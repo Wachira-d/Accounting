@@ -13,8 +13,13 @@ namespace Accounting.Controllers;
 /// **ศูนย์ช่วยเหลือ — เอกสารและวิดีโอสอนใช้งาน**
 ///
 /// <para>เนื้อหาเป็นของ**แพลตฟอร์ม** (ผู้ให้บริการเป็นคนสอน) ลูกค้าทุกรายเห็น
-/// ชุดเดียวกัน จึงไม่มี tenant scope — แต่ยังต้องล็อกอิน (เนื้อหาสอนวิธีใช้ระบบ
-/// ไม่ใช่หน้าการตลาดสาธารณะ) · การแก้ไขจำกัดที่ <c>SystemAdmin</c></para>
+/// ชุดเดียวกัน จึงไม่มี tenant scope · การแก้ไขจำกัดที่ <c>SystemAdmin</c></para>
+///
+/// <para>**เส้นอ่านเป็นสาธารณะ** (2026-09-08 ตามที่เจ้าของระบบสั่ง): คู่มือสอน
+/// ใช้งานต้องอ่านได้ก่อนสมัคร — <c>GET api/help/public</c> เปิดให้ทุกคน คืนเฉพาะ
+/// แถวที่ <c>IsPublished</c> และ <c>IsPublic</c> · เส้นในระบบ (<c>GET api/help</c>)
+/// ยังต้องล็อกอินเพราะคืนข้อมูลภายในเพิ่ม (path ไฟล์ · ยอดเปิดดู · แถวที่ยังไม่
+/// เผยแพร่สำหรับแอดมิน)</para>
 /// </summary>
 [ApiController]
 [Route("api/help")]
@@ -35,8 +40,13 @@ public class HelpCenterController : ControllerBase
     private static object ToDto(HelpResource r) => new
     {
         r.Id,
+        r.Slug,
         r.Title,
         r.Description,
+        // เนื้อหาแปลงเป็น HTML ที่**เซิร์ฟเวอร์ที่เดียว** หน้าเว็บแสดงอย่างเดียว
+        // (สองหน้าที่แสดงคู่มือจะได้ไม่มีตัวแปล Markdown คนละตัว = drift เป็นศูนย์)
+        body = r.Body,
+        bodyHtml = HelpArticleMarkdown.ToHtml(r.Body),
         category = r.Category.ToString(),
         categoryLabel = CategoryLabel(r.Category),
         r.ModuleCode,
@@ -115,11 +125,14 @@ public class HelpCenterController : ControllerBase
 
     /// <summary>**เส้นสาธารณะ** — คนที่ยังไม่สมัครก็อ่านได้ (หน้า `/docs.html`)
     ///
-    /// <para>คืนเฉพาะแถวที่แอดมินตั้งใจเปิดทั้งสองชั้น: <c>IsPublished</c>
-    /// (พร้อมเผยแพร่) **และ** <c>IsPublic</c> (ยอมให้คนนอกเห็น) — ค่า default ของ
-    /// <c>IsPublic</c> เป็น false จึงไม่มีเนื้อหาเดิมชิ้นไหนหลุดออกไปจากการเพิ่ม
-    /// เส้นนี้ · ไม่คืน <c>StoragePath</c>/<c>FileName</c>/<c>ViewCount</c> เพราะ
-    /// เป็นข้อมูลภายใน ไม่ใช่สิ่งที่หน้าเว็บสาธารณะต้องใช้</para></summary>
+    /// <para>คืนเฉพาะแถวที่เปิดครบสองชั้น: <c>IsPublished</c> (พร้อมเผยแพร่)
+    /// **และ** <c>IsPublic</c> (ยอมให้คนนอกเห็น) — <c>IsPublic</c> default = true
+    /// ตั้งแต่ 2026-09-08 เพราะคู่มือสอนใช้งานต้องอ่านได้ก่อนสมัคร ส่วนชิ้นที่
+    /// อ้างข้อมูลภายในให้แอดมิน**ปิดเป็นรายชิ้น**ในหน้าจัดการเนื้อหา</para>
+    ///
+    /// <para>ไม่คืน <c>StoragePath</c>/<c>FileName</c>/<c>ViewCount</c> เพราะเป็น
+    /// ข้อมูลภายใน ไม่ใช่สิ่งที่หน้าเว็บสาธารณะต้องใช้ · เนื้อหาบทความส่งมาเป็น
+    /// <c>bodyHtml</c> ที่เซิร์ฟเวอร์หนี HTML แล้ว หน้าเว็บ**แสดงอย่างเดียว**</para></summary>
     [HttpGet("public")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<object>>> PublicList()
@@ -134,7 +147,8 @@ public class HelpCenterController : ControllerBase
         {
             items = rows.Select(r => new
             {
-                r.Id, r.Title, r.Description,
+                r.Id, r.Slug, r.Title, r.Description,
+                bodyHtml = HelpArticleMarkdown.ToHtml(r.Body),
                 category = r.Category.ToString(),
                 categoryLabel = CategoryLabel(r.Category),
                 r.ModuleCode,
@@ -171,7 +185,8 @@ public class HelpCenterController : ControllerBase
         Guid? Id, string Title, string? Description, string Category, string? ModuleCode,
         string Kind, string? SourceUrl, string? StoragePath, string? FileName,
         int DurationSeconds, string? ThumbnailUrl, bool IsPublished, int SortOrder,
-        bool IsPublic = false);
+        // default = true ตามนโยบาย “คู่มือเป็นสาธารณะ” (ดู HelpResource.IsPublic)
+        bool IsPublic = true, string? Slug = null, string? Body = null);
 
     [HttpPost]
     [Authorize(Roles = "SystemAdmin")]
@@ -187,6 +202,10 @@ public class HelpCenterController : ControllerBase
         var hasSource = !string.IsNullOrWhiteSpace(req.SourceUrl) || !string.IsNullOrWhiteSpace(req.StoragePath);
         // บทความใช้ Description เป็นเนื้อหาจึงไม่ต้องมีไฟล์/ลิงก์ · ที่เหลือถ้าไม่มี
         // แหล่งสื่อเลย = การ์ดที่กดแล้วไม่มีอะไรเกิดขึ้น (silent no-op) จึงบล็อก
+        if (kind == HelpResourceKind.Article
+            && string.IsNullOrWhiteSpace(req.Body) && string.IsNullOrWhiteSpace(req.Description))
+            return BadRequest(new ApiResponse<string>(false, null,
+                "บทความต้องมีเนื้อหา — กรอกช่องเนื้อหาบทความ หรืออย่างน้อยคำอธิบายสั้น"));
         if (kind != HelpResourceKind.Article && !hasSource)
             return BadRequest(new ApiResponse<string>(false, null,
                 "ต้องใส่ลิงก์วิดีโอ หรืออัปโหลดไฟล์อย่างน้อยหนึ่งอย่าง"));
@@ -214,6 +233,8 @@ public class HelpCenterController : ControllerBase
         row.ThumbnailUrl = string.IsNullOrWhiteSpace(req.ThumbnailUrl) ? null : req.ThumbnailUrl.Trim();
         row.IsPublished = req.IsPublished;
         row.IsPublic = req.IsPublic;
+        row.Slug = string.IsNullOrWhiteSpace(req.Slug) ? null : req.Slug.Trim().ToLowerInvariant();
+        row.Body = string.IsNullOrWhiteSpace(req.Body) ? null : req.Body.Trim();
         row.SortOrder = req.SortOrder;
         // เดา provider จาก URL เสมอ — ให้ผู้ดูแลเลือกเองแล้วเลือกผิด = ฝังไม่ขึ้น
         // โดยไม่มีอะไรบอกว่าทำไม

@@ -769,7 +769,23 @@ do {
   <script src="/js/layout.js"></script>
 <script>
 API.init();
-Layout.init('api-developer');
+// เอกสาร API เป็นเนื้อหาอ้างอิงสาธารณะ (เจ้าของระบบสั่ง 2026-09-08: คู่มือไม่ต้องล็อกอิน)
+// — ไม่มีข้อมูลของบริษัทไหนบนหน้านี้ (ตัวอย่างโค้ดล้วน) · ถ้ายังไม่ล็อกอินให้แสดง
+// เนื้อหาเดิมโดยไม่เรียก Layout.init (ซึ่งจะเด้งไปหน้าล็อกอิน) แล้วซ่อนปุ่มที่ต้องใช้บัญชี
+if (localStorage.getItem('token')) {
+  Layout.init('api-developer');
+} else {
+  document.querySelectorAll('a[href="/pages/integrations.html"]').forEach(a => {
+    a.textContent = 'สมัคร/เข้าสู่ระบบเพื่อออกคีย์';
+    a.href = '/login.html';
+    a.classList.remove('btn-primary'); a.classList.add('btn-ghost');
+  });
+  const back = document.createElement('a');
+  back.href = '/docs.html';
+  back.textContent = '← กลับหน้าคู่มือ';
+  back.style.cssText = 'display:inline-block;margin:12px 16px 0;font-size:13px;color:var(--primary)';
+  document.getElementById('pageContent').prepend(back);
+}
 
 function toggleEndpoint(header) {
   const body = header.nextElementSibling;

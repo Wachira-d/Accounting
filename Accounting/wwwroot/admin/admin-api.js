@@ -13,7 +13,7 @@ const AdminAPI = {
     if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body) opts.body = JSON.stringify(body);
 
-    const res = await fetch(`${this.base}${path}`, opts);
+    const res = await fetch(this.url(path), opts);
     if (res.status === 401) {
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');
@@ -50,6 +50,10 @@ const AdminAPI = {
     return data;
   },
 
+  // พาธที่ขึ้นต้นด้วย /api/ ใช้ตามนั้น (เส้นแพลตฟอร์มที่อยู่นอก /api/admin แต่รับ
+  // JWT ของ SystemAdmin ใบเดียวกัน เช่น /api/help) — ที่เหลือต่อท้าย base เหมือนเดิม
+  url(path) { return path.startsWith('/api/') ? path : `${this.base}${path}`; },
+
   get(path) { return this.request('GET', path); },
   post(path, body) { return this.request('POST', path, body); },
   put(path, body) { return this.request('PUT', path, body); },
@@ -59,7 +63,7 @@ const AdminAPI = {
     const token = localStorage.getItem('admin_token');
     const opts = { method: 'POST', body: formData, headers: {} };
     if (token) opts.headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${this.base}${path}`, opts);
+    const res = await fetch(this.url(path), opts);
     if (res.status === 401) { window.location.href = '/admin/login.html'; throw new Error('Unauthorized'); }
     const data = await res.json();
     if (!data.success) throw new Error(data.message || 'อัพโหลดไม่สำเร็จ');

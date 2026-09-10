@@ -1205,7 +1205,7 @@ const Layout = {
       description: 'ใครใช้ AI เท่าไร แยกรายลูกค้า/ช่องทาง (หน้าเว็บ vs API) · ต้นทุนจริง · สัดส่วนที่ระบบตอบเองได้' },
     { id: 'admin-company-usage', label: 'การใช้งานรายบริษัท', icon: '🏢', href: '/pages/admin-company-usage.html', platformAdmin: true,
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
-    { id: 'admin-help', label: 'จัดการคู่มือ/วิดีโอสอน', icon: '🎓', href: '/pages/admin-help.html', platformAdmin: true,
+    { id: 'admin-help', label: 'จัดการคู่มือ/วิดีโอสอน', icon: '🎓', href: '/admin/help-content.html', platformAdmin: true,
       description: 'อัปโหลดวิดีโอสอนหรือวางลิงก์ YouTube/Facebook/TikTok · แยกหมวดตามเรื่องและตามโมดูลธุรกิจ · เผยแพร่/พักไว้เป็นร่างได้' },
     { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
       description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },

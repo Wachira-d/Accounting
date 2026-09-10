@@ -51,6 +51,29 @@
     .need-login { font-size:11px; font-weight:600; color:#b45309; background:#fffbeb; border:1px solid #fde68a;
                   border-radius:999px; padding:2px 8px; margin-left:6px; white-space:nowrap; }
     .empty { text-align:center; color:var(--gray-500); padding:28px 12px; font-size:.9rem; line-height:1.9; }
+    .art { display:flex; gap:12px; align-items:flex-start; padding:14px; border:1px solid var(--gray-200);
+           border-radius:12px; background:#fff; cursor:pointer; text-align:left; width:100%; font:inherit; color:inherit; }
+    .art:hover { border-color:var(--primary); box-shadow:0 4px 14px rgba(0,0,0,.06); }
+    .art .ic { font-size:20px; line-height:1.4; }
+    .art h3 { font-size:.98rem; margin:0 0 4px; }
+    .art p { font-size:.84rem; color:var(--gray-600); margin:0; line-height:1.7; }
+    .artlist { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:12px; }
+    .reader { display:none; }
+    .reader.on { display:block; }
+    .reader .back { background:none; border:0; color:var(--primary); font:inherit; font-weight:600;
+                    cursor:pointer; padding:0; margin-bottom:14px; }
+    .reader h1 { font-size:1.5rem; margin:0 0 6px; }
+    .reader .meta { color:var(--gray-500); font-size:.85rem; margin:0 0 18px; }
+    .prose { font-size:.95rem; line-height:1.95; color:var(--gray-800); }
+    .prose h3 { font-size:1.05rem; margin:26px 0 8px; color:var(--gray-900); }
+    .prose p { margin:0 0 12px; }
+    .prose ul, .prose ol { margin:0 0 14px; padding-left:22px; }
+    .prose li { margin-bottom:6px; }
+    .prose code { background:var(--gray-100); border-radius:4px; padding:1px 6px; font-size:.88em; }
+    .prose strong { color:var(--gray-900); }
+    .toc { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; padding-top:16px; border-top:1px solid var(--gray-200); }
+    .toc a { font-size:.82rem; color:var(--primary); text-decoration:none; border:1px solid var(--gray-200);
+             border-radius:999px; padding:5px 12px; }
     @media (max-width:768px) { .docs-hero h1 { font-size:1.8rem; } }
   </style>
 </head>
@@ -101,37 +124,51 @@
 
       <!-- คลังวิดีโอ/บทความ: ดึงจากศูนย์ช่วยเหลือชุดเดียวกับในระบบ (ไม่มีสำเนามือ) -->
       <div class="card" id="tutorials">
-        <h2>วิดีโอ &amp; บทความสอนใช้งาน</h2>
-        <p class="sub">เนื้อหาชุดเดียวกับศูนย์ช่วยเหลือในระบบ — ส่วนที่เปิดให้อ่านได้โดยไม่ต้องสมัคร</p>
-        <div class="cat-bar" id="catBar"></div>
-        <div class="grid" id="grid"></div>
-        <div class="empty" id="empty" hidden>
-          ยังไม่มีเนื้อหาที่เปิดสาธารณะในตอนนี้<br>
-          คู่มือฉบับเต็มและวิดีโอทั้งหมดอยู่ในระบบ — <a href="/register.html" style="color:var(--primary);font-weight:600">สมัครใช้ฟรี</a>
-          แล้วเปิดเมนู "คู่มือ &amp; วิดีโอสอนใช้งาน" ได้ทันที
+        <div id="listView">
+          <h2>คู่มือสอนใช้งาน</h2>
+          <p class="sub">อ่านได้เลย ไม่ต้องสมัครและไม่ต้องเข้าสู่ระบบ — เนื้อหาชุดเดียวกับศูนย์ช่วยเหลือในระบบ</p>
+          <div class="cat-bar" id="catBar"></div>
+          <div class="artlist" id="artList"></div>
+          <div class="grid" id="grid" style="margin-top:16px"></div>
+          <div class="empty" id="empty" hidden>
+            ยังโหลดเนื้อหาไม่ได้ในตอนนี้ — ลองรีเฟรชอีกครั้ง<br>
+            หรือ <a href="/contact.html" style="color:var(--primary);font-weight:600">ติดต่อเรา</a> เพื่อขอคู่มือฉบับ PDF
+          </div>
+        </div>
+
+        <div class="reader" id="reader">
+          <button class="back" id="backBtn" type="button">&larr; กลับไปหน้ารายการคู่มือ</button>
+          <h1 id="rTitle"></h1>
+          <p class="meta" id="rMeta"></p>
+          <div class="prose" id="rBody"></div>
+          <div class="toc" id="rNext"></div>
         </div>
       </div>
 
       <!-- คู่มือในระบบ: ลิงก์ตรง ไม่คัดลอกเนื้อหามาไว้ที่สอง -->
       <div class="card" id="in-app">
-        <h2>คู่มือฉบับเต็ม (ในระบบ)</h2>
-        <p class="sub">อยู่หลังหน้าเข้าสู่ระบบ เพราะเป็นวิธีใช้งานจริงทีละหน้าจอ — สมัครใช้ฟรีแล้วเข้าได้ทันที</p>
+        <h2>เครื่องมือที่ต้องใช้บัญชีของคุณ</h2>
+        <p class="sub">คู่มือทั้งหมดอ่านได้ที่หน้านี้โดยไม่ต้องล็อกอิน — สามอย่างข้างล่างต้องเข้าสู่ระบบ
+          เพราะมันอ่าน<strong>ข้อมูลของบริษัทคุณ</strong> ไม่ใช่เพราะเนื้อหาถูกปิด</p>
         <a class="linkrow" href="/pages/getting-started.html" style="text-decoration:none;color:inherit">
           <span class="ic">🚀</span>
-          <span><h3>เริ่มต้นใช้งาน <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
-          <p>เช็กลิสต์ตั้งค่าทีละขั้น พร้อมสถานะว่าทำถึงไหนแล้ว</p></span>
+          <span><h3>เช็กลิสต์เริ่มต้นใช้งาน <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
+          <p>บอกว่า<em>บริษัทของคุณ</em>ตั้งค่าไปถึงขั้นไหนแล้ว — เป็นสถานะข้อมูลจริง ไม่ใช่บทความ
+             (ภาพรวมขั้นตอนอ่านได้ที่หัวข้อ “เริ่มต้นใน 5 ขั้น” ด้านบน)</p></span>
         </a>
         <a class="linkrow" href="/pages/help.html" style="text-decoration:none;color:inherit">
           <span class="ic">🎓</span>
-          <span><h3>คู่มือ &amp; วิดีโอสอนใช้งาน <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
-          <p>แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)</p></span>
+          <span><h3>ศูนย์ช่วยเหลือในระบบ <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
+          <p>เนื้อหา<strong>ชุดเดียวกับหน้านี้</strong> แต่เปิดจากในระบบได้เลยขณะทำงาน พร้อมวิดีโอที่แอดมินอัปโหลดเพิ่ม</p></span>
         </a>
         <a class="linkrow" href="/pages/api-developer.html" id="api">
           <span class="ic">📘</span>
-          <span><h3>เอกสาร API สำหรับนักพัฒนา <span class="need-login">ต้องเข้าสู่ระบบ</span></h3>
-          <p>เชื่อมระบบภายนอกเข้ากับ <code>/api/v1</code> — คีย์ · ขอบเขตสิทธิ์ · ตัวอย่างเรียกใช้</p></span>
+          <span><h3>เอกสาร API สำหรับนักพัฒนา</h3>
+          <p>รายการ endpoint และตัวอย่างเรียกใช้ <code>/api/v1</code> — อ่านได้โดยไม่ต้องล็อกอิน
+             (ออกคีย์จริงต้องเข้าสู่ระบบ)</p></span>
         </a>
       </div>
+
     </div>
   </div>
 
@@ -147,7 +184,8 @@
     });
 
     // คลังเนื้อหา — ดึงจาก endpoint สาธารณะของศูนย์ช่วยเหลือชุดเดียวกับในระบบ
-    // (แอดมินต้องติ๊ก "เปิดสาธารณะ" ทีละชิ้น จึงไม่มีเนื้อหาภายในหลุดออกมาเอง)
+    // เนื้อหาบทความถูกแปลงเป็น HTML และหนีอักขระ**ที่เซิร์ฟเวอร์** (HelpArticleMarkdown)
+    // หน้านี้แสดงอย่างเดียว — ห้ามเขียนตัวแปล Markdown ตัวที่สองที่นี่
     const Docs = {
       items: [], cat: '',
       esc(v) {
@@ -167,6 +205,14 @@
           this.renderCats(d?.categories || []);
         } catch (e) { this.items = []; }
         this.render();
+        // ลิงก์ตรงมาที่บทความ (แชร์ได้ · กลับมาแล้วอยู่ที่เดิม)
+        const want = new URLSearchParams(location.search).get('a');
+        if (want) this.open(want, false);
+        window.addEventListener('popstate', () => {
+          const slug = new URLSearchParams(location.search).get('a');
+          if (slug) this.open(slug, false); else this.closeReader(false);
+        });
+        document.getElementById('backBtn').addEventListener('click', () => this.closeReader(true));
       },
       renderCats(cats) {
         if (!cats.length) return;
@@ -180,11 +226,23 @@
       },
       render() {
         const rows = this.cat ? this.items.filter(x => x.category === this.cat) : this.items;
-        const grid = document.getElementById('grid');
+        // บทความ (มีเนื้อหาให้อ่านในหน้านี้) แยกจากสื่อที่ต้องเปิดแท็บใหม่
+        const articles = rows.filter(r => r.bodyHtml);
+        const media = rows.filter(r => !r.bodyHtml);
         document.getElementById('empty').hidden = rows.length > 0;
         document.getElementById('catBar').hidden = this.items.length === 0;
+
+        document.getElementById('artList').innerHTML = articles.map(r => `
+          <button class="art" type="button" data-slug="${this.esc(r.slug || r.id)}">
+            <span class="ic">📖</span>
+            <span><h3>${this.esc(r.title)}</h3>
+            ${r.description ? `<p>${this.esc(r.description)}</p>` : ''}</span>
+          </button>`).join('');
+        document.querySelectorAll('#artList .art').forEach(b =>
+          b.addEventListener('click', () => this.open(b.dataset.slug, true)));
+
         const icon = { Video: '▶', Document: '📄', Article: '📝', Link: '🔗' };
-        grid.innerHTML = rows.map(r => {
+        document.getElementById('grid').innerHTML = media.map(r => {
           // เปิดในแท็บใหม่เมื่อมีลิงก์จริง — ไม่มีลิงก์ = การ์ดอ่านอย่างเดียว
           // (ห้ามให้กดแล้วไม่มีอะไรเกิดขึ้น)
           const href = r.embedUrl || r.openUrl;
@@ -202,6 +260,34 @@
             </div>
           </${tag}>`;
         }).join('');
+      },
+      open(slug, push) {
+        const it = this.items.find(x => (x.slug || x.id) === slug);
+        // ลิงก์ที่ชี้บทความที่ไม่มีแล้ว = พากลับรายการ ไม่ใช่หน้าเปล่า
+        if (!it || !it.bodyHtml) { this.closeReader(false); return; }
+        document.getElementById('rTitle').textContent = it.title || '';
+        document.getElementById('rMeta').textContent = it.categoryLabel || '';
+        // bodyHtml หนีอักขระมาจากเซิร์ฟเวอร์แล้ว (HelpArticleMarkdown.Escape)
+        document.getElementById('rBody').innerHTML = it.bodyHtml;
+        // อ่านจบแล้วต้องมีที่ไปต่อ — ห้ามจบด้วยหน้าตัน
+        const idx = this.items.filter(x => x.bodyHtml);
+        const at = idx.findIndex(x => (x.slug || x.id) === slug);
+        const near = [idx[at - 1], idx[at + 1]].filter(Boolean);
+        document.getElementById('rNext').innerHTML = near.map(n =>
+          `<a href="?a=${encodeURIComponent(n.slug || n.id)}">${this.esc(n.title)}</a>`).join('');
+        document.querySelectorAll('#rNext a').forEach(a => a.addEventListener('click', ev => {
+          ev.preventDefault();
+          this.open(new URL(a.href, location.origin).searchParams.get('a'), true);
+        }));
+        document.getElementById('listView').style.display = 'none';
+        document.getElementById('reader').classList.add('on');
+        if (push) history.pushState({}, '', `?a=${encodeURIComponent(slug)}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      },
+      closeReader(push) {
+        document.getElementById('reader').classList.remove('on');
+        document.getElementById('listView').style.display = '';
+        if (push) history.pushState({}, '', location.pathname);
       },
     };
     Docs.load();

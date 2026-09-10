@@ -7,6 +7,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <style>
+    /* บทความในศูนย์ช่วยเหลือ — โครง HTML มาจากเซิร์ฟเวอร์ตัวเดียวกับหน้า /docs.html */
+    .help-prose { font-size:14px; line-height:1.95; color:#334155; }
+    .help-prose h3 { font-size:15px; margin:20px 0 6px; color:#0f172a; }
+    .help-prose p { margin:0 0 10px; }
+    .help-prose ul, .help-prose ol { margin:0 0 12px; padding-left:20px; }
+    .help-prose li { margin-bottom:5px; }
+    .help-prose code { background:#f1f5f9; border-radius:4px; padding:1px 5px; font-size:.9em; }
+    .help-prose strong { color:#0f172a; }
     .cat-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px }
     .cat { padding:6px 14px; border-radius:999px; border:1px solid #e2e8f0; background:#fff;
            font-size:13px; cursor:pointer; white-space:nowrap; color:#334155 }
@@ -164,8 +172,12 @@
         } else if (it.embedUrl) {
           body = `<iframe class="player" src="${Layout.esc(it.embedUrl)}" allowfullscreen
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"></iframe>`;
+        } else if (it.bodyHtml) {
+          // บทความ — เซิร์ฟเวอร์แปลง Markdown + หนีอักขระมาแล้ว (HelpArticleMarkdown)
+          // หน้านี้แสดงอย่างเดียว ห้ามเขียนตัวแปลตัวที่สอง (จะ drift กับ /docs.html)
+          body = `<div class="help-prose">${it.bodyHtml}</div>`;
         } else {
-          // บทความ — เนื้อหาอยู่ใน description
+          // ไม่มีเนื้อหาเต็ม — ใช้คำอธิบายสั้นแทน (ยังดีกว่ากรอบว่าง)
           body = `<div style="font-size:14px;line-height:1.9;white-space:pre-wrap">${Layout.esc(it.description || 'ไม่มีเนื้อหา')}</div>`;
         }
         if (it.description && it.kind !== 'Article') {

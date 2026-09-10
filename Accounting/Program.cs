@@ -1983,6 +1983,21 @@ try
     {
         app.Logger.LogWarning(ex, "DistillationCorpusSeeder failed at startup (non-fatal)");
     }
+
+    // คู่มือสอนใช้งาน — เนื้อหาตั้งต้นที่เปิดสาธารณะ (`/docs.html`) และใช้ในศูนย์
+    // ช่วยเหลือชุดเดียวกัน · idempotent ด้วย Slug และไม่ทับแถวที่แอดมินแก้เองแล้ว
+    // จึงรันซ้ำทุก deploy ได้ · ต้องรันทุก instance เพราะเป็นการเขียนข้อมูลกลาง
+    // ที่ idempotent (ไม่ใช่ state ต่อ process) — ชนกันแล้วผลลัพธ์เท่าเดิม
+    try
+    {
+        var helpSeeder = new Accounting.Services.Implementations.HelpContentSeeder(
+            db, app.Services.GetRequiredService<ILogger<Accounting.Services.Implementations.HelpContentSeeder>>());
+        await helpSeeder.SeedAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "HelpContentSeeder failed at startup (non-fatal — คู่มือจะว่างจนกว่าจะรันใหม่)");
+    }
 }
 catch (Exception ex)
 {

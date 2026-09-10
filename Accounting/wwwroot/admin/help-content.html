@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คู่มือ/วิดีโอสอนใช้งาน - NextAcc Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .hc-note{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 16px;font-size:12px;color:#64748b;line-height:1.7;margin-bottom:14px}
+    .hc-tabs{display:flex;gap:8px;margin-bottom:14px;border-bottom:2px solid #e2e8f0}
+    .hc-tab{padding:8px 16px;cursor:pointer;font-size:14px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px}
+    .hc-tab.on{color:#1e40af;border-bottom-color:#1e40af}
+    .hc-form label{display:block;font-size:12px;color:#64748b;margin:8px 0 4px}
+    .hc-form input,.hc-form select,.hc-form textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit}
+    .hc-form textarea#fBody{min-height:320px;resize:vertical;line-height:1.7}
+    .hc-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:640px){.hc-grid{grid-template-columns:1fr}}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+    .pill.on{background:#dcfce7;color:#166534}.pill.off{background:#f1f5f9;color:#64748b}.pill.pub{background:#ecfdf5;color:#065f46}
+    .hc-row{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px}
+    .hc-row:hover{background:#f8fafc}
+    .hc-row .t{font-weight:600}
+    .hc-row .d{font-size:11px;color:#94a3b8}
+    .hc-row .m{font-size:11px;color:#64748b;margin-top:3px}
+    .muted{color:#94a3b8}
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <h2 style="margin:0 0 6px">🎓 คู่มือ / วิดีโอสอนใช้งาน</h2>
+    <div class="hc-note">
+      <b>ทุกชิ้นเป็นสาธารณะโดยค่าเริ่มต้น</b> — แสดงทั้งในศูนย์ช่วยเหลือของผู้ใช้และหน้า
+      <a href="/docs.html" target="_blank" rel="noopener">/docs.html</a> ที่คนยังไม่สมัครก็อ่านได้
+      (ติ๊ก “สาธารณะ” ออกเป็นรายชิ้นถ้าเนื้อหานั้นอ้างข้อมูลภายใน) ·
+      <b>บทความที่ระบบใส่ให้</b> (มี slug) แก้ได้เลย — เมื่อแก้แล้วระบบจะไม่เขียนทับตอน deploy รอบหน้า ·
+      <b>วิดีโอ</b> วางลิงก์ YouTube / Facebook / TikTok หรืออัปโหลดไฟล์เอง (.mp4 .webm .mov .m4v .pdf ≤ 300 MB)
+    </div>
+
+    <div class="hc-tabs">
+      <div class="hc-tab on" data-tab="list" onclick="Page.tab('list',this)">รายการทั้งหมด</div>
+      <div class="hc-tab" data-tab="editor" onclick="Page.tab('editor',this)">✏️ เพิ่ม / แก้ไข</div>
+    </div>
+
+    <div id="tab-list">
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <select id="fltCat" onchange="Page.render()" style="padding:7px 10px;border-radius:8px;border:1px solid #cbd5e1">
+          <option value="">ทุกหมวด</option>
+        </select>
+        <input id="fltQ" placeholder="🔍 ค้นชื่อเรื่อง" oninput="Page.render()"
+          style="flex:1;min-width:180px;padding:7px 12px;border-radius:8px;border:1px solid #cbd5e1">
+        <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="Page.edit(null)">+ เพิ่มเนื้อหา</button>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px" id="list">
+        <div style="padding:24px;text-align:center;color:#94a3b8">กำลังโหลด…</div>
+      </div>
+    </div>
+
+    <div id="tab-editor" style="display:none">
+      <div class="hc-form" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;max-width:900px">
+        <input type="hidden" id="fId">
+        <label>เรื่อง *</label>
+        <input id="fTitle" placeholder="เช่น วิธีออกใบกำกับภาษีจากการเข้าพัก">
+        <label>คำอธิบายสั้น <span class="muted">(1 บรรทัดบนการ์ด)</span></label>
+        <input id="fDesc">
+        <div class="hc-grid">
+          <div>
+            <label>หมวด (สอนเรื่องอะไร)</label>
+            <select id="fCat">
+              <option value="GettingStarted">เริ่มต้นใช้งาน</option>
+              <option value="Accounting">ระบบบัญชี</option>
+              <option value="Documents">เอกสาร</option>
+              <option value="Tax">ภาษี</option>
+              <option value="Payroll">เงินเดือน/ประกันสังคม</option>
+              <option value="Inventory">สินค้าคงคลัง</option>
+              <option value="BusinessFeature">ฟีเจอร์เฉพาะธุรกิจ</option>
+              <option value="Reports">รายงาน</option>
+              <option value="Other">อื่น ๆ</option>
+            </select>
+          </div>
+          <div>
+            <label>โมดูลธุรกิจ <span class="muted">(ว่าง = ทุกธุรกิจ)</span></label>
+            <input id="fModule" list="moduleList" placeholder="Lodging / Pos / Cms">
+            <datalist id="moduleList"><option value="Lodging"><option value="Pos"><option value="Cms"><option value="Billing"></datalist>
+          </div>
+          <div>
+            <label>ชนิด</label>
+            <select id="fKind" onchange="Page.onKindChange()">
+              <option value="Article">บทความ (เขียนในระบบ)</option>
+              <option value="Video">วิดีโอ</option>
+              <option value="Document">คู่มือ (PDF)</option>
+              <option value="Link">ลิงก์ภายนอก</option>
+            </select>
+          </div>
+          <div>
+            <label>ลำดับแสดงผล</label>
+            <input id="fSort" type="number" value="10">
+          </div>
+        </div>
+
+        <div id="bodyBlock">
+          <label>เนื้อหาบทความ <span class="muted">— <code>## หัวข้อ</code> · <code>- ข้อ</code> · <code>1. ข้อ</code> · <code>**หนา**</code> · <code>`โค้ด`</code></span></label>
+          <textarea id="fBody"></textarea>
+          <label>Slug <span class="muted">(ลิงก์ตรง <code>/docs.html?a=&lt;slug&gt;</code> · a-z 0-9 - · ว่างได้)</span></label>
+          <input id="fSlug" placeholder="เช่น doc-tax-invoice-86-4" pattern="[a-z0-9-]+">
+        </div>
+
+        <div id="srcBlock">
+          <label>ลิงก์วิดีโอ / เอกสาร</label>
+          <input id="fUrl" placeholder="https://www.youtube.com/watch?v=… หรือ https://www.tiktok.com/@…/video/…">
+          <label>หรืออัปโหลดไฟล์เข้าระบบเอง</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="fFile" accept=".mp4,.webm,.mov,.m4v,.pdf" style="width:auto">
+            <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.upload()">⬆ อัปโหลด</button>
+            <span id="upInfo" class="muted" style="font-size:12px"></span>
+          </div>
+          <input type="hidden" id="fStoragePath">
+          <label>ความยาว (วินาที) <span class="muted">0 = ไม่ระบุ</span></label>
+          <input id="fDur" type="number" min="0" value="0" style="max-width:160px">
+        </div>
+
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin:12px 0">
+          <label style="display:flex;gap:8px;align-items:center;margin:0"><input type="checkbox" id="fPub" checked style="width:auto"> เผยแพร่</label>
+          <label style="display:flex;gap:8px;align-items:center;margin:0" title="แสดงบน /docs.html ให้คนที่ยังไม่สมัครดูได้ — ต้องติ๊ก เผยแพร่ ด้วย">
+            <input type="checkbox" id="fPublic" checked style="width:auto"> สาธารณะ (ไม่ต้องล็อกอิน)</label>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="admin-btn admin-btn-primary" onclick="Page.save()">บันทึก</button>
+          <button class="admin-btn admin-btn-outline" onclick="Page.edit(null)">ล้างฟอร์ม</button>
+          <a class="admin-btn admin-btn-outline" id="previewLink" href="/docs.html" target="_blank" rel="noopener" style="margin-left:auto">👁 ดูหน้าสาธารณะ</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('help-content');
+
+    const Page = {
+      rows: [],
+      esc(v) { return AdminLayout.esc(v); },
+
+      tab(name, el) {
+        document.querySelectorAll('.hc-tab').forEach(t => t.classList.toggle('on', t === el));
+        document.getElementById('tab-list').style.display = name === 'list' ? '' : 'none';
+        document.getElementById('tab-editor').style.display = name === 'editor' ? '' : 'none';
+      },
+
+      async load() {
+        try {
+          // เส้นเดียวกับศูนย์ช่วยเหลือ — JWT ของ SystemAdmin ใบเดียวกันใช้ได้ (ดู AdminAPI.url)
+          const res = await AdminAPI.get('/api/help');
+          this.rows = res?.data?.items || [];
+          const cats = res?.data?.categories || [];
+          const sel = document.getElementById('fltCat');
+          const keep = sel.value;
+          sel.innerHTML = '<option value="">ทุกหมวด</option>' + cats.map(c =>
+            `<option value="${this.esc(c.value)}">${this.esc(c.label)} (${c.count})</option>`).join('');
+          sel.value = keep;
+        } catch (e) {
+          document.getElementById('list').innerHTML =
+            `<div style="padding:24px;color:#dc2626">${this.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+          return;
+        }
+        this.render();
+      },
+
+      render() {
+        const cat = document.getElementById('fltCat').value;
+        const q = document.getElementById('fltQ').value.trim().toLowerCase();
+        const rows = this.rows.filter(r => (!cat || r.category === cat)
+          && (!q || (r.title || '').toLowerCase().includes(q)));
+        const box = document.getElementById('list');
+        if (!rows.length) {
+          box.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8">ไม่มีเนื้อหาที่ตรงเงื่อนไข — กด “เพิ่มเนื้อหา” เพื่อเริ่ม</div>';
+          return;
+        }
+        const kindLabel = { Video: '🎬 วิดีโอ', Document: '📄 คู่มือ', Article: '📝 บทความ', Link: '🔗 ลิงก์' };
+        box.innerHTML = rows.map(r => {
+          const i = this.rows.indexOf(r);
+          return `<div class="hc-row">
+            <div style="flex:1;min-width:0">
+              <div class="t">${this.esc(r.title)}
+                <span class="pill ${r.isPublished ? 'on' : 'off'}" style="margin-left:6px">${r.isPublished ? 'เผยแพร่' : 'ร่าง'}</span>
+                ${r.isPublic ? '<span class="pill pub">สาธารณะ</span>' : ''}</div>
+              ${r.description ? `<div class="d">${this.esc(r.description)}</div>` : ''}
+              <div class="m">${this.esc(r.categoryLabel)} · ${kindLabel[r.kind] || this.esc(r.kind)}
+                ${r.moduleCode ? ' · ' + this.esc(r.moduleCode) : ''}
+                ${r.slug ? ` · <a href="/docs.html?a=${encodeURIComponent(r.slug)}" target="_blank" rel="noopener">/docs.html?a=${this.esc(r.slug)}</a>` : ''}
+                · เปิดดู ${(r.viewCount || 0).toLocaleString('th-TH')} · ลำดับ ${r.sortOrder}
+                ${r.kind === 'Video' && !r.embedUrl && r.sourceUrl ? ' · <span style="color:#b45309">⚠️ ฝังไม่ได้ จะเปิดแท็บใหม่แทน</span>' : ''}</div>
+            </div>
+            <div style="white-space:nowrap;display:flex;gap:6px">
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.edit(${i})">แก้ไข</button>
+              <button class="admin-btn admin-btn-danger admin-btn-sm" onclick="Page.remove(${i})">ลบ</button>
+            </div>
+          </div>`;
+        }).join('');
+      },
+
+      onKindChange() {
+        const article = document.getElementById('fKind').value === 'Article';
+        document.getElementById('bodyBlock').style.display = article ? '' : 'none';
+        document.getElementById('srcBlock').style.display = article ? 'none' : '';
+      },
+
+      edit(i) {
+        const r = (i === null || i === undefined) ? null : this.rows[i];
+        const set = (id, v) => { document.getElementById(id).value = v; };
+        set('fId', r?.id || '');
+        set('fTitle', r?.title || '');
+        set('fDesc', r?.description || '');
+        set('fBody', r?.body || '');
+        set('fSlug', r?.slug || '');
+        set('fCat', r?.category || 'GettingStarted');
+        set('fModule', r?.moduleCode || '');
+        set('fKind', r?.kind || 'Article');
+        set('fDur', r?.durationSeconds ?? 0);
+        set('fUrl', r?.sourceUrl || '');
+        set('fStoragePath', r?.storagePath || '');
+        set('fSort', r?.sortOrder ?? 10);
+        document.getElementById('fPub').checked = r ? !!r.isPublished : true;
+        // default = สาธารณะ ตามนโยบาย “คู่มือไม่ต้องล็อกอิน” (HelpResource.IsPublic)
+        document.getElementById('fPublic').checked = r ? !!r.isPublic : true;
+        document.getElementById('upInfo').textContent = r?.fileName || '';
+        document.getElementById('fFile').value = '';
+        document.getElementById('previewLink').href = r?.slug ? `/docs.html?a=${encodeURIComponent(r.slug)}` : '/docs.html';
+        this.onKindChange();
+        this.tab('editor', document.querySelector('.hc-tab[data-tab="editor"]'));
+      },
+
+      async upload() {
+        const f = document.getElementById('fFile').files[0];
+        if (!f) { AdminLayout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        const info = document.getElementById('upInfo');
+        info.textContent = 'กำลังอัปโหลด…';
+        try {
+          const fd = new FormData(); fd.append('file', f);
+          const res = await AdminAPI.upload('/api/help/upload', fd);
+          const d = res?.data || {};
+          document.getElementById('fStoragePath').value = d.storagePath || '';
+          info.textContent = `${d.fileName} (${Math.round((d.sizeBytes || 0) / 1048576)} MB)`;
+          AdminLayout.toast('อัปโหลดสำเร็จ');
+        } catch (e) { info.textContent = ''; AdminLayout.toast(e.message || 'อัปโหลดไม่สำเร็จ', 'error'); }
+      },
+
+      async save() {
+        const body = {
+          id: document.getElementById('fId').value || null,
+          title: document.getElementById('fTitle').value.trim(),
+          description: document.getElementById('fDesc').value.trim() || null,
+          category: document.getElementById('fCat').value,
+          moduleCode: document.getElementById('fModule').value.trim() || null,
+          kind: document.getElementById('fKind').value,
+          sourceUrl: document.getElementById('fUrl').value.trim() || null,
+          storagePath: document.getElementById('fStoragePath').value.trim() || null,
+          fileName: document.getElementById('upInfo').textContent || null,
+          durationSeconds: +document.getElementById('fDur').value || 0,
+          thumbnailUrl: null,
+          isPublished: document.getElementById('fPub').checked,
+          isPublic: document.getElementById('fPublic').checked,
+          sortOrder: +document.getElementById('fSort').value || 0,
+          body: document.getElementById('fBody').value.trim() || null,
+          slug: document.getElementById('fSlug').value.trim().toLowerCase() || null,
+        };
+        if (!body.title) { AdminLayout.toast('กรุณาระบุชื่อเรื่อง', 'error'); return; }
+        try {
+          const res = await AdminAPI.post('/api/help', body);
+          AdminLayout.toast(res?.message || 'บันทึกแล้ว');
+          await this.load();
+          this.tab('list', document.querySelector('.hc-tab[data-tab="list"]'));
+        } catch (e) { AdminLayout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
+      async remove(i) {
+        const r = this.rows[i];
+        if (!r || !confirm(`ลบ “${r.title}” ใช่ไหม?`)) return;
+        try {
+          await AdminAPI.del(`/api/help/${r.id}`);
+          AdminLayout.toast('ลบแล้ว');
+          await this.load();
+        } catch (e) { AdminLayout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+    };
+    Page.onKindChange();
+    Page.load();
+  </script>
+</body>
+</html>

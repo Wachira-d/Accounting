@@ -69,6 +69,7 @@ const AdminLayout = {
     { id: 'customers', label: 'ลูกค้า/บริษัท', icon: '🏢', href: '/admin/customers.html' },
     { id: 'chats', label: 'แชทลูกค้า', icon: '💬', href: '/admin/chats.html' },
     { id: 'chat-kb', label: 'คลังความรู้ Chatbot', icon: '📚', href: '/admin/chat-kb.html' },
+    { id: 'help-content', label: 'คู่มือ/วิดีโอสอนใช้งาน', icon: '🎓', href: '/admin/help-content.html' },
     { id: 'users', label: 'ผู้ใช้งาน', icon: '👥', href: '/admin/users.html' },
     { id: 'account-subs', label: '🎫 Account Plans (User License)', icon: '🎫', href: '/admin/account-subscriptions.html' },
     { section: 'แพ็กเกจ' },

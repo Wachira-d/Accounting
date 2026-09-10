@@ -298,6 +298,14 @@ public static class DatabaseMigrationHelper
 
             // ===== SSO / OAuth ตั้งจากหน้าแอดมินได้ (เดิมมีแต่ appsettings) =====
             """ALTER TABLE "HelpResources" ADD COLUMN IF NOT EXISTS "IsPublic" boolean NOT NULL DEFAULT false;""",
+            // ===== คู่มือสอนใช้งานเป็นสาธารณะ (เจ้าของระบบสั่ง 2026-09-08) =====
+            // เดิม default=false ⇒ เส้น /api/help/public ไม่เคยมีเนื้อหาเลยสักชิ้น
+            // แถวเก่าที่เผยแพร่แล้วต้องเปิดตามด้วย ไม่งั้นแก้โค้ดอย่างเดียวไม่พอ
+            """ALTER TABLE "HelpResources" ALTER COLUMN "IsPublic" SET DEFAULT true;""",
+            """UPDATE "HelpResources" SET "IsPublic" = true WHERE "IsDeleted" = false AND "IsPublished" = true AND "IsPublic" = false;""",
+            """ALTER TABLE "HelpResources" ADD COLUMN IF NOT EXISTS "Slug" varchar(120) NULL;""",
+            """ALTER TABLE "HelpResources" ADD COLUMN IF NOT EXISTS "Body" text NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_HelpResources_Slug" ON "HelpResources" ("Slug") WHERE "Slug" IS NOT NULL AND "IsDeleted" = false;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "ContactAddress" text NULL;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "BusinessHours" text NULL;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleLoginEnabled" boolean NOT NULL DEFAULT false;""",
