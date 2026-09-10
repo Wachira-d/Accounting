@@ -102,7 +102,7 @@
           <div class="admin-table-wrap">
           <table class="admin-table">
             <thead><tr>
-              <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ</th><th>ผู้ใช้</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
+              <th>บริษัท</th><th>เจ้าของ</th><th>แพ็กเกจ</th><th>สถานะ</th><th>ผู้ใช้</th><th>เอกสาร</th><th>ใช้งานล่าสุด</th><th>สมัครเมื่อ</th><th>หมดอายุ</th><th></th>
             </tr></thead>
             <tbody>
               ${d.items.map(c => `
@@ -115,6 +115,8 @@
                   <td>${c.subscription ? AdminLayout.planBadge(c.subscription.plan) + (c.subscription.viaLicense ? ` <span title="ผ่าน License ของ ${c.subscription.licenseOwnerEmail || '-'}" style="background:#ecfeff;color:#0c4a6e;border:1px solid #67e8f9;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🎫</span>` : '') : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${c.subscription ? AdminLayout.statusBadge(c.subscription.status) : '<span style="color:#94a3b8">ไม่มี</span>'}</td>
                   <td>${c.userCount}</td>
+                  <td>${c.documentCount != null ? c.documentCount.toLocaleString('th-TH') : '-'}</td>
+                  <td>${c.lastActivityAt ? AdminLayout.date(c.lastActivityAt) : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${AdminLayout.date(c.createdAt)}</td>
                   <td>${c.subscription ? (c.subscription.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : AdminLayout.date(c.subscription.endDate)) : '-'}</td>
                   <td>
@@ -210,8 +212,12 @@
                 <div class="info-item"><div class="label">สถานะบริษัท</div><div class="value">${AdminLayout.statusBadge(c.status)}</div></div>
                 <div class="info-item"><div class="label">สมัครเมื่อ</div><div class="value">${AdminLayout.datetime(c.createdAt)}</div></div>
                 <div class="info-item"><div class="label">ที่อยู่</div><div class="value">${AdminLayout.esc([c.address, c.province].filter(Boolean).join(', ') || '-')}</div></div>
-                <div class="info-item"><div class="label">จำนวนเอกสาร</div><div class="value">${d.usage.documents}</div></div>
-                <div class="info-item"><div class="label">สมุดรายวัน</div><div class="value">${d.usage.journalEntries}</div></div>
+                <div class="info-item"><div class="label">เอกสารที่ออกจริง</div><div class="value">${(d.usage.documentsIssued ?? d.usage.documents).toLocaleString('th-TH')}
+                  <span style="font-size:11px;color:#94a3b8">(ทุกสถานะรวมร่าง/ยกเลิก ${(d.usage.documents || 0).toLocaleString('th-TH')})</span></div></div>
+                <div class="info-item"><div class="label">สมุดรายวัน (ทั้งหมด)</div><div class="value">${(d.usage.journalEntries || 0).toLocaleString('th-TH')}</div></div>
+                <div class="info-item"><div class="label">ใช้งานล่าสุด</div><div class="value">${d.usage.lastActivityAt ? AdminLayout.datetime(d.usage.lastActivityAt) : '<span style="color:#94a3b8">ยังไม่มีกิจกรรม</span>'}</div></div>
+                <div class="info-item"><div class="label">ออกเอกสารล่าสุด</div><div class="value">${d.usage.lastDocumentAt ? AdminLayout.datetime(d.usage.lastDocumentAt) : '<span style="color:#94a3b8">ยังไม่มีเอกสาร</span>'}</div></div>
+                <div class="info-item"><div class="label">ล็อกอินล่าสุด (สมาชิก)</div><div class="value">${d.usage.lastLoginAt ? AdminLayout.datetime(d.usage.lastLoginAt) : '-'}</div></div>
               </div>
 
               ${c.status === 'Suspended' && c.suspendReason ? `
@@ -298,11 +304,13 @@
 
                 ${s.limits ? `
                 <div style="margin-top:16px">
-                  <h4 style="font-size:14px;margin-bottom:12px">Usage Limits</h4>
-                  ${renderLimitBar('ผู้ใช้', s.current?.documentsThisMonth || 0, s.limits.maxUsers, d.users.length)}
-                  ${renderLimitBar('เอกสาร/เดือน', s.current?.documentsThisMonth || 0, s.limits.maxDocumentsPerMonth)}
-                  ${renderLimitBar('สมุดรายวัน/เดือน', s.current?.journalEntriesThisMonth || 0, s.limits.maxJournalEntriesPerMonth)}
-                  ${renderLimitBar('พื้นที่จัดเก็บ', s.current?.storageUsed || 0, s.limits.maxStorageBytes, null, true)}
+                  <h4 style="font-size:14px;margin-bottom:4px">Usage Limits
+                    ${s.limits.fromAccountPlan ? '<span style="font-size:11px;color:#0c4a6e;background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:1px 6px;margin-left:6px">เพดานจาก Account Plan · ตัวเลขใช้จริงรวมทุกบริษัทใต้ License</span>' : ''}</h4>
+                  <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">เอกสาร = ใบที่นับโควตา (ใบกำกับ/ใบแจ้งหนี้/ใบเสร็จ/ใบเสนอราคา/PO/PR) เดือนนี้ · สมุดรายวัน = JE ที่โพสต์เดือนนี้ · พื้นที่ = ไฟล์แนบ + สื่อเว็บไซต์</div>
+                  ${renderLimitBar('ผู้ใช้', d.users.length, s.limits.maxUsers)}
+                  ${renderLimitBar('เอกสาร/เดือน', s.current?.documentsThisMonth, s.limits.maxDocumentsPerMonth)}
+                  ${renderLimitBar('สมุดรายวัน/เดือน', s.current?.journalEntriesThisMonth, s.limits.maxJournalEntriesPerMonth)}
+                  ${renderLimitBar('พื้นที่จัดเก็บ', s.current?.storageUsed, s.limits.maxStorageBytes, true)}
                 </div>
                 ` : ''}
 
@@ -435,13 +443,22 @@
       if (!ap) loadAttachLicenseOptions();
     }
 
-    function renderLimitBar(label, current, max, actualCount, isBytes) {
-      const used = actualCount != null ? actualCount : current;
+    // current = undefined/null แปลว่าเซิร์ฟเวอร์ยังไม่ส่งค่า → ต้องบอกว่า “ไม่มีข้อมูล”
+    // ไม่ใช่วาดเป็น 0 (เดิมทุกแถบเป็น 0/50 ตลอดกาลเพราะ endpoint ไม่เคยส่ง current)
+    function renderLimitBar(label, current, max, isBytes) {
+      if (current == null) {
+        return `<div class="limit-bar">
+          <span class="limit-label">${AdminLayout.esc(label)}</span>
+          <div class="bar"><div class="fill" style="width:0%"></div></div>
+          <span class="limit-value" style="color:#94a3b8">ไม่มีข้อมูล</span>
+        </div>`;
+      }
+      const used = current;
       const pct = max > 0 ? Math.min((used / max) * 100, 100) : 0;
       const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
       const fmtVal = isBytes
         ? `${(used/1048576).toFixed(1)}/${(max/1048576).toFixed(0)} MB`
-        : `${used}/${max >= 99999 ? '∞' : max}`;
+        : `${used.toLocaleString('th-TH')}/${max >= 99999 ? '∞' : max.toLocaleString('th-TH')}`;
       return `<div class="limit-bar">
         <span class="limit-label">${AdminLayout.esc(label)}</span>
         <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div>

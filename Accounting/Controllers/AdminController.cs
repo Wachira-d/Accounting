@@ -383,6 +383,10 @@ public class AdminController : ControllerBase
                     .Select(cu => new { cu.User.Email, cu.User.FullName })
                     .FirstOrDefault(),
                 userCount = c.CompanyUsers.Count,
+                // ใช้งานล่าสุด = audit ล่าสุดของบริษัท (subquery ต่อแถว บน index CompanyId+Timestamp)
+                lastActivityAt = _db.AuditLogs.Where(a => a.CompanyId == c.Id).Max(a => (DateTime?)a.Timestamp),
+                documentCount = c.Documents.Count(d => d.Status != DocumentStatus.Draft
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected),
                 subscription = c.Subscription == null ? null : new
                 {
                     // Effective plan + status + end-date come from the License
@@ -449,6 +453,30 @@ public class AdminController : ControllerBase
 
         var docCount = await _db.Documents.CountAsync(d => d.CompanyId == companyId);
         var journalCount = await _db.JournalEntries.CountAsync(j => j.CompanyId == companyId);
+        // เอกสาร “จริง” = ตัดร่าง/ยกเลิก/ปฏิเสธออก — ตัวเลขทั้งหมดกับตัวเลขนี้ต่างกันได้มาก
+        // ในบริษัทที่ทดลองสร้างร่างเยอะ ให้แอดมินเห็นทั้งสองค่าแทนเดาว่านับอะไร
+        var docCountIssued = await _db.Documents.CountAsync(d => d.CompanyId == companyId
+            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+            && d.Status != DocumentStatus.Rejected);
+        var lastDocumentAt = await _db.Documents.Where(d => d.CompanyId == companyId)
+            .MaxAsync(d => (DateTime?)d.CreatedAt);
+        // “ใช้งานล่าสุด” = กิจกรรมใน audit log ล่าสุดของบริษัท (index CompanyId+Timestamp มีอยู่แล้ว)
+        // สำรองด้วยล็อกอินล่าสุดของสมาชิก — บริษัทที่เปิดดูอย่างเดียวไม่มี audit row
+        var lastActivityAt = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId)
+            .MaxAsync(a => (DateTime?)a.Timestamp);
+        var lastLoginAt = company.CompanyUsers
+            .Select(cu => cu.User.LastLoginAt).Where(t => t != null).Max();
+
+        // limits + current ต้องมาจาก resolver ตัวเดียวกับหน้าลูกค้า (overlay Account Plan
+        // + ตัวเลขใช้จริง) — เดิมประกอบ limits เองจากคอลัมน์ต่อบริษัท และ**ไม่ส่ง current เลย**
+        // ⇒ แถบ Usage Limits ของแอดมินเป็น 0 ทุกบริษัทตลอดกาล (JS อ่าน s.current ที่ไม่มี)
+        Models.DTOs.Subscription.SubscriptionResponse? effective = null;
+        if (company.Subscription != null)
+        {
+            try { effective = await _subscriptionService.GetSubscriptionAsync(companyId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "resolve subscription ของบริษัท {CompanyId} ไม่สำเร็จ — โชว์ค่าต่อบริษัทแทน", companyId); }
+        }
 
         // WP-E1: integrations + recent activity + limits ให้หน้า detail ครบ 360°
         var integrations = await _db.ExternalIntegrations.AsNoTracking()
@@ -513,10 +541,19 @@ public class AdminController : ControllerBase
                 company.Subscription.RenewalInvoiceNumber,
                 limits = new
                 {
-                    maxDocumentsPerMonth = company.Subscription.MaxDocumentsPerMonth,
-                    maxJournalEntriesPerMonth = company.Subscription.MaxJournalEntriesPerMonth,
-                    maxStorageBytes = company.Subscription.MaxStorageBytes,
-                    maxUsers = company.Subscription.MaxUsers,
+                    maxDocumentsPerMonth = effective?.Limits.MaxDocumentsPerMonth ?? company.Subscription.MaxDocumentsPerMonth,
+                    maxJournalEntriesPerMonth = effective?.Limits.MaxJournalEntriesPerMonth ?? company.Subscription.MaxJournalEntriesPerMonth,
+                    maxStorageBytes = effective?.Limits.MaxStorageBytes ?? company.Subscription.MaxStorageBytes,
+                    maxUsers = effective?.Limits.MaxUsers ?? company.Subscription.MaxUsers,
+                    // true = เพดานมาจาก Account Plan (รวมทุกบริษัทใต้ License เดียวกัน) ให้ UI ติดป้าย
+                    fromAccountPlan = company.Subscription.AccountSubscriptionId != null,
+                },
+                // null = resolve ไม่ได้ (UI ต้องวาด “ไม่มีข้อมูล” ไม่ใช่ 0)
+                current = effective == null ? null : new
+                {
+                    documentsThisMonth = effective.Current.DocumentsThisMonth,
+                    journalEntriesThisMonth = effective.Current.JournalEntriesThisMonth,
+                    storageUsed = effective.Current.StorageUsed,
                 },
             },
             integrations,
@@ -534,7 +571,15 @@ public class AdminController : ControllerBase
                 trial.TrialStartDate, trial.TrialEndDate, trial.ExtensionsUsed,
                 trial.MaxExtensions, trial.IsTrialExpired, trial.GracePeriodEndDate
             },
-            usage = new { documents = docCount, journalEntries = journalCount },
+            usage = new
+            {
+                documents = docCount,               // ทุกสถานะ (รวมร่าง/ยกเลิก)
+                documentsIssued = docCountIssued,   // ออกจริง (ไม่รวมร่าง/ยกเลิก/ปฏิเสธ)
+                journalEntries = journalCount,
+                lastDocumentAt,
+                lastActivityAt = lastActivityAt ?? lastLoginAt ?? lastDocumentAt,
+                lastLoginAt,
+            },
             recentPayments = payments.Select(p => new
             {
                 p.Id, p.PaymentNumber, p.Amount, p.PaymentMethod,

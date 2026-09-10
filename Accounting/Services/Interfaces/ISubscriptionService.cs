@@ -23,6 +23,10 @@ public interface ISubscriptionService
     Task<Accounting.Services.Implementations.SubscriptionService.AggregateUsage?> GetAggregateUsageAsync(Guid accountSubscriptionId);
     Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType);
     Task IncrementUsageAsync(Guid companyId, string usageType);
+    /// <summary>ตัวเลข “ใช้ไปเท่าไร” ตัวเดียวของทั้งระบบ (เอกสาร/สมุดรายวัน/พื้นที่) —
+    /// หน้าลูกค้า · แดชบอร์ด · พอร์ทัลแอดมิน ต้องเรียกตัวนี้ ห้ามอ่าน counter บน
+    /// Subscription ตรง ๆ (สองตัวในนั้นไม่มีใครเขียน)</summary>
+    Task<UsageCurrent> GetUsageCurrentAsync(Guid companyId);
 
     /// <summary>Check whether <paramref name="additionalBytes"/> of new storage
     /// would fit in the License-overlaid quota for this company. Aggregates
