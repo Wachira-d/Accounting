@@ -76,6 +76,28 @@ public class FixedAssetController : ControllerBase
         => Ok(new ApiResponse<List<FixedAssetResponse>>(true,
             await _assetService.GetByDocumentAsync(companyId, documentId)));
 
+    /// <summary>บรรทัดของเอกสารเทียบกับทะเบียนสินทรัพย์ (อ่านอย่างเดียว) — แผงสินทรัพย์บนหน้า
+    /// เอกสารใช้วาด “บรรทัดไหนยังไม่ขึ้นทะเบียน” โดยไม่เดา prefix ผังเอง</summary>
+    [HttpGet("document-lines/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<DocumentAssetLinesResponse>>> GetDocumentLines(Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<DocumentAssetLinesResponse>(true,
+            await _assetService.GetDocumentAssetLinesAsync(companyId, documentId)));
+
+    /// <summary>ขึ้นทะเบียนสินทรัพย์จากเอกสารที่โพสต์แล้ว — ทั้งใบ หรือเฉพาะ <c>lineId</c>
+    /// (ซ่อมเคสที่ auto-register ตอนอนุมัติล้ม/ถูกข้าม) · ตรรกะเดียวกับตอนอนุมัติ</summary>
+    [HttpPost("from-document/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<RegisterFromDocumentResult>>> RegisterFromDocument(
+        Guid companyId, Guid documentId, [FromQuery] Guid? lineId = null)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ขึ้นทะเบียนสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.RegisterFromDocumentAsync(companyId, documentId, lineId, userId);
+        var msg = result.Created > 0
+            ? $"ขึ้นทะเบียนสินทรัพย์ {result.Created} รายการ (รอตรวจสอบและยืนยัน)"
+            : "ไม่มีรายการใหม่ที่ขึ้นทะเบียน — " + string.Join(" · ", result.Notes);
+        return Ok(new ApiResponse<RegisterFromDocumentResult>(true, result, msg));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)

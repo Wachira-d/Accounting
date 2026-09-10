@@ -81,7 +81,9 @@ public record FixedAssetResponse(
     /// <summary>เลขเอกสารที่สร้างสินทรัพย์ตัวนี้ — UI ต้องแสดงคู่กับรายการเสมอ
     /// เพราะเมื่อพบสินทรัพย์ซ้ำ ทางแก้อยู่ที่**เอกสาร** ไม่ใช่ที่ทะเบียน
     /// (ลบสินทรัพย์ทิ้งขณะใบต้นทางยังลง Dr 12210 = งบดุลกับทะเบียนไม่ตรงถาวร)</summary>
-    string? SourceDocumentNumber = null);
+    string? SourceDocumentNumber = null,
+    /// <summary>บรรทัดต้นทาง — แผงสินทรัพย์บนหน้าเอกสารใช้จับคู่ “บรรทัดไหนมีทะเบียนแล้ว”</summary>
+    Guid? SourceDocumentLineId = null);
 
 public record DepreciationResponse(
     Guid Id,
@@ -193,3 +195,17 @@ public record ImportFixedAssetsResult(
     int SuccessCount,
     int ErrorCount,
     List<string> Errors);
+
+/// <summary>สถานะรายบรรทัดของเอกสารเทียบกับทะเบียนสินทรัพย์ — เซิร์ฟเวอร์ตัดสินว่าบรรทัดไหน
+/// “เข้าข่ายสินทรัพย์” (ตัวจำแนกเดียวกับที่ใช้ตอนอนุมัติ) และมีทะเบียนแล้วหรือยัง ·
+/// หน้าเอกสารแสดงอย่างเดียว ห้ามเดาจาก prefix 12 เอง</summary>
+public record DocumentAssetLineStatus(
+    Guid LineId, int LineOrder, string Description, decimal Amount, string? AccountCode,
+    bool IsAssetAccount, Guid? AssetId, string? AssetCode, bool? AssetNeedsReview,
+    bool IsAuxiliary = false);
+
+public record DocumentAssetLinesResponse(
+    Guid DocumentId, string DocumentNumber, string Status, bool IsIssued, bool TypeSupportsAutoRegister,
+    List<DocumentAssetLineStatus> Lines, List<FixedAssetResponse> Assets);
+
+public record RegisterFromDocumentResult(int Created, int Skipped, List<FixedAssetResponse> Assets, List<string> Notes);

@@ -609,6 +609,10 @@ const API = {
       // (NeedsReview=true) — UI ใช้เป็น badge เตือนผู้ใช้
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),
       getAssetsByDocument: (docId) => API.get(`${base}/fixedasset/by-document/${docId}`),
+      // บรรทัดของเอกสาร vs ทะเบียน (เซิร์ฟเวอร์ตัดสินว่าบรรทัดไหนเข้าข่าย/มีทะเบียนแล้ว)
+      getDocumentAssetLines: (docId) => API.get(`${base}/fixedasset/document-lines/${docId}`),
+      // ขึ้นทะเบียนจากเอกสารที่โพสต์แล้ว — ทั้งใบ หรือเฉพาะบรรทัด
+      registerAssetsFromDocument: (docId, lineId) => API.post(`${base}/fixedasset/from-document/${docId}${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ''}`, {}),
       createAsset: (d) => API.post(`${base}/fixedasset`, d),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),

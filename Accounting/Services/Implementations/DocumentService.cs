@@ -457,6 +457,25 @@ public partial class DocumentService : IDocumentService
                 .ToListAsync())
                 .ToHashSet();
 
+        // รหัสผัง (AccountCode) ที่ resolve ไม่ได้ต้อง**ล้มดัง** — เดิม resolver คืน null เงียบ ⇒
+        // AccountId=null ⇒ JE ตกไปใช้ผัง default/หมวดหัวเอกสารเดิม ⇒ ผู้ใช้เห็นว่า “แก้ผังแล้ว
+        // กดบันทึกอนุมัติ ระบบไม่เปลี่ยน” โดยไม่มี error (ผลตรวจ 2026-09-10)
+        var codesToCheck = lines
+            .Where(l => !l.AccountId.HasValue && !string.IsNullOrWhiteSpace(l.AccountCode))
+            .Select(l => l.AccountCode!.Trim()).Distinct().ToList();
+        if (codesToCheck.Count > 0)
+        {
+            var known = (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.IsActive && codesToCheck.Contains(a.AccountCode))
+                .Select(a => a.AccountCode).ToListAsync()).ToHashSet();
+            var bad = lines.FirstOrDefault(l => !l.AccountId.HasValue
+                && !string.IsNullOrWhiteSpace(l.AccountCode) && !known.Contains(l.AccountCode!.Trim()));
+            if (bad != null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"รหัสบัญชี “{bad.AccountCode}” ในรายการ “{bad.Description}” ไม่พบในผังบัญชีของบริษัท หรือถูกปิดใช้งาน "
+                    + "— เลือกรหัสจากรายการ (พิมพ์รหัสหรือชื่อบัญชี) แล้วบันทึกใหม่");
+        }
+
         foreach (var line in lines)
         {
             if (line.Quantity <= 0)
@@ -12065,148 +12084,20 @@ public partial class DocumentService : IDocumentService
     private async Task AutoRegisterFixedAssetsAsync(Guid companyId, Document doc, string actor)
     {
         if (_fixedAssets == null) return;   // service ไม่ inject (เช่น test) → ข้าม
-        if (doc.DocumentType is not (DocumentType.Expense or DocumentType.PurchaseInvoice
-            or DocumentType.PaymentVoucher)) return;
-        if (doc.Lines == null || doc.Lines.Count == 0) return;
-
-        // ⚠️ เอกสารที่สร้างจากสแกนที่ "ลงทะเบียนสินทรัพย์ไปแล้ว" ต้องไม่สร้างซ้ำ
-        // เดิม dedup ใช้ `SourceDocumentLineId` ซึ่งสาย scan ไม่เคยเซ็ต (ตอนนั้น
-        // ยังไม่มีเอกสาร) ⇒ key ไม่มีวันชน ⇒ ของชิ้นเดียวได้ 2 แถวในทะเบียน
-        // + PPE เดบิตสองเท่า + ค่าเสื่อมถูกตัดทั้งสองแถวทุกเดือน
-        var scanIds = await _db.Set<OcrScanResult>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id && !r.IsDeleted)
-            .Select(r => r.Id)
-            .ToListAsync();
-        if (scanIds.Count > 0)
+        // ตรรกะรายบรรทัด (planner · ผังค่าเสื่อม · dedupe) อยู่ที่ FixedAssetService
+        // ตัวเดียว — ปุ่ม “ขึ้นทะเบียนจากบรรทัดนี้” บนหน้าเอกสารเรียกตัวเดียวกัน
+        // (เดิมอยู่ที่นี่เป็น private ⇒ on-demand ต้องเขียนสำเนาที่สอง)
+        try
         {
-            var alreadyFromScan = await _db.Set<FixedAsset>().AsNoTracking()
-                .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted
-                               && a.SourceScanResultId != null
-                               && scanIds.Contains(a.SourceScanResultId.Value));
-            if (alreadyFromScan)
-            {
-                _logger.LogInformation(
-                    "ข้าม auto-register สินทรัพย์ของ {Doc} — สแกนต้นทางลงทะเบียนไปแล้ว", doc.Id);
-                return;
-            }
+            await _fixedAssets.RegisterFromDocumentAsync(companyId, doc, onlyLineId: null, actor,
+                skipIfScanRegistered: true);
         }
-
-        // ผังที่แต่ละบรรทัดลง → code
-        var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
-        if (accIds.Count == 0) return;
-        var accMap = (await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => accIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.AccountCode }).ToListAsync())
-            .ToDictionary(a => a.Id, a => a.AccountCode);
-
-        // PPE accounts ทั้งบริษัท (code → Id) สำหรับ resolve accum/dep accounts
-        var allPpe = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId
-                && (a.AccountCode.StartsWith("18") || a.AccountCode.StartsWith("56")))
-            .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
-        Guid? CodeToId(string? code) => code == null ? null
-            : allPpe.FirstOrDefault(a => a.AccountCode == code)?.Id;
-
-        // TFRS for NPAEs บทที่ 10 — ต้นทุนสินทรัพย์ = ราคาซื้อ + ค่าใช้จ่ายที่
-        // ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม)
-        //
-        // ⚠️ **หนึ่งใบ = หลายสินทรัพย์ได้** — เดิมโค้ดนี้จัดกลุ่มด้วย AccountId แล้ว
-        // สร้าง asset **ตัวเดียวต่อผัง** ⇒ ใบที่ซื้อแอร์ 3 เครื่องบน 12210 ได้
-        // ทะเบียน 1 แถวราคารวม (จำหน่ายทีละเครื่องไม่ได้ · นับจำนวนผิด).
-        // ตอนนี้แผนมาจาก `Helpers/AssetRegistrationPlanner` ตัวเดียว: บรรทัดจริง
-        // = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบเฉลี่ยตามสัดส่วนเข้าทุกตัว
-
-        // group บรรทัดที่เป็น PPE ตามผัง (AccountId) — บรรทัดที่ผังไม่ใช่ PPE ข้าม
-        var ppeLines = doc.Lines.Where(l =>
-            l.AccountId.HasValue
-            && accMap.TryGetValue(l.AccountId.Value, out var c)
-            && Tax.FixedAssetAccountClassifier.Resolve(c) != null
-            && l.Amount > 0).ToList();
-        if (ppeLines.Count == 0) return;
-
-        var groups = ppeLines.GroupBy(l => l.AccountId!.Value);
-        foreach (var grp in groups)
+        catch (Exception ex)
         {
-            var code = accMap[grp.Key];
-            var cls = Tax.FixedAssetAccountClassifier.Resolve(code)!;
-            // แผนของกลุ่มนี้: บรรทัดจริง = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบ
-            // เฉลี่ยตามสัดส่วนราคาเข้าทุกตัว (ทุกบรรทัดเป็น auxiliary = ใบค่าติดตั้ง
-            // เดี่ยว ๆ ที่ผังลง PPE → ยังขึ้นทะเบียน 1 ตัว ไม่ปล่อยให้ Dr 12xxx
-            // ลอยโดยไม่มีคู่ในทะเบียน)
-            var planned = Accounting.Helpers.AssetRegistrationPlanner.Plan(
-                grp.Select(l => new Accounting.Helpers.AssetRegistrationPlanner.Line(
-                    l.Id, l.Description, l.Amount)).ToList());
-            var auxDescs = grp
-                .Where(l => Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description))
-                .Select(l => $"{l.Description?.Trim()} {l.Amount:N2}").ToList();
-
-            foreach (var plan in planned)
-            {
-            var mainLine = grp.First(l => l.Id == plan.SourceLineId);
-            var totalCost = plan.Cost;
-
-            // dedupe — เคยลง asset จากบรรทัดนี้แล้ว (re-approve) ข้าม
-            var dup = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId
-                && a.SourceDocumentLineId == mainLine.Id);
-            if (dup) continue;
-
-            // ใส่ aux description ลง Description ของ asset เพื่อ audit trail
-            // (เห็นว่าต้นทุนรวมค่าขนส่ง/ติดตั้งแล้ว — และเฉลี่ยมาเท่าไร)
-            var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
-                + (auxDescs.Count > 0
-                    ? $" (รวม: {string.Join(", ", auxDescs)}"
-                      + (plan.AllocatedAuxiliary > 0m && planned.Count > 1
-                          ? $" — เฉลี่ยเข้ารายการนี้ {plan.AllocatedAuxiliary:N2}" : "")
-                      + ")"
-                    : "");
-
-            // ยังไม่ออกเลขจริงตอน NeedsReview — ใส่ placeholder "DRAFT-{guid}"
-            // เพื่อไม่ให้กิน counter (gap-free). เลขจริง FA-yyyyMM-#### จะออก
-            // ตอน user กดบันทึกในหน้า edit (FixedAssetService.UpdateAsync ตอน
-            // NeedsReview=true → false). ถ้า user ลบ asset ที่ยังเป็น DRAFT
-            // ก่อนยืนยัน จะไม่กระทบลำดับเลขของ asset อื่น
-            var assetCode = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
-            try
-            {
-                await _fixedAssets.CreateAsync(companyId, new Models.DTOs.FixedAsset.CreateFixedAssetRequest(
-                    AssetCode: assetCode,
-                    Name: string.IsNullOrWhiteSpace(mainLine.Description) ? cls.Category : mainLine.Description,
-                    Description: assetDesc,
-                    Category: cls.Category,
-                    Location: null, SerialNumber: null,
-                    PurchaseDate: doc.DocumentDate,
-                    PurchaseCost: totalCost,
-                    SalvageValue: 0m,
-                    UsefulLifeMonths: cls.DefaultUsefulLifeMonths,
-                    DepreciationMethod: cls.Depreciable
-                        ? Models.Enums.DepreciationMethod.StraightLine
-                        : Models.Enums.DepreciationMethod.None,
-                    AssetAccountId: mainLine.AccountId,
-                    DepreciationExpenseAccountId: CodeToId(cls.DepExpenseAccountCode),
-                    AccumulatedDepreciationAccountId: CodeToId(cls.AccumDepAccountCode),
-                    PostAcquisitionJournalEntry: false,   // เอกสารลง Dr asset แล้ว
-                    CreditAccountId: null,
-                    ProjectId: mainLine.ProjectId ?? doc.ProjectId,
-                    SourceDocumentId: doc.Id,
-                    SourceDocumentLineId: mainLine.Id,
-                    NeedsReview: true), actor);
-            }
-            catch (Exception ex)
-            {
-                // ไม่ให้ asset registration ล้ม ทำ approve พัง — log ไว้
-                _logger.LogWarning(ex, "Auto-register fixed asset failed (doc {Doc} line {Line})",
-                    doc.DocumentNumber, mainLine.Id);
-            }
-            }
+            // ไม่ให้ asset registration ล้มทำ approve พัง — log ไว้ (หน้าเอกสารมีปุ่มขึ้นทะเบียนซ่อมทีหลัง)
+            _logger.LogWarning(ex, "Auto-register fixed assets failed (doc {Doc})", doc.DocumentNumber);
         }
     }
-
-    /// <summary>รหัสสินทรัพย์ <c>FA-yyyyMM-####</c> — เดินผ่านตัวออกรหัสตัวเดียว
-    /// ของระบบ (เดิมไฟล์นี้กับ <c>FixedAssetService</c> มีสำเนาเหมือนกันคำต่อคำ
-    /// ที่ไม่มีล็อกทั้งคู่ ⇒ ขึ้นทะเบียนจากใบซื้อชนกับที่ผู้ใช้กดสร้างเอง —
-    /// ผลตรวจ F-08)</summary>
-    private Task<string> GenerateAssetCodeAsync(Guid companyId)
-        => Accounting.Helpers.AssetCodeGenerator.NextAsync(_db, companyId);
 
     /// <summary>หา FiscalPeriod ของวันที่นี้ — <b>ไม่ดูสถานะ</b> (ใช้กับงานอ่านอย่างเดียว)</summary>
     private async Task<FiscalPeriod?> ResolveFiscalPeriodAsync(Guid companyId, DateTime date)

@@ -5,16 +5,19 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
 public class FixedAssetService : IFixedAssetService
 {
     private readonly AccountingDbContext _db;
+    private readonly ILogger<FixedAssetService>? _logger;
 
-    public FixedAssetService(AccountingDbContext db)
+    public FixedAssetService(AccountingDbContext db, ILogger<FixedAssetService>? logger = null)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task<FixedAssetResponse> CreateAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy)
@@ -1295,6 +1298,217 @@ public class FixedAssetService : IFixedAssetService
                 ? n : null)).ToList();
     }
 
+
+    // ═══════════════ ลงทะเบียนจากเอกสาร (ตัวเดียวของทั้ง approve และปุ่มบนหน้าเอกสาร) ═══════════════
+
+    /// <summary>ชนิดเอกสารฝั่งซื้อที่การลงผัง PPE = “ได้มาสินทรัพย์” — ตัวเดียวกับที่หน้าเอกสาร
+    /// ใช้ตัดสินว่าจะโชว์แผงสินทรัพย์ไหม (เดิม UI ถือลิสต์เองและนับใบรับสินค้าด้วย ⇒ บอกว่า
+    /// “ระบบจะสร้างให้ตอนอนุมัติ” แล้วไม่สร้าง)</summary>
+    public static bool SupportsAutoRegister(DocumentType type)
+        => type is DocumentType.Expense or DocumentType.PurchaseInvoice or DocumentType.PaymentVoucher;
+
+    public async Task<DocumentAssetLinesResponse> GetDocumentAssetLinesAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines).ThenInclude(l => l.Account)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var assets = await GetByDocumentAsync(companyId, documentId);
+        var byLine = assets.Where(a => a.SourceDocumentLineId.HasValue)
+            .GroupBy(a => a.SourceDocumentLineId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var lines = doc.Lines.OrderBy(l => l.LineOrder).Select(l =>
+        {
+            var code = l.Account?.AccountCode;
+            var isAsset = Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(code) != null && l.Amount > 0;
+            byLine.TryGetValue(l.Id, out var asset);
+            return new DocumentAssetLineStatus(
+                l.Id, l.LineOrder, l.Description, l.Amount, code, isAsset,
+                asset?.Id, asset?.AssetCode, asset?.NeedsReview,
+                IsAuxiliary: isAsset && Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description));
+        }).ToList();
+
+        return new DocumentAssetLinesResponse(
+            doc.Id, doc.DocumentNumber, doc.Status.ToString(),
+            IsIssued: Accounting.Helpers.DocumentStatusRules.IsEffective(doc.Status),
+            TypeSupportsAutoRegister: SupportsAutoRegister(doc.DocumentType),
+            lines, assets);
+    }
+
+    public async Task<RegisterFromDocumentResult> RegisterFromDocumentAsync(
+        Guid companyId, Guid documentId, Guid? onlyLineId, string actor)
+    {
+        var doc = await _db.Documents
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ต้นทุนสินทรัพย์มาจาก JE ของเอกสาร — ใบที่ยังไม่โพสต์/ถูกยกเลิก ไม่มี Dr 12xxx ให้คู่
+        if (!Accounting.Helpers.DocumentStatusRules.IsEffective(doc.Status))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber} สถานะ {doc.Status} ยังไม่มีรายการบัญชี — อนุมัติก่อนแล้วระบบจะขึ้นทะเบียนให้อัตโนมัติ");
+        if (onlyLineId.HasValue && doc.Lines.All(l => l.Id != onlyLineId.Value))
+            throw new KeyNotFoundException("ไม่พบบรรทัดนี้ในเอกสาร");
+        // ปุ่มกดเอง = ผู้ใช้ตัดสินแล้วว่าต้องการ — ไม่ข้ามด้วยเหตุ “สแกนต้นทางลงไปแล้ว”
+        return await RegisterFromDocumentAsync(companyId, doc, onlyLineId, actor, skipIfScanRegistered: false);
+    }
+
+    /// <summary>ตรรกะรายบรรทัดตัวเดียว: แผนจาก <c>AssetRegistrationPlanner</c> (บรรทัดจริง = 1 สินทรัพย์
+    /// · ค่าประกอบเฉลี่ย) · ผังค่าเสื่อมจาก <c>FixedAssetAccountClassifier</c> · dedupe ด้วย
+    /// <c>SourceDocumentLineId</c> · NeedsReview=true · ไม่โพสต์ JE ซื้อ (เอกสารลง Dr แล้ว)</summary>
+    public async Task<RegisterFromDocumentResult> RegisterFromDocumentAsync(
+        Guid companyId, Document doc, Guid? onlyLineId, string actor, bool skipIfScanRegistered)
+    {
+        var createdList = new List<FixedAssetResponse>();
+        var notes = new List<string>();
+        var skipped = 0;
+        RegisterFromDocumentResult Done() => new(createdList.Count, skipped, createdList, notes);
+
+        if (!SupportsAutoRegister(doc.DocumentType))
+        {
+            notes.Add($"เอกสารชนิด {doc.DocumentType} ไม่ใช่ใบได้มาสินทรัพย์ (รองรับ ใบซื้อ/ใบสำคัญจ่าย/บันทึกค่าใช้จ่าย)");
+            return Done();
+        }
+        if (doc.Lines == null || doc.Lines.Count == 0) { notes.Add("เอกสารไม่มีรายการ"); return Done(); }
+
+        // ⚠️ เอกสารที่สร้างจากสแกนที่ "ลงทะเบียนสินทรัพย์ไปแล้ว" ต้องไม่สร้างซ้ำ
+        // เดิม dedup ใช้ `SourceDocumentLineId` ซึ่งสาย scan ไม่เคยเซ็ต (ตอนนั้น
+        // ยังไม่มีเอกสาร) ⇒ key ไม่มีวันชน ⇒ ของชิ้นเดียวได้ 2 แถวในทะเบียน
+        // + PPE เดบิตสองเท่า + ค่าเสื่อมถูกตัดทั้งสองแถวทุกเดือน
+        var scanIds = !skipIfScanRegistered ? new List<Guid>() : await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id && !r.IsDeleted)
+            .Select(r => r.Id)
+            .ToListAsync();
+        if (scanIds.Count > 0)
+        {
+            var alreadyFromScan = await _db.Set<FixedAsset>().AsNoTracking()
+                .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted
+                               && a.SourceScanResultId != null
+                               && scanIds.Contains(a.SourceScanResultId.Value));
+            if (alreadyFromScan)
+            {
+                notes.Add("สแกนต้นทางของใบนี้ลงทะเบียนสินทรัพย์ไปแล้ว — ไม่สร้างซ้ำ");
+                return Done();
+            }
+        }
+
+        // ผังที่แต่ละบรรทัดลง → code
+        var accIds = doc.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+        if (accIds.Count == 0) { notes.Add("ไม่มีบรรทัดที่ระบุผังบัญชี"); return Done(); }
+        var accMap = (await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => accIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync())
+            .ToDictionary(a => a.Id, a => a.AccountCode);
+
+        // PPE accounts ทั้งบริษัท (code → Id) สำหรับ resolve accum/dep accounts
+        var allPpe = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && (a.AccountCode.StartsWith("18") || a.AccountCode.StartsWith("56")))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+        Guid? CodeToId(string? code) => code == null ? null
+            : allPpe.FirstOrDefault(a => a.AccountCode == code)?.Id;
+
+        // TFRS for NPAEs บทที่ 10 — ต้นทุนสินทรัพย์ = ราคาซื้อ + ค่าใช้จ่ายที่
+        // ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/ฝึกอบรม/ค่าธรรมเนียม)
+        //
+        // ⚠️ **หนึ่งใบ = หลายสินทรัพย์ได้** — เดิมโค้ดนี้จัดกลุ่มด้วย AccountId แล้ว
+        // สร้าง asset **ตัวเดียวต่อผัง** ⇒ ใบที่ซื้อแอร์ 3 เครื่องบน 12210 ได้
+        // ทะเบียน 1 แถวราคารวม (จำหน่ายทีละเครื่องไม่ได้ · นับจำนวนผิด).
+        // ตอนนี้แผนมาจาก `Helpers/AssetRegistrationPlanner` ตัวเดียว: บรรทัดจริง
+        // = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบเฉลี่ยตามสัดส่วนเข้าทุกตัว
+
+        // group บรรทัดที่เป็น PPE ตามผัง (AccountId) — บรรทัดที่ผังไม่ใช่ PPE ข้าม
+        var ppeLines = doc.Lines.Where(l =>
+            l.AccountId.HasValue
+            && accMap.TryGetValue(l.AccountId.Value, out var c)
+            && Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(c) != null
+            && l.Amount > 0).ToList();
+        if (ppeLines.Count == 0) { notes.Add("ไม่มีบรรทัดที่ลงผังสินทรัพย์ถาวร (PPE)"); return Done(); }
+
+        var groups = ppeLines.GroupBy(l => l.AccountId!.Value);
+        foreach (var grp in groups)
+        {
+            var code = accMap[grp.Key];
+            var cls = Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(code)!;
+            // แผนของกลุ่มนี้: บรรทัดจริง = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบ
+            // เฉลี่ยตามสัดส่วนราคาเข้าทุกตัว (ทุกบรรทัดเป็น auxiliary = ใบค่าติดตั้ง
+            // เดี่ยว ๆ ที่ผังลง PPE → ยังขึ้นทะเบียน 1 ตัว ไม่ปล่อยให้ Dr 12xxx
+            // ลอยโดยไม่มีคู่ในทะเบียน)
+            var planned = Accounting.Helpers.AssetRegistrationPlanner.Plan(
+                grp.Select(l => new Accounting.Helpers.AssetRegistrationPlanner.Line(
+                    l.Id, l.Description, l.Amount)).ToList());
+            var auxDescs = grp
+                .Where(l => Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description))
+                .Select(l => $"{l.Description?.Trim()} {l.Amount:N2}").ToList();
+
+            foreach (var plan in planned)
+            {
+            // ขึ้นทะเบียนเฉพาะบรรทัดที่ขอ (ปุ่มบนหน้าเอกสาร) — ค่าประกอบยังเฉลี่ยจากทั้งกลุ่ม
+            if (onlyLineId.HasValue && plan.SourceLineId != onlyLineId.Value) continue;
+            var mainLine = grp.First(l => l.Id == plan.SourceLineId);
+            var totalCost = plan.Cost;
+
+            // dedupe — เคยลง asset จากบรรทัดนี้แล้ว (re-approve) ข้าม
+            var dup = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId
+                && a.SourceDocumentLineId == mainLine.Id);
+            if (dup) { skipped++; notes.Add($"บรรทัด “{mainLine.Description}” ขึ้นทะเบียนอยู่แล้ว — ข้าม"); continue; }
+
+            // ใส่ aux description ลง Description ของ asset เพื่อ audit trail
+            // (เห็นว่าต้นทุนรวมค่าขนส่ง/ติดตั้งแล้ว — และเฉลี่ยมาเท่าไร)
+            var assetDesc = $"ลงทะเบียนอัตโนมัติจาก {doc.DocumentNumber}"
+                + (auxDescs.Count > 0
+                    ? $" (รวม: {string.Join(", ", auxDescs)}"
+                      + (plan.AllocatedAuxiliary > 0m && planned.Count > 1
+                          ? $" — เฉลี่ยเข้ารายการนี้ {plan.AllocatedAuxiliary:N2}" : "")
+                      + ")"
+                    : "");
+
+            // ยังไม่ออกเลขจริงตอน NeedsReview — ใส่ placeholder "DRAFT-{guid}"
+            // เพื่อไม่ให้กิน counter (gap-free). เลขจริง FA-yyyyMM-#### จะออก
+            // ตอน user กดบันทึกในหน้า edit (FixedAssetService.UpdateAsync ตอน
+            // NeedsReview=true → false). ถ้า user ลบ asset ที่ยังเป็น DRAFT
+            // ก่อนยืนยัน จะไม่กระทบลำดับเลขของ asset อื่น
+            var assetCode = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
+            try
+            {
+                var created = await CreateAsync(companyId, new CreateFixedAssetRequest(
+                    AssetCode: assetCode,
+                    Name: string.IsNullOrWhiteSpace(mainLine.Description) ? cls.Category : mainLine.Description,
+                    Description: assetDesc,
+                    Category: cls.Category,
+                    Location: null, SerialNumber: null,
+                    PurchaseDate: doc.DocumentDate,
+                    PurchaseCost: totalCost,
+                    SalvageValue: 0m,
+                    UsefulLifeMonths: cls.DefaultUsefulLifeMonths,
+                    DepreciationMethod: cls.Depreciable
+                        ? DepreciationMethod.StraightLine
+                        : DepreciationMethod.None,
+                    AssetAccountId: mainLine.AccountId,
+                    DepreciationExpenseAccountId: CodeToId(cls.DepExpenseAccountCode),
+                    AccumulatedDepreciationAccountId: CodeToId(cls.AccumDepAccountCode),
+                    PostAcquisitionJournalEntry: false,   // เอกสารลง Dr asset แล้ว
+                    CreditAccountId: null,
+                    ProjectId: mainLine.ProjectId ?? doc.ProjectId,
+                    SourceDocumentId: doc.Id,
+                    SourceDocumentLineId: mainLine.Id,
+                    NeedsReview: true), actor);
+                createdList.Add(created);
+            }
+            catch (Exception ex)
+            {
+                // ไม่ให้ทั้งชุดล้มเพราะบรรทัดเดียว — บอกเหตุผลกลับให้ผู้เรียก (หน้าเอกสารแสดง)
+                skipped++;
+                notes.Add($"บรรทัด “{mainLine.Description}” ขึ้นทะเบียนไม่สำเร็จ: {ex.Message}");
+                _logger?.LogWarning(ex, "Register fixed asset failed (doc {Doc} line {Line})",
+                    doc.DocumentNumber, mainLine.Id);
+            }
+            }
+        }
+        return Done();
+    }
+
     private static FixedAssetResponse MapToResponse(FixedAsset a, string? sourceDocumentNumber = null) =>
         new(a.Id, a.AssetCode, a.Name, a.Description, a.Category,
             a.Location, a.SerialNumber, a.PurchaseDate, a.PurchaseCost,
@@ -1304,5 +1518,5 @@ public class FixedAssetService : IFixedAssetService
             a.AssetAccountId, a.DepreciationExpenseAccountId,
             a.AccumulatedDepreciationAccountId,
             a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
-            a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber);
+            a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber, a.SourceDocumentLineId);
 }

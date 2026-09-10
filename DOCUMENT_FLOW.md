@@ -68,7 +68,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Controller**: `DocumentController.cs:165` → `DocumentService.CreateDocumentAsync` (`DocumentService.cs:279`)
 - **กฎ**:
   - ตั้ง `Status = Draft`, `DocumentNumber = "DRAFT-{guid}"`
-  - resolve `AccountCode → AccountId` ต่อบรรทัด (รองรับ AI suggest)
+  - resolve `AccountCode → AccountId` ต่อบรรทัด (รองรับ AI suggest) — **รหัสที่ resolve
+    ไม่ได้ต้องล้มดัง** (`ValidateDocumentLinesAsync` → `BusinessRuleException` ระบุรหัส +
+    บรรทัด) · เดิม resolver คืน null เงียบ ⇒ `AccountId=null` ⇒ JE ตกไปใช้ผังตามหมวด
+    หัวเอกสาร ⇒ ผู้ใช้เห็นว่า “แก้ผังแล้วกดบันทึกอนุมัติ ระบบไม่เปลี่ยน” โดยไม่มี error
+    (2026-09-10). ฝั่งฟอร์ม `documents.html`: เปลี่ยน "หมวดค่าใช้จ่าย" ระดับหัวเอกสาร
+    → เติมผังให้บรรทัดที่ผู้ใช้**ยังไม่แตะ** (`dataset.userTouched`) · ก่อน save ถ้า
+    หัวกับบรรทัดไม่ตรงกันจะถาม 1 ครั้ง (ใช้หัวทับทุกบรรทัด / คงรายบรรทัด) — JE ลงตาม
+    **บรรทัด** เสมอ หัวเป็นแค่ตัวเติมค่าเริ่มต้น
   - validate VAT-claimability ต่อบัญชี (`ChartOfAccount.InputVatClaimable`)
   - compute line amounts (`ComputeLineAmounts`) รองรับ `PricesIncludeVat`
   - เก็บ `GlAccountAiFeedbackId` ต่อบรรทัด (ปิดลูปการสอน local model)
@@ -934,7 +941,28 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ไม่ใช่ `CostPrice` นิ่ง); void = ต้นทุนเดิมของ movement ต้นทาง
      (ให้กลับรายการหักล้างมูลค่าเท่ากัน). POS ใช้ helper `EffectiveUnitCost`
      เดียวกันทั้ง COGS JE / stock stamp / refund
-9. **Fixed asset auto-register** (`:1799`) — `AutoRegisterFixedAssetsAsync`:
+9. **Fixed asset auto-register** — `AutoRegisterFixedAssetsAsync` (DocumentService)
+   เป็นแค่ตัวห่อ: มอบต่อให้ **`FixedAssetService.RegisterFromDocumentAsync(companyId,
+   doc, onlyLineId: null, actor, skipIfScanRegistered: true)`** ซึ่งเป็น**ตัวขึ้นทะเบียน
+   จากเอกสารตัวเดียว**ของระบบ (รอบ 2026-09-10 — เดิมตรรกะทั้งก้อนอยู่ใน DocumentService
+   และหน้าเอกสารไม่มีทางกดขึ้นทะเบียนย้อนหลังเลย ⇒ ใบที่อนุมัติไปก่อนมีผัง 12xxx
+   หรือใบที่ตัวลงทะเบียนอัตโนมัติข้าม (ซ้ำ/ผิดพลาด) ค้างเป็น Dr 12xxx ที่ไม่มีคู่ในทะเบียน
+   โดยผู้ใช้ไม่รู้). ทางเข้าตัวที่สอง: `POST /fixedasset/from-document/{docId}?lineId=`
+   (สิทธิ์ `AssetManage`) — ขึ้นทะเบียน**เฉพาะบรรทัด** หรือทุกบรรทัดที่ยังไม่มีทะเบียน ·
+   ด่าน `DocumentStatusRules.IsEffective` (ร่าง/รออนุมัติ/ยกเลิก → BusinessRuleException)
+   · ชนิดที่รองรับ = `FixedAssetService.SupportsAutoRegister` (Expense · PurchaseInvoice ·
+   PaymentVoucher — ตัวเดียวกับที่ขั้นอนุมัติใช้ ห้ามเขียนลิสต์ซ้ำ). ผลลัพธ์
+   `RegisterFromDocumentResult(Created, Skipped, Assets, Notes)` — บรรทัดที่ข้ามต้องมี
+   เหตุผลใน `Notes` เสมอ (ห้าม silent no-op).
+   **ลิงก์สองทาง**: `GET /fixedasset/document-lines/{docId}` คืน
+   `DocumentAssetLinesResponse` (รายบรรทัด: เป็นผังสินทรัพย์ไหม · เป็นค่าประกอบไหม ·
+   `AssetId/AssetCode/AssetNeedsReview` ที่ผูกอยู่) → `documents.html`
+   `renderDocAssetSection` วาดตาราง "🏭 ทะเบียนสินทรัพย์" ในหน้ารายละเอียด: บรรทัดที่มี
+   ทะเบียนแล้วลิงก์ไป `/pages/fixed-assets.html?assetId=` · บรรทัดที่ยังไม่มีมีปุ่ม
+   "➕ ขึ้นทะเบียนจากบรรทัดนี้" (เฉพาะใบที่ `IsIssued`) · ฝั่งทะเบียน
+   (`fixed-assets.html` detail) มีช่อง "เอกสารต้นทาง" ลิงก์กลับ
+   `/pages/documents.html?openDoc=<SourceDocumentId>` (`FixedAssetResponse` ส่ง
+   `SourceDocumentLineId` ด้วย) — ทั้งสองหน้าอ่านจาก endpoint เดียวกัน ไม่คำนวณเอง.
    บรรทัดที่ลงผัง 12210 / 12220 / 12230 / 12240 / 12260 / 12270 / 12290 /
    12310 → group ตาม AccountId เพื่อหาค่าใช้จ่ายประกอบของผังนั้น แล้ววางแผน
    ด้วย **`Helpers/AssetRegistrationPlanner`** (pure ตัวเดียว — ห้ามเขียนกติกา
@@ -1560,7 +1588,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `/inventory/movements`
 - Fixed Asset: `FixedAsset` row สร้างอัตโนมัติ → ผู้ใช้กรอก
   `UsefulLifeMonths + DepreciationMethod` ในหน้า fixed-assets แล้วยืนยัน
-  (`NeedsReview = false`) → schedule depreciation ปกติ
+  (`NeedsReview = false`) → schedule depreciation ปกติ · ใบที่อนุมัติแล้วแต่บรรทัด
+  ผัง 12xxx ยังไม่มีทะเบียน (อนุมัติก่อนฟีเจอร์ · ถูกข้าม) → ปุ่มขึ้นทะเบียนย้อนหลัง
+  ในหน้ารายละเอียดเอกสาร (`POST /fixedasset/from-document/{docId}?lineId=`) ·
+  สถานะรายบรรทัด "มีทะเบียนไหม" อ่านจาก `GET /fixedasset/document-lines/{docId}`
+  ตัวเดียว ทั้งหน้าเอกสารและหน้าทะเบียน (ดู §3.2 ข้อ 9)
 
 ---
 
@@ -1968,7 +2000,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | แก้ §65 ตรี rule | `Services/Implementations/Tax/Section65TerValidator.cs` |
 | แก้ tax point logic | `Services/Implementations/Tax/TaxPointResolver.cs` |
 | แก้ §86/4 completeness | `Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs` |
-| แก้ fixed asset auto-register | `DocumentService.AutoRegisterFixedAssetsAsync :4477` |
+| แก้ fixed asset auto-register / ขึ้นทะเบียนจากเอกสาร | `FixedAssetService.RegisterFromDocumentAsync` (ตัวเดียว — `DocumentService.AutoRegisterFixedAssetsAsync` แค่มอบต่อ) · ลิสต์ชนิดที่รองรับ `FixedAssetService.SupportsAutoRegister` |
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
 | แก้ deposit Realize/Refund/Apply | `DocumentService.cs` ค้นหา `RealizeDepositAsync` / `RefundDepositAsync` / `ApplyDepositToInvoiceAsync` |
 | แก้ราคาที่พัก/ห้องว่าง (ฤดูกาล/แผนราคา/override/มัดจำ/ค่าปรับยกเลิก) | `Helpers/LodgingPricingEngine.cs` (pure + `Accounting.Tests/LodgingPricingEngineTests.cs`) — service แค่โหลดข้อมูลส่งเข้า `BuildQuote` (`LodgingService.Reservations.cs`) |
@@ -4753,3 +4785,9 @@ RD API (เดิมประทับ + ล็อกเอกสารถาว
 `RequireEtaxAsync` + เพิ่มไฟล์เข้า `WATCHED` ของ checker (เดิมรายงานเขียวตลอดเพราะไม่เคยมอง
 ไฟล์นี้) · `EtaxRefNumber` ย้ายไป `SequenceNumber`. ผลตรวจ 7 ทีมรอบนี้อยู่ใน
 `SYSTEM_AUDIT_2026-09-07.md`)_
+
+_Last verified against codebase: 2026-09-10 (รอบ 150 — **สินทรัพย์ ↔ เอกสาร สองทาง + ผังบัญชี
+ที่แก้ต้องมีผล**: ตัวขึ้นทะเบียนจากเอกสารย้ายไป `FixedAssetService.RegisterFromDocumentAsync`
+ตัวเดียว (ขั้นอนุมัติมอบต่อ · ปุ่มขึ้นทะเบียนย้อนหลังรายบรรทัดในหน้าเอกสาร) · หน้าเอกสาร/
+หน้าทะเบียนลิงก์หากันจาก endpoint เดียว · `AccountCode` ที่ resolve ไม่ได้ล้มดังแทนตกผัง
+default เงียบ · หมวดค่าใช้จ่ายหัวเอกสาร→บรรทัดตาม `userTouched`)_

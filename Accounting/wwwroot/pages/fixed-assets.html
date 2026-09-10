@@ -642,6 +642,10 @@
               <div><div class="text-xs text-gray-500">อายุใช้งาน</div><div>${a.usefulLifeMonths} เดือน</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(a.status)}</div></div>
               ${a.disposalDate ? `<div><div class="text-xs text-gray-500">วันที่จำหน่าย</div><div>${Layout.date(a.disposalDate)}</div></div>` : ''}
+              <div><div class="text-xs text-gray-500">เอกสารต้นทาง</div>
+                <div>${a.sourceDocumentId
+                  ? `<a href="/pages/documents.html?openDoc=${Layout.esc(a.sourceDocumentId)}" style="color:var(--primary)">📄 ${Layout.esc(a.sourceDocumentNumber || 'เปิดเอกสาร')}</a>`
+                  : '<span style="color:#94a3b8">ขึ้นทะเบียนเอง (ไม่มีใบซื้อผูก)</span>'}</div></div>
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
               <div class="kpi-card"><div class="kpi-label">ราคาทุน</div><div class="kpi-value">${Layout.money(a.purchaseCost)}</div></div>

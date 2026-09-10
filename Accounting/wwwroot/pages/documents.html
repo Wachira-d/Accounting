@@ -804,7 +804,7 @@
                   🤖 ให้ AI ช่วย
                 </button>
               </label>
-              <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
+              <select class="form-select" id="fExpenseCategory" onchange="Page.onHeaderExpenseCategoryChange(this)"><option value="">— ไม่ระบุ —</option></select>
             </div>
           </div>
 
@@ -2273,8 +2273,12 @@
        *  มาตรฐานของระบบ) และเป็นเอกสาร**ฝั่งซื้อ** — ใบขายที่บังเอิญอ้างผัง 12
        *  (เช่นขายทรัพย์สินออก) ไม่ใช่การ "ได้มา" จึงไม่ต้องชวนลงทะเบียน */
       _docHasAssetAccountLine(d) {
-        const buySide = ['PurchaseInvoice', 'Expense', 'PaymentVoucher', 'GoodsReceiptNote'];
+        // ชนิดต้องตรงกับ FixedAssetService.SupportsAutoRegister ฝั่งเซิร์ฟเวอร์ — เดิมนับใบรับ
+        // สินค้า (GRN) ด้วย ⇒ แผงบอกว่า “ระบบจะสร้างให้ตอนอนุมัติ” แล้วไม่สร้าง
+        const buySide = ['PurchaseInvoice', 'Expense', 'PaymentVoucher'];
         if (!buySide.includes(d.documentType)) return false;
+        // prefix 12 เป็นแค่ตัวกรองราคาถูกก่อนยิง API — บรรทัดไหน “เข้าข่ายจริง” เซิร์ฟเวอร์ตัดสิน
+        // (ตัวจำแนกเดียวกับตอนอนุมัติ: 12110 เงินให้กู้/12410 รอตัดจ่าย ไม่ใช่สินทรัพย์ถาวร)
         return (d.lines || []).some(l => String(l.accountCode || '').startsWith('12'));
       },
 
@@ -2292,55 +2296,65 @@
         const host = document.getElementById('docAssetPanel_' + docId);
         if (!host) return;
         const api = Layout.api(); if (!api) return;
-        let list = [];
+        let st;
         try {
-          const res = await api.getAssetsByDocument(docId);
-          list = res?.data || [];
+          st = (await api.getDocumentAssetLines(docId))?.data;
         } catch (e) {
           host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลดข้อมูลสินทรัพย์ไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
           return;
         }
-        // ใช้ `_currentDoc` ที่เส้น openDetail ตั้งไว้แล้ว — ห้ามสร้างตัวแปรใหม่
-        // ที่ไม่มีใครเซ็ต (จะได้ status undefined แล้วเงื่อนไข approved ผิดเสมอ)
-        const doc = this._currentDoc || {};
-        const approved = !['Draft', 'WaitingApproval', 'Rejected'].includes(doc.status);
+        if (!st) return;
+        const assetLines = (st.lines || []).filter(l => l.isAssetAccount);
+        const list = st.assets || [];
+        // เซิร์ฟเวอร์บอกว่าไม่มีบรรทัดที่เข้าข่าย (เช่น 12410 รอตัดจ่าย) และไม่มีทะเบียน → ไม่วาดอะไร
+        if (!assetLines.length && !list.length) { host.innerHTML = ''; return; }
+        const approved = !!st.isIssued;
+        const missing = assetLines.filter(l => !l.assetId && !l.isAuxiliary);
+        const esc = (v) => this.escapeHtml(v ?? '');
 
-        if (!list.length) {
-          host.innerHTML = `
-            <h4 style="font-size:14px;margin-bottom:8px">🏗️ สินทรัพย์ถาวร</h4>
-            <div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:12px;font-size:13px;color:#78350f">
-              <div style="font-weight:600;margin-bottom:4px">
-                ${approved ? 'ใบนี้ยังไม่ได้ลงทะเบียนเป็นสินทรัพย์' : 'ยังไม่ถึงจังหวะลงทะเบียน'}
-              </div>
-              <div style="font-size:12px;line-height:1.7;margin-bottom:${approved ? '10px' : '0'}">
-                ${approved
-                  ? 'ใบนี้มีบรรทัดที่ลงผังบัญชีหมวดสินทรัพย์ (12xxx) แต่ยังไม่มีรายการในทะเบียนสินทรัพย์ — ค่าเสื่อมราคาจะไม่ถูกคำนวณจนกว่าจะลงทะเบียน (TFRS for NPAEs บทที่ 10)'
-                  : 'ระบบจะสร้างรายการสินทรัพย์ให้อัตโนมัติเมื่อ<b>อนุมัติ</b>เอกสารใบนี้ — ไม่ต้องสร้างเองล่วงหน้า มิฉะนั้นจะได้สินทรัพย์ซ้ำสองรายการจากใบเดียว'}
-              </div>
-              ${approved ? '<a href="/pages/fixed-assets.html" class="btn btn-sm btn-warning">➕ ไปทะเบียนสินทรัพย์</a>' : ''}
-            </div>`;
-          return;
-        }
+        const lineRows = assetLines.map(l => `<tr>
+            <td>${esc(l.description)}${l.isAuxiliary ? ' <span style="font-size:10px;color:#64748b">(ค่าประกอบ — เฉลี่ยเข้าสินทรัพย์หลัก)</span>' : ''}</td>
+            <td style="font-family:ui-monospace,monospace">${esc(l.accountCode)}</td>
+            <td class="text-right">${Layout.money(l.amount)}</td>
+            <td>${l.assetId
+              ? `<a class="btn btn-sm btn-ghost" href="/pages/fixed-assets.html?assetId=${esc(l.assetId)}">${esc(l.assetCode)}${l.assetNeedsReview ? ' ⚠️ รอตรวจ' : ''} →</a>`
+              : l.isAuxiliary ? '<span style="color:#94a3b8;font-size:12px">—</span>'
+              : approved
+                ? `<button class="btn btn-sm btn-warning" onclick="Page.registerAssetFromLine('${Layout.jsArg(docId)}','${Layout.jsArg(l.lineId)}')">➕ ขึ้นทะเบียนจากบรรทัดนี้</button>`
+                : '<span style="color:#92400e;font-size:12px">จะสร้างให้เมื่ออนุมัติ</span>'}</td>
+          </tr>`).join('');
 
         const pending = list.filter(a => a.needsReview).length;
         host.innerHTML = `
-          <h4 style="font-size:14px;margin-bottom:8px">🏗️ สินทรัพย์ถาวรจากใบนี้ (${list.length})</h4>
+          <h4 style="font-size:14px;margin-bottom:8px">🏗️ สินทรัพย์ถาวร${list.length ? ` จากใบนี้ (${list.length})` : ''}</h4>
+          ${!approved && missing.length ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12px;color:#78350f;margin-bottom:8px">
+            ระบบจะสร้างรายการสินทรัพย์ให้อัตโนมัติเมื่อ<b>อนุมัติ</b>เอกสารใบนี้ — ไม่ต้องสร้างเองล่วงหน้า (จะได้สินทรัพย์ซ้ำจากใบเดียว)
+          </div>` : ''}
+          ${approved && missing.length ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b;margin-bottom:8px">
+            <b>${missing.length} บรรทัด</b>ลงผังสินทรัพย์ถาวรแล้วแต่<b>ยังไม่มีในทะเบียน</b> — ค่าเสื่อมราคาจะไม่ถูกคำนวณ (TFRS for NPAEs บทที่ 10)
+            และงบดุลกับทะเบียนไม่ตรงกัน · กดขึ้นทะเบียนทีละบรรทัด หรือ
+            <button class="btn btn-sm btn-warning" style="margin-left:4px" onclick="Page.registerAssetFromLine('${Layout.jsArg(docId)}', null)">➕ ขึ้นทะเบียนทั้งหมด</button>
+          </div>` : ''}
           ${pending ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12px;color:#78350f;margin-bottom:8px">
             มี ${pending} รายการที่ระบบสร้างให้อัตโนมัติและ<b>ยังไม่ผ่านการยืนยัน</b> —
             ค่าเสื่อมจะคำนวณถูกต้องก็ต่อเมื่อตรวจอายุการใช้งาน/วิธีคิดค่าเสื่อมแล้ว
           </div>` : ''}
           <table class="table" style="font-size:12px">
-            <thead><tr><th>รหัส</th><th>ชื่อ</th><th class="text-right">ราคาทุน</th><th>สถานะ</th><th></th></tr></thead>
-            <tbody>${list.map(a => `<tr>
-              <td style="font-family:ui-monospace,monospace">${this.escapeHtml(a.assetCode || '')}</td>
-              <td>${this.escapeHtml(a.name || '')}</td>
-              <td class="text-right">${Layout.money(a.acquisitionCost)}</td>
-              <td>${a.needsReview
-                ? '<span class="badge" style="background:#fbbf24;color:#78350f">⚠️ รอตรวจ</span>'
-                : Layout.statusBadge(a.status)}</td>
-              <td class="text-right"><a class="btn btn-sm btn-ghost" href="/pages/fixed-assets.html?assetId=${a.id}">เปิด →</a></td>
-            </tr>`).join('')}</tbody>
+            <thead><tr><th>บรรทัด</th><th>ผัง</th><th class="text-right">ยอด</th><th>ทะเบียนสินทรัพย์</th></tr></thead>
+            <tbody>${lineRows}</tbody>
           </table>`;
+      },
+
+      /** ขึ้นทะเบียนสินทรัพย์จากบรรทัด (หรือทั้งใบเมื่อ lineId=null) — เส้นเดียวกับที่รันตอนอนุมัติ */
+      async registerAssetFromLine(docId, lineId) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.registerAssetsFromDocument(docId, lineId);
+          const r = res?.data;
+          Layout.toast(res?.message || 'ขึ้นทะเบียนแล้ว', r && r.created > 0 ? 'success' : 'info', 8000);
+          if (r?.notes?.length && r.created === 0) console.warn('register asset notes:', r.notes);
+          await this.renderDocAssetSection(docId);
+        } catch (e) { Layout.toast(e.message || 'ขึ้นทะเบียนไม่สำเร็จ', 'error', 8000); }
       },
 
       /** แผง "รายการบัญชี (JE)" บนหน้าเอกสาร — กางบรรทัด Dr/Cr จริงจาก GL
@@ -4659,9 +4673,11 @@
       /** ผู้ใช้พิมพ์/เลือก accountCode บนบรรทัด → ถ้าต่างจากที่ AI แนะนำ
        *  เปลี่ยน badge เป็น "✎ แก้แล้ว" (สีส้ม). บันทึก choice จริงเกิดที่
        *  backend ตอน save (เปรียบ chosen code กับ AiPrimaryAnswer). */
-      onLineAccountInput(el) {
+      onLineAccountInput(el, fromUser = false) {
         const row = el.closest('.line-card');
         if (!row) return;
+        // ค่าที่ผู้ใช้พิมพ์เองชนะเสมอ (กฎเหล็ก #4 A) — หมวดหัวเอกสารจะไม่ทับบรรทัดนี้อีก
+        if (fromUser) { el.dataset.userTouched = '1'; delete el.dataset.autoSrc; }
         const badge = row.querySelector('[data-f="accountBadge"]');
         const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
         const suggested = sugCodeEl?.dataset?.code;
@@ -4689,6 +4705,72 @@
           badge.style.display = 'none';
         }
       },
+      /** หมวดค่าใช้จ่ายบนหัวเอกสารเปลี่ยน → ไล่ลงบรรทัดที่ผู้ใช้ยังไม่ได้แก้เอง
+       *
+       *  ที่มา (ผลตรวจ 2026-09-10): เอกสารมี “ผังบัญชี” สองชั้น — หัวเอกสาร
+       *  (ExpenseCategoryId) เป็นแค่ fallback เมื่อบรรทัดไม่มีผัง แต่ทุกใบจาก OCR
+       *  เติมผังลงบรรทัดไว้แล้ว ⇒ ผู้ใช้เปลี่ยน dropdown หัวเอกสารแล้วกด “บันทึกและ
+       *  อนุมัติ” JE ยังลงผังเดิมของบรรทัด = silent no-op ที่มองไม่เห็น
+       *  กติกา: บรรทัดที่ผู้ใช้พิมพ์ผังเอง (userTouched) ไม่ทับ · ที่เหลือตามหัวเอกสาร */
+      onHeaderExpenseCategoryChange(sel) {
+        const id = sel?.value || '';
+        const acc = id ? (this.expenseCategories || []).find(a => a.id === id) : null;
+        const code = acc?.accountCode || '';
+        const prev = sel.dataset.prevCode || '';
+        sel.dataset.prevCode = code;
+        sel.dataset.userTouched = '1';
+        if (!code) return;
+        let changed = 0, kept = 0;
+        document.querySelectorAll('#linesBody .line-card [data-f="accountCode"]').forEach(inp => {
+          const cur = inp.value.trim();
+          if (cur === code) return;
+          if (inp.dataset.userTouched === '1' && cur && cur !== prev) { kept++; return; }
+          inp.value = code;
+          inp.dataset.autoSrc = 'header';
+          this.onLineAccountInput(inp, false);
+          changed++;
+        });
+        if (changed || kept) {
+          Layout.toast(`ผังบัญชี ${code} ใส่ให้ ${changed} บรรทัด`
+            + (kept ? ` · คง ${kept} บรรทัดที่คุณเลือกผังเองไว้` : ''), 'info');
+        }
+      },
+
+      /** ก่อนบันทึก: หัวเอกสารกับบรรทัดต้องเล่าเรื่องเดียวกัน — JE ลงตาม**บรรทัด**
+       *  ถ้าหัวบอกผังหนึ่งแต่บรรทัดใช้อีกผัง ต้องให้คนตัดสิน ไม่ปล่อยให้ “แก้แล้วไม่เปลี่ยน” เงียบ
+       *  คืน false = ผู้ใช้ยกเลิกการบันทึก */
+      _confirmHeaderLineAccountAgreement() {
+        const sel = document.getElementById('fExpenseCategory');
+        const side = document.getElementById('linesTable')?.dataset.docSide;
+        if (!sel || side !== 'expense' || !sel.value) return true;
+        const acc = (this.expenseCategories || []).find(a => a.id === sel.value);
+        const code = acc?.accountCode;
+        if (!code) return true;
+        const rows = [...document.querySelectorAll('#linesBody .line-card')].filter(r =>
+          (r.querySelector('[data-f="desc"]')?.value || '').trim());
+        const mismatched = rows.filter(r => {
+          const c = (r.querySelector('[data-f="accountCode"]')?.value || '').trim();
+          return c && c !== code;
+        });
+        if (!mismatched.length) return true;
+        const sample = mismatched.slice(0, 3).map(r =>
+          `• ${(r.querySelector('[data-f="desc"]')?.value || '').trim().slice(0, 40)} → ${(r.querySelector('[data-f="accountCode"]')?.value || '').trim()}`).join('\n');
+        const useHeader = confirm(
+          `หมวดค่าใช้จ่ายบนหัวเอกสารคือ ${code} (${acc.accountName})\n`
+          + `แต่ ${mismatched.length} บรรทัดใช้ผังอื่น:\n${sample}${mismatched.length > 3 ? '\n• …' : ''}\n\n`
+          + 'รายการบัญชี (JE) ลงตาม**ผังของบรรทัด** ไม่ใช่หัวเอกสาร\n\n'
+          + `กด OK = ใช้ ${code} กับทุกบรรทัด\nกด Cancel = คงผังรายบรรทัดตามเดิม (หัวเอกสารเป็นแค่ป้าย)`);
+        if (useHeader) {
+          mismatched.forEach(r => {
+            const inp = r.querySelector('[data-f="accountCode"]');
+            if (!inp) return;
+            inp.value = code; delete inp.dataset.userTouched; inp.dataset.autoSrc = 'header';
+            this.onLineAccountInput(inp, false);
+          });
+        }
+        return true;
+      },
+
       /**
        * ขอ AI ให้แนะนำผังบัญชี GL ของทุกบรรทัด — student-first (local model)
        * ผ่าน orchestrator ตามกฎเหล็ก #1 Distillation Mandate. ระบบ validate
@@ -6975,7 +7057,7 @@
             <label style="color:#475569;min-width:64px" data-f="accountLabel">ผังบัญชี</label>
             <input type="text" class="form-input lc-acc-input" data-f="accountCode" list="${(document.getElementById('linesTable')?.dataset.docSide === 'expense') ? 'coaList' : 'coaListRevenue'}"
                    placeholder="${(document.getElementById('linesTable')?.dataset.docSide === 'expense') ? 'เลือก/ค้นหาผังบัญชี…' : 'ผังรายได้ (เว้นว่าง = รายได้มาตรฐาน 41000)'}"
-                   oninput="Page.onLineAccountInput(this)"
+                   oninput="Page.onLineAccountInput(this, true)"
                    style="flex:1;font-size:13px">
             <span class="lc-acc-badge" data-f="accountBadge" style="display:none;font-size:11px;padding:2px 8px;border-radius:8px;font-weight:600"></span>
             <span data-f="glAiFeedbackId" hidden></span>
@@ -8103,6 +8185,8 @@
       },
       async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
+        // หัวเอกสาร vs ผังรายบรรทัด — ถามก่อนเมื่อขัดกัน (JE ลงตามบรรทัด)
+        if (!this._confirmHeaderLineAccountAgreement()) return;
         // ── ด่านความขัดแย้ง: ติ๊ก "มีใบกำกับภาษีซื้อ (ขอเครดิต ภ.พ.30)" แต่
         // ทุกบรรทัดเป็น 🚫 ไม่เคลม (เคสจริง: OCR ตั้ง 🚫 จากใบอย่างย่อ แล้ว
         // ผู้ใช้ได้ใบเต็มรูปมาทีหลัง) — ถามเป็นภาษาคนก่อนบันทึก ไม่ปล่อยให้

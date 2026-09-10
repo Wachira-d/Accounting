@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.FixedAsset;
+using Accounting.Models.Entities;
 
 namespace Accounting.Services.Interfaces;
 
@@ -19,6 +20,13 @@ public interface IFixedAssetService
     /// ที่หายไปใน 12 วินาที ⇒ ผู้ใช้ที่พลาดหรือเปิดใบย้อนหลังไม่มีทางรู้เลยว่า
     /// ของไปโผล่ที่ไหน (และไม่รู้ว่าต้องไปยืนยัน)</summary>
     Task<List<FixedAssetResponse>> GetByDocumentAsync(Guid companyId, Guid documentId);
+    /// <summary>บรรทัดของเอกสารเทียบกับทะเบียน: บรรทัดไหนเข้าข่ายสินทรัพย์ · มีทะเบียนแล้วไหม —
+    /// ให้แผงสินทรัพย์บนหน้าเอกสารวาดปุ่ม “ขึ้นทะเบียนจากบรรทัดนี้” เฉพาะที่ยังขาด</summary>
+    Task<DocumentAssetLinesResponse> GetDocumentAssetLinesAsync(Guid companyId, Guid documentId);
+    /// <summary>ขึ้นทะเบียนจากเอกสารที่โพสต์แล้ว (ทั้งใบ หรือเฉพาะบรรทัด) — ตรรกะเดียวกับที่รันตอนอนุมัติ</summary>
+    Task<RegisterFromDocumentResult> RegisterFromDocumentAsync(Guid companyId, Guid documentId, Guid? onlyLineId, string actor);
+    /// <summary>เวอร์ชันรับ entity — DocumentService เรียกตอนอนุมัติ (มี doc โหลดอยู่แล้ว)</summary>
+    Task<RegisterFromDocumentResult> RegisterFromDocumentAsync(Guid companyId, Document doc, Guid? onlyLineId, string actor, bool skipIfScanRegistered);
     /// <summary>ลบสินทรัพย์ที่ลงทะเบียนผิด — อนุญาตเฉพาะ asset ที่ยังไม่คิดค่า
     /// เสื่อมจริง (NeedsReview=true / ไม่มี posted depreciation). ต้นทุนมาจาก
     /// เอกสารต้นทาง (ไม่ใช่ acquisition JE ของ asset) จึงไม่กระทบ GL. asset ที่
