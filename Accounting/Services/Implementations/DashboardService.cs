@@ -376,11 +376,15 @@ public class DashboardService : IDashboardService
         if (sub == null) return null;
 
         var usersCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
+        var planName = await _db.PlanTemplates.AsNoTracking()
+            .Where(t => t.Plan == sub.Plan && t.IsActive)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync();
 
         return new DashboardSubscriptionSummary(sub.Plan, sub.Status, sub.EndDate,
             Math.Max(0, (int)(sub.EndDate - DateTime.UtcNow).TotalDays),
             sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
-            usersCount, sub.MaxUsers);
+            usersCount, sub.MaxUsers, planName);
     }
 
     private async Task<VatWhtSummary?> GetVatWhtSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)

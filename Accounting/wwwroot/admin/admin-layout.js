@@ -113,6 +113,7 @@ const AdminLayout = {
       console.error('[AdminLayout] admin-api.js ยังไม่ถูกโหลด — ต้องใส่ก่อน admin-layout.js');
     } else {
       AdminAPI.token = token;
+      this.loadPlanNames();
     }
     this.render(user);
     this._rendered = true;
@@ -225,10 +226,31 @@ const AdminLayout = {
     const c = colors[status] || 'bg-gray';
     return `<span class="admin-badge-sm ${c}">${status}</span>`;
   },
+  /// ชื่อแพ็กเกจจาก PlanTemplate ที่แอดมินตั้ง — โหลดครั้งเดียวต่อหน้า (เดิม map enum→ชื่อพิมพ์ไว้ที่นี่
+  /// และอีก 4 หน้าฝั่งลูกค้า ⇒ เปลี่ยนชื่อแพ็กเกจในหน้า plans แล้วป้ายทั่วระบบไม่เปลี่ยน)
+  _planNames: null,
+  _planNamesLoading: null,
+  loadPlanNames() {
+    if (this._planNamesLoading) return this._planNamesLoading;
+    this._planNamesLoading = (async () => {
+      try {
+        const res = await AdminAPI.plans(true);
+        const map = {};
+        for (const p of (res.data || [])) if (p.isActive && !map[p.plan]) map[p.plan] = p.name;
+        this._planNames = map;
+        // ป้ายที่วาดไปก่อนชื่อมาถึง — เติมชื่อย้อนหลัง (กันเรื่อง "ใครมาก่อนชนะ")
+        document.querySelectorAll('[data-plan-badge]').forEach(el => {
+          const n = map[el.getAttribute('data-plan-badge')];
+          if (n) el.textContent = n;
+        });
+      } catch { this._planNames = {}; }
+    })();
+    return this._planNamesLoading;
+  },
   planBadge(plan) {
     const colors = { FreeTrial: 'bg-gray', Basic: 'bg-blue', Pro: 'bg-purple', Enterprise: 'bg-gold' };
-    const labels = { FreeTrial: 'ทดลองใช้', Basic: 'Starter', Pro: 'Professional', Enterprise: 'Enterprise' };
-    return `<span class="admin-badge-sm ${colors[plan] || 'bg-gray'}">${labels[plan] || plan}</span>`;
+    const name = (this._planNames && this._planNames[plan]) || plan;
+    return `<span class="admin-badge-sm ${colors[plan] || 'bg-gray'}" data-plan-badge="${this.esc(plan)}">${this.esc(name)}</span>`;
   },
 
   toast(msg, type = 'success') {

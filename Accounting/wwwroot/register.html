@@ -96,37 +96,9 @@
           <!-- Plan Selection -->
           <div class="form-group" style="margin-bottom:20px">
             <label class="form-label" style="font-weight:600;margin-bottom:10px" data-i18n="register.selectPlan">เลือกแพ็กเกจที่ต้องการ</label>
+            <!-- การ์ดแพ็กเกจวาดจาก /api/subscription/plans (ค่าที่แอดมินตั้ง) — ห้ามพิมพ์ชื่อ/วันทดลอง/โควตาตายตัว -->
             <div id="planGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
-              <label class="plan-card" data-plan="FreeTrial" style="cursor:pointer;padding:12px;border:2px solid #10B981;border-radius:10px;text-align:center;transition:all 0.15s;background:linear-gradient(135deg,#ecfdf5,#ffffff);position:relative">
-                <input type="radio" name="plan" value="FreeTrial" checked style="display:none">
-                <div style="position:absolute;top:-8px;right:8px;background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">ฟรีตลอดชีพ</div>
-                <div style="font-size:20px">🎁</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px;color:#059669">Free</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">ฟรีตลอดชีพ</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">30 เอกสาร/เดือน</div>
-              </label>
-              <label class="plan-card" data-plan="Basic" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
-                <input type="radio" name="plan" value="Basic" style="display:none">
-                <div style="font-size:20px">📦</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px">Starter</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">100 เอกสาร/เดือน</div>
-              </label>
-              <label class="plan-card" data-plan="Pro" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff;position:relative">
-                <input type="radio" name="plan" value="Pro" style="display:none">
-                <div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>
-                <div style="font-size:20px">⚡</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px">Pro</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 14 วัน</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">+ e-Tax, AI</div>
-              </label>
-              <label class="plan-card" data-plan="Enterprise" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff">
-                <input type="radio" name="plan" value="Enterprise" style="display:none">
-                <div style="font-size:20px">🏢</div>
-                <div style="font-weight:700;font-size:13px;margin-top:4px">Enterprise</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px">ทดลอง 30 วัน</div>
-                <div style="font-size:11px;color:#64748b;margin-top:6px">หลายบริษัท + API</div>
-              </label>
+              <div style="grid-column:1/-1;text-align:center;font-size:12px;color:#94a3b8;padding:10px">กำลังโหลดแพ็กเกจ…</div>
             </div>
             <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">💡 เริ่มฟรีตลอดชีพ หรือทดลอง Pro/Enterprise ก่อนตัดสินใจซื้อ — เปลี่ยนแพ็กเกจได้ตลอดเวลา</div>
           </div>
@@ -180,6 +152,7 @@
 
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
+  <script src="/js/plan-display.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/sso.js"></script>
   <script>
@@ -580,38 +553,75 @@
       window.location.href = (localStorage.getItem('uiMode') || 'simple') === 'advanced' ? '/app.html' : '/simple.html';
     }
 
-    // Plan card visual selection
-    document.querySelectorAll('.plan-card').forEach(card => {
-      card.addEventListener('click', function() {
-        document.querySelectorAll('.plan-card').forEach(c => {
-          c.style.borderColor = '#e2e8f0';
-          c.style.background = '#fff';
-          const nameEl = c.querySelector('div:nth-child(3)');
-          if (nameEl) nameEl.style.color = '';
+    // ===== แพ็กเกจให้เลือก — จากค่าที่แอดมินตั้ง =====
+    // เดิมการ์ด 4 ใบพิมพ์ "ทดลอง 14 วัน" · "30 เอกสาร/เดือน" ตายตัว ⇒ แอดมินแก้แพ็กเกจแล้ว
+    // หน้าสมัครยังโชว์ค่าเก่า (ผู้ใช้รายงาน 2026-09-10). ตอนนี้วาดจาก API แล้วค่อยผูก
+    // ตัวไฮไลต์ + อ่าน ?plan= — ลำดับสำคัญ: ต้องมีการ์ดก่อนถึงจะ click() ได้
+    const PLAN_ICON = { FreeTrial: '🎁', Basic: '📦', Pro: '⚡', Enterprise: '🏢' };
+    function paintPlanCard(card, selected) {
+      const isFree = card.dataset.free === '1';
+      const accent = isFree ? '#10B981' : '#4F46E5';
+      card.style.borderColor = selected ? accent : '#e2e8f0';
+      card.style.background = selected ? (isFree ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : 'linear-gradient(135deg,#eef2ff,#ffffff)') : '#fff';
+      const nameEl = card.querySelector('.plan-name');
+      if (nameEl) nameEl.style.color = selected ? (isFree ? '#059669' : '#4F46E5') : '';
+    }
+    function bindPlanCards() {
+      document.querySelectorAll('.plan-card').forEach(card => {
+        card.addEventListener('click', function() {
+          document.querySelectorAll('.plan-card').forEach(c => paintPlanCard(c, false));
+          paintPlanCard(this, true);
+          this.querySelector('input[type="radio"]').checked = true;
         });
-        const isFree = this.dataset.plan === 'FreeTrial';
-        const accent = isFree ? '#10B981' : '#4F46E5';
-        const bg = isFree ? 'linear-gradient(135deg,#ecfdf5,#ffffff)' : 'linear-gradient(135deg,#eef2ff,#ffffff)';
-        this.style.borderColor = accent;
-        this.style.background = bg;
-        const nameEl = this.querySelector('div:nth-child(3)');
-        if (nameEl) nameEl.style.color = isFree ? '#059669' : '#4F46E5';
-        this.querySelector('input[type="radio"]').checked = true;
       });
-    });
-
+    }
     // ?plan= จากตารางราคาในหน้าแรก (index.html ส่ง lower-case มา) — เดิม
-    // **ไม่มีใครอ่านเลย** ⇒ กด "เลือก Pro" แล้วได้ FreeTrial เงียบ ๆ ทุกครั้ง
-    // (ผลตรวจ B-A3) · ต้องอยู่ **หลัง** listener ของการ์ดถูกผูกแล้ว เพราะเรา
-    // อาศัย handler เดียวกันทำไฮไลต์ให้ — ไม่งั้นจะต้องคัดลอกโค้ดสไตล์มาเขียน
-    // ซ้ำแล้ว drift รอบหน้า (ติ๊กถูกแต่หน้าจอไฮไลต์ผิด = ผู้ใช้เชื่อสิ่งที่เห็น)
-    (function _applyPlanFromQuery() {
+    // **ไม่มีใครอ่านเลย** ⇒ กด "เลือก Pro" แล้วได้ FreeTrial เงียบ ๆ ทุกครั้ง (ผลตรวจ B-A3)
+    function applyPlanFromQuery() {
       const wantPlan = (new URLSearchParams(location.search).get('plan') || '').trim().toLowerCase();
       if (!wantPlan) return;
       const hit = [...document.querySelectorAll('input[name="plan"]')]
         .find(r => (r.value || '').toLowerCase() === wantPlan);
       hit?.closest('.plan-card')?.click();
-    })();
+    }
+    async function renderPlanCards() {
+      const grid = document.getElementById('planGrid');
+      const esc = PlanDisplay.esc;
+      let plans = [];
+      try {
+        const r = await fetch('/api/subscription/plans');
+        const j = await r.json();
+        plans = PlanDisplay.sort(j.data?.items || j.data || []);
+      } catch { /* แสดงสถานะข้างล่าง */ }
+      if (!plans.length) {
+        // ไม่มีค่า = ไม่แต่งการ์ดปลอม — สมัครได้ (แพ็กเกจฟรี) แล้วไปเลือกภายหลัง
+        grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;font-size:12px;color:#64748b;padding:10px">โหลดรายการแพ็กเกจไม่สำเร็จ — สมัครแล้วเลือกแพ็กเกจได้ที่หน้า “แพ็กเกจ” ภายหลัง</div>
+          <input type="radio" name="plan" value="FreeTrial" checked style="display:none">`;
+        return;
+      }
+      grid.style.gridTemplateColumns = `repeat(${plans.length},1fr)`;
+      const defaultPlan = plans.find(p => p.isPermanentFree) || plans[0];
+      grid.innerHTML = plans.map(p => {
+        const free = !!p.isPermanentFree;
+        const badge = free
+          ? '<div style="position:absolute;top:-8px;right:8px;background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">ฟรีตลอดชีพ</div>'
+          : (p.plan === 'Pro' ? '<div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>' : '');
+        const line2 = free ? 'ฟรีตลอดชีพ' : (p.trialDurationDays > 0 ? `ทดลอง ${p.trialDurationDays} วัน` : 'ไม่มีช่วงทดลอง');
+        const docs = PlanDisplay.limit(p.maxDocumentsPerMonth, 'docs', 'ไม่จำกัด');
+        return `<label class="plan-card" data-plan="${esc(p.plan)}" data-free="${free ? '1' : '0'}" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff;position:relative">
+                <input type="radio" name="plan" value="${esc(p.plan)}" ${p === defaultPlan ? 'checked' : ''} style="display:none">
+                ${badge}
+                <div style="font-size:20px">${PLAN_ICON[p.plan] || '📦'}</div>
+                <div class="plan-name" style="font-weight:700;font-size:13px;margin-top:4px">${esc(p.name)}</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px">${esc(line2)}</div>
+                <div style="font-size:11px;color:#64748b;margin-top:6px">${esc(docs)} เอกสาร/เดือน</div>
+              </label>`;
+      }).join('');
+      bindPlanCards();
+      document.querySelectorAll('.plan-card').forEach(c => paintPlanCard(c, c.querySelector('input').checked));
+      applyPlanFromQuery();
+    }
+    renderPlanCards();
 
     // Apply site settings (logo, background, colors)
     (async function() {

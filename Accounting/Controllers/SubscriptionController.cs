@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Subscription;
+using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -175,6 +176,13 @@ public class SubscriptionController : ControllerBase
         var result = await _subscriptionService.GetPlanTemplatesAsync(false);
         return Ok(new ApiResponse<List<PlanTemplateResponse>>(true, result));
     }
+
+    /// <summary>แคตตาล็อกฟีเจอร์ (ป้าย/หมวด/ชุดสำเร็จรูป) — สาธารณะเพราะหน้าแรกใช้วาดตาราง
+    /// เปรียบเทียบแพ็กเกจ; ค่า "แพ็กเกจไหนเปิดอะไร" มาจาก `plans` ไม่ใช่ที่นี่</summary>
+    [HttpGet("feature-catalog")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<FeatureCatalogResponse>> GetFeatureCatalog()
+        => Ok(new ApiResponse<FeatureCatalogResponse>(true, FeatureFlagsHelper.Catalog()));
 
     // ===== Notification Settings =====
 

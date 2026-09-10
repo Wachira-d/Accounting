@@ -1230,6 +1230,7 @@ const API = {
 
   // Subscription
   getPlans: () => API.get('/api/subscription/plans'),
+  getFeatureCatalog: () => API.get('/api/subscription/feature-catalog'),
   startTrial: (d) => API.post('/api/subscription/trial/start', d),
 };
 

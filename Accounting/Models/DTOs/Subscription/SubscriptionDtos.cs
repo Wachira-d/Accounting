@@ -26,7 +26,10 @@ public record TrialStatusResponse(
     FeatureFlags EnabledFeatures,
     TrialUsageInfo Usage,
     TrialExpiryBehavior ExpiryBehavior,
-    ConversionIncentive? Incentive);
+    ConversionIncentive? Incentive,
+    /// <summary>วันที่ได้เพิ่มต่อการขยาย 1 ครั้ง (จากแพ็กเกจที่แอดมินตั้ง) — หน้าเว็บแสดงค่านี้
+    /// ห้ามพิมพ์ "7 วัน" ตายตัว (เดิม `subscription.html` พิมพ์ไว้ 3 จุดขณะที่ Enterprise ตั้ง 15)</summary>
+    int ExtensionDays = 0);
 
 public record TrialUsageInfo(
     int DocumentsUsed,
@@ -79,7 +82,10 @@ public record SubscriptionResponse(
     /// แพ็กเกจเพื่อให้ `Layout.hasFeature` ตัวเดียวตอบได้ทั้ง "ความสามารถของ
     /// แพ็กเกจ" (bitmask) และ "ส่วนเสริมที่ซื้อเพิ่ม" (string) — ห้ามให้หน้าเว็บ
     /// ไปเรียก endpoint ที่สองแล้วตัดสินเอง (จะกลายเป็น resolver ตัวที่สอง)</summary>
-    List<string>? EnabledAddOnCodes = null);
+    List<string>? EnabledAddOnCodes = null,
+    /// <summary>ชื่อแพ็กเกจที่แอดมินตั้งใน PlanTemplate (เช่น "Starter") — หน้าเว็บแสดงค่านี้
+    /// แทนการแปล enum เอง (`Basic`→"Starter" เคยถูกพิมพ์ซ้ำใน 5 หน้า และหน้าหนึ่งใช้คีย์ผิด)</summary>
+    string? PlanName = null);
 
 public record UsageLimits(
     int MaxUsers,
@@ -184,7 +190,23 @@ public record PlanTemplateResponse(
     int? AzureOcrPagesPerMonth = null,
     int? LocalOcrPagesPerMonth = null,
     bool FallbackToLocalWhenAzureExhausted = true,
-    int TrialMaxOcrPagesPerMonth = 10);
+    int TrialMaxOcrPagesPerMonth = 10,
+    // ─── พฤติกรรมช่วงทดลอง (หน้าแรก/หน้าสมัครแสดงจากค่าที่แอดมินตั้ง ไม่พิมพ์ "7 วัน" เอง) ───
+    int TrialGracePeriodDays = 7,
+    bool TrialBlockOnExpiry = false,
+    int TrialMaxUsers = 2,
+    int TrialMaxDocumentsPerMonth = 20,
+    int TrialMaxJournalEntriesPerMonth = 50);
+
+/// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
+public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");
+
+/// <summary>แคตตาล็อกฟีเจอร์สาธารณะ (`GET /api/subscription/feature-catalog`) — ป้าย · หมวด ·
+/// ชุดสำเร็จรูป มาจาก <c>Helpers/FeatureCatalog</c> ตัวเดียว ให้ทุกหน้าแสดงอย่างเดียว</summary>
+public record FeatureCatalogResponse(
+    List<FeatureFlagInfo> Features,
+    List<Accounting.Helpers.FeatureCategoryInfo> Categories,
+    Dictionary<string, List<string>> Presets);
 
 // ===== Subscription Notification Settings =====
 public record UpdateSubscriptionNotificationRequest(

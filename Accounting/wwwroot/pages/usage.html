@@ -150,8 +150,11 @@
       data: null,
 
       async load() {
+        // ชื่อแพ็กเกจจากที่แอดมินตั้ง (เดิม map enum→ชื่อพิมพ์เองในหน้านี้)
+        try { const r = await API.getPlans(); this._plans = r.data?.items || r.data || []; } catch { this._plans = []; }
         await this.loadUsage();
       },
+      _planName(planEnum) { return (this._plans || []).find(p => p.plan === planEnum)?.name || planEnum || '-'; },
       async init() {
         if (!Layout.init('usage')) return;
         Layout.setTitle('สถานะการใช้งาน');
@@ -200,7 +203,6 @@
       },
 
       renderOverview(d) {
-        const planMap = { FreeTrial:'ทดลองฟรี', Basic:'Starter', Pro:'Professional', Enterprise:'Enterprise' };
         const statusMap = { Trial:'ทดลองใช้', Active:'ใช้งาน', PastDue:'เกินกำหนด', Cancelled:'ยกเลิก', Expired:'หมดอายุ', Suspended:'ระงับ' };
         const daysLeft = Math.max(0, Math.ceil((new Date(d.endDate) - new Date()) / 86400000));
         const storagePct = d.maxStorageBytes > 0 ? (d.storageUsed / d.maxStorageBytes * 100).toFixed(1) : 0;
@@ -208,7 +210,7 @@
         document.getElementById('overviewCards').innerHTML = `
           <div class="usage-card">
             <h4>แพ็กเกจ</h4>
-            <div class="value" style="color:var(--primary)">${planMap[d.plan] || d.plan}</div>
+            <div class="value" style="color:var(--primary)">${Layout.esc(this._planName(d.plan))}</div>
             <div class="sub">${statusMap[d.status] || d.status} | เหลือ ${daysLeft} วัน</div>
           </div>
           <div class="usage-card">

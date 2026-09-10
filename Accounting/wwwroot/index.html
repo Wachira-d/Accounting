@@ -369,8 +369,8 @@
         <div style="display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-bottom:16px">
           <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">∞</div><div class="text-xs text-gray-500" data-i18n="landing.freeLifetime">ตลอดชีพ</div></div>
           <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">0฿</div><div class="text-xs text-gray-500" data-i18n="landing.freeCost">ค่าใช้จ่าย</div></div>
-          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">30</div><div class="text-xs text-gray-500" data-i18n="landing.freeDocs">เอกสาร/เดือน</div></div>
-          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)">1</div><div class="text-xs text-gray-500" data-i18n="landing.freeUsers">ผู้ใช้งาน</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)" id="freeDocsN">…</div><div class="text-xs text-gray-500" data-i18n="landing.freeDocs">เอกสาร/เดือน</div></div>
+          <div style="text-align:center"><div style="font-size:28px;font-weight:800;color:var(--primary)" id="freeUsersN">…</div><div class="text-xs text-gray-500" data-i18n="landing.freeUsers">ผู้ใช้งาน</div></div>
         </div>
         <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--gray-600)">
           <span data-i18n="landing.freeNoCc">&#10003; ไม่ต้องผูกบัตรเครดิต</span>
@@ -380,67 +380,14 @@
         </div>
       </div>
 
-      <!-- Feature Comparison Table -->
-      <div class="pricing-compare">
+      <!-- Feature Comparison Table — วาดจาก /api/subscription/plans + /api/subscription/feature-catalog
+           (ค่าที่แอดมินตั้ง) ห้ามพิมพ์แถว/เครื่องหมายถูกตายตัวที่นี่ — ถ้า API ไม่ตอบ ซ่อนทั้งส่วน -->
+      <div class="pricing-compare" id="pricingCompare" hidden>
         <h3 style="text-align:center;font-size:24px;font-weight:700;margin-bottom:24px" data-i18n="landing.compareTitle">เปรียบเทียบฟีเจอร์ทุกแพ็กเกจ</h3>
         <div class="table-container" style="max-width:900px;margin:0 auto;-webkit-overflow-scrolling:touch">
           <table class="table">
-            <thead>
-              <tr><th data-i18n="landing.cmpFeature">ฟีเจอร์</th><th class="text-center" data-i18n="landing.cmpFreeTrial">ทดลองฟรี</th><th class="text-center" data-i18n="landing.cmpStarter">Starter</th><th class="text-center" style="background:#EEF2FF" data-i18n="landing.cmpPro">Professional</th><th class="text-center" data-i18n="landing.cmpEnterprise">Enterprise</th></tr>
-            </thead>
-            <tbody>
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecUsage">ลิมิตการใช้งาน</td></tr>
-              <tr><td data-i18n="landing.cmpUsers">จำนวนผู้ใช้</td><td class="text-center">2</td><td class="text-center">2</td><td class="text-center" style="background:#FAFAFF">10</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
-              <tr><td data-i18n="landing.cmpCompanies">จำนวนบริษัท</td><td class="text-center">1</td><td class="text-center">1</td><td class="text-center" style="background:#FAFAFF">3</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
-              <tr><td data-i18n="landing.cmpDocsMonth">เอกสาร/เดือน</td><td class="text-center">30</td><td class="text-center">100</td><td class="text-center" style="background:#FAFAFF">1,000</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
-              <tr><td data-i18n="landing.cmpJournalsMonth">รายการบัญชี/เดือน</td><td class="text-center">50</td><td class="text-center">200</td><td class="text-center" style="background:#FAFAFF">2,000</td><td class="text-center" data-i18n="landing.cmpUnlimited">ไม่จำกัด</td></tr>
-              <tr><td data-i18n="landing.cmpStorage">พื้นที่จัดเก็บ</td><td class="text-center">100 MB</td><td class="text-center">500 MB</td><td class="text-center" style="background:#FAFAFF">5 GB</td><td class="text-center">50 GB</td></tr>
-
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecCore">ฟีเจอร์หลัก</td></tr>
-              <tr><td data-i18n="landing.cmpAccounting">ระบบบัญชี + สมุดรายวัน</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpDocuments">ออกเอกสาร (ใบแจ้งหนี้/ใบเสร็จ/ใบกำกับ)</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpVatWht">ภาษีมูลค่าเพิ่ม + หัก ณ ที่จ่าย</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpDashboard">แดชบอร์ดภาพรวม</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpReports">รายงาน (งบทดลอง/งบดุล/กำไรขาดทุน)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpAuditLog">Audit Log + ไฟล์แนบ</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpAging">รายงานอายุลูกหนี้/เจ้าหนี้</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecPro">ฟีเจอร์ขั้นสูง (Pro)</td></tr>
-              <tr><td data-i18n="landing.cmpAdvReports">รายงานขั้นสูง + กระแสเงินสด</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpInventory">สต็อกสินค้า + คลังสินค้า</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpRecon">กระทบยอดธนาคาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpBudget">งบประมาณ + ศูนย์ต้นทุน</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpApproval">ระบบอนุมัติ + Workflow</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpMultiApi">Multi-company + API Access</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpRecurring">รายการซ้ำอัตโนมัติ + เบิกค่าใช้จ่าย</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecCms">CMS & E-Commerce</td></tr>
-              <tr><td data-i18n="landing.cmpCmsSite">สร้างเว็บไซต์ Multi-site CMS</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpStore">ร้านค้าออนไลน์ + ตะกร้า + ชำระเงิน</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpCoupon">คูปอง + โปรโมชั่น + Free Shipping</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpShipping">ระบบจัดส่ง (Zone + Rate + คำนวณอัตโนมัติ)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpVariants">ตัวแปรสินค้า (ไซส์/สี/SKU)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpReview">รีวิว + Wishlist + Abandoned Cart</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpQuotation">โหมดใบเสนอราคาอัตโนมัติ (Quotation-only)</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpBooking">ระบบจองบริการ + นัดหมาย</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecEnt">ฟีเจอร์ Enterprise</td></tr>
-              <tr><td data-i18n="landing.cmpEtax">e-Tax Invoice + ลายเซ็นดิจิทัล</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpPayroll">ระบบเงินเดือน + ประกันสังคม</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpProject">โครงการ + Time Billing</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpConsol">Consolidation + Intercompany</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpAsset">สินทรัพย์ถาวร + ค่าเสื่อมราคา</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpAi">AI อัจฉริยะ + OCR เอกสาร</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpBanking">Open Banking + Webhook</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpLoan">สินเชื่อ + คอมมิชชั่น + FP&A</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-              <tr><td data-i18n="landing.cmpPriority">Priority Support</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300">&#10007;</td><td class="text-center text-gray-300" style="background:#FAFAFF">&#10007;</td><td class="text-center text-success">&#10003;</td></tr>
-
-              <tr><td colspan="5" style="background:var(--gray-50);font-weight:600" data-i18n="landing.cmpSecTrial">การทดลองใช้</td></tr>
-              <tr><td data-i18n="landing.cmpTrialDur">ระยะเวลาทดลอง</td><td class="text-center" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp30days">30 วัน</td></tr>
-              <tr><td data-i18n="landing.cmpExtend">ขยายเวลาทดลอง</td><td class="text-center" data-i18n="landing.cmpExt1x7d">1 ครั้ง (+7 วัน)</td><td class="text-center" data-i18n="landing.cmpExt1x7d">1 ครั้ง (+7 วัน)</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmpExt2x7d">2 ครั้ง (+7 วัน)</td><td class="text-center" data-i18n="landing.cmpExt3x15d">3 ครั้ง (+15 วัน)</td></tr>
-              <tr><td data-i18n="landing.cmpGrace">Grace Period หลังหมดอายุ</td><td class="text-center" data-i18n="landing.cmp7days">7 วัน</td><td class="text-center" data-i18n="landing.cmp7days">7 วัน</td><td class="text-center" style="background:#FAFAFF" data-i18n="landing.cmp14days">14 วัน</td><td class="text-center" data-i18n="landing.cmp30days">30 วัน</td></tr>
-              <tr><td data-i18n="landing.cmpExportExpiry">ส่งออกข้อมูลหลังหมดอายุ</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success">&#10003;</td><td class="text-center text-success" style="background:#FAFAFF">&#10003;</td><td class="text-center text-success">&#10003;</td></tr>
-            </tbody>
+            <thead id="cmpHead"></thead>
+            <tbody id="cmpBody"></tbody>
           </table>
         </div>
       </div>
@@ -510,6 +457,7 @@
 
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
+  <script src="/js/plan-display.js"></script>
   <script>
     I18n.init();
     I18n.renderSwitcher('langSwitcher');
@@ -685,17 +633,27 @@
     });
 
     // ===== Dynamic Pricing =====
+    // ทุกตัวเลข/ฟีเจอร์บนการ์ดและตารางเปรียบเทียบมาจากค่าที่แอดมินตั้ง (plans) +
+    // แคตตาล็อกฟีเจอร์ของเซิร์ฟเวอร์ — หน้านี้ "แสดง" อย่างเดียว (ดู js/plan-display.js)
     const Pricing = {
+      allPlans: [],
       plans: [],
+      catalog: null,
       cycle: 'monthly',
 
       async init() {
-        try {
-          const res = await fetch('/api/subscription/plans');
-          const json = await res.json();
-          this.plans = (json.data?.items || json.data || []).filter(p => p.plan !== 'FreeTrial');
-          if (this.plans.length) this.render();
-        } catch (e) { this.renderFallback(); }
+        const [plansRes, catRes] = await Promise.all([
+          fetch('/api/subscription/plans').then(r => r.json()).catch(() => null),
+          fetch('/api/subscription/feature-catalog').then(r => r.json()).catch(() => null),
+        ]);
+        const list = plansRes?.data?.items || plansRes?.data || [];
+        this.allPlans = PlanDisplay.sort(Array.isArray(list) ? list : []);
+        this.plans = this.allPlans.filter(p => !p.isPermanentFree && p.plan !== 'FreeTrial');
+        this.catalog = catRes?.data || null;
+        this.render();
+        this.renderFreeBox();
+        this.renderCompare();
+        I18n.onLangChange(() => { this.render(); this.renderCompare(); });
       },
 
       setCycle(cycle, el) {
@@ -722,66 +680,46 @@
         return n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
       },
 
-      formatStorage(bytes) {
-        if (bytes >= 1024*1024*1024) return (bytes / (1024*1024*1024)).toFixed(0) + ' GB';
-        return (bytes / (1024*1024)).toFixed(0) + ' MB';
+      nextPlan(p) {
+        const i = this.plans.indexOf(p);
+        return i >= 0 && i + 1 < this.plans.length ? this.plans[i + 1] : null;
       },
 
       featureList(plan) {
-        const t = k => I18n.t('landing.' + k);
-        const features = {
-          'Basic': [
-            { check: true, text: t('pricUsers').replace('{n}', plan.maxUsers) },
-            { check: true, text: t('pricDocs').replace('{n}', plan.maxDocumentsPerMonth.toLocaleString()) },
-            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
-            { check: true, text: t('pricBasicAccounting') },
-            { check: true, text: t('pricDocsTax') },
-            { check: true, text: t('pricVatWht') },
-            { check: true, text: t('pricStdReports') },
-            { check: true, text: t('pricFreeTrial').replace('{n}', plan.trialDurationDays) },
-            { check: false, text: t('pricNoInventory') },
-            { check: false, text: t('pricNoPayrollAi') },
-          ],
-          'Pro': [
-            { check: true, text: t('pricUsers').replace('{n}', plan.maxUsers) },
-            { check: true, text: t('pricCompanies').replace('{n}', plan.maxCompanies) },
-            { check: true, text: t('pricDocs').replace('{n}', plan.maxDocumentsPerMonth.toLocaleString()) },
-            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
-            { check: true, text: t('pricAllStarter') },
-            { check: true, text: t('pricInventoryRecon') },
-            { check: true, text: t('pricBudgetCost') },
-            { check: true, text: t('pricApiMulti') },
-            { check: true, text: t('pricApprovalWf') },
-            { check: true, text: t('pricFreeTrial').replace('{n}', plan.trialDurationDays) },
-          ],
-          'Enterprise': [
-            { check: true, text: t('pricUnlimitedUsers') },
-            { check: true, text: t('pricCompaniesPlus').replace('{n}', plan.maxCompanies) },
-            { check: true, text: t('pricUnlimitedDocs') },
-            { check: true, text: t('pricStorage').replace('{n}', this.formatStorage(plan.maxStorageBytes)) },
-            { check: true, text: t('pricAllPro') },
-            { check: true, text: t('pricEtaxDigital') },
-            { check: true, text: t('pricPayrollSso') },
-            { check: true, text: t('pricConsolidation') },
-            { check: true, text: t('pricAiOcrBank') },
-            { check: true, text: t('pricFreeTrialPriority').replace('{n}', plan.trialDurationDays) },
-          ],
-        };
-        return features[plan.plan] || [];
+        const t = (k, vars) => I18n.t('landing.' + k, vars);
+        return PlanDisplay.featureLines(plan, this.catalog, this.nextPlan(plan), {
+          lang: I18n.lang,
+          unlimited: t('cmpUnlimited'),
+          users: n => t('pricUsers', { n }),
+          unlimitedUsers: t('pricUnlimitedUsers'),
+          companies: n => t('pricCompanies', { n }),
+          docs: n => t('pricDocs', { n }),
+          unlimitedDocs: t('pricUnlimitedDocs'),
+          storage: n => t('pricStorage', { n }),
+          featureCount: n => t('pricFeatureCount', { n }),
+          trial: n => t('pricFreeTrial', { n }),
+        });
       },
 
       render() {
         const grid = document.getElementById('pricingGrid');
-        grid.innerHTML = this.plans.map((p, i) => {
+        if (!this.plans.length) {
+          // ไม่มีค่า = ไม่แต่งตัวเลข — บอกตรง ๆ ว่าโหลดไม่ได้ (เดิมมีตารางราคาสำรองพิมพ์ตายตัว
+          // ซึ่งจะโชว์ราคาเก่าเมื่อแอดมินเปลี่ยนราคาแล้ว API ล่มพอดี)
+          grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--gray-500)">${PlanDisplay.esc(I18n.t('landing.pricLoadFailed'))}</div>`;
+          return;
+        }
+        grid.innerHTML = this.plans.map(p => {
           const price = this.getPrice(p);
           const isFeatured = p.plan === 'Pro';
           const features = this.featureList(p);
-          const savingsPercent = this.cycle !== 'monthly' ? Math.round((1 - price.perMonth / p.monthlyPrice) * 100) : 0;
+          const savingsPercent = this.cycle !== 'monthly' && p.monthlyPrice > 0 ? Math.round((1 - price.perMonth / p.monthlyPrice) * 100) : 0;
+          const esc = PlanDisplay.esc;
 
           return `<div class="pricing-card${isFeatured ? ' featured' : ''}">
-            <div class="pricing-trial-badge">${I18n.t('landing.pricTrialBadge').replace('{n}', p.trialDurationDays)}</div>
-            <div class="pricing-name">${p.name}</div>
-            <div class="pricing-desc">${p._descKey ? I18n.t(p._descKey) : (p.description ? p.description.substring(0, 60) + '...' : '')}</div>
+            ${p.trialDurationDays > 0 ? `<div class="pricing-trial-badge">${esc(I18n.t('landing.pricTrialBadge', { n: p.trialDurationDays }))}</div>` : ''}
+            <div class="pricing-name">${esc(p.name)}</div>
+            <div class="pricing-desc">${esc(p.description ? (p.description.length > 60 ? p.description.substring(0, 60) + '…' : p.description) : '')}</div>
             <div class="pricing-price">
               <span class="amount">฿${this.formatMoney(price.perMonth)}</span>
               <span class="period">${I18n.t('landing.pricPerMonth')}</span>
@@ -790,24 +728,69 @@
               ฿${this.formatMoney(price.total)}/${this.cycleName()} (${I18n.t('landing.pricSave')} ${savingsPercent}%)
             </div>` : '<div style="margin-bottom:8px"></div>'}
             <ul class="pricing-features">
-              ${features.map(f => `<li><span class="${f.check ? 'check' : 'cross'}">${f.check ? '✓' : '✗'}</span> ${f.text}</li>`).join('')}
+              ${features.map(f => `<li><span class="${f.check ? 'check' : 'cross'}">${f.check ? '✓' : '✗'}</span> ${esc(f.text)}</li>`).join('')}
             </ul>
-            <a href="/register.html?plan=${p.plan.toLowerCase()}" class="btn ${isFeatured ? 'btn-primary' : 'btn-outline'} w-full">
+            <a href="/register.html?plan=${encodeURIComponent(String(p.plan).toLowerCase())}" class="btn ${isFeatured ? 'btn-primary' : 'btn-outline'} w-full">
               ${p.plan === 'Enterprise' ? I18n.t('landing.pricContactSales') : I18n.t('landing.pricStartTrial')}
             </a>
           </div>`;
         }).join('');
       },
 
-      renderFallback() {
-        // ใช้ข้อมูล static ถ้า API ไม่ตอบ
-        this.plans = [
-          { name:'Starter', plan:'Basic', monthlyPrice:590, quarterlyPrice:1680, semiAnnualPrice:3186, annualPrice:6018, maxUsers:2, maxCompanies:1, maxDocumentsPerMonth:100, maxStorageBytes:500*1024*1024, trialDurationDays:14, _descKey:'landing.descBasic' },
-          { name:'Professional', plan:'Pro', monthlyPrice:1490, quarterlyPrice:4248, semiAnnualPrice:8046, annualPrice:15198, maxUsers:10, maxCompanies:3, maxDocumentsPerMonth:1000, maxStorageBytes:5*1024*1024*1024, trialDurationDays:14, _descKey:'landing.descPro' },
-          { name:'Enterprise', plan:'Enterprise', monthlyPrice:4990, quarterlyPrice:14222, semiAnnualPrice:26946, annualPrice:50898, maxUsers:999, maxCompanies:99, maxDocumentsPerMonth:99999, maxStorageBytes:50*1024*1024*1024, trialDurationDays:30, _descKey:'landing.descEnterprise' },
-        ];
-        this.render();
-      }
+      /// กล่อง "Free Edition" — ตัวเลขเอกสาร/ผู้ใช้จากแพ็กเกจฟรีที่แอดมินตั้ง (เดิมพิมพ์ 30 / 1 ตายตัว)
+      renderFreeBox() {
+        const free = this.allPlans.find(p => p.isPermanentFree) || this.allPlans.find(p => p.plan === 'FreeTrial');
+        const box = document.querySelector('.trial-detail-box');
+        if (!box) return;
+        if (!free) { box.hidden = true; return; }
+        const d = document.getElementById('freeDocsN'); const u = document.getElementById('freeUsersN');
+        if (d) d.textContent = PlanDisplay.limit(free.maxDocumentsPerMonth, 'docs', '∞');
+        if (u) u.textContent = PlanDisplay.limit(free.maxUsers, 'users', '∞');
+      },
+
+      /// ตารางเปรียบเทียบ — แถว = ลิมิต + ทุกฟีเจอร์ในแคตตาล็อกที่มีอย่างน้อยหนึ่งแพ็กเกจเปิด
+      /// + เงื่อนไขทดลอง · คอลัมน์ = ทุกแพ็กเกจที่ active (รวมแพ็กเกจฟรี)
+      renderCompare() {
+        const box = document.getElementById('pricingCompare');
+        if (!box) return;
+        const plans = this.allPlans; const cat = this.catalog;
+        if (!plans.length || !cat?.features?.length) { box.hidden = true; return; }
+        const esc = PlanDisplay.esc;
+        const t = (k, vars) => I18n.t('landing.' + k, vars);
+        const en = I18n.lang === 'en';
+        const hi = p => p.plan === 'Pro' ? ' style="background:#FAFAFF"' : '';
+        const head = `<tr><th>${esc(t('cmpFeature'))}</th>${plans.map(p => `<th class="text-center"${hi(p)}>${esc(p.name)}</th>`).join('')}</tr>`;
+        const sec = label => `<tr><td colspan="${plans.length + 1}" style="background:var(--gray-50);font-weight:600">${esc(label)}</td></tr>`;
+        const row = (label, cells) => `<tr><td>${esc(label)}</td>${cells.map((c, i) => `<td class="text-center${c.cls || ''}"${hi(plans[i])}>${c.html}</td>`).join('')}</tr>`;
+        const num = v => ({ html: esc(v) });
+        const yes = { html: '&#10003;', cls: ' text-success' };
+        const no = { html: '&#10007;', cls: ' text-gray-300' };
+        const unl = t('cmpUnlimited');
+
+        let body = sec(t('cmpSecUsage'));
+        body += row(t('cmpUsers'), plans.map(p => num(PlanDisplay.limit(p.maxUsers, 'users', unl))));
+        body += row(t('cmpCompanies'), plans.map(p => num(PlanDisplay.limit(p.maxCompanies, 'companies', unl))));
+        body += row(t('cmpDocsMonth'), plans.map(p => num(PlanDisplay.limit(p.maxDocumentsPerMonth, 'docs', unl))));
+        body += row(t('cmpJournalsMonth'), plans.map(p => num(PlanDisplay.limit(p.maxJournalEntriesPerMonth, 'journals', unl))));
+        body += row(t('cmpStorage'), plans.map(p => num(PlanDisplay.storage(p.maxStorageBytes))));
+
+        for (const c of cat.categories || []) {
+          const shown = cat.features.filter(f => f.category === c.key && plans.some(p => PlanDisplay.has(p, f.name)));
+          if (!shown.length) continue;
+          body += sec(en && c.labelEn ? c.labelEn : c.labelTh);
+          for (const f of shown)
+            body += row(PlanDisplay.label(f, I18n.lang), plans.map(p => PlanDisplay.has(p, f.name) ? yes : no));
+        }
+
+        body += sec(t('cmpSecTrial'));
+        body += row(t('cmpTrialDur'), plans.map(p => num(p.isPermanentFree ? t('cmpForever') : t('cmpDaysFmt', { n: p.trialDurationDays }))));
+        body += row(t('cmpExtend'), plans.map(p => num(PlanDisplay.trialExtension(p, (n, d) => t('cmpExtFmt', { n, d }), t('cmpNone')))));
+        body += row(t('cmpGrace'), plans.map(p => num(p.isPermanentFree ? t('cmpNone') : t('cmpDaysFmt', { n: p.trialGracePeriodDays }))));
+
+        document.getElementById('cmpHead').innerHTML = head;
+        document.getElementById('cmpBody').innerHTML = body;
+        box.hidden = false;
+      },
     };
     Pricing.init();
 

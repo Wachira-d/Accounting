@@ -115,7 +115,9 @@ public record DashboardSubscriptionSummary(
     int DocumentsUsed,
     int DocumentsLimit,
     int UsersCount,
-    int UsersLimit);
+    int UsersLimit,
+    /// <summary>ชื่อแพ็กเกจจาก PlanTemplate (แอดมินตั้ง) — `app.html` เคยแปล enum เองด้วยคีย์ที่ไม่ตรง enum เลย</summary>
+    string? PlanName = null);
 
 public record DashboardRequest(
     DateTime? FromDate = null,

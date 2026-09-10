@@ -749,14 +749,13 @@
             const docPct = sub.documentsLimit > 0 ? Math.round(sub.documentsUsed / sub.documentsLimit * 100) : 0;
             const userPct = sub.usersLimit > 0 ? Math.round(sub.usersCount / sub.usersLimit * 100) : 0;
             const docColor = docPct > 80 ? 'var(--danger)' : docPct > 60 ? 'var(--warning)' : 'var(--success)';
-            const planLabels = { Free: 'ฟรี', Starter: 'Starter', Professional: 'Professional', Enterprise: 'Enterprise' };
             const statusLabels = { Active: ['ใช้งาน', 'badge-success'], Trial: ['ทดลองใช้', 'badge-warning'], Expired: ['หมดอายุ', 'badge-danger'], Cancelled: ['ยกเลิก', 'badge-danger'] };
             const [sLabel, sCls] = statusLabels[sub.status] || [sub.status, 'badge-secondary'];
             subEl.innerHTML = `
               <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
                 <div>
                   <div class="text-sm text-gray-500">แพ็กเกจ</div>
-                  <div class="font-semibold">${planLabels[sub.plan] || sub.plan} <span class="badge ${sCls}">${sLabel}</span></div>
+                  <div class="font-semibold">${Layout.esc(sub.planName || sub.plan)} <span class="badge ${sCls}">${sLabel}</span></div>
                 </div>
                 <div style="flex:1;min-width:200px">
                   <div class="text-sm text-gray-500">เอกสาร (${sub.documentsUsed}/${sub.documentsLimit})</div>

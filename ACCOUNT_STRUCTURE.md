@@ -353,6 +353,24 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 **ขายเฉพาะของที่มีจริง** — `lodging.promo` ถูก unpublish แล้ว: `LodgingReservation.PromoCode`
 เก็บเป็นข้อความเฉย ๆ `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ เปิดขายไปก็ไม่ได้อะไร
 
+#### 6.1c แคตตาล็อกฟีเจอร์ + หน้าที่แสดงแพ็กเกจ — อ่านจากที่แอดมินตั้งเท่านั้น ✅ (2026-09-10)
+
+| ชั้น | ตัวเดียวของระบบ | หมายเหตุ |
+| --- | --- | --- |
+| ชื่อ/ป้าย/หมวด/คำอธิบาย/ชุดสำเร็จรูปของฟีเจอร์ | `Helpers/FeatureCatalog.cs` → `GET /api/subscription/feature-catalog` (สาธารณะ) | ทุกบิตใน `FeatureFlags` ต้องมี metadata (เทสต์ `FeatureCatalogTests`) · preset คำนวณจาก enum combo ไม่พิมพ์ซ้ำ · `FeatureFlagsHelper` แค่มอบต่อ |
+| แพ็กเกจไหนเปิดอะไร · ลิมิต · เงื่อนไขทดลอง | `PlanTemplate` ที่แอดมินตั้ง → `GET /api/subscription/plans` (`PlanTemplateResponse` ส่ง `TrialGracePeriodDays`/`TrialBlockOnExpiry`/`TrialMax*` ด้วยแล้ว) | หน้าเว็บ**แสดง**อย่างเดียว |
+| วิธีแสดง (ไม่จำกัด · พื้นที่ · ขยายทดลอง · บรรทัดฟีเจอร์บนการ์ด) | `wwwroot/js/plan-display.js` (`PlanDisplay`) | ใช้ร่วมกันโดย `index.html` · `register.html` · `pages/subscription.html` — เกณฑ์ "ไม่จำกัด" (999/99/99999) อยู่ที่นี่ที่เดียว |
+| ชื่อแพ็กเกจที่ผู้ใช้เห็น | `SubscriptionResponse.PlanName` · `DashboardSubscriptionSummary.PlanName` · `AdminLayout.loadPlanNames()` | เดิม map `Basic→"Starter"` พิมพ์ซ้ำใน 5 หน้า และ `app.html` ใช้คีย์ที่ไม่ตรง enum เลย |
+
+ที่มา: ผู้ใช้รายงานว่าตารางเปรียบเทียบฟีเจอร์บนหน้าแรกไม่ตรงกับที่ติ๊กในหน้าแพ็กเกจของแอดมิน —
+ตารางเป็น HTML ตายตัว 40 แถว · การ์ดสมัครพิมพ์ "ทดลอง 14 วัน" · `subscription.html` พิมพ์ "+7 วัน"
+3 จุดและ**ส่ง `additionalDays: 7` ทับค่าแพ็กเกจ** · `settings-features.html` มีตารางป้าย 45 แถวที่ตก
+`CmsBooking` · `admin/plans.html` มี preset มือที่ตก `EtaxByEmail` · `admin-addons.html` มีรายชื่อแพ็กเกจ
+`['FreeTrial','Starter','Standard','Professional','Enterprise']` ซึ่ง 3 ใน 5 ไม่ใช่ชื่อ enum ⇒
+"แพ็กเกจขั้นต่ำ" ของ add-on **ไม่เคยบล็อก** (`MinPlanBlocked` parse ไม่ได้ = ขายทุกแพ็กเกจ) และตั้ง
+โบนัสโควตาต่อแพ็กเกจแล้ว 404. กติกา: ค่าที่มีที่ให้ตั้งในระบบ ห้ามมีสำเนาบนหน้าใด ๆ · API ไม่ตอบ =
+ซ่อนส่วนนั้น/บอกว่าโหลดไม่ได้ ไม่ตกไปใช้ตารางราคาสำรองที่พิมพ์ไว้ (เดิม `renderFallback` โชว์ราคาเก่า)
+
 ### 6.2 Prepaid (default) / Postpaid
 
 - **Prepaid**: ซื้อแพ็กเครดิตล่วงหน้า → `CreditBalance` ตัดตาม UsageEvent → เตือน 20%/หมด
@@ -676,6 +694,11 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-09-10 (rev 26 — **§6.1c แคตตาล็อกฟีเจอร์ + หน้าแสดง_
+_แพ็กเกจอ่านจากที่แอดมินตั้ง**: `Helpers/FeatureCatalog` + `GET /api/subscription/feature-catalog` ·_
+_`js/plan-display.js` · ตารางเปรียบเทียบ/การ์ดราคา/การ์ดสมัคร/หน้าแพ็กเกจลูกค้า/ตั้งค่าฟีเจอร์/preset_
+_แอดมิน วาดจาก API ทั้งหมด · `PlanName` บน SubscriptionResponse/Dashboard · add-on min-plan ใช้ชื่อ enum จริง)_
 
 _Last verified against codebase: 2026-09-03 (rev 25 — **รอบผู้ใช้รายงาน 6 ข้อ**:_
 _(1) หน้า "ติดต่อเรา" ของเว็บ CMS โชว์เบอร์/อีเมลตัวอย่าง (`02-XXX-XXXX`) ที่ seed_

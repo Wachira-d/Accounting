@@ -78,55 +78,9 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    // Feature → display label mapping. Keys must match FeatureFlags
-    // enum names from the server. Labels in Thai per Owner persona.
-    const FEATURE_LABELS = {
-      BasicAccounting:       { label:'บัญชีพื้นฐาน',        desc:'GL · journal · งบทดลอง · ผังบัญชี' },
-      AdvancedReporting:     { label:'รายงานขั้นสูง',      desc:'งบดุล · งบกำไรขาดทุน · executive reports' },
-      TaxManagement:         { label:'จัดการภาษี',          desc:'ภพ.30 · ภงด.1/3/53 · e-Tax' },
-      DocumentEngine:        { label:'ระบบเอกสาร',          desc:'ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · PO/PI' },
-      MultiCompany:          { label:'หลายบริษัท',          desc:'จัดการหลายบริษัทใน account เดียว' },
-      APIAccess:             { label:'API Access',          desc:'integrate ระบบนอก ผ่าน REST API' },
-      BulkImport:            { label:'นำเข้าจำนวนมาก',      desc:'CSV / Excel bulk import' },
-      AutoPosting:           { label:'auto-post GL',         desc:'ลง journal อัตโนมัติจาก doc' },
-      EtaxInvoice:           { label:'e-Tax Invoice',       desc:'PDF/A-3 + XML ETDA' },
-      WorkflowEngine:        { label:'Workflow อนุมัติ',     desc:'multi-step approval routing' },
-      AuditLog:              { label:'Audit Log',           desc:'log การเข้าถึง + แก้ไขข้อมูล' },
-      EmailNotification:     { label:'อีเมลแจ้งเตือน',      desc:'ส่งใบกำกับ + แจ้งครบกำหนด' },
-      MultiUser:             { label:'หลายผู้ใช้',          desc:'invite + role-based access' },
-      BankReconciliation:    { label:'กระทบยอดธนาคาร',     desc:'auto-match bank statement' },
-      Inventory:             { label:'คลังสินค้า',          desc:'stock movement · barcode · cost' },
-      FixedAssets:           { label:'สินทรัพย์ถาวร',       desc:'depreciation · disposal · register' },
-      RecurringTransactions: { label:'รายการประจำ',         desc:'auto-create recurring docs' },
-      MultiCurrency:         { label:'หลายสกุลเงิน',        desc:'FX rate · multi-currency posting' },
-      ApprovalWorkflow:      { label:'Approval flow',       desc:'document approval chain' },
-      FileAttachments:       { label:'แนบไฟล์',             desc:'attach รูป / PDF กับเอกสาร' },
-      PurchaseOrders:        { label:'ใบสั่งซื้อ',          desc:'PO → รับสินค้า → PI chain' },
-      ExpenseManagement:     { label:'จัดการเบิกพนักงาน',    desc:'expense claim · §65 ทวิ · approval' },
-      Dashboard:             { label:'แดชบอร์ด',            desc:'KPI · กราฟ · executive summary' },
-      BudgetManagement:      { label:'งบประมาณ',            desc:'budget vs actual · variance' },
-      AgingReport:           { label:'รายงาน aging',        desc:'aging AR / AP · alert' },
-      Payroll:               { label:'เงินเดือน + ลา',       desc:'payroll runs · leave · ภงด.1' },
-      ProjectAccounting:     { label:'บัญชีโครงการ',        desc:'project P&L · cost tracking' },
-      CostCenter:            { label:'cost centre',         desc:'dimension-based GL reporting' },
-      Consolidation:         { label:'งบรวม',               desc:'consolidate หลายบริษัท' },
-      WarehouseManagement:   { label:'หลายคลัง',            desc:'multi-warehouse stock' },
-      LoanManagement:        { label:'จัดการเงินกู้',       desc:'ผ่อนต้น + ดอกเบี้ย' },
-      Commission:            { label:'คอมมิชชัน',           desc:'rule-based commission calc' },
-      AI_Features:           { label:'AI Augmentation',     desc:'DeepSeek + local model train' },
-      DocumentOCR:           { label:'OCR เอกสาร',           desc:'ถ่ายรูปบิล → AI อ่าน → ลง doc' },
-      ReportBuilder:         { label:'สร้างรายงานเอง',      desc:'custom report builder' },
-      CustomerPortal:        { label:'Customer Portal',     desc:'ลูกค้า login ดูเอกสารตัวเอง' },
-      TimeBilling:           { label:'Time billing',        desc:'ลง timesheet → bill ลูกค้า' },
-      OpenBanking:           { label:'Open Banking',        desc:'auto-import bank txns' },
-      Webhook:               { label:'Webhooks',            desc:'push events ออกไปข้างนอก' },
-      RevenueRecognition:    { label:'รับรู้รายได้',         desc:'ASC 606 / TFRS 15' },
-      FPA:                   { label:'FP&A',                desc:'forecast + variance' },
-      EtaxByEmail:           { label:'e-Tax ผ่านอีเมล',     desc:'PDF/A-3 ส่งให้ลูกค้า + RD timestamp' },
-      EtaxDirect:            { label:'e-Tax ตรง RD',        desc:'submit XML ตรง RD API' },
-      CmsWebsiteBuilder:     { label:'CMS เว็บไซต์',        desc:'สร้างเว็บบริษัท / ขายของ' },
-      CmsEcommerce:          { label:'CMS Ecommerce',       desc:'ระบบ shopping cart' },
-    };
+    // ป้าย/คำอธิบายฟีเจอร์มาจาก GET /api/subscription/feature-catalog (Helpers/FeatureCatalog ตัวเดียว)
+    // — เดิมหน้านี้พิมพ์ตารางป้ายเอง 45 แถว ซึ่งตก CmsBooking และป้ายไม่ตรงกับหน้าแพ็กเกจของแอดมิน
+    // ⇒ ฟีเจอร์ที่แพ็กเกจเปิดแต่ตารางไม่รู้จัก **หายจากหน้าตั้งค่า** โดยไม่มีอะไรบอก
 
     // Menu groups extracted from layout.js navItems — labels match the
     // sidebar so user toggling here = direct effect on what they see.
@@ -155,8 +109,9 @@
         Layout.setTitle('ตั้งค่าฟีเจอร์และเมนู');
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await API.get(`/api/companies/${cid}/owner-config`);
+          const [r, cat] = await Promise.all([API.get(`/api/companies/${cid}/owner-config`), API.getFeatureCatalog()]);
           this._data = r?.data;
+          this._catalog = cat?.data || { features: [] };
           document.getElementById('main').style.display = '';
           this.renderFeatures();
           this.renderMenus();
@@ -182,18 +137,19 @@
         const grid = document.getElementById('featureGrid');
         // Only render features the plan includes — outside-plan features
         // are hidden (Owner can't enable them from here anyway).
-        const ordered = Object.keys(FEATURE_LABELS).filter(k => plan.has(k));
+        const ordered = (this._catalog.features || []).filter(f => plan.has(f.name));
         if (!ordered.length) {
           grid.innerHTML = '<div style="grid-column:1/-1;padding:14px;color:#94a3b8">แพ็คเกจปัจจุบันยังไม่เปิดฟีเจอร์ใดๆ</div>';
           return;
         }
-        grid.innerHTML = ordered.map(key => {
-          const meta = FEATURE_LABELS[key];
+        grid.innerHTML = ordered.map(f => {
+          const key = f.name;
+          const meta = { label: f.labelTh || f.name, desc: f.description || '' };
           const isOn = !disabled.has(key);
           return `<div class="feature-card${isOn ? '' : ' disabled'}" data-key="${key}">
             <div>
-              <div class="name">${meta.label}</div>
-              <div class="desc">${meta.desc}</div>
+              <div class="name">${Layout.esc(meta.label)}</div>
+              <div class="desc">${Layout.esc(meta.desc)}</div>
             </div>
             <label class="switch">
               <input type="checkbox" ${isOn ? 'checked' : ''} onchange="Page.toggleFeature('${key}', this.checked)">

@@ -207,8 +207,11 @@
             <input class="form-control" id="fTrial" type="number" min="0">
           </div>
           <div>
-            <label>แพ็กเกจขั้นต่ำ <span class="muted" style="font-weight:400">(คั่นด้วยจุลภาค เว้นว่าง = ทุกแพ็กเกจ)</span></label>
-            <input class="form-control" id="fMinPlan" placeholder="Standard,Professional,Enterprise">
+            <label>แพ็กเกจที่ซื้อได้ <span class="muted" style="font-weight:400">(ไม่ติ๊กเลย = ทุกแพ็กเกจ)</span></label>
+            <!-- ช่องติ๊กสร้างจาก /api/subscription/plans — ค่าที่ส่งคือชื่อ enum (FreeTrial/Basic/Pro/Enterprise)
+                 ซึ่งเป็นสิ่งเดียวที่ EntitlementService.MinPlanBlocked อ่านออก. เดิมเป็นช่องพิมพ์ CSV ที่ placeholder
+                 แนะนำ "Standard,Professional,Enterprise" ⇒ ทุกชื่อ parse ไม่ได้ ⇒ ด่านแพ็กเกจขั้นต่ำไม่เคยบล็อกเลย -->
+            <div id="fMinPlanBox" style="display:flex;gap:10px;flex-wrap:wrap;padding:6px 0;font-size:13px"></div>
           </div>
         </div>
         <label style="display:flex;gap:8px;align-items:center;margin-top:8px">
@@ -375,7 +378,7 @@
         document.getElementById('fUnit').value = f.unitLabel || '';
         document.getElementById('fSort').value = f.sortOrder ?? 0;
         document.getElementById('fTrial').value = f.trialDays ?? 0;
-        document.getElementById('fMinPlan').value = f.minPlanCsv || '';
+        this._setMinPlans(f.minPlanCsv || '');
         document.getElementById('fPublished').checked = !!f.isPublished;
         // ราคาเริ่มต้นว่างเสมอ — การเปิดฟอร์มต้องไม่กลายเป็นการตั้งราคาใหม่โดยไม่ตั้งใจ
         document.getElementById('pMethod').value = '';
@@ -408,7 +411,7 @@
             icon: document.getElementById('fIcon').value.trim(),
             moduleCode: this._module || null,
             trialDays: +document.getElementById('fTrial').value || 0,
-            minPlanCsv: document.getElementById('fMinPlan').value.trim(),
+            minPlanCsv: this._getMinPlans(),
           });
 
           if (method) {
@@ -429,12 +432,37 @@
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
 
-      // ───────── ภารกิจแลกโควตา ─────────
-      PLANS: ['FreeTrial', 'Starter', 'Standard', 'Professional', 'Enterprise'],
+      // ───────── แพ็กเกจ (จากค่าที่แอดมินตั้ง) ─────────
+      // เดิมพิมพ์ ['FreeTrial','Starter','Standard','Professional','Enterprise'] ⇒ 3 ใน 5 ไม่ใช่ชื่อ enum
+      // (`Standard` ไม่มีในระบบเลย) ⇒ ตั้ง "แพ็กเกจขั้นต่ำ" แล้วไม่บล็อก · ตั้งโบนัสโควตาต่อแพ็กเกจแล้ว 404
+      _plans: null,
+      async _loadPlans() {
+        if (this._plans) return this._plans;
+        try { const r = await API.getPlans(); this._plans = (r.data?.items || r.data || []).filter(p => p.isActive !== false); }
+        catch { this._plans = []; }
+        return this._plans;
+      },
+      _renderMinPlanBox() {
+        const box = document.getElementById('fMinPlanBox'); if (!box) return;
+        box.innerHTML = (this._plans || []).map(p => `<label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="checkbox" class="fMinPlan" value="${Layout.esc(p.plan)}"> ${Layout.esc(p.name)}</label>`).join('')
+          || '<span class="muted">โหลดรายการแพ็กเกจไม่สำเร็จ</span>';
+      },
+      async _setMinPlans(csv) {
+        await this._loadPlans();
+        this._renderMinPlanBox();
+        const want = new Set(String(csv || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+        document.querySelectorAll('.fMinPlan').forEach(cb => { cb.checked = want.has(cb.value.toLowerCase()); });
+      },
+      _getMinPlans() {
+        return [...document.querySelectorAll('.fMinPlan:checked')].map(cb => cb.value).join(',');
+      },
 
+      // ───────── ภารกิจแลกโควตา ─────────
       async loadRewards() {
+        await this._loadPlans();
         const sel = document.getElementById('rwPlan');
-        if (sel && !sel.options.length) sel.innerHTML = this.PLANS.map(p => `<option value="${p}">${p}</option>`).join('');
+        if (sel && !sel.options.length) sel.innerHTML = (this._plans || []).map(p => `<option value="${Layout.esc(p.plan)}">${Layout.esc(p.name)}</option>`).join('');
         let list = [];
         try {
           const res = await API.get('/api/admin/metering/quota-rewards');

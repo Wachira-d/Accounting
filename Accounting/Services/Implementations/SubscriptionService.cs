@@ -273,7 +273,8 @@ public class SubscriptionService : ISubscriptionService
                 tc.TrialMessage),
             tc.DiscountPercentOnConversion.HasValue
                 ? new ConversionIncentive(tc.DiscountPercentOnConversion, tc.DiscountValidUntil, tc.ConversionPromoCode)
-                : null);
+                : null,
+            tc.ExtensionDays);
     }
 
     public async Task<TrialStatusResponse> ExtendTrialAsync(Guid companyId, ExtendTrialRequest request, string performedBy)
@@ -444,6 +445,7 @@ public class SubscriptionService : ISubscriptionService
         // Enterprise License. Mirrors the source-of-truth picked by
         // GetEffectivePlanAsync but stays inline so we don't double-query.
         var plan = sub.Plan;
+        string? planName = null;
         var status = sub.Status;
         var features = sub.EnabledFeatures;
         var endDate = sub.EndDate;
@@ -461,6 +463,7 @@ public class SubscriptionService : ISubscriptionService
             if (acct != null)
             {
                 plan = acct.PlanTemplate.Plan;
+                planName = acct.PlanTemplate.Name;
                 status = acct.Status;
                 features = acct.EnabledFeatures;
                 endDate = acct.EndDate;
@@ -491,6 +494,12 @@ public class SubscriptionService : ISubscriptionService
             .Select(f => f.FeatureCode)
             .ToListAsync();
 
+        // ชื่อแพ็กเกจที่แอดมินตั้ง (ไม่ใช่ชื่อ enum) — หน้าเว็บแสดงค่านี้ตรง ๆ
+        planName ??= await _db.PlanTemplates.AsNoTracking()
+            .Where(t => t.Plan == plan && t.IsActive)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync();
+
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
@@ -499,7 +508,8 @@ public class SubscriptionService : ISubscriptionService
             new UsageLimits(maxUsers, maxCompanies, maxDocs, maxJournals, maxStorage),
             await GetUsageCurrentAsync(sub),
             sub.IsPermanentFree,
-            addOnCodes);
+            addOnCodes,
+            planName);
     }
 
     /// <summary>
@@ -2221,119 +2231,34 @@ public class SubscriptionService : ISubscriptionService
             t.AzureOcrPagesPerMonth,
             t.LocalOcrPagesPerMonth,
             t.FallbackToLocalWhenAzureExhausted,
-            t.TrialMaxOcrPagesPerMonth);
+            t.TrialMaxOcrPagesPerMonth,
+            t.TrialGracePeriodDays,
+            t.TrialBlockOnExpiry,
+            t.TrialMaxUsers,
+            t.TrialMaxDocumentsPerMonth,
+            t.TrialMaxJournalEntriesPerMonth);
     }
 }
 
 /// <summary>
-/// Helper for converting FeatureFlags bitmask to/from name lists
+/// ตัวแปลง bitmask ↔ รายชื่อ — **มอบต่อให้ <see cref="Accounting.Helpers.FeatureCatalog"/> ทั้งหมด**
+/// (เดิมไฟล์นี้มีตารางป้ายไทย + หมวดของตัวเองซึ่งตกธง CMS 3 ตัว และซ้ำกับสำเนาใน JS 4 หน้า)
 /// </summary>
 public static class FeatureFlagsHelper
 {
-    private static readonly string[] PresetNames = { "None", "TrialFeatures", "BasicFeatures", "ProFeatures", "EnterpriseFeatures" };
+    public static List<string> ToNameList(FeatureFlags flags) => Accounting.Helpers.FeatureCatalog.NamesOf(flags);
 
-    public static List<string> ToNameList(FeatureFlags flags)
-    {
-        var result = new List<string>();
-        foreach (FeatureFlags v in Enum.GetValues(typeof(FeatureFlags)))
-        {
-            var name = v.ToString();
-            if (PresetNames.Contains(name)) continue;
-            var val = (long)v;
-            // Single-bit flag only (power of 2)
-            if (val > 0 && (val & (val - 1)) == 0 && flags.HasFlag(v))
-                result.Add(name);
-        }
-        return result;
-    }
-
-    public static FeatureFlags FromNameList(IEnumerable<string>? names)
-    {
-        var result = FeatureFlags.None;
-        if (names == null) return result;
-        foreach (var n in names)
-        {
-            if (string.IsNullOrWhiteSpace(n)) continue;
-            if (Enum.TryParse<FeatureFlags>(n, true, out var f) && !PresetNames.Contains(f.ToString()))
-                result |= f;
-        }
-        return result;
-    }
+    public static FeatureFlags FromNameList(IEnumerable<string>? names) => Accounting.Helpers.FeatureCatalog.FlagsOf(names);
 
     public static List<FeatureFlagInfo> AllFeatures()
-    {
-        var result = new List<FeatureFlagInfo>();
-        foreach (FeatureFlags v in Enum.GetValues(typeof(FeatureFlags)))
-        {
-            var name = v.ToString();
-            if (PresetNames.Contains(name)) continue;
-            var val = (long)v;
-            if (val > 0 && (val & (val - 1)) == 0)
-                result.Add(new FeatureFlagInfo(name, FeatureCategory(name), FeatureLabelTh(name)));
-        }
-        return result;
-    }
+        => Accounting.Helpers.FeatureCatalog.All
+            .Select(e => new FeatureFlagInfo(e.Name, e.Category, e.LabelTh, e.LabelEn, e.DescriptionTh))
+            .ToList();
 
-    private static string FeatureCategory(string name) => name switch
-    {
-        "BasicAccounting" or "DocumentEngine" or "TaxManagement" or "Dashboard" or "CustomChartOfAccounts" or "AutoPosting" => "core",
-        "AdvancedReporting" or "AgingReport" or "ReportBuilder" or "FPA" or "BudgetManagement" => "reporting",
-        "MultiCompany" or "MultiUser" or "MultiCurrency" or "Consolidation" or "Intercompany" => "multi",
-        "Inventory" or "WarehouseManagement" or "FixedAssets" or "BankReconciliation" or "ExpenseManagement" or "PurchaseOrders" or "RecurringTransactions" or "CostCenter" or "ProjectAccounting" or "Payroll" or "Commission" or "TimeBilling" or "LoanManagement" or "RevenueRecognition" => "operations",
-        "WorkflowEngine" or "ApprovalWorkflow" or "AuditLog" or "EtaxInvoice" or "EtaxByEmail" or "EtaxDirect" or "OpenBanking" or "Webhook" => "advanced",
-        "APIAccess" or "BulkImport" or "EmailNotification" or "FileAttachments" or "CustomerPortal" => "integration",
-        "AI_Features" or "DocumentOCR" => "ai",
-        _ => "other"
-    };
-
-    private static string FeatureLabelTh(string name) => name switch
-    {
-        "BasicAccounting" => "บัญชีพื้นฐาน",
-        "AdvancedReporting" => "รายงานขั้นสูง",
-        "TaxManagement" => "จัดการภาษี",
-        "DocumentEngine" => "ระบบเอกสาร",
-        "MultiCompany" => "หลายบริษัท",
-        "APIAccess" => "เปิดใช้ API",
-        "BulkImport" => "นำเข้าจำนวนมาก",
-        "CustomChartOfAccounts" => "ผังบัญชีแบบกำหนดเอง",
-        "AutoPosting" => "ลงบัญชีอัตโนมัติ",
-        "EtaxInvoice" => "e-Tax Invoice",
-        "EtaxByEmail" => "e-Tax by Email (RD เก็บเวลาประทับ)",
-        "EtaxDirect" => "e-Tax Direct (ยิง XML เข้า RD API)",
-        "WorkflowEngine" => "Workflow Engine",
-        "AuditLog" => "บันทึกประวัติการใช้งาน",
-        "EmailNotification" => "แจ้งเตือนทางอีเมล",
-        "MultiUser" => "ผู้ใช้หลายคน",
-        "BankReconciliation" => "กระทบยอดธนาคาร",
-        "Inventory" => "สินค้าคงคลัง",
-        "FixedAssets" => "สินทรัพย์ถาวร",
-        "RecurringTransactions" => "รายการอัตโนมัติ",
-        "MultiCurrency" => "หลายสกุลเงิน",
-        "ApprovalWorkflow" => "ระบบอนุมัติ",
-        "FileAttachments" => "แนบไฟล์",
-        "PurchaseOrders" => "ใบสั่งซื้อ",
-        "ExpenseManagement" => "จัดการค่าใช้จ่าย",
-        "Dashboard" => "แดชบอร์ด",
-        "BudgetManagement" => "จัดการงบประมาณ",
-        "AgingReport" => "รายงาน Aging",
-        "Payroll" => "เงินเดือน",
-        "ProjectAccounting" => "บัญชีโครงการ",
-        "CostCenter" => "ศูนย์ต้นทุน",
-        "Consolidation" => "รวมงบบริษัทในกลุ่ม",
-        "WarehouseManagement" => "จัดการคลังสินค้า",
-        "LoanManagement" => "จัดการสินเชื่อ",
-        "Commission" => "ระบบค่าคอมมิชชั่น",
-        "AI_Features" => "ฟีเจอร์ AI",
-        "DocumentOCR" => "OCR เอกสาร",
-        "ReportBuilder" => "สร้างรายงานเอง",
-        "CustomerPortal" => "พอร์ทัลลูกค้า",
-        "TimeBilling" => "บันทึกชั่วโมงทำงาน",
-        "OpenBanking" => "Open Banking",
-        "Webhook" => "Webhook",
-        "RevenueRecognition" => "รับรู้รายได้",
-        "FPA" => "วางแผน/วิเคราะห์การเงิน",
-        _ => name
-    };
+    /// <summary>payload ของ `GET /api/subscription/feature-catalog`</summary>
+    public static FeatureCatalogResponse Catalog()
+        => new(AllFeatures(),
+            Accounting.Helpers.FeatureCatalog.Categories.ToList(),
+            Accounting.Helpers.FeatureCatalog.Presets.ToDictionary(kv => kv.Key, kv => kv.Value));
 }
 
-public record FeatureFlagInfo(string Name, string Category, string LabelTh);

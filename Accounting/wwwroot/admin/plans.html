@@ -24,24 +24,23 @@
   <script>
     AdminLayout.init('plans');
 
+    // แคตตาล็อกฟีเจอร์ (รายการ · หมวด · ชุดสำเร็จรูป) มาจาก GET /api/subscription/feature-catalog
+    // ตัวเดียวกับที่หน้าแรก/หน้าสมัคร/หน้าตั้งค่าของลูกค้าใช้ — เดิมหน้านี้พิมพ์ชื่อหมวด + รายการ
+    // preset เอง ⇒ preset "Pro" ตก EtaxByEmail ที่ enum มี และหมวด cms ไม่มีป้าย
     let allFeatures = [];
-    const categoryLabels = {
-      core: 'หลัก/พื้นฐาน',
-      reporting: 'รายงาน',
-      multi: 'หลายบริษัท/หลายสกุลเงิน',
-      operations: 'การดำเนินงาน',
-      advanced: 'ขั้นสูง/Workflow',
-      integration: 'เชื่อมต่อ/นำเข้า',
-      ai: 'AI / OCR',
-      other: 'อื่นๆ'
-    };
-    const categoryOrder = ['core', 'reporting', 'multi', 'operations', 'advanced', 'integration', 'ai', 'other'];
+    let categoryLabels = {};
+    let categoryOrder = [];
+    let presets = {};
 
     async function loadFeatures() {
       try {
-        const res = await AdminAPI.features();
-        allFeatures = res.data || [];
-      } catch (e) { console.warn('Could not load features', e); }
+        const res = await AdminAPI.get('/api/subscription/feature-catalog');
+        const cat = res.data || {};
+        allFeatures = cat.features || [];
+        categoryOrder = (cat.categories || []).map(c => c.key);
+        categoryLabels = Object.fromEntries((cat.categories || []).map(c => [c.key, c.labelTh]));
+        presets = cat.presets || {};
+      } catch (e) { console.warn('Could not load feature catalog', e); }
     }
 
     async function loadPlans() {
@@ -165,7 +164,7 @@
           </div>
         </div>
         <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:280px;overflow:auto;background:#f8fafc">`;
-      categoryOrder.forEach(cat => {
+      [...categoryOrder, ...Object.keys(byCategory).filter(k => !categoryOrder.includes(k))].forEach(cat => {
         if (!byCategory[cat]) return;
         const features = byCategory[cat];
         html += `<div style="margin-bottom:10px">
@@ -194,16 +193,6 @@
       document.querySelectorAll('.' + prefix + '_feat').forEach(cb => cb.checked = val);
       featureCount(prefix);
     }
-
-    const presets = {
-      trial: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard'],
-      basic: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport'],
-      pro: ['BasicAccounting', 'DocumentEngine', 'TaxManagement', 'Dashboard', 'AuditLog', 'EmailNotification', 'FileAttachments', 'AgingReport',
-        'AdvancedReporting', 'MultiCompany', 'APIAccess', 'BulkImport', 'CustomChartOfAccounts', 'AutoPosting', 'MultiUser',
-        'BankReconciliation', 'Inventory', 'RecurringTransactions', 'ApprovalWorkflow', 'PurchaseOrders', 'ExpenseManagement',
-        'BudgetManagement', 'CostCenter'],
-      enterprise: allFeatures.map(f => f.name)
-    };
 
     function featureApplyPreset(prefix, preset) {
       const set = new Set(presets[preset] || []);
