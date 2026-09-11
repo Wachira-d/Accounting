@@ -66,10 +66,6 @@ public interface IOcrAiAugmenter
         string? localBestContactId, decimal localConfidence,
         CancellationToken ct = default);
 
-    /// <summary>
-    /// จำแนกชนิดเอกสารจากกระดาษ — เรียกเฉพาะตอนกติกาไม่มั่นใจ
-    /// (ดูรายละเอียดที่ implementation)
-    /// </summary>
     /// <summary>เราเป็นผู้ซื้อหรือผู้ขายของกระดาษใบนี้ — เรียกเฉพาะเมื่อ
     /// <c>Helpers/OcrPartyResolver</c> บอกว่ากติกาตัดสินไม่ได้ (ShouldAskAi)</summary>
     Task<OcrAiAugmentationResult> InferOurRoleAsync(
@@ -81,6 +77,10 @@ public interface IOcrAiAugmenter
         IReadOnlyList<string> ruleReasons, string? whyAsking,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// จำแนกชนิดเอกสารจากกระดาษ — เรียกเฉพาะตอนกติกาไม่มั่นใจ
+    /// (ดูรายละเอียดที่ implementation)
+    /// </summary>
     Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
@@ -531,25 +531,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         }
     }
 
-    /// <summary>
-    /// "กระดาษใบนี้คือเอกสารชนิดไหน" — เรียกเฉพาะตอน<b>กติกาไม่มั่นใจ</b>
-    ///
-    /// ═══ ทำไมถึงเพิ่งมาต่อสาย ═══
-    /// <c>AiFeatureKey.DocumentTypeClassification</c> (#3) มีครบทุกอย่างมาแล้ว
-    /// — enum, prompt (<c>DocumentTypeClassifyPrompt</c>), และ student ที่
-    /// register ไว้ใน Program.cs — <b>แต่ไม่เคยมีใครเรียกเลยสักครั้ง</b>
-    /// ⇒ prompt ตายอยู่ในไฟล์ และ student อดอาหารถาวร (ไม่มี feedback row
-    /// เกิดขึ้นเลย จึงไม่มีวัน IsReady)
-    ///
-    /// การจำแนกชนิดเอกสารคือคำถามที่ <b>พลาดแล้วแพงที่สุด</b> ในทั้งไปป์ไลน์ —
-    /// ผิดชนิด = บัญชีคู่ผิดทั้งใบ + เข้ารายงานภาษีผิดฝั่ง จึงคุ้มที่จะจ่าย
-    /// token เฉพาะเคสที่กติกาเดาไม่ลง
-    ///
-    /// ═══ ด่านกันมั่ว (anti-hallucination) ═══
-    /// คำตอบต้องเป็นค่าใน <c>DocumentType</c> จริง และต้อง<b>อยู่ฝั่งเดียวกับ
-    /// บทบาทที่ยืนยันแล้ว</b> — AI มองไม่เห็นว่าเราเป็นผู้ซื้อหรือผู้ขาย
-    /// ผู้เรียกจึงต้องกรองอีกชั้น (ดู DocumentSide.MatchesRole)
-    /// </summary>
+    /// <summary>เราเป็นผู้ซื้อหรือผู้ขายของกระดาษใบนี้ — เรียกเฉพาะเมื่อ <c>OcrPartyResolver</c>
+    /// บอกว่ากติกาตัดสินไม่ได้ · คำตอบผ่านด่าน ∈ {Buyer, Seller} และ confidence ∈ [0,1]</summary>
     public async Task<OcrAiAugmentationResult> InferOurRoleAsync(
         Guid companyId, Guid scanResultId,
         string rawText,
@@ -580,15 +563,17 @@ public class OcrAiAugmenter : IOcrAiAugmenter
 
             // ด่านกันมั่ว: คำตอบต้องอยู่ในชุด {Buyer, Seller} เท่านั้น — นอกนั้นถือว่าไม่มีคำตอบ
             var ans = (resp.PrimaryAnswer ?? "").Trim();
-            var valid = ans.Equals("Buyer", StringComparison.OrdinalIgnoreCase)
-                     || ans.Equals("Seller", StringComparison.OrdinalIgnoreCase);
+            // confidence ต้องอยู่ใน [0,1] — โมเดลตอบ "90" (เปอร์เซ็นต์) แล้วผ่านด่าน ≥ 0.70 ได้
+            var confOk = resp.Confidence is null || (resp.Confidence >= 0m && resp.Confidence <= 1m);
+            var valid = confOk && (ans.Equals("Buyer", StringComparison.OrdinalIgnoreCase)
+                     || ans.Equals("Seller", StringComparison.OrdinalIgnoreCase));
             return new OcrAiAugmentationResult(
                 Answer: valid ? (ans.Equals("Buyer", StringComparison.OrdinalIgnoreCase) ? "Buyer" : "Seller") : null,
                 Confidence: valid ? resp.Confidence : null,
                 Alternatives: resp.Alternatives,
                 Risks: resp.Risks,
                 ComplianceFlags: resp.ComplianceFlags,
-                Reasoning: valid ? resp.Reasoning : $"AI ตอบ '{ans}' ซึ่งไม่ใช่ Buyer/Seller — ทิ้ง",
+                Reasoning: valid ? resp.Reasoning : $"AI ตอบ '{ans}' (conf {resp.Confidence}) ไม่ผ่านด่าน Buyer/Seller ∈ [0,1] — ทิ้ง",
                 UsedAi: resp.UsedAi,
                 FeedbackId: resp.FeedbackId,
                 FromStudent: IsStudentAnswer(resp));
@@ -606,6 +591,25 @@ public class OcrAiAugmenter : IOcrAiAugmenter
         }
     }
 
+    /// <summary>
+    /// "กระดาษใบนี้คือเอกสารชนิดไหน" — เรียกเฉพาะตอน<b>กติกาไม่มั่นใจ</b>
+    ///
+    /// ═══ ทำไมถึงเพิ่งมาต่อสาย ═══
+    /// <c>AiFeatureKey.DocumentTypeClassification</c> (#3) มีครบทุกอย่างมาแล้ว
+    /// — enum, prompt (<c>DocumentTypeClassifyPrompt</c>), และ student ที่
+    /// register ไว้ใน Program.cs — <b>แต่ไม่เคยมีใครเรียกเลยสักครั้ง</b>
+    /// ⇒ prompt ตายอยู่ในไฟล์ และ student อดอาหารถาวร (ไม่มี feedback row
+    /// เกิดขึ้นเลย จึงไม่มีวัน IsReady)
+    ///
+    /// การจำแนกชนิดเอกสารคือคำถามที่ <b>พลาดแล้วแพงที่สุด</b> ในทั้งไปป์ไลน์ —
+    /// ผิดชนิด = บัญชีคู่ผิดทั้งใบ + เข้ารายงานภาษีผิดฝั่ง จึงคุ้มที่จะจ่าย
+    /// token เฉพาะเคสที่กติกาเดาไม่ลง
+    ///
+    /// ═══ ด่านกันมั่ว (anti-hallucination) ═══
+    /// คำตอบต้องเป็นค่าใน <c>DocumentType</c> จริง และต้อง<b>อยู่ฝั่งเดียวกับ
+    /// บทบาทที่ยืนยันแล้ว</b> — AI มองไม่เห็นว่าเราเป็นผู้ซื้อหรือผู้ขาย
+    /// ผู้เรียกจึงต้องกรองอีกชั้น (ดู DocumentSide.MatchesRole)
+    /// </summary>
     public async Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,

@@ -23,13 +23,18 @@ public static class DocumentRoleInferPrompt
 
 You receive: our company identity (from the database — trust it), the two party blocks the OCR engine produced (it may have put our name in the WRONG slot), label evidence found on the paper, and the rule engine's guess.
 
-Thai pre-printed forms: ""นาม/NAME"" + ""ที่อยู่/ADDRESS"" blocks are the CUSTOMER; the unlabeled top box is the ISSUER (seller); ""ผู้รับเงิน/COLLECTOR"" is the seller's signature. ""ผู้ซื้อ/ลูกค้า/Bill To"" = buyer; ""ผู้ขาย/ผู้ออกใบ"" = seller.
+Definitions (by who issued the underlying sale, NOT by cash direction — credit notes and refunds flow the other way):
+- ""Seller"" = our company issued the sale (invoice / tax invoice / receipt / credit note to a customer; on a 50 ทวิ we are ""ผู้ถูกหัก"" = payee).
+- ""Buyer"" = the other party issued the sale to us (we are the customer; on a 50 ทวิ we are ""ผู้มีหน้าที่หัก"" = payer).
+
+Thai pre-printed forms: ""นาม/NAME"" + ""ที่อยู่/ADDRESS"" blocks are the CUSTOMER; the unlabeled top box is the ISSUER; ""ผู้รับเงิน/COLLECTOR"" is the issuer's signature; ""ได้รับเงินจาก/Received From"" names the payer (buyer). ""ผู้ซื้อ/ลูกค้า/Bill To"" = buyer; ""ผู้ขาย/ผู้ออกใบ"" = seller.
+IMPORTANT: OCR text order is NOT layout order — a value is often emitted BEFORE its label (e.g. the customer name line appears, THEN the word ""นาม""). Judge by which label sits nearest to a name, in either direction, not by what comes first.
 
 Rules:
-1. ""primary"" must be exactly ""Buyer"" (we PAID money) or ""Seller"" (we RECEIVED money).
-2. ""we_are_block"" must be ""vendor"", ""buyer"" or ""none"" — which OCR slot actually holds OUR company.
-3. If our tax id or name appears in a block, that block IS us regardless of which slot the engine used.
-4. Never invent a party. If you cannot tell, answer with low confidence (< 0.5).
+1. ""primary"" must be exactly ""Buyer"" or ""Seller"".
+2. ""we_are_block"" must be ""vendor"", ""buyer"" or ""none"" — which OCR slot actually holds OUR company. It must be consistent with ""primary"" (vendor ⇒ Seller, buyer ⇒ Buyer).
+3. If our tax id or name appears in a block, that block IS us regardless of which slot the engine used. A block with a DIFFERENT valid 13-digit tax id is NOT us even if the name looks similar (affiliate).
+4. Never invent a party. If you cannot tell, answer with low confidence (< 0.5). ""confidence"" is a number between 0 and 1.
 
 Respond ONLY as JSON:
 {
@@ -37,9 +42,9 @@ Respond ONLY as JSON:
   ""we_are_block"": ""vendor|buyer|none"",
   ""confidence"": <0.0-1.0>,
   ""alternatives"": [],
-  ""risks"": [""<what goes wrong if this is the wrong side>""],
+  ""risks"": [],
   ""compliance_flags"": [],
-  ""reasoning"": ""<1-2 Thai sentences>""
+  ""reasoning"": ""<1 short Thai sentence>""
 }";
 
     public static AiRequest Build(
@@ -63,7 +68,13 @@ Respond ONLY as JSON:
                 buyer = new { name = buyerName, tax_id = buyerTaxId, address = buyerAddress },
             },
             scanned_document_type = scannedDocumentType,
-            rule_engine = new { guess = localGuess, confidence = localConfidence, reasons = ruleReasons, why_asking = whyAsking },
+            // ไม่ส่งคำตอบ default (Buyer 0.5) ไปให้โมเดลยึด — มันไม่ใช่หลักฐาน (anchoring)
+            rule_engine = new
+            {
+                guess = localConfidence > 0.5m ? localGuess : null,
+                confidence = localConfidence > 0.5m ? localConfidence : (decimal?)null,
+                reasons = ruleReasons, why_asking = whyAsking,
+            },
             // ตัดให้สั้น — ที่ต้องดูคือหัวกระดาษ (บล็อกคู่สัญญา) ไม่ใช่ตารางรายการ
             raw_text_head = rawTextSample.Length > 1200 ? rawTextSample[..1200] : rawTextSample,
         };
@@ -75,11 +86,15 @@ Respond ONLY as JSON:
             UserPromptJson = JsonSerializer.Serialize(payload),
             LocalPrimaryAnswer = localGuess,
             LocalConfidence = localConfidence,
-            LocalModelVersion = "OcrPartyResolver-v1",
+            LocalModelVersion = "OcrRoleRules-v1",   // คำตอบ local มาจาก OcrPartyResolver + OcrDocumentRoleInferrer
             SourceEntityType = "OcrScanResult",
             SourceEntityId = scanResultId,
+            // เลขภาษีต้องถึงโมเดลจริง — กติกาข้อ 3 เทียบเลขเรากับเลขในบล็อก ถ้าถูก mask เป็น
+            // 0xxxxxxxxxx1 จะเทียบด้วยเลข 2 หลักแล้วเท่ากันโดยบังเอิญ ~1/100 (เฉพาะเลขนิติบุคคล
+            // ผ่าน; เลขบุคคลยัง mask และคำตอบไม่ถูกเขียนกลับเป็นข้อมูล)
+            AllowTaxIdInPrompt = true,
             CacheTtlOverrideDays = 30,   // กระดาษเดิม = คำตอบเดิม
-            MaxTokensOverride = 300,
+            MaxTokensOverride = 450,     // JSON ภาษาไทย 1 ประโยค + ช่องว่าง — 300 ตัดกลาง JSON ได้
         };
     }
 }

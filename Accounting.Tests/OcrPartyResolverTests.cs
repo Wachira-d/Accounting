@@ -38,7 +38,9 @@ public class OcrPartyResolverTests
         Assert.Equal("บจก. แอมแฮปปี้เนส (สำนักงานใหญ่)", r.Buyer.Name);
         Assert.Equal("202/24 ม.5 ซ. บ้านห้วยกุ่ม 4", r.Buyer.Address);   // ของเดิมฝั่งผู้ซื้อต้องไม่ถูกทับ
         Assert.Equal("00000", r.Buyer.BranchCode);                        // “(สำนักงานใหญ่)” เป็นของเรา ย้ายตามชื่อ
-        Assert.Null(r.Buyer.TaxId);                                        // เลขบนกระดาษ checksum ตก — ไม่แต่ง
+        // เลขบนกระดาษ 0203562025871 checksum ตก (อ่านเพี้ยน 1 หลัก) — ไม่ใช้เลขที่อ่านมา แต่เติม
+        // เลขจริงของเราจากทะเบียน เพราะรู้แล้วว่าฝั่งนี้คือเรา และกระดาษยืนยันว่าเลขเราอยู่บนใบ
+        Assert.Equal("0203562005871", r.Buyer.TaxId);
         Assert.Null(r.Vendor.Name);                                        // ร้าน “อ๊อฟ” เขียนมือ อ่านไม่ได้ = ไม่รู้
         Assert.Equal("177/18 ม.5 ต.บางพระ อ.ศรีราชา จ. ชลบุรี", r.Vendor.Address); // ที่อยู่กรอบบนเป็นของร้าน ต้องคงไว้
         Assert.False(r.ShouldAskAi);                                       // ป้ายชัด ไม่ต้องจ่าย token
@@ -142,6 +144,76 @@ public class OcrPartyResolverTests
         Assert.True(OcrPartyResolver.AddressLooksLikeOurs("202/24 ม.5 ซ. บ้านห้วยกุ่ม 4", Us.Address));
         Assert.False(OcrPartyResolver.AddressLooksLikeOurs("177/18 ม.5 ต.บางพระ", Us.Address));
         Assert.False(OcrPartyResolver.AddressLooksLikeOurs("1202/245 ถ.สุขุมวิท", Us.Address));   // ห้ามจับ substring กลางเลข
+    }
+
+    [Fact]
+    public void ฝั่งเราชัดแต่กระดาษไม่มีเลขเราเลย_ต้องไม่เติมเลขภาษี()
+    {
+        // ผู้ขายไม่ได้กรอกเลขผู้ซื้อ — เติมเองไม่ได้ เพราะกระดาษไม่มีหลักฐาน (ใบกำกับที่ขาดเลข
+        // ผู้ซื้อคือใบที่เคลมภาษีซื้อไม่ได้จริง ๆ ห้ามทำให้ดูครบ)
+        var vendor = new OcrPartyBlock("บริษัท ก จำกัด", "0105551234567", null, null);
+        var buyer = new OcrPartyBlock("หจก. แอม แฮปปี้เนส", null, null, null);
+        var r = OcrPartyResolver.Resolve("ใบเสร็จ\nลูกค้า หจก. แอม แฮปปี้เนส\n", Us, vendor, buyer);
+        Assert.Equal(OcrSelfSide.Buyer, r.OurSide);
+        Assert.Null(r.Buyer.TaxId);
+    }
+
+    [Fact]
+    public void เราเป็นผู้ขายชัด_กระดาษมีเลขเราตรง_แต่ช่องว่าง_ต้องเติม()
+    {
+        var vendor = new OcrPartyBlock("หจก. แอม แฮปปี้เนส", null, null, null);
+        var buyer = new OcrPartyBlock("บริษัท ลูกค้าดี จำกัด", "0105551234567", null, null);
+        var r = OcrPartyResolver.Resolve("ใบกำกับภาษี\nผู้ขาย หจก. แอม แฮปปี้เนส เลขประจำตัวผู้เสียภาษี 0203562005871\nลูกค้า บริษัท ลูกค้าดี จำกัด\n",
+            Us, vendor, buyer);
+        Assert.Equal(OcrSelfSide.Seller, r.OurSide);
+        Assert.Equal("0203562005871", r.Vendor.TaxId);
+    }
+
+    // ═══ จากทีมตรวจสวน 2026-09-11 ═══
+    [Fact]
+    public void ใบที่เราออกเอง_ป้ายลูกค้าอยู่ใกล้หัวเรา_เลขภาษีต้องชนะป้าย_ห้ามสลับ()
+    {
+        // ใบขายจริงมักไม่พิมพ์ "ผู้ขาย" แต่พิมพ์ "ลูกค้า" ห่างจากหัวเราไม่กี่สิบตัวอักษร —
+        // ถ้าให้ป้ายชนะ ใบขายของเราเองจะกลายเป็นใบซื้อ
+        var vendor = new OcrPartyBlock("หจก. แอม แฮปปี้เนส", "0203562005871", Us.Address, "00000");
+        var buyer = new OcrPartyBlock("บริษัท ลูกค้าดี จำกัด", null, null, null);
+        var r = OcrPartyResolver.Resolve(
+            "หจก. แอม แฮปปี้เนส\nเลขประจำตัวผู้เสียภาษี 0203562005871\nใบกำกับภาษี\nลูกค้า บริษัท ลูกค้าดี จำกัด\n",
+            Us, vendor, buyer);
+        Assert.Equal(OcrSelfSide.Seller, r.OurSide);
+        Assert.Equal(1.0m, r.Confidence);
+        Assert.Equal(OcrPartyDecision.Unchanged, r.Decision);
+        Assert.Equal("0203562005871", r.Vendor.TaxId);
+    }
+
+    [Fact]
+    public void บริษัทในเครือชื่อคล้ายแต่มีเลขภาษีของตัวเอง_ไม่ใช่เรา()
+    {
+        var affiliate = new OcrPartyBlock("บจก. แอม แฮปปี้เนส เทรดดิ้ง", "0105551234567", null, null);
+        Assert.Equal(0m, OcrPartyResolver.SelfStrength(affiliate, Us, out _));
+        // และแม้ไม่มีเลขภาษี ชื่อที่ยาวเกินชื่อเรามาก ก็ไม่ใช่เรา
+        Assert.Equal(0m, OcrPartyResolver.SelfStrength(
+            new OcrPartyBlock("บจก. แอม แฮปปี้เนส เทรดดิ้ง", null, null, null), Us, out _));
+    }
+
+    [Fact]
+    public void เลขเราตัวเดียวในช่องผู้ขาย_ไม่มีคู่ค้าไม่มีป้าย_ต้องไม่ฟันธงว่าเราออกใบ()
+    {
+        // บิลร้านไม่จด VAT พิมพ์แค่เลขลูกค้า (= เรา) แล้วตัวสกัดเอนเลขเข้าช่องผู้ขาย
+        var vendor = new OcrPartyBlock(null, "0203562005871", null, null);
+        var r = OcrPartyResolver.Resolve("บิลเงินสด\n0203562005871\nรวมเงิน 500\n", Us, vendor, OcrPartyBlock.Empty);
+        Assert.True(r.Confidence < 0.7m);
+        Assert.True(r.ShouldAskAi);
+    }
+
+    [Fact]
+    public void ApplySide_คำตอบAI_ต้องย้ายบล็อกไม่ใช่แค่ป้าย()
+    {
+        var vendor = new OcrPartyBlock("หจก. แอม แฮปปี้เนส", null, "202/24 ม.5 ต.บางพระ", "00000");
+        var (v, b) = OcrPartyResolver.ApplySide(vendor, OcrPartyBlock.Empty, OcrSelfSide.Buyer, Us);
+        Assert.Null(v.Name);
+        Assert.Equal("หจก. แอม แฮปปี้เนส", b.Name);
+        Assert.Equal("202/24 ม.5 ต.บางพระ", b.Address);
     }
 
     [Fact]

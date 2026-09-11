@@ -42,6 +42,10 @@ public static class OcrPartyLabels
     {
         "customer copy", "customer service", "merchant copy",
         "สำเนาลูกค้า", "ลูกค้าสัมพันธ์",
+        // "รหัสลูกค้า: C-0012" ในกล่องข้อมูลของ**ผู้ออกใบ** — ไม่ใช่ตำแหน่งบล็อกผู้ซื้อ
+        // (ทีมตรวจ 2026-09-11: ใบที่เราออกเองถูกกลับทิศเพราะคำนี้อยู่ใต้หัวเรา)
+        "รหัสลูกค้า", "เลขที่ลูกค้า", "customer code", "customer no", "customer id", "cust. code",
+        "ศูนย์บริการลูกค้า", "บริการลูกค้า",
     };
 
     private static readonly (string Label, LabelMatch Mode)[] BuyerLabels =
@@ -54,8 +58,16 @@ public static class OcrPartyLabels
         ("ขายให้", LabelMatch.Anywhere),
         ("Bill To", LabelMatch.Anywhere),
         ("Sold To", LabelMatch.Anywhere),
+        ("Ship To", LabelMatch.Anywhere),
+        ("Invoice To", LabelMatch.Anywhere),
         ("Customer", LabelMatch.Anywhere),
         ("BUYER", LabelMatch.Anywhere),
+        // ใบเสร็จ: "ได้รับเงินจาก <ผู้จ่าย>" — ผู้จ่ายคือฝั่งผู้ซื้อ (เดิม "From" อยู่ฝั่งผู้ขาย
+        // ⇒ "Received From: <เรา>" ทำให้เรากลายเป็นผู้ขายของใบเสร็จที่ออกให้เรา)
+        ("ได้รับเงินจาก", LabelMatch.Anywhere),
+        ("รับเงินจาก", LabelMatch.Anywhere),
+        ("Received From", LabelMatch.Anywhere),
+        ("ผู้ชำระเงิน", LabelMatch.Anywhere),
         // ── แบบฟอร์มพิมพ์สำเร็จ (บิลเงินสด/ใบเสร็จ/ใบส่งของ เล่มสำเนา) ──
         // “นาม” เดี่ยว ๆ = ช่องชื่อลูกค้าเสมอ (ร้านผู้ออกบิลอยู่กรอบบนที่ไม่มีป้าย)
         ("นาม", LabelMatch.ThaiToken),
@@ -70,7 +82,12 @@ public static class OcrPartyLabels
         ("ผู้ให้บริการ", LabelMatch.Anywhere),
         ("ผู้ออก", LabelMatch.Anywhere),
         ("Seller", LabelMatch.Anywhere),
-        ("From", LabelMatch.Anywhere),
+        ("Sold By", LabelMatch.Anywhere),
+        ("Issued By", LabelMatch.Anywhere),
+        ("Supplier", LabelMatch.Anywhere),
+        ("Vendor", LabelMatch.Anywhere),
+        // ⚠️ ตัด "From" ออก — โผล่ใน "Received From / Transfer from / Valid from / Ship from"
+        // ซึ่งไม่ใช่ป้ายผู้ขายสักอัน และตัวแรกกลับทิศใบเสร็จที่ออกให้เราตรง ๆ
         // ⚠️ จงใจ **ไม่ใส่** “ผู้รับเงิน / COLLECTOR” แม้ความหมายจะตรง —
         // มันคือช่อง**ลายเซ็นท้ายบิล** ไม่ใช่บล็อกข้อมูลผู้ขาย. ตำแหน่งของป้าย
         // ถูกใช้เป็น “จุดยึด” หาชื่อ/เลขภาษีที่ใกล้ที่สุด ⇒ ใส่เข้าไปจะลาก
@@ -87,6 +104,33 @@ public static class OcrPartyLabels
 
     public static int FindBuyer(string? text) => Find(text).BuyerPos;
     public static int FindSeller(string? text) => Find(text).SellerPos;
+
+    /// <summary>ตำแหน่ง<b>ทุก</b>ป้ายของแต่ละฝั่ง — ใช้วัด "ป้ายที่ใกล้ชื่อเราที่สุด" (ป้ายตัวแรก
+    /// ของหน้าอาจเป็นคนละบล็อก เช่น "ศูนย์บริการลูกค้า" ในหัวผู้ขาย แล้ว "ลูกค้า:" ตัวจริง
+    /// อยู่ห่างออกไป — ทีมตรวจ 2026-09-11)</summary>
+    public static (IReadOnlyList<int> BuyerPos, IReadOnlyList<int> SellerPos) FindAll(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return (Array.Empty<int>(), Array.Empty<int>());
+        var masked = MaskNoise(text);
+        return (FindEvery(masked, BuyerLabels), FindEvery(masked, SellerLabels));
+    }
+
+    private static IReadOnlyList<int> FindEvery(string text, (string Label, LabelMatch Mode)[] labels)
+    {
+        var found = new SortedSet<int>();
+        foreach (var (label, mode) in labels)
+        {
+            var from = 0;
+            while (from <= text.Length - label.Length)
+            {
+                var i = text.IndexOf(label, from, StringComparison.OrdinalIgnoreCase);
+                if (i < 0) break;
+                if (Accepts(text, i, label, mode)) found.Add(i);
+                from = i + 1;
+            }
+        }
+        return found.ToList();
+    }
 
     /// <summary>กลบข้อความรบกวน โดย<b>คงความยาวเดิม</b> — ไม่งั้น index ของป้ายจริง
     /// ตัวอื่นเลื่อนทั้งหน้า แล้วการวัดระยะ “ป้ายอยู่ใกล้ชื่อไหม” เพี้ยนตามไปหมด</summary>

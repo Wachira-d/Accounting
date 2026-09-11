@@ -49,7 +49,19 @@ public static class OcrSelfPartyGuard
     /// นิติบุคคลออกก่อนเทียบ) · ตัวเดียวของระบบ ใช้ทั้ง SmartFieldExtractor และ
     /// OcrDocumentRoleInferrer</summary>
     public static bool IsSelf(string? partyName, string? companyName)
-        => NameOverlaps(partyName, companyName);
+    {
+        if (!NameOverlaps(partyName, companyName)) return false;
+        // ชื่อบนกระดาษ **ยาวกว่า** ชื่อเรามาก = บริษัทในเครือ/ชื่อที่มีคำเราเป็นส่วนหนึ่ง
+        // ("แอม แฮปปี้เนส เทรดดิ้ง" · "สยามแม็คโคร" กับ tenant "สยาม") ไม่ใช่เรา —
+        // ทิศตรงข้าม (กระดาษสั้นกว่า = engine ตัดชื่อเรา "แอม แฮปปี้") ยังยอมเหมือนเดิม
+        var paper = Normalize(partyName);
+        var ours = Normalize(companyName);
+        return paper.Length - ours.Length <= MaxSurplus;
+    }
+
+    /// <summary>ตัวอักษร (หลัง normalize) ที่ชื่อบนกระดาษยาวเกินชื่อเราได้ โดยยังถือว่าเป็นเรา
+    /// — พอสำหรับเศษอย่าง "(สนญ.)"/"สาขา 1" ไม่พอสำหรับคำต่อท้ายที่เป็นชื่อบริษัทอื่น</summary>
+    public const int MaxSurplus = 6;
 
     /// <summary>เทียบชื่อสองตัวแบบหลวม: ตัดคำนำหน้า/ต่อท้ายนิติบุคคลและช่องว่างออก
     /// แล้วดูว่าตัวหนึ่ง<b>ครอบ</b>อีกตัวไหม (≥ 4 ตัวอักษรจึงจะนับเป็นหลักฐาน)</summary>
@@ -85,20 +97,30 @@ public static class OcrSelfPartyGuard
     /// <para>คืน <see cref="OcrSelfSide.Unknown"/> เมื่อหาชื่อเราไม่เจอ / ไม่มีป้าย
     /// ใกล้พอ / ป้ายสองฝั่งใกล้เท่ากัน — “ไม่รู้ = บอกว่าไม่รู้” ห้ามเดา เพราะ
     /// เดาผิดทิศเดียว = รายจ่ายกลายเป็นรายได้</para></summary>
-    public static OcrSelfPartyVerdict FromPaperLabels(string? rawText, string? companyName)
+    public static OcrSelfPartyVerdict FromPaperLabels(string? rawText, string? companyName, string? ourTaxId = null)
     {
         if (string.IsNullOrWhiteSpace(rawText) || string.IsNullOrWhiteSpace(companyName))
             return new(OcrSelfSide.Unknown, "", -1);
 
         var pos = FindOurNameLine(rawText!, companyName!);
+        // อ่านชื่อเราไม่ออกเลย แต่กระดาษมีเลขภาษีเราตรง/เพี้ยนหลักเดียว → ใช้ตำแหน่งเลขเป็นจุดยึด
+        // (บล็อกคู่สัญญาบนกระดาษไทยพิมพ์ชื่อกับเลขภาษีติดกันเสมอ)
+        if (pos < 0) pos = FindOurTaxIdPosition(rawText!, ourTaxId);
         if (pos < 0) return new(OcrSelfSide.Unknown, "", -1);
 
-        var (buyerPos, sellerPos) = OcrPartyLabels.Find(rawText);
+        var (buyerAll, sellerAll) = OcrPartyLabels.FindAll(rawText);
+        // ป้ายที่ **ใกล้ที่สุด** ของแต่ละฝั่ง — ไม่ใช่ตัวแรกของหน้า
+        var buyerPos = Nearest(buyerAll, pos);
+        var sellerPos = Nearest(sellerAll, pos);
         var dBuyer = buyerPos >= 0 ? Math.Abs(buyerPos - pos) : int.MaxValue;
         var dSeller = sellerPos >= 0 ? Math.Abs(sellerPos - pos) : int.MaxValue;
         if (dBuyer > MaxLabelDistance && dSeller > MaxLabelDistance)
             return new(OcrSelfSide.Unknown, "", pos);
         if (dBuyer == dSeller) return new(OcrSelfSide.Unknown, "", pos);
+        // "ผู้ซื้อ … ผู้ขาย" บน**บรรทัดเดียวกัน** = หัวตารางสองคอลัมน์ — ตำแหน่งตัวอักษรใน
+        // ข้อความเรียงบรรทัดบอกไม่ได้ว่าชื่อเราอยู่คอลัมน์ไหน ⇒ ไม่ตัดสิน (ทีมตรวจ 2026-09-11)
+        if (buyerPos >= 0 && sellerPos >= 0 && SameLine(rawText!, buyerPos, sellerPos))
+            return new(OcrSelfSide.Unknown, "ป้ายผู้ซื้อ/ผู้ขายอยู่บรรทัดเดียวกัน (หัวตาราง) — ตำแหน่งบอกคอลัมน์ไม่ได้", pos);
 
         return dBuyer < dSeller
             ? new(OcrSelfSide.Buyer,
@@ -115,6 +137,39 @@ public static class OcrSelfPartyGuard
     /// คืนอาจถูก <c>VendorKnownGoodCorrector</c> แทนด้วยรูปมาตรฐานของเราไปแล้ว
     /// (“บจก. แอมแฮปปี้เนส (สำนักงานใหญ่)” บนกระดาษ → “หจก. แอม แฮปปี้เนส สำนักงานใหญ่”)
     /// ⇒ <c>IndexOf</c> ด้วยสตริงนั้นจะหาไม่เจอทั้งที่ชื่อเราอยู่บนกระดาษชัด ๆ</para></summary>
+    private static int Nearest(IReadOnlyList<int> positions, int anchor)
+    {
+        var best = -1; var bestD = int.MaxValue;
+        foreach (var p in positions)
+        {
+            var d = Math.Abs(p - anchor);
+            if (d < bestD) { bestD = d; best = p; }
+        }
+        return best;
+    }
+
+    private static bool SameLine(string text, int a, int b)
+    {
+        var lo = Math.Min(a, b); var hi = Math.Max(a, b);
+        return text.IndexOf('\n', lo, hi - lo) < 0;
+    }
+
+    /// <summary>ตำแหน่งของเลขภาษีเรา (ตรง หรือต่างหลักเดียว) บนกระดาษ — -1 เมื่อไม่พบ</summary>
+    private static int FindOurTaxIdPosition(string rawText, string? ourTaxId)
+    {
+        var ours = ThaiTaxId.Normalize(ourTaxId);
+        if (ours.Length != 13) return -1;
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(rawText, @"(?<!\d)\d(?:[- \t]?\d){12}(?!\d)"))
+        {
+            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            var diff = 0;
+            for (var i = 0; i < 13 && diff <= 1; i++) if (digits[i] != ours[i]) diff++;
+            if (diff <= 1) return m.Index;
+        }
+        return -1;
+    }
+
     private static int FindOurNameLine(string rawText, string companyName)
     {
         var offset = 0;

@@ -824,12 +824,23 @@ public class OcrService : IOcrService
                 // ใครเป็นใครกระจายอยู่หลายจุด และจุดที่ย้ายค่าไม่ได้ sync ลงแถวสแกน
                 // ⇒ รวมเป็นตัวตัดสินเดียว (ตัวตนจาก DB > ป้ายบนกระดาษ > ช่องที่ engine ใส่)
                 //   แล้ว sync ผลสุดท้ายลงแถวสแกน**ครบทุกช่อง**ที่จุดเดียว (ดูบล็อก persist ด้านล่าง)
-                var partyResolution = Accounting.Helpers.OcrPartyResolver.Resolve(
-                    normalizedText, ourIdentity,
-                    new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
-                        extractedData.VendorAddress, extractedData.VendorBranchCode),
-                    new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
-                        extractedData.BuyerAddress, extractedData.BuyerBranchCode));
+                var vendorBlock0 = new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
+                    extractedData.VendorAddress, extractedData.VendorBranchCode);
+                var buyerBlock0 = new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
+                    extractedData.BuyerAddress, extractedData.BuyerBranchCode);
+                var isEtaxXml = ocrEngineUsed == "EtaxXml";
+                // e-Tax XML ที่ลงนามดิจิทัล = ความจริงตามกฎหมาย ไม่ใช่ผลอ่าน — ห้ามให้ตัวตัดสินจาก
+                // "ป้ายบนกระดาษ" ย้าย/ล้างช่อง (ข้อความคือ tag XML ซึ่งมีคำว่า Seller/Buyer เต็มไปหมด)
+                // ตัดสินฝั่งจากเลขภาษีใน XML เท่านั้น และไม่ถาม AI
+                var partyResolution = isEtaxXml
+                    ? new Accounting.Helpers.OcrPartyResolution(
+                        vendorBlock0, buyerBlock0,
+                        Accounting.Helpers.ThaiTaxId.Same(buyerBlock0.TaxId, ourIdentity.TaxId) ? Accounting.Helpers.OcrSelfSide.Buyer
+                            : Accounting.Helpers.ThaiTaxId.Same(vendorBlock0.TaxId, ourIdentity.TaxId) ? Accounting.Helpers.OcrSelfSide.Seller
+                            : Accounting.Helpers.OcrSelfSide.Unknown,
+                        1.0m, Accounting.Helpers.OcrPartyDecision.Unchanged, false, null,
+                        new[] { "e-Tax XML ลงนามแล้ว — ฝั่งตัดสินจากเลขภาษีใน XML เท่านั้น ไม่แตะช่องคู่สัญญา" })
+                    : Accounting.Helpers.OcrPartyResolver.Resolve(normalizedText, ourIdentity, vendorBlock0, buyerBlock0);
                 {
                     var v = partyResolution.Vendor;
                     var b = partyResolution.Buyer;
@@ -848,8 +859,33 @@ public class OcrService : IOcrService
                     if (partyResolution.Decision != Accounting.Helpers.OcrPartyDecision.Unchanged)
                         extractedData.ReasoningTrace.Add(
                             $"[Party] ตัดสิน: {partyResolution.Decision} · เราเป็น {partyResolution.OurSide} (มั่นใจ {partyResolution.Confidence:P0})");
+
+                    // ช่องผู้ขายว่างหลังตัดสิน + เราเป็นผู้ซื้อ + กระดาษเป็นแบบฟอร์มพิมพ์สำเร็จ →
+                    // เสนอชื่อในกรอบบน (ที่เล่มบิลสงวนให้ผู้ออกบิล) ด้วยความมั่นใจต่ำให้ผู้ใช้ตรวจ
+                    // — กฎเหล็ก #3: เติมไว้แล้วไฮไลต์ ไม่ใช่ปล่อยว่าง · ใบรับรองแทนใบเสร็จต้องมีชื่อผู้รับเงิน
+                    if (string.IsNullOrWhiteSpace(extractedData.VendorName)
+                        && partyResolution.OurSide == Accounting.Helpers.OcrSelfSide.Buyer)
+                    {
+                        var issuerGuess = Accounting.Helpers.OcrIssuerHeaderGuess.FromTopBox(normalizedText, ourIdentity);
+                        if (issuerGuess != null)
+                        {
+                            extractedData.VendorName = issuerGuess;
+                            extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = Accounting.Helpers.OcrIssuerHeaderGuess.Confidence;
+                            extractedData.Note(Accounting.Helpers.OcrFieldKeys.SellerName, issuerGuess,
+                                Accounting.Helpers.OcrFieldSource.Guess, (decimal)Accounting.Helpers.OcrIssuerHeaderGuess.Confidence,
+                                "ชื่อในกรอบบนของแบบฟอร์ม (ตำแหน่งผู้ออกบิล) — ข้อเสนอ ไม่ใช่การอ่าน");
+                            extractedData.ReasoningTrace.Add(
+                                $"[Party] เสนอผู้ขาย “{issuerGuess}” จากกรอบบนของแบบฟอร์ม (มั่นใจ {Accounting.Helpers.OcrIssuerHeaderGuess.Confidence:P0}) — กรุณาตรวจ");
+                        }
+                    }
                 }
 
+                // คำตัดสินของ resolver ต้องถึงตัวอนุมานบทบาท (ทีมตรวจ 2026-09-11: เดิม Infer เห็นแค่
+                // ช่องที่ย้ายแล้ว ⇒ เคส "ป้ายชี้ฝั่งเราแต่ engine ใส่ชื่ออื่นในช่อง" ถูกทิ้งเงียบ ๆ)
+                // — override ที่ 0.92 ยังแพ้เลขภาษีที่ตรงกับเรา (1.0) และทิศจาก 50 ทวิ ใน Infer เอง
+                var resolverRole = partyResolution.OurSide != Accounting.Helpers.OcrSelfSide.Unknown
+                    && partyResolution.Confidence >= 0.80m
+                    ? partyResolution.OurSide.ToString() : null;
                 var role = OcrDocumentRoleInferrer.Infer(
                     rawText: normalizedText,
                     vendorTaxId: extractedData.VendorTaxId,
@@ -864,7 +900,8 @@ public class OcrService : IOcrService
                     // "Net N") — flips invoice target PV→PI when > 0. The
                     // VendorIntel history backfill runs AFTER this point on
                     // purpose: only the paper's own terms prove "unpaid".
-                    paymentTermsDays: extractedData.PaymentTermsDays);
+                    paymentTermsDays: extractedData.PaymentTermsDays,
+                    roleOverride: resolverRole);
 
                 // ─── ถาม "ครู" ว่าเราเป็นผู้ซื้อหรือผู้ขาย — เฉพาะเคสที่กติกาตัดสินไม่ได้ ───
                 //
@@ -873,8 +910,13 @@ public class OcrService : IOcrService
                 // ปิด provider → student (GenericFeedbackDistillationModel) ตอบ · ไม่มีใครตอบ →
                 // คงคำตอบของกติกา. คำตอบผ่านด่าน: ∈ {Buyer,Seller} · conf ≥ 0.70 · ห้ามขัดกับ
                 // ตัวตนทางกฎหมาย (เลขภาษีที่ตรงกับเราชี้ฝั่งแล้ว AI เปลี่ยนไม่ได้)
-                var askRole = _aiAugmenter != null
-                    && (partyResolution.ShouldAskAi || role.RoleConfidence < 0.7m)
+                // ⚠️ ถามเฉพาะเมื่อ resolver บอกว่า "หลักฐานเชิงกติกาไม่พอ" (ShouldAskAi) — เดิมเพิ่ม
+                // เงื่อนไข `roleConf < 0.7` เข้าไปด้วย ⇒ สลิป POS ทุกใบ (ไม่มีชื่อเรา ⇒ Infer ให้ 0.6
+                // จากตำแหน่ง) จะเรียก provider ทุกครั้ง = ตรงข้ามกฎเหล็ก #1 ข้อ 6 และชน daily cap
+                // ในวันปกติ (ทีมตรวจ 2026-09-11) · e-Tax XML ไม่ถามเลย
+                var askRole = _aiAugmenter != null && !isEtaxXml
+                    && partyResolution.ShouldAskAi
+                    && role.RoleConfidence < 0.9m
                     && !string.IsNullOrWhiteSpace(normalizedText) && normalizedText.Trim().Length >= 40;
                 if (askRole)
                 {
@@ -899,6 +941,7 @@ public class OcrService : IOcrService
                         var contradictsIdentity = (ai.Answer == "Buyer" && vendorPinnedByTax)
                             || (ai.Answer == "Seller" && buyerPinnedByTax);
                         if (ai.HasModelAnswer && (ai.Confidence ?? 0m) >= 0.70m
+                            && (ai.Confidence ?? 0m) > role.RoleConfidence
                             && ai.Answer is "Buyer" or "Seller" && !contradictsIdentity
                             && !string.Equals(ai.Answer, role.OurRole, StringComparison.Ordinal))
                         {
@@ -906,6 +949,24 @@ public class OcrService : IOcrService
                                 $"[Role] {(ai.UsedAi ? "🤖 AI" : "⚙️ นักเรียน")} ตัดสินว่าเราเป็น {ai.Answer} "
                                 + $"(มั่นใจ {ai.Confidence:P0}) แทนคำตอบกติกา {role.OurRole} ({role.RoleConfidence:P0}): {ai.Reasoning}");
                             scanResult.OurRoleUsedAi = ai.UsedAi;   // ป้ายซื่อสัตย์: true เฉพาะ provider จริง
+
+                            // คำตอบ AI ต้อง**ย้ายบล็อก**ด้วย ไม่ใช่แค่เปลี่ยนป้ายบทบาท — ไม่งั้นชื่อเราค้าง
+                            // ช่องผู้ขายแล้ว sync ลงแถว = อาการเดิมของผู้ใช้กลับมาอีกทาง (ทีมตรวจ)
+                            var aiSide = ai.Answer == "Buyer" ? Accounting.Helpers.OcrSelfSide.Buyer : Accounting.Helpers.OcrSelfSide.Seller;
+                            var (v2, b2) = Accounting.Helpers.OcrPartyResolver.ApplySide(
+                                new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
+                                    extractedData.VendorAddress, extractedData.VendorBranchCode),
+                                new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
+                                    extractedData.BuyerAddress, extractedData.BuyerBranchCode),
+                                aiSide, ourIdentity);
+                            if (!string.IsNullOrWhiteSpace(extractedData.VendorName) && string.IsNullOrWhiteSpace(v2.Name))
+                                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.20;
+                            if (!string.IsNullOrWhiteSpace(extractedData.BuyerName) && string.IsNullOrWhiteSpace(b2.Name))
+                                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerName] = 0.20;
+                            extractedData.VendorName = v2.Name; extractedData.VendorTaxId = v2.TaxId;
+                            extractedData.VendorAddress = v2.Address; extractedData.VendorBranchCode = v2.BranchCode;
+                            extractedData.BuyerName = b2.Name; extractedData.BuyerTaxId = b2.TaxId;
+                            extractedData.BuyerAddress = b2.Address; extractedData.BuyerBranchCode = b2.BranchCode;
                             role = OcrDocumentRoleInferrer.Infer(
                                 rawText: normalizedText,
                                 vendorTaxId: extractedData.VendorTaxId, buyerTaxId: extractedData.BuyerTaxId,
@@ -917,6 +978,7 @@ public class OcrService : IOcrService
                         }
                         else if (ai.HasModelAnswer && string.Equals(ai.Answer, role.OurRole, StringComparison.Ordinal))
                         {
+                            scanResult.OurRoleUsedAi = ai.UsedAi;   // ยืนยันก็คือเรียก provider จริง — ตัวชี้วัดต้องนับ
                             extractedData.ReasoningTrace.Add(
                                 $"[Role] {(ai.UsedAi ? "AI" : "นักเรียน")} ยืนยันคำตอบกติกา ({ai.Answer} · {ai.Confidence:P0})");
                         }
@@ -1111,7 +1173,8 @@ public class OcrService : IOcrService
             scanResult.BuyerBranchCode = extractedData.BuyerBranchCode;
             scanResult.BuyerAddress = extractedData.BuyerAddress;
 
-            // ── สอนตัวเองจากผล Azure **หลัง**ทุกขั้นแก้ไข (ย้ายมาจากจุดที่ engine เพิ่งคืนผล) ──
+            // ── สอนตัวเองจากผล Azure **หลังขั้นตัดสินคู่ค้า/ตัวกรองเลขที่/AI** (ย้ายมาจากจุดที่ engine
+            //    เพิ่งคืนผล) — ยังอยู่ก่อน DBD/เติมเลขผู้ซื้อ ซึ่งไม่แตะช่องที่สอน ──
             // สแกนจริง 2026-09-11: ตัวเรียนรู้เคยรันตอน engine คืนผลดิบ ⇒ จำ "บจก. แอมแฮปปี้เนส"
             // (= เราเอง) เป็นผู้ขายที่รู้ว่าถูก และจำเลขที่บ้าน "177/18" เป็นเลขที่เอกสารด้วย
             // regex กวาดทุกอย่าง ⇒ สแกนรอบถัดไปได้ "CASHSALE" เป็นเลขที่ · ตอนนี้สอนด้วยค่าที่ผ่าน
@@ -2304,8 +2367,11 @@ public class OcrService : IOcrService
                 // ───── Branches 2-4: DBD unavailable / failed ─────
                 var hasValidTaxId = !string.IsNullOrEmpty(extractedData.VendorTaxId)
                     && Ocr.SmartFieldExtractor.IsValidThaiTaxId(extractedData.VendorTaxId);
+                // ชื่อที่เป็นแค่ "ข้อเสนอ" (เดาจากกรอบบน · มั่นใจ < 0.5) ห้ามกลายเป็น Contact
+                // ถาวรโดยผู้ใช้ยังไม่ยืนยัน — Contact ผิดหนึ่งราย = จับคู่ผิดทุกใบถัดไป
                 var hasVendorName = !string.IsNullOrWhiteSpace(extractedData.VendorName)
-                    && extractedData.VendorName.Trim().Length >= 3;
+                    && extractedData.VendorName.Trim().Length >= 3
+                    && extractedData.FieldConfidence.GetValueOrDefault(Accounting.Helpers.OcrFieldKeys.SellerName, 1.0) >= 0.5;
                 var hasAddress = !string.IsNullOrWhiteSpace(extractedData.VendorAddress);
                 var hasPhone = !string.IsNullOrWhiteSpace(extractedData.VendorPhone);
                 // Quality gate — we want at least ONE supporting field beyond

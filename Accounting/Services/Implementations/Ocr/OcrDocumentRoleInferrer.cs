@@ -227,7 +227,10 @@ public static class OcrDocumentRoleInferrer
                      || text.Contains("wht certificate")
                      || text.Contains("tax withheld at source");
         var weAreWithheld = isWhtCert ? InferWhtCertWeAreWithheld(rawText, companyTaxId) : null;
-        if (weAreWithheld.HasValue && roleConf < 0.9m)
+        // ⬅ ไม่มีด่าน roleConf อีกต่อไป (ทีมตรวจ 2026-09-11): บน 50 ทวิ "ช่องบน = ผู้จ่าย"
+        // กลับด้านกับใบขาย ⇒ เลขเราในช่องผู้ขาย (1.0) แปลว่าเราเป็น**ผู้หัก = ผู้ซื้อ** ไม่ใช่
+        // ผู้ขาย — ตัวอ่านทิศจากช่อง "ผู้มีหน้าที่หัก/ผู้ถูกหัก" คือหลักฐานที่ตรงกว่าเลขในช่อง
+        if (weAreWithheld.HasValue)
         {
             // เราถูกหัก = เราเป็นผู้รับเงิน = ผู้ขาย · เราหักเขา = เราเป็นผู้จ่าย = ผู้ซื้อ
             role = weAreWithheld.Value ? "Seller" : "Buyer";

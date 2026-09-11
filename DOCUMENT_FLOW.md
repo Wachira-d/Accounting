@@ -1892,7 +1892,6 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | OCR เราเป็นผู้ซื้อ/ผู้ขาย (ถามเฉพาะเมื่อ `OcrPartyResolver.ShouldAskAi`) | `DocumentRoleInference = 4` | generic (`Buyer`/`Seller`) | ตอน user แก้ `OurRole` ในหน้า scan (`OurRoleAiFeedbackId`) — รอบ 156 |
 | OCR target doc to create | `DocumentConversionSuggestion = 23` | generic | ตอน user เปลี่ยน targetDocType |
 | Vendor canonical match | `VendorCanonicalization = 1` | `VendorCanonDistillationModel.cs` | ตอน user เลือก contact |
-| Buyer/Seller role infer | `DocumentRoleInference = 4` | generic | – |
 | WHT category infer | `WhtCategoryInference = 5` | generic | ตอน user แก้ |
 | Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
 | Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |

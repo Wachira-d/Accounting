@@ -84,6 +84,18 @@ public class OcrSelfPartyGuardTests
             "ผู้ซื้อ\nบริษัท คนอื่น จำกัด\n", OurCompany).Side);
 
     [Fact]
+    public void ป้ายผู้ซื้อและผู้ขายบนบรรทัดเดียวกัน_คือหัวตาราง_ต้องไม่ตัดสิน()
+        // ตำแหน่งตัวอักษรในข้อความเรียงบรรทัดบอกไม่ได้ว่าชื่อเราอยู่คอลัมน์ไหน
+        => Assert.Equal(OcrSelfSide.Unknown, OcrSelfPartyGuard.FromPaperLabels(
+            "ผู้ซื้อ                         ผู้ขาย\nหจก. แอม แฮปปี้เนส      บริษัท ก จำกัด\n", OurCompany).Side);
+
+    [Fact]
+    public void อ่านชื่อเราไม่ออกแต่มีเลขภาษีเรา_ใช้ตำแหน่งเลขเป็นจุดยึด()
+        => Assert.Equal(OcrSelfSide.Buyer, OcrSelfPartyGuard.FromPaperLabels(
+            "ใบกำกับภาษี\nผู้ขาย บริษัท ก จำกัด 0105551234567\nลูกค้า ??? ???\nเลขประจำตัวผู้เสียภาษี 0203562005871\n",
+            OurCompany, "0203562005871").Side);
+
+    [Fact]
     public void ค่าว่าง_ต้องไม่พัง()
     {
         Assert.Equal(OcrSelfSide.Unknown, OcrSelfPartyGuard.FromPaperLabels(null, OurCompany).Side);
