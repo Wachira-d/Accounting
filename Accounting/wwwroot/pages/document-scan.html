@@ -2360,13 +2360,19 @@
                   <option value="Other" ${(scan.scannedDocumentType || scan.documentType) === 'Other' ? 'selected' : ''}>อื่นๆ</option>
                 </select>
               </div>
-              <div class="review-field" style="background:#fef3c7;border:1px solid #fcd34d;padding:8px 10px;border-radius:6px">
+              <!-- ⚠️ .review-field เป็น flex **แถวเดียว** (label 120px + ช่อง + …) — บล็อกนี้มี
+                   ทั้งป้ายยาว ("เอกสารที่จะสร้างในระบบ ⚙️ ระบบแนะนำ (จากชนิดเอกสาร/บทบาท
+                   บนกระดาษ)") · select ชนิดเอกสาร · และ select บทบาทของเรา อยู่แถวเดียวกัน
+                   ⇒ ช่องที่สำคัญที่สุดถูกบีบเหลือแค่ลูกศร อ่านไม่ออกว่าเลือกอะไรอยู่
+                   (ผู้ใช้รายงาน 2026-09-11) → บล็อกนี้เรียงเป็น **คอลัมน์** ป้ายอยู่บรรทัดของ
+                   ตัวเอง ช่องเลือกกว้างเต็มกรอบ -->
+              <div class="review-field" style="flex-direction:column;align-items:stretch;gap:6px;background:#fef3c7;border:1px solid #fcd34d;padding:8px 10px;border-radius:6px">
                 <!-- ป้ายซื่อสัตย์ตามกฎเหล็ก #1 ข้อ "UI ติดป้ายซื่อสัตย์": "🤖 AI แนะนำ"
                      เฉพาะตอนเรียก provider จริงเท่านั้น (targetDocTypeUsedAi) ไม่งั้นเป็น
                      "⚙️ ระบบแนะนำ" — ธงนี้มีบนแถวสแกนมาตลอดแต่เพิ่งถูกส่งออกมาใน DTO
                      (ผลตรวจ 2026-09-06 · T3-12) -->
-                <label style="color:#78350f;font-weight:600">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">${scan.targetDocTypeUsedAi ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ (จากชนิดเอกสาร/บทบาทบนกระดาษ)'}</span></label>
-                <select class="form-input" id="revTargetDocType" style="flex:1;background:white">
+                <label style="color:#78350f;font-weight:600;min-width:0">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">${scan.targetDocTypeUsedAi ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ (จากชนิดเอกสาร/บทบาทบนกระดาษ)'}</span></label>
+                <select class="form-input" id="revTargetDocType" style="width:100%;background:white;font-size:14px;font-weight:600;padding:9px 12px">
                   <option value="">— เลือก —</option>
                   <option value="PurchaseInvoice" ${scan.targetDocumentType === 'PurchaseInvoice' ? 'selected' : ''}>ใบแจ้งหนี้ซื้อ (AP)</option>
                   <option value="Expense" ${scan.targetDocumentType === 'Expense' ? 'selected' : ''}>ใบบันทึกค่าใช้จ่าย</option>
@@ -2391,7 +2397,7 @@
                      ใบขายของเราเองที่สแกนกลับเข้ามา) แต่ผู้ใช้แก้ไม่ได้เลย
                      และไม่มี learner ตัวไหนเก็บความจริงข้อนี้ ⇒ ผิดแล้วผิดตลอด
                      เปลี่ยนแล้วเซิร์ฟเวอร์จะอนุมาน "เอกสารที่จะสร้าง" ใหม่ให้ -->
-                <label style="font-size:11px;color:#92400e;display:inline-flex;align-items:center;gap:4px">
+                <label style="font-size:11px;color:#92400e;display:flex;align-items:center;gap:6px;min-width:0">
                   บทบาทของเราบนกระดาษ
                   <select id="revOurRole" class="form-control" style="width:auto;padding:2px 6px;font-size:12px"
                           onchange="Page.onRoleChanged()" title="ผู้ซื้อ = เราจ่าย (ฝั่งซื้อ) · ผู้ขาย = เรารับเงิน (ฝั่งขาย) — เปลี่ยนแล้วระบบจะเสนอเอกสารที่จะสร้างใหม่ให้">

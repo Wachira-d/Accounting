@@ -1753,16 +1753,43 @@ public class OcrService : IOcrService
             // §82/5(2) ของตัวเองอยู่แล้ว (เตือนเคลมภาษีซื้อไม่ได้ ด้านบน)
             if (extractedData.OurRole == "Buyer"
                 && string.Equals(extractedData.DocumentType, "Receipt", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrWhiteSpace(extractedData.VendorTaxId)
                 && (extractedData.VatAmount ?? 0m) <= 0m
                 && extractedData.TargetDocumentType
                     is null or nameof(DocumentType.Expense) or nameof(DocumentType.PaymentVoucher))
             {
-                extractedData.TargetDocumentType = nameof(DocumentType.CertificateInLieu);
-                extractedData.ReasoningTrace.Add(
-                    "[CertInLieu] บิลไม่มีเลขผู้เสียภาษี 13 หลักและไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่าย"
-                    + "ทางภาษี (§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
-                    + "ตามแนวทางกรมสรรพากร");
+                // ⚠️ เดิมตัดสินจากสัญญาณเดียว (ไม่มีเลขผู้เสียภาษี = ระบุผู้รับเงินไม่ได้)
+                // ⇒ บิลเงินสดของร้านที่มี **ชื่อ + ที่อยู่ครบบนกระดาษ** ถูกเปลี่ยนเป็น
+                // "ใบรับรองแทนใบเสร็จ" ทั้งที่ผู้ขายออกบิลให้แล้ว (ผู้ใช้รายงาน 2026-09-11)
+                // — §65 ตรี(18) ถามว่า "พิสูจน์ผู้รับเงินได้ไหม" ไม่ได้ถามหาเลข 13 หลัก
+                // ตัวตัดสินอยู่ที่ Helpers/OcrPayeeEvidence ตัวเดียว (pure + มีเทสต์)
+                var payee = Accounting.Helpers.OcrPayeeEvidence.Evaluate(
+                    extractedData.VendorTaxId, extractedData.VendorName,
+                    extractedData.VendorAddress, extractedData.VendorPhone);
+                if (payee.Level == Accounting.Helpers.OcrPayeeProof.Unidentified)
+                {
+                    extractedData.TargetDocumentType = nameof(DocumentType.CertificateInLieu);
+                    extractedData.ReasoningTrace.Add(
+                        $"[CertInLieu] {payee.Reason} และไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่าย"
+                        + "ทางภาษี (§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
+                        + "ตามแนวทางกรมสรรพากร");
+                }
+                else if (payee.Level == Accounting.Helpers.OcrPayeeProof.Weak)
+                {
+                    // ก้ำกึ่ง = **บอก ไม่ใช่เปลี่ยนให้เงียบ ๆ** (กติกา "ไม่รู้ = บอกว่าไม่รู้")
+                    extractedData.ReasoningTrace.Add(
+                        $"[CertInLieu] {payee.Reason} — ยังคงชนิดเอกสารเดิมไว้ "
+                        + "ถ้าตรวจแล้วพิสูจน์ผู้รับเงินไม่ได้ (§65 ตรี(18)) ให้เปลี่ยนช่อง "
+                        + "\"เอกสารที่จะสร้างในระบบ\" เป็น \"ใบรับรองแทนใบเสร็จ\" เอง");
+                }
+                else if (!Accounting.Helpers.ThaiTaxId.IsPlausibleFromScan(extractedData.VendorTaxId))
+                {
+                    // ไม่มีเลขภาษีแต่พิสูจน์ผู้รับได้ = เคสที่กติกาเดิมเปลี่ยนชนิดผิด
+                    // → จดไว้ให้ผู้ใช้เห็นว่าทำไม "ไม่" ออกใบรับรองแทนใบเสร็จ
+                    extractedData.ReasoningTrace.Add(
+                        $"[CertInLieu] ไม่ต้องออกใบรับรองแทนใบเสร็จ — {payee.Reason} "
+                        + "(พิสูจน์ผู้รับเงินได้ตาม §65 ตรี(18)) · ผู้ขายออกบิลให้แล้ว "
+                        + "→ บันทึกเป็นใบสำคัญจ่าย/ค่าใช้จ่ายแนบบิลตามปกติ");
+                }
             }
 
             // ───── ใบมัดจำ/รับเงินล่วงหน้า (ฝั่งขาย) ─────
