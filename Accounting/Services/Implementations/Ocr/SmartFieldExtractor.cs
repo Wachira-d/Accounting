@@ -317,14 +317,41 @@ internal static class SmartFieldExtractor
                 data.Note(Accounting.Helpers.OcrFieldKeys.SellerAddress, cleanVendorAddr, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m,
                     "ตัดเศษท้ายชื่อผู้ขายที่ engine ใส่ปนมากับที่อยู่");
             }
+            // ที่อยู่ **สองแห่ง** ถูก engine ต่อกันเป็นสตริงเดียว (กรอบร้าน + ช่อง
+            // “ที่อยู่/ADDRESS” ของลูกค้า) — ผ่าคืน แล้วยกก้อนที่สองให้อีกฝั่ง
+            // **เฉพาะตอนฝั่งนั้นยังว่าง** (ไม่ทับของที่อ่านมาได้เอง)
+            var (vFirst, vSecond) = Accounting.Helpers.OcrPartyAddress.SplitGlued(data.VendorAddress);
+            if (vSecond != null)
+            {
+                data.ReasoningTrace.Add($"[Vendor] ที่อยู่สองแห่งถูกต่อกัน — ผ่าเป็น “{vFirst}” + “{vSecond}”");
+                data.VendorAddress = vFirst;
+                if (string.IsNullOrWhiteSpace(data.BuyerAddress))
+                {
+                    data.BuyerAddress = vSecond;
+                    // ก้อนที่สองเป็นของอีกฝั่ง “ตามลำดับบนกระดาษ” (ผู้ออกบิลอยู่บน)
+                    // — เป็นการอนุมาน ไม่ใช่การอ่าน ⇒ คะแนนต้องต่ำจนไฮไลต์ขึ้น
+                    data.Note(Accounting.Helpers.OcrFieldKeys.BuyerAddress, vSecond,
+                        Accounting.Helpers.OcrFieldSource.Guess, 0.45m,
+                        "ก้อนที่สองของที่อยู่ที่ถูกต่อกัน — เดาว่าเป็นของผู้ซื้อตามลำดับบนกระดาษ");
+                }
+            }
+            var (bFirst, bSecond) = Accounting.Helpers.OcrPartyAddress.SplitGlued(data.BuyerAddress);
+            if (bSecond != null && string.IsNullOrWhiteSpace(data.VendorAddress))
+            {
+                data.ReasoningTrace.Add($"[Buyer] ที่อยู่สองแห่งถูกต่อกัน — ผ่าเป็น “{bFirst}” + “{bSecond}”");
+                data.BuyerAddress = bFirst;
+                data.VendorAddress = bSecond;
+            }
         }
         if (bothDistinct) return;
 
-        // Find seller/buyer keyword positions in raw text
-        var sellerKeywords = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "ผู้ออก", "SELLER", "FROM" };
-        var buyerKeywords = new[] { "ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "BUYER", "CUSTOMER", "BILL TO", "SOLD TO", "ส่งถึง" };
-        int sellerPos = FindFirstKeyword(text, sellerKeywords);
-        int buyerPos = FindFirstKeyword(text, buyerKeywords);
+        // ป้ายฝั่งผู้ซื้อ/ผู้ขายบนกระดาษ — **รายการคำอยู่ที่ Helpers/OcrPartyLabels
+        // ที่เดียว** ใช้ร่วมกับ OcrDocumentRoleInferrer (เดิมสองไฟล์ถือรายการคนละชุด
+        // ที่ไม่ตรงกัน ⇒ ตัดสิน “เลขภาษีนี้ของใคร” กับ “เราเป็นผู้ซื้อหรือผู้ขาย”
+        // ด้วยหลักฐานคนละชุดบนกระดาษใบเดียวกัน)
+        var (buyerPos0, sellerPos0) = Accounting.Helpers.OcrPartyLabels.Find(text);
+        int sellerPos = sellerPos0;
+        int buyerPos = buyerPos0;
 
         // ตำแหน่งจริงของคำว่า "ผู้ซื้อ/ลูกค้า" — **ห้ามปลอมเป็นท้ายหน้า**
         //
@@ -419,7 +446,9 @@ internal static class SmartFieldExtractor
 
     private static List<(string FullName, int Position)> ExtractCompanyNames(string text)
     {
-        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
+        // “บจก.” / “บมจ.” เคยตกหล่นทั้งที่เป็นตัวย่อที่ใช้กันทั่วไป ⇒ ชื่อบริษัทที่
+        // กระดาษเขียนว่า “บจก. …” ไม่ถูกมองว่าเป็นชื่อนิติบุคคลเลยสักครั้ง
+        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|หจก\.?|บจก\.?|บมจ\.?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
         var matches = Regex.Matches(text, pattern, RegexOptions.Multiline);
         var results = new List<(string, int)>();
         foreach (Match m in matches)
@@ -434,16 +463,6 @@ internal static class SmartFieldExtractor
             results.Add(($"{prefix} {name}{suffix}".Trim(), m.Index));
         }
         return results;
-    }
-
-    private static int FindFirstKeyword(string text, string[] keywords)
-    {
-        foreach (var kw in keywords)
-        {
-            var idx = text.IndexOf(kw, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0) return idx;
-        }
-        return -1;
     }
 
     private static bool NamesEqual(string? a, string? b)

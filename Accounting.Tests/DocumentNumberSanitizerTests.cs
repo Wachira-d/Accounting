@@ -112,6 +112,54 @@ public class DocumentNumberSanitizerTests
         Assert.Equal("INV-2026-0042", doc);
     }
 
+    // ═══ เลขที่บ้าน ไม่ใช่เลขที่เอกสาร (ผู้ใช้รายงาน 2026-09-11) ═══
+    // บิลเงินสดเขียนมือที่ช่อง "เล่มที่/เลขที่" **เว้นว่าง** — Azure หยิบเลขที่บ้าน
+    // ของร้านในกรอบบนมาเป็นเลขที่เอกสาร ⇒ ตามใบไม่เจอ + ด่านกันสแกนซ้ำใช้ไม่ได้
+    private const string HandwrittenCashBill = """
+        อ๊อฟ พิการ
+        เล่มที่
+        เลขที่
+        177/18 ม.5 ต.บางพระ อ.ศรีราชา จ. ชลบุรี
+        บิลเงินสด
+        CASHSALE
+        """;
+
+    [Fact]
+    public void เลขที่บ้านที่มีคำบอกที่อยู่ตามหลัง_ต้องถูกล้างทิ้ง()
+    {
+        var (doc, note) = DocumentNumberSanitizer.Sanitize("177/18", HandwrittenCashBill);
+        Assert.Null(doc);                       // "ไม่รู้ = บอกว่าไม่รู้"
+        Assert.NotNull(note);
+        Assert.Contains("เลขที่บ้าน", note!);
+    }
+
+    [Fact]
+    public void ป้ายเลขที่ที่อยู่ติดกันบนแบบฟอร์มเปล่า_ต้องไม่ช่วยให้ผ่าน()
+    {
+        // บนกระดาษใบนี้ "เลขที่" (ป้ายที่ถูกเว้นว่าง) อยู่ก่อน "177/18" แค่บรรทัดเดียว
+        // — ด่านที่อิง "ความใกล้ของป้าย" ห้ามใช้เป็นข้อยกเว้นของด่านที่อิงคุณสมบัติ
+        // ของตัวข้อมูลเอง (บทเรียนเดิม: บาร์โค้ด EAN-13 ที่บังเอิญมีป้ายอยู่ใกล้)
+        Assert.Contains("เลขที่\n", HandwrittenCashBill.Replace("\r", ""));
+        Assert.Null(DocumentNumberSanitizer.Sanitize("177/18", HandwrittenCashBill).DocumentNumber);
+    }
+
+    [Fact]
+    public void เลขที่เอกสารรูปทับที่ไม่มีที่อยู่ตามหลัง_ต้องไม่ถูกแตะ()
+    {
+        // ร้านเล็กออกเลขบิลแบบ "12/68" (ลำดับ/ปี พ.ศ.) — รูปเหมือนเลขที่บ้าน
+        // แต่ไม่มีคำบอกที่อยู่ตามหลัง ⇒ ต้องผ่านตามเดิม
+        const string t = "ใบเสร็จรับเงิน\nเลขที่ 12/68\nรวมเงิน 500\n";
+        Assert.Equal("12/68", DocumentNumberSanitizer.Sanitize("12/68", t).DocumentNumber);
+    }
+
+    [Fact]
+    public void เลขที่เอกสารที่บังเอิญซ้ำกับเลขบ้านในที่อยู่_ต้องไม่ถูกทิ้ง()
+    {
+        // โผล่สองที่: ที่หนึ่งเป็นที่อยู่ อีกที่เป็นเลขที่เอกสารจริง ⇒ ไม่ตัดสิน
+        const string t = "บริษัท ก จำกัด\n55/7 ม.2 ต.หนองขาม จ.ชลบุรี\nเลขที่ 55/7\nรวมเงิน 100\n";
+        Assert.Equal("55/7", DocumentNumberSanitizer.Sanitize("55/7", t).DocumentNumber);
+    }
+
     [Fact]
     public void When_no_anchor_distinguishes_the_halves_the_left_one_wins()
     {

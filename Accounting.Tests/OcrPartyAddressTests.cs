@@ -76,6 +76,42 @@ public class OcrPartyAddressTests
         Assert.Null(OcrPartyAddress.StripLeakedNameFragment(PaperAddress, "ก"));
     }
 
+    // ── ที่อยู่สองแห่งถูกต่อกันเป็นสตริงเดียว (SplitGlued) ──────────────
+    // ที่มา (สแกนจริง 2026-09-11 · บิลเงินสดเขียนมือ): Azure คืน VendorAddress
+    // เดียวที่เอาที่อยู่ร้าน (กรอบบน) ต่อกับที่อยู่ลูกค้า (ช่อง “ที่อยู่/ADDRESS”)
+    [Fact]
+    public void เคสจริง_ที่อยู่สองแห่งต่อกัน_ต้องผ่าถูกจุด()
+    {
+        var (first, second) = OcrPartyAddress.SplitGlued(
+            "177/18 ม.5 ต.บางพระ อ.ศรีราชา จ. ชลบุรี202/24 ม.5 ซ. บ้านห้วยกุ่ม 4");
+        Assert.Equal("177/18 ม.5 ต.บางพระ อ.ศรีราชา จ. ชลบุรี", first);
+        Assert.Equal("202/24 ม.5 ซ. บ้านห้วยกุ่ม 4", second);
+    }
+
+    [Fact]
+    public void ที่อยู่แห่งเดียว_ต้องไม่ถูกผ่า()
+        => Assert.Null(OcrPartyAddress.SplitGlued(PaperAddress).Second);
+
+    [Fact]
+    public void เลขทับสองตัวในที่อยู่เดียวกัน_ต้องไม่ถูกผ่า()
+        // ไม่มี “จบที่อยู่” (จังหวัด/รหัสไปรษณีย์) คั่นกลาง ⇒ ยังเป็นแห่งเดียว
+        => Assert.Null(OcrPartyAddress.SplitGlued(
+            "เลขที่ 1/2 และ 1/3 ถ.สุขุมวิท ต.บางพระ อ.ศรีราชา จ.ชลบุรี 20110").Second);
+
+    [Fact]
+    public void รหัสไปรษณีย์ก็นับเป็นจุดจบที่อยู่()
+    {
+        var (first, second) = OcrPartyAddress.SplitGlued(
+            "99/1 ถ.สุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110 55/7 ม.2 ต.หนองขาม");
+        Assert.EndsWith("10110", first);
+        Assert.StartsWith("55/7", second!);
+    }
+
+    [Fact]
+    public void ก้อนที่สองสั้นเกินจะเป็นที่อยู่_ต้องไม่ผ่า()
+        => Assert.Null(OcrPartyAddress.SplitGlued(
+            "177/18 ม.5 ต.บางพระ อ.ศรีราชา จ.ชลบุรี 1/2").Second);
+
     [Fact]
     public void ห้ามตัดจนเหลือสระลอยเป็นตัวแรก()
         // ชื่อลงท้าย “แฮปป” + ที่อยู่ขึ้นต้น “แฮปปี้เนส…” ⇒ ถ้าตัดตรง ๆ ที่อยู่จะเริ่ม

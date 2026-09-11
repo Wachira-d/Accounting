@@ -64,6 +64,50 @@ public static class OcrPartyAddress
         return null;
     }
 
+    /// <summary>ที่อยู่ <b>สองแห่งถูกต่อกันเป็นสตริงเดียว</b> — ผ่าคืนเป็นสองก้อน
+    ///
+    /// <para>═══ ที่มา (สแกนจริง 2026-09-11 · บิลเงินสดเขียนมือ) ═══ กระดาษมีที่อยู่
+    /// สองบล็อก (ร้านผู้ออกบิลอยู่กรอบบน · ลูกค้าอยู่ช่อง “ที่อยู่/ADDRESS”) แต่
+    /// Azure DI คืน <c>VendorAddress</c> เดียวที่เอาทั้งสองมาต่อกัน:
+    /// <c>“177/18 ม.5 ต.บางพระ อ.ศรีราชา จ. ชลบุรี<b>202/24</b> ม.5 ซ. บ้านห้วยกุ่ม 4”</c>
+    /// ⇒ ช่องที่อยู่ผู้ขายผิด และช่องที่อยู่ผู้ซื้อว่างทั้งที่กระดาษมีครบ (§86/4)</para>
+    ///
+    /// <para>═══ ตัวตัดที่ใช้ ═══ ที่อยู่ไทย<b>จบที่จังหวัด</b> (+รหัสไปรษณีย์) เสมอ —
+    /// อะไรที่ตามหลังจังหวัดแล้ว<b>ขึ้นต้นด้วยเลขที่บ้านรูป <c>n/n</c></b> คือที่อยู่
+    /// <b>คนละแห่ง</b> ไม่ใช่ส่วนต่อของแห่งเดิม. บังคับให้มีตัวบ่งชี้จังหวัด/รหัส
+    /// ไปรษณีย์คั่นกลางเสมอ จึงไม่ไปผ่าที่อยู่ที่มีเลขทับสองตัวในแห่งเดียวกัน
+    /// (“เลขที่ 1/2 และ 1/3 ถนน…”)</para>
+    ///
+    /// <returns>(ก้อนแรก, ก้อนที่สอง) — <c>Second = null</c> เมื่อไม่พบรอยต่อ</returns></summary>
+    public static (string First, string? Second) SplitGlued(string? address)
+    {
+        var addr = (address ?? string.Empty).Trim();
+        if (addr.Length < MinGluedPart * 2) return (addr, null);
+
+        var houses = System.Text.RegularExpressions.Regex.Matches(addr, @"\d{1,4}/\d{1,4}");
+        if (houses.Count < 2) return (addr, null);
+
+        for (var i = 1; i < houses.Count; i++)
+        {
+            var cut = houses[i].Index;
+            var left = addr[..cut].TrimEnd(' ', '\t', ',', '-');
+            var right = addr[cut..].Trim();
+            if (left.Length < MinGluedPart || right.Length < MinGluedPart) continue;
+            // ต้องมี “จบที่อยู่” คั่นอยู่จริง ไม่งั้นเป็นเลขทับสองตัวในที่อยู่เดียว
+            if (!EndsAnAddress(left)) continue;
+            return (left, right);
+        }
+        return (addr, null);
+    }
+
+    /// <summary>ก้อนข้อความนี้ “จบที่อยู่” แล้วหรือยัง — มีจังหวัดหรือรหัสไปรษณีย์</summary>
+    private static bool EndsAnAddress(string s)
+        => System.Text.RegularExpressions.Regex.IsMatch(s,
+            @"(จ\.|จังหวัด|กรุงเทพ|กทม\.?|\b\d{5}\b)");
+
+    /// <summary>แต่ละก้อนต้องยาวพอจะเป็นที่อยู่จริง</summary>
+    private const int MinGluedPart = 10;
+
     /// <summary>สระบน/ล่าง + วรรณยุกต์ไทย — โผล่เป็นตัวแรกของข้อความไม่ได้</summary>
     private static bool IsThaiCombining(char c)
         => c == '\u0E31'                          // ไม้หันอากาศ

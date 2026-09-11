@@ -160,7 +160,27 @@ public static class OcrDocumentRoleInferrer
                 reasons.Add($"เลขประจำตัวผู้ขาย ({vendorTaxId}) ตรงกับบริษัทเรา → role = Seller");
             }
         }
+        // ─── Step 1a″: ป้ายบนกระดาษชนะ "ช่องที่ engine เลือกใส่" ───────────────
+        //
+        // ที่มา (สแกนจริง 2026-09-11 · บิลเงินสดเขียนมือ 3,500): Azure หยิบชื่อใน
+        // ช่อง "นาม" (= ลูกค้า) ไปใส่ VendorName ⇒ กติกา fuzzy ข้างล่างสรุปว่า
+        // "ชื่อผู้ขายคือเรา ⇒ เราเป็นผู้ขาย" ⇒ เสนอสร้าง**ใบแจ้งหนี้ขาย** จาก
+        // เงินที่เรา**จ่ายออก** (รายจ่ายกลายเป็นรายได้ + Contact จับคู่เป็นตัวเราเอง)
+        //
+        // เมื่อชื่อเราโผล่ในช่องคู่ค้า มีสองสมมติฐานเสมอ: (ก) เราเป็นฝั่งนั้นจริง
+        // (ข) engine ใส่ผิดช่อง — โค้ดเดิมพิจารณาแค่ (ก). ตัวตัดสินที่ถูกคือ
+        // **ป้ายบนกระดาษ** ไม่ใช่ช่องที่ engine เลือก (ช่องนั้นคือสิ่งที่ถูกสงสัย)
         if (roleConf < 1.0m && !string.IsNullOrEmpty(companyNm))
+        {
+            var paper = Accounting.Helpers.OcrSelfPartyGuard.FromPaperLabels(rawText, companyName);
+            if (paper.Side != Accounting.Helpers.OcrSelfSide.Unknown)
+            {
+                role = paper.Side == Accounting.Helpers.OcrSelfSide.Buyer ? "Buyer" : "Seller";
+                roleConf = 0.90m;
+                reasons.Add(paper.Reason);
+            }
+        }
+        if (roleConf < 0.90m && !string.IsNullOrEmpty(companyNm))
         {
             // Fuzzy name fallback when tax IDs aren't extracted or company hasn't
             // set its TaxId. Strip common Thai entity suffixes for matching.
@@ -632,21 +652,11 @@ public static class OcrDocumentRoleInferrer
     // True when the two names share a meaningful substring (≥4 chars) after
     // stripping common Thai entity suffixes — handles "บริษัท X จำกัด" vs "X จำกัด"
     // vs "X Co., Ltd." reasonably without needing a proper tokenizer.
+    // เทียบชื่อ/normalize อยู่ที่ Helpers/OcrSelfPartyGuard ที่เดียว — ตัวเดิมในไฟล์
+    // นี้ตกคำว่า "บจก." ⇒ ชื่อเดียวกันสองรูป ("บจก. X" บนกระดาษ vs "หจก. X" ใน
+    // ทะเบียน) เทียบไม่ติดในบางเส้นทาง
     private static bool NameOverlaps(string a, string b)
-    {
-        var na = Normalize(a);
-        var nb = Normalize(b);
-        if (na.Length < 4 || nb.Length < 4) return false;
-        return na.Contains(nb) || nb.Contains(na);
-    }
-
-    private static string Normalize(string s)
-    {
-        var lowered = s.ToLowerInvariant();
-        foreach (var suffix in new[] { "บริษัท", "ห้างหุ้นส่วนจำกัด", "หจก.", "จำกัด", "(มหาชน)", "co., ltd.", "co.,ltd.", "ltd.", "ltd", "company" })
-            lowered = lowered.Replace(suffix, "");
-        return new string(lowered.Where(c => !char.IsWhiteSpace(c) && c != '.' && c != ',').ToArray()).Trim();
-    }
+        => Accounting.Helpers.OcrSelfPartyGuard.NameOverlaps(a, b);
 
     private static bool ContainsAny(string text, params string[] needles)
         => needles.Any(n => text.Contains(n.ToLowerInvariant()));
@@ -697,29 +707,8 @@ public static class OcrDocumentRoleInferrer
     private static (int buyerLabelPos, int sellerLabelPos) FindRolePhrasePositions(string text)
     {
         if (string.IsNullOrEmpty(text)) return (-1, -1);
-        // "CUSTOMER COPY" (สลิปบัตรทุกใบ) / "CUSTOMER SERVICE" / "สำเนาลูกค้า"
-        // ไม่ใช่ป้ายบอกตำแหน่งผู้ซื้อ — ตัดทิ้งก่อนค้น (แทนด้วยช่องว่างความยาว
-        // เท่าเดิม เพื่อไม่ให้ตำแหน่ง index ของป้ายจริงตัวอื่นเลื่อน)
-        foreach (var noise in new[] { "customer copy", "customer service", "merchant copy",
-                                      "สำเนาลูกค้า", "ลูกค้าสัมพันธ์" })
-        {
-            int at;
-            while ((at = text.IndexOf(noise, StringComparison.OrdinalIgnoreCase)) >= 0)
-                text = text.Remove(at, noise.Length).Insert(at, new string(' ', noise.Length));
-        }
-        var buyerLabels = new[] { "ผู้ซื้อ", "ลูกค้า", "นามผู้ซื้อ", "Bill To", "BILL TO", "Sold To", "SOLD TO", "ส่งถึง", "Customer", "BUYER" };
-        var sellerLabels = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "ผู้ออก", "Seller", "SELLER", "From", "FROM" };
-        int buyerIdx = -1, sellerIdx = -1;
-        foreach (var l in buyerLabels)
-        {
-            var i = text.IndexOf(l, StringComparison.OrdinalIgnoreCase);
-            if (i >= 0 && (buyerIdx < 0 || i < buyerIdx)) buyerIdx = i;
-        }
-        foreach (var l in sellerLabels)
-        {
-            var i = text.IndexOf(l, StringComparison.OrdinalIgnoreCase);
-            if (i >= 0 && (sellerIdx < 0 || i < sellerIdx)) sellerIdx = i;
-        }
-        return (buyerIdx, sellerIdx);
+        // รายการคำ + การกลบ noise อยู่ที่ Helpers/OcrPartyLabels ที่เดียว —
+        // ใช้ร่วมกับ SmartFieldExtractor (เดิมสองไฟล์ถือรายการคนละชุด)
+        return Accounting.Helpers.OcrPartyLabels.Find(text);
     }
 }

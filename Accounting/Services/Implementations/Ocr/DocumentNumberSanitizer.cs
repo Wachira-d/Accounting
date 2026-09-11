@@ -49,6 +49,20 @@ internal static class DocumentNumberSanitizer
         // ไม่มี raw text ให้เทียบ (เช่น e-Tax XML ที่ field มาจาก XML ตรง ๆ) — ปล่อยผ่าน
         if (string.IsNullOrWhiteSpace(rawText)) return (doc, null);
 
+        // ── เลขที่บ้าน ไม่ใช่เลขที่เอกสาร ──────────────────────────────────────
+        // ที่มา (สแกนจริง 2026-09-11): บิลเงินสดเขียนมือที่ช่อง "เล่มที่/เลขที่"
+        // **เว้นว่าง** — Azure หยิบ "177/18" (เลขที่บ้านของร้านในกรอบบน) มาเป็น
+        // เลขที่เอกสาร ⇒ ตามใบไม่เจอ + ด่านกันสแกนซ้ำจับใบเดิมไม่ได้
+        //
+        // ⚠️ จงใจ **ไม่** ยกเว้นให้กรณีที่มีป้าย "เลขที่" อยู่ข้างหน้า — บนแบบฟอร์ม
+        // พิมพ์สำเร็จ ป้ายที่ถูกเว้นว่างจะถูก OCR คืนมาเป็นบรรทัดลอย ๆ ติดกับค่าของ
+        // ช่องอื่นพอดี (ที่นี่: "เล่มที่\nเลขที่\n177/18 ม.5 …") ⇒ ด่านที่อิง
+        // "ความใกล้ของป้าย" ห้ามใช้เป็นข้อยกเว้นของด่านที่อิงคุณสมบัติของตัวข้อมูลเอง
+        // (บทเรียนเดิมของเรพ — เคสบาร์โค้ด EAN-13)
+        if (LooksLikeHouseNumber(doc, rawText!))
+            return (null, $"\"{doc}\" เป็นเลขที่บ้าน (มี ม./ต./อ./จ. ตามหลังบนกระดาษ) "
+                + "ไม่ใช่เลขที่เอกสาร — เอกสารนี้ไม่ได้กรอกเลขที่ กรุณาระบุเอง");
+
         // token ทั้งหมดที่ OCR อ่านได้จริงจากกระดาษ
         var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match m in TokenRx.Matches(rawText)) tokens.Add(m.Value);
@@ -77,6 +91,30 @@ internal static class DocumentNumberSanitizer
         // ผู้ใช้ยังเห็นและแก้เองได้ในฟอร์ม)
         return (doc, null);
     }
+
+    /// <summary>รูปเลขที่บ้าน (<c>n/n</c>) ที่บนกระดาษมี<b>คำบอกที่อยู่ตามหลังทันที</b>
+    /// (ม. · หมู่ · ต. · ถ. · ซ. · อ. · จ. · แขวง · เขต) — เลขที่เอกสารจริงไม่มีทาง
+    /// ตามด้วยคำพวกนี้ ส่วนเลขที่บ้านตามด้วยเสมอ. ต้องเจอ<b>ทุก</b>ตำแหน่งที่ token
+    /// นั้นโผล่ ไม่งั้นเลขที่เอกสารที่บังเอิญซ้ำกับเลขบ้านในที่อยู่จะถูกทิ้งไปด้วย</summary>
+    private static bool LooksLikeHouseNumber(string doc, string rawText)
+    {
+        if (!Regex.IsMatch(doc, @"^\d{1,4}/\d{1,4}$")) return false;
+        var seen = false;
+        var idx = -1;
+        while ((idx = rawText.IndexOf(doc, idx + 1, StringComparison.Ordinal)) >= 0)
+        {
+            seen = true;
+            var from = idx + doc.Length;
+            var window = rawText[from..Math.Min(rawText.Length, from + 12)];
+            if (!AddressWordRx.IsMatch(window)) return false;   // มีจุดที่ไม่ใช่ที่อยู่ → ไม่ตัดสิน
+        }
+        return seen;
+    }
+
+    /// <summary>คำบอกตำแหน่งในที่อยู่ไทยที่ตามหลังเลขที่บ้านได้</summary>
+    private static readonly Regex AddressWordRx = new(
+        @"^\s*(ม\.|หมู่|ต\.|ตำบล|ถ\.|ถนน|ซ\.|ซอย|อ\.|อำเภอ|จ\.|จังหวัด|แขวง|เขต)",
+        RegexOptions.Compiled);
 
     /// <summary>เลือกว่าซีก left/right ตัวไหนคือเลขที่เอกสารหลัก:
     /// ตัวที่อยู่หลังป้าย "เลขที่/No." ธรรมดาชนะตัวที่อยู่หลังป้ายรอง

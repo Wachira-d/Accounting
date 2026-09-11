@@ -656,7 +656,9 @@ public class OcrService : IOcrService
             if (docNoNote != null)
             {
                 extractedData.DocumentNumber = cleanDocNo;
-                extractedData.FieldConfidence["DocumentNumber"] = 0.85;
+                // ล้างทิ้งเพราะเป็นเลขที่บ้าน = "ไม่รู้" ⇒ คะแนนต้องต่ำจนไฮไลต์เหลือง
+                // ขึ้น (กฎเหล็ก #3 ข้อ 3) ห้ามปล่อยให้ช่องว่างดูเหมือนมั่นใจ 85%
+                extractedData.FieldConfidence["DocumentNumber"] = cleanDocNo == null ? 0.25 : 0.85;
                 extractedData.ReasoningTrace.Add("[DocNo] " + docNoNote);
             }
 
@@ -831,6 +833,85 @@ public class OcrService : IOcrService
                 // resolver, basket-rule lookup) sees readable Thai.
                 // Original extractedText is preserved for display.
                 var normalizedText = Ocr.ThaiTextNormalizer.Normalize(extractedText);
+                // ── ชื่อบริษัทเราถูก engine ใส่ผิดช่องหรือเปล่า ───────────────────
+                //
+                // ที่มา (สแกนจริง 2026-09-11 · บิลเงินสดเขียนมือ 3,500): กระดาษเป็น
+                // บิลที่ร้านออกให้เรา — กรอบบนคือร้าน ช่อง "นาม/NAME" คือเรา. Azure
+                // หยิบชื่อในช่อง "นาม" ไปใส่ VendorName ⇒ ระบบสรุปว่าเราเป็นผู้ขาย
+                // แล้วเสนอสร้างใบแจ้งหนี้ขาย (รายจ่ายกลายเป็นรายได้) + จับคู่ Contact
+                // ได้เป็น**ตัวบริษัทเราเอง**
+                //
+                // ตัวตัดสินคือ **ป้ายบนกระดาษ** (Helpers/OcrSelfPartyGuard) ไม่ใช่ช่อง
+                // ที่ engine เลือก · ไม่มีป้ายใกล้พอ = ไม่ย้าย ("ไม่รู้ = บอกว่าไม่รู้")
+                // เพราะการสแกน**ใบที่เราออกเอง** ก็ทำให้ชื่อเราอยู่ช่องผู้ขายอย่างถูกต้อง
+                {
+                    var selfPaper = Accounting.Helpers.OcrSelfPartyGuard.FromPaperLabels(
+                        normalizedText, companyContext?.Name);
+                    var vendorIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsSelf(
+                        extractedData.VendorName, companyContext?.Name);
+                    var buyerIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsSelf(
+                        extractedData.BuyerName, companyContext?.Name);
+
+                    if (vendorIsUs && !buyerIsUs
+                        && selfPaper.Side == Accounting.Helpers.OcrSelfSide.Buyer)
+                    {
+                        extractedData.BuyerName = extractedData.VendorName;
+                        extractedData.VendorName = null;
+                        // ที่อยู่/เลขภาษี/สาขา ย้ายตามชื่อ **เฉพาะตอนฝั่งปลายทางยังว่าง**
+                        // — ถ้าตัวผ่าที่อยู่ (OcrPartyAddress.SplitGlued) เติมให้แล้ว
+                        // แปลว่าช่องผู้ขายถือที่อยู่ของ "กรอบบน" ซึ่งเป็นผู้ขายตัวจริง
+                        // ⇒ ห้ามย้ายออก
+                        if (string.IsNullOrWhiteSpace(extractedData.BuyerAddress))
+                        {
+                            extractedData.BuyerAddress = extractedData.VendorAddress;
+                            extractedData.VendorAddress = null;
+                        }
+                        if (string.IsNullOrWhiteSpace(extractedData.BuyerTaxId))
+                        {
+                            extractedData.BuyerTaxId = extractedData.VendorTaxId;
+                            extractedData.VendorTaxId = null;
+                        }
+                        if (string.IsNullOrWhiteSpace(extractedData.BuyerBranchCode))
+                        {
+                            extractedData.BuyerBranchCode = extractedData.VendorBranchCode;
+                            extractedData.VendorBranchCode = null;
+                        }
+                        // ผู้ขายตัวจริงยัง**ไม่รู้** — ห้ามปล่อยให้ช่องว่างดูเหมือน
+                        // มั่นใจ (กฎเหล็ก #3 ข้อ 3) และห้ามแต่งชื่อขึ้นมาเอง
+                        extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.20;
+                        extractedData.ReasoningTrace.Add(
+                            "[SelfParty] engine ใส่ชื่อบริษัทเราไว้ช่องผู้ขาย แต่กระดาษวางชื่อเราไว้ใต้ป้าย"
+                            + "ฝั่งผู้ซื้อ → ย้ายไปเป็นผู้ซื้อ และปล่อยช่องผู้ขายว่างให้ผู้ใช้ระบุ "
+                            + "(เดิมจะสรุปว่าเราเป็นผู้ขายแล้วเสนอสร้างเอกสารขาย)");
+                    }
+                    else if (buyerIsUs && !vendorIsUs
+                        && selfPaper.Side == Accounting.Helpers.OcrSelfSide.Seller)
+                    {
+                        extractedData.VendorName = extractedData.BuyerName;
+                        extractedData.BuyerName = null;
+                        if (string.IsNullOrWhiteSpace(extractedData.VendorAddress))
+                        {
+                            extractedData.VendorAddress = extractedData.BuyerAddress;
+                            extractedData.BuyerAddress = null;
+                        }
+                        if (string.IsNullOrWhiteSpace(extractedData.VendorTaxId))
+                        {
+                            extractedData.VendorTaxId = extractedData.BuyerTaxId;
+                            extractedData.BuyerTaxId = null;
+                        }
+                        extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerName] = 0.20;
+                        extractedData.ReasoningTrace.Add(
+                            "[SelfParty] engine ใส่ชื่อบริษัทเราไว้ช่องผู้ซื้อ แต่กระดาษวางชื่อเราไว้ใต้ป้าย"
+                            + "ฝั่งผู้ขาย → ย้ายไปเป็นผู้ขาย และปล่อยช่องผู้ซื้อว่างให้ผู้ใช้ระบุ");
+                    }
+                    else if (vendorIsUs && buyerIsUs)
+                    {
+                        extractedData.ReasoningTrace.Add(
+                            "[SelfParty] ทั้งช่องผู้ขายและผู้ซื้ออ่านได้เป็นบริษัทเราเอง — "
+                            + "ตัดสินทิศทางจากกระดาษไม่ได้ กรุณาตรวจคู่ค้าก่อนสร้างเอกสาร");
+                    }
+                }
+
                 var role = OcrDocumentRoleInferrer.Infer(
                     rawText: normalizedText,
                     vendorTaxId: extractedData.VendorTaxId,
