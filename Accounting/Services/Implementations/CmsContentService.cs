@@ -17,19 +17,27 @@ public class CmsContentService : ICmsContentService
     private readonly ILogger<CmsContentService> _logger;
     private readonly IImageProcessingService? _images;
     private readonly ISubscriptionService _subscription;
+    /// <summary>ตัวนับโควตาหน้าเว็บ — ด่านเดียวกับที่หน้าจอใช้แสดงตัวเลข</summary>
+    private readonly ICmsQuotaService _quota;
 
-    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, ISubscriptionService subscription, IImageProcessingService? images = null)
+    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, ISubscriptionService subscription, ICmsQuotaService quota, IImageProcessingService? images = null)
     {
         _db = db;
         _logger = logger;
         _images = images;
         _subscription = subscription;
+        _quota = quota;
     }
 
     // ===== Pages =====
 
     public async Task<PageResponse> CreatePageAsync(Guid companyId, Guid siteId, CreatePageRequest request, string userId)
     {
+        // เพดาน MaxPages ของแพ็กเกจถูก **แสดง** มาตลอดแต่ไม่เคยกั้นอะไร
+        // (CanAddPageAsync ไม่มีใครเรียก) ⇒ ลูกค้าสร้างเกินโควตาได้ไม่จำกัด
+        var blocked = (await _quota.PageUsageAsync(companyId, siteId)).BlockReason("หน้าเว็บ");
+        if (blocked != null) throw new BusinessRuleException(blocked);
+
         var slug = !string.IsNullOrWhiteSpace(request.Slug)
             ? NormalizeSlug(request.Slug)
             : NormalizeSlug(request.Title);
@@ -90,7 +98,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PageResponse> UpdatePageAsync(Guid companyId, Guid siteId, Guid pageId, UpdatePageRequest request, string userId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted)
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Page not found.");
 
         if (request.Title != null) page.Title = request.Title;
@@ -209,9 +217,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PagedResponse<PageListResponse>> GetPagesAsync(Guid companyId, Guid siteId, string? search, int page, int pageSize)
     {
-        // ไม่มี global query filter บน SitePage ⇒ ต้องกรอง IsDeleted เอง ไม่งั้นหน้าที่ลบแล้วยังโชว์ในรายการ
-        // (และหลังเปลี่ยนมาใช้ CmsRetiredSlug จะโชว์ slug ที่ถูกย้ายด้วย — ยิ่งชวนงง)
-        var query = _db.SitePages.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
+        var query = _db.SitePages.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(p => p.Title.Contains(search) || p.Slug.Contains(search));
@@ -240,7 +246,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<bool> DeletePageAsync(Guid companyId, Guid siteId, Guid pageId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId);
         if (page == null) return false;
 
         // unique index (SiteId, Slug) ไม่ได้กรอง IsDeleted ⇒ soft-delete เฉย ๆ แล้วสร้างหน้า slug เดิมใหม่จะชน 500
@@ -253,7 +259,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PageResponse> PublishPageAsync(Guid companyId, Guid siteId, Guid pageId, string userId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted)
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Page not found.");
 
         page.Status = PageStatus.Published;
@@ -780,7 +786,10 @@ public class CmsContentService : ICmsContentService
     {
         var baseSlug = slug;
         var counter = 1;
-        while (await _db.SitePages.AnyAsync(p => p.SiteId == siteId && !p.IsDeleted && p.Slug == slug && (!excludePageId.HasValue || p.Id != excludePageId.Value)))
+        // ต้อง IgnoreQueryFilters: unique index (SiteId, Slug) **ไม่กรอง IsDeleted** ⇒ หน้าที่ถูก
+        // soft-delete ไว้ (ก่อนมี CmsRetiredSlug) ยังจอง slug อยู่จริงในฐาน — ถ้าไม่นับ จะได้ slug ที่
+        // ดูว่าง แล้วไป insert ชน index เป็น 500 ที่ผู้ใช้อ่านไม่ออก
+        while (await _db.SitePages.IgnoreQueryFilters().AnyAsync(p => p.SiteId == siteId && p.Slug == slug && (!excludePageId.HasValue || p.Id != excludePageId.Value)))
         {
             slug = $"{baseSlug}-{counter++}";
         }

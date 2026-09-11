@@ -194,15 +194,16 @@ const Page = {
       tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ไม่มีรายการรออนุมัติ</td></tr>';
       return;
     }
-    const statusMap = { 0: 'รออนุมัติ', 1: 'อนุมัติแล้ว', 2: 'ปฏิเสธ' };
-    const statusClass = { 0: 'badge-warning', 1: 'badge-success', 2: 'badge-danger' };
+    // ป้ายอยู่ที่ Layout.ENUM_LABELS — API ส่งชื่อ enum ("Pending") ไม่ใช่ตัวเลข
+    // (เดิมคีย์ตัวเลข ⇒ แถวรออนุมัติโชว์ค่าดิบและ badge ตกไปสีเทาเสมอ)
+    const statusClass = { Pending: 'badge-warning', Approved: 'badge-success', Rejected: 'badge-danger', Recalled: 'badge-secondary' };
     tbody.innerHTML = this.pendingApprovals.map(a => `
       <tr>
         <td>${a.documentNumber}</td>
         <td>${a.approvalType}</td>
         <td>${a.approverRole}</td>
         <td>${a.stepOrder}</td>
-        <td><span class="badge ${statusClass[a.status] || 'badge-secondary'}">${statusMap[a.status] || a.status}</span></td>
+        <td><span class="badge ${statusClass[a.status] || 'badge-secondary'}">${Layout.enumLabel('approvalStatus', a.status)}</span></td>
         <td>
           <button class="btn btn-sm btn-success" onclick="Page.showApproveModal('${a.id}','${a.documentNumber}')">อนุมัติ</button>
           <button class="btn btn-sm btn-danger" onclick="Page.showRejectModal('${a.id}','${a.documentNumber}')">ปฏิเสธ</button>

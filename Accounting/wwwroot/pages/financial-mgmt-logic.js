@@ -92,7 +92,7 @@ const Page = {
   // ===== 2. DEPOSITS =====
   async loadDeposits() {
     try {
-      const res = await this.api.getDeposits();
+      const res = await this.api.getFinancialDeposits();
       if (!res?.success) return;
       document.getElementById('depositBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="10" class="text-center">ไม่มีข้อมูล</td></tr>'
@@ -107,7 +107,7 @@ const Page = {
   },
   async submitDeposit() {
     try {
-      const res = await this.api.createDeposit({
+      const res = await this.api.createFinancialDeposit({
         description: document.getElementById('depDesc').value,
         direction: document.getElementById('depDir').value,
         depositType: document.getElementById('depType').value,
@@ -124,7 +124,7 @@ const Page = {
   showRefund(id, max) { this._refundId = id; document.getElementById('refundAmt').value = max; this.showModal('refundModal'); },
   async submitRefund() {
     try {
-      const res = await this.api.refundDeposit(this._refundId, {
+      const res = await this.api.refundFinancialDeposit(this._refundId, {
         amount: parseFloat(document.getElementById('refundAmt').value),
         notes: document.getElementById('refundNotes').value || null
       });

@@ -96,15 +96,9 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const STATUS_LABEL = {
-      'New':'ใหม่','Qualified':'Qualified','Quoted':'เสนอราคาแล้ว',
-      'Won':'ปิดได้','Lost':'เสียดีล','Spam':'Spam'
-    };
-    const TYPE_LABEL = {
-      'Contact':'ติดต่อทั่วไป','Rfq':'RFQ','Viewing':'นัดดูทรัพย์','Demo':'Demo',
-      'Enrollment':'สมัครเรียน','Quote':'ขอใบเสนอราคา','Subscription':'สมาชิก',
-      'ShipmentQuote':'ขอราคาขนส่ง','Other':'อื่น ๆ'
-    };
+    // ป้ายสถานะ/ชนิด lead อยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
+    const STATUS_LABEL = Layout.ENUM_LABELS.leadStatus;
+    const TYPE_LABEL = Layout.ENUM_LABELS.leadType;
     const NEXT_STATUS = {
       'New':       [['Qualified','✓ รับคำขอ (Qualify)','btn-primary'],['Spam','Spam','btn-secondary'],['Lost','ไม่สนใจแล้ว','btn-secondary']],
       'Qualified': [['Quoted','สร้างใบเสนอราคา','btn-primary',true],['Lost','ปิดดีลไม่ได้','btn-secondary']],

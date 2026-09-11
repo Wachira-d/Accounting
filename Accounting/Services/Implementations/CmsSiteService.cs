@@ -14,9 +14,12 @@ public class CmsSiteService : ICmsSiteService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsSiteService> _logger;
+    /// <summary>ตัวนับโควตาหน้าเว็บ — เส้นเติมเทมเพลตเพิ่มหน้าทีละหลายหน้า จึงต้องผ่านด่านเดียวกัน</summary>
+    private readonly ICmsQuotaService? _quota;
 
-    public CmsSiteService(AccountingDbContext db, ILogger<CmsSiteService> logger)
+    public CmsSiteService(AccountingDbContext db, ILogger<CmsSiteService> logger, ICmsQuotaService? quota = null)
     {
+        _quota = quota;
         _db = db;
         _logger = logger;
     }
@@ -85,11 +88,13 @@ public class CmsSiteService : ICmsSiteService
         // lands on a complete, working site instead of a blank canvas.
         // The template is plain SitePage + PageBlock rows — fully editable
         // through the CMS editor afterwards.
+        var seededBookingPage = false;
         if (request.SeedTemplate)
         {
             try
             {
                 var pages = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId, site.SiteType);
+                seededBookingPage = pages.Any(pg => pg.Blocks.Any(b => b.BlockType == CmsBlockType.BookingCalendar));
                 _db.SitePages.AddRange(pages);
                 await _db.SaveChangesAsync();
                 _logger.LogInformation("Seeded {Count} starter pages for site {SiteId} (industry={Industry})",
@@ -100,14 +105,20 @@ public class CmsSiteService : ICmsSiteService
                 // Seeding is best-effort — the site itself was created
                 // successfully, so a template failure shouldn't fail the
                 // whole request. Logged so we can spot template issues.
+                // ⚠ ต้องล้าง change tracker ด้วย ไม่งั้นแถวที่ Add ค้างอยู่จะถูกส่งซ้ำในทุก
+                // SaveChanges ถัดไป ⇒ seed ที่พัก/บริการจองล้มตามไปทั้งหมดด้วย error เดิม
+                _db.ChangeTracker.Clear();
+                seededBookingPage = false;
                 _logger.LogWarning(ex, "Site template seeding failed for site {SiteId}", site.Id);
             }
         }
 
-        // จองคิว/นัดหมายแบบ slot (สปา · คลินิก · ร้านอาหาร · นัดดูทรัพย์ · เว็บชนิด Booking) → seed
-        // บริการตัวอย่างให้หน้า /booking มีอะไรให้จองตั้งแต่วันแรก (เดิมหน้าขึ้น "ยังไม่มีบริการให้จอง"
-        // จนกว่าเจ้าของจะไปตั้งเอง — ผิดสัญญา "เว็บพร้อมใช้ทันที" ของเทมเพลต) · best-effort เหมือน template
-        if (request.SeedTemplate)
+        // จองคิว/นัดหมายแบบ slot → seed บริการตัวอย่างให้หน้า /booking มีอะไรให้จองตั้งแต่วันแรก
+        // (เดิมหน้าขึ้น "ยังไม่มีบริการให้จอง" จนกว่าเจ้าของจะไปตั้งเอง — ผิดสัญญา "เว็บพร้อมใช้ทันที")
+        // **เฉพาะเว็บที่มีหน้าจองจริง**: `CmsModuleResolver` ใช้ "มีบริการจองไหม" เป็นหลักฐานว่าบริษัท
+        // ใช้โมดูลนี้ ⇒ ถ้า seed ให้เว็บที่ไม่มีหน้าจอง ระบบจะสร้างหลักฐานของตัวเองแล้วโชว์เมนู
+        // "การจองคิวจากเว็บ" ที่ไม่มีวันมีข้อมูล
+        if (request.SeedTemplate && seededBookingPage)
         {
             try
             {
@@ -116,6 +127,7 @@ public class CmsSiteService : ICmsSiteService
             }
             catch (Exception ex)
             {
+                _db.ChangeTracker.Clear();
                 _logger.LogWarning(ex, "Booking-service seeding failed for site {SiteId}", site.Id);
             }
         }
@@ -311,6 +323,29 @@ public class CmsSiteService : ICmsSiteService
 
     public async Task<ApplySiteTemplateResponse> ApplyTemplateAsync(Guid companyId, Guid siteId, ApplySiteTemplateRequest request, string userId)
     {
+        // งานนี้บันทึกหลายรอบ (ปลด slug เดิม → ใส่หน้าใหม่ → seed ที่พัก/บริการ) — ถ้าปล่อยไม่มีธุรกรรม
+        // แล้วรอบหลังล้ม ผู้ใช้จะเหลือเว็บที่ "หน้าเดิมถูกปลดไปแล้ว แต่หน้าใหม่ยังไม่มา" = เสียของฟรี
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var result = await ApplyTemplateCoreAsync(companyId, siteId, request, userId);
+            await tx.CommitAsync();
+            return result;
+        }
+        catch (DbUpdateException ex)
+        {
+            await tx.RollbackAsync();
+            // ชนกติกาของฐาน (เช่น slug ซ้ำกับหน้าที่ถูกลบไว้) — ต้องเป็นข้อความที่ผู้ใช้อ่านรู้เรื่อง
+            // ไม่ใช่ 500 ที่ middleware แปลงเป็น "เกิดข้อผิดพลาดภายในระบบ"
+            _logger.LogWarning(ex, "Apply template failed for site {SiteId}", siteId);
+            throw new BusinessRuleException(
+                "เติมเทมเพลตไม่สำเร็จ — มีหน้าเว็บที่ใช้ที่อยู่ (slug) เดียวกันค้างอยู่ "
+                + "กรุณาเปลี่ยนชื่อที่อยู่ของหน้าเดิม แล้วลองใหม่อีกครั้ง");
+        }
+    }
+
+    private async Task<ApplySiteTemplateResponse> ApplyTemplateCoreAsync(Guid companyId, Guid siteId, ApplySiteTemplateRequest request, string userId)
+    {
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Site not found.");
 
@@ -320,15 +355,18 @@ public class CmsSiteService : ICmsSiteService
         site.UpdatedBy = userId;
 
         var result = new ApplySiteTemplateResponse();
+        var seededHasBookingPage = false;
 
         if (request.SeedPages)
         {
             // ตัวสร้างหน้าตัวเดียวกับตอนสร้างเว็บ (BuildSeed) — ห้ามมีชุดที่สอง
             var seeded = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId, site.SiteType);
-            // ต้องดึง "แถวที่ลบแล้ว" มาด้วย: SitePage ไม่มี global query filter และ unique index (SiteId, Slug)
-            // ก็ไม่กรอง IsDeleted ⇒ หน้าที่เคยถูก soft-delete ไว้ (ก่อนมี CmsRetiredSlug) ยังจอง slug อยู่
-            // ถ้าไม่นับ จะ insert ชน index เป็น 500 ที่ผู้ใช้อ่านไม่ออก
+            seededHasBookingPage = seeded.Any(pg => pg.Blocks.Any(b => b.BlockType == CmsBlockType.BookingCalendar));
+            // ต้อง IgnoreQueryFilters: `SitePage` **มี** global query filter `!IsDeleted` (AccountingDbContext)
+            // แต่ unique index (SiteId, Slug) **ไม่กรอง** ⇒ หน้าที่เคยถูก soft-delete ไว้ (ก่อนมี
+            // CmsRetiredSlug) ยังจอง slug อยู่จริงในฐาน · query ปกติมองไม่เห็น ⇒ insert แล้วชน index = 500
             var existing = await _db.SitePages
+                .IgnoreQueryFilters()
                 .Where(p => p.SiteId == site.Id && p.CompanyId == companyId)
                 .ToListAsync();
             var bySlug = existing.GroupBy(p => p.Slug).ToDictionary(g => g.Key, g => g.First());
@@ -374,14 +412,24 @@ public class CmsSiteService : ICmsSiteService
                 toAdd.Add(page);
             }
 
+            // โควตาหน้าเว็บ: เส้นนี้เพิ่มหน้าทีละหลายหน้า ⇒ ต้องถามด่านด้วยจำนวนจริง
+            // (หน้าที่ "แทนที่" ไม่ทำให้จำนวนโต จึงนับเฉพาะ PagesAdded)
+            if (_quota != null && result.PagesAdded > 0)
+            {
+                var blocked = (await _quota.PageUsageAsync(companyId, siteId))
+                    .BlockReason("หน้าเว็บ", result.PagesAdded);
+                if (blocked != null) throw new BusinessRuleException(blocked);
+            }
+
             // บันทึก "การย้าย slug เดิม" ให้จบก่อน แล้วค่อย insert หน้าใหม่ — ไม่ฝากความหวังไว้กับ
             // ลำดับคำสั่งที่ EF เลือกเอง (update ก่อน insert) เพราะถ้าเดาผิดจะชน unique index เป็น 500
             if (result.PagesReplaced > 0 || result.FreedDeletedSlugs > 0) await _db.SaveChangesAsync();
             _db.SitePages.AddRange(toAdd);
         }
 
-        // บริการจองคิวตัวอย่าง (idempotent — ข้ามถ้าเว็บมีบริการอยู่แล้ว)
-        if (request.SeedPages)
+        // บริการจองคิวตัวอย่าง — เฉพาะเทมเพลตที่มีหน้าจองจริง (เหตุผลเดียวกับตอนสร้างเว็บ:
+        // ห้ามให้ระบบสร้าง "หลักฐาน" ของโมดูลที่เว็บนี้ไม่ได้ใช้)
+        if (request.SeedPages && seededHasBookingPage)
             result.BookingServicesAdded = await Cms.CmsBookingServiceSeeder.SeedForSiteAsync(_db, companyId, site, request.IndustryType, userId);
 
         // ที่พัก: seed property/ห้อง/ราคา (idempotent ต่อ SiteId ใน LodgingSeeder) — คนละชั้นกับหน้าเว็บ

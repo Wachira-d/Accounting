@@ -121,25 +121,25 @@
             <div class="form-group" id="industryWrap">
               <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(ตั้งให้ตามเทมเพลตที่เลือก — เปลี่ยนได้ถ้าเทมเพลตกับธุรกิจจริงไม่ตรงกัน)</span></label>
               <select class="form-input" id="fIndustry" onchange="Page.onIndustryChange(this)">
-                <option value="0">ทั่วไป / บริการ</option>
-                <option value="2">บริการมืออาชีพ</option>
-                <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
-                <option value="4">ร้านอาหาร</option>
-                <option value="5">คาเฟ่ / เครื่องดื่ม</option>
-                <option value="6">ค้าปลีก / Retail</option>
-                <option value="16">ขายออนไลน์ / E-commerce</option>
-                <option value="1">ซื้อมาขายไป / Trading</option>
-                <option value="14">เกษตร</option>
-                <option value="12">สปา / ทำเล็บ / ความงาม</option>
-                <option value="10">คลินิก / สุขภาพ</option>
-                <option value="11">การศึกษา / สอนพิเศษ</option>
-                <option value="7">รับเหมาก่อสร้าง</option>
-                <option value="8">อสังหาริมทรัพย์</option>
-                <option value="9">เทคโนโลยี / SaaS</option>
-                <option value="13">ขนส่ง / โลจิสติกส์</option>
-                <option value="15">โรงแรม / ที่พัก</option>
-                <option value="3">โรงงาน / OEM</option>
-                <option value="99">อื่น ๆ</option>
+                <option value="General">ทั่วไป / บริการ</option>
+                <option value="Service">บริการมืออาชีพ</option>
+                <option value="Freelance">ฟรีแลนซ์ / ที่ปรึกษา</option>
+                <option value="Restaurant">ร้านอาหาร</option>
+                <option value="Cafe">คาเฟ่ / เครื่องดื่ม</option>
+                <option value="Retail">ค้าปลีก / Retail</option>
+                <option value="Ecommerce">ขายออนไลน์ / E-commerce</option>
+                <option value="Trading">ซื้อมาขายไป / Trading</option>
+                <option value="Agriculture">เกษตร</option>
+                <option value="Beauty">สปา / ทำเล็บ / ความงาม</option>
+                <option value="Healthcare">คลินิก / สุขภาพ</option>
+                <option value="Education">การศึกษา / สอนพิเศษ</option>
+                <option value="Construction">รับเหมาก่อสร้าง</option>
+                <option value="RealEstate">อสังหาริมทรัพย์</option>
+                <option value="Technology">เทคโนโลยี / SaaS</option>
+                <option value="Transportation">ขนส่ง / โลจิสติกส์</option>
+                <option value="Hotel">โรงแรม / ที่พัก</option>
+                <option value="Manufacturing">โรงงาน / OEM</option>
+                <option value="Other">อื่น ๆ</option>
               </select>
               <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
             </div>
@@ -155,9 +155,8 @@
 
   <!-- เติมเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บที่มีอยู่ — ทางซ่อมเว็บที่สร้างผิดประเภท (เช่น เลือกการ์ด
        "โรงแรม" แล้วได้หน้าบริการทั่วไป) โดยไม่ต้องลบเว็บ (subdomain/โดเมน/ลูกค้า/ออเดอร์อยู่ครบ) -->
-  <div class="modal" id="applyTplModal">
-    <div class="modal-overlay" onclick="Layout.closeModal('applyTplModal')"></div>
-    <div class="modal-content" style="max-width:560px">
+  <div class="modal-overlay" id="applyTplModal">
+    <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <h3 class="modal-title">🧩 เติมเทมเพลต / เปลี่ยนประเภทธุรกิจ</h3>
         <button class="modal-close" onclick="Layout.closeModal('applyTplModal')">×</button>
@@ -208,8 +207,8 @@
         icon: '📄',
         thumbClass: 'blank',
         description: 'เริ่มต้นจากหน้าเปล่า — ออกแบบเองทุกอย่าง',
-        siteType: 1, // Corporate
-        industryType: 0,
+        siteType: 'Corporate',
+        industryType: 'General',
         seedTemplate: false  // truly blank — server creates one empty Home page on demand later
       },
       corporate: {
@@ -218,7 +217,7 @@
         icon: '🏢',
         thumbClass: '',
         description: 'เว็บแสดงข้อมูลบริษัท บริการ ราคา รีวิวลูกค้า และช่องทางติดต่อ — 4 หน้า พร้อมใช้',
-        siteType: 1, industryType: 0, seedTemplate: true
+        siteType: 'Corporate', industryType: 'General', seedTemplate: true
       },
       ecommerce: {
         name: 'ร้านค้าออนไลน์',
@@ -226,7 +225,7 @@
         icon: '🛒',
         thumbClass: 'eco',
         description: 'ขายสินค้าออนไลน์ — Hero / สินค้าแนะนำ / รีวิวลูกค้า / FAQ',
-        siteType: 2, industryType: 16, seedTemplate: true
+        siteType: 'Ecommerce', industryType: 'Ecommerce', seedTemplate: true
       },
       restaurant: {
         name: 'ร้านอาหาร / คาเฟ่',
@@ -234,7 +233,7 @@
         icon: '🍜',
         thumbClass: 'food',
         description: 'หน้าหลัก · เมนู · จองโต๊ะ · ติดต่อ — รวมเมนูตัวอย่างพร้อมราคา',
-        siteType: 3, industryType: 4, seedTemplate: true
+        siteType: 'Booking', industryType: 'Restaurant', seedTemplate: true
       },
       beauty: {
         name: 'สปา / ความงาม',
@@ -242,7 +241,7 @@
         icon: '💆',
         thumbClass: 'beauty',
         description: 'หน้าหลัก · บริการ · จองคิว · ติดต่อ — พร้อมแพ็กเกจตัวอย่าง',
-        siteType: 3, industryType: 12, seedTemplate: true
+        siteType: 'Booking', industryType: 'Beauty', seedTemplate: true
       },
       healthcare: {
         name: 'คลินิก / สุขภาพ',
@@ -250,7 +249,7 @@
         icon: '🏥',
         thumbClass: 'health',
         description: 'หน้าหลัก · บริการ · นัดหมายแพทย์ · ติดต่อ',
-        siteType: 3, industryType: 10, seedTemplate: true
+        siteType: 'Booking', industryType: 'Healthcare', seedTemplate: true
       },
       booking: {
         name: 'จองนัดหมาย (ทั่วไป)',
@@ -258,7 +257,7 @@
         icon: '📅',
         thumbClass: 'book',
         description: 'รับจองคิว/นัดหมายออนไลน์ — สำหรับบริการอื่น ๆ',
-        siteType: 3, industryType: 2, seedTemplate: true
+        siteType: 'Booking', industryType: 'Service', seedTemplate: true
       },
       construction: {
         name: 'รับเหมาก่อสร้าง',
@@ -266,7 +265,7 @@
         icon: '🏗️',
         thumbClass: 'construction',
         description: 'หน้าหลัก · ผลงาน · ขอใบเสนอราคา · ติดต่อ — สำหรับผู้รับเหมา',
-        siteType: 1, industryType: 7, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Construction', seedTemplate: true
       },
       realestate: {
         name: 'อสังหาริมทรัพย์',
@@ -274,7 +273,7 @@
         icon: '🏘️',
         thumbClass: 'realestate',
         description: 'นายหน้า — รายการขาย/เช่า บ้าน คอนโด ที่ดิน + นัดดูทรัพย์',
-        siteType: 1, industryType: 8, seedTemplate: true
+        siteType: 'Corporate', industryType: 'RealEstate', seedTemplate: true
       },
       technology: {
         name: 'เทคโนโลยี / ซอฟต์แวร์',
@@ -282,7 +281,7 @@
         icon: '💻',
         thumbClass: 'tech',
         description: 'หน้าหลัก · ฟีเจอร์ · ราคา · ติดต่อเดโม — แพ็กเกจ + รีวิว',
-        siteType: 1, industryType: 9, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Technology', seedTemplate: true
       },
       education: {
         name: 'สถาบันสอน / คอร์ส',
@@ -290,7 +289,7 @@
         icon: '🎓',
         thumbClass: 'education',
         description: 'หน้าหลัก · หลักสูตร · สมัครเรียน · ติดต่อ — รวมราคาคอร์ส',
-        siteType: 1, industryType: 11, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Education', seedTemplate: true
       },
       transportation: {
         name: 'ขนส่ง / โลจิสติกส์',
@@ -298,7 +297,7 @@
         icon: '🚚',
         thumbClass: 'transport',
         description: 'หน้าหลัก · บริการ · ขอราคา/จองรถ · ติดต่อ',
-        siteType: 1, industryType: 13, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Transportation', seedTemplate: true
       },
       hotel: {
         name: 'โรงแรม / ที่พัก',
@@ -306,7 +305,7 @@
         icon: '🏨',
         thumbClass: 'hotel',
         description: 'หน้าหลัก · ห้องพัก · จองห้อง · ติดต่อ — รวมรีวิวแขก',
-        siteType: 3, industryType: 15, seedTemplate: true
+        siteType: 'Booking', industryType: 'Hotel', seedTemplate: true
       },
       manufacturing: {
         name: 'โรงงาน / OEM',
@@ -314,7 +313,7 @@
         icon: '🏭',
         thumbClass: 'manufacturing',
         description: 'หน้าหลัก · ความสามารถ · RFQ · ติดต่อ',
-        siteType: 1, industryType: 3, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Manufacturing', seedTemplate: true
       },
       cafe: {
         name: 'คาเฟ่ / ร้านกาแฟ',
@@ -322,7 +321,7 @@
         icon: '☕',
         thumbClass: 'food',
         description: 'หน้าหลัก · เมนูกาแฟ/ขนม · บรรยากาศร้าน · ติดต่อ — สำหรับคาเฟ่เน้นกาแฟ + work-friendly',
-        siteType: 1, industryType: 5, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Cafe', seedTemplate: true
       },
       retail: {
         name: 'ร้านค้าปลีก',
@@ -330,7 +329,7 @@
         icon: '🏬',
         thumbClass: 'eco',
         description: 'ร้านค้าปลีกหน้าร้าน + ออนไลน์ — Hero / สินค้าแนะนำ / รีวิว / ติดต่อ',
-        siteType: 1, industryType: 6, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Retail', seedTemplate: true
       },
       trading: {
         name: 'ซื้อมาขายไป / B2B',
@@ -338,7 +337,7 @@
         icon: '📦',
         thumbClass: 'eco',
         description: 'แคตตาล็อกขายส่ง · MOQ · ใบเสนอราคา · ติดต่อ — สำหรับผู้กระจายสินค้า',
-        siteType: 1, industryType: 1, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Trading', seedTemplate: true
       },
       agriculture: {
         name: 'เกษตร / ฟาร์ม',
@@ -346,7 +345,7 @@
         icon: '🌾',
         thumbClass: 'food',
         description: 'ฟาร์ม-สู่-โต๊ะ · ผักออร์แกนิก · CSA Box · ติดต่อ — สำหรับเกษตรกร + เกษตรอินทรีย์',
-        siteType: 1, industryType: 14, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Agriculture', seedTemplate: true
       },
       freelance: {
         name: 'ฟรีแลนซ์ / Portfolio',
@@ -354,7 +353,7 @@
         icon: '🎨',
         thumbClass: 'tech',
         description: 'พอร์ตโฟลิโอ · บริการ · ราคา · จ้างผม/ฉัน — สำหรับฟรีแลนซ์รับงาน',
-        siteType: 1, industryType: 17, seedTemplate: true
+        siteType: 'Corporate', industryType: 'Freelance', seedTemplate: true
       }
     };
 
@@ -366,11 +365,18 @@
       'Suspended': ['ระงับ','maintenance'], 3: ['ระงับ','maintenance'],
     };
     const isSitePublished = (s) => s === 1 || s === 'Published' || s === 'published';
-    const TYPE_LABEL = { 1: 'เว็บบริษัท', 2: 'ร้านค้าออนไลน์', 3: 'จองนัดหมาย', 4: 'แค็ตตาล็อกบริการ', 5: 'ผสม' };
+    // ชนิดเว็บ/ประเภทธุรกิจมาจาก API เป็น **ชื่อ enum** (JsonStringEnumConverter)
+    // — ตัวแมปที่คีย์ด้วยตัวเลขเดิมไม่เคย match เลย การ์ดจึงโชว์ "-" มาตลอด
+    const typeLabelOf = (t) => Layout.enumLabel('siteType', t, '-');
+    // TEMPLATES ถือ siteType/industryType เป็น **ชื่อ enum** ทั้งคู่ (ส่งไปก็ได้ โชว์ก็ได้
+    // ด้วยค่าเดียวกัน) — เดิม siteType เป็นตัวเลขแล้วต้องมีตารางแปลงคั่นอีกชั้น = สำเนาที่รอ drift
     // ป้ายประเภทธุรกิจอ่านจาก dropdown ในวิซาร์ด (แหล่งเดียว — ไม่พิมพ์ตารางซ้ำ)
+    // ชื่อไทยของประเภทธุรกิจอ่านจาก dropdown ในวิซาร์ด (แหล่งเดียว — ไม่พิมพ์ตารางซ้ำ)
+    // ค่าที่ API ส่งมาเป็นชื่อ enum ("Hotel") ไม่ใช่ตัวเลข
     const industryLabel = (v) => {
-      const opt = document.querySelector(`#fIndustry option[value="${Number(v) || 0}"]`);
-      return opt ? opt.textContent : `ประเภท ${v}`;
+      if (!v) return '—';
+      const opt = document.querySelector(`#fIndustry option[value="${CSS.escape(String(v))}"]`);
+      return opt ? opt.textContent.trim() : String(v);
     };
     // ปุ่มโมดูลต่อเว็บ — จาก site.modules ที่เซิร์ฟเวอร์คำนวณ (CmsModuleResolver) หน้าเว็บแค่วาด
     const MODULE_LINKS = {
@@ -416,7 +422,7 @@
         empty.style.display = 'none';
         list.innerHTML = this.sites.map(s => {
           const [statusLabel, statusClass] = STATUS_LABEL[s.status] || ['?','draft'];
-          const typeLabel = TYPE_LABEL[s.siteType] || '-';
+          const typeLabel = typeLabelOf(s.siteType);
           const pathUrl = `/site/${s.subdomain}`;
           const displayUrl = `${location.origin}/site/${s.subdomain}`;
           const isPublished = isSitePublished(s.status);
@@ -433,7 +439,7 @@
                     <span title="ประเภทธุรกิจของเว็บ (กำหนดเทมเพลตและโมดูล)">${Layout.esc(industryLabel(s.industryType))}</span>
                   </div>
                 </div>
-                <div style="font-size:32px">${s.industryType === 15 ? '🏨' : '🌐'}</div>
+                <div style="font-size:32px">${s.industryType === 'Hotel' ? '🏨' : '🌐'}</div>
               </div>
               <div style="font-size:13px;color:var(--gray-600);margin-bottom:8px">
                 <span style="color:var(--gray-400)">URL:</span>
@@ -496,8 +502,8 @@
         // ค่าที่ผู้ใช้เลือกเองหลังจากนี้ชนะ · แต่กลับไปเปลี่ยนเทมเพลตใหม่ = เริ่มนับใหม่จากเทมเพลต
         const ind = document.getElementById('fIndustry');
         if (ind) {
-          ind.value = String(tpl.industryType ?? 0);
-          if (ind.value !== String(tpl.industryType ?? 0)) ind.value = '0'; // เทมเพลตอ้างค่าที่ dropdown ไม่มี
+          ind.value = String(tpl.industryType ?? 'General');
+          if (ind.value !== String(tpl.industryType ?? 'General')) ind.value = 'General'; // เทมเพลตอ้างค่าที่ dropdown ไม่มี
           ind.dataset.autoSrc = 'template';
           delete ind.dataset.userTouched;
           this.renderIndustryHint();
@@ -518,7 +524,7 @@
         const hint = document.getElementById('industryHint');
         const tpl = TEMPLATES[this.selectedTpl];
         if (!ind || !hint || !tpl) return;
-        const tplInd = String(tpl.industryType ?? 0);
+        const tplInd = String(tpl.industryType ?? 'General');
         const label = ind.options[ind.selectedIndex]?.textContent || '';
         if (ind.value === tplInd) {
           hint.textContent = `ตามเทมเพลต "${tpl.name}" → เนื้อหา/ฟีเจอร์ของ ${label}` + (ind.value === '15' ? ' (จะสร้างระบบจองห้องพัก · ห้อง · ราคา · นโยบาย ให้พร้อมจองทันที)' : '');
@@ -559,9 +565,9 @@
         btn.textContent = 'กำลังสร้าง...';
 
         // dropdown ถูกตั้งค่าจากเทมเพลตใน selectTemplate() แล้ว — ที่นี่แค่อ่าน (ผู้ใช้เปลี่ยนเองได้
-        // เช่นเลือกการ์ด "เว็บบริษัท" แต่จริง ๆ เป็นฟรีแลนซ์). ห้ามใช้ parseInt(value) ตัดสิน "มีการ override
-        // ไหม" — value ไม่เคยว่าง ("0" คือค่าจริง) จึงเคยทับเทมเพลตทุกครั้ง
-        const industryOverride = parseInt(document.getElementById('fIndustry')?.value || '');
+        // เช่นเลือกการ์ด "เว็บบริษัท" แต่จริง ๆ เป็นฟรีแลนซ์) · ค่าเป็น **ชื่อ enum** ให้ตรงกับสิ่งที่
+        // API คืนกลับมา (เดิมเป็นตัวเลข แล้วทุกจุดที่เทียบกับค่าที่โหลดมาไม่เคยตรงเลย)
+        const chosenIndustry = document.getElementById('fIndustry')?.value || tpl.industryType || 'General';
         const useSeed = document.getElementById('fSeedTemplate')?.checked !== false && tpl.seedTemplate !== false;
 
         try {
@@ -574,15 +580,14 @@
             defaultLanguage: lang,
             defaultCurrency: currency,
             seedTemplate: useSeed,
-            industryType: !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0)
+            industryType: chosenIndustry
           });
           const site = siteRes.data;
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
 
           Layout.closeModal('createModal');
           if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();   // เมนูโมดูลใหม่ (ที่พัก/ร้านค้า) โผล่ทันที
-          const chosenIndustry = !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0);
-          if (chosenIndustry === 15) {
+          if (chosenIndustry === 'Hotel') {
             // ธุรกิจที่พัก: เซิร์ฟเวอร์ seed ห้อง/ราคา/นโยบายให้แล้ว → พาไปหน้าตั้งค่าที่พัก
             // (ผูกด้วย siteId — หน้านั้น resolve ที่พักของเว็บนี้เอง) ให้เห็นทันทีว่าจองได้แล้ว
             Layout.toast('สร้างเว็บไซต์ + ระบบจองที่พักสำเร็จ — กำลังพาไปตั้งค่าที่พัก', 'success');
@@ -605,7 +610,7 @@
         document.getElementById('applyTplSiteName').textContent = `เว็บไซต์: ${site.name} — ปัจจุบัน: ${industryLabel(site.industryType)}`;
         const sel = document.getElementById('applyTplIndustry');
         sel.innerHTML = document.getElementById('fIndustry').innerHTML;   // ตัวเลือกชุดเดียวกับวิซาร์ด
-        sel.value = String(site.industryType ?? 0);
+        sel.value = site.industryType || 'General';
         sel.onchange = () => this.renderApplyTplHint();
         document.getElementById('applyTplSeed').checked = true;
         document.getElementById('applyTplReplace').checked = false;
@@ -616,15 +621,17 @@
       renderApplyTplHint() {
         const v = document.getElementById('applyTplIndustry').value;
         const hint = document.getElementById('applyTplHint');
-        hint.textContent = v === '15'
+        const tpl = Object.values(TEMPLATES).find(t => t.industryType === v && t.seedTemplate !== false);
+        const typeNote = tpl ? ` · ชนิดเว็บจะเปลี่ยนเป็น "${typeLabelOf(tpl.siteType)}"` : '';
+        hint.textContent = (v === 'Hotel'
           ? 'ที่พัก: ระบบจะสร้างที่พัก · ประเภทห้อง · ราคา · นโยบายยกเลิก ให้จองได้ทันที (ถ้ายังไม่มี) และหน้า /rooms /booking จะกลายเป็นระบบจองห้อง'
-          : 'หน้าเว็บ/บริการตัวอย่างจะตรงกับประเภทธุรกิจที่เลือก';
+          : 'หน้าเว็บ/บริการตัวอย่างจะตรงกับประเภทธุรกิจที่เลือก') + typeNote;
       },
 
       async applyTemplate() {
         const api = Layout.api(); if (!api) return;
         const id = this._applyTplSiteId; if (!id) return;
-        const industryType = parseInt(document.getElementById('applyTplIndustry').value || '0');
+        const industryType = document.getElementById('applyTplIndustry').value || 'General';
         const seedPages = document.getElementById('applyTplSeed').checked;
         const replace = document.getElementById('applyTplReplace').checked;
         if (replace && !(await Layout.confirmDanger({
@@ -652,7 +659,7 @@
           await this.load();
           // รีเฟรชธงโมดูลของเมนูซ้าย (เพิ่งได้ที่พัก/ร้านค้าเป็นครั้งแรก) — ไม่ต้องรอโหลดหน้าใหม่
           if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();
-          if (industryType === 15) setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${id}&welcome=1`; }, 900);
+          if (industryType === 'Hotel') setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${id}&welcome=1`; }, 900);
         } catch (e) { Layout.toast(e.message || 'เติมเทมเพลตไม่สำเร็จ', 'error'); }
         finally { btn.disabled = false; btn.textContent = 'เติมเทมเพลต'; }
       },

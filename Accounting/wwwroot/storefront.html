@@ -562,14 +562,7 @@
             //     for industry-specific inputs (budget range, course,
             //     property id, origin/destination, etc.). Extras land
             //     in the lead's DataJson dict.
-            const captchaProvider = this.data?.site?.captchaProvider;
-            const captchaSiteKey = this.data?.site?.captchaSiteKey;
-            let captchaHtml = '';
-            if (captchaProvider === 'hcaptcha' && captchaSiteKey) {
-              captchaHtml = `<div class="h-captcha" data-sitekey="${esc(captchaSiteKey)}" style="margin-bottom:14px"></div>`;
-            } else if (captchaProvider === 'recaptcha' && captchaSiteKey) {
-              captchaHtml = `<div class="g-recaptcha" data-sitekey="${esc(captchaSiteKey)}" style="margin-bottom:14px"></div>`;
-            }
+            const captchaHtml = this.captchaWidgetHtml();
             const leadType = cfg.leadType || 'Contact';
             const extras = Array.isArray(cfg.extraFields) ? cfg.extraFields : [];
             const extrasHtml = extras.map(f => {
@@ -637,6 +630,7 @@
               <form class="blk-form" onsubmit="Store.submitContact(event,this)" data-lead-type="Subscription" data-emailto="" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;max-width:520px;margin:0 auto">
                 <input type="email" name="email" placeholder="email@example.com" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:var(--radius);border:1px solid #D1D5DB">
                 <input type="hidden" name="message" value="สมัครรับข่าวสาร (${esc(cfg.headline||'newsletter')})">
+                ${this.captchaWidgetHtml('width:100%;display:flex;justify-content:center')}
                 <button type="submit" class="btn btn-primary">${esc(cfg.buttonText||'สมัคร')}</button>
                 <div class="form-status" style="width:100%;font-size:13px;margin-top:6px"></div>
               </form>
@@ -722,6 +716,26 @@
           s.src = 'https://www.google.com/recaptcha/api.js';
         }
         document.head.appendChild(s);
+      },
+
+      /**
+       * วิดเจ็ต CAPTCHA — ตัวสร้าง HTML ตัวเดียวของทุกฟอร์มบนหน้าร้าน
+       *
+       * ทุกฟอร์มสาธารณะเดินผ่าน `submitContact` ซึ่ง **บล็อกการส่ง** เมื่อ
+       * เว็บตั้ง CAPTCHA ไว้แต่ยังไม่มีโทเคน ⇒ ฟอร์มไหนไม่วาดวิดเจ็ตนี้
+       * ผู้เยี่ยมชมจะเจอ "กรุณายืนยัน CAPTCHA ก่อนส่ง" ตลอดกาลโดยทำตาม
+       * ไม่ได้เลย (บล็อก Newsletter เคยเป็นแบบนั้น — ปุ่มสมัครกดไม่ขึ้น
+       * บนเว็บที่เปิด CAPTCHA) เพิ่มฟอร์มใหม่เมื่อไรต้องเรียกตัวนี้เสมอ
+       */
+      captchaWidgetHtml(styleOverride) {
+        const provider = this.data?.site?.captchaProvider;
+        const siteKey = this.data?.site?.captchaSiteKey;
+        if (!provider || !siteKey) return '';
+        const cls = provider === 'hcaptcha' ? 'h-captcha'
+                  : provider === 'recaptcha' ? 'g-recaptcha' : '';
+        if (!cls) return '';
+        const style = styleOverride || 'margin-bottom:14px';
+        return `<div class="${cls}" data-sitekey="${this.esc(siteKey)}" style="${this.esc(style)}"></div>`;
       },
 
       getCaptchaToken(form) {
@@ -1517,13 +1531,14 @@
       },
 
       async renderLodgingSearch() {
-        const info = await this.lodgingInfo();
+        // สองคำขอนี้ไม่ขึ้นแก่กัน — ยิงพร้อมกัน ไม่ใช่ต่อคิว (เดิมผู้เยี่ยมชมเห็นหน้าว่าง
+        // นาน = เวลาไป-กลับสองรอบ ซึ่งบนมือถือ/3G รู้สึกได้ชัด)
+        // หน้า CMS ที่ slug เดียวกัน (rooms/booking ที่เทมเพลต seed ไว้) — วาด Hero ของมันไว้บนสุด
+        // ให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้ (เดิมหน้านั้นถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op)
+        const [info, cmsHero] = await Promise.all([this.lodgingInfo(), this.lodgingCmsHero()]);
         const main = document.getElementById('sfMain');
         document.title = `จองห้องพัก — ${info?.name || ''}`;
         if (!info) { main.innerHTML = '<div class="sf-loader">เว็บไซต์นี้ยังไม่มีที่พักเปิดให้จอง</div>'; return; }
-        // หน้า CMS ที่ slug เดียวกัน (rooms/booking ที่เทมเพลต seed ไว้) — วาด Hero ของมันไว้บนสุด
-        // ให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้ (เดิมหน้านั้นถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op)
-        const cmsHero = await this.lodgingCmsHero();
         // ⚠️ payload ของ /lodging/info มี 30 ฟิลด์ (แกลเลอรี · สิ่งอำนวยความสะดวก ·
         // คำอธิบาย · แผนที่ · ติดต่อ) แต่เดิมหน้านี้วาดแค่ ชื่อ+ดาว+ที่อยู่ ⇒ ของที่
         // ที่พักกรอกไว้ไม่เคยถูกแสดงเลย (defect class "เก็บแล้วไม่ echo กลับ")

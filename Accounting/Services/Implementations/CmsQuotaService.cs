@@ -13,7 +13,15 @@ public class CmsQuotaService : ICmsQuotaService
         _db = db;
     }
 
-    public async Task<bool> CanAddPageAsync(Guid companyId, Guid siteId)
+    // ── โควตาหน้า/สินค้า ────────────────────────────────────────────────
+    // สูตรอยู่ที่ `PageUsageAsync`/`ProductUsageAsync` ที่เดียว · ด่าน (CanAdd*),
+    // ข้อความปฏิเสธ (BlockReason) และจำนวนที่เหลือ (Remaining) ล้วนคำนวณจาก
+    // ผลนั้น — ห้ามมีจุดไหนนับเอง (เดิม GetQuotaStatusAsync นับซ้ำอีกชุด)
+    //
+    // หมายเหตุ: `SitePage` มี global query filter `!IsDeleted` อยู่แล้ว
+    // (AccountingDbContext.cs) ⇒ หน้าที่ลูกค้าลบทิ้งไม่กินโควตา ซึ่งถูกต้อง
+
+    public async Task<CmsQuotaUsage> PageUsageAsync(Guid companyId, Guid siteId)
     {
         var site = await _db.Sites
             .AsNoTracking()
@@ -21,16 +29,15 @@ public class CmsQuotaService : ICmsQuotaService
             .Select(s => new { s.MaxPages })
             .FirstOrDefaultAsync();
 
-        if (site == null) return false;
-        if (site.MaxPages == null) return true;
+        if (site == null) return new CmsQuotaUsage { SiteFound = false, Used = 0, Limit = 0 };
 
-        var currentCount = await _db.SitePages
+        var used = await _db.SitePages
             .CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
 
-        return currentCount < site.MaxPages.Value;
+        return new CmsQuotaUsage { SiteFound = true, Used = used, Limit = site.MaxPages };
     }
 
-    public async Task<bool> CanAddProductAsync(Guid companyId, Guid siteId)
+    public async Task<CmsQuotaUsage> ProductUsageAsync(Guid companyId, Guid siteId)
     {
         var site = await _db.Sites
             .AsNoTracking()
@@ -38,14 +45,19 @@ public class CmsQuotaService : ICmsQuotaService
             .Select(s => new { s.MaxProducts })
             .FirstOrDefaultAsync();
 
-        if (site == null) return false;
-        if (site.MaxProducts == null) return true;
+        if (site == null) return new CmsQuotaUsage { SiteFound = false, Used = 0, Limit = 0 };
 
-        var currentCount = await _db.SiteProducts
+        var used = await _db.SiteProducts
             .CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
 
-        return currentCount < site.MaxProducts.Value;
+        return new CmsQuotaUsage { SiteFound = true, Used = used, Limit = site.MaxProducts };
     }
+
+    public async Task<bool> CanAddPageAsync(Guid companyId, Guid siteId)
+        => (await PageUsageAsync(companyId, siteId)).CanAdd();
+
+    public async Task<bool> CanAddProductAsync(Guid companyId, Guid siteId)
+        => (await ProductUsageAsync(companyId, siteId)).CanAdd();
 
     public async Task<bool> CanUploadMediaAsync(Guid companyId, Guid siteId, long fileSizeBytes)
     {
@@ -78,17 +90,19 @@ public class CmsQuotaService : ICmsQuotaService
             .FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบเว็บไซต์");
 
-        var pagesCount = await _db.SitePages.CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
-        var productsCount = await _db.SiteProducts.CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
+        // ตัวเลขที่ผู้ใช้เห็น ต้องมาจากตัวนับเดียวกับที่ด่านใช้ — ไม่งั้นหน้าจอบอก
+        // "ยังเหลือ" แต่กดแล้วถูกปฏิเสธ (หรือกลับกัน) ซึ่งเป็น drift ที่หาสาเหตุยาก
+        var pageUsage = await PageUsageAsync(companyId, siteId);
+        var productUsage = await ProductUsageAsync(companyId, siteId);
 
         return new CmsQuotaStatus
         {
             StorageUsedBytes = site.CurrentStorageUsed,
             StorageLimitBytes = site.MaxStorageBytes,
-            PagesCount = pagesCount,
-            PagesLimit = site.MaxPages,
-            ProductsCount = productsCount,
-            ProductsLimit = site.MaxProducts,
+            PagesCount = pageUsage.Used,
+            PagesLimit = pageUsage.Limit,
+            ProductsCount = productUsage.Used,
+            ProductsLimit = productUsage.Limit,
             BandwidthUsedBytes = site.CurrentBandwidthUsed,
             BandwidthLimitBytes = site.MaxBandwidthBytesPerMonth
         };

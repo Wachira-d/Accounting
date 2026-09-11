@@ -250,6 +250,25 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 - เพดานย่อยต่อบริษัท (optional): เตือนที่ 80% → block ที่ 100% → AccountAdmin ปลดได้เอง
 - สาขา**ไม่มีโควตา** — คุมพฤติกรรมด้วย rate limit ของ ApiClient ที่ผูกสาขาแทน
 
+### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
+
+เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)
+แยกจากโควตาเอกสารของแพ็กเกจบัญชี (§5 ข้างบน) — คนละมิเตอร์ คนละตัวนับ
+
+| เพดาน | ตัวนับ/ด่าน | บังคับที่ |
+| --- | --- | --- |
+| `MaxPages` | `ICmsQuotaService.PageUsageAsync` → `CmsQuotaUsage.BlockReason()` | `CmsContentService.CreatePageAsync` · `CmsSiteService.ApplyTemplateCoreAsync` (นับทีละหลายหน้า) |
+| `MaxProducts` | `ProductUsageAsync` | `CmsCommerceService.AddProductAsync` (โยน) · auto-publish ตอนสร้างเว็บ (**ตัดให้พอดี ไม่โยน**) |
+| `MaxStorageBytes` | `ISubscriptionService.CanFitStorageAsync` (pool ของ License) | `CmsContentService.UploadMediaAsync` — ของเดิม ไม่เปลี่ยน |
+
+- **ตัวนับตัวเดียว**: `GetQuotaStatusAsync` (ตัวเลขบนหน้าจอ) และด่านทั้งหมดอ่านจาก
+  `PageUsageAsync`/`ProductUsageAsync` ตัวเดียวกัน — ห้ามจุดไหนนับเอง ไม่งั้นจอบอก
+  "ยังเหลือ" แต่กดแล้วถูกปฏิเสธ
+- หน้าที่ถูก soft-delete **ไม่กินโควตา** (global query filter `!IsDeleted` ของ `SitePage`)
+- ข้อความปฏิเสธต้องบอก **ใช้ไป/เพดาน/จำนวนที่ต้องการ/ทางไปต่อ** เสมอ (ลบของที่ไม่ใช้ หรืออัปเกรด)
+- *ก่อนรอบ 159*: เมธอด `CanAddPageAsync`/`CanAddProductAsync` มีอยู่แต่ **ไม่มีใครเรียก** ⇒
+  เพดานทั้งสองเป็นแค่ตัวเลขบนหน้าจอ ลูกค้าสร้างเกินได้ไม่จำกัด
+
 ---
 
 ## 6. Billing
@@ -704,6 +723,11 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-09-11 (rev 27 — **§5.1 โควตาเว็บ CMS บังคับจริง**:_
+_`CmsQuotaUsage` เป็นตัวนับตัวเดียวของทั้งด่านและตัวเลขบนหน้าจอ · ต่อสายที่ `CreatePageAsync` ·_
+_`ApplyTemplateCoreAsync` (นับทีละหลายหน้า) · `AddProductAsync` · auto-publish ตัดให้พอดีโควตา —_
+_เดิม `CanAddPageAsync`/`CanAddProductAsync` ไม่มีใครเรียก เพดานจึงไม่เคยกั้นอะไร)_
 
 _Last verified against codebase: 2026-09-10 (rev 26 — **§6.1c แคตตาล็อกฟีเจอร์ + หน้าแสดง_
 _แพ็กเกจอ่านจากที่แอดมินตั้ง**: `Helpers/FeatureCatalog` + `GET /api/subscription/feature-catalog` ·_

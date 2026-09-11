@@ -22,12 +22,16 @@ public class CmsCommerceService : ICmsCommerceService
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
     /// แทน fallback ที่เคยเขียน `CurrentStock -=` เองเมื่อ DI ไม่ครบ</summary>
     private readonly IStockLedger? _stock;
+    /// <summary>ตัวนับโควตาสินค้าบนเว็บ — ด่านเดียวกับที่หน้าจอใช้แสดงตัวเลข</summary>
+    private readonly ICmsQuotaService? _quota;
 
     public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger,
         IConfiguration config, IImageProcessingService? images = null,
         IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
-        IProductService? productService = null, IStockLedger? stock = null)
+        IProductService? productService = null, IStockLedger? stock = null,
+        ICmsQuotaService? quota = null)
     {
+        _quota = quota;
         _stock = stock;
         _db = db;
         _logger = logger;
@@ -44,6 +48,13 @@ public class CmsCommerceService : ICmsCommerceService
     {
         if (await _db.SiteProducts.AnyAsync(p => p.SiteId == siteId && p.ProductId == request.ProductId))
             throw new InvalidOperationException("Product is already listed on this site.");
+
+        // เพดาน MaxProducts ของแพ็กเกจ (เดิมแสดงอย่างเดียว ไม่เคยกั้น)
+        if (_quota != null)
+        {
+            var blocked = (await _quota.ProductUsageAsync(companyId, siteId)).BlockReason("สินค้าบนเว็บ");
+            if (blocked != null) throw new BusinessRuleException(blocked);
+        }
 
         var erpProduct = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == request.ProductId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ERP product not found.");
@@ -276,10 +287,20 @@ public class CmsCommerceService : ICmsCommerceService
             .ToListAsync();
         var existingSet = existing.ToHashSet();
 
+        // auto-publish เกิดตอน "สร้างเว็บ" — โควตาเต็มต้อง **ตัดให้พอดี** ไม่ใช่โยน
+        // (โยน = สร้างเว็บไม่สำเร็จเพราะสินค้าใน ERP เยอะ ซึ่งไม่ใช่ความผิดของผู้ใช้)
+        int? slotsLeft = null;
+        if (_quota != null) slotsLeft = (await _quota.ProductUsageAsync(companyId, siteId)).Remaining;
+
         var ordering = 0;
         foreach (var p in masterProducts)
         {
             if (existingSet.Contains(p.Id)) continue;
+            if (slotsLeft != null)
+            {
+                if (slotsLeft.Value <= 0) break;
+                slotsLeft = slotsLeft.Value - 1;
+            }
             _db.SiteProducts.Add(new SiteProduct
             {
                 CompanyId = companyId,

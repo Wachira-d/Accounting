@@ -211,10 +211,12 @@
   <script src="/js/layout.js"></script>
   <script>
     const DAYS = ['อา','จ','อ','พ','พฤ','ศ','ส'];
-    const PRICE_MODE = {1:'ต่อการเข้าพัก',2:'ต่อคืน',3:'ต่อคน',4:'ต่อคน/คืน'};
-    const EXTRA_CAT = {1:'อาหารเช้า',2:'เตียงเสริม',3:'รถรับส่ง',4:'ทัวร์',5:'สปา',6:'อาหาร',99:'อื่น ๆ'};
-    const SEASON_TYPE = {1:'Low',2:'Regular',3:'High',4:'Peak',5:'วันหยุด'};
-    const ADJUST = {0:'ราคาฐาน',1:'ราคาตายตัว',2:'คูณ',3:'บวก/ลบ'};
+    // ป้าย enum ทั้งหมดอยู่ที่ Layout.ENUM_LABELS ที่เดียว — API ส่งเป็น "ชื่อ" ไม่ใช่ตัวเลข
+    const PRICE_MODE = (m) => Layout.enumLabel('lodgingExtraPriceMode', m);
+    const EXTRA_CAT = (c) => Layout.enumLabel('lodgingExtraCategory', c);
+    const SEASON_TYPE = (t) => Layout.enumLabel('lodgingSeasonType', t);
+    // enum มาเป็นสตริงจาก API (JsonStringEnumConverter) — ตัวแมปตัวเลขเดิมไม่เคย match
+    const ADJUST = (m) => Layout.enumLabel('lodgingAdjustMode', m);
     const esc = (s) => Layout.esc(s);
     const num = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
@@ -242,7 +244,7 @@
         const boundBy = new Map((this.props || []).filter(p => p.siteId && p.id !== this.propertyId).map(p => [p.siteId, p.name]));
         document.getElementById('siteSelect').innerHTML = '<option value="">— ไม่ผูก —</option>' + this.sites.map(s => {
           const other = boundBy.get(s.id);
-          return `<option value="${s.id}" ${other ? 'disabled' : ''}>${esc(s.name)}${s.industryType === 15 ? ' 🏨' : ''}${other ? ` — ผูกกับ "${esc(other)}" แล้ว` : ''}</option>`;
+          return `<option value="${s.id}" ${other ? 'disabled' : ''}>${esc(s.name)}${s.industryType === 'Hotel' ? ' 🏨' : ''}${other ? ` — ผูกกับ "${esc(other)}" แล้ว` : ''}</option>`;
         }).join('');
       },
 
@@ -271,8 +273,9 @@
               <button class="btn btn-primary btn-sm" onclick="Page.newProperty('${Layout.jsArg(preferSite)}')">+ สร้างที่พักสำหรับเว็บนี้</button>
               <a class="btn btn-secondary btn-sm" href="/pages/cms-sites.html">🧩 หรือกด "เติมเทมเพลต" ที่หน้าเว็บไซต์ของฉัน (สร้างห้อง/ราคาให้อัตโนมัติ)</a>
             </div>`;
-          this.propertyId = this.props[0].id; sel.value = this.propertyId;
-          await this.loadAll();
+          // ห้ามโหลดที่พักแห่งอื่นค้างไว้ข้างหลังฟอร์ม "ที่พักใหม่" (แท็บอื่นจะโชว์ห้อง/ราคาของคนละแห่ง
+          // แล้วปุ่มเพิ่มห้องจะทำงานกับ propertyId = null) — เปิดฟอร์มเปล่าอย่างเดียว
+          sel.value = '';
           this.newProperty(preferSite);
           return;
         }
@@ -409,7 +412,7 @@
         box.innerHTML = this.roomTypes.map(r => `<div class="card">
           <div class="flex" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
             <div><h4 style="margin:0">${esc(r.name)} <span class="pill">${esc(r.code)}</span> <span class="pill ${r.isActive ? 'on' : 'off'}">${r.isActive ? 'เปิดขาย' : 'ปิด'}</span></h4>
-              <div class="hint">฿${num(r.baseRate)}/${r.pricingMode === 2 ? 'คน' : 'ห้อง'}/คืน · มาตรฐาน ${r.standardOccupancy} คน · สูงสุด ${r.maxAdults} ผู้ใหญ่ ${r.maxChildren} เด็ก (รวม ${r.maxOccupancy}) ${r.allowExtraBed ? '· เตียงเสริม ฿' + num(r.extraBedPrice) : ''} ${r.includesBreakfast ? '· 🍳' : ''} ${r.minNights ? '· ขั้นต่ำ ' + r.minNights + ' คืน' : ''}</div></div>
+              <div class="hint">฿${num(r.baseRate)}/${r.pricingMode === 'PerPerson' ? 'คน' : 'ห้อง'}/คืน · มาตรฐาน ${r.standardOccupancy} คน · สูงสุด ${r.maxAdults} ผู้ใหญ่ ${r.maxChildren} เด็ก (รวม ${r.maxOccupancy}) ${r.allowExtraBed ? '· เตียงเสริม ฿' + num(r.extraBedPrice) : ''} ${r.includesBreakfast ? '· 🍳' : ''} ${r.minNights ? '· ขั้นต่ำ ' + r.minNights + ' คืน' : ''}</div></div>
             <div class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editRoomType('${r.id}')">แก้ไข</button> <button class="btn btn-sm btn-secondary" onclick="Page.editUnit('${r.id}')">+ ห้อง</button> <button class="btn btn-sm btn-danger" onclick="Page.deleteRoomType('${r.id}')">ลบ</button></div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${(r.units || []).map(u => `<span class="pill ${u.isOutOfService ? 'off' : (u.isActive ? '' : 'off')}" style="cursor:pointer" title="${esc(u.floor ? 'ชั้น ' + u.floor : '')}" onclick="Page.editUnit('${r.id}','${u.id}')">${esc(u.number)}${u.isOutOfService ? ' 🔧' : ''}</span>`).join('') || '<span class="hint">ยังไม่มีหมายเลขห้อง — กด "+ ห้อง"</span>'}</div>
@@ -478,7 +481,7 @@
         tb.innerHTML = this.plans.length ? this.plans.map(p => `<tr>
           <td><b>${esc(p.name)}</b>${p.isDefault ? ' <span class="pill on">default</span>' : ''}</td><td>${esc(p.code)}</td>
           <td>${p.roomTypeId ? esc(this.roomTypes.find(r => r.id === p.roomTypeId)?.name || '?') : 'ทุกห้อง'}</td>
-          <td>${ADJUST[p.adjustMode]}${p.adjustMode ? ' ' + p.adjustValue : ''}</td><td>${p.includesBreakfast ? '🍳' : '-'}</td><td>${p.isRefundable ? 'ได้' : '<span class="pill off">ไม่คืน</span>'}</td>
+          <td>${esc(ADJUST(p.adjustMode))}${p.adjustMode && p.adjustMode !== 'Base' ? ' ' + p.adjustValue : ''}</td><td>${p.includesBreakfast ? '🍳' : '-'}</td><td>${p.isRefundable ? 'ได้' : '<span class="pill off">ไม่คืน</span>'}</td>
           <td>${esc(this.policies.find(x => x.id === p.cancellationPolicyId)?.name || '-')}</td>
           <td class="hint">${[p.minNights ? `≥${p.minNights} คืน` : '', p.maxNights ? `≤${p.maxNights} คืน` : '', p.minAdvanceDays ? `จองก่อน ≥${p.minAdvanceDays} วัน` : '', p.maxAdvanceDays != null ? `จองก่อน ≤${p.maxAdvanceDays} วัน` : '', p.validFrom ? Layout.date(p.validFrom) + '–' + (p.validTo ? Layout.date(p.validTo) : '') : ''].filter(Boolean).join(' · ') || '-'}</td>
           <td>${p.depositPercent != null ? p.depositPercent + '%' : 'ตามที่พัก'}</td><td><span class="pill ${p.isActive ? 'on' : 'off'}">${p.isActive ? 'ใช้' : 'ปิด'}</span></td>
@@ -520,7 +523,7 @@
       renderSeasons() {
         const tb = document.getElementById('seasonsBody');
         const fmt = (s) => s.isRecurringYearly ? `${new Date(s.startDate).getDate()}/${new Date(s.startDate).getMonth() + 1} – ${new Date(s.endDate).getDate()}/${new Date(s.endDate).getMonth() + 1}` : `${Layout.date(s.startDate)} – ${Layout.date(s.endDate)}`;
-        tb.innerHTML = this.seasons.length ? this.seasons.map(s => `<tr><td><b>${esc(s.name)}</b></td><td>${SEASON_TYPE[s.seasonType] || s.seasonType}</td><td>${fmt(s)}</td><td>×${s.multiplier}</td><td>${s.isRecurringYearly ? '✓' : '-'}</td><td>${s.minNights || '-'}</td>
+        tb.innerHTML = this.seasons.length ? this.seasons.map(s => `<tr><td><b>${esc(s.name)}</b></td><td>${SEASON_TYPE(s.seasonType) || s.seasonType}</td><td>${fmt(s)}</td><td>×${s.multiplier}</td><td>${s.isRecurringYearly ? '✓' : '-'}</td><td>${s.minNights || '-'}</td>
           <td class="hint">${(s.roomTypeIds || []).length ? s.roomTypeIds.map(id => esc(this.roomTypes.find(r => r.id === id)?.name || '?')).join(', ') : 'ทุกห้อง'}</td><td><span class="pill ${s.isActive ? 'on' : 'off'}">${s.isActive ? 'ใช้' : 'ปิด'}</span></td>
           <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editSeason('${s.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeleteSeason','${s.id}')">ลบ</button></td></tr>`).join('')
           : '<tr><td colspan="9" class="text-center text-gray-400">ยังไม่มีฤดูกาล</td></tr>';
@@ -615,7 +618,7 @@
       // ─── บริการเสริม ───
       renderExtras() {
         const tb = document.getElementById('extrasBody');
-        tb.innerHTML = this.extras.length ? this.extras.map(x => `<tr><td><b>${esc(x.name)}</b><div class="hint">${esc(x.description || '')}</div></td><td>${EXTRA_CAT[x.category] || '-'}</td><td>${PRICE_MODE[x.priceMode]}</td><td class="text-right">฿${num(x.price)}</td><td>${x.maxQuantity || '-'}</td><td>${x.showOnWebsite ? '✓' : '-'}</td><td><span class="pill ${x.isActive ? 'on' : 'off'}">${x.isActive ? 'ใช้' : 'ปิด'}</span></td>
+        tb.innerHTML = this.extras.length ? this.extras.map(x => `<tr><td><b>${esc(x.name)}</b><div class="hint">${esc(x.description || '')}</div></td><td>${EXTRA_CAT(x.category) || '-'}</td><td>${PRICE_MODE(x.priceMode)}</td><td class="text-right">฿${num(x.price)}</td><td>${x.maxQuantity || '-'}</td><td>${x.showOnWebsite ? '✓' : '-'}</td><td><span class="pill ${x.isActive ? 'on' : 'off'}">${x.isActive ? 'ใช้' : 'ปิด'}</span></td>
           <td class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editExtra('${x.id}')">แก้ไข</button> <button class="btn btn-sm btn-danger" onclick="Page.del('lodgingDeleteExtra','${x.id}')">ลบ</button></td></tr>`).join('')
           : '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่มีบริการเสริม</td></tr>';
       },

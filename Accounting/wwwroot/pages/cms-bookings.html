@@ -84,10 +84,8 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const STATUS_LABEL = {
-      'Pending':'รอยืนยัน','Confirmed':'ยืนยันแล้ว','InProgress':'กำลังให้บริการ',
-      'Completed':'เสร็จสิ้น','Cancelled':'ยกเลิก','NoShow':'ไม่มา (No-show)'
-    };
+    // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
+    const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
     const NEXT_STATUS = {
       'Pending':    [['Confirmed','✓ ยืนยันการจอง','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
       'Confirmed':  [['InProgress','เริ่มให้บริการ','btn-primary'],['NoShow','ลูกค้าไม่มา','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],

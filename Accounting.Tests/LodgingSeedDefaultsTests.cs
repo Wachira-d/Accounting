@@ -12,10 +12,26 @@ namespace Accounting.Tests;
 /// เทสต์นี้อ่านผลจริงของ BuildSeed แล้วเทียบกับ LodgingSeedDefaults ทั้งสองทิศ (ต้องมี · ต้องไม่มี)</summary>
 public class LodgingSeedDefaultsTests
 {
+    /// <summary>ข้อความบนหน้าเว็บที่ seed — **ต้องถอด `\uXXXX` ก่อนเทียบ**
+    ///
+    /// <para>`JsonSerializer.Serialize` ใช้ `JavaScriptEncoder.Default` ซึ่งหนีอักขระที่ไม่ใช่ ASCII
+    /// ทุกตัว ⇒ "฿1,500" ถูกเก็บเป็น `\u0e3f1,500` และ "7 วัน" เป็น `7 \u0e27\u0e31\u0e19`.
+    /// ถ้าเทียบกับสตริงดิบ: assert ฝั่ง `Contains` จะ **ตกทันที** และฝั่ง `DoesNotContain` จะ
+    /// **ผ่านตลอดกาลโดยไม่ตรวจอะไรเลย** (เทสต์ที่ล้มไม่ได้ = ไม่มีเทสต์)</para></summary>
     private static string HotelText()
     {
         var pages = CmsSiteTemplateSeeder.BuildSeed(Guid.NewGuid(), Guid.NewGuid(), IndustryType.Hotel, "test", SiteType.Booking);
-        return string.Join("\n", pages.SelectMany(p => p.Blocks).Select(b => b.ConfigJson));
+        var raw = string.Join("\n", pages.SelectMany(p => p.Blocks).Select(b => b.ConfigJson));
+        return System.Text.RegularExpressions.Regex.Replace(
+            raw, @"\\u([0-9a-fA-F]{4})", m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
+    }
+
+    [Fact]
+    public void ตัวถอดรหัสของเทสต์ต้องคืนข้อความไทยจริง_ไม่งั้นทุก_assert_ด้านล่างไร้ความหมาย()
+    {
+        var text = HotelText();
+        Assert.DoesNotContain("\\u0e", text);          // ไม่เหลืออักขระที่ยังหนีอยู่
+        Assert.Contains("ห้องพัก", text);              // อ่านภาษาไทยได้จริง
     }
 
     [Fact]

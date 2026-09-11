@@ -200,7 +200,7 @@
             <td>${c.stepOrder}</td>
             <td class="font-medium">${c.name}</td>
             <td class="text-right">${c.durationMinutes || '-'} นาที</td>
-            <td>${c.commissionType === 1 ? c.commissionValue + '%' : Layout.money(c.commissionValue || 0)}</td>
+            <td>${c.commissionType === 'Percentage' ? c.commissionValue + '%' : Layout.money(c.commissionValue || 0)}</td>
             <td>${c.requiresStaff ? '<span class="badge badge-success" data-i18n="common.yes">ใช่</span>' : '<span class="badge badge-gray" data-i18n="common.no">ไม่</span>'}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.editComponent('${c.id}')" data-i18n="common.edit">แก้ไข</button>

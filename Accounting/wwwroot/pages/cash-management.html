@@ -174,6 +174,12 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    // สีของ pill ต่อสถานะ — **ข้อความ**อยู่ที่ Layout.ENUM_LABELS ที่เดียว
+    // (เดิมทั้งป้ายและปุ่มเทียบด้วยตัวเลข แต่ API ส่งชื่อ enum ⇒ ป้ายขึ้น undefined
+    //  และปุ่ม ฝาก/Clear/เด้ง/อนุมัติ **ไม่เคย render เลย** — หน้านี้ใช้งานจริงไม่ได้)
+    const PDC_PILL = { Held:'info', Deposited:'warning', Cleared:'success', Dishonored:'danger', Cancelled:'danger', Returned:'danger' };
+    const ADV_PILL = { Requested:'warning', Approved:'info', Disbursed:'info', PendingClearance:'warning',
+      Cleared:'success', Refunded:'success', Rejected:'danger', Cancelled:'danger' };
     const Page = {
       currentTab: 'forecast',
       async init() {
@@ -272,9 +278,9 @@
             <td class="text-right">${Layout.money(p.amount)}</td>
             <td>${new Date(p.scheduledDepositDate).toLocaleDateString('th-TH')}</td>
             <td class="${p.daysUntilDeposit < 0 ? 'text-danger' : p.daysUntilDeposit <= 7 ? 'text-warning' : ''}">${p.daysUntilDeposit < 0 ? 'เลย ' + (-p.daysUntilDeposit) + ' วัน' : 'อีก ' + p.daysUntilDeposit + ' วัน'}</td>
-            <td><span class="pill pill-${p.status === 1 ? 'info' : p.status === 2 ? 'warning' : p.status === 3 ? 'success' : 'danger'}">${['','Held','Deposited','Cleared','Dishonored','Cancelled','Returned'][p.status]}</span></td>
-            <td>${p.status === 1 ? `<button class="btn btn-sm btn-primary" onclick="Page.pdcAction('${p.id}','deposit')">📥 ฝาก</button>` :
-                p.status === 2 ? `<button class="btn btn-sm btn-success" onclick="Page.pdcAction('${p.id}','clear')">✓ Clear</button>
+            <td><span class="pill pill-${PDC_PILL[p.status] || 'danger'}">${Layout.esc(Layout.enumLabel('pdcStatus', p.status))}</span></td>
+            <td>${p.status === 'Held' ? `<button class="btn btn-sm btn-primary" onclick="Page.pdcAction('${p.id}','deposit')">📥 ฝาก</button>` :
+                p.status === 'Deposited' ? `<button class="btn btn-sm btn-success" onclick="Page.pdcAction('${p.id}','clear')">✓ Clear</button>
                                   <button class="btn btn-sm btn-danger" onclick="Page.pdcDishonor('${p.id}')">⚠ เด้ง</button>` : ''}</td>
           </tr>`).join('');
           document.getElementById('pdcTable').innerHTML = rows ? `<table class="table"><thead><tr><th>ประเภท</th><th>เลขเช็ค</th><th>ธนาคาร</th><th>ผู้ติดต่อ</th><th class="text-right">จำนวน</th><th>วันฝาก</th><th>คงเหลือ</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -364,12 +370,12 @@
             <td class="text-right">${c.approvedAmount ? Layout.money(c.approvedAmount) : '-'}</td>
             <td>${new Date(c.requestDate).toLocaleDateString('th-TH')}</td>
             <td>${c.clearanceDueDate ? new Date(c.clearanceDueDate).toLocaleDateString('th-TH') : '-'}</td>
-            <td><span class="pill pill-${c.status === 1 ? 'warning' : c.status === 5 || c.status === 6 ? 'success' : c.status === 7 || c.status === 8 ? 'danger' : 'info'}">${['','รออนุมัติ','อนุมัติแล้ว','จ่ายแล้ว','เลยกำหนด','เคลียร์แล้ว','คืนเงิน','ปฏิเสธ','ยกเลิก'][c.status]}</span>${c.overdue ? ' 🔴' : ''}</td>
+            <td><span class="pill pill-${ADV_PILL[c.status] || 'info'}">${Layout.esc(Layout.enumLabel('cashAdvanceStatus', c.status))}</span>${c.overdue ? ' 🔴' : ''}</td>
             <td>
-              ${c.status === 1 ? `<button class="btn btn-sm btn-success" onclick="Page.caAction('${c.id}','approve')">✓ อนุมัติ</button>
+              ${c.status === 'Requested' ? `<button class="btn btn-sm btn-success" onclick="Page.caAction('${c.id}','approve')">✓ อนุมัติ</button>
                                    <button class="btn btn-sm btn-danger" onclick="Page.caAction('${c.id}','reject')">✗</button>` : ''}
-              ${c.status === 2 ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','disburse')">💸 จ่าย</button>` : ''}
-              ${c.status === 3 ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','clear')">📝 เคลียร์</button>` : ''}
+              ${c.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','disburse')">💸 จ่าย</button>` : ''}
+              ${c.status === 'Disbursed' ? `<button class="btn btn-sm btn-primary" onclick="Page.caAction('${c.id}','clear')">📝 เคลียร์</button>` : ''}
             </td>
           </tr>`).join('');
           document.getElementById('caTable').innerHTML = rows ? `<table class="table"><thead><tr><th>เลขที่</th><th>พนักงาน</th><th>วัตถุประสงค์</th><th class="text-right">ขอ</th><th class="text-right">อนุมัติ</th><th>วันขอ</th><th>กำหนด clear</th><th>สถานะ</th><th>การจัดการ</th></tr></thead><tbody>${rows}</tbody></table>`

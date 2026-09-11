@@ -2094,6 +2094,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "IndustryType" integer NOT NULL DEFAULT 0;
             """,
+            // รอบ 159 — เว็บที่ "มีที่พักผูกอยู่จริง" คือเว็บที่พักแน่นอน ⇒ เติมย้อนหลังให้ตรง ไม่ใช่ปล่อยเป็น
+            // General ทั้งหมด (ไม่งั้นการ์ด/โมดัลเติมเทมเพลตจะโชว์ "ทั่วไป" ให้ทุกเว็บที่สร้างก่อนคอลัมน์นี้
+            // และการกดเติมเทมเพลตโดยไม่แตะ dropdown จะเปลี่ยนเว็บที่พักเป็นเว็บทั่วไป). 15 = IndustryType.Hotel
+            """UPDATE "Sites" SET "IndustryType" = 15 WHERE "IndustryType" = 0 AND "Id" IN (SELECT "SiteId" FROM "LodgingProperties" WHERE "SiteId" IS NOT NULL AND "IsDeleted" = false);""",
             """
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CaptchaSiteKey" varchar(500) NULL;
             """,

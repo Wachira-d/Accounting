@@ -73,8 +73,13 @@ public class CmsSiteController : ControllerBase
         return Ok(new ApiResponse<SiteResponse>(true, result, "เผยแพร่เว็บไซต์สำเร็จ"));
     }
 
-    /// <summary>เติม/เปลี่ยนเทมเพลตให้เว็บที่มีอยู่ — ทางซ่อมเว็บที่สร้างผิดประเภท (ไม่ต้องลบสร้างใหม่)</summary>
+    /// <summary>เติม/เปลี่ยนเทมเพลตให้เว็บที่มีอยู่ — ทางซ่อมเว็บที่สร้างผิดประเภท (ไม่ต้องลบสร้างใหม่)
+    ///
+    /// <para>เป็น endpoint เดียวในคอนโทรลเลอร์นี้ที่ **ทำลายเนื้อหาของเจ้าของได้** (ติ๊ก "แทนที่หน้าเดิม"
+    /// = ปลดหน้าที่ slug ซ้ำออกจากเว็บ) จึงบังคับสิทธิ์ระดับ Admin ของเว็บนั้น ไม่ใช่แค่ `[Authorize]`
+    /// ที่ตอบเพียง "ล็อกอินหรือยัง" (เจ้าของบริษัทผ่านอัตโนมัติใน `CmsRbacMiddleware`)</para></summary>
     [HttpPost("{siteId:guid}/apply-template")]
+    [RequireSiteRole(SiteStaffRole.Admin)]
     public async Task<ActionResult<ApiResponse<ApplySiteTemplateResponse>>> ApplyTemplate(Guid companyId, Guid siteId, [FromBody] ApplySiteTemplateRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();

@@ -158,11 +158,9 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const STATUS_LABEL = {
-      'Pending':'รอดำเนินการ','Confirmed':'ยืนยันแล้ว','Processing':'กำลังเตรียม',
-      'Shipped':'จัดส่งแล้ว','Delivered':'ส่งถึงปลายทาง','Cancelled':'ยกเลิก',
-      'Refunded':'คืนเงินแล้ว','PartiallyRefunded':'คืนเงินบางส่วน'
-    };
+    // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว (cms-edit เคยถือสำเนาที่คีย์ด้วยตัวเลข
+    // แล้วไม่ match อะไรเลย) — ที่นี่แค่มอบต่อ ห้ามพิมพ์ตารางซ้ำ
+    const STATUS_LABEL = Layout.ENUM_LABELS.orderStatus;
     const NEXT_STATUS = {
       'Pending':       [['Confirmed','ยืนยันคำสั่งซื้อ','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
       'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Cancelled','ยกเลิก','btn-secondary']],

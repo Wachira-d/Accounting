@@ -850,6 +850,7 @@
     // Status values come back from the API as enum *names* (JsonStringEnumConverter
     // is enabled globally), so the dict keys must be string-typed. A few legacy
     // call sites still send numeric values, so we accept both.
+    const SITE_TYPE_NUM = { Corporate:1, Ecommerce:2, Booking:3, ServiceCatalog:4, Hybrid:5 };
     const PAGE_STATUS = {
       'Draft':0, 0:['ร่าง','draft'],
       'Published':1, 1:['เผยแพร่','published'],
@@ -864,7 +865,8 @@
       return ['?','draft'];
     };
     // Match DomainVerificationStatus enum: Pending=0, Verifying=1, Verified=2, Failed=3
-    const DOM_VERIFY = { 0:['รอยืนยัน','pending'], 1:['กำลังตรวจสอบ','pending'], 2:['ยืนยันแล้ว','verified'], 3:['ล้มเหลว','failed'] };
+    // คลาสสีของแต่ละสถานะ (ป้ายข้อความมาจาก Layout.ENUM_LABELS — ห้ามพิมพ์ซ้ำ)
+    const DOM_VERIFY_CLASS = { Pending:'pending', Verifying:'pending', Verified:'verified', Failed:'failed' };
 
     const Page = {
       siteId: null,
@@ -972,9 +974,14 @@
         const mods = Array.isArray(this.site?.modules) ? new Set(this.site.modules) : null;
         const t = this.site?.siteType;
         // เซิร์ฟเวอร์เก่าที่ยังไม่ส่ง modules → ตกไปใช้ siteType แบบเดิม (แสดงมากไว้ก่อน ไม่ซ่อนเงียบ)
-        const showCommerce = mods ? mods.has('orders') : (t === 2 || t === 4 || t === 5);
-        const showBooking = mods ? mods.has('bookings') : (t === 3 || t === 5);
+        // ชนิดเว็บมาเป็นชื่อ enum — รับเลขไว้ด้วยเผื่อเซิร์ฟเวอร์รุ่นเก่า
+        const isType = (...names) => names.includes(t) || names.some(n => SITE_TYPE_NUM[n] === t);
+        const showCommerce = (mods ? mods.has('orders') : false) || isType('Ecommerce', 'ServiceCatalog', 'Hybrid');
+        // เว็บ "จองคิว" ที่ยังไม่มีบริการสักตัว โมดูลยังไม่ติด (ไม่มีหลักฐาน) — แต่ต้องเห็นแท็บ
+        // ไม่งั้น **สร้างบริการแรกไม่ได้เลย** (cmsCreateBookingService ถูกเรียกจากที่นี่ที่เดียวทั้งเรพ)
+        // ที่พักใช้ระบบจองห้อง ไม่ใช่ slot → ไม่ต้องโชว์แท็บจองคิวให้รก
         const showLodging = mods ? mods.has('lodging') : false;
+        const showBooking = ((mods ? mods.has('bookings') : false) || isType('Booking', 'Hybrid')) && !showLodging;
         if (showCommerce) {
           document.getElementById('tabProducts').style.display = '';
           document.getElementById('tabOrders').style.display = '';
@@ -1625,7 +1632,8 @@
           return;
         }
         list.innerHTML = this.domains.map(d => {
-          const [verifyLabel, verifyClass] = DOM_VERIFY[d.verificationStatus] || ['?','pending'];
+          const verifyLabel = Layout.enumLabel('domainVerification', d.verificationStatus, '?');
+          const verifyClass = DOM_VERIFY_CLASS[d.verificationStatus] || 'pending';
           return `
             <div class="domain-row">
               <div style="flex:1">
@@ -1635,7 +1643,7 @@
                   ${d.sslEnabled ? '<span style="margin-left:8px;color:#065F46">🔒 SSL เปิดใช้งาน</span>' : '<span style="margin-left:8px;color:var(--gray-500)">SSL รอเปิด</span>'}
                   ${d.isPrimary ? '<span style="margin-left:8px;color:var(--primary)">⭐ โดเมนหลัก</span>' : ''}
                 </div>
-                ${d.verificationStatus !== 2 && d.verificationToken ? `
+                ${d.verificationStatus !== 'Verified' && d.verificationToken ? `
                   <div class="verify-token-box">
                     <strong>เพิ่ม TXT record:</strong><br>
                     Host: <code>_verify.${Layout.esc(d.domain)}</code><br>
@@ -1643,7 +1651,7 @@
                   </div>` : ''}
               </div>
               <div class="flex gap-2" style="flex-shrink:0">
-                ${d.verificationStatus !== 2 ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
+                ${d.verificationStatus !== 'Verified' ? `<button class="btn btn-sm btn-primary" onclick="Page.verifyDomain('${d.id}')">ตรวจสอบ</button>` : ''}
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteDomain('${d.id}','${Layout.jsArg(d.domain)}')">🗑</button>
               </div>
             </div>`;
@@ -2182,14 +2190,13 @@
           const orders = res.data?.items || res.data || [];
           const list = document.getElementById('ordersList');
           if (!orders.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีคำสั่งซื้อ</div>'; return; }
-          const STATUS = { 0:'รอยืนยัน', 1:'ยืนยันแล้ว', 2:'กำลังเตรียม', 3:'จัดส่งแล้ว', 4:'ส่งถึงปลายทาง', 5:'ยกเลิก', 6:'คืนเงิน' };
           list.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th class="text-right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>` +
             orders.map(o => `<tr>
               <td>${Layout.esc(o.orderNumber||'')}</td>
               <td>${new Date(o.createdAt).toLocaleDateString('th-TH')}</td>
               <td>${Layout.esc(o.customerName||o.customerEmail||'-')}</td>
               <td class="text-right">฿${Number(o.totalAmount||0).toLocaleString('th-TH')}</td>
-              <td><span class="block-type-badge">${STATUS[o.status]||o.status}</span></td>
+              <td><span class="block-type-badge">${Layout.esc(Layout.enumLabel('orderStatus', o.status))}</span></td>
               <td><button class="btn btn-sm btn-secondary" onclick="Page.viewOrder('${o.id}')">ดู</button>
               ${!o.erpDocumentId ? `<button class="btn btn-sm btn-success" onclick="Page.syncOrderToErp('${o.id}')" title="สร้างเอกสารใน ERP">📊 ส่ง ERP</button>` : '<span style="color:#10B981;font-size:12px">✓ อยู่ใน ERP</span>'}</td>
             </tr>`).join('') + '</tbody></table></div>';
@@ -2297,18 +2304,18 @@
           const bookings = res.data?.items || res.data || [];
           const list = document.getElementById('bookingsList');
           if (!bookings.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีรายการจอง</div>'; return; }
-          const STATUS = { 0:'รอยืนยัน', 1:'ยืนยันแล้ว', 2:'เสร็จสิ้น', 3:'ยกเลิก', 4:'ไม่มา' };
           list.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่/เวลา</th><th>ลูกค้า</th><th>บริการ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>` +
             bookings.map(b => `<tr>
               <td>${Layout.esc(b.bookingNumber||'')}</td>
               <td>${b.startTime ? new Date(b.startTime).toLocaleString('th-TH') : '-'}</td>
               <td>${Layout.esc(b.customerName||b.customerEmail||'-')}</td>
               <td>${Layout.esc(b.serviceName||'-')}</td>
-              <td><span class="block-type-badge">${STATUS[b.status]||b.status}</span></td>
+              <td><span class="block-type-badge">${Layout.esc(Layout.enumLabel('bookingStatus', b.status))}</span></td>
               <td>
-                ${b.status === 0 ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}',1)">ยืนยัน</button>` : ''}
-                ${b.status === 1 ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}',2)">เสร็จสิ้น</button>` : ''}
-                ${b.status < 2 ? `<button class="btn btn-sm btn-danger" onclick="Page.updateBookingStatus('${b.id}',3)">ยกเลิก</button>` : ''}
+                ${b.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}','Confirmed')">ยืนยัน</button>` : ''}
+                ${b.status === 'Confirmed' ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}','InProgress')">เริ่มให้บริการ</button>` : ''}
+                ${b.status === 'InProgress' ? `<button class="btn btn-sm btn-success" onclick="Page.updateBookingStatus('${b.id}','Completed')">เสร็จสิ้น</button>` : ''}
+                ${(b.status === 'Pending' || b.status === 'Confirmed') ? `<button class="btn btn-sm btn-danger" onclick="Page.updateBookingStatus('${b.id}','Cancelled')">ยกเลิก</button>` : ''}
               </td>
             </tr>`).join('') + '</tbody></table></div>';
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -2468,7 +2475,6 @@
 
       renderFormFields() {
         const wrap = document.getElementById('formFieldsList');
-        const FT = { 1:'Text', 2:'Email', 3:'Phone', 4:'Number', 5:'Textarea', 6:'Select', 7:'Checkbox', 8:'Date' };
         if (!this._draftFields?.length) {
           wrap.innerHTML = '<div style="color:var(--gray-500);font-size:12px;text-align:center;padding:14px;border:1px dashed var(--gray-300);border-radius:6px">ยังไม่มีฟิลด์ — เพิ่มจากด้านล่าง</div>';
           return;
@@ -2476,7 +2482,7 @@
         wrap.innerHTML = this._draftFields.map((f, idx) => `
           <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#F9FAFB;border-radius:6px;margin-bottom:6px">
             <strong>${Layout.esc(f.label||f.fieldName)}</strong>
-            <span class="block-type-badge">${FT[f.fieldType]||'Text'}</span>
+            <span class="block-type-badge">${Layout.esc(Layout.enumLabel('formFieldType', f.fieldType, 'Text'))}</span>
             ${f.isRequired ? '<span class="block-type-badge" style="background:#FEE2E2;color:#991B1B">บังคับ</span>' : ''}
             <span style="color:var(--gray-500);font-size:12px;flex:1">${Layout.esc(f.fieldName)}</span>
             <button class="btn btn-sm btn-danger" onclick="Page.removeFormField(${idx})">🗑</button>
@@ -2541,7 +2547,6 @@
           const wrap = document.getElementById('submissionsList');
           if (!subs.length) { wrap.innerHTML = '<div class="text-center text-gray-400" style="padding:30px">ยังไม่มีคำขอที่ส่งมา</div>'; }
           else {
-            const STATUS = { 0:'ใหม่', 1:'อ่านแล้ว', 2:'กำลังดำเนินการ', 3:'เสร็จสิ้น', 4:'สแปม' };
             wrap.innerHTML = subs.map(s => {
               let data = {};
               try { data = JSON.parse(s.dataJson || '{}'); } catch(_) {}
@@ -2549,7 +2554,7 @@
               return `<div class="page-row" style="flex-direction:column;align-items:stretch;gap:8px">
                 <div style="display:flex;align-items:center;gap:12px">
                   <strong>${new Date(s.createdAt).toLocaleString('th-TH')}</strong>
-                  <span class="block-type-badge">${STATUS[s.status]||s.status}</span>
+                  <span class="block-type-badge">${Layout.esc(Layout.enumLabel('formSubmissionStatus', s.status))}</span>
                   ${s.customerName ? `<span style="color:var(--gray-500)">${Layout.esc(s.customerName)}</span>` : ''}
                 </div>
                 <div style="background:#F9FAFB;padding:10px;border-radius:6px;font-size:13px;line-height:1.6">${fields}</div>

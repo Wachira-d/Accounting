@@ -72,6 +72,56 @@ const Layout = {
   // ตัวเดิมแก้ค่าของตัวเองได้) · เรียงตาม "ปลอมยากแค่ไหน" แบบเดียวกับลำดับหลักฐาน
   // ของ OcrPartyResolver: สิ่งที่คนตั้งใจเลือก > สิ่งที่บันทึกไว้แล้ว > สิ่งที่กระดาษ
   // เขียน > ค่าตั้งต้นตามชนิดเอกสาร > การเดาจากชื่อรายการ
+  // ── ป้ายสถานะของโมดูล CMS / ที่พัก — **แหล่งเดียว** ของทุกหน้า ──────────────
+  // คีย์เป็น "ชื่อ enum" เพราะ API ของระบบนี้ serialize enum เป็น **สตริง** เสมอ
+  // (`Program.cs` ลงทะเบียน `JsonStringEnumConverter`) ⇒ ตัวแมปที่คีย์ด้วย **ตัวเลข**
+  // จะไม่ match อะไรเลยและ **เงียบ** (ตกไปโชว์ชื่ออังกฤษ/ค่าดิบ) — เกิดจริงมาตลอดใน
+  // แท็บออเดอร์/การจอง/ฟอร์ม ของ cms-edit และตัวเลขในนั้นยัง **เลื่อนไม่ตรง enum** ด้วย
+  // (BookingStatus 2 = กำลังให้บริการ ไม่ใช่ "เสร็จสิ้น") ⇒ ปุ่มเปลี่ยนสถานะส่งค่าผิดความหมาย
+  // ห้ามพิมพ์ตารางพวกนี้ซ้ำในหน้าใด ๆ อีก — หน้าเว็บเรียก `Layout.enumLabel(kind, value)`
+  ENUM_LABELS: {
+    orderStatus: { Pending:'รอดำเนินการ', Confirmed:'ยืนยันแล้ว', Processing:'กำลังเตรียม',
+      Shipped:'จัดส่งแล้ว', Delivered:'ส่งถึงปลายทาง', Cancelled:'ยกเลิก',
+      Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน' },
+    bookingStatus: { Pending:'รอยืนยัน', Confirmed:'ยืนยันแล้ว', InProgress:'กำลังให้บริการ',
+      Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก', NoShow:'ไม่มา (No-show)' },
+    leadStatus: { New:'ใหม่', Qualified:'คัดกรองแล้ว', Quoted:'เสนอราคาแล้ว',
+      Won:'ปิดได้', Lost:'เสียดีล', Spam:'Spam' },
+    leadType: { Contact:'ติดต่อทั่วไป', Rfq:'RFQ', Viewing:'นัดดูทรัพย์', Demo:'Demo',
+      Enrollment:'สมัครเรียน', Quote:'ขอใบเสนอราคา', Subscription:'สมาชิก/รับข่าวสาร',
+      ShipmentQuote:'ขอราคาขนส่ง', Other:'อื่น ๆ' },
+    formSubmissionStatus: { New:'ใหม่', Read:'อ่านแล้ว', Replied:'ตอบกลับแล้ว',
+      ConvertedToQuotation:'ออกใบเสนอราคาแล้ว', Archived:'เก็บเข้าคลัง' },
+    domainVerification: { Pending:'รอยืนยัน', Verifying:'กำลังตรวจสอบ', Verified:'ยืนยันแล้ว', Failed:'ล้มเหลว' },
+    siteType: { Corporate:'เว็บบริษัท', Ecommerce:'ร้านค้าออนไลน์', Booking:'จองนัดหมาย',
+      ServiceCatalog:'แค็ตตาล็อกบริการ', Hybrid:'ผสม' },
+    lodgingAdjustMode: { Base:'ราคาฐาน', Absolute:'ราคาตายตัว', Multiplier:'คูณ', Delta:'บวก/ลบ' },
+    lodgingSeasonType: { Low:'Low', Regular:'Regular', High:'High', Peak:'Peak', Holiday:'วันหยุด' },
+    lodgingExtraPriceMode: { PerStay:'ต่อการเข้าพัก', PerNight:'ต่อคืน', PerPerson:'ต่อคน', PerPersonPerNight:'ต่อคน/คืน' },
+    lodgingExtraCategory: { Breakfast:'อาหารเช้า', ExtraBed:'เตียงเสริม', Transfer:'รถรับส่ง', Tour:'ทัวร์',
+      Spa:'สปา', Food:'อาหาร', Other:'อื่น ๆ' },
+    lodgingHousekeeping: { VacantClean:'ว่าง-สะอาด', VacantDirty:'ว่าง-รอทำความสะอาด', Occupied:'มีผู้เข้าพัก',
+      Cleaning:'กำลังทำความสะอาด', Inspecting:'กำลังตรวจ', OutOfOrder:'งดใช้', Maintenance:'ซ่อมบำรุง' },
+    formFieldType: { Text:'Text', Email:'Email', Phone:'Phone', Number:'Number', TextArea:'Textarea',
+      Select:'Select', MultiSelect:'MultiSelect', Checkbox:'Checkbox', Radio:'Radio', Date:'Date',
+      DateTime:'DateTime', File:'File', Hidden:'Hidden' },
+    // ── นอกโมดูล CMS แต่คลาสบั๊กเดียวกัน (หน้าเว็บเคยเทียบตัวเลขแล้วปุ่มไม่เคยขึ้น) ──
+    pdcStatus: { Held:'ถือไว้', Deposited:'ฝากแล้ว', Cleared:'เคลียร์แล้ว', Dishonored:'เด้ง',
+      Cancelled:'ยกเลิก', Returned:'คืนเช็ค' },
+    cashAdvanceStatus: { Requested:'รออนุมัติ', Approved:'อนุมัติแล้ว', Disbursed:'จ่ายแล้ว',
+      PendingClearance:'เลยกำหนดเคลียร์', Cleared:'เคลียร์แล้ว', Refunded:'คืนเงิน',
+      Rejected:'ปฏิเสธ', Cancelled:'ยกเลิก' },
+    approvalStatus: { Pending:'รออนุมัติ', Approved:'อนุมัติแล้ว', Rejected:'ปฏิเสธ', Recalled:'เรียกคืน' },
+    commissionType: { Fixed:'จำนวนเงินคงที่', Percentage:'เปอร์เซ็นต์' },
+  },
+
+  /// คืนป้ายไทยของค่า enum ที่เซิร์ฟเวอร์ส่งมา — ไม่รู้จัก = คืนค่าดิบ (ห้ามเดาแทน)
+  enumLabel(kind, value, fallback) {
+    if (value === null || value === undefined || value === '') return fallback ?? '-';
+    const map = this.ENUM_LABELS[kind] || {};
+    return map[value] ?? (fallback ?? String(value));
+  },
+
   VAT_SRC_RANK: { ai: 1, doctype: 2, ocr: 3, doc: 4, product: 4, user: 5 },
 
   /** ระดับของค่าที่อยู่ในช่องตอนนี้ (0 = ยังไม่มีใครตัดสิน — ค่า default ของ markup) */
@@ -499,7 +549,11 @@ const Layout = {
       const cachedEtax = localStorage.getItem('etaxOn:' + this.currentCompany.id);
       if (cachedEtax !== null) this._etaxEnabled = cachedEtax === 'true';
       const cachedMods = localStorage.getItem('cmsMods:' + this.currentCompany.id);
-      if (cachedMods !== null) this._cmsModules = new Set(JSON.parse(cachedMods));
+      if (cachedMods !== null) {
+        // ค่าที่เสียหายต้องแปลว่า "ยังไม่รู้" (แสดงเมนูไว้ก่อน) ไม่ใช่ "ไม่มีโมดูลเลย" (ซ่อนหมด)
+        const mods = JSON.parse(cachedMods);
+        if (Array.isArray(mods)) this._cmsModules = new Set(mods);
+      }
     } catch {}
     try {
       const res = await API.get(`/api/companies/${this.currentCompany.id}/settings`);
