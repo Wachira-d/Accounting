@@ -320,6 +320,17 @@ public class OcrScanResult : TenantEntity
     /// "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ" ตามกฎเหล็ก #1</summary>
     public bool TargetDocTypeUsedAi { get; set; }
 
+    /// <summary>feedback row ของการถาม AI ว่า "เราเป็นผู้ซื้อหรือผู้ขาย"
+    /// (<c>AiFeatureKey.DocumentRoleInference</c>) — ปิด loop ตอนผู้ใช้แก้ <c>OurRole</c>
+    /// ในหน้า review (กฎเหล็ก #1 ขั้น CAPTURE). null = กติกามั่นใจพอ ไม่ได้ถาม</summary>
+    public Guid? OurRoleAiFeedbackId { get; set; }
+
+    /// <summary>คำตอบที่ AI/นักเรียนเสนอ (Buyer/Seller) — เทียบ accepted/แก้</summary>
+    public string? OurRoleAiSuggested { get; set; }
+
+    /// <summary>true เมื่อ provider จริงถูกเรียกและคำตอบถูกใช้ — ป้าย "🤖 AI" vs "⚙️ ระบบ"</summary>
+    public bool OurRoleUsedAi { get; set; }
+
     /// <summary>feedback row ของการ "แตกบรรทัดจากข้อความด้วย AI"
     /// (<c>AiFeatureKey.OcrLineItemSplit</c>) — เก็บไว้ปิด loop ตอนผู้ใช้แก้/
     /// ยืนยันรายการในหน้า review (กฎเหล็ก #1 ขั้น CAPTURE). null = ไม่ได้เรียก

@@ -789,6 +789,26 @@ public static class DocumentZoneAnalyzer
             FailureCount = 1,
         };
 
+    /// <summary>แปลงค่าเป็น regex ตามรูปทรง: กลุ่มตัวเลข → <c>\d{n,n+1}</c> · กลุ่มตัวอักษร →
+    /// ตัวจริง (ไม่สนตัวพิมพ์) · เครื่องหมาย → ตามตัว · ขอบหน้า/หลังต้องไม่ใช่ตัวอักษร/เลข</summary>
+    internal static string ShapeRegex(string value)
+    {
+        var sb = new System.Text.StringBuilder("(?<![A-Za-z0-9])");
+        var i = 0;
+        while (i < value.Length)
+        {
+            var c = value[i];
+            var j = i;
+            if (char.IsDigit(c)) { while (j < value.Length && char.IsDigit(value[j])) j++; sb.Append($"\\d{{{j - i},{j - i + 1}}}"); }
+            // ตัวอักษร = "ชุด" ของเลขที่ (INV vs REC คือคนละเอกสาร) ⇒ ล็อกเป็นตัวจริง ไม่ใช่ class
+            // (ยอมต่างตัวพิมพ์ใหญ่-เล็ก เพราะ OCR สลับได้)
+            else if (char.IsLetter(c)) { while (j < value.Length && char.IsLetter(value[j])) j++; sb.Append("(?i:").Append(Regex.Escape(value[i..j])).Append(')'); }
+            else { j = i + 1; sb.Append(Regex.Escape(c.ToString())); }
+            i = j;
+        }
+        return sb.Append("(?![A-Za-z0-9])").ToString();
+    }
+
     static OcrLearnedPattern? FindContextForValue(string text, string value, string fieldName,
         Guid companyId, string? vendorTaxId)
     {
@@ -828,12 +848,19 @@ public static class DocumentZoneAnalyzer
         };
     }
 
-    static string BuildExtractionRegex(string value)
+    /// <summary>regex สำหรับดึงค่าชนิดเดียวกันจากใบถัดไปของผู้ขายรายเดิม
+    ///
+    /// <para>⚠️ เดิมเลขที่เอกสารได้ regex กวาดทุกอย่าง <c>([A-Za-z0-9\-/]+)</c> ⇒ บนสแกน
+    /// รอบถัดไปมันคว้า token แรกที่เจอในรัศมีค้น ("CASHSALE" หัวแบบฟอร์ม) มาเป็นเลขที่
+    /// เอกสาร (สแกนจริง 2026-09-11). เลขที่เอกสารของผู้ขายรายเดียวกันมี<b>รูปทรงคงที่</b>
+    /// (INV-2026-0042 → ตัวอักษร 3 · ขีด · เลข 4 · ขีด · เลข 4) ⇒ สร้าง regex จากรูปทรง
+    /// ของค่าที่เรียน: ตัวอักษรตามจำนวนเดิม · ตัวเลขยอมให้ยาวขึ้นได้หนึ่งหลัก (เลขรันเกินหลัก)</para></summary>
+    internal static string BuildExtractionRegex(string value)
     {
         if (Regex.IsMatch(value, @"^\d{13}$"))
             return Accounting.Helpers.ThaiTaxId.Pattern;
         if (Regex.IsMatch(value, @"^[A-Za-z0-9\-/]+$"))
-            return @"([A-Za-z0-9\-/]+)";
+            return "(" + ShapeRegex(value) + ")";
         if (value.Contains("บริษัท") || value.Contains("ห้างหุ้นส่วน") || value.Contains("ร้าน"))
             return @"((?:บริษัท|ห้างหุ้นส่วน|ร้าน).+?(?:จำกัด(?:\s*\(มหาชน\))?|$))";
         return Regex.Escape(value);

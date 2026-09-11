@@ -4848,6 +4848,22 @@ public static class DatabaseMigrationHelper
             WHERE "Reference" IS NOT NULL AND "Reference" LIKE 'ECL-%' AND "IsDeleted" = false;
             """,
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeAiSuggested" varchar(50) NULL;""",
+            // เราเป็นผู้ซื้อ/ผู้ขาย — ถาม AI เฉพาะเคสที่ OcrPartyResolver ตัดสินไม่ได้ (รอบ 156)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleAiFeedbackId" uuid NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleAiSuggested" varchar(20) NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleUsedAi" boolean NOT NULL DEFAULT false;""",
+            // ── ล้างของเสียที่ตัวเรียนรู้จาก Azure สอนตัวเองไว้ (รอบ 156) ──
+            // ตัวเรียนรู้เคยรัน **ก่อน** ขั้นแก้ไขทุกขั้น ⇒ (1) แพตเทิร์นเลขที่เอกสารถูกสร้างด้วย
+            // regex กวาดทุกอย่าง `([A-Za-z0-9\-/]+)` ซึ่งบนสแกนรอบถัดไปคว้า token แรกที่เจอ
+            // ("CASHSALE") มาเป็นเลขที่เอกสาร (2) ชื่อบริษัทเราเองถูกจำเป็น "ผู้ขายที่รู้ว่าถูก"
+            // ของผู้ขายนิรนาม (VendorTaxId NULL) ⇒ ตัวซ่อมชื่อจะดึงชื่อเรากลับมาเป็นผู้ขายทุกใบ
+            // แก้โค้ดอย่างเดียวไม่พอ — แถวเก่ายังสอนผิดต่อไป (บทเรียนเดิม OcrLearnedPatterns.ExtractionRegex)
+            """DELETE FROM "OcrLearnedPatterns" WHERE "FieldName" = 'DocumentNumber' AND "ExtractionRegex" = '([A-Za-z0-9\-/]+)';""",
+            """DELETE FROM "VendorKnownGoodValues" v USING "Companies" c WHERE v."CompanyId" = c."Id" AND v."FieldName" = 'SellerTaxId' AND regexp_replace(v."Value", '[^0-9]', '', 'g') = regexp_replace(c."TaxId", '[^0-9]', '', 'g');""",
+            """DELETE FROM "VendorKnownGoodValues" v USING "Companies" c WHERE v."CompanyId" = c."Id" AND v."FieldName" IN ('SellerName', 'VendorAddress') AND length(regexp_replace(lower(c."Name"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g')) >= 4 AND (v."FieldName" = 'VendorAddress' AND v."VendorTaxId" IS NULL AND EXISTS (SELECT 1 FROM "VendorKnownGoodValues" n WHERE n."CompanyId" = v."CompanyId" AND n."VendorTaxId" IS NULL AND n."FieldName" = 'SellerName' AND position(regexp_replace(lower(c."Name"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g') IN regexp_replace(lower(n."Value"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g')) > 0) OR (v."FieldName" = 'SellerName' AND position(regexp_replace(lower(c."Name"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g') IN regexp_replace(lower(v."Value"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g')) > 0));""",
+            // แถวสแกนที่โดนอาการ "ย้ายแล้วไม่ sync": ผู้ขาย = ผู้ซื้อ = บริษัทเรา ทั้งที่บทบาทคือผู้ซื้อ
+            // ⇒ ล้างช่องผู้ขายให้ตรงกับที่หน่วยความจำตัดสินไว้ (ไม่แตะแถวที่สองช่องต่างกัน)
+            """UPDATE "OcrScanResults" s SET "ExtractedVendorName" = NULL, "ExtractedVendorTaxId" = NULL FROM "Companies" c WHERE s."CompanyId" = c."Id" AND s."OurRole" = 'Buyer' AND s."ExtractedVendorName" IS NOT NULL AND s."BuyerName" IS NOT NULL AND regexp_replace(lower(s."ExtractedVendorName"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g') = regexp_replace(lower(s."BuyerName"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g') AND length(regexp_replace(lower(c."Name"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g')) >= 4 AND position(regexp_replace(lower(c."Name"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g') IN regexp_replace(lower(s."ExtractedVendorName"), '(บริษัท|ห้างหุ้นส่วนจำกัด|หจก|บจก|บมจ|จำกัด|มหาชน|สำนักงานใหญ่|[[:space:].,()])', '', 'g')) > 0;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "TargetDocTypeUsedAi" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedWhtRate" numeric(5,2) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "WhtIncomeTypeCode" varchar(10) NULL;""",

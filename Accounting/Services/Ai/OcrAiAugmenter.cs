@@ -70,6 +70,17 @@ public interface IOcrAiAugmenter
     /// จำแนกชนิดเอกสารจากกระดาษ — เรียกเฉพาะตอนกติกาไม่มั่นใจ
     /// (ดูรายละเอียดที่ implementation)
     /// </summary>
+    /// <summary>เราเป็นผู้ซื้อหรือผู้ขายของกระดาษใบนี้ — เรียกเฉพาะเมื่อ
+    /// <c>Helpers/OcrPartyResolver</c> บอกว่ากติกาตัดสินไม่ได้ (ShouldAskAi)</summary>
+    Task<OcrAiAugmentationResult> InferOurRoleAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText,
+        Accounting.Helpers.OcrPartyBlock vendor, Accounting.Helpers.OcrPartyBlock buyer,
+        string? scannedDocumentType,
+        string? localGuess, decimal localConfidence,
+        IReadOnlyList<string> ruleReasons, string? whyAsking,
+        CancellationToken ct = default);
+
     Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,
@@ -539,6 +550,62 @@ public class OcrAiAugmenter : IOcrAiAugmenter
     /// บทบาทที่ยืนยันแล้ว</b> — AI มองไม่เห็นว่าเราเป็นผู้ซื้อหรือผู้ขาย
     /// ผู้เรียกจึงต้องกรองอีกชั้น (ดู DocumentSide.MatchesRole)
     /// </summary>
+    public async Task<OcrAiAugmentationResult> InferOurRoleAsync(
+        Guid companyId, Guid scanResultId,
+        string rawText,
+        Accounting.Helpers.OcrPartyBlock vendor, Accounting.Helpers.OcrPartyBlock buyer,
+        string? scannedDocumentType,
+        string? localGuess, decimal localConfidence,
+        IReadOnlyList<string> ruleReasons, string? whyAsking,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // ตัวตนเรามาจากฐานข้อมูล ไม่ใช่กระดาษ — โหลดเองให้ทุก call site ได้บริบทเท่ากัน
+            var me = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.Name, c.TaxId })
+                .FirstOrDefaultAsync(ct);
+
+            var req = Prompts.DocumentRoleInferPrompt.Build(
+                companyId, scanResultId, rawText ?? "",
+                ourName: me?.Name, ourTaxId: me?.TaxId,
+                vendorName: vendor.Name, vendorTaxId: vendor.TaxId, vendorAddress: vendor.Address,
+                buyerName: buyer.Name, buyerTaxId: buyer.TaxId, buyerAddress: buyer.Address,
+                scannedDocumentType: scannedDocumentType,
+                localGuess: localGuess, localConfidence: localConfidence,
+                ruleReasons: ruleReasons, whyAsking: whyAsking);
+
+            var resp = await _orchestrator.AskAsync(req, ct);
+
+            // ด่านกันมั่ว: คำตอบต้องอยู่ในชุด {Buyer, Seller} เท่านั้น — นอกนั้นถือว่าไม่มีคำตอบ
+            var ans = (resp.PrimaryAnswer ?? "").Trim();
+            var valid = ans.Equals("Buyer", StringComparison.OrdinalIgnoreCase)
+                     || ans.Equals("Seller", StringComparison.OrdinalIgnoreCase);
+            return new OcrAiAugmentationResult(
+                Answer: valid ? (ans.Equals("Buyer", StringComparison.OrdinalIgnoreCase) ? "Buyer" : "Seller") : null,
+                Confidence: valid ? resp.Confidence : null,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: valid ? resp.Reasoning : $"AI ตอบ '{ans}' ซึ่งไม่ใช่ Buyer/Seller — ทิ้ง",
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId,
+                FromStudent: IsStudentAnswer(resp));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OcrAiAugmenter.InferOurRole failed");
+            // AI ล้ม = คงคำตอบของกติกา (kill-switch: feature ยังทำงานครบ)
+            return new OcrAiAugmentationResult(
+                Answer: null, Confidence: null,
+                Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+                ComplianceFlags: Array.Empty<string>(),
+                Reasoning: $"Augmenter exception: {ex.Message}",
+                UsedAi: false, FeedbackId: null);
+        }
+    }
+
     public async Task<OcrAiAugmentationResult> ClassifyDocumentTypeAsync(
         Guid companyId, Guid scanResultId,
         string rawText, string? documentNumber, string? vendorName, decimal? totalAmount,

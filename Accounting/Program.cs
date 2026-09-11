@@ -568,6 +568,9 @@ builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistilla
 foreach (var genericFeatureKey in new[]
 {
     Accounting.Models.Enums.AiFeatureKey.DocumentTypeClassification,
+    // เราเป็นผู้ซื้อ/ผู้ขาย — single answer (Buyer/Seller) ⇒ generic student พอ
+    // (เดิม enum มีแต่ไม่มี student = feature ที่เรียก AI ได้แต่ปิด provider แล้วไม่มีใครตอบ)
+    Accounting.Models.Enums.AiFeatureKey.DocumentRoleInference,
     Accounting.Models.Enums.AiFeatureKey.WhtCategoryInference,
     Accounting.Models.Enums.AiFeatureKey.CreditNoteReasonClassification,
     Accounting.Models.Enums.AiFeatureKey.StockMovementValidation,

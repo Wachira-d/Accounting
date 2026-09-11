@@ -135,7 +135,10 @@ public static class OcrDocumentRoleInferrer
         // OCR-extracted credit terms ("เครดิต 30 วัน" / "Net 30"). > 0 means
         // the paper grants credit — i.e. NOT yet paid — which flips an
         // invoice's target from PaymentVoucher to PurchaseInvoice (ตั้งหนี้).
-        int? paymentTermsDays = null)
+        int? paymentTermsDays = null,
+        // บทบาทที่ชั้นบน (AI ที่ผ่านด่านตรวจแล้ว / ผู้ใช้) ตัดสินมาแล้ว — ใช้แทนการ
+        // เดาจากชื่อ/ป้าย แต่**แพ้เลขภาษีที่ตรงกับเรา** (ตัวตนทางกฎหมายชนะทุกอย่าง)
+        string? roleOverride = null)
     {
         var reasons = new List<string>();
         var text = (rawText ?? "").ToLowerInvariant();
@@ -160,6 +163,14 @@ public static class OcrDocumentRoleInferrer
                 reasons.Add($"เลขประจำตัวผู้ขาย ({vendorTaxId}) ตรงกับบริษัทเรา → role = Seller");
             }
         }
+        // ─── Step 1a‴: บทบาทที่ชั้นบนตัดสินมาแล้ว (AI ผ่านด่าน / ผู้ใช้) ───────
+        if (roleConf < 1.0m && roleOverride is "Buyer" or "Seller")
+        {
+            role = roleOverride!;
+            roleConf = 0.92m;   // สูงกว่าป้าย (0.90) เพราะชั้นบนเห็นป้ายเหล่านั้นแล้วก่อนตัดสิน
+            reasons.Add($"บทบาทจากชั้นตัดสินกลาง/AI ที่ผ่านด่านตรวจ → role = {role}");
+        }
+
         // ─── Step 1a″: ป้ายบนกระดาษชนะ "ช่องที่ engine เลือกใส่" ───────────────
         //
         // ที่มา (สแกนจริง 2026-09-11 · บิลเงินสดเขียนมือ 3,500): Azure หยิบชื่อใน
@@ -170,7 +181,7 @@ public static class OcrDocumentRoleInferrer
         // เมื่อชื่อเราโผล่ในช่องคู่ค้า มีสองสมมติฐานเสมอ: (ก) เราเป็นฝั่งนั้นจริง
         // (ข) engine ใส่ผิดช่อง — โค้ดเดิมพิจารณาแค่ (ก). ตัวตัดสินที่ถูกคือ
         // **ป้ายบนกระดาษ** ไม่ใช่ช่องที่ engine เลือก (ช่องนั้นคือสิ่งที่ถูกสงสัย)
-        if (roleConf < 1.0m && !string.IsNullOrEmpty(companyNm))
+        if (roleConf < 0.92m && !string.IsNullOrEmpty(companyNm))
         {
             var paper = Accounting.Helpers.OcrSelfPartyGuard.FromPaperLabels(rawText, companyName);
             if (paper.Side != Accounting.Helpers.OcrSelfSide.Unknown)

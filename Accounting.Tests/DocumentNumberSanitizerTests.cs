@@ -144,6 +144,15 @@ public class DocumentNumberSanitizerTests
     }
 
     [Fact]
+    public void คำบนแบบฟอร์มที่ไม่มีตัวเลข_ไม่ใช่เลขที่เอกสาร()
+    {
+        // แพตเทิร์นที่เรียนไว้ด้วย regex กวาดทุกอย่างคว้า "CASHSALE" มาเป็นเลขที่ (สแกนจริง 2026-09-11)
+        var (doc, note) = DocumentNumberSanitizer.Sanitize("CASHSALE", HandwrittenCashBill);
+        Assert.Null(doc);
+        Assert.Contains("ไม่มีตัวเลข", note!);
+    }
+
+    [Fact]
     public void เลขที่เอกสารรูปทับที่ไม่มีที่อยู่ตามหลัง_ต้องไม่ถูกแตะ()
     {
         // ร้านเล็กออกเลขบิลแบบ "12/68" (ลำดับ/ปี พ.ศ.) — รูปเหมือนเลขที่บ้าน

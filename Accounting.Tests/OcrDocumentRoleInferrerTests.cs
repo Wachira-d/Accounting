@@ -29,6 +29,25 @@ public class OcrDocumentRoleInferrerTests
             rawText, vendorTaxId, buyerTaxId, vendorName, buyerName,
             companyTaxId: Us, companyName: UsName, paymentTermsDays: paymentTermsDays);
 
+    // ═══ บทบาทที่ชั้นบน (AI ผ่านด่าน) ตัดสินมาแล้ว ═══
+    [Fact]
+    public void roleOverride_ชนะการเดาจากชื่อ_แต่แพ้เลขภาษีที่ตรงกับเรา()
+    {
+        // ไม่มีเลขภาษีเลย · ชื่อเราอยู่ช่องผู้ขาย · AI บอกว่าเราเป็นผู้ซื้อ → ใช้ AI
+        var byAi = OcrDocumentRoleInferrer.Infer("บิลเงินสด\n" + UsName + "\nรวม 3,500",
+            vendorTaxId: null, buyerTaxId: null, vendorName: UsName, buyerName: null,
+            companyTaxId: Us, companyName: UsName, roleOverride: "Buyer");
+        Assert.Equal("Buyer", byAi.OurRole);
+        Assert.True(byAi.RoleConfidence >= 0.9m);
+
+        // เลขภาษีผู้ขายคือเรา (ตัวตนทางกฎหมาย) → AI เปลี่ยนไม่ได้
+        var pinned = OcrDocumentRoleInferrer.Infer("ใบกำกับภาษี\nผู้ขาย " + UsName,
+            vendorTaxId: Us, buyerTaxId: null, vendorName: UsName, buyerName: null,
+            companyTaxId: Us, companyName: UsName, roleOverride: "Buyer");
+        Assert.Equal("Seller", pinned.OurRole);
+        Assert.Equal(1.0m, pinned.RoleConfidence);
+    }
+
     // ═══ เคสที่เจ้าของระบบยกเป็นตัวอย่าง ═══
 
     [Fact]

@@ -1889,6 +1889,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | OCR full review | `OcrFullReview = 22` | `GenericFeedbackDistillationModel` (register ใน Program.cs) | `SubmitCorrectionAsync` (OcrService) |
 | ผังบัญชี GL ต่อบรรทัด | `GlAccountSuggestion = 2` | `GlAccountDistillationModel.cs` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
 | OCR document type label | `DocumentTypeClassification = 3` | generic | ตอน user แก้ในหน้า scan |
+| OCR เราเป็นผู้ซื้อ/ผู้ขาย (ถามเฉพาะเมื่อ `OcrPartyResolver.ShouldAskAi`) | `DocumentRoleInference = 4` | generic (`Buyer`/`Seller`) | ตอน user แก้ `OurRole` ในหน้า scan (`OurRoleAiFeedbackId`) — รอบ 156 |
 | OCR target doc to create | `DocumentConversionSuggestion = 23` | generic | ตอน user เปลี่ยน targetDocType |
 | Vendor canonical match | `VendorCanonicalization = 1` | `VendorCanonDistillationModel.cs` | ตอน user เลือก contact |
 | Buyer/Seller role infer | `DocumentRoleInference = 4` | generic | – |
@@ -4898,3 +4899,20 @@ _ผู้ใช้รายงานต่อจากรอบ 152: ใบ `TI
 **บทเรียน**: ธงที่ตัดสิน "ควรเสนอปุ่มไหม" ต้องมาจาก**ตัวตัดสินเดียวกับที่ตัดสินผลลัพธ์จริง**
 (ที่นี่คือหัวกระดาษ) — การดูช่องเดียวที่ "ใกล้เคียง" (`ReceiptDocumentNumber` = มี REC แยกไหม)
 ตอบคำถามคนละข้อกับ "การรับเงินนี้มีหลักฐานใบรับแล้วหรือยัง" เพราะใบต้นทางเองก็เป็นหลักฐานได้
+
+
+---
+
+_Last verified against codebase: 2026-09-11 (รอบ 156 — **ขั้นตัดสินกลาง "ชุดข้อมูลไหนคือใคร"**
+`Helpers/OcrPartyResolver` + ต่อสาย `AiFeatureKey.DocumentRoleInference` ที่มี enum มานานแต่ไม่มี
+prompt/call site/student)_
+
+_ทางเข้า OCR (ข้อ 10): ลำดับใน `OcrService.ScanAsync` ตอนนี้คือ engine → `SmartFieldExtractor.Enrich`
+(ขยายชื่อ · ตัดเศษชื่อจากที่อยู่ · ผ่าที่อยู่ที่ถูกต่อกัน · ป้ายจาก `OcrPartyLabels`) →
+`DocumentNumberSanitizer` → แพตเทิร์นที่เรียนไว้ (ผ่าน sanitizer ซ้ำ) → **`OcrPartyResolver`**
+(ตัวตนจาก DB > ป้ายบนกระดาษ > ช่องที่ engine ใส่ · ล้างคู่ค้าที่เป็นเราเอง · ย้ายค่าเฉพาะที่ปลายทางว่าง)
+→ `OcrDocumentRoleInferrer.Infer` → **AI บทบาท** เฉพาะ `ShouldAskAi`/conf < 0.7 (ด่าน: ∈ {Buyer,Seller}
+· ≥ 0.70 · ห้ามขัดเลขภาษีที่ตรงกับเรา) → Infer ซ้ำด้วย `roleOverride` → sync ลงแถวสแกน**ครบทุกช่อง
+ที่จุดเดียว** (รวม `ExtractedVendorName/TaxId` ที่เดิมถูกเขียนก่อนขั้นตัดสินแล้วไม่มีใคร sync) →
+`AzureDiPatternLearner` (ย้ายมาหลังทุกขั้นแก้ไข + ปฏิเสธเมื่อผู้ขาย = เรา) → จับคู่ Contact
+(ด่านใหม่: ห้ามจับคู่เป็นบริษัทเราเอง ทั้งทางเลขภาษี/substring/fuzzy/สร้างใหม่)_

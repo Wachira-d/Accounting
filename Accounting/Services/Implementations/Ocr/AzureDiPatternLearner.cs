@@ -57,8 +57,20 @@ public class AzureDiPatternLearner
         string? vendorEmail,
         string? vendorBranchCode,
         decimal sourceConfidence,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // ตัวตนของบริษัทเรา — ห้ามจำ "บริษัทเราเอง" เป็นผู้ขายที่รู้ว่าถูก (สแกนจริง 2026-09-11:
+        // engine ใส่ชื่อเราในช่องผู้ขาย ตัวเรียนรู้จำไว้ แล้ว VendorKnownGoodCorrector ดึงชื่อเรา
+        // กลับมาเป็นผู้ขายทุกใบถัดไป = สอนผิดถาวรจากใบเดียว)
+        string? ourCompanyName = null,
+        string? ourTaxId = null)
     {
+        var vendorIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsSelf(vendorName, ourCompanyName)
+            || (Accounting.Helpers.ThaiTaxId.IsValid(vendorTaxId) && Accounting.Helpers.ThaiTaxId.Same(vendorTaxId, ourTaxId));
+        if (vendorIsUs)
+        {
+            _logger.LogInformation("AzureDI learner: skip — ช่องผู้ขายเป็นบริษัทเราเอง ({Vendor}) ไม่จำเป็นผู้ขาย", vendorName);
+            return;
+        }
         // ⚠️ ด่านคุณภาพก่อน "สอน" (ผลตรวจ 2026-09-05 T3-06): ค่านี้มาจากผลอ่านของ
         // Azure ที่**ยังไม่มีใครยืนยัน** — ใบแรกที่อ่านชื่อผู้ขายเพี้ยนจะกลายเป็น
         // "known good" (ConfirmedCount=1) แล้ว VendorKnownGoodCorrector เอาไปทับ

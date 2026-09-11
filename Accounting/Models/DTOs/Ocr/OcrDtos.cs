@@ -145,7 +145,10 @@ public record OcrResultResponse(
     string? PredecessorLinkReason = null,
     /// <summary>JSON ของ <c>List&lt;PredecessorCandidateDto&gt;</c> เรียงตามคะแนน — <c>null</c> = ยังไม่ได้วิเคราะห์
     /// (สแกนรุ่นก่อน) · <c>[]</c> = วิเคราะห์แล้วไม่พบ · หน้าเว็บวาดปุ่ม "เลือกใบต้นทาง" เฉพาะเมื่อมีรายการ</summary>
-    string? PredecessorCandidatesJson = null);
+    string? PredecessorCandidatesJson = null,
+    /// <summary>บทบาทเรา (ผู้ซื้อ/ผู้ขาย) ตัดสินโดยเรียก AI จริงไหม — ป้ายซื่อสัตย์
+    /// ("🤖 AI แนะนำ" เฉพาะตอนเรียก provider จริง)</summary>
+    bool OurRoleUsedAi = false);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);
