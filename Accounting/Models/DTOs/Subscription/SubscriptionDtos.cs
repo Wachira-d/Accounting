@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Subscription;
@@ -205,7 +206,11 @@ public record FeatureFlagInfo(string Name, string Category, string LabelTh, stri
 /// ชุดสำเร็จรูป มาจาก <c>Helpers/FeatureCatalog</c> ตัวเดียว ให้ทุกหน้าแสดงอย่างเดียว</summary>
 public record FeatureCatalogResponse(
     List<FeatureFlagInfo> Features,
-    List<Accounting.Helpers.FeatureCategoryInfo> Categories,
+    // ⚠️ ชื่อเปล่าผ่าน using เท่านั้น — ห้ามเขียน `Accounting.Helpers.X` ในไฟล์ใต้
+    // namespace Accounting.Models.DTOs.* เพราะมี namespace พี่น้องชื่อ
+    // `Accounting.Models.DTOs.Accounting` อยู่ ⇒ ตัว `Accounting` นำหน้าผูกไปที่นั่น
+    // (กติกา "ชั้นใกล้ชนะ") แล้วฟ้อง CS0234 ว่าไม่มี Helpers ในนั้น
+    List<FeatureCategoryInfo> Categories,
     Dictionary<string, List<string>> Presets);
 
 // ===== Subscription Notification Settings =====

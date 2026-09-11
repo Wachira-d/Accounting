@@ -28,8 +28,9 @@ TYPE_DECL = re.compile(
     r"^\s*(?:\[[^\]]*\]\s*)*(?:public|internal|private|protected)?\s*"
     r"(?:static\s+|sealed\s+|abstract\s+|partial\s+|readonly\s+|ref\s+|file\s+)*"
     r"(?:class|struct|interface|enum|record)\s+(?:class\s+|struct\s+)?([A-Za-z_]\w*)", re.M)
-# `Seg.Type` ที่ Seg ขึ้นต้นด้วยตัวใหญ่ และตามด้วยชนิด/สมาชิกที่ขึ้นต้นตัวใหญ่
-QUALIFIED = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9_]*)\.([A-Z][A-Za-z0-9_]*)")
+# โซ่ `A.B.C` เต็มสาย (≥ 2 ตอน) ที่ทุกตอนขึ้นต้นด้วยตัวใหญ่ — ต้องจับ**ทั้งสาย**
+# ไม่ใช่แค่สองตอนแรก เพราะเคสที่ราก (`Accounting`) ถูกบังต้องดูตอนกลางด้วย
+QUALIFIED = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)+)")
 
 
 def build_index(files):
@@ -80,6 +81,19 @@ def strip_noise(text: str) -> str:
     return "".join(out)
 
 
+def resolves(root: str, parts, namespaces: set, types: dict) -> bool:
+    """สายชื่อ `parts` เดินได้จริงไหมถ้าตอนแรกผูกกับ namespace `root`
+
+    ลองทุกจุดตัดระหว่าง "ส่วนที่เป็น namespace" กับ "ชื่อชนิด" — สายอาจยาวเกิน
+    ชนิด (เช่น `Accounting.Helpers.ThaiTaxId.Pattern` = ns 2 ตอน + ชนิด + สมาชิก)
+    """
+    for k in range(1, len(parts)):
+        ns = ".".join([root] + parts[1:k])
+        if ns in namespaces and parts[k] in types.get(ns, ()):
+            return True
+    return False
+
+
 def check_file(path: Path, namespaces: set, types: dict):
     text = path.read_text(encoding="utf-8", errors="replace")
     m = NS_DECL.search(text)
@@ -93,19 +107,21 @@ def check_file(path: Path, namespaces: set, types: dict):
         stripped = line.strip()
         if stripped.startswith(("using ", "namespace ")):
             continue
-        for seg, member in QUALIFIED.findall(line):
-            # ผู้สมัคร: ไล่จากชั้นในสุดออกมาถึงระดับบนสุด
+        for chain in QUALIFIED.findall(line):
+            parts = chain.split(".")
+            seg = parts[0]
+            # ผู้สมัครของ**ตอนแรก**: ไล่จากชั้นในสุดออกมาถึงระดับบนสุด
             candidates = [".".join(own[:i] + [seg]) for i in range(len(own), 0, -1)]
             candidates.append(seg)
             hits = [c for c in candidates if c in namespaces]
             if len(hits) < 2:
                 continue
             winner = hits[0]                      # ชั้นใกล้ที่สุดชนะเสมอ
-            if member in types.get(winner, ()):
-                continue                          # ชั้นที่ชนะมีชนิดนี้จริง = โค้ดถูก
-            owners = [c for c in hits[1:] if member in types.get(c, ())]
-            if owners:                            # ชั้นนอกมี แต่ชั้นที่ชนะไม่มี = CS0234
-                problems.append((line_no, stripped, seg, member, winner, owners))
+            if resolves(winner, parts, namespaces, types):
+                continue                          # ชั้นที่ชนะเดินสายนี้ได้จริง = โค้ดถูก
+            owners = [c for c in hits[1:] if resolves(c, parts, namespaces, types)]
+            if owners:                            # ชั้นนอกเดินได้ แต่ชั้นที่ชนะไม่ได้ = CS0234
+                problems.append((line_no, stripped, chain, winner, owners))
     return problems
 
 
@@ -119,12 +135,13 @@ def main():
     targets = [Path(a) for a in sys.argv[1:]] or files
     total = 0
     for path in targets:
-        for line_no, text, seg, member, winner, owners in check_file(path, namespaces, types):
+        for line_no, text, chain, winner, owners in check_file(path, namespaces, types):
             total += 1
             rel = path.relative_to(ROOT) if ROOT in path.parents else path
-            print(f"{rel}:{line_no}: `{seg}.{member}` ผูกไป {winner} (ชั้นใกล้ชนะ) "
-                  f"ซึ่งไม่มีชนิดนี้ — ตัวจริงอยู่ที่ {', '.join(owners)}\n    {text}")
-            print(f"    → เขียนชื่อเต็ม {owners[0]}.{member} หรือใช้ชื่อเปล่าผ่าน using")
+            print(f"{rel}:{line_no}: `{chain}` — ตอนแรกผูกไป {winner} (ชั้นใกล้ชนะ) "
+                  f"ซึ่งเดินสายนี้ไม่ได้ — ที่เดินได้คือ {', '.join(owners)}\n    {text}")
+            print("    → ใช้ชื่อเปล่าผ่าน using (ทางที่ปลอดภัยสุดเมื่อ**ราก**ถูกบัง) "
+                  "หรือเขียนชื่อเต็มที่ไม่ถูกบัง")
 
     print(f"\nตรวจ {len(targets)} ไฟล์ .cs · ชื่อที่ผูกไป namespace ผิดชั้น {total} จุด")
     return 1 if total else 0
