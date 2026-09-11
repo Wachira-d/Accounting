@@ -181,11 +181,17 @@ public record OcrLinePreviewResponse(
     IReadOnlyList<OcrLinePreviewLineDto> Lines,
     string? Notes);
 
+/// <param name="SourceItemIndex">ลำดับของ <c>ExtractedItems[i]</c> ที่บรรทัดนี้มาจาก
+/// — หน้า review ใช้จับคู่กลับไปยังแถวในตาราง "รายการที่อ่านได้" เพื่อโชว์อัตรา VAT
+/// ที่<b>เซิร์ฟเวอร์จะใช้จริง</b> · ห้ามให้หน้าเว็บเดาจากลำดับเอง: วันที่ตัวสร้าง
+/// บรรทัดเพิ่ม/ข้ามแถว ป้ายจะเลื่อนไปทั้งตารางโดยไม่มีอะไรฟ้อง (-1 = ไม่มีต้นทาง
+/// เช่นบรรทัดสรุปที่สร้างจากหัวใบเมื่อ OCR ไม่ได้รายการเลย)</param>
 public record OcrLinePreviewLineDto(
     string Description, decimal Quantity, string? Unit, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount, decimal Amount,
     decimal VatRate, decimal VatAmount, decimal WithholdingTaxRate,
-    string? AccountCode, string? ProductCode, Guid? ProjectId, Guid? SourceLineId);
+    string? AccountCode, string? ProductCode, Guid? ProjectId, Guid? SourceLineId,
+    int SourceItemIndex = -1);
 
 /// <summary>Body of POST /ocr/{scanId}/link-po — the chosen PO plus the
 /// per-OCR-line mapping (line index → PO line id). Unmapped indices are

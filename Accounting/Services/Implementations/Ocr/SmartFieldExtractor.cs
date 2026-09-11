@@ -293,6 +293,30 @@ internal static class SmartFieldExtractor
                 data.Note(Accounting.Helpers.OcrFieldKeys.SellerName, fullVendor, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
                     "ชื่อเต็มบรรทัดบนกระดาษครอบชื่อที่ engine ตัดสั้น");
             }
+
+            // เศษท้ายชื่อที่หลุดไปเกาะ**หัวที่อยู่** (Azure ตัดกรอบผิด: ชื่อขาดท้าย
+            // “แอม แฮปปี้” + ที่อยู่ได้ “เนส202/24 ม.5 …”) — รอบก่อนซ่อมแต่ฝั่งชื่อ
+            // จึงเหลืออีกฝั่งไว้ (defect class “คู่สมมาตร — แก้ฝั่งเดียวคือเหลืออีกฝั่ง”)
+            // · ตัวตัดสินอยู่ที่ Helpers/OcrPartyAddress (ตัดเฉพาะเศษที่ถูกตัด**กลางคำ**
+            //   ของชื่อ ⇒ ไม่ไปตัดที่อยู่ของบริษัทที่ตั้งชื่อตามสถานที่)
+            var cleanBuyerAddr = Accounting.Helpers.OcrPartyAddress
+                .StripLeakedNameFragment(data.BuyerAddress, data.BuyerName);
+            if (cleanBuyerAddr != null)
+            {
+                data.ReasoningTrace.Add($"[Buyer] ตัดเศษท้ายชื่อออกจากที่อยู่ “{data.BuyerAddress}” → “{cleanBuyerAddr}”");
+                data.BuyerAddress = cleanBuyerAddr;
+                data.Note(Accounting.Helpers.OcrFieldKeys.BuyerAddress, cleanBuyerAddr, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m,
+                    "ตัดเศษท้ายชื่อผู้ซื้อที่ engine ใส่ปนมากับที่อยู่");
+            }
+            var cleanVendorAddr = Accounting.Helpers.OcrPartyAddress
+                .StripLeakedNameFragment(data.VendorAddress, data.VendorName);
+            if (cleanVendorAddr != null)
+            {
+                data.ReasoningTrace.Add($"[Vendor] ตัดเศษท้ายชื่อออกจากที่อยู่ “{data.VendorAddress}” → “{cleanVendorAddr}”");
+                data.VendorAddress = cleanVendorAddr;
+                data.Note(Accounting.Helpers.OcrFieldKeys.SellerAddress, cleanVendorAddr, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.80m,
+                    "ตัดเศษท้ายชื่อผู้ขายที่ engine ใส่ปนมากับที่อยู่");
+            }
         }
         if (bothDistinct) return;
 

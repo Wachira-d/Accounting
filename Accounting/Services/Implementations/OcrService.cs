@@ -5964,7 +5964,10 @@ public class OcrService : IOcrService
             l.Description, l.Quantity, l.Unit, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount,
             l.VatRate, l.VatAmount, l.WithholdingTaxRate,
             l.AccountId.HasValue && codeMap.TryGetValue(l.AccountId.Value, out var code) ? code : null,
-            l.ProductCode, l.ProjectId, l.SourceLineId)).ToList();
+            l.ProductCode, l.ProjectId, l.SourceLineId,
+            // BuildScanLinesAsync เดินลูป items แบบ 1 แถว = 1 บรรทัด (LineOrder เริ่มที่ 1)
+            // — ส่งดัชนีต้นทางออกไปตรง ๆ แทนที่จะให้หน้าเว็บสมมติว่าลำดับตรงกัน
+            items.Count > 0 ? l.LineOrder - 1 : -1)).ToList();
 
         var notesAfter = result.ProcessingNotes ?? "";
         var delta = notesAfter.Length > notesBefore.Length ? notesAfter[notesBefore.Length..].Trim() : null;

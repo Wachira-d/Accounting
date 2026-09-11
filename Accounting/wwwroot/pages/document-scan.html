@@ -2669,10 +2669,21 @@
                   </button>
                   <span style="font-size:11px;color:#4f46e5">เลือกแล้วค่อยแก้เฉพาะบรรทัดที่ไม่ตรง</span>
                 </div>
-                <table style="width:100%;font-size:12px;border-collapse:collapse">
-                  <tr style="background:var(--gray-100)"><th style="padding:4px 2px;width:28px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;text-align:center;width:64px" title="อัตราภาษีของบรรทัดนี้ — 'ยกเว้น' = §81">VAT</th><th style="padding:4px 6px;text-align:center;width:56px">หน่วย</th><th style="padding:4px 6px;min-width:150px">บัญชี</th><th style="padding:4px 6px;min-width:180px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:70px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:90px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)" title="ตัดสินที่เซิร์ฟเวอร์ — แก้ได้ที่ฟอร์มเอกสาร">${it.vatRate == null ? '-' : (it.vatRate < 0 ? 'ยกเว้น' : it.vatRate + '%')}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)">${Layout.esc(it.unit || '-')}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                <!-- ความกว้างคอลัมน์: “รายละเอียด” คือช่องที่ผู้ใช้ต้องอ่าน/แก้มากที่สุด
+                     แต่เดิมไม่มีความกว้างของตัวเอง จึงถูก min-width ของ “บัญชี/โครงการ”
+                     (150/180px) กับ input จำนวน/ราคา (70/90px) บีบจนเหลือไม่กี่ตัวอักษร
+                     ⇒ ล็อกด้วย colgroup + table-layout:fixed: ช่องตัวเลขแคบลงเท่าที่พอ
+                     อ่านจำนวนจริง ส่วนที่เหลือตกเป็นของ “รายละเอียด” ทั้งหมด -->
+                <div style="overflow-x:auto">
+                <table style="width:100%;min-width:720px;font-size:12px;border-collapse:collapse;table-layout:fixed">
+                  <colgroup><col style="width:26px"><col><col style="width:62px"><col style="width:84px"><col style="width:82px"><col style="width:76px"><col style="width:52px"><col style="width:15%"><col style="width:15%"></colgroup>
+                  <tr style="background:var(--gray-100)"><th style="padding:4px 2px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;text-align:center" title="อัตราภาษีของบรรทัดนี้ — 'ยกเว้น' = §81 · ค่าที่แสดงคืออัตราที่เซิร์ฟเวอร์จะใช้จริงตอนสร้างเอกสาร">VAT</th><th style="padding:4px 6px;text-align:center">หน่วย</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px">โครงการ</th></tr>
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)" data-line-vat="${idx}" title="ตัดสินที่เซิร์ฟเวอร์ — แก้ได้ที่ฟอร์มเอกสาร">${it.vatRate == null ? '…' : (it.vatRate < 0 ? 'ยกเว้น' : it.vatRate + '%')}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)">${Layout.esc(it.unit || '-')}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
+                </div>
+                <!-- สรุป VAT ของตารางนี้ — เติมโดย _loadLineVatPreview() จากผลของ
+                     เซิร์ฟเวอร์ (ตัวสร้างบรรทัดตัวเดียวกับปุ่ม "สร้างเอกสาร") -->
+                <div id="lineVatSummary" style="margin-top:6px"></div>
                 <!-- เพิ่มแถว — เดิมทำไม่ได้เลย ⇒ OCR รวมสองแถวเป็นแถวเดียว
                      ผู้ใช้แยกกลับไม่ได้ ต้องไปแก้ทีหลังในฟอร์มเอกสาร -->
                 <button class="btn btn-sm btn-outline" style="margin-top:6px"
@@ -2917,6 +2928,9 @@
           // Load chart of accounts for dropdowns
           this._loadAccountDropdowns(scan);
 
+          // อัตรา VAT รายบรรทัด + สรุป "ราคารวม VAT แล้วหรือยัง"
+          this._loadLineVatPreview(scan);
+
           // WHT checkbox toggle
           const whtCb = document.getElementById('revHasWht');
           const whtRate = document.getElementById('revWhtRate');
@@ -2925,6 +2939,67 @@
         } catch (err) {
           Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + err.message, 'error');
         }
+      },
+
+      // เติมคอลัมน์ VAT ของตาราง "รายการที่อ่านได้" + แบนเนอร์สรุป
+      //
+      // ═══ ที่มา (ผู้ใช้รายงาน 2026-09-11) ═══ ใบ HS6909180 หัวใบมี VAT 43.64
+      // แต่ทุกบรรทัดในตารางขึ้น "-" เพราะกระดาษไม่ได้แยก VAT รายบรรทัด และค่าที่
+      // เก็บใน ExtractedItems จึงเป็น null — ขณะที่ตอน "สร้างเอกสาร" เซิร์ฟเวอร์
+      // **ใส่ 7% ให้ทุกบรรทัด** และถอด VAT ออกจากราคา (ราคาบนกระดาษรวม VAT:
+      // 239+239+189 = 667 = ยอดรวมทั้งสิ้น) ⇒ หน้า review เล่าคนละเรื่องกับเอกสาร
+      // ที่จะได้ ผู้ใช้จึงไม่มีทางรู้ว่าระบบจะคิด VAT ให้หรือไม่
+      //
+      // **ห้ามคำนวณเองที่นี่** (= สำเนามือชุดที่สองของตัวสร้างบรรทัด ซึ่งไฟล์นี้
+      // เพิ่งถอดออกไปรอบก่อน) — ดึงจาก GET ocr/{id}/line-preview ที่ใช้
+      // BuildScanLinesAsync ตัวเดียวกับปุ่ม "สร้างเอกสาร" แล้วจับคู่แถวด้วย
+      // sourceItemIndex ที่เซิร์ฟเวอร์ส่งมา (ไม่ใช่เดาจากลำดับ)
+      async _loadLineVatPreview(scan) {
+        const summaryEl = document.getElementById('lineVatSummary');
+        if (!document.querySelector('[data-line-vat]')) return;
+        let preview;
+        try {
+          preview = (await Layout.api().ocrLinePreview(scan.id))?.data;
+        } catch (e) {
+          // ล้มแล้วต้องบอก ไม่ใช่ปล่อย "…" ค้างให้ผู้ใช้เดาว่าระบบกำลังคิดอยู่
+          document.querySelectorAll('[data-line-vat]').forEach(td => {
+            if (td.textContent.trim() === '…') td.textContent = '?';
+          });
+          if (summaryEl) summaryEl.innerHTML = `<div style="font-size:11.5px;color:#b45309">⚠️ อ่านอัตรา VAT รายบรรทัดจากเซิร์ฟเวอร์ไม่สำเร็จ (${Layout.esc(e.message || '')}) — ตรวจที่ฟอร์มเอกสารอีกครั้ง</div>`;
+          return;
+        }
+        if (!preview) return;
+        const incl = !!preview.pricesIncludeVat;
+        for (const l of (preview.lines || [])) {
+          const idx = l.sourceItemIndex;
+          if (idx == null || idx < 0) continue;
+          const td = document.querySelector(`[data-line-vat="${idx}"]`);
+          if (!td) continue;
+          const rate = Number(l.vatRate);
+          if (!(rate > 0)) { td.textContent = 'ยกเว้น'; td.title = 'บรรทัดนี้ไม่มีภาษีขาย/ภาษีซื้อ (§81 ยกเว้น หรือ 0%)'; continue; }
+          td.textContent = incl ? `${rate}% ⊂` : `${rate}%`;
+          td.title = incl
+            ? `ราคา ${Layout.money(l.unitPrice)} บนกระดาษรวม VAT แล้ว — ระบบถอดออกเป็นยอดก่อน VAT ${Layout.money(l.amount)} + VAT ${Layout.money(l.vatAmount)}`
+            : `ยอดก่อน VAT ${Layout.money(l.amount)} + VAT ${rate}% = ${Layout.money(l.vatAmount)}`;
+        }
+        // แถวที่ preview ไม่ครอบ (ไม่มีต้นทาง) ห้ามค้าง "…" ให้ผู้ใช้เดาว่ายังโหลดอยู่
+        document.querySelectorAll('[data-line-vat]').forEach(td => {
+          if (td.textContent.trim() === '…') td.textContent = '-';
+        });
+        if (!summaryEl) return;
+        const sub = Number(preview.headerSubTotal) || 0;
+        const vat = Number(preview.headerVat) || 0;
+        const tot = Number(preview.headerTotal) || 0;
+        if (vat <= 0) { summaryEl.innerHTML = ''; return; }
+        const math = `${Layout.money(sub)} + VAT ${Layout.money(vat)} = ${Layout.money(tot)}`;
+        summaryEl.innerHTML = incl
+          ? `<div style="font-size:11.5px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:6px;padding:6px 10px">
+               💡 <b>ราคาต่อหน่วยบนกระดาษรวม VAT แล้ว</b> (⊂ = VAT อยู่ในราคา) — ผลรวมบรรทัดตรงกับยอดรวมทั้งสิ้น
+               ระบบจะถอด VAT ออกให้ตอนสร้างเอกสาร: <b>${Layout.esc(math)}</b> · ช่อง "ราคา" ในตารางนี้จึงเป็นราคารวม VAT ตามกระดาษ ไม่ต้องแก้
+             </div>`
+          : `<div style="font-size:11.5px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:6px;padding:6px 10px">
+               💡 ราคาต่อหน่วยเป็น<b>ยอดก่อน VAT</b> — ระบบบวก VAT ตามอัตราของแต่ละบรรทัด: <b>${Layout.esc(math)}</b>
+             </div>`;
       },
 
       async _loadAccountDropdowns(scan) {
