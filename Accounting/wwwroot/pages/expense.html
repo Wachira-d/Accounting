@@ -347,7 +347,9 @@
             const row = document.getElementById('linesBody').lastElementChild;
             row.querySelector('[data-f="desc"]').value = l.description || '';
             row.querySelector('[data-f="amt"]').value = l.amount || 0;
-            row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
+            // ค่าที่บันทึกไว้แล้วในใบเบิก — ผ่านตัวตัดสินกลางเหมือนหน้าเอกสาร
+            // (ห้ามให้ตัวเติมใด ๆ ทับค่าที่บันทึกไว้ ดู Layout.setLineVat)
+            Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
           });
           if (!e.lines?.length) this.addLine();

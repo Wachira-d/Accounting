@@ -2065,8 +2065,10 @@
             if (_dm) _dm.value = 'pct';
             row.querySelector('[data-f="disc"]').value = l.discountPercent ?? 0;
           }
+          // อัตรา VAT: ประทับที่มา 'ocr' — กันตัวแนะนำ (blur ของช่องรายละเอียด)
+          // ทับค่าที่กระดาษเขียนไว้ ดู Layout.setLineVat
           const vatSel = row.querySelector('[data-f="vat"]');
-          if (vatSel) vatSel.value = String(l.vatRate ?? 7);
+          Layout.setLineVat(vatSel, l.vatRate ?? 7, 'ocr');
           // WHT — ใช้ค่า per-line ก่อน, fallback to header-level จาก OCR
           row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate
             ?? (payload.hasWht && payload.whtRate ? payload.whtRate : 0);
@@ -2992,7 +2994,7 @@
         if (!on) return;
         let touched = 0;
         document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(sel => {
-          if ((parseFloat(sel.value) || 0) === 0) { sel.value = '7'; touched++; }
+          if ((parseFloat(sel.value) || 0) === 0 && Layout.setLineVat(sel, 7, 'user')) touched++;
         });
         if (touched) {
           this.calcSum();
@@ -3728,7 +3730,11 @@
           const desc = (row.querySelector('[data-f="desc"]')?.value || '').trim();
           if (desc.length < 3) return;
           const vatSel = row.querySelector('[data-f="vat"]');
-          if (!vatSel || vatSel.dataset.userTouched === '1') return;
+          // ⚠️ ตัวแนะนำนี้ **ไม่เคยเห็นกระดาษ** — มันตอบจากชื่อรายการอย่างเดียว
+          // จึงเป็นแหล่งที่อ่อนที่สุด ห้ามทับค่าจาก OCR / เอกสารที่บันทึกไว้ /
+          // ชนิดเอกสาร / ที่ผู้ใช้เลือกเอง (บั๊กจริง 2026-09-11: บิลไม่มี VAT
+          // ถูกดันเป็น 7% ตอน blur ⇒ ยอด 3,500 → 3,745)
+          if (!vatSel || !Layout.canSetLineVat(vatSel, 'ai')) return;
 
           const cid = Layout.getCompanyId();
           const contactId = document.getElementById('fContactId')?.value || null;
@@ -3750,10 +3756,12 @@
           const j = await r.json();
           if (!j.success || !j.data) return;
           const suggested = j.data.vatType === 'Exempt' ? '-1' : String(j.data.vatType);
-          if (vatSel.value !== suggested) {
-            vatSel.value = suggested;
+          if (vatSel.value !== suggested && Layout.setLineVat(vatSel, suggested, 'ai')) {
             vatSel.dataset.aiFeedbackId = j.data.feedbackId || '';
             vatSel.title = this._aiHint(j.data);
+            // อัตราเปลี่ยน = ช่อง "เคลม VAT" ต้องตามทันที (เหตุผลเดียวกับ
+            // onVatTypeChange: 0% ✓ → 7% แล้วยัง ✓ = เคลมภาษีซื้อที่ไม่มีใครเลือก)
+            this.syncVatClaimWithRate(row);
             this.calcSum();
           }
         } catch { /* best-effort */ }
@@ -3763,6 +3771,7 @@
       // เป็น ground-truth ให้ AI เรียน
       onVatTypeChange(sel) {
         sel.dataset.userTouched = '1';
+        sel.dataset.vatSrc = 'user';
         // เปลี่ยนอัตรา VAT → ช่อง "เคลม VAT" ต้องตามทันที ไม่งั้นค่าที่ค้างอยู่
         // จะกลายเป็นการตัดสินใจที่ไม่มีใครตั้งใจ (0% ✓ → เปลี่ยนเป็น 7% แล้ว
         // ยัง ✓ = เคลมภาษีซื้อโดยที่ผู้ใช้ไม่เคยเลือก)
@@ -6078,7 +6087,7 @@
         const qtyEl = row.querySelector('[data-f="qty"]'); if (qtyEl) qtyEl.value = 1;
         const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = 'รายการ';
         const priceEl = row.querySelector('[data-f="price"]'); if (priceEl) priceEl.value = grossDue;
-        const vatSel = row.querySelector('[data-f="vat"]'); if (vatSel) vatSel.value = '0';
+        const vatSel = row.querySelector('[data-f="vat"]'); Layout.setLineVat(vatSel, 0, 'doc');
         const whtEl = row.querySelector('[data-f="wht"]'); if (whtEl) whtEl.value = whtRate;
         this.calcSum?.();
         const refEl = document.getElementById('fRef');
@@ -6315,7 +6324,7 @@
             set('qty', l.quantity || 1);
             set('unit', l.unit || 'ชิ้น');
             set('price', l.unitPrice || 0);
-            set('vat', String(l.vatRate ?? 0));
+            Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate ?? 0, 'doc');
             set('wht', l.withholdingTaxRate || 0);
           });
           this.calcSum?.();
@@ -7072,8 +7081,7 @@
         // ไม่จด VAT) — ตั้งต้นบรรทัดเป็น "ยกเว้น" แทน 7% (แก้ได้ แต่เคลมไม่ได้
         // อยู่ดีเพราะไม่มีใบกำกับ §82/5(1))
         if (document.getElementById('fDocType')?.value === 'CertificateInLieu') {
-          const v = row.querySelector('[data-f="vat"]');
-          if (v) v.value = '-1';
+          Layout.setLineVat(row.querySelector('[data-f="vat"]'), -1, 'doctype');
         }
         const descInput = row.querySelector('[data-f="desc"]');
         // auto-grow textarea (รองรับรายละเอียดหลายบรรทัด) — ขยายสูงตามเนื้อหา
@@ -7976,7 +7984,7 @@
               if (_dm2) _dm2.value = 'pct';
               row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
             }
-            row.querySelector('[data-f="vat"]').value = l.vatRate || 0;
+            Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
             // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
             // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice

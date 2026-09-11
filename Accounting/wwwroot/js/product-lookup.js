@@ -194,7 +194,11 @@ const ProductLookup = {
     }
     if (opts.overwriteVat !== false && product.vatRate != null) {
       const vatSel = row.querySelector('[data-f="vat"]');
-      if (vatSel) vatSel.value = String(product.vatRate);
+      // ผูกสินค้าจากคลัง = การเลือกที่ตั้งใจ → ชนะค่าที่ OCR อ่านมาได้ แต่ยังแพ้
+      // อัตราที่ผู้ใช้กดเลือกในช่อง VAT เอง · Layout.setLineVat เป็นตัวตัดสินตัวเดียว
+      // (หน้าเดียวที่โหลดไฟล์นี้คือ documents.html ซึ่งโหลด layout.js อยู่แล้ว —
+      //  ไม่ใส่ fallback เพราะสาขาที่ไม่มีใครเดินคือสาขาที่ไม่มีใครรู้ว่าพัง)
+      Layout.setLineVat(vatSel, product.vatRate, 'product');
     }
     row.dataset.productId = product.id || '';
     row.dataset.productCode = product.code || '';
