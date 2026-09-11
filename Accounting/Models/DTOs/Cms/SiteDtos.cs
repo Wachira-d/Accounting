@@ -85,6 +85,10 @@ public class SiteResponse
     public string? CustomDomain { get; set; }
     public SiteStatus Status { get; set; }
     public SiteType SiteType { get; set; }
+    public IndustryType IndustryType { get; set; }
+    /// <summary>โมดูลที่เว็บนี้ใช้ ("orders"/"bookings"/"lodging"/"leads") — จาก CmsModuleResolver
+    /// ให้ cms-edit เลือกแท็บ/ลิงก์ (ห้ามหน้าเว็บตัดสินจาก siteType เอง — โรงแรมเป็น Booking แต่ใช้ lodging)</summary>
+    public List<string> Modules { get; set; } = new();
     public SiteRenderMode RenderMode { get; set; }
     public Guid? BranchId { get; set; }
     public string? BranchName { get; set; }
@@ -130,9 +134,41 @@ public class SiteListResponse
     public string? CustomDomain { get; set; }
     public SiteStatus Status { get; set; }
     public SiteType SiteType { get; set; }
+    public IndustryType IndustryType { get; set; }
+    public List<string> Modules { get; set; } = new();
     public string? BranchName { get; set; }
     public DateTime? PublishedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>เติม/เปลี่ยนเทมเพลตให้เว็บที่มีอยู่แล้ว — ทางซ่อมสำหรับเว็บที่สร้างผิดประเภท
+/// (เช่น เลือกการ์ด "โรงแรม" แต่ได้หน้าบริการทั่วไป) โดยไม่ต้องลบเว็บแล้วสร้างใหม่
+/// (subdomain/โดเมน/ลูกค้า/ออเดอร์ที่ผูกอยู่จะหายไปด้วยถ้าลบ)</summary>
+public class ApplySiteTemplateRequest
+{
+    public IndustryType IndustryType { get; set; } = IndustryType.General;
+    /// <summary>เปลี่ยนชนิดเว็บด้วยไหม (ที่พัก/จองคิว = Booking · ร้านค้า = Ecommerce) — null = ไม่แตะ</summary>
+    public SiteType? SiteType { get; set; }
+    /// <summary>seed หน้าเว็บของประเภทนั้นเพิ่ม (หน้าที่ slug ซ้ำกับของเดิม: ข้าม เว้นแต่ ReplaceExistingPages)</summary>
+    public bool SeedPages { get; set; } = true;
+    /// <summary>หน้าเดิมที่ slug ชนกับเทมเพลต → ปลดออก (soft-delete + เปลี่ยน slug ให้พ้น unique index) แล้วใส่หน้าใหม่แทน
+    /// — หน้าเดิมไม่ถูกลบจริง กู้จากฐานได้</summary>
+    public bool ReplaceExistingPages { get; set; } = false;
+}
+
+public class ApplySiteTemplateResponse
+{
+    public int PagesAdded { get; set; }
+    public int PagesReplaced { get; set; }
+    /// <summary>slug ที่มีอยู่แล้วและถูกข้าม (ผู้ใช้ตัดสินเองว่าจะติ๊ก "แทนที่" แล้วทำซ้ำไหม)</summary>
+    public List<string> SkippedSlugs { get; set; } = new();
+    /// <summary>ที่พักถูก seed ให้ในรอบนี้ (false = มีอยู่แล้ว หรือไม่ใช่ประเภทที่พัก)</summary>
+    public bool LodgingSeeded { get; set; }
+    /// <summary>บริการจองคิวตัวอย่างที่เพิ่มให้ (0 = มีอยู่แล้ว หรือประเภทนี้ไม่ใช้จองคิว)</summary>
+    public int BookingServicesAdded { get; set; }
+    /// <summary>slug ที่ถูกจองไว้โดยหน้าที่ลบไปแล้ว (ปลดให้อัตโนมัติ — ไม่ใช่การทับหน้าของผู้ใช้)</summary>
+    public int FreedDeletedSlugs { get; set; }
+    public SiteResponse Site { get; set; } = new();
 }
 
 // ==================== Domain ====================

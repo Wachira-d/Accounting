@@ -121,6 +121,7 @@ public partial class LodgingService : ILodgingService
 
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
         Apply(p, dto);
+        await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, LodgingAccountingMode.Full, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
         await EnsureUniqueCodeAsync(companyId, p);
@@ -134,6 +135,7 @@ public partial class LodgingService : ILodgingService
         var p = await RequirePropertyAsync(companyId, propertyId, tracking: true);
         var prevMode = p.AccountingMode;
         Apply(p, dto);
+        await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, prevMode, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
         await EnsureUniqueCodeAsync(companyId, p);
@@ -185,6 +187,19 @@ public partial class LodgingService : ILodgingService
     {
         var letters = new string(name.Where(char.IsLetterOrDigit).Take(4).ToArray()).ToUpperInvariant();
         return string.IsNullOrEmpty(letters) || letters.Any(c => c > 127) ? "STAY" : letters;
+    }
+
+    /// <summary>เว็บหนึ่งผูกที่พักได้แห่งเดียว — storefront อ่านที่พักจาก SiteId (`ResolvePropertyIdForSiteAsync`
+    /// หยิบ FirstOrDefault) ถ้าผูกซ้ำได้ แขกจะจองที่พัก A ขณะเจ้าของคิดว่าเปิด B โดยไม่มี error ที่ไหน
+    /// (ทีมตรวจรอบ 158 L-02) · index ฐานข้อมูลเป็น partial unique คู่กัน — ด่านนี้ให้ข้อความไทยแทน 500</summary>
+    private async Task EnsureSiteNotBoundElsewhereAsync(Guid companyId, LodgingProperty p)
+    {
+        if (p.SiteId == null) return;
+        var other = await _db.LodgingProperties.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.Id != p.Id && x.SiteId == p.SiteId)
+            .Select(x => x.Name).FirstOrDefaultAsync();
+        if (other != null)
+            throw new BusinessRuleException($"เว็บไซต์นี้ผูกกับที่พัก \"{other}\" อยู่แล้ว — เว็บหนึ่งเปิดจองได้ที่พักเดียว (หน้า /booking อ่านที่พักจากเว็บ) กรุณาปลดการผูกที่ที่พักเดิมก่อน หรือเลือกเว็บอื่น");
     }
 
     private async Task EnsureUniqueCodeAsync(Guid companyId, LodgingProperty p)

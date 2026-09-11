@@ -60,6 +60,7 @@
       <div class="editor-tab" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
       <div class="editor-tab" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
       <div class="editor-tab" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
+      <div class="editor-tab" data-tab="lodging" onclick="Page.switchTab('lodging')" id="tabLodging" style="display:none">🏨 ที่พัก</div>
       <div class="editor-tab" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
       <div class="editor-tab" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
       <div class="editor-tab" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
@@ -227,6 +228,26 @@
         <button class="btn btn-secondary btn-sm" onclick="Page.loadBookings()">🔄 รีเฟรช</button>
       </div>
       <div id="bookingsList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+    </div>
+
+    <!-- ====================== LODGING TAB (เว็บที่พัก) ====================== -->
+    <div class="tab-pane" id="tab-lodging">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:6px">🏨 ระบบจองห้องพักของเว็บนี้</h3>
+      <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px">
+        หน้า <code>/rooms</code> และ <code>/booking</code> ของเว็บนี้แสดงระบบจองห้องพัก (ห้องว่าง · ราคาตามวัน · มัดจำ) จากข้อมูลที่พักที่ผูกไว้ —
+        แก้ห้อง/ราคา/นโยบายที่หน้าตั้งค่าที่พัก ไม่ใช่ที่บล็อกหน้าเว็บ (บล็อกบนสองหน้านั้นแสดงเฉพาะหัวเรื่อง Hero)
+      </p>
+      <div class="grid grid-2 gap-3">
+        <a class="card" id="lodgingSettingsLink" href="/pages/lodging-settings.html" style="padding:18px;display:block">
+          <div style="font-size:24px">🛏️</div><div style="font-weight:600;margin-top:6px">ตั้งค่าที่พัก</div>
+          <div style="font-size:12px;color:var(--gray-500)">ประเภทห้อง · หมายเลขห้อง · แผนราคา · ฤดูกาล · นโยบายยกเลิก · บริการเสริม · รูปภาพ</div>
+        </a>
+        <a class="card" id="lodgingDeskLink" href="/pages/lodging.html" style="padding:18px;display:block">
+          <div style="font-size:24px">🏨</div><div style="font-weight:600;margin-top:6px">Front desk</div>
+          <div style="font-size:12px;color:var(--gray-500)">การจองที่เข้ามา · ตรวจสลิปมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน</div>
+        </a>
+      </div>
+      <div id="lodgingModuleNote" style="margin-top:14px;font-size:12px;color:var(--gray-500)"></div>
     </div>
 
     <!-- ====================== DOMAIN TAB ====================== -->
@@ -944,18 +965,29 @@
         if (tab === 'redirects' && !this._redirectsLoaded) this.loadRedirects();
       },
 
-      // Show e-commerce/booking tabs based on site type
+      // แท็บโมดูลตาม site.modules ที่เซิร์ฟเวอร์คำนวณ (CmsModuleResolver — ตัวเดียวกับเมนูหลัก)
+      // เดิมตัดสินจาก siteType เอง ⇒ เว็บที่พัก (siteType Booking) ได้แท็บ "บริการจอง/รายการจอง"
+      // แบบ slot ที่ไม่เกี่ยวกับห้องพัก และไม่มีทางไปหน้าตั้งค่าที่พักเลย
       applyTabsBySiteType() {
+        const mods = Array.isArray(this.site?.modules) ? new Set(this.site.modules) : null;
         const t = this.site?.siteType;
-        // Ecommerce, ServiceCatalog, Hybrid → show Products + Orders
-        if (t === 2 || t === 4 || t === 5) {
+        // เซิร์ฟเวอร์เก่าที่ยังไม่ส่ง modules → ตกไปใช้ siteType แบบเดิม (แสดงมากไว้ก่อน ไม่ซ่อนเงียบ)
+        const showCommerce = mods ? mods.has('orders') : (t === 2 || t === 4 || t === 5);
+        const showBooking = mods ? mods.has('bookings') : (t === 3 || t === 5);
+        const showLodging = mods ? mods.has('lodging') : false;
+        if (showCommerce) {
           document.getElementById('tabProducts').style.display = '';
           document.getElementById('tabOrders').style.display = '';
         }
-        // Booking, Hybrid → show booking tabs
-        if (t === 3 || t === 5) {
+        if (showBooking) {
           document.getElementById('tabBooking').style.display = '';
           document.getElementById('tabBookings').style.display = '';
+        }
+        if (showLodging) {
+          document.getElementById('tabLodging').style.display = '';
+          document.getElementById('lodgingSettingsLink').href = `/pages/lodging-settings.html?siteId=${this.siteId}`;
+          document.getElementById('lodgingDeskLink').href = `/pages/lodging.html?siteId=${this.siteId}`;
+          document.getElementById('lodgingModuleNote').textContent = 'เมนู "ที่พัก · Front desk" และ "ตั้งค่าที่พัก" ในแถบซ้ายจะแสดงเฉพาะบริษัทที่มีเว็บ/ที่พักประเภทนี้';
         }
       },
 

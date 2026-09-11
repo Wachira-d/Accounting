@@ -1960,9 +1960,15 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 > engine (pure): `Helpers/LodgingPricingEngine.cs` (+ `LodgingAvailability`) · service: `Services/Implementations/Lodging/LodgingService*.cs` ·
 > API หลังบ้าน: `Controllers/LodgingController.cs` (`/api/companies/{cid}/lodging/**` · สิทธิ์ `Lodging.Manage` / `Lodging.Settings`) ·
 > API สาธารณะ: `Controllers/LodgingPublicController.cs` (`/cms/sites/{siteId}/lodging/**` AllowAnonymous · scope siteId + token) ·
-> seed: `Services/Implementations/Cms/LodgingSeeder.cs` (เรียกจาก `CmsSiteService.CreateSiteAsync` เมื่อ `IndustryType.Hotel`)
+> seed: `Services/Implementations/Cms/LodgingSeeder.cs` (เรียกจาก `CmsSiteService.CreateSiteAsync` **และ** `ApplyTemplateAsync`
+> เมื่อ `IndustryType.Hotel` — idempotent ต่อ SiteId) · ค่าตั้งต้นทุกตัว (ราคา/เวลาเข้า-ออก/นโยบายยกเลิก/บริการเสริม)
+> มาจาก **`Helpers/LodgingSeedDefaults`** ที่เดียว ซึ่ง `CmsSiteTemplateSeeder.HotelPlan` ใช้พิมพ์หน้าเว็บด้วย
+> (รอบ 158: เดิมสองที่ถือคนละชุด — หน้าเว็บโฆษณา "Junior Suite ฿3,800 · 4 ประเภท · เช็คอิน 15:00 · ยกเลิกฟรีก่อน 3 วัน"
+> ขณะที่ที่พักที่จองได้จริงมี 3 ประเภท · 14:00 · 7 วัน ⇒ แขกเห็นราคา/กติกาบนหน้าแรกแล้วไปเจออีกอย่างตอนจอง) ·
+> **เว็บหนึ่งผูกที่พักได้แห่งเดียว** — `EnsureSiteNotBoundElsewhereAsync` + unique index `UX_LodgingProperties_CompanyId_SiteId_Live`
 
-**ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
+**ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้;
+เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
 
 **Lifecycle**: `Pending` (กันห้องถึง `HoldExpiresAt` = `PaymentHoldMinutes`; หมดเวลา+ไม่มีสลิป → `ExpireHoldsAsync` ตั้ง Cancelled อัตโนมัติ; อัปโหลดสลิปต่อเวลา 24 ชม.) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีเมื่อ `ConfirmWithoutDeposit`/มัดจำ = 0/staff ConfirmImmediately) → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
 

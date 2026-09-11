@@ -162,7 +162,7 @@
       cur.items.push({
         id: it.id, label: it.label, icon: it.icon || '📄',
         // เงื่อนไขการแสดงผลที่ "ชนะ" สิทธิ์ role — เก็บมาโชว์ให้แอดมินรู้ล่วงหน้า
-        vatOnly: !!it.vatOnly, etaxOnly: !!it.etaxOnly, feature: it.feature || null,
+        vatOnly: !!it.vatOnly, etaxOnly: !!it.etaxOnly, feature: it.feature || null, cmsModule: it.cmsModule || null,
       });
     });
     return out.filter(sec => sec.items.length > 0);
@@ -304,6 +304,7 @@
             notes.push('🔒 ไม่อยู่ในแพ็กเกจปัจจุบัน — สมาชิกเห็นแบบล็อก');
           if (item.vatOnly) notes.push('แสดงเฉพาะบริษัทที่จด VAT');
           if (item.etaxOnly) notes.push('แสดงเมื่อเปิดใช้ e-Tax แล้ว');
+          if (item.cmsModule) notes.push(`แสดงเมื่อบริษัทใช้โมดูลนี้บนเว็บไซต์ (${{orders:'ร้านค้าออนไลน์/ออเดอร์',bookings:'จองคิว',lodging:'ที่พัก',leads:'เว็บไซต์'}[item.cmsModule] || item.cmsModule}) — สร้างที่ "เว็บไซต์ของฉัน (CMS)"`);
           const mark = ownerHidden.has(item.id) ? ' <span style="color:#b45309">⚠️</span>'
             : (planLoaded && item.feature && !Layout.hasFeature(item.feature)) ? ' <span>🔒</span>' : '';
           const tt = notes.length ? ` title="${notes.join(' · ').replace(/"/g, '&quot;')}"` : '';

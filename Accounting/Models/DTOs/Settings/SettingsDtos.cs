@@ -229,7 +229,13 @@ public record CompanySettingsResponse(
     string? CashSaleStockPolicyDescription = null,
     // บัญชีทิปพนักงานค้างจ่าย (null = ใช้ค่าแนะนำ) + รหัสที่ระบบจะใช้จริงตอนนี้
     string? PosTipPayableAccountCode = null,
-    string? PosTipPayableAccountCodeEffective = null);
+    string? PosTipPayableAccountCodeEffective = null)
+{
+    /// <summary>โมดูล CMS ที่บริษัทนี้ใช้จริง ("orders" · "bookings" · "lodging" · "leads") —
+    /// คำนวณโดย <c>CmsModuleResolver</c> ฝั่งเซิร์ฟเวอร์ ให้ layout.js ซ่อนเมนูที่ไม่เกี่ยว
+    /// (กติกาเดียวกับ VatRegistered/EtaxEnabled: null = ยังไม่ได้คำนวณ → หน้าเว็บต้องแสดงไว้ก่อน)</summary>
+    public IReadOnlyList<string>? CmsModules { get; init; }
+}
 
 // ===== Landing Page Services (Public) =====
 public record LandingServicesResponse(

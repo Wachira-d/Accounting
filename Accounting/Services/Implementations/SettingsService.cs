@@ -27,7 +27,28 @@ public class SettingsService : ISettingsService
     public async Task<CompanySettingsResponse> GetSettingsAsync(Guid companyId)
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
-        return MapToResponse(companyId, settings);
+        // เมนู CMS ที่ควรแสดง — คำนวณที่นี่ (request เดียวที่ layout.js ยิงอยู่แล้วตอนโหลดบริษัท
+        // ตามกติกา "reuse /settings ไม่เพิ่ม request ต่อธง") — เส้น update อื่นคืน null = ไม่แตะเมนู
+        return MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) };
+    }
+
+    /// <summary>ข้อเท็จจริงระดับบริษัทสำหรับ <see cref="CmsModuleResolver"/> — ทุก query กรอง CompanyId
+    /// (global filter กัน IsDeleted ให้แล้ว) · เว็บที่พักที่ property ถูกลบไปยังนับเป็น lodging (เจตนา)</summary>
+    private async Task<IReadOnlyList<string>> ComputeCmsModulesAsync(Guid companyId)
+    {
+        var sites = await _db.Sites.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.SiteType, s.IndustryType })
+            .ToListAsync();
+        var facts = new CmsModuleFacts(
+            HasCommerceSite: sites.Any(s => CmsModuleResolver.IsCommerceSiteType(s.SiteType)),
+            HasOrders: await _db.SiteOrders.AnyAsync(o => o.CompanyId == companyId),
+            HasBookingServices: await _db.SiteBookingServices.AnyAsync(b => b.CompanyId == companyId),
+            HasBookings: await _db.SiteBookings.AnyAsync(b => b.CompanyId == companyId),
+            HasLodgingProperty: await _db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId),
+            HasHotelSite: sites.Any(s => s.IndustryType == IndustryType.Hotel),
+            HasAnySite: sites.Count > 0);
+        return CmsModuleResolver.Resolve(facts);
     }
 
     public async Task<CompanySettingsResponse> UpdateSettingsAsync(Guid companyId, UpdateCompanySettingsRequest request)

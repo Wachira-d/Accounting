@@ -13,6 +13,12 @@ public class Site : TenantEntity
     public SiteStatus Status { get; set; } = SiteStatus.Draft;
     public SiteType SiteType { get; set; } = SiteType.Corporate;
     public SiteRenderMode RenderMode { get; set; } = SiteRenderMode.ServerRendered;
+    /// <summary>ประเภทธุรกิจที่ใช้เลือกเทมเพลตหน้าเว็บ + โมดูล (ที่พัก/ร้านค้า/จองคิว) ของเว็บนี้
+    /// — เก็บไว้กับ "เว็บ" ไม่ใช่บริษัท เพราะบริษัทเดียวเปิดได้หลายเว็บคนละธุรกิจ.
+    /// เดิมค่านี้มาใน CreateSiteRequest แล้ว "หายไป" หลัง seed ⇒ ไม่มีใครรู้ว่าเว็บไหนเป็นที่พัก
+    /// (แถบเมนู · storefront · หน้ารายการเว็บ ต้องเดาจากการมี LodgingProperty แทน) และ
+    /// เว็บที่สร้างผิดประเภทไปแล้วไม่มีทางซ่อม (ApplyTemplateAsync อ่าน/เขียนช่องนี้)</summary>
+    public IndustryType IndustryType { get; set; } = IndustryType.General;
 
     // Domain & Routing
     public string Subdomain { get; set; } = "";

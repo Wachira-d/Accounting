@@ -634,9 +634,11 @@
             return `<div class="blk-cta" style="background:var(--surface,#F9FAFB);color:var(--text,#111827)">
               ${cfg.headline?`<h2 style="color:var(--text)">${esc(cfg.headline)}</h2>`:''}
               ${cfg.subheadline?`<p style="margin-bottom:16px">${esc(cfg.subheadline)}</p>`:''}
-              <form onsubmit="alert('สมัครเรียบร้อย!');return false" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;max-width:520px;margin:0 auto">
-                <input type="email" placeholder="email@example.com" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:var(--radius);border:1px solid #D1D5DB">
+              <form class="blk-form" onsubmit="Store.submitContact(event,this)" data-lead-type="Subscription" data-emailto="" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;max-width:520px;margin:0 auto">
+                <input type="email" name="email" placeholder="email@example.com" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:var(--radius);border:1px solid #D1D5DB">
+                <input type="hidden" name="message" value="สมัครรับข่าวสาร (${esc(cfg.headline||'newsletter')})">
                 <button type="submit" class="btn btn-primary">${esc(cfg.buttonText||'สมัคร')}</button>
+                <div class="form-status" style="width:100%;font-size:13px;margin-top:6px"></div>
               </form>
             </div>`;
           }
@@ -1519,6 +1521,9 @@
         const main = document.getElementById('sfMain');
         document.title = `จองห้องพัก — ${info?.name || ''}`;
         if (!info) { main.innerHTML = '<div class="sf-loader">เว็บไซต์นี้ยังไม่มีที่พักเปิดให้จอง</div>'; return; }
+        // หน้า CMS ที่ slug เดียวกัน (rooms/booking ที่เทมเพลต seed ไว้) — วาด Hero ของมันไว้บนสุด
+        // ให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้ (เดิมหน้านั้นถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op)
+        const cmsHero = await this.lodgingCmsHero();
         // ⚠️ payload ของ /lodging/info มี 30 ฟิลด์ (แกลเลอรี · สิ่งอำนวยความสะดวก ·
         // คำอธิบาย · แผนที่ · ติดต่อ) แต่เดิมหน้านี้วาดแค่ ชื่อ+ดาว+ที่อยู่ ⇒ ของที่
         // ที่พักกรอกไว้ไม่เคยถูกแสดงเลย (defect class "เก็บแล้วไม่ echo กลับ")
@@ -1540,7 +1545,7 @@
           : `<div class="lg-sum"><b>ที่พักนี้ยังไม่เปิดรับจองออนไลน์</b>
                <div style="margin-top:6px;font-size:14px">กรุณาติดต่อที่พักโดยตรงเพื่อสอบถามห้องว่าง${contact ? ' — ' + contact : ''}</div></div>`;
 
-        main.innerHTML = `<div class="sf-container" style="padding:32px 20px">
+        main.innerHTML = `${cmsHero}<div class="sf-container" style="padding:32px 20px">
           <h1 style="margin-bottom:6px">${this.esc(info.name)}</h1>
           <div style="color:var(--text-secondary);margin-bottom:14px">${'★'.repeat(info.starRating||0)} ${this.esc(info.address||'')}${contact ? ' · ' + contact : ''}</div>
           ${hero}
@@ -1554,6 +1559,22 @@
             <div style="white-space:pre-wrap;font-size:13px;color:var(--text-secondary)">${this.esc(info.houseRules)}</div></div>` : ''}
         </div>`;
         if (info.onlineBookingEnabled && this._lgState.checkIn) await this.lodgingSearch();
+      },
+
+      // Hero block ของหน้า CMS ที่ slug ตรงกับหน้าจองที่พัก (rooms/booking) — เฉพาะ Hero:
+      // เนื้อหาอื่น (รายการห้อง/ฟอร์ม) ระบบจองห้องวาดจากข้อมูลจริงอยู่แล้ว ไม่ซ้อน
+      async lodgingCmsHero() {
+        try {
+          const { companyId, siteId } = this._ctx || {};
+          if (!companyId || !siteId || !this.slug) return '';
+          const res = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/pages/${encodeURIComponent(this.slug)}?lang=${this.lang}`);
+          if (!res.ok) return '';
+          const json = await res.json();
+          const page = json.data || json;
+          const hero = (page?.blocks || []).filter(b => b.isVisible !== false).sort((a, b) => a.sortOrder - b.sortOrder)
+            .find(b => b.blockType === 'Hero' || b.blockType === 1);
+          return hero ? `<section>${this.renderBlock(hero) || ''}</section>` : '';
+        } catch (_) { return ''; }
       },
 
       lgLightbox(i) {

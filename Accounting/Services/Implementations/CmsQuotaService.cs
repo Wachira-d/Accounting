@@ -78,7 +78,7 @@ public class CmsQuotaService : ICmsQuotaService
             .FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบเว็บไซต์");
 
-        var pagesCount = await _db.SitePages.CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
+        var pagesCount = await _db.SitePages.CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
         var productsCount = await _db.SiteProducts.CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
 
         return new CmsQuotaStatus

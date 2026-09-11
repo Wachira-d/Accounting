@@ -498,6 +498,8 @@ const Layout = {
       if (cached !== null) this._vatRegistered = cached === 'true';
       const cachedEtax = localStorage.getItem('etaxOn:' + this.currentCompany.id);
       if (cachedEtax !== null) this._etaxEnabled = cachedEtax === 'true';
+      const cachedMods = localStorage.getItem('cmsMods:' + this.currentCompany.id);
+      if (cachedMods !== null) this._cmsModules = new Set(JSON.parse(cachedMods));
     } catch {}
     try {
       const res = await API.get(`/api/companies/${this.currentCompany.id}/settings`);
@@ -506,9 +508,13 @@ const Layout = {
         // e-Tax เป็น opt-in (ต้องมีใบรับรองดิจิทัล + ลงทะเบียนกับสรรพากร)
         // บริษัทที่ยังไม่เปิดใช้ไม่ควรเห็นเมนูนี้รกอยู่ในแถบภาษี
         this._etaxEnabled = res.data.etaxEnabled === true;
+        // โมดูล CMS ที่บริษัทใช้จริง (orders/bookings/lodging/leads) — เซิร์ฟเวอร์คำนวณ
+        // (CmsModuleResolver) หน้าเว็บแค่แสดง · null/ไม่มีฟิลด์ (เซิร์ฟเวอร์เก่า) = ไม่รู้ → แสดงไว้ก่อน
+        if (Array.isArray(res.data.cmsModules)) this._cmsModules = new Set(res.data.cmsModules);
         try {
           localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered));
           localStorage.setItem('etaxOn:' + this.currentCompany.id, String(this._etaxEnabled));
+          if (Array.isArray(res.data.cmsModules)) localStorage.setItem('cmsMods:' + this.currentCompany.id, JSON.stringify(res.data.cmsModules));
         } catch {}
         this._refreshNavMenu();
       }
@@ -656,6 +662,10 @@ const Layout = {
       // `=== false` เท่านั้น: ตอนยังโหลดค่าไม่เสร็จ (undefined) ให้แสดงไว้ก่อน
       // กันเมนูกระพริบหาย ๆ โผล่ ๆ (กติกาเดียวกับ vatOnly)
       if (item.etaxOnly && this._etaxEnabled === false) return false;
+      // เมนูของโมดูล CMS เฉพาะธุรกิจ (ที่พัก · ออเดอร์ · จองคิว · lead) — ซ่อนเมื่อเซิร์ฟเวอร์บอกแล้วว่า
+      // บริษัทนี้ไม่ได้ใช้โมดูลนั้น (ร้านอาหารไม่ต้องเห็น "ตั้งค่าที่พัก") · ยังไม่โหลด = แสดง (กัน flicker)
+      // ซ่อน ≠ ห้าม: หน้าเปิดจาก URL ได้และมี empty-state พาไปสร้างของเอง
+      if (item.cmsModule && this._cmsModules && !this._cmsModules.has(item.cmsModule)) return false;
       // simple-mode shortlist ใช้เฉพาะผู้ใช้สิทธิ์เต็ม ('*'/owner) — custom role
       // เห็นเมนูตามที่ตั้งสิทธิ์ให้ครบ ไม่โดนตัดซ้ำ
       if (uiMode === 'simple' && !hasCustomGrants && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
@@ -1181,15 +1191,15 @@ const Layout = {
     { section: 'ขายออนไลน์ & Portal', icon: '🌐', description: 'เว็บไซต์ · คำสั่งซื้อ/จองจากเว็บ · lead · portal ลูกค้า/vendor' },
     { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
       description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
-    { id: 'cms-orders', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders',
+    { id: 'cms-orders', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
-    { id: 'cms-bookings', label: 'การจองจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings',
-      description: 'จัดการการจอง — ร้านอาหาร · สปา · คลินิก · โรงแรม · ยืนยัน-ยกเลิก-No show' },
-    { id: 'lodging', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging',
+    { id: 'cms-bookings', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
+      description: 'จัดการการจองคิว/นัดหมาย — ร้านอาหาร · สปา · คลินิก · ยืนยัน-ยกเลิก-No show (การจองห้องพักอยู่ที่ "ที่พัก · Front desk")' },
+    { id: 'lodging', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
       description: 'จองห้องพัก · ยืนยันมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน · โรงแรม/รีสอร์ท/บ้านพัก' },
-    { id: 'lodging-settings', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings',
+    { id: 'lodging-settings', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',
       description: 'ประเภทห้อง · หมายเลขห้อง · แผนราคา · ฤดูกาล · ราคารายวัน · นโยบายยกเลิก · บริการเสริม · มัดจำ/VAT' },
-    { id: 'cms-leads', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads',
+    { id: 'cms-leads', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads', cmsModule: 'leads',
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },

@@ -37,7 +37,9 @@ public class CmsRenderingService : ICmsRenderingService
             .Include(p => p.Translations)
             .Include(p => p.Site)
                 .ThenInclude(s => s.Theme)
-            .Where(p => p.Site.CompanyId == companyId && p.SiteId == siteId && p.Status == PageStatus.Published)
+            // SitePage ไม่มี global query filter (ต่างจาก Document/JournalEntryLine) ⇒ ต้องกรอง IsDeleted เอง
+            // ไม่งั้นหน้าที่ลบไปแล้วยัง "เปิดจาก URL ได้" ต่อไป ทั้งที่หายจากเมนูแล้ว (:176 กรองอยู่ที่เดียว)
+            .Where(p => p.Site.CompanyId == companyId && p.SiteId == siteId && !p.IsDeleted && p.Status == PageStatus.Published)
             .FirstOrDefaultAsync(p => p.Slug == slug
                 || p.Translations.Any(t => t.Slug == slug && t.LanguageCode == (languageCode ?? "th")));
 

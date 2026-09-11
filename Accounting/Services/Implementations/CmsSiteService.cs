@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -38,6 +39,7 @@ public class CmsSiteService : ICmsSiteService
             Slug = slug,
             Subdomain = subdomain,
             SiteType = request.SiteType,
+            IndustryType = request.IndustryType,
             RenderMode = request.RenderMode,
             BranchId = request.BranchId,
             DefaultWarehouseId = request.DefaultWarehouseId,
@@ -87,7 +89,7 @@ public class CmsSiteService : ICmsSiteService
         {
             try
             {
-                var pages = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId);
+                var pages = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId, site.SiteType);
                 _db.SitePages.AddRange(pages);
                 await _db.SaveChangesAsync();
                 _logger.LogInformation("Seeded {Count} starter pages for site {SiteId} (industry={Industry})",
@@ -99,6 +101,22 @@ public class CmsSiteService : ICmsSiteService
                 // successfully, so a template failure shouldn't fail the
                 // whole request. Logged so we can spot template issues.
                 _logger.LogWarning(ex, "Site template seeding failed for site {SiteId}", site.Id);
+            }
+        }
+
+        // จองคิว/นัดหมายแบบ slot (สปา · คลินิก · ร้านอาหาร · นัดดูทรัพย์ · เว็บชนิด Booking) → seed
+        // บริการตัวอย่างให้หน้า /booking มีอะไรให้จองตั้งแต่วันแรก (เดิมหน้าขึ้น "ยังไม่มีบริการให้จอง"
+        // จนกว่าเจ้าของจะไปตั้งเอง — ผิดสัญญา "เว็บพร้อมใช้ทันที" ของเทมเพลต) · best-effort เหมือน template
+        if (request.SeedTemplate)
+        {
+            try
+            {
+                var services = await Cms.CmsBookingServiceSeeder.SeedForSiteAsync(_db, companyId, site, request.IndustryType, userId);
+                if (services > 0) await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Booking-service seeding failed for site {SiteId}", site.Id);
             }
         }
 
@@ -180,9 +198,29 @@ public class CmsSiteService : ICmsSiteService
         return await GetSiteAsync(companyId, siteId) ?? throw new InvalidOperationException("Failed to retrieve updated site.");
     }
 
+    /// <summary>โมดูลต่อเว็บ (ตัวตัดสินเดียวกับเมนูหลัก: <see cref="CmsModuleResolver"/>) — query แบบกลุ่ม
+    /// ครั้งเดียวต่อรายการ ไม่ยิงต่อแถว</summary>
+    private async Task<Dictionary<Guid, List<string>>> LoadSiteModulesAsync(Guid companyId, IReadOnlyCollection<(Guid Id, SiteType SiteType, IndustryType Industry)> sites)
+    {
+        var ids = sites.Select(x => x.Id).ToList();
+        if (ids.Count == 0) return new();
+        var withOrders = (await _db.SiteOrders.Where(o => o.CompanyId == companyId && ids.Contains(o.SiteId)).Select(o => o.SiteId).Distinct().ToListAsync()).ToHashSet();
+        var withServices = (await _db.SiteBookingServices.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
+        var withBookings = (await _db.SiteBookings.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
+        var withLodging = (await _db.LodgingProperties.Where(p => p.CompanyId == companyId && p.SiteId != null && ids.Contains(p.SiteId.Value)).Select(p => p.SiteId!.Value).Distinct().ToListAsync()).ToHashSet();
+        return sites.ToDictionary(x => x.Id, x => CmsModuleResolver.Resolve(new CmsModuleFacts(
+            HasCommerceSite: CmsModuleResolver.IsCommerceSiteType(x.SiteType),
+            HasOrders: withOrders.Contains(x.Id),
+            HasBookingServices: withServices.Contains(x.Id),
+            HasBookings: withBookings.Contains(x.Id),
+            HasLodgingProperty: withLodging.Contains(x.Id),
+            HasHotelSite: x.Industry == IndustryType.Hotel,
+            HasAnySite: true)).ToList());
+    }
+
     public async Task<SiteResponse?> GetSiteAsync(Guid companyId, Guid siteId)
     {
-        return await _db.Sites
+        var site = await _db.Sites
             .AsNoTracking()
             .Where(s => s.Id == siteId && s.CompanyId == companyId)
             .Select(s => new SiteResponse
@@ -196,6 +234,7 @@ public class CmsSiteService : ICmsSiteService
                 CustomDomain = s.CustomDomain,
                 Status = s.Status,
                 SiteType = s.SiteType,
+                IndustryType = s.IndustryType,
                 RenderMode = s.RenderMode,
                 BranchId = s.BranchId,
                 BranchName = s.Branch != null ? s.Branch.Name : null,
@@ -233,6 +272,9 @@ public class CmsSiteService : ICmsSiteService
                 UpdatedAt = s.UpdatedAt
             })
             .FirstOrDefaultAsync();
+        if (site != null)
+            site.Modules = (await LoadSiteModulesAsync(companyId, new[] { (Id: site.Id, SiteType: site.SiteType, Industry: site.IndustryType) })).GetValueOrDefault(site.Id) ?? new();
+        return site;
     }
 
     public async Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search, int page, int pageSize)
@@ -255,13 +297,108 @@ public class CmsSiteService : ICmsSiteService
                 CustomDomain = s.CustomDomain,
                 Status = s.Status,
                 SiteType = s.SiteType,
+                IndustryType = s.IndustryType,
                 BranchName = s.Branch != null ? s.Branch.Name : null,
                 PublishedAt = s.PublishedAt,
                 CreatedAt = s.CreatedAt
             })
             .ToListAsync();
+        var modules = await LoadSiteModulesAsync(companyId, items.Select(x => (Id: x.Id, SiteType: x.SiteType, Industry: x.IndustryType)).ToList());
+        foreach (var it in items) it.Modules = modules.GetValueOrDefault(it.Id) ?? new();
 
         return new PagedResponse<SiteListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    public async Task<ApplySiteTemplateResponse> ApplyTemplateAsync(Guid companyId, Guid siteId, ApplySiteTemplateRequest request, string userId)
+    {
+        var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("Site not found.");
+
+        site.IndustryType = request.IndustryType;
+        if (request.SiteType.HasValue) site.SiteType = request.SiteType.Value;
+        site.UpdatedAt = DateTime.UtcNow;
+        site.UpdatedBy = userId;
+
+        var result = new ApplySiteTemplateResponse();
+
+        if (request.SeedPages)
+        {
+            // ตัวสร้างหน้าตัวเดียวกับตอนสร้างเว็บ (BuildSeed) — ห้ามมีชุดที่สอง
+            var seeded = Cms.CmsSiteTemplateSeeder.BuildSeed(companyId, site.Id, request.IndustryType, userId, site.SiteType);
+            // ต้องดึง "แถวที่ลบแล้ว" มาด้วย: SitePage ไม่มี global query filter และ unique index (SiteId, Slug)
+            // ก็ไม่กรอง IsDeleted ⇒ หน้าที่เคยถูก soft-delete ไว้ (ก่อนมี CmsRetiredSlug) ยังจอง slug อยู่
+            // ถ้าไม่นับ จะ insert ชน index เป็น 500 ที่ผู้ใช้อ่านไม่ออก
+            var existing = await _db.SitePages
+                .Where(p => p.SiteId == site.Id && p.CompanyId == companyId)
+                .ToListAsync();
+            var bySlug = existing.GroupBy(p => p.Slug).ToDictionary(g => g.Key, g => g.First());
+            var toAdd = new List<SitePage>();
+            var live = existing.Where(p => !p.IsDeleted).ToList();
+            var nextOrder = live.Count == 0 ? 0 : live.Max(p => p.SortOrder) + 1;
+
+            foreach (var page in seeded)
+            {
+                if (bySlug.TryGetValue(page.Slug, out var old))
+                {
+                    // แถวที่ลบไปแล้วไม่ใช่ "หน้าของผู้ใช้" — ปลด slug ให้พ้นทางแล้วใส่หน้าใหม่ ไม่ต้องถาม
+                    if (old.IsDeleted)
+                    {
+                        old.Slug = CmsRetiredSlug.For(old.Slug, DateTime.UtcNow);
+                        old.UpdatedAt = DateTime.UtcNow;
+                        old.UpdatedBy = userId;
+                        page.SortOrder = nextOrder++;
+                        result.PagesAdded++;
+                        result.FreedDeletedSlugs++;      // ไม่ใช่ "แทนที่หน้าของผู้ใช้" แต่ทำให้ต้อง save ปลด slug ก่อน insert
+                        toAdd.Add(page);
+                        continue;
+                    }
+                    if (!request.ReplaceExistingPages)
+                    {
+                        result.SkippedSlugs.Add(page.Slug);
+                        continue;
+                    }
+                    // unique index (SiteId, Slug) ไม่ได้กรอง IsDeleted → soft-delete อย่างเดียวจะชนตอน insert
+                    // หน้าใหม่ slug เดิม ⇒ ต้องย้าย slug เดิมออกไปด้วย (เก็บของเดิมไว้ กู้ได้ ไม่ลบจริง)
+                    old.Slug = CmsRetiredSlug.For(old.Slug, DateTime.UtcNow);
+                    old.IsDeleted = true;
+                    old.UpdatedAt = DateTime.UtcNow;
+                    old.UpdatedBy = userId;
+                    page.SortOrder = old.SortOrder;   // หน้าใหม่นั่งตำแหน่งเดิมในเมนู
+                    result.PagesReplaced++;
+                }
+                else
+                {
+                    page.SortOrder = nextOrder++;
+                    result.PagesAdded++;
+                }
+                toAdd.Add(page);
+            }
+
+            // บันทึก "การย้าย slug เดิม" ให้จบก่อน แล้วค่อย insert หน้าใหม่ — ไม่ฝากความหวังไว้กับ
+            // ลำดับคำสั่งที่ EF เลือกเอง (update ก่อน insert) เพราะถ้าเดาผิดจะชน unique index เป็น 500
+            if (result.PagesReplaced > 0 || result.FreedDeletedSlugs > 0) await _db.SaveChangesAsync();
+            _db.SitePages.AddRange(toAdd);
+        }
+
+        // บริการจองคิวตัวอย่าง (idempotent — ข้ามถ้าเว็บมีบริการอยู่แล้ว)
+        if (request.SeedPages)
+            result.BookingServicesAdded = await Cms.CmsBookingServiceSeeder.SeedForSiteAsync(_db, companyId, site, request.IndustryType, userId);
+
+        // ที่พัก: seed property/ห้อง/ราคา (idempotent ต่อ SiteId ใน LodgingSeeder) — คนละชั้นกับหน้าเว็บ
+        // ต้องทำแม้ SeedPages=false ไม่งั้น /booking ของเว็บไม่มีอะไรให้จอง
+        if (request.IndustryType == IndustryType.Hotel)
+        {
+            var prop = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId);
+            result.LodgingSeeded = prop != null;
+        }
+
+        // ไม่ best-effort เหมือนตอนสร้างเว็บ — ผู้ใช้กดปุ่ม "เติมเทมเพลต" โดยตั้งใจ ถ้า seed พังต้องรู้
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Applied template {Industry} to site {SiteId}: +{Added} pages, {Replaced} replaced, {Skipped} skipped, lodging={Lodging}",
+            request.IndustryType, site.Id, result.PagesAdded, result.PagesReplaced, result.SkippedSlugs.Count, result.LodgingSeeded);
+
+        result.Site = await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve site.");
+        return result;
     }
 
     public async Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId)

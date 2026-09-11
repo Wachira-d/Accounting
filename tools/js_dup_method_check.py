@@ -26,8 +26,11 @@ import sys
 ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     'Accounting', 'wwwroot')
 
+# `return {` = object literal ที่คืนจากฟังก์ชัน (api.js `company(companyId) { … return { … } }` ถือ
+# เมธอด 100+ ตัว) — รุ่นก่อนไม่รู้จัก ⇒ key ซ้ำ 5 คู่ในนั้นรอดมาตลอด (รอบ 158 ทีมตรวจ D-10)
 OBJ_OPEN = re.compile(r'^(\s*)(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{\s*$|'
-                      r'^(\s*)window\.([A-Za-z_$][\w$]*)\s*=\s*\{\s*$')
+                      r'^(\s*)window\.([A-Za-z_$][\w$]*)\s*=\s*\{\s*$|'
+                      r'^(\s*)(return)\s*\{\s*$')
 KEY = re.compile(r'^(\s*)(?:async\s+)?([A-Za-z_$][\w$]*)\s*(?:\(|:)')
 SKIP_NAMES = {'get', 'set', 'if', 'for', 'while', 'switch', 'return', 'function', 'catch'}
 
@@ -155,7 +158,7 @@ def scan_script(lines, rel, problems):
         if not m:
             i += 1
             continue
-        obj_name = m.group(2) or m.group(4)
+        obj_name = m.group(2) or m.group(4) or (m.group(6) and 'return{}')
         depth = 1
         seen = {}
         j = i + 1
@@ -170,7 +173,10 @@ def scan_script(lines, rel, problems):
                         seen[name] = j
             depth += lines[j].count('{') - lines[j].count('}')
             j += 1
-        i = j
+        # เดินต่อทีละบรรทัด ไม่กระโดดข้ามทั้งก้อน — object ที่ "ซ้อนอยู่ข้างใน" ต้องถูกตรวจด้วย
+        # (api.js ห่อทุกเมธอดไว้ใน `const API = {` ชั้นนอก แล้วมี `return {` ที่ถือเมธอดจริง 800+ ตัว
+        #  ข้างใน ⇒ รุ่นก่อนตั้ง i = j ข้ามไปท้ายไฟล์ตั้งแต่ก้อนแรก key ซ้ำ 8 คู่จึงรอดมาตลอด — รอบ 158)
+        i += 1
 
 
 def main():

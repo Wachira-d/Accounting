@@ -227,15 +227,25 @@
         const api = Layout.api(); if (!api) return;
         const qs = new URLSearchParams(location.search);
         try { const sr = await api.cmsListSites(); this.sites = sr?.data?.items || sr?.data || []; } catch (_) { this.sites = []; }
-        document.getElementById('siteSelect').innerHTML = '<option value="">— ไม่ผูก —</option>' + this.sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+        this.renderSiteSelect();
         document.getElementById('weekendDays').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" data-mask="${1 << i}"> ${d}</label>`).join('');
         await this.loadProps(qs.get('propertyId'), qs.get('siteId'));
-        if (qs.get('welcome') === '1' && this.prop) {
+        if (qs.get('welcome') === '1' && this.prop && (!qs.get('siteId') || this.prop.siteId === qs.get('siteId'))) {
           document.getElementById('welcomeBox').style.display = '';
           const site = this.sites.find(s => s.id === this.prop.siteId);
           document.getElementById('welcomeUrl').textContent = site ? `${site.subdomain}.nextacc.net/booking` : '/booking';
         }
       },
+      // dropdown "เว็บไซต์ที่ผูก" — เว็บที่ผูกกับที่พักอื่นแล้วต้องเห็นว่าผูกแล้ว (เว็บหนึ่งเปิดจองได้ที่พักเดียว
+      // เซิร์ฟเวอร์ปฏิเสธด้วย EnsureSiteNotBoundElsewhereAsync — หน้าจอบอกล่วงหน้าแทนให้กดแล้วเจอ error)
+      renderSiteSelect() {
+        const boundBy = new Map((this.props || []).filter(p => p.siteId && p.id !== this.propertyId).map(p => [p.siteId, p.name]));
+        document.getElementById('siteSelect').innerHTML = '<option value="">— ไม่ผูก —</option>' + this.sites.map(s => {
+          const other = boundBy.get(s.id);
+          return `<option value="${s.id}" ${other ? 'disabled' : ''}>${esc(s.name)}${s.industryType === 15 ? ' 🏨' : ''}${other ? ` — ผูกกับ "${esc(other)}" แล้ว` : ''}</option>`;
+        }).join('');
+      },
+
       async loadProps(preferId, preferSite) {
         const api = Layout.api();
         const res = await api.lodgingProperties();
@@ -248,7 +258,25 @@
         }
         sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.code)})</option>`).join('');
         const bySite = preferSite ? this.props.find(p => p.siteId === preferSite) : null;
-        this.propertyId = preferId || bySite?.id || this.props[0].id;
+        // ?propertyId= ที่ไม่ใช่ของบริษัทนี้ → ไม่ยิง 6 API ให้ 404 เงียบ ๆ (ล็อกกับรายการที่โหลดได้จริง)
+        const validPreferId = preferId && this.props.some(p => p.id === preferId) ? preferId : null;
+        if (preferSite && !validPreferId && !bySite) {
+          // มาจากเว็บที่พัก (siteId) แต่ยังไม่มีที่พักผูกกับเว็บนั้น — ห้ามตกไปที่พักแห่งแรกเงียบ ๆ
+          // (เดิมทำ ⇒ หน้าต้อนรับโชว์ URL ของเว็บอื่น ผู้ใช้แก้ที่พักผิดแห่ง) → บอกตรง ๆ + ปุ่มสร้างผูกเว็บนี้
+          const site = this.sites.find(s => s.id === preferSite);
+          const box = document.getElementById('welcomeBox');
+          box.style.display = '';
+          box.innerHTML = `⚠️ เว็บไซต์ <b>${esc(site?.name || preferSite)}</b> ยังไม่มีที่พักผูกอยู่ — หน้า /booking ของเว็บนี้จะยังจองไม่ได้
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="Page.newProperty('${Layout.jsArg(preferSite)}')">+ สร้างที่พักสำหรับเว็บนี้</button>
+              <a class="btn btn-secondary btn-sm" href="/pages/cms-sites.html">🧩 หรือกด "เติมเทมเพลต" ที่หน้าเว็บไซต์ของฉัน (สร้างห้อง/ราคาให้อัตโนมัติ)</a>
+            </div>`;
+          this.propertyId = this.props[0].id; sel.value = this.propertyId;
+          await this.loadAll();
+          this.newProperty(preferSite);
+          return;
+        }
+        this.propertyId = validPreferId || bySite?.id || this.props[0].id;
         sel.value = this.propertyId;
         await this.loadAll();
       },
@@ -259,7 +287,7 @@
           api.lodgingGetProperty(this.propertyId), api.lodgingRoomTypes(this.propertyId), api.lodgingRatePlans(this.propertyId),
           api.lodgingSeasons(this.propertyId), api.lodgingPolicies(this.propertyId), api.lodgingExtras(this.propertyId)]);
         this.prop = p.data; this.roomTypes = rt.data || []; this.plans = pl.data || []; this.seasons = se.data || []; this.policies = po.data || []; this.extras = ex.data || [];
-        this.fillProp(this.prop); this.renderRooms(); this.renderPlans(); this.renderSeasons(); this.renderPolicies(); this.renderExtras();
+        this.renderSiteSelect(); this.fillProp(this.prop); this.renderRooms(); this.renderPlans(); this.renderSeasons(); this.renderPolicies(); this.renderExtras();
         document.getElementById('dailyRoomType').innerHTML = this.roomTypes.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
         if (!document.getElementById('dailyMonth').value) document.getElementById('dailyMonth').value = new Date().toISOString().slice(0, 7);
         await this.loadDaily();
@@ -346,9 +374,9 @@
           if (!this.propertyId) await this.loadProps(res.data.id); else { this.prop = res.data; this.fillProp(this.prop); }
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
-      newProperty() {
+      newProperty(bindSiteId = null) {
         this.propertyId = null; this.prop = null;
-        this.fillProp({ name: '', propertyType: 1, checkInTime: '14:00', checkOutTime: '12:00', minNights: 1, maxNights: 30, maxAdvanceDays: 365, depositPercent: 50, paymentHoldMinutes: 1440, childMaxAge: 11, infantMaxAge: 2, weekendMultiplier: 1, weekendDaysMask: 96, noShowChargePercent: 100, onlineBookingEnabled: true, autoConfirmOnDeposit: true, notifyOwnerOnBooking: true, autoCreateHousekeepingTaskOnCheckout: true, housekeepingMinutesPerRoom: 30, isActive: true, pricesIncludeVat: true });
+        this.fillProp({ name: '', propertyType: 1, siteId: bindSiteId || '', checkInTime: '14:00', checkOutTime: '12:00', minNights: 1, maxNights: 30, maxAdvanceDays: 365, depositPercent: 50, paymentHoldMinutes: 1440, childMaxAge: 11, infantMaxAge: 2, weekendMultiplier: 1, weekendDaysMask: 96, noShowChargePercent: 100, onlineBookingEnabled: true, autoConfirmOnDeposit: true, notifyOwnerOnBooking: true, autoCreateHousekeepingTaskOnCheckout: true, housekeepingMinutesPerRoom: 30, isActive: true, pricesIncludeVat: true });
         this.showTab('general'); Layout.toast('กรอกข้อมูลที่พักใหม่แล้วกดบันทึก');
       },
 

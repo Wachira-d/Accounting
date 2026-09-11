@@ -119,8 +119,8 @@
               </label>
             </div>
             <div class="form-group" id="industryWrap">
-              <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(เลือกเพื่อให้ระบบใส่เนื้อหาตัวอย่างที่เหมาะกับธุรกิจ)</span></label>
-              <select class="form-input" id="fIndustry">
+              <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(ตั้งให้ตามเทมเพลตที่เลือก — เปลี่ยนได้ถ้าเทมเพลตกับธุรกิจจริงไม่ตรงกัน)</span></label>
+              <select class="form-input" id="fIndustry" onchange="Page.onIndustryChange(this)">
                 <option value="0">ทั่วไป / บริการ</option>
                 <option value="2">บริการมืออาชีพ</option>
                 <option value="17">ฟรีแลนซ์ / ที่ปรึกษา</option>
@@ -141,6 +141,7 @@
                 <option value="3">โรงงาน / OEM</option>
                 <option value="99">อื่น ๆ</option>
               </select>
+              <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
             </div>
           </div>
         </div>
@@ -148,6 +149,42 @@
           <button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button>
           <button class="btn btn-primary" id="btnCreate" onclick="Page.createSite()" style="display:none">สร้างเว็บไซต์</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- เติมเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บที่มีอยู่ — ทางซ่อมเว็บที่สร้างผิดประเภท (เช่น เลือกการ์ด
+       "โรงแรม" แล้วได้หน้าบริการทั่วไป) โดยไม่ต้องลบเว็บ (subdomain/โดเมน/ลูกค้า/ออเดอร์อยู่ครบ) -->
+  <div class="modal" id="applyTplModal">
+    <div class="modal-overlay" onclick="Layout.closeModal('applyTplModal')"></div>
+    <div class="modal-content" style="max-width:560px">
+      <div class="modal-header">
+        <h3 class="modal-title">🧩 เติมเทมเพลต / เปลี่ยนประเภทธุรกิจ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('applyTplModal')">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:13px;color:var(--gray-600);margin-bottom:12px" id="applyTplSiteName"></div>
+        <div class="form-group">
+          <label class="form-label">ประเภทธุรกิจใหม่</label>
+          <select class="form-input" id="applyTplIndustry"></select>
+          <p id="applyTplHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" id="applyTplSeed" checked style="margin-top:3px">
+            <span><strong>เติมหน้าเว็บของประเภทนี้</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าที่ยังไม่มีจะถูกเพิ่ม · หน้าที่มี slug ซ้ำ (เช่น home/contact) จะถูก<u>ข้าม</u> เว้นแต่ติ๊กข้อถัดไป</span></span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" id="applyTplReplace" style="margin-top:3px">
+            <span><strong style="color:#b45309">แทนที่หน้าเดิมที่ slug ซ้ำ</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าเดิมจะถูกซ่อน (ไม่ลบจริง กู้จากฐานข้อมูลได้) แล้วใส่หน้าเทมเพลตใหม่แทน — ใช้เมื่อยังไม่ได้แต่งหน้าเดิม</span></span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('applyTplModal')">ยกเลิก</button>
+        <button class="btn btn-primary" id="btnApplyTpl" onclick="Page.applyTemplate()">เติมเทมเพลต</button>
       </div>
     </div>
   </div>
@@ -181,47 +218,7 @@
         icon: '🏢',
         thumbClass: '',
         description: 'เว็บแสดงข้อมูลบริษัท บริการ ราคา รีวิวลูกค้า และช่องทางติดต่อ — 4 หน้า พร้อมใช้',
-        siteType: 1, industryType: 0, seedTemplate: true,
-        _legacy_pages_unused: [
-          {
-            title: 'หน้าแรก', slug: 'home', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'ยินดีต้อนรับ', subheadline: 'บริษัทของเราพร้อมให้บริการคุณ', ctaText: 'ติดต่อเรา', ctaUrl: '/contact', backgroundUrl: '' } },
-              { type: 2, config: { content: '<h2>เกี่ยวกับเรา</h2><p>เราเป็นบริษัทที่ทุ่มเทเพื่อมอบบริการที่ดีที่สุดให้แก่ลูกค้า</p>' } },
-              { type: 14, config: { headline: 'บริการของเรา', plans: [
-                { name: 'พื้นฐาน', price: '999', features: ['คุณสมบัติ A','คุณสมบัติ B'] },
-                { name: 'มืออาชีพ', price: '2,999', features: ['ทุกอย่างจาก พื้นฐาน','คุณสมบัติ C','คุณสมบัติ D'] }
-              ] } },
-              { type: 15, config: { headline: 'พร้อมเริ่มต้นกับเรา?', ctaText: 'ติดต่อเลย', ctaUrl: '/contact' } }
-            ]
-          },
-          {
-            title: 'เกี่ยวกับเรา', slug: 'about', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'เกี่ยวกับเรา', subheadline: 'เรื่องราวของบริษัท' } },
-              { type: 2, config: { content: '<h2>วิสัยทัศน์</h2><p>...</p><h2>พันธกิจ</h2><p>...</p>' } }
-            ]
-          },
-          {
-            title: 'บริการ', slug: 'services', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'บริการของเรา' } },
-              { type: 2, config: { content: '<p>รายละเอียดบริการที่เราให้</p>' } }
-            ]
-          },
-          {
-            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'ติดต่อเรา', subheadline: 'เราพร้อมรับฟังคุณ' } },
-              { type: 9, config: { headline: 'ส่งข้อความถึงเรา', fields: [
-                { name: 'name', label: 'ชื่อ', type: 'text', required: true },
-                { name: 'email', label: 'อีเมล', type: 'email', required: true },
-                { name: 'message', label: 'ข้อความ', type: 'textarea', required: true }
-              ] } },
-              { type: 11, config: { address: '', lat: 13.7563, lng: 100.5018 } }
-            ]
-          }
-        ]
+        siteType: 1, industryType: 0, seedTemplate: true
       },
       ecommerce: {
         name: 'ร้านค้าออนไลน์',
@@ -229,37 +226,7 @@
         icon: '🛒',
         thumbClass: 'eco',
         description: 'ขายสินค้าออนไลน์ — Hero / สินค้าแนะนำ / รีวิวลูกค้า / FAQ',
-        siteType: 2, industryType: 16, seedTemplate: true,
-        _legacy_pages_unused: [
-          {
-            title: 'หน้าแรก', slug: 'home', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'สินค้าคุณภาพ ราคาดี', subheadline: 'ส่งฟรีทั่วประเทศ', ctaText: 'ช้อปเลย', ctaUrl: '/shop' } },
-              { type: 6, config: { headline: 'สินค้าแนะนำ', featured: true, limit: 8 } },
-              { type: 12, config: { headline: 'ลูกค้าพูดถึงเรา', testimonials: [] } }
-            ]
-          },
-          {
-            title: 'สินค้าทั้งหมด', slug: 'shop', pageType: 5,
-            blocks: [
-              { type: 1, config: { headline: 'สินค้าทั้งหมด' } },
-              { type: 6, config: { headline: '', limit: 24 } }
-            ]
-          },
-          {
-            title: 'ตะกร้าสินค้า', slug: 'cart', pageType: 6,
-            blocks: [
-              { type: 23, config: {} }
-            ]
-          },
-          {
-            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'ติดต่อเรา' } },
-              { type: 9, config: { headline: 'ส่งข้อความถึงเรา', fields: [] } }
-            ]
-          }
-        ]
+        siteType: 2, industryType: 16, seedTemplate: true
       },
       restaurant: {
         name: 'ร้านอาหาร / คาเฟ่',
@@ -267,7 +234,7 @@
         icon: '🍜',
         thumbClass: 'food',
         description: 'หน้าหลัก · เมนู · จองโต๊ะ · ติดต่อ — รวมเมนูตัวอย่างพร้อมราคา',
-        siteType: 1, industryType: 4, seedTemplate: true
+        siteType: 3, industryType: 4, seedTemplate: true
       },
       beauty: {
         name: 'สปา / ความงาม',
@@ -283,7 +250,7 @@
         icon: '🏥',
         thumbClass: 'health',
         description: 'หน้าหลัก · บริการ · นัดหมายแพทย์ · ติดต่อ',
-        siteType: 1, industryType: 10, seedTemplate: true
+        siteType: 3, industryType: 10, seedTemplate: true
       },
       booking: {
         name: 'จองนัดหมาย (ทั่วไป)',
@@ -291,39 +258,7 @@
         icon: '📅',
         thumbClass: 'book',
         description: 'รับจองคิว/นัดหมายออนไลน์ — สำหรับบริการอื่น ๆ',
-        siteType: 3, industryType: 2, seedTemplate: true,
-        _legacy_pages_unused: [
-          {
-            title: 'หน้าแรก', slug: 'home', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'จองคิวออนไลน์ ง่าย รวดเร็ว', subheadline: 'เลือกบริการและเวลาที่สะดวก', ctaText: 'จองเลย', ctaUrl: '/booking' } },
-              { type: 14, config: { headline: 'บริการของเรา', plans: [] } },
-              { type: 12, config: { headline: 'ลูกค้ารีวิว' } }
-            ]
-          },
-          {
-            title: 'บริการของเรา', slug: 'services', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'บริการของเรา' } },
-              { type: 2, config: { content: '<p>รายละเอียดบริการ</p>' } }
-            ]
-          },
-          {
-            title: 'จองคิว', slug: 'booking', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'จองคิว' } },
-              { type: 8, config: {} }
-            ]
-          },
-          {
-            title: 'ติดต่อเรา', slug: 'contact', pageType: 1,
-            blocks: [
-              { type: 1, config: { headline: 'ติดต่อเรา' } },
-              { type: 9, config: { headline: 'ส่งข้อความ', fields: [] } },
-              { type: 11, config: { address: '' } }
-            ]
-          }
-        ]
+        siteType: 3, industryType: 2, seedTemplate: true
       },
       construction: {
         name: 'รับเหมาก่อสร้าง',
@@ -432,6 +367,23 @@
     };
     const isSitePublished = (s) => s === 1 || s === 'Published' || s === 'published';
     const TYPE_LABEL = { 1: 'เว็บบริษัท', 2: 'ร้านค้าออนไลน์', 3: 'จองนัดหมาย', 4: 'แค็ตตาล็อกบริการ', 5: 'ผสม' };
+    // ป้ายประเภทธุรกิจอ่านจาก dropdown ในวิซาร์ด (แหล่งเดียว — ไม่พิมพ์ตารางซ้ำ)
+    const industryLabel = (v) => {
+      const opt = document.querySelector(`#fIndustry option[value="${Number(v) || 0}"]`);
+      return opt ? opt.textContent : `ประเภท ${v}`;
+    };
+    // ปุ่มโมดูลต่อเว็บ — จาก site.modules ที่เซิร์ฟเวอร์คำนวณ (CmsModuleResolver) หน้าเว็บแค่วาด
+    const MODULE_LINKS = {
+      lodging: [
+        { label: '🛏️ ตั้งค่าที่พัก', href: (s) => `/pages/lodging-settings.html?siteId=${s.id}` },
+        { label: '🏨 Front desk', href: (s) => `/pages/lodging.html?siteId=${s.id}` },
+      ],
+      orders: [{ label: '📦 ออเดอร์', href: (s) => `/pages/cms-orders.html?siteId=${s.id}` }],
+      bookings: [{ label: '📅 การจองคิว', href: (s) => `/pages/cms-bookings.html?siteId=${s.id}` }],
+    };
+    const moduleButtons = (s) => (Array.isArray(s.modules) ? s.modules : [])
+      .flatMap(m => MODULE_LINKS[m] || [])
+      .map(l => `<a class="btn btn-sm btn-secondary" href="${l.href(s)}">${l.label}</a>`).join('');
 
     const Page = {
       sites: [],
@@ -477,9 +429,11 @@
                     <span class="site-status ${statusClass}">${statusLabel}</span>
                     <span style="margin:0 6px">·</span>
                     <span>${typeLabel}</span>
+                    <span style="margin:0 6px">·</span>
+                    <span title="ประเภทธุรกิจของเว็บ (กำหนดเทมเพลตและโมดูล)">${Layout.esc(industryLabel(s.industryType))}</span>
                   </div>
                 </div>
-                <div style="font-size:32px">🌐</div>
+                <div style="font-size:32px">${s.industryType === 15 ? '🏨' : '🌐'}</div>
               </div>
               <div style="font-size:13px;color:var(--gray-600);margin-bottom:8px">
                 <span style="color:var(--gray-400)">URL:</span>
@@ -496,6 +450,8 @@
                 <a href="${pathUrl}/home${!isPublished?'?preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
                 ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${s.id}')">🚀 เผยแพร่</button>` : ''}
                 ${isPublished ? `<a href="${pathUrl}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
+                ${moduleButtons(s)}
+                <button class="btn btn-sm btn-ghost" onclick="Page.openApplyTemplate('${s.id}')" title="เติมหน้าเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บนี้ (ใช้ซ่อมเว็บที่สร้างผิดประเภท)">🧩 เติมเทมเพลต</button>
                 <button class="btn btn-sm btn-danger" onclick="Page.deleteSite('${s.id}','${Layout.jsArg(s.name)}')" style="margin-left:auto">🗑</button>
               </div>
             </div>`;
@@ -535,9 +491,42 @@
         const tpl = TEMPLATES[key];
         document.getElementById('selectedTplName').textContent = `เทมเพลต: ${tpl.name}${tpl.seedTemplate === false ? ' (หน้าเปล่า)' : ' — ระบบจะใส่ 4 หน้าตัวอย่างให้'}`;
         document.getElementById('selectedTplDesc').textContent = tpl.description;
+        // เทมเพลตเป็นคนตั้ง "ประเภทธุรกิจ" (เดิม dropdown ค้างที่ "ทั่วไป" แล้ว createSite อ่านค่านั้น
+        // ทับเทมเพลตเสมอ ⇒ การ์ด "โรงแรม" ได้เว็บบริการทั่วไป ไม่มีหน้าจอง). กติกา autoSrc/userTouched:
+        // ค่าที่ผู้ใช้เลือกเองหลังจากนี้ชนะ · แต่กลับไปเปลี่ยนเทมเพลตใหม่ = เริ่มนับใหม่จากเทมเพลต
+        const ind = document.getElementById('fIndustry');
+        if (ind) {
+          ind.value = String(tpl.industryType ?? 0);
+          if (ind.value !== String(tpl.industryType ?? 0)) ind.value = '0'; // เทมเพลตอ้างค่าที่ dropdown ไม่มี
+          ind.dataset.autoSrc = 'template';
+          delete ind.dataset.userTouched;
+          this.renderIndustryHint();
+        }
         document.getElementById('step1').style.display = 'none';
         document.getElementById('step2').style.display = '';
         document.getElementById('btnCreate').style.display = '';
+      },
+
+      onIndustryChange(sel) {
+        sel.dataset.userTouched = '1';
+        sel.dataset.autoSrc = 'user';
+        this.renderIndustryHint();
+      },
+
+      renderIndustryHint() {
+        const ind = document.getElementById('fIndustry');
+        const hint = document.getElementById('industryHint');
+        const tpl = TEMPLATES[this.selectedTpl];
+        if (!ind || !hint || !tpl) return;
+        const tplInd = String(tpl.industryType ?? 0);
+        const label = ind.options[ind.selectedIndex]?.textContent || '';
+        if (ind.value === tplInd) {
+          hint.textContent = `ตามเทมเพลต "${tpl.name}" → เนื้อหา/ฟีเจอร์ของ ${label}` + (ind.value === '15' ? ' (จะสร้างระบบจองห้องพัก · ห้อง · ราคา · นโยบาย ให้พร้อมจองทันที)' : '');
+          hint.style.color = 'var(--gray-500)';
+        } else {
+          hint.textContent = `⚠️ คุณเลือก "${label}" ต่างจากเทมเพลต "${tpl.name}" — หน้าเว็บที่ระบบใส่ให้จะเป็นของ ${label} ไม่ใช่ของเทมเพลต`;
+          hint.style.color = '#b45309';
+        }
       },
 
       backToTemplates() {
@@ -569,9 +558,9 @@
         btn.disabled = true;
         btn.textContent = 'กำลังสร้าง...';
 
-        // Industry picker can override the template's default — useful when
-        // the user picks "Corporate" template but they're really a freelance
-        // designer; pick "ทั่วไป" to get the generic copy.
+        // dropdown ถูกตั้งค่าจากเทมเพลตใน selectTemplate() แล้ว — ที่นี่แค่อ่าน (ผู้ใช้เปลี่ยนเองได้
+        // เช่นเลือกการ์ด "เว็บบริษัท" แต่จริง ๆ เป็นฟรีแลนซ์). ห้ามใช้ parseInt(value) ตัดสิน "มีการ override
+        // ไหม" — value ไม่เคยว่าง ("0" คือค่าจริง) จึงเคยทับเทมเพลตทุกครั้ง
         const industryOverride = parseInt(document.getElementById('fIndustry')?.value || '');
         const useSeed = document.getElementById('fSeedTemplate')?.checked !== false && tpl.seedTemplate !== false;
 
@@ -591,6 +580,7 @@
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
 
           Layout.closeModal('createModal');
+          if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();   // เมนูโมดูลใหม่ (ที่พัก/ร้านค้า) โผล่ทันที
           const chosenIndustry = !isNaN(industryOverride) ? industryOverride : (tpl.industryType ?? 0);
           if (chosenIndustry === 15) {
             // ธุรกิจที่พัก: เซิร์ฟเวอร์ seed ห้อง/ราคา/นโยบายให้แล้ว → พาไปหน้าตั้งค่าที่พัก
@@ -607,6 +597,64 @@
           btn.disabled = false;
           btn.textContent = 'สร้างเว็บไซต์';
         }
+      },
+
+      openApplyTemplate(id) {
+        const site = this.sites.find(x => x.id === id); if (!site) return;
+        this._applyTplSiteId = id;
+        document.getElementById('applyTplSiteName').textContent = `เว็บไซต์: ${site.name} — ปัจจุบัน: ${industryLabel(site.industryType)}`;
+        const sel = document.getElementById('applyTplIndustry');
+        sel.innerHTML = document.getElementById('fIndustry').innerHTML;   // ตัวเลือกชุดเดียวกับวิซาร์ด
+        sel.value = String(site.industryType ?? 0);
+        sel.onchange = () => this.renderApplyTplHint();
+        document.getElementById('applyTplSeed').checked = true;
+        document.getElementById('applyTplReplace').checked = false;
+        this.renderApplyTplHint();
+        Layout.openModal('applyTplModal');
+      },
+
+      renderApplyTplHint() {
+        const v = document.getElementById('applyTplIndustry').value;
+        const hint = document.getElementById('applyTplHint');
+        hint.textContent = v === '15'
+          ? 'ที่พัก: ระบบจะสร้างที่พัก · ประเภทห้อง · ราคา · นโยบายยกเลิก ให้จองได้ทันที (ถ้ายังไม่มี) และหน้า /rooms /booking จะกลายเป็นระบบจองห้อง'
+          : 'หน้าเว็บ/บริการตัวอย่างจะตรงกับประเภทธุรกิจที่เลือก';
+      },
+
+      async applyTemplate() {
+        const api = Layout.api(); if (!api) return;
+        const id = this._applyTplSiteId; if (!id) return;
+        const industryType = parseInt(document.getElementById('applyTplIndustry').value || '0');
+        const seedPages = document.getElementById('applyTplSeed').checked;
+        const replace = document.getElementById('applyTplReplace').checked;
+        if (replace && !(await Layout.confirmDanger({
+          title: 'แทนที่หน้าเดิม',
+          message: 'หน้าที่ slug ซ้ำกับเทมเพลตจะถูกซ่อนแล้วแทนด้วยหน้าใหม่ — สิ่งที่แต่งไว้บนหน้านั้นจะไม่แสดงบนเว็บอีก',
+        }))) return;
+        const btn = document.getElementById('btnApplyTpl');
+        btn.disabled = true; btn.textContent = 'กำลังเติม...';
+        try {
+          const tpl = Object.values(TEMPLATES).find(t => t.industryType === industryType && t.seedTemplate !== false);
+          const res = await api.cmsApplySiteTemplate(id, {
+            industryType,
+            siteType: tpl ? tpl.siteType : null,   // ชนิดเว็บตามการ์ดของประเภทนั้น (ที่พัก/จองคิว = Booking)
+            seedPages, replaceExistingPages: replace
+          });
+          const r = res.data || {};
+          const parts = [];
+          if (r.pagesAdded) parts.push(`เพิ่ม ${r.pagesAdded} หน้า`);
+          if (r.pagesReplaced) parts.push(`แทนที่ ${r.pagesReplaced} หน้า`);
+          if (r.skippedSlugs?.length) parts.push(`ข้าม ${r.skippedSlugs.length} หน้าที่มีอยู่ (${r.skippedSlugs.join(', ')})`);
+          if (r.bookingServicesAdded) parts.push(`บริการจองตัวอย่าง ${r.bookingServicesAdded} รายการ`);
+          if (r.lodgingSeeded) parts.push('สร้างที่พัก+ห้อง+ราคาให้แล้ว');
+          Layout.toast('เติมเทมเพลตสำเร็จ' + (parts.length ? ' — ' + parts.join(' · ') : ' (ไม่มีอะไรต้องเพิ่ม)'), 'success');
+          Layout.closeModal('applyTplModal');
+          await this.load();
+          // รีเฟรชธงโมดูลของเมนูซ้าย (เพิ่งได้ที่พัก/ร้านค้าเป็นครั้งแรก) — ไม่ต้องรอโหลดหน้าใหม่
+          if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();
+          if (industryType === 15) setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${id}&welcome=1`; }, 900);
+        } catch (e) { Layout.toast(e.message || 'เติมเทมเพลตไม่สำเร็จ', 'error'); }
+        finally { btn.disabled = false; btn.textContent = 'เติมเทมเพลต'; }
       },
 
       async publish(id) {

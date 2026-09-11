@@ -141,7 +141,10 @@
         const sel = document.getElementById('propSelector');
         if (!this.props.length) { sel.innerHTML = '<option value="">ยังไม่มีที่พัก</option>'; document.getElementById('dashStats').innerHTML = '<div class="card">ยังไม่มีที่พัก — <a href="/pages/lodging-settings.html">สร้างที่พักในหน้าตั้งค่า</a> หรือสร้างเว็บไซต์ประเภท "โรงแรม/ที่พัก" ใน CMS</div>'; return; }
         sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-        this.propertyId = new URLSearchParams(location.search).get('propertyId') || this.props[0].id; sel.value = this.propertyId;
+        // ?siteId= จาก cms-edit/cms-sites → ที่พักที่ผูกเว็บนั้น (กติกาเดียวกับ lodging-settings)
+        const qs0 = new URLSearchParams(location.search);
+        const bySite = qs0.get('siteId') ? this.props.find(p => p.siteId === qs0.get('siteId')) : null;
+        this.propertyId = qs0.get('propertyId') || bySite?.id || this.props[0].id; sel.value = this.propertyId;
         this.property = this.props.find(p => p.id === this.propertyId) || null;
         await this.loadRefs(); await this.loadDash();
         const open = new URLSearchParams(location.search).get('id'); if (open) await this.openReservation(open);

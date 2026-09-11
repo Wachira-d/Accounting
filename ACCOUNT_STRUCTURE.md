@@ -119,9 +119,19 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   ที่ active — `ResolvePropertyIdForSiteAsync` เลือกตัวแรกตาม SortOrder) และ `BranchId` (เอกสารทุกใบของที่พักออกจากสาขานั้น)
 - บริษัทเดียวมีหลายที่พักได้ (`Code` ไม่ซ้ำต่อบริษัท — ใช้ในเลขจอง `RES-{Code}-…`); ที่พักไม่ผูกเว็บ = รับจองผ่าน front desk อย่างเดียว
 - สร้างอัตโนมัติเมื่อ `CreateSiteAsync(IndustryType.Hotel)` (`LodgingSeeder`) — ไม่ขึ้นกับ `SeedTemplate`; idempotent ต่อ SiteId
+  · **รอบ 158**: `Site.IndustryType` ถูก **เก็บลงคอลัมน์** แล้ว (เดิมรับมาใน request เพื่อ seed แล้วทิ้ง ⇒ ไม่มีใครรู้ว่าเว็บไหนเป็นที่พัก)
+  และเว็บที่สร้างผิดประเภทซ่อมได้ด้วย `POST cms/sites/{siteId}/apply-template` (เติมหน้าเทมเพลต · ตัวเลือก "แทนที่หน้าที่ slug ซ้ำ"
+  ซึ่งย้าย slug เดิมผ่าน `Helpers/CmsRetiredSlug` เพราะ unique index `(SiteId, Slug)` ไม่กรอง `IsDeleted` · seed ที่พัก/บริการจองให้ด้วย)
+  · **เว็บ 1 : ที่พัก 1** บังคับจริงแล้ว (`EnsureSiteNotBoundElsewhereAsync` + partial unique index) — เดิมผูกซ้ำได้และ storefront หยิบตัวแรกเงียบ ๆ
+- **โมดูลของเว็บ** — `Helpers/CmsModuleResolver` เป็นตัวตัดสินตัวเดียวว่าบริษัท/เว็บนี้ใช้โมดูลไหน (`orders` · `bookings` · `lodging` · `leads`)
+  จากข้อเท็จจริง (ชนิดเว็บ · มีแถว order/booking-service/booking · มี `LodgingProperty` · มีเว็บ `IndustryType.Hotel`) —
+  **ห้ามตัดสินจาก `SiteType` ตรง ๆ** (เว็บที่พักก็เป็น `SiteType.Booking` แต่ใช้ระบบจองห้อง ไม่ใช่จองคิวแบบ slot) ·
+  ส่งออกทาง `CompanySettingsResponse.CmsModules` (แถบเมนูซ้าย: ธง `cmsModule:` ใน `Layout.navItems` — กติกาเดียวกับ `vatOnly`/`etaxOnly`
+  คือ **ซ่อนเมื่อเซิร์ฟเวอร์บอกแล้วเท่านั้น** ยังไม่โหลด = แสดงไว้ก่อน) และ `SiteResponse.Modules` (แท็บ/ลิงก์ใน `cms-edit.html`)
 - สิทธิ์ใหม่ใน `PermissionKeys`: `Lodging.Manage` (front desk) · `Lodging.Settings` (ตั้งค่า) — Owner/SystemAdmin ผ่านอัตโนมัติ
 - ฝั่งสาธารณะ scope `CompanyId + SiteId` เสมอ · การจองเข้าถึงด้วย `PublicToken` (ไม่มี id เดาได้) · เมนู `lodging`/`lodging-settings`
-  อยู่ใต้ feature `CmsWebsiteBuilder` เหมือน CMS
+  อยู่ใต้ feature `CmsWebsiteBuilder` เหมือน CMS **+ ธง `cmsModule: 'lodging'`** ⇒ ร้านอาหาร/คลินิกไม่เห็น "ตั้งค่าที่พัก" รกแถบเมนู
+  (ซ่อน ≠ ห้าม — เปิดหน้าจาก URL ได้ และหน้ามี empty-state พาไปสร้าง; `roles.html` ยังติ๊กสิทธิ์ได้ครบพร้อมป้ายบอกเงื่อนไขการแสดงผล)
 - **license/การคิดเงินของส่วนเสริม** 📋 ออกแบบแล้วใน `LODGING_LICENSING_PLAN.md` — ใช้ catalog `ApiFeature`/`ApiPricingPlan`/
   `CompanyFeature`/`UsageEvent` (§7) เป็น add-on catalog ทั่วไป · มิเตอร์หลัก = โควตาเอกสารของแพ็กเกจบัญชี (§5) ·
   ข้อเท็จจริงที่ต้องแก้ก่อน: `FlatMonthly` ยังไม่ถูกเก็บเงินจริง · โควตาเอกสาร hard-block เอกสารตามกฎหมาย · `/lodging` ไม่มี gate

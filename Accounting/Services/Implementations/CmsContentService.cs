@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -89,7 +90,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PageResponse> UpdatePageAsync(Guid companyId, Guid siteId, Guid pageId, UpdatePageRequest request, string userId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId)
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted)
             ?? throw new KeyNotFoundException("Page not found.");
 
         if (request.Title != null) page.Title = request.Title;
@@ -208,7 +209,9 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PagedResponse<PageListResponse>> GetPagesAsync(Guid companyId, Guid siteId, string? search, int page, int pageSize)
     {
-        var query = _db.SitePages.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId);
+        // ไม่มี global query filter บน SitePage ⇒ ต้องกรอง IsDeleted เอง ไม่งั้นหน้าที่ลบแล้วยังโชว์ในรายการ
+        // (และหลังเปลี่ยนมาใช้ CmsRetiredSlug จะโชว์ slug ที่ถูกย้ายด้วย — ยิ่งชวนงง)
+        var query = _db.SitePages.AsNoTracking().Where(p => p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(p => p.Title.Contains(search) || p.Slug.Contains(search));
@@ -237,9 +240,12 @@ public class CmsContentService : ICmsContentService
 
     public async Task<bool> DeletePageAsync(Guid companyId, Guid siteId, Guid pageId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId);
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted);
         if (page == null) return false;
 
+        // unique index (SiteId, Slug) ไม่ได้กรอง IsDeleted ⇒ soft-delete เฉย ๆ แล้วสร้างหน้า slug เดิมใหม่จะชน 500
+        // → ย้าย slug ที่ปลดออกไปให้พ้นทาง (กติกาเดียวกับ CmsSiteService.ApplyTemplateAsync)
+        page.Slug = CmsRetiredSlug.For(page.Slug, DateTime.UtcNow);
         page.IsDeleted = true;
         await _db.SaveChangesAsync();
         return true;
@@ -247,7 +253,7 @@ public class CmsContentService : ICmsContentService
 
     public async Task<PageResponse> PublishPageAsync(Guid companyId, Guid siteId, Guid pageId, string userId)
     {
-        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId)
+        var page = await _db.SitePages.FirstOrDefaultAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId && !p.IsDeleted)
             ?? throw new KeyNotFoundException("Page not found.");
 
         page.Status = PageStatus.Published;
@@ -774,7 +780,7 @@ public class CmsContentService : ICmsContentService
     {
         var baseSlug = slug;
         var counter = 1;
-        while (await _db.SitePages.AnyAsync(p => p.SiteId == siteId && p.Slug == slug && (!excludePageId.HasValue || p.Id != excludePageId.Value)))
+        while (await _db.SitePages.AnyAsync(p => p.SiteId == siteId && !p.IsDeleted && p.Slug == slug && (!excludePageId.HasValue || p.Id != excludePageId.Value)))
         {
             slug = $"{baseSlug}-{counter++}";
         }

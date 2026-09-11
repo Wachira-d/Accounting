@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
@@ -25,7 +26,7 @@ public static class CmsSiteTemplateSeeder
     /// Caller is responsible for adding them to the DbContext and
     /// SaveChanges. Returns the SitePages with their Blocks already
     /// attached (EF navigates the FK on insert).</summary>
-    public static List<SitePage> BuildSeed(Guid companyId, Guid siteId, IndustryType industry, string userId)
+    public static List<SitePage> BuildSeed(Guid companyId, Guid siteId, IndustryType industry, string userId, SiteType? siteType = null)
     {
         var plan = industry switch
         {
@@ -48,6 +49,13 @@ public static class CmsSiteTemplateSeeder
             IndustryType.Manufacturing => ManufacturingPlan(),
             _ => GeneralPlan()
         };
+
+        // เว็บชนิด "จองนัดหมาย" (SiteType.Booking) ต้องมีหน้าจองเสมอ — การ์ด "จองนัดหมาย (ทั่วไป)"
+        // ในวิซาร์ดชี้ไป IndustryType.Service ซึ่งแผนไม่มี BookingCalendar ⇒ ผู้ใช้เลือก "จองคิว"
+        // แล้วได้เว็บที่ปรึกษาที่ไม่มีที่ให้จอง (ทีมตรวจรอบ 158 D-01). ที่พักไม่เข้าข้อนี้เพราะ
+        // HotelPlan มีหน้า booking อยู่แล้ว (และ storefront ส่งไประบบจองห้อง)
+        if (siteType == SiteType.Booking && !plan.Any(p => p.Item2.Any(b => b.Type == CmsBlockType.BookingCalendar)))
+            plan = plan.Concat(new[] { GenericBookingPage() }).ToList();
 
         var pages = new List<SitePage>();
         var pageOrder = 0;
@@ -90,6 +98,30 @@ public static class CmsSiteTemplateSeeder
     private record Plan(PageMeta Page, List<BlockMeta> Blocks);
 
     private static string J(object o) => JsonSerializer.Serialize(o);
+
+    /// <summary>ช่องเพิ่มของฟอร์ม "ขอจอง/นัดหมาย" — ให้เจ้าของได้ วัน·เวลา·จำนวนคน เป็นช่องแยกใน lead
+    /// ไม่ใช่ข้อความอิสระ (ทีมตรวจรอบ 158 D-03: ฟอร์มจองโต๊ะ/จองคิว/นัดแพทย์ เดิมเป็น Contact เปล่า ๆ
+    /// ทั้งที่ Hero สัญญา "ยืนยันภายใน 30 นาที" — ไม่มีวันที่ให้ยืนยัน)</summary>
+    private static object[] BookingExtraFields(string partyLabel, string? extraName = null, string? extraLabel = null)
+    {
+        var list = new List<object>
+        {
+            new { name = "date", label = "วันที่", type = "date", required = true },
+            new { name = "time", label = "เวลา", type = "time", required = true },
+            new { name = "guests", label = partyLabel, type = "number", required = true },
+        };
+        if (extraName != null) list.Add(new { name = extraName, label = extraLabel ?? extraName, type = "text", required = false });
+        return list.ToArray();
+    }
+
+    private static (PageMeta, List<BlockMeta>) GenericBookingPage() =>
+        (new("จองคิว", "booking", PageType.Standard, "จองคิว/นัดหมายออนไลน์"), new()
+        {
+            new(CmsBlockType.Hero, J(new { headline = "จองคิวออนไลน์", subheadline = "เลือกบริการและเวลาที่สะดวก — เราจะติดต่อยืนยัน" })),
+            new(CmsBlockType.BookingCalendar, "{}"),
+            new(CmsBlockType.ContactForm, J(new { headline = "หรือกรอกฟอร์มขอนัด", submitText = "ส่งคำขอนัด", emailTo = "", phoneRequired = true,
+                                                  extraFields = BookingExtraFields("จำนวนคน", "service", "บริการที่ต้องการ") }))
+        });
 
     // ============================================================
     // GENERAL / DEFAULT — professional services landing
@@ -388,7 +420,9 @@ public static class CmsSiteTemplateSeeder
             new(CmsBlockType.ContactForm, J(new {
                 headline = "แบบฟอร์มจองโต๊ะ",
                 submitText = "ส่งคำขอจอง",
-                emailTo = ""
+                emailTo = "",
+                phoneRequired = true,
+                extraFields = BookingExtraFields("จำนวนคน", "note", "โอกาสพิเศษ / ที่นั่งที่ต้องการ")
             })),
             new(CmsBlockType.BookingCalendar, "{}")
         }),
@@ -1243,7 +1277,8 @@ WhatsApp: +66 XX XXX XXXX</p>"
                 subheadline = "เลือกบริการและเวลาที่สะดวก เราจะติดต่อยืนยัน"
             })),
             new(CmsBlockType.BookingCalendar, "{}"),
-            new(CmsBlockType.ContactForm, J(new { headline = "หรือกรอกฟอร์ม", submitText = "ส่งคำขอ", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new { headline = "หรือกรอกฟอร์ม", submitText = "ส่งคำขอ", emailTo = "", phoneRequired = true,
+                                                  extraFields = BookingExtraFields("จำนวนท่าน", "service", "บริการที่ต้องการ") }))
         }),
 
         (new("เกี่ยวกับเรา", "about", PageType.Standard, "เรื่องราวสปา"), new() {
@@ -1408,7 +1443,8 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li>มาก่อนเวลา 30 นาที (ผู้ป่วยใหม่)</li>
 </ul>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "แจ้งนัดหมาย", submitText = "ส่งคำขอนัด", emailTo = "" })),
+            new(CmsBlockType.ContactForm, J(new { headline = "แจ้งนัดหมาย", submitText = "ส่งคำขอนัด", emailTo = "", phoneRequired = true,
+                                                  extraFields = BookingExtraFields("จำนวนผู้ป่วย", "symptom", "อาการ / แพทย์ที่ต้องการพบ") })),
             new(CmsBlockType.BookingCalendar, "{}")
         }),
 
@@ -2493,12 +2529,12 @@ WhatsApp: +66 XX XXX XXXX</p>"
         }),
 
         (new("Tracking", "tracking", PageType.Standard, "ติดตามพัสดุ"), new() {
-            new(CmsBlockType.Hero, J(new { headline = "ติดตามพัสดุ", subheadline = "กรอกเลข tracking ดูสถานะแบบ real-time" })),
+            new(CmsBlockType.Hero, J(new { headline = "สอบถามสถานะพัสดุ", subheadline = "แจ้งเลข tracking — ทีมงานตอบกลับภายในเวลาทำการ" })),
             new(CmsBlockType.RichText, J(new {
-                content = @"<p>หากต้องการติดตามสถานะการจัดส่ง กรุณาติดต่อทีมงานพร้อมเลข tracking
-หรือใช้ระบบ tracking ในแอป (ติดต่อ admin เพื่อรับลิงก์)</p>"
+                content = @"<p>กรอกเลข tracking ด้านล่าง ทีมงานจะตรวจสอบสถานะและติดต่อกลับ (ยังไม่มีระบบติดตามอัตโนมัติบนเว็บ — อย่าสัญญาสิ่งที่หน้าเว็บทำไม่ได้)</p>"
             })),
-            new(CmsBlockType.ContactForm, J(new { headline = "สอบถามสถานะ", submitText = "ส่ง", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new { headline = "สอบถามสถานะ", submitText = "ส่ง", emailTo = "", leadType = "Other", phoneRequired = true,
+                                                  extraFields = new object[] { new { name = "trackingNo", label = "เลข tracking", type = "text", required = true } } }))
         }),
 
         (new("ติดต่อ", "contact", PageType.Standard, "ติดต่อขนส่ง"), new() {
@@ -2512,133 +2548,116 @@ WhatsApp: +66 XX XXX XXXX</p>"
     };
 
     // ============================================================
-    // HOTEL — Booking.com / Marriott / Banyan Tree style
+    // HOTEL — ตัวเลข/กติกาทุกตัวจาก LodgingSeedDefaults (ชุดเดียวกับที่พักที่ LodgingSeeder สร้างให้จองจริง)
+    // ห้ามพิมพ์ราคา/เวลา/นโยบายเป็น literal ที่นี่ — LodgingSeedDefaultsTests ล็อกไว้
+    // หน้า rooms/booking: บนเว็บที่มีที่พักผูกอยู่ storefront จะแสดงระบบจองห้องแทนเนื้อหา CMS
+    // (คง Hero ไว้ให้เจ้าของแก้หัวเรื่องได้ — storefront วาด Hero ของหน้าเหนือระบบจอง)
     // ============================================================
+    private static string HotelRoomsHtml() =>
+        "<h2>🏨 ห้องพักของเรา</h2><ul>"
+        + string.Concat(LodgingSeedDefaults.RoomTypes.Select(r =>
+            $"<li><strong>{r.Name}</strong> — {r.Description} · {LodgingSeedDefaults.Baht(r.Rate)}/คืน</li>"))
+        + "</ul><p><a href=\"/rooms\" class=\"btn\">ดูห้องทั้งหมด →</a></p>";
+
+    private static object HotelPricingPlans() => LodgingSeedDefaults.RoomTypes
+        .Select(r => new { name = r.Name, price = LodgingSeedDefaults.Baht(r.Rate), features = r.Description.Split(" · ") })
+        .ToArray();
+
     private static List<(PageMeta, List<BlockMeta>)> HotelPlan() => new()
     {
-        (new("หน้าหลัก", "home", PageType.Landing, "โรงแรม · รีสอร์ท · ที่พัก · จองตรงรับส่วนลด"), new() {
+        (new("หน้าหลัก", "home", PageType.Landing, "โรงแรม · รีสอร์ท · ที่พัก · จองตรงกับที่พัก ไม่มีค่าธรรมเนียม"), new() {
             new(CmsBlockType.Hero, J(new {
                 headline = "พักผ่อนเหมือนกลับบ้าน",
-                subheadline = "ห้องสะอาด · บรรยากาศดี · ทำเลใจกลางเมือง · จองตรงรับส่วนลด 10%",
+                subheadline = "ห้องสะอาด · บรรยากาศดี · ทำเลใจกลางเมือง · จองตรงกับที่พัก ไม่มีค่าธรรมเนียม OTA",
                 ctaText = "จองห้องพัก",
                 ctaUrl = "/booking"
             })),
             new(CmsBlockType.RichText, J(new {
-                content = @"<h2>✨ ทำไมต้องพักกับเรา</h2>
+                content = $@"<h2>✨ ทำไมต้องพักกับเรา</h2>
 <ul>
-  <li>📍 <strong>ทำเลใจกลางเมือง</strong> — เดินถึง BTS · ใกล้แหล่งช้อปปิ้ง</li>
+  <li>📍 <strong>ทำเลใจกลางเมือง</strong> — เดินถึงระบบขนส่ง · ใกล้แหล่งช้อปปิ้ง</li>
   <li>🛏️ <strong>ห้องพักสะอาด</strong> — เปลี่ยนผ้าทุกวัน · ทีมแม่บ้านมืออาชีพ</li>
-  <li>🍳 <strong>อาหารเช้าฟรี</strong> — Buffet 30+ เมนู · 6:30-10:30</li>
-  <li>💊 <strong>สิ่งอำนวยความสะดวก</strong> — สระ · ฟิตเนส · สปา · ที่จอดรถ</li>
-  <li>🚗 <strong>รับส่งสนามบิน</strong> — บริการพรีเมียม · ราคาเริ่ม 800 บาท</li>
-  <li>💰 <strong>จองตรงรับส่วนลด 10%</strong> — ไม่มีค่าธรรมเนียม OTA</li>
+  <li>🍳 <strong>อาหารเช้า</strong> — เลือกแผนราคารวมอาหารเช้า หรือเพิ่มได้ {LodgingSeedDefaults.Baht(LodgingSeedDefaults.BreakfastPerPersonPerNight)}/ท่าน/คืน</li>
+  <li>🚗 <strong>รับส่งสนามบิน</strong> — {LodgingSeedDefaults.Baht(LodgingSeedDefaults.AirportTransferPerStay)}/เที่ยว · แจ้งล่วงหน้า 24 ชม.</li>
+  <li>💰 <strong>จองตรงกับที่พัก</strong> — ไม่มีค่าธรรมเนียม OTA · แผนไม่คืนเงินลด {LodgingSeedDefaults.NonRefundableDiscountPercent}% · พักยาว {LodgingSeedDefaults.LongStayMinNights} คืนขึ้นไปลด {LodgingSeedDefaults.LongStayDiscountPercent}%</li>
 </ul>"
             })),
-            new(CmsBlockType.RichText, J(new {
-                content = @"<h2>🏨 ห้องพักของเรา</h2>
-<ul>
-  <li><strong>Standard Room</strong> — 25 ตรม. · 1 เตียง 6 ฟุต · ฿1,500/คืน</li>
-  <li><strong>Deluxe Room</strong> — 32 ตรม. · King size · วิวเมือง · ฿2,500/คืน</li>
-  <li><strong>Junior Suite</strong> — 48 ตรม. · ห้องนั่งเล่นแยก · ฿3,800/คืน</li>
-  <li><strong>Executive Suite</strong> — 65 ตรม. · อ่างอาบน้ำ · มินิบาร์ · ฿4,500/คืน</li>
-</ul>
-<p><a href=""/rooms"" class=""btn"">ดูห้องทั้งหมด →</a></p>"
-            })),
+            new(CmsBlockType.RichText, J(new { content = HotelRoomsHtml() })),
             new(CmsBlockType.PricingTable, J(new {
-                headline = "💰 ราคาห้องพัก (ต่อคืน · รวมอาหารเช้า)",
-                plans = new[] {
-                    new { name = "Standard", price = "฿1,500",
-                          features = new[] { "25 ตรม.", "เตียง 6 ฟุต", "อาหารเช้า 2 ท่าน", "WiFi · TV · มินิบาร์" } },
-                    new { name = "Deluxe", price = "฿2,500",
-                          features = new[] { "32 ตรม.", "King size · วิวเมือง", "อาหารเช้า 2 ท่าน", "เครื่องชงกาแฟ · อ่างอาบน้ำ" } },
-                    new { name = "Suite", price = "฿4,500",
-                          features = new[] { "65 ตรม.", "ห้องนั่งเล่นแยก", "Late checkout 16:00", "มินิบาร์ฟรี · สิทธิ์ Executive Lounge" } }
-                }
+                headline = "💰 ราคาห้องพัก (ต่อคืน · ราคามาตรฐาน)",
+                plans = HotelPricingPlans()
             })),
             new(CmsBlockType.Testimonials, J(new {
                 headline = "รีวิวจากแขก",
                 testimonials = new[] {
-                    new { quote = "ห้องสะอาดมาก พนักงานน่ารัก จะกลับมาแน่นอน", author = "Sarah J.", role = "Booking.com 9.5/10" },
-                    new { quote = "ทำเลดีมาก เดินไปกินข้าวได้รอบ ๆ", author = "คุณภัทร", role = "TripAdvisor 5 ดาว" },
-                    new { quote = "อาหารเช้าเยอะมาก สดและอร่อย", author = "Mr. Tanaka", role = "Repeat guest" },
-                    new { quote = "สระว่ายน้ำดาดฟ้าสวยมาก วิวเมืองยามค่ำคืน", author = "Agoda Verified", role = "9.2/10" }
+                    new { quote = "ห้องสะอาดมาก พนักงานน่ารัก จะกลับมาแน่นอน", author = "Sarah J.", role = "แขกต่างชาติ" },
+                    new { quote = "ทำเลดีมาก เดินไปกินข้าวได้รอบ ๆ", author = "คุณภัทร", role = "ครอบครัว 4 ท่าน" },
+                    new { quote = "จองตรงง่าย ได้ราคาดีกว่า", author = "Mr. Tanaka", role = "Repeat guest" }
                 }
             })),
             new(CmsBlockType.RichText, J(new {
-                content = @"<h2>📅 ขั้นตอนการจอง</h2>
+                content = $@"<h2>📅 ขั้นตอนการจอง</h2>
 <ol>
-  <li><strong>1. เลือกห้อง + วัน</strong> — Check in / Check out · จำนวนแขก</li>
-  <li><strong>2. ยืนยัน + ชำระเงิน</strong> — บัตรเครดิต / โอน · ยอด 50% มัดจำ</li>
-  <li><strong>3. รับ confirmation</strong> — Email + SMS · พร้อม voucher</li>
-  <li><strong>4. Check-in</strong> — 15:00 · บัตร ปชช./passport</li>
-  <li><strong>5. Check-out</strong> — 12:00 · ขยายได้ตามว่าง</li>
+  <li><strong>1. เลือกห้อง + วัน</strong> — เช็คอิน / เช็คเอาต์ · จำนวนแขก</li>
+  <li><strong>2. ยืนยัน + ชำระมัดจำ {LodgingSeedDefaults.DepositPercent}%</strong> — โอน/แนบสลิป หรือชำระออนไลน์ (ถ้าที่พักเปิด)</li>
+  <li><strong>3. รับอีเมลยืนยัน</strong> — พร้อมหลักฐานการจอง (PDF)</li>
+  <li><strong>4. เช็คอิน {LodgingSeedDefaults.CheckIn}</strong> — แสดงบัตรประชาชน/พาสปอร์ต</li>
+  <li><strong>5. เช็คเอาต์ {LodgingSeedDefaults.CheckOut}</strong> — ขยายได้ตามห้องว่าง</li>
 </ol>"
             })),
             new(CmsBlockType.Faq, J(new {
                 headline = "คำถามที่พบบ่อย",
                 items = new[] {
-                    new { q = "Check-in / Check-out กี่โมง?", a = "Check-in 15:00 · Check-out 12:00 · ยืดได้ตามว่าง" },
-                    new { q = "ยกเลิกได้ฟรีไหม?", a = "ฟรีก่อน check-in 3 วัน · หลังจากนั้นคิด 1 คืน" },
-                    new { q = "มีรถรับส่งสนามบินไหม?", a = "มี ราคาเริ่ม 800 บาท · แจ้งล่วงหน้า 24 ชม." },
-                    new { q = "อนุญาตสัตว์เลี้ยงไหม?", a = "ห้องพิเศษ pet-friendly 3 ห้อง · มีค่าทำความสะอาด 500 บาท" },
-                    new { q = "มีอาหารฮาลาลไหม?", a = "มี · แจ้งล่วงหน้าตอนจอง · เชฟปรับเมนูให้" }
+                    new { q = "เช็คอิน / เช็คเอาต์กี่โมง?", a = $"เช็คอิน {LodgingSeedDefaults.CheckIn} · เช็คเอาต์ {LodgingSeedDefaults.CheckOut} · Late check-out ถึง {LodgingSeedDefaults.LateCheckoutUntil} มีค่าบริการ {LodgingSeedDefaults.Baht(LodgingSeedDefaults.LateCheckoutPerStay)}" },
+                    new { q = "ยกเลิกได้ฟรีไหม?", a = LodgingSeedDefaults.CancellationSummary + " (แผนไม่คืนเงิน: ยกเลิกไม่ได้ทุกกรณี)" },
+                    new { q = "ต้องวางมัดจำเท่าไร?", a = $"{LodgingSeedDefaults.DepositPercent}% ของค่าห้อง — ส่วนที่เหลือชำระตอนเช็คอิน" },
+                    new { q = "มีรถรับส่งสนามบินไหม?", a = $"มี {LodgingSeedDefaults.Baht(LodgingSeedDefaults.AirportTransferPerStay)}/เที่ยว · แจ้งล่วงหน้า 24 ชม." },
+                    new { q = "ขอเตียงเสริมได้ไหม?", a = $"ได้ในห้อง Deluxe/Suite {LodgingSeedDefaults.Baht(LodgingSeedDefaults.ExtraBedPerNight)}/คืน" }
                 }
             })),
             new(CmsBlockType.CallToAction, J(new {
-                headline = "จองตรงรับส่วนลด 10%",
-                subheadline = "ไม่มีค่าธรรมเนียม · ฟรี upgrade ถ้าห้องว่าง",
+                headline = "จองตรงกับที่พัก — ไม่มีค่าธรรมเนียม",
+                subheadline = $"แผนไม่คืนเงินลด {LodgingSeedDefaults.NonRefundableDiscountPercent}% · ฟรีอัปเกรดถ้าห้องว่าง",
                 ctaText = "จองตอนนี้",
                 ctaUrl = "/booking"
             }))
         }),
 
         (new("ห้องพัก", "rooms", PageType.Standard, "ห้องพักและราคา"), new() {
-            new(CmsBlockType.Hero, J(new { headline = "ห้องพักของเรา", subheadline = "4 ประเภท · ตอบทุกความต้องการ" })),
-            new(CmsBlockType.RichText, J(new {
-                content = @"<h2>🛏️ Standard Room (฿1,500)</h2>
-<p>25 ตรม. · เตียง 6 ฟุต · ห้องน้ำในตัว · WiFi · TV · มินิบาร์ · อาหารเช้า 2 ท่าน</p>
-<h2>🛏️ Deluxe Room (฿2,500)</h2>
-<p>32 ตรม. · King size · วิวเมือง · เครื่องชงกาแฟ · อ่างอาบน้ำ · bathrobe</p>
-<h2>🛏️ Junior Suite (฿3,800)</h2>
-<p>48 ตรม. · ห้องนั่งเล่นแยก · pantry · เครื่องซักผ้า · เหมาะ stay ยาว</p>
-<h2>🛏️ Executive Suite (฿4,500)</h2>
-<p>65 ตรม. · 2 ห้องนอน · อ่างน้ำวน · Executive Lounge · late checkout</p>"
-            })),
-            new(CmsBlockType.Gallery, J(new {
-                images = new[] {
-                    new { url = "https://placehold.co/600x400?text=Standard", alt = "Standard Room" },
-                    new { url = "https://placehold.co/600x400?text=Deluxe", alt = "Deluxe Room" },
-                    new { url = "https://placehold.co/600x400?text=Junior+Suite", alt = "Junior Suite" },
-                    new { url = "https://placehold.co/600x400?text=Executive", alt = "Executive Suite" }
-                }
-            }))
+            new(CmsBlockType.Hero, J(new { headline = "ห้องพักของเรา", subheadline = $"{LodgingSeedDefaults.RoomTypes.Length} ประเภท · {LodgingSeedDefaults.TotalUnits} ห้อง · เลือกวันเพื่อดูห้องว่างและราคาจริง" })),
+            new(CmsBlockType.RichText, J(new { content = HotelRoomsHtml() }))
         }),
 
         (new("จองห้องพัก", "booking", PageType.Standard, "จองห้อง"), new() {
-            new(CmsBlockType.Hero, J(new { headline = "จองห้องพัก", subheadline = "จองตรงรับส่วนลด 10% · ไม่มีค่าธรรมเนียม" })),
+            new(CmsBlockType.Hero, J(new { headline = "จองห้องพัก", subheadline = "จองตรงกับที่พัก · ไม่มีค่าธรรมเนียม · ยืนยันทันทีเมื่อชำระมัดจำ" })),
             new(CmsBlockType.BookingCalendar, "{}"),
-            new(CmsBlockType.ContactForm, J(new { headline = "หรือกรอกฟอร์มจอง", submitText = "ส่งคำขอจอง", emailTo = "" }))
+            new(CmsBlockType.ContactForm, J(new { headline = "หรือส่งคำขอจองให้เจ้าหน้าที่ติดต่อกลับ", submitText = "ส่งคำขอจอง", emailTo = "", phoneRequired = true,
+                extraFields = new object[] {
+                    new { name = "checkIn", label = "วันเช็คอิน", type = "date", required = true },
+                    new { name = "checkOut", label = "วันเช็คเอาต์", type = "date", required = true },
+                    new { name = "guests", label = "จำนวนผู้เข้าพัก", type = "number", required = true },
+                    new { name = "roomType", label = "ประเภทห้องที่ต้องการ", type = "text", required = false }
+                } }))
         }),
 
         (new("สิ่งอำนวยความสะดวก", "amenities", PageType.Standard, "สิ่งอำนวยความสะดวก"), new() {
             new(CmsBlockType.Hero, J(new { headline = "สิ่งอำนวยความสะดวก" })),
             new(CmsBlockType.RichText, J(new {
-                content = @"<h2>🏊 สิ่งอำนวยความสะดวก</h2>
+                content = $@"<h2>🏊 สิ่งอำนวยความสะดวก</h2>
 <ul>
-  <li><strong>สระว่ายน้ำดาดฟ้า</strong> — เปิด 6:00-22:00 · ผ้าเช็ดตัวฟรี</li>
-  <li><strong>ฟิตเนส</strong> — เปิด 24 ชม. · เครื่องทันสมัย</li>
-  <li><strong>สปา + นวด</strong> — เปิด 10:00-22:00 · เปิดให้ outside guest</li>
-  <li><strong>ห้องอาหาร</strong> — Breakfast buffet · A la carte · Room service 24 ชม.</li>
-  <li><strong>ที่จอดรถ</strong> — ฟรี · Valet ตามขอ</li>
-  <li><strong>รถรับส่งสนามบิน</strong> — เริ่ม 800 บาท · แจ้งล่วงหน้า 24 ชม.</li>
+  <li><strong>WiFi ฟรีทุกห้อง</strong> · ที่จอดรถ · เครื่องปรับอากาศ</li>
+  <li><strong>สระว่ายน้ำ</strong> — เปิด 6:00-22:00 · ผ้าเช็ดตัวฟรี</li>
+  <li><strong>อาหารเช้า</strong> — {LodgingSeedDefaults.Baht(LodgingSeedDefaults.BreakfastPerPersonPerNight)}/ท่าน/คืน หรือเลือกแผนราคารวมอาหารเช้า</li>
+  <li><strong>รถรับส่งสนามบิน</strong> — {LodgingSeedDefaults.Baht(LodgingSeedDefaults.AirportTransferPerStay)}/เที่ยว · แจ้งล่วงหน้า 24 ชม.</li>
+  <li><strong>เตียงเสริม</strong> — {LodgingSeedDefaults.Baht(LodgingSeedDefaults.ExtraBedPerNight)}/คืน (ห้อง Deluxe/Suite)</li>
 </ul>"
             }))
         }),
 
         (new("ติดต่อ / ที่ตั้ง", "contact", PageType.Standard, "ที่ตั้งโรงแรม"), new() {
-            new(CmsBlockType.Hero, J(new { headline = "ติดต่อโรงแรม", subheadline = "Front desk เปิด 24 ชม." })),
+            new(CmsBlockType.Hero, J(new { headline = "ติดต่อที่พัก", subheadline = "ยินดีตอบทุกคำถามเรื่องการจอง" })),
             new(CmsBlockType.RichText, J(new {
-                content = "<p>📞 {{company.phone}} (24 ชม.) · LINE: @hotel · 📧 {{company.email}}</p>"
+                content = "<p>📞 {{company.phone}} · 📧 {{company.email}}</p>"
             })),
             new(CmsBlockType.ContactForm, J(new { headline = "สอบถามการจอง", submitText = "ส่ง", emailTo = "" })),
             new(CmsBlockType.Map, J(new { address = "กรุงเทพมหานคร ประเทศไทย" }))

@@ -73,6 +73,22 @@ public class CmsSiteController : ControllerBase
         return Ok(new ApiResponse<SiteResponse>(true, result, "เผยแพร่เว็บไซต์สำเร็จ"));
     }
 
+    /// <summary>เติม/เปลี่ยนเทมเพลตให้เว็บที่มีอยู่ — ทางซ่อมเว็บที่สร้างผิดประเภท (ไม่ต้องลบสร้างใหม่)</summary>
+    [HttpPost("{siteId:guid}/apply-template")]
+    public async Task<ActionResult<ApiResponse<ApplySiteTemplateResponse>>> ApplyTemplate(Guid companyId, Guid siteId, [FromBody] ApplySiteTemplateRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var result = await _siteService.ApplyTemplateAsync(companyId, siteId, request, userId);
+            return Ok(new ApiResponse<ApplySiteTemplateResponse>(true, result, "เติมเทมเพลตสำเร็จ"));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiResponse<ApplySiteTemplateResponse>(false, null, "ไม่พบเว็บไซต์"));
+        }
+    }
+
     // ===== Domains =====
 
     [HttpPost("{siteId:guid}/domains")]

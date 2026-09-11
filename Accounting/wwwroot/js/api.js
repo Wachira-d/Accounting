@@ -335,9 +335,12 @@ const API = {
       getPrepaids: () => API.get(`${base}/financial/prepaid`),
       getPrepaidDetail: (id) => API.get(`${base}/financial/prepaid/${id}`),
       processAmortization: (date) => API.post(`${base}/financial/prepaid/process?asOfDate=${date}`),
-      createDeposit: (d) => API.post(`${base}/financial/deposits`, d),
-      getDeposits: (dir = '') => API.get(`${base}/financial/deposits${dir ? '?direction=' + dir : ''}`),
-      refundDeposit: (id, d) => API.post(`${base}/financial/deposits/${id}/refund`, d),
+      // เงินมัดจำ/ประกันของโมดูล FinancialManagement — คนละตารางกับ "มัดจำจากเอกสาร" (document/deposits)
+      // ชื่อเดิมซ้ำกับกลุ่มเอกสารด้านบน ⇒ ตัวหลังทับเงียบ ๆ: หน้า deposits.html/deposit-center.html
+      // (มัดจำจากใบเสร็จ) ยิงไป /financial/deposits ผิดโมดูลมาตลอด — ต้องมีชื่อของตัวเอง
+      createFinancialDeposit: (d) => API.post(`${base}/financial/deposits`, d),
+      getFinancialDeposits: (dir = '') => API.get(`${base}/financial/deposits${dir ? '?direction=' + dir : ''}`),
+      refundFinancialDeposit: (id, d) => API.post(`${base}/financial/deposits/${id}/refund`, d),
       createBadDebt: (d) => API.post(`${base}/financial/bad-debt`, d),
       getBadDebts: () => API.get(`${base}/financial/bad-debt`),
       postBadDebt: (id) => API.post(`${base}/financial/bad-debt/${id}/post`),
@@ -437,6 +440,7 @@ const API = {
       cmsUpdateSite: (id, d) => API.put(`${base}/cms/sites/${id}`, d),
       cmsDeleteSite: (id) => API.del(`${base}/cms/sites/${id}`),
       cmsPublishSite: (id) => API.post(`${base}/cms/sites/${id}/publish`, {}),
+      cmsApplySiteTemplate: (id, d) => API.post(`${base}/cms/sites/${id}/apply-template`, d),
 
       // CMS commerce — order/booking management for the site owner
       cmsListOrders: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders${q}`),
@@ -541,9 +545,7 @@ const API = {
       cmsCreateProduct: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/products`, d),
       cmsUpdateProduct: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/products/${id}`, d),
       cmsDeleteProduct: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${id}`),
-      cmsListOrders: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/commerce/orders${q}`),
-      cmsGetOrder: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}`),
-      cmsUpdateOrderStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/orders/${id}/status`, d),
+      // cmsListOrders/cmsGetOrder/cmsUpdateOrderStatus อยู่ในกลุ่ม "Orders" ด้านบน — ห้ามประกาศซ้ำ (key ซ้ำตัวหลังทับเงียบ)
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
       cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
       // Booking (per site)
@@ -551,8 +553,7 @@ const API = {
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
       cmsUpdateBookingService: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/services/${id}`, d),
       cmsDeleteBookingService: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/services/${id}`),
-      cmsListBookings: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
-      cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
+      // cmsListBookings/cmsGetBooking/cmsUpdateBookingStatus อยู่ในกลุ่มด้านบน — ห้ามประกาศซ้ำ
       // Customers (per site)
       cmsListCustomers: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/customers${q}`),
       cmsGetCustomer: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/customers/${id}`),
@@ -729,7 +730,6 @@ const API = {
       updateEmployee: (id, d) => API.put(`${base}/payroll/employees/${id}`, d),
       terminateEmployee: (id, date) => API.post(`${base}/payroll/employees/${id}/terminate?endDate=${date}`),
       getPayrollRun: (id) => API.get(`${base}/payroll/runs/${id}`),
-      payPayroll: (id) => API.post(`${base}/payroll/runs/${id}/pay`),
       getPayrollDetail: (runId, empId) => API.get(`${base}/payroll/runs/${runId}/employees/${empId}`),
       getPayslip: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip`,
       getPayslipDownload: (runId, empId) => `${base}/payroll/runs/${runId}/employees/${empId}/payslip?download=true`,

@@ -82,23 +82,20 @@
     // — เดิมหน้านี้พิมพ์ตารางป้ายเอง 45 แถว ซึ่งตก CmsBooking และป้ายไม่ตรงกับหน้าแพ็กเกจของแอดมิน
     // ⇒ ฟีเจอร์ที่แพ็กเกจเปิดแต่ตารางไม่รู้จัก **หายจากหน้าตั้งค่า** โดยไม่มีอะไรบอก
 
-    // Menu groups extracted from layout.js navItems — labels match the
-    // sidebar so user toggling here = direct effect on what they see.
-    const MENU_GROUPS = [
-      { title:'หลัก', ids:['dashboard','accountant'] },
-      { title:'ขาย / รายรับ', ids:['documents','revenue-recognition','customer-portal'] },
-      { title:'ซื้อ / รายจ่าย', ids:['purchases','expense-docs','payments'] },
-      { title:'พนักงาน (Self-Service)', ids:['expense','expense-no-receipt','leave-my'] },
-      { title:'POS หน้าร้าน', ids:['pos','pos-packages','pos-modifiers','pos-reports'] },
-      { title:'ลูกค้า & สินค้า', ids:['contacts','products','inventory','warehouses'] },
-      { title:'เงิน & ธนาคาร', ids:['bank','loans','currencies'] },
-      { title:'บัญชี', ids:['chart-of-accounts','journals','general-ledger','fiscal','fixed-assets'] },
-      { title:'ภาษี & e-Filing', ids:['vat','wht','etax','tax-calendar','rd-export'] },
-      { title:'HR & เงินเดือน', ids:['organization','payroll','leave-types','leave-calendar','salary-advance','commission'] },
-      { title:'รายงาน & วิเคราะห์', ids:['executive-reports','reports','budget','aging','arap-analysis','fpa','executive-dashboard'] },
-      { title:'CMS / Multi-Site', ids:['cms-sites','cms-edit','cms-leads','cms-bookings','cms-orders'] },
-      { title:'ตั้งค่า / Admin', ids:['settings','settings-features','users','roles','audit-log','approvals','integrations'] },
-    ];
+    // กลุ่มเมนูสร้างจาก Layout.navItems ตอน runtime — เดิมเป็นสำเนามือที่ตกเมนูที่เพิ่มทีหลัง
+    // (ที่พัก · ตั้งค่าที่พัก · ภาษีย้อนหลัง ฯลฯ) ⇒ เจ้าของซ่อนเมนูพวกนั้นทั้งบริษัทไม่ได้เลย
+    // (defect class เดียวกับ MENU_SECTIONS ใน roles.html ที่แก้ไปแล้ว)
+    const MENU_GROUPS = (() => {
+      const out = []; let cur = null;
+      (Layout.navItems || []).forEach(it => {
+        if (it.section) { cur = { title: it.section, ids: [] }; out.push(cur); return; }
+        if (!it.id || it.adminOnly || it.platformAdmin) return;
+        if (!cur) { cur = { title: 'หลัก', ids: [] }; out.push(cur); }
+        cur.ids.push(it.id);
+      });
+      return out.filter(g => g.ids.length);
+    })();
+    const MENU_LABEL = Object.fromEntries((Layout.navItems || []).filter(it => it.id).map(it => [it.id, `${it.icon || ''} ${it.label}`.trim()]));
 
     const Page = {
       _data: null,
@@ -167,7 +164,7 @@
           ${g.ids.map(id => `
             <div class="menu-row">
               <input type="checkbox" id="hide_${id}" ${hidden.has(id) ? 'checked' : ''} onchange="Page.toggleMenu('${id}', this.checked)">
-              <label for="hide_${id}">${id} — <span style="color:#64748b">ซ่อนเมนูนี้</span></label>
+              <label for="hide_${id}">${Layout.esc(MENU_LABEL[id] || id)} <span style="color:#94a3b8;font-size:11px">(${id})</span> — <span style="color:#64748b">ซ่อนเมนูนี้</span></label>
             </div>`).join('')}
         `).join('');
       },

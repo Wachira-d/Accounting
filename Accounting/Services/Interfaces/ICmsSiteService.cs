@@ -12,6 +12,7 @@ public interface ICmsSiteService
     Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search = null, int page = 1, int pageSize = 20);
     Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId);
     Task<SiteResponse> PublishSiteAsync(Guid companyId, Guid siteId, string userId);
+    Task<ApplySiteTemplateResponse> ApplyTemplateAsync(Guid companyId, Guid siteId, ApplySiteTemplateRequest request, string userId);
 
     // Domains
     Task<DomainResponse> AddDomainAsync(Guid companyId, Guid siteId, CreateDomainRequest request, string userId);
