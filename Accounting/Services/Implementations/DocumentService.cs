@@ -11421,38 +11421,50 @@ public partial class DocumentService : IDocumentService
         var payIds = payments.Select(p => p.Id).ToList();
         var receiptFkIds = payments.Where(p => p.ReceiptDocumentId.HasValue)
             .Select(p => p.ReceiptDocumentId!.Value).ToList();
-        var receiptDocs = payIds.Count == 0
-            ? new List<(Guid Id, string Number, Guid? PayId)>()
-            : (await _db.Documents.AsNoTracking()
+        // ⚠️ ห้ามใช้ ternary คร่อมสองสาขาที่เป็น tuple — ถ้า**ชื่อสมาชิกไม่ตรงกัน**
+        // ทุกตัว C# จะหา common type แล้ว **ทิ้งชื่อที่ไม่ตรง** ⇒ `(Guid Id, string,
+        // Guid?)` แล้วฟ้อง CS1061 ที่จุดที่เรียกชื่อนั้นทีหลัง (เจอจริง build ฝั่งผู้ใช้)
+        // → ประกาศชนิดไว้ตรง ๆ แล้วเติมทีหลัง ชัดเจนกว่าและไม่มีทางเพี้ยน
+        var receiptByPayment = new Dictionary<Guid, (Guid Id, string Number)>();
+        var receiptById = new Dictionary<Guid, string>();
+        if (payIds.Count > 0)
+        {
+            var receiptDocs = await _db.Documents.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && !r.IsDeleted
                     && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
                     && ((r.SettlementPaymentId != null && payIds.Contains(r.SettlementPaymentId.Value))
                         || receiptFkIds.Contains(r.Id)))
                 .Select(r => new { r.Id, r.DocumentNumber, r.SettlementPaymentId })
-                .ToListAsync())
-                .Select(r => (r.Id, r.DocumentNumber, r.SettlementPaymentId)).ToList();
-        var receiptByPayment = receiptDocs.Where(r => r.PayId.HasValue)
-            .GroupBy(r => r.PayId!.Value)
-            .ToDictionary(g => g.Key, g => (g.First().Id, g.First().Number));
-        var receiptById = receiptDocs.ToDictionary(r => r.Id, r => r.Number);
+                .ToListAsync();
+            foreach (var r in receiptDocs)
+            {
+                receiptById[r.Id] = r.DocumentNumber;
+                if (r.SettlementPaymentId.HasValue)
+                    receiptByPayment.TryAdd(r.SettlementPaymentId.Value, (r.Id, r.DocumentNumber));
+            }
+        }
 
         (Guid? Id, string? Number) ReceiptOf(Payment p)
         {
-            if (receiptByPayment.TryGetValue(p.Id, out var byPay)) return (byPay.Item1, byPay.Item2);
+            if (receiptByPayment.TryGetValue(p.Id, out var byPay)) return (byPay.Id, byPay.Number);
             if (p.ReceiptDocumentId.HasValue && receiptById.TryGetValue(p.ReceiptDocumentId.Value, out var num))
                 return (p.ReceiptDocumentId, num);
             return (null, null);
         }
 
-        var rows = payments.Select(p => new PaymentResponse(
-            p.Id, p.PaymentNumber, p.DocumentId,
-            p.PaymentDate, p.Amount, p.PaymentMethod,
-            p.Reference, p.BankAccount, p.BankAccountId,
-            p.Notes, p.CreatedAt,
-            HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
-            PayerSignatureName: p.PayerSignatureName,
-            ReceiptDocumentId: ReceiptOf(p).Id,
-            ReceiptDocumentNumber: ReceiptOf(p).Number)).ToList();
+        var rows = payments.Select(p =>
+        {
+            var rec = ReceiptOf(p);   // คำนวณครั้งเดียวต่อแถว
+            return new PaymentResponse(
+                p.Id, p.PaymentNumber, p.DocumentId,
+                p.PaymentDate, p.Amount, p.PaymentMethod,
+                p.Reference, p.BankAccount, p.BankAccountId,
+                p.Notes, p.CreatedAt,
+                HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
+                PayerSignatureName: p.PayerSignatureName,
+                ReceiptDocumentId: rec.Id,
+                ReceiptDocumentNumber: rec.Number);
+        }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
         // หลัก: สองเส้นทางชำระ (แปลง vs บันทึกชำระ) ต้องเห็นประวัติเหมือนกัน.

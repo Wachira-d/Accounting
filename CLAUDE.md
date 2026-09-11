@@ -571,6 +571,7 @@ python3 tools/sequence_lock_check.py # ออกเลขรันเองด�
 python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่)
 python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
 python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
+python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -2088,6 +2089,24 @@ awk brace-balance                      # ทุก .cs ที่แก้
   _ฟ้อง 1 จุด · สร้างไฟล์ probe ที่เขียน `Helpers.PdpaPolicy` ใน_
   _`Accounting.Services.Implementations` (รูปเดิมที่ checker เขียนมาจับ) → ฟ้อง 1 จุด ·_
   _ทั้งเรพ 0 จุด)_
+- **ternary ที่สองสาขาเป็น tuple "ชื่อไม่ตรงกัน" = ชื่อหายเงียบ แล้ว error ไปโผล่ที่อื่น**
+  เขียน `var xs = ids.Count == 0 ? new List<(Guid Id, string Number, Guid? PayId)>() :
+  rows.Select(r => (r.Id, r.DocumentNumber, r.SettlementPaymentId)).ToList();` — สาขาแรก
+  **ตั้งชื่อ** สาขาสอง **อนุมานชื่อ**จาก member access ⇒ C# หา common type ของสองสาขาแล้ว
+  **ทิ้งชื่อตำแหน่งที่ไม่ตรง** ได้ `(Guid Id, string, Guid?)`. บรรทัดที่ประกาศ**ไม่ error
+  เลยสักตัว** — CS1061 "ไม่มี `PayId`/`Number`" ไปโผล่ที่จุดใช้ซึ่งอยู่ห่างออกไป จึงอ่านแล้ว
+  งงว่าทำไมชื่อที่พิมพ์ไว้ชัด ๆ หายไป (ญาติของ "อ้างสมาชิกที่ไม่มีอยู่บนชนิดที่ถืออยู่จริง"
+  แต่ที่นี่**ชนิดถูกเปลี่ยนโดยคอมไพเลอร์เอง** ไม่ใช่เราอ่านชนิดผิด)
+  → กติกา: อย่าใช้ ternary คร่อมค่าที่เป็น tuple — **ประกาศชนิดไว้ตรง ๆ แล้วเติมทีหลัง**
+  (`var d = new Dictionary<…>(); if (…) { … }`) ชัดเจนกว่าและไม่มีทางเพี้ยน · ถ้าจำเป็น
+  ต้องใช้จริง ให้ตั้งชื่อในสาขา else ให้ครบ (`Select(r => (Id: r.Id, Number: r.DocumentNumber))`)
+  _(→ เพิ่ม `tools/tuple_name_merge_check.py` — เทียบ "ชื่อที่ประกาศ" กับ "ชื่อที่อนุมานได้"_
+  _ตำแหน่งต่อตำแหน่ง. **ตัวนี้เขียนได้แม่นโดยไม่ชนกำแพง type resolution** ที่ทำให้ checker_
+  _`.HasValue` และ `nullable_unwrap` ถูกทิ้งไป เพราะกติกาอนุมานชื่อ tuple เป็น **syntax ล้วน**_
+  _(ชื่อ = ตัวระบุตัวสุดท้ายของ member access) ไม่ต้องรู้ชนิดของตัวแปรเลย ·_
+  _เรพมีรูปนี้อีก 2 จุด (`DocumentService` 3527/3609) ที่ชื่อ**ตรงกันพอดี** = true negative_
+  _ของจริง ไม่ใช่ไฟล์สังเคราะห์ · negative test: ใส่บั๊กจริงกลับเข้าไป → ฟ้อง 1 จุดพร้อม_
+  _โชว์ทั้งสองชุดชื่อ · ทั้งเรพ 0 จุด)_
 - แจ้งผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ — รบกวน rebuild ฝั่งคุณ"
 
 ### G. Testing mandate (ช่องโหว่ใหญ่สุดของระบบ)
