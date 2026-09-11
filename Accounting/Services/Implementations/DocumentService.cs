@@ -10564,6 +10564,107 @@ public partial class DocumentService : IDocumentService
         return receipt;
     }
 
+    /// <summary>ออกใบเสร็จรับเงินให้ <b>การรับชำระที่บันทึกไปแล้ว</b> (ย้อนหลัง)
+    ///
+    /// <para>═══ ที่มา (ผู้ใช้รายงาน 2026-09-11) ═══ ก่อนด่าน "ใบเสร็จต้องลงวันที่
+    /// รับเงินจริง" (ม.105) เส้น <c>CreatePaymentAsync</c> ยอมให้ใบกำกับ<b>ยกหัว</b>
+    /// เป็นใบเสร็จเองเมื่อรับครบงวดเดียว แล้ว<b>ไม่ออก REC แยก</b>. พอด่านมา หัวก็
+    /// กลับเป็น "ใบกำกับภาษี" ถูกต้องตามกฎหมาย — แต่แถวที่บันทึกไว้แล้วกลายเป็น
+    /// <b>มี JE รับเงิน มีเงินเข้าบัญชี แต่ไม่มีกระดาษใบรับให้ลูกค้าเลย</b>
+    /// (เคสจริง: PAY-202609-0010 · JE RV-202609-0006 · ใบ TIV-20260805-0005)</para>
+    ///
+    /// <para>กติกา "ด่านที่ปิดทางต้องมีทางไปต่อ" (กฎเหล็ก #4) — การแก้โค้ดอย่างเดียว
+    /// ไม่พอเมื่อของเสียถูก persist ไว้แล้ว. **แต่ห้ามเขียน migration ไล่สร้างเอกสาร
+    /// ย้อนหลังเอง** เพราะเลขที่ §86/4 ต้องออกตอนคนตัดสินใจ (gap-free + ตรวจสอบได้)
+    /// → เปิดเป็นปุ่มให้ผู้ใช้กดทีละใบแทน</para>
+    ///
+    /// <para>ใบที่ได้เป็นตัวเดียวกับที่เส้นบันทึกชำระออกให้ (<see cref="CreateSettlementReceiptAsync"/>)
+    /// — ลงวันที่ <c>payment.PaymentDate</c> · ไม่ลง JE ซ้ำ · ไม่คิด VAT ซ้ำ</para></summary>
+    public async Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(
+        Guid companyId, Guid paymentId, string createdBy)
+    {
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // ล็อกแถว payment ในธุรกรรม — กันกดสองครั้งแล้วได้ใบเสร็จสองใบ
+            // (ซ้ำรอยบทเรียน VoidPaymentAsync: FOR UPDATE ต้องอยู่ใน transaction
+            //  ไม่งั้น lock ถูกปล่อยทันทีใน autocommit)
+            var payment = await _db.Payments
+                .FromSqlRaw(
+                    """SELECT * FROM "Payments" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
+                    paymentId, companyId)
+                .FirstOrDefaultAsync()
+                ?? throw new KeyNotFoundException("ไม่พบการชำระเงิน");
+
+
+            // มีใบเสร็จอยู่แล้ว → คืนใบเดิม ไม่สร้างซ้ำ (idempotent). เช็ค **สองทาง**
+            // เพราะข้อมูลเก่าอาจมีใบอยู่จริงแต่ FK บน payment ว่าง
+            var existing = await _db.Documents
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                    && (r.Id == payment.ReceiptDocumentId || r.SettlementPaymentId == paymentId));
+            if (existing != null)
+            {
+                // ซ่อมสายที่ขาดไปด้วยเลย — ครั้งหน้าปุ่มจะไม่โผล่มาให้กดอีก
+                if (payment.ReceiptDocumentId != existing.Id)
+                {
+                    payment.ReceiptDocumentId = existing.Id;
+                    await _db.SaveChangesAsync();
+                }
+                await tx.CommitAsync();
+                return new IssuedReceiptResult(existing.Id, existing.DocumentNumber,
+                    existing.DocumentDate, existing.Status == DocumentStatus.Draft, AlreadyExisted: true);
+            }
+
+            // เงินก้อนเดียวกระจายหลายใบ — ใบเสร็จ settlement เป็น 1 payment : 1 ใบ
+            // ต้นทาง จึงตัดสินยอดต่อใบเองไม่ได้ ("ไม่รู้ = บอกว่าไม่รู้")
+            var allocCount = await _db.PaymentAllocations.CountAsync(
+                a => a.PaymentId == paymentId && a.CompanyId == companyId && !a.IsDeleted);
+            var doc = await _db.Documents.FirstOrDefaultAsync(
+                d => d.Id == payment.DocumentId && d.CompanyId == companyId && !d.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทางของการชำระนี้");
+
+            // ด่านทั้งหมดอยู่ที่ Helpers/SettlementReceiptPolicy ตัวเดียว — คืนเหตุผล
+            // เป็นข้อความไทยที่เอาไปโชว์ได้ ไม่ใช่ bool ให้หน้าจอแต่งคำเอง
+            var why = Accounting.Helpers.SettlementReceiptPolicy.WhyCannotIssue(
+                payment.IsDeleted, doc.DocumentType, doc.Status, allocCount);
+            if (why != null) throw new InvalidOperationException(why);
+
+            // เกณฑ์ "ใบเสร็จนี้คือใบกำกับภาษี ณ วันรับเงิน (§78/1)" มาจาก helper
+            // ตัวเดียวกับเส้นบันทึกรับชำระ ("งวดเดียว" ที่นี่ = เป็นรายการชำระ
+            // รายการเดียวของใบ และยอดคงเหลือเป็นศูนย์)
+            var paymentCount = await _db.Payments.CountAsync(
+                pm => pm.DocumentId == doc.Id && pm.CompanyId == companyId && !pm.IsDeleted);
+            var carryVat = Accounting.Helpers.SettlementReceiptPolicy.CarriesTaxInvoiceRole(
+                doc.DocumentType, doc.VatAmount, doc.BalanceDue <= 0.005m && paymentCount == 1);
+
+            // สิทธิ์อนุมัติของ "ผู้กดออกใบ" → ใบสมบูรณ์ทันที (เลขจริง) หรือ Draft
+            // รอผู้มีสิทธิ์อนุมัติ — กติกาเดียวกับตอนบันทึกรับชำระ
+            var canApprove = true;
+            if (_permissionService != null && Guid.TryParse(createdBy, out var uid))
+                canApprove = await Accounting.Helpers.DocumentPermissionHelper
+                    .CanApproveAsync(_permissionService, companyId, uid, DocumentType.Receipt);
+
+            var receipt = await CreateSettlementReceiptAsync(
+                companyId, doc, payment, createdBy, canApprove, carryVat);
+            await _db.SaveChangesAsync();
+            payment.ReceiptDocumentId = receipt.Id;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return new IssuedReceiptResult(receipt.Id, receipt.DocumentNumber,
+                receipt.DocumentDate, receipt.Status == DocumentStatus.Draft, AlreadyExisted: false);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+        });
+    }
+
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
         // Validate Amount > 0
@@ -10834,8 +10935,11 @@ public partial class DocumentService : IDocumentService
                     // "ใบกำกับภาษี" ที่กฎหมายบังคับออก ณ วันรับเงิน (§78/1) → ถือ
                     // VAT/บรรทัดจากใบแจ้งหนี้ (หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน")
                     // — เหมือนผล convert ใบแจ้งหนี้→ใบเสร็จทุกประการ
-                    var carryVat = doc.DocumentType == DocumentType.Invoice
-                        && doc.VatAmount > 0 && singleShotFull;
+                    // กติกาเดียวกับเส้นออกใบย้อนหลัง (Helpers/SettlementReceiptPolicy)
+                    // — ห้ามเขียนเงื่อนไขซ้ำสองที่ ไม่งั้นใบเดียวกันถือ VAT หรือไม่ถือ
+                    // ขึ้นกับว่าผู้ใช้กดปุ่มไหน
+                    var carryVat = Accounting.Helpers.SettlementReceiptPolicy
+                        .CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount, singleShotFull);
                     var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove, carryVat);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
@@ -11309,13 +11413,46 @@ public partial class DocumentService : IDocumentService
         if (documentId.HasValue) query = query.Where(p => p.DocumentId == documentId.Value);
 
         var payments = await query.OrderByDescending(p => p.PaymentDate).ToListAsync();
+
+        // ใบเสร็จ (REC) ที่ออกคู่กับแต่ละการรับชำระ — batch เดียว ไม่ใช่ N+1.
+        // ค้น **สองทาง** (FK บน payment · SettlementPaymentId บนใบเสร็จ) เพราะแถว
+        // เก่าบางแถวมีใบอยู่จริงแต่ FK ว่าง ⇒ ถ้าดูทางเดียวจะโชว์ปุ่ม "ออกใบเสร็จ"
+        // ให้ใบที่มีอยู่แล้ว = ชวนให้ผู้ใช้ออกใบซ้ำ
+        var payIds = payments.Select(p => p.Id).ToList();
+        var receiptFkIds = payments.Where(p => p.ReceiptDocumentId.HasValue)
+            .Select(p => p.ReceiptDocumentId!.Value).ToList();
+        var receiptDocs = payIds.Count == 0
+            ? new List<(Guid Id, string Number, Guid? PayId)>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                    && ((r.SettlementPaymentId != null && payIds.Contains(r.SettlementPaymentId.Value))
+                        || receiptFkIds.Contains(r.Id)))
+                .Select(r => new { r.Id, r.DocumentNumber, r.SettlementPaymentId })
+                .ToListAsync())
+                .Select(r => (r.Id, r.DocumentNumber, r.SettlementPaymentId)).ToList();
+        var receiptByPayment = receiptDocs.Where(r => r.PayId.HasValue)
+            .GroupBy(r => r.PayId!.Value)
+            .ToDictionary(g => g.Key, g => (g.First().Id, g.First().Number));
+        var receiptById = receiptDocs.ToDictionary(r => r.Id, r => r.Number);
+
+        (Guid? Id, string? Number) ReceiptOf(Payment p)
+        {
+            if (receiptByPayment.TryGetValue(p.Id, out var byPay)) return (byPay.Item1, byPay.Item2);
+            if (p.ReceiptDocumentId.HasValue && receiptById.TryGetValue(p.ReceiptDocumentId.Value, out var num))
+                return (p.ReceiptDocumentId, num);
+            return (null, null);
+        }
+
         var rows = payments.Select(p => new PaymentResponse(
             p.Id, p.PaymentNumber, p.DocumentId,
             p.PaymentDate, p.Amount, p.PaymentMethod,
             p.Reference, p.BankAccount, p.BankAccountId,
             p.Notes, p.CreatedAt,
             HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
-            PayerSignatureName: p.PayerSignatureName)).ToList();
+            PayerSignatureName: p.PayerSignatureName,
+            ReceiptDocumentId: ReceiptOf(p).Id,
+            ReceiptDocumentNumber: ReceiptOf(p).Number)).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
         // หลัก: สองเส้นทางชำระ (แปลง vs บันทึกชำระ) ต้องเห็นประวัติเหมือนกัน.

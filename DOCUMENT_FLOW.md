@@ -4847,3 +4847,31 @@ _ไม่รู้วันรับเงิน (ปิดยอดด้ว�
 _เอกสารเก่าที่เคยได้หัว 3-in-1 แบบผิดจะกลับเป็น "ใบกำกับภาษี" เอง (คิดตอน render ไม่ได้ persist) —_
 _ทางออกให้ลูกค้าคือ **แปลงเอกสาร → ใบเสร็จรับเงิน** (`TaxInvoice → Receipt` มีใน `ValidConversions` แล้ว)._
 _เทสต์ `CombinedReceiptSameDayTests` (ล็อกสองทิศ) + `PaidOnIssueHeaderTests` mirror ตามไปด้วย_
+
+_Last verified against codebase: 2026-09-11 (รอบ 152 — **ทางไปต่อของการรับชำระที่ไม่มีเอกสารคู่**:
+`POST document/payments/{id}/receipt` → `IssueReceiptForPaymentAsync`)_
+
+_ผู้ใช้รายงานต่อจากรอบ 151: ใบ `TIV-20260805-0005` กลับเป็น "ใบกำกับภาษี" ถูกต้องแล้ว **แต่**
+การรับชำระที่บันทึกไว้ก่อนการแก้ (`PAY-202609-0010` · JE `RV-202609-0006` Dr ธนาคาร 111,800 +
+Dr ภาษีถูกหัก 3,225 / Cr ลูกหนี้ 115,025) ยังเหลือ **JE รับเงินที่ไม่มีเอกสารใบรับให้ลูกค้า** —
+เพราะเส้นเดิม `combinedSelfReceipt` กด REC ทิ้งไปตั้งแต่ตอนนั้น. **แก้โค้ดอย่างเดียวไม่พอเมื่อของ
+เสียถูก persist ไว้แล้ว** (defect class เดิมของเรพนี้ — `OcrLearnedPatterns` · `VendorKnownGoodValues`
+· `AiCallStatus` · e-Tax `OFFLINE-`) แต่ที่นี่ **ห้ามเขียน migration ไล่สร้างเอกสารย้อนหลัง**
+เพราะเลข §86/4 ต้อง gap-free และต้องตรวจสอบได้ว่า "ใครเป็นคนออก" → เปิดเป็นปุ่มให้คนกดทีละใบ_
+
+| ส่วน | รายละเอียด |
+| --- | --- |
+| ทางเข้าใหม่ | `POST /api/companies/{companyId}/document/payments/{paymentId}/receipt` — ด่านสิทธิ์ `DenyDocAsync(Receipt, Create)` (อยู่ในลิสต์ `write_permission_gate_check` แล้ว) |
+| ผลลัพธ์ | ใบเดียวกับที่เส้นบันทึกรับชำระออกให้ (`CreateSettlementReceiptAsync`) — `DocumentDate = payment.PaymentDate` (ม.105) · `IsSettlementReceipt=true` · `SettlementPaymentId` · **ไม่ลง JE ซ้ำ** · **ไม่คิด VAT ซ้ำ** |
+| idempotent | มีใบอยู่แล้ว → คืนใบเดิม + `AlreadyExisted=true` (ไม่สร้างซ้ำ) · ค้นสองทาง (`Payment.ReceiptDocumentId` **และ** `Document.SettlementPaymentId`) แล้วซ่อม FK ที่ขาดให้ด้วย |
+| กันกดสองครั้ง | `FOR UPDATE` บนแถว `Payments` **ภายใน** transaction (บทเรียนเดิมของ `VoidPaymentAsync` — lock นอก tx ถูกปล่อยทันที) |
+| สิทธิ์ผู้กด | มีสิทธิ์อนุมัติ `Receipt` → ใบสมบูรณ์ เลขจริงทันที · ไม่มี → `Draft` (`DRAFT-…`) รอผู้มีสิทธิ์อนุมัติ |
+| ที่ปฏิเสธ | `Helpers/SettlementReceiptPolicy.WhyCannotIssue` — การชำระถูกยกเลิก · เงินก้อนเดียวกระจายหลายใบ (ให้ไปใช้ "แปลงเอกสาร → ใบเสร็จรับเงิน") · ต้นทางไม่ใช่ฝั่งรับเงิน · ต้นทาง Voided/Rejected/Draft |
+| หน้าเว็บ | ตาราง "ประวัติการชำระเงิน" ในหน้ารายละเอียดเอกสาร เพิ่มคอลัมน์ **ใบเสร็จ** — มีใบ → ลิงก์ไปใบนั้น · ไม่มี → ปุ่ม "🧾 ออกใบเสร็จ" (ห้ามปล่อยช่องว่างเงียบ) |
+
+**helper ใหม่ `Helpers/SettlementReceiptPolicy`** — เกณฑ์ "ใบเสร็จนี้ถือ VAT (= ใบกำกับภาษี
+ณ วันรับเงิน §78/1) หรือเป็นใบรับเปล่า" เดิมเขียนอยู่ที่เส้นบันทึกรับชำระที่เดียว
+(`Invoice && VatAmount > 0 && singleShotFull`) — พอเปิดเส้นที่สอง ถ้าคัดลอกไปวางอีกชุดจะได้
+**ใบเดียวกันถือ VAT หรือไม่ถือ ขึ้นกับว่าผู้ใช้กดปุ่มไหน** ⇒ ยุบเป็นตัวเดียว
+(`CarriesTaxInvoiceRole` · `IsReceivableSource` · `WhyCannotIssue`) + เทสต์
+`SettlementReceiptPolicyTests` (ล็อกทั้งเคสที่ต้องออกได้และทุกเหตุผลที่ปฏิเสธ)

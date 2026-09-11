@@ -264,4 +264,8 @@ public interface IDocumentService
     Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null);
     /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร</summary>
     Task VoidPaymentAsync(Guid companyId, Guid paymentId);
+    /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
+    /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
+    /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>
+    Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy);
 }

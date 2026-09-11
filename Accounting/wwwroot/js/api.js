@@ -264,6 +264,8 @@ const API = {
       purgeDocument: (id, force = false, reason = null) =>
         API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
+      // ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (แถวที่มี JE แต่ไม่มีเอกสารคู่)
+      issueReceiptForPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/receipt`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       // ใบวางบิลรวมใบค้างชำระหลายใบ (ลูกค้ารายเดียว)
       getBillingOutstanding: (contactId) => API.get(`${base}/document/billing-note/outstanding?contactId=${contactId}`),

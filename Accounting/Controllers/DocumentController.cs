@@ -1,3 +1,4 @@
+using System.Globalization;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
@@ -1222,6 +1223,36 @@ public class DocumentController : ControllerBase
         if (denyVoidPay != null) return Forbid403<string>(denyVoidPay);
         await _documentService.VoidPaymentAsync(companyId, paymentId);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกการชำระเงินสำเร็จ"));
+    }
+
+    /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง)
+    ///
+    /// <para>ที่มา: ก่อนด่าน ม.105 ("ใบรับต้องลงวันที่ที่รับเงินจริง") ใบกำกับที่รับ
+    /// ครบงวดเดียวจะ<b>ยกหัวเป็นใบเสร็จเอง</b>แล้วไม่ออก REC แยก — พอด่านมา หัวกลับ
+    /// เป็น "ใบกำกับภาษี" ถูกต้อง แต่แถวเดิมเหลือ **JE รับเงินที่ไม่มีเอกสารคู่**
+    /// (ผู้ใช้รายงาน 2026-09-11). ใบเสร็จตัวจริงต้องออกโดยคน ไม่ใช่ migration ไล่
+    /// สร้างย้อนหลัง เพราะเลข §86/4 ต้อง gap-free และตรวจสอบได้ว่าใครออก</para></summary>
+    [HttpPost("payments/{paymentId:guid}/receipt")]
+    public async Task<ActionResult<ApiResponse<IssuedReceiptResult>>> IssueReceiptForPayment(
+        Guid companyId, Guid paymentId)
+    {
+        // ออกใบเสร็จ = ออกเอกสารตามกฎหมายใบใหม่พร้อมเลขจริง ⇒ ระดับ Create ของ
+        // Receipt (เส้นบันทึกชำระใช้ Approve ของใบต้นทางอยู่แล้ว — ที่นี่คนกดอาจ
+        // เป็นคนละคนกับผู้รับเงิน จึงถามสิทธิ์ของชนิดที่กำลังจะออกจริง)
+        var denyIssue = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            DocumentType.Receipt, DocPerm.Create, "ออกใบเสร็จรับเงินสำหรับการชำระของ");
+        if (denyIssue != null) return Forbid403<IssuedReceiptResult>(denyIssue);
+        var result = await _documentService.IssueReceiptForPaymentAsync(
+            companyId, paymentId, JwtHelper.GetUserIdFromClaims(User).ToString());
+        var msg = result.AlreadyExisted
+            ? $"การรับชำระนี้มีใบเสร็จอยู่แล้ว: {result.ReceiptNumber}"
+            : result.IsDraft
+                ? $"สร้างใบเสร็จรับเงินเป็น \"ร่าง\" แล้ว — รอผู้มีสิทธิ์อนุมัติเพื่อออกเลขจริง"
+                // ⚠️ InvariantCulture — th-TH ทำให้ปฏิทินเริ่มต้นเป็นพุทธ ⇒ 2026 → 2569
+                // ปนกับ ค.ศ. ในข้อความเดียวกันโดยเงียบ (บทเรียนเดิมของเรพนี้)
+                : $"ออกใบเสร็จรับเงิน {result.ReceiptNumber} ลงวันที่ "
+                    + $"{result.ReceiptDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} แล้ว";
+        return Ok(new ApiResponse<IssuedReceiptResult>(true, result, msg));
     }
 
     public sealed record BulkApproveRequest(List<Guid> DocumentIds, bool AcknowledgeWarnings);

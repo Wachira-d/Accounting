@@ -9354,9 +9354,20 @@
             const journals = journalsRes?.data?.items || journalsRes?.data || [];
             let extraSections = '';
             if (payments.length) {
+              // คอลัมน์ "ใบเสร็จ" — การรับชำระที่ยังไม่มี REC ต้องเห็นปุ่มออกใบ
+              // ไม่ใช่ช่องว่างเงียบ ๆ (เคสจริง: รับชำระที่บันทึกก่อนด่าน ม.105
+              // มี JE รับเงินแต่ไม่มีเอกสารคู่ให้ลูกค้า). แถว source='document'
+              // คือใบ settle เอง จึงไม่มีปุ่ม
+              const recCell = (p) => {
+                if (p.receiptDocumentNumber)
+                  return `<a href="#" onclick="Page.detail('${p.receiptDocumentId}');return false;">${Layout.esc(p.receiptDocumentNumber)}</a>`;
+                if (p.source === 'document') return '<span class="text-gray-400">—</span>';
+                return `<button class="btn btn-sm btn-secondary" title="รับเงินแล้วแต่ยังไม่มีใบเสร็จให้ลูกค้า — ออกใบลงวันที่รับเงินจริง (ม.105)"
+                  onclick="Page.issueReceiptForPayment('${p.id}','${d.id}')">🧾 ออกใบเสร็จ</button>`;
+              };
               extraSections += `<div style="margin-top:16px"><h4 style="font-size:14px;margin-bottom:8px">ประวัติการชำระเงิน (${payments.length})</h4>
-                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th></tr></thead>
-                <tbody>${payments.map(p => `<tr><td>${p.paymentNumber}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${Layout.money(p.amount)}</td><td>${p.paymentMethod||'-'}</td></tr>`).join('')}</tbody></table></div>`;
+                <table class="table" style="font-size:12px"><thead><tr><th>เลขที่</th><th>วันที่</th><th class="text-right">จำนวน</th><th>วิธี</th><th>ใบเสร็จ</th></tr></thead>
+                <tbody>${payments.map(p => `<tr><td>${Layout.esc(p.paymentNumber)}</td><td>${Layout.date(p.paymentDate)}</td><td class="text-right">${Layout.money(p.amount)}</td><td>${Layout.esc(p.paymentMethod||'-')}</td><td>${recCell(p)}</td></tr>`).join('')}</tbody></table></div>`;
             }
             if (journals.length) {
               // host ว่างไว้ — เนื้อหาจริงมาจาก renderDocJournalSection() ที่อ่าน
@@ -10830,6 +10841,23 @@
           if (res?.data?.id) await this.detail(res.data.id);
         } catch (e) { Layout.toast(e.message || 'ออกใบกำกับภาษีเต็มรูปไม่สำเร็จ', 'error'); }
       },
+      /// ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว — ทางไปต่อของแถวที่มี JE
+      /// รับเงินแต่ไม่มีเอกสารคู่ (รับชำระที่บันทึกก่อนด่าน ม.105). เซิร์ฟเวอร์เป็น
+      /// คนตัดสินทุกอย่าง (วันที่ใบ = วันรับเงิน · ถือ VAT ไหม · เลขชุดไหน) —
+      /// หน้านี้แค่กดแล้วโหลดใหม่
+      async issueReceiptForPayment(paymentId, docId) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ออกใบเสร็จรับเงินสำหรับการรับชำระนี้?\n\n'
+          + 'ใบจะลงวันที่ "วันที่รับเงินจริง" ตาม ป.รัษฎากร ม.105 '
+          + 'และไม่ลงบัญชีซ้ำ (JE ของการรับชำระลงไปแล้ว)')) return;
+        try {
+          const res = await api.issueReceiptForPayment(paymentId);
+          Layout.toast(res.message || 'ออกใบเสร็จรับเงินแล้ว', 'success', 8000);
+          if (docId) await this.detail(docId);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 8000); }
+      },
+
       async voidPayment(paymentId) {
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({

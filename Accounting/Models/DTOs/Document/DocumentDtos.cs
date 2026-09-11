@@ -1351,8 +1351,35 @@ public record PaymentResponse(
     /// "document" = แถวสังเคราะห์จากเอกสาร settle เส้น "แปลงเอกสาร"
     /// (ใบเสร็จ/ใบสำคัญรับ-จ่าย/CIL ที่ไม่มี Payment row) — read-only ให้
     /// สองเส้นทางเห็นประวัติเหมือนกัน.</summary>
-    string Source = "payment");
+    string Source = "payment",
+    /// <summary>ใบเสร็จรับเงิน (REC) ที่ออกคู่กับการรับชำระรายการนี้ — <c>null</c> =
+    /// <b>ยังไม่มีกระดาษใบรับให้ลูกค้า</b> ซึ่งหน้าเว็บต้องแสดงปุ่ม "ออกใบเสร็จ"
+    /// ไม่ใช่ปล่อยว่างเงียบ ๆ
+    ///
+    /// <para>ที่มา: การรับชำระที่บันทึกก่อนด่าน ม.105 (ใบเดิมยกหัวเป็นใบเสร็จเอง)
+    /// ไม่เคยออก REC — พอหัวกลับเป็น "ใบกำกับภาษี" ตามกฎหมาย แถวเหล่านั้นจึงเหลือ
+    /// JE รับเงินโดยไม่มีเอกสารคู่</para></summary>
+    Guid? ReceiptDocumentId = null,
+    string? ReceiptDocumentNumber = null);
 
+
+/// <summary>ผลของการ "ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว"
+/// (<c>POST payments/{id}/receipt</c>)
+///
+/// <para>คืนแค่ตัวตนของใบปลายทาง ไม่ใช่ <c>DocumentResponse</c> เต็มใบ — ใบที่เพิ่ง
+/// สร้างยังไม่ได้ load บรรทัดกลับมา การคืน DTO เต็มจะได้ใบที่ <c>Lines</c> ว่าง
+/// ซึ่งหน้าเว็บอ่านแล้วเข้าใจผิดว่าใบไม่มีรายการ ("ห้ามคืนค่าที่ไม่ใช่ความจริง")</para>
+///
+/// <para><paramref name="AlreadyExisted"/> = มีใบเสร็จของการรับชำระนี้อยู่แล้ว
+/// (ไม่ได้สร้างใหม่) — ข้อความที่โชว์ต้องต่างกัน ไม่งั้นผู้ใช้นึกว่าออกใบซ้ำ ·
+/// <paramref name="IsDraft"/> = ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จ ใบจึงเป็นร่าง
+/// (เลขจริงออกตอนผู้มีสิทธิ์อนุมัติ — gap-free §86/4)</para></summary>
+public record IssuedReceiptResult(
+    Guid ReceiptId,
+    string ReceiptNumber,
+    DateTime ReceiptDate,
+    bool IsDraft,
+    bool AlreadyExisted);
 
 public record WriteOffBadDebtRequest(string? Reason);
 public record BatchConvertRequest(List<Guid> DocumentIds);
