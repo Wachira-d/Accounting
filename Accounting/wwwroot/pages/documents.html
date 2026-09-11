@@ -9362,6 +9362,12 @@
                 if (p.receiptDocumentNumber)
                   return `<a href="#" onclick="Page.detail('${p.receiptDocumentId}');return false;">${Layout.esc(p.receiptDocumentNumber)}</a>`;
                 if (p.source === 'document') return '<span class="text-gray-400">—</span>';
+                // ใบต้นทางเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินก้อนนี้อยู่แล้ว
+                // (รับครบวันเดียวกับวันที่ใบ) → ห้ามเสนอปุ่ม ไม่งั้นได้กระดาษใบรับ 2 ใบ
+                // ต่อการรับเงินก้อนเดียว. **ธงมาจากเซิร์ฟเวอร์** (ตัวตัดสินเดียวกับ
+                // หัวกระดาษ) ห้าม JS เดาเอง · ซ่อนปุ่มแล้วต้องบอกเหตุผล + ทางไปต่อ
+                if (p.sourceServesAsReceipt)
+                  return `<span class="text-gray-500" title="ใบนี้รับเงินครบในวันเดียวกับวันที่บนใบ หัวกระดาษจึงเป็น &quot;ใบกำกับภาษี/ใบเสร็จรับเงิน&quot; = เป็นใบเสร็จในตัวแล้ว — ถ้าต้องการแยกใบเสร็จทุกครั้ง ตั้งค่าบริษัทเป็น &quot;แยกใบกำกับภาษี–ใบเสร็จรับเงิน&quot; ที่หน้าตั้งค่า → เอกสาร">ใบนี้เป็นใบเสร็จในตัว</span>`;
                 return `<button class="btn btn-sm btn-secondary" title="รับเงินแล้วแต่ยังไม่มีใบเสร็จให้ลูกค้า — ออกใบลงวันที่รับเงินจริง (ม.105)"
                   onclick="Page.issueReceiptForPayment('${p.id}','${d.id}')">🧾 ออกใบเสร็จ</button>`;
               };

@@ -46,7 +46,7 @@ public class SettlementReceiptPolicyTests
         // TIV-20260805-0005 · 111,800 · ชำระครบแล้ว (Paid) · รับชำระรายการเดียว
         Assert.Null(SettlementReceiptPolicy.WhyCannotIssue(
             paymentVoided: false, DocumentType.TaxInvoice, DocumentStatus.Paid,
-            allocationCount: 0));
+            allocationCount: 0, sourceServesAsReceipt: false));
     }
 
     [Theory]
@@ -59,13 +59,14 @@ public class SettlementReceiptPolicyTests
         // ด่านเขียนเป็น "ห้ามสถานะไหน" ไม่ใช่ "ต้องเป็นสถานะไหน" — สถานะเป็น
         // lifecycle ที่ไหลไปข้างหน้าเอง (บทเรียนเดิมของ e-Tax gate)
         => Assert.Null(SettlementReceiptPolicy.WhyCannotIssue(
-            false, DocumentType.Invoice, st, 0));
+            false, DocumentType.Invoice, st, 0, sourceServesAsReceipt: false));
 
     [Fact]
     public void การชำระที่ถูกยกเลิก_ห้ามออกใบ()
     {
         var why = SettlementReceiptPolicy.WhyCannotIssue(
-            paymentVoided: true, DocumentType.TaxInvoice, DocumentStatus.Paid, 0);
+            paymentVoided: true, DocumentType.TaxInvoice, DocumentStatus.Paid, 0,
+            sourceServesAsReceipt: false);
         Assert.NotNull(why);
         Assert.Contains("ยกเลิก", why!);
     }
@@ -74,7 +75,8 @@ public class SettlementReceiptPolicyTests
     public void เงินก้อนเดียวกระจายหลายใบ_ห้ามเดายอด_และต้องบอกทางไปต่อ()
     {
         var why = SettlementReceiptPolicy.WhyCannotIssue(
-            false, DocumentType.Invoice, DocumentStatus.Paid, allocationCount: 3);
+            false, DocumentType.Invoice, DocumentStatus.Paid, allocationCount: 3,
+            sourceServesAsReceipt: false);
         Assert.NotNull(why);
         Assert.Contains("แปลงเอกสาร", why!);   // ปฏิเสธแล้วต้องมีทางไปต่อ ไม่ใช่ตันเฉย ๆ
     }
@@ -88,17 +90,40 @@ public class SettlementReceiptPolicyTests
     {
         Assert.False(SettlementReceiptPolicy.IsReceivableSource(t));
         Assert.NotNull(SettlementReceiptPolicy.WhyCannotIssue(
-            false, t, DocumentStatus.Paid, 0));
+            false, t, DocumentStatus.Paid, 0, sourceServesAsReceipt: false));
     }
 
     [Fact]
     public void เอกสารต้นทางที่ถูกยกเลิกหรือยังเป็นร่าง_ห้ามออก()
     {
         Assert.NotNull(SettlementReceiptPolicy.WhyCannotIssue(
-            false, DocumentType.TaxInvoice, DocumentStatus.Voided, 0));
+            false, DocumentType.TaxInvoice, DocumentStatus.Voided, 0, sourceServesAsReceipt: false));
         Assert.NotNull(SettlementReceiptPolicy.WhyCannotIssue(
-            false, DocumentType.TaxInvoice, DocumentStatus.Draft, 0));
+            false, DocumentType.TaxInvoice, DocumentStatus.Draft, 0, sourceServesAsReceipt: false));
     }
+
+    [Fact]
+    public void เคสจริงของผู้ใช้_ใบที่หัวเป็นใบกำกับใบเสร็จอยู่แล้ว_ห้ามออกใบเสร็จซ้ำ()
+    {
+        // TIV-20260805-0007 · ใบลงวันที่ 5 ส.ค. · PAY-202608-0007 รับเงิน 5 ส.ค.
+        // (วันเดียวกัน) ⇒ หัวกระดาษเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่แล้ว
+        // แต่หน้าจอยังโชว์ปุ่ม "ออกใบเสร็จ" ⇒ กดแล้วได้ใบรับใบที่สองของเงินก้อนเดิม
+        var why = SettlementReceiptPolicy.WhyCannotIssue(
+            false, DocumentType.TaxInvoice, DocumentStatus.Paid, 0,
+            sourceServesAsReceipt: true);
+        Assert.NotNull(why);
+        Assert.Contains("ใบเสร็จของการรับเงินนี้แล้ว", why!);
+        // ปฏิเสธแล้วต้องบอกทางไปต่อ (ตั้งค่าโหมดแยกใบ) ไม่ใช่ตันเฉย ๆ
+        Assert.Contains("แยกใบกำกับภาษี", why!);
+    }
+
+    [Fact]
+    public void ใบที่ยังไม่ได้ยกหัวเป็นใบเสร็จ_ยังออกใบเสร็จย้อนหลังได้เหมือนเดิม()
+        // ทิศตรงข้ามของเคสบน — ด่านใหม่ต้องไม่ปิดเส้นที่เพิ่งเปิดให้ผู้ใช้
+        // (รับเงินคนละวันกับวันที่ใบ = ใบต้นทางไม่ใช่ใบเสร็จ ⇒ ต้องออกได้)
+        => Assert.Null(SettlementReceiptPolicy.WhyCannotIssue(
+            false, DocumentType.TaxInvoice, DocumentStatus.Paid, 0,
+            sourceServesAsReceipt: false));
 
     [Fact]
     public void ทุกการปฏิเสธต้องมีข้อความไทยที่เอาไปโชว์ได้()
@@ -106,12 +131,13 @@ public class SettlementReceiptPolicyTests
         // ห้ามคืน bool เปล่า ๆ แล้วให้แต่ละหน้าจอแต่งคำเอง (= สำเนาชุดที่สาม)
         var reasons = new[]
         {
-            SettlementReceiptPolicy.WhyCannotIssue(true, DocumentType.Invoice, DocumentStatus.Paid, 0),
-            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Expense, DocumentStatus.Paid, 0),
-            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Invoice, DocumentStatus.Voided, 0),
-            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Invoice, DocumentStatus.Paid, 2),
+            SettlementReceiptPolicy.WhyCannotIssue(true, DocumentType.Invoice, DocumentStatus.Paid, 0, false),
+            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Expense, DocumentStatus.Paid, 0, false),
+            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Invoice, DocumentStatus.Voided, 0, false),
+            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.Invoice, DocumentStatus.Paid, 2, false),
+            SettlementReceiptPolicy.WhyCannotIssue(false, DocumentType.TaxInvoice, DocumentStatus.Paid, 0, true),
         };
         Assert.All(reasons, r => Assert.False(string.IsNullOrWhiteSpace(r)));
-        Assert.Equal(4, reasons.Distinct().Count());
+        Assert.Equal(5, reasons.Distinct().Count());
     }
 }

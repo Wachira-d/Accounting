@@ -1360,7 +1360,14 @@ public record PaymentResponse(
     /// ไม่เคยออก REC — พอหัวกลับเป็น "ใบกำกับภาษี" ตามกฎหมาย แถวเหล่านั้นจึงเหลือ
     /// JE รับเงินโดยไม่มีเอกสารคู่</para></summary>
     Guid? ReceiptDocumentId = null,
-    string? ReceiptDocumentNumber = null);
+    string? ReceiptDocumentNumber = null,
+    /// <summary>ใบต้นทาง<b>ทำหน้าที่ใบเสร็จของการรับเงินรายการนี้อยู่แล้ว</b>
+    /// (รับครบในวันเดียวกับวันที่บนใบ ⇒ หัวกระดาษพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน")
+    /// — หน้าเว็บต้อง<b>ไม่</b>เสนอปุ่ม "ออกใบเสร็จ" แต่ต้องบอกเหตุผลด้วย ห้ามซ่อนเงียบ
+    ///
+    /// <para>เซิร์ฟเวอร์คำนวณด้วย <c>DocumentService.ComputeServedAsReceipt</c> ตัวเดียว
+    /// กับที่ตัดสินหัวกระดาษ — ห้ามให้ JS เดาจากชนิด/ยอดเอง (สำเนามือ = drift)</para></summary>
+    bool SourceServesAsReceipt = false);
 
 
 /// <summary>ผลของการ "ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว"

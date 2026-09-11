@@ -51,6 +51,19 @@ public static class ReceiptIssuePolicy
     public static bool SettledSameDay(DateTime documentDate, DateTime? settledOn)
         => settledOn.HasValue && settledOn.Value.Date == documentDate.Date;
 
+    /// <summary>ใบต้นทางที่ยกหัวเป็นใบเสร็จ (<paramref name="documentServesAsReceipt"/>)
+    /// ทำหน้าที่เป็นใบรับของ<b>การรับชำระรายการนี้</b> ด้วยไหม
+    ///
+    /// <para>ต้องเทียบวันที่ของรายการชำระเอง ไม่ใช่เชื่อธงระดับเอกสารอย่างเดียว:
+    /// ใบที่ผ่อนหลายงวดแล้ว<b>งวดสุดท้าย</b>บังเอิญตรงวันที่บนใบ จะได้ธงระดับเอกสาร
+    /// เป็นจริง — แต่งวดก่อนหน้าที่รับเงินคนละวัน<b>ยังไม่มีกระดาษใบรับ</b>
+    /// ถ้าเอาธงระดับเอกสารไปปิดปุ่มทั้งแถว ผู้ใช้จะออกใบเสร็จให้งวดนั้นไม่ได้เลย</para>
+    ///
+    /// <para>ใช้ทั้งฝั่งแสดงผล (<c>GetPaymentsAsync</c> → ซ่อนปุ่ม "ออกใบเสร็จ")
+    /// และฝั่งด่าน (<c>IssueReceiptForPaymentAsync</c>) — ตัวเดียวกัน ห้ามคัดลอก</para></summary>
+    public static bool CoversPayment(bool documentServesAsReceipt, DateTime documentDate, DateTime paymentDate)
+        => documentServesAsReceipt && paymentDate.Date == documentDate.Date;
+
     /// <summary>เหตุผลที่ยก/ไม่ยกหัวเป็นใบเสร็จ — เอาไปโชว์ได้ (ห้ามให้หน้าจอ
     /// ซ่อนแล้วผู้ใช้เดาเอง). <c>null</c> = ยกหัวได้</summary>
     public static string? WhyNotCombined(ReceiptIssueMode mode, DateTime documentDate, DateTime? settledOn)

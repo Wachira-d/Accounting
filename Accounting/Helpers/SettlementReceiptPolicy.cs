@@ -34,9 +34,15 @@ public static class SettlementReceiptPolicy
     ///
     /// <para><b>ห้ามคืน bool เปล่า ๆ</b> แล้วให้แต่ละหน้าจอแต่งคำเอง (= สำเนาชุดที่สาม)
     /// และทุกการปฏิเสธต้องบอก<b>ทางไปต่อ</b> ไม่ใช่ตันเฉย ๆ (กฎเหล็ก #4)</para></summary>
+    /// <param name="sourceServesAsReceipt">ใบต้นทาง<b>ทำหน้าที่ใบเสร็จของการรับเงิน
+    /// ก้อนนี้อยู่แล้ว</b> (รับครบในวันเดียวกับวันที่บนใบ ⇒ หัวกระดาษพิมพ์
+    /// "ใบกำกับภาษี/ใบเสร็จรับเงิน" — ดู <c>DocumentService.ComputeServedAsReceipt</c>).
+    /// ไม่มีค่าเริ่มต้นโดยตั้งใจ: ผู้เรียกทุกรายต้อง<b>ตัดสินใจ</b>ว่าคำนวณมาแล้ว
+    /// ไม่ใช่ปล่อยผ่านเพราะลืมส่ง (กฎเหล็ก #4 — พารามิเตอร์ที่ตัดสินผลทางกฎหมาย
+    /// ห้ามมี default)</param>
     public static string? WhyCannotIssue(
         bool paymentVoided, DocumentType sourceType, DocumentStatus sourceStatus,
-        int allocationCount)
+        int allocationCount, bool sourceServesAsReceipt)
     {
         if (paymentVoided)
             return "การชำระเงินนี้ถูกยกเลิกไปแล้ว — ออกใบเสร็จไม่ได้";
@@ -50,6 +56,16 @@ public static class SettlementReceiptPolicy
         if (sourceStatus is DocumentStatus.Voided or DocumentStatus.Rejected or DocumentStatus.Draft)
             return $"เอกสารต้นทางอยู่ในสถานะ {sourceStatus} — ออกใบเสร็จไม่ได้ "
                 + "(ถ้าเอกสารถูกยกเลิกไปแล้ว ต้องยกเลิกการชำระนี้ด้วย)";
+        // ⬅ ที่มา (ผู้ใช้รายงาน 2026-09-11): ปุ่ม "ออกใบเสร็จ" โผล่บนใบ TIV ที่หัว
+        // กระดาษเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่แล้ว (รับเงินวันเดียวกับวันที่ใบ)
+        // ⇒ กดแล้วได้กระดาษใบที่สองที่อ้างการรับเงินก้อนเดียวกัน = ใบรับซ้ำ ซึ่งเป็น
+        // สิ่งที่ ReceiptIssuePolicy ทั้งไฟล์เขียนขึ้นมาเพื่อกัน
+        if (sourceServesAsReceipt)
+            return "ใบต้นทางรับเงินครบในวันเดียวกับวันที่บนใบ ระบบจึงพิมพ์หัวเป็น "
+                + "\"ใบกำกับภาษี/ใบเสร็จรับเงิน\" — ตัวใบเองเป็นใบเสร็จของการรับเงินนี้แล้ว "
+                + "ออกอีกใบจะมีกระดาษ 2 ใบที่อ้างการรับเงินก้อนเดียวกัน. "
+                + "ถ้าต้องการแยกใบเสร็จออกมาทุกครั้ง ให้ตั้งค่าบริษัทเป็น "
+                + "\"แยกใบกำกับภาษี–ใบเสร็จรับเงิน\" ที่หน้าตั้งค่า → เอกสาร";
         return null;
     }
 }

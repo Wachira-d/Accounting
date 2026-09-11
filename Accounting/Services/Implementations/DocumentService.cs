@@ -1929,18 +1929,7 @@ public partial class DocumentService : IDocumentService
         // (ไม่ใช่ N+1) เพื่อให้ป้ายประเภทเอกสารบน list ตรงกับหัวที่พิมพ์จริง
         var tivIdsOnPage = items.Where(d => d.DocumentType == DocumentType.TaxInvoice)
             .Select(d => d.Id).ToList();
-        var tivWithReceipt = tivIdsOnPage.Count == 0
-            ? new HashSet<Guid>()
-            : (await _db.Documents.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && r.RelatedDocumentId != null
-                    && tivIdsOnPage.Contains(r.RelatedDocumentId.Value)
-                    && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
-                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
-                    && r.Status != DocumentStatus.Rejected)
-                .Select(r => r.RelatedDocumentId!.Value)
-                .Distinct()
-                .ToListAsync())
-                .ToHashSet();
+        var tivWithReceipt = await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, tivIdsOnPage);
 
         // หัวเอกสารที่จะพิมพ์จริงของทั้งหน้า — resolver ตัวเดียวกับตอนออก PDF
         // (query คงที่ 3 ครั้ง/หน้า ไม่ใช่ N+1) เพื่อให้ป้ายบนตารางตรงกับกระดาษ
@@ -10627,10 +10616,23 @@ public partial class DocumentService : IDocumentService
                 d => d.Id == payment.DocumentId && d.CompanyId == companyId && !d.IsDeleted)
                 ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทางของการชำระนี้");
 
+            // ใบต้นทางเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินก้อนนี้อยู่แล้ว
+            // ไหม — ตัวตัดสินตัวเดียวกับที่หน้าจอ/PDF ใช้ (ComputeServedAsReceipt)
+            // ห้ามเขียนเกณฑ์ใหม่ตรงนี้. เทียบวันที่ของ **การชำระรายการนี้** ด้วย
+            // เพราะใบที่ผ่อนหลายงวดแล้วงวดสุดท้ายตรงวันที่ใบ ยังต้องออกใบเสร็จให้
+            // งวดก่อนหน้าที่รับเงินคนละวัน
+            var servedByDoc = ComputeServedAsReceipt(doc,
+                (await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, new[] { doc.Id })).Contains(doc.Id),
+                await GetReceiptIssueModeAsync(companyId),
+                (await LoadSettlementDatesAsync(_db, companyId, new[] { doc.Id }))
+                    .TryGetValue(doc.Id, out var settledOnSrc) ? settledOnSrc : null);
+            var sourceServesAsReceipt = Accounting.Helpers.ReceiptIssuePolicy.CoversPayment(
+                servedByDoc, doc.DocumentDate, payment.PaymentDate);
+
             // ด่านทั้งหมดอยู่ที่ Helpers/SettlementReceiptPolicy ตัวเดียว — คืนเหตุผล
             // เป็นข้อความไทยที่เอาไปโชว์ได้ ไม่ใช่ bool ให้หน้าจอแต่งคำเอง
             var why = Accounting.Helpers.SettlementReceiptPolicy.WhyCannotIssue(
-                payment.IsDeleted, doc.DocumentType, doc.Status, allocCount);
+                payment.IsDeleted, doc.DocumentType, doc.Status, allocCount, sourceServesAsReceipt);
             if (why != null) throw new InvalidOperationException(why);
 
             // เกณฑ์ "ใบเสร็จนี้คือใบกำกับภาษี ณ วันรับเงิน (§78/1)" มาจาก helper
@@ -11444,6 +11446,33 @@ public partial class DocumentService : IDocumentService
             }
         }
 
+        // ใบต้นทางทำหน้าที่ "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินแถวนี้อยู่แล้ว
+        // ไหม — ถ้าใช่ หน้าจอต้อง**ไม่**เสนอปุ่ม "ออกใบเสร็จ" (ผู้ใช้รายงาน
+        // 2026-09-11: ปุ่มโผล่บนใบที่หัวเป็นใบเสร็จอยู่แล้ว ⇒ ชวนออกใบรับซ้ำ).
+        // คำนวณที่เซิร์ฟเวอร์ด้วยตัวตัดสินตัวเดียวกับหัวกระดาษ — ห้ามให้ JS เดาเอง
+        // (defect class "สำเนามือฝั่ง JS ที่ตามหลังอยู่ไม่กี่ธง")
+        var srcDocIds = payments.Select(p => p.DocumentId).Distinct().ToList();
+        var srcDocs = srcDocIds.Count == 0
+            ? new List<Document>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && srcDocIds.Contains(d.Id))
+                .ToListAsync();
+        var srcWithReceipt = await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, srcDocIds);
+        var srcSettled = await LoadSettlementDatesAsync(_db, companyId, srcDocIds);
+        var srcMode = await GetReceiptIssueModeAsync(companyId);
+        var servedByDoc = new Dictionary<Guid, (bool Served, DateTime DocDate)>();
+        foreach (var d in srcDocs)
+            servedByDoc[d.Id] = (
+                ComputeServedAsReceipt(d, srcWithReceipt.Contains(d.Id), srcMode,
+                    srcSettled.TryGetValue(d.Id, out var srcPaidOn) ? srcPaidOn : null),
+                d.DocumentDate);
+
+        // การชำระ "รายการนี้" ถูกคุมด้วยหัวใบต้นทางไหม — ต้องเทียบวันที่ของรายการ
+        // ด้วย เพราะใบที่ผ่อนหลายงวดแล้วงวดสุดท้ายตรงวันที่ใบ ยังต้องออกใบเสร็จให้
+        // งวดก่อนหน้าที่รับเงินคนละวัน
+        bool ServedFor(Payment p) => servedByDoc.TryGetValue(p.DocumentId, out var sv)
+            && Accounting.Helpers.ReceiptIssuePolicy.CoversPayment(sv.Served, sv.DocDate, p.PaymentDate);
+
         (Guid? Id, string? Number) ReceiptOf(Payment p)
         {
             if (receiptByPayment.TryGetValue(p.Id, out var byPay)) return (byPay.Id, byPay.Number);
@@ -11463,7 +11492,8 @@ public partial class DocumentService : IDocumentService
                 HasPayerSignature: !string.IsNullOrWhiteSpace(p.PayerSignatureBase64),
                 PayerSignatureName: p.PayerSignatureName,
                 ReceiptDocumentId: rec.Id,
-                ReceiptDocumentNumber: rec.Number);
+                ReceiptDocumentNumber: rec.Number,
+                SourceServesAsReceipt: ServedFor(p));
         }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
@@ -15340,6 +15370,33 @@ public partial class DocumentService : IDocumentService
         return direct.Concat(allocated)
             .GroupBy(r => r.DocId)
             .ToDictionary(g => g.Key, g => g.Max(r => r.PaymentDate));
+    }
+
+    /// <summary>เอกสารใดใน <paramref name="documentIds"/> มี <b>ใบเสร็จแยก</b>
+    /// (REC/ใบสำคัญรับ) อ้างถึงอยู่ — batch เดียว ไม่ใช่ N+1
+    ///
+    /// <para>เงื่อนไขชุดนี้เดิมถูกคัดลอกไว้ 3 ที่ (หน้ารายการ · หน้ารายละเอียด ·
+    /// เส้นออกใบเสร็จย้อนหลัง) ซึ่งเป็น defect class "สำเนามือ = drift แน่นอน" —
+    /// drift ตรงนี้แปลว่า<b>หน้าจอบอกว่ายังไม่มีใบเสร็จ แต่กระดาษพิมพ์หัวว่ามีแล้ว</b>
+    /// (หรือกลับกัน) จึงยุบมาไว้ที่เดียว</para>
+    ///
+    /// <para>นับใบ <c>Draft</c> เป็น "ยังไม่มี" เพราะใบร่างยังไม่ใช่เอกสารตามกฎหมาย
+    /// (เลข <c>DRAFT-</c>) — กติกาเดียวกับตอนตัดสินหัวกระดาษ</para></summary>
+    internal static async Task<HashSet<Guid>> LoadDocIdsWithSeparateReceiptAsync(
+        AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> documentIds)
+    {
+        if (documentIds.Count == 0) return new HashSet<Guid>();
+        var ids = documentIds.Distinct().ToList();
+        return (await db.Documents.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                && r.RelatedDocumentId != null && ids.Contains(r.RelatedDocumentId.Value)
+                && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+                && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
+                && r.Status != DocumentStatus.Rejected)
+            .Select(r => r.RelatedDocumentId!.Value)
+            .Distinct()
+            .ToListAsync())
+            .ToHashSet();
     }
 
     /// <summary>ใบกำกับ "ทำหน้าที่ใบเสร็จในตัว" ไหม — mirror ของกติกาใน

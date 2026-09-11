@@ -146,4 +146,30 @@ public class CombinedReceiptSameDayTests
         // ผ่อนหลายงวด → ออกใบเสร็จต่องวดตามเดิม (ไม่เกี่ยวกับวันที่)
         Assert.False(CombinedSelfReceipt(ReceiptIssueMode.Combined, IssuedOn, true, singleShotFull: false));
     }
+
+    // ── ปุ่ม "ออกใบเสร็จ" บนประวัติการชำระ (ผู้ใช้รายงาน 2026-09-11) ──────
+    // TIV-20260805-0007 หัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" อยู่แล้ว แต่ปุ่มยังโผล่
+    // ⇒ กดแล้วได้กระดาษใบรับใบที่สองของเงินก้อนเดิม
+    [Fact]
+    public void เคสจริง_รับเงินวันเดียวกับวันที่ใบ_ถือว่าใบต้นทางเป็นใบรับของงวดนั้นแล้ว()
+        => Assert.True(ReceiptIssuePolicy.CoversPayment(
+            documentServesAsReceipt: true, IssuedOn, IssuedOn));
+
+    [Fact]
+    public void งวดที่รับเงินคนละวัน_ยังต้องออกใบเสร็จได้_แม้ใบจะยกหัวแล้ว()
+        // ใบผ่อน 2 งวด: งวดแรก 27 ก.ค. · งวดปิด 5 ส.ค. (= วันที่บนใบ) ⇒ ธงระดับ
+        // เอกสารเป็นจริง แต่งวดแรกยังไม่มีกระดาษใบรับ — ห้ามปิดปุ่มทั้งแถว
+        => Assert.False(ReceiptIssuePolicy.CoversPayment(
+            documentServesAsReceipt: true, IssuedOn, IssuedOn.AddDays(-9)));
+
+    [Fact]
+    public void ใบที่ไม่ได้ยกหัวเป็นใบเสร็จ_ไม่คุมงวดไหนเลย_แม้วันตรงกัน()
+        => Assert.False(ReceiptIssuePolicy.CoversPayment(
+            documentServesAsReceipt: false, IssuedOn, IssuedOn));
+
+    [Fact]
+    public void เทียบเฉพาะวัน_ไม่เอาเวลามาตัดสิน()
+        // PaymentDate มักมีส่วนเวลาติดมาจากฟอร์ม/DB — ห้ามทำให้ "วันเดียวกัน" กลายเป็นเท็จ
+        => Assert.True(ReceiptIssuePolicy.CoversPayment(
+            documentServesAsReceipt: true, IssuedOn, IssuedOn.AddHours(15).AddMinutes(42)));
 }
