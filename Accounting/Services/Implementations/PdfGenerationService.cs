@@ -497,7 +497,51 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
         // ให้ผู้ใช้ตรวจ Dr/Cr ก่อนอนุมัติ (ยอด+ผังจริงเกิดหลังอนุมัติ)
-        return await BuildProjectedGlAsync(companyId, document);
+        var projected = await BuildProjectedGlAsync(companyId, document);
+
+        // ⚠️ ป้าย "(ประมาณการ — ก่อนอนุมัติ)" เดิมถูกติดให้ **ทุกกรณี** ที่หา JE
+        // ไม่เจอ โดยไม่เคยตรวจเลยว่าเอกสารอนุมัติไปแล้วหรือยัง — เป็นการเดาสาเหตุ
+        // แทนผู้ใช้ (CLAUDE.md: "ข้อความที่เดาสาเหตุแทนผู้ใช้ อันตรายกว่าไม่บอก
+        // อะไรเลย" — พาไล่ผิดทางเป็นเดือน). ใบที่ออกเลข §86/4 แล้วย่อมผ่านการ
+        // อนุมัติเสมอ (ตอนสร้างเป็น DRAFT-{guid}) ⇒ ถ้ามันยังโชว์ประมาณการ แปลว่า
+        // **อนุมัติแล้วแต่ GL ว่าง** ซึ่งเป็นอาการหนักที่สุดที่ระบบมี (ภ.พ.30 นับ
+        // ใบนี้แล้ว แต่ไม่มีรายการในสมุดรายวันเลย) — ต้องดัง ไม่ใช่เงียบ
+        if (projected != null && Accounting.Helpers.DocumentJournalExpectation.ExpectsLiveJournal(
+                document.DocumentType, document.Status,
+                document.IsSettlementReceipt, document.ReplacesDocumentId.HasValue))
+        {
+            var reason = await DescribeMissingJournalAsync(companyId, documentId);
+            projected = projected with { EntryNumber = reason };
+        }
+        return projected;
+    }
+
+    /// <summary>
+    /// เอกสารที่ "ควรมี JE แต่ไม่มี" — อ่านสาเหตุ **จากฐานข้อมูลจริง** ไม่ใช่เดา.
+    /// ใช้ <c>IgnoreQueryFilters()</c> เพื่อให้เห็น JE ที่ถูกลบ (soft-delete) ด้วย —
+    /// นั่นคือสาเหตุที่พบบ่อยที่สุด (ผู้ใช้ลบรายการจากหน้าสมุดรายวัน แล้วเอกสาร
+    /// ยังเป็น Approved อยู่) และเป็นสาเหตุที่มองไม่เห็นเลยจากหน้าเอกสาร.
+    /// ⚠️ ตัดกรองเองด้วย <c>CompanyId == companyId</c> เพราะ IgnoreQueryFilters
+    /// ถอด tenant filter ออกไปพร้อมกัน (กฎ M)
+    /// </summary>
+    private async Task<string> DescribeMissingJournalAsync(Guid companyId, Guid documentId)
+    {
+        var states = await _db.JournalEntries.AsNoTracking().IgnoreQueryFilters()
+            .Where(j => j.CompanyId == companyId
+                        && j.SourceDocumentId == documentId
+                        && j.OriginalEntryId == null)
+            .Select(j => new { j.IsDeleted, IsReversed = j.ReversedByEntryId != null, j.Status })
+            .ToListAsync();
+
+        const string head = "(⚠ อนุมัติแล้วแต่ยังไม่มีรายการในสมุดรายวัน";
+        const string tail = " · ตัวเลขข้างล่างเป็นประมาณการ ไม่ใช่ยอดที่ลงบัญชีจริง)";
+        if (states.Any(x => x.IsDeleted))
+            return head + " — JE ถูกลบออกจากสมุดรายวัน" + tail;
+        if (states.Any(x => x.IsReversed))
+            return head + " — JE ถูกกลับรายการ" + tail;
+        if (states.Any(x => x.Status != JournalEntryStatus.Posted))
+            return head + " — JE ยังไม่ผ่านรายการ (Draft)" + tail;
+        return head + tail;
     }
 
     /// <summary>รวมบรรทัด GL ที่ลงผังเดียวกัน + ทิศเดียวกัน (Dr/Cr) เป็นบรรทัด

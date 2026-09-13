@@ -5176,17 +5176,10 @@ public partial class DocumentService : IDocumentService
                     await ApplySection65TerAsync(companyId, doc);
                 }
 
-                var autoPostTypes = new[] {
-                    DocumentType.Invoice, DocumentType.TaxInvoice,
-                    DocumentType.DebitNote, DocumentType.CreditNote,
-                    DocumentType.PurchaseInvoice, DocumentType.Expense,
-                    DocumentType.Receipt, DocumentType.ReceiptVoucher,
-                    DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
-                    // 3-way match: a GRN accrues goods-received-not-invoiced
-                    // (Dr Expense / Cr GR-NI) so received goods hit the books
-                    // before the supplier's invoice arrives.
-                    DocumentType.GoodsReceiptNote,
-                };
+                // ชนิดที่ลงบัญชีอัตโนมัติ — ย้ายไป Helpers/DocumentJournalExpectation
+                // เพื่อให้ "พรีวิว GL" ถามคำถามเดียวกันได้ว่า "ใบนี้ควรมี JE ไหม"
+                // (เดิมลิสต์นี้เป็น local ⇒ ฝั่งแสดงผลไม่มีทางรู้ เลยติดป้าย
+                // "ก่อนอนุมัติ" ให้ทุกใบที่หา JE ไม่เจอ แม้ใบที่อนุมัติไปแล้ว)
                 // ใบเสร็จหลักฐานรับเงิน (settlement, สร้างเป็น Draft เมื่อผู้กด
                 // บันทึกไม่มีสิทธิ์อนุมัติ): การเงินทั้งหมดอยู่ที่ Payment แล้ว
                 // (JE Dr เงินสด/Cr ลูกหนี้ + PaidAmount) — อนุมัติใบนี้ = ออกเลขจริง
@@ -5197,7 +5190,8 @@ public partial class DocumentService : IDocumentService
                 // ซ้ำ = รายได้/ภาษีขายเบิ้ล (และ ภ.พ.30 ก็สลับไปนับใบแทนแล้ว)
                 var isFullTaxInvoiceReplacement = doc.ReplacesDocumentId.HasValue;
 
-                if (!hasExistingJournal && autoPostTypes.Contains(doc.DocumentType)
+                if (!hasExistingJournal
+                    && Accounting.Helpers.DocumentJournalExpectation.PostsToJournal(doc.DocumentType)
                     && !doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);

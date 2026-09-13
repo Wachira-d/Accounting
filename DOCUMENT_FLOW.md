@@ -1142,6 +1142,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - ⚠️ PDF footer "การลงบัญชี" (`PdfGenerationService.LoadGlPostingAsync`)
   query `OriginalEntryId == null` เพื่อแสดง **JE forward ต้นทาง** เสมอ
   ไม่ใช่ reversal — กัน footer ขึ้น Cr แทน Dr ตอน void
+- ⚠️ **หา JE ไม่เจอ ≠ "ยังไม่อนุมัติ"** (รอบ 161) — เมื่อไม่มี JE ที่มีผลจริง
+  footer ตกไปใช้ `BuildProjectedGlAsync` ซึ่งเดิมติดป้าย "(ประมาณการ — ก่อน
+  อนุมัติ)" ให้ **ทุกกรณี** โดยไม่เคยตรวจสถานะเอกสาร. เลขรัน §86/4 ออกตอน
+  อนุมัติเท่านั้น (ตอนสร้าง = `DRAFT-{guid}`) ⇒ ใบที่มีเลขจริงแต่ยังโชว์
+  ประมาณการ แปลว่า **อนุมัติแล้วแต่สมุดรายวันว่าง** (ภ.พ.30 นับใบนี้แล้ว) —
+  สาเหตุที่เป็นไปได้: ผู้ใช้ลบ JE จากหน้าสมุดรายวัน (`AccountingService`
+  soft-delete ทั้งเดี่ยวและ bulk) · JE ถูกกลับรายการ · JE ค้าง Draft.
+  ตอนนี้ป้ายอ่านสาเหตุจากฐานจริง (`DescribeMissingJournalAsync`,
+  `IgnoreQueryFilters` เพื่อเห็นแถวที่ลบแล้ว + กรอง `CompanyId` เอง) และ
+  ตัวตัดสินว่า "ใบนี้ควรมี JE ไหม" คือ **`Helpers/DocumentJournalExpectation`**
+  ตัวเดียวที่ `ApproveDocumentAsync` ใช้เลือก post ด้วย — ใบเสนอราคา/ใบวางบิล/
+  PR/PO/ใบส่งของ · ใบที่ยกเลิก · ใบเสร็จหลักฐานรับเงิน (`IsSettlementReceipt`)
+  · ใบกำกับที่ออกแทนใบเดิม (`ReplacesDocumentId`) **ไม่มี JE คือถูกต้อง ห้ามเตือน**
 - **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
   - `VoidPaymentAsync` (`DocumentService.cs`) — lock `Payments` row `FOR UPDATE`
     ในทรานแซกชัน + re-check `IsDeleted`; ถ้า void ไปแล้ว = no-op (กัน reverse
@@ -4919,7 +4932,14 @@ _ผู้ใช้รายงานต่อจากรอบ 152: ใบ `TI
 
 ---
 
-_Last verified against codebase: 2026-09-13 (รอบ 160 — **พรีวิว GL "ประมาณการ — ก่อนอนุมัติ"
+_Last verified against codebase: 2026-09-13 (รอบ 161 — **"หา JE ไม่เจอ" ถูกแปลว่า "ยังไม่อนุมัติ"
+มาตลอด**: `LoadGlPostingAsync` ติดป้าย "(ประมาณการ — ก่อนอนุมัติ)" ให้ทุกกรณีที่ไม่มี JE โดยไม่เคย
+ตรวจสถานะเอกสารเลย ⇒ ใบที่ **อนุมัติแล้วแต่ JE ถูกลบ/ถูกกลับรายการ** (ภ.พ.30 นับแล้ว แต่ GL ว่าง —
+อาการหนักที่สุดที่ระบบมี) อ่านออกมาเป็น "ยังไม่อนุมัติ" ⇒ ผู้ใช้ไล่ผิดทาง · แยกตัวตัดสิน "ใบนี้ควรมี
+JE ไหม" ออกจาก local `autoPostTypes` ใน `ApproveDocumentAsync` เป็น **`Helpers/DocumentJournalExpectation`**
+ให้ทั้งเส้นอนุมัติและเส้นแสดงผลถามตัวเดียวกัน + ป้ายอ่านสาเหตุจริงจากฐาน (ลบ/กลับรายการ/ค้าง Draft)
+— เทสต์ล็อกสองทิศใน `DocumentJournalExpectationTests` (ใบที่ควรมีต้องจับได้ · ใบเสนอราคา/ใบวางบิล/
+ใบยกเลิก/ใบเสร็จหลักฐาน/ใบออกแทน ต้องไม่ถูกเตือน) · รอบ 160 — **พรีวิว GL "ประมาณการ — ก่อนอนุมัติ"
 ไม่เคยรู้จัก §83/6 ภ.พ.36 เลยสักวัน**: `BuildProjectedGlAsync` ไม่มีบรรทัด `Cr 21912` และเครดิต
 เจ้าหนี้/ธนาคารด้วย **ยอดรวม VAT** ขณะที่ `AutoPostToJournalAsync` (รอบ 94) แยกถูกมาตลอด ⇒ ผู้ใช้
 เทียบใบเก่าที่อนุมัติแล้วกับใบใหม่ที่ยังไม่อนุมัติ แล้วเห็นว่า "ระบบบันทึกเปลี่ยนไปเป็นผิด" ทั้งที่
