@@ -13992,7 +13992,8 @@ public partial class DocumentService : IDocumentService
                 // ได้ใบเสร็จ RD" (§77/2) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
                 // เพราะไม่มีใบกำกับไทย) → RecognizePp36 จะย้าย 11640→11610 ทีหลัง
                 var (vatInputAccount, postedAsUndue) = doc.IsForeignService
-                    ? ((await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630")
+                    ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
+                            ?? await FindAccountAsync(companyId, "11630")
                         ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด) สำหรับ ภ.พ.36")), true)
                     : await ResolveInputVatAccountAsync(companyId, doc);
                 AddLine(vatInputAccount.Id, claimableVatPi, 0,
@@ -14025,17 +14026,22 @@ public partial class DocumentService : IDocumentService
             // สรรพากร (Cr 21912 เจ้าหนี้ ภ.พ.36) แยกต่างหาก — เดิม Cr เจ้าหนี้รวม
             // VAT = ตั้งหนี้/จ่ายผู้ขายเกินยอดจริง + งบไม่มีหนี้ ภ.พ.36
             var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
-            var pp36Vat = doc.IsForeignService ? doc.VatAmount : 0m;
-            var apAmountAtInvoice = (whtBasis == Models.Enums.WhtRecognitionBasis.Cash
-                ? doc.TotalAmount + doc.WithholdingTaxAmount
-                : doc.TotalAmount) - pp36Vat;
+            // การแยกขาเครดิตอยู่ที่ ForeignServiceVat ที่เดียว — พรีวิว GL ก่อนอนุมัติ
+            // ใช้ตัวเดียวกัน (เดิมพรีวิวไม่รู้จักกฎนี้ ⇒ โชว์ Cr เจ้าหนี้รวม VAT)
+            var pp36Split = ForeignServiceVat.SplitCredit(doc.IsForeignService,
+                whtBasis == Models.Enums.WhtRecognitionBasis.Cash
+                    ? doc.TotalAmount + doc.WithholdingTaxAmount
+                    : doc.TotalAmount,
+                doc.VatAmount);
+            var pp36Vat = pp36Split.Pp36Credit;
+            var apAmountAtInvoice = pp36Split.PayeeCredit;
             if (apAccount != null)
                 AddLine(apAccount.Id, 0, apAmountAtInvoice,
                     $"{(doc.DocumentType == DocumentType.Expense ? "เจ้าหนี้อื่น (ตั้งหนี้ค่าใช้จ่าย)" : "เจ้าหนี้การค้า")} - {doc.DocumentNumber}"
                     + (pp36Vat > 0 ? " (ฐาน ไม่รวม VAT ประเมินเอง §83/6)" : ""));
             if (pp36Vat > 0)
             {
-                var pp36Acc = await FindAccountAsync(companyId, "21912")
+                var pp36Acc = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
                     ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                 AddLine(pp36Acc.Id, 0, pp36Vat, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
             }
@@ -14745,7 +14751,8 @@ public partial class DocumentService : IDocumentService
                     // §83/6 บริการต่างประเทศ → บังคับ 11640 เสมอ (เคลมได้หลังนำส่ง
                     // ภ.พ.36 + ได้ใบเสร็จ RD §77/2 — RecognizePp36 ย้ายให้ทีหลัง)
                     var (vatInputAccount, postedAsUndue) = doc.IsForeignService
-                        ? ((await FindAccountAsync(companyId, "11640") ?? await FindAccountAsync(companyId, "11630")
+                        ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
+                                ?? await FindAccountAsync(companyId, "11630")
                             ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด) สำหรับ ภ.พ.36")), true)
                         : await ResolveInputVatAccountAsync(companyId, doc);
                     AddLine(vatInputAccount.Id, claimableVatPv, 0,
@@ -14760,10 +14767,12 @@ public partial class DocumentService : IDocumentService
                 // §83/6: VAT ประเมินเอง → Cr เจ้าหนี้ ภ.พ.36 (21912); เงินที่จ่าย
                 // ผู้ขายจริง = ฐานเท่านั้น (ผู้ขาย ตปท. ไม่เก็บ VAT ไทย — เดิม Cr
                 // เงินสดรวม VAT = จ่ายเกิน 7%)
-                var pp36VatPv = doc.IsForeignService ? doc.VatAmount : 0m;
+                var pp36SplitPv = ForeignServiceVat.SplitCredit(
+                    doc.IsForeignService, doc.TotalAmount, doc.VatAmount);
+                var pp36VatPv = pp36SplitPv.Pp36Credit;
                 if (pp36VatPv > 0)
                 {
-                    var pp36AccPv = await FindAccountAsync(companyId, "21912")
+                    var pp36AccPv = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
                         ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                     AddLine(pp36AccPv.Id, 0, pp36VatPv, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
                 }
@@ -14784,12 +14793,12 @@ public partial class DocumentService : IDocumentService
                     // (เจ้าหนี้อื่น 21220) so AP reports stay consistent.
                     var apAccount = await ResolvePayableAccountAsync(companyId, DocumentType.Expense, doc.Contact);
                     if (apAccount != null)
-                        AddLine(apAccount.Id, 0, doc.TotalAmount - pp36VatPv,
+                        AddLine(apAccount.Id, 0, pp36SplitPv.PayeeCredit,
                             $"เจ้าหนี้ - {doc.DocumentNumber}");
                 }
                 else if (moneyAccount != null)
                 {
-                    AddLine(moneyAccount.Id, 0, doc.TotalAmount - pp36VatPv,
+                    AddLine(moneyAccount.Id, 0, pp36SplitPv.PayeeCredit,
                         $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}"
                         + (pp36VatPv > 0 ? " (ฐาน — VAT ตั้งหนี้ ภ.พ.36)" : ""));
                 }

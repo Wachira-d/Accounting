@@ -597,6 +597,37 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
             return (codes[0], fallbackName);
         }
+        // ธนาคาร → ผัง GL ที่ผูกไว้ (mirror moneyAccount ใน AutoPostToJournalAsync:
+        // PaymentAccountId > BankAccount.LinkedAccount > 111). เดิมพรีวิวคืน
+        // **ชื่อบัญชีธนาคาร** (`AccountName`) พร้อมเลขผังว่าง ⇒ ผู้ใช้เห็น
+        // "Cr หจก.ชื่อบริษัท" แทน "Cr 11122-001 เงินฝากออมทรัพย์" ที่ JE จริงลง
+        async Task<(string Code, string Name)?> BankGlAsync(Guid bankAccountId)
+        {
+            var b = await _db.BankAccounts.AsNoTracking()
+                .Where(x => x.Id == bankAccountId && x.CompanyId == companyId)
+                .Select(x => new { x.AccountName, x.LinkedAccountId })
+                .FirstOrDefaultAsync();
+            if (b == null) return null;
+            if (b.LinkedAccountId is Guid linkedId)
+            {
+                var la = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.Id == linkedId && x.CompanyId == companyId)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+                if (la != null) return (la.AccountCode, la.AccountName);
+            }
+            // ธนาคารที่ยังไม่ผูกผัง — JE จริงตกไป FindAccountAsync("111") ซึ่ง
+            // **ค้นแบบ prefix** (Level >= 4) ไม่ใช่ exact: ผังมาตรฐานไม่มีบัญชี
+            // ลงบัญชีรหัส "111" ตรง ๆ (เป็น header) ⇒ ต้องเลียนแบบให้ตรง ไม่งั้น
+            // พรีวิวโชว์เลข "111" ที่ไม่มีอยู่จริงในผัง
+            var cash = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.AccountCode.StartsWith("111")
+                            && x.Level >= 4 && x.IsActive)
+                .OrderBy(x => x.AccountCode)
+                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+            return cash != null ? (cash.AccountCode, cash.AccountName)
+                : ("", b.AccountName ?? "เงินฝากธนาคาร");
+        }
+
         // WHT payable — mirror DocumentService.ResolveWhtPayableAccountAsync:
         // นิติบุคคล → 21917 (ภ.ง.ด.53) ก่อน, บุคคลธรรมดา → 21916 (ภ.ง.ด.3) ก่อน
         async Task<(string Code, string Name)> WhtPayableAsync()
@@ -611,10 +642,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             if (doc.BankAccountId.HasValue)
             {
-                var b = await _db.BankAccounts.AsNoTracking()
-                    .Where(x => x.Id == doc.BankAccountId.Value)
-                    .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
-                return ("", b?.AccountName ?? "เงินฝากธนาคาร");
+                var bank = await BankGlAsync(doc.BankAccountId.Value);
+                if (bank != null) return bank.Value;
             }
             if (doc.PaymentAccountId.HasValue)
             {
@@ -701,13 +730,19 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (lines.Count == 0) return null;
 
+        // §83/6 บริการต่างประเทศ — ตัวแยกขาเครดิตตัวเดียวกับ AutoPostToJournalAsync
+        var pp36 = ForeignServiceVat.SelfAssessedVat(doc.IsForeignService, doc.VatAmount);
+
         if (doc.VatAmount != 0m)
         {
             if (isPurchase)
             {
-                var code = doc.InputVatAccountCodeOverride
-                    ?? (doc.InputVatPostedAsUndue ? "11640" : "11610");
-                var v = await ByCode(code, doc.InputVatPostedAsUndue ? "ภาษีซื้อยังไม่ถึงกำหนด" : "ภาษีซื้อ");
+                // ภ.พ.36 บังคับพักที่ 11640 เสมอ — ไม่รอธง InputVatPostedAsUndue
+                // ซึ่งเซ็ตตอน "อนุมัติ" เท่านั้น (ใบที่ยังไม่อนุมัติจึงเคยโชว์ 11610)
+                var code = pp36 > 0 ? ForeignServiceVat.Pp36InputVatCode
+                    : (doc.InputVatAccountCodeOverride
+                        ?? (doc.InputVatPostedAsUndue ? "11640" : "11610"));
+                var v = await ByCode(code, (pp36 > 0 || doc.InputVatPostedAsUndue) ? "ภาษีซื้อยังไม่ถึงกำหนด" : "ภาษีซื้อ");
                 lines.Add(new GlPostingLine(v.Code, v.Name, doc.VatAmount, 0m));
             }
             else
@@ -735,8 +770,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
         }
 
+        // ผู้ขายต่างประเทศไม่เก็บ VAT ไทย ⇒ ขาเครดิต "ผู้รับเงิน" เป็นฐานเท่านั้น
+        // ส่วน VAT ตั้งเป็นหนี้ต่อสรรพากร (Cr 21912) — เดิมพรีวิวไม่มีบรรทัดนี้เลย
+        // และเครดิตเจ้าหนี้/ธนาคารด้วยยอดรวม VAT ⇒ ดูเหมือนจ่ายผู้ขายเกิน 7%
+        if (pp36 > 0)
+        {
+            var pp36Acc = await ByCode(ForeignServiceVat.Pp36PayableCode, "ภาษีขาย ภ.พ.36");
+            lines.Add(new GlPostingLine(pp36Acc.Code, pp36Acc.Name, 0m, pp36));
+        }
+
         var gross = lineNet + doc.VatAmount;
-        var contraAmt = gross - doc.WithholdingTaxAmount;
+        var contraAmt = ForeignServiceVat
+            .SplitCredit(doc.IsForeignService, gross - doc.WithholdingTaxAmount, doc.VatAmount)
+            .PayeeCredit;
         (string Code, string Name) contra;
 
         // ใบเสร็จ settlement: บัญชีเงินสด/ธนาคารจริงอยู่ที่ "การชำระเงิน" (Payment)
@@ -762,19 +808,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                 .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
             contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
         }
-        else if (settleBank.HasValue)
+        else if (settleBank.HasValue && await BankGlAsync(settleBank.Value) is { } settleGl)
         {
-            var b = await _db.BankAccounts.AsNoTracking()
-                .Where(x => x.Id == settleBank.Value)
-                .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
-            contra = ("", b?.AccountName ?? "เงินฝากธนาคาร");
+            contra = settleGl;
         }
-        else if (doc.BankAccountId.HasValue)
+        else if (doc.BankAccountId.HasValue && await BankGlAsync(doc.BankAccountId.Value) is { } bankGl)
         {
-            var b = await _db.BankAccounts.AsNoTracking()
-                .Where(x => x.Id == doc.BankAccountId.Value)
-                .Select(x => new { x.AccountName }).FirstOrDefaultAsync();
-            contra = ("", b?.AccountName ?? "เงินฝากธนาคาร");
+            contra = bankGl;
         }
         else if (doc.PaymentAccountId.HasValue)
         {
