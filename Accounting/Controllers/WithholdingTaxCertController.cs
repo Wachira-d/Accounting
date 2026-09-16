@@ -149,6 +149,24 @@ public class WithholdingTaxCertController : ControllerBase
             $"สร้างสำเร็จ {result.Generated} รายการ" + (result.Skipped > 0 ? $", ข้าม {result.Skipped} รายการ" : "")));
     }
 
+    /// <summary>ข้อมูลอ้างอิง: คำนำหน้าชื่อ — ให้ทุกหน้าสร้าง dropdown จากที่นี่
+    /// ไม่ใช่พิมพ์ตัวเลือกซ้ำในแต่ละหน้า (เดิม employees.html มี "ดร." แต่
+    /// payroll.html ไม่มี ทั้งที่เป็นช่องเดียวกันของข้อมูลชุดเดียวกัน)</summary>
+    [HttpGet("~/api/reference/titles")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<object>> GetTitles()
+    {
+        var titles = Accounting.Helpers.ThaiTitleHelper.All.Select(t => new
+        {
+            t.Thai,
+            t.RdCode,
+            t.IsJuristic,
+            // ใช้ยื่น สปส. ได้ไหม (สปส. e-Service ปฏิเสธทั้งแถวถ้าคำนำหน้าไม่อยู่ในชุด)
+            ValidForSso = Accounting.Helpers.ThaiTitleHelper.IsValidForSso(t.Thai),
+        });
+        return Ok(new ApiResponse<object>(true, titles));
+    }
+
     /// <summary>ข้อมูลอ้างอิง: ประเภทเงินได้ + อัตราหัก ณ ที่จ่ายตามกฎหมาย</summary>
     [HttpGet("~/api/reference/income-types")]
     [AllowAnonymous]

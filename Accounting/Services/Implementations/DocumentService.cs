@@ -10058,6 +10058,7 @@ public partial class DocumentService : IDocumentService
             Fill(() => dup.Email, v => dup.Email = v, request.Email);
             Fill(() => dup.Address, v => dup.Address = v, request.Address);
             Fill(() => dup.ContactPerson, v => dup.ContactPerson = v, request.ContactPerson);
+            Fill(() => dup.TitleTh, v => dup.TitleTh = v, request.TitleTh);
             if (request.IsCustomer && !dup.IsCustomer) { dup.IsCustomer = true; enriched = true; }
             if (request.IsSupplier && !dup.IsSupplier) { dup.IsSupplier = true; enriched = true; }
             if (enriched) { dup.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(); }
@@ -10075,6 +10076,9 @@ public partial class DocumentService : IDocumentService
         var contact = new Contact
         {
             CompanyId = companyId,
+            // คำนำหน้า: ค่าที่ผู้ใช้กรอกชนะเสมอ · ไม่ได้กรอก = แยกจากชื่อให้
+            // (ตัวแยกมีด่านกันตัดชื่อกิจการอย่าง "นายช่างการไฟฟ้า" อยู่แล้ว)
+            TitleTh = request.TitleTh ?? Accounting.Helpers.ThaiTitleHelper.Split(request.Name).Title,
             Name = request.Name,
             TaxId = request.TaxId,
             BranchCode = request.BranchCode,
@@ -10260,6 +10264,7 @@ public partial class DocumentService : IDocumentService
             || (request.BranchCode != null && NormalizeBranchCode(request.BranchCode) != NormalizeBranchCode(contact.BranchCode));
 
         if (request.Name != null) contact.Name = request.Name;
+        if (request.TitleTh != null) contact.TitleTh = request.TitleTh;
         if (request.TaxId != null) contact.TaxId = request.TaxId;
         if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
         if (request.BranchName != null) contact.BranchName = request.BranchName;
@@ -15781,6 +15786,7 @@ public partial class DocumentService : IDocumentService
     private static ContactResponse MapContactToResponse(Contact c) => new(
         c.Id, c.Name, c.TaxId, c.BranchCode, c.ContactType, c.IsCustomer, c.IsSupplier,
         c.Address, c.Phone, c.Email, c.ContactPerson, c.IsActive,
+        TitleTh: c.TitleTh,
         BranchName: c.BranchName,
         BuildingNumber: c.BuildingNumber,
         BuildingName: c.BuildingName,

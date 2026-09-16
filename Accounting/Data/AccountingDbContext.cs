@@ -504,6 +504,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<Company>(e =>
         {
             e.HasIndex(c => c.TaxId);
+            e.Property(c => c.TitleTh).HasMaxLength(50);
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
             e.Property(c => c.BaseCurrency).HasMaxLength(3);

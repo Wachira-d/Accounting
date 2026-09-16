@@ -755,6 +755,13 @@ public class DocumentLine : BaseEntity
 /// </summary>
 public class Contact : TenantEntity
 {
+    /// <summary>คำนำหน้าชื่อ — แยกช่องเพราะแบบยื่นภาษีของกรมสรรพากร
+    /// (ภ.ง.ด.3 Col12 · 50 ทวิ) มีช่องคำนำหน้าของตัวเอง และการเดาจาก
+    /// <see cref="Name"/> ตัดชื่อกิจการผิดได้ ("นายช่างการไฟฟ้า").
+    /// <c>null</c> = ยังไม่เคยแยก (ข้อมูลเก่า — ตัวสร้างไฟล์จะเดาให้ต่อไป)
+    /// ต่างจาก <c>""</c> = ยืนยันแล้วว่าไม่มีคำนำหน้า</summary>
+    public string? TitleTh { get; set; }
+
     public string Name { get; set; } = null!;
     public string? TaxId { get; set; }
     public string? BranchCode { get; set; }

@@ -25,7 +25,16 @@ namespace Accounting.Helpers;
 ///  Col9  อัตราภาษี (4,2)
 ///  Col10 จำนวนภาษีที่หัก (15,2)
 ///  Col11 เงื่อนไขการหักภาษี  1=หัก ณ ที่จ่าย · 2=ออกให้ตลอดไป · 3=ออกให้ครั้งเดียว
+///  Col12 คำนำหน้าชื่อ — **ข้อความไทย** ("นาย"/"นางสาว"/"บริษัท") ไม่ใช่รหัส
 /// </code>
+///
+/// <para><b>ทำไมคำนำหน้าอยู่ท้ายแถว ไม่ใช่แทรกก่อนชื่อ</b> — Col1–Col11 ถูก
+/// ยืนยันกับหน้า import จริงไปแล้ว (Col3 = เลขที่สาขา ทั้ง ภ.ง.ด.3 และ 53 —
+/// ยืนยันกับผู้ใช้ 2026-09-16 · ก่อนหน้านี้ <c>TODO_OPUS.md</c> เดาไว้ว่า Col3
+/// ของ ภ.ง.ด.3 อาจเป็นคำนำหน้า ซึ่ง**ไม่จริง**). หน้า import ให้ผู้ใช้ map
+/// คอลัมน์เอง ⇒ การแทรกกลางจะเลื่อน Col5–Col11 ทั้งชุด และผู้ใช้ที่บันทึก
+/// column-mapping ไว้บนเว็บ RD ต้อง map ใหม่ทุกคน. ต่อท้าย = mapping เดิมใช้ได้
+/// ต่อ แล้วค่อย map ช่องใหม่เพิ่มช่องเดียว</para>
 ///
 /// ⚠️ **ตัวสร้างไฟล์ ภ.ง.ด.3/53 ทุกทางต้องเรียกคลาสนี้** — มีสองทางออกไฟล์
 /// (<c>TaxFilingExportService.ExportPnd3/53Async</c> = เมนูส่งออก และ
@@ -46,7 +55,11 @@ public static class PndTextFileFormat
         decimal IncomeAmount,
         decimal TaxRate,
         decimal TaxAmount,
-        int Condition = 1);
+        int Condition = 1,
+        // คำนำหน้าที่ "ผู้ใช้ยืนยันแล้ว" (Contact.TitleTh) — null/ว่าง = ยังไม่เคย
+        // แยกช่อง ให้ตัวสร้างไฟล์เดาจากชื่อแทน (ห้ามทิ้งช่องว่างเฉย ๆ เพราะ
+        // ข้อมูลเก่าทั้งหมดมีคำนำหน้าติดอยู่ในชื่อ)
+        string? PayeeTitle = null);
 
     /// <summary>ประกอบไฟล์ทั้งฉบับ — detail rows ล้วน คั่นด้วย CRLF</summary>
     public static string Build(IEnumerable<Row> rows)
@@ -74,30 +87,39 @@ public static class PndTextFileFormat
             Rate(r.TaxRate),                                                  // Col9
             Money(r.TaxAmount),                                               // Col10
             (r.Condition is 1 or 2 or 3 ? r.Condition : 1)
-                .ToString(CultureInfo.InvariantCulture));                     // Col11
+                .ToString(CultureInfo.InvariantCulture),                      // Col11
+            Clean(ResolveTitle(r)));                                          // Col12
+    }
+
+    /// <summary>คำนำหน้าที่จะลงไฟล์ — ค่าที่ผู้ใช้ยืนยันไว้ชนะเสมอ ถ้าไม่มี
+    /// จึงเดาจากชื่อเต็ม (ข้อมูลเก่ายังพิมพ์คำนำหน้าติดมากับชื่อ). ทั้งสองทาง
+    /// ผ่าน <see cref="ThaiTitleHelper"/> ตัวเดียว — ห้าม parse เองซ้ำที่นี่</summary>
+    private static string ResolveTitle(Row r)
+    {
+        var explicitTitle = (r.PayeeTitle ?? "").Trim();
+        if (explicitTitle.Length > 0) return ThaiTitleHelper.Normalize(explicitTitle);
+        return ThaiTitleHelper.Split(r.PayeeName).Title;
     }
 
     /// <summary>บุคคลธรรมดา → แยก "ชื่อตัว | ชื่อสกุล" ที่ช่องว่างแรก
-    /// (คำนำหน้าถูกตัดทิ้ง — หน้า RD มีช่องคำนำหน้าแยกและเราไม่ได้ map).
-    /// นิติบุคคล → ชื่อเต็มอยู่ Col4, Col5 ว่างเสมอ (สรรพากรไม่มีนามสกุลนิติบุคคล)</summary>
+    /// (คำนำหน้าถูกตัดออกจากสองช่องนี้ แล้วไปลง <b>Col12</b> แทน — เดิมถูกทิ้ง).
+    /// นิติบุคคล → ชื่อเต็มอยู่ Col4, Col5 ว่างเสมอ (สรรพากรไม่มีนามสกุลนิติบุคคล)
+    ///
+    /// ⚠️ ลิสต์คำนำหน้าอยู่ที่ <see cref="ThaiTitleHelper"/> ที่เดียว — เดิมไฟล์นี้
+    /// ถือลิสต์ของตัวเองที่ไม่มี "เด็กชาย/เด็กหญิง" ⇒ ผู้ถูกหักที่เป็นผู้เยาว์
+    /// (ค่าเช่า/มรดก/นักแสดงเด็ก) ได้ Col4="เด็กชาย" Col5="สมชาย ใจดี"</summary>
     public static (string First, string Last) SplitName(string? fullName, bool isJuristic)
     {
         var name = (fullName ?? "").Trim();
         if (isJuristic || name.Length == 0) return (name, "");
 
-        foreach (var t in ThaiTitles)
-            if (name.StartsWith(t, StringComparison.Ordinal))
-            {
-                name = name[t.Length..].TrimStart();
-                break;
-            }
+        // ตัดเฉพาะคำนำหน้าบุคคล — ตัวช่วยมีด่านกัน "นายช่างการไฟฟ้า" ให้แล้ว
+        var (title, rest) = ThaiTitleHelper.Split(name);
+        if (title.Length > 0 && !ThaiTitleHelper.IsJuristicTitle(title)) name = rest;
 
         var sp = name.IndexOf(' ');
         return sp < 0 ? (name, "") : (name[..sp].Trim(), name[(sp + 1)..].Trim());
     }
-
-    private static readonly string[] ThaiTitles =
-        { "นางสาว", "น.ส.", "นาง", "นาย", "ดร.", "Mr.", "Mrs.", "Miss", "Ms." };
 
     /// <summary>ตัวเลขล้วน — เลขผู้เสียภาษีที่ผู้ใช้พิมพ์ขีดคั่นมาต้องส่งเป็น 13 หลักติดกัน</summary>
     private static string Digits(string? raw) =>

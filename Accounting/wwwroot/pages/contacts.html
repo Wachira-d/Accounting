@@ -68,6 +68,15 @@
               <option value="3">หน่วยงานราชการ</option>
             </select>
           </div>
+          <!-- คำนำหน้าชื่อ: แยกช่องเพราะแบบ ภ.ง.ด.3 (Col12) และ 50 ทวิ มีช่อง
+               ของตัวเอง — ถ้าให้พิมพ์รวมในชื่อ ระบบต้องเดา ซึ่งตัดชื่อกิจการ
+               อย่าง "นายช่างการไฟฟ้า" ผิดได้ -->
+          <div class="form-group" id="titleThGroup" style="display:none">
+            <label class="form-label">คำนำหน้าชื่อ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้ในไฟล์ยื่น ภ.ง.ด.3 และหนังสือรับรอง 50 ทวิ)</span></label>
+            <select class="form-input" id="fTitleTh">
+              <option value="">— ไม่ระบุ —</option>
+            </select>
+          </div>
           <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
           <!-- AI fuzzy-match suggestion: เด้งเตือนเมื่อชื่อ/TaxId คล้ายกับ
                contact ที่มีอยู่แล้ว — ป้องกัน duplicate (data hygiene #1) -->
@@ -432,6 +441,25 @@
         }
       },
 
+      // ตัวเลือกคำนำหน้ามาจาก /api/reference/titles (ตารางเดียวกับที่ไฟล์ยื่น
+      // ภ.ง.ด. ใช้) — โหลดไม่ได้ = คงเหลือแต่ "ไม่ระบุ" แล้วบอกผู้ใช้
+      // ห้าม fallback ไปใช้ลิสต์ที่พิมพ์เองในหน้านี้ (= สำเนามือชุดที่ 4)
+      async _loadTitleOptions() {
+        const sel = document.getElementById('fTitleTh');
+        if (!sel) return;
+        try {
+          const res = await fetch('/api/reference/titles');
+          const json = await res.json();
+          (json.data || []).filter(t => !t.isJuristic).forEach(t => {
+            const o = document.createElement('option');
+            o.value = t.thai; o.textContent = t.thai;
+            sel.appendChild(o);
+          });
+        } catch (e) {
+          console.warn('โหลดรายการคำนำหน้าไม่สำเร็จ', e);
+        }
+      },
+
       async init() {
         if (!Layout.init('contacts')) return;
         Layout.setTitle('ผู้ติดต่อ');
@@ -442,6 +470,7 @@
         // accounts only to keep the dropdown manageable — anything
         // starting with 1 (asset), 2 (liability) qualifies.
         await this._loadAccountDropdowns();
+        await this._loadTitleOptions();
         await this.load();
         this.checkDuplicates();   // ตรวจผู้ติดต่อซ้ำ (banner) — best-effort ไม่ block หน้า
         const params = new URLSearchParams(window.location.search);
@@ -607,6 +636,7 @@
           if (!result) return;
           // DBD returns juristic person data → auto-set type
           document.getElementById('fContactType').value = '2';
+          document.getElementById('fTitleTh').value = '';   // นิติบุคคลไม่มีคำนำหน้าบุคคล
           Page.onContactTypeChange();
           // Fill name + taxId + free-text address + structured address parts
           DbdLookup.fillCompanyForm(result, {
@@ -704,7 +734,12 @@
         document.getElementById('branchCodeGroup').style.display = (isJuristic || isGov) ? '' : 'none';
         document.getElementById('fDbdBtn').style.display = isJuristic ? '' : 'none';
         document.getElementById('fNameHint').style.display = isJuristic ? '' : 'none';
-        document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ-นามสกุล';
+        document.getElementById('fName').placeholder = isJuristic ? 'พิมพ์ชื่อบริษัทเพื่อค้นหา...' : isGov ? 'ชื่อหน่วยงานราชการ' : 'ชื่อ นามสกุล (ไม่ต้องใส่คำนำหน้า)';
+        // คำนำหน้าเป็นเรื่องของบุคคลธรรมดาเท่านั้น — ซ่อนแล้วต้อง**ล้างค่า**ด้วย
+        // ไม่ใช่ปล่อยค้าง (ไม่งั้นเปลี่ยนเป็นนิติบุคคลแล้ว "นาย" ยังติดไปกับใบยื่น)
+        const titleGroup = document.getElementById('titleThGroup');
+        titleGroup.style.display = (isJuristic || isGov) ? 'none' : '';
+        if (isJuristic || isGov) document.getElementById('fTitleTh').value = '';
         document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
       },
 
@@ -778,6 +813,9 @@
         this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
         const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
+        // <select> ต้องตั้งค่าชัด ๆ — ลูป _allFieldIds ข้างบน set value='' ซึ่งกับ
+        // select แปลว่า "ไม่เลือกอะไรเลย" ไม่ใช่ "กลับไปตัวเลือกแรก"
+        document.getElementById('fTitleTh').value = '';
         document.getElementById('fContactType').value = '2';
         // ผู้ติดต่อรายใหม่ติ๊กทั้งลูกค้าและผู้จำหน่ายไว้ก่อน — คู่ค้าส่วนใหญ่ของ SME
         // เป็นได้ทั้งสองฝั่ง (ซื้อของจากร้านเดียวกับที่ขายให้) และการ "ติ๊กเกิน"
@@ -861,6 +899,7 @@
         document.getElementById('fContactType').value =
           String(Layout.contactTypeCode(c.contactType) || 2);
         document.getElementById('fName').value = c.name;
+        document.getElementById('fTitleTh').value = c.titleTh || '';
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';
         document.getElementById('fBranchName').value = c.branchName || '';
@@ -1012,6 +1051,9 @@
 
         const data = {
           name: name,
+          // คำนำหน้า: ส่งค่าตรง ๆ เสมอ ("" = ล้างค่า) semantics เดียวกับ nameEn
+          // นิติบุคคล/ราชการ ช่องถูกซ่อนและล้างไว้แล้ว จึงส่ง "" ไปโดยตั้งใจ
+          titleTh: document.getElementById('fTitleTh').value || '',
           taxId: taxId,
           branchCode: (ct === 2 || ct === 3) ? (document.getElementById('fBranch').value || '00000') : null,
           branchName: document.getElementById('fBranchName').value || null,

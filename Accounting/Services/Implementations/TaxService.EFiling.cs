@@ -139,17 +139,26 @@ public partial class TaxService
         // ให้ map คอลัมน์เอง (บรรทัด H|/T| เดิมกลายเป็นแถวขยะที่ผู้ใช้ต้องลบ).
         // สองปุ่ม (ปุ่มนี้ กับเมนูส่งออก) ต้องได้ไฟล์หน้าตาเดียวกันเสมอ
         var isJuristicForm = taxType is TaxType.WithholdingTax53 or TaxType.WithholdingTax54;
+        // ⚠️ สี่ช่องนี้เคยต่างจากเมนู "ส่งออกไฟล์ยื่นภาษี" ทั้งที่เป็นงวดเดียวกัน:
+        //   Col3 สาขา     — hardcode null ⇒ "00000" ทุกแถว
+        //   Col7 ประเภท   — ส่งรหัสภายในดิบ ("40(8)"/"8ad") แทนรหัสของ RD
+        //   Col11 เงื่อนไข — ไม่ส่งเลย ⇒ default 1 ⇒ ใบ "ออกให้ตลอดไป" ยื่นผิดเงื่อนไข
+        //   Col12 คำนำหน้า — ไม่มีที่เก็บ
+        // ตอนนี้ TaxReportLine พาทั้งสี่มาจาก cert แล้ว (TaxService.GenerateWhtReport)
+        // แถวเก่าที่สร้างก่อน migration ยังเป็น null → ตกไปใช้ค่าเดิมอย่างปลอดภัย
         var body = Accounting.Helpers.PndTextFileFormat.Build(detailLines.Select(l =>
             new Accounting.Helpers.PndTextFileFormat.Row(
                 PayeeTaxId: l.TaxPayerId,
-                BranchCode: null,          // TaxReportLine ไม่เก็บสาขาผู้ถูกหัก → 00000
+                BranchCode: l.TaxPayerBranchCode,
                 PayeeName: l.TaxPayerName,
                 IsJuristic: isJuristicForm,
                 PayDate: l.TransactionDate,
-                IncomeTypeCode: l.IncomeTypeCode,
+                IncomeTypeCode: Accounting.Helpers.PndIncomeTypeCode.ForFile(l.IncomeTypeCode),
                 IncomeAmount: l.IncomeAmount,
                 TaxRate: l.TaxRate,
-                TaxAmount: l.TaxAmount)));
+                TaxAmount: l.TaxAmount,
+                Condition: l.WhtCondition ?? 1,
+                PayeeTitle: l.TaxPayerTitle)));
 
         var totalIncome = detailLines.Sum(l => l.IncomeAmount);
         var totalTax = detailLines.Sum(l => l.TaxAmount);

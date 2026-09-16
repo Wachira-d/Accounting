@@ -24,19 +24,10 @@ public class TaxFilingExportService : ITaxFilingExportService
     // BOM บางครั้ง trip parser ของพวกเขาให้เห็น phantom char ในคอลัมน์แรก.
     private static byte[] AsBytes(string text) => Encoding.UTF8.GetBytes(text);
 
-    /// <summary>คำนำหน้าตามรหัสกรมสรรพากร: 1=นาย, 2=นาง, 3=น.ส., 4=บริษัท,
-    /// 5=ห้างหุ้นส่วน, 6=คณะบุคคล, 7=มูลนิธิ/สมาคม, 9=อื่นๆ.</summary>
-    private static string TitleCode(string? title) => (title ?? "").Trim() switch
-    {
-        "นาย" or "Mr." or "Mr" => "1",
-        "นาง" or "Mrs." or "Mrs" => "2",
-        "นางสาว" or "น.ส." or "Miss" or "Ms." or "Ms" => "3",
-        "บริษัท" or "บจก." or "บมจ." or "Co., Ltd." or "Co.,Ltd." => "4",
-        "หจก." or "ห้างหุ้นส่วนจำกัด" => "5",
-        "คณะบุคคล" => "6",
-        "มูลนิธิ" or "สมาคม" => "7",
-        _ => "9",
-    };
+    /// <summary>คำนำหน้าตามรหัสกรมสรรพากรสำหรับไฟล์ H|D|T (ภ.ง.ด.1/1ก).
+    /// ตารางอยู่ที่ <see cref="ThaiTitleHelper"/> ที่เดียว — เดิมเป็นสำเนามือ
+    /// ที่ไม่รู้จัก "ดร."/"เด็กชาย"/"เด็กหญิง" จึงคืน "9" ให้ทั้งสามตัว</summary>
+    private static string TitleCode(string? title) => ThaiTitleHelper.RdCode(title);
 
     // =====================================================================
     // ภ.ง.ด.1 — Monthly Salary Withholding Tax (e-Filing text format)
@@ -661,7 +652,8 @@ public class TaxFilingExportService : ITaxFilingExportService
                             2, MidpointRounding.AwayFromZero)
                         : 0m,
                     TaxAmount: cert.TotalTaxAmount,
-                    Condition: condition));
+                    Condition: condition,
+                    PayeeTitle: contact?.TitleTh));
                 continue;
             }
 
@@ -676,24 +668,15 @@ public class TaxFilingExportService : ITaxFilingExportService
                     IncomeAmount: line.IncomeAmount,
                     TaxRate: line.TaxRate,
                     TaxAmount: line.TaxAmount,
-                    Condition: condition));
+                    Condition: condition,
+                    PayeeTitle: contact?.TitleTh));
         }
         return rows;
     }
 
-    private static string MapIncomeTypeCode(string? code) => code switch
-    {
-        "1" or "40(1)" => "1",
-        "2" or "40(2)" => "2",
-        "3" or "40(3)" => "3",
-        "4a" or "40(4)a" or "40(4)(a)" => "4A",
-        "4b" or "40(4)b" or "40(4)(b)" => "4B",
-        "5" or "40(5)" => "5",
-        "6" or "40(6)" => "6",
-        "7" or "40(7)" => "6",  // ค่ารับเหมา → §3เตรส ค่าจ้างทำของ
-        "8" or "40(8)" => "6",  // ค่าบริการ → §3เตรส ค่าจ้างทำของ
-        _ => "6"
-    };
+    /// <summary>ย้ายไป <see cref="PndIncomeTypeCode"/> แล้ว เพื่อให้ปุ่ม e-Filing
+    /// ในหน้ารายงานใช้ตารางเดียวกัน (เดิมเป็น private ที่นี่ อีกทางจึงส่งรหัสดิบ)</summary>
+    private static string MapIncomeTypeCode(string? code) => PndIncomeTypeCode.ForFile(code);
 
     // =====================================================================
     // ภ.ง.ด.91 — Annual personal income tax summary per employee

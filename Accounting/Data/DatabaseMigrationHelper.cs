@@ -90,6 +90,10 @@ public static class DatabaseMigrationHelper
             // ฝั่งเรา ทำให้ที่อยู่ลูกค้า/ผู้ขายบนใบภาษาอังกฤษถูกถอดอักษรอัตโนมัติ
             // เสมอและแก้ทับไม่ได้เลย (ThaiRomanizer เป็น RTGS แบบประมาณ ชื่อ
             // ตำบล/อำเภอ/ถนนสะกดเพี้ยนได้เป็นปกติ)
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "TitleTh" varchar(50) NULL;""",
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerTitle" varchar(50) NULL;""",
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "TaxPayerBranchCode" varchar(5) NULL;""",
+            """ALTER TABLE "TaxReportLines" ADD COLUMN IF NOT EXISTS "WhtCondition" integer NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEn" varchar(300) NULL;""",
             """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AddressEn" varchar(500) NULL;""",
             // ร่องรอยการ sync/ตรวจข้อมูลจากระบบภายนอก — **ภายในเท่านั้น** ห้ามพิมพ์ลงเอกสาร

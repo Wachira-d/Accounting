@@ -47,4 +47,104 @@ public static class ThaiTitleHelper
 
     /// <summary>true เมื่อคำนำหน้าใช้ยื่น สปส. ได้โดยไม่โดนปฏิเสธ</summary>
     public static bool IsValidForSso(string? title) => SsoValidTitles.Contains((title ?? "").Trim());
+
+    // =====================================================================
+    // ตารางคำนำหน้าชื่อกลางของระบบ — **ที่เดียวเท่านั้น**
+    //
+    // เดิมความรู้ชุดนี้ถูกคัดลอกไว้ 3 ที่ที่ไม่ตรงกัน: ลิสต์ "ไว้ตัดทิ้ง" ใน
+    // PndTextFileFormat (มี ดร. แต่ไม่มี เด็กชาย/เด็กหญิง/นิติบุคคล) ·
+    // TaxFilingExportService.TitleCode (มีนิติบุคคล แต่ไม่มี ดร./เด็กชาย) ·
+    // SsoValidTitles ข้างบน ⇒ ผู้ถูกหักชื่อ "เด็กชาย สมชาย ใจดี" ได้
+    // Col4="เด็กชาย" Col5="สมชาย ใจดี" บนไฟล์ยื่น (ชื่อจริงกลายเป็นนามสกุล)
+    // ตามกฎ CLAUDE.md: ตารางเชิงกฎหมายต้องมีที่เดียว แล้วทุกเส้นอ่านจากตัวนี้
+    // =====================================================================
+
+    /// <summary>คำนำหน้า 1 รายการ</summary>
+    /// <param name="Thai">รูปเต็มภาษาไทย — ค่านี้คือสิ่งที่ลงไฟล์ยื่น (หน้า
+    /// import ของ RD รับ **ข้อความไทย** ไม่ใช่รหัส — ยืนยันกับผู้ใช้ 2026-09-16)</param>
+    /// <param name="RdCode">รหัสกรมสรรพากรสำหรับไฟล์ "สื่อบันทึก" H|D|T
+    /// (ภ.ง.ด.1/1ก) ซึ่งเป็นคนละรูปแบบกับไฟล์นำเข้าเว็บของ ภ.ง.ด.3/53</param>
+    /// <param name="IsJuristic">true = รูปแบบนิติบุคคล/คณะบุคคล (ไม่มีนามสกุล)</param>
+    /// <param name="Aliases">รูปย่อ/อังกฤษที่พบบนกระดาษและไฟล์นำเข้า</param>
+    public sealed record TitlePrefix(string Thai, string RdCode, bool IsJuristic, string[] Aliases);
+
+    /// <summary>ตารางกลาง — เรียงยาวไปสั้นตอนจับคู่เสมอ (ไม่งั้น "นาง" กิน "นางสาว")</summary>
+    public static readonly IReadOnlyList<TitlePrefix> All = new List<TitlePrefix>
+    {
+        new("นาย",       "1", false, new[] { "Mr.", "Mr" }),
+        new("นาง",       "2", false, new[] { "Mrs.", "Mrs" }),
+        new("นางสาว",    "3", false, new[] { "น.ส.", "น.ส", "นส.", "Miss", "Ms.", "Ms" }),
+        new("เด็กชาย",   "9", false, new[] { "ด.ช.", "ด.ช", "ดช.", "Master" }),
+        new("เด็กหญิง",  "9", false, new[] { "ด.ญ.", "ด.ญ", "ดญ." }),
+        new("ดร.",       "9", false, new[] { "ดร", "Dr.", "Dr" }),
+        new("บริษัท",    "4", true,  new[] { "บจก.", "บมจ.", "บริษัทมหาชนจำกัด" }),
+        new("ห้างหุ้นส่วนจำกัด",  "5", true, new[] { "หจก.", "หจก" }),
+        new("ห้างหุ้นส่วนสามัญ",  "5", true, new[] { "หสน.", "หสน" }),
+        new("คณะบุคคล",  "6", true,  Array.Empty<string>()),
+        new("มูลนิธิ",    "7", true,  Array.Empty<string>()),
+        new("สมาคม",     "7", true,  Array.Empty<string>()),
+    };
+
+    /// <summary>รหัสคำนำหน้าของกรมสรรพากรสำหรับไฟล์ H|D|T (ภ.ง.ด.1/1ก).
+    /// ไม่รู้จัก → "9" (อื่น ๆ) ตามตารางของ RD</summary>
+    public static string RdCode(string? title)
+    {
+        var t = (title ?? "").Trim();
+        if (t.Length == 0) return "9";
+        foreach (var p in All)
+        {
+            if (string.Equals(p.Thai, t, StringComparison.OrdinalIgnoreCase)) return p.RdCode;
+            foreach (var a in p.Aliases)
+                if (string.Equals(a, t, StringComparison.OrdinalIgnoreCase)) return p.RdCode;
+        }
+        return "9";
+    }
+
+    /// <summary>true เมื่อคำนำหน้านั้นเป็นรูปแบบนิติบุคคล/คณะบุคคล</summary>
+    public static bool IsJuristicTitle(string? title)
+    {
+        var t = (title ?? "").Trim();
+        if (t.Length == 0) return false;
+        foreach (var p in All)
+        {
+            if (!p.IsJuristic) continue;
+            if (string.Equals(p.Thai, t, StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (var a in p.Aliases)
+                if (string.Equals(a, t, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// แยก "คำนำหน้า" ออกจากชื่อเต็มที่ผู้ใช้พิมพ์รวมกันมา คืนรูปเต็มภาษาไทย
+    /// เสมอ (เช่น "น.ส." → "นางสาว") · ไม่พบ → <c>("", ชื่อเดิม)</c>
+    ///
+    /// ⚠️ <b>ด่านกันตัดชื่อร้าน</b>: ตัดเฉพาะเมื่อคำนำหน้าตามด้วย**ช่องว่าง**
+    /// หรือส่วนที่เหลือ**มีช่องว่างอย่างน้อยหนึ่งตัว** (= มีทั้งชื่อและสกุล)
+    /// ⇒ "นายช่างการไฟฟ้า" · "นางเลิ้งพาณิชย์" · "นายหน้าประกันภัย" ไม่ถูกแตะ
+    /// เพราะเป็นชื่อกิจการที่บังเอิญขึ้นต้นเหมือนคำนำหน้า — การเดาผิดตรงนี้
+    /// ไหลไปถึงชื่อบนไฟล์ยื่น ภ.ง.ด. และใบกำกับภาษี
+    /// </summary>
+    public static (string Title, string Rest) Split(string? fullName)
+    {
+        var name = (fullName ?? "").Trim();
+        if (name.Length == 0) return ("", "");
+
+        // ยาวไปสั้น — "นางสาว" ต้องชนะ "นาง" · "ห้างหุ้นส่วนจำกัด" ต้องชนะ ""
+        var candidates = All
+            .SelectMany(p => p.Aliases.Append(p.Thai).Select(form => (Form: form, Canonical: p.Thai)))
+            .OrderByDescending(x => x.Form.Length)
+            .ToList();
+
+        foreach (var (form, canonical) in candidates)
+        {
+            if (!name.StartsWith(form, StringComparison.OrdinalIgnoreCase)) continue;
+            var rest = name[form.Length..].TrimStart();
+            if (rest.Length == 0) continue;                       // ทั้งชื่อเป็นคำนำหน้า = ไม่ใช่คำนำหน้า
+            var followedBySpace = char.IsWhiteSpace(name[form.Length]);
+            if (!followedBySpace && !rest.Contains(' ')) continue; // ชื่อร้าน — ห้ามตัด
+            return (canonical, rest);
+        }
+        return ("", name);
+    }
 }

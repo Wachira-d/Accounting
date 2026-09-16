@@ -1117,7 +1117,9 @@ public record CreateContactRequest(
     // ข้อมูลภาษาอังกฤษ — ใช้เมื่อออกเอกสารเป็นภาษาอังกฤษ. null = ชื่อใช้ไทย
     // ตามเดิม / ที่อยู่ให้ระบบถอดอักษรให้ (ThaiRomanizer)
     [property: StringLength(300)] string? NameEn = null,
-    [property: StringLength(500)] string? AddressEn = null);
+    [property: StringLength(500)] string? AddressEn = null,
+    // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
+    [property: StringLength(50)] string? TitleTh = null);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -1152,7 +1154,9 @@ public record UpdateContactRequest(
     string? DocumentLanguage = null,
     // null = ไม่เปลี่ยน · "" = ล้างค่า (กลับไปใช้ไทย/ถอดอักษรอัตโนมัติ)
     [property: StringLength(300)] string? NameEn = null,
-    [property: StringLength(500)] string? AddressEn = null);
+    [property: StringLength(500)] string? AddressEn = null,
+    // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
+    [property: StringLength(50)] string? TitleTh = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -1210,7 +1214,9 @@ public record ContactResponse(
     // กดบันทึกค่าจะหาย (defect class เดียวกับ DocumentResponse.DocumentLanguage)
     string? DocumentLanguage = null,
     string? NameEn = null,
-    string? AddressEn = null);
+    string? AddressEn = null,
+    // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
+    [property: StringLength(50)] string? TitleTh = null);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

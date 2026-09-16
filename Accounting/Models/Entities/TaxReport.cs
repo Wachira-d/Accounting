@@ -103,6 +103,22 @@ public class TaxReportLine : BaseEntity
     public string? IncomeTypeCode { get; set; }  // รหัสประเภทเงินได้
     public Guid? DocumentId { get; set; }
 
+    // ── ช่องที่ "ไฟล์ยื่น ภ.ง.ด.3/53/54" ต้องใช้ แต่เดิมไม่ได้เดินทางมาถึง ──
+    // ปุ่ม e-Filing ในหน้ารายงานประกอบไฟล์จากแถวพวกนี้ (ไม่ใช่จาก cert เหมือน
+    // เมนูส่งออก) ⇒ สิ่งที่ไม่มีช่องเก็บ จะกลายเป็นค่า default เงียบ ๆ:
+    // สาขาเป็น "00000" ทุกแถว · เงื่อนไขการหักเป็น 1 เสมอ · ไม่มีคำนำหน้า
+    // = สองปุ่มให้ไฟล์คนละชุดจากงวดเดียวกัน (defect class "สอง renderer ห้าม drift")
+
+    /// <summary>คำนำหน้าชื่อผู้เสียภาษี — ภ.ง.ด.3 Col12</summary>
+    public string? TaxPayerTitle { get; set; }
+
+    /// <summary>รหัสสาขาผู้ถูกหัก 5 หลัก — ภ.ง.ด.3/53 Col3 (null = สำนักงานใหญ่)</summary>
+    public string? TaxPayerBranchCode { get; set; }
+
+    /// <summary>เงื่อนไขการหักภาษี — Col11 (1=หัก ณ ที่จ่าย · 2=ออกให้ตลอดไป
+    /// · 3=ออกให้ครั้งเดียว) null = ยังไม่เคยเก็บ ให้ปลายทางใช้ 1</summary>
+    public int? WhtCondition { get; set; }
+
     /// <summary>True = the accountant chose NOT to include this line in the
     /// filed return (e.g. prohibited input VAT, an over-age invoice). The
     /// line is kept for audit but excluded from OutputVat/InputVat/NetVat.</summary>

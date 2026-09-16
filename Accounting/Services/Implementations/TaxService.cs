@@ -1682,6 +1682,11 @@ public partial class TaxService : ITaxService
                             IncomeAmount = cl.IncomeAmount, TaxRate = cl.TaxRate,
                             TaxAmount = cl.TaxAmount, DocumentId = cert.DocumentId,
                             IncomeTypeCode = cl.IncomeTypeCode,
+                            // พาข้อมูลผู้ถูกหักมาถึงไฟล์ยื่นด้วย — ไม่งั้นปุ่ม e-Filing
+                            // จะเติมค่า default แทน (สาขา 00000 · เงื่อนไข 1 · ไม่มีคำนำหน้า)
+                            TaxPayerTitle = cert.PayeeContact?.TitleTh,
+                            TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                            WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
                         });
                 }
                 else
@@ -1699,6 +1704,9 @@ public partial class TaxService : ITaxService
                             : 0m,
                         TaxAmount = cert.TotalTaxAmount, DocumentId = cert.DocumentId,
                         IncomeTypeCode = "40(8)",
+                        TaxPayerTitle = cert.PayeeContact?.TitleTh,
+                        TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                        WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
                     });
                 }
             }
@@ -1728,6 +1736,9 @@ public partial class TaxService : ITaxService
                         : 0m,
                     TaxAmount = cert.TotalTaxAmount, DocumentId = cert.DocumentId,
                     IncomeTypeCode = "40(8)", IsExcluded = true,
+                    TaxPayerTitle = cert.PayeeContact?.TitleTh,
+                    TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
+                    WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
                 });
             }
 
