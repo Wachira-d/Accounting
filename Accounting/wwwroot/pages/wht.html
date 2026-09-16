@@ -242,7 +242,7 @@
         const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1' };
         tbody.innerHTML = items.map(w => `<tr>
           <td class="font-medium">${w.certificateNumber || '-'}</td>
-          <td>${w.payeeName}</td>
+          <td>${Layout.esc(w.payeeName)}</td>
           <td>${formMap[w.taxFormType] || w.taxFormName || w.taxFormType}</td>
           <td>${w.taxYear}/${String(w.taxMonth).padStart(2,'0')}</td>
           <td class="text-right">${Layout.money(w.totalIncomeAmount)}</td>
@@ -270,8 +270,8 @@
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
               <div><span class="text-gray-500 text-xs">เลขที่</span><div class="font-semibold">${d.certificateNumber || '-'}</div></div>
               <div><span class="text-gray-500 text-xs" data-i18n="common.status">สถานะ</span><div>${Layout.statusBadge(d.status)}</div></div>
-              <div><span class="text-gray-500 text-xs">ผู้ถูกหักภาษี</span><div>${d.payeeName || '-'}</div></div>
-              <div><span class="text-gray-500 text-xs">เลขประจำตัวผู้เสียภาษี</span><div>${d.payeeTaxId || '-'}</div></div>
+              <div><span class="text-gray-500 text-xs">ผู้ถูกหักภาษี</span><div>${Layout.esc(d.payeeName || '-')}</div></div>
+              <div><span class="text-gray-500 text-xs">เลขประจำตัวผู้เสียภาษี</span><div>${Layout.esc(d.payeeTaxId || '-')}</div></div>
               <div><span class="text-gray-500 text-xs">แบบ</span><div>${formMap[d.taxFormType] || d.taxFormType}</div></div>
               <div><span class="text-gray-500 text-xs" data-i18n="common.type">ประเภท</span><div>${certTypeMap[d.certificateType] || d.certificateType || '-'}</div></div>
               <div><span class="text-gray-500 text-xs">ปี/เดือน</span><div>${d.taxYear}/${String(d.taxMonth).padStart(2,'0')}</div></div>
@@ -544,12 +544,12 @@
                 </tr></table>
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ชื่อ</td>
-                  <td><u class="ul">&nbsp;${d.payerName || ''}&nbsp;</u></td>
+                  <td><u class="ul">&nbsp;${Layout.esc(d.payerName || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ที่อยู่</td>
-                  <td><u class="ul">&nbsp;${d.payerAddress || ''}&nbsp;</u></td>
+                  <td><u class="ul">&nbsp;${Layout.esc(d.payerAddress || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>
               </td></tr>
@@ -565,12 +565,12 @@
                 </tr></table>
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ชื่อ</td>
-                  <td><u class="ul">&nbsp;${d.payeeName || ''}&nbsp;</u></td>
+                  <td><u class="ul">&nbsp;${Layout.esc(d.payeeName || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ที่อยู่</td>
-                  <td><u class="ul">&nbsp;${d.payeeAddress || ''}&nbsp;</u></td>
+                  <td><u class="ul">&nbsp;${Layout.esc(d.payeeAddress || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>
               </td></tr>

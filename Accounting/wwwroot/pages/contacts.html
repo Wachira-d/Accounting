@@ -441,24 +441,18 @@
         }
       },
 
-      // ตัวเลือกคำนำหน้ามาจาก /api/reference/titles (ตารางเดียวกับที่ไฟล์ยื่น
-      // ภ.ง.ด. ใช้) — โหลดไม่ได้ = คงเหลือแต่ "ไม่ระบุ" แล้วบอกผู้ใช้
-      // ห้าม fallback ไปใช้ลิสต์ที่พิมพ์เองในหน้านี้ (= สำเนามือชุดที่ 4)
+      // ตัวเลือกคำนำหน้า + การคงค่าที่ไม่รู้จัก อยู่ที่ Layout ตัวเดียว
+      // (เดิมหน้านี้โหลดเอง แล้ว employees/payroll พิมพ์ลิสต์ของตัวเองคนละชุด)
       async _loadTitleOptions() {
-        const sel = document.getElementById('fTitleTh');
-        if (!sel) return;
-        try {
-          const res = await fetch('/api/reference/titles');
-          const json = await res.json();
-          (json.data || []).filter(t => !t.isJuristic).forEach(t => {
-            const o = document.createElement('option');
-            o.value = t.thai; o.textContent = t.thai;
-            sel.appendChild(o);
-          });
-        } catch (e) {
-          console.warn('โหลดรายการคำนำหน้าไม่สำเร็จ', e);
-        }
+        await Layout.fillTitleSelect('fTitleTh', { emptyLabel: '— ไม่ระบุ —' });
       },
+
+      // ค่าที่เก็บไว้แล้วแต่ไม่อยู่ในตัวเลือก (ข้อมูลเก่า/ยิงผ่าน API มาก่อนมีด่าน)
+      // ⚠️ ห้ามปล่อยให้ select ปัดทิ้งเงียบ ๆ — เพราะพอกดบันทึก payload จะส่ง ''
+      // กลับไปแล้ว **ลบค่าเดิมทิ้ง** โดยผู้ใช้ไม่รู้ตัว (defect class "เก็บแล้ว
+      // ต้อง echo กลับ" + "ห้าม silent no-op"). แสดงเป็นตัวเลือกพิเศษพร้อมป้าย
+      // เตือน ให้ผู้ใช้เห็นและเลือกเปลี่ยนเองได้
+      _setTitleValue(v) { Layout.setTitleSelectValue('fTitleTh', v); },
 
       async init() {
         if (!Layout.init('contacts')) return;
@@ -636,7 +630,7 @@
           if (!result) return;
           // DBD returns juristic person data → auto-set type
           document.getElementById('fContactType').value = '2';
-          document.getElementById('fTitleTh').value = '';   // นิติบุคคลไม่มีคำนำหน้าบุคคล
+          this._setTitleValue('');   // นิติบุคคลไม่มีคำนำหน้าบุคคล
           Page.onContactTypeChange();
           // Fill name + taxId + free-text address + structured address parts
           DbdLookup.fillCompanyForm(result, {
@@ -739,7 +733,7 @@
         // ไม่ใช่ปล่อยค้าง (ไม่งั้นเปลี่ยนเป็นนิติบุคคลแล้ว "นาย" ยังติดไปกับใบยื่น)
         const titleGroup = document.getElementById('titleThGroup');
         titleGroup.style.display = (isJuristic || isGov) ? 'none' : '';
-        if (isJuristic || isGov) document.getElementById('fTitleTh').value = '';
+        if (isJuristic || isGov) this._setTitleValue('');
         document.getElementById('taxIdLabel').textContent = isJuristic ? 'เลขผู้เสียภาษี (13 หลัก)' : isGov ? 'เลขประจำตัวผู้เสียภาษี' : 'เลขบัตรประชาชน (13 หลัก)';
       },
 
@@ -815,7 +809,7 @@
         const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
         // <select> ต้องตั้งค่าชัด ๆ — ลูป _allFieldIds ข้างบน set value='' ซึ่งกับ
         // select แปลว่า "ไม่เลือกอะไรเลย" ไม่ใช่ "กลับไปตัวเลือกแรก"
-        document.getElementById('fTitleTh').value = '';
+        this._setTitleValue('');
         document.getElementById('fContactType').value = '2';
         // ผู้ติดต่อรายใหม่ติ๊กทั้งลูกค้าและผู้จำหน่ายไว้ก่อน — คู่ค้าส่วนใหญ่ของ SME
         // เป็นได้ทั้งสองฝั่ง (ซื้อของจากร้านเดียวกับที่ขายให้) และการ "ติ๊กเกิน"
@@ -899,7 +893,7 @@
         document.getElementById('fContactType').value =
           String(Layout.contactTypeCode(c.contactType) || 2);
         document.getElementById('fName').value = c.name;
-        document.getElementById('fTitleTh').value = c.titleTh || '';
+        this._setTitleValue(c.titleTh || '');
         document.getElementById('fTaxId').value = c.taxId || '';
         document.getElementById('fBranch').value = c.branchCode || '';
         document.getElementById('fBranchName').value = c.branchName || '';

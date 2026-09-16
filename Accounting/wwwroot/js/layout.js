@@ -248,6 +248,64 @@ const Layout = {
   /** true = นิติบุคคล (ต้องมีรหัสสาขา §86/4 · หัก ณ ที่จ่ายยื่น ภ.ง.ด.53) */
   isJuristicContact(v) { return this.contactTypeCode(v) === 2; },
 
+  /** คำนำหน้าชื่อ — ตัวโหลด **ตัวเดียว**ของทุกหน้า
+   *
+   *  เดิมมีลิสต์พิมพ์มือ 3 ชุดที่ไม่ตรงกัน (contacts 6 ตัวจาก endpoint ·
+   *  employees.html 4 ตัว · payroll.html 3 ตัว) ⇒ พนักงานที่เป็นผู้เยาว์
+   *  (เด็กชาย/เด็กหญิง) เลือกไม่ได้เลยจากสองหน้าหลัง แล้วไฟล์ สปส.1-10 /
+   *  ภ.ง.ด.1 ได้คำนำหน้าผิด. ตารางกลางอยู่ฝั่งเซิร์ฟเวอร์ (ThaiTitleHelper.All)
+   *  หน้าเว็บ **สร้าง UI จาก endpoint** ห้ามพิมพ์ซ้ำ — กลไกเดียวกับ
+   *  MENU_SECTIONS ที่สร้างจาก Layout.navItems
+   *
+   *  `current` = ค่าที่เก็บไว้แล้ว: ถ้าไม่อยู่ในตาราง (ข้อมูลเก่า/ยิงผ่าน API
+   *  มาก่อนมีด่าน) ต้องโชว์เป็นตัวเลือกพิเศษพร้อมป้ายเตือน **ห้ามปัดทิ้งเงียบ ๆ**
+   *  เพราะ select จะกลายเป็นค่าว่าง แล้วการกดบันทึกครั้งถัดไปลบค่าเดิมทิ้ง
+   *  (defect class "เก็บแล้วต้อง echo กลับ" + "ห้าม silent no-op") */
+  async fillTitleSelect(sel, opts) {
+    if (typeof sel === 'string') sel = document.getElementById(sel);
+    if (!sel) return;
+    const o = opts || {};
+    if (!Layout._titlesCache) {
+      try {
+        const res = await fetch('/api/reference/titles');
+        const json = await res.json();
+        Layout._titlesCache = json.data || [];
+      } catch (e) {
+        console.warn('โหลดรายการคำนำหน้าไม่สำเร็จ', e);
+        Layout._titlesCache = null;      // ลองใหม่รอบหน้า ห้าม cache ความล้มเหลว
+      }
+    }
+    const rows = Layout._titlesCache || [];
+    sel.innerHTML = '';
+    if (o.allowEmpty !== false) {
+      const e0 = document.createElement('option');
+      e0.value = ''; e0.textContent = o.emptyLabel || '— ไม่ระบุ —';
+      sel.appendChild(e0);
+    }
+    rows.filter(t => o.includeJuristic ? true : !t.isJuristic).forEach(t => {
+      const op = document.createElement('option');
+      op.value = t.thai; op.textContent = t.thai;
+      sel.appendChild(op);
+    });
+    Layout.setTitleSelectValue(sel, o.current || '');
+  },
+
+  /** ตั้งค่าให้ select คำนำหน้า โดยคงค่าที่ไม่รู้จักไว้พร้อมป้ายเตือน */
+  setTitleSelectValue(sel, v) {
+    if (typeof sel === 'string') sel = document.getElementById(sel);
+    if (!sel) return;
+    sel.querySelectorAll('option[data-legacy="1"]').forEach(x => x.remove());
+    const val = (v || '').trim();
+    if (val && ![...sel.options].some(x => x.value === val)) {
+      const op = document.createElement('option');
+      op.value = val;
+      op.textContent = val + ' (⚠️ ไม่อยู่ในตารางของกรมสรรพากร)';
+      op.dataset.legacy = '1';
+      sel.appendChild(op);
+    }
+    sel.value = val;
+  },
+
   jsArg(v) {
     return String(v == null ? '' : v)
       .replace(/\\/g, '\\\\')

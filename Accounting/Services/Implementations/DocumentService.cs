@@ -10073,12 +10073,19 @@ public partial class DocumentService : IDocumentService
             ? ThaiAddressParser.Parse(request.Address)
             : null;
 
+        // คำนำหน้า: ค่าที่ผู้ใช้กรอกชนะเสมอ · ไม่ได้กรอก = แยกจากชื่อให้
+        // (ตัวแยกมีด่านกันตัดชื่อกิจการอย่าง "นายช่างการไฟฟ้า" อยู่แล้ว)
+        // ⚠️ ต้องผ่านด่านก่อน — ค่านี้ไหลตรงไปคอลัมน์ที่ 12 ของไฟล์ที่อัปโหลด
+        // เข้าเว็บกรมสรรพากร (ภ.ง.ด.3) และไฟล์ สปส.1-10 ซึ่งปฏิเสธทั้งแถวเมื่อ
+        // คำนำหน้าไม่อยู่ในชุดที่รับ. หน้าจอเป็น dropdown แต่ API/import ส่งอะไร
+        // มาก็ได้ ⇒ ด่านต้องอยู่ที่ service ไม่ใช่ที่หน้าจอ
+        var titleTh = NormalizeContactTitle(request.TitleTh)
+            ?? Accounting.Helpers.ThaiTitleHelper.Split(request.Name).Title;
+
         var contact = new Contact
         {
             CompanyId = companyId,
-            // คำนำหน้า: ค่าที่ผู้ใช้กรอกชนะเสมอ · ไม่ได้กรอก = แยกจากชื่อให้
-            // (ตัวแยกมีด่านกันตัดชื่อกิจการอย่าง "นายช่างการไฟฟ้า" อยู่แล้ว)
-            TitleTh = request.TitleTh ?? Accounting.Helpers.ThaiTitleHelper.Split(request.Name).Title,
+            TitleTh = titleTh,
             Name = request.Name,
             TaxId = request.TaxId,
             BranchCode = request.BranchCode,
@@ -10264,7 +10271,8 @@ public partial class DocumentService : IDocumentService
             || (request.BranchCode != null && NormalizeBranchCode(request.BranchCode) != NormalizeBranchCode(contact.BranchCode));
 
         if (request.Name != null) contact.Name = request.Name;
-        if (request.TitleTh != null) contact.TitleTh = request.TitleTh;
+        // "" = ผู้ใช้ตั้งใจล้างค่า (นิติบุคคลไม่มีคำนำหน้า) — ต้องล้างได้จริง
+        if (request.TitleTh != null) contact.TitleTh = NormalizeContactTitle(request.TitleTh) ?? "";
         if (request.TaxId != null) contact.TaxId = request.TaxId;
         if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
         if (request.BranchName != null) contact.BranchName = request.BranchName;
@@ -15825,6 +15833,23 @@ public partial class DocumentService : IDocumentService
     /// - TaxId 13 หลัก ขึ้นต้นด้วย 0 → นิติบุคคล (เลขทะเบียนนิติบุคคล)
     /// - อื่นๆ → บุคคลธรรมดา
     /// </summary>
+    /// <summary>ด่านคำนำหน้าชื่อของคู่ค้า — ผ่าน <c>ThaiTitleHelper.TryCanonical</c>
+    /// ตัวเดียวกับที่ไฟล์ยื่นใช้ แล้วคืน "รูปเต็มภาษาไทย" เสมอ (เช่น "น.ส." →
+    /// "นางสาว") · <c>null</c>/ว่าง = ไม่ระบุ (นิติบุคคลปกติไม่มีคำนำหน้า)
+    ///
+    /// ทำไมต้อง throw ที่นี่: ช่องนี้ไหลตรงไปคอลัมน์ที่ 12 ของไฟล์ ภ.ง.ด.3 ที่
+    /// อัปโหลดเข้าเว็บกรมสรรพากร และไฟล์ สปส.1-10 ที่ปฏิเสธทั้งแถวเมื่อคำนำหน้า
+    /// ไม่อยู่ในชุดที่รับ ("รหัสคำนำหน้า Mrs. ไม่ถูกต้อง") — หน้าจอเป็น dropdown
+    /// อยู่แล้ว ผู้ที่จะโดนด่านนี้คือ API/import ซึ่งอ่านข้อความ error ได้และ
+    /// แก้ได้ทันที (ต่างจากเส้น OCR ที่ห้ามบล็อกผู้ใช้ — เส้นนั้นไม่เซ็ตช่องนี้)</summary>
+    private static string? NormalizeContactTitle(string? input)
+    {
+        if (input == null) return null;
+        if (Accounting.Helpers.ThaiTitleHelper.TryCanonical(input, out var canonical, out var reason))
+            return canonical;
+        throw new Accounting.Helpers.BusinessRuleException(reason!, "CONTACT-TITLE");
+    }
+
     public static ContactType InferContactType(string? taxId, string? branchCode)
     {
         // BranchCode ≠ null/empty/"00000" → clearly juristic (has branch offices)

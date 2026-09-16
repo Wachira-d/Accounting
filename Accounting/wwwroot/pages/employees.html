@@ -60,9 +60,9 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="fCode" placeholder="EMP001"></div>
             <div class="form-group"><label class="form-label">คำนำหน้า</label>
-              <select class="form-select" id="fTitle">
-                <option>นาย</option><option>นาง</option><option>นางสาว</option><option>ดร.</option>
-              </select>
+              <!-- ตัวเลือกสร้างจาก /api/reference/titles ตอน init — ห้ามพิมพ์ลิสต์ที่นี่
+                   (เดิมมี 4 ตัว ขาด เด็กชาย/เด็กหญิง ⇒ พนักงานผู้เยาว์เลือกไม่ได้) -->
+              <select class="form-select" id="fTitle"></select>
             </div>
           </div>
           <div class="form-row">
@@ -326,6 +326,8 @@
       async init() {
         if (!Layout.init('employees')) return;
         Layout.setTitle('พนักงาน');
+        // ตัวเลือกคำนำหน้ามาจากตารางกลางฝั่งเซิร์ฟเวอร์ — default "นาย" เหมือนเดิม
+        await Layout.fillTitleSelect('fTitle', { allowEmpty: false, current: 'นาย' });
         await this.load();
       },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); },
@@ -360,7 +362,7 @@
               const sync = e.externalSystem ? `<span class="badge b-Sync">${e.externalSystem}</span>` : '<span style="color:#cbd5e1">—</span>';
               return `<tr>
                 <td><b>${e.employeeCode}</b></td>
-                <td>${e.titleTh || ''}${e.firstNameTh || ''} ${e.lastNameTh || ''}</td>
+                <td>${Layout.esc([e.titleTh, e.firstNameTh, e.lastNameTh].filter(Boolean).join(' '))}</td>
                 <td>${e.departmentName || e.department || '-'}<div style="font-size:11px;color:#64748b">${e.positionTitle || e.position || ''}</div></td>
                 <td>${e.employmentType || '-'}</td>
                 <td style="text-align:right">${this._fmt(e.baseSalary)}<div style="font-size:11px;color:#64748b">${e.salaryType}${salaryUnit}</div></td>
@@ -413,7 +415,7 @@
           document.getElementById('fId').value = e.id;
           document.getElementById('fCode').value = e.employeeCode;
           document.getElementById('fCode').disabled = true;
-          document.getElementById('fTitle').value = e.titleTh || 'นาย';
+          Layout.setTitleSelectValue('fTitle', e.titleTh || 'นาย');
           document.getElementById('fFirstNameTh').value = e.firstNameTh || '';
           document.getElementById('fLastNameTh').value = e.lastNameTh || '';
           document.getElementById('fFirstNameEn').value = e.firstNameEn || '';

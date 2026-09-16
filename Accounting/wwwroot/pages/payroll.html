@@ -167,7 +167,7 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="empCode" placeholder="EMP001"></div>
             <div class="form-group"><label class="form-label">คำนำหน้า</label>
-              <select class="form-select" id="empTitle"><option value="นาย">นาย</option><option value="นาง">นาง</option><option value="นางสาว">นางสาว</option></select>
+              <select class="form-select" id="empTitle"></select>
             </div>
           </div>
           <div class="form-row">
@@ -393,6 +393,9 @@ const Page = {
   init() {
     if (!Layout.init('payroll')) return;
     Layout.setTitle('ระบบเงินเดือน');
+    // ตัวเลือกคำนำหน้าของฟอร์มเพิ่มพนักงาน — เดิมพิมพ์ไว้ 3 ตัว (ขาด เด็กชาย/
+    // เด็กหญิง/ดร.) จึงเลือกไม่ได้เลย แล้วไฟล์ ภ.ง.ด.1/สปส.1-10 ได้คำนำหน้าผิด
+    Layout.fillTitleSelect('empTitle', { allowEmpty: false, current: 'นาย' });
     const y = new Date().getFullYear();
     ['leaveYear','reportYear','whtCertYear'].forEach(id => {
       const sel = document.getElementById(id);

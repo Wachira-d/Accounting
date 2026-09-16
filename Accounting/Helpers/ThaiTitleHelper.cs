@@ -18,6 +18,15 @@ public static class ThaiTitleHelper
     public static string Normalize(string? title)
     {
         var t = (title ?? "").Trim();
+        if (t.Length == 0) return t;
+        // ตารางกลางมาก่อนเสมอ — เดิม switch ข้างล่างไม่รู้จัก "ดร"/"บจก."/"หจก."
+        // ที่ตารางรู้จัก ⇒ สองตัวตอบไม่ตรงกันในไฟล์เดียวกัน
+        foreach (var p in All)
+        {
+            if (string.Equals(p.Thai, t, StringComparison.OrdinalIgnoreCase)) return p.Thai;
+            foreach (var a in p.Aliases)
+                if (string.Equals(a, t, StringComparison.OrdinalIgnoreCase)) return p.Thai;
+        }
         var key = t.TrimEnd('.').Trim().ToUpperInvariant();
         return key switch
         {
@@ -132,19 +141,75 @@ public static class ThaiTitleHelper
 
         // ยาวไปสั้น — "นางสาว" ต้องชนะ "นาง" · "ห้างหุ้นส่วนจำกัด" ต้องชนะ ""
         var candidates = All
-            .SelectMany(p => p.Aliases.Append(p.Thai).Select(form => (Form: form, Canonical: p.Thai)))
+            .SelectMany(p => p.Aliases.Append(p.Thai)
+                .Select(form => (Form: form, Canonical: p.Thai, IsCanonical: form == p.Thai)))
             .OrderByDescending(x => x.Form.Length)
             .ToList();
 
-        foreach (var (form, canonical) in candidates)
+        foreach (var (form, canonical, isCanonical) in candidates)
         {
             if (!name.StartsWith(form, StringComparison.OrdinalIgnoreCase)) continue;
             var rest = name[form.Length..].TrimStart();
             if (rest.Length == 0) continue;                       // ทั้งชื่อเป็นคำนำหน้า = ไม่ใช่คำนำหน้า
             var followedBySpace = char.IsWhiteSpace(name[form.Length]);
-            if (!followedBySpace && !rest.Contains(' ')) continue; // ชื่อร้าน — ห้ามตัด
+            if (!followedBySpace)
+            {
+                if (!rest.Contains(' ')) continue;                // ชื่อร้าน — ห้ามตัด
+                // ⚠️ ติดกันโดยไม่มีช่องว่าง: ยอมเฉพาะรูปที่ "จบในตัวเอง" —
+                // รูปเต็มภาษาไทย ("นางสาวสมหญิง ใจดี") หรือตัวย่อที่มีจุดปิด
+                // ("น.ส.สมหญิง ใจดี"). ตัวย่อที่**ไม่มีจุด** ("ดร" · "Dr" · "นส")
+                // เป็นแค่ต้นคำของคำอื่นได้ ⇒ "ดรุณี ใจดี" เคยถูกตัดเป็น
+                // ("ดร.", "ุณี ใจดี") และ "Drake Co Ltd" เป็น ("ดร.", "ake Co Ltd")
+                if (!isCanonical && !form.EndsWith('.')) continue;
+                // ชื่อไทยไม่มีทางขึ้นต้นด้วยสระบน/ล่าง/วรรณยุกต์ — ถ้าตัวถัดไป
+                // เป็นเครื่องหมายผสม แปลว่าเรากำลังผ่ากลางคำเดียวกัน
+                if (IsThaiCombiningMark(rest[0])) continue;
+            }
             return (canonical, rest);
         }
         return ("", name);
+    }
+
+    /// <summary>สระบน/สระล่าง/วรรณยุกต์/เครื่องหมายไทยที่ "เกาะ" พยัญชนะตัวหน้า —
+    /// ตัวอักษรกลุ่มนี้ขึ้นต้นคำไม่ได้</summary>
+    private static bool IsThaiCombiningMark(char c)
+        => c == '\u0E31' || (c >= '\u0E33' && c <= '\u0E3A') || (c >= '\u0E47' && c <= '\u0E4E');
+
+    /// <summary>
+    /// ด่านตรวจคำนำหน้าชื่อ — **ตัวตัดสินตัวเดียว**ของทุกทางเข้า (ฟอร์ม · API ·
+    /// import · ไฟล์ยื่น). รับรูปย่อ/อังกฤษแล้วคืน "รูปเต็มภาษาไทย" ที่ลงไฟล์ได้
+    ///
+    /// คืน <c>reason</c> เป็น**ข้อความไทยที่เอาไปโชว์ได้ทันที** ไม่ใช่ <c>bool</c>
+    /// เปล่า ๆ — ไม่งั้นแต่ละหน้าจอจะไปแต่งคำเอง = สำเนามือชุดถัดไป (กฎ CLAUDE.md
+    /// เดียวกับ <c>PayrollRunEditPolicy.CanVoid</c>) และลิสต์ในข้อความสร้างจาก
+    /// <see cref="All"/> ตอน runtime ห้ามพิมพ์ซ้ำในสตริง
+    /// </summary>
+    /// <returns>true = ว่าง (ไม่ระบุ ซึ่งถูกต้อง) หรือรู้จัก · false = ไม่อยู่ในตาราง</returns>
+    public static bool TryCanonical(string? input, out string canonical, out string? reason)
+    {
+        canonical = "";
+        reason = null;
+        var t = (input ?? "").Trim();
+        if (t.Length == 0) return true;            // ไม่ระบุ = ถูกต้อง (นิติบุคคล/ไม่ทราบ)
+
+        foreach (var p in All)
+        {
+            if (string.Equals(p.Thai, t, StringComparison.OrdinalIgnoreCase))
+            { canonical = p.Thai; return true; }
+            foreach (var a in p.Aliases)
+                if (string.Equals(a, t, StringComparison.OrdinalIgnoreCase))
+                { canonical = p.Thai; return true; }
+        }
+
+        // รูปย่อที่ Normalize รู้จักแต่ไม่อยู่ในตาราง (Mister/Madam/…)
+        var viaNormalize = Normalize(t);
+        if (!string.Equals(viaNormalize, t, StringComparison.Ordinal))
+            return TryCanonical(viaNormalize, out canonical, out reason);
+
+        var person = string.Join(" · ", All.Where(p => !p.IsJuristic).Select(p => p.Thai));
+        var juristic = string.Join(" · ", All.Where(p => p.IsJuristic).Select(p => p.Thai));
+        reason = $"คำนำหน้า \"{t}\" ใช้กับไฟล์ยื่นของกรมสรรพากร/ประกันสังคมไม่ได้ — "
+               + $"บุคคลธรรมดาใช้: {person} · นิติบุคคลใช้: {juristic}";
+        return false;
     }
 }
