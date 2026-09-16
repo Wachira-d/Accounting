@@ -740,9 +740,9 @@
             // เข้าใจว่าเป็นยอดที่จะยื่นจริง · undefined (เซิร์ฟเวอร์เก่า) = ไม่วาดอะไร
             const estBadge = tax.isEstimate === true
               ? `<div class="text-xs" style="color:#b45309;margin-bottom:6px">
-                   ⚙️ ประมาณการ — ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวดนี้
+                   ⚙️ ประมาณการ — ยังไม่มีรายงาน ภ.พ.30 ครบทุกเดือนในช่วงนี้
                    (<a href="/pages/tax.html" style="text-decoration:underline">สร้างรายงาน</a>
-                   แล้วตัวเลขจะตรงกับที่ยื่นจริง)
+                   ให้ครบ แล้วตัวเลขจะตรงกับที่ยื่นจริง)
                  </div>`
               : '';
             taxEl.innerHTML = estBadge + `

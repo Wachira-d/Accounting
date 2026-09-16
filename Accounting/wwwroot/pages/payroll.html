@@ -1884,8 +1884,9 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTaxWithheld ?? d.totalTax)}</div></div>
           </div>
-          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th></tr></thead>
-          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${e.fullName||e.name||'-'}</td><td>${e.citizenId||e.idCard||'-'}</td><td class="text-right">${Layout.money(e.taxableIncome ?? e.income)}</td><td class="text-right">${Layout.money(e.taxWithheld ?? e.tax)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+          ${Page._filingNote(d)}
+          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th><th>ในไฟล์ยื่น</th></tr></thead>
+          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${Layout.esc(e.fullName||e.name||'-')}</td><td>${Layout.esc(e.citizenId||e.idCard||'-')}</td><td class="text-right">${Layout.money(e.taxableIncome ?? e.income)}</td><td class="text-right">${Layout.money(e.taxWithheld ?? e.tax)}</td><td>${Page._filingCell(e)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       } else {
         res = await api.getSso(year, month);
         const d = res.data || {};
@@ -1896,10 +1897,33 @@ const Page = {
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.totalEmployeeContribution ?? d.employeeContribution)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบนายจ้าง</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalEmployerContribution ?? d.employerContribution)}</div></div>
           </div>
-          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th></tr></thead>
-          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${e.fullName||e.name||'-'}</td><td>${e.socialSecurityNumber||e.idCard||'-'}</td><td class="text-right">${Layout.money(e.salaryBase ?? e.wage)}</td><td class="text-right">${Layout.money(e.employeeContribution ?? e.contribution)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+          ${Page._filingNote(d)}
+          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">ค่าจ้าง</th><th class="text-right">สมทบ</th><th>ในไฟล์ยื่น</th></tr></thead>
+          <tbody>${(d.lines || d.employees).map(e => `<tr><td>${Layout.esc(e.fullName||e.name||'-')}</td><td>${Layout.esc(e.socialSecurityNumber||e.idCard||'-')}</td><td class="text-right">${Layout.money(e.salaryBase ?? e.wage)}</td><td class="text-right">${Layout.money(e.employeeContribution ?? e.contribution)}</td><td>${Page._filingCell(e)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       }
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
+  },
+
+  /** แบนเนอร์ "จอกับไฟล์ยื่นไม่เท่ากัน" — ข้อความมาจากเซิร์ฟเวอร์ทั้งก้อน
+   *  (หน้าเว็บ **แสดง** ไม่คิดเกณฑ์เอง = ไม่มีสำเนามือชุดที่สาม)
+   *  undefined = เซิร์ฟเวอร์เก่ายังไม่ส่งฟิลด์ ⇒ "ยังไม่ได้ตรวจ" ห้ามวาดอะไร
+   *  (ต่างจาก null/0 ที่แปลว่า "ตรวจแล้วไม่มีปัญหา") */
+  _filingNote(d) {
+    if (d.excludedNote === undefined) return '';
+    if (!d.excludedNote) return '';
+    return `<div class="card" style="padding:12px;margin-bottom:16px;border-left:4px solid var(--warning,#f59e0b)">
+      <div style="font-weight:600">⚠️ ยอดบนจอกับไฟล์ยื่นไม่เท่ากัน</div>
+      <div style="font-size:13px;margin-top:4px">${Layout.esc(d.excludedNote)}</div>
+      <div style="font-size:13px;margin-top:4px">ไฟล์ยื่นจะประกาศ <b>${d.filedEmployees ?? '-'}</b> คน</div>
+    </div>`;
+  },
+
+  /** ป้ายรายแถว — ธงมาจากเซิร์ฟเวอร์ (PayrollRunFilingScope + SsoFilingScope) */
+  _filingCell(e) {
+    if (e.inFilingFile === undefined) return '';
+    if (e.inFilingFile) return '<span class="badge badge-success">✓</span>';
+    const why = e.excludeReason || 'ไม่อยู่ในไฟล์ยื่น';
+    return `<span class="badge badge-warning" title="${Layout.esc(why)}">✕ ${Layout.esc(why)}</span>`;
   },
 };
 

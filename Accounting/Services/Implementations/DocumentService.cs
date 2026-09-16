@@ -10063,7 +10063,12 @@ public partial class DocumentService : IDocumentService
             Fill(() => dup.Email, v => dup.Email = v, request.Email);
             Fill(() => dup.Address, v => dup.Address = v, request.Address);
             Fill(() => dup.ContactPerson, v => dup.ContactPerson = v, request.ContactPerson);
-            Fill(() => dup.TitleTh, v => dup.TitleTh = v, request.TitleTh);
+            // ⚠️ ต้องผ่านด่านเดียวกับเส้นสร้างใหม่/แก้ไข — เส้น dedup นี้คือเส้นที่
+            // **API/import ใช้บ่อยที่สุด** (ยิงซ้ำด้วยเลขภาษีเดิม) ⇒ ถ้าเขียนดิบ
+            // ค่าที่ตารางไม่รู้จัก ("Herr"/"คุณ") จะไหลไปลง Col12 ของไฟล์ ภ.ง.ด.3
+            // = "ด่านที่ครอบแค่ทางเดียว คือด่านที่ไม่มี" ในทรงที่ซ่อนดีที่สุด
+            // (อยู่ในเมธอดเดียวกับด่าน ห่างกัน 20 บรรทัด)
+            Fill(() => dup.TitleTh, v => dup.TitleTh = v, NormalizeContactTitle(request.TitleTh));
             if (request.IsCustomer && !dup.IsCustomer) { dup.IsCustomer = true; enriched = true; }
             if (request.IsSupplier && !dup.IsSupplier) { dup.IsSupplier = true; enriched = true; }
             if (enriched) { dup.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(); }

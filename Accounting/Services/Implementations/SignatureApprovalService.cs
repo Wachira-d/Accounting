@@ -120,6 +120,19 @@ public class SignatureApprovalService : ISignatureApprovalService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await RequireApproveAsync(companyId, userId, doc.DocumentType, "ตั้งขั้นอนุมัติ");
 
+        // ⚠️ ตั้งขั้นอนุมัติ = พลิกสถานะเป็น WaitingApproval ⇒ ทำกับเอกสารที่
+        // **ออกเลขแล้ว**ไม่ได้: §86/4 ห้ามแก้เลขที่ออกแล้วย้อนหลัง · JE ลงไปแล้ว ·
+        // และ WaitingApproval อยู่ใน DocumentStatusRules.NotIssued ⇒ ใบจะ
+        // **หายจากรายงานภาษี/แบบยื่นทุกแบบพร้อมกันโดยไม่มีอะไรบอก**
+        // (ภ.พ.30 ที่เคยนับใบนี้ไปแล้วจะไม่ตรงกับ GL ทันที)
+        if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.Rejected)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber} อยู่สถานะ {doc.Status} — ตั้งขั้นอนุมัติย้อนหลัง"
+                + "ไม่ได้ เพราะเลขที่เอกสารออกแล้ว (§86/4) และรายการบัญชีลงไปแล้ว · "
+                + "ถ้าต้องการให้ผ่านสายอนุมัติ ให้ยกเลิกใบนี้แล้วออกใบใหม่ "
+                + "หรือตั้งขั้นอนุมัติตั้งแต่ตอนที่ยังเป็นร่าง",
+                "DOC-APPROVAL-SETUP-TOO-LATE");
+
         // Remove existing pending approvals
         var existing = await _db.Set<DocumentApproval>()
             .Where(a => a.DocumentId == request.DocumentId && a.Status == ApprovalStatus.Pending && !a.IsDeleted)

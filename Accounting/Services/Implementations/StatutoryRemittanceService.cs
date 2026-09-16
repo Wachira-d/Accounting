@@ -55,7 +55,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
     public async Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12)
     {
-        var today = DateTime.UtcNow.Date;
+        // ⚠️ ต้องเป็นวันตามเวลาไทย (UTC+7) ไม่ใช่ UTC — ช่วง 00:00–07:00 ของไทย
+        // UTC ยังเป็นเมื่อวาน ⇒ ธง "เลยกำหนด" และเงินเพิ่ม §49 คลาดไป 1 วัน และ
+        // **ไม่ตรงกับปฏิทินยื่นในไฟล์เดียวกัน** ซึ่งใช้ +7 อยู่แล้ว
+        // (สองจอของ service เดียวกันบอกคนละวัน)
+        var today = DateTime.UtcNow.AddHours(7).Date;
         var start = new DateTime(today.Year, today.Month, 1).AddMonths(-Math.Max(1, monthsBack));
         bool InRange(int y, int m) { var d = new DateTime(y, m, 1); return d >= start && d <= new DateTime(today.Year, today.Month, 1); }
 
@@ -92,7 +96,20 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         DateTime? FiledAt(string type, int y, int m)
         {
             var rt = ReportTypeOf(type);
-            if (rt == null) return null;   // สปส.1-10 ไม่ได้ยื่นผ่าน TaxReport
+            if (rt == null) return null;
+            // ⚠️ ข้อจำกัดที่รู้ตัว: `TaxService.CreateTaxReport` **ปฏิเสธ**
+            // WithholdingTax1 และ SocialSecurity (บอกให้ไปใช้เมนูส่งออกไฟล์ยื่น)
+            // ⇒ สองแบบนี้ไม่มีแถว TaxReport ให้ค้นเลย ⇒ สถานะ "ยื่นแบบแล้ว ·
+            // รอบันทึกการนำส่งเงิน" (สีส้ม) **ไปไม่ถึง** — แถวจะเป็นแดงจนกว่าจะ
+            // บันทึกการนำส่งเงิน ซึ่งปิดแถวทั้งใบอยู่แล้ว
+            // (คอมเมนต์เดิมเขียนว่า "สปส.1-10 ไม่ได้ยื่นผ่าน TaxReport จึงคืน null
+            //  ที่บรรทัดนี้" — **ผิด**: ReportTypeOf("SsoSps110") คืน
+            //  TaxType.SocialSecurity ไม่ใช่ null; ตัวที่ทำให้ได้ null คือ "ไม่มีแถว"
+            //  ไม่ใช่ "แปลงชนิดไม่ได้")
+            // ถ้าจะเปิดสถานะส้มให้สองแบบนี้ ต้องมีที่ให้ผู้ใช้ทำเครื่องหมาย
+            // "ยื่นแบบแล้ว" ก่อน — ห้าม infer จากการกดดาวน์โหลดไฟล์ (ดาวน์โหลด
+            // ≠ ยื่น) ตามกฎ "สถานะที่แปลว่าระบบภายนอกรับไปแล้ว ต้องตั้งได้เฉพาะ
+            // เมื่อระบบภายนอกตอบกลับจริง"
             var hit = filed.Where(f => f.Type == rt.Value && f.Year == y && f.Month == m)
                            .Select(f => (DateTime?)(f.At ?? DateTime.UtcNow)).ToList();
             return hit.Count > 0 ? hit[0] : null;
@@ -158,9 +175,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // WithholdingTaxAmount ⇒ เดิมนับสองครั้ง (และข้ามเดือนถ้าจ่ายคนละเดือน)
             // ท.ป.4/2528: ภาระนำส่งเกิดที่ "การจ่าย" ⇒ ใบสำคัญจ่ายคือแถวจริง
             // (กติกาเดียวกับ settledSourceIds ของ TaxService.GenerateWhtReport)
-            var settledByPv = whtDocs
-                .Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null)
-                .Select(d => d.RelatedDocumentId!.Value).ToHashSet();
+            var settledByPv = Accounting.Helpers.WhtRemitScope.SettledSourceIds(
+                whtDocs, d => d.DocumentType, d => d.RelatedDocumentId, d => d.WithholdingTaxAmount);
             whtDocs = whtDocs
                 .Where(d => d.DocumentType == DocumentType.PaymentVoucher || !settledByPv.Contains(d.Id))
                 .ToList();
@@ -492,9 +508,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     CName = d.Contact != null ? d.Contact.Name : null,
                     CCountry = d.Contact != null ? d.Contact.CountryCode : null })
                 .ToListAsync();
-            var settledByPv = docs
-                .Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null)
-                .Select(d => d.RelatedDocumentId!.Value).ToHashSet();
+            // ⚠️ query ของเมธอดนี้ดึง PV ที่ **ไม่มี WHT** เข้ามาด้วย (เงื่อนไข
+            // `IsForeignService && VatAmount > 0` สำหรับ ภ.พ.36) ⇒ ถ้าไม่กรอง
+            // `wht != 0` ใบตั้งหนี้ที่ PV แบบนั้นอ้างถึงจะถูกตัดทิ้งแล้วยอด
+            // ภ.ง.ด.53 หายทั้งก้อน — ตัวกรองอยู่ใน helper ตัวเดียวกับหน้านำส่ง
+            var settledByPv = Accounting.Helpers.WhtRemitScope.SettledSourceIds(
+                docs, d => d.DocumentType, d => d.RelatedDocumentId, d => d.WithholdingTaxAmount);
             foreach (var d in docs)
             {
                 if (d.DocumentType != DocumentType.PaymentVoucher && settledByPv.Contains(d.Id))
@@ -894,30 +913,46 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // เป็น 0 อีกฝั่งไม่เป็น = ข้อมูลผิดเสมอ ไม่ใช่สถานะที่กฎหมายรองรับ
         if (type == "SsoSps110")
         {
-            var mismatched = await _db.PayrollDetails.AsNoTracking()
-                .Include(d => d.Employee)
+            // ⚠️ ธง "อยู่ในระบบประกันสังคม" อยู่บน **Employee** ไม่ใช่ PayrollDetail
+            // (เคยเขียน d.IsSubjectToSocialSecurity ⇒ CS1061 ล้มทั้ง solution)
+            // ดึงเฉพาะแถวที่ "มีเงิน" มาก่อน แล้วตัดสินในหน่วยความจำ — ตัวตัดสิน
+            // เป็น pure helper ที่ EF แปลเป็น SQL ไม่ได้ และแถวที่มีเงินในหนึ่ง
+            // งวดมีจำนวนจำกัดอยู่แล้ว
+            var funded = await _db.PayrollDetails.AsNoTracking()
                 .Where(d => d.CompanyId == companyId
                     && d.PayrollRun.Year == req.PeriodYear && d.PayrollRun.Month == req.PeriodMonth
                     && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid
-                    && d.IsSubjectToSocialSecurity
-                    && d.SocialSecurityEmployee <= 0 && d.SocialSecurityEmployer > 0)
+                    && (d.SocialSecurityEmployee > 0 || d.SocialSecurityEmployer > 0))
                 .Select(d => new { d.Employee.EmployeeCode,
                     Name = d.Employee.FirstNameTh + " " + d.Employee.LastNameTh,
-                    d.SocialSecurityEmployer })
+                    Subject = d.Employee.IsSubjectToSocialSecurity,
+                    d.SocialSecurityEmployee, d.SocialSecurityEmployer })
                 .ToListAsync();
+            // เทียบกับ **กติกาเดียวกับที่ exporter ใช้ตัดแถว** (Helpers/SsoFilingScope)
+            // ⇒ ครอบทั้งสองทรงที่ทำให้ "เงินที่โอน ≠ ยอดที่ประกาศ": ธง=false แต่มี
+            // ยอด · และฝั่งลูกจ้าง=0 ขณะฝั่งนายจ้าง>0 (ม.46 บอกว่าเป็นไปไม่ได้)
+            var mismatched = funded
+                .Where(x => Accounting.Helpers.SsoFilingScope.IsFundedButUndeclared(
+                    x.Subject, x.SocialSecurityEmployee, x.SocialSecurityEmployer))
+                .ToList();
             if (mismatched.Count > 0)
             {
-                var dropped = mismatched.Sum(x => x.SocialSecurityEmployer);
+                // ยอดที่นำส่ง = ผลรวมของ **ทุกแถว** (PayrollRun.TotalSocialSecurity*)
+                // ส่วนไฟล์ประกาศเฉพาะแถวที่ผ่าน IsDeclared ⇒ ส่วนต่างคือยอดทั้งคู่
+                // ของแถวเหล่านี้ ไม่ใช่เฉพาะฝั่งนายจ้าง
+                var dropped = mismatched.Sum(x => x.SocialSecurityEmployee + x.SocialSecurityEmployer);
                 var who = string.Join(" · ", mismatched.Take(5)
-                    .Select(x => $"{x.EmployeeCode} {x.Name} ({x.SocialSecurityEmployer:N2})"))
+                    .Select(x => $"{x.EmployeeCode} {x.Name} "
+                        + $"({x.SocialSecurityEmployee + x.SocialSecurityEmployer:N2} — "
+                        + Accounting.Helpers.SsoFilingScope.ReasonOf(
+                            x.Subject, x.SocialSecurityEmployee, x.SocialSecurityEmployer) + ")"))
                     + (mismatched.Count > 5 ? $" และอีก {mismatched.Count - 5} คน" : "");
                 throw new Accounting.Helpers.BusinessRuleException(
-                    $"พนักงาน {mismatched.Count} คนมียอดสมทบฝั่งนายจ้างแต่ฝั่งลูกจ้างเป็น 0 "
-                    + $"รวม {dropped:N2} บาท — {who} · "
-                    + "ม.46 ให้สมทบจากฐานค่าจ้างเดียวกันทั้งสองฝั่ง และไฟล์ สปส.1-10 "
-                    + "จะไม่ประกาศแถวเหล่านี้ ⇒ เงินที่นำส่งจะไม่ตรงกับที่ประกาศ · "
+                    $"พนักงาน {mismatched.Count} คนมียอดสมทบอยู่ในยอดนำส่ง แต่ไฟล์ สปส.1-10 "
+                    + $"จะไม่ประกาศ รวม {dropped:N2} บาท — {who} · "
+                    + "เงินที่โอนจะไม่ตรงกับที่ประกาศ แล้ว สปส. ตีกลับทั้งไฟล์ · "
                     + "กรุณาแก้ยอดรายคนที่หน้าเงินเดือน (กลับรายการจ่าย → แก้ยอด → จ่ายใหม่) "
-                    + "หรือปลดธง “อยู่ในระบบประกันสังคม” ถ้าพนักงานคนนั้นไม่ต้องสมทบ",
+                    + "หรือติ๊ก/ปลดธง “อยู่ในระบบประกันสังคม” ให้ตรงกับความจริง",
                     "SSO-PAIR-CONFLICT");
             }
         }

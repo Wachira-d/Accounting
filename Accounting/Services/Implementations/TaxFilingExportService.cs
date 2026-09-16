@@ -11,6 +11,48 @@ namespace Accounting.Services.Implementations;
 
 public class TaxFilingExportService : ITaxFilingExportService
 {
+    /// <summary>
+    /// ด่าน "ไฟล์ว่างเงียบ ๆ" — ถ้างวดนี้ไม่มีรอบเงินเดือนที่ยื่นได้
+    /// (<see cref="Accounting.Helpers.PayrollRunFilingScope.FilingStatuses"/>)
+    /// แต่ **มีรอบอยู่ในสถานะอื่น** ให้ล้มพร้อมบอกว่าต้องไปกดอะไร
+    ///
+    /// ที่มา: ตัวกรองไฟล์ยื่นถูกบีบจาก "ไม่ใช่ Draft/Voided" เหลือ
+    /// {Approved, Paid} (ถูกต้อง — ห้ามยื่นด้วยยอดที่ยังไม่มีใครอนุมัติ) แต่
+    /// ผลลัพธ์ของรอบที่ค้างที่ <c>Calculated</c> กลายเป็นไฟล์ที่มีแต่ header/trailer
+    /// ศูนย์บาท ส่งกลับเป็น HTTP 200 ⇒ หน้าเว็บขึ้น "ดาวน์โหลดสำเร็จ" แล้วผู้ใช้
+    /// อัปโหลดไฟล์ว่างเข้าเว็บ RD/สปส. — silent no-op ในเส้นที่แก้ย้อนหลังไม่ได้
+    ///
+    /// <c>month = null</c> = แบบรายปี (ภ.ง.ด.1ก) ⇒ ดูทั้งปี
+    /// </summary>
+    private async Task EnsureFilableRunsAsync(
+        Guid companyId, int year, int? month, string formName)
+    {
+        var runs = await _db.Set<PayrollRun>().AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.Year == year
+                && (month == null || p.Month == month.Value))
+            .Select(p => new { p.Status, p.Month })
+            .ToListAsync();
+        if (runs.Any(r => Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(r.Status)))
+            return;
+
+        var periodLabel = month == null ? $"ปี {year}" : $"เดือน {month}/{year}";
+        var blocked = runs
+            .Where(r => r.Status != Accounting.Helpers.PayrollRunFilingScope.Voided)
+            .Select(r => r.Status).Distinct().ToList();
+        if (blocked.Count == 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ยังไม่มีรอบเงินเดือนของ{periodLabel} — สร้างและคำนวณรอบเงินเดือนก่อน "
+                + $"แล้วจึงดาวน์โหลด {formName} ได้",
+                "PAYROLL-NO-RUN");
+
+        throw new Accounting.Helpers.BusinessRuleException(
+            $"รอบเงินเดือน{periodLabel}ยังอยู่สถานะ {string.Join("/", blocked)} — "
+            + $"ไฟล์ {formName} รับเฉพาะรอบที่ **อนุมัติแล้ว** (ไฟล์ที่อัปโหลดเข้าเว็บ"
+            + "ราชการแล้วแก้ย้อนหลังไม่ได้ จึงต้องเป็นยอดที่ผ่านการอนุมัติ) · "
+            + "กรุณากด “อนุมัติ” ที่หน้าเงินเดือนก่อน แล้วดาวน์โหลดใหม่",
+            "PAYROLL-RUN-NOT-APPROVED");
+    }
+
     private readonly AccountingDbContext _db;
     private readonly ITaxService _taxService;
 
@@ -35,6 +77,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month)
     {
+        await EnsureFilableRunsAsync(companyId, year, month, "ภ.ง.ด.1");
         var company = await GetCompanyAsync(companyId);
         var payrollRuns = await _db.PayrollRuns
             .Include(p => p.Details).ThenInclude(d => d.Employee)
@@ -113,11 +156,23 @@ public class TaxFilingExportService : ITaxFilingExportService
         var rows = BuildPndRows(certs, juristicPayee: false);
         var body = PndTextFileFormat.Build(rows);
 
+        // ⚠️ บุคคลธรรมดาต้องมีทั้งชื่อตัวและชื่อสกุล — แถวที่แยกไม่ได้จะได้ Col5 ว่าง
+        // และคำนำหน้าอาจค้างใน Col4. ระบบ **ไม่เดาให้** (คำแรกอาจเป็นคำนำหน้าหรือ
+        // เป็นส่วนของชื่อร้าน — แยกจากตัวอักษรอย่างเดียวไม่ได้) จึงบอกผู้ใช้ว่า
+        // ต้องไปกรอก "คำนำหน้า" ในผู้ติดต่อ แล้วระบบจะตัดให้เองแบบไม่ต้องเดา
+        var needReview = rows.Where(PndTextFileFormat.NeedsNameReview).ToList();
+        var reviewNote = needReview.Count == 0 ? "" :
+            $" · ⚠️ {needReview.Count} รายแยกชื่อตัว/ชื่อสกุลไม่ได้ "
+            + $"({string.Join(", ", needReview.Take(3).Select(r => r.PayeeName))}"
+            + (needReview.Count > 3 ? ", …" : "") + ") — "
+            + "กรอกช่อง “คำนำหน้า” ที่ผู้ติดต่อ แล้วสร้างไฟล์ใหม่";
+
         return new TaxFilingExportResult(
             "PND3", "ภ.ง.ด.3", $"PND3_{year}{month:D2}.txt", "text/plain", AsBytes(body),
             certs.Count, totalIncome, totalTax,
             $"ภ.ง.ด.3 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
-            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + reviewNote);
     }
 
     // =====================================================================
@@ -156,6 +211,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year)
     {
+        await EnsureFilableRunsAsync(companyId, year, null, "ภ.ง.ด.1ก");
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
         var yearStart = new DateTime(year, 1, 1);
@@ -341,6 +397,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportSso110Async(Guid companyId, int year, int month)
     {
+        await EnsureFilableRunsAsync(companyId, year, month, "สปส.1-10");
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
         var period = $"{thaiYear:D4}{month:D2}";
@@ -358,7 +415,11 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var allDetails = payrollRuns
             .SelectMany(p => p.Details)
-            .Where(d => d.Employee.IsSubjectToSocialSecurity && d.SocialSecurityEmployee > 0)
+            // กติกาตัดแถวอยู่ที่ Helpers/SsoFilingScope ที่เดียว — ด่าน
+            // SSO-PAIR-CONFLICT ตอนนำส่งอ่านตัวเดียวกัน ⇒ "เงินที่โอน" กับ
+            // "ยอดที่ประกาศ" ใช้นิยามเดียวกันเสมอ (เดิมเขียนเงื่อนไขซ้ำสองที่)
+            .Where(d => Accounting.Helpers.SsoFilingScope.IsDeclared(
+                d.Employee.IsSubjectToSocialSecurity, d.SocialSecurityEmployee))
             .OrderBy(d => d.Employee.EmployeeCode)
             .ToList();
 
@@ -428,6 +489,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportSso110ExcelAsync(Guid companyId, int year, int month)
     {
+        await EnsureFilableRunsAsync(companyId, year, month, "สปส.1-10 (Excel)");
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
 
@@ -444,7 +506,11 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var allDetails = payrollRuns
             .SelectMany(p => p.Details)
-            .Where(d => d.Employee.IsSubjectToSocialSecurity && d.SocialSecurityEmployee > 0)
+            // กติกาตัดแถวอยู่ที่ Helpers/SsoFilingScope ที่เดียว — ด่าน
+            // SSO-PAIR-CONFLICT ตอนนำส่งอ่านตัวเดียวกัน ⇒ "เงินที่โอน" กับ
+            // "ยอดที่ประกาศ" ใช้นิยามเดียวกันเสมอ (เดิมเขียนเงื่อนไขซ้ำสองที่)
+            .Where(d => Accounting.Helpers.SsoFilingScope.IsDeclared(
+                d.Employee.IsSubjectToSocialSecurity, d.SocialSecurityEmployee))
             .OrderBy(d => d.Employee.EmployeeCode)
             .ToList();
 

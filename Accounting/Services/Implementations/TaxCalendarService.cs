@@ -41,11 +41,21 @@ public class TaxCalendarService : ITaxCalendarService
 
     public async Task InitializeYearAsync(Guid companyId, int year)
     {
-        // Check if already initialized
-        var existing = await _db.Set<TaxCalendarEvent>()
-            .AnyAsync(e => e.CompanyId == companyId && e.Year == year);
-        if (existing)
-            throw new InvalidOperationException($"ปฏิทินภาษีปี {year} ถูกสร้างไว้แล้ว");
+        // ⚠️ **เดิม throw เมื่อมีแถวอยู่แล้ว** ⇒ ปฏิทินที่สร้างครั้งเดียวจะค้างเป็น
+        // วันที่ของกติกาเก่าตลอดไป ไม่มี endpoint ไหนสร้างใหม่ได้เลย. หลังยุบ
+        // ตารางกำหนดยื่นมาที่ Helpers/TaxFilingDeadline (แก้ ภ.พ.36 ที่เคยได้
+        // วันที่ 23 · เพิ่ม ภ.ง.ด.54 ที่หายไปทั้งปี · เลื่อนวันหยุด ป.พ.พ. §193/8 ·
+        // ภ.ง.ด.50 นับ 150 วันจากสิ้นรอบบัญชี) แถวเก่าจึงเล่าคนละเรื่องกับ
+        // หน้านำส่งภาษีที่คำนวณสด — สองหน้าห่างกันหนึ่งคลิก
+        // ⇒ เปลี่ยนเป็น **upsert**: แถวที่ยัง Pending อัปเดตวันให้ตรงกติกาปัจจุบัน ·
+        // แบบที่ยังไม่มีให้เพิ่ม · แถวที่ผู้ใช้ทำเครื่องหมายว่ายื่นแล้ว **ห้ามแตะ**
+        // (เป็นบันทึกของสิ่งที่เกิดขึ้นจริง ไม่ใช่ค่าที่คำนวณได้)
+        var existingRows = await _db.Set<TaxCalendarEvent>()
+            .Where(e => e.CompanyId == companyId && e.Year == year && !e.IsDeleted)
+            .ToListAsync();
+        var byKey = existingRows
+            .GroupBy(e => (e.TaxFormCode, e.Month))
+            .ToDictionary(g => g.Key, g => g.First());
 
         // ⚠️ ภ.ง.ด.50/51 ผูกกับ **รอบบัญชีของบริษัท** ไม่ใช่ปีปฏิทิน —
         // `TaxService.GenerateCitReport` อ่าน `FiscalYearStartMonth` อยู่แล้ว
@@ -121,15 +131,18 @@ public class TaxCalendarService : ITaxCalendarService
 
         foreach (var (code, name, dueDate, eFilingExtra) in annualForms)
         {
-            var adjustedDueDate = dueDate;
-            if (adjustedDueDate.DayOfWeek == DayOfWeek.Saturday)
-                adjustedDueDate = adjustedDueDate.AddDays(2);
-            else if (adjustedDueDate.DayOfWeek == DayOfWeek.Sunday)
-                adjustedDueDate = adjustedDueDate.AddDays(1);
+            // ⚠️ e-Filing ต้องนับ +8 จากวันครบกำหนด **ก่อนเลื่อนวันหยุด** แล้วค่อย
+            // เลื่อนทั้งคู่ (มาตรการกระทรวงการคลังขยายจากวันตามกฎหมาย ไม่ใช่จากวัน
+            // ที่เลื่อนแล้ว) — เดิมบล็อกนี้เลื่อนก่อนแล้วบวก ⇒ ได้ช้ากว่าจริง 1-2 วัน
+            // และ **ไม่เลื่อน e-Filing เลย** ⇒ ภ.ง.ด.50/1ก/2ก/3ก/53ก ตกวันเสาร์ได้
+            // ⇒ ปฏิทินขึ้น "เลยกำหนด" ก่อนเวลาจริง. ตัวเลข 8 อยู่ที่
+            // Helpers/TaxFilingDeadline ที่เดียว — ห้ามพิมพ์ซ้ำ (บล็อกนี้เคยพิมพ์ 6 จุด)
+            var adjustedDueDate = Accounting.Helpers.TaxFilingDeadline.RollToBusinessDay(dueDate);
 
             DateTime? eFilingDueDate = null;
             if (eFilingExtra > 0)
-                eFilingDueDate = adjustedDueDate.AddDays(eFilingExtra);
+                eFilingDueDate = Accounting.Helpers.TaxFilingDeadline.RollToBusinessDay(
+                    dueDate.AddDays(Accounting.Helpers.TaxFilingDeadline.EFilingExtraDays));
 
             events.Add(new TaxCalendarEvent
             {
@@ -146,8 +159,27 @@ public class TaxCalendarService : ITaxCalendarService
             });
         }
 
-        _db.Set<TaxCalendarEvent>().AddRange(events);
-        await _db.SaveChangesAsync();
+        var added = 0; var refreshed = 0;
+        foreach (var e in events)
+        {
+            if (!byKey.TryGetValue((e.TaxFormCode, e.Month), out var row))
+            {
+                _db.Set<TaxCalendarEvent>().Add(e);
+                added++;
+                continue;
+            }
+            // ยื่นแล้ว/ทำเครื่องหมายเองแล้ว = ข้อเท็จจริง ห้ามเขียนทับด้วยค่าที่คำนวณ
+            if (!string.Equals(row.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+                || row.FiledDate != null) continue;
+            if (row.DueDate == e.DueDate && row.EFilingDueDate == e.EFilingDueDate
+                && row.TaxFormName == e.TaxFormName) continue;
+            row.DueDate = e.DueDate;
+            row.EFilingDueDate = e.EFilingDueDate;
+            row.TaxFormName = e.TaxFormName;
+            row.UpdatedAt = DateTime.UtcNow;
+            refreshed++;
+        }
+        if (added > 0 || refreshed > 0) await _db.SaveChangesAsync();
     }
 
     public async Task<TaxCalendarEventResponse> UpdateEventAsync(Guid companyId, Guid eventId, UpdateTaxCalendarEventRequest request)

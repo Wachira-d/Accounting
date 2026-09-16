@@ -3819,6 +3819,12 @@ public class PayrollService : IPayrollService
                 && d.PayrollRun.Status != "Voided")
             .ToListAsync();
 
+        // ⚠️ จอแสดงกว้างกว่าไฟล์โดยตั้งใจ (ใช้ทบทวนก่อนอนุมัติ) — แต่ห้ามให้
+        // ผู้ใช้เดาเองว่าแถวไหนจะอยู่ในไฟล์ยื่น: ไฟล์รับเฉพาะรอบ Approved/Paid
+        // (Helpers/PayrollRunFilingScope) และเฉพาะแถวที่มีเงินได้ ⇒ ส่งธงรายแถว
+        // มาให้หน้าเว็บ **แสดง** ไม่ใช่ให้ JS คิดเกณฑ์เอง (= สำเนามือชุดที่สาม)
+        static decimal IncomeForTax(PayrollDetail d)
+            => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
@@ -3826,9 +3832,14 @@ public class PayrollService : IPayrollService
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             IncomeType = "เงินเดือน ค่าจ้าง (ม.40(1))",
             TaxableIncome = d.GrossIncome,
-            TaxWithheld = d.WithholdingTax
+            TaxWithheld = d.WithholdingTax,
+            RunStatus = d.PayrollRun.Status,
+            InFilingFile = Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
+                               .Contains(d.PayrollRun.Status)
+                           && IncomeForTax(d) > 0
         }).ToList();
 
+        var excluded = lines.Where(l => !l.InFilingFile).ToList();
         return new
         {
             FormCode = "ภ.ง.ด.1",
@@ -3837,6 +3848,14 @@ public class PayrollService : IPayrollService
             TotalEmployees = lines.Count,
             TotalTaxableIncome = lines.Sum(l => l.TaxableIncome),
             TotalTaxWithheld = lines.Sum(l => l.TaxWithheld),
+            // ยอดที่ **ไฟล์ยื่นจะประกาศจริง** — เดิมจอกับไฟล์ต่างกันได้เงียบ ๆ
+            FiledEmployees = lines.Count - excluded.Count,
+            FiledTaxWithheld = lines.Where(l => l.InFilingFile).Sum(l => l.TaxWithheld),
+            ExcludedEmployees = excluded.Count,
+            ExcludedNote = excluded.Count == 0 ? null
+                : $"{excluded.Count} แถวจะไม่อยู่ในไฟล์ ภ.ง.ด.1 — "
+                  + $"รอบที่ยังไม่อนุมัติ ({string.Join("/", excluded.Select(l => l.RunStatus).Distinct())}) "
+                  + "หรือไม่มีเงินได้ · กดอนุมัติรอบเงินเดือนก่อนดาวน์โหลด",
             Lines = lines
         };
     }
@@ -3850,7 +3869,13 @@ public class PayrollService : IPayrollService
                 && d.PayrollRun.Year == year
                 && d.PayrollRun.Month == month
                 && d.PayrollRun.Status != "Voided"
-                && d.Employee.IsSubjectToSocialSecurity)
+                // ⚠️ **ห้ามกรอง IsSubjectToSocialSecurity ที่ query** — แถวที่ธง
+                // เป็น false แต่มียอดสมทบคือเคสที่ทำให้ "เงินที่โอน ≠ ยอดที่
+                // ประกาศ" (ยอดนำส่งมาจาก run.TotalSocialSecurity* ซึ่งรวมทุกแถว)
+                // ถ้าจอซ่อนมันไว้ ผู้ใช้จะไม่มีทางเห็นต้นเหตุตอนโดนด่าน
+                // SSO-PAIR-CONFLICT บล็อก
+                && (d.Employee.IsSubjectToSocialSecurity
+                    || d.SocialSecurityEmployee > 0 || d.SocialSecurityEmployer > 0))
             .ToListAsync();
 
         // Wage base cap follows the YEAR being reported, not a fixed 15,000.
@@ -3862,9 +3887,25 @@ public class PayrollService : IPayrollService
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             SalaryBase = Math.Min(d.BaseSalary, ssoParams.MaxBase),
             EmployeeContribution = d.SocialSecurityEmployee,
-            EmployerContribution = d.SocialSecurityEmployer
+            EmployerContribution = d.SocialSecurityEmployer,
+            RunStatus = d.PayrollRun.Status,
+            // ธงรายแถวจากตัวตัดสินเดียวกับ exporter — จอ "แสดง" ไม่ใช่ "คิดเอง"
+            InFilingFile = Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
+                               .Contains(d.PayrollRun.Status)
+                           && Accounting.Helpers.SsoFilingScope.IsDeclared(
+                               d.Employee.IsSubjectToSocialSecurity, d.SocialSecurityEmployee),
+            ExcludeReason =
+                !Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(d.PayrollRun.Status)
+                    ? $"รอบยังไม่อนุมัติ ({d.PayrollRun.Status})"
+                : Accounting.Helpers.SsoFilingScope.IsDeclared(
+                      d.Employee.IsSubjectToSocialSecurity, d.SocialSecurityEmployee)
+                    ? null
+                    : Accounting.Helpers.SsoFilingScope.ReasonOf(
+                          d.Employee.IsSubjectToSocialSecurity,
+                          d.SocialSecurityEmployee, d.SocialSecurityEmployer)
         }).ToList();
 
+        var excluded = lines.Where(l => !l.InFilingFile).ToList();
         return new
         {
             FormCode = "สปส.1-10",
@@ -3874,6 +3915,16 @@ public class PayrollService : IPayrollService
             TotalEmployeeContribution = lines.Sum(l => l.EmployeeContribution),
             TotalEmployerContribution = lines.Sum(l => l.EmployerContribution),
             TotalContribution = lines.Sum(l => l.EmployeeContribution + l.EmployerContribution),
+            // ยอดที่ **ไฟล์จะประกาศจริง** — ต่างจากยอดรวมเมื่อมีแถวที่ถูกตัด
+            FiledEmployees = lines.Count - excluded.Count,
+            FiledContribution = lines.Where(l => l.InFilingFile)
+                .Sum(l => l.EmployeeContribution + l.EmployerContribution),
+            ExcludedEmployees = excluded.Count,
+            ExcludedNote = excluded.Count == 0 ? null
+                : $"{excluded.Count} แถว รวม "
+                  + $"{excluded.Sum(l => l.EmployeeContribution + l.EmployerContribution):N2} บาท "
+                  + "จะไม่อยู่ในไฟล์ สปส.1-10 แต่ยอดนำส่งนับรวมไว้ ⇒ "
+                  + "ต้องแก้ก่อนกดนำส่ง (ระบบจะบล็อกให้)",
             Lines = lines
         };
     }

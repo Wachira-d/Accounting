@@ -74,7 +74,7 @@ public static class PndTextFileFormat
     /// <summary>1 บรรทัด (ไม่มี CRLF ต่อท้าย) — เปิด public เพื่อให้เทสต์ยิงตรงได้</summary>
     public static string DetailRow(int seq, Row r)
     {
-        var (first, last) = SplitName(r.PayeeName, r.IsJuristic);
+        var (first, last) = SplitName(r.PayeeName, r.IsJuristic, r.PayeeTitle);
         return string.Join("|",
             seq.ToString(CultureInfo.InvariantCulture),                       // Col1
             Digits(r.PayeeTaxId).PadLeft(13, '0'),                            // Col2
@@ -108,17 +108,54 @@ public static class PndTextFileFormat
     /// ⚠️ ลิสต์คำนำหน้าอยู่ที่ <see cref="ThaiTitleHelper"/> ที่เดียว — เดิมไฟล์นี้
     /// ถือลิสต์ของตัวเองที่ไม่มี "เด็กชาย/เด็กหญิง" ⇒ ผู้ถูกหักที่เป็นผู้เยาว์
     /// (ค่าเช่า/มรดก/นักแสดงเด็ก) ได้ Col4="เด็กชาย" Col5="สมชาย ใจดี"</summary>
-    public static (string First, string Last) SplitName(string? fullName, bool isJuristic)
+    public static (string First, string Last) SplitName(
+        string? fullName, bool isJuristic, string? knownTitle = null)
     {
         var name = (fullName ?? "").Trim();
         if (isJuristic || name.Length == 0) return (name, "");
 
-        // ตัดเฉพาะคำนำหน้าบุคคล — ตัวช่วยมีด่านกัน "นายช่างการไฟฟ้า" ให้แล้ว
-        var (title, rest) = ThaiTitleHelper.Split(name);
-        if (title.Length > 0 && !ThaiTitleHelper.IsJuristicTitle(title)) name = rest;
+        // ── 1. คำนำหน้าที่ **ผู้ใช้ยืนยันแล้ว** (Contact.TitleTh) ชนะเสมอ ──
+        // ตัดแบบ deterministic ไม่ต้องเดา: ถ้าชื่อขึ้นต้นด้วยคำนั้น (รูปเต็มหรือ
+        // ตัวย่อรูปใดก็ได้) ตัดทิ้งได้ทันที
+        //
+        // ที่มา: ด่านกัน "นายช่างการไฟฟ้า" (ชื่อร้าน — ห้ามผ่า) บังคับว่าส่วนที่
+        // เหลือต้องมีช่องว่าง ⇒ ผู้ถูกหักที่บันทึกชื่อไว้ติดกันไม่มีนามสกุล
+        // ("นายสมชาย") ได้ Col4 = "นายสมชาย" และ Col12 ว่าง = แย่กว่าเดิมทั้งสองช่อง.
+        // ทางที่ถูกไม่ใช่ให้ตัวเดาเดาหนักขึ้น (จะพา "นายช่างการไฟฟ้า" พังกลับ)
+        // แต่คือ **ใช้ค่าที่รู้แน่แล้วมาตัดสิน** — ญาติของกฎ "ข้อมูลอ้างอิงเชื่อถือ
+        // ได้เฉพาะเมื่อกุญแจที่ใช้ค้นถูก"
+        var confirmed = (knownTitle ?? "").Trim();
+        if (confirmed.Length > 0)
+        {
+            foreach (var form in ThaiTitleHelper.FormsOf(confirmed))
+            {
+                if (!name.StartsWith(form, StringComparison.OrdinalIgnoreCase)) continue;
+                var rest0 = name[form.Length..].TrimStart();
+                if (rest0.Length == 0) continue;      // ทั้งชื่อเป็นคำนำหน้า — ไม่ตัด
+                name = rest0;
+                break;
+            }
+        }
+        else
+        {
+            // ── 2. ไม่รู้คำนำหน้า → เดาจากชื่อ (ตัวช่วยมีด่านกันชื่อร้านให้แล้ว) ──
+            var (title, rest) = ThaiTitleHelper.Split(name);
+            if (title.Length > 0 && !ThaiTitleHelper.IsJuristicTitle(title)) name = rest;
+        }
 
         var sp = name.IndexOf(' ');
         return sp < 0 ? (name, "") : (name[..sp].Trim(), name[(sp + 1)..].Trim());
+    }
+
+    /// <summary>true = แถวนี้ยังแยก "ชื่อตัว/ชื่อสกุล" ไม่ได้ (บุคคลธรรมดาแต่ไม่มี
+    /// ช่องว่างในชื่อ) ⇒ Col5 จะว่าง และคำนำหน้าอาจค้างอยู่ใน Col4.
+    /// **ไม่แก้ให้เอง** — ระบบไม่รู้ว่าคำแรกเป็นคำนำหน้าหรือเป็นส่วนของชื่อร้าน
+    /// จึงรายงานให้ผู้ใช้ตัดสิน (กฎ "ไม่รู้ = บอกว่าไม่รู้")</summary>
+    public static bool NeedsNameReview(Row r)
+    {
+        if (r.IsJuristic) return false;
+        var (_, last) = SplitName(r.PayeeName, r.IsJuristic, r.PayeeTitle);
+        return string.IsNullOrWhiteSpace(last);
     }
 
     /// <summary>ตัวเลขล้วน — เลขผู้เสียภาษีที่ผู้ใช้พิมพ์ขีดคั่นมาต้องส่งเป็น 13 หลักติดกัน</summary>

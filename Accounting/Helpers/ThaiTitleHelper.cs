@@ -54,6 +54,25 @@ public static class ThaiTitleHelper
         return t;
     }
 
+    /// <summary>ทุกรูปของคำนำหน้าหนึ่งตัว (รูปเต็ม + ตัวย่อ/อังกฤษ) เรียงยาวไปสั้น
+    /// — ใช้ตัดคำนำหน้าที่ **รู้แน่แล้ว** ออกจากชื่อแบบ deterministic
+    /// (ผู้ใช้อาจบันทึกชื่อว่า "น.ส.สมหญิง" ขณะที่ TitleTh = "นางสาว").
+    /// คืน list ว่างเมื่อไม่รู้จักคำนั้น — ผู้เรียกต้องไม่ตัดอะไรทั้งนั้น</summary>
+    public static IReadOnlyList<string> FormsOf(string? title)
+    {
+        var t = (title ?? "").Trim();
+        if (t.Length == 0) return Array.Empty<string>();
+        foreach (var p in All)
+        {
+            var match = string.Equals(p.Thai, t, StringComparison.OrdinalIgnoreCase)
+                || p.Aliases.Any(a => string.Equals(a, t, StringComparison.OrdinalIgnoreCase));
+            if (!match) continue;
+            return p.Aliases.Append(p.Thai)
+                .OrderByDescending(f => f.Length).ToList();
+        }
+        return Array.Empty<string>();
+    }
+
     /// <summary>true เมื่อคำนำหน้าใช้ยื่น สปส. ได้โดยไม่โดนปฏิเสธ</summary>
     public static bool IsValidForSso(string? title) => SsoValidTitles.Contains((title ?? "").Trim());
 

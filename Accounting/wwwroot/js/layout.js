@@ -273,6 +273,9 @@ const Layout = {
       } catch (e) {
         console.warn('โหลดรายการคำนำหน้าไม่สำเร็จ', e);
         Layout._titlesCache = null;      // ลองใหม่รอบหน้า ห้าม cache ความล้มเหลว
+        // ห้ามเงียบ — ช่องนี้บังคับในฟอร์มพนักงาน และค่าที่ค้างอยู่จะถูกคงไว้
+        // โดยไม่มีตัวเลือกอื่นให้เลือก ⇒ ต้องบอกว่าทำไมและต้องทำอะไร
+        try { Layout.toast('โหลดรายการคำนำหน้าไม่สำเร็จ — เลือกคำนำหน้าใหม่ไม่ได้ชั่วคราว (ค่าเดิมยังอยู่ครบ) กรุณารีเฟรชหน้า', 'error'); } catch (_) {}
       }
     }
     const rows = Layout._titlesCache || [];
@@ -290,16 +293,23 @@ const Layout = {
     Layout.setTitleSelectValue(sel, o.current || '');
   },
 
-  /** ตั้งค่าให้ select คำนำหน้า โดยคงค่าที่ไม่รู้จักไว้พร้อมป้ายเตือน */
+  /** ตั้งค่าให้ select คำนำหน้า โดยคงค่าที่ไม่รู้จักไว้พร้อมป้ายเตือน
+   *
+   *  ⚠️ ป้าย "ไม่อยู่ในตารางของกรมสรรพากร" เป็นการ **ยืนยันข้อเท็จจริง** ⇒ ติดได้
+   *  เฉพาะตอนที่เราโหลดตารางมาได้จริงเท่านั้น. ถ้า `fetch /api/reference/titles`
+   *  ล้ม (`_titlesCache === null`) เรา **ไม่รู้** ว่าค่านั้นถูกหรือผิด — การติดป้าย
+   *  เตือนตอนนั้นคือฟ้องของถูกทุกใบ ซึ่งสอนผู้ใช้ให้เมินคำเตือนทั้งกล่อง
+   *  (กฎเดียวกับ "checker ที่ฟ้องผิด = checker ที่พังแล้ว") */
   setTitleSelectValue(sel, v) {
     if (typeof sel === 'string') sel = document.getElementById(sel);
     if (!sel) return;
     sel.querySelectorAll('option[data-legacy="1"]').forEach(x => x.remove());
     const val = (v || '').trim();
+    const tableLoaded = Array.isArray(Layout._titlesCache) && Layout._titlesCache.length > 0;
     if (val && ![...sel.options].some(x => x.value === val)) {
       const op = document.createElement('option');
       op.value = val;
-      op.textContent = val + ' (⚠️ ไม่อยู่ในตารางของกรมสรรพากร)';
+      op.textContent = tableLoaded ? val + ' (⚠️ ไม่อยู่ในตารางของกรมสรรพากร)' : val;
       op.dataset.legacy = '1';
       sel.appendChild(op);
     }
