@@ -156,16 +156,31 @@ public class WhtCreditService
         var expired = Sum(WhtCreditStatus.Expired);
 
         var (start, end) = await FiscalRangeAsync(companyId, taxYear);
-        var glBalance = await GlWhtBalanceAsync(companyId, start, end);
+        // ⚠️ กระทบยอดต้องเทียบ "ก่อนปิดปี" — JE ปิดปี (`SettleYearEndAsync`) ลง
+        // วันสุดท้ายของรอบพอดี จึงอยู่ในช่วงที่นับ ⇒ GL ลดลงเท่ายอดที่ล้าง ขณะที่
+        // ฝั่งทะเบียน (pending+received+claimed) เท่าเดิม ⇒ หน้าทะเบียนขึ้นแถบแดง
+        // "ไม่ตรงกับบัญชี 11910" **ถาวร** ทุกปีที่ปิดไปแล้ว บนหน้าที่เขียนเองว่า
+        // "ต้องตรวจก่อนยื่นแบบ" = คำเตือนที่ฟ้องของถูกทุกครั้ง (ปิดด่านโดยไม่ตั้งใจ)
+        var glBalance = await GlWhtBalanceAsync(companyId, start, end,
+            excludeYearEndClose: taxYear);
 
         return new WhtCreditSummary(taxYear, pending, received, claimed, expired,
             received, rows.Count(r => r.Status == WhtCreditStatus.Pending),
             glBalance, Math.Round(pending + received + claimed - glBalance, 2));
     }
 
-    /// <summary>ยอด Dr สุทธิของบัญชี 11910 ในช่วงรอบบัญชี (จาก JE ที่ post จริง)</summary>
-    public async Task<decimal> GlWhtBalanceAsync(Guid companyId, DateTime start, DateTime end)
+    /// <summary>ยอด Dr สุทธิของบัญชี 11910 ในช่วงรอบบัญชี (จาก JE ที่ post จริง)
+    ///
+    /// <para><paramref name="excludeYearEndClose"/> = ปีภาษีที่ต้อง **ไม่นับ** JE ปิดปี
+    /// เข้ามา (ใช้ตอนกระทบยอดกับทะเบียน ซึ่งฝั่งทะเบียนไม่ได้ลดตามการปิดปี) ·
+    /// ปล่อย null ตอนเช็ค "ยังล้างได้อีกเท่าไร" เพราะตรงนั้นต้องการ**ยอดคงเหลือสุทธิ**
+    /// ไม่งั้นปิดปีซ้ำครั้งที่สองจะเห็นยอดเต็มแล้วล้างเกิน</para></summary>
+    public async Task<decimal> GlWhtBalanceAsync(Guid companyId, DateTime start, DateTime end,
+        int? excludeYearEndClose = null)
     {
+        var closeRef = excludeYearEndClose.HasValue
+            ? Accounting.Helpers.WhtYearEndReference.For(excludeYearEndClose.Value)
+            : null;
         var lines = await (from l in _db.JournalEntryLines.AsNoTracking()
                            join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
                            join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
@@ -181,6 +196,7 @@ public class WhtCreditService
                                      || j.Status == JournalEntryStatus.Reversed)
                                  && j.EntryDate >= start && j.EntryDate <= end
                                  && a.AccountCode.StartsWith("11910")
+                                 && !(closeRef != null && j.Reference == closeRef)
                            select l.DebitAmount - l.CreditAmount).ToListAsync();
         return Math.Round(lines.Sum(), 2);
     }
@@ -406,7 +422,7 @@ public class WhtCreditService
             JournalType = JournalType.General,
             Description = $"ปิดปีภาษี {r.TaxYear} — ล้างภาษีถูกหัก ณ ที่จ่าย"
                 + (string.IsNullOrWhiteSpace(r.Reason) ? "" : $" ({r.Reason})"),
-            Reference = $"WHT-{r.TaxYear}",
+            Reference = Accounting.Helpers.WhtYearEndReference.For(r.TaxYear),
             Status = JournalEntryStatus.Posted,
             TotalDebit = total,
             TotalCredit = total,

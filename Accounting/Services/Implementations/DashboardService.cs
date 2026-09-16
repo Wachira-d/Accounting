@@ -401,14 +401,22 @@ public class DashboardService : IDashboardService
                 && (t.Year > fromDate.Year || (t.Year == fromDate.Year && t.Month >= fromDate.Month))
                 && (t.Year < toDate.Year || (t.Year == toDate.Year && t.Month <= toDate.Month)))
             .OrderByDescending(t => t.UpdatedAt)
-            .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.UpdatedAt })
+            .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.NetVat, t.UpdatedAt })
             .ToListAsync();
         var byMonth = vatReports.GroupBy(x => (x.Year, x.Month)).Select(g => g.First()).ToList();
+
+        // ⚠️ NetVat ที่ persist ไว้ = ภาษีขาย − ภาษีซื้อ − **เครดิตยกมา §82/3**
+        // เดิมการ์ดคิดใหม่เป็น output − input เฉย ๆ ⇒ งวดที่มีเครดิตยกมา การ์ด
+        // บอกยอด "ต้องชำระ" **สูงเกินจริง** ทั้งที่อ่านรายงานเดียวกันที่มี NetVat
+        // ให้อยู่แล้ว (กติกา: เซิร์ฟเวอร์คำนวณครั้งเดียว ที่เหลืออ่าน ห้ามคิดซ้ำ)
+        decimal? netVatFromReports = null;
+        var isEstimate = byMonth.Count == 0;
 
         if (byMonth.Count > 0)
         {
             outputVat = byMonth.Sum(x => x.OutputVat);
             inputVat = byMonth.Sum(x => x.InputVat);
+            netVatFromReports = byMonth.Sum(x => x.NetVat);
         }
         else
         {
@@ -441,18 +449,26 @@ public class DashboardService : IDashboardService
         // Documents.WithholdingTaxAmount — many users issue certs without the source
         // document carrying the WHT amount. Sum + count from the same source so the
         // dashboard total and "X รายการ" stay consistent.
+        // ⚠️ จัดช่วงด้วย **งวดภาษี** (TaxYear/TaxMonth) ไม่ใช่ `IssuedDate` —
+        // ใบงวด ก.ค. ที่ออกวันที่ 5 ส.ค. อยู่ใน **แบบ ก.ค.** แต่เดิมถูกนับเข้า
+        // การ์ดเดือน ส.ค. ⇒ การ์ดไม่มีวันตรงกับแบบใดเลย ขณะที่รายงาน/ไฟล์ยื่น
+        // ทุกตัวจัดด้วย TaxYear/TaxMonth มาตลอด
+        var fromKey = fromDate.Year * 100 + fromDate.Month;
+        var toKey = toDate.Year * 100 + toDate.Month;
         var whtCertQuery = _db.WithholdingTaxCerts
             .Where(c => c.CompanyId == companyId
                 && c.Status != WithholdingTaxCertStatus.Voided
                 && c.Status != WithholdingTaxCertStatus.Draft
-                && c.IssuedDate != null
-                && c.IssuedDate >= fromDate && c.IssuedDate <= toDate);
+                && c.TaxYear * 100 + c.TaxMonth >= fromKey
+                && c.TaxYear * 100 + c.TaxMonth <= toKey);
 
         var totalWht = await whtCertQuery.SumAsync(c => c.TotalTaxAmount);
         var whtCount = await whtCertQuery.CountAsync();
 
         var period = $"{fromDate:MMM yyyy} – {toDate:MMM yyyy}";
 
-        return new VatWhtSummary(outputVat, inputVat, outputVat - inputVat, totalWht, whtCount, period);
+        return new VatWhtSummary(outputVat, inputVat,
+            netVatFromReports ?? (outputVat - inputVat),
+            totalWht, whtCount, period, isEstimate);
     }
 }

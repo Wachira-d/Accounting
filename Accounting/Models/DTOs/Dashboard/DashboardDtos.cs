@@ -22,7 +22,11 @@ public record VatWhtSummary(
     decimal NetVat,
     decimal TotalWht,
     int WhtCertificateCount,
-    string CurrentPeriod);
+    string CurrentPeriod,
+    // true = ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวด ⇒ ตัวเลขข้างบนคำนวณดิบจากเอกสาร
+    // (ไม่ผ่าน tax point/§82/3/§82/5/undue 11640/CN-DN) — UI ต้องติดป้ายให้ชัด
+    // ห้ามปล่อยให้ผู้ใช้เข้าใจว่าเป็นยอดที่จะยื่นจริง
+    bool IsEstimate = false);
 
 public record DashboardKpis(
     decimal TotalRevenue,

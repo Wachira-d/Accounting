@@ -731,7 +731,17 @@
           if (taxEl && tax) {
             const netColor = tax.netVat > 0 ? 'var(--danger)' : 'var(--success)';
             const netLabel = tax.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน';
-            taxEl.innerHTML = `
+            // ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวด → ตัวเลขเป็นการคำนวณดิบจากเอกสาร
+            // (ไม่ผ่าน tax point/§82/3/§82/5/undue 11640/CN-DN) ห้ามปล่อยให้ผู้ใช้
+            // เข้าใจว่าเป็นยอดที่จะยื่นจริง · undefined (เซิร์ฟเวอร์เก่า) = ไม่วาดอะไร
+            const estBadge = tax.isEstimate === true
+              ? `<div class="text-xs" style="color:#b45309;margin-bottom:6px">
+                   ⚙️ ประมาณการ — ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวดนี้
+                   (<a href="/pages/tax.html" style="text-decoration:underline">สร้างรายงาน</a>
+                   แล้วตัวเลขจะตรงกับที่ยื่นจริง)
+                 </div>`
+              : '';
+            taxEl.innerHTML = estBadge + `
               <div class="grid grid-4 gap-4" style="text-align:center">
                 <div><div class="text-sm text-gray-500">ภาษีขาย (Output VAT)</div><div class="text-xl font-bold">${Layout.money(tax.outputVat)}</div></div>
                 <div><div class="text-sm text-gray-500">ภาษีซื้อ (Input VAT)</div><div class="text-xl font-bold">${Layout.money(tax.inputVat)}</div></div>
