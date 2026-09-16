@@ -504,7 +504,6 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<Company>(e =>
         {
             e.HasIndex(c => c.TaxId);
-            e.Property(c => c.TitleTh).HasMaxLength(50);
             e.Property(c => c.Name).HasMaxLength(500);
             e.Property(c => c.TaxId).HasMaxLength(13);
             e.Property(c => c.BaseCurrency).HasMaxLength(3);
@@ -889,6 +888,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<Contact>(e =>
         {
             e.Property(c => c.Name).HasMaxLength(500);
+            // คำนำหน้าชื่อ (บุคคลธรรมดา) — ใช้ในไฟล์ยื่น ภ.ง.ด.3 คอลัมน์ที่ 12
+            e.Property(c => c.TitleTh).HasMaxLength(50);
             e.Property(c => c.TaxId).HasMaxLength(13);
             // Per-contact GL account overrides — SetNull on delete so
             // deleting an account doesn't cascade-orphan the contact.

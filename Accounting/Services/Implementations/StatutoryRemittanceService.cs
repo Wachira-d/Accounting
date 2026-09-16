@@ -79,6 +79,31 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             remits.Where(r => r.RemittanceType == type && r.PeriodYear == y && r.PeriodMonth == m)
                   .Sum(r => r.Amount);
 
+        // ── "ยื่นแบบแล้วหรือยัง" — คนละเหตุการณ์กับ "จ่ายเงินแล้วหรือยัง" ──
+        // เดิมหน้านี้อ่านแต่ StatutoryRemittance (เงินที่จ่าย) ⇒ งวดที่ผู้ใช้กด
+        // "ยื่นแบบ" ที่หน้ารายงานภาษีแล้ว ยังขึ้น "เลยกำหนด N วัน" สีแดงตลอดไป
+        // (ปฏิทินยื่นในไฟล์เดียวกันอ่าน TaxReport.Status อยู่แล้ว — สองจอของ
+        // service เดียวกันจึงเล่าคนละเรื่อง)
+        var filed = new List<(TaxType Type, int Year, int Month, DateTime? At)>();
+        try
+        {
+            filed = (await _db.TaxReports.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.Status != TaxReportStatus.Draft
+                    && (r.Year > start.Year || (r.Year == start.Year && r.Month >= start.Month)))
+                .Select(r => new { r.TaxType, r.Year, r.Month, r.FiledDate })
+                .ToListAsync())
+                .Select(r => (r.TaxType, r.Year, r.Month, r.FiledDate)).ToList();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลดสถานะยื่นแบบ (TaxReports) ไม่สำเร็จ"); }
+        DateTime? FiledAt(string type, int y, int m)
+        {
+            var rt = ReportTypeOf(type);
+            if (rt == null) return null;   // สปส.1-10 ไม่ได้ยื่นผ่าน TaxReport
+            var hit = filed.Where(f => f.Type == rt.Value && f.Year == y && f.Month == m)
+                           .Select(f => (DateTime?)(f.At ?? DateTime.UtcNow)).ToList();
+            return hit.Count > 0 ? hit[0] : null;
+        }
+
         // ── SSO + ภงด.1 จาก PayrollRun ──
         try
         {
@@ -95,13 +120,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 var total = emp + empr;
                 if (total <= 0.009m) continue;
                 pending.Add(BuildItem("SsoSps110", g.Key.Year, g.Key.Month, total, today,
-                    employee: emp, employer: empr, relatedRunId: g.First().Id));
+                    employee: emp, employer: empr, relatedRunId: g.First().Id,
+                    reportFiledAt: FiledAt("SsoSps110", g.Key.Year, g.Key.Month)));
             }
             foreach (var g in runs.Where(r => InRange(r.Year, r.Month)).GroupBy(r => (r.Year, r.Month)))
             {
                 var outstanding = g.Sum(x => x.Wht) - Remitted("WhtPnd1", g.Key.Year, g.Key.Month);
                 if (outstanding <= 0.009m) continue;
-                pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month, outstanding, today));
+                pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month, outstanding, today,
+                    reportFiledAt: FiledAt("WhtPnd1", g.Key.Year, g.Key.Month)));
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ SSO/ภงด.1 ไม่สำเร็จ"); }
@@ -109,27 +136,56 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // ── ภงด.3 / 53 จากเอกสารหัก ณ ที่จ่าย (bound ช่วงวันที่ใน SQL) ──
         try
         {
+            // ⚠️ ต้องกรอง **ฝั่งซื้อ** เท่านั้น — เดิมไม่กรองชนิดเอกสารเลย ⇒ ใบขาย
+            // (Invoice/TaxInvoice/DebitNote) ที่ "ลูกค้าหักเราไว้" ซึ่งเป็น
+            // **เครดิตภาษีของเรา** (Dr 11910 → ภ.ง.ด.50) ถูกนับเป็นเงินที่เรา
+            // ต้องนำส่ง ⇒ ยอดค้างพองเกินจริง และไม่ตรงกับหน้ารายงานภาษีที่กรอง
+            // ถูกมาตลอด. ลิสต์อยู่ที่ Helpers/WhtRemitScope ตัวเดียว
+            var payerSide = Accounting.Helpers.WhtRemitScope.PayerSideTypes;
             var whtDocs = await _db.Documents.AsNoTracking()
                 // เฉพาะเอกสารที่ post WHT payable เข้า GL แล้ว (อนุมัติขึ้นไป)
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                     && d.WithholdingTaxAmount > 0
+                    && payerSide.Contains(d.DocumentType)
                     && (d.PaymentDate ?? d.DocumentDate) >= start
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
+                .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
+                    d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
                     d.IsForeignService,
-                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
+                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
+                    CTaxId = d.Contact != null ? d.Contact.TaxId : null,
+                    CName = d.Contact != null ? d.Contact.Name : null,
+                    CCountry = d.Contact != null ? d.Contact.CountryCode : null })
                 .ToListAsync();
+
+            // ⚠️ ตัดใบตั้งหนี้ที่มีใบสำคัญจ่ายคลุมแล้ว — ทั้งคู่ถือ
+            // WithholdingTaxAmount ⇒ เดิมนับสองครั้ง (และข้ามเดือนถ้าจ่ายคนละเดือน)
+            // ท.ป.4/2528: ภาระนำส่งเกิดที่ "การจ่าย" ⇒ ใบสำคัญจ่ายคือแถวจริง
+            // (กติกาเดียวกับ settledSourceIds ของ TaxService.GenerateWhtReport)
+            var settledByPv = whtDocs
+                .Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null)
+                .Select(d => d.RelatedDocumentId!.Value).ToHashSet();
+            whtDocs = whtDocs
+                .Where(d => d.DocumentType == DocumentType.PaymentVoucher || !settledByPv.Contains(d.Id))
+                .ToList();
             // ม.70: WHT จ่ายต่างประเทศ (ใบ ภ.พ.36) ยื่น **ภ.ง.ด.54** — ห้ามนับปน
             // ภงด.3/53 (เดิมตกใน 53 ตาม ContactType → ยื่นผิดแบบ + 21918 ว่างตลอด)
             foreach (var typ in new[] { "WhtPnd3", "WhtPnd53", "WhtPnd54" })
             {
-                bool juristic = typ == "WhtPnd53";
+                var wantForm = typ switch
+                {
+                    "WhtPnd53" => TaxType.WithholdingTax53,
+                    "WhtPnd54" => TaxType.WithholdingTax54,
+                    _ => TaxType.WithholdingTax3,
+                };
+                // ⚠️ เดิมดู `ContactType` ดิบ ๆ ซึ่ง **default = Individual** และมี 4 ทางเข้า
+                // ที่ตั้งค่าผิด/ไม่ตั้ง ⇒ "บริษัท ก จำกัด" ที่เลขภาษีขึ้นต้น 0 ตกไป ภ.ง.ด.3
+                // ที่นี่ แต่ทะเบียน 50 ทวิ/รายงานจัดเป็น ภ.ง.ด.53 (ใช้ตัวตัดสิน 3 สัญญาณ)
+                // ⇒ สองหน้าแบ่ง 3/53 คนละแบบทั้งที่ยอดรวมเท่ากัน. ใช้ตัวเดียวกันทั้งระบบ
                 var grouped = whtDocs
-                    .Where(d => typ == "WhtPnd54"
-                        ? d.IsForeignService
-                        : !d.IsForeignService
-                          && (juristic ? d.CType == ContactType.JuristicPerson : d.CType != ContactType.JuristicPerson))
+                    .Where(d => wantForm == Accounting.Helpers.WhtPayeeKind.ResolveForm(
+                        d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName))
                     .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
                     .Where(d => InRange(d.Date.Year, d.Date.Month))
                     .GroupBy(d => (d.Date.Year, d.Date.Month));
@@ -137,7 +193,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 {
                     var outstanding = g.Sum(x => x.WithholdingTaxAmount) - Remitted(typ, g.Key.Year, g.Key.Month);
                     if (outstanding <= 0.009m) continue;
-                    pending.Add(BuildItem(typ, g.Key.Year, g.Key.Month, outstanding, today, payeeCount: g.Count()));
+                    pending.Add(BuildItem(typ, g.Key.Year, g.Key.Month, outstanding, today,
+                        payeeCount: g.Count(), reportFiledAt: FiledAt(typ, g.Key.Year, g.Key.Month)));
                 }
             }
         }
@@ -160,7 +217,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 var outstanding = v.NetVat - Remitted("VatPp30", v.Year, v.Month);
                 if (outstanding <= 0.009m) continue;
                 pending.Add(BuildItem("VatPp30", v.Year, v.Month, outstanding, today,
-                    outputVat: v.OutputVat, inputVat: v.InputVat));
+                    outputVat: v.OutputVat, inputVat: v.InputVat,
+                    reportFiledAt: FiledAt("VatPp30", v.Year, v.Month)));
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "โหลด ภพ.30 ไม่สำเร็จ"); }
@@ -185,7 +243,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 var outstanding = g.Sum(x => x.VatAmount) - Remitted("VatPp36", g.Key.Year, g.Key.Month);
                 if (outstanding <= 0.009m) continue;
                 pending.Add(BuildItem("VatPp36", g.Key.Year, g.Key.Month, outstanding, today,
-                    payeeCount: g.Count()));
+                    payeeCount: g.Count(), reportFiledAt: FiledAt("VatPp36", g.Key.Year, g.Key.Month)));
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภพ.36 ไม่สำเร็จ"); }
@@ -258,18 +316,22 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
     private PendingRemittanceItem BuildItem(string type, int year, int month, decimal amount,
         DateTime today, decimal? employee = null, decimal? employer = null, int? payeeCount = null,
-        decimal? outputVat = null, decimal? inputVat = null, Guid? relatedRunId = null)
+        decimal? outputVat = null, decimal? inputVat = null, Guid? relatedRunId = null,
+        DateTime? reportFiledAt = null)
     {
         var (label, form, code) = Meta(type);
         var (paper, efiling) = DueDates(type, year, month);
-        var overdue = today > efiling.Date;
+        // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
+        // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
+        var overdue = today > efiling.Date && reportFiledAt == null;
         // เงินเพิ่ม preview เฉพาะ ปกส. (§49 2%/เดือน)
         var lateFee = type == "SsoSps110"
             ? PayrollService.ComputeSsoLateFee(year, month, today, amount)
             : 0m;
         return new PendingRemittanceItem(type, label, form, year, month, amount,
             paper, efiling, overdue, lateFee, code,
-            employee, employer, payeeCount, outputVat, inputVat, relatedRunId);
+            employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
+            reportFiledAt);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -292,6 +354,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         "WhtPnd1"   => (true,  "ยื่นทุกเดือนที่มีการจ่ายเงินได้ ม.40(1)(2) แม้ภาษีหัก = 0 (ท.ป.4/2528)"),
         "WhtPnd3"   => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีบุคคลธรรมดา (ท.ป.4/2528)"),
         "WhtPnd53"  => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีนิติบุคคล (ท.ป.4/2528)"),
+        "WhtPnd54"  => (false, "ยื่นเฉพาะเดือนที่จ่ายเงินได้ให้ผู้รับในต่างประเทศ (ป.รัษฎากร ม.70)"),
         "VatPp36"   => (false, "ยื่นเฉพาะเดือนที่จ่ายค่าบริการต่างประเทศ (ป.รัษฎากร §83/6)"),
         _           => (false, "")
     };
@@ -302,7 +365,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         DateTime? FiledAt, decimal NetVat);
     private sealed record RunSnap(int Year, int Month, decimal Emp, decimal Empr, decimal Wht,
         DateTime? SsoSettledAt, string? SsoFiling);
-    private sealed record WhtSnap(int Year, int Month, decimal Wht, bool Juristic);
+    // เก็บ **แบบที่ต้องยื่น** ไม่ใช่ธง juristic — เดิมตัดสินจาก `ContactType`
+    // ดิบ ๆ ตรงนี้ที่เดียว ⇒ ปฏิทินแบ่ง 3/53 คนละแบบกับทะเบียน 50 ทวิ/รายงาน
+    // และ WHT จ่ายต่างประเทศ (ม.70) ตกไปอยู่ 53 แทนที่จะเป็น 54
+    private sealed record WhtSnap(int Year, int Month, decimal Wht, TaxType Form);
     private sealed record FsSnap(int Year, int Month, decimal Vat);
 
     /// <summary>map ชนิดนำส่ง → TaxType ของรายงานภาษีในระบบ (ใช้เช็ค "ยื่นแบบแล้ว")</summary>
@@ -312,6 +378,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         "WhtPnd1"   => TaxType.WithholdingTax1,
         "WhtPnd3"   => TaxType.WithholdingTax3,
         "WhtPnd53"  => TaxType.WithholdingTax53,
+        // ม.70 — เดิมตกหล่นจาก map นี้ ⇒ ปฏิทินยื่นไม่รู้จัก ภ.ง.ด.54 เลย
+        "WhtPnd54"  => TaxType.WithholdingTax54,
         "SsoSps110" => TaxType.SocialSecurity,
         "VatPp36"   => TaxType.VatPp36,
         _           => null
@@ -395,22 +463,37 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var fsDocs = new List<FsSnap>();
         try
         {
+            // กติกาชุดเดียวกับ GetDashboardAsync (สองจอของ service เดียวกัน เคย
+            // คำนวณคนละแบบ): ฝั่งซื้อเท่านั้น · กันใบตั้งหนี้ + ใบสำคัญจ่ายนับซ้ำ ·
+            // แบ่ง 3/53/54 ด้วย Helpers/WhtPayeeKind ตัวเดียวกับทะเบียน 50 ทวิ
+            var payerSide = Accounting.Helpers.WhtRemitScope.PayerSideTypes;
             var docs = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                     && (d.WithholdingTaxAmount > 0 || (d.IsForeignService && d.VatAmount > 0))
+                    && payerSide.Contains(d.DocumentType)
                     && (d.PaymentDate ?? d.DocumentDate) >= startMonth
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
+                .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
+                    d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
                     d.PaymentDate, d.DocumentDate,
-                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual })
+                    CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
+                    CTaxId = d.Contact != null ? d.Contact.TaxId : null,
+                    CName = d.Contact != null ? d.Contact.Name : null,
+                    CCountry = d.Contact != null ? d.Contact.CountryCode : null })
                 .ToListAsync();
+            var settledByPv = docs
+                .Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null)
+                .Select(d => d.RelatedDocumentId!.Value).ToHashSet();
             foreach (var d in docs)
             {
+                if (d.DocumentType != DocumentType.PaymentVoucher && settledByPv.Contains(d.Id))
+                    continue;
                 var dt = d.PaymentDate ?? d.DocumentDate;
                 if (d.WithholdingTaxAmount > 0)
                     whtDocs.Add(new WhtSnap(dt.Year, dt.Month, d.WithholdingTaxAmount,
-                        d.CType == ContactType.JuristicPerson));
+                        Accounting.Helpers.WhtPayeeKind.ResolveForm(
+                            d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName)));
                 if (d.IsForeignService && d.VatAmount > 0)
                     fsDocs.Add(new FsSnap(dt.Year, dt.Month, d.VatAmount));
             }
@@ -419,7 +502,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         // ── ประกอบเป็นตาราง ──
         var rows = new List<FilingCalendarRow>();
-        var order = new[] { "VatPp30", "WhtPnd1", "SsoSps110", "WhtPnd3", "WhtPnd53", "VatPp36" };
+        var order = new[] { "VatPp30", "WhtPnd1", "SsoSps110", "WhtPnd3", "WhtPnd53",
+            "WhtPnd54", "VatPp36" };
         foreach (var type in order)
         {
             var (label, form, _) = Meta(type);
@@ -555,10 +639,13 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 unknownUrl = "/pages/payroll.html";
                 break;
             case "WhtPnd3":
-                amount = whtDocs.Where(d => d.Year == y && d.Month == m && !d.Juristic).Sum(d => d.Wht);
-                break;
             case "WhtPnd53":
-                amount = whtDocs.Where(d => d.Year == y && d.Month == m && d.Juristic).Sum(d => d.Wht);
+            case "WhtPnd54":
+                {
+                    var want = ReportTypeOf(type);
+                    amount = whtDocs.Where(d => d.Year == y && d.Month == m && d.Form == want)
+                        .Sum(d => d.Wht);
+                }
                 break;
             case "VatPp36":
                 amount = fsDocs.Where(d => d.Year == y && d.Month == m).Sum(d => d.Vat);

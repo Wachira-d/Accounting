@@ -702,34 +702,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     //   3) ชื่อมีคำบ่งชี้นิติบุคคล (บริษัท/ห้างหุ้นส่วน/มหาชน/Co.,Ltd…)
     // คืน true=นิติบุคคล, false=บุคคลธรรมดา, null=ไม่มีสัญญาณชัด (ให้ caller fallback)
     internal static bool? DetectJuristic(Contact? contact)
-    {
-        if (contact == null) return null;
-
-        var digits = new string((contact.TaxId ?? "").Where(char.IsDigit).ToArray());
-        if (digits.Length == 13)
-        {
-            if (digits[0] == '0') return true;                    // นิติบุคคล
-            if (digits[0] >= '1' && digits[0] <= '8') return false; // บุคคลธรรมดา
-        }
-
-        if (contact.ContactType is ContactType.JuristicPerson or ContactType.GovernmentAgency)
-            return true;
-
-        var name = (contact.Name ?? "").Trim();
-        if (name.Length > 0)
-        {
-            // Thai keywords (distinctive) + English legal suffixes
-            string[] thaiKw = { "บริษัท", "บมจ", "หจก", "ห้างหุ้นส่วน", "มหาชน", "องค์การ", "สหกรณ์", "มูลนิธิ", "สมาคม" };
-            if (thaiKw.Any(k => name.Contains(k))) return true;
-            var lower = name.ToLowerInvariant();
-            string[] engKw = { "co.,ltd", "co., ltd", "co.ltd", "company limited", "ltd.", "ltd ", " plc", "public company", "partnership", "corporation", "incorporated" };
-            if (engKw.Any(k => lower.Contains(k))) return true;
-        }
-
-        // ไม่มีสัญญาณนิติบุคคล + ContactType ตั้งเป็น Individual ชัด → บุคคลธรรมดา;
-        // ถ้า type ยังเป็น default โดยไม่มีหลักฐานอื่น คืน null ให้ caller ตัดสิน
-        return contact.ContactType == ContactType.Individual ? false : (bool?)null;
-    }
+        => contact == null
+            ? null
+            : Accounting.Helpers.WhtPayeeKind.Detect(
+                contact.TaxId, contact.ContactType, contact.Name);
 
     /// <summary>เลือกประเภทแบบ ภ.ง.ด. ที่ "ถูกต้อง" จาก payee — ตรวจ/แก้แม้ caller
     /// (เช่น มังกร) ส่ง TaxFormType มาแล้ว. แก้เฉพาะแกน ภ.ง.ด.3 ↔ 53 (ขึ้นกับผู้ถูก
@@ -747,8 +723,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // 3/53 ⇒ 50 ทวิ ของ payee ต่างประเทศถูกออกเป็น ภงด.3/53 → เข้ารายงาน+
         // ไฟล์ 3/53 ขณะที่ ภงด.54 (doc-mined) ก็นับเอกสารเดิม = นำส่งซ้ำสองแบบ
         var isForeignPayee = contact != null
-            && !string.IsNullOrWhiteSpace(contact.CountryCode)
-            && !string.Equals(contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase);
+            && Accounting.Helpers.WhtPayeeKind.IsForeignPayee(false, contact.CountryCode);
         if (isForeignPayee)
             return (TaxType.WithholdingTax54, requested.HasValue && requested.Value != TaxType.WithholdingTax54,
                 "payee ต่างประเทศ (ม.70 → ภ.ง.ด.54)");

@@ -19,7 +19,13 @@ public record PendingRemittanceItem(
     int? PayeeCount,              // WHT: จำนวนผู้ถูกหัก
     decimal? OutputVat,           // VAT: ภาษีขาย
     decimal? InputVat,            // VAT: ภาษีซื้อ
-    Guid? RelatedPayrollRunId);   // SSO: รอบเงินเดือนที่ผูก (ถ้ามี)
+    Guid? RelatedPayrollRunId,    // SSO: รอบเงินเดือนที่ผูก (ถ้ามี)
+    // ── "ยื่นแบบแล้วหรือยัง" (คนละเหตุการณ์กับ "จ่ายเงินแล้วหรือยัง") ──
+    // เดิม IsOverdue คิดจากวันที่อย่างเดียว แล้วหักกลบเฉพาะเงินที่จ่าย ⇒ งวดที่
+    // ผู้ใช้ "ยื่นแบบ" ไปแล้วที่หน้ารายงานภาษี ยังขึ้น "เลยกำหนด N วัน" สีแดง
+    // ทั้งที่ยื่นตรงเวลา — จอเล่าเรื่องผิดและผู้ใช้ไม่มีอะไรให้ไล่ต่อ.
+    // null = ยังไม่ได้ยื่นแบบ (หรือแบบนี้ยังไม่มีรายงานในระบบ)
+    DateTime? ReportFiledAt = null);
 
 /// <summary>สรุปหน้านำส่ง — ยอดรวมรอนำส่ง + รายการ.</summary>
 public record RemittanceDashboardResponse(

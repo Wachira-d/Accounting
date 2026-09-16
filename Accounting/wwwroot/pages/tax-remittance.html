@@ -248,6 +248,16 @@
        *  (ตัวตัดสินตัวเดียว ห้ามคำนวณซ้ำที่อื่น) */
       _urgency(r) {
         const days = this._daysTo(r.eFilingDueDate);
+        // ยื่นแบบแล้ว (คนละเหตุการณ์กับจ่ายเงิน) — เซิร์ฟเวอร์ตัด isOverdue ให้แล้ว
+        // แต่ต้องบอกผู้ใช้ด้วยว่า "ที่ค้างคือเงิน ไม่ใช่แบบ" ไม่งั้นแถวนี้จะดู
+        // เหมือนงานที่ยังไม่เริ่มทั้งที่ยื่นตรงเวลาไปแล้ว
+        if (r.reportFiledAt) {
+          const d = new Date(r.reportFiledAt);
+          const when = isNaN(d) ? '' : ' ' + d.toLocaleDateString('th-TH',
+            { day: 'numeric', month: 'short', year: 'numeric' });
+          return { key: 'filed', cls: 'u-soon', badge: 'badge-warning',
+            label: `ยื่นแบบแล้ว${when} · รอบันทึกการนำส่งเงิน` };
+        }
         if (r.isOverdue) {
           const late = days == null ? null : -days;
           return { key: 'overdue', cls: 'u-overdue', badge: 'badge-danger',

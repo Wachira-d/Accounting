@@ -1571,8 +1571,9 @@ public partial class TaxService : ITaxService
         // เฉพาะเอกสาร "ฝั่งซื้อ" ที่เราเป็นผู้หัก — ใบขาย (Invoice/Receipt/...)
         // ที่ลูกค้าหักเราไว้ (Dr 11910 เครดิตภาษีเรา) ห้ามเข้าแบบนำส่ง ไม่งั้น
         // นำส่งภาษีที่เราถูกหักซ้ำอีกรอบ (ตรงกับ filter ของ WithholdingTaxCertService)
-        var purchaseSide = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
-            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
+        // ลิสต์เดียวกับหน้า "นำส่งภาษี" — อยู่ที่ Helpers/WhtRemitScope ตัวเดียว
+        // (เดิมพิมพ์ไว้ในเมธอดนี้เป็น local ⇒ ฝั่งนำส่งเรียกไม่ได้ จึงไม่กรองเลย)
+        var purchaseSide = Accounting.Helpers.WhtRemitScope.PayerSideTypes;
 
         var docs = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3/53)
