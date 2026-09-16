@@ -26,7 +26,11 @@ public record VatWhtSummary(
     // true = ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวด ⇒ ตัวเลขข้างบนคำนวณดิบจากเอกสาร
     // (ไม่ผ่าน tax point/§82/3/§82/5/undue 11640/CN-DN) — UI ต้องติดป้ายให้ชัด
     // ห้ามปล่อยให้ผู้ใช้เข้าใจว่าเป็นยอดที่จะยื่นจริง
-    bool IsEstimate = false);
+    bool IsEstimate = false,
+    // true = ช่วงที่เลือกคือ "เดือนเดียว" ⇒ NetVat แปลว่า **ยอดตามแบบ ภ.พ.30 งวดนี้**
+    // false = หลายเดือน ⇒ เป็น "ฐานะ VAT สะสม" (Σ ขาย − Σ ซื้อ) ห้ามติดป้ายว่า
+    // "ต้องชำระ" เพราะแต่ละงวดจ่ายแยกกันไปแล้ว
+    bool IsSinglePeriod = true);
 
 public record DashboardKpis(
     decimal TotalRevenue,

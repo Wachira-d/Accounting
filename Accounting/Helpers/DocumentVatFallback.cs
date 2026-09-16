@@ -11,30 +11,19 @@ namespace Accounting.Helpers;
 /// <c>doc.Lines.Sum(...)</c> ตรง ๆ จะได้ <b>0</b> ทั้งที่ GL มียอดเต็ม —
 /// เงียบสนิทเพราะ 0 ก็เป็นตัวเลขที่ "ดูสมเหตุสมผล"</para>
 ///
-/// <para>เจอมาแล้ว 2 ที่คนละรอบ: <c>TaxService.GeneratePp36Report</c> (แก้ไปแล้ว
-/// ด้วย fallback ของตัวเอง) และหน้า <b>"ภาษีซื้อยังไม่ถึงกำหนด"</b>
-/// (<c>DocumentService</c>) ที่ยังเหลืออยู่ ⇒ ยกเป็นตัวเดียวตามกฎ CLAUDE.md
-/// "แก้ตัวเดียว เหลือที่เหลือ"</para>
+/// <para><b>ขอบเขตที่จงใจแคบ</b>: มีเฉพาะ "ฐานก่อน VAT" ซึ่งเป็นกติกาที่
+/// <c>TaxService.GeneratePp36Report</c> ใช้อยู่จริง. เคยมีเมธอด <c>ClaimableVat</c>
+/// คู่กัน แล้วต้องถอดออก — สาขา header-only ของมัน<b>ข้ามธง <c>IsVatClaimable</c>
+/// §82/5 ทั้งหมด</b> และแยกไม่ออกระหว่าง "ไม่มีบรรทัดจริง" กับ "ผู้เรียกลืม
+/// <c>.Include(Lines)</c>" ⇒ ผู้เรียกคนถัดไปที่ลืม Include จะได้ VAT ต้องห้าม
+/// นับเป็นเคลมได้โดยไม่มี error. <b>ห้ามเพิ่มกลับ</b>เว้นแต่พิสูจน์ได้ว่ามีแถวจริง
+/// ที่ไม่มีบรรทัด และมีด่าน §82/5 รองรับที่ฝั่งผู้เรียก</para>
 /// </summary>
 public static class DocumentVatFallback
 {
     /// <summary>true = เอกสารนี้เก็บยอดไว้ที่หัว ไม่มีบรรทัดย่อยให้รวม</summary>
     public static bool IsHeaderOnly(ICollection<DocumentLine>? lines)
         => lines is not { Count: > 0 };
-
-    /// <summary>
-    /// ภาษีซื้อที่ <b>เคลมได้</b> ของเอกสาร — มีบรรทัด: รวมเฉพาะบรรทัดที่
-    /// <c>IsVatClaimable</c> · ไม่มีบรรทัด: ใช้ VAT ระดับหัวเอกสาร
-    ///
-    /// <para>เอกสาร header-only ไม่มีธง claimable รายบรรทัดให้ดู — ธง §82/5 ของมัน
-    /// ถูกบันทึกไว้คนละที่ (<c>[VAT-CLAIM]</c> ใน ProcessingNotes / ผังบัญชีที่เลือก)
-    /// ⇒ ที่นี่คืนยอดเต็มแล้วให้ด่านของเส้นนั้นเป็นตัวตัด — <b>คืน 0 คือการโกหก</b>
-    /// เพราะแปลว่า "ไม่มีภาษีซื้อ" ซึ่งไม่จริง</para>
-    /// </summary>
-    public static decimal ClaimableVat(ICollection<DocumentLine>? lines, decimal headerVatAmount)
-        => IsHeaderOnly(lines)
-            ? headerVatAmount
-            : lines!.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
 
     /// <summary>
     /// ฐานก่อน VAT ของเอกสาร — มีบรรทัด: รวมบรรทัดที่ไม่ใช่ "ยกเว้น VAT"

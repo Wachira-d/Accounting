@@ -47,46 +47,46 @@ public class TaxCalendarService : ITaxCalendarService
         if (existing)
             throw new InvalidOperationException($"ปฏิทินภาษีปี {year} ถูกสร้างไว้แล้ว");
 
-        // Thai tax form definitions: (code, name, isMonthly, dayOfMonth, eFilingExtraDays)
+        // ⚠️ ภ.ง.ด.50/51 ผูกกับ **รอบบัญชีของบริษัท** ไม่ใช่ปีปฏิทิน —
+        // `TaxService.GenerateCitReport` อ่าน `FiscalYearStartMonth` อยู่แล้ว
+        // แต่ปฏิทินนี้ hardcode 31 พ.ค. ⇒ บริษัทที่รอบไม่ตรงปีปฏิทินได้วันผิดทั้งปี
+        var fiscalStart = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth)
+            .FirstOrDefaultAsync();
+        if (fiscalStart is < 1 or > 12) fiscalStart = 1;
+        // สิ้นรอบบัญชีของปีภาษีนี้ · ครึ่งรอบ (ใช้กับ ภ.ง.ด.51)
+        var fyStart = new DateTime(year, fiscalStart, 1);
+        var fyEnd = fyStart.AddYears(1).AddDays(-1);
+        var halfEnd = fyStart.AddMonths(6).AddDays(-1);
+
+        // ⚠️ วันครบกำหนดมาจาก Helpers/TaxFilingDeadline ตัวเดียว — ห้ามพิมพ์เลขวันซ้ำ
+        // ที่นี่ (เดิมเป็นตารางชุดที่สองของเรพ) · เพิ่ม **ภ.ง.ด.54** ที่เดิมไม่มีในลิสต์
+        // เลย ⇒ บริษัทที่จ่ายเงินได้ให้ผู้รับต่างประเทศ (ม.70) ได้เตือน ภ.พ.36 แต่
+        // ไม่ได้เตือน ภ.ง.ด.54 ทั้งที่มาจากการจ่ายครั้งเดียวกัน
         var monthlyForms = new[]
         {
-            ("ภ.พ.30", "แบบแสดงรายการภาษีมูลค่าเพิ่ม", 15, 8),
-            ("ภ.พ.36", "แบบนำส่ง VAT จากการจ่ายค่าบริการต่างประเทศ", 7, 8),
-            ("ภ.ง.ด.1", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (เงินเดือน)", 7, 8),
-            ("ภ.ง.ด.3", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (บุคคลธรรมดา)", 7, 8),
-            ("ภ.ง.ด.53", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (นิติบุคคล)", 7, 8),
-            ("สปส.1-10", "แบบรายการแสดงการส่งเงินสมทบประกันสังคม", 15, 0),
+            ("ภ.พ.30", "แบบแสดงรายการภาษีมูลค่าเพิ่ม", "VatPp30"),
+            ("ภ.พ.36", "แบบนำส่ง VAT จากการจ่ายค่าบริการต่างประเทศ", "VatPp36"),
+            ("ภ.ง.ด.1", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (เงินเดือน)", "WhtPnd1"),
+            ("ภ.ง.ด.3", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (บุคคลธรรมดา)", "WhtPnd3"),
+            ("ภ.ง.ด.53", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (นิติบุคคล)", "WhtPnd53"),
+            ("ภ.ง.ด.54", "แบบนำส่งภาษีเงินได้หัก ณ ที่จ่าย (จ่ายต่างประเทศ ม.70)", "WhtPnd54"),
+            ("สปส.1-10", "แบบรายการแสดงการส่งเงินสมทบประกันสังคม", "SsoSps110"),
         };
 
         var events = new List<TaxCalendarEvent>();
 
         // Create monthly events for all 12 months
-        foreach (var (code, name, dueDay, eFilingExtra) in monthlyForms)
+        foreach (var (code, name, remitKey) in monthlyForms)
         {
             for (var month = 1; month <= 12; month++)
             {
-                // Due date is in the following month (tax for Jan is due in Feb)
-                var dueMonth = month == 12 ? 1 : month + 1;
-                var dueYear = month == 12 ? year + 1 : year;
-                var maxDay = DateTime.DaysInMonth(dueYear, dueMonth);
-                var actualDueDay = Math.Min(dueDay, maxDay);
-                var dueDate = new DateTime(dueYear, dueMonth, actualDueDay);
-
-                // Adjust if due date falls on weekend
-                if (dueDate.DayOfWeek == DayOfWeek.Saturday)
-                    dueDate = dueDate.AddDays(2);
-                else if (dueDate.DayOfWeek == DayOfWeek.Sunday)
-                    dueDate = dueDate.AddDays(1);
-
-                DateTime? eFilingDueDate = null;
-                if (eFilingExtra > 0)
-                {
-                    eFilingDueDate = dueDate.AddDays(eFilingExtra);
-                    if (eFilingDueDate.Value.DayOfWeek == DayOfWeek.Saturday)
-                        eFilingDueDate = eFilingDueDate.Value.AddDays(2);
-                    else if (eFilingDueDate.Value.DayOfWeek == DayOfWeek.Sunday)
-                        eFilingDueDate = eFilingDueDate.Value.AddDays(1);
-                }
+                // ⚠️ e-Filing ต้องนับจากวันครบกำหนด **ก่อนเลื่อนวันหยุด** — เดิมที่นี่
+                // เลื่อนกระดาษก่อนแล้วค่อย +8 ⇒ งวดที่วันที่ 7 ตรงเสาร์ ได้ e-Filing
+                // วันที่ 17 ซึ่ง **ช้ากว่าที่กฎหมายให้ 2 วัน** (ของจริงคือ 15 แล้วเลื่อน)
+                var (dueDate, eFiling) =
+                    Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month);
+                DateTime? eFilingDueDate = eFiling == dueDate ? null : eFiling;
 
                 events.Add(new TaxCalendarEvent
                 {
@@ -107,8 +107,11 @@ public class TaxCalendarService : ITaxCalendarService
         // Annual forms
         var annualForms = new[]
         {
-            ("ภ.ง.ด.50", "แบบแสดงรายการภาษีเงินได้นิติบุคคล (ประจำปี)", new DateTime(year + 1, 5, 31), 8),
-            ("ภ.ง.ด.51", "แบบแสดงรายการภาษีเงินได้นิติบุคคลครึ่งปี", new DateTime(year, 8, 31), 8),
+            // §69 — ภายใน **150 วัน**นับแต่วันสุดท้ายของรอบบัญชี (ไม่ใช่ 31 พ.ค. ตายตัว:
+            // รอบปฏิทินได้ 30 พ.ค. · ปีอธิกสุรทิน 29 พ.ค. · รอบที่ไม่ตรงปีปฏิทินคนละวันเลย)
+            ("ภ.ง.ด.50", "แบบแสดงรายการภาษีเงินได้นิติบุคคล (ประจำปี)", fyEnd.AddDays(150), 8),
+            // §67 ทวิ — ภายใน 2 เดือนนับแต่วันสุดท้ายของรอบ 6 เดือนแรก
+            ("ภ.ง.ด.51", "แบบแสดงรายการภาษีเงินได้นิติบุคคลครึ่งปี", halfEnd.AddMonths(2), 8),
             ("ภ.ง.ด.1ก", "แบบสรุปภาษีเงินได้หัก ณ ที่จ่าย (ประจำปี)", new DateTime(year + 1, 2, 28), 8),
             ("สบช.3", "แบบนำส่งงบการเงิน (กรมพัฒนาธุรกิจการค้า)", new DateTime(year + 1, 5, 31), 0),
             ("ภ.ง.ด.2ก", "แบบสรุป WHT เงินปันผล/ดอกเบี้ย ประจำปี", new DateTime(year + 1, 1, 31), 8),

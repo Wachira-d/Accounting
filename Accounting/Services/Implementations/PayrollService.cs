@@ -4342,18 +4342,33 @@ public class PayrollService : IPayrollService
         return await GetPayrollRunAsync(companyId, payrollRunId);
     }
 
-    /// <summary>คำนวณเงินเพิ่มประกันสังคม (§49 พ.ร.บ.ประกันสังคม):
-    /// 2% ต่อเดือนของยอดที่นำส่ง × จำนวนเดือนช้า (ปัดเศษเดือนขึ้น).
-    /// deadline = วันที่ 15 ของเดือนถัดจาก period; เพดาน 100% ของยอดส่ง.
-    /// payDate ≤ deadline → 0. คืน 0 ทันทีถ้าไม่มียอดส่ง.</summary>
+    /// <summary>คำนวณเงินเพิ่มประกันสังคม (§49 พ.ร.บ.ประกันสังคม 2533):
+    /// <b>2% ต่อเดือน</b>ของยอดที่นำส่ง × จำนวนเดือนที่ช้า โดย<b>เศษของเดือนนับเป็น
+    /// หนึ่งเดือน</b> · เพดาน 100% ของยอดส่ง (§49 วรรคท้าย แก้ไขโดยฉบับที่ 4 พ.ศ. 2558)
+    ///
+    /// <para>⚠️ เดิมนับเดือนด้วย <c>Math.Ceiling(daysLate / 30.0)</c> ⇒ ช้าพอดี
+    /// <b>หนึ่งเดือนปฏิทินที่มี 31 วัน</b> (15 มี.ค. → 15 เม.ย.) ได้ <c>ceil(31/30) = 2</c>
+    /// ⇒ <b>คิดเงินเพิ่มเกินไป 1 งวดทุกรอยต่อเดือน 31 วัน</b> — เงียบสนิทเพราะยอดที่ได้
+    /// "ดูสมเหตุสมผล". กฎหมายนับเป็น<b>เดือน</b> ไม่ใช่ช่วง 30 วัน</para>
+    ///
+    /// <para>⚠️ วันครบกำหนดต้องเลื่อนพ้นวันหยุด (ป.พ.พ. §193/8) — เดิมใช้วันที่ 15 ดิบ ๆ
+    /// ⇒ คนที่จ่ายวันจันทร์เพราะวันที่ 15 ตรงเสาร์ ถูกคิดเงินเพิ่มทั้งที่จ่ายตรงกำหนด</para></summary>
     public static decimal ComputeSsoLateFee(int periodYear, int periodMonth, DateTime payDate, decimal totalSso)
     {
         if (totalSso <= 0) return 0m;
-        var deadline = new DateTime(periodYear, periodMonth, 15).AddMonths(1);   // 15 of next month
-        if (payDate.Date <= deadline.Date) return 0m;
-        var daysLate = (payDate.Date - deadline.Date).Days;
-        var monthsLate = (decimal)Math.Ceiling(daysLate / 30.0);
-        var fee = Math.Round(totalSso * 0.02m * monthsLate, 2);
-        return Math.Min(fee, totalSso);   // cap 100%
+        var deadline = Accounting.Helpers.TaxFilingDeadline
+            .For("SsoSps110", periodYear, periodMonth).EFiling.Date;
+        if (payDate.Date <= deadline) return 0m;
+
+        var pay = payDate.Date;
+        // จำนวน "เดือนเต็ม" ที่ผ่านไปนับจากวันครบกำหนด (AddMonths ปัดสิ้นเดือนให้เอง)
+        var whole = (pay.Year - deadline.Year) * 12 + (pay.Month - deadline.Month);
+        if (deadline.AddMonths(whole) > pay) whole--;
+        // เศษของเดือนนับเป็นหนึ่งเดือน · ช้าแม้วันเดียว = 1 เดือน
+        var monthsLate = whole + (deadline.AddMonths(whole) < pay ? 1 : 0);
+        if (monthsLate < 1) monthsLate = 1;
+
+        var fee = Math.Round(totalSso * 0.02m * monthsLate, 2, MidpointRounding.AwayFromZero);
+        return Math.Min(fee, totalSso);   // เพดาน 100%
     }
 }

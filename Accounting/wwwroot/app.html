@@ -730,7 +730,11 @@
           const taxEl = document.getElementById('taxSummaryContent');
           if (taxEl && tax) {
             const netColor = tax.netVat > 0 ? 'var(--danger)' : 'var(--success)';
-            const netLabel = tax.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน';
+            // ช่วงหลายเดือน: ตัวเลขนี้คือ "ฐานะสะสม" ไม่ใช่ยอดที่ต้องจ่ายงวดใดงวดหนึ่ง
+            // (แต่ละงวดจ่าย/ขอคืนแยกกันไปแล้ว) — ป้าย "ต้องชำระ" จะทำให้เข้าใจผิด
+            // undefined (เซิร์ฟเวอร์เก่า) = ถือว่าเดือนเดียวเหมือนพฤติกรรมเดิม
+            const multi = tax.isSinglePeriod === false;
+            const netLabel = multi ? 'สะสมในช่วง' : (tax.netVat > 0 ? 'ต้องชำระ' : 'ขอคืน');
             // ยังไม่ได้สร้างรายงาน ภ.พ.30 ของงวด → ตัวเลขเป็นการคำนวณดิบจากเอกสาร
             // (ไม่ผ่าน tax point/§82/3/§82/5/undue 11640/CN-DN) ห้ามปล่อยให้ผู้ใช้
             // เข้าใจว่าเป็นยอดที่จะยื่นจริง · undefined (เซิร์ฟเวอร์เก่า) = ไม่วาดอะไร

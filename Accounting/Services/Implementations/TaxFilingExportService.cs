@@ -38,8 +38,13 @@ public class TaxFilingExportService : ITaxFilingExportService
         var company = await GetCompanyAsync(companyId);
         var payrollRuns = await _db.PayrollRuns
             .Include(p => p.Details).ThenInclude(d => d.Employee)
+            // ⚠️ ไฟล์ที่อัปโหลดเข้าเว็บราชการแล้วแก้ย้อนหลังไม่ได้ ⇒ ต้องเป็นยอดที่
+            // **ผ่านการอนุมัติ**แล้วเท่านั้น. เดิม `!= Draft && != Voided` รวม
+            // `Calculated` (คำนวณ/นำเข้ามาแล้วแต่ยังไม่มีใครอนุมัติ) เข้าไปด้วย
+            // ⇒ ผู้ใช้ดาวน์โหลดไฟล์ไปยื่นด้วยยอดที่ยังเปลี่ยนได้
+            // ขอบเขตอยู่ที่ Helpers/PayrollRunFilingScope ตัวเดียว
             .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == month
-                && p.Status != "Draft" && p.Status != "Voided")
+                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(p.Status))
             .ToListAsync();
 
         var sb = new StringBuilder();
@@ -159,8 +164,11 @@ public class TaxFilingExportService : ITaxFilingExportService
         var payrollDetails = await _db.PayrollDetails
             .Include(d => d.Employee)
             .Include(d => d.PayrollRun)
+            // ขอบเขตเดียวกับไฟล์ยื่นรายเดือน (Approved/Paid) — ห้ามให้ยอดที่ยัง
+            // ไม่อนุมัติหลุดเข้าแบบสรุปประจำปี ภ.ง.ด.1ก
             .Where(d => d.CompanyId == companyId && d.PayrollRun.Year == year
-                && d.PayrollRun.Status != "Draft" && d.PayrollRun.Status != "Voided")
+                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
+                    .Contains(d.PayrollRun.Status))
             .ToListAsync();
 
         // ใช้ TaxableGross ถ้ามี (รายได้ที่ใช้คำนวณ WHT จริง — Gross
@@ -339,8 +347,13 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var payrollRuns = await _db.PayrollRuns
             .Include(p => p.Details).ThenInclude(d => d.Employee)
+            // ⚠️ ไฟล์ที่อัปโหลดเข้าเว็บราชการแล้วแก้ย้อนหลังไม่ได้ ⇒ ต้องเป็นยอดที่
+            // **ผ่านการอนุมัติ**แล้วเท่านั้น. เดิม `!= Draft && != Voided` รวม
+            // `Calculated` (คำนวณ/นำเข้ามาแล้วแต่ยังไม่มีใครอนุมัติ) เข้าไปด้วย
+            // ⇒ ผู้ใช้ดาวน์โหลดไฟล์ไปยื่นด้วยยอดที่ยังเปลี่ยนได้
+            // ขอบเขตอยู่ที่ Helpers/PayrollRunFilingScope ตัวเดียว
             .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == month
-                && p.Status != "Draft" && p.Status != "Voided")
+                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(p.Status))
             .ToListAsync();
 
         var allDetails = payrollRuns
@@ -420,8 +433,13 @@ public class TaxFilingExportService : ITaxFilingExportService
 
         var payrollRuns = await _db.PayrollRuns
             .Include(p => p.Details).ThenInclude(d => d.Employee)
+            // ⚠️ ไฟล์ที่อัปโหลดเข้าเว็บราชการแล้วแก้ย้อนหลังไม่ได้ ⇒ ต้องเป็นยอดที่
+            // **ผ่านการอนุมัติ**แล้วเท่านั้น. เดิม `!= Draft && != Voided` รวม
+            // `Calculated` (คำนวณ/นำเข้ามาแล้วแต่ยังไม่มีใครอนุมัติ) เข้าไปด้วย
+            // ⇒ ผู้ใช้ดาวน์โหลดไฟล์ไปยื่นด้วยยอดที่ยังเปลี่ยนได้
+            // ขอบเขตอยู่ที่ Helpers/PayrollRunFilingScope ตัวเดียว
             .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == month
-                && p.Status != "Draft" && p.Status != "Voided")
+                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(p.Status))
             .ToListAsync();
 
         var allDetails = payrollRuns

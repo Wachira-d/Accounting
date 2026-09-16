@@ -4470,12 +4470,12 @@ public partial class DocumentService : IDocumentService
             var monthsLeft = ((windowEnd.Year - today.Year) * 12 + windowEnd.Month - today.Month);
             if (monthsLeft < 0) monthsLeft = 0;
             var completeness = TaxInvoiceCompletenessChecker.Evaluate(d, d.Contact);
-            // ⚠️ Expense/PV/CIL เก็บยอดไว้ที่ **หัวเอกสาร** ได้โดยไม่มีบรรทัดเลย
-            // (ทรงหลักของใบบริการต่างประเทศ) ⇒ เดิมรวมบรรทัดตรง ๆ ได้ 0.00 ทั้งที่
-            // GL มียอดเต็มใน 11640 — หน้า "ภาษีซื้อยังไม่ถึงกำหนด" จึงโชว์ ฿0.00
-            // ให้ใบที่มีภาษีซื้อรอเคลมจริง. กติกาอยู่ที่ Helpers/DocumentVatFallback
-            // ตัวเดียว (บั๊กทรงเดียวกับที่ GeneratePp36Report เคยเจอ)
-            var vat = Accounting.Helpers.DocumentVatFallback.ClaimableVat(d.Lines, d.VatAmount);
+            // ⚠️ ต้องแปลงเป็นเงินบาทด้วย `ToGlAmount` — บรรทัดเอกสารเก็บยอดใน
+            // **สกุลของเอกสาร** ส่วน GL/ผัง 11640 เก็บเป็นบาท (`:11787` ของเส้นย้าย
+            // 11640→11610 แปลงอยู่แล้ว) ⇒ เดิมหน้านี้รวมยอดดิบ: ใบซื้อ USD ที่ FX 36
+            // โชว์ "VAT รอเคลม 70" ทั้งที่ GL ถือ 2,520 บาท — เงียบสนิทเพราะเลขที่ได้
+            // ก็เป็นจำนวนเงินที่ดูปกติ
+            var vat = ToGlAmount(d, d.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount));
             // ใบ ภ.พ.36: "ขาดข้อมูล" ตาม checklist §86/4 ไม่มีความหมาย (ผู้ขาย
             // ตปท. ไม่มีเลขภาษีไทย/ใบกำกับไทยให้เติม) — ทางออกจริงคือวงจรนำส่ง
             return new UndueInputVatSummary(

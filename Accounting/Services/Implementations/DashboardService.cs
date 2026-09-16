@@ -405,10 +405,17 @@ public class DashboardService : IDashboardService
             .ToListAsync();
         var byMonth = vatReports.GroupBy(x => (x.Year, x.Month)).Select(g => g.First()).ToList();
 
-        // ⚠️ NetVat ที่ persist ไว้ = ภาษีขาย − ภาษีซื้อ − **เครดิตยกมา §82/3**
-        // เดิมการ์ดคิดใหม่เป็น output − input เฉย ๆ ⇒ งวดที่มีเครดิตยกมา การ์ด
-        // บอกยอด "ต้องชำระ" **สูงเกินจริง** ทั้งที่อ่านรายงานเดียวกันที่มี NetVat
-        // ให้อยู่แล้ว (กติกา: เซิร์ฟเวอร์คำนวณครั้งเดียว ที่เหลืออ่าน ห้ามคิดซ้ำ)
+        // ⚠️ `NetVat` ของแต่ละเดือน = ภาษีขาย − ภาษีซื้อ − **เครดิตยกมา §82/3**
+        // ⇒ ใช้ได้เฉพาะตอนช่วงคือ **เดือนเดียว** (ตัวเลขนั้นแปลว่า "ยอดตามแบบ
+        // ภ.พ.30 ของงวดนี้"). ถ้าเอาไป **บวกข้ามหลายเดือนจะหักเครดิตซ้ำสองรอบ**
+        // เพราะเครดิตยกมาของเดือนหลัง ก็คือ NetVat ติดลบของเดือนก่อนซึ่งอยู่ใน
+        // ผลรวมอยู่แล้ว:
+        //   มิ.ย. −30,000 · ก.ค. (100,000−40,000−30,000)=30,000 · ส.ค. 50,000
+        //   Σ(ขาย−ซื้อ) = 80,000 ← ถูก (เงินที่จ่ายจริงรวมทั้งไตรมาส)
+        //   Σ NetVat    = 50,000 ← ขาดไป 30,000 และป้ายเขียนว่า "ต้องชำระ"
+        // ปุ่ม preset "ไตรมาสนี้"/"ปีนี้" ใน app.html กดครั้งเดียวก็เข้าเคสนี้
+        // จึงไม่ใช่ edge case
+        var singleMonth = fromDate.Year == toDate.Year && fromDate.Month == toDate.Month;
         decimal? netVatFromReports = null;
         var isEstimate = byMonth.Count == 0;
 
@@ -416,7 +423,7 @@ public class DashboardService : IDashboardService
         {
             outputVat = byMonth.Sum(x => x.OutputVat);
             inputVat = byMonth.Sum(x => x.InputVat);
-            netVatFromReports = byMonth.Sum(x => x.NetVat);
+            if (singleMonth) netVatFromReports = byMonth.Sum(x => x.NetVat);
         }
         else
         {
@@ -469,6 +476,6 @@ public class DashboardService : IDashboardService
 
         return new VatWhtSummary(outputVat, inputVat,
             netVatFromReports ?? (outputVat - inputVat),
-            totalWht, whtCount, period, isEstimate);
+            totalWht, whtCount, period, isEstimate, singleMonth);
     }
 }

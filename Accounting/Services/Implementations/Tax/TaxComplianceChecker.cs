@@ -177,22 +177,13 @@ public class TaxComplianceChecker : ITaxComplianceChecker
                 null));
     }
 
-    /// <summary>RD deadlines — ภพ.30 = วันที่ 15 ของเดือนถัดไป (paper)
-    /// or วันที่ 23 (e-Filing); ภงด.3/53 = วันที่ 7 ของเดือนถัดไป (paper)
-    /// or วันที่ 15 (e-Filing). We pick the e-Filing window (the
-    /// more lenient) since this app exports e-Filing format.</summary>
+    /// <summary>กำหนดยื่น e-Filing (แอปนี้ส่งออกรูปแบบ e-Filing จึงใช้กรอบที่ยาวกว่า)
+    ///
+    /// <para>⚠️ เดิมเขียนตารางเองที่นี่แล้วเหมา <b>ภ.พ.36 ไปรวมกับ ภ.พ.30</b>
+    /// (<c>VAT or VatPp36 => AddDays(22)</c> = วันที่ 23) — ภ.พ.36 อยู่ใต้ §83/6
+    /// ซึ่งกำหนด "ภายใน 7 วันนับแต่วันสิ้นเดือน" ⇒ e-Filing คือวันที่ <b>15</b>
+    /// ⇒ ตัวตรวจนี้เตือนช้ากว่ากำหนดจริง 8 วันมาตลอด. ตารางย้ายไปอยู่ที่
+    /// <see cref="Accounting.Helpers.TaxFilingDeadline"/> ตัวเดียวแล้ว</para></summary>
     private static DateTime? DeadlineFor(TaxType type, int year, int month)
-    {
-        if (year < 2018 || month < 1 || month > 12) return null;
-        var nextMonth = new DateTime(year, month, 1).AddMonths(1);
-        return type switch
-        {
-            TaxType.VAT or TaxType.VatPp36 => nextMonth.AddDays(22),       // วันที่ 23
-            TaxType.WithholdingTax1 or TaxType.WithholdingTax3
-                or TaxType.WithholdingTax53 or TaxType.WithholdingTax54
-                => nextMonth.AddDays(14),                                   // วันที่ 15
-            TaxType.SocialSecurity => nextMonth.AddDays(14),
-            _ => null,
-        };
-    }
+        => Accounting.Helpers.TaxFilingDeadline.EFilingFor(type, year, month);
 }

@@ -46,18 +46,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         _           => ("ไม่ทราบ", type, "")
     };
 
-    // กำหนดยื่น: (กระดาษวันที่, e-Filing วันที่) ของเดือนถัดจากงวด
+    // กำหนดยื่น: (กระดาษ, e-Filing) — ตารางอยู่ที่ Helpers/TaxFilingDeadline ตัวเดียว
+    // (เดิมเรพมี 3 ตาราง ตัวหนึ่งให้ ภ.พ.36 = วันที่ 23 ⇒ เตือนช้ากว่ากำหนดจริง 8 วัน)
+    // ตัวกลางเลื่อนพ้นเสาร์/อาทิตย์ให้แล้วตาม ป.พ.พ. §193/8 — เดิมที่นี่ไม่เลื่อนเลย
+    // ⇒ งวดที่วันที่ 7/15 ตรงวันหยุด ขึ้น "เลยกำหนด" สีแดงทั้งที่ยังไม่เลย
     internal static (DateTime Paper, DateTime EFiling) DueDates(string type, int year, int month)
-    {
-        var next = new DateTime(year, month, 1).AddMonths(1);
-        DateTime D(int day) => new DateTime(next.Year, next.Month, day);
-        return type switch
-        {
-            "SsoSps110" => (D(15), D(15)),                 // สปส. วันที่ 15 ทั้งคู่
-            "VatPp30"   => (D(15), D(23)),                 // ภพ.30 กระดาษ 15 / e-Filing +8 = 23
-            _           => (D(7), D(15)),                  // ภงด. กระดาษ 7 / e-Filing 15
-        };
-    }
+        => Accounting.Helpers.TaxFilingDeadline.For(type, year, month);
 
     public async Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12)
     {
@@ -108,7 +102,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         try
         {
             var runs = await _db.Set<PayrollRun>().AsNoTracking()
-                .Where(r => r.CompanyId == companyId && r.Status == "Paid")
+                .Where(r => r.CompanyId == companyId
+                    && r.Status == Accounting.Helpers.PayrollRunFilingScope.Paid)
                 .Select(r => new { r.Id, r.Year, r.Month,
                     Emp = r.TotalSocialSecurityEmployee, Empr = r.TotalSocialSecurityEmployer,
                     Wht = r.TotalWithholdingTax, r.SsoSettledAt })
@@ -445,11 +440,26 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         catch (Exception ex) { _logger.LogWarning(ex, "โหลด TaxReports ไม่สำเร็จ"); }
 
         // ── ฐานยอดที่ต้องนำส่ง ──
+        // งวดที่ "อนุมัติแล้วแต่ยังไม่กดจ่าย" — ไฟล์ยื่น ภ.ง.ด.1/สปส.1-10 ดาวน์โหลด
+        // ได้แล้ว แต่ยังไม่มี JE ตั้งหนี้ 21815/21914 จึงยังนำส่งไม่ได้ ⇒ ต้องไม่บอก
+        // ว่า "ยังไม่ได้รันเงินเดือนงวดนี้" ซึ่งเป็นความเท็จและพาผู้ใช้ไปผิดที่
+        var approvedNotPaid = new HashSet<(int, int)>();
+        try
+        {
+            approvedNotPaid = (await _db.PayrollRuns.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.Status == Accounting.Helpers.PayrollRunFilingScope.Approved)
+                .Select(r => new { r.Year, r.Month }).ToListAsync())
+                .Select(r => (r.Year, r.Month)).ToHashSet();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลดรอบเงินเดือนที่อนุมัติแล้วไม่สำเร็จ"); }
+
         var runs = new List<RunSnap>();
         try
         {
             runs = (await _db.PayrollRuns.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.Status == "Paid")
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.Status == Accounting.Helpers.PayrollRunFilingScope.Paid)
                 .Select(r => new { r.Year, r.Month, r.TotalSocialSecurityEmployee,
                     r.TotalSocialSecurityEmployer, r.TotalWithholdingTax, r.SsoSettledAt, r.SsoFilingNumber })
                 .ToListAsync())
@@ -524,7 +534,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             {
                 cells.Add(applicable
                     ? BuildCell(type, form, always, p, today, systemStart, remits, reports, reportType,
-                        runs, whtDocs, fsDocs, activeEmployees)
+                        runs, whtDocs, fsDocs, activeEmployees, approvedNotPaid)
                     : new FilingCalendarCell(p.Year, p.Month, "NotRequired", 0, 0,
                         DueDates(type, p.Year, p.Month).Paper, DueDates(type, p.Year, p.Month).EFiling,
                         false, 0, false, null, false, null, null, false, false,
@@ -595,7 +605,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         List<RunSnap> runs,
         List<WhtSnap> whtDocs,
         List<FsSnap> fsDocs,
-        int activeEmployees)
+        int activeEmployees,
+        HashSet<(int Year, int Month)> approvedNotPaid)
     {
         int y = period.Year, m = period.Month;
         var (paper, efiling) = DueDates(type, y, m);
@@ -629,13 +640,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             case "SsoSps110":
                 amount = monthRuns.Sum(r => r.Emp + r.Empr);
                 known = monthRuns.Count > 0 || activeEmployees == 0;
-                unknownHint = "ยังไม่ได้รันเงินเดือนงวดนี้ — เงินสมทบยังคำนวณไม่ได้";
+                unknownHint = Accounting.Helpers.PayrollRunFilingScope
+                    .PendingReason(approvedNotPaid.Contains((y, m)));
                 unknownUrl = "/pages/payroll.html";
                 break;
             case "WhtPnd1":
                 amount = monthRuns.Sum(r => r.Wht);
                 known = monthRuns.Count > 0 || activeEmployees == 0;
-                unknownHint = "ยังไม่ได้รันเงินเดือนงวดนี้ — ภาษีหัก ณ ที่จ่ายยังคำนวณไม่ได้";
+                unknownHint = Accounting.Helpers.PayrollRunFilingScope
+                    .PendingReason(approvedNotPaid.Contains((y, m)));
                 unknownUrl = "/pages/payroll.html";
                 break;
             case "WhtPnd3":
@@ -901,7 +914,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             if (type == "SsoSps110")
             {
                 var runs = await _db.Set<PayrollRun>()
-                    .Where(r => r.CompanyId == companyId && r.Status == "Paid"
+                    .Where(r => r.CompanyId == companyId
+                        && r.Status == Accounting.Helpers.PayrollRunFilingScope.Paid
                         && r.Year == req.PeriodYear && r.Month == req.PeriodMonth
                         && r.SsoSettledAt == null)
                     .ToListAsync();
