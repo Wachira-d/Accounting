@@ -576,6 +576,7 @@ python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ข�
 node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)
 python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-"
 python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
+python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
@@ -2420,6 +2421,14 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - [ ] อัปเดตบรรทัดท้ายไฟล์: `Last verified against codebase: YYYY-MM-DD —
   commit <new-sha>` (รอใส่ sha จริงหลัง commit ก็ได้)
 - [ ] ใส่ทั้ง 2 ไฟล์ใน commit เดียวกัน
+- [ ] **ตรวจว่า sha ที่จดไว้อยู่บน branch จริง** — `git merge-base --is-ancestor <sha> HEAD`
+  ก่อน push ทุกครั้ง. sha ที่เขียนลง doc *ก่อน* commit จะกลายเป็น **dangling ทันทีที่
+  amend/rebase** (แก้ commit message · เพิ่มไฟล์ที่ลืม · ซ่อม build) ⇒ doc ชี้ไปยัง object
+  ที่ `git show` ยังเปิดได้วันนี้แต่ **ไม่อยู่ในประวัติของ branch** และจะหายจริงหลัง `gc`
+  ⇒ คนที่ตามรอยว่า "พฤติกรรมนี้เปลี่ยนที่คอมมิตไหน" จะหาไม่เจอ
+  _(ที่มา: รอบ 163/164 จด `dbaa778`/`0c80a7b` ไว้ ซึ่งเป็น sha ก่อน amend — ของจริงคือ
+  `ff635b0`/`0393d2f`; `git cat-file -t` ตอบว่า "commit" ทั้งคู่จึงดูเหมือนถูก
+  — **`cat-file` พิสูจน์ว่า object มีอยู่ ไม่ได้พิสูจน์ว่าอยู่บน branch**)_
 
 ### Anti-pattern — ห้ามทำ
 

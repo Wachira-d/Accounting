@@ -5015,7 +5015,7 @@ _Last verified against codebase: 2026-09-16 (รอบ 163 — **สองหน
 เพิ่ม **ภ.ง.ด.54** ที่เดิมตกหล่นจาก `order`/`FilingRule`/`ReportTypeOf` ทั้งสามที่ ·
 และหน้านำส่งอ่าน `TaxReport.Status/FiledDate` แล้ว ⇒ งวดที่ยื่นแบบไปแล้วเลิกขึ้น
 "เลยกำหนด N วัน" สีแดง เปลี่ยนเป็น "ยื่นแบบแล้ว · รอบันทึกการนำส่งเงิน"
-— commit dbaa778)_
+— commit ff635b0)_
 
 _Last verified against codebase: 2026-09-16 (รอบ 164 — **ตั้งทีมกฎหมาย + ทีมฝ่ายค้าน
 ไล่ตรวจแล้วพบว่าการแก้ของรอบก่อนผิดเองสองข้อ**: (1) การ์ด VAT บนหน้าแรกเปลี่ยนไปใช้
@@ -5032,4 +5032,26 @@ _Last verified against codebase: 2026-09-16 (รอบ 164 — **ตั้งท
 ตาม §69 แทน 31 พ.ค. ตายตัว) · เงินเพิ่ม ปกส. §49 เลิกนับเดือนด้วย `ceil(วัน/30)`
 ซึ่งคิดเกิน 1 งวดทุกรอยต่อเดือน 31 วัน · และไฟล์ยื่น ภ.ง.ด.1/สปส.1-10/ภ.ง.ด.1ก
 รับเฉพาะรอบ **Approved/Paid** (เดิมรวม `Calculated` ที่ยังไม่มีใครอนุมัติ)
-— commit 0c80a7b)_
+— commit 0393d2f)_
+
+_Last verified against codebase: 2026-09-16 (รอบ 165 — **นิยาม "ต่างประเทศ" และ "3 vs 53"
+เคยมี 4 ชุด ⇒ เงินก้อนเดียวกันขึ้นคนละแบบยื่นแล้วแต่ว่าใครถาม**: `DocumentService`
+`ResolveWhtPayableAccountAsync` (ผังค้างจ่าย 21916/21917/21918) · `WithholdingTaxCert`
+`DetectJuristic`+`ResolveWhtFormType` (ทะเบียน 50 ทวิ) · `TaxService` (รายงาน/ไฟล์ยื่น) ·
+หน้านำส่ง — ทั้งสี่ยุบมาที่ `Helpers/WhtPayeeKind.ResolveForm(isForeignService, countryCode,
+taxId, contactType, name)` ตัวเดียว ⇒ ใบ Booking.com/AWS ที่เคยลง 21918 ใน GL แต่**หาย
+จากไฟล์ ภ.ง.ด.54** (เพราะทะเบียนดูแต่ `CountryCode` ส่วน GL ดูแต่ `IsForeignService`)
+กลับมาตรงกันทั้งสาย · พร้อมกันนี้ **11 จุดใน `TaxService.cs`** เลิกเขียนชุดสถานะเอง
+แล้วใช้ `DocumentStatusRules.NotIssued` ⇒ เอกสาร `WaitingApproval` ที่ยังถือเลข
+`DRAFT-{guid}` และยังไม่มี JE เลิกไหลเข้ารายงานภาษี/แบบยื่นทุกแบบ (เดิมไฟล์นี้ไม่มีคำว่า
+`WaitingApproval` อยู่เลยสักบรรทัด) — commit 1bd9ecd)_
+
+_Last verified against codebase: 2026-09-16 (รอบ 166 — **ด่านที่ doc-comment อ้างมาตลอด
+ว่ามี กลายเป็นมีจริง**: `Helpers/SsoWageBase` เขียนไว้ว่า "ด่านตอนนำส่งจะบล็อกให้เอง
+เงินไม่ออกไปผิด" แต่ `grep` ทั้งเรพพบว่า **ไม่มี call site ใน `RemitAsync` เลย** ⇒
+รอบที่มีพนักงานฝั่งลูกจ้าง = 0 แต่ฝั่งนายจ้าง > 0 (ม.46 บังคับให้สองฝั่งใช้ฐานเดียวกัน
+⇒ คู่แบบนี้คือข้อมูลเสียเสมอ) จะ **นำส่งเงินตามยอดที่หน้าจอนับ แต่ไฟล์ สปส.1-10 ไม่
+ประกาศแถวนั้น** ⇒ เงินที่โอนไป ≠ ยอดที่ประกาศ แล้ว สปส. ตีกลับทั้งไฟล์. เพิ่มด่านจริง
+ก่อนเปิด transaction ใน `StatutoryRemittanceService.RemitAsync` (RuleCode
+`SSO-PAIR-CONFLICT`) คืน **รายชื่อ + รหัสพนักงาน + ยอดที่ไฟล์จะไม่ประกาศ + ทางไปต่อ
+2 ทาง** และแก้ doc-comment ให้ชี้จุดที่ด่านอยู่จริง — commit d4a7c77)_
