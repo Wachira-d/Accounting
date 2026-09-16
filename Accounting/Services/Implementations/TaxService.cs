@@ -150,7 +150,7 @@ public partial class TaxService : ITaxService
             // ไม่ Include Contact (required nav + !IsDeleted filter → INNER JOIN
             // ตัดใบที่ contact ถูกลบ = under-report ภ.พ.30). hydrate แยกด้านล่าง
             .Where(d => d.CompanyId == companyId
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 // ⚠️ เดิมเงื่อนไขคือ `VatAmount != 0` เท่านั้น ⇒ ใบที่**ทั้งใบเป็น 0%
                 // หรือยกเว้น** มี VatAmount = 0 จึงไม่เคยเข้ารายงานเลย:
                 //   • ช่อง 7 ยอดขายอัตราร้อยละ 0 (ส่งออก §80/1) — หายทั้งช่อง
@@ -221,7 +221,7 @@ public partial class TaxService : ITaxService
                 // เพิ่มแถวซ้ำ (นับซ้ำ = ยอดขาย/ภาษีขายเกินจริง)
                 && d.DepositAppliedToDocumentId == null
                 && d.ReplacedByDocumentId == null   // ออกใบกำกับเต็มรูปแทนแล้ว → ใบแทนรายงาน
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 && d.VatAmount != 0)
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, deferredRecognized);
@@ -410,9 +410,8 @@ public partial class TaxService : ITaxService
                     && (r.DocumentType == DocumentType.Receipt
                         || r.DocumentType == DocumentType.ReceiptVoucher)
                     && r.VatAmount > 0.005m
+                    && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(r.Status)
                     && r.Status != DocumentStatus.Voided
-                    && r.Status != DocumentStatus.Draft
-                    && r.Status != DocumentStatus.Rejected
                     && !r.IsDeleted)
                 .Select(r => r.RelatedDocumentId!.Value)
                 .ToListAsync())
@@ -1046,7 +1045,7 @@ public partial class TaxService : ITaxService
                 .Include(d => d.Lines)
                 .Where(d => d.CompanyId == companyId
                     && d.VatAmount != 0
-                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                     && d.Status != DocumentStatus.Rejected
                     && (d.TaxPointDate ?? d.DocumentDate) < startDate
                     && (d.TaxPointDate ?? d.DocumentDate) >= lateWindowStart
@@ -1391,7 +1390,7 @@ public partial class TaxService : ITaxService
                     && d.DepositOutputVatRecognizedAt == null
                     && d.DepositAppliedToDocumentId == null
                     && d.VatAmount > 0.005m
-                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                    && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                     && (d.TaxPointDate ?? d.DocumentDate) <= agingCutoff)
                 .Select(d => new { d.DocumentNumber, d.VatAmount, Dt = d.TaxPointDate ?? d.DocumentDate })
                 .OrderBy(d => d.Dt).Take(20)
@@ -1503,7 +1502,7 @@ public partial class TaxService : ITaxService
             .Where(d => d.CompanyId == companyId
                 && d.IsForeignService && d.VatAmount > 0
                 && purchaseSide.Contains(d.DocumentType)
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Rejected
                 && (d.TaxPointDate ?? d.DocumentDate) >= startDate
                 && (d.TaxPointDate ?? d.DocumentDate) <= endDate)
@@ -1578,7 +1577,7 @@ public partial class TaxService : ITaxService
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3/53)
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 && purchaseSide.Contains(d.DocumentType)
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
@@ -1610,7 +1609,7 @@ public partial class TaxService : ITaxService
             // (2) DetectJuristic คืน null ได้เมื่อ "ไม่มีสัญญาณชัด" — ถ้ากรองด้วยค่านั้น
             //     ตรง ๆ ผู้รับกลุ่มนี้จะหายจากทั้ง ภ.ง.ด.3 และ 53 (ไม่ถูกนำส่งเลย)
             //     ส่วน resolver มี fallback DetermineTaxFormType ให้ลงแบบใดแบบหนึ่งเสมอ
-            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null);
+            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService);
             return report.TaxType == form;
         }
         docs = docs.Where(d => PayeeInScope(d.Contact, d.IsForeignService)).ToList();
@@ -1636,7 +1635,7 @@ public partial class TaxService : ITaxService
                 && x.DocumentType == DocumentType.PaymentVoucher
                 && x.RelatedDocumentId != null && !x.IsDeleted
                 && x.WithholdingTaxAmount != 0
-                && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.Voided
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(x.Status) && x.Status != DocumentStatus.Voided
                 && x.Status != DocumentStatus.Rejected)
             .Select(x => x.RelatedDocumentId!.Value)
             .ToListAsync())
@@ -1953,7 +1952,7 @@ public partial class TaxService : ITaxService
         var nonDeductDocs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= fromDate && d.DocumentDate <= toDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Rejected
                 && d.NonDeductibleAmount > 0)
             .Select(d => new { d.NonDeductibleAmount, d.NonDeductibleRuleJson })
@@ -2592,9 +2591,8 @@ public partial class TaxService : ITaxService
                                     && tivIds.Contains(r.RelatedDocumentId!.Value)
                                     && (r.DocumentType == DocumentType.Receipt
                                         || r.DocumentType == DocumentType.ReceiptVoucher)
-                                    && r.Status != DocumentStatus.Voided
-                                    && r.Status != DocumentStatus.Draft
-                                    && r.Status != DocumentStatus.Rejected)
+                                    && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(r.Status)
+                                    && r.Status != DocumentStatus.Voided)
                                 .Select(r => r.RelatedDocumentId!.Value)
                                 .Distinct().ToListAsync()).ToHashSet();
                         var mode = await _db.CompanySettings.AsNoTracking()
@@ -3019,7 +3017,7 @@ public partial class TaxService : ITaxService
                 && types.Contains(d.DocumentType)
                 && d.VatAmount != 0
                 && d.DocumentDate >= from && d.DocumentDate < to
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected);
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided);
         // ถ้าค้นด้วยเลขเอกสารตรง ๆ กรองใน SQL ให้ก่อน (เร็ว); ถ้าไม่มี match เลย
         // (อาจตั้งใจค้นชื่อ) จะ fallback ดึงกว้างแล้วกรองชื่อ client-side ด้านล่าง
         var byNumber = !string.IsNullOrWhiteSpace(s)
@@ -3337,7 +3335,7 @@ public partial class TaxService : ITaxService
         var docs = await _db.Documents
             .Where(d => d.CompanyId == companyId
                 && d.DocumentDate >= start && d.DocumentDate < end
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided)
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.VatAmount, d.Status })
             .ToListAsync();
 
@@ -3516,7 +3514,8 @@ public partial class TaxService : ITaxService
                         if (freshDocIds.Contains(p.DocumentId)) continue;
                         var stillOk = await _db.Documents.AsNoTracking().AnyAsync(d =>
                             d.Id == p.DocumentId && d.CompanyId == companyId && !d.IsDeleted
-                            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft);
+                            && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status)
+                            && d.Status != DocumentStatus.Voided);
                         var claimedElse = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
                             l.DocumentId == p.DocumentId && !l.IsExcluded
                             && l.TaxReportId != fresh.Id

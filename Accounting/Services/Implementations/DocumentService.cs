@@ -11562,11 +11562,22 @@ public partial class DocumentService : IDocumentService
         // ตกไป 21916/17 → หน้านำส่งนับปนใน ภงด.3/53 (ยื่นผิดแบบ) ขณะที่ 21918
         // ว่างตลอด. ตัดสินจาก doc.IsForeignService (ผู้ใช้ติ๊กเอง — ชัดกว่าเดา
         // จาก CountryCode ของ contact ที่มักไม่ได้กรอก)
-        if (isForeignService)
+        // ⚠️ ต้องใช้ตัวตัดสินตัวเดียวกับทะเบียน 50 ทวิ / รายงาน / หน้านำส่ง —
+        // เดิมที่นี่ดู `IsForeignService` อย่างเดียว (พลาดเคส ม.70 ที่กรอก
+        // CountryCode แต่ไม่ได้ติ๊ก §83/6 เช่นค่าสิทธิ/ดอกเบี้ย) และแยก 3/53 ด้วย
+        // `ContactType` **ดิบ ๆ** ซึ่ง default = Individual และมี 4 ทางเข้าที่ไม่เคย
+        // ตั้งค่า (API v1 · import · OCR) ⇒ "บริษัท ก จำกัด" ที่เลขภาษีขึ้นต้น 0
+        // ตั้งหนี้ที่ **21916** แต่ทุกจอจัดเป็น ภ.ง.ด.53 ⇒ ตอนกดนำส่งจะ Dr **21917
+        // ที่ไม่มียอด** ⇒ 21917 ติดลบ · 21916 ค้างถาวร ล้างไม่ได้ตลอดกาล
+        var form = Accounting.Helpers.WhtPayeeKind.ResolveForm(
+            isForeignService, contact?.CountryCode, contact?.TaxId,
+            contact?.ContactType ?? ContactType.Individual, contact?.Name);
+
+        if (form == TaxType.WithholdingTax54)
             return await FindAccountAsync(companyId, "21918")
                 ?? await FindAccountAsync(companyId, "21917")
                 ?? await FindAccountAsync(companyId, "21916");
-        var preferJuristic = contact?.ContactType == ContactType.JuristicPerson;
+        var preferJuristic = form == TaxType.WithholdingTax53;
         var primary = preferJuristic ? "21917" : "21916";
         var secondary = preferJuristic ? "21916" : "21917";
         return await FindAccountAsync(companyId, primary)

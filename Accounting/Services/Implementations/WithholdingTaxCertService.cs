@@ -482,7 +482,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
         // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
         // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type)
-        var (taxFormType, _, _) = ResolveWhtFormType(doc.Contact, null);
+        var (taxFormType, _, _) = ResolveWhtFormType(doc.Contact, null, doc.IsForeignService);
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
@@ -711,7 +711,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     /// (เช่น มังกร) ส่ง TaxFormType มาแล้ว. แก้เฉพาะแกน ภ.ง.ด.3 ↔ 53 (ขึ้นกับผู้ถูก
     /// หัก); ภ.ง.ด.1 (เงินเดือน) / ภ.ง.ด.2 (ดอกเบี้ย/ปันผล) ขึ้นกับประเภทเงินได้ —
     /// ไม่แตะ. คืน (form ที่ถูก, corrected=แก้จากที่ขอมาไหม, reason).</summary>
-    internal static (TaxType formType, bool corrected, string reason) ResolveWhtFormType(Contact? contact, TaxType? requested)
+    /// <param name="documentIsForeignService">ธง §83/6 ของ **เอกสาร** — ต้องส่งเข้ามา
+    /// ด้วยเสมอเมื่อมีเอกสารต้นทาง: เดิมตัวนี้ดูแต่ <c>Contact.CountryCode</c>
+    /// ⇒ เคส Booking.com ที่ติ๊ก §83/6 แต่คู่ค้าไม่ได้กรอกประเทศ (เคสที่คอมเมนต์ใน
+    /// เรพเขียนเองว่าเกิดบ่อย) ออก 50 ทวิ เป็น **ภ.ง.ด.3/53** ⇒ รายงาน ภ.ง.ด.54
+    /// หาใบนั้นไม่เจอ (cert คนละ TaxFormType) และ mine จากเอกสารก็ไม่ได้เพราะถูก
+    /// <c>certCoveredDocIds</c> ตัดออก ⇒ <b>ใบหายจาก ภ.ง.ด.54 ทั้งใบ ไปโผล่ 53 แทน</b>
+    /// ขณะที่ GL ตั้งหนี้ไว้ที่ 21918 ⇒ ยื่นผิดแบบ + 21918 ไม่มีวันถูกล้าง</param>
+    internal static (TaxType formType, bool corrected, string reason) ResolveWhtFormType(
+        Contact? contact, TaxType? requested, bool documentIsForeignService = false)
     {
         // แบบที่ไม่ใช่แกน 3/53 → ปล่อยตามที่ขอ (income-type-driven)
         if (requested.HasValue
@@ -722,8 +730,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ผู้รับต่างประเทศ (ม.70) → ภ.ง.ด.54 เท่านั้น — เดิม resolver คืนได้แค่
         // 3/53 ⇒ 50 ทวิ ของ payee ต่างประเทศถูกออกเป็น ภงด.3/53 → เข้ารายงาน+
         // ไฟล์ 3/53 ขณะที่ ภงด.54 (doc-mined) ก็นับเอกสารเดิม = นำส่งซ้ำสองแบบ
-        var isForeignPayee = contact != null
-            && Accounting.Helpers.WhtPayeeKind.IsForeignPayee(false, contact.CountryCode);
+        var isForeignPayee = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(
+            documentIsForeignService, contact?.CountryCode);
         if (isForeignPayee)
             return (TaxType.WithholdingTax54, requested.HasValue && requested.Value != TaxType.WithholdingTax54,
                 "payee ต่างประเทศ (ม.70 → ภ.ง.ด.54)");
