@@ -134,7 +134,13 @@ public static class SsoWageBase
         // หายไปจาก JE เงียบ ๆ และไฟล์ สปส.1-10 ก็กรองแถวนี้ออก ⇒ นำส่งขาด
         // + เงินเพิ่ม §49) ระบบไม่มีทางรู้ว่าที่ถูกคือ "เติมฝั่งลูกจ้าง" หรือ
         // "ลบฝั่งนายจ้าง" ⇒ คงของเดิมไว้แล้วให้คนตัดสิน
-        // (ด่านตอนนำส่งจะบล็อกให้เองอยู่แล้ว — เงินไม่ออกไปผิด)
+        // ด่านที่บล็อกจริงอยู่ที่ `StatutoryRemittanceService.RemitAsync`
+        // (RuleCode `SSO-PAIR-CONFLICT`) — **เพิ่งต่อสายเมื่อ 2026-09-16**: ก่อนหน้านี้
+        // คอมเมนต์บรรทัดนี้เขียนว่า "ด่านตอนนำส่งจะบล็อกให้เองอยู่แล้ว" ทั้งที่
+        // `grep` ทั้ง RemitAsync ไม่มีคำว่า Conflict/IsConsistent/SsoWageBase เลย
+        // ⇒ เป็น doc-comment ที่โกหกคนอ่านมาตลอด (defect class ของ CLAUDE.md:
+        // "ด่านที่ doc บอกว่ามี ≠ ด่านที่ถูกเรียก") — ถ้าย้าย/ลบด่านนั้น ต้องแก้
+        // บรรทัดนี้ในคอมมิตเดียวกัน
         if (employeeContribution <= 0)
             return new SsoPairResult(storedBase, employerOnFile, false, false,
                 $"ฝั่งลูกจ้างเป็น 0 แต่ฝั่งนายจ้างมี {employerOnFile:N2} บาท — "

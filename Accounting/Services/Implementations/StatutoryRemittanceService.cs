@@ -879,6 +879,49 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             lines.Add(new JournalLineRequest(bankGlId, 0, amount + lateFee, $"นำส่ง{form} {req.PeriodMonth:D2}/{req.PeriodYear}"));
         }
 
+        // ══ ด่านคู่ (ค่าจ้าง, เงินสมทบ) ก่อนเงินออก — ม.33/ม.46 ══
+        //
+        // ⚠️ ไฟล์ สปส.1-10 **กรองแถวที่ฝั่งลูกจ้าง = 0 ทิ้งเงียบ ๆ** (ทั้ง txt และ xlsx)
+        // ขณะที่หน้านี้นับ `Emp + Empr` ของทั้งรอบ ⇒ กดนำส่งตามยอดบนจอ
+        // แล้วอัปโหลดไฟล์ที่ประกาศน้อยกว่า = **นำส่งไม่ตรงกับที่ประกาศ** ⇒ สปส.
+        // ตีกลับ/นำส่งขาด + เงินเพิ่ม §49 2%/เดือน
+        //
+        // doc-comment ของ `SsoWageBase.Normalize` เขียนไว้เองว่า "ด่านตอนนำส่งจะ
+        // บล็อกให้เองอยู่แล้ว — เงินไม่ออกไปผิด" แต่ `grep` ทั้งไฟล์นี้ไม่มีคำว่า
+        // `Conflict`/`IsConsistent`/`SsoWageBase` เลยสักคำ ⇒ **ด่านนั้นไม่เคยมีอยู่จริง**
+        //
+        // ม.46 ให้ลูกจ้างและนายจ้างสมทบ **ในอัตราเดียวกันจากฐานเดียวกัน** ⇒ ฝั่งหนึ่ง
+        // เป็น 0 อีกฝั่งไม่เป็น = ข้อมูลผิดเสมอ ไม่ใช่สถานะที่กฎหมายรองรับ
+        if (type == "SsoSps110")
+        {
+            var mismatched = await _db.PayrollDetails.AsNoTracking()
+                .Include(d => d.Employee)
+                .Where(d => d.CompanyId == companyId
+                    && d.PayrollRun.Year == req.PeriodYear && d.PayrollRun.Month == req.PeriodMonth
+                    && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid
+                    && d.IsSubjectToSocialSecurity
+                    && d.SocialSecurityEmployee <= 0 && d.SocialSecurityEmployer > 0)
+                .Select(d => new { d.Employee.EmployeeCode,
+                    Name = d.Employee.FirstNameTh + " " + d.Employee.LastNameTh,
+                    d.SocialSecurityEmployer })
+                .ToListAsync();
+            if (mismatched.Count > 0)
+            {
+                var dropped = mismatched.Sum(x => x.SocialSecurityEmployer);
+                var who = string.Join(" · ", mismatched.Take(5)
+                    .Select(x => $"{x.EmployeeCode} {x.Name} ({x.SocialSecurityEmployer:N2})"))
+                    + (mismatched.Count > 5 ? $" และอีก {mismatched.Count - 5} คน" : "");
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"พนักงาน {mismatched.Count} คนมียอดสมทบฝั่งนายจ้างแต่ฝั่งลูกจ้างเป็น 0 "
+                    + $"รวม {dropped:N2} บาท — {who} · "
+                    + "ม.46 ให้สมทบจากฐานค่าจ้างเดียวกันทั้งสองฝั่ง และไฟล์ สปส.1-10 "
+                    + "จะไม่ประกาศแถวเหล่านี้ ⇒ เงินที่นำส่งจะไม่ตรงกับที่ประกาศ · "
+                    + "กรุณาแก้ยอดรายคนที่หน้าเงินเดือน (กลับรายการจ่าย → แก้ยอด → จ่ายใหม่) "
+                    + "หรือปลดธง “อยู่ในระบบประกันสังคม” ถ้าพนักงานคนนั้นไม่ต้องสมทบ",
+                    "SSO-PAIR-CONFLICT");
+            }
+        }
+
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
