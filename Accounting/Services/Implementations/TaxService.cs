@@ -1532,9 +1532,8 @@ public partial class TaxService : ITaxService
             // `doc.Lines?.Sum(...) ?? fallback` — Lines เป็น collection ที่ init
             // ไว้เสมอ (ไม่มีวัน null) ⇒ fallback เป็น dead code, ใบ header-only
             // ได้ฐาน 0 ทั้งที่มี VAT นำส่ง (จอ+ไฟล์ยื่นโชว์ฐาน 0.00)
-            var baseAmount = doc.Lines is { Count: > 0 }
-                ? doc.Lines.Where(l => l.VatRate != -1).Sum(l => l.Amount)
-                : (doc.SubTotal > 0 ? doc.SubTotal : doc.TotalAmount - doc.VatAmount);
+            var baseAmount = Accounting.Helpers.DocumentVatFallback.TaxBase(
+                doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,

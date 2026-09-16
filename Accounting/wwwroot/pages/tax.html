@@ -333,7 +333,12 @@
           this._pp36Remit = {};
           if (this.taxType === 'VatPp36') {
             try {
-              const dash = await API.get(`/api/companies/${Layout.getCompanyId()}/remittances/dashboard`);
+              // ⚠️ route คือ `/remittances` เฉย ๆ — เดิมเรียก `/remittances/dashboard`
+              // ซึ่ง **ไม่เคยมีอยู่จริง** แล้ว catch ข้างล่างกลืน 404 ไปเงียบ ๆ
+              // ⇒ แถว "ยังไม่สร้างรายงาน" + สถานะนำส่งของแท็บ ภ.พ.36 ไม่เคยขึ้นเลย
+              // สักครั้งตั้งแต่เขียนมา (ฟีเจอร์ที่ comment ข้างบนบอกว่าทำมาแก้
+              // คำถามผู้ใช้ "ไม่ขึ้นอัตโนมัติหรอ" ตายเงียบตั้งแต่วันแรก)
+              const dash = await API.get(`/api/companies/${Layout.getCompanyId()}/remittances?monthsBack=24`);
               const d = dash?.data || {};
               const pend = (d.pending || []).filter(r => r.remittanceType === 'VatPp36');
               // ⚠️ งวดที่ "นำส่งแล้ว" จะหลุดออกจาก pending ไปอยู่ใน recentHistory
@@ -358,7 +363,12 @@
                 .filter(r => !yearF || String(r.year) === String(yearF))
                 .filter(r => { const k = `${r.year}-${r.month}`; if (seen.has(k)) return false; seen.add(k); return true; })
                 .sort((a, b) => (b.year - a.year) || (b.month - a.month));
-            } catch (_) { /* dashboard ล้มไม่ต้องพังทั้งแท็บ */ }
+            } catch (e) {
+              // ล้มไม่ต้องพังทั้งแท็บ — แต่ห้ามเงียบสนิท ไม่งั้นเส้นนี้ตายแล้ว
+              // ไม่มีใครรู้อีก (บทเรียนเดิม: route ผิดถูกกลืนมาตลอด)
+              console.warn('โหลดสถานะนำส่ง ภ.พ.36 ไม่สำเร็จ', e);
+              this._pp36LoadFailed = true;
+            }
           }
           this.updateStats();
           this.render();
@@ -414,6 +424,14 @@
         let items = this.allReports;
         if (statusF) items = items.filter(r => r.status === statusF);
         const tbody = document.getElementById('tableBody');
+        // โหลดสถานะนำส่งไม่สำเร็จ = "ยังไม่ได้ตรวจ" ไม่ใช่ "ไม่มีงวดค้าง" —
+        // ต้องบอกผู้ใช้ ไม่ใช่โชว์ตารางว่างแล้วให้เข้าใจว่าไม่มีอะไรต้องทำ
+        const pp36Warn = (this.taxType === 'VatPp36' && this._pp36LoadFailed)
+          ? `<tr><td colspan="9" style="background:#fef2f2;color:#991b1b;padding:8px">
+               ⚠️ โหลดสถานะการนำส่ง ภ.พ.36 ไม่สำเร็จ — ตารางนี้อาจไม่ครบ
+               (งวดที่ยังไม่ได้สร้างรายงานจะไม่ขึ้น) ลองรีเฟรชหน้าอีกครั้ง
+             </td></tr>`
+          : '';
         // แถว "งวดที่มียอด ภ.พ.36 แต่ยังไม่สร้างรายงาน" — โชว์เสมอบนแท็บ ภ.พ.36
         const missingRows = (this.taxType === 'VatPp36' ? (this._pp36Missing || []) : [])
           .map(m => `<tr style="background:${m.remitted ? '#fffbeb' : '#f8fafc'}">
@@ -431,9 +449,8 @@
               onclick="Page.generatePp36For(${m.year}, ${m.month})">+ สร้างรายงานงวดนี้</button></td>
           </tr>`).join('');
         if (!items.length) {
-          tbody.innerHTML = missingRows
-            || '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>';
-          if (missingRows) return;
+          tbody.innerHTML = pp36Warn + (missingRows
+            || '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีรายงาน</td></tr>');
           return;
         }
         // ภงด.3/53/54 เก็บยอดใน totalIncome/totalTaxWithheld — ไม่ใช่ outputVat/
@@ -499,7 +516,7 @@
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
-        </tr>`).join('') + missingRows;
+        </tr>`).join('') + missingRows + pp36Warn;
         this._updateTaxSelectionBar();
       },
       goPage(p) { Page.page = p; Page.load(); },

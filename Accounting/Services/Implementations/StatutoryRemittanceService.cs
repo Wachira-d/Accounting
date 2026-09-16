@@ -817,19 +817,41 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var lines = new List<JournalLineRequest>();
         if (type == "VatPp30")
         {
-            // Dr ภาษีขาย (21911 = output) / Cr ภาษีซื้อ (11610 = input) / Cr ธนาคาร (net)
-            var output = item.OutputVat ?? amount;
-            var input = item.InputVat ?? 0m;
-            lines.Add(new JournalLineRequest(payable.Id, output, 0, "ล้างภาษีขาย ภพ.30 (Dr 21911)"));
-            if (input > 0)
+            // Dr 21911 ภาษีขาย / Cr 11610 ภาษีซื้อ (+ เครดิตยกมา §82/3) / Cr ธนาคาร
+            //
+            // ⚠️ เดิม Cr 11610 ลงเฉพาะ "ภาษีซื้อของงวด" แต่ Cr ธนาคารลง NetVat ซึ่ง
+            // หัก **เครดิตยกมา** ไว้แล้ว ⇒ ทุกงวดที่มีเครดิตยกมา Dr − Cr = เครดิตยกมา
+            // ⇒ CreateJournalEntryAsync โยน "ยอดเดบิตไม่เท่ากับยอดเครดิต" ⇒ นำส่งงวด
+            // นั้นไม่ได้เลย และข้อความนั้นผู้ใช้ไม่มีทางแก้เองได้
+            // ตรรกะอยู่ที่ Helpers/VatRemittanceJournal (pure + มีเทสต์ล็อก Dr = Cr)
+            var plan = Accounting.Helpers.VatRemittanceJournal.Build(
+                item.OutputVat ?? amount, item.InputVat ?? 0m, amount);
+
+            lines.Add(new JournalLineRequest(payable.Id, plan.ClearOutputVat, 0,
+                "ล้างภาษีขาย ภพ.30 (Dr 21911)"));
+
+            if (plan.ClearInputVat > 0)
             {
-                var inputAcc = await ResolveAccountAsync(companyId, "11610");
-                if (inputAcc != null)
-                    lines.Add(new JournalLineRequest(inputAcc.Id, 0, input, "ล้างภาษีซื้อ ภพ.30 (Cr 11610)"));
-                else // ไม่พบ 11610 → ลง net ตรง ๆ
-                    amount = output;
+                // ⚠️ เดิมสาขา "ไม่พบผัง 11610" ตั้ง amount = output **เงียบ ๆ**
+                // ⇒ บริษัทจ่ายภาษีขายเต็มจำนวนแทนยอดสุทธิ (เคสตัวอย่าง: จ่ายเกิน
+                // 4,200 บาทโดยไม่มีอะไรเตือน). ต้องปฏิเสธพร้อมบอกทางไปต่อ —
+                // "ค่า default ที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้ อันตรายกว่าการไม่ตอบ"
+                var inputAcc = await ResolveAccountAsync(companyId, "11610")
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        "ไม่พบผังบัญชี 11610 (ภาษีซื้อ) — งวดนี้มีภาษีซื้อ/เครดิตยกมา "
+                        + $"{plan.ClearInputVat:N2} บาทที่ต้องล้างออกจากบัญชีนั้น "
+                        + "กรุณาสร้างผังบัญชี 11610 ที่หน้า “ผังบัญชี” ก่อนบันทึกการนำส่ง",
+                        "VAT-REMIT-NO-11610");
+
+                var desc = plan.CarryForwardUsed > 0.005m
+                    ? $"ล้างภาษีซื้อ ภพ.30 (Cr 11610) — งวดนี้ {plan.ClearInputVat - plan.CarryForwardUsed:N2}"
+                      + $" + เครดิตยกมา §82/3 {plan.CarryForwardUsed:N2}"
+                    : "ล้างภาษีซื้อ ภพ.30 (Cr 11610)";
+                lines.Add(new JournalLineRequest(inputAcc.Id, 0, plan.ClearInputVat, desc));
             }
-            lines.Add(new JournalLineRequest(bankGlId, 0, amount, $"จ่ายภาษีมูลค่าเพิ่ม {req.PeriodMonth:D2}/{req.PeriodYear}"));
+
+            lines.Add(new JournalLineRequest(bankGlId, 0, plan.PayFromBank,
+                $"จ่ายภาษีมูลค่าเพิ่ม {req.PeriodMonth:D2}/{req.PeriodYear}"));
         }
         else
         {
