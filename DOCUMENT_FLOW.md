@@ -459,6 +459,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (ม.105) และใบกำกับ (§86/4) ไม่ต้องพิมพ์แยกสองใบ (พิมพ์แยก = เสี่ยงเคลมซ้ำ)
     - **§86 บังคับออกใบกำกับ "ทุกครั้ง" ที่ tax point เกิด** ไม่ออก = เบี้ยปรับ
       2 เท่าของภาษีตามใบ (§89(5)) + ปรับอาญา (§90(12))
+    - **ท.ป.4/2528 ข้อ 12 — คำเตือน "ยังไม่ได้หัก ณ ที่จ่าย" เป็น 3 สถานะ (รอบ 176)**
+      เดิมเงื่อนไขมีแค่ ฝั่งซื้อ · มีคู่ค้า · ยังไม่กรอก WHT · ยอดสะสม ≥ 1,000 —
+      **ไม่มีข้อไหนถามว่าเป็นค่าสินค้าหรือค่าบริการ** ทั้งที่การซื้อสินค้าไม่อยู่ในข่ายหัก
+      ⇒ ใบซื้อของทุกใบที่เกินพันเด้งหมด (ผู้ใช้รายงาน 2026-09-18 · ใบร้านค้าปลีก 5,682.24)
+      ตอนนี้: `Helpers/WhtApplicabilityEvidence.Judge` (pure + เทสต์) ตอบ 3 สถานะ —
+      **สินค้า** (ทุกบรรทัดผูกสินค้าในระบบ) ⇒ เงียบ · **บริการ** (บรรทัดมีประเภทเงินได้
+      ม.40 แล้ว หรือผูกรายการชนิด Service) ⇒ เตือน · **ยังไม่รู้** (บรรทัดอิสระจาก OCR)
+      ⇒ ถามชั้นเรียนรู้ผ่าน `AiFeatureKey.WhtCategoryInference` (นักเรียนก่อน ครูทีหลัง):
+      ตอบ `None`/`Skip` ⇒ เงียบ + เขียนร่องรอยใน `InternalNotes` · ตอบรหัสประเภทเงินได้
+      ที่**มีอยู่จริงใน `ThaiWhtRateTable`** ⇒ เตือนว่า "ระบบสงสัยว่าเข้าข่าย" ·
+      ตอบไม่ได้/ตอบนอกชุด/ปิด AI ⇒ กลับไปเตือนแบบเดิม (ทิศปลอดภัยตาม §54)
+      และยอดสะสมนับเฉพาะ `ArApScope.PayableTypes` (เดิมรวมเอกสารทุกชนิดรวมใบขาย
+      ที่เราออกให้คู่ค้ารายนั้น ⇒ "ยอดจ่ายสะสม" ไม่ใช่ยอดจ่ายจริง)
     - เอกสารที่ VAT เข้ารายงานแต่หัวไม่มีคำว่าใบกำกับ → `CollectApprovalWarningsAsync`
       เตือนตอนอนุมัติ (ไม่ block — ขายปลีกที่ลูกค้าไม่ขอใบกำกับเป็นเคสปกติ) และ
       **เมื่อผู้ใช้กด "ยืนยันทั้งที่มีคำเตือน" (`acknowledgeWarnings=true`)
@@ -1955,7 +1968,8 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | OCR เราเป็นผู้ซื้อ/ผู้ขาย (ถามเฉพาะเมื่อ `OcrPartyResolver.ShouldAskAi`) | `DocumentRoleInference = 4` | generic (`Buyer`/`Seller`) | ตอน user แก้ `OurRole` ในหน้า scan (`OurRoleAiFeedbackId`) — รอบ 156 |
 | OCR target doc to create | `DocumentConversionSuggestion = 23` | generic | ตอน user เปลี่ยน targetDocType |
 | Vendor canonical match | `VendorCanonicalization = 1` | `VendorCanonDistillationModel.cs` | ตอน user เลือก contact |
-| WHT category infer | `WhtCategoryInference = 5` | generic | ตอน user แก้ |
+| WHT category infer | `WhtCategoryInference = 5` | generic | ตอน user แก้ · **และตอนอนุมัติเอกสาร** (`RecordWhtDecisionFeedbackAsync` — อนุมัติโดยไม่หัก = คำตอบ `None` · หักและระบุประเภทเงินได้ = รหัสนั้น) รอบ 176 |
+| **เข้าข่ายหัก ณ ที่จ่ายไหม (ตอนอนุมัติ)** — ถามเฉพาะเมื่อ `WhtApplicabilityEvidence.Judge` = `Unknown` | `WhtCategoryInference = 5` (**คลังเดียวกัน ห้ามตั้ง key ใหม่**) | generic | `WhtAdviceAiFeedbackId` บนเอกสาร → ปิดตอนอนุมัติ |
 | Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
 | Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |
 | Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |

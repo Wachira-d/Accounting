@@ -458,6 +458,21 @@ public class Document : TenantEntity
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
 
+    // ── คำแนะนำเรื่องหัก ณ ที่จ่าย จากชั้นเรียนรู้ (กฎเหล็ก #1) ──
+    // เก็บไว้เพื่อ **ปิดวงจร**: ตอนผู้ใช้กดอนุมัติ ระบบเอา FeedbackId นี้ไปบันทึก
+    // ว่าคนตัดสินว่าอะไรจริง ⇒ AiFeedbackTrainingJob เอาไปเทรนนักเรียนต่อ
+    // (ถ้าไม่เก็บ = ถามแล้วไม่เคยรู้ว่าตอบถูกไหม = จ่าย token ฟรี)
+
+    /// <summary>แถว feedback ของ <c>AiFeatureKey.WhtCategoryInference</c> สำหรับใบนี้</summary>
+    public Guid? WhtAdviceAiFeedbackId { get; set; }
+
+    /// <summary>คำตอบที่ชั้นเรียนรู้ให้ไว้ ("None"/"Skip"/รหัสประเภทเงินได้)</summary>
+    public string? WhtAdviceAnswer { get; set; }
+
+    /// <summary>คำตอบนั้นมาจาก AI ภายนอกจริงไหม (false = นักเรียนในระบบตอบเอง) —
+    /// ใช้ติดป้ายซื่อสัตย์บน UI และเป็นตัวชี้วัดว่า local โตพอหรือยัง</summary>
+    public bool WhtAdviceUsedAi { get; set; }
+
     /// <summary>โมดูลที่สร้างเอกสารนี้ ("Lodging", "Pos", "Ocr", null = ฟอร์มปกติ/API)
     ///
     /// ใช้ตัดสิน**โควตา**: เอกสารที่โมดูลที่พักออกให้อัตโนมัติไม่นับเข้าโควตาเอกสาร

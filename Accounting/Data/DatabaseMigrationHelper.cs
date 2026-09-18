@@ -182,6 +182,19 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PricesIncludeVat" boolean NOT NULL DEFAULT false;
             """,
 
+            // ===== Documents: คำแนะนำหัก ณ ที่จ่าย จากชั้นเรียนรู้ (กฎเหล็ก #1) =====
+            // FeedbackId เก็บไว้ปิดวงจรตอนผู้ใช้กดอนุมัติ — ไม่เก็บ = ถามแล้วไม่เคยรู้
+            // ว่าคำตอบถูกไหม ⇒ นักเรียนไม่มีวันโต
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtAdviceAiFeedbackId" uuid NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtAdviceAnswer" text NULL;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtAdviceUsedAi" boolean NOT NULL DEFAULT false;
+            """,
+
             // ===== DocumentLines: ProductCode =====
             """
             ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "ProductCode" varchar(50) NULL;

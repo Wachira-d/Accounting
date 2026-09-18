@@ -5139,6 +5139,10 @@ public partial class DocumentService : IDocumentService
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // ── ปิดวงจรเรียนรู้เรื่องหัก ณ ที่จ่าย (กฎเหล็ก #1 ขั้น CAPTURE) ──
+                // การกดอนุมัติ = การตัดสินใจจริงของคน ⇒ เป็นคำตอบที่เอาไปสอนได้
+                await RecordWhtDecisionFeedbackAsync(doc);
+
                 // ===== Tax Point §78/§78/1 — snapshot จุดความรับผิด VAT =====
                 // VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate. คำนวณเฉพาะ
                 // เอกสารที่มี VAT (มิฉะนั้นไม่เกี่ยว).
@@ -15981,6 +15985,156 @@ public partial class DocumentService : IDocumentService
     ///   • foreign currency without an explicit FX rate update
     ///   • inventory-tracked product would go negative on this approval
     /// </summary>
+    /// <summary>
+    /// **คำตัดสินของคนเรื่องหัก ณ ที่จ่าย → คลังเรียนรู้** (กฎเหล็ก #1 ขั้น CAPTURE)
+    ///
+    /// <para>เรียกตอนเอกสารถูกอนุมัติจริงเท่านั้น — ใบที่ผู้ใช้เปิดดูแล้วปิดไป
+    /// ไม่ใช่การตัดสินใจ. บันทึกทั้งสองทิศ:</para>
+    /// <list type="bullet">
+    /// <item>อนุมัติโดย<b>ไม่หัก</b> ⇒ คำตอบจริงคือ <c>None</c> — ถ้าโมเดลเคยตอบ
+    ///   <c>None</c> ไว้ก็คือ "ยืนยันว่าถูก" (สอนให้มั่นใจขึ้น) ถ้าเคยเตือนว่าเข้าข่าย
+    ///   ก็คือ "คนแย้ง" (สอนไม่ให้เตือนซ้ำกับคู่ค้ารายนี้)</item>
+    /// <item>อนุมัติโดย<b>หัก</b>และระบุประเภทเงินได้ ⇒ คำตอบจริงคือรหัสนั้น</item>
+    /// </list>
+    ///
+    /// <para>งานกลางคืน <c>AiFeedbackTrainingJob</c> จะ mine แถวที่มี
+    /// <c>UserChosenAt</c> ไปเทรนนักเรียนของ <c>WhtCategoryInference</c> ⇒ ครั้งหน้า
+    /// นักเรียนตอบเองได้โดยไม่ต้องจ่าย token (กฎเหล็ก #1 ขั้น DISTILL)</para>
+    /// </summary>
+    private async Task RecordWhtDecisionFeedbackAsync(Document doc)
+    {
+        if (_feedbackRecorder == null || doc.WhtAdviceAiFeedbackId is not { } fid) return;
+        try
+        {
+            string chosen;
+            if (doc.WithholdingTaxAmount > 0.005m)
+            {
+                // หักจริง — คำตอบคือประเภทเงินได้ที่ใช้ · ไม่ระบุ = สอนอะไรไม่ได้ ข้ามไป
+                var code = doc.Lines?
+                    .FirstOrDefault(l => !l.IsDeleted && !string.IsNullOrWhiteSpace(l.IncomeTypeCode))?.IncomeTypeCode;
+                if (string.IsNullOrWhiteSpace(code)) return;
+                chosen = code!;
+            }
+            else
+            {
+                chosen = "None";
+            }
+
+            await _feedbackRecorder.RecordUserChoiceAsync(fid, chosen,
+                acceptedAi: string.Equals(chosen, doc.WhtAdviceAnswer, StringComparison.OrdinalIgnoreCase),
+                default);
+        }
+        catch (Exception ex)
+        {
+            // การเรียนรู้ล้มต้องไม่ทำให้การอนุมัติล้ม
+            _logger.LogWarning(ex, "บันทึกคำตัดสินหัก ณ ที่จ่ายเข้าคลังเรียนรู้ไม่สำเร็จ (ไม่กระทบการอนุมัติ)");
+        }
+    }
+
+    /// <summary>ข้อเท็จจริงรายบรรทัดสำหรับ <see cref="Accounting.Helpers.WhtApplicabilityEvidence"/>
+    ///
+    /// <para><c>DocumentLine</c> เก็บแต่ <c>ProductCode</c> (ไม่มี FK ไปสินค้า) จึงต้อง join
+    /// เอง — บรรทัดที่ไม่ได้ผูกรหัสสินค้า (เช่นบรรทัดอิสระจาก OCR) จะได้ <c>null</c>
+    /// ซึ่งแปลว่า "ไม่รู้ชนิด" **ไม่ใช่** "ไม่ใช่สินค้า"</para></summary>
+    private async Task<List<Accounting.Helpers.WhtLineFact>> BuildWhtLineFactsAsync(
+        Guid companyId, Document doc)
+    {
+        var liveLines = doc.Lines.Where(l => !l.IsDeleted).ToList();
+        var codes = liveLines
+            .Select(l => l.ProductCode)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c!)
+            .Distinct()
+            .ToList();
+
+        var kindByCode = codes.Count == 0
+            ? new Dictionary<string, Models.Enums.ProductType>(StringComparer.OrdinalIgnoreCase)
+            : (await _db.Products.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted && codes.Contains(p.Code))
+                    .Select(p => new { p.Code, p.ProductType })
+                    .ToListAsync())
+                .GroupBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().ProductType, StringComparer.OrdinalIgnoreCase);
+
+        return liveLines.Select(l => new Accounting.Helpers.WhtLineFact(
+            l.Description,
+            l.IncomeTypeCode,
+            !string.IsNullOrWhiteSpace(l.ProductCode) && kindByCode.TryGetValue(l.ProductCode!, out var k)
+                ? k : null,
+            l.Amount)).ToList();
+    }
+
+    /// <summary>คำตอบของชั้น "นักเรียน → ครู" เรื่องเข้าข่ายหัก ณ ที่จ่ายไหม</summary>
+    /// <param name="SaysNoWithholding">ตอบชัดว่า<b>ไม่</b>เข้าข่าย (None/Skip)</param>
+    /// <param name="SaysWithhold">ตอบเป็นประเภทเงินได้ที่<b>มีอยู่จริงในตารางอัตรา</b></param>
+    private sealed record WhtAdvice(
+        bool SaysNoWithholding, bool SaysWithhold,
+        string? Answer, decimal Confidence, bool UsedAi, Guid? FeedbackId);
+
+    /// <summary>
+    /// ถามชั้นเรียนรู้ว่า "ใบนี้เข้าข่ายหัก ณ ที่จ่ายไหม" เมื่อหลักฐานเชิงกำหนดตอบไม่ได้
+    ///
+    /// <para>ใช้ <c>AiFeatureKey.WhtCategoryInference</c> ซึ่ง<b>มีคลังคำตอบอยู่แล้ว</b>
+    /// (prompt · นักเรียน <c>GenericFeedbackDistillationModel</c> · งานกลางคืน
+    /// <c>AiFeedbackTrainingJob</c>) — ห้ามตั้ง feature key ใหม่สำหรับคำถามเดียวกัน
+    /// เพราะจะได้ corpus สองกอง แล้วนักเรียนของทั้งสองกองโตช้าลงครึ่งหนึ่ง
+    /// (กฎเหล็ก #1 ข้อ 6)</para>
+    ///
+    /// <para><b>ด่านกันคำตอบที่แต่งขึ้น</b>: รับเฉพาะ <c>None</c>/<c>Skip</c> หรือรหัส
+    /// ประเภทเงินได้ที่หาเจอใน <see cref="Accounting.Helpers.ThaiWhtRateTable"/> จริง —
+    /// คำตอบนอกชุดถือว่า "ตอบไม่ได้" แล้วตกกลับไปเตือนแบบเดิม (ทิศที่ปลอดภัยกว่าตาม §54)</para>
+    /// </summary>
+    private async Task<WhtAdvice> AdviseWhtApplicabilityAsync(
+        Guid companyId, Document doc, decimal paidToContactThisYear)
+    {
+        var none = new WhtAdvice(false, false, null, 0m, false, null);
+        if (_aiAugmenter == null) return none;
+
+        try
+        {
+            // คำอธิบายที่ส่งไปถาม = บรรทัดที่มีเงินจริง เรียงตามยอด (บรรทัดยอด 0
+            // อย่าง "Shipping costs 0.00" เป็นแถวฟอร์ม ไม่ใช่เนื้อหาของใบ)
+            var desc = string.Join(" · ", doc.Lines
+                .Where(l => !l.IsDeleted && l.Amount > 0m && !string.IsNullOrWhiteSpace(l.Description))
+                .OrderByDescending(l => l.Amount)
+                .Take(5)
+                .Select(l => l.Description));
+            if (string.IsNullOrWhiteSpace(desc)) return none;
+
+            var suggestion = await _aiAugmenter.InferWhtCategoryAsync(
+                companyId, doc.Id,
+                vendorName: doc.Contact?.Name,
+                vendorTaxId: doc.Contact?.TaxId,
+                vendorType: doc.Contact?.ContactType.ToString(),
+                lineDescription: desc,
+                amount: doc.SubTotal,
+                localGuess: null, localConfidence: null);
+
+            var answer = suggestion.Answer?.Trim();
+            if (string.IsNullOrWhiteSpace(answer)) return none;
+
+            var conf = suggestion.Confidence ?? 0m;
+            // "ไม่เข้าข่าย" ตามคำศัพท์ที่ prompt กำหนด: None = ซื้อสินค้าล้วน · Skip = ยังไม่ถึงเกณฑ์
+            if (answer.Equals("None", StringComparison.OrdinalIgnoreCase)
+                || answer.Equals("Skip", StringComparison.OrdinalIgnoreCase))
+                return new WhtAdvice(true, false, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
+
+            // ⬅ ด่าน: รหัสต้องมีอยู่จริงในตารางอัตรา ไม่งั้นคือคำตอบที่แต่งขึ้น
+            if (Accounting.Helpers.ThaiWhtRateTable.Find(answer) != null)
+                return new WhtAdvice(false, true, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
+
+            _logger.LogInformation(
+                "WHT advice ตอบนอกชุดคำตอบ ({Answer}) — ถือว่าตอบไม่ได้ แล้วเตือนตามเดิม", answer);
+            return none;
+        }
+        catch (Exception ex)
+        {
+            // ปิด provider / เกินงบ / timeout ⇒ เงียบแล้วตกกลับไปเตือนแบบเดิม
+            _logger.LogWarning(ex, "WHT applicability advice failed — ใช้คำเตือนเดิมแทน");
+            return none;
+        }
+    }
+
     private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
     {
         var warnings = new List<string>();
@@ -16089,32 +16243,103 @@ public partial class DocumentService : IDocumentService
         // เลยสักใบ ⇒ ไม่หักทั้งสามงวด ทั้งที่กฎหมายให้หักตั้งแต่งวดที่ยอดสะสมถึง
         // ⇒ **ผู้จ่ายรับผิดในภาษีที่ไม่ได้หัก (§54)** ไม่ใช่ผู้รับ
         //
-        // เตือน ไม่บล็อก — ผู้ใช้อาจรู้ยอดสัญญาทั้งก้อนที่ระบบไม่เห็น (เช่นสัญญา
-        // ปีต่อปีที่ยังไม่ได้บันทึก) การบล็อกจะทำให้เขาทำงานไม่ได้โดยเราไม่ได้ถูกกว่า
+        // ═══ สามสถานะ ไม่ใช่สองสถานะ (ผู้ใช้รายงาน 2026-09-18) ═══
+        // เดิมเงื่อนไขมีแค่ 4 ข้อ — ฝั่งซื้อ · มีคู่ค้า · ยังไม่กรอก WHT · ยอดสะสม
+        // ≥ 1,000 — **ไม่มีข้อไหนถามว่าเป็นค่าสินค้าหรือค่าบริการ** ทั้งที่
+        // ท.ป.4/2528 ครอบเฉพาะค่าบริการ/ค่าจ้าง/ค่าเช่า/วิชาชีพ ฯลฯ
+        // **การซื้อสินค้าไม่อยู่ในข่าย** ⇒ ใบซื้อของทุกใบที่เกินพันเด้งหมด
+        // ⇒ ผู้ใช้เรียนรู้ที่จะกด "ยอมรับและอนุมัติต่อ" โดยไม่อ่าน ⇒ วันที่เป็น
+        // ค่าบริการจริงก็จะถูกกดผ่านไปด้วย = ปิดด่านโดยไม่ตั้งใจ (กฎเหล็ก #4)
         if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType)
             && doc.ContactId != Guid.Empty
             && doc.WithholdingTaxAmount <= 0.005m
             && doc.SubTotal > 0m)
         {
-            var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
-            var paidToContactThisYear = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
-                            && d.Id != doc.Id
-                            && d.DocumentDate >= yearStart && d.DocumentDate <= doc.DocumentDate
-                            && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
-                .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+            // ชั้นที่ 1 — หลักฐานเชิงกำหนดจากข้อมูลที่เราถืออยู่ (pure helper + เทสต์)
+            var whtEvidence = Accounting.Helpers.WhtApplicabilityEvidence.Judge(
+                await BuildWhtLineFactsAsync(companyId, doc));
 
-            if (Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(doc.SubTotal, paidToContactThisYear))
+            // พิสูจน์ได้ว่าเป็นการซื้อสินค้า ⇒ **เงียบสนิท** ไม่ต้องคิดยอดสะสมด้วยซ้ำ
+            if (whtEvidence.Level != Accounting.Helpers.WhtApplicability.GoodsNoWithholding)
             {
-                var cumulative = doc.SubTotal + paidToContactThisYear;
-                warnings.Add(
-                    $"⚠️ ท.ป.4/2528 ข้อ 12: ใบนี้ยังไม่ได้หัก ณ ที่จ่าย แต่ยอดจ่ายสะสมให้ "
-                    + $"'{doc.Contact?.Name ?? "คู่ค้ารายนี้"}' ปีนี้เป็น {cumulative:N2} บาท "
-                    + $"(ใบนี้ {doc.SubTotal:N2} + ก่อนหน้า {paidToContactThisYear:N2}) — "
-                    + $"เกินเกณฑ์ {Accounting.Helpers.ThaiWhtRateTable.MinimumThresholdBaht:N0} บาท "
-                    + "ซึ่งนับ**สะสมต่อคู่สัญญา ไม่ใช่ต่อใบ** ⇒ ต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์. "
-                    + "ถ้าเป็นค่าซื้อสินค้า (ไม่ใช่ค่าบริการ/รับจ้าง) ไม่ต้องหัก — ยืนยันเพื่ออนุมัติต่อ. "
-                    + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                // ── ยอดจ่ายสะสมปีนี้ ──────────────────────────────────────
+                // ⚠️ เดิมคิวรีนี้รวมยอดจาก **เอกสารทุกชนิด** ที่ผูกกับคู่ค้ารายนั้น
+                // โดยไม่กรองฝั่ง/ชนิดเลย ⇒ ใบเสนอราคา · ใบสั่งซื้อ · **ใบขายที่เรา
+                // ออกให้เขา** · และการซื้อครั้งเดียวที่มีทั้ง PO + ใบกำกับ + ใบสำคัญจ่าย
+                // ถูกนับซ้ำ ⇒ ตัวเลขที่โชว์ว่า "ยอดจ่ายสะสม" ไม่ใช่ยอดจ่ายจริง
+                // → กรองด้วย ArApScope.PayableTypes ซึ่งเป็นชุดชนิดเจ้าหนี้ตัวเดียวของระบบ
+                var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
+                var payableTypes = Accounting.Helpers.ArApScope.PayableTypes;
+                var paidToContactThisYear = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
+                                && d.Id != doc.Id
+                                && payableTypes.Contains(d.DocumentType)
+                                && d.DocumentDate >= yearStart && d.DocumentDate <= doc.DocumentDate
+                                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
+                    .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+
+                if (Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(doc.SubTotal, paidToContactThisYear))
+                {
+                    var cumulative = doc.SubTotal + paidToContactThisYear;
+                    var head =
+                        $"ยอดจ่ายสะสมให้ '{doc.Contact?.Name ?? "คู่ค้ารายนี้"}' ปีนี้เป็น {cumulative:N2} บาท "
+                        + $"(ใบนี้ {doc.SubTotal:N2} + ก่อนหน้า {paidToContactThisYear:N2}) — "
+                        + $"เกินเกณฑ์ {Accounting.Helpers.ThaiWhtRateTable.MinimumThresholdBaht:N0} บาท "
+                        + "ซึ่งนับ**สะสมต่อคู่สัญญา ไม่ใช่ต่อใบ**";
+
+                    if (whtEvidence.Level == Accounting.Helpers.WhtApplicability.ServiceWithholding)
+                    {
+                        // พิสูจน์ได้ว่าเป็นค่าบริการ — เตือนอย่างมั่นใจ
+                        warnings.Add(
+                            $"⚠️ ท.ป.4/2528 ข้อ 12: ใบนี้ยังไม่ได้หัก ณ ที่จ่าย — {whtEvidence.Reason}. "
+                            + head + " ⇒ ต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์. "
+                            + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                    }
+                    else
+                    {
+                        // ── ชั้นที่ 2 — ยังไม่รู้: ให้ "นักเรียนก่อน ครูทีหลัง" ตัดสิน ──
+                        // (กฎเหล็ก #1) orchestrator ถาม local model ก่อนเสมอ แล้วค่อย
+                        // ตกไปหา AI เมื่อนักเรียนไม่มั่นใจ · ปิด provider ทุกตัวแล้ว
+                        // นักเรียนยังตอบได้ · นักเรียนยังไม่มีข้อมูล (tenant ใหม่) →
+                        // ตกกลับมาเตือนแบบเดิม ซึ่งเป็นทิศที่ปลอดภัยกว่า (§54)
+                        var advice = await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
+
+                        doc.WhtAdviceAiFeedbackId = advice.FeedbackId ?? doc.WhtAdviceAiFeedbackId;
+                        doc.WhtAdviceAnswer = advice.Answer ?? doc.WhtAdviceAnswer;
+                        doc.WhtAdviceUsedAi = advice.UsedAi;
+
+                        if (advice.SaysNoWithholding)
+                        {
+                            // ⚠️ **เงียบตามคำตอบของโมเดล** (เจ้าของโปรเจกต์ตัดสิน 2026-09-18)
+                            // แต่ต้องตามรอยได้ — ไม่งั้นจะไม่มีใครรู้ว่าทำไมใบนี้ไม่มีคำเตือน
+                            // (การเงียบที่ไม่ทิ้งร่องรอย = สถานะที่ระบบประทับเองโดยไม่มีหลักฐาน)
+                            doc.InternalNotes = (doc.InternalNotes ?? "")
+                                + $"\n[WHT-ADVICE] ไม่เตือนเรื่องหัก ณ ที่จ่าย — "
+                                + $"{(advice.UsedAi ? "AI" : "โมเดลในระบบ")} ประเมินว่าไม่เข้าข่าย "
+                                + $"({advice.Answer}) ความมั่นใจ {advice.Confidence:P0}";
+                        }
+                        else if (advice.SaysWithhold)
+                        {
+                            warnings.Add(
+                                $"🤔 ระบบสงสัยว่าใบนี้เข้าข่ายหัก ณ ที่จ่าย — โปรดตรวจสอบ. "
+                                + $"{(advice.UsedAi ? "🤖 AI" : "⚙️ ระบบ")}ประเมินว่าเป็นเงินได้ประเภท "
+                                + $"'{advice.Answer}' (ความมั่นใจ {advice.Confidence:P0}) และ" + head + ". "
+                                + "ถ้าเป็นค่าซื้อสินค้า กด \"ยอมรับและอนุมัติต่อ\" ได้เลย — "
+                                + "ระบบจะจำคำตอบนี้ไว้สอนตัวเองสำหรับคู่ค้ารายนี้. "
+                                + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                        }
+                        else
+                        {
+                            // ทั้งนักเรียนและ AI ตอบไม่ได้ (cold start / ปิด AI / ตอบนอกชุด)
+                            // ⇒ กลับไปใช้คำเตือนเดิม — "ไม่รู้" ต้องไม่กลายเป็น "ไม่ต้องหัก"
+                            warnings.Add(
+                                $"⚠️ ท.ป.4/2528 ข้อ 12: ใบนี้ยังไม่ได้หัก ณ ที่จ่าย และ{whtEvidence.Reason}. "
+                                + head + " ⇒ ถ้าเป็นค่าบริการต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์ "
+                                + "· ถ้าเป็นค่าซื้อสินค้าไม่ต้องหัก — ยืนยันเพื่ออนุมัติต่อ. "
+                                + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                        }
+                    }
+                }
             }
         }
 
