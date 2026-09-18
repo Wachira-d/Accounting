@@ -1272,6 +1272,21 @@ public class OcrService : IOcrService
             var zeroLines = extractedData.Items
                 .Where(i => (i.Amount ?? 0m) <= 0m && (i.UnitPrice ?? 0m) <= 0m)
                 .Select(i => i.Description).ToList();
+            // ── หมวดค่าใช้จ่ายที่ "มาถึงก่อน" ตัวจัดหมวดของเรา ──────────────
+            // `extractedData.ExpenseCategory` ณ จุดนี้ **ไม่ได้มาจาก**
+            // `ExpenseCategoryResolver` — มันมาจากชั้นก่อนหน้า (ช่อง
+            // `expense_category` ของ engine ในเครื่อง · ตารางค่าตั้งต้นตามชนิด
+            // เอกสาร · ค่าที่ผู้ใช้เคยแก้) ซึ่ง**ไม่มีชั้นไหนเขียนร่องรอยไว้เลย**
+            // ⇒ ผู้ใช้ถามว่า "ทำไมแนะนำหมวดนี้" แล้วตอบไม่ได้ แม้แต่ตอนไล่โค้ด
+            // (เคสจริง: หมวด "ค่าสาธารณูปโภค" บนใบซื้ออุปกรณ์แคมป์ปิ้ง 2026-09-18
+            //  ซึ่ง grep แล้วไม่มี label นี้ใน resolver เลย)
+            // หลักการข้อ G4: ผู้ชนะต้องบอกได้ว่าตัวเองมาจากไหน ก่อนจะให้ใครเชื่อ
+            if (!string.IsNullOrWhiteSpace(extractedData.ExpenseCategory))
+                extractedData.ReasoningTrace.Add(
+                    $"[Category] ค่าที่ติดมาก่อนตัวจัดหมวด: '{extractedData.ExpenseCategory}' "
+                    + "(มาจากช่อง expense_category ของ engine หรือค่าตั้งต้นตามชนิดเอกสาร "
+                    + "— ไม่ใช่ผลของ ExpenseCategoryResolver)");
+
             var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
                 vendorName: extractedData.VendorName,
                 headerDescription: extractedData.ExpenseCategory,
@@ -1282,6 +1297,11 @@ public class OcrService : IOcrService
                 zeroAmountLineDescriptions: zeroLines);
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult, categoryResolverText);
+            else if (!string.IsNullOrWhiteSpace(extractedData.ExpenseCategory))
+                extractedData.ReasoningTrace.Add(
+                    "[Category] ตัวจัดหมวดไม่มีกติกาไหนตรงกับใบนี้ ⇒ คงค่าที่ติดมาก่อนหน้าไว้ "
+                    + $"('{extractedData.ExpenseCategory}') — ถ้าหมวดนี้ดูไม่เข้าเรื่อง แปลว่า"
+                    + "ค่ามาจากชั้น engine/ค่าตั้งต้น ไม่ใช่จากกติกาของระบบ");
 
             // ───── Basket-analysis association rule lookup ─────
             // Apriori-mined rules from approved-doc history across all
