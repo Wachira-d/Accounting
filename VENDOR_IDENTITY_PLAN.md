@@ -152,3 +152,28 @@
 
 ชุด A ทั้งสี่ข้อรวมกันเล็กกว่าที่คิด เพราะสามในสี่เป็น "ของมีอยู่แล้วแต่ไม่ถูกเรียก"
 ไม่ใช่การสร้างของใหม่
+
+---
+
+## 10. ลงมือแล้ว — รอบ 174 (`<pending>`)
+
+| ข้อ | ทำอะไร | ไฟล์ |
+| --- | --- | --- |
+| ✅ A1 | `Helpers/OcrVendorKeyEvidence` (ใหม่ · ฟังก์ชันบริสุทธิ์) ตัดสินว่า "กุญแจถูก" จาก **กระดาษ**: checksum + ไม่ใช่บาร์โค้ด (`ThaiTaxId.IsPlausibleFromScan`) · มีป้าย "เลขประจำตัวผู้เสียภาษี" กำกับ (`SmartFieldExtractor.ExtractTaxIdCandidates`) · ไม่ใช่เลขผู้ซื้อ/เลขบริษัทเรา · ไม่ได้อยู่ใต้ป้ายฝั่งผู้ซื้อ (`OcrPartyLabels.FindAll`) → ส่งเข้า `DbdIdentityGuard.Judge(..., keyProven:)` ซึ่งได้ verdict ใหม่ `KeyVerifiedNameDiffers` ⇒ **ทะเบียนชนะแม้ชื่อคล้าย 0.000** | `Helpers/OcrVendorKeyEvidence.cs` · `Helpers/DbdIdentityGuard.cs` · `OcrService.EnrichFromDbdAsync` |
+| ✅ A1b | **ถอดสำเนา inline** — `EnrichFromDbdAsync` เคยมีตรรกะ "ทะเบียนชนะไหม" เขียนซ้ำอยู่เอง (`NormalizeCompanyName` + เกณฑ์ 0.45 ของตัวเอง) ทั้งที่ doc ของ `DbdIdentityGuard` เขียนว่า "ยุบมาแล้ว" ⇒ สองสำเนาที่ drift ได้ทุกเมื่อ. ตอนนี้เหลือตัวตัดสินตัวเดียวทั้งเส้น OCR และเส้น integration | `OcrService.cs` (ลบ `NormalizeCompanyName`) |
+| ✅ A1c | ด่านก่อนยิงทะเบียนเปลี่ยนจาก `Length != 13` → `ThaiTaxId.IsPlausibleFromScan` (checksum + ไม่ใช่บาร์โค้ด GS1) · ไม่ยิง = เขียนเหตุผลลง `ReasoningTrace` ("ไม่รู้ = บอกว่าไม่รู้") | `OcrService.cs` |
+| ✅ A1d | `DbdIdentityGuard.MinSubstringLength = 4` — เส้นทาง "ชื่อหนึ่งเป็นส่วนหนึ่งของอีกชื่อ" ไม่มีขั้นต่ำมาก่อน ⇒ "ปตท" (3 ตัวอักษรหลัง normalize) เป็นส่วนหนึ่งของ "ปตท น้ำมันและการค้าปลีก" ได้ `ExactMatch` แล้ว**ข้ามด่าน 0.45 ทั้งด่าน** | `Helpers/DbdIdentityGuard.cs` |
+| ✅ A2 | `OcrReviewGuard` — `vendor_name` / `buyer_name` / `document_number` เดิมเป็น `_ => (true, "")` (รับทุกสตริง) → ต้อง**ปรากฏบนข้อความที่อ่านจากกระดาษ** (เทียบแบบตัดช่องว่าง/เครื่องหมาย เพราะ OCR ไทยแทรกช่องว่างกลางคำ) · ตกด่าน ≠ ทิ้ง — ไปอยู่ใน `Rejected` ที่ UI แสดงเป็นคำแนะนำ | `Helpers/OcrReviewGuard.cs` · `AiSuggestionController.cs` |
+| ✅ A3 | เรียก `VendorKnownGoodCorrector.ApplyAsync` บนเส้น **Azure** ด้วย (เดิม tier 2/3 เท่านั้น) — จำเป็นเมื่อคลังมีค่าที่ผู้ใช้แก้เอง ซึ่ง `BestMatch` จัดให้ชนะ Azure | `OcrService.cs` |
+| ✅ A4 | `VendorKnownGoodCorrector.RememberUserCorrectionAsync` (ใหม่) + เรียกจาก `SubmitCorrectionAsync` ⇒ คลัง `VendorKnownGoodValues` มีแถว `Source="UserCorrection"` เป็นครั้งแรก. **ก่อนหน้านี้ผู้เขียนมีเจ้าเดียวคือ `AzureDiPatternLearner`** ⇒ ตัวจัดอันดับที่เขียนว่า "UserCorrection ชนะ AzureDI" ไม่มีวันได้ทำงาน (หลักการข้อ 2 "มี ≠ ถูกเรียก") | `Ocr/VendorKnownGoodCorrector.cs` · `OcrService.cs` |
+| ✅ B2-half | ย้ายการ serialize `FieldConfidenceJson` ไป**ท้ายไปป์ไลน์** (นอก try/catch) — เดิมอยู่กลางทาง ⇒ ค่าที่ตั้งหลังจุดนั้นทั้งหมด (`[DBD]` 0.30/0.50 · `DebitAccount` · `DocumentNumber` · `ExpenseCategory` · VAT/SubTotal ที่คำนวณย้อน) **ไม่เคยลงฐาน** ⇒ เปิดหน้าทบทวนแล้วเห็นป้ายเขียวบนช่องที่ระบบเองยังไม่มั่นใจ (กฎเหล็ก #3 ข้อ 3 สั่งให้ไฮไลต์เหลือง — ไฮไลต์นั้นไม่เคยขึ้น) | `OcrService.cs` |
+| ✅ doc | CLAUDE.md กฎเหล็ก #3 ข้อ 2.6 เคยเขียนว่า "autofill `SellerName/Address/BranchCode` จาก `Contact` ล่าสุด" — **ไม่มีในโค้ด**: บล็อก `[Enrich]` ไหลทางเดียว (สแกน → เติมช่องว่างของ Contact) ไม่เคยอ่านชื่อ Contact กลับมาทับ `VendorName`. แก้ doc ให้ตรงโค้ด (โค้ดเป็น ground truth) | `CLAUDE.md` |
+
+**เทสต์ที่ล็อกไว้** — `Accounting.Tests/VendorKeyEvidenceTests.cs` (ใหม่ 16 เคส) แบ่งสองครึ่งตามกฎเหล็ก #4 H:
+ครึ่งแรกพิสูจน์ว่าใบแบรนด์ละตินกลับมาถูก · ครึ่งหลังพิสูจน์ว่า**เคสที่ด่าน 0.45 ถูกสร้างมากันยังกันอยู่**
+(เลขผู้ซื้อถูกหยิบมาเป็นผู้ขาย · เลขบริษัทเราเอง · บาร์โค้ด EAN-13 ที่ผ่าน mod-11 ไทย · checksum ไม่ผ่าน ·
+เลขอยู่ใต้ป้ายผู้ซื้อ) + `OcrReviewGuardTests` เพิ่ม 5 เคสสองทิศ (รวมทิศ "ไม่มีข้อความให้เทียบ ห้ามบล็อกทุกใบ")
+
+**ยังไม่ทำ (ต้องให้เจ้าของตัดสิน/ต้องรันกระดาษจริงก่อน):** ชุด B1 (แยกช่องชื่อบนกระดาษ ↔ ชื่อทะเบียน) ·
+B2 ส่วนที่เหลือ (เก็บผลค้นทะเบียนเป็นคอลัมน์) · ชุด C1 (ย้ายตัวตัดสินเข้า `OcrFieldArbiter`) ·
+ข้อโต้แย้งเลขมาตรา §65 ตรี ของทีมกฎหมาย (§6) ที่ขัดกับตารางใน CLAUDE.md เอง

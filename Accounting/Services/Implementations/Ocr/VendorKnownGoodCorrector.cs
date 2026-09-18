@@ -1,3 +1,4 @@
+using Accounting.Models.Entities;
 using Accounting.Data;
 using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
@@ -155,6 +156,64 @@ public class VendorKnownGoodCorrector
             _logger.LogDebug("KnownGood corrector: {Count} field swaps for vendor {Vendor}",
                 swaps, taxId);
         }
+    }
+
+    /// <summary>
+    /// **ปิดวงจรเรียนรู้จากคำแก้ของผู้ใช้** — เขียนค่าที่ผู้ใช้ยืนยันเองลงคลัง
+    /// known-good ด้วย <c>Source = "UserCorrection"</c> ซึ่ง <see cref="ApplyAsync"/>
+    /// จัดให้<b>ชนะค่าที่ Azure สอนไว้เสมอ</b>
+    ///
+    /// <para>═══ ที่มา ═══ คลังนี้เดิมมีผู้เขียนแค่ <c>AzureDiPatternLearner</c>
+    /// (Source = "AzureDI") ⇒ ตัวจัดอันดับที่เขียนว่า "UserCorrection ชนะ Azure"
+    /// **ไม่มีวันได้ใช้** เพราะไม่มีใครเขียนแถว UserCorrection ลงไปเลยจากเส้น OCR
+    /// ⇒ ผู้ใช้แก้ชื่อผู้ขายกี่ครั้ง ใบถัดไปก็กลับไปผิดเหมือนเดิม — อาการ
+    /// "สอนแล้วระบบไม่จำ" (กฎเหล็ก #1: CAPTURE ที่ไม่มีคนเขียน = ไม่มี CAPTURE ·
+    /// หลักการข้อ 2 "มี ≠ ถูกเรียก")</para>
+    ///
+    /// <para>ใช้ด่านช่องชุดเดียวกับฝั่งเขียนของ Azure (<see cref="Accounting.Helpers.VendorKnownGoodFields"/>)
+    /// — เลขที่เอกสารและช่องตัวเลขล้วนยัง<b>ห้าม</b>เข้าคลัง แม้ผู้ใช้จะพิมพ์เอง</para>
+    /// </summary>
+    public async Task RememberUserCorrectionAsync(Guid companyId, string? vendorTaxId,
+        string fieldName, string? value, CancellationToken ct = default)
+    {
+        var v = value?.Trim();
+        if (string.IsNullOrEmpty(v)) return;
+        // ต้องเป็นช่องที่ "คงที่ต่อผู้ขาย" เท่านั้น — กติกาเดียวกับฝั่ง Azure
+        if (!Accounting.Helpers.VendorKnownGoodFields.IsCorrectable(fieldName)) return;
+        if (Accounting.Helpers.VendorKnownGoodFields.IsPerDocument(fieldName)) return;
+        var key = NormalizeTaxId(vendorTaxId);
+        if (string.IsNullOrEmpty(key)) return;   // ไม่มีกุญแจ = หาไม่เจอตอนอ่าน
+
+        var existing = await _db.VendorKnownGoodValues
+            .FirstOrDefaultAsync(x => x.CompanyId == companyId
+                && x.VendorTaxId == key
+                && x.FieldName == fieldName
+                && x.Value == v
+                && !x.IsDeleted, ct);
+        if (existing != null)
+        {
+            existing.ConfirmedCount += 1;
+            existing.LastSeenAt = DateTime.UtcNow;
+            existing.Source = "UserCorrection";          // เลื่อนขั้นได้ ห้ามลดขั้น
+            existing.Confidence = Math.Max(existing.Confidence, 0.98m);
+            existing.UpdatedBy = "User-Correction";
+        }
+        else
+        {
+            _db.VendorKnownGoodValues.Add(new VendorKnownGoodValue
+            {
+                CompanyId = companyId,
+                VendorTaxId = key,
+                FieldName = fieldName,
+                Value = v,
+                Confidence = 0.98m,
+                ConfirmedCount = 1,
+                Source = "UserCorrection",
+                LastSeenAt = DateTime.UtcNow,
+                CreatedBy = "User-Correction",
+            });
+        }
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>Strip non-digit chars and confirm a 13-digit Thai TaxId before using as a lookup key.</summary>

@@ -3045,10 +3045,12 @@ public class AiSuggestionController : ControllerBase
         // + เหตุผล" ไปแสดงเป็นคำแนะนำ
         var scanAmounts = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.Id == scanResultId)
-            .Select(x => new { x.ExtractedSubTotal, x.ExtractedVatAmount, x.ExtractedTotalAmount })
+            .Select(x => new { x.ExtractedSubTotal, x.ExtractedVatAmount, x.ExtractedTotalAmount, x.RawTextContent })
             .FirstOrDefaultAsync(ct);
         var guard = Helpers.OcrReviewGuard.Filter(r.StructuredJson,
-            scanAmounts?.ExtractedSubTotal, scanAmounts?.ExtractedVatAmount, scanAmounts?.ExtractedTotalAmount);
+            scanAmounts?.ExtractedSubTotal, scanAmounts?.ExtractedVatAmount, scanAmounts?.ExtractedTotalAmount,
+            // ข้อความจากกระดาษ = หลักฐานเดียวที่พิสูจน์ชื่อ/เลขที่ที่โมเดลเสนอได้
+            rawText: scanAmounts?.RawTextContent);
 
         var dto = ToAdvancedDto(r);
         return Ok(new ApiResponse<object>(true, new

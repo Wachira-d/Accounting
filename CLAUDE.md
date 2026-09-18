@@ -404,8 +404,21 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
       หลักไม่ได้ทั้งชื่อผู้ขายและยอดรวม
    5. **Local distillation model** (`OcrFullReviewDistillationModel` +
       `GlAccountDistillationModel` ฯลฯ — ตามกฎเหล็ก #1)
-   6. **Historical lookup** — ถ้า `SellerTaxId` เคยมีในระบบ → autofill
-      `SellerName/Address/BranchCode` จาก `Contact` ล่าสุดของ vendor นั้น
+   6. **ทะเบียนราชการ + ประวัติผู้ขาย** (แก้ doc 2026-09-18 — ข้อเดิมเขียนว่า
+      "autofill SellerName/Address/BranchCode จาก `Contact` ล่าสุด" ซึ่ง**ไม่มีใน
+      โค้ด**: บล็อก `[Enrich]` ใน `OcrService` ไหล**ทางเดียว** คือเอาค่าจากสแกน
+      ไปเติมช่องที่ว่างของ `Contact` ไม่เคยอ่านชื่อ Contact กลับมาทับ `VendorName`)
+      ของจริงมีสองชั้น:
+      - `VendorKnownGoodCorrector.ApplyAsync` — ค่าที่เคยยืนยันแล้วของผู้ขายราย
+        นั้น (คีย์ = เลขผู้เสียภาษี) โดย `Source = "UserCorrection"` ชนะ `"AzureDI"`
+        · รันทุก tier รวม **Azure** (เดิมเรียกเฉพาะ tier 2/3)
+      - `EnrichFromDbdAsync` — เอาเลขผู้เสียภาษีไปค้นทะเบียน (RD VAT → DBD)
+        แล้ว **`Helpers/DbdIdentityGuard` ตัวเดียว** ตัดสินว่าทะเบียนชนะไหม
+        โดยถามว่า "**กุญแจ**ถูกไหม" (`Helpers/OcrVendorKeyEvidence`: ป้ายกำกับบน
+        กระดาษ + ไม่ใช่เลขผู้ซื้อ/เลขเรา + ไม่ได้อยู่ในบล็อกผู้ซื้อ) **ไม่ใช่**
+        "ชื่อสองชื่อคล้ายกันไหม" — ชื่อแบรนด์ละตินบนโลโก้ ("DECATHLON") ได้คะแนน
+        ความคล้ายกับชื่อนิติบุคคลไทย = 0.000 เท่ากับ "คนละบริษัท" ⇒ ถ้าตัดสิน
+        ด้วยชื่ออย่างเดียว ชื่อโลโก้จะกลายเป็นชื่อคู่ค้าถาวร (บั๊กจริง 2026-09-18)
    7. **Rule-based defaults** — VAT 7%, BranchCode `00000`, GL account จาก
       `VendorDefaultGlAccount`, payment terms = company default
    8. **เดาแบบมีเหตุผล** ใช้ `IAiOrchestrator.AskAsync` เป็น last resort
@@ -929,6 +942,10 @@ logic ซ้อน 10 หมวด · สายข้อมูล 8 ค่า ·
   **`Helpers/OcrPostingReadiness`** (ตัวตัดสิน "อนุมัติอัตโนมัติได้ไหม" ตัวเดียวของ
   ทุกช่องทาง — เว็บ/LINE/มือถือ ห้ามเขียนเกณฑ์เอง) · **`Helpers/OcrReviewGuard`**
   (กรองคำตอบ AI ก่อนแตะฟอร์ม — ยอดเงินรับเป็นชุดและต้องลงตัว) ·
+  **`Helpers/OcrVendorKeyEvidence`** (หลักฐานว่า "เลขที่ใช้ค้นทะเบียนเป็นของผู้ขายจริง" —
+  ป้ายกำกับ + ไม่ใช่เลขผู้ซื้อ/เลขเรา + ไม่ได้อยู่ในบล็อกผู้ซื้อ · ส่งผลให้
+  `DbdIdentityGuard.Judge(..., keyProven:)` ซึ่งเป็น**ตัวตัดสินตัวเดียว**ของทั้งเส้น OCR
+  และเส้น integration — สำเนา inline ใน `OcrService` ถูกถอดแล้ว) ·
   **`Helpers/InputVatAccountPolicy`** (ธงผังบัญชีปิดการเคลม §82/5 — ใช้ทั้งเส้นคีย์มือ
   และเส้น OCR) · **`Helpers/RawTextLineSplitter`** (แตกบรรทัดจากข้อความเมื่อไม่มีโมเดล
   — ต้องผ่าน `OcrLineSplitGuard` เสมอ) · **`Helpers/OcrTargetDocumentType`** (ชนิดเอกสาร

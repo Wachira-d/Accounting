@@ -24,7 +24,10 @@ namespace Accounting.Tests;
 /// </summary>
 public class DbdNameGuardTests
 {
-    private const double Floor = 0.45;   // ตรงกับ DbdSameCompanyFloor ใน OcrService
+    // เกณฑ์เดียวกับของจริง — อ่านจากตัวตั้งตัวเดียว ไม่พิมพ์เลขซ้ำ
+    // (เดิมเขียน 0.45 ไว้เองพร้อมคอมเมนต์ว่า "ตรงกับ DbdSameCompanyFloor ใน OcrService"
+    //  ซึ่งเป็นสำเนาที่สาม และสำเนาใน OcrService ถูกถอดแล้วในรอบ 174)
+    private const double Floor = Accounting.Helpers.DbdIdentityGuard.SameCompanyFloor;
 
     [Theory]
     // บริษัทเดียวกันที่ OCR สะกดเพี้ยน → ต้องผ่านด่าน (DBD ชนะ + เรียนรู้ได้)

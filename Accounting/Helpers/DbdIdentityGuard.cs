@@ -9,6 +9,13 @@ public enum DbdTrustVerdict
     SameCompanyMisspelled = 2,
     /// <summary>ต้นทางไม่ได้ส่งชื่อมา — ใช้ชื่อจากทะเบียนได้เลย ไม่มีอะไรให้ขัดแย้ง</summary>
     NoIncomingName = 3,
+    /// <summary><b>กุญแจพิสูจน์แล้ว แต่ชื่อไม่คล้ายเลย</b> — ชื่อที่ต้นทางส่งมาเป็น
+    /// <b>แบรนด์/โลโก้/ชื่อสาขา</b> ไม่ใช่ชื่อนิติบุคคล (เช่น "DECATHLON" vs
+    /// "บริษัท ดีแคทลอน (ประเทศไทย) จำกัด" — คนละตัวอักษร คะแนนคล้าย 0.000)
+    /// ⇒ ทะเบียนชนะ + เก็บของเดิมเป็น negative example ได้ เพราะ<b>กุญแจ</b>
+    /// ผ่านการพิสูจน์มาแล้ว (ดู <c>OcrVendorKeyEvidence</c>) ไม่ใช่เดาจากความคล้าย</summary>
+    KeyVerifiedNameDiffers = 4,
+
     /// <summary><b>คนละบริษัท</b> — ผู้ต้องสงสัยคือ "เลขผู้เสียภาษี" ไม่ใช่ชื่อ
     /// ⇒ ห้ามทับ ห้ามสอน ห้ามสร้างข้อมูลของบริษัทที่ไม่เกี่ยวข้อง</summary>
     KeyLooksWrong = 9,
@@ -43,6 +50,17 @@ public static class DbdIdentityGuard
     /// <summary>คะแนนต่ำกว่านี้ = คนละบริษัท ⇒ กุญแจ (เลขผู้เสียภาษี) น่าจะผิด</summary>
     public const double SameCompanyFloor = 0.45;
 
+    /// <summary>ชื่อ (หลัง <see cref="Normalize"/>) ต้องยาวอย่างน้อยเท่านี้จึงจะใช้
+    /// เส้นทาง "ชื่อหนึ่งเป็นส่วนหนึ่งของอีกชื่อ" ตัดสินว่าเป็นบริษัทเดียวกันได้
+    ///
+    /// <para>ที่มา: เส้นทาง <c>Contains</c> ไม่มีขั้นต่ำมาก่อน ⇒ ชื่อย่อ/แบรนด์สั้น
+    /// เป็น<b>ส่วนหนึ่ง</b>ของชื่อทะเบียนบริษัทอื่นได้ง่ายมาก — "ปตท" อยู่ใน
+    /// "ปตท น้ำมันและการค้าปลีก" (คนละนิติบุคคล) · "cp" อยู่ใน "cp all" ·
+    /// "ais" อยู่ใน "aisin" ⇒ ได้ <see cref="DbdTrustVerdict.ExactMatch"/>
+    /// แล้ว<b>ข้ามด่าน</b> <see cref="SameCompanyFloor"/> ไปเลย ทั้งที่เป็นเคส
+    /// ที่ด่านนั้นถูกสร้างมากันพอดี</para></summary>
+    public const int MinSubstringLength = 4;
+
     /// <summary>คำนำหน้า/คำต่อท้ายที่ไม่ได้ช่วยแยกตัวตน — ตัดก่อนเทียบ</summary>
     private static readonly string[] Noise =
     {
@@ -69,7 +87,13 @@ public static class DbdIdentityGuard
     /// <para><paramref name="similarity"/> รับเข้ามาเป็นพารามิเตอร์ (ไม่คำนวณเอง) เพื่อให้
     /// helper นี้เป็น<b>ฟังก์ชันบริสุทธิ์</b> ทดสอบได้โดยไม่ต้องลาก FuzzyMatcher —
     /// ผู้เรียกส่ง <c>FuzzyMatcher.Similarity(registryName, incomingName)</c> เข้ามา</para></summary>
-    public static DbdTrustVerdict Judge(string? registryName, string? incomingName, double similarity)
+    /// <param name="keyProven">กุญแจ (เลขผู้เสียภาษี) ผ่านการพิสูจน์<b>ด้วยหลักฐานอื่น</b>
+    /// นอกเหนือจากความคล้ายของชื่อแล้ว — เส้น OCR ส่งผลจาก
+    /// <c>OcrVendorKeyEvidence.Judge</c> (ป้ายกำกับบนกระดาษ + ไม่ใช่เลขผู้ซื้อ/เลขเรา
+    /// + ไม่ได้อยู่ในบล็อกผู้ซื้อ) เข้ามา · เส้นที่ไม่มีกระดาษให้ดู (integration)
+    /// ปล่อยเป็น <c>false</c> แล้วพฤติกรรมเดิมทุกอย่างคงเดิม</param>
+    public static DbdTrustVerdict Judge(string? registryName, string? incomingName, double similarity,
+        bool keyProven = false)
     {
         if (string.IsNullOrWhiteSpace(incomingName)) return DbdTrustVerdict.NoIncomingName;
         if (string.IsNullOrWhiteSpace(registryName)) return DbdTrustVerdict.KeyLooksWrong;
@@ -78,17 +102,31 @@ public static class DbdIdentityGuard
         var b = Normalize(registryName);
         if (a.Length > 0 && b.Length > 0
             && (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)
-                || b.Contains(a, StringComparison.OrdinalIgnoreCase)
-                || a.Contains(b, StringComparison.OrdinalIgnoreCase)))
+                || (Math.Min(a.Length, b.Length) >= MinSubstringLength
+                    && (b.Contains(a, StringComparison.OrdinalIgnoreCase)
+                        || a.Contains(b, StringComparison.OrdinalIgnoreCase)))))
             return DbdTrustVerdict.ExactMatch;
 
-        return similarity >= SameCompanyFloor
-            ? DbdTrustVerdict.SameCompanyMisspelled
+        if (similarity >= SameCompanyFloor) return DbdTrustVerdict.SameCompanyMisspelled;
+
+        // ชื่อไม่คล้ายเลย — คำถามต่อไปคือ "แล้ว**กุญแจ**ล่ะ ถูกไหม"
+        // ถ้ากุญแจพิสูจน์มาแล้วด้วยหลักฐานบนกระดาษ ความไม่คล้ายของชื่อ**ไม่ใช่**
+        // หลักฐานว่าเลขผิดอีกต่อไป — มันแปลว่ากระดาษพิมพ์ชื่อแบรนด์ ไม่ใช่ชื่อนิติบุคคล
+        return keyProven
+            ? DbdTrustVerdict.KeyVerifiedNameDiffers
             : DbdTrustVerdict.KeyLooksWrong;
     }
 
     /// <summary>ทะเบียนชนะได้ไหม (ใช้ชื่อทางการทับของเดิม)</summary>
     public static bool RegistryWins(DbdTrustVerdict v) => v != DbdTrustVerdict.KeyLooksWrong;
+
+    /// <summary>เก็บชื่อเดิมเป็น <b>negative example</b> ได้ไหม
+    ///
+    /// <para>เฉพาะกรณีที่รู้แน่ว่าเป็น<b>บริษัทเดียวกัน</b> — ชื่อเดิมจึงเป็น
+    /// "คำตอบที่ผิดของผู้ขายรายนี้" จริง ๆ. กรณีชื่อตรงกันอยู่แล้วไม่มีอะไรให้สอน
+    /// และกรณีกุญแจน่าสงสัยห้ามสอนเด็ดขาด (จะสอนว่าชื่อที่ถูกคือชื่อบริษัทอื่น)</para></summary>
+    public static bool ShouldLearnMismatch(DbdTrustVerdict v)
+        => v is DbdTrustVerdict.SameCompanyMisspelled or DbdTrustVerdict.KeyVerifiedNameDiffers;
 
     /// <summary>ข้อความอธิบายเมื่อกุญแจน่าสงสัย — ต้องบอกว่า<b>ให้ไปตรวจอะไร</b>
     /// ไม่ใช่แค่บอกว่าไม่ผ่าน</summary>

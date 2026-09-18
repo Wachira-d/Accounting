@@ -78,4 +78,56 @@ public class OcrReviewGuardTests
         Assert.Empty(OcrReviewGuard.Filter("""{"other":1}""", null, null, null).Accepted);
         Assert.Empty(OcrReviewGuard.Filter(null, null, null, null).Accepted);
     }
+
+    // ── ชื่อ/เลขที่ที่โมเดลเสนอ ต้องมีอยู่บนกระดาษจริง (รอบ 174) ──────────────
+
+    private const string Paper = """
+        บ ริษัท ดีแคทลอน (ประเทศไทย) จํากัด
+        DECATHLON
+        เลขประจําตัวผู้เสียภาษี 0-1055-35099-51-1
+        ใบกํากับภาษี เลขที่ INV-2026-0091
+        """;
+
+    [Fact]
+    public void ชื่อที่ปรากฏบนกระดาษ_แม้_OCR_แทรกช่องว่างกลางคำ_ต้องรับได้()
+    {
+        // "บ ริษัท ดีแคทลอน…" บนกระดาษ ↔ "บริษัท ดีแคทลอน (ประเทศไทย) จำกัด" ที่โมเดลเสนอ
+        var json = """{"corrections":{"vendor_name":"บริษัท ดีแคทลอน (ประเทศไทย) จํากัด"}}""";
+        var r = OcrReviewGuard.Filter(json, null, null, null, Paper);
+        Assert.Equal("บริษัท ดีแคทลอน (ประเทศไทย) จํากัด", r.Accepted["vendor_name"]);
+    }
+
+    [Fact]
+    public void ชื่อที่ไม่มีบนกระดาษ_ต้องตกไปเป็นคำแนะนำ_ไม่เขียนทับ()
+    {
+        // โมเดล "รู้" ว่าดีแคทลอนคือใครจากความรู้ทั่วไป แล้วเติมชื่อบริษัทแม่ที่ไม่มีบนใบ
+        var json = """{"corrections":{"vendor_name":"บริษัท เดคาทลอน อินเตอร์เนชั่นแนล จำกัด"}}""";
+        var r = OcrReviewGuard.Filter(json, null, null, null, Paper);
+        Assert.DoesNotContain("vendor_name", r.Accepted.Keys);
+        Assert.Contains(r.Rejected, x => x.Field == "vendor_name" && x.Reason.Contains("ไม่พบข้อความนี้บนกระดาษ"));
+    }
+
+    [Fact]
+    public void เลขที่เอกสารที่โมเดลแต่งขึ้น_ต้องตกด่าน()
+    {
+        var json = """{"corrections":{"document_number":"INV-2026-0092"}}""";
+        var r = OcrReviewGuard.Filter(json, null, null, null, Paper);
+        Assert.DoesNotContain("document_number", r.Accepted.Keys);
+    }
+
+    [Fact]
+    public void เลขที่เอกสารที่อยู่บนกระดาษ_ต้องรับได้()
+    {
+        var json = """{"corrections":{"document_number":"INV-2026-0091"}}""";
+        var r = OcrReviewGuard.Filter(json, null, null, null, Paper);
+        Assert.Equal("INV-2026-0091", r.Accepted["document_number"]);
+    }
+
+    [Fact]
+    public void ไม่มีข้อความจากกระดาษให้เทียบ_ต้องไม่บล็อก()
+        // ทิศตรงข้าม: สแกนที่ engine อ่านข้อความไม่ได้เลย (มีแต่ภาพ) ห้ามกลายเป็น
+        // "ปฏิเสธทุกข้อเสนอ" — ด่านที่ฟ้องทุกใบ = ปิดด่านโดยไม่ตั้งใจ
+        => Assert.Equal("บริษัท ก",
+            OcrReviewGuard.Filter("""{"corrections":{"vendor_name":"บริษัท ก"}}""",
+                null, null, null, rawText: null).Accepted["vendor_name"]);
 }

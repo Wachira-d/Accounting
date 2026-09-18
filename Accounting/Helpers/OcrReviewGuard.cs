@@ -43,8 +43,11 @@ public static class OcrReviewGuard
     /// <param name="paperSubTotal">ยอดก่อน VAT ที่ engine อ่านได้ (ใช้เทียบสามเหลี่ยม)</param>
     /// <param name="paperVat">VAT ที่ engine อ่านได้</param>
     /// <param name="paperTotal">ยอดรวมที่ engine อ่านได้</param>
+    /// <param name="rawText">ข้อความทั้งหน้าที่ engine อ่านได้ — ใช้พิสูจน์ว่าชื่อ/เลขที่
+    /// ที่โมเดลเสนอ<b>มีอยู่บนกระดาษจริง</b> · <c>null</c> = ไม่มีให้เทียบ (พฤติกรรมเดิม)</param>
     public static Result Filter(string? structuredJson,
-        decimal? paperSubTotal, decimal? paperVat, decimal? paperTotal)
+        decimal? paperSubTotal, decimal? paperVat, decimal? paperTotal,
+        string? rawText = null)
     {
         if (string.IsNullOrWhiteSpace(structuredJson)) return Empty;
 
@@ -96,10 +99,24 @@ public static class OcrReviewGuard
                     ? (true, "")
                     : (false, "วันที่อ่านไม่ได้หรืออยู่นอกช่วงที่เป็นไปได้"));
 
-            // ข้อความล้วน — ไม่มีอะไรให้พิสูจน์ นอกจากต้องไม่ว่างและไม่ถูกปิดบัง
-            Take("document_number", _ => (true, ""));
-            Take("vendor_name", _ => (true, ""));
-            Take("buyer_name", _ => (true, ""));
+            // ── ข้อความล้วน: พิสูจน์ได้อย่างเดียวคือ "อยู่บนกระดาษไหม" ──────────
+            //
+            // เดิมสามช่องนี้เขียนว่า `_ => (true, "")` คือ **รับทุกสตริง** ด้วยเหตุผล
+            // ว่า "ไม่มีอะไรให้พิสูจน์" — แต่มีสิ่งที่พิสูจน์ได้อยู่: ข้อความที่โมเดล
+            // เสนอต้องปรากฏบน<b>ข้อความที่อ่านจากกระดาษ</b>ใบเดียวกัน. ชื่อคู่ค้าที่
+            // โมเดลเติมเองจากความรู้ทั่วไป (เห็นโลโก้แล้วเดาชื่อนิติบุคคล · เห็นชื่อ
+            // ย่อแล้วขยายเป็นชื่อเต็มที่ไม่มีบนใบ) จะกลายเป็นชื่อคู่ค้าถาวรและไหลลง
+            // ใบกำกับ §86/4 ⇒ "ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ"
+            //
+            // ตกด่าน ≠ ทิ้ง — ไปอยู่ใน Rejected ที่ UI แสดงเป็น<b>คำแนะนำ</b> ให้คน
+            // กดรับเองได้ (ทางไปต่อของผู้ใช้ยังอยู่ครบ)
+            (bool, string) OnPaper(string v) =>
+                AppearsOnPaper(rawText, v)
+                    ? (true, "")
+                    : (false, "ไม่พบข้อความนี้บนกระดาษ — แสดงเป็นคำแนะนำ ไม่เขียนทับค่าที่อ่านจากเอกสาร");
+            Take("document_number", OnPaper);
+            Take("vendor_name", OnPaper);
+            Take("buyer_name", OnPaper);
 
             // ── ยอดเงินสามช่อง: รับ "ทั้งชุด" เท่านั้น ──────────────────────────
             // ยอดเงินคือสิ่งที่กลายเป็นรายการบัญชีจริง — รับทีละช่องแล้วเอาไปผสมกับ
@@ -130,6 +147,29 @@ public static class OcrReviewGuard
 
             return new Result(accepted, rejected);
         }
+    }
+
+    /// <summary>ข้อความนี้ปรากฏบนกระดาษไหม — เทียบแบบ<b>ตัดช่องว่าง/เครื่องหมายทิ้ง</b>
+    /// เพราะ OCR ไทยแทรกช่องว่างกลางคำเป็นปกติ ("บ ริษัท ก") และแบบฟอร์มมีจุดไข่ปลา
+    /// คั่น. <c>rawText</c> ว่าง = ไม่มีกระดาษให้เทียบ ⇒ ถือว่าผ่าน (ไม่มีหลักฐาน
+    /// ว่าแต่งขึ้น — ห้ามเดาแทนคน)</summary>
+    private static bool AppearsOnPaper(string? rawText, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return true;
+        var needle = Squash(value);
+        if (needle.Length == 0) return true;
+        return Squash(rawText).Contains(needle, StringComparison.Ordinal);
+    }
+
+    /// <summary>เหลือเฉพาะตัวอักษร/ตัวเลข ตัวพิมพ์เล็ก — ตัดช่องว่าง วรรณยุกต์ที่ไม่ใช่
+    /// ตัวอักษร และเครื่องหมายทั้งหมด</summary>
+    private static string Squash(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s)
+            if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+        return sb.ToString();
     }
 
     private static decimal? Money(JsonElement obj, string name)

@@ -12,7 +12,6 @@ CmsSecurityHelper.cs IsValidHexColor
 CmsSecurityHelper.cs IsValidSlug
 CmsSecurityHelper.cs SanitizeHtmlBlock
 CmsSecurityHelper.cs SanitizeJsonConfig
-DbdIdentityGuard.cs RegistryWins
 DisplayText.cs ContainsControlChars
 DisplayText.cs ContainsMarkup
 DocumentIssuerIdentity.cs BuildLegalLine

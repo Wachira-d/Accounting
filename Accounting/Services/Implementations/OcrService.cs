@@ -381,6 +381,15 @@ public class OcrService : IOcrService
                     // Engine-specific accounting: record the Azure page usage
                     // so the next CanUseAzureAsync correctly reflects the new total.
                     await _quota.RecordEngineUsageAsync(companyId, "Azure");
+                    // ── ตัวซ่อมจากประวัติผู้ขาย ต้องรันบนเส้น Azure ด้วย ────────────
+                    // เดิมเรียกเฉพาะ Tier 2/3 ด้วยเหตุผลว่า "ของ Azure สะอาดอยู่แล้ว"
+                    // — จริงเมื่อคลัง known-good มีแต่ค่าที่ Azure เองสอนไว้ (แทนตัวเอง
+                    // = no-op) แต่ **ไม่จริง**เมื่อคลังมีค่าที่ *ผู้ใช้แก้เอง*
+                    // (Source = UserCorrection ซึ่ง BestMatch จัดให้ชนะ Azure เสมอ)
+                    // ⇒ ผู้ใช้แก้ชื่อผู้ขายไปแล้ว ใบถัดไปที่เข้าทาง Azure ก็ยัง
+                    // กลับไปผิดแบบเดิม = "แก้แล้วระบบไม่จำ" ซึ่งเป็นอาการที่ผู้ใช้
+                    // รายงานว่า "สอนแล้วทำไมยังผิด" (กฎเหล็ก #1: วงจรเรียนรู้ต้องปิด)
+                    await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
                     // ตัวเรียนรู้จาก Azure (AzureDiPatternLearner) **ย้ายไปรันหลังขั้นตัดสินคู่ค้า**
                     // — เดิมสอนด้วยผลดิบตรงนี้ ก่อน Enrich/ตัวตัดสิน/ตัวกรองเลขที่ ⇒ จำ "ชื่อบริษัท
                     // เราเอง" เป็นผู้ขาย และจำเลขที่บ้านเป็นเลขที่เอกสาร (ดูบล็อก persist ด้านล่าง)
@@ -1222,16 +1231,6 @@ public class OcrService : IOcrService
                     + "\n[DATE-UNKNOWN] อ่านวันที่บนกระดาษไม่ได้ — ระบบจะเติมวันนี้ให้เป็นค่าเริ่มต้น กรุณายืนยันวันที่ก่อนอนุมัติ (งวดภาษี §78/§82/3)";
             }
 
-            if (extractedData.FieldConfidence.Count > 0)
-            {
-                // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
-                // ProcessingNotes ซึ่งอ่านกลับมาใช้ไม่ได้ ⇒ พอ reload หน้า
-                // ความมั่นใจรายช่องหายหมด แล้วป้าย % ตกไปใช้ค่าทั้งใบ
-                var canon = Accounting.Helpers.OcrFieldKeys.Canonicalize(extractedData.FieldConfidence);
-                scanResult.FieldConfidenceJson = System.Text.Json.JsonSerializer.Serialize(canon);
-                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
-                    string.Join("\n", canon.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
-            }
             // ── สมุดที่มาของค่ารายช่อง (D1) ──────────────────────────────────
             // ยังไม่ย้ายตัวตัดสิน — ค่าที่ผู้ใช้เห็นมาจากลำดับเดิมทุกประการ
             // เก็บไว้เพื่อ (ก) ผู้ใช้กดดูได้ว่า "ค่านี้มาจากไหน" (ข) เวลาไล่บั๊ก
@@ -2809,6 +2808,27 @@ public class OcrService : IOcrService
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Error] {ex.Message}";
         }
 
+        // ── ความมั่นใจรายช่อง: เก็บ**ท้ายสุด** ห้ามเก็บกลางทาง ──────────────
+        // เดิมบล็อกนี้อยู่กลางไปป์ไลน์ (ก่อนด่าน DBD · ก่อนตัวเดาผังบัญชี ·
+        // ก่อนตัวอ่านเลขที่เอกสาร) ⇒ ทุกค่าที่ตั้ง**หลัง**จุดนั้น **ไม่เคยถูกเก็บ
+        // ลงฐานเลย**: [DBD] ที่ลดเหลือ 0.30/0.50 เพื่อขอให้คนตรวจ · DebitAccount ·
+        // DocumentNumber · ExpenseCategory · VatAmount/SubTotal ที่คำนวณย้อน
+        // ⇒ ผู้ใช้เปิดหน้าทบทวนแล้วเห็นป้ายเขียวบนช่องที่ระบบเองยังไม่มั่นใจ
+        // (กฎเหล็ก #3 ข้อ 3 บอกให้ไฮไลต์เหลืองเมื่อ < 0.85 — ไฮไลต์นั้นไม่เคยขึ้น)
+        //
+        // ตำแหน่งนี้อยู่**นอก** try/catch โดยตั้งใจ: สแกนที่ล้มกลางทางก็ยังต้อง
+        // เก็บสิ่งที่รู้แล้วไว้ให้คนตรวจ ไม่ใช่ทิ้งทั้งชุด
+        if (extractedData.FieldConfidence.Count > 0)
+        {
+            // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
+            // ProcessingNotes ซึ่งอ่านกลับมาใช้ไม่ได้ ⇒ พอ reload หน้า
+            // ความมั่นใจรายช่องหายหมด แล้วป้าย % ตกไปใช้ค่าทั้งใบ
+            var canon = Accounting.Helpers.OcrFieldKeys.Canonicalize(extractedData.FieldConfidence);
+            scanResult.FieldConfidenceJson = System.Text.Json.JsonSerializer.Serialize(canon);
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
+                string.Join("\n", canon.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
+        }
+
         await _db.SaveChangesAsync();
 
         _logger.LogInformation(
@@ -4222,6 +4242,32 @@ public class OcrService : IOcrService
 
         await _db.SaveChangesAsync();
 
+        // ───── ปิดวงจร: คำแก้ของผู้ใช้ → คลัง known-good ของผู้ขายรายนี้ ─────
+        //
+        // ⚠️ ก่อนหน้านี้คลัง VendorKnownGoodValues มีผู้เขียนแค่ AzureDiPatternLearner
+        // (Source = "AzureDI") ⇒ ตัวจัดอันดับใน VendorKnownGoodCorrector ที่เขียนไว้ว่า
+        // "UserCorrection ชนะ Azure" **ไม่มีวันได้ทำงาน** เพราะไม่มีแถว UserCorrection
+        // อยู่เลย ⇒ ผู้ใช้แก้ชื่อผู้ขายกี่รอบ ใบถัดไปของผู้ขายรายเดิมก็กลับไปผิดแบบเดิม
+        // (หลักการข้อ 2 "มี ≠ ถูกเรียก" — ตัวจัดอันดับมีอยู่ แต่ไม่มีข้อมูลให้จัด)
+        var knownGoodTaxId = correction.VendorTaxId ?? result.ExtractedVendorTaxId;
+        if (!string.IsNullOrWhiteSpace(knownGoodTaxId))
+        {
+            try
+            {
+                if (correction.VendorName != null)
+                    await _knownGoodCorrector.RememberUserCorrectionAsync(
+                        companyId, knownGoodTaxId, "SellerName", correction.VendorName);
+                if (correction.VendorAddress != null)
+                    await _knownGoodCorrector.RememberUserCorrectionAsync(
+                        companyId, knownGoodTaxId, "VendorAddress", correction.VendorAddress);
+            }
+            catch (Exception ex)
+            {
+                // ไม่ให้การเรียนรู้ล้มไปกระทบการบันทึกคำแก้ (ซึ่งบันทึกไปแล้วข้างบน)
+                _logger.LogWarning(ex, "บันทึกค่า known-good จากคำแก้ของผู้ใช้ไม่สำเร็จ (ไม่กระทบคำแก้)");
+            }
+        }
+
         // ───── Train VendorIntelligence with the corrected target type ─────
         // When the user changes "เอกสารที่จะสร้าง" we want next scan of the
         // same vendor to predict the same target — that's exactly what
@@ -4457,18 +4503,36 @@ public class OcrService : IOcrService
     }
 
     /// <summary>
-    /// Look up the extracted Tax ID against DBD (กรมพัฒนาธุรกิจการค้า) and use the
-    /// authoritative result as ground truth. Differences from OCR become training signals.
+    /// เอา **เลขผู้เสียภาษี** ที่อ่านได้ไปค้นทะเบียนราชการ (RD VAT → DBD) แล้วใช้
+    /// ชื่อ/ที่อยู่ทางการเป็นความจริง — ส่วนที่ OCR อ่านต่างกลายเป็นสัญญาณสอนระบบ
+    ///
+    /// <para>═══ ตัวตัดสินอยู่ที่ <see cref="Accounting.Helpers.DbdIdentityGuard"/> ═══
+    /// เดิมตรรกะ "ทะเบียนชนะได้ไหม" ถูกเขียน inline อยู่ตรงนี้ **และ** ถูกยุบเป็น
+    /// helper ไว้แล้วสำหรับเส้น integration ⇒ มีสองสำเนาที่ drift ได้ทันที
+    /// (doc ของ helper เขียนว่า "ยุบมาแล้ว" แต่สำเนาที่นี่ไม่เคยถูกถอด —
+    /// ญาติของ defect class "แก้ที่เดียวจาก N"). ตอนนี้เหลือตัวตัดสินตัวเดียว</para>
     /// </summary>
     private async Task EnrichFromDbdAsync(Guid companyId, OcrExtractedData data, OcrScanResult scanResult)
     {
-        if (string.IsNullOrEmpty(data.VendorTaxId) || data.VendorTaxId.Length != 13)
+        // ── ด่านก่อนยิง: เลขต้อง "ใช้เป็นเลขผู้เสียภาษีได้จริง" ──
+        // เดิมเช็คแค่ `Length != 13` ⇒ เลขที่ checksum ไม่ผ่าน และ **บาร์โค้ดสินค้า
+        // EAN-13** ที่หลุดมาเป็นเลขผู้ขาย ก็ถูกส่งไปค้นทะเบียน แล้วไปพึ่งด่านชื่อ
+        // กันไว้ทีหลัง — สู้ไม่ค้นตั้งแต่แรกไม่ได้ (เปลืองโควตา API + เพิ่มโอกาส
+        // ได้ "คนละบริษัท" มายั่วให้ทับ). IsPlausibleFromScan = checksum + ไม่ใช่บาร์โค้ด
+        if (!Accounting.Helpers.ThaiTaxId.IsPlausibleFromScan(data.VendorTaxId))
+        {
+            // "ไม่รู้ = บอกว่าไม่รู้" — ผู้ใช้ต้องเห็นว่าทำไมไม่มีข้อมูลทะเบียน
+            if (!string.IsNullOrWhiteSpace(data.VendorTaxId))
+                data.ReasoningTrace.Add(
+                    $"[DBD] ไม่ได้ค้นทะเบียน — '{data.VendorTaxId}' ใช้เป็นเลขผู้เสียภาษีไม่ได้ " +
+                    "(หลักตรวจสอบไม่ผ่าน หรือหน้าตาเป็นบาร์โค้ดสินค้า) กรุณาตรวจเลขบนกระดาษ");
             return;
+        }
 
         DbdCompanyResult? dbd = null;
         try
         {
-            dbd = await _dbdLookup.GetByJuristicIdAsync(data.VendorTaxId);
+            dbd = await _dbdLookup.GetByJuristicIdAsync(data.VendorTaxId!);
         }
         catch (Exception ex)
         {
@@ -4485,85 +4549,76 @@ public class OcrService : IOcrService
 
         data.DbdLookupAttempted = true;
 
-        // Compare OCR's vendor name with DBD canonical
         var ocrName = data.VendorName?.Trim();
         var dbdName = dbd.NameTh?.Trim();
 
-        bool nameMatches = false;
-        if (!string.IsNullOrEmpty(ocrName) && !string.IsNullOrEmpty(dbdName))
-        {
-            // Normalize: remove "บริษัท ... จำกัด" wrappers and whitespace for comparison
-            var normalizedOcr = NormalizeCompanyName(ocrName);
-            var normalizedDbd = NormalizeCompanyName(dbdName);
-            nameMatches = string.Equals(normalizedOcr, normalizedDbd, StringComparison.OrdinalIgnoreCase)
-                       || normalizedDbd.Contains(normalizedOcr, StringComparison.OrdinalIgnoreCase)
-                       || normalizedOcr.Contains(normalizedDbd, StringComparison.OrdinalIgnoreCase);
-        }
-
-        // ⚠️ **DBD ชนะได้ก็ต่อเมื่อ "กุญแจ" ถูก** — การค้นหาใช้ `VendorTaxId` เป็นคีย์
-        // ซึ่งเป็นช่องที่ OCR อ่านผิดได้บ่อยที่สุดช่องหนึ่ง (บาร์โค้ด EAN-13 ที่ผ่าน
-        // mod-11 · เลขผู้ซื้อถูกหยิบมาเป็นผู้ขาย · หลักเดียวเพี้ยน) ⇒ ถ้าเลขผิด DBD
-        // จะคืน **คนละบริษัท** แล้วโค้ดเดิมจะ (1) ทับชื่อผู้ขายที่อ่านมาถูกแล้วด้วย
-        // ชื่อบริษัทอื่น (2) บันทึกชื่อที่ถูกต้องเป็น **negative example** = สอน
-        // ตัวเรียนรู้ผิดถาวร (3) ตั้ง confidence 0.95 ⇒ ไม่ขึ้นไฮไลต์เตือน และ
-        // (4) สร้าง Contact ผู้ขายรายใหม่ของบริษัทที่ไม่เกี่ยวข้องกับใบนี้เลย
-        //
-        // ตัวแยกคือ **ระดับความต่าง**: OCR ที่อ่าน "ชื่อเดียวกัน" ผิด ได้สตริงที่
-        // *คล้าย* เสมอ (นั่นคือสมมติฐานทั้งหมดของ FuzzyMatcher) — คนละบริษัทได้
-        // คะแนนเกือบศูนย์. วัดกับตัวอย่างจริง: อ่านเพี้ยน 0.772–0.941 ·
-        // คนละบริษัท 0.000–0.087 ⇒ เกณฑ์ 0.45 อยู่กลางช่องว่างกว้าง ๆ
-        const double DbdSameCompanyFloor = 0.45;
+        // ═══ คำถามที่ถูกคือ "กุญแจถูกไหม" ไม่ใช่ "ชื่อคล้ายกันไหม" ═══
+        // (เคสดีแคทลอน 2026-09-18: กระดาษพิมพ์แบรนด์ "DECATHLON" เป็นชื่อผู้ขาย ·
+        //  ทะเบียนคืนชื่อนิติบุคคลภาษาไทย · ความคล้ายข้ามตัวอักษร = 0.000 เท่ากับ
+        //  "คนละบริษัท" ⇒ ด่านเดิมโยนชื่อทางการทิ้งแล้วเก็บชื่อโลโก้ไว้)
+        var keyEvidence = await JudgeVendorKeyEvidenceAsync(companyId, data, scanResult);
         var nameSim = Ocr.FuzzyMatcher.Similarity(ocrName, dbdName);
-        if (!nameMatches && !string.IsNullOrEmpty(ocrName) && nameSim < DbdSameCompanyFloor)
+        var verdict = Accounting.Helpers.DbdIdentityGuard.Judge(dbdName, ocrName, nameSim,
+            keyProven: keyEvidence == Accounting.Helpers.VendorKeyEvidence.ProvenSellerKey);
+
+        if (!Accounting.Helpers.DbdIdentityGuard.RegistryWins(verdict))
         {
-            // คนละบริษัท → ผู้ต้องสงสัยคือ **เลขผู้เสียภาษี** ไม่ใช่ชื่อ
+            // คนละบริษัท + กุญแจก็พิสูจน์ไม่ได้ → ผู้ต้องสงสัยคือ **เลขผู้เสียภาษี**
             // ห้ามทับ ห้ามสอน — ลด confidence ให้ไฮไลต์เหลืองขึ้น (กฎเหล็ก #3 ข้อ 3)
             // แล้วให้คนตัดสิน (หลัก "ไม่รู้ = ต้องบอกว่าไม่รู้")
             data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerTaxId] = 0.30;
             data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.50;
             data.ReasoningTrace.Add(
                 $"[DBD] ⚠ เลข {data.VendorTaxId} เป็นของ '{dbd.NameTh}' แต่บนกระดาษเขียนว่า '{ocrName}' " +
-                $"(ต่างกันสิ้นเชิง) — น่าจะอ่าน**เลขผู้เสียภาษี**ผิด จึงไม่ทับชื่อและไม่นำไปสอนระบบ");
+                $"(ต่างกันสิ้นเชิง และไม่พบป้ายกำกับยืนยันว่าเลขนี้เป็นของผู้ขาย) — " +
+                "น่าจะอ่าน**เลขผู้เสียภาษี**ผิด จึงไม่ทับชื่อและไม่นำไปสอนระบบ");
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") +
-                $"\n[DBD] ⚠ เลขผู้เสียภาษีอาจอ่านผิด — {data.VendorTaxId} ขึ้นทะเบียนเป็น '{dbd.NameTh}' " +
-                $"ไม่ใช่ '{ocrName}' กรุณาตรวจเลขผู้เสียภาษีบนกระดาษอีกครั้ง";
+                "\n[DBD] ⚠ " + Accounting.Helpers.DbdIdentityGuard.KeyMismatchMessage(
+                    data.VendorTaxId!, dbd.NameTh ?? "", ocrName ?? "");
             return;   // ไม่ตั้ง DbdMatched ⇒ ไม่สร้าง Contact ของบริษัทที่ไม่เกี่ยวข้อง
         }
 
-        // DBD found + คีย์น่าเชื่อถือ — adopt as authoritative
+        // ทะเบียนชนะ — adopt as authoritative
         data.DbdMatched = true;
         data.DbdCanonicalName = dbd.NameTh;
         data.DbdAddress = dbd.Address;
         data.DbdJuristicType = dbd.JuristicType;
         data.DbdStatus = dbd.Status;
+        data.VendorName = dbd.NameTh;   // ใช้การสะกดทางการเสมอ (§86/4 ต้องการชื่อนิติบุคคล)
 
-        if (nameMatches)
+        switch (verdict)
         {
-            // OCR was correct — boost confidence and use DBD's exact form for Contact
-            data.FieldConfidence["SellerName"] = 1.0;
-            data.FieldConfidence["SellerTaxId"] = 1.0;
-            data.VendorName = dbd.NameTh; // use DBD's exact spelling
-            data.ReasoningTrace.Add($"[DBD] ✓ ชื่อบริษัทตรงกับ DBD ({dbd.NameTh}) — ใช้ชื่อทางการ");
+            case Accounting.Helpers.DbdTrustVerdict.ExactMatch:
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 1.0;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerTaxId] = 1.0;
+                data.ReasoningTrace.Add($"[DBD] ✓ ชื่อบริษัทตรงกับทะเบียน ({dbd.NameTh}) — ใช้ชื่อทางการ");
+                break;
+
+            case Accounting.Helpers.DbdTrustVerdict.NoIncomingName:
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 1.0;
+                data.ReasoningTrace.Add($"[DBD] อ่านชื่อผู้ขายจากกระดาษไม่ได้ — ใช้ชื่อจากทะเบียน: {dbd.NameTh}");
+                break;
+
+            case Accounting.Helpers.DbdTrustVerdict.KeyVerifiedNameDiffers:
+                // กระดาษพิมพ์ **แบรนด์/โลโก้** ไม่ใช่ชื่อนิติบุคคล — ไม่ใช่การอ่านผิด
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.95;
+                data.ReasoningTrace.Add(
+                    $"[DBD] บนกระดาษเขียนว่า '{ocrName}' ซึ่งเป็นชื่อแบรนด์/ร้าน — เลขผู้เสียภาษี " +
+                    $"{data.VendorTaxId} มีป้ายกำกับยืนยันบนกระดาษ และขึ้นทะเบียนเป็น '{dbd.NameTh}' " +
+                    "⇒ ใช้ชื่อนิติบุคคลตามทะเบียน (§86/4 ต้องใช้ชื่อผู้ประกอบการ ไม่ใช่ชื่อร้าน)");
+                break;
+
+            default:   // SameCompanyMisspelled — บริษัทเดียวกันที่ OCR สะกดเพี้ยน
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.95;
+                data.ReasoningTrace.Add(
+                    $"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ทะเบียนระบุ '{dbd.NameTh}' " +
+                    $"(ใกล้เคียง {nameSim:P0}) — ใช้จากทะเบียนและเรียนรู้");
+                break;
         }
-        else if (string.IsNullOrEmpty(ocrName))
-        {
-            // OCR didn't find a name but DBD has one — use DBD
-            data.VendorName = dbd.NameTh;
-            data.FieldConfidence["SellerName"] = 1.0;
-            data.ReasoningTrace.Add($"[DBD] ใช้ชื่อจาก DBD: {dbd.NameTh}");
-        }
-        else
-        {
-            // ชื่อ *คล้าย* แต่ไม่เท่า ⇒ บริษัทเดียวกันที่ OCR สะกดเพี้ยน
-            // (ด่าน DbdSameCompanyFloor ข้างบนคัด "คนละบริษัท" ออกไปแล้ว)
-            // → DBD ชนะ + เก็บของเดิมเป็น negative example ได้อย่างปลอดภัย
-            data.ReasoningTrace.Add($"[DBD] ⚠ OCR อ่านได้ '{ocrName}' แต่ DBD ระบุ '{dbd.NameTh}' (ใกล้เคียง {nameSim:P0}) — ใช้จาก DBD และเรียนรู้");
-            await RecordOcrMismatchAsync(companyId, data.VendorTaxId, "SellerName",
+
+        if (Accounting.Helpers.DbdIdentityGuard.ShouldLearnMismatch(verdict))
+            await RecordOcrMismatchAsync(companyId, data.VendorTaxId!, "SellerName",
                 wrongValue: ocrName, correctValue: dbd.NameTh);
-            data.VendorName = dbd.NameTh;
-            // Confidence stays moderate because OCR misread
-            data.FieldConfidence["SellerName"] = 0.95;
-        }
 
         // Update scanResult so subsequent saves use the canonical name
         scanResult.ExtractedVendorName = data.VendorName;
@@ -4574,16 +4629,44 @@ public class OcrService : IOcrService
             (string.IsNullOrEmpty(dbd.Address) ? "" : $"\n[DBD Address] {dbd.Address}");
     }
 
-    private static string NormalizeCompanyName(string name)
+    /// <summary>
+    /// รวบรวมหลักฐานจาก**กระดาษ**ว่า "เลขที่จะเอาไปค้นทะเบียน เป็นเลขของผู้ขายจริง"
+    /// แล้วส่งให้ <see cref="Accounting.Helpers.OcrVendorKeyEvidence"/> ตัดสิน
+    ///
+    /// <para>ตัวตัดสินเป็นฟังก์ชันบริสุทธิ์ที่มีเทสต์ — ที่นี่ทำแค่ "หาหลักฐาน"
+    /// (ตำแหน่ง/ป้ายกำกับ/เลขบริษัทเรา) ห้ามเขียนกติกาซ้ำ</para>
+    /// </summary>
+    private async Task<Accounting.Helpers.VendorKeyEvidence> JudgeVendorKeyEvidenceAsync(
+        Guid companyId, OcrExtractedData data, OcrScanResult scanResult)
     {
-        if (string.IsNullOrEmpty(name)) return "";
-        var n = name.Trim();
-        // Strip common legal-entity prefixes/suffixes for comparison only
-        n = System.Text.RegularExpressions.Regex.Replace(n, @"^(บริษัท|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วนสามัญ|หจก\.?|บจก\.?|ร้าน)\s*", "");
-        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s*จำกัด\s*\(?มหาชน\)?\s*$", "");
-        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s*จำกัด\s*$", "");
-        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s+", " ");
-        return n.Trim();
+        if (string.IsNullOrWhiteSpace(scanResult.RawTextContent))
+            return Accounting.Helpers.VendorKeyEvidence.Unproven;
+
+        // ⚠️ **ต้องใช้ข้อความก้อนเดียวกันทั้งสองตัว** — ตำแหน่งของเลขกับตำแหน่งของป้าย
+        // ถูกเอามาเทียบกัน ถ้าสกัดเลขจากข้อความดิบแต่หาป้ายจากข้อความที่ normalize แล้ว
+        // ดัชนีจะเลื่อนกันทั้งหน้า แล้วเงื่อนไข "เลขอยู่ใต้ป้ายผู้ซื้อไหม" จะเพี้ยนเงียบ ๆ
+        //
+        // และต้องเป็นฝั่ง **normalize** เพราะ Tesseract ไทยแทรกช่องว่างทุกกลุ่มอักษร
+        // ("ผู้ ซื้ อ") ⇒ OcrPartyLabels ซึ่งเทียบสตริงตรง ๆ จะหาป้ายฝั่งผู้ซื้อไม่เจอ
+        // = ทิศที่ผ่อนปรนเกินไป (เลขผู้ซื้อกลายเป็น "พิสูจน์แล้ว")
+        var raw = Ocr.ThaiTextNormalizer.Normalize(scanResult.RawTextContent!);
+
+        // เลขก้อนนี้บนกระดาษ: มีป้าย "เลขประจำตัวผู้เสียภาษี" กำกับไหม และอยู่ตรงไหน
+        // (ตัวสกัดตัวเดียวกับที่ใช้ตอนหาเลข — ไม่สร้างสำเนาที่สองของกติกาป้าย)
+        var candidate = Ocr.SmartFieldExtractor.ExtractTaxIdCandidates(raw)
+            .FirstOrDefault(c => Accounting.Helpers.ThaiTaxId.Same(c.Id, data.VendorTaxId));
+        var labels = Accounting.Helpers.OcrPartyLabels.FindAll(raw);
+
+        var ourTaxId = await _db.Companies
+            .Where(c => c.Id == companyId)
+            .Select(c => c.TaxId)
+            .FirstOrDefaultAsync();
+
+        return Accounting.Helpers.OcrVendorKeyEvidence.Judge(
+            data.VendorTaxId, data.BuyerTaxId, ourTaxId,
+            labelledAsTaxIdOnPaper: candidate.Labelled,
+            taxIdPosition: string.IsNullOrEmpty(candidate.Id) ? -1 : candidate.Position,
+            labels.BuyerPos, labels.SellerPos);
     }
 
     /// <summary>
