@@ -76,4 +76,22 @@ public class CmsRetiredSlugTests
         }
         finally { System.Globalization.CultureInfo.CurrentCulture = prev; }
     }
+
+    [Fact]
+    public void ความยาวปริยายต้องยังเป็นของ_SitePage_เหมือนเดิม()
+        => Assert.Equal(CmsFieldLengths.PageSlug, CmsRetiredSlug.MaxLength);
+
+    [Theory]
+    [InlineData(CmsFieldLengths.SiteSubdomain)]
+    [InlineData(CmsFieldLengths.SiteSlug)]
+    [InlineData(CmsFieldLengths.Domain)]
+    public void ปลดคีย์ของคอลัมน์ที่สั้นกว่า_ต้องไม่ยาวเกินและยังตรวจจับได้(int maxLength)
+    {
+        // Site.Subdomain ยาวได้แค่ 63 — ใช้ความยาวปริยาย 256 จะได้สตริงยาวเกินคอลัมน์
+        // แล้ว insert ล้มตอน runtime โดยคอมไพเลอร์ไม่จับ
+        var got = CmsRetiredSlug.For(new string('a', 400), T, maxLength);
+        Assert.True(got.Length <= maxLength, $"ยาวเกิน: {got.Length} > {maxLength}");
+        Assert.True(CmsRetiredSlug.IsRetired(got));
+    }
+
 }

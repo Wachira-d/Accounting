@@ -115,6 +115,16 @@ public class ExceptionMiddleware
             ArgumentException => (HttpStatusCode.BadRequest,
                 LooksUserFacing(exception.Message) ? exception.Message : "ข้อมูลที่ส่งมาไม่ถูกต้อง"),
             FormatException => (HttpStatusCode.BadRequest, "ข้อมูลไม่ถูกต้อง"),
+            // ชนคีย์ไม่ซ้ำของ Postgres (23505) — เดิมตกลงไปที่ default แล้วผู้ใช้เห็น
+            // "เกิดข้อผิดพลาดภายในระบบ" ซึ่งบอกไม่ได้ว่าต้องแก้อะไร ทั้งที่เป็นเรื่องที่
+            // ผู้ใช้แก้เองได้ (เปลี่ยนรหัส/ชื่อ/URL) — บั๊กจริง REF:F37BE341
+            // ⚠️ ข้อความ **บอกอาการ ไม่วินิจฉัยสาเหตุ**: ที่นี่ไม่รู้ว่าซ้ำกับแถวที่เห็นอยู่
+            // หรือแถวที่ถูกลบไปแล้วยังจองคีย์ไว้ — เดาแล้วพาไล่ผิดทาง (บทเรียน CSP/Google SSO)
+            // รหัสอ้างอิงยังติดไปด้วยเสมอ ผู้ดูแลจึงเปิด Error Logs ดูชื่อ constraint ได้
+            Microsoft.EntityFrameworkCore.DbUpdateException dbe
+                when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" }
+                => (HttpStatusCode.Conflict,
+                    $"ข้อมูลนี้ซ้ำกับรายการที่มีอยู่แล้ว — รหัส ชื่อ หรือ URL ที่กรอกถูกใช้ไปแล้ว กรุณาเปลี่ยนแล้วลองใหม่ (รหัสอ้างอิง {refCode})"),
             _ => (HttpStatusCode.InternalServerError,
                 $"เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง {refCode} — แจ้งรหัสนี้ให้ผู้ดูแลระบบเพื่อดูรายละเอียดใน Error Logs)")
         };

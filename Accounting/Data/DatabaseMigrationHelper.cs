@@ -6361,6 +6361,22 @@ public static class DatabaseMigrationHelper
             // ลายเซ็นที่ชี้ชัดว่าไม่เคยส่งจริงคือ SubmissionId ขึ้นต้น "OFFLINE-"
             // (การส่งจริงใช้เลขที่ RD คืนมา) — คืนสถานะเป็น 1=Signed ซึ่งเป็นความจริง
             """UPDATE "EtaxInvoices" SET "Status" = 1, "SubmittedAt" = NULL, "SubmissionId" = NULL, "ErrorCode" = 'RD_API_NOT_CONFIGURED', "ErrorMessage" = 'ยังไม่ได้ตั้งค่าการเชื่อมต่อกรมสรรพากร — เอกสารลงนามแล้วแต่ยังไม่ได้นำส่ง (ล้างสถานะที่ระบบเคยประทับผิดโดยอัตโนมัติ)' WHERE "SubmissionId" LIKE 'OFFLINE-%' AND "Status" = 2;""",
+
+            // ── ปลดคีย์ CMS ของเว็บไซต์ที่ถูกลบไปแล้ว (บั๊กจริง REF:F37BE341) ──
+            // unique index ของ CMS ไม่มีตัวไหนกรอง IsDeleted แต่ Site มี global query
+            // filter `!IsDeleted` ⇒ เว็บที่ลบแล้วยัง "จอง" slug/subdomain/domain ไว้
+            // ทั้งที่ไม่มี query ไหนมองเห็น ⇒ ลูกค้าสร้างเว็บชื่อเดิมไม่ได้อีกเลย และ
+            // ได้ 23505 เป็น 500 ที่อ่านไม่ออก (ผู้ใช้เจอกับเว็บชื่อ "b1")
+            // DeleteSiteAsync ปลดให้ตั้งแต่รอบนี้แล้ว — แต่แถวที่ลบไปก่อนหน้ายังค้าง
+            //
+            // ต่อท้ายด้วย Id ของแถวเอง (ไม่ใช่เวลา) ⇒ ไม่ซ้ำแน่นอน และรันซ้ำได้
+            // (รอบสองแถวเดิมติด NOT LIKE '%--retired-%' แล้ว จึงไม่ถูกแตะอีก)
+            // left(...) ตัดหัวให้พอดีคอลัมน์: Slug 128 · Subdomain 63 · Domain 256
+            // ลบด้วย 42 = ความยาวของ '--retired-' (10) + Id ที่ถอดขีดออก (32)
+            """UPDATE "Sites" SET "Slug" = left("Slug", 86) || '--retired-' || replace("Id"::text, '-', '') WHERE "IsDeleted" = true AND "Slug" NOT LIKE '%--retired-%';""",
+            """UPDATE "Sites" SET "Subdomain" = left("Subdomain", 21) || '--retired-' || replace("Id"::text, '-', '') WHERE "IsDeleted" = true AND "Subdomain" NOT LIKE '%--retired-%';""",
+            """UPDATE "Sites" SET "CustomDomain" = left("CustomDomain", 214) || '--retired-' || replace("Id"::text, '-', '') WHERE "IsDeleted" = true AND "CustomDomain" IS NOT NULL AND "CustomDomain" NOT LIKE '%--retired-%';""",
+            """UPDATE "SiteDomains" d SET "Domain" = left(d."Domain", 214) || '--retired-' || replace(d."Id"::text, '-', '') FROM "Sites" s WHERE s."Id" = d."SiteId" AND s."IsDeleted" = true AND d."Domain" NOT LIKE '%--retired-%';""",
         };
 
         foreach (var sql in statements)

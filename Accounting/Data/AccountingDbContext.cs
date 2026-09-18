@@ -2801,9 +2801,9 @@ public class AccountingDbContext : DbContext
             e.HasIndex(s => new { s.CompanyId, s.Slug }).IsUnique().HasDatabaseName("IX_Sites_CompanyId_Slug");
             e.Property(s => s.Name).HasMaxLength(256);
             e.Property(s => s.NameEn).HasMaxLength(256);
-            e.Property(s => s.Slug).HasMaxLength(128);
-            e.Property(s => s.Subdomain).HasMaxLength(63);
-            e.Property(s => s.CustomDomain).HasMaxLength(256);
+            e.Property(s => s.Slug).HasMaxLength(Accounting.Helpers.CmsFieldLengths.SiteSlug);
+            e.Property(s => s.Subdomain).HasMaxLength(Accounting.Helpers.CmsFieldLengths.SiteSubdomain);
+            e.Property(s => s.CustomDomain).HasMaxLength(Accounting.Helpers.CmsFieldLengths.Domain);
             e.Property(s => s.DefaultLanguage).HasMaxLength(10);
             e.Property(s => s.DefaultCurrency).HasMaxLength(3);
             e.Property(s => s.GoogleAnalyticsId).HasMaxLength(50);
@@ -2819,7 +2819,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteDomain>(e =>
         {
             e.HasIndex(d => d.Domain).IsUnique().HasDatabaseName("IX_SiteDomains_Domain");
-            e.Property(d => d.Domain).HasMaxLength(256);
+            e.Property(d => d.Domain).HasMaxLength(Accounting.Helpers.CmsFieldLengths.Domain);
             e.Property(d => d.VerificationToken).HasMaxLength(256);
             e.HasOne(d => d.Site).WithMany(s => s.Domains).HasForeignKey(d => d.SiteId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -2876,7 +2876,7 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(p => new { p.SiteId, p.Slug }).IsUnique().HasDatabaseName("IX_SitePages_SiteId_Slug");
             e.Property(p => p.Title).HasMaxLength(512);
-            e.Property(p => p.Slug).HasMaxLength(256);
+            e.Property(p => p.Slug).HasMaxLength(Accounting.Helpers.CmsFieldLengths.PageSlug);
             e.Property(p => p.TemplateLayout).HasMaxLength(64);
             e.HasOne(p => p.Site).WithMany(s => s.Pages).HasForeignKey(p => p.SiteId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(p => p.ParentPage).WithMany(p => p.ChildPages).HasForeignKey(p => p.ParentPageId).OnDelete(DeleteBehavior.Restrict);

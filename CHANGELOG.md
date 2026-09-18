@@ -2639,6 +2639,41 @@ _void row-lock, recurring FOR UPDATE SKIP LOCKED, Employee.LineId migration._
 _รอบ 16: DBD XBRL annual export (TFRS-NPAEs taxonomy) + ผู้ทำบัญชี CPD gate_
 _(พ.ร.บ.การบัญชี ม.7), PDPA Wave 3 UI tabs (DSR/RoPA/Consent/Breach with 72h timer)._
 
+## รอบ 171 — เว็บไซต์ CMS: ลบแล้วสร้างชื่อเดิมไม่ได้ (500 อ่านไม่ออก)
+
+**อาการที่ผู้ใช้เจอ** สร้างเว็บชื่อ `b1` → 500 "เกิดข้อผิดพลาดภายในระบบ (F37BE341)" ·
+Error Logs: `23505 duplicate key ... IX_Sites_CompanyId_Slug`
+
+**ต้นเหตุ 2 ตัวซ้อนกัน**
+1. คีย์ไม่ซ้ำของ CMS ทั้ง 4 ตัวไม่กรอง `IsDeleted` แต่ `Site` มี query filter `!IsDeleted`
+   ⇒ เว็บที่ลบแล้วยังจอง slug/subdomain/domain ไว้โดยไม่มี query ไหนมองเห็น
+   (`DeleteSiteAsync` ตั้ง `IsDeleted=true` อย่างเดียว ไม่ปลดคีย์)
+2. `CreateSiteAsync` ตรวจซ้ำ **เฉพาะ Subdomain ไม่เคยตรวจ Slug** ⇒ ตั้งชื่อเว็บซ้ำกับเว็บที่ยัง
+   ใช้อยู่ก็ 500 เหมือนกัน แม้ไม่เคยลบอะไรเลย
+
+**แก้**
+- `DeleteSiteAsync` ปลดคีย์ก่อนซ่อนแถว (Slug · Subdomain · CustomDomain · ทุกแถว `SiteDomains`)
+  ผ่าน `Helpers/CmsRetiredSlug` ตัวเดิมที่หน้า CMS ใช้อยู่ — เพิ่มพารามิเตอร์ความยาวคอลัมน์
+- `Helpers/CmsFieldLengths` เป็นตัวตั้งความยาวตัวเดียว `AccountingDbContext` อ่านตัวเดียวกัน (5 จุด)
+- `CreateSiteAsync` อ่านคีย์ที่จองไว้ด้วย `IgnoreQueryFilters()` แล้วแยกทางตามที่มาของค่า:
+  Subdomain (ผู้ใช้พิมพ์) → `BusinessRuleException` บอกให้เปลี่ยน ·
+  Slug (ระบบสร้าง ไม่มีช่องให้แก้) → `Helpers/CmsSlugUniquifier` เติม `-2` ให้เอง
+- เพิ่มด่านชน `IX_SiteDomains_Domain` ซึ่งไม่ซ้ำ **ข้ามบริษัท** (ข้อความไม่บอกว่าใครถือไว้)
+- `ExceptionMiddleware` แปลง Postgres 23505 เป็น **409 พร้อมข้อความไทย** แทน 500 ที่อ่านไม่ออก
+  — ครอบทุกตารางในระบบ ไม่ใช่แค่ CMS · ข้อความบอกอาการ ไม่วินิจฉัยสาเหตุ
+- migration 4 คำสั่งปลดคีย์ของเว็บที่ลบไปก่อนหน้า (ต่อท้ายด้วย `Id` ของแถว ⇒ ไม่ซ้ำ รันซ้ำได้)
+
+**ยังไม่ได้แก้ — ต้องให้เจ้าของตัดสิน** กวาดทั้ง `AccountingDbContext` พบ **62 entity** ที่มีทั้ง
+unique index และ query filter `!IsDeleted` ในนั้น **9 ตัวคีย์เป็นรหัสที่ผู้ใช้พิมพ์เอง** จึงมีอาการ
+เดียวกันรออยู่: `Product.Code` · `ProductCategory.Code` · `Warehouse.Code` · `Branch.Code` ·
+`Department.Code` · `Position.Code` · `Project.Code` · `ChartOfAccount.AccountCode` ·
+`SiteCustomer.Email` — การปลดรหัสตอนลบเปลี่ยนสิ่งที่รายงานย้อนหลังแสดง (ERP core) จึงไม่รวมใน
+คอมมิตของบั๊ก CMS · ระหว่างนี้ทั้ง 9 ตัวได้ข้อความ 409 ที่อ่านออกแล้วจาก ExceptionMiddleware
+
+**เทสต์** `CmsSlugUniquifierTests` (9 เคส รวม invariant "ผลลัพธ์ต้องไม่ชนของที่จองไว้" 50 รอบ) ·
+`CmsRetiredSlugTests` เพิ่มเคสความยาวคอลัมน์ 63/128/256
+
+
 ## รายการที่ผ่านมาเรียงตามรอบ
 
 | รอบ | Theme | Key items |

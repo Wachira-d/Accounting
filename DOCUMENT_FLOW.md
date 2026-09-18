@@ -683,6 +683,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     + revert ตอน void) แล้ว
 
 ### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
+- **สร้าง/ลบเว็บไซต์** (`CmsSiteService.CreateSiteAsync` · `DeleteSiteAsync`) — คีย์ไม่ซ้ำ 4 ตัว
+  (`IX_Sites_CompanyId_Slug` · `IX_Sites_CompanyId_Subdomain` · `IX_Sites_CustomDomain` ·
+  `IX_SiteDomains_Domain`) **ไม่มีตัวไหนกรอง `IsDeleted`** แต่ `Site` มี global query filter
+  `!IsDeleted` ⇒ ตรวจซ้ำด้วย query ปกติจะ "ว่าง" แล้วไปตายที่ 23505
+  - ลบ = **ปลดคีย์ก่อนซ่อนแถว** — Slug/Subdomain/CustomDomain + ทุกแถว `SiteDomains` ของเว็บนั้น
+    ย้ายผ่าน `Helpers/CmsRetiredSlug` (ความยาวคอลัมน์มาจาก `Helpers/CmsFieldLengths`)
+  - สร้าง = อ่านคีย์ที่จองไว้ด้วย `IgnoreQueryFilters()` แล้วแยกทางตามที่มาของค่า:
+    **Subdomain** ผู้ใช้พิมพ์เอง → `BusinessRuleException` (`CMS-SUBDOMAIN-TAKEN`) ให้เปลี่ยน ·
+    **Slug** ระบบสร้างจากชื่อเว็บ ผู้ใช้ไม่มีช่องให้แก้ → `Helpers/CmsSlugUniquifier` เติม `-2`
+    ให้เอง (โยน error = ทางตัน)
+  - ไม่มีเส้นทางกู้คืนเว็บที่ลบแล้ว การปลดคีย์จึงไม่ต้องย้อนกลับ
 - **Order flow** (`CmsCommerceService.cs`):
   - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
     สร้าง `SiteOrderPayment` Status=`Pending`

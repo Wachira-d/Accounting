@@ -28,11 +28,40 @@ public class CmsSiteService : ICmsSiteService
 
     public async Task<SiteResponse> CreateSiteAsync(Guid companyId, CreateSiteRequest request, string userId)
     {
-        var slug = GenerateSlug(request.Name);
         var subdomain = request.Subdomain.ToLowerInvariant().Trim();
 
-        if (await _db.Sites.AnyAsync(s => s.CompanyId == companyId && s.Subdomain == subdomain))
-            throw new InvalidOperationException($"Subdomain '{subdomain}' is already in use.");
+        // unique index ของ CMS **ไม่มีตัวไหนกรอง IsDeleted** แต่ Site มี global query
+        // filter `!IsDeleted` ⇒ ตรวจซ้ำด้วย query ปกติจะ "ตรวจแล้วว่าง" แล้วไปตายที่
+        // 23505 ตอน insert เป็น 500 ที่ผู้ใช้อ่านไม่ออก (บั๊กจริง REF:F37BE341 —
+        // ลบเว็บ b1 แล้วสร้างใหม่ชื่อเดิม). IgnoreQueryFilters() = เห็นความจริงชุด
+        // เดียวกับที่ฐานข้อมูลเห็น. DeleteSiteAsync ปลดคีย์ให้แล้วตั้งแต่รอบนี้ —
+        // ด่านนี้จึงเหลือไว้กันแถวที่ลบไว้ก่อนหน้าและ migration ตามไม่ทัน
+        var reserved = await _db.Sites.IgnoreQueryFilters()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.Subdomain, s.Slug })
+            .ToListAsync();
+
+        if (reserved.Any(r => r.Subdomain == subdomain))
+            throw new BusinessRuleException(
+                $"URL ย่อย \"{subdomain}\" ถูกใช้ไปแล้ว กรุณาเลือกชื่ออื่น",
+                "CMS-SUBDOMAIN-TAKEN");
+
+        // IX_SiteDomains_Domain ไม่ซ้ำ **ข้ามบริษัท** (ต่างจาก Sites ที่ซ้ำต่อบริษัท)
+        // ⇒ ต้องถามแยก ไม่งั้นบริษัทอื่นที่จองชื่อนี้ไว้ทำให้เราได้ 500 แทนคำอธิบาย
+        // ข้อความไม่บอกว่าใครถือไว้ (กันการไล่เดาชื่อข้ามผู้เช่า)
+        var domain = $"{subdomain}.nextacc.net";
+        if (await _db.SiteDomains.IgnoreQueryFilters().AnyAsync(d => d.Domain == domain))
+            throw new BusinessRuleException(
+                $"URL ย่อย \"{subdomain}\" ถูกใช้ไปแล้ว กรุณาเลือกชื่ออื่น",
+                "CMS-SUBDOMAIN-TAKEN");
+
+        // Slug มาจาก "ชื่อเว็บไซต์" โดยอัตโนมัติ — ผู้ใช้ไม่ได้พิมพ์และไม่มีช่องให้แก้
+        // ⇒ ชนแล้วโยน error = ทางตัน (เจอคำว่า slug ที่ไม่เคยเห็นในฟอร์ม) จึงเติมเลข
+        // ต่อท้ายให้แทน ต่างจาก Subdomain ที่ผู้ใช้พิมพ์เอง ซึ่งต้องบอกให้เปลี่ยน
+        var slug = CmsSlugUniquifier.MakeUnique(
+            GenerateSlug(request.Name),
+            reserved.Select(r => r.Slug),
+            CmsFieldLengths.SiteSlug);
 
         var site = new Site
         {
@@ -72,7 +101,7 @@ public class CmsSiteService : ICmsSiteService
         {
             CompanyId = companyId,
             SiteId = site.Id,
-            Domain = $"{subdomain}.nextacc.net",
+            Domain = domain,
             DomainType = DomainType.Subdomain,
             VerificationStatus = DomainVerificationStatus.Verified,
             ApprovalStatus = DomainApprovalStatus.Approved,
@@ -453,6 +482,26 @@ public class CmsSiteService : ICmsSiteService
     {
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
         if (site == null) return false;
+
+        // ปล่อยคีย์ที่ unique index จองไว้ **ก่อน** ซ่อนแถว — index ทั้งสี่ตัวไม่กรอง
+        // IsDeleted ⇒ ถ้าไม่ย้ายออกไป ลูกค้าจะสร้างเว็บชื่อเดิม/URL ย่อยเดิมไม่ได้อีก
+        // เลยตลอดไป และได้ 23505 เป็น 500 แทนข้อความบอกเหตุ
+        // (กลไกเดียวกับหน้า CMS ที่ทำไว้ตั้งแต่รอบ 158 — ตัวตัดสินอยู่ที่ CmsRetiredSlug
+        //  ตัวเดียว ตอนนั้นแก้เฉพาะ SitePages แล้วเหลือ Sites ไว้ = "แก้ตัวเดียว
+        //  เหลือที่เหลือ" ซึ่งมาโผล่เป็นบั๊กของผู้ใช้จริง REF:F37BE341)
+        var now = DateTime.UtcNow;
+        site.Slug = CmsRetiredSlug.For(site.Slug, now, CmsFieldLengths.SiteSlug);
+        site.Subdomain = CmsRetiredSlug.For(site.Subdomain, now, CmsFieldLengths.SiteSubdomain);
+        if (!string.IsNullOrEmpty(site.CustomDomain))
+            site.CustomDomain = CmsRetiredSlug.For(site.CustomDomain, now, CmsFieldLengths.Domain);
+
+        // SiteDomains ถือ `{subdomain}.nextacc.net` ไว้ด้วย และ unique ข้ามบริษัท
+        // เดินทีละแถวพร้อมขยับเวลา 1 ms กันสองแถวที่หัวถูกตัดจนเหมือนกันชนกันเอง
+        var domains = await _db.SiteDomains.IgnoreQueryFilters()
+            .Where(d => d.SiteId == siteId && d.CompanyId == companyId)
+            .ToListAsync();
+        for (var i = 0; i < domains.Count; i++)
+            domains[i].Domain = CmsRetiredSlug.For(domains[i].Domain, now.AddMilliseconds(i), CmsFieldLengths.Domain);
 
         site.IsDeleted = true;
         site.Status = SiteStatus.Suspended;

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **188 ไฟล์ · 1,437 `[Fact]` + 235 `[Theory]` (1,072 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
+| เทสต์ที่มี | **189 ไฟล์ · 1,447 `[Fact]` + 236 `[Theory]` (1,075 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4355,3 +4355,22 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | CI-02 | push คอมมิตที่แตะแต่ `.md` | **ไม่รัน** (paths-ignore) |
 | CI-03 | push 2 คอมมิตติดกันบน branch เดียว | รอบแรกถูก cancel (concurrency) |
 | CI-04 | build ล้มด้วย CSxxxx | step "สรุป CSxxxx" พิมพ์บรรทัด error ที่ไม่ซ้ำ ≤ 40 บรรทัด + artifact `build-log` |
+
+### รอบ 171 — CMS: ลบเว็บแล้วสร้างชื่อเดิมไม่ได้ (REF:F37BE341)
+
+| ID | เคส | คาดหวัง |
+| --- | --- | --- |
+| CMS-SLUG-01 | slug ไม่ชนของเดิม | คืนค่าเดิม ไม่แตะ |
+| CMS-SLUG-02 | slug ชนของเดิม | ได้ `b1-2` (ไม่ throw — ผู้ใช้ไม่มีช่องให้แก้ slug) |
+| CMS-SLUG-03 | ชนทั้ง `b1` และ `b1-2` | ข้ามไป `b1-3` |
+| CMS-SLUG-04 | ชื่อต่างตัวพิมพ์ใหญ่เล็ก (`B1`) | ถือว่าชน |
+| CMS-SLUG-05 | รายการที่จองไว้เป็น null/ค่าว่าง | ไม่พัง คืนค่าเดิม |
+| CMS-SLUG-06 | ชื่อตัดแล้วเหลือว่าง | ได้ `site` (routing ต้องมีอะไรให้จับ) |
+| CMS-SLUG-07 | ชื่อยาว 200 ตัว ลงคอลัมน์ Subdomain (63) 5 รอบ | ทุกผลลัพธ์ ≤ 63 และไม่ชนกันเอง |
+| CMS-SLUG-08 | หัวถูกตัดคาขีด | ไม่มี `--` ซ้อน และยาวไม่เกินคอลัมน์ |
+| CMS-SLUG-09 | **invariant** เรียกต่อเนื่อง 50 รอบ | ไม่มีผลลัพธ์ไหนชนของที่จองไว้เลย |
+| CMS-RET-01 | `CmsRetiredSlug.MaxLength` | ต้องยังเท่ากับ `CmsFieldLengths.PageSlug` (ของเดิมไม่เปลี่ยน) |
+| CMS-RET-02 | ปลดคีย์ยาว 400 ตัวลงคอลัมน์ 63 / 128 / 256 | ยาวไม่เกินคอลัมน์ และ `IsRetired` ยังเป็นจริง |
+
+> ทิศตรงข้ามที่ล็อกไว้ด้วย: CMS-RET-01 พิสูจน์ว่าการเพิ่มพารามิเตอร์ความยาวไม่เปลี่ยน
+> พฤติกรรมของผู้เรียกเดิม (หน้า CMS 3 จุด) · CMS-SLUG-01 พิสูจน์ว่าไม่ไปเติมเลขให้ชื่อที่ไม่ชน
