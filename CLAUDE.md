@@ -761,6 +761,9 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **`bash tools/check_all.sh` ก่อน commit ทุกครั้ง** — ถ้าเครื่องมี `dotnet` มันจะ build/test ให้เอง ถ้าไม่มี
   (env นี้ยังไม่มี SDK จนกว่าเจ้าของจะเปิด host .NET ใน proxy) ให้ push แล้ว **อ่านผล CI บน `claude/**` ผ่าน MCP**
   (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ — และยังต้องบอกผู้ใช้ว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้"
+- **`/publish`** (`.claude/commands/publish.md`) = คำสั่งปิดรอบ ห่อ F3 ทั้งชุดไว้: ตรวจ branch → `check_all.sh` →
+  เอกสารขยับพร้อมโค้ด → ตอบ 6 คำถามในข้อความคอมมิต → push → **อ่านผล CI ผ่าน MCP จนเขียว** → ค่อยรายงาน
+  (คอมมิตที่แตะแต่ `**.md` ไม่รัน CI ตาม `paths-ignore` — ต้องบอกผู้ใช้ว่าไม่มีรอบให้รอ ห้ามรายงานว่าเขียว)
 - **commit message** เขียนเป็นไทยได้ อธิบาย *ทำไม* มากกว่า *ทำอะไร*
 - **ห้าม push** main/master โดยไม่มี explicit approval
 - งานพัฒนาทั้งหมดอยู่บน branch ที่ระบุใน prompt ต้น session
