@@ -205,4 +205,4 @@ prefill ยังเดิม ⇒ ผู้ใช้ที่กด "ยอม�
 ---
 
 _Last verified against codebase: 2026-09-18 — รอบ 177 (ทีม T1/T2/T3 + main agent เปิดไฟล์ยืนยัน)_
-_commit: <pending — เติมในคอมมิตตามหลัง ห้าม amend>_
+_commit: f23a89e_
