@@ -16056,6 +16056,34 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>
+    /// **กระดาษที่สแกนมามีส่วน "หัก ณ ที่จ่าย" เขียนไว้ไหม** — ชั้นที่ 0 ของด่าน WHT
+    ///
+    /// <para>คำตัดสินเจ้าของโปรเจกต์ 2026-09-18: <i>"ใบกำกับภาษีที่ถูกต้อง ถ้าไม่มีเขียน
+    /// ส่วนหัก ณ ที่จ่ายไว้ ยังไงก็ไม่ต้องหัก"</i> — ผู้ขายที่อยู่ในข่ายถูกหักพิมพ์บรรทัด
+    /// นั้นมาบนใบเองเป็นปกติของวงการ ส่วนผู้ขายสินค้าไม่เคยพิมพ์</para>
+    ///
+    /// <para>คืน <c>null</c> เมื่อ<b>ไม่มีกระดาษให้ดู</b> (คีย์มือ · สร้างจากใบอื่น ·
+    /// สแกนอ่านข้อความไม่ออก) — "ไม่มีกระดาษ" ≠ "กระดาษบอกว่าไม่ต้องหัก"
+    /// การเหมารวมสองอย่างนี้คือการแปลง "ไม่รู้" เป็น "ไม่ต้องหัก"</para>
+    /// </summary>
+    private async Task<bool?> ScanPaperShowsWithholdingAsync(Guid companyId, Guid documentId)
+    {
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new { r.RawTextContent, r.HasWht, r.WhtRate })
+            .FirstOrDefaultAsync();
+        if (scan == null) return null;                              // เอกสารนี้ไม่ได้มาจากสแกน
+        if (string.IsNullOrWhiteSpace(scan.RawTextContent)) return null;  // อ่านกระดาษไม่ออก
+
+        // ตัวอ่านตัวเดียวของระบบ — ห้ามเขียน regex ชุดที่สองที่นี่
+        var paper = Accounting.Helpers.PaperWhtReader.Read(scan.RawTextContent);
+        if (paper.Amount is > 0m || paper.RatePercent is > 0m) return true;
+        if (scan.HasWht || scan.WhtRate is > 0m) return true;       // ตัวสกัดตอนสแกนเจอไว้ก่อนแล้ว
+        return false;                                                // อ่านกระดาษได้ และไม่มีส่วนหัก
+    }
+
     /// <summary>ข้อเท็จจริงรายบรรทัดสำหรับ <see cref="Accounting.Helpers.WhtApplicabilityEvidence"/>
     ///
     /// <para><c>DocumentLine</c> เก็บแต่ <c>ProductCode</c> (ไม่มี FK ไปสินค้า) จึงต้อง join
@@ -16088,6 +16116,11 @@ public partial class DocumentService : IDocumentService
                 ? k : null,
             l.Amount)).ToList();
     }
+
+    /// <summary>ความมั่นใจขั้นต่ำที่ยอมให้คำตอบ "ไม่ต้องหัก" **ปิดคำเตือน** —
+    /// ตรงกับตัวอย่างใน CLAUDE.md กฎเหล็ก #1 ที่ใช้ 0.70 เป็นด่านก่อน apply
+    /// (ทิศ "เตือน" ไม่ต้องผ่านด่านนี้ เพราะเตือนเกินยังแก้ได้ แต่เงียบผิดมองไม่เห็น)</summary>
+    private const decimal MinWhtSilenceConfidence = 0.70m;
 
     /// <summary>คำตอบของชั้น "นักเรียน → ครู" เรื่องเข้าข่ายหัก ณ ที่จ่ายไหม</summary>
     /// <param name="SaysNoWithholding">ตอบชัดว่า<b>ไม่</b>เข้าข่าย (None/Skip)</param>
@@ -16139,18 +16172,45 @@ public partial class DocumentService : IDocumentService
             if (string.IsNullOrWhiteSpace(answer)) return none;
 
             var conf = suggestion.Confidence ?? 0m;
-            // "ไม่เข้าข่าย" ตามคำศัพท์ที่ prompt กำหนด: None = ซื้อสินค้าล้วน · Skip = ยังไม่ถึงเกณฑ์
-            if (answer.Equals("None", StringComparison.OrdinalIgnoreCase)
-                || answer.Equals("Skip", StringComparison.OrdinalIgnoreCase))
+
+            // ⚠️ **"Skip" ใช้ที่นี่ไม่ได้** — prompt นิยามไว้ว่า Skip แปลว่า
+            // "ยอดสะสมยังไม่ถึง 1,000" แต่โค้ดจะมาถึงบรรทัดนี้ได้ก็ต่อเมื่อเรา
+            // เพิ่งคำนวณเองแล้วว่า **ถึงเกณฑ์แล้ว** ⇒ รับ Skip = เอาคำตอบที่ขัดกับ
+            // การคำนวณเชิงกำหนดของเราเองไปปิดคำเตือน (ฝ่ายค้านรอบ 177)
+            // คลังคำตอบนี้ใช้ร่วมกับเส้นถามรายบรรทัดซึ่งตอบ Skip ได้อย่างถูกต้อง
+            // ⇒ แถว Skip มีอยู่จริงในคลังและถูกเสิร์ฟกลับมาที่นี่ได้
+            if (answer.Equals("Skip", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation(
+                    "WHT advice ตอบ Skip ทั้งที่ยอดสะสมถึงเกณฑ์แล้ว — ถือว่าตอบไม่ได้ แล้วเตือนตามเดิม");
+                return none;
+            }
+
+            // "ไม่เข้าข่าย" = None (ซื้อสินค้าล้วน) เท่านั้น
+            if (answer.Equals("None", StringComparison.OrdinalIgnoreCase))
+            {
+                // ⚠️ ด่านความมั่นใจ — คำตอบ "ไม่ต้องหัก" เป็นทิศที่ผิดแล้ว**มองไม่เห็น**
+                // (§54 ให้ผู้จ่ายรับผิด) ⇒ ต้องมั่นใจพอ ไม่ใช่รับทุกคำตอบ
+                // ตัวอย่างในกฎเหล็ก #1 เองก็ใช้ 0.70 เป็นเกณฑ์ก่อน apply
+                if (conf < MinWhtSilenceConfidence)
+                {
+                    _logger.LogInformation(
+                        "WHT advice ตอบ None แต่มั่นใจแค่ {Conf:P0} (ต่ำกว่า {Floor:P0}) — เตือนตามเดิม",
+                        conf, MinWhtSilenceConfidence);
+                    return new WhtAdvice(false, false, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
+                }
                 return new WhtAdvice(true, false, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
+            }
 
             // ⬅ ด่าน: รหัสต้องมีอยู่จริงในตารางอัตรา ไม่งั้นคือคำตอบที่แต่งขึ้น
             if (Accounting.Helpers.ThaiWhtRateTable.Find(answer) != null)
                 return new WhtAdvice(false, true, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
 
+            // ตอบนอกชุด = เชื่อไม่ได้ **แต่ยังต้องเก็บ FeedbackId** — เส้นนี้คือเส้นที่
+            // อยากสอนที่สุด ถ้าทิ้งไปคือจ่าย token แล้วไม่มีวันรู้คำตอบที่ถูก (ฝ่ายค้านรอบ 177)
             _logger.LogInformation(
                 "WHT advice ตอบนอกชุดคำตอบ ({Answer}) — ถือว่าตอบไม่ได้ แล้วเตือนตามเดิม", answer);
-            return none;
+            return new WhtAdvice(false, false, answer, conf, suggestion.UsedAi, suggestion.FeedbackId);
         }
         catch (Exception ex)
         {
@@ -16280,28 +16340,40 @@ public partial class DocumentService : IDocumentService
             && doc.WithholdingTaxAmount <= 0.005m
             && doc.SubTotal > 0m)
         {
+            // ชั้นที่ 0 — **กระดาษพูดก่อน** (คำตัดสินเจ้าของโปรเจกต์ 2026-09-18)
+            // ใบกำกับที่สแกนมาไม่มีส่วน "หัก ณ ที่จ่าย" ⇒ ไม่ต้องหัก
+            var paperShowsWht = await ScanPaperShowsWithholdingAsync(companyId, doc.Id);
+
             // ชั้นที่ 1 — หลักฐานเชิงกำหนดจากข้อมูลที่เราถืออยู่ (pure helper + เทสต์)
             var whtEvidence = Accounting.Helpers.WhtApplicabilityEvidence.Judge(
-                await BuildWhtLineFactsAsync(companyId, doc));
+                await BuildWhtLineFactsAsync(companyId, doc), paperShowsWht);
 
-            // พิสูจน์ได้ว่าเป็นการซื้อสินค้า ⇒ **เงียบสนิท** ไม่ต้องคิดยอดสะสมด้วยซ้ำ
-            if (whtEvidence.Level != Accounting.Helpers.WhtApplicability.GoodsNoWithholding)
+            // พิสูจน์ได้ว่าไม่อยู่ในข่าย ⇒ **เงียบสนิท** ไม่ต้องคิดยอดสะสมด้วยซ้ำ
+            if (whtEvidence.Level != Accounting.Helpers.WhtApplicability.NotApplicable)
             {
                 // ── ยอดจ่ายสะสมปีนี้ ──────────────────────────────────────
                 // ⚠️ เดิมคิวรีนี้รวมยอดจาก **เอกสารทุกชนิด** ที่ผูกกับคู่ค้ารายนั้น
                 // โดยไม่กรองฝั่ง/ชนิดเลย ⇒ ใบเสนอราคา · ใบสั่งซื้อ · **ใบขายที่เรา
                 // ออกให้เขา** · และการซื้อครั้งเดียวที่มีทั้ง PO + ใบกำกับ + ใบสำคัญจ่าย
                 // ถูกนับซ้ำ ⇒ ตัวเลขที่โชว์ว่า "ยอดจ่ายสะสม" ไม่ใช่ยอดจ่ายจริง
-                // → กรองด้วย ArApScope.PayableTypes ซึ่งเป็นชุดชนิดเจ้าหนี้ตัวเดียวของระบบ
+                //
+                // ⚠️ และ **ห้ามใช้ ArApScope.PayableTypes** เป็นนิยามของ "ยอดจ่าย" —
+                // ชุดนั้นคือ "เอกสารที่เพิ่มเจ้าหนี้" สำหรับ aging และ doc ของมันเขียนเองว่า
+                // PV/CIL เป็นหลักฐานจ่าย ไม่ใช่การตั้งหนี้ ⇒ จ่ายงวดละ 800 สามงวดด้วย
+                // ใบสำคัญจ่ายจะได้ยอดสะสม 0 ทุกงวด = ไม่เตือนสักงวด ซึ่งเป็นเคสที่กฎนี้
+                // ถูกสร้างมาแก้โดยตรง (ฝ่ายค้านรอบ 177 จับได้หลังผมเผลอใช้ชุดนั้น)
+                // → Helpers/WhtCumulativeScope: ชุด "เอกสารที่แทนการจ่าย" + กันนับซ้ำ
+                //   ด้วยความสัมพันธ์ต้นทาง–ปลายทาง แทนการตัดชนิดเอกสารทิ้ง
                 var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
-                var payableTypes = Accounting.Helpers.ArApScope.PayableTypes;
-                var paidToContactThisYear = await _db.Documents.AsNoTracking()
+                var yearRows = await _db.Documents.AsNoTracking()
                     .Where(d => d.CompanyId == companyId && d.ContactId == doc.ContactId
                                 && d.Id != doc.Id
-                                && payableTypes.Contains(d.DocumentType)
                                 && d.DocumentDate >= yearStart && d.DocumentDate <= doc.DocumentDate
                                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided)
-                    .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
+                    .Select(d => new Accounting.Helpers.WhtPaymentRow(
+                        d.Id, d.DocumentType, d.SubTotal, d.RelatedDocumentId, d.CnDnPurchaseSideOverride))
+                    .ToListAsync();
+                var paidToContactThisYear = Accounting.Helpers.WhtCumulativeScope.SumDistinct(yearRows);
 
                 if (Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(doc.SubTotal, paidToContactThisYear))
                 {

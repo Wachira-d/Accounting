@@ -5,8 +5,9 @@ namespace Accounting.Helpers;
 /// <summary>ใบนี้ "เข้าข่ายหัก ณ ที่จ่าย" ไหม — พิสูจน์จากข้อมูลที่ระบบถืออยู่</summary>
 public enum WhtApplicability
 {
-    /// <summary>พิสูจน์ได้ว่าเป็น<b>การซื้อสินค้า</b> — ไม่อยู่ในข่ายหัก ณ ที่จ่าย ⇒ เงียบ</summary>
-    GoodsNoWithholding = 0,
+    /// <summary>พิสูจน์ได้ว่า<b>ไม่อยู่ในข่ายหัก ณ ที่จ่าย</b> ⇒ เงียบ
+    /// (กระดาษไม่มีส่วนหัก ณ ที่จ่าย · หรือเป็นการซื้อสินค้า)</summary>
+    NotApplicable = 0,
 
     /// <summary>พิสูจน์ได้ว่าเป็น<b>ค่าบริการ/ค่าจ้าง</b> — เตือนได้อย่างมั่นใจ</summary>
     ServiceWithholding = 1,
@@ -55,14 +56,42 @@ public readonly record struct WhtLineFact(
 /// </summary>
 public static class WhtApplicabilityEvidence
 {
-    /// <summary>ชนิดสินค้าที่เป็น "ของ" ไม่ใช่ "บริการ" — ซื้อแล้วไม่ต้องหัก</summary>
+    /// <summary>ชนิดสินค้าที่เป็น "ของ" ไม่ใช่ "บริการ" — ซื้อแล้วไม่ต้องหัก
+    ///
+    /// <para>⚠️ <b>ไม่รวม <c>NonStock</c></b> — หน้าจัดการสินค้าติดป้ายชนิดนี้ว่า
+    /// <b>"อื่นๆ"</b> (products.html) และไม่มีโค้ดส่วนไหนในเรพให้ความหมายเชิงบัญชี
+    /// กับมันเลย ⇒ เป็นถังรวมของที่ผู้ใช้ไม่รู้จะใส่ตรงไหน ไม่ใช่หลักฐานว่าเป็น "ของ"
+    /// (ค่าบริการที่ถูกตั้งเป็น NonStock จะเงียบสนิทโดยไม่ได้ถามชั้นเรียนรู้ด้วยซ้ำ)
+    /// — ให้ตกเป็น <see cref="WhtApplicability.Unknown"/> แล้วให้ชั้นถัดไปตัดสิน
+    /// (ฝ่ายค้านรอบ 177)</para></summary>
     private static bool IsGoods(ProductType t)
-        => t is ProductType.Product or ProductType.Supplies
-             or ProductType.RawMaterial or ProductType.NonStock;
+        => t is ProductType.Product or ProductType.Supplies or ProductType.RawMaterial;
 
-    /// <summary>ตัดสินจากบรรทัดทั้งใบ</summary>
-    public static WhtApplicabilityResult Judge(IEnumerable<WhtLineFact>? lines)
+    /// <summary>ตัดสินจากกระดาษ + บรรทัดทั้งใบ</summary>
+    /// <param name="lines">ข้อเท็จจริงรายบรรทัด</param>
+    /// <param name="paperShowsWithholding">กระดาษที่สแกนมามีส่วน "หัก ณ ที่จ่าย" เขียนไว้ไหม —
+    /// <c>null</c> = ไม่มีกระดาษให้ดู (คีย์มือ/สร้างจากใบอื่น) ⇒ ข้ามชั้นนี้ไปชั้นถัดไป</param>
+    public static WhtApplicabilityResult Judge(
+        IEnumerable<WhtLineFact>? lines, bool? paperShowsWithholding = null)
     {
+        // ── ชั้นที่ 0 (คำตัดสินเจ้าของโปรเจกต์ 2026-09-18): กระดาษพูดก่อนเสมอ ──
+        //
+        // "ใบกำกับภาษีที่ถูกต้อง ถ้าไม่มีเขียนส่วนหัก ณ ที่จ่ายไว้ ยังไงก็ไม่ต้องหัก"
+        // — ผู้ขายที่อยู่ในข่ายถูกหักจะพิมพ์บรรทัดหัก ณ ที่จ่ายมาบนใบเองเป็นปกติ
+        // ของวงการ (และผู้ขายสินค้าไม่เคยพิมพ์) ⇒ "กระดาษไม่มี" เป็นหลักฐานที่
+        // ตรงและตรวจซ้ำได้ที่สุดเท่าที่ระบบมี จึงมาก่อนทุกชั้น
+        //
+        // ⚠️ ข้อจำกัดที่ต้องรู้ (ผมแจ้งเจ้าของแล้วและเจ้าของตัดสินแบบนี้): ตามตัวบท
+        // ภาระหักเป็นของ**ผู้จ่าย** (§54) ไม่ได้ขึ้นกับว่าผู้ขายพิมพ์อะไรมา —
+        // ใบที่ผู้ขายลืมพิมพ์จะเงียบไปด้วย. ชั้นนี้จึงทำงานเฉพาะเมื่อ**อ่านกระดาษได้จริง**
+        // (`false` = อ่านแล้วไม่เจอ) ไม่ใช่เมื่อไม่มีกระดาษ (`null`)
+        if (paperShowsWithholding == false)
+            return new(WhtApplicability.NotApplicable,
+                "ใบกำกับภาษีที่สแกนมาไม่มีส่วน \"หัก ณ ที่จ่าย\" เขียนไว้");
+        if (paperShowsWithholding == true)
+            return new(WhtApplicability.ServiceWithholding,
+                "กระดาษมีส่วน \"หัก ณ ที่จ่าย\" เขียนไว้บนใบ");
+
         var all = lines?.ToList() ?? new List<WhtLineFact>();
         if (all.Count == 0)
             return new(WhtApplicability.Unknown, "ใบนี้ไม่มีรายการให้ตรวจ");
@@ -83,7 +112,7 @@ public static class WhtApplicabilityEvidence
 
         // ── ชั้นที่ 3: ทุกบรรทัดผูกกับ "ของ" ⇒ พิสูจน์ได้ว่าเป็นการซื้อสินค้า ──
         if (all.All(l => l.ProductKind.HasValue && IsGoods(l.ProductKind.Value)))
-            return new(WhtApplicability.GoodsNoWithholding,
+            return new(WhtApplicability.NotApplicable,
                 "ทุกบรรทัดผูกกับสินค้า/วัสดุในระบบ — การซื้อสินค้าไม่อยู่ในข่ายหัก ณ ที่จ่าย");
 
         // ── ไม่มีหลักฐานพอ ──

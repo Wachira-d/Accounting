@@ -26,9 +26,8 @@ public class WhtApplicabilityEvidenceTests
     [InlineData(ProductType.Product)]
     [InlineData(ProductType.Supplies)]
     [InlineData(ProductType.RawMaterial)]
-    [InlineData(ProductType.NonStock)]
     public void ทุกบรรทัดเป็นของ_ต้องสรุปว่าไม่เข้าข่ายหัก(ProductType kind)
-        => Assert.Equal(WhtApplicability.GoodsNoWithholding,
+        => Assert.Equal(WhtApplicability.NotApplicable,
             WhtApplicabilityEvidence.Judge(new[]
             {
                 Goods("แผ่นปะซ่อมเต็นท์", kind),
@@ -106,4 +105,37 @@ public class WhtApplicabilityEvidenceTests
         Assert.False(string.IsNullOrWhiteSpace(r.Reason));
         Assert.Contains("ซื้อสินค้า", r.Reason);
     }
+
+    // ══════════ ชั้นที่ 0: กระดาษพูดก่อน (คำตัดสินเจ้าของ 2026-09-18) ══════════
+
+    [Fact]
+    public void กระดาษไม่มีส่วนหักณที่จ่าย_ต้องเงียบ_แม้บรรทัดจะดูเป็นบริการ()
+        // "ใบกำกับภาษีที่ถูกต้อง ถ้าไม่มีเขียนส่วนหักไว้ ยังไงก็ไม่ต้องหัก"
+        // ⇒ ชั้นนี้ชนะแม้บรรทัดจะผูกรายการชนิดบริการ
+        => Assert.Equal(WhtApplicability.NotApplicable,
+            WhtApplicabilityEvidence.Judge(
+                new[] { new WhtLineFact("ค่าติดตั้ง", null, ProductType.Service, 9_000m) },
+                paperShowsWithholding: false).Level);
+
+    [Fact]
+    public void กระดาษมีส่วนหักณที่จ่าย_ต้องเตือน_แม้บรรทัดจะเป็นสินค้า()
+        // ทิศตรงข้าม: ผู้ขายพิมพ์บรรทัดหักมาเอง = หลักฐานตรงว่าอยู่ในข่าย
+        => Assert.Equal(WhtApplicability.ServiceWithholding,
+            WhtApplicabilityEvidence.Judge(
+                new[] { Goods("อะไหล่") }, paperShowsWithholding: true).Level);
+
+    [Fact]
+    public void ไม่มีกระดาษให้ดู_ต้องไม่ถือว่ากระดาษบอกว่าไม่ต้องหัก()
+        // null = คีย์มือ/สร้างจากใบอื่น ⇒ ต้องไหลไปชั้นถัดไป ไม่ใช่เงียบ
+        => Assert.Equal(WhtApplicability.ServiceWithholding,
+            WhtApplicabilityEvidence.Judge(
+                new[] { new WhtLineFact("ค่าที่ปรึกษา", "40(2)", null, 10_000m) },
+                paperShowsWithholding: null).Level);
+
+    [Fact]
+    public void รายการชนิด_NonStock_ไม่ใช่หลักฐานว่าเป็นของ()
+        // หน้าจัดการสินค้าติดป้ายชนิดนี้ว่า "อื่นๆ" — เป็นถังรวม ไม่ใช่หลักฐาน
+        // ⇒ ต้องตกไปให้ชั้นเรียนรู้ตัดสิน ไม่ใช่เงียบเอง (ฝ่ายค้านรอบ 177)
+        => Assert.Equal(WhtApplicability.Unknown,
+            WhtApplicabilityEvidence.Judge(new[] { Goods("รายการอื่นๆ", ProductType.NonStock) }).Level);
 }

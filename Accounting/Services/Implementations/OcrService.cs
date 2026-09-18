@@ -2016,15 +2016,41 @@ public class OcrService : IOcrService
                     // distinctive Thai keyword from the suggested name
                     // (skip stopword-class words like "ค่า") and look
                     // for an account whose name contains it.
+                    //
+                    // ⚠️ **ตัวเลือกต้องผ่าน Helpers/GlDebitAccountPicker** — เดิมบรรทัดนี้
+                    // `OrderBy(AccountCode).First()` โดย **ไม่กรองประเภทบัญชี** ⇒ หนี้สิน
+                    // ที่ขึ้นต้น "2" มาก่อนค่าใช้จ่ายที่ขึ้นต้น "5" **เสมอ** ⇒ ผังบัญชีที่มี
+                    // ทั้ง "ค่าโทรศัพท์ค้างจ่าย 21513" (หนี้สิน) และ "ค่าโทรศัพท์ฯ 5304"
+                    // (ค่าใช้จ่าย) จะได้ตัวที่ผิดทุกครั้ง — การเดบิตบัญชีค้างจ่ายคือการ
+                    // ตัดหนี้ที่ไม่เคยตั้งไว้ ⇒ งบฐานะการเงินเพี้ยน + ค่าใช้จ่ายไม่เข้างบ P&L
+                    // (ผู้ใช้รายงาน 2026-09-18 — ใบซื้ออุปกรณ์แคมป์ปิ้งได้บัญชี 21513)
                     var name = extractedData.DebitAccountName;
                     var keyword = ExtractDistinctiveKeyword(name);
                     if (!string.IsNullOrEmpty(keyword))
                     {
-                        debitAccount = await _db.ChartOfAccounts
+                        var candidates = await _db.ChartOfAccounts
                             .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                                 && a.AccountName.Contains(keyword))
-                            .OrderBy(a => a.AccountCode)
-                            .FirstOrDefaultAsync();
+                            .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                            .ToListAsync();
+                        var picked = Accounting.Helpers.GlDebitAccountPicker.Pick(
+                            candidates.Select(a => new Accounting.Helpers.GlAccountCandidate(
+                                a.AccountCode, a.AccountName, a.AccountType)),
+                            seededCode: seeded);
+                        if (picked is { } p)
+                        {
+                            debitAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(
+                                a => a.CompanyId == companyId && a.AccountCode == p.Code && !a.IsDeleted);
+                        }
+                        else if (candidates.Count > 0)
+                        {
+                            // มีบัญชีชื่อตรงแต่ไม่มีตัวไหนเป็นเดบิตของค่าใช้จ่ายได้เลย
+                            // ⇒ ปล่อยว่างให้คนเลือก และ**บอกว่าทำไม** ไม่ใช่เงียบ
+                            extractedData.ReasoningTrace.Add(
+                                $"[CoA] พบบัญชีชื่อใกล้เคียง \"{keyword}\" {candidates.Count} รายการ "
+                                + "แต่เป็นบัญชีหนี้สิน/รายได้/ส่วนของเจ้าของทั้งหมด ซึ่งใช้เป็นบัญชีเดบิต "
+                                + "ของค่าใช้จ่ายไม่ได้ — เว้นว่างไว้ให้เลือกเอง");
+                        }
                     }
                 }
                 if (debitAccount != null)
