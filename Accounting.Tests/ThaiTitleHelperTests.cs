@@ -39,7 +39,7 @@ public class ThaiTitleHelperTests
     {
         var got = ThaiTitleHelper.Split(full);
         Assert.Equal(title, got.Title);
-        Assert.Equal(rest, got.Rest);
+        Assert.Equal(rest, got.Remainder);
     }
 
     [Theory]

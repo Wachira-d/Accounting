@@ -13,6 +13,25 @@
 #      bash tools/check_all.sh --all --no-dotnet   # ใน CI job static-checks (job build/test แยกต่างหาก — ไม่ build ซ้ำ)
 set -u
 cd "$(dirname "$0")/.." || exit 2
+if [ "${1:-}" = "--self-test" ]; then
+  # negative test ของตัวนับ brace: ไฟล์ที่ปีกกาหายจริงต้องถูกฟ้อง · ไฟล์ที่มีปีกกาในสตริง/รูอินเทอร์โพเลตต้องไม่ถูกฟ้อง
+  t=$(mktemp -d); fail=0
+  printf 'class A { void F() { var s = "{"; if (true) { \n } \n' > "$t/Bad.cs"          # ขาด } จริง 1 ตัว
+  printf 'class B { string S = "{{"; string T = $@"x{(true ? "a" : "b")}y"; }\n' > "$t/Ok.cs"  # ถูกทุกประการ
+  for f in Bad.cs Ok.cs; do
+    raw=$(awk '{o+=gsub(/\{/,"");c+=gsub(/\}/,"")} END{print o-c}' "$t/$f")
+    py=$(python3 -c "
+import re,sys
+t=open(sys.argv[1],encoding='utf-8').read()
+t=re.sub(r'/\*.*?\*/','',t,flags=re.S); t=re.sub(r'(?<!:)//[^\n]*','',t)
+t=re.sub(r'@\"(?:[^\"]|\"\")*\"','\"\"',t,flags=re.S); t=re.sub(r'\"(?:\\\\.|[^\"\\\\\n])*\"','\"\"',t)
+print(t.count('{')-t.count('}'))" "$t/$f")
+    both=0; [ "$raw" != "0" ] && [ "$py" != "0" ] && both=1
+    case $f in Bad.cs) [ $both -eq 1 ] || { echo "self-test ล้ม: Bad.cs ต้องถูกฟ้อง (awk=$raw py=$py)"; fail=1; };;
+               Ok.cs)  [ $both -eq 0 ] || { echo "self-test ล้ม: Ok.cs ต้องไม่ถูกฟ้อง (awk=$raw py=$py)"; fail=1; };; esac
+  done
+  rm -rf "$t"; [ $fail -eq 0 ] && echo "self-test: ผ่าน"; exit $fail
+fi
 fail=0
 red()  { printf '\033[31m%s\033[0m\n' "$*"; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
@@ -38,9 +57,21 @@ for f in $changed; do
   [ -f "$f" ] || continue
   case "$f" in
     *.cs)
-      # brace balance — นับดิบด้วย awk ตามที่ CLAUDE.md F กำหนด (ตัวนับที่พยายาม "ตัดสตริงก่อน" ฟ้องผิดที่
-      # `$@"…{(x ? "a" : "b")}…"` เพราะ `"` ในรูอินเทอร์โพเลตปิดสตริงก่อนเวลา — negative test บน PayrollService.cs)
-      bal=$(awk '{o+=gsub(/\{/,"");c+=gsub(/\}/,"")} END{print o-c}' "$f")
+      # brace balance — ใช้ **สองตัวนับที่มีจุดบอดคนละที่** แล้วฟ้องเฉพาะเมื่อทั้งคู่ไม่เป็น 0:
+      #   • awk ดิบ  → ฟ้องผิดกับ `{`/`}` ในสตริง/คอมเมนต์ (CI รอบ 170 ฟ้อง 6 ไฟล์ที่คอมไพล์ผ่าน)
+      #   • python ตัดสตริง/คอมเมนต์ก่อน → ฟ้องผิดกับ `$@"…{(x ? "a" : "b")}…"` (รูอินเทอร์โพเลตในสตริง verbatim)
+      # ปีกกาที่หายจริงทำให้ **ทั้งสอง** ไม่เป็น 0 — negative test อยู่ท้ายไฟล์นี้ (--self-test)
+      raw=$(awk '{o+=gsub(/\{/,"");c+=gsub(/\}/,"")} END{print o-c}' "$f")
+      py=$(python3 - "$f" <<'PY'
+import re,sys
+t=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
+t=re.sub(r'/\*.*?\*/','',t,flags=re.S); t=re.sub(r'(?<!:)//[^\n]*','',t)
+t=re.sub(r'@"(?:[^"]|"")*"','""',t,flags=re.S); t=re.sub(r'"""[\s\S]*?"""','""',t)
+t=re.sub(r'"(?:\\.|[^"\\\n])*"','""',t); t=re.sub(r"'(?:\\.|[^'\\\n])*'","''",t)
+print(t.count('{')-t.count('}'))
+PY
+)
+      bal=0; if [ "$raw" != "0" ] && [ "$py" != "0" ]; then bal="awk=$raw py=$py"; fi
       if [ "$bal" != "0" ]; then red "❌ brace ไม่สมดุล ($bal): $f"; fail=1; fi
       ;;
     *.html)

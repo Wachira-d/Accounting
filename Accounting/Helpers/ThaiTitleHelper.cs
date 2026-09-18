@@ -165,8 +165,10 @@ public static class ThaiTitleHelper
     /// ⇒ "นายช่างการไฟฟ้า" · "นางเลิ้งพาณิชย์" · "นายหน้าประกันภัย" ไม่ถูกแตะ
     /// เพราะเป็นชื่อกิจการที่บังเอิญขึ้นต้นเหมือนคำนำหน้า — การเดาผิดตรงนี้
     /// ไหลไปถึงชื่อบนไฟล์ยื่น ภ.ง.ด. และใบกำกับภาษี
+    /// (ชื่อ element ตัวที่สองเป็น <c>Remainder</c> — <c>Rest</c> เป็นชื่อสงวนของ ValueTuple ⇒ CS8126;
+    /// หลุดมาตั้งแต่รอบ 168 เพราะไม่มีใครคอมไพล์ branch จนกว่า CI จะเปิดในรอบ 170)
     /// </summary>
-    public static (string Title, string Rest) Split(string? fullName)
+    public static (string Title, string Remainder) Split(string? fullName)
     {
         var name = (fullName ?? "").Trim();
         if (name.Length == 0) return ("", "");
