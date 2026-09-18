@@ -371,7 +371,7 @@
            data-tour-text="ขั้นที่ 1 — ลากไฟล์ใบกำกับ/ใบเสร็จมาวาง หรือคลิกเลือกไฟล์ รองรับ JPG/PNG/PDF หลายไฟล์พร้อมกัน">
       <div class="upload-zone-icon">&#x1F4C4;</div>
       <h3>ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</h3>
-      <p>รองรับหลายไฟล์พร้อมกัน</p>
+      <p>รองรับหลายไฟล์พร้อมกัน <span id="uploadSizeHint" style="color:#64748b"></span></p>
       <div class="file-types">
         <span class="file-type-badge">JPG</span>
         <span class="file-type-badge">PNG</span>
@@ -717,6 +717,11 @@
           }).join('');
           sel.value = initial || 'auto';
           document.getElementById('engineChooser').style.display = '';
+          // เพดานขนาดไฟล์มาจากเซิร์ฟเวอร์เท่านั้น — หน้าเว็บห้ามพิมพ์ตัวเลขเอง
+          // (undefined = ยังไม่รู้ ≠ 0 — ถ้าไม่รู้ก็ไม่บอกและไม่กันไฟล์)
+          this._maxFileSizeMb = (typeof data.maxFileSizeMb === 'number') ? data.maxFileSizeMb : null;
+          const hint = document.getElementById('uploadSizeHint');
+          if (hint && this._maxFileSizeMb) hint.textContent = `ไฟล์ละไม่เกิน ${this._maxFileSizeMb} MB`;
           this.onEngineChanged();
         } catch (e) {
           // Selector is optional — if it fails to load we keep the prior
@@ -955,6 +960,15 @@
         }
 
         try {
+          // ด่านขนาดไฟล์ฝั่งหน้าเว็บ = **ความสะดวก** ไม่ใช่กติกา (กติกาอยู่ที่เซิร์ฟเวอร์
+          // ซึ่งยังตรวจซ้ำเสมอ) — มีไว้เพื่อไม่ให้ผู้ใช้รออัปโหลด 40MB แล้วค่อยล้ม
+          // และเพื่อให้ข้อความบอก "ใหญ่เกินเท่าไร" ได้ทันที
+          if (this._maxFileSizeMb && file.size > this._maxFileSizeMb * 1024 * 1024) {
+            throw new Error(`ไฟล์ใหญ่เกิน ${this._maxFileSizeMb} MB `
+              + `(ไฟล์นี้ ${(file.size / (1024 * 1024)).toFixed(1)} MB) — `
+              + 'ลองบีบอัด PDF หรือสแกนใหม่ที่ความละเอียดต่ำลง');
+          }
+
           statusEl.textContent = 'กำลังอัปโหลด...';
           progressEl.style.width = '30%';
 
@@ -967,6 +981,10 @@
           progressEl.style.width = '60%';
           const res = await api.ocrUploadAndScan(formData, this._currentEngine());
           progressEl.style.width = '100%';
+
+          // 401 → API.request พากลับหน้า login แล้วคืน undefined (กำลังเปลี่ยนหน้าอยู่)
+          // ห้าม deref ต่อ ไม่งั้นได้ TypeError ทับข้อความจริงที่ผู้ใช้ควรเห็น
+          if (!res) return;
 
           if (res.success === false) {
             throw new Error(res.message || 'อัปโหลดไม่สำเร็จ');

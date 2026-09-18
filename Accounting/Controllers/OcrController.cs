@@ -76,7 +76,12 @@ public class OcrController : ControllerBase
     }
 
     [HttpPost("upload")]
-    [RequestSizeLimit(10 * 1024 * 1024)]
+    // ⚠️ ขีดจำกัดขนาดต้องมาจาก **ตัวตั้งตัวเดียว** — เดิมตรงนี้เขียน 10MB ไว้เอง
+    // ขณะที่ด่านตรวจไฟล์ (OcrPreprocessor.MaxFileSize) ถือ 50MB ตามเพดานจริงของ
+    // Azure DI ⇒ ไฟล์ 10–50MB ถูก framework ตัดทิ้ง**ก่อน**เข้า action ⇒ ข้อความ
+    // ไทยที่เตรียมไว้ ("ไฟล์ใหญ่เกิน 50MB") ไม่มีวันได้แสดง และผู้ใช้ได้ response
+    // ที่ body ว่างแทน (ผู้ใช้รายงาน 2026-09-18 — สแกน PDF แล้วขึ้น JSON parse error)
+    [RequestSizeLimit(Accounting.Services.Implementations.Ocr.OcrPreprocessor.MaxFileSize)]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UploadAndScan(
         Guid companyId, IFormFile file,
         // Optional per-scan engine override: "auto" | "azure" | "local".
@@ -1298,6 +1303,9 @@ public class OcrController : ControllerBase
                 localUsed = quota.LocalUsedThisMonth,
                 localMax = quota.LocalMaxPagesPerMonth,
             },
+            // ขนาดไฟล์สูงสุด — หน้าเว็บ **ห้ามพิมพ์ตัวเลขนี้เอง** ต้องอ่านจากที่นี่
+            // (กติกาอยู่ที่เซิร์ฟเวอร์ที่เดียว ไม่งั้นแก้เพดานแล้วหน้าเว็บเล่าคนละเรื่อง)
+            maxFileSizeMb = Accounting.Services.Implementations.Ocr.OcrPreprocessor.MaxFileSize / (1024 * 1024),
         }));
     }
 

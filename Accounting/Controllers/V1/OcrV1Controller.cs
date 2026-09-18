@@ -38,7 +38,9 @@ public class OcrV1Controller : PublicApiControllerBase
     /// ใช้ `/batch` ที่คืน jobId แล้วแจ้งผลทาง webhook แทน
     /// </summary>
     [HttpPost("scan")]
-    [RequestSizeLimit(30 * 1024 * 1024)]
+    // ตัวตั้งตัวเดียวกับเส้นเว็บ (เดิม 30MB ที่นี่ · 10MB ที่เส้นเว็บ · 50MB ที่ด่านตรวจ
+    // = สามเพดานสำหรับไฟล์ชนิดเดียวกัน)
+    [RequestSizeLimit(Accounting.Services.Implementations.Ocr.OcrPreprocessor.MaxFileSize)]
     public async Task<IActionResult> Scan(IFormFile file, CancellationToken ct)
     {
         var (ctx, error) = await ResolveCallerAsync("ocr:write", Feature, ct);

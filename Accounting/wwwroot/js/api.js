@@ -905,9 +905,16 @@ const API = {
       createForecast: (d) => API.post(`${base}/ai/forecast`, d),
       getForecasts: () => API.get(`${base}/ai/forecasts`),
       // OCR
+      // ⚠️ ต้องผ่าน API.request เท่านั้น — เดิมเมธอดนี้เป็น **จุดเดียวในไฟล์** ที่เขียน
+      // fetch เองแล้วเรียก `r.json()` ดิบ ๆ โดยไม่ดู status/content-type ⇒ ทุก response
+      // ที่ body ว่าง (401 จาก JWT · 413 ไฟล์ใหญ่เกิน · 502/504 จาก proxy) กลายเป็น
+      // ข้อความ **"Failed to execute 'json' on 'Response': Unexpected end of JSON input"**
+      // ซึ่งบอกผู้ใช้ไม่ได้เลยว่าเกิดอะไรและต้องทำอะไรต่อ (ผู้ใช้รายงาน 2026-09-18)
+      // API.request จัดการครบอยู่แล้ว: 401 → พากลับหน้า login · non-JSON → บอก
+      // status + เนื้อความจริง · !ok → ใช้ message ของเซิร์ฟเวอร์ · network → ข้อความไทย
       ocrUploadAndScan: (formData, preferredEngine) => {
         const qs = preferredEngine ? `?preferredEngine=${encodeURIComponent(preferredEngine)}` : '';
-        return fetch(`${base}/ocr/upload${qs}`, { method: 'POST', headers: { 'Authorization': `Bearer ${API.token}` }, body: formData }).then(r => r.json());
+        return API.request('POST', `${base}/ocr/upload${qs}`, formData, true);
       },
       getOcrEngines: () => API.get(`${base}/ocr/engines`),
 

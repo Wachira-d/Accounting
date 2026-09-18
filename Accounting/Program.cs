@@ -185,7 +185,42 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     context.Token = accessToken;
                 }
                 return Task.CompletedTask;
-            }
+            },
+
+            // 401 ต้องมี **body ที่อ่านได้** — ค่าเริ่มต้นของ JwtBearer ตอบ 401 พร้อม
+            // header WWW-Authenticate แต่ **body ว่างเปล่า** ⇒ ฝั่งเว็บที่เรียก
+            // `response.json()` จะได้ "Unexpected end of JSON input" ซึ่งไม่บอกอะไร
+            // กับผู้ใช้เลย (ผู้ใช้รายงาน 2026-09-18 ที่หน้าอัปโหลด OCR)
+            // ⇒ ตอบรูปแบบเดียวกับ ApiResponse ทั้งระบบ เพื่อให้ทุกจุดที่ parse JSON
+            // ได้ข้อความไทยที่บอกทางไปต่อ ไม่ว่าจะเรียกผ่านตัวกลางหรือไม่
+            OnChallenge = async context =>
+            {
+                context.HandleResponse();   // หยุด handler เดิมที่จะตอบ body ว่าง
+                if (context.Response.HasStarted) return;
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    data = (object?)null,
+                    message = "เซสชันหมดอายุหรือยังไม่ได้เข้าสู่ระบบ — กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง",
+                }));
+            },
+
+            // 403 เช่นกัน — เดิม body ว่าง ⇒ หน้าเว็บบอกได้แค่ "คุณไม่มีสิทธิ์"
+            // แบบเดาเอง (API.request มี fallback อยู่แล้ว แต่จุดที่ไม่ได้ผ่านตัวกลาง
+            // จะได้ JSON parse error เหมือนกัน)
+            OnForbidden = async context =>
+            {
+                if (context.Response.HasStarted) return;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    data = (object?)null,
+                    message = "บัญชีนี้ไม่มีสิทธิ์เข้าถึงรายการนี้",
+                }));
+            },
         };
     });
 
