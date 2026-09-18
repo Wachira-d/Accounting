@@ -18,9 +18,17 @@ CS1001 "Identifier expected" / CS1003 ลามทั้งไฟล์ แล�
 วิธีตรวจ: หาบรรทัดที่เป็นการ**ประกาศ** method/คลาส แล้วนับ token ก่อนวงเล็บเปิด
 หลังตัดตัวขยาย (public/static/async/…) ออก — ต้องเหลือ [return type][ชื่อ] = 2
 token พอดี (คลาส/record/enum = 1) มากกว่านั้นแปลว่ามีช่องว่างอยู่ในชื่อ
+
+ทรงที่สอง (รอบ 170c — CI run 162 จับได้): **ตัวอักษรที่ไม่ใช่ตัวอักษร/ตัวเลข/_
+ในชื่อ** เช่น `เพดานไม่เกิน_§49_วรรคท้าย()` — `§` ไม่ใช่ identifier char ⇒ CS1056
+"Unexpected character" + CS1013 + CS1002 ล้ม `Accounting.Tests`. ชื่อไทยทำให้พลาด
+ง่ายอีกครั้ง เพราะสายตาอ่าน "§49" เป็นคำเดียวกับข้อความรอบ ๆ. ตรวจเฉพาะ **token ชื่อ**
+(ตัวสุดท้ายก่อน `(` / ชื่อชนิด) หลังตัด generic `<…>` ทิ้ง — อนุญาต `\w` `.` (explicit
+interface impl) `@` (verbatim identifier) `~` (destructor)
 """
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +56,31 @@ def collapse_generics(s: str) -> str:
             continue
         out.append(ch)
     return "".join(out)
+
+
+# ตัวอักษรที่ใช้ในชื่อได้ตามสเปก C# (identifier-part-character): หมวด Unicode
+# L* (ตัวอักษร) · Nl · Nd (ตัวเลข) · Mn/Mc (**สระ/วรรณยุกต์ไทยอยู่หมวดนี้** —
+# `str.isalnum()`/`\w` ตอบว่าไม่ใช่ตัวอักษร ⇒ ใช้ไม่ได้ ฟ้องผิดทุกชื่อไทย) · Pc (_) · Cf
+# บวกที่อนุญาตเป็นพิเศษ: `.` ของ explicit interface impl (`IFoo.Bar(`) · `@` verbatim
+# identifier · `~` destructor
+IDENT_CATEGORIES = {"Lu", "Ll", "Lt", "Lm", "Lo", "Nl", "Nd", "Mn", "Mc", "Pc", "Cf"}
+
+
+def strip_generic(name: str) -> str:
+    """`Foo<T>` → `Foo` · `Dictionary<string,int>` → `Dictionary` (ชื่อจริงอยู่ก่อน <)"""
+    i = name.find("<")
+    return name[:i] if i >= 0 else name
+
+
+def bad_name_char(name: str):
+    """คืนตัวอักษรตัวแรกที่ใช้ในชื่อไม่ได้ หรือ None"""
+    core = strip_generic(name)
+    for i, ch in enumerate(core):
+        if ch in ".@" or (ch == "~" and i == 0):
+            continue
+        if unicodedata.category(ch) not in IDENT_CATEGORIES:
+            return ch
+    return None
 
 
 def check_file(path: Path):
@@ -94,6 +127,10 @@ def check_file(path: Path):
                 name_tokens = name_tokens[1:]
             if len(name_tokens) > 1:
                 problems.append((lineno, raw.strip(), "ชื่อชนิดมีช่องว่าง"))
+            elif name_tokens:
+                bad = bad_name_char(name_tokens[0].split("(")[0])
+                if bad is not None:
+                    problems.append((lineno, raw.strip(), f"ชื่อชนิดมีตัวอักษรที่ใช้ไม่ได้ '{bad}' (CS1056)"))
             continue
 
         if not is_method:
@@ -104,6 +141,10 @@ def check_file(path: Path):
         # ถึงตรงนี้ = ประกาศ method/ctor: ต้องเหลือ [return type][ชื่อ] หรือ [ชื่อ ctor]
         if len(tokens) > 2:
             problems.append((lineno, raw.strip(), "ชื่อ method มีช่องว่าง"))
+            continue
+        bad = bad_name_char(tokens[-1])
+        if bad is not None:
+            problems.append((lineno, raw.strip(), f"ชื่อ method มีตัวอักษรที่ใช้ไม่ได้ '{bad}' (CS1056)"))
     return problems
 
 
@@ -122,7 +163,7 @@ def main():
             rel = path.relative_to(ROOT) if ROOT in path.parents else path
             print(f"{rel}:{lineno}: {why}\n    {text}")
 
-    print(f"\nตรวจ {len(targets)} ไฟล์ .cs · ชื่อที่มีช่องว่าง {total} จุด")
+    print(f"\nตรวจ {len(targets)} ไฟล์ .cs · ชื่อที่มีช่องว่าง/ตัวอักษรต้องห้าม {total} จุด")
     return 1 if total else 0
 
 

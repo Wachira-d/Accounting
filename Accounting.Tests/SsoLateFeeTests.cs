@@ -56,7 +56,7 @@ public class SsoLateFeeTests
         => Assert.Equal(0m, PayrollService.ComputeSsoLateFee(2026, 2, new DateTime(2027, 1, 1), 0m));
 
     [Fact]
-    public void เพดานไม่เกินยอดเงินสมทบเอง_§49_วรรคท้าย()
+    public void เพดานไม่เกินยอดเงินสมทบเอง_มาตรา49_วรรคท้าย()
     {
         // ช้ามาก ๆ (หลายปี) — 2% × 60 เดือน = 120% ต้องถูกตัดที่ 100%
         var fee = PayrollService.ComputeSsoLateFee(2026, 2, new DateTime(2031, 6, 30), Total);

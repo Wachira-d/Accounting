@@ -87,6 +87,12 @@
   (2) `record struct Foo(...)` มีคำนำหน้า **สองคำ** ป๊อปคำเดียวไม่พอ. และต้อง
   ยกเว้น `operator ==` ที่ตัดตรง `=` ไม่ได้ · ยุบช่องว่างใน `<...>` ก่อน ไม่งั้น
   `Dictionary<string, int>` ถูกนับเป็นสอง token)_
+  _(ทรงที่สอง — รอบ 170c, **CI run 162 จับได้ก่อนถึงผู้ใช้**: `_§49_` ในชื่อเทสต์ ⇒ CS1056
+  "Unexpected character" ล้ม `Accounting.Tests` — สัญลักษณ์มาตราที่ใช้ได้ทั่วไฟล์นี้ในคอมเมนต์/
+  สตริง พอหลุดเข้าชื่อ method สายตาอ่านผ่านเพราะชื่อไทยยาวดูเป็นข้อความอยู่แล้ว → ขยาย checker
+  เดิมให้ตรวจ **ตัวอักษรของ token ชื่อ** ตามหมวด Unicode ของสเปก C# — รุ่นแรกใช้ `isalnum()`/`\w`
+  ฟ้อง **1,179 จุด** เพราะสระ/วรรณยุกต์ไทย (ื ่ ้) อยู่หมวด Mn/Mc ซึ่ง Python ไม่นับเป็นตัวอักษร
+  แต่ C# นับ — "checker ที่ฟ้องผิด = checker ที่พัง" อีกรอบ ต้องใช้ `unicodedata.category`)_
 
 - **`Helpers.X` ผูกไป namespace ผิดชั้น = CS0234 ล้มทั้ง solution** `AuthService.cs`
   อยู่ใน `Accounting.Services.Implementations` เขียน `Helpers.PdpaPolicy` โดยคิดว่า
