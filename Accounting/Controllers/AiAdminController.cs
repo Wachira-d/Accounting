@@ -364,7 +364,10 @@ public class AiAdminController : ControllerBase
             r.avgLocalConfidence,
         });
 
-        var health = await _db.LocalModelHealths.AsNoTracking().ToListAsync();
+        // แถว CompanyId = null คือยอดรวมทั้งแพลตฟอร์ม — หน้านี้เป็นมุมมองของแอดมิน
+        // ระบบ ไม่ใช่ของบริษัทใดบริษัทหนึ่ง (รอบ 178: สุขภาพนักเรียนแยกต่อบริษัทแล้ว)
+        var health = await _db.LocalModelHealths.AsNoTracking()
+            .Where(h => h.CompanyId == null).ToListAsync();
         return Ok(new ApiResponse<object>(true, new
         {
             days,
@@ -439,7 +442,9 @@ public class AiAdminController : ControllerBase
         var cutoff = DateTime.UtcNow.AddDays(-Math.Max(7, Math.Min(days, 180)));
         var configs = (await _routing.ListAllAsync(HttpContext.RequestAborted))
             .ToDictionary(c => c.FeatureKey);
-        var health = (await _db.LocalModelHealths.AsNoTracking().ToListAsync())
+        // เฉพาะแถวยอดรวม — ไม่งั้น ToDictionary จะระเบิดเพราะมีหลายแถวต่อ feature
+        var health = (await _db.LocalModelHealths.AsNoTracking()
+                .Where(h => h.CompanyId == null).ToListAsync())
             .ToDictionary(h => h.FeatureKey);
         var stats = await _db.AiSuggestionFeedbacks.AsNoTracking()
             .Where(f => f.CreatedAt >= cutoff && f.UserChosenAt != null)

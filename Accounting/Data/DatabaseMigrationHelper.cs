@@ -4202,6 +4202,21 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false;""",
 
+            // ── สุขภาพนักเรียนต้องแยกต่อบริษัท (รอบ 178) ──────────────────────
+            // เดิม unique ที่ FeatureKey อย่างเดียว ⇒ เก็บได้แถวเดียวต่อ feature
+            // = ตัวเลขของทุก tenant ถูกเฉลี่ยรวมกัน (ทีม T3) · แถว CompanyId = NULL
+            // คือยอดรวมทั้งแพลตฟอร์มที่หน้าแอดมินอ่าน — ต้องคงไว้
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "CompanyId" uuid NULL;""",
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "LocalSamplesLast30d" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "LocalCoverage30d" numeric(5,4) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "ExplicitLabels30d" integer NOT NULL DEFAULT 0;""",
+            """DROP INDEX IF EXISTS "IX_LocalModelHealths_FeatureKey";""",
+            // ⚠️ Postgres ถือว่า NULL ต่างกันเสมอใน unique index ⇒ index เดียวบน
+            // ("FeatureKey","CompanyId") **ไม่กัน** แถวยอดรวม (CompanyId IS NULL) ซ้ำ
+            // ต้องแยกเป็นสอง partial index (หลักการ "ด่านที่ไม่กันอะไรเลย = ไม่มีด่าน")
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_Feature_Company" ON "LocalModelHealths" ("FeatureKey", "CompanyId") WHERE "IsDeleted" = false AND "CompanyId" IS NOT NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_Feature_Platform" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false AND "CompanyId" IS NULL;""",
+
             // Per-feature routing policy — admin sets mode + thresholds
             // per AiFeatureKey. Sparse (rows missing fall back to global
             // defaults in the orchestrator).
@@ -6046,6 +6061,18 @@ public static class DatabaseMigrationHelper
             // สถานะสามค่านี้เป็นลายเซ็นที่แม่นพอในตัวเอง — ไม่มีเส้นไหนในเรพตั้งค่าเหล่านี้
             // **หลัง**ยิง provider สำเร็จ/ล้ม (ล้มจริงคือ Failed=3 / InvalidResponse=7)
             """UPDATE "AiSuggestionFeedbacks" SET "ProviderUsed" = 0 WHERE "ProviderUsed" <> 0 AND "Status" IN (4, 5, 6);""",
+
+            // ── แยก "ผู้ใช้เลือกเอง" ออกจาก "ค่าที่ระบบเติมแล้วถูกกดผ่าน" (รอบ 178) ──
+            """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "UserChoiceOrigin" integer NULL;""",
+            """ALTER TABLE "AiSuggestionMemories" ADD COLUMN IF NOT EXISTS "ExplicitAcceptCount" integer NOT NULL DEFAULT 0;""",
+
+            // ⚠️ **ต้อง backfill** ไม่งั้นของที่ทำงานอยู่แล้วพัง: ฝั่งอ่านคลังคำตอบ
+            // ใช้ `ExplicitAcceptCount >= 1` เป็นด่านใหม่ ⇒ แถวเก่าที่มีค่า 0 ทั้งหมด
+            // จะหยุดเสิร์ฟทันทีที่ deploy ทั้งที่เคยเสิร์ฟถูกมาตลอด (กฎเหล็ก #4 H
+            // "อะไรที่ทำได้ดีแล้ว ห้ามทำให้แย่ลง")
+            // พฤติกรรมเดิมเทียบเท่ากับ "ทุกคำยืนยันนับเป็นการลงมือเลือก" ⇒ คัดลอก
+            // AcceptCount มาเป็นยอดตั้งต้น แล้วให้กติกาใหม่มีผลกับของที่เรียนต่อจากนี้
+            """UPDATE "AiSuggestionMemories" SET "ExplicitAcceptCount" = "AcceptCount" WHERE "ExplicitAcceptCount" = 0 AND "AcceptCount" > 0;""",
 
             // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
             // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)

@@ -935,9 +935,11 @@ const API = {
       aiSuggestBankMatch: (bankTransactionId, currentMatchedDocId) =>
         API.post(`${base}/ai/bank/suggest-match`,
           { bankTransactionId, currentMatchedDocId }),
-      aiFeedbackRecord: (feedbackId, chosenAnswer, acceptedAi) =>
+      // `source` = คำยืนยันนี้ตั้งใจแค่ไหน: 'Explicit' เมื่อเรียกจาก event ที่ผู้ใช้
+      // เปลี่ยนค่าเอง · 'BulkApprove' เมื่อคลิกเดียวยืนยันหลายรายการ · ไม่ส่ง = Implicit
+      aiFeedbackRecord: (feedbackId, chosenAnswer, acceptedAi, source) =>
         API.post(`${base}/ai-feedback/record`,
-          { feedbackId, chosenAnswer, acceptedAi }),
+          { feedbackId, chosenAnswer, acceptedAi, source }),
       aiExplainAnomaly: (anomalyId, force) =>
         API.post(`${base}/ai/anomalies/${anomalyId}/explain${force ? '?force=true' : ''}`),
       aiBatchSuggestPvAccounts: (sourceInvoiceId) =>

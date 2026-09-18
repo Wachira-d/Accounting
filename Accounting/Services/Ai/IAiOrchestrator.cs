@@ -28,5 +28,7 @@ public interface IAiOrchestrator
     /// <summary>Called by UI when the user makes a final choice on a
     /// previously-suggested answer. Caller supplies the FeedbackId
     /// returned by the original AskAsync call.</summary>
-    Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct = default);
+    Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi,
+        CancellationToken ct = default,
+        Models.Enums.UserChoiceSource source = Models.Enums.UserChoiceSource.Implicit);
 }

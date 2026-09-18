@@ -43,6 +43,17 @@ public class AiFeatureRoutingResolver : IAiFeatureRoutingResolver
 
     private const decimal DefaultThreshold = 0.85m;
     private const decimal DefaultSampling = 0.10m;
+
+    /// <summary>อัตราสุ่มถามครูขั้นต่ำ — **ห้ามเป็น 0**
+    ///
+    /// <para>การสุ่มถามครูคือ<b>ช่องทางเดียว</b>ที่ระบบจะรู้ว่านักเรียนเริ่มตอบผิด:
+    /// ถ้าตั้งเป็น 0 เราจะไม่มีคำตอบของครูมาเทียบอีกเลย ⇒ ตัววัด "นักเรียนแม่นแค่ไหน"
+    /// กลายเป็นค่าที่ไม่มีวันเปลี่ยน แล้วระบบก็จะดู "สุขภาพดี" ตลอดกาลทั้งที่กำลังแย่ลง
+    /// (ทีม T3 รอบ 177 · ญาติของ "ด่านที่ป้อนผลของสูตรที่ตัวเองตรวจ")</para>
+    ///
+    /// <para>ปิดการถามครูจริง ๆ ให้ใช้ <c>AiFeatureRoutingMode.LocalOnly</c> หรือปิด
+    /// provider — ซึ่งเป็น**การตัดสินใจที่มองเห็นได้** ไม่ใช่ตัวเลขที่เลื่อนไปจนสุด</para></summary>
+    public const decimal MinSamplingRate = 0.01m;
     private const AiFeatureRoutingMode DefaultMode = AiFeatureRoutingMode.Hybrid;
 
     private Dictionary<string, AiFeatureRoutingDecision> _cache = new();
@@ -72,6 +83,12 @@ public class AiFeatureRoutingResolver : IAiFeatureRoutingResolver
             throw new ArgumentOutOfRangeException(nameof(threshold), "Must be in [0,1].");
         if (samplingRate.HasValue && (samplingRate.Value < 0 || samplingRate.Value > 1))
             throw new ArgumentOutOfRangeException(nameof(samplingRate), "Must be in [0,1].");
+        // พื้นขั้นต่ำ — ดูเหตุผลที่ MinSamplingRate · ผู้ใช้ที่ตั้งใจปิดจริงต้องเลือก
+        // โหมด LocalOnly ซึ่งบอกเจตนาตรง ๆ แทนการเลื่อนอัตราไปจนเป็นศูนย์
+        if (samplingRate is { } sr && sr > 0m && sr < MinSamplingRate)
+            samplingRate = MinSamplingRate;
+        else if (samplingRate == 0m && mode != AiFeatureRoutingMode.LocalOnly)
+            samplingRate = MinSamplingRate;
 
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();

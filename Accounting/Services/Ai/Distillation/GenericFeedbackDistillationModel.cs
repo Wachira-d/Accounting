@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -102,7 +99,7 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
             .Select(f => new
             {
                 f.PromptJson, f.UserChosenAnswer, f.UserChosenAt,
-                f.UserAcceptedAi, f.AiPrimaryAnswer,
+                f.UserAcceptedAi, f.AiPrimaryAnswer, f.UserChoiceOrigin,
             })
             .ToListAsync(ct);
 
@@ -110,7 +107,15 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
         var perInput = new Dictionary<string, Dictionary<string, (int Confirmed, int Overridden)>>();
         var companyTally = new Dictionary<string, (int Confirmed, int Overridden)>();
 
-        void Add(string? key, string answer, int confirmedDelta, int overriddenDelta)
+        // ⚠️ `countTowardMajority` แยกสองถังออกจากกัน (ทีม T3 รอบ 177 §3.1):
+        //  • ถังต่ออินพุต (tier 1) รับได้ทุกสัญญาณ — มันผูกกับ "คำถามเดิมเป๊ะ"
+        //    อยู่แล้ว การเรียนผิดจึงจำกัดวงอยู่ที่อินพุตนั้น
+        //  • ถังรวมทั้งบริษัท (tier 2) ตอบ **ทุกอินพุตที่ไม่เคยเห็น** ⇒ สัญญาณอ่อน
+        //    (กดอนุมัติผ่าน · ยืนยันทั้งชุด · คำตอบครูที่ไม่มีใครแตะ) ห้ามเข้าถังนี้
+        //    ไม่งั้น "คำตอบยอดฮิตที่ไม่มีใครเคยมอง" จะกลายเป็นค่าตั้งต้นของทั้งบริษัท
+        //    โดยเฉพาะตอนปิด provider ซึ่งเป็นโหมดเป้าหมายของโปรเจกต์
+        void Add(string? key, string answer, int confirmedDelta, int overriddenDelta,
+            bool countTowardMajority)
         {
             if (!string.IsNullOrEmpty(key))
             {
@@ -119,28 +124,35 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
                 var s = perAns.GetValueOrDefault(answer);
                 perAns[answer] = (s.Item1 + confirmedDelta, s.Item2 + overriddenDelta);
             }
+            if (!countTowardMajority) return;
             var c = companyTally.GetValueOrDefault(answer);
             companyTally[answer] = (c.Item1 + confirmedDelta, c.Item2 + overriddenDelta);
         }
 
         foreach (var r in rows)
         {
-            var key = Fingerprint(r.PromptJson);
+            var key = Accounting.Helpers.AiMemoryKey.Of(r.PromptJson);
 
             if (r.UserChosenAt != null && !string.IsNullOrEmpty(r.UserChosenAnswer))
             {
+                // แถวก่อนรอบ 178 ไม่มีค่านี้ — ตีความเป็น Explicit เพื่อไม่ให้ของที่
+                // เรียนมาแล้วหายไปทั้งก้อน (กติกาใหม่มีผลกับสิ่งที่เรียนต่อจากนี้)
+                var deliberate = r.UserChoiceOrigin is null
+                    or Models.Enums.UserChoiceSource.Explicit;
                 // Strong signal — the human's pick is ground truth (high weight).
-                Add(key, r.UserChosenAnswer, StrongWeight, 0);
+                Add(key, r.UserChosenAnswer, StrongWeight, 0, countTowardMajority: deliberate);
                 // If they overrode a DIFFERENT AI answer, record that as a
                 // negative example so the wrong answer's score is pulled down.
                 if (!string.IsNullOrEmpty(r.AiPrimaryAnswer)
                     && r.AiPrimaryAnswer != r.UserChosenAnswer)
-                    Add(key, r.AiPrimaryAnswer, 0, StrongWeight);
+                    Add(key, r.AiPrimaryAnswer, 0, StrongWeight, countTowardMajority: deliberate);
             }
             else if (!string.IsNullOrEmpty(r.AiPrimaryAnswer))
             {
                 // Weak signal — distil the confident teacher answer (low weight).
-                Add(key, r.AiPrimaryAnswer, WeakWeight, 0);
+                // **ห้ามเข้าถังรวมบริษัท**: คำตอบครูที่ไม่มีมนุษย์แตะเลยยังไม่ใช่
+                // ความจริงของบริษัท — มันคือสิ่งที่เรากำลังจะตรวจสอบ ไม่ใช่ข้อสรุป
+                Add(key, r.AiPrimaryAnswer, WeakWeight, 0, countTowardMajority: false);
             }
         }
 
@@ -181,9 +193,60 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
             featureName, companyId, perInput.Count, companyTally.Count > 0, rows.Count);
     }
 
-    public Task<LocalPrediction?> PredictAsync(Guid companyId, string inputJson, CancellationToken ct)
+    /// <summary>ความมั่นใจของคำตอบที่มาจาก "คลังที่เรียนทันที" (tier 0) —
+    /// **ต่ำกว่าเกณฑ์ short-circuit 0.85 โดยตั้งใจ**: มันคือคำยืนยันของคนคนเดียว
+    /// ที่ยังไม่ผ่านงานกลางคืน ⇒ ใช้ตอบได้ (โดยเฉพาะตอนปิด provider) แต่ต้อง
+    /// **ไม่ทำให้เลิกถามครูทันทีตั้งแต่ครั้งแรก**</summary>
+    private const decimal InstantMemoryConfidence = 0.80m;
+
+    /// <summary>จำนวนคำยืนยันแบบ<b>ตั้งใจ</b>ขั้นต่ำก่อนจะเสิร์ฟคำตอบจากคลังทันที
+    ///
+    /// <para>ผู้ใช้ที่กด "ยอมรับและอนุมัติต่อ" เป็นนิสัยสร้างคำยืนยันแบบ
+    /// <see cref="Models.Enums.UserChoiceSource.Implicit"/> ได้วันละหลายสิบแถว
+    /// โดยไม่เคยมองค่าที่ระบบเติมให้ ⇒ ถ้านับรวมเป็นความจริง คลังจะเอียงตามนิสัย
+    /// การกด ไม่ใช่ตามความถูกต้อง (ทีม T3 รอบ 177 §3.1)</para></summary>
+    private const int MinExplicitConfirms = 1;
+
+    public async Task<LocalPrediction?> PredictAsync(Guid companyId, string inputJson, CancellationToken ct)
     {
-        var key = Fingerprint(inputJson);
+        var key = Accounting.Helpers.AiMemoryKey.Of(inputJson);
+
+        // ── Tier 0 — คลังที่ "เรียนทันทีเมื่อผู้ใช้ยืนยัน" ─────────────────────
+        // งานกลางคืนเป็นตัวที่ทำให้นักเรียนเก่งขึ้นจริง แต่มันรันวันละครั้ง ⇒ คำตอบ
+        // ที่ผู้ใช้เพิ่งแก้เมื่อเช้า ระบบจะยังตอบผิดแบบเดิมไปทั้งวัน. แถวใน
+        // `AiSuggestionMemory` ถูกเขียนทันทีที่ผู้ใช้ยืนยัน/แก้ — เดิมเส้นนี้
+        // **ไม่มีใครอ่านกลับเลย** เพราะกุญแจฝั่งเขียนกับฝั่งอ่านคนละแบบ (รอบ 178)
+        if (!string.IsNullOrEmpty(key))
+        {
+            try
+            {
+                using var scope = _services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+                var featureName = FeatureKey.ToString();
+                var mem = await db.AiSuggestionMemories.AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.CompanyId == companyId
+                                              && m.FeatureKey == featureName
+                                              && m.InputKey == key, ct);
+                if (mem != null
+                    && !string.IsNullOrWhiteSpace(mem.LearnedAnswer)
+                    && mem.ExplicitAcceptCount >= MinExplicitConfirms
+                    && mem.Confidence >= 0.50m)
+                {
+                    return new LocalPrediction(
+                        PrimaryAnswer: mem.LearnedAnswer,
+                        Confidence: Math.Min(InstantMemoryConfidence, mem.Confidence),
+                        Alternatives: Array.Empty<string>(),
+                        SupportingSamples: mem.AcceptCount + mem.OverrideCount,
+                        ModelVersion: Version + "-instant");
+                }
+            }
+            catch (Exception ex)
+            {
+                // คลังล่ม ≠ ตอบไม่ได้ — ตกไปใช้ชั้นในหน่วยความจำต่อ
+                _logger.LogWarning(ex, "อ่านคลังคำตอบทันทีไม่สำเร็จ (feature {Feature})", FeatureKey);
+            }
+        }
+
         lock (_lock)
         {
             // Tier 1 — exact fingerprint hit (can reach short-circuit confidence).
@@ -191,27 +254,27 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
                 && _entries.TryGetValue((companyId, key), out var hits) && hits.Count > 0)
             {
                 var top = hits[0];
-                return Task.FromResult<LocalPrediction?>(new LocalPrediction(
+                return new LocalPrediction(
                     PrimaryAnswer: top.Answer,
                     Confidence: top.WilsonScore,
                     Alternatives: hits.Skip(1).Take(2).Select(h => h.Answer).ToList(),
                     SupportingSamples: top.Confirmed + top.Overridden,
-                    ModelVersion: Version));
+                    ModelVersion: Version);
             }
 
             // Tier 2 — company majority fallback (capped confidence; the
             // safety net that keeps the feature alive when AI is switched off).
             if (_majority.TryGetValue(companyId, out var maj))
             {
-                return Task.FromResult<LocalPrediction?>(new LocalPrediction(
+                return new LocalPrediction(
                     PrimaryAnswer: maj.Answer,
                     Confidence: maj.Confidence,
                     Alternatives: Array.Empty<string>(),
                     SupportingSamples: maj.N,
-                    ModelVersion: Version + "-majority"));
+                    ModelVersion: Version + "-majority");
             }
         }
-        return Task.FromResult<LocalPrediction?>(null);
+        return null;
     }
 
     private static decimal Wilson(int successes, int n)
@@ -225,104 +288,9 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
         return (decimal)Math.Max(0, (center - spread) / denom);
     }
 
-    /// <summary>SHA-256 of the volatile-token-stripped prompt JSON. Stripping
-    /// tax IDs / amounts / dates / doc numbers means (a) inputs that differ only
-    /// in those values share a key, and (b) the PII-sanitised prompt stored at
-    /// train time and the raw prompt seen at predict time converge.</summary>
-    private static string Fingerprint(string? promptJson)
-    {
-        if (string.IsNullOrEmpty(promptJson)) return "";
-        var normalised = Normalise(promptJson);
-        if (normalised.Length == 0) return "";
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
-        return Convert.ToHexString(bytes);
-    }
-
-    private static readonly System.Text.RegularExpressions.Regex _taxIdRe =
-        new(@"\b\d{13}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-    // ⚠️ รูปแบบ "หลัง mask" ของ AiPromptSanitizer ต้อง normalise ให้เป็น token
-    // เดียวกับค่าดิบ — แถว feedback ถูกบันทึกด้วย prompt ที่ sanitize แล้ว
-    // (AiStripPiiInPrompts=true) ขณะที่ตอนทำนายใช้ prompt ดิบ ถ้าไม่ทำให้ตรงกัน
-    // fingerprint จะไม่มีวันชนกัน → Tier-1 exact-memory ของ student ตายสนิท
-    private static readonly System.Text.RegularExpressions.Regex _taxIdMaskedRe =
-        new(@"\b(?:\dx{10}\d|x{13})\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _phoneRe =
-        new(@"\b0\d{1,2}[- \t]?\d{3}[- \t]?\d{4}\b|\b0\d{8,9}\b",
-            System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _phoneMaskedRe =
-        new(@"\b(?:\d{2}x{4}\d{2}|0x{6})\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _piiHashRe =
-        new(@"""h:[0-9a-f]{6,}""", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _docNumRe =
-        new(@"\b(?:INV|TXN|REF|PV|RV|BIL|TAX|IV)[-_/]?\d{4,}\b",
-            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    private static readonly System.Text.RegularExpressions.Regex _dateRe =
-        new(@"\b\d{4}-\d{2}-\d{2}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _amountRe =
-        new(@"\b[\d,]+\.?\d*\b", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex _wsRe =
-        new(@"\s+", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    private static string Normalise(string s)
-    {
-        // Best-effort: re-serialise to canonical JSON so key ordering /
-        // whitespace don't affect the fingerprint; fall back to raw on parse error.
-        // พร้อมกันนี้ทำให้ field ที่ sanitizer แทนด้วย hash ("*_pii"/"*_personal")
-        // กลายเป็น token คงที่ทั้งฝั่งบันทึกและฝั่งทำนาย
-        var t = s;
-        try
-        {
-            var node = System.Text.Json.Nodes.JsonNode.Parse(s);
-            if (node != null)
-            {
-                MaskPiiKeys(node);
-                t = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
-            }
-        }
-        catch { /* not JSON — fingerprint the raw text */ }
-
-        t = t.ToLowerInvariant();
-        t = _piiHashRe.Replace(t, "\"<pii>\"");
-        // masked ก่อน raw: ค่าที่ถูก mask แล้วมีตัวอักษร x ปน ถ้าปล่อยให้ _amountRe
-        // จับก่อนจะได้ "<amt>xxxx<amt>" ซึ่งไม่ตรงกับค่าดิบที่ได้ "<phone>"
-        t = _taxIdMaskedRe.Replace(t, "<taxid>");
-        t = _taxIdRe.Replace(t, "<taxid>");
-        t = _phoneMaskedRe.Replace(t, "<phone>");
-        t = _phoneRe.Replace(t, "<phone>");
-        t = _docNumRe.Replace(t, "<docnum>");
-        t = _dateRe.Replace(t, "<date>");
-        t = _amountRe.Replace(t, "<amt>");
-        t = _wsRe.Replace(t, " ").Trim();
-        return t;
-    }
-
-    /// <summary>แทนค่าของ field ที่เป็น PII ตาม convention ของ AiPromptSanitizer
-    /// ("*_pii" / "*_personal") ด้วย token คงที่ — ฝั่งบันทึกเก็บเป็น "h:{hash}"
-    /// ฝั่งทำนายเป็นค่าดิบ ถ้าไม่ทำให้เหมือนกัน fingerprint จะไม่ตรงกันตลอดไป</summary>
-    private static void MaskPiiKeys(System.Text.Json.Nodes.JsonNode node)
-    {
-        if (node is System.Text.Json.Nodes.JsonObject obj)
-        {
-            foreach (var key in obj.Select(kvp => kvp.Key).ToList())
-            {
-                var val = obj[key];
-                if (key.EndsWith("_pii", StringComparison.OrdinalIgnoreCase)
-                    || key.EndsWith("_personal", StringComparison.OrdinalIgnoreCase))
-                {
-                    obj[key] = "<pii>";
-                }
-                else if (val is System.Text.Json.Nodes.JsonObject or System.Text.Json.Nodes.JsonArray)
-                {
-                    MaskPiiKeys(val);
-                }
-            }
-        }
-        else if (node is System.Text.Json.Nodes.JsonArray arr)
-        {
-            foreach (var item in arr.Where(i => i != null))
-                MaskPiiKeys(item!);
-        }
-    }
+    // กุญแจของ "อินพุตเดียวกัน" ย้ายไป Helpers/AiMemoryKey แล้ว (รอบ 178) —
+    // เดิมสำเนานี้เป็นตัวเดียวที่รู้วิธีทำกุญแจ ทำให้ฝั่ง orchestrator เขียนคลัง
+    // ด้วยกุญแจคนละแบบจนไม่มีใครอ่านกลับได้ (ดู doc ของ AiMemoryKey)
 
     private sealed record Cand(string Answer, int Confirmed, int Overridden, decimal WilsonScore);
 }

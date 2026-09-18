@@ -2560,8 +2560,11 @@ public class AccountingDbContext : DbContext
 
         modelBuilder.Entity<LocalModelHealth>(e =>
         {
-            e.HasIndex(h => h.FeatureKey)
-                .HasDatabaseName("IX_LocalModelHealths_FeatureKey")
+            // หนึ่งแถวต่อ (feature, บริษัท) — แถว CompanyId = null คือ **ยอดรวม
+            // ทั้งแพลตฟอร์ม** ที่หน้าแอดมินอ่าน (รอบ 178: เดิม unique ที่ FeatureKey
+            // อย่างเดียว ⇒ เก็บได้แถวเดียวต่อ feature = วัดรวมทุก tenant)
+            e.HasIndex(h => new { h.FeatureKey, h.CompanyId })
+                .HasDatabaseName("IX_LocalModelHealths_Feature_Company")
                 .IsUnique();
             e.HasQueryFilter(h => !h.IsDeleted);
         });

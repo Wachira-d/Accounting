@@ -12184,7 +12184,13 @@ public partial class DocumentService : IDocumentService
             var accepted = string.Equals(chosenCode, ai.AiPrimaryAnswer, StringComparison.OrdinalIgnoreCase);
             try
             {
-                await _feedbackRecorder.RecordUserChoiceAsync(fid, chosenCode, accepted, ct);
+                // ⚠️ **Implicit เสมอ** — เส้นนี้ยิงตอน**อนุมัติเอกสาร** ทุกบรรทัดที่มี
+                // feedbackId โดยไม่รู้ว่าผู้ใช้เคยมองช่องผังบัญชีนั้นหรือไม่
+                // (`accepted` = ค่าที่ระบบเติมให้ยังไม่ถูกเปลี่ยน) ⇒ ผู้ใช้ที่กด
+                // "อนุมัติ" รัว ๆ จะกลายเป็นผู้ยืนยันวันละหลายสิบแถว แล้วดัน Wilson
+                // ทะลุเกณฑ์จนไม่มีครูมาขัดอีกเลย (ทีม T3 รอบ 177 §3.1)
+                await _feedbackRecorder.RecordUserChoiceAsync(fid, chosenCode, accepted, ct,
+                    Accounting.Models.Enums.UserChoiceSource.Implicit);
             }
             catch (Exception ex)
             {
@@ -16032,6 +16038,10 @@ public partial class DocumentService : IDocumentService
         try
         {
             string chosen;
+            // "ตั้งใจแค่ไหน" ต่างกันสองทาง (ทีม T3 รอบ 177 §3.1):
+            //  • กรอกยอดหัก + เลือกประเภทเงินได้เอง = ลงมือทำจริง ⇒ Explicit
+            //  • ไม่กรอกอะไรเลยแล้วกดอนุมัติ ⇒ "None" เป็นค่าตั้งต้น ไม่ใช่การตัดสินใจ
+            Accounting.Models.Enums.UserChoiceSource source;
             if (doc.WithholdingTaxAmount > 0.005m)
             {
                 // หักจริง — คำตอบคือประเภทเงินได้ที่ใช้ · ไม่ระบุ = สอนอะไรไม่ได้ ข้ามไป
@@ -16039,15 +16049,17 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefault(l => !l.IsDeleted && !string.IsNullOrWhiteSpace(l.IncomeTypeCode))?.IncomeTypeCode;
                 if (string.IsNullOrWhiteSpace(code)) return;
                 chosen = code!;
+                source = Accounting.Models.Enums.UserChoiceSource.Explicit;
             }
             else
             {
                 chosen = "None";
+                source = Accounting.Models.Enums.UserChoiceSource.Implicit;
             }
 
             await _feedbackRecorder.RecordUserChoiceAsync(fid, chosen,
                 acceptedAi: string.Equals(chosen, doc.WhtAdviceAnswer, StringComparison.OrdinalIgnoreCase),
-                default);
+                default, source);
         }
         catch (Exception ex)
         {
@@ -16067,21 +16079,66 @@ public partial class DocumentService : IDocumentService
     /// สแกนอ่านข้อความไม่ออก) — "ไม่มีกระดาษ" ≠ "กระดาษบอกว่าไม่ต้องหัก"
     /// การเหมารวมสองอย่างนี้คือการแปลง "ไม่รู้" เป็น "ไม่ต้องหัก"</para>
     /// </summary>
-    private async Task<bool?> ScanPaperShowsWithholdingAsync(Guid companyId, Guid documentId)
+    /// <summary>สิ่งที่กระดาษของเอกสารนี้บอกเรื่องหัก ณ ที่จ่าย + ใบนั้นสมบูรณ์แค่ไหน
+    ///
+    /// <para>คืนสองค่าพร้อมกันเพราะทั้งคู่มาจาก<b>แถวสแกนแถวเดียวกัน</b> — แยกคิวรีสองรอบ
+    /// จะได้คำตอบจากคนละใบเมื่อเอกสารหนึ่งมีสแกนหลายรอบ</para></summary>
+    private async Task<(bool? ShowsWht, Accounting.Helpers.PaperTaxInvoiceGrade Grade, string GradeReason)>
+        ScanPaperWhtEvidenceAsync(Guid companyId, Guid documentId)
     {
+        var unknown = (default(bool?), Accounting.Helpers.PaperTaxInvoiceGrade.Unknown, "ไม่มีกระดาษให้ดู");
+
         var scan = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.RawTextContent, r.HasWht, r.WhtRate })
+            .Select(r => new
+            {
+                r.RawTextContent, r.HasWht, r.WhtRate,
+                r.ExtractedVendorName, r.ExtractedVendorTaxId, r.VendorAddress,
+                r.BuyerName, r.BuyerAddress,
+                r.ExtractedDocumentNumber, r.ExtractedDate,
+                r.ExtractedSubTotal, r.ExtractedVatAmount, r.ExtractedTotalAmount,
+                r.ExtractedItemsJson,
+            })
             .FirstOrDefaultAsync();
-        if (scan == null) return null;                              // เอกสารนี้ไม่ได้มาจากสแกน
-        if (string.IsNullOrWhiteSpace(scan.RawTextContent)) return null;  // อ่านกระดาษไม่ออก
+        if (scan == null) return unknown;                              // เอกสารนี้ไม่ได้มาจากสแกน
+        if (string.IsNullOrWhiteSpace(scan.RawTextContent)) return unknown;  // อ่านกระดาษไม่ออก
+
+        // ความสมบูรณ์ของใบ — ตัวตัดสินตัวเดียว ห้ามนับรายการเองที่นี่
+        var grade = Accounting.Helpers.PaperTaxInvoiceCompleteness.Judge(
+            new Accounting.Helpers.PaperTaxInvoiceFacts(
+                RawText: scan.RawTextContent,
+                SellerName: scan.ExtractedVendorName,
+                SellerTaxId: scan.ExtractedVendorTaxId,
+                SellerAddress: scan.VendorAddress,
+                BuyerName: scan.BuyerName,
+                BuyerAddress: scan.BuyerAddress,
+                DocumentNumber: scan.ExtractedDocumentNumber,
+                DocumentDate: scan.ExtractedDate,
+                LineCount: CountScanLines(scan.ExtractedItemsJson),
+                SubTotal: scan.ExtractedSubTotal,
+                VatAmount: scan.ExtractedVatAmount,
+                TotalAmount: scan.ExtractedTotalAmount));
 
         // ตัวอ่านตัวเดียวของระบบ — ห้ามเขียน regex ชุดที่สองที่นี่
         var paper = Accounting.Helpers.PaperWhtReader.Read(scan.RawTextContent);
-        if (paper.Amount is > 0m || paper.RatePercent is > 0m) return true;
-        if (scan.HasWht || scan.WhtRate is > 0m) return true;       // ตัวสกัดตอนสแกนเจอไว้ก่อนแล้ว
-        return false;                                                // อ่านกระดาษได้ และไม่มีส่วนหัก
+        if (paper.Amount is > 0m || paper.RatePercent is > 0m) return (true, grade.Grade, grade.Reason);
+        if (scan.HasWht || scan.WhtRate is > 0m) return (true, grade.Grade, grade.Reason);
+        return (false, grade.Grade, grade.Reason);   // อ่านกระดาษได้ และไม่มีส่วนหัก
+    }
+
+    /// <summary>จำนวนบรรทัดที่ OCR แกะได้จากกระดาษ — JSON เสีย/ว่าง = 0 (ไม่ throw:
+    /// ด่านนี้ตอบว่า "ใบไม่สมบูรณ์" ได้ แต่ห้ามทำให้การอนุมัติล้ม)</summary>
+    private static int CountScanLines(string? itemsJson)
+    {
+        if (string.IsNullOrWhiteSpace(itemsJson)) return 0;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(itemsJson);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? doc.RootElement.GetArrayLength() : 0;
+        }
+        catch (System.Text.Json.JsonException) { return 0; }
     }
 
     /// <summary>ข้อเท็จจริงรายบรรทัดสำหรับ <see cref="Accounting.Helpers.WhtApplicabilityEvidence"/>
@@ -16343,11 +16400,19 @@ public partial class DocumentService : IDocumentService
         {
             // ชั้นที่ 0 — **กระดาษพูดก่อน** (คำตัดสินเจ้าของโปรเจกต์ 2026-09-18)
             // ใบกำกับที่สแกนมาไม่มีส่วน "หัก ณ ที่จ่าย" ⇒ ไม่ต้องหัก
-            var paperShowsWht = await ScanPaperShowsWithholdingAsync(companyId, doc.Id);
+            var (paperShowsWht, paperGrade, paperGradeReason) =
+                await ScanPaperWhtEvidenceAsync(companyId, doc.Id);
 
             // ชั้นที่ 1 — หลักฐานเชิงกำหนดจากข้อมูลที่เราถืออยู่ (pure helper + เทสต์)
             var whtEvidence = Accounting.Helpers.WhtApplicabilityEvidence.Judge(
-                await BuildWhtLineFactsAsync(companyId, doc), paperShowsWht);
+                await BuildWhtLineFactsAsync(companyId, doc), paperShowsWht, paperGrade);
+
+            // ใบที่ "เงียบแต่ไม่สมบูรณ์" ต้องตามรอยได้ว่าทำไมความเงียบนั้นไม่ถูกนับ
+            // (ไม่งั้นรอบหน้าจะมีคนถามซ้ำว่า "กระดาษไม่มีบรรทัดหัก ทำไมยังเตือน")
+            if (paperShowsWht == false && paperGrade != Accounting.Helpers.PaperTaxInvoiceGrade.Complete)
+                _logger.LogInformation(
+                    "WHT: กระดาษของเอกสาร {DocumentId} ไม่มีส่วนหัก ณ ที่จ่าย แต่ยังไม่นับเป็นหลักฐาน — {Reason}",
+                    doc.Id, paperGradeReason);
 
             // พิสูจน์ได้ว่าไม่อยู่ในข่าย ⇒ **เงียบสนิท** ไม่ต้องคิดยอดสะสมด้วยซ้ำ
             if (whtEvidence.Level != Accounting.Helpers.WhtApplicability.NotApplicable)

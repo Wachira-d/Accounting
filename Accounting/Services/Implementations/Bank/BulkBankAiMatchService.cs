@@ -167,8 +167,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             {
                 try
                 {
+                    // ยืนยันทั้งชุดในคลิกเดียว — หนึ่งคลิกกลายเป็นคำยืนยันหลายสิบแถว
+                    // ⇒ ห้ามนับเป็นคำยืนยันที่ตั้งใจต่อรายการ (ทีม T3 §3.1)
                     await _recorder.RecordUserChoiceAsync(o.PerMatchFeedbackId,
-                        o.ChosenCandidateJson, o.AcceptedAi, ct);
+                        o.ChosenCandidateJson, o.AcceptedAi, ct,
+                        Accounting.Models.Enums.UserChoiceSource.BulkApprove);
                 }
                 catch (Exception ex)
                 {

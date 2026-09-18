@@ -70,6 +70,11 @@ public class AiSuggestionController : ControllerBase
             x => x.CompanyId == companyId && x.FeatureKey == feature.ToString() && x.InputKey == inputKey, ct);
         if (m == null) return null;
         if (m.Confidence < 0.50m) return null;          // contested — let heuristic decide
+        // ⚠️ ต้องมีคำยืนยันที่ **ตั้งใจ** อย่างน้อยหนึ่งครั้ง — ยอด AcceptCount ล้วน
+        // อาจมาจากการกด "อนุมัติ" รัว ๆ โดยไม่เคยมองค่าที่ระบบเติมให้เลย
+        // (ทีม T3 รอบ 177 §3.1 · แถวเก่าถูก backfill ให้เท่า AcceptCount ใน migration
+        //  จึงไม่มีใครเสียสิ่งที่เคยทำงานอยู่)
+        if (m.ExplicitAcceptCount < 1) return null;
         var samples = m.AcceptCount + m.OverrideCount;
         return (m.LearnedAnswer, m.Confidence, samples);
     }
@@ -451,6 +456,29 @@ public class AiSuggestionController : ControllerBase
             req.LineDescription, req.Amount,
             req.CurrentCode, req.CurrentCode != null ? 0.50m : (decimal?)null,
             ct);
+
+        // ── ด่านกันคำตอบที่แต่งขึ้น (รอบ 178) ────────────────────────────────
+        // ผู้เรียกอีกรายของ feature key เดียวกัน (`DocumentService` สายคำเตือน
+        // หัก ณ ที่จ่าย) ตรวจว่ารหัสที่ได้ **มีอยู่จริงใน ThaiWhtRateTable** ก่อนใช้
+        // แต่เส้นนี้คืนค่าดิบ ⇒ ด่านถูกใส่ที่เดียวจากสองที่ (ผิดหลัก "แก้ที่หนึ่ง
+        // grep ทั้งเรพ") · รหัสที่ไม่มีในตารางแปลว่าโมเดลแต่งขึ้น ⇒ ไม่ส่งออกไป
+        // ให้หน้าเว็บเอาไปตั้งอัตราหัก เพราะอัตราที่ผิดคือเงินที่นำส่งผิดจริง
+        if (!string.IsNullOrWhiteSpace(result.Answer)
+            && !string.Equals(result.Answer, "None", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(result.Answer, "Skip", StringComparison.OrdinalIgnoreCase)
+            && Accounting.Helpers.ThaiWhtRateTable.Find(result.Answer) == null)
+        {
+            return Ok(new ApiResponse<object>(true, new
+            {
+                answer = (string?)null,
+                confidence = 0m,
+                usedAi = result.UsedAi,
+                feedbackId = result.FeedbackId,   // ⬅ ยังเก็บไว้: คำตอบที่ถูกทิ้งก็เป็นข้อมูลสอน
+                reasoning = "ระบบเสนอรหัสประเภทเงินได้ที่ไม่มีในตารางอัตรา ท.ป.4/2528 — "
+                    + "จึงไม่แนะนำค่าใด กรุณาเลือกประเภทเงินได้เอง",
+            }));
+        }
+
         return Ok(new ApiResponse<object>(true, ToDto(result)));
     }
 

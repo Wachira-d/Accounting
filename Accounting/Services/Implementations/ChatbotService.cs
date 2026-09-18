@@ -504,8 +504,10 @@ public class ChatbotService : IChatbotService
         {
             try
             {
+                // ผู้ใช้กดให้คะแนนคำตอบนั้นเอง = การลงมือเลือก
                 await _feedback.RecordUserChoiceAsync(msg.AiFeedbackId.Value,
-                    vote == 1 ? msg.Content : "", acceptedAi: vote == 1, ct);
+                    vote == 1 ? msg.Content : "", acceptedAi: vote == 1, ct,
+                    Accounting.Models.Enums.UserChoiceSource.Explicit);
             }
             catch (Exception ex) { _logger.LogWarning(ex, "chat vote feedback failed"); }
         }

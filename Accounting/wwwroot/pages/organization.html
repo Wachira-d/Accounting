@@ -259,7 +259,8 @@
                 fetch(`/api/companies/${cid}/ai-feedback/record`, {
                   method: 'POST',
                   headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId })
+                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value,
+                    acceptedAi: sel.value === d.accountId, source: 'Explicit' })   // ยิงจาก event change
                 }).catch(() => {});
               } catch {}
             }, { once: true });

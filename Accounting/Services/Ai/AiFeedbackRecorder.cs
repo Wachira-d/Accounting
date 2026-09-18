@@ -19,7 +19,11 @@ namespace Accounting.Services.Ai;
 public interface IAiFeedbackRecorder
 {
     Task<Guid> RecordCallAsync(AiFeedbackRecord record, CancellationToken ct);
-    Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct);
+    /// <param name="source">คำยืนยันนี้ตั้งใจแค่ไหน — ค่าตั้งต้นคือ
+    /// <see cref="UserChoiceSource.Implicit"/> (อ่อนที่สุด) จุดที่รู้แน่ว่าผู้ใช้ลงมือ
+    /// เลือกเองต้องส่ง <see cref="UserChoiceSource.Explicit"/> มาเอง</param>
+    Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi,
+        CancellationToken ct, UserChoiceSource source = UserChoiceSource.Implicit);
 
     /// <summary>Bulk-insert synthetic CHILD feedback rows (e.g. one per match in
     /// a bulk-bank-match plan) in a SINGLE SaveChanges instead of N round-trips.
@@ -230,7 +234,8 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         catch { return System.Text.Json.JsonSerializer.Serialize(new { raw = s }); }
     }
 
-    public async Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct)
+    public async Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi,
+        CancellationToken ct, UserChoiceSource source = UserChoiceSource.Implicit)
     {
         if (feedbackId == Guid.Empty) return;
         try
@@ -244,6 +249,7 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             row.UserChosenAnswer = chosenAnswer;
             row.UserChosenAt = DateTime.UtcNow;
             row.UserAcceptedAi = acceptedAi;
+            row.UserChoiceOrigin = source;
             await _db.SaveChangesAsync(ct);
 
             // สะท้อนเข้าสรุปรายวันของลูกค้ารายนั้น — อัตรา "AI แม่นในสายตา
@@ -258,7 +264,7 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             // PromptHash, which suggestion endpoints set to a stable
             // business key (contactId, normalised name, …). Skipped when
             // the key is empty (legacy rows) or the answer is blank.
-            await LearnInlineAsync(row.CompanyId, row.FeatureKey, row.PromptHash, chosenAnswer, ct);
+            await LearnInlineAsync(row.CompanyId, row.FeatureKey, row.PromptHash, chosenAnswer, source, ct);
         }
         catch (Exception ex)
         {
@@ -271,7 +277,8 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
     /// for an exact input is authoritative, so the model "learns ไปเลย".
     /// A persistent override (Override &gt; Accept) flips the stored answer
     /// to the new value. Confidence = Accept / (Accept + Override).</summary>
-    private async Task LearnInlineAsync(Guid companyId, string featureKey, string inputKey, string chosenAnswer, CancellationToken ct)
+    private async Task LearnInlineAsync(Guid companyId, string featureKey, string inputKey,
+        string chosenAnswer, UserChoiceSource source, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(inputKey) || string.IsNullOrWhiteSpace(chosenAnswer)) return;
         if (inputKey.Length > 256) inputKey = inputKey[..256];
@@ -285,6 +292,7 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
                 {
                     CompanyId = companyId, FeatureKey = featureKey, InputKey = inputKey,
                     LearnedAnswer = chosenAnswer, AcceptCount = 1, OverrideCount = 0,
+                    ExplicitAcceptCount = source == UserChoiceSource.Explicit ? 1 : 0,
                     Confidence = 1m, LastLearnedAt = DateTime.UtcNow,
                 };
                 _db.AiSuggestionMemories.Add(mem);
@@ -292,6 +300,7 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             else if (string.Equals(mem.LearnedAnswer, chosenAnswer, StringComparison.Ordinal))
             {
                 mem.AcceptCount++;
+                if (source == UserChoiceSource.Explicit) mem.ExplicitAcceptCount++;
             }
             else
             {
@@ -301,6 +310,8 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
                 {
                     mem.LearnedAnswer = chosenAnswer;
                     mem.AcceptCount = 1;
+                    // คำตอบใหม่เริ่มนับของตัวเอง — ยอด "ตั้งใจ" ของคำตอบเก่าใช้แทนกันไม่ได้
+                    mem.ExplicitAcceptCount = source == UserChoiceSource.Explicit ? 1 : 0;
                     mem.OverrideCount = 0;
                 }
             }
@@ -323,9 +334,14 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
                 if (existing != null)
                 {
                     if (string.Equals(existing.LearnedAnswer, chosenAnswer, StringComparison.Ordinal))
+                    {
                         existing.AcceptCount++;
+                        if (source == UserChoiceSource.Explicit) existing.ExplicitAcceptCount++;
+                    }
                     else
+                    {
                         existing.OverrideCount++;
+                    }
                     var t = existing.AcceptCount + existing.OverrideCount;
                     existing.Confidence = t > 0 ? Math.Round((decimal)existing.AcceptCount / t, 4) : 1m;
                     existing.LastLearnedAt = DateTime.UtcNow;

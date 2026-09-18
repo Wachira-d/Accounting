@@ -109,20 +109,56 @@ public class WhtApplicabilityEvidenceTests
     // ══════════ ชั้นที่ 0: กระดาษพูดก่อน (คำตัดสินเจ้าของ 2026-09-18) ══════════
 
     [Fact]
-    public void กระดาษไม่มีส่วนหักณที่จ่าย_ต้องเงียบ_แม้บรรทัดจะดูเป็นบริการ()
-        // "ใบกำกับภาษีที่ถูกต้อง ถ้าไม่มีเขียนส่วนหักไว้ ยังไงก็ไม่ต้องหัก"
+    public void ใบกำกับที่สมบูรณ์ไม่มีส่วนหักณที่จ่าย_ต้องเงียบ_แม้บรรทัดจะดูเป็นบริการ()
+        // "ถ้าเป็นใบกำกับภาษีที่สมบูรณ์ กระดาษชนะ" (คำตัดสินเจ้าของ รอบ 178)
         // ⇒ ชั้นนี้ชนะแม้บรรทัดจะผูกรายการชนิดบริการ
         => Assert.Equal(WhtApplicability.NotApplicable,
             WhtApplicabilityEvidence.Judge(
                 new[] { new WhtLineFact("ค่าติดตั้ง", null, ProductType.Service, 9_000m) },
+                paperShowsWithholding: false,
+                paperGrade: PaperTaxInvoiceGrade.Complete).Level);
+
+    // ── ทิศตรงข้ามของชั้นที่ 0: ใบที่ไม่สมบูรณ์ "เงียบ" ไม่ได้ ──────────────
+    // เดิมความเงียบของกระดาษ**ทุกใบ**ถูกนับเป็นหลักฐาน ⇒ ใบที่ OCR อ่านไม่ครบ
+    // หรือใบที่ผู้ขายกรอกไม่ครบ ก็ปิดคำเตือนได้ทั้งที่ไม่มีน้ำหนักพอ
+    // และที่หนักกว่านั้นคือมันข้าม **คำประกาศของมนุษย์** (ประเภทเงินได้ ม.40
+    // ที่ผู้ใช้ตั้งเอง) ซึ่งเป็นหลักฐานที่แข็งกว่า "ไม่พบคำบนกระดาษ" (ทีม T1 V4)
+
+    [Fact]
+    public void ใบไม่สมบูรณ์ที่ไม่มีส่วนหัก_ต้องไม่ปิดคำประกาศของผู้ใช้()
+        => Assert.Equal(WhtApplicability.ServiceWithholding,
+            WhtApplicabilityEvidence.Judge(
+                new[] { new WhtLineFact("ค่าที่ปรึกษา", "40(2)", null, 10_000m) },
+                paperShowsWithholding: false,
+                paperGrade: PaperTaxInvoiceGrade.Incomplete).Level);
+
+    [Fact]
+    public void ยังไม่ได้ตรวจความสมบูรณ์_ก็ยังไม่นับความเงียบของกระดาษ()
+        // ค่าตั้งต้นของพารามิเตอร์คือ Unknown ⇒ ผู้เรียกที่ยังไม่ส่งเกรดมา
+        // จะ**ไม่**ได้ผลว่า "ไม่ต้องหัก" ฟรี ๆ (เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล
+        // ห้ามตกเป็น "ผ่าน" — หลักการ G3)
+        => Assert.Equal(WhtApplicability.ServiceWithholding,
+            WhtApplicabilityEvidence.Judge(
+                new[] { new WhtLineFact("ค่าที่ปรึกษา", "40(2)", null, 10_000m) },
                 paperShowsWithholding: false).Level);
+
+    [Fact]
+    public void ใบไม่สมบูรณ์ที่เป็นสินค้าล้วน_ยังเงียบได้จากชั้นบรรทัด()
+        // ทิศตรงข้ามอีกด้าน: การเข้มขึ้นที่ชั้น 0 ต้อง**ไม่**ทำให้ใบซื้อของ
+        // กลับมาเด้ง — ชั้นที่ 3 (ทุกบรรทัดผูกสินค้า) ยังรับไว้เหมือนเดิม
+        => Assert.Equal(WhtApplicability.NotApplicable,
+            WhtApplicabilityEvidence.Judge(
+                new[] { Goods("แผ่นปะเต็นท์"), Goods("ผ้าปูพื้น") },
+                paperShowsWithholding: false,
+                paperGrade: PaperTaxInvoiceGrade.Incomplete).Level);
 
     [Fact]
     public void กระดาษมีส่วนหักณที่จ่าย_ต้องเตือน_แม้บรรทัดจะเป็นสินค้า()
         // ทิศตรงข้าม: ผู้ขายพิมพ์บรรทัดหักมาเอง = หลักฐานตรงว่าอยู่ในข่าย
         => Assert.Equal(WhtApplicability.ServiceWithholding,
             WhtApplicabilityEvidence.Judge(
-                new[] { Goods("อะไหล่") }, paperShowsWithholding: true).Level);
+                new[] { Goods("อะไหล่") }, paperShowsWithholding: true,
+                paperGrade: PaperTaxInvoiceGrade.Incomplete).Level);   // ใบไม่ครบก็ยังชนะ — เป็นคำประกาศเชิงบวก
 
     [Fact]
     public void ไม่มีกระดาษให้ดู_ต้องไม่ถือว่ากระดาษบอกว่าไม่ต้องหัก()

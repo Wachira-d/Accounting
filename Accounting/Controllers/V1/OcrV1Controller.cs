@@ -161,7 +161,9 @@ public class OcrV1Controller : PublicApiControllerBase
             try
             {
                 // acceptedAi ตัดสินที่ recorder โดยเทียบกับคำตอบเดิมที่บันทึกไว้
-                await recorder.RecordUserChoiceAsync(f.FeedbackId.Value, f.FinalValue!, acceptedAi: false, ct);
+                // พาร์ตเนอร์ส่งค่าที่ "ตรวจแล้วแก้แล้ว" กลับมา = การลงมือเลือกของฝั่งเขา
+            await recorder.RecordUserChoiceAsync(f.FeedbackId.Value, f.FinalValue!, acceptedAi: false, ct,
+                Accounting.Models.Enums.UserChoiceSource.Explicit);
                 recorded++;
             }
             catch (Exception ex)

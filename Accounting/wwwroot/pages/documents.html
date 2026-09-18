@@ -3510,6 +3510,7 @@
                     feedbackId: fbId,
                     chosenAnswer: rateEl.value,
                     acceptedAi: parseFloat(rateEl.value) === parseFloat(j.data.rate),
+                    source: 'Explicit',   // ยิงจาก event change = ผู้ใช้เปลี่ยนเอง
                   })
                 }).catch(() => {});
               } catch {}
@@ -3549,6 +3550,7 @@
                       feedbackId: sel.dataset.aiFeedbackId,
                       chosenAnswer: sel.value,
                       acceptedAi: sel.value === pid,
+                      source: 'Explicit',
                     })
                   }).catch(() => {});
                 } catch {}
@@ -3592,6 +3594,7 @@
                   feedbackId: fbId,
                   chosenAnswer: sel.value,
                   acceptedAi: sel.value === suggested,
+                  source: 'Explicit',
                 })
               }).catch(() => {});
             } catch {}
@@ -3642,6 +3645,7 @@
                   feedbackId: fbId,
                   chosenAnswer: cdEl.value,
                   acceptedAi: parseInt(cdEl.value, 10) === parseInt(j.data.creditDays, 10),
+                  source: 'Explicit',
                 })
               }).catch(() => {});
             } catch {}
@@ -3789,6 +3793,7 @@
                 feedbackId: fbId,
                 chosenAnswer: sel.value === '-1' ? 'Exempt' : sel.value,
                 acceptedAi: false,
+                source: 'Explicit',   // ผู้ใช้เปลี่ยนอัตรา VAT ของบรรทัดนี้เอง
               })
             }).catch(() => {});
           } catch {}
@@ -8673,8 +8678,11 @@
                 fetch(`/api/companies/${cid}/ai-feedback/record`, {
                   method: 'POST',
                   headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                  // ⚠️ ยิงตอน**บันทึกเอกสาร** ไม่ใช่ตอนผู้ใช้แตะช่อง ⇒ นับเป็น
+                  // คำยืนยันที่ตั้งใจได้เฉพาะเมื่อผู้ใช้เปลี่ยนค่านั้นจริง ๆ
                   body: JSON.stringify({ feedbackId: this._lastPaymentTypeFeedbackId,
-                    chosenAnswer: payload.paymentType, acceptedAi: !this._paymentTypeTouched }),
+                    chosenAnswer: payload.paymentType, acceptedAi: !this._paymentTypeTouched,
+                    source: this._paymentTypeTouched ? 'Explicit' : 'Implicit' }),
                 });
               } catch (e) { /* training is best-effort */ }
             }
@@ -9874,6 +9882,8 @@
                   await API.post(`/api/companies/${companyId}/ai-feedback/record`, {
                     feedbackId: h.feedbackId, chosenAnswer: 'Acknowledge',
                     acceptedAi: h.primary === 'Acknowledge',
+                    // คลิก "รับทราบ" ครั้งเดียวยิงให้**ทุกคำเตือน**พร้อมกัน
+                    source: 'BulkApprove',
                   });
                 } catch (e) { /* feedback record is fire-and-forget */ }
               }

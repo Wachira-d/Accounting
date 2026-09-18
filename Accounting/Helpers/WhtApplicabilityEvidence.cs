@@ -71,8 +71,12 @@ public static class WhtApplicabilityEvidence
     /// <param name="lines">ข้อเท็จจริงรายบรรทัด</param>
     /// <param name="paperShowsWithholding">กระดาษที่สแกนมามีส่วน "หัก ณ ที่จ่าย" เขียนไว้ไหม —
     /// <c>null</c> = ไม่มีกระดาษให้ดู (คีย์มือ/สร้างจากใบอื่น) ⇒ ข้ามชั้นนี้ไปชั้นถัดไป</param>
+    /// <param name="paperGrade">ใบที่สแกนมาสมบูรณ์ตาม §86/4 แค่ไหน
+    /// (<see cref="PaperTaxInvoiceCompleteness"/>) — **ความเงียบของกระดาษนับเป็นหลักฐาน
+    /// เฉพาะใบที่สมบูรณ์** (คำตัดสินเจ้าของ 2026-09-18 รอบ 178)</param>
     public static WhtApplicabilityResult Judge(
-        IEnumerable<WhtLineFact>? lines, bool? paperShowsWithholding = null)
+        IEnumerable<WhtLineFact>? lines, bool? paperShowsWithholding = null,
+        PaperTaxInvoiceGrade paperGrade = PaperTaxInvoiceGrade.Unknown)
     {
         // ── ชั้นที่ 0 (คำตัดสินเจ้าของโปรเจกต์ 2026-09-18): กระดาษพูดก่อนเสมอ ──
         //
@@ -85,12 +89,22 @@ public static class WhtApplicabilityEvidence
         // ภาระหักเป็นของ**ผู้จ่าย** (§54) ไม่ได้ขึ้นกับว่าผู้ขายพิมพ์อะไรมา —
         // ใบที่ผู้ขายลืมพิมพ์จะเงียบไปด้วย. ชั้นนี้จึงทำงานเฉพาะเมื่อ**อ่านกระดาษได้จริง**
         // (`false` = อ่านแล้วไม่เจอ) ไม่ใช่เมื่อไม่มีกระดาษ (`null`)
-        if (paperShowsWithholding == false)
-            return new(WhtApplicability.NotApplicable,
-                "ใบกำกับภาษีที่สแกนมาไม่มีส่วน \"หัก ณ ที่จ่าย\" เขียนไว้");
+        //
+        // ⚠️ **สองทิศไม่เท่ากัน** (แก้รอบ 178 ตามคำตัดสินเจ้าของ "ถ้าเป็นใบกำกับภาษี
+        // ที่สมบูรณ์ กระดาษชนะ"):
+        //  • กระดาษ **มี** บรรทัดหัก ณ ที่จ่าย = คำ**ประกาศ**ตรง ๆ ของผู้ขาย —
+        //    เป็นหลักฐานเชิงบวกที่ไม่ขึ้นกับความสมบูรณ์ของใบ ⇒ ชนะเสมอ
+        //  • กระดาษ **ไม่มี** = หลักฐานเชิง**ลบ** ("ไม่พบคำ") ซึ่งอ่อนกว่ามาก —
+        //    แปลได้ว่า "ไม่ต้องหัก" ก็ต่อเมื่อใบนั้นสมบูรณ์พอที่จะเชื่อว่าผู้ขายทำเอกสาร
+        //    เป็น (ครบ §86/4) · ใบที่กรอกไม่ครบ/อ่านไม่ครบ ความเงียบของมันไม่มีน้ำหนัก
+        //    ⇒ ไหลไปชั้นถัดไป ซึ่งชั้นที่ 1 คือ **คำประกาศของมนุษย์** (ประเภทเงินได้
+        //    ม.40 ที่ผู้ใช้ตั้งเอง) ที่เดิมถูกข้ามไปทั้งที่แข็งกว่า (ทีม T1 ข้อ V4)
         if (paperShowsWithholding == true)
             return new(WhtApplicability.ServiceWithholding,
                 "กระดาษมีส่วน \"หัก ณ ที่จ่าย\" เขียนไว้บนใบ");
+        if (paperShowsWithholding == false && paperGrade == PaperTaxInvoiceGrade.Complete)
+            return new(WhtApplicability.NotApplicable,
+                "ใบกำกับภาษีเต็มรูปที่ครบตาม §86/4 และไม่มีส่วน \"หัก ณ ที่จ่าย\" เขียนไว้");
 
         var all = lines?.ToList() ?? new List<WhtLineFact>();
         if (all.Count == 0)

@@ -76,7 +76,8 @@ public class AiOrchestrator : IAiOrchestrator
         Distillation.LocalPrediction localPred, string reason, CancellationToken ct)
     {
         var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-            request.CompanyId, request.FeatureKey, "", request.UserPromptJson, null,
+            request.CompanyId, request.FeatureKey,
+            Accounting.Helpers.AiMemoryKey.Of(request.UserPromptJson), request.UserPromptJson, null,
             AiPrimaryAnswer: null, AiConfidence: null,
             LocalModelAnswer: localPred.PrimaryAnswer,
             LocalModelConfidence: localPred.Confidence,
@@ -298,6 +299,16 @@ public class AiOrchestrator : IAiOrchestrator
             request.UserPromptJson, settings.AiStripPiiInPrompts, request.AllowTaxIdInPrompt);
         var promptHash = _sanitizer.ComputePromptHash(sanitizedUserJson, enrichedSystemPrompt, providerConfig.Model);
 
+        // ⚠️ **สองกุญแจ คนละหน้าที่ ห้ามใช้ตัวเดียวกัน** (รอบ 178)
+        //  • `promptHash` = กุญแจ **แคชคำตอบ** — ต้องมีรุ่นโมเดล + system prompt
+        //    ปนอยู่ เพื่อไม่ให้เสิร์ฟคำตอบของโมเดลหนึ่งให้อีกโมเดลหนึ่ง
+        //  • `memoryKey` = กุญแจ **อินพุตเดียวกัน** สำหรับคลังที่เรียนไว้ —
+        //    ต้อง**ไม่**มีรุ่นโมเดล/บริบทบริษัทปน ไม่งั้นเปลี่ยนรุ่นทีเดียว
+        //    ของที่เรียนไว้ทั้งหมดกลายเป็นขยะที่ไม่มีใครอ่านได้อีก
+        // เดิมแถว feedback เก็บ `promptHash` ⇒ `AiSuggestionMemory` ของเส้นนี้
+        // ถูกเขียนด้วยกุญแจที่ไม่มีฝั่งอ่านไหนใช้เลย = write-only ทั้งเส้น
+        var memoryKey = Accounting.Helpers.AiMemoryKey.Of(request.UserPromptJson);
+
         // ── Step 5: cache lookup ──────────────────────────────────────
         if (!request.BypassCache)
         {
@@ -306,7 +317,7 @@ public class AiOrchestrator : IAiOrchestrator
             {
                 var parsed = TryParseFeatureResponse(content);
                 var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                    request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, content,
+                    request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, content,
                     parsed.PrimaryAnswer, parsed.Confidence,
                     request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
                     request.SourceEntityType, request.SourceEntityId,
@@ -354,7 +365,7 @@ public class AiOrchestrator : IAiOrchestrator
         if (!raw.Success)
         {
             var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, null,
+                request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, null,
                 AiPrimaryAnswer: null, AiConfidence: null,
                 request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
                 request.SourceEntityType, request.SourceEntityId,
@@ -376,7 +387,7 @@ public class AiOrchestrator : IAiOrchestrator
             if (string.IsNullOrWhiteSpace(raw.Content))
             {
                 var efid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                    request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+                    request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, raw.Content,
                     AiPrimaryAnswer: null, AiConfidence: null,
                     request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
                     request.SourceEntityType, request.SourceEntityId,
@@ -388,7 +399,7 @@ public class AiOrchestrator : IAiOrchestrator
             }
 
             var planFid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+                request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, raw.Content,
                 AiPrimaryAnswer: null, AiConfidence: null,
                 request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
                 request.SourceEntityType, request.SourceEntityId,
@@ -416,7 +427,7 @@ public class AiOrchestrator : IAiOrchestrator
             // Provider returned valid JSON but wrong schema. Treat as
             // InvalidResponse — record, fall through to local.
             var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+                request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, raw.Content,
                 AiPrimaryAnswer: null, AiConfidence: null,
                 request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
                 request.SourceEntityType, request.SourceEntityId,
@@ -433,7 +444,7 @@ public class AiOrchestrator : IAiOrchestrator
 
         // ── Step 8: write feedback row (Success path) ─────────────────
         var feedbackId = await _recorder.RecordCallAsync(new AiFeedbackRecord(
-            request.CompanyId, request.FeatureKey, promptHash, sanitizedUserJson, raw.Content,
+            request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, raw.Content,
             featureResp.PrimaryAnswer, featureResp.Confidence,
             request.LocalPrimaryAnswer, request.LocalConfidence, request.LocalModelVersion,
             request.SourceEntityType, request.SourceEntityId,
@@ -474,13 +485,17 @@ public class AiOrchestrator : IAiOrchestrator
         if (resp.FeedbackId.HasValue && resp.FeedbackId.Value != Guid.Empty)
         {
             var acceptedAi = resp.UsedAi && resp.PrimaryAnswer == userChoice;
-            await _recorder.RecordUserChoiceAsync(resp.FeedbackId.Value, userChoice, acceptedAi, ct);
+            // ผู้เรียกเส้นนี้ส่ง "คำตอบสุดท้ายของผู้ใช้" มาพร้อมกับคำถาม = การลงมือเลือกจริง
+            await _recorder.RecordUserChoiceAsync(resp.FeedbackId.Value, userChoice, acceptedAi, ct,
+                Models.Enums.UserChoiceSource.Explicit);
         }
         return resp;
     }
 
-    public Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi, CancellationToken ct = default)
-        => _recorder.RecordUserChoiceAsync(feedbackId, chosenAnswer, acceptedAi, ct);
+    public Task RecordUserChoiceAsync(Guid feedbackId, string chosenAnswer, bool acceptedAi,
+        CancellationToken ct = default,
+        Models.Enums.UserChoiceSource source = Models.Enums.UserChoiceSource.Implicit)
+        => _recorder.RecordUserChoiceAsync(feedbackId, chosenAnswer, acceptedAi, ct, source);
 
     /// <summary>เติม business context (ชื่อ/ประเภทธุรกิจ/industry/top accounts)
     /// ต่อท้าย system prompt — ทำให้ AI ทุก feature ตัดสินใจตามสายธุรกิจของ
@@ -521,7 +536,8 @@ public class AiOrchestrator : IAiOrchestrator
         try
         {
             return await _recorder.RecordCallAsync(new AiFeedbackRecord(
-                req.CompanyId, req.FeatureKey, "", req.UserPromptJson, null,
+                req.CompanyId, req.FeatureKey,
+                Accounting.Helpers.AiMemoryKey.Of(req.UserPromptJson), req.UserPromptJson, null,
                 AiPrimaryAnswer: null, AiConfidence: null,
                 req.LocalPrimaryAnswer, req.LocalConfidence, req.LocalModelVersion,
                 req.SourceEntityType, req.SourceEntityId,

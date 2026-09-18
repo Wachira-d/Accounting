@@ -30,7 +30,11 @@ public class AiFeedbackController : ControllerBase
     public AiFeedbackController(IAiOrchestrator orchestrator, Accounting.Data.AccountingDbContext db)
     { _orchestrator = orchestrator; _db = db; }
 
-    public sealed record RecordChoiceRequest(Guid FeedbackId, string ChosenAnswer, bool AcceptedAi);
+    /// <param name="Source">คำยืนยันนี้ตั้งใจแค่ไหน — <c>"Explicit"</c> เมื่อหน้าเว็บ
+    /// เรียกจาก event ที่ผู้ใช้<b>เปลี่ยนค่าเอง</b> · <c>"BulkApprove"</c> เมื่อคลิกเดียว
+    /// ยืนยันหลายรายการ · ไม่ส่งมา = <c>Implicit</c> (อ่อนที่สุด — ค่าตั้งต้นที่ปลอดภัย)</param>
+    public sealed record RecordChoiceRequest(
+        Guid FeedbackId, string ChosenAnswer, bool AcceptedAi, string? Source = null);
 
     /// <summary>
     /// Records the user's choice. AcceptedAi=true means the user took
@@ -48,7 +52,16 @@ public class AiFeedbackController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.ChosenAnswer))
             return BadRequest(new ApiResponse<object>(false, null, "ChosenAnswer ห้ามว่าง"));
 
-        await _orchestrator.RecordUserChoiceAsync(req.FeedbackId, req.ChosenAnswer, req.AcceptedAi, ct);
+        // ⚠️ **ห้าม hardcode เป็น Explicit** — endpoint เดียวนี้ถูกเรียกจากหลายทรง:
+        // ตัวที่ผูกกับ event `change` ของช่องนั้น (ผู้ใช้เปลี่ยนเอง = ตั้งใจ) ·
+        // ตัวที่ยิงตอน**บันทึกเอกสาร** โดยไม่รู้ว่าผู้ใช้แตะช่องนั้นไหม ·
+        // และตัวที่ยิงให้ทุกคำเตือนพร้อมกันตอนกด "รับทราบ" หนึ่งครั้ง
+        // ⇒ ให้ผู้เรียกประกาศเอง · ค่าที่ไม่รู้จัก/ไม่ส่งมา = Implicit (อ่อนที่สุด)
+        var source = Enum.TryParse<Accounting.Models.Enums.UserChoiceSource>(
+            req.Source, ignoreCase: true, out var parsed)
+            ? parsed
+            : Accounting.Models.Enums.UserChoiceSource.Implicit;
+        await _orchestrator.RecordUserChoiceAsync(req.FeedbackId, req.ChosenAnswer, req.AcceptedAi, ct, source);
         return Ok(new ApiResponse<object>(true, null, "บันทึก feedback สำเร็จ"));
     }
 

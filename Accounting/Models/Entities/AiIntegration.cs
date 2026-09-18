@@ -167,6 +167,15 @@ public class AiSuggestionFeedback : TenantEntity
     /// or override entirely (= false, UserChosenAnswer = free-text)?</summary>
     public bool? UserAcceptedAi { get; set; }
 
+    /// <summary>คำยืนยันนี้ "ตั้งใจแค่ไหน" — <c>null</c> = แถวเก่าก่อนรอบ 178
+    /// (ชื่อพร็อพเพอร์ตี้ตั้งใจไม่ให้ตรงกับชื่อชนิด เพื่อเลี่ยงกรณี "Color Color"
+    /// ที่การอ้าง <c>UserChoiceSource.Implicit</c> ในคลาสนี้จะไปชนกับพร็อพเพอร์ตี้)
+    /// (ตีความเป็น <see cref="UserChoiceSource.Implicit"/> เวลาคำนวณ)
+    ///
+    /// <para>ใช้แยก "ผู้ใช้เลือกเอง" ออกจาก "ค่าที่ระบบเติมแล้วถูกกดผ่าน" —
+    /// ดูเหตุผลเต็มที่ doc ของ <see cref="UserChoiceSource"/></para></summary>
+    public UserChoiceSource? UserChoiceOrigin { get; set; }
+
     /// <summary>Source entity that triggered the call — Document, Payment,
     /// OcrScanResult, etc. Lets us cross-reference back to the document
     /// being reasoned about for audit and for follow-up feature work.</summary>
@@ -291,7 +300,32 @@ public class LocalModelHealth : BaseEntity
     /// changes so historic accuracy isn't unfairly attributed.</summary>
     public string LocalModelVersion { get; set; } = "v1";
 
+    /// <summary>บริษัทที่ตัวเลขชุดนี้เป็นของ — <c>null</c> = แถวรวมทุก tenant
+    /// (รูปแบบเดิมก่อนรอบ 178)
+    ///
+    /// <para>⚠️ เดิมตารางนี้ไม่มีคอลัมน์นี้เลย ⇒ วัดรวมทุกบริษัท: ลูกค้าใหม่หนึ่งราย
+    /// ที่ยังไม่มีข้อมูลจะดึงตัวเลขของทุกคนลง และบริษัทที่นักเรียนแย่จริงจะถูกกลบ
+    /// ด้วยค่าเฉลี่ย ⇒ สถานะที่ได้ไม่ตรงกับความจริงของใครเลย (ทีม T3 รอบ 177)</para></summary>
+    public Guid? CompanyId { get; set; }
+
     public int SamplesLast30d { get; set; }
+
+    /// <summary>จำนวนแถวที่<b>นักเรียนตอบได้</b> (มี <c>LocalModelAnswer</c>) —
+    /// ตัวหารที่ถูกของ <see cref="LocalAccuracy30d"/>
+    ///
+    /// <para>เดิมความแม่นของนักเรียนถูกหารด้วย <see cref="SamplesLast30d"/> ทั้งก้อน
+    /// ซึ่งรวมแถวที่นักเรียน<b>ไม่ได้ตอบเลย</b> ⇒ ตัวเลขที่ได้เป็น "ความแม่น × ความครอบคลุม"
+    /// ปนกัน แล้วถูกเอาไปลบกับความแม่นของ AI ที่หารด้วยตัวหารคนละตัว
+    /// ⇒ feature ที่นักเรียนยังตอบไม่ครบจะติดสถานะ Degraded โดยโครงสร้าง</para></summary>
+    public int LocalSamplesLast30d { get; set; }
+
+    /// <summary>สัดส่วนแถวที่นักเรียนตอบได้ ต่อแถวทั้งหมด — "โตแค่ไหน" คนละเรื่องกับ
+    /// "แม่นแค่ไหน" · ตัวนี้ตกพร้อม <c>UsedAi</c> = ระบบ<b>เงียบลง</b> ไม่ใช่โตขึ้น</summary>
+    public decimal LocalCoverage30d { get; set; }
+
+    /// <summary>จำนวนแถวที่ผู้ใช้ยืนยันแบบ<b>ตั้งใจ</b> (Explicit) ใน 30 วัน —
+    /// ถ้าตัวนี้ตกลงเรื่อย ๆ แปลว่าคลังกำลังเรียนจากการกดผ่าน ไม่ใช่จากการตัดสินใจ</summary>
+    public int ExplicitLabels30d { get; set; }
 
     /// <summary>Fraction of cases where local model's primary answer ==
     /// user's chosen answer. 0.0–1.0.</summary>
@@ -349,6 +383,14 @@ public class AiSuggestionMemory : TenantEntity
     /// <summary>Times a user overrode it with something else. When an
     /// override wins repeatedly, LearnedAnswer flips to the new value.</summary>
     public int OverrideCount { get; set; }
+
+    /// <summary>ในจำนวน <see cref="AcceptCount"/> นั้น มีกี่ครั้งที่ผู้ใช้
+    /// <b>ลงมือยืนยันเอง</b> (<see cref="UserChoiceSource.Explicit"/>)
+    ///
+    /// <para>ฝั่งอ่านทุกที่ต้องใช้ตัวนี้เป็นด่าน ไม่ใช่ <c>AcceptCount</c> —
+    /// ไม่งั้นการกด "ยอมรับและอนุมัติต่อ" รัว ๆ จะกลายเป็นความจริงของบริษัท
+    /// (ทีม T3 รอบ 177 §3.1 "คลังเอียง")</para></summary>
+    public int ExplicitAcceptCount { get; set; }
 
     /// <summary>Accept / (Accept + Override). Suggestion endpoints only
     /// trust the memory above a threshold (e.g. ≥0.6 with ≥2 samples).</summary>

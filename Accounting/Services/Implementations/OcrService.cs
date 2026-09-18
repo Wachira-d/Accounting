@@ -4404,7 +4404,8 @@ public class OcrService : IOcrService
                     var acceptedAi = result.GlAccountUsedAi
                         && string.Equals(aiSuggestedDebitBefore, correction.DebitAccountCode, StringComparison.Ordinal);
                     await _feedbackRecorder.RecordUserChoiceAsync(
-                        result.GlAccountAiFeedbackId.Value, correction.DebitAccountCode, acceptedAi, default);
+                        result.GlAccountAiFeedbackId.Value, correction.DebitAccountCode, acceptedAi, default,
+                        Accounting.Models.Enums.UserChoiceSource.Explicit);   // ผู้ใช้ส่งรหัสผังมาในคำแก้เอง
                 }
                 catch (Exception ex)
                 {
@@ -4425,14 +4426,21 @@ public class OcrService : IOcrService
         // บันทึกทุกช่องที่มี feedbackId ผูกอยู่ ไม่ว่าผู้ใช้จะแก้ช่องไหน
         if (_feedbackRecorder != null)
         {
-            async Task CloseAiFeedbackLoop(Guid? feedbackId, string? chosen, string? aiAnswer)
+            // ⚠️ `userTouched` แยก "ผู้ใช้แก้ช่องนี้เอง" ออกจาก "ช่องนี้ถูกส่งมาด้วย
+            // เพราะอยู่ในฟอร์มเดียวกัน" — เดิมทุกช่องที่มี feedbackId ถูกบันทึกเป็น
+            // คำยืนยันเท่ากันหมด ⇒ ช่องที่ผู้ใช้ไม่เคยมองก็กลายเป็น "ความจริง"
+            // (ทีม T3 รอบ 177 §3.1 — ตัวเดียวกับกติกา userTouched ของฝั่งฟอร์ม)
+            async Task CloseAiFeedbackLoop(Guid? feedbackId, string? chosen, string? aiAnswer, bool userTouched)
             {
                 if (feedbackId is null || string.IsNullOrWhiteSpace(chosen)) return;
                 try
                 {
                     await _feedbackRecorder.RecordUserChoiceAsync(
                         feedbackId.Value, chosen,
-                        acceptedAi: string.Equals(chosen, aiAnswer, StringComparison.Ordinal), default);
+                        acceptedAi: string.Equals(chosen, aiAnswer, StringComparison.Ordinal), default,
+                        userTouched
+                            ? Accounting.Models.Enums.UserChoiceSource.Explicit
+                            : Accounting.Models.Enums.UserChoiceSource.Implicit);
                 }
                 catch (Exception ex)
                 {
@@ -4443,12 +4451,14 @@ public class OcrService : IOcrService
             // OcrFullReview / DocumentConversionSuggestion
             await CloseAiFeedbackLoop(result.TargetDocTypeAiFeedbackId,
                 correction.TargetDocumentType ?? result.TargetDocumentType,
-                result.TargetDocTypeAiSuggested);
+                result.TargetDocTypeAiSuggested,
+                userTouched: !string.IsNullOrWhiteSpace(correction.TargetDocumentType));
             // บทบาทเรา (ผู้ซื้อ/ผู้ขาย) — คำตอบจริงของ DocumentRoleInference: ผู้ใช้ยืนยัน/แก้
             // ในหน้า review คือ feedback ที่สอน student (กฎเหล็ก #1 ขั้น CAPTURE)
             await CloseAiFeedbackLoop(result.OurRoleAiFeedbackId,
                 correction.OurRole ?? result.OurRole,
-                result.OurRoleAiSuggested);
+                result.OurRoleAiSuggested,
+                userTouched: !string.IsNullOrWhiteSpace(correction.OurRole));
         }
 
         // Federated doc-workflow learning — when the user confirms what
@@ -5960,14 +5970,17 @@ public class OcrService : IOcrService
         {
             try
             {
+                // ⚠️ เส้นนี้คือ "กดสร้างจากการ์ด" — ผู้ใช้ไม่ได้เลือกชนิดเอกสาร/คู่ค้า
+                // ทีละช่อง แค่ยอมรับสิ่งที่ระบบเติมให้ ⇒ เป็นคำยืนยันแบบ Implicit
+                // (นับเป็น Explicit เมื่อไร คลังจะเรียนนิสัยการกด ไม่ใช่ความถูกต้อง)
                 if (result.TargetDocTypeAiFeedbackId is Guid dtFid)
                     await _feedbackRecorder.RecordUserChoiceAsync(dtFid, docType.ToString(),
                         acceptedAi: string.Equals(result.TargetDocumentType, docType.ToString(), StringComparison.OrdinalIgnoreCase),
-                        CancellationToken.None);
+                        CancellationToken.None, Accounting.Models.Enums.UserChoiceSource.Implicit);
                 if (result.AiSuggestionFeedbackId is Guid vFid && contactId is Guid chosenContact)
                     await _feedbackRecorder.RecordUserChoiceAsync(vFid, chosenContact.ToString(),
                         acceptedAi: result.AiSuggestedContactId == chosenContact,
-                        CancellationToken.None);
+                        CancellationToken.None, Accounting.Models.Enums.UserChoiceSource.Implicit);
             }
             catch (Exception fx)
             {
@@ -6846,7 +6859,8 @@ public class OcrService : IOcrService
             {
                 var acceptedAi = lineBefore.AiSuggestedProjectId == projectId;
                 await _feedbackRecorder.RecordUserChoiceAsync(
-                    lineBefore.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+                    lineBefore.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default,
+                    Accounting.Models.Enums.UserChoiceSource.Explicit);   // ผู้ใช้เลือกโปรเจกต์ของบรรทัดนี้เอง
             }
             catch (Exception ex)
             {
@@ -6903,7 +6917,8 @@ public class OcrService : IOcrService
                 {
                     var acceptedAi = item.AiSuggestedProjectId == projectId;
                     await _feedbackRecorder.RecordUserChoiceAsync(
-                        item.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default);
+                        item.ProjectAiFeedbackId.Value, projectId.Value.ToString(), acceptedAi, default,
+                        Accounting.Models.Enums.UserChoiceSource.BulkApprove);   // คลิกเดียวทับทุกบรรทัด
                 }
                 catch (Exception ex)
                 {
@@ -7046,7 +7061,9 @@ public class OcrService : IOcrService
         {
             await _feedbackRecorder.RecordUserChoiceAsync(
                 fbId, finalLineCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                acceptedAi, default);
+                acceptedAi, default,
+                // ผู้เรียกเดียวของเมธอดนี้คือ "ผู้ใช้เพิ่ม/ลบบรรทัดเอง"
+                Accounting.Models.Enums.UserChoiceSource.Explicit);
             scan.LineSplitAiFeedbackId = null;      // ปิดแล้วปิดเลย ไม่ส่งซ้ำ
             await _db.SaveChangesAsync();
         }
@@ -7077,7 +7094,8 @@ public class OcrService : IOcrService
             {
                 var acceptedAi = result.AiSuggestedContactId == contactId;
                 await _feedbackRecorder.RecordUserChoiceAsync(
-                    result.AiSuggestionFeedbackId.Value, contactId.ToString(), acceptedAi, default);
+                    result.AiSuggestionFeedbackId.Value, contactId.ToString(), acceptedAi, default,
+                    Accounting.Models.Enums.UserChoiceSource.Explicit);   // ผู้ใช้กดจับคู่คู่ค้าเอง
             }
             catch (Exception ex)
             {

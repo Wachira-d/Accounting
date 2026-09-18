@@ -117,13 +117,23 @@ public class AiFeedbackTrainingJob : BackgroundService
         // over the last 30 days using the user's chosen answer as ground
         // truth. Rows without UserChosenAnswer are excluded — we have
         // no label.
+        // ⚠️ **แยกต่อบริษัท** (ทีม T3 รอบ 177) — เดิมจัดกลุ่มด้วย FeatureKey อย่างเดียว
+        // ⇒ ตัวเลขของทุก tenant ถูกเฉลี่ยรวมกัน: ลูกค้าใหม่หนึ่งรายที่ยังไม่มีข้อมูล
+        // ดึงของทุกคนลง และบริษัทที่นักเรียนแย่จริงถูกกลบด้วยค่าเฉลี่ย
         var rows = await db.AiSuggestionFeedbacks.AsNoTracking()
             .Where(f => f.CreatedAt >= cutoff && f.UserChosenAt != null)
-            .GroupBy(f => f.FeatureKey)
+            .GroupBy(f => new { f.FeatureKey, f.CompanyId })
             .Select(g => new
             {
-                FeatureKey = g.Key,
+                g.Key.FeatureKey,
+                g.Key.CompanyId,
                 Samples = g.Count(),
+                // ⚠️ ตัวหารของ "นักเรียนแม่นแค่ไหน" ต้องเป็นจำนวนครั้งที่**นักเรียนตอบ**
+                // ไม่ใช่แถวทั้งหมด — ไม่งั้นได้ "ความแม่น × ความครอบคลุม" ปนกัน แล้วเอาไป
+                // ลบกับความแม่นของ AI ที่หารด้วยตัวหารคนละตัว ⇒ feature ที่นักเรียนยัง
+                // ตอบไม่ครบติด Degraded โดยโครงสร้าง ไม่ใช่เพราะตอบผิด
+                LocalSamples = g.Count(f => f.LocalModelAnswer != null),
+                ExplicitLabels = g.Count(f => f.UserChoiceOrigin == UserChoiceSource.Explicit),
                 LocalCorrect = g.Count(f => f.LocalModelAnswer != null
                                             && f.LocalModelAnswer == f.UserChosenAnswer),
                 // ⚠️ "ความแม่นของ AI" ต้องหารด้วยจำนวนครั้งที่ **AI ตอบจริง**
@@ -141,14 +151,19 @@ public class AiFeedbackTrainingJob : BackgroundService
 
         foreach (var r in rows)
         {
-            var health = await db.LocalModelHealths.FirstOrDefaultAsync(h => h.FeatureKey == r.FeatureKey, ct);
+            var health = await db.LocalModelHealths.FirstOrDefaultAsync(
+                h => h.FeatureKey == r.FeatureKey && h.CompanyId == r.CompanyId, ct);
             if (health == null)
             {
-                health = new LocalModelHealth { FeatureKey = r.FeatureKey };
+                health = new LocalModelHealth { FeatureKey = r.FeatureKey, CompanyId = r.CompanyId };
                 db.LocalModelHealths.Add(health);
             }
             health.SamplesLast30d = r.Samples;
-            health.LocalAccuracy30d = r.Samples > 0 ? (decimal)r.LocalCorrect / r.Samples : 0m;
+            health.LocalSamplesLast30d = r.LocalSamples;
+            health.ExplicitLabels30d = r.ExplicitLabels;
+            health.LocalCoverage30d = r.Samples > 0 ? (decimal)r.LocalSamples / r.Samples : 0m;
+            // ตัวหารสมมาตรแล้ว: นักเรียนหารด้วยครั้งที่นักเรียนตอบ · AI หารด้วยครั้งที่ AI ตอบ
+            health.LocalAccuracy30d = r.LocalSamples > 0 ? (decimal)r.LocalCorrect / r.LocalSamples : 0m;
             health.AiAccuracy30d = r.AiSamples > 0 ? (decimal)r.AiCorrect / r.AiSamples : 0m;
             health.AgreementRate30d = r.Samples > 0 ? (decimal)r.Agreement / r.Samples : 0m;
             health.LastEvaluatedAt = DateTime.UtcNow;
@@ -179,14 +194,57 @@ public class AiFeedbackTrainingJob : BackgroundService
             else
             {
                 health.Status = LocalModelHealthStatus.Healthy;
-                health.Recommendation = $"Local {health.LocalAccuracy30d:P0} ≈ AI {health.AiAccuracy30d:P0}. " +
-                    (health.AgreementRate30d >= 0.85m
-                        ? "ลด sampling rate ลงได้ — local แทน AI ส่วนใหญ่"
+                // ⚠️ "แม่นพอ ๆ กัน" ยังไม่พอจะแนะให้ลดการสุ่มถามครู — ต้องดู
+                // **ความครอบคลุม** ด้วย: นักเรียนที่ตอบได้แค่ 20% ของเคสแต่ตอบถูกหมด
+                // ไม่ได้แปลว่าแทน AI ได้ · และการสุ่มถามครูคือช่องทางเดียวที่จะรู้ว่า
+                // นักเรียนเริ่มแย่ลง (ทีม T3 รอบ 177)
+                health.Recommendation = $"Local {health.LocalAccuracy30d:P0} ≈ AI {health.AiAccuracy30d:P0} " +
+                    $"(นักเรียนตอบได้ {health.LocalCoverage30d:P0} ของเคส · " +
+                    $"ผู้ใช้ยืนยันแบบตั้งใจ {health.ExplicitLabels30d} ครั้ง). " +
+                    (health.AgreementRate30d >= 0.85m && health.LocalCoverage30d >= 0.80m
+                        ? "ลด sampling rate ลงได้ — local แทน AI ส่วนใหญ่ (ห้ามลดเหลือ 0)"
                         : "เหมาะสม");
             }
         }
+        // ── แถวยอดรวมทั้งแพลตฟอร์ม (CompanyId = null) ────────────────────────
+        // หน้าแอดมินดูภาพรวมของทั้งระบบ ไม่ใช่ของบริษัทใดบริษัทหนึ่ง ⇒ ต้องมีแถวนี้
+        // ต่อไป มิฉะนั้นการแยกต่อบริษัทข้างบนจะทำให้หน้าแอดมินอ่านได้หลายแถวต่อ
+        // feature แล้วพัง (defect class "แก้ฝั่งเขียนแล้วลืมฝั่งอ่าน")
+        foreach (var g in rows.GroupBy(r => r.FeatureKey))
+        {
+            var samples = g.Sum(r => r.Samples);
+            var localSamples = g.Sum(r => r.LocalSamples);
+            var aiSamples = g.Sum(r => r.AiSamples);
+            var platform = await db.LocalModelHealths.FirstOrDefaultAsync(
+                h => h.FeatureKey == g.Key && h.CompanyId == null, ct);
+            if (platform == null)
+            {
+                platform = new LocalModelHealth { FeatureKey = g.Key, CompanyId = null };
+                db.LocalModelHealths.Add(platform);
+            }
+            platform.SamplesLast30d = samples;
+            platform.LocalSamplesLast30d = localSamples;
+            platform.ExplicitLabels30d = g.Sum(r => r.ExplicitLabels);
+            platform.LocalCoverage30d = samples > 0 ? (decimal)localSamples / samples : 0m;
+            platform.LocalAccuracy30d = localSamples > 0 ? (decimal)g.Sum(r => r.LocalCorrect) / localSamples : 0m;
+            platform.AiAccuracy30d = aiSamples > 0 ? (decimal)g.Sum(r => r.AiCorrect) / aiSamples : 0m;
+            platform.AgreementRate30d = samples > 0 ? (decimal)g.Sum(r => r.Agreement) / samples : 0m;
+            platform.LastEvaluatedAt = DateTime.UtcNow;
+            platform.Status = samples < 30
+                ? LocalModelHealthStatus.InsufficientData
+                : platform.LocalAccuracy30d < platform.AiAccuracy30d - 0.15m
+                    ? LocalModelHealthStatus.NeedsRedesign
+                    : platform.LocalAccuracy30d < platform.AiAccuracy30d - 0.05m
+                        ? LocalModelHealthStatus.Degraded
+                        : LocalModelHealthStatus.Healthy;
+            platform.Recommendation =
+                $"ทั้งแพลตฟอร์ม: นักเรียน {platform.LocalAccuracy30d:P0} / AI {platform.AiAccuracy30d:P0} " +
+                $"· ครอบคลุม {platform.LocalCoverage30d:P0} · {g.Count()} บริษัท";
+        }
+
         await db.SaveChangesAsync(ct);
-        _logger.LogInformation("AiFeedbackTrainingJob: refreshed health for {N} features", rows.Count);
+        _logger.LogInformation(
+            "AiFeedbackTrainingJob: refreshed health for {N} (feature, company) pairs", rows.Count);
     }
 
     // ────────────────────────────────────────────────────────────────
