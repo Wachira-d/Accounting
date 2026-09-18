@@ -1202,11 +1202,19 @@ public class IntegrationService : IIntegrationService
                     .FirstOrDefaultAsync(d => d.Id == relatedDocId.Value && d.CompanyId == companyId);
                 if (originalDoc != null)
                 {
-                    originalDoc.BalanceDue = Math.Max(0, originalDoc.BalanceDue - document.TotalAmount);
-                    if (originalDoc.BalanceDue == 0)
-                        originalDoc.Status = DocumentStatus.Paid;
-                    else if (originalDoc.BalanceDue < originalDoc.TotalAmount)
-                        originalDoc.Status = DocumentStatus.PartiallyPaid;
+                    // ⚠️ ตัวตั้งคือ PaidAmount · BalanceDue = TotalAmount − PaidAmount (กติกาเดียว
+                    // กับ DocumentService สาย CN). เดิมลด BalanceDue ตรง ๆ โดยไม่แตะ PaidAmount
+                    // ⇒ สองช่องแยกทาง: (ก) ArApAnalysis ที่อ่าน PaidAmount นับใบนี้ว่ายังไม่จ่าย
+                    // ทั้งที่ Balance=0 (ข) รับชำระบางส่วนครั้งถัดไปคำนวณ Balance = Total − Paid
+                    // ทับ ⇒ ยอด CN ที่หักไปแล้ว**เด้งกลับมาเป็นยอดค้าง** เงียบ ๆ
+                    // (บทเรียน "ตัวเลขคู่ที่ต้องสอดคล้องกัน ต้องมีตัวตั้งตัวเดียว")
+                    var apply = Math.Min(document.TotalAmount, Math.Max(0m, originalDoc.BalanceDue));
+                    originalDoc.PaidAmount += apply;
+                    originalDoc.BalanceDue = Math.Max(0m, originalDoc.TotalAmount - originalDoc.PaidAmount);
+                    if (originalDoc.Status != DocumentStatus.Voided)
+                        originalDoc.Status = originalDoc.BalanceDue <= 0.01m
+                            ? DocumentStatus.Paid
+                            : DocumentStatus.PartiallyPaid;
                     await _db.SaveChangesAsync();
                 }
             }

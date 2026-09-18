@@ -73,6 +73,19 @@ public static class ThaiTitleHelper
         return Array.Empty<string>();
     }
 
+    /// <summary>"คำนำหน้า + ชื่อ" สำหรับพิมพ์ — ไม่ต่อซ้ำถ้าชื่อขึ้นต้นด้วยคำนำหน้านั้นอยู่แล้ว
+    /// (ข้อมูลเก่าจำนวนมากมีคำนำหน้าติดในชื่อ) และไม่ต่อให้นิติบุคคล (คำนำหน้าเป็นส่วน
+    /// ของชื่ออยู่แล้ว เช่น "บริษัท ก จำกัด")</summary>
+    public static string WithTitle(string? titleTh, string? name)
+    {
+        var n = (name ?? "").Trim();
+        var t = Normalize(titleTh);
+        if (t.Length == 0 || IsJuristicTitle(t)) return n;
+        foreach (var form in FormsOf(t))
+            if (n.StartsWith(form, StringComparison.OrdinalIgnoreCase)) return n;
+        return n.Length == 0 ? t : t + " " + n;
+    }
+
     /// <summary>true เมื่อคำนำหน้าใช้ยื่น สปส. ได้โดยไม่โดนปฏิเสธ</summary>
     public static bool IsValidForSso(string? title) => SsoValidTitles.Contains((title ?? "").Trim());
 

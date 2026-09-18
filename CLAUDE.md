@@ -577,9 +577,16 @@ node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำ
 python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-"
 python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
 python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
+python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
+python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
 node --check                           # ทุก <script> ใน .html ที่แก้
 awk brace-balance                      # ทุก .cs ที่แก้
 ```
+> **ทางลัด (รอบ 169): `bash tools/check_all.sh`** รันทุกบรรทัดข้างบนด้วยคำสั่งเดียว (checker ทุกตัว + `node --check`
+> ทุก `<script>` ในไฟล์ที่แก้ + awk brace + U+FFFD + `test_inventory --check` + `dotnet build/test` ถ้ามี SDK) — exit code
+> เดียว · และ **ก่อนแก้สัญลักษณ์ใด** ให้ `python3 tools/callers.py <Symbol>` (นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ แยกกัน)
+> แทนการประกอบ grep เอง — เหตุผลอยู่ใน `REGRESSION_ROOT_CAUSE_2026-09-18.md` §2.3 (ต้นเหตุอันดับ 2 ของการถดถอย 33 กรณี
+> คือ "แก้เส้นเดียวจาก N โดยไม่ grep call site")
 - **error ในโปรเจกต์หลัก = ล้มทั้ง solution** — `Accounting` คอมไพล์ไม่ผ่าน ทำให้
   `Accounting.Tests` พังตามด้วย CS0006 "Metadata file Accounting.dll could not
   be found" ทุกครั้ง (ไม่ใช่บั๊กแยก — หายเองเมื่อแก้ต้นเหตุ) _(ที่มา: CS0246
@@ -926,9 +933,14 @@ awk brace-balance                      # ทุก .cs ที่แก้
   _(3) นี่เป็นบั๊กที่ checker จับได้จริงเพราะเป็น **รูปทรงของโค้ด** ไม่ใช่ taint —_
   _ต่างจากเคส `_db.Users` ที่จงใจไม่เขียน checker → `tools/advisory_lock_key_check.py`)_
 - **entity ที่ "ไม่ใช่ tenant entity" คือจุดที่ global query filter ช่วยไม่ได้**
-  กฎ M ("ทุก query ต้องมี `CompanyId`") ถูกบังคับด้วย global query filter สำหรับ
-  entity ที่มี `CompanyId` — แต่ **`User` ผูกกับบริษัทผ่าน `CompanyUser`** จึงไม่มี
-  filter ตัวไหนช่วยเลย. เส้น DSR ทั้งสาม (`GenerateAccessReportAsync` อ่าน ·
+  กฎ M ("ทุก query ต้องมี `CompanyId`") — **⚠️ แก้ doc 2026-09-18: ประโยคเดิมตรงนี้อ้าง
+  ว่า "ถูกบังคับด้วย global query filter สำหรับ entity ที่มี `CompanyId`" ซึ่ง
+  ไม่จริง**: `AccountingDbContext` มี `HasQueryFilter` 203 ตัว **ทุกตัวกรองแค่
+  `IsDeleted`** ไม่มีตัวไหนแตะ `CompanyId` และไม่มี `ICurrentTenant` ในเรพ ⇒ tenant
+  isolation ทั้งระบบพึ่ง**การกรองมือในทุก query** ไม่มีตาข่ายชั้น DbContext รองรับเลย
+  (ทีมล่า logic ซ้อนรอบ 169 นับ query บนตารางหลักที่ไม่มี `CompanyId` ในคำสั่ง 63+108
+  จุด — ส่วนใหญ่รอดเพราะคีย์จาก parent ที่ scope แล้ว = ปลอดภัยโดยการอนุมาน ไม่ใช่โดย
+  โครงสร้าง). `User` ยิ่งชัด: ผูกกับบริษัทผ่าน `CompanyUser` จึงไม่มี filter ตัวไหนช่วยเลย. เส้น DSR ทั้งสาม (`GenerateAccessReportAsync` อ่าน ·
   `ApplyRectificationAsync` แก้ · `ApplyErasureAsync` **anonymize ถาวร**) เขียน
   `_db.Users.FirstOrDefaultAsync(u => u.Id == userId)` เปล่า ๆ ⇒ สมาชิกบริษัท A
   ใส่ GUID ของผู้ใช้บริษัทไหนก็ได้ในระบบ แล้วอ่าน/แก้/**ลบ**ได้จริง
@@ -2401,6 +2413,20 @@ awk brace-balance                      # ทุก .cs ที่แก้
   เมื่อ `MapToResponse(x, string? y = null)`) — คอมไพเลอร์อนุมานชนิดไม่ได้ ต้องเขียน lambda หรือใช้
   batch mapper; checker ฝั่ง Python มองไม่เห็น (ต้อง resolve overload) → พึ่ง `dotnet build` ฝั่งผู้ใช้
 
+- **บทเรียนที่จดแล้วยังเกิดซ้ำ 20/33 กรณี = การจดไม่ใช่ด่าน** (รอบ 169 — `REGRESSION_ROOT_CAUSE_2026-09-18.md`)
+  ทีมโบราณคดีไล่ 145 คอมมิตพบการถดถอยที่พิสูจน์ sha คู่ได้ 33 กรณี: เทสต์จับได้ **0** · checker 1 · ผู้ใช้ 39% ·
+  ทีมตรวจรอบถัดไป 30% · และ **20 กรณี defect class ถูกจดในไฟล์นี้ไว้แล้วก่อนเกิด** (`.HasValue` บนชนิดที่คิดว่าถืออยู่
+  ซ้ำ 3 · "แก้ตัวเดียว เหลือที่เหลือ" ซ้ำ 8 · "สอง renderer ห้าม drift" — กฎข้อแรกของ A — ซ้ำใน 3 คอมมิตติด).
+  กลุ่มที่ "จดแล้วไม่กัน" คือกลุ่มที่ต้องรู้**ชนิดจริง** (= compiler ซึ่ง env นี้ไม่มีเพราะ **proxy policy** ไม่ใช่กฎธรรมชาติ
+  — ดู §7.3 O-1/O-2 ที่รอเจ้าของตัดสิน) และกลุ่มที่ต้อง **grep ให้ครบ** (= วินัย → ทำเป็นคำสั่ง `tools/callers.py` +
+  ratchet `tools/dead_helper_check.py`). 79% ของ 33 กรณีอยู่นอกขอบเขต static checker — **หยุดเขียน checker ที่ต้อง type
+  resolution และหยุดจดบทเรียน CSxxxx เพิ่ม**; ก่อนเริ่มงานอ่าน "หลักการ 10 ข้อ + checklist 12 ข้อ" ใน §8 ของรายงานนั้น
+  แทนการไล่ bullet ทั้งหมวด F
+  _(ของแถมที่ยืนยันแล้วรอบเดียวกัน: ข้อ M เคยเขียนว่า tenant isolation "บังคับด้วย global query filter" — **ไม่จริง**_
+  _(203 ตัวกรองแค่ `IsDeleted`) · `SsoRateSchedule.RangesOverlap` มี doc-comment บน `Payroll.cs:493` ว่า "เป็นตัวตรวจ"_
+  _แต่ไม่มีใครเรียก · `PayrollRunFilingScope.CanRemit/CountsTowardFiling` ไม่มีทั้งผู้เรียกและเทสต์ — ทั้งหมดอยู่ใน_
+  _`tools/dead_helper_baseline.txt` 58 แถวที่ต้องถูกตัดสินทีละตัว "ต่อสาย หรือ ลบ" ห้ามเดาแทนเจ้าของ)_
+
 ### Litmus test ก่อน commit (engineering)
 
 > "บั๊กนี้/โค้ดนี้อยู่ใน defect class ที่เคยเกิดแล้วหรือไม่ — ถ้าใช่
@@ -2422,8 +2448,11 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft ใช้ `DRAFT-{guid}` placeholder)
   เพื่อกัน gap จากการลบ Draft (compliance §86/4)
 - **POS หลายสาขา + วัตถุดิบ** — ผลวิเคราะห์และแผน 7 เฟสอยู่ใน `POS_MULTI_BRANCH_ANALYSIS.md`
-  (ข้อเท็จจริงสำคัญ: `Product.CurrentStock` กับ `WarehouseStock` เป็น**สองความจริงที่ไม่คุยกัน**
-  — ห้ามเพิ่มฟีเจอร์สาขาก่อนยุบผ่าน `IStockLedger` ตัวเดียว · POS ยังไม่ผูก `Branch`/`Warehouse`
+  (ข้อเท็จจริง **ณ 2026-09-18 — แก้ doc**: `Product.CurrentStock` กับ `WarehouseStock`
+  **ยุบผ่าน `IStockLedger` ตัวเดียวแล้ว** (`StockLedger.MoveAsync` เขียนทั้งคู่ในคำสั่งเดียว ·
+  `tools/stock_writer_check.py` = 0 จุดนอก ledger) — ประโยคเดิม "สองความจริงที่ไม่คุยกัน"
+  ล้าสมัย · ที่ยังค้าง: `ReconcileProductTotalsAsync` มีแต่**ไม่มีใครเรียก** (ตาข่ายซ่อมข้อมูล
+  เก่าก่อนเฟส 0 ยังไม่ต่อสาย) · POS ยังไม่ผูก `Branch`/`Warehouse`
   · สลิปพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่ตรวจ ภ.พ.06)
 - **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
   (วันนี้**ไม่มี**การเชื่อม gateway ใดเลย มีแค่ enum + คีย์ที่เข้ารหัสไว้แล้วไม่มีใครอ่าน ·
@@ -2572,6 +2601,16 @@ frontend · โมดูลรอง) **180 ข้อ (P0 25 · P1 61 · P2 65 �
 - เมื่อแก้ข้อใดเสร็จ ให้**ติ๊กในไฟล์นั้น** (เติม `✅ <sha>` หน้า ID) ไม่ลบแถว —
   เพื่อให้รอบถัดไปรู้ว่าอะไรปิดแล้ว ปิดที่คอมมิตไหน
 - §10 คือส่วนที่ยังไม่ได้ตรวจ เรียงตามความเสี่ยง — ทีมตรวจรอบถัดไปเริ่มจากตรงนั้น
+
+## 📔 REGRESSION_ROOT_CAUSE_2026-09-18.md — ทำไมของที่เคยดีกลับแย่ลง + กลไกให้ระบบดีขึ้นเรื่อย ๆ
+
+`REGRESSION_ROOT_CAUSE_2026-09-18.md` (root) คือผลตรวจรอบ 169 โดยทีม 4 ด้าน (โบราณคดีการถดถอย 33 กรณี ·
+logic ซ้อน 10 หมวด · สายข้อมูล 8 ค่า · สถาปนิกกระบวนการ) ที่ main agent เปิดไฟล์ยืนยันทุกข้อ — **อ่าน §1 (คำตอบ 5 ข้อ)
++ §8 (หลักการ 10 ข้อ + checklist ก่อน push 12 ข้อ + ข้อห้าม 7 ข้อ) ก่อนเริ่มงานทุกรอบ** แทนการไล่ bullet ทั้งหมวด F ข้างบน
+- §6 = รายการที่ทีมรายงานมาแล้ว**ไม่จริง** — ห้ามรายงานซ้ำ · §7.3 = 2 เรื่องที่ต้องให้เจ้าของตัดสิน (เปิด host .NET ใน
+  proxy policy · เปิด `claude/**` ใน workflow แบบแก้ "เสียง" ไม่ใช่ปิด "ด่าน") · §10 = backlog พร้อมป้ายว่าใครต้องตัดสิน
+- เครื่องมือที่เกิดจากรอบนี้: `tools/check_all.sh` · `tools/callers.py` · `tools/dead_helper_check.py` (+ baseline) ·
+  `tools/test_inventory.py` — กติกา ratchet: baseline **ห้ามเพิ่มแถว** เพื่อให้ checker เขียว มีแต่ตัดออกเมื่อต่อสาย/ลบแล้ว
 
 ## 📒 OCR_PIPELINE_REVIEW_2026-09-06.md — ไปป์ไลน์ OCR → เอกสาร (ทีมตรวจ 5 ด้าน)
 

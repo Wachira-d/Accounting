@@ -94,8 +94,12 @@ public partial class PdfGenerationService
                             BuildTitleBar(form, cert.CertificateNumber);
                             BuildPartyBlock(form, "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย", company.TaxId,
                                 company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName), fullAddress);
+                            // ชื่อผู้ถูกหัก = คำนำหน้า (Contact.TitleTh) + ชื่อ — หน้าผู้ติดต่อบอกให้กรอกชื่อ
+                            // "ไม่ต้องใส่คำนำหน้า" ⇒ ถ้าไม่ต่อตรงนี้ ใบรับรองพิมพ์ "สมชาย ใจดี" ขณะไฟล์
+                            // ภ.ง.ด.3 ประกาศ "นาย" = สอง renderer ของผู้ถูกหักคนเดียวเล่าคนละชื่อ
                             BuildPartyBlock(form, "ผู้ถูกหักภาษี ณ ที่จ่าย", cert.PayeeContact.TaxId,
-                                cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr);
+                                Accounting.Helpers.ThaiTitleHelper.WithTitle(cert.PayeeContact.TitleTh, cert.PayeeContact.Name)
+                                + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr);
                             BuildFormTypeRow(form, cert);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);

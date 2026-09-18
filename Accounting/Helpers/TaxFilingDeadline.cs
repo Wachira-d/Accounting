@@ -39,13 +39,17 @@ public static class TaxFilingDeadline
     {
         "VatPp30" => 15,       // §83 วรรคสอง
         "SsoSps110" => 15,     // พ.ร.บ.ประกันสังคม §47
+        // สปส.6-09 แจ้งสิ้นสุดความเป็นผู้ประกันตน — วันที่ 15 ของเดือนถัดจากเดือนที่ออก
+        // (เดิม PayrollService คิดเองว่า `new DateTime(y,m,15).AddMonths(1)` โดยไม่เลื่อน
+        // วันหยุด = ตารางชุดที่ 5 ที่ checker มองไม่เห็นเพราะซ่อนในเมธอดชื่อ Terminate…)
+        "SsoSps609" => 15,
         _ => 7,                // ภ.พ.36 §83/6 · ภ.ง.ด.ทุกตัว §52/§59/§70
     };
 
     /// <summary>ยื่นผ่านอินเทอร์เน็ตได้ไหม — <b>สปส. ไม่อยู่ในมาตรการของกระทรวงการคลัง</b>
     /// (คนละหน่วยงาน) จึงไม่ได้ +8 วัน</summary>
     private static bool HasEFilingExtension(string remittanceType)
-        => remittanceType != "SsoSps110";
+        => !remittanceType.StartsWith("Sso", StringComparison.Ordinal);
 
     /// <summary>
     /// (กระดาษ, e-Filing) ของงวด <paramref name="year"/>/<paramref name="month"/>

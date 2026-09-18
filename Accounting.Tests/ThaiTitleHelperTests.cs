@@ -113,4 +113,18 @@ public class ThaiTitleHelperTests
         foreach (var t in ThaiTitleHelper.SsoValidTitles)
             Assert.Contains(ThaiTitleHelper.All, p => p.Thai == t);
     }
+
+    /// <summary>ชื่อบนหนังสือรับรอง 50 ทวิ = คำนำหน้า + ชื่อ — เดิม PDF พิมพ์ `Contact.Name`
+    /// เปล่า ๆ ขณะไฟล์ ภ.ง.ด.3 ประกาศคำนำหน้า ⇒ สอง renderer ของคนเดียวเล่าคนละชื่อ.
+    /// ล็อกสองทิศ: ต่อเมื่อควรต่อ · **ไม่ต่อซ้ำ**เมื่อชื่อมีคำนำหน้าอยู่แล้ว · ไม่ต่อให้นิติบุคคล</summary>
+    [Theory]
+    [InlineData("นาย", "สมชาย ใจดี", "นาย สมชาย ใจดี")]
+    [InlineData("Mr.", "สมชาย ใจดี", "นาย สมชาย ใจดี")]          // รูปอังกฤษถูก normalize
+    [InlineData("นาย", "นายสมชาย ใจดี", "นายสมชาย ใจดี")]        // มีอยู่แล้ว — ห้ามซ้ำ
+    [InlineData("นางสาว", "น.ส.สมหญิง ใจดี", "น.ส.สมหญิง ใจดี")]   // รูปย่อของคำเดียวกัน — ห้ามซ้ำ
+    [InlineData("บริษัท", "บริษัท ก จำกัด", "บริษัท ก จำกัด")]      // นิติบุคคล — ไม่ต่อ
+    [InlineData("", "สมชาย ใจดี", "สมชาย ใจดี")]                   // ไม่รู้คำนำหน้า — คงเดิม
+    [InlineData(null, "สมชาย ใจดี", "สมชาย ใจดี")]
+    public void WithTitle_ต่อคำนำหน้าเฉพาะเมื่อควรต่อ(string? title, string name, string expected)
+        => Assert.Equal(expected, ThaiTitleHelper.WithTitle(title, name));
 }

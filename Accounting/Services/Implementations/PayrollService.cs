@@ -877,7 +877,11 @@ public class PayrollService : IPayrollService
         // deadline tracker ผ่าน ComplianceFiling (surface ในปฏิทิน compliance).
         if (employee.IsSubjectToSocialSecurity)
         {
-            var sps609Due = new DateTime(endDate.Year, endDate.Month, 15).AddMonths(1);
+            // ตารางกำหนดยื่นอยู่ที่ Helpers/TaxFilingDeadline ที่เดียว — เดิมคิดเอง
+            // `new DateTime(y,m,15).AddMonths(1)` ⇒ ไม่เลื่อนวันหยุด ป.พ.พ. §193/8
+            // (15 ตรงเสาร์ = ปฏิทินขึ้น "เลยกำหนด" วันอาทิตย์ทั้งที่ยังไม่ครบ)
+            var sps609Due = Accounting.Helpers.TaxFilingDeadline
+                .For("SsoSps609", endDate.Year, endDate.Month).Paper;
             await TrackSsoEmployeeFilingAsync(companyId, "SSO_Termination", "สปส.6-09",
                 endDate, sps609Due,
                 $"แจ้งออก {employee.FirstNameTh} {employee.LastNameTh} ({employee.EmployeeCode}) — ภายในวันที่ 15 ของเดือนถัดไป");

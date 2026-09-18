@@ -275,87 +275,39 @@ public class ComplianceService : IComplianceService
 
         var filings = new List<ComplianceFiling>();
 
-        // Monthly VAT filing (ภ.พ.30) - due 15th of following month, e-filing gets +8 days
-        for (int month = 1; month <= 12; month++)
+        // ── รายเดือน: กำหนดยื่นทุกแบบมาจาก Helpers/TaxFilingDeadline ที่เดียว ──
+        // เดิมเมธอดนี้พิมพ์ตารางเอง 4 ลูป (`AddMonths(1).AddDays(14)` / `AddDays(6)`) =
+        // ตารางกำหนดยื่น**ชุดที่ 4** ที่ไม่เลื่อนวันหยุด ป.พ.พ. §193/8 และไม่รู้จัก e-Filing
+        // ⇒ ปฏิทิน compliance บอกกำหนดคนละวันกับหน้านำส่งภาษี (ซ้ำรอย ภ.พ.36 ที่เคยได้
+        // วันที่ 23 แทน 15). checker `filing_deadline_single_source_check` มองไม่เห็น
+        // เพราะจับจากชื่อเมธอด — แก้ checker ให้จับจากรูปทรงบอดี้แล้วในรอบเดียวกัน
+        //
+        // ใช้วัน "กระดาษ" เป็น DueDate (เข้มกว่า — ผู้ที่ยื่นออนไลน์ยังทันเสมอ)
+        // เพราะ ComplianceFiling ไม่มีช่อง e-Filing แยก
+        var monthlyForms = new (string FilingType, string FormCode, string RemitKey)[]
         {
-            var dueDate = new DateTime(year, month, 1).AddMonths(1).AddDays(14); // 15th of next month
-            if (month == 12) dueDate = new DateTime(year + 1, 1, 15);
-
-            filings.Add(new ComplianceFiling
-            {
-                CompanyId = companyId,
-                FilingType = "RD_VAT",
-                FormCode = "PP30",
-                Year = year,
-                Month = month,
-                DueDate = dueDate,
-                Status = "NotStarted"
-            });
-        }
-
-        // Monthly WHT filing (ภ.ง.ด.3 / ภ.ง.ด.53) - due 7th of following month, e-filing +8 days
-        for (int month = 1; month <= 12; month++)
+            ("RD_VAT",           "PP30",    "VatPp30"),
+            ("RD_WHT",           "PND3",    "WhtPnd3"),
+            ("RD_WHT",           "PND53",   "WhtPnd53"),
+            ("RD_WHT",           "PND1",    "WhtPnd1"),
+            ("SSO_Contribution", "SSO1-10", "SsoSps110"),
+        };
+        foreach (var (filingType, formCode, remitKey) in monthlyForms)
         {
-            var dueDate = new DateTime(year, month, 1).AddMonths(1).AddDays(6); // 7th of next month
-            if (month == 12) dueDate = new DateTime(year + 1, 1, 7);
-
-            filings.Add(new ComplianceFiling
+            for (int month = 1; month <= 12; month++)
             {
-                CompanyId = companyId,
-                FilingType = "RD_WHT",
-                FormCode = "PND3",
-                Year = year,
-                Month = month,
-                DueDate = dueDate,
-                Status = "NotStarted"
-            });
-
-            filings.Add(new ComplianceFiling
-            {
-                CompanyId = companyId,
-                FilingType = "RD_WHT",
-                FormCode = "PND53",
-                Year = year,
-                Month = month,
-                DueDate = dueDate,
-                Status = "NotStarted"
-            });
-        }
-
-        // Monthly WHT for salary (ภ.ง.ด.1) - due 7th of following month
-        for (int month = 1; month <= 12; month++)
-        {
-            var dueDate = new DateTime(year, month, 1).AddMonths(1).AddDays(6);
-            if (month == 12) dueDate = new DateTime(year + 1, 1, 7);
-
-            filings.Add(new ComplianceFiling
-            {
-                CompanyId = companyId,
-                FilingType = "RD_WHT",
-                FormCode = "PND1",
-                Year = year,
-                Month = month,
-                DueDate = dueDate,
-                Status = "NotStarted"
-            });
-        }
-
-        // Monthly Social Security (สปส.1-10) - due 15th of following month
-        for (int month = 1; month <= 12; month++)
-        {
-            var dueDate = new DateTime(year, month, 1).AddMonths(1).AddDays(14);
-            if (month == 12) dueDate = new DateTime(year + 1, 1, 15);
-
-            filings.Add(new ComplianceFiling
-            {
-                CompanyId = companyId,
-                FilingType = "SSO_Contribution",
-                FormCode = "SSO1-10",
-                Year = year,
-                Month = month,
-                DueDate = dueDate,
-                Status = "NotStarted"
-            });
+                var (paper, _) = Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month);
+                filings.Add(new ComplianceFiling
+                {
+                    CompanyId = companyId,
+                    FilingType = filingType,
+                    FormCode = formCode,
+                    Year = year,
+                    Month = month,
+                    DueDate = paper,
+                    Status = "NotStarted"
+                });
+            }
         }
 
         // Half-year CIT (ภ.ง.ด.51) - due within 2 months of half-year end

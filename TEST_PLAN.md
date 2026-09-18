@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **~150 เคส / 19 ไฟล์** — pure-logic ทั้งหมด (ไม่มี DB) |
+| เทสต์ที่มี | **187 ไฟล์ · 1,435 `[Fact]` + 235 `[Theory]` (1,072 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4310,3 +4310,25 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | CAL-02 | ภ.ง.ด.50 ของรอบบัญชีที่สิ้นสุดวันเสาร์ | e-Filing = (วันครบกำหนด **ก่อนเลื่อน** + 8) แล้วเลื่อนพ้นวันหยุด — เดิมเลื่อนก่อนแล้วบวก และ **ไม่เลื่อน e-Filing เลย** ⇒ ตกวันเสาร์ได้ |
 | DASH-01 | ช่วง 3 เดือนที่มีรายงาน ภ.พ.30 แค่ 1 เดือน | ติดป้าย **"⚙️ ประมาณการ"** (เดิม `isEstimate` เป็นจริงเฉพาะตอนไม่มีรายงานเลย ⇒ ตัวเลขของเดือนเดียวโชว์ใต้หัวข้อ 3 เดือนโดยไม่มีป้าย) |
 | DASH-02 | ช่วงเดือนเดียวที่มีรายงานครบ | ไม่ติดป้ายประมาณการ · ใช้ `NetVat` จากรายงาน (หักเครดิตยกมา §82/3 แล้ว) |
+
+### รอบ 169 — root cause ของการถดถอย (ทีม 4 ด้าน) · `REGRESSION_ROOT_CAUSE_2026-09-18.md`
+
+| ID | เคส | ต้องได้ |
+| --- | --- | --- |
+| TTL-07 | 50 ทวิ ของ `Contact{TitleTh="นาย", Name="สมชาย ใจดี"}` | PDF พิมพ์ `นาย สมชาย ใจดี` (`ThaiTitleHelperTests.WithTitle_*`) |
+| TTL-08 | `TitleTh="นาย"` แต่ชื่อบันทึกว่า `"นายสมชาย ใจดี"` / รูปย่อ `"น.ส.สมหญิง"` กับ `TitleTh="นางสาว"` | **ไม่ต่อซ้ำ** — คืนชื่อเดิม |
+| TTL-09 | `TitleTh="บริษัท"` / `"หจก."` (นิติบุคคล) · `TitleTh` ว่าง | คืนชื่อเดิมไม่แตะ — คำนำหน้านิติบุคคลอยู่ในชื่ออยู่แล้ว |
+| FDL-05 | `filing_deadline_single_source_check` บนเรพปัจจุบัน | 0 จุด (ComplianceService/PayrollService ผ่าน `TaxFilingDeadline` แล้ว) |
+| FDL-06 | negative: `git show <sha ก่อนแก้>:ComplianceService.cs` และ `PayrollService.cs` | ฟ้อง **1 จุดต่อไฟล์** — รุ่นเดิมของ checker รายงาน 0 ทั้งคู่ (เขียวเทียม) |
+| FDL-07 | ไฟล์สังเคราะห์: `new DateTime(y,m,1).AddMonths(1)` (ขอบงวด) · `AddDays(1)` · `DueDate ==` (เปรียบเทียบ) · คอมเมนต์ที่อธิบายบั๊ก | **ไม่ฟ้อง** — FP ทั้ง 4 ทรงเคยเกิดตอนเขียน |
+| FDL-08 | ปฏิทิน compliance ปี 2569: ภ.พ.30 เดือนที่วันที่ 15 ตรงเสาร์ · สปส.6-09 พนักงานลาออกเดือนที่ 15 ตรงอาทิตย์ | ทั้งสองเลื่อนเป็นวันทำการถัดไป (เดิมไม่เลื่อน) · สปส. **ไม่มี** e-Filing +8 |
+| CNB-01 | PI ยอด 10,000 → CN 3,000 ผ่าน API → รับชำระบางส่วน 2,000 | `Paid=5,000 · Balance=5,000 · PartiallyPaid` — เดิม Balance เด้งกลับเป็น 8,000 หลังรับชำระ |
+| CNB-02 | CN เกินยอดค้าง (PI ค้าง 1,000 · CN 3,000) | `apply=1,000` · `Balance=0 · Paid` — ไม่ติดลบ · invariant ทุกผู้เขียน: `Balance = max(0, Total − Paid)` |
+| CNB-03 | CN บน PI ที่ `Voided` | ยอดขยับแต่ **สถานะไม่เปลี่ยน** (ทิศตรงข้าม) |
+| PRE-01 | งวดที่มี `WithholdingTax3` แล้ว แต่ไม่มี `WithholdingTax53` | PreClose ข้อ WHT **เตือน** พร้อมลิงก์ `/pages/tax.html` (เดิมนับ `WithholdingTax1` ที่ไม่มีวันมี ⇒ เตือนทุกงวดและลิงก์ผิดหน้า) |
+| DHC-01 | `dead_helper_check --self-test` | ผ่าน 7 ข้อ: orphan ฟ้อง · มีผู้เรียกไม่ฟ้อง · **เทสต์อย่างเดียวฟ้อง** · คอมเมนต์ไม่นับ · URL บรรทัดเดียวกับผู้เรียกไม่กลบ · operator/property ไม่นับ · ratchet สองทิศ |
+| DHC-02 | เพิ่ม `public static int Foo()` ใน Helpers โดยไม่มีผู้เรียก | `check_all.sh` **ล้ม** พร้อมชื่อไฟล์:เมธอด — baseline 58 แถวเดิมไม่ล้ม |
+| DHC-03 | ต่อสาย method ที่อยู่ใน baseline | รายงาน "ตัดออกจาก baseline ได้" (ไม่ล้ม) |
+| CAL-01 | `callers.py SsoFilingScope` vs `callers.py PayrollRunFilingScope.CanRemit` vs `SsoRateSchedule.RangesOverlap` | 7 ผู้เรียก / 0 (นิยาม 1) / เทสต์ 2 โค้ด 0 — exit 1 สองตัวหลัง · ชื่อเต็ม `Accounting.Helpers.X.Y` นับเป็นผู้เรียก |
+| INV-01 | `test_inventory.py --check` หลังเพิ่ม `[Theory]` โดยไม่แก้ TEST_PLAN §0 | ล้มพร้อมตัวเลขทั้งสองฝั่ง · คอมเมนต์ที่เอ่ย `DbContext` ไม่นับเป็นการใช้ (4 ไฟล์) |
+| CHK-01 | `check_all.sh` brace balance บน `PayrollService.cs` (มี `$@"…{(x ? "a" : "b")}…"`) | **0** — ตัวนับที่ "ตัดสตริงก่อน" ฟ้อง −1 ทั้ง HEAD และ WT = FP จึงใช้ awk ดิบตาม CLAUDE.md F |

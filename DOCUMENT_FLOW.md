@@ -5083,3 +5083,20 @@ deterministic (ไม่ใช่ให้ตัวเดาเดาหนั�
 ใบหายจากรายงานภาษี 13 จุดพร้อมกันเงียบ ๆ) · `today` ของหน้านำส่งใช้ UTC+7 ให้ตรงกับ
 ปฏิทินในไฟล์เดียวกัน · เส้น dedup ผู้ติดต่อผ่านด่านคำนำหน้าเหมือนอีกสองเส้น
 — commit 3470198)_
+
+_Last verified against codebase: 2026-09-18 (รอบ 169 — **root cause ของการถดถอย + logic ซ้อน + สายข้อมูล**
+รายงานเต็ม `REGRESSION_ROOT_CAUSE_2026-09-18.md`. สิ่งที่เปลี่ยน flow: (1) **ตารางกำหนดยื่นชุดที่ 4 ถูกยุบ** —
+`ComplianceService.InitializeFilingCalendarAsync` (ปฏิทิน compliance · `POST compliance/initialize/{year}`) เลิกพิมพ์
+ภ.พ.30/ภ.ง.ด.1/3/53/สปส.1-10 เอง 4 ลูป ⇒ ทุกแบบรายเดือนได้ `DueDate` จาก `Helpers/TaxFilingDeadline.For` ตัวเดียวกับ
+หน้านำส่ง/ปฏิทินยื่น (เลื่อนวันหยุด ป.พ.พ. §193/8 ด้วย — เดิมไม่เลื่อน) · สปส.6-09 ใน `PayrollService.TerminateEmployeeAsync`
+ผ่าน `TaxFilingDeadline.For("SsoSps609")` (วันที่ 15 · ไม่มี e-Filing +8 เหมือน `Sso*` ทุกตัว) · checker
+`filing_deadline_single_source_check` จับที่ body shape แทนชื่อเมธอด (รุ่นเดิมรายงาน 0 ทั้งที่มีสำเนา)
+(2) **ใบลดหนี้ผ่าน Integration API** (`IntegrationService` ~1205) เลิกลด `BalanceDue` เดี่ยว ๆ — ขยับคู่
+`PaidAmount += min(CN, max(0, BalanceDue))` · `BalanceDue = max(0, Total − Paid)` แล้วสถานะตาม `BalanceDue` เหมือน
+`DocumentService` (เดิม `Total − Paid ≠ Balance` ⇒ รับชำระบางส่วนครั้งถัดไปคำนวณทับ ยอด CN เด้งกลับเป็นยอดค้าง)
+(3) **50 ทวิ PDF** พิมพ์คำนำหน้าบุคคลธรรมดาจาก `Contact.TitleTh` ผ่าน `ThaiTitleHelper.WithTitle` (ไม่ต่อซ้ำเมื่อชื่อมีอยู่แล้ว ·
+ไม่ต่อให้นิติบุคคล) ให้ตรงกับที่ไฟล์ ภ.ง.ด.3 ประกาศใน Col12 (4) **PreClose checklist** ข้อ WHT นับเฉพาะ
+`WithholdingTax3/53` + ลิงก์ `/pages/tax.html` (เดิมนับ `WithholdingTax1` ซึ่ง `TaxService` throw ไม่ให้สร้าง และลิงก์ไป
+ทะเบียน 50 ทวิ) · **ไม่ได้เปลี่ยน**: ยอด WHT ค้างนำส่งยังนับจาก `Documents` ขณะที่ไฟล์ยื่นนับจาก `WithholdingTaxCerts`
+(§4 #2 ของรายงาน — รอการตัดสินใจ "50 ทวิ auto-issue") · สถานะ "ยื่นแล้ว" ยังเก็บ 4 ที่ไม่ sync (§4 #6)
+— commit <pending>)_

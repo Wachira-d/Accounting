@@ -79,15 +79,18 @@ public class PreCloseChecklistService
             0, "/pages/tax.html"));
 
         // 6. WHT reports exist
+        // ⚠️ `TaxService.CreateTaxReport` **ปฏิเสธ** WithholdingTax1 โดยตั้งใจ (ภ.ง.ด.1 ยื่นผ่าน
+        // เมนูส่งออกไฟล์จากรอบเงินเดือน ไม่ใช่ TaxReport) ⇒ เงื่อนไขเดิมที่นับ WithholdingTax1
+        // เป็นจริงไม่ได้เลย และลิงก์ไป wht.html (ทะเบียน 50 ทวิ) ไม่ใช่ที่สร้างรายงาน —
+        // checklist ข้อนี้จึงเตือนผิดที่มาตลอด. ตรวจเฉพาะ 3/53 และพาไปหน้ารายงานภาษี
         var whtExists = await _db.TaxReports.AsNoTracking()
             .CountAsync(r => r.CompanyId == companyId
-                && (r.TaxType == TaxType.WithholdingTax3 || r.TaxType == TaxType.WithholdingTax53
-                    || r.TaxType == TaxType.WithholdingTax1)
+                && (r.TaxType == TaxType.WithholdingTax3 || r.TaxType == TaxType.WithholdingTax53)
                 && r.Year == year && r.Month == month);
-        items.Add(new("WHT_REPORTS", "รายงาน ภงด. (1/3/53)", whtExists >= 1,
+        items.Add(new("WHT_REPORTS", "รายงาน ภงด.3/53", whtExists >= 1,
             whtExists >= 1 ? "Info" : "Warning",
-            whtExists >= 1 ? $"สร้างรายงาน WHT {whtExists} ฉบับ" : "ยังไม่ได้สร้างรายงาน WHT",
-            whtExists, "/pages/wht.html"));
+            whtExists >= 1 ? $"สร้างรายงาน WHT {whtExists} ฉบับ" : "ยังไม่ได้สร้างรายงาน ภ.ง.ด.3/53 (ภ.ง.ด.1 ดูที่ไฟล์ยื่นจากรอบเงินเดือน)",
+            whtExists, "/pages/tax.html"));
 
         // 7. Fixed Assets depreciation run for the month
         // Heuristic: any auto-generated JE in the period that references a
