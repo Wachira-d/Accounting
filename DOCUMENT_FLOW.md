@@ -5117,4 +5117,4 @@ WHT แต่ไม่มี cert ที่ออกจริง = **ช่อ�
 (`.github/workflows/ci.yml`) แบบแก้ "เสียง" ไม่ปิด "ด่าน": paths-ignore `**.md` · concurrency cancel · job
 `static-checks` (= `tools/check_all.sh --all --no-dotnet`) + `build` ทุก push · `test` เฉพาะ PR/main/dispatch —
 agent อ่านผลผ่าน MCP หลัง push · **ยังค้าง**: สถานะ "ยื่นแล้ว" 4 ที่ไม่ sync (§4 #6) · dead helper 58 ตัวรอตัดสิน
-— commit <pending>)_
+— commit db5112d)_
