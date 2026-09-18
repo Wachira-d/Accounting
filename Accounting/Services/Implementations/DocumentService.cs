@@ -7528,12 +7528,37 @@ public partial class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // ── ตัดตัวชี้จากสแกน OCR ก่อนลบแถวเอกสาร ─────────────────────────
+            //
+            // `OcrScanResult.CreatedDocumentId` เป็น `Guid?` เปล่า ๆ **ไม่มี FK**
+            // ⇒ ลบเอกสารแล้วตัวชี้ค้างอยู่โดยไม่มีอะไรฟ้อง ⇒ การ์ดบนหน้า OCR ยัง
+            // ติดป้าย "สร้างแล้ว" · กดแล้วเด้ง "ไม่พบเอกสาร" · แท็บ "รอตรวจสอบ"
+            // ไม่เห็นสแกนใบนี้อีกเลย · และ**ด่านกันสร้างซ้ำ**ก็อ่านช่องนี้ ⇒ ผู้ใช้
+            // สร้างเอกสารใหม่จากสแกนเดิมไม่ได้ ทั้งที่ของเก่าถูกลบไปแล้ว
+            // (ผู้ใช้รายงาน 2026-09-18 — ตัวตัดสินอยู่ที่ Helpers/OcrCreatedDocumentLink)
+            var linkedScans = await _db.Set<OcrScanResult>()
+                .Where(sr => sr.CompanyId == companyId && sr.CreatedDocumentId == documentId)
+                .ToListAsync();
+            foreach (var sr in linkedScans)
+            {
+                sr.CreatedDocumentId = null;
+                // ต่อท้ายเสมอ ห้ามทับ — ช่องนี้เป็นที่สะสมที่ด่านอื่นอ่านธงจากมัน
+                sr.ProcessingNotes = (sr.ProcessingNotes ?? "")
+                    + Accounting.Helpers.OcrCreatedDocumentLink.UnlinkNote(doc.DocumentNumber, DateTime.UtcNow);
+                sr.UpdatedAt = DateTime.UtcNow;
+            }
+
             // Hard-delete lines first (FK), then header. Use Remove (not soft-delete)
             // because Draft never reached the books — no audit obligation.
             _db.DocumentLines.RemoveRange(doc.Lines);
             _db.Documents.Remove(doc);
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
+
+            if (linkedScans.Count > 0)
+                _logger.LogInformation(
+                    "ลบเอกสาร {DocNum} แล้วตัดตัวชี้จากสแกน OCR {Count} ใบ — สแกนกลับไปสถานะ 'ยังไม่ได้สร้างเอกสาร'",
+                    doc.DocumentNumber, linkedScans.Count);
         }
         catch
         {

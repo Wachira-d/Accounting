@@ -182,6 +182,21 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PricesIncludeVat" boolean NOT NULL DEFAULT false;
             """,
 
+            // ===== OcrScanResults: ล้าง "ตัวชี้ค้าง" ไปยังเอกสารที่ถูกลบไปแล้ว =====
+            // DeleteDocumentAsync ลบแถว Documents ทิ้งจริง (hard delete ใบร่าง) แต่เดิม
+            // ไม่เคยแตะ OcrScanResult.CreatedDocumentId ซึ่งไม่มี FK ⇒ การ์ดบนหน้า OCR
+            // ติดป้าย "สร้างแล้ว" ค้าง · กดแล้วไม่พบเอกสาร · สร้างใหม่จากสแกนเดิมไม่ได้
+            // เพราะด่านกันซ้ำอ่านช่องนี้ (ผู้ใช้รายงาน 2026-09-18)
+            // — แก้โค้ดอย่างเดียวไม่พอ แถวที่พังไปแล้วต้องถูกซ่อมด้วย (หลักการข้อ 9)
+            """
+            UPDATE "OcrScanResults" s
+               SET "CreatedDocumentId" = NULL,
+                   "ProcessingNotes" = COALESCE(s."ProcessingNotes", '')
+                       || E'\n[Unlink] เอกสารที่สร้างจากสแกนนี้ถูกลบไปแล้ว — สแกนกลับไปสถานะ "ยังไม่ได้สร้างเอกสาร" และสร้างใหม่ได้'
+             WHERE s."CreatedDocumentId" IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM "Documents" d WHERE d."Id" = s."CreatedDocumentId");
+            """,
+
             // ===== Documents: คำแนะนำหัก ณ ที่จ่าย จากชั้นเรียนรู้ (กฎเหล็ก #1) =====
             // FeedbackId เก็บไว้ปิดวงจรตอนผู้ใช้กดอนุมัติ — ไม่เก็บ = ถามแล้วไม่เคยรู้
             // ว่าคำตอบถูกไหม ⇒ นักเรียนไม่มีวันโต

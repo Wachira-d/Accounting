@@ -5097,7 +5097,57 @@ public class OcrService : IOcrService
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
             ?? throw new InvalidOperationException("OCR scan result not found.");
 
+        await ClearDanglingCreatedDocumentAsync(companyId, new[] { result });
         return await AttachComplianceAsync(companyId, MapToResponse(result));
+    }
+
+    /// <summary>
+    /// **ล้าง "ตัวชี้ค้าง" ไปยังเอกสารที่ถูกลบแล้ว** — ฝั่งอ่านของคู่สมมาตรกับ
+    /// <c>DocumentService.DeleteDocumentAsync</c>
+    ///
+    /// <para>ฝั่งเขียนตัดตัวชี้ให้แล้วตอนลบ แต่ฝั่งอ่านต้องซื่อสัตย์ด้วยตัวเอง:
+    /// แถวที่ค้างมาก่อนคอมมิตนี้ · การลบผ่านเส้นทางอื่นในอนาคต · ข้อมูลที่ถูก
+    /// restore มาไม่ครบ ⇒ ถ้าไม่ตรวจ การ์ดจะโกหกว่า "สร้างแล้ว" ต่อไปเรื่อย ๆ
+    /// (หลักการ "ชี้ไป ≠ ปลายทางมีจริง" — ดู <see cref="Accounting.Helpers.OcrCreatedDocumentLink"/>)</para>
+    ///
+    /// <para>คิวรีเดียวต่อหน้า ไม่ใช่ต่อแถว (กัน N+1) · ล้างค่าแล้ว<b>บันทึกลงฐาน</b>
+    /// เพื่อให้ตัวกรองแท็บ "รอตรวจสอบ" (ซึ่งกรองที่ระดับ SQL ก่อนถึงตรงนี้)
+    /// เห็นความจริงเดียวกันในครั้งถัดไป</para>
+    /// </summary>
+    private async Task ClearDanglingCreatedDocumentAsync(Guid companyId, IReadOnlyList<OcrScanResult> rows)
+    {
+        var ids = rows
+            .Where(r => r.CreatedDocumentId.HasValue && r.CreatedDocumentId.Value != Guid.Empty)
+            .Select(r => r.CreatedDocumentId!.Value)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0) return;
+
+        var alive = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id))
+            .Select(d => d.Id)
+            .ToListAsync();
+        var aliveSet = alive.ToHashSet();
+
+        var cleared = 0;
+        foreach (var r in rows)
+        {
+            if (!Accounting.Helpers.OcrCreatedDocumentLink.IsDangling(
+                    r.CreatedDocumentId, aliveSet.Contains(r.CreatedDocumentId ?? Guid.Empty)))
+                continue;
+            r.CreatedDocumentId = null;
+            r.ProcessingNotes = (r.ProcessingNotes ?? "")
+                + Accounting.Helpers.OcrCreatedDocumentLink.UnlinkNote(null, DateTime.UtcNow);
+            r.UpdatedAt = DateTime.UtcNow;
+            cleared++;
+        }
+        if (cleared > 0)
+        {
+            await _db.SaveChangesAsync();
+            _logger.LogInformation(
+                "ล้างตัวชี้ค้างของสแกน {Count} ใบ (เอกสารปลายทางถูกลบไปแล้ว) บริษัท {CompanyId}",
+                cleared, companyId);
+        }
     }
 
     public async Task<PagedResponse<OcrResultResponse>> GetResultsAsync(Guid companyId, string? status, PagedRequest request)
@@ -5135,6 +5185,8 @@ public class OcrService : IOcrService
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
+
+        await ClearDanglingCreatedDocumentAsync(companyId, rows);
 
         // คำเตือนบนการ์ดคำนวณที่นี่ที่เดียว (ดู OcrScanComplianceEvaluator) —
         // ดึงเลขบริษัท **ครั้งเดียวต่อหน้า** ไม่ใช่ต่อแถว (กัน N+1)
