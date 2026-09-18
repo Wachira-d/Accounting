@@ -130,4 +130,33 @@ public class OcrReviewGuardTests
         => Assert.Equal("บริษัท ก",
             OcrReviewGuard.Filter("""{"corrections":{"vendor_name":"บริษัท ก"}}""",
                 null, null, null, rawText: null).Accepted["vendor_name"]);
+
+    [Fact]
+    public void กระดาษเขียนนิคหิตแยก_โมเดลตอบสระอำ_ต้องถือว่าเป็นคำเดียวกัน()
+    {
+        // "จํากัด" (นิคหิต ํ + สระอา า) คือสิ่งที่ OCR ไทยคืนมาเป็นปกติ ·
+        // "จำกัด" (สระอำ ำ) คือสิ่งที่โมเดล/ทะเบียนตอบ — NFC **ไม่รวมให้**
+        // เทสต์ชุดแรกของผมใช้รูปแยกทั้งสองฝั่งพอดี จึงเขียวโดยไม่ได้พิสูจน์เรื่องนี้
+        const string paper = "บริษัท ทดสอบ จํากัด";
+        var json = """{"corrections":{"vendor_name":"บริษัท ทดสอบ จำกัด"}}""";
+        Assert.Equal("บริษัท ทดสอบ จำกัด",
+            OcrReviewGuard.Filter(json, null, null, null, paper).Accepted["vendor_name"]);
+    }
+
+    [Fact]
+    public void วรรณยุกต์ที่_OCR_ทำหล่น_ต้องไม่ทำให้ตกด่าน()
+        // "เทรดดิง" บนกระดาษ ↔ "เทรดดิ้ง" ที่โมเดลเสนอ — ด่านนี้มีไว้จับชื่อที่
+        // แต่งขึ้นทั้งก้อน ไม่ใช่จับการสะกดวรรณยุกต์
+        => Assert.Equal("บริษัท เอบีซี เทรดดิ้ง จำกัด",
+            OcrReviewGuard.Filter(
+                """{"corrections":{"vendor_name":"บริษัท เอบีซี เทรดดิ้ง จำกัด"}}""",
+                null, null, null, "บริษัท เอบีซี เทรดดิง จํากัด").Accepted["vendor_name"]);
+
+    [Fact]
+    public void พยัญชนะคนละตัว_ยังต้องตกด่าน()
+        // ทิศตรงข้าม: การผ่อนเรื่องวรรณยุกต์ต้องไม่กลายเป็น "รับทุกอย่าง"
+        => Assert.DoesNotContain("vendor_name",
+            OcrReviewGuard.Filter(
+                """{"corrections":{"vendor_name":"บริษัท เอกซ์วายแซด จำกัด"}}""",
+                null, null, null, "บริษัท เอบีซี เทรดดิง จํากัด").Accepted.Keys);
 }

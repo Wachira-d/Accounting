@@ -124,9 +124,31 @@ public static class DbdIdentityGuard
     ///
     /// <para>เฉพาะกรณีที่รู้แน่ว่าเป็น<b>บริษัทเดียวกัน</b> — ชื่อเดิมจึงเป็น
     /// "คำตอบที่ผิดของผู้ขายรายนี้" จริง ๆ. กรณีชื่อตรงกันอยู่แล้วไม่มีอะไรให้สอน
-    /// และกรณีกุญแจน่าสงสัยห้ามสอนเด็ดขาด (จะสอนว่าชื่อที่ถูกคือชื่อบริษัทอื่น)</para></summary>
-    public static bool ShouldLearnMismatch(DbdTrustVerdict v)
-        => v is DbdTrustVerdict.SameCompanyMisspelled or DbdTrustVerdict.KeyVerifiedNameDiffers;
+    /// และกรณีกุญแจน่าสงสัยห้ามสอนเด็ดขาด (จะสอนว่าชื่อที่ถูกคือชื่อบริษัทอื่น)</para>
+    ///
+    /// <para>⚠️ <b>ชื่อย่อที่ถูกต้องไม่ใช่คำตอบผิด</b> — เมื่อชื่อหนึ่งเป็นส่วนหนึ่ง
+    /// ของอีกชื่อ ("ซีพี" ⊂ "ซีพี ออลล์" · "PTT" ⊂ "PTT Global Chemical") แปลว่า
+    /// ต้นทางเขียน<b>ชื่อย่อ/ชื่อทางการค้า</b> ไม่ใช่สะกดผิด. หลังใส่
+    /// <see cref="MinSubstringLength"/> ชื่อย่อสั้น ๆ ไม่ได้ <c>ExactMatch</c> อีก
+    /// ต่อไป จึงตกมาที่สาขานี้ ⇒ ถ้าไม่กันไว้ ระบบจะจดชื่อย่อที่ผู้ใช้ใช้อยู่ทุกวัน
+    /// เป็น "คำตอบที่ผิด" ถาวร (ฝ่ายค้านรอบ 174 · หลักการข้อ 8 ทิศตรงข้าม)</para></summary>
+    public static bool ShouldLearnMismatch(DbdTrustVerdict v, string? registryName = null, string? incomingName = null)
+    {
+        if (v is not (DbdTrustVerdict.SameCompanyMisspelled or DbdTrustVerdict.KeyVerifiedNameDiffers))
+            return false;
+        var a = Normalize(incomingName);
+        var b = Normalize(registryName);
+        // เฉพาะทิศ "ชื่อที่ได้มา **สั้นกว่า** และเป็นส่วนหนึ่งของชื่อทะเบียน" = ชื่อย่อ
+        //
+        // ⚠️ ทิศกลับ (ชื่อที่ได้มา**ยาวกว่า**และคลุมชื่อทะเบียน) **ต้องสอน** — นั่นคือ
+        // ชื่อที่มีขยะพ่วงท้าย เช่น "(มหาซน)" ที่ OCR อ่านเพี้ยนจาก "(มหาชน)" จนตัดคำ
+        // มาตรฐานไม่ออก ⇒ เหลือหางติดมา. กติกาแรกที่ผมเขียนเช็คทั้งสองทิศ แล้วเทสต์
+        // ทิศตรงข้ามของตัวเองจับได้ว่ามันปิดการเรียนรู้เคสที่ควรเรียน
+        if (a.Length > 0 && b.Length > 0 && a.Length < b.Length
+            && b.Contains(a, StringComparison.OrdinalIgnoreCase))
+            return false;   // ชื่อย่อของรายเดียวกัน — ไม่มี "ความผิด" ให้สอน
+        return true;
+    }
 
     /// <summary>ข้อความอธิบายเมื่อกุญแจน่าสงสัย — ต้องบอกว่า<b>ให้ไปตรวจอะไร</b>
     /// ไม่ใช่แค่บอกว่าไม่ผ่าน</summary>

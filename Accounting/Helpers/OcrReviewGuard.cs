@@ -108,8 +108,10 @@ public static class OcrReviewGuard
             // ย่อแล้วขยายเป็นชื่อเต็มที่ไม่มีบนใบ) จะกลายเป็นชื่อคู่ค้าถาวรและไหลลง
             // ใบกำกับ §86/4 ⇒ "ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ"
             //
-            // ตกด่าน ≠ ทิ้ง — ไปอยู่ใน Rejected ที่ UI แสดงเป็น<b>คำแนะนำ</b> ให้คน
-            // กดรับเองได้ (ทางไปต่อของผู้ใช้ยังอยู่ครบ)
+            // ตกด่าน ≠ ทิ้ง — ไปอยู่ใน Rejected ที่หน้าเว็บแสดงเป็น**คำเตือนพร้อมค่าที่
+            // โมเดลเสนอ** ⇒ คนอ่านแล้วพิมพ์เองได้ถ้าเห็นด้วย
+            // ⚠️ วันนี้ยัง**ไม่มีปุ่มกดรับ** — ถ้าจะให้เป็น 1-click จริงตามกฎเหล็ก #3
+            // ต้องเพิ่มปุ่มที่หน้าเว็บ (จดไว้ใน VENDOR_IDENTITY_PLAN §10)
             (bool, string) OnPaper(string v) =>
                 AppearsOnPaper(rawText, v)
                     ? (true, "")
@@ -149,10 +151,22 @@ public static class OcrReviewGuard
         }
     }
 
-    /// <summary>ข้อความนี้ปรากฏบนกระดาษไหม — เทียบแบบ<b>ตัดช่องว่าง/เครื่องหมายทิ้ง</b>
-    /// เพราะ OCR ไทยแทรกช่องว่างกลางคำเป็นปกติ ("บ ริษัท ก") และแบบฟอร์มมีจุดไข่ปลา
-    /// คั่น. <c>rawText</c> ว่าง = ไม่มีกระดาษให้เทียบ ⇒ ถือว่าผ่าน (ไม่มีหลักฐาน
-    /// ว่าแต่งขึ้น — ห้ามเดาแทนคน)</summary>
+    /// <summary>ข้อความนี้ปรากฏบนกระดาษไหม
+    ///
+    /// <para>ย่อทั้งสองฝั่งด้วย <c>ThaiTextNormalizer.SquashForKeywordMatch</c> —
+    /// <b>ตัวย่อกลางตัวเดียวของเรพ</b> ห้ามเขียนสำเนาที่สอง: มันทำสิ่งที่ตัวย่อ
+    /// เขียนเองมองข้ามเสมอ คือรวม <b>นิคหิต + สระอา (ํ+า) เป็นสระอำ (ำ)</b> ซึ่ง
+    /// NFC ไม่รวมให้ ⇒ "จํากัด" ที่ OCR คืนมา กับ "จำกัด" ที่โมเดล/ทะเบียนตอบ
+    /// เป็นคนละสตริงในสายตาโปรแกรม (บั๊กจริง PI-20260820-0005 — ฝ่ายค้านรอบ 174
+    /// จับได้ว่าตัวย่อที่ผมเพิ่งเขียนเองพลาดข้อนี้ และเทสต์ก็หลบเคสนี้พอดี)</para>
+    ///
+    /// <para>แล้วตัด<b>วรรณยุกต์/สระบน-ล่าง</b>ออกอีกชั้น เพราะ Tesseract ทำหล่น/
+    /// เกินเป็นปกติ ("เทรดดิ้ง"↔"เทรดดิง" ต้องถือว่าเป็นคำเดียวกัน · "มหาชน"↔"มหาซน"
+    /// ยังต่างกันเพราะเป็นพยัญชนะคนละตัว) — ด่านนี้มีไว้จับ<b>ชื่อที่โมเดลแต่งขึ้น
+    /// ทั้งก้อน</b> ไม่ใช่จับการสะกดวรรณยุกต์</para>
+    ///
+    /// <para><c>rawText</c> ว่าง = ไม่มีกระดาษให้เทียบ ⇒ ถือว่าผ่าน (ไม่มีหลักฐาน
+    /// ว่าแต่งขึ้น — ห้ามเดาแทนคน)</para></summary>
     private static bool AppearsOnPaper(string? rawText, string? value)
     {
         if (string.IsNullOrWhiteSpace(rawText)) return true;
@@ -161,14 +175,19 @@ public static class OcrReviewGuard
         return Squash(rawText).Contains(needle, StringComparison.Ordinal);
     }
 
-    /// <summary>เหลือเฉพาะตัวอักษร/ตัวเลข ตัวพิมพ์เล็ก — ตัดช่องว่าง วรรณยุกต์ที่ไม่ใช่
-    /// ตัวอักษร และเครื่องหมายทั้งหมด</summary>
+    /// <summary>ตัวย่อกลางของเรพ + ตัดวรรณยุกต์/สระบน-ล่าง (Mn/Mc) —
+    /// ดูเหตุผลใน <see cref="AppearsOnPaper"/></summary>
     private static string Squash(string? s)
     {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        var sb = new System.Text.StringBuilder(s.Length);
-        foreach (var ch in s)
-            if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+        var t = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.SquashForKeywordMatch(s);
+        var sb = new System.Text.StringBuilder(t.Length);
+        foreach (var ch in t)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (cat is System.Globalization.UnicodeCategory.NonSpacingMark
+                    or System.Globalization.UnicodeCategory.SpacingCombiningMark) continue;
+            if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+        }
         return sb.ToString();
     }
 

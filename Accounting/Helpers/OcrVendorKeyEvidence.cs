@@ -53,6 +53,8 @@ public static class OcrVendorKeyEvidence
     /// <param name="taxIdPosition">ตำแหน่งเลขก้อนนี้ในข้อความทั้งหน้า (-1 = ไม่พบ/ไม่รู้)</param>
     /// <param name="buyerLabelPositions">ตำแหน่งป้ายฝั่งผู้ซื้อทุกตัว</param>
     /// <param name="sellerLabelPositions">ตำแหน่งป้ายฝั่งผู้ขายทุกตัว</param>
+    /// <param name="textLength">ความยาวข้อความทั้งหน้า — ใช้เฉพาะตอน<b>ไม่มีป้ายฝั่งใดเลย</b>
+    /// (0 = ไม่รู้)</param>
     public static VendorKeyEvidence Judge(
         string? vendorTaxId,
         string? buyerTaxId,
@@ -60,7 +62,8 @@ public static class OcrVendorKeyEvidence
         bool labelledAsTaxIdOnPaper,
         int taxIdPosition,
         IReadOnlyList<int>? buyerLabelPositions,
-        IReadOnlyList<int>? sellerLabelPositions)
+        IReadOnlyList<int>? sellerLabelPositions,
+        int textLength = 0)
     {
         // 1) รูปแบบ + checksum + ไม่ใช่บาร์โค้ดสินค้า
         if (!ThaiTaxId.IsPlausibleFromScan(vendorTaxId)) return VendorKeyEvidence.Unproven;
@@ -76,8 +79,28 @@ public static class OcrVendorKeyEvidence
         if (InBuyerBlock(taxIdPosition, buyerLabelPositions, sellerLabelPositions))
             return VendorKeyEvidence.Unproven;
 
+        // 5) กระดาษที่<b>ไม่มีป้ายฝั่งใดเลยทั้งหน้า</b> = ไม่มีหลักฐานเชิงตำแหน่ง
+        //
+        // เดิมเคสนี้ตกลงมาเป็น "พิสูจน์แล้ว" เพราะ InBuyerBlock คืน false เมื่อไม่มี
+        // ป้ายอะไรเลย (ฝ่ายค้านรอบ 174 จับได้) — ซึ่งแปลง "ไม่รู้" เป็น "ใช่" ตรง ๆ
+        // ขัดหลักการข้อ 3 ของเรพ. ป้าย "เลขประจำตัวผู้เสียภาษี" ในเงื่อนไข 2
+        // **ไม่แยกฝั่ง** (ผู้ซื้อก็มีป้ายนี้) ⇒ ถ้าไม่มีป้ายฝั่งเลย ด่านที่เหลือจริง
+        // มีแค่ "ไม่ใช่เลขผู้ซื้อ/เลขเรา" ซึ่งหายไปเองเมื่อ tenant ยังไม่กรอกเลขบริษัท
+        //
+        // ใช้แบบแผนหน้ากระดาษแทน: บล็อกผู้ขายของใบไทยอยู่**หัวใบ**เสมอ (หมายเหตุใน
+        // OcrPartyLabels) ⇒ ยอมรับเฉพาะเลขที่อยู่ในครึ่งบน. ไม่รู้ความยาวหน้า
+        // (textLength = 0) ⇒ ไม่มีหลักฐาน ⇒ Unproven
+        var noPartyLabels = (buyerLabelPositions?.Count ?? 0) == 0
+                         && (sellerLabelPositions?.Count ?? 0) == 0;
+        if (noPartyLabels && !InTopHalf(taxIdPosition, textLength))
+            return VendorKeyEvidence.Unproven;
+
         return VendorKeyEvidence.ProvenSellerKey;
     }
+
+    /// <summary>เลขอยู่ในครึ่งบนของข้อความทั้งหน้าไหม (ไม่รู้ตำแหน่ง/ความยาว = ไม่ใช่)</summary>
+    private static bool InTopHalf(int position, int textLength)
+        => position >= 0 && textLength > 0 && position * 2 <= textLength;
 
     /// <summary>เลขก้อนนี้อยู่ใต้ป้ายฝั่ง<b>ผู้ซื้อ</b>หรือไม่
     ///

@@ -386,10 +386,18 @@ public class OcrService : IOcrService
                     // — จริงเมื่อคลัง known-good มีแต่ค่าที่ Azure เองสอนไว้ (แทนตัวเอง
                     // = no-op) แต่ **ไม่จริง**เมื่อคลังมีค่าที่ *ผู้ใช้แก้เอง*
                     // (Source = UserCorrection ซึ่ง BestMatch จัดให้ชนะ Azure เสมอ)
-                    // ⇒ ผู้ใช้แก้ชื่อผู้ขายไปแล้ว ใบถัดไปที่เข้าทาง Azure ก็ยัง
-                    // กลับไปผิดแบบเดิม = "แก้แล้วระบบไม่จำ" ซึ่งเป็นอาการที่ผู้ใช้
-                    // รายงานว่า "สอนแล้วทำไมยังผิด" (กฎเหล็ก #1: วงจรเรียนรู้ต้องปิด)
-                    await _knownGoodCorrector.ApplyAsync(companyId, extractedData);
+                    //
+                    // ขอบเขตที่ทำได้จริง (อย่าอ่านเกินนี้ — ฝ่ายค้านรอบ 174 ทักว่า
+                    // คอมเมนต์เดิมกล่าวเกิน): `BestMatch` บังคับความคล้าย ≥ 0.80
+                    // ⇒ ช่วยเฉพาะเคส "สะกดเพี้ยนเล็กน้อยจากค่าที่ผู้ใช้เคยแก้"
+                    // เคสชื่อแบรนด์ละติน ↔ ชื่อนิติบุคคลไทย (ความคล้าย 0.000)
+                    // **ไม่ได้แก้ที่นี่** — ตัวที่แก้คือด่านทะเบียน + การพิสูจน์กุญแจ
+                    //
+                    // allowTaxIdRecovery: false — Azure อ่านเลขบนกระดาษได้แม่น
+                    // ถ้ามันบอกว่าไม่มีเลข การเติมเลขจากประวัติ = แต่งเลขที่ไม่ได้อยู่
+                    // บนใบนี้ลงช่องผู้ขาย แล้วไหลต่อไปเป็นเลขใน §86/4 และรายงาน §87
+                    await _knownGoodCorrector.ApplyAsync(companyId, extractedData,
+                        allowTaxIdRecovery: false);
                     // ตัวเรียนรู้จาก Azure (AzureDiPatternLearner) **ย้ายไปรันหลังขั้นตัดสินคู่ค้า**
                     // — เดิมสอนด้วยผลดิบตรงนี้ ก่อน Enrich/ตัวตัดสิน/ตัวกรองเลขที่ ⇒ จำ "ชื่อบริษัท
                     // เราเอง" เป็นผู้ขาย และจำเลขที่บ้านเป็นเลขที่เอกสาร (ดูบล็อก persist ด้านล่าง)
@@ -1884,10 +1892,9 @@ public class OcrService : IOcrService
             scanResult.Currency = extractedData.Currency ?? InferCurrency(extractedText);
             scanResult.Confidence = extractedData.Confidence;
 
-            // Build [Reasoning] section LAST so it includes VendorIntel + Learner traces
-            if (extractedData.ReasoningTrace.Count > 0)
-                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
-                    string.Join("\n", extractedData.ReasoningTrace.Select(r => "  • " + r));
+            // [Reasoning] ถูกย้ายไป dump ท้ายไปป์ไลน์ (ก่อน SaveChangesAsync) —
+            // คอมเมนต์เดิมตรงนี้เขียนว่า "LAST" แต่ยัง**ก่อน**ด่านทะเบียน/ตัวเดา
+            // ผังบัญชีอีก 270 บรรทัด ⇒ เหตุผลของขั้นเหล่านั้นไม่เคยถึงผู้ใช้
 
             // ── Credit-account auto-fill by target document type ──
             // The Category resolver fills the DEBIT side (expense
@@ -2808,26 +2815,42 @@ public class OcrService : IOcrService
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + $"\n[Error] {ex.Message}";
         }
 
-        // ── ความมั่นใจรายช่อง: เก็บ**ท้ายสุด** ห้ามเก็บกลางทาง ──────────────
-        // เดิมบล็อกนี้อยู่กลางไปป์ไลน์ (ก่อนด่าน DBD · ก่อนตัวเดาผังบัญชี ·
-        // ก่อนตัวอ่านเลขที่เอกสาร) ⇒ ทุกค่าที่ตั้ง**หลัง**จุดนั้น **ไม่เคยถูกเก็บ
-        // ลงฐานเลย**: [DBD] ที่ลดเหลือ 0.30/0.50 เพื่อขอให้คนตรวจ · DebitAccount ·
-        // DocumentNumber · ExpenseCategory · VatAmount/SubTotal ที่คำนวณย้อน
-        // ⇒ ผู้ใช้เปิดหน้าทบทวนแล้วเห็นป้ายเขียวบนช่องที่ระบบเองยังไม่มั่นใจ
-        // (กฎเหล็ก #3 ข้อ 3 บอกให้ไฮไลต์เหลืองเมื่อ < 0.85 — ไฮไลต์นั้นไม่เคยขึ้น)
+        // ── สิ่งที่ผู้ใช้ต้องเห็น: เก็บ**ท้ายสุด** ห้ามเก็บกลางทาง ──────────────
+        //
+        // เดิมทั้งสองบล็อกนี้อยู่กลางไปป์ไลน์ ⇒ ทุกอย่างที่เกิด**หลัง**จุดนั้นหายเงียบ:
+        //   • ความมั่นใจรายช่อง — [DBD] ที่ลดเหลือ 0.30/0.50 เพื่อขอให้คนตรวจ ·
+        //     DebitAccount · DocumentNumber · ExpenseCategory · VAT/SubTotal ที่คำนวณย้อน
+        //     ⇒ ผู้ใช้เห็นป้ายเขียวบนช่องที่ระบบเองยังไม่มั่นใจ (กฎเหล็ก #3 ข้อ 3
+        //     สั่งให้ไฮไลต์เหลืองเมื่อ < 0.85 — ไฮไลต์นั้นไม่เคยขึ้น)
+        //   • [Reasoning] — ถูก dump ที่บรรทัด ~1888 ซึ่งอยู่**ก่อน**ด่านทะเบียน (DBD)
+        //     ถึง 270 บรรทัด ⇒ เหตุผลทุกบรรทัดที่ EnrichFromDbdAsync เขียน
+        //     ("ไม่ได้ค้นทะเบียนเพราะเลขใช้ไม่ได้" · "ใช้ชื่อนิติบุคคลแทนชื่อแบรนด์")
+        //     **ไม่เคยถึงผู้ใช้เลย** ทั้งตอนสดและตอน reload เพราะ DTO ไม่มีช่อง
+        //     ReasoningTrace — มีแต่ ProcessingNotes (ฝ่ายค้านรอบ 174 จับได้)
         //
         // ตำแหน่งนี้อยู่**นอก** try/catch โดยตั้งใจ: สแกนที่ล้มกลางทางก็ยังต้อง
         // เก็บสิ่งที่รู้แล้วไว้ให้คนตรวจ ไม่ใช่ทิ้งทั้งชุด
-        if (extractedData.FieldConfidence.Count > 0)
+        //
+        // ⚠️ `extractedData` เป็น **nullable** และเป็น null จริงเมื่อ engine ตัวแรก
+        // โยน exception ก่อนถูกกำหนดค่า (เช่น โควตา/Tesseract ล้ม) ⇒ ต้องใช้ `?.`
+        // ไม่งั้น NRE ตรงนี้จะข้าม SaveChangesAsync ข้างล่าง แล้วแถวที่ INSERT ไว้
+        // เป็น "Processing" จะค้างสถานะนั้นตลอดกาล พร้อมกับ 500 ถึงผู้ใช้ —
+        // ซึ่งเป็นเคสเดียวกับที่คอมเมนต์ข้างบนบอกว่าจะรองรับ (CS8602 เป็นแค่ warning
+        // และเรพไม่ได้เปิด TreatWarningsAsErrors ⇒ CI ไม่จับให้)
+        if (extractedData?.FieldConfidence is { Count: > 0 } conf)
         {
             // เก็บลงฐานด้วยชื่อช่องกลาง — เดิมเก็บแค่เป็นข้อความใน
             // ProcessingNotes ซึ่งอ่านกลับมาใช้ไม่ได้ ⇒ พอ reload หน้า
             // ความมั่นใจรายช่องหายหมด แล้วป้าย % ตกไปใช้ค่าทั้งใบ
-            var canon = Accounting.Helpers.OcrFieldKeys.Canonicalize(extractedData.FieldConfidence);
+            var canon = Accounting.Helpers.OcrFieldKeys.Canonicalize(conf);
             scanResult.FieldConfidenceJson = System.Text.Json.JsonSerializer.Serialize(canon);
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Field Confidence]\n" +
                 string.Join("\n", canon.Select(kv => $"  {kv.Key}: {kv.Value:P0}"));
         }
+
+        if (extractedData?.ReasoningTrace is { Count: > 0 } trace)
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
+                string.Join("\n", trace.Select(r => "  • " + r));
 
         await _db.SaveChangesAsync();
 
@@ -4267,6 +4290,15 @@ public class OcrService : IOcrService
                 _logger.LogWarning(ex, "บันทึกค่า known-good จากคำแก้ของผู้ใช้ไม่สำเร็จ (ไม่กระทบคำแก้)");
             }
         }
+        else if (correction.VendorName != null || correction.VendorAddress != null)
+        {
+            // ไม่มีเลขผู้เสียภาษี = ไม่มีกุญแจให้ผูกคำแก้ ⇒ ครั้งหน้าระบบจำไม่ได้
+            // **ห้ามเงียบ** — ไม่งั้นผู้ใช้เข้าใจว่าสอนระบบไปแล้ว (หลักการข้อ 7)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + "\n[KnownGood] ยังจำคำแก้ชื่อ/ที่อยู่ผู้ขายใบนี้ไม่ได้ เพราะยังไม่มีเลขผู้เสียภาษี"
+                + "ของผู้ขายเป็นกุญแจ — กรอกเลขผู้เสียภาษีแล้วบันทึกอีกครั้ง ระบบจะจำให้ใบถัดไป";
+            await _db.SaveChangesAsync();
+        }
 
         // ───── Train VendorIntelligence with the corrected target type ─────
         // When the user changes "เอกสารที่จะสร้าง" we want next scan of the
@@ -4616,7 +4648,7 @@ public class OcrService : IOcrService
                 break;
         }
 
-        if (Accounting.Helpers.DbdIdentityGuard.ShouldLearnMismatch(verdict))
+        if (Accounting.Helpers.DbdIdentityGuard.ShouldLearnMismatch(verdict, dbdName, ocrName))
             await RecordOcrMismatchAsync(companyId, data.VendorTaxId!, "SellerName",
                 wrongValue: ocrName, correctValue: dbd.NameTh);
 
@@ -4666,7 +4698,8 @@ public class OcrService : IOcrService
             data.VendorTaxId, data.BuyerTaxId, ourTaxId,
             labelledAsTaxIdOnPaper: candidate.Labelled,
             taxIdPosition: string.IsNullOrEmpty(candidate.Id) ? -1 : candidate.Position,
-            labels.BuyerPos, labels.SellerPos);
+            labels.BuyerPos, labels.SellerPos,
+            textLength: raw.Length);
     }
 
     /// <summary>

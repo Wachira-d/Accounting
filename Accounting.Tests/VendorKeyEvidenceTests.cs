@@ -27,10 +27,15 @@ public class VendorKeyEvidenceTests
     private const string OurId = "0105564045849";   // บริษัทเจ้าของ tenant
     private const string Barcode = "8859991446166";   // ผ่านทั้ง mod-11 ไทย และ EAN-13 (GS1 885)
 
+    /// <summary>หน้ากระดาษสมมติยาว 1000 ตัวอักษร — ตำแหน่ง &lt; 500 = ครึ่งบน</summary>
+    private const int PageLength = 1000;
+
     private static VendorKeyEvidence Judge(string? vendor, bool labelled, int pos,
-        int[]? buyerLabels = null, int[]? sellerLabels = null, string? buyer = BuyerId)
+        int[]? buyerLabels = null, int[]? sellerLabels = null, string? buyer = BuyerId,
+        int textLength = PageLength)
         => OcrVendorKeyEvidence.Judge(vendor, buyer, OurId, labelled, pos,
-            buyerLabels ?? System.Array.Empty<int>(), sellerLabels ?? System.Array.Empty<int>());
+            buyerLabels ?? System.Array.Empty<int>(), sellerLabels ?? System.Array.Empty<int>(),
+            textLength);
 
     // ══════════ ครึ่งแรก: ใบที่เคยพัง ══════════
 
@@ -50,7 +55,7 @@ public class VendorKeyEvidenceTests
         var verdict = DbdIdentityGuard.Judge(official, "DECATHLON", sim, keyProven: true);
         Assert.Equal(DbdTrustVerdict.KeyVerifiedNameDiffers, verdict);
         Assert.True(DbdIdentityGuard.RegistryWins(verdict));
-        Assert.True(DbdIdentityGuard.ShouldLearnMismatch(verdict),
+        Assert.True(DbdIdentityGuard.ShouldLearnMismatch(verdict, official, "DECATHLON"),
             "ชื่อโลโก้ต้องถูกเก็บเป็นตัวอย่างเชิงลบ ไม่งั้นครั้งหน้าก็ยังอ่านได้ 'DECATHLON' เหมือนเดิม");
     }
 
@@ -142,4 +147,51 @@ public class VendorKeyEvidenceTests
     [Fact]
     public void ต้นทางไม่ส่งชื่อมา_ไม่มีอะไรให้สอน()
         => Assert.False(DbdIdentityGuard.ShouldLearnMismatch(DbdTrustVerdict.NoIncomingName));
+
+    // ══════════ กระดาษที่ไม่มีป้ายฝั่งใดเลย = ไม่มีหลักฐานเชิงตำแหน่ง (ฝ่ายค้านรอบ 174) ══════════
+
+    [Fact]
+    public void ไม่มีป้ายฝั่งใดเลย_เลขอยู่หัวกระดาษ_ยังพิสูจน์ได้()
+        // บล็อกผู้ขายของใบไทยอยู่หัวใบเสมอ — เคสดีแคทลอนอยู่กลุ่มนี้
+        => Assert.Equal(VendorKeyEvidence.ProvenSellerKey, Judge(SellerId, labelled: true, pos: 120));
+
+    [Fact]
+    public void ไม่มีป้ายฝั่งใดเลย_เลขอยู่ท้ายกระดาษ_ห้ามนับว่าพิสูจน์แล้ว()
+        // เดิมเคสนี้ "ผ่าน" เพราะไม่มีป้ายผู้ซื้อให้เทียบ ⇒ แปลง "ไม่รู้" เป็น "ใช่"
+        // ทั้งที่ป้าย "เลขประจำตัวผู้เสียภาษี" มีอยู่ทั้งสองฝั่งของใบทุกใบ
+        => Assert.Equal(VendorKeyEvidence.Unproven, Judge(SellerId, labelled: true, pos: 900));
+
+    [Fact]
+    public void ไม่รู้ความยาวหน้ากระดาษ_และไม่มีป้ายเลย_ต้องไม่เดาว่าผ่าน()
+        => Assert.Equal(VendorKeyEvidence.Unproven,
+            Judge(SellerId, labelled: true, pos: 120, textLength: 0));
+
+    [Fact]
+    public void มีป้ายผู้ซื้ออยู่ล่าง_เลขอยู่บน_ไม่ต้องใช้กติกาครึ่งหน้า()
+        // ทิศตรงข้าม: พอมีป้ายสักฝั่ง กติกาตำแหน่งปกติ (ป้ายไหนอยู่เหนือ) พอแล้ว
+        // ⇒ เลขที่อยู่ท้ายหน้าแต่เหนือป้ายผู้ซื้อ ต้องยังผ่าน
+        => Assert.Equal(VendorKeyEvidence.ProvenSellerKey,
+            Judge(SellerId, labelled: true, pos: 900, buyerLabels: new[] { 950 }));
+
+    // ══════════ ชื่อย่อที่ถูกต้อง ไม่ใช่ "คำตอบผิด" ที่ต้องเอาไปสอน ══════════
+
+    [Theory]
+    [InlineData("บริษัท ซีพี ออลล์ จำกัด (มหาชน)", "บริษัท ซีพี จำกัด")]
+    [InlineData("PTT Global Chemical Public Company Limited", "PTT")]
+    public void ชื่อย่อที่เป็นส่วนหนึ่งของชื่อทะเบียน_ห้ามเก็บเป็นตัวอย่างเชิงลบ(string official, string incoming)
+    {
+        // หลังใส่ MinSubstringLength ชื่อย่อสั้น ๆ ไม่ได้ ExactMatch อีกต่อไป จึงตกมาที่
+        // สาขาที่เคย "เรียนรู้" ⇒ ถ้าไม่กัน ระบบจะจดชื่อย่อที่ผู้ใช้ใช้ทุกวันว่าผิด
+        var sim = Accounting.Services.Implementations.Ocr.FuzzyMatcher.Similarity(official, incoming);
+        var verdict = DbdIdentityGuard.Judge(official, incoming, sim, keyProven: true);
+        Assert.True(DbdIdentityGuard.RegistryWins(verdict));
+        Assert.False(DbdIdentityGuard.ShouldLearnMismatch(verdict, official, incoming));
+    }
+
+    [Fact]
+    public void ชื่อคนละบริษัทที่กุญแจพิสูจน์แล้ว_ยังต้องเรียนรู้ได้()
+        // ทิศตรงข้ามของเทสต์ข้างบน — ไม่ใช่ทุกเคสที่ห้ามสอน
+        => Assert.True(DbdIdentityGuard.ShouldLearnMismatch(
+            DbdTrustVerdict.SameCompanyMisspelled,
+            "บริษัท ไทยเบฟเวอเรจ จำกัด (มหาชน)", "บริษัท ไทยเบฟเวอเรจ จํากัด (มหาซน)"));
 }

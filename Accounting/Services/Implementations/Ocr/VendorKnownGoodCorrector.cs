@@ -43,7 +43,14 @@ public class VendorKnownGoodCorrector
     /// entries so the user can see why a value changed mid-pipeline.
     /// Internal because OcrExtractedData is internal to this assembly.
     /// </summary>
-    internal async Task ApplyAsync(Guid companyId, OcrExtractedData data, CancellationToken ct = default)
+    /// <param name="allowTaxIdRecovery">ยอมให้ "กู้ <c>VendorTaxId</c> จากชื่อที่ใกล้เคียง"
+    /// ไหม — <b>เส้น Azure ต้องส่ง false</b>: Azure อ่านเลขบนกระดาษได้แม่น ถ้ามันบอกว่า
+    /// ไม่มีเลข แปลว่ากระดาษไม่มี ⇒ การเติมเลขจากประวัติคือการ<b>แต่งเลขที่ไม่ได้อยู่
+    /// บนใบนี้</b> ลงช่องผู้ขาย แล้วไหลต่อไปเป็นเลขใน §86/4 และรายงานภาษีซื้อ §87
+    /// (หลักการข้อ 3: ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ) · tier 2/3 ยังเปิดไว้เพราะ
+    /// ผลอ่านสกปรกจนคุ้มเสี่ยง และเป็นพฤติกรรมเดิมที่มีเทสต์ล็อกอยู่</param>
+    internal async Task ApplyAsync(Guid companyId, OcrExtractedData data,
+        bool allowTaxIdRecovery = true, CancellationToken ct = default)
     {
         if (data == null) return;
         // Need at least vendor TaxId or vendor name to find anything.
@@ -56,7 +63,7 @@ public class VendorKnownGoodCorrector
         // that maps to a TaxId. This is the "we knew this vendor before"
         // recovery path; with TaxId restored, downstream corrections can
         // proceed.
-        if (string.IsNullOrEmpty(taxId) && !string.IsNullOrEmpty(nameNoise))
+        if (string.IsNullOrEmpty(taxId) && !string.IsNullOrEmpty(nameNoise) && allowTaxIdRecovery)
         {
             var byName = await _db.VendorKnownGoodValues
                 .Where(v => v.CompanyId == companyId
@@ -173,16 +180,26 @@ public class VendorKnownGoodCorrector
     /// <para>ใช้ด่านช่องชุดเดียวกับฝั่งเขียนของ Azure (<see cref="Accounting.Helpers.VendorKnownGoodFields"/>)
     /// — เลขที่เอกสารและช่องตัวเลขล้วนยัง<b>ห้าม</b>เข้าคลัง แม้ผู้ใช้จะพิมพ์เอง</para>
     /// </summary>
-    public async Task RememberUserCorrectionAsync(Guid companyId, string? vendorTaxId,
+    public async Task<bool> RememberUserCorrectionAsync(Guid companyId, string? vendorTaxId,
         string fieldName, string? value, CancellationToken ct = default)
     {
         var v = value?.Trim();
-        if (string.IsNullOrEmpty(v)) return;
+        if (string.IsNullOrEmpty(v)) return false;
         // ต้องเป็นช่องที่ "คงที่ต่อผู้ขาย" เท่านั้น — กติกาเดียวกับฝั่ง Azure
-        if (!Accounting.Helpers.VendorKnownGoodFields.IsCorrectable(fieldName)) return;
-        if (Accounting.Helpers.VendorKnownGoodFields.IsPerDocument(fieldName)) return;
+        if (!Accounting.Helpers.VendorKnownGoodFields.IsCorrectable(fieldName)) return false;
+        if (Accounting.Helpers.VendorKnownGoodFields.IsPerDocument(fieldName)) return false;
         var key = NormalizeTaxId(vendorTaxId);
-        if (string.IsNullOrEmpty(key)) return;   // ไม่มีกุญแจ = หาไม่เจอตอนอ่าน
+        if (string.IsNullOrEmpty(key))
+        {
+            // ไม่มีกุญแจ = ฝั่งอ่าน (ApplyAsync) หาแถวนี้ไม่เจอตลอดกาล ⇒ เก็บไปก็ไร้ผล
+            // **ห้ามเงียบ** — ผู้ใช้ที่แก้ชื่อผู้ขายบนสแกนที่อ่านเลขภาษีไม่ออก (เคสที่พบ
+            // บ่อยที่สุด) จะเข้าใจว่าระบบจำแล้ว ทั้งที่ไม่ได้จำอะไรเลย
+            // (หลักการข้อ 7 "ล้มดัง" · ผู้เรียกเอาไปบอกผู้ใช้ต่อ)
+            _logger.LogInformation(
+                "known-good: ไม่บันทึกคำแก้ช่อง {Field} ของบริษัท {CompanyId} — ยังไม่มีเลขผู้เสียภาษีของผู้ขายเป็นกุญแจ",
+                fieldName, companyId);
+            return false;
+        }
 
         var existing = await _db.VendorKnownGoodValues
             .FirstOrDefaultAsync(x => x.CompanyId == companyId
@@ -214,6 +231,7 @@ public class VendorKnownGoodCorrector
             });
         }
         await _db.SaveChangesAsync(ct);
+        return true;
     }
 
     /// <summary>Strip non-digit chars and confirm a 13-digit Thai TaxId before using as a lookup key.</summary>
