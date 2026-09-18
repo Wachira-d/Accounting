@@ -282,4 +282,4 @@ Student > CrossTenant > Rule > Ai > Guess) แล้ว `Normalize` สเกล
 ---
 
 _Last verified against codebase: 2026-09-18 — รอบ 181 (ตรวจกระบวนการตัดสินใจทั้งระบบ 8 ทีม → DECISION_AUDIT)_
-_commit: <pending>_
+_commit: ddb023b_

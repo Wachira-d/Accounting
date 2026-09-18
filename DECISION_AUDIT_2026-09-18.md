@@ -312,4 +312,4 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 ---
 
 _Last verified against codebase: 2026-09-18 — รอบ 181 (ตรวจกระบวนการตัดสินใจ 8 ทีม · ครบทั้ง 8)_
-_commit: <pending>_
+_commit: ddb023b_
