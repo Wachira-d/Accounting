@@ -1662,8 +1662,7 @@ public partial class TaxService : ITaxService
                 .Where(c => c.CompanyId == companyId
                     && c.TaxFormType == report.TaxType
                     && c.TaxYear == report.Year && c.TaxMonth == report.Month
-                    && (c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Issued
-                        || c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Printed))
+                    && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(c.Status))
                 .ToListAsync();
             await _db.HydratePayeeContactsAsync(companyId, monthCerts);
             foreach (var cert in monthCerts.OrderBy(c => c.CertificateNumber))

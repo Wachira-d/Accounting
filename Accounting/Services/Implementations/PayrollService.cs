@@ -3933,63 +3933,6 @@ public class PayrollService : IPayrollService
         };
     }
 
-    // ===== PND3 Report (ภ.ง.ด.3) =====
-
-    public async Task<object> GeneratePnd3Async(Guid companyId, int year, int month)
-    {
-        var startDate = new DateTime(year, month, 1);
-        var endDate = startDate.AddMonths(1).AddDays(-1);
-
-        var docs = await _db.Documents
-            .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ตัดแถว ภ.ง.ด.3)
-            .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= startDate && d.DocumentDate <= endDate
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.WithholdingTaxAmount > 0)
-            .ToListAsync();
-        await _db.HydrateContactsAsync(companyId, docs);
-
-        var lines = docs.SelectMany(d => d.Lines
-            .Where(l => l.WithholdingTaxAmount > 0)
-            .Select(l => new
-            {
-                TaxPayerId = d.Contact?.TaxId,
-                TaxPayerName = d.Contact?.Name ?? "",
-                IncomeTypeCode = l.IncomeTypeCode ?? "40(8)",
-                IncomeAmount = l.Amount,
-                TaxRate = l.WithholdingTaxRate,
-                TaxWithheld = l.WithholdingTaxAmount,
-                DocumentNumber = d.DocumentNumber,
-                PaymentDate = d.DocumentDate
-            }))
-            .ToList();
-
-        // Group by vendor for summary
-        var vendorSummary = lines
-            .GroupBy(l => new { l.TaxPayerId, l.TaxPayerName })
-            .Select(g => new
-            {
-                g.Key.TaxPayerId,
-                g.Key.TaxPayerName,
-                TotalIncome = g.Sum(l => l.IncomeAmount),
-                TotalTaxWithheld = g.Sum(l => l.TaxWithheld),
-                TransactionCount = g.Count()
-            })
-            .ToList();
-
-        return new
-        {
-            FormCode = "ภ.ง.ด.3",
-            Year = year,
-            Month = month,
-            TotalVendors = vendorSummary.Count,
-            TotalIncome = lines.Sum(l => l.IncomeAmount),
-            TotalTaxWithheld = lines.Sum(l => l.TaxWithheld),
-            VendorSummary = vendorSummary,
-            Lines = lines
-        };
-    }
-
     // ===== Thai Income Tax Calculation =====
 
 

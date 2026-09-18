@@ -71,7 +71,7 @@ public class PayrollController : ControllerBase
     /// <summary>ด่านสำหรับข้อมูล "รายคน": ของตัวเองดูได้เสมอ · ของคนอื่นต้องมีสิทธิ์ HR
     ///
     /// <para>ที่มา (ผลตรวจ D-A2): endpoint อ่าน 7 ตัวไม่มีด่านเลย — รวม
-    /// <c>pnd3</c>/<c>sso</c> ที่คืน<b>ชื่อ + ค่าจ้าง + ภาษีของพนักงานทุกคน</b>
+    /// <c>sso</c> (และ <c>pnd3</c> ที่ลบไปรอบ 170) ที่คืน<b>ชื่อ + ค่าจ้าง + ภาษีของพนักงานทุกคน</b>
     /// และ <c>leaves</c>/<c>leaves/balance</c> ที่รับ <c>employeeId</c> อะไรก็ได้
     /// ⇒ สมาชิกคนไหนของบริษัทก็อ่านข้อมูลเงินเดือน/วันลาของเพื่อนร่วมงานได้</para></summary>
     private async Task<ActionResult?> RequireOwnOrPayrollAsync(Guid companyId, Guid employeeId)
@@ -656,12 +656,9 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
     }
 
-    [HttpGet("pnd3/{year:int}/{month:int}")]
-    public async Task<ActionResult<ApiResponse<object>>> GetPnd3(Guid companyId, int year, int month)
-    {
-        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
-        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd3Async(companyId, year, month)));
-    }
+    // `pnd3/{year}/{month}` ถูกลบรอบ 170 — เป็นสูตรที่ 3 ของยอด ภ.ง.ด.3 (นับจาก Documents ไม่กรองฝั่งซื้อ ·
+    // ไม่แยก 3/53 · ไม่ตัด PV ซ้ำ) ที่ **ไม่มี UI เรียก** (REGRESSION_ROOT_CAUSE §4 #2) — ตัวตั้งคือ
+    // รายงานภาษี (TaxService.GenerateWhtReport จาก 50 ทวิ ที่ออกแล้ว) ที่ /api/tax/reports
 
     [HttpGet("sso/{year:int}/{month:int}")]
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)

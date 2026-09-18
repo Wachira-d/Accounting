@@ -463,6 +463,10 @@
           : (r.remittanceType === 'VatPp30' || r.remittanceType === 'VatPp36'
               ? `<div class="text-xs text-gray-400">ขาย ${Layout.money(r.outputVat)} − ซื้อ ${Layout.money(r.inputVat)}</div>`
               : (r.payeeCount ? `<div class="text-xs text-gray-400">${r.payeeCount} ราย</div>` : ''));
+        // ช่องโหว่ 50 ทวิ — เซิร์ฟเวอร์ตัดสิน (undefined = เซิร์ฟเวอร์เก่า ไม่วาด · 0/null = ไม่มี)
+        const gap = (r.unissuedWhtCount > 0)
+          ? `<div class="text-xs" style="color:#b45309">⚠️ ${r.unissuedWhtCount} ใบยังไม่มี 50 ทวิ ที่ออกแล้ว (${Layout.money(r.unissuedWhtAmount)}) — ไม่รวมในยอดนี้ · <a href="/pages/wht.html" style="text-decoration:underline">ออกใบ</a></div>`
+          : '';
         const typeCell = showType
           ? `<span class="rm-type-badge" style="color:${g.fg};background:${g.bg};border-color:${g.bd}">${Layout.esc(r.formCode)}</span>${Layout.esc(r.typeLabel)}
              <div class="text-xs text-gray-400">ผังบัญชี ${Layout.esc(r.payableAccountCode)}</div>`
@@ -471,7 +475,7 @@
           <tr class="rm-row ${u.cls}">
             <td class="font-medium" data-label="แบบ">${typeCell}</td>
             <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
-            <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}</td>
+            <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}${gap}</td>
             <td class="text-center" data-label="กำหนดยื่น">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div></td>
             <td class="text-center" data-label="สถานะ"><span class="badge ${u.badge}">${u.label}</span></td>
             <td class="text-right"><button class="btn btn-outline btn-sm" onclick="Page.openPay(${r._idx})">💸 นำส่ง</button></td>

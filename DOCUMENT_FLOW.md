@@ -5100,3 +5100,21 @@ _Last verified against codebase: 2026-09-18 (รอบ 169 — **root cause ข�
 ทะเบียน 50 ทวิ) · **ไม่ได้เปลี่ยน**: ยอด WHT ค้างนำส่งยังนับจาก `Documents` ขณะที่ไฟล์ยื่นนับจาก `WithholdingTaxCerts`
 (§4 #2 ของรายงาน — รอการตัดสินใจ "50 ทวิ auto-issue") · สถานะ "ยื่นแล้ว" ยังเก็บ 4 ที่ไม่ sync (§4 #6)
 — commit ac91b71)_
+
+_Last verified against codebase: 2026-09-18 (รอบ 170 — **คำตัดสินเจ้าของ 4 ข้อจาก REGRESSION_ROOT_CAUSE §7.3/§10**:
+(1) **50 ทวิ ออกอัตโนมัติเป็น Issued ตอนจ่าย** (ท.ป.4/2528 ให้ออกในวันจ่าย) — hook ทั้ง 3 ใน
+`DocumentService` (approve ที่จ่ายจบ · `CreatePaymentAsync` · ชำระหลายใบ) เปลี่ยน `autoIssue: false → true`;
+เส้น integration ยังเป็น `autoIssue: paid` (PI ที่ยังไม่จ่าย = Draft รอจ่ายจริง) · void เอกสารยัง cascade void cert (6d)
+(2) **หน้านำส่ง/ปฏิทินยื่น ภ.ง.ด.3/53/54 อ่านจาก `WithholdingTaxCerts` Issued/Printed** (ตัวตั้งเดียวกับ
+`TaxService.GenerateWhtReport` · `TaxFilingExportService` · การ์ดแดชบอร์ด) แทน `Documents.WithholdingTaxAmount`
+— สถานะ "นับเข้าแบบยื่น" ตัดสินที่ `Helpers/WhtCertFilingScope.Filed` ตัวเดียว (ยุบสำเนา 5 ที่) · เอกสารฝั่งซื้อที่หัก
+WHT แต่ไม่มี cert ที่ออกจริง = **ช่องโหว่** ⇒ `PendingRemittanceItem.UnissuedWhtCount/Amount` + แถวเตือนบนหน้านำส่ง
+(งวดที่ certs = 0 แต่มีช่องโหว่ **ยังขึ้นแถว** ไม่ `continue` ทิ้ง) · ช่องปฏิทิน NotRequired/Filed ที่มีช่องโหว่ → Unknown
++ ลิงก์ออกใบ · **`RemitAsync` บล็อก** ด้วย `BusinessRuleException("WHT-CERT-UNISSUED")` จนกว่าจะออกครบ —
+ไม่นำส่งน้อยกว่าที่หักจริงเงียบ ๆ · ลิสต์ "รอออกใบ" ใช้ชุดชนิด `WhtRemitScope.PayerSideTypes` (เพิ่ม CertificateInLieu)
+(3) ลบ `PayrollService.GeneratePnd3Async` + `GET payroll/pnd3` — สูตรที่ 3 ของ ภ.ง.ด.3 ที่ไม่มี UI เรียก (ต่อสายไม่ได้
+เพราะกติกาผิดตั้งแต่ต้น: ไม่กรองฝั่งซื้อ · ไม่แยก 3/53 · ไม่ตัด PV ซ้ำ) (4) **CI เปิดบน `claude/**` อีกครั้ง**
+(`.github/workflows/ci.yml`) แบบแก้ "เสียง" ไม่ปิด "ด่าน": paths-ignore `**.md` · concurrency cancel · job
+`static-checks` (= `tools/check_all.sh --all --no-dotnet`) + `build` ทุก push · `test` เฉพาะ PR/main/dispatch —
+agent อ่านผลผ่าน MCP หลัง push · **ยังค้าง**: สถานะ "ยื่นแล้ว" 4 ที่ไม่ sync (§4 #6) · dead helper 58 ตัวรอตัดสิน
+— commit <pending>)_

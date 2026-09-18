@@ -10,6 +10,7 @@
 #
 # ใช้: bash tools/check_all.sh          # ไฟล์ที่แก้ = diff กับ HEAD + staged + untracked
 #      bash tools/check_all.sh --all    # node --check / brace / U+FFFD กับทุกไฟล์ใน wwwroot + *.cs
+#      bash tools/check_all.sh --all --no-dotnet   # ใน CI job static-checks (job build/test แยกต่างหาก — ไม่ build ซ้ำ)
 set -u
 cd "$(dirname "$0")/.." || exit 2
 fail=0
@@ -24,7 +25,9 @@ done
 [ $fail -eq 0 ] && green "✅ checker $(ls tools/*_check.py | wc -l) ตัวผ่าน"
 
 # ---------- 2. ไฟล์ที่แก้ ----------
-if [ "${1:-}" = "--all" ]; then
+all=0; nodotnet=0
+for a in "$@"; do case "$a" in --all) all=1;; --no-dotnet) nodotnet=1;; esac; done
+if [ $all -eq 1 ]; then
   changed=$( { git ls-files 'Accounting/**/*.cs' 'Accounting.Tests/*.cs' 'Accounting/wwwroot/**/*.html' 'Accounting/wwwroot/**/*.js'; } )
 else
   changed=$( { git diff --name-only HEAD; git diff --name-only --cached; git ls-files --others --exclude-standard; } | sort -u )
@@ -74,7 +77,9 @@ green "✅ ไฟล์ที่ตรวจ (brace/node/U+FFFD): $(echo "$chang
 if ! python3 tools/test_inventory.py --check; then fail=1; fi
 
 # ---------- 4. compiler ถ้ามี ----------
-if command -v dotnet >/dev/null 2>&1; then
+if [ $nodotnet -eq 1 ]; then
+  echo "ℹ️  --no-dotnet: ข้าม build/test (job อื่นทำ)"
+elif command -v dotnet >/dev/null 2>&1; then
   dotnet build Accounting.sln -c Release 2>&1 | tail -20 || fail=1
   dotnet test Accounting.sln -c Release --no-build 2>&1 | tail -20 || fail=1
 else

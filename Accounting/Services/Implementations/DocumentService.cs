@@ -5244,6 +5244,9 @@ public partial class DocumentService : IDocumentService
                 // PaidAmount>0) แม้ label ยังเป็น Approved — ครอบใบ PV จ่ายแล้วที่สร้าง
                 // เป็น Draft (เช่น integration AutoApprove=false) แล้วมาอนุมัติทีหลัง
                 // ให้ออก 50 ทวิ ครบ. guard cert-exists ใน AutoGenerate กันออกซ้ำอยู่แล้ว.
+                // รอบ 170 (นโยบายเจ้าของ): autoIssue = true — ท.ป.4/2528 ให้ออกหนังสือรับรอง **ในวันจ่าย**
+                // เดิมสร้างเป็น Draft ⇒ ไม่เข้า ภ.ง.ด.3/53 · ไม่เข้าไฟล์ยื่น · หน้านำส่ง (นับจาก Documents) จึงได้
+                // ยอดคนละก้อนกับไฟล์ (นับจาก certs Issued/Printed) จนกว่าผู้ใช้จะกด "ออกใบ" ทีละใบ
                 var whtPaidOnApprove = doc.Status == DocumentStatus.Paid
                     || (doc.BalanceDue <= 0.005m && doc.PaidAmount > 0.005m);
                 if (whtPaidOnApprove
@@ -5255,7 +5258,7 @@ public partial class DocumentService : IDocumentService
                     try
                     {
                         await _whtService.AutoGenerateFromDocumentAsync(
-                            companyId, doc.Id, false, approvedBy,
+                            companyId, doc.Id, autoIssue: true, approvedBy,
                             doc.PaymentDate ?? doc.DocumentDate);
                     }
                     catch (Exception ex)
@@ -11000,8 +11003,9 @@ public partial class DocumentService : IDocumentService
                     // แล้วที่ payment.WithholdingTaxAmount) — เดิมออกใบด้วยยอดเต็ม
                     // ทั้งเอกสารตั้งแต่งวดแรก แล้ว guard กันซ้ำทำให้งวดถัดไปไม่ออกอีก
                     // → นำส่งเกินในเดือนแรกและขาดในเดือนที่จ่ายส่วนที่เหลือ
+                    // รอบ 170: ออกเป็น Issued ทันที (ไม่ใช่ Draft) — ดูหมายเหตุที่ hook ตอน approve
                     await _whtService.AutoGenerateFromDocumentAsync(
-                        companyId, doc.Id, false, createdBy, payment.PaymentDate,
+                        companyId, doc.Id, autoIssue: true, createdBy, payment.PaymentDate,
                         sourcePaymentId: payment.Id,
                         paymentWhtAmount: payment.WithholdingTaxAmount > 0
                             ? payment.WithholdingTaxAmount : null);
@@ -11384,7 +11388,7 @@ public partial class DocumentService : IDocumentService
                             && allocType is DocumentType.PurchaseInvoice or DocumentType.Expense
                                 or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu)
                             await _whtService.AutoGenerateFromDocumentAsync(
-                                companyId, allocDocId, false, createdBy, payment.PaymentDate,
+                                companyId, allocDocId, autoIssue: true, createdBy, payment.PaymentDate,
                                 sourcePaymentId: payment.Id,
                                 paymentWhtAmount: whtByDoc[allocDocId]);
                     }

@@ -478,8 +478,8 @@ public class DashboardService : IDashboardService
         var toKey = toDate.Year * 100 + toDate.Month;
         var whtCertQuery = _db.WithholdingTaxCerts
             .Where(c => c.CompanyId == companyId
-                && c.Status != WithholdingTaxCertStatus.Voided
-                && c.Status != WithholdingTaxCertStatus.Draft
+                // "นับเข้าแบบยื่น" ตัดสินที่ Helpers/WhtCertFilingScope ตัวเดียว (เดิมเขียนกลับด้านเป็น ≠Voided/≠Draft)
+                && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(c.Status)
                 && c.TaxYear * 100 + c.TaxMonth >= fromKey
                 && c.TaxYear * 100 + c.TaxMonth <= toKey);
 

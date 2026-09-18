@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **187 ไฟล์ · 1,435 `[Fact]` + 235 `[Theory]` (1,072 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
+| เทสต์ที่มี | **188 ไฟล์ · 1,437 `[Fact]` + 235 `[Theory]` (1,072 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4332,3 +4332,26 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | CAL-01 | `callers.py SsoFilingScope` vs `callers.py PayrollRunFilingScope.CanRemit` vs `SsoRateSchedule.RangesOverlap` | 7 ผู้เรียก / 0 (นิยาม 1) / เทสต์ 2 โค้ด 0 — exit 1 สองตัวหลัง · ชื่อเต็ม `Accounting.Helpers.X.Y` นับเป็นผู้เรียก |
 | INV-01 | `test_inventory.py --check` หลังเพิ่ม `[Theory]` โดยไม่แก้ TEST_PLAN §0 | ล้มพร้อมตัวเลขทั้งสองฝั่ง · คอมเมนต์ที่เอ่ย `DbContext` ไม่นับเป็นการใช้ (4 ไฟล์) |
 | CHK-01 | `check_all.sh` brace balance บน `PayrollService.cs` (มี `$@"…{(x ? "a" : "b")}…"`) | **0** — ตัวนับที่ "ตัดสตริงก่อน" ฟ้อง −1 ทั้ง HEAD และ WT = FP จึงใช้ awk ดิบตาม CLAUDE.md F |
+
+### รอบ 170 — 50 ทวิ ออกอัตโนมัติตอนจ่าย + หน้านำส่งอ่านจาก certs (คำตัดสินเจ้าของ) + CI เปิดบน claude/**
+
+| ID | เคส | ต้องได้ |
+| --- | --- | --- |
+| W50-01 | PV มี WHT อนุมัติแบบ "จ่ายจบตอน approve" | 50 ทวิ ถูกสร้างเป็น **Issued** ทันที (เดิม Draft) · `IssuedDate` = เวลาที่อนุมัติ · TaxMonth = เดือน `PaymentDate ?? DocumentDate` |
+| W50-02 | PI มี WHT → บันทึกชำระ 2 งวด (40% · 60%) | ได้ 50 ทวิ **2 ใบ Issued** ผูก `SourcePaymentId` คนละใบ ยอด Σ = WHT ทั้งเอกสาร (ตรรกะ pro-rata เดิม ไม่เปลี่ยน) |
+| W50-03 | ชำระหลายใบด้วยโอนก้อนเดียว (allocation) | ใบละ 1 cert Issued ต่อ payment — ฝั่งขาย (Invoice) ในก้อนเดียวกัน **ไม่ออก** (เราเป็นผู้ถูกหัก) |
+| W50-04 | integration sync PI ที่ `paid=false` | ยังเป็น Draft ตามเดิม (`autoIssue: paid`) — ตอนจ่ายจริงจึงออก Issued ผ่าน hook payment |
+| W50-05 | Void PV ที่ออก 50 ทวิ Issued แล้ว | cert ถูก Void ตาม (cascade เดิม 6d) — ไม่มีของค้างในไฟล์ยื่น |
+| RMT-01 | งวดที่ certs Issued รวม 5,000 · Documents หัก WHT รวม 5,000 (ครบ) | หน้านำส่ง = **5,000** · ปฏิทิน = 5,000 · รายงาน ภ.ง.ด.53 = 5,000 · ไฟล์ยื่น = 5,000 — **สี่จอเลขเดียว** |
+| RMT-02 | Documents หัก WHT 5,000 แต่ certs Issued แค่ 3,000 (ใบหนึ่งออกไม่สำเร็จ/ยังเป็นร่าง) | หน้านำส่ง **Amount = 3,000** + แถวเตือน `unissuedWhtCount=1 · unissuedWhtAmount=2,000` · ปฏิทินช่องนั้นมี hint ⚠️ · **กดนำส่ง → 400 `WHT-CERT-UNISSUED`** พร้อมทางไปต่อ (เดิมนำส่ง 5,000 ขณะไฟล์ยื่น 3,000 — เงียบ) |
+| RMT-03 | งวดที่ certs = 0 แต่มีเอกสารหัก WHT 1 ใบไม่มี cert | **ยังขึ้นแถว** Amount 0 พร้อมเตือน (เดิม `continue` ทิ้ง ⇒ หายเงียบ) · ปฏิทิน: ช่อง NotRequired → **Unknown** + ลิงก์ `/pages/wht.html` |
+| RMT-04 | cert ที่ผู้ใช้แก้ `TaxMonth` ให้ต่างจากเดือนจ่าย | ยอดไปอยู่เดือนตาม TaxMonth (ตรงรายงาน) · เอกสารนั้น **ไม่ถูกนับเป็นช่องโหว่** (coverage ดูที่ DocumentId ไม่ดูเดือน) |
+| RMT-05 | ใบ ภ.พ.36 (IsForeignService · WHT ต่างประเทศ) | certs `TaxFormType = WithholdingTax54` เข้าแถว ภ.ง.ด.54 · ไม่ปน 3/53 (ตัวแบ่งฝั่ง cert = TaxFormType ที่ตั้งตอนออกใบ) |
+| RMT-06 | เซิร์ฟเวอร์เก่าไม่ส่ง `unissuedWhtCount` (undefined) | หน้าเว็บ **ไม่วาด** แถวเตือน (undefined ≠ 0) |
+| RMT-07 | endpoint `GET payroll/pnd3/{y}/{m}` | **404** — ลบแล้ว (สูตรที่ 3 ที่ไม่มี UI เรียก) · `grep GeneratePnd3Async` ทั้งเรพ = 0 |
+| CFS-01 | `WhtCertFilingScopeTests` ไล่ทุกค่า enum | เฉพาะ Issued/Printed อยู่ใน `Filed` · TaxService/TaxFilingExportService×3/DashboardService/StatutoryRemittanceService×2 อ้างตัวเดียวกัน (`grep "WithholdingTaxCertStatus.Printed" Services` = 0 นอก helper) |
+| PND-01 | ลิสต์ "รอออกใบ 50 ทวิ" กับใบรับรองแทนใบเสร็จ (CertificateInLieu) ที่มี WHT และไม่มี cert | **ขึ้นในลิสต์** (เดิมพิมพ์ชนิด 3 ชนิดเอง ตกชนิดนี้) — ชุดชนิดมาจาก `WhtRemitScope.PayerSideTypes` |
+| CI-01 | push คอมมิตที่แตะ .cs บน `claude/**` | workflow CI รัน job `static-checks` (check_all --all --no-dotnet) + `build`; job `test` **ไม่รัน** (เฉพาะ PR/main/dispatch) |
+| CI-02 | push คอมมิตที่แตะแต่ `.md` | **ไม่รัน** (paths-ignore) |
+| CI-03 | push 2 คอมมิตติดกันบน branch เดียว | รอบแรกถูก cancel (concurrency) |
+| CI-04 | build ล้มด้วย CSxxxx | step "สรุป CSxxxx" พิมพ์บรรทัด error ที่ไม่ซ้ำ ≤ 40 บรรทัด + artifact `build-log` |

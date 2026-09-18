@@ -617,9 +617,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 && !d.WhtCertSkipped
                 && d.WithholdingTaxAmount > 0
                 && !existingCertDocIds.Contains(d.Id)
-                && (d.DocumentType == DocumentType.PurchaseInvoice
-                    || d.DocumentType == DocumentType.Expense
-                    || d.DocumentType == DocumentType.PaymentVoucher));
+                // ชุดชนิด "เราเป็นผู้หัก" อยู่ที่ Helpers/WhtRemitScope ที่เดียว — เดิมพิมพ์เอง 3 ชนิด
+                // ตก CertificateInLieu ที่ hook auto-gen และหน้านำส่งนับอยู่ ⇒ ใบรับรองแทนใบเสร็จที่ออก
+                // 50 ทวิ ไม่สำเร็จจะไม่โผล่ในลิสต์ "รอออกใบ" เลย
+                && Accounting.Helpers.WhtRemitScope.PayerSideTypes.Contains(d.DocumentType));
 
         if (year.HasValue)
             query = query.Where(d => d.DocumentDate.Year == year.Value);

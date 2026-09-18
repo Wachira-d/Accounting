@@ -146,8 +146,7 @@ public class TaxFilingExportService : ITaxFilingExportService
                 // เฉพาะใบที่ "ออกแล้ว" — เดิม != Voided ทำให้ใบร่าง (ยังไม่ออกให้
                 // ผู้ถูกหัก) หลุดเข้าไฟล์ยื่น RD ⇒ นำส่งภาษีของใบที่อาจถูกทิ้ง +
                 // ยอดไฟล์ไม่ตรงรายงานบนจอ (รายงานนับเฉพาะ Issued/Printed)
-                && (w.Status == WithholdingTaxCertStatus.Issued
-                    || w.Status == WithholdingTaxCertStatus.Printed))
+                && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
@@ -189,8 +188,7 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && w.TaxYear == year && w.TaxMonth == month
                 // เฉพาะใบที่ "ออกแล้ว" — เดิม != Voided ทำให้ใบร่างหลุดเข้าไฟล์ยื่น
                 // RD + ยอดไฟล์ไม่ตรงรายงานบนจอ (รายงานนับเฉพาะ Issued/Printed)
-                && (w.Status == WithholdingTaxCertStatus.Issued
-                    || w.Status == WithholdingTaxCertStatus.Printed))
+                && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 
@@ -967,8 +965,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             .Where(w => w.CompanyId == companyId
                 && w.TaxFormType == TaxType.WithholdingTax54
                 && w.TaxYear == year && w.TaxMonth == month
-                && (w.Status == WithholdingTaxCertStatus.Issued
-                    || w.Status == WithholdingTaxCertStatus.Printed))
+                && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
 

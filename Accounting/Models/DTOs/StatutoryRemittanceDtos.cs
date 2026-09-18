@@ -25,7 +25,12 @@ public record PendingRemittanceItem(
     // ผู้ใช้ "ยื่นแบบ" ไปแล้วที่หน้ารายงานภาษี ยังขึ้น "เลยกำหนด N วัน" สีแดง
     // ทั้งที่ยื่นตรงเวลา — จอเล่าเรื่องผิดและผู้ใช้ไม่มีอะไรให้ไล่ต่อ.
     // null = ยังไม่ได้ยื่นแบบ (หรือแบบนี้ยังไม่มีรายงานในระบบ)
-    DateTime? ReportFiledAt = null);
+    DateTime? ReportFiledAt = null,
+    // ── ช่องโหว่ 50 ทวิ (รอบ 170) ── WHT: เอกสารฝั่งซื้อที่หัก ณ ที่จ่ายในงวดนี้แต่ **ยังไม่มีหนังสือรับรอง
+    // ที่ออกจริง** (Issued/Printed) ⇒ ไม่รวมใน Amount (ตัวตั้ง = certs ชุดเดียวกับรายงาน/ไฟล์ยื่น) และ
+    // RemitAsync บล็อกจนกว่าจะออกครบ — ห้ามนับเงียบ ๆ (ยอดนำส่งจะน้อยกว่าที่หักจริง) · null = ไม่มี
+    int? UnissuedWhtCount = null,
+    decimal? UnissuedWhtAmount = null);
 
 /// <summary>สรุปหน้านำส่ง — ยอดรวมรอนำส่ง + รายการ.</summary>
 public record RemittanceDashboardResponse(

@@ -2611,6 +2611,12 @@ logic ซ้อน 10 หมวด · สายข้อมูล 8 ค่า ·
   proxy policy · เปิด `claude/**` ใน workflow แบบแก้ "เสียง" ไม่ใช่ปิด "ด่าน") · §10 = backlog พร้อมป้ายว่าใครต้องตัดสิน
 - เครื่องมือที่เกิดจากรอบนี้: `tools/check_all.sh` · `tools/callers.py` · `tools/dead_helper_check.py` (+ baseline) ·
   `tools/test_inventory.py` — กติกา ratchet: baseline **ห้ามเพิ่มแถว** เพื่อให้ checker เขียว มีแต่ตัดออกเมื่อต่อสาย/ลบแล้ว
+- **คำตัดสินเจ้าของ (รอบ 170)**: (ก) **CI เปิดบน `claude/**` แล้ว** — หลัง push ต้องอ่านผล Actions ผ่าน MCP
+  (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้; job `test` รันเฉพาะ PR/main/dispatch (ข) เจ้าของจะเปิด host
+  .NET ใน proxy policy — เมื่อ `command -v dotnet` เจอ `check_all.sh` จะ build/test ให้เอง (ค) **50 ทวิ ออกอัตโนมัติเป็น
+  Issued ตอนจ่าย** ทุกทางเข้า — ยอดนำส่ง/ปฏิทิน/รายงาน/ไฟล์ยื่น/แดชบอร์ด อ่านจาก certs ผ่าน `Helpers/WhtCertFilingScope.Filed`
+  ตัวเดียว · เอกสารหัก WHT ที่ไม่มี cert ออกจริง = ช่องโหว่ที่ต้องเตือน+บล็อกนำส่ง ห้ามนับเงียบ (ง) ยุบหมวด F เป็นหลักการ
+  10 ข้อ + ย้ายบทเรียนดิบไป `docs/lessons/` (คอมมิตถัดไป)
 
 ## 📒 OCR_PIPELINE_REVIEW_2026-09-06.md — ไปป์ไลน์ OCR → เอกสาร (ทีมตรวจ 5 ด้าน)
 

@@ -1,53 +1,103 @@
 name: CI
 
-# Build + test ทุก push / PR — จับ compile error และ money-math regression
-# (JE balancing, VAT/WHT, §65 ตรี add-back ฯลฯ) ก่อน merge. เดิมไม่มี CI เลย.
-# ปิดการรันอัตโนมัติบน branch งาน (claude/**) ตามที่เจ้าของโปรเจกต์สั่ง —
-# ระหว่างพัฒนา agent commit ถี่ ทุก commit ที่ยัง build ไม่ผ่านจะส่งเมลแจ้ง
-# ทุกครั้ง กลายเป็นเสียงรบกวนมากกว่าสัญญาณ
-#
-# ยังทำงานเต็มรูปตรงจุดที่สำคัญจริง: **ทุก PR เข้า main/master** (กันโค้ดที่
-# build/test ไม่ผ่านหลุดเข้า main) และ push ตรงเข้า main/master
-# สั่งรันเองระหว่างพัฒนาได้ที่แท็บ Actions → CI → "Run workflow"
-# (workflow_dispatch) โดยไม่ต้องแก้ไฟล์นี้
-#
-# ถ้าอยากให้กลับมารันทุก push ของ branch งาน: เพิ่ม "claude/**" กลับเข้า
-# รายการ branches ของ push ด้านล่าง
+# เปิดบน branch งาน (claude/**) อีกครั้งตามคำตัดสินเจ้าของรอบ 169 — แต่แก้ที่ "เสียง" ไม่ใช่ปิด "ด่าน":
+#   • paths-ignore **.md / erp-review / scripts → คอมมิตเอกสารล้วน (~39% ของทั้งหมด) ไม่รัน
+#   • concurrency cancel-in-progress          → คอมมิตถี่ ยกเลิกรอบเก่าอัตโนมัติ ไม่กองกัน
+#   • job แยก: static-checks (tools/check_all.sh) + build ทุก push · test เฉพาะ PR เข้า main / push main / dispatch
+#   • agent อ่านผลเองผ่าน MCP (actions_list / get_job_logs) หลัง push แล้วแก้ก่อนรายงานผู้ใช้
+#   • อีเมลแจ้ง fail: เจ้าของปิดที่ GitHub → Settings → Notifications → Actions → "Send notifications for failed workflows only" / uncheck
+# ที่มา: REGRESSION_ROOT_CAUSE_2026-09-18.md §7 RC-1 — CI ไฟล์เดิมครบทุกขั้นแต่ trigger ไม่ครอบ branch งาน
+# ⇒ ไม่เคยรันกับคอมมิตไหนใน 145 ตัว และ build error ถึงเครื่องผู้ใช้ 8 ครั้งใน 15 วัน
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'claude/**' ]
+    paths-ignore: [ '**.md', 'erp-review/**', 'scripts/**' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
 jobs:
-  build-and-test:
+  static-checks:
+    name: Static checks (tools/check_all.sh)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # doc_commit_sha_check ต้องเห็นประวัติทั้ง branch
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # checker ทุกตัว + node --check ทุก <script> + awk brace + U+FFFD + TEST_PLAN §0 ↔ เทสต์จริง
+      # (ไม่ build ที่นี่ — job build ทำ; ไม่งั้นบิลด์ซ้ำสองรอบ)
+      - name: check_all --all --no-dotnet
+        run: bash tools/check_all.sh --all --no-dotnet
 
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+  build:
+    name: dotnet build (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-
-      # DI graph — `dotnet build` จับวงกลมไม่ได้ (เป็น runtime validation ตอน
-      # BuildServiceProvider) เคยหลุดมาแล้วครั้งหนึ่ง: คอมไพล์ผ่าน แต่แอป start
-      # ไม่ขึ้นเลย. ตรวจก่อน build เพราะเร็วกว่ามากและ fail ตรงจุด
-      - name: ตรวจวงกลม DI (circular dependency)
-        run: python3 tools/di_cycle_check.py
-
-      # CS1503 (int?/Guid? → พารามิเตอร์ที่ไม่รับ null) — `dotnet build` จับได้
-      # อยู่แล้ว แต่ env ของ agent ไม่มี .NET SDK จึงหลุดถึงเครื่องผู้ใช้มาแล้ว
-      # ตรวจตรงนี้เพื่อให้ agent รันเองได้ก่อน push (เร็ว ไม่ต้อง restore)
-      - name: ตรวจ nullable → non-nullable argument (CS1503)
-        run: python3 tools/nullable_arg_check.py
-
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Restore
         run: dotnet restore Accounting.sln
-
+      # error ตัวแรกคือของจริง — บรรทัดถัดไปมักเป็นผลพวง (CS0006 ของ Accounting.Tests ตาม Accounting.dll ที่ไม่ถูกสร้าง)
       - name: Build
-        run: dotnet build Accounting.sln --configuration Release --no-restore
+        run: dotnet build Accounting.sln --configuration Release --no-restore 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+      - name: สรุป CSxxxx ที่ไม่ซ้ำ (อ่านง่ายกว่า log เต็ม)
+        if: failure()
+        run: grep -E 'error CS[0-9]{4}' build.log | sed -E 's/\[.*$//' | sort -u | head -40
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
 
-      - name: Test
-        run: dotnet test Accounting.sln --configuration Release --no-build --verbosity normal
+  test:
+    name: dotnet test
+    needs: build
+    # เทสต์เต็มเฉพาะ PR เข้า main · push main/master · สั่งเอง — push บน claude/** ได้แค่ build (เร็ว)
+    # เทสต์ทั้งหมดเป็น pure-function (0 ไฟล์แตะ DbContext) ถ้าอยากรันทุก push ให้ลบ if นี้ได้โดยไม่ต้องมี PostgreSQL
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet restore Accounting.sln
+      - run: dotnet build Accounting.sln --configuration Release --no-restore
+      - run: dotnet test Accounting.sln --configuration Release --no-build --logger "trx;LogFileName=results.trx" --results-directory TestResults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults
+          retention-days: 7
