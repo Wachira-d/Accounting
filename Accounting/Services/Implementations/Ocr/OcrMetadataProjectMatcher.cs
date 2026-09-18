@@ -34,6 +34,10 @@ namespace Accounting.Services.Implementations.Ocr;
 /// </summary>
 internal sealed class OcrMetadataProjectMatcher
 {
+    /// <summary>ความมั่นใจขั้นต่ำก่อนเขียนคำตอบของโมเดลลงข้อมูลจริง — ตรงกับเกณฑ์
+    /// ที่เส้น OCR ใช้ทุกจุด (<c>OcrService</c> 0.70) และกับตัวอย่างใน CLAUDE.md กฎเหล็ก #1</summary>
+    private const decimal MinApplyConfidence = 0.70m;
+
     private readonly AccountingDbContext _db;
     private readonly IOcrAiAugmenter? _ai;
     private readonly ILogger _logger;
@@ -411,7 +415,15 @@ internal sealed class OcrMetadataProjectMatcher
                 var res = await _ai!.MatchLineProjectAsync(
                     companyId, scanResultId, it.Description!, it.Amount, candidates, ct);
                 // ★ นักเรียน (local model) ที่ผ่านเกณฑ์ routing ใช้ได้เท่า AI (กฎเหล็ก #1 · T3-01)
+                // ⚠️ **ต้องมีเกณฑ์ความมั่นใจด้วย ห้ามใช้ `HasModelAnswer` เดี่ยว ๆ** —
+                // นักเรียน `GenericFeedbackDistillationModel` มีชั้น "คำตอบที่บริษัทนี้
+                // ยืนยันบ่อยที่สุดของ feature นี้ **โดยไม่ดูอินพุตเลย**" ซึ่งถูก cap ไว้ที่
+                // 0.45 เพื่อไม่ให้ short-circuit — แต่ตอนปิด provider (โหมดเป้าหมายของ
+                // โปรเจกต์) คำตอบนั้นจะกลายเป็นคำตอบเดียวที่มี ⇒ ถ้าไม่มีเกณฑ์
+                // โปรเจกต์ยอดฮิตหนึ่งตัวจะถูกเขียนลงทุกบรรทัดที่จับคู่ตรง ๆ ไม่ได้
+                // (ทีม T2 รอบ 177 — จุดนี้เป็นจุดเดียวในเส้น OCR ที่ไม่มีเกณฑ์)
                 if (res.HasModelAnswer
+                    && (res.Confidence ?? 0m) >= MinApplyConfidence
                     && validIds.Contains(res.Answer!)
                     && Guid.TryParse(res.Answer, out var pid))
                 {

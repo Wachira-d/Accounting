@@ -7,7 +7,8 @@ public enum DbdTrustVerdict
     ExactMatch = 1,
     /// <summary>ชื่อ**คล้าย**พอที่จะเป็นบริษัทเดียวกันที่สะกดเพี้ยน — ทะเบียนชนะ + เรียนรู้ได้</summary>
     SameCompanyMisspelled = 2,
-    /// <summary>ต้นทางไม่ได้ส่งชื่อมา — ใช้ชื่อจากทะเบียนได้เลย ไม่มีอะไรให้ขัดแย้ง</summary>
+    /// <summary>ต้นทางไม่ได้ส่งชื่อมา <b>และกุญแจพิสูจน์แล้ว</b> — ใช้ชื่อจากทะเบียน
+    /// ได้เต็มที่ ไม่มีอะไรให้ขัดแย้ง</summary>
     NoIncomingName = 3,
     /// <summary><b>กุญแจพิสูจน์แล้ว แต่ชื่อไม่คล้ายเลย</b> — ชื่อที่ต้นทางส่งมาเป็น
     /// <b>แบรนด์/โลโก้/ชื่อสาขา</b> ไม่ใช่ชื่อนิติบุคคล (เช่น "DECATHLON" vs
@@ -15,6 +16,17 @@ public enum DbdTrustVerdict
     /// ⇒ ทะเบียนชนะ + เก็บของเดิมเป็น negative example ได้ เพราะ<b>กุญแจ</b>
     /// ผ่านการพิสูจน์มาแล้ว (ดู <c>OcrVendorKeyEvidence</c>) ไม่ใช่เดาจากความคล้าย</summary>
     KeyVerifiedNameDiffers = 4,
+
+    /// <summary><b>ไม่มีชื่อให้เทียบ และกุญแจก็ยังพิสูจน์ไม่ได้</b> — ทะเบียนยังชนะ
+    /// (ต้องมีค่าเติมตาม กฎเหล็ก #3 — ช่องว่างไม่ใช่คำตอบที่ปลอดภัยกว่า) แต่
+    /// <b>ห้ามประทับความมั่นใจเต็ม</b>: เลข 13 หลักที่ผ่าน checksum อาจเป็นบาร์โค้ด
+    /// หรือเลขผู้ซื้อ ⇒ ทะเบียนจะคืนชื่อ<b>บริษัทอื่น</b>ที่ถูกต้อง 100% ตามทะเบียน
+    /// แล้วไหลลงใบกำกับโดยไม่มีอะไรฟ้อง (§86/4 บังคับชื่อผู้ประกอบการที่ถูกต้อง)
+    /// ⇒ ผู้เรียกต้องตั้ง confidence ต่ำกว่าเกณฑ์ไฮไลต์เหลือง 0.85 (กฎเหล็ก #3 ข้อ 3)
+    ///
+    /// <para>แยกจาก <see cref="NoIncomingName"/> เพราะ "ไม่รู้" กับ "รู้แล้วว่าใช่"
+    /// ห้ามเป็นค่าเดียวกัน — เงื่อนไขที่เป็นเท็จเพราะ<b>ไม่มีข้อมูล</b> ห้ามตกเป็น "ผ่าน"</para></summary>
+    NoIncomingNameUnprovenKey = 5,
 
     /// <summary><b>คนละบริษัท</b> — ผู้ต้องสงสัยคือ "เลขผู้เสียภาษี" ไม่ใช่ชื่อ
     /// ⇒ ห้ามทับ ห้ามสอน ห้ามสร้างข้อมูลของบริษัทที่ไม่เกี่ยวข้อง</summary>
@@ -95,7 +107,11 @@ public static class DbdIdentityGuard
     public static DbdTrustVerdict Judge(string? registryName, string? incomingName, double similarity,
         bool keyProven = false)
     {
-        if (string.IsNullOrWhiteSpace(incomingName)) return DbdTrustVerdict.NoIncomingName;
+        // ⚠️ "อ่านชื่อไม่ได้" **ไม่ใช่** หลักฐานว่าเลขถูก — ต้องถามกุญแจต่อ
+        // (เดิมคืน NoIncomingName ทันที ⇒ RegistryWins = true ⇒ call site ประทับ
+        //  ความมั่นใจ 1.0 ⇒ ชื่อบริษัทอื่นลงใบกำกับเงียบสนิท · ทีม T1 รอบ 177)
+        if (string.IsNullOrWhiteSpace(incomingName))
+            return keyProven ? DbdTrustVerdict.NoIncomingName : DbdTrustVerdict.NoIncomingNameUnprovenKey;
         if (string.IsNullOrWhiteSpace(registryName)) return DbdTrustVerdict.KeyLooksWrong;
 
         var a = Normalize(incomingName);

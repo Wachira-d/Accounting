@@ -4653,8 +4653,22 @@ public class OcrService : IOcrService
                 break;
 
             case Accounting.Helpers.DbdTrustVerdict.NoIncomingName:
+                // อ่านชื่อไม่ได้ **แต่กุญแจพิสูจน์แล้ว** — ทะเบียนคือคำตอบที่ถูกที่สุดที่มี
                 data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 1.0;
                 data.ReasoningTrace.Add($"[DBD] อ่านชื่อผู้ขายจากกระดาษไม่ได้ — ใช้ชื่อจากทะเบียน: {dbd.NameTh}");
+                break;
+
+            case Accounting.Helpers.DbdTrustVerdict.NoIncomingNameUnprovenKey:
+                // อ่านชื่อไม่ได้ **และกุญแจก็ยังพิสูจน์ไม่ได้** — ยังเติมค่าให้ (กฎเหล็ก #3
+                // ห้ามปล่อยช่องว่าง) แต่ห้ามประทับ 1.0: เลข 13 หลักที่ผ่าน checksum อาจเป็น
+                // บาร์โค้ด/เลขผู้ซื้อ ⇒ ทะเบียนคืนชื่อ**บริษัทอื่น**ที่ถูกต้องตามทะเบียน
+                // แล้วไหลลงใบกำกับเงียบ ๆ (§86/4) — ต่ำกว่า 0.85 = ไฮไลต์เหลืองให้คนตรวจ
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.55;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerTaxId] = 0.55;
+                data.ReasoningTrace.Add(
+                    $"[DBD] อ่านชื่อผู้ขายจากกระดาษไม่ได้ และ**ไม่พบป้ายกำกับ**ยืนยันว่าเลข " +
+                    $"{data.VendorTaxId} เป็นของผู้ขาย — เติมชื่อจากทะเบียนไว้ให้ ('{dbd.NameTh}') " +
+                    "แต่ยังไม่ถือว่ายืนยัน กรุณาตรวจว่าเลขผู้เสียภาษีบนกระดาษเป็นของผู้ขายจริง");
                 break;
 
             case Accounting.Helpers.DbdTrustVerdict.KeyVerifiedNameDiffers:

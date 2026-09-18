@@ -6035,6 +6035,18 @@ public static class DatabaseMigrationHelper
             // ที่ latency/token เป็น 0 โดยชอบธรรมเพราะแม่ของมันเป็น call จริง
             """UPDATE "AiSuggestionFeedbacks" SET "Status" = 8, "ProviderUsed" = 0 WHERE "Status" = 1 AND "ProviderUsed" <> 0 AND COALESCE("LatencyMs", 0) = 0 AND COALESCE("InputTokens", 0) = 0 AND COALESCE("OutputTokens", 0) = 0 AND COALESCE("CostUsd", 0) = 0 AND "CacheHitOfFeedbackId" IS NULL;""",
 
+            // ── แถวที่ orchestrator ประทับ DeepSeek ทั้งที่ไม่เคยยิง provider (รอบ 177) ──
+            // `AiOrchestrator.ReturnLocalAsync` / `RecordSkip` ส่ง `AiProviderType.DeepSeek`
+            // ตายตัว ทั้งที่ทั้งสองเส้นเกิด**ก่อน**การยิง HTTP เสมอ (Skipped=4 ตอนนักเรียน
+            // ตอบเองหรือปิด augmentation · BudgetExceeded=5 · NoProvider=6) ⇒ แถวนักเรียน
+            // ถูกนับใน `AiSamples` ของ `AiFeedbackTrainingJob` ทั้งที่ `AiPrimaryAnswer`
+            // เป็น null ⇒ `AiAccuracy30d` ต่ำเทียม ⇒ ยิ่งนักเรียนเก่ง สถานะยิ่ง "Healthy"
+            // ⇒ ตัววัดที่ควรบอกว่า local อ่อน กลับบอกว่าแข็งเสมอ
+            //
+            // สถานะสามค่านี้เป็นลายเซ็นที่แม่นพอในตัวเอง — ไม่มีเส้นไหนในเรพตั้งค่าเหล่านี้
+            // **หลัง**ยิง provider สำเร็จ/ล้ม (ล้มจริงคือ Failed=3 / InvalidResponse=7)
+            """UPDATE "AiSuggestionFeedbacks" SET "ProviderUsed" = 0 WHERE "ProviderUsed" <> 0 AND "Status" IN (4, 5, 6);""",
+
             // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
             // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)
             // เพราะเจ้าของระบบกำหนดตัวเลขมาแล้ว ("guest portal +100/เดือน") และ add-on ที่

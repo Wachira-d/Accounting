@@ -82,7 +82,15 @@ public class AiOrchestrator : IAiOrchestrator
             LocalModelConfidence: localPred.Confidence,
             LocalModelVersion: localPred.ModelVersion,
             request.SourceEntityType, request.SourceEntityId,
-            AiCallStatus.Skipped, AiProviderType.DeepSeek, ModelVersion: null,
+            // ⚠️ **ไม่ได้เรียก provider เลย** ⇒ ต้องเป็น None ไม่ใช่ DeepSeek —
+            // doc ของ enum เขียนไว้เองว่า "ต้องแยกจาก DeepSeek ไม่งั้นสถิติต้นทุน/
+            // จำนวน call ของ admin นับ local เป็นค่าใช้จ่าย provider" และ
+            // `AiFeedbackTrainingJob` กรอง `ProviderUsed != None` เพื่อหา "ครั้งที่ AI
+            // ตอบจริง" ⇒ แถวนักเรียนที่ถูกประทับ DeepSeek เข้าไปนับใน AiSamples
+            // ทั้งที่ AiPrimaryAnswer เป็น null ⇒ AiAccuracy30d ต่ำเทียม ⇒ ยิ่งนักเรียน
+            // เก่ง/ยิ่งปิด provider สถานะยิ่งขึ้น "Healthy" ตลอดกาล = ตัววัดที่โกหก
+            // (ทีม T3 รอบ 177 · ยืนยันด้วยคอมเมนต์ของ job เอง)
+            AiCallStatus.Skipped, AiProviderType.None, ModelVersion: null,
             LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
             CacheHitOfFeedbackId: null,
             ErrorMessage: reason), ct);
@@ -517,7 +525,9 @@ public class AiOrchestrator : IAiOrchestrator
                 AiPrimaryAnswer: null, AiConfidence: null,
                 req.LocalPrimaryAnswer, req.LocalConfidence, req.LocalModelVersion,
                 req.SourceEntityType, req.SourceEntityId,
-                status, AiProviderType.DeepSeek, ModelVersion: null,
+                // ไม่ได้เรียก provider (Skipped / NoProvider / BudgetExceeded ทั้งสามสถานะ
+                // เกิด**ก่อน**การยิง) — ดูเหตุผลเต็มที่ ReturnLocalAsync
+                status, AiProviderType.None, ModelVersion: null,
                 LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
                 CacheHitOfFeedbackId: null, ErrorMessage: reason), ct);
         }

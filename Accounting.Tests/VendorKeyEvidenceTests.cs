@@ -194,4 +194,41 @@ public class VendorKeyEvidenceTests
         => Assert.True(DbdIdentityGuard.ShouldLearnMismatch(
             DbdTrustVerdict.SameCompanyMisspelled,
             "บริษัท ไทยเบฟเวอเรจ จำกัด (มหาชน)", "บริษัท ไทยเบฟเวอเรจ จํากัด (มหาซน)"));
+
+    // ══════════ "อ่านชื่อไม่ได้" ไม่ใช่หลักฐานว่าเลขถูก (ทีม T1 รอบ 177) ══════════
+    //
+    // บั๊ก: `Judge` คืน `NoIncomingName` **ก่อน**ดู `keyProven` ⇒ `RegistryWins` = true
+    // ⇒ call site ประทับ `FieldConfidence[SellerName] = 1.0` ⇒ เลข 13 หลักที่ผ่าน
+    // checksum แต่เป็นบาร์โค้ด/เลขผู้ซื้อ พาชื่อ**บริษัทอื่น**ลงใบกำกับด้วยความมั่นใจ
+    // สูงสุดและเงียบสนิท (ไม่ถึงเกณฑ์ไฮไลต์เหลือง 0.85 ของ กฎเหล็ก #3)
+
+    [Fact]
+    public void อ่านชื่อผู้ขายไม่ได้_และกุญแจยังพิสูจน์ไม่ได้_ต้องไม่ใช่คำตอบที่ยืนยันแล้ว()
+        => Assert.Equal(DbdTrustVerdict.NoIncomingNameUnprovenKey,
+            DbdIdentityGuard.Judge("บริษัท อะไรสักอย่าง จำกัด", null, 0.0, keyProven: false));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ชื่อว่างทุกรูปแบบ_เดินเส้นเดียวกัน(string? incoming)
+        => Assert.Equal(DbdTrustVerdict.NoIncomingNameUnprovenKey,
+            DbdIdentityGuard.Judge("บริษัท อะไรสักอย่าง จำกัด", incoming, 0.0, keyProven: false));
+
+    [Fact]
+    public void กุญแจที่ยังพิสูจน์ไม่ได้_ยังต้องเติมชื่อให้_ห้ามปล่อยช่องว่าง()
+        // ทิศตรงข้าม #1 — ด่านนี้ลด**ความมั่นใจ** ไม่ใช่ตัดค่าทิ้ง
+        // (กฎเหล็ก #3: ทุกช่องที่ §86/4 บังคับต้องมีค่าเติมไว้ ไฮไลต์ได้แต่ห้าม null)
+        => Assert.True(DbdIdentityGuard.RegistryWins(DbdTrustVerdict.NoIncomingNameUnprovenKey));
+
+    [Fact]
+    public void อ่านชื่อไม่ได้_แต่กุญแจพิสูจน์แล้ว_ต้องยังเป็นคำตอบที่ยืนยันแล้วเหมือนเดิม()
+        // ทิศตรงข้าม #2 — ใบที่เคยถูกต้องอยู่แล้วห้ามถูกแตะ
+        => Assert.Equal(DbdTrustVerdict.NoIncomingName,
+            DbdIdentityGuard.Judge("บริษัท อะไรสักอย่าง จำกัด", null, 0.0, keyProven: true));
+
+    [Fact]
+    public void ไม่มีชื่อและกุญแจไม่ผ่าน_ห้ามเอาไปสอนระบบ()
+        // ไม่มีชื่อเดิมให้เป็นตัวอย่างเชิงลบ และเลขก็ยังน่าสงสัย
+        => Assert.False(DbdIdentityGuard.ShouldLearnMismatch(DbdTrustVerdict.NoIncomingNameUnprovenKey));
 }
