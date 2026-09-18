@@ -1766,9 +1766,17 @@ public partial class TaxService : ITaxService
                 foreach (var line in docWhtLines)
                 {
                     // Determine WHT rate from income type or use line rate
+                    // ⚠️ ต้องส่ง **ชนิดผู้รับจริง** เข้าไป — เดิม `GetWhtRate` ตั้ง
+                    // `payeeIsJuristic: true` ตายตัว ⇒ ดอกเบี้ย 40(4)(ก) ที่จ่ายให้
+                    // บุคคลธรรมดาแสดง **1% แทน 15%** ทั้งที่ยอดที่หักจริงบอกเป็นอย่างอื่น
+                    // (`doc.Contact` อยู่ในมืออยู่แล้ว — บรรทัดล่างใช้ `doc.Contact?.TaxId`)
+                    var payeeIsJuristic = Accounting.Helpers.WhtPayeeKind.IsJuristic(
+                        doc.Contact?.TaxId,
+                        doc.Contact?.ContactType ?? Models.Enums.ContactType.Individual,
+                        doc.Contact?.Name);
                     var whtRate = line.WithholdingTaxRate > 0
                         ? line.WithholdingTaxRate
-                        : GetWhtRate(line.IncomeTypeCode, line.Amount, line.WithholdingTaxAmount);
+                        : GetWhtRate(line.IncomeTypeCode, line.Amount, line.WithholdingTaxAmount, payeeIsJuristic);
 
                     report.Lines.Add(new TaxReportLine
                     {
@@ -2516,11 +2524,15 @@ public partial class TaxService : ITaxService
     /// ไม่ใช่ค่าที่แต่งขึ้น (3) คำนวณไม่ได้ = คืน 0 = "ไม่ทราบ" ให้ผู้ใช้เห็นว่า
     /// ต้องเติม แทนการใส่ 3% ปลอมให้ช่องไม่ว่าง</para>
     /// </summary>
-    private static decimal GetWhtRate(string? incomeTypeCode, decimal incomeAmount, decimal taxAmount)
+    private static decimal GetWhtRate(string? incomeTypeCode, decimal incomeAmount, decimal taxAmount,
+        bool payeeIsJuristic)
     {
-        // (1) อัตราตามกฎหมาย — ผู้รับส่วนใหญ่ในรายงาน ภ.ง.ด.3/53 เป็นนิติบุคคล
-        var statutory = Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic: true)
-            ?? Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic: false);
+        // (1) อัตราตามกฎหมาย **ของผู้รับรายนี้** — เดิมบรรทัดนี้ตั้ง `payeeIsJuristic: true`
+        // ตายตัวพร้อมคอมเมนต์ว่า "ผู้รับส่วนใหญ่เป็นนิติบุคคล" ⇒ แถวของบุคคลธรรมดาใน
+        // ภ.ง.ด.3 ได้อัตราของนิติบุคคล (ดอกเบี้ย 1% แทน 15%) — "ส่วนใหญ่" ไม่ใช่เหตุผล
+        // ที่ดีพอสำหรับตัวเลขที่ลงแบบยื่นภาษี
+        var statutory = Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic)
+            ?? Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, !payeeIsJuristic);
         if (statutory is decimal r) return r;
 
         // (2) คิดกลับจากยอดที่หักจริง (เงินเดือนขั้นบันได / รหัสที่ไม่รู้จัก)

@@ -11607,19 +11607,17 @@ public partial class DocumentService : IDocumentService
         // ตั้งค่า (API v1 · import · OCR) ⇒ "บริษัท ก จำกัด" ที่เลขภาษีขึ้นต้น 0
         // ตั้งหนี้ที่ **21916** แต่ทุกจอจัดเป็น ภ.ง.ด.53 ⇒ ตอนกดนำส่งจะ Dr **21917
         // ที่ไม่มียอด** ⇒ 21917 ติดลบ · 21916 ค้างถาวร ล้างไม่ได้ตลอดกาล
-        var form = Accounting.Helpers.WhtPayeeKind.ResolveForm(
-            isForeignService, contact?.CountryCode, contact?.TaxId,
-            contact?.ContactType ?? ContactType.Individual, contact?.Name);
-
-        if (form == TaxType.WithholdingTax54)
-            return await FindAccountAsync(companyId, "21918")
-                ?? await FindAccountAsync(companyId, "21917")
-                ?? await FindAccountAsync(companyId, "21916");
-        var preferJuristic = form == TaxType.WithholdingTax53;
-        var primary = preferJuristic ? "21917" : "21916";
-        var secondary = preferJuristic ? "21916" : "21917";
-        return await FindAccountAsync(companyId, primary)
-            ?? await FindAccountAsync(companyId, secondary);
+        // ⚠️ ลำดับรหัสมาจาก `Helpers/WhtPayableAccount` **ตัวเดียว** — เดิมเขียน
+        // "21917/21916" ไว้ที่นี่ และมีสำเนาอีก 3 ชุด (พรีวิว GL · integration ×2)
+        // ที่ตัดสินด้วยกติกาคนละแบบและ **ไม่รู้จัก 21918 เลย** (ผลตรวจรอบ 180)
+        foreach (var code in Accounting.Helpers.WhtPayableAccount.CodeChain(
+                     isForeignService, contact?.CountryCode, contact?.TaxId,
+                     contact?.ContactType ?? ContactType.Individual, contact?.Name))
+        {
+            var acct = await FindAccountAsync(companyId, code);
+            if (acct != null) return acct;
+        }
+        return null;
     }
 
     /// <summary>Get (creating once if absent) the "goods received not
@@ -16526,7 +16524,12 @@ public partial class DocumentService : IDocumentService
                         // และชั้นเรียนรู้ตอบไม่ได้ จะ**เงียบ** ⇒ ความเสี่ยง §54 ตกที่บริษัท
                         // — ชดเชยด้วยการทำให้ "เหตุ" ครอบคลุม (WhtServiceHints) และ
                         //   บันทึกทุกครั้งที่เลือกเงียบลง audit chain ให้ตามรอยได้
-                        var hint = Accounting.Helpers.WhtServiceHints.Scan(whtLineFacts);
+                        // ชนิดผู้รับเงินเป็น **ตัวลดเกณฑ์** ไม่ใช่ "เหตุ" ในตัวเอง —
+                        // ต้องพิสูจน์ได้เชิงบวก (เลขบัตร 13 หลักขึ้นต้น 1–8 หรือคำนำหน้า
+                        // ชื่อที่มนุษย์กรอก) ห้ามใช้ `ContactType` ดิบซึ่ง default = Individual
+                        var payeeIndividual = Accounting.Helpers.WhtPayeeKind.IsProvenIndividual(
+                            doc.Contact?.TaxId, doc.Contact?.Name, doc.Contact?.TitleTh);
+                        var hint = Accounting.Helpers.WhtServiceHints.Scan(whtLineFacts, payeeIndividual);
                         if (!hint.Suspicious)
                         {
                             // ไม่มีเหตุ ⇒ เงียบ · ไม่ถามชั้นเรียนรู้ด้วยซ้ำ เพราะคำตอบ
@@ -16549,7 +16552,8 @@ public partial class DocumentService : IDocumentService
                             doc.WhtAdviceUsedAi = advice.UsedAi;
 
                             var why = $"พบคำว่า \"{hint.MatchedKeyword}\" ในรายการ "
-                                + $"(คิดเป็น {hint.AmountShare:P0} ของยอดใบนี้)";
+                                + $"(คิดเป็น {hint.AmountShare:P0} ของยอดใบนี้)"
+                                + (payeeIndividual ? " และผู้รับเป็นบุคคลธรรมดา" : "");
 
                             if (advice.SaysNoWithholding)
                             {

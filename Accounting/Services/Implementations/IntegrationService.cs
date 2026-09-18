@@ -2125,9 +2125,22 @@ public class IntegrationService : IIntegrationService
                 // เจ้าหนี้/WHT payable). 21917 นิติบุคคล / 21916 บุคคล.
                 if (document.WithholdingTaxAmount > 0)
                 {
-                    var juristic = expenseContact?.ContactType == Models.Enums.ContactType.JuristicPerson;
-                    var whtAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21917" : "21916"))
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && a.AccountCode == (juristic ? "21916" : "21917"));
+                    // ⚠️ ลำดับรหัสต้องมาจาก `Helpers/WhtPayableAccount` ตัวเดียว —
+                    // เดิมที่นี่ตัดสินจาก `ContactType` ดิบ (default = Individual และมี
+                    // 12 ทางเข้าที่ไม่เคยตั้งค่า) **และไม่รู้จัก 21918 (ภ.ง.ด.54) เลย**
+                    // ⇒ WHT ของการจ่ายต่างประเทศตกไปกอง ภ.ง.ด.3/53 ⇒ ตอนกดนำส่งจะ
+                    // Dr บัญชีที่ไม่มียอด = ยอดค้างที่ล้างไม่ได้ (ผลตรวจรอบ 180)
+                    var whtChain = Accounting.Helpers.WhtPayableAccount.CodeChain(
+                        document.IsForeignService, expenseContact?.CountryCode, expenseContact?.TaxId,
+                        expenseContact?.ContactType ?? Models.Enums.ContactType.Individual,
+                        expenseContact?.Name);
+                    ChartOfAccount? whtAcc = null;
+                    foreach (var code in whtChain)
+                    {
+                        whtAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(
+                            a => a.CompanyId == companyId && a.IsActive && a.AccountCode == code);
+                        if (whtAcc != null) break;
+                    }
                     if (whtAcc != null)
                         journalLines.Add(new JournalEntryLine
                         {
@@ -3368,12 +3381,15 @@ public class IntegrationService : IIntegrationService
 
         if (document.WithholdingTaxAmount > 0)
         {
-            // 21917 = ภ.ง.ด.53 (นิติบุคคล), 21916 = ภ.ง.ด.3 (บุคคลธรรมดา) —
-            // pick by the supplier's juristic-vs-individual TaxId heuristic.
+            // ⚠️ เดิมที่นี่เดาเองจาก `TaxId.StartsWith("0")` ล้วน ๆ — เป็นกติกาชุดที่ 4
+            // ของเรื่องเดียวกัน และเป็นชุดที่อ่อนที่สุด (ไม่ดู ContactType · ไม่ดูคำใน
+            // ชื่อ · ไม่รู้จัก 21918) ⇒ ยุบมาที่ `Helpers/WhtPayableAccount` ตัวเดียว
             var supplier = await _db.Set<Contact>().AsNoTracking()
                 .FirstOrDefaultAsync(c => c.Id == document.ContactId);
-            var juristic = supplier?.TaxId != null && supplier.TaxId.StartsWith("0");
-            var whtCode = juristic ? "21917" : "21916";
+            var payChain = Accounting.Helpers.WhtPayableAccount.CodeChain(
+                document.IsForeignService, supplier?.CountryCode, supplier?.TaxId,
+                supplier?.ContactType ?? Models.Enums.ContactType.Individual, supplier?.Name);
+            var whtCode = payChain[0];
             var whtAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == whtCode && a.IsActive)
                 ?? await _db.ChartOfAccounts

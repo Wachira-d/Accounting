@@ -676,10 +676,19 @@ public partial class PdfGenerationService : IPdfGenerationService
         // นิติบุคคล → 21917 (ภ.ง.ด.53) ก่อน, บุคคลธรรมดา → 21916 (ภ.ง.ด.3) ก่อน
         async Task<(string Code, string Name)> WhtPayableAsync()
         {
-            var preferJuristic = doc.Contact?.ContactType == ContactType.JuristicPerson;
-            return await ByCodeChain(
-                preferJuristic ? new[] { "21917", "21916" } : new[] { "21916", "21917" },
-                preferJuristic ? "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53" : "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 3");
+            // ⚠️ **พรีวิวต้องพูดตรงกับ JE จริงคำต่อคำ** — เดิมที่นี่ตัดสินจาก
+            // `ContactType` ดิบ ขณะที่ `DocumentService.ResolveWhtPayableAccountAsync`
+            // ตัดสินจาก `WhtPayeeKind` (เลขผู้เสียภาษี → ContactType → คำในชื่อ)
+            // ⇒ นิติบุคคลที่ ContactType ยังเป็นค่า default จะเห็นพรีวิว **21916**
+            // แต่ JE จริงลง **21917** · และที่นี่ไม่รู้จัก 21918 (ภ.ง.ด.54) เลย
+            // (defect class "สอง renderer ห้าม drift" — กฎเหล็ก #4 A ข้อแรก)
+            var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
+                doc.IsForeignService, doc.Contact?.CountryCode, doc.Contact?.TaxId,
+                doc.Contact?.ContactType ?? ContactType.Individual, doc.Contact?.Name);
+            var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
+                doc.IsForeignService, doc.Contact?.CountryCode, doc.Contact?.TaxId,
+                doc.Contact?.ContactType ?? ContactType.Individual, doc.Contact?.Name);
+            return await ByCodeChain(chain.ToArray(), label);
         }
         // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement
         async Task<(string Code, string Name)> MoneyAccountAsync()

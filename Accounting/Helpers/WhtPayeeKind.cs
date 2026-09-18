@@ -8,8 +8,13 @@ namespace Accounting.Helpers;
 /// ทำไมต้องรวมมาไว้ที่นี่ (บั๊กจริง 2026-09-16): ยอด ภ.ง.ด.3/53 ของงวดเดียวกันถูก
 /// ผลิตจาก 5 ที่ และแต่ละที่แบ่งแบบคนละกติกา —
 ///   • ทะเบียน 50 ทวิ + หน้ารายงานภาษี + ไฟล์ยื่น → ตัวตัดสิน 3 สัญญาณ (ไฟล์นี้)
-///   • **หน้านำส่งภาษี + ปฏิทินยื่น** → `Contact.ContactType` ดิบ ๆ ซึ่ง default =
-///     Individual และมี 4 ทางเข้าที่ไม่เคยตั้งค่า (API v1 / import / OCR ×4)
+///   • **หน้านำส่งภาษี + ปฏิทินยื่น** → `Contact.ContactType` ดิบ ๆ ซึ่ง default = Individual
+/// (แก้ doc 2026-09-18 รอบ 180 — ประโยคเดิมเขียนว่า "4 ทางเข้าที่ไม่เคยตั้งค่า (API v1 /
+/// import / OCR ×4)" ซึ่ง**ผิดสองทาง**: API v1 ตั้งให้แล้ว (`ContactsV1Controller.cs:128`)
+/// และ OCR ก็ตั้งแล้วทั้งสองจุดหลัก (`OcrService.cs:2441, 2507`) โดยเอนไปทาง
+/// `JuristicPerson` เมื่อไม่แน่ใจ · **ของจริงคือ 12 จุดที่ `new Contact` โดยไม่ตั้ง
+/// `ContactType`** ซึ่ง 6 จุดสร้าง payee: `OcrService.cs:5555` · `ImportExportService.cs:528,977`
+/// · `IntegrationService.cs:1581` · `LineBotService.cs:334` · `CrossTenantWorkflowService.cs:387`)
 /// ⇒ "บริษัท ก จำกัด" ที่เลขผู้เสียภาษีขึ้นต้น 0 ตกไป **ภ.ง.ด.3** บนหน้านำส่ง
 /// แต่เป็น **ภ.ง.ด.53** ในทะเบียน/ไฟล์ยื่น ⇒ สองหน้าแบ่งคนละแบบทั้งที่ยอดรวมเท่ากัน
 /// (อาการที่ผู้ใช้เห็น: 16,880.55 + 510.00 = 17,390.55 แต่ช่องแบ่ง 3/53 ไม่ตรง)
@@ -79,6 +84,50 @@ public static class WhtPayeeKind
         => documentIsForeignService
            || (!string.IsNullOrWhiteSpace(countryCode)
                && !string.Equals(countryCode, "TH", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// **พิสูจน์ได้ไหมว่าผู้รับเป็นบุคคลธรรมดา** — ใช้กับ<b>การตั้งด่าน</b> เท่านั้น
+    ///
+    /// ═══ ทำไมใช้ <see cref="Detect"/> แทนไม่ได้ (ทีมตรวจรอบ 180) ═══
+    /// <c>Detect</c> บรรทัดสุดท้ายคืน <c>false</c> (= บุคคลธรรมดา) ให้ทุก contact ที่
+    /// <c>ContactType</c> ยังเป็นค่า default — และ default คือ <c>Individual</c>
+    /// (<c>Contact.ContactType</c>) · <c>InferContactType</c> ก็ fallback เป็น
+    /// <c>Individual</c> · และ enum ไม่มีค่า <c>Unknown</c> ให้ใช้เลย
+    /// ⇒ **คู่ค้าที่คีย์ชื่อมาเปล่า ๆ = "บุคคลธรรมดาที่พิสูจน์แล้ว"** ในสายตา <c>Detect</c>
+    ///
+    /// <para><c>Detect</c> ทำแบบนั้น<b>ถูกสำหรับงานของมัน</b> — <see cref="ResolveForm"/>
+    /// ต้องเลือกแบบใดแบบหนึ่งเสมอ ไม่งั้นผู้รับหายจากทั้ง ภ.ง.ด.3 และ 53 (ไม่ถูกนำส่งเลย)
+    /// แต่<b>คนละงานกับการตั้งด่าน</b>: ด่านที่ตีความ "ไม่รู้" ว่า "ใช่" จะเตือนทั้งฐาน
+    /// ⇒ ผู้ใช้ชินกับการกดข้าม = ปิดด่านโดยไม่ตั้งใจ (กฎเหล็ก #4)</para>
+    ///
+    /// <para>ที่นี่จึงต้องการ<b>หลักฐานเชิงบวก</b>อย่างน้อยหนึ่งข้อ:
+    /// (1) เลข 13 หลักขึ้นต้น 1–8 = เลขบัตรประชาชน (ทะเบียนตามกฎหมาย — หนักที่สุด)
+    /// และชื่อไม่มีคำบ่งชี้นิติบุคคล · (2) คำนำหน้าชื่อไทยที่มนุษย์กรอกเอง
+    /// ("นาย/นาง/นางสาว") ซึ่งเป็น<b>การประกาศ</b> ไม่ใช่ค่า default
+    /// ⇒ "ไม่รู้" คืน <c>false</c> = **ใช้กติกาเดิม** ไม่ใช่ "เตือนถี่ขึ้น"</para></summary>
+    /// <param name="titleTh">คำนำหน้าชื่อภาษาไทยของคู่ค้า (<c>Contact.TitleTh</c>)</param>
+    public static bool IsProvenIndividual(string? taxId, string? name, string? titleTh)
+    {
+        var trimmedName = (name ?? "").Trim();
+        var looksJuristic = trimmedName.Length > 0
+            && (JuristicThaiKeywords.Any(k => trimmedName.Contains(k))
+                || JuristicEnglishKeywords.Any(k => trimmedName.ToLowerInvariant().Contains(k)));
+        if (looksJuristic) return false;   // ชื่อบอกว่าเป็นนิติบุคคล — หลักฐานค้านตรง ๆ
+
+        // ⚠️ ต้องผ่าน **checksum** ด้วย — เลข 13 หลักที่ OCR อ่านเพี้ยนหนึ่งหลักไม่ใช่
+        // หลักฐาน · ใช้ตัวตรวจ canonical ตัวเดียวของระบบ ห้ามเขียนสูตร mod-11 ซ้ำ
+        if (ThaiTaxId.IsValid(taxId) && ThaiTaxId.Normalize(taxId)[0] != '0') return true;
+
+        var title = (titleTh ?? "").Trim();
+        if (title.Length > 0 && IndividualTitles.Any(t => title.StartsWith(t, StringComparison.Ordinal)))
+            return true;
+
+        return false;   // ไม่มีหลักฐานเชิงบวก = ไม่รู้ ⇒ ห้ามนับว่าเป็นบุคคลธรรมดา
+    }
+
+    /// <summary>คำนำหน้าชื่อที่บอกว่าเป็นบุคคลธรรมดา — มนุษย์กรอกเอง จึงเป็นการประกาศ
+    /// (ช่องนี้ถูกใช้เป็น <c>PayeeTitle</c> ของไฟล์ ภ.ง.ด.3 อยู่แล้ว)</summary>
+    private static readonly string[] IndividualTitles = { "นาย", "นาง", "นางสาว", "น.ส.", "ด.ช.", "ด.ญ." };
 
     /// <summary>แบบ ภ.ง.ด. ที่ผู้ถูกหักรายนี้ต้องอยู่ — ตัวตัดสินตัวเดียวที่ทุกหน้าใช้</summary>
     public static TaxType ResolveForm(bool documentIsForeignService, string? countryCode,

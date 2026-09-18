@@ -43,6 +43,21 @@ public static class WhtServiceHints
     /// ส่วนต้นทุนของการพลาดคือเงินภาษีที่บริษัทต้องจ่ายแทน</para></summary>
     public const decimal MinAmountShare = 0.20m;
 
+    /// <summary>เกณฑ์สัดส่วนเมื่อ**พิสูจน์ได้**ว่าผู้รับเป็นบุคคลธรรมดา
+    ///
+    /// <para>ทำไมต่ำกว่า: กองเงินได้ที่หักได้เฉพาะบุคคลธรรมดา (ค่าจ้างแรงงาน ม.40(1) ·
+    /// ค่าจ้างรายบุคคล ม.40(2)) ผูกกับคู่ค้าชนิดนี้ฝ่ายเดียว · คนธรรมดาส่วนใหญ่
+    /// **ไม่จด VAT** ⇒ ไม่มีใบกำกับเต็มรูป ⇒ ชั้นที่ 0 (กระดาษสมบูรณ์ ⇒ เงียบ) ไม่ทำงาน
+    /// กับใบของเขาเลย · และใบเขียนมือมักเขียนสั้น ("ค่างวดที่ 1") ⇒ คำบ่งชี้ติดน้อย
+    /// ⇒ ช่องโหว่ §54 กระจุกอยู่ที่คู่ค้าชนิดนี้พอดี</para>
+    ///
+    /// <para>⚠️ <b>เป็นตัวลดเกณฑ์ ไม่ใช่ "เหตุ" ในตัวเอง</b> — ความเป็นบุคคลธรรมดา
+    /// ไม่ได้บอกอะไรเลยว่าเงินก้อนนี้เป็นค่าสินค้าหรือค่าบริการ (ร้านโชห่วย/ร้านวัสดุ
+    /// ที่จดทะเบียนเป็นบุคคลธรรมดามีเต็มไปหมด) ⇒ ถ้าใช้เป็นเหตุเดี่ยว ใบซื้อของทุกใบ
+    /// จะเด้ง = กลับไปเป็นบั๊กเดิม. ที่นี่ทำงาน**เฉพาะเมื่อเจอคำบ่งชี้บริการอยู่แล้ว**
+    /// ⇒ ไม่มีใบใหม่เด้งเพราะชนิดคู่ค้าเพียงอย่างเดียว</para></summary>
+    public const decimal MinAmountShareIndividual = 0.10m;
+
     /// <summary>คำบ่งชี้ค่าจ้าง/ค่าบริการตามประเภทเงินได้ที่ ท.ป.4/2528 + §3 เตรส ครอบ
     ///
     /// <para>ไม่ใส่คำที่กำกวมเกินไป ("งาน" · "โครงการ" · "ทำ") เพราะปรากฏบนใบซื้อของทั่วไป
@@ -72,7 +87,10 @@ public static class WhtServiceHints
         => kind is ProductType.Product or ProductType.Supplies or ProductType.RawMaterial;
 
     /// <summary>ตรวจรายการทั้งใบ</summary>
-    public static WhtServiceHint Scan(IEnumerable<WhtLineFact>? lines)
+    /// <param name="payeeProvenIndividual">พิสูจน์ได้ว่าผู้รับเป็นบุคคลธรรมดา
+    /// (<see cref="WhtPayeeKind.IsProvenIndividual"/>) — <b>ต้องเป็นหลักฐานเชิงบวกเท่านั้น</b>
+    /// ห้ามส่งผลของ <c>ContactType</c> ดิบเข้ามา เพราะ default = Individual</param>
+    public static WhtServiceHint Scan(IEnumerable<WhtLineFact>? lines, bool payeeProvenIndividual = false)
     {
         var all = lines?.Where(l => l.Amount > 0m).ToList() ?? new List<WhtLineFact>();
         if (all.Count == 0) return new(false, "", 0m);
@@ -95,7 +113,8 @@ public static class WhtServiceHints
         if (firstKeyword.Length == 0) return new(false, "", 0m);
 
         var share = matched / total;
-        return new(share >= MinAmountShare, firstKeyword, share);
+        var threshold = payeeProvenIndividual ? MinAmountShareIndividual : MinAmountShare;
+        return new(share >= threshold, firstKeyword, share);
     }
 
     /// <summary>คำแรกที่เจอในคำอธิบายบรรทัดนี้ — <c>""</c> เมื่อไม่เจอ</summary>

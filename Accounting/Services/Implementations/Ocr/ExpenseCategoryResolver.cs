@@ -495,25 +495,55 @@ internal static class ExpenseCategoryResolver
         // จริง 2,137.38 อ่านคำอธิบายไม่ออก ("0") ⇒ กฎ "ค่าขนส่ง" ชนะจากคำบนแถวยอด 0
         // แล้วระบบเสนอ "40(8) ค่าขนส่ง · หัก 1%" ทั้งที่กระดาษไม่ได้บอกว่าจ่ายค่าขนส่ง
         // — หมวดเดาผิดแค่ให้ผู้ใช้เลือกใหม่ แต่ประเภทเงินได้ผิดไหลไป 50 ทวิ + ภ.ง.ด.3/53
-        if (result.StatutoryWhtRate is > 0m && result.Confidence >= 0.6m
+        // ⚠️ **อัตราที่ขึ้นกับชนิดผู้รับ ห้ามเสนอตัวเลขเมื่อยังไม่รู้ชนิดผู้รับ**
+        // ดอกเบี้ย 40(4)(ก) = บุคคลธรรมดา 15% · นิติบุคคลไทย 1% (ต่างกัน 15 เท่า)
+        // เดิมกฎ "ดอกเบี้ยจ่าย" ฝัง `StatutoryWhtRate: 15m` ไว้ในแถวกฎ ⇒ ดอกเบี้ยเงินกู้
+        // ธนาคาร (นิติบุคคล) ถูกเสนอ 15% · ขณะที่รายงานอีกเส้นสมมติเป็นนิติบุคคลเสมอ
+        // ⇒ **รหัสเดียวกันได้สองคำตอบที่ขัดกันเอง** ขึ้นกับว่าเข้าทางไหน (ผลตรวจรอบ 180)
+        // ตอนนี้: รู้ชนิดผู้รับ → ใช้อัตราของชนิดนั้น · ไม่รู้ → **ไม่เสนออัตรา**
+        // แต่บอกผู้ใช้ว่าทำไม (ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ)
+        var ambiguousByPayee =
+            Accounting.Helpers.ThaiWhtRateTable.RateDependsOnPayeeKind(result.WhtIncomeTypeCode);
+        var payeeIsJuristic = ambiguousByPayee
+            ? Accounting.Helpers.WhtPayeeKind.Detect(
+                data.VendorTaxId, Models.Enums.ContactType.Individual, data.VendorName)
+            : (bool?)null;
+        var effectiveWhtRate = ambiguousByPayee
+            ? (payeeIsJuristic is bool j
+                ? Accounting.Helpers.ThaiWhtRateTable.RateFor(result.WhtIncomeTypeCode, j)
+                : null)
+            : result.StatutoryWhtRate;
+
+        if (ambiguousByPayee && effectiveWhtRate is null && result.Confidence >= 0.6m
             && result.MoneyBackedEvidence)
         {
-            data.SuggestedWhtRate = result.StatutoryWhtRate;
+            var it = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
+            data.WhtIncomeTypeCode ??= result.WhtIncomeTypeCode;
+            data.ReasoningTrace.Add(
+                $"[Category] หมวด '{result.Category}' อัตราหัก ณ ที่จ่าย**ขึ้นกับชนิดผู้รับ** "
+                + (it != null ? $"({it.TaxSection} {it.Name}: บุคคลธรรมดา {it.IndividualRate}% · นิติบุคคล {it.JuristicRate}%) " : "")
+                + "— ยังระบุชนิดผู้รับไม่ได้จากกระดาษ จึงไม่เติมอัตราให้ กรุณาเลือกคู่ค้าก่อน");
+        }
+
+        if (effectiveWhtRate is > 0m && result.Confidence >= 0.6m
+            && result.MoneyBackedEvidence)
+        {
+            data.SuggestedWhtRate = effectiveWhtRate;
             data.WhtIncomeTypeCode ??= result.WhtIncomeTypeCode;
         }
 
-        if (!data.HasWht && !data.WhtRate.HasValue && result.StatutoryWhtRate.HasValue
-            && result.StatutoryWhtRate.Value > 0 && result.Confidence >= 0.6m
+        if (!data.HasWht && !data.WhtRate.HasValue && effectiveWhtRate.HasValue
+            && effectiveWhtRate.Value > 0 && result.Confidence >= 0.6m
             && result.MoneyBackedEvidence && docMentionsWht)
         {
             data.HasWht = true;
-            data.WhtRate = result.StatutoryWhtRate;
+            data.WhtRate = effectiveWhtRate;
             data.FieldConfidence["WhtRate"] = 0.6;  // inferred, not extracted
             data.ReasoningTrace.Add(
-                $"[Category] อนุมาน WHT {result.StatutoryWhtRate}% จากหมวด '{result.Category}' (ป.รัษฎากร ม.50, เอกสารกล่าวถึง WHT)");
+                $"[Category] อนุมาน WHT {effectiveWhtRate}% จากหมวด '{result.Category}' (ป.รัษฎากร ม.50, เอกสารกล่าวถึง WHT)");
         }
-        else if (!data.HasWht && result.StatutoryWhtRate.HasValue
-                 && result.StatutoryWhtRate.Value > 0 && rawText != null && !docMentionsWht
+        else if (!data.HasWht && effectiveWhtRate.HasValue
+                 && effectiveWhtRate.Value > 0 && rawText != null && !docMentionsWht
                  && result.MoneyBackedEvidence)
         {
             // กระดาษไม่พิมพ์ WHT — ไม่ตั้งค่าให้เอง แต่ **ต้องบอกผู้ใช้ว่ากฎหมายให้หัก**
@@ -522,7 +552,7 @@ internal static class ExpenseCategoryResolver
             var incomeType = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
             data.ReasoningTrace.Add(
                 $"[Category] กระดาษไม่ได้พิมพ์ยอดหัก ณ ที่จ่าย — แต่หมวด '{result.Category}' "
-                + $"กฎหมายกำหนดให้ผู้จ่ายหัก {result.StatutoryWhtRate}%"
+                + $"กฎหมายกำหนดให้ผู้จ่ายหัก {effectiveWhtRate}%"
                 + (incomeType != null ? $" (ประเภทเงินได้ {incomeType.TaxSection} {incomeType.Name})" : "")
                 + " · ตรวจสอบก่อนยืนยัน (ท.ป.4/2528 · ไม่หัก = ผู้จ่ายรับผิด ม.54)");
         }

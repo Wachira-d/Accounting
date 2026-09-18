@@ -1529,6 +1529,15 @@ public class OcrService : IOcrService
                 {
                     extractedData.DebitAccountCode = vendorPred.DebitAccountCode;
                     extractedData.DebitAccountName = vendorPred.DebitAccountName;
+                    // ⚠️ **ต้องเขียนความมั่นใจลงไปด้วยเสมอ** — เดิมบล็อกนี้เติมรหัสแต่
+                    // ไม่เคยแตะ `FieldConfidence["DebitAccount"]` ⇒ ค่าค้างที่ 0 ⇒
+                    //  (ก) ด่าน "ครูภายนอกต้องมั่นใจกว่าของเดิม" ที่เพิ่มรอบ 179
+                    //      **ผ่านทุกครั้ง** เมื่อประวัติผู้ขายเป็นคนเติม — AI 0.70 ทับได้เสมอ
+                    //  (ข) ไฮไลต์เหลืองตาม กฎเหล็ก #3 ข้อ 3 คำนวณจาก 0 ⇒ ขึ้นเหลืองทั้งที่
+                    //      ประวัติผู้ขายเป็นหลักฐานที่ดี
+                    // (ทีมตรวจรอบ 180 จับรูนี้ในสิ่งที่ผมเพิ่งแก้เอง)
+                    extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.DebitAccount] =
+                        (double)vendorPred.DebitAccountConfidence;
                     extractedData.ReasoningTrace.Add(
                         $"[VendorIntel] เลือกรหัสบัญชี {vendorPred.DebitAccountCode} จากประวัติผู้ขาย (confidence {vendorPred.DebitAccountConfidence:P0})");
                 }
