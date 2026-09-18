@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **189 ไฟล์ · 1,447 `[Fact]` + 236 `[Theory]` (1,075 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
+| เทสต์ที่มี | **189 ไฟล์ · 1,449 `[Fact]` + 236 `[Theory]` (1,075 `InlineData`)** ณ 2026-09-18 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) · ⚠️ บรรทัดนี้เคยเขียน "~150 เคส / 19 ไฟล์" ค้างมาจนผิดจริง 10 เท่า — ตัวเลขนี้ต้องมาจาก `python3 tools/test_inventory.py` ไม่ใช่พิมพ์มือ |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4367,10 +4367,15 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | CMS-SLUG-05 | รายการที่จองไว้เป็น null/ค่าว่าง | ไม่พัง คืนค่าเดิม |
 | CMS-SLUG-06 | ชื่อตัดแล้วเหลือว่าง | ได้ `site` (routing ต้องมีอะไรให้จับ) |
 | CMS-SLUG-07 | ชื่อยาว 200 ตัว ลงคอลัมน์ Subdomain (63) 5 รอบ | ทุกผลลัพธ์ ≤ 63 และไม่ชนกันเอง |
-| CMS-SLUG-08 | หัวถูกตัดคาขีด | ไม่มี `--` ซ้อน และยาวไม่เกินคอลัมน์ |
+| CMS-SLUG-08a | ชื่อลงท้ายด้วยขีด ไม่ชน | ได้ `ab` (ไม่ห้อยขีดไว้) |
+| CMS-SLUG-08b | ชื่อลงท้ายด้วยขีดแล้วชน | ได้ `ab-2` ไม่ใช่ `ab--2` |
+| CMS-SLUG-08c | ตัดคาขีดแล้วชนกับหัวที่เล็มแล้ว | ได้ `aaa-2` ไม่ใช่ `aaaa-` |
 | CMS-SLUG-09 | **invariant** เรียกต่อเนื่อง 50 รอบ | ไม่มีผลลัพธ์ไหนชนของที่จองไว้เลย |
 | CMS-RET-01 | `CmsRetiredSlug.MaxLength` | ต้องยังเท่ากับ `CmsFieldLengths.PageSlug` (ของเดิมไม่เปลี่ยน) |
 | CMS-RET-02 | ปลดคีย์ยาว 400 ตัวลงคอลัมน์ 63 / 128 / 256 | ยาวไม่เกินคอลัมน์ และ `IsRetired` ยังเป็นจริง |
 
+> CMS-SLUG-08a/b/c เลือกมาจากการรันสูตรจริงเทียบสองรุ่น (มี/ไม่มีตัวเล็มขีดท้าย) — เคสแรกที่เขียนไว้
+> ให้ผลเท่ากันทั้งสองรุ่นจึงไม่พิสูจน์อะไร ตามกฎ "negative test ที่ผ่านทั้งก่อนและหลังแก้ = ยังไม่ได้พิสูจน์"
+>
 > ทิศตรงข้ามที่ล็อกไว้ด้วย: CMS-RET-01 พิสูจน์ว่าการเพิ่มพารามิเตอร์ความยาวไม่เปลี่ยน
 > พฤติกรรมของผู้เรียกเดิม (หน้า CMS 3 จุด) · CMS-SLUG-01 พิสูจน์ว่าไม่ไปเติมเลขให้ชื่อที่ไม่ชน

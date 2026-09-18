@@ -53,13 +53,19 @@ public class CmsSlugUniquifierTests
     }
 
     [Fact]
-    public void หัวที่ถูกตัดคาขีด_ต้องไม่ได้ขีดซ้อนกัน()
-    {
-        // "aaaa-" ถูกตัดพอดีที่ขีด แล้วต่อ "-2" จะได้ "aaaa--2" ถ้าไม่เล็มขีดท้ายทิ้ง
-        var got = CmsSlugUniquifier.MakeUnique("aaaa-bbbb", new[] { "aaaa-bbbb" }, 7);
-        Assert.DoesNotContain("--", got);
-        Assert.True(got.Length <= 7);
-    }
+    public void ผลลัพธ์ต้องไม่ลงท้ายด้วยขีด()
+        // ถ้าไม่เล็มขีดท้ายทิ้งจะได้ "ab-" ซึ่งเป็น URL ที่ห้อยขีดไว้เฉย ๆ
+        => Assert.Equal("ab", CmsSlugUniquifier.MakeUnique("ab-", null, 10));
+
+    [Fact]
+    public void หัวที่ลงท้ายด้วยขีดแล้วชน_ต้องไม่ได้ขีดซ้อนกัน()
+        // ไม่เล็มขีด → head="ab-" ชน → ต่อ "-2" ได้ "ab--2"
+        => Assert.Equal("ab-2", CmsSlugUniquifier.MakeUnique("ab-", new[] { "ab-", "ab" }, 10));
+
+    [Fact]
+    public void ตัดคาขีดแล้วชน_ต้องเล็มก่อนเติมเลข()
+        // ไม่เล็มขีด → head="aaaa-" ไม่ชนกับ "aaaa" → หลุดออกไปเป็น "aaaa-"
+        => Assert.Equal("aaa-2", CmsSlugUniquifier.MakeUnique("aaaa-bbbb", new[] { "aaaa" }, 5));
 
     [Fact]
     public void ทุกผลลัพธ์ต้องไม่ชนของที่จองไว้_ไล่ต่อเนื่องหลายรอบ()
