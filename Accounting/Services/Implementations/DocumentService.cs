@@ -16174,6 +16174,56 @@ public partial class DocumentService : IDocumentService
             l.Amount)).ToList();
     }
 
+    /// <summary>**ตัวเขียน "ระบบเลือกเงียบ" ตัวเดียว** — ทิ้งร่องรอยสองที่เสมอ
+    ///
+    /// <para>การเงียบคือ<b>สถานะปลายทางที่ระบบประทับเอง</b> (หลักการข้อ 3) ⇒ ต้องตามรอยได้
+    /// ว่าเงียบเพราะอะไร มิฉะนั้นผู้สอบบัญชี/สรรพากรถามว่า "ทำไมใบนี้ไม่มีคำเตือน"
+    /// แล้วไม่มีอะไรตอบได้ ทั้งที่ §54 ให้<b>ผู้จ่าย</b>รับผิดในภาษีที่ไม่ได้หัก</para>
+    ///
+    /// <list type="bullet">
+    /// <item><c>InternalNotes</c> — ผู้ใช้เปิดเอกสารแล้วเห็น แต่<b>แก้ได้</b> จึงไม่ใช่หลักฐาน</item>
+    /// <item><c>AuditLog</c> — append-only + hash chain + <c>RuleCode</c>/<c>LegalReference</c>
+    /// (กฎเหล็ก #2 ข้อ M) = ของที่ยกไปอ้างได้จริง</item>
+    /// </list>
+    ///
+    /// <para>ด่านคำเตือนรัน<b>ทุกครั้งที่กดอนุมัติ</b> (รอบแรก throw 422 · รอบสองหลังยืนยัน)
+    /// ⇒ ต้องกันการทบซ้ำด้วย <c>WhtAdviceNote.ShouldAppend</c> เสมอ</para></summary>
+    /// <param name="advice">คำตอบของชั้นเรียนรู้ ถ้ามี — <c>null</c> = เงียบโดยไม่ได้ถามใคร</param>
+    private void RecordWhtSilence(Document doc, Guid companyId, decimal paidToContactThisYear,
+        string ruleCode, string reason, WhtAdvice? advice)
+    {
+        var note = advice is { } a
+            ? Accounting.Helpers.WhtAdviceNote.Compose(a.UsedAi, a.Answer, a.Confidence)
+            : Accounting.Helpers.WhtAdviceNote.ComposeNoSuspicion(reason);
+        if (!Accounting.Helpers.WhtAdviceNote.ShouldAppend(doc.InternalNotes, note)) return;
+
+        AppendInternalNote(doc, note);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            CompanyId = companyId,
+            Action = AuditAction.Update,
+            EntityType = "Document",
+            EntityId = doc.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "WhtWarningSuppressed",
+                documentNumber = doc.DocumentNumber,
+                documentType = doc.DocumentType.ToString(),
+                contactId = doc.ContactId,
+                contactName = doc.Contact?.Name,
+                subTotal = doc.SubTotal,
+                paidToContactThisYear,
+                reason,
+                answer = advice?.Answer,
+                confidence = advice?.Confidence,
+                usedAi = advice?.UsedAi,
+                feedbackId = advice?.FeedbackId,
+                ruleCode,
+                legalReference = Accounting.Helpers.WhtAdviceNote.SilentLegalReference,
+            }),
+        });
+    }
+
     /// <summary>ความมั่นใจขั้นต่ำที่ยอมให้คำตอบ "ไม่ต้องหัก" **ปิดคำเตือน** —
     /// ตรงกับตัวอย่างใน CLAUDE.md กฎเหล็ก #1 ที่ใช้ 0.70 เป็นด่านก่อน apply
     /// (ทิศ "เตือน" ไม่ต้องผ่านด่านนี้ เพราะเตือนเกินยังแก้ได้ แต่เงียบผิดมองไม่เห็น)</summary>
@@ -16404,8 +16454,9 @@ public partial class DocumentService : IDocumentService
                 await ScanPaperWhtEvidenceAsync(companyId, doc.Id);
 
             // ชั้นที่ 1 — หลักฐานเชิงกำหนดจากข้อมูลที่เราถืออยู่ (pure helper + เทสต์)
+            var whtLineFacts = await BuildWhtLineFactsAsync(companyId, doc);
             var whtEvidence = Accounting.Helpers.WhtApplicabilityEvidence.Judge(
-                await BuildWhtLineFactsAsync(companyId, doc), paperShowsWht, paperGrade);
+                whtLineFacts, paperShowsWht, paperGrade);
 
             // ใบที่ "เงียบแต่ไม่สมบูรณ์" ต้องตามรอยได้ว่าทำไมความเงียบนั้นไม่ถูกนับ
             // (ไม่งั้นรอบหน้าจะมีคนถามซ้ำว่า "กระดาษไม่มีบรรทัดหัก ทำไมยังเตือน")
@@ -16460,79 +16511,76 @@ public partial class DocumentService : IDocumentService
                     }
                     else
                     {
-                        // ── ชั้นที่ 2 — ยังไม่รู้: ให้ "นักเรียนก่อน ครูทีหลัง" ตัดสิน ──
-                        // (กฎเหล็ก #1) orchestrator ถาม local model ก่อนเสมอ แล้วค่อย
-                        // ตกไปหา AI เมื่อนักเรียนไม่มั่นใจ · ปิด provider ทุกตัวแล้ว
-                        // นักเรียนยังตอบได้ · นักเรียนยังไม่มีข้อมูล (tenant ใหม่) →
-                        // ตกกลับมาเตือนแบบเดิม ซึ่งเป็นทิศที่ปลอดภัยกว่า (§54)
-                        var advice = await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
-
-                        doc.WhtAdviceAiFeedbackId = advice.FeedbackId ?? doc.WhtAdviceAiFeedbackId;
-                        doc.WhtAdviceAnswer = advice.Answer ?? doc.WhtAdviceAnswer;
-                        doc.WhtAdviceUsedAi = advice.UsedAi;
-
-                        if (advice.SaysNoWithholding)
+                        // ── ชั้นที่ 2 — ยังไม่รู้: **เงียบ เว้นแต่มีเหตุให้สงสัย** ──
+                        //
+                        // คำตัดสินเจ้าของ 2026-09-18 (รอบ 179): "มีเหตุให้สงสัยว่าเป็น
+                        // ค่าจ้าง หรือ ค่าบริการ ค่อยขึ้นเตือนหัก" — พลิกค่าตั้งต้นจาก
+                        // "ไม่รู้ ⇒ เตือนไว้ก่อน" เป็น "ไม่รู้ ⇒ เงียบ"
+                        //
+                        // เหตุผล: กฎเดิมเลือกทิศปลอดภัยตาม §54 (ผู้จ่ายรับผิด) แต่ราคาของ
+                        // มันคือใบที่ระบบอ่านรายการไม่ออกเด้งหมด ⇒ ผู้ใช้ชินกับการกดข้าม
+                        // ⇒ วันที่เตือนถูกจริงก็ถูกกดข้ามไปด้วย = ปิดด่านโดยไม่ตั้งใจ
+                        // (กฎเหล็ก #4: "คำเตือนที่ฟ้องใบถูกทุกใบ = ไม่มีด่าน")
+                        //
+                        // ⚠️ ข้อแลกเปลี่ยนที่ผมแจ้งเจ้าของแล้ว: ใบค่าบริการที่ไม่มีคำบ่งชี้
+                        // และชั้นเรียนรู้ตอบไม่ได้ จะ**เงียบ** ⇒ ความเสี่ยง §54 ตกที่บริษัท
+                        // — ชดเชยด้วยการทำให้ "เหตุ" ครอบคลุม (WhtServiceHints) และ
+                        //   บันทึกทุกครั้งที่เลือกเงียบลง audit chain ให้ตามรอยได้
+                        var hint = Accounting.Helpers.WhtServiceHints.Scan(whtLineFacts);
+                        if (!hint.Suspicious)
                         {
-                            // ⚠️ **เงียบตามคำตอบของโมเดล** (เจ้าของโปรเจกต์ตัดสิน 2026-09-18)
-                            // แต่ต้องตามรอยได้ — ไม่งั้นจะไม่มีใครรู้ว่าทำไมใบนี้ไม่มีคำเตือน
-                            // (การเงียบที่ไม่ทิ้งร่องรอย = สถานะที่ระบบประทับเองโดยไม่มีหลักฐาน)
-                            //
-                            // ต้องดัง **สองที่** ไม่ใช่ที่เดียว (ฝ่ายค้านรอบ 177 ข้อ B4):
-                            //  • InternalNotes — ผู้ใช้เปิดเอกสารแล้วเห็น แต่**แก้ได้** จึงไม่ใช่หลักฐาน
-                            //  • AuditLog     — append-only + hash chain + RuleCode/LegalReference
-                            //                   (กฎเหล็ก #2 ข้อ M) = ของที่ผู้สอบบัญชียกมาอ้างได้
-                            // และ `CollectApprovalWarningsAsync` ถูกเรียก**ทุกครั้งที่กดอนุมัติ**
-                            // (รอบแรก throw 422 · รอบสองหลังผู้ใช้ยืนยัน) ⇒ ถ้าไม่กันซ้ำ บรรทัด
-                            // เดิมจะทบไปเรื่อย ๆ ในช่องที่ด่านอื่นอ่านธงจากมัน (B3)
-                            var adviceNote = Accounting.Helpers.WhtAdviceNote.Compose(
-                                advice.UsedAi, advice.Answer, advice.Confidence);
-                            if (Accounting.Helpers.WhtAdviceNote.ShouldAppend(doc.InternalNotes, adviceNote))
-                            {
-                                AppendInternalNote(doc, adviceNote);
-                                _db.AuditLogs.Add(new AuditLog
-                                {
-                                    CompanyId = companyId,
-                                    Action = AuditAction.Update,
-                                    EntityType = "Document",
-                                    EntityId = doc.Id.ToString(),
-                                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                                    {
-                                        action = "WhtWarningSuppressedByModel",
-                                        documentNumber = doc.DocumentNumber,
-                                        documentType = doc.DocumentType.ToString(),
-                                        contactId = doc.ContactId,
-                                        contactName = doc.Contact?.Name,
-                                        subTotal = doc.SubTotal,
-                                        paidToContactThisYear,
-                                        answer = advice.Answer,
-                                        confidence = advice.Confidence,
-                                        usedAi = advice.UsedAi,
-                                        feedbackId = advice.FeedbackId,
-                                        ruleCode = Accounting.Helpers.WhtAdviceNote.SilentRuleCode,
-                                        legalReference = Accounting.Helpers.WhtAdviceNote.SilentLegalReference,
-                                    }),
-                                });
-                            }
-                        }
-                        else if (advice.SaysWithhold)
-                        {
-                            warnings.Add(
-                                $"🤔 ระบบสงสัยว่าใบนี้เข้าข่ายหัก ณ ที่จ่าย — โปรดตรวจสอบ. "
-                                + $"{(advice.UsedAi ? "🤖 AI" : "⚙️ ระบบ")}ประเมินว่าเป็นเงินได้ประเภท "
-                                + $"'{advice.Answer}' (ความมั่นใจ {advice.Confidence:P0}) และ" + head + ". "
-                                + "ถ้าเป็นค่าซื้อสินค้า กด \"ยอมรับและอนุมัติต่อ\" ได้เลย — "
-                                + "ระบบจะจำคำตอบนี้ไว้สอนตัวเองสำหรับคู่ค้ารายนี้. "
-                                + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                            // ไม่มีเหตุ ⇒ เงียบ · ไม่ถามชั้นเรียนรู้ด้วยซ้ำ เพราะคำตอบ
+                            // ไม่เปลี่ยนสิ่งที่ผู้ใช้เห็น (DECISION_DOCTRINE §2.1 ข้อ 4)
+                            RecordWhtSilence(doc, companyId, paidToContactThisYear,
+                                Accounting.Helpers.WhtAdviceNote.NoSuspicionRuleCode,
+                                "ไม่พบเหตุให้สงสัยว่าเป็นค่าจ้าง/ค่าบริการในรายการของใบนี้",
+                                advice: null);
                         }
                         else
                         {
-                            // ทั้งนักเรียนและ AI ตอบไม่ได้ (cold start / ปิด AI / ตอบนอกชุด)
-                            // ⇒ กลับไปใช้คำเตือนเดิม — "ไม่รู้" ต้องไม่กลายเป็น "ไม่ต้องหัก"
-                            warnings.Add(
-                                $"⚠️ ท.ป.4/2528 ข้อ 12: ใบนี้ยังไม่ได้หัก ณ ที่จ่าย และ{whtEvidence.Reason}. "
-                                + head + " ⇒ ถ้าเป็นค่าบริการต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์ "
-                                + "· ถ้าเป็นค่าซื้อสินค้าไม่ต้องหัก — ยืนยันเพื่ออนุมัติต่อ. "
-                                + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                            // มีเหตุแล้ว — ถามชั้นเรียนรู้ว่าเป็นเงินได้ประเภทไหน
+                            // (กฎเหล็ก #1) orchestrator ถาม local model ก่อนเสมอ แล้วค่อย
+                            // ตกไปหา AI เมื่อนักเรียนไม่มั่นใจ · ปิด provider ทุกตัวแล้ว
+                            // นักเรียนยังตอบได้
+                            var advice = await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
+
+                            doc.WhtAdviceAiFeedbackId = advice.FeedbackId ?? doc.WhtAdviceAiFeedbackId;
+                            doc.WhtAdviceAnswer = advice.Answer ?? doc.WhtAdviceAnswer;
+                            doc.WhtAdviceUsedAi = advice.UsedAi;
+
+                            var why = $"พบคำว่า \"{hint.MatchedKeyword}\" ในรายการ "
+                                + $"(คิดเป็น {hint.AmountShare:P0} ของยอดใบนี้)";
+
+                            if (advice.SaysNoWithholding)
+                            {
+                                // โมเดลปัดข้อสงสัยตก ⇒ เงียบ แต่ต้องตามรอยได้
+                                RecordWhtSilence(doc, companyId, paidToContactThisYear,
+                                    Accounting.Helpers.WhtAdviceNote.SilentRuleCode,
+                                    why + " แต่ชั้นเรียนรู้ประเมินว่าไม่เข้าข่าย",
+                                    advice);
+                            }
+                            else if (advice.SaysWithhold)
+                            {
+                                warnings.Add(
+                                    $"🤔 ระบบสงสัยว่าใบนี้เข้าข่ายหัก ณ ที่จ่าย — โปรดตรวจสอบ. "
+                                    + why + " · "
+                                    + $"{(advice.UsedAi ? "🤖 AI" : "⚙️ ระบบ")}ประเมินว่าเป็นเงินได้ประเภท "
+                                    + $"'{advice.Answer}' (ความมั่นใจ {advice.Confidence:P0}) และ" + head + ". "
+                                    + "ถ้าเป็นค่าซื้อสินค้า กด \"ยอมรับและอนุมัติต่อ\" ได้เลย — "
+                                    + "ระบบจะจำคำตอบนี้ไว้สอนตัวเองสำหรับคู่ค้ารายนี้. "
+                                    + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                            }
+                            else
+                            {
+                                // ชั้นเรียนรู้ตอบไม่ได้ (cold start / ปิด AI / ตอบนอกชุด)
+                                // แต่**เหตุยังอยู่** ⇒ ยังต้องเตือน เพียงแต่บอกไม่ได้ว่าประเภทไหน
+                                warnings.Add(
+                                    $"🤔 ระบบสงสัยว่าใบนี้เข้าข่ายหัก ณ ที่จ่าย — โปรดตรวจสอบ. "
+                                    + why + " และ" + head + ". "
+                                    + "ถ้าเป็นค่าบริการต้องหักตั้งแต่งวดที่ยอดสะสมถึงเกณฑ์ "
+                                    + "· ถ้าเป็นค่าซื้อสินค้าไม่ต้องหัก — ยืนยันเพื่ออนุมัติต่อ. "
+                                    + "**ภาษีที่ไม่ได้หัก ผู้จ่ายเป็นผู้รับผิด (§54)**");
+                            }
                         }
                     }
                 }

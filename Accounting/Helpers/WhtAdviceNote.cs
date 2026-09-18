@@ -27,6 +27,19 @@ public static class WhtAdviceNote
     /// <c>RuleCode</c> + <c>LegalReference</c>)</summary>
     public const string SilentRuleCode = "WHT-ADVICE-SILENT";
 
+    /// <summary>รหัสกฎของการเงียบเพราะ<b>ไม่มีเหตุให้สงสัย</b> (คำตัดสินเจ้าของ รอบ 179:
+    /// "มีเหตุให้สงสัยว่าเป็นค่าจ้าง หรือ ค่าบริการ ค่อยขึ้นเตือนหัก")
+    ///
+    /// <para>แยกจาก <see cref="SilentRuleCode"/> เพราะเป็นคนละเหตุผล: อันนั้นคือ
+    /// "ถามแล้วโมเดลว่าไม่เข้าข่าย" อันนี้คือ "ไม่มีอะไรให้ต้องถามตั้งแต่ต้น" —
+    /// ผู้สอบบัญชีที่ไล่ดูต้องแยกสองกรณีนี้ออกจากกันได้</para></summary>
+    public const string NoSuspicionRuleCode = "WHT-NO-SUSPICION";
+
+    /// <summary>ข้อความที่ต่อลง <c>Document.InternalNotes</c> เมื่อระบบเงียบเพราะ
+    /// <b>ไม่มีเหตุ</b> — ไม่มีเวลาในตัวด้วยเหตุผลเดียวกับ <see cref="Compose"/></summary>
+    public static string ComposeNoSuspicion(string reason)
+        => $"{Marker} ไม่เตือนเรื่องหัก ณ ที่จ่าย — {reason}";
+
     /// <summary>มาตราที่การตัดสินใจนี้อ้างอิง — ท.ป.4/2528 ข้อ 12 (เกณฑ์ ฿1,000 สะสม
     /// ต่อคู่สัญญา) + §54 (ผู้จ่ายรับผิดในภาษีที่ไม่ได้หัก)</summary>
     public const string SilentLegalReference = "RD-TP4/2528-12 / RD-54";

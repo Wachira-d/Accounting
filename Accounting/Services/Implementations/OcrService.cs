@@ -1732,7 +1732,22 @@ public class OcrService : IOcrService
                         // true เฉพาะตอนค่าที่แสดงมาจาก AI จริง ไม่ใช่แค่ AI ถูกเรียก.
                         scanResult.GlAccountUsedAi = false;
                         // ★ กฎเหล็ก #1 (T3-01): นักเรียนที่ short-circuit ใช้ได้เท่า AI
-                        if (glResult.HasModelAnswer && (glResult.Confidence ?? 0m) >= 0.70m)
+                        //
+                        // ⚠️ **ครูภายนอกต้องมั่นใจกว่าของเดิมจริงถึงจะทับ** (รอบ 179)
+                        // เดิมบล็อกนี้ไม่เทียบกับ `FieldConfidence["DebitAccount"]` เลย
+                        // ⇒ คำตอบของ AI ที่ 0.70 ทับกติกาตะกร้า/NaiveBayes/ประวัติผู้ขาย
+                        // ที่ 0.95 ได้ เพียงเพราะ**มาทีหลัง** — เป็น "ใครมาก่อนชนะ"
+                        // ในทรงกลับด้าน ซึ่งกฎเหล็ก #4 A ห้ามไว้ และชั้นถัดขึ้นไปในไฟล์
+                        // เดียวกัน (`[Learner]`) ก็เทียบก่อนทับอยู่แล้ว = สองมาตรฐาน
+                        //
+                        // นักเรียน (`UsedAi == false`) ไม่ต้องผ่านด่านนี้ เพราะคำตอบของมัน
+                        // **คือ**ประวัติที่ผู้ใช้บริษัทนี้ยืนยันไว้เอง — อยู่ชั้นเดียวกับ
+                        // ตัวที่มันจะไปทับ ไม่ใช่การเดาจากภายนอก (DECISION_DOCTRINE G1)
+                        var glIncumbentConf = (decimal)extractedData.FieldConfidence
+                            .GetValueOrDefault("DebitAccount", 0);
+                        var glConf = glResult.Confidence ?? 0m;
+                        var glMayOverride = !glResult.UsedAi || glConf > glIncumbentConf;
+                        if (glResult.HasModelAnswer && glConf >= 0.70m && glMayOverride)
                         {
                             var aiAcct = await _db.ChartOfAccounts.AsNoTracking()
                                 .FirstOrDefaultAsync(a => a.CompanyId == companyId
@@ -1752,13 +1767,19 @@ public class OcrService : IOcrService
                                     extractedData.ReasoningTrace.Add("[AI risk] " + risk);
                             }
                         }
-                        // AI ถูกเรียกแต่ confidence ต่ำ/ไม่อยู่ในผัง → log เหตุผล
+                        // AI ถูกเรียกแต่ไม่ได้ใช้ → **ต้องบอกว่าทำไม** ไม่ใช่เงียบ
+                        // (G4: ผู้แพ้ต้องถูกบันทึกไว้ให้ไล่ย้อน/ให้ผู้ใช้สลับได้)
                         if (!scanResult.GlAccountUsedAi && glResult.UsedAi
                             && !string.IsNullOrEmpty(glResult.Answer))
                         {
+                            var why = glConf < 0.70m
+                                ? "ต่ำกว่าเกณฑ์ 70%"
+                                : !glMayOverride
+                                    ? $"ไม่สูงกว่าค่าเดิมที่มีอยู่ ({glIncumbentConf:P0}) จึงไม่ทับ"
+                                    : "ไม่มีรหัสนี้ในผังบัญชีของบริษัท";
                             extractedData.ReasoningTrace.Add(
-                                $"[AI/DeepSeek] เสนอ {glResult.Answer} (confidence {(glResult.Confidence ?? 0):P0}) "
-                                + "— ต่ำกว่าเกณฑ์ 70% หรือไม่อยู่ในผังบัญชี → ใช้ผลของ local model แทน");
+                                $"[AI/DeepSeek] เสนอ {glResult.Answer} (confidence {glConf:P0}) "
+                                + $"— {why} → ใช้ค่าเดิม {extractedData.DebitAccountCode}");
                         }
                     }
                 }
