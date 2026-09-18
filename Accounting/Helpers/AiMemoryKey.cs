@@ -74,10 +74,7 @@ public static class AiMemoryKey
         {
             var node = System.Text.Json.Nodes.JsonNode.Parse(s);
             if (node != null)
-            {
-                MaskPiiKeys(node);
-                t = node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
-            }
+                t = Canonicalise(node).ToJsonString(new JsonSerializerOptions { WriteIndented = false });
         }
         catch (JsonException) { /* not JSON — fingerprint the raw text */ }
 
@@ -96,31 +93,43 @@ public static class AiMemoryKey
         return t;
     }
 
-    /// <summary>แทนค่าของ field ที่เป็น PII ตาม convention ของ AiPromptSanitizer
-    /// ("*_pii" / "*_personal") ด้วย token คงที่ — ฝั่งบันทึกเก็บเป็น "h:{hash}"
-    /// ฝั่งทำนายเป็นค่าดิบ ถ้าไม่ทำให้เหมือนกัน fingerprint จะไม่ตรงกันตลอดไป</summary>
-    private static void MaskPiiKeys(System.Text.Json.Nodes.JsonNode node)
+    /// <summary>คืน JSON ที่ <b>เรียงคีย์แล้ว</b> + แทนค่าของ field ที่เป็น PII
+    /// ด้วย token คงที่
+    ///
+    /// <para><b>เรียงคีย์</b>: <c>JsonNode</c> คงลำดับตามที่ parse มา ⇒ payload
+    /// เดียวกันที่ผู้เรียกคนละจุดประกอบคนละลำดับจะได้กุญแจคนละตัว (คอมเมนต์เดิมของ
+    /// สำเนานี้เขียนว่า "canonical JSON" มาตลอดแต่ไม่เคยเรียงจริง — โค้ดเป็น
+    /// ground truth จึงทำให้เป็นจริงตามที่เขียนไว้ · รอบ 178)</para>
+    ///
+    /// <para><b>PII</b>: convention ของ <c>AiPromptSanitizer</c> คือ "*_pii" / "*_personal"
+    /// — ฝั่งบันทึกเก็บเป็น "h:{hash}" ฝั่งทำนายเป็นค่าดิบ ถ้าไม่ทำให้เหมือนกัน
+    /// fingerprint จะไม่ตรงกันตลอดไป</para></summary>
+    private static System.Text.Json.Nodes.JsonNode Canonicalise(System.Text.Json.Nodes.JsonNode node)
     {
         if (node is System.Text.Json.Nodes.JsonObject obj)
         {
-            foreach (var key in obj.Select(kvp => kvp.Key).ToList())
+            var result = new System.Text.Json.Nodes.JsonObject();
+            foreach (var key in obj.Select(kvp => kvp.Key).OrderBy(k => k, StringComparer.Ordinal))
             {
                 var val = obj[key];
                 if (key.EndsWith("_pii", StringComparison.OrdinalIgnoreCase)
                     || key.EndsWith("_personal", StringComparison.OrdinalIgnoreCase))
-                {
-                    obj[key] = "<pii>";
-                }
-                else if (val is System.Text.Json.Nodes.JsonObject or System.Text.Json.Nodes.JsonArray)
-                {
-                    MaskPiiKeys(val);
-                }
+                    result[key] = "<pii>";
+                else
+                    result[key] = val == null ? null : Canonicalise(val.DeepClone());
             }
+            return result;
         }
-        else if (node is System.Text.Json.Nodes.JsonArray arr)
+
+        if (node is System.Text.Json.Nodes.JsonArray arr)
         {
-            foreach (var item in arr.Where(i => i != null))
-                MaskPiiKeys(item!);
+            // ลำดับของ array คือ**ข้อมูล** (บรรทัดที่ 1 ไม่ใช่บรรทัดที่ 2) — ห้ามเรียง
+            var outArr = new System.Text.Json.Nodes.JsonArray();
+            foreach (var item in arr)
+                outArr.Add(item == null ? null : Canonicalise(item.DeepClone()));
+            return outArr;
         }
+
+        return node;
     }
 }
