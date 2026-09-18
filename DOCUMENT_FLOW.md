@@ -5099,4 +5099,4 @@ _Last verified against codebase: 2026-09-18 (รอบ 169 — **root cause ข�
 `WithholdingTax3/53` + ลิงก์ `/pages/tax.html` (เดิมนับ `WithholdingTax1` ซึ่ง `TaxService` throw ไม่ให้สร้าง และลิงก์ไป
 ทะเบียน 50 ทวิ) · **ไม่ได้เปลี่ยน**: ยอด WHT ค้างนำส่งยังนับจาก `Documents` ขณะที่ไฟล์ยื่นนับจาก `WithholdingTaxCerts`
 (§4 #2 ของรายงาน — รอการตัดสินใจ "50 ทวิ auto-issue") · สถานะ "ยื่นแล้ว" ยังเก็บ 4 ที่ไม่ sync (§4 #6)
-— commit <pending>)_
+— commit ac91b71)_
