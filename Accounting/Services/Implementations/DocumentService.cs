@@ -16123,7 +16123,8 @@ public partial class DocumentService : IDocumentService
     private const decimal MinWhtSilenceConfidence = 0.70m;
 
     /// <summary>คำตอบของชั้น "นักเรียน → ครู" เรื่องเข้าข่ายหัก ณ ที่จ่ายไหม</summary>
-    /// <param name="SaysNoWithholding">ตอบชัดว่า<b>ไม่</b>เข้าข่าย (None/Skip)</param>
+    /// <param name="SaysNoWithholding">ตอบชัดว่า<b>ไม่</b>เข้าข่าย — <c>None</c> เท่านั้น
+    /// (<c>Skip</c> ถูกปฏิเสธ: มันแปลว่า "ยอดสะสมยังไม่ถึง" ซึ่งขัดกับการคำนวณของเราเอง)</param>
     /// <param name="SaysWithhold">ตอบเป็นประเภทเงินได้ที่<b>มีอยู่จริงในตารางอัตรา</b></param>
     private sealed record WhtAdvice(
         bool SaysNoWithholding, bool SaysWithhold,
@@ -16138,7 +16139,7 @@ public partial class DocumentService : IDocumentService
     /// เพราะจะได้ corpus สองกอง แล้วนักเรียนของทั้งสองกองโตช้าลงครึ่งหนึ่ง
     /// (กฎเหล็ก #1 ข้อ 6)</para>
     ///
-    /// <para><b>ด่านกันคำตอบที่แต่งขึ้น</b>: รับเฉพาะ <c>None</c>/<c>Skip</c> หรือรหัส
+    /// <para><b>ด่านกันคำตอบที่แต่งขึ้น</b>: รับเฉพาะ <c>None</c> หรือรหัส
     /// ประเภทเงินได้ที่หาเจอใน <see cref="Accounting.Helpers.ThaiWhtRateTable"/> จริง —
     /// คำตอบนอกชุดถือว่า "ตอบไม่ได้" แล้วตกกลับไปเตือนแบบเดิม (ทิศที่ปลอดภัยกว่าตาม §54)</para>
     /// </summary>
@@ -16410,10 +16411,43 @@ public partial class DocumentService : IDocumentService
                             // ⚠️ **เงียบตามคำตอบของโมเดล** (เจ้าของโปรเจกต์ตัดสิน 2026-09-18)
                             // แต่ต้องตามรอยได้ — ไม่งั้นจะไม่มีใครรู้ว่าทำไมใบนี้ไม่มีคำเตือน
                             // (การเงียบที่ไม่ทิ้งร่องรอย = สถานะที่ระบบประทับเองโดยไม่มีหลักฐาน)
-                            doc.InternalNotes = (doc.InternalNotes ?? "")
-                                + $"\n[WHT-ADVICE] ไม่เตือนเรื่องหัก ณ ที่จ่าย — "
-                                + $"{(advice.UsedAi ? "AI" : "โมเดลในระบบ")} ประเมินว่าไม่เข้าข่าย "
-                                + $"({advice.Answer}) ความมั่นใจ {advice.Confidence:P0}";
+                            //
+                            // ต้องดัง **สองที่** ไม่ใช่ที่เดียว (ฝ่ายค้านรอบ 177 ข้อ B4):
+                            //  • InternalNotes — ผู้ใช้เปิดเอกสารแล้วเห็น แต่**แก้ได้** จึงไม่ใช่หลักฐาน
+                            //  • AuditLog     — append-only + hash chain + RuleCode/LegalReference
+                            //                   (กฎเหล็ก #2 ข้อ M) = ของที่ผู้สอบบัญชียกมาอ้างได้
+                            // และ `CollectApprovalWarningsAsync` ถูกเรียก**ทุกครั้งที่กดอนุมัติ**
+                            // (รอบแรก throw 422 · รอบสองหลังผู้ใช้ยืนยัน) ⇒ ถ้าไม่กันซ้ำ บรรทัด
+                            // เดิมจะทบไปเรื่อย ๆ ในช่องที่ด่านอื่นอ่านธงจากมัน (B3)
+                            var adviceNote = Accounting.Helpers.WhtAdviceNote.Compose(
+                                advice.UsedAi, advice.Answer, advice.Confidence);
+                            if (Accounting.Helpers.WhtAdviceNote.ShouldAppend(doc.InternalNotes, adviceNote))
+                            {
+                                AppendInternalNote(doc, adviceNote);
+                                _db.AuditLogs.Add(new AuditLog
+                                {
+                                    CompanyId = companyId,
+                                    Action = AuditAction.Update,
+                                    EntityType = "Document",
+                                    EntityId = doc.Id.ToString(),
+                                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                                    {
+                                        action = "WhtWarningSuppressedByModel",
+                                        documentNumber = doc.DocumentNumber,
+                                        documentType = doc.DocumentType.ToString(),
+                                        contactId = doc.ContactId,
+                                        contactName = doc.Contact?.Name,
+                                        subTotal = doc.SubTotal,
+                                        paidToContactThisYear,
+                                        answer = advice.Answer,
+                                        confidence = advice.Confidence,
+                                        usedAi = advice.UsedAi,
+                                        feedbackId = advice.FeedbackId,
+                                        ruleCode = Accounting.Helpers.WhtAdviceNote.SilentRuleCode,
+                                        legalReference = Accounting.Helpers.WhtAdviceNote.SilentLegalReference,
+                                    }),
+                                });
+                            }
                         }
                         else if (advice.SaysWithhold)
                         {
