@@ -84,12 +84,22 @@ def collect(root):
                 continue
             methods[(os.path.basename(p), name)] = p
     dead = {}
+    internal_only = set()
     for (fname, name), p in methods.items():
         pat = re.compile(r'\b' + re.escape(name) + r'\b')
         alive = any(pat.search(t) for q, t in sources.items() if q != p)
         if not alive:
             dead[(fname, name)] = bool(re.search(r'\b' + re.escape(name) + r'\b', tests))
-    return methods, dead
+            # ★ รอบ 183 — แยกสองอาการที่เดิมกองรวมกัน:
+            #   · "ไม่มีใครเรียกเลย"        = ของที่สร้างแล้วลืมต่อสาย (ปัญหาจริง)
+            #   · "เรียกในไฟล์ตัวเองเท่านั้น" = ควรเป็น private (ระเบียบ ไม่ใช่ช่องโหว่)
+            # ทีมตัดสินใจฝ่ายข้อมูลวัดแล้วพบว่า ~53% ของ baseline เป็นอาการที่สอง
+            # ⇒ baseline ที่ปนสองอาการทำให้คนเลิกอ่าน = ratchet ที่ไม่มีใครเชื่อ
+            # (F2 ข้อ 6: checker ที่ฟ้องผิด = checker ที่พัง)
+            own = sources.get(p, '')
+            if len(pat.findall(own)) > 1:      # นิยาม + อย่างน้อยหนึ่งการใช้งาน
+                internal_only.add((fname, name))
+    return methods, dead, internal_only
 
 
 def read_baseline(path):
@@ -115,23 +125,29 @@ def write_baseline(path, dead):
 
 
 def run(root, baseline_path, show_all=False):
-    methods, dead = collect(root)
+    methods, dead, internal_only = collect(root)
     baseline = read_baseline(baseline_path)
     new = sorted(k for k in dead if k not in baseline)
     revived = sorted(k for k in baseline if k not in dead)
+    orphan = {k for k in dead if k not in internal_only}
     print(f'public static method ใน Helpers: {len(methods)} · ไม่มีผู้เรียกนอกไฟล์: {len(dead)} '
           f'(baseline {len(baseline)})')
+    print(f'   ├─ ไม่มีใครเรียกเลย (ของที่ลืมต่อสาย)        : {len(orphan)}')
+    print(f'   └─ เรียกในไฟล์ตัวเองเท่านั้น (ควรเป็น private): {len(internal_only)}')
     if show_all:
         for (f, n) in sorted(dead):
             tag = 'มีเทสต์' if dead[(f, n)] else 'ไม่มีเทสต์'
-            print(f'   {f} {n} [{tag}]{"" if (f, n) in baseline else "  ← ใหม่"}')
+            kind = 'INTERNAL' if (f, n) in internal_only else 'ORPHAN'
+            print(f'   [{kind:8}] {f} {n} [{tag}]{"" if (f, n) in baseline else "  ← ใหม่"}')
     for (f, n) in revived:
         print(f'ℹ️  กลับมามีผู้เรียกแล้ว — ตัดออกจาก baseline ได้: {f} {n}')
     if new:
         print(f'❌ dead helper ใหม่ {len(new)} ตัว (สร้างแล้วไม่ต่อสาย หรือถอดผู้เรียกตัวสุดท้ายโดยไม่ลบ):')
         for (f, n) in new:
             tag = 'มีเทสต์แต่ระบบไม่เคยเดิน' if dead[(f, n)] else 'ไม่มีทั้งผู้เรียกและเทสต์'
-            print(f'   Accounting/Helpers/{f}: {n}  [{tag}]')
+            kind = ('เรียกในไฟล์ตัวเองเท่านั้น → ทำเป็น private'
+                    if (f, n) in internal_only else 'ไม่มีใครเรียกเลย → ต่อสาย หรือ ลบ')
+            print(f'   Accounting/Helpers/{f}: {n}  [{tag}] — {kind}')
         print('   → ต่อสายเข้าเส้นที่ควรเรียก หรือลบทิ้ง — ห้ามเติมลง baseline เพื่อให้ผ่าน')
         return 1
     print('✅ ไม่มี dead helper ใหม่')
@@ -167,7 +183,7 @@ def self_test():
                      '}\n')
         with open(os.path.join(td, 'FooTests.cs'), 'w', encoding='utf-8') as fh:
             fh.write('class FooTests { void T() { Foo.TestOnly(); Foo.Orphan(1); } }\n')
-        methods, dead = collect(tmp)
+        methods, dead, internal_only = collect(tmp)
         names = {n for (_, n) in methods}
         for expect_in in ('Orphan', 'Wired', 'CommentOnly', 'TestOnly', 'Generic'):
             if expect_in not in names:
@@ -214,7 +230,7 @@ if __name__ == '__main__':
     if '--self-test' in sys.argv:
         sys.exit(self_test())
     if '--write-baseline' in sys.argv:
-        _, dead = collect(ROOT)
+        _, dead, _ = collect(ROOT)
         write_baseline(BASELINE, dead)
         print(f'เขียน baseline {len(dead)} แถว → {os.path.relpath(BASELINE, ROOT)}')
         sys.exit(0)

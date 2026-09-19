@@ -63,6 +63,11 @@
           <div class="form-group">
             <label class="form-label">ประเภทผู้ติดต่อ *</label>
             <select class="form-input" id="fContactType" onchange="Page.onContactTypeChange()">
+              <!-- ตัวเลือก "ยังไม่ระบุ" ต้อง**มีอยู่จริง** ไม่ใช่แค่ตั้ง value=''
+                   ถ้าไม่มี option ที่ตรง เบราว์เซอร์จะโชว์ตัวแรก (นิติบุคคล) ทั้งที่
+                   ค่าเป็นว่าง ⇒ จอบอกอย่าง ค่าเป็นอีกอย่าง · ฟอร์มสร้างใหม่ยังตั้ง
+                   '2' ตรง ๆ อยู่ (บรรทัด ~640/~825) จึงไม่เปลี่ยนค่าตั้งต้นของคู่ค้าใหม่ -->
+              <option value="">— ยังไม่ระบุ (เลือกก่อนบันทึก) —</option>
               <option value="2">นิติบุคคล (บริษัท/ห้างหุ้นส่วน)</option>
               <option value="1">บุคคลธรรมดา</option>
               <option value="3">หน่วยงานราชการ</option>
@@ -891,8 +896,15 @@
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
         // ห้ามเทียบตรง ๆ: API ส่ง "JuristicPerson" แต่ <option value="2">
         // ⇒ เดิม select ว่างทุกครั้งที่เปิดแก้ไข (ผู้ใช้เห็นเป็นช่องเปล่า)
+        //
+        // ⚠️ เดิมปิดท้ายด้วย `|| 2` ซึ่งแปลว่า "ไม่รู้ ⇒ เดาว่านิติบุคคล" —
+        // คู่ค้าที่ API ไม่ส่ง contactType มา (หรือค่าที่ map ไม่ได้) จะเห็นฟอร์ม
+        // ขึ้น "นิติบุคคล" แล้วการกดบันทึก **ประทับค่าที่ผู้ใช้ไม่เคยเลือก**
+        // ลงฐาน · และ default ฝั่ง JS (2) ยังขัดกับ default ฝั่งเซิร์ฟเวอร์ (1)
+        // = สอง default ที่ตอบคนละอย่างสำหรับข้อมูลชุดเดียวกัน
+        // ⇒ "ไม่รู้" ต้องเป็นช่องว่างที่ผู้ใช้เห็นและเลือกเอง (DECISION_DOCTRINE G3)
         document.getElementById('fContactType').value =
-          String(Layout.contactTypeCode(c.contactType) || 2);
+          String(Layout.contactTypeCode(c.contactType) ?? '');
         document.getElementById('fName').value = c.name;
         this._setTitleValue(c.titleTh || '');
         document.getElementById('fTaxId').value = c.taxId || '';
@@ -1017,6 +1029,13 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('editId').value;
         const ct = parseInt(document.getElementById('fContactType').value);
+        // ชนิดคู่ค้าเป็นตัวตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax XML
+        // ⇒ บันทึกทั้งที่ยังไม่รู้ไม่ได้ (เดิมช่องนี้เดาเป็น "นิติบุคคล" ให้เงียบ ๆ)
+        if (isNaN(ct)) {
+          Layout.toast('กรุณาเลือกประเภทผู้ติดต่อก่อนบันทึก (มีผลกับแบบยื่นภาษีหัก ณ ที่จ่าย)', 'error');
+          document.getElementById('fContactType').focus();
+          return;
+        }
         const name = document.getElementById('fName').value;
         const taxId = document.getElementById('fTaxId').value || null;
         const phone = document.getElementById('fPhone').value || null;
