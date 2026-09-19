@@ -16,9 +16,15 @@ namespace Accounting.Tests;
 /// ⇒ ลูกค้าได้เงินคืน**น้อยกว่าที่จ่ายมา** และไม่มีเทสต์แม้แต่ตัวเดียว
 /// (grep <c>discountFactor</c>/<c>CouponDiscountAmount</c> ใน Accounting.Tests = 0)
 ///
+/// ═══ รอบ 184 — ค่าบริการต้องคืนด้วย (คำตัดสินเจ้าของ "คืนทั้งหมด") ═══
+/// <c>RecalculateOrder</c> คิด <c>ServiceCharge = afterDiscount × pct/100</c> แล้วบวกเข้า
+/// <c>TotalAmount</c> ⇒ ลูกค้าจ่ายค่าบริการ**ของของที่ซื้อ** · เดิมคืนเฉพาะยอดของ ⇒
+/// บิล 990 คืนทั้งใบได้ 900 (ร้านเก็บค่าบริการของของที่ถูกส่งคืนไว้เอง) **และ** JE ขาย
+/// เหลือรายได้ 90 + ภาษีขาย 5.89 ค้างอยู่โดยไม่มีวันกลับรายการ
+///
 /// เทสต์นี้มีสองครึ่งตามกฎเหล็ก #4 H:
-///   • ครึ่งที่พิสูจน์ว่า "บิลที่พัง (มีคูปอง) กลับมาถูก"
-///   • ครึ่งที่พิสูจน์ว่า "บิลที่ถูกอยู่แล้ว (ไม่มีคูปอง) ผลเท่าเดิมเป๊ะ"
+///   • ครึ่งที่พิสูจน์ว่า "บิลที่พัง (มีคูปอง · มีค่าบริการ) กลับมาถูก"
+///   • ครึ่งที่พิสูจน์ว่า "บิลที่ถูกอยู่แล้ว (**ไม่มีค่าบริการ** ไม่มีคูปอง) ผลเท่าเดิมเป๊ะ"
 ///     — ยึดค่าที่สูตร**เก่า**เคยให้ เพื่อกันการแก้เกินตัว
 /// </summary>
 public class PosRefundMathTests
@@ -63,9 +69,15 @@ public class PosRefundMathTests
         => o.Items.Where(i => !i.IsDeleted).Sum(i => i.TotalAmount);
 
     private static PosRefundAmounts RefundAll(PosOrder o)
-        => PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount,
+        => PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount, o.ServiceChargePercent,
             o.Items.Where(i => !i.IsDeleted)
                 .Select(i => new PosRefundLine(i.TotalAmount, i.VatAmount, i.Quantity, i.Quantity)));
+
+    /// <summary>ยอดคืนที่สูตร **ก่อนรอบ 184** ให้ (ไม่คูณค่าบริการ) — เส้นฐานของครึ่ง
+    /// "ใบที่ถูกอยู่แล้วห้ามขยับ" และของตารางตัวเลข "เดิม vs ใหม่" ในรายงาน</summary>
+    private static decimal OldGrossAllLines(PosOrder o)
+        => Math.Round(LineGrossTotal(o) * OldDiscountFactor(LineGrossTotal(o), o), 2,
+            MidpointRounding.AwayFromZero);
 
     // ─────────── ครึ่งที่ 1: บิลที่พังต้องกลับมาถูก ───────────
 
@@ -101,19 +113,22 @@ public class PosRefundMathTests
     public void ลดเปอร์เซ็นต์_บวกคูปอง_บวกค่าบริการ_คืนถูก()
     {
         // ป้าย 1,000 · ลด 10% = 100 · คูปอง 50 ⇒ DiscountAmount = 150 ⇒ ฐานสินค้า 850
-        // ค่าบริการ 10% ของ 850 = 85 ⇒ ลูกค้าจ่าย 935 (ค่าบริการไม่คืน ตามกติกาเดิม)
+        // ค่าบริการ 10% ของ 850 = 85 ⇒ ลูกค้าจ่าย 935 ⇒ **คืนทั้งใบต้องได้ 935**
         var o = Order(discountPct: 10m, coupon: 50m, serviceChargePct: 10m, lineGross: new[] { 1000m });
         Assert.Equal(150m, o.DiscountAmount);
         Assert.Equal(85m, o.ServiceChargeAmount);
         Assert.Equal(935m, o.TotalAmount);
 
         var r = RefundAll(o);
-        Assert.Equal(850m, r.Gross);                       // เฉพาะส่วนสินค้า
+        Assert.Equal(935m, r.Gross);                       // = เงินที่ลูกค้าจ่าย (รวมค่าบริการ)
+        Assert.Equal(850m, r.Goods);                       // ส่วนของ "ของ"
+        Assert.Equal(85m, r.ServiceCharge);                // ส่วนของค่าบริการ
+        Assert.Equal(r.Gross, r.Goods + r.ServiceCharge);  // สองก้อนต้องบวกได้ยอดจ่ายเป๊ะ
         Assert.Equal(0.85m, r.DiscountFactor);
 
-        // บั๊กเดิมจะหักคูปองซ้ำ ⇒ 800 (ลูกค้าขาดไป ฿50)
-        var oldGross = Math.Round(1000m * OldDiscountFactor(LineGrossTotal(o), o), 2, MidpointRounding.AwayFromZero);
-        Assert.Equal(800m, oldGross);
+        // สูตรก่อนรอบ 184 คืนแค่ส่วนของ ⇒ ลูกค้าขาดค่าบริการไป 85 บาท
+        Assert.Equal(850m, OldGrossAllLines(o));
+        Assert.Equal(85m, r.Gross - OldGrossAllLines(o));
     }
 
     [Fact]
@@ -122,7 +137,7 @@ public class PosRefundMathTests
         // ป้าย 2 บรรทัด ๆ ละ 500 · คูปอง 200 ⇒ factor 0.8 ⇒ คืนบรรทัดเดียว = 400
         var o = Order(coupon: 200m, lineGross: new[] { 500m, 500m });
         var first = o.Items.First();
-        var r = PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount,
+        var r = PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount, o.ServiceChargePercent,
             new[] { new PosRefundLine(first.TotalAmount, first.VatAmount, first.Quantity, first.Quantity) });
         Assert.Equal(400m, r.Gross);
     }
@@ -133,7 +148,7 @@ public class PosRefundMathTests
         var o = Order(coupon: 100m, lineGross: new[] { 1000m });
         var item = o.Items.First();
         item.Quantity = 4;                                  // 4 ชิ้น รวม 1,000
-        var r = PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount,
+        var r = PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount, o.ServiceChargePercent,
             new[] { new PosRefundLine(item.TotalAmount, item.VatAmount, 4m, 1m) });
         Assert.Equal(225m, r.Gross);                        // 1,000 × 1/4 × 0.9
     }
@@ -156,23 +171,31 @@ public class PosRefundMathTests
     // ─────────── ครึ่งที่ 2: บิลที่ถูกอยู่แล้ว ห้ามเปลี่ยน ───────────
 
     [Theory]
-    [InlineData(0, 0)]
-    [InlineData(10, 0)]
-    [InlineData(5, 10)]
-    [InlineData(100, 0)]
-    public void ไม่มีคูปอง_ผลต้องเท่าสูตรเดิมเป๊ะ(double discountPct, double serviceChargePct)
+    [InlineData(0)]
+    [InlineData(10)]
+    [InlineData(100)]
+    public void ไม่มีคูปอง_ไม่มีค่าบริการ_ผลต้องเท่าสูตรเดิมเป๊ะ(double discountPct)
     {
-        var o = Order((decimal)discountPct, coupon: 0m, serviceChargePct: (decimal)serviceChargePct,
+        // ครึ่ง "ห้ามทำใบที่ถูกอยู่แล้วพัง" — บิลที่ไม่มีค่าบริการต้องได้ตัวเลข**เท่าเดิมเป๊ะ**
+        // (ค่าบริการ 0% ⇒ ตัวคูณ = 1 ⇒ สูตรใหม่ต้องลดรูปเป็นสูตรเดิมทุกกรณี)
+        var o = Order((decimal)discountPct, coupon: 0m, serviceChargePct: 0m,
             lineGross: new[] { 321.50m, 678.50m });
         Assert.Equal(0m, o.CouponDiscountAmount);
+        Assert.Equal(0m, o.ServiceChargeAmount);
 
         var lineGross = LineGrossTotal(o);
         var oldFactor = OldDiscountFactor(lineGross, o);
         Assert.Equal(oldFactor, PosRefundMath.DiscountFactor(lineGross, o.DiscountAmount));
 
-        var oldGross = Math.Round(lineGross * oldFactor, 2, MidpointRounding.AwayFromZero);
-        Assert.Equal(oldGross, RefundAll(o).Gross);
+        var r = RefundAll(o);
+        Assert.Equal(OldGrossAllLines(o), r.Gross);
+        Assert.Equal(0m, r.ServiceCharge);
+        Assert.Equal(r.Gross, r.Goods);
     }
+
+    [Fact]
+    public void ค่าบริการศูนย์เปอร์เซ็นต์_ตัวคูณต้องเป็นหนึ่งพอดี()
+        => Assert.Equal(1m, PosRefundMath.ServiceChargeFactor(0m));
 
     [Fact]
     public void บิลไม่มีส่วนลดเลย_คืนเต็มราคาป้ายและ_VAT_ตรงกับที่ตรึงไว้()
@@ -212,7 +235,95 @@ public class PosRefundMathTests
     [Fact]
     public void บรรทัดจำนวนศูนย์_ข้ามไปไม่พัง()
     {
-        var r = PosRefundMath.Compute(1000m, 0m, new[] { new PosRefundLine(500m, 35m, 0m, 1m) });
+        var r = PosRefundMath.Compute(1000m, 0m, 0m, new[] { new PosRefundLine(500m, 35m, 0m, 1m) });
         Assert.Equal(0m, r.Gross);
     }
+
+    // ─────────── รอบ 184: ค่าบริการต้องคืนด้วย ("คืนทั้งหมด") ───────────
+
+    /// <summary>**Invariant ของทั้งเรื่อง**: คืนทุกบรรทัดเต็มจำนวน ⇒ ยอดคืน = เงินที่ลูกค้า
+    /// จ่ายสำหรับสินค้า/บริการ (<c>order.TotalAmount</c> — ไม่รวมปัดเศษ/ทิป) และ VAT ที่คืน
+    /// = <c>order.VatAmount</c> ที่ตรึงไว้ตอนขาย ⇒ JE คืนเงินกลับรายการ JE ขายได้ครบทุกบรรทัด
+    ///
+    /// <para>ตัวเลขทุกแถวมาจากการเดินสูตรจริงของระบบ (<c>RecalculateOrder</c>) ไม่ใช่ค่าที่
+    /// เทสต์แต่งขึ้น — รวมบิลที่ยอดหลังส่วนลดมีทศนิยมเกิน 2 ตำแหน่ง (ลด 33.33%)</para></summary>
+    [Theory]
+    [InlineData(0, 0, 10)]        // ไม่ลด · ค่าบริการ 10%
+    [InlineData(10, 0, 10)]       // ลด 10% · ค่าบริการ 10%  ← เคสในโจทย์เจ้าของ
+    [InlineData(0, 100, 10)]      // คูปอง 100 · ค่าบริการ 10%
+    [InlineData(33.33, 0, 10)]    // ยอดหลังส่วนลดทศนิยมยาว
+    [InlineData(10, 50, 5)]       // ลด% + คูปอง + ค่าบริการ 5%
+    [InlineData(0, 0, 0)]         // ไม่มีค่าบริการเลย (ครึ่งที่ห้ามพัง)
+    public void คืนทั้งใบ_ต้องได้ยอดที่ลูกค้าจ่ายเป๊ะ(double discountPct, double coupon, double svcPct)
+    {
+        var o = Order((decimal)discountPct, (decimal)coupon, (decimal)svcPct,
+            lineGross: new[] { 321.50m, 678.50m });
+
+        var r = RefundAll(o);
+        Assert.Equal(o.TotalAmount, r.Gross);      // = TotalAmount (ไม่รวม RoundingAmount/TipAmount)
+        Assert.Equal(o.VatAmount, r.Vat);          // ภาษีขายกลับรายการครบ
+        Assert.Equal(o.ServiceChargeAmount, r.ServiceCharge);
+        Assert.Equal(r.Goods + r.ServiceCharge, r.Gross);
+    }
+
+    /// <summary>ตารางเคสของโจทย์ — บิล 1,000 · ลด 10% · ค่าบริการ 10%
+    /// (ลูกค้าจ่าย 990 · เดิมคืน 900 · ใหม่คืน 990 · ผลต่าง 90)</summary>
+    [Fact]
+    public void บิลพันลดสิบค่าบริการสิบ_เดิมคืน900_ใหม่ต้องคืน990()
+    {
+        var o = Order(discountPct: 10m, serviceChargePct: 10m, lineGross: new[] { 1000m });
+        Assert.Equal(900m, o.SubTotal - o.DiscountAmount);
+        Assert.Equal(90m, o.ServiceChargeAmount);
+        Assert.Equal(990m, o.TotalAmount);
+        Assert.Equal(64.77m, o.VatAmount);
+
+        var r = RefundAll(o);
+        Assert.Equal(900m, OldGrossAllLines(o));   // ← ตัวเลขที่ผู้ใช้เสียหายจริงก่อนแก้
+        Assert.Equal(990m, r.Gross);
+        Assert.Equal(90m, r.Gross - OldGrossAllLines(o));
+        Assert.Equal(64.77m, r.Vat);               // เดิมคืน VAT แค่ 58.88 ⇒ ภ.พ.30 นำส่งเกิน 5.89
+        Assert.Equal(925.23m, r.Net);              // = รายได้ที่ JE ขายเครดิตไว้ (990 − 64.77)
+    }
+
+    [Fact]
+    public void คืนครึ่งบรรทัด_ค่าบริการต้องคืนตามสัดส่วนเดียวกัน()
+    {
+        // 4 ชิ้น รวม 1,000 · ลด 10% · ค่าบริการ 10% ⇒ คืน 2 ชิ้น = 1,000 × 0.5 × 0.9 × 1.1
+        var o = Order(discountPct: 10m, serviceChargePct: 10m, lineGross: new[] { 1000m });
+        var item = o.Items.First();
+        item.Quantity = 4;
+        var r = PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount, o.ServiceChargePercent,
+            new[] { new PosRefundLine(item.TotalAmount, item.VatAmount, 4m, 2m) });
+        Assert.Equal(495m, r.Gross);
+        Assert.Equal(450m, r.Goods);
+        Assert.Equal(45m, r.ServiceCharge);
+    }
+
+    [Fact]
+    public void คืนสองครั้งครึ่งใบ_รวมแล้วต้องไม่เกินยอดที่จ่าย()
+    {
+        // คืนทีละบรรทัดจนครบ ต้องไม่ทำให้ยอดรวมเกิน TotalAmount (เศษสตางค์สะสม)
+        var o = Order(discountPct: 10m, serviceChargePct: 10m, lineGross: new[] { 333.33m, 666.67m });
+        var items = o.Items.ToList();
+        decimal sum = 0m;
+        foreach (var i in items)
+            sum += PosRefundMath.Compute(LineGrossTotal(o), o.DiscountAmount, o.ServiceChargePercent,
+                new[] { new PosRefundLine(i.TotalAmount, i.VatAmount, i.Quantity, i.Quantity) }).Gross;
+        Assert.True(sum <= o.TotalAmount + 0.01m, $"คืนทีละบรรทัดรวม {sum} เกินยอดจ่าย {o.TotalAmount}");
+        Assert.True(sum >= o.TotalAmount - 0.01m, $"คืนทีละบรรทัดรวม {sum} ขาดจากยอดจ่าย {o.TotalAmount}");
+    }
+
+    [Fact]
+    public void ค่าบริการติดลบ_คืนตามที่จ่ายจริงไม่ใช่เต็มราคาของ()
+    {
+        // ส่วนลดค่าบริการ −10% ⇒ ลูกค้าจ่ายน้อยกว่าของ ⇒ คืนน้อยกว่าของ (คืนเกิน = เงินหาย)
+        Assert.Equal(0.9m, PosRefundMath.ServiceChargeFactor(-10m));
+        var r = PosRefundMath.Compute(1000m, 0m, -10m,
+            new[] { new PosRefundLine(1000m, 65.42m, 1m, 1m) });
+        Assert.Equal(900m, r.Gross);
+    }
+
+    [Fact]
+    public void ค่าบริการติดลบเกินร้อย_ห้ามคืนเงินติดลบ()
+        => Assert.Equal(0m, PosRefundMath.ServiceChargeFactor(-150m));
 }

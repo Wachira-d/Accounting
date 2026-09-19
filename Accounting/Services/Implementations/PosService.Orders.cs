@@ -233,7 +233,14 @@ public partial class PosService
         // ลูกค้าจ่ายจริงตามยอดหลังหักส่วนลด/คูปองระดับบิล ไม่ใช่ยอดรวมรายบรรทัด
         // ดังนั้นต้องปรับสัดส่วนคืนเงินด้วย PosRefundMath.DiscountFactor มิฉะนั้นจะคืนเกิน
         // (เช่น สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 แต่ถ้าคืนเต็ม 1000 = คืนเกิน 100)
-        // ค่าบริการ (ServiceCharge) และทิป (Tip) เป็นรายการเพิ่มบนบิล ไม่คืนตามการคืนสินค้า
+        // ★ รอบ 184 (คำตัดสินเจ้าของ "คืนทั้งหมด") — **ค่าบริการคืนไปกับของ**:
+        // RecalculateOrder คิดค่าบริการจากยอด**หลังส่วนลด** แล้วบวกเข้า TotalAmount ⇒
+        // ของทุกบาทถูกคิดเงิน (1 + ServiceChargePercent/100) บาท การคืนจึงคูณกลับด้วย
+        // ตัวเดียวกัน · เดิมไม่คูณ ⇒ คืนทั้งใบได้แค่ยอดของ (บิล 990 คืน 900) = ร้านเก็บ
+        // ค่าบริการของของที่ลูกค้าส่งคืนไว้เอง **และ** JE ขายเหลือรายได้/ภาษีขายค้าง
+        // ที่ไม่มีวันถูกกลับรายการ
+        // ทิป (Tip) ยังไม่คืน — เป็นหนี้สินที่ถือแทนพนักงาน (อาจจ่ายออกไปแล้ว) ต้องมีเส้นของตัวเอง
+        // ค่าปัดเศษ (RoundingAmount) ไม่คืน — เศษระดับบิล ไม่ผูกบรรทัด (ดู doc-comment ของ helper)
         //
         // ★ D8-2 — ฐานของสัดส่วนต้องตรงกับฐานที่ RecalculateOrder ใช้คิดยอดที่เก็บจริง:
         //   • ส่วนลดระดับบิลคือ `DiscountAmount` **ตัวเดียว** (รวมคูปองไว้แล้วที่ :1745)
@@ -269,7 +276,7 @@ public partial class PosService
             throw new InvalidOperationException("ไม่มีรายการที่จะคืนเงิน");
 
         var refund = Accounting.Helpers.PosRefundMath.Compute(
-            lineGrossTotal, order.DiscountAmount, refundLines);
+            lineGrossTotal, order.DiscountAmount, order.ServiceChargePercent, refundLines);
         var refundGross = refund.Gross;
         var refundVat = refund.Vat;
         var refundNet = refund.Net;
@@ -321,7 +328,8 @@ public partial class PosService
             // Reversal journal entry — back out the refunded portion:
             //   Dr รายได้ขาย / Dr ภาษีขาย   Cr เงินสด
             //   Dr สินค้าคงเหลือ            Cr ต้นทุนขาย
-            await CreateRefundJournalEntryAsync(companyId, order, refundNet, refundVat, refundGross, refundCogs, userId);
+            await CreateRefundJournalEntryAsync(companyId, order, refundNet, refundVat, refundGross,
+                refundCogs, request.RefundMethod, userId);
 
             // Record the cash-out as a negative payment so the shift/day
             // cash reconciliation reflects it.
@@ -351,23 +359,53 @@ public partial class PosService
         return await GetOrderAsync(companyId, orderId);
     }
 
+    /// <summary>JE ของการคืนเงิน — ต้องเป็น**ภาพสะท้อน**ของ <see cref="CreateSalesJournalEntryAsync"/>
+    /// ทุกด้าน: บัญชีเงินตามวิธีที่จ่ายคืน (ไม่ใช่ลิ้นชักเงินสดเสมอ) · รายได้ที่กลับรายการ
+    /// รวมค่าบริการเหมือนที่ตอนขายเครดิตรวมไว้ · ภาษีขายกลับเท่าที่ลงไว้
+    ///
+    /// <para>★ รอบ 184 — เดิมเมธอดนี้ <c>return;</c> เงียบเมื่อหาผังไม่เจอ และ
+    /// <c>catch</c> กลืน exception ทิ้ง ⇒ <b>เงินออกจากลิ้นชักจริงแต่ไม่มีรายการบัญชีเลย</b>
+    /// ขณะที่ฝั่งขายของเมธอดคู่กัน <c>throw</c> ตั้งแต่รอบ H-A18 — "คู่สมมาตรที่แก้ข้างเดียว"
+    /// (กฎเหล็ก #4 F2 ข้อ 1/7) · ตอนนี้ทั้งสองทางออกล้มดังเหมือนกัน และอยู่ใน transaction
+    /// เดียวกับการคืนสต็อก ⇒ คืนไม่สำเร็จทั้งก้อน ดีกว่าคืนแล้ว GL ไม่รู้</para></summary>
     private async Task CreateRefundJournalEntryAsync(Guid companyId, PosOrder order,
-        decimal refundNet, decimal refundVat, decimal refundGross, decimal refundCogs, string userId)
+        decimal refundNet, decimal refundVat, decimal refundGross, decimal refundCogs,
+        PaymentMethod refundMethod, string userId)
     {
-        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11111")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
+        // เครื่องที่เปิดกะของบิลใบนี้ — บัญชีเงินสด/ธนาคารที่ปักหมุดไว้บนเครื่องชนะผังมาตรฐาน
+        // (เส้นขายใช้ resolver ตัวเดียวกัน · เดิมฝั่งคืนฮาร์ดโค้ด "11111" ⇒ คืนบัตรเครดิต
+        // ก็ไปลดเงินสดของสาขา ⇒ กระทบยอดลิ้นชัก/ธนาคารรายสาขาไม่ตรงตลอดไป)
+        var jeTerminal = await _db.PosSessions.AsNoTracking()
+            .Where(x => x.Id == order.SessionId && x.CompanyId == companyId)
+            .Select(x => x.Terminal)
+            .FirstOrDefaultAsync();
+        var cashAccount = await ResolvePaymentAccountAsync(companyId, refundMethod, jeTerminal);
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
-        if (cashAccount == null || salesAccount == null) return;
+        if (cashAccount == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ไม่พบบัญชีเงินสด/ธนาคารสำหรับจ่ายคืนด้วยวิธี \"{PaymentMethodThaiLabel(refundMethod)}\" — "
+                + "ตั้งค่าผังบัญชีของสาขา/เครื่องก่อนคืนเงิน (บิลยังอยู่ คืนใหม่ได้ทันทีที่ตั้งค่าเสร็จ)",
+                "POS-NO-CASH-ACCOUNT");
+        if (salesAccount == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบบัญชีรายได้จากการขาย (41000) ในผังบัญชี — เพิ่มผังบัญชีก่อนคืนเงิน "
+                + "มิฉะนั้นการคืนเงินจะไม่กลับรายการยอดขายในบัญชีแยกประเภท",
+                "POS-NO-SALES-ACCOUNT");
+        if (refundVat > 0 && vatAccount == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบบัญชีภาษีขาย (21911) ในผังบัญชี — คืนเงินบิลที่มี VAT ไม่ได้ "
+                + "เพราะภาษีขายที่ลงไว้ตอนขายจะค้างอยู่ทั้งก้อน (ภ.พ.30 นำส่งเกิน)",
+                "POS-NO-VAT-ACCOUNT");
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>
         {
             new(salesAccount.Id, refundNet, 0, $"คืนรายได้ขาย POS #{order.OrderNumber}"),
         };
-        if (refundVat > 0 && vatAccount != null)
-            lines.Add(new(vatAccount.Id, refundVat, 0, $"คืนภาษีขาย POS #{order.OrderNumber}"));
+        if (refundVat > 0)
+            lines.Add(new(vatAccount!.Id, refundVat, 0, $"คืนภาษีขาย POS #{order.OrderNumber}"));
         lines.Add(new(cashAccount.Id, 0, refundGross, $"จ่ายคืนเงิน POS #{order.OrderNumber}"));
 
         if (refundCogs > 0)
@@ -395,8 +433,15 @@ public partial class PosService
         }
         catch (Exception ex)
         {
+            // ★ รอบ 184 — เดิมกลืนทิ้ง: เงินออกจากลิ้นชัก สต็อกกลับเข้าคลัง แต่ GL ไม่รู้เรื่อง
+            // และไม่มีใครเห็นเพราะ LogError ไม่ใช่การล้มดัง (กฎเหล็ก #4 E/F2 ข้อ 7)
+            // โยนต่อ ⇒ transaction ของ RefundOrderAsync rollback ทั้งก้อน
             _logger.LogError(ex, "POS refund journal creation failed for order {OrderNumber} in company {CompanyId}",
                 order.OrderNumber, companyId);
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"คืนเงินไม่สำเร็จ — ลงรายการบัญชีการคืนเงินของบิล #{order.OrderNumber} ไม่ได้ "
+                + $"({ex.Message}) · ไม่มีเงินออกจากลิ้นชักและสต็อกไม่ถูกคืน แก้ผังบัญชี/งวดบัญชีแล้วลองใหม่",
+                "POS-REFUND-JE-FAILED");
         }
     }
 
@@ -410,6 +455,20 @@ public partial class PosService
             throw new InvalidOperationException("ออกใบกำกับเต็มรูปได้เฉพาะออเดอร์ที่ปิดบิลแล้ว");
         if (order.DocumentId.HasValue)
             throw new InvalidOperationException("ออกใบกำกับภาษีไปแล้ว — ไม่สามารถออกซ้ำได้");
+        // ★ รอบ 184 — บิลที่**คืนเงินไปบางส่วนแล้ว** ออกใบกำกับเต็มรูปไม่ได้:
+        // ยอดที่ใบจะพิมพ์มาจาก order.TotalAmount/Items ซึ่ง **ไม่ขยับตามการคืนเงิน**
+        // (RefundOrderAsync บวก RefundedQuantity + ลง JE กลับรายการ แต่ไม่แตะยอดบนบิล)
+        // ⇒ ใบกำกับจะประกาศยอดเต็มทั้งที่เงินคืนไปแล้วบางส่วน = ผู้ซื้อเคลมภาษีซื้อเกิน
+        // และภาษีขายบนกระดาษไม่ตรง GL · คืนทั้งใบไม่ต้องกันตรงนี้เพราะสถานะเป็น
+        // Refunded แล้ว (ด่าน Completed ด้านบนดักไว้)
+        // ทางไปต่อของผู้ใช้: ใบกำกับอย่างย่อ/ใบเสร็จของบิลยังใช้ได้ตามเดิม ถ้าผู้ซื้อ
+        // ต้องการใบเต็มรูปให้ออกที่หน้าเอกสารพร้อมใบลดหนี้ของส่วนที่คืน (§86/10)
+        if (order.Items.Any(i => !i.IsDeleted && i.RefundedQuantity > 0.0001m))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บิลนี้มีการคืนเงินบางส่วนแล้ว — ออกใบกำกับภาษีเต็มรูปจาก POS ไม่ได้ "
+                + "เพราะยอดบนใบจะเป็นยอดก่อนคืน (ผู้ซื้อเคลมภาษีซื้อเกิน) · "
+                + "ออกใบกำกับ + ใบลดหนี้ที่หน้าเอกสารแทน",
+                "RD-86/4-POS-REFUNDED");
         var buyerName = (request.BuyerName ?? "").Trim();
         if (string.IsNullOrWhiteSpace(buyerName))
             throw new InvalidOperationException("กรุณาระบุชื่อผู้ซื้อ");

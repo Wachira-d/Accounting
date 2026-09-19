@@ -997,22 +997,39 @@ public class CmsCommerceService : ICmsCommerceService
             order.PaidAt ??= DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        // 2. Sync ERP doc ถ้ายังไม่ sync
-        if (!order.ErpDocumentId.HasValue)
-        {
-            try { await SyncOrderToErpAsync(companyId, siteId, orderId); }
-            catch (Exception ex)
-            { _logger.LogError(ex, "ConfirmPayment: sync ERP failed for {OrderId}", orderId); }
-            await _db.Entry(order).ReloadAsync();
-        }
-
-        // 3+4. Approve + Record payment (JE auto-post)
         // ⚠️ CLAUDE.md กฎเหล็ก #4 E — ห้ามกลืน error ใน payment/stock/JE path.
         // แต่ webhook ของ gateway ก็ throw ไม่ได้ (เงินเข้าจริงแล้ว + gateway จะ
         // retry วนไม่จบ) ⇒ ทางที่ถูก: **ไม่เงียบ** — สะสมทุกความล้มเหลว, log เป็น
-        // Error (ไม่ใช่ Warning), แล้ว "ปักหมุด" ไว้บนออเดอร์ (InternalNotes +
-        // ErpSyncFailed) ให้แอดมินเห็นว่าเงินเข้าแต่บัญชี/สต๊อกยังไม่ลง
+        // Error (ไม่ใช่ Warning), แล้ว "ปักหมุด" ไว้บนออเดอร์ (`InternalNotes`)
+        // ให้แอดมินเห็นว่าเงินเข้าแต่บัญชี/สต๊อกยังไม่ลง
+        // (คอมเมนต์เดิมอ้างถึงฟิลด์ `ErpSyncFailed` ที่ **ไม่มีอยู่จริงในเรพ** — แก้แล้ว)
         var syncFailures = new List<string>();
+
+        // 2. Sync ERP doc ถ้ายังไม่ sync
+        if (!order.ErpDocumentId.HasValue)
+        {
+            // ★ รอบ 184 — ความล้มเหลวของขั้นนี้เคย **ไม่ถูกสะสม** เข้า syncFailures
+            // ⇒ ออเดอร์ที่สร้างเอกสารไม่สำเร็จจะข้ามขั้น 3+4 (ซึ่งถูกกันด้วย
+            // `ErpDocumentId.HasValue`) แล้วจบแบบ "สำเร็จ" โดยไม่มีอะไรฟ้อง
+            // เคสจริงที่เกิดอยู่ตอนนี้: ออเดอร์หน้าร้าน **ที่มีส่วนลด** ทุกใบ —
+            // `BuildOrderErpLines` ส่งบรรทัดส่วนลดเป็น `UnitPrice` ติดลบ แต่
+            // `DocumentService.ValidateDocumentLinesAsync` โยน "ราคาต่อหน่วยต้องไม่ติดลบ"
+            // ⇒ จ่ายเงินแล้วแต่ไม่มีเอกสาร ไม่มี JE ไม่มีลูกหนี้ เงียบสนิท
+            try { await SyncOrderToErpAsync(companyId, siteId, orderId); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ConfirmPayment: sync ERP failed for {OrderId}", orderId);
+                syncFailures.Add($"สร้างเอกสาร ERP ไม่สำเร็จ: {ex.Message}");
+            }
+            await _db.Entry(order).ReloadAsync();
+
+            // ไม่ throw แต่ก็ห้ามเงียบ: ถ้ายังไม่มีเอกสาร ขั้น 3+4 จะถูกข้ามทั้งคู่
+            // ⇒ ต้องบอกให้ชัดว่า "เงินเข้าแล้วแต่ยังไม่ลงบัญชี" ไม่ใช่แค่ขั้นใดขั้นหนึ่งพลาด
+            if (!order.ErpDocumentId.HasValue && syncFailures.Count == 0)
+                syncFailures.Add("ยังไม่มีเอกสาร ERP ของออเดอร์นี้ — ยังไม่ได้อนุมัติเอกสารและยังไม่ได้บันทึกรับชำระเข้าบัญชี");
+        }
+
+        // 3+4. Approve + Record payment (JE auto-post) — ดูเหตุผลของ syncFailures ข้างบน
         if (order.ErpDocumentId.HasValue && _docService != null)
         {
             try

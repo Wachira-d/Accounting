@@ -43,6 +43,14 @@ WATCHED = [
     # ลง JE กำไร/ขาดทุน · ตัดจำหน่าย · ตีราคาใหม่) แต่มีแค่ [Authorize] ระดับคลาส
     # และ **ไม่มีคีย์สิทธิ์สินทรัพย์อยู่ใน PermissionKeys เลย** จนถึงรอบนี้
     "Accounting/Controllers/FixedAssetController.cs",
+    # เพิ่มรอบ 184 — ทุก write ที่นี่แตะเงินสดในลิ้นชักและสต็อกจริง (คืนเงิน ·
+    # ยกเลิกบิล · แก้ราคา · ปิดกะ) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
+    # ⇒ แคชเชียร์คนไหนก็คืนเงิน/ปิดกะแทนกันได้ และ checker มองไม่เห็นเพราะ
+    # ไฟล์นี้ไม่เคยอยู่ในลิสต์ (บทเรียนซ้ำรอบที่ 5 ของ "allow-list ครบไหม ≠ ผ่านไหม")
+    "Accounting/Controllers/PosController.cs",
+    # เพิ่มรอบ 184 — มีด่านครบอยู่แล้วทุกจุด แต่ไม่เคยถูกเฝ้า ⇒ ใครถอดด่านออก
+    # พรุ่งนี้ก็ไม่มีอะไรฟ้อง (ratchet: ใส่ตอนที่ยังเขียว = ล็อกไว้ไม่ให้ถอยหลัง)
+    "Accounting/Controllers/LodgingController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -58,6 +66,11 @@ GATE_MARKERS = (
     "HasPermissionAsync",
     "UserRole.Owner",          # ด่าน Owner-only (purge)
     "IsInRole(\"SystemAdmin\")",
+    # ด่านแบบ attribute ที่บังคับ "คีย์สิทธิ์" (ไม่ใช่แค่ล็อกอิน) — `Filters/
+    # RequirePermissionAttribute` · เพิ่มรอบ 184 พร้อม PosController
+    # ⚠️ ถ้าไม่มีบรรทัดนี้ `LodgingController` (มีด่านครบ 41 จุด) จะถูกฟ้องผิดทันที
+    # ที่ใครเพิ่มมันเข้า WATCHED — checker ที่ฟ้องผิด = checker ที่พัง (F2 ข้อ 6)
+    "RequirePermission(",
 )
 
 # `[Authorize(Roles = "…")]` / `[Authorize(Policy = "…")]` **บน action** ก็เป็นด่าน
@@ -91,12 +104,25 @@ def scan(path):
         if m:
             acts.append((i, m.group(1), m.group(3) or ""))
 
+    # ── attribute ที่วาง**เหนือ** [Http…] เป็นของ action ตัวล่าง ไม่ใช่ตัวบน ──
+    # C# เขียนได้ทั้งสองแบบ: `[RequirePermission] [HttpPost]` และ `[HttpPost]
+    # [RequirePermission]` · ถ้านับช่วงจาก [Http…] ลงไปอย่างเดียว attribute แบบแรก
+    # จะถูกนับให้ action **ก่อนหน้า** ⇒ action ที่ไม่มีด่านจะเขียว และ action ที่มี
+    # ด่านจะถูกฟ้อง — ผิดทั้งสองทิศพร้อมกัน (F2 ข้อ 6 "checker ที่ฟ้องผิด = checker ที่พัง")
+    def attr_start(i):
+        j = i
+        while j > 0 and lines[j - 1].lstrip().startswith("["):
+            j -= 1
+        return j
+
+    starts = [attr_start(i) for i, _, _ in acts]
+
     bad = []
     for idx, (i, verb, route) in enumerate(acts):
         if verb == "Get":
             continue
-        end = acts[idx + 1][0] if idx + 1 < len(acts) else len(lines)
-        body = "\n".join(lines[i:end])
+        end = starts[idx + 1] if idx + 1 < len(acts) else len(lines)
+        body = "\n".join(lines[starts[idx]:end])
         nm = NAME_RE.search(body)
         name = nm.group(1) if nm else "?"
         if name in READ_ONLY_POSTS:
@@ -107,8 +133,69 @@ def scan(path):
     return bad
 
 
+SELF_TEST_SRC = """
+public class FakeController : ControllerBase
+{
+    [HttpGet("x")]
+    public async Task<IActionResult> ReadThing() => Ok();
+
+    [HttpPost("a")]
+    [RequirePermission(PermissionKeys.PosCashier)]
+    public async Task<IActionResult> AttrBelowHttp() => Ok();
+
+    [RequirePermission(PermissionKeys.PosRefund)]
+    [HttpPost("b")]
+    public async Task<IActionResult> AttrAboveHttp() => Ok();
+
+    [HttpPost("c")]
+    public async Task<IActionResult> NoGateAtAll() => Ok();
+
+    [HttpPut("d")]
+    public async Task<IActionResult> GateInBody()
+    {
+        await DenyKeyAsync("x");
+        return Ok();
+    }
+}
+"""
+
+
+def self_test():
+    """ใส่บั๊กกลับแล้วต้องจับได้ — 3 ทิศ:
+    1. endpoint ที่ไม่มีด่านเลย ต้องถูกฟ้อง
+    2. endpoint ที่มี [RequirePermission] **ใต้** [Http…] ต้องไม่ถูกฟ้อง
+    3. endpoint ที่มี [RequirePermission] **เหนือ** [Http…] ต้องไม่ถูกฟ้อง
+       (และต้องไม่ทำให้ action ก่อนหน้าเขียวไปด้วย)
+    """
+    import tempfile
+    ok = True
+    with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+        f.write(SELF_TEST_SRC)
+        tmp = f.name
+    try:
+        found = {name for _, _, _, name in scan(tmp)}
+    finally:
+        os.unlink(tmp)
+
+    expect_bad = {"NoGateAtAll"}
+    expect_ok = {"AttrBelowHttp", "AttrAboveHttp", "GateInBody", "ReadThing"}
+    missing = expect_bad - found
+    wrong = found & expect_ok
+    if missing:
+        print(f"❌ self-test: ควรฟ้องแต่ไม่ฟ้อง {sorted(missing)}")
+        ok = False
+    if wrong:
+        print(f"❌ self-test: ฟ้องผิด (endpoint ที่มีด่านแล้ว) {sorted(wrong)}")
+        ok = False
+    if ok:
+        print("✅ self-test ผ่าน 3 ทิศ (ไม่มีด่าน=ฟ้อง · attr ใต้/เหนือ [Http…]=ไม่ฟ้อง)")
+    return 0 if ok else 1
+
+
 def main():
-    targets = sys.argv[1:] or WATCHED
+    if "--self-test" in sys.argv:
+        return self_test()
+    targets = [a for a in sys.argv[1:] if not a.startswith("--")] or WATCHED
     total = 0
     for rel in targets:
         path = rel if os.path.isabs(rel) else os.path.join(ROOT, rel)

@@ -9,6 +9,36 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Accounting.Controllers;
 
+/// <summary>
+/// ═══ ด่านสิทธิ์ของ POS (D8-7 · รอบ 184) ═══
+/// <para><c>[Authorize]</c> ระดับคลาสตอบแค่ "ล็อกอินอยู่ไหม" — เดิมทั้งไฟล์มีด่าน
+/// สิทธิ์จริงแค่ปุ่มเดียว (<c>issue-tax-invoice</c>) ⇒ <b>สมาชิกคนไหนของบริษัทก็กด
+/// คืนเงินจากลิ้นชัก · ยกเลิกบิลที่ปิดแล้ว · แก้เมนู/ราคา · ปิดกะ ได้ทั้งหมด</b></para>
+///
+/// <para>ทุก endpoint ที่ **เขียนข้อมูล** ผูกกับคีย์ที่มีอยู่แล้วใน
+/// <see cref="PermissionKeys"/> (ไม่สร้างคีย์ใหม่) แบ่ง 4 ชั้นตาม "ความเสียหาย
+/// ถ้าคนผิดกด":</para>
+/// <list type="bullet">
+/// <item><c>POS.Cashier</c> — งานขายประจำวัน (เปิดกะ · บิล · รายการ · ส่วนลดรายการ ·
+///   ทิป · คูปอง · รวม/แยกบิล · ย้ายโต๊ะ · รับเงิน · ปิดบิล · sync ออฟไลน์ · ส่งใบเสร็จ)</item>
+/// <item><c>POS.Refund</c> — <b>เงินออก/กลับรายการ</b>: คืนเงิน + ยกเลิกบิล
+///   (ยกเลิกบิลที่ปิดแล้ว = reverse JE + คืนสต็อก ⇒ อันตรายเท่าคืนเงิน)</item>
+/// <item><c>POS.CloseDay</c> — ปิดกะ/กระทบยอดลิ้นชัก</item>
+/// <item><c>POS.Manager</c> — ตั้งค่าเครื่อง · แพ็กเกจบริการ · ตัวเลือกเสริม (ราคา)</item>
+/// <item><c>Document.Revenue.Approve</c> — ออกใบกำกับเต็มรูป (อนุมัติเอกสารรายได้จริง)</item>
+/// </list>
+///
+/// <para><b>ผู้ใช้ที่ถูกกันทำอะไรได้แทน</b>: <c>HasPermissionAsync</c> ให้
+/// Owner/SystemAdmin ผ่านอัตโนมัติ · role อื่นที่ยังไม่ได้รับสิทธิ์จะได้ 403 พร้อม
+/// **ชื่อคีย์ที่ต้องขอ** (บิล/กะยังอยู่ ทำต่อได้ทันทีที่เจ้าของติ๊กคีย์ให้ใน
+/// หน้า "บทบาทและสิทธิ์" — เทมเพลต "POS Cashier" มีคีย์ชุดนี้อยู่แล้ว
+/// ดู <c>PermissionCatalogController</c>)</para>
+///
+/// <para><b>ตำแหน่ง attribute อยู่ใต้ <c>[Http…]</c> โดยตั้งใจ</b> —
+/// <c>tools/write_permission_gate_check.py</c> อ่าน "ตัวของ action" นับจากบรรทัด
+/// <c>[Http…]</c> ลงไป ถ้าวางไว้**เหนือ**มัน ด่านจะถูกนับให้ action **ก่อนหน้า**
+/// ⇒ checker เขียวทั้งที่ endpoint จริงไม่มีด่าน (checker ที่ฟ้องผิด = checker ที่พัง)</para>
+/// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/pos")]
 [Authorize]
@@ -23,10 +53,12 @@ public class PosController : ControllerBase
         => Ok(new ApiResponse<List<TerminalResponse>>(true, await _pos.GetTerminalsAsync(companyId)));
 
     [HttpPost("terminals")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<TerminalResponse>>> CreateTerminal(Guid companyId, [FromBody] CreateTerminalRequest request)
         => StatusCode(201, new ApiResponse<TerminalResponse>(true, await _pos.CreateTerminalAsync(companyId, request)));
 
     [HttpPut("terminals/{terminalId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<TerminalResponse>>> UpdateTerminal(Guid companyId, Guid terminalId, [FromBody] UpdateTerminalRequest request)
         => Ok(new ApiResponse<TerminalResponse>(true, await _pos.UpdateTerminalAsync(companyId, terminalId, request)));
 
@@ -40,6 +72,7 @@ public class PosController : ControllerBase
         => Ok(new ApiResponse<SessionResponse>(true, await _pos.GetSessionAsync(companyId, sessionId)));
 
     [HttpPost("sessions/open")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<SessionResponse>>> OpenSession(Guid companyId, [FromBody] OpenSessionRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -47,6 +80,7 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("sessions/{sessionId:guid}/close")]
+    [RequirePermission(PermissionKeys.PosCloseDay)]
     public async Task<ActionResult<ApiResponse<SessionResponse>>> CloseSession(Guid companyId, Guid sessionId, [FromBody] CloseSessionRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -65,6 +99,7 @@ public class PosController : ControllerBase
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.GetOrderAsync(companyId, orderId)));
 
     [HttpPost("orders")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> CreateOrder(Guid companyId, [FromBody] CreateOrderRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -72,10 +107,12 @@ public class PosController : ControllerBase
     }
 
     [HttpPut("orders/{orderId:guid}")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateOrder(Guid companyId, Guid orderId, [FromBody] UpdateOrderRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateOrderAsync(companyId, orderId, request)));
 
     [HttpPost("orders/{orderId:guid}/status")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateOrderStatus(Guid companyId, Guid orderId, [FromBody] UpdateOrderStatusRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -83,6 +120,7 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("orders/{orderId:guid}/void")]
+    [RequirePermission(PermissionKeys.PosRefund)]
     public async Task<ActionResult<ApiResponse<string>>> VoidOrder(Guid companyId, Guid orderId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -91,6 +129,7 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("orders/{orderId:guid}/refund")]
+    [RequirePermission(PermissionKeys.PosRefund)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> RefundOrder(Guid companyId, Guid orderId, [FromBody] RefundOrderRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -105,8 +144,8 @@ public class PosController : ControllerBase
     /// ตาม §86/4) จึงใช้คีย์เดียวกับเส้นเอกสาร ไม่ใช่คีย์ POS ทั่วไป —
     /// Owner/SystemAdmin/Accountant ผ่านอัตโนมัติ · แคชเชียร์ที่ไม่ได้รับสิทธิ์จะได้ 403
     /// พร้อมชื่อคีย์ที่ต้องขอ (บิลยังอยู่ ออกใบใหม่ได้เมื่อได้สิทธิ์)</para></summary>
-    [RequirePermission(PermissionKeys.DocumentRevenueApprove)]
     [HttpPost("orders/{orderId:guid}/issue-tax-invoice")]
+    [RequirePermission(PermissionKeys.DocumentRevenueApprove)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> IssueTaxInvoice(Guid companyId, Guid orderId, [FromBody] IssueTaxInvoiceRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -115,6 +154,7 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("orders/sync-offline")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> SyncOfflineOrder(Guid companyId, [FromBody] OfflineOrderRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -124,10 +164,12 @@ public class PosController : ControllerBase
 
     // ===== Order Items =====
     [HttpPost("orders/{orderId:guid}/items")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddOrderItem(Guid companyId, Guid orderId, [FromBody] CreateOrderItemRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.AddOrderItemAsync(companyId, orderId, request)));
 
     [HttpDelete("orders/{orderId:guid}/items/{itemId:guid}")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult> RemoveOrderItem(Guid companyId, Guid orderId, Guid itemId)
     {
         await _pos.RemoveOrderItemAsync(companyId, orderId, itemId);
@@ -135,31 +177,37 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("orders/{orderId:guid}/items/{itemId:guid}/status")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemStatus(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemStatusRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateItemStatusAsync(companyId, orderId, itemId, request)));
 
     public record UpdateItemQtyRequest(decimal Quantity);
     [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/qty")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> UpdateItemQty(Guid companyId, Guid orderId, Guid itemId, [FromBody] UpdateItemQtyRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.UpdateOrderItemQuantityAsync(companyId, orderId, itemId, request.Quantity)));
 
     public record SetItemDiscountRequest(decimal? DiscountAmount, decimal? DiscountPercent);
     [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/discount")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> SetItemDiscount(Guid companyId, Guid orderId, Guid itemId, [FromBody] SetItemDiscountRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetItemDiscountAsync(companyId, orderId, itemId, request.DiscountAmount, request.DiscountPercent)));
 
     public record SetTipRequest(decimal TipAmount);
     [HttpPut("orders/{orderId:guid}/tip")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> SetTip(Guid companyId, Guid orderId, [FromBody] SetTipRequest request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetTipAsync(companyId, orderId, request.TipAmount)));
 
     public record ApplyCouponRequest2(string? Code);
     [HttpPost("orders/{orderId:guid}/coupon")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> ApplyCoupon(Guid companyId, Guid orderId, [FromBody] ApplyCouponRequest2 request)
         => Ok(new ApiResponse<OrderResponse>(true, await _pos.ApplyCouponAsync(companyId, orderId, request.Code)));
 
     public record MergeOrdersRequest(List<Guid> SourceOrderIds);
     [HttpPost("orders/{orderId:guid}/merge")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> Merge(Guid companyId, Guid orderId, [FromBody] MergeOrdersRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -168,6 +216,7 @@ public class PosController : ControllerBase
 
     public record TransferTableRequest(string? TableNumber);
     [HttpPut("orders/{orderId:guid}/table")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> TransferTable(Guid companyId, Guid orderId, [FromBody] TransferTableRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -176,6 +225,7 @@ public class PosController : ControllerBase
 
     public record EmailReceiptRequest(string Email);
     [HttpPost("orders/{orderId:guid}/email-receipt")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<string>>> EmailReceipt(Guid companyId, Guid orderId, [FromBody] EmailReceiptRequest request)
     {
         await _pos.EmailReceiptAsync(companyId, orderId, request.Email);
@@ -187,6 +237,7 @@ public class PosController : ControllerBase
     /// item-id groups — each group becomes a new child order. The original
     /// order is voided. Returns all child orders in order.</summary>
     [HttpPost("orders/{orderId:guid}/split")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<List<OrderResponse>>>> SplitOrder(Guid companyId, Guid orderId, [FromBody] SplitOrderRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -195,6 +246,7 @@ public class PosController : ControllerBase
 
     // ===== Payment =====
     [HttpPost("payments")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> AddPayment(Guid companyId, [FromBody] CreatePaymentRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -202,6 +254,7 @@ public class PosController : ControllerBase
     }
 
     [HttpPost("orders/{orderId:guid}/complete")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> CompleteOrder(Guid companyId, Guid orderId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -218,14 +271,17 @@ public class PosController : ControllerBase
         => Ok(new ApiResponse<ServicePackageResponse>(true, await _pos.GetServicePackageAsync(companyId, packageId)));
 
     [HttpPost("packages")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ServicePackageResponse>>> CreatePackage(Guid companyId, [FromBody] CreateServicePackageRequest request)
         => StatusCode(201, new ApiResponse<ServicePackageResponse>(true, await _pos.CreateServicePackageAsync(companyId, request)));
 
     [HttpPut("packages/{packageId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ServicePackageResponse>>> UpdatePackage(Guid companyId, Guid packageId, [FromBody] UpdateServicePackageRequest request)
         => Ok(new ApiResponse<ServicePackageResponse>(true, await _pos.UpdateServicePackageAsync(companyId, packageId, request)));
 
     [HttpDelete("packages/{packageId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult> DeletePackage(Guid companyId, Guid packageId)
     {
         await _pos.DeleteServicePackageAsync(companyId, packageId);
@@ -234,14 +290,17 @@ public class PosController : ControllerBase
 
     // ===== Service Component =====
     [HttpPost("packages/{packageId:guid}/components")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ServicePackageResponse>>> AddComponent(Guid companyId, Guid packageId, [FromBody] CreateServiceComponentRequest request)
         => Ok(new ApiResponse<ServicePackageResponse>(true, await _pos.AddComponentAsync(companyId, packageId, request)));
 
     [HttpPut("packages/{packageId:guid}/components/{componentId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ServicePackageResponse>>> UpdateComponent(Guid companyId, Guid packageId, Guid componentId, [FromBody] UpdateServiceComponentRequest request)
         => Ok(new ApiResponse<ServicePackageResponse>(true, await _pos.UpdateComponentAsync(companyId, packageId, componentId, request)));
 
     [HttpDelete("packages/{packageId:guid}/components/{componentId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult> RemoveComponent(Guid companyId, Guid packageId, Guid componentId)
     {
         await _pos.RemoveComponentAsync(companyId, packageId, componentId);
@@ -250,6 +309,7 @@ public class PosController : ControllerBase
 
     // ===== Service Activity =====
     [HttpPut("activities/{activityId:guid}")]
+    [RequirePermission(PermissionKeys.PosCashier)]
     public async Task<ActionResult<ApiResponse<ServiceActivityResponse>>> UpdateActivity(Guid companyId, Guid activityId, [FromBody] UpdateServiceActivityRequest request)
         => Ok(new ApiResponse<ServiceActivityResponse>(true, await _pos.UpdateServiceActivityAsync(companyId, activityId, request)));
 
@@ -259,14 +319,17 @@ public class PosController : ControllerBase
         => Ok(new ApiResponse<List<ModifierGroupResponse>>(true, await _pos.GetModifierGroupsAsync(companyId, productId)));
 
     [HttpPost("modifier-groups")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ModifierGroupResponse>>> CreateModifierGroup(Guid companyId, [FromBody] CreateModifierGroupRequest request)
         => StatusCode(201, new ApiResponse<ModifierGroupResponse>(true, await _pos.CreateModifierGroupAsync(companyId, request)));
 
     [HttpPut("modifier-groups/{groupId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ModifierGroupResponse>>> UpdateModifierGroup(Guid companyId, Guid groupId, [FromBody] UpdateModifierGroupRequest request)
         => Ok(new ApiResponse<ModifierGroupResponse>(true, await _pos.UpdateModifierGroupAsync(companyId, groupId, request)));
 
     [HttpDelete("modifier-groups/{groupId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult> DeleteModifierGroup(Guid companyId, Guid groupId)
     {
         await _pos.DeleteModifierGroupAsync(companyId, groupId);
@@ -275,14 +338,17 @@ public class PosController : ControllerBase
 
     // ===== Modifier Option =====
     [HttpPost("modifier-groups/{groupId:guid}/options")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ModifierGroupResponse>>> AddOption(Guid companyId, Guid groupId, [FromBody] CreateModifierOptionRequest request)
         => Ok(new ApiResponse<ModifierGroupResponse>(true, await _pos.AddModifierOptionAsync(companyId, groupId, request)));
 
     [HttpPut("modifier-groups/{groupId:guid}/options/{optionId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<ModifierGroupResponse>>> UpdateOption(Guid companyId, Guid groupId, Guid optionId, [FromBody] UpdateModifierOptionRequest request)
         => Ok(new ApiResponse<ModifierGroupResponse>(true, await _pos.UpdateModifierOptionAsync(companyId, groupId, optionId, request)));
 
     [HttpDelete("modifier-groups/{groupId:guid}/options/{optionId:guid}")]
+    [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult> RemoveOption(Guid companyId, Guid groupId, Guid optionId)
     {
         await _pos.RemoveModifierOptionAsync(companyId, groupId, optionId);
