@@ -1,0 +1,11 @@
+# จุดที่ประทับ 'สถานะปลายทาง' นอกเจ้าของกติกา ณ วันที่สร้าง baseline
+# แต่ละแถวต้องถูกตัดสินทีละตัว: ต่อสายเข้าเจ้าของกติกา หรือ ยอมรับพร้อมเหตุผลในโค้ด
+# ห้ามเพิ่มแถวเพื่อให้ checker เขียว — ratchet เดินทางเดียว (ตัดออกได้ เพิ่มไม่ได้)
+Controllers/V1/BankV1Controller.cs:ReconciliationStatus.Matched = 1
+Services/Implementations/BankFeedService.cs:ReconciliationStatus.Matched = 1
+Services/Implementations/BankService.AiReconciliation.cs:ReconciliationStatus.Matched = 1
+Services/Implementations/BankService.Reconciliation.cs:ReconciliationStatus.Matched = 1
+Services/Implementations/BankService.cs:ReconciliationStatus.Matched = 3
+Services/Implementations/CmsCommerceService.cs:StockDeducted = true = 2
+Services/Implementations/FinancialManagementService.Part2.cs:Status = "Filed" (สตริง) = 2
+Services/Implementations/OpenBankingService.cs:ReconciliationStatus.Matched = 1
