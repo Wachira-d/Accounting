@@ -41,7 +41,7 @@ public class DocumentTitleServerOwnedTests
 
     private static string Title(Document doc, DocumentTemplate tpl, CompanySettings? st = null,
         string lang = "th")
-        => PdfGenerationService.ComputeDocumentTitle(doc, tpl, st, lang);
+        => PdfGenerationService.ComputeDocumentTitle(doc, tpl, st, lang, companyMayIssueAbbreviated: true);
 
     [Fact]
     public void เคส1_ชื่อหัวที่ผู้ใช้ตั้งเองใน_CompanySettings_ต้องชนะหัวมาตรฐาน()

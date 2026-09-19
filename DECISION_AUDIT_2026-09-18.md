@@ -87,7 +87,7 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 | D1-B2 | ✅ | **P0** | `DocumentSide.IsPurchase(doc.DocumentType)` **ไม่ส่ง role** 2 จุด → CN/DN ฝั่ง**ขาย**เข้าด่าน WHT + `ProhibitedInputVatScreener` · PO/PR/GRN (`AlwaysPurchase`) เข้าด่าน WHT ทั้งที่ไม่ใช่การจ่าย → เขียน audit "suppressed" ใส่ PO · `CnDnPurchaseSideOverride` มีแต่ใช้ที่ `:16603` เท่านั้น | DS `:16414` · `:16444` · `Helpers/DocumentSide.cs:40-85` |
 | D1-7/B3 | ✅ | **P0** | Invoice ที่บรรทัดไม่มี `ProductCode` = **เดาเป็นบริการ → VAT พัก 21913** ไม่เข้า ภ.พ.30 ทั้งที่ส่งมอบแล้ว (§78) = นำส่งขาดแบบมองไม่เห็น (ทิศผิดตาม G5) · `TaxPointResolver.Resolve(doc)` โหมด Auto ซ้ำอีกชั้นแทนส่ง `SupplyKind` ที่เพิ่งตัดสิน | DS `:13452-13476` · `:5150` |
 | D1-11 | ✅ | **P1** | `DocumentAiAugmenter` คืน **"Acknowledge"@0.50 เมื่อไม่มีใครตอบ** (`:736,:796` · `:175` เรียกว่า "ค่าปลอดภัย") · DS `:4567` `r.Answer ?? "Acknowledge"` · UI ป้ายเขียว "🤖 AI: Acknowledge" · กดรับทราบ → `acceptedAi=true` ⇒ คลัง `ApprovalWarningFixSuggestion` เต็มด้วยคำตอบที่ AI ไม่เคยพูด | `Services/Ai/DocumentAiAugmenter.cs:175,736,778,796` · DS `:4567` · `documents.html:9884` |
-| D1-B4 | ✅ | **P1** | `doc.BuyerDeclinedTaxInvoice = true` **ประทับเจตนาผู้ซื้อแทนผู้ซื้อ** เมื่อ `IsJuristicBuyer=false` (ContactType default Individual + ไม่มีเลข 0xxxx — ราก 180-A) ⇒ ลูกค้านิติบุคคลที่คีย์มาเปล่าถูก downgrade เป็นอย่างย่อเงียบ · หัว "ใบกำกับภาษีอย่างย่อ" พิมพ์โดย**ไม่ตรวจ `IsRetailApproved`/`PhoR06ApprovedDate`** (ธงนี้มีผู้อ่านแค่ POS) — ขัดกฎเหล็ก #2 §86/6 | DS `:4834` · `PdfGenerationService.cs:1437-1446` |
+| 🔨 <pending> D1-B4 | ✅ | **P1** | `doc.BuyerDeclinedTaxInvoice = true` **ประทับเจตนาผู้ซื้อแทนผู้ซื้อ** เมื่อ `IsJuristicBuyer=false` (ContactType default Individual + ไม่มีเลข 0xxxx — ราก 180-A) ⇒ ลูกค้านิติบุคคลที่คีย์มาเปล่าถูก downgrade เป็นอย่างย่อเงียบ · หัว "ใบกำกับภาษีอย่างย่อ" พิมพ์โดย**ไม่ตรวจ `IsRetailApproved`/`PhoR06ApprovedDate`** (ธงนี้มีผู้อ่านแค่ POS) — ขัดกฎเหล็ก #2 §86/6 | DS `:4834` · `PdfGenerationService.cs:1437-1446` |
 | D1-9 | ⚠ | **P1** | §65 ตรี: `annualRevenue` ใช้ปีปฏิทินทั้งที่ `FiscalYear` ถูกใช้ 5 บรรทัดถัดมา + รวม Receipt ที่ settle Invoice ⇒ ฐานเพดานค่ารับรองพอง → บวกกลับ**น้อยไป** · context (8)(14)(15)(19) ไม่มีใครป้อน (grep `IsRelatedParty|RelatedToBusiness` นอก validator = 0) · keyword "รับรอง" 2 สำเนา | DS `:12265-12305` · `Section65TerValidator.cs:220` (ยังไม่ได้เปิดยืนยันบรรทัด annualRevenue) |
 | D1-C | ⚠ | **P1** | §82/3 ตอน post: `ResolveInputVatAccountAsync` ดูแค่ §86/4 ⇒ ใบครบแต่เก่า 8 เดือนลง 11610 · reclassify กรอง `InputVatPostedAsUndue` เท่านั้น ⇒ GL 11610 ≠ ภ.พ.30 · ข้อความ `:16752` "ระบบจะ reclassify อัตโนมัติ" ไม่ตรงสิ่งที่เกิด | DS `:11758` · `:11946` · `:16741-16761` |
 | D1-3 | ✅ | P2 | `knownWhtRates {0,1,1.5,2,3,5,10,15}` ฝังใน DS = สำเนาที่สองของ `ThaiWhtRateTable.StatutoryRates` และมี 1.5% ที่ตารางกลางไม่มี | DS `:16690` |
@@ -101,13 +101,13 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 
 | ID | สถานะ | P | เรื่อง | ที่ |
 | --- | --- | --- | --- | --- |
-| D2-B2a | ✅ | **P0** | **CIT 2 ตาราง**: `TaxService.CalculateThaiCit(netProfit)` ใช้ขั้น SME กับ**ทุกบริษัท** (ผู้เรียก ภ.ง.ด.50 `:2135`) ขณะ `TaxFilingExportService.ComputeCit(netProfit, isSme)` ตัดสิน `PaidUpCapital ≤ 5ล. && รายได้ ≤ 30ล.` ถูก ⇒ บริษัททั่วไปได้ CIT ต่ำกว่ากฎหมายบน ภ.ง.ด.50 แต่ถูกบน 51 · golden: ทุน 10 ล. กำไร 1 ล. → ต้อง 200,000 (วันนี้ 105,000) | `TaxService.cs:2485-2510,2135` · `TaxFilingExportService.cs:1052-1054,1077-1096` |
+| ✅ <pending> D2-B2a | ✅ | **P0** | **CIT 2 ตาราง**: `TaxService.CalculateThaiCit(netProfit)` ใช้ขั้น SME กับ**ทุกบริษัท** (ผู้เรียก ภ.ง.ด.50 `:2135`) ขณะ `TaxFilingExportService.ComputeCit(netProfit, isSme)` ตัดสิน `PaidUpCapital ≤ 5ล. && รายได้ ≤ 30ล.` ถูก ⇒ บริษัททั่วไปได้ CIT ต่ำกว่ากฎหมายบน ภ.ง.ด.50 แต่ถูกบน 51 · golden: ทุน 10 ล. กำไร 1 ล. → ต้อง 200,000 (วันนี้ 105,000) | `TaxService.cs:2485-2510,2135` · `TaxFilingExportService.cs:1052-1054,1077-1096` |
 | D2-B1a | ✅ | **P0** | **`FileTaxReportAsync` ประทับ `Filed`+`FiledDate`+`FilingLockedAt` จากการกดปุ่ม** ไม่มี `FilingNumber`/การตอบกลับ RD · controller ตอบ "ยื่นรายงานภาษีสำเร็จ" · `TaxReportStatus.Submitted` ไม่มีใครตั้ง · e-Filing แค่ `EFilingExportedAt` ⇒ ล็อกเอกสาร/JE ทั้งงวดด้วยเหตุการณ์ที่ระบบไม่รู้ว่าเกิด · **ไม่บล็อกเมื่อมีแถว ⚠ excluded** (ด่านที่ `RemitAsync` มี) | `TaxService.cs:2725-2729` · `TaxController.cs:51` · `TaxService.EFiling.cs:103,132-135` |
 | D2-B1b | ✅ | **P0** | `ComplianceService.SubmitFilingAsync` — คอมเมนต์เอง "Simulate submission" → `Status="Filed"` + **แต่ง** `SubmissionReference`/`ConfirmationNumber` จาก GUID · เงินเพิ่ม 1.5%/เดือน **ไม่มีเพดานเท่าภาษี** (§27) · มี UI เรียกจริง | `ComplianceService.cs:232-247` · `ComplianceController.cs:46` |
 | D2-B4a | ✅ | **P1** | PDPA legal hold = `DocumentDate > now−5y` แต่ ม.10 พ.ร.บ.บัญชี = สิ้นรอบ+5 ปี · §87/3 = วันยื่น+5 ปี ⇒ ปลดล็อก**เร็วกว่ากฎหมายได้ถึง ~17 เดือน** (ลบแล้วกู้ไม่ได้) | `Services/Implementations/Pdpa/PdpaService.cs:515-522,541` |
 | D2-B4b | ⚠ | **P1** | ภ.พ.36 สองกติกางวด: รายงาน/ไฟล์ = `TaxPointDate ?? DocumentDate` · แดชบอร์ด/นำส่ง/รับรู้ = `PaymentDate ?? DocumentDate` · §83/6 ผูกวันจ่าย ⇒ ใบผู้ขาย 28/6 จ่าย 3/7 อยู่คนละงวดกันระหว่างจอกับ JE | `TaxService.cs:1505-1506` · `StatutoryRemittanceService.cs:275-283,1180-1186` |
 | D2-B3 | ✅ | **P1** | ค่าแต่งลงไฟล์ยื่น: `PndIncomeTypeCode.ForFile _ => "6"` (รหัสไม่รู้จัก → ไฟล์ยื่นเป็น "6" เงียบ) · `IncomeTypeCode="40(8)"` default 5 จุด · cert ไม่มีบรรทัด → `"8"` + `3m` · ภ.พ.36 `7m` · JE-fallback `3m` | `Helpers/PndIncomeTypeCode.cs:42` · `TaxService.cs:1541,1683,1705,1795,1810,1925,~1899` · `WithholdingTaxCertService.cs:519-528,539` |
-| D2-B3b | ✅ | P2 | `GetWhtRate` `?? RateFor(code, !payeeIsJuristic)` — ขั้น "ชนิดตรงข้าม" วันนี้ dead แต่เป็นกับดักทันทีที่เพิ่มรหัสที่มีอัตราฝั่งเดียว (ขัด 180-3 ที่เพิ่งแก้) | `TaxService.cs:2532-2533` |
+| ✅ <pending> D2-B3b | ✅ | P2 | `GetWhtRate` `?? RateFor(code, !payeeIsJuristic)` — ขั้น "ชนิดตรงข้าม" วันนี้ dead แต่เป็นกับดักทันทีที่เพิ่มรหัสที่มีอัตราฝั่งเดียว (ขัด 180-3 ที่เพิ่งแก้) | `TaxService.cs:2532-2533` |
 | D2-C1 | ⚠ | **P1** | `ThaiWhtRateTable` **ไม่มีแถว ม.70** (15%/10%) · ไม่มีตาราง DTA ทั้งเรพ ⇒ cert ภ.ง.ด.54 รับ `line.WithholdingTaxRate` ตามที่ผู้ใช้พิมพ์ไม่มีด่าน | `Helpers/ThaiWhtRateTable.cs` · `ITaxFilingExportService.cs:59-60` |
 | D2-C2 | ⚠ | P1 | `rdReceiptNumber` optional ใน `RecognizePp36InputVatAsync` ⇒ ใบเข้ารายงานภาษีซื้อไม่มีเลขใบกำกับ §86/14 | `StatutoryRemittanceService.cs:1156-1165` |
 | D2-C3 | ⚠ | P1 | §82/5(2) ฝั่งซื้อเส้นคีย์มือ: ไม่มีธง "ผู้ขายให้ใบอย่างย่อ" · `TaxInvoiceCompletenessChecker.Evaluate` ไม่ตรวจหัว "ใบกำกับภาษี" (GAP-3 ครอบเฉพาะ OCR) | `TaxInvoiceCompletenessChecker.cs:304-330` |
@@ -146,9 +146,9 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 
 | ID | สถานะ | P | เรื่อง | ที่ |
 | --- | --- | --- | --- | --- |
-| D5-1 | ✅ | **P0** | **FIFO เศษ**: `Math.Round(takeSum / Math.Max(taken, 1m), 4)` — ขาย 0.5 กก. จาก layer 100/กก. ได้ต้นทุน **50** (วัตถุดิบ กก./ลิตร โดนทุกบิล) · ปัด 4 ตำแหน่ง**ไม่ระบุ AwayFromZero** (สำเนาที่สองของ `WeightedAverageCost` ที่ทำถูก) | `Inventory/InventoryCostingService.cs:182,223` |
-| D5-6 | ✅ | **P0** | **ด่านสต็อกติดลบอยู่ผิดชั้น**: guard อยู่ใน `ResolveOutboundCostAsync` แต่ `StockLedger.MoveAsync :175` `r.UnitCostOverride ?? …` ข้ามมันทุกครั้งที่มี override ซึ่งเอกสารส่ง**เสมอ** (DS `:13096`) ⇒ `AllowNegativeStock=false` **ไม่เคยถูกบังคับที่ ledger** (ราก E-03) | `Inventory/StockLedger.cs:175` · `InventoryCostingService.cs:112-126` · DS `:13096` |
-| D5-2 | ✅ | **P0** | **วัสดุสิ้นเปลืองสองบัญชีไม่หักล้าง**: `TrackStock = request.TrackStock || ProductType == Supplies` บังคับเป็นสินค้าคงเหลือ · ซื้อ → Dr `InventoryAccountId ?? 11500` (resolver `:13241-13246` ดู `tracked` = TrackStock อย่างเดียว) · เบิกใช้ → Cr `SuppliesAccountId ?? 118xx` ⇒ 11500 บวมถาวร | `ProductService.cs:119,1009-1012` · DS `:13224-13264` |
+| ✅ <pending> D5-1 | ✅ | **P0** | **FIFO เศษ**: `Math.Round(takeSum / Math.Max(taken, 1m), 4)` — ขาย 0.5 กก. จาก layer 100/กก. ได้ต้นทุน **50** (วัตถุดิบ กก./ลิตร โดนทุกบิล) · ปัด 4 ตำแหน่ง**ไม่ระบุ AwayFromZero** (สำเนาที่สองของ `WeightedAverageCost` ที่ทำถูก) | `Inventory/InventoryCostingService.cs:182,223` |
+| ✅ <pending> D5-6 | ✅ | **P0** | **ด่านสต็อกติดลบอยู่ผิดชั้น**: guard อยู่ใน `ResolveOutboundCostAsync` แต่ `StockLedger.MoveAsync :175` `r.UnitCostOverride ?? …` ข้ามมันทุกครั้งที่มี override ซึ่งเอกสารส่ง**เสมอ** (DS `:13096`) ⇒ `AllowNegativeStock=false` **ไม่เคยถูกบังคับที่ ledger** (ราก E-03) | `Inventory/StockLedger.cs:175` · `InventoryCostingService.cs:112-126` · DS `:13096` |
+| ✅ <pending> D5-2 | ✅ | **P0** | **วัสดุสิ้นเปลืองสองบัญชีไม่หักล้าง**: `TrackStock = request.TrackStock || ProductType == Supplies` บังคับเป็นสินค้าคงเหลือ · ซื้อ → Dr `InventoryAccountId ?? 11500` (resolver `:13241-13246` ดู `tracked` = TrackStock อย่างเดียว) · เบิกใช้ → Cr `SuppliesAccountId ?? 118xx` ⇒ 11500 บวมถาวร | `ProductService.cs:119,1009-1012` · DS `:13224-13264` |
 | D5-3 | ⚠ | **P1** | COGS = 0 เงียบเมื่อ avg=0 & CostPrice=0 (`if (cogsTotal > 0)` ไม่มี else/หมายเหตุ) · ไม่พบผัง 511/115 → log เท่านั้น | DS `:13486-13505` |
 | D5-4 | ⚠ | **P1** | CN Return กลับ COGS ที่ **WAC ปัจจุบัน** ไม่ใช่ต้นทุนตอนขาย (`StockMovement.UnitCost` ของใบต้นทางมีอยู่) · สินค้า FIFO คืนของถูกตีเป็น `CostPrice` เพราะ `EffectiveUnitCost` คืน avg เฉพาะ WeightedAverage ⇒ layer ใหม่ราคาผิด | DS `:13874-13890,13176` |
 | D5-5 | ⚠ | **P1** | capex ตัดสินด้วยผังที่ผู้ใช้เลือกอย่างเดียว · เกณฑ์เงิน 3 ชุด (50,000 / 5,000 / 50,000→0.90) เป็นแค่เตือน · **เพดานรถยนต์นั่ง 1,000,000 (พ.ร.ฎ.145 ม.5) ไม่มีที่ไหนเลย** ⇒ ค่าเสื่อมทางบัญชี=ทางภาษี ไม่มีบวกกลับ · `ImportAsync` `_db.FixedAssets.Add` ตรงข้ามด่านที่ดิน · job ค่าเสื่อมไม่กรอง `NeedsReview` ⇒ ตัว `DRAFT-` อายุ default โพสต์ JE ก่อนใครยืนยัน · วันเริ่มคิด = `DocumentDate` ไม่ใช่วันพร้อมใช้ | `FixedAssetService.cs:1421-1425,1243,861` · `Section65TerValidator.cs:25,257` · `FixedAssetDetector.cs:41,85` · `DurableGoodsHeuristic.cs:16` · `DepreciationSchedule.cs:42-43` |
@@ -178,11 +178,11 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 
 | ID | สถานะ | P | เรื่อง | ที่ |
 | --- | --- | --- | --- | --- |
-| D7-1 | ✅ | **P0** | widget `ai-suggestion.js:123` ส่ง `chosenAnswer:'__USER_KEPT_EXISTING__'` — **server ไม่กรอง** (grep .cs = 0) ⇒ `LearnInlineAsync` เก็บเป็น `LearnedAnswer` · `TrainGlAccountAsync` insert `OcrCategoryMapping.AccountCode = sentinel` · `GlAccountDistillationModel` นับเป็นบัญชีที่ยืนยัน ⇒ **รหัสผังปลอมไหลเข้าตัวแนะนำ GL** | `wwwroot/js/ai-suggestion.js:120-123` · `AiFeedbackRecorder.cs:280-296` · `AiFeedbackTrainingJob.cs:556-566` · `GlAccountDistillationModel.cs:97-110` |
-| D7-2 | ✅ | **P0** | **กุญแจเขียน ≠ กุญแจอ่าน ทันทีที่นักเรียนตอบได้** (รูของรอบ 178 เอง): `AiOrchestrator :154` ทำนายจาก JSON เดิม → `:177` `request = request with { UserPromptJson = ReplaceLocalModelBlock(...) }` → `:310` `memoryKey = AiMemoryKey.Of(request.UserPromptJson)` คิดจาก JSON **หลังแก้** · `GenericFeedbackDistillationModel :212` predict จาก JSON ก่อนแก้ · `:134` เรียนจาก `PromptJson` หลังแก้ ⇒ prompt ที่มีบล็อก `local_model` (9 ไฟล์ prompt) ทำให้ generic 5 ตัว (DocType · WhtCategory · CreditNote · PVAccounting · DocConversion) tier-0/1 **หยุดโตหลังใบแรก** | `Services/Ai/AiOrchestrator.cs:154-178,310,540` · `GenericFeedbackDistillationModel.cs:134,212` |
-| D7-3 | ✅ | **P0** | 6 จุด JS ผูก `change` แล้ว**ไม่ส่ง `source`** ⇒ Implicit ⇒ `MemoryLookupAsync` ปฏิเสธ (Explicit≥1) ⇒ คลังทันทีของ ManualJeAccount / ProductCategory / GlAccountSlot(recurring) / AssetCategory / BankStatementMatch / OcrFullReview+DocConversion **ตายหลังรอบ 178** (backfill ครอบแค่แถวเก่า) | `journals.html:607` · `products.html:492` · `fixed-assets.html:343` · `bank.html:1311` · `recurring.html:404` · `document-scan.html:3609,3614` |
-| D7-4 | ✅ | **P1** | `MinSamplingRate` บังคับแค่ `SetAsync` · ฝั่งอ่าน `:143` `?? DefaultSampling` ไม่ clamp · migration มีแค่ CREATE ไม่มี UPDATE ⇒ แถวที่เคยตั้ง 0 ยัง 0 (kill-teacher ที่รอบ 178 ตั้งใจกัน ยังเกิดกับข้อมูลเก่า) | `AiFeatureRoutingResolver.cs:86-91,143` · `DatabaseMigrationHelper.cs:4229` |
-| D7-5 | ✅ | **P1** | orphan detector `_ => false` กับ 6 key ที่**มีนักเรียนเรียนตรงจากแถวอยู่แล้ว** (PaymentType · OcrProjectMatch · OcrLineItemSplit · Chat×2 · FuzzyDuplicate) ⇒ ประทับ `NeedsRedesign "ขาด trainer"` ทุกรอบ = false alarm · query `FirstOrDefaultAsync(h => h.FeatureKey == featureKey)` **ไม่กรอง `CompanyId`** ⇒ หลังรอบ 179 มีแถวรายบริษัท อาจคว้าแถวบริษัทมาประทับ | `AiFeedbackTrainingJob.cs:300-323,470` |
+| ✅ <pending> D7-1 | ✅ | **P0** | widget `ai-suggestion.js:123` ส่ง `chosenAnswer:'__USER_KEPT_EXISTING__'` — **server ไม่กรอง** (grep .cs = 0) ⇒ `LearnInlineAsync` เก็บเป็น `LearnedAnswer` · `TrainGlAccountAsync` insert `OcrCategoryMapping.AccountCode = sentinel` · `GlAccountDistillationModel` นับเป็นบัญชีที่ยืนยัน ⇒ **รหัสผังปลอมไหลเข้าตัวแนะนำ GL** | `wwwroot/js/ai-suggestion.js:120-123` · `AiFeedbackRecorder.cs:280-296` · `AiFeedbackTrainingJob.cs:556-566` · `GlAccountDistillationModel.cs:97-110` |
+| ✅ <pending> D7-2 | ✅ | **P0** | **กุญแจเขียน ≠ กุญแจอ่าน ทันทีที่นักเรียนตอบได้** (รูของรอบ 178 เอง): `AiOrchestrator :154` ทำนายจาก JSON เดิม → `:177` `request = request with { UserPromptJson = ReplaceLocalModelBlock(...) }` → `:310` `memoryKey = AiMemoryKey.Of(request.UserPromptJson)` คิดจาก JSON **หลังแก้** · `GenericFeedbackDistillationModel :212` predict จาก JSON ก่อนแก้ · `:134` เรียนจาก `PromptJson` หลังแก้ ⇒ prompt ที่มีบล็อก `local_model` (9 ไฟล์ prompt) ทำให้ generic 5 ตัว (DocType · WhtCategory · CreditNote · PVAccounting · DocConversion) tier-0/1 **หยุดโตหลังใบแรก** | `Services/Ai/AiOrchestrator.cs:154-178,310,540` · `GenericFeedbackDistillationModel.cs:134,212` |
+| ✅ <pending> D7-3 | ✅ | **P0** | 6 จุด JS ผูก `change` แล้ว**ไม่ส่ง `source`** ⇒ Implicit ⇒ `MemoryLookupAsync` ปฏิเสธ (Explicit≥1) ⇒ คลังทันทีของ ManualJeAccount / ProductCategory / GlAccountSlot(recurring) / AssetCategory / BankStatementMatch / OcrFullReview+DocConversion **ตายหลังรอบ 178** (backfill ครอบแค่แถวเก่า) | `journals.html:607` · `products.html:492` · `fixed-assets.html:343` · `bank.html:1311` · `recurring.html:404` · `document-scan.html:3609,3614` |
+| ✅ <pending> D7-4 | ✅ | **P1** | `MinSamplingRate` บังคับแค่ `SetAsync` · ฝั่งอ่าน `:143` `?? DefaultSampling` ไม่ clamp · migration มีแค่ CREATE ไม่มี UPDATE ⇒ แถวที่เคยตั้ง 0 ยัง 0 (kill-teacher ที่รอบ 178 ตั้งใจกัน ยังเกิดกับข้อมูลเก่า) | `AiFeatureRoutingResolver.cs:86-91,143` · `DatabaseMigrationHelper.cs:4229` |
+| ✅ <pending> D7-5 | ✅ | **P1** | orphan detector `_ => false` กับ 6 key ที่**มีนักเรียนเรียนตรงจากแถวอยู่แล้ว** (PaymentType · OcrProjectMatch · OcrLineItemSplit · Chat×2 · FuzzyDuplicate) ⇒ ประทับ `NeedsRedesign "ขาด trainer"` ทุกรอบ = false alarm · query `FirstOrDefaultAsync(h => h.FeatureKey == featureKey)` **ไม่กรอง `CompanyId`** ⇒ หลังรอบ 179 มีแถวรายบริษัท อาจคว้าแถวบริษัทมาประทับ | `AiFeedbackTrainingJob.cs:300-323,470` |
 | D7-6 | ⚠ | **P1** | CAPTURE ขาด 7 จุด (ได้ FeedbackId แล้วทิ้ง/ไม่ปิด): AnomalyExplanation (`AiService.cs:571-580` MarkFalsePositive ไม่เรียก recorder) · StockMovementValidation (`document-scan.html` ไม่เก็บ id) · AgingExplanation (ไม่มีนักเรียน + ไม่ปิด) · ImportColumnMatch/ImportDataReview (`ImportExportService` ไม่เก็บ FeedbackId เลย) · FuzzyDuplicate (ไม่มี UI) · **PayrollIncomeType ไม่มี `RecordCallAsync` = CAPTURE ศูนย์** (ตรง D6-D) · `BankMatchDistillationModel` เรียนจาก `BankMatchRules.TimesConfirmed` ที่เขียนเฉพาะ `OcrService:4603` ไม่ใช่จาก feedback · `OcrLineItemSplit` negative-only (ตรง D3-7) | ตามบรรทัด |
 | D7-7 | ⚠ | P2 | `ApprovalWarningFixSuggestion` ไม่มี guard (free-text) · `BankStatementMatch` `BankAiAugmenter:113-131` ไม่พบ candidate check · `BulkBankAiMatchService:147` child rows hardcode `DeepSeek` · `/accuracy` `/routing` ไม่ส่ง `LocalCoverage30d`/`ExplicitLabels30d` (โผล่แค่ในสตริง Recommendation) · แถว health รายบริษัทไม่มีผู้อ่าน · enum doc `DocumentMemo :1732` บอกเรียก AI เมื่อ ≥3 หมวด แต่โค้ดไม่เรียก (doc ผิด) · T3-P1a ตัวเลขที่ถูก: consume-only 29 key ในนั้นเรียก AI จริงแค่ 2 · key ตาย: 6 · 18 · 21 (0 caller) | ตามบรรทัด |
 | D7-E | ✅ | **P1 (โครง)** | **ไม่มีวงจรปิด**: grep `NeedsRedesign|Degraded` นอก job/controller = 0 ⇒ สุขภาพตกแล้วทำแค่แสดง badge · routing เปลี่ยนได้ทางเดียวคือคน PUT · `Version` bump ทุกรอบไม่มีเทสต์ก่อน promote · **ไม่มีเทสต์ orchestrator/Generic/job/resolver เลย** (มีแค่ `AiMemoryKeyTests` · `LineSplitStudentTests`) | `AiFeedbackTrainingJob.cs` · `admin/ai-models.html:220` |
@@ -194,8 +194,8 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 | --- | --- | --- | --- | --- |
 | D8-1 | ✅ | **P0** | **POS ใบกำกับเต็มรูป** สร้าง `Document` ตรง `Status=Approved` ไม่ผ่าน `ApproveDocumentAsync`/`CanApproveAsync`/quota/§86/4 · บรรทัดจาก `item.TotalAmount/VatAmount` **ไม่หักส่วนลดบิล/คูปอง/ค่าบริการ** (`RecalculateOrder` หัก `DiscountAmount` ที่ระดับออเดอร์) ⇒ ยอดใบ ≠ ยอดที่ลูกค้าจ่าย ≠ JE · ไม่ตั้ง `Document.BranchId`/`IsTaxInvoiceByLaw` · ไม่อ้าง/ยกเลิกใบย่อ (`AbbreviatedInvoiceNumber`) · Contact จับด้วยชื่อเท่านั้น | `PosService.Orders.cs:437-503,460,476-478,1739-1746` |
 | D8-2 | ✅ | **P0** | **POS คืนเงินนับคูปองซ้ำ**: `orderLevelDiscount = DiscountAmount + CouponDiscountAmount` แต่ `DiscountAmount` **รวมคูปองอยู่แล้ว** (`:1740`) ⇒ คืนเงินต่ำกว่าจริง · เทสต์ = 0 | `PosService.Orders.cs:236-241,1740` |
-| D8-3 | ✅ | **P0** | **V1 ContactType**: `taxId.Length == 13 ⇒ JuristicPerson` — เลขไทยทุกใบ 13 หลัก ⇒ บุคคลธรรมดาที่มีบัตรกลายเป็นนิติบุคคล ⇒ **ภ.ง.ด.53 แทน 3** · `DocumentsV1Controller:215` สำเนาอีกชุด (`StartsWith('0')`) = กติกา 3 สำเนา (ตัวถูกคือ `ThaiTaxId.IsJuristic` ที่ Integration ใช้) · V1 อนุมัติด้วย scope `documents:write` ไม่มี `CanApproveAsync` | `V1/ContactsV1Controller.cs:128` · `V1/DocumentsV1Controller.cs:149-156,215` |
-| D8-4 | ✅ | **P0** | **Integration `request.VatRate ?? 7m` 6 จุด โดยไม่มี `IsVatRegistered` เลยทั้งไฟล์** (grep = 0) ⇒ tenant ไม่จด VAT ได้ VAT 7% · + `Status=Approved` ตรง 6 จุด (ERP_REVIEW รู้แล้ว) | `IntegrationService.cs:691,2625,2709,3124,3245,3502` |
+| ✅ <pending> D8-3 | ✅ | **P0** | **V1 ContactType**: `taxId.Length == 13 ⇒ JuristicPerson` — เลขไทยทุกใบ 13 หลัก ⇒ บุคคลธรรมดาที่มีบัตรกลายเป็นนิติบุคคล ⇒ **ภ.ง.ด.53 แทน 3** · `DocumentsV1Controller:215` สำเนาอีกชุด (`StartsWith('0')`) = กติกา 3 สำเนา (ตัวถูกคือ `ThaiTaxId.IsJuristic` ที่ Integration ใช้) · V1 อนุมัติด้วย scope `documents:write` ไม่มี `CanApproveAsync` | `V1/ContactsV1Controller.cs:128` · `V1/DocumentsV1Controller.cs:149-156,215` |
+| ✅ <pending> D8-4 | ✅ | **P0** | **Integration `request.VatRate ?? 7m` 6 จุด โดยไม่มี `IsVatRegistered` เลยทั้งไฟล์** (grep = 0) ⇒ tenant ไม่จด VAT ได้ VAT 7% · + `Status=Approved` ตรง 6 จุด (ERP_REVIEW รู้แล้ว) | `IntegrationService.cs:691,2625,2709,3124,3245,3502` |
 | D8-5 | ⚠ | **P1** | CMS: PreOrder/Backorder → `StockDeducted=true` **โดยไม่ตัด** → ยกเลิก `RestoreStock` **บวกคืน** ⇒ สต็อกบวมเงียบ · ฐาน VAT ค่าส่ง/ส่วนลด `VatRate:0` ขัด §79 · Contact ไม่ตั้ง ContactType / TaxId ไม่ตรวจ checksum · booking `FreeCancellationHours/CancellationFeePercent` ไม่มีผู้อ่านนอก CRUD | `CmsCommerceService.cs:864-874,936-958,1244-1251,1315-1325` · `CmsBookingService.cs:38-42,346-353` |
 | D8-6 | ⚠ | **P1** | ที่พัก: เช็คเอาต์ `Approve(acknowledgeWarnings:true)` ⇒ ที่อยู่ผู้ซื้อ §86/4 (warning) ถูก ack อัตโนมัติ ใบกำกับแขกไม่มีที่อยู่ออกเงียบ · `BranchCode="00000"` แต่งขึ้น · ContactType จาก "มีชื่อบริษัทไหม" ไม่ใช่ `ThaiTaxId.IsJuristic` · **Night audit ประทับ NoShow ตรง**ไม่ผ่าน `CancelCoreAsync` ⇒ มัดจำค้าง 217xx สถานะ Terminal · ค่าปรับ > มัดจำ แค่ InternalNotes · snapshot นโยบายพัง → `catch → fee 0` เงียบ · VAT `7` ตายตัว (ไม่ใช่ `OutputVatRate.ForCompany`) | `Lodging*/Lifecycle.cs:296-374,603-618,718-764` · `Reservations.cs:413-434` · `LodgingNightAuditJob.cs:122-130` · `LodgingService.cs:69-75` |
 | D8-7 | ✅ | **P1** | **ไม่มีด่านสิทธิ์เลย**: `PosController` (0/51 endpoint รวม `issue-tax-invoice`) · `CmsCommerceController` · `CmsBookingController` · `IntegrationController` · `MobileController` (เทียบ `LodgingController` 41 อ้าง) · Mobile ExpenseClaim ตั้ง Approved ตรง | ตาม controller |
@@ -311,5 +311,107 @@ E ข้อเสนอ · F ไม่ใช่ปัญหา · ห้าม�
 
 ---
 
-_Last verified against codebase: 2026-09-18 — รอบ 181 (ตรวจกระบวนการตัดสินใจ 8 ทีม · ครบทั้ง 8)_
+## §8 รอบ 182 — ลงมือแล้ว (ทีมลงมือ 4 ชุด + main agent · main agent เปิดไฟล์ตรวจงานทุกทีมก่อนรวม)
+
+> โจทย์เจ้าของ 2026-09-19: (ก) เรื่องใบกำกับอย่างย่อ — ให้มีที่ตั้งค่า ภ.พ.06 ต่อบริษัท และ**สวิตช์ฝั่งแอดมิน**
+> ว่าจะบังคับ ภ.พ.06 ไหม เผื่อกฎหมายเปลี่ยน (ข) เรื่องอื่น "ตั้งทีมวิเคราะห์ ทำอันที่ดีที่สุด"
+
+### 8.1 ใบกำกับภาษีอย่างย่อ §86/6 — สวิตช์ระดับแพลตฟอร์ม (คำตอบข้อ ก)
+
+**สิ่งที่พบตอนเปิดโค้ด**: ฟิลด์ `Company.IsRetailApproved` + `PhoR06ApprovedDate` มีอยู่แล้ว **และมีช่องกรอก
+ในหน้าตั้งค่าบริษัทแล้ว** (`settings.html:181-194`) · แต่ **(1)** มีผู้อ่านแค่ `PosService` เท่านั้น — เส้น
+เอกสาร/PDF พิมพ์ "ใบกำกับภาษีอย่างย่อ" โดย**ไม่เคยตรวจ ภ.พ.06 เลย** (D1-B4) **(2)** ไม่มีสวิตช์ฝั่งแอดมิน
+
+| ทำอะไร | ที่ |
+| --- | --- |
+| ตัวตัดสิน**ตัวเดียว**ของ "บริษัทนี้ออกอย่างย่อได้ไหม" (ย้าย enum เหตุผลมาด้วย) | `Helpers/AbbreviatedTaxInvoiceRule.cs` (ใหม่) |
+| สลิป POS เลิกตัดสินเอง → เรียกตัวตัดสินกลาง (เหลือเฉพาะกติกาของสลิป "ไม่มี VAT ก็ไม่ใช่ใบกำกับ") | `Helpers/PosSlipHeader.Resolve(..., requirePhoR06)` |
+| **หัวเอกสาร/PDF ผ่านด่าน §86/6 เป็นครั้งแรก** — ทั้ง HTML renderer และ QuestPDF ใช้ predicate ตัวเดียวกัน (ข้อความ §86/6(6) หายพร้อมกัน ไม่ drift) | `ComputeDocumentTitle(..., companyMayIssueAbbreviated)` · `IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated)` — **ไม่มีค่าตั้งต้น** ผู้เรียกต้องตอบเสมอ |
+| สวิตช์แอดมิน "บังคับ ภ.พ.06" (ค่าตั้งต้น = บังคับ ตามกฎหมายวันนี้) | `SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` + migration + `GET/PUT admin/site-settings` + การ์ด "นโยบายตามกฎหมาย" ใน `admin/site-settings.html` |
+
+**กติกาที่ล็อกไว้**: สวิตช์ปิดได้เฉพาะด่าน **ภ.พ.06** — ด่าน "ยังไม่จด VAT" (§77/1) ปิดไม่ได้ ·
+ใบกำกับ**เต็มรูป §86/4 ไม่เกี่ยวกับสวิตช์นี้** จด VAT แล้วออกได้เสมอ · ไม่มีสิทธิ์ → หัวตกเป็น
+"ใบเสร็จรับเงิน" (VAT ขายยังลง ภ.พ.30 ครบ) · ผู้เรียกที่ลืมส่งนโยบายได้ทิศ**เข้มกว่า**
+เทสต์: `AbbreviatedTaxInvoiceRuleTests` (10 เคส สองทิศ) + `AbbreviatedTaxInvoiceTitleTests` (+3 เคส รวม
+"ใบเต็มรูปไม่ถูกแตะ")
+
+### 8.2 ของที่เจอเพิ่มระหว่างทำ — `PaidUpCapital` ถูกอ่านแต่ไม่มีใครเขียน
+
+`Company.PaidUpCapital` ถูกใช้โดยสูตรภาษี **4 จุด** (อัตรา CIT ของ SME ทั้ง ภ.ง.ด.50/51 · เพดานค่ารับรอง
+§65 ตรี(4) · context ของ AI) แต่ **ไม่มีทั้งช่องกรอก ช่องรับใน DTO และช่อง echo กลับ** ⇒ เป็น `0` ทุกบริษัท
+(defect class "หน้าเว็บอ่านฟิลด์ที่ไม่มีใครเขียน" ในทิศกลับ) · แก้: `UpdateCompanyRequest.PaidUpCapital` +
+`CompanyResponse.PaidUpCapital` + ด่านค่าติดลบใน `CompanyService` + ช่องกรอกใน `settings.html` พร้อมคำอธิบาย
+ว่ามีผลกับอัตราภาษีอย่างไร
+
+⚠️ **ตามมาเป็นคำถามให้เจ้าของ (Q10)**: วันนี้ `PaidUpCapital = 0` (ยังไม่กรอก) + รายได้ ≤ 30 ล.
+⇒ ระบบนับเป็น **SME** = "ไม่รู้" ตกเป็น "ผ่าน" ซึ่งขัด G3 และเป็นทิศที่เสียภาษี**ต่ำกว่า**กฎหมาย
+(ความเสียหายมองไม่เห็นจนกว่าสรรพากรจะประเมิน) · **ยังไม่เปลี่ยนในรอบนี้** เพราะก่อนหน้านี้ไม่มีช่องให้กรอก —
+การพลิกทันทีจะทำให้ทุกบริษัทเสีย 20% โดยไม่มีทางแก้ · ตอนนี้ช่องกรอกมีแล้ว เจ้าของตัดสินได้ว่าจะพลิกเมื่อไร
+
+### 8.3 P0 อื่นที่ปิดในรอบนี้
+
+| ID | ทำอะไร | ผลต่อผู้ใช้จริง |
+| --- | --- | --- |
+| D2-B2a | `Helpers/CitRateTable` เป็น OWNER ตัวเดียวของอัตรา CIT + เกณฑ์ SME · `CalculateThaiCit` รับ `isSme` จริง · `ComputeCit` เหลือ wrapper | **บริษัทที่ทุน > 5 ล. หรือรายได้ > 30 ล. เสียภาษีเพิ่มบน ภ.ง.ด.50** (เดิมต่ำกว่ากฎหมาย) · กำไร 1 ล. → 200,000 แทน 105,000 · ส่วนต่างสูงสุด +195,000 คงที่เมื่อกำไร > 3 ล. · **SME ไม่เปลี่ยนแม้แต่สตางค์เดียว** (ล็อกด้วยเทสต์ทิศตรงข้าม) · ⚠️ รายงาน ภ.ง.ด.50 ที่ generate ไว้**ก่อน**แก้ ยังถือยอดเก่าในฐาน — ต้อง regenerate |
+| D2-B3b | ลบขั้น fallback "ใช้อัตราของชนิดผู้รับ**ตรงข้าม**" ใน `GetWhtRate` | วันนี้ไม่มีผล (ทุกรหัสมีอัตราครบสองข้างหรือว่างทั้งคู่) — เป็นการถอดกับดักก่อนเพิ่มรหัสใหม่ · เทสต์เดินทุกแถวของ `ThaiWhtRateTable` เป็นด่านเชิงรุก |
+| D5-1 | FIFO `Math.Max(taken, 1m)` → หารด้วยจำนวนจริง + `AwayFromZero` (ซ่อม `Math.Round` ไม่ระบุ MidpointRounding 5 จุด) | **ต้นทุนขายของที่ขายเป็นเศษส่วนถูกต้อง** — ขาย 0.5 กก. จาก layer 100/กก. ได้ 100 (เดิม 50) · วัตถุดิบที่นับเป็น กก./ลิตร/ชม. โดนทุกบิล |
+| D5-6 | ย้ายด่านสต็อกติดลบจาก `InventoryCostingService` (ซึ่งถูกข้ามทุกครั้งที่ผู้เรียกส่ง `UnitCostOverride` = เส้นเอกสาร**เสมอ**) ไปที่ `StockLedger.MoveAsync` + `Helpers/NegativeStockGuard` | **ปิดราก SYSTEM_REVIEW E-03** · `AllowNegativeStock=false` มีผลจริงครั้งแรก · ดู §8.4 |
+| D5-2 | `Helpers/InventoryControlAccount` — ฝั่งซื้อ (`DocumentService`) กับฝั่งเบิกใช้ (`ProductService`) ถามผังจากตัวตัดสินเดียวกัน + กรอง `Level >= 4` (บัญชี postable) ทั้งสองฝั่ง | ซื้อวัสดุสิ้นเปลืองเข้า 118xx เหมือนตอนเบิกใช้ — เดิม Dr 11500 / Cr 118xx ⇒ **11500 บวมถาวร** · ⚠️ ยอดเก่าที่ลง 11500 ไปแล้วยังอยู่ ต้องมี migration/ปรับปรุงรายการ (ยังไม่ทำ) |
+
+### 8.4 พฤติกรรมที่เปลี่ยน — ผู้ใช้จะเห็นทันที (ต้องบอกเจ้าของ)
+
+1. **ขายของที่คลังนั้นไม่มี จะถูกบล็อก** (เดิมผ่านเงียบแล้วสต็อกติดลบ) — ข้อความบอกทางไปต่อ 3 ทาง
+   (รับเข้าคลังนี้ · โอนจากคลังอื่น · เปิด "อนุญาตสต๊อกติดลบ" ในตั้งค่าบริษัท ซึ่ง**มีสวิตช์จริงอยู่แล้ว**
+   ที่ `settings.html:874` — ยืนยันแล้ว ไม่ใช่ข้อความที่ชี้ไปที่ว่าง)
+2. **ฐานที่ใช้ตัดสินเปลี่ยนจาก "ยอดรวมบริษัท" → "ยอดของคลังนั้น"** — กระทบเฉพาะบริษัทหลายคลัง
+   (POS · ร้านค้าออนไลน์ · เบิกวัตถุดิบเข้าผลิต · ฝากขาย) · บริษัทคลังเดียวได้ผลเท่าเดิม
+3. **การกลับรายการ (void/ยกเลิกเอกสาร) ได้รับยกเว้นด่าน** — `StockMoveRequest.AllowNegativeOverride`
+   (ค่าตั้งต้น `false` · มีเทสต์ล็อก) ใช้เฉพาะเส้น void: การกลับรายการไม่ใช่การตัดสินใจใหม่ แต่คือการลบสิ่งที่
+   เคยลงไว้ — ถ้าบล็อก ใบซื้อที่ของถูกขายออกไปแล้วจะ**ยกเลิกไม่ได้ตลอดกาล** = ด่านที่ไม่มีทางไปต่อ
+4. **ภ.ง.ด.50 ของบริษัทที่ไม่ใช่ SME แสดงยอดภาษีสูงขึ้น** (ยอดที่ถูกตามกฎหมาย)
+5. **บริษัทที่ยังไม่ได้อนุมัติ ภ.พ.06 จะเห็นหัวเอกสารเป็น "ใบเสร็จรับเงิน"** แทน "ใบกำกับภาษีอย่างย่อ"
+   ทั้งบนจอและบนกระดาษ (ถ้าไม่ต้องการ ให้กรอกวันที่อนุมัติ ภ.พ.06 หรือปิดสวิตช์ฝั่งแอดมิน)
+
+### 8.5 ทีม 3 (สายป้าย/คลังเรียนรู้ AI) · ทีม 4 (ทางเข้าภายนอก)
+
+| ID | ทำอะไร | ผลต่อผู้ใช้จริง |
+| --- | --- | --- |
+| D7-1 | `Helpers/AiSentinelAnswers` — sentinel `__USER_KEPT_EXISTING__` (ธง "ผู้ใช้ไม่รับคำแนะนำ") ถูกกรอง **3 ชั้น** (recorder · `LearnInlineAsync` · trainer) + migration ล้างแถวที่ปนเปื้อน 3 ตาราง | **รหัสผังบัญชีปลอมหยุดไหลเข้าตัวแนะนำ GL** · แถวที่ค้างอยู่ถูกล้าง โดยยัง**คงการปฏิเสธ**ไว้ (ไม่แตะ `UserChosenAt`) ⇒ สถิติไม่เพี้ยน |
+| D7-1b | ตามมาจาก D7-1: แถว "ตรวจแล้วแต่ไม่บอกคำตอบ" เคยตกไปสาขา "ครูตอบแล้วไม่มีใครแตะ" ⇒ ได้คะแนน**บวก**ให้คำตอบที่มนุษย์เพิ่งปฏิเสธ = สอนกลับทาง · เพิ่มสาขาที่สาม ให้คะแนน**ลบ** ไม่นับเข้าถังรวมบริษัท | นักเรียนเลิกเรียนผิดทาง (main agent แก้เอง — ทีมชี้รูที่งานตัวเองเปิด) |
+| D7-2 | `AiMemoryKey` ตัดบล็อก `local_model` ออกจากกุญแจ (ลิสต์ปิด ไม่ใช้แพตเทิร์น) | **นักเรียน generic กลับมาโตได้** — เดิมกุญแจฝั่งเขียน≠ฝั่งอ่าน**ทันทีที่นักเรียนเริ่มตอบได้** ⇒ หยุดโตตั้งแต่ใบที่สองของทุก feature ที่มีบล็อกนี้ (11 จุด 5 prompt builder) · tier-0 ของ 11 จุดนั้นเริ่มใหม่ · tier-1/2 ฟื้นเองใน 1 รอบงานกลางคืน (~6 ชม.) ไม่ต้อง migration |
+| D7-3 | เติม `source` 6 หน้าเว็บ + ป็อปอัพ · **checker ใหม่** `tools/ai_feedback_source_check.py` (+ `--self-test`) · backfill เฉพาะ 3 feature ที่พิสูจน์ได้ | ด่าน "Explicit ≥ 1" ของรอบ 178 เลิกปิดคลังทันทีของ ManualJeAccount / ProductCategory / GlAccountSlot เงียบ ๆ · **ป้ายตรงความจริง**: `document-scan` ยิงตอน "บันทึก" จึงเป็น `Implicit` เว้นแต่ผู้ใช้แตะช่องจริง (เพิ่ม `userTouched`) |
+| D7-4 | `ClampSamplingRate` ใช้ทั้งฝั่งเขียนและฝั่งอ่าน + migration ยกแถวที่ค้าง 0 | ครูที่ถูกปิดถาวรโดยไม่มีใครรู้กลับมาถูกสุ่มถาม (นักเรียนได้ตัวอย่างใหม่) · **LocalOnly ยังเป็น 0** (kill-switch ที่ประกาศชัดต้องใช้ได้จริง) |
+| D7-5 | orphan detector ยกเว้น feature ที่มี `ILocalDistillationModel` จริง (อ่านจาก DI ไม่ hardcode) + กรอง `CompanyId == null` | เลิกประทับ `NeedsRedesign` ให้ 6 feature ที่มีนักเรียนอยู่แล้วทุกรอบ (ตัวเตือนที่ฟ้องผิด = ตัวเตือนที่พัง) และเลิกเสี่ยงคว้าแถวรายบริษัทมาประทับสถานะแพลตฟอร์ม |
+| D8-3 | `Helpers/ContactTypeFromTaxId` ตัวเดียว — V1 ทั้ง 2 จุด + `IntegrationService` เรียกตัวเดียวกัน · ตัดสินไม่ได้ = **คงค่าเดิม ไม่เดา** | คู่ค้า**บุคคลธรรมดา**ที่ sync ผ่าน API เลิกกลายเป็นนิติบุคคล ⇒ เลิกยื่น **ภ.ง.ด.53 แทน ภ.ง.ด.3** และเลิกใช้อัตราดอกเบี้ย 1% แทน 15% · ⚠️ แถวที่ประทับผิดไปแล้วยังอยู่ — ดู Q11 |
+| D8-4 | `Helpers/PartnerVatRate` — `?? 7m` เหลือ **0 จุด** (พบเพิ่มเป็น **8 จุด** ไม่ใช่ 6: `BuildDocumentLinesAsync(defaultVatRate = 7)` ที่ใบเพิ่ม/ลดหนี้ใช้อยู่โดยไม่มีใครเห็น) | tenant ที่ไม่จด VAT เลิกออกเอกสารพร้อม VAT 7% · บริษัทที่ตั้งอัตราเอง ≠ 7 ได้อัตราของตัวเอง · **พบบั๊กเพิ่ม**: `BuildDocumentLinesAsync` ไม่เคยตั้ง `IsVatClaimable` ⇒ default `true` ⇒ ภาษีซื้อของบริษัทที่ไม่จด VAT ถูกนับเป็นเคลมได้ทุกใบที่มาทาง integration — ปิดแล้ว |
+| D8-3b | `POST /api/v1/documents/{id}/approve` ผ่าน `CanApproveAsync` (ผู้ใช้ = เจ้าของ API key) + 404 เมื่อเอกสารไม่ใช่ของบริษัทผู้เรียก | คีย์ที่ออกโดย Owner/Accountant/SystemAdmin ไม่กระทบ · คีย์ของ Staff ที่ไม่มีสิทธิ์อนุมัติจะได้ 403 พร้อมทางไปต่อ (เอกสารยังค้าง Draft ไม่หาย) |
+
+**brief ของ main agent ผิด 1 ข้อ — จดไว้ตามกติกา**: ผมสั่งทีม 4 ให้เปลี่ยน `?? 7m` ทั้ง 6 จุดเป็น
+`OutputVatRate.ForCompany` ทีมทักกลับว่า **6 จุดไม่ใช่กติกาเดียวกัน** — 2 จุดเป็นภาษี**ขาย** (เราออกใบ)
+อีก 4 จุดเป็นภาษี**ซื้อ** (ผู้ขายออกให้เรา) · ถ้าบังคับฝั่งซื้อเป็น 0 เมื่อเราไม่จด VAT **ยอดที่ต้องจ่าย
+ผู้ขายจะหายไป 7% เงียบ ๆ** (VAT บนใบเป็นของผู้ขาย ไม่ใช่ของเรา) = ทิศที่ความเสียหายมองไม่เห็น ซึ่งขัด
+DOCTRINE §1 G5 · ทีมทำตามเส้นที่ระบบมีอยู่แล้ว (`DocumentService.CreateDocumentAsync`): **คงอัตราไว้ แต่
+บังคับ `IsVatClaimable=false` + เหตุผล** — ถูกกว่าที่ผมสั่ง
+
+### 8.6 คำถามใหม่ที่ต้องให้เจ้าของตัดสิน (เพิ่มจาก §6.4)
+
+| # | เรื่อง | ทางเลือก / สิ่งที่ต้องรู้ |
+| --- | --- | --- |
+| Q10 | **`PaidUpCapital = 0` (ยังไม่กรอก) ควรนับเป็น SME ไหม** | วันนี้ = นับเป็น SME (เสียภาษีต่ำกว่ากฎหมาย · ความเสียหายมองไม่เห็น) · ทางที่ตรง DOCTRINE G3/G5 คือ "ไม่รู้ทุน = ไม่ใช่ SME" แต่กระทบ ภ.ง.ด.51 ด้วย และบริษัทที่ยังไม่กรอกจะเสีย 20% ทันที · **ตอนนี้มีช่องให้กรอกแล้ว** (§8.2) เจ้าของเลือกได้ว่าจะพลิกเมื่อไร และจะแจ้งลูกค้าให้กรอกก่อนไหม |
+| Q11 | **รัน migration แก้ ContactType ที่ประทับผิดไหม** (D8-3) | คิวรีนับก่อน: `SELECT "CompanyId", COUNT(*) FROM "Contacts" WHERE "ContactType"=2 AND "UpdatedBy"='api:v1:contact-sync' AND "TaxId" ~ '^[1-8][0-9]{12}$' GROUP BY 1;` · ขอบเขตแคบพิสูจน์ได้ (สตริง `UpdatedBy` มีจุดเขียนจุดเดียวทั้งเรพ) · **false positive**: คู่ค้าที่ส่ง `contactType: "JuristicPerson"` มาเองพร้อมเลขบัตรประชาชนก็ตกในชุดนี้ (ฐานไม่บันทึกว่ามาจาก branch ไหน) — ความเห็นทีม: แถวแบบนั้นผิดอยู่แล้ว แต่ไม่เดาแทน |
+| Q12 | **regenerate รายงาน ภ.ง.ด.50 ของบริษัทที่ไม่ใช่ SME ไหม** (D2-B2a) | รายงานที่ generate ไว้ก่อนแก้ยังถือยอดเก่าในฐาน (`TaxReport.CitAmount`) · ทางเลือก: regenerate อัตโนมัติ · เตือนบนหน้าจอให้กดสร้างใหม่ · ปล่อยไว้ |
+| Q13 | **ยอด 11500 ที่บวมจากวัสดุสิ้นเปลืองย้อนหลัง** (D5-2) | โค้ดถูกแล้วตั้งแต่นี้ไป แต่ยอดเก่าที่ลง 11500 ไม่ได้ย้ายเอง · ต้องมีรายการปรับปรุง (JE) หรือ migration ย้ายยอด — ต้องให้นักบัญชีตัดสินว่าย้ายทั้งก้อนหรือปล่อยให้ล้างตามธรรมชาติ |
+| Q14 | **สำเนากติกา ContactType ที่เหลืออีก 7 จุด** (นอกขอบเขตทีม 4) | `OcrService:2517` · `TaxInvoiceCompletenessChecker:83` · `LodgingService.Reservations:428` · `PlatformBillingDocumentIssuer:310` · `PayrollService:2753` · `CmsLeadService:248` · `DocumentService:15937` — ทั้งหมดเป็น `StartsWith("0")` ไม่ตรวจ checksum · เรียก `Helpers.ContactTypeFromTaxId` ได้เลย (งานรอบถัดไป) |
+
+### 8.7 ยังไม่ได้คอมไพล์
+
+env นี้ไม่มี .NET SDK — ตรวจด้วย Python checker 39 ตัว + `node --check` + brace balance + U+FFFD เท่านั้น
+**CI บน `claude/**` คือ compiler ตัวแรก** · จุดที่เสี่ยง compile error มากสุด: ลายเซ็นที่เปลี่ยนแบบ
+**ไม่มีค่าตั้งต้น** (`ComputeDocumentTitle` · `IsAbbreviatedTaxInvoiceDoc` · `PosSlipHeader.Resolve` ·
+`CalculateThaiCit` · `BuildDocumentLinesAsync`) และ constructor ของ `DocumentsV1Controller` ที่ฉีด
+`IPermissionService` เพิ่ม
+
+---
+
+_Last verified against codebase: 2026-09-19 — รอบ 182 (ลงมือ P0 ชุดแรก · §8)_
 _commit: ddb023b_

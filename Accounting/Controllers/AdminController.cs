@@ -1771,7 +1771,7 @@ public class AdminController : ControllerBase
             return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
                 null, null, null, null, null, null, null, null, null, null,
                 new List<LandingServiceItem>(), null, null, null, null, null,
-                null, null, null, null, null, true, false, null, "th", null, null)));
+                null, null, null, null, null, true, false, null, "th", null, null, true)));
 
         var services = DeserializeServices(settings.ServicesJson);
         return Ok(new ApiResponse<SiteSettingsResponse>(true, new SiteSettingsResponse(
@@ -1784,7 +1784,8 @@ public class AdminController : ControllerBase
             settings.YouTubeUrl, settings.InstagramUrl,
             settings.RegistrationEnabled, settings.MaintenanceMode,
             settings.MaintenanceMessage, settings.DefaultLanguage,
-            settings.ContactAddress, settings.BusinessHours)));
+            settings.ContactAddress, settings.BusinessHours,
+            settings.RequirePhoR06ForAbbreviatedTaxInvoice)));
     }
 
     [HttpPut("site-settings")]
@@ -1833,6 +1834,10 @@ public class AdminController : ControllerBase
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         }
 
+        // นโยบาย ภ.พ.06 — null = ไม่แตะ (ผู้เรียกที่ไม่รู้จักฟิลด์นี้ต้องไม่ปิดด่านให้เงียบ ๆ)
+        if (request.RequirePhoR06ForAbbreviatedTaxInvoice.HasValue)
+            settings.RequirePhoR06ForAbbreviatedTaxInvoice = request.RequirePhoR06ForAbbreviatedTaxInvoice.Value;
+
         settings.UpdatedAt = DateTime.UtcNow;
         settings.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();
@@ -1848,7 +1853,8 @@ public class AdminController : ControllerBase
             settings.YouTubeUrl, settings.InstagramUrl,
             settings.RegistrationEnabled, settings.MaintenanceMode,
             settings.MaintenanceMessage, settings.DefaultLanguage,
-            settings.ContactAddress, settings.BusinessHours),
+            settings.ContactAddress, settings.BusinessHours,
+            settings.RequirePhoR06ForAbbreviatedTaxInvoice),
             "บันทึกการตั้งค่าสำเร็จ"));
     }
 

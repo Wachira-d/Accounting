@@ -1048,10 +1048,14 @@ public class TaxFilingExportService : ITaxFilingExportService
         var estimatedAnnualProfit = netProfitHalf * 2m;
 
         // อัตราภาษี — SME (ทุน ≤ 5 ล. + รายได้ ≤ 30 ล.) ใช้ขั้นบันได, อื่น ๆ 20%.
-        // ใช้ totalRevenue ทั้งปีจริง (ถ้ามี) หรือประมาณ × 2 ตัดสินว่า SME.
+        // ใช้รายได้ทั้งปี (ประมาณครึ่งปี × 2) ตัดสินว่า SME.
+        // ★ D2-B2a: เกณฑ์ SME เคยเป็นสูตร inline ที่นี่ — ย้ายไป
+        // `Helpers/CitRateTable.IsSme` เพื่อให้เส้น ภ.ง.ด.50 (TaxService) ใช้
+        // เกณฑ์ **ตัวเดียวกัน** (เดิม ภ.ง.ด.50 ไม่ตัดสิน SME เลย = ใช้ขั้นบันได
+        // กับทุกบริษัท)
         var revenueAnnualEst = revenueHalf * 2m;
         var paidUpCapital = company.PaidUpCapital;
-        var isSme = paidUpCapital <= 5_000_000m && revenueAnnualEst <= 30_000_000m;
+        var isSme = Accounting.Helpers.CitRateTable.IsSme(paidUpCapital, revenueAnnualEst);
         var estimatedAnnualCit = ComputeCit(estimatedAnnualProfit, isSme);
         // §67 ทวิ — **ตกจุดกึ่งกลางจริง**: `x/2` ให้ .005 ทุกครั้งที่สตางค์เป็นเลขคี่
         // (พิสูจน์แล้วด้วยการไล่ค่า) ⇒ ไม่มี AwayFromZero = banker's rounding
@@ -1071,29 +1075,12 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"กำหนดยื่น: {halfEnd.AddMonths(2):dd/MM/yyyy} (§67 ทวิ — 2 เดือนนับจาก {halfEnd:dd/MM/yyyy})");
     }
 
-    /// <summary>คำนวณ CIT ตามอัตรา SME / ทั่วไป. SME (ทุน ≤ 5 ล. + รายได้ ≤ 30 ล.):
-    /// 0–300k = 0%, 300k–3M = 15%, > 3M = 20%. ทั่วไป: 20% flat.
-    /// กฎ: ประมวลรัษฎากร §65 + พระราชกฤษฎีกา #530/595.</summary>
+    /// <summary>คำนวณ CIT ตามอัตรา SME / ทั่วไป — <b>ตารางอัตราอยู่ที่
+    /// <see cref="Accounting.Helpers.CitRateTable"/> ที่เดียว</b>
+    /// (เดิมสูตรขั้นบันไดอยู่ที่นี่ และมีสำเนาที่สองใน <c>TaxService</c> ที่
+    /// **ไม่ดู SME เลย** — D2-B2a). ห้ามเขียนขั้น/อัตราซ้ำที่นี่อีก</summary>
     private static decimal ComputeCit(decimal netProfit, bool isSme)
-    {
-        if (netProfit <= 0) return 0;
-        // ⚠️ `×0.20` **ไม่เคยตกจุดกึ่งกลางเลย** (ไล่ค่า 2 ล้านค่าแล้วไม่พบสักตัว —
-        // 20·c ลงท้าย 0 เสมอ) ⇒ บรรทัดนี้ไม่ใช่บั๊ก แต่ใส่ไว้ให้เหมือนกันทั้งเมธอด
-        // **เป็นการป้องกัน** ไม่ให้คนถัดไปคัดลอกรูปที่ไม่มี MidpointRounding ไปใช้
-        // กับสูตรที่ตกจริง (บทเรียน VatRoundingMode: ลืม AwayFromZero ≠ ยอดผิดเสมอ)
-        if (!isSme) return Math.Round(netProfit * 0.20m, 2, MidpointRounding.AwayFromZero);
-        // SME ขั้นบันได
-        decimal tax = 0;
-        var remain = netProfit;
-        var b1 = Math.Min(remain, 300_000m); tax += b1 * 0m; remain -= b1;
-        if (remain <= 0) return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
-        // ★ `×0.15` **ตกจุดกึ่งกลางจริง** — ทุกยอดที่สตางค์ ≡ 10 (mod 20)
-        // (0.30 → 0.045 · 0.70 → 0.105 · 1.10 → 0.165) ⇒ ราว 5% ของยอด
-        var b2 = Math.Min(remain, 2_700_000m); tax += b2 * 0.15m; remain -= b2;
-        if (remain <= 0) return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
-        tax += remain * 0.20m;
-        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
-    }
+        => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme);
 
     private static string Esc(string? s) => s == null ? "" : s.Replace("|", "/").Replace("\n", " ").Trim();
 }

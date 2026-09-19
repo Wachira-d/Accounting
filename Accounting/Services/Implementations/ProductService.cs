@@ -854,7 +854,8 @@ public class ProductService : IProductService
         var buckets = items.GroupBy(i => i.AgingBucket)
             .Select(g => new StockAgingBucketSummary(
                 g.Key, g.Count(), g.Sum(i => i.TotalValue),
-                totalValue > 0 ? Math.Round(g.Sum(i => i.TotalValue) / totalValue * 100, 2) : 0))
+                totalValue > 0 ? Math.Round(g.Sum(i => i.TotalValue) / totalValue * 100, 2,
+                    MidpointRounding.AwayFromZero) : 0))
             .OrderBy(b => b.Bucket)
             .ToList();
 
@@ -1006,13 +1007,45 @@ public class ProductService : IProductService
         // Auto journal: Dr ค่าวัสดุสิ้นเปลือง (5xxxxx) / Cr วัสดุสิ้นเปลือง (118xx)
         if (request.AutoCreateJournal && usageCost > 0)
         {
-            var suppliesAccount = product.SuppliesAccountId.HasValue
-                ? await _db.ChartOfAccounts.FindAsync(product.SuppliesAccountId.Value)
-                : await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.AccountCode.StartsWith("118") && a.IsActive);
+            // บัญชีคุมสต็อกของสินค้าตัวนี้ — ตัวตัดสินเดียวที่ **ฝั่งซื้อและฝั่งเบิกใช้
+            // ร่วมกัน** (Helpers/InventoryControlAccount) · เดิมฝั่งเบิก Cr 118xx
+            // ขณะที่ฝั่งซื้อ (DocumentService) Dr 11500 เพราะเห็นแค่ว่า TrackStock
+            // ⇒ สองบัญชีไม่มีวันหักล้าง 11500 บวมถาวร (DECISION_AUDIT D5-2)
+            var suppliesDefaultId = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
+                    && a.AccountCode.StartsWith(
+                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies))
+                    // Level >= 4 = บัญชี postable เท่านั้น — ผังมาตรฐานมี header ระดับ 3
+                    // ชื่อรหัสสั้น ("118") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
+                    // (บั๊กเดียวกับ audit F2 ที่ CN ซื้อเคยลง header "116")
+                    && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync();
+            var inventoryDefaultId = await _db.ChartOfAccounts
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
+                    && a.AccountCode.StartsWith(
+                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Product))
+                    && a.Level >= 4)
+                .OrderBy(a => a.AccountCode)
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync();
 
+            var controlAccountId = Accounting.Helpers.InventoryControlAccount.Resolve(
+                product.ProductType, product.InventoryAccountId, product.SuppliesAccountId,
+                inventoryDefaultId, suppliesDefaultId);
+
+            // ค้นด้วย CompanyId เสมอ (FindAsync ข้าม tenant filter ได้ — กฎเหล็ก #2 M)
+            var suppliesAccount = controlAccountId.HasValue
+                ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == controlAccountId.Value && a.CompanyId == companyId && !a.IsDeleted)
+                : null;
+
+            // เหตุผลเดียวกับด้านบน: FindAsync ไม่ผูก CompanyId
             var expenseAccount = product.SuppliesExpenseAccountId.HasValue
-                ? await _db.ChartOfAccounts.FindAsync(product.SuppliesExpenseAccountId.Value)
+                ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == product.SuppliesExpenseAccountId.Value
+                    && a.CompanyId == companyId && !a.IsDeleted)
                 : await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("5") && a.IsActive
                     && (a.AccountCode.StartsWith("524") || a.AccountCode.StartsWith("531") || a.AccountCode.StartsWith("520")));
@@ -1117,7 +1150,8 @@ public class ProductService : IProductService
             .GroupBy(i => i.Department ?? "ไม่ระบุ")
             .Select(g => new SuppliesUsageByDepartment(
                 g.Key, g.Sum(i => i.TotalCost),
-                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2) : 0))
+                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2,
+                    MidpointRounding.AwayFromZero) : 0))
             .OrderByDescending(d => d.TotalCost)
             .ToList();
 
@@ -1125,7 +1159,8 @@ public class ProductService : IProductService
             .GroupBy(i => i.Category ?? "ไม่ระบุ")
             .Select(g => new SuppliesUsageByCategory(
                 g.Key, g.Sum(i => i.TotalCost),
-                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2) : 0))
+                grandTotal > 0 ? Math.Round(g.Sum(i => i.TotalCost) / grandTotal * 100, 2,
+                    MidpointRounding.AwayFromZero) : 0))
             .OrderByDescending(c => c.TotalCost)
             .ToList();
 

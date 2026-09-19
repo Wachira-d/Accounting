@@ -49,6 +49,19 @@ public class SiteSettings : BaseEntity
     // System behavior
     public bool RegistrationEnabled { get; set; } = true;
     public bool MaintenanceMode { get; set; } = false;
+
+    /// <summary>บังคับให้บริษัทต้องได้รับอนุมัติ <b>ภ.พ.06</b> ก่อนจึงออก
+    /// "ใบกำกับภาษีอย่างย่อ" (§86/6) ได้หรือไม่ — <b>ค่าตั้งต้น <c>true</c> ตามกฎหมายวันนี้</b>
+    ///
+    /// <para>ใบกำกับภาษี<b>เต็มรูป</b> (§86/4) ไม่เกี่ยวกับธงนี้ — จด VAT แล้วออกได้เลยเสมอ</para>
+    ///
+    /// <para>เหตุที่ทำเป็นสวิตช์แทนการฝังกฎไว้ในโค้ด: ข้อบังคับ ภ.พ.06 เป็น<b>นโยบาย</b>
+    /// ที่กรมสรรพากรเปลี่ยนได้ · ปิดสวิตช์นี้ = "ไม่ต้องมี ภ.พ.06 ก็ออกอย่างย่อได้"
+    /// ใช้เมื่อกฎเปลี่ยนโดยไม่ต้องรอ deploy (คำตัดสินเจ้าของโปรเจกต์ 2026-09-19)</para>
+    ///
+    /// <para>ตัวตัดสินอยู่ที่ <c>Helpers/AbbreviatedTaxInvoiceRule</c> ตัวเดียว —
+    /// ห้ามอ่านธงนี้ไปเขียนเงื่อนไขเองที่อื่น</para></summary>
+    public bool RequirePhoR06ForAbbreviatedTaxInvoice { get; set; } = true;
     public string? MaintenanceMessage { get; set; }
     public string DefaultLanguage { get; set; } = "th";
 

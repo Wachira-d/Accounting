@@ -280,7 +280,9 @@ public record SiteSettingsResponse(
     string? MaintenanceMessage,
     string DefaultLanguage,
     string? ContactAddress = null,
-    string? BusinessHours = null);
+    string? BusinessHours = null,
+    /// <summary>บังคับ ภ.พ.06 ก่อนออกใบกำกับภาษีอย่างย่อ (§86/6) — true = กฎหมายวันนี้</summary>
+    bool RequirePhoR06ForAbbreviatedTaxInvoice = true);
 
 public record UpdateSiteSettingsRequest(
     string? SiteName,
@@ -308,7 +310,9 @@ public record UpdateSiteSettingsRequest(
     string? MaintenanceMessage,
     string? DefaultLanguage,
     string? ContactAddress = null,
-    string? BusinessHours = null);
+    string? BusinessHours = null,
+    /// <summary>null = ไม่แตะค่าเดิม (แบบเดียวกับฟิลด์อื่นในคำขอนี้)</summary>
+    bool? RequirePhoR06ForAbbreviatedTaxInvoice = null);
 
 public record LandingPageResponse(
     string? SiteName,

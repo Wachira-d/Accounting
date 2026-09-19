@@ -56,6 +56,25 @@ public class AiFeatureRoutingResolver : IAiFeatureRoutingResolver
     public const decimal MinSamplingRate = 0.01m;
     private const AiFeatureRoutingMode DefaultMode = AiFeatureRoutingMode.Hybrid;
 
+    /// <summary>บังคับพื้นขั้นต่ำของอัตราสุ่มถามครู — **กติกาตัวเดียวที่ใช้ทั้งฝั่งเขียน
+    /// และฝั่งอ่าน** (รอบ 181 · D7-4)
+    ///
+    /// <para>เดิมพื้นนี้ถูกบังคับเฉพาะตอน <see cref="SetAsync"/> ⇒ แถวที่แอดมินตั้ง
+    /// <c>0</c> ไว้**ก่อน**รอบ 178 ยังคงเป็น 0 อยู่ในฐาน และฝั่งอ่าน
+    /// (<c>EnsureCacheFreshAsync</c>) ส่งค่า 0 นั้นให้ orchestrator ตรง ๆ ⇒ ครูถูกปิดถาวร
+    /// โดยไม่มีใครรู้: นักเรียนจะไม่มีวันได้ตัวอย่างใหม่ และตัววัด "นักเรียนแม่นแค่ไหน"
+    /// ก็ไม่มีวันเปลี่ยน = ระบบดู "สุขภาพดี" ตลอดกาล (ด่านที่ป้อนผลของสูตรที่ตัวเองตรวจ)</para>
+    ///
+    /// <para><b>ทิศตรงข้ามที่ต้องคงไว้</b>: โหมด <see cref="AiFeatureRoutingMode.LocalOnly"/>
+    /// คือ**เจตนาปิดครูจริง ๆ ที่มองเห็นได้** — 0 ของโหมดนั้นต้องอยู่เป็น 0 ห้ามยกพื้นให้
+    /// (ไม่งั้นกลายเป็นยิง provider ทั้งที่แอดมินสั่งปิด = kill-switch ใช้ไม่ได้จริง)</para></summary>
+    public static decimal ClampSamplingRate(AiFeatureRoutingMode mode, decimal rate)
+    {
+        if (mode == AiFeatureRoutingMode.LocalOnly) return rate;
+        if (rate > 1m) return 1m;
+        return rate < MinSamplingRate ? MinSamplingRate : rate;
+    }
+
     private Dictionary<string, AiFeatureRoutingDecision> _cache = new();
     private DateTime _cacheLoadedAt = DateTime.MinValue;
     private readonly object _lock = new();
@@ -85,10 +104,8 @@ public class AiFeatureRoutingResolver : IAiFeatureRoutingResolver
             throw new ArgumentOutOfRangeException(nameof(samplingRate), "Must be in [0,1].");
         // พื้นขั้นต่ำ — ดูเหตุผลที่ MinSamplingRate · ผู้ใช้ที่ตั้งใจปิดจริงต้องเลือก
         // โหมด LocalOnly ซึ่งบอกเจตนาตรง ๆ แทนการเลื่อนอัตราไปจนเป็นศูนย์
-        if (samplingRate is { } sr && sr > 0m && sr < MinSamplingRate)
-            samplingRate = MinSamplingRate;
-        else if (samplingRate == 0m && mode != AiFeatureRoutingMode.LocalOnly)
-            samplingRate = MinSamplingRate;
+        // ⚠️ ใช้ ClampSamplingRate **ตัวเดียวกับฝั่งอ่าน** — กติกาสองสำเนาคือที่มาของ D7-4
+        if (samplingRate is { } sr) samplingRate = ClampSamplingRate(mode, sr);
 
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
@@ -140,7 +157,11 @@ public class AiFeatureRoutingResolver : IAiFeatureRoutingResolver
                 r => new AiFeatureRoutingDecision(
                     r.Mode,
                     r.LocalConfidenceThreshold ?? DefaultThreshold,
-                    r.ProviderSamplingRate ?? DefaultSampling));
+                    // ★ D7-4: clamp **ตอนอ่าน** ด้วย — แถวที่เก็บ 0 ไว้ก่อนรอบ 178 ยัง
+                    // อยู่ในฐานและไม่มีใครไปแตะ (การแก้ที่ SetAsync มีผลเฉพาะตอนแอดมิน
+                    // กดบันทึกใหม่เท่านั้น) ⇒ ถ้าไม่ clamp ที่นี่ feature นั้นจะไม่มีวัน
+                    // สุ่มถามครูอีกเลย · แถวที่ยังไม่เคยตั้งค่า (null) ใช้ค่าเริ่มต้น 0.10
+                    ClampSamplingRate(r.Mode, r.ProviderSamplingRate ?? DefaultSampling)));
         }
         catch (Exception ex)
         {

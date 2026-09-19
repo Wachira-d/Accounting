@@ -611,6 +611,10 @@
                     feedbackId: accSel.dataset.aiFeedbackId,
                     chosenAnswer: accSel.value,
                     acceptedAi: accSel.value === top.accountId,
+                    // ผูกกับ event `change` ของดรอปดาวน์ = ผู้ใช้ลงมือเลือกเอง ⇒ Explicit
+                    // (ไม่ส่ง = Implicit ⇒ ExplicitAcceptCount ค้าง 0 ⇒ ด่านของคลังทันที
+                    //  ใน GenericFeedbackDistillationModel ไม่ยอมเสิร์ฟคำตอบเลย · รอบ 181 D7-3)
+                    source: 'Explicit',
                   })
                 }).catch(() => {});
               } catch {}

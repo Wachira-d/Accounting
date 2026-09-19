@@ -1,19 +1,5 @@
 namespace Accounting.Helpers;
 
-/// <summary>เหตุผลที่ออก "ใบกำกับภาษีอย่างย่อ" (§86/6) ไม่ได้ — ใช้แสดงให้ผู้ใช้เข้าใจ
-/// ว่าต้องทำอะไรต่อ (กติกา: ปฏิเสธแล้วต้องมีทางไปต่อ ห้ามตันเฉย ๆ)</summary>
-public enum AbbreviatedInvoiceBlockReason
-{
-    None = 0,
-    /// <summary>บริษัทยังไม่จด VAT — ไม่มีสิทธิ์ออกใบกำกับชนิดใดเลย (§77/1)</summary>
-    NotVatRegistered = 1,
-    /// <summary>จด VAT แล้วแต่ยังไม่ได้รับอนุมัติ ภ.พ.06 (ประกอบกิจการค้าปลีก)</summary>
-    NoPhoR06Approval = 2,
-    /// <summary>บิลนี้ไม่มี VAT (ขายสินค้ายกเว้น §81 หรืออัตรา 0%) — ออกใบกำกับ
-    /// อย่างย่อไม่ได้ ต้องเป็นใบเสร็จรับเงินธรรมดา</summary>
-    NoVatOnBill = 3,
-}
-
 /// <summary>หัวกระดาษของสลิป POS + สิทธิ์ออกใบกำกับภาษีอย่างย่อ (§86/6)
 ///
 /// ═══ ที่มา (POS_MULTI_BRANCH_ANALYSIS.md — ทีม CPA) ═══
@@ -38,45 +24,33 @@ public static class PosSlipHeader
         bool CanIssueAbbreviated,
         AbbreviatedInvoiceBlockReason Reason)
     {
-        /// <summary>ข้อความอธิบายพร้อมทางไปต่อ — null เมื่อออกได้ปกติ</summary>
-        public string? Message => Reason switch
-        {
-            AbbreviatedInvoiceBlockReason.NotVatRegistered =>
-                "บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม — สลิปพิมพ์เป็น \"ใบเสร็จรับเงิน\" "
-                + "(จด VAT แล้วมาตั้งค่าในหน้าข้อมูลบริษัท)",
-            AbbreviatedInvoiceBlockReason.NoPhoR06Approval =>
-                "ยังไม่ได้รับอนุมัติ ภ.พ.06 (ประกอบกิจการค้าปลีก) — ออกใบกำกับภาษีอย่างย่อไม่ได้ "
-                + "ตาม §86/6 · สลิปพิมพ์เป็น \"ใบเสร็จรับเงิน\" ไปก่อน · ยื่น ภ.พ.06 แล้วกรอกวันที่"
-                + "อนุมัติในหน้าข้อมูลบริษัท",
-            AbbreviatedInvoiceBlockReason.NoVatOnBill =>
-                "บิลนี้ไม่มีภาษีมูลค่าเพิ่ม (สินค้ายกเว้น §81 หรืออัตรา 0%) — พิมพ์เป็น"
-                + "\"ใบเสร็จรับเงิน\"",
-            _ => null,
-        };
+        /// <summary>ข้อความอธิบายพร้อมทางไปต่อ — null เมื่อออกได้ปกติ
+        /// (ข้อความอยู่ที่ <see cref="AbbreviatedTaxInvoiceRule"/> เจ้าของกติกา ห้ามเขียนซ้ำที่นี่)</summary>
+        public string? Message => AbbreviatedTaxInvoiceRule.Message(Reason);
     }
 
     /// <summary>ตัดสินหัวสลิป
     ///
-    /// <para><paramref name="phoR06ApprovedDate"/> เป็นตัวชี้ขาดคู่กับ
-    /// <paramref name="isRetailApproved"/>: ต้องมี **ทั้งสองอย่าง** — ธงอย่างเดียวคือ
-    /// เจตนา ส่วนวันที่คือหลักฐาน (บทเรียน "doc-comment ที่บอกว่ามีด่านแล้ว = เจตนา
-    /// ไม่ใช่หลักฐาน" ในรูปข้อมูล)</para>
+    /// <para>สิทธิ์ออกใบกำกับอย่างย่อตัดสินโดย <see cref="AbbreviatedTaxInvoiceRule"/>
+    /// <b>ตัวเดียวของระบบ</b> (เส้นเอกสาร/PDF ใช้ตัวเดียวกัน) — ที่นี่เหลือเฉพาะกติกา
+    /// ที่เป็นของ<b>สลิป</b>จริง ๆ คือ "บิลนี้ไม่มี VAT ก็ไม่มีอะไรให้ใบกำกับรับรอง"</para>
     ///
-    /// <para><paramref name="issueDateUtc"/> ใช้กันการออกย้อนไปก่อนวันอนุมัติ — ใบที่ลงวันที่
-    /// ก่อน ภ.พ.06 อนุมัติ ยังออกอย่างย่อไม่ได้</para></summary>
+    /// <para><paramref name="requirePhoR06"/> มาจาก
+    /// <c>SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice</c> (แอดมินแพลตฟอร์มตั้ง) —
+    /// <b>ไม่มีค่าตั้งต้นในลายเซ็นโดยตั้งใจ</b>: ผู้เรียกใหม่ต้องรู้ตัวว่ากำลังตัดสินเรื่อง
+    /// สิทธิ์ตามกฎหมาย ไม่ใช่เผลอรับค่า default ไปเงียบ ๆ</para></summary>
     public static Result Resolve(
         bool isVatRegistered,
         bool isRetailApproved,
         DateTime? phoR06ApprovedDate,
         decimal vatAmountOnBill,
-        DateTime issueDateUtc)
+        DateTime issueDateUtc,
+        bool requirePhoR06)
     {
-        if (!isVatRegistered)
-            return new(Receipt, false, AbbreviatedInvoiceBlockReason.NotVatRegistered);
-
-        if (!isRetailApproved || phoR06ApprovedDate is not DateTime approved
-            || issueDateUtc.Date < approved.Date)
-            return new(Receipt, false, AbbreviatedInvoiceBlockReason.NoPhoR06Approval);
+        var eligibility = AbbreviatedTaxInvoiceRule.Judge(
+            isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06);
+        if (eligibility != AbbreviatedInvoiceBlockReason.None)
+            return new(Receipt, false, eligibility);
 
         // ไม่มี VAT บนบิล = ไม่มีอะไรให้ใบกำกับรับรอง — คำว่า "ใบกำกับภาษี" บนใบที่
         // VAT = 0 ทำให้ผู้ซื้อเข้าใจผิดว่ามีภาษีซื้อให้เคลม

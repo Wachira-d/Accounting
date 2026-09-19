@@ -469,8 +469,11 @@ public class IntegrationService : IIntegrationService
         if (!string.IsNullOrWhiteSpace(sent)) return ParseContactType(sent);
         // ทะเบียนนิติบุคคลยืนยันแล้ว = นิติบุคคลแน่นอน
         if (dbdMatched) return ContactType.JuristicPerson;
-        return Accounting.Helpers.ThaiTaxId.IsJuristic(taxId)
-            ? ContactType.JuristicPerson : ContactType.Individual;
+        // ตัวตัดสินจากเลขผู้เสียภาษีย้ายไป Helpers/ContactTypeFromTaxId แล้ว —
+        // เส้น `/api/v1` ทั้งสองจุดเรียกตัวเดียวกันนี้ (เดิมมีสำเนาคนละแบบ 3 ชุด)
+        // ตัดสินไม่ได้ที่นี่ยังคง Individual ตามพฤติกรรมเดิม เพราะผู้เรียกฝั่ง
+        // update มีด่าน "ห้ามลดระดับนิติบุคคลที่ยืนยันแล้ว" ของตัวเองอยู่แล้ว
+        return Accounting.Helpers.ContactTypeFromTaxId.Resolve(taxId) ?? ContactType.Individual;
     }
 
     // ===== Phase 2: Inbound Data Processing =====
@@ -653,10 +656,8 @@ public class IntegrationService : IIntegrationService
             // endpoint นี้สร้าง TaxInvoice เสมอ — บริษัทที่ติ๊ก "ไม่จด VAT"
             // ต้องถูกปฏิเสธพร้อมทางแก้ ไม่ใช่ปล่อยใบกำกับหลุดออกไป (ความผิด
             // ทั้งค่าปรับและต้องนำส่ง VAT ที่เรียกเก็บ)
-            var vatRegistered = await _db.CompanySettings.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => (bool?)c.VatRegistered)
-                .FirstOrDefaultAsync() ?? true;
+            var vatProfile = await GetCompanyVatProfileAsync(companyId);
+            var vatRegistered = vatProfile.Registered;
             if (!vatRegistered)
             {
                 log.Status = "Failed";
@@ -688,7 +689,21 @@ public class IntegrationService : IIntegrationService
             // แล้วไม่ได้ใช้ (เส้นทาง fail ด้านล่าง) ไม่ทำให้เกิดช่องว่างอยู่แล้ว
 
             // Calculate totals
-            var vatRate = request.VatRate ?? 7m;
+            // อัตราภาษีขาย — ตัวตัดสินเดียวอยู่ที่ Helpers/PartnerVatRate
+            // (เดิมถอยไปหาเลข 7 ตายตัว ⇒ ไม่เคยอ่านอัตราที่บริษัทตั้งไว้เลย)
+            // จุดนี้ผ่านด่าน §90/2 ข้างบนแล้วจึงไม่มีทาง Rejected — เช็คไว้กัน
+            // ให้ด่านสองชั้นไม่หลุดทิศกันถ้าวันหนึ่งด่านแรกถูกย้าย/ผ่อน
+            var vatDecision = Accounting.Helpers.PartnerVatRate.ForIssuedDocument(
+                request.VatRate, vatRegistered, vatProfile.DefaultRate);
+            if (vatDecision.Rejected)
+            {
+                log.Status = "Failed";
+                log.ErrorMessage = "Output VAT blocked — company not VAT-registered (§90/2)";
+                log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                await SaveSyncLog(log, integrationId);
+                return new InboundSyncResponse(false, vatDecision.Error, null, null, null, null, null);
+            }
+            var vatRate = vatDecision.Rate;
             decimal subTotal = 0, totalVat = 0, totalDiscount = 0;
             var lines = new List<DocumentLine>();
 
@@ -1160,7 +1175,15 @@ public class IntegrationService : IIntegrationService
                 relatedDocId = original?.Id;
             }
 
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines);
+            // §86/9-10 ใบเพิ่มหนี้/ใบลดหนี้ = เอกสารที่ **เราออก** ⇒ เป็นภาษีขาย:
+            // อัตราต้องมาจากสถานะจดทะเบียนของบริษัท ไม่ใช่ค่า default `= 7`
+            // ที่เคยฝังอยู่ในลายเซ็น BuildDocumentLinesAsync (DTO ของ CN/DN ไม่มี
+            // ช่อง vatRate ระดับเอกสาร จึงส่ง null เสมอ — ดู Helpers/PartnerVatRate)
+            var noteVatProfile = await GetCompanyVatProfileAsync(companyId);
+            var noteVat = Accounting.Helpers.PartnerVatRate.ForIssuedDocument(
+                null, noteVatProfile.Registered, noteVatProfile.DefaultRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, noteVat.Rate,
+                outputVatAllowed: noteVatProfile.Registered);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
 
@@ -1280,7 +1303,15 @@ public class IntegrationService : IIntegrationService
                 relatedDocId = original?.Id;
             }
 
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines);
+            // §86/9-10 ใบเพิ่มหนี้/ใบลดหนี้ = เอกสารที่ **เราออก** ⇒ เป็นภาษีขาย:
+            // อัตราต้องมาจากสถานะจดทะเบียนของบริษัท ไม่ใช่ค่า default `= 7`
+            // ที่เคยฝังอยู่ในลายเซ็น BuildDocumentLinesAsync (DTO ของ CN/DN ไม่มี
+            // ช่อง vatRate ระดับเอกสาร จึงส่ง null เสมอ — ดู Helpers/PartnerVatRate)
+            var noteVatProfile = await GetCompanyVatProfileAsync(companyId);
+            var noteVat = Accounting.Helpers.PartnerVatRate.ForIssuedDocument(
+                null, noteVatProfile.Registered, noteVatProfile.DefaultRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, noteVat.Rate,
+                outputVatAllowed: noteVatProfile.Registered);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
 
@@ -1784,9 +1815,38 @@ public class IntegrationService : IIntegrationService
     private static bool IsWrongSideAccount(AccountType type, bool expenseSide)
         => expenseSide ? type == AccountType.Revenue : type == AccountType.Expense;
 
+    /// <summary>
+    /// สถานะ VAT ของบริษัทนี้ — **จุดอ่านเดียวของทั้งไฟล์** (เดิมไม่มีเลย จึงเกิด
+    /// `request.VatRate` ถอยไปหาเลข 7 ตายตัว 6 จุด + `defaultVatRate = 7` อีก 2 จุด
+    /// โดยไม่มีใครรู้ว่า tenant จด VAT หรือไม่ — DECISION_AUDIT §3 D8-4)
+    ///
+    /// <para>อ่านจาก <c>CompanySettings</c> ชุดเดียวกับ <c>DocumentService</c> และ
+    /// ด่าน §90/2 ที่มีอยู่แล้วในไฟล์นี้ (คู่ <c>Company.IsVatRegistered</c>/<c>VatRate</c>
+    /// ถูก sync ให้ตรงกันเสมอที่ <c>CompanyService</c>/<c>SettingsService</c>)</para>
+    ///
+    /// <para>ยังไม่เคยตั้งค่า = ถือว่า "จด + 7%" — ตรงกับพฤติกรรมเดิมของบริษัทที่ยัง
+    /// ไม่แตะหน้าตั้งค่า จึงไม่มีใครถูกบล็อกโดยไม่รู้ตัวจากการแก้รอบนี้</para>
+    /// </summary>
+    private async Task<(bool Registered, decimal DefaultRate)> GetCompanyVatProfileAsync(Guid companyId)
+    {
+        var row = await _db.CompanySettings.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.VatRegistered, c.DefaultVatRate })
+            .FirstOrDefaultAsync();
+        var rate = row?.DefaultVatRate ?? Accounting.Helpers.PartnerVatRate.StatutoryRate;
+        return (row?.VatRegistered ?? true,
+            rate > 0m ? rate : Accounting.Helpers.PartnerVatRate.StatutoryRate);
+    }
+
+    /// <param name="outputVatAllowed">false = บริษัทยังไม่จด VAT และเอกสารนี้ **เราเป็นผู้ออก**
+    /// ⇒ บรรทัดที่คู่ค้าสั่งให้เก็บ VAT ต้องถูกปฏิเสธดัง ๆ ไม่ใช่เงียบ ๆ ตัดเป็น 0
+    /// (ไม่งั้นด่านระดับเอกสารถูกข้ามด้วยอัตรารายบรรทัด — ราก R5)</param>
+    /// <param name="inputVatClaimable">false = บริษัทไม่จด VAT ⇒ ภาษีซื้อบนใบของผู้ขาย
+    /// เคลมไม่ได้ รวมเป็นต้นทุน (ยอดที่ต้องจ่ายผู้ขาย **ไม่เปลี่ยน**)</param>
     private async Task<List<DocumentLine>> BuildDocumentLinesAsync(
-        Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate = 7,
-        bool expenseSide = false, bool includeVat = false)
+        Guid companyId, List<InboundInvoiceLineRequest> lines, decimal defaultVatRate,
+        bool expenseSide = false, bool includeVat = false,
+        bool outputVatAllowed = true, bool inputVatClaimable = true)
     {
         // Resolve any line-level AccountCode the partner sent → ChartOfAccount
         // id, so the document line carries its real GL account and the JE
@@ -1833,6 +1893,10 @@ public class IntegrationService : IIntegrationService
             var lineDiscount = line.DiscountAmount ?? 0;
             var lineNet = lineAmount - lineDiscount;
             var lineVatRate = line.VatRate ?? defaultVatRate;
+            // §90/2 — ผู้ไม่จดทะเบียนเรียกเก็บ VAT ไม่ได้ แม้คู่ค้าสั่งมารายบรรทัด
+            if (!outputVatAllowed && (lineVatRate > 0m || line.VatAmount > 0m))
+                throw new InvalidOperationException(
+                    Accounting.Helpers.PartnerVatRate.BlockedMessage(lineVatRate));
             // ⚠️ เดิมคิด exclusive เสมอ ไม่รู้จัก IncludeVat ⇒ VAT ไม่เคยถูกบวก
             // เข้ายอดรวม แล้ว JE ถูกตีตกทั้งใบ (ดูหมายเหตุที่ SplitLineVat)
             (lineNet, var lineVat) = Accounting.Helpers.DocumentLineVatConvention.SplitLine(lineNet, lineVatRate, line.VatAmount, includeVat);
@@ -1858,6 +1922,14 @@ public class IntegrationService : IIntegrationService
                 VatAmount = lineVat,
                 WithholdingTaxRate = lineWhtRate,
                 WithholdingTaxAmount = lineWht,
+                // ภาษีซื้อ: บริษัทไม่จด VAT = เคลมไม่ได้ทุกบรรทัด (รวมเป็นต้นทุน) ·
+                // บรรทัดที่ไม่มี VAT ก็ไม่มีอะไรให้เคลม — กติกาเดียวกับเส้นคีย์มือ
+                // ใน DocumentService (เดิมเส้น integration ไม่เคยตั้งค่านี้เลย
+                // ⇒ default true ⇒ ภาษีซื้อของผู้ไม่จด VAT ถูกนับเป็นเคลมได้)
+                IsVatClaimable = !expenseSide
+                    || Accounting.Helpers.PartnerVatRate.InputVatClaimable(inputVatClaimable, lineVat),
+                VatNonClaimableReason = expenseSide && !inputVatClaimable && lineVat > 0m
+                    ? Accounting.Helpers.PartnerVatRate.NotVatRegisteredReason : null,
                 // Honour the partner's AccountCode → real GL account on the line.
                 AccountId = accountId
             };
@@ -2619,11 +2691,27 @@ public class IntegrationService : IIntegrationService
             return new InboundSyncResponse(false, guardError, existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
         }
 
+        // อัตราภาษีขายของใบที่ resync — เส้นนี้ **ไม่ได้** ผ่านด่าน §90/2 ของ
+        // ProcessInvoiceAsync (คู่ค้ายิงตรงเข้ามาแก้ใบเดิมได้) ⇒ ต้องตรวจเองที่นี่
+        // มิฉะนั้นบริษัทที่เพิ่งยกเลิกจดทะเบียนจะยังถูก resync ใส่ VAT กลับเข้าไป
+        var vatProfile = await GetCompanyVatProfileAsync(companyId);
+        var vatDecision = Accounting.Helpers.PartnerVatRate.ForIssuedDocument(
+            request.VatRate, vatProfile.Registered, vatProfile.DefaultRate);
+        if (vatDecision.Rejected)
+        {
+            log.Status = "Failed";
+            log.ErrorMessage = "Output VAT blocked — company not VAT-registered (§90/2)";
+            log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+            await SaveSyncLog(log, integrationId);
+            return new InboundSyncResponse(false, vatDecision.Error, existing.Id, existing.ContactId, null, null, existing.DocumentNumber);
+        }
+
         // ลบบรรทัดเดิม → สร้างใหม่จากข้อมูล resync (helper เดียวกับตอน create)
         var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
         _db.DocumentLines.RemoveRange(oldLines);
-        var vatRate = request.VatRate ?? 7m;
-        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, includeVat: request.IncludeVat);
+        var vatRate = vatDecision.Rate;
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate,
+            includeVat: request.IncludeVat, outputVatAllowed: vatProfile.Registered);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;   // ให้ JE builder เห็นบรรทัดใหม่ทันที (nav ไม่ได้ Include มา)
 
@@ -2706,8 +2794,16 @@ public class IntegrationService : IIntegrationService
 
         var oldLines = await _db.DocumentLines.Where(l => l.DocumentId == existing.Id).ToListAsync();
         _db.DocumentLines.RemoveRange(oldLines);
-        var vatRate = request.VatRate ?? 7m;
-        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
+        // ภาษี**ซื้อ**: VAT บนใบเป็นของผู้ขาย — สถานะจดทะเบียนของเราไม่ตัดอัตรานี้
+        // (ตัดแล้วยอดที่ต้องจ่ายผู้ขายหายไปเงียบ ๆ) แต่ตัดสิน "เคลมได้ไหม":
+        // ไม่จด VAT = เคลมไม่ได้ทุกบรรทัด รวมเป็นต้นทุน — กติกาเดียวกับเส้นคีย์มือ
+        // ใน DocumentService · ตัวตัดสินเดียวอยู่ที่ Helpers/PartnerVatRate
+        var vatProfile = await GetCompanyVatProfileAsync(companyId);
+        var vatRate = Accounting.Helpers.PartnerVatRate.ForReceivedDocument(
+            request.VatRate, vatProfile.DefaultRate);
+        var newLines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate,
+            expenseSide: true, includeVat: request.IncludeVat,
+            inputVatClaimable: vatProfile.Registered);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;
 
@@ -3121,8 +3217,16 @@ public class IntegrationService : IIntegrationService
                 request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.Expense, request.DocumentDate);
-            var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
+            // ภาษี**ซื้อ**: VAT บนใบเป็นของผู้ขาย — สถานะจดทะเบียนของเราไม่ตัดอัตรานี้
+            // (ตัดแล้วยอดที่ต้องจ่ายผู้ขายหายไปเงียบ ๆ) แต่ตัดสิน "เคลมได้ไหม":
+            // ไม่จด VAT = เคลมไม่ได้ทุกบรรทัด รวมเป็นต้นทุน — กติกาเดียวกับเส้นคีย์มือ
+            // ใน DocumentService · ตัวตัดสินเดียวอยู่ที่ Helpers/PartnerVatRate
+            var vatProfile = await GetCompanyVatProfileAsync(companyId);
+            var vatRate = Accounting.Helpers.PartnerVatRate.ForReceivedDocument(
+                request.VatRate, vatProfile.DefaultRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate,
+                expenseSide: true, includeVat: request.IncludeVat,
+                inputVatClaimable: vatProfile.Registered);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
@@ -3242,8 +3346,16 @@ public class IntegrationService : IIntegrationService
                 request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
-            var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
+            // ภาษี**ซื้อ**: VAT บนใบเป็นของผู้ขาย — สถานะจดทะเบียนของเราไม่ตัดอัตรานี้
+            // (ตัดแล้วยอดที่ต้องจ่ายผู้ขายหายไปเงียบ ๆ) แต่ตัดสิน "เคลมได้ไหม":
+            // ไม่จด VAT = เคลมไม่ได้ทุกบรรทัด รวมเป็นต้นทุน — กติกาเดียวกับเส้นคีย์มือ
+            // ใน DocumentService · ตัวตัดสินเดียวอยู่ที่ Helpers/PartnerVatRate
+            var vatProfile = await GetCompanyVatProfileAsync(companyId);
+            var vatRate = Accounting.Helpers.PartnerVatRate.ForReceivedDocument(
+                request.VatRate, vatProfile.DefaultRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate,
+                expenseSide: true, includeVat: request.IncludeVat,
+                inputVatClaimable: vatProfile.Registered);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             var totalWht = lines.Sum(l => l.WithholdingTaxAmount);
@@ -3499,8 +3611,16 @@ public class IntegrationService : IIntegrationService
                 null, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
             var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.CertificateInLieu, request.DocumentDate);
-            var vatRate = request.VatRate ?? 7m;
-            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate, expenseSide: true, includeVat: request.IncludeVat);
+            // ภาษี**ซื้อ**: VAT บนใบเป็นของผู้ขาย — สถานะจดทะเบียนของเราไม่ตัดอัตรานี้
+            // (ตัดแล้วยอดที่ต้องจ่ายผู้ขายหายไปเงียบ ๆ) แต่ตัดสิน "เคลมได้ไหม":
+            // ไม่จด VAT = เคลมไม่ได้ทุกบรรทัด รวมเป็นต้นทุน — กติกาเดียวกับเส้นคีย์มือ
+            // ใน DocumentService · ตัวตัดสินเดียวอยู่ที่ Helpers/PartnerVatRate
+            var vatProfile = await GetCompanyVatProfileAsync(companyId);
+            var vatRate = Accounting.Helpers.PartnerVatRate.ForReceivedDocument(
+                request.VatRate, vatProfile.DefaultRate);
+            var lines = await BuildDocumentLinesAsync(companyId, request.Lines, vatRate,
+                expenseSide: true, includeVat: request.IncludeVat,
+                inputVatClaimable: vatProfile.Registered);
             var subTotal = lines.Sum(l => l.Amount);
             var totalVat = lines.Sum(l => l.VatAmount);
             // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT

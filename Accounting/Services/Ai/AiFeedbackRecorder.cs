@@ -246,7 +246,23 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             // ถ้านับทุกครั้งอัตรายอมรับจะเพี้ยน (ตัวหารโตกว่าจำนวน call จริง)
             var firstDecision = row.UserChosenAt == null;
             var wasAccepted = row.UserAcceptedAi == true;
-            row.UserChosenAnswer = chosenAnswer;
+
+            // ── ธงของ UI ≠ คำตอบ (รอบ 181 · D7-1) ─────────────────────────────
+            // ปุ่ม "ใช้ของเดิม" ส่ง `__USER_KEPT_EXISTING__` มาเพื่อบอกว่า **ไม่รับคำตอบ
+            // ของ AI** — มันไม่ใช่ค่าที่ผู้ใช้เลือก และหน้าเว็บไม่ได้บอกเราว่าค่าที่เขา
+            // เก็บไว้คืออะไร ⇒ สิ่งที่เรารู้จริงมีอย่างเดียวคือ "ผู้ใช้ดูแล้วและปฏิเสธ"
+            //
+            // จึงบันทึก **การปฏิเสธ** (UserChosenAt + UserAcceptedAi=false → เข้าสถิติ
+            // "ผู้ใช้ตรวจแล้ว/รับ AI กี่ครั้ง" ตามจริง) แต่ **ไม่แต่งคำตอบขึ้นมา**:
+            // `UserChosenAnswer` คงเป็น null = "ไม่รู้" ซึ่งเป็นค่าที่ถูกต้องตามหลักการ
+            // ข้อ 3 (ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ) และทำให้ทุกฝั่งที่เรียนรู้
+            // (LearnInlineAsync · AiFeedbackTrainingJob · นักเรียน generic) มองข้ามแถวนี้
+            // แทนที่จะเรียนสตริงธงเป็น "รหัสบัญชีที่ผู้ใช้ยืนยัน"
+            var isSentinel = Accounting.Helpers.AiSentinelAnswers.IsSentinel(chosenAnswer);
+            // ห้ามลบคำตอบจริงที่เคยบันทึกไว้ด้วยการกดปุ่มธงทีหลัง — เขียนเฉพาะค่าจริง
+            if (!isSentinel) row.UserChosenAnswer = chosenAnswer;
+            // ธง "ใช้ของเดิม" = ปฏิเสธเสมอ ต่อให้ผู้เรียกส่ง acceptedAi=true มาผิด ๆ
+            if (isSentinel) acceptedAi = false;
             row.UserChosenAt = DateTime.UtcNow;
             row.UserAcceptedAi = acceptedAi;
             row.UserChoiceOrigin = source;
@@ -264,7 +280,10 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
             // PromptHash, which suggestion endpoints set to a stable
             // business key (contactId, normalised name, …). Skipped when
             // the key is empty (legacy rows) or the answer is blank.
-            await LearnInlineAsync(row.CompanyId, row.FeatureKey, row.PromptHash, chosenAnswer, source, ct);
+            // sentinel ⇒ ไม่มีคำตอบให้เรียน (ดูบล็อกด้านบน) — ด่านตัวจริงอยู่ใน
+            // LearnInlineAsync ด้วย เผื่อมีผู้เรียกใหม่วันหลัง
+            if (!isSentinel)
+                await LearnInlineAsync(row.CompanyId, row.FeatureKey, row.PromptHash, chosenAnswer, source, ct);
         }
         catch (Exception ex)
         {
@@ -281,6 +300,8 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         string chosenAnswer, UserChoiceSource source, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(inputKey) || string.IsNullOrWhiteSpace(chosenAnswer)) return;
+        // ธงของ UI ("ใช้ของเดิม") ไม่ใช่คำตอบ — ห้ามเข้าคลัง (รอบ 181 · D7-1)
+        if (Accounting.Helpers.AiSentinelAnswers.IsSentinel(chosenAnswer)) return;
         if (inputKey.Length > 256) inputKey = inputKey[..256];
         try
         {

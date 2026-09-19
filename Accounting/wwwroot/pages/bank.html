@@ -1311,7 +1311,8 @@
                   fetch(`/api/companies/${cid}/ai-feedback/record`, {
                     method: 'POST',
                     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ feedbackId: j.data.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === top.accountId })
+                    // event `change` ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3)
+                    body: JSON.stringify({ feedbackId: j.data.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === top.accountId, source: 'Explicit' })
                   }).catch(() => {});
                 } catch {}
               }, { once: true });

@@ -254,6 +254,14 @@ public class CompanyService : ICompanyService
         if (request.IsRetailApproved.HasValue) company.IsRetailApproved = request.IsRetailApproved.Value;
         if (request.PhoR06ApprovedDate.HasValue)
             company.PhoR06ApprovedDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.PhoR06ApprovedDate.Value);
+        // ทุนจดทะเบียนที่ชำระแล้ว — ติดลบไม่มีความหมาย ปฏิเสธดีกว่าเก็บค่าที่ทำให้
+        // สูตรภาษีเพี้ยนเงียบ (เพดานค่ารับรอง §65 ตรี(4) คิดจากค่านี้)
+        if (request.PaidUpCapital.HasValue)
+        {
+            if (request.PaidUpCapital.Value < 0m)
+                throw new InvalidOperationException("ทุนจดทะเบียนที่ชำระแล้วต้องไม่ติดลบ");
+            company.PaidUpCapital = request.PaidUpCapital.Value;
+        }
         if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
         if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
         if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
@@ -604,7 +612,8 @@ public class CompanyService : ICompanyService
             c.FiscalYearStartMonth, c.IsSetupComplete, sub,
             AddressEn: c.AddressEn,
             IsRetailApproved: c.IsRetailApproved,
-            PhoR06ApprovedDate: c.PhoR06ApprovedDate);
+            PhoR06ApprovedDate: c.PhoR06ApprovedDate,
+            PaidUpCapital: c.PaidUpCapital);
     }
 
     /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่

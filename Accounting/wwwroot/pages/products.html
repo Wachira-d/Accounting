@@ -496,6 +496,8 @@
                     feedbackId: d.feedbackId,
                     chosenAnswer: catEl.value,
                     acceptedAi: catEl.value === suggested,
+                    // event `change` ของช่องหมวด = ผู้ใช้แก้เอง ⇒ Explicit (รอบ 181 D7-3)
+                    source: 'Explicit',
                   })
                 }).catch(() => {});
               } catch {}

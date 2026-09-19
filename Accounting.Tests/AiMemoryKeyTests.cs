@@ -74,6 +74,67 @@ public class AiMemoryKeyTests
     public void ไม่มีอินพุต_ต้องคืนค่าว่าง(string? input)
         => Assert.Equal("", AiMemoryKey.Of(input));
 
+    // ══════════ บล็อก local_model = "คำตอบที่เสนอ" ไม่ใช่ "คำถาม" (รอบ 181 · D7-2) ══════════
+    //
+    // บั๊กที่ล็อกไว้: `AiOrchestrator` เขียนทับบล็อก `local_model` ด้วยคำตอบของนักเรียน
+    // **ก่อน** คิดกุญแจ (บรรทัด :177 → :310) ส่วนนักเรียนทำนายด้วย JSON **ก่อน** เขียนทับ
+    // ⇒ กุญแจสองฝั่งต่างกันทันทีที่นักเรียนเริ่มตอบได้ = คลังที่เรียนไว้หาไม่เจอตลอดกาล
+    // (นักเรียน generic หยุดโตหลังใบแรก · อาการเงียบสนิท ไม่มี error ไม่มี log)
+
+    private const string PayloadHeuristic = """
+        {"vendor":{"name":"ร้านวัสดุ ก","tax_id":"0105556123453"},
+         "line":{"description":"ค่าซ่อมแอร์"},
+         "local_model":{"pick":null,"confidence":0.0}}
+        """;
+
+    private const string PayloadStudentAnswered = """
+        {"vendor":{"name":"ร้านวัสดุ ก","tax_id":"0105556123453"},
+         "line":{"description":"ค่าซ่อมแอร์"},
+         "local_model":{"pick":"5310","confidence":0.82,"source":"distilled-student"}}
+        """;
+
+    [Fact]
+    public void บล็อก_local_model_ต่างกัน_ยังเป็นคำถามเดียวกัน()
+        => Assert.Equal(AiMemoryKey.Of(PayloadHeuristic), AiMemoryKey.Of(PayloadStudentAnswered));
+
+    [Fact]
+    public void มีบล็อก_local_model_กับไม่มีเลย_ต้องได้กุญแจเดียวกัน()
+        // prompt builder บางตัวไม่ใส่บล็อกนี้ (payload แบบ bulk) — คำถามเดียวกันต้องชนกัน
+        => Assert.Equal(
+            AiMemoryKey.Of("""{"line":{"description":"ค่าซ่อมแอร์"}}"""),
+            AiMemoryKey.Of("""{"line":{"description":"ค่าซ่อมแอร์"},"local_model":{"pick":"5310"}}"""));
+
+    [Fact]
+    public void กุญแจฝั่งทำนายกับฝั่งเรียน_ต้องตรงกันตามลำดับจริงของ_orchestrator()
+    {
+        // ลำดับจริง: (1) นักเรียนทำนายด้วย UserPromptJson เดิม → (2) orchestrator เขียนทับ
+        // บล็อก local_model ด้วยคำตอบนักเรียน → (3) คิด memoryKey จาก JSON ที่แก้แล้ว
+        // เรียก **ฟังก์ชันจริง** ไม่ลอกตรรกะมาเขียนใหม่ (สำเนาที่สองจะ drift เงียบ ๆ)
+        var predictKey = AiMemoryKey.Of(PayloadHeuristic);
+        var rewritten = Accounting.Services.Ai.AiOrchestrator.ReplaceLocalModelBlock(
+            PayloadHeuristic, "5310", 0.82m);
+        var recordKey = AiMemoryKey.Of(rewritten);
+
+        Assert.NotEqual(PayloadHeuristic, rewritten);      // เขียนทับจริง (ไม่งั้นเทสต์นี้ว่างเปล่า)
+        Assert.Equal(predictKey, recordKey);
+    }
+
+    [Fact]
+    public void ตัด_local_model_แล้ว_คนละคำถามยังต้องได้คนละกุญแจ()
+        // ทิศตรงข้าม: การตัดบล็อกออกต้องไม่ทำให้ "อะไรก็ชนกันหมด" — ถ้าคำถามต่างกันจริง
+        // (คนละรายการ) กุญแจต้องยังต่างกัน ไม่งั้นจะเสิร์ฟคำตอบของใบอื่นซึ่งแย่กว่าไม่ตอบ
+        => Assert.NotEqual(
+            AiMemoryKey.Of("""{"line":{"description":"ค่าซ่อมแอร์"},"local_model":{"pick":"5310"}}"""),
+            AiMemoryKey.Of("""{"line":{"description":"ค่าเช่าสำนักงาน"},"local_model":{"pick":"5310"}}"""));
+
+    [Fact]
+    public void คีย์ที่ชื่อคล้าย_local_model_แต่เป็นอินพุตจริง_ห้ามถูกตัด()
+        // ลิสต์ปิดโดยตั้งใจ: ถ้าใช้แพตเทิร์น `local*` / `*_model` คีย์อินพุตจริงจะหายไป
+        // แล้วคำถามคนละคำถามจะได้กุญแจเดียวกัน (ญาติของ `__NEW__` ที่เป็นคำตอบจริง)
+        => Assert.NotEqual(
+            AiMemoryKey.Of("""{"local_branch":"สาขาลาดพร้าว","model_code":"เครื่องพิมพ์"}"""),
+            AiMemoryKey.Of("""{"local_branch":"สาขาสีลม","model_code":"เครื่องพิมพ์"}"""));
+
     [Fact]
     public void กุญแจต้องยาวไม่เกินคอลัมน์ที่เก็บ()
         // PromptHash เป็น varchar(80) — SHA-256 hex = 64 ตัว

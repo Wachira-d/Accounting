@@ -2390,7 +2390,10 @@
                      "⚙️ ระบบแนะนำ" — ธงนี้มีบนแถวสแกนมาตลอดแต่เพิ่งถูกส่งออกมาใน DTO
                      (ผลตรวจ 2026-09-06 · T3-12) -->
                 <label style="color:#78350f;font-weight:600;min-width:0">เอกสารที่จะสร้างในระบบ <span style="font-weight:400;font-size:11px">${scan.targetDocTypeUsedAi ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ (จากชนิดเอกสาร/บทบาทบนกระดาษ)'}</span></label>
-                <select class="form-input" id="revTargetDocType" style="width:100%;background:white;font-size:14px;font-weight:600;padding:9px 12px">
+                <!-- ธง "ผู้ใช้ลงมือเปลี่ยนเอง" — _closeAiReviewFeedback ใช้ตัดสินป้าย
+                     UserChoiceSource ให้ตรงความจริง: แตะ=Explicit · ไม่แตะ=Implicit
+                     (รอบ 181 D7-3 — ป้ายที่ตรงความจริงสำคัญกว่าป้ายที่ทำให้ตัวเลขสวย) -->
+                <select class="form-input" id="revTargetDocType" onchange="this.dataset.userTouched='1'" style="width:100%;background:white;font-size:14px;font-weight:600;padding:9px 12px">
                   <option value="">— เลือก —</option>
                   <option value="PurchaseInvoice" ${scan.targetDocumentType === 'PurchaseInvoice' ? 'selected' : ''}>ใบแจ้งหนี้ซื้อ (AP)</option>
                   <option value="Expense" ${scan.targetDocumentType === 'Expense' ? 'selected' : ''}>ใบบันทึกค่าใช้จ่าย</option>
@@ -3601,17 +3604,25 @@
        *  AiFeedbackTrainingJob ไม่เคยได้ข้อมูลจาก OcrFullReview เลยสักแถว */
       async _closeAiReviewFeedback() {
         const api = Layout.api(); if (!api) return;
-        const chosen = document.getElementById('revTargetDocType')?.value || null;
+        const sel = document.getElementById('revTargetDocType');
+        const chosen = sel?.value || null;
         if (!chosen) return;
+        // ── ป้ายต้องตรงความจริง (รอบ 181 · D7-3) ────────────────────────────
+        // เส้นนี้ยิงตอน **บันทึก/สร้างเอกสาร** (_persistReviewEdits) ไม่ใช่ตอนผู้ใช้
+        // เปลี่ยนค่า ⇒ ติด Explicit เหมาเลยไม่ได้: ส่วนใหญ่คือ "ระบบเติมให้แล้วกดผ่าน"
+        // ซึ่งคือนิยามของ Implicit เป๊ะ ๆ. ธง userTouched ถูกตั้งโดย onchange ของ
+        // ดรอปดาวน์เอง (ดู markup ของ #revTargetDocType) ⇒ Explicit เฉพาะตอนผู้ใช้
+        // ลงมือเปลี่ยนชนิดเอกสารเป้าหมายจริง ๆ
+        const source = sel?.dataset?.userTouched === '1' ? 'Explicit' : 'Implicit';
         const jobs = [];
         if (this._aiReviewFeedbackId) {
           const aiSaid = this._lastAiReview?.target_document || null;
-          jobs.push(api.aiFeedbackRecord(this._aiReviewFeedbackId, chosen, chosen === aiSaid));
+          jobs.push(api.aiFeedbackRecord(this._aiReviewFeedbackId, chosen, chosen === aiSaid, source));
           this._aiReviewFeedbackId = null;   // ปิดแล้วปิดเลย ไม่ส่งซ้ำ
         }
         if (this._aiConvFeedbackId) {
           const convSaid = this._lastAiConv?.primary || null;
-          jobs.push(api.aiFeedbackRecord(this._aiConvFeedbackId, chosen, chosen === convSaid));
+          jobs.push(api.aiFeedbackRecord(this._aiConvFeedbackId, chosen, chosen === convSaid, source));
           this._aiConvFeedbackId = null;
         }
         try { await Promise.all(jobs); }

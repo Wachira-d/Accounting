@@ -24,6 +24,23 @@ public class StockLedger : IStockLedger
     /// <summary>cache ต่อ scope — การขาย 1 ออเดอร์มี 10 บรรทัด ไม่ควร query คลังหลัก 10 ครั้ง</summary>
     private readonly Dictionary<Guid, Guid> _defaultWarehouseCache = new();
 
+    /// <summary>cache ต่อ scope ด้วยเหตุผลเดียวกัน — ใบขาย 10 บรรทัดไม่ควรถาม
+    /// ค่าตั้งค่า "อนุญาตสต๊อกติดลบ" 10 ครั้ง (ค่านี้เปลี่ยนระหว่างธุรกรรมเดียวไม่ได้)</summary>
+    private readonly Dictionary<Guid, bool> _allowNegativeCache = new();
+
+    /// <summary>ค่าตั้งค่าของบริษัท — ไม่มีแถวตั้งค่า = ไม่อนุญาต (ทิศปลอดภัย:
+    /// การถูกบล็อกมองเห็นและแก้ทันที ส่วนสต็อกติดลบเงียบต้องมาไล่ทีหลัง)</summary>
+    private async Task<bool> AllowNegativeStockAsync(Guid companyId, CancellationToken ct)
+    {
+        if (_allowNegativeCache.TryGetValue(companyId, out var cached)) return cached;
+        var allow = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.AllowNegativeStock)
+            .FirstOrDefaultAsync(ct);
+        _allowNegativeCache[companyId] = allow;
+        return allow;
+    }
+
     public async Task<Guid> GetOrCreateDefaultWarehouseIdAsync(Guid companyId, CancellationToken ct = default)
     {
         if (_defaultWarehouseCache.TryGetValue(companyId, out var cached)) return cached;
@@ -131,6 +148,29 @@ public class StockLedger : IStockLedger
                 new StockMovement { CompanyId = r.CompanyId, ProductId = r.ProductId, Quantity = 0m },
                 warehouseId, row.Quantity, product.CurrentStock, product.AverageUnitCost);
         }
+
+        // ── ด่านสต็อกติดลบ — **ก่อน** แตะยอดใด ๆ และ **ทุกกรณี** ไม่ว่าผู้เรียกจะ
+        // ส่ง UnitCostOverride มาหรือไม่ (D5-6: ด่านเดิมอยู่ใน
+        // InventoryCostingService ซึ่งบรรทัดล่างเรียกเฉพาะตอน override เป็น null
+        // ⇒ เส้นเอกสารที่ส่ง override เสมอ ข้ามด่านมาตลอด)
+        //
+        // ตัดสินด้วยยอด **ของคลังนั้น** (`row.Quantity`) ไม่ใช่ `product.CurrentStock`
+        // เพราะแถวที่จะติดลบจริงคือแถวคลัง และเป็นฐานเดียวกับด่านที่มีอยู่แล้วของ
+        // `ProductService.AdjustStockAsync` / `WarehouseService` (ของที่กองอยู่
+        // สาขา B ไม่ได้อยู่ในมือคนที่เบิกที่สาขา A) · บริษัทที่ไม่ใช้ระบบคลังมี
+        // คลังเดียวจึงได้ผลเท่ากับยอดรวมเหมือนเดิม
+        //
+        // ถามค่าตั้งค่าเฉพาะขาออก (ขาเข้าไม่มีทางติดลบ) — เป็นการประหยัด query
+        // ไม่ใช่สำเนากติกา: กติกา "delta >= 0 ไม่บล็อก" ยังอยู่ในตัวด่านที่เดียว
+        // `AllowNegativeOverride` = เส้นกลับรายการ (void) ซึ่งต้องผ่านเสมอ —
+        // เหตุผลเต็มอยู่ที่นิยามของฟิลด์ใน IStockLedger.StockMoveRequest
+        var allowNegative = r.AllowNegativeOverride
+            || (delta < 0m && await AllowNegativeStockAsync(r.CompanyId, ct));
+        var stockVerdict = NegativeStockGuard.Evaluate(
+            product.TrackStock, row.Quantity, delta, allowNegative,
+            product.Code, product.Name, product.Unit);
+        if (stockVerdict.Blocked)
+            throw new BusinessRuleException(stockVerdict.Message!, NegativeStockGuard.RuleCode);
 
         // ต้นทุน: ขาเข้าใช้ที่ผู้เรียกยืนยัน (ราคาซื้อ) แล้วอัปเดตถัวเฉลี่ย ·
         // ขาออกถาม costing service ว่าควรใช้เท่าไร (ถัวเฉลี่ย/FIFO ตาม CostingMethod)

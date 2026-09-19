@@ -51,12 +51,20 @@ public partial class PdfGenerationService
     internal static string? PickLangText(string? th, string? en, string lang)
         => lang == "en" && !string.IsNullOrWhiteSpace(en) ? en : th;
 
+    /// <param name="requirePhoR06">นโยบายแพลตฟอร์ม (<c>SiteSettings</c>) — บังคับ ภ.พ.06
+    /// ก่อนออกใบกำกับภาษีอย่างย่อ (§86/6) หรือไม่ · ค่าตั้งต้น <c>true</c> = กฎหมายวันนี้
+    /// (ผู้เรียกที่ลืมส่ง ได้ทิศเข้มกว่า ไม่ใช่ทิศที่ออกใบกำกับโดยไม่มีสิทธิ์)</param>
     internal byte[] RenderDocumentPdfNative(EntDoc doc, EntCompany company,
         EntSettings? settings, EntTemplate template, string? watermarkOverride, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
         bool showFreeTierCredit = false,
-        bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null)
+        bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null,
+        bool requirePhoR06 = true)
     {
+        // สิทธิ์ §86/6 ของผู้ออก — ตัวตัดสินตัวเดียวกับ HTML renderer (ห้าม drift)
+        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            doc.DocumentDate, requirePhoR06);
         EnsureThaiFontsRegistered();
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
@@ -79,7 +87,7 @@ public partial class PdfGenerationService
         var fontChain = GetFontFamilyChain(b.FontFamily);
         // หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) จาก resolver กลาง —
         // ตั้งเองได้ผ่าน settings; ใช้ร่วมกับ HTML renderer กัน logic drift
-        var titleText = ComputeDocumentTitle(doc, template, settings, lang);
+        var titleText = ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated);
         // ตัวตนผู้ออกเอกสาร (ชื่อ/โลโก้/ที่อยู่/ป้ายสาขา/ข้อความท้ายเอกสาร) —
         // resolver กลางตัวเดียวกับ HTML renderer. **คำนวณครั้งเดียวตรงนี้** แล้ว
         // ส่งต่อทั้งหัวและท้ายกระดาษ: ComposeFooter ต้องใช้ FooterNotes ของแบรนด์
@@ -186,7 +194,7 @@ public partial class PdfGenerationService
                         {
                             void SafeH(Action a) { try { a(); } catch { /* skip failed section */ } }
                             if (cornerLabel != null) SafeH(() => ComposeCornerLabel(hc));
-                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer));
+                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated));
                             SafeH(() => ComposeContact(hc, doc, template, accent, L));
                             // ระยะห่างหัว↔เนื้อหา — Header ติดกับ Content ทันที
                             // ถ้าไม่เว้น ตารางจะชนขอบล่างของกล่องคู่ค้า
@@ -205,7 +213,7 @@ public partial class PdfGenerationService
                         if (!repeatHeader)
                         {
                             if (cornerLabel != null) Safe(() => ComposeCornerLabel(col));
-                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer));
+                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated));
                             Safe(() => ComposeContact(col, doc, template, accent, L));
                         }
                         Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
@@ -301,7 +309,7 @@ public partial class PdfGenerationService
                 // เส้นสำรองสุดท้ายก็ต้องพิมพ์เครดิตด้วย ไม่งั้นบัญชีฟรีจะหลุด
                 // เครดิตไปเงียบ ๆ เฉพาะตอน composition พัง
                 var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride,
-                    showFreeTierCredit: showFreeTierCredit);
+                    showFreeTierCredit: showFreeTierCredit, requirePhoR06: requirePhoR06);
                 return ConvertHtmlToPdf(html, template, b);
             }
         }
@@ -313,7 +321,7 @@ public partial class PdfGenerationService
     private static void ComposeHeaderAndTitle(ColumnDescriptor col, string layout,
         EntDoc doc, EntCompany company, EntTemplate template, PdfBranding b,
         string accent, string headerBg, string headerText, string titleText, Accounting.Services.Implementations.Pdf.DocumentLabels L,
-        Accounting.Helpers.IssuerIdentity issuer)
+        Accounting.Helpers.IssuerIdentity issuer, bool companyMayIssueAbbreviated)
     {
 
         // cap title ที่ 18pt กันชื่อเอกสารใหญ่เกิน (เดิม 22/20 ใหญ่ไป — ผู้ใช้ขอเล็กลง)
@@ -490,7 +498,7 @@ public partial class PdfGenerationService
         // §86/6(6) — ใบกำกับภาษีอย่างย่อต้องมีข้อความระบุชัดว่าราคารวม VAT แล้ว
         // ใส่จุดเดียวท้าย header ครอบทุก layout (ใส่ทีละ layout = drift แน่)
         // — sync กับ HTML renderer ใต้ .doc-title
-        if (IsAbbreviatedTaxInvoiceDoc(doc))
+        if (IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated))
             col.Item().PaddingTop(2).AlignCenter()
                 .Text("ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว")
                 .FontSize(8.5f).FontColor("#64748B");

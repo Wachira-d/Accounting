@@ -341,6 +341,28 @@
         </div>
 
         <div class="admin-card">
+          <div class="section-title">นโยบายตามกฎหมาย (ใช้กับทุกบริษัทในระบบ)</div>
+          <div class="toggle-group">
+            <div>
+              <label>บังคับ ภ.พ.06 ก่อนออกใบกำกับภาษีอย่างย่อ</label>
+              <div class="help-text">
+                <b>เปิด (ค่าตั้งต้น — ตรงกับกฎหมายวันนี้):</b> บริษัทต้องจด VAT
+                <u>และ</u> กรอกวันที่อนุมัติ ภ.พ.06 ในหน้าข้อมูลบริษัท จึงจะออก
+                &ldquo;ใบกำกับภาษีอย่างย่อ&rdquo; (§86/6) จากเครื่อง POS ได้ —
+                บริษัทที่ยังไม่ได้รับอนุมัติจะพิมพ์เป็น &ldquo;ใบเสร็จรับเงิน&rdquo; แทน<br>
+                <b>ปิด:</b> จด VAT อย่างเดียวก็ออกอย่างย่อได้ (ใช้เมื่อกรมสรรพากรเปลี่ยนกฎ)<br>
+                <b>ไม่เกี่ยวกับใบกำกับภาษีเต็มรูป (§86/4)</b> — บริษัทที่จด VAT ออกใบเต็มรูปได้เสมอ
+                ไม่ว่าสวิตช์นี้จะเปิดหรือปิด
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="requirePhoR06" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="admin-card">
           <div class="section-title">ภาษาและภูมิภาค</div>
           <div class="form-group">
             <label>ภาษาเริ่มต้น</label>
@@ -551,6 +573,10 @@
         document.getElementById('instagramUrl').value = d.instagramUrl || '';
         document.getElementById('registrationEnabled').checked = d.registrationEnabled !== false;
         document.getElementById('maintenanceMode').checked = d.maintenanceMode || false;
+        // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งฟิลด์นี้ → แสดงตามกฎหมายวันนี้ (บังคับ)
+        // ห้ามตีความ undefined เป็น false เพราะจะโชว์ว่า "ปิดด่านอยู่" ทั้งที่เซิร์ฟเวอร์ยังบังคับ
+        document.getElementById('requirePhoR06').checked =
+          d.requirePhoR06ForAbbreviatedTaxInvoice !== false;
         document.getElementById('maintenanceMessage').value = d.maintenanceMessage || '';
         document.getElementById('defaultLanguage').value = d.defaultLanguage || 'th';
 
@@ -725,6 +751,7 @@
           instagramUrl: document.getElementById('instagramUrl').value || null,
           registrationEnabled: document.getElementById('registrationEnabled').checked,
           maintenanceMode: document.getElementById('maintenanceMode').checked,
+          requirePhoR06ForAbbreviatedTaxInvoice: document.getElementById('requirePhoR06').checked,
           maintenanceMessage: document.getElementById('maintenanceMessage').value || null,
           defaultLanguage: document.getElementById('defaultLanguage').value,
           services: validServices,

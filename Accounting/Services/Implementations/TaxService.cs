@@ -2129,10 +2129,17 @@ public partial class TaxService : ITaxService
             ? Math.Min(lossCarryForwardAvailable, netProfitBeforeTax)
             : 0m;
 
-        // Thai CIT progressive rates (for SME companies) — คิดจากกำไรหลังหัก
-        // ผลขาดทุนยกมาแล้ว (ฐานภาษีจริงตาม §65 ตรี(12))
+        // อัตรา CIT — คิดจากกำไรหลังหักผลขาดทุนยกมาแล้ว (ฐานภาษีจริงตาม §65 ตรี(12))
+        //
+        // ★ D2-B2a: เดิมบรรทัดนี้ส่งแต่กำไร แล้ว CalculateThaiCit ใช้ **ขั้นบันได SME
+        // กับทุกบริษัท** ⇒ บริษัททั่วไปเสียภาษีต่ำกว่ากฎหมายบน ภ.ง.ด.50. เกณฑ์ SME
+        // (ทุน ≤ 5 ล. + รายได้ทั้งรอบ ≤ 30 ล.) อ่านจาก CitRateTable.IsSme ตัวเดียว
+        // ร่วมกับเส้น ภ.ง.ด.51 ใน TaxFilingExportService — ห้ามเขียนสูตรที่สอง.
+        // `paidUpCapital` คำนวณไว้แล้วด้านบน (เพดานค่ารับรอง §65 ตรี(4)) ·
+        // `totalRevenue` = รายได้ทั้งรอบบัญชีจริง (ไม่ใช่ประมาณการ)
+        var isSme = Accounting.Helpers.CitRateTable.IsSme(paidUpCapital, totalRevenue);
         var taxableProfit = netProfitBeforeTax - lossCarryForwardUsed;
-        var citAmount = CalculateThaiCit(taxableProfit);
+        var citAmount = CalculateThaiCit(taxableProfit, isSme);
         var netCitAmount = citAmount;
 
         // ===== เครดิตภาษีที่ "เราถูกหัก ณ ที่จ่าย" (ภ.ง.ด.50/51) =====
@@ -2476,35 +2483,19 @@ public partial class TaxService : ITaxService
     }
 
     /// <summary>
-    /// Thai CIT progressive rates for SME (registered capital <= 5M, revenue <= 30M):
-    /// Net profit 0 - 300,000: exempt
-    /// Net profit 300,001 - 3,000,000: 15%
-    /// Net profit > 3,000,000: 20%
-    /// Non-SME: flat 20%
+    /// ภาษีเงินได้นิติบุคคลจากกำไรสุทธิ — <b>อัตราอยู่ที่
+    /// <see cref="Accounting.Helpers.CitRateTable"/> ที่เดียว</b> ห้ามเขียนขั้น/อัตราซ้ำที่นี่
+    ///
+    /// ═══ บั๊กที่แก้ (ผลตรวจรอบ 181 · DECISION_AUDIT_2026-09-18.md §3 D2-B2a) ═══
+    /// <para>เมธอดนี้เคยรับแค่ <c>netProfit</c> แล้วใช้ <b>ขั้นบันได SME กับทุก
+    /// บริษัท</b> ทั้งที่ผู้เรียกคือเส้น <b>ภ.ง.ด.50</b> ⇒ บริษัททั่วไป (ทุน &gt; 5 ล.
+    /// หรือรายได้ &gt; 30 ล.) เสียภาษีต่ำกว่ากฎหมายบนแบบที่ยื่นจริง
+    /// (กำไร 1,000,000 ได้ 105,000 แทน 200,000 = ขาดไป 95,000)</para>
     /// </summary>
-    private static decimal CalculateThaiCit(decimal netProfit)
-    {
-        if (netProfit <= 0) return 0;
-
-        decimal tax = 0;
-
-        // SME rates
-        if (netProfit <= 300_000m)
-        {
-            tax = 0; // Exempt
-        }
-        else if (netProfit <= 3_000_000m)
-        {
-            tax = (netProfit - 300_000m) * 0.15m;
-        }
-        else
-        {
-            tax = (3_000_000m - 300_000m) * 0.15m  // 15% tier
-                + (netProfit - 3_000_000m) * 0.20m; // 20% tier
-        }
-
-        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
-    }
+    /// <param name="isSme">ผลของ <see cref="Accounting.Helpers.CitRateTable.IsSme"/>
+    /// ของบริษัทนั้น — ห้ามตั้งค่าตายตัว</param>
+    private static decimal CalculateThaiCit(decimal netProfit, bool isSme)
+        => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme);
 
     /// <summary>
     /// อัตราหัก ณ ที่จ่ายของบรรทัดที่ยังไม่ได้บันทึกอัตราไว้
@@ -2518,22 +2509,31 @@ public partial class TaxService : ITaxService
     /// คือ <b>วิชาชีพอิสระ 3%</b> ⇒ บรรทัดที่ระบบเองสร้างด้วยรหัสกลาง จะถูก
     /// รายงานด้วยอัตราของประเภทอื่นทั้งดุ้น</para>
     ///
-    /// <para><b>ลำดับการหาคำตอบ</b> — ห้ามเดา: (1) อัตราตามกฎหมายจากตารางกลาง
-    /// (2) ถ้ากฎหมายไม่ได้กำหนดคงที่ (เงินเดือน 40(1) = ขั้นบันได) หรือไม่รู้จัก
-    /// รหัส ให้ <b>คำนวณจากยอดที่หักจริงบนบรรทัดนั้น</b> ซึ่งเป็นข้อมูลจริง
+    /// <para><b>ลำดับการหาคำตอบ</b> — ห้ามเดา: (1) อัตราตามกฎหมาย<b>ของชนิดผู้รับ
+    /// รายนี้</b>จากตารางกลาง (2) ถ้ากฎหมายไม่ได้กำหนดคงที่ (เงินเดือน 40(1) =
+    /// ขั้นบันได) หรือไม่รู้จักรหัส หรือ<b>ชนิดผู้รับรายนี้ไม่มีอัตราในตาราง</b>
+    /// ให้ <b>คำนวณจากยอดที่หักจริงบนบรรทัดนั้น</b> ซึ่งเป็นข้อมูลจริง
     /// ไม่ใช่ค่าที่แต่งขึ้น (3) คำนวณไม่ได้ = คืน 0 = "ไม่ทราบ" ให้ผู้ใช้เห็นว่า
     /// ต้องเติม แทนการใส่ 3% ปลอมให้ช่องไม่ว่าง</para>
+    ///
+    /// <para>★ D2-B3b (ผลตรวจรอบ 181): ขั้น (1) เคยมีท้ายบรรทัดว่า
+    /// <c>?? RateFor(code, !payeeIsJuristic)</c> = "หาอัตราของผู้รับชนิดนี้ไม่เจอ
+    /// ให้ใช้อัตราของ<b>ชนิดตรงข้าม</b>" — วันนี้ยังไม่เกิด (ทุกแถวในตารางมีอัตรา
+    /// ครบทั้งสองข้างหรือว่างทั้งสองข้าง) แต่เป็นระเบิดเวลาทันทีที่เพิ่มรหัสที่
+    /// กฎหมายกำหนดอัตราไว้ฝั่งเดียว และขัดกับงานรอบ 180 ที่เพิ่งแยกอัตราตามชนิด
+    /// ผู้รับ (ดอกเบี้ย 40(4)(ก): บุคคล 15% · นิติบุคคล 1% — ต่างกัน 15 เท่า)
+    /// ⇒ <b>ถอดทิ้ง</b> ให้ตกไปขั้น (2)/(3) แทน</para>
     /// </summary>
-    private static decimal GetWhtRate(string? incomeTypeCode, decimal incomeAmount, decimal taxAmount,
+    internal static decimal GetWhtRate(string? incomeTypeCode, decimal incomeAmount, decimal taxAmount,
         bool payeeIsJuristic)
     {
         // (1) อัตราตามกฎหมาย **ของผู้รับรายนี้** — เดิมบรรทัดนี้ตั้ง `payeeIsJuristic: true`
         // ตายตัวพร้อมคอมเมนต์ว่า "ผู้รับส่วนใหญ่เป็นนิติบุคคล" ⇒ แถวของบุคคลธรรมดาใน
         // ภ.ง.ด.3 ได้อัตราของนิติบุคคล (ดอกเบี้ย 1% แทน 15%) — "ส่วนใหญ่" ไม่ใช่เหตุผล
-        // ที่ดีพอสำหรับตัวเลขที่ลงแบบยื่นภาษี
-        var statutory = Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic)
-            ?? Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, !payeeIsJuristic);
-        if (statutory is decimal r) return r;
+        // ที่ดีพอสำหรับตัวเลขที่ลงแบบยื่นภาษี.
+        // ห้ามเติม `?? RateFor(code, !payeeIsJuristic)` กลับมา — ดูหมายเหตุ D2-B3b ด้านบน
+        if (Accounting.Helpers.ThaiWhtRateTable.RateFor(incomeTypeCode, payeeIsJuristic) is decimal r)
+            return r;
 
         // (2) คิดกลับจากยอดที่หักจริง (เงินเดือนขั้นบันได / รหัสที่ไม่รู้จัก)
         if (incomeAmount > 0m && taxAmount > 0m)

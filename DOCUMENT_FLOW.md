@@ -1507,6 +1507,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       (เทมเพลตบริษัท · ตั้งค่าบริษัท · แบรนด์+ใบต้นทางของหน้านั้น) ไม่ใช่ N+1
     - เทสต์: `Accounting.Tests/DocumentTitleServerOwnedTests.cs` (ล็อกทั้ง 6 เคส
       ฝั่ง C#) + simulation ฝั่ง JS ที่รัน `docHeaderLabel` จริงจาก layout.js
+    - **สิทธิ์ §86/6 ของผู้ออก เป็นด่านแรกของหัวเอกสาร** (รอบ 182 — DECISION_AUDIT D1-B4)
+      `ComputeDocumentTitle(..., bool companyMayIssueAbbreviated)` และ
+      `IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated)` **ไม่มีค่าตั้งต้น**
+      ผู้เรียกต้องตอบเสมอ · คำตอบมาจาก `Helpers/AbbreviatedTaxInvoiceRule.CanIssue`
+      ตัวเดียวของระบบ (ตัวเดียวกับสลิป POS ผ่าน `PosSlipHeader.Resolve`) ซึ่งรับ
+      `IsVatRegistered` · `IsRetailApproved` · `PhoR06ApprovedDate` · วันที่บนเอกสาร ·
+      และนโยบายแพลตฟอร์ม `SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice`
+      _(เดิมเส้นเอกสาร/PDF พิมพ์ "ใบกำกับภาษีอย่างย่อ" **โดยไม่เคยตรวจ ภ.พ.06 เลย** —
+      ธงนี้มีผู้อ่านแค่ `PosService` ⇒ บริษัทที่ยังไม่ได้รับอนุมัติออกใบกำกับโดยไม่มีสิทธิ์
+      ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(5))_
+      - **ไม่มีสิทธิ์ → หัวตกเป็น "ใบเสร็จรับเงิน"** (VAT ขายยังลง ภ.พ.30 ครบเหมือนเดิม —
+        ภาระภาษีไม่ขึ้นกับหัวเอกสาร) · ข้อความ §86/6(6) "ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว"
+        หายตามไปด้วยทั้ง **สอง renderer** (ใช้ predicate ตัวเดียวกัน — กัน drift)
+      - **ใบกำกับเต็มรูป §86/4 ไม่เกี่ยวกับด่านนี้** — จด VAT แล้วออกได้เสมอ
+      - ผู้เรียกที่ลืมส่งนโยบาย (`requirePhoR06` default `true` ใน `BuildDocumentHtml` /
+        `RenderDocumentPdfNative`) ได้ทิศ**เข้มกว่า** ไม่ใช่ทิศที่ออกใบกำกับโดยไม่มีสิทธิ์
+      - เทสต์: `AbbreviatedTaxInvoiceTitleTests` (3 เคสใหม่ รวมทิศตรงข้าม "ใบเต็มรูป
+        ไม่ถูกแตะ") · `AbbreviatedTaxInvoiceRuleTests` (สวิตช์แพลตฟอร์มสองทิศ)
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
 - **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)

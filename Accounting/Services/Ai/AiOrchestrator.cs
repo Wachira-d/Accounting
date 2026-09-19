@@ -561,7 +561,11 @@ public class AiOrchestrator : IAiOrchestrator
     /// <para>ทำแบบ best-effort: payload ที่ไม่มีบล็อกนี้ (prompt แบบ bulk) ปล่อย
     /// ผ่านโดยไม่แตะ — ดีกว่าทำ JSON พังแล้วทั้ง call ล้ม</para>
     /// </summary>
-    private static string ReplaceLocalModelBlock(string userPromptJson, string? pick, decimal confidence)
+    /// <remarks><b>internal</b> เพื่อให้เทสต์เรียก <b>ฟังก์ชันจริง</b> ได้ — เทสต์ของ
+    /// D7-2 ต้องพิสูจน์ว่า "กุญแจฝั่งทำนาย (JSON ก่อนเขียนทับ) == กุญแจฝั่งเรียน
+    /// (JSON หลังเขียนทับ)" ถ้าเทสต์ลอกตรรกะนี้ไปเขียนเองจะกลายเป็นสำเนาที่สองที่
+    /// drift ได้เงียบ ๆ (หลักการข้อ 4/ข้อ 6)</remarks>
+    internal static string ReplaceLocalModelBlock(string userPromptJson, string? pick, decimal confidence)
     {
         if (string.IsNullOrWhiteSpace(userPromptJson)) return userPromptJson;
         try

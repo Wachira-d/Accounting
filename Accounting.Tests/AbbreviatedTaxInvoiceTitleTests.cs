@@ -41,7 +41,8 @@ public class AbbreviatedTaxInvoiceTitleTests
         };
 
     private static string Title(Document d, string lang = "th")
-        => PdfGenerationService.ComputeDocumentTitle(d, new DocumentTemplate(), null, lang);
+        => PdfGenerationService.ComputeDocumentTitle(d, new DocumentTemplate(), null, lang,
+            companyMayIssueAbbreviated: true);
 
     // ── เคสหลักตามคำขอผู้ใช้ ─────────────────────────────────────────
 
@@ -112,7 +113,7 @@ public class AbbreviatedTaxInvoiceTitleTests
         var d = Doc(DocumentType.Receipt, contact: WalkIn());
         d.IsDeposit = true;
         d.DepositOutputVatDeferred = true;
-        Assert.False(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(d));
+        Assert.False(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(d, companyMayIssueAbbreviated: true));
     }
 
     [Fact]
@@ -121,8 +122,49 @@ public class AbbreviatedTaxInvoiceTitleTests
         // ผู้ใช้ตั้งหัวเองในเทมเพลต — resolver ห้ามทับ (พฤติกรรมเดิม)
         var tpl = new DocumentTemplate { CustomTitle = "บิลเงินสดร้านเรา" };
         var t = PdfGenerationService.ComputeDocumentTitle(
-            Doc(DocumentType.Receipt, contact: WalkIn()), tpl, null, "th");
+            Doc(DocumentType.Receipt, contact: WalkIn()), tpl, null, "th",
+            companyMayIssueAbbreviated: true);
         Assert.Equal("บิลเงินสดร้านเรา", t);
+    }
+
+    // ── สิทธิ์ ภ.พ.06 ของผู้ออก (DECISION_AUDIT D1-B4) ──────────────
+
+    [Fact]
+    public void ไม่มีสิทธิ์_ภพ06_หัวเอกสารต้องไม่ใช่ใบกำกับอย่างย่อ()
+    {
+        // เดิมเส้นเอกสาร/PDF พิมพ์ "ใบกำกับภาษีอย่างย่อ" โดย**ไม่เคยตรวจ ภ.พ.06 เลย**
+        // (ธงนี้มีผู้อ่านแค่ POS) = ออกใบกำกับโดยไม่มีสิทธิ์ · ผู้ซื้อเคลมไม่ได้ §82/5(5)
+        var d = Doc(DocumentType.Receipt, contact: WalkIn());
+        var t = PdfGenerationService.ComputeDocumentTitle(d, new DocumentTemplate(), null, "th",
+            companyMayIssueAbbreviated: false);
+        Assert.DoesNotContain("ใบกำกับภาษี", t);
+        Assert.Equal("ใบเสร็จรับเงิน", t);
+        // ข้อความ §86/6(6) บน renderer ต้องหายตามไปด้วย (สอง renderer ห้าม drift)
+        Assert.False(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(d, companyMayIssueAbbreviated: false));
+    }
+
+    [Fact]
+    public void ไม่มีสิทธิ์_ภพ06_ใบกำกับเต็มรูปไม่ถูกแตะ()
+    {
+        // ทิศตรงข้าม — §86/4 ไม่เกี่ยวกับ ภ.พ.06: ผู้ซื้อข้อมูลครบ ต้องยังได้ "ใบกำกับภาษี"
+        // (ถ้าด่านนี้ไปโดนใบเต็มรูปด้วย = ปิดความสามารถที่ถูกกฎหมายโดยไม่ตั้งใจ)
+        var full = Doc(DocumentType.TaxInvoice);
+        var t = PdfGenerationService.ComputeDocumentTitle(full, new DocumentTemplate(), null, "th",
+            companyMayIssueAbbreviated: false);
+        Assert.Contains("ใบกำกับภาษี", t);
+        Assert.DoesNotContain("อย่างย่อ", t);
+    }
+
+    [Fact]
+    public void ไม่มีสิทธิ์_ภพ06_ใบที่ไม่มี_VAT_ไม่เปลี่ยนพฤติกรรม()
+    {
+        // ทิศตรงข้าม #2: ใบที่เดิมก็ไม่ใช่ใบกำกับอยู่แล้ว ต้องได้หัวเดิมเป๊ะ
+        var d = Doc(DocumentType.Receipt, vat: 0m, contact: WalkIn());
+        var withRight = PdfGenerationService.ComputeDocumentTitle(d, new DocumentTemplate(), null, "th",
+            companyMayIssueAbbreviated: true);
+        var withoutRight = PdfGenerationService.ComputeDocumentTitle(d, new DocumentTemplate(), null, "th",
+            companyMayIssueAbbreviated: false);
+        Assert.Equal(withRight, withoutRight);
     }
 
     // ── โหมดอังกฤษ + ตัวตัดสินกลาง ──────────────────────────────────
@@ -143,8 +185,8 @@ public class AbbreviatedTaxInvoiceTitleTests
         // ("ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว") — ต้องชี้ใบเดียวกับหัวเสมอ
         var abbreviated = Doc(DocumentType.Receipt, contact: WalkIn());
         var full = Doc(DocumentType.Receipt);
-        Assert.True(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(abbreviated));
-        Assert.False(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(full));
+        Assert.True(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(abbreviated, companyMayIssueAbbreviated: true));
+        Assert.False(PdfGenerationService.IsAbbreviatedTaxInvoiceDoc(full, companyMayIssueAbbreviated: true));
         Assert.Contains("อย่างย่อ", Title(abbreviated));
         Assert.DoesNotContain("อย่างย่อ", Title(full));
     }

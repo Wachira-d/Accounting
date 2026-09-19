@@ -1187,9 +1187,14 @@ public partial class PosService
         // ★ H-A3 — เลขใบกำกับอย่างย่อ (§86/6) ผูกกับวัน/เดือนตามปฏิทินไทย
         var issuedAt = Accounting.Helpers.ThaiDate.CalendarDateUtc(
             order.CompletedAt ?? DateTime.UtcNow);
+        // นโยบายระดับแพลตฟอร์ม: บังคับ ภ.พ.06 ไหม (แอดมินปิดได้เมื่อกฎหมายเปลี่ยน)
+        // — แถว SiteSettings ยังไม่ถูกสร้าง = ยึดกฎหมายวันนี้ (บังคับ) ไม่ใช่ปล่อยผ่าน
+        var requirePhoR06 = await _db.SiteSettings.AsNoTracking()
+            .Select(s => (bool?)s.RequirePhoR06ForAbbreviatedTaxInvoice)
+            .FirstOrDefaultAsync() ?? true;
         var header = Accounting.Helpers.PosSlipHeader.Resolve(
             company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            order.VatAmount, issuedAt);
+            order.VatAmount, issuedAt, requirePhoR06);
 
         // รหัสสาขาตรึงลงบิลเสมอ แม้ออกอย่างย่อไม่ได้ — รายงานภาษีขายต้องรู้ว่าใบนี้
         // ของสาขาไหน และค่านี้ต้องไม่เปลี่ยนเมื่อเครื่องย้ายสาขาภายหลัง

@@ -166,6 +166,18 @@
 
       <!-- Thai Tax Registration -->
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ทะเบียนภาษีและประกันสังคม</h4>
+      <!-- ทุนจดทะเบียนที่ชำระแล้ว — ถูกอ่านโดยสูตรภาษี 2 ตัว (อัตรา CIT ของ SME และ
+           เพดานค่ารับรอง §65 ตรี(4)) มาตลอด แต่ไม่เคยมีช่องให้กรอก ⇒ เป็น 0 ทุกบริษัท
+           (ผลตรวจรอบ 182 — ของที่ "ถูกอ่านแต่ไม่มีใครเขียน") -->
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">ทุนจดทะเบียนที่ชำระแล้ว (บาท)</label>
+          <input type="number" id="cPaidUpCapital" class="form-input" min="0" step="0.01" placeholder="0.00">
+          <div class="form-hint">ใช้ตัดสิน<b>อัตราภาษีนิติบุคคล</b> (SME = ทุน ≤ 5 ล้าน และรายได้ ≤ 30 ล้าน
+            → 0% / 15% / 20% แบบขั้นบันได · เกินเกณฑ์ = 20% ทั้งก้อน) และ<b>เพดานค่ารับรอง</b>
+            §65 ตรี(4) · ไม่กรอก = ระบบคิดจาก 0</div>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group" style="flex:1">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
@@ -1822,6 +1834,9 @@
           this.renderIndustryGrid();
           this.onBizTypeChange(true);
           document.getElementById('cJuristicId').value = c.juristicId || '';
+          // undefined = เซิร์ฟเวอร์ยังไม่ส่งฟิลด์ → ปล่อยว่าง ไม่ใช่โชว์ 0
+          document.getElementById('cPaidUpCapital').value =
+            (c.paidUpCapital ?? 0) > 0 ? c.paidUpCapital : '';
           document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
           document.getElementById('cRetailApproved').checked = c.isRetailApproved || false;
           document.getElementById('cPhoR06Date').value = c.phoR06ApprovedDate
@@ -2057,6 +2072,8 @@
             businessType: document.getElementById('cBizType').value,
             industryType: document.getElementById('cIndustryType').value,
             juristicId: document.getElementById('cJuristicId').value || null,
+            // ว่าง = ไม่แตะค่าเดิม (null) · 0 ที่ผู้ใช้พิมพ์เองส่งไปตามจริง
+            paidUpCapital: Layout.numOrNull('cPaidUpCapital'),
             isVatRegistered: document.getElementById('cVatRegistered').checked,
             isRetailApproved: document.getElementById('cRetailApproved').checked,
             phoR06ApprovedDate: document.getElementById('cPhoR06Date').value || null,

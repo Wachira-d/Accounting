@@ -116,11 +116,16 @@ window.AiSuggestion = (function () {
     const dismissBtn = pop.querySelector('.ai-dismiss-btn');
     if (dismissBtn) dismissBtn.onclick = async () => {
       // Record a "did not accept" feedback so the local model learns
-      // that AI's pick was rejected in this context. ChosenAnswer is
-      // sent as "__USER_KEPT_EXISTING__" — the trainer can choose to
-      // demote AI's pick on this signal.
+      // that AI's pick was rejected in this context.
+      //
+      // ⚠️ `__USER_KEPT_EXISTING__` เป็น **ธงของ UI ไม่ใช่คำตอบ** — เรารู้แค่ว่า
+      // ผู้ใช้ปฏิเสธคำตอบของ AI แต่ไม่รู้ว่าค่าที่เขาเก็บไว้คืออะไร (ที่นี่อ่านไม่ได้).
+      // ฝั่งเซิร์ฟเวอร์รู้จักค่านี้แล้วผ่าน `Helpers/AiSentinelAnswers` ⇒ บันทึก
+      // "ปฏิเสธ" ไว้แต่ **ไม่เอาสตริงนี้ไปเรียนเป็นคำตอบ** (รอบ 181 · D7-1 — เดิมมันไหล
+      // ไปเป็น OcrCategoryMapping.AccountCode = รหัสผังบัญชีปลอม).
+      // source: ผู้ใช้กดปุ่ม "ใช้ของเดิม" เอง = ลงมือตัดสินใจจริง ⇒ Explicit
       if (resp.feedbackId) {
-        try { await API.post(window.AiSuggestion._companyScopedFeedbackUrl(), { feedbackId: resp.feedbackId, chosenAnswer: '__USER_KEPT_EXISTING__', acceptedAi: false }); } catch (e) {}
+        try { await API.post(window.AiSuggestion._companyScopedFeedbackUrl(), { feedbackId: resp.feedbackId, chosenAnswer: '__USER_KEPT_EXISTING__', acceptedAi: false, source: 'Explicit' }); } catch (e) {}
       }
       close();
     };
@@ -130,7 +135,9 @@ window.AiSuggestion = (function () {
     if (feedbackId) {
       try {
         await API.post(window.AiSuggestion._companyScopedFeedbackUrl(), {
-          feedbackId, chosenAnswer: chosen || '', acceptedAi: accepted,
+          // ผู้ใช้กดปุ่ม "✓ ใช้คำแนะนำนี้" หรือกดเลือกทางเลือกอื่นในป็อปอัพเอง
+          // = ลงมือเลือกจริง ⇒ Explicit (รอบ 181 · D7-3)
+          feedbackId, chosenAnswer: chosen || '', acceptedAi: accepted, source: 'Explicit',
         });
       } catch (e) { /* fire-and-forget */ }
     }

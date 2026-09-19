@@ -12888,7 +12888,11 @@ public partial class DocumentService : IDocumentService
                     // ต้นทุนเดิมของ movement ต้นทาง — กลับรายการมูลค่าเท่ากันพอดี
                     UnitCostOverride: n.OrigCost,
                     Notes: $"กลับรายการจากการยกเลิก {doc.DocumentType} เลขที่ {doc.DocumentNumber}",
-                    CreatedBy: actor));
+                    CreatedBy: actor,
+                    // การกลับรายการต้องผ่านด่านสต็อกติดลบเสมอ — ไม่ใช่การตัดสินใจใหม่
+                    // แต่คือการลบสิ่งที่เคยลงไว้ · ถ้าบล็อก ใบซื้อที่ของถูกขายออกไปแล้ว
+                    // จะยกเลิกไม่ได้ตลอดกาล = ด่านที่ไม่มีทางไปต่อ (D5-6)
+                    AllowNegativeOverride: true));
 
                 // WAC ต้อง rebuild หลัง void ซื้อ (audit A5): เดิมปรับแค่ CurrentStock
                 // → avg ค้างค่าที่รวมล็อตที่ยกเลิกแล้ว → COGS ขายถัดไปผิด + 11500
@@ -13178,9 +13182,13 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>ต้นทุนขายออกต่อหน่วย — FIFO เดิน layer จริงผ่าน
     /// InventoryCostingService (คำนวณ "ก่อน" movement ของเอกสารนี้ถูก insert
-    /// → COGS JE กับ movement stamp ได้ค่าเดียวกัน deterministic);
-    /// negative-stock guard ของ service ถูก catch → fallback WAC/CostPrice
-    /// (คงพฤติกรรมเดิม ไม่ block การอนุมัติเพิ่ม)</summary>
+    /// → COGS JE กับ movement stamp ได้ค่าเดียวกัน deterministic)
+    ///
+    /// <para>⚠️ คอมเมนต์เดิมเขียนว่า "negative-stock guard ของ service ถูก catch →
+    /// ไม่ block การอนุมัติ" — <b>ไม่จริงอีกแล้ว</b> ตั้งแต่ D5-6: ด่านสต็อกติดลบย้ายไป
+    /// อยู่ที่ <c>StockLedger.MoveAsync</c> (รันทุกกรณี บล็อกจริง) · เมธอดนี้เหลือหน้าที่
+    /// เดียวคือ "ต้นทุนเท่าไร" และ <c>catch</c> ข้างล่างกันเฉพาะ error ของการคิดต้นทุน
+    /// แล้ว fallback เป็น WAC/CostPrice</para></summary>
     private async Task<decimal> ResolveOutboundUnitCostAsync(Product product, decimal qty)
     {
         if (product.CostingMethod == Models.Enums.CostingMethod.Fifo
@@ -13224,9 +13232,18 @@ public partial class DocumentService : IDocumentService
                 .ToDictionaryAsync(p => p.Code);
 
         Guid? invDefaultId = null;
+        Guid? suppliesDefaultId = null;
         if (tracked.Count > 0)
+        {
             invDefaultId = (await FindAccountAsync(companyId, "11500")
                 ?? await FindAccountAsync(companyId, "115"))?.Id;
+            // ★ D5-2: บัญชีคุม "วัสดุสิ้นเปลือง" — โหลดเฉพาะเมื่อมีบรรทัดที่เป็น
+            // Supplies จริง (ไม่งั้นเป็น query ที่ไม่มีใครใช้ทุกใบ)
+            if (tracked.Values.Any(p => p.ProductType == Models.Enums.ProductType.Supplies))
+                suppliesDefaultId = (await FindAccountAsync(companyId,
+                    Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(
+                        Models.Enums.ProductType.Supplies)))?.Id;
+        }
 
         // landed cost ต้องเข้า 115 ด้วย (มูลค่าถูกเกลี่ยเข้าต้นทุนสินค้าแล้ว
         // — ถ้าลงเป็นค่าใช้จ่ายจะ double: expense + COGS ที่แพงขึ้น)
@@ -13242,7 +13259,12 @@ public partial class DocumentService : IDocumentService
                 return invForLanded ?? defaultExpenseId;
             if (!string.IsNullOrWhiteSpace(line.ProductCode)
                 && tracked.TryGetValue(line.ProductCode!, out var prod))
-                return prod.InventoryAccountId ?? invDefaultId ?? defaultExpenseId;
+                // ★ D5-2: ฝั่งซื้อกับฝั่งเบิกใช้ต้องถามผังจาก**ตัวตัดสินเดียวกัน**
+                // เดิมซื้อวัสดุสิ้นเปลืองลง Dr 11500 (สินค้าคงเหลือ) แต่ตอนเบิกใช้
+                // Cr 118xx (วัสดุ) ⇒ สองบัญชีไม่มีวันหักล้าง 11500 บวมถาวร
+                return Accounting.Helpers.InventoryControlAccount.Resolve(
+                    prod.ProductType, prod.InventoryAccountId, prod.SuppliesAccountId,
+                    invDefaultId, suppliesDefaultId) ?? defaultExpenseId;
             return defaultExpenseId;
         };
     }

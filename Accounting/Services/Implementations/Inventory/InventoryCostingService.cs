@@ -109,21 +109,15 @@ public class InventoryCostingService : IInventoryCostingService
         var product = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == productId, ct);
         if (product == null) throw new InvalidOperationException($"Product {productId} not found.");
 
-        // Negative-stock guard: refuse OUT that would push CurrentStock below
-        // zero unless the tenant explicitly opted in (CompanySettings
-        // .AllowNegativeStock = true). Stock-tracked products only — services
-        // and supplies bypass the check.
-        if (product.TrackStock && product.CurrentStock - quantity < 0)
-        {
-            var allow = await _db.Set<Models.Entities.CompanySettings>().AsNoTracking()
-                .Where(s => s.CompanyId == product.CompanyId)
-                .Select(s => s.AllowNegativeStock)
-                .FirstOrDefaultAsync(ct);
-            if (!allow)
-                throw new InvalidOperationException(
-                    $"สต๊อกไม่พอ: {product.Code} {product.Name} คงเหลือ {product.CurrentStock} ต้องการ {quantity}. " +
-                    "หากต้องการขาย/เบิกโดยไม่มีสต๊อก ให้เปิด \"อนุญาตสต๊อกติดลบ\" ในตั้งค่าบริษัทก่อน");
-        }
+        // ⚠️ ด่านสต็อกติดลบ **ไม่ได้อยู่ที่นี่แล้ว** — ย้ายไป
+        // `Helpers/NegativeStockGuard` ที่ `StockLedger.MoveAsync` เรียกกับทุก
+        // การเคลื่อนไหวขาออก (DECISION_AUDIT D5-6 · ราก SYSTEM_REVIEW E-03).
+        // เหตุผล: ledger เรียกเมธอดนี้เฉพาะตอนผู้เรียก **ไม่** ส่ง UnitCostOverride
+        // (`r.UnitCostOverride ?? await _costing.Resolve…`) และเส้นเอกสารส่งเสมอ
+        // ⇒ ด่านที่ฝังในตัวคิดต้นทุนคือด่านที่ปิดตัวเองทุกครั้งที่ผู้เรียกบอก
+        // ต้นทุนมาเอง. เมธอดนี้ตอบเฉพาะ "ต้นทุนต่อหน่วยเท่าไร" — ไม่ใช่ด่าน
+        // (ห้ามเพิ่มด่านกลับมาที่นี่ = สองความจริงคนละฐาน: ที่นี่รู้แต่ยอดรวม
+        //  บริษัท ส่วน ledger ตัดสินต่อคลังซึ่งเป็นแถวที่จะติดลบจริง)
 
         switch (product.CostingMethod)
         {
@@ -157,29 +151,15 @@ public class InventoryCostingService : IInventoryCostingService
                 // แล้วคิดต้นทุนเฉพาะ "ก้อนใหม่" (quantity) — audit A2: เดิมเฉลี่ย
                 // costSum/consumed ทั้งประวัติ → ขายครั้งที่สองได้ต้นทุนเฉลี่ยรวม
                 // แทนต้นทุน layer ถัดไปตามหลัก FIFO
-                decimal skipped = 0m, taken = 0m, takeSum = 0m;
-                foreach (var layer in inLayers)
-                {
-                    var available = layer.Quantity;
-                    var skip = Math.Min(available, Math.Max(0m, outQty - skipped));
-                    skipped += skip;
-                    var rem = available - skip;
-                    if (rem <= 0) continue;
-                    var need = quantity - taken;
-                    if (need <= 0) break;
-                    var take = Math.Min(rem, need);
-                    taken += take;
-                    takeSum += take * layer.UnitCost;
-                }
-                if (taken < quantity)
-                {
-                    // Stock would go negative under FIFO accounting.
-                    // Fall back to last known IN cost for the residual.
-                    var lastInCost = inLayers.LastOrDefault()?.UnitCost ?? product.CostPrice;
-                    takeSum += (quantity - taken) * lastInCost;
-                    taken = quantity;
-                }
-                return Math.Round(takeSum / Math.Max(taken, 1m), 4);
+                //
+                // สูตรอยู่ที่ `Helpers/FifoLayerCost` ที่เดียว (มีเทสต์ที่ใช้ตัวเลขจริง)
+                // — เดิมเขียน inline ที่นี่และปิดท้ายด้วย `Math.Max(taken, 1m)` ซึ่งกด
+                // ตัวหารเป็น 1 ทุกครั้งที่ขายน้อยกว่า 1 หน่วย ⇒ ขาย 0.5 กก. จากล็อต
+                // 100 บาท/กก. ได้ต้นทุน 50 (DECISION_AUDIT D5-1)
+                var lastInCost = inLayers.LastOrDefault()?.UnitCost ?? product.CostPrice;
+                return Accounting.Helpers.FifoLayerCost.Resolve(
+                    inLayers.Select(l => new Accounting.Helpers.FifoLayer(l.Quantity, l.UnitCost)).ToList(),
+                    alreadyConsumed: outQty, quantity: quantity, fallbackUnitCost: lastInCost);
             }
             case CostingMethod.Standard:
                 return product.CostPrice;
@@ -220,7 +200,10 @@ public class InventoryCostingService : IInventoryCostingService
             }
             // ADJUST: skipped — adjustment treatment is policy-dependent.
         }
-        product.AverageUnitCost = Math.Round(avg, 4);
+        // ระบุ MidpointRounding เสมอ — default ของ .NET คือ banker's rounding
+        // (CLAUDE.md กฎเหล็ก #4 E) · ทศนิยมเท่ากับ FifoLayerCost.CostDecimals
+        product.AverageUnitCost = Math.Round(avg, Accounting.Helpers.FifoLayerCost.CostDecimals,
+            MidpointRounding.AwayFromZero);
         await _db.SaveChangesAsync(ct);
         return product.AverageUnitCost;
     }

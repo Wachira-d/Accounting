@@ -5931,6 +5931,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "IsRetailApproved" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PhoR06ApprovedDate" timestamp with time zone NULL;""",
 
+            // สวิตช์ระดับแพลตฟอร์ม: บังคับ ภ.พ.06 ก่อนออกใบกำกับอย่างย่อหรือไม่
+            // (คำตัดสินเจ้าของ 2026-09-19 — เผื่อกฎหมายเปลี่ยนจะได้ไม่ต้องแก้โค้ด)
+            // default true = กฎหมายวันนี้ · ตัวตัดสิน Helpers/AbbreviatedTaxInvoiceRule
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "RequirePhoR06ForAbbreviatedTaxInvoice" boolean NOT NULL DEFAULT true;""",
+
             // ═══ POS เฟส 3: ขายแล้วกินวัตถุดิบตามสูตร (sell-consumes-BOM) ═══
             // เดิม BOM ถูกอ่านจาก ProductionOrderService ที่เดียว (ผลิตล่วงหน้า) ·
             // การขายไม่เคยอ่านสูตรเลย ⇒ ขายชานม 1 แก้วตัดสต็อก "ชานมไข่มุก" ตัวเดียว
@@ -6073,6 +6078,33 @@ public static class DatabaseMigrationHelper
             // พฤติกรรมเดิมเทียบเท่ากับ "ทุกคำยืนยันนับเป็นการลงมือเลือก" ⇒ คัดลอก
             // AcceptCount มาเป็นยอดตั้งต้น แล้วให้กติกาใหม่มีผลกับของที่เรียนต่อจากนี้
             """UPDATE "AiSuggestionMemories" SET "ExplicitAcceptCount" = "AcceptCount" WHERE "ExplicitAcceptCount" = 0 AND "AcceptCount" > 0;""",
+
+            // ═══ รอบ 182 · D7-1 — ล้าง "สตริงธง" ที่ไหลเข้าไปเป็นคำตอบจริง ═══
+            // ปุ่ม "ใช้ของเดิม" ในป็อปอัพ (`wwwroot/js/ai-suggestion.js`) ส่ง
+            // `chosenAnswer: '__USER_KEPT_EXISTING__'` เป็นธงบอกว่า "ผู้ใช้ไม่รับคำแนะนำ"
+            // แต่ฝั่งเซิร์ฟเวอร์ **ไม่มีใครกรอง** ⇒ ถูกเก็บเป็นคำตอบ แล้วไหลต่อเข้า
+            // `OcrCategoryMapping.AccountCode` ⇒ **รหัสผังบัญชีปลอมเข้าไปอยู่ในตัวแนะนำ GL**
+            // โค้ดกรองแล้วที่ `Helpers/AiSentinelAnswers` (3 ชั้น) — ตรงนี้ล้างของที่ค้างอยู่
+            """DELETE FROM "OcrCategoryMappings" WHERE "AccountCode" = '__USER_KEPT_EXISTING__';""",
+            """DELETE FROM "AiSuggestionMemories" WHERE "LearnedAnswer" = '__USER_KEPT_EXISTING__';""",
+            // แถว feedback: ล้าง**คำตอบ** แต่คง**การปฏิเสธ**ไว้ (ไม่แตะ UserChosenAt)
+            // ⇒ สถิติ "ผู้ใช้ตรวจแล้วกี่ครั้ง" ยังถูก และตัวเรียนรู้จะอ่านเป็น
+            // "คำตอบ AI ไม่ถูกใช้" (คะแนนลบ) แทนที่จะเรียนสตริงธงเป็นคำตอบ
+            """UPDATE "AiSuggestionFeedbacks" SET "UserChosenAnswer" = NULL, "UserAcceptedAi" = false WHERE "UserChosenAnswer" = '__USER_KEPT_EXISTING__';""",
+
+            // ═══ รอบ 182 · D7-4 — แถว routing ที่ค้างเป็น 0 ก่อนรอบ 178 ═══
+            // โค้ด clamp ตอนอ่านแล้ว migration นี้ทำให้ "ค่าที่เก็บ" ตรงกับ "ค่าที่ใช้จริง"
+            // ไม่งั้นหน้าแอดมินโชว์ 0 ทั้งที่ระบบสุ่มถามครูอยู่ = หน้าจอโกหก
+            // Mode 1 = LocalOnly = เจตนาปิดครูที่ประกาศชัด — ห้ามแตะ
+            """UPDATE "AiFeatureRoutingConfigs" SET "ProviderSamplingRate" = 0.01, "UpdatedAt" = NOW() WHERE "ProviderSamplingRate" IS NOT NULL AND "ProviderSamplingRate" < 0.01 AND "Mode" <> 1;""",
+
+            // ═══ รอบ 182 · D7-3 — backfill ExplicitAcceptCount รอบสอง ═══
+            // รอบ 178 ตั้งด่าน "ต้องมี Explicit ≥ 1" แต่หน้าเว็บ 6 จุดยังไม่ส่ง `source`
+            // ⇒ แถวที่เกิดหลังรอบ 178 ของ 3 feature นี้ตกเป็น Implicit ทั้งที่ผู้เขียนแถว
+            // มีทางเดียวคือ handler `change` (= ผู้ใช้เปลี่ยนค่าเอง) — เปิดไฟล์ยืนยันแล้ว
+            // ⚠️ **ห้ามเหมารวม**: OcrFullReview/DocumentConversionSuggestion ยิงตอน "บันทึก"
+            // (Implicit จริง) · feature จากป็อปอัพเพิ่งเริ่มส่ง Explicit รอบนี้ แถวเก่าพิสูจน์ไม่ได้
+            """UPDATE "AiSuggestionMemories" SET "ExplicitAcceptCount" = "AcceptCount" WHERE "ExplicitAcceptCount" = 0 AND "AcceptCount" >= 1 AND "FeatureKey" IN ('ManualJeAccountSuggestion', 'ProductCategoryTagging', 'GlAccountSlotSuggestion');""",
 
             // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
             // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)

@@ -125,7 +125,12 @@ public class ContactsV1Controller : PublicApiControllerBase
             c.IsCustomer = item.IsCustomer;
             c.IsActive = item.IsActive;
             if (Enum.TryParse<ContactType>(item.ContactType, true, out var ctype)) c.ContactType = ctype;
-            else if (taxId.Length == 13) c.ContactType = ContactType.JuristicPerson;
+            // ประเภทผู้ติดต่อ = ตัวตัดสิน **ภ.ง.ด.3 (บุคคล) vs ภ.ง.ด.53 (นิติบุคคล)**
+            // เดิม `taxId.Length == 13 ⇒ JuristicPerson` ผิดทุกราย เพราะเลขผู้เสียภาษี
+            // ไทย**ทุกแบบ**ยาว 13 หลัก รวมเลขบัตรประชาชนของบุคคลธรรมดา.
+            // ตัวตัดสินตัวเดียวอยู่ที่ Helpers/ContactTypeFromTaxId — ตัดสินไม่ได้
+            // (เลขว่าง/ไม่ครบ/checksum ไม่ผ่าน) = **คงค่าเดิม ไม่เดา**
+            else c.ContactType = Helpers.ContactTypeFromTaxId.Apply(c.ContactType, taxId);
             c.UpdatedAt = DateTime.UtcNow;
             c.UpdatedBy = "api:v1:contact-sync";
         }

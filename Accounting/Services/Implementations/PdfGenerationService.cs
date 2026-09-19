@@ -105,7 +105,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                     // ของบริษัท ⇒ ใบที่ตั้งเป็นอังกฤษได้เนื้อเอกสารอังกฤษ แต่ metadata
                     // Title ของ PDF/A-3 เป็นไทย (ไม่ตรงกันในไฟล์เดียว)
                     pdfTitle: $"{GetDocumentTitle(document.DocumentType, ResolveDocumentLanguage(request.Language, document, template, settings))} {document.DocumentNumber}",
-                    pdfAuthor: company.Name);
+                    pdfAuthor: company.Name,
+                    requirePhoR06: await RequirePhoR06Async());
                 var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
                 // ชื่อไฟล์ XML แนบต้องเป็น ETDA-invoice.xml (ETDA spec) — ดู EtdaEmbeddedXmlFileName
                 var xmlFileName = EtdaEmbeddedXmlFileName;
@@ -127,10 +128,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         byte[]? pdfBytes = null;
         if (_htmlPdf is { Enabled: true })
         {
-            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies, freeCredit);
+            var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies, freeCredit,
+                await RequirePhoR06Async());
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
-        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, freeCredit);
+        pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, freeCredit,
+            requirePhoR06: await RequirePhoR06Async());
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -164,7 +167,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         var depositApplies = document.DepositAppliedAmount > 0
             ? await LoadDepositApplyBreakdownAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride,
-            request.Language, signers, gl, depositApplies, await IsFreeTierAsync(companyId));
+            request.Language, signers, gl, depositApplies, await IsFreeTierAsync(companyId),
+            await RequirePhoR06Async());
     }
 
     /// <summary>Build a printable 50 ทวิ from an IN-MEMORY (un-saved) cert
@@ -1377,7 +1381,23 @@ public partial class PdfGenerationService : IPdfGenerationService
             doc.IssuerBranchCode, view, company.BranchCode, company.BranchName, isEnglish);
     }
 
-    internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang)
+    /// <param name="companyMayIssueAbbreviated">บริษัทผู้ออกมีสิทธิ์ออก "ใบกำกับภาษีอย่างย่อ"
+    /// (§86/6) สำหรับเอกสารใบนี้หรือไม่ — ตัดสินโดย <see cref="Accounting.Helpers.AbbreviatedTaxInvoiceRule"/>
+    /// ตัวเดียวของระบบ (เดิมหัวเอกสารพิมพ์คำว่า "ใบกำกับภาษีอย่างย่อ" <b>โดยไม่ตรวจ ภ.พ.06 เลย</b>
+    /// = ออกใบกำกับโดยไม่มีสิทธิ์ · ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(5) — DECISION_AUDIT D1-B4).
+    /// <b>ไม่มีค่าตั้งต้นโดยตั้งใจ</b>: ผู้เรียกใหม่ต้องตอบคำถามนี้เสมอ ห้ามเผลอข้าม</param>
+    /// <summary>นโยบายแพลตฟอร์ม: บังคับ ภ.พ.06 ก่อนออกใบกำกับภาษีอย่างย่อหรือไม่
+    /// (แอดมินตั้งที่หน้า site-settings · ค่าตั้งต้น = บังคับ ตามกฎหมายวันนี้)
+    ///
+    /// <para>แถว <c>SiteSettings</c> ยังไม่ถูกสร้าง (ระบบใหม่) → คืน <c>true</c>
+    /// ไม่ใช่ <c>false</c>: "ยังไม่ได้ตั้งค่า" ต้องไม่แปลว่า "ปิดด่านกฎหมาย"</para></summary>
+    private async Task<bool> RequirePhoR06Async()
+        => await _db.SiteSettings.AsNoTracking()
+            .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice)
+            .FirstOrDefaultAsync() ?? true;
+
+    internal static string ComputeDocumentTitle(Document doc, DocumentTemplate template, CompanySettings? settings, string lang,
+        bool companyMayIssueAbbreviated)
     {
         var isEn = lang == "en";
         var overrides = isEn ? new Dictionary<string, string>() : ParseTitleOverrides(settings);
@@ -1433,7 +1453,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // VAT ขายยังลง ภ.พ.30 ครบเหมือนเดิม (ภาระภาษีไม่ขึ้นกับหัวเอกสาร).
         // ยกเว้นใบเสร็จ settlement ของใบกำกับ (SettlesTaxInvoiceSource) — VAT
         // รายงานที่ใบกำกับต้นทางแล้ว ห้ามมีคำใบกำกับซ้ำใบที่สอง → ใบเสร็จเปล่า
-        else if (!hasCustomTitle && IsAbbreviatedTaxInvoiceDoc(doc))
+        else if (!hasCustomTitle && IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated))
         {
             // เอกสารที่ทำหน้าที่รับเงินด้วย (ใบเสร็จ / ใบกำกับที่รับเงินแล้ว) →
             // หัวคู่ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"; ใบกำกับขายเชื่อ → อย่างย่อเดี่ยว
@@ -1458,7 +1478,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ใบที่ไม่ใช่เอกสารภาษี (ใบเสนอราคา/ใบสั่งซื้อ ฯลฯ) ใช้อังกฤษล้วนได้
         if (isEn && doc.VatAmount > 0)
         {
-            var thaiTitle = ComputeDocumentTitle(doc, template, settings, "th");
+            var thaiTitle = ComputeDocumentTitle(doc, template, settings, "th", companyMayIssueAbbreviated);
             if (thaiTitle.Contains("ใบกำกับภาษี") && !title.Contains("ใบกำกับภาษี"))
                 title = $"{title} / {thaiTitle}";
         }
@@ -1508,6 +1528,17 @@ public partial class PdfGenerationService : IPdfGenerationService
         var settings = await db.CompanySettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
+        // สิทธิ์ออกใบกำกับอย่างย่อ (§86/6) — โหลดครั้งเดียวต่อหน้า แล้วถามรายใบ
+        // (ถามรายใบเพราะวันที่บนเอกสารมีผล: ใบที่ลงวันที่ก่อน ภ.พ.06 อนุมัติ ยังออกไม่ได้)
+        // ถ้าไม่พบแถวบริษัท/แถว SiteSettings → ยึดทิศเข้ม (ไม่ใช่ปล่อยผ่าน)
+        var issuer864 = await db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate })
+            .FirstOrDefaultAsync();
+        var requirePhoR06 = await db.SiteSettings.AsNoTracking()
+            .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice)
+            .FirstOrDefaultAsync() ?? true;
+
         // แบรนด์ที่ใบในหน้านี้ออกในนาม (เฉพาะที่ยังไม่ได้ Include มา)
         var brandIds = docs.Where(d => d.BrandId.HasValue && d.Brand == null)
             .Select(d => d.BrandId!.Value).Distinct().ToList();
@@ -1540,7 +1571,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             // template ซึ่งเส้นทางนี้ใช้ร่วมกันทั้งหน้า (และไม่มีผลกับหัวเอกสาร)
             var template = PickTemplate(pool, doc, null, brandDefault);
             var lang = ResolveDocumentLanguage(null, doc, template, settings);
-            result[doc.Id] = ComputeDocumentTitle(doc, template, settings, lang);
+            var mayAbbrev = issuer864 != null
+                && Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+                    issuer864.IsVatRegistered, issuer864.IsRetailApproved,
+                    issuer864.PhoR06ApprovedDate, doc.DocumentDate, requirePhoR06);
+            result[doc.Id] = ComputeDocumentTitle(doc, template, settings, lang, mayAbbrev);
         }
         return result;
     }
@@ -1568,8 +1603,12 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// HTML renderer และ QuestPDF ใช้ร่วม (หัว + ข้อความ §86/6(6) ต้องมาคู่กัน
     /// เสมอ — คนละ renderer ห้าม drift). ไม่รวมใบเสร็จ settlement ของใบกำกับ
     /// (VAT รายงานที่ต้นทางแล้ว — ใบนั้นเป็นใบเสร็จเปล่า) และมัดจำ VAT พักรอ.</summary>
-    internal static bool IsAbbreviatedTaxInvoiceDoc(Document doc)
-        => doc.VatAmount > 0
+    internal static bool IsAbbreviatedTaxInvoiceDoc(Document doc, bool companyMayIssueAbbreviated)
+        // ด่านแรก: บริษัทมีสิทธิ์ §86/6 ไหม — ไม่มีสิทธิ์ก็ไม่ใช่ใบกำกับอย่างย่อ
+        // ไม่ว่ารูปเอกสารจะเข้าเงื่อนไขอื่นครบแค่ไหน (หัวจะตกไปเป็น "ใบเสร็จรับเงิน"
+        // ซึ่งเป็นทิศที่ถูกกฎหมายและผู้ใช้เห็นทันทีว่าต่างจากที่คาด)
+        => companyMayIssueAbbreviated
+           && doc.VatAmount > 0
            && !IsDeferredVatDeposit(doc)
            && !doc.SettlesTaxInvoiceSource
            && doc.DocumentType is DocumentType.TaxInvoice
@@ -1718,12 +1757,19 @@ public partial class PdfGenerationService : IPdfGenerationService
         doc.ServedAsReceipt = !await HasSeparateReceiptAsync(companyId, doc.Id);
     }
 
+    /// <param name="requirePhoR06">นโยบายแพลตฟอร์ม (<c>SiteSettings</c>) ว่าบังคับ ภ.พ.06
+    /// ก่อนออกใบกำกับอย่างย่อหรือไม่ — ค่าตั้งต้น <c>true</c> = กฎหมายวันนี้ · ผู้เรียกที่ลืมส่ง
+    /// จะได้ทิศที่<b>เข้มกว่า</b> (พิมพ์ "ใบเสร็จรับเงิน") ไม่ใช่ทิศที่ออกใบกำกับโดยไม่มีสิทธิ์</param>
     private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
         IReadOnlyList<(string RefNo, decimal Amount)>? depositApplies = null,
-        bool showFreeTierCredit = false)
+        bool showFreeTierCredit = false,
+        bool requirePhoR06 = true)
     {
+        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            doc.DocumentDate, requirePhoR06);
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
         var sb = new StringBuilder();
@@ -1785,7 +1831,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ตัวตนผู้ออกเอกสาร (ชื่อทางการค้า vs ชื่อนิติบุคคล + โลโก้/ที่อยู่ที่ควรใช้)
         // — resolver กลางตัวเดียวกับ QuestPDF ห้ามตัดสินเองที่นี่
         var issuer = BuildIssuer(doc, company, settings, lang,
-            ComputeDocumentTitle(doc, template, settings, lang));
+            ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated));
 
         // Header
         sb.AppendLine("<div class='header'>");
@@ -1840,7 +1886,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
         // resolver กลาง ComputeDocumentTitle (ตั้งเองได้ผ่าน settings) — เดิม logic
         // ซ้ำกับ native renderer เสี่ยง drift
-        var title = ComputeDocumentTitle(doc, template, settings, lang);
+        var title = ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated);
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
         var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
                 or DocumentType.DebitNote or DocumentType.CreditNote
@@ -1860,7 +1906,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // §86/6(6) — ใบกำกับภาษีอย่างย่อต้องมีข้อความระบุชัดว่าราคารวม VAT แล้ว
         // (ยอดรวมทั้งสิ้นบนใบรวม VAT เสมออยู่แล้ว — บรรทัดนี้คือถ้อยคำที่กฎหมาย
         // บังคับให้พิมพ์) — sync กับ QuestPDF ComposeHeaderAndTitle
-        if (IsAbbreviatedTaxInvoiceDoc(doc))
+        if (IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated))
             sb.AppendLine($"<div style='text-align:center;font-size:11px;color:#64748b;margin:-4px 0 8px'>"
                 + (lang == "en" ? "VAT included in the total amount / ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว"
                                 : "ยอดรวมทั้งสิ้นได้รวมภาษีมูลค่าเพิ่มแล้ว") + "</div>");

@@ -33,11 +33,13 @@ public class DocumentsV1Controller : PublicApiControllerBase
     private const string Feature = "document.create";
 
     private readonly IDocumentService _documents;
+    private readonly IPermissionService _permissions;
     private readonly ILogger<DocumentsV1Controller> _logger;
 
     public DocumentsV1Controller(AccountingDbContext db, IUsageMeteringService metering,
-        IDocumentService documents, ILogger<DocumentsV1Controller> logger) : base(db, metering)
-    { _documents = documents; _logger = logger; }
+        IDocumentService documents, IPermissionService permissions,
+        ILogger<DocumentsV1Controller> logger) : base(db, metering)
+    { _documents = documents; _permissions = permissions; _logger = logger; }
 
     public record LineRequest(string Description, decimal Quantity, decimal UnitPrice,
         decimal VatRate = 7, string? Unit = null, decimal WithholdingTaxRate = 0);
@@ -144,12 +146,33 @@ public class DocumentsV1Controller : PublicApiControllerBase
         }
     }
 
-    /// <summary>อนุมัติ — ออกเลขที่จริง (gap-free §86/4) + ลงบัญชี</summary>
+    /// <summary>อนุมัติ — ออกเลขที่จริง (gap-free §86/4) + ลงบัญชี
+    ///
+    /// <para><b>ด่านสิทธิ์</b>: scope <c>documents:write</c> ตอบได้แค่ "คีย์ใบนี้เขียน
+    /// ข้อมูลได้ไหม" — <b>ไม่ใช่</b> "ใครอนุมัติเอกสารได้". ERP_REVIEW กำหนดว่า
+    /// <b>ทุกทางเข้าอนุมัติ</b> (เว็บ/กฎ/ลายเซ็น/มือถือ/LINE) ต้องผ่าน
+    /// <c>DocumentPermissionHelper.CanApproveAsync</c> ตัวเดียวกัน มิฉะนั้น
+    /// ทางเข้าภายนอกกลายเป็นประตูหลังที่ข้ามสิทธิ์ทั้งชุด (ราก R5 "ทางเข้าอื่นไม่เดินด่าน")</para>
+    ///
+    /// <para>คีย์ไม่มี "ผู้ใช้" ในตัวเอง — ใช้ <c>ApiKey.CreatedByUserId</c> คือผู้ที่ออก
+    /// คีย์ใบนี้ ซึ่งเป็นคนเดียวกับที่ <c>ApiKeyMiddleware</c> ใส่เป็น
+    /// <c>ClaimTypes.NameIdentifier</c> ให้ทั้ง request อยู่แล้ว ⇒ คีย์ทำได้ไม่เกิน
+    /// สิทธิ์ของคนที่ออกมัน</para></summary>
     [HttpPost("{documentId:guid}/approve")]
     public async Task<IActionResult> Approve(Guid documentId, CancellationToken ct)
     {
         var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
         if (error != null) return error;
+
+        var docType = await Db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync(ct);
+        if (docType == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารนี้ในบริษัทของคุณ"));
+
+        var permError = await CheckApprovePermissionAsync(ctx!, docType.Value, ct);
+        if (permError != null) return permError;
 
         try
         {
@@ -166,6 +189,41 @@ public class DocumentsV1Controller : PublicApiControllerBase
         {
             return BadRequest(new ApiResponse<string>(false, null, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// ด่านสิทธิ์อนุมัติของทางเข้าภายนอก — คืน <c>null</c> เมื่อผ่าน
+    ///
+    /// <para>ล้มดังพร้อม "ทางไปต่อ" เสมอ: ข้อความบอกว่าต้องให้สิทธิ์ใคร หรือออกคีย์ใหม่
+    /// ด้วยบัญชีไหน (กฎเหล็ก #4 F2 ข้อ 8) — ห้ามคืน 403 เปล่าที่คู่ค้าเดาต่อไม่ถูก</para>
+    /// </summary>
+    private async Task<IActionResult?> CheckApprovePermissionAsync(
+        ApiCallerContext ctx, DocumentType docType, CancellationToken ct)
+    {
+        var owner = ctx.ApiKeyId.HasValue
+            ? await Db.Set<ApiKey>().AsNoTracking()
+                .Where(k => k.Id == ctx.ApiKeyId.Value && k.CompanyId == ctx.CompanyId)
+                .Select(k => new { k.CreatedByUserId, k.Name })
+                .FirstOrDefaultAsync(ct)
+            : null;
+
+        // ไม่รู้ว่าใครเป็นเจ้าของคีย์ = ตัดสินสิทธิ์ไม่ได้ → ห้ามเดาว่า "ผ่าน"
+        // (เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล ห้ามตกเป็น "ผ่าน" — DECISION_DOCTRINE §1)
+        if (owner == null || owner.CreatedByUserId == Guid.Empty)
+            return StatusCode(403, new ApiResponse<string>(false, null,
+                "API key ใบนี้ไม่ได้ผูกกับผู้ใช้ที่ระบุตัวได้ จึงตรวจสิทธิ์อนุมัติเอกสารไม่ได้ — "
+                + "กรุณาออก API key ใบใหม่จากหน้าจัดการ API key ด้วยบัญชีที่มีสิทธิ์ \"อนุมัติเอกสาร\" "
+                + "แล้วใช้คีย์ใบใหม่แทน (สร้างเอกสารเป็นฉบับร่างยังทำได้ตามเดิม)"));
+
+        if (await Helpers.DocumentPermissionHelper.CanApproveAsync(
+                _permissions, ctx.CompanyId, owner.CreatedByUserId, docType))
+            return null;
+
+        return StatusCode(403, new ApiResponse<string>(false, null,
+            $"ผู้ใช้ที่ออก API key \"{owner.Name}\" ไม่มีสิทธิ์อนุมัติเอกสารชนิด {docType} — "
+            + "ให้เจ้าของบริษัทเพิ่มสิทธิ์ \"อนุมัติเอกสาร\" แก่ผู้ใช้รายนี้ในหน้าบทบาท/สิทธิ์ "
+            + "หรือออก API key ใบใหม่ด้วยบัญชีที่มีสิทธิ์อยู่แล้ว. "
+            + "เอกสารยังคงอยู่เป็นฉบับร่างและอนุมัติจากหน้าเว็บได้ตามปกติ"));
     }
 
     /// <summary>
@@ -212,8 +270,11 @@ public class DocumentsV1Controller : PublicApiControllerBase
             CompanyId = companyId,
             Name = req.ContactName.Trim(),
             TaxId = taxId,
-            ContactType = taxId?.Length == 13 && taxId.StartsWith('0')
-                ? ContactType.JuristicPerson : ContactType.Individual,
+            // ตัวตัดสิน ภ.ง.ด.3 vs 53 — สำเนาที่สองของกติกาถูกถอดแล้ว (เดิมเช็ค
+            // `Length == 13 && StartsWith('0')` เองโดยไม่ตรวจ checksum ⇒ เลขมั่ว
+            // ที่ขึ้นต้น 0 ผ่านเป็นนิติบุคคล). ตัดสินไม่ได้ = ค่าตั้งต้นของ entity
+            // (Individual) — ทิศที่ผิดแล้วผู้ใช้เห็นและแก้ได้ในหน้าผู้ติดต่อ
+            ContactType = Helpers.ContactTypeFromTaxId.Resolve(taxId) ?? ContactType.Individual,
             IsSupplier = true,
             IsActive = true,
             CreatedBy = "api:v1:auto-contact",

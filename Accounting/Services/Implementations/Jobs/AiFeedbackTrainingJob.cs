@@ -267,6 +267,22 @@ public class AiFeedbackTrainingJob : BackgroundService
         // Features ที่มี ground-truth row แต่ TrainSingleAsync ไม่มี case
         // — เก็บนับ "rows ที่หลุดวง training" ต่อ feature
         var orphanedFeatures = new Dictionary<string, int>();
+
+        // ── feature ที่มี "นักเรียน" ลงทะเบียนจริง = สัญญาณ **ไม่ได้** หลุดวง ──────
+        // (รอบ 181 · D7-5) `ILocalDistillationModel` อย่าง `GenericFeedbackDistillationModel`
+        // อ่าน **แถว feedback ตรง ๆ** ใน `LoadFromFeedbackAsync` ⇒ ไม่ต้องมี case ใน
+        // TrainSingleAsync ก็เรียนได้ครบ. เดิมตัวตรวจ orphan มองแค่ `_ => false` ของ switch
+        // แล้วประทับ `LocalModelHealth.Status = NeedsRedesign` ว่า "ขาด trainer" ให้ feature
+        // พวกนี้ **ทุกรอบ** (PaymentTypeSuggestion · OcrProjectMatch · OcrLineItemSplit ·
+        // PublicFaqChat · TenantAssistantChat · FuzzyDuplicateDetection …) = คำเตือนที่ฟ้องผิด
+        // ⇒ แอดมินเลิกเชื่อหน้า ai-health ทั้งหน้า ("ตัวเตือนที่ฟ้องผิด = ตัวเตือนที่พัง")
+        //
+        // ⚠️ อ่านจาก DI ไม่ใช่รายชื่อ hardcode — รายชื่อที่พิมพ์มือจะล้าสมัยทันทีที่มีคน
+        // register นักเรียนตัวใหม่ใน Program.cs แล้วไม่มีอะไรฟ้อง (defect class เดิมของ
+        // KnownTrainerFeatures เอง)
+        var studentFeatures = _services.GetServices<ILocalDistillationModel>()
+            .Select(m => m.FeatureKey.ToString())
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var row in labelled)
         {
             try
@@ -279,7 +295,8 @@ public class AiFeedbackTrainingJob : BackgroundService
                     trainedFeatures.TryGetValue(row.FeatureKey, out var c);
                     trainedFeatures[row.FeatureKey] = c + 1;
                 }
-                else if (!KnownTrainerFeatures.Contains(row.FeatureKey))
+                else if (!KnownTrainerFeatures.Contains(row.FeatureKey)
+                         && !studentFeatures.Contains(row.FeatureKey))
                 {
                     orphanedFeatures.TryGetValue(row.FeatureKey, out var oc);
                     orphanedFeatures[row.FeatureKey] = oc + 1;
@@ -306,11 +323,16 @@ public class AiFeedbackTrainingJob : BackgroundService
                 string.Join(", ", orphanedFeatures.Select(kv => $"{kv.Key}({kv.Value} rows)")));
             foreach (var (featureKey, rows) in orphanedFeatures)
             {
+                // ⚠️ **ต้องกรอง CompanyId == null** (รอบ 181 · D7-5) — ตั้งแต่รอบ 179
+                // ตารางนี้มีทั้งแถวรายบริษัทและแถวรวมทั้งแพลตฟอร์ม (ดู
+                // RefreshAllLocalModelHealthsAsync) ⇒ query ที่กรองด้วย FeatureKey
+                // อย่างเดียวจะคว้า**แถวของบริษัทใดบริษัทหนึ่ง**มาประทับสถานะระดับ
+                // แพลตฟอร์มทับ แล้วหน้าแอดมินจะเห็นสถานะของบริษัทนั้นเพี้ยนไปด้วย
                 var health = await db.LocalModelHealths
-                    .FirstOrDefaultAsync(h => h.FeatureKey == featureKey, ct);
+                    .FirstOrDefaultAsync(h => h.FeatureKey == featureKey && h.CompanyId == null, ct);
                 if (health == null)
                 {
-                    health = new LocalModelHealth { FeatureKey = featureKey };
+                    health = new LocalModelHealth { FeatureKey = featureKey, CompanyId = null };
                     db.LocalModelHealths.Add(health);
                 }
                 health.Status = LocalModelHealthStatus.NeedsRedesign;
@@ -403,6 +425,16 @@ public class AiFeedbackTrainingJob : BackgroundService
     private async Task<bool> TrainSingleAsync(AccountingDbContext db, AiSuggestionFeedback row, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(row.UserChosenAnswer)) return false;
+
+        // ── defense in depth (รอบ 181 · D7-1) ────────────────────────────────
+        // ตั้งแต่รอบนี้ `AiFeedbackRecorder` ไม่เขียนธงของ UI ลง UserChosenAnswer แล้ว
+        // แต่ **แถวเก่าที่ปนเปื้อนยังอยู่ในฐาน** (และหน้าต่างของงานนี้คือ 7 วันย้อนหลัง)
+        // ⇒ ต้องกันที่นี่ด้วย ไม่งั้น `__USER_KEPT_EXISTING__` จะไหลเข้า
+        // OcrCategoryMapping.AccountCode = รหัสผังบัญชีปลอมที่นักเรียนนับว่า "ผู้ใช้ยืนยัน"
+        //
+        // คืน true (= consumed) โดยตั้งใจ: แถวนี้ไม่มีคำตอบให้เรียนและจะไม่มีวันมี
+        // ⇒ ประทับ TRAINED เพื่อไม่ให้วนอ่านซ้ำทุกรอบ และไม่ให้ไปโผล่เป็น "orphan"
+        if (Accounting.Helpers.AiSentinelAnswers.IsSentinel(row.UserChosenAnswer)) return true;
 
         // The FeatureKey is the enum name — switch on it.
         return row.FeatureKey switch
@@ -531,6 +563,10 @@ public class AiFeedbackTrainingJob : BackgroundService
         // GL account training updates OcrCategoryMapping. PromptJson
         // carries vendor + line description; parse them out.
         if (string.IsNullOrEmpty(row.PromptJson)) return false;
+        // ⚠️ ชั้นที่สองของด่านเดียวกับใน TrainSingleAsync — ตารางนี้คือปลายทางที่
+        // `__USER_KEPT_EXISTING__` เคยกลายเป็น **รหัสผังบัญชี** จริง ๆ (รอบ 181 · D7-1)
+        // จึงต้องมีด่านติดอยู่กับจุดเขียนเอง ไม่ใช่ฝากไว้กับผู้เรียกเท่านั้น
+        if (Accounting.Helpers.AiSentinelAnswers.IsSentinel(row.UserChosenAnswer)) return false;
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(row.PromptJson);

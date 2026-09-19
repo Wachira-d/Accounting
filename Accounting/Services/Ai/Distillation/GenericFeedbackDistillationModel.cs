@@ -147,6 +147,20 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
                     && r.AiPrimaryAnswer != r.UserChosenAnswer)
                     Add(key, r.AiPrimaryAnswer, 0, StrongWeight, countTowardMajority: deliberate);
             }
+            else if (r.UserChosenAt != null && !string.IsNullOrEmpty(r.AiPrimaryAnswer))
+            {
+                // ★ รอบ 182 — แถว "ผู้ใช้ตรวจแล้วแต่ไม่บอกคำตอบ"
+                //
+                // เกิดจาก `AiFeedbackRecorder` ที่ปฏิเสธ sentinel (`__USER_KEPT_EXISTING__`
+                // จากปุ่ม "ใช้ของเดิม") ⇒ `UserChosenAt` ถูกประทับแต่ `UserChosenAnswer`
+                // เป็น null. ถ้าปล่อยให้ตกไปสาขาถัดไป มันจะกลายเป็น "ครูตอบแล้วไม่มีใคร
+                // แตะ" ⇒ ได้คะแนน**บวก** ให้คำตอบที่มนุษย์เพิ่ง**ปฏิเสธ** = สอนกลับทาง
+                //
+                // เรารู้แน่ชัดแค่ "คำตอบของ AI ไม่ถูกใช้" (ไม่รู้ว่าอะไรถูก) ⇒ ลงคะแนน
+                // **ลบ** ให้คำตอบนั้น น้ำหนักเต็ม แต่ **ไม่นับเข้าถังรวมบริษัท** เพราะ
+                // ไม่มีคำตอบที่ถูกให้นับ (majority ต้องมีตัวเลือกที่ชนะ ไม่ใช่แค่ตัวแพ้)
+                Add(key, r.AiPrimaryAnswer, 0, StrongWeight, countTowardMajority: false);
+            }
             else if (!string.IsNullOrEmpty(r.AiPrimaryAnswer))
             {
                 // Weak signal — distil the confident teacher answer (low weight).

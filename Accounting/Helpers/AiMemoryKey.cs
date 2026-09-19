@@ -26,6 +26,26 @@ namespace Accounting.Helpers;
 /// แทนด้วย token คงที่โดยตั้งใจ: ใบของผู้ขายรายเดิม รายการเดิม แต่ยอดต่างกัน
 /// ต้องได้คำตอบที่เรียนไว้เดียวกัน ไม่งั้นคลังจะโตแต่ไม่มีวันถูกใช้</para>
 ///
+/// <para>⚠️ <b>บล็อก <c>local_model</c> ไม่ใช่อินพุต — ต้องถูกตัดออกจากกุญแจ</b>
+/// (รอบ 181 · D7-2) prompt builder ทุกตัวที่เสนอคำตอบของนักเรียนให้ครูตรวจ
+/// (<c>GlAccountPrompt</c> · <c>VendorCanonPrompt</c> · <c>WorkflowPrompts</c> ·
+/// <c>AdvancedPrompts</c> · <c>BankAndAnalyticsPrompts</c>) ใส่บล็อกนี้ไว้ใน payload และ
+/// <c>AiOrchestrator.ReplaceLocalModelBlock</c> **เขียนทับมันด้วยคำตอบของนักเรียนตัวจริง**
+/// ก่อนคิดกุญแจ ⇒ ถ้านับบล็อกนี้เข้ากุญแจด้วย:
+/// <list type="bullet">
+/// <item>ฝั่ง <b>ทำนาย</b> (<c>GenericFeedbackDistillationModel.PredictAsync</c>) คิดจาก
+/// JSON <b>ก่อน</b>เขียนทับ — บล็อกยังเป็น heuristic ของผู้เรียก</item>
+/// <item>ฝั่ง <b>เขียน/เรียน</b> คิดจาก JSON <b>หลัง</b>เขียนทับ — บล็อกเป็นคำตอบนักเรียน
+/// และมีคีย์ <c>source</c> งอกเพิ่มมาอีก</item>
+/// </list>
+/// ⇒ กุญแจสองฝั่งต่างกัน <b>ทันทีที่นักเรียนเริ่มตอบได้</b> = นักเรียนหยุดโตหลังใบแรก
+/// (คำถามเดิมเป๊ะ ๆ ก็หาคลังไม่เจอ). บล็อกนี้คือ "คำตอบที่เสนอ" ไม่ใช่ "คำถาม" จึงไม่ควร
+/// อยู่ในกุญแจของอินพุตตั้งแต่แรก</para>
+///
+/// <para>คีย์อื่นที่เป็น "คำตอบที่เสนอ" (ถ้ามีเพิ่มวันหลัง) ให้เติมใน
+/// <c>ProposedAnswerKeys</c> — <b>ห้ามใช้แพตเทิร์นเดาชื่อ</b> เพราะคีย์ของอินพุตจริงอาจ
+/// ชื่อคล้ายกัน (ญาติของ <c>__NEW__</c> ที่เป็น "คำตอบจริง" ไม่ใช่ sentinel)</para>
+///
 /// <para>ผลลัพธ์เป็นเลขฐานสิบหก 64 ตัว — พอดีกับคอลัมน์ <c>PromptHash varchar(80)</c></para>
 /// </summary>
 public static class AiMemoryKey
@@ -39,6 +59,20 @@ public static class AiMemoryKey
         if (normalised.Length == 0) return "";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalised)));
     }
+
+    /// <summary>คีย์ใน payload ที่เป็น <b>"คำตอบที่เสนอ"</b> ไม่ใช่ <b>"คำถาม"</b> —
+    /// ตัดทิ้งก่อนทำกุญแจเสมอ (ดูเหตุผลเต็มที่ doc ของคลาส · รอบ 181 D7-2)
+    ///
+    /// <para>เป็น <b>ลิสต์ปิด</b> โดยตั้งใจ: ตรวจชื่อคีย์ตรง ๆ เท่านั้น ห้ามใช้แพตเทิร์น
+    /// (<c>local*</c>/<c>*_model</c>) เพราะจะกินคีย์อินพุตจริงที่บังเอิญชื่อคล้ายกัน แล้ว
+    /// คำถามคนละคำถามจะได้กุญแจเดียวกัน = เสิร์ฟคำตอบของใบอื่น ซึ่งแย่กว่าไม่ตอบ</para>
+    ///
+    /// <para>ปัจจุบันมีตัวเดียว — ยืนยันด้วย
+    /// <c>grep -rn "local_model" Accounting/Services/Ai/Prompts/</c> (11 จุด 5 ไฟล์
+    /// ทั้งหมดใช้ชื่อนี้ชื่อเดียว) และไม่มี prompt builder ตัวใดใช้ <c>local_prediction</c>
+    /// หรือ <c>student_*</c> เลย</para></summary>
+    private static readonly HashSet<string> ProposedAnswerKeys =
+        new(StringComparer.OrdinalIgnoreCase) { "local_model" };
 
     private static readonly System.Text.RegularExpressions.Regex _taxIdRe =
         new(@"\b\d{13}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -111,6 +145,9 @@ public static class AiMemoryKey
             var result = new System.Text.Json.Nodes.JsonObject();
             foreach (var key in obj.Select(kvp => kvp.Key).OrderBy(k => k, StringComparer.Ordinal))
             {
+                // "คำตอบที่เสนอ" ไม่ใช่อินพุต — ตัดทิ้งทุกชั้น (บล็อกอยู่ชั้นบนสุดในวันนี้
+                // แต่ตัดทุกชั้นกันไว้ ถ้ามี prompt ห่อ payload ซ้อนวันหลัง)
+                if (ProposedAnswerKeys.Contains(key)) continue;
                 var val = obj[key];
                 if (key.EndsWith("_pii", StringComparison.OrdinalIgnoreCase)
                     || key.EndsWith("_personal", StringComparison.OrdinalIgnoreCase))
