@@ -880,7 +880,10 @@ public class PayrollController : ControllerBase
         var overrides = await db.TaxRuleConfigs
             .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.FiscalYear >= start && c.FiscalYear <= end)
             .ToListAsync();
-        var defaultBrackets = "[{\"upperBound\":150000,\"rate\":0},{\"upperBound\":300000,\"rate\":0.05},{\"upperBound\":500000,\"rate\":0.10},{\"upperBound\":750000,\"rate\":0.15},{\"upperBound\":1000000,\"rate\":0.20},{\"upperBound\":2000000,\"rate\":0.25},{\"upperBound\":5000000,\"rate\":0.30},{\"upperBound\":0,\"rate\":0.35}]";
+        // ตารางขั้น §48(1) + ค่าลดหย่อน §47 อ่านจาก `Helpers/ThaiPitCalculator`
+        // ที่เดียว — เดิมพิมพ์ซ้ำที่นี่ (สำเนาที่ 2 ของตารางกฎหมาย) ⇒ หน้าตั้งค่า
+        // โชว์เลขหนึ่ง เครื่องคิดภาษีใช้อีกเลขหนึ่งได้โดยไม่มีอะไรฟ้อง
+        var defaultBrackets = Accounting.Helpers.ThaiPitCalculator.DefaultBracketsJson();
         var rows = Enumerable.Range(start, end - start + 1).Select(y =>
         {
             var ov = overrides.FirstOrDefault(o => o.FiscalYear == y);
@@ -888,17 +891,17 @@ public class PayrollController : ControllerBase
             {
                 FiscalYear = y,
                 BracketsJson = ov?.BracketsJson ?? defaultBrackets,
-                PersonalAllowance = ov?.PersonalAllowance ?? 60_000m,
-                SpouseAllowance = ov?.SpouseAllowance ?? 60_000m,
-                ChildAllowance = ov?.ChildAllowance ?? 30_000m,
-                ChildAllowancePost2561 = ov?.ChildAllowancePost2561 ?? 60_000m,
-                ParentAllowance = ov?.ParentAllowance ?? 30_000m,
-                Section42TwiCap = ov?.Section42TwiCap ?? 100_000m,
-                LifeInsuranceCap = ov?.LifeInsuranceCap ?? 100_000m,
-                HealthInsuranceCap = ov?.HealthInsuranceCap ?? 25_000m,
-                PvdCap = ov?.PvdCap ?? 500_000m,
-                MortgageInterestCap = ov?.MortgageInterestCap ?? 100_000m,
-                DonationCapPercent = ov?.DonationCapPercent ?? 10m,
+                PersonalAllowance = ov?.PersonalAllowance ?? Accounting.Helpers.ThaiPitCalculator.DefaultPersonalAllowance,
+                SpouseAllowance = ov?.SpouseAllowance ?? Accounting.Helpers.ThaiPitCalculator.DefaultSpouseAllowance,
+                ChildAllowance = ov?.ChildAllowance ?? Accounting.Helpers.ThaiPitCalculator.DefaultChildAllowance,
+                ChildAllowancePost2561 = ov?.ChildAllowancePost2561 ?? Accounting.Helpers.ThaiPitCalculator.DefaultChildAllowancePost2561,
+                ParentAllowance = ov?.ParentAllowance ?? Accounting.Helpers.ThaiPitCalculator.DefaultParentAllowance,
+                Section42TwiCap = ov?.Section42TwiCap ?? Accounting.Helpers.ThaiPitCalculator.DefaultExpenseCap,
+                LifeInsuranceCap = ov?.LifeInsuranceCap ?? Accounting.Helpers.ThaiPitCalculator.DefaultLifeInsuranceCap,
+                HealthInsuranceCap = ov?.HealthInsuranceCap ?? Accounting.Helpers.ThaiPitCalculator.DefaultHealthInsuranceCap,
+                PvdCap = ov?.PvdCap ?? Accounting.Helpers.ThaiPitCalculator.DefaultPvdCap,
+                MortgageInterestCap = ov?.MortgageInterestCap ?? Accounting.Helpers.ThaiPitCalculator.DefaultMortgageInterestCap,
+                DonationCapPercent = ov?.DonationCapPercent ?? Accounting.Helpers.ThaiPitCalculator.DefaultDonationCapPercent,
                 IsOverride = ov != null,
                 ov?.Notes,
             };

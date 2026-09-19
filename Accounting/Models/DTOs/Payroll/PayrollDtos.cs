@@ -140,7 +140,10 @@ public record CreatePayrollItemRequest(
     bool IsTaxable, Guid? AccountId,
     /// <summary>ลักษณะเงินได้ — มีผลกับการประมาณการภาษีทั้งปี (D6-3)
     /// ไม่ส่งมา = Unspecified ⇒ ระบบใช้กฎรหัสเดิม</summary>
-    Models.Enums.PayrollIncomeNature IncomeNature = Models.Enums.PayrollIncomeNature.Unspecified);
+    Models.Enums.PayrollIncomeNature IncomeNature = Models.Enums.PayrollIncomeNature.Unspecified,
+    /// <summary>เป็น "ค่าจ้าง" ตาม ม.5 ⇒ เข้าฐานเงินสมทบประกันสังคม/กองทุน
+    /// เงินทดแทนด้วยไหม · ไม่ส่งมา = null = ยังไม่ตัดสิน (ไม่รวม + เตือน)</summary>
+    bool? CountsForSsoBase = null);
 
 /// <summary>แก้ไขรายการเงินเดือน — ต้องมี เพราะแถวเก่าถูก migration เติม
 /// <c>IncomeNature</c> จากกฎรหัสเดิม (คงพฤติกรรม) ผู้ใช้จึงต้องแก้ให้ถูกได้
@@ -151,7 +154,13 @@ public record UpdatePayrollItemRequest(
     decimal? FixedAmount, decimal? Percentage,
     bool? IsTaxable, Guid? AccountId,
     Models.Enums.PayrollIncomeNature? IncomeNature,
-    bool? IsActive);
+    bool? IsActive,
+    /// <summary>เป็นค่าจ้างตาม ม.5 ไหม — <b>สามสถานะ</b> จึงส่งเป็นสตริง
+    /// (<c>"true"</c>/<c>"false"</c>/<c>"unset"</c>) ไม่ใช่ <c>bool?</c>:
+    /// <c>bool?</c> ที่ไม่ส่งมา กับที่ตั้งใจส่ง <c>null</c> แยกกันไม่ออก ⇒
+    /// ผู้ใช้จะ**ย้อนกลับไป "ยังไม่ระบุ" ไม่ได้เลย** (silent no-op คลาสเดิม)
+    /// · ไม่ส่ง/ค่าอื่น = ไม่แตะของเดิม</summary>
+    string? CountsForSsoBase = null);
 
 public record PayrollItemResponse(
     Guid Id, string Code, string Name, string ItemType,
@@ -163,7 +172,14 @@ public record PayrollItemResponse(
     /// เมื่อระบุไว้ · ตกกลับไปกฎรหัสเดิมเมื่อยังไม่ระบุ</summary>
     Models.Enums.PayrollIncomeNature EffectiveIncomeNature = Models.Enums.PayrollIncomeNature.Unspecified,
     /// <summary>คำอธิบายผลต่อการประมาณการภาษี — เซิร์ฟเวอร์เป็นเจ้าของถ้อยคำ</summary>
-    string? IncomeNatureNote = null);
+    string? IncomeNatureNote = null,
+    // ── Q1: ฐานเงินสมทบ ม.5 — เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A) ──
+    /// <summary>null = ยังไม่ตัดสิน (ไม่รวมในฐาน + ขึ้นคำเตือน)</summary>
+    bool? CountsForSsoBase = null,
+    /// <summary>ยังรอให้ HR ตัดสินไหม — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่แสดง</summary>
+    bool SsoBaseNeedsDecision = false,
+    /// <summary>คำอธิบายผลต่อฐานเงินสมทบ — เซิร์ฟเวอร์เป็นเจ้าของถ้อยคำ</summary>
+    string? SsoBaseNote = null);
 
 /// <summary>สร้างรอบเงินเดือน
 ///

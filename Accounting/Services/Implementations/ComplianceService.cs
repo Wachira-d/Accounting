@@ -365,15 +365,42 @@ public class ComplianceService : IComplianceService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>สถานะที่แปลว่า "ประกาศว่ายื่นแล้ว" ของ <c>ComplianceFiling</c>
+    /// (ฝั่งนี้เก็บสถานะเป็นข้อความ ไม่ใช่ enum เดียวกับ <c>TaxReport</c>)</summary>
+    private static bool IsDeclaredFiled(string? status)
+        => status is "Filed" or "Accepted";
+
     private static ComplianceFilingResponse MapToResponse(ComplianceFiling f)
     {
         var daysUntilDue = (f.DueDate - DateTime.UtcNow.Date).Days;
+
+        // ── ระดับหลักฐาน: "มีเลขยืนยันจริงไหม" ไม่ใช่ "สถานะเป็น Filed ไหม" ──
+        // ใช้เกณฑ์ตัวเดียวกับฝั่งรายงานภาษี (Helpers/TaxFilingLockPolicy) เพื่อ
+        // ไม่ให้เกิดนิยาม "มีเลขรับ" ชุดที่สอง (ช่องว่างล้วน = ยังไม่มี)
+        var hasNumber = Accounting.Helpers.TaxFilingLockPolicy
+            .HasFilingNumber(f.ConfirmationNumber);
+        var declared = IsDeclaredFiled(f.Status);
+        var evidence = !declared
+            ? Accounting.Helpers.TaxFilingEvidence.NotFiled
+            : hasNumber
+                ? Accounting.Helpers.TaxFilingEvidence.ConfirmedByFilingNumber
+                : Accounting.Helpers.TaxFilingEvidence.DeclaredByUser;
+        var evidenceDetail = evidence switch
+        {
+            Accounting.Helpers.TaxFilingEvidence.ConfirmedByFilingNumber =>
+                $"ยืนยันด้วยเลขที่ {f.ConfirmationNumber!.Trim()} ที่ผู้ใช้บันทึกไว้",
+            Accounting.Helpers.TaxFilingEvidence.DeclaredByUser =>
+                "ระบบบันทึกตามที่ผู้ใช้แจ้งว่ายื่นแล้วเท่านั้น — ยังไม่มีเลขยืนยันจากหน่วยงาน "
+                + "(ถ้ามีใบเสร็จ/เลขรับแล้ว ให้กรอกที่ช่อง \"เลขยืนยัน\")",
+            _ => "ยังไม่ได้ยื่น",
+        };
 
         return new ComplianceFilingResponse(
             f.Id, f.FilingType, f.FormCode, f.Year, f.Month,
             f.DueDate, f.FiledDate, f.Status,
             f.SubmissionReference, f.ConfirmationNumber,
             f.TaxAmount, f.PenaltyAmount,
-            f.ValidationErrors, daysUntilDue);
+            f.ValidationErrors, daysUntilDue,
+            evidence.ToString(), evidenceDetail);
     }
 }

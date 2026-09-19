@@ -777,14 +777,23 @@ public partial class TaxService : ITaxService
             // CIL ตัดออก (audit F7): ใบรับรองแทนใบเสร็จเคลมภาษีซื้อไม่ได้ (§82/4 ไม่มี
             // ใบกำกับเต็มรูป) — JE ก็ fold VAT เข้า expense อยู่แล้ว การนับที่นี่ =
             // เคลมเกินสิทธิ์ + นับซ้ำเมื่อ CIL ถูก convert มาจาก Expense ที่รายงานแล้ว
-            else if (doc.DocumentType == DocumentType.PurchaseInvoice
-                  || doc.DocumentType == DocumentType.Expense
-                  // PV แบบ settlement (RelatedDocumentId → PI/Expense) ห้ามเคลม:
-                  // ภาษีซื้ออยู่ที่ใบตั้งหนี้แล้ว และ JE ของ PV settlement ไม่มี
-                  // ขา 11610 เลย (Dr เจ้าหนี้/Cr เงิน) — เดิมติ๊ก flag ภายหลัง =
-                  // ก้อนเดียวขึ้น 2 บรรทัด (PI + PV)
-                  || (doc.DocumentType == DocumentType.PaymentVoucher
-                      && doc.HasTaxInvoiceReference && doc.RelatedDocumentId == null))
+            // PV แบบ settlement (RelatedDocumentId → PI/Expense) ห้ามเคลม:
+            // ภาษีซื้ออยู่ที่ใบตั้งหนี้แล้ว และ JE ของ PV settlement ไม่มี
+            // ขา 11610 เลย (Dr เจ้าหนี้/Cr เงิน) — เดิมติ๊ก flag ภายหลัง =
+            // ก้อนเดียวขึ้น 2 บรรทัด (PI + PV)
+            //
+            // ชุดชนิด "ใบที่เคลมภาษีซื้อ" ย้ายไป `Helpers/InputVatGateScope` ตัวเดียว
+            // เพื่อให้ด่าน §82/5 ตอนอนุมัติ (DocumentService) กับรายงาน ภ.พ.30 ที่นี่
+            // ใช้นิยามเดียวกัน — เดิมด่านเตือนยืมชุด "เอกสารที่แทนการจ่ายเงิน"
+            // (WhtGateScope) ซึ่งกว้างกว่า (รวม CIL/PV ตัดชำระที่เคลมไม่ได้) และ
+            // แคบกว่าในเวลาเดียวกัน (ตกใบเพิ่มหนี้ฝั่งซื้อที่แยกฝั่งไม่ได้).
+            // `cnDnPurchaseSide: false` ที่นี่ไม่ได้เดาฝั่ง — CN/DN ถูกสาขาข้างบน
+            // รับไปหมดแล้ว จึงไม่มีทางเดินมาถึงบรรทัดนี้ (ส่งค่าอะไรก็ผลเท่ากัน)
+            else if (Accounting.Helpers.InputVatGateScope.ClaimsInputVat(
+                         doc.DocumentType,
+                         cnDnPurchaseSide: false,
+                         hasTaxInvoiceReference: doc.HasTaxInvoiceReference,
+                         hasRelatedDocument: doc.RelatedDocumentId != null))
             {
                 // ภาษีซื้อ "ยังไม่ถึงกำหนด" (audit F4): เอกสารที่ post ลง 11640
                 // (ใบกำกับซื้อยังไม่ครบ §86/4) ห้ามเคลมใน ภ.พ.30 จนกว่าจะเติมใบ
@@ -2473,37 +2482,14 @@ public partial class TaxService : ITaxService
         return (name, taxId);
     }
 
-    /// <summary>Thai personal income tax (PIT) progressive rates</summary>
+    /// <summary>ภาษีเงินได้บุคคลธรรมดาตามขั้น §48(1) — <b>ตารางขั้นอยู่ที่
+    /// <see cref="Accounting.Helpers.ThaiPitCalculator.DefaultBrackets"/> ที่เดียว</b>
+    ///
+    /// <para>เดิมที่นี่ถือตารางขั้นของตัวเอง (สำเนาที่ 2 ของ §48(1)) ⇒ ถ้าสรรพากร
+    /// ปรับขั้น จะต้องจำได้ว่ามีอีกชุดซ่อนอยู่ใน ภ.ง.ด.91 — แบบเดียวกับที่
+    /// CLAUDE.md F2 ข้อ 4 ห้ามตรง ๆ ("ตารางกฎหมายห้ามมีสำเนาที่สอง")</para></summary>
     private static decimal CalculateThaiPersonalIncomeTax(decimal taxableIncome)
-    {
-        if (taxableIncome <= 0) return 0;
-
-        var brackets = new (decimal UpperBound, decimal Rate)[]
-        {
-            (150_000m, 0.00m),
-            (300_000m, 0.05m),
-            (500_000m, 0.10m),
-            (750_000m, 0.15m),
-            (1_000_000m, 0.20m),
-            (2_000_000m, 0.25m),
-            (5_000_000m, 0.30m),
-            (decimal.MaxValue, 0.35m)
-        };
-
-        decimal tax = 0;
-        decimal previousBound = 0;
-
-        foreach (var (upperBound, rate) in brackets)
-        {
-            if (taxableIncome <= previousBound) break;
-
-            var taxableInBracket = Math.Min(taxableIncome, upperBound) - previousBound;
-            tax += taxableInBracket * rate;
-            previousBound = upperBound;
-        }
-
-        return Math.Round(tax, 2, MidpointRounding.AwayFromZero);
-    }
+        => Accounting.Helpers.ThaiPitCalculator.AnnualTax(taxableIncome);
 
     /// <summary>
     /// ภาษีเงินได้นิติบุคคลจากกำไรสุทธิ — <b>อัตราอยู่ที่
@@ -2681,6 +2667,30 @@ public partial class TaxService : ITaxService
             }
         }
 
+        // ── ภ.ง.ด.50/51: ตัวเลขนี้ยังตรงกับข้อมูลต้นทางไหม (คำตัดสิน Q12) ──
+        //
+        // รายงาน CIT คำนวณครั้งเดียวตอนกดสร้างแล้วเก็บยอดลงแถว ⇒ เอกสาร/JE ที่
+        // ขยับหลังจากนั้นไม่มีผลกับตัวเลขที่โชว์ · **เตือนแล้วเสนอปุ่ม "สร้างใหม่"
+        // — ห้าม regenerate เอง** (ตัวเลขบนรายงานที่ยื่นไปแล้วต้องไม่เปลี่ยนเงียบ ๆ)
+        //
+        // เกณฑ์ = เทียบ "ยอดที่คำนวณสด" กับ "ยอดที่เก็บไว้" ไม่ใช่เดาจากวันที่
+        // (การแก้ที่ไม่กระทบ GL ก็ดัน UpdatedAt ⇒ ถ้าใช้วันที่จะเตือนใบที่ถูกอยู่แล้ว)
+        // — ตัวตัดสินอยู่ที่ Helpers/CitReportFreshness ตัวเดียว
+        if (report.TaxType == TaxType.CorporateIncomeTax)
+        {
+            try
+            {
+                resp = resp with { Freshness = await BuildCitFreshnessAsync(companyId, report) };
+            }
+            catch (Exception ex)
+            {
+                // ป้ายความสดเป็น "ข้อมูลช่วยตัดสินใจ" — ล้มแล้วต้องไม่ทำให้เปิด
+                // รายงานไม่ได้ แต่ห้ามเงียบ (ผู้ดูแลต้องเห็นใน log ว่าป้ายหาย)
+                _logger?.LogWarning(ex,
+                    "ตรวจความสดของรายงาน ภ.ง.ด.50/51 ไม่สำเร็จ (report {Report})", reportId);
+            }
+        }
+
         // ข้อมูลผู้ประกอบการสำหรับ header ฟอร์มราชการ
         var co = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId)
@@ -2690,6 +2700,73 @@ public partial class TaxService : ITaxService
             resp = resp with { CompanyName = co.Name, CompanyTaxId = co.TaxId, CompanyBranchCode = co.BranchCode };
 
         return resp;
+    }
+
+    /// <summary>
+    /// คำนวณ "ยอดสด" ของรอบบัญชีแล้วเทียบกับยอดที่รายงานเก็บไว้ (Q12)
+    ///
+    /// <para>คิวรีใช้เงื่อนไข<b>ชุดเดียวกับ <see cref="GenerateCitReport"/></b>
+    /// (Posted · ไม่ใช่ใบปิดบัญชี · ช่วงรอบตาม <c>FiscalYearStartMonth</c>) —
+    /// ถ้าเงื่อนไขสองฝั่งไม่ตรงกัน ตัวเทียบจะฟ้องทุกใบตลอดกาล</para>
+    ///
+    /// <para>ฐานเวลาคือ <c>report.CreatedAt</c> ไม่ใช่ <c>UpdatedAt</c> — การกด
+    /// "สร้างใหม่" สร้างแถวใหม่เสมอ ส่วน <c>UpdatedAt</c> ขยับจากการติ๊ก/แก้
+    /// หมายเหตุซึ่ง<b>ไม่ได้</b>คำนวณตัวเลขใหม่</para>
+    /// </summary>
+    private async Task<TaxReportFreshnessResponse> BuildCitFreshnessAsync(
+        Guid companyId, TaxReport report)
+    {
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId);
+        var fy = Accounting.Helpers.FiscalYear.RangeFor(
+            report.Year, company?.FiscalYearStartMonth ?? 1);
+
+        var freshRevenue = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry
+                && l.JournalEntry.EntryDate >= fy.Start
+                && l.JournalEntry.EntryDate <= fy.EndInclusive
+                && l.Account!.AccountType == AccountType.Revenue)
+            .SumAsync(l => l.CreditAmount - l.DebitAmount);
+
+        var freshExpense = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && !l.JournalEntry.IsClosingEntry
+                && l.JournalEntry.EntryDate >= fy.Start
+                && l.JournalEntry.EntryDate <= fy.EndInclusive
+                && l.Account!.AccountType == AccountType.Expense)
+            .SumAsync(l => l.DebitAmount - l.CreditAmount);
+
+        // ยอดค่าใช้จ่าย "ที่เก็บไว้" อยู่ในบรรทัดที่ GenerateCitReport เขียนไว้
+        // (= ค่าใช้จ่ายจาก GL ล้วน ไม่รวมค่าเสื่อมทางภาษี ซึ่งอยู่คนละบรรทัด)
+        const string expenseLineLabel = "ค่าใช้จ่ายทั้งปี";
+        var storedExpense = report.Lines
+            .Where(l => l.Description == expenseLineLabel)
+            .Sum(l => l.IncomeAmount);
+
+        var since = report.CreatedAt;
+        var changedDocs = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId
+                && d.DocumentDate >= fy.Start && d.DocumentDate <= fy.EndInclusive
+                && (d.CreatedAt > since || (d.UpdatedAt != null && d.UpdatedAt > since)));
+        var changedJes = await _db.JournalEntries.AsNoTracking()
+            .CountAsync(j => j.CompanyId == companyId
+                && j.EntryDate >= fy.Start && j.EntryDate <= fy.EndInclusive
+                && (j.CreatedAt > since || (j.UpdatedAt != null && j.UpdatedAt > since)));
+
+        var verdict = Accounting.Helpers.CitReportFreshness.Evaluate(
+            generatedAt: since,
+            storedRevenue: report.TotalIncome, freshRevenue: freshRevenue,
+            storedExpense: storedExpense, freshExpense: freshExpense,
+            changedDocuments: changedDocs, changedJournalEntries: changedJes,
+            alreadyFiled: Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status));
+
+        return new TaxReportFreshnessResponse(
+            verdict.Status.ToString(), verdict.Message, verdict.NeedsAttention,
+            verdict.CanRegenerate, since, changedDocs + changedJes,
+            verdict.RevenueDelta, verdict.ExpenseDelta);
     }
 
     public async Task<List<TaxReportResponse>> GetTaxReportsAsync(Guid companyId, TaxType? taxType = null, int? year = null)

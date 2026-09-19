@@ -171,7 +171,8 @@ public class TaxFilingExportService : ITaxFilingExportService
             certs.Count, totalIncome, totalTax,
             $"ภ.ง.ด.3 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
-            + reviewNote);
+            + reviewNote
+            + WhtRateNote(rows));
     }
 
     // =====================================================================
@@ -201,7 +202,8 @@ public class TaxFilingExportService : ITaxFilingExportService
             "PND53", "ภ.ง.ด.53", $"PND53_{year}{month:D2}.txt", "text/plain", AsBytes(body),
             certs.Count, totalIncome, totalTax,
             $"ภ.ง.ด.53 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
-            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + WhtRateNote(rows));
     }
 
     // =====================================================================
@@ -760,6 +762,36 @@ public class TaxFilingExportService : ITaxFilingExportService
     /// ในหน้ารายงานใช้ตารางเดียวกัน (เดิมเป็น private ที่นี่ อีกทางจึงส่งรหัสดิบ)</summary>
     private static string MapIncomeTypeCode(string? code) => PndIncomeTypeCode.ForFile(code);
 
+    /// <summary>
+    /// คำเตือนท้ายสรุปไฟล์ยื่น: แถวที่ใช้ "อัตราที่ใช้ไม่ได้ ณ วันที่จ่าย"
+    ///
+    /// <para>ไฟล์ที่กำลังจะอัปโหลดเข้าเว็บสรรพากรคือจุดสุดท้ายก่อนตัวเลขกลายเป็น
+    /// แบบที่ยื่นจริง ⇒ เป็นที่ที่ต้อง "ล้มดัง" ถ้าอัตราผิด. ตัวตัดสินคือ
+    /// <c>ThaiWhtRateTable.ClassifyRate</c> ตัวเดียวกับด่านตอนอนุมัติเอกสาร —
+    /// ห้ามเขียนลิสต์อัตราซ้ำที่นี่</para>
+    ///
+    /// <para><b>เตือน ไม่บล็อก</b>: ไฟล์ยังสร้างได้เสมอ (ผู้ใช้ที่มีเหตุผล
+    /// — เช่นบันทึกย้อนหลังงวดเก่า — ต้องมีทางไปต่อ) แต่เห็นว่า "แถวไหน"</para>
+    /// </summary>
+    private static string WhtRateNote(IEnumerable<PndTextFileFormat.Row> rows)
+    {
+        var bad = rows
+            .Select(r => (Row: r, Verdict: Accounting.Helpers.ThaiWhtRateTable
+                .ClassifyRate(r.TaxRate, r.PayDate)))
+            .Where(x => x.Verdict.NeedsAttention)
+            .ToList();
+        if (bad.Count == 0) return "";
+
+        var samples = bad.Take(3)
+            .Select(x => $"{x.Row.PayeeName} {x.Row.TaxRate:0.##}% ({x.Row.PayDate:dd/MM/yyyy})")
+            .ToList();
+
+        return $" · ⚠️ {bad.Count} บรรทัดใช้อัตราที่ใช้ไม่ได้ ณ วันที่จ่าย — "
+            + string.Join(", ", samples)
+            + (bad.Count > samples.Count ? ", …" : "")
+            + $" — {bad[0].Verdict.Warning}";
+    }
+
     // =====================================================================
     // ภ.ง.ด.91 — Annual personal income tax summary per employee
     // =====================================================================
@@ -980,6 +1012,11 @@ public class TaxFilingExportService : ITaxFilingExportService
             certs.Count, totalIncome, totalWht,
             $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {certs.Count} ราย WHT {totalWht:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
+        // ⚠️ **ไม่เรียก `WhtRateNote` ที่ ภ.ง.ด.54 โดยตั้งใจ** — ตารางอัตราของ
+        // `ThaiWhtRateTable` คือ ท.ป.4/2528 (ในประเทศ) ส่วน ภ.ง.ด.54 เดินตาม ม.70
+        // + อนุสัญญาภาษีซ้อน (DTA) ซึ่งมีอัตราของตัวเอง ⇒ เอามาตัดสินจะกลายเป็น
+        // คำเตือนที่ฟ้องใบถูกทุกใบของคนที่ใช้สิทธิ DTA (F2 ข้อ 8). ด่านของเส้นนี้
+        // คือด่าน DTA (คำตัดสิน Q6) ไม่ใช่ตารางนี้
     }
 
     // =====================================================================

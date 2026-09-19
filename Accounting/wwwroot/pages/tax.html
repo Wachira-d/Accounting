@@ -620,6 +620,11 @@
                 `}
               </div>
             </div>
+            ${(d.freshness && d.freshness.message) ? `
+            <div class="card" style="margin-bottom:16px;font-size:13px;line-height:1.7;border-left:4px solid ${d.freshness.needsAttention ? '#d97706' : '#94a3b8'};background:${d.freshness.needsAttention ? '#fffbeb' : 'var(--bg-secondary)'}">
+              <div>${d.freshness.needsAttention ? '⚠️' : 'ℹ️'} ${_esc(d.freshness.message)}</div>
+              ${d.freshness.canRegenerate ? `<div style="margin-top:8px"><button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${d.id}')">สร้างใหม่จากข้อมูลปัจจุบัน</button></div>` : ''}
+            </div>` : ''}
             ${d.taxType === 'VAT' ? `
             <div class="card" style="border:1px solid var(--gray-300);margin-bottom:16px;font-size:13px;line-height:1.7">
               <div style="font-weight:700;text-align:center;font-size:14px">รายงานภาษีซื้อ / รายงานภาษีขาย</div>

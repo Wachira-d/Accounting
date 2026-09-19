@@ -468,6 +468,22 @@ public class PayrollItem : TenantEntity
     /// migration เติมค่าจากสูตรเดียวกัน (D6-3)</para></summary>
     public Enums.PayrollIncomeNature IncomeNature { get; set; } = Enums.PayrollIncomeNature.Unspecified;
 
+    /// <summary>รายการนี้เป็น "ค่าจ้าง" ตาม ม.5 พ.ร.บ.ประกันสังคม หรือไม่ ⇒
+    /// เข้าฐานเงินสมทบ (และฐานกองทุนเงินทดแทน) ด้วยไหม
+    ///
+    /// <para><b>คำตัดสินเจ้าของ Q1 (DECISION_AUDIT §9.2)</b>: ม.5 นิยาม "ค่าจ้าง"
+    /// กว้างกว่าเงินเดือนพื้นฐาน — เบี้ยขยัน/ค่าตำแหน่ง/ค่าครองชีพที่จ่ายประจำ
+    /// ทุกเดือนถือเป็นค่าจ้าง ส่วนค่าเดินทาง/ที่พักตามจ่ายจริงไม่ใช่ · เส้นแบ่ง
+    /// ขึ้นกับข้อตกลงการจ้างของแต่ละบริษัท ระบบเดาแทนไม่ได้ จึงเป็นธงที่ HR ติ๊ก</para>
+    ///
+    /// <para><c>null</c> = <b>ยังไม่มีใครตัดสิน</b> ⇒ ไม่รวมในฐาน = พฤติกรรมเดิม
+    /// เป๊ะ (ไม่มีบริษัทไหนยอดนำส่งขยับเพราะอัปเดตระบบ) แต่ขึ้น**คำเตือน** ให้
+    /// HR ไปติ๊ก เพราะการนำส่งขาดคือทิศที่มองไม่เห็นจนถึงวันที่ สปส. ประเมิน
+    /// ย้อนหลัง + เงินเพิ่ม 2%/เดือน (ม.49) · <c>false</c> = ตัดสินแล้วว่าไม่ใช่
+    /// ค่าจ้าง ⇒ ไม่เตือนอีก · ตัวตัดสินอยู่ที่
+    /// <c>Helpers.SsoWageBase.CountsAsWage/NeedsWageDecision</c></para></summary>
+    public bool? CountsForSsoBase { get; set; }
+
     public bool IsActive { get; set; } = true;
     public Guid? AccountId { get; set; }                 // GL account
     public ChartOfAccount? Account { get; set; }
@@ -533,42 +549,42 @@ public class TaxRuleConfig : TenantEntity
     public string BracketsJson { get; set; } = "";
 
     /// <summary>ค่าลดหย่อนส่วนตัว §47(1)(ก) — default 60,000.</summary>
-    public decimal PersonalAllowance { get; set; } = 60_000m;
+    public decimal PersonalAllowance { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultPersonalAllowance;
 
     /// <summary>ค่าลดหย่อนคู่สมรส §47(1)(ข) — default 60,000.</summary>
-    public decimal SpouseAllowance { get; set; } = 60_000m;
+    public decimal SpouseAllowance { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultSpouseAllowance;
 
     /// <summary>ค่าลดหย่อนบุตรคนละ §47(1)(ค) — default 30,000.</summary>
-    public decimal ChildAllowance { get; set; } = 30_000m;
+    public decimal ChildAllowance { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultChildAllowance;
 
     /// <summary>ค่าลดหย่อนบุตรคนที่ 2 ขึ้นไป (เกิดหลัง 2561)
     /// §47(1)(ค) วรรค 2 — default 60,000.</summary>
-    public decimal ChildAllowancePost2561 { get; set; } = 60_000m;
+    public decimal ChildAllowancePost2561 { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultChildAllowancePost2561;
 
     /// <summary>ค่าลดหย่อนบิดามารดาคนละ §47(1)(ง) — default 30,000
     /// (อายุ 60+, รายได้ไม่เกิน 30,000/ปี).</summary>
-    public decimal ParentAllowance { get; set; } = 30_000m;
+    public decimal ParentAllowance { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultParentAllowance;
 
     /// <summary>เพดาน §42 ทวิ ค่าใช้จ่าย 50% — default 100,000 (ตาม
     /// ประกาศ คทอ. 2560 — เงินเดือนหักได้ 50% ไม่เกิน 100K).</summary>
-    public decimal Section42TwiCap { get; set; } = 100_000m;
+    public decimal Section42TwiCap { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultExpenseCap;
 
     /// <summary>เพดานเบี้ยประกันชีวิต — default 100,000.</summary>
-    public decimal LifeInsuranceCap { get; set; } = 100_000m;
+    public decimal LifeInsuranceCap { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultLifeInsuranceCap;
 
     /// <summary>เพดานเบี้ยประกันสุขภาพ — default 25,000 (รวม + ประกันชีวิต ≤ 100K).</summary>
-    public decimal HealthInsuranceCap { get; set; } = 25_000m;
+    public decimal HealthInsuranceCap { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultHealthInsuranceCap;
 
     /// <summary>เพดานรวม PVD + RMF + SSF + กบข. — default 500,000.</summary>
-    public decimal PvdCap { get; set; } = 500_000m;
+    public decimal PvdCap { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultPvdCap;
 
     /// <summary>เพดานดอกเบี้ยที่อยู่อาศัย — default 100,000.</summary>
-    public decimal MortgageInterestCap { get; set; } = 100_000m;
+    public decimal MortgageInterestCap { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultMortgageInterestCap;
 
     /// <summary>เพดานบริจาคทั่วไป — เป็น % ของ net income post-allowances.
     /// Default 10. (บริจาคพิเศษ เช่น การศึกษา หัก 2 เท่า → คนเงินเดือน
     /// คงไม่ใช้ — ทำเฉพาะเคสที่ HR ระบุพิเศษ.)</summary>
-    public decimal DonationCapPercent { get; set; } = 10m;
+    public decimal DonationCapPercent { get; set; } = Accounting.Helpers.ThaiPitCalculator.DefaultDonationCapPercent;
 
     public string? Notes { get; set; }
     public bool IsActive { get; set; } = true;

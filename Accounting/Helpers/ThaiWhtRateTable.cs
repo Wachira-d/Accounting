@@ -123,6 +123,110 @@ public static class ThaiWhtRateTable
     /// ที่คัดลอกไปเขียนใหม่ = เตือน/คิดผิดตลอดไป — บทเรียนใน CLAUDE.md)</para></summary>
     public static readonly decimal[] StatutoryRates = { 1m, 2m, 3m, 5m, 10m, 15m };
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  อัตราลดชั่วคราว — ตารางกฎหมายที่มี "อายุ"
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // ═══ ที่มา (คำถามค้าง §10.5 ข้อ 2 รอบ 183) ═══
+    // เอกสารรอบก่อนตั้งคำถามว่า "อัตรา 1.5% (e-withholding) ไม่อยู่ในตารางกลาง
+    // ⇒ ใบที่ใช้ 1.5% จะขึ้นคำเตือน" และเสนอให้เติมเข้า `StatutoryRates`
+    //
+    // **ข้อเท็จจริงที่ตรวจแล้วต่างจากคำถาม**: 1.5% ไม่ใช่อัตรา e-withholding —
+    // เป็นอัตราลด**ทั่วไป**ช่วงโควิด ใช้กับการจ่ายระหว่าง 1 เม.ย. – 30 ก.ย. 2563
+    // เท่านั้น. อัตราของ e-withholding คือ 2% (1 ต.ค. 2563 – 31 ธ.ค. 2564) แล้ว
+    // 1% (1 ม.ค. 2566 – 31 ธ.ค. 2568) ซึ่ง **อยู่ใน `StatutoryRates` อยู่แล้ว**
+    // (2% = ค่าโฆษณา · 1% = ค่าขนส่ง) ⇒ ใบ e-withholding **ไม่เคยติดคำเตือนเลย**
+    //
+    // ⇒ การเติม 1.5% เข้า `StatutoryRates` แบบไม่มีวันหมดอายุจะทำให้อัตราที่
+    // หมดอายุไปแล้ว 6 ปีกลายเป็น "ถูกกฎหมาย" ถาวร — ใบปีนี้ที่ใช้ 1.5% (หัก**ขาด**
+    // ครึ่งหนึ่งจาก 3%) จะเงียบสนิท และ §54 ให้**ผู้จ่าย**รับผิดในภาษีที่หักขาด
+    // = ความเสียหายที่มองไม่เห็นจนกว่าจะถูกประเมิน (ผิดทิศตาม G5)
+    //
+    // ⇒ ทางที่เลือก: ให้ตาราง**มีมิติเวลา** — อัตราที่เคยใช้ได้จริงถูกบันทึกไว้
+    // พร้อมช่วงเวลาและเลขที่ประกาศ. ใบที่ลงวันที่ **ในช่วง** ⇒ เงียบ (เลิกฟ้อง
+    // ใบที่ถูก — F2 ข้อ 8) · ใบที่ลงวันที่ **นอกช่วง** ⇒ เตือนโดย**อ้างช่วงเวลา
+    // และอัตราที่ควรใช้แทน** ไม่ใช่แค่ "ไม่ใช่อัตราตามกฎหมาย"
+    //
+    // ⚠️ ห้ามใส่แถวที่ยังไม่มีประกาศจริงรองรับ — แถวที่แต่งขึ้นจะทำให้ระบบเงียบ
+    // กับใบที่หักขาด ซึ่งอันตรายกว่าการเตือนเกิน (หลักการ 10 ข้อ #3)
+
+    /// <param name="Rate">อัตรา (%)</param>
+    /// <param name="From">วันแรกที่ใช้ได้ (วันที่<b>จ่าย</b> ไม่ใช่วันที่ในใบกำกับ)</param>
+    /// <param name="ToInclusive">วันสุดท้ายที่ใช้ได้ (รวมวันนี้)</param>
+    /// <param name="LegalReference">เลขที่ประกาศ/กฎหมายที่ให้อัตรานี้</param>
+    /// <param name="AppliesTo">ขอบเขตประเภทเงินได้ที่ประกาศนั้นครอบ (ข้อความอธิบาย)</param>
+    public sealed record TemporaryRate(
+        decimal Rate, DateTime From, DateTime ToInclusive, string LegalReference, string AppliesTo);
+
+    /// <summary>อัตราลดชั่วคราวที่เคยมีผลจริง — เรียงตามวันเริ่ม</summary>
+    public static readonly IReadOnlyList<TemporaryRate> TemporaryReducedRates = new[]
+    {
+        new TemporaryRate(1.5m,
+            new DateTime(2020, 4, 1), new DateTime(2020, 9, 30),
+            "ท.ป.310/2563",
+            "ลดจาก 3% เป็น 1.5% สำหรับเงินได้ ม.40(2)(3)(6)(7)(8) — มาตรการโควิด-19"),
+    };
+
+    /// <summary>สถานะของอัตราหนึ่ง ณ วันที่จ่ายหนึ่ง</summary>
+    public enum RateStanding
+    {
+        /// <summary>อัตราถาวรตาม ท.ป.4/2528 / §3 เตรส</summary>
+        Statutory = 0,
+        /// <summary>อัตราลดชั่วคราว และวันที่จ่าย<b>อยู่ใน</b>ช่วงที่ประกาศให้</summary>
+        TemporaryInForce = 1,
+        /// <summary>อัตราลดชั่วคราว แต่วันที่จ่าย<b>อยู่นอก</b>ช่วง</summary>
+        TemporaryOutOfWindow = 2,
+        /// <summary>ไม่ใช่อัตราของไทยเลย</summary>
+        NotRecognised = 3,
+    }
+
+    /// <param name="Standing">สถานะ</param>
+    /// <param name="Warning">ข้อความเตือน (null = ไม่ต้องเตือน) — ภาษาไทย เอาไปโชว์ได้ตรง ๆ</param>
+    public readonly record struct RateVerdict(RateStanding Standing, string? Warning)
+    {
+        /// <summary>ต้องเตือนผู้ใช้ไหม</summary>
+        public bool NeedsAttention => Warning != null;
+    }
+
+    /// <summary>
+    /// อัตรานี้ใช้ได้ตามกฎหมายไหม เมื่อ<b>จ่ายวันนั้น</b> — ตัวตัดสินตัวเดียว
+    /// ของทั้งด่านตอนอนุมัติเอกสารและตัวสร้างไฟล์ยื่น ภ.ง.ด.
+    ///
+    /// <para>ไม่ throw · อัตรา ≤ 0 = "ไม่ได้หัก" ⇒ ไม่มีอะไรต้องเตือน</para>
+    /// </summary>
+    /// <param name="ratePercent">อัตราที่ใบ/บรรทัดใช้ (%)</param>
+    /// <param name="paymentDate">วันที่จ่าย (ท.ป.4/2528 ผูกกับวันจ่าย ไม่ใช่วันที่ในใบ)</param>
+    public static RateVerdict ClassifyRate(decimal ratePercent, DateTime paymentDate)
+    {
+        if (ratePercent <= 0m) return new RateVerdict(RateStanding.Statutory, null);
+        if (StatutoryRates.Contains(ratePercent))
+            return new RateVerdict(RateStanding.Statutory, null);
+
+        var temp = TemporaryReducedRates.FirstOrDefault(t => t.Rate == ratePercent);
+        if (temp != null)
+        {
+            var d = paymentDate.Date;
+            if (d >= temp.From.Date && d <= temp.ToInclusive.Date)
+                return new RateVerdict(RateStanding.TemporaryInForce, null);
+
+            return new RateVerdict(RateStanding.TemporaryOutOfWindow,
+                $"อัตรา {ratePercent:0.##}% เป็นอัตรา**ลดชั่วคราว** ({temp.LegalReference}: {temp.AppliesTo}) "
+                + $"ใช้ได้เฉพาะการจ่ายระหว่าง {ThaiDate(temp.From)}–{ThaiDate(temp.ToInclusive)} "
+                + $"แต่ใบนี้จ่าย {ThaiDate(paymentDate)} — นอกช่วง ⇒ ต้องใช้อัตราปกติ ("
+                + string.Join(" / ", StatutoryRates.Select(r => $"{r:0.##}")) + "%). "
+                + "ถ้าหักน้อยกว่าที่กฎหมายกำหนด **ผู้จ่ายรับผิดในส่วนที่ขาด (§54)** — "
+                + "แก้อัตราที่บรรทัด หรือยืนยันประเภทเงินได้อีกครั้ง");
+        }
+
+        return new RateVerdict(RateStanding.NotRecognised,
+            $"อัตรา {ratePercent:0.##}% ไม่ใช่อัตราตามกฎหมาย ("
+            + string.Join(" / ", StatutoryRates.Select(r => $"{r:0.##}"))
+            + "%) ตรวจประเภทเงินได้ (Income Type Code) อีกครั้ง");
+    }
+
+    /// <summary>วันที่แบบไทย (พ.ศ.) สำหรับข้อความที่ผู้ใช้อ่าน — ใช้ในไฟล์นี้เท่านั้น</summary>
+    private static string ThaiDate(DateTime d) => $"{d:dd/MM/}{d.Year + 543}";
+
     /// <summary>ดึงอัตราตามกฎหมายที่ใกล้ที่สุดเมื่อห่างไม่เกิน
     /// <paramref name="tolerance"/> — ไกลกว่านั้นคืน <c>null</c> (ไม่ใช่อัตราของไทย
     /// = อย่าเดา ปล่อยให้ด่านตรวจเตือนแทน)</summary>

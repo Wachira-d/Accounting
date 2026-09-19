@@ -45,7 +45,32 @@ public record TaxReportResponse(
     bool FilingPeriodLocked = false,
     /// <summary>ยังค้างเลขรับที่ต้องตามเก็บ — รวมแถวเก่าที่ประทับ Filed
     /// ไว้ก่อนรอบนี้โดยไม่มีเลขรับ</summary>
-    bool NeedsFilingNumber = false);
+    bool NeedsFilingNumber = false,
+    /// <summary>ความสดของตัวเลข ภ.ง.ด.50/51 (Q12) — null สำหรับรายงานชนิดอื่น
+    /// และเมื่อตรวจไม่สำเร็จ (หน้าเว็บต้องแสดง "ยังไม่ได้ตรวจ" ไม่ใช่ "ตรงแล้ว")</summary>
+    TaxReportFreshnessResponse? Freshness = null);
+
+/// <summary>
+/// "ตัวเลขบนรายงาน ภ.ง.ด.50/51 ยังตรงกับข้อมูลต้นทางไหม" — เซิร์ฟเวอร์ตัดสิน
+/// (<c>Helpers/CitReportFreshness</c>) หน้าเว็บแสดงอย่างเดียว
+/// </summary>
+/// <param name="Level">UpToDate · SourceTouched · Stale · StaleAfterFiling</param>
+/// <param name="Message">ประโยคที่โชว์ (null = ไม่มีอะไรต้องบอก)</param>
+/// <param name="NeedsAttention">ต้องขึ้นแถบเตือนไหม</param>
+/// <param name="CanRegenerate">ปุ่ม "สร้างใหม่" ใช้ได้ไหม</param>
+/// <param name="GeneratedAt">เวลาที่ตัวเลขชุดนี้ถูกคำนวณ (UTC)</param>
+/// <param name="ChangedSourceCount">จำนวนเอกสาร+สมุดรายวันในรอบที่ขยับหลังจากนั้น</param>
+/// <param name="RevenueDelta">รายได้สด − ที่เก็บไว้ (บาท)</param>
+/// <param name="ExpenseDelta">ค่าใช้จ่ายสด − ที่เก็บไว้ (บาท)</param>
+public record TaxReportFreshnessResponse(
+    string Level,
+    string? Message,
+    bool NeedsAttention,
+    bool CanRegenerate,
+    DateTime GeneratedAt,
+    int ChangedSourceCount,
+    decimal RevenueDelta,
+    decimal ExpenseDelta);
 
 public record UpdateTaxReportRequest(
     string? Notes,

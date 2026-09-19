@@ -178,6 +178,15 @@
         ตั้งผิด = หักภาษีเกิน/ขาดจริงทุกงวด (เช่น โบนัส 300,000 ที่ถูกนับเป็นเบี้ยเลี้ยงประจำ
         ทำให้หักเกินไปประมาณ 20,000 บาท)
       </div>
+      <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;line-height:1.7">
+        <b>และ "ค่าจ้างตาม ม.5" คนละเรื่องกับ "ลักษณะเงินได้"</b> —
+        ม.5 พ.ร.บ.ประกันสังคม นับ <b>เงินที่จ่ายตอบแทนการทำงาน</b> เป็นค่าจ้าง
+        (เบี้ยขยัน · ค่าตำแหน่ง · ค่าครองชีพ ที่จ่ายประจำทุกเดือน = ค่าจ้าง)
+        ส่วนเงินที่<b>ชดเชยค่าใช้จ่ายตามจ่ายจริง</b> (ค่าเดินทาง/ค่าที่พัก) ไม่ใช่ค่าจ้าง.
+        รายการที่ยัง <b>"ยังไม่ระบุ"</b> ระบบจะ<b>ไม่รวม</b>ในฐานเงินสมทบ (เท่าพฤติกรรมเดิม
+        — ยอดที่เคยนำส่งไปแล้วไม่ขยับ) แต่ถ้าของจริงเป็นค่าจ้าง จะกลายเป็นการนำส่งขาด
+        ซึ่ง สปส. ประเมินย้อนหลังพร้อมเงินเพิ่ม 2%/เดือน (ม.49) — โปรดระบุให้ครบ
+      </div>
       <div class="card" style="padding:0" id="payrollItemsCard">
         <p class="text-gray-400 text-center" style="padding:24px">กำลังโหลด...</p>
       </div>
@@ -195,7 +204,7 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภท *</label>
-              <select class="form-select" id="itemType">
+              <select class="form-select" id="itemType" onchange="Page.onItemTypeChange()">
                 <option value="Earning">เงินได้ (Earning)</option>
                 <option value="Deduction">รายการหัก (Deduction)</option>
               </select>
@@ -222,6 +231,17 @@
               <option value="Unspecified">ยังไม่ระบุ (ใช้กฎรหัสเดิม)</option>
             </select>
             <div id="itemNatureNote" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.6"></div>
+          </div>
+          <!-- Q1 (DECISION_AUDIT §9.2): ฐานเงินสมทบ ม.5 — สามสถานะ เพราะ
+               "ยังไม่ตัดสิน" ต้องต่างจาก "ตัดสินแล้วว่าไม่ใช่ค่าจ้าง" -->
+          <div class="form-group" id="itemSsoGroup">
+            <label class="form-label">เป็น "ค่าจ้าง" ตาม ม.5 ประกันสังคม? (มีผลกับฐานเงินสมทบ)</label>
+            <select class="form-select" id="itemSsoBase" onchange="Page.renderItemSsoNote()">
+              <option value="unset">ยังไม่ระบุ — ไม่รวมในฐาน (ค่าตั้งต้น)</option>
+              <option value="true">ใช่ — รวมในฐานเงินสมทบ ปกส. + กองทุนเงินทดแทน</option>
+              <option value="false">ไม่ใช่ — เงินชดเชยค่าใช้จ่ายตามจ่ายจริง</option>
+            </select>
+            <div id="itemSsoNote" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.6"></div>
           </div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px">
@@ -530,7 +550,7 @@ const Page = {
         <table class="table" style="width:100%">
           <thead><tr>
             <th>รหัส</th><th>ชื่อ</th><th>ประเภท</th><th class="text-right">จำนวน/%</th>
-            <th>ลักษณะเงินได้</th><th>ภาษี</th><th></th>
+            <th>ลักษณะเงินได้</th><th>ภาษี</th><th>ฐาน ปกส. (ม.5)</th><th></th>
           </tr></thead>
           <tbody>${items.map(i => {
             const unspecified = i.incomeNature === 'Unspecified';
@@ -546,6 +566,10 @@ const Page = {
                     ? `⚠️ ยังไม่ระบุ <span class="text-gray-400">(ระบบใช้: ${Layout.esc(eff)})</span>`
                     : Layout.esc(eff)}</span>`}</td>
               <td>${i.isTaxable ? 'คิดภาษี' : '<span style="color:#b45309">ยกเว้น</span>'}</td>
+              <td>${i.itemType !== 'Earning' ? '<span class="text-gray-400">—</span>'
+                : `<span title="${Layout.esc(i.ssoBaseNote || '')}">${i.ssoBaseNeedsDecision
+                    ? '<span style="color:#b45309">⚠️ ยังไม่ระบุ</span>'
+                    : (i.countsForSsoBase ? 'รวมในฐาน' : 'ไม่รวม')}</span>`}</td>
               <td><button class="btn btn-sm btn-ghost" onclick="Page.openItemModal('${i.id}')">แก้ไข</button></td>
             </tr>`;
           }).join('')}</tbody>
@@ -568,6 +592,29 @@ const Page = {
         : 'คิดเฉพาะงวดที่จ่าย ไม่ถูกนำไปคูณกับงวดที่เหลือ';
   },
 
+  // คำอธิบายเต็มของแถวที่มีอยู่มาจากเซิร์ฟเวอร์ (ssoBaseNote) — ตอนเลือกใหม่
+  // ใช้ประโยคสั้นที่บอก "รวม/ไม่รวม" อย่างเดียว ไม่ทำสำเนากติกา ม.5
+  // รายการหัก (Deduction) ไม่เกี่ยวกับลักษณะเงินได้/ฐานค่าจ้าง ม.5 — ซ่อนช่อง
+  // ที่ไม่มีความหมาย แทนที่จะปล่อยให้ผู้ใช้กรอกค่าที่ระบบไม่เคยอ่าน
+  onItemTypeChange() {
+    const earning = document.getElementById('itemType').value === 'Earning';
+    const ng = document.getElementById('itemNatureGroup');
+    const sg = document.getElementById('itemSsoGroup');
+    if (ng) ng.style.display = earning ? '' : 'none';
+    if (sg) sg.style.display = earning ? '' : 'none';
+  },
+
+  renderItemSsoNote() {
+    const sel = document.getElementById('itemSsoBase');
+    const note = document.getElementById('itemSsoNote');
+    if (!sel || !note) return;
+    note.textContent = sel.value === 'true'
+      ? 'รวมในฐานคำนวณเงินสมทบประกันสังคม (ลูกจ้าง 5% + นายจ้าง 5% ภายในเพดานของปีนั้น) และฐานกองทุนเงินทดแทน'
+      : sel.value === 'false'
+        ? 'ไม่เข้าฐานเงินสมทบ — ใช้กับเงินที่ชดเชยค่าใช้จ่ายตามจ่ายจริง'
+        : '⚠️ ระบบจะไม่รวมในฐานเงินสมทบ (เท่าพฤติกรรมเดิม) และจะขึ้นคำเตือนทุกครั้งที่คำนวณรอบเงินเดือน';
+  },
+
   openItemModal(id) {
     const it = id ? this._items.find(x => x.id === id) : null;
     document.getElementById('itemModalTitle').textContent = it ? 'แก้ไขรายการเงินเดือน' : 'เพิ่มรายการเงินเดือน';
@@ -582,7 +629,13 @@ const Page = {
     document.getElementById('itemPercentage').value = it && it.percentage != null ? it.percentage : '';
     document.getElementById('itemNature').value = it ? (it.incomeNature || 'Unspecified') : 'RecurringAllowance';
     document.getElementById('itemIsTaxable').checked = it ? !!it.isTaxable : true;
+    // สามสถานะ: null/undefined = "ยังไม่ระบุ" (ต้องแยกจาก false)
+    document.getElementById('itemSsoBase').value =
+      (it && it.countsForSsoBase === true) ? 'true'
+      : (it && it.countsForSsoBase === false) ? 'false' : 'unset';
+    this.onItemTypeChange();
     this.renderItemNatureNote();
+    this.renderItemSsoNote();
     Layout.openModal('itemModal');
   },
 
@@ -604,14 +657,20 @@ const Page = {
       isTaxable: document.getElementById('itemIsTaxable').checked,
       incomeNature: document.getElementById('itemNature').value,
     };
+    // ⚠️ แก้ไข = ส่ง **สตริงสามค่า** ("true"/"false"/"unset") เพราะ JSON null
+    // ที่ตั้งใจส่ง แยกจาก "ไม่ได้ส่ง" ไม่ได้ ⇒ ผู้ใช้จะย้อนกลับไป "ยังไม่ระบุ"
+    // ไม่ได้เลย · สร้างใหม่ = ส่ง bool? ตรง ๆ (ไม่มีค่าเดิมให้ต้องแยก)
+    const ssoRaw = document.getElementById('itemSsoBase').value;
     try {
       if (id) {
-        await API.put(`/api/companies/${cid}/payroll/items/${id}`, body);
+        await API.put(`/api/companies/${cid}/payroll/items/${id}`,
+          { ...body, countsForSsoBase: ssoRaw });
       } else {
         await API.post(`/api/companies/${cid}/payroll/items`, {
           ...body, code, nameEn: null,
           itemType: document.getElementById('itemType').value,
           accountId: null,
+          countsForSsoBase: ssoRaw === 'unset' ? null : ssoRaw === 'true',
         });
       }
       Layout.closeModal('itemModal');

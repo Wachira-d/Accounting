@@ -135,12 +135,46 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     employee: emp, employer: empr, relatedRunId: g.First().Id,
                     reportFiledAt: FiledAt("SsoSps110", g.Key.Year, g.Key.Month)));
             }
+            // ── ช่องโหว่ 50 ทวิ ของ ภ.ง.ด.1 (D6-4) ──
+            // ยอดบนแถวนี้มาจาก PayrollRun.TotalWithholdingTax (ภาษีที่หักไปจริง)
+            // แต่ใบ 50 ทวิ อาจออกไม่ครบ (พนักงานไม่มีเลขผู้เสียภาษี / งวดที่การ
+            // ออกใบล้มทั้งก้อน) ⇒ เทียบสองแหล่งสด ๆ ทุกครั้ง แล้วให้ด่านเดียวกับ
+            // ภ.ง.ด.3/53/54 บล็อกการนำส่ง — ห้ามนับเงียบ (คำตัดสินเจ้าของรอบ 170)
+            var pnd1Payroll = (await _db.PayrollDetails.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                        && d.WithholdingTax > 0
+                        && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid)
+                    .Select(d => new { d.PayrollRun.Year, d.PayrollRun.Month, d.WithholdingTax })
+                    .ToListAsync())
+                .GroupBy(x => (x.Year, x.Month))
+                .ToDictionary(g => g.Key, g => (Count: g.Count(), Tax: g.Sum(x => x.WithholdingTax)));
+            var pnd1Filed = Accounting.Helpers.WhtCertFilingScope.Filed;
+            var pnd1Certs = (await _db.WithholdingTaxCerts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxFormType == TaxType.WithholdingTax1
+                        && pnd1Filed.Contains(c.Status))
+                    .Select(c => new { c.TaxYear, c.TaxMonth, c.TotalTaxAmount })
+                    .ToListAsync())
+                .GroupBy(x => (Year: x.TaxYear, Month: x.TaxMonth))
+                .ToDictionary(g => g.Key, g => (Count: g.Count(), Tax: g.Sum(x => x.TotalTaxAmount)));
+
             foreach (var g in runs.Where(r => InRange(r.Year, r.Month)).GroupBy(r => (r.Year, r.Month)))
             {
                 var outstanding = g.Sum(x => x.Wht) - Remitted("WhtPnd1", g.Key.Year, g.Key.Month);
-                if (outstanding <= 0.009m) continue;
-                pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month, outstanding, today,
-                    reportFiledAt: FiledAt("WhtPnd1", g.Key.Year, g.Key.Month)));
+                var pay = pnd1Payroll.TryGetValue(g.Key, out var pv) ? pv : (Count: 0, Tax: 0m);
+                var cer = pnd1Certs.TryGetValue(g.Key, out var cv) ? cv : (Count: 0, Tax: 0m);
+                var gap = Accounting.Helpers.Pnd1CertCoverage.Evaluate(
+                    pay.Count, pay.Tax, cer.Count, cer.Tax);
+                // ยอดค้าง 0 แต่ยังมีใบไม่ครบ = ยังต้องขึ้นแถวเตือน (ผู้ใช้ต้องเห็น
+                // ว่ามีอะไรค้างอยู่ ไม่ใช่หายไปจากจอ)
+                if (outstanding <= 0.009m && !gap.Any) continue;
+                pending.Add(BuildItem("WhtPnd1", g.Key.Year, g.Key.Month,
+                    Math.Max(0m, outstanding), today,
+                    reportFiledAt: FiledAt("WhtPnd1", g.Key.Year, g.Key.Month),
+                    // ส่งจำนวนจริง (0 ได้) — ห้ามแต่งเป็น 1 ให้ดูมีเหตุผล; ด่านฝั่ง
+                    // RemitAsync ใช้เกณฑ์ OR กับยอดเงินอยู่แล้ว
+                    unissuedCount: gap.Any ? gap.EmployeeCount : null,
+                    unissuedAmount: gap.Any ? gap.TaxAmount : null));
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ SSO/ภงด.1 ไม่สำเร็จ"); }
@@ -539,6 +573,38 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 .ToListAsync())
                 .Select(c => new WhtSnap(c.TaxYear, c.TaxMonth, c.TotalTaxAmount, c.TaxFormType))
                 .ToList();
+            // ── ช่องโหว่ 50 ทวิ ของ ภ.ง.ด.1 (D6-4) — เทียบแถวเงินเดือนกับใบที่ออกจริง
+            // ตัวตัดสินเดียวกับหน้านำส่ง (Helpers/Pnd1CertCoverage) ห้ามเขียนสูตรซ้ำ
+            var pnd1PayrollCal = (await _db.PayrollDetails.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                        && d.WithholdingTax > 0
+                        && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid
+                        && (d.PayrollRun.Year > startMonth.Year
+                            || (d.PayrollRun.Year == startMonth.Year && d.PayrollRun.Month >= startMonth.Month)))
+                    .Select(d => new { d.PayrollRun.Year, d.PayrollRun.Month, d.WithholdingTax })
+                    .ToListAsync())
+                .GroupBy(x => (x.Year, x.Month))
+                .ToDictionary(g => g.Key, g => (Count: g.Count(), Tax: g.Sum(x => x.WithholdingTax)));
+            var pnd1CertsCal = (await _db.WithholdingTaxCerts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                        && c.TaxFormType == TaxType.WithholdingTax1
+                        && calFiled.Contains(c.Status)
+                        && (c.TaxYear > startMonth.Year
+                            || (c.TaxYear == startMonth.Year && c.TaxMonth >= startMonth.Month)))
+                    .Select(c => new { c.TaxYear, c.TaxMonth, c.TotalTaxAmount })
+                    .ToListAsync())
+                .GroupBy(x => (Year: x.TaxYear, Month: x.TaxMonth))
+                .ToDictionary(g => g.Key, g => (Count: g.Count(), Tax: g.Sum(x => x.TotalTaxAmount)));
+            foreach (var key in pnd1PayrollCal.Keys)
+            {
+                var cer = pnd1CertsCal.TryGetValue(key, out var cv) ? cv : (Count: 0, Tax: 0m);
+                var g1 = Accounting.Helpers.Pnd1CertCoverage.Evaluate(
+                    pnd1PayrollCal[key].Count, pnd1PayrollCal[key].Tax, cer.Count, cer.Tax);
+                if (g1.Any)
+                    whtGaps.Add(new WhtGapSnap(key.Year, key.Month,
+                        TaxType.WithholdingTax1, g1.TaxAmount));
+            }
+
             var coveredCalDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.DocumentId != null
                     && calFiled.Contains(c.Status))
@@ -729,6 +795,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 unknownHint = Accounting.Helpers.PayrollRunFilingScope
                     .PendingReason(approvedNotPaid.Contains((y, m)));
                 unknownUrl = "/pages/payroll.html";
+                {
+                    // ช่องโหว่ 50 ทวิ ของเงินเดือน — ต้องเตือนเหมือน ภ.ง.ด.3/53/54
+                    // (เดิมมีเฉพาะสามแบบนั้น ⇒ ภ.ง.ด.1 นับเงียบ · D6-4)
+                    var p1 = whtGaps.Where(d => d.Year == y && d.Month == m
+                        && d.Form == TaxType.WithholdingTax1).ToList();
+                    if (p1.Count > 0)
+                        whtGapHint = $"⚠️ ภาษีที่หักจากเงินเดือน {p1.Sum(x => x.Wht):N2} บาท "
+                            + "ยังไม่มีหนังสือรับรอง 50 ทวิ ที่ออกแล้วรองรับ — "
+                            + "ตรวจว่าพนักงานกรอกเลขประจำตัวผู้เสียภาษีครบ แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน";
+                }
                 break;
             case "WhtPnd3":
             case "WhtPnd53":
@@ -852,7 +928,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // = ระบบยังบอกยอดที่แท้จริงไม่ได้ ⇒ Unknown พร้อมลิงก์ไปออกใบ (ไม่ใช่ปล่อยเขียวทั้งที่นำส่งขาด)
         if (whtGapHint != null)
         {
-            if (status is "NotRequired" or "Filed") { status = "Unknown"; url = "/pages/wht.html"; hint = whtGapHint; }
+            if (status is "NotRequired" or "Filed")
+            { status = "Unknown"; url = type == "WhtPnd1" ? "/pages/payroll.html" : "/pages/wht.html"; hint = whtGapHint; }
             else hint += " · " + whtGapHint;
         }
 
@@ -909,13 +986,21 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         // ยอดนำส่ง WHT ต้องมาจาก 50 ทวิ ที่ออกแล้ว **ครบ** — ถ้ายังมีเอกสารหัก WHT ที่ไม่มีใบ ยอดที่จะจ่าย
         // กรมสรรพากรจะน้อยกว่าที่หักจริง และไฟล์ ภ.ง.ด. ก็ประกาศไม่ครบ ⇒ บล็อกพร้อมทางไปต่อ (ไม่เงียบ ไม่เดา)
-        if (item.UnissuedWhtCount is > 0)
+        // ⚠️ เกณฑ์เป็น **OR** ระหว่างจำนวนใบกับยอดเงิน — ภ.ง.ด.1 มีทรงที่
+        // "จำนวนใบครบแต่ยอดขาด" ได้ (HR แก้ยอดบนใบรายคน) ถ้าดูแค่จำนวนจะหลุด
+        if (item.UnissuedWhtCount is > 0 || item.UnissuedWhtAmount is > 0.009m)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} มีเอกสารหัก ณ ที่จ่าย {item.UnissuedWhtCount} ใบ "
-                + $"(รวม {item.UnissuedWhtAmount:N2} บาท) ที่ยังไม่มีหนังสือรับรอง 50 ทวิ ที่ออกแล้ว — "
-                + "ออกใบให้ครบที่หน้า “หนังสือรับรองหัก ณ ที่จ่าย” (แท็บรอออกใบ) แล้วกลับมานำส่ง "
-                + "หรือกด “ข้าม” ใบที่ไม่ใช่การจ่ายจริง",
-                "WHT-CERT-UNISSUED");
+                type == "WhtPnd1"
+                    // เงินเดือน: "ใบ" ผูกกับพนักงาน ไม่ใช่เอกสารซื้อ ⇒ ทางไปต่อคนละทาง
+                    ? Accounting.Helpers.Pnd1CertCoverage.GapMessage(
+                        req.PeriodMonth, req.PeriodYear,
+                        new Accounting.Helpers.Pnd1CoverageGap(
+                            item.UnissuedWhtCount ?? 0, item.UnissuedWhtAmount ?? 0m))
+                    : $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} มีเอกสารหัก ณ ที่จ่าย {item.UnissuedWhtCount} ใบ "
+                      + $"(รวม {item.UnissuedWhtAmount:N2} บาท) ที่ยังไม่มีหนังสือรับรอง 50 ทวิ ที่ออกแล้ว — "
+                      + "ออกใบให้ครบที่หน้า “หนังสือรับรองหัก ณ ที่จ่าย” (แท็บรอออกใบ) แล้วกลับมานำส่ง "
+                      + "หรือกด “ข้าม” ใบที่ไม่ใช่การจ่ายจริง",
+                Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
 
         var amount = item.Amount;
         var lateFee = (type == "SsoSps110" && req.IncludeLateFee)

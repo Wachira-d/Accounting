@@ -185,10 +185,26 @@ public class SettingsService : ISettingsService
         // กองทุนเงินทดแทน (กท.20ก)
         if (request.WorkersCompensationEnabled.HasValue)
             settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
-        if (request.WorkersCompensationRatePercent.HasValue
-            && request.WorkersCompensationRatePercent.Value >= 0.2m
-            && request.WorkersCompensationRatePercent.Value <= 1.0m)
+        if (request.WorkersCompensationRatePercent.HasValue)
+        {
+            // ⚠️ เดิมเป็น `if (… >= 0.2m && … <= 1.0m) set` เฉย ๆ = **silent no-op**
+            // (กฎเหล็ก #4 A): กรอกอัตรานอกกรอบแล้วกดบันทึก ระบบตอบ "สำเร็จ" แต่
+            // ค่าเดิมยังอยู่ ⇒ ผู้ใช้เชื่อว่าเปลี่ยนแล้วทั้งที่ไม่เปลี่ยน
+            // และกรอบ 0.2–1.0% เคยเป็น literal ที่นี่ ซ้ำกับเพดาน 20,000 ใน
+            // PayrollService — ตอนนี้อ่านจาก Helpers/WorkersCompensationBase ตัวเดียว
+            if (!Accounting.Helpers.WorkersCompensationBase.IsRateInRange(
+                    request.WorkersCompensationRatePercent.Value))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"อัตราเงินสมทบกองทุนเงินทดแทน {request.WorkersCompensationRatePercent.Value:0.##}% "
+                    + $"อยู่นอกกรอบกฎหมาย — ต้องอยู่ระหว่าง "
+                    + $"{Accounting.Helpers.WorkersCompensationBase.MinRatePercent:0.##}% ถึง "
+                    + $"{Accounting.Helpers.WorkersCompensationBase.MaxRatePercent:0.##}% "
+                    + "ตามประเภทกิจการ (ดูหนังสือแจ้งอัตราจากสำนักงานประกันสังคม) — "
+                    + "ถ้าต้องการ**ปิด**การคิดกองทุนเงินทดแทน ให้ติ๊กออกที่ช่อง "
+                    + "“คิดกองทุนเงินทดแทน” แทนการตั้งอัตราเป็น 0",
+                    "WC-RATE-OUT-OF-RANGE");
             settings.WorkersCompensationRatePercent = request.WorkersCompensationRatePercent.Value;
+        }
 
         // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — null = ไม่แตะ, ค่าว่าง = ล้าง
         if (request.BookkeeperName != null)

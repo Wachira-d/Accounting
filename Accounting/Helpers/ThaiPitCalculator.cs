@@ -84,6 +84,66 @@ public static class ThaiPitCalculator
     public const decimal DefaultExpenseRatePercent = 50m;
     public const decimal DefaultExpenseCap = 100_000m;
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ค่าลดหย่อน §47 + เพดาน §47(7)/§47ทวิ — **ตัวตั้งตัวเดียวของระบบ**
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // ═══ ที่มา (งานค้าง "ลดหย่อน 3 สำเนา" · ทีม E ข้อ 3) ═══ ตัวเลขชุดเดียวกัน
+    // ถูกพิมพ์ไว้ **3 ที่** และแต่ละที่แก้ได้อิสระ:
+    //   1. `Models/Entities/Payroll.cs` — property initializer ของ `TaxRuleConfig`
+    //   2. `Controllers/PayrollController.cs` — `ov?.X ?? 60_000m` ตอนสร้างตาราง
+    //      ให้หน้าตั้งค่า (บริษัทที่ยังไม่เคย override เห็นค่าจากที่นี่)
+    //   3. `Services/Implementations/PayrollService.cs` — `PitPersonalAllowance`
+    //      ฯลฯ ที่ใช้ตอน "ไม่มี TaxRuleConfig ของปีนั้น"
+    // ⇒ สรรพากรปรับค่าลดหย่อนเมื่อไร ต้องแก้ครบสามที่ถึงจะตรง; แก้ไม่ครบ =
+    //    หน้าตั้งค่าโชว์เลขหนึ่ง เครื่องคิดภาษีใช้อีกเลขหนึ่ง โดยไม่มีอะไรฟ้อง
+    //
+    // ที่นี่คือเจ้าของตัวเลข — ผู้เรียกทุกที่ต้องอ้างค่าคงที่เหล่านี้
+    // (ห้ามพิมพ์ literal ซ้ำ · หลักการ 10 ข้อ #4 "ตัวตั้งตัวเดียว")
+
+    /// <summary>§47(1)(ก) ค่าลดหย่อนส่วนตัว</summary>
+    public const decimal DefaultPersonalAllowance = 60_000m;
+
+    /// <summary>§47(1)(ข) คู่สมรสที่ไม่มีเงินได้</summary>
+    public const decimal DefaultSpouseAllowance = 60_000m;
+
+    /// <summary>§47(1)(ค) บุตรคนละ</summary>
+    public const decimal DefaultChildAllowance = 30_000m;
+
+    /// <summary>§47(1)(ค) วรรคสอง — บุตรคนที่ 2 ขึ้นไปที่เกิดตั้งแต่ปี 2561</summary>
+    public const decimal DefaultChildAllowancePost2561 = 60_000m;
+
+    /// <summary>§47(1)(ง) บิดามารดาคนละ (อายุ 60+ · รายได้ไม่เกิน 30,000/ปี)</summary>
+    public const decimal DefaultParentAllowance = 30_000m;
+
+    /// <summary>เพดานเบี้ยประกันชีวิต §47(1)(ง)</summary>
+    public const decimal DefaultLifeInsuranceCap = 100_000m;
+
+    /// <summary>เพดานเบี้ยประกันสุขภาพ (รวมกับประกันชีวิตแล้วไม่เกิน 100,000)</summary>
+    public const decimal DefaultHealthInsuranceCap = 25_000m;
+
+    /// <summary>เพดานรวม PVD + RMF + SSF + กบข.</summary>
+    public const decimal DefaultPvdCap = 500_000m;
+
+    /// <summary>เพดานดอกเบี้ยเงินกู้ที่อยู่อาศัย</summary>
+    public const decimal DefaultMortgageInterestCap = 100_000m;
+
+    /// <summary>เพดานเงินบริจาคทั่วไป — % ของเงินได้หลังหักค่าลดหย่อน</summary>
+    public const decimal DefaultDonationCapPercent = 10m;
+
+    /// <summary>ขั้นภาษี §48(1) ในรูป JSON ที่ <c>TaxRuleConfig.BracketsJson</c> ใช้
+    /// — <b>สร้างจาก <see cref="DefaultBrackets"/> โดยตรง</b> ไม่ใช่สตริงที่พิมพ์มือ
+    ///
+    /// <para>ขั้นสุดท้ายใช้ <c>upperBound = 0</c> ตามที่ตัวอ่านฝั่ง
+    /// <c>PayrollService</c> คาดไว้ (0 = catch-all — <c>decimal.MaxValue</c>
+    /// เขียนลง JSON ไม่ได้)</para></summary>
+    public static string DefaultBracketsJson()
+        => "[" + string.Join(",", DefaultBrackets.Select(b =>
+            {
+                var upper = b.UpperBound == decimal.MaxValue ? 0m : b.UpperBound;
+                return $"{{\"upperBound\":{upper:0.##},\"rate\":{b.Rate:0.####}}}";
+            })) + "]";
+
     private static decimal R(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
     /// <summary>

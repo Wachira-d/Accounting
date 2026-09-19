@@ -957,6 +957,8 @@ public class PayrollService : IPayrollService
             Percentage = request.Percentage,
             IsTaxable = request.IsTaxable,
             IncomeNature = request.IncomeNature,
+            // Q1: null = ยังไม่ตัดสิน ⇒ ไม่รวมในฐานเงินสมทบ + ขึ้นคำเตือน
+            CountsForSsoBase = request.CountsForSsoBase,
             AccountId = request.AccountId
         };
 
@@ -983,6 +985,11 @@ public class PayrollService : IPayrollService
         if (request.Percentage.HasValue) item.Percentage = request.Percentage;
         if (request.IsTaxable.HasValue) item.IsTaxable = request.IsTaxable.Value;
         if (request.IncomeNature.HasValue) item.IncomeNature = request.IncomeNature.Value;
+        // ธงสามสถานะ — ต้องกลับไป "ยังไม่ระบุ" ได้ จึงรับเป็นสตริงแล้วแปลงที่
+        // ตัวตัดสินตัวเดียว (ส่งค่าที่แปลไม่ได้/ไม่ส่ง = ไม่แตะของเดิม)
+        if (Accounting.Helpers.SsoWageBase.TryParseWageDecision(
+                request.CountsForSsoBase, out var ssoDecision))
+            item.CountsForSsoBase = ssoDecision;
         if (request.AccountId.HasValue) item.AccountId = request.AccountId;
         if (request.IsActive.HasValue) item.IsActive = request.IsActive.Value;
 
@@ -1609,6 +1616,17 @@ public class PayrollService : IPayrollService
             var earningItems = payrollItems.Where(i => i.ItemType == "Earning").ToList();
             var deductionItems = payrollItems.Where(i => i.ItemType == "Deduction").ToList();
 
+            // ★ Q1: รายการเงินได้ที่ยังไม่มีใครตัดสินว่าเป็น "ค่าจ้าง ม.5" หรือไม่
+            //   ระบบไม่รวมในฐานเงินสมทบ (= พฤติกรรมเดิม) **แต่ห้ามเงียบ** —
+            //   นำส่งขาดคือทิศที่มองไม่เห็นจนถึงวันที่ สปส. ประเมินย้อนหลัง
+            //   พร้อมเงินเพิ่ม 2%/เดือน (ม.49) ⇒ ดังที่ผลการคำนวณและที่หน้า
+            //   "รายการเงินเดือน" (คอลัมน์ฐาน ปกส.)
+            var ssoUndecided = earningItems
+                .Where(i => (i.CalculationType == "Fixed" ? (i.FixedAmount ?? 0) : (i.Percentage ?? 0)) > 0
+                    && Accounting.Helpers.SsoWageBase.NeedsWageDecision(i.CountsForSsoBase))
+                .Select(i => $"{i.Code} {i.Name}".Trim())
+                .ToList();
+
             // Batch-load per-employee lookups that previously ran one query per
             // employee inside the loop — for a 100-person payroll that turned a
             // single Calculate click into 200+ round-trips. We pre-fetch both
@@ -1692,6 +1710,18 @@ public class PayrollService : IPayrollService
                 // ฐานคำนวณภาษี (estimatedAnnualIncome below subtracts it).
                 var nonTaxableExtra = 0m;
 
+                // ═══ D6-3 แหล่งที่ 2/3: "ยอดเบี้ยเลี้ยงที่แสดง" ≠ "ฐานประจำที่ฉาย" ═══
+                // `allowances` = ยอดรวมที่ขึ้นช่อง "เบี้ยเลี้ยง" บนสลิป/รายงาน
+                // (ต้องเท่าเดิมทุกบาท) · `recurringAllowances` = เฉพาะส่วนที่
+                // **คาดว่าจะได้ทุกงวด** ซึ่งเป็นตัวเดียวที่ถูกคูณกับงวดที่เหลือ
+                // ตอนประมาณการเงินได้ทั้งปี. รวมสองอย่างนี้เป็นถังเดียวคือบั๊ก
+                // ที่ทำให้เบี้ยเลี้ยงเดินทางเดือนเดียวกลายเป็นรายได้ประจำทั้งปี
+                var recurringAllowances = 0m;
+
+                // ★ Q1 (ม.5): เบี้ยเลี้ยงที่ HR ติ๊กว่าเป็น "ค่าจ้าง" → เข้าฐาน
+                //   เงินสมทบ ปกส. + กองทุนเงินทดแทน · null = ยังไม่ตัดสิน = ไม่รวม
+                var ssoWageAllowances = 0m;
+
                 // ═══ D6-3: ลักษณะเงินได้มาจาก PayrollItem.IncomeNature ไม่ใช่ prefix ═══
                 // เดิม: Code.StartsWith("OT") / == "COM" / == "BONUS" / **ที่เหลือทุกตัว
                 // = เบี้ยเลี้ยงประจำ** ⇒ รหัสที่ผู้ใช้ตั้งเอง (BN01 "โบนัส", INCENTIVE)
@@ -1699,17 +1729,32 @@ public class PayrollService : IPayrollService
                 // กลับมาทางประตูหลัง) · และธง IsTaxable ที่เขียนไว้ไม่เคยถูกอ่าน
                 // (silent no-op) — ตอนนี้ตัวรวมยอดตัวเดียว (Helpers/PayrollIncomeNatureRules)
                 // อ่านทั้งสองอย่าง · แถวที่ยัง Unspecified ตกกลับไปกฎรหัสเดิม = ตัวเลขเท่าเดิม
+                // ยอดของแต่ละแถวคิดครั้งเดียวแล้วใช้ซ้ำ — ทั้งถังลักษณะเงินได้
+                // (ภาษี) และธง "เป็นค่าจ้าง ม.5" (ประกันสังคม) อ่านจากชุดเดียวกัน
+                // ⇒ ไม่มีทางที่สองเรื่องจะเห็นจำนวนเงินไม่ตรงกัน
+                var earningAmounts = earningItems
+                    .Select(item => (Item: item, Amount: item.CalculationType == "Fixed"
+                        ? (item.FixedAmount ?? 0)
+                        : (item.Percentage ?? 0) / 100m * emp.BaseSalary))
+                    .ToList();
+
                 var itemBuckets = Accounting.Helpers.PayrollIncomeNatureRules.Accumulate(
-                    earningItems.Select(item => (
-                        item.IncomeNature,
-                        (string?)item.Code,
-                        item.IsTaxable,
-                        item.CalculationType == "Fixed"
-                            ? (item.FixedAmount ?? 0)
-                            : (item.Percentage ?? 0) / 100m * emp.BaseSalary)));
+                    earningAmounts.Select(x => (
+                        x.Item.IncomeNature,
+                        (string?)x.Item.Code,
+                        x.Item.IsTaxable,
+                        x.Amount)));
+
+                foreach (var x in earningAmounts)
+                {
+                    if (x.Amount <= 0) continue;
+                    if (Accounting.Helpers.SsoWageBase.CountsAsWage(x.Item.CountsForSsoBase))
+                        ssoWageAllowances += x.Amount;
+                }
 
                 overtimePay += itemBuckets.Overtime;
                 allowances += itemBuckets.RecurringAllowance;
+                recurringAllowances += itemBuckets.RecurringAllowance;
                 commission += itemBuckets.Commission;
                 bonus += itemBuckets.Bonus;
                 // ครั้งคราว → otherIncome: เข้า taxableGross ของงวดนี้ แต่ **ไม่** เข้า
@@ -1767,12 +1812,31 @@ public class PayrollService : IPayrollService
                         }
                     }
                     overtimePay += Math.Round(otPayWeekday + otPayHoliday, 2, MidpointRounding.AwayFromZero);
-                    allowances += Math.Round(perDiemSum + accomSum + otMealSum + dailyMealSum, 2, MidpointRounding.AwayFromZero);
+
+                    // ═══ D6-3 แหล่งที่ 2: เบี้ยเลี้ยงจากการลงเวลา ห้ามถูกฉาย ═══
+                    // per-diem · ค่าที่พัก · ค่าอาหารวัน OT · ค่าอาหารรายวัน มาจาก
+                    // EmployeeProjectTime **ของเดือนนั้น** ⇒ ผันแปรทุกงวดโดยนิยาม
+                    // เดิมบวกเข้า `allowances` ตัวเดียวกับเบี้ยเลี้ยงประจำ แล้วถูก
+                    // คูณกับงวดที่เหลือ ⇒ ไปต่างจังหวัดเดือนเดียว = ประมาณการรายได้
+                    // ทั้งปีบวมทั้งปี = **ถูกหักภาษีเกินทุกงวดที่เหลือ**
+                    // ตัวตัดสินลักษณะเป็นตัวเดียวกับ PayrollItem (ห้ามมีชุดกฎที่สอง)
+                    //
+                    // ⚠️ ปัดเศษ "ยอดรวมของกลุ่ม" เหมือนเดิมเป๊ะ (ไม่ใช่ปัดรายตัว)
+                    // เพื่อให้ยอดเบี้ยเลี้ยงที่แสดง/จ่ายจริงไม่ขยับแม้แต่สตางค์เดียว
+                    var attendanceAllowanceTotal = Math.Round(
+                        perDiemSum + accomSum + otMealSum + dailyMealSum, 2, MidpointRounding.AwayFromZero);
+
+                    var extraSources =
+                        new List<(Accounting.Models.Enums.PayrollIncomeNature, string?, bool, decimal)>
+                        {
+                            (Accounting.Helpers.PayrollIncomeNatureRules.AttendanceAllowance,
+                                "ATTENDANCE", true, attendanceAllowanceTotal),
+                        };
 
                     // Custom allowances ที่บริษัทตั้งเองในตาราง — Monthly =
-                    // จ่ายเต็มจำนวนต่อรอบ, Daily = คูณวันทำงานจริง. isTaxable
-                    // = false เก็บไว้ใน otherIncome แยกแล้ว NOT รวมในฐาน WHT
-                    // (skipped from estimatedAnnualIncome below).
+                    // จ่ายเต็มจำนวนต่อรอบ (ได้เท่ากันทุกเดือน ⇒ **ประจำ**),
+                    // Daily = คูณวันทำงานจริง (⇒ **ครั้งคราว**). isTaxable = false
+                    // → nonTaxableExtra (ไม่เข้าฐาน WHT).
                     if (!string.IsNullOrWhiteSpace(compDefaults.CustomAllowancesJson))
                     {
                         try
@@ -1785,12 +1849,28 @@ public class PayrollService : IPayrollService
                                 var amt = string.Equals(c.Type, "Daily", StringComparison.OrdinalIgnoreCase)
                                     ? c.Amount * workDays
                                     : c.Amount;
-                                if (c.IsTaxable) allowances += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
-                                else nonTaxableExtra += Math.Round(amt, 2, MidpointRounding.AwayFromZero);
+                                extraSources.Add((
+                                    Accounting.Helpers.PayrollIncomeNatureRules.ForCustomAllowance(c.Type),
+                                    c.Code, c.IsTaxable,
+                                    Math.Round(amt, 2, MidpointRounding.AwayFromZero)));
                             }
                         }
-                        catch { /* malformed JSON — skip silently */ }
+                        catch (Exception ex)
+                        {
+                            // ⚠️ เดิม `catch { }` เงียบสนิท ⇒ JSON เสียหนึ่งตัวอักษร
+                            // = พนักงานทั้งบริษัทขาดเบี้ยเลี้ยงทุกงวดโดยไม่มีอะไรบอก
+                            _logger?.LogError(ex,
+                                "อ่านเบี้ยเลี้ยงที่บริษัทตั้งเอง (CustomAllowancesJson) ไม่สำเร็จ "
+                                + "company={Cid} — รอบนี้คำนวณโดยไม่มีเบี้ยเลี้ยงกลุ่มนี้", companyId);
+                        }
                     }
+
+                    var extraBuckets = Accounting.Helpers.PayrollIncomeNatureRules.Accumulate(extraSources);
+                    // ยอดที่แสดง = ประจำ + ครั้งคราว (เท่ากับตัวเลขเดิมทุกบาท)
+                    allowances += extraBuckets.AllowanceTotal;
+                    // ฐานที่ถูกฉายไปงวดที่เหลือ = เฉพาะส่วนประจำ
+                    recurringAllowances += extraBuckets.RecurringAllowance;
+                    nonTaxableExtra += extraBuckets.NonTaxable;
                 }
 
                 // Calculate leave deductions — sourced from the batched lookup.
@@ -1873,6 +1953,15 @@ public class PayrollService : IPayrollService
                 var ssoEmployee = 0m;
                 var ssoEmployer = 0m;
                 var ssoWageBase = 0m;
+                // ★ Q1 (ม.5 "ค่าจ้าง"): ฐานก่อน clamp = เงินเดือนที่จ่ายจริงในงวดนี้
+                //   + เบี้ยเลี้ยงที่ HR **ติ๊กแล้วว่าเป็นค่าจ้าง** · รายการที่ยัง
+                //   ไม่ติ๊ก (null) ไม่ถูกรวม ⇒ ทุกบริษัทที่ยังไม่ตั้งค่าได้ตัวเลข
+                //   เท่าเดิมเป๊ะ — ดูคำตัดสิน DECISION_AUDIT §9.2 Q1
+                //   ฐานเดียวกันนี้ใช้กับกองทุนเงินทดแทนด้วย (นิยาม ม.5 ตัวเดียวกัน
+                //   คนละเพดาน)
+                var statutoryWage = Accounting.Helpers.SsoWageBase.GrossWage(
+                    proratedBaseSalary, ssoWageAllowances);
+
                 if (emp.IsSubjectToSocialSecurity)
                 {
                     // ฐาน + การปัดเศษผ่านตัวกลางเดียว (Helpers/SsoWageBase) —
@@ -1880,7 +1969,7 @@ public class PayrollService : IPayrollService
                     // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
                     // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) —
                     // เข้า/ออกกลางเดือนต้องใช้ยอดที่เฉลี่ยแล้ว ไม่ใช่เงินเดือนเต็ม
-                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(proratedBaseSalary, sso.MaxBase);
+                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(statutoryWage, sso.MaxBase);
                     ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
                         ssoWageBase, sso.Rate, sso.MaxContribution);
                     ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
@@ -1897,9 +1986,14 @@ public class PayrollService : IPayrollService
                     && emp.IsSubjectToSocialSecurity
                     && companySettings.WorkersCompensationRatePercent > 0)
                 {
-                    const decimal WcMonthlyBaseCap = 20_000m;   // 240,000/12
-                    var wcBase = Math.Min(emp.BaseSalary, WcMonthlyBaseCap);
-                    workersComp = Math.Round(wcBase * companySettings.WorkersCompensationRatePercent / 100m, 2);
+                    // ═══ D6-6: สูตรย้ายไป Helpers/WorkersCompensationBase ═══
+                    // เดิมที่นี่ผิด 3 อย่างพร้อมกัน: (1) `Math.Round(x, 2)` ไม่ระบุ
+                    // AwayFromZero (banker's rounding — กฎเหล็ก #4 E) · (2) ฐานใช้
+                    // `emp.BaseSalary` **เต็มเดือน** ทั้งที่ฐาน ปกส. ข้างกันเฉลี่ย
+                    // ตามวันที่เป็นลูกจ้างจริงไปแล้ว ⇒ คนเข้า/ออกกลางเดือนถูกคิด
+                    // สมทบเต็มเดือน · (3) เพดาน 20,000 เป็น literal ที่นี่ที่เดียว
+                    workersComp = Accounting.Helpers.WorkersCompensationBase.Contribution(
+                        statutoryWage, companySettings.WorkersCompensationRatePercent);
                 }
 
                 // Provident fund calculation
@@ -1932,7 +2026,10 @@ public class PayrollService : IPayrollService
                 // ฐานประจำใช้ **เงินเดือนเต็ม** เพราะงวดที่เหลือเป็นเดือนเต็ม —
                 // การเฉลี่ยของงวดนี้ (เข้ากลางเดือน) และการลาไม่รับค่าจ้างเป็น
                 // เหตุการณ์ครั้งคราว ไม่ใช่ฐานที่จะเกิดซ้ำทุกงวด
-                var recurringMonthly = Math.Max(0m, emp.BaseSalary + allowances);
+                // ⚠️ `recurringAllowances` ไม่ใช่ `allowances` — ยอดที่แสดงรวม
+                // เบี้ยเลี้ยงผันแปร (เดินทาง/ที่พัก/ค่าอาหารรายวัน) ซึ่งเดือนหน้า
+                // อาจเป็นศูนย์ การฉายมันไปทั้งปีคือบั๊กที่ทำให้หักภาษีเกิน
+                var recurringMonthly = Math.Max(0m, emp.BaseSalary + recurringAllowances);
 
                 // งวดที่เหลือหลังงวดนี้ — เคารพวันสิ้นสุดการจ้างถ้ามี (ลาออกกลางปี
                 // ไม่ควรถูกประมาณการว่ายังได้เงินเดือนจนสิ้นปี)
@@ -2072,9 +2169,21 @@ public class PayrollService : IPayrollService
             await _db.SaveChangesAsync();
             await transaction.CommitAsync();
 
+            var ssoWarning = ssoUndecided.Count == 0 ? "" :
+                $" · ⚠️ รายการเงินได้ {ssoUndecided.Count} รายการ "
+                + $"({string.Join(" · ", ssoUndecided.Take(3))}{(ssoUndecided.Count > 3 ? " …" : "")}) "
+                + "ยังไม่ได้ระบุว่าเป็น “ค่าจ้าง” ตาม ม.5 หรือไม่ — รอบนี้จึง**ไม่รวม**ใน "
+                + "ฐานเงินสมทบประกันสังคม ถ้ารายการใดจ่ายประจำทุกเดือน (เบี้ยขยัน/ค่าตำแหน่ง/"
+                + "ค่าครองชีพ) ตามกฎหมายถือเป็นค่าจ้างที่ต้องนำส่ง — ตั้งค่าที่แท็บ "
+                + "“รายการเงินเดือน” แล้วคำนวณรอบใหม่";
+            if (ssoUndecided.Count > 0)
+                _logger?.LogWarning(
+                    "รอบเงินเดือน {Run} ({Month}/{Year}) มีรายการเงินได้ {Count} รายการที่ยังไม่ระบุธงฐานประกันสังคม (ม.5)",
+                    run.Id, run.Month, run.Year, ssoUndecided.Count);
+
             await NotifyRunAsync(companyId, NotificationEvents.PayrollGenerated, actorUserId: null,
                 title: $"คำนวณรอบเงินเดือน {run.Month:D2}/{run.Year} เสร็จสิ้น",
-                message: $"พนักงาน {run.EmployeeCount} คน · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
+                message: $"พนักงาน {run.EmployeeCount} คน · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท" + ssoWarning,
                 entityId: run.Id);
 
             return MapToPayrollRunResponse(run);
@@ -3133,10 +3242,33 @@ public class PayrollService : IPayrollService
                 .ToListAsync();
             var empById = employees.ToDictionary(e => e.Id);
 
+            // ═══ D6-4: ห้ามข้ามแถวเงียบ ═══ (คำตัดสินเจ้าของรอบ 170)
+            // "50 ทวิ ออกอัตโนมัติเป็น Issued ตอนจ่าย ทุกทางเข้า · เอกสารที่หัก
+            //  WHT แต่ไม่มี cert ออกจริง = ช่องโหว่ที่ต้องเตือน + บล็อกนำส่ง
+            //  **ห้ามนับเงียบ**"
+            // เดิมพนักงานที่ยังไม่กรอกเลขประจำตัวผู้เสียภาษีถูก `continue` ทิ้ง ⇒
+            // ยอด ภ.ง.ด.1 บนหน้านำส่ง (ซึ่งอ่านจาก PayrollRun.TotalWithholdingTax)
+            // ยังนับภาษีของคนนั้น แต่ไม่มีใบรับรองรองรับ ⇒ ยื่น/นำส่งแล้วยอดกับ
+            // ใบไม่ตรง และพนักงานไม่ได้ 50 ทวิ ไปยื่นแบบของตัวเอง
+            var skipped = new List<string>();
+            var issuedCount = 0;   // นับที่ออกได้จริง — ไม่ใช่ details.Count − skipped
+                                   // (แถวที่ HR ออกใบเองไว้ก่อนก็ไม่ได้ออกใหม่ที่นี่)
+
             foreach (var d in details)
             {
-                if (!empById.TryGetValue(d.EmployeeId, out var emp)) continue;
-                if (string.IsNullOrWhiteSpace(emp.TaxId)) continue; // ไม่มี tax id ออก cert ไม่ได้
+                if (!empById.TryGetValue(d.EmployeeId, out var emp))
+                {
+                    skipped.Add($"พนักงาน {d.EmployeeId} (ไม่พบระเบียนพนักงาน)");
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(emp.TaxId))
+                {
+                    // ⚠️ ห้าม log เลขบัตร/เลขผู้เสียภาษีเต็ม (PDPA ม.26) — ใช้
+                    // รหัสพนักงาน + ชื่อ ซึ่งเป็นสิ่งที่ HR ใช้ค้นในระบบอยู่แล้ว
+                    skipped.Add($"{emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}".Trim()
+                        + " (ยังไม่ได้กรอกเลขประจำตัวผู้เสียภาษี)");
+                    continue;
+                }
 
                 // Skip ถ้ามี cert เดือนนี้อยู่แล้วและไม่ใช่จาก run นี้
                 // (กรณี HR ออกเองด้วยมือก่อน) — ไม่ override manual cert
@@ -3198,13 +3330,50 @@ public class PayrollService : IPayrollService
                     TaxRate = taxableIncome > 0 ? Math.Round(d.WithholdingTax / taxableIncome * 100, 4) : 0,
                     TaxAmount = d.WithholdingTax
                 });
+                issuedCount++;
             }
             await _db.SaveChangesAsync();
-            _logger?.LogInformation("ออก ภ.ง.ด.1 cert {Count} ฉบับสำหรับ run {Run}", details.Count, run.Id);
+            _logger?.LogInformation("ออก ภ.ง.ด.1 cert {Count} ฉบับสำหรับ run {Run}",
+                issuedCount, run.Id);
+
+            // ── ล้มดัง 3 ที่ (F2 ข้อ 7) ──
+            //  1. ตัวข้อมูลที่ผู้ใช้เปิดดู — หน้านำส่ง/ปฏิทินขึ้นคำเตือน + บล็อก
+            //     (StatutoryRemittanceService คำนวณช่องว่างจาก certs เองทุกครั้ง
+            //      ⇒ ไม่ต้องพึ่งธงที่เขียนไว้ตอนนี้ และซ่อมตัวเองเมื่อ HR ออกใบครบ)
+            //  2. สถานะงาน — LogError + การแจ้งเตือนในระบบ
+            //  3. คำตอบผู้เรียก — งานนี้รันหลัง commit การจ่าย (fire-and-forget)
+            //     จึงไม่มีผู้เรียกที่รอคำตอบ; ข้อ 1+2 คือช่องทางที่ถึงคนจริง
+            if (skipped.Count > 0)
+            {
+                var who = string.Join(" · ", skipped.Take(5))
+                    + (skipped.Count > 5 ? $" และอีก {skipped.Count - 5} คน" : "");
+                _logger?.LogError(
+                    "ออก 50 ทวิ (ภ.ง.ด.1) ไม่ครบ {Count} คน สำหรับ run {Run} ({Month}/{Year}) — {Who}",
+                    skipped.Count, run.Id, run.Month, run.Year, who);
+                await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+                    title: $"⚠️ ออกหนังสือรับรอง 50 ทวิ ไม่ครบ — งวด {run.Month:D2}/{run.Year}",
+                    message: $"พนักงาน {skipped.Count} คนยังไม่มีหนังสือรับรองหัก ณ ที่จ่าย: {who} · "
+                        + "ยอด ภ.ง.ด.1 ของงวดนี้จึงยังนำส่งไม่ได้จนกว่าจะออกใบครบ "
+                        + "— กรอกเลขประจำตัวผู้เสียภาษีที่หน้าพนักงาน แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน",
+                    entityId: run.Id);
+            }
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "IssueMonthlyPnd1CertsAsync failed run={Run}", run.Id);
+            // ⚠️ เดิมเป็น LogWarning เฉย ๆ ⇒ งวดที่ออกใบไม่สำเร็จทั้งก้อนเงียบสนิท
+            // ทั้งที่ 50 ทวิ มีกำหนดตามกฎหมาย (ออกในวันที่จ่าย · ยื่นวันที่ 7/15)
+            // ที่นี่ throw ไม่ได้ (การจ่ายเงิน commit ไปแล้ว — ล้มย้อนหลังไม่ได้)
+            // จึงต้องดังผ่าน LogError + การแจ้งเตือน และปล่อยให้ด่านนำส่งบล็อก
+            _logger?.LogError(ex,
+                "ออก 50 ทวิ (ภ.ง.ด.1) ล้มทั้งงวด run={Run} ({Month}/{Year}) — "
+                + "ยอดนำส่ง ภ.ง.ด.1 จะถูกบล็อกจนกว่าจะสั่งสร้างเอกสารใหม่สำเร็จ",
+                run.Id, run.Month, run.Year);
+            await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+                title: $"⚠️ ออกหนังสือรับรอง 50 ทวิ ไม่สำเร็จ — งวด {run.Month:D2}/{run.Year}",
+                message: "ระบบออกหนังสือรับรองหัก ณ ที่จ่าย (ภ.ง.ด.1) ของรอบนี้ไม่สำเร็จ "
+                    + $"({ex.Message}) · ยอด ภ.ง.ด.1 ของงวดนี้จะนำส่งไม่ได้จนกว่าจะออกใบครบ "
+                    + "— กด “สร้างเอกสารใหม่” ที่รอบเงินเดือน หรือแจ้งผู้ดูแลระบบ",
+                entityId: run.Id);
         }
     }
 
@@ -4051,7 +4220,15 @@ public class PayrollService : IPayrollService
             i.FixedAmount, i.Percentage, i.IsTaxable, i.IsActive,
             IncomeNature: i.IncomeNature,
             EffectiveIncomeNature: effective,
-            IncomeNatureNote: Accounting.Helpers.PayrollIncomeNatureRules.Describe(i.IncomeNature));
+            IncomeNatureNote: Accounting.Helpers.PayrollIncomeNatureRules.Describe(i.IncomeNature),
+            CountsForSsoBase: i.CountsForSsoBase,
+            // เฉพาะรายการ "เงินได้" ที่ยังไม่ตัดสินเท่านั้นที่ต้องเตือน —
+            // รายการหัก (Deduction) ไม่เกี่ยวกับฐานค่าจ้าง ม.5
+            SsoBaseNeedsDecision: i.ItemType == "Earning"
+                && Accounting.Helpers.SsoWageBase.NeedsWageDecision(i.CountsForSsoBase),
+            SsoBaseNote: i.ItemType == "Earning"
+                ? Accounting.Helpers.SsoWageBase.DescribeWageDecision(i.CountsForSsoBase)
+                : null);
     }
 
     private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r)

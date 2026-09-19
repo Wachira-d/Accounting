@@ -24,6 +24,23 @@ public readonly record struct PayrollEarningBuckets(
     /// <summary>ส่วนที่เข้าฐานภาษีของงวดนี้ (ไม่รวมเงินเดือนฐาน)</summary>
     public decimal TaxableExtras
         => Overtime + RecurringAllowance + OneTimeAllowance + Commission + Bonus;
+
+    /// <summary>เบี้ยเลี้ยงทั้งหมดของงวดนี้ (ประจำ + ครั้งคราว) — ยอดที่ขึ้นช่อง
+    /// "เบี้ยเลี้ยง" บนสลิป/รายงาน · **คนละตัว**กับ <see cref="RecurringAllowance"/>
+    /// ที่ใช้ฉายไปงวดที่เหลือ (รวมสองเรื่องนี้เป็นถังเดียวคือบั๊ก D6-3)</summary>
+    public decimal AllowanceTotal => RecurringAllowance + OneTimeAllowance;
+
+    /// <summary>รวมสองชุด — ใช้เมื่อเงินได้ของคนหนึ่งงวดมาจากหลายแหล่ง
+    /// (แถว <c>PayrollItem</c> + การลงเวลา + เบี้ยเลี้ยงที่บริษัทตั้งเอง)
+    /// โดยที่ทุกแหล่งต้องเดิน <see cref="PayrollIncomeNatureRules.Accumulate"/>
+    /// ตัวเดียวกัน</summary>
+    public PayrollEarningBuckets Plus(PayrollEarningBuckets o) => new(
+        Overtime + o.Overtime,
+        RecurringAllowance + o.RecurringAllowance,
+        OneTimeAllowance + o.OneTimeAllowance,
+        Commission + o.Commission,
+        Bonus + o.Bonus,
+        NonTaxable + o.NonTaxable);
 }
 
 /// <summary>
@@ -67,6 +84,34 @@ public static class PayrollIncomeNatureRules
     /// ยังไม่ระบุจึงตกกลับไปกฎรหัสเดิม</summary>
     public static PayrollIncomeNature Effective(PayrollIncomeNature stored, string? code)
         => stored == PayrollIncomeNature.Unspecified ? FromLegacyCode(code) : stored;
+
+    /// <summary>เบี้ยเลี้ยงที่เกิดจาก**การลงเวลา** (เบี้ยเลี้ยงเดินทาง/ต่างจังหวัด ·
+    /// ค่าที่พัก · ค่าอาหารวัน OT · ค่าอาหารรายวัน) — **ครั้งคราวเสมอ**
+    ///
+    /// <para>═══ บั๊กที่ปิด (D6-3 แหล่งที่สอง · DECISION_AUDIT §10.5 ข้อ 9) ═══
+    /// รอบที่แล้วแก้ให้ <c>PayrollItem</c> แยกประจำ/ครั้งคราวได้แล้ว แต่
+    /// <c>PayrollService</c> ยังบวกเบี้ยเลี้ยงจาก attendance เข้าถัง
+    /// <c>allowances</c> ตัวเดียวกับเบี้ยเลี้ยงประจำ ⇒ ถูก**ฉาย × งวดที่เหลือ**
+    /// ทั้งที่ผันแปรตามวันที่ไปทำงานจริงทุกเดือน ⇒ พนักงานที่ไปต่างจังหวัด
+    /// เดือนเดียวถูกประมาณการรายได้ทั้งปีสูงเกินจริง แล้ว**ถูกหักภาษีเกินทุกงวด
+    /// ที่เหลือ** (ลูกจ้างออกเงินให้บริษัทไปก่อนจนกว่าจะยื่นแบบขอคืนเอง)</para>
+    ///
+    /// <para>ทำไมไม่ให้ผู้ใช้เลือก: ค่าพวกนี้ไม่ได้มาจากแถว <c>PayrollItem</c>
+    /// แต่คำนวณจาก <c>EmployeeProjectTime</c> ของ**เดือนนั้น** ⇒ ตามนิยามแล้ว
+    /// เป็นศูนย์ในเดือนที่ไม่ได้ไป ⇒ ไม่มีเคสที่ "ประจำ" เป็นคำตอบที่ถูก</para></summary>
+    public const PayrollIncomeNature AttendanceAllowance = PayrollIncomeNature.OneTimeAllowance;
+
+    /// <summary>ลักษณะของ "เบี้ยเลี้ยงที่บริษัทตั้งเอง" (<c>CustomAllowanceItem</c>)
+    /// — <c>Type = "Daily"</c> คูณจำนวนวันทำงานจริง ⇒ ผันแปรทุกงวด = ครั้งคราว ·
+    /// <c>"Monthly"</c> จ่ายก้อนเดียวต่อรอบไม่ว่าจะมาทำงานกี่วัน = ประจำ
+    ///
+    /// <para>ตัวเทียบที่ชัดที่สุด: ค่าตำแหน่ง/ค่าครองชีพ (Monthly) ได้เท่ากันทุก
+    /// เดือน ⇒ ฉายถูก · ค่าอาหาร 50 บาท/วัน (Daily) เดือนที่ลาเยอะได้น้อยลง
+    /// ⇒ ฉายจากเดือนที่ทำงานครบทำให้ประมาณการเกิน</para></summary>
+    public static PayrollIncomeNature ForCustomAllowance(string? type)
+        => string.Equals(type, "Daily", StringComparison.OrdinalIgnoreCase)
+            ? PayrollIncomeNature.OneTimeAllowance
+            : PayrollIncomeNature.RecurringAllowance;
 
     /// <summary>รวมยอดรายการเงินได้ทั้งหมดของพนักงานหนึ่งคนลงถังที่ถูกต้อง —
     /// pure ทั้งหมด (เทสต์ได้โดยไม่ต้องมี DB)</summary>
