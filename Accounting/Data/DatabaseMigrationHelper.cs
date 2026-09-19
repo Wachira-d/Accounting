@@ -6130,6 +6130,19 @@ public static class DatabaseMigrationHelper
             WHERE "IncomeNature" = 0 AND "ItemType" = 'Earning';
             """,
 
+            // ═══ รอบ 184 · ซ่อมอัตรา VAT ที่คำนวณได้ซึ่งถูกเขียนลงฐานไปแล้ว (รอบ 183) ═══
+            // `PosTaxInvoiceLines` รอบ 183 คืน `VatRate` ที่**คำนวณ**จากยอดของบรรทัด
+            // ⇒ บรรทัดที่รับเศษ VAT ได้ค่าอย่าง `7.01` หรือ `-0.00` · ค่านี้ไม่ได้อยู่เฉย ๆ:
+            // `TaxService` ใช้ `Max(l.VatRate)` พิมพ์ลง**รายงานภาษีขาย/แบบยื่น 11 จุด** และ
+            // `EtaxInvoiceService` ใช้เป็นอัตราทั้งหัวใบและรายบรรทัดใน XML ที่ยื่นกรมสรรพากร
+            // ⇒ ใบกำกับประกาศอัตรา 7.01% ต่อสรรพากร · โค้ดบังคับให้เป็น 0/7/-1 แล้ว
+            // ⚠️ แก้เฉพาะ**อัตราที่ประกาศ** ไม่แตะ `Amount`/`VatAmount` ⇒ ยอดหัวเอกสารไม่ขยับ
+            //    (idempotent · ช่วงแคบพอที่จะไม่กลืนอัตราอื่นที่ตั้งใจ)
+            """UPDATE "DocumentLines" SET "VatRate" = 7 WHERE "VatRate" <> 7 AND "VatRate" > 6.5 AND "VatRate" < 7.5 AND "IsDeleted" = false;""",
+            """UPDATE "DocumentLines" SET "VatRate" = 0 WHERE "VatRate" <> 0 AND "VatRate" > -0.5 AND "VatRate" < 0.5 AND "IsDeleted" = false;""",
+            // **บรรทัดติดลบที่ออกไปแล้วห้ามแก้** — ใบที่ออกและอาจยื่นภาษีไปแล้ว
+            // การแก้ย้อนหลังผิด §86/4 ("ห้ามแก้ไขย้อนหลัง") · คิวรีนับอยู่ในรายงานรอบนี้
+
             // ═══ รอบ 184 · D-1 — ชนิดผู้ติดต่อ "ยังไม่รู้" ต้องเห็นได้ ═══
             // `ContactType` ตัดสิน **ภ.ง.ด.3 vs ภ.ง.ด.53** และ scheme ของ e-Tax XML
             // (`NIDN` vs `TXID`) · ค่าตั้งต้นเดิมคือ `Individual` ⇒ คู่ค้าที่ไม่มีใคร

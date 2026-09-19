@@ -478,12 +478,20 @@ public partial class DocumentService : IDocumentService
 
         foreach (var line in lines)
         {
-            if (line.Quantity <= 0)
-                throw new InvalidOperationException("จำนวนสินค้าต้องมากกว่า 0");
-            if (line.UnitPrice < 0)
-                throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+            // เครื่องหมายบนบรรทัด (จำนวน/ราคาต่อหน่วย/ส่วนลด) ตัดสินที่ **ตัวตั้งตัวเดียว**
+            // `Helpers/DocumentLineKind` — เดิมกติกา "ห้ามติดลบ" อยู่ที่นี่ที่เดียว ส่วน
+            // CMS/POS สร้างบรรทัดติดลบของตัวเองคนละแบบ (CMS โดนโยนทุกใบ · POS เลี่ยง
+            // validator ทั้งหมดเพราะประกอบ Document เอง) = กฎสองชุดที่เถียงกันเอง
+            var sign = DocumentLineKind.Judge(line.Quantity, line.UnitPrice, line.DiscountAmount ?? 0m);
+            if (!sign.Ok)
+                throw new BusinessRuleException(
+                    $"รายการ \u201c{line.Description}\u201d: {sign.Reason}",
+                    DocumentLineKind.SignRuleCode);
             if (line.DiscountPercent < 0 || line.DiscountPercent > 100)
-                throw new InvalidOperationException("ส่วนลดต้องอยู่ระหว่าง 0-100%");
+                throw new BusinessRuleException(
+                    $"รายการ \u201c{line.Description}\u201d: ส่วนลดต้องอยู่ระหว่าง 0-100% "
+                    + "— ถ้าต้องการหักเป็นยอดเงิน ให้กรอกที่ช่องส่วนลด (บาท) แทน",
+                    DocumentLineKind.SignRuleCode);
             if (line.VatRate != 0 && line.VatRate != 7 && line.VatRate != -1)
                 throw new InvalidOperationException("อัตราภาษีมูลค่าเพิ่มต้องเป็น 0, 7 หรือ -1 (ยกเว้น)");
             if (line.WithholdingTaxRate < 0 || line.WithholdingTaxRate > 15)

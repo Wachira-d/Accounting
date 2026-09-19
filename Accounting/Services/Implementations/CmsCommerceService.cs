@@ -929,32 +929,69 @@ public class CmsCommerceService : ICmsCommerceService
         return created.Id;
     }
 
-    /// <summary>สร้างบรรทัดเอกสาร ERP จาก order — สินค้า + ค่าจัดส่ง (บวก) +
-    /// ส่วนลด (ลบ) ให้ยอดรวม = order.TotalAmount (= Σสินค้า + ค่าจัดส่ง − ส่วนลด,
-    /// ดู line 604) กัน AR ค้างเศษ. ราคาเป็น gross (PricesIncludeVat=true);
-    /// ค่าจัดส่ง/ส่วนลด ใช้ VAT 0% ไม่ให้กระทบฐานภาษีของสินค้า.</summary>
-    private static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true)
+    /// <summary>สร้างบรรทัดเอกสาร ERP จาก order — สินค้า + ค่าจัดส่ง แล้ว**เฉลี่ยส่วนลด
+    /// ลงบรรทัด** ให้ยอดรวมเอกสาร = <c>order.TotalAmount</c> (= Σสินค้า + ค่าจัดส่ง − ส่วนลด)
+    /// กัน AR ค้างเศษ. ราคาเป็น gross (<c>PricesIncludeVat=true</c>)
+    ///
+    /// <para>═══ บั๊ก P0 ที่แก้ในรอบ 184 ═══ เดิมส่วนลดถูกส่งเป็น**บรรทัดติดลบ**
+    /// (<c>UnitPrice: -order.DiscountAmount</c>) แต่ <c>DocumentService.ValidateDocumentLinesAsync</c>
+    /// โยน "ราคาต่อหน่วยต้องไม่ติดลบ" เสมอ ⇒ <b>ออเดอร์หน้าร้านทุกใบที่มีส่วนลด จ่ายเงินแล้ว
+    /// แต่ไม่เคยมีเอกสาร · ไม่มี JE · ไม่มีลูกหนี้ · ไม่มีภาษีขาย</b> (เงียบสนิทก่อนรอบ 184
+    /// ที่ <c>ConfirmPaymentAsync</c> เริ่มปักหมุดความล้มเหลวไว้บนออเดอร์)</para>
+    ///
+    /// <para>คำตัดสิน "ห้ามบรรทัดติดลบ" + หลักฐานอยู่ที่ <see cref="DocumentLineKind"/>
+    /// (ตัวตั้งตัวเดียวร่วมกับ POS) · ที่นี่ส่วนลดถูกเฉลี่ย pro-rata ลง
+    /// <c>DocumentLineRequest.DiscountAmount</c> ของแต่ละบรรทัด ซึ่ง
+    /// <c>ComputeLineAmounts</c> หักออกจาก gross **ก่อน**แยก VAT ⇒
+    /// ยอดรวมของบรรทัด (net+VAT) = <c>gross − ส่วนลด</c> เป๊ะทุกบรรทัด ⇒
+    /// ยอดเอกสารลดลงเท่ายอดส่วนลดพอดี **แม้บรรทัดคนละอัตรา VAT**
+    /// (เฉลี่ยผ่าน <c>BillDiscountAmount</c> ซึ่งคิดบนฐาน ex-VAT จะคลาดเป็นสตางค์
+    /// เมื่ออัตราผสม เพราะ VAT ถูกคิดใหม่จาก net ที่ปัดแล้ว)</para>
+    ///
+    /// <para>⚠️ <b>ค่าจัดส่งยัง VAT 0% ตามของเดิม</b> — ไม่ใช่เพราะถูก แต่เพราะการเปลี่ยน
+    /// กระทบยอดภาษีของออเดอร์ที่ **ไม่มีส่วนลด** ด้วย (นอกขอบเขตบั๊กนี้ · ต้องให้เจ้าของ
+    /// ตัดสิน). ผลข้างเคียงที่ยืนยันแล้ว: <c>Pp30SalesClassifier.Split</c> จัดบรรทัดอัตรา 0
+    /// เข้า "ยอดขายอัตราร้อยละ 0 (§80/1 ส่งออก)" ของ ภ.พ.30 ช่อง 7 ⇒ ค่าส่งในประเทศ
+    /// ถูกรายงานเป็นยอดส่งออก</para></summary>
+    // internal (ไม่ใช่ private) เพื่อให้เทสต์เรียกตรงได้ — เส้นนี้เป็นเส้นที่เงียบ
+    // ที่สุดของระบบ (webhook → เอกสาร) ไม่มีใครเห็นถ้าพัง (InternalsVisibleTo อยู่ใน .csproj แล้ว)
+    internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true)
     {
-        var lines = order.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
-            Description: l.ProductName,
-            Quantity: l.Quantity,
-            UnitPrice: l.UnitPrice,
-            Unit: l.Unit,
-            DiscountPercent: 0m,
-            VatRate: vatRegistered ? l.VatRate : 0m,
-            WithholdingTaxRate: 0m,
-            AccountId: null,
-            ProjectId: null)).ToList();
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
+        // ฐานเฉลี่ยส่วนลด = ยอดรวม VAT ต่อบรรทัด **ปัดแบบเดียวกับ ComputeLineAmounts**
+        // (ฐานคนละตัวกับที่ service ใช้ = ส่วนลดเกินยอดบรรทัดแล้วถูก clamp เงียบ)
+        var lineGross = new List<decimal>();
+
+        foreach (var l in order.Lines)
+        {
+            lines.Add(new Models.DTOs.Document.DocumentLineRequest(
+                Description: l.ProductName,
+                Quantity: l.Quantity,
+                UnitPrice: l.UnitPrice,
+                Unit: l.Unit,
+                DiscountPercent: 0m,
+                VatRate: vatRegistered ? l.VatRate : 0m,
+                WithholdingTaxRate: 0m,
+                AccountId: null,
+                ProjectId: null));
+            lineGross.Add(Math.Round(l.Quantity * l.UnitPrice, 2, R));
+        }
         if (order.ShippingAmount > 0m)
+        {
             lines.Add(new Models.DTOs.Document.DocumentLineRequest(
                 Description: "ค่าจัดส่ง", Quantity: 1m, UnitPrice: order.ShippingAmount,
                 Unit: "ครั้ง", DiscountPercent: 0m, VatRate: 0m, WithholdingTaxRate: 0m,
                 AccountId: null, ProjectId: null));
-        if (order.DiscountAmount > 0m)
-            lines.Add(new Models.DTOs.Document.DocumentLineRequest(
-                Description: "ส่วนลด", Quantity: 1m, UnitPrice: -order.DiscountAmount,
-                Unit: "ครั้ง", DiscountPercent: 0m, VatRate: 0m, WithholdingTaxRate: 0m,
-                AccountId: null, ProjectId: null));
+            lineGross.Add(Math.Round(order.ShippingAmount, 2, R));
+        }
+
+        if (order.DiscountAmount > 0m && lines.Count > 0)
+        {
+            var alloc = DocumentLineKind.AllocateDeduction(lineGross, order.DiscountAmount);
+            for (var i = 0; i < lines.Count; i++)
+                if (alloc[i] > 0m) lines[i] = lines[i] with { DiscountAmount = alloc[i] };
+        }
         return lines;
     }
 
@@ -1525,7 +1562,13 @@ public class CmsCommerceService : ICmsCommerceService
                 Reference: order.OrderNumber,
                 Notes: string.Join("\n", notesParts),
                 Lines: lines,
-                CustomFooterNotes: string.IsNullOrWhiteSpace(ownerFooter) ? null : ownerFooter);
+                CustomFooterNotes: string.IsNullOrWhiteSpace(ownerFooter) ? null : ownerFooter,
+                // ราคาในตะกร้า CMS เป็น **ราคารวม VAT** (`RecalculateCartTotals` ถอด VAT
+                // ออกด้วย price × rate/(100+rate)) — เส้นนี้เคยไม่ส่งธงนี้ ⇒ ค่าตั้งต้น
+                // false ⇒ DocumentService บวก VAT ทับอีก 7% ⇒ ใบเสนอราคาที่ลูกค้าได้รับ
+                // สูงกว่ายอดในตะกร้า ~7% ทุกใบ (ญาติของบั๊กส่วนลด: เส้นที่สองที่แปลง
+                // ออเดอร์ CMS เป็นเอกสาร แต่แปลงคนละกติกา)
+                PricesIncludeVat: true);
 
             try
             {

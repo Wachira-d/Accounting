@@ -180,6 +180,15 @@ public class DocumentsV1Controller : PublicApiControllerBase
             // กฎธุรกิจ/ภาษีปฏิเสธ — ข้อความไทยจาก service ใช้บอกลูกค้าได้ตรง ๆ
             return BadRequest(new ApiResponse<string>(false, null, ex.Message));
         }
+        // ★ รอบ 184 — `BusinessRuleException` (รหัสบัญชีผิด · บรรทัดติดลบ · จำนวน ≤ 0 ·
+        // ส่วนลดติดลบ) **ไม่ได้สืบทอดจาก `InvalidOperationException`** จึงเคยตกไป
+        // `catch (Exception)` ข้างล่าง → **500 ข้อความกลบ** ⇒ คู่ค้าเห็นแค่
+        // "สร้างเอกสารไม่สำเร็จ" แล้วแก้เองไม่ได้ · รูนี้มีมาก่อนรอบนี้แล้ว
+        // (รหัสบัญชีผิด) รอบนี้แค่ทำให้เจอบ่อยขึ้นเพราะด่านบรรทัดติดลบใช้ชนิดนี้
+        catch (Accounting.Helpers.BusinessRuleException ex)
+        {
+            return BadRequest(new ApiResponse<string>(false, null, ex.Message));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "สร้างเอกสาร v1 ล้มเหลว company={Company}", ctx.CompanyId);

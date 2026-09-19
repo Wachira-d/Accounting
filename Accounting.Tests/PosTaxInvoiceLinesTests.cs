@@ -6,17 +6,21 @@ using Xunit;
 namespace Accounting.Tests;
 
 /// <summary>
-/// ใบกำกับภาษีเต็มรูปจากบิล POS — ยอดบนใบต้องเท่าเงินที่ลูกค้าจ่าย
+/// ใบกำกับภาษีเต็มรูปจากบิล POS — ยอดบนใบต้องเท่าเงินที่ลูกค้าจ่าย **และทุกบรรทัดต้องเป็นบวก**
 ///
-/// ═══ ที่มา (DECISION_AUDIT_2026-09-18 · D8-1 · P0) ═══
+/// ═══ ที่มา รอบ 183 (D8-1 · P0) ═══
 /// <c>IssueTaxInvoiceAsync</c> เดิมสร้างบรรทัดจาก <c>item.TotalAmount</c>/<c>item.VatAmount</c>
 /// ซึ่งเป็นยอด **ก่อน** หักส่วนลดท้ายบิล/คูปอง และ **ไม่มี** ค่าบริการ ⇒
-/// บิล 1,000 ลด 10% ลูกค้าจ่าย 900 แต่ใบกำกับเขียน 1,000:
-///   • ผู้ซื้อเคลมภาษีซื้อ**เกินจริง** (§82/5(1) ใบไม่ถูกต้อง)
-///   • ผู้ขายรายงานภาษีขาย ≠ GL ที่ POS ลงไว้ ⇒ ภ.พ.30 กับงบไม่ตรงกัน
+/// บิล 1,000 ลด 10% ลูกค้าจ่าย 900 แต่ใบกำกับเขียน 1,000
+///
+/// ═══ ที่มา รอบ 184 (P0 — ทีมสถาปัตยกรรมเอกสาร/ภาษีขาย) ═══
+/// การแก้รอบ 183 ใช้ **บรรทัดติดลบ** แล้วประกอบ <c>Document</c> เองโดยไม่ผ่าน
+/// <c>ValidateDocumentLinesAsync</c> ⇒ ระบบเดียวมีกติกาสองชุด (เส้นกลางห้ามติดลบ จน
+/// ออเดอร์ CMS ที่มีส่วนลดสร้างเอกสารไม่ได้เลย · POS ติดลบได้เพราะเลี่ยงด่าน) ⇒
+/// ยอดหักระดับบิลย้ายไปเฉลี่ยลงบรรทัดผ่าน <c>DocumentLineKind.AllocateDeduction</c>
 ///
 /// เทสต์นี้มีสองครึ่งตามกฎเหล็ก #4 H:
-///   • ครึ่งที่พิสูจน์ว่าบิลที่พัง (มีส่วนลด/คูปอง/ค่าบริการ) ออกใบถูกต้อง
+///   • ครึ่งที่พิสูจน์ว่าบิลที่พัง (มีส่วนลด/คูปอง/ค่าบริการ/ปัดเศษ) ออกใบถูกต้อง**และไม่มีบรรทัดติดลบ**
 ///   • ครึ่งที่พิสูจน์ว่าบิลธรรมดา (ไม่มีส่วนลดอะไรเลย) ได้บรรทัด**เท่าเดิมทุกบาท**
 ///     และไม่มีบรรทัดปรับปรุงงอกขึ้นมา
 /// </summary>
@@ -71,6 +75,21 @@ public class PosTaxInvoiceLinesTests
     private static decimal Gross(IReadOnlyList<PosInvoiceLine> lines)
         => lines.Sum(l => l.AmountNet) + lines.Sum(l => l.VatAmount);
 
+    /// <summary>ทุกบรรทัดต้องผ่านด่านเดียวกับที่ <c>DocumentService</c> ใช้ — นี่คือเงื่อนไข
+    /// ที่ทำให้ POS ย้ายเข้าเส้นเอกสารกลางได้ในอนาคตโดยไม่ต้องผ่อนด่าน</summary>
+    private static void AssertPassesCentralGate(IReadOnlyList<PosInvoiceLine> lines)
+    {
+        Assert.All(lines, l =>
+        {
+            var v = DocumentLineKind.Judge(l.Quantity, l.UnitPriceNet, 0m);
+            Assert.True(v.Ok, v.Reason);
+            Assert.True(l.AmountNet >= 0m, $"บรรทัด '{l.Description}' ยอดติดลบ");
+            Assert.True(l.VatAmount >= 0m, $"บรรทัด '{l.Description}' VAT ติดลบ");
+            Assert.True(l.VatRate == 0m || l.VatRate == 7m || l.VatRate == -1m,
+                $"บรรทัด '{l.Description}' อัตรา VAT = {l.VatRate} ซึ่งไม่ใช่อัตราตามกฎหมาย");
+        });
+    }
+
     // ─────────── ครึ่งที่ 1: บิลที่พังต้องกลับมาถูก ───────────
 
     [Fact]
@@ -84,10 +103,30 @@ public class PosTaxInvoiceLinesTests
 
         var lines = Build(o);
         Assert.Equal(900m, Gross(lines));
-        Assert.Equal(3, lines.Count);                       // สินค้า 2 + ส่วนลด 1
-        var discount = lines.Single(l => l.Description == PosTaxInvoiceLines.BillDiscountLabel);
-        Assert.True(discount.AmountNet < 0m);
-        Assert.True(discount.VatAmount < 0m);               // ส่วนลดลดฐานภาษีจริง §79
+        AssertPassesCentralGate(lines);
+        Assert.Equal(2, lines.Count);                       // สินค้า 2 บรรทัด ไม่มีบรรทัดส่วนลดติดลบ
+        // ส่วนลดลดฐานภาษีจริง §79 — ไม่ได้ถูกซ่อนเป็นบรรทัด VAT 0%
+        Assert.Equal(o.VatAmount, lines.Sum(l => l.VatAmount));
+        Assert.True(lines.Sum(l => l.DiscountNet) > 0m);
+    }
+
+    [Fact]
+    public void ส่วนลดท้ายบิลต้องกลายเป็นบรรทัดติดลบไม่ได้อีก_แต่ยอดหักต้องยังอยู่ครบ()
+    {
+        var o = Order(discountPct: 10m, lineGross: new[] { 600m, 400m });
+        var lines = Build(o);
+
+        Assert.DoesNotContain(lines, l => l.Description == PosTaxInvoiceLines.BillDiscountLabel);
+        Assert.DoesNotContain(lines, l => l.AmountNet < 0m);
+
+        // ยอดหักยังอยู่ครบ: ส่วนลด 100 (รวม VAT) = 93.46 ก่อน VAT
+        // คลาดได้ ≤ 2 สตางค์ เพราะ DiscountNet เป็นตัวเลข **สำหรับแสดงผล** (ถอด VAT
+        // รายบรรทัดแล้วปัด) ส่วนตัวเลขที่ต้องเป๊ะคือ Σ(net+VAT) และ Σ VAT ซึ่งถูกล็อก
+        // ไว้ในเทสต์อื่นแล้ว — ห้ามเอา DiscountNet ไปคิดยอดใด ๆ ต่อ
+        var expectedDiscountNet = 100m - Math.Round(100m * VatRate / (100m + VatRate), 2, MidpointRounding.AwayFromZero);
+        Assert.True(Math.Abs(expectedDiscountNet - lines.Sum(l => l.DiscountNet)) <= 0.02m,
+            $"ยอดหักก่อน VAT = {lines.Sum(l => l.DiscountNet)} คาด {expectedDiscountNet}");
+        Assert.Equal(900m, Gross(lines));
     }
 
     [Fact]
@@ -98,6 +137,7 @@ public class PosTaxInvoiceLinesTests
 
         var lines = Build(o);
         Assert.Equal(1100m, Gross(lines));
+        AssertPassesCentralGate(lines);
         var sc = lines.Single(l => l.Description == PosTaxInvoiceLines.ServiceChargeLabel);
         Assert.Equal(100m, sc.AmountNet + sc.VatAmount);
     }
@@ -111,22 +151,20 @@ public class PosTaxInvoiceLinesTests
         var lines = Build(o);
         Assert.Equal(o.VatAmount, lines.Sum(l => l.VatAmount));
         Assert.Equal(PosTaxInvoiceLines.GrossPayableForGoods(o.TotalAmount, o.RoundingAmount), Gross(lines));
+        AssertPassesCentralGate(lines);
     }
 
     [Fact]
-    public void คูปองต้องเป็นบรรทัดของตัวเองพร้อมรหัสคูปอง_ไม่ถูกนับซ้ำกับส่วนลดเปอร์เซ็นต์()
+    public void คูปองต้องหักครั้งเดียว_ไม่ถูกนับซ้ำกับส่วนลดเปอร์เซ็นต์()
     {
         // ลด 10% (=100) + คูปอง 50 ⇒ DiscountAmount = 150 (คูปองรวมอยู่แล้ว)
         var o = Order(discountPct: 10m, coupon: 50m, couponCode: "SAVE50", lineGross: new[] { 1000m });
         Assert.Equal(150m, o.DiscountAmount);
 
         var lines = Build(o);
-        Assert.Equal(850m, Gross(lines));
-        var coupon = lines.Single(l => l.Description.StartsWith(PosTaxInvoiceLines.CouponLabel, StringComparison.Ordinal));
-        Assert.Contains("SAVE50", coupon.Description);
-        Assert.Equal(-50m, coupon.AmountNet + coupon.VatAmount);      // คูปองหัก 50 ครั้งเดียว
-        var pct = lines.Single(l => l.Description == PosTaxInvoiceLines.BillDiscountLabel);
-        Assert.Equal(-100m, pct.AmountNet + pct.VatAmount);           // ส่วนที่เหลือคือส่วนลด%
+        Assert.Equal(850m, Gross(lines));          // หัก 150 ครั้งเดียว ไม่ใช่ 200
+        AssertPassesCentralGate(lines);
+        Assert.Single(lines);
     }
 
     [Fact]
@@ -140,15 +178,48 @@ public class PosTaxInvoiceLinesTests
     }
 
     [Fact]
-    public void ปัดเศษเป็นบรรทัดที่ไม่มี_VAT_และทำให้ยอดตรงกับเงินที่รับ()
+    public void ปัดเศษขึ้นเป็นบรรทัดบวกที่ไม่มี_VAT_และทำให้ยอดตรงกับเงินที่รับ()
     {
-        var o = Order(lineGross: new[] { 100.40m });
-        Assert.NotEqual(0m, o.RoundingAmount);              // ปัดขึ้นเป็น 100
+        var o = Order(lineGross: new[] { 100.60m });
+        Assert.True(o.RoundingAmount > 0m);                 // 100.60 → 101.00
         var lines = Build(o);
         var rounding = lines.Single(l => l.Description == PosTaxInvoiceLines.RoundingLabel);
         Assert.Equal(0m, rounding.VatAmount);
         Assert.Equal(0m, rounding.VatRate);
+        Assert.True(rounding.AmountNet > 0m);
         Assert.Equal(o.NetAmount, Gross(lines));            // ไม่มีทิป ⇒ = เงินที่รับจริง
+        AssertPassesCentralGate(lines);
+    }
+
+    [Fact]
+    public void ปัดเศษลงต้องไม่กลายเป็นบรรทัดติดลบ_แต่ยอดต้องยังตรงกับเงินที่รับ()
+    {
+        var o = Order(lineGross: new[] { 100.40m });
+        Assert.True(o.RoundingAmount < 0m);                 // 100.40 → 100.00
+        var lines = Build(o);
+        Assert.DoesNotContain(lines, l => l.Description == PosTaxInvoiceLines.RoundingLabel);
+        Assert.Equal(o.NetAmount, Gross(lines));
+        Assert.Equal(o.VatAmount, lines.Sum(l => l.VatAmount));
+        AssertPassesCentralGate(lines);
+    }
+
+    [Fact]
+    public void รายการที่คีย์มาติดลบต้องกลายเป็นยอดหัก_ไม่ใช่บรรทัดติดลบบนใบกำกับ()
+    {
+        // หน้าร้านบางที่คีย์ "ปรับยอด −50" เป็นรายการ — ห้ามหลุดเป็นบรรทัดติดลบ
+        var lines = PosTaxInvoiceLines.Build(
+            new[]
+            {
+                new PosInvoiceSourceLine("สินค้า", "P1", "ชิ้น", 1m, 1000m),
+                new PosInvoiceSourceLine("ปรับยอด", null, "ครั้ง", 1m, -50m),
+            },
+            billDiscountAmount: 0m, couponAmount: 0m, couponCode: null,
+            serviceChargeAmount: 0m, roundingAmount: 0m,
+            headGrossPayable: 950m,
+            headVat: Math.Round(950m * 7m / 107m, 2, MidpointRounding.AwayFromZero));
+        Assert.Single(lines);
+        Assert.Equal(950m, Gross(lines));
+        AssertPassesCentralGate(lines);
     }
 
     [Fact]
@@ -161,6 +232,18 @@ public class PosTaxInvoiceLinesTests
             headGrossPayable: 900m,        // หัวใบบอก 900 แต่บรรทัดรวม 1,000
             headVat: 58.88m));
         Assert.Equal("RD-86/4-POS-LINE-SUM", ex.RuleCode);
+    }
+
+    [Fact]
+    public void ข้อความที่ยอดไม่ตรงต้องบอกที่มาของยอดหัก_ให้แคชเชียร์ไล่ได้()
+    {
+        var ex = Assert.Throws<BusinessRuleException>(() => PosTaxInvoiceLines.Build(
+            new[] { new PosInvoiceSourceLine("สินค้า", "P1", "ชิ้น", 1m, 1000m) },
+            billDiscountAmount: 100m, couponAmount: 100m, couponCode: "SAVE100",
+            serviceChargeAmount: 0m, roundingAmount: 0m,
+            headGrossPayable: 950m,        // ของจริงต้องเป็น 900
+            headVat: 58.88m));
+        Assert.Contains("SAVE100", ex.Message);
     }
 
     // ─────────── ครึ่งที่ 2: บิลที่ถูกอยู่แล้ว ห้ามเปลี่ยน ───────────
@@ -179,6 +262,7 @@ public class PosTaxInvoiceLinesTests
         Assert.Equal(214m, lines[1].AmountNet + lines[1].VatAmount);
         Assert.Equal(o.VatAmount, lines.Sum(l => l.VatAmount));
         Assert.All(lines, l => Assert.Equal(7m, l.VatRate));
+        Assert.All(lines, l => Assert.Equal(0m, l.DiscountNet));
     }
 
     [Fact]

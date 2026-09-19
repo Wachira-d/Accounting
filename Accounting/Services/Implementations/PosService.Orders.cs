@@ -632,6 +632,12 @@ public partial class PosService
 
             doc.SubTotal = lines.Sum(l => l.AmountNet);
             doc.VatAmount = lines.Sum(l => l.VatAmount);
+            // ★ รอบ 184 — ส่วนลดท้ายบิล/คูปอง/ปัดเศษลง ถูก**เฉลี่ยลงบรรทัด**แล้ว
+            // (ห้ามบรรทัดติดลบ — `Helpers/DocumentLineKind`) ⇒ ยอดถูกต้องแต่ผู้ซื้อ
+            // จะไม่เห็นว่ามีส่วนลด (บรรทัดถูกลดราคาลงเงียบ ๆ) · ตั้งช่องนี้เพื่อให้
+            // renderer พิมพ์ "รวมก่อนหักท้ายบิล" + "ส่วนลดท้ายบิล" เหมือนใบที่คีย์มือ
+            // ⚠️ ห้ามใส่ `DocumentLine.DiscountAmount` พร้อมกัน — ผู้ซื้อจะเห็นสองครั้ง
+            doc.BillDiscountAmount = lines.Sum(l => l.DiscountNet);
             doc.TotalAmount = doc.SubTotal + doc.VatAmount;
             doc.BalanceDue = 0;                 // POS already collected payment
             doc.PaidAmount = doc.TotalAmount;

@@ -7301,10 +7301,22 @@ public class OcrService : IOcrService
             throw new InvalidOperationException("Scan ไม่มีรายการสินค้าใน OCR result.");
         if (lineIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(lineIndex));
-        if (quantity.HasValue && quantity.Value < 0m)
-            throw new InvalidOperationException("จำนวนต้องไม่ติดลบ");
-        if (unitPrice.HasValue && unitPrice.Value < 0m)
-            throw new InvalidOperationException("ราคาต่อหน่วยต้องไม่ติดลบ");
+        // ★ รอบ 184 — ใช้ตัวตัดสินตัวเดียวกับ `DocumentService.ValidateDocumentLinesAsync`
+        // (`Helpers/DocumentLineKind`) แทนข้อความ literal ชุดที่สอง · ก่อนหน้านี้ข้อความ
+        // ที่ผู้ใช้เห็นต่างกันระหว่างเส้นสแกนกับเส้นเอกสาร และการแก้กติกาที่เดียว
+        // ไม่ครบทั้งสองที่ ("แก้ตัวเดียว เหลือที่เหลือ" — F2 ข้อ 1)
+        // ⚠️ ที่นี่ยอมให้ `quantity == 0` ได้ (แก้ทีละช่อง ยังไม่ใช่บรรทัดเอกสาร)
+        // จึงส่ง 1 แทนเมื่อผู้ใช้ไม่ได้แก้จำนวน — ด่าน "จำนวนต้อง > 0" อยู่ที่เส้นสร้างเอกสาร
+        {
+            // `0` ยังผ่านที่นี่เหมือนเดิม (ผู้ใช้ล้างช่องจำนวนระหว่างแก้แถวสแกน) —
+            // ส่ง 1 แทนเพื่อให้ `Judge` ตรวจเฉพาะ "ติดลบ" ตามพฤติกรรมเดิมของเส้นนี้
+            // ส่วนค่าติดลบยังถูกส่งเข้าไปตรง ๆ จึงยังถูกปฏิเสธ
+            var lineSign = Accounting.Helpers.DocumentLineKind.Judge(
+                quantity is null or 0m ? 1m : quantity.Value, unitPrice ?? 0m, discountAmount: 0m);
+            if (!lineSign.Ok)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    lineSign.Reason!, Accounting.Helpers.DocumentLineKind.SignRuleCode);
+        }
 
         List<OcrExtractedLineItem> items;
         try
