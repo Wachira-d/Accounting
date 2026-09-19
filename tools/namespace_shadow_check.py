@@ -94,6 +94,45 @@ def resolves(root: str, parts, namespaces: set, types: dict) -> bool:
     return False
 
 
+def resolves_ns(root: str, parts, namespaces: set) -> bool:
+    """สายชื่อ `parts` เป็น **namespace** ที่มีจริงไหม ถ้าตอนแรกผูกกับ `root`
+
+    ใช้กับ `using A.B.C;` ซึ่งเป้าหมายเป็น namespace ไม่ใช่ชนิด — `resolves()`
+    ที่ต้องเจอ "ชนิด" ตอบคำถามนี้ไม่ได้
+    """
+    return ".".join([root] + list(parts[1:])) in namespaces
+
+
+USING_TARGET = re.compile(
+    r"^using\s+(?:static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_][\w.]*)\s*;")
+
+
+def check_using(chain: str, own, namespaces: set, types: dict, line_no: int, stripped: str):
+    """`using A.B.C;` ที่วาง**ใต้** `namespace X;` — ตอนแรกผูกแบบชั้นใกล้ชนะ
+
+    ที่มา (CI จับได้จริง 2026-09-19): `OcrDtos.cs` เขียน `namespace
+    Accounting.Models.DTOs.Ocr;` แล้วตามด้วย `using Accounting.Helpers;`
+    เรพนี้มี **`Accounting.Models.DTOs.Accounting`** อยู่ ⇒ ตอนแรก `Accounting`
+    ผูกไปชั้นนั้น ⇒ CS0234 "ไม่มี Helpers ใน Accounting.Models.DTOs.Accounting"
+    (ตัวเดิมข้ามบรรทัด `using ` ทุกบรรทัดโดยไม่ดูว่ามันอยู่ใต้ namespace หรือไม่)
+    """
+    parts = chain.split(".")
+    if len(parts) < 2:
+        return []
+    seg = parts[0]
+    candidates = [".".join(own[:i] + [seg]) for i in range(len(own), 0, -1)]
+    candidates.append(seg)
+    hits = [c for c in candidates if c in namespaces]
+    if len(hits) < 2:
+        return []
+    winner = hits[0]
+    if resolves_ns(winner, parts, namespaces) or resolves(winner, parts, namespaces, types):
+        return []
+    owners = [c for c in hits[1:]
+              if resolves_ns(c, parts, namespaces) or resolves(c, parts, namespaces, types)]
+    return [(line_no, stripped, chain, winner, owners)] if owners else []
+
+
 def check_file(path: Path, namespaces: set, types: dict):
     text = path.read_text(encoding="utf-8", errors="replace")
     m = NS_DECL.search(text)
@@ -101,11 +140,23 @@ def check_file(path: Path, namespaces: set, types: dict):
         return []
     own = m.group(1).split(".")
     body = strip_noise(text)
+    # บรรทัดที่ประกาศ namespace — `using` **หลัง**บรรทัดนี้อยู่ใน scope ของ
+    # namespace นั้น จึงใช้กติกา "ชั้นใกล้ชนะ" เหมือนชื่อที่มีจุดนำหน้าทุกตัว
+    # (`using` ก่อนหน้าอยู่ระดับ global — ปลอดภัยเสมอ จึงข้าม)
+    ns_line = text[:m.start()].count("\n") + 1
 
     problems = []
     for line_no, line in enumerate(body.splitlines(), 1):
         stripped = line.strip()
-        if stripped.startswith(("using ", "namespace ")):
+        if stripped.startswith("namespace "):
+            continue
+        if stripped.startswith("using "):
+            if line_no < ns_line:
+                continue
+            um = USING_TARGET.match(stripped)
+            if not um:
+                continue
+            problems.extend(check_using(um.group(1), own, namespaces, types, line_no, stripped))
             continue
         for chain in QUALIFIED.findall(line):
             parts = chain.split(".")
@@ -140,8 +191,12 @@ def main():
             rel = path.relative_to(ROOT) if ROOT in path.parents else path
             print(f"{rel}:{line_no}: `{chain}` — ตอนแรกผูกไป {winner} (ชั้นใกล้ชนะ) "
                   f"ซึ่งเดินสายนี้ไม่ได้ — ที่เดินได้คือ {', '.join(owners)}\n    {text}")
-            print("    → ใช้ชื่อเปล่าผ่าน using (ทางที่ปลอดภัยสุดเมื่อ**ราก**ถูกบัง) "
-                  "หรือเขียนชื่อเต็มที่ไม่ถูกบัง")
+            if text.startswith("using "):
+                print("    → ย้ายบรรทัด `using` ขึ้น**เหนือ** `namespace ...;` "
+                      "(ระดับ global ไม่ถูกบัง) หรือเขียน `global::`")
+            else:
+                print("    → ใช้ชื่อเปล่าผ่าน using (ทางที่ปลอดภัยสุดเมื่อ**ราก**ถูกบัง) "
+                      "หรือเขียนชื่อเต็มที่ไม่ถูกบัง")
 
     print(f"\nตรวจ {len(targets)} ไฟล์ .cs · ชื่อที่ผูกไป namespace ผิดชั้น {total} จุด")
     return 1 if total else 0

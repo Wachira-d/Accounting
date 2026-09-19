@@ -1,5 +1,6 @@
-namespace Accounting.Models.DTOs.Ocr;
 using Accounting.Helpers;
+
+namespace Accounting.Models.DTOs.Ocr;
 
 public record OcrResultResponse(
     Guid Id, string OriginalFileName, string ScanStatus, string? DocumentType, decimal Confidence,
