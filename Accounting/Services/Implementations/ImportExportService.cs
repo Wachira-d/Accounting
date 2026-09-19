@@ -267,7 +267,14 @@ public class ImportExportService : IImportExportService
             "contacts" => new ImportTemplateResponse("contacts", new List<ImportField>
             {
                 new("Name", "ชื่อ", "string", true, "ชื่อลูกค้า/ผู้ขาย", null),
-                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก", null),
+                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก (ตรวจ checksum — เลขผิดจะถูกปฏิเสธทั้งแถว)", null),
+                // ช่องนี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax (NIDN/TXID)
+                // — เดิมไม่มีในแม่แบบเลย ⇒ ผู้ใช้ไม่มีทางระบุได้ แล้วทุกแถวตกค่า default
+                new("ContactType", "ประเภทผู้ติดต่อ", "enum", false,
+                    "Individual (บุคคลธรรมดา → ภ.ง.ด.3) · JuristicPerson (นิติบุคคล → ภ.ง.ด.53) · GovernmentAgency — เว้นว่างได้ถ้ามีเลขผู้เสียภาษีที่ถูกต้อง ระบบจะอ่านจากเลขให้",
+                    new List<string> { "Individual", "JuristicPerson", "GovernmentAgency" }),
+                new("BranchCode", "รหัสสาขา", "string", false,
+                    "5 หลักตามประกาศอธิบดีฯ 199 — 00000 = สำนักงานใหญ่ (เก็บเฉพาะนิติบุคคล/ราชการ)", null),
                 new("IsCustomer", "เป็นลูกค้า", "bool", false, "true/false", new List<string> { "true", "false" }),
                 new("IsSupplier", "เป็นผู้ขาย", "bool", false, "true/false", new List<string> { "true", "false" }),
                 new("Email", "อีเมล", "string", false, null, null),
@@ -481,8 +488,24 @@ public class ImportExportService : IImportExportService
         Dictionary<string, string>? resolutions = null, string defaultAction = "Merge")
     {
         var name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required");
-        var taxId = row.GetValueOrDefault("TaxId");
         var email = row.GetValueOrDefault("Email");
+
+        // ── เลขผู้เสียภาษีจากไฟล์ต้องผ่านด่านเดียวกับ /api/v1 ──
+        // เดิมเส้นนำเข้าไฟล์**ไม่ตรวจอะไรเลย** ⇒ "1234", "N/A", เลขที่ checksum ไม่ผ่าน
+        // ถูกเก็บลงทะเบียนแล้วไปโผล่บนใบกำกับเต็มรูปที่ออกภายหลัง (§86/4 ไม่ครบ ⇒
+        // ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(1)) — ราก R5 "ทางเข้าอื่นไม่เดินด่าน"
+        var rawTaxId = row.GetValueOrDefault("TaxId");
+        string? taxId = null;
+        if (!string.IsNullOrWhiteSpace(rawTaxId))
+        {
+            var check = Accounting.Helpers.ThaiTaxIdValidator.Check(rawTaxId);
+            if (!check.IsValid)
+                throw new InvalidOperationException(
+                    $"เลขประจำตัวผู้เสียภาษี \"{rawTaxId}\" ของ \"{name}\" ไม่ถูกต้อง ({check.Reason}) — "
+                    + "แก้ในไฟล์แล้วนำเข้าใหม่ หรือลบคอลัมน์ TaxId ออกถ้ายังไม่มีเลข "
+                    + "(เลขที่ผิดจะทำให้ใบกำกับภาษีที่ออกภายหลังขาดรายการตาม §86/4)");
+            taxId = Accounting.Helpers.ThaiTaxIdValidator.Normalize(rawTaxId);
+        }
 
         // Idempotent on re-import: match by TaxId, then Email.
         Contact? existing = null;
@@ -521,15 +544,36 @@ public class ImportExportService : IImportExportService
             }
             existing.IsCustomer = existing.IsCustomer || isCustomer;
             existing.IsSupplier = existing.IsSupplier || isSupplier;
+            // ชนิดผู้ติดต่อ: ตัวตัดสินตัวเดียว + "ค่าเดิมที่คนตั้งไว้ชนะการอนุมาน"
+            // (ApplyToExisting) ⇒ ไฟล์นำเข้าไม่ลดระดับคู่ค้าที่ตั้งไว้ถูกแล้ว
+            existing.ContactType = Accounting.Helpers.ContactTypeResolver.ApplyToExisting(
+                existing.ContactType, row.GetValueOrDefault("ContactType"),
+                taxId ?? existing.TaxId, existing.Name).Type;
+            var branchIn = string.IsNullOrWhiteSpace(row.GetValueOrDefault("BranchCode"))
+                ? existing.BranchCode : row.GetValueOrDefault("BranchCode");
+            existing.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
+                existing.ContactType, branchIn);
             existing.UpdatedAt = DateTime.UtcNow;
             return;
         }
+
+        // ── ชนิดผู้ติดต่อ + รหัสสาขา จากตัวตัดสินตัวเดียว (Helpers/ContactTypeResolver) ──
+        // เดิมเส้นนำเข้าไฟล์**ไม่เคยตั้ง ContactType เลย** ⇒ ตกค่า default ของ entity
+        // (เดิม Individual) ทุกแถว ⇒ คู่ค้านิติบุคคลที่นำเข้าจากไฟล์ถูกยื่น ภ.ง.ด.3
+        // แทน ภ.ง.ด.53 และ e-Tax ได้ scheme NIDN แทน TXID
+        var identity = Accounting.Helpers.ContactTypeResolver.ResolveWithBranch(
+            declared: row.GetValueOrDefault("ContactType"),
+            taxId: taxId,
+            branchCode: row.GetValueOrDefault("BranchCode"),
+            name: name);
 
         _db.Contacts.Add(new Contact
         {
             CompanyId = companyId,
             Name = name,
             TaxId = taxId,
+            ContactType = identity.Type,
+            BranchCode = identity.BranchCode,
             IsCustomer = isCustomer,
             IsSupplier = isSupplier,
             Email = email,
@@ -799,7 +843,12 @@ public class ImportExportService : IImportExportService
         var contacts = await _db.Contacts.Where(c => c.CompanyId == companyId).OrderBy(c => c.Name).ToListAsync();
         return contacts.Select(c => new Dictionary<string, string>
         {
-            ["Name"] = c.Name, ["TaxId"] = c.TaxId ?? "", ["IsCustomer"] = c.IsCustomer.ToString(),
+            ["Name"] = c.Name, ["TaxId"] = c.TaxId ?? "",
+            // ส่งออกเป็น **ชื่อ** เสมอ (ไม่ใช่เลข) และต้องอยู่ในไฟล์ด้วย มิฉะนั้น
+            // export → import กลับ จะทำให้ชนิดผู้ติดต่อของทั้งทะเบียนหายไป
+            ["ContactType"] = c.ContactType.ToString(),
+            ["BranchCode"] = c.BranchCode ?? "",
+            ["IsCustomer"] = c.IsCustomer.ToString(),
             ["IsSupplier"] = c.IsSupplier.ToString(), ["Email"] = c.Email ?? "", ["Phone"] = c.Phone ?? "",
             ["Address"] = c.Address ?? "", ["ContactPerson"] = c.ContactPerson ?? ""
         }).ToList();
@@ -974,11 +1023,18 @@ public class ImportExportService : IImportExportService
                 (!string.IsNullOrWhiteSpace(contactName) && c.Name == contactName)));
         if (contact == null)
         {
+            var newName = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName;
+            // ชนิดผู้ติดต่อ + รหัสสาขา จากตัวตัดสินตัวเดียว — เดิมทางเข้านี้ไม่ตั้ง
+            // ContactType เลย ⇒ ลูกหนี้/เจ้าหนี้ยกมาทุกรายตกค่า default
+            var identity = Accounting.Helpers.ContactTypeResolver.ResolveWithBranch(
+                declared: null, taxId: contactTaxId, branchCode: null, name: newName);
             contact = new Contact
             {
                 CompanyId = companyId,
-                Name = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName,
+                Name = newName,
                 TaxId = string.IsNullOrWhiteSpace(contactTaxId) ? null : contactTaxId,
+                ContactType = identity.Type,
+                BranchCode = identity.BranchCode,
                 IsCustomer = isReceivable,
                 IsSupplier = !isReceivable,
                 IsActive = true,
@@ -1490,6 +1546,17 @@ public class ImportExportService : IImportExportService
             .FirstOrDefault(d => d.CompanyId == companyId && d.DocumentNumber == docNum)
             ?? await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNum);
 
+        // ── ด่าน: ห้ามต่อบรรทัดเข้าเอกสารที่ไม่ใช่ฉบับร่าง ──
+        // เส้นนี้ "เจอเลขเดิม = เติมบรรทัด" ซึ่งถูกสำหรับไฟล์หลายแถวต่อใบ แต่ถ้าเลข
+        // ในไฟล์ไปชนใบที่ **อนุมัติ/ออกไปแล้ว** มันจะเติมบรรทัดและ**คำนวณยอดหัวใบใหม่**
+        // ให้ใบกำกับภาษีที่ส่งลูกค้าไปแล้ว ⇒ ตัวเลขบนกระดาษกับในระบบไม่ตรงกัน และ
+        // §86/4 ห้ามแก้ไขย้อนหลัง (ต้องออกใบยกเลิก + ใบใหม่) ⇒ ล้มดังพร้อมทางไปต่อ
+        if (doc != null && doc.Status != DocumentStatus.Draft)
+            throw new InvalidOperationException(
+                $"เอกสาร {docNum} มีสถานะ {doc.Status} แล้ว จึงเติมบรรทัดจากไฟล์นำเข้าไม่ได้ "
+                + "(§86/4 ห้ามแก้ไขเอกสารที่ออกเลขแล้ว — ต้องออกใบลดหนี้/ใบยกเลิกแทน) — "
+                + "แก้เลขที่เอกสารในไฟล์ให้ไม่ซ้ำกับใบที่มีอยู่ แล้วนำเข้าใหม่");
+
         if (doc == null)
         {
             if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out var docType))
@@ -1578,6 +1645,22 @@ public class ImportExportService : IImportExportService
             case "contacts":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อ"));
+                // ด่านเดียวกับตอนนำเข้าจริง (ImportContactAsync) — ถ้าตรวจคนละชุด
+                // หน้า "ตรวจก่อนนำเข้า" จะบอกว่าผ่าน แล้วไปล้มตอนกดนำเข้าจริง
+                var cTaxId = row.GetValueOrDefault("TaxId");
+                if (!string.IsNullOrWhiteSpace(cTaxId))
+                {
+                    var cCheck = Accounting.Helpers.ThaiTaxIdValidator.Check(cTaxId);
+                    if (!cCheck.IsValid)
+                        errors.Add(new ImportError(rowNumber, "TaxId", cTaxId,
+                            $"เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง ({cCheck.Reason}) — แก้ในไฟล์ หรือเว้นว่างไว้ก่อน"));
+                }
+                var cType = row.GetValueOrDefault("ContactType");
+                if (!string.IsNullOrWhiteSpace(cType)
+                    && Accounting.Helpers.ContactTypeResolver.ParseDeclared(cType) == null)
+                    errors.Add(new ImportError(rowNumber, "ContactType", cType,
+                        "ประเภทผู้ติดต่อไม่ถูกต้อง — ใช้ Individual / JuristicPerson / GovernmentAgency "
+                        + "(หรือเว้นว่างให้ระบบอ่านจากเลขผู้เสียภาษี)"));
                 break;
             case "products":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Code")))
@@ -1700,27 +1783,23 @@ public class ImportExportService : IImportExportService
         return errors;
     }
 
+    /// <summary>ไฟล์ CSV ที่ส่งออก — ทุกช่องผ่าน <see cref="Accounting.Helpers.CsvFieldSafety"/>
+    /// ตัวเดียว (เดิมตัวหนีในไฟล์นี้ดูแค่ <c>,</c> <c>"</c> <c>\n</c> ⇒ ชื่อคู่ค้า/
+    /// คำอธิบายที่ขึ้นต้นด้วย <c>=</c> <c>+</c> <c>-</c> <c>@</c> กลายเป็น**สูตร**
+    /// บนเครื่องนักบัญชีที่เปิดไฟล์ และ <c>\r</c> เดี่ยวทำให้แถวแตกกลางคัน)</summary>
     private static string BuildCsv(List<Dictionary<string, string>> data)
     {
         if (data.Count == 0) return "";
 
         var sb = new StringBuilder();
         var headers = data[0].Keys.ToList();
-        sb.AppendLine(string.Join(",", headers.Select(EscapeCsv)));
+        sb.AppendLine(Accounting.Helpers.CsvFieldSafety.Row(headers));
 
         foreach (var row in data)
-        {
-            sb.AppendLine(string.Join(",", headers.Select(h => EscapeCsv(row.GetValueOrDefault(h) ?? ""))));
-        }
+            sb.AppendLine(Accounting.Helpers.CsvFieldSafety.Row(
+                headers.Select(h => row.GetValueOrDefault(h) ?? "")));
 
         return sb.ToString();
-    }
-
-    private static string EscapeCsv(string value)
-    {
-        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
-            return $"\"{value.Replace("\"", "\"\"")}\"";
-        return value;
     }
 
     // ===== Smart Import - AI Column Matching =====
@@ -2230,14 +2309,14 @@ public class ImportExportService : IImportExportService
         var csv = new StringBuilder();
 
         // Header row
-        csv.AppendLine(string.Join(",", fields.Select(f => EscapeCsv(f.FieldName))));
+        csv.AppendLine(string.Join(",", fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(f.FieldName))));
 
         // Sample data row
-        var sampleRow = fields.Select(f => EscapeCsv(GetSampleValue(f))).ToList();
+        var sampleRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(GetSampleValue(f))).ToList();
         csv.AppendLine(string.Join(",", sampleRow));
 
         // ส่ง description row (comment)
-        var descRow = fields.Select(f => EscapeCsv(
+        var descRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(
             $"{f.DisplayName}{(f.IsRequired ? " *จำเป็น" : "")}{(f.Description != null ? $" ({f.Description})" : "")}" +
             $"{(f.AllowedValues != null ? $" [{string.Join("/", f.AllowedValues)}]" : "")}")).ToList();
         csv.AppendLine(string.Join(",", descRow));
@@ -2527,7 +2606,14 @@ public class ImportExportService : IImportExportService
             "contacts" => new List<ImportField>
             {
                 new("Name", "ชื่อ", "string", true, "ชื่อลูกค้า/ผู้ขาย", null),
-                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก", null),
+                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก (ตรวจ checksum — เลขผิดจะถูกปฏิเสธทั้งแถว)", null),
+                // ช่องนี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax (NIDN/TXID)
+                // — เดิมไม่มีในแม่แบบเลย ⇒ ผู้ใช้ไม่มีทางระบุได้ แล้วทุกแถวตกค่า default
+                new("ContactType", "ประเภทผู้ติดต่อ", "enum", false,
+                    "Individual (บุคคลธรรมดา → ภ.ง.ด.3) · JuristicPerson (นิติบุคคล → ภ.ง.ด.53) · GovernmentAgency — เว้นว่างได้ถ้ามีเลขผู้เสียภาษีที่ถูกต้อง ระบบจะอ่านจากเลขให้",
+                    new List<string> { "Individual", "JuristicPerson", "GovernmentAgency" }),
+                new("BranchCode", "รหัสสาขา", "string", false,
+                    "5 หลักตามประกาศอธิบดีฯ 199 — 00000 = สำนักงานใหญ่ (เก็บเฉพาะนิติบุคคล/ราชการ)", null),
                 new("IsCustomer", "เป็นลูกค้า", "bool", false, "true/false", new List<string> { "true", "false" }),
                 new("IsSupplier", "เป็นผู้ขาย", "bool", false, "true/false", new List<string> { "true", "false" }),
                 new("Email", "อีเมล", "string", false, null, null),

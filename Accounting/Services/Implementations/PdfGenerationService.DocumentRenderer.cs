@@ -642,7 +642,11 @@ public partial class PdfGenerationService
                 // ทั้งสอง renderer — ติ๊กนี้ไม่เคยถูกอ่านเลย) ยกเว้นใบกำกับภาษี
                 // เต็มรูป §86/4 ที่กฎหมายบังคับให้มี — ติ๊กปิดไม่ได้
                 var showBranch = (t.ShowContactBranch || RequiresBuyerBranchOnPrint(doc.DocumentType))
-                    && (c.ContactType != Accounting.Models.Enums.ContactType.Individual
+                    // ★ รอบ 184 — ใช้ตัวตัดสินตัวเดียว: `ContactType.Unknown` ก็ยัง**ไม่รู้ว่ามีสาขา**
+                    // เดิมเทียบ `!= Individual` ⇒ Unknown ตกฝั่ง "มีสาขา" แล้ว `FormatBranch(null,null)`
+                    // พิมพ์ "สำนักงานใหญ่" ต่อท้ายเลขผู้เสียภาษี = **ข้อความเท็จบนเอกสารภาษี**
+                    // (สองเรนเดอเรอร์ห้าม drift — แก้พร้อมกันในคอมมิตเดียว · กฎเหล็ก #4 A ข้อแรก)
+                    && (Accounting.Helpers.ContactTypeResolver.HasBranchStructure(c.ContactType)
                         || (!string.IsNullOrWhiteSpace(c.BranchCode)
                             && c.BranchCode!.Trim().TrimStart('0').Length > 0));
                 var cBranch = showBranch ? $" ({FormatBranch(c.BranchCode, c.BranchName, "th")})" : "";

@@ -36,6 +36,12 @@ public class ContactsV1Controller : PublicApiControllerBase
         ILogger<ContactsV1Controller> logger) : base(db, metering)
     { _logger = logger; }
 
+    /// <summary>ใครถือเลขผู้เสียภาษีนี้อยู่แล้ว — ข้อเท็จจริงที่ป้อนให้
+    /// <c>Helpers/PartnerSyncConflict</c> (ประกาศเป็น record แทน tuple โดยตั้งใจ:
+    /// ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน C# จะทิ้งชื่อแล้วไป CS1061 ไกล ๆ —
+    /// tools/tuple_name_merge_check.py)</summary>
+    private sealed record TaxIdOwnerRow(string TaxId, string? ExternalId, string Name);
+
     public record ContactSyncItem(
         string ExternalId,
         string Name,
@@ -47,7 +53,10 @@ public class ContactsV1Controller : PublicApiControllerBase
         bool IsSupplier = true,
         bool IsCustomer = false,
         bool IsActive = true,
-        string? ContactType = null);   // "Individual" | "JuristicPerson"
+        string? ContactType = null,    // "Individual" | "JuristicPerson" | "GovernmentAgency"
+        // ยืนยันว่าตั้งใจเปลี่ยนเลขผู้เสียภาษีของรหัสนี้จริง — ทางไปต่อของรายการที่
+        // ติดด่าน CONTACT-TAXID-CHANGED (Helpers/PartnerSyncConflict)
+        bool AllowTaxIdChange = false);
 
     public record SyncRequest(string? SystemName, List<ContactSyncItem> Contacts);
 
@@ -56,9 +65,29 @@ public class ContactsV1Controller : PublicApiControllerBase
     ///
     /// ยิงซ้ำได้เสมอ — รายการที่มีอยู่แล้วจะถูกอัปเดต ไม่สร้างซ้ำ
     /// แนะนำให้ซิงก์ทั้งทะเบียนตอนเริ่มใช้ แล้วส่งเฉพาะที่เปลี่ยนเป็นรอบ ๆ
+    ///
+    /// <para><b>ด่านกันชน</b> (Helpers/PartnerSyncConflict): รายการที่ชนกับทะเบียน
+    /// เดิม — เลขผู้เสียภาษีเป็นของคู่ค้ารายอื่น · เปลี่ยนเลขที่ checksum ผ่านอยู่แล้ว
+    /// — จะถูก<b>ปฏิเสธเป็นรายแถวพร้อมบอกว่าชนกับอะไร</b> รายการที่เหลือยังบันทึกปกติ
+    /// (ทั้งชุดล้มเพราะแถวเดียวคือการลงโทษที่ไม่ได้สัดส่วนกับ sync ทะเบียนพันรายการ)</para>
     /// </summary>
     [HttpPost("sync")]
     public async Task<IActionResult> Sync([FromBody] SyncRequest req, CancellationToken ct)
+        => await SyncCoreAsync(req, dryRun: false, ct);
+
+    /// <summary>
+    /// **ลองยิงดูก่อน** — เดินด่านชุดเดียวกับ `/sync` เป๊ะ แต่ **ไม่เขียนอะไรลงฐาน**
+    ///
+    /// <para>ทำไมต้องเดินด่านชุดเดียวกัน: dry-run ที่เดินคนละชุดคือ dry-run ที่โกหก
+    /// ซึ่งแย่กว่าไม่มี — พาร์ตเนอร์จะเชื่อว่า "ผ่านแล้ว" แล้วไปล้มตอนของจริง
+    /// ⇒ ที่นี่เรียก <c>SyncCoreAsync</c> ตัวเดียวกัน ต่างกันแค่ transaction ที่
+    /// <b>rollback เสมอ</b> ท้ายสุด (ไม่ใช่โค้ดตรวจคนละชุด)</para>
+    /// </summary>
+    [HttpPost("sync/dry-run")]
+    public async Task<IActionResult> SyncDryRun([FromBody] SyncRequest req, CancellationToken ct)
+        => await SyncCoreAsync(req, dryRun: true, ct);
+
+    private async Task<IActionResult> SyncCoreAsync(SyncRequest req, bool dryRun, CancellationToken ct)
     {
         var (ctx, error) = await ResolveCallerAsync("contacts:write", Feature, ct);
         if (error != null) return error;
@@ -79,70 +108,155 @@ public class ContactsV1Controller : PublicApiControllerBase
                      && c.ExternalId != null && ids.Contains(c.ExternalId))
             .ToDictionaryAsync(c => c.ExternalId!, ct);
 
-        int created = 0, updated = 0, skipped = 0;
-        var errors = new List<string>();
-
-        foreach (var item in req.Contacts)
+        // ── ใครถือเลขผู้เสียภาษีที่ส่งมาอยู่บ้าง (ทั้งบริษัท ไม่จำกัดแค่ระบบต้นทางนี้) ──
+        // ต้องกวาดข้ามทุก ExternalSystem: คู่ค้ารายเดียวกันอาจถูกสร้างจาก OCR
+        // (ไม่มี ExternalId) มาก่อน — ถ้าดูเฉพาะระบบนี้จะมองไม่เห็นแล้วสร้างซ้ำ
+        var incomingTaxIds = req.Contacts
+            .Select(c => Helpers.ThaiTaxId.Normalize(c.TaxId))
+            .Where(t => t.Length == 13).Distinct().ToList();
+        var taxIdOwners = new List<TaxIdOwnerRow>();
+        if (incomingTaxIds.Count > 0)
         {
-            if (string.IsNullOrWhiteSpace(item.ExternalId) || string.IsNullOrWhiteSpace(item.Name))
-            { skipped++; continue; }
-
-            // เลขผู้เสียภาษีผิดรูปแบบ = ปล่อยผ่านแต่ไม่เก็บค่าผิด ๆ ไว้
-            // (§86/4 ต้องการเลขที่ถูกต้อง — เก็บขยะไว้จะทำให้ใบกำกับที่ออกภายหลังผิด)
-            var taxId = (item.TaxId ?? "").Trim();
-            if (taxId.Length > 0)
-            {
-                var check = Helpers.ThaiTaxIdValidator.Check(taxId);
-                if (!check.IsValid)
-                {
-                    errors.Add($"{item.ExternalId}: เลขผู้เสียภาษี \"{taxId}\" ไม่ถูกต้อง ({check.Reason}) — บันทึกโดยไม่ใส่เลข");
-                    taxId = "";
-                }
-                else taxId = Helpers.ThaiTaxIdValidator.Normalize(taxId) ?? "";
-            }
-
-            if (!existing.TryGetValue(item.ExternalId, out var c))
-            {
-                c = new Contact
-                {
-                    CompanyId = ctx!.CompanyId,
-                    ExternalId = item.ExternalId.Trim(),
-                    ExternalSystem = system,
-                    CreatedBy = "api:v1:contact-sync",
-                };
-                Db.Contacts.Add(c);
-                created++;
-            }
-            else updated++;
-
-            c.Name = item.Name.Trim();
-            c.TaxId = taxId.Length > 0 ? taxId : null;
-            c.BranchCode = string.IsNullOrWhiteSpace(item.BranchCode) ? c.BranchCode : item.BranchCode.Trim();
-            if (item.Address != null) c.Address = item.Address.Trim();
-            if (item.Phone != null) c.Phone = item.Phone.Trim();
-            if (item.Email != null) c.Email = item.Email.Trim();
-            c.IsSupplier = item.IsSupplier;
-            c.IsCustomer = item.IsCustomer;
-            c.IsActive = item.IsActive;
-            if (Enum.TryParse<ContactType>(item.ContactType, true, out var ctype)) c.ContactType = ctype;
-            // ประเภทผู้ติดต่อ = ตัวตัดสิน **ภ.ง.ด.3 (บุคคล) vs ภ.ง.ด.53 (นิติบุคคล)**
-            // เดิม `taxId.Length == 13 ⇒ JuristicPerson` ผิดทุกราย เพราะเลขผู้เสียภาษี
-            // ไทย**ทุกแบบ**ยาว 13 หลัก รวมเลขบัตรประชาชนของบุคคลธรรมดา.
-            // ตัวตัดสินตัวเดียวอยู่ที่ Helpers/ContactTypeFromTaxId — ตัดสินไม่ได้
-            // (เลขว่าง/ไม่ครบ/checksum ไม่ผ่าน) = **คงค่าเดิม ไม่เดา**
-            else c.ContactType = Helpers.ContactTypeFromTaxId.Apply(c.ContactType, taxId);
-            c.UpdatedAt = DateTime.UtcNow;
-            c.UpdatedBy = "api:v1:contact-sync";
+            var rows = await Db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == ctx!.CompanyId && c.TaxId != null
+                         && incomingTaxIds.Contains(c.TaxId))
+                .Select(c => new { c.TaxId, c.ExternalId, c.Name })
+                .ToListAsync(ct);
+            foreach (var r in rows)
+                taxIdOwners.Add(new TaxIdOwnerRow(r.TaxId!, r.ExternalId, r.Name));
         }
 
-        await Db.SaveChangesAsync(ct);
+        int created = 0, updated = 0, skipped = 0, rejected = 0;
+        var errors = new List<string>();
 
+        // dry-run เขียนจริงแล้ว rollback — เป็นทางเดียวที่รับประกันว่าเดินด่าน
+        // ชุดเดียวกัน (รวมด่านระดับฐานข้อมูล: unique index / FK / check constraint)
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
+        if (dryRun) tx = await Db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            foreach (var item in req.Contacts)
+            {
+                if (string.IsNullOrWhiteSpace(item.ExternalId) || string.IsNullOrWhiteSpace(item.Name))
+                { skipped++; continue; }
+
+                existing.TryGetValue(item.ExternalId, out var c);
+
+                // ── เลขผู้เสียภาษี: "ไม่ได้ส่งมา" ≠ "ส่งค่าว่างมาเพื่อลบ" ──
+                // เดิมเขียน `c.TaxId = taxId.Length > 0 ? taxId : null` ⇒ การ sync
+                // แบบส่งเฉพาะช่องที่เปลี่ยน (ซึ่งเอกสารแนะนำให้ทำ!) **ล้างเลขผู้เสียภาษี
+                // ของคู่ค้าทุกรายทิ้ง** เงียบ ๆ แล้วใบกำกับเต็มรูปที่ออกหลังจากนั้น
+                // ขาดรายการตาม §86/4 — กติกาเดียวกับช่องอื่น (null = ไม่แตะ)
+                var rawTaxId = item.TaxId?.Trim();
+                var taxId = Helpers.ThaiTaxId.Normalize(c?.TaxId);   // ค่าเดิมเป็นตัวตั้ง
+                if (rawTaxId != null)
+                {
+                    if (rawTaxId.Length == 0) taxId = "";            // ส่ง "" = ตั้งใจล้าง
+                    else
+                    {
+                        var check = Helpers.ThaiTaxIdValidator.Check(rawTaxId);
+                        if (check.IsValid) taxId = Helpers.ThaiTaxIdValidator.Normalize(rawTaxId) ?? "";
+                        else errors.Add($"{item.ExternalId}: เลขผู้เสียภาษี \"{rawTaxId}\" ไม่ถูกต้อง ({check.Reason}) — คงค่าเดิมไว้ ไม่บันทึกเลขนี้");
+                    }
+                }
+
+                // ── ด่านกันชน — ก่อนแตะแถวใด ๆ ──
+                var owner = taxIdOwners.FirstOrDefault(o =>
+                    o.TaxId == taxId
+                    && !string.Equals(o.ExternalId, item.ExternalId, StringComparison.OrdinalIgnoreCase));
+                var clash = Helpers.PartnerSyncConflict.CheckContact(
+                    externalId: item.ExternalId.Trim(),
+                    incomingTaxId: taxId,
+                    existingTaxId: c?.TaxId,
+                    taxIdOwnerExternalId: owner == null
+                        ? null
+                        : (string.IsNullOrWhiteSpace(owner.ExternalId) ? "(สร้างจากเอกสารในระบบเรา)" : owner.ExternalId),
+                    taxIdOwnerName: owner?.Name,
+                    allowTaxIdChange: item.AllowTaxIdChange);
+                if (clash.IsBlocked) { rejected++; errors.Add(clash.Message); continue; }
+                if (clash.HasIssue) errors.Add(clash.Message);
+
+                if (c == null)
+                {
+                    c = new Contact
+                    {
+                        CompanyId = ctx!.CompanyId,
+                        ExternalId = item.ExternalId.Trim(),
+                        ExternalSystem = system,
+                        CreatedBy = "api:v1:contact-sync",
+                    };
+                    Db.Contacts.Add(c);
+                    // รหัสเดียวกันส่งมาสองแถวในชุดเดียว = แถวหลังต้องอัปเดตแถวแรก
+                    // ไม่ใช่สร้างคู่ค้าซ้ำ (เดิมสร้างซ้ำเพราะ dictionary ไม่ถูกเติม)
+                    existing[item.ExternalId] = c;
+                    created++;
+                }
+                else updated++;
+
+                c.Name = item.Name.Trim();
+                c.TaxId = taxId.Length > 0 ? taxId : null;
+                if (item.Address != null) c.Address = item.Address.Trim();
+                if (item.Phone != null) c.Phone = item.Phone.Trim();
+                if (item.Email != null) c.Email = item.Email.Trim();
+                c.IsSupplier = item.IsSupplier;
+                c.IsCustomer = item.IsCustomer;
+                c.IsActive = item.IsActive;
+
+                // ── ชนิดผู้ติดต่อ + รหัสสาขา จากตัวตัดสินตัวเดียว (Helpers/ContactTypeResolver) ──
+                // ค่านี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax XML (NIDN/TXID)
+                // ⇒ "ตัดสินไม่ได้" ต้องออกมาเป็น ContactType.Unknown ที่เห็นได้
+                //   ไม่ใช่เดาเป็นบุคคลธรรมดาแล้วเงียบ
+                var typeVerdict = Helpers.ContactTypeResolver.ApplyToExisting(
+                    c.ContactType, item.ContactType, taxId, c.Name);
+                c.ContactType = typeVerdict.Type;
+
+                var typeClash = Helpers.PartnerSyncConflict.CheckDeclaredType(
+                    item.ExternalId.Trim(), typeVerdict.Type, taxId);
+                if (typeClash.HasIssue) errors.Add(typeClash.Message);
+
+                // รหัสสาขาเป็นเรื่องของนิติบุคคล/ราชการ (§86/4(2) · ประกาศฯ 199) —
+                // ตัวตัดสินเดียวกันเป็นคนบอกว่าเก็บได้ไหม ไม่ใช่เก็บดิบทุกค่าที่ส่งมา
+                var branchIn = item.BranchCode == null ? c.BranchCode : item.BranchCode;
+                c.BranchCode = Helpers.ContactTypeResolver.BranchCodeFor(typeVerdict.Type, branchIn);
+
+                if (typeVerdict.Type == Models.Enums.ContactType.Unknown)
+                    errors.Add($"{item.ExternalId}: ยังระบุชนิดผู้ติดต่อไม่ได้ ({typeVerdict.Reason}) "
+                        + "— ส่ง contactType (\"Individual\"/\"JuristicPerson\"/\"GovernmentAgency\") "
+                        + "หรือเลขผู้เสียภาษีที่ถูกต้องมาด้วย มิฉะนั้นแบบยื่น ภ.ง.ด. และ e-Tax จะเลือกไม่ถูก");
+
+                c.UpdatedAt = DateTime.UtcNow;
+                c.UpdatedBy = dryRun ? "api:v1:contact-sync:dry-run" : "api:v1:contact-sync";
+            }
+
+            await Db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (dryRun)
+        {
+            // dry-run ต้องคืน "จะพังตรงไหน" ไม่ใช่ 500 เปล่า ๆ — นั่นคือเหตุผลที่มันมีอยู่
+            errors.Add("ฐานข้อมูลปฏิเสธชุดนี้: " + ex.GetBaseException().Message);
+        }
+        finally
+        {
+            // dry-run: ทิ้งทุกอย่างเสมอ แม้ทางเดินจะสำเร็จ
+            if (tx != null)
+            {
+                await tx.RollbackAsync(ct);
+                await tx.DisposeAsync();
+                // ตัวติดตามยังถือ entity ที่ถูก rollback ไปแล้ว — ปล่อยไว้จะทำให้
+                // การ SaveChanges ครั้งถัดไปใน request เดียวกันเขียนของที่ทิ้งแล้ว
+                Db.ChangeTracker.Clear();
+            }
+        }
+
+        var head = dryRun ? "ผลการลองยิง (ไม่ได้บันทึกอะไรลงฐาน)" : "ซิงก์ผู้ติดต่อสำเร็จ";
         return Ok(new ApiResponse<object>(true, new
         {
-            created, updated, skipped,
+            dryRun,
+            created, updated, skipped, rejected,
             warnings = errors,
-        }, $"ซิงก์ผู้ติดต่อสำเร็จ — เพิ่มใหม่ {created} · อัปเดต {updated}"
-           + (skipped > 0 ? $" · ข้าม {skipped} (ไม่มีรหัสหรือชื่อ)" : "")));
+        }, $"{head} — เพิ่มใหม่ {created} · อัปเดต {updated}"
+           + (skipped > 0 ? $" · ข้าม {skipped} (ไม่มีรหัสหรือชื่อ)" : "")
+           + (rejected > 0 ? $" · ปฏิเสธ {rejected} (ชนกับทะเบียนเดิม — ดู warnings)" : "")));
     }
 
     /// <summary>

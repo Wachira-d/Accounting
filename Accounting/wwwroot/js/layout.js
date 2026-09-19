@@ -242,7 +242,10 @@ const Layout = {
     if (typeof v === 'number') return v;
     const n = parseInt(v, 10);
     if (!isNaN(n) && String(n) === String(v).trim()) return n;
-    return ({ Individual: 1, JuristicPerson: 2, GovernmentAgency: 3 })[String(v)] ?? null;
+    // Unknown = 0 ("ตรวจแล้วตอบไม่ได้") ต้องแยกจาก null ("เซิร์ฟเวอร์ไม่ได้ส่งช่องนี้มา")
+    // — DECISION_DOCTRINE §1 G3b. เดิมชื่อนี้ map ไม่ได้แล้วกลายเป็น null ⇒ หน้าจอ
+    // แสดง "-" เหมือนกรณีไม่มีข้อมูล ผู้ใช้จึงหาแถวที่ต้องไปเลือกชนิดไม่เจอ
+    return ({ Unknown: 0, Individual: 1, JuristicPerson: 2, GovernmentAgency: 3 })[String(v)] ?? null;
   },
 
   /** true = นิติบุคคล (ต้องมีรหัสสาขา §86/4 · หัก ณ ที่จ่ายยื่น ภ.ง.ด.53) */

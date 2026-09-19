@@ -551,14 +551,15 @@
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีผู้ติดต่อ</td></tr>'; return; }
           items.forEach(c => Page._cache[c.id] = c);
-          const ctLabel = (ct) => ({1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] || '-');
+          // 0 = "ยังไม่ระบุ" (ระบบตอบไม่ได้ ต้องให้คนเลือก) · null = เซิร์ฟเวอร์ไม่ได้ส่งช่องนี้มา
+          const ctLabel = (ct) => ({0:'ยังไม่ระบุ',1:'บุคคลธรรมดา',2:'นิติบุคคล',3:'หน่วยงานราชการ'}[ct] ?? '-');
           // API ส่ง enum เป็น **สตริง** (JsonStringEnumConverter) — ต้องแปลงผ่านตัวกลาง
           // ก่อนเทียบกับตัวเลขเสมอ ไม่งั้นเงื่อนไขเป็นเท็จทุกครั้งแบบเงียบ ๆ
           const ctCode = (c) => Layout.contactTypeCode(c.contactType);
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${Layout.esc(c.name)}</td>
             <td>${Layout.esc(c.taxId || '-')}${c.branchCode && Layout.isJuristicContact(c.contactType) ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
-            <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':'badge-gray'}">${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
+            <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':ctCode(c)===0?'badge-warning':'badge-gray'}" ${ctCode(c)===0?'title="ชนิดผู้ติดต่อตัดสินแบบยื่น ภ.ง.ด.3/53 และ scheme ของ e-Tax — กดแก้ไขเพื่อเลือก"':''}>${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
@@ -816,7 +817,12 @@
         // <select> ต้องตั้งค่าชัด ๆ — ลูป _allFieldIds ข้างบน set value='' ซึ่งกับ
         // select แปลว่า "ไม่เลือกอะไรเลย" ไม่ใช่ "กลับไปตัวเลือกแรก"
         this._setTitleValue('');
-        document.getElementById('fContactType').value = '2';
+        // ฟอร์มใหม่เริ่มที่ "— ยังไม่ระบุ —" ไม่ใช่ "นิติบุคคล"
+        // ช่องนี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax (NIDN/TXID)
+        // ⇒ การเลือกให้ล่วงหน้าคือการ "ตอบแทนผู้ใช้" ในเรื่องที่ระบบยังไม่รู้
+        // (DECISION_AUDIT §9.3 D-1) · save() บล็อกอยู่แล้วถ้ายังไม่ได้เลือก
+        // ⇒ ผู้ใช้เสียแค่คลิกเดียว แต่ไม่มีคู่ค้ารายไหนถูกประทับชนิดที่ไม่มีใครเลือก
+        document.getElementById('fContactType').value = '';
         // ผู้ติดต่อรายใหม่ติ๊กทั้งลูกค้าและผู้จำหน่ายไว้ก่อน — คู่ค้าส่วนใหญ่ของ SME
         // เป็นได้ทั้งสองฝั่ง (ซื้อของจากร้านเดียวกับที่ขายให้) และการ "ติ๊กเกิน"
         // ไม่ทำให้เกิดความเสียหาย ต่างจากการ "ติ๊กขาด" ที่ทำให้ผู้ติดต่อไม่โผล่ใน
@@ -903,8 +909,12 @@
         // ลงฐาน · และ default ฝั่ง JS (2) ยังขัดกับ default ฝั่งเซิร์ฟเวอร์ (1)
         // = สอง default ที่ตอบคนละอย่างสำหรับข้อมูลชุดเดียวกัน
         // ⇒ "ไม่รู้" ต้องเป็นช่องว่างที่ผู้ใช้เห็นและเลือกเอง (DECISION_DOCTRINE G3)
+        // 0 = "Unknown" ของฝั่งเซิร์ฟเวอร์ — ต้อง map เป็น '' ให้ตรงกับ
+        // <option value=""> "— ยังไม่ระบุ —" ที่มีอยู่จริง (ถ้าตั้ง '0' เบราว์เซอร์
+        // จะหา option ไม่เจอแล้วโชว์ช่องเปล่าโดยที่ค่ายังเป็น '0' = จอกับค่าไม่ตรงกัน)
+        const ctEdit = Layout.contactTypeCode(c.contactType);
         document.getElementById('fContactType').value =
-          String(Layout.contactTypeCode(c.contactType) ?? '');
+          (ctEdit == null || ctEdit === 0) ? '' : String(ctEdit);
         document.getElementById('fName').value = c.name;
         this._setTitleValue(c.titleTh || '');
         document.getElementById('fTaxId').value = c.taxId || '';

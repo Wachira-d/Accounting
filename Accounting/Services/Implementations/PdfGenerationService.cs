@@ -1960,7 +1960,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             // + ต้องเคารพติ๊ก ShowContactBranch ด้วย (เดิมติ๊กออกแล้วสาขายังขึ้น)
             // ยกเว้นใบกำกับภาษีเต็มรูป §86/4 ที่กฎหมายบังคับ — ติ๊กปิดไม่ได้
             var showContactBranch = (template.ShowContactBranch || RequiresBuyerBranchOnPrint(doc.DocumentType))
-                && (doc.Contact.ContactType != Models.Enums.ContactType.Individual
+                // ★ รอบ 184 — ใช้ตัวตัดสินตัวเดียว: `ContactType.Unknown` ก็ยัง**ไม่รู้ว่ามีสาขา**
+                // เดิมเทียบ `!= Individual` ⇒ Unknown ตกฝั่ง "มีสาขา" แล้ว `FormatBranch(null,null)`
+                // พิมพ์ "สำนักงานใหญ่" ต่อท้ายเลขผู้เสียภาษี = **ข้อความเท็จบนเอกสารภาษี**
+                // (สองเรนเดอเรอร์ห้าม drift — แก้พร้อมกันในคอมมิตเดียว · กฎเหล็ก #4 A ข้อแรก)
+                && (Accounting.Helpers.ContactTypeResolver.HasBranchStructure(doc.Contact.ContactType)
                     || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
                         && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0));
             sb.AppendLine($"<div>{L.TaxIdShort}: {doc.Contact.TaxId}"

@@ -464,17 +464,17 @@ public class IntegrationService : IIntegrationService
     /// · ค่าเดิม default เป็น <c>Individual</c> เสมอเมื่อไม่ได้ส่งมา ⇒ นิติบุคคลถูกจัดเป็น
     /// บุคคลธรรมดาเงียบ ๆ แล้วยื่นผิดแบบ · เลข 13 หลักที่ขึ้นต้น <b>0</b> คือเลขทะเบียน
     /// นิติบุคคล ตอบได้จากข้อมูลที่มีอยู่แล้ว ไม่ต้องเดา</para></summary>
-    private static ContactType ResolveContactType(string? sent, string? taxId, bool dbdMatched)
-    {
-        if (!string.IsNullOrWhiteSpace(sent)) return ParseContactType(sent);
-        // ทะเบียนนิติบุคคลยืนยันแล้ว = นิติบุคคลแน่นอน
-        if (dbdMatched) return ContactType.JuristicPerson;
-        // ตัวตัดสินจากเลขผู้เสียภาษีย้ายไป Helpers/ContactTypeFromTaxId แล้ว —
-        // เส้น `/api/v1` ทั้งสองจุดเรียกตัวเดียวกันนี้ (เดิมมีสำเนาคนละแบบ 3 ชุด)
-        // ตัดสินไม่ได้ที่นี่ยังคง Individual ตามพฤติกรรมเดิม เพราะผู้เรียกฝั่ง
-        // update มีด่าน "ห้ามลดระดับนิติบุคคลที่ยืนยันแล้ว" ของตัวเองอยู่แล้ว
-        return Accounting.Helpers.ContactTypeFromTaxId.Resolve(taxId) ?? ContactType.Individual;
-    }
+    /// <summary>ชนิดผู้ติดต่อจาก <c>Helpers/ContactTypeResolver</c> —
+    /// <b>ตัวตัดสินตัวเดียวของระบบ</b> (สำเนาในไฟล์นี้ถูกถอดแล้ว)
+    ///
+    /// <para><b>ตัดสินไม่ได้ = <c>ContactType.Unknown</c> ไม่ใช่ <c>Individual</c></b>
+    /// (DECISION_AUDIT §9.3 D-1 · DOCTRINE §1 G3). ของเดิมคืน <c>Individual</c>
+    /// ⇒ คู่ค้าที่ระบบต้นทางไม่ส่งชนิดมาและไม่มีเลขภาษีที่ใช้ได้ กลายเป็น
+    /// "บุคคลธรรมดาที่พิสูจน์แล้ว" ในสายตา <c>WhtPayeeKind.Detect</c> ⇒ 50 ทวิ
+    /// ถูกออกเป็น ภ.ง.ด.3 โดยไม่มีใครเห็นว่าข้อมูลยังไม่ครบ</para></summary>
+    private static ContactType ResolveContactType(string? sent, string? taxId, bool dbdMatched,
+        string? name = null)
+        => Accounting.Helpers.ContactTypeResolver.Resolve(sent, taxId, name, dbdMatched).Type;
 
     // ===== Phase 2: Inbound Data Processing =====
 
@@ -515,6 +515,10 @@ public class IntegrationService : IIntegrationService
 
             if (contact == null)
             {
+                // ชนิดผู้ติดต่อ + รหัสสาขา ต้องออกจากตัวตัดสินตัวเดียวกัน (§86/4(2))
+                var newContactIdentity = Accounting.Helpers.ContactTypeResolver.ResolveWithBranch(
+                    request.ContactType, request.TaxId, request.BranchCode,
+                    officialName ?? request.Name, dbdCheck.Matched);
                 contact = new Contact
                 {
                     CompanyId = companyId,
@@ -524,9 +528,10 @@ public class IntegrationService : IIntegrationService
                     Phone = request.Phone,
                     Email = request.Email,
                     Address = request.Address,
-                    BranchCode = request.BranchCode,
                     // ตัวตัดสิน ภ.ง.ด.3 vs 53 — ห้าม default เป็นบุคคลธรรมดาเงียบ ๆ
-                    ContactType = ResolveContactType(request.ContactType, request.TaxId, dbdCheck.Matched),
+                    // ตัดสินไม่ได้ ⇒ ContactType.Unknown ที่เห็นได้บนหน้าผู้ติดต่อ
+                    ContactType = newContactIdentity.Type,
+                    BranchCode = newContactIdentity.BranchCode,
                     IsCustomer = request.IsCustomer ?? true,
                     IsSupplier = request.IsSupplier ?? false,
                     IsActive = true,
@@ -572,12 +577,21 @@ public class IntegrationService : IIntegrationService
                 // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
                 // approve 400 "ต้องมีรหัสสาขาผู้ซื้อ" ตลอดไป แม้ TakeTime ส่งครบ
-                if (request.BranchCode != null) contact.BranchCode = request.BranchCode;
-                // ประเภทผู้ติดต่อ: อนุมานได้เมื่อไม่ได้ส่งมา — แต่ห้ามลดระดับนิติบุคคล
-                // ที่ยืนยันแล้วกลับเป็นบุคคลธรรมดาเพราะ sync ครั้งนี้ไม่ได้ส่งค่ามา
-                var resolvedType = ResolveContactType(request.ContactType, request.TaxId, dbdCheck.Matched);
-                if (request.ContactType != null || contact.ContactType != ContactType.JuristicPerson)
-                    contact.ContactType = resolvedType;
+                // ประเภทผู้ติดต่อ: อนุมานได้เมื่อไม่ได้ส่งมา — แต่ห้ามลดระดับค่าที่คน
+                // เคยตั้งใจตั้งไว้ เพราะ sync ครั้งนี้ไม่ได้ส่งค่ามา. กติกาทั้งชุด
+                // (ประกาศชนะ > รูปเลขที่ checksum ผ่าน > คงค่าเดิม > อนุมาน) อยู่ใน
+                // Helpers/ContactTypeResolver.ApplyToExisting ตัวเดียว — เดิมด่าน
+                // "ห้ามลดระดับ" ที่เขียนไว้ตรงนี้ครอบแค่ JuristicPerson ⇒ ราชการ
+                // ถูกกดกลับเป็นบุคคลธรรมดาได้ทุกรอบ sync
+                contact.ContactType = Accounting.Helpers.ContactTypeResolver.ApplyToExisting(
+                    contact.ContactType, request.ContactType, request.TaxId ?? contact.TaxId,
+                    contact.Name, dbdCheck.Matched).Type;
+                // รหัสสาขาเป็นเรื่องของนิติบุคคล/ราชการ (§86/4(2) · ประกาศฯ 199) —
+                // ตัวตัดสินตัวเดียวเป็นคนบอกว่าเก็บได้ไหม เพื่อไม่ให้ "00000" ที่ระบบ
+                // ต้นทางใส่มาเป็น default ไปติดท้ายเลขบัตรประชาชนเป็น "(สำนักงานใหญ่)"
+                if (request.BranchCode != null)
+                    contact.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
+                        contact.ContactType, request.BranchCode);
                 if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
                 // ใช้ค่าที่ผ่านด่านแล้ว — ค่าที่ถูกปฏิเสธจะไม่ทับของเดิมที่ผู้ใช้แก้ไว้ถูก
                 if (buildingName != null) contact.BuildingName = buildingName;
@@ -1559,7 +1573,7 @@ public class IntegrationService : IIntegrationService
                 // ⇒ โหมดเอกสารภาษาอังกฤษต้องถอดอักษรเอาเองทั้งที่มีชื่อทางการอยู่
                 NameEn = resolvedNameEn,
                 // ตัวตัดสิน ภ.ง.ด.3 vs 53 — ทะเบียนยืนยันแล้ว หรือเลขขึ้นต้น "0" = นิติบุคคล
-                ContactType = ResolveContactType(null, taxId, dbdDoc.Matched),
+                ContactType = ResolveContactType(null, taxId, dbdDoc.Matched, resolvedName ?? name),
             };
             _db.Set<Contact>().Add(contact);
             await _db.SaveChangesAsync();
@@ -4346,13 +4360,6 @@ public class IntegrationService : IIntegrationService
             })
         };
     }
-
-    private static ContactType ParseContactType(string? type) => type?.ToLower() switch
-    {
-        "juristicperson" or "juristic" or "company" => ContactType.JuristicPerson,
-        "government" => ContactType.GovernmentAgency,
-        _ => ContactType.Individual
-    };
 
     private static PaymentMethod ParsePaymentMethod(string? method) => method?.ToLower() switch
     {

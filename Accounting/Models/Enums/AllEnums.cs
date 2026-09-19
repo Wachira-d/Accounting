@@ -183,9 +183,32 @@ public enum ErpConnectorType
     FormulaErp = 7        // Formula (ไทย)
 }
 
-/// <summary>ประเภทผู้ติดต่อ — ใช้กำหนดแบบ ภ.ง.ด. อัตโนมัติ</summary>
+/// <summary>ประเภทผู้ติดต่อ — ใช้กำหนดแบบ ภ.ง.ด. อัตโนมัติ
+///
+/// <para><b>ตัวตัดสินตัวเดียว</b>: <c>Helpers/ContactTypeResolver</c> —
+/// ห้ามเขียนกติกา "เลขขึ้นต้น 0" / "ชื่อมีคำว่าบริษัท" ซ้ำที่อื่นอีก</para>
+/// </summary>
 public enum ContactType
 {
+    /// <summary><b>ยังไม่รู้ — และไม่ได้แปลว่าบุคคลธรรมดา</b>
+    ///
+    /// <para>เพิ่มตาม <c>DECISION_DOCTRINE.md</c> §1 G3 ("ไม่รู้" ต้องเป็นค่าใน enum
+    /// ไม่ใช่ <c>null</c>/<c>false</c>/ค่ากลาง) และคำตัดสิน
+    /// <c>DECISION_AUDIT_2026-09-18.md</c> §9.3 D-1.</para>
+    ///
+    /// <para><b>ทำไมต้องมี</b>: ค่านี้ตัดสิน <b>ภ.ง.ด.3 vs ภ.ง.ด.53</b> และ scheme ของ
+    /// e-Tax XML ที่ส่งกรมสรรพากร (<c>NIDN</c> vs <c>TXID</c>). ก่อนหน้านี้ค่าตั้งต้น
+    /// คือ <c>Individual</c> ⇒ คู่ค้าที่ไม่มีใครเคยเลือกชนิดให้ กลายเป็น "บุคคลธรรมดา
+    /// ที่พิสูจน์แล้ว" ในสายตา <c>WhtPayeeKind.Detect</c> ⇒ ระบบเงียบ ไม่มีใครเห็นว่า
+    /// ข้อมูลยังไม่ครบ จนกระทั่งแบบยื่นผิดแล้ว.</para>
+    ///
+    /// <para><b>เลข 0 ปลอดภัยกับข้อมูลเก่า</b>: คอลัมน์ <c>Contacts.ContactType</c> เป็น
+    /// <c>integer NOT NULL DEFAULT 1</c> และแถวที่มีอยู่ทุกแถวเก็บ 1/2/3 อยู่แล้ว
+    /// ⇒ ไม่มีแถวไหนเปลี่ยนความหมาย. <b>ห้าม backfill</b> แถวเก่าเป็น 0
+    /// (จะเปลี่ยนคำตอบ <c>WhtPayeeKind</c> ของคู่ค้าที่ไม่มีเลขภาษี ⇒ 50 ทวิ ย้ายแบบยื่น
+    /// โดยไม่มีใครสั่ง — เหตุผลเต็มใน §9.3 D-1)</para></summary>
+    Unknown = 0,
+
     Individual = 1,         // บุคคลธรรมดา → ภ.ง.ด.3
     JuristicPerson = 2,     // นิติบุคคล (บริษัท/ห้างหุ้นส่วน) → ภ.ง.ด.53
     GovernmentAgency = 3    // หน่วยงานราชการ → ไม่หัก ณ ที่จ่าย
@@ -1671,6 +1694,12 @@ public enum AiFeatureKey
     /// <summary>Per-SKU demand forecast + reorder point recommendation.
     /// Local: Croston / Holt-Winters per product. AI: narrative
     /// + scenario suggestions.</summary>
+    /// <summary>⚠️ **เลิกใช้แล้ว (D-5 รอบ 184)** — ไม่มีจุดไหนในระบบเรียก AI ด้วยคีย์นี้
+    /// อีก. รายงานจุดสั่งซื้อเล่าเรื่องด้วย <c>Helpers/ReorderNarrative</c> (เลขคณิตล้วน)
+    /// เพราะทุกตัวเลขในประโยคมาจากสิ่งที่เราคำนวณเอง และร้อยแก้วไม่มี candidate set
+    /// ให้ตรวจกลับ · **ห้ามนำกลับมาใช้โดยไม่ register <c>ILocalDistillationModel</c>**
+    /// (กฎเหล็ก #1 ข้อ 2) — ค่าคงไว้เพื่อไม่ให้แถวเก่าใน <c>AiSuggestionFeedbacks</c>
+    /// เปลี่ยนความหมาย</summary>
     ReorderForecast = 24,
 
     /// <summary>Whole-month bank reconciliation in ONE call. Bundles

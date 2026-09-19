@@ -51,12 +51,21 @@ WATCHED = [
     # เพิ่มรอบ 184 — มีด่านครบอยู่แล้วทุกจุด แต่ไม่เคยถูกเฝ้า ⇒ ใครถอดด่านออก
     # พรุ่งนี้ก็ไม่มีอะไรฟ้อง (ratchet: ใส่ตอนที่ยังเขียว = ล็อกไว้ไม่ให้ถอยหลัง)
     "Accounting/Controllers/LodgingController.cs",
+    # เพิ่มรอบ 184 — ทางเข้า "นำเข้าไฟล์" เขียน JE · การชำระเงิน · สินทรัพย์ · ยอดยกมา ·
+    # ทะเบียนพนักงาน ได้เป็นพันแถวในคำสั่งเดียว และ /export โหลด CitizenId + เลขบัญชี +
+    # เงินเดือนทั้งบริษัท แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
+    # ("allow-list ครบไหม ≠ ผ่านไหม" — รอบที่ 6 ของบทเรียนเดียวกัน)
+    "Accounting/Controllers/ImportExportController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
 GATE_MARKERS = (
     "DenyDocAsync",
     "DenyKeyAsync",
+    # ด่านของเส้นนำเข้า/ส่งออกไฟล์ (รอบ 184) — เป็น **เมธอด** ไม่ใช่ attribute เพราะ
+    # คีย์ที่ต้องใช้ขึ้นกับ `entityType` ใน body ซึ่ง attribute คงที่มองไม่เห็น
+    # (ทะเบียนพนักงานต้องเข้มกว่าผู้ติดต่อ) · เรียก `HasPermissionAsync` ภายใน
+    "DenyAsync",
     "DocumentPermissionHelper",
     "RequirePayrollWriteAsync",
     "RequireBillingAsync",

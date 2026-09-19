@@ -1065,7 +1065,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var raw = taxId.Trim().Replace("-", "").Replace(" ", "").Replace(".", "");
 
         // Use ContactType when explicitly set
-        if (contactType.HasValue)
+        // ★ รอบ 184 — `ContactType.Unknown` **ไม่ใช่** "ตั้งค่าไว้แล้ว": มันแปลว่ายังไม่มี
+        // ใครตัดสิน ถ้าปล่อยให้ตกสาขา `_ => "OTHR"` คู่ค้าที่มีเลข 13 หลักถูกต้องแต่ยัง
+        // ไม่ได้ระบุชนิด จะได้ scheme ผิดใน XML ที่ส่งกรมสรรพากร (เดิมได้ `NIDN`
+        // เพราะ default เป็น Individual) ⇒ ต้องไหลลงไปให้บล็อก "infer from digit
+        // pattern" ข้างล่างตอบแทน — ซึ่งเป็นหลักฐานที่ใกล้ของจริงกว่าการเดา
+        if (contactType.HasValue && contactType.Value != ContactType.Unknown)
         {
             return contactType.Value switch
             {

@@ -36,7 +36,7 @@ public class V1ContactTypeTests
     public void เลขนิติบุคคลขึ้นต้นศูนย์และผ่าน_checksum_เป็นนิติบุคคล()
     {
         Assert.True(ThaiTaxId.IsValid(Juristic));
-        Assert.Equal(ContactType.JuristicPerson, ContactTypeFromTaxId.Resolve(Juristic));
+        Assert.Equal(ContactType.JuristicPerson, ContactTypeResolver.FromTaxId(Juristic));
     }
 
     // ═══ ทิศที่เคยพัง: เลข 13 หลักของบุคคลธรรมดา ═══
@@ -54,16 +54,16 @@ public class V1ContactTypeTests
     {
         var id = WithCheckDigit($"{firstDigit}10554013452");
         Assert.True(ThaiTaxId.IsValid(id));
-        Assert.Equal(ContactType.Individual, ContactTypeFromTaxId.Resolve(id));
+        Assert.Equal(ContactType.Individual, ContactTypeResolver.FromTaxId(id));
         // กติกาเดิม (Length == 13) จะตอบ JuristicPerson ทุกเคสข้างบน
-        Assert.NotEqual(ContactType.JuristicPerson, ContactTypeFromTaxId.Resolve(id));
+        Assert.NotEqual(ContactType.JuristicPerson, ContactTypeResolver.FromTaxId(id));
     }
 
     [Fact]
     public void เลขบัตรประชาชนกับเลขต่างด้าวได้บุคคลธรรมดาเหมือนกัน()
     {
-        Assert.Equal(ContactType.Individual, ContactTypeFromTaxId.Resolve(Citizen1));
-        Assert.Equal(ContactType.Individual, ContactTypeFromTaxId.Resolve(Citizen8));
+        Assert.Equal(ContactType.Individual, ContactTypeResolver.FromTaxId(Citizen1));
+        Assert.Equal(ContactType.Individual, ContactTypeResolver.FromTaxId(Citizen8));
     }
 
     // ═══ "ไม่รู้" ต้องเป็นคำตอบได้ — ห้ามเดา ═══
@@ -74,7 +74,7 @@ public class V1ContactTypeTests
         // พลิกหลักตรวจสอบให้ผิด
         var broken = Juristic[..12] + (char)('0' + (Juristic[12] - '0' + 1) % 10);
         Assert.False(ThaiTaxId.HasValidChecksum(broken));
-        Assert.Null(ContactTypeFromTaxId.Resolve(broken));
+        Assert.Null(ContactTypeResolver.FromTaxId(broken));
     }
 
     [Theory]
@@ -85,7 +85,7 @@ public class V1ContactTypeTests
     [InlineData("ไม่ใช่ตัวเลขเลย")]
     public void เลขว่างหรือไม่ครบ_ตัดสินไม่ได้(string? taxId)
     {
-        Assert.Null(ContactTypeFromTaxId.Resolve(taxId));
+        Assert.Null(ContactTypeResolver.FromTaxId(taxId));
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class V1ContactTypeTests
     {
         var nine = WithCheckDigit("910554013452");
         Assert.True(ThaiTaxId.HasValidChecksum(nine));   // checksum ผ่านแต่ใช้ไม่ได้
-        Assert.Null(ContactTypeFromTaxId.Resolve(nine));
+        Assert.Null(ContactTypeResolver.FromTaxId(nine));
     }
 
     [Fact]
@@ -101,11 +101,11 @@ public class V1ContactTypeTests
     {
         // แถวที่ผู้ใช้ตั้งเป็นนิติบุคคลไว้ แล้ว sync ส่งเลขพังมา → ห้ามลดระดับ
         Assert.Equal(ContactType.JuristicPerson,
-            ContactTypeFromTaxId.Apply(ContactType.JuristicPerson, ""));
+            ContactTypeResolver.ApplyToExisting(ContactType.JuristicPerson, null, "", null).Type);
         Assert.Equal(ContactType.GovernmentAgency,
-            ContactTypeFromTaxId.Apply(ContactType.GovernmentAgency, "ไม่ใช่ตัวเลข"));
+            ContactTypeResolver.ApplyToExisting(ContactType.GovernmentAgency, null, "ไม่ใช่ตัวเลข", null).Type);
         Assert.Equal(ContactType.Individual,
-            ContactTypeFromTaxId.Apply(ContactType.Individual, null));
+            ContactTypeResolver.ApplyToExisting(ContactType.Individual, null, null, null).Type);
     }
 
     // ═══ ทิศตรงข้าม: ของที่เคยถูกอยู่แล้วต้องไม่ถูกแตะ ═══
@@ -114,7 +114,7 @@ public class V1ContactTypeTests
     public void คู่ค้านิติบุคคลที่เคยถูกอยู่แล้ว_ยังเป็นนิติบุคคลเหมือนเดิม()
     {
         Assert.Equal(ContactType.JuristicPerson,
-            ContactTypeFromTaxId.Apply(ContactType.JuristicPerson, Juristic));
+            ContactTypeResolver.ApplyToExisting(ContactType.JuristicPerson, null, Juristic, null).Type);
     }
 
     [Fact]
@@ -123,6 +123,6 @@ public class V1ContactTypeTests
         // นี่คือเคสที่ migration ต้องซ่อมย้อนหลัง: แถวเดิมเป็น JuristicPerson
         // เพราะกติกาเก่า — เมื่อ sync รอบถัดไปมาถึง ต้องถูกแก้กลับเป็นบุคคลธรรมดา
         Assert.Equal(ContactType.Individual,
-            ContactTypeFromTaxId.Apply(ContactType.JuristicPerson, Citizen1));
+            ContactTypeResolver.ApplyToExisting(ContactType.JuristicPerson, null, Citizen1, null).Type);
     }
 }

@@ -781,7 +781,19 @@ public class Contact : TenantEntity
     public string? TaxId { get; set; }
     public string? BranchCode { get; set; }
     public string? BranchName { get; set; }
-    public ContactType ContactType { get; set; } = ContactType.Individual;
+    /// <summary>ชนิดผู้ติดต่อ — ตัดสิน <b>ภ.ง.ด.3 vs ภ.ง.ด.53</b> และ scheme ของ
+    /// e-Tax XML (<c>NIDN</c>/<c>TXID</c>)
+    ///
+    /// <para><b>ค่าตั้งต้น = <see cref="ContactType.Unknown"/> ไม่ใช่ <c>Individual</c></b>
+    /// (DECISION_AUDIT_2026-09-18 §9.3 D-1 · DOCTRINE §1 G3). ค่าเดิม <c>Individual</c>
+    /// ทำให้คู่ค้าที่<b>ไม่มีใครเคยเลือกชนิดให้</b> กลายเป็น "บุคคลธรรมดาที่พิสูจน์แล้ว"
+    /// ในสายตา <c>WhtPayeeKind.Detect</c> ⇒ ความไม่รู้ถูกกลบจนมองไม่เห็น.</para>
+    ///
+    /// <para>ค่านี้กระทบเฉพาะแถว<b>ใหม่ที่ไม่มีใครตั้งค่าให้</b> — แถวเก่าในฐานเก็บ
+    /// 1/2/3 อยู่แล้ว และ <b>ห้าม backfill เป็น 0</b> (จะย้ายแบบยื่น 50 ทวิ
+    /// ของคู่ค้าที่ไม่มีเลขภาษีโดยไม่มีใครสั่ง). ตัวเติมค่าคือ
+    /// <c>Helpers/ContactTypeResolver</c> ตัวเดียว — ห้ามเขียนกติกาเดาเองที่อื่น</para></summary>
+    public ContactType ContactType { get; set; } = ContactType.Unknown;
     public bool IsCustomer { get; set; }
     public bool IsSupplier { get; set; }
 
