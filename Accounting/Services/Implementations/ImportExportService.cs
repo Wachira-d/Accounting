@@ -1248,10 +1248,20 @@ public class ImportExportService : IImportExportService
                 .Select(p => p.PaymentNumber),
             _db.Payments.Local.Select(p => p.PaymentNumber));
 
+        // ── ด่านจ่ายเกิน: ทางเข้า "นำเข้าไฟล์" ต้องเดินด่านเดียวกับเว็บ (D4-3) ──
+        // เดิมที่นี่ไม่มีด่านเลย ⇒ ไฟล์ที่ยอดผิด/ถูกนำเข้าซ้ำ ดัน PaidAmount เกิน
+        // ยอดใบ แล้ว BalanceDue ติดลบเงียบ ๆ (ลูกหนี้ติดลบไหลเข้ารายงานอายุหนี้)
+        if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(doc.BalanceDue, amount))
+            throw new InvalidOperationException(
+                $"ยอดชำระ ({amount:N2}) เกินยอดค้างชำระ ({doc.BalanceDue:N2}) ของเอกสาร {docNum} — "
+                + "ตรวจไฟล์นำเข้า (ยอดผิด หรือแถวนี้ถูกนำเข้าไปแล้ว) ก่อนนำเข้าใหม่");
+
         doc.PaidAmount += amount;
-        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
-        doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
-        if (doc.Status == DocumentStatus.Paid)
+        var settle = Accounting.Helpers.DocumentSettlementState.Apply(
+            doc.TotalAmount, doc.PaidAmount, doc.Status);
+        doc.BalanceDue = settle.BalanceDue;
+        doc.Status = settle.Status;
+        if (settle.Status == DocumentStatus.Paid)
         {
             doc.AgingDays = null;
             doc.AgingLastEvaluatedAt = DateTime.UtcNow;

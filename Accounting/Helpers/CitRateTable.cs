@@ -61,9 +61,44 @@ public static class CitRateTable
     /// ให้ประมาณเป็นทั้งรอบก่อนส่งเข้ามา ห้ามส่งยอดครึ่งเดียว มิฉะนั้นบริษัท
     /// รายได้ 40 ล. จะถูกนับเป็น SME</para>
     /// </summary>
-    public static bool IsSme(decimal paidUpCapital, decimal annualRevenue)
-        => paidUpCapital <= SmePaidUpCapitalCeiling
+    /// <param name="paidUpCapital">ทุนที่ชำระแล้ว — <b><c>null</c> หรือ ≤ 0 =
+    /// "ยังไม่กรอก"</b> ไม่ใช่ "ทุนศูนย์" (นิติบุคคลมีทุน 0 ไม่ได้)</param>
+    /// <param name="annualRevenue">รายได้ทั้งรอบ</param>
+    public static bool IsSme(decimal? paidUpCapital, decimal annualRevenue)
+        => KnownCapital(paidUpCapital) is { } capital
+        && capital <= SmePaidUpCapitalCeiling
         && annualRevenue <= SmeAnnualRevenueCeiling;
+
+    /// <summary>ทุนที่ชำระแล้วที่ "รู้จริง" — null/≤0 = ไม่รู้
+    ///
+    /// <para>คอลัมน์ <c>Companies.PaidUpCapital</c> เป็น <c>NOT NULL DEFAULT 0</c>
+    /// และก่อนรอบ 182 <b>ไม่มีช่องให้กรอกเลย</b> ⇒ ทุกบริษัทมีค่า 0 ⇒ "ไม่รู้"
+    /// ถูกแปลงเป็น "ทุนน้อยมาก" โดยอัตโนมัติ. นิติบุคคลจดทะเบียนโดยมีทุนชำระแล้ว
+    /// 0 บาท<b>ไม่ได้</b> ⇒ 0 แปลว่า "ยังไม่กรอก" เสมอ</para></summary>
+    private static decimal? KnownCapital(decimal? paidUpCapital)
+        => paidUpCapital is { } v && v > 0m ? v : null;
+
+    /// <summary>เหตุผลภาษาไทยว่าทำไมบริษัทนี้ถูกจัดเป็น SME หรือไม่ —
+    /// ต้องเดินทางไปถึงจอ/ไฟล์ยื่น ไม่ใช่ตัดสินเงียบ (DOCTRINE §1 G3)
+    ///
+    /// <para>⚠️ ทิศที่เลือก (คำตัดสินรอบ 182 · Q10): <b>ไม่รู้ทุน = ไม่ใช่ SME</b>
+    /// เพราะทิศตรงข้าม ("ไม่รู้ = SME") ทำให้เสียภาษี<b>ต่ำกว่า</b>กฎหมายโดย
+    /// ความเสียหาย<b>มองไม่เห็น</b>จนกว่าสรรพากรจะประเมินย้อนหลังพร้อมเบี้ยปรับ ·
+    /// ทิศนี้ถ้าผิด บริษัทจะเห็นยอดภาษีสูงผิดปกติ<b>ก่อน</b>ยื่น และมีช่องกรอกทุน
+    /// ให้แก้ได้ทันที = ความเสียหายมองเห็นและแก้ทัน (DOCTRINE §1 G5)</para></summary>
+    public static string SmeReason(decimal? paidUpCapital, decimal annualRevenue)
+    {
+        var capital = KnownCapital(paidUpCapital);
+        if (capital is null)
+            return "ไม่ใช่ SME — ยังไม่ได้กรอก \"ทุนที่ชำระแล้ว\" ของบริษัท ระบบจึงใช้อัตราทั่วไป 20% "
+                 + "(กรอกทุนที่หน้าตั้งค่าบริษัท แล้วสร้างรายงานใหม่ ถ้าเข้าเกณฑ์จะได้ขั้นบันได SME)";
+        if (capital > SmePaidUpCapitalCeiling)
+            return $"ไม่ใช่ SME — ทุนที่ชำระแล้ว {capital:N2} บาท เกิน {SmePaidUpCapitalCeiling:N0} บาท";
+        if (annualRevenue > SmeAnnualRevenueCeiling)
+            return $"ไม่ใช่ SME — รายได้ทั้งรอบ {annualRevenue:N2} บาท เกิน {SmeAnnualRevenueCeiling:N0} บาท";
+        return $"SME — ทุนที่ชำระแล้ว {capital:N2} บาท และรายได้ทั้งรอบ {annualRevenue:N2} บาท "
+             + "เข้าเกณฑ์ทั้งสองข้อ (พ.ร.ฎ. 530)";
+    }
 
     /// <summary>
     /// ภาษีเงินได้นิติบุคคลจากกำไรสุทธิ (บาท) — ขาดทุนหรือศูนย์ = 0

@@ -137,12 +137,33 @@ public record CreatePayrollItemRequest(
     string Code, string Name, string? NameEn,
     string ItemType, string CalculationType,
     decimal? FixedAmount, decimal? Percentage,
-    bool IsTaxable, Guid? AccountId);
+    bool IsTaxable, Guid? AccountId,
+    /// <summary>ลักษณะเงินได้ — มีผลกับการประมาณการภาษีทั้งปี (D6-3)
+    /// ไม่ส่งมา = Unspecified ⇒ ระบบใช้กฎรหัสเดิม</summary>
+    Models.Enums.PayrollIncomeNature IncomeNature = Models.Enums.PayrollIncomeNature.Unspecified);
+
+/// <summary>แก้ไขรายการเงินเดือน — ต้องมี เพราะแถวเก่าถูก migration เติม
+/// <c>IncomeNature</c> จากกฎรหัสเดิม (คงพฤติกรรม) ผู้ใช้จึงต้องแก้ให้ถูกได้
+/// (ไม่งั้น <c>BN01</c> ที่แปลว่าโบนัสจะถูกฉายไปทั้งปีตลอดกาล)</summary>
+public record UpdatePayrollItemRequest(
+    string? Name, string? NameEn,
+    string? CalculationType,
+    decimal? FixedAmount, decimal? Percentage,
+    bool? IsTaxable, Guid? AccountId,
+    Models.Enums.PayrollIncomeNature? IncomeNature,
+    bool? IsActive);
 
 public record PayrollItemResponse(
     Guid Id, string Code, string Name, string ItemType,
     string CalculationType, decimal? FixedAmount,
-    decimal? Percentage, bool IsTaxable, bool IsActive);
+    decimal? Percentage, bool IsTaxable, bool IsActive,
+    // ── D6-3: เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A) ──
+    Models.Enums.PayrollIncomeNature IncomeNature = Models.Enums.PayrollIncomeNature.Unspecified,
+    /// <summary>ลักษณะที่ระบบ<b>ใช้จริง</b>ตอนคำนวณ — เท่ากับ IncomeNature
+    /// เมื่อระบุไว้ · ตกกลับไปกฎรหัสเดิมเมื่อยังไม่ระบุ</summary>
+    Models.Enums.PayrollIncomeNature EffectiveIncomeNature = Models.Enums.PayrollIncomeNature.Unspecified,
+    /// <summary>คำอธิบายผลต่อการประมาณการภาษี — เซิร์ฟเวอร์เป็นเจ้าของถ้อยคำ</summary>
+    string? IncomeNatureNote = null);
 
 /// <summary>สร้างรอบเงินเดือน
 ///

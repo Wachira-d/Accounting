@@ -2643,7 +2643,10 @@ public partial class DocumentService : IDocumentService
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded
                 && l.TaxReport.CompanyId == companyId
                 && l.TaxReport.TaxType == TaxType.VAT
-                && l.TaxReport.Status == TaxReportStatus.Filed)
+                // ★ รอบ 183 — "ยื่นแล้ว" รวม `Submitted` (ผู้ใช้ประกาศว่ายื่น ยังไม่มีเลขรับ)
+                // ด้วย: ถอนการเคลมออกจากงวดที่ประกาศไปแล้วทำให้ยอดบนแบบที่ยื่นกับ GL
+                // ไม่ตรงกันเหมือนกัน — ตัวตัดสินตัวเดียวคือ `TaxFilingLockPolicy`
+                && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(l.TaxReport.Status))
             .Select(l => new { l.TaxReport.Year, l.TaxReport.Month })
             .FirstOrDefaultAsync();
         if (filedIn != null)
@@ -2706,7 +2709,8 @@ public partial class DocumentService : IDocumentService
             .Where(l => l.DocumentId == doc.Id && !l.IsExcluded
                 && l.TaxReport.CompanyId == companyId
                 && l.TaxReport.TaxType == TaxType.VAT
-                && l.TaxReport.Status != TaxReportStatus.Filed)
+                // ★ รอบ 183 — ติ๊กบรรทัดออกได้เฉพาะรายงานที่ยัง**เป็นร่างจริง ๆ**
+                && !Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(l.TaxReport.Status))
             .ToListAsync();
         await ExcludeVatReportLinesAsync(draftLines, "ผู้ใช้เลิกเคลม");
     }
@@ -3032,7 +3036,8 @@ public partial class DocumentService : IDocumentService
                         + $"สถานะ {openPeriod.Status} — เลือกวันที่รับรู้ในงวดที่ยังเปิดอยู่");
                 var filed = await _db.TaxReports.AsNoTracking().AnyAsync(t =>
                     t.CompanyId == companyId && !t.IsDeleted && t.TaxType == TaxType.VAT
-                    && t.Status == TaxReportStatus.Filed
+                    // ★ รอบ 183 — งวดที่ประกาศว่ายื่นแล้วก็เลือกวันรับรู้เข้าไปไม่ได้
+                    && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status)
                     && t.Year == when.Year && t.Month == when.Month);
                 if (filed)
                     throw new InvalidOperationException(
@@ -3898,7 +3903,8 @@ public partial class DocumentService : IDocumentService
             var filedPeriod = await _db.TaxReports.AsNoTracking()
                 .Where(t => t.CompanyId == companyId && !t.IsDeleted
                     && t.TaxType == TaxType.VAT
-                    && t.Status == TaxReportStatus.Filed
+                    // ★ รอบ 183 — เหมือนกัน: ประกาศว่ายื่นแล้ว = แก้ใบมัดจำของงวดนั้นไม่ได้
+                    && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status)
                     && t.Year == depTaxPoint.Year && t.Month == depTaxPoint.Month)
                 .AnyAsync();
             if (filedPeriod)
@@ -4112,17 +4118,13 @@ public partial class DocumentService : IDocumentService
             deposit.DepositOutputVatRecognizedAt = when;
 
         // ตัดยอดค้างใบแจ้งหนี้ (gross)
+        // S-7 + D4-3: ยอดค้าง/สถานะมาจาก `DocumentSettlementState` ตัวเดียวของระบบ
+        // (เดิมตรรกะสามบรรทัดนี้ถูกคัดลอกด้วยมือ 7 ที่ ด้วยเกณฑ์ปัดเศษ 3 แบบ)
         invoice.PaidAmount += request.Amount;
-        invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
-        // S-7: รวม Sent/Overdue ให้ตรงกับ ApplyJournalDepositToInvoiceAsync —
-        // เดิมใบที่ส่งอีเมลแล้ว/เลยกำหนด หักมัดจำจนครบยอดก็ยังค้างสถานะเดิม
-        // ⇒ งานทวงหนี้/รายงานอายุหนี้ไล่ทวงใบที่จ่ายครบแล้ว
-        if (invoice.BalanceDue <= 0.005m
-            && invoice.Status is DocumentStatus.Approved or DocumentStatus.PartiallyPaid
-                or DocumentStatus.Sent or DocumentStatus.Overdue)
-            invoice.Status = DocumentStatus.Paid;
-        else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
-            invoice.Status = DocumentStatus.PartiallyPaid;   // audit #12
+        var depSettle = Accounting.Helpers.DocumentSettlementState.Apply(
+            invoice.TotalAmount, invoice.PaidAmount, invoice.Status);
+        invoice.BalanceDue = depSettle.BalanceDue;
+        invoice.Status = depSettle.Status;
         // stamp ยอดหักมัดจำลงใบแจ้งหนี้ (audit E2): list/PDF โชว์ "หักมัดจำ/รับสุทธิ"
         // + API consumers เห็นยอดจริง (เดิมตั้งเฉพาะตอน create — apply ทีหลังไม่ตั้ง)
         invoice.DepositAppliedAmount += request.Amount;
@@ -4367,13 +4369,10 @@ public partial class DocumentService : IDocumentService
         jv.DepositAppliedToDocumentId = invoiceId;   // one-shot
 
         invoice.PaidAmount += gross;
-        invoice.BalanceDue = Math.Max(0m, invoice.TotalAmount - invoice.PaidAmount);
-        if (invoice.BalanceDue <= 0.005m
-            && (invoice.Status == DocumentStatus.Approved || invoice.Status == DocumentStatus.PartiallyPaid
-                || invoice.Status == DocumentStatus.Sent || invoice.Status == DocumentStatus.Overdue))
-            invoice.Status = DocumentStatus.Paid;
-        else if (invoice.BalanceDue > 0.005m && invoice.Status == DocumentStatus.Approved)
-            invoice.Status = DocumentStatus.PartiallyPaid;
+        var jvSettle = Accounting.Helpers.DocumentSettlementState.Apply(
+            invoice.TotalAmount, invoice.PaidAmount, invoice.Status);
+        invoice.BalanceDue = jvSettle.BalanceDue;
+        invoice.Status = jvSettle.Status;
         invoice.DepositAppliedAmount += gross;
         invoice.DepositAppliedRef = MergeDepositRef(invoice.DepositAppliedRef, jv.EntryNumber);
 
@@ -4563,14 +4562,19 @@ public partial class DocumentService : IDocumentService
                     // Cost drops from N× to 1×.
                     var bulk = await _aiAugmenter.SuggestApprovalWarningFixesBulkAsync(
                         companyId, doc.Id, warnings, snapshot, null, aiCts.Token);
+                    // ⚠️ ห้ามเติม `?? "Acknowledge"` กลับมาอีก (ผลตรวจ D1-11):
+                    // เมื่อ**ไม่มีใครตอบ** (provider ปิด/ล่ม + นักเรียนยังไม่มีคลัง)
+                    // คำตอบต้องเดินทางถึงหน้าจอในสภาพ "ว่าง" ไม่ใช่ถูกแปลงเป็น
+                    // คำแนะนำเขียว ๆ ที่ผู้ใช้กดยอมรับแล้วกลายเป็นแถว acceptedAi=true
+                    // ⇒ นักเรียนเรียนจากคำพูดที่ตัวเองไม่เคยพูด
                     hints = bulk.Hints.Select(r => new DocumentApprovalAiHint(
-                        Primary: r.Answer ?? "Acknowledge",
-                        Confidence: r.Confidence ?? 0.5m,
+                        Primary: Accounting.Helpers.AiHintAnswer.ForTransport(r.Answer),
+                        Confidence: Accounting.Helpers.AiHintAnswer.ConfidenceFor(r.Answer, r.Confidence),
                         Reasoning: r.Reasoning,
                         SuggestedActions: r.SuggestedActions,
                         Risks: r.Risks,
                         ComplianceFlags: r.ComplianceFlags,
-                        FeedbackId: r.FeedbackId,
+                        FeedbackId: Accounting.Helpers.AiHintAnswer.FeedbackIdFor(r.Answer, r.FeedbackId),
                         UsedAi: r.UsedAi)).ToList();
                 }
                 catch (Exception aiEx)
@@ -4817,11 +4821,19 @@ public partial class DocumentService : IDocumentService
                 //    block + ชี้ทางออกชัดเจน (เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับ)
                 //    ผู้ใช้ไม่ตัน มีทางไปต่อเสมอ
                 //  • ผู้ซื้อ "บุคคลธรรมดา/ไม่มีเลขภาษี" (ขายปลีก) → ไม่ต้องใช้ใบกำกับ
-                //    เต็มรูปอยู่แล้ว → auto ตั้ง BuyerDeclinedTaxInvoice=true → หัว
-                //    เปลี่ยนเป็น "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" (§86/6 — ผู้จด
-                //    VAT ต้องออกใบกำกับบางรูปแบบทุกการขาย อย่างย่อคือรูปแบบสำหรับ
-                //    ขายปลีก/ผู้ซื้อไม่แจ้งข้อมูล), ไม่ block. VAT ขายยังลง ภ.พ.30
-                //    ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร) ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
+                //    เต็มรูปอยู่แล้ว → ไม่ block. หัวเอกสารเปลี่ยนเป็น "ใบเสร็จรับเงิน/
+                //    ใบกำกับภาษีอย่างย่อ" (§86/6) เองอยู่แล้วโดย**ไม่ต้องประทับธง**
+                //    VAT ขายยังลง ภ.พ.30 ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร)
+                //    ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
+                //
+                // ⚠️ **ห้ามเขียน `doc.BuyerDeclinedTaxInvoice = true` กลับมาอีก**
+                // (คำตัดสินรอบ 181): ธงนั้นแปลว่า "**ผู้ซื้อ**แจ้งว่าไม่ประสงค์รับ
+                // ใบกำกับ" = เจตนาของมนุษย์ ระบบแต่งขึ้นแทนไม่ได้ — และเมื่อ persist
+                // แล้วมันจะถูก clone ต่อไปเอกสารลูก + โผล่ในข้อความ e-Tax ราวกับ
+                // ลูกค้าเคยปฏิเสธจริง. ผู้อ่านธงนี้ทุกตัวตรวจ "ผู้ซื้อ §86/4 ไม่ครบ"
+                // ด้วยตัวเองอยู่แล้ว (PdfGenerationService `buyerDeclined` /
+                // `IsAbbreviatedTaxInvoiceDoc` · TaxService `NotFullTaxInvoice`)
+                // ⇒ หัวเอกสาร/รายงานภาษีเหมือนเดิมทุกใบ
                 if (isJuristicBuyer)
                     throw new InvalidOperationException(
                         $"⛔ §86/4: ใบกำกับภาษีเต็มรูปต้องมี {string.Join(", ", missing)} " +
@@ -4829,7 +4841,6 @@ public partial class DocumentService : IDocumentService
                         "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็น " +
                         "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ §86/6 " +
                         "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2))");
-                doc.BuyerDeclinedTaxInvoice = true;
             }
         }
 
@@ -7348,7 +7359,8 @@ public partial class DocumentService : IDocumentService
                 .Where(l => l.DocumentId == documentId && !l.IsExcluded
                     && l.TaxReport.CompanyId == companyId
                     && reportTaxTypes.Contains(l.TaxReport.TaxType)
-                    && l.TaxReport.Status != TaxReportStatus.Filed)
+                    // ★ รอบ 183 — ถอนบรรทัดได้เฉพาะรายงานที่ยังเป็นร่างจริง ๆ
+                    && !Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(l.TaxReport.Status))
                 .ToListAsync();
             if (vatLines.Count > 0)
             {
@@ -10770,7 +10782,11 @@ public partial class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     "ค่าธรรมเนียมหักจากยอดโอน ใช้ได้เฉพาะเอกสารฝั่งขาย (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้)");
         }
-        if (request.Amount + paymentFee > doc.BalanceDue + 0.01m)
+        // ด่านจ่ายเกิน — เกณฑ์เดียวกับทุกทางเข้า (Integration/นำเข้าไฟล์) ผ่าน
+        // `DocumentSettlementState.WouldOverpay` (ผลตรวจ D4-3: เดิมเว็บใช้ 0.01
+        // · integration ใช้ 0.005 · นำเข้าไฟล์ไม่มีด่านเลย)
+        if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(
+                doc.BalanceDue, request.Amount + paymentFee))
             throw new InvalidOperationException(
                 $"เงินสุทธิ ({request.Amount:N2}) + ค่าธรรมเนียม ({paymentFee:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
 
@@ -10898,8 +10914,10 @@ public partial class DocumentService : IDocumentService
             _db.Payments.Add(payment);
 
             doc.PaidAmount += request.Amount + paymentFee;
-            doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
-            doc.Status = doc.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+            var paySettle = Accounting.Helpers.DocumentSettlementState.Apply(
+                doc.TotalAmount, doc.PaidAmount, doc.Status);
+            doc.BalanceDue = paySettle.BalanceDue;
+            doc.Status = paySettle.Status;
             // Clear stale aging immediately when the doc settles — otherwise
             // the list view keeps showing "⏳ 30+d" on a paid invoice until
             // DocumentAgingBackgroundService runs (every 6h). PartiallyPaid
@@ -11273,8 +11291,10 @@ public partial class DocumentService : IDocumentService
 
                     // Settle the document
                     d.PaidAmount += alloc.AllocatedAmount;
-                    d.BalanceDue = d.TotalAmount - d.PaidAmount;
-                    d.Status = d.BalanceDue <= 0 ? DocumentStatus.Paid : DocumentStatus.PartiallyPaid;
+                    var allocSettle = Accounting.Helpers.DocumentSettlementState.Apply(
+                        d.TotalAmount, d.PaidAmount, d.Status);
+                    d.BalanceDue = allocSettle.BalanceDue;
+                    d.Status = allocSettle.Status;
                     if (d.Status == DocumentStatus.Paid)
                     {
                         d.AgingDays = null;
@@ -12052,7 +12072,11 @@ public partial class DocumentService : IDocumentService
                     && s.CreatedDocumentId == doc.Id && !s.IsDeleted);
             if (scan == null) return;
 
-            var isPurchase = Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType);
+            // ชนิดกำกวม (CN/DN/ใบส่งของ) ต้องดูฝั่งที่ระบบตัดสินไว้แล้วก่อน —
+            // เรียก `IsPurchase(type)` เปล่า ๆ จะได้ "ฝั่งซื้อ" สำหรับใบลดหนี้ฝั่งขาย
+            // (กติกาเดียวกับ TaxService — ตามล้างรูปแบบเดิมให้ครบตอนแก้ D1-B2)
+            var isPurchase = doc.CnDnPurchaseSideOverride
+                ?? Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType);
             var contact = doc.ContactId != Guid.Empty
                 ? await _db.Contacts.AsNoTracking()
                     .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
@@ -12195,68 +12219,6 @@ public partial class DocumentService : IDocumentService
                 _logger.LogWarning(ex, "Record GL feedback failed (feedbackId={Fid})", fid);
             }
         }
-    }
-
-    /// <summary>ใบนี้เป็น "การซื้อสินค้าล้วน" หรือไม่ — ใช้ปิดคำเตือนหัก ณ ที่จ่าย
-    /// (§3 เตรส ใช้กับค่าบริการ/เช่า/ขนส่ง/โฆษณา/จ้างทำของ — <b>ซื้อสินค้าไม่ต้องหัก</b>)
-    ///
-    /// <para>ตัดสินจากสัญญาณที่เชื่อถือได้เท่านั้น ไม่เดาจากคำในรายการ:
-    /// ทุกบรรทัดที่มียอด ต้อง (ก) ผูกสินค้าที่ตัดสต๊อก หรือ (ข) ลงผังบัญชี
-    /// สินค้าคงเหลือ/ต้นทุนสินค้า. บรรทัดยอด 0 (ของแถม/บริการหยิบของฟรี)
-    /// ไม่นับ — ไม่งั้นใบซื้อของที่มีบรรทัดแถมจะถูกมองว่ามีบริการปน</para>
-    ///
-    /// <para>เจอสัญญาณไม่พอ = คืน false (เตือนตามเดิม) — พลาดฝั่ง "เตือนเกิน"
-    /// ดีกว่าพลาดฝั่ง "ไม่เตือนตอนต้องหักจริง" ซึ่งบริษัทต้องรับผิดภาษีแทน</para></summary>
-    private async Task<bool> IsPureGoodsPurchaseAsync(Guid companyId, Document doc)
-    {
-        var priced = doc.Lines.Where(l => l.Amount > 0m).ToList();
-        if (priced.Count == 0) return false;
-
-        // (ก) ผูกสินค้าที่ตัดสต๊อก = สินค้าแน่นอน
-        var codes = priced.Where(l => !string.IsNullOrWhiteSpace(l.ProductCode))
-            .Select(l => l.ProductCode!).Distinct().ToList();
-        var stockCodes = codes.Count == 0
-            ? new HashSet<string>()
-            : (await _db.Products.AsNoTracking()
-                .Where(p => p.CompanyId == companyId && !p.IsDeleted
-                    && codes.Contains(p.Code) && p.TrackStock)
-                .Select(p => p.Code).ToListAsync()).ToHashSet();
-
-        // (ข) ผังบัญชีสินค้าคงเหลือ (115x) / ต้นทุนสินค้า (51xxx)
-        var accIds = priced.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value)
-            .Distinct().ToList();
-        var goodsAcc = accIds.Count == 0
-            ? new HashSet<Guid>()
-            : (await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => accIds.Contains(a.Id)
-                    && (a.AccountCode.StartsWith("115") || a.AccountCode.StartsWith("51")))
-                .Select(a => a.Id).ToListAsync()).ToHashSet();
-
-        return priced.All(l =>
-            (l.ProductCode != null && stockCodes.Contains(l.ProductCode))
-            || (l.AccountId.HasValue && goodsAcc.Contains(l.AccountId.Value)));
-    }
-
-    /// <summary>WHT threshold §50: ไม่หักถ้ายอดสัญญา < 1,000 บาท แต่ถ้ารวม
-    /// ทุกครั้งที่จ่ายให้ผู้รับเดียวกัน (per contact, per income type, per
-    /// ปีภาษี) ≥ 1,000 ต้องหักย้อนหลัง. method นี้คืน "ต้องหักเพิ่ม" boolean +
-    /// total YTD ของผู้รับเดียวกัน → caller (UI/approval) เตือนผู้ใช้ก่อนอนุมัติ
-    /// เอกสารที่ลืมใส่ WHT rate. ใช้ใน warnings ตอน approve.</summary>
-    private async Task<(bool Required, decimal YtdAmount)> CheckWhtThresholdAsync(
-        Guid companyId, Guid contactId, DateTime documentDate, decimal currentLineTotal)
-    {
-        var yearStart = new DateTime(documentDate.Year, 1, 1);
-        var yearEnd = yearStart.AddYears(1);
-        var ytd = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && d.ContactId == contactId
-                && (d.DocumentType == DocumentType.PaymentVoucher
-                    || d.DocumentType == DocumentType.Expense
-                    || d.DocumentType == DocumentType.PurchaseInvoice)
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
-                && d.DocumentDate >= yearStart && d.DocumentDate < yearEnd)
-            .SumAsync(d => (decimal?)d.SubTotal) ?? 0m;
-        var projectedTotal = ytd + currentLineTotal;
-        return (projectedTotal >= 1000m, projectedTotal);
     }
 
     /// <summary>คำนวณ §65 ตรี รายจ่ายต้องห้าม → เก็บ NonDeductibleAmount +
@@ -16113,7 +16075,8 @@ public partial class DocumentService : IDocumentService
             .OrderByDescending(r => r.CreatedAt)
             .Select(r => new
             {
-                r.RawTextContent, r.HasWht, r.WhtRate,
+                // ⚠️ ไม่ดึง `HasWht`/`WhtRate` โดยตั้งใจ — ดูเหตุผลที่บล็อก PaperWhtReader ล่าง
+                r.RawTextContent,
                 r.ExtractedVendorName, r.ExtractedVendorTaxId, r.VendorAddress,
                 r.BuyerName, r.BuyerAddress,
                 r.ExtractedDocumentNumber, r.ExtractedDate,
@@ -16141,9 +16104,13 @@ public partial class DocumentService : IDocumentService
                 TotalAmount: scan.ExtractedTotalAmount));
 
         // ตัวอ่านตัวเดียวของระบบ — ห้ามเขียน regex ชุดที่สองที่นี่
+        // ⚠️ **ห้ามกลับมาอ่าน `scan.HasWht`/`scan.WhtRate` ที่นี่** (D3-2 รอบ 183):
+        // สองช่องนั้นเคยถูกเขียนโดย `VendorIntelligenceService` จาก**ประวัติผู้ขาย**
+        // ไม่ใช่จากกระดาษ ⇒ ด่านนี้เคยสรุปว่า "กระดาษประกาศเชิงบวก" จากคำตอบของระบบเอง
+        // แล้ว VendorIntel ก็เรียนกลับจากผลนั้นอีกที = วงจรสอนตัวเอง (DECISION_DOCTRINE §3)
+        // ฝั่งเรียนรู้ใช้ตัวอ่านตัวเดียวกันนี้แล้วเช่นกัน (`VendorIntelligenceService`)
         var paper = Accounting.Helpers.PaperWhtReader.Read(scan.RawTextContent);
         if (paper.Amount is > 0m || paper.RatePercent is > 0m) return (true, grade.Grade, grade.Reason);
-        if (scan.HasWht || scan.WhtRate is > 0m) return (true, grade.Grade, grade.Reason);
         return (false, grade.Grade, grade.Reason);   // อ่านกระดาษได้ และไม่มีส่วนหัก
     }
 
@@ -16423,6 +16390,32 @@ public partial class DocumentService : IDocumentService
                 + "— ใบแจ้งหนี้เปล่าเหมาะกับงานบริการที่ใบกำกับจะออกตอนรับเงิน (§78/1) เท่านั้น");
         }
 
+        // ── ใบนี้คือ "การจ่าย/ภาระจ่ายให้คู่ค้า" ไหม — ตัวตัดสินตัวเดียวของด่านล่าง ──
+        //
+        // CN/DN เป็นชนิด**สองฝั่ง**: ใช้ override ที่ผู้ใช้ระบุก่อน ถ้าไม่มีให้ดูว่า
+        // ใบต้นทางเป็นเอกสารฝั่งซื้อไหม (กติกาเดียวกับด่าน §86/10 ข้างล่างซึ่งเดิม
+        // คำนวณค่านี้เองอยู่ที่เดียว) — ส่วนอีกสองด่านเคยถาม
+        // `DocumentSide.IsPurchase(type)` **โดยไม่ส่งบทบาท** ทั้งที่ helper ตัวนั้น
+        // เขียนไว้เองว่าชนิดกำกวมต้องส่ง `ourRole` ⇒ **ใบลดหนี้ฝั่งขาย**ถูกลากเข้า
+        // ด่านซื้อ และ **ใบขอซื้อ/ใบสั่งซื้อ/ใบรับสินค้า** (ยังไม่มีการจ่ายเงิน)
+        // ถูกลากเข้าด่านหัก ณ ที่จ่าย + ถูกเขียน audit "ระบบเลือกเงียบ" (ผลตรวจ D1-B2)
+        bool? cnDnPurchaseSide = doc.CnDnPurchaseSideOverride;
+        if (cnDnPurchaseSide == null
+            && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+            && doc.RelatedDocumentId.HasValue)
+        {
+            cnDnPurchaseSide = await _db.Documents.AsNoTracking().AnyAsync(x =>
+                x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId
+                && (x.DocumentType == DocumentType.PurchaseInvoice
+                    || x.DocumentType == DocumentType.Expense
+                    || x.DocumentType == DocumentType.PaymentVoucher
+                    || x.DocumentType == DocumentType.CertificateInLieu));
+        }
+        // ชุดชนิดเอกสารมาจาก `WhtCumulativeScope.Counts` ตัวเดียว (ชุดที่ใช้คิดยอด
+        // สะสมด้วย) — ห้ามมีชุดที่สอง ไม่งั้นด่านเตือนกับยอดที่โชว์จะนับคนละใบ
+        var paysCounterparty = Accounting.Helpers.WhtGateScope.Applies(
+            doc.DocumentType, cnDnPurchaseSide);
+
         // ── §82/5(4)(6) ภาษีซื้อต้องห้าม — ครอบ **ทุกทางเข้า** ไม่ใช่แค่ OCR ──
         //
         // `ProhibitedInputVatScreener` ถูกเรียกจากที่เดียวคือสาย OCR (ผลตรวจ C-T12)
@@ -16433,7 +16426,7 @@ public partial class DocumentService : IDocumentService
         // ที่นี่ไม่มี raw text ของกระดาษ จึงคัดกรองจาก **ชื่อผู้ขาย + คำอธิบาย
         // รายบรรทัด** ซึ่งเป็นข้อมูลที่ผู้ใช้พิมพ์เองอยู่แล้ว · เตือน ไม่บล็อก
         // เพราะรถบางประเภทเคลมได้ (§82/5(6) ยกเว้นรถบรรทุก/กระบะตอนเดียว)
-        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType)
+        if (paysCounterparty
             && doc.VatAmount > 0.005m
             && doc.Lines.Any(l => l.IsVatClaimable))
         {
@@ -16463,7 +16456,7 @@ public partial class DocumentService : IDocumentService
         // **การซื้อสินค้าไม่อยู่ในข่าย** ⇒ ใบซื้อของทุกใบที่เกินพันเด้งหมด
         // ⇒ ผู้ใช้เรียนรู้ที่จะกด "ยอมรับและอนุมัติต่อ" โดยไม่อ่าน ⇒ วันที่เป็น
         // ค่าบริการจริงก็จะถูกกดผ่านไปด้วย = ปิดด่านโดยไม่ตั้งใจ (กฎเหล็ก #4)
-        if (Accounting.Helpers.DocumentSide.IsPurchase(doc.DocumentType)
+        if (paysCounterparty
             && doc.ContactId != Guid.Empty
             && doc.WithholdingTaxAmount <= 0.005m
             && doc.SubTotal > 0m)
@@ -16622,15 +16615,8 @@ public partial class DocumentService : IDocumentService
             && doc.VatAmount != 0
             && string.IsNullOrWhiteSpace(doc.SupplierInvoiceNumber))
         {
-            var cnIsPurchaseSide = doc.CnDnPurchaseSideOverride
-                ?? (doc.RelatedDocumentId.HasValue
-                    && await _db.Documents.AsNoTracking().AnyAsync(x =>
-                        x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId
-                        && (x.DocumentType == DocumentType.PurchaseInvoice
-                            || x.DocumentType == DocumentType.Expense
-                            || x.DocumentType == DocumentType.PaymentVoucher
-                            || x.DocumentType == DocumentType.CertificateInLieu)));
-            if (cnIsPurchaseSide)
+            // ใช้ค่าที่ตัดสินไว้แล้วข้างบน (override → ใบต้นทาง) — เดิมคำนวณซ้ำที่นี่
+            if (cnDnPurchaseSide == true)
             {
                 var w = doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้";
                 warnings.Add($"⚠️ §86/10: {w}ฝั่งซื้อใบนี้มี VAT {doc.VatAmount:N2} บาท "
@@ -16709,36 +16695,29 @@ public partial class DocumentService : IDocumentService
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
         // create path; this is the "rate is technically legal but unusual"
         // shoulder (e.g. ratio that doesn't match a known ภ.ง.ด. code).
-        var knownWhtRates = new HashSet<decimal> { 0m, 1m, 1.5m, 2m, 3m, 5m, 10m, 15m };
+        // อัตราที่ถือว่า "มาตรฐาน" อ่านจาก `ThaiWhtRateTable.StatutoryRates` ตัวเดียว
+        // (เดิมเป็นเซ็ตฝังในไฟล์นี้ซึ่งมี 1.5% ที่ตารางกลางไม่มี = ตารางกฎหมาย
+        // สำเนาที่สอง — ผลตรวจ D1-3) · ข้อความก็สร้างจากตารางเดียวกัน ไม่พิมพ์ซ้ำ
         foreach (var line in doc.Lines)
         {
-            if (line.WithholdingTaxRate > 0 && !knownWhtRates.Contains(line.WithholdingTaxRate))
-                warnings.Add($"อัตรา WHT ของ '{line.Description}' = {line.WithholdingTaxRate}% — ไม่ใช่อัตรามาตรฐาน (1 / 1.5 / 2 / 3 / 5 / 10 / 15%) ตรวจ Income Type Code อีกครั้ง");
+            if (line.WithholdingTaxRate > 0
+                && !Accounting.Helpers.ThaiWhtRateTable.StatutoryRates.Contains(line.WithholdingTaxRate))
+                warnings.Add($"อัตรา WHT ของ '{line.Description}' = {line.WithholdingTaxRate}% — ไม่ใช่อัตราตามกฎหมาย ("
+                    + string.Join(" / ", Accounting.Helpers.ThaiWhtRateTable.StatutoryRates.Select(r => $"{r:0.##}"))
+                    + "%) ตรวจ Income Type Code อีกครั้ง");
         }
 
-        // WHT threshold §50 — รวมยอดจ่ายให้ผู้รับเดียวกันทั้งปีภาษี ≥ 1,000
-        // บาท ต้องหัก ณ ที่จ่ายทุกงวด. ถ้าเอกสารฝั่งจ่ายไม่มี WHT แต่ยอดรวม
-        // ≥ 1,000 → เตือนผู้ใช้ว่าอาจลืมหัก
-        if ((doc.DocumentType == DocumentType.PaymentVoucher
-             || doc.DocumentType == DocumentType.Expense
-             || doc.DocumentType == DocumentType.PurchaseInvoice)
-            && doc.WithholdingTaxAmount == 0m && doc.SubTotal > 0)
-        {
-            // §3 เตรส หัก ณ ที่จ่ายใช้กับ "ค่าบริการ/ค่าเช่า/ขนส่ง/โฆษณา/จ้างทำของ"
-            // — **การซื้อสินค้าไม่ต้องหัก**. เตือนทุกใบที่ ≥1,000 โดยไม่ดูว่าซื้อ
-            // อะไร = เตือนผิดแทบทุกใบซื้อของ (เคสจริง: ซื้อปลอกหมอนจาก IKEA)
-            // ผู้ใช้จะชินกับการกดข้ามคำเตือน แล้ววันที่เตือนถูกจริงก็ข้ามไปด้วย
-            var looksLikeGoods = await IsPureGoodsPurchaseAsync(companyId, doc);
-            var (required, ytd) = await CheckWhtThresholdAsync(
-                companyId, doc.ContactId, doc.DocumentDate, doc.SubTotal);
-            if (required && !looksLikeGoods)
-            {
-                if (doc.SubTotal < 1000m)
-                    warnings.Add($"⚠️ §50 threshold: ยอดสะสมจ่ายให้ '{doc.Contact?.Name}' ในปีนี้ {ytd:N2} บาท ≥ 1,000 — แม้ใบนี้ {doc.SubTotal:N2} (<1,000) ต้องหัก ณ ที่จ่ายทุกงวด (เฉพาะกรณีเป็นค่าบริการ/เช่า/ขนส่ง/โฆษณา — ซื้อสินค้าไม่ต้องหัก)");
-                else
-                    warnings.Add($"⚠️ ใบนี้ {doc.SubTotal:N2} ≥ 1,000 บาท และยังไม่ได้กรอกหัก ณ ที่จ่าย — **ถ้าเป็นค่าบริการ/จ้างทำของ 3% · ค่าเช่า 5% · ค่าโฆษณา 2% · ขนส่ง 1%** ต้องหัก (§3 เตรส) · ถ้าใบนี้เป็น **การซื้อสินค้า** ไม่ต้องหัก — ข้ามคำเตือนนี้ได้");
-            }
-        }
+        // ── ด่านหัก ณ ที่จ่าย "ชุดเก่า" ถูกถอดแล้ว (ผลตรวจ D1-B1 รอบ 181) ──
+        // เดิมบล็อก §50 อีกชุดยืนอยู่ตรงนี้: `IsPureGoodsPurchaseAsync` +
+        // `CheckWhtThresholdAsync` เตือนทุกใบที่บรรทัด**ไม่ได้ผูกสินค้าที่ตัดสต๊อก
+        // หรือผัง 115x/51xxx** ซึ่งคือเคสเดียวกับที่ด่านใหม่ (สามสถานะ ข้างบน)
+        // ตั้งใจให้ "เงียบ" แล้วเขียน audit `WhtWarningSuppressed` ไว้
+        // ⇒ audit บอกว่าเงียบ แต่จอเตือน = สองความจริงบนใบเดียว
+        // และด่านเก่าไม่เคยดู `paperGrade` เลย ⇒ คำตัดสิน "ใบกำกับเต็มรูปที่ครบ
+        // §86/4 และไม่มีบรรทัดหัก ณ ที่จ่าย ⇒ ไม่ต้องหัก" ถูกลบล้างทุกครั้ง
+        // อีกทั้งยอดสะสมของมันรวม PI+Expense+PV **ตรง ๆ** (ไม่กันนับซ้ำ) ต่างจาก
+        // `WhtCumulativeScope.SumDistinct` ที่ด่านใหม่ใช้ ⇒ การซื้อครั้งเดียวที่มี
+        // ทั้งใบกำกับและใบสำคัญจ่ายถูกนับสองรอบ. ด่านเดียวที่เหลือคือด่านใหม่
 
         // DTA bilateral treaty — เตือนเมื่อจ่ายไปต่างประเทศ + ใช้ default rate
         // (15% ม.70) แต่ payee country มี DTA ลดเหลือ 5-10% บ่อย → ผู้ใช้
@@ -17055,7 +17034,10 @@ public class DocumentApprovalWarningsException : Exception
 /// / Block" + suggested actions per item.
 /// </summary>
 public sealed record DocumentApprovalAiHint(
-    string Primary,                         // "Acknowledge" | "Edit" | "Block"
+    // "Acknowledge" | "Edit" | "Block" — **สตริงว่าง = ไม่มีใครตอบ**
+    // (AI ปิด/ล่ม และนักเรียนยังไม่มีคลัง) หน้าจอต้องไม่ขึ้นป้ายและต้องไม่
+    // บันทึก feedback ในกรณีนั้น · ดู Helpers/AiHintAnswer
+    string Primary,
     decimal Confidence,
     string? Reasoning,
     IReadOnlyList<string> SuggestedActions,

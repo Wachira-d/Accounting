@@ -108,6 +108,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   อ่าน ⇒ พาไปหน้ารวมเปล่า ๆ). **อนุมัติไม่ผ่าน ≠ ล้มทั้งก้อน** — ใบ Draft ยังอยู่
   แล้วแนบเหตุผลกลับมาเป็น `[APPROVE-FAIL]` (ถ้า throw ทิ้ง ผู้ใช้จะเข้าใจว่า
   ไม่มีใบเกิดขึ้นแล้วสแกนซ้ำ = ใบซ้ำ)
+- **จุด serialize `ExtractedItemsJson` มีจุดเดียว** (รอบ 183 · D3-1) —
+  `OcrService.SerializeExtractedItems` เรียกจาก **จุดเดียวในไปป์ไลน์** ซึ่งอยู่
+  **หลัง** ตัวเทียบสินค้าใน master + ตัวเรียนรายบรรทัด และ **ก่อน**
+  `SuggestPredecessorLinkAsync`/`AutoCreateDocumentAsync`
+  _เดิม serialize ที่ต้นไปป์ไลน์ด้วย projection 8 ช่อง ⇒ `SuggestedAccountCode`
+  · `VatRate` · `ProjectAiFeedbackId` ที่ชั้นหลังเขียน **หายทุกใบ** ⇒ เอกสารได้
+  ผังบัญชีระดับ**หัวใบ**ทั้งที่ trace บนจอเขียนว่า "[Product] รายการ → บัญชี"
+  (ชั้นหลักฐานที่แข็งที่สุดไม่เคยถึงเอกสาร)_
+  · ลำดับชั้น "บรรทัดนี้ลงบัญชีอะไร" อยู่ที่ **`Helpers/OcrLineAccountSource`**:
+  บรรทัด PO ที่ผูกไว้ → บรรทัดสแกน → หัวใบ → ไม่มี (ห้ามเขียน `??` เรียงกันเอง)
+  · ⚠️ แถวที่ persist ก่อนรอบนี้ยัง `VatRate = null` — อ่านได้ปกติ แต่ถ้าจะซ่อม
+  ย้อนหลังต้องมี migration (ยังไม่ทำ)
+- **`[MATH]` บล็อกการอนุมัติอัตโนมัติ** (รอบ 183 · D3-3) — `!MathConsistent`
+  (ยอดหัวใบไม่ลงตัว / สามช่องขัดกัน / Σ บรรทัดไม่ตรงหัวใบ) เขียนแท็ก `[MATH]`
+  ลง `ProcessingNotes` และแท็กนี้อยู่ใน `Helpers/OcrPostingReadiness.BlockingTags`
+  ⇒ **ทุกช่องทาง** (เว็บ · LINE · มือถือ) ห้ามอนุมัติเองจนกว่าคนจะดู
+  · และ `VendorPrediction` **เลิกยกคะแนนทั้งใบ** (`Confidence = Math.Max(…, prior)`)
+  — prior ของผู้ขายประจำเคยดันใบที่ตัวเลขไม่ลงตัวกลับขึ้นเกณฑ์ auto-create
 - **ด่านคุณภาพก่อน persist** (ทั้ง 4 ทางออกได้ผลเดียวกัน — ตรรกะอยู่ที่
   scan-time ก่อน serialize `ExtractedItemsJson`):
   1. **`DocumentNumberSanitizer`** — เลขที่เอกสารต้องปรากฏบนกระดาษจริง;
@@ -288,6 +306,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `|SubTotal+VAT−Total| > ฿0.02` **และ** `|VAT − 7%×SubTotal| > max(฿0.02,
   ฿0.01×จำนวนบรรทัด)` พร้อมกัน ⇒ ใบหลายอัตราภาษี (ผลรวมเป๊ะ) ไม่ถูกฟ้องผิด ·
   ปิดช่องที่ ฿0.44 เคยรอด `MathTolerance` ฿2.00 และ 7.37% เคยรอดกรอบ 6.5–7.5%
+
+- **วงจร "ประวัติยืนยันประวัติ" เรื่องหัก ณ ที่จ่าย — ตัดแล้ว** (รอบ 183 · D3-2):
+  - `VendorIntelligenceService` เคยเติม `HasWht`/`WhtRate` ให้สแกนจาก**ประวัติผู้ขาย**
+    ⇒ ด่านอนุมัติ (`DocumentService.ScanPaperWhtEvidenceAsync`) อ่านช่องนั้นแล้วสรุปว่า
+    "กระดาษประกาศเชิงบวก" ⇒ VendorIntel เรียนกลับจากผลนั้น = ความมั่นใจโตเองโดยไม่มี
+    หลักฐานใหม่สักชิ้น
+  - ตอนนี้ VendorIntel เขียนลง **`SuggestedWhtRate`** (ช่องข้อเสนอ) + `FieldConfidence`
+    + โน้ต `[WHT-SUGGEST]` ที่บอกตรง ๆ ว่ามาจากประวัติ ไม่ใช่จากกระดาษ
+  - **"กระดาษพูด" อ่านจาก `Helpers/PaperWhtReader` ตัวเดียว** ทั้งฝั่งด่านอนุมัติและ
+    ฝั่งเรียนรู้ — ห้ามอ่าน `scan.HasWht`/`scan.WhtRate` ที่ไหนอีก (ทำให้แถวเก่าที่
+    ปนเปื้อนหมดฤทธิ์เองโดยไม่ต้อง migration)
+  - **`Helpers/OcrWhtLearningScope.Decide`** ตัดสินว่าใบนี้สอนประวัติได้ไหม:
+    คีย์มือ / กระดาษพิมพ์ / ผู้ใช้แก้ช่อง WHT เอง ⇒ เรียนได้ · ระบบเสนอเองแล้วไม่มี
+    ใครแตะ ⇒ **ไม่เรียน** (ทุกทางเข้ารวม backfill เดินด่านเดียวกัน)
+  - ⚠️ **ผลที่ผู้ใช้เห็น**: ผู้ขายบริการประจำที่กระดาษไม่พิมพ์ส่วนหัก จะ**ไม่ถูกเติม
+    WHT อัตโนมัติอีก** — ใบมี `WithholdingTaxAmount = 0` + โน้ต `[WHT-SUGGEST]` ให้คนกรอก
 
 ### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
 
@@ -522,6 +556,25 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ถูกสร้างมาแก้โดยตรง (ฝ่ายค้านรอบ 177)
       · คำตอบ `Skip` จากชั้นเรียนรู้ **ใช้ที่จุดนี้ไม่ได้** (แปลว่า "ยังไม่ถึงเกณฑ์"
       ซึ่งขัดกับการคำนวณที่เพิ่งทำ) · คำตอบ "ไม่ต้องหัก" ต้องมั่นใจ ≥ 0.70 จึงจะปิดคำเตือน
+    - **ด่านเก่า §50 ถูกถอดออกแล้ว (รอบ 183 · D1-B1)** — เดิมมีด่าน WHT **สองตัว**
+      ทำงานต่อกันในเมธอดเดียว: ตัวใหม่ (ข้างบน) และบล็อกเก่าที่ใช้
+      `IsPureGoodsPurchaseAsync` + `CheckWhtThresholdAsync` ซึ่ง (ก) ไม่ดูความสมบูรณ์
+      ของกระดาษ ⇒ ใบซื้อของร้านค้าปลีกที่ใบกำกับครบ §86/4 ก็โดนเตือน (ข) เชื่อ
+      **ผังบัญชี**ว่าเป็น "ของ" ⇒ ค่าจ้างติดตั้งที่ถูกลงผัง 51xxx เงียบสนิท
+      (ค) ครอบแค่ PV/Expense/PI ⇒ ใบรับรองแทนใบเสร็จ (CIL) หลุดทั้งกอง
+      · อัตราที่ใช้เตือนอ่านจาก **`ThaiWhtRateTable.StatutoryRates` ตัวเดียว**
+      (ของเดิมมีชุด `knownWhtRates` ของตัวเองที่มี 1.5%) และข้อความเตือนสร้างจาก
+      ตารางนั้น ไม่พิมพ์อัตราซ้ำ
+    - **ขอบเขตของด่าน = `Helpers/WhtGateScope.Applies`** ซึ่ง delegate ตรงไป
+      `WhtCumulativeScope.Counts` (ไม่มีชุดที่สอง) — เดิมถาม
+      `DocumentSide.IsPurchase(type)` **โดยไม่ส่งบทบาท** ทั้งที่ helper ตัวนั้นเขียน
+      doc ของตัวเองไว้ว่าชนิดกำกวมต้องส่ง `OurRole` ⇒ **ใบลดหนี้ฝั่งขาย** ตกเป็น
+      "ฝั่งซื้อ" และ **ใบขอซื้อ/ใบสั่งซื้อ/ใบรับสินค้า** เด้งคำเตือนหัก ณ ที่จ่าย
+      ทั้งที่ยังไม่มีการจ่ายเงิน · `cnDnPurchaseSide` คำนวณครั้งเดียวที่ต้นเมธอด
+      แล้วใช้ร่วมกัน 3 ด่าน (§82/5 · WHT · §86/10)
+      ⚠️ **ผลข้างเคียงที่ตั้งใจ**: ด่าน §82/5 แคบลงตามไปด้วย ⇒ PO/PR/GRN และใบลดหนี้
+      ไม่ถูกสกรีนภาษีซื้อต้องห้ามอีก (PO/GRN ไม่ลงภาษีซื้อจริงอยู่แล้ว · ใบลดหนี้เป็นการ
+      *ลด*การเคลมจากใบต้นทางที่ถูกสกรีนไปแล้ว)
     - เอกสารที่ VAT เข้ารายงานแต่หัวไม่มีคำว่าใบกำกับ → `CollectApprovalWarningsAsync`
       เตือนตอนอนุมัติ (ไม่ block — ขายปลีกที่ลูกค้าไม่ขอใบกำกับเป็นเคสปกติ) และ
       **เมื่อผู้ใช้กด "ยืนยันทั้งที่มีคำเตือน" (`acknowledgeWarnings=true`)
@@ -788,17 +841,55 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - Dr Cash 1011 / Bank 1012 / Credit Card 1131 (ตาม PaymentMethod)
   - Cr Sales Revenue 41000 (net of VAT)
   - Cr Output VAT 21911 (7%)
-  - Cr Tip Liability 2160 (ถ้ามี)
+  - Cr Tip Liability 21814/21819 (ถ้ามี) — **ไม่พบบัญชีทิป = `throw`
+    `POS-NO-TIP-ACCOUNT` ปิดบิลไม่ได้** (รอบ 183 · D8-8) เดิมยัดเข้ารายได้ขาย
+    + `LogWarning` ⇒ เงินที่ถือแทนพนักงานกลายเป็นรายได้ กำไรบวม หนี้หายจากงบ
+    · ทิศเดียวกับฝั่งจ่ายทิป `TipPayoutService` ที่ throw อยู่แล้ว
+    · บัญชีมาจาก `Helpers/TipAccountResolver` (21814 อยู่ใน `ChartOfAccountTemplates`
+    ⇒ ผังมาตรฐานไม่มีทางเจอ throw นี้)
   - Dr COGS / Cr Inventory (สินค้าที่ track stock)
-- **Tax Invoice** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
+- **ใบกำกับภาษีอย่างย่อ (§86/6)** — เลขออกที่ `IssueAbbreviatedInvoiceNumberAsync`
+  (`PosService.Orders.cs:1265`) โดย **`Helpers/AbbreviatedTaxInvoiceRule` เป็นตัวตัดสิน
+  ตัวเดียว** (ใช้ร่วมกับเส้น PDF) + `Helpers/PosSlipHeader` ที่ถือกติกาเฉพาะของสลิป:
+  1. ยังไม่จด VAT (§77/1) → ไม่ออกเลข หัวสลิป "ใบเสร็จรับเงิน"
+  2. ยังไม่อนุมัติ ภ.พ.06 → ไม่ออก **เว้นแต่แอดมินแพลตฟอร์มปิดสวิตช์**
+     (`SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` — ตั้งต้น `true`)
+  3. บิลไม่มี VAT → ไม่ออก
+  4. **บิลผูกสาขาแต่สาขายังไม่มีรหัส 5 หลัก → ไม่ออก** (รอบ 183):
+     `PosSlipHeader.BranchSeriesCode` คืน `null` แทนการเดา `"00000"` ซึ่งแปลว่า
+     "สำนักงานใหญ่" ⇒ เดิมกระดาษของสาขาประกาศเท็จ **และ** เลขรันไปกินเล่ม
+     สำนักงานใหญ่ (สองเล่มไม่ gap-free ตาม §86/4) · บริษัทที่ไม่มีสาขาเลย
+     ยังได้ `00000` เหมือนเดิม
+- **Tax Invoice เต็มรูป** (deferred): `IssueTaxInvoiceAsync` → สร้าง Document ใน
   Status=Approved (กัน JE ซ้อน) + เรียก `EtaxInvoiceService`
+  - ด่านสิทธิ์ `[RequirePermission(PermissionKeys.DocumentRevenueApprove)]` —
+    คีย์เดียวกับเส้นเอกสาร เพราะปุ่มนี้คือการอนุมัติเอกสารรายได้
+  - ด่านกฎหมาย `Helpers/FullTaxInvoiceReplacement.Check` ตัวเดียวกับ
+    `DocumentService` (ไม่จด VAT · บิลไม่มี VAT · ผู้ซื้อไม่ครบ §86/4 · ออกไปแล้ว)
+  - **บรรทัดสร้างจาก `Helpers/PosTaxInvoiceLines` ตัวเดียว** (รอบ 183 · D8-1):
+    Σ บรรทัด (รวม VAT) ต้องเท่า **เงินที่ลูกค้าจ่ายสำหรับสินค้า/บริการ**
+    (`TotalAmount + RoundingAmount` = `NetAmount − TipAmount`) — ไม่ลงตัว =
+    `throw RD-86/4-POS-LINE-SUM` ไม่ออกใบ · ส่วนลดท้ายบิล/คูปองเป็นบรรทัด**ติดลบ
+    ที่แบ่ง VAT ติดลบไปด้วย** (§79 ฐานภาษีลดจริง — ไม่ใช่ VAT 0%) · บรรทัดปัดเศษ
+    ไม่มี VAT · Σ VAT รายบรรทัด = `order.VatAmount` เป๊ะ (เศษไปบรรทัดใหญ่สุด)
+    · **ทิปไม่อยู่บนใบกำกับ** (ถือแทนพนักงาน ไม่ใช่ค่าตอบแทนการขาย)
+    _เดิมสร้างจาก `item.TotalAmount` = ยอด**ก่อน**ส่วนลด ⇒ ใบกำกับ 1,000 ทั้งที่
+    ลูกค้าจ่าย 900 ⇒ ผู้ซื้อเคลมภาษีซื้อเกิน ผู้ขายรายงานภาษีขายไม่ตรง GL_
+  - `BranchId`/`IssuerBranchCode` คัดจากบิล (snapshot ตอนปิดบิล) · `IsTaxInvoiceByLaw`
+    ตัดสินด้วย `TaxInvoiceSeriesPolicy.CarriesTaxInvoiceRole` · อ้างใบย่อที่ลูกค้า
+    ถือไปแล้วผ่าน `FullTaxInvoiceReplacement.ReplacementNote` + `ReplacementReason`
 - **Refund/Void**: reverse JE + return stock
-  - **Refund คิดสัดส่วนหลังส่วนลดระดับบิล** (`RefundOrderAsync`,
-    `PosService.Orders.cs`): ยอดคืน = `Σ(item.TotalAmount × ratio) × discountFactor`
-    โดย `discountFactor = (Σ item.TotalAmount − (DiscountAmount + CouponDiscountAmount))
-    / Σ item.TotalAmount` — กันคืนเกินเมื่อบิลมีส่วนลด/คูปองระดับออเดอร์ (เช่น
-    สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 → คืนเต็มต้องได้ 900 ไม่ใช่ 1000).
-    ServiceCharge/Tip เป็นรายการเสริมบนบิล ไม่คืนตามการคืนสินค้า
+  - **Refund คิดสัดส่วนหลังส่วนลดระดับบิล** — สูตรอยู่ที่ **`Helpers/PosRefundMath`
+    ตัวเดียว** (`RefundOrderAsync` เรียก `Compute`): ยอดคืน =
+    `Σ(LineGross × ratio) × discountFactor` โดย
+    `discountFactor = (Σ LineGross − DiscountAmount) / Σ LineGross`
+    - ⚠️ **`DiscountAmount` ตัวเดียว ห้ามบวก `CouponDiscountAmount` ซ้ำ** —
+      `RecalculateOrder` รวมคูปองไว้ในค่านั้นแล้ว · สูตรเดิมบวกซ้ำ ⇒ **คืนเงิน
+      ลูกค้าต่ำกว่าจริง** (บิล 1,000 คูปอง 100 จ่าย 900 แต่คืนได้แค่ 800) — รอบ 183 D8-2
+    - ฐาน `Σ LineGross` นับเฉพาะบรรทัด `!IsDeleted` (`PosOrderItem` ไม่มี global
+      query filter ⇒ บรรทัดที่ถูกลบเคยไหลมาเป็นฐาน ⇒ คืนเกิน)
+    - ปัดทศนิยม **ครั้งเดียวที่ยอดรวม** · ServiceCharge/Tip เป็นรายการเสริมบนบิล
+      ไม่คืนตามการคืนสินค้า (พฤติกรรมเดิม คงไว้โดยตั้งใจ)
 - **Offline sync**: `SyncOfflineOrderAsync(ClientOrderId)` dedup
 - **Gap (ยัง TODO)**:
   - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
@@ -1789,6 +1880,38 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ผิดสองเดือนพร้อมกันโดยยอดรวมทั้งปียังตรง (X-7 · บทเรียนเดียวกับ X-1).
   ทุกวันยังผ่าน `ResolveReversalDateAsync` เพื่อ fallback เมื่องวดปลายทางปิด
 
+### 6.0c-bis การจับคู่ธนาคาร — ให้คะแนน 1 ตัว · ตัดสิน 1 ตัว (รอบ 183 · D4-1/D4-2)
+
+ก่อนรอบนี้สูตรให้คะแนนมี **5 สำเนาที่ให้อันดับต่างกัน** ⇒ อันดับที่ "คนเห็นบนจอ"
+กับที่ "เครื่องประทับให้" ไม่ใช่อันเดียวกัน และทุกเส้นใช้ `score > bestScore` /
+`FirstOrDefault` ⇒ **ใครมาก่อนชนะ** (รันสองครั้งได้คนละคำตอบ)
+
+- **`Helpers/BankMatchScorer`** = สูตรให้คะแนนตัวเดียว (60 ยอดตรง / 30 วันเดียวกัน /
+  +22 ชื่อผู้โอนมั่นใจ / +10 เลขอ้างอิง · ตัดที่ 100) — **ให้คะแนนอย่างเดียว ไม่ตัดสิน**
+- **`Helpers/BankMatchArbiter`** = ตัวตัดสินตัวเดียว → `Apply` / `Suggest` / `None`
+  · `ApplyMinScore = 80` · `SuggestMinScore = 60` · `ApplyMinMargin = 10`
+  · **เสมอกันที่หัวตาราง = `Suggest` เสมอ** (ห้ามประทับ) · จัดอันดับ deterministic
+  (`Score` → `HasIdentitySignal` → `Id`) เพื่อให้ลำดับแถวใน DB ไม่มีผล
+  · ข้อยกเว้นเดียว `BANK-MATCH-IDENTITY`: ที่ 1 มีหลักฐานระบุตัวตนที่ที่ 2 ไม่มี
+  = หลักฐานคนละชั้น (คะแนนถูกตัดที่ 100 ทำให้ระยะห่างที่วัดได้เล็กกว่าน้ำหนักจริง)
+  · `ScreenAiProposals` ทิ้ง id ที่ AI แต่งขึ้น + conf < 0.70 ก่อนถึงการตัดสิน
+  · `RankBySourceThenConfidence` — **เซิร์ฟเวอร์ชนะ AI เสมอ** แม้ conf ต่ำกว่า (G1)
+- ผู้ใช้: `BankService.AutoMatchAsync` (Payment + JE) · `BankService.MatchCandidates`
+  · `BankFeedService.TryAutoMatchAsync` · `OpenBankingService` · `BulkBankAiMatchService`
+- **`Matched` ต้องมี id ของคู่เสมอ** (ราก R1) — BankFeed เคยประทับ `Matched` เมื่อเจอ
+  *Document* ทั้งที่ตารางไม่มีคอลัมน์เก็บ document id ⇒ "เงินก้อนนี้มีที่มาที่ไปแล้ว"
+  โดยไม่มีอะไรให้กดดู · ตอนนี้ไม่มีคู่ที่บันทึกได้ = ปล่อย `Unmatched` + log
+  · migration คืนแถวเก่าที่ `Matched`/`Suggested` แบบไม่มีคู่ให้เป็น `Unmatched`
+- **`Helpers/BankReconciliationTolerance`** — client เคยส่ง `Tolerance` เท่าไรก็ได้
+  (ส่ง 1,000,000 แล้วกลุ่มที่ต่างกันเป็นแสนก็ "สมดุล") ⇒ ≤1 บ. ผ่าน · 1–20 บ.
+  ต้องมีเหตุผลใน `Notes` · >20 บ. **ปฏิเสธเสมอ** (ต้องลงเป็นรายการจริง)
+- **`Helpers/BankMatchAmountReconciler`** — แต่ละใบมี "ยอดเงินสดที่ผ่านธนาคาร"
+  **ค่าเดียว** (`BankLineAmount` ถ้ารู้ ไม่งั้น `Recorded − Withheld − Fee`) —
+  เดิมมีทั้ง net และ gross เป็น "สองโอกาสผ่าน" · ชนิดที่ระบบไม่รู้ทิศ = **ปฏิเสธ
+  พร้อมบอกชื่อใบ** ไม่ใช่บวกเข้าไปเงียบ ๆ
+- `UnmatchTransactionAsync` เขียน `BankMatchExclusion` ให้ทุก id ที่ถูกถอน
+  (ปิดลูปเรียนรู้ — ผู้ใช้ยกเลิกได้ที่ `BankController.ClearMatchExclusion`)
+
 ### 6.0a-ter เลขที่ JE ต้องนับ "ใบที่ Add ค้างยังไม่ save" ด้วย
 
 ตัวขอเลข JE มี 2 ตัว (`DocumentService.GetNextJournalEntryNumberAsync` /
@@ -2145,7 +2268,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
 | §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |
 | §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
-| WHT 50 ทวิ ≤ threshold 1,000 | `CheckWhtThresholdAsync` | ไม่หักถ้ารวมสัญญา < 1,000 |
+| WHT 50 ทวิ ≤ threshold 1,000 | `Helpers/WhtCumulativeScope.SumDistinct` (ขอบเขตด่าน = `Helpers/WhtGateScope`) | ไม่หักถ้ายอดสะสมทั้งสัญญา < 1,000 · `CheckWhtThresholdAsync` ถูกลบรอบ 183 (ด่านซ้อน) |
 | DTA override | WHT cert PDF | bilateral rate แทน ม.70 default |
 | OCR auto-fill ครบ (กฎเหล็ก #3) | `OcrService.CreateDocumentFromScanAsync` | ทุก §86/4 field ต้อง pre-filled ก่อนเปิดฟอร์ม |
 

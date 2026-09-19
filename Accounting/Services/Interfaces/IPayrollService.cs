@@ -29,6 +29,7 @@ public interface IPayrollService
 
     // Payroll Items (earnings/deductions types)
     Task<PayrollItemResponse> CreatePayrollItemAsync(Guid companyId, CreatePayrollItemRequest request);
+    Task<PayrollItemResponse> UpdatePayrollItemAsync(Guid companyId, Guid itemId, UpdatePayrollItemRequest request);
     Task<List<PayrollItemResponse>> GetPayrollItemsAsync(Guid companyId);
 
     // Payroll Runs

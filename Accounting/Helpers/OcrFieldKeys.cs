@@ -49,6 +49,14 @@ public static class OcrFieldKeys
     public const string DebitAccount = "DebitAccount";
     public const string PaymentTerms = "PaymentTerms";
 
+    /// <summary>ชนิดเอกสารที่จะ **สร้าง** จากสแกนใบนี้ (ไม่ใช่ชนิดกระดาษที่สแกนมา)
+    ///
+    /// <para>⚠️ ช่องนี้ถูกเขียนทับถึง 7 ชั้นในไปป์ไลน์เดียว (ตัวอนุมานบทบาท → AI/นักเรียน →
+    /// ประวัติผู้ขาย → คลังกลางข้ามผู้เช่า → เครดิตเทอม → ใบรับรองแทนใบเสร็จ → ใบมัดจำ)
+    /// แบบ "ใครมาหลังชนะ" ⇒ ตอบไม่ได้ว่าค่าที่ผู้ใช้เห็นมาจากไหน (ผลตรวจ 2026-09-18 · D3-4)
+    /// ทุกชั้นต้อง <c>Note()</c> ด้วยคีย์นี้เสมอ</para></summary>
+    public const string TargetDocumentType = "TargetDocumentType";
+
     /// <summary>ช่องที่ "ต้องมีค่า" ตาม §86/4 — ใช้เป็นชุดอ้างอิงของด่านลด
     /// confidence และของกฎ "OCR ต้องกรอกให้ครบ" (กฎเหล็ก #3 ข้อ 1)</summary>
     public static readonly string[] CriticalForTaxInvoice =

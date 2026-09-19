@@ -1049,7 +1049,9 @@ public class IntegrationService : IIntegrationService
                 return new InboundSyncResponse(true, reason, document.Id, null, null, null, document.DocumentNumber);
             }
             // over-payment cap: ยอดชำระต้องไม่เกินคงค้าง (กัน PaidAmount>Total, AR ติดลบ)
-            if (request.Amount > document.BalanceDue + 0.005m)
+            // — เกณฑ์เดียวกับเว็บ/นำเข้าไฟล์ ผ่าน `DocumentSettlementState` (D4-3)
+            if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(
+                    document.BalanceDue, request.Amount))
                 throw new InvalidOperationException(
                     $"ยอดชำระ ({request.Amount:N2}) เกินยอดคงค้าง ({document.BalanceDue:N2}) ของ {document.DocumentNumber} — " +
                     "ถ้าหักมัดจำ ให้ส่ง depositAppliedRef ตอนออกใบกำกับ (drives) ไม่ใช่ยิง payment แยก");
@@ -1093,18 +1095,21 @@ public class IntegrationService : IIntegrationService
             _db.Set<Payment>().Add(payment);
 
             // Update document
+            // ยอดค้าง/สถานะ: ตัวตัดสินตัวเดียวกับเว็บ (D4-3) — เดิมที่นี่ clamp
+            // ยอดติดลบเป็น 0 เงียบ ๆ ⇒ การรับเงินเกินหายไปโดยไม่มีใครเห็น
             document.PaidAmount += request.Amount;
-            document.BalanceDue = document.TotalAmount - document.PaidAmount;
-            if (document.BalanceDue <= 0)
+            var settle = Accounting.Helpers.DocumentSettlementState.Apply(
+                document.TotalAmount, document.PaidAmount, document.Status);
+            document.BalanceDue = settle.BalanceDue;
+            document.Status = settle.Status;
+            if (settle.Overpaid)
+                _logger.LogWarning(
+                    "รับชำระเกินยอดใบ {DocumentNumber} ({Company}) เกิน {Over:N2} บาท — ยอดค้างถูกปิดที่ 0",
+                    document.DocumentNumber, companyId, settle.OverpaidAmount);
+            if (settle.Status == DocumentStatus.Paid)
             {
-                document.BalanceDue = 0;
-                document.Status = DocumentStatus.Paid;
                 document.AgingDays = null;
                 document.AgingLastEvaluatedAt = DateTime.UtcNow;
-            }
-            else
-            {
-                document.Status = DocumentStatus.PartiallyPaid;
             }
 
             await _db.SaveChangesAsync();
@@ -1233,11 +1238,13 @@ public class IntegrationService : IIntegrationService
                     // (บทเรียน "ตัวเลขคู่ที่ต้องสอดคล้องกัน ต้องมีตัวตั้งตัวเดียว")
                     var apply = Math.Min(document.TotalAmount, Math.Max(0m, originalDoc.BalanceDue));
                     originalDoc.PaidAmount += apply;
-                    originalDoc.BalanceDue = Math.Max(0m, originalDoc.TotalAmount - originalDoc.PaidAmount);
-                    if (originalDoc.Status != DocumentStatus.Voided)
-                        originalDoc.Status = originalDoc.BalanceDue <= 0.01m
-                            ? DocumentStatus.Paid
-                            : DocumentStatus.PartiallyPaid;
+                    // D4-3: เกณฑ์ปัดเศษเดิมที่นี่คือ 0.01 (ต่างจาก 0.005 ของเว็บ)
+                    // ⇒ ใบที่เหลือ 1 สตางค์ถูกประทับ "ชำระครบ" ทั้งที่ยอดค้างยังโชว์
+                    // — ตอนนี้ใช้ตัวตัดสินตัวเดียว (สถานะ Voided ถูกกันไว้ในตัวมันเอง)
+                    var cnSettle = Accounting.Helpers.DocumentSettlementState.Apply(
+                        originalDoc.TotalAmount, originalDoc.PaidAmount, originalDoc.Status);
+                    originalDoc.BalanceDue = cnSettle.BalanceDue;
+                    originalDoc.Status = cnSettle.Status;
                     await _db.SaveChangesAsync();
                 }
             }

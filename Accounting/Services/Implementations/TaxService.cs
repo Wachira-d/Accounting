@@ -1037,7 +1037,9 @@ public partial class TaxService : ITaxService
                 .Select(l => l.DocumentId!.Value).ToListAsync()).ToHashSet();
             var filedPeriods = (await _db.TaxReports.AsNoTracking()
                 .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT
-                    && t.Status == TaxReportStatus.Filed)
+                    // งวดที่ "ประกาศว่ายื่นแล้ว" (Submitted) นับเป็นยื่นแล้วด้วย —
+                    // §82/3 ผูกกับการยื่นจริงของผู้เสียภาษี ไม่ใช่กับเลขรับ
+                    && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
                 .Select(t => new { t.Year, t.Month }).ToListAsync())
                 .Select(x => (x.Year, x.Month)).ToHashSet();
 
@@ -1348,7 +1350,7 @@ public partial class TaxService : ITaxService
                 && t.TaxType == TaxType.VAT
                 && t.Year == previousMonth.Year
                 && t.Month == previousMonth.Month
-                && t.Status == TaxReportStatus.Filed)
+                && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
             .FirstOrDefaultAsync();
 
         if (previousVatReport != null && previousVatReport.NetVat < 0)
@@ -1727,7 +1729,7 @@ public partial class TaxService : ITaxService
                     TaxPayerId = cert.PayeeContact?.TaxId,
                     TaxPayerName = cert.PayeeContact?.Name ?? "",
                     TransactionDate = new DateTime(cert.TaxYear, cert.TaxMonth, 1),
-                    Description = $"⚠️ หนังสือรับรองยังเป็นร่าง — {cert.CertificateNumber} (ออกใบก่อนยื่น)",
+                    Description = $"{Accounting.Helpers.WhtUnissuedCertGate.DraftCertMarker} — {cert.CertificateNumber} (ออกใบก่อนยื่น)",
                     IncomeAmount = cert.TotalIncomeAmount,
                     TaxRate = cert.TotalIncomeAmount > 0
                         ? Math.Round(cert.TotalTaxAmount / cert.TotalIncomeAmount * 100m, 2, MidpointRounding.AwayFromZero)
@@ -1785,7 +1787,7 @@ public partial class TaxService : ITaxService
                         TaxPayerId = doc.Contact?.TaxId,
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {line.Description} "
+                        Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {line.Description} "
                             + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
                         IncomeAmount = line.Amount,
                         TaxRate = whtRate,
@@ -1808,7 +1810,7 @@ public partial class TaxService : ITaxService
                     TaxPayerId = doc.Contact?.TaxId,
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                    Description = $"⚠️ ยังไม่ออกหนังสือรับรอง — {doc.DocumentNumber} "
+                    Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {doc.DocumentNumber} "
                         + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
                     IncomeAmount = docBase,
                     TaxRate = docBase > 0
@@ -2055,10 +2057,18 @@ public partial class TaxService : ITaxService
         // Add depreciation to total expenses
         totalExpenses += totalDepreciation;
 
-        // F11 — Entertainment expense cap §65 ทวิ (4) per ประมวลรัษฎากร:
-        // ค่ารับรองหักได้ไม่เกิน MIN(0.3% ของรายได้, 0.3% ของทุนชำระแล้ว)
-        // เพดานสูงสุด 10 ล้านบาท. ส่วนเกินถือเป็นรายจ่ายต้องห้าม (non-
-        // deductible) — เพิ่มกลับเข้า net profit เพื่อคำนวณ CIT.
+        // F11 — Entertainment expense cap §65 ตรี (4) + กฎกระทรวง ฉบับที่ 143:
+        // ค่ารับรองหักได้ไม่เกิน **MAX**(0.3% ของรายได้, 0.3% ของทุนชำระแล้ว)
+        // และไม่เกิน 10 ล้านบาท/รอบ — กฎหมายให้ใช้ฐานที่ **สูงกว่า** ของสองฐาน
+        // (บริษัทตั้งใหม่ที่ยังไม่มีรายได้จึงยังใช้ฐานทุนได้)
+        //
+        // ⚠️ คอมเมนต์เดิมตรงนี้เขียนว่า MIN ซึ่ง **ขัดกับโค้ดข้างล่างที่ทำ Max**
+        // และขัดกับ CLAUDE.md กฎเหล็ก #2 §L(4) — โค้ดถูก คอมเมนต์ผิด จึงแก้คอมเมนต์
+        // (หลักการ 10 ข้อ #10). ถ้าปล่อยไว้ คนถัดไปจะ "แก้โค้ดให้ตรงคอมเมนต์"
+        // แล้วทำให้ลูกค้าบวกกลับเกินจริง = เสียภาษีสูงกว่าที่กฎหมายกำหนด
+        //
+        // ส่วนเกินถือเป็นรายจ่ายต้องห้าม (non-deductible) — เพิ่มกลับเข้า
+        // net profit เพื่อคำนวณ CIT.
         // ตรวจหาบัญชีค่ารับรองโดย InputVatClaimable=false (seed มาเป็น
         // ค่ารับรอง) หรือ AccountName match "รับรอง".
         var entertainmentLines = expenseLines.Where(l => l.Account != null
@@ -2097,7 +2107,7 @@ public partial class TaxService : ITaxService
             .Where(t => t.CompanyId == companyId
                 && t.TaxType == TaxType.CorporateIncomeTax
                 && t.Year >= year - 5 && t.Year < year
-                && t.Status == TaxReportStatus.Filed)
+                && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
             .OrderBy(t => t.Year)
             .Select(t => new { t.Year, NetProfit = t.NetVat })
             .ToListAsync();
@@ -2138,6 +2148,9 @@ public partial class TaxService : ITaxService
         // `paidUpCapital` คำนวณไว้แล้วด้านบน (เพดานค่ารับรอง §65 ตรี(4)) ·
         // `totalRevenue` = รายได้ทั้งรอบบัญชีจริง (ไม่ใช่ประมาณการ)
         var isSme = Accounting.Helpers.CitRateTable.IsSme(paidUpCapital, totalRevenue);
+        // ★ Q10 (รอบ 182): "ไม่รู้ทุน" ไม่ใช่ SME — เหตุผลต้องเดินทางไปถึงจอ
+        // ไม่ใช่ตัดสินเงียบ (บริษัทที่ยังไม่กรอกทุนจะเห็นว่าทำไมถึงได้ 20%)
+        var smeReason = Accounting.Helpers.CitRateTable.SmeReason(paidUpCapital, totalRevenue);
         var taxableProfit = netProfitBeforeTax - lossCarryForwardUsed;
         var citAmount = CalculateThaiCit(taxableProfit, isSme);
         var netCitAmount = citAmount;
@@ -2201,14 +2214,24 @@ public partial class TaxService : ITaxService
             });
         }
 
-        // F11 — แสดง entertainment cap §65 ทวิ (4) ที่ apply
+        // อัตราที่ใช้ + เหตุผล — ต้องอยู่บนรายงานที่ผู้ใช้เปิดดู (Q10)
+        report.Lines.Add(new TaxReportLine
+        {
+            TaxReportId = report.Id,
+            LineOrder = lineOrder++,
+            Description = $"อัตราภาษี: {(isSme ? "ขั้นบันได SME" : "ทั่วไป 20%")} — {smeReason}",
+            IncomeAmount = 0,
+            TaxAmount = 0,
+        });
+
+        // F11 — แสดง entertainment cap §65 ตรี (4) ที่ apply
         if (entertainmentExpense > 0)
         {
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = $"ค่ารับรอง (เพดาน §65 ทวิ(4): {entertainmentCap:N2})",
+                Description = $"ค่ารับรอง (เพดาน §65 ตรี(4) + กฎกระทรวง 143: {entertainmentCap:N2})",
                 IncomeAmount = entertainmentExpense,
                 TaxAmount = 0
             });
@@ -2218,7 +2241,7 @@ public partial class TaxService : ITaxService
                 {
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
-                    Description = $"➕ บวกกลับ ค่ารับรองส่วนเกิน §65 ทวิ(4) — ไม่หักภาษีได้",
+                    Description = $"➕ บวกกลับ ค่ารับรองส่วนเกิน §65 ตรี(4) — ไม่หักภาษีได้",
                     IncomeAmount = entertainmentExcess,
                     TaxAmount = 0
                 });
@@ -2691,9 +2714,31 @@ public partial class TaxService : ITaxService
 
         if (report.Status == TaxReportStatus.Filed)
             throw new InvalidOperationException("รายงานภาษีนี้ถูกยื่นแล้ว");
+        if (report.Status == TaxReportStatus.Submitted)
+            throw new InvalidOperationException(
+                "รายงานนี้ถูกบันทึกว่ายื่นแล้ว (รอเลขรับ) — ถ้าได้เลขรับจากกรมสรรพากรแล้ว "
+                + "ให้กด \"บันทึกเลขรับ\" เพื่อยืนยันและล็อกงวด · ถ้ายังต้องแก้ ให้กด \"ปลดล็อก/กลับเป็นร่าง\" ก่อน");
 
         if (report.TaxType != TaxType.CorporateIncomeTax && !report.Lines.Any())
             throw new InvalidOperationException("รายงานภาษีต้องมีรายการอย่างน้อย 1 รายการ");
+
+        // ═══ ด่านเดียวกับ StatutoryRemittanceService.RemitAsync (WHT-CERT-UNISSUED) ═══
+        // เดิมด่านนี้มีเฉพาะตอน "จ่ายเงินนำส่ง" ไม่มีตอน "ยื่นแบบ" ⇒ ยื่นแบบที่
+        // ประกาศยอดไม่ครบได้ แล้วไปชนด่านตอนจ่ายทีหลัง (ด่านไม่สมมาตร · D2-B1a).
+        // แถวเตือนถูกสร้างโดย GenerateWhtReport ด้วย IsExcluded=true + marker ของ
+        // Helpers/WhtUnissuedCertGate ตัวเดียวกัน
+        if (report.TaxType is TaxType.WithholdingTax1 or TaxType.WithholdingTax3
+            or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
+        {
+            var unissued = Accounting.Helpers.WhtUnissuedCertGate.Evaluate(
+                report.Lines.Select(l => (l.Description, l.IsExcluded, l.TaxAmount)));
+            if (unissued.Any)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.WhtUnissuedCertGate.BlockMessage(
+                        Accounting.Helpers.WhtUnissuedCertGate.FormLabel(report.TaxType),
+                        report.Month, report.Year, unissued),
+                    Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
+        }
 
         // Revalidate ก่อนยื่น: บรรทัด active ต้องไม่อ้างเอกสารที่ถูกยกเลิก/ลบ
         // ไปแล้วระหว่างที่รายงานเป็น Draft — ยื่นทั้งอย่างนั้น = เคลม/นำส่งจาก
@@ -2717,12 +2762,23 @@ public partial class TaxService : ITaxService
             }
         }
 
-        report.Status = TaxReportStatus.Filed;
+        // ═══ "ประกาศว่ายื่น" ≠ "ระบบรู้ว่ายื่นสำเร็จ" (D2-B1a · ราก R1) ═══
+        // เดิมบรรทัดนี้ประทับ Filed + FilingLockedAt จาก**การกดปุ่ม** ⇒ ล็อกเอกสาร
+        // /JE ทั้งงวดด้วยเหตุการณ์ที่ระบบไม่รู้ว่าเกิดจริง. ตอนนี้ตัวตัดสินตัวเดียว
+        // (Helpers/TaxFilingLockPolicy) แยกสองชั้น:
+        //   ไม่มีเลขรับ → Submitted (บันทึกตามคำประกาศ) · **ไม่ล็อกงวด**
+        //   มีเลขรับ   → Filed + ล็อกงวด (ของจริงยืนยันแล้ว)
+        // ผู้ที่ยื่นกระดาษแล้วยังไม่มีเลขรับ: ประกาศไว้ก่อน แล้วกด "บันทึกเลขรับ"
+        // (POST {reportId}/rd-ack) เมื่อได้ใบรับ ⇒ ระบบอัปเกรดเป็น Filed + ล็อกให้เอง
+        var judgement = Accounting.Helpers.TaxFilingLockPolicy.Judge(report.RdAckNumber);
+        report.Status = judgement.Status;
         report.FiledDate = DateTime.UtcNow;
-        // Mark the filing as locked simultaneously — see Task 4 of the
-        // ERP upgrade. Once Filed, every linked document/JE is read-only
-        // until an explicit UnlockTaxFilingAsync (admin operation).
-        report.FilingLockedAt = DateTime.UtcNow;
+        report.RdSubmissionStatus = judgement.Evidence
+            == Accounting.Helpers.TaxFilingEvidence.ConfirmedByFilingNumber
+            ? Accounting.Helpers.TaxFilingLockPolicy.SubmissionAcknowledged
+            : Accounting.Helpers.TaxFilingLockPolicy.SubmissionDeclared;
+        if (judgement.LockPeriod)
+            report.FilingLockedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         // เครดิตภาษีซื้อยกไป: ถ้ารายงานงวดถัดไปถูกสร้างไว้ "ก่อน" งวดนี้ยื่น มัน
@@ -2736,7 +2792,9 @@ public partial class TaxService : ITaxService
                 var nextReport = await _db.TaxReports.Include(r => r.Lines)
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
                         && r.Year == nextPeriod.Year && r.Month == nextPeriod.Month
-                        && r.Status != TaxReportStatus.Filed);
+                        // เฉพาะงวดถัดไปที่ยัง "ร่าง" จริง ๆ — งวดที่ถูกประกาศว่า
+                        // ยื่นแล้ว (Submitted) ห้ามเติมบรรทัดเข้าไปทีหลัง
+                        && r.Status == TaxReportStatus.Draft);
                 if (nextReport != null
                     && !nextReport.Lines.Any(l => l.IncomeTypeCode == "VAT_CREDIT_CF"))
                 {
@@ -2769,8 +2827,10 @@ public partial class TaxService : ITaxService
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
 
-        if (report.Status == TaxReportStatus.Filed)
-            throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
+        if (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status))
+            throw new InvalidOperationException(
+                "ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่น/บันทึกว่ายื่นแล้ว "
+                + "(ต้องกด \"ปลดล็อก/กลับเป็นร่าง\" พร้อมระบุเหตุผลก่อน)");
 
         if (request.Notes != null)
             report.Notes = request.Notes;
@@ -3184,8 +3244,8 @@ public partial class TaxService : ITaxService
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
         if (report.TaxType != TaxType.VAT)
             throw new InvalidOperationException("ดึงเอกสารได้เฉพาะรายงาน ภพ.30");
-        if (report.Status == TaxReportStatus.Filed)
-            throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่นแล้ว");
+        if (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status))
+            throw new InvalidOperationException("ไม่สามารถแก้ไขได้ — รายงานนี้ถูกยื่น/บันทึกว่ายื่นแล้ว");
 
         // AsNoTracking — เมธอดนี้ "อ่าน" เอกสารอย่างเดียว (ไม่แก้) การ track ไว้
         // ทำให้ Document/DocumentLine/Contact ที่ hydrate เข้ามาถูกดึงเข้า
@@ -3420,8 +3480,8 @@ public partial class TaxService : ITaxService
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
 
-        if (existing.Status == TaxReportStatus.Filed)
-            throw new InvalidOperationException("ไม่สามารถสร้างใหม่ได้ — รายงานนี้ถูกยื่นแล้ว");
+        if (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(existing.Status))
+            throw new InvalidOperationException("ไม่สามารถสร้างใหม่ได้ — รายงานนี้ถูกยื่น/บันทึกว่ายื่นแล้ว");
 
         var request = new CreateTaxReportRequest(existing.TaxType, existing.Year, existing.Month);
 
@@ -3565,8 +3625,8 @@ public partial class TaxService : ITaxService
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
 
-        if (existing.Status == TaxReportStatus.Filed)
-            throw new InvalidOperationException("ไม่สามารถลบได้ — รายงานนี้ถูกยื่นแล้ว");
+        if (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(existing.Status))
+            throw new InvalidOperationException("ไม่สามารถลบได้ — รายงานนี้ถูกยื่น/บันทึกว่ายื่นแล้ว");
 
         _db.TaxReportLines.RemoveRange(existing.Lines);
         _db.TaxReports.Remove(existing);
@@ -3598,7 +3658,8 @@ public partial class TaxService : ITaxService
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId
                         && r.TaxType == taxType && r.Year == year && r.Month == month);
 
-                if (existing is { Status: TaxReportStatus.Filed })
+                if (existing != null
+                    && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(existing.Status))
                     continue;
 
                 if (existing != null)
@@ -3628,7 +3689,25 @@ public partial class TaxService : ITaxService
         return refreshed;
     }
 
-    private static TaxReportResponse MapToResponse(TaxReport r) => new(
+    private static TaxReportResponse MapToResponse(TaxReport r)
+    {
+        // ป้าย "ยื่นแล้ว/รอเลขรับ" ตัดสินที่เซิร์ฟเวอร์ตัวเดียว — ห้ามให้ JS
+        // เดาจาก status เอง (หลักการ 10 ข้อ #5 · D2-B1a)
+        var filing = Accounting.Helpers.TaxFilingLockPolicy.Describe(r.Status, r.RdAckNumber);
+        return MapToResponseCore(r) with
+        {
+            FilingNumber = r.RdAckNumber,
+            FilingAcknowledgedAt = r.RdAcknowledgedAt,
+            FilingEvidence = filing.Evidence.ToString(),
+            FilingLabel = filing.Label,
+            FilingDetail = filing.Detail,
+            FilingNextStep = filing.NextStep,
+            FilingPeriodLocked = r.FilingLockedAt != null,
+            NeedsFilingNumber = filing.NeedsFilingNumber,
+        };
+    }
+
+    private static TaxReportResponse MapToResponseCore(TaxReport r) => new(
         r.Id, r.TaxType, r.Year, r.Month, r.Status, r.FiledDate,
         r.OutputVat, r.InputVat, r.NetVat, r.TotalIncome, r.TotalTaxWithheld,
         r.Lines.OrderBy(l => l.LineOrder).Select(l => new TaxReportLineResponse(

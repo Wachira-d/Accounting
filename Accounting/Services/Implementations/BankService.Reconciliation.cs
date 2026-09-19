@@ -139,7 +139,13 @@ public partial class BankService
         // we block it outright — the operator adds a fee / difference line (or
         // fixes the selection) until both sides match.
         var diff = Math.Abs(totalBank - totalMatched);
-        var tolerance = request.Tolerance > 0 ? request.Tolerance : 0.01m;
+        // เพดานความคลาดเคลื่อน (`DECISION_AUDIT_2026-09-18.md` §3 D4-4) — เดิม
+        // `request.Tolerance > 0 ? request.Tolerance : 0.01m` รับค่าจาก client
+        // ดิบ ๆ ⇒ ส่ง 1,000,000 มาแล้วกลุ่มที่สองฝั่งต่างกันเป็นแสนถูกประทับว่า
+        // "สมดุล" (`IsBalanced = true`) = เงินหายโดยระบบรับรองว่าครบ
+        var tol = Accounting.Helpers.BankReconciliationTolerance.Resolve(request.Tolerance, request.Notes);
+        if (!tol.Ok) throw new InvalidOperationException(tol.Error);
+        var tolerance = tol.Tolerance;
         var balanced = diff <= tolerance;
         if (!balanced)
             throw new InvalidOperationException(

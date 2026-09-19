@@ -172,22 +172,24 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     {
         try
         {
-            // "Acknowledge" = ให้ผู้ใช้รับทราบเอง — เป็น **ค่าปลอดภัย** ไม่ใช่
-            // คำแนะนำที่คิดมาแล้ว จึงต้องติดความมั่นใจต่ำให้ตรงความจริง
-            // (0.50 เดิมคือตัวเลขที่แต่งขึ้นให้ดูเหมือนมีเหตุผล — CLAUDE.md
-            // "ค่า default ที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้ อันตรายกว่าการไม่ตอบ")
-            const decimal acknowledgeConfidence = 0.20m;
+            // ⚠️ **ห้ามส่ง "Acknowledge" เป็นคำตอบของนักเรียน** (ผลตรวจ D1-11):
+            // ตัวเรียกนี้ไม่มีนักเรียนอยู่ในมือ — `ApprovalWarningDistillationModel`
+            // เป็นคนตอบผ่าน orchestrator เอง. การยัด localFix="Acknowledge" ลงไป
+            // ทำให้แถว feedback บันทึก `LocalModelAnswer="Acknowledge"` ทุกครั้ง
+            // (คำตอบที่ไม่มีใครคิด) แล้วงานกลางคืนเอาไปนับเป็นหลักฐานว่านักเรียน
+            // "เคยตอบแบบนี้" ⇒ คลังเอียงไปทาง "ปล่อยผ่าน" ตั้งแต่ยังไม่มีข้อมูลจริง
             var req = ApprovalWarningFixPrompt.Build(
                 companyId, documentId, warningText,
                 documentSnapshot, vendorHistory,
-                localFix: "Acknowledge", localConfidence: acknowledgeConfidence);
+                localFix: null, localConfidence: null);
             var resp = await _orchestrator.AskAsync(req, ct);
             return Convert(resp);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Approval warning fix augmenter failed");
-            return Fallback(localAnswer: "Acknowledge", confidence: 0.20m);
+            // ไม่มีใครตอบ = **ไม่มีคำตอบ** (null) ไม่ใช่ "Acknowledge" ที่แต่งขึ้น
+            return Fallback(localAnswer: null, confidence: null);
         }
     }
 
@@ -710,6 +712,14 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             for (int i = 0; i < parsed.Hints.Count; i++)
             {
                 var hint = parsed.Hints[i];
+                // คำเตือนที่ไม่มีใครตอบ: ไม่สร้างแถว feedback ให้เลย (D1-11) —
+                // แถวที่ไม่มีคำตอบของโมเดลแต่ผู้ใช้กด "รับทราบ" จะกลายเป็นหลักฐาน
+                // ว่า "โมเดลแนะนำให้ปล่อยผ่านแล้วผู้ใช้เห็นด้วย" ซึ่งไม่เคยเกิดขึ้น
+                if (string.IsNullOrWhiteSpace(hint.Answer))
+                {
+                    enriched.Add(hint with { FeedbackId = null });
+                    continue;
+                }
                 var perWarnJson = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     warning = warnings[i],
@@ -732,8 +742,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Bulk approval warning augmenter failed");
+            // ไม่มีคำตอบ ≠ "Acknowledge" — ดูเหตุผลใน Helpers/AiHintAnswer (D1-11)
             return new BulkApprovalWarningFixResult(
-                warnings.Select(_ => Fallback("Acknowledge", 0.50m)).ToList(),
+                warnings.Select(_ => Fallback(null, null)).ToList(),
                 null,
                 new[] { $"Bulk exception: {ex.Message}" },
                 UsedAi: false);
@@ -774,8 +785,10 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                         var actions = new List<string>();
                         if (el.TryGetProperty("suggestedActions", out var sEl) && sEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var a in sEl.EnumerateArray()) if (a.GetString() is { } s) actions.Add(s);
+                        // AI ตอบมาแต่ไม่มีช่อง "primary" = ตอบไม่ครบ ⇒ ถือว่าไม่มีคำตอบ
+                        // สำหรับคำเตือนข้อนั้น (เดิมแปลงเป็น "Acknowledge" เงียบ ๆ)
                         byIdx[idx] = new DocumentAiSuggestion(
-                            Answer: primary ?? "Acknowledge", Confidence: conf,
+                            Answer: primary, Confidence: primary != null ? conf : (decimal?)null,
                             Alternatives: Array.Empty<string>(),
                             Risks: Array.Empty<string>(),
                             ComplianceFlags: Array.Empty<string>(),
@@ -793,7 +806,8 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         }
         var hints = new List<DocumentAiSuggestion>(warnings.Count);
         for (int i = 0; i < warnings.Count; i++)
-            hints.Add(byIdx.TryGetValue(i, out var h) ? h : Fallback("Acknowledge", 0.50m));
+            // คำเตือนที่ AI ไม่ได้ตอบถึง = ไม่มีคำตอบ (ห้ามเติมคำแนะนำแทนมัน)
+            hints.Add(byIdx.TryGetValue(i, out var h) ? h : Fallback(null, null));
         return new BulkApprovalWarningFixResult(hints, rootCause, parseWarnings, resp.UsedAi);
     }
 

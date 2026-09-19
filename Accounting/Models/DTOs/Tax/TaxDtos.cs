@@ -27,7 +27,25 @@ public record TaxReportResponse(
     string? CompanyBranchCode = null,
     /// <summary>ภาษีเงินได้นิติบุคคล (ภ.ง.ด.50/51) — null สำหรับรายงานชนิดอื่น.
     /// แยกจาก TotalTaxWithheld ที่เป็นยอดหัก ณ ที่จ่าย</summary>
-    decimal? CitAmount = null);
+    decimal? CitAmount = null,
+    // ── หลักฐานการยื่น (D2-B1a) — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว ──
+    /// <summary>เลขรับ/เลขอ้างอิงจากกรมสรรพากร (null = ยังไม่มี)</summary>
+    string? FilingNumber = null,
+    /// <summary>วันที่กรมสรรพากรรับแบบ (จากใบรับ/หน้าจอ e-Filing)</summary>
+    DateTime? FilingAcknowledgedAt = null,
+    /// <summary>ระดับหลักฐาน — NotFiled / DeclaredByUser / ConfirmedByFilingNumber</summary>
+    string? FilingEvidence = null,
+    /// <summary>ป้ายสั้นบนจอ ("ร่าง" / "บันทึกว่ายื่นแล้ว (รอเลขรับ)" / "ยื่นแล้ว")</summary>
+    string? FilingLabel = null,
+    /// <summary>ประโยคอธิบายสิ่งที่ระบบรู้จริง</summary>
+    string? FilingDetail = null,
+    /// <summary>ทางไปต่อของผู้ใช้ (null = ไม่มีอะไรต้องทำ)</summary>
+    string? FilingNextStep = null,
+    /// <summary>งวดนี้ถูกล็อก (เอกสาร/JE แก้ไม่ได้) หรือไม่</summary>
+    bool FilingPeriodLocked = false,
+    /// <summary>ยังค้างเลขรับที่ต้องตามเก็บ — รวมแถวเก่าที่ประทับ Filed
+    /// ไว้ก่อนรอบนี้โดยไม่มีเลขรับ</summary>
+    bool NeedsFilingNumber = false);
 
 public record UpdateTaxReportRequest(
     string? Notes,

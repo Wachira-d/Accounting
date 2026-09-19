@@ -409,6 +409,13 @@ public partial class BankService
         return BacktrackGeneric(items, idx + 1, target, tolerance, result, current);
     }
 
+    /// <summary>
+    /// ให้คะแนนผู้สมัคร 1 ราย — **ตัวคำนวณจริงย้ายไป
+    /// <see cref="Accounting.Helpers.BankMatchScorer"/> แล้ว** (OWNER file ตัวเดียว
+    /// ของสูตรให้คะแนนทั้งระบบ) เพราะสูตรนี้เคยมีสำเนา 5 ชุดที่ให้อันดับต่างกัน
+    /// (`DECISION_AUDIT_2026-09-18.md` §3 D4-1 · `DECISION_DOCTRINE.md` §4.2 GAP-1)
+    /// เมธอดนี้เหลือไว้เป็นตัวแปลงพารามิเตอร์ให้ call site เดิมไม่ต้องแก้
+    /// </summary>
     private static (int score, string reason) ScoreCandidate(
         decimal candidateAmount, decimal bankAmount,
         DateTime candidateDate, DateTime bankDate,
@@ -419,71 +426,13 @@ public partial class BankService
         // Description ถ้าไม่ส่งเข้ามาจะเสียสัญญาณชื่อไปทั้งดุ้น
         string bankPayee = "")
     {
-        int score = 0;
-        var reasons = new List<string>();
-
-        // === Amount (max 60) ===
-        var amountDiff = Math.Abs(candidateAmount - bankAmount);
-        if (bankAmount > 0)
-        {
-            var pctDiff = amountDiff / bankAmount;
-            if (amountDiff < 0.005m) { score += 60; reasons.Add("ยอดตรงเป๊ะ"); }
-            else if (pctDiff <= 0.005m) { score += 50; reasons.Add("ยอดต่างน้อยมาก"); }
-            else if (pctDiff <= 0.01m) { score += 40; reasons.Add("ยอดต่าง ≤1%"); }
-            else if (pctDiff <= 0.02m) { score += 25; reasons.Add("ยอดต่าง ≤2%"); }
-        }
-
-        // === Date proximity (max 30) ===
-        var dateDiff = Math.Abs((candidateDate - bankDate).TotalDays);
-        if (dateDiff == 0) { score += 30; reasons.Add("วันเดียวกัน"); }
-        else if (dateDiff <= 1) { score += 25; reasons.Add("ห่างกัน 1 วัน"); }
-        else if (dateDiff <= 3) { score += 20; reasons.Add("ห่างกัน ≤3 วัน"); }
-        else if (dateDiff <= 7) { score += 15; reasons.Add("ห่างกัน ≤7 วัน"); }
-        else if (dateDiff <= 14) { score += 8; }
-        else if (dateDiff <= 30) { score += 3; }
-
-        // === เลขอ้างอิง / เลขเอกสาร (max 10) ===
-        // หลักฐานแบบ "ตรงตัวอักษร" — เจอเมื่อไรแทบไม่มีทางผิด แต่เจอไม่บ่อย
-        // เพราะแบงก์ไทยไม่ค่อยส่งเลขเอกสารมาใน statement
-        bool refMatch = false;
-        var allCandidateText = ($"{candidateRef} {candidateNotes} {candidateDocNumber} {candidateName}").ToLowerInvariant();
-
-        if (!string.IsNullOrWhiteSpace(candidateRef) && !string.IsNullOrWhiteSpace(bankRefLower)
-            && allCandidateText.Contains(bankRefLower)) refMatch = true;
-
-        if (!string.IsNullOrWhiteSpace(candidateDocNumber)
-            && bankDescLower.Contains(candidateDocNumber.ToLowerInvariant())) refMatch = true;
-
-        if (refMatch) { score += 10; reasons.Add("เลขอ้างอิงตรงกัน"); }
-
-        // === ชื่อผู้โอน (max 22) ===
-        // เดิมเป็น bool จาก substring ธรรมดา — พังทุกครั้งที่ statement เป็น
-        // อังกฤษแต่ contact เก็บเป็นไทย (คนละ code point ไม่มีทาง Contains กันได้)
-        // หรือแบงก์ตัดชื่อกลางคำ. ตอนนี้ใช้ตัวเทียบข้ามภาษา/ทนการตัดคำ
-        // (CounterpartyNameMatcher) แล้วให้คะแนนตามระดับความมั่นใจ ไม่ใช่ 0/1
-        //
-        // ให้น้ำหนักสูงกว่าเลขอ้างอิงเพราะ **มีข้อมูลให้ใช้จริงเกือบทุกบรรทัด**
-        // (แบงก์ส่งชื่อผู้โอนมาเสมอ) — เป็นสัญญาณเดียวที่แยกใบที่ยอด+วันที่
-        // เท่ากันเป๊ะออกจากกันได้
-        if (!string.IsNullOrWhiteSpace(candidateName))
-        {
-            var nm = Matching.CounterpartyNameMatcher.Match(
-                $"{bankDescLower} {bankPayee}", candidateName);
-            if (nm.Score >= Matching.CounterpartyNameMatcher.ConfidentThreshold)
-            {
-                score += 22;
-                reasons.Add("ชื่อผู้โอนตรงกัน" + (nm.CrossScript ? " (ข้ามภาษา)" : ""));
-            }
-            else if (nm.Score >= Matching.CounterpartyNameMatcher.MinimumUsefulThreshold)
-            {
-                // 0.45–0.79 → 8–17 คะแนน ไล่ตามความมั่นใจ ไม่กระโดด
-                var partial = (int)Math.Round(8 + 9 * (nm.Score - 0.45) / 0.35);
-                score += Math.Clamp(partial, 8, 17);
-                reasons.Add($"ชื่อผู้โอนใกล้เคียง ({nm.Reason})");
-            }
-        }
-
-        return (Math.Min(score, 100), reasons.Count > 0 ? string.Join(", ", reasons) : "");
+        var r = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
+            CandidateAmount: candidateAmount, BankAmount: bankAmount,
+            CandidateDate: candidateDate, BankDate: bankDate,
+            CandidateRef: candidateRef, CandidateNotes: candidateNotes,
+            CandidateDocNumber: candidateDocNumber, CandidateName: candidateName,
+            BankDescription: bankDescLower, BankReference: bankRefLower, BankPayee: bankPayee));
+        return (r.Score, r.Reason);
     }
 
     /// <summary>

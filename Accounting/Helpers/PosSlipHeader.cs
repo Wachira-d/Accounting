@@ -38,14 +38,24 @@ public static class PosSlipHeader
     /// <para><paramref name="requirePhoR06"/> มาจาก
     /// <c>SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice</c> (แอดมินแพลตฟอร์มตั้ง) —
     /// <b>ไม่มีค่าตั้งต้นในลายเซ็นโดยตั้งใจ</b>: ผู้เรียกใหม่ต้องรู้ตัวว่ากำลังตัดสินเรื่อง
-    /// สิทธิ์ตามกฎหมาย ไม่ใช่เผลอรับค่า default ไปเงียบ ๆ</para></summary>
+    /// สิทธิ์ตามกฎหมาย ไม่ใช่เผลอรับค่า default ไปเงียบ ๆ</para>
+    ///
+    /// <para><paramref name="billBelongsToBranch"/> + <paramref name="issuerTaxBranchCode"/>
+    /// ตอบข้อ §86/4(2): บิลที่ผูกสาขาไว้ต้องรู้รหัสสาขาก่อนจึงจะออกใบกำกับอย่างย่อได้
+    /// — ดู <see cref="BranchSeriesCode"/></para></summary>
+    /// <param name="billBelongsToBranch">บิลนี้ผูกกับ <c>Branch</c> ไหม
+    /// (<c>PosOrder.BranchId != null</c>) — บริษัทที่ไม่มีสาขาเลยคือสำนักงานใหญ่โดยนิยาม</param>
+    /// <param name="issuerTaxBranchCode">รหัสสาขา 5 หลักที่ตรึงบนบิล
+    /// (<c>PosOrder.IssuerBranchCode</c>) — ว่าง/ผิดรูป = ยังไม่รู้</param>
     public static Result Resolve(
         bool isVatRegistered,
         bool isRetailApproved,
         DateTime? phoR06ApprovedDate,
         decimal vatAmountOnBill,
         DateTime issueDateUtc,
-        bool requirePhoR06)
+        bool requirePhoR06,
+        bool billBelongsToBranch,
+        string? issuerTaxBranchCode)
     {
         var eligibility = AbbreviatedTaxInvoiceRule.Judge(
             isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06);
@@ -57,7 +67,31 @@ public static class PosSlipHeader
         if (vatAmountOnBill <= 0m)
             return new(Receipt, false, AbbreviatedInvoiceBlockReason.NoVatOnBill);
 
+        // §86/4(2) — ใบต้องบอกว่าออกจากสำนักงานใหญ่หรือสาขาไหน. บิลของสาขาที่ยังไม่มี
+        // รหัส = ยังตอบคำถามนั้นไม่ได้ ⇒ พิมพ์ "ใบเสร็จรับเงิน" ไปก่อน ห้ามเดา 00000
+        if (BranchSeriesCode(billBelongsToBranch, issuerTaxBranchCode) == null)
+            return new(Receipt, false, AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing);
+
         return new(AbbreviatedTaxInvoice, true, AbbreviatedInvoiceBlockReason.None);
+    }
+
+    /// <summary>รหัสสาขา 5 หลักที่ใช้เป็น<b>ส่วนหนึ่งของเลขรัน</b>ใบกำกับอย่างย่อ —
+    /// <c>null</c> = ยังไม่รู้ ⇒ <b>ห้ามออกเลข</b>
+    ///
+    /// <para>═══ ทำไม <c>00000</c> ถึงไม่ใช่ค่าสำรองที่ปลอดภัย ═══ มันไม่ใช่ "ไม่ระบุ"
+    /// แต่แปลว่า <b>"สำนักงานใหญ่"</b> (ประกาศอธิบดีฯ 199) · บิลของสาขาที่ตกมาใช้ค่านี้
+    /// จะ (ก) พิมพ์ข้อความเท็จบนกระดาษ และ (ข) กินเลขรันในเล่มของสำนักงานใหญ่ ทำให้
+    /// เล่มทั้งสองเล่มไม่ gap-free ตาม §86/4 — ความเสียหายแบบที่ <b>มองไม่เห็นและ
+    /// แก้ย้อนหลังไม่ได้</b> จึงต้องล้มตั้งแต่ก่อนออกเลข (DECISION_DOCTRINE §1 G5)</para>
+    ///
+    /// <para>บริษัทที่<b>ไม่มีสาขา</b> (<paramref name="billBelongsToBranch"/> = false)
+    /// คือสำนักงานใหญ่โดยนิยาม ⇒ <c>00000</c> ถูกต้องและเป็นพฤติกรรมเดิม</para></summary>
+    public static string? BranchSeriesCode(bool billBelongsToBranch, string? taxBranchCode)
+    {
+        var code = taxBranchCode?.Trim();
+        if (!string.IsNullOrEmpty(code) && code.Length == 5 && code.All(char.IsDigit))
+            return code;
+        return billBelongsToBranch ? null : "00000";
     }
 
     /// <summary>ข้อความรหัสสาขาบนสลิป (§86/4 · ประกาศอธิบดีฯ ฉบับที่ 199)

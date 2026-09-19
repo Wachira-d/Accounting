@@ -231,17 +231,22 @@ public partial class PosService
             throw new InvalidOperationException("กรุณาเลือกรายการที่จะคืนเงิน");
 
         // ลูกค้าจ่ายจริงตามยอดหลังหักส่วนลด/คูปองระดับบิล ไม่ใช่ยอดรวมรายบรรทัด
-        // ดังนั้นต้องปรับสัดส่วนคืนเงินด้วย discountFactor มิฉะนั้นจะคืนเกิน
+        // ดังนั้นต้องปรับสัดส่วนคืนเงินด้วย PosRefundMath.DiscountFactor มิฉะนั้นจะคืนเกิน
         // (เช่น สินค้า 1000 ลดทั้งบิล 10% ลูกค้าจ่าย 900 แต่ถ้าคืนเต็ม 1000 = คืนเกิน 100)
         // ค่าบริการ (ServiceCharge) และทิป (Tip) เป็นรายการเพิ่มบนบิล ไม่คืนตามการคืนสินค้า
-        var lineGrossTotal = order.Items.Sum(i => i.TotalAmount);
-        var orderLevelDiscount = order.DiscountAmount + order.CouponDiscountAmount;
-        var discountFactor = lineGrossTotal > 0
-            ? Math.Max(0m, (lineGrossTotal - orderLevelDiscount) / lineGrossTotal)
-            : 1m;
+        //
+        // ★ D8-2 — ฐานของสัดส่วนต้องตรงกับฐานที่ RecalculateOrder ใช้คิดยอดที่เก็บจริง:
+        //   • ส่วนลดระดับบิลคือ `DiscountAmount` **ตัวเดียว** (รวมคูปองไว้แล้วที่ :1745)
+        //     เดิมบวก `CouponDiscountAmount` ซ้ำ ⇒ หักคูปองสองครั้ง ⇒ **คืนเงินลูกค้าต่ำกว่าจริง**
+        //   • ยอดป้ายต้องนับเฉพาะบรรทัดที่ยังอยู่ (`!IsDeleted`) เหมือน RecalculateOrder —
+        //     PosOrderItem ไม่มี global query filter ⇒ บรรทัดที่ถูกลบหลังคีย์ก็ไหลมาด้วย
+        //     ⇒ ฐานใหญ่เกินจริง ⇒ สัดส่วนสูงเกิน ⇒ คืนเกิน
+        // สูตรอยู่ที่ Helpers/PosRefundMath ตัวเดียว (เทสต์: PosRefundMathTests)
+        var lineGrossTotal = order.Items.Where(i => !i.IsDeleted).Sum(i => i.TotalAmount);
 
-        // Validate + compute the refund (proportional to each line).
-        decimal refundGross = 0, refundVat = 0, refundCogs = 0;
+        // Validate + collect the refund lines (proportional to each line).
+        decimal refundCogs = 0;
+        var refundLines = new List<Accounting.Helpers.PosRefundLine>();
         var toRestore = new List<(PosOrderItem Item, decimal Qty)>();
         foreach (var line in request.Lines)
         {
@@ -253,17 +258,21 @@ public partial class PosService
                 throw new InvalidOperationException(
                     $"รายการ '{item.ItemName}' คืนได้ไม่เกิน {remaining:0.##} (ขอคืน {line.Quantity:0.##})");
 
-            var ratio = item.Quantity > 0 ? line.Quantity / item.Quantity : 0m;
-            refundGross += item.TotalAmount * ratio * discountFactor;
-            refundVat += item.VatAmount * ratio * discountFactor;
+            refundLines.Add(new Accounting.Helpers.PosRefundLine(
+                LineGross: item.TotalAmount,
+                LineVat: item.VatAmount,
+                LineQuantity: item.Quantity,
+                RefundQuantity: line.Quantity));
             toRestore.Add((item, line.Quantity));
         }
         if (toRestore.Count == 0)
             throw new InvalidOperationException("ไม่มีรายการที่จะคืนเงิน");
 
-        refundGross = Math.Round(refundGross, 2, MidpointRounding.AwayFromZero);
-        refundVat = Math.Round(refundVat, 2, MidpointRounding.AwayFromZero);
-        var refundNet = refundGross - refundVat;
+        var refund = Accounting.Helpers.PosRefundMath.Compute(
+            lineGrossTotal, order.DiscountAmount, refundLines);
+        var refundGross = refund.Gross;
+        var refundVat = refund.Vat;
+        var refundNet = refund.Net;
 
         await using var txn = await _db.Database.BeginTransactionAsync();
         try
@@ -405,34 +414,80 @@ public partial class PosService
         if (string.IsNullOrWhiteSpace(buyerName))
             throw new InvalidOperationException("กรุณาระบุชื่อผู้ซื้อ");
 
+        // ★ D8-1 — บริษัทที่ยังไม่จด VAT ออกใบกำกับไม่ได้เลย (§90/2 เป็นความผิดอาญา)
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+
+        // เลขใบที่ออกจริง — ต้องส่งกลับให้หน้าเว็บ (pos.html อ่าน `documentNumber`
+        // มาตลอดแต่ MapOrder ส่ง null เสมอ = "หน้าเว็บอ่านฟิลด์ที่เซิร์ฟเวอร์ไม่เคยส่ง")
+        string? issuedNumber = null;
+
         await using var txn = await _db.Database.BeginTransactionAsync();
         try
         {
             // Resolve / create the buyer contact.
-            var taxId = request.BuyerTaxId?.Trim();
+            var taxId = string.IsNullOrWhiteSpace(request.BuyerTaxId) ? null : request.BuyerTaxId!.Trim();
+            var buyerBranch = string.IsNullOrWhiteSpace(request.BuyerBranchCode) ? null : request.BuyerBranchCode!.Trim();
+            var buyerAddress = string.IsNullOrWhiteSpace(request.BuyerAddress) ? null : request.BuyerAddress!.Trim();
+
             Models.Entities.Contact? contact = null;
-            if (!string.IsNullOrWhiteSpace(taxId))
+            if (taxId != null)
                 contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId);
-            contact ??= await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == buyerName);
+            // ★ D8-1 — จับคู่ด้วย **ชื่อ** ได้เฉพาะตอนที่ยังไม่มีเลขภาษีมาชน: ชื่อซ้ำกันได้
+            // (ชื่อเล่น/สาขา/บุคคลธรรมดาชื่อเหมือนกัน) การผูกใบกำกับเข้ากับผู้ติดต่อที่ถือ
+            // **เลขภาษีคนละเลข** = ออกใบกำกับให้ผิดนิติบุคคล แก้ย้อนหลังไม่ได้ (§86/4)
+            if (contact == null)
+            {
+                var byName = await _db.Contacts
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == buyerName);
+                if (byName != null && (taxId == null || string.IsNullOrWhiteSpace(byName.TaxId)))
+                    contact = byName;
+            }
+            var isNewContact = contact == null;
             if (contact == null)
             {
                 contact = new Models.Entities.Contact
                 {
                     CompanyId = companyId,
                     Name = buyerName,
-                    TaxId = string.IsNullOrWhiteSpace(taxId) ? null : taxId,
-                    BranchCode = string.IsNullOrWhiteSpace(request.BuyerBranchCode) ? null : request.BuyerBranchCode!.Trim(),
-                    Address = string.IsNullOrWhiteSpace(request.BuyerAddress) ? null : request.BuyerAddress!.Trim(),
+                    TaxId = taxId,
+                    BranchCode = buyerBranch,
+                    Address = buyerAddress,
                     IsCustomer = true,
                     IsActive = true,
                     CreatedBy = userId,
                 };
-                _db.Contacts.Add(contact);
             }
             else
             {
                 contact.IsCustomer = true; // make sure the role is set
+                // เติม**เฉพาะช่องที่ยังว่าง** — ห้ามทับข้อมูลที่ผู้ใช้เคยยืนยันไว้ด้วยสิ่งที่
+                // แคชเชียร์พิมพ์หน้าเคาน์เตอร์ (ทิศเดียวกับบล็อก [Enrich] ของเส้น OCR)
+                if (string.IsNullOrWhiteSpace(contact.TaxId) && taxId != null) contact.TaxId = taxId;
+                if (string.IsNullOrWhiteSpace(contact.Address) && buyerAddress != null) contact.Address = buyerAddress;
+                if (string.IsNullOrWhiteSpace(contact.BranchCode) && buyerBranch != null) contact.BranchCode = buyerBranch;
             }
+
+            // ★ D8-1(ง) — ด่านออกใบกำกับเต็มรูป **ตัวเดียวกับเส้นเอกสาร**
+            // (Helpers/FullTaxInvoiceReplacement เป็นเจ้าของกติกา: ไม่จด VAT · บิลไม่มี VAT ·
+            // ผู้ซื้อไม่ครบ §86/4 · ออกไปแล้ว) — ห้ามเขียนสำเนาที่สองที่นี่ (F2 ข้อ 4)
+            var missingBuyer = Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(contact);
+            var eligibility = Accounting.Helpers.FullTaxInvoiceReplacement.Check(
+                sourceIsIssued: order.Status == PosOrderStatus.Completed,
+                sourceIsFullTaxInvoice: false,       // บิล POS ออกได้แค่ใบเสร็จ/อย่างย่อ
+                sourceVatAmount: order.VatAmount,
+                alreadyReplaced: order.DocumentId.HasValue,
+                companyIsVatRegistered: company.IsVatRegistered,
+                missingBuyerFields: missingBuyer);
+            if (!eligibility.Allowed)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    eligibility.Message ?? "ออกใบกำกับภาษีเต็มรูปจากบิลนี้ไม่ได้",
+                    $"RD-86/4-POS-{eligibility.Reason}");
+
+            if (isNewContact) _db.Contacts.Add(contact);
 
             // Build the Document directly — POS already posted its own JE for
             // this sale, so we must NOT go through ApproveDocumentAsync (would
@@ -449,6 +504,15 @@ public partial class PosService
             var docNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                 _db, companyId, Models.Enums.DocumentType.TaxInvoice, posDocDate);
 
+            // ★ D8-1(ค) — ใบย่อที่ลูกค้าถือไปแล้วต้องถูก**อ้างและประกาศว่าเรียกคืน**
+            // บนใบเต็มรูป มิฉะนั้นการขายครั้งเดียวมีกระดาษสองใบที่ประกาศตัวเป็นใบกำกับ
+            // ⇒ ผู้ซื้อเคลมภาษีซื้อได้สองรอบ (ข้อความอยู่ที่ FullTaxInvoiceReplacement)
+            var abbreviated = string.IsNullOrWhiteSpace(order.AbbreviatedInvoiceNumber)
+                ? null : order.AbbreviatedInvoiceNumber!.Trim();
+            var replacedNote = abbreviated == null
+                ? null
+                : Accounting.Helpers.FullTaxInvoiceReplacement.ReplacementNote(abbreviated, posDocDate);
+
             var doc = new Models.Entities.Document
             {
                 CompanyId = companyId,
@@ -460,40 +524,62 @@ public partial class PosService
                 Status = Models.Enums.DocumentStatus.Approved,
                 IsOpeningBalance = false,
                 Reference = order.OrderNumber,
-                Notes = request.Notes ?? $"ใบกำกับภาษีเต็มรูปจาก POS — ออเดอร์ {order.OrderNumber}",
+                // ★ D8-1(ข) — สาขาที่ออกใบ (§86/4(2)) มาจากบิลที่ผูก Branch ไว้ตั้งแต่ปิดบิล
+                // · รหัสสาขาใช้ snapshot ที่ตรึงบนบิล **ห้ามเดา "00000"** (PosSlipHeader.BranchLabel)
+                BranchId = order.BranchId,
+                IssuerBranchCode = order.IssuerBranchCode,
+                ReplacementReason = abbreviated == null ? null : $"แทนใบกำกับภาษีอย่างย่อ {abbreviated}",
+                Notes = string.Join(" · ", new[]
+                {
+                    request.Notes?.Trim(),
+                    $"ใบกำกับภาษีเต็มรูปจาก POS — ออเดอร์ {order.OrderNumber}",
+                    replacedNote,
+                }.Where(s => !string.IsNullOrWhiteSpace(s))),
                 CreatedBy = userId,
             };
 
-            decimal totalNet = 0, totalVat = 0;
+            // ★ D8-1(ก) — Σ บรรทัด ต้องเท่า **เงินที่ลูกค้าจ่ายสำหรับสินค้า/บริการ**
+            // (ส่วนลดท้ายบิล · คูปอง · ค่าบริการ · ปัดเศษ — ทิปไม่อยู่บนใบกำกับ)
+            // สูตรอยู่ที่ Helpers/PosTaxInvoiceLines ตัวเดียว (เทสต์: PosTaxInvoiceLinesTests)
+            var lines = Accounting.Helpers.PosTaxInvoiceLines.Build(
+                order.Items.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder)
+                    .Select(x => new Accounting.Helpers.PosInvoiceSourceLine(
+                        x.ItemName, x.ItemCode, x.Unit, x.Quantity, x.TotalAmount)),
+                billDiscountAmount: order.DiscountAmount,
+                couponAmount: order.CouponDiscountAmount,
+                couponCode: order.CouponCode,
+                serviceChargeAmount: order.ServiceChargeAmount,
+                roundingAmount: order.RoundingAmount,
+                headGrossPayable: Accounting.Helpers.PosTaxInvoiceLines.GrossPayableForGoods(
+                    order.TotalAmount, order.RoundingAmount),
+                headVat: order.VatAmount);
+
             var lineOrder = 1;
-            foreach (var i in order.Items.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder))
-            {
-                var lineGross = i.TotalAmount;
-                var lineVat = i.VatAmount;
-                var lineNet = lineGross - lineVat;
-                var unitPriceNet = i.Quantity > 0 ? Math.Round(lineNet / i.Quantity, 4, MidpointRounding.AwayFromZero) : 0m;
+            foreach (var l in lines)
                 doc.Lines.Add(new Models.Entities.DocumentLine
                 {
                     LineOrder = lineOrder++,
-                    ProductCode = i.ItemCode,
-                    Description = i.ItemName,
-                    Quantity = i.Quantity,
-                    Unit = i.Unit ?? "ชิ้น",
-                    UnitPrice = unitPriceNet,
+                    ProductCode = l.ProductCode,
+                    Description = l.Description,
+                    Quantity = l.Quantity,
+                    Unit = l.Unit ?? "ชิ้น",
+                    UnitPrice = l.UnitPriceNet,
                     DiscountPercent = 0,
                     DiscountAmount = 0,
-                    Amount = lineNet,
-                    VatRate = lineNet > 0 ? Math.Round(lineVat * 100 / lineNet, 2, MidpointRounding.AwayFromZero) : 0m,
-                    VatAmount = lineVat,
+                    Amount = l.AmountNet,
+                    VatRate = l.VatRate,
+                    VatAmount = l.VatAmount,
                 });
-                totalNet += lineNet;
-                totalVat += lineVat;
-            }
-            doc.SubTotal = totalNet;
-            doc.VatAmount = totalVat;
-            doc.TotalAmount = totalNet + totalVat;
+
+            doc.SubTotal = lines.Sum(l => l.AmountNet);
+            doc.VatAmount = lines.Sum(l => l.VatAmount);
+            doc.TotalAmount = doc.SubTotal + doc.VatAmount;
             doc.BalanceDue = 0;                 // POS already collected payment
             doc.PaidAmount = doc.TotalAmount;
+            // ★ D8-1(ข) — "ใบนี้เป็นใบกำกับตามกฎหมายไหม" ตัดสินด้วย resolver ตัวเดียว
+            // ของระบบ (ห้ามเขียน true ดื้อ ๆ) แล้วตรึงไปพร้อมเลขที่ตาม §86/4
+            doc.IsTaxInvoiceByLaw = Accounting.Helpers.TaxInvoiceSeriesPolicy
+                .CarriesTaxInvoiceRole(doc, null);
             _db.Documents.Add(doc);
             await _db.SaveChangesAsync();
 
@@ -506,6 +592,7 @@ public partial class PosService
                 if (je != null && je.SourceDocumentId == null) je.SourceDocumentId = doc.Id;
             }
 
+            issuedNumber = doc.DocumentNumber;
             await _db.SaveChangesAsync();
             await txn.CommitAsync();
         }
@@ -514,7 +601,8 @@ public partial class PosService
             await txn.RollbackAsync();
             throw;
         }
-        return await GetOrderAsync(companyId, orderId);
+        var response = await GetOrderAsync(companyId, orderId);
+        return response with { DocumentNumber = issuedNumber };
     }
 
     public async Task<OrderResponse> SyncOfflineOrderAsync(Guid companyId, OfflineOrderRequest request, string createdBy)
@@ -1192,18 +1280,21 @@ public partial class PosService
         var requirePhoR06 = await _db.SiteSettings.AsNoTracking()
             .Select(s => (bool?)s.RequirePhoR06ForAbbreviatedTaxInvoice)
             .FirstOrDefaultAsync() ?? true;
-        var header = Accounting.Helpers.PosSlipHeader.Resolve(
-            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            order.VatAmount, issuedAt, requirePhoR06);
-
         // รหัสสาขาตรึงลงบิลเสมอ แม้ออกอย่างย่อไม่ได้ — รายงานภาษีขายต้องรู้ว่าใบนี้
         // ของสาขาไหน และค่านี้ต้องไม่เปลี่ยนเมื่อเครื่องย้ายสาขาภายหลัง
+        // ⚠️ ต้องทำ **ก่อน** ตัดสินหัวสลิป เพราะ §86/4(2) เป็นหนึ่งในเงื่อนไขของการออกเลข
         order.IssuerBranchCode ??= order.BranchId is Guid bid
             ? await _db.Branches.AsNoTracking()
                 .Where(b => b.Id == bid && b.CompanyId == companyId)
                 .Select(b => b.TaxBranchCode)
                 .FirstOrDefaultAsync()
             : null;
+
+        var header = Accounting.Helpers.PosSlipHeader.Resolve(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            order.VatAmount, issuedAt, requirePhoR06,
+            billBelongsToBranch: order.BranchId.HasValue,
+            issuerTaxBranchCode: order.IssuerBranchCode);
 
         if (!header.CanIssueAbbreviated) return;
 
@@ -1212,7 +1303,11 @@ public partial class PosService
             .Where(x => x.Id == order.SessionId && x.CompanyId == companyId)
             .Select(x => x.Terminal.AbbreviatedInvoicePrefix)
             .FirstOrDefaultAsync();
-        var branchPart = string.IsNullOrWhiteSpace(order.IssuerBranchCode) ? "00000" : order.IssuerBranchCode;
+        // ★ D8-P0 — ส่วนสาขาของเลขรันมาจาก resolver ตัวเดียวกับที่ตัดสินหัวสลิป
+        // (ถึงตรงนี้ได้แปลว่าไม่เป็น null แล้ว เพราะ CanIssueAbbreviated ผ่าน)
+        var branchPart = Accounting.Helpers.PosSlipHeader.BranchSeriesCode(
+            order.BranchId.HasValue, order.IssuerBranchCode)
+            ?? throw new InvalidOperationException("รหัสสาขาหายระหว่างออกเลขใบกำกับอย่างย่อ");
         var prefix = $"{(string.IsNullOrWhiteSpace(prefixRoot) ? "ABB" : prefixRoot)}-{branchPart}-{issuedAt:yyyyMM}-";
 
         await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
@@ -1314,16 +1409,19 @@ public partial class PosService
             var tipCfg = await _db.CompanySettings.AsNoTracking()
                 .Where(cs => cs.CompanyId == companyId).Select(cs => cs.PosTipPayableAccountCode).FirstOrDefaultAsync();
             var tipAccount = await TipAccountResolver.ResolveAsync(_db, companyId, tipCfg);
-            if (tipAccount != null)
-                lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
-            // If no tip-account exists, fold into Sales so JE balances — better
-            // than dropping the entry. The log warning lets owner correct later.
-            else
-            {
-                _logger.LogWarning("No tip-liability account (2160) for company {Cid}; tip {Tip:N2} posted to sales for order {Order}.",
-                    companyId, order.TipAmount, order.OrderNumber);
-                lines.Add(new(salesAccount.Id, 0, order.TipAmount, $"ทิป (ไม่มีบัญชี 2160) POS #{order.OrderNumber}"));
-            }
+            // ★ D8-8 — เดิมไม่พบบัญชีทิป → **ยัดเข้ารายได้ขาย** + LogWarning ⇒ เงินที่
+            // บริษัทถือแทนพนักงานกลายเป็นรายได้ของบริษัท: กำไรบวม · เสียภาษีเงินได้จาก
+            // เงินที่ไม่ใช่ของตัวเอง · หนี้สินที่ต้องจ่ายพนักงานหายไปจากงบ · และไม่มี
+            // ใครเห็นเพราะ LogWarning ไม่ใช่การล้มดัง (กฎเหล็ก #4 F2 ข้อ 7)
+            // ทางออกของผู้ใช้อยู่ในข้อความ — ทางเดียวกับ H-A18 ที่เมธอดนี้ทำอยู่แล้ว
+            if (tipAccount == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ไม่พบบัญชี \"ทิปพนักงานค้างจ่าย\" ในผังบัญชี — ปิดบิลที่มีทิป {order.TipAmount:N2} บาทไม่ได้ "
+                    + "(ทิปเป็นเงินที่ถือแทนพนักงาน ลงเป็นรายได้ไม่ได้) · "
+                    + $"เพิ่มบัญชี {string.Join(" หรือ ", TipAccountResolver.DefaultCodes)} ในผังบัญชี "
+                    + "หรือตั้งค่ารหัสบัญชีทิปในตั้งค่าบริษัท แล้วปิดบิลใหม่ (หรือเอาทิปออกจากบิลนี้)",
+                    "POS-NO-TIP-ACCOUNT");
+            lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
         }
 
         // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — record cost of goods sold so

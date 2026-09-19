@@ -485,8 +485,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && (t.Year > startMonth.Year || (t.Year == startMonth.Year && t.Month >= startMonth.Month)))
                 .Select(t => new { t.TaxType, t.Year, t.Month, t.Status, t.FiledDate, t.NetVat })
                 .ToListAsync())
+                // "ยื่นแล้ว" บนแดชบอร์ดนำส่ง = ผู้ใช้ประกาศว่ายื่นแล้ว (Submitted)
+                // หรือยืนยันด้วยเลขรับ (Filed) — ตัดสินที่ Helpers/TaxFilingLockPolicy
+                // ตัวเดียว ไม่เทียบ == Filed เอง (D2-B1a)
                 .Select(t => new ReportSnap(t.TaxType, t.Year, t.Month,
-                    t.Status == TaxReportStatus.Filed, t.FiledDate, t.NetVat))
+                    Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(t.Status),
+                    t.FiledDate, t.NetVat))
                 .ToList();
         }
         catch (Exception ex) { _logger.LogWarning(ex, "โหลด TaxReports ไม่สำเร็จ"); }

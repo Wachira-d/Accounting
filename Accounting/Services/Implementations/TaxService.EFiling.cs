@@ -110,14 +110,10 @@ public partial class TaxService
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildPndAsync(
         Guid companyId, Company company, string formType, int year, int month)
     {
-        var taxType = formType switch
-        {
-            "PND.1" => TaxType.WithholdingTax1,
-            "PND.3" => TaxType.WithholdingTax3,
-            "PND.53" => TaxType.WithholdingTax53,
-            "PND.54" => TaxType.WithholdingTax54,
-            _ => throw new ArgumentException(formType),
-        };
+        // แผนที่รหัสแบบ → ชนิดรายงาน อยู่ใน Helpers/WhtUnissuedCertGate ตัวเดียว
+        // (ตัวที่หาคำเตือนมาแปะบนหน้าจอใช้แผนที่เดียวกันนี้ — ห้ามพิมพ์ซ้ำ)
+        var taxType = Accounting.Helpers.WhtUnissuedCertGate.TaxTypeForPndForm(formType)
+            ?? throw new ArgumentException(formType);
         var report = await _db.TaxReports
             .Include(r => r.Lines)
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == taxType
@@ -129,6 +125,11 @@ public partial class TaxService
         // ยอดรวมซ้ำต่อผู้ขาย) และบรรทัดที่ผู้ทำบัญชีติ๊กออก (IsExcluded เช่น
         // เอกสารยกเลิก) ห้ามลงไฟล์ยื่น — เดิมยิงทุกบรรทัด ทำให้ผู้ขายที่มี
         // หลายรายการถูกนับ 2 เท่าและรายการที่ตัดออกยังถูกนำส่ง
+        //
+        // ⚠️ การ "ตัดออก" ต้องไม่เงียบ (D2-B1a): แถวที่ตัดเพราะยังไม่มีใบ 50 ทวิ
+        // ถูกสรุปเป็น reviewNote แล้วส่งขึ้นหน้าจอผ่าน header ของ endpoint
+        // e-Filing (แบบเดียวกับ ExportPnd3Async ที่มี reviewNote อยู่แล้ว) —
+        // ตัวสรุปคือ Helpers/WhtUnissuedCertGate ตัวเดียวกับด่านตอนยื่น
         var detailLines = report.Lines
             .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded)
             .OrderBy(x => x.LineOrder)

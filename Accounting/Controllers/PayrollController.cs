@@ -265,6 +265,16 @@ public class PayrollController : ControllerBase
         return StatusCode(201, new ApiResponse<PayrollItemResponse>(true, await _service.CreatePayrollItemAsync(companyId, request)));
     }
 
+    /// <summary>แก้ไขรายการเงินเดือน — รวมช่อง "ลักษณะเงินได้" (D6-3) ที่
+    /// migration เติมให้แถวเก่าจากกฎรหัสเดิม ผู้ใช้ต้องแก้ให้ถูกได้เอง</summary>
+    [HttpPut("items/{itemId:guid}")]
+    public async Task<ActionResult<ApiResponse<PayrollItemResponse>>> UpdateItem(
+        Guid companyId, Guid itemId, [FromBody] UpdatePayrollItemRequest request)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "แก้ไขรายการเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollItemResponse>(true, await _service.UpdatePayrollItemAsync(companyId, itemId, request)));
+    }
+
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
     {

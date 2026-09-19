@@ -20,7 +20,8 @@ public class PosSlipHeaderTests
     [Fact]
     public void ครบเงื่อนไข_ออกอย่างย่อได้()
     {
-        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true);
+        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.True(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.AbbreviatedTaxInvoice, r.Title);
         Assert.Null(r.Message);
@@ -29,7 +30,8 @@ public class PosSlipHeaderTests
     [Fact]
     public void ยังไม่จด_VAT_ห้ามพิมพ์คำว่าใบกำกับ()
     {
-        var r = PosSlipHeader.Resolve(false, true, Approved, 7m, Today, requirePhoR06: true);
+        var r = PosSlipHeader.Resolve(false, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.Receipt, r.Title);
         Assert.DoesNotContain("ใบกำกับ", r.Title);
@@ -40,7 +42,8 @@ public class PosSlipHeaderTests
     public void จด_VAT_แต่ไม่มี_ภพ06_ห้ามออก()
     {
         // นี่คือเคสที่ระบบเดิมพลาด — บริษัทจด VAT แล้วจึงดู "ถูกต้อง" ผิวเผิน
-        var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: true);
+        var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.Receipt, r.Title);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval, r.Reason);
@@ -51,7 +54,8 @@ public class PosSlipHeaderTests
     public void ติ๊กธงแต่ไม่มีวันที่อนุมัติ_ยังออกไม่ได้()
     {
         // ธง = เจตนา · วันที่ = หลักฐาน — ต้องมีทั้งคู่
-        var r = PosSlipHeader.Resolve(true, true, null, 7m, Today, requirePhoR06: true);
+        var r = PosSlipHeader.Resolve(true, true, null, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval, r.Reason);
     }
@@ -60,9 +64,11 @@ public class PosSlipHeaderTests
     public void บิลลงวันที่ก่อนวันอนุมัติ_ออกไม่ได้()
     {
         var before = Approved.AddDays(-1);
-        Assert.False(PosSlipHeader.Resolve(true, true, Approved, 7m, before, requirePhoR06: true).CanIssueAbbreviated);
+        Assert.False(PosSlipHeader.Resolve(true, true, Approved, 7m, before, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null).CanIssueAbbreviated);
         // วันเดียวกับวันอนุมัติ = ออกได้
-        Assert.True(PosSlipHeader.Resolve(true, true, Approved, 7m, Approved, requirePhoR06: true).CanIssueAbbreviated);
+        Assert.True(PosSlipHeader.Resolve(true, true, Approved, 7m, Approved, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null).CanIssueAbbreviated);
     }
 
     [Fact]
@@ -70,7 +76,8 @@ public class PosSlipHeaderTests
     {
         // สินค้ายกเว้น §81 หรืออัตรา 0% — คำว่า "ใบกำกับภาษี" จะทำให้ผู้ซื้อเข้าใจผิด
         // ว่ามีภาษีซื้อให้เคลม
-        var r = PosSlipHeader.Resolve(true, true, Approved, 0m, Today, requirePhoR06: true);
+        var r = PosSlipHeader.Resolve(true, true, Approved, 0m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoVatOnBill, r.Reason);
     }
@@ -161,6 +168,7 @@ public class AbbreviatedTaxInvoiceRuleTests
                      AbbreviatedInvoiceBlockReason.NotVatRegistered,
                      AbbreviatedInvoiceBlockReason.NoPhoR06Approval,
                      AbbreviatedInvoiceBlockReason.NoVatOnBill,
+                     AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing,
                  })
             Assert.False(string.IsNullOrWhiteSpace(AbbreviatedTaxInvoiceRule.Message(reason)));
         Assert.Null(AbbreviatedTaxInvoiceRule.Message(AbbreviatedInvoiceBlockReason.None));
@@ -169,7 +177,8 @@ public class AbbreviatedTaxInvoiceRuleTests
     [Fact]
     public void สลิป_POS_ปิดสวิตช์แล้วพิมพ์อย่างย่อได้()
     {
-        var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: false);
+        var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: false,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.True(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.AbbreviatedTaxInvoice, r.Title);
     }
@@ -178,8 +187,98 @@ public class AbbreviatedTaxInvoiceRuleTests
     public void สลิป_POS_ปิดสวิตช์แต่บิลไม่มี_VAT_ยังเป็นใบเสร็จ()
     {
         // ทิศตรงข้าม: สวิตช์ไม่ได้ปิดกติกา "ไม่มี VAT ก็ไม่มีอะไรให้ใบกำกับรับรอง"
-        var r = PosSlipHeader.Resolve(true, true, Approved, 0m, Today, requirePhoR06: false);
+        var r = PosSlipHeader.Resolve(true, true, Approved, 0m, Today, requirePhoR06: false,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoVatOnBill, r.Reason);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  §86/4(2) — บิลของสาขาที่ยังไม่มีรหัสสาขา (ประกาศอธิบดีฯ ฉบับที่ 199)
+    //
+    //  ที่มา: ทีม POS รอบ 183 รายงานว่า `IssueAbbreviatedInvoiceNumberAsync`
+    //  ตกไปใช้ `"00000"` เมื่อสาขายังไม่กรอก `TaxBranchCode` — ซึ่งไม่ใช่
+    //  "ไม่ระบุ" แต่แปลว่า **สำนักงานใหญ่** ⇒ กระดาษประกาศเท็จ **และ** เลขรัน
+    //  ของสาขาไปกินเล่มสำนักงานใหญ่ (สองเล่มไม่ gap-free ตาม §86/4)
+    // ══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void บิลของสาขาที่ยังไม่มีรหัสสาขา_ห้ามออกอย่างย่อ()
+    {
+        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: null);
+        Assert.False(r.CanIssueAbbreviated);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing, r.Reason);
+        Assert.Equal(PosSlipHeader.Receipt, r.Title);
+        // ต้องมีทางไปต่อ ไม่ใช่ตันเฉย ๆ (F2 ข้อ 8)
+        Assert.Contains("รหัสสาขา", r.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("1")]        // สั้นกว่า 5 หลัก
+    [InlineData("001")]
+    [InlineData("0000A")]    // มีตัวอักษร
+    [InlineData("000001")]   // ยาวเกิน
+    public void รหัสสาขาผิดรูปบนบิลของสาขา_ก็ห้ามออก(string code)
+    {
+        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: code);
+        Assert.False(r.CanIssueAbbreviated);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing, r.Reason);
+    }
+
+    // ── ครึ่งที่ต้อง "ไม่ถูกแตะ" ────────────────────────────────────────
+
+    [Theory]
+    [InlineData("00000")]
+    [InlineData("00001")]
+    [InlineData("00123")]
+    public void บิลของสาขาที่มีรหัสครบ_ออกได้ตามปกติ(string code)
+    {
+        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: code);
+        Assert.True(r.CanIssueAbbreviated);
+        Assert.Equal(PosSlipHeader.AbbreviatedTaxInvoice, r.Title);
+    }
+
+    [Fact]
+    public void บริษัทที่ไม่มีสาขาเลย_ยังได้_00000_เหมือนเดิม()
+    {
+        // ร้านเดี่ยว/บริษัทที่ยังไม่เปิดใช้ Branch = สำนักงานใหญ่โดยนิยาม
+        // (ถ้าเทสต์นี้แดง แปลว่าด่านใหม่ไปบล็อกลูกค้าเดิมทั้งหมด)
+        Assert.Equal("00000", PosSlipHeader.BranchSeriesCode(false, null));
+        Assert.Equal("00000", PosSlipHeader.BranchSeriesCode(false, ""));
+        var r = PosSlipHeader.Resolve(true, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
+        Assert.True(r.CanIssueAbbreviated);
+    }
+
+    [Fact]
+    public void เลขรันของสาขาต้องไม่ไปปนเล่มสำนักงานใหญ่()
+    {
+        // หัวใจของบั๊ก: ก่อนแก้ ทั้งสองเคสคืน "00000" เหมือนกัน ⇒ เลขชุดเดียวกัน
+        Assert.Equal("00007", PosSlipHeader.BranchSeriesCode(true, "00007"));
+        Assert.Null(PosSlipHeader.BranchSeriesCode(true, null));
+        Assert.Equal("00000", PosSlipHeader.BranchSeriesCode(false, null));
+    }
+
+    [Fact]
+    public void ด่านสาขาอยู่หลังด่าน_VAT_และ_ภพ06_เสมอ()
+    {
+        // ลำดับเหตุผลต้องคงที่: บริษัทที่ยังไม่จด VAT ต้องได้เหตุผล "ยังไม่จด VAT"
+        // ไม่ใช่ "ไม่มีรหัสสาขา" (ผู้ใช้จะไปกรอกรหัสสาขาแล้วก็ยังออกไม่ได้อยู่ดี)
+        var noVat = PosSlipHeader.Resolve(false, true, Approved, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: null);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotVatRegistered, noVat.Reason);
+
+        var noPhoR06 = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: null);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval, noPhoR06.Reason);
+
+        var noVatOnBill = PosSlipHeader.Resolve(true, true, Approved, 0m, Today, requirePhoR06: true,
+            billBelongsToBranch: true, issuerTaxBranchCode: null);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NoVatOnBill, noVatOnBill.Reason);
     }
 }

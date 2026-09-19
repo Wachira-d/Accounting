@@ -489,3 +489,109 @@ env นี้ไม่มี .NET SDK — ตรวจด้วย Python checke
 
 _Last verified against codebase: 2026-09-19 — รอบ 182 (ลงมือ P0 ชุดแรก · §8)_
 _commit: ddb023b_
+
+---
+
+## §10 รอบ 183 — งานที่ลงมือแล้ว (5 ทีม + main agent) · main agent เปิดไฟล์ตรวจทุกข้อ
+
+> **ยังไม่ได้คอมไพล์ในเครื่องนี้** (ไม่มี .NET SDK) · `bash tools/check_all.sh` เขียวทั้งชุด
+> (checker 40 ตัว · node --check · brace · U+FFFD · TEST_PLAN §0) · `dotnet test` **ไม่รันบน branch นี้**
+> (workflow จำกัดไว้ที่ PR/main/dispatch) ⇒ เทสต์ใหม่ ~250 เคสยังไม่เคยรัน
+
+### 10.1 P0 ที่ปิดแล้ว
+
+| ราก | ข้อ | ที่แก้ | ตัวตัดสินตัวเดียวที่เกิดใหม่ |
+| --- | --- | --- | --- |
+| R1 | D2-B1a `Filed` + ล็อกงวดจากปุ่ม | `TaxService` · `TaxController` · `tax.html` | `Helpers/TaxFilingLockPolicy` |
+| R1 | D4-2 BankFeed ประทับ `Matched` กับความว่าง | `BankFeedService` | `Helpers/BankMatchArbiter` |
+| R1 | D1-B?? `BuyerDeclinedTaxInvoice` ประทับเอง | `DocumentService` | — (ลบการประทับ คง throw) |
+| R2 | D1-11 `"Acknowledge"` ที่ไม่มีใครตอบ | `DocumentAiAugmenter` · `DocumentService` · `documents.html` | `Helpers/AiHintAnswer` |
+| R2 | D4-5 ชนิดไม่รู้ทิศ → บวกเงียบ | `BankService.ValidateMatchAmountAsync` | `Helpers/BankMatchAmountReconciler` |
+| R3 | D4-1 สูตรจับคู่ 5 สำเนา | `BankService` ×4 · `BankFeedService` · `OpenBankingService` | `Helpers/BankMatchScorer` |
+| R3 | D2-B1a แผนที่ form→TaxType 2 ชุด | `TaxService.EFiling` · `TaxController` | `Helpers/WhtUnissuedCertGate` |
+| R4 | D1-B1 ด่าน WHT เก่ายังรันหลังด่านใหม่ | `DocumentService` (ลบ 62 บรรทัด + 2 เมธอด) | `ThaiWhtRateTable.StatutoryRates` |
+| R4 | D1-B2 ขอบเขตด่านเดา `IsPurchase` | `DocumentService` ×4 | `Helpers/WhtGateScope` |
+| R5 | D4-3 สถานะจ่าย 7 สำเนา 3 เกณฑ์ปัดเศษ | `DocumentService` · `IntegrationService` · `ImportExportService` | `Helpers/DocumentSettlementState` |
+| R6 | D3-2 VendorIntel สอนตัวเองเรื่อง WHT | `OcrService` · `VendorIntelligenceService` · `DocumentService` | `Helpers/OcrWhtLearningScope` + `PaperWhtReader` ตัวเดียว |
+| R6 | D3-4 ป้าย "AI ถูก" เทียบค่าสุดท้าย | `OcrService` ×2 | `Helpers/OcrAiLabelScope` |
+| R7 | D3-1 บรรทัด serialize ก่อนตัวเทียบสินค้า | `OcrService` (จุด serialize เหลือจุดเดียว) | `Helpers/OcrLineAccountSource` |
+| R7 | D3-3 prior ยกคะแนนใบที่เลขไม่ลงตัว | `OcrService` · `OcrPostingReadiness` | แท็ก `[MATH]` ใน `BlockingTags` |
+| R7 | D8-1 ใบกำกับ POS ไม่หักส่วนลด | `PosService.Orders` · `PosController` · `pos.html` | `Helpers/PosTaxInvoiceLines` |
+| R7 | D8-2 คืนเงิน POS นับคูปองซ้ำ | `PosService.Orders` | `Helpers/PosRefundMath` |
+| R7 | D8-8 ทิปไม่มีบัญชี → ยัดเข้ารายได้ | `PosService.Orders` | `throw POS-NO-TIP-ACCOUNT` |
+| R7 | D6-3 โบนัส `BN01` ถูกฉายเป็นเงินประจำ | `PayrollService` · `payroll.html` (แท็บใหม่) | `Helpers/PayrollIncomeNatureRules` |
+| R7 | D2-B1b เงินเพิ่ม ม.27 ไม่มีเพดาน | `ComplianceService` | `Helpers/RevenueCodeSurcharge` |
+| R7 | D4-4 client ส่ง Tolerance เท่าไรก็ได้ | `BankService.Reconciliation` | `Helpers/BankReconciliationTolerance` |
+| — | §86/4(2) เลขใบย่อของสาขาตกไป `"00000"` | `PosService.Orders` | `PosSlipHeader.BranchSeriesCode` |
+
+### 10.2 บั๊กที่ทีมเจอระหว่างทางและแก้ไปด้วย (ไม่อยู่ในโจทย์)
+
+1. **ปุ่ม "ออกใบกำกับเต็ม" ของ POS ไม่เคยทำงานเลยตั้งแต่มีมา** — `pos.html` ส่ง
+   `customerName/customerTaxId/customerAddress` แต่ DTO คือ `buyerName/…` ⇒ 400
+   "กรุณาระบุชื่อผู้ซื้อ" ทุกครั้ง (defect class "ส่ง/อ่านฟิลด์ที่ DTO ไม่มี")
+2. `MapOrder` ส่ง `DocumentNumber: null` เสมอ แต่ JS อ่าน `res.data.documentNumber`
+3. `RefundOrderAsync` นับบรรทัดที่ `IsDeleted` เป็นฐานส่วนลด (`PosOrderItem` ไม่มี
+   global query filter) ⇒ **คืนเกิน**
+4. `OpenBankingService` 5 คิวรีไม่มี `CompanyId` — **ละเมิด tenant isolation** (กฎ M)
+5. `GET /accounts/{id}/unreconciled` คืนเฉพาะ `Unmatched` ⇒ แถวที่ถูกลดชั้นเป็น
+   `Suggested` จะหายจากหน้าจับคู่ด้วยมือ = ผู้ใช้ไม่มีทางไปต่อ
+6. `UnlockTaxFilingAsync` โยน "ไม่ได้ถูก lock" ⇒ รายงาน `Submitted` จะติดตาย
+7. `POST {reportId}/rd-ack` มีอยู่แล้วแต่**ไม่มีหน้าไหนเรียก** — ต่อสายเป็นปุ่ม "บันทึกเลขรับ"
+8. ไม่มีหน้าไหนเลยที่สร้าง/แก้ `PayrollItem` ได้ (`api.js` มี wrapper · 0 หน้าเรียก)
+
+### 10.3 ⚠️ ผู้ใช้จะเห็นอะไรเปลี่ยน (ต้องแจ้งก่อน deploy)
+
+| # | ใคร | เดิม | ตอนนี้ |
+| --- | --- | --- | --- |
+| 1 | กด "ยื่นภาษี" | "ยื่นสำเร็จ" + ล็อกงวดทันที | `Submitted` **ไม่ล็อก** จนกว่าจะกด "บันทึกเลขรับ" |
+| 2 | ยื่น ภ.ง.ด.1/3/53/54 ที่ยังมีใบ 50 ทวิ ร่าง | ยื่นได้ (ไปชนตอนกดนำส่งเงิน) | **บล็อก** `WHT-CERT-UNISSUED` พร้อมบอกว่าใบไหน |
+| 3 | AutoMatch ธนาคาร ยอดตรง + ห่าง 4–7 วัน | `Matched` | **`Suggested`** (เกณฑ์ประทับ 80) — กลุ่มที่กระทบมากที่สุด |
+| 4 | กระทบยอด JE เมื่อบัญชีธนาคารยังไม่ผูกผังบัญชี | ผ่าน (บวก gross) | **throw** พร้อมบอกให้ไปผูกก่อน |
+| 5 | กระทบยอดใบที่หัก WHT แต่ไม่ได้บันทึก `WithholdingTaxAmount` | ผ่านทาง gross-tally | **throw** พร้อมบอกให้บันทึกยอดหักก่อน |
+| 6 | บริษัทที่ยังไม่กรอก "ทุนที่ชำระแล้ว" | CIT ขั้นบันได SME | **20% เต็ม** (กำไร 1 ล. → 200,000 แทน 105,000) + เหตุผลบนรายงาน |
+| 7 | ผู้ขายบริการประจำที่กระดาษไม่พิมพ์ส่วนหัก | เติม WHT อัตโนมัติจากประวัติ | `WithholdingTaxAmount = 0` + โน้ต `[WHT-SUGGEST]` ให้คนกรอก |
+| 8 | สแกนที่ยอดหัวใบไม่ลงตัว | อนุมัติอัตโนมัติได้ถ้า prior ผู้ขายสูง | ติด `[MATH]` — คนต้องดูก่อน (กดเองได้) |
+| 9 | รายการเงินเดือนที่ HR ติ๊ก "ไม่หักภาษี" | **ไม่มีผล** (silent no-op) | มีผลจริง ⇒ WHT พนักงานลดลง |
+| 10 | ปิดบิล POS ที่มีทิป แต่ผังไม่มีบัญชีทิป | ยัดเข้ารายได้ + `LogWarning` | **ปิดบิลไม่ได้** (ผังมาตรฐานมี 21814 อยู่แล้ว) |
+| 11 | ใบกำกับเต็มรูปจาก POS ของบิลที่มีส่วนลด | ยอดบนใบ = ราคาป้าย | = **เงินที่ลูกค้าจ่ายจริง** |
+| 12 | คืนเงิน POS ของบิลที่ใช้คูปอง | คืนต่ำกว่าจริง (คูปองหักสองครั้ง) | คืนเต็มตามที่จ่าย |
+| 13 | บิล POS ของสาขาที่ยังไม่กรอกรหัสสาขา | พิมพ์ "ใบกำกับภาษีอย่างย่อ" + เลขในเล่ม `00000` | พิมพ์ "ใบเสร็จรับเงิน" จนกว่าจะกรอกรหัสสาขา |
+
+### 10.4 Migration ที่ merge แล้ว (`DatabaseMigrationHelper.cs`)
+
+1. `PayrollItems.IncomeNature` (คอลัมน์ใหม่) + backfill ด้วย**สูตรเดียวกับกฎรหัสเดิมเป๊ะ**
+   ⇒ payroll run ที่คำนวณไปแล้วไม่ขยับแม้แต่สตางค์เดียว
+2. `TaxReports.RdSubmissionStatus = 'Declared'` สำหรับแถว `Filed` ที่ไม่มีเลขรับ
+   (**ไม่ลดชั้น** — ติดธงให้ตามเก็บ)
+3. ล้าง `AiSuggestionFeedbacks` ของ `ApprovalWarningFixSuggestion` ที่
+   `LocalModelVersion = 'ApprovalWarningCollector-v1'` (คำตอบนักเรียนที่ระบบแต่งขึ้น)
+   + `UserAcceptedAi = true` ที่ไม่มี `AiPrimaryAnswer`
+4. `BankTransactions` ที่ `Matched`/`Suggested` แต่ไม่มีคู่ในทุกช่อง → `Unmatched`
+
+**ไม่ต้องมี migration** สำหรับ `OcrScanResults.HasWht` ที่ปนเปื้อน — ทั้งด่านอนุมัติและ
+ด่านเรียนรู้เปลี่ยนไปอ่าน `Helpers/PaperWhtReader` แล้ว ⇒ ค่าที่ปนอยู่ในคอลัมน์ไม่มีผล
+ต่อการตัดสินอีกต่อไป (แก้ที่ตัวตัดสิน ดีกว่าไล่แก้ข้อมูล)
+
+### 10.5 ค้าง — ต้องให้เจ้าของตัดสิน
+
+1. **ใบลดหนี้ฝั่งซื้อควรยังเข้าด่าน §82/5 ไหม** — การแคบขอบเขตด่าน WHT (D1-B2) ทำให้
+   ด่านภาษีซื้อต้องห้ามแคบลงด้วย ถ้าต้องการให้ CN ฝั่งซื้อยังถูกสกรีน ต้องมี scope
+   ตัวที่สองสำหรับ "ภาษีซื้อ" แยกจาก "การจ่ายเงิน"
+2. **อัตรา WHT 1.5%** (e-withholding ยุคลดอัตรา) ไม่อยู่ใน `ThaiWhtRateTable.StatutoryRates`
+   ⇒ ใบที่ใช้ 1.5% จะขึ้นคำเตือน "ไม่ใช่อัตราตามกฎหมาย" — ถ้าลูกค้ายังใช้จริงต้องเติม
+   ที่ตารางกลาง (ห้ามเติมกลับใน `DocumentService`)
+3. **ค่าบริการ (service charge) ควรคืนตามสัดส่วนเมื่อลูกค้าคืนสินค้าไหม** — วันนี้ไม่คืน
+   (พฤติกรรมเดิม) · ทีม POS ไม่เดาแทน
+4. **แถว `ComplianceFiling` เก่าที่มีเลขปลอม** (`SUB-…` / `CONF-…` ที่ระบบแต่งจาก GUID)
+   — ลบ/ล้างไหม
+5. **คอลัมน์ `BankTransactions.SuggestedDocumentId`** — ถ้าต้องการให้เส้น "AI เสนอเอกสาร"
+   กลับมาใช้ได้ (วันนี้ไม่ประทับสถานะเลยเมื่อเสนอเอกสารที่ยังไม่มีรายการชำระ)
+6. **`Company.PaidUpCapital` เป็น `decimal?` จริง ๆ ไหม** — วันนี้ `NOT NULL DEFAULT 0`
+   และ `CitRateTable.IsSme` ถือ `null`/`≤0` = "ยังไม่กรอก" = ไม่ใช่ SME (ผลเท่ากัน)
+7. **Q12 `CitReportFreshness`** ยังไม่ทำ · **ข้อ 3 ของทีม E ทั้งชุด** (cap 1/5 §76 ·
+   50 ทวิ `continue` เงียบ · ลดหย่อน 3 สำเนา · กท.20ก ปัดเศษ) ยังไม่ทำ
+8. **POS ยังไม่เดิน `CreateDocumentAsync`/`ApproveDocumentAsync`** ⇒ โควตาเอกสารไม่นับ
+   ใบกำกับจาก POS · สเปกทางที่ถูกอยู่ในรายงานทีม POS (ต้องเพิ่มโหมด "อนุมัติโดยไม่ post JE"
+   ที่ใช้กับใบที่เกิดใหม่ได้ + ยืนยันว่าด่าน §86/4 รับบรรทัดยอดติดลบ)
+9. **เบี้ยเลี้ยงจาก attendance** (`PayrollService.cs:1734`) ถูกฉาย × งวดที่เหลือเหมือน
+   `PayrollItem` — รากเดียวกับ D6-3 คนละแหล่งข้อมูล

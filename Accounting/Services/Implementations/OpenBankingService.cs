@@ -236,8 +236,9 @@ public class OpenBankingService : IOpenBankingService
             }
 
             // Get current running balance once (rather than re-querying for each row)
+            // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี CompanyId
             var runningBalance = await _db.BankTransactions
-                .Where(t => t.BankAccountId == bankAccountId)
+                .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
                 .OrderByDescending(t => t.TransactionDate)
                 .ThenByDescending(t => t.CreatedAt)
                 .Select(t => t.BalanceAfter)
@@ -258,14 +259,14 @@ public class OpenBankingService : IOpenBankingService
                 if (!string.IsNullOrEmpty(r.Reference))
                 {
                     isDuplicate = await _db.BankTransactions
-                        .AnyAsync(t => t.BankAccountId == bankAccountId
+                        .AnyAsync(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId
                                     && t.Reference == r.Reference
                                     && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd);
                 }
                 else
                 {
                     isDuplicate = await _db.BankTransactions
-                        .AnyAsync(t => t.BankAccountId == bankAccountId
+                        .AnyAsync(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId
                                     && t.Amount == amount
                                     && t.TransactionType == (isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal)
                                     && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd
@@ -311,30 +312,78 @@ public class OpenBankingService : IOpenBankingService
             throw new InvalidOperationException($"รูปแบบไฟล์ '{fileFormat}' ยังไม่รองรับ");
         }
 
-        // Try auto-matching new transactions with existing payments
-        var unmatchedPayments = await _db.Payments
-            .Include(p => p.Document)
-            .Where(p => p.CompanyId == companyId)
+        // ═══ จับคู่อัตโนมัติ — เดินด่านเดียวกับทุกทางเข้า ═══
+        // ของเดิม (`DECISION_AUDIT_2026-09-18.md` §3 D4-1, P0) มี 3 บั๊ก:
+        //  1. คิวรี `BankTransactions` **ไม่มี `CompanyId`** ⇒ ละเมิด tenant
+        //     isolation (กฎเหล็ก #2 M) — ไฟล์ statement ของบริษัทหนึ่งไป
+        //     ประทับสถานะให้บรรทัดของอีกบริษัทที่บังเอิญใช้ bankAccountId เดียวกัน
+        //  2. โหลด `Payments` **ทั้งบริษัทโดยไม่กันตัวที่ถูกจับไปแล้ว** ⇒
+        //     รายการชำระใบเดียวถูกจับคู่กับหลายบรรทัดธนาคาร (double-match)
+        //  3. `FirstOrDefault(ยอดตรง + ≤3 วัน)` = **ใครมาก่อนชนะ** ไม่ดูชื่อ
+        //     ผู้โอน แล้วประทับ `Matched` เอง
+        var alreadyPairedPaymentIds = await _db.BankTransactions
+            .Where(t => t.CompanyId == companyId && t.MatchedPaymentId != null)
+            .Select(t => t.MatchedPaymentId!.Value)
             .ToListAsync();
+        var takenPaymentIds = new HashSet<Guid>(alreadyPairedPaymentIds);
+
+        var candidatePayments = await _db.Payments
+            .Include(p => p.Document)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.Document.Status != DocumentStatus.Voided)
+            .ToListAsync();
+        await Accounting.Helpers.ContactHydration.HydratePaymentContactsAsync(
+            _db, companyId, candidatePayments);
 
         var newUnmatched = await _db.BankTransactions
-            .Where(t => t.BankAccountId == bankAccountId
+            .Where(t => t.CompanyId == companyId
+                      && t.BankAccountId == bankAccountId
                       && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
             .ToListAsync();
 
         foreach (var tx in newUnmatched)
         {
-            var matchingPayment = unmatchedPayments
-                .FirstOrDefault(p => p.Amount == Math.Abs(tx.Amount)
-                                  && Math.Abs((p.PaymentDate - tx.TransactionDate).TotalDays) <= 3);
+            var options = new List<Accounting.Helpers.BankMatchArbiter.Option>();
+            foreach (var p in candidatePayments)
+            {
+                if (takenPaymentIds.Contains(p.Id)) continue;
+                if (Math.Abs((p.PaymentDate.Date - tx.TransactionDate.Date).TotalDays) > 3) continue;
 
-            if (matchingPayment != null)
+                var sc = Accounting.Helpers.BankMatchScorer.Score(
+                    new Accounting.Helpers.BankMatchScorer.Input(
+                        CandidateAmount: p.Amount,
+                        BankAmount: Math.Abs(tx.Amount),
+                        CandidateDate: p.PaymentDate,
+                        BankDate: tx.TransactionDate,
+                        CandidateRef: p.Reference,
+                        CandidateNotes: p.Notes,
+                        CandidateDocNumber: p.Document?.DocumentNumber,
+                        CandidateName: p.Document?.Contact?.Name,
+                        BankDescription: tx.Description,
+                        BankReference: tx.Reference,
+                        BankPayee: tx.Payee));
+                options.Add(new Accounting.Helpers.BankMatchArbiter.Option(
+                    p.Id, "Payment", sc.Score, sc.HasIdentitySignal, sc.Reason));
+            }
+
+            var decision = Accounting.Helpers.BankMatchArbiter.Decide(options);
+            if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.None) continue;
+
+            // ทุกสถานะที่เขียนต้องมี id ของคู่เสมอ — ห้ามประทับกับความว่าง
+            tx.MatchedPaymentId = decision.Chosen!.Id;
+            takenPaymentIds.Add(decision.Chosen.Id);
+
+            if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply)
             {
                 tx.ReconciliationStatus = ReconciliationStatus.Matched;
-                tx.MatchedPaymentId = matchingPayment.Id;
                 tx.ReconciledAt = DateTime.UtcNow;
-                tx.ReconciledBy = "AutoMatch";
+                tx.ReconciledBy = "OpenBanking";
                 autoMatched++;
+            }
+            else
+            {
+                tx.ReconciliationStatus = ReconciliationStatus.Suggested;
+                tx.ReconciledBy = "OpenBanking (เสนอ รอยืนยัน)";
             }
         }
 
@@ -356,7 +405,7 @@ public class OpenBankingService : IOpenBankingService
 
         // Update bank account balance
         var latestTransaction = await _db.BankTransactions
-            .Where(t => t.BankAccountId == bankAccountId)
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
             .OrderByDescending(t => t.TransactionDate)
             .ThenByDescending(t => t.CreatedAt)
             .FirstOrDefaultAsync();

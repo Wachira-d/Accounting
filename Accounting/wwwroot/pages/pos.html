@@ -2120,19 +2120,33 @@
       // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือเดิมหนีแค่ & < ' ⇒ ค่าที่มี " แตกออกจาก attribute ได้)
       esc(s) { return Layout.esc(s); },
 
+      // ★ D8-1 — ชื่อฟิลด์ต้องตรงกับ IssueTaxInvoiceRequest (buyerName/buyerTaxId/
+      // buyerBranchCode/buyerAddress). เดิมส่ง customerName/customerTaxId/customerAddress
+      // ซึ่งเซิร์ฟเวอร์ **ไม่เคยอ่าน** ⇒ BuyerName = null ⇒ 400 "กรุณาระบุชื่อผู้ซื้อ"
+      // ทุกครั้ง = ปุ่มนี้ไม่เคยออกใบกำกับได้เลยตั้งแต่มีมา (defect class
+      // "หน้าเว็บส่ง/อ่านฟิลด์ที่ DTO ของ endpoint นั้นไม่มี")
       async openIssueTaxInvoice(orderId) {
         const customerName = prompt('ชื่อผู้ซื้อ (จะแสดงในใบกำกับเต็ม)');
         if (customerName === null) return;
         const taxId = prompt('เลขผู้เสียภาษีของผู้ซื้อ (13 หลัก) — เว้นว่างได้ถ้าบุคคลธรรมดา', '');
         if (taxId === null) return;
-        const address = prompt('ที่อยู่ผู้ซื้อ (สำคัญสำหรับใบกำกับเต็ม)', '');
+        // ที่อยู่ผู้ซื้อเป็น **ของบังคับ** §86/4 — เซิร์ฟเวอร์บล็อกถ้าว่าง จึงบอกไว้ตรงนี้
+        const address = prompt('ที่อยู่ผู้ซื้อ (บังคับตาม §86/4 — ไม่มีที่อยู่ออกใบกำกับเต็มรูปไม่ได้)', '');
         if (address === null) return;
+        // รหัสสาขาผู้ซื้อ §86/4 — ถามเฉพาะผู้ซื้อที่มีเลขภาษี · เว้นว่าง = สำนักงานใหญ่
+        let branchCode = '';
+        if (taxId.trim()) {
+          const b = prompt('รหัสสาขาผู้ซื้อ 5 หลัก (เว้นว่าง = 00000 สำนักงานใหญ่)', '');
+          if (b === null) return;
+          branchCode = b;
+        }
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.issuePosTaxInvoice(orderId, {
-            customerName: customerName.trim(),
-            customerTaxId: taxId.trim() || null,
-            customerAddress: address.trim() || null
+            buyerName: customerName.trim(),
+            buyerTaxId: taxId.trim() || null,
+            buyerBranchCode: branchCode.trim() || null,
+            buyerAddress: address.trim() || null
           });
           Layout.toast(`✓ ออกใบกำกับเต็ม #${res.data.documentNumber || ''} แล้ว`, 'success');
           const bar = document.getElementById('postCheckoutBar'); if (bar) bar.remove();

@@ -633,6 +633,19 @@ public class OcrService : IOcrService
                 documentDiscount: extractedData.DiscountAmount);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
+            // ── ผลของด่านคณิตศาสตร์ต้องมี "ผู้บริโภค" ไม่ใช่แค่หักคะแนน (D3-3) ──
+            // `GatewayResult.MathConsistent` เคยไม่มีผู้อ่านทั้งเรพ ⇒ ใบที่ระบบเอง
+            // บอกว่า "อย่างน้อยหนึ่งช่องอ่านผิด" ยังถูกอนุมัติอัตโนมัติได้ถ้าคะแนน
+            // รวมยังถึงเกณฑ์. แท็กนี้อยู่ในรายการห้ามอนุมัติเองของ
+            // Helpers/OcrPostingReadiness — ผู้ใช้ยังกดอนุมัติเองได้ (นั่นคือการ
+            // ตัดสินใจของคน) แต่ระบบต้องไม่ตัดสินแทนเงียบ ๆ
+            // ธงนี้ตั้งได้จาก 3 เหตุ (ยอดหัวใบไม่ลงตัว · สามช่องขัดกันเอง · Σ บรรทัด
+            // ไม่ตรงหัวใบ) ⇒ ข้อความต้องไม่ระบุเหตุเดียว แต่ชี้ไปที่บรรทัด [Gateway]
+            // ที่บอกเหตุจริง (ประโยคที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง)
+            if (!gatewayResult.MathConsistent)
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + "\n[MATH] ตัวเลขบนใบขัดกันเอง (ยอดหัวใบไม่ลงตัว หรือ Σ บรรทัดไม่ตรงหัวใบ) — "
+                    + "ดูรายละเอียดที่บรรทัด [Gateway] ในเหตุผลประกอบ แล้วตรวจยอดกับกระดาษก่อนอนุมัติ";
             foreach (var w in gatewayResult.Warnings)
                 extractedData.ReasoningTrace.Add("[Gateway] " + w);
             // ข้อสังเกตที่ไม่ใช่ความผิด (ใบผสมอัตรา VAT · ราคารวม VAT · ส่วนลดที่
@@ -780,12 +793,11 @@ public class OcrService : IOcrService
                 if (string.IsNullOrWhiteSpace(it.Unit))
                     it.Unit = UnitInferrer.Infer(it.Description);
 
-            // Store extracted items and account suggestions
-            if (extractedData.Items.Count > 0)
-            {
-                scanResult.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(
-                    extractedData.Items.Select(i => new { i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode, i.ProjectId, i.ProjectName, i.Unit }));
-            }
+            // ⚠️ บรรทัดรายการ **ไม่ serialize ตรงนี้แล้ว** (ผลตรวจ 2026-09-18 · D3-1)
+            // — จุดเดียวที่เขียน ExtractedItemsJson ของไปป์ไลน์อยู่ท้ายสุดก่อนบล็อก
+            // CONTENT FINGERPRINT ดูเหตุผลเต็มที่นั่น (สรุป: ที่นี่อยู่**ก่อน**
+            // ApplyProductCrossReferenceAsync + ตัวเรียนรายบรรทัด ⇒ ผังบัญชีรายบรรทัด
+            // ที่ดีที่สุดไม่เคยถูกบันทึกลงแถวสแกน)
             scanResult.ExtractedDiscountAmount = extractedData.DiscountAmount;
 
             scanResult.ExpenseCategory = extractedData.ExpenseCategory;
@@ -1013,7 +1025,15 @@ public class OcrService : IOcrService
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;
-                extractedData.TargetDocumentType = role.TargetDocType.ToString();
+                SetTargetDocumentType(extractedData, role.TargetDocType.ToString(),
+                    // กระดาษบอกชนิดเอกสารเอง = ป้ายบนกระดาษ · ไม่บอก = กติกา/ค่าเริ่มต้นตามบทบาท
+                    role.ScannedDocType.HasValue
+                        ? Accounting.Helpers.OcrFieldSource.PaperLabel
+                        : Accounting.Helpers.OcrFieldSource.Rule,
+                    role.RoleConfidence,
+                    role.ScannedDocType.HasValue
+                        ? $"ชนิดกระดาษ {role.ScannedDocType} + บทบาทเรา ({role.OurRole})"
+                        : $"กระดาษไม่ได้ระบุชนิด — ค่าเริ่มต้นตามบทบาท ({role.OurRole}) และการตั้งค่าบริษัท");
                 ocrRoleConfidence = role.RoleConfidence;
                 ocrLikelyOurOwnDoc = role.LikelyOurOwnIssuedDocument;
                 ocrWeAreWithheld = role.WeAreWithheld;
@@ -1089,11 +1109,13 @@ public class OcrService : IOcrService
                             && Enum.TryParse<DocumentType>(cls.Answer, true, out var aiType)
                             && Accounting.Helpers.DocumentSide.MatchesRole(aiType, extractedData.OurRole))
                         {
-                            extractedData.TargetDocumentType = aiType.ToString();
                             scanResult.TargetDocTypeUsedAi = cls.UsedAi;   // ป้ายซื่อสัตย์: true เฉพาะ provider จริง
-                            extractedData.ReasoningTrace.Add(
-                                $"[{cls.SourceLabel}] จำแนกชนิดเอกสาร → {aiType} (มั่นใจ {cls.Confidence:P0}) — "
-                                + (cls.UsedAi ? "เรียก AI เพราะกติกาไม่มั่นใจ" : "นักเรียน (local model) ตอบแทน AI"));
+                            SetTargetDocumentType(extractedData, aiType.ToString(),
+                                cls.UsedAi
+                                    ? Accounting.Helpers.OcrFieldSource.Ai
+                                    : Accounting.Helpers.OcrFieldSource.Student,
+                                cls.Confidence ?? 0m,
+                                cls.UsedAi ? "เรียก AI เพราะกติกาไม่มั่นใจ" : "นักเรียน (local model) ตอบแทน AI");
                         }
                         else if (cls.UsedAi || cls.FromStudent)
                         {
@@ -1239,15 +1261,8 @@ public class OcrService : IOcrService
                     + "\n[DATE-UNKNOWN] อ่านวันที่บนกระดาษไม่ได้ — ระบบจะเติมวันนี้ให้เป็นค่าเริ่มต้น กรุณายืนยันวันที่ก่อนอนุมัติ (งวดภาษี §78/§82/3)";
             }
 
-            // ── สมุดที่มาของค่ารายช่อง (D1) ──────────────────────────────────
-            // ยังไม่ย้ายตัวตัดสิน — ค่าที่ผู้ใช้เห็นมาจากลำดับเดิมทุกประการ
-            // เก็บไว้เพื่อ (ก) ผู้ใช้กดดูได้ว่า "ค่านี้มาจากไหน" (ข) เวลาไล่บั๊ก
-            // จะรู้ทันทีว่าใครเป็นคนใส่ ไม่ต้องเดาจากลำดับบรรทัดในเมธอด 2,000 บรรทัด
-            if (extractedData.FieldCandidates.Count > 0)
-            {
-                var decisions = Accounting.Helpers.OcrFieldArbiter.DecideAll(extractedData.FieldCandidates);
-                scanResult.FieldDecisionsJson = Accounting.Helpers.OcrFieldArbiter.ToJson(decisions);
-            }
+            // ── สมุดที่มาของค่ารายช่อง (D1) — **เขียนท้ายไปป์ไลน์** ──────────
+            // (บล็อกนี้ถูกย้ายลงไปไว้หลัง EnrichFromDbdAsync — ดูเหตุผลที่นั่น)
 
             // [Reasoning] section is built AFTER vendorPred so VendorIntel/Learner traces are included.
 
@@ -1455,12 +1470,17 @@ public class OcrService : IOcrService
                 {
                     var newTarget = vendorPred.DocumentType.Value.ToString();
                     if (extractedData.TargetDocumentType != newTarget)
-                    {
-                        extractedData.ReasoningTrace.Add(
-                            $"[VendorIntel] เปลี่ยนเอกสารที่จะสร้างจาก {extractedData.TargetDocumentType} → {newTarget} (confidence {vendorPred.DocumentTypeConfidence:P0})");
-                        extractedData.TargetDocumentType = newTarget;
-                    }
-                    extractedData.Confidence = Math.Max(extractedData.Confidence, vendorPred.DocumentTypeConfidence);
+                        SetTargetDocumentType(extractedData, newTarget,
+                            Accounting.Helpers.OcrFieldSource.VendorHistory,
+                            vendorPred.DocumentTypeConfidence,
+                            $"ประวัติ {vendorPred.SampleSize} เอกสารของผู้ขายรายนี้ (ฝั่งเดียวกับบทบาทเรา)");
+                    // ⚠️ **ห้ามยกคะแนนความมั่นใจทั้งใบด้วย prior ของผู้ขาย** (D3-3)
+                    // เดิม: `Confidence = Math.Max(Confidence, vendorPred.DocumentTypeConfidence)`
+                    // — prior บอกได้แค่ "เอกสารของเจ้านี้มักลงเป็นชนิดอะไร" ไม่ได้รู้ว่า
+                    // **ตัวเลขบนใบนี้อ่านถูกไหม** ⇒ ใบที่ Gateway หักคะแนนเพราะ
+                    // sub + vat ≠ total ของผู้ขายประจำ ถูกดันกลับขึ้นเหนือเกณฑ์
+                    // auto-create 0.85 = ด่านคณิตศาสตร์ถูกลบล้างด้วยความคุ้นเคย
+                    // (ชนิดเอกสารที่ prior ตัดสินยังถูกใช้อยู่ตามเดิม — แค่ไม่ยกคะแนน)
                 }
                 else if (vendorPred.DocumentType.HasValue && vendorPred.DocumentTypeConfidence >= VendorIntelligenceService.MediumConfidence)
                 {
@@ -1508,9 +1528,11 @@ public class OcrService : IOcrService
                                 && Enum.TryParse<DocumentType>(fedTarget, out var fedDt)
                                 && Accounting.Helpers.DocumentSide.MatchesRole(fedDt, extractedData.OurRole))
                             {
-                                extractedData.TargetDocumentType = fedTarget;
-                                extractedData.ReasoningTrace.Add(
-                                    $"[Federated] 🌐 ระบบกลางแนะนำสร้าง {fedTarget} (จาก {fedTenants} ลูกค้าที่ใช้ vendor เดียวกัน)");
+                                SetTargetDocumentType(extractedData, fedTarget,
+                                    Accounting.Helpers.OcrFieldSource.VendorHistory,
+                                    FederatedTargetConfidence,
+                                    $"🌐 คลังกลางข้ามผู้เช่า: {fedTenants} ลูกค้าที่ใช้ผู้ขายรายเดียวกันลงเป็นชนิดนี้ "
+                                    + "(คลังกลางไม่รายงานความมั่นใจ)");
                             }
                             else if (!string.IsNullOrEmpty(fedTarget))
                             {
@@ -1542,14 +1564,35 @@ public class OcrService : IOcrService
                         $"[VendorIntel] เลือกรหัสบัญชี {vendorPred.DebitAccountCode} จากประวัติผู้ขาย (confidence {vendorPred.DebitAccountConfidence:P0})");
                 }
 
-                // Auto-fill WHT habits when extraction missed it but vendor typically has WHT
-                if (!extractedData.HasWht && vendorPred.HasWht == true && vendorPred.WhtRate.HasValue
+                // ── ประวัติผู้ขายเรื่อง WHT = **ข้อเสนอ** ห้ามสวมรอย "กระดาษ" ──
+                //
+                // ⚠️ ที่มา (ผลตรวจ 2026-09-18 · D3-2): เดิมบล็อกนี้เขียน
+                // `HasWht = true; WhtRate = …` ซึ่งเป็นช่อง "ยอด/อัตราที่**พิมพ์บน
+                // กระดาษ**" (ดู doc ของ OcrExtractedData.WhtRate) ทั้งที่
+                // `Helpers/PaperWhtReader` เพิ่งอ่านกระดาษแล้วตอบว่าไม่มีส่วนหัก ⇒
+                //   1. เส้นสร้างเอกสารคิด `headerWht` แล้วหัก ณ ที่จ่ายจริงบนใบ
+                //   2. ตอนอนุมัติ `ScanPaperWhtEvidenceAsync` อ่าน `scan.HasWht`
+                //      แล้วสรุปว่า "กระดาษประกาศเชิงบวก ⇒ ต้องหัก" (ชนะทุกด่าน)
+                //   3. `VendorIntelligenceService` เรียนกลับจาก
+                //      `doc.WithholdingTaxAmount > 0` ⇒ **วงจรสอนตัวเอง** ที่
+                //      DECISION_DOCTRINE §3 ห้าม (ประวัติยืนยันประวัติของตัวเอง)
+                // ตอนนี้เขียนลง `SuggestedWhtRate` (ช่อง "ข้อเสนอ") + ความมั่นใจราย
+                // ช่อง (< 0.85 ⇒ ไฮไลต์เหลืองตามกฎเหล็ก #3 ข้อ 3) ⇒ เส้นสร้างเอกสาร
+                // ออกคำเตือน [WHT-SUGGEST] ให้คนตัดสิน แต่ไม่หักเงินให้เอง
+                if (!extractedData.HasWht && !extractedData.SuggestedWhtRate.HasValue
+                    && vendorPred.HasWht == true && vendorPred.WhtRate.HasValue
                     && vendorPred.WhtConfidence >= VendorIntelligenceService.MediumConfidence)
                 {
-                    extractedData.HasWht = true;
-                    extractedData.WhtRate = vendorPred.WhtRate;
+                    extractedData.SuggestedWhtRate = vendorPred.WhtRate;
+                    extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] =
+                        (double)vendorPred.WhtConfidence;
+                    extractedData.Note(Accounting.Helpers.OcrFieldKeys.WhtRate, vendorPred.WhtRate,
+                        Accounting.Helpers.OcrFieldSource.VendorHistory, vendorPred.WhtConfidence,
+                        "ประวัติการหัก ณ ที่จ่ายของผู้ขายรายนี้ — ไม่ใช่ยอดบนกระดาษใบนี้");
                     extractedData.ReasoningTrace.Add(
-                        $"[VendorIntel] ตั้ง WHT = {vendorPred.WhtRate}% จากประวัติผู้ขาย (confidence {vendorPred.WhtConfidence:P0})");
+                        $"[VendorIntel] **เสนอ** หัก ณ ที่จ่าย {vendorPred.WhtRate}% จากประวัติผู้ขาย "
+                        + $"(confidence {vendorPred.WhtConfidence:P0}) — กระดาษใบนี้ไม่ได้พิมพ์ไว้ "
+                        + "ระบบจึงไม่หักให้ ต้องให้ผู้ใช้ยืนยันก่อน");
                 }
 
                 // Auto-fill payment terms when missing
@@ -1578,10 +1621,10 @@ public class OcrService : IOcrService
                         && vendorPred.TypicalPaymentTermsDays > 0
                         && extractedData.DocumentType is nameof(DocumentType.TaxInvoice) or nameof(DocumentType.Invoice))
                     {
-                        extractedData.TargetDocumentType = nameof(DocumentType.PurchaseInvoice);
-                        extractedData.ReasoningTrace.Add(
-                            $"[VendorIntel] ผู้ขายรายนี้ให้เครดิต {vendorPred.TypicalPaymentTermsDays} วันเป็นปกติ "
-                            + "และกระดาษไม่มีตรา \"ชำระแล้ว\" → ตั้งหนี้เป็นใบแจ้งหนี้ซื้อ แทนใบสำคัญจ่าย "
+                        SetTargetDocumentType(extractedData, nameof(DocumentType.PurchaseInvoice),
+                            Accounting.Helpers.OcrFieldSource.VendorHistory, 1.0m,
+                            $"ผู้ขายรายนี้ให้เครดิต {vendorPred.TypicalPaymentTermsDays} วันเป็นปกติ "
+                            + "และกระดาษไม่มีตรา \"ชำระแล้ว\" → ตั้งหนี้แทนใบสำคัญจ่าย "
                             + "(กันบันทึกการจ่ายที่ยังไม่เกิด)");
                     }
                 }
@@ -1824,10 +1867,10 @@ public class OcrService : IOcrService
                     extractedData.VendorAddress, extractedData.VendorPhone);
                 if (payee.Level == Accounting.Helpers.OcrPayeeProof.Unidentified)
                 {
-                    extractedData.TargetDocumentType = nameof(DocumentType.CertificateInLieu);
-                    extractedData.ReasoningTrace.Add(
-                        $"[CertInLieu] {payee.Reason} และไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่าย"
-                        + "ทางภาษี (§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
+                    SetTargetDocumentType(extractedData, nameof(DocumentType.CertificateInLieu),
+                        Accounting.Helpers.OcrFieldSource.Rule, 1.0m,
+                        $"{payee.Reason} และไม่มี VAT — หลักฐานยังไม่พอเป็นรายจ่ายทางภาษี "
+                        + "(§65 ตรี(9)(18)) → จัดทำ \"ใบรับรองแทนใบเสร็จรับเงิน\" แนบรูปบิลเป็นหลักฐาน"
                         + "ตามแนวทางกรมสรรพากร");
                 }
                 else if (payee.Level == Accounting.Helpers.OcrPayeeProof.Weak)
@@ -1867,10 +1910,10 @@ public class OcrService : IOcrService
                 && extractedData.TargetDocumentType
                     is null or nameof(DocumentType.Receipt) or nameof(DocumentType.Invoice))
             {
-                extractedData.TargetDocumentType = "Deposit";
-                extractedData.ReasoningTrace.Add(
-                    "[Deposit] เอกสารระบุ \"มัดจำ/รับล่วงหน้า\" → ตั้งเป้าเป็นใบมัดจำ "
-                    + "(Cr ขายรอรับรู้ 217xx แทนรายได้ — รับรู้รายได้เมื่อส่งมอบ/ออกใบกำกับ)");
+                SetTargetDocumentType(extractedData, "Deposit",
+                    Accounting.Helpers.OcrFieldSource.PaperLabel, 1.0m,
+                    "เอกสารระบุ \"มัดจำ/รับล่วงหน้า\" พร้อมยอดเงิน (Helpers/OcrDepositMarker) → "
+                    + "Cr ขายรอรับรู้ 217xx แทนรายได้ (รับรู้รายได้เมื่อส่งมอบ/ออกใบกำกับ)");
             }
 
             // ───── มัดจำ/จ่ายล่วงหน้า (ฝั่ง**ซื้อ**) ─────
@@ -2140,6 +2183,30 @@ public class OcrService : IOcrService
                 });
             }
 
+            // ───── บรรทัดรายการ: serialize **ครั้งเดียว · ท้ายไปป์ไลน์** ─────
+            //
+            // ⚠️ ที่มา (ผลตรวจ 2026-09-18 · D3-1): เดิม serialize ที่ต้นไปป์ไลน์ ด้วย
+            // projection 8 ช่อง และอยู่ **ก่อน** `ApplyProductCrossReferenceAsync`
+            // (ตัวเขียน `line.SuggestedAccountCode` จากสินค้าใน master) กับตัวเรียน
+            // รายบรรทัด ⇒
+            //   (ก) `BuildScanLinesAsync` อ่าน `item.SuggestedAccountCode` ได้ **null
+            //       ทุกบรรทัด** แล้วตกไปใช้บัญชีระดับหัวใบ ⇒ ชั้นหลักฐานที่แข็งที่สุด
+            //       (สินค้าที่ผูกผังบัญชีไว้แล้ว) **ไม่เคยถึงเอกสาร** และ trace
+            //       "[Product] รายการ → บัญชี" กลายเป็นคำโกหก (หน้าจอรอบแรกเห็นถูก
+            //       เพราะ MapToResponse ใช้ `data.Items` — reload แล้วหาย)
+            //   (ข) projection ตก `VatRate` / `VatAmount` / `ProjectAiFeedbackId` /
+            //       `AiSuggestedProjectId` ที่บรรทัดถืออยู่จริง ⇒ ด่าน "ผู้ใช้/AI
+            //       ตัดสินอัตรา VAT มาแล้ว ห้ามทับ" เป็นจริงเฉพาะหลังผู้ใช้แก้บรรทัด
+            //       (เส้นแก้บรรทัด re-serialize เต็มรูปอยู่แล้ว)
+            //
+            // ตำแหน่งนี้อยู่ **หลัง** ทุกตัวที่แตะบรรทัด (project matcher · sanitizer ·
+            // UnitInferrer · Product cross-reference · ตัวเรียนรายบรรทัด) และ **ก่อน**
+            // ทุกตัวที่อ่าน JSON กลับ (`ScanLineDescriptions` ของการผูกใบต้นทาง ·
+            // alias ตอน link-po · auto-create → `CreateDocumentFromScanAsync` ที่
+            // re-query แถวนี้) — ย้ายไปท้ายกว่านี้ = auto-create ได้เอกสารบรรทัดว่าง
+            if (extractedData.Items.Count > 0)
+                scanResult.ExtractedItemsJson = SerializeExtractedItems(extractedData.Items);
+
             // ───── CONTENT FINGERPRINT (cross-format dedup) ─────
             // Catches the case where same invoice is uploaded as JPG once + PDF later.
             // File hash differs but the semantic content matches. Stored on the row for
@@ -2239,6 +2306,22 @@ public class OcrService : IOcrService
             // canonical company name + address. This is treated as ground truth — if OCR
             // disagrees, we trust DBD and record the OCR mismatch as negative training.
             await EnrichFromDbdAsync(companyId, extractedData, scanResult);
+
+            // ── สมุดที่มาของค่ารายช่อง (D1) ──────────────────────────────────
+            // ยังไม่ย้ายตัวตัดสิน — ค่าที่ผู้ใช้เห็นมาจากลำดับเดิมทุกประการ
+            // เก็บไว้เพื่อ (ก) ผู้ใช้กดดูได้ว่า "ค่านี้มาจากไหน" (ข) เวลาไล่บั๊ก
+            // จะรู้ทันทีว่าใครเป็นคนใส่ ไม่ต้องเดาจากลำดับบรรทัดในเมธอด 2,000 บรรทัด
+            //
+            // ⚠️ ย้ายลงมาจากกลางไปป์ไลน์ (ผลตรวจ 2026-09-18 · D3-4/D3-B): เดิมเขียน
+            // ก่อน VendorIntel · Federated · CertInLieu · Deposit · ทะเบียน DBD
+            // ⇒ ผู้เสนอทุกรายหลังจุดนั้น (รวมชั้นที่ **เปลี่ยนชนิดเอกสาร**) ถูกทิ้ง
+            // เงียบ ๆ — สมุดที่ควรตอบว่า "ค่านี้มาจากไหน" จึงตอบได้แค่ครึ่งแรกของ
+            // ไปป์ไลน์. ตัวตัดสินยังไม่ย้าย (ลำดับเดิมทุกประการ) แต่สมุดครบแล้ว
+            if (extractedData.FieldCandidates.Count > 0)
+            {
+                var decisions = Accounting.Helpers.OcrFieldArbiter.DecideAll(extractedData.FieldCandidates);
+                scanResult.FieldDecisionsJson = Accounting.Helpers.OcrFieldArbiter.ToJson(decisions);
+            }
 
             // ห้ามจับคู่คู่ค้าเป็น **บริษัทเราเอง** — Contact ของตัวเองมีอยู่จริงในหลาย tenant
             // (สร้างไว้ออกใบให้ตัวเอง/ทดสอบ) และเดิมไม่มีด่านเลย ⇒ สแกนที่ engine ใส่ชื่อเรา
@@ -2927,6 +3010,14 @@ public class OcrService : IOcrService
         if (extractedData?.ReasoningTrace is { Count: > 0 } trace)
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[Reasoning]\n" +
                 string.Join("\n", trace.Select(r => "  • " + r));
+
+        // บรรทัดที่อ่านได้ต้องไม่หายเมื่อไปป์ไลน์ล้มกลางทาง — จุด serialize หลักอยู่
+        // กลางไปป์ไลน์ (ต้องอยู่ก่อนตัวอ่าน JSON ทุกตัว ดูเหตุผลที่นั่น) ส่วนบล็อกนี้
+        // อยู่**นอก** try/catch จึงเติมให้เฉพาะตอนที่ยังไม่มีใครเขียน — ห้ามทับของที่
+        // เส้นสร้างเอกสาร/ผู้ใช้แก้บรรทัดเขียนไว้แล้ว
+        if (string.IsNullOrEmpty(scanResult.ExtractedItemsJson)
+            && extractedData?.Items is { Count: > 0 } salvagedItems)
+            scanResult.ExtractedItemsJson = SerializeExtractedItems(salvagedItems);
 
         await _db.SaveChangesAsync();
 
@@ -3721,6 +3812,48 @@ public class OcrService : IOcrService
         return digits.Length == expectedLength ? digits : (digits.Length > 0 ? digits : null);
     }
 
+    /// <summary>ความมั่นใจที่ใช้บันทึกที่มาเมื่อ**คลังกลางข้ามผู้เช่า**เป็นคนเสนอชนิดเอกสาร —
+    /// ตัวเรียนกลางไม่รายงานความมั่นใจกลับมา จึงตั้งไว้ต่ำกว่า
+    /// <see cref="VendorIntelligenceService.MediumConfidence"/> เพื่อไม่ให้ค่าที่
+    /// **ไม่ได้วัด** ชนะค่าที่วัดจริงของแหล่งเดียวกัน (ห้ามแต่งตัวเลขให้ดูมั่นใจ)</summary>
+    private const decimal FederatedTargetConfidence = 0.50m;
+
+    /// <summary>**ตัวเขียน "ชนิดเอกสารที่จะสร้าง" ตัวเดียวของไปป์ไลน์** — เขียนค่า +
+    /// บันทึกที่มา + ทิ้งร่องรอยในคราวเดียว
+    ///
+    /// <para>⚠️ ที่มา (ผลตรวจ 2026-09-18 · D3-4): ช่องนี้ถูกทับ 7 ชั้นแบบ "ใครมาหลังชนะ"
+    /// โดยไม่มีชั้นไหน <c>Note()</c> เลย ⇒ หน้ารีวิวตอบไม่ได้ว่าค่ามาจากไหน และเวลาไล่บั๊ก
+    /// ต้องเดาจากลำดับบรรทัด. ทุกชั้นที่เปลี่ยนชนิดเอกสารต้องเรียกตัวนี้ ห้ามเขียน
+    /// <c>data.TargetDocumentType = …</c> ตรง ๆ อีก</para>
+    ///
+    /// <para><b>ยังไม่ย้ายตัวตัดสิน</b> — ค่าที่ใช้จริงยังมาจากลำดับเดิมทุกประการ
+    /// (การสลับลำดับชั้นต้องมี golden ก่อน/หลังตามกฎเหล็ก #4 H)</para></summary>
+    private static void SetTargetDocumentType(
+        OcrExtractedData data, string newTarget, Accounting.Helpers.OcrFieldSource source,
+        decimal confidence, string why)
+    {
+        var previous = data.TargetDocumentType;
+        data.TargetDocumentType = newTarget;
+        data.Note(Accounting.Helpers.OcrFieldKeys.TargetDocumentType, newTarget, source, confidence, why);
+        var head = string.IsNullOrWhiteSpace(previous) || string.Equals(previous, newTarget, StringComparison.OrdinalIgnoreCase)
+            ? $"[Target] ตั้งเป็น {newTarget}"
+            : $"[Target] เปลี่ยน {previous} → {newTarget}";
+        data.ReasoningTrace.Add(
+            $"{head} · ที่มา {Accounting.Helpers.OcrFieldArbiter.SourceLabel(source)} "
+            + $"(มั่นใจ {confidence:P0}) — {why}");
+    }
+
+    /// <summary>**รูปเดียวของ "บรรทัดที่สแกนได้" ที่ลงฐาน** (<c>OcrScanResult.ExtractedItemsJson</c>)
+    ///
+    /// <para>ทุกฝั่งที่เขียนต้องผ่านตัวนี้ — ห้าม projection มือ. ที่มา (D3-1): ไปป์ไลน์เคย
+    /// เขียนด้วย projection 8 ช่องของตัวเอง ขณะที่เส้น "ผู้ใช้แก้บรรทัด" เขียนวัตถุเต็ม
+    /// ⇒ ช่องที่ projection ไม่มี (<c>VatRate</c> · <c>VatAmount</c> ·
+    /// <c>ProjectAiFeedbackId</c> · <c>AiSuggestedProjectId</c>) หายทุกครั้งที่ไปป์ไลน์
+    /// เขียน แล้วกลับมาเฉพาะหลังผู้ใช้แก้ = "ค่าเดียวกันสองรูป" ที่ผู้ใช้เห็นเป็น
+    /// ค่าหายเงียบ ๆ ตอน reload</para></summary>
+    internal static string SerializeExtractedItems(IReadOnlyList<OcrExtractedLineItem> items)
+        => System.Text.Json.JsonSerializer.Serialize(items);
+
     /// <summary>
     /// ตัด "(ส่วนมีภาษี)" / "(ส่วนไม่มีภาษี)" / "(VATable)" / "(non-VAT)" /
     /// "(VAT-included)" และคู่ขนานทั้งไทย+อังกฤษ ออกจากท้าย description ของ
@@ -4467,7 +4600,9 @@ public class OcrService : IOcrService
                 {
                     await _feedbackRecorder.RecordUserChoiceAsync(
                         feedbackId.Value, chosen,
-                        acceptedAi: string.Equals(chosen, aiAnswer, StringComparison.Ordinal), default,
+                        // นิยามเดียวกับเส้น 1-click (Helpers/OcrAiLabelScope) — สองทางเข้า
+                        // ต้องให้ label เดียวกันกับใบเดียวกัน
+                        acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(aiAnswer, chosen), default,
                         userTouched
                             ? Accounting.Models.Enums.UserChoiceSource.Explicit
                             : Accounting.Models.Enums.UserChoiceSource.Implicit);
@@ -5643,9 +5778,17 @@ public class OcrService : IOcrService
             && Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase, 0m))
         {
             var it = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
+            // ⚠️ ข้อเสนอมาได้ 2 ทาง และ**ข้อความต้องบอกตรงว่ามาจากไหน** (D3-2):
+            //   • มีรหัสประเภทเงินได้ ม.40 = ตัวจัดหมวดอ่านจากรายการบนกระดาษ ⇒ อ้าง
+            //     กฎหมายได้ ("หมวดนี้กฎหมายให้หัก")
+            //   • ไม่มีรหัส = มาจากประวัติผู้ขาย (VendorIntel) ⇒ อ้างกฎหมายไม่ได้
+            //     ("เคยหักเป็นปกติ") — ประโยคที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง
             result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                + $"\n[WHT-SUGGEST] หมวดรายจ่ายนี้กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
-                + (it != null ? $" ({it.TaxSection} {it.Name} → {string.Join("/", it.ApplicableForms)})" : "")
+                + (it != null
+                    ? $"\n[WHT-SUGGEST] หมวดรายจ่ายนี้กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
+                        + $" ({it.TaxSection} {it.Name} → {string.Join("/", it.ApplicableForms)})"
+                    : $"\n[WHT-SUGGEST] ผู้ขายรายนี้เคยถูกหัก ณ ที่จ่าย {result.SuggestedWhtRate}% เป็นปกติ"
+                        + " (จากประวัติของผู้ขาย ไม่ใช่จากกระดาษใบนี้ และยังไม่รู้ประเภทเงินได้ ม.40)")
                 + $" ≈ {Math.Round(whtBase * result.SuggestedWhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero):N2} บาท "
                 + "— กระดาษไม่ได้พิมพ์ไว้ ระบบจึงไม่หักให้ ตรวจแล้วกรอกในใบก่อนอนุมัติ";
         }
@@ -6003,9 +6146,17 @@ public class OcrService : IOcrService
                 // ⚠️ เส้นนี้คือ "กดสร้างจากการ์ด" — ผู้ใช้ไม่ได้เลือกชนิดเอกสาร/คู่ค้า
                 // ทีละช่อง แค่ยอมรับสิ่งที่ระบบเติมให้ ⇒ เป็นคำยืนยันแบบ Implicit
                 // (นับเป็น Explicit เมื่อไร คลังจะเรียนนิสัยการกด ไม่ใช่ความถูกต้อง)
+                // ⚠️ "AI ถูกไหม" ต้องเทียบกับ **คำตอบของ AI** (`TargetDocTypeAiSuggested`)
+                // ไม่ใช่กับ `TargetDocumentType` ซึ่งเป็น**ค่าสุดท้าย**หลังผ่านอีก 5 ชั้น
+                // (VendorIntel · Federated · เครดิตเทอม · CertInLieu · Deposit)
+                // ⇒ เดิม: AI ตอบ X แล้วชั้นหลังทับเป็น Y ผู้ใช้กดสร้าง = บันทึกว่า
+                // "AI ถูก" ทั้งที่คำตอบ AI ถูกทิ้งไปแล้ว ⇒ คลังคำตอบของนักเรียนเต็ม
+                // ไปด้วย label ปลอม (ผลตรวจ 2026-09-18 · D3-4) · เส้น
+                // SubmitCorrectionAsync เทียบถูกมาตลอด — สองทางเข้าต้องนิยามเดียวกัน
                 if (result.TargetDocTypeAiFeedbackId is Guid dtFid)
                     await _feedbackRecorder.RecordUserChoiceAsync(dtFid, docType.ToString(),
-                        acceptedAi: string.Equals(result.TargetDocumentType, docType.ToString(), StringComparison.OrdinalIgnoreCase),
+                        acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(
+                            result.TargetDocTypeAiSuggested, docType.ToString()),
                         CancellationToken.None, Accounting.Models.Enums.UserChoiceSource.Implicit);
                 if (result.AiSuggestionFeedbackId is Guid vFid && contactId is Guid chosenContact)
                     await _feedbackRecorder.RecordUserChoiceAsync(vFid, chosenContact.ToString(),
@@ -6231,7 +6382,8 @@ public class OcrService : IOcrService
             for (var i = 0; i < items.Count; i++)
             {
                 var item = items[i];
-                Guid? lineAccountId = null;
+                Guid? poLineAccountId = null;
+                Guid? scannedLineAccountId = null;
                 string? lineProductCode = null;
                 Guid? lineSourceLineId = null;
                 // PO-line override (highest priority): when this OCR line was
@@ -6245,21 +6397,24 @@ public class OcrService : IOcrService
                     var poLine = linkedPo.Lines.FirstOrDefault(l => l.Id == mappedPoLineId.Value && !l.IsDeleted);
                     if (poLine != null)
                     {
-                        lineAccountId = poLine.AccountId;
+                        poLineAccountId = poLine.AccountId;
                         lineProductCode = poLine.ProductCode;
                         lineSourceLineId = poLine.Id;
                     }
                 }
-                if (lineAccountId == null && !string.IsNullOrEmpty(item.SuggestedAccountCode))
+                if (poLineAccountId == null && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                 {
                     var lineAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.AccountCode == item.SuggestedAccountCode && !a.IsDeleted);
-                    lineAccountId = lineAccount?.Id;
+                    scannedLineAccountId = lineAccount?.Id;
                 }
-                // Final fallback: the scan-level suggested debit GL — keeps
-                // every line pre-filled when the classifier only produced a
-                // document-level pick.
-                lineAccountId ??= scanDebitAccountId;
+                // ★ ลำดับชั้นอยู่ใน Helpers/OcrLineAccountSource ตัวเดียว (pure + มีเทสต์):
+                // บรรทัด PO > ผังบัญชีของบรรทัดนั้น > ผังบัญชีระดับหัวใบ. ชั้นกลางเคย
+                // **ตายสนิท** เพราะไปป์ไลน์ serialize บรรทัดก่อนตัวเทียบสินค้า/ตัวเรียน
+                // รายบรรทัดจะเขียน SuggestedAccountCode (D3-1) ⇒ ทุกใบตกไปใช้บัญชีหัวใบ
+                var accountPick = Accounting.Helpers.OcrLineAccountSource.Resolve(
+                    poLineAccountId, scannedLineAccountId, scanDebitAccountId);
+                var lineAccountId = accountPick.AccountId;
 
                 var amount = item.Amount ?? 0;
                 // Last line absorbs the rounding remainder (both VAT and WHT)
@@ -6900,7 +7055,7 @@ public class OcrService : IOcrService
 
         items[lineIndex].ProjectId = projectId;
         items[lineIndex].ProjectName = projectName;
-        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
@@ -6958,7 +7113,7 @@ public class OcrService : IOcrService
             item.ProjectId = projectId;
             item.ProjectName = projectName;
         }
-        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
     }
@@ -7016,7 +7171,7 @@ public class OcrService : IOcrService
         if (qty > 0m && up > 0m)
             line.Amount = System.Math.Round(qty * up, 2);
 
-        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return line.Amount ?? 0m;
@@ -7066,7 +7221,7 @@ public class OcrService : IOcrService
                 throw new Accounting.Helpers.BusinessRuleException($"คำสั่งไม่ถูกต้อง: {action}");
         }
 
-        scan.ExtractedItemsJson = System.Text.Json.JsonSerializer.Serialize(items);
+        scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 

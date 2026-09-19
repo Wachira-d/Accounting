@@ -529,13 +529,44 @@ public class VendorIntelligenceService
         }
 
         // ─── WHT ───
+        // ⚠️ เรียนได้เฉพาะเมื่อคำตอบ **ไม่ได้มาจากปากของเราเอง** (ผลตรวจ 2026-09-18 · D3-2):
+        // ไปป์ไลน์ OCR เคยเอาประวัติแถวนี้ไปเติม WHT ให้ใบใหม่อัตโนมัติ แล้วใบนั้นถูกอนุมัติ
+        // กลับมาสอนแถวเดิม ⇒ ความมั่นใจโตขึ้นเรื่อย ๆ โดยไม่มีหลักฐานใหม่สักชิ้น
+        // (self-confirm loop ที่ DECISION_DOCTRINE §3 ห้าม). ตัวตัดสินอยู่ที่
+        // Helpers/OcrWhtLearningScope ตัวเดียว — ใช้ร่วมกับเส้น backfill
         if (doc.WithholdingTaxAmount > 0)
         {
-            intel.WhtUsageCount++;
-            // Approximate the rate from the document
-            var whtRate = doc.SubTotal > 0 ? Math.Round(doc.WithholdingTaxAmount / doc.SubTotal * 100m, 0) : 0m;
-            if (whtRate is 1 or 2 or 3 or 5 or 10 or 15)
-                intel.TypicalWhtRate = whtRate;
+            var whtScan = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r => new { r.RawTextContent, r.UserCorrectedFields })
+                .FirstOrDefaultAsync();
+            // ⚠️ "กระดาษพูด" ต้องมาจาก **ตัวอ่านกระดาษตัวเดียว** (`PaperWhtReader`)
+            // ห้ามอ่าน `scan.HasWht`/`scan.WhtRate` ที่นี่: สองช่องนั้นเคยถูกเขียนโดย
+            // VendorIntelligence เอง (ประวัติผู้ขาย) ⇒ ถามมันว่า "กระดาษพูดไหม" คือการ
+            // ถามคำตอบของตัวเอง = วงจรสอนตัวเองที่ D3-2 มาปิด · ใช้ตัวอ่านตัวเดียวกัน
+            // ยังทำให้**แถวเก่าที่ปนเปื้อนหายเองโดยไม่ต้อง migration** (ค่าที่ปนอยู่ใน
+            // คอลัมน์ไม่มีผลต่อการตัดสินอีกต่อไป) — ตรงกับด่านฝั่งอนุมัติ
+            // `DocumentService.ScanPaperWhtEvidenceAsync`
+            var paperWht = Accounting.Helpers.PaperWhtReader.Read(whtScan?.RawTextContent);
+            var scope = OcrWhtLearningScope.Decide(
+                hasScan: whtScan != null,
+                paperShowsWht: paperWht.Amount is > 0m || paperWht.RatePercent is > 0m,
+                userCorrectedFields: whtScan?.UserCorrectedFields);
+            if (scope.Learn)
+            {
+                intel.WhtUsageCount++;
+                // Approximate the rate from the document
+                var whtRate = doc.SubTotal > 0 ? Math.Round(doc.WithholdingTaxAmount / doc.SubTotal * 100m, 0) : 0m;
+                if (whtRate is 1 or 2 or 3 or 5 or 10 or 15)
+                    intel.TypicalWhtRate = whtRate;
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "ไม่เรียนประวัติหัก ณ ที่จ่ายจากเอกสาร {Doc} — {Why}",
+                    doc.DocumentNumber, OcrWhtLearningScope.Explain(scope.Evidence));
+            }
         }
 
         // ─── Amount stats (running stats) ───
@@ -721,6 +752,37 @@ public class VendorIntelligenceService
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
 
+        // ⚠️ ด่านเดียวกับ TrainFromDocumentAsync (D3-2): ยอดหัก ณ ที่จ่ายที่ระบบเสนอเอง
+        // แล้วไม่มีใครแตะ **ห้าม**นับเข้าประวัติ — มิฉะนั้น backfill จะชุบชีวิตวงจรสอน
+        // ตัวเองที่เส้นเพิ่มทีละใบเพิ่งปิดไป (ทางเข้าอื่นต้องเดินด่านเดียวกัน)
+        var docIds = docs.Select(d => d.Id).ToList();
+        var whtScans = docIds.Count == 0
+            ? new Dictionary<Guid, (bool Paper, string? Corrected)>()
+            : (await _db.Set<OcrScanResult>().AsNoTracking()
+                    .Where(r => r.CompanyId == companyId && r.CreatedDocumentId != null
+                        && docIds.Contains(r.CreatedDocumentId!.Value))
+                    .OrderByDescending(r => r.CreatedAt)
+                    .Select(r => new
+                    {
+                        DocId = r.CreatedDocumentId!.Value,
+                        // ⚠️ ดึง**ข้อความกระดาษ** ไม่ใช่ธง HasWht — เหตุผลเดียวกับ
+                        // TrainFromDocumentAsync ข้างบน (ธงนั้นเคยเป็นคำตอบของเราเอง)
+                        r.RawTextContent,
+                        r.UserCorrectedFields,
+                    })
+                    .ToListAsync())
+                .GroupBy(x => x.DocId)
+                .ToDictionary(g => g.Key,
+                    // ชื่อสมาชิกต้องตรงกับสาขาว่างข้างบนเป๊ะ — ternary ที่ชื่อไม่ตรง
+                    // C# จะทิ้งชื่อทิ้ง แล้ว `.Corrected` หายไปเป็น CS1061 ไกลจากจุดนี้
+                    g =>
+                    {
+                        var first = g.First();
+                        var paper = Accounting.Helpers.PaperWhtReader.Read(first.RawTextContent);
+                        return (Paper: paper.Amount is > 0m || paper.RatePercent is > 0m,
+                                Corrected: first.UserCorrectedFields);
+                    });
+
         var trained = 0;
         // Group by vendor key and aggregate in memory before bulk insert — much
         // faster than calling TrainFromDocumentAsync per-doc (which does a roundtrip each).
@@ -778,7 +840,12 @@ public class VendorIntelligenceService
                     debitNames[code] = dominantLine.AccountName;
                 }
 
-                if (d.WithholdingTaxAmount > 0 && d.SubTotal > 0)
+                var hasScanRow = whtScans.TryGetValue(d.Id, out var whtScan);
+                var whtLearnable = OcrWhtLearningScope.Decide(
+                    hasScan: hasScanRow,
+                    paperShowsWht: whtScan.Paper,
+                    userCorrectedFields: whtScan.Corrected).Learn;
+                if (d.WithholdingTaxAmount > 0 && d.SubTotal > 0 && whtLearnable)
                 {
                     whtCount++;
                     var rate = Math.Round(d.WithholdingTaxAmount / d.SubTotal * 100m, 0);

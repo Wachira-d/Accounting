@@ -452,7 +452,22 @@ public class PayrollItem : TenantEntity
     public string CalculationType { get; set; } = "Fixed"; // Fixed, Percentage, Formula
     public decimal? FixedAmount { get; set; }
     public decimal? Percentage { get; set; }
+
+    /// <summary>เข้าฐานคำนวณภาษีหัก ณ ที่จ่ายหรือไม่
+    /// <para>⚠️ ธงนี้เคยเป็น <b>silent no-op</b> (D6-3): ถูกเขียนตอนสร้างรายการ
+    /// แต่ไม่มีใครอ่านในเส้นคำนวณเลย ⇒ HR ติ๊ก "ไม่หักภาษี" แล้วไม่มีผล ·
+    /// ตอนนี้ <c>Helpers.PayrollIncomeNatureRules.Accumulate</c> อ่านจริง —
+    /// รายการที่ <c>false</c> จ่ายให้พนักงาน (อยู่ใน GrossIncome) แต่ไม่เข้า
+    /// TaxableGross</para></summary>
     public bool IsTaxable { get; set; } = true;
+
+    /// <summary>ลักษณะเงินได้ที่เครื่องคำนวณภาษีต้องแยก — ประจำ (ฉายไปงวดที่เหลือ)
+    /// หรือครั้งคราว/OT/คอมมิชชัน/โบนัส (ไม่ฉาย)
+    /// <para><see cref="PayrollIncomeNature.Unspecified"/> = ยังไม่ระบุ ⇒ ระบบ
+    /// ตกกลับไปใช้กฎรหัสเดิม (prefix) เพื่อคงพฤติกรรมของข้อมูลเก่าเป๊ะ ๆ ·
+    /// migration เติมค่าจากสูตรเดียวกัน (D6-3)</para></summary>
+    public Enums.PayrollIncomeNature IncomeNature { get; set; } = Enums.PayrollIncomeNature.Unspecified;
+
     public bool IsActive { get; set; } = true;
     public Guid? AccountId { get; set; }                 // GL account
     public ChartOfAccount? Account { get; set; }

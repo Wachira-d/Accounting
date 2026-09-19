@@ -44,11 +44,21 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีสำเร็จ"));
     }
 
+    /// <summary>บันทึกการยื่นแบบ — **ไม่ใช่** การส่งแบบไปกรมสรรพากร
+    ///
+    /// <para>ระบบไม่มีการเชื่อมต่อกับ RD ⇒ สิ่งเดียวที่รู้คือ "ผู้ใช้แจ้งว่ายื่นแล้ว".
+    /// ไม่มีเลขรับ → <c>Submitted</c> (ไม่ล็อกงวด) · มีเลขรับ (บันทึกผ่าน
+    /// <c>POST {reportId}/rd-ack</c> ก่อน) → <c>Filed</c> + ล็อกงวด ·
+    /// ข้อความตอบกลับต้องตรงกับสิ่งที่เกิดจริง ห้ามตอบ "ยื่นสำเร็จ" (D2-B1a)</para></summary>
     [HttpPost("{reportId:guid}/file")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> FileTaxReport(Guid companyId, Guid reportId)
     {
         var result = await _taxService.FileTaxReportAsync(companyId, reportId);
-        return Ok(new ApiResponse<TaxReportResponse>(true, result, "ยื่นรายงานภาษีสำเร็จ"));
+        var message = result.FilingPeriodLocked
+            ? $"บันทึกการยื่นพร้อมเลขรับ {result.FilingNumber} แล้ว — งวดนี้ถูกล็อก"
+            : "บันทึกว่ายื่นแล้ว (ยังไม่มีเลขรับจากกรมสรรพากร) — งวดนี้ยังไม่ถูกล็อก "
+              + "เมื่อได้ใบรับแล้วให้กด \"บันทึกเลขรับ\"";
+        return Ok(new ApiResponse<TaxReportResponse>(true, result, message));
     }
 
     [HttpPut("{reportId:guid}")]
@@ -192,10 +202,32 @@ public class TaxController : ControllerBase
     /// </summary>
     [HttpPost("e-filing/{formType}")]
     public async Task<IActionResult> GenerateEFiling(
-        Guid companyId, string formType, [FromQuery] int year, [FromQuery] int month)
+        Guid companyId, string formType, [FromQuery] int year, [FromQuery] int month,
+        [FromServices] Data.AccountingDbContext db, CancellationToken ct = default)
     {
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var export = await _taxService.GenerateEFilingAsync(companyId, formType, year, month, userId);
+
+        // ⚠️ แถวที่ถูกตัดออกจากไฟล์ยื่นเพราะยังไม่มีใบ 50 ทวิ ต้อง**ไม่หายเงียบ**
+        // (D2-B1a) — ส่งคำเตือนขึ้นไปกับ response ให้หน้าจอแสดง (ไฟล์เองต้อง
+        // สะอาดตามรูปแบบของกรมสรรพากร จึงแปะบน header ไม่ใช่ในไฟล์)
+        var pndType = Helpers.WhtUnissuedCertGate.TaxTypeForPndForm(formType);
+        if (pndType.HasValue)
+        {
+            var lines = await db.TaxReportLines.AsNoTracking()
+                .Where(l => l.TaxReport.CompanyId == companyId
+                    && l.TaxReport.TaxType == pndType.Value
+                    && l.TaxReport.Year == year && l.TaxReport.Month == month
+                    && !l.IsDeleted)
+                .Select(l => new { l.Description, l.IsExcluded, l.TaxAmount })
+                .ToListAsync(ct);
+            var rows = Helpers.WhtUnissuedCertGate.Evaluate(
+                lines.Select(l => (l.Description, l.IsExcluded, l.TaxAmount)));
+            if (rows.Any)
+                // header ต้องเป็น ASCII — encode ฝั่งนี้ หน้าเว็บ decodeURIComponent
+                Response.Headers["X-Filing-Review-Note"] = Uri.EscapeDataString(rows.ReviewNote);
+        }
+
         var fileName = $"{formType}_{year}{month:D2}.txt";
         var bytes = System.Text.Encoding.UTF8.GetBytes(export.FileContent);
         return File(bytes, "text/plain; charset=utf-8", fileName);
@@ -203,6 +235,10 @@ public class TaxController : ControllerBase
 
     public sealed record RecordAckRequest(string RdAckNumber, DateTime RdAcknowledgedAt,
         string? Status, string? RejectionReason, string? AckDocumentUrl);
+
+    // NOTE (D2-B1a): endpoint นี้คือ **ทางไปต่อ** ของผู้ที่ยื่นกระดาษ/e-Filing
+    // แล้วยังไม่มีเลขรับตอนกดยื่น — กดยื่นไว้ก่อน (Submitted ไม่ล็อกงวด) แล้ว
+    // กลับมากรอกเลขรับที่นี่ ⇒ ระบบอัปเกรดเป็น Filed + ล็อกงวดให้เอง
 
     /// <summary>Record the RD e-Filing acknowledgement after admin
     /// uploads the report via the RD portal. The RD returns an ACK
@@ -219,18 +255,56 @@ public class TaxController : ControllerBase
         var report = await db.TaxReports.FirstOrDefaultAsync(
             r => r.Id == reportId && r.CompanyId == companyId, ct);
         if (report == null) return NotFound(new ApiResponse<object>(false, null, "TaxReport not found"));
-        report.RdAckNumber = req.RdAckNumber;
+
+        // เลขรับคือ "ของจริง" ที่ยกระดับคำประกาศเป็นการยื่นที่ยืนยันแล้ว —
+        // ว่าง = ไม่มีอะไรให้ยืนยัน (ห้ามรับค่าว่างแล้วล็อกงวด)
+        if (!Helpers.TaxFilingLockPolicy.HasFilingNumber(req.RdAckNumber))
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ต้องระบุเลขรับ/เลขอ้างอิงจากกรมสรรพากร — ถ้ายังไม่มี ให้ปล่อยรายงานไว้ที่ "
+                + "\"บันทึกว่ายื่นแล้ว (รอเลขรับ)\" ก่อน"));
+        if (report.Status == TaxReportStatus.Draft)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "รายงานนี้ยังเป็นร่าง — กด \"ยื่นภาษี\" เพื่อบันทึกการยื่นก่อน แล้วจึงบันทึกเลขรับ"));
+
+        report.RdAckNumber = req.RdAckNumber.Trim();
         report.RdAcknowledgedAt = req.RdAcknowledgedAt;
-        report.RdSubmissionStatus = req.Status ?? "Accepted";
         report.RdRejectionReason = req.RejectionReason;
         report.RdAcknowledgementDocumentUrl = req.AckDocumentUrl;
+
+        var rejected = string.Equals(req.Status, "Rejected", StringComparison.OrdinalIgnoreCase);
+        if (rejected)
+        {
+            // กรมสรรพากรปฏิเสธ = ยังไม่ถือว่ายื่นสำเร็จ — ห้ามล็อกงวด
+            report.RdSubmissionStatus = "Rejected";
+            report.Status = TaxReportStatus.Submitted;
+            report.FilingLockedAt = null;
+            report.FilingLockedBy = null;
+        }
+        else
+        {
+            var judgement = Helpers.TaxFilingLockPolicy.Judge(report.RdAckNumber);
+            report.Status = judgement.Status;
+            report.RdSubmissionStatus = Helpers.TaxFilingLockPolicy.SubmissionAcknowledged;
+            if (judgement.LockPeriod && report.FilingLockedAt == null)
+            {
+                report.FilingLockedAt = DateTime.UtcNow;
+                report.FilingLockedBy = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+            }
+            if (report.FiledDate == null) report.FiledDate = req.RdAcknowledgedAt;
+        }
+
         await db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, new
         {
-            reportId, ackNumber = req.RdAckNumber,
-            acknowledgedAt = req.RdAcknowledgedAt,
+            reportId,
+            ackNumber = report.RdAckNumber,
+            acknowledgedAt = report.RdAcknowledgedAt,
             status = report.RdSubmissionStatus,
-        }));
+            reportStatus = report.Status.ToString(),
+            periodLocked = report.FilingLockedAt != null,
+        }, rejected
+            ? "บันทึกผลปฏิเสธจากกรมสรรพากรแล้ว — งวดนี้ยังไม่ถูกล็อก กรุณาแก้แล้วยื่นใหม่"
+            : "บันทึกเลขรับจากกรมสรรพากรแล้ว — งวดนี้ถูกล็อก เอกสาร/รายการบัญชีในงวดแก้ไม่ได้"));
     }
 
     /// <summary>Local rule-based pre-check before e-Filing submission.

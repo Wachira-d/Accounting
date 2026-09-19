@@ -281,42 +281,70 @@ public class BankFeedService : IBankFeedService
         }
     }
 
+    /// <summary>
+    /// จับคู่รายการที่เพิ่ง sync เข้ามากับรายการชำระเงินที่ค้างอยู่.
+    ///
+    /// ═══ ของเดิมพังตรงไหน (`DECISION_AUDIT_2026-09-18.md` §3 D4-2, P0) ═══
+    /// 1. **ประทับ `Matched` กับความว่าง** — เจอ `Document` ที่ยอดตรงแล้วตั้ง
+    ///    `txn.ReconciliationStatus = Matched` **โดยไม่เก็บว่าจับกับอะไร**
+    ///    (ไม่ตั้ง `MatchedPaymentId` / ไม่มีคอลัมน์ document id เลย) และไม่แตะ
+    ///    เอกสาร ⇒ บรรทัดธนาคารขึ้นว่า "จับคู่แล้ว" แต่ใบยังค้างชำระ และ
+    ///    **ไม่มีใครตามได้ว่าคู่คือใคร** (R1 สถานะปลายทางประทับเอง)
+    /// 2. **ถาม AI ก่อนลองในบ้าน** — ชั้นในบ้านมีแค่ "ยอดตรงเป๊ะ + memo อ้าง
+    ///    เลขเอกสาร" พลาดปุ๊บยิง AI ทันที ทั้งที่ยังไม่ได้ลองชื่อผู้โอน/คะแนน
+    ///    ผู้สมัครเลย (ขัด `DECISION_DOCTRINE` §2.1 student-first)
+    ///
+    /// ═══ ตอนนี้ ═══
+    /// ลองชั้นในบ้านให้ครบก่อน: ให้คะแนนด้วย <see cref="Accounting.Helpers.BankMatchScorer"/>
+    /// (สูตรเดียวกับรายการที่มนุษย์เห็นบนจอ — รวมชื่อผู้โอน) แล้วให้
+    /// <see cref="Accounting.Helpers.BankMatchArbiter"/> ตัดสิน. ทุกสถานะที่เขียน
+    /// **ต้องมี id ของคู่เสมอ** — ประทับ `Matched` ได้เฉพาะ verdict `Apply`,
+    /// `Suggest` เขียน `Suggested` พร้อม `MatchedPaymentId` ของคู่ที่เสนอ
+    ///
+    /// AI เป็น last resort และคำตอบต้องผ่านด่าน
+    /// <see cref="Accounting.Helpers.BankMatchArbiter.ScreenAiProposals"/> (กัน id ที่แต่งขึ้น)
+    /// **ข้อจำกัดที่ยังค้าง**: augmenter ตอบเป็น `Document` id แต่
+    /// `BankTransaction` **ไม่มีคอลัมน์เก็บ document id** ⇒ ถ้าเอกสารนั้นยัง
+    /// ไม่มีรายการชำระให้ผูก เราจะ **ไม่ประทับสถานะใด ๆ** (ปล่อย `Unmatched`
+    /// + log) ดีกว่าประทับสถานะที่บันทึกคู่ไม่ได้ — ตามหลัก "ค่าที่แต่งขึ้น
+    /// อันตรายกว่าการไม่ตอบ" (F2 ข้อ 3). ต้องเพิ่มคอลัมน์
+    /// `SuggestedDocumentId` ก่อนถึงจะเปิดเส้นนี้เต็มได้ (SQL อยู่ในรายงานรอบนี้)
+    /// </summary>
     private async Task<bool> TryAutoMatchAsync(Guid companyId, BankTransaction txn)
     {
-        if (string.IsNullOrWhiteSpace(txn.Description) && string.IsNullOrWhiteSpace(txn.Reference))
-            return false;
+        // ── ชั้นที่ 1 (ในบ้าน): รายการชำระเงินที่ยังไม่ถูกจับคู่ ────────────
+        var (decision, byId) = await ScoreLocalPaymentCandidatesAsync(companyId, txn);
 
-        // Deposits match revenue docs (Invoice/TaxInvoice), withdrawals match expense docs (PurchaseInvoice)
-        var revenueTypes = new[] { Models.Enums.DocumentType.Invoice, Models.Enums.DocumentType.TaxInvoice };
-        var expenseTypes = new[] { Models.Enums.DocumentType.PurchaseInvoice, Models.Enums.DocumentType.CertificateInLieu };
-        var matchTypes = txn.TransactionType == Models.Enums.BankTransactionType.Deposit ? revenueTypes : expenseTypes;
-
-        var matchedDoc = await _db.Documents
-            .FirstOrDefaultAsync(d => d.CompanyId == companyId
-                && d.TotalAmount == txn.Amount
-                && matchTypes.Contains(d.DocumentType)
-                && d.Status != Models.Enums.DocumentStatus.Paid
-                && d.Status != Models.Enums.DocumentStatus.Voided
-                && d.Status != Models.Enums.DocumentStatus.Draft
-                && (d.DocumentNumber == txn.Reference
-                    || (txn.Description != null && d.Reference != null && txn.Description.Contains(d.Reference))));
-
-        if (matchedDoc != null)
+        if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply)
         {
+            var chosen = decision.Chosen!;
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Matched;
+            txn.MatchedPaymentId = chosen.Id;
+            txn.ReconciledAt = DateTime.UtcNow;
+            txn.ReconciledBy = "BankFeed";
+            _logger.LogInformation(
+                "Bank txn {Txn} → จับคู่กับรายการชำระ {PaymentId} ({Rule}: {Reason})",
+                txn.Id, chosen.Id, decision.RuleCode, decision.Reason);
             return true;
         }
 
-        // ── AI fallback when exact heuristic missed ──
-        // Local matcher is strict (exact amount + same matchTypes +
-        // memo contains DocNumber/Reference). When it misses, fire AI
-        // augmenter against open docs in a ±15% / ±14d window. AI may
-        // see a match the strict heuristic couldn't (memo says
-        // "settlement for INV2025-0312" even though we strip-matched
-        // wrong, or amount differs by bank fee). Reports the match as
-        // a "suggested" status — user still has to confirm in the
-        // bank reconciliation UI before it's auto-applied.
+        if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.Suggest)
+        {
+            var chosen = decision.Chosen!;
+            // เสนอ = ยังไม่ใช่การกระทบยอด → ไม่ตั้ง ReconciledAt
+            txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
+            txn.MatchedPaymentId = chosen.Id;
+            txn.ReconciledBy = "BankFeed (เสนอ รอยืนยัน)";
+            _logger.LogInformation(
+                "Bank txn {Txn} → เสนอรายการชำระ {PaymentId} ({Rule}: {Reason})",
+                txn.Id, chosen.Id, decision.RuleCode, decision.Reason);
+            return true;
+        }
+
+        // ── ชั้นที่ 2 (ครูพิเศษ): ถาม AI เฉพาะตอนชั้นในบ้านไม่ได้คำตอบ ──────
         if (_aiAugmenter == null) return false;
+        if (string.IsNullOrWhiteSpace(txn.Description) && string.IsNullOrWhiteSpace(txn.Reference))
+            return false;
         try
         {
             using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -325,22 +353,47 @@ public class BankFeedService : IBankFeedService
                 companyId, txn.Id, memo, txn.TransactionDate, txn.Amount, "THB",
                 txn.TransactionType, localBestDocumentId: null, localConfidence: 0m,
                 aiCts.Token);
-            if (aiResult.UsedAi
-                && !string.IsNullOrEmpty(aiResult.Answer) && aiResult.Answer != "__NEW__"
-                && (aiResult.Confidence ?? 0m) >= 0.75m
-                && Guid.TryParse(aiResult.Answer, out var aiMatchedId))
+            if (!aiResult.UsedAi
+                || string.IsNullOrEmpty(aiResult.Answer) || aiResult.Answer == "__NEW__"
+                || !Guid.TryParse(aiResult.Answer, out var aiDocId))
+                return false;
+
+            // ด่านกัน hallucination: เอกสารต้องมีอยู่จริงในบริษัทนี้
+            var docExists = await _db.Documents.AnyAsync(d => d.Id == aiDocId
+                && d.CompanyId == companyId && !d.IsDeleted
+                && d.Status != Models.Enums.DocumentStatus.Voided);
+            if (!docExists)
             {
-                var verified = await _db.Documents.AnyAsync(d => d.Id == aiMatchedId
-                    && d.CompanyId == companyId && !d.IsDeleted
-                    && d.Status != Models.Enums.DocumentStatus.Voided);
-                if (verified)
-                {
-                    txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
-                    _logger.LogInformation("Bank txn {Txn} → AI-suggested match {Doc} ({Conf:P0})",
-                        txn.Id, aiMatchedId, aiResult.Confidence ?? 0m);
-                    return true;
-                }
+                _logger.LogWarning("AI เสนอเอกสาร {Doc} ที่ไม่มีอยู่จริงสำหรับ txn {Txn} — ทิ้งคำตอบ",
+                    aiDocId, txn.Id);
+                return false;
             }
+
+            // คำตอบของ AI เป็น "เอกสาร" แต่สิ่งที่เราบันทึกคู่ได้คือ "รายการชำระ"
+            // → แปลงผ่านรายการชำระของเอกสารนั้นที่อยู่ในชุดผู้สมัครในบ้าน
+            var screened = Accounting.Helpers.BankMatchArbiter.ScreenAiProposals(
+                new[] { new Accounting.Helpers.BankMatchArbiter.AiProposal(
+                    aiDocId, "Document", aiResult.Confidence ?? 0m) },
+                byId.Keys.ToList());
+            var viaPayment = byId.Values.FirstOrDefault(p => p.DocumentId == aiDocId);
+            if (screened.Accepted.Count == 0 && viaPayment == null)
+            {
+                _logger.LogInformation(
+                    "AI เสนอเอกสาร {Doc} ให้ txn {Txn} แต่ยังไม่มีรายการชำระให้ผูก — "
+                    + "ไม่ประทับสถานะ (ไม่มีคอลัมน์เก็บคู่ที่เป็นเอกสาร) ปล่อยเป็น Unmatched",
+                    aiDocId, txn.Id);
+                return false;
+            }
+            if ((aiResult.Confidence ?? 0m) < Accounting.Helpers.BankMatchArbiter.DefaultAiMinConfidence)
+                return false;
+
+            var paymentId = viaPayment?.Id ?? screened.Accepted[0].CandidateId;
+            txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
+            txn.MatchedPaymentId = paymentId;
+            txn.ReconciledBy = "BankFeed/AI (เสนอ รอยืนยัน)";
+            _logger.LogInformation("Bank txn {Txn} → AI เสนอรายการชำระ {PaymentId} ({Conf:P0})",
+                txn.Id, paymentId, aiResult.Confidence ?? 0m);
+            return true;
         }
         catch (Exception aiEx)
         {
@@ -348,6 +401,54 @@ public class BankFeedService : IBankFeedService
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// ให้คะแนนรายการชำระเงินที่เป็นไปได้ด้วยสูตรกลาง แล้วให้ arbiter ตัดสิน.
+    /// คืนคำตัดสิน + ตารางผู้สมัคร (ใช้ตรวจคำตอบ AI ต่อ)
+    /// </summary>
+    private async Task<(Accounting.Helpers.BankMatchArbiter.Decision Decision,
+        Dictionary<Guid, Payment> ById)> ScoreLocalPaymentCandidatesAsync(
+        Guid companyId, BankTransaction txn)
+    {
+        var winStart = txn.TransactionDate.Date.AddDays(-7);
+        var winEnd = txn.TransactionDate.Date.AddDays(7);
+
+        // กันจับซ้ำ: id ที่ถูกอ้างเป็นคู่ (หรือคู่ที่เสนอ) ของบรรทัดอื่นแล้ว
+        var usedPaymentIds = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.MatchedPaymentId != null && t.Id != txn.Id)
+            .Select(t => t.MatchedPaymentId!.Value)
+            .ToListAsync();
+
+        var candidates = await _db.Payments
+            .Include(p => p.Document)
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.PaymentDate >= winStart && p.PaymentDate <= winEnd
+                && p.Document.Status != Models.Enums.DocumentStatus.Voided
+                && !usedPaymentIds.Contains(p.Id))
+            .ToListAsync();
+        await _db.HydratePaymentContactsAsync(companyId, candidates);
+
+        var byId = candidates.ToDictionary(p => p.Id);
+        var options = candidates.Select(p =>
+        {
+            var r = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
+                CandidateAmount: p.Amount,
+                BankAmount: Math.Abs(txn.Amount),
+                CandidateDate: p.PaymentDate,
+                BankDate: txn.TransactionDate,
+                CandidateRef: p.Reference,
+                CandidateNotes: p.Notes,
+                CandidateDocNumber: p.Document?.DocumentNumber,
+                CandidateName: p.Document?.Contact?.Name,
+                BankDescription: txn.Description,
+                BankReference: txn.Reference,
+                BankPayee: txn.Payee));
+            return new Accounting.Helpers.BankMatchArbiter.Option(
+                p.Id, "Payment", r.Score, r.HasIdentitySignal, r.Reason);
+        }).ToList();
+
+        return (Accounting.Helpers.BankMatchArbiter.Decide(options), byId);
     }
 
     private static BankFeedConnectionResponse MapToResponse(BankConnection c) => new(

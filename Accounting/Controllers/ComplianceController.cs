@@ -3,6 +3,7 @@ using Accounting.Models.DTOs.Compliance;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -41,9 +42,50 @@ public class ComplianceController : ControllerBase
     public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Validate(Guid companyId, Guid filingId)
         => Ok(new ApiResponse<ComplianceFilingResponse>(true, await _service.ValidateFilingAsync(companyId, filingId)));
 
+    /// <summary>บันทึกว่า "ยื่นแบบนี้แล้ว" — ระบบ**ไม่ได้**ส่งอะไรไปหน่วยงาน
+    ///
+    /// <para>D2-B1b: เดิมเมธอดปลายทางคอมเมนต์ตัวเองว่า "Simulate submission"
+    /// แล้วแต่งเลขอ้างอิง/เลขยืนยันจาก GUID · ตอนนี้เลขยืนยันมาจากผู้ใช้กรอก
+    /// (<c>ConfirmationNumber</c> ในบอดี้) หรือไม่มีเลย และข้อความตอบกลับบอก
+    /// ตามสิ่งที่เกิดจริง</para></summary>
     [HttpPost("filings/{filingId:guid}/submit")]
-    public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Submit(Guid companyId, Guid filingId)
-        => Ok(new ApiResponse<ComplianceFilingResponse>(true, await _service.SubmitFilingAsync(companyId, filingId, User.Identity?.Name ?? "")));
+    public async Task<ActionResult<ApiResponse<ComplianceFilingResponse>>> Submit(
+        Guid companyId, Guid filingId,
+        [FromServices] Data.AccountingDbContext db,
+        [FromBody] FileComplianceRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _service.SubmitFilingAsync(companyId, filingId, User.Identity?.Name ?? "");
+
+        var confirmation = request?.ConfirmationNumber?.Trim();
+        if (!string.IsNullOrWhiteSpace(confirmation) || !string.IsNullOrWhiteSpace(request?.Notes))
+        {
+            var filing = await db.Set<Models.Entities.ComplianceFiling>()
+                .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.Id == filingId && !f.IsDeleted, ct);
+            if (filing != null)
+            {
+                if (!string.IsNullOrWhiteSpace(confirmation))
+                {
+                    filing.ConfirmationNumber = confirmation;
+                    filing.SubmissionReference = confirmation;
+                }
+                if (!string.IsNullOrWhiteSpace(request?.Notes))
+                    filing.Notes = string.IsNullOrWhiteSpace(filing.Notes)
+                        ? request!.Notes : filing.Notes + "\n" + request!.Notes;
+                await db.SaveChangesAsync(ct);
+                result = result with
+                {
+                    ConfirmationNumber = filing.ConfirmationNumber,
+                    SubmissionReference = filing.SubmissionReference,
+                };
+            }
+        }
+
+        var message = string.IsNullOrWhiteSpace(result.ConfirmationNumber)
+            ? "บันทึกว่ายื่นแบบแล้ว (ไม่มีเลขยืนยันจากหน่วยงาน) — ระบบไม่ได้ส่งแบบไปหน่วยงานให้"
+            : $"บันทึกการยื่นพร้อมเลขยืนยัน {result.ConfirmationNumber} แล้ว";
+        return Ok(new ApiResponse<ComplianceFilingResponse>(true, result, message));
+    }
 
     [HttpGet("pending")]
     public async Task<ActionResult<ApiResponse<List<ComplianceFilingResponse>>>> GetPending(Guid companyId)

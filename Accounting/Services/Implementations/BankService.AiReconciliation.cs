@@ -869,11 +869,71 @@ public partial class BankService
         }
     }
 
+    /// <summary>
+    /// ถอนการจับคู่ของบรรทัดธนาคาร.
+    ///
+    /// **การถอน = ตัวอย่างลบ** (`DECISION_AUDIT_2026-09-18.md` §3 D4-8 · §2 R6
+    /// "ลูปเรียนรู้ไม่ปิด") — เดิมเมธอดนี้ล้างค่าอย่างเดียว ⇒ ผู้ใช้บอกระบบ
+    /// ชัด ๆ ว่า "คู่นี้ผิด" แล้วระบบ **ลืมทันที** และรอบหน้าเสนอคู่เดิมซ้ำ.
+    /// ตอนนี้ทุก id ที่ถูกถอนจะถูกบันทึกลง `BankMatchExclusion`
+    /// (ถังตัวอย่างลบที่มีอยู่แล้วและมี endpoint ให้ผู้ใช้ยกเลิกได้ที่
+    /// `BankController.ClearMatchExclusion` — ผู้ใช้ที่เปลี่ยนใจมีทางไปต่อ)
+    /// </summary>
     public async Task<BankTransactionResponse> UnmatchTransactionAsync(Guid companyId, UnmatchRequest request)
     {
         var txn = await _db.Set<BankTransaction>()
             .FirstOrDefaultAsync(t => t.Id == request.BankTransactionId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการธนาคาร");
+
+        // ── เก็บคู่ที่กำลังจะถูกถอน ไว้เป็นตัวอย่างลบก่อนล้างค่า ──────────
+        var rejected = new List<(Guid Id, string Type)>();
+        if (txn.MatchedPaymentId.HasValue) rejected.Add((txn.MatchedPaymentId.Value, "Payment"));
+        if (txn.MatchedJournalEntryId.HasValue) rejected.Add((txn.MatchedJournalEntryId.Value, "JournalEntry"));
+        if (!string.IsNullOrWhiteSpace(txn.MatchedEntryIdsJson))
+        {
+            try
+            {
+                var ids = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(txn.MatchedEntryIdsJson!);
+                if (ids != null)
+                    foreach (var id in ids)
+                        if (id != Guid.Empty && rejected.All(r => r.Id != id))
+                            rejected.Add((id, "Unknown"));
+            }
+            catch (Exception ex)
+            {
+                // ล้มเหลวตรงนี้ไม่ควรกันผู้ใช้ไม่ให้ถอนการจับคู่ — แต่ต้องดัง
+                // พอให้เห็นว่าเราเสียตัวอย่างลบไป 1 ตัว ไม่ใช่ catch เปล่า
+                _logger?.LogWarning(ex,
+                    "ถอดคู่ของ bank txn {Txn} ไม่ได้ครบเพราะ MatchedEntryIdsJson เสีย — ตัวอย่างลบบางตัวไม่ถูกบันทึก",
+                    txn.Id);
+            }
+        }
+
+        if (rejected.Count > 0)
+        {
+            var rejectedIds = rejected.Select(r => r.Id).ToList();
+            var already = await _db.Set<BankMatchExclusion>()
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted
+                    && x.BankTransactionId == txn.Id
+                    && rejectedIds.Contains(x.CandidateId))
+                .Select(x => x.CandidateId)
+                .ToListAsync();
+            var userId = await ResolveCurrentUserIdAsync(companyId);
+            foreach (var (id, type) in rejected)
+            {
+                if (already.Contains(id)) continue;
+                _db.Set<BankMatchExclusion>().Add(new BankMatchExclusion
+                {
+                    CompanyId = companyId,
+                    BankTransactionId = txn.Id,
+                    CandidateId = id,
+                    CandidateType = type,
+                    RejectedAt = DateTime.UtcNow,
+                    RejectionReason = "ผู้ใช้ถอนการจับคู่ (unmatch)",
+                    RejectedByUserId = userId == Guid.Empty ? null : userId.ToString(),
+                });
+            }
+        }
 
         txn.ReconciliationStatus = ReconciliationStatus.Unmatched;
         txn.MatchedPaymentId = null;

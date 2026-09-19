@@ -228,22 +228,37 @@ public class ComplianceService : IComplianceService
         if (filing.Status != "Validated")
             throw new InvalidOperationException("Filing must be validated before submission. Current status: " + filing.Status);
 
-        // Simulate submission to government e-filing system
+        // ═══ "บันทึกการยื่นด้วยมือ" — ไม่ใช่การส่งแบบไปหน่วยงาน (D2-B1b · ราก R1) ═══
+        // เดิมบล็อกนี้คอมเมนต์ตัวเองว่า "Simulate submission to government
+        // e-filing system" แล้ว **แต่งเลขอ้างอิง/เลขยืนยันจาก GUID** ⇒ ผู้ใช้เห็น
+        // เลข "CONF-PP30-2026-05-A1B2C3D4" บนจอและเข้าใจว่าเป็นเลขของราชการ
+        // ทั้งที่ไม่มีอะไรถูกส่งไปไหนเลย (หลักการ 10 ข้อ #3: ค่าที่แต่งขึ้น
+        // อันตรายกว่าการไม่ตอบ · สถานะปลายทางตั้งได้เฉพาะเมื่อภายนอกตอบกลับจริง)
+        //
+        // ตอนนี้: บันทึกว่า "ผู้ใช้แจ้งว่ายื่นแล้ว" เท่านั้น — เลขอ้างอิงมาจาก
+        // ผู้ใช้กรอกเองผ่าน UpdateFilingAsync/endpoint บันทึกเลขรับ หรือ**ไม่มีเลย**
         filing.Status = "Filed";
         filing.FiledDate = DateTime.UtcNow;
         filing.FiledBy = filedBy;
-        filing.SubmissionReference = $"SUB-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString()[..6].ToUpper()}";
-        filing.ConfirmationNumber = $"CONF-{filing.FormCode}-{filing.Year}-{filing.Month:D2}-{Guid.NewGuid().ToString()[..8].ToUpper()}";
+        filing.SubmissionReference = null;   // ห้ามแต่ง — ไม่มีการส่งจริง
+        // ConfirmationNumber: คงค่าที่ผู้ใช้เคยกรอกไว้ (ถ้ามี) ไม่เขียนทับด้วยของปลอม
 
-        // Check for late filing penalty
-        if (filing.FiledDate > filing.DueDate)
+        // เงินเพิ่มยื่นช้า ม.27 — 1.5%/เดือน **แต่ไม่เกินจำนวนภาษี** (ม.27 วรรคสาม)
+        // เดิมไม่มีเพดาน ⇒ ยื่นช้าเกิน 66 เดือนได้ตัวเลขเกิน 100% ของภาษี ซึ่งสูง
+        // กว่าที่กรมสรรพากรเรียกเก็บจริง. สูตรอยู่ใน Helpers/RevenueCodeSurcharge
+        // ตัวเดียว (เศษของเดือนนับเป็น 1 เดือน · AwayFromZero)
+        if (filing.TaxAmount is > 0 && filing.FiledDate.HasValue)
         {
-            var daysLate = (filing.FiledDate.Value - filing.DueDate).Days;
-            // Thai Revenue Department: surcharge of 1.5% per month for late filing
-            if (filing.TaxAmount.HasValue && filing.TaxAmount.Value > 0)
+            filing.PenaltyAmount = Accounting.Helpers.RevenueCodeSurcharge.Compute(
+                filing.TaxAmount.Value, filing.DueDate, filing.FiledDate.Value);
+            // ชนเพดานแล้วต้องบอก ไม่งั้นผู้ใช้เห็นตัวเลขหยุดโตแล้วคิดว่าระบบคำนวณผิด
+            if (Accounting.Helpers.RevenueCodeSurcharge.IsCapped(
+                    filing.TaxAmount.Value, filing.DueDate, filing.FiledDate.Value))
             {
-                var monthsLate = Math.Ceiling(daysLate / 30.0m);
-                filing.PenaltyAmount = filing.TaxAmount.Value * 0.015m * monthsLate;
+                var capNote = $"[เงินเพิ่ม ม.27] ชนเพดานแล้ว — 1.5%/เดือน คิดได้ไม่เกินจำนวนภาษี "
+                    + $"({filing.TaxAmount.Value:N2} บาท)";
+                filing.Notes = string.IsNullOrWhiteSpace(filing.Notes)
+                    ? capNote : filing.Notes + "\n" + capNote;
             }
         }
 

@@ -199,7 +199,7 @@
         <div class="card-header" style="padding:14px 18px">
           <div>
             <h3 class="card-title" style="margin:0">🧠 กระทบยอดอัตโนมัติ</h3>
-            <p style="font-size:11px;color:#64748b;margin:2px 0 0">AI จะดูเอกสาร/JE/Payment ในช่วงเดือนที่เลือก (±5 วัน) + ย้อนหลัง 90 วันสำหรับเอกสารค้างชำระ</p>
+            <p style="font-size:11px;color:#64748b;margin:2px 0 0">ระบบจะดูเอกสาร/JE/Payment ในช่วงเดือนที่เลือก (±5 วัน) + ย้อนหลัง 90 วันสำหรับเอกสารค้างชำระ (ปุ่ม "ระบบแนะนำ" ใช้สูตรของระบบล้วน · ปุ่ม "AI match ทั้งเดือน" เท่านั้นที่ส่งไป provider)</p>
           </div>
           <div class="flex gap-2" style="align-items:center;flex-wrap:wrap">
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#475569">
@@ -211,7 +211,7 @@
             <button class="btn btn-sm btn-secondary" onclick="Page.autoMatch()" title="จับคู่ตามกฎตายตัว (ยอด+วันที่+อ้างอิง) — เร็ว ไม่ใช้ AI">⚡ จับคู่พื้นฐาน</button>
             <button class="btn btn-sm" onclick="Page.runAiMatch()" id="btnAiMatch"
                     style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
-                    title="Heuristic + local model — ไม่ส่งไป provider">🤖 AI (local)</button>
+                    title="ให้คะแนนด้วยสูตรของระบบ (ยอด+วันที่+ชื่อผู้โอน+เลขอ้างอิง) แล้วเสนอคู่ที่น่าจะใช่ — ไม่เรียก AI ใด ๆ">⚙️ ระบบแนะนำ (กระทบยอด)</button>
             <button class="btn btn-sm" onclick="Page.runBulkAiMatch()" id="btnBulkAi"
                     title="ส่งทุก txn ที่ค้าง + เอกสารเปิด + JE ของเดือนนี้ไป DeepSeek match ทีเดียว"
                     style="background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff">🧠 AI match ทั้งเดือน</button>
@@ -872,7 +872,7 @@
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${Layout.esc(t.description || t.payee || '-')}${t.reference ? ' <span class="text-xs text-gray-400">('+Layout.esc(t.reference)+')</span>' : ''}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${(this._matchIssueIds && this._matchIssueIds.has(t.id)) ? ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>' : ''}${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6">🤖 AI แนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${(this._matchIssueIds && this._matchIssueIds.has(t.id)) ? ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>' : ''}${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6" title="ระบบเสนอคู่ที่น่าจะใช่ — กด &quot;จับคู่&quot; เพื่อยืนยัน">⚙️ ระบบแนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
           <td>
             ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่กับเอกสาร/JE อะไร">🔍 ดูคู่</button><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>

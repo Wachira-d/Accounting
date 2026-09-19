@@ -1070,7 +1070,9 @@ public class TaxFilingExportService : ITaxFilingExportService
         return new TaxFilingExportResult(
             "PND51", "ภ.ง.ด.51", $"PND51_{year}.txt", "text/plain", AsBytes(sb.ToString()),
             1, revenueHalf, halfYearCit,
-            $"ภ.ง.ด.51 ปี {year} ({(isSme ? "SME" : "ทั่วไป")}) — กำไรครึ่งปี {netProfitHalf:N2}, " +
+            $"ภ.ง.ด.51 ปี {year} ({(isSme ? "SME" : "ทั่วไป")}) — "
+            + Accounting.Helpers.CitRateTable.SmeReason(paidUpCapital, revenueAnnualEst) + " · "
+            + $"กำไรครึ่งปี {netProfitHalf:N2}, " +
             $"ประมาณการทั้งปี {estimatedAnnualProfit:N2}, ภาษีครึ่งปี {halfYearCit:N2}. " +
             $"กำหนดยื่น: {halfEnd.AddMonths(2):dd/MM/yyyy} (§67 ทวิ — 2 เดือนนับจาก {halfEnd:dd/MM/yyyy})");
     }

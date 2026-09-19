@@ -80,7 +80,14 @@ public sealed record ProposedMatch(
     // primary proposer OR AI proposed the same (bank,candidate) pair as the
     // server. The UI uses a lower auto-tick threshold (0.85) for AI-validated
     // matches; server-only matches need 0.95.
-    bool AiValidated = false);
+    bool AiValidated = false,
+    /// <summary>true = ข้อเสนอนี้มาจาก **การกวาดของเซิร์ฟเวอร์** (คำนวณจากข้อมูล
+    /// ใน DB) · false = มาจากคำตอบของ AI. ใช้เรียงลำดับตอนแย่งคู่กัน —
+    /// `DECISION_DOCTRINE` §1 G1 "เรียงด้วยระยะห่างจากของจริง ไม่ใช่ confidence
+    /// ที่ผู้เสนอแต่งเอง". เดิม `DeduplicateMatches` เรียงด้วย `Confidence`
+    /// อย่างเดียว ⇒ AI ที่ตอบ 0.99 ชนะเซิร์ฟเวอร์ที่คำนวณได้ 0.90 เสมอ
+    /// (`DECISION_AUDIT_2026-09-18.md` §3 D4-8)</summary>
+    bool ServerProposed = false);
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -640,12 +647,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var historyHints = await HistoricalAccountSuggester.BuildAsync(
             _db, companyId, bank.LinkedAccountId ?? Guid.Empty, historySince, ct);
 
-        // ── 6c. Distillation pre-pass — warm the local BankMatchDistillation
-        // ── model so single-txn suggestions hit it later without an extra
-        // ── round-trip. Returns no seeded matches in this version (needs
-        // ── ContactId plumbing).
-        _ = await TryDistillationPrePassAsync(companyId, txns,
-            openDocs, openPayments, openJes, ct);
+        // ── 6c. โหลดโมเดลท้องถิ่นให้พร้อม (warm-up) — ไม่ได้เสนอคู่จากโมเดล
+        // ── ในเวอร์ชันนี้ ชื่อเมธอดบอกตรง ๆ แล้วว่าทำแค่นี้
+        await EnsureBankMatchModelLoadedAsync(companyId, ct);
 
         // ── 6d. Pre-AI diagnostics — own-account transfers + duplicate bank
         // ── lines + same-account reverse pairs. All informational; the
@@ -1714,7 +1718,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 new List<MatchCandidate> { new(best.Value.Id, best.Value.Kind, best.Value.Amt) },
                 conf,
                 $"1:1 (server sweep, {dir}, ห่าง {best.Value.DateGap} วัน, สัญญาณ={best.Value.SignalCount}{(conf >= 0.99m ? ", ยืนยันยอด+ชื่อ+วันตรง" : "")}{(exactAmountInWindow > 1 ? $", {exactAmountInWindow} ตัวยอดเท่ากัน" : "")})",
-                Guid.Empty));
+                Guid.Empty, ServerProposed: true));
             clearedBankIds.Add(bid);
             consumed.Add(best.Value.Id);
         }
@@ -1740,23 +1744,23 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// doc), claiming each match's bank line + candidate ids. A later match that
     /// reuses any claimed id is demoted to 'unmatched'. M:N groups (one doc
     /// settled by several deposits) legitimately share the doc across their rows,
-    /// <summary>Local-model pre-pass: ensures the BankMatchDistillationModel
-    /// is loaded for this tenant so the inline AiOrchestrator path (single-txn
-    /// suggestions) can hit it without an extra round-trip. Returns no matches
-    /// in this commit — wiring high-confidence predictions into the bulk
-    /// candidate pool needs ContactId plumbing through OpenPaymentInput /
-    /// OpenJeInput which is a larger change. Stubbed cleanly so the load cost
-    /// is paid here exactly once per request, not on every suggestion call.</summary>
-    private async Task<List<ProposedMatch>> TryDistillationPrePassAsync(
-        Guid companyId,
-        IReadOnlyList<BulkBankMatchPrompt.BankTxnInput> txns,
-        IReadOnlyList<BulkBankMatchPrompt.OpenDocInput> openDocs,
-        IReadOnlyList<BulkBankMatchPrompt.OpenPaymentInput> openPayments,
-        IReadOnlyList<BulkBankMatchPrompt.OpenJeInput> openJes,
-        CancellationToken ct)
+    /// <summary>
+    /// โหลดโมเดลท้องถิ่น `BankMatchDistillationModel` ของบริษัทนี้ให้พร้อม
+    /// เพื่อให้เส้น `AiOrchestrator` (คำแนะนำรายบรรทัด) ใช้ได้โดยไม่ต้องโหลดซ้ำ
+    /// ทุกครั้ง — จ่ายค่าโหลดครั้งเดียวต่อ 1 request
+    ///
+    /// **เดิมชื่อ `TryDistillationPrePassAsync` คืน `List&lt;ProposedMatch&gt;`
+    /// ที่ว่างเปล่าเสมอ** และถูกเรียกแบบ `_ = await …` (`DECISION_AUDIT_2026-09-18.md`
+    /// §3 D4-8) — ชื่อกับลายเซ็นสัญญาว่าจะ "เสนอคู่จากโมเดล" แต่ไม่เคยทำ
+    /// ⇒ คนอ่านโค้ดเข้าใจว่านักเรียนมีส่วนร่วมในการจับคู่ทั้งที่ไม่มี.
+    /// **ตัดสินแล้ว: เก็บงานที่มันทำจริง (warm-up) และตัดคำสัญญาที่ไม่ได้ทำทิ้ง**
+    /// — ไม่ลบทั้งเมธอดเพราะการ warm-up มีผลจริงต่อ latency ของคำแนะนำรายบรรทัด.
+    /// การป้อนคำทำนายของนักเรียนเข้ากองผู้สมัครเป็นงานแยก (ต้องพา `ContactId`
+    /// ผ่าน `OpenPaymentInput`/`OpenJeInput` ก่อน) — อยู่ใน backlog ไม่ใช่ที่นี่
+    /// </summary>
+    private async Task EnsureBankMatchModelLoadedAsync(Guid companyId, CancellationToken ct)
     {
-        var hits = new List<ProposedMatch>();
-        if (_bankMatchModel == null) return hits;
+        if (_bankMatchModel == null) return;
         try
         {
             if (!_bankMatchModel.IsReady)
@@ -1766,7 +1770,6 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         {
             _logger.LogDebug(ex, "BankMatchDistillationModel load skipped for {Cid}", companyId);
         }
-        return hits;
     }
 
     /// <summary>Pre-matching diagnostic sweep: returns informational warnings
@@ -1901,13 +1904,22 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         var kept = new List<ProposedMatch>();
         var demoted = new List<UnmatchedTxn>();
 
-        var nonGroup = parsed.Matches.Where(m => !m.MatchGroupId.HasValue)
-            .OrderByDescending(m => m.Confidence)
+        // ⚠ เดิมเรียงด้วย `Confidence` อย่างเดียว ⇒ ข้อเสนอของ AI ที่ตอบ 0.99
+        // ชิงคู่ไปจากข้อเสนอของเซิร์ฟเวอร์ที่คำนวณจาก DB ได้ 0.90 เสมอ
+        // (ขัด G1 — confidence ของ AI เป็นตัวเลขที่ผู้เสนอแต่งเอง)
+        // ตอนนี้ **ที่มาก่อน แล้วค่อย confidence** ผ่านตัวเรียงกลาง
+        var nonGroup = Accounting.Helpers.BankMatchArbiter.RankBySourceThenConfidence(
+                parsed.Matches.Where(m => !m.MatchGroupId.HasValue),
+                m => m.ServerProposed
+                    ? Accounting.Helpers.BankMatchArbiter.MatchSource.Server
+                    : Accounting.Helpers.BankMatchArbiter.MatchSource.Ai,
+                m => m.Confidence)
             .ThenBy(m => m.Candidates.Count)
             .ToList();
         var groups = parsed.Matches.Where(m => m.MatchGroupId.HasValue)
             .GroupBy(m => m.MatchGroupId!.Value)
-            .OrderByDescending(g => g.Max(m => m.Confidence))
+            .OrderBy(g => g.Any(m => m.ServerProposed) ? 0 : 1)
+            .ThenByDescending(g => g.Max(m => m.Confidence))
             .ToList();
 
         // 1) Non-group matches.
@@ -2043,7 +2055,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                     new List<MatchCandidate> { new(pick.Cand, pick.Kind, key.Amt) },
                     0.62m,
                     $"จับคู่อัตโนมัติแบบกลุ่ม: มี {bankList.Count} รายการยอด {key.Amt:N2} เท่ากัน{surplusNote}",
-                    Guid.Empty));
+                    Guid.Empty, ServerProposed: true));
                 cleared.Add(pick.Bank);
                 consumed.Add(pick.Cand);
             }
@@ -2128,7 +2140,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                     new List<MatchCandidate> { new(c.Id, c.Kind, b.Amt) },
                     0.72m,
                     $"หลายโอนรวมเป็นเอกสารเดียว: {hit.Count} รายการ รวม {hit.Sum(x => x.Amt):N2} = {c.Amt:N2} (กระทบยอดแบบกลุ่ม M:N)",
-                    Guid.Empty, groupId));
+                    Guid.Empty, groupId, ServerProposed: true));
                 cleared.Add(b.Id);
                 usedBank.Add(b.Id);
             }
@@ -2244,7 +2256,8 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // and decays with subset size; calibrator runs next and may lower
             // further if delta is non-zero.
             var baseConf = best.Items.Count switch { 2 => 0.80m, 3 => 0.70m, _ => 0.60m };
-            added.Add(new ProposedMatch(bt.Id, "OneBankToManyDocs", cands, baseConf, reason, Guid.Empty));
+            added.Add(new ProposedMatch(bt.Id, "OneBankToManyDocs", cands, baseConf, reason, Guid.Empty,
+                ServerProposed: true));
             clearedBankIds.Add(bt.Id);
             // Mark these JEs as taken so the next bank txn can't claim them.
             foreach (var item in best.Items) consumedJeIds.Add(item.Je.Id);

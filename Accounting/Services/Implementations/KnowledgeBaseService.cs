@@ -169,14 +169,17 @@ public class KnowledgeBaseService : IKnowledgeBaseService
                 .Where(t => t.CompanyId == companyId && !t.IsDeleted
                     && t.TaxType == Models.Enums.TaxType.VAT)
                 .OrderByDescending(t => t.Year).ThenByDescending(t => t.Month)
-                .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.NetVat, t.Status })
+                .Select(t => new { t.Year, t.Month, t.OutputVat, t.InputVat, t.NetVat, t.Status, t.RdAckNumber })
                 .Take(6).ToListAsync(ct);
             if (vatRows.Count > 0)
             {
                 var body = "สถานะภาษีมูลค่าเพิ่ม (ภ.พ.30) ย้อนหลังของกิจการ:\n"
                     + string.Join("\n", vatRows.Select(v =>
                         $"งวด {v.Month:D2}/{v.Year}: ภาษีขาย {v.OutputVat:N2} − ภาษีซื้อ {v.InputVat:N2} "
-                        + $"= สุทธิ {v.NetVat:N2} บาท · สถานะรายงาน {(v.Status == Models.Enums.TaxReportStatus.Filed ? "ยื่นแล้ว" : "ยังไม่ยื่น (ฉบับร่าง)")}"))
+                        // ★ รอบ 183 — สามสถานะ ไม่ใช่สอง: `Submitted` = ผู้ใช้ประกาศว่ายื่น
+                        // แต่ระบบยังไม่เห็นเลขรับ · ตอบว่า "ยังไม่ยื่น" จะทำให้แชทบอกผิด
+                        + $"= สุทธิ {v.NetVat:N2} บาท · สถานะรายงาน "
+                        + Accounting.Helpers.TaxFilingLockPolicy.Describe(v.Status, v.RdAckNumber).Label))
                     + "\nหมายเหตุ: ผู้จด VAT ต้องยื่น ภ.พ.30 ทุกเดือนแม้ยอดเป็นศูนย์ (§83)";
                 await UpsertChunkAsync(companyId, "TenantSnapshot", "tenant:vat-status",
                     "สถานะ ภ.พ.30 ล่าสุด", body, "Tenant", ct, forceTouch: true);

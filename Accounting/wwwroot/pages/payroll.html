@@ -15,6 +15,7 @@
       <button class="tab" onclick="Page.switchTab('runs')">รอบเงินเดือน</button>
       <button class="tab" onclick="Page.switchTab('leaves')">ลาหยุด</button>
       <button class="tab" onclick="Page.switchTab('reports')">รายงาน ภงด.1 / ประกันสังคม</button>
+      <button class="tab" onclick="Page.switchTab('items')">รายการเงินเดือน</button>
     </div>
 
     <!-- Employees Tab -->
@@ -155,6 +156,84 @@
           ประกาศเปลี่ยน — engine WHT จะคำนวณตามค่าใหม่ทันที.
         </p>
         <div id="taxRuleConfigTable"><p class="text-gray-400 text-center">กำลังโหลด...</p></div>
+      </div>
+    </div>
+
+    <!-- ===== รายการเงินเดือน (เบี้ยเลี้ยง/โบนัส/รายการหัก) =====
+         D6-3: ช่อง "ลักษณะเงินได้" มีผลกับการประมาณการภาษีทั้งปี — เดิมระบบเดา
+         จาก prefix ของรหัส ทำให้รหัสที่ตั้งเอง (BN01) ถูกฉายเป็นเบี้ยเลี้ยงประจำ -->
+    <div id="tab-items" style="display:none">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">รายการเงินเดือน</h2>
+          <p class="page-subtitle">เบี้ยเลี้ยง · ค่าล่วงเวลา · โบนัส · รายการหัก — ใช้กับพนักงานทุกคนในรอบเงินเดือน</p>
+        </div>
+        <button class="btn btn-primary" onclick="Page.openItemModal()">+ เพิ่มรายการ</button>
+      </div>
+      <div style="margin-bottom:12px;padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af;line-height:1.7">
+        <b>ทำไม "ลักษณะเงินได้" ถึงสำคัญ</b> — ระบบคำนวณภาษีหัก ณ ที่จ่ายรายเดือนโดย
+        <b>ประมาณการเงินได้ทั้งปี</b> จาก "ฐานประจำ" × งวดที่เหลือ.
+        รายการที่ตั้งเป็น <b>เบี้ยเลี้ยงประจำ</b> จะถูกนำไปคูณกับงวดที่เหลือ ส่วน
+        <b>โบนัส / คอมมิชชัน / ค่าล่วงเวลา / เงินได้ครั้งคราว</b> จะคิดเฉพาะงวดที่จ่าย.
+        ตั้งผิด = หักภาษีเกิน/ขาดจริงทุกงวด (เช่น โบนัส 300,000 ที่ถูกนับเป็นเบี้ยเลี้ยงประจำ
+        ทำให้หักเกินไปประมาณ 20,000 บาท)
+      </div>
+      <div class="card" style="padding:0" id="payrollItemsCard">
+        <p class="text-gray-400 text-center" style="padding:24px">กำลังโหลด...</p>
+      </div>
+    </div>
+
+    <!-- Payroll Item Modal -->
+    <div class="modal-overlay" id="itemModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title" id="itemModalTitle">เพิ่มรายการเงินเดือน</h3><button class="modal-close" onclick="Layout.closeModal('itemModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="itemId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รหัส *</label><input type="text" class="form-input" id="itemCode" placeholder="BN01"></div>
+            <div class="form-group"><label class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="itemName" placeholder="โบนัส"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ประเภท *</label>
+              <select class="form-select" id="itemType">
+                <option value="Earning">เงินได้ (Earning)</option>
+                <option value="Deduction">รายการหัก (Deduction)</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">วิธีคิด</label>
+              <select class="form-select" id="itemCalcType">
+                <option value="Fixed">จำนวนเงินคงที่</option>
+                <option value="Percentage">% ของเงินเดือนฐาน</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">จำนวนเงิน</label><input type="number" step="0.01" class="form-input" id="itemFixedAmount"></div>
+            <div class="form-group"><label class="form-label">เปอร์เซ็นต์</label><input type="number" step="0.01" class="form-input" id="itemPercentage"></div>
+          </div>
+          <div class="form-group" id="itemNatureGroup">
+            <label class="form-label">ลักษณะเงินได้ * (มีผลกับการประมาณการภาษีทั้งปี)</label>
+            <select class="form-select" id="itemNature" onchange="Page.renderItemNatureNote()">
+              <option value="RecurringAllowance">เบี้ยเลี้ยงประจำ — ได้ทุกงวด (ถูกฉายไปงวดที่เหลือ)</option>
+              <option value="OneTimeAllowance">เงินได้ครั้งคราว — ไม่ได้ทุกงวด</option>
+              <option value="Overtime">ค่าล่วงเวลา</option>
+              <option value="Commission">คอมมิชชัน</option>
+              <option value="Bonus">โบนัส</option>
+              <option value="Unspecified">ยังไม่ระบุ (ใช้กฎรหัสเดิม)</option>
+            </select>
+            <div id="itemNatureNote" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.6"></div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <input type="checkbox" id="itemIsTaxable" checked>
+              เข้าฐานคำนวณภาษีหัก ณ ที่จ่าย (ติ๊กออก = สวัสดิการที่ได้รับยกเว้นภาษี — จ่ายให้พนักงานแต่ไม่คิดภาษี)
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('itemModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveItem()">บันทึก</button>
+        </div>
       </div>
     </div>
 
@@ -411,8 +490,8 @@ const Page = {
   switchTab(tab) {
     this.currentTab = tab;
     document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tabs .tab').forEach(t => { if (t.textContent.includes({employees:'พนักงาน',runs:'รอบเงินเดือน',leaves:'ลาหยุด',reports:'รายงาน'}[tab]?.substring(0,4)||'')) t.classList.add('active'); });
-    ['employees','runs','leaves','reports'].forEach(t => {
+    document.querySelectorAll('.tabs .tab').forEach(t => { if (t.textContent.includes({employees:'พนักงาน',runs:'รอบเงินเดือน',leaves:'ลาหยุด',reports:'รายงาน',items:'รายการเงินเดือน'}[tab]?.substring(0,4)||'')) t.classList.add('active'); });
+    ['employees','runs','leaves','reports','items'].forEach(t => {
       const el = document.getElementById('tab-'+t);
       if (el) el.style.display = t === tab ? '' : 'none';
     });
@@ -420,6 +499,125 @@ const Page = {
     else if (tab === 'runs') this.loadRuns();
     else if (tab === 'leaves') this.loadLeaves();
     else if (tab === 'reports') { this.loadReports(); this.loadSsoConfig(); this.loadTaxRuleConfig(); }
+    else if (tab === 'items') this.loadPayrollItems();
+  },
+
+  // ===== รายการเงินเดือน (PayrollItem) — D6-3 =====
+  // ป้าย/คำอธิบายของ "ลักษณะเงินได้" มาจากเซิร์ฟเวอร์ (incomeNatureNote) —
+  // หน้านี้เก็บเฉพาะชื่อไทยสั้น ๆ ของ dropdown ไม่ทำสำเนากติกาการฉายภาษี
+  natureLabels: {
+    Unspecified: 'ยังไม่ระบุ',
+    RecurringAllowance: 'เบี้ยเลี้ยงประจำ',
+    OneTimeAllowance: 'ครั้งคราว',
+    Overtime: 'ค่าล่วงเวลา',
+    Commission: 'คอมมิชชัน',
+    Bonus: 'โบนัส',
+  },
+  _items: [],
+
+  async loadPayrollItems() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const box = document.getElementById('payrollItemsCard'); if (!box) return;
+    try {
+      const res = await API.get(`/api/companies/${cid}/payroll/items`);
+      const items = res?.data || [];
+      this._items = items;
+      if (items.length === 0) {
+        box.innerHTML = '<p class="text-gray-400 text-center" style="padding:24px">ยังไม่มีรายการ — กด "เพิ่มรายการ"</p>';
+        return;
+      }
+      box.innerHTML = `
+        <table class="table" style="width:100%">
+          <thead><tr>
+            <th>รหัส</th><th>ชื่อ</th><th>ประเภท</th><th class="text-right">จำนวน/%</th>
+            <th>ลักษณะเงินได้</th><th>ภาษี</th><th></th>
+          </tr></thead>
+          <tbody>${items.map(i => {
+            const unspecified = i.incomeNature === 'Unspecified';
+            const eff = this.natureLabels[i.effectiveIncomeNature] || i.effectiveIncomeNature || '-';
+            return `<tr>
+              <td class="font-medium">${Layout.esc(i.code)}</td>
+              <td>${Layout.esc(i.name)}</td>
+              <td>${i.itemType === 'Earning' ? 'เงินได้' : 'รายการหัก'}</td>
+              <td class="text-right">${i.calculationType === 'Percentage'
+                ? `${Number(i.percentage || 0)}%` : Layout.money(i.fixedAmount || 0)}</td>
+              <td>${i.itemType !== 'Earning' ? '<span class="text-gray-400">—</span>'
+                : `<span title="${Layout.esc(i.incomeNatureNote || '')}">${unspecified
+                    ? `⚠️ ยังไม่ระบุ <span class="text-gray-400">(ระบบใช้: ${Layout.esc(eff)})</span>`
+                    : Layout.esc(eff)}</span>`}</td>
+              <td>${i.isTaxable ? 'คิดภาษี' : '<span style="color:#b45309">ยกเว้น</span>'}</td>
+              <td><button class="btn btn-sm btn-ghost" onclick="Page.openItemModal('${i.id}')">แก้ไข</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`;
+    } catch (e) {
+      box.innerHTML = `<p class="text-danger text-center" style="padding:24px">${Layout.esc(e.message)}</p>`;
+    }
+  },
+
+  renderItemNatureNote() {
+    const sel = document.getElementById('itemNature');
+    const note = document.getElementById('itemNatureNote');
+    if (!sel || !note) return;
+    // คำอธิบายเต็มของแถวที่มีอยู่มาจากเซิร์ฟเวอร์ · ตอนเลือกใหม่ใช้ข้อความสั้น
+    // ที่บอก "ฉาย/ไม่ฉาย" อย่างเดียว (ไม่ใช่ตารางกติกาซ้ำ)
+    note.textContent = sel.value === 'RecurringAllowance'
+      ? 'จะถูกนำไปคูณกับงวดที่เหลือของปีในการประมาณการภาษี'
+      : sel.value === 'Unspecified'
+        ? '⚠️ ระบบจะใช้กฎรหัสเดิม — รหัสที่ไม่ได้ขึ้นต้นด้วย OT และไม่ใช่ COM/BONUS จะถูกนับเป็นเบี้ยเลี้ยงประจำ'
+        : 'คิดเฉพาะงวดที่จ่าย ไม่ถูกนำไปคูณกับงวดที่เหลือ';
+  },
+
+  openItemModal(id) {
+    const it = id ? this._items.find(x => x.id === id) : null;
+    document.getElementById('itemModalTitle').textContent = it ? 'แก้ไขรายการเงินเดือน' : 'เพิ่มรายการเงินเดือน';
+    document.getElementById('itemId').value = it ? it.id : '';
+    document.getElementById('itemCode').value = it ? it.code : '';
+    document.getElementById('itemCode').disabled = !!it;   // รหัสเป็นกุญแจของรอบเก่า
+    document.getElementById('itemName').value = it ? it.name : '';
+    document.getElementById('itemType').value = it ? it.itemType : 'Earning';
+    document.getElementById('itemType').disabled = !!it;
+    document.getElementById('itemCalcType').value = it ? it.calculationType : 'Fixed';
+    document.getElementById('itemFixedAmount').value = it && it.fixedAmount != null ? it.fixedAmount : '';
+    document.getElementById('itemPercentage').value = it && it.percentage != null ? it.percentage : '';
+    document.getElementById('itemNature').value = it ? (it.incomeNature || 'Unspecified') : 'RecurringAllowance';
+    document.getElementById('itemIsTaxable').checked = it ? !!it.isTaxable : true;
+    this.renderItemNatureNote();
+    Layout.openModal('itemModal');
+  },
+
+  async saveItem() {
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const id = document.getElementById('itemId').value;
+    const code = document.getElementById('itemCode').value.trim();
+    const name = document.getElementById('itemName').value.trim();
+    if (!id && !code) { Layout.toast('กรุณากรอกรหัส', 'error'); return; }
+    if (!name) { Layout.toast('กรุณากรอกชื่อรายการ', 'error'); return; }
+    const calcType = document.getElementById('itemCalcType').value;
+    const fixedRaw = document.getElementById('itemFixedAmount').value;
+    const pctRaw = document.getElementById('itemPercentage').value;
+    const body = {
+      name,
+      calculationType: calcType,
+      fixedAmount: fixedRaw === '' ? null : Number(fixedRaw),
+      percentage: pctRaw === '' ? null : Number(pctRaw),
+      isTaxable: document.getElementById('itemIsTaxable').checked,
+      incomeNature: document.getElementById('itemNature').value,
+    };
+    try {
+      if (id) {
+        await API.put(`/api/companies/${cid}/payroll/items/${id}`, body);
+      } else {
+        await API.post(`/api/companies/${cid}/payroll/items`, {
+          ...body, code, nameEn: null,
+          itemType: document.getElementById('itemType').value,
+          accountId: null,
+        });
+      }
+      Layout.closeModal('itemModal');
+      Layout.toast('บันทึกรายการเงินเดือนแล้ว');
+      await this.loadPayrollItems();
+    } catch (e) { Layout.toast(e.message, 'error'); }
   },
 
   // ===== SSO year-config (เพดานค่าจ้าง/อัตราสมทบ รายปี) =====

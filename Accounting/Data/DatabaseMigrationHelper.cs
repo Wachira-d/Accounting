@@ -6106,6 +6106,69 @@ public static class DatabaseMigrationHelper
             // (Implicit จริง) · feature จากป็อปอัพเพิ่งเริ่มส่ง Explicit รอบนี้ แถวเก่าพิสูจน์ไม่ได้
             """UPDATE "AiSuggestionMemories" SET "ExplicitAcceptCount" = "AcceptCount" WHERE "ExplicitAcceptCount" = 0 AND "AcceptCount" >= 1 AND "FeatureKey" IN ('ManualJeAccountSuggestion', 'ProductCategoryTagging', 'GlAccountSlotSuggestion');""",
 
+            // ═══ รอบ 183 · D6-3 — ลักษณะเงินได้ของรายการเงินเดือน ═══
+            // เครื่องคำนวณภาษีต้องแยก "ประจำ (ฉายไปงวดที่เหลือ)" ออกจาก
+            // "ครั้งคราว/OT/คอมมิชชัน/โบนัส (ไม่ฉาย)" — เดิมตัดสินจาก **prefix ของรหัส**
+            // (`OT*` · `COM` · `BONUS` · ที่เหลือถือเป็นประจำ) ⇒ โบนัสที่ HR ตั้งรหัสเอง
+            // เป็น `BN01` ถูกฉาย × งวดที่เหลือ ⇒ ประมาณการรายได้ทั้งปีสูงเกินจริง
+            // ⇒ หักภาษีพนักงานเกินทุกงวด
+            """ALTER TABLE "PayrollItems" ADD COLUMN IF NOT EXISTS "IncomeNature" integer NOT NULL DEFAULT 0;""",
+            // backfill ด้วย **สูตรเดียวกับกฎรหัสเดิมเป๊ะ ๆ** (`PayrollIncomeNatureRules.FromLegacyCode`)
+            // ⇒ ตัวเลขของ payroll run ที่คำนวณไปแล้ว **ไม่ขยับแม้แต่สตางค์เดียว**
+            // (กฎเหล็ก #4 H: "อะไรที่ทำได้ดีแล้ว ห้ามทำให้แย่ลง") · HR มาแก้ทีหลังได้ที่
+            // แท็บ "รายการเงินเดือน" — ถ้าไม่รัน backfill ระบบก็ยังถูก (โค้ดตกกลับไปกฎเดิม
+            // เมื่อค่าเป็น 0 = Unspecified) แต่ทุกแถวจะขึ้นป้าย "⚠️ ยังไม่ระบุ"
+            // 1=RecurringAllowance 3=Overtime 4=Commission 5=Bonus
+            """
+            UPDATE "PayrollItems"
+            SET "IncomeNature" = CASE
+                    WHEN upper("Code") LIKE 'OT%' THEN 3
+                    WHEN upper("Code") = 'COM'    THEN 4
+                    WHEN upper("Code") = 'BONUS'  THEN 5
+                    ELSE 1
+                END
+            WHERE "IncomeNature" = 0 AND "ItemType" = 'Earning';
+            """,
+
+            // ═══ รอบ 183 · D2-B1a — รายงานที่ "ยื่นแล้ว" โดยไม่มีเลขรับ ═══
+            // `FileTaxReportAsync` เคยประทับ `Filed` + `FilingLockedAt` จาก**การกดปุ่ม**
+            // อย่างเดียว ⇒ ล็อกเอกสาร/JE ทั้งงวดด้วยเหตุการณ์ที่ระบบไม่รู้ว่าเกิดจริง
+            // โค้ดแยกเป็น `Submitted` (ประกาศ ไม่ล็อก) / `Filed` (มีเลขรับ ล็อก) แล้ว
+            // ⚠️ แถวเก่า **ห้ามลดชั้นย้อนหลัง** (`Filed` → `Submitted`) เพราะจะปลดล็อก
+            // งวดที่ผู้ใช้อาจยื่นไปจริง — ติดธงให้ตามเก็บเลขรับแทน (UI ขึ้นปุ่ม "บันทึกเลขรับ")
+            """UPDATE "TaxReports" SET "RdSubmissionStatus" = 'Declared' WHERE "Status" = 1 AND ("RdAckNumber" IS NULL OR btrim("RdAckNumber") = '') AND "RdSubmissionStatus" IS NULL;""",
+
+            // ═══ รอบ 183 · D1-11 — ล้างคำตอบ "นักเรียน" ที่ระบบแต่งขึ้นเอง ═══
+            // `WorkflowPrompts` ตั้ง `LocalModelVersion = "ApprovalWarningCollector-v1"` +
+            // `LocalModelAnswer = "Acknowledge"` ให้ **ทุกแถว** ของคำเตือนก่อนอนุมัติ
+            // ทั้งที่ไม่มีโมเดลไหนตอบ ⇒ คลังฝึกเต็มไปด้วย "นักเรียนตอบ Acknowledge"
+            // ที่นักเรียนไม่เคยพูด ⇒ `ApprovalWarningDistillationModel` เรียนว่า
+            // "ปล่อยผ่านทุก template" · โค้ดเลิกแต่งแล้ว ตรงนี้ล้างของที่ค้างอยู่
+            // (ลายเซ็น `LocalModelVersion` แยกแถวปลอมออกจากคำตอบจริงได้ 100%)
+            """UPDATE "AiSuggestionFeedbacks" SET "LocalModelAnswer" = NULL, "LocalModelConfidence" = NULL, "LocalModelVersion" = NULL WHERE "FeatureKey" = 'ApprovalWarningFixSuggestion' AND "LocalModelVersion" = 'ApprovalWarningCollector-v1' AND "LocalModelAnswer" = 'Acknowledge';""",
+            // แถวที่จดว่า "ผู้ใช้เห็นด้วยกับ AI" ทั้งที่ AI ไม่เคยตอบ — เป็นไปไม่ได้
+            // โดยนิยาม (ไม่มีคำตอบให้เห็นด้วย) · คง `UserChosenAt` ไว้ = ผู้ใช้ตรวจจริง
+            """UPDATE "AiSuggestionFeedbacks" SET "UserAcceptedAi" = false WHERE "FeatureKey" = 'ApprovalWarningFixSuggestion' AND "UserAcceptedAi" = true AND ("AiPrimaryAnswer" IS NULL OR "AiPrimaryAnswer" = '');""",
+
+            // ═══ รอบ 183 · D4-2 — "จับคู่แล้ว" ที่ไม่มีคู่ (ราก R1) ═══
+            // `BankFeedService.TryAutoMatchAsync` เคยประทับ `Matched`/`Suggested` โดย
+            // **ไม่เก็บ id ของคู่** (เจอ Document แต่ตารางไม่มีคอลัมน์เก็บ document id)
+            // ⇒ ผู้ใช้เห็น "เงินก้อนนี้มีที่มาที่ไปแล้ว" โดยไม่มีอะไรให้กดดู และยอด
+            // "ยังไม่กระทบยอด" ต่ำกว่าความจริง · โค้ดปิดแล้ว ตรงนี้คืนแถวเก่าเป็น
+            // `Unmatched` เพื่อให้กลับเข้าคิวจับคู่ด้วยมือ (0=Unmatched 1=Matched 3=Suggested)
+            // ⚠️ เงื่อนไขไล่ครบ **ทุกช่องที่เก็บคู่ได้** (เดี่ยว/M:N เก่า/กลุ่มใหม่)
+            // มิฉะนั้นจะไปถอนการจับคู่ที่ถูกต้องอยู่แล้วทิ้ง
+            """
+            UPDATE "BankTransactions"
+            SET    "ReconciliationStatus" = 0, "ReconciledAt" = NULL, "ReconciledBy" = NULL
+            WHERE  "ReconciliationStatus" IN (1, 3)
+              AND  "MatchedPaymentId"      IS NULL
+              AND  "MatchedJournalEntryId" IS NULL
+              AND  "MatchedEntryIdsJson"   IS NULL
+              AND  "MatchGroupId"          IS NULL
+              AND  "ReconciliationGroupId" IS NULL;
+            """,
+
             // ── seed add-on ของโมดูลที่พัก + มิเตอร์ระบบ ──
             // ต่างจาก seed ของ Connected API ตรงที่ **ตั้งราคาตั้งต้นให้ด้วย** (ด้านล่าง)
             // เพราะเจ้าของระบบกำหนดตัวเลขมาแล้ว ("guest portal +100/เดือน") และ add-on ที่

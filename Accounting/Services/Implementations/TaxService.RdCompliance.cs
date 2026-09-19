@@ -72,14 +72,23 @@ public partial class TaxService
         var report = await _db.TaxReports
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
-        if (report.FilingLockedAt == null)
-            throw new InvalidOperationException("รายงานนี้ไม่ได้ถูก lock");
+        // รายงานที่ "บันทึกว่ายื่นแล้ว (รอเลขรับ)" ไม่มี FilingLockedAt โดยตั้งใจ
+        // (Helpers/TaxFilingLockPolicy) — แต่ยังต้องกลับเป็นร่างได้ ไม่งั้นผู้ที่
+        // กดยื่นผิดงวดจะติดตายโดยไม่มีทางไปต่อ
+        if (report.FilingLockedAt == null
+            && !Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status))
+            throw new InvalidOperationException("รายงานนี้ยังเป็นร่างอยู่แล้ว — ไม่มีอะไรให้ปลดล็อก");
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("ต้องระบุเหตุผลในการ unlock");
 
         report.FilingLockedAt = null;
         report.FilingLockedBy = null;
         report.Status = TaxReportStatus.Draft;
+        // เลขรับที่เคยบันทึกไว้ต้องถูกล้างพร้อมกัน — ไม่งั้นรายงานที่กลับเป็นร่าง
+        // ยังถือ "หลักฐานว่ายื่นแล้ว" ของการยื่นครั้งก่อนติดตัวไปด้วย
+        report.RdAckNumber = null;
+        report.RdAcknowledgedAt = null;
+        report.RdSubmissionStatus = null;
         report.Notes = (report.Notes ?? "") + $"\n[UNLOCK by {userId} @ {DateTime.UtcNow:u}] {reason}";
         await _db.SaveChangesAsync();
     }
@@ -102,8 +111,15 @@ public partial class TaxService
             .FirstOrDefaultAsync(r => r.Id == reportId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายงานภาษี");
 
+        // Reject & Reverse ใช้กับรายงานที่ยื่นจริงและ**ล็อกแล้ว** (มีเลขรับ)
+        // เท่านั้น — รายงานที่แค่ "บันทึกว่ายื่นแล้ว (รอเลขรับ)" ยังไม่ได้ล็อก
+        // อะไร ให้กลับเป็นร่างแล้วแก้ตรง ๆ ไม่ต้องสร้าง JE กลับรายการ
+        if (report.Status == TaxReportStatus.Submitted)
+            throw new InvalidOperationException(
+                "รายงานนี้ยังเป็นเพียงการบันทึกว่ายื่นแล้ว (ไม่มีเลขรับ) — "
+                + "ให้กด \"ปลดล็อก/กลับเป็นร่าง\" แล้วแก้รายงานตรง ๆ แทนการ Reject & Reverse");
         if (report.Status != TaxReportStatus.Filed)
-            throw new InvalidOperationException("Reject ได้เฉพาะรายงานที่ Filed แล้ว");
+            throw new InvalidOperationException("Reject ได้เฉพาะรายงานที่ยื่นแล้ว (Filed)");
         if (report.ReversalJournalEntryId.HasValue)
             throw new InvalidOperationException("รายงานนี้ถูก Reject + Reverse ไปแล้ว");
 

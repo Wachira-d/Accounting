@@ -956,10 +956,37 @@ public class PayrollService : IPayrollService
             FixedAmount = request.FixedAmount,
             Percentage = request.Percentage,
             IsTaxable = request.IsTaxable,
+            IncomeNature = request.IncomeNature,
             AccountId = request.AccountId
         };
 
         _db.Set<PayrollItem>().Add(item);
+        await _db.SaveChangesAsync();
+
+        return MapToPayrollItemResponse(item);
+    }
+
+    /// <summary>แก้ไขรายการเงินเดือน — ทางเดียวที่ผู้ใช้แก้ <c>IncomeNature</c>
+    /// ของแถวที่ migration เติมจากกฎรหัสเดิมได้ (D6-3) · ไม่ให้แก้ <c>Code</c>
+    /// และ <c>ItemType</c> เพราะเป็นกุญแจที่รอบเงินเดือนเก่าอ้างถึง</summary>
+    public async Task<PayrollItemResponse> UpdatePayrollItemAsync(
+        Guid companyId, Guid itemId, UpdatePayrollItemRequest request)
+    {
+        var item = await _db.Set<PayrollItem>()
+            .FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId && !i.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรายการเงินเดือน");
+
+        if (request.Name != null) item.Name = request.Name;
+        if (request.NameEn != null) item.NameEn = request.NameEn;
+        if (request.CalculationType != null) item.CalculationType = request.CalculationType;
+        if (request.FixedAmount.HasValue) item.FixedAmount = request.FixedAmount;
+        if (request.Percentage.HasValue) item.Percentage = request.Percentage;
+        if (request.IsTaxable.HasValue) item.IsTaxable = request.IsTaxable.Value;
+        if (request.IncomeNature.HasValue) item.IncomeNature = request.IncomeNature.Value;
+        if (request.AccountId.HasValue) item.AccountId = request.AccountId;
+        if (request.IsActive.HasValue) item.IsActive = request.IsActive.Value;
+
+        item.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         return MapToPayrollItemResponse(item);
@@ -1665,21 +1692,30 @@ public class PayrollService : IPayrollService
                 // ฐานคำนวณภาษี (estimatedAnnualIncome below subtracts it).
                 var nonTaxableExtra = 0m;
 
-                foreach (var item in earningItems)
-                {
-                    var amount = item.CalculationType == "Fixed"
-                        ? (item.FixedAmount ?? 0)
-                        : (item.Percentage ?? 0) / 100m * emp.BaseSalary;
+                // ═══ D6-3: ลักษณะเงินได้มาจาก PayrollItem.IncomeNature ไม่ใช่ prefix ═══
+                // เดิม: Code.StartsWith("OT") / == "COM" / == "BONUS" / **ที่เหลือทุกตัว
+                // = เบี้ยเลี้ยงประจำ** ⇒ รหัสที่ผู้ใช้ตั้งเอง (BN01 "โบนัส", INCENTIVE)
+                // ถูกฉาย × งวดที่เหลือในการประมาณการทั้งปี ⇒ หักภาษีเกินจริง (บั๊ก D-T3
+                // กลับมาทางประตูหลัง) · และธง IsTaxable ที่เขียนไว้ไม่เคยถูกอ่าน
+                // (silent no-op) — ตอนนี้ตัวรวมยอดตัวเดียว (Helpers/PayrollIncomeNatureRules)
+                // อ่านทั้งสองอย่าง · แถวที่ยัง Unspecified ตกกลับไปกฎรหัสเดิม = ตัวเลขเท่าเดิม
+                var itemBuckets = Accounting.Helpers.PayrollIncomeNatureRules.Accumulate(
+                    earningItems.Select(item => (
+                        item.IncomeNature,
+                        (string?)item.Code,
+                        item.IsTaxable,
+                        item.CalculationType == "Fixed"
+                            ? (item.FixedAmount ?? 0)
+                            : (item.Percentage ?? 0) / 100m * emp.BaseSalary)));
 
-                    if (item.Code.StartsWith("OT", StringComparison.OrdinalIgnoreCase))
-                        overtimePay += amount;
-                    else if (item.Code.Equals("COM", StringComparison.OrdinalIgnoreCase))
-                        commission += amount;
-                    else if (item.Code.Equals("BONUS", StringComparison.OrdinalIgnoreCase))
-                        bonus += amount;
-                    else
-                        allowances += amount;
-                }
+                overtimePay += itemBuckets.Overtime;
+                allowances += itemBuckets.RecurringAllowance;
+                commission += itemBuckets.Commission;
+                bonus += itemBuckets.Bonus;
+                // ครั้งคราว → otherIncome: เข้า taxableGross ของงวดนี้ แต่ **ไม่** เข้า
+                // recurringMonthly ที่ถูกฉายไปงวดที่เหลือ
+                otherIncome += itemBuckets.OneTimeAllowance;
+                nonTaxableExtra += itemBuckets.NonTaxable;
 
                 // ===== Attendance-driven extras (OT + per-diem + accom + OT-meal) =====
                 // Read EmployeeProjectTime rows for this employee in the run
@@ -4006,9 +4042,17 @@ public class PayrollService : IPayrollService
             e.DonationAmount, e.TaxAllowances);
     }
 
-    private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i) =>
-        new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
-            i.FixedAmount, i.Percentage, i.IsTaxable, i.IsActive);
+    private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i)
+    {
+        // ลักษณะที่ "ใช้จริง" + คำอธิบายผลต่อภาษี คิดที่เซิร์ฟเวอร์ตัวเดียว —
+        // หน้าเว็บห้ามทำสำเนากฎ prefix ของตัวเอง (หลักการ 10 ข้อ #5)
+        var effective = Accounting.Helpers.PayrollIncomeNatureRules.Effective(i.IncomeNature, i.Code);
+        return new(i.Id, i.Code, i.Name, i.ItemType, i.CalculationType,
+            i.FixedAmount, i.Percentage, i.IsTaxable, i.IsActive,
+            IncomeNature: i.IncomeNature,
+            EffectiveIncomeNature: effective,
+            IncomeNatureNote: Accounting.Helpers.PayrollIncomeNatureRules.Describe(i.IncomeNature));
+    }
 
     private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r)
     {

@@ -122,4 +122,51 @@ public class CitRateTableTests
         Assert.Equal(0m, CitRateTable.Compute(300_000m, isSme: true));
         Assert.Equal(60_000m, CitRateTable.Compute(300_000m, isSme: false));
     }
+
+    // ════════ Q10 (รอบ 182) — "ไม่รู้ทุน" ต้องไม่ใช่ SME ════════
+    //
+    // คอลัมน์ Companies.PaidUpCapital เป็น NOT NULL DEFAULT 0 และก่อนรอบ 182
+    // **ไม่มีช่องให้กรอกเลย** ⇒ ทุกบริษัทมีค่า 0 ⇒ "ไม่รู้" ถูกแปลงเป็น
+    // "ทุนน้อยมาก" ⇒ นับเป็น SME ⇒ เสียภาษี**ต่ำกว่า**กฎหมายโดยความเสียหาย
+    // มองไม่เห็นจนสรรพากรประเมิน (ขัด DOCTRINE §1 G3/G5)
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ไม่รู้ทุนที่ชำระแล้ว_ต้องไม่ใช่_SME(double? capital)
+    {
+        var c = capital.HasValue ? (decimal?)(decimal)capital.Value : null;
+
+        Assert.False(CitRateTable.IsSme(c, annualRevenue: 1_000_000m));
+        Assert.Contains("ยังไม่ได้กรอก", CitRateTable.SmeReason(c, 1_000_000m));
+
+        // ผลเป็นเงิน: กำไร 1 ล. → 200,000 (อัตราทั่วไป) ไม่ใช่ 105,000
+        Assert.Equal(200_000m, CitRateTable.Compute(
+            1_000_000m, CitRateTable.IsSme(c, 1_000_000m)));
+    }
+
+    // ── ทิศตรงข้าม: บริษัทที่กรอกทุนครบอยู่แล้ว ยอดต้องไม่ขยับแม้แต่สตางค์เดียว ──
+
+    [Fact]
+    public void บริษัทที่กรอกทุนแล้วและเข้าเกณฑ์_ยังเป็น_SME_เหมือนเดิม()
+    {
+        Assert.True(CitRateTable.IsSme(1_000_000m, annualRevenue: 10_000_000m));
+        Assert.Equal(105_000m, CitRateTable.Compute(
+            1_000_000m, CitRateTable.IsSme(1_000_000m, 10_000_000m)));
+        Assert.StartsWith("SME", CitRateTable.SmeReason(1_000_000m, 10_000_000m));
+    }
+
+    [Fact]
+    public void ทุนพอดีเพดาน_5_ล้าน_ยังเป็น_SME()
+    {
+        Assert.True(CitRateTable.IsSme(5_000_000m, annualRevenue: 30_000_000m));
+    }
+
+    [Fact]
+    public void เหตุผลต้องบอกข้อที่ตกเกณฑ์จริง_ไม่ใช่ข้อความรวม()
+    {
+        Assert.Contains("ทุนที่ชำระแล้ว", CitRateTable.SmeReason(10_000_000m, 1_000_000m));
+        Assert.Contains("รายได้ทั้งรอบ", CitRateTable.SmeReason(1_000_000m, 40_000_000m));
+    }
 }

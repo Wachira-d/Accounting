@@ -390,13 +390,18 @@ public partial class BankService : IBankService
     }
 
     /// <summary>
-    /// Amount-integrity guard. Counterparts on the SAME side as the bank txn
-    /// ADD; counterparts on the OPPOSITE side SUBTRACT (legit net-settlement —
-    /// e.g. customer Receipt 2,500 minus PaymentVoucher refund 500 = 2,000 net
-    /// into bank). What's BLOCKED is same-side subtraction (two Receipt
-    /// Vouchers can't offset each other — the original −500 + 2,500 nonsense).
-    /// Document direction comes from its type; JE direction from the SIGNED net
-    /// on the bank's own GL account.
+    /// ด่านความถูกต้องของยอด — รายการฝั่งเดียวกับบรรทัดธนาคาร **บวก**,
+    /// ฝั่งตรงข้าม **หัก** (net-settlement เช่น ใบเสร็จ 2,500 − ใบสำคัญจ่าย 500
+    /// = 2,000 สุทธิเข้าบัญชี). ที่ถูกบล็อกคือการหักกันภายในฝั่งเดียวกัน
+    ///
+    /// เลขคณิตย้ายไป <see cref="Accounting.Helpers.BankMatchAmountReconciler"/>
+    /// (pure + มีเทสต์) — เมธอดนี้เหลือหน้าที่ "ดึงข้อมูลจาก DB แล้วแปลงเป็น
+    /// อินพุตของตัวกระทบยอด". สองช่องที่ `DECISION_AUDIT_2026-09-18.md` §3 D4-5
+    /// ระบุถูกปิดในตัวกระทบยอดนั้น:
+    ///   (1) ชนิดที่ไม่รู้ทิศ เดิม "บวกเงียบ ๆ (legacy safe default)" →
+    ///       ตอนนี้ **ปฏิเสธพร้อมบอกว่าใบไหน**
+    ///   (2) เดิม "ผ่านถ้า net หรือ gross ตรง" = สองโอกาสผ่านต่อใบ →
+    ///       ตอนนี้แต่ละใบมียอดเงินสดที่คาดว่าผ่านธนาคาร **ค่าเดียว**
     /// </summary>
     private async Task ValidateMatchAmountAsync(Guid companyId, BankTransaction txn, IEnumerable<Guid> matchedIds)
     {
@@ -408,16 +413,21 @@ public partial class BankService : IBankService
             .Select(a => a.LinkedAccountId)
             .FirstOrDefaultAsync();
 
-        bool txnIsIn = txn.TransactionType is BankTransactionType.Deposit
-            or BankTransactionType.Interest;
+        var bankDirection = txn.TransactionType is BankTransactionType.Deposit
+            or BankTransactionType.Interest
+            ? Accounting.Helpers.BankFlowDirection.Inflow
+            : Accounting.Helpers.BankFlowDirection.Outflow;
 
-        // Same-side items add; opposite-side items subtract (net-settlement).
-        // Net = sameDirSum − oppDirSum, compared to bank amount.
-        decimal sameDirSum = 0m, oppDirSum = 0m;
+        var items = new List<Accounting.Helpers.BankMatchAmountReconciler.Item>();
 
         var pays = await _db.Payments.AsNoTracking()
             .Where(p => ids.Contains(p.Id) && p.CompanyId == companyId)
-            .Select(p => new { p.Id, p.Amount, DocType = p.Document.DocumentType, DocNo = p.Document.DocumentNumber })
+            .Select(p => new
+            {
+                p.Id, p.Amount, p.WithholdingTaxAmount, p.FeeAmount,
+                DocType = p.Document.DocumentType,
+                DocNo = p.Document.DocumentNumber
+            })
             .ToListAsync();
         foreach (var p in pays)
         {
@@ -426,87 +436,81 @@ public partial class BankService : IBankService
                 or DocumentType.BillingNote or DocumentType.DebitNote;
             bool payIsOut = p.DocType is DocumentType.PaymentVoucher or DocumentType.Expense
                 or DocumentType.PurchaseInvoice or DocumentType.CertificateInLieu;
-            // Direction unknown (other doc types) → treat as additive (legacy
-            // safe default).
-            if (!payIsIn && !payIsOut) { sameDirSum += p.Amount; continue; }
-            if (payIsIn == txnIsIn) sameDirSum += p.Amount;
-            else oppDirSum += p.Amount;
+            var dir = payIsIn ? Accounting.Helpers.BankFlowDirection.Inflow
+                : payIsOut ? Accounting.Helpers.BankFlowDirection.Outflow
+                : Accounting.Helpers.BankFlowDirection.Unknown;   // ⬅ เดิมบวกเงียบ ๆ
+            items.Add(new Accounting.Helpers.BankMatchAmountReconciler.Item(
+                p.Id,
+                $"{p.DocType} {p.DocNo}".Trim(),
+                dir,
+                RecordedAmount: p.Amount,
+                BankLineAmount: null,
+                WithheldAmount: p.WithholdingTaxAmount,
+                FeeAmount: p.FeeAmount));
         }
-        var payIds = pays.Select(p => p.Id).ToHashSet();
-        // Parallel GROSS tally: a WHT/fee payment shows the gross on the bank
-        // statement but a net bank-line on the JE (e.g. pay 7,490, JE bank-line
-        // 7,280 after 210 WHT). Accept the match if EITHER the net OR the gross
-        // side reconciles, so the operator isn't blocked on a legitimate WHT case.
-        decimal grossSameDir = sameDirSum, grossOppDir = oppDirSum;
 
-        // The rest are treated as JournalEntries.
+        var payIds = pays.Select(p => p.Id).ToHashSet();
         var jeIds = ids.Where(i => !payIds.Contains(i)).ToList();
         if (jeIds.Count > 0)
         {
-            // JE gross (TotalDebit) for every matched JE, for the gross tally.
-            var jeGross = await _db.JournalEntries.AsNoTracking()
-                .Where(j => jeIds.Contains(j.Id))
-                .ToDictionaryAsync(j => j.Id, j => j.TotalDebit);
+            var jeHeads = await _db.JournalEntries.AsNoTracking()
+                .Where(j => jeIds.Contains(j.Id) && j.CompanyId == companyId)
+                .Select(j => new { j.Id, j.TotalDebit, j.EntryNumber })
+                .ToListAsync();
+            var jeById = jeHeads.ToDictionary(j => j.Id);
 
+            var jeNetSigned = new Dictionary<Guid, decimal>();
             if (bankCoaId.HasValue)
             {
                 var lines = await _db.JournalEntryLines.AsNoTracking()
                     .Where(l => jeIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
                     .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount })
                     .ToListAsync();
-                var withBankLine = lines.Select(l => l.JournalEntryId).ToHashSet();
-
-                // Tally each JE: same-side adds, opposite-side subtracts.
-                var jeNetSigned = lines.GroupBy(l => l.JournalEntryId)
+                jeNetSigned = lines.GroupBy(l => l.JournalEntryId)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.Net));
-                foreach (var kv in jeNetSigned)
-                {
-                    if (Math.Abs(kv.Value) < 0.01m) continue;
-                    bool jeIsIn = kv.Value > 0;
-                    var mag = Math.Abs(kv.Value);
-                    var gross = jeGross.GetValueOrDefault(kv.Key, mag);
-                    if (jeIsIn == txnIsIn) { sameDirSum += mag; grossSameDir += gross; }
-                    else { oppDirSum += mag; grossOppDir += gross; }
-                }
-                // JEs that don't touch the bank account → unknown side; additive.
-                var noBankLine = jeIds.Where(id => !withBankLine.Contains(id)).ToList();
-                foreach (var id in noBankLine)
-                {
-                    var g = jeGross.GetValueOrDefault(id, 0m);
-                    sameDirSum += g; grossSameDir += g;
-                }
             }
-            else
+
+            foreach (var id in jeIds)
             {
-                foreach (var id in jeIds)
+                var label = jeById.TryGetValue(id, out var h) && !string.IsNullOrWhiteSpace(h.EntryNumber)
+                    ? $"สมุดรายวัน {h.EntryNumber}" : $"สมุดรายวัน {id.ToString("N")[..8]}";
+                var gross = jeById.TryGetValue(id, out var hh) ? hh.TotalDebit : 0m;
+
+                if (jeNetSigned.TryGetValue(id, out var signed) && Math.Abs(signed) >= 0.01m)
                 {
-                    var g = jeGross.GetValueOrDefault(id, 0m);
-                    sameDirSum += g; grossSameDir += g;
+                    items.Add(new Accounting.Helpers.BankMatchAmountReconciler.Item(
+                        id, label,
+                        signed > 0 ? Accounting.Helpers.BankFlowDirection.Inflow
+                                   : Accounting.Helpers.BankFlowDirection.Outflow,
+                        RecordedAmount: gross,
+                        BankLineAmount: signed));
+                    continue;
                 }
+
+                // JE ที่ไม่แตะบัญชีธนาคารเลย → **ไม่รู้ทิศ** เดิมบวกเข้าไปเงียบ ๆ
+                // (ถ้ามันไม่แตะบัญชีธนาคาร มันก็ไม่ใช่ต้นทางของเงินก้อนนี้)
+                // ⚠ กรณีบัญชีธนาคารยังไม่ผูกผังบัญชี เราไม่มีทางรู้ทิศของ JE ใด ๆ
+                // เลย — บอกผู้ใช้ตรง ๆ ว่าต้องไปผูกก่อน (ห้ามเดาทิศให้)
+                var why = bankCoaId.HasValue
+                    ? " (ไม่มีบรรทัดลงบัญชีธนาคารนี้)"
+                    : " (บัญชีธนาคารนี้ยังไม่ได้ผูกกับผังบัญชี — ตั้งค่าบัญชีธนาคาร → ผังบัญชีที่เชื่อมโยง)";
+                items.Add(new Accounting.Helpers.BankMatchAmountReconciler.Item(
+                    id, label + why, Accounting.Helpers.BankFlowDirection.Unknown,
+                    RecordedAmount: gross));
             }
         }
 
-        var target = Math.Abs(txn.Amount);
-        var net = sameDirSum - oppDirSum;
-        var grossNet = grossSameDir - grossOppDir;
-        var diff = Math.Abs(net - target);
-        var grossDiff = Math.Abs(grossNet - target);
-        if (diff > 0.01m && grossDiff > 0.01m)
-        {
-            // Identify the offending bank line so the operator can find it.
-            var sign = txn.TransactionType == BankTransactionType.Deposit ? "+" : "-";
-            var desc = (txn.Description ?? txn.Payee ?? "").Trim();
-            if (desc.Length > 40) desc = desc[..40] + "…";
-            var who = $"รายการธนาคาร {txn.TransactionDate:dd/MM/yyyy} {sign}{target:N2}" +
-                      (string.IsNullOrWhiteSpace(desc) ? "" : $" ({desc})");
-            // Report whichever interpretation is closer (net vs gross).
-            var shownAmt = grossDiff < diff ? grossNet : net;
-            var shownDiff = Math.Min(diff, grossDiff);
-            throw new InvalidOperationException(
-                $"{who}: ยอดที่จับคู่ ({shownAmt:N2}) ไม่ตรงกับยอดธนาคาร ({target:N2}) — ต่างกัน {shownDiff:N2} บาท. " +
-                "ฝั่งเดียวกันบวกกัน, ข้ามฝั่งหักกัน (เช่น Receipt 2,500 − PaymentVoucher 500 = 2,000 net เข้าบัญชี). " +
-                "ใบรับ 2 ใบไม่สามารถนำมาลบกันได้ — เลือกเอกสาร/JE ให้ถูก หรือใช้กลุ่มกระทบยอด M:N.");
-        }
+        var result = Accounting.Helpers.BankMatchAmountReconciler.Reconcile(
+            txn.Amount, bankDirection, items);
+        if (result.Ok) return;
+
+        // ระบุบรรทัดธนาคารที่มีปัญหาให้ผู้ใช้หาเจอ
+        var sign = txn.TransactionType == BankTransactionType.Deposit ? "+" : "-";
+        var desc = (txn.Description ?? txn.Payee ?? "").Trim();
+        if (desc.Length > 40) desc = desc[..40] + "…";
+        var who = $"รายการธนาคาร {txn.TransactionDate:dd/MM/yyyy} {sign}{Math.Abs(txn.Amount):N2}" +
+                  (string.IsNullOrWhiteSpace(desc) ? "" : $" ({desc})");
+        throw new InvalidOperationException($"{who}: {result.Message}");
     }
 
     public async Task<BankTransactionResponse> ReconcileAsync(Guid companyId, ReconcileRequest request)
@@ -566,10 +570,16 @@ public partial class BankService : IBankService
 
     public async Task<List<BankTransactionResponse>> GetUnreconciledAsync(Guid companyId, Guid bankAccountId)
     {
+        // `Suggested` = "ระบบเสนอคู่ไว้ แต่ยังไม่มีใครยืนยัน" ⇒ **ยังไม่ได้
+        // กระทบยอด** ต้องอยู่ในลิสต์นี้เหมือน `Unmatched`
+        // (`BankService.Reconciliation.cs` ก็นับสองสถานะนี้เป็น pending อยู่แล้ว)
+        // ถ้าไม่รวม รายการที่ arbiter ลดชั้นจาก `Matched` → `Suggested` จะ
+        // **หายไปจากหน้าจับคู่ด้วยมือและตัวสร้างกลุ่ม M:N** = ผู้ใช้ไม่มีทางไปต่อ
         var transactions = await _db.Set<BankTransaction>()
             .Where(t => t.CompanyId == companyId
                 && t.BankAccountId == bankAccountId
-                && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+                && (t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                    || t.ReconciliationStatus == ReconciliationStatus.Suggested))
             .OrderByDescending(t => t.TransactionDate)
             .ToListAsync();
 
@@ -593,9 +603,20 @@ public partial class BankService : IBankService
                     && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
                 .ToListAsync();
 
+            // ⚠ เดิมกรอง `p.PaymentMethod == PaymentMethod.BankTransfer` ตรงนี้
+            // ⇒ **PromptPay / QR / เช็คที่ขึ้นเงินแล้ว / บัตร หลุดจากการจับคู่
+            // อัตโนมัติทั้งหมด** ทั้งที่เงินเข้าบัญชีธนาคารจริง
+            // (`DECISION_AUDIT_2026-09-18.md` §3 D4-1 · `BankService.cs:595`)
+            // ช่องทางการชำระไม่ใช่เครื่องตัดสินว่าเงินผ่านธนาคารไหม — ให้
+            // ตัวให้คะแนนกลางตัดสินจากยอด/วัน/ชื่อผู้โอน/เลขอ้างอิงแทน
             var payments = await _db.Payments
-                .Where(p => p.CompanyId == companyId && p.PaymentMethod == PaymentMethod.BankTransfer)
+                .Include(p => p.Document)
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                    && p.Document.Status != DocumentStatus.Voided)
                 .ToListAsync();
+            // เรียกแบบ static (ไม่ import `Accounting.Helpers` ทั้ง namespace เพราะ
+            // ไฟล์นี้ import `Accounting.Services.Helpers` อยู่แล้ว — ชนกันได้)
+            await Accounting.Helpers.ContactHydration.HydratePaymentContactsAsync(_db, companyId, payments);
 
             // Get already matched payment IDs to prevent double-matching
             var alreadyMatchedPaymentIds = await _db.Set<BankTransaction>()
@@ -635,53 +656,62 @@ public partial class BankService : IBankService
                         && !matched.Any(m => m.MatchedPaymentId == p.Id))
                     .ToList();
 
-                Payment? bestMatch = null;
-                decimal bestScore = 0;
-
+                // ═══ ให้คะแนนด้วยสูตรกลางตัวเดียว + ให้ arbiter ตัดสิน ═══
+                // เดิมที่นี่มีสูตรของตัวเอง (ยอด 50 / วัน 30 / อ้างอิง 20) ที่
+                // **ไม่ดูชื่อผู้โอนเลย** แล้วใช้ `score > bestScore` = ใครมาก่อน
+                // ชนะ ⇒ ใบสองใบที่ยอด+วันเท่ากันเป๊ะได้คำตอบตามลำดับแถวใน DB
+                // และอันดับที่เครื่องประทับไม่ตรงกับอันดับที่คนเห็นบนจอ
+                // (GAP-1 · `DECISION_DOCTRINE.md` §4.2)
+                var autoWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
+                var options = new List<Accounting.Helpers.BankMatchArbiter.Option>();
                 foreach (var payment in candidates)
                 {
-                    decimal score = 0;
-
-                    // Amount must match EXACTLY (within 1 satang) — auto-match
-                    // never leaves an unaccounted remainder. Near-but-not-equal
-                    // amounts are left for the operator to match manually / group.
-                    if (Math.Abs(payment.Amount - txn.Amount) <= 0.01m)
-                        score += 50;
-                    else
+                    // หน้าต่างเวลาตามชนิดกระแสเงิน (ยังเป็นด่านแข็งเหมือนเดิม —
+                    // ใบที่ลงวันหลังเงินเข้าไม่มีทางเป็นต้นทางของเงินก้อนนั้น)
+                    if (!Bank.BankFlowClassifier.InWindow(payment.PaymentDate, txn.TransactionDate, autoWin))
                         continue;
 
-                    // Flow-aware directional window (shared classifier) — a
-                    // KSHOP/Thai-QR deposit only reaches back 1 day, a cheque
-                    // 7, etc.; a receipt dated after the deposit can't fund it.
-                    var autoWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
-                    if (!Bank.BankFlowClassifier.InWindow(payment.PaymentDate, txn.TransactionDate, autoWin)) continue;
-                    var daysDiff = Math.Abs((payment.PaymentDate.Date - txn.TransactionDate.Date).TotalDays);
-                    if (daysDiff <= 0) score += 30;
-                    else if (daysDiff <= 3) score += 20;
-                    else score += 10;
-
-                    // Reference match = 20 points
-                    if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(payment.Reference)
-                        && txn.Reference.Contains(payment.Reference, StringComparison.OrdinalIgnoreCase))
-                        score += 20;
-
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        bestMatch = payment;
-                    }
+                    var sc = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
+                        CandidateAmount: payment.Amount,
+                        BankAmount: Math.Abs(txn.Amount),
+                        CandidateDate: payment.PaymentDate,
+                        BankDate: txn.TransactionDate,
+                        CandidateRef: payment.Reference,
+                        CandidateNotes: payment.Notes,
+                        CandidateDocNumber: payment.Document?.DocumentNumber,
+                        CandidateName: payment.Document?.Contact?.Name,
+                        BankDescription: txn.Description,
+                        BankReference: txn.Reference,
+                        BankPayee: txn.Payee));
+                    options.Add(new Accounting.Helpers.BankMatchArbiter.Option(
+                        payment.Id, "Payment", sc.Score, sc.HasIdentitySignal, sc.Reason));
                 }
 
-                // Only match if confidence is high enough (at least amount match + date proximity)
-                if (bestMatch != null && bestScore >= 60)
+                var payDecision = Accounting.Helpers.BankMatchArbiter.Decide(options);
+
+                if (payDecision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply)
                 {
                     txn.ReconciliationStatus = ReconciliationStatus.Matched;
-                    txn.MatchedPaymentId = bestMatch.Id;
+                    txn.MatchedPaymentId = payDecision.Chosen!.Id;
                     txn.ReconciledAt = DateTime.UtcNow;
                     txn.ReconciledBy = "AutoMatch";
                     matched.Add(MapTransactionToResponse(txn));
-                    alreadyMatchedPaymentIds.Add(bestMatch.Id);
+                    alreadyMatchedPaymentIds.Add(payDecision.Chosen.Id);
                     processedKeySet.Add(txnKey);
+                    continue;
+                }
+
+                if (payDecision.Verdict == Accounting.Helpers.BankMatchVerdict.Suggest)
+                {
+                    // แยกไม่ออกด้วยหลักฐานที่มี → **เสนอ** ไม่ประทับ
+                    // (แต่ยังเก็บ id ของคู่ที่เสนอไว้เสมอ — ห้ามมีสถานะที่ไม่มีคู่)
+                    txn.ReconciliationStatus = ReconciliationStatus.Suggested;
+                    txn.MatchedPaymentId = payDecision.Chosen!.Id;
+                    txn.ReconciledBy = "AutoMatch (เสนอ รอยืนยัน)";
+                    alreadyMatchedPaymentIds.Add(payDecision.Chosen.Id);
+                    _logger?.LogInformation(
+                        "Bank txn {Txn}: เสนอรายการชำระ {PaymentId} ({Rule}) — {Reason}",
+                        txn.Id, payDecision.Chosen.Id, payDecision.RuleCode, payDecision.Reason);
                     continue;
                 }
 
@@ -696,51 +726,58 @@ public partial class BankService : IBankService
                         && j.EntryDate <= txn.TransactionDate.Date.AddDays(1))
                     .ToListAsync();
 
-                JournalEntry? bestJeMatch = null;
-                decimal bestJeScore = 0;
-
+                // ฝั่ง JE ใช้ **สูตรกลางตัวเดียวกัน** กับฝั่ง Payment และกับ
+                // รายการที่มนุษย์เห็น (เดิมเป็นสำเนาที่ 6 ของสูตร: 50/30/20)
+                var jeOptions = new List<Accounting.Helpers.BankMatchArbiter.Option>();
+                var jeWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
                 foreach (var je in journalEntries.Where(j => !alreadyMatchedJeIds.Contains(j.Id)))
                 {
-                    decimal jeScore = 0;
+                    if (!Bank.BankFlowClassifier.InWindow(je.EntryDate, txn.TransactionDate, jeWin)) continue;
 
-                    // Match on the NET that posts to the bank account (compound
-                    // entries valued by what actually hit the bank); fall back to
-                    // the JE total when it doesn't post to the bank account.
+                    // ยอดที่ลงบัญชีธนาคารจริง (compound entry วัดด้วยเงินที่ขยับ
+                    // ในบัญชีนั้น) — ไม่มีบรรทัดธนาคารจึงค่อยถอยไปใช้ยอดรวม
                     decimal jeBankAmt = autoBankCoaId.HasValue
                         ? Math.Abs(je.Lines.Where(l => l.AccountId == autoBankCoaId.Value)
                             .Sum(l => l.DebitAmount - l.CreditAmount))
                         : 0m;
                     if (jeBankAmt <= 0.01m) jeBankAmt = Math.Max(je.TotalDebit, je.TotalCredit);
-                    if (Math.Abs(jeBankAmt - Math.Abs(txn.Amount)) <= 0.01m)
-                        jeScore += 50;
-                    else
-                        continue;
 
-                    // Flow-aware directional window (shared classifier).
-                    var jeWin = Bank.BankFlowClassifier.Window(txn.Description, txn.Payee, txn.Reference);
-                    if (!Bank.BankFlowClassifier.InWindow(je.EntryDate, txn.TransactionDate, jeWin)) continue;
-                    var jeDaysDiff = Math.Abs((je.EntryDate.Date - txn.TransactionDate.Date).TotalDays);
-                    if (jeDaysDiff <= 0) jeScore += 30;
-                    else if (jeDaysDiff <= 3) jeScore += 20;
-                    else jeScore += 10;
-
-                    // Reference match
-                    if (!string.IsNullOrEmpty(txn.Reference) && !string.IsNullOrEmpty(je.Reference)
-                        && txn.Reference.Contains(je.Reference, StringComparison.OrdinalIgnoreCase))
-                        jeScore += 20;
-
-                    if (jeScore > bestJeScore) { bestJeScore = jeScore; bestJeMatch = je; }
+                    var jeSc = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
+                        CandidateAmount: jeBankAmt,
+                        BankAmount: Math.Abs(txn.Amount),
+                        CandidateDate: je.EntryDate,
+                        BankDate: txn.TransactionDate,
+                        CandidateRef: je.Reference,
+                        CandidateNotes: je.Description,
+                        CandidateDocNumber: je.EntryNumber,
+                        CandidateName: null,
+                        BankDescription: txn.Description,
+                        BankReference: txn.Reference,
+                        BankPayee: txn.Payee));
+                    jeOptions.Add(new Accounting.Helpers.BankMatchArbiter.Option(
+                        je.Id, "JournalEntry", jeSc.Score, jeSc.HasIdentitySignal, jeSc.Reason));
                 }
 
-                if (bestJeMatch != null && bestJeScore >= 60)
+                var jeDecision = Accounting.Helpers.BankMatchArbiter.Decide(jeOptions);
+                if (jeDecision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply)
                 {
                     txn.ReconciliationStatus = ReconciliationStatus.Matched;
-                    txn.MatchedJournalEntryId = bestJeMatch.Id;
+                    txn.MatchedJournalEntryId = jeDecision.Chosen!.Id;
                     txn.ReconciledAt = DateTime.UtcNow;
                     txn.ReconciledBy = "AutoMatch";
                     matched.Add(MapTransactionToResponse(txn));
-                    alreadyMatchedJeIds.Add(bestJeMatch.Id);
+                    alreadyMatchedJeIds.Add(jeDecision.Chosen.Id);
                     processedKeySet.Add(txnKey);
+                }
+                else if (jeDecision.Verdict == Accounting.Helpers.BankMatchVerdict.Suggest)
+                {
+                    txn.ReconciliationStatus = ReconciliationStatus.Suggested;
+                    txn.MatchedJournalEntryId = jeDecision.Chosen!.Id;
+                    txn.ReconciledBy = "AutoMatch (เสนอ รอยืนยัน)";
+                    alreadyMatchedJeIds.Add(jeDecision.Chosen.Id);
+                    _logger?.LogInformation(
+                        "Bank txn {Txn}: เสนอสมุดรายวัน {JeId} ({Rule}) — {Reason}",
+                        txn.Id, jeDecision.Chosen.Id, jeDecision.RuleCode, jeDecision.Reason);
                 }
             }
 

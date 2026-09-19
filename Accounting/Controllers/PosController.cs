@@ -1,4 +1,6 @@
+using Accounting.Filters;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Pos;
 using Accounting.Services.Interfaces;
@@ -96,6 +98,14 @@ public class PosController : ControllerBase
         return Ok(new ApiResponse<OrderResponse>(true, result, "คืนเงินสำเร็จ"));
     }
 
+    /// <summary>ออกใบกำกับภาษี**เต็มรูป** (§86/4) จากบิล POS ที่ปิดแล้ว
+    ///
+    /// <para>★ D8-1(ง) — ด่านสิทธิ์: การกดปุ่มนี้คือการ **อนุมัติเอกสารรายได้**
+    /// (เอกสารเกิดพร้อมสถานะ Approved + เลขที่ในเล่มใบกำกับ ซึ่งแก้ย้อนหลังไม่ได้
+    /// ตาม §86/4) จึงใช้คีย์เดียวกับเส้นเอกสาร ไม่ใช่คีย์ POS ทั่วไป —
+    /// Owner/SystemAdmin/Accountant ผ่านอัตโนมัติ · แคชเชียร์ที่ไม่ได้รับสิทธิ์จะได้ 403
+    /// พร้อมชื่อคีย์ที่ต้องขอ (บิลยังอยู่ ออกใบใหม่ได้เมื่อได้สิทธิ์)</para></summary>
+    [RequirePermission(PermissionKeys.DocumentRevenueApprove)]
     [HttpPost("orders/{orderId:guid}/issue-tax-invoice")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> IssueTaxInvoice(Guid companyId, Guid orderId, [FromBody] IssueTaxInvoiceRequest request)
     {

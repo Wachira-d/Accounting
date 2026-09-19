@@ -489,6 +489,12 @@
               : ''}</td>
           <td class="text-right font-semibold ${_netOf(r) > 0 ? 'text-danger' : 'text-success'}">${Layout.money(_netOf(r))}</td>
           <td>${Layout.statusBadge(r.status)}${
+            // ป้าย "ยื่นแล้ว" กับ "บันทึกว่ายื่นแล้ว (รอเลขรับ)" เป็นคนละเรื่อง —
+            // เซิร์ฟเวอร์ตัดสินและส่ง filingLabel/filingDetail มาให้ (D2-B1a)
+            // หน้าเว็บห้ามเดาเองจาก status
+            r.filingLabel && r.status !== 'Draft'
+              ? `<div style="font-size:10px;color:${r.filingPeriodLocked ? '#15803d' : '#b45309'};margin-top:2px" title="${(r.filingDetail||'').replace(/"/g,'&quot;')}">${r.filingPeriodLocked ? '🔒' : '⏳'} ${r.filingLabel}${r.filingNumber ? ` · เลขรับ ${r.filingNumber}` : ''}</div>`
+              : ''}${
             // ภ.พ.36 มี 2 สถานะคนละเรื่องที่ผู้ใช้สับสนกันบ่อย: สถานะ "รายงาน"
             // (ร่าง/ยื่นแล้ว) กับ "นำส่งเงิน" ที่ทำในหน้านำส่งภาษี — แสดงคู่กัน
             // ไม่งั้นเห็น "ร่าง" แล้วเข้าใจว่ายังไม่ได้นำส่ง ทั้งที่จ่ายไปแล้ว
@@ -496,9 +502,10 @@
           <td>${r.filedDate ? Layout.date(r.filedDate) : '-'}</td>
           <td class="flex gap-1" style="flex-wrap:wrap">
             <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${r.id}')" data-i18n="common.view">ดู</button>
-            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
-            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
-            ${r.status !== 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
+            ${!this._isDeclared(r) ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${r.id}')">สร้างใหม่</button>` : ''}
+            ${!this._isDeclared(r) ? `<button class="btn btn-sm btn-success" onclick="Page.fileReport('${r.id}')">ยื่นภาษี</button>` : ''}
+            ${!this._isDeclared(r) ? `<button class="btn btn-sm btn-danger" onclick="Page.deleteReport('${r.id}')" data-i18n="common.delete">ลบ</button>` : ''}
+            ${r.needsFilingNumber ? `<button class="btn btn-sm" style="background:#0d9488;color:#fff" onclick="Page.recordFilingNumber('${r.id}')" title="${(r.filingNextStep||'').replace(/"/g,'&quot;')}">🧾 บันทึกเลขรับ</button>` : ''}
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="Page.exportEFiling('${r.id}','${r.taxType}',${r.year},${r.month})" title="ดาวน์โหลดไฟล์ pipe-delimited สำหรับยื่น RD">📥 e-Filing</button>
             <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="Page.exportXlsx('${r.id}')" title="ส่งออกรายงานเป็น Excel — VAT แยกชีตภาษีขาย/ภาษีซื้อ">📊 Excel</button>
             ${/* ⚠️ เดิมใช้ `taxType.toLowerCase().includes('vat')` ซึ่ง 'VatPp36'
@@ -513,7 +520,7 @@
             ${this._isType(r, 'VatPp36', 9) ? `
             <a class="btn btn-sm" style="background:#0ea5e9;color:#fff;text-decoration:none"
                href="/pages/tax-remittance.html" title="ภ.พ.36 นำส่งเงิน + แนบใบเสร็จกรมสรรพากร + กดรับรู้ภาษีซื้อ ทำที่หน้านำส่งภาษี">💸 หน้านำส่ง/ใบเสร็จ</a>` : ''}
-            ${r.status === 'Filed' ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อกการยื่น — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน">🔓 Unlock</button>` : ''}
+            ${this._isDeclared(r) ? `<button class="btn btn-sm btn-warning" onclick="Page.unlockFiling('${r.id}')" title="ปลดล็อก/กลับเป็นร่าง — ใช้เมื่อต้องแก้ไขเอกสารที่อยู่ในรายงาน หรือกดยื่นผิดงวด">🔓 ปลดล็อก</button>` : ''}
             ${r.status === 'Filed' ? `<button class="btn btn-sm btn-danger" onclick="Page.rejectAndReverse('${r.id}')" title="RD reject → autonomous reversal JE">⚠️ Reject &amp; Reverse</button>` : ''}
           </td>
         </tr>`).join('') + missingRows + pp36Warn;
@@ -578,7 +585,10 @@
           const d = res.data || {};
           this._currentReport = d;
           this._currentReportId = id;   // ให้ auto-save รู้ว่ากำลังแก้รายงานไหน
-          const editable = d.status !== 'Filed';
+          // รายงานที่ถูก "บันทึกว่ายื่นแล้ว" (Submitted) ก็แก้ไม่ได้เหมือน Filed —
+          // ต้องกดปลดล็อก/กลับเป็นร่างพร้อมเหตุผลก่อน (เซิร์ฟเวอร์บล็อกอยู่แล้ว
+          // ปุ่มต้องไม่ชวนให้กดแล้วเด้ง error · ห้าม silent no-op) · D2-B1a
+          const editable = !this._isDeclared(d);
           const _esc = s => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/"/g, '&quot;');
           const _branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
           const _periodTH = `${this.monthNames[d.month]} ${d.year + 543}`;
@@ -933,14 +943,43 @@
         await this._doFileReport(id);
       },
 
+      // "ยื่นแล้ว" ตามสถานะของรายงาน — ครอบทั้ง Filed (มีเลขรับ ล็อกงวดแล้ว)
+      // และ Submitted (ผู้ใช้บันทึกว่ายื่นแล้ว ยังไม่มีเลขรับ) · D2-B1a
+      _isDeclared(r) { return r && (r.status === 'Filed' || r.status === 'Submitted'); },
+
       async _doFileReport(id) {
-        if (!confirm('ยืนยันการยื่นรายงานภาษี?')) return;
+        // ข้อความต้องตรงกับสิ่งที่ระบบทำจริง: ระบบ**ไม่ได้**ส่งแบบไปกรมสรรพากร
+        // แค่บันทึกว่าผู้ใช้ยื่นแล้ว (D2-B1a)
+        if (!confirm('บันทึกว่ายื่นแบบนี้แล้ว?\n\nระบบไม่ได้ส่งแบบไปกรมสรรพากรให้ — เป็นการบันทึกตามที่คุณแจ้ง\nถ้ายังไม่มีเลขรับ งวดนี้จะยังไม่ถูกล็อก และบันทึกเลขรับภายหลังได้')) return;
         const api = Layout.api(); if (!api) return;
         try {
-          await api.fileTaxReport(id);
+          const res = await api.fileTaxReport(id);
           Layout.closeModal('detailModal');
           Layout.closeModal('precheckModal');
-          Layout.toast('ยื่นภาษีสำเร็จ');
+          Layout.toast(res?.message || 'บันทึกการยื่นแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ทางไปต่อของผู้ยื่นกระดาษ/e-Filing ที่ยังไม่มีเลขรับตอนกดยื่น —
+      // กลับมากรอกเลขรับที่นี่ ระบบจะอัปเกรดเป็น "ยื่นแล้ว" + ล็อกงวดให้เอง
+      async recordFilingNumber(id) {
+        const num = prompt('กรอกเลขรับ / เลขอ้างอิงจากกรมสรรพากร (จากใบเสร็จ หรือหน้ายืนยันของ e-Filing):');
+        if (num === null) return;
+        if (!num.trim()) { Layout.toast('ต้องระบุเลขรับ', 'error'); return; }
+        const dateStr = prompt('วันที่กรมสรรพากรรับแบบ (ปปปป-ดด-วว):',
+          new Date().toISOString().slice(0, 10));
+        if (dateStr === null) return;
+        const when = new Date(dateStr);
+        if (isNaN(when.getTime())) { Layout.toast('วันที่ไม่ถูกต้อง', 'error'); return; }
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/tax/${id}/rd-ack`, {
+            rdAckNumber: num.trim(),
+            rdAcknowledgedAt: when.toISOString(),
+            status: 'Accepted',
+          });
+          Layout.toast(res?.message || 'บันทึกเลขรับแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -1056,7 +1095,15 @@
           a.download = `${form}_${year}${String(month).padStart(2,'0')}.txt`;
           a.click();
           URL.revokeObjectURL(a.href);
-          Layout.toast(`ดาวน์โหลด ${form} สำเร็จ — ไฟล์พร้อมส่ง RD`);
+          // แถวที่ถูกตัดออกจากไฟล์ (ยังไม่มีใบ 50 ทวิ) ต้องไม่หายเงียบ — เซิร์ฟเวอร์
+          // ส่งคำเตือนมาบน header (D2-B1a)
+          const note = res.headers.get('X-Filing-Review-Note');
+          if (note) {
+            let text = note; try { text = decodeURIComponent(note); } catch {}
+            Layout.toast(`ดาวน์โหลด ${form} แล้ว${text}`, 'error');
+          } else {
+            Layout.toast(`ดาวน์โหลด ${form} สำเร็จ — ไฟล์พร้อมส่ง RD`);
+          }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
