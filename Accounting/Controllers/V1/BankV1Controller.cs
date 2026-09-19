@@ -158,10 +158,39 @@ public class BankV1Controller : PublicApiControllerBase
         if (txn == null)
             return NotFound(new ApiResponse<string>(false, null, "ไม่พบรายการเดินบัญชี"));
 
-        txn.MatchedEntryIdsJson = System.Text.Json.JsonSerializer.Serialize(req.EntryIds);
-        txn.ReconciliationStatus = ReconciliationStatus.Matched;
-        txn.ReconciledAt = DateTime.UtcNow;
-        txn.ReconciledBy = "api:v1";
+        // ── ทางเข้าอื่นต้องเดินด่านเดียวกัน (F3 ข้อ 8 · ราก R5) ────────────
+        // เดิมทางนี้เขียนสถานะ `Matched` **ตรงลงตาราง**: ไม่ผ่านด่านยอด
+        // (`ValidateMatchAmountAsync`) · ไม่ผ่านด่านงวดบัญชี · ไม่ล็อกแถว ·
+        // ไม่มี audit row · และ **ไม่บันทึกแพตเทิร์นการเรียนรู้เลย** ทั้งที่
+        // doc-comment ข้างบนสัญญาว่า "การยืนยันนี้คือ feedback ที่สอนระบบ"
+        // (defect class "ด่าน/คำสัญญาที่คอมเมนต์บอกว่ามี แต่ไม่มี")
+        try
+        {
+            await _bank.BatchReconcileAsync(ctx!.CompanyId, new Models.DTOs.Bank.BatchReconcileRequest(
+                new List<Models.DTOs.Bank.BatchReconcileItem>
+                {
+                    new(BankTransactionId: txn.Id,
+                        MatchType: req.EntryIds.Count == 1 ? "JournalEntry" : "Multiple",
+                        MatchedPaymentId: null,
+                        MatchedJournalEntryId: req.EntryIds.Count == 1 ? req.EntryIds[0] : null,
+                        MatchedEntryIds: req.EntryIds.Count == 1 ? null : req.EntryIds,
+                        ConfidenceAtApply: null,
+                        WasAiValidated: false,
+                        AlternativesJson: null)
+                }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<string>(false, null, ex.Message));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ApiResponse<string>(false, null, ex.Message));
+        }
+
+        // ผู้กระทำคือ **ระบบภายนอก** ไม่ใช่คนที่นั่งหน้าจอ — ป้ายต้องบอกตรง ๆ
+        // (`BatchReconcileAsync` เขียน `Person(Guid.Empty)` เพราะไม่มี JWT)
+        txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.ApiV1;
         await Db.SaveChangesAsync(ct);
 
         return Ok(new ApiResponse<object>(true,

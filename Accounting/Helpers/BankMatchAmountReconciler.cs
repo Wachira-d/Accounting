@@ -58,6 +58,13 @@ public static class BankMatchAmountReconciler
     /// <param name="BankLineAmount">|ยอดสุทธิที่ลงบัญชีธนาคาร| — รู้เฉพาะ JE ที่แตะบัญชีธนาคาร; null = ไม่รู้</param>
     /// <param name="WithheldAmount">ภาษีหัก ณ ที่จ่ายที่หักจากยอดนี้ (เงินที่ไม่เคยออกจากธนาคาร)</param>
     /// <param name="FeeAmount">ค่าธรรมเนียมที่ถูกหักจากยอดโอน (marketplace/gateway/ธนาคาร)</param>
+    /// <param name="ConversionRate">
+    /// อัตราแปลง "สกุลของรายการ → สกุลของบัญชีธนาคาร" จาก
+    /// <see cref="BankMatchCurrency"/>. **1 = สกุลเดียวกัน** (ค่าปกติ).
+    /// ⚠ `BankLineAmount` เป็นยอดที่ลงบัญชีแยกประเภทอยู่แล้ว (สกุลฐาน =
+    /// สกุลของบัญชีธนาคาร) ⇒ ผู้เรียกต้องส่ง `ConversionRate = 1` คู่กับมันเสมอ
+    /// มิฉะนั้นจะแปลงซ้ำ
+    /// </param>
     public sealed record Item(
         Guid Id,
         string Label,
@@ -65,13 +72,22 @@ public static class BankMatchAmountReconciler
         decimal RecordedAmount,
         decimal? BankLineAmount = null,
         decimal WithheldAmount = 0m,
-        decimal FeeAmount = 0m)
+        decimal FeeAmount = 0m,
+        decimal ConversionRate = 1m)
     {
-        /// <summary>ยอดเงินสดที่ "ควรจะ" ผ่านบัญชีธนาคารสำหรับรายการนี้ — **ค่าเดียว**</summary>
-        public decimal ExpectedCashAmount =>
-            BankLineAmount.HasValue
-                ? Math.Abs(BankLineAmount.Value)
-                : RecordedAmount - WithheldAmount - FeeAmount;
+        /// <summary>ยอดเงินสดที่ "ควรจะ" ผ่านบัญชีธนาคารสำหรับรายการนี้ — **ค่าเดียว**
+        /// และอยู่ใน **สกุลของบัญชีธนาคาร** เสมอ (หักในสกุลเอกสารก่อน แล้วแปลงครั้งเดียว)</summary>
+        public decimal ExpectedCashAmount
+        {
+            get
+            {
+                var inItemCurrency = BankLineAmount.HasValue
+                    ? Math.Abs(BankLineAmount.Value)
+                    : RecordedAmount - WithheldAmount - FeeAmount;
+                if (ConversionRate == 1m) return inItemCurrency;
+                return Math.Round(inItemCurrency * ConversionRate, 2, MidpointRounding.AwayFromZero);
+            }
+        }
     }
 
     /// <param name="Ok">true = ยอดสองฝั่งตรงกันในกรอบ tolerance</param>

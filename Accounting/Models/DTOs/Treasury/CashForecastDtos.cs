@@ -51,7 +51,13 @@ public record CashForecastItem(
     /// DueDate. Lets the UI flag overdue receipts as lower-confidence
     /// cashflow.</summary>
     string TimingStatus,
-    int DaysFromToday);
+    int DaysFromToday,
+    // ── ที่มาของวันที่คาดการณ์ (`Helpers/CashForecastTiming`) ────────────
+    // "DueDate" | "DueDatePlusHistory" | "DocumentDateOnly" | "Overdue"
+    // enum ออกเป็น **ชื่อ** เสมอ (F2 ข้อ 5) · null = แถวที่ไม่ได้ผ่านตัวคำนวณ
+    // (เช่น เงินเดือน ที่วันจ่ายถูกกำหนดไว้แน่นอนแล้ว)
+    string? TimingBasis = null,
+    int LagDaysApplied = 0);
 
 public record ArContactSummary(
     Guid ContactId,

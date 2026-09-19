@@ -53,7 +53,32 @@ public class BankTransaction : TenantEntity
     public Guid? MatchedPaymentId { get; set; }
     public Guid? MatchedJournalEntryId { get; set; }
     public DateTime? ReconciledAt { get; set; }
+    /// <summary>ใครทำให้แถวนี้ถูกจับคู่ — ค่าที่เขียนต้องมาจาก
+    /// <see cref="Accounting.Helpers.BankMatchAttribution"/> เท่านั้น
+    /// (ป้ายบนจอคำนวณที่เซิร์ฟเวอร์ ไม่ใช่ใน JS)</summary>
     public string? ReconciledBy { get; set; }
+
+    /// <summary>
+    /// **เอกสาร** ที่ระบบ/AI เสนอไว้ เมื่อยังไม่มี `Payment`/`JournalEntry` ให้ผูก.
+    ///
+    /// ก่อนมีคอลัมน์นี้ เส้น "AI เสนอเอกสาร" ถูก**ปิดทั้งเส้น** เพราะกฎ R1
+    /// ("`Matched`/`Suggested` ต้องมีคู่เสมอ") — ตารางไม่มีที่เก็บ document id
+    /// จึงเลือกปล่อย `Unmatched` แทนการประทับสถานะกับความว่าง
+    /// (`DECISION_AUDIT_2026-09-18.md` §10.5 ข้อ 5)
+    ///
+    /// **ห้ามยืมช่องอื่นเก็บค่านี้** (`MatchedPaymentId` / `MatchedEntryIdsJson`) —
+    /// id ของคนละตาราง ถ้าปนกันตัวอ่าน (`ResolveCoreAsync`) จะ lookup ผิดตาราง
+    /// แล้วรายงาน "คู่ที่จับถูกลบ" (กฎเหล็ก #4 E: ห้าม reuse field ผิดความหมาย)
+    /// </summary>
+    public Guid? SuggestedDocumentId { get; set; }
+
+    /// <summary>รหัสกฎที่ทำให้เกิดสถานะปัจจุบัน (`BANK-MATCH-APPLY` /
+    /// `BANK-MATCH-TIE` / `BANK-MATCH-LOW` / …) — ลง audit + โชว์บนจอได้</summary>
+    public string? MatchRuleCode { get; set; }
+
+    /// <summary>เหตุผลภาษาไทยที่ระบบเสนอ/ประทับคู่นี้ — ผู้ใช้ต้องเห็นว่า
+    /// "ทำไมถึงเสนอใบนี้" และ "ทำไมถึงไม่ประทับให้เอง" ไม่ใช่เห็นแต่สถานะ</summary>
+    public string? MatchReason { get; set; }
 
     // AI Reconciliation — group ID for aggregated (many-to-one) matches
     public string? MatchGroupId { get; set; }
@@ -414,6 +439,17 @@ public class PettyCashTransaction : TenantEntity
     /// Flows to the auto-generated JE line's ProjectId so project
     /// cost reports pick it up.</summary>
     public Guid? ProjectId { get; set; }
+
+    /// <summary>ติดธง "บวกกลับ" ตาม §65 ตรี — วันนี้ตั้งโดย
+    /// <see cref="Accounting.Helpers.PettyCashJePlan"/> เมื่อจ่ายโดย**ไม่มี
+    /// หลักฐานผู้รับ** (§65 ตรี(9)). เลือกทิศ "บันทึกได้ แต่ติดธง" แทนการบล็อก
+    /// เพราะเงินออกจากลิ้นชักไปแล้วจริง การห้ามบันทึกทำให้ยอดในระบบไม่ตรงกับ
+    /// เงินในลิ้นชักถาวร (เสียหายกว่า) — ธงทำให้ worksheet ภ.ง.ด.50 เห็นเอง</summary>
+    public bool IsNonDeductible { get; set; }
+
+    /// <summary>รหัสกฎที่ทำให้ติดธง เช่น `RD-65TER-9` — ลง audit + อ้างมาตรา
+    /// บน tooltip ได้ (กฎเหล็ก #2 M "Legal reference logging")</summary>
+    public string? NonDeductibleRuleCode { get; set; }
 }
 
 /// <summary>

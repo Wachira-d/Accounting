@@ -63,10 +63,15 @@ public class ChequeService : IChequeService
     private readonly AccountingDbContext _db;
     private readonly ILogger<ChequeService> _logger;
     private readonly Accounting.Services.Interfaces.IWebhookService? _webhooks;
+    /// <summary>ใช้กลับรายการชำระตอนเช็คเด้ง — เส้นกลับรายการ (JE + สถานะใบ +
+    /// ยอดธนาคาร + ปลดการกระทบยอด) อยู่ที่ `DocumentService.VoidPaymentAsync`
+    /// ที่เดียว ห้ามเขียนซ้ำที่นี่ (ตัวตั้งตัวเดียว — F2 ข้อ 4)</summary>
+    private readonly Accounting.Services.Interfaces.IDocumentService? _documents;
 
     public ChequeService(AccountingDbContext db, ILogger<ChequeService> logger,
-        Accounting.Services.Interfaces.IWebhookService? webhooks = null)
-    { _db = db; _logger = logger; _webhooks = webhooks; }
+        Accounting.Services.Interfaces.IWebhookService? webhooks = null,
+        Accounting.Services.Interfaces.IDocumentService? documents = null)
+    { _db = db; _logger = logger; _webhooks = webhooks; _documents = documents; }
 
     private async Task FireAsync(Guid companyId, string eventType, object payload)
     {
@@ -202,9 +207,18 @@ public class ChequeService : IChequeService
             if (cheque.IsInbound) bank.CurrentBalance += cheque.Amount;
             else                  bank.CurrentBalance -= cheque.Amount;
         }
-        else if (cheque.IsInbound)
+        else
         {
-            _logger.LogWarning("Inbound cheque {Id} cleared with no DepositBankAccountId — bank balance NOT updated", chequeId);
+            // ⚠ เดิม `LogWarning` แล้วผ่าน ⇒ เช็คขึ้นสถานะ "ขึ้นเงินแล้ว"
+            // โดย**ยอดธนาคารไม่ขยับและไม่มีใครรู้** (`DECISION_AUDIT` §3 D4-6 ·
+            // F2 ข้อ 7 "LogWarning ไม่ใช่การดัง"). ทางไปต่อของผู้ใช้ชัดเจน:
+            // ระบุบัญชีที่นำฝาก/บัญชีของสมุดเช็ค แล้วกดใหม่
+            throw new InvalidOperationException(
+                cheque.IsInbound
+                    ? "เช็ครับใบนี้ยังไม่ได้ระบุบัญชีที่นำฝาก — ระบุบัญชีธนาคารที่นำเช็คเข้า "
+                      + "ก่อนกด “ขึ้นเงินแล้ว” มิฉะนั้นยอดธนาคารจะไม่ขยับตามเงินจริง"
+                    : "เช็คจ่ายใบนี้ไม่พบบัญชีธนาคารของสมุดเช็ค — ตั้งค่าบัญชีธนาคารของสมุดเช็ค "
+                      + "ก่อนกด “ขึ้นเงินแล้ว”");
         }
 
         await _db.SaveChangesAsync(ct);
@@ -218,24 +232,80 @@ public class ChequeService : IChequeService
         return cheque;
     }
 
+    /// <summary>
+    /// เช็คเด้ง — **เงินไม่เคยเปลี่ยนมือ** ⇒ ต้องถอยรายการบัญชีที่ลงไว้ด้วย
+    /// ไม่ใช่เปลี่ยนแค่สถานะ (`DECISION_AUDIT_2026-09-18.md` §3 D4-6):
+    /// เดิมเมธอดนี้ตั้ง `Status = Bounced` + เหตุผล แล้วจบ ⇒ `Payment` ยังอยู่ ·
+    /// ใบยังเป็น "ชำระแล้ว" · JE ยังอยู่ ⇒ **เงินที่ไม่เคยเข้ายังอยู่ในบัญชี**
+    ///
+    /// สิ่งที่ต้องถอยตัดสินที่ <see cref="Accounting.Helpers.ChequeBouncePlan"/>
+    /// (pure + มีเทสต์) และการถอยจริงเดินผ่าน `VoidPaymentAsync` ตัวเดียว
+    /// (กลับ JE · คืนยอดธนาคาร · คืนสถานะใบ · ปลดการกระทบยอด — ครบในที่เดียว)
+    ///
+    /// **เช็คที่ขึ้นเงินไปแล้วก็เด้งได้** — ธนาคารคืนเช็คหลังให้เครดิตชั่วคราว
+    /// เป็นเรื่องปกติ. เดิมบล็อกไว้ ⇒ ผู้ใช้ **ไม่มีทางบันทึกเหตุการณ์นี้เลย**
+    /// (ด่านที่ไม่มีทางไปต่อ — กฎเหล็ก #4 F2 ข้อ 8)
+    /// </summary>
     public async Task<ChequeEntity> MarkBouncedAsync(Guid companyId, Guid chequeId,
         string reason, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new InvalidOperationException(
+                "กรุณาระบุเหตุผลที่เช็คเด้ง (เช่น เงินในบัญชีไม่พอ / ปิดบัญชี / ลายเซ็นไม่ตรง)");
+
         var cheque = await _db.Cheques
+            .Include(c => c.ChequeBook).ThenInclude(b => b!.BankAccount)
+            .Include(c => c.DepositBankAccount)
             .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
         if (cheque == null) throw new InvalidOperationException("Cheque not found.");
-        if (cheque.Status == ChequeStatus.Cleared)
-            throw new InvalidOperationException("Cleared cheque cannot be bounced.");
+        if (cheque.Status == ChequeStatus.Bounced)
+            return cheque;                       // idempotent — กดซ้ำไม่ถอยซ้ำ
+        if (cheque.Status == ChequeStatus.Voided)
+            throw new InvalidOperationException("เช็คที่ยกเลิกแล้วไม่สามารถทำรายการเด้งได้");
+
+        var plan = Accounting.Helpers.ChequeBouncePlan.Decide(
+            cheque.IsInbound,
+            wasCleared: cheque.Status == ChequeStatus.Cleared,
+            hasLinkedPayment: cheque.PaymentId.HasValue);
+
+        // ── ถอยการชำระ (JE + สถานะใบ + ยอดธนาคาร + ปลดกระทบยอด) ────────────
+        // ⚠ ห้ามกลืน error ในเส้นเงิน (กฎเหล็ก #4 E) — ถอยไม่สำเร็จแปลว่า
+        // งบยังถือเงินที่ไม่มีจริง ⇒ ต้องล้มทั้งรายการ ไม่ใช่ประทับ Bounced
+        // แล้วปล่อยผ่าน
+        if (plan.ReversePayment && cheque.PaymentId.HasValue)
+        {
+            if (_documents == null)
+                throw new InvalidOperationException(
+                    "ระบบยังไม่พร้อมกลับรายการชำระของเช็คใบนี้ — ติดต่อผู้ดูแลระบบ "
+                    + "(บันทึกเช็คเด้งโดยไม่กลับรายการจะทำให้งบถือเงินที่ไม่มีจริง)");
+            await _documents.VoidPaymentAsync(companyId, cheque.PaymentId.Value);
+        }
+        else if (plan.RestoreBankBalanceDirectly)
+        {
+            // เช็คที่ขึ้นเงินเองโดยไม่มีการชำระผูก — ตอน `MarkClearedAsync`
+            // มันเป็นคนขยับยอด ⇒ ตอนเด้งก็ต้องเป็นคนคืนยอดเอง (สมมาตร)
+            var bank = cheque.IsInbound ? cheque.DepositBankAccount : cheque.ChequeBook?.BankAccount;
+            if (bank == null)
+                throw new InvalidOperationException(
+                    "เช็คใบนี้เคยขึ้นเงินแล้วแต่ไม่พบบัญชีธนาคารที่ผูกไว้ — "
+                    + "คืนยอดไม่ได้ ระบุบัญชีธนาคารของเช็คก่อน");
+            if (cheque.IsInbound) bank.CurrentBalance -= cheque.Amount;
+            else                  bank.CurrentBalance += cheque.Amount;
+        }
+
         cheque.Status = ChequeStatus.Bounced;
         cheque.BounceReason = reason;
 
         await _db.SaveChangesAsync(ct);
-        _logger.LogWarning("Cheque {Id} bounced: {Reason}", chequeId, reason);
+        _logger.LogWarning("Cheque {Id} bounced ({Rule}): {Reason} — {Plan}",
+            chequeId, plan.RuleCode, reason, plan.Reason);
         await FireAsync(companyId, "cheque.bounced", new
         {
             id = cheque.Id, chequeNumber = cheque.ChequeNumber,
             amount = cheque.Amount, isInbound = cheque.IsInbound,
             reason = cheque.BounceReason,
+            ruleCode = plan.RuleCode,
+            reversedPayment = plan.ReversePayment ? cheque.PaymentId : null,
         });
         return cheque;
     }

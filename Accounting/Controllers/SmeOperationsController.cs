@@ -55,15 +55,23 @@ public class SmeOperationsController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
-    public sealed record ReplenishRequest(decimal Amount, string? Notes, DateTime TxnDate);
+    /// <param name="SourceAccountId">ผังบัญชีต้นทางของเงินที่เติม (บัญชีธนาคาร/
+    /// เงินสด) — จำเป็นเมื่อบริษัทมีบัญชีธนาคารที่ผูกผังมากกว่า 1 ใบ</param>
+    public sealed record ReplenishRequest(decimal Amount, string? Notes, DateTime TxnDate,
+        Guid? SourceAccountId = null);
 
     [HttpPost("petty-cash/funds/{fundId:guid}/replenish")]
     public async Task<ActionResult<ApiResponse<PettyCashTransaction>>> Replenish(
         Guid companyId, Guid fundId, [FromBody] ReplenishRequest req,
         [FromServices] IPettyCashService svc, CancellationToken ct)
     {
-        var t = await svc.ReplenishAsync(companyId, fundId, req.Amount, req.Notes, req.TxnDate, ct);
-        return Ok(new ApiResponse<PettyCashTransaction>(true, t, "เติมเงินสดย่อยแล้ว"));
+        try
+        {
+            var t = await svc.ReplenishAsync(companyId, fundId, req.Amount, req.Notes, req.TxnDate,
+                req.SourceAccountId, ct);
+            return Ok(new ApiResponse<PettyCashTransaction>(true, t, "เติมเงินสดย่อยแล้ว"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     [HttpGet("petty-cash/funds/{fundId:guid}/transactions")]

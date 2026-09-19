@@ -809,7 +809,18 @@ public partial class BankService
 
                 txn.ReconciliationStatus = ReconciliationStatus.Matched;
                 txn.ReconciledAt = DateTime.UtcNow;
-                txn.ReconciledBy = "AI-Batch";
+                // ⚠ เดิมเขียน `"AI-Batch"` **ทุกแถว** แม้ `WasAiValidated == false`
+                // ⇒ การจับคู่ที่คนเลือกเองล้วน ๆ ถูกบันทึกว่า AI ทำ และคนที่กด
+                // หายไปจากแถว ทั้งที่ audit row รู้อยู่แล้วว่าใคร
+                // (`DECISION_AUDIT_2026-09-18.md` §3 D4-8 "ป้ายโกหก")
+                // ปุ่มนี้ **คนเป็นคนกด** เสมอ — AI เป็นแค่ผู้เสนอ
+                txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.Person(
+                    appliedByUserId, aiAssisted: item.WasAiValidated);
+                txn.SuggestedDocumentId = null;
+                txn.MatchRuleCode = item.WasAiValidated ? "BANK-MATCH-BATCH-AI" : "BANK-MATCH-BATCH";
+                txn.MatchReason = item.WasAiValidated
+                    ? $"ผู้ใช้ยืนยันคำแนะนำ AI (ความมั่นใจ {(item.ConfidenceAtApply ?? 0m):P0})"
+                    : "ผู้ใช้เลือกคู่เองจากหน้าจับคู่เป็นชุด";
 
                 if (item.MatchType == "Payment" && item.MatchedPaymentId.HasValue)
                 {
@@ -832,6 +843,19 @@ public partial class BankService
                 }
 
                 results.Add(MapTransactionToResponse(txn));
+
+                // CAPTURE (กฎเหล็ก #1) — คู่ที่ **คนกดยืนยัน** คือคำตอบจริง
+                // ของโดเมนนี้ เดิมเส้น batch ไม่สอนกลับเข้าคลังเลย
+                var capturedItems = new List<(ReconciliationItemType Type, Guid Id, decimal Amount)>();
+                foreach (var cid in ids)
+                {
+                    var isPayment = item.MatchType == "Payment"
+                        || (item.MatchedPaymentId.HasValue && cid == item.MatchedPaymentId.Value);
+                    capturedItems.Add((
+                        isPayment ? ReconciliationItemType.Payment : ReconciliationItemType.JournalEntry,
+                        cid, Math.Abs(txn.Amount)));
+                }
+                await CaptureConfirmedMatchAsync(companyId, txn, capturedItems);
 
                 // Audit row — captures who confirmed, when, what alternatives
                 // they saw, and at what confidence. Used by dispute lookup.
@@ -889,6 +913,9 @@ public partial class BankService
         var rejected = new List<(Guid Id, string Type)>();
         if (txn.MatchedPaymentId.HasValue) rejected.Add((txn.MatchedPaymentId.Value, "Payment"));
         if (txn.MatchedJournalEntryId.HasValue) rejected.Add((txn.MatchedJournalEntryId.Value, "JournalEntry"));
+        // เอกสารที่ถูก "เสนอ" ก็เป็นคู่ที่ผู้ใช้เพิ่งปฏิเสธเหมือนกัน — ถ้าไม่เก็บ
+        // เป็นตัวอย่างลบ ระบบจะเสนอใบเดิมซ้ำทุกครั้งที่ sync
+        if (txn.SuggestedDocumentId.HasValue) rejected.Add((txn.SuggestedDocumentId.Value, "Document"));
         if (!string.IsNullOrWhiteSpace(txn.MatchedEntryIdsJson))
         {
             try
@@ -938,8 +965,11 @@ public partial class BankService
         txn.ReconciliationStatus = ReconciliationStatus.Unmatched;
         txn.MatchedPaymentId = null;
         txn.MatchedJournalEntryId = null;
+        txn.SuggestedDocumentId = null;
         txn.ReconciledAt = null;
         txn.ReconciledBy = null;
+        txn.MatchRuleCode = null;
+        txn.MatchReason = null;
         txn.MatchGroupId = null;
         txn.MatchedEntryIdsJson = null;
 

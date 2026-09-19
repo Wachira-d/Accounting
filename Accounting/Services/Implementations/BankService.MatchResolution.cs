@@ -86,6 +86,9 @@ public partial class BankService
             var ids = new List<Guid>();
             if (t.MatchedPaymentId.HasValue) ids.Add(t.MatchedPaymentId.Value);
             if (t.MatchedJournalEntryId.HasValue) ids.Add(t.MatchedJournalEntryId.Value);
+            // เอกสารที่ถูก "เสนอ" ต้องกดดูได้เหมือนกัน — สถานะที่ไม่มีอะไรให้
+            // กดดูคือ "สถานะกับความว่าง" (ราก R1)
+            if (t.SuggestedDocumentId.HasValue) ids.Add(t.SuggestedDocumentId.Value);
             if (!string.IsNullOrWhiteSpace(t.MatchedEntryIdsJson))
                 try { ids.AddRange(JsonSerializer.Deserialize<List<Guid>>(t.MatchedEntryIdsJson!) ?? new()); }
                 catch { /* malformed JSON — ignore */ }
@@ -106,7 +109,8 @@ public partial class BankService
 
         var jeCandidateIds = allIds.Where(i => !payIdSet.Contains(i)).ToList();
         var jeHeaders = await _db.JournalEntries.AsNoTracking()
-            .Where(j => jeCandidateIds.Contains(j.Id))
+            // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี `CompanyId`
+            .Where(j => jeCandidateIds.Contains(j.Id) && j.CompanyId == companyId)
             .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.TotalDebit, j.Description })
             .ToListAsync();
         var jeMap = jeHeaders.ToDictionary(j => j.Id);
@@ -118,7 +122,8 @@ public partial class BankService
         if (bankCoaId.HasValue && jeCandidateIds.Count > 0)
         {
             var lines = await _db.JournalEntryLines.AsNoTracking()
-                .Where(l => jeCandidateIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value)
+                .Where(l => jeCandidateIds.Contains(l.JournalEntryId) && l.AccountId == bankCoaId.Value
+                && l.JournalEntry.CompanyId == companyId)
                 .Select(l => new { l.JournalEntryId, Net = l.DebitAmount - l.CreditAmount })
                 .ToListAsync();
             jeSignedNet = lines.GroupBy(l => l.JournalEntryId)
@@ -131,7 +136,8 @@ public partial class BankService
             .Concat(groupItems.Where(g => g.ItemType == ReconciliationItemType.Document).Select(g => g.ItemId))
             .Distinct().ToList();
         var docs = await _db.Documents.AsNoTracking()
-            .Where(d => docCandidateIds.Contains(d.Id))
+            // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี `CompanyId`
+            .Where(d => docCandidateIds.Contains(d.Id) && d.CompanyId == companyId)
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount })
             .ToListAsync();
         var docMap = docs.ToDictionary(d => d.Id);
@@ -236,8 +242,16 @@ public partial class BankService
                 agree = ids.Count == 0 || netAgree || grossAgree;
             }
 
+            var who = Accounting.Helpers.BankMatchAttribution.Describe(t.ReconciledBy);
+            // แถวที่ยังเป็นแค่ข้อเสนอ ยอดจะ "ไม่ตรง" ได้ตามปกติ (ยังไม่มีใคร
+            // ยืนยัน) — ห้ามเอาไปนับเป็น "ยอดไม่ตรง" ของรายการที่กระทบยอดแล้ว
             result.Add(new ResolvedMatchDto(t.Id, t.TransactionDate, type, t.Description ?? t.Payee,
-                bankAmt, total, agree, missing, isGroup, groupNo, cps));
+                bankAmt, total, agree, missing, isGroup, groupNo, cps,
+                Status: t.ReconciliationStatus.ToString(),
+                ReconciledByLabel: who.Kind == Accounting.Helpers.BankMatchActorKind.Unknown
+                    ? null : who.Label,
+                MatchRuleCode: t.MatchRuleCode,
+                MatchReason: t.MatchReason));
         }
         return result;
     }

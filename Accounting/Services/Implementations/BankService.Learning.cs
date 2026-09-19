@@ -81,70 +81,136 @@ public partial class BankService
     }
 
     /// <summary>
-    /// Record pattern rows for every (bankTxn, matchItem) pair in a confirmed
-    /// reconciliation group. Called from CreateReconciliationGroupAsync after
-    /// the group + items are saved. Failures are swallowed — learning never
-    /// blocks a confirmed reconciliation.
+    /// บันทึกแพตเทิร์น 1 แถวต่อคู่ (bankTxn, matchItem) ของกลุ่มที่ยืนยันแล้ว.
+    ///
+    /// ⚠ **เดิมห่อทั้งเมธอดด้วย `try/catch` + `LogWarning`** (`Learning.cs:145` ·
+    /// `DECISION_AUDIT_2026-09-18.md` §3 D4-8) ⇒ ถ้าการบันทึกล้ม คลังเรียนรู้
+    /// **หยุดโตอย่างเงียบสนิท** ไม่มีใครรู้ตลอดกาล — ตรงกับ F2 ข้อ 7
+    /// ("`LogWarning` ไม่ใช่การดัง"). ตอนนี้ล้มแล้ว **โยนต่อ** และผู้เรียกเรียก
+    /// ตัวนี้ **ก่อน commit** ⇒ ผู้ใช้เห็น error แล้วกดใหม่ได้ (ความเสียหาย
+    /// มองเห็นและแก้ทัน — G5) ดีกว่าคลังที่ไม่โตโดยไม่มีอะไรฟ้อง
     /// </summary>
     public async Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId)
     {
-        try
+        var group = await _db.ReconciliationGroups.AsNoTracking()
+            .Include(g => g.Items)
+            .FirstOrDefaultAsync(g => g.Id == groupId && g.CompanyId == companyId);
+        if (group == null) return;
+
+        var bankItems = group.Items.Where(i => i.ItemType == ReconciliationItemType.BankTransaction).ToList();
+        var matchItems = group.Items.Where(i => i.ItemType != ReconciliationItemType.BankTransaction).ToList();
+        if (bankItems.Count == 0 || matchItems.Count == 0) return;
+
+        // Pull bank txn descriptors in one shot.
+        var bankIds = bankItems.Select(b => b.ItemId).ToList();
+        var bankTxns = await _db.Set<BankTransaction>().AsNoTracking()
+            .Where(t => bankIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.Description, t.Reference, t.Payee })
+            .ToListAsync();
+
+        // Map items' contacts when possible (best-effort).
+        var paymentContactMap = await _db.Set<Payment>().AsNoTracking()
+            .Where(p => matchItems
+                .Where(i => i.ItemType == ReconciliationItemType.Payment)
+                .Select(i => i.ItemId).Contains(p.Id))
+            .Select(p => new { p.Id, ContactId = (Guid?)p.Document.ContactId })
+            .ToDictionaryAsync(x => x.Id, x => x.ContactId);
+        var docContactMap = await _db.Documents.AsNoTracking()
+            .Where(d => matchItems
+                .Where(i => i.ItemType == ReconciliationItemType.Document)
+                .Select(i => i.ItemId).Contains(d.Id))
+            .Select(d => new { d.Id, ContactId = (Guid?)d.ContactId })
+            .ToDictionaryAsync(x => x.Id, x => x.ContactId);
+
+        foreach (var b in bankItems)
         {
-            var group = await _db.ReconciliationGroups.AsNoTracking()
-                .Include(g => g.Items)
-                .FirstOrDefaultAsync(g => g.Id == groupId && g.CompanyId == companyId);
-            if (group == null) return;
+            var info = bankTxns.FirstOrDefault(x => x.Id == b.ItemId);
+            if (info == null) continue;
+            var sig = ComputeDescriptionSignature(info.Description, info.Reference, info.Payee);
+            var bucket = ComputeAmountBucket(b.AllocatedAmount);
 
-            var bankItems = group.Items.Where(i => i.ItemType == ReconciliationItemType.BankTransaction).ToList();
-            var matchItems = group.Items.Where(i => i.ItemType != ReconciliationItemType.BankTransaction).ToList();
-            if (bankItems.Count == 0 || matchItems.Count == 0) return;
+            foreach (var item in matchItems)
+            {
+                Guid? contactId = null;
+                if (item.ItemType == ReconciliationItemType.Payment)
+                    paymentContactMap.TryGetValue(item.ItemId, out contactId);
+                else if (item.ItemType == ReconciliationItemType.Document)
+                    docContactMap.TryGetValue(item.ItemId, out contactId);
 
-            // Pull bank txn descriptors in one shot.
-            var bankIds = bankItems.Select(b => b.ItemId).ToList();
-            var bankTxns = await _db.Set<BankTransaction>().AsNoTracking()
-                .Where(t => bankIds.Contains(t.Id))
-                .Select(t => new { t.Id, t.Description, t.Reference, t.Payee })
-                .ToListAsync();
+                await UpsertPatternAsync(companyId, group.BankAccountId, sig, bucket,
+                    item.ItemType, contactId, Math.Abs(item.AllocatedAmount));
+            }
+        }
 
-            // Map items' contacts when possible (best-effort).
-            var paymentContactMap = await _db.Set<Payment>().AsNoTracking()
-                .Where(p => matchItems
-                    .Where(i => i.ItemType == ReconciliationItemType.Payment)
-                    .Select(i => i.ItemId).Contains(p.Id))
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// **ปิดฝั่ง "ยืนยัน" ของวงจรเรียนรู้** (กฎเหล็ก #1 ขั้น CAPTURE).
+    ///
+    /// รอบที่แล้วต่อฝั่ง **ถอน** แล้ว (`UnmatchTransactionAsync` →
+    /// `BankMatchExclusion` = ตัวอย่างลบ) แต่ฝั่ง **ยืนยัน** ยังเปิดอยู่:
+    /// การจับคู่ 1:1 (`ReconcileAsync`) · batch (`BatchReconcileAsync`) ·
+    /// อัตโนมัติ (`AutoMatchAsync`) **ไม่บันทึกแพตเทิร์นเลย** ⇒ ระบบไม่เคย
+    /// ฉลาดขึ้นจากการจับคู่ที่คนยืนยัน มีแต่กลุ่ม M:N เท่านั้นที่สอน
+    /// (`DECISION_AUDIT_2026-09-18.md` §3 D4-8)
+    ///
+    /// ตัวนี้ **ไม่เรียก `SaveChanges` เอง** — ผู้เรียกบันทึกพร้อมกับการจับคู่
+    /// ในทรานแซกชันเดียวกัน เพื่อให้ "จับคู่สำเร็จ" กับ "สอนแล้ว" เป็นจริงพร้อมกัน
+    /// เสมอ (ไม่มีสถานะครึ่ง ๆ ที่ไม่มีใครเห็น)
+    /// </summary>
+    /// <param name="txn">บรรทัดธนาคารที่เพิ่งถูกยืนยัน</param>
+    /// <param name="items">คู่ที่ถูกยืนยัน — (ชนิด, id, ยอดในสกุลบัญชีธนาคาร)</param>
+    public async Task CaptureConfirmedMatchAsync(
+        Guid companyId, BankTransaction txn,
+        IReadOnlyList<(ReconciliationItemType Type, Guid Id, decimal Amount)> items)
+    {
+        if (txn == null || items == null || items.Count == 0) return;
+
+        var sig = ComputeDescriptionSignature(txn.Description, txn.Reference, txn.Payee);
+        var bucket = ComputeAmountBucket(txn.Amount);
+
+        // ContactId ของคู่ — ทำให้แพตเทิร์นจำได้ว่า "ข้อความแบบนี้ = คู่ค้ารายนี้"
+        var paymentIds = items.Where(i => i.Type == ReconciliationItemType.Payment)
+            .Select(i => i.Id).ToList();
+        var docIds = items.Where(i => i.Type == ReconciliationItemType.Document)
+            .Select(i => i.Id).ToList();
+        var paymentContacts = paymentIds.Count == 0
+            ? new Dictionary<Guid, Guid?>()
+            : await _db.Payments.AsNoTracking()
+                .Where(p => paymentIds.Contains(p.Id) && p.CompanyId == companyId)
                 .Select(p => new { p.Id, ContactId = (Guid?)p.Document.ContactId })
                 .ToDictionaryAsync(x => x.Id, x => x.ContactId);
-            var docContactMap = await _db.Documents.AsNoTracking()
-                .Where(d => matchItems
-                    .Where(i => i.ItemType == ReconciliationItemType.Document)
-                    .Select(i => i.ItemId).Contains(d.Id))
+        var docContacts = docIds.Count == 0
+            ? new Dictionary<Guid, Guid?>()
+            : await _db.Documents.AsNoTracking()
+                .Where(d => docIds.Contains(d.Id) && d.CompanyId == companyId)
                 .Select(d => new { d.Id, ContactId = (Guid?)d.ContactId })
                 .ToDictionaryAsync(x => x.Id, x => x.ContactId);
 
-            foreach (var b in bankItems)
-            {
-                var info = bankTxns.FirstOrDefault(x => x.Id == b.ItemId);
-                if (info == null) continue;
-                var sig = ComputeDescriptionSignature(info.Description, info.Reference, info.Payee);
-                var bucket = ComputeAmountBucket(b.AllocatedAmount);
-
-                foreach (var item in matchItems)
-                {
-                    Guid? contactId = null;
-                    if (item.ItemType == ReconciliationItemType.Payment)
-                        paymentContactMap.TryGetValue(item.ItemId, out contactId);
-                    else if (item.ItemType == ReconciliationItemType.Document)
-                        docContactMap.TryGetValue(item.ItemId, out contactId);
-
-                    await UpsertPatternAsync(companyId, group.BankAccountId, sig, bucket,
-                        item.ItemType, contactId, Math.Abs(item.AllocatedAmount));
-                }
-            }
-
-            await _db.SaveChangesAsync();
-        }
-        catch (Exception ex)
+        foreach (var (type, id, amount) in items)
         {
-            _logger?.LogWarning(ex, "RecordReconciliationPatternsAsync failed for group {GroupId}", groupId);
+            Guid? contactId = null;
+            if (type == ReconciliationItemType.Payment) paymentContacts.TryGetValue(id, out contactId);
+            else if (type == ReconciliationItemType.Document) docContacts.TryGetValue(id, out contactId);
+
+            await UpsertPatternAsync(companyId, txn.BankAccountId, sig, bucket,
+                type, contactId, Math.Abs(amount));
+        }
+
+        // ผู้ใช้ยืนยันคู่นี้แล้ว → ถ้าเคยมี "ตัวอย่างลบ" ของคู่เดียวกันค้างอยู่
+        // ต้องถอนออก มิฉะนั้นคลังเก็บสองคำตอบที่ขัดกันของเหตุการณ์เดียวกัน
+        // (§3 กันคลังเอียง — "เก็บสองทิศ" ไม่ได้แปลว่าเก็บทิศที่ถูกกลับแล้วด้วย)
+        var confirmedIds = items.Select(i => i.Id).ToList();
+        var staleExclusions = await _db.Set<BankMatchExclusion>()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted
+                && x.BankTransactionId == txn.Id
+                && confirmedIds.Contains(x.CandidateId))
+            .ToListAsync();
+        foreach (var ex in staleExclusions)
+        {
+            ex.IsDeleted = true;
+            ex.UpdatedAt = DateTime.UtcNow;
         }
     }
 

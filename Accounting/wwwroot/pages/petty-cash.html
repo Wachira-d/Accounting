@@ -40,8 +40,12 @@
         <input id="dAmount" type="number" step="0.01" min="0" class="form-input">
         <label>คำอธิบาย</label>
         <input id="dDesc" class="form-input">
-        <label>เลขที่ใบเสร็จ (optional)</label>
+        <label>เลขที่ใบเสร็จ</label>
         <input id="dReceipt" class="form-input">
+        <div style="font-size:11px;color:#b45309;margin-top:4px">
+          ไม่กรอก = รายจ่ายนี้จะถูกติดธง <b>บวกกลับตอนคำนวณภาษี</b> (§65 ตรี(9) —
+          รายจ่ายที่พิสูจน์ผู้รับไม่ได้) · ยังบันทึกได้ตามปกติเพราะเงินออกจากลิ้นชักไปแล้วจริง
+        </div>
         <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)
           <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('PettyExpense','dExpense','dExpenseHint')">🤖</button>
         </label>
@@ -196,13 +200,34 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // ★ รอบ 184 (D4-7) — การเติมเงินลง JE จริงแล้ว (Dr กองทุน / Cr บัญชีต้นทาง)
+      // ⇒ ต้องรู้ว่าเงินมาจากบัญชีไหน · เซิร์ฟเวอร์เดาให้เฉพาะตอนบริษัทมีบัญชีธนาคาร
+      // ที่ผูกผังบัญชีไว้ "ใบเดียว" (ไม่ใช่การเดา — เป็นคำตอบเดียวที่เป็นไปได้)
+      // มีหลายใบ = ต้องเลือก · หน้านี้จึงถามก่อนส่ง แทนที่จะให้ผู้ใช้ไปชน error
       async replenish(fundId, suggested) {
         const amount = +(prompt('จำนวนเติม', suggested.toFixed(2)) || 0);
         if (!amount) return;
+        const cid = Layout.getCompanyId();
+        let sourceAccountId = null;
         try {
-          const cid = Layout.getCompanyId();
+          const res = await Layout.api().getBankAccounts();
+          const accounts = (res && res.data) || [];
+          if (accounts.length > 1) {
+            const menu = accounts.map((a, i) => `${i + 1}. ${a.accountName || a.bankName || a.id}`).join('\n');
+            const pick = prompt(`เงินที่เติมมาจากบัญชีไหน\n${menu}\n\nใส่หมายเลข`, '1');
+            if (pick === null) return;
+            const idx = parseInt(pick, 10) - 1;
+            if (!(idx >= 0 && idx < accounts.length)) { Layout.toast('เลือกบัญชีไม่ถูกต้อง', 'error'); return; }
+            sourceAccountId = accounts[idx].id;
+          } else if (accounts.length === 1) {
+            sourceAccountId = accounts[0].id;
+          }
+          // ไม่มีบัญชีเลย → ปล่อย null ให้เซิร์ฟเวอร์เป็นคนบอกว่าต้องตั้งค่าอะไร
+          // (ห้ามแต่งค่าขึ้นมาเอง — ฝั่งเซิร์ฟเวอร์มีข้อความที่บอกทางไปต่ออยู่แล้ว)
+        } catch (e) { /* ดึงรายชื่อบัญชีไม่ได้ = ให้เซิร์ฟเวอร์ตัดสิน ไม่ใช่บล็อกที่นี่ */ }
+        try {
           await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/replenish`,
-            { amount, notes: null, txnDate: new Date().toISOString() });
+            { amount, notes: null, txnDate: new Date().toISOString(), sourceAccountId });
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

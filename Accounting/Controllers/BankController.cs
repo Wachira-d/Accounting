@@ -458,7 +458,11 @@ public class BankController : ControllerBase
     public sealed record MatchInfoItem(string Kind, string Label, DateTime? Date, decimal Amount);
     public sealed record MatchInfoResponse(Guid TxnId, decimal TxnAmount, string Status,
         List<MatchInfoItem> Counterparts, decimal CounterpartTotal, bool AmountsAgree,
-        bool HasMissingCounterpart, string? GroupNumber);
+        bool HasMissingCounterpart, string? GroupNumber,
+        // ป้าย "ใครจับคู่ให้" + "เพราะอะไร" — คำนวณที่เซิร์ฟเวอร์ตัวเดียว
+        // (`Helpers/BankMatchAttribution` · `BankMatchArbiter.Decision.Reason`)
+        string? ReconciledByLabel = null, string? MatchRuleCode = null,
+        string? MatchReason = null);
 
     // Map the shared resolver's clean ItemType to the UI icon label.
     private static string KindLabel(string itemType) => itemType switch
@@ -480,9 +484,12 @@ public class BankController : ControllerBase
         if (r == null) return NotFound(new ApiResponse<MatchInfoResponse>(false, null, "ไม่พบรายการ"));
         var items = r.Counterparts
             .Select(c => new MatchInfoItem(KindLabel(c.ItemType), c.Label, c.Date, c.Amount)).ToList();
+        // ⚠ เดิมส่ง `"Matched"` **ตายตัว** ⇒ แถวที่เป็นแค่ข้อเสนอถูกบอกว่า
+        // "จับคู่แล้ว" บนป๊อปอัป (สถานะปลายทางที่หน้าจอประทับเอง — ราก R1)
         return Ok(new ApiResponse<MatchInfoResponse>(true, new MatchInfoResponse(
-            r.TxnId, r.BankAmount, "Matched", items, r.MatchedAmount,
-            r.AmountsAgree, r.HasMissingCounterpart, r.GroupNumber)));
+            r.TxnId, r.BankAmount, r.Status, items, r.MatchedAmount,
+            r.AmountsAgree, r.HasMissingCounterpart, r.GroupNumber,
+            r.ReconciledByLabel, r.MatchRuleCode, r.MatchReason)));
     }
 
     public sealed record MatchIssue(Guid TxnId, DateTime Date, string Type, string? Description,

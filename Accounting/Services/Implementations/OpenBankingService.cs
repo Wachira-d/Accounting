@@ -124,8 +124,11 @@ public class OpenBankingService : IOpenBankingService
         if (linkedBankAccountId.HasValue)
         {
             // Count existing transactions in the period as "fetched"
+            // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี `CompanyId`
+            // (จุดที่ 6 ที่เหลือจากรอบที่แล้ว)
             var existingTransactions = await _db.BankTransactions
-                .Where(t => t.BankAccountId == linkedBankAccountId.Value
+                .Where(t => t.CompanyId == companyId
+                          && t.BankAccountId == linkedBankAccountId.Value
                           && t.TransactionDate >= syncFrom
                           && t.TransactionDate <= syncTo)
                 .ToListAsync();
@@ -341,6 +344,13 @@ public class OpenBankingService : IOpenBankingService
                       && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
             .ToListAsync();
 
+        // FX — ยอดของ Payment อยู่ในสกุลเอกสาร ต้องแปลงเป็นสกุลบัญชีธนาคารก่อนเทียบ
+        var obBankCurrency = await _db.BankAccounts.AsNoTracking()
+            .Where(a => a.Id == bankAccountId && a.CompanyId == companyId)
+            .Select(a => a.Currency).FirstOrDefaultAsync();
+        var obHomeCurrency = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
+
         foreach (var tx in newUnmatched)
         {
             var options = new List<Accounting.Helpers.BankMatchArbiter.Option>();
@@ -349,9 +359,14 @@ public class OpenBankingService : IOpenBankingService
                 if (takenPaymentIds.Contains(p.Id)) continue;
                 if (Math.Abs((p.PaymentDate.Date - tx.TransactionDate.Date).TotalDays) > 3) continue;
 
+                var obFx = Accounting.Helpers.BankMatchCurrency.Convert(
+                    obBankCurrency, p.Document?.Currency, p.Amount,
+                    p.ExchangeRate, p.Document?.ExchangeRate, obHomeCurrency);
+                if (!obFx.Comparable) continue;
+
                 var sc = Accounting.Helpers.BankMatchScorer.Score(
                     new Accounting.Helpers.BankMatchScorer.Input(
-                        CandidateAmount: p.Amount,
+                        CandidateAmount: obFx.BankCurrencyAmount,
                         BankAmount: Math.Abs(tx.Amount),
                         CandidateDate: p.PaymentDate,
                         BankDate: tx.TransactionDate,
@@ -377,13 +392,17 @@ public class OpenBankingService : IOpenBankingService
             {
                 tx.ReconciliationStatus = ReconciliationStatus.Matched;
                 tx.ReconciledAt = DateTime.UtcNow;
-                tx.ReconciledBy = "OpenBanking";
+                tx.ReconciledBy = Accounting.Helpers.BankMatchAttribution.OpenBanking;
+                tx.MatchRuleCode = decision.RuleCode;
+                tx.MatchReason = decision.Reason;
                 autoMatched++;
             }
             else
             {
                 tx.ReconciliationStatus = ReconciliationStatus.Suggested;
-                tx.ReconciledBy = "OpenBanking (เสนอ รอยืนยัน)";
+                tx.ReconciledBy = Accounting.Helpers.BankMatchAttribution.OpenBankingSuggested;
+                tx.MatchRuleCode = decision.RuleCode;
+                tx.MatchReason = decision.Reason;
             }
         }
 

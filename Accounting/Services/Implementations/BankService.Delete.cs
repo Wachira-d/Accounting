@@ -111,13 +111,19 @@ public partial class BankService
     /// </summary>
     private static void UnmatchIfReconciled(BankTransaction txn)
     {
-        if (txn.ReconciliationStatus != ReconciliationStatus.Matched) return;
+        // `Suggested` ก็ถือคู่ไว้เหมือนกัน (`MatchedPaymentId` / `SuggestedDocumentId`)
+        // ⇒ ถ้าไม่ล้างด้วย แถวจะชี้ไปยังของที่เพิ่งถูกลบ
+        if (txn.ReconciliationStatus != ReconciliationStatus.Matched
+            && txn.ReconciliationStatus != ReconciliationStatus.Suggested) return;
 
         txn.MatchedPaymentId = null;
         txn.MatchedJournalEntryId = null;
+        txn.SuggestedDocumentId = null;
         txn.ReconciliationStatus = ReconciliationStatus.Unmatched;
         txn.ReconciledAt = null;
         txn.ReconciledBy = null;
+        txn.MatchRuleCode = null;
+        txn.MatchReason = null;
         txn.MatchGroupId = null;
         txn.MatchedEntryIdsJson = null;
     }

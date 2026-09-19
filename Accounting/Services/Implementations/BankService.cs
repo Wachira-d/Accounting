@@ -218,7 +218,25 @@ public partial class BankService : IBankService
         if (request.AccountName != null) account.AccountName = request.AccountName;
         if (request.BranchName != null) account.BranchName = request.BranchName;
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
-        if (request.LinkedAccountId.HasValue) account.LinkedAccountId = request.LinkedAccountId.Value;
+        if (request.LinkedAccountId.HasValue)
+        {
+            // ⚠ เดิมรับ id จาก client **ดิบ ๆ** ⇒ ผูกบัญชีธนาคารกับผังของ
+            // บริษัทอื่นได้ (ละเมิด tenant isolation — กฎเหล็ก #2 M) และผูกกับ
+            // ผังที่ไม่ใช่เงินสด/เงินฝากได้ ⇒ ตัวกระทบยอดอ่าน "ขาที่วิ่งผ่าน
+            // บัญชีนี้" ผิดใบทุกใบ
+            var coa = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == request.LinkedAccountId.Value && a.CompanyId == companyId && !a.IsDeleted)
+                .Select(a => new { a.AccountCode, a.IsActive })
+                .FirstOrDefaultAsync()
+                ?? throw new KeyNotFoundException("ไม่พบผังบัญชีที่เลือกในบริษัทนี้");
+            if (!coa.IsActive)
+                throw new InvalidOperationException("ผังบัญชีที่เลือกถูกปิดใช้งานอยู่ — เลือกบัญชีอื่น");
+            if (!coa.AccountCode.StartsWith("111"))
+                throw new InvalidOperationException(
+                    $"ผังบัญชี {coa.AccountCode} ไม่ใช่กลุ่มเงินสด/เงินฝากธนาคาร (111x) — "
+                    + "การกระทบยอดอ่านยอดจาก \"ขาที่วิ่งผ่านบัญชีนี้\" จึงต้องผูกกับผังเงินฝากเท่านั้น");
+            account.LinkedAccountId = request.LinkedAccountId.Value;
+        }
 
         if (!string.IsNullOrWhiteSpace(request.BankName))
             account.BankName = request.BankName;
@@ -383,8 +401,12 @@ public partial class BankService : IBankService
             .Take(request.PageSize)
             .ToListAsync();
 
+        // ชื่อผู้ใช้สำหรับป้าย "👤 <ชื่อ>" — ค้นครั้งเดียวทั้งหน้า
+        var names = await ResolveReconcilerNamesAsync(companyId, items);
+        // ⚠ ห้ามส่ง method group ที่มีพารามิเตอร์ optional เข้า `Select`
+        // (CS0411 — บทเรียน กฎเหล็ก #4 H) ต้องเป็น lambda เสมอ
         return new PagedResponse<BankTransactionResponse>(
-            items.Select(MapTransactionToResponse).ToList(),
+            items.Select(t => MapTransactionToResponse(t, LookupReconcilerName(names, t))).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -408,10 +430,15 @@ public partial class BankService : IBankService
         var ids = matchedIds.Where(i => i != Guid.Empty).Distinct().ToList();
         if (ids.Count == 0) return;
 
-        var bankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+        var bankMeta = await _db.Set<BankAccount>().AsNoTracking()
             .Where(a => a.Id == txn.BankAccountId && a.CompanyId == companyId)
-            .Select(a => a.LinkedAccountId)
+            .Select(a => new { a.LinkedAccountId, a.Currency })
             .FirstOrDefaultAsync();
+        var bankCoaId = bankMeta?.LinkedAccountId;
+        var bankCurrency = bankMeta?.Currency;
+        // สกุลฐานของบริษัท — อัตราแลกเปลี่ยนบนเอกสารเทียบกับสกุลนี้เสมอ
+        var homeCurrency = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
 
         var bankDirection = txn.TransactionType is BankTransactionType.Deposit
             or BankTransactionType.Interest
@@ -425,12 +452,24 @@ public partial class BankService : IBankService
             .Select(p => new
             {
                 p.Id, p.Amount, p.WithholdingTaxAmount, p.FeeAmount,
+                p.ExchangeRate,
                 DocType = p.Document.DocumentType,
-                DocNo = p.Document.DocumentNumber
+                DocNo = p.Document.DocumentNumber,
+                DocCurrency = p.Document.Currency,
+                DocRate = p.Document.ExchangeRate
             })
             .ToListAsync();
         foreach (var p in pays)
         {
+            // ── FX: `Payment.Amount` อยู่ใน **สกุลของเอกสาร** ส่วนยอดบนบรรทัด
+            // ธนาคารอยู่ใน **สกุลของบัญชี** — เดิมเทียบกันตรง ๆ ⇒ ใบ 1,000 USD
+            // ที่เงินเข้า 35,000 บาท **กระทบยอดไม่ได้เลย** (throw ทุกครั้ง)
+            // (`DECISION_AUDIT_2026-09-18.md` §3 D4-8 "FX")
+            var fx = Accounting.Helpers.BankMatchCurrency.Convert(
+                bankCurrency, p.DocCurrency, p.Amount, p.ExchangeRate, p.DocRate, homeCurrency);
+            if (!fx.Comparable)
+                throw new InvalidOperationException(
+                    $"{p.DocType} {p.DocNo}: {fx.Reason}");
             bool payIsIn = p.DocType is DocumentType.Receipt or DocumentType.ReceiptVoucher
                 or DocumentType.Invoice or DocumentType.TaxInvoice
                 or DocumentType.BillingNote or DocumentType.DebitNote;
@@ -446,7 +485,10 @@ public partial class BankService : IBankService
                 RecordedAmount: p.Amount,
                 BankLineAmount: null,
                 WithheldAmount: p.WithholdingTaxAmount,
-                FeeAmount: p.FeeAmount));
+                FeeAmount: p.FeeAmount,
+                // หักยอดในสกุลเอกสารให้เสร็จก่อนค่อยแปลง — แปลงทีละช่อง
+                // จะปัดเศษ 3 ครั้ง (คลาดได้ถึง 1.5 สตางค์ > tolerance 1 สตางค์)
+                ConversionRate: fx.Rate));
         }
 
         var payIds = pays.Select(p => p.Id).ToHashSet();
@@ -562,10 +604,31 @@ public partial class BankService : IBankService
         transaction.ReconciliationStatus = ReconciliationStatus.Matched;
         transaction.MatchedPaymentId = request.MatchedPaymentId;
         transaction.MatchedJournalEntryId = request.MatchedJournalEntryId;
+        // ข้อเสนอเดิมถูกแทนที่ด้วยคำตอบของคน — ล้างทิ้ง ไม่งั้นแถวถือคู่สองชุด
+        transaction.SuggestedDocumentId = null;
         transaction.ReconciledAt = DateTime.UtcNow;
+        // ⚠ เดิม **ไม่เคยตั้ง `ReconciledBy`** ที่นี่เลย ⇒ แถวที่คนกดจับคู่เอง
+        // ยังค้างค่าเดิม ("AutoMatch (เสนอ รอยืนยัน)") ⇒ หน้าจอจะบอกว่า
+        // "⚙️ ระบบ" ทั้งที่คนเป็นคนตัดสิน (ป้ายโกหก — กฎเหล็ก #1)
+        var reconcilerId = await ResolveCurrentUserIdAsync(companyId);
+        transaction.ReconciledBy = Accounting.Helpers.BankMatchAttribution.Person(reconcilerId);
+        transaction.MatchRuleCode = "BANK-MATCH-MANUAL";
+        transaction.MatchReason = "ผู้ใช้เลือกคู่เองจากหน้าจับคู่";
+
+        // CAPTURE (กฎเหล็ก #1) — การจับคู่ที่ **คนยืนยัน** คือคำตอบที่เชื่อได้
+        // ที่สุดของโดเมนนี้ เดิมเส้น 1:1 ไม่สอนอะไรกลับเข้าคลังเลย
+        var captured = new List<(ReconciliationItemType Type, Guid Id, decimal Amount)>();
+        if (request.MatchedPaymentId.HasValue)
+            captured.Add((ReconciliationItemType.Payment, request.MatchedPaymentId.Value, Math.Abs(transaction.Amount)));
+        else
+            captured.Add((ReconciliationItemType.JournalEntry, request.MatchedJournalEntryId!.Value, Math.Abs(transaction.Amount)));
+        await CaptureConfirmedMatchAsync(companyId, transaction, captured);
 
         await _db.SaveChangesAsync();
-        return MapTransactionToResponse(transaction);
+        var reconcilerName = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == reconcilerId && u.CompanyId == companyId)
+            .Select(u => u.FullName).FirstOrDefaultAsync();
+        return MapTransactionToResponse(transaction, reconcilerName);
     }
 
     public async Task<List<BankTransactionResponse>> GetUnreconciledAsync(Guid companyId, Guid bankAccountId)
@@ -583,7 +646,10 @@ public partial class BankService : IBankService
             .OrderByDescending(t => t.TransactionDate)
             .ToListAsync();
 
-        return transactions.Select(MapTransactionToResponse).ToList();
+        var unreconciledNames = await ResolveReconcilerNamesAsync(companyId, transactions);
+        return transactions
+            .Select(t => MapTransactionToResponse(t, LookupReconcilerName(unreconciledNames, t)))
+            .ToList();
     }
 
     public async Task<List<BankTransactionResponse>> AutoMatchAsync(Guid companyId, Guid bankAccountId)
@@ -593,9 +659,13 @@ public partial class BankService : IBankService
         {
             // Bank's GL account — lets JE matching use the net that actually hit
             // the bank (compound entries), consistent with the shared resolver.
-            var autoBankCoaId = await _db.Set<BankAccount>().AsNoTracking()
+            var autoBankMeta = await _db.Set<BankAccount>().AsNoTracking()
                 .Where(a => a.Id == bankAccountId && a.CompanyId == companyId)
-                .Select(a => a.LinkedAccountId).FirstOrDefaultAsync();
+                .Select(a => new { a.LinkedAccountId, a.Currency }).FirstOrDefaultAsync();
+            var autoBankCoaId = autoBankMeta?.LinkedAccountId;
+            var autoBankCurrency = autoBankMeta?.Currency;
+            var autoHomeCurrency = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
 
             var unmatched = await _db.Set<BankTransaction>()
                 .Where(t => t.CompanyId == companyId
@@ -671,8 +741,16 @@ public partial class BankService : IBankService
                     if (!Bank.BankFlowClassifier.InWindow(payment.PaymentDate, txn.TransactionDate, autoWin))
                         continue;
 
+                    // ── FX: เทียบยอดข้ามสกุลไม่ได้ ⇒ **ข้ามผู้สมัครรายนั้น** ──
+                    // เส้นนี้ประทับสถานะเอง ทิศปลอดภัยคือไม่ตอบ (G5) — ใบที่ถูก
+                    // ข้ามยังโผล่ในหน้าจับคู่ด้วยมือพร้อมเหตุผล ผู้ใช้จึงมีทางไปต่อ
+                    var payFx = Accounting.Helpers.BankMatchCurrency.Convert(
+                        autoBankCurrency, payment.Document?.Currency, payment.Amount,
+                        payment.ExchangeRate, payment.Document?.ExchangeRate, autoHomeCurrency);
+                    if (!payFx.Comparable) continue;
+
                     var sc = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
-                        CandidateAmount: payment.Amount,
+                        CandidateAmount: payFx.BankCurrencyAmount,
                         BankAmount: Math.Abs(txn.Amount),
                         CandidateDate: payment.PaymentDate,
                         BankDate: txn.TransactionDate,
@@ -693,8 +771,11 @@ public partial class BankService : IBankService
                 {
                     txn.ReconciliationStatus = ReconciliationStatus.Matched;
                     txn.MatchedPaymentId = payDecision.Chosen!.Id;
+                    txn.SuggestedDocumentId = null;
                     txn.ReconciledAt = DateTime.UtcNow;
-                    txn.ReconciledBy = "AutoMatch";
+                    txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.AutoMatch;
+                    txn.MatchRuleCode = payDecision.RuleCode;
+                    txn.MatchReason = payDecision.Reason;
                     matched.Add(MapTransactionToResponse(txn));
                     alreadyMatchedPaymentIds.Add(payDecision.Chosen.Id);
                     processedKeySet.Add(txnKey);
@@ -707,7 +788,9 @@ public partial class BankService : IBankService
                     // (แต่ยังเก็บ id ของคู่ที่เสนอไว้เสมอ — ห้ามมีสถานะที่ไม่มีคู่)
                     txn.ReconciliationStatus = ReconciliationStatus.Suggested;
                     txn.MatchedPaymentId = payDecision.Chosen!.Id;
-                    txn.ReconciledBy = "AutoMatch (เสนอ รอยืนยัน)";
+                    txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.AutoMatchSuggested;
+                    txn.MatchRuleCode = payDecision.RuleCode;
+                    txn.MatchReason = payDecision.Reason;
                     alreadyMatchedPaymentIds.Add(payDecision.Chosen.Id);
                     _logger?.LogInformation(
                         "Bank txn {Txn}: เสนอรายการชำระ {PaymentId} ({Rule}) — {Reason}",
@@ -763,8 +846,11 @@ public partial class BankService : IBankService
                 {
                     txn.ReconciliationStatus = ReconciliationStatus.Matched;
                     txn.MatchedJournalEntryId = jeDecision.Chosen!.Id;
+                    txn.SuggestedDocumentId = null;
                     txn.ReconciledAt = DateTime.UtcNow;
-                    txn.ReconciledBy = "AutoMatch";
+                    txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.AutoMatch;
+                    txn.MatchRuleCode = jeDecision.RuleCode;
+                    txn.MatchReason = jeDecision.Reason;
                     matched.Add(MapTransactionToResponse(txn));
                     alreadyMatchedJeIds.Add(jeDecision.Chosen.Id);
                     processedKeySet.Add(txnKey);
@@ -773,7 +859,9 @@ public partial class BankService : IBankService
                 {
                     txn.ReconciliationStatus = ReconciliationStatus.Suggested;
                     txn.MatchedJournalEntryId = jeDecision.Chosen!.Id;
-                    txn.ReconciledBy = "AutoMatch (เสนอ รอยืนยัน)";
+                    txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.AutoMatchSuggested;
+                    txn.MatchRuleCode = jeDecision.RuleCode;
+                    txn.MatchReason = jeDecision.Reason;
                     alreadyMatchedJeIds.Add(jeDecision.Chosen.Id);
                     _logger?.LogInformation(
                         "Bank txn {Txn}: เสนอสมุดรายวัน {JeId} ({Rule}) — {Reason}",
@@ -983,10 +1071,67 @@ public partial class BankService : IBankService
         a.IsActive,
         a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt);
 
-    private static BankTransactionResponse MapTransactionToResponse(BankTransaction t) => new(
-        t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,
-        t.Amount, t.BalanceAfter, t.Description, t.Reference, t.Payee,
-        t.ReconciliationStatus, t.MatchedPaymentId);
+    /// <summary>
+    /// แปลงแถวเป็น DTO. <paramref name="personName"/> = ชื่อผู้ใช้ที่ผู้เรียก
+    /// **ค้นมาให้แล้ว** (null = ค้นไม่เจอ/ไม่ได้ค้น → ป้ายเป็น "👤 ผู้ใช้" เฉย ๆ
+    /// ห้ามแต่งชื่อ). ป้ายคำนวณที่เซิร์ฟเวอร์ตัวเดียว — JS แสดงอย่างเดียว
+    /// </summary>
+    private static BankTransactionResponse MapTransactionToResponse(
+        BankTransaction t, string? personName = null)
+    {
+        var who = Accounting.Helpers.BankMatchAttribution.Describe(t.ReconciledBy, personName);
+        return new BankTransactionResponse(
+            t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType,
+            t.Amount, t.BalanceAfter, t.Description, t.Reference, t.Payee,
+            t.ReconciliationStatus, t.MatchedPaymentId,
+            MatchedJournalEntryId: t.MatchedJournalEntryId,
+            SuggestedDocumentId: t.SuggestedDocumentId,
+            ReconciledBy: t.ReconciledBy,
+            ReconciledAt: t.ReconciledAt,
+            ReconciledByKind: who.Kind.ToString(),
+            ReconciledByLabel: who.Kind == Accounting.Helpers.BankMatchActorKind.Unknown
+                ? null : who.Label,
+            MatchRuleCode: t.MatchRuleCode,
+            MatchReason: t.MatchReason);
+    }
+
+    /// <summary>
+    /// ค้นชื่อผู้ใช้ของทุกแถวที่ `ReconciledBy` เป็น GUID ในคิวรีเดียว
+    /// (กัน N+1 และกัน "หน้าเว็บอ่านฟิลด์ที่เซิร์ฟเวอร์ไม่เคยส่ง")
+    /// </summary>
+    private async Task<Dictionary<string, string>> ResolveReconcilerNamesAsync(
+        Guid companyId, IEnumerable<BankTransaction> rows)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var t in rows)
+        {
+            if (string.IsNullOrWhiteSpace(t.ReconciledBy)) continue;
+            var core = t.ReconciledBy!.Trim();
+            if (core.EndsWith(Accounting.Helpers.BankMatchAttribution.AiAssistedSuffix,
+                    StringComparison.OrdinalIgnoreCase))
+                core = core[..^Accounting.Helpers.BankMatchAttribution.AiAssistedSuffix.Length];
+            if (Guid.TryParse(core, out var uid) && uid != Guid.Empty) ids.Add(uid);
+        }
+        if (ids.Count == 0) return new Dictionary<string, string>();
+        var list = ids.ToList();
+        var users = await _db.Users.AsNoTracking()
+            .Where(u => list.Contains(u.Id) && u.CompanyId == companyId)
+            .Select(u => new { u.Id, u.FullName })
+            .ToListAsync();
+        return users.ToDictionary(u => u.Id.ToString("D"), u => u.FullName ?? "");
+    }
+
+    /// <summary>หาชื่อที่ตรงกับค่า `ReconciledBy` ของแถวนี้จากตารางที่ค้นมาแล้ว</summary>
+    private static string? LookupReconcilerName(
+        Dictionary<string, string> names, BankTransaction t)
+    {
+        if (names.Count == 0 || string.IsNullOrWhiteSpace(t.ReconciledBy)) return null;
+        var core = t.ReconciledBy!.Trim();
+        if (core.EndsWith(Accounting.Helpers.BankMatchAttribution.AiAssistedSuffix,
+                StringComparison.OrdinalIgnoreCase))
+            core = core[..^Accounting.Helpers.BankMatchAttribution.AiAssistedSuffix.Length];
+        return names.TryGetValue(core, out var n) && !string.IsNullOrWhiteSpace(n) ? n : null;
+    }
 
     /// <summary>Block reconciliation in a Closed or Locked fiscal period.
     /// Throws InvalidOperationException with a clear Thai message naming the

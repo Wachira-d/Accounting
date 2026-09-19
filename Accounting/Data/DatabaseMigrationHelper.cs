@@ -6130,6 +6130,47 @@ public static class DatabaseMigrationHelper
             WHERE "IncomeNature" = 0 AND "ItemType" = 'Earning';
             """,
 
+            // ═══ รอบ 184 · D4-2 ต่อ — คู่ที่เป็น "เอกสาร" + เหตุผลของสถานะ ═══
+            // รอบ 183 ปิดช่องโหว่ "Matched ที่ไม่มีคู่" ด้วยการ **ไม่ประทับสถานะเลย**
+            // เมื่อ AI เสนอ *Document* (ตารางไม่มีคอลัมน์เก็บ document id) ⇒ ความสามารถ
+            // นั้นหายไปทั้งเส้น · รอบนี้คืนมาอย่างถูกวิธี: มีที่เก็บคู่ ⇒ ประทับได้
+            // `MatchRuleCode`/`MatchReason` = เหตุผลที่ `BankMatchArbiter` ตัดสิน เดินทาง
+            // ถึงหน้าจอ (ผู้ใช้ต้องเห็นว่า "ทำไมระบบเสนอใบนี้" และ "ทำไมไม่ประทับให้เอง")
+            """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "SuggestedDocumentId" uuid NULL;""",
+            """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchRuleCode" text NULL;""",
+            """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "MatchReason" text NULL;""",
+            """CREATE INDEX IF NOT EXISTS "IX_BankTransactions_SuggestedDocumentId" ON "BankTransactions" ("CompanyId", "SuggestedDocumentId") WHERE "SuggestedDocumentId" IS NOT NULL;""",
+
+            // ป้าย "AI-Batch" ที่ระบบเขียนให้ทุกแถวแม้ `WasAiValidated = false` — โกหกสองชั้น
+            // (บอกว่า AI ทำ ทั้งที่คนกด · และทิ้งชื่อคนที่กดไปเลย ทั้งที่ audit row รู้)
+            // แหล่งความจริงคือ `BankMatchAuditLogs` ซึ่งเก็บทั้งผู้กดและธง AI ไว้แล้ว
+            // ⇒ นี่ไม่ใช่การ "แก้ประวัติ" แต่เป็นการ **คืนค่าที่ถูกจากบันทึกต้นทาง**
+            // ทับค่าที่ระบบแต่งขึ้น · แถวที่ไม่มี audit row จะไม่ถูกแตะ (JOIN ไม่ติด)
+            """
+            UPDATE "BankTransactions" t
+               SET "ReconciledBy" = a."AppliedByUserId"::text || CASE WHEN a."WasAiValidated" THEN '+ai' ELSE '' END
+              FROM (SELECT DISTINCT ON ("BankTransactionId") "BankTransactionId", "AppliedByUserId", "WasAiValidated"
+                      FROM "BankMatchAuditLogs" ORDER BY "BankTransactionId", "CreatedAt" DESC) a
+             WHERE t."Id" = a."BankTransactionId" AND t."ReconciledBy" = 'AI-Batch';
+            """,
+
+            // ═══ รอบ 184 · D4-7 — ธง §65 ตรี(9) ของเงินสดย่อย ═══
+            // เงินที่จ่ายจากลิ้นชักโดยไม่มีใบเสร็จ **หักเป็นรายจ่ายไม่ได้** แต่ "ห้ามบันทึก"
+            // ไม่ใช่ทางออก — เงินออกไปแล้วจริง ถ้าไม่ให้บันทึก ยอดในระบบจะไม่ตรงกับเงิน
+            // ในลิ้นชัก **ถาวร** และไม่มีใครเห็น ⇒ เลือกทิศที่ความเสียหายถูก**นับ**
+            // (ธงไหลเข้า worksheet บวกกลับ ภ.ง.ด.50 เอง) ไม่ใช่ถูก**ซ่อน**
+            // ⚠️ ข้อนี้ต่างจากตัวอักษรใน CLAUDE.md §L(9) ที่เขียนว่า hard block — ดูหมายเหตุในคอมมิต
+            """ALTER TABLE "PettyCashTransactions" ADD COLUMN IF NOT EXISTS "IsNonDeductible" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "PettyCashTransactions" ADD COLUMN IF NOT EXISTS "NonDeductibleRuleCode" text NULL;""",
+            // แถวเก่าที่ไม่มีเลขที่ใบเสร็จเข้าข่ายเดียวกัน — ติดธงให้เห็น ไม่ได้เปลี่ยนยอดเงิน
+            """
+            UPDATE "PettyCashTransactions"
+               SET "IsNonDeductible" = true, "NonDeductibleRuleCode" = 'RD-65TER-9'
+             WHERE "Type" = 'Disbursement'
+               AND ("ReceiptReference" IS NULL OR btrim("ReceiptReference") = '')
+               AND "IsNonDeductible" = false;
+            """,
+
             // ═══ รอบ 184 · Q1 — ฐานเงินสมทบ ม.5 รายรายการ ═══
             // ม.5 นิยาม "ค่าจ้าง" กว้างกว่าเงินเดือนพื้นฐาน (เบี้ยขยัน/ค่าตำแหน่ง/ค่าครองชีพ
             // ที่จ่ายประจำ = ค่าจ้าง · ค่าเดินทาง/ที่พักตามจ่ายจริง = ไม่ใช่) เส้นแบ่งขึ้นกับ

@@ -179,14 +179,34 @@ public partial class BankService
             .GroupBy(l => l.JournalEntryId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        // ── FX (`DECISION_AUDIT_2026-09-18.md` §3 D4-8) ────────────────────
+        // ยอดของ Payment อยู่ใน **สกุลของเอกสาร** ส่วนบรรทัดธนาคารอยู่ใน
+        // **สกุลของบัญชี** — เดิมเทียบตัวเลขกันตรง ๆ ⇒ ใบ 1,000 USD กับเงินเข้า
+        // 1,000 บาท ได้ "ยอดตรงเป๊ะ 60 คะแนน" ทั้งที่ต่างกัน 35 เท่า.
+        // **ที่นี่คือรายการที่มนุษย์เห็น** ⇒ ทิศปลอดภัยคือ "ยังโชว์ แต่ตัดคะแนน
+        // ยอดทิ้งและบอกเหตุผล" ไม่ใช่ซ่อนแถว (ซ่อน = ผู้ใช้ไม่มีทางไปต่อ — G5)
+        var pickBankCurrency = await _db.Set<BankAccount>().AsNoTracking()
+            .Where(a => a.Id == bankTxn.BankAccountId && a.CompanyId == companyId)
+            .Select(a => a.Currency).FirstOrDefaultAsync();
+        var pickHomeCurrency = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
+
         var rankedPaymentsAll = paymentCandidates
             .Select(p =>
             {
-                var amountDiff = Math.Abs(p.Amount - bankAmount);
+                var fx = Accounting.Helpers.BankMatchCurrency.Convert(
+                    pickBankCurrency, p.Document?.Currency, p.Amount,
+                    p.ExchangeRate, p.Document?.ExchangeRate, pickHomeCurrency);
+                // เทียบไม่ได้ → ส่งยอดที่ "ไม่มีทางตรง" เข้าไปให้คะแนนยอดเป็น 0
+                // (คะแนนวัน/ชื่อ/เลขอ้างอิงยังได้ตามปกติ — ผู้ใช้ยังหาเจอ)
+                var comparableAmount = fx.Comparable ? fx.BankCurrencyAmount : 0m;
+                var amountDiff = fx.Comparable ? Math.Abs(fx.BankCurrencyAmount - bankAmount) : 0m;
                 var dateDiff = (int)Math.Abs((p.PaymentDate.Date - bankDate).TotalDays);
-                var (score, reason) = ScoreCandidate(p.Amount, bankAmount, p.PaymentDate.Date, bankDate,
+                var (score, reason) = ScoreCandidate(comparableAmount, bankAmount, p.PaymentDate.Date, bankDate,
                     p.Reference, p.Notes, p.Document?.DocumentNumber, p.Document?.Contact?.Name,
                     bankDescLower, bankRefLower, bankPayee);
+                if (!fx.Comparable)
+                    reason = string.IsNullOrEmpty(reason) ? fx.Reason : reason + " · " + fx.Reason;
 
                 // Deposit info: derive from PaymentMethod + BankAccount field on Payment.
                 var (depLabel, depCat) = DerivePaymentDeposit(p);
@@ -211,7 +231,11 @@ public partial class BankService
                     Score: score,
                     ScoreReason: reason,
                     DepositLabel: depLabel,
-                    DepositCategory: depCat);
+                    DepositCategory: depCat,
+                    Currency: p.Document?.Currency,
+                    BankCurrencyAmount: fx.Comparable ? fx.BankCurrencyAmount : (decimal?)null,
+                    CurrencyNote: fx.Kind == Accounting.Helpers.BankAmountComparability.SameCurrency
+                        ? null : fx.Reason);
             })
             .OrderByDescending(c => c.Score)
             .ThenBy(c => c.DateDiffDays)

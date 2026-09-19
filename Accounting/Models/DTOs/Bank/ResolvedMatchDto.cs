@@ -23,4 +23,12 @@ public sealed record ResolvedMatchDto(
     bool HasMissingCounterpart,
     bool IsGroup,
     string? GroupNumber,
-    System.Collections.Generic.List<ResolvedCounterpartDto> Counterparts);
+    System.Collections.Generic.List<ResolvedCounterpartDto> Counterparts,
+    // ── สถานะจริงของแถว + เหตุผล ────────────────────────────────────────
+    // `BankController.MatchInfo` เคยส่งสตริง "Matched" **ตายตัว** ⇒ แถวที่
+    // เป็นแค่ข้อเสนอ (`Suggested`) ก็ถูกบอกว่า "จับคู่แล้ว" บนป๊อปอัป
+    // (สถานะปลายทางที่หน้าจอประทับเอง — ราก R1)
+    string Status = "Matched",
+    string? ReconciledByLabel = null,
+    string? MatchRuleCode = null,
+    string? MatchReason = null);

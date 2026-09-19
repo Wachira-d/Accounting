@@ -320,8 +320,11 @@ public class BankFeedService : IBankFeedService
             var chosen = decision.Chosen!;
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Matched;
             txn.MatchedPaymentId = chosen.Id;
+            txn.SuggestedDocumentId = null;
             txn.ReconciledAt = DateTime.UtcNow;
-            txn.ReconciledBy = "BankFeed";
+            txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.BankFeed;
+            txn.MatchRuleCode = decision.RuleCode;
+            txn.MatchReason = decision.Reason;
             _logger.LogInformation(
                 "Bank txn {Txn} → จับคู่กับรายการชำระ {PaymentId} ({Rule}: {Reason})",
                 txn.Id, chosen.Id, decision.RuleCode, decision.Reason);
@@ -334,7 +337,9 @@ public class BankFeedService : IBankFeedService
             // เสนอ = ยังไม่ใช่การกระทบยอด → ไม่ตั้ง ReconciledAt
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
             txn.MatchedPaymentId = chosen.Id;
-            txn.ReconciledBy = "BankFeed (เสนอ รอยืนยัน)";
+            txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.BankFeedSuggested;
+            txn.MatchRuleCode = decision.RuleCode;
+            txn.MatchReason = decision.Reason;
             _logger.LogInformation(
                 "Bank txn {Txn} → เสนอรายการชำระ {PaymentId} ({Rule}: {Reason})",
                 txn.Id, chosen.Id, decision.RuleCode, decision.Reason);
@@ -349,8 +354,13 @@ public class BankFeedService : IBankFeedService
         {
             using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var memo = string.IsNullOrEmpty(txn.Reference) ? txn.Description : $"{txn.Reference} {txn.Description}";
+            // ⚠ เดิมส่ง `"THB"` **ตายตัว** ⇒ บัญชี USD ได้ชุดผู้สมัครของใบ THB
+            // (augmenter กรอง `d.Currency == currency`) = ชุดผิดตั้งแต่ต้นทาง
+            var feedCurrency = await _db.BankAccounts.AsNoTracking()
+                .Where(a => a.Id == txn.BankAccountId && a.CompanyId == companyId)
+                .Select(a => a.Currency).FirstOrDefaultAsync() ?? "THB";
             var aiResult = await _aiAugmenter.SuggestStatementMatchAsync(
-                companyId, txn.Id, memo, txn.TransactionDate, txn.Amount, "THB",
+                companyId, txn.Id, memo, txn.TransactionDate, txn.Amount, feedCurrency,
                 txn.TransactionType, localBestDocumentId: null, localConfidence: 0m,
                 aiCts.Token);
             if (!aiResult.UsedAi
@@ -358,41 +368,68 @@ public class BankFeedService : IBankFeedService
                 || !Guid.TryParse(aiResult.Answer, out var aiDocId))
                 return false;
 
-            // ด่านกัน hallucination: เอกสารต้องมีอยู่จริงในบริษัทนี้
-            var docExists = await _db.Documents.AnyAsync(d => d.Id == aiDocId
-                && d.CompanyId == companyId && !d.IsDeleted
-                && d.Status != Models.Enums.DocumentStatus.Voided);
-            if (!docExists)
-            {
-                _logger.LogWarning("AI เสนอเอกสาร {Doc} ที่ไม่มีอยู่จริงสำหรับ txn {Txn} — ทิ้งคำตอบ",
-                    aiDocId, txn.Id);
-                return false;
-            }
+            // ── ด่านกัน hallucination (กฎเหล็ก #1 · DOCTRINE §2.2) ──────────
+            // **candidate set ที่ตรวจกลับได้** = เอกสารของบริษัทนี้ที่
+            // (ก) ไม่ถูกลบ/ยกเลิก (ข) **ยังค้างชำระ** — ใบที่ปิดแล้วไม่ใช่ต้นทาง
+            // ของเงินก้อนใหม่ (ค) สกุลเงินตรงกับบัญชี — ยอดข้ามสกุลเทียบกันไม่ได้
+            // (ง) อยู่ในกรอบวันที่เดียวกับที่ให้คะแนนในบ้าน
+            var openDocIds = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && d.Status != Models.Enums.DocumentStatus.Voided
+                    && d.BalanceDue > 0
+                    && d.Currency == feedCurrency
+                    && d.DocumentDate >= txn.TransactionDate.Date.AddDays(-90)
+                    && d.DocumentDate <= txn.TransactionDate.Date.AddDays(7))
+                .Select(d => d.Id)
+                .ToListAsync();
 
-            // คำตอบของ AI เป็น "เอกสาร" แต่สิ่งที่เราบันทึกคู่ได้คือ "รายการชำระ"
-            // → แปลงผ่านรายการชำระของเอกสารนั้นที่อยู่ในชุดผู้สมัครในบ้าน
+            // ด่านนี้ **บังคับจริง** — `Accepted` ว่าง = ทิ้งคำตอบ
+            // (ห้ามคำนวณด่านแล้วไม่ใช้ผล: "มี ≠ ถูกเรียก" F2 ข้อ 2)
             var screened = Accounting.Helpers.BankMatchArbiter.ScreenAiProposals(
                 new[] { new Accounting.Helpers.BankMatchArbiter.AiProposal(
                     aiDocId, "Document", aiResult.Confidence ?? 0m) },
-                byId.Keys.ToList());
-            var viaPayment = byId.Values.FirstOrDefault(p => p.DocumentId == aiDocId);
-            if (screened.Accepted.Count == 0 && viaPayment == null)
+                openDocIds);
+            if (screened.Accepted.Count == 0)
             {
-                _logger.LogInformation(
-                    "AI เสนอเอกสาร {Doc} ให้ txn {Txn} แต่ยังไม่มีรายการชำระให้ผูก — "
-                    + "ไม่ประทับสถานะ (ไม่มีคอลัมน์เก็บคู่ที่เป็นเอกสาร) ปล่อยเป็น Unmatched",
-                    aiDocId, txn.Id);
+                _logger.LogWarning(
+                    "AI เสนอเอกสาร {Doc} ให้ txn {Txn} แต่ไม่ผ่านด่าน "
+                    + "(นอกชุดผู้สมัคร {Unknown} · ความมั่นใจต่ำ {Low}) — ทิ้งคำตอบ",
+                    aiDocId, txn.Id, screened.RejectedUnknownIds.Count,
+                    screened.RejectedLowConfidence.Count);
                 return false;
             }
-            if ((aiResult.Confidence ?? 0m) < Accounting.Helpers.BankMatchArbiter.DefaultAiMinConfidence)
-                return false;
 
-            var paymentId = viaPayment?.Id ?? screened.Accepted[0].CandidateId;
+            // คำตอบของ AI เป็น "เอกสาร". ถ้าเอกสารนั้นมีรายการชำระอยู่ในชุด
+            // ผู้สมัครในบ้านแล้ว ให้ผูกกับรายการชำระ (แม่นกว่า) — ถ้ายังไม่มี
+            // ให้เก็บลง `SuggestedDocumentId` ซึ่ง**เป็นคอลัมน์ที่เพิ่งเพิ่ม**
+            // เพื่อเปิดเส้นนี้กลับมา: ก่อนหน้านี้ตารางไม่มีที่เก็บ document id
+            // เลยเลือก "ไม่ประทับสถานะใด ๆ" ⇒ ความสามารถนี้หายไปทั้งเส้น
+            // (`DECISION_AUDIT_2026-09-18.md` §10.5 ข้อ 5)
+            // **สถานะทุกตัวยังต้องมีคู่ที่กดดูได้เสมอ** (ราก R1)
+            var viaPayment = byId.Values.FirstOrDefault(p => p.DocumentId == aiDocId);
+
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
-            txn.MatchedPaymentId = paymentId;
-            txn.ReconciledBy = "BankFeed/AI (เสนอ รอยืนยัน)";
-            _logger.LogInformation("Bank txn {Txn} → AI เสนอรายการชำระ {PaymentId} ({Conf:P0})",
-                txn.Id, paymentId, aiResult.Confidence ?? 0m);
+            txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.BankFeedAiSuggested;
+            txn.MatchRuleCode = "BANK-MATCH-AI-DOC";
+            if (viaPayment != null)
+            {
+                txn.MatchedPaymentId = viaPayment.Id;
+                txn.SuggestedDocumentId = aiDocId;
+                txn.MatchReason =
+                    $"AI เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
+                    + "และพบรายการชำระของเอกสารเดียวกันในกรอบวันที่ — รอยืนยัน";
+                _logger.LogInformation("Bank txn {Txn} → AI เสนอรายการชำระ {PaymentId} ({Conf:P0})",
+                    txn.Id, viaPayment.Id, aiResult.Confidence ?? 0m);
+            }
+            else
+            {
+                txn.SuggestedDocumentId = aiDocId;
+                txn.MatchReason =
+                    $"AI เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
+                    + "แต่ยังไม่มีรายการชำระของเอกสารนี้ — บันทึกการชำระก่อนจึงจะกระทบยอดได้";
+                _logger.LogInformation("Bank txn {Txn} → AI เสนอเอกสาร {Doc} ({Conf:P0}) — ยังไม่มีรายการชำระ",
+                    txn.Id, aiDocId, aiResult.Confidence ?? 0m);
+            }
             return true;
         }
         catch (Exception aiEx)
@@ -430,10 +467,24 @@ public class BankFeedService : IBankFeedService
         await _db.HydratePaymentContactsAsync(companyId, candidates);
 
         var byId = candidates.ToDictionary(p => p.Id);
-        var options = candidates.Select(p =>
+
+        // FX — ยอดของ Payment อยู่ในสกุลเอกสาร ต้องแปลงเป็นสกุลของบัญชีธนาคาร
+        // ก่อนเทียบ. แปลงไม่ได้ = **ข้ามผู้สมัครรายนั้น** (เส้นนี้ประทับสถานะเอง)
+        var scoreBankCurrency = await _db.BankAccounts.AsNoTracking()
+            .Where(a => a.Id == txn.BankAccountId && a.CompanyId == companyId)
+            .Select(a => a.Currency).FirstOrDefaultAsync();
+        var scoreHomeCurrency = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
+        var fxByPayment = candidates.ToDictionary(
+            p => p.Id,
+            p => Accounting.Helpers.BankMatchCurrency.Convert(
+                scoreBankCurrency, p.Document?.Currency, p.Amount,
+                p.ExchangeRate, p.Document?.ExchangeRate, scoreHomeCurrency));
+
+        var options = candidates.Where(p => fxByPayment[p.Id].Comparable).Select(p =>
         {
             var r = Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
-                CandidateAmount: p.Amount,
+                CandidateAmount: fxByPayment[p.Id].BankCurrencyAmount,
                 BankAmount: Math.Abs(txn.Amount),
                 CandidateDate: p.PaymentDate,
                 BankDate: txn.TransactionDate,

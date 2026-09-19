@@ -358,6 +358,11 @@
               <div class="text-xs text-gray-400 hidden" id="fOpeningHint">แก้ยอดเปิดบัญชีหลังสร้างไม่ได้ — ใช้ "เพิ่มรายการเคลื่อนไหว" หรือ JE ปรับปรุงแทน</div>
             </div>
           </div>
+          <div class="form-group">
+            <label class="form-label">ผังบัญชีที่เชื่อมโยง</label>
+            <select class="form-select" id="fLinkedAccount"><option value="">— ระบบสร้างให้อัตโนมัติ —</option></select>
+            <div class="text-xs text-gray-400">ต้องผูกก่อนจึงจะกระทบยอดกับ<b>สมุดรายวัน</b>ได้ (จับคู่กับรายการชำระเงินไม่ต้องใช้)</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -822,6 +827,11 @@
         // + dropdown สลับบัญชีจากแท็บกระทบยอดได้เลย
         const hintEl = document.getElementById('reconAccountHint');
         if (hintEl) hintEl.textContent = `${acct.bankName || ''} ${acct.accountNumber || ''}`.trim();
+        // ── บัญชีที่ยังไม่ผูกผังบัญชี = กระทบยอดกับสมุดรายวันไม่ได้เลย ──────
+        // รอบ 183 เปลี่ยนจาก "บวก gross เงียบ ๆ" เป็น **throw** ตอนกดบันทึก
+        // ⇒ ถ้าไม่บอกล่วงหน้า ผู้ใช้จะเจอ error ตอนกดยืนยันโดยไม่รู้สาเหตุ
+        // (ด่านที่เข้มขึ้นต้องมี "ทางไปต่อ" ที่มองเห็นก่อน — F2 ข้อ 8)
+        this.renderCoaLinkWarning(acct);
         const sw = document.getElementById('reconAccountSwitch');
         if (sw && (this.accounts?.length || 0) > 1) {
           sw.style.display = '';
@@ -832,6 +842,25 @@
         this.transPage = 1;
         await this.loadTransactions();
       },
+      // แถบเตือน "ยังไม่ผูกผังบัญชี" — วางไว้เหนือส่วนรายการเคลื่อนไหว
+      renderCoaLinkWarning(acct) {
+        const host = document.getElementById('transSection');
+        if (!host) return;
+        let el = document.getElementById('coaLinkWarn');
+        // `undefined` = เซิร์ฟเวอร์ไม่ได้ส่งฟิลด์มา ⇒ ไม่รู้ ห้ามเตือนมั่ว
+        if (acct.linkedAccountId === undefined) { if (el) el.remove(); return; }
+        if (acct.linkedAccountId) { if (el) el.remove(); return; }
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'coaLinkWarn';
+          el.style.cssText = 'margin:0 0 12px;padding:10px 14px;border-radius:8px;background:#fffbeb;color:#92400e;font-size:13px;border:1px solid #fde68a';
+          host.insertBefore(el, host.firstChild);
+        }
+        el.innerHTML = 'บัญชีนี้ยังไม่ได้ผูกกับผังบัญชี — จับคู่กับ<b>สมุดรายวัน</b>ไม่ได้ '
+          + '(จับคู่กับรายการชำระเงินยังทำได้ตามปกติ). '
+          + '<a href="javascript:void(0)" onclick="Page.openEdit(\'' + acct.id + '\')">ตั้งค่าผังบัญชีที่เชื่อมโยง →</a>';
+      },
+
       // === TRANSACTIONS ===
       async loadTransactions() {
         if (!this.selectedAccount) return;
@@ -852,6 +881,50 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       filterTrans() { this.renderTransactions(); },
+
+      // ── ป้ายสถานะ + "ใครจับคู่ให้ · เพราะอะไร" ────────────────────────
+      // ⚠ ป้ายผู้กระทำ (`reconciledByLabel`) และเหตุผล (`matchReason`)
+      // **คำนวณที่เซิร์ฟเวอร์** (`Helpers/BankMatchAttribution` +
+      // `BankMatchArbiter.Decision.Reason`) — ที่นี่แสดงอย่างเดียว ห้ามถือ
+      // สำเนาตารางป้ายใน JS (กฎเหล็ก #4 F2 ข้อ 5)
+      // `undefined` = เซิร์ฟเวอร์ไม่ได้ส่งมา ⇒ แสดง "ไม่มีข้อมูล" ห้ามแต่งค่า
+      actorBadge(t) {
+        const label = t.reconciledByLabel;
+        if (label === undefined || label === null || label === '')
+          return '<span class="text-xs text-gray-400" title="แถวนี้ไม่ได้บันทึกไว้ว่าใครจับคู่ให้">ไม่มีข้อมูล</span>';
+        return `<span class="text-xs text-gray-500">${Layout.esc(label)}</span>`;
+      },
+      reasonTip(t) {
+        const bits = [];
+        if (t.matchReason) bits.push(t.matchReason);
+        if (t.matchRuleCode) bits.push('รหัสกฎ ' + t.matchRuleCode);
+        return bits.length ? bits.join(' · ') : '';
+      },
+      statusCell(t) {
+        const st = t.reconciliationStatus || 'Unmatched';
+        const why = this.reasonTip(t);
+        // `Layout.esc` หนีครบ 5 ตัวรวม `"` ⇒ ใช้ใน attribute ได้ตรง ๆ
+        const whyAttr = why ? ` title="${Layout.esc(why)}"` : '';
+        let badge;
+        if (st === 'Matched') {
+          badge = '<span class="badge badge-success">จับคู่แล้ว</span>';
+          if (this._matchIssueIds && this._matchIssueIds.has(t.id))
+            badge += ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>';
+        } else if (st === 'Suggested') {
+          badge = `<span class="badge" style="background:#ddd6fe;color:#5b21b6"${whyAttr}>เสนอคู่ไว้ — รอยืนยัน</span>`;
+        } else if (st === 'Excluded') {
+          badge = '<span class="badge badge-gray">ไม่รวม</span>';
+        } else {
+          badge = '<span class="badge badge-warning">รอจับคู่</span>';
+        }
+        let extra = '';
+        if (st === 'Matched' || st === 'Suggested') {
+          extra = `<div>${this.actorBadge(t)}</div>`;
+          if (why) extra += `<div class="text-xs text-gray-400">${Layout.esc(why)}</div>`;
+        }
+        return badge + extra;
+      },
+
       renderTransactions() {
         const search = (document.getElementById('transSearch').value || '').toLowerCase();
         const typeF = document.getElementById('transTypeFilter').value;
@@ -872,9 +945,11 @@
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
           <td class="text-right">${Layout.money(t.balanceAfter)}</td>
           <td>${Layout.esc(t.description || t.payee || '-')}${t.reference ? ' <span class="text-xs text-gray-400">('+Layout.esc(t.reference)+')</span>' : ''}</td>
-          <td>${t.reconciliationStatus === 'Matched' ? `<span class="badge badge-success">จับคู่แล้ว</span>${(this._matchIssueIds && this._matchIssueIds.has(t.id)) ? ' <span class="badge badge-danger" title="ยอดที่จับไม่ตรงกับยอดธนาคาร">⚠️ ยอดไม่ตรง</span>' : ''}${t.matchedPaymentId ? ` <a href="/pages/documents.html?search=${t.reference||''}" class="text-xs" style="margin-left:4px">ดูเอกสาร</a>` : ''}` : t.reconciliationStatus === 'Suggested' ? '<span class="badge" style="background:#ddd6fe;color:#5b21b6" title="ระบบเสนอคู่ที่น่าจะใช่ — กด &quot;จับคู่&quot; เพื่อยืนยัน">⚙️ ระบบแนะนำ — รอยืนยัน</span>' : t.reconciliationStatus === 'Excluded' ? '<span class="badge badge-gray">ไม่รวม</span>' : '<span class="badge badge-warning">รอจับคู่</span>'}</td>
+          <td>${this.statusCell(t)}</td>
           <td>
-            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่กับเอกสาร/JE อะไร">🔍 ดูคู่</button><button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
+            ${(t.reconciliationStatus === 'Matched' || t.reconciliationStatus === 'Suggested') ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่/เสนอกับเอกสาร-JE อะไร">🔍 ดูคู่</button>` : ''}
+            ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
+            ${t.reconciliationStatus === 'Suggested' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" title="ไม่ใช่คู่นี้ — ล้างข้อเสนอทิ้ง">ไม่ใช่</button>` : ''}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
           </td>
         </tr>`).join('');
@@ -895,7 +970,15 @@
             body.innerHTML = '<div style="padding:20px;color:#92400e;background:#fffbeb;border-radius:8px">จับคู่แล้วแต่ไม่พบรายละเอียดคู่ที่จับ (อาจถูกลบ/แก้ไขภายหลัง) — แนะนำกด "ยกเลิก" แล้วจับคู่ใหม่</div>';
             return;
           }
-          let html = `<div style="font-size:13px;color:#64748b;margin-bottom:10px">ยอดธนาคาร <b>฿${m(d.txnAmount)}</b>${d.groupNumber ? ` · กลุ่ม ${this.esc(d.groupNumber)}` : ''}</div>`;
+          // สถานะจริงของแถว + "ใครจับคู่ให้ · เพราะอะไร" — เซิร์ฟเวอร์ส่งมาแล้ว
+          // (เดิม endpoint ส่ง status = "Matched" ตายตัวทุกแถว)
+          const stTh = d.status === 'Suggested' ? 'เสนอคู่ไว้ — รอยืนยัน'
+            : d.status === 'Matched' ? 'จับคู่แล้ว'
+            : d.status === 'Excluded' ? 'ไม่รวม'
+            : d.status === 'Unmatched' ? 'รอจับคู่' : (d.status || '');
+          let html = `<div style="font-size:13px;color:#64748b;margin-bottom:10px">ยอดธนาคาร <b>฿${m(d.txnAmount)}</b>${stTh ? ` · <b>${this.esc(stTh)}</b>` : ''}${d.groupNumber ? ` · กลุ่ม ${this.esc(d.groupNumber)}` : ''}</div>`;
+          if (d.reconciledByLabel) html += `<div style="font-size:12px;color:#64748b;margin-bottom:6px">${this.esc(d.reconciledByLabel)}</div>`;
+          if (d.matchReason) html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">เหตุผล: ${this.esc(d.matchReason)}${d.matchRuleCode ? ' (' + this.esc(d.matchRuleCode) + ')' : ''}</div>`;
           html += d.counterparts.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px">
             <div><div style="font-size:11px;color:#94a3b8">${c.kind}</div><div style="font-weight:600">${this.esc(c.label)}</div>${c.date ? `<div style="font-size:11px;color:#94a3b8">${Layout.date(c.date)}</div>` : ''}</div>
             <div style="font-weight:700;color:#4F46E5">฿${m(c.amount)}</div>
@@ -2434,13 +2517,17 @@
                     <strong style="color:#0f172a">${this.esc(c.number)}</strong>
                     ${depBadge}
                   </div>
-                  <strong style="color:#4F46E5;font-size:15px;white-space:nowrap">฿${Layout.money(c.amount)}</strong>
+                  <strong style="color:#4F46E5;font-size:15px;white-space:nowrap">${c.currency && c.currency !== 'THB' ? this.esc(c.currency) + ' ' : '฿'}${Layout.money(c.amount)}</strong>
                 </div>
                 <div style="font-size:12px;color:#64748b;display:flex;gap:12px;flex-wrap:wrap">
                   <span>📅 ${dateStr}</span>
                   ${c.dateDiffDays === 0 ? '<span style="color:#10b981">✓ วันเดียวกัน</span>' : `<span>ห่าง ${c.dateDiffDays} วัน</span>`}
                   ${c.amountDiff < 0.01 ? '<span style="color:#10b981">✓ ยอดตรงเป๊ะ</span>' : ''}
                 </div>
+                ${c.bankCurrencyAmount != null && c.currency && c.currency !== 'THB'
+                  ? `<div style="font-size:11px;color:#64748b;margin-top:2px">≈ ฿${Layout.money(c.bankCurrencyAmount)} (ยอดที่ใช้เทียบกับรายการธนาคาร)</div>` : ''}
+                ${c.bankCurrencyAmount == null && c.currencyNote
+                  ? `<div style="font-size:11px;color:#b45309;margin-top:2px">⚠ ${this.esc(c.currencyNote)}</div>` : ''}
                 ${c.counterpartyName ? `<div style="font-size:13px;color:#334155;margin-top:4px">👤 ${this.esc(c.counterpartyName)}</div>` : ''}
                 ${c.description && c.description !== c.counterpartyName ? `<div style="font-size:12px;color:#64748b;margin-top:2px">${this.esc(c.description)}</div>` : ''}
                 ${c.reference ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">อ้างอิง: ${this.esc(c.reference)}</div>` : ''}
@@ -2588,8 +2675,34 @@
         const op = document.getElementById('fOpening');
         op.value = '0'; op.disabled = false;
         document.getElementById('fOpeningHint').classList.add('hidden');
+        this._populateLinkedAccountSelect(null);
         Layout.openModal('formModal');
       },
+
+      // ผังบัญชีที่เชื่อมโยงของบัญชีธนาคาร — ไม่มีช่องนี้บนฟอร์มมาก่อน
+      // ⇒ บัญชีที่ `LinkedAccountId` ว่าง (ข้อมูลเก่า/นำเข้า) **ไม่มีทางแก้
+      // จากหน้าเว็บเลย** ทั้งที่ด่านกระทบยอด JE ต้องใช้ (รอบ 183 เปลี่ยนเป็น throw)
+      async _populateLinkedAccountSelect(selectedId) {
+        const sel = document.getElementById('fLinkedAccount');
+        if (!sel) return;
+        try {
+          if (!this._chartCache) {
+            const api = Layout.api();
+            const r = await api.getAccounts();
+            this._chartCache = (r.data?.items || r.data || []);
+          }
+          // เงินสด/เงินฝาก = 111x เท่านั้น — ผูกบัญชีธนาคารกับผังอื่นทำให้
+          // การกระทบยอดอ่าน "ขาที่วิ่งผ่านบัญชีนี้" ผิดใบ
+          const cash = this._chartCache.filter(a =>
+            (a.accountCode || '').toString().startsWith('111'));
+          sel.innerHTML = '<option value="">— ระบบสร้างให้อัตโนมัติ —</option>' +
+            cash.map(a => `<option value="${a.id}" ${a.id === selectedId ? 'selected' : ''}>${this.esc(a.accountCode)} - ${this.esc(a.accountName)}</option>`).join('');
+          if (selectedId) sel.value = selectedId;
+        } catch (e) {
+          sel.innerHTML = '<option value="">โหลดผังบัญชีไม่สำเร็จ</option>';
+        }
+      },
+
       openEdit(id) {
         const a = this.accounts.find(x => x.id === id);
         if (!a) return;
@@ -2605,6 +2718,7 @@
         const op = document.getElementById('fOpening');
         op.value = a.currentBalance ?? 0; op.disabled = true;
         document.getElementById('fOpeningHint').classList.remove('hidden');
+        this._populateLinkedAccountSelect(a.linkedAccountId || null);
         Layout.openModal('formModal');
       },
       async save() {
@@ -2618,6 +2732,9 @@
           accountType: document.getElementById('fAccType').value,
           currency: document.getElementById('fCurrency').value || 'THB',
           openingBalance: parseFloat(document.getElementById('fOpening').value) || 0,
+          // เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A) — ค่านี้ถูก hydrate กลับเข้าฟอร์ม
+          // ตอน openEdit จาก `BankAccountResponse.linkedAccountId`
+          linkedAccountId: document.getElementById('fLinkedAccount').value || null,
         };
         if (!data.accountName || !data.accountNumber) { Layout.toast('กรุณากรอกข้อมูลที่จำเป็น', 'error'); return; }
         try {

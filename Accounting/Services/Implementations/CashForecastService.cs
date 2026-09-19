@@ -104,29 +104,36 @@ public class CashForecastService : ICashForecastService
                 .Select(p => p.Name).FirstOrDefaultAsync(ct);
         }
 
+        // ===== พฤติกรรมการชำระจริงของคู่ค้าแต่ละราย =====
+        // ⚠ เดิมพยากรณ์ด้วย `DueDate` **ล้วน ๆ** (`DECISION_AUDIT_2026-09-18.md`
+        // §3 D4-8) ⇒ ลูกค้าที่จ่ายช้าเฉลี่ย 25 วันมาตลอดปี ยังถูกพยากรณ์ว่าจะจ่าย
+        // ตรงวัน ⇒ กราฟบอกว่าเงินพอ ทั้งที่จะขาดมือ. ตัวตัดสินอยู่ที่
+        // `Helpers/CashForecastTiming` (pure + มีเทสต์) — ที่นี่แค่ดึงข้อมูล
+        var lagByContact = await BuildPaymentLagHistoryAsync(companyId, ct);
+
+        CashForecastItem BuildDocItem(string source, Models.Entities.Document d)
+        {
+            lagByContact.TryGetValue(d.ContactId, out var lags);
+            var t = CashForecastTiming.Resolve(d.DueDate, d.DocumentDate, today, lags);
+            return new CashForecastItem(
+                source,
+                t.ExpectedDate,
+                d.BalanceDue,
+                d.Id, d.DocumentNumber,
+                d.ContactId, d.Contact?.Name,
+                d.ProjectId, d.Project?.Name,
+                t.Note,
+                t.Basis == CashTimingBasis.Overdue ? "Overdue" : "OnTime",
+                (int)(t.ExpectedDate - today).TotalDays,
+                TimingBasis: t.Basis.ToString(),
+                LagDaysApplied: t.LagDaysApplied);
+        }
+
         // ===== Materialize inflow / outflow items =====
-        var inflowItems = arDocs.Select(d => new CashForecastItem(
-            "AR",
-            (d.DueDate ?? d.DocumentDate).Date,
-            d.BalanceDue,
-            d.Id, d.DocumentNumber,
-            d.ContactId, d.Contact?.Name,
-            d.ProjectId, d.Project?.Name,
-            null,
-            (d.DueDate ?? d.DocumentDate).Date >= today ? "OnTime" : "Overdue",
-            (int)((d.DueDate ?? d.DocumentDate).Date - today).TotalDays))
+        var inflowItems = arDocs.Select(d => BuildDocItem("AR", d))
             .OrderBy(i => i.ExpectedDate).ToList();
 
-        var outflowItems = apDocs.Select(d => new CashForecastItem(
-            "AP",
-            (d.DueDate ?? d.DocumentDate).Date,
-            d.BalanceDue,
-            d.Id, d.DocumentNumber,
-            d.ContactId, d.Contact?.Name,
-            d.ProjectId, d.Project?.Name,
-            null,
-            (d.DueDate ?? d.DocumentDate).Date >= today ? "OnTime" : "Overdue",
-            (int)((d.DueDate ?? d.DocumentDate).Date - today).TotalDays))
+        var outflowItems = apDocs.Select(d => BuildDocItem("AP", d))
             .Concat(payrollItems)
             .OrderBy(i => i.ExpectedDate).ToList();
 
@@ -173,6 +180,41 @@ public class CashForecastService : ICashForecastService
             outflowItems.Sum(i => i.Amount),
             byDay, inflowItems, outflowItems,
             topDebtors, topCreditors, risks);
+    }
+
+    /// <summary>
+    /// "ใบที่ชำระครบแล้วของคู่ค้ารายนี้ ช้ากว่าวันครบกำหนดกี่วัน" — เก็บเป็น
+    /// ลิสต์ต่อ `ContactId` แล้วให้ <see cref="CashForecastTiming"/> หามัธยฐาน.
+    /// นับจาก **วันชำระงวดสุดท้าย** ของใบ (เงินเข้าจริงเมื่อไร) ไม่ใช่วันปิดใบ
+    /// · ดูย้อนหลัง 18 เดือนพอ — พฤติกรรมเก่ากว่านั้นไม่ได้บอกอะไรกับวันนี้
+    /// </summary>
+    private async Task<Dictionary<Guid, List<int>>> BuildPaymentLagHistoryAsync(
+        Guid companyId, CancellationToken ct)
+    {
+        var since = DateTime.UtcNow.Date.AddMonths(-18);
+        var rows = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted
+                && p.PaymentDate >= since
+                && p.Document.CompanyId == companyId
+                && p.Document.DueDate != null
+                && p.Document.Status != DocumentStatus.Voided)
+            .Select(p => new
+            {
+                p.Document.ContactId,
+                Due = p.Document.DueDate!.Value,
+                Paid = p.PaymentDate,
+            })
+            .ToListAsync(ct);
+
+        var map = new Dictionary<Guid, List<int>>();
+        foreach (var r in rows)
+        {
+            var lag = (int)(r.Paid.Date - r.Due.Date).TotalDays;
+            if (!map.TryGetValue(r.ContactId, out var list))
+                map[r.ContactId] = list = new List<int>();
+            list.Add(lag);
+        }
+        return map;
     }
 
     private static List<ArContactSummary> BuildArSummaries(List<Models.Entities.Document> docs, DateTime today)

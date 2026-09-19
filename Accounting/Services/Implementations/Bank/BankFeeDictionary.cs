@@ -5,10 +5,21 @@ namespace Accounting.Services.Implementations.Bank;
 /// catalogue of EXPECTED Thai-bank deductions, so a small mismatch is
 /// labelled with its real cause ("ค่าธรรมเนียมโอนข้ามธนาคาร 25 บาท",
 /// "หัก ณ ที่จ่าย 3%", "FX variance 1.8%") instead of just being
-/// flagged as "ยอดไม่ตรง". When the delta is explained the UI can
-/// surface a single-click "สร้าง JE ค่าธรรมเนียม" follow-up, and the
-/// confidence ceiling can stay high because the difference is
-/// understood — only an UNEXPLAINED delta should drop confidence.
+/// flagged as "ยอดไม่ตรง".
+///
+/// **สิ่งที่ตัวนี้ทำจริง** (ผู้เรียกเดียว: `BulkBankAiMatchService.Calibrate*`):
+/// (ก) เพดานความมั่นใจ — delta ที่อธิบายได้ถูกกดเหลือ 0.55/0.65 เพื่อบังคับ
+/// ให้คนเพิ่มบรรทัดส่วนต่างเอง · (ข) ข้อความไทยที่ **ตั้งชื่อสาเหตุ** +
+/// เสนอผังบัญชีที่แก้เป็นรหัสจริงของบริษัทผ่าน `CompanyChartOfAccountsResolver`
+///
+/// ⚠ **ของเดิมเขียนว่า "the UI can surface a single-click 'สร้าง JE
+/// ค่าธรรมเนียม' follow-up" — ไม่มีอยู่จริง** (`DECISION_AUDIT_2026-09-18.md`
+/// §3 D4-8 · F2 ข้อ 2 "มี ≠ ถูกเรียก"): ไม่มีหน้าไหน/endpoint ไหนรับผลของ
+/// `Classify` ไปสร้าง JE ให้อัตโนมัติ. การสร้าง JE ส่วนต่างวันนี้ทำที่
+/// `POST /bank/transactions/{id}/create-je` ซึ่ง **ผู้ใช้เลือกผังบัญชีเอง**
+/// และไม่ได้อ่านค่าจากตัวนี้เลย — คำสัญญาถูกลบออกเพื่อไม่ให้คนถัดมาสร้าง
+/// ฟีเจอร์ทับความเข้าใจผิด (ถ้าจะต่อสายจริง ต้องส่ง `SuggestedGlAccountKey`
+/// ที่ resolve แล้วไปถึงฟอร์ม `create-je` เป็นค่าตั้งต้น — งานคนละรอบ)
 /// </summary>
 public static class BankFeeDictionary
 {

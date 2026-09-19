@@ -201,10 +201,14 @@ public partial class BankService
             }
 
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
 
-            // Best-effort learning capture — failures don't roll back the confirmed match.
+            // CAPTURE (กฎเหล็ก #1) — **อยู่ในทรานแซกชันเดียวกัน** ไม่ใช่
+            // best-effort หลัง commit แบบเดิม: การบันทึกที่ล้มแล้วถูกกลืนด้วย
+            // `LogWarning` ทำให้คลังเรียนรู้หยุดโตโดยไม่มีอะไรฟ้อง (F2 ข้อ 7)
             await RecordReconciliationPatternsAsync(companyId, group.Id);
+            await _db.SaveChangesAsync();
+
+            await tx.CommitAsync();
 
             return await BuildGroupResponseAsync(companyId, group.Id);
         }
@@ -289,8 +293,11 @@ public partial class BankService
         {
             t.ReconciliationGroupId = null;
             t.ReconciliationStatus = ReconciliationStatus.Unmatched;
+            t.SuggestedDocumentId = null;
             t.ReconciledAt = null;
             t.ReconciledBy = null;
+            t.MatchRuleCode = null;
+            t.MatchReason = null;
             t.UpdatedAt = DateTime.UtcNow;
         }
 

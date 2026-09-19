@@ -63,7 +63,24 @@ public record BankTransactionResponse(
     string? Reference,
     string? Payee,
     ReconciliationStatus ReconciliationStatus,
-    Guid? MatchedPaymentId);
+    Guid? MatchedPaymentId,
+    // ── "ใครจับคู่ให้ · เพราะอะไร" ต้องเดินทางถึงจอ ────────────────────
+    // (`DECISION_AUDIT_2026-09-18.md` §3 D4-8) เดิม DTO ไม่มีช่องเหล่านี้เลย
+    // ⇒ หน้าจอบอกไม่ได้ว่าระบบ/AI/คน เป็นคนจับ และบอกไม่ได้ว่าทำไม
+    // `ReconciledByLabel` คำนวณที่เซิร์ฟเวอร์ (`Helpers/BankMatchAttribution`)
+    // — JS แสดงอย่างเดียว ห้ามถือสำเนาตารางป้าย (F2 ข้อ 5)
+    Guid? MatchedJournalEntryId = null,
+    // เอกสารที่ถูกเสนอไว้เมื่อยังไม่มีรายการชำระให้ผูก
+    Guid? SuggestedDocumentId = null,
+    // ค่าดิบในฐาน ("AutoMatch" / GUID ผู้ใช้ / …) — เผื่อ debug/ส่งออก
+    string? ReconciledBy = null,
+    DateTime? ReconciledAt = null,
+    // "System" | "Ai" | "Person" | "Api" | "Unknown" — enum ออกเป็น **ชื่อ** เสมอ
+    string? ReconciledByKind = null,
+    // ป้ายพร้อมแสดง เช่น "⚙️ ระบบ (จับคู่อัตโนมัติ)" · null = ไม่มีข้อมูล
+    string? ReconciledByLabel = null,
+    string? MatchRuleCode = null,
+    string? MatchReason = null);
 
 public record ReconcileRequest(
     Guid BankTransactionId,
@@ -217,7 +234,15 @@ public record MatchCandidate(
     // Helps user see whether the candidate is a cash receipt (won't appear on
     // bank statement) or a bank receipt/transfer (matches a bank txn directly).
     string? DepositLabel = null,   // e.g. "💵 เงินสด" / "🏦 KBANK 064-1-70621-3" / "💵 → 🏦"
-    string? DepositCategory = null);  // "Cash" / "Bank" / "Mixed" / "Other"
+    string? DepositCategory = null,  // "Cash" / "Bank" / "Mixed" / "Other"
+    // ── สกุลเงิน (`DECISION_AUDIT_2026-09-18.md` §3 D4-8 "FX") ──────────
+    // `Amount` คือยอดในสกุลของเอกสาร (สิ่งที่ผู้ใช้เห็นบนใบ) ส่วน
+    // `BankCurrencyAmount` คือยอดเดียวกันในสกุลของบัญชีธนาคาร = ตัวที่เอาไป
+    // เทียบจริง. null = แปลงไม่ได้ (ต้องโชว์เหตุผลใน `CurrencyNote` แทน
+    // **ห้ามซ่อนแถว** ไม่งั้นผู้ใช้ไม่มีทางไปต่อ)
+    string? Currency = null,
+    decimal? BankCurrencyAmount = null,
+    string? CurrencyNote = null);
 
 public record MatchCandidatesResponse(
     Guid BankTransactionId,
