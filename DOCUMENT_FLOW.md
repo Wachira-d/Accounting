@@ -2468,4 +2468,4 @@ _Last verified against codebase: 2026-09-19 (รอบ 183–184 — **ปิด
 ป้ายผู้กระทำ) · **§6.2e ใหม่** (บรรทัดเอกสารห้ามติดลบ — `Helpers/DocumentLineKind` เป็น OWNER file · ส่วนลดไปที่
 `DiscountAmount` รายบรรทัด/`BillDiscountAmount` ไม่ใช่บรรทัดติดลบ · ปิด P0 ออเดอร์หน้าร้านที่มีส่วนลดแล้วไม่เคยเข้าบัญชี) ·
 ประวัติเต็มของทั้งสองรอบอยู่ใน `CHANGELOG.md` · งานที่ยังต้องให้เจ้าของตัดสิน 9 ข้ออยู่ใน `DECISION_AUDIT_2026-09-18.md` §11.2
-— commit <pending>)_
+— commit ddc7a2b)_
