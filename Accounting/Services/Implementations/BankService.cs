@@ -625,9 +625,8 @@ public partial class BankService : IBankService
         await CaptureConfirmedMatchAsync(companyId, transaction, captured);
 
         await _db.SaveChangesAsync();
-        var reconcilerName = await _db.Users.AsNoTracking()
-            .Where(u => u.Id == reconcilerId && u.CompanyId == companyId)
-            .Select(u => u.FullName).FirstOrDefaultAsync();
+        var reconcilerName = (await CompanyMemberNamesAsync(companyId, new[] { reconcilerId }))
+            .Values.FirstOrDefault();
         return MapTransactionToResponse(transaction, reconcilerName);
     }
 
@@ -1112,10 +1111,27 @@ public partial class BankService : IBankService
                 core = core[..^Accounting.Helpers.BankMatchAttribution.AiAssistedSuffix.Length];
             if (Guid.TryParse(core, out var uid) && uid != Guid.Empty) ids.Add(uid);
         }
-        if (ids.Count == 0) return new Dictionary<string, string>();
-        var list = ids.ToList();
+        return await CompanyMemberNamesAsync(companyId, ids);
+    }
+
+    /// <summary>ชื่อผู้ใช้ของ id ที่ส่งมา — **เฉพาะคนที่เป็นสมาชิกของบริษัทนี้**
+    ///
+    /// <para><c>User</c> ไม่มีช่อง <c>CompanyId</c> (คนหนึ่งอยู่ได้หลายบริษัท) ⇒
+    /// ความเป็นสมาชิกอยู่ที่ <c>CompanyUsers</c> ซึ่งเป็นตารางเดียวกับที่
+    /// <c>TenantGuard</c> ใช้ตัดสิน ⇒ การกรองด้วยตารางนี้คือ tenant isolation
+    /// ตัวจริง (กฎ M) · id ที่ไม่ได้เป็นสมาชิกจะ**หายไปจากผลลัพธ์** ⇒ ฝั่งเรียก
+    /// แสดง "ไม่ทราบผู้ทำรายการ" แทนการเผยชื่อคนของบริษัทอื่น</para>
+    ///
+    /// <para>เป็นจุดเดียวในไฟล์นี้ที่ตอบคำถาม "ผู้ใช้คนนี้อยู่บริษัทนี้ไหม" —
+    /// ผู้เรียกทั้งสองเส้น (จับคู่ 1:1 · ตารางรายการ) เดินตัวเดียวกัน</para></summary>
+    private async Task<Dictionary<string, string>> CompanyMemberNamesAsync(
+        Guid companyId, IEnumerable<Guid> userIds)
+    {
+        var list = userIds.Distinct().Where(id => id != Guid.Empty).ToList();
+        if (list.Count == 0) return new Dictionary<string, string>();
         var users = await _db.Users.AsNoTracking()
-            .Where(u => list.Contains(u.Id) && u.CompanyId == companyId)
+            .Where(u => list.Contains(u.Id)
+                && _db.CompanyUsers.Any(cu => cu.UserId == u.Id && cu.CompanyId == companyId))
             .Select(u => new { u.Id, u.FullName })
             .ToListAsync();
         return users.ToDictionary(u => u.Id.ToString("D"), u => u.FullName ?? "");
