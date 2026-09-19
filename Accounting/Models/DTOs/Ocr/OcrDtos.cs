@@ -1,4 +1,5 @@
 namespace Accounting.Models.DTOs.Ocr;
+using Accounting.Helpers;
 
 public record OcrResultResponse(
     Guid Id, string OriginalFileName, string ScanStatus, string? DocumentType, decimal Confidence,
@@ -127,6 +128,9 @@ public record OcrResultResponse(
     /// <summary>อัตราหัก ณ ที่จ่ายที่ **กฎหมายกำหนด** สำหรับหมวดรายจ่ายนี้ (ท.ป.4/2528)
     /// — ข้อเสนอ ไม่ใช่ค่าที่ระบบตั้งให้ (<c>WhtRate</c> = ยอดที่พิมพ์บนกระดาษ)</summary>
     decimal? SuggestedWhtRate = null,
+    /// <summary>ที่มาของ <see cref="SuggestedWhtRate"/> — หน้าเว็บติดป้ายซื่อสัตย์ได้ว่า
+    /// "กฎหมายกำหนด" หรือ "ผู้ขายรายนี้เคยถูกหัก" โดยไม่ต้องเดาจากช่องอื่น (D-3)</summary>
+    WhtEvidenceSource SuggestedWhtSource = WhtEvidenceSource.None,
     /// <summary>รหัสประเภทเงินได้ ม.40 — บังคับก่อนออก 50 ทวิ/ภ.ง.ด.3/53 (T4-06)</summary>
     string? WhtIncomeTypeCode = null,
     /// <summary>หมายเหตุ/เหตุผลทางธุรกิจที่ผู้ใช้เขียน (§65 ตรี(3)/(14)) — ต้อง echo

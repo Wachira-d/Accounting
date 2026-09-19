@@ -3167,9 +3167,17 @@ public class AiSuggestionController : ControllerBase
     }
 
     // ────────────────────────────────────────────────────────────────
-    //  Reorder forecast narrative — wraps the Croston output with a
-    //  DeepSeek prose summary so admin gets a one-line per-SKU
-    //  recommendation ("SKU 1234 จะหมดใน 7 วัน — แนะนำสั่ง 50 ชิ้น").
+    //  Reorder forecast narrative — **เลขคณิตล้วน ไม่เรียก AI** (D-5)
+    //
+    //  ⚠️ เดิมส่งตารางที่เราคำนวณเสร็จแล้วไปให้ DeepSeek เรียบเรียงเป็นร้อยแก้ว
+    //  ซึ่งผิดเกณฑ์ DECISION_DOCTRINE §2.1 สองข้อพร้อมกัน (ถามสิ่งที่เราเพิ่ง
+    //  คำนวณเอง · คำตอบไม่ใช่ชุดปิดที่ตรวจกลับได้) และเป็น AiFeatureKey ตัวเดียว
+    //  ในระบบที่ยิง provider โดยไม่มี ILocalDistillationModel ⇒ ปิด provider
+    //  ทุกตัวแล้ว endpoint ตอบ "AI ปิดอยู่" = kill-switch test ไม่ผ่าน
+    //
+    //  ตอนนี้ประโยคมาจาก Helpers/ReorderNarrative (pure + มีเทสต์) ⇒ ทำงานครบ
+    //  100% เมื่อ AI ดับ/เกินงบ/ไม่มีเน็ต · `usedAi` คง false เสมอเพื่อให้หน้าจอ
+    //  ติดป้ายซื่อสัตย์ (กฎเหล็ก #1: "🤖 AI แนะนำ" เฉพาะตอนเรียกจริง)
     // ────────────────────────────────────────────────────────────────
     public sealed record ReorderNarrativeRequest(
         List<ReorderNarrativeRow> Rows);
@@ -3180,60 +3188,22 @@ public class AiSuggestionController : ControllerBase
         decimal SuggestedOrderQuantity, string Urgency);
 
     [HttpPost("inventory/reorder-narrative")]
-    public async Task<ActionResult<ApiResponse<object>>> ReorderNarrative(
-        Guid companyId, [FromBody] ReorderNarrativeRequest req,
-        [FromServices] IAiOrchestrator orchestrator,
-        CancellationToken ct)
+    public ActionResult<ApiResponse<object>> ReorderNarrative(
+        Guid companyId, [FromBody] ReorderNarrativeRequest req)
     {
-        if (req.Rows == null || req.Rows.Count == 0)
-            return Ok(new ApiResponse<object>(true, new { narrative = "", usedAi = false }));
-        var payload = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            task = "reorder_forecast_narrative",
-            rows = req.Rows.Take(40),       // cap context
-        });
-        var aiReq = new AiRequest
-        {
-            FeatureKey = AiFeatureKey.ReorderForecast,
-            CompanyId = companyId,
-            SystemPrompt = "You are a Thai inventory analyst. Given a Croston-forecasted reorder report, produce 3-5 sentences in Thai prioritising which SKUs to act on first + why. Be specific (use SKU codes + amounts).",
-            UserPromptJson = payload,
-            CacheTtlOverrideDays = 1,
-            MaxTokensOverride = 600,
-        };
-        var resp = await orchestrator.AskAsync(aiReq, ct);
-        // Three-state outcome (the previous "?? Reasoning ?? ''" fallback
-        // was useful but ambiguous — the operator couldn't tell whether
-        // AI was off, returned bad output, or genuinely had nothing to
-        // say). Now status makes it explicit.
-        string narrative;
-        string status;
-        if (!resp.UsedAi)
-        {
-            narrative = "AI ปิดอยู่หรือไม่พร้อมใช้งาน — ลองอีกครั้งหรือดูข้อมูล raw จากตารางด้านบน";
-            status = "ai_unavailable";
-        }
-        else if (!string.IsNullOrWhiteSpace(resp.PrimaryAnswer))
-        {
-            narrative = resp.PrimaryAnswer!;
-            status = "ok";
-        }
-        else if (!string.IsNullOrWhiteSpace(resp.Reasoning))
-        {
-            narrative = resp.Reasoning!;
-            status = "partial";    // AI ran but PrimaryAnswer was empty
-        }
-        else
-        {
-            narrative = "AI ตอบแต่ผลว่าง — ลองดูจาก raw data แทน";
-            status = "empty_response";
-        }
+        var rows = (req?.Rows ?? new List<ReorderNarrativeRow>())
+            .Select(r => new Accounting.Helpers.ReorderRow(
+                r.Sku, r.Name, r.CurrentStock, r.AvgDailyDemand,
+                r.DaysOfStockRemaining, r.SuggestedOrderQuantity, r.Urgency))
+            .ToList();
         return Ok(new ApiResponse<object>(true, new
         {
-            narrative,
-            status,
-            usedAi = resp.UsedAi,
-            feedbackId = resp.FeedbackId,
+            narrative = Accounting.Helpers.ReorderNarrative.Build(rows),
+            // สามสถานะเดิมยุบเหลือหนึ่ง: ตัวคำนวณเชิงกำหนดตอบได้เสมอ จึงไม่มี
+            // "ai_unavailable" / "empty_response" อีกต่อไป
+            status = "ok",
+            usedAi = false,
+            feedbackId = (Guid?)null,
         }));
     }
 

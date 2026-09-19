@@ -19,9 +19,11 @@ namespace Accounting.Services.Implementations.Inventory;
 ///   • Local view: /stock/reorder-forecast — table for AP / purchasing
 ///     team. Sortable by "days to stockout" so the most urgent items
 ///     surface first.
-///   • AI narrative (AiFeatureKey.ReorderForecast): DeepSeek wraps the
-///     numeric report in Thai prose + suggests vendors based on
-///     historical purchase patterns. Triggered per row.
+///   • Narrative (Helpers/ReorderNarrative): **เลขคณิตล้วน ไม่เรียก AI** —
+///     เรียบเรียงแถวข้างบนเป็นประโยคไทย ผ่าน endpoint
+///     POST ai/inventory/reorder-narrative (D-5 รอบ 184: เดิมส่งตารางนี้ไปให้
+///     DeepSeek เล่าเรื่อง = ถามสิ่งที่เราเพิ่งคำนวณเอง + ไม่มีนักเรียนรองรับ
+///     ⇒ kill-switch ไม่ผ่าน)
 /// </summary>
 public interface IInventoryReorderForecastService
 {

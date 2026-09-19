@@ -1579,20 +1579,40 @@ public class OcrService : IOcrService
                 // ตอนนี้เขียนลง `SuggestedWhtRate` (ช่อง "ข้อเสนอ") + ความมั่นใจราย
                 // ช่อง (< 0.85 ⇒ ไฮไลต์เหลืองตามกฎเหล็ก #3 ข้อ 3) ⇒ เส้นสร้างเอกสาร
                 // ออกคำเตือน [WHT-SUGGEST] ให้คนตัดสิน แต่ไม่หักเงินให้เอง
-                if (!extractedData.HasWht && !extractedData.SuggestedWhtRate.HasValue
-                    && vendorPred.HasWht == true && vendorPred.WhtRate.HasValue
-                    && vendorPred.WhtConfidence >= VendorIntelligenceService.MediumConfidence)
+                //
+                // ── รอบ 184 (D-3 ส่วนที่เหลือ) — "ประวัติใบเดียวไม่ใช่ประวัติ" ──
+                // เกณฑ์เดิมคือ MediumConfidence (0.65) และ **ไม่มีขั้นต่ำของขนาด
+                // ตัวอย่างเลย** ⇒ ผู้ขายที่มีเอกสารใบเดียวได้ WhtConfidence =
+                // max(p, 1−p) = 1.0 ทันที (บล็อกนี้ไม่มี sizeFactor ต่างจากบล็อก
+                // ชนิดเอกสาร/ผังบัญชีข้างบน) ⇒ ใบแรกของผู้ขายใหม่กลายเป็น "นิสัย"
+                // ตอนนี้ทุกเงื่อนไขอยู่ใน Helpers/OcrWhtSuggestionGate ตัวเดียว
+                // (เกณฑ์เป็น public const ให้เทสต์อ้างได้ · G6)
+                var whtGate = Accounting.Helpers.OcrWhtSuggestionGate.Judge(
+                    paperAlreadyAnswered: extractedData.HasWht,
+                    historyLeansToWithhold: vendorPred.HasWht == true,
+                    historyRate: vendorPred.WhtRate,
+                    totalDocuments: vendorPred.SampleSize,
+                    dominance: vendorPred.WhtConfidence);
+                if (whtGate.Suggest)
                 {
-                    extractedData.SuggestedWhtRate = vendorPred.WhtRate;
-                    extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] =
-                        (double)vendorPred.WhtConfidence;
-                    extractedData.Note(Accounting.Helpers.OcrFieldKeys.WhtRate, vendorPred.WhtRate,
+                    // บล็อกนี้**เสนออย่างเดียว ไม่เขียนค่า**: คนตัดสินคือ
+                    // ApplyWhtSuggestion (arbiter) ท้ายไปป์ไลน์ — เลิก "ใครเขียนก่อนชนะ"
+                    extractedData.Note(Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate,
+                        vendorPred.WhtRate,
                         Accounting.Helpers.OcrFieldSource.VendorHistory, vendorPred.WhtConfidence,
                         "ประวัติการหัก ณ ที่จ่ายของผู้ขายรายนี้ — ไม่ใช่ยอดบนกระดาษใบนี้");
                     extractedData.ReasoningTrace.Add(
-                        $"[VendorIntel] **เสนอ** หัก ณ ที่จ่าย {vendorPred.WhtRate}% จากประวัติผู้ขาย "
-                        + $"(confidence {vendorPred.WhtConfidence:P0}) — กระดาษใบนี้ไม่ได้พิมพ์ไว้ "
-                        + "ระบบจึงไม่หักให้ ต้องให้ผู้ใช้ยืนยันก่อน");
+                        $"[VendorIntel] **เสนอ** หัก ณ ที่จ่าย {vendorPred.WhtRate}% — {whtGate.Reason} "
+                        + "· ระบบไม่หักให้ ต้องให้ผู้ใช้ยืนยันก่อน");
+                }
+                else if (vendorPred.HasWht == true && vendorPred.WhtRate is > 0m
+                         && !extractedData.HasWht && !extractedData.SuggestedWhtRate.HasValue)
+                {
+                    // ทางไปต่อของผู้ใช้ที่ถูกกัน (F2 ข้อ 8): บอกว่า**ทำไมไม่เสนอ**
+                    // แทนที่จะเงียบ — ช่องอัตรายังกรอกเองได้ตามปกติ
+                    extractedData.ReasoningTrace.Add(
+                        $"[VendorIntel] ไม่เสนออัตราหัก ณ ที่จ่ายจากประวัติ — {whtGate.Reason} "
+                        + "· กรอกเองได้ในช่อง \"อัตราหัก ณ ที่จ่าย\"");
                 }
 
                 // Auto-fill payment terms when missing
@@ -1961,9 +1981,23 @@ public class OcrService : IOcrService
                     + "ค่าใช้จ่ายของงวด ต้องหักกลบเมื่อได้รับใบกำกับเต็มจำนวน";
             }
 
+            // ── D-4 ขั้นที่ 1: ให้ arbiter **ตัดสินจริง** หนึ่งช่อง ────────────────
+            // ช่องที่เลือกคือ "อัตราหัก ณ ที่จ่ายที่ระบบเสนอ" เพราะมีผู้เสนอสองราย
+            // ที่วันนี้แข่งกันด้วย "ใครเขียนก่อนชนะ" (ตัวจัดหมวดรันที่ :1314 ·
+            // ประวัติผู้ขายรันที่ :1590 แล้วถูกกันด้วย `!HasValue`) — ทิศที่ความ
+            // เสียหายมองเห็นและแก้ทัน (G5): ค่านี้เป็น **ข้อเสนอ** ที่ขึ้นไฮไลต์
+            // เหลือง + โน้ต [WHT-SUGGEST] เสมอ ไม่เคยหักเงินให้เอง
+            //
+            // ⚠️ **ไม่ได้สลับลำดับชั้น** (กฎเหล็ก #4 H): `Statute` เป็นชั้นที่เพิ่ม
+            // ใหม่และอยู่เหนือ `VendorHistory` ⇒ เมื่อทั้งสองเสนอ ผู้ชนะยังเป็น
+            // ตารางกฎหมายเหมือนเดิมทุกใบ · ที่เปลี่ยนคือ**เหตุผลของการชนะ**
+            // (จากลำดับบรรทัด → จากลำดับชั้นหลักฐานที่ประกาศไว้เป็นข้อมูล)
+            ApplyWhtSuggestion(extractedData);
+
             // ข้อเสนอ WHT ตามกฎหมาย + ประเภทเงินได้ ม.40 — ต้อง persist ไม่งั้นหายตอน
             // reload หน้า และเส้นสร้างเอกสารอ่านจากแถวนี้ (T1-07 · T4-06)
             scanResult.SuggestedWhtRate = extractedData.SuggestedWhtRate;
+            scanResult.SuggestedWhtSource = extractedData.SuggestedWhtSource;
             scanResult.WhtIncomeTypeCode = extractedData.WhtIncomeTypeCode;
 
             // ───── Re-sync mutable fields (extractedData → scanResult) ─────
@@ -2317,10 +2351,22 @@ public class OcrService : IOcrService
             // ⇒ ผู้เสนอทุกรายหลังจุดนั้น (รวมชั้นที่ **เปลี่ยนชนิดเอกสาร**) ถูกทิ้ง
             // เงียบ ๆ — สมุดที่ควรตอบว่า "ค่านี้มาจากไหน" จึงตอบได้แค่ครึ่งแรกของ
             // ไปป์ไลน์. ตัวตัดสินยังไม่ย้าย (ลำดับเดิมทุกประการ) แต่สมุดครบแล้ว
+            //
+            // ── รอบ 184 (D-4 ขั้นที่ 1) — สมุดต้องรายงาน "ค่าที่อยู่ในฟอร์มจริง" ──
+            // เดิมสมุดแสดงผลของ `DecideAll` ตรง ๆ ทั้งที่ arbiter ไม่ได้ตัดสินอะไร
+            // ⇒ ป้าย "🧾 ค่านี้มาจากไหน" ขัดกับค่าที่ผู้ใช้เห็นได้โดยไม่มีอะไรฟ้อง (V1)
+            // ตอนนี้: ค่าจริงมาก่อน → ผู้เสนอที่ตรงกับค่าจริงคือ "ที่มา" →
+            // ไม่มีใครตรง ⇒ Unknown (ห้ามยกผู้ชนะของ arbiter มาสวม)
+            // และเก็บ `arbiterAgreed` ไว้เป็นตัววัดว่าพร้อมทำขั้นที่ 2 เมื่อไร
             if (extractedData.FieldCandidates.Count > 0)
             {
-                var decisions = Accounting.Helpers.OcrFieldArbiter.DecideAll(extractedData.FieldCandidates);
-                scanResult.FieldDecisionsJson = Accounting.Helpers.OcrFieldArbiter.ToJson(decisions);
+                var provenance = Accounting.Helpers.OcrFieldProvenance.Build(
+                    extractedData.FieldCandidates, BuildActualFieldValues(extractedData));
+                scanResult.FieldDecisionsJson = Accounting.Helpers.OcrFieldProvenance.ToJson(provenance);
+                if (provenance.ArbiterAgreed is decimal agreedRatio)
+                    extractedData.ReasoningTrace.Add(
+                        $"[Arbiter] ตัวตัดสินเห็นด้วยกับค่าที่ใช้จริง {provenance.Agreed}/{provenance.Compared} ช่อง "
+                        + $"({agreedRatio:P0}) — ต่ำ = ยังมีชั้นที่เขียนค่าโดยไม่ผ่านตัวตัดสิน");
             }
 
             // ห้ามจับคู่คู่ค้าเป็น **บริษัทเราเอง** — Contact ของตัวเองมีอยู่จริงในหลาย tenant
@@ -3843,6 +3889,87 @@ public class OcrService : IOcrService
             + $"(มั่นใจ {confidence:P0}) — {why}");
     }
 
+    /// <summary>**ค่าที่อยู่ในฟอร์มจริง ณ ตอนนี้** ต่อช่องกลาง (<see cref="Accounting.Helpers.OcrFieldKeys"/>)
+    /// — ตัวป้อนของสมุด "ค่านี้มาจากไหน" (<see cref="Accounting.Helpers.OcrFieldProvenance"/>)
+    ///
+    /// <para>ช่องที่<b>ไม่อยู่ใน dictionary นี้</b> แปลว่า "ยังไม่ได้ตรวจ" และจะไม่ถูกนับ
+    /// เข้าตัวหารของ <c>arbiterAgreed</c> — ต่างจากช่องที่อยู่แต่ค่าเป็น <c>null</c>
+    /// ซึ่งแปลว่า "ตรวจแล้ว ฟอร์มยังว่าง" (undefined ≠ null ≠ 0)</para>
+    ///
+    /// <para>รูปของค่าต้องตรงกับที่ <c>Note()</c> บันทึก (<c>"0.00"</c> สำหรับจำนวนเงิน ·
+    /// <c>"yyyy-MM-dd"</c> สำหรับวันที่) มิฉะนั้น "ค่าเดียวกัน" จะดูเหมือนคนละค่า —
+    /// ส่วนการเทียบตัวเลขยังผ่าน <c>OcrFieldProvenance.SameValue</c> อีกชั้น</para></summary>
+    private static Dictionary<string, string?> BuildActualFieldValues(OcrExtractedData d)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        // ชื่อ Amt (ไม่ใช่ Money) — กันชนกับเมธอด Money(decimal) ของที่อื่นในเรพ
+        string? Amt(decimal? v) => v?.ToString("0.00", inv);
+        return new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [Accounting.Helpers.OcrFieldKeys.SellerName] = d.VendorName,
+            [Accounting.Helpers.OcrFieldKeys.SellerTaxId] = d.VendorTaxId,
+            [Accounting.Helpers.OcrFieldKeys.BuyerName] = d.BuyerName,
+            [Accounting.Helpers.OcrFieldKeys.BuyerTaxId] = d.BuyerTaxId,
+            [Accounting.Helpers.OcrFieldKeys.SellerAddress] = d.VendorAddress,
+            [Accounting.Helpers.OcrFieldKeys.BuyerAddress] = d.BuyerAddress,
+            [Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = d.VendorBranchCode,
+            [Accounting.Helpers.OcrFieldKeys.BuyerBranchCode] = d.BuyerBranchCode,
+            [Accounting.Helpers.OcrFieldKeys.DocumentNumber] = d.DocumentNumber,
+            [Accounting.Helpers.OcrFieldKeys.DocumentDate] = d.DocumentDate?.ToString("yyyy-MM-dd", inv),
+            [Accounting.Helpers.OcrFieldKeys.SubTotal] = Amt(d.SubTotal),
+            [Accounting.Helpers.OcrFieldKeys.VatAmount] = Amt(d.VatAmount),
+            [Accounting.Helpers.OcrFieldKeys.TotalAmount] = Amt(d.TotalAmount),
+            [Accounting.Helpers.OcrFieldKeys.WhtRate] = Amt(d.WhtRate),
+            [Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate] = Amt(d.SuggestedWhtRate),
+            [Accounting.Helpers.OcrFieldKeys.ExpenseCategory] = d.ExpenseCategory,
+            [Accounting.Helpers.OcrFieldKeys.DebitAccount] = d.DebitAccountCode,
+            [Accounting.Helpers.OcrFieldKeys.PaymentTerms] = d.PaymentTermsDays?.ToString(inv),
+            [Accounting.Helpers.OcrFieldKeys.TargetDocumentType] = d.TargetDocumentType,
+        };
+    }
+
+    /// <summary>**ตัวตัดสิน "อัตราหัก ณ ที่จ่ายที่ระบบเสนอ" ตัวเดียวของไปป์ไลน์** (D-4 ขั้นที่ 1)
+    ///
+    /// <para>ทุกชั้นที่เสนออัตรามีหน้าที่ <c>Note(OcrFieldKeys.SuggestedWhtRate, …)</c>
+    /// อย่างเดียว — <b>ห้ามเขียน <c>data.SuggestedWhtRate</c> เองอีก</b>. คนตัดสินคือ
+    /// <see cref="Accounting.Helpers.OcrFieldArbiter"/> ซึ่งเรียงด้วยตาราง
+    /// <c>Precedence</c> (ข้อมูล) ไม่ใช่ลำดับบรรทัด</para>
+    ///
+    /// <para>ข้อยกเว้นที่ตั้งใจ: <c>ExpenseCategoryResolver</c> ยังเขียนค่าตั้งต้นไว้ด้วย
+    /// เพื่อให้เส้นที่เรียกมันแบบเดี่ยว ๆ (เทสต์ · ตัวเรียกอื่น) ได้คำตอบเดิม —
+    /// เมธอดนี้ <b>เขียนทับด้วยผลของ arbiter เสมอ</b> เมื่อมีผู้เสนอในสมุด ⇒ ผลสุดท้าย
+    /// ของไปป์ไลน์มาจากตัวตัดสินตัวเดียว</para>
+    ///
+    /// <para><b>ไม่มีผู้เสนอ = ไม่แตะอะไร</b> (ห้ามล้างค่าที่ชั้นอื่นตั้งไว้ด้วยความว่าง)</para></summary>
+    internal static void ApplyWhtSuggestion(OcrExtractedData data)
+    {
+        var decision = Accounting.Helpers.OcrFieldArbiter.Decide(
+            Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate, data.FieldCandidates);
+        if (decision?.Value == null) return;
+        if (!decimal.TryParse(decision.Value, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var rate) || rate <= 0m)
+            return;
+
+        var source = Accounting.Helpers.OcrWhtSuggestionGate.FromFieldSource(decision.Source);
+        var changed = data.SuggestedWhtRate != rate || data.SuggestedWhtSource != source;
+        data.SuggestedWhtRate = rate;
+        data.SuggestedWhtSource = source;
+        // กฎเหล็ก #3 ข้อ 3 — ข้อเสนอต้องมีคะแนนรายช่องเสมอ (ขาดคะแนน = ไม่มีไฮไลต์
+        // = ผู้ใช้ไม่รู้ว่าต้องตรวจ) และต้องต่ำกว่า 0.85 เพราะกระดาษใบนี้ไม่ได้พิมพ์ไว้
+        data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] =
+            Accounting.Helpers.OcrWhtSuggestionGate.SuggestionFieldConfidence;
+
+        if (!changed) return;
+        var losers = decision.Alternatives
+            .Where(a => !Accounting.Helpers.OcrFieldProvenance.SameValue(a.Value, decision.Value))
+            .Select(a => $"{a.Value}% ({Accounting.Helpers.OcrFieldArbiter.SourceLabel(a.Source)})")
+            .ToList();
+        data.ReasoningTrace.Add(
+            $"[WHT-ARBITER] เลือกอัตราที่เสนอ {rate}% · ที่มา "
+            + Accounting.Helpers.OcrWhtSuggestionGate.Describe(source)
+            + (losers.Count > 0 ? $" · แหล่งอื่นเสนอ: {string.Join(" · ", losers)}" : ""));
+    }
+
     /// <summary>**รูปเดียวของ "บรรทัดที่สแกนได้" ที่ลงฐาน** (<c>OcrScanResult.ExtractedItemsJson</c>)
     ///
     /// <para>ทุกฝั่งที่เขียนต้องผ่านตัวนี้ — ห้าม projection มือ. ที่มา (D3-1): ไปป์ไลน์เคย
@@ -4519,6 +4646,24 @@ public class OcrService : IOcrService
         {
             try
             {
+                // ── D-3 · ทางเข้าที่สองของ "ประวัติ WHT" ที่เคยไม่เดินด่าน ──
+                //
+                // ⚠️ บล็อกนี้ยิงเมื่อผู้ใช้เปลี่ยน **ชนิดเอกสารที่จะสร้าง** แต่ส่ง
+                // `whtRate` ที่ฟอร์มพกมาด้วยเข้าไปสอนคลังประวัติเสมอ ⇒ ค่าที่
+                // **ระบบเป็นคนเติมเองแล้วผู้ใช้ไม่เคยแตะ** กลายเป็น "ประวัติของ
+                // ผู้ขาย" ผ่านประตูหลัง — วงจรสอนตัวเองตัวเดียวกับ D3-2 ที่รอบ 183
+                // ปิดไปแล้วที่ `TrainFromDocumentAsync` (ราก R5: ทางเข้าอื่นไม่เดินด่าน)
+                //
+                // ใช้ตัวตัดสินตัวเดียวกัน (`OcrWhtLearningScope`) ไม่ใช่เขียนเกณฑ์ใหม่
+                var paperWht = Accounting.Helpers.PaperWhtReader.Read(result.RawTextContent);
+                var whtLearn = Accounting.Helpers.OcrWhtLearningScope.Decide(
+                    hasScan: true,
+                    paperShowsWht: paperWht.Amount is > 0m || paperWht.RatePercent is > 0m,
+                    userCorrectedFields: result.UserCorrectedFields);
+                if (!whtLearn.Learn && correction.WhtRate.HasValue)
+                    _logger.LogInformation(
+                        "ไม่สอนประวัติ WHT ของผู้ขายจากสแกน {ScanId} — {Reason}",
+                        result.Id, Accounting.Helpers.OcrWhtLearningScope.Explain(whtLearn.Evidence));
                 await _vendorIntel.TrainFromAdminAsync(
                     companyId,
                     correction.VendorTaxId ?? result.ExtractedVendorTaxId,
@@ -4526,7 +4671,7 @@ public class OcrService : IOcrService
                     corrTarget,
                     debitAccountCode: correction.DebitAccountCode,
                     debitAccountName: null,
-                    whtRate: correction.WhtRate,
+                    whtRate: whtLearn.Learn ? correction.WhtRate : null,
                     paymentTermsDays: null,
                     weight: 1);
             }
@@ -5778,17 +5923,33 @@ public class OcrService : IOcrService
             && Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase, 0m))
         {
             var it = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
-            // ⚠️ ข้อเสนอมาได้ 2 ทาง และ**ข้อความต้องบอกตรงว่ามาจากไหน** (D3-2):
-            //   • มีรหัสประเภทเงินได้ ม.40 = ตัวจัดหมวดอ่านจากรายการบนกระดาษ ⇒ อ้าง
-            //     กฎหมายได้ ("หมวดนี้กฎหมายให้หัก")
-            //   • ไม่มีรหัส = มาจากประวัติผู้ขาย (VendorIntel) ⇒ อ้างกฎหมายไม่ได้
-            //     ("เคยหักเป็นปกติ") — ประโยคที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง
+            // ⚠️ ข้อเสนอมาได้ 2 ทาง และ**ข้อความต้องบอกตรงว่ามาจากไหน** (D3-2 · D-3)
+            //
+            // เดิมเลือกประโยคด้วย `it != null` (= "มีรหัสประเภทเงินได้ ม.40 ไหม")
+            // ซึ่งเป็นการ**เดาที่มาจากช่องที่บังเอิญมีค่า**: ใบที่ข้อเสนอมาจากนิสัย
+            // ผู้ขายแต่มีรหัส ม.40 ติดมาจากชั้นอื่น จะได้ประโยค "หมวดนี้กฎหมายให้หัก"
+            // ⇒ ประโยคอ้างกฎหมายบนใบที่กฎหมายไม่ได้พูดอะไรเลย (หลักการข้อ 7:
+            // ข้อความที่ระบุ "สาเหตุ" ต้องตรวจสาเหตุนั้นจริง)
+            // ตอนนี้อ่านจาก `SuggestedWhtSource` ที่ตัวตัดสินประทับไว้ตรง ๆ
+            // แถวที่สแกนไว้**ก่อนรอบ 184** ไม่มีที่มาเก็บไว้ ⇒ `None` · ห้ามเดาว่าเป็น
+            // ชั้นไหน (ไม่รู้ = บอกว่าไม่รู้ · G3) และไม่มี migration เพราะ "ที่มา"
+            // ของใบเก่าไม่มีอยู่ในข้อมูลต้นทางอีกแล้ว — ดูสเปก §migration
+            var whtSuggestLine = result.SuggestedWhtSource switch
+            {
+                Accounting.Helpers.WhtEvidenceSource.Statute =>
+                    $"\n[WHT-SUGGEST] หมวดรายจ่ายนี้กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
+                        + (it != null ? $" ({it.TaxSection} {it.Name} → {string.Join("/", it.ApplicableForms)})" : ""),
+                Accounting.Helpers.WhtEvidenceSource.VendorHistory =>
+                    $"\n[WHT-SUGGEST] ผู้ขายรายนี้เคยถูกหัก ณ ที่จ่าย {result.SuggestedWhtRate}% เป็นปกติ"
+                        + " (จากประวัติของผู้ขาย ไม่ใช่จากกระดาษใบนี้)"
+                        + (it != null ? $" · ประเภทเงินได้ที่บันทึกไว้: {it.TaxSection} {it.Name}" : " และยังไม่รู้ประเภทเงินได้ ม.40"),
+                _ =>
+                    $"\n[WHT-SUGGEST] มีข้อเสนออัตราหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
+                        + " แต่**ไม่ทราบที่มา** (สแกนรุ่นก่อนบันทึกที่มา) — ตรวจกับกระดาษก่อนใช้"
+                        + (it != null ? $" · ประเภทเงินได้ที่บันทึกไว้: {it.TaxSection} {it.Name}" : ""),
+            };
             result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                + (it != null
-                    ? $"\n[WHT-SUGGEST] หมวดรายจ่ายนี้กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย {result.SuggestedWhtRate}%"
-                        + $" ({it.TaxSection} {it.Name} → {string.Join("/", it.ApplicableForms)})"
-                    : $"\n[WHT-SUGGEST] ผู้ขายรายนี้เคยถูกหัก ณ ที่จ่าย {result.SuggestedWhtRate}% เป็นปกติ"
-                        + " (จากประวัติของผู้ขาย ไม่ใช่จากกระดาษใบนี้ และยังไม่รู้ประเภทเงินได้ ม.40)")
+                + whtSuggestLine
                 + $" ≈ {Math.Round(whtBase * result.SuggestedWhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero):N2} บาท "
                 + "— กระดาษไม่ได้พิมพ์ไว้ ระบบจึงไม่หักให้ ตรวจแล้วกรอกในใบก่อนอนุมัติ";
         }
@@ -8226,6 +8387,7 @@ public class OcrService : IOcrService
             Currency: r.Currency ?? InferCurrency(r.RawTextContent),
             GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
             SuggestedWhtRate: r.SuggestedWhtRate,
+            SuggestedWhtSource: r.SuggestedWhtSource,
             WhtIncomeTypeCode: r.WhtIncomeTypeCode,
             UserNotes: r.UserNotes,
             FieldDecisionsJson: r.FieldDecisionsJson);
@@ -9150,6 +9312,14 @@ internal class OcrExtractedData
     /// <para>เป็น **ข้อเสนอ** ไม่ใช่การตัดสิน — ระบบไม่ตั้ง <c>HasWht</c> ให้เอง
     /// เพราะหักเกินก็ผิด (ผู้รับต้องไปขอคืน) หน้าเว็บโชว์เป็นปุ่ม "ใช้อัตรานี้"</para></summary>
     public decimal? SuggestedWhtRate { get; set; }
+
+    /// <summary>**ใครเป็นคนเสนออัตราใน <see cref="SuggestedWhtRate"/>** — ค่าที่เห็นได้
+    /// ไม่ใช่เดาย้อนจาก "ช่องไหนบังเอิญมีค่า" (D-3 · <c>Helpers/OcrWhtSuggestion</c>)
+    ///
+    /// <para>ตั้งโดย <c>ApplyWhtSuggestion</c> จากผลของ <c>Helpers/OcrFieldArbiter</c>
+    /// เท่านั้น — ชั้นที่เสนอมีหน้าที่ <c>Note()</c> อย่างเดียว</para></summary>
+    public Accounting.Helpers.WhtEvidenceSource SuggestedWhtSource { get; set; }
+        = Accounting.Helpers.WhtEvidenceSource.None;
 
     /// <summary>รหัสประเภทเงินได้ ม.40 (<see cref="Accounting.Helpers.ThaiWhtRateTable"/>) —
     /// จำเป็นต่อ **หนังสือรับรอง 50 ทวิ + ภ.ง.ด.3/53** ไม่ใช่แค่อัตรา (T4-06)</summary>

@@ -166,7 +166,16 @@ public class AiFeedbackTrainingJob : BackgroundService
             health.LocalAccuracy30d = r.LocalSamples > 0 ? (decimal)r.LocalCorrect / r.LocalSamples : 0m;
             health.AiAccuracy30d = r.AiSamples > 0 ? (decimal)r.AiCorrect / r.AiSamples : 0m;
             health.AgreementRate30d = r.Samples > 0 ? (decimal)r.Agreement / r.Samples : 0m;
+            health.AiSamplesLast30d = r.AiSamples;
             health.LastEvaluatedAt = DateTime.UtcNow;
+
+            // ── ตัวชี้วัดคู่: "โตจริง" ≠ "เงียบลง" (DECISION_DOCTRINE §3.2) ──
+            // `UsedAi` ที่ลดลงตีความได้สองทางที่ตรงข้ามกัน — ตัวเลขเดียวแยกไม่ออก
+            // จึงต้องอ่านความครอบคลุม + ความแม่น + จำนวน label ที่คนตั้งใจให้ พร้อมกัน
+            var growth = Accounting.Helpers.LocalGrowthVerdict.Judge(
+                r.Samples, r.LocalSamples, r.AiSamples,
+                health.LocalAccuracy30d, r.ExplicitLabels);
+            health.GrowthState = growth.State;
 
             // Status decision:
             //   Samples < 30                                     → InsufficientData
@@ -205,6 +214,12 @@ public class AiFeedbackTrainingJob : BackgroundService
                         ? "ลด sampling rate ลงได้ — local แทน AI ส่วนใหญ่ (ห้ามลดเหลือ 0)"
                         : "เหมาะสม");
             }
+
+            // คำตัดสิน "โต/เงียบ" ต้องอยู่**หน้าสุด**ของคำแนะนำ — มันเปลี่ยนความหมาย
+            // ของทุกตัวเลขที่ตามมา (เช่น "แม่น 100%" บนแถว Blind = ยืนยันไม่ได้)
+            health.Recommendation =
+                $"[{Accounting.Helpers.LocalGrowthVerdict.Label(growth.State)}] {growth.Reason} · "
+                + health.Recommendation;
         }
         // ── แถวยอดรวมทั้งแพลตฟอร์ม (CompanyId = null) ────────────────────────
         // หน้าแอดมินดูภาพรวมของทั้งระบบ ไม่ใช่ของบริษัทใดบริษัทหนึ่ง ⇒ ต้องมีแถวนี้

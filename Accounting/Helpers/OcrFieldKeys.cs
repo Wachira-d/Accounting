@@ -45,6 +45,15 @@ public static class OcrFieldKeys
     public const string VatAmount = "VatAmount";
     public const string TotalAmount = "TotalAmount";
     public const string WhtRate = "WhtRate";
+
+    /// <summary>อัตราหัก ณ ที่จ่ายที่ระบบ **เสนอ** (ไม่ใช่ที่พิมพ์บนกระดาษ — นั่นคือ
+    /// <see cref="WhtRate"/>) — แยกคีย์โดยตั้งใจ: สองค่านี้ตอบคนละคำถาม และถ้าใช้คีย์
+    /// เดียวกัน สมุด "ค่านี้มาจากไหน" จะรายงานว่า <c>WhtRate = 3</c> จากประวัติผู้ขาย
+    /// ขณะที่ช่องจริงบนฟอร์มเป็น 0 (= ป้ายที่มาขัดกับค่าที่ผู้ใช้เห็น · V1)
+    ///
+    /// <para>ℹ️ <c>FieldConfidence</c> ยัง<b>เขียนที่ <see cref="WhtRate"/></b> เพราะ
+    /// ไฮไลต์เหลืองผูกกับ<b>ช่องกรอกบนฟอร์ม</b> ซึ่งมีช่องเดียว (<c>fWhtRate</c>)</para></summary>
+    public const string SuggestedWhtRate = "SuggestedWhtRate";
     public const string ExpenseCategory = "ExpenseCategory";
     public const string DebitAccount = "DebitAccount";
     public const string PaymentTerms = "PaymentTerms";

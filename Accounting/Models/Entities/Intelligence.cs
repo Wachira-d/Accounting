@@ -361,6 +361,15 @@ public class OcrScanResult : TenantEntity
     /// ข้อเสนอ ไม่ใช่ค่าที่ระบบตัดสินให้ (ดู <c>OcrExtractedData.SuggestedWhtRate</c>)</summary>
     public decimal? SuggestedWhtRate { get; set; }
 
+    /// <summary>**ใครเป็นคนเสนออัตราใน <see cref="SuggestedWhtRate"/>**
+    /// (<c>Helpers/OcrWhtSuggestion</c> · D-3) — ต้องเก็บลงแถวเพราะเส้นสร้างเอกสาร
+    /// อ่านจากที่นี่เพื่อเขียนโน้ต <c>[WHT-SUGGEST]</c>
+    ///
+    /// <para>⚠️ ก่อนรอบ 184 เส้นนั้น<b>เดา</b>ที่มาจาก "มีรหัส ม.40 ไหม" ⇒ ประโยคที่
+    /// อ้างว่า "กฎหมายให้หัก" โผล่บนใบที่ข้อเสนอมาจากนิสัยผู้ขายได้</para></summary>
+    public Accounting.Helpers.WhtEvidenceSource SuggestedWhtSource { get; set; }
+        = Accounting.Helpers.WhtEvidenceSource.None;
+
     /// <summary>รหัสประเภทเงินได้ ม.40 — ต้องมีก่อนออก 50 ทวิ/ภ.ง.ด.3/53</summary>
     public string? WhtIncomeTypeCode { get; set; }
     public int? PaymentTermsDays { get; set; }

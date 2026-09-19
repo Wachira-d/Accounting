@@ -99,16 +99,23 @@ public class OcrFieldArbiterTests
         Assert.Equal("INV-1", all.First(d => d.Field == OcrFieldKeys.DocumentNumber).Value);
     }
 
+    /// <summary>รูป JSON ที่หน้าเว็บอ่าน **ย้ายไป <c>OcrFieldProvenance.ToJson</c>** แล้ว
+    /// (รอบ 184 · D-4 ขั้นที่ 1) เพราะสมุดต้องรายงาน "ค่าที่อยู่ในฟอร์มจริง" ไม่ใช่
+    /// ผู้ชนะของ arbiter เพียว ๆ — <c>OcrFieldArbiter.ToJson</c> จึงถูกลบทิ้ง
+    /// (ของที่ไม่มีใครเรียก = ไม่มี · F2 ข้อ 2) · เทสต์รูป JSON อยู่ที่
+    /// <c>OcrFieldProvenanceTests</c> · ที่นี่เหลือล็อกว่า <c>DecideAll</c> ยังคืนผู้ชนะถูก</summary>
     [Fact]
-    public void แปลงเป็น_JSON_ได้รูปที่หน้าเว็บอ่านได้()
+    public void DecideAll_ยังคืนผู้ชนะของแต่ละช่องพร้อมตัวเลือกที่แพ้()
     {
-        var json = OcrFieldArbiter.ToJson(OcrFieldArbiter.DecideAll(new[]
+        var all = OcrFieldArbiter.DecideAll(new[]
         {
             new OcrFieldCandidate(OcrFieldKeys.SellerName, "บจก. ก", OcrFieldSource.PaperLabel, 0.9m, "หัวกระดาษ"),
             new OcrFieldCandidate(OcrFieldKeys.SellerName, "บจก. ข", OcrFieldSource.VendorHistory, 0.8m),
-        }));
-        Assert.Contains("\"source\":\"PaperLabel\"", json);
-        Assert.Contains("\"alternatives\"", json);
-        Assert.Contains("VendorHistory", json);
+        });
+        var d = Assert.Single(all);
+        Assert.Equal("บจก. ก", d.Value);
+        Assert.Equal(OcrFieldSource.PaperLabel, d.Source);
+        Assert.Equal("หัวกระดาษ", d.Evidence);
+        Assert.Equal(OcrFieldSource.VendorHistory, Assert.Single(d.Alternatives).Source);
     }
 }

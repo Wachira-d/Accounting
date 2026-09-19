@@ -529,6 +529,19 @@ internal static class ExpenseCategoryResolver
             && result.MoneyBackedEvidence)
         {
             data.SuggestedWhtRate = effectiveWhtRate;
+            // ── ที่มาต้อง "เห็นได้" ไม่ใช่เดาจากช่องที่มีค่า (D-3 รอบ 184) ──
+            // ข้อความ [WHT-SUGGEST] เดิมเลือกประโยคด้วย `it != null` (มีรหัส ม.40 ไหม)
+            // ⇒ เดาที่มาจากช่องที่บังเอิญมีค่า. ตอนนี้ประกาศตรง ๆ ว่าใครเสนอ
+            data.SuggestedWhtSource = Accounting.Helpers.WhtEvidenceSource.Statute;
+            // ข้อเสนอ ≠ สิ่งที่กระดาษพิมพ์ ⇒ ต้องต่ำกว่า 0.85 เพื่อให้ช่องอัตราขึ้น
+            // ไฮไลต์เหลือง "ตรวจสอบอีกครั้ง" (กฎเหล็ก #3 ข้อ 3) — ตัวเลขเดียวกับ
+            // ฝั่งประวัติผู้ขาย เพื่อไม่ให้ "ข้อเสนอสองชนิด" ดูต่างกันโดยไม่มีเหตุ
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] =
+                Accounting.Helpers.OcrWhtSuggestionGate.SuggestionFieldConfidence;
+            data.Note(Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate, effectiveWhtRate,
+                Accounting.Helpers.OcrFieldSource.Statute, result.Confidence,
+                $"อัตราตามกฎหมายของหมวด '{result.Category}'"
+                + (string.IsNullOrEmpty(result.WhtIncomeTypeCode) ? "" : $" (ม.40 {result.WhtIncomeTypeCode})"));
             data.WhtIncomeTypeCode ??= result.WhtIncomeTypeCode;
         }
 

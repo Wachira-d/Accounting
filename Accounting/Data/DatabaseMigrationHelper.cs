@@ -6130,6 +6130,21 @@ public static class DatabaseMigrationHelper
             WHERE "IncomeNature" = 0 AND "ItemType" = 'Earning';
             """,
 
+            // ═══ รอบ 184 · D-3 — ที่มาของข้อเสนออัตราหัก ณ ที่จ่ายบนผลสแกน ═══
+            // เดิมเดาที่มาจาก "มีรหัส ม.40 ติดมาไหม" ⇒ ประโยค "หมวดรายจ่ายนี้กฎหมายให้
+            // ผู้จ่ายหัก…" โผล่บนใบที่ข้อเสนอมาจาก**นิสัยผู้ขาย** (อ้างกฎหมายผิด)
+            // ⚠️ **ไม่ backfill โดยเจตนา** — "ที่มา" ของใบเก่าไม่มีอยู่ในข้อมูลต้นทางแล้ว
+            //   0 = None = "ไม่ทราบที่มา" และฝั่งอ่านพิมพ์ประโยคที่บอกตรง ๆ ว่าไม่ทราบ
+            //   (ไม่รู้ = บอกว่าไม่รู้ · G3 — ดีกว่าเดาที่มาให้ใบเก่าทุกใบ)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedWhtSource" integer NOT NULL DEFAULT 0;""",
+
+            // ═══ รอบ 184 · KPI คู่ — แยก "นักเรียนโตจริง" ออกจาก "ระบบเงียบลง" ═══
+            // `UsedAi` ที่ลดลงตีความได้สองทางที่ตรงกันข้าม (นักเรียนเก่งขึ้น = ดี ·
+            // ด่านปิด/เกินงบ/เลิกสุ่มถามครู = แย่) ⇒ ตัวเลขเดียวแยกไม่ออก
+            // DEFAULT 0 = NotEnoughData = "ยังตัดสินไม่ได้" (ไม่ใช่ "ปกติ") · job เขียนทับรอบถัดไป
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "AiSamplesLast30d" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LocalModelHealths" ADD COLUMN IF NOT EXISTS "GrowthState" integer NOT NULL DEFAULT 0;""",
+
             // ═══ รอบ 184 · D4-2 ต่อ — คู่ที่เป็น "เอกสาร" + เหตุผลของสถานะ ═══
             // รอบ 183 ปิดช่องโหว่ "Matched ที่ไม่มีคู่" ด้วยการ **ไม่ประทับสถานะเลย**
             // เมื่อ AI เสนอ *Document* (ตารางไม่มีคอลัมน์เก็บ document id) ⇒ ความสามารถ

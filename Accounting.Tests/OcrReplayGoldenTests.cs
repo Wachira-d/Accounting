@@ -1,0 +1,125 @@
+using Accounting.Helpers;
+using Xunit;
+
+namespace Accounting.Tests;
+
+/// <summary>
+/// D-7 — golden ของ replay harness: **คำตอบของกระดาษชุดเดิมต้องไม่เปลี่ยนเงียบ ๆ**
+///
+/// <para>ทุกแถวคือคำตอบที่ระบบให้<b>วันนี้</b> · ถ้าแถวไหนล้ม แปลว่าการแก้ครั้งนี้
+/// เปลี่ยนคำตอบของใบนั้น — ซึ่ง<b>อาจถูกหรือผิดก็ได้</b> กติกาคือ
+/// <b>ต้องอธิบายได้ทุกใบ</b> ก่อนจะแก้ตัวเลขในเทสต์ (กฎเหล็ก #4 H)</para>
+///
+/// <para>เทสต์มีสองครึ่ง: ครึ่ง "ใบที่เคยพังต้องถูก" (ลักกี้เวย์สลับป้าย · แถวฟอร์ม
+/// มัดจำยอด 0 · ชื่อผู้ซื้อที่ถูกตัด) และครึ่ง "ใบที่ถูกอยู่แล้วห้ามถูกแตะ"
+/// (Makro · ใบส่งออก 0% · ใบบริการที่ไม่พิมพ์ส่วนหัก)</para>
+/// </summary>
+public class OcrReplayGoldenTests
+{
+    private static string? Val(string paper, string field)
+        => OcrReplayHarness.Run().Single(a => a.Paper == paper && a.Field == field).Value;
+
+    // ── ครึ่งที่ 1: ใบที่เคยพัง ต้องได้คำตอบที่ถูก ───────────────────────────
+
+    [Fact]
+    public void ลักกี้เวย์_ป้ายสลับต้องถูกสลับกลับ()
+    {
+        Assert.Equal("true", Val("luckyway-swapped", "HeaderSwapped"));
+        Assert.Equal("1000.00", Val("luckyway-swapped", "HeaderSubTotal"));
+        Assert.Equal("1070.00", Val("luckyway-swapped", "HeaderTotal"));
+    }
+
+    [Fact]
+    public void แถวฟอร์ม_หักเงินมัดจำ_ยอดศูนย์_ต้องไม่ติดธงมัดจำ()
+        => Assert.Equal("false", Val("deposit-form-row-zero", "IsDeposit"));
+
+    [Fact]
+    public void ใบมัดจำจริง_ต้องยังติดธง()
+        => Assert.Equal("true", Val("deposit-real", "IsDeposit"));
+
+    [Fact]
+    public void ชื่อผู้ซื้อที่ถูกตัด_ต้องถูกขยายเป็นชื่อเต็มบนกระดาษ()
+        => Assert.Equal("หจก. แอม แฮปปี้เนส", Val("buyer-name-truncated", "ExpandedName"));
+
+    [Fact]
+    public void ใบที่กระดาษพิมพ์ส่วนหัก_ต้องอ่านยอดและอัตราได้()
+    {
+        Assert.Equal("300.00", Val("service-wht-printed", "PaperWhtAmount"));
+        Assert.Equal("3", Val("service-wht-printed", "PaperWhtRate"));
+    }
+
+    // ── ครึ่งที่ 2: ใบที่ถูกอยู่แล้ว ต้องไม่ถูกแตะ ───────────────────────────
+
+    [Fact]
+    public void Makro_สามยอดถูกอยู่แล้ว_ห้ามสลับ()
+    {
+        Assert.Equal("false", Val("makro-correct", "HeaderSwapped"));
+        Assert.Equal("951.00", Val("makro-correct", "HeaderSubTotal"));
+        Assert.Equal("1000.00", Val("makro-correct", "HeaderTotal"));
+    }
+
+    [Fact]
+    public void ใบส่งออกศูนย์เปอร์เซ็นต์_VAT_เป็นศูนย์โดยชอบ_ห้ามถูกตีว่าป้ายสลับ()
+    {
+        Assert.Equal("false", Val("export-zero-rated", "HeaderSwapped"));
+        Assert.Equal("100000.00", Val("export-zero-rated", "HeaderTotal"));
+    }
+
+    [Fact]
+    public void ใบบริการที่ไม่พิมพ์ส่วนหัก_ต้องไม่มียอดหักจากกระดาษ_ห้ามแต่งขึ้น()
+    {
+        Assert.Null(Val("service-wht-absent", "PaperWhtAmount"));
+        Assert.Null(Val("service-wht-absent", "PaperWhtRate"));
+    }
+
+    [Fact]
+    public void ใบที่ไม่เกี่ยวมัดจำ_ต้องไม่ติดธง()
+    {
+        Assert.Equal("false", Val("makro-correct", "IsDeposit"));
+        Assert.Equal("false", Val("service-wht-printed", "IsDeposit"));
+        Assert.Equal("false", Val("export-zero-rated", "IsDeposit"));
+    }
+
+    // ── ตัวเครื่องมือเอง: ต้อง deterministic และต้อง "จับได้" เมื่อคำตอบเปลี่ยน ──
+
+    [Fact]
+    public void รันสองครั้งต้องได้ผลเท่ากัน_ไม่งั้นตารางผลต่างเชื่อไม่ได้()
+        => Assert.Empty(OcrReplayHarness.Diff(OcrReplayHarness.Run(), OcrReplayHarness.Run()));
+
+    /// <summary>negative test ของตัวเครื่องมือ (F2 ข้อ 6): ใส่ "บั๊ก" กลับเข้าไป
+    /// (กระดาษที่ป้ายไม่สลับ) แล้วตารางผลต่างต้องฟ้อง — เครื่องมือที่ฟ้องไม่ได้
+    /// = เครื่องมือที่ไม่มีอยู่จริง</summary>
+    [Fact]
+    public void ตารางผลต่างต้องจับได้เมื่อคำตอบของใบหนึ่งเปลี่ยน()
+    {
+        var before = OcrReplayHarness.Run();
+        var mutated = OcrReplayHarness.Corpus
+            .Select(p => p.Name == "luckyway-swapped"
+                ? p with { EngineSubTotal = 1000m, EngineTotal = 1070m }   // ป้ายถูกอยู่แล้ว
+                : p)
+            .ToList();
+        var after = OcrReplayHarness.Run(mutated);
+
+        var diff = OcrReplayHarness.Diff(before, after);
+        Assert.NotEmpty(diff);
+        Assert.All(diff, d => Assert.Equal("luckyway-swapped", d.Paper));
+        Assert.Contains(diff, d => d.Field == "HeaderSwapped" && d.Before == "true" && d.After == "false");
+
+        var table = OcrReplayHarness.DiffTable(before, after);
+        Assert.Contains("luckyway-swapped", table);
+        Assert.Contains("| ใบ | ช่อง | เดิม | ตอนนี้ |", table);
+    }
+
+    [Fact]
+    public void ไม่มีอะไรเปลี่ยน_ตารางต้องบอกว่าศูนย์แถว_ไม่ใช่ตารางเปล่า()
+        => Assert.Contains("0 แถว",
+            OcrReplayHarness.DiffTable(OcrReplayHarness.Run(), OcrReplayHarness.Run()));
+
+    [Fact]
+    public void สแนปช็อตต้องอ่านออกและมีทุกใบ()
+    {
+        var snap = OcrReplayHarness.Snapshot(OcrReplayHarness.Run());
+        foreach (var p in OcrReplayHarness.Corpus)
+            Assert.Contains(p.Name, snap);
+    }
+}

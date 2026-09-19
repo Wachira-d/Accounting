@@ -193,7 +193,7 @@
           <button class="btn btn-primary" onclick="Page.loadReorder()">โหลดรายงาน</button>
           <button class="btn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
             onclick="Page.requestReorderNarrative()" id="btnReorderAi"
-            title="ให้ AI สรุปลำดับความสำคัญ + เหตุผลภาษาไทย">🧠 AI สรุป</button>
+            title="สรุปลำดับความสำคัญ + เหตุผลภาษาไทยจากตัวเลขในตาราง (ระบบคำนวณเอง ไม่เรียก AI)">⚙️ สรุปให้อ่าน</button>
         </div>
       </div>
       <div id="reorderNarrative" style="display:none;background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px;color:#1e293b"></div>
@@ -316,7 +316,7 @@
         }
         const btn = document.getElementById('btnReorderAi');
         const nb = document.getElementById('reorderNarrative');
-        btn.disabled = true; btn.textContent = '🧠 AI กำลังคิด...';
+        btn.disabled = true; btn.textContent = '⚙️ กำลังสรุป...';
         nb.style.display = 'block'; nb.textContent = 'กำลังประมวลผล...';
         try {
           const cid = Layout.getCompanyId();
@@ -332,11 +332,11 @@
               urgency: x.urgency,
             })),
           });
-          nb.textContent = r.data?.narrative || '(AI ไม่ตอบ)';
-          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
+          nb.textContent = r.data?.narrative || '(ไม่มีข้อมูลให้สรุป)';
+          btn.disabled = false; btn.textContent = '⚙️ สรุปให้อ่าน';
         } catch (e) {
           nb.textContent = 'ผิดพลาด: ' + e.message;
-          btn.disabled = false; btn.textContent = '🧠 AI สรุป';
+          btn.disabled = false; btn.textContent = '⚙️ สรุปให้อ่าน';
         }
       },
 

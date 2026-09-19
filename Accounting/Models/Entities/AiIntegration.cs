@@ -332,6 +332,19 @@ public class LocalModelHealth : BaseEntity
     public decimal LocalAccuracy30d { get; set; }
     public decimal AiAccuracy30d { get; set; }
 
+    /// <summary>จำนวนแถวที่<b>ยิง provider จริง</b> (<c>ProviderUsed != None</c>) ใน 30 วัน —
+    /// job คำนวณตัวนี้อยู่แล้วแต่เดิม<b>ไม่เคยเก็บ</b> ⇒ ไม่มีทางรู้ว่า "เรียกครูน้อยลง"
+    /// เพราะนักเรียนเก่งขึ้น หรือเพราะระบบหยุดถาม (ตัวป้อนของ <see cref="GrowthState"/>)</summary>
+    public int AiSamplesLast30d { get; set; }
+
+    /// <summary>**"โตจริง" หรือ "แค่เงียบลง"** (<see cref="Accounting.Helpers.LocalGrowthVerdict"/>)
+    /// — คนละคำถามกับ <see cref="Status"/> ซึ่งตอบว่า "นักเรียนสู้ครูได้ไหม"
+    ///
+    /// <para>ต้องเป็น<b>ค่า</b> ไม่ใช่ข้อความในคำแนะนำ เพราะหน้าจอ/งานแจ้งเตือนต้อง
+    /// กรองด้วยมันได้ และ "ไม่รู้" ต้องแยกออกจาก "ปกติ"</para></summary>
+    public Accounting.Helpers.LocalGrowthState GrowthState { get; set; }
+        = Accounting.Helpers.LocalGrowthState.NotEnoughData;
+
     /// <summary>Fraction of cases where local and AI agreed AND the user
     /// confirmed. Drives the cost-saving "skip-AI-when-local-confident"
     /// optimisation — high agreement → trust local for that confidence

@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Accounting.Helpers;
 
 /// <summary>ใครเป็นคนให้ค่านี้ — เรียงจาก<b>น่าเชื่อน้อยสุดไปมากสุด</b>
@@ -18,6 +16,19 @@ public enum OcrFieldSource
     Rule = 30,
     /// <summary>ประวัติของผู้ขายรายนี้ / ทะเบียนราชการ — ถูกเฉพาะเมื่อ<b>คีย์ที่ใช้ค้นถูก</b></summary>
     VendorHistory = 40,
+    /// <summary>ตารางกฎหมาย (อัตรา ท.ป.4/2528 · VAT 7/107 · เพดานตามกฎกระทรวง)
+    /// ที่ผูกกับ<b>สิ่งที่อ่านได้จากกระดาษใบนี้</b> เช่น หมวดรายจ่าย/ประเภทเงินได้ ม.40
+    ///
+    /// <para>ต่างจาก <see cref="Rule"/> ซึ่งเป็น "ค่าตั้งต้นของระบบ" (VAT 7% · เครดิตเทอม
+    /// ของบริษัท) ที่ใช้ได้เพราะ<b>ไม่มีอะไรดีกว่า</b> — ชั้นนี้ตัวเลขมาจากกฎหมายจึงผิดไม่ได้
+    /// จุดอ่อนอยู่ที่ "หมวดที่อ่านมาจากกระดาษ" เท่านั้น ⇒ อยู่<b>เหนือ</b>นิสัยของผู้ขาย
+    /// (<see cref="VendorHistory"/>) แต่<b>ใต้</b>สิ่งที่อ่านมาตรง ๆ จากใบ</para>
+    ///
+    /// <para>⚠️ เพิ่มในรอบ 184 (D-4 ขั้นที่ 1) แบบ<b>เติมอย่างเดียว</b>: ยังไม่มีผู้เสนอราย
+    /// เดิมรายไหนใช้ค่านี้ ⇒ อันดับของทุกช่องที่มีอยู่<b>ไม่ขยับแม้แต่ช่องเดียว</b>
+    /// (กฎเหล็ก #4 H: สลับลำดับชั้นต้องมี golden ก่อน/หลัง · การ<b>เติมชั้นใหม่</b>
+    /// ที่ไม่มีใครเคยเสนอ ไม่ใช่การสลับ)</para></summary>
+    Statute = 45,
     /// <summary>นักเรียน (local distillation model) ตอบ</summary>
     Student = 50,
     /// <summary>แพตเทิร์นตำแหน่งที่เรียนไว้จากใบของผู้ขายรายนี้</summary>
@@ -30,6 +41,18 @@ public enum OcrFieldSource
     AzureHighConfidence = 90,
     /// <summary>e-Tax XML ที่มีลายเซ็นดิจิทัล — ความจริงตามกฎหมาย ไม่ใช่ผลอ่าน</summary>
     EtaxXml = 100,
+    /// <summary><b>ผู้ใช้ยืนยัน/แก้เอง</b> — ชั้นบนสุด: คนที่ถือกระดาษอยู่ตรงหน้าเป็น
+    /// ผู้ตัดสินสุดท้าย ไม่มีผู้เสนออัตโนมัติรายใดทับได้ (**one-way governor** · D-7)
+    ///
+    /// <para>⚠️ ก่อนรอบ 184 ลำดับชั้นฝั่งเซิร์ฟเวอร์<b>ไม่มีที่ยืนให้ "ผู้ใช้" เลย</b>
+    /// ขณะที่ฝั่งหน้าเว็บมีกติกา <c>dataset.userTouched</c> = "ค่าผู้ใช้ชนะเสมอ"
+    /// (<c>documents.html</c> · <c>_canAutoFill</c>) ⇒ สองฝั่งพูดคนละภาษา และเส้นที่
+    /// อยากบันทึกว่า "ค่านี้คนยืนยันแล้ว" ต้องไป<b>ยืม</b> <see cref="PaperLabel"/>
+    /// ซึ่งแปลว่าคนละเรื่อง (G3b)</para>
+    ///
+    /// <para>เพิ่มแบบ<b>เติมอย่างเดียว</b> เช่นเดียวกับ <see cref="Statute"/>:
+    /// ยังไม่มีผู้เสนอรายเดิมรายใดใช้ค่านี้ ⇒ อันดับของทุกช่องที่มีอยู่ไม่ขยับ</para></summary>
+    UserConfirmed = 110,
 }
 
 /// <summary>ค่าที่แหล่งหนึ่งเสนอสำหรับช่องหนึ่ง</summary>
@@ -75,12 +98,14 @@ public static class OcrFieldArbiter
     /// เปลี่ยนลำดับที่นี่ที่เดียว ไม่ต้องไปสลับบรรทัดในไปป์ไลน์</summary>
     public static readonly IReadOnlyList<OcrFieldSource> Precedence = new[]
     {
+        OcrFieldSource.UserConfirmed,
         OcrFieldSource.EtaxXml,
         OcrFieldSource.AzureHighConfidence,
         OcrFieldSource.PaperLabel,
         OcrFieldSource.Engine,
         OcrFieldSource.LearnedPattern,
         OcrFieldSource.Student,
+        OcrFieldSource.Statute,
         OcrFieldSource.VendorHistory,
         OcrFieldSource.Rule,
         OcrFieldSource.Ai,
@@ -138,32 +163,18 @@ public static class OcrFieldArbiter
             .ToList();
     }
 
-    /// <summary>บันทึกลง <c>OcrScanResult.FieldDecisionsJson</c> — รูปแบบเรียบ ๆ
-    /// ที่หน้า review อ่านไปแสดง "ค่านี้มาจากไหน" ได้โดยไม่ต้องมี DTO ใหม่</summary>
-    public static string ToJson(IEnumerable<OcrFieldDecision> decisions)
-        => JsonSerializer.Serialize(decisions.Select(d => new
-        {
-            field = d.Field,
-            value = d.Value,
-            source = d.Source.ToString(),
-            confidence = d.Confidence,
-            evidence = d.Evidence,
-            alternatives = d.Alternatives.Select(a => new
-            {
-                value = a.Value, source = a.Source.ToString(), confidence = a.Confidence,
-            }).ToList(),
-        }));
-
     /// <summary>คำอธิบายภาษาไทยของแหล่ง — ใช้ทั้งหน้า review และ ProcessingNotes
     /// (ห้ามให้แต่ละหน้าจอแต่งคำเอง = สำเนามือชุดที่สอง)</summary>
     public static string SourceLabel(OcrFieldSource source) => source switch
     {
+        OcrFieldSource.UserConfirmed => "ผู้ใช้ยืนยัน/แก้เอง",
         OcrFieldSource.EtaxXml => "e-Tax XML (มีลายเซ็นดิจิทัล)",
         OcrFieldSource.AzureHighConfidence => "Azure DI (มั่นใจสูง)",
         OcrFieldSource.PaperLabel => "ป้ายกำกับบนกระดาษ",
         OcrFieldSource.Engine => "ผลอ่านของ engine",
         OcrFieldSource.LearnedPattern => "แพตเทิร์นที่เรียนจากใบของผู้ขายรายนี้",
         OcrFieldSource.Student => "ระบบเรียนรู้แล้ว (local model)",
+        OcrFieldSource.Statute => "ตารางกฎหมาย (อัตรา/เพดานตามประมวลรัษฎากร)",
         OcrFieldSource.VendorHistory => "ประวัติผู้ขาย/ทะเบียนราชการ",
         OcrFieldSource.Rule => "กติกาของระบบ",
         OcrFieldSource.Ai => "AI แนะนำ",

@@ -1455,33 +1455,50 @@
         Layout.toast(`ตั้งหัก ณ ที่จ่าย ${rate}% ตามที่กฎหมายกำหนด — ตรวจประเภทเงินได้ด้วย`, 'success');
       },
 
-      /// สมุด "ค่านี้มาจากไหน" (D1) — เซิร์ฟเวอร์ตัดสินและส่งมาแล้ว หน้าเว็บแค่แสดง
-      /// (undefined = สแกนรุ่นก่อนมีระบบนี้ ⇒ ไม่วาดอะไร ไม่ใช่วาดว่า "ไม่มีที่มา")
+      /// สมุด "ค่านี้มาจากไหน" (D1 · D-4 ขั้นที่ 1) — เซิร์ฟเวอร์ตัดสินและส่ง
+      /// **ป้ายภาษาไทยมาด้วย** (`sourceLabel`) หน้าเว็บแค่แสดง
+      ///
+      /// เดิมหน้านี้ถือตารางป้ายเป็นสำเนาที่สองของ `OcrFieldArbiter.SourceLabel`
+      /// ⇒ ชั้นใหม่ที่เซิร์ฟเวอร์เพิ่ม (เช่น Statute) จะโผล่เป็นชื่อ enum ดิบ
+      /// (F2 ข้อ 5: server computes · page displays)
+      ///
+      /// รับได้สองรูป: array = แถวที่ persist ไว้ก่อนรอบ 184 · object = รูปใหม่
+      /// ที่พก `arbiterAgreed` มาด้วย · undefined = สแกนรุ่นก่อนมีระบบนี้
+      /// ⇒ ไม่วาดอะไร (ไม่ใช่วาดว่า "ไม่มีที่มา" ซึ่งเป็นคนละความหมาย)
       renderFieldSources(json) {
         if (!json) return '';
-        let rows = [];
-        try { rows = JSON.parse(json) || []; } catch (e) { return ''; }
+        let parsed = null;
+        try { parsed = JSON.parse(json); } catch (e) { return ''; }
+        if (!parsed) return '';
+        const isLegacy = Array.isArray(parsed);
+        const rows = isLegacy ? parsed : (parsed.fields || []);
         if (!rows.length) return '';
-        const label = {
-          EtaxXml: 'e-Tax XML (ลายเซ็นดิจิทัล)', AzureHighConfidence: 'Azure DI (มั่นใจสูง)',
-          PaperLabel: 'ป้ายกำกับบนกระดาษ', Engine: 'ผลอ่านของ engine',
-          LearnedPattern: 'แพตเทิร์นที่เรียนไว้', Student: 'ระบบเรียนรู้แล้ว',
-          VendorHistory: 'ประวัติผู้ขาย/ทะเบียน', Rule: 'กติกาของระบบ',
-          Ai: 'AI แนะนำ', Guess: 'ค่าเดา — ต้องตรวจสอบ',
-        };
+        // ป้ายของแถวเก่า (ไม่มี sourceLabel) — แสดงชื่อ enum ดิบไปตรง ๆ
+        // ดีกว่าเดาคำแปลผิดชั้น; แถวใหม่ทุกแถวมี sourceLabel จากเซิร์ฟเวอร์
+        const lbl = (r) => r.sourceLabel || r.source || '';
+        const agreedBadge = (!isLegacy && parsed.compared > 0)
+          ? `<span style="font-size:10px;color:var(--gray-500);font-weight:400">
+               · ตัวตัดสินตรงกับค่าที่ใช้จริง ${parsed.agreed}/${parsed.compared}</span>`
+          : '';
         return `
         <div style="margin-bottom:12px">
-          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">🧾 ค่านี้มาจากไหน</div>
+          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">🧾 ค่านี้มาจากไหน${agreedBadge}</div>
           <div style="display:grid;gap:4px">
             ${rows.map(r => {
               const alts = (r.alternatives || []).filter(a => a.value !== r.value);
+              // agrees === false ⇒ ค่าที่ใช้จริงไม่ใช่ตัวที่ตัวตัดสินเลือก:
+              // บอกตรง ๆ แทนที่จะซ่อน (ผู้ใช้ตรวจได้ว่าควรเชื่อตัวไหน)
+              const mismatch = (r.agrees === false && r.decided)
+                ? `<div style="color:#b45309;margin-top:2px">ตัวตัดสินเลือก: ${Layout.esc(String(r.decided))}</div>`
+                : '';
               return `<div style="font-size:11px;padding:4px 8px;background:var(--gray-50);border-radius:4px">
                 <span style="color:var(--gray-700);font-weight:600">${Layout.esc(r.field || '')}</span>
                 <span style="color:var(--gray-900)"> = ${Layout.esc(String(r.value ?? ''))}</span>
-                <span style="color:var(--gray-500)"> · ${Layout.esc(label[r.source] || r.source || '')}</span>
+                <span style="color:var(--gray-500)"> · ${Layout.esc(lbl(r))}</span>
                 ${r.evidence ? `<span style="color:var(--gray-400)"> · ${Layout.esc(r.evidence)}</span>` : ''}
+                ${mismatch}
                 ${alts.length ? `<div style="color:var(--gray-400);margin-top:2px">แหล่งอื่นเสนอ: ${
-                  alts.map(a => Layout.esc(String(a.value ?? '')) + ' (' + Layout.esc(label[a.source] || a.source || '') + ')').join(' · ')
+                  alts.map(a => Layout.esc(String(a.value ?? '')) + ' (' + Layout.esc(a.sourceLabel || a.source || '') + ')').join(' · ')
                 }</div>` : ''}
               </div>`;
             }).join('')}
