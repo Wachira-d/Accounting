@@ -3016,3 +3016,46 @@ _Last verified against codebase: 2026-09-18 (รอบ 170b — **โครง�
 · บทเรียนดิบย้ายไป `docs/lessons/<หมวด>.md` 8 ไฟล์ 153 ข้อ **ไม่ลบเนื้อหา** (ดัชนี `docs/lessons/README.md`) · ประวัติราย "รอบ"
 ของ DOCUMENT_FLOW (179 บล็อก · 2,900 บรรทัด) ย้ายมา `CHANGELOG.md` — DOCUMENT_FLOW เหลือสถานะปัจจุบัน §1–§9 + §10 บล็อกล่าสุด
 · ไม่มีการเปลี่ยน flow ของโค้ดในคอมมิตนี้ — commit 38629a7)_
+
+_Last verified against codebase: 2026-09-19 (รอบ 183 — **ปิด P0 ทั้ง 21 ข้อของ `DECISION_AUDIT_2026-09-18` พร้อมกัน**
+เพราะหลายข้อมีรากเดียวกัน (R1–R7) แก้ทีละข้อจะเกิด "ด่านใหม่ทับด่านเก่า" ซ้ำอีก:
+**R1 สถานะปลายทางประทับเอง** — ยื่นภาษี `Filed` + ล็อกงวดต้องมีเลขรับจากกรมสรรพากร (`Helpers/TaxFilingLockPolicy` ·
+ไม่มีเลขรับ = `Submitted` "ประกาศไว้ ยังไม่ล็อก") · จับคู่ธนาคาร `Matched` ต้องมี id ของคู่เสมอ (`Helpers/BankMatchArbiter`) ·
+เลิกประทับ `BuyerDeclinedTaxInvoice` จากการที่ผู้ใช้ไม่กรอกข้อมูลผู้ซื้อ · **R2 "ไม่รู้"→ค่าแต่ง** — คำเตือนก่อนอนุมัติ
+ไม่มีใครตอบ = ไม่มีป้าย ไม่มี FeedbackId (`Helpers/AiHintAnswer`) · **R3/R4 สำเนา+ด่านซ้อน** — สูตรจับคู่ธนาคาร 5 สำเนา →
+`Helpers/BankMatchScorer` ตัวเดียว · ลบด่าน WHT เก่า (§50) 62 บรรทัด + 2 เมธอดที่ยังรันต่อจากด่านใหม่ ·
+**R5 ทางเข้าอื่น** — สถานะจ่าย 7 สำเนา 3 เกณฑ์ปัดเศษ → `Helpers/DocumentSettlementState` + ด่าน "จ่ายเกิน" ครบ 3 ทางเข้า ·
+**R6 ลูปสอนตัวเอง** — "กระดาษพูดเรื่องหัก ณ ที่จ่ายไหม" อ่านจาก `Helpers/PaperWhtReader` ตัวเดียว (เดิมอ่าน `scan.HasWht`
+ที่ `VendorIntelligence` เขียนเองจากประวัติ = ประวัติยืนยันประวัติตัวเอง) · **R7 ไม่มีเทสต์ที่ด่านเงิน** — ทุกข้อ extract เป็น
+pure helper + เทสต์สองครึ่ง (`PosTaxInvoiceLines` · `PosRefundMath` · `PayrollIncomeNatureRules` · `RevenueCodeSurcharge`) ·
+**ภ.พ.06**: บิล POS ของสาขาที่ยังไม่กรอกรหัสสาขา 5 หลัก ไม่ออกเลขใบกำกับอย่างย่อ (เดิมตกไป `00000` = "สำนักงานใหญ่"
+⇒ กระดาษประกาศเท็จ + เลขรันสาขาไปกินเล่มสำนักงานใหญ่ ไม่ gap-free §86/4) · migration 4 ชุด — commit 30c2e02)_
+
+_Last verified against codebase: 2026-09-19 (รอบ 184 — **7 ทีมผู้เชี่ยวชาญถกเถียงสองฝั่งแล้วลงมือ** (POS · ภาษี · เงินเดือน ·
+ธนาคาร/เงินสด · OCR/AI · ข้อมูล/ทางเข้าภายนอก · สถาปัตยกรรมเอกสาร) — main agent เปิดไฟล์ยืนยันทุกข้อ P0 ก่อนรับ:
+**คำสั่งเจ้าของ "คืนทั้งหมด"** — `Helpers/PosRefundMath` คืน**ค่าบริการ**ไปกับของ (บิล 1,000 ลด 10% ค่าบริการ 10%
+ลูกค้าจ่าย 990 เดิมคืนได้แค่ 900 ⇒ JE เหลือรายได้ 90 + ภาษีขาย 5.89 ค้างถาวร) · invariant ที่ล็อกเป็นเทสต์:
+คืนเต็มใบ ⇒ `Gross == order.TotalAmount` และ `Vat == order.VatAmount` เป๊ะ · ทิป/ค่าปัดเศษไม่คืน (เหตุผลใน doc-comment) ·
+**ด่านสิทธิ์ POS 36 endpoint** + `ImportExportController` 8 (เดิมมีแค่ `[Authorize]` = "ล็อกอินไหม") ·
+**บรรทัดเอกสารห้ามติดลบ** (`Helpers/DocumentLineKind`) — เดิม `Pp30SalesClassifier:68-70` พาบรรทัดส่วนลด `VatRate==0`
+เข้า ภ.พ.30 ช่อง 7 (ยอดส่งออก) และ JE ได้เครดิตติดลบ ⇒ **P0: ออเดอร์หน้าร้านที่มีส่วนลดทุกใบ จ่ายเงินแล้วแต่ไม่เคยมี
+เอกสาร/JE/ลูกหนี้/ภาษีขาย** (validator throw → ถูกกลืน) ⇒ ส่วนลดเฉลี่ยลง `DiscountAmount` รายบรรทัดแทน ·
+**FX**: ทุกเส้นจับคู่ธนาคารเคยเทียบ `Payment.Amount` (สกุลเอกสาร) กับยอดบนบรรทัดธนาคารตรง ๆ ⇒ 30,780 USD กับ
+30,780 บาท ได้ "ยอดตรงเป๊ะ" (`Helpers/BankMatchCurrency`) · **เช็คเด้ง**กลับรายการชำระทั้งชุด · **เงินสดย่อย**เติมเงิน
+ต้องมี JE · **ตาราง WHT รู้จักเวลา** (1.5% = ท.ป.310/2563 ช่วงโควิด ไม่ใช่ e-withholding — หักล้างรายงานเดิม) ·
+**เบี้ยเลี้ยง**เลิกถูกฉาย × งวดที่เหลือ · **ประวัติผู้ขาย**เลิกเสนออัตรา WHT จากใบเดียว (`MinHistoryDocuments = 3`) ·
+`ContactType.Unknown = 0` + `Helpers/ContactTypeResolver` (สองเรนเดอเรอร์เคยพิมพ์ "สำนักงานใหญ่" ต่อท้ายเลขบัตร
+ประชาชน = ข้อความเท็จบนเอกสารภาษี) · ถอด AI ออกจากสรุปจุดสั่งซื้อ (kill-switch ไม่ผ่าน · `Helpers/ReorderNarrative`
+เขียนเองได้ทุกครั้ง) · migration 5 ชุด — commit 555cf16)_
+
+_Last verified against codebase: 2026-09-19 (รอบ 184b — **ซ่อม build ที่ CI จับได้ 2 รอบ** (ไม่มี .NET SDK ในเครื่องพัฒนา
+⇒ CI คือคอมไพเลอร์ตัวแรก): (1) `OcrDtos.cs` วาง `using Accounting.Helpers;` **ใต้** `namespace Accounting.Models.DTOs.Ocr;`
+⇒ ใช้กติกา "ชั้นใกล้ชนะ" และเรพมี namespace `Accounting.Models.DTOs.Accounting` อยู่จริง ⇒ CS0234 ·
+`tools/namespace_shadow_check.py` มีไว้กัน defect class นี้โดยตรงแต่ข้ามบรรทัด `using` ทุกบรรทัด ⇒ **ปิดรูของด่านเอง**
+(ตอนนี้ `using` เหนือ namespace ยังข้าม · ใต้ namespace เดินกติกาเดียวกับชื่อที่มีจุดนำหน้า + `resolves_ns()` ·
+negative test 2 ทิศรันแล้ว) (2) `BankService` เติม `u.CompanyId == companyId` ลงคิวรี `_db.Users` แต่ **`User` ไม่มีช่องนั้น**
+— ความเป็นสมาชิกบริษัทอยู่ที่ `CompanyUsers` (ตารางเดียวกับ `TenantGuard`) ⇒ ยุบเป็น `CompanyMemberNamesAsync` ตัวเดียว ·
+เจตนาเดิมถูก: คิวรีทั้งสองเคยค้นชื่อจาก `_db.Users` **โดยไม่มีเงื่อนไขบริษัทเลย** ⇒ ชื่อผู้ใช้บริษัทอื่นโผล่บนหน้ากระทบยอด
+· **CI เขียวทั้ง static-checks และ dotnet build (Release) ที่ `9167816`** ⇒ ไฟล์เทสต์ใหม่ 44 ไฟล์ของรอบ 183/184
+คอมไพล์ผ่านเป็นครั้งแรก · `dotnet test` **ยังไม่เคยรัน** (job รันเฉพาะ PR/main/dispatch · `workflow_dispatch` = 403)
+— commit <pending>)_
