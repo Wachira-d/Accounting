@@ -3079,4 +3079,4 @@ warning ตอนอนุมัติ ไม่บล็อก) · ฟอร์
 `_syncLineAccountPickers()` (datalist/ป้าย/placeholder/ชิป) เรียกจาก `onCnSideChange` ด้วย + ชิป "⚠ ผังคนละฝั่ง" ·
 ของแถม: counter account ของ CN/DN เคารพ `DefaultApAccountId`/`DefaultArAccountId` ของคู่ค้าแล้ว (เดิมไม่ส่ง
 `doc.Contact` ต่างจากทุกเส้นอื่น) · `OcrService.FallbackLineDescription` เลิกเขียนชื่อ enum ดิบ ("TaxInvoice")
-ลงช่องรายละเอียดบรรทัด ซึ่งถูกพิมพ์ลงกระดาษ §86/4 และลงคำบรรยาย JE ("ใบลดหนี้ - TaxInvoice") — commit <pending>)_
+ลงช่องรายละเอียดบรรทัด ซึ่งถูกพิมพ์ลงกระดาษ §86/4 และลงคำบรรยาย JE ("ใบลดหนี้ - TaxInvoice") — commit e48ea3c)_
