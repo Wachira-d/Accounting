@@ -186,6 +186,13 @@ public interface IDocumentService
     Task<DocumentResponse> ReclassifyCnDnSideAsync(Guid companyId, Guid documentId,
         bool toPurchaseSide, string? reason, string actor);
 
+    /// <summary>ติ๊ก/ปลดติ๊ก "ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)" หลังอนุมัติ —
+    /// กลับ JE เดิมแล้วลงใหม่ผ่านตัวลงบัญชีตัวเดิม · ใบที่ลืมติ๊กจะไม่มี
+    /// <c>Cr 21912</c> (ไม่มีหนี้ ภ.พ.36 ⇒ ไม่โผล่หน้านำส่ง ⇒ ไม่เคยนำส่ง) และ
+    /// เครดิตผู้รับเงินด้วยยอดรวม VAT (เจ้าหนี้/ธนาคารเกินจริง)</summary>
+    Task<DocumentResponse> ReclassifyForeignServiceAsync(Guid companyId, Guid documentId,
+        bool toForeignService, string? reason, string actor);
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr / 1 Cr และอื่น ๆ) =====
     /// <summary>List adjusting JE lines ที่ผูกกับเอกสาร (sorted by LineOrder)</summary>
     Task<List<Models.Entities.DocumentAdjustingJournalLine>> ListAdjustingJournalLinesAsync(
