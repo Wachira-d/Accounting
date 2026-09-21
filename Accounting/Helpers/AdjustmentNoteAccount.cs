@@ -75,6 +75,32 @@ public static class AdjustmentNoteAccount
         return userOverride;
     }
 
+    /// <summary>ฝั่งของใบที่ **ลงบัญชีไปแล้ว** — ใช้กับรายงาน/แบบยื่น (คนละคำถามกับ
+    /// <see cref="ResolveSide"/> ซึ่งตอบตอน "กำลังจะสร้าง")
+    ///
+    /// <para><b>ลำดับต่างจาก <see cref="ResolveSide"/> โดยเจตนา</b>: ที่นี่ค่าที่ผู้ใช้
+    /// สั่งย้ายฝั่งเอง (<c>userOverride</c>) <b>ชนะทุกชั้น</b> เพราะการย้ายฝั่งทำให้ระบบ
+    /// กลับ JE เดิมแล้วลงใหม่ให้ตรงฝั่ง (<c>ReclassifyCnDnSideAsync</c>) ⇒ รายงานต้อง
+    /// เล่าเรื่องเดียวกับ GL · ส่วน <see cref="ResolveSide"/> ให้ใบต้นทางชนะ เพราะตอน
+    /// สร้างยังไม่มี JE และการเลือกฝั่งขัดกับใบต้นทางถูกปฏิเสธด้วย error ของตัวเอง</para>
+    ///
+    /// <para>ลำดับ: ผู้ใช้สั่งย้าย → ชนิดใบต้นทาง (FK) → <b>GL</b> (ผังภาษีที่ JE ลงจริง
+    /// — หลักฐานที่ใกล้ของจริงที่สุดรองจากคำสั่งตรง) → คู่ค้าเป็นผู้ขายอย่างเดียว →
+    /// <b>ไม่รู้</b> · <c>Unknown = true</c> แปลว่า **ห้ามนับเข้าช่องใดช่องหนึ่งของแบบยื่น**
+    /// (G3 — เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล ห้ามตกเป็น "ผ่าน")</para></summary>
+    public static (bool IsPurchase, bool Unknown) ResolvePostedSide(
+        bool? userOverride,
+        DocumentType? sourceType,
+        bool? glTouchedInputVat,
+        bool contactIsSupplierOnly)
+    {
+        if (userOverride.HasValue) return (userOverride.Value, false);
+        if (sourceType.HasValue) return (SourceIsPurchaseSide(sourceType.Value), false);
+        if (glTouchedInputVat.HasValue) return (glTouchedInputVat.Value, false);
+        if (contactIsSupplierOnly) return (true, false);
+        return (false, true);
+    }
+
     /// <summary>ผังบัญชีบนบรรทัดอยู่ถูกฝั่งไหม — คืน <c>null</c> = ผ่าน ·
     /// คืนข้อความไทย = ต้องบล็อกพร้อมบอกทางไปต่อ
     ///

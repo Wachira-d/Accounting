@@ -6629,6 +6629,44 @@ public static class DatabaseMigrationHelper
             """UPDATE "Sites" SET "Subdomain" = left("Subdomain", 21) || '--retired-' || replace("Id"::text, '-', '') WHERE "IsDeleted" = true AND "Subdomain" NOT LIKE '%--retired-%';""",
             """UPDATE "Sites" SET "CustomDomain" = left("CustomDomain", 214) || '--retired-' || replace("Id"::text, '-', '') WHERE "IsDeleted" = true AND "CustomDomain" IS NOT NULL AND "CustomDomain" NOT LIKE '%--retired-%';""",
             """UPDATE "SiteDomains" d SET "Domain" = left(d."Domain", 214) || '--retired-' || replace(d."Id"::text, '-', '') FROM "Sites" s WHERE s."Id" = d."SiteId" AND s."IsDeleted" = true AND d."Domain" NOT LIKE '%--retired-%';""",
+
+            // ── ผังบัญชีที่ขาดหายของใบลดหนี้ฝั่งซื้อ (รอบ 185 · ผู้ใช้รายงาน) ──
+            // **เพิ่มผังอย่างเดียว ไม่ย้ายยอดใด ๆ** — การย้ายยอดใน GL ต้องทำด้วย JE
+            // ปรับปรุงผ่าน `ReclassifyDocumentLineAccountAsync` เท่านั้น ไม่ใช่ migration
+            //
+            // (1) `11520 วัสดุสิ้นเปลืองคงเหลือ` — ผังมาตรฐานไม่เคยมีผังวัสดุสิ้นเปลือง
+            //     หมวดสินทรัพย์ ⇒ `InventoryControlAccount.DefaultAccountPrefix(Supplies)`
+            //     (เดิม "118") ค้นเจอ **11810 เงินมัดจำ** ⇒ ซื้อวัสดุสิ้นเปลืองที่ตัดสต็อก
+            //     Dr เข้าบัญชีเงินมัดจำ · ใส่ให้ทุกบริษัทที่ใช้ผังมาตรฐาน (มี 11500)
+            // (2) `51150/51160` contra-purchase — เดิมอยู่เฉพาะเทมเพลตซื้อมาขายไป
+            //     ⇒ บริษัทบริการ/ผลิต/ทั่วไปไม่มีผังให้ใบลดหนี้ฝั่งซื้อลงเลย จึงถูกบีบ
+            //     ไปใช้ `43060 ส่วนลดรับ` ซึ่งอยู่หมวด **รายได้**
+            //
+            // `ON CONFLICT DO NOTHING` อาศัย unique index (CompanyId, AccountCode)
+            // ⇒ รันซ้ำได้ และไม่ทับผังที่ลูกค้าสร้างรหัสเดียวกันไว้เอง
+            """
+            INSERT INTO "ChartOfAccounts"
+                ("Id","CompanyId","AccountCode","AccountName","AccountNameEn","AccountType",
+                 "ParentAccountId","Level","IsActive","IsSystemAccount","InputVatClaimable",
+                 "CashFlowSection","CreatedAt","IsDeleted")
+            SELECT gen_random_uuid(), p."CompanyId", v.code, v.name_th, v.name_en, v.acct_type,
+                   NULL, 4, true, true, true, 0, now() at time zone 'utc', false
+            FROM (VALUES
+                    ('11520','วัสดุสิ้นเปลืองคงเหลือ','Supplies on Hand',1),
+                    ('51150','ส่วนลดรับ (สินค้า)','Purchase Discount',5),
+                    ('51160','ส่งคืนสินค้า','Purchase Returns',5)
+                 ) AS v(code,name_th,name_en,acct_type)
+            CROSS JOIN (
+                SELECT DISTINCT "CompanyId" FROM "ChartOfAccounts"
+                WHERE "AccountCode" = '11500' AND "IsDeleted" = false
+            ) AS p
+            ON CONFLICT DO NOTHING;
+            """,
+            // ชื่อ `43060` ระบุให้ชัดว่าเป็น **ส่วนลดเงินสด** เพื่อไม่ให้ถูกหยิบผิด
+            // ความหมาย — แตะเฉพาะแถวที่ยังเป็นชื่อ default (ลูกค้าที่เปลี่ยนชื่อเองแล้ว
+            // ไม่ถูกทับ) · **`AccountType` ไม่เปลี่ยน** เพราะการย้ายหมวดจะ re-sign
+            // งบของงวดที่ปิด/ยื่นไปแล้วทั้งประวัติ
+            """UPDATE "ChartOfAccounts" SET "AccountName" = 'ส่วนลดรับ (ส่วนลดเงินสด)', "AccountNameEn" = 'Cash Discounts Received' WHERE "AccountCode" = '43060' AND "AccountName" = 'ส่วนลดรับ' AND "IsDeleted" = false;""",
         };
 
         foreach (var sql in statements)

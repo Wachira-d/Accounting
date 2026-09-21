@@ -43,6 +43,12 @@ public static class ChartOfAccountTemplates
             new("11400", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
             new("115", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
             new("11500", "สินค้าคงเหลือ", "Inventory", AccountType.Asset, 4),
+            // บัญชีคุมสต็อกของ `ProductType.Supplies` — ต้องมีอยู่จริงในผัง มิฉะนั้น
+            // `InventoryControlAccount.DefaultAccountPrefix(Supplies)` (เดิมคืน "118")
+            // จะไปค้นเจอ **11810 เงินมัดจำ** เพราะผังมาตรฐานไม่มีผังวัสดุสิ้นเปลือง
+            // หมวดสินทรัพย์เลย ⇒ ซื้อวัสดุสิ้นเปลืองที่ตัดสต็อก Dr เข้าบัญชีเงินมัดจำ
+            // และยอดวัสดุคงเหลือไปกองอยู่ใน "เงินมัดจำจ่ายล่วงหน้า" บนงบดุลถาวร
+            new("11520", "วัสดุสิ้นเปลืองคงเหลือ", "Supplies on Hand", AccountType.Asset, 4),
             new("116", "ภาษีซื้อรอเครดิต", "Input VAT / VAT Recoverable", AccountType.Asset, 3),
             new("11610", "ภาษีซื้อ ภ.พ. 30", "Input VAT (P.P. 30)", AccountType.Asset, 4),
             new("11620", "ภาษีซื้อ ภ.พ. 36", "Input VAT (P.P. 36)", AccountType.Asset, 4),
@@ -176,7 +182,12 @@ public static class ChartOfAccountTemplates
             new("43030", "รายได้จากการขายสินทรัพย์", "Gain on Sale of Assets", AccountType.Revenue, 4),
             new("43040", "รายได้จากการเช่า", "Rental Income", AccountType.Revenue, 4),
             new("43050", "รายได้จากอัตราแลกเปลี่ยน", "Foreign Exchange Gain", AccountType.Revenue, 4),
-            new("43060", "ส่วนลดรับ", "Discounts Received", AccountType.Revenue, 4),
+            // ⚠️ ชื่อระบุให้ชัดว่าเป็น **ส่วนลดเงินสด** (early-payment discount) ซึ่งเป็น
+            // นโยบายบัญชีที่รับรู้เป็นรายได้อื่นได้ · **ส่วนลดการค้า/ของคืนฝั่งซื้อ
+            // ต้องใช้ 51150/51160** (contra-purchase) ไม่ใช่ผังนี้
+            // **ห้ามเปลี่ยน `AccountType`** — ยอดที่ post ไว้แล้วจะย้ายหมวดใน P&L
+            // ของงวดที่ปิด/ยื่นไปแล้วทั้งประวัติ (กฎเหล็ก #4 E + principle 9)
+            new("43060", "ส่วนลดรับ (ส่วนลดเงินสด)", "Cash Discounts Received", AccountType.Revenue, 4),
             new("43070", "รายได้อื่นๆ", "Other Income", AccountType.Revenue, 4),
             new("43080", "รายได้ค่าปรับ/ค่าเสียหายที่ได้รับ", "Penalties and Damages Received", AccountType.Revenue, 4),
 
@@ -190,6 +201,14 @@ public static class ChartOfAccountTemplates
             new("51120", "ค่าขนส่งสินค้า", "Freight-in / Delivery Cost", AccountType.Expense, 4),
             new("51130", "ค่าแรงงานในการผลิต", "Direct Labor Cost", AccountType.Expense, 4),
             new("51140", "ค่าใช้จ่ายในการผลิต", "Manufacturing Overhead", AccountType.Expense, 4),
+            // ★ ผัง contra-purchase — **ทุกประเภทธุรกิจต้องมี** ไม่ใช่เฉพาะซื้อมาขายไป
+            // (เดิมอยู่ใน `GetIndustryTrading()` เท่านั้น ⇒ บริษัทบริการ/ผลิต/ทั่วไป
+            // ไม่มีผังสำหรับ "ส่วนลดรับ/ส่งคืนสินค้า" ฝั่งซื้อเลย ⇒ ผู้ใช้ที่ออกใบลดหนี้
+            // ฝั่งซื้อถูกบีบให้ไปเลือก `43060 ส่วนลดรับ` ซึ่งอยู่หมวด **รายได้**
+            // ⇒ รายได้บวมโดยไม่มีที่มา · ผู้ใช้รายงานจริง 2026-09-21)
+            // TFRS for NPAEs บทที่ 8: ส่วนลดการค้า/ของคืน **หักจากต้นทุนซื้อ** ไม่ใช่รายได้
+            new("51150", "ส่วนลดรับ (สินค้า)", "Purchase Discount", AccountType.Expense, 4),
+            new("51160", "ส่งคืนสินค้า", "Purchase Returns", AccountType.Expense, 4),
 
             // --- 52 ต้นทุนบริการ ---
             new("52", "ต้นทุนบริการ", "Cost of Services", AccountType.Expense, 2),

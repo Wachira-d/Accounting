@@ -345,6 +345,27 @@ public partial class TaxService : ITaxService
                 if (touchedInput != touchedOutput) cnDnSideFromGl[g.Key] = touchedInput;
             }
         }
+        // ═══ ตัวตัดสิน "ฝั่งของใบลดหนี้/ใบเพิ่มหนี้" **ตัวเดียวของไฟล์นี้** ═══
+        // เดิมมี 2 ชุดที่ให้คำตอบ**ต่างกัน**: ชุดเต็ม 4 ชั้น (ใช้กับรายงานภาษีซื้อ/ขาย)
+        // กับชุดสั้น `doc.CnDnPurchaseSideOverride ?? DocumentSide.IsPurchase(type)`
+        // ที่ใช้กับช่อง 7/8 — ชุดสั้นผิดเพราะ `DocumentSide.IsPurchase(CreditNote)`
+        // **ไม่ได้รับ `ourRole`** และ CN อยู่ใน `BothSides` ⇒ `IsSales` คืน false
+        // ⇒ `IsPurchase` = **true เสมอ** ⇒ ใบลดหนี้ฝั่ง**ขาย**ที่ยังไม่มี override
+        // ถูกนับยอดยกเว้นเข้าช่องฝั่ง**ซื้อ** (`AgingReportService:85-89` เขียนเตือน
+        // เรื่องนี้ไว้เองแล้ว แต่จุดนี้ตกหล่น)
+        //
+        // ลำดับความน่าเชื่อถือ (ใกล้ของจริงที่สุดก่อน — DECISION_DOCTRINE §1):
+        //   ผู้ใช้สั่งย้ายฝั่งเอง → FK ใบต้นทาง → GL (ผังภาษีที่ JE ลงจริง)
+        //   → คู่ค้าเป็น supplier อย่างเดียว → ไม่รู้
+        (bool IsPurchase, bool Unknown) ResolveCnDnSide(Document d)
+            => Accounting.Helpers.AdjustmentNoteAccount.ResolvePostedSide(
+                userOverride: d.CnDnPurchaseSideOverride,
+                sourceType: d.RelatedDocumentId.HasValue
+                    && relatedDocTypes.TryGetValue(d.RelatedDocumentId.Value, out var st)
+                    ? st : null,
+                glTouchedInputVat: cnDnSideFromGl.TryGetValue(d.Id, out var gl) ? gl : null,
+                contactIsSupplierOnly: d.Contact is { IsSupplier: true, IsCustomer: false });
+
         // ใบแจ้งหนี้ (ต้นทาง CN/DN) ที่ VAT ยังพัก 21913 — CN/DN ต้องไม่หัก/เพิ่ม
         // ยอด ภ.พ.30 จนกว่าใบเดิมจะถึง tax point (GL-driven เหมือน branch Invoice)
         var relatedInvoicePendingIds = relatedDocInfos
@@ -456,14 +477,33 @@ public partial class TaxService : ITaxService
                     .Where(l => !l.IsDeleted)
                     .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
 
-                // ใบลดหนี้/เพิ่มหนี้อยู่ได้สองฝั่ง — ตัวชนิดอย่างเดียวตัดสินไม่ได้
-                // (ดู Helpers/DocumentSide) · ที่นี่ใช้ฝั่งที่ระบบตัดสินให้แล้ว
-                // ผ่าน CnDnPurchaseSideOverride ถ้ามี ไม่งั้นถือตามชนิด
-                var isPurchase = doc.CnDnPurchaseSideOverride
-                    ?? DocumentSide.IsPurchase(doc.DocumentType);
+                // ใบลดหนี้/เพิ่มหนี้อยู่ได้สองฝั่ง — ใช้ตัวตัดสินตัวเดียวกับรายงาน
+                // ภาษีซื้อ/ขายด้านล่าง (เดิมใช้ชุดสั้นที่ตอบ "ซื้อ" เสมอ — ดูคอมเมนต์
+                // ที่ `ResolveCnDnSide`) · ฝั่งที่ยัง**ไม่รู้** ไม่ถูกนับเข้าช่องใดเลย
+                // (G3: เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล ห้ามตกเป็น "ผ่าน" —
+                //  การเดาผิดที่นี่ไปโผล่ในแบบที่ยื่นแล้วแก้ไม่ได้)
+                var isAdjNote = doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote;
+                // ⚠️ ห้ามเขียนเป็น ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน —
+                // C# ทิ้งชื่อทิ้ง แล้ว CS1061 จะไปโผล่ไกลจากจุดที่ผิด
+                // (`tools/tuple_name_merge_check.py` มีไว้จับคลาสนี้)
+                (bool IsPurchase, bool Unknown) side = isAdjNote
+                    ? ResolveCnDnSide(doc)
+                    : (DocumentSide.IsPurchase(doc.DocumentType), false);
+                // ใบลดหนี้ = **ลด**ยอดของงวด ไม่ใช่เพิ่ม — เดิมบวกเข้าไปทุกใบ
+                // ⇒ ลดหนี้ยอดยกเว้น/0% ทำให้ช่อง 7/8 สูงกว่าความจริงเป็นสองเท่าของยอดลด
+                var adjSign = doc.DocumentType == DocumentType.CreditNote ? -1m : 1m;
 
-                if (isPurchase) exemptPurchases += split.ExemptBase;
-                else { zeroRatedSales += split.ZeroRatedBase; exemptSales += split.ExemptBase; }
+                if (isAdjNote && side.Unknown)
+                {
+                    // ไม่นับ — และไม่เงียบ: บรรทัดเตือนของใบนี้ถูกสร้างในส่วนรายงาน
+                    // ภาษีซื้อ/ขายด้านล่างอยู่แล้ว (ป้าย "⚠️ แยกฝั่งไม่ได้")
+                }
+                else if (side.IsPurchase) exemptPurchases += adjSign * split.ExemptBase;
+                else
+                {
+                    zeroRatedSales += adjSign * split.ZeroRatedBase;
+                    exemptSales += adjSign * split.ExemptBase;
+                }
             }
 
             // Output VAT - from tax invoices (ใบกำกับภาษี) per Thai law ภ.พ.30.
@@ -616,22 +656,10 @@ public partial class TaxService : ITaxService
                 // ไม่มีทั้งคู่ = คงพฤติกรรมเดิม (ฝั่งขาย) แต่ติดธงไว้เตือนด้านล่าง
                 // ผู้ใช้สั่งย้ายฝั่งเอง = ชนะทุกชั้น (ตอนสั่งย้าย ระบบกลับ JE เดิม
                 // แล้วลงใหม่ให้ตรงฝั่งด้วย รายงานกับ GL จึงยังตรงกันเสมอ)
-                var sideForced = doc.CnDnPurchaseSideOverride;
-                var sideResolvedByFk = doc.RelatedDocumentId.HasValue
-                    && relatedDocTypes.ContainsKey(doc.RelatedDocumentId.Value);
-                var isPurchaseSide = sideForced ?? (sideResolvedByFk
-                    ? (relatedDocTypes[doc.RelatedDocumentId!.Value] is DocumentType.PurchaseInvoice
-                        or DocumentType.Expense or DocumentType.CertificateInLieu
-                        or DocumentType.PaymentVoucher)
-                    : cnDnSideFromGl.GetValueOrDefault(doc.Id, false));
-                var sideUnknown = !sideForced.HasValue && !sideResolvedByFk && !cnDnSideFromGl.ContainsKey(doc.Id);
-                // ชั้นสุดท้าย (ตรงกับ AutoPost): คู่ค้าเป็น supplier อย่างเดียว
-                // = ฝั่งซื้อแน่นอน — เราไม่ออกใบลดหนี้การขายให้คนที่ไม่เคยเป็นลูกค้า
-                if (sideUnknown && doc.Contact is { IsSupplier: true, IsCustomer: false })
-                {
-                    isPurchaseSide = true;
-                    sideUnknown = false;
-                }
+                // ตัวตัดสินเดียวกับช่อง 7/8 (`ResolveCnDnSide`) — เดิมเป็นสำเนาที่สอง
+                var cnSide = ResolveCnDnSide(doc);
+                var isPurchaseSide = cnSide.IsPurchase;
+                var sideUnknown = cnSide.Unknown;
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640 — ยังไม่เคยเข้า
                 // ภ.พ.30) → CN ห้ามหักยอดงวดนี้ (จะเป็นการขอคืน VAT ที่ไม่เคยนำส่ง/
                 // ไม่เคยเคลม) — ใส่บรรทัดเตือน excluded คู่ไว้ ยอดสุทธิจะถูกนับตอน

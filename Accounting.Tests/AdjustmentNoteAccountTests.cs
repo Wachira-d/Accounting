@@ -158,6 +158,65 @@ public class AdjustmentNoteAccountTests
             purchase, returns, tracks, picked, control, "รายการ"));
     }
 
+    // ═══════════ ฝั่งของใบที่ลงบัญชีไปแล้ว (รายงาน/แบบยื่น) ═══════════
+
+    [Fact]
+    public void ผู้ใช้สั่งย้ายฝั่งเอง_ต้องชนะทุกชั้น_เพราะการย้ายฝั่งลง_JE_ใหม่ให้แล้ว()
+    {
+        var r = AdjustmentNoteAccount.ResolvePostedSide(
+            userOverride: false, sourceType: DocumentType.PurchaseInvoice,
+            glTouchedInputVat: true, contactIsSupplierOnly: true);
+        Assert.False(r.IsPurchase);
+        Assert.False(r.Unknown);
+    }
+
+    [Fact]
+    public void ไม่มีคำสั่งย้าย_ใบต้นทางชนะ_GL()
+    {
+        var r = AdjustmentNoteAccount.ResolvePostedSide(
+            null, DocumentType.TaxInvoice, glTouchedInputVat: true, contactIsSupplierOnly: true);
+        Assert.False(r.IsPurchase);
+        Assert.False(r.Unknown);
+    }
+
+    [Fact]
+    public void ไม่มีใบต้นทาง_GL_ชนะบทบาทคู่ค้า()
+    {
+        var r = AdjustmentNoteAccount.ResolvePostedSide(
+            null, null, glTouchedInputVat: false, contactIsSupplierOnly: true);
+        Assert.False(r.IsPurchase);   // JE แตะภาษีขาย 2191x = ฝั่งขาย
+        Assert.False(r.Unknown);
+    }
+
+    [Fact]
+    public void เหลือแต่บทบาทคู่ค้า_ผู้ขายอย่างเดียวคือฝั่งซื้อ()
+    {
+        var r = AdjustmentNoteAccount.ResolvePostedSide(null, null, null, contactIsSupplierOnly: true);
+        Assert.True(r.IsPurchase);
+        Assert.False(r.Unknown);
+    }
+
+    [Fact]
+    public void ไม่มีหลักฐานเลย_ต้องเป็น_Unknown_ไม่ใช่เดาว่าฝั่งซื้อ()
+    {
+        // ทิศที่ผิดของเดิม: `DocumentSide.IsPurchase(CreditNote)` **ไม่รับ ourRole**
+        // ⇒ คืน true เสมอ ⇒ ใบลดหนี้ฝั่งขายถูกนับยอดยกเว้นเข้าช่องฝั่งซื้อของ ภ.พ.30
+        // ที่นี่ต้องตอบว่า "ไม่รู้" เพื่อให้ผู้เรียก **ไม่นับเข้าช่องใดเลย** (G3)
+        var r = AdjustmentNoteAccount.ResolvePostedSide(null, null, null, contactIsSupplierOnly: false);
+        Assert.True(r.Unknown);
+    }
+
+    [Fact]
+    public void ล็อกพฤติกรรมของ_DocumentSide_ที่เป็นเหตุให้ห้ามใช้เดี่ยว_ๆ()
+    {
+        // เทสต์นี้ไม่ได้บอกว่า `DocumentSide` ผิด — มันถูกตามสัญญาของมันเอง
+        // (ชนิดกำกวม + ไม่รู้บทบาท = ฝั่งซื้อ) · ล็อกไว้เพื่อให้คนถัดไปเห็นว่า
+        // **ทำไมห้ามเรียกมันเดี่ยว ๆ กับ CN/DN** แล้วไปเดาเอาเองว่ามันตอบถูก
+        Assert.True(DocumentSide.IsPurchase(DocumentType.CreditNote));
+        Assert.True(DocumentSide.IsPurchase(DocumentType.DebitNote));
+        Assert.False(DocumentSide.IsPurchase(DocumentType.CreditNote, "Seller"));
+    }
+
     [Fact]
     public void ชุดชนิดใบต้นทางฝั่งซื้อ_ต้องมี_4_ชนิดพอดี()
     {

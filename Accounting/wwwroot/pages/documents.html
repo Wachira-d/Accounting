@@ -4684,6 +4684,28 @@
         const panel = document.getElementById('depositOptions');
         if (panel) panel.style.display = on ? 'block' : 'none';
       },
+      /** แถบเตือนเมื่อเอกสารที่เปิดมามีบรรทัดที่ผังอยู่คนละฝั่ง — อ่านจากแถวที่
+       *  hydrate แล้ว จึงใช้กติกาเดียวกับชิปรายบรรทัดและด่านฝั่งเซิร์ฟเวอร์
+       *  (`Helpers/AdjustmentNoteAccount.SideViolation`) โดยไม่ต้องยิง API เพิ่ม */
+      _flagWrongSideLineAccounts() {
+        const hint = document.getElementById('linesHint');
+        if (!hint) return;
+        const bad = [];
+        document.querySelectorAll('#linesBody .line-card [data-f="accountCode"]').forEach(inp => {
+          const code = inp.value.trim();
+          const acc = code && this.coaByCode?.[code];
+          if (acc && this._lineAccountWrongSide(acc)) bad.push(`${acc.accountCode} ${acc.accountName}`);
+        });
+        if (!bad.length) return;
+        const isExpSide = document.getElementById('linesTable')?.dataset.docSide === 'expense';
+        hint.innerHTML = `<span style="color:#b91c1c;font-weight:600">⚠️ ใบนี้มี ${bad.length} `
+          + `บรรทัดที่ผูกผังหมวด${isExpSide ? 'รายได้' : 'ค่าใช้จ่าย'}ไว้บนเอกสารฝั่ง`
+          + `${isExpSide ? 'ซื้อ' : 'ขาย'} (${Layout.esc(bad.join(' · '))})</span> — `
+          + `ตอนอนุมัติระบบจะ${isExpSide ? 'ลดยอด "รายได้" แทนที่จะลด "ค่าใช้จ่าย"' : 'ลงรายได้เข้าผังค่าใช้จ่าย'} `
+          + `กรุณาแก้ผังให้ตรงกับใบต้นทางก่อนอนุมัติ `
+          + `(ใบที่อนุมัติไปแล้วต้องใช้ปุ่ม "เปลี่ยนผังบัญชี" ซึ่งลง JE ปรับปรุงให้ในงวดเดิม)`;
+      },
+
       /** ผู้ใช้พิมพ์/เลือก accountCode บนบรรทัด → ถ้าต่างจากที่ AI แนะนำ
        *  เปลี่ยน badge เป็น "✎ แก้แล้ว" (สีส้ม). บันทึก choice จริงเกิดที่
        *  backend ตอน save (เปรียบ chosen code กับ AiPrimaryAnswer). */
@@ -8162,6 +8184,12 @@
           // the select is disabled in edit mode — useful context for
           // the operator.
           this.onDocTypeChange();
+          // ใบที่ **บันทึกไว้ก่อนมีด่านผังข้ามฝั่ง** อาจมีผังหมวดรายได้ค้างบนใบลดหนี้
+          // ฝั่งซื้อ (เช่น 43060 ส่วนลดรับ) ⇒ ตอนอนุมัติ JE จะ Cr รายได้แทนที่จะลด
+          // ค่าใช้จ่าย · ระบบ **ไม่แก้ให้เอง** (ใบที่ post แล้วต้องผ่านเส้น reclassify
+          // ซึ่งลง JE ปรับปรุงให้ — การเปลี่ยนคอลัมน์เฉย ๆ จะทำให้เอกสารกับ GL
+          // แยกทางถาวร) แต่ต้อง **เห็น** ไม่ใช่เงียบ
+          this._flagWrongSideLineAccounts();
           // ซื้อบริการต่างประเทศ + เงินมัดจำ + เหตุผลใบลดหนี้ — hydrate fields ที่
           // เพิ่งทำให้แก้ได้ตอน Draft (เดิมเปิดมาแก้แล้วค่าเหล่านี้เงียบหาย).
           // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.

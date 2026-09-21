@@ -1016,7 +1016,7 @@ public class ProductService : IProductService
                     && a.AccountCode.StartsWith(
                         Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies))
                     // Level >= 4 = บัญชี postable เท่านั้น — ผังมาตรฐานมี header ระดับ 3
-                    // ชื่อรหัสสั้น ("118") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
+                    // ชื่อรหัสสั้น ("115") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
                     // (บั๊กเดียวกับ audit F2 ที่ CN ซื้อเคยลง header "116")
                     && a.Level >= 4)
                 .OrderBy(a => a.AccountCode)
