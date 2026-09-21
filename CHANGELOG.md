@@ -3140,4 +3140,35 @@ p.Code = DeriveCode(p.Name);` และ `Apply` ก็เขียน `d.Code?.T
 `return BadRequest` เองถือว่าตรงกัน ไม่ฟ้อง ⇒ เขียวที่ 0 จุดโดยไม่ต้องมี baseline · ใส่บั๊กกลับ (Code เป็น non-nullable)
 แล้วจับได้ 3 จุดทันที · `tools/validation_field_label_sim.js` ล็อกข้อความที่ผู้ใช้เห็นด้วย **โค้ดจริงจาก api.js** 4 ทิศ ·
 และพบว่า CLAUDE.md §F เขียนตั้งแต่รอบ 169 ว่า `check_all.sh` รัน `node tools/vat_line_source_sim.js` ด้วย แต่
-**ไม่เคยรัน** — เพิ่มหมวด 1b ที่กวาด `tools/*_sim.js` ทั้งหมด (ด่านที่ไม่มีใครเรียก = ไม่มีด่าน) — commit <pending>)_
+**ไม่เคยรัน** — เพิ่มหมวด 1b ที่กวาด `tools/*_sim.js` ทั้งหมด (ด่านที่ไม่มีใครเรียก = ไม่มีด่าน) — commit 81968d5)_
+_Last verified against codebase: 2026-09-21 (รอบ 188 — **ช่องตัวเลขที่เว้นว่าง ทำให้บันทึกไม่ได้ทั้งใบ** ·
+ผู้ใช้ส่งภาพตอนสร้างประเภทห้อง "Nordic Tent": เว้นช่อง "เตียงเสริมสูงสุด" แล้วได้
+`dto: The dto field is required.; $.maxExtraBeds: The JSON value could not be converted to System.Int32.`
+⇒ หน้าเว็บส่ง `maxExtraBeds: null` · `LodgingRoomTypeDto.MaxExtraBeds` เป็น `int` (ไม่ใช่ `int?`) ⇒
+System.Text.Json แปลงไม่ได้ ⇒ **โยน body ทิ้งทั้งก้อน** ⇒ พารามิเตอร์ของ action เป็น null ⇒ MVC เติม error
+ตัวที่สอง "dto is required" ซึ่ง**ไม่มีช่องชื่อ dto บนหน้าจอให้แก้** · และ**ไม่มีอะไรถูกบันทึกเลย**ทั้งที่ช่องนั้นไม่บังคับ
+
+ต้นเหตุเชิงโครงสร้าง: `readForm` (ใช้ร่วมกัน **6 modal** — ประเภทห้อง/ห้อง/แผนราคา/ฤดูกาล/นโยบาย/บริการเสริม)
+แปลง "ช่องตัวเลขว่าง" เป็น `null` ทุกช่องโดยไม่รู้ว่า DTO ปลายทาง nullable หรือไม่ · ส่วน `readProp` ของฟอร์มที่พัก
+กันไว้ด้วย **ลิสต์ชื่อฟิลด์ฮาร์ดโค้ด 2 ชุด** (12 ชื่อ "ว่าง = ตัดทิ้ง" + 8 ชื่อ "ว่าง = 0") ซึ่งคือ**สำเนาที่สองของ
+กติกาใน DTO** ที่ไม่มีใครอัปเดตตอนเพิ่มฟิลด์ (F2 ข้อ 4) — และ modal ทั้ง 6 ไม่มีลิสต์นั้นเลย
+
+แก้:
+1. `_readNumberInto` ตัวเดียวที่ทั้ง `readProp` และ `readForm` เรียก — ว่าง = **ตัดคีย์ทิ้ง** (ปล่อยให้ค่า default
+   ที่ DTO ประกาศไว้ทำงาน: `MaxExtraBeds = 0` · `StandardOccupancy = 2`) · ช่องที่ "ว่าง = ศูนย์" ประกาศที่
+   **ตัวช่องเอง**ด้วย `data-blank="0"` (8 ช่องเงิน/%) ⇒ ลิสต์ฮาร์ดโค้ดทั้ง 2 ชุดถูกถอด พฤติกรรมเดิมไม่เปลี่ยน ·
+   ต้อง `delete` ไม่ใช่แค่ไม่เซ็ต เพราะ `readProp` seed payload มาจากใบเดิม
+2. `Helpers/ValidationErrorText` — เมื่อมี error ระดับ JSON path (`$.x`) ให้**ตัด "required" ระดับพารามิเตอร์
+   ที่เป็นผลพวงทิ้ง** (ปลอดภัยเพราะ deserialize ล้ม ⇒ MVC ข้าม validation ราย property ทั้งหมด) ⇒ ผู้ใช้เห็น
+   เฉพาะช่องที่ผิดจริง ไม่เห็น "dto" ที่หาไม่เจอบนหน้าจอ · ข้อความชนิดผิดพูดถึง "ช่องตัวเลขที่เว้นว่าง" ด้วย
+
+กวาดทั้งเรพ: จุดที่ส่ง null ให้ค่าตัวเลขมี 6 จุด — **2 จุดเป็นบั๊ก** (ตัวอ่านฟอร์มแบบวนลูปที่ไม่รู้ชนิดปลายทาง
+= ที่แก้รอบนี้) · อีก 4 จุดเปิดไฟล์ยืนยันแล้ว**ไม่ใช่บั๊ก** เพราะปลายทาง nullable ทุกตัว
+(`LodgingRateOverrideBulkRequest.StopSell` เป็น `bool?` · `LodgingAddChargeRequest.VatRate` เป็น `decimal?` ·
+`payroll fixedAmount` เป็น `decimal?` · `admin/plans.html` ยิงเข้า Update DTO ที่เป็น `int?`/`decimal?` ทั้งชุด)
+— ด้วยเหตุนี้ checker จึงจับ**เฉพาะตัวอ่านฟอร์มแบบวนลูป** ไม่กวาด `parseInt(...)` รายช่อง (จะฟ้องผิด 15 จุด
+ใน `admin/plans.html` ที่ไม่มีบั๊ก — checker ที่ฟ้องผิด = checker ที่พัง)
+
+กันกลับมาเกิด: `tools/blank_number_null_check.py` (self-test 3 ทิศ · ถอดการแก้ออกแล้วจับได้ 2 จุดทันที) ·
+`tools/blank_number_form_sim.js` ล็อก 4 ทิศด้วย **โค้ดจริงที่ดึงออกมาจากหน้าเว็บ** (ว่าง = ตัดคีย์ · data-blank=0 =
+ศูนย์ · **0 ที่ผู้ใช้พิมพ์เองต้องไม่หาย** · หน้าไม่เหลือรูปแบบเดิม) — commit <pending>)_

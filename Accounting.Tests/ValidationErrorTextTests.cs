@@ -93,6 +93,43 @@ public class ValidationErrorTextTests
         Assert.Contains("1 ช่อง", s.Message);
     }
 
+    [Fact]
+    public void เคสจริงที่สอง_body_แปลงไม่ผ่าน_ต้องรายงานเฉพาะช่องที่ผิดจริง_ไม่ใช่ผลพวง()
+    {
+        // ผู้ใช้ส่งภาพ 2026-09-21 (สร้างประเภทห้อง "Nordic Tent") — ช่อง "เตียงเสริมสูงสุด"
+        // ว่าง ⇒ หน้าเว็บส่ง `maxExtraBeds: null` ⇒ System.Text.Json แปลงเข้า `int`
+        // ไม่ได้ ⇒ โยน body ทิ้ง ⇒ พารามิเตอร์ของ action เป็น null ⇒ MVC เติม error
+        // ตัวที่สอง "The dto field is required." ซึ่ง **ไม่มีช่องชื่อ dto บนหน้าจอ**
+        // ให้ผู้ใช้แก้เลย — ตัวจริงมีตัวเดียวคือ maxExtraBeds
+        var s = Describe(
+            ("dto", "The dto field is required."),
+            ("$.maxExtraBeds", "The JSON value could not be converted to System.Int32. "
+                + "Path: $.maxExtraBeds | LineNumber: 0 | BytePositionInLine: 248."));
+
+        Assert.Equal(new[] { "maxExtraBeds" }, s.Fields);
+        Assert.DoesNotContain("dto", s.Message);
+        Assert.Contains("1 ช่อง", s.Message);
+        Assert.Contains("ผิดชนิด", s.Errors[0]);
+    }
+
+    [Fact]
+    public void ผลพวงถูกตัดเฉพาะตอนมี_error_ระดับ_JSON_path_เท่านั้น()
+    {
+        // ไม่มี `$.` = body แปลงผ่าน ⇒ "required" ที่เหลือเป็นของจริง ห้ามตัด
+        var s = Describe(("Name", "The Name field is required."));
+        Assert.Equal(new[] { "name" }, s.Fields);
+    }
+
+    [Fact]
+    public void มี_JSON_path_แล้ว_error_อื่นที่ไม่ใช่_required_ต้องยังอยู่()
+    {
+        // ตัดเฉพาะ "required" ที่เป็นผลพวง — ข้อความชนิดอื่นไม่ใช่ผลพวง ห้ามกลืน
+        var s = Describe(
+            ("$.maxExtraBeds", "The JSON value could not be converted to System.Int32."),
+            ("SomeOther", "The field SomeOther must be between 1 and 5."));
+        Assert.Equal(new[] { "maxExtraBeds", "someOther" }, s.Fields);
+    }
+
     // ═══════════ ครึ่งที่ 2 — ของที่ถูกอยู่แล้วต้องไม่ถูกแตะ ═══════════
 
     [Fact]

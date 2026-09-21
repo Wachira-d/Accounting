@@ -88,8 +88,8 @@
           <div class="grid2">
             <div class="fld"><label>เวลาเช็คอิน</label><input class="form-input" name="checkInTime" placeholder="14:00"></div>
             <div class="fld"><label>เวลาเช็คเอาต์</label><input class="form-input" name="checkOutTime" placeholder="12:00"></div>
-            <div class="fld"><label>Early check-in ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="earlyCheckInHours" min="0"><input class="form-input" type="number" step="0.01" name="earlyCheckInFee" min="0"></div></div>
-            <div class="fld"><label>Late check-out ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="lateCheckOutHours" min="0"><input class="form-input" type="number" step="0.01" name="lateCheckOutFee" min="0"></div></div>
+            <div class="fld"><label>Early check-in ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="earlyCheckInHours" min="0"><input class="form-input" type="number" step="0.01" name="earlyCheckInFee" data-blank="0" min="0"></div></div>
+            <div class="fld"><label>Late check-out ได้กี่ชม. / ค่าธรรมเนียม</label><div class="flex gap-2"><input class="form-input" type="number" name="lateCheckOutHours" min="0"><input class="form-input" type="number" step="0.01" name="lateCheckOutFee" data-blank="0" min="0"></div></div>
             <div class="fld"><label>พักขั้นต่ำ (คืน)</label><input class="form-input" type="number" name="minNights" min="1"></div>
             <div class="fld"><label>พักสูงสุด (คืน)</label><input class="form-input" type="number" name="maxNights" min="1"></div>
             <div class="fld"><label>จองล่วงหน้าได้สูงสุด (วัน)</label><input class="form-input" type="number" name="maxAdvanceDays" min="1"></div>
@@ -97,8 +97,8 @@
             <div class="fld"><label>เด็ก = อายุไม่เกิน</label><input class="form-input" type="number" name="childMaxAge" min="0"></div>
             <div class="fld"><label>ทารก (ไม่คิดเงิน) = อายุไม่เกิน</label><input class="form-input" type="number" name="infantMaxAge" min="0"></div>
             <div class="fld"><label>Overbooking ได้กี่ห้อง</label><input class="form-input" type="number" name="overbookingAllowance" min="0"></div>
-            <div class="fld"><label>ราคาแขกเกินมาตรฐาน /คน/คืน (default)</label><input class="form-input" type="number" step="0.01" name="extraGuestPrice" min="0"></div>
-            <div class="fld"><label>ตัวคูณสุดสัปดาห์ (1.00 = ไม่ปรับ)</label><input class="form-input" type="number" step="0.01" name="weekendMultiplier" min="0.01"></div>
+            <div class="fld"><label>ราคาแขกเกินมาตรฐาน /คน/คืน (default)</label><input class="form-input" type="number" step="0.01" name="extraGuestPrice" data-blank="0" min="0"></div>
+            <div class="fld"><label>ตัวคูณสุดสัปดาห์ (1.00 = ไม่ปรับ)</label><input class="form-input" type="number" step="0.01" name="weekendMultiplier" data-blank="0" min="0.01"></div>
             <div class="fld"><label>วันที่ถือเป็นสุดสัปดาห์</label><div id="weekendDays" class="flex gap-2" style="flex-wrap:wrap;font-size:13px"></div></div>
             <div class="fld"><label><input type="checkbox" name="onlineBookingEnabled"> เปิดให้จองผ่านเว็บ</label></div>
             <div class="fld"><label><input type="checkbox" name="requireGuestIdNumber"> ต้องกรอกเลขบัตร/พาสปอร์ตตอนจอง</label></div>
@@ -106,12 +106,12 @@
         </div>
         <div class="card"><h4>มัดจำ & การยืนยัน</h4>
           <div class="grid2">
-            <div class="fld"><label>มัดจำ % ของยอดรวม</label><input class="form-input" type="number" step="0.01" name="depositPercent" min="0" max="100"></div>
+            <div class="fld"><label>มัดจำ % ของยอดรวม</label><input class="form-input" type="number" step="0.01" name="depositPercent" data-blank="0" min="0" max="100"></div>
             <div class="fld"><label>หรือมัดจำคงที่ต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" name="depositFixedAmount" min="0"><div class="hint">มีค่า = ใช้แทน %</div></div>
-            <div class="fld"><label>มัดจำขั้นต่ำ</label><input class="form-input" type="number" step="0.01" name="depositMinAmount" min="0"></div>
+            <div class="fld"><label>มัดจำขั้นต่ำ</label><input class="form-input" type="number" step="0.01" name="depositMinAmount" data-blank="0" min="0"></div>
             <div class="fld"><label>มัดจำสูงสุด</label><input class="form-input" type="number" step="0.01" name="depositMaxAmount" min="0"></div>
             <div class="fld"><label>กันห้องรอชำระมัดจำ (นาที)</label><input class="form-input" type="number" name="paymentHoldMinutes" min="15"><div class="hint">หมดเวลา = ปล่อยห้องอัตโนมัติ</div></div>
-            <div class="fld"><label>ค่าปรับ no-show (% ของยอดรวม)</label><input class="form-input" type="number" step="0.01" name="noShowChargePercent" min="0" max="100"></div>
+            <div class="fld"><label>ค่าปรับ no-show (% ของยอดรวม)</label><input class="form-input" type="number" step="0.01" name="noShowChargePercent" data-blank="0" min="0" max="100"></div>
             <div class="fld"><label><input type="checkbox" name="autoConfirmOnDeposit"> ยืนยันอัตโนมัติเมื่อบันทึกรับมัดจำ</label></div>
             <div class="fld"><label><input type="checkbox" name="confirmWithoutDeposit"> ยืนยันทันทีโดยไม่เก็บมัดจำ</label></div>
             <div class="fld"><label>นโยบายยกเลิก default</label><select class="form-input" name="defaultCancellationPolicyId" id="policySelect"><option value="">— ไม่มี —</option></select></div>
@@ -121,7 +121,7 @@
           <div class="grid2">
             <div class="fld"><label>ราคาที่ตั้ง</label><select class="form-input" name="pricesIncludeVat"><option value="true">รวม VAT แล้ว (แสดงลูกค้าแบบรวมภาษี)</option><option value="false">ยังไม่รวม VAT</option></select></div>
             <div class="fld"><label>คิด VAT ห้องพัก</label><select class="form-input" name="chargeVat"><option value="">ตามสถานะจด VAT ของบริษัท</option><option value="true">คิด 7% เสมอ</option><option value="false">ไม่คิด</option></select><div class="hint">อัตราที่ใช้จริงตอนนี้: <b id="effVat">-</b>%</div></div>
-            <div class="fld"><label>Service charge %</label><input class="form-input" type="number" step="0.01" name="serviceChargePercent" min="0" max="100"></div>
+            <div class="fld"><label>Service charge %</label><input class="form-input" type="number" step="0.01" name="serviceChargePercent" data-blank="0" min="0" max="100"></div>
             <div class="fld"><label>ผังบัญชีรายได้ค่าห้อง</label><input class="form-input" name="roomRevenueAccountCode" placeholder="ว่าง = ตามสินค้า/บริษัท"></div>
             <div class="fld"><label>ผังบัญชี service charge</label><input class="form-input" name="serviceChargeAccountCode"></div>
             <div class="fld"><label>ผังบัญชีรายได้ริบมัดจำ/ค่าปรับยกเลิก</label><input class="form-input" name="cancellationFeeAccountCode" placeholder="ว่าง = รายได้ค่าห้อง"></div>
@@ -363,6 +363,24 @@
         document.getElementById('policySelect').innerHTML = '<option value="">— ไม่มี —</option>' + (this.policies || []).map(x => `<option value="${x.id}" ${x.id === p.defaultCancellationPolicyId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
         document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
       },
+      // ═══ ช่องตัวเลขที่เว้นว่าง: **ตัดคีย์ทิ้ง ห้ามส่ง null** ═══
+      // บั๊กจริง (ผู้ใช้รายงาน 2026-09-21 ตอนสร้างประเภทห้อง "Nordic Tent"):
+      // ช่อง "เตียงเสริมสูงสุด" ว่าง → ส่ง `maxExtraBeds: null` → System.Text.Json
+      // แปลง null เข้า `int` (ไม่ใช่ `int?`) ไม่ได้ → **โยนทั้ง body ทิ้ง** → ผู้ใช้ได้
+      // error สองชั้นพร้อมกัน ("$.maxExtraBeds แปลงไม่ได้" + "dto is required")
+      // และ**ไม่มีอะไรถูกบันทึกเลย** ทั้งที่ช่องนั้นไม่บังคับ
+      //
+      // ตัดคีย์ทิ้ง = ให้ค่า default ที่ DTO ประกาศไว้ทำงาน (เช่น MaxExtraBeds = 0,
+      // StandardOccupancy = 2) · ช่องที่ "ว่าง = ศูนย์" ประกาศที่ **ตัวช่องเอง**
+      // ด้วย `data-blank="0"` — ห้ามเก็บเป็นลิสต์ชื่อฟิลด์ในโค้ด เพราะลิสต์คือสำเนา
+      // ที่สองของกติกาใน DTO ที่ไม่มีใครอัปเดตตอนเพิ่มฟิลด์ใหม่ (F2 ข้อ 4)
+      // _(ของเดิม readProp มีลิสต์แบบนั้น 2 ชุด · readForm ของ 6 modal **ไม่มีเลย**
+      //   ⇒ ทุก modal พังทันทีที่ผู้ใช้เว้นช่องตัวเลขว่าง)_
+      _readNumberInto(d, el) {
+        if (el.value !== '') { d[el.name] = +el.value; return; }
+        if (el.dataset.blank === '0') { d[el.name] = 0; return; }
+        delete d[el.name];   // ต้อง delete ไม่ใช่แค่ไม่เซ็ต — d อาจถูก seed มาจากใบเดิม
+      },
       readProp() {
         const f = document.getElementById('propForm'); const d = Object.assign({}, this.prop || {});
         for (const el of f.elements) {
@@ -372,13 +390,10 @@
           else if (el.name === 'images') d.images = el.value.split('\n').map(s => s.trim()).filter(Boolean);
           else if (el.name === 'chargeVat') d.chargeVat = el.value === '' ? null : el.value === 'true';
           else if (el.name === 'pricesIncludeVat') d.pricesIncludeVat = el.value === 'true';
-          else if (el.type === 'number') d[el.name] = el.value === '' ? null : +el.value;
+          else if (el.type === 'number') this._readNumberInto(d, el);
           else d[el.name] = el.value === '' ? null : el.value;
         }
         let mask = 0; document.querySelectorAll('#weekendDays input:checked').forEach(cb => mask |= +cb.dataset.mask); d.weekendDaysMask = mask;
-        ['minNights','maxNights','maxAdvanceDays','minAdvanceHours','childMaxAge','infantMaxAge','overbookingAllowance','paymentHoldMinutes','housekeepingMinutesPerRoom','starRating','earlyCheckInHours','lateCheckOutHours']
-          .forEach(k => { if (d[k] == null) delete d[k]; });
-        ['depositPercent','depositMinAmount','serviceChargePercent','weekendMultiplier','extraGuestPrice','noShowChargePercent','earlyCheckInFee','lateCheckOutFee'].forEach(k => { if (d[k] == null) d[k] = 0; });
         return d;
       },
       async saveProperty(ev) {
@@ -408,7 +423,7 @@
         for (const el of f.elements) {
           if (!el.name) continue;
           if (el.type === 'checkbox') d[el.name] = el.checked;
-          else if (el.type === 'number') d[el.name] = el.value === '' ? null : +el.value;
+          else if (el.type === 'number') this._readNumberInto(d, el);
           else d[el.name] = el.value === '' ? null : el.value;
         }
         return d;

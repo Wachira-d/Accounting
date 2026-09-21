@@ -108,25 +108,44 @@ public static class ValidationErrorText
         if (m.Contains(FrameworkNotValid, StringComparison.OrdinalIgnoreCase)
             || m.Contains(FrameworkJsonConvert, StringComparison.OrdinalIgnoreCase)
             || m.Contains(FrameworkInvalidStart, StringComparison.OrdinalIgnoreCase))
-            return "ค่าที่กรอกผิดชนิด (เช่น กรอกตัวอักษรในช่องตัวเลข หรือวันที่ผิดรูปแบบ)";
+            return "ค่าที่ส่งมาผิดชนิด (เช่น ตัวอักษรในช่องตัวเลข · วันที่ผิดรูปแบบ · "
+                + "หรือช่องตัวเลขที่เว้นว่างแล้วถูกส่งมาเป็นค่าว่าง)";
         return $"ค่าไม่ถูกต้อง (ระบบแจ้งว่า: {m})";
     }
+
+    private static bool IsFrameworkRequired(string? raw)
+        => (raw ?? "").Contains(FrameworkRequired, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>รวม ModelState ทั้งชุดเป็นข้อความเดียวที่<b>ระบุชื่อช่องเสมอ</b></summary>
     /// <param name="entries">คู่ (คีย์ ModelState, ข้อความ) — ผู้เรียกดึงจาก
     /// <c>ActionContext.ModelState</c> เพื่อให้ helper นี้เทสต์ได้โดยไม่ต้องลาก ASP.NET มา</param>
     public static ValidationErrorSummary Describe(IEnumerable<(string Key, IEnumerable<string> Messages)> entries)
     {
+        List<(string Key, IEnumerable<string> Messages)> list =
+            entries is null ? new() : entries.ToList();
+
+        // ── ตัด "ผลพวง" ออกก่อน ── (บั๊กจริง 2026-09-21)
+        // เมื่อ body แปลงไม่ผ่าน (`$.maxExtraBeds` เป็น null แต่ชนิดเป็น `int`)
+        // System.Text.Json โยนทั้งก้อนทิ้ง ⇒ พารามิเตอร์ของ action กลายเป็น null
+        // ⇒ MVC เติม error ตัวที่สองให้เองว่า "The dto field is required."
+        // ผู้ใช้จึงเห็นสองบรรทัดที่บรรทัดหลังไม่มีความหมายและ **ไม่มีช่องชื่อ "dto"
+        // บนหน้าจอให้แก้** · ตัวจริงคือบรรทัดแรกเท่านั้น
+        // (ปลอดภัยที่จะตัด เพราะเมื่อ deserialize ล้ม MVC ข้าม validation ราย
+        //  property ทั้งหมด ⇒ error ที่ไม่ใช่ `$.` จะมีได้แค่ตัวพารามิเตอร์เอง)
+        var hasJsonPathError = list.Any(e => (e.Key ?? "").StartsWith("$", StringComparison.Ordinal));
+        if (hasJsonPathError)
+            list = list.Where(e => (e.Key ?? "").StartsWith("$", StringComparison.Ordinal)
+                                   || !IsFrameworkRequired(e.Messages?.FirstOrDefault())).ToList();
+
         var fields = new List<string>();
         var errors = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var bodyLevel = 0;   // ผิดที่ตัว request ทั้งก้อน ไม่ใช่ช่องใดช่องหนึ่ง
 
-        foreach (var (key, messages) in entries)
+        foreach (var (key, messages) in list)
         {
             var field = NormalizeKey(key);
             var text = TranslateMessage(messages?.FirstOrDefault());
-            if (field.Length == 0) { bodyLevel++; errors.Add(text); continue; }
+            if (field.Length == 0) { errors.Add(text); continue; }
             if (!seen.Add(field)) continue;
             fields.Add(field);
             errors.Add(text);

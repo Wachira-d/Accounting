@@ -590,6 +590,8 @@ python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขา
 python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ของบรรทัดตรง ๆ ไม่ผ่าน Layout.setLineVat → ตัวแนะนำทับค่าที่อ่านจากกระดาษ ยอดเพี้ยนเงียบ
 node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)
 node tools/validation_field_label_sim.js # ข้อความ validation ต้องชี้ "ป้ายไทยที่ผู้ใช้เห็น" ไม่ใช่ชื่อ property C# · ช่องที่ไม่มีบนหน้าต้องบอกว่าไม่มี (รันโค้ดจริงจาก api.js)
+python3 tools/blank_number_null_check.py # ช่องตัวเลขที่เว้นว่างถูกส่งเป็น `null` → System.Text.Json แปลงเข้า int/decimal ไม่ได้ ⇒ โยน body ทิ้งทั้งก้อน ⇒ ไม่มีอะไรถูกบันทึกและ error ชี้ไปที่ "dto" ที่ไม่มีบนหน้าจอ
+node tools/blank_number_form_sim.js # ล็อก "ว่าง = ตัดคีย์ทิ้ง · data-blank=\"0\" = ศูนย์ · 0 ที่พิมพ์เองต้องไม่หาย" ด้วยโค้ดจริงจากหน้าเว็บ
 # ↑ `tools/*_sim.js` ทุกตัวถูก check_all.sh กวาดรันเอง (แก้ 2026-09-21 — เดิมเขียนไว้ว่ารันแต่ **ไม่เคยรัน**)
 python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-"
 python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
