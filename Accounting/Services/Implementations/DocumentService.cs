@@ -395,9 +395,22 @@ public partial class DocumentService : IDocumentService
     /// สมมาตรกัน (Dr ค่าใช้จ่ายเข้าบัญชี 4xxxx). โยน error ภาษาไทยชัด ๆ ตั้งแต่
     /// ตอนบันทึก — ดีกว่าปล่อยผ่านแล้วไปพังใน GL. ฝั่งขายยังใช้ผังหนี้สิน/
     /// สินทรัพย์ได้ (มัดจำ, รับล่วงหน้า) — บล็อกเฉพาะหมวดค่าใช้จ่าย.</summary>
+    /// <param name="cnDnIsPurchase">ฝั่งของใบลดหนี้/ใบเพิ่มหนี้ (<c>null</c> = ยังไม่รู้)
+    ///   — ชนิดอื่นไม่ใช้ค่านี้. **CN/DN เคยถูกยกเว้นจากด่านนี้ทั้งด่าน** (ดูคอมเมนต์ที่
+    ///   <c>PureSalesSideTypes</c>) ⇒ ผังหมวดรายได้บนใบลดหนี้ฝั่งซื้อ Cr เข้า 4xxxx เงียบ ๆ
+    ///   · กติกาอยู่ที่ <c>Helpers/AdjustmentNoteAccount.SideViolation</c> ตัวเดียว</param>
     private static void EnsureLineAccountMatchesDocSide(
-        DocumentType docType, string? lineDescription, ChartOfAccount acct)
+        DocumentType docType, string? lineDescription, ChartOfAccount acct,
+        bool? cnDnIsPurchase = null)
     {
+        if (docType is DocumentType.CreditNote or DocumentType.DebitNote)
+        {
+            var violation = Accounting.Helpers.AdjustmentNoteAccount.SideViolation(
+                cnDnIsPurchase, docType == DocumentType.CreditNote,
+                acct.AccountType, acct.AccountCode, acct.AccountName, lineDescription);
+            if (violation != null) throw new InvalidOperationException(violation);
+            return;
+        }
         if (PureSalesSideTypes.Contains(docType) && acct.AccountType == AccountType.Expense)
             throw new InvalidOperationException(
                 $"รายการ '{lineDescription}' เลือกผังบัญชี {acct.AccountCode} {acct.AccountName} (หมวดค่าใช้จ่าย) " +
@@ -909,7 +922,28 @@ public partial class DocumentService : IDocumentService
         // "ผู้ติดต่อไม่ได้ตั้งค่าเป็นลูกค้า" ทั้งที่คู่ค้ารายนั้นคือผู้ขาย ไม่ใช่ลูกค้า
         // → ตรวจตามฝั่งที่ผู้ใช้เลือกจริง
         var isTwoSidedAdj = request.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote;
-        var adjIsPurchase = isTwoSidedAdj && request.CnDnPurchaseSideOverride == true;
+        // ฝั่งของใบลดหนี้/เพิ่มหนี้ต้องดู **ใบต้นทาง** ด้วย ไม่ใช่แต่ override ที่ผู้ใช้ติ๊ก:
+        // `ConvertCoreAsync` ส่ง `RelatedDocumentId` มาแต่ **ไม่เคยส่ง**
+        // `CnDnPurchaseSideOverride` (ไล่พารามิเตอร์ครบแล้วที่ `:9378-9421`) ⇒ การแปลง
+        // "ใบแจ้งหนี้ซื้อ → ใบลดหนี้" ซึ่งเป็นเส้น**เดียว**ที่คัดลอกผังบัญชีรายบรรทัด
+        // มาให้ครบ (`:9359 s.Line.AccountId`) ตกด่านข้างล่างนี้ด้วยข้อความ "ไม่ได้ตั้งค่า
+        // เป็นลูกค้า" ทุกครั้ง (คู่ค้าของใบซื้อเป็น supplier ไม่ใช่ลูกค้า) ⇒ ผู้ใช้ถูกบีบ
+        // ไปคีย์มือแล้วไปเจอผังที่ค้างฝั่งขาย — นี่คือรากร่วมของบั๊กที่ผู้ใช้รายงาน
+        //
+        // ตัวตัดสินฝั่งที่ถูกต้องมีอยู่แล้วที่ `:1118-1125` แต่อยู่**หลัง**ด่านนี้ ~200 บรรทัด
+        // (R4 "สองด่านในเมธอดเดียวที่เรียงผิดลำดับ") — ที่นี่ใช้ตัวตัดสินเดียวกันผ่าน
+        // `Helpers/AdjustmentNoteAccount.ResolveSide` เพื่อไม่ให้มีสำเนากติกาชุดที่สอง
+        DocumentType? adjSourceType = null;
+        if (isTwoSidedAdj && request.RelatedDocumentId.HasValue)
+            adjSourceType = await _db.Documents.AsNoTracking()
+                .Where(x => x.Id == request.RelatedDocumentId.Value && x.CompanyId == companyId)
+                .Select(x => (DocumentType?)x.DocumentType)
+                .FirstOrDefaultAsync();
+        var adjSideResolved = isTwoSidedAdj
+            ? Accounting.Helpers.AdjustmentNoteAccount.ResolveSide(
+                adjSourceType, request.CnDnPurchaseSideOverride)
+            : null;
+        var adjIsPurchase = adjSideResolved == true;
         if ((revenueDocTypes.Contains(request.DocumentType) || (isTwoSidedAdj && !adjIsPurchase))
             && !contact.IsCustomer)
             throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
@@ -1117,9 +1151,10 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefaultAsync();
                 if (srcType.HasValue)
                 {
-                    var srcIsPurchase = srcType.Value is DocumentType.PurchaseInvoice
-                        or DocumentType.Expense or DocumentType.PaymentVoucher
-                        or DocumentType.CertificateInLieu;
+                    // ชุดชนิด "ใบต้นทางฝั่งซื้อ" อ่านจาก OWNER file ตัวเดียว —
+                    // เดิมพิมพ์มือซ้ำ 6 ที่ (F2 ข้อ 4)
+                    var srcIsPurchase =
+                        Accounting.Helpers.AdjustmentNoteAccount.SourceIsPurchaseSide(srcType.Value);
                     // ไม่ได้ระบุฝั่งมา → ยึดฝั่งของใบต้นทาง (ชัดเจนที่สุด ไม่ต้องเดา)
                     if (!doc.CnDnPurchaseSideOverride.HasValue)
                         doc.CnDnPurchaseSideOverride = srcIsPurchase;
@@ -1352,7 +1387,8 @@ public partial class DocumentService : IDocumentService
                 var lineAccountId = resolvedAccountIds.TryGetValue(lineIdx, out var rid) ? (Guid?)rid : null;
                 // ผังรายบรรทัดต้องอยู่ฝั่งเดียวกับเอกสาร (กัน JE Cr รายได้เข้า 5xxxx)
                 if (lineAccountId.HasValue && accountMeta.TryGetValue(lineAccountId.Value, out var lineAcct))
-                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, lineAcct);
+                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, lineAcct,
+                        doc.CnDnPurchaseSideOverride);
                 // ภาษีซื้อต้องห้าม: ถ้าบัญชีตั้งเป็น InputVatClaimable=false
                 // (เช่น ค่ารับรอง) → บังคับ line.IsVatClaimable=false
                 // ไม่ว่า request จะส่งอะไรมา — รักษา consistency กับ chart
@@ -2355,7 +2391,8 @@ public partial class DocumentService : IDocumentService
                 var lineAccountId = updResolvedAccountIds.TryGetValue(updLineIdx, out var rid2) ? (Guid?)rid2 : null;
                 // ผังรายบรรทัดต้องอยู่ฝั่งเดียวกับเอกสาร (กัน JE Cr รายได้เข้า 5xxxx)
                 if (lineAccountId.HasValue && updAccountMeta.TryGetValue(lineAccountId.Value, out var updLineAcct))
-                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, updLineAcct);
+                    EnsureLineAccountMatchesDocSide(doc.DocumentType, line.Description, updLineAcct,
+                        doc.CnDnPurchaseSideOverride);
                 var enforcedClaimable = line.IsVatClaimable;
                 string? enforcedReason = line.VatNonClaimableReason;
                 if (lineAccountId.HasValue && accountFlags.TryGetValue(lineAccountId.Value, out var acctClaimable) && !acctClaimable)
@@ -13721,7 +13758,13 @@ public partial class DocumentService : IDocumentService
             else
                 counterAccCode = isCashSettlement ? "111" : "113"; // Cash or AR
 
-            var counterAcc = await FindAccountAsync(companyId, counterAccCode);
+            // ⚠️ ต้องส่ง `doc.Contact` เหมือนทุกเส้นอื่นในไฟล์นี้ (`:3984` `:4200` `:4349`
+            // `:8272` `:13407` `:14181` `:15294`) — `FindAccountAsync` อ่าน
+            // `Contact.DefaultArAccountId`/`DefaultApAccountId` จากพารามิเตอร์นี้เท่านั้น
+            // เดิมไม่ส่ง ⇒ คู่ค้าที่ปักผังลูกหนี้/เจ้าหนี้เฉพาะรายไว้ ถูกใบลดหนี้/เพิ่มหนี้
+            // ลงเข้าผังกลางแทน ⇒ ผังเฉพาะรายค้างยอดถาวรเพราะใบตั้งหนี้กับใบปรับปรุง
+            // อยู่คนละบัญชี (ยอดคงเหลือรายคู่ค้าไม่มีวันเป็นศูนย์)
+            var counterAcc = await FindAccountAsync(companyId, counterAccCode, doc.Contact);
             var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
                 (isCashSettlement ? " (เงินสด)" : "");
 
@@ -16631,6 +16674,62 @@ public partial class DocumentService : IDocumentService
                     + $"แต่ยังไม่ได้กรอก \"เลขที่{w}จากผู้ขาย\" — รายงานภาษีซื้อ/ไฟล์ยื่นจะแสดง"
                     + "เลขเอกสารภายในของเราแทนเลขจริงของผู้ออก (กระทบยอดกับผู้ขายไม่ได้). "
                     + $"เปิดเอกสาร → กรอกช่อง \"เลขที่{w}จากผู้ขาย\" ก่อนยื่น ภ.พ.30");
+            }
+        }
+
+        // TFRS บทที่ 8 — ใบลดหนี้ฝั่งซื้อเหตุผล "รับคืนสินค้า" ตัด **จำนวน** ออกจาก
+        // สต็อกจริง (`ApplyStockMovementsAsync`) ⇒ ถ้าขา Cr ไม่ใช่บัญชีคุมสต็อกของ
+        // สินค้านั้น จำนวนลดแต่มูลค่าใน GL ไม่ลด = สองความจริงที่สะสมทุกใบ
+        //
+        // **เป็นคำเตือน ไม่ใช่การบล็อก** โดยเจตนา: มีเคสที่ผู้ใช้ตั้งใจจริง (ของถูกขาย
+        // ออกไปแล้ว ส่วนลดตามทฤษฎีเข้า COGS) ซึ่งระบบแยกจากข้อมูลบนใบไม่ได้ ·
+        // ของเดิมคือ "เงียบสนิท" — รอบนี้อย่างน้อยผู้ใช้เห็นและกดยืนยันเองว่ารู้ตัว
+        if (doc.DocumentType == DocumentType.CreditNote
+            && cnDnPurchaseSide == true
+            && doc.CreditNoteReason == Models.Enums.CreditNoteReason.Return
+            && doc.Lines.Any(l => l.AccountId.HasValue && !string.IsNullOrWhiteSpace(l.ProductCode)))
+        {
+            var stockCodes = doc.Lines
+                .Where(l => l.AccountId.HasValue && !string.IsNullOrWhiteSpace(l.ProductCode))
+                .Select(l => l.ProductCode!.Trim()).Distinct().ToList();
+            var stockProducts = await _db.Products.AsNoTracking()
+                .Where(pr => pr.CompanyId == companyId && stockCodes.Contains(pr.Code)
+                    && !pr.IsDeleted && pr.TrackStock)
+                .Select(pr => new { pr.Code, pr.ProductType, pr.InventoryAccountId, pr.SuppliesAccountId })
+                .ToListAsync();
+            if (stockProducts.Count > 0)
+            {
+                var invDefault = (await FindAccountAsync(companyId, "11500")
+                    ?? await FindAccountAsync(companyId, "115"))?.Id;
+                Guid? supDefault = null;
+                if (stockProducts.Any(pr => pr.ProductType == Models.Enums.ProductType.Supplies))
+                    supDefault = (await FindAccountAsync(companyId,
+                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(
+                            Models.Enums.ProductType.Supplies)))?.Id;
+                var prodByCode = stockProducts.ToDictionary(pr => pr.Code);
+                var codeIds = doc.Lines.Where(l => l.AccountId.HasValue)
+                    .Select(l => l.AccountId!.Value).ToList();
+                var acctCodeById = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && codeIds.Contains(a.Id))
+                    .ToDictionaryAsync(a => a.Id, a => a.AccountCode);
+                foreach (var line in doc.Lines)
+                {
+                    if (!line.AccountId.HasValue || string.IsNullOrWhiteSpace(line.ProductCode)) continue;
+                    if (!prodByCode.TryGetValue(line.ProductCode!.Trim(), out var prod)) continue;
+                    var controlId = Accounting.Helpers.InventoryControlAccount.Resolve(
+                        prod.ProductType, prod.InventoryAccountId, prod.SuppliesAccountId,
+                        invDefault, supDefault);
+                    if (!controlId.HasValue || controlId.Value == line.AccountId.Value) continue;
+                    acctCodeById.TryGetValue(line.AccountId.Value, out var pickedCode);
+                    var controlCode = await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.Id == controlId.Value && a.CompanyId == companyId)
+                        .Select(a => a.AccountCode).FirstOrDefaultAsync();
+                    var w = Accounting.Helpers.AdjustmentNoteAccount.StockValuationWarning(
+                        isPurchaseSide: true, lineReturnsGoods: true, productTracksStock: true,
+                        pickedAccountCode: pickedCode, inventoryControlAccountCode: controlCode,
+                        lineDescription: line.Description);
+                    if (w != null) warnings.Add(w);
+                }
             }
         }
 

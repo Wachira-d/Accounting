@@ -3059,3 +3059,24 @@ negative test 2 ทิศรันแล้ว) (2) `BankService` เติม `
 · **CI เขียวทั้ง static-checks และ dotnet build (Release) ที่ `9167816`** ⇒ ไฟล์เทสต์ใหม่ 44 ไฟล์ของรอบ 183/184
 คอมไพล์ผ่านเป็นครั้งแรก · `dotnet test` **ยังไม่เคยรัน** (job รันเฉพาะ PR/main/dispatch · `workflow_dispatch` = 403)
 — commit 9167816)_
+
+_Last verified against codebase: 2026-09-21 (รอบ 185 — **ผังบัญชีบนใบลดหนี้/ใบเพิ่มหนี้ฝั่งซื้อ** · ผู้ใช้รายงาน:
+"หน้าลดหนี้ ผังบัญชีต้องเลือกฝั่งค่าใช้จ่ายได้ด้วย เพราะลดหนี้ฝั่งซื้อ ถ้าลงบัญชีเป็นวัสดุสิ้นเปลือง ก็ต้องไปลดวัสดุสิ้นเปลือง"
+· ทีมตรวจ 3 ชุด (บัญชี/ภาษี · UX/UI · ฝ่ายค้าน-ทางเข้าอื่น) ถกเถียงแล้ว main agent เปิดไฟล์ยืนยันทุกข้อหลัก:
+**ราก 4 ชั้น** (1) `onCnSourceSelect` สร้างแถว**ก่อน**ตั้งฝั่ง ⇒ ใบลดหนี้ที่อ้างใบ**ซื้อ** ได้แถวที่เสนอแต่ผังรายได้
+4xxxx ทุกแถว แล้ว `_refreshCnSideEditability()` ล็อก radio ทันที ⇒ ผู้ใช้แก้เองไม่ได้เลย (เส้นที่ §86/10 อยากให้ใช้
+ที่สุด ผิด 100%) (2) ลูปเติมบรรทัดจากใบต้นทางคัดลอกแค่ 6 ช่อง **ทิ้ง `accountCode`/`productCode`/`isVatClaimable`/
+ส่วนลด** ทั้งที่ `DocumentLineResponse` ส่งมาครบ ⇒ ทิ้ง productCode = JE ตกไป 51110 แทนบัญชีคุมสต็อก · ทิ้ง
+isVatClaimable = Cr 11610 ทั้งที่ตอนตั้งหนี้ไม่เคย Dr (ภาษีซื้อติดลบ) (3) `EnsureLineAccountMatchesDocSide`
+**ยกเว้น CN/DN ทั้งด่าน** ⇒ ฝั่งขายมีตาข่าย `RevenueLegAccountId` แต่ฝั่งซื้อไม่มีเลย ⇒ `43060 ส่วนลดรับ` (หมวด
+Revenue) **ถูก Cr เข้า 4xxxx เงียบสนิท** แทนที่จะลดวัสดุสิ้นเปลือง (4) ด่านบทบาทคู่ค้าที่ `CreateDocumentAsync`
+อ่านแต่ `CnDnPurchaseSideOverride` ⇒ การแปลง **ใบแจ้งหนี้ซื้อ → ใบลดหนี้** ซึ่งเป็นเส้น**เดียว**ที่คัดลอกผังบัญชี
+รายบรรทัดมาให้ครบ (`ConvertCoreAsync` `s.Line.AccountId`) ถูกปฏิเสธทุกครั้งด้วยข้อความ "ไม่ได้ตั้งค่าเป็นลูกค้า"
+⇒ ผู้ใช้ถูกบีบไปคีย์มือแล้วไปเจอผังที่ค้างฝั่งขาย · **แก้**: `Helpers/AdjustmentNoteAccount` เป็น OWNER file
+(`ResolveSide` ใบต้นทางชนะ override · `SideViolation` ฝั่งซื้อห้ามหมวดรายได้/ฝั่งขายห้ามหมวดค่าใช้จ่าย/สินทรัพย์-หนี้สิน
+ผ่านทั้งคู่/**ฝั่ง null = ปล่อยผ่าน** กันการล้มใบเก่าและ API ที่ไม่เคยส่งฝั่ง · `StockValuationWarning` เป็น soft
+warning ตอนอนุมัติ ไม่บล็อก) · ฟอร์มตั้งฝั่งก่อนสร้างแถว + `_hydrateLineRow` ตัวเดียวกับตอนแก้ไขเอกสาร +
+`_syncLineAccountPickers()` (datalist/ป้าย/placeholder/ชิป) เรียกจาก `onCnSideChange` ด้วย + ชิป "⚠ ผังคนละฝั่ง" ·
+ของแถม: counter account ของ CN/DN เคารพ `DefaultApAccountId`/`DefaultArAccountId` ของคู่ค้าแล้ว (เดิมไม่ส่ง
+`doc.Contact` ต่างจากทุกเส้นอื่น) · `OcrService.FallbackLineDescription` เลิกเขียนชื่อ enum ดิบ ("TaxInvoice")
+ลงช่องรายละเอียดบรรทัด ซึ่งถูกพิมพ์ลงกระดาษ §86/4 และลงคำบรรยาย JE ("ใบลดหนี้ - TaxInvoice") — commit <pending>)_

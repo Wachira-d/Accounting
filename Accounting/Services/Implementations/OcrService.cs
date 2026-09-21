@@ -6402,6 +6402,27 @@ public class OcrService : IOcrService
         return (status.ToString(), issues ?? "[]");
     }
 
+    /// <summary>คำบรรยายบรรทัดเมื่อกระดาษไม่ได้บอกรายการมา — **ห้ามใช้ชื่อ enum ดิบ**
+    ///
+    /// <para>เดิมเขียน <c>result.DocumentType ?? "รายการจาก OCR"</c> ซึ่ง
+    /// <c>result.DocumentType</c> คือ**ชื่อ enum ภาษาอังกฤษ** ("TaxInvoice") ⇒ ค่านั้น
+    /// ไม่ได้อยู่แค่บนหน้าจอ: มันถูกพิมพ์ลงกระดาษ §86/4 (ซึ่งบังคับให้ทุกบรรทัดมี
+    /// <c>Description</c> ที่สื่อความ) และถูกใช้เป็นคำบรรยายบรรทัด JE ผ่าน
+    /// <c>$"{typeLabel} - {docLine.Description}"</c> ⇒ สมุดรายวันมีบรรทัด
+    /// "ใบลดหนี้ - TaxInvoice" (ผู้ใช้รายงานจริง 2026-09-21)</para>
+    ///
+    /// <para>ทิศที่ถูกคือ F2 ข้อ 3 — "ไม่รู้ = บอกว่าไม่รู้ อย่าแต่งค่าขึ้นมา":
+    /// ใช้ข้อเท็จจริงที่อยู่บนกระดาษจริง (เลขเอกสาร → ชื่อผู้ขาย) และถ้าไม่มีทั้งคู่
+    /// ให้เขียนประโยคที่ <b>อ่านแล้วรู้ว่าต้องแก้</b> แทนคำที่ดูเหมือนมีข้อมูลแล้ว</para></summary>
+    internal static string FallbackLineDescription(string? documentNumber, string? vendorName)
+    {
+        if (!string.IsNullOrWhiteSpace(documentNumber))
+            return $"รายการตามเอกสารเลขที่ {documentNumber.Trim()}";
+        if (!string.IsNullOrWhiteSpace(vendorName))
+            return $"รายการจาก {vendorName.Trim()}";
+        return "รายการจากเอกสารสแกน (เอกสารไม่ได้ระบุรายละเอียด — กรุณาระบุ)";
+    }
+
     /// <summary>
     /// **ตัวสร้าง DocumentLine จากผลสแกน — ตัวเดียวของทุกทางเข้า** (สร้างเอกสารจากสแกน ·
     /// ดึงรายการซ้ำเข้าเอกสารว่าง). กระทบยอด Σ บรรทัด ↔ หัวใบผ่าน
@@ -6602,7 +6623,8 @@ public class OcrService : IOcrService
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
-                    Description = item.Description ?? result.DocumentType ?? "รายการจาก OCR",
+                    Description = item.Description ?? FallbackLineDescription(
+                        result.ExtractedDocumentNumber, result.ExtractedVendorName),
                     Quantity = item.Quantity ?? 1,
                     // Resolve: ว่าง → อนุมานจากคำอธิบาย (ค่าไฟ→"หน่วย") ก่อนตก
                     // "ชิ้น" · "ชิ้น" บนบรรทัดที่กฎรู้จัก (สแกนเก่าที่ default
@@ -6663,7 +6685,8 @@ public class OcrService : IOcrService
             document.Lines.Add(new DocumentLine
             {
                 LineOrder = 1,
-                Description = result.DocumentType ?? "รายการจาก OCR",
+                Description = FallbackLineDescription(
+                    result.ExtractedDocumentNumber, result.ExtractedVendorName),
                 Quantity = 1,
                 UnitPrice = headerSubTotal,
                 Amount = headerSubTotal,

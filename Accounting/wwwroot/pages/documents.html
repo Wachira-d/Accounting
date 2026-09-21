@@ -4687,6 +4687,21 @@
       /** ผู้ใช้พิมพ์/เลือก accountCode บนบรรทัด → ถ้าต่างจากที่ AI แนะนำ
        *  เปลี่ยน badge เป็น "✎ แก้แล้ว" (สีส้ม). บันทึก choice จริงเกิดที่
        *  backend ตอน save (เปรียบ chosen code กับ AiPrimaryAnswer). */
+      /** ผังนี้อยู่คนละฝั่งกับเอกสารที่กำลังกรอกไหม — กติกาเดียวกับด่านฝั่งเซิร์ฟเวอร์
+       *  (`Helpers/AdjustmentNoteAccount.SideViolation` + `EnsureLineAccountMatchesDocSide`):
+       *  ฝั่งซื้อห้ามหมวด **รายได้** · ฝั่งขายห้ามหมวด **ค่าใช้จ่าย** ·
+       *  สินทรัพย์/หนี้สินผ่านทั้งสองฝั่ง (มัดจำ · รับ-จ่ายล่วงหน้า · ภาษีซื้อ-ขาย)
+       *
+       *  หน้าเว็บ**ไม่ตัดสินแทนเซิร์ฟเวอร์** — เป็นแค่คำเตือนล่วงหน้าเพื่อให้ผู้ใช้
+       *  ไม่ต้องกดบันทึกแล้วเจอ error (ตัวตัดสินจริงยังอยู่ที่เซิร์ฟเวอร์ทางเดียว) */
+      _lineAccountWrongSide(acc) {
+        if (!acc) return false;
+        const isExpSide = document.getElementById('linesTable')?.dataset.docSide === 'expense';
+        // `accountType` มาจาก API เป็น**ชื่อ** ไม่ใช่ตัวเลข (Layout ทั้งเรพยึดกติกานี้)
+        const at = String(acc.accountType || '');
+        return isExpSide ? at === 'Revenue' : at === 'Expense';
+      },
+
       onLineAccountInput(el, fromUser = false) {
         const row = el.closest('.line-card');
         if (!row) return;
@@ -4709,6 +4724,21 @@
           badge.style.background = '#dcfce7'; badge.style.color = '#15803d';
           badge.textContent = '✓ ตามที่ AI แนะนำ';
           badge.title = 'AI แนะนำผังนี้ — ระบบจะบันทึกเป็น accepted';
+        } else if (found && this._lineAccountWrongSide(found)) {
+          // ผังคนละฝั่งกับเอกสาร — ชิปเดิมทาสีฟ้าโชว์ชื่อผังให้ทุกรหัสที่ resolve ได้
+          // โดยไม่ดูฝั่งเลย ⇒ "ส่วนลดรับ 43060" บนใบลดหนี้ฝั่งซื้อดูเหมือนได้รับการ
+          // ยืนยันจากระบบ ทั้งที่เซิร์ฟเวอร์จะปฏิเสธตอนบันทึก (RD-86/9-10-ACCT-SIDE)
+          const isExpSide = document.getElementById('linesTable')?.dataset.docSide === 'expense';
+          badge.style.display = 'inline-block';
+          badge.style.background = '#fee2e2'; badge.style.color = '#b91c1c';
+          badge.textContent = '⚠ ผังคนละฝั่ง';
+          badge.title = `${found.accountCode} ${found.accountName} เป็นผังหมวด`
+            + `${isExpSide ? 'รายได้' : 'ค่าใช้จ่าย'} ซึ่งใช้กับเอกสารฝั่ง`
+            + `${isExpSide ? 'ซื้อ' : 'ขาย'}ไม่ได้ — `
+            + (isExpSide
+                ? 'เลือกผังหมวดค่าใช้จ่าย/สินทรัพย์/หนี้สิน (เช่น ผังเดิมที่ลงไว้ตอนซื้อ) '
+                  + 'หรือเว้นว่างเพื่อให้ระบบใช้ผังเดียวกับใบต้นทาง'
+                : 'เลือกผังหมวดรายได้ (4xxxx) หรือเว้นว่างเพื่อใช้บัญชีรายได้มาตรฐาน');
         } else if (found) {
           badge.style.display = 'inline-block';
           badge.style.background = '#e0e7ff'; badge.style.color = '#3730a3';
@@ -5744,6 +5774,127 @@
        *   • PV → แสดงเฉพาะเมื่อติ๊ก "มีใบกำกับภาษีซื้อ" (master switch)
        *   • PI/Expense → แสดงเสมอ (มี VAT ซื้อได้เสมอ)
        * ทำผ่าน class .vat-claim-off บน #linesTable (CSS จัดการ display) */
+      /** **ตัวเติมค่าลงแถวรายการตัวเดียวของหน้านี้** — รับ `DocumentLineResponse`
+       *  ตรง ๆ แล้วเติมทุกช่องที่เอกสารเก็บไว้ (รายละเอียด · จำนวน · ราคา · ส่วนลด ·
+       *  VAT · WHT · ธงเคลมภาษีซื้อ · **ผังบัญชี** · สินค้า · โครงการ · ลิงก์บรรทัดต้นทาง)
+       *
+       *  ที่มา: เดิมมีตัวเติมสองชุด — `openEdit` เติมครบ 13 ช่อง แต่
+       *  `onCnSourceSelect` (เติมบรรทัดจากใบต้นทางของใบลดหนี้/เพิ่มหนี้) มีสำเนา
+       *  ของตัวเองที่เติมแค่ 6 ช่อง **ทิ้ง `accountCode` · `productCode` ·
+       *  `isVatClaimable` · ส่วนลด** ทั้งที่ payload ส่งมาครบ ⇒ ใบลดหนี้ฝั่งซื้อต้อง
+       *  ให้ผู้ใช้เดาผังบัญชีเอง และ JE ตกไป 51110/Cr 11610 ผิดทั้งสองขา
+       *  (กฎเหล็ก #4 H "สองเส้นที่ผลิตของชิ้นเดียวกัน ต้องเรียกตัวสร้างตัวเดียว")
+       *
+       *  @param {HTMLElement} row แถวที่ `addLine()` เพิ่งสร้าง
+       *  @param {object} l DocumentLineResponse
+       *  @param {{carryStoredVat?:boolean, carryAiFeedback?:boolean}} opts
+       *    `carryStoredVat` — จำยอด VAT ที่บันทึกไว้เพื่อ echo กลับโดยไม่ขยับ
+       *      (จริงเฉพาะตอน **แก้ไขใบเดิม**) · ใบลดหนี้ที่เติมจากใบต้นทางจะถูกแก้ยอด
+       *      อยู่แล้ว การจำยอดเดิมไว้จะทำให้ VAT ไม่ตามยอดใหม่
+       *    `carryAiFeedback` — feedbackId เป็นของบรรทัด**ใบนั้น** ไม่ใช่ของใบใหม่
+       */
+      _hydrateLineRow(row, l, opts = {}) {
+        row.querySelector('[data-f="desc"]').value = l.description || '';
+        row.querySelector('[data-f="qty"]').value = l.quantity || 1;
+        const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
+        row.querySelector('[data-f="price"]').value = l.unitPrice || 0;
+        // ส่วนลด: discountAmount (ยอดเงิน) → โหมด ฿; ไม่งั้นโหมด %
+        const _dm2 = row.querySelector('[data-f="discMode"]');
+        if (l.discountAmount && l.discountAmount > 0) {
+          if (_dm2) _dm2.value = 'amt';
+          row.querySelector('[data-f="disc"]').value = l.discountAmount;
+        } else {
+          if (_dm2) _dm2.value = 'pct';
+          row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
+        }
+        Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
+        row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+        // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
+        // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
+        // ที่บันทึกไว้แล้ว.
+        const claimEl = row.querySelector('[data-f="vatClaim"]');
+        if (claimEl) {
+          const claim = l.isVatClaimable !== false;
+          claimEl.dataset.claim = claim ? 'true' : 'false';
+          claimEl.dataset.reason = l.vatNonClaimableReason || '';
+          claimEl.dataset.userOverride = '1';
+          claimEl.textContent = claim ? '✓' : '🚫';
+          claimEl.style.color = claim ? '' : '#dc2626';
+          claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
+          // เอกสารเก่าที่บันทึกก่อนมีกฎนี้อาจเก็บ claim=true ทั้งที่ VAT=0
+          // → แสดงเป็น "—" ให้ตรงความจริง (server จะ normalize ตอนบันทึกครั้งถัดไป)
+          this.syncVatClaimWithRate(row);
+        }
+        // Per-line account picker — hydrate จาก server + AI feedback
+        const accInp = row.querySelector('[data-f="accountCode"]');
+        if (accInp && l.accountCode) accInp.value = l.accountCode;
+        if (opts.carryAiFeedback !== false && l.glAccountAiFeedbackId) {
+          const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
+          if (fidEl) fidEl.dataset.feedbackId = l.glAccountAiFeedbackId;
+        }
+        if (accInp) this.onLineAccountInput(accInp);
+        if (l.productCode) {
+          row.dataset.productCode = l.productCode;
+          if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
+        }
+        // Carry the conversion-traceability link so editing this document
+        // never breaks its partial-fulfilment accounting.
+        if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
+        // ยอด VAT ที่ "บันทึกไว้จริง" ของบรรทัดนี้ — เอกสารที่มาจาก OCR/
+        // integration เก็บ VAT ที่คิดมาแล้ว ซึ่งอาจต่างจากการคิดใหม่จากอัตรา
+        // ระดับสตางค์. ถ้าเปิดฟอร์มแล้วกดบันทึกโดยไม่แตะบรรทัด ยอดต้องไม่ขยับ
+        // (กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ") → จำค่าไว้พร้อม "ฐานที่ใช้คิด"
+        // ถ้าผู้ใช้แก้ จำนวน/ราคา/ส่วนลด/อัตรา เมื่อไร ฐานเปลี่ยน → กลับไปคิดใหม่
+        if (opts.carryStoredVat !== false && l.vatAmount != null) {
+          row.dataset.storedVat = String(l.vatAmount);
+          row.dataset.storedVatBasis = this._vatBasisKey(row);
+        }
+        // Per-line project — empty value means "inherit header's project".
+        const pSel = row.querySelector('[data-f="project"]');
+        if (pSel) pSel.value = l.projectId || '';
+      },
+
+      /** ป้าย/placeholder/datalist ของช่อง "ผังบัญชี" รายบรรทัด — **ตัวเดียวของหน้านี้**
+       *
+       *  ต้องเรียกทุกครั้งที่ "ฝั่งของเอกสาร" เปลี่ยน ไม่ใช่แค่ตอน render แถว:
+       *  `addLine()` ฝังค่าเหล่านี้ลง markup ตอนสร้างแถว ⇒ แถวที่มีอยู่ก่อนสลับฝั่ง
+       *  จะค้างชุดเดิมตลอดไป (บั๊กที่ผู้ใช้รายงาน — สลับเป็น "ซื้อ" แล้วช่องผังบัญชี
+       *  ยังเสนอแต่ผังรายได้ 4xxxx จนต้องเลือก "43060 ส่วนลดรับ" ซึ่งผิดหมวด)
+       *
+       *  ป้ายบอกตรง ๆ ว่าผังนี้คือผังที่จะถูก **ลด/เพิ่มยอด** ไม่ใช่ผังของรายการใหม่ —
+       *  ทิศ Dr/Cr ตรงกับ `DocumentService.AutoPostToJournalAsync`
+       *  (`lineIsDebit = isPurchaseSide ? !isCreditNote : isCreditNote`)
+       */
+      _syncLineAccountPickers() {
+        const tbl = document.getElementById('linesTable');
+        if (!tbl) return;
+        const isExp = tbl.dataset.docSide === 'expense';
+        const docType = document.getElementById('fDocType')?.value;
+        const isCn = docType === 'CreditNote';
+        const isAdj = isCn || docType === 'DebitNote';
+        const verb = isCn ? 'ลด' : 'เพิ่ม';
+        const drcr = isExp ? (isCn ? 'เครดิต' : 'เดบิต') : (isCn ? 'เดบิต' : 'เครดิต');
+        const noun = isExp ? 'ผัง' : 'ผังรายได้';
+        const label = isAdj ? `${noun}ที่จะถูก${verb}ยอด` : (isExp ? 'ผังบัญชี' : 'ผังบัญชี (รายได้)');
+        const title = isAdj
+          ? `${isCn ? 'ใบลดหนี้' : 'ใบเพิ่มหนี้'}ฝั่ง${isExp ? 'ซื้อ' : 'ขาย'}จะ "${drcr}" ผังนี้ — `
+            + `ต้องเป็นผังเดียวกับที่ลงไว้ตอน${isExp ? 'ซื้อ' : 'ขาย'} `
+            + (isExp ? 'เช่น ซื้อลงค่าวัสดุสิ้นเปลือง ก็ต้องเลือกผังวัสดุสิ้นเปลืองผังเดิม' : '')
+          : '';
+        const ph = isExp
+          ? (isAdj ? 'เว้นว่าง = ใช้ผังเดียวกับใบต้นทาง' : 'เลือก/ค้นหาผังบัญชี…')
+          : 'ผังรายได้ (เว้นว่าง = รายได้มาตรฐาน 41000)';
+        tbl.querySelectorAll('.lc-acc-input').forEach(inp => {
+          inp.setAttribute('list', isExp ? 'coaList' : 'coaListRevenue');
+          inp.placeholder = ph;
+          const lbl = inp.closest('.lc-acc-row')?.querySelector('[data-f="accountLabel"]');
+          if (lbl) { lbl.textContent = label; lbl.title = title; }
+          // ค่าที่กรอกไว้แล้วอาจเป็นผังคนละฝั่ง (เช่นเลือก 43060 ไว้ตอนยังเป็นฝั่งขาย)
+          // — ประเมินชิปใหม่เพื่อให้คำเตือนขึ้นทันทีที่สลับฝั่ง ไม่ต้องรอผู้ใช้พิมพ์
+          if (inp.value) this.onLineAccountInput(inp, false);
+        });
+      },
+
       _syncVatClaimColumn() {
         const tbl = document.getElementById('linesTable');
         if (!tbl) return;
@@ -5764,14 +5915,7 @@
         // ฝั่งซื้อ = coaList (ค่าใช้จ่าย/หนี้สิน/สินทรัพย์), ฝั่งขาย =
         // coaListRevenue (รายได้ 4xxxx). ครอบคลุมทั้งแถวที่มีอยู่แล้วตอน
         // ผู้ใช้สลับชนิดเอกสารกลางฟอร์ม และแถวที่ hydrate ตอนแก้ไข
-        {
-          const isExp = tbl.dataset.docSide === 'expense';
-          tbl.querySelectorAll('.lc-acc-input').forEach(inp => {
-            inp.setAttribute('list', isExp ? 'coaList' : 'coaListRevenue');
-            inp.placeholder = isExp ? 'เลือก/ค้นหาผังบัญชี…'
-              : 'ผังรายได้ (เว้นว่าง = รายได้มาตรฐาน 41000)';
-          });
-        }
+        this._syncLineAccountPickers();
         let off = false;
         if (docType === 'PaymentVoucher') {
           off = !document.getElementById('fHasTaxInvoiceRef')?.checked;
@@ -6276,6 +6420,11 @@
         // ฝั่งซื้อ = ตารางรายการใช้ราคาทุน + คอลัมน์เคลม VAT ต้องโผล่
         const tbl = document.getElementById('linesTable');
         if (tbl) tbl.dataset.docSide = isPurchase ? 'expense' : 'revenue';
+        // แถวที่ render ไปแล้วต้องเปลี่ยน datalist/ป้าย/ชิป ตามฝั่งใหม่ด้วย —
+        // เดิมเปลี่ยนแค่ `dataset.docSide` แล้วจบ ⇒ แถวเดิมค้างลิสต์ฝั่งเก่าถาวร
+        // และเมื่อฝั่งถูกตั้งจากใบต้นทาง radio จะถูกล็อก ⇒ ผู้ใช้ไม่มีทาง trigger
+        // ให้ re-point ได้อีกเลยตลอด session (เส้นที่ §86/10 อยากให้ใช้ที่สุด)
+        this._syncLineAccountPickers();
         this._refreshCnSideEditability();
       },
 
@@ -6318,27 +6467,32 @@
             + `บรรทัดถูกเติมด้วยยอดเต็มใบเดิม — <b>แก้เป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริง</b>ก่อนบันทึก `
             + `(กระดาษจะพิมพ์กล่อง มูลค่าเดิม/มูลค่าที่ถูกต้อง/ผลต่าง ให้อัตโนมัติ${isCn ? ' + ระบบกันยอดลดรวมเกินใบเดิม' : ''})`;
         }
+        // ⚠️ ลำดับสำคัญ: **ตั้งฝั่งก่อนสร้างแถว** — `addLine()` อ่าน
+        // `linesTable.dataset.docSide` ตอน render แล้วฝัง `list=`/ป้าย/placeholder
+        // ลง markup ของแถวนั้นถาวร · เดิมสร้างแถวก่อนแล้วค่อยตั้งฝั่ง ⇒ ใบลดหนี้ที่
+        // อ้างใบ**ซื้อ** ได้แถวที่เสนอแต่ผังรายได้ 4xxxx ทุกแถว และ
+        // `_refreshCnSideEditability()` ล็อก radio ทันที ⇒ ผู้ใช้ไม่มีทางแก้เองได้เลย
+        // (นี่คือเส้นที่ §86/10 อยากให้ใช้ที่สุด กลับเป็นเส้นที่ผิด 100%)
+        this._setCnSide(srcIsPurchase,
+          `ตั้งตามใบต้นทาง (${Layout.docTypeLabel(d.documentType)}) — ` +
+          (srcIsPurchase ? 'ลดภาษีซื้อ' : 'ลดภาษีขาย'), { fromSource: true });
         if (Array.isArray(d.lines) && d.lines.length) {
           document.getElementById('linesBody').innerHTML = '';
           this.lineCount = 0;
           d.lines.forEach(l => {
             this.addLine();
-            const row = document.getElementById('linesBody').lastElementChild;
-            const set = (f, v) => { const el = row.querySelector(`[data-f="${f}"]`); if (el) { el.value = v; el.__grow?.(); } };
-            set('desc', l.description || '');
-            set('qty', l.quantity || 1);
-            set('unit', l.unit || 'ชิ้น');
-            set('price', l.unitPrice || 0);
-            Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate ?? 0, 'doc');
-            set('wht', l.withholdingTaxRate || 0);
+            // ตัวเติมตัวเดียวกับตอนแก้ไขเอกสาร — สืบทอด **ผังบัญชี · สินค้า ·
+            // ธงเคลมภาษีซื้อ §82/5 · ส่วนลด** จากบรรทัดใบเดิมด้วย ไม่ใช่แค่ 6 ช่อง
+            // เหมือนเดิม: ใบลดหนี้คือการ "กลับรายการ" ของใบเดิม ⇒ ต้องลงกลับผังเดิม
+            // (ทิ้ง productCode ⇒ JE ตกไป 51110 แทนบัญชีคุมสต็อก · ทิ้ง
+            //  isVatClaimable ⇒ Cr 11610 ทั้งที่ตอนตั้งหนี้ไม่เคย Dr = ภาษีซื้อติดลบ)
+            // ไม่สืบทอด: ยอด VAT ที่ตรึงไว้ (ผู้ใช้ต้องแก้ยอดเป็นยอดที่ลดจริง) และ
+            // feedbackId ของ AI (เป็นของบรรทัดใบนั้น ไม่ใช่ของใบใหม่)
+            this._hydrateLineRow(document.getElementById('linesBody').lastElementChild, l,
+              { carryStoredVat: false, carryAiFeedback: false });
           });
           this.calcSum?.();
         }
-        // ฝั่งภาษีต้องตามใบเดิมเสมอ — ใบเดิมเป็นใบซื้อ ใบลดหนี้ก็ต้องฝั่งซื้อ
-        // (ตั้งให้อัตโนมัติ ไม่ปล่อยให้ระบบไปเดาตอนอนุมัติ)
-        this._setCnSide(srcIsPurchase,
-          `ตั้งตามใบต้นทาง (${Layout.docTypeLabel(d.documentType)}) — ` +
-          (srcIsPurchase ? 'ลดภาษีซื้อ' : 'ลดภาษีขาย'), { fromSource: true });
 
         const refEl = document.getElementById('fRef');
         // ช่อง "อ้างอิง" เติมด้วยเลขเดียวกับที่จะพิมพ์บนกระดาษ/ยื่น ภ.พ.30
@@ -7975,65 +8129,7 @@
           this.lineCount = 0;
           (d.lines || []).forEach(l => {
             this.addLine();
-            const row = document.getElementById('linesBody').lastElementChild;
-            row.querySelector('[data-f="desc"]').value = l.description || '';
-            row.querySelector('[data-f="qty"]').value = l.quantity || 1;
-            const unitEl = row.querySelector('[data-f="unit"]'); if (unitEl) unitEl.value = l.unit || 'ชิ้น';
-            row.querySelector('[data-f="price"]').value = l.unitPrice || 0;
-            // ส่วนลด: discountAmount (ยอดเงิน) → โหมด ฿; ไม่งั้นโหมด %
-            const _dm2 = row.querySelector('[data-f="discMode"]');
-            if (l.discountAmount && l.discountAmount > 0) {
-              if (_dm2) _dm2.value = 'amt';
-              row.querySelector('[data-f="disc"]').value = l.discountAmount;
-            } else {
-              if (_dm2) _dm2.value = 'pct';
-              row.querySelector('[data-f="disc"]').value = l.discountPercent || 0;
-            }
-            Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
-            row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
-            // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
-            // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
-            // ที่บันทึกไว้แล้ว.
-            const claimEl = row.querySelector('[data-f="vatClaim"]');
-            if (claimEl) {
-              const claim = l.isVatClaimable !== false;
-              claimEl.dataset.claim = claim ? 'true' : 'false';
-              claimEl.dataset.reason = l.vatNonClaimableReason || '';
-              claimEl.dataset.userOverride = '1';
-              claimEl.textContent = claim ? '✓' : '🚫';
-              claimEl.style.color = claim ? '' : '#dc2626';
-              claimEl.title = claim ? 'VAT เคลมได้' : `VAT ต้องห้าม — ${l.vatNonClaimableReason || 'ไม่นำเข้า ภพ.30'}`;
-              // เอกสารเก่าที่บันทึกก่อนมีกฎนี้อาจเก็บ claim=true ทั้งที่ VAT=0
-              // → แสดงเป็น "—" ให้ตรงความจริง (server จะ normalize ตอนบันทึกครั้งถัดไป)
-              this.syncVatClaimWithRate(row);
-            }
-            // Per-line account picker — hydrate จาก server + AI feedback
-            const accInp = row.querySelector('[data-f="accountCode"]');
-            if (accInp && l.accountCode) accInp.value = l.accountCode;
-            if (l.glAccountAiFeedbackId) {
-              const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
-              if (fidEl) fidEl.dataset.feedbackId = l.glAccountAiFeedbackId;
-            }
-            if (accInp) this.onLineAccountInput(accInp);
-            if (l.productCode) {
-              row.dataset.productCode = l.productCode;
-              if (window.ProductLookup) ProductLookup.createChip(row, l.productCode);
-            }
-            // Carry the conversion-traceability link so editing this document
-            // never breaks its partial-fulfilment accounting.
-            if (l.sourceLineId) row.dataset.sourceLineId = l.sourceLineId;
-            // ยอด VAT ที่ "บันทึกไว้จริง" ของบรรทัดนี้ — เอกสารที่มาจาก OCR/
-            // integration เก็บ VAT ที่คิดมาแล้ว ซึ่งอาจต่างจากการคิดใหม่จากอัตรา
-            // ระดับสตางค์. ถ้าเปิดฟอร์มแล้วกดบันทึกโดยไม่แตะบรรทัด ยอดต้องไม่ขยับ
-            // (กฎเหล็ก #4 A "เก็บแล้วต้อง echo กลับ") → จำค่าไว้พร้อม "ฐานที่ใช้คิด"
-            // ถ้าผู้ใช้แก้ จำนวน/ราคา/ส่วนลด/อัตรา เมื่อไร ฐานเปลี่ยน → กลับไปคิดใหม่
-            if (l.vatAmount != null) {
-              row.dataset.storedVat = String(l.vatAmount);
-              row.dataset.storedVatBasis = this._vatBasisKey(row);
-            }
-            // Per-line project — empty value means "inherit header's project".
-            const pSel = row.querySelector('[data-f="project"]');
-            if (pSel) pSel.value = l.projectId || '';
+            this._hydrateLineRow(document.getElementById('linesBody').lastElementChild, l);
           });
           if (!d.lines?.length) this.addLine();
           this.calcSum();
