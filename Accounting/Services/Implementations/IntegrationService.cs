@@ -522,7 +522,13 @@ public class IntegrationService : IIntegrationService
                 contact = new Contact
                 {
                     CompanyId = companyId,
-                    Name = officialName ?? request.Name,
+                    // ชื่อเว้นว่างได้ (DTO เป็น `string?`) และทะเบียนอาจไม่คืนชื่อมา —
+                    // คู่ค้าที่ไม่มีชื่อเลยค้นไม่เจอตลอดไป ⇒ ใช้เลขผู้เสียภาษีเป็นชื่อชั่วคราว
+                    // ให้ผู้ใช้เห็นแล้วแก้ได้ แทนการปล่อย null ลงคอลัมน์ที่ไม่รับ null
+                    Name = officialName
+                        ?? (string.IsNullOrWhiteSpace(request.Name)
+                            ? $"(ไม่ระบุชื่อ) {request.TaxId}".Trim()
+                            : request.Name),
                     NameEn = dbdCheck.Matched ? dbdCheck.OfficialNameEn : null,
                     TaxId = request.TaxId,
                     Phone = request.Phone,

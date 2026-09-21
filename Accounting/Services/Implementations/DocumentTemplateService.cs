@@ -21,7 +21,9 @@ public class DocumentTemplateService : IDocumentTemplateService
         var template = new DocumentTemplate
         {
             CompanyId = companyId,
-            Name = request.Name,
+            // ชื่อเว้นว่างได้ (DTO เป็น `string?`) — เส้นพรีวิวที่ `:48` เติม "Preview"
+            // ให้อยู่แล้ว เส้นสร้างจริงต้องเติมด้วย ไม่ใช่ปล่อย null ลงคอลัมน์ที่ไม่รับ null
+            Name = string.IsNullOrWhiteSpace(request.Name) ? "เทมเพลตใหม่" : request.Name.Trim(),
             LayoutStyle = request.LayoutStyle ?? "Classic",
             Description = request.Description,
             DocumentType = request.DocumentType,

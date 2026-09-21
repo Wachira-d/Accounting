@@ -15436,9 +15436,9 @@ public partial class DocumentService : IDocumentService
             var supplierOnly = false;
             if (doc.Contact is { } loaded)
                 supplierOnly = loaded is { IsSupplier: true, IsCustomer: false };
-            else if (doc.ContactId.HasValue)
+            else if (doc.ContactId != Guid.Empty)
                 supplierOnly = await _db.Contacts.AsNoTracking()
-                    .Where(c => c.Id == doc.ContactId.Value && c.CompanyId == companyId)
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
                     .Select(c => c.IsSupplier && !c.IsCustomer)
                     .FirstOrDefaultAsync();
 
