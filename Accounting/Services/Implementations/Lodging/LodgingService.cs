@@ -387,7 +387,10 @@ public partial class LodgingService : ILodgingService
     {
         var rt = await _db.LodgingRoomTypes.AsNoTracking().FirstOrDefaultAsync(x => x.Id == dto.RoomTypeId && x.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบประเภทห้อง");
+        // `dto.Number` เป็น `string?` โดยตั้งใจ — ด่านไทยบรรทัดนี้ต้องเป็นคนตอบ
+        // ไม่ใช่ implicit required ของ ASP.NET ที่ตอบเป็นอังกฤษก่อนถึง service
         if (string.IsNullOrWhiteSpace(dto.Number)) throw new BusinessRuleException("กรุณาระบุหมายเลขห้อง");
+        var number = dto.Number.Trim();
         LodgingUnit u;
         if (dto.Id is Guid id)
         {
@@ -399,7 +402,6 @@ public partial class LodgingService : ILodgingService
             u = new LodgingUnit { CompanyId = companyId, CreatedBy = userId };
             _db.LodgingUnits.Add(u);
         }
-        var number = dto.Number.Trim();
         var clash = await _db.LodgingUnits.AnyAsync(x => x.CompanyId == companyId && x.Id != u.Id && x.Number == number && x.RoomType.PropertyId == rt.PropertyId);
         if (clash) throw new BusinessRuleException($"หมายเลขห้อง {number} มีอยู่แล้วในที่พักนี้");
         u.RoomTypeId = dto.RoomTypeId; u.Number = number; u.Floor = dto.Floor; u.Building = dto.Building; u.Notes = dto.Notes;

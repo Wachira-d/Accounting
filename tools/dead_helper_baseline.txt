@@ -53,6 +53,5 @@ ThaiPitCalculator.cs EstimateAnnualIncome
 ThaiPitCalculator.cs ExpenseDeduction
 ThaiPitCalculator.cs WithholdingForPeriod
 ThaiTaxId.cs HasValidEan13Checksum
-ThaiTaxId.cs IsWellFormed
 UploadFileType.cs SniffAsync
 VatReportLineKind.cs IsDocumentRow

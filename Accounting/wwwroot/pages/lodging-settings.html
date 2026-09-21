@@ -63,7 +63,7 @@
           <div class="grid2">
             <div class="fld"><label>ชื่อที่พัก *</label><input class="form-input" name="name" required></div>
             <div class="fld"><label>ชื่ออังกฤษ</label><input class="form-input" name="nameEn"></div>
-            <div class="fld"><label>รหัส (ใช้ในเลขจอง RES-XXXX-…)</label><input class="form-input" name="code" maxlength="8" style="text-transform:uppercase"></div>
+            <div class="fld"><label>รหัส (ใช้ในเลขจอง RES-XXXX-…)</label><input class="form-input" name="code" maxlength="8" style="text-transform:uppercase"><div class="hint">ปล่อยว่างได้ — ระบบตั้งให้จากชื่อที่พัก</div></div>
             <div class="fld"><label>ประเภท</label><select class="form-input" name="propertyType"><option value="1">โรงแรม</option><option value="2">รีสอร์ท</option><option value="3">โฮสเทล</option><option value="4">บ้านพัก/วิลล่า</option><option value="5">อพาร์ตเมนต์</option><option value="6">แคมป์</option><option value="99">อื่น ๆ</option></select></div>
             <div class="fld"><label>ดาว (0 = ไม่ระบุ)</label><input class="form-input" type="number" name="starRating" min="0" max="5"></div>
             <div class="fld"><label>เว็บไซต์ที่ผูก</label><select class="form-input" name="siteId" id="siteSelect"><option value="">— ไม่ผูก —</option></select><div class="hint">ที่พักที่ผูกกับเว็บจะเปิดจองบน /booking ของเว็บนั้น</div></div>
@@ -299,6 +299,19 @@
         ['tabGeneral','tabRooms','tabPlans','tabSeasons','tabDaily','tabPolicies','tabExtras'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
         document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.remove('hidden');
         document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+      },
+
+      // hook ที่ api.js เรียกเมื่อเซิร์ฟเวอร์ตีกลับว่าช่องไหนไม่ผ่าน — ช่องที่ผิดอาจอยู่ใน
+      // แท็บที่ซ่อนอยู่ ⇒ ต้องเปิดแท็บนั้นก่อน ไม่งั้นข้อความบอกชื่อช่องแต่ผู้ใช้มองไม่เห็น
+      // (api.js **ห้าม** ปลด .hidden เอง — panel ที่ถูกปลดมั่วจะค้างทับแท็บอื่น
+      //  ดู tools/tab_hidelist_check.py ที่เกิดจากบั๊กทรงนั้นโดยตรง)
+      revealField(_name, el) {
+        const map = { tabGeneral: 'general', tabRooms: 'rooms', tabPlans: 'plans', tabSeasons: 'seasons',
+                      tabDaily: 'daily', tabPolicies: 'policies', tabExtras: 'extras' };
+        for (const [id, tab] of Object.entries(map)) {
+          const panel = document.getElementById(id);
+          if (panel && panel.contains(el)) { this.showTab(tab); return; }
+        }
       },
 
       // ─── ที่พัก ───

@@ -798,6 +798,34 @@ builder.Services.AddControllers(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    })
+    // ── ข้อความ validation ต้องบอกว่า "ช่องไหน ขาดอะไร" (ผู้ใช้รายงาน 2026-09-21) ──
+    // เดิม: ASP.NET ตอบ ValidationProblemDetails ดิบ ⇒ หน้าเว็บโชว์
+    //   "One or more validation errors occurred. — Code: The Code field is required."
+    // ภาษาอังกฤษล้วน + ชื่อ property C# ที่ไม่ตรงกับป้ายใด ๆ บนหน้าจอ ⇒ ผู้ใช้หาไม่เจอ
+    // ว่าต้องแก้ช่องไหน. ตัวแปลอยู่ใน `Helpers/ValidationErrorText` (OWNER file ตัวเดียว
+    // มีเทสต์ใน `Accounting.Tests/ValidationErrorTextTests.cs`) และซองคำตอบใช้ทรงเดียว
+    // กับ `ExceptionMiddleware` (`ApiResponse<T>`) เพื่อให้ฝั่ง JS อ่านทางเดียวเสมอ
+    // — `data.fields` คือชื่อช่องแบบ camelCase ให้หน้าเว็บไปหา `[name=...]` แล้วอ่าน
+    // **ป้ายไทยจริงจาก DOM ของตัวเอง** (เซิร์ฟเวอร์ไม่มีสำเนาป้าย — F2 ข้อ 5)
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var entries = context.ModelState
+                .Where(kv => kv.Value != null && kv.Value.Errors.Count > 0)
+                .Select(kv => (kv.Key, (IEnumerable<string>)kv.Value!.Errors
+                    .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage)
+                        ? e.Exception?.Message ?? ""
+                        : e.ErrorMessage)
+                    .ToList()));
+            var summary = Accounting.Helpers.ValidationErrorText.Describe(entries);
+            var body = new Accounting.Models.DTOs.ApiResponse<Accounting.Models.DTOs.ValidationErrorData>(
+                false,
+                new Accounting.Models.DTOs.ValidationErrorData(summary.Fields, summary.Errors),
+                summary.Message);
+            return new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(body);
+        };
     });
 
 // Raise the global request body limit so large bank-statement / attachment

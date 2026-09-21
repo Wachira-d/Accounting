@@ -566,6 +566,7 @@ python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน obje
 python3 tools/identifier_space_check.py # CS1001/CS1003 ช่องว่างในชื่อ method/ชนิด · CS1056 ตัวอักษรต้องห้าม (§) ในชื่อ
 python3 tools/namespace_shadow_check.py # CS0234 `Helpers.X` ผูกไป namespace ผิดชั้น
 python3 tools/service_interface_check.py # CS1061 controller เรียกเมธอดที่ลืมประกาศใน interface ของ service (impl+endpoint ครบ แต่ interface ขาด) → ลาก CS0006 ให้เทสต์ล้มตาม
+python3 tools/dto_nullable_contract_check.py # DTO ประกาศ `string` (ไม่ nullable) ทั้งที่ service เติมค่าให้เมื่อว่าง → ASP.NET ใส่ [Required] โดยปริยาย แล้วตีกลับเป็นอังกฤษชื่อ property C# ก่อนถึงโค้ดเรา (ฟ้องเฉพาะตอนสองชั้น**ขัดกัน** — ชั้นที่ throw/BadRequest เองถือว่าตรงกัน ไม่ฟ้อง)
 python3 tools/css_var_check.py       # var(--x) ที่ไม่เคยประกาศ → ปุ่มล่องหน/สีหาย
 python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรที่ไม่มีในเมธอดนั้นเป็นอาร์กิวเมนต์
 python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
@@ -588,6 +589,8 @@ python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helper
 python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
 python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ของบรรทัดตรง ๆ ไม่ผ่าน Layout.setLineVat → ตัวแนะนำทับค่าที่อ่านจากกระดาษ ยอดเพี้ยนเงียบ
 node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)
+node tools/validation_field_label_sim.js # ข้อความ validation ต้องชี้ "ป้ายไทยที่ผู้ใช้เห็น" ไม่ใช่ชื่อ property C# · ช่องที่ไม่มีบนหน้าต้องบอกว่าไม่มี (รันโค้ดจริงจาก api.js)
+# ↑ `tools/*_sim.js` ทุกตัวถูก check_all.sh กวาดรันเอง (แก้ 2026-09-21 — เดิมเขียนไว้ว่ารันแต่ **ไม่เคยรัน**)
 python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-"
 python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
 python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)

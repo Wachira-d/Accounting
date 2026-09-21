@@ -13,6 +13,93 @@ const API = {
     return (v && v !== key) ? v : fallback;
   },
 
+  // ═══ ข้อความ validation ต้องชี้ "ช่องไหน" ที่ผู้ใช้มองเห็น (ผู้ใช้รายงาน 2026-09-21) ═══
+  // เดิมกดบันทึกที่หน้าตั้งค่าที่พักแล้วได้ toast:
+  //   "One or more validation errors occurred. — Code: The Code field is required."
+  // อังกฤษล้วน + ชื่อ property C# (`Code`) ที่ไม่ตรงกับป้ายใด ๆ บนจอ (ป้ายจริงคือ
+  // "รหัส (ใช้ในเลขจอง RES-XXXX-…)") ⇒ ผู้ใช้หาไม่เจอว่าต้องแก้ตรงไหน
+  //
+  // เซิร์ฟเวอร์รู้แค่**ชื่อช่อง** (ส่งมาใน `data.fields` แบบ camelCase = ตรงกับ
+  // `name="..."` บนฟอร์ม) · **ป้ายไทยอยู่ใน DOM ของหน้านี้อยู่แล้ว** ⇒ ฝั่งนี้แค่
+  // ไปอ่านป้ายมาประกอบ ไม่ได้ถือสำเนากติกาใด ๆ (F2 ข้อ 5 "Server computes · page displays")
+  //
+  // ⚠️ กรณี "หาช่องไม่เจอบนหน้านี้" ต้องพูดตรง ๆ ว่าไม่เจอ — ห้ามสั่งให้ผู้ใช้ไป
+  // กรอกของที่มองไม่เห็น (DECISION_DOCTRINE §1 G3 "ไม่รู้ ต้องบอกว่าไม่รู้")
+  _fieldLabel(el) {
+    if (!el) return '';
+    const fld = el.closest('.fld');
+    let lab = fld ? fld.querySelector('label') : null;
+    if (!lab && el.id) lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    if (!lab) lab = el.closest('label');
+    const text = lab ? (lab.textContent || '').replace(/\s+/g, ' ').trim().replace(/\s*\*$/, '') : '';
+    return text;
+  },
+
+  _fieldSection(el) {
+    const card = el && el.closest ? el.closest('.card') : null;
+    const h = card ? card.querySelector('h3, h4') : null;
+    return h ? (h.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  },
+
+  // หา input ของช่องชื่อนี้ — รองรับชื่อซ้อน ("lines[0].qty") โดยลองทั้งเส้นก่อน
+  // แล้วค่อยถอยมาที่ส่วนท้าย (ฟอร์มส่วนใหญ่ตั้ง name เป็นชื่อช่องล้วน)
+  _findFieldEl(name) {
+    const tries = [name];
+    const last = String(name).split('.').pop();
+    if (last && last !== name) tries.push(last);
+    for (const t of tries) {
+      let el = null;
+      try { el = document.querySelector(`[name="${CSS.escape(t)}"]`); } catch (_) { el = null; }
+      if (el) return el;
+    }
+    return null;
+  },
+
+  /** สร้างข้อความไทยที่ระบุ "ป้ายที่ผู้ใช้เห็น" + ไฮไลต์ + พาไปที่ช่องแรกที่ผิด
+   *  @returns {string} ข้อความสำหรับ toast (ว่าง = ประกอบไม่ได้ ให้ผู้เรียกใช้ข้อความเดิม) */
+  describeFieldErrors(fields, messages) {
+    if (!Array.isArray(fields) || fields.length === 0) return '';
+    // ล้างไฮไลต์รอบก่อน มิฉะนั้นช่องที่แก้แล้วยังแดงค้าง (ทำให้ผู้ใช้ไล่ผิดช่อง)
+    document.querySelectorAll('.has-error').forEach(el => {
+      el.classList.remove('has-error');
+      el.removeAttribute('aria-invalid');
+    });
+
+    const parts = [];
+    let firstEl = null, firstName = '';
+    fields.forEach((f, i) => {
+      const why = (messages && messages[i]) ? String(messages[i]) : 'ค่าไม่ถูกต้อง';
+      const el = this._findFieldEl(f);
+      if (!el) {
+        // ช่องนี้ไม่มีบนหน้าจอ — ฟอร์มส่งค่ามาเองโดยผู้ใช้ไม่เคยเห็น
+        parts.push(`«${f}» (ไม่มีช่องนี้บนหน้านี้ — ฟอร์มส่งค่ามาเอง กรุณาแจ้งผู้ดูแลระบบ): ${why}`);
+        return;
+      }
+      el.classList.add('has-error');
+      el.setAttribute('aria-invalid', 'true');
+      const label = this._fieldLabel(el) || f;
+      const section = this._fieldSection(el);
+      parts.push(`«${label}»${section ? ` (ในส่วน "${section}")` : ''}: ${why}`);
+      if (!firstEl) { firstEl = el; firstName = f; }
+    });
+
+    // พาไปที่ช่องแรก — ถ้าหน้านั้นมีแท็บ/ส่วนที่ซ่อนอยู่ ให้หน้านั้นเปิดเองผ่าน hook
+    // (ห้ามสั่ง unhide เอง — panel ที่ถูกปลดซ่อนมั่ว ๆ จะค้างทับแท็บอื่น ดู
+    //  tools/tab_hidelist_check.py ที่เกิดจากบั๊กทรงนั้นโดยตรง)
+    if (firstEl) {
+      try {
+        if (typeof Page !== 'undefined' && Page && typeof Page.revealField === 'function') {
+          Page.revealField(firstName, firstEl);
+        }
+        firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        firstEl.focus({ preventScroll: true });
+      } catch (_) { /* โฟกัสไม่ได้ไม่ใช่เหตุให้กลืนข้อความ */ }
+    }
+
+    const head = fields.length === 1 ? 'บันทึกไม่ได้ — ต้องแก้ 1 ช่อง' : `บันทึกไม่ได้ — ต้องแก้ ${fields.length} ช่อง`;
+    return `${head}: ${parts.join(' · ')}`;
+  },
+
   async request(method, url, data = null, isFormData = false, signal = null) {
     // Re-read token from localStorage on each request (handles token refresh by other tabs)
     this.token = localStorage.getItem('token');
@@ -102,7 +189,16 @@ const API = {
       const json = await res.json();
       if (!res.ok) {
         let msg = json.message || json.title || `Error ${res.status}`;
-        if (json.errors) {
+        // ซองของเราเอง (ApiResponse + ValidationErrorData): มีชื่อช่องมาด้วย ⇒
+        // ประกอบข้อความจากป้ายไทยบนหน้าจอ + ไฮไลต์ช่องที่ผิด แทนที่จะโยนชื่อ
+        // property C# ใส่หน้าผู้ใช้ (ดู describeFieldErrors)
+        const vFields = json && json.data && Array.isArray(json.data.fields) ? json.data.fields : null;
+        if (vFields && vFields.length) {
+          const described = this.describeFieldErrors(vFields, json.data.messages);
+          if (described) msg = described;
+        } else if (json.errors) {
+          // ProblemDetails ดิบของ ASP.NET (endpoint ที่ยังไม่ผ่าน factory ของเรา
+          // เช่น 400 จาก middleware ชั้นนอก) — อย่างน้อยยังต่อท้ายให้เห็นว่าช่องไหน
           const details = Object.entries(json.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ');
           if (details) msg += ' — ' + details;
         }

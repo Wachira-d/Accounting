@@ -3107,4 +3107,37 @@ _Last verified against codebase: 2026-09-21 (รอบ 186 — **ใบซื้
 §82/3 โยนเป็นค่าใช้จ่ายเมื่อครบ 6 เดือน · **วันนี้ระบบไม่มีทางแก้เลย** — `UpdateDocumentAsync` แก้ได้เฉพาะก่อนอนุมัติ
 ⇒ เพิ่ม `ReclassifyForeignServiceAsync` (+ endpoint + ปุ่มบนหน้าเอกสาร) ที่กลับ JE เดิมแล้วลงใหม่ผ่านตัวลงบัญชีตัวเดิม
 ด้วย gate ชุดเดียวกับย้ายฝั่ง CN/DN · และ `Helpers/ForeignServiceEvidence` เตือนตั้งแต่ก่อนอนุมัติ (คำเตือน ไม่บล็อก —
-สาขาบริษัทต่างชาติที่จด VAT ไทยออกใบกำกับไทยได้ ไม่ใช่ §83/6) — commit <pending>)_
+สาขาบริษัทต่างชาติที่จด VAT ไทยออกใบกำกับไทยได้ ไม่ใช่ §83/6) — commit abc5f92 · ซ่อม build (ลืมประกาศใน `IDocumentService`) 3fedb41)_
+_Last verified against codebase: 2026-09-21 (รอบ 187 — **"ไม่มีบอกว่า Require อันไหน หรือ ขาดอะไร อันไหน"** (คำร้องผู้ใช้)
+· กด "💾 บันทึกการตั้งค่า" ที่หน้าตั้งค่าที่พักแล้วได้ toast แดง `One or more validation errors occurred. — Code: The Code
+field is required.` — **อังกฤษล้วน + ชื่อ property C# ที่ไม่ตรงกับป้ายใด ๆ บนจอ** (ป้ายจริงคือ "รหัส (ใช้ในเลขจอง RES-XXXX-…)")
+⇒ ผู้ใช้หาไม่เจอว่าต้องแก้ช่องไหน · ต้นเหตุสองชั้นที่ขัดกันเอง: (ก) โปรเจกต์เปิด `<Nullable>enable</Nullable>` ⇒ ASP.NET ใส่
+`[Required]` **โดยปริยาย** ให้ property reference ที่ไม่มี `?` ทุกตัว (71 ตัวใน `Models/DTOs/`) แล้วตอบด้วยข้อความมาตรฐาน
+ของ framework **ก่อนถึง service** (ข) `LodgingService` เขียนไว้ชัดว่ารหัสเว้นว่างได้ — `if (IsNullOrWhiteSpace(p.Code))
+p.Code = DeriveCode(p.Name);` และ `Apply` ก็เขียน `d.Code?.Trim() ?? ""` ไว้แล้ว ⇒ ฟอร์มไม่มีดอกจัน service รองรับค่าว่าง
+แต่ DTO ประกาศว่าบังคับ · ผลข้างเคียงที่เจ็บกว่า: `BusinessRuleException` ไทยที่เขียนไว้ดี ("กรุณาระบุหมายเลขห้อง")
+**ไม่เคยถูกเรียก**ในเคส null ("มี ≠ ถูกเรียก" F2 ข้อ 2)
+
+แก้ 4 ชั้น — **ไม่ปิด implicit required ทั้งระบบ** (ปิดแล้ว null จะไหลเข้า `d.Name.Trim()` ⇒ NRE 500 ซึ่งเงียบกว่าและ
+แย่กว่า — G5 "ทิศปลอดภัย = ทิศที่ความเสียหายมองเห็นและแก้ทัน") แต่ทำให้ด่านนั้น**พูดไทยและชี้ช่องได้**:
+1. `Helpers/ValidationErrorText` (OWNER ตัวเดียว · pure · 10 เทสต์) — แปล ModelState เป็นไทย · ยุบคีย์ซ้ำ ·
+   ทำคีย์ทุกทรง (`Code` · `$.code` · `$.lines[0].unitPrice`) ให้ตรงกับ `name="..."` บนฟอร์มด้วยอัลกอริทึมเดียวกับ
+   `JsonNamingPolicy.CamelCase` ที่ `Program.cs` ตั้งไว้ · **ห้ามแต่งป้ายไทยเอง** (เซิร์ฟเวอร์ไม่รู้ป้าย — F2 ข้อ 5)
+   · ข้อความอังกฤษที่แปลไม่ได้ **ส่งต่อตามเดิม** พร้อมป้าย "ระบบแจ้งว่า:" ไม่กลืนแล้วแต่งใหม่
+2. `Program.cs` `InvalidModelStateResponseFactory` → ซองเดียวกับ `ExceptionMiddleware` (`ApiResponse<ValidationErrorData>`)
+   ⇒ ฝั่ง JS อ่านทางเดียวเสมอ · `data.fields` = ชื่อช่อง camelCase
+3. `wwwroot/js/api.js` `describeFieldErrors` — เอาชื่อช่องไปหา `[name=...]` **บน DOM ของหน้านั้นเอง** แล้วอ่านป้ายไทยจริง
+   + ชื่อส่วนจาก `.card > h4` · ไฮไลต์ `.has-error` (คลาสที่มีใน `style.css` มาตลอดแต่**ไม่มีใครเรียก**) + `aria-invalid`
+   + เลื่อนจอ/โฟกัส · ล้างไฮไลต์รอบก่อนทุกครั้ง (ไม่งั้นช่องที่แก้แล้วแดงค้าง ผู้ใช้ไล่ผิดช่อง) ·
+   ช่องที่หาไม่เจอบนหน้าต้องบอกตรง ๆ ว่า **"ไม่มีช่องนี้บนหน้านี้ — ฟอร์มส่งค่ามาเอง"** (G3 ไม่รู้ต้องบอกว่าไม่รู้
+   ห้ามสั่งให้ผู้ใช้ไปกรอกของที่มองไม่เห็น) · แท็บที่ซ่อนอยู่เปิดผ่าน hook `Page.revealField` ของหน้านั้น —
+   `api.js` **ห้ามปลด `.hidden` เอง** (panel ที่ปลดมั่วจะค้างทับแท็บอื่น — ต้นเรื่องของ `tools/tab_hidelist_check.py`)
+4. `LodgingDtos` — `Code` ×3 (ที่พัก/ประเภทห้อง/แผนราคา) → `string?` ให้ตรงกับที่ service ทำอยู่จริง ·
+   `LodgingUnitDto.Number` → `string?` เพื่อให้ด่านไทย "กรุณาระบุหมายเลขห้อง" ได้ทำงานจริง · ฟอร์มเพิ่ม hint
+   "ปล่อยว่างได้ — ระบบตั้งให้จากชื่อที่พัก"
+
+กันกลับมาเกิด: `tools/dto_nullable_contract_check.py` (self-test 5 ทิศ) ฟ้องเฉพาะตอนสองชั้น**ขัดกัน** — ชั้นที่ `throw`/
+`return BadRequest` เองถือว่าตรงกัน ไม่ฟ้อง ⇒ เขียวที่ 0 จุดโดยไม่ต้องมี baseline · ใส่บั๊กกลับ (Code เป็น non-nullable)
+แล้วจับได้ 3 จุดทันที · `tools/validation_field_label_sim.js` ล็อกข้อความที่ผู้ใช้เห็นด้วย **โค้ดจริงจาก api.js** 4 ทิศ ·
+และพบว่า CLAUDE.md §F เขียนตั้งแต่รอบ 169 ว่า `check_all.sh` รัน `node tools/vat_line_source_sim.js` ด้วย แต่
+**ไม่เคยรัน** — เพิ่มหมวด 1b ที่กวาด `tools/*_sim.js` ทั้งหมด (ด่านที่ไม่มีใครเรียก = ไม่มีด่าน) — commit <pending>)_

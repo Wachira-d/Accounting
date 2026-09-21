@@ -21,7 +21,12 @@ public class LodgingPropertyDto
     public Guid? BranchId { get; set; }
     public string Name { get; set; } = "";
     public string? NameEn { get; set; }
-    public string Code { get; set; } = "";
+    /// <summary>รหัสสั้น — **ไม่บังคับ** ปล่อยว่างได้ ระบบตั้งให้จากชื่อ
+    /// (<c>LodgingService.DeriveCode</c>) · ต้องเป็น <c>string?</c> มิฉะนั้น ASP.NET
+    /// ใส่ <c>[Required]</c> โดยปริยาย (nullable reference types) แล้วตอบ
+    /// "The Code field is required." เป็นภาษาอังกฤษ ทั้งที่ฟอร์มไม่มีดอกจัน
+    /// และ service รองรับค่าว่างอยู่แล้ว — บั๊กจริงที่ผู้ใช้รายงาน 2026-09-21</summary>
+    public string? Code { get; set; }
     public LodgingPropertyType PropertyType { get; set; } = LodgingPropertyType.Hotel;
     public string? Description { get; set; }
     public string? Address { get; set; }
@@ -102,7 +107,12 @@ public class LodgingRoomTypeDto
     public Guid PropertyId { get; set; }
     public string Name { get; set; } = "";
     public string? NameEn { get; set; }
-    public string Code { get; set; } = "";
+    /// <summary>รหัสสั้น — **ไม่บังคับ** ปล่อยว่างได้ ระบบตั้งให้จากชื่อ
+    /// (<c>LodgingService.DeriveCode</c>) · ต้องเป็น <c>string?</c> มิฉะนั้น ASP.NET
+    /// ใส่ <c>[Required]</c> โดยปริยาย (nullable reference types) แล้วตอบ
+    /// "The Code field is required." เป็นภาษาอังกฤษ ทั้งที่ฟอร์มไม่มีดอกจัน
+    /// และ service รองรับค่าว่างอยู่แล้ว — บั๊กจริงที่ผู้ใช้รายงาน 2026-09-21</summary>
+    public string? Code { get; set; }
     public string? Slug { get; set; }
     public string? Description { get; set; }
     public List<string> Images { get; set; } = new();
@@ -134,7 +144,11 @@ public class LodgingUnitDto
 {
     public Guid? Id { get; set; }
     public Guid RoomTypeId { get; set; }
-    public string Number { get; set; } = "";
+    /// <summary>หมายเลขห้อง — บังคับ แต่ประกาศเป็น <c>string?</c> โดยตั้งใจ เพื่อให้
+    /// ด่านของเราเอง (<c>BusinessRuleException "กรุณาระบุหมายเลขห้อง"</c> ใน
+    /// <c>LodgingService</c>) เป็นคนตอบ ไม่ใช่ implicit required ของ ASP.NET ที่ตอบ
+    /// "The Number field is required." เป็นอังกฤษ — ข้อความไทยที่เขียนไว้แล้วจะได้ถูกเรียกจริง</summary>
+    public string? Number { get; set; }
     public string? Floor { get; set; }
     public string? Building { get; set; }
     public string? Notes { get; set; }
@@ -154,7 +168,12 @@ public class LodgingRatePlanDto
     public Guid? RoomTypeId { get; set; }
     public string Name { get; set; } = "";
     public string? NameEn { get; set; }
-    public string Code { get; set; } = "";
+    /// <summary>รหัสสั้น — **ไม่บังคับ** ปล่อยว่างได้ ระบบตั้งให้จากชื่อ
+    /// (<c>LodgingService.DeriveCode</c>) · ต้องเป็น <c>string?</c> มิฉะนั้น ASP.NET
+    /// ใส่ <c>[Required]</c> โดยปริยาย (nullable reference types) แล้วตอบ
+    /// "The Code field is required." เป็นภาษาอังกฤษ ทั้งที่ฟอร์มไม่มีดอกจัน
+    /// และ service รองรับค่าว่างอยู่แล้ว — บั๊กจริงที่ผู้ใช้รายงาน 2026-09-21</summary>
+    public string? Code { get; set; }
     public string? Description { get; set; }
     public LodgingRateAdjustMode AdjustMode { get; set; } = LodgingRateAdjustMode.Base;
     public decimal AdjustValue { get; set; }

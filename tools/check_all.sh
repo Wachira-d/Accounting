@@ -43,6 +43,23 @@ for f in tools/*_check.py; do
 done
 [ $fail -eq 0 ] && green "✅ checker $(ls tools/*_check.py | wc -l) ตัวผ่าน"
 
+# ---------- 1b. simulation ที่รันโค้ดจริง ----------
+# CLAUDE.md §F เขียนไว้ตั้งแต่รอบ 169 ว่า check_all.sh "รันทุกบรรทัดข้างบน" ซึ่งรวม
+# `node tools/vat_line_source_sim.js` — แต่จริง ๆ **ไม่เคยรัน** (ตรวจพบ 2026-09-21)
+# = ด่านที่มีแต่ไม่มีใครเรียก ("มี ≠ ถูกเรียก" F2 ข้อ 2) · glob ไว้เพื่อให้ sim ตัวใหม่
+# ถูกรันเองโดยไม่ต้องมาแก้สคริปต์นี้อีก
+simfail=0
+if command -v node >/dev/null 2>&1; then
+  for f in tools/*_sim.js; do
+    [ -e "$f" ] || continue
+    out=$(node "$f" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then red "❌ $f"; echo "$out" | tail -40; fail=1; simfail=1; fi
+  done
+  [ $simfail -eq 0 ] && green "✅ simulation $(ls tools/*_sim.js 2>/dev/null | wc -l) ตัวผ่าน"
+else
+  echo "ℹ️  ไม่มี node — ข้าม simulation (ต้องรันฝั่งที่มี node ก่อน push)"
+fi
+
 # ---------- 2. ไฟล์ที่แก้ ----------
 all=0; nodotnet=0
 for a in "$@"; do case "$a" in --all) all=1;; --no-dotnet) nodotnet=1;; esac; done
