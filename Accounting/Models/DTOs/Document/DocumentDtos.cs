@@ -967,6 +967,10 @@ public record ReclassifyPaymentSourceRequest(
 /// false = ฝั่งขาย (ลดภาษีขาย)</summary>
 public record ReclassifyCnDnSideRequest(bool ToPurchaseSide, string? Reason);
 
+/// <summary>ติ๊ก/ปลดติ๊ก "ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)" ของเอกสารที่
+/// อนุมัติไปแล้ว — ระบบกลับ JE เดิมแล้วลงใหม่ ไม่ใช่ปะตัวเลขในรายงาน</summary>
+public record ReclassifyForeignServiceRequest(bool ToForeignService, string? Reason);
+
 /// <summary>รายการ "ตัวกลับ" 1 ใบที่เครื่องมือแก้วันที่กลับบัญชีจะย้าย —
 /// ใช้โชว์ให้ผู้ใช้เห็นก่อนกดยืนยันว่า **ใบไหนบ้าง** จะถูกย้ายจากวันไหนไปวันไหน
 /// (เอกสารหนึ่งใบมักมีตัวกลับหลายใบ: ใบซื้อ/ใบขาย + การรับ-จ่ายชำระ + มัดจำ)</summary>

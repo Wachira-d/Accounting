@@ -6209,6 +6209,173 @@ public partial class DocumentService : IDocumentService
     /// ผ่าน gate ชุดเดียวกับ reclassify อื่น: งวดบัญชียังเปิด, ไม่มีเอกสารปลายทาง,
     /// ยังไม่อยู่ในรายงานภาษีที่ยื่นแล้ว, ยังไม่ได้ส่ง e-Tax
     /// </summary>
+    /// <summary>
+    /// **ติ๊ก/ปลดติ๊ก "ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)" ของเอกสารที่อนุมัติไปแล้ว**
+    /// — กลับ JE เดิมทั้งหมดแล้วลงใหม่ผ่าน <c>AutoPostToJournalAsync</c> ตัวเดิม
+    /// (ไม่ใช่ปะตัวเลขในรายงาน — ไม่งั้น GL กับแบบยื่นภาษีจะขัดกันเอง)
+    ///
+    /// <para>ที่มา (ผู้ใช้ส่งภาพ 2026-09-21): ใบสำคัญจ่ายค่าคอมมิชชั่น Booking.com
+    /// สองใบของคู่ค้าเดียวกัน ใบหนึ่งติ๊ก ใบหนึ่งไม่ติ๊ก ⇒ ใบที่ไม่ติ๊ก**ไม่มี
+    /// <c>Cr 21912</c>** และเครดิตผู้รับเงินด้วยยอดรวม VAT · วันนี้ระบบ**ไม่มีทาง
+    /// แก้เลย**: <c>UpdateDocumentAsync</c> แก้ได้เฉพาะก่อนอนุมัติ · เส้น §86/4
+    /// (<c>CompleteSupplierTaxInvoiceAsync</c>) ปิดอยู่เพราะผู้ขายต่างประเทศไม่มี
+    /// เลขภาษีไทย · เส้นปลดล็อก ภ.พ.36 อ่าน <c>IsForeignService</c> ซึ่งยังเป็น false
+    /// ⇒ ภาษีซื้อค้าง 11640 จนงาน §82/3 โยนเป็นค่าใช้จ่ายเมื่อครบ 6 เดือน</para>
+    ///
+    /// <para>ใช้ gate ชุดเดียวกับ <see cref="ReclassifyCnDnSideAsync"/> ทุกข้อ เพราะ
+    /// เป็น operation ทรงเดียวกัน (กลับ JE ทั้งใบ → ลงใหม่) · เพิ่มเฉพาะเงื่อนไข
+    /// ของ §83/6 เอง: ต้องมี VAT · ห้ามโหมดราคารวมภาษี · และห้ามทำหลังจาก
+    /// ภาษีซื้อของใบนี้ถูกย้ายออกจาก 11640 ไปแล้ว (เคลมแล้ว/หมดอายุแล้ว) ซึ่ง
+    /// การลง JE ใหม่จะทำให้ 11640 กับ 11610 เพี้ยนทั้งคู่</para>
+    /// </summary>
+    public async Task<DocumentResponse> ReclassifyForeignServiceAsync(
+        Guid companyId, Guid documentId, bool toForeignService, string? reason, string actor)
+    {
+        var doc = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        // ชนิดที่ `IsForeignService` มีความหมาย — ตรงกับชนิดที่ `AutoPostToJournalAsync`
+        // เดิน `ForeignServiceVat.SplitCredit` จริง (สาย PI/Expense และสาย PV)
+        if (doc.DocumentType is not (DocumentType.PurchaseInvoice
+            or DocumentType.Expense or DocumentType.PaymentVoucher))
+            throw new InvalidOperationException(
+                "ตั้งเป็นบริการต่างประเทศได้เฉพาะใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย · ใบสำคัญจ่าย");
+
+        if (doc.IsForeignService == toForeignService)
+            throw new InvalidOperationException(
+                $"เอกสารนี้{(toForeignService ? "เป็นบริการต่างประเทศ" : "ไม่ได้เป็นบริการต่างประเทศ")}อยู่แล้ว");
+
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
+                       or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
+            throw new InvalidOperationException(
+                $"เอกสารสถานะ {doc.Status} ยังไม่ได้ลงบัญชี — ติ๊กช่อง \"ซื้อบริการจากต่างประเทศ\" "
+                + "ที่ฟอร์มปกติแล้วค่อยอนุมัติ (ไม่ต้องใช้เมนูนี้)");
+
+        // ── เงื่อนไขเฉพาะของ §83/6 (ตรงกับด่านตอนอนุมัติ ไม่ใช่กติกาชุดที่สอง) ──
+        if (toForeignService && doc.VatAmount <= 0)
+            throw new InvalidOperationException(
+                "ใบนี้ไม่มี VAT — ภ.พ.36 ต้องประเมิน VAT 7% จากยอดจ่ายเสมอ "
+                + "(ผู้ขายต่างประเทศไม่คิด VAT มา เราประเมินเองเพื่อนำส่ง). "
+                + "ใบที่ไม่มี VAT ต้องยกเลิกแล้วออกใหม่พร้อม VAT 7%");
+        if (toForeignService && doc.PricesIncludeVat)
+            throw new InvalidOperationException(
+                "ใบนี้ใช้โหมด \"ราคารวมภาษี\" ซึ่งใช้กับใบบริการต่างประเทศไม่ได้ — "
+                + "ยอดที่จ่ายผู้ขายต่างประเทศไม่มี VAT ไทยปนอยู่ ต้องยกเลิกใบแล้วออกใหม่"
+                + "โดยปลดโหมดราคารวมภาษี");
+
+        // ภาษีซื้อของใบนี้ถูกย้ายออกจากที่พักไปแล้ว — ลง JE ใหม่จะทำให้ทั้ง 11640
+        // และปลายทาง (11610 หรือค่าใช้จ่าย) เพี้ยนพร้อมกัน เพราะ AutoPost ลงเฉพาะ
+        // JE ของใบหลัก ไม่รู้จัก JE ปรับปรุงที่เกิดทีหลัง
+        if (doc.InputVatBecameClaimableAt.HasValue)
+            throw new InvalidOperationException(
+                "ภาษีซื้อของใบนี้ถูกย้ายไปเป็น \"เคลมได้\" (11610) แล้ว — ต้องกลับรายการ"
+                + "การเคลมก่อน แล้วค่อยเปลี่ยนเป็นบริการต่างประเทศ");
+        if (doc.InputVatExpiredAt.HasValue)
+            throw new InvalidOperationException(
+                "ภาษีซื้อของใบนี้พ้น 6 เดือน (§82/3) และถูกโยนเป็นค่าใช้จ่ายไปแล้ว — "
+                + "เปลี่ยนเป็นบริการต่างประเทศย้อนหลังไม่ได้ ต้องปรับด้วยใบสำคัญทั่วไป");
+
+        // ===== gate ชุดเดียวกับ ReclassifyCnDnSideAsync ทุกข้อ =====
+        var period = await _db.FiscalPeriods.FirstOrDefaultAsync(p =>
+            p.CompanyId == companyId
+            && p.StartDate <= doc.DocumentDate && p.EndDate >= doc.DocumentDate);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            throw new InvalidOperationException(
+                $"วันที่เอกสารอยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — แก้ไม่ได้");
+
+        var hasDownstream = await _db.Documents.AsNoTracking().AnyAsync(d =>
+            d.CompanyId == companyId && d.RelatedDocumentId == documentId
+            && d.Status != DocumentStatus.Voided && !d.IsDeleted);
+        if (hasDownstream)
+            throw new InvalidOperationException(
+                "มีเอกสารปลายทางอ้างเอกสารนี้แล้ว — ยกเลิกเอกสารปลายทางก่อน");
+
+        // ขั้นที่ 1 กลับ "ทุก JE ที่ผูกเอกสารนี้" ซึ่งรวม **JE การชำระเงิน** แต่
+        // ขั้นที่ 2 (AutoPost) ลงคืนเฉพาะ JE ใบหลัก ⇒ เงินที่จ่ายจริงหายจาก GL
+        // (เหตุผลเดียวกับ ReclassifyCnDnSide/ReclassifyPaymentSource)
+        var hasPayments = await _db.Payments.AsNoTracking().AnyAsync(p =>
+            p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted);
+        if (hasPayments)
+            throw new InvalidOperationException(
+                "เอกสารนี้มีรายการจ่ายชำระแยกอยู่ — เปลี่ยนแล้วรายการชำระจะหายจากบัญชี "
+                + "กรุณายกเลิกการชำระก่อน แล้วค่อยเปลี่ยน");
+
+        var inSubmittedReport = await _db.TaxReportLines.AsNoTracking().AnyAsync(l =>
+            l.DocumentId == documentId && l.TaxReport.CompanyId == companyId
+            && (l.TaxReport.Status == TaxReportStatus.Submitted
+                || l.TaxReport.Status == TaxReportStatus.Filed));
+        if (inSubmittedReport)
+            throw new InvalidOperationException(
+                "เอกสารอยู่ในรายงานภาษีที่ยื่นสรรพากรแล้ว — ต้องยื่นแบบเพิ่มเติมแทนการแก้ใบ");
+
+        var hasSubmittedEtax = await _db.EtaxInvoices.AsNoTracking().AnyAsync(e =>
+            e.DocumentId == documentId && e.SubmittedAt != null);
+        if (hasSubmittedEtax)
+            throw new InvalidOperationException("เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — แก้ไม่ได้");
+
+        var label = toForeignService ? "บริการต่างประเทศ (ภ.พ.36 §83/6)" : "ซื้อในประเทศ";
+
+        using var txn = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var postedJeIds = await _db.JournalEntries
+                .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
+                    && !j.IsDeleted && j.Status == JournalEntryStatus.Posted
+                    && j.OriginalEntryId == null && j.ReversedByEntryId == null)
+                .Select(j => j.Id).ToListAsync();
+            foreach (var jeId in postedJeIds)
+                // วันที่ตัวกลับ = **วันที่เอกสารเอง** ให้ตรงกับ JE ใหม่ที่ AutoPost
+                // จะลงที่ `doc.DocumentDate` (ถ้าตกวันนี้ งวดของเอกสารจะมีทั้งเก่า
+                // และใหม่พร้อมกัน และงวดปัจจุบันมียอดกลับลอย)
+                await _accountingService.ReverseJournalEntryAsync(companyId, jeId,
+                    reversalDate: doc.DocumentDate.Date,
+                    description: $"เปลี่ยนการลงบัญชี {doc.DocumentNumber} → {label}",
+                    systemTriggered: true);
+
+            doc.IsForeignService = toForeignService;
+            // ภาษีซื้อของ ภ.พ.36 บังคับพักที่ 11640 เสมอ — override ที่ผู้ใช้เคยปัก
+            // ไว้เองต้องถูกล้าง ไม่งั้น AutoPost จะลงตามค่าที่ปักแทนกติกา §83/6
+            // (ในภาพของผู้ใช้ ใบที่ผิดมี override = "11640" ซึ่งบังเอิญตรงผัง แต่
+            //  เป็นคนละเหตุผล และถ้าปักเป็นผังอื่นไว้จะลงผิดทันที)
+            if (toForeignService) doc.InputVatAccountCodeOverride = null;
+            await _db.SaveChangesAsync();
+            await AutoPostToJournalAsync(companyId, doc, actor);
+            await _db.SaveChangesAsync();
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = documentId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ReclassifyForeignService",
+                    documentNumber = doc.DocumentNumber,
+                    toForeignService,
+                    ruleCode = Accounting.Helpers.ForeignServiceEvidence.RuleCode,
+                    legalReference = Accounting.Helpers.ForeignServiceEvidence.LegalReference,
+                    vatAmount = doc.VatAmount,
+                    reason,
+                    actor,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            await txn.CommitAsync();
+        }
+        catch
+        {
+            await txn.RollbackAsync();
+            throw;
+        }
+
+        _logger.LogInformation("เอกสาร {Doc} เปลี่ยนเป็น {Label} โดย {Actor}",
+            doc.DocumentNumber, label, actor);
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
     public async Task<DocumentResponse> ReclassifyCnDnSideAsync(
         Guid companyId, Guid documentId, bool toPurchaseSide, string? reason, string actor)
     {
@@ -16731,6 +16898,24 @@ public partial class DocumentService : IDocumentService
                     if (w != null) warnings.Add(w);
                 }
             }
+        }
+
+        // §83/6 — ใบซื้อที่ "น่าจะเป็นบริการต่างประเทศ" แต่ลืมติ๊ก
+        // (ผู้ใช้ส่งภาพจริง 2026-09-21: ใบค่าคอมมิชชั่น Booking.com สองใบของคู่ค้า
+        //  เดียวกัน ใบหนึ่งติ๊ก ใบหนึ่งไม่ติ๊ก ⇒ ใบที่ไม่ติ๊กไม่มี Cr 21912 เลย)
+        // กติกาอยู่ใน `Helpers/ForeignServiceEvidence` ตัวเดียว — เป็นคำเตือน
+        // ไม่ใช่การบล็อก เพราะหลักฐานที่มีตอบไม่ได้ 100% (ดู doc-comment ที่นั่น)
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.PaymentVoucher)
+        {
+            var fs = Accounting.Helpers.ForeignServiceEvidence.Judge(
+                isForeignService: doc.IsForeignService,
+                vatAmount: doc.VatAmount,
+                contactCountryCode: doc.Contact?.CountryCode,
+                contactTaxId: doc.Contact?.TaxId,
+                inputVatParkedAsUndue: doc.InputVatPostedAsUndue
+                    || doc.InputVatAccountCodeOverride == "11640");
+            if (fs.Suspect) warnings.Add("⚠️ " + fs.Reason);
         }
 
         // §81/1 — ผู้ที่ไม่ได้จด VAT ห้ามออกใบกำกับภาษี + เก็บ VAT. ถ้าบริษัท

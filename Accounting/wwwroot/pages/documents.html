@@ -9179,6 +9179,25 @@
               <span style="color:#64748b;font-size:11px">ระบบจะกลับ JE เดิมแล้วลงใหม่ให้ถูกฝั่ง — งบกับ ภ.พ.30 จึงตรงกันเสมอ</span>
             </div>`;
           }
+          // ── §83/6 บริการต่างประเทศ (ภ.พ.36) — สถานะ + ปุ่มแก้ย้อนหลัง ──
+          // ใบที่ "ลืมติ๊ก" ไม่มี Cr 21912 ⇒ ไม่โผล่หน้านำส่งภาษี ⇒ ไม่เคยนำส่ง ·
+          // และเครดิตผู้รับเงินด้วยยอดรวม VAT ⇒ เจ้าหนี้/ธนาคารเกินจริง ·
+          // เดิมแก้ย้อนหลังไม่ได้เลย (แก้ฟอร์มได้เฉพาะก่อนอนุมัติ) — ปุ่มนี้คือทางออก
+          if (['PurchaseInvoice', 'Expense', 'PaymentVoucher'].includes(d.documentType)
+              && Number(d.vatAmount) > 0.005) {
+            const isFs = d.isForeignService === true;
+            const canFix = !['Draft', 'Voided', 'Rejected', 'WaitingApproval'].includes(d.status);
+            const bg = isFs ? '#ecfdf5' : '#f1f5f9';
+            const bd = isFs ? '#6ee7b7' : '#cbd5e1';
+            banners += `<div style="background:${bg};border:1px solid ${bd};color:#334155;padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>🌐 การลงบัญชีภาษีของใบนี้: <b>${isFs ? 'บริการต่างประเทศ (ภ.พ.36 §83/6)' : 'ซื้อในประเทศ'}</b></span>
+              ${canFix ? `<button class="btn btn-sm btn-secondary" style="padding:3px 10px;font-size:11.5px"
+                onclick="Page.openForeignServiceFix('${d.id}', ${isFs})">↔ ${isFs ? 'ยกเลิกสถานะบริการต่างประเทศ' : 'แก้เป็นบริการต่างประเทศ (ภ.พ.36)'}</button>` : ''}
+              <span style="color:#64748b;font-size:11px">${isFs
+                ? 'ระบบตั้งหนี้ ภ.พ.36 (Cr 21912) และเครดิตผู้รับเงินเป็นฐานเท่านั้น — ผู้ขายต่างประเทศไม่เก็บ VAT ไทย'
+                : 'ถ้าผู้รับเงินเป็นผู้ขายต่างประเทศ ต้องประเมิน VAT 7% เองแล้วนำส่งด้วย ภ.พ.36 — กดปุ่มเพื่อแก้การลงบัญชี'}</span>
+            </div>`;
+          }
           // ── ใบแทน/ใบที่ถูกแทน (§86/6 → §86/4) ──
           // ต้องเห็นทั้งสองทิศ: ใบที่ถูกแทนต้องบอกว่า "ทำไมหายจากรายงานภาษีขาย"
           // และใบแทนต้องบอกว่า "ทำไมไม่มีรายการบัญชีของตัวเอง" — ไม่งั้นทั้งคู่
@@ -11350,6 +11369,40 @@
           await this.load();
         } catch (e) {
           Layout.toast('ย้ายฝั่งไม่สำเร็จ: ' + (e.message || ''), 'error', 9000);
+        }
+      },
+
+      /**
+       * แก้เอกสารที่อนุมัติแล้วให้เป็น/เลิกเป็น "บริการต่างประเทศ (ภ.พ.36 §83/6)"
+       *
+       * ฝั่ง server กลับ JE เดิมแล้วลงใหม่ผ่านตัวลงบัญชีตัวเดิม — ไม่ใช่ปะตัวเลข
+       * ในรายงาน (ถ้าปะแต่รายงาน งบกับแบบยื่นจะขัดกันเองตอนตรวจย้อนหลัง)
+       */
+      async openForeignServiceFix(docId, currentlyForeign) {
+        const target = !currentlyForeign;
+        const what = target ? 'บริการต่างประเทศ (ภ.พ.36 §83/6)' : 'ซื้อในประเทศ';
+        if (!confirm(
+          `เปลี่ยนการลงบัญชีของใบนี้เป็น "${what}" ?\n\n`
+          + 'ระบบจะ:\n'
+          + '  1) กลับรายการบัญชี (JE) เดิมของใบนี้\n'
+          + '  2) ลงบัญชีใหม่' + (target
+              ? ' — ตั้งหนี้ ภ.พ.36 (Cr 21912) และเครดิตผู้รับเงินเป็น "ฐาน" เท่านั้น\n'
+                + '     (ผู้ขายต่างประเทศไม่เก็บ VAT ไทย — เราประเมิน 7% เองเพื่อนำส่งแทน)\n'
+              : ' ตามการซื้อในประเทศ\n')
+          + '\nหลังจากนั้นให้กด "สร้างรายงานภาษีใหม่" ของงวดนี้ เพื่อให้ยอดตรง\n'
+          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่นภาษีงวดนั้นแล้ว / มีรายการจ่ายชำระแยก / ส่ง e-Tax แล้ว)')) return;
+        const reason = prompt('เหตุผล (บันทึกลง audit log):',
+          target ? 'ลืมติ๊กบริการต่างประเทศตอนอนุมัติ' : 'ติ๊กบริการต่างประเทศผิด');
+        if (reason === null) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/document/${docId}/reclassify-foreign-service`,
+            { toForeignService: target, reason: reason.trim() || null });
+          Layout.toast(r?.message || 'แก้การลงบัญชีสำเร็จ', 'success', 9000);
+          await this.detail(docId);
+          await this.load();
+        } catch (e) {
+          Layout.toast('แก้ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000);
         }
       },
 

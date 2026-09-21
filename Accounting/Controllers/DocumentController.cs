@@ -683,6 +683,31 @@ public class DocumentController : ControllerBase
             + "(สร้างรายงานภาษีงวดนี้ใหม่เพื่อให้ยอดตรง)"));
     }
 
+    /// <summary>แก้เอกสารที่อนุมัติแล้วให้เป็น/เลิกเป็น "บริการต่างประเทศ (ภ.พ.36 §83/6)"
+    /// — ใบที่ลืมติ๊กจะไม่มี <c>Cr 21912</c> (ไม่มีหนี้ ภ.พ.36 ⇒ ไม่โผล่หน้านำส่ง
+    /// ⇒ ไม่เคยนำส่ง) และเครดิตผู้รับเงินด้วยยอดรวม VAT (เจ้าหนี้/ธนาคารเกินจริง)
+    /// · ระบบกลับ JE เดิมแล้วลงใหม่ผ่านตัวลงบัญชีตัวเดิม ดู gate ใน
+    /// DocumentService.ReclassifyForeignServiceAsync</summary>
+    [HttpPost("{documentId:guid}/reclassify-foreign-service")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ReclassifyForeignService(
+        Guid companyId, Guid documentId, [FromBody] ReclassifyForeignServiceRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        // GL + ภ.พ.36 impact → permission ระดับเดียวกับ Approve
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์แก้การลงบัญชีของเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await _documentService.ReclassifyForeignServiceAsync(
+            companyId, documentId, request.ToForeignService, request.Reason, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            request.ToForeignService
+                ? "ตั้งเป็นบริการต่างประเทศแล้ว — ลงหนี้ ภ.พ.36 (Cr 21912) และแก้ยอดเครดิตผู้รับเงิน"
+                  + "ให้เป็นฐานเท่านั้น · ใบนี้จะโผล่ที่หน้านำส่งภาษีของงวดแล้ว"
+                : "ยกเลิกสถานะบริการต่างประเทศแล้ว — กลับ JE เดิมและลงใหม่ตามการซื้อในประเทศ"));
+    }
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ) =====
     public sealed record AdjustingLineDto(Guid AccountId, decimal DebitAmount,
         decimal CreditAmount, string? Description, Guid? ProjectId, string? Reason);
