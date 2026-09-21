@@ -16,6 +16,10 @@ const path = require('path');
 class El {
   constructor(tag, attrs = {}, children = []) {
     this.tag = tag; this.attrs = attrs; this.children = children;
+    // input/select/textarea จริงมี property `value` เสมอ — โค้ดใน api.js ใช้
+    // `'value' in el` กรองไม่ให้ `#someDiv` ถูกเลือกมาเป็น "ช่องกรอก"
+    // (ตัวปลอมที่ไม่มี value = ตัวปลอมที่ไม่เหมือนของจริง ไม่ใช่โค้ดผิด)
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') this.value = attrs.value ?? '';
     this.classList = new Set((attrs.class || '').split(' ').filter(Boolean));
     this.parent = null; this.focused = false; this.scrolled = false;
     children.forEach(c => { c.parent = this; });
@@ -42,6 +46,11 @@ class El {
       if (part.startsWith('[name=')) {
         const want = part.slice(6, -1).replace(/^"|"$/g, '');
         if (this.attrs.name === want) return true;
+      }
+      if (part.startsWith('#') && this.attrs.id === part.slice(1)) return true;
+      if (part.startsWith('[data-field=')) {
+        const want = part.slice(12, -1).replace(/^"|"$/g, '');
+        if (this.attrs['data-field'] === want) return true;
       }
       if (/^[a-z0-9]+$/i.test(part) && this.tag === part) return true;
     }
@@ -113,13 +122,31 @@ function check(name, cond, extra = '') {
 }
 
 {
+  console.log('ทิศที่ 1b — ช่องที่ผูกด้วย id อย่างเดียว (94% ของหน้า) ต้องหาเจอด้วย');
+  const codeById = new El('input', { class: 'form-input', id: 'code' });
+  const card = new El('div', { class: 'card' }, [
+    new El('h4', { text: 'ข้อมูลที่พัก' }),
+    new El('div', { class: 'fld' }, [new El('label', { text: 'รหัสที่พัก' }), codeById]),
+  ]);
+  const root = new El('body', {}, [card]);
+  const api = loadApi(root);
+  globalThis.Page = undefined;
+  const msg = api.describeFieldErrors(['code'], ['ต้องมีค่า']);
+  check('หาเจอผ่าน #id แล้วอ่านป้ายไทยได้', msg.includes('รหัสที่พัก'), msg);
+  check('ไฮไลต์ช่องที่หาเจอผ่าน id', codeById.classList.contains('has-error'));
+}
+
+{
   console.log('ทิศที่ 2 — ช่องไม่มีบนหน้า: ต้องบอกว่าไม่มี ไม่ใช่สั่งให้ไปกรอก');
   const page = buildPage();
   const api = loadApi(page.root);
   globalThis.Page = undefined;
   const msg = api.describeFieldErrors(['ghostField'], ['ต้องมีค่า — เว้นว่างไม่ได้']);
-  check('บอกตรง ๆ ว่าไม่มีช่องนี้บนหน้านี้', msg.includes('ไม่มีช่องนี้บนหน้านี้'), msg);
-  check('บอกทางไปต่อ (แจ้งผู้ดูแล)', msg.includes('แจ้งผู้ดูแลระบบ'), msg);
+  check('บอกชื่อช่องที่เซิร์ฟเวอร์ฟ้อง', msg.includes('ghostField'), msg);
+  check('บอกว่าไฮไลต์ให้ไม่ได้ (ไม่ใช่สั่งให้ไปกรอกของที่มองไม่เห็น)',
+        msg.includes('ไฮไลต์ให้อัตโนมัติไม่ได้'), msg);
+  check('**ห้ามวินิจฉัยสาเหตุที่ยังไม่ได้ตรวจ** (F2 ข้อ 7)',
+        !msg.includes('ฟอร์มส่งค่ามาเอง'), msg);
   check('ไม่พังเมื่อหน้าไม่มี hook revealField', true);
 }
 

@@ -95,7 +95,11 @@ const Layout = {
     domainVerification: { Pending:'รอยืนยัน', Verifying:'กำลังตรวจสอบ', Verified:'ยืนยันแล้ว', Failed:'ล้มเหลว' },
     siteType: { Corporate:'เว็บบริษัท', Ecommerce:'ร้านค้าออนไลน์', Booking:'จองนัดหมาย',
       ServiceCatalog:'แค็ตตาล็อกบริการ', Hybrid:'ผสม' },
-    lodgingAdjustMode: { Base:'ราคาฐาน', Absolute:'ราคาตายตัว', Multiplier:'คูณ', Delta:'บวก/ลบ' },
+    lodgingAdjustMode: { Base:'ใช้ราคาฐาน', Absolute:'ราคาตายตัว (บาท/คืน)',
+      Multiplier:'คูณราคาฐาน (0.90 = ลด 10%)', Delta:'บวก/ลบ (บาท/คืน)' },
+    lodgingPricingMode: { PerUnit:'ต่อห้องต่อคืน', PerPerson:'ต่อคนต่อคืน (โฮสเทล/แคมป์)' },
+    lodgingPropertyType: { Hotel:'โรงแรม', Resort:'รีสอร์ท', Hostel:'โฮสเทล', Villa:'บ้านพัก/วิลล่า',
+      Apartment:'อพาร์ตเมนต์', Campsite:'แคมป์/ลานกางเต็นท์', Other:'อื่น ๆ' },
     lodgingSeasonType: { Low:'Low', Regular:'Regular', High:'High', Peak:'Peak', Holiday:'วันหยุด' },
     lodgingExtraPriceMode: { PerStay:'ต่อการเข้าพัก', PerNight:'ต่อคืน', PerPerson:'ต่อคน', PerPersonPerNight:'ต่อคน/คืน' },
     lodgingExtraCategory: { Breakfast:'อาหารเช้า', ExtraBed:'เตียงเสริม', Transfer:'รถรับส่ง', Tour:'ทัวร์',
@@ -113,6 +117,22 @@ const Layout = {
       Rejected:'ปฏิเสธ', Cancelled:'ยกเลิก' },
     approvalStatus: { Pending:'รออนุมัติ', Approved:'อนุมัติแล้ว', Rejected:'ปฏิเสธ', Recalled:'เรียกคืน' },
     commissionType: { Fixed:'จำนวนเงินคงที่', Percentage:'เปอร์เซ็นต์' },
+  },
+
+  /** ตัวเลือกของ <select> สำหรับ enum ชุดนี้ — **คีย์เป็นชื่อ enum** ตรงกับที่ API
+   *  ส่งมาและรับกลับ (`JsonStringEnumConverter` ใน Program.cs)
+   *
+   *  ที่มา (ทีมตรวจรอบ 189 F-01/F-02/F-04): หน้าเว็บเคยพิมพ์ `{1:'…',2:'…'}` เอง
+   *  แต่ API ส่งค่ามาเป็น `"PerUnit"` ⇒ `String(v) === String(k)` ไม่เคยจริง ⇒
+   *  ไม่มี option ไหนถูก `selected` ⇒ เบราว์เซอร์เลือกตัวแรกให้เงียบ ๆ ⇒
+   *  **เปิดแก้แล้วกดบันทึก ค่าเดิมถูกเปลี่ยนโดยผู้ใช้ไม่รู้ตัว**
+   *  (โฮสเทลที่คิดราคาต่อคน กลับเป็นต่อห้อง · ส่วนลดทั้งแผนราคาหายไป)
+   *  และกรณี `<select>` ของ propertyType ที่ไม่มี option ตรง ⇒ ส่ง null เข้า enum
+   *  ที่ไม่ nullable ⇒ **body ถูกโยนทิ้งทั้งก้อน บันทึกไม่ได้เลย** (คลาสเดียวกับรอบ 188)
+   *
+   *  ห้ามพิมพ์ตารางตัวเลือกซ้ำในหน้าใด ๆ — เรียกตัวนี้ (F2 ข้อ 4/5) */
+  enumOptions(kind) {
+    return this.ENUM_LABELS[kind] || {};
   },
 
   /// คืนป้ายไทยของค่า enum ที่เซิร์ฟเวอร์ส่งมา — ไม่รู้จัก = คืนค่าดิบ (ห้ามเดาแทน)

@@ -15409,17 +15409,62 @@ public partial class DocumentService : IDocumentService
         var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
             DocumentType.DebitNote, DocumentType.BillingNote, DocumentType.ReceiptVoucher };
         var isRevenue = revenueTypes.Contains(doc.DocumentType);
-        // DebitNote มีสองฝั่ง — ฝั่งซื้อ (vendor เรียกเก็บเพิ่ม, source = PI/Expense/CIL)
-        // การชำระคือเงินออก: Dr AP / Cr เงินสด — ไม่ใช่เงินเข้าแบบฝั่งขาย
-        if (doc.DocumentType == DocumentType.DebitNote && doc.RelatedDocumentId.HasValue)
+
+        // ══ ใบลดหนี้/ใบเพิ่มหนี้มีสองฝั่ง — ทิศของเงินต้องตาม "ฝั่งของใบ" ไม่ใช่ชนิดเอกสาร ══
+        // บั๊กจริง (ทีมตรวจรอบ 189 B-01 · main agent เปิดไฟล์ยืนยันแล้ว): เมธอดนี้เป็น
+        // **จุดเดียวใน 31 จุดทั้งเรพ** ที่ตัดสินฝั่ง CN/DN เองโดยไม่ผ่าน
+        // `Helpers/AdjustmentNoteAccount` และ **ไม่อ่าน `CnDnPurchaseSideOverride`** เลย
+        // ทั้งที่ทุกเส้นอื่นอ่าน (`:13890` · `:13124` · `TaxService:362,731` ·
+        // `AgingReportService:91`) และฟอร์มส่งค่านี้มาทุกใบ
+        // ⇒ ใบเพิ่มหนี้ฝั่งซื้อที่**ไม่มีใบต้นทางในระบบ** (เคสที่ UI แนะนำเอง) ตอนจ่ายเงิน
+        //   ลง Dr เงินสด / Cr ลูกหนี้ แทน Dr เจ้าหนี้ / Cr เงินสด ⇒ เงินสดเกินจริง
+        //   สองเท่าของยอด และเจ้าหนี้ไม่ถูกตัด — เงียบจนถึงวันกระทบยอดธนาคาร
+        // (นี่คือ "แก้ที่หนึ่ง เหลือที่เหลือ" ของรอบ 185 ที่ grep ไม่ครบ — F2 ข้อ 1)
+        //
+        // คู่สมมาตรที่รอบ 185 ก็ไม่ได้ดู: **ใบลดหนี้ก็มีสองฝั่งเหมือนกัน** — ฝั่งซื้อ
+        // คือผู้ขายคืนเงินให้เรา (เงิน**เข้า**) ไม่ใช่เงินออกแบบฝั่งขาย
+        if (doc.DocumentType is DocumentType.DebitNote or DocumentType.CreditNote)
         {
-            var dnSrcType = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                .Select(d => (DocumentType?)d.DocumentType)
-                .FirstOrDefaultAsync();
-            if (dnSrcType is DocumentType.PurchaseInvoice or DocumentType.Expense
-                or DocumentType.CertificateInLieu)
-                isRevenue = false;
+            DocumentType? adjSrcType = null;
+            if (doc.RelatedDocumentId.HasValue)
+                adjSrcType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+
+            // ชั้นคู่ค้า (ผู้ขายอย่างเดียว) ใช้เฉพาะตอนไม่มีทั้งคำสั่งผู้ใช้และใบต้นทาง
+            var supplierOnly = false;
+            if (doc.Contact is { } loaded)
+                supplierOnly = loaded is { IsSupplier: true, IsCustomer: false };
+            else if (doc.ContactId.HasValue)
+                supplierOnly = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId.Value && c.CompanyId == companyId)
+                    .Select(c => c.IsSupplier && !c.IsCustomer)
+                    .FirstOrDefaultAsync();
+
+            // ใบนี้ลงบัญชีไปแล้ว ⇒ ถามแบบ "ฝั่งของใบที่ลงแล้ว" (ผู้ใช้สั่งย้ายฝั่งชนะทุกชั้น)
+            var adjSide = Accounting.Helpers.AdjustmentNoteAccount.ResolvePostedSide(
+                userOverride: doc.CnDnPurchaseSideOverride,
+                sourceType: adjSrcType,
+                glTouchedInputVat: null,
+                contactIsSupplierOnly: supplierOnly);
+
+            // "ไม่รู้" ห้ามตกเป็นค่า default เงียบ ๆ — ทิศเงินผิดมองไม่เห็นจนกระทบยอด
+            // ธนาคารไม่ลง ส่วนการบล็อกเห็นทันทีและมีทางไปต่อ (G5 "ทิศที่ความเสียหาย
+            // มองเห็นและแก้ทัน")
+            if (adjSide.Unknown)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"เอกสาร {doc.DocumentNumber} เป็น"
+                    + $"{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}"
+                    + " ที่ระบบยังไม่รู้ว่าเป็นฝั่งซื้อหรือฝั่งขาย จึงลงบัญชีการรับ/จ่ายเงินให้ไม่ได้ "
+                    + "(ลงผิดทิศ = เงินสดกับเจ้าหนี้/ลูกหนี้เพี้ยนโดยไม่มีอะไรฟ้อง) — "
+                    + "กรุณาเปิดเอกสารแล้วเลือกฝั่งให้ถูก หรือผูกใบต้นทาง แล้วลองรับ/จ่ายเงินใหม่");
+
+            // ฝั่งซื้อ: ใบเพิ่มหนี้ = เราจ่ายเพิ่ม (เงินออก) · ใบลดหนี้ = ผู้ขายคืนเงิน (เงินเข้า)
+            // ฝั่งขาย: ใบเพิ่มหนี้ = ลูกค้าจ่ายเพิ่ม (เงินเข้า) · ใบลดหนี้ = เราคืนลูกค้า (เงินออก)
+            isRevenue = adjSide.IsPurchase
+                ? doc.DocumentType == DocumentType.CreditNote
+                : doc.DocumentType == DocumentType.DebitNote;
         }
         var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
 

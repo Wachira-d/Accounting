@@ -4,7 +4,7 @@ namespace Accounting.Models.DTOs.DocumentTemplate;
 
 // ===== Template CRUD =====
 public record CreateDocumentTemplateRequest(
-    string Name,
+    string? Name,
     string? Description,
     DocumentType DocumentType,
     bool IsDefault,

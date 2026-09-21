@@ -63,13 +63,38 @@ def dto_nonnullable_strings(dto_root: Path) -> dict:
     for f in sorted(dto_root.rglob("*.cs")):
         body = strip_noise(f.read_text(encoding="utf-8", errors="replace"))
         current = None
-        for ln in body.splitlines():
+        lines = body.splitlines()
+        for idx, ln in enumerate(lines):
             m = TYPE_DECL.search(ln)
             if m:
                 current = m.group("name")
                 result.setdefault(current, set())
                 # positional record: `record Foo(string Bar, string? Baz)`
+                # ⚠️ ลายเซ็นข้ามบรรทัดได้และ**ส่วนใหญ่ข้าม** — เวอร์ชันแรก (รอบ 187)
+                # อ่านแค่ส่วนที่เหลือของบรรทัดเดียวกัน ⇒ `CreateProjectRequest`
+                # (พารามิเตอร์อยู่บรรทัดที่ 2-3) คืน None ⇒ checker **เขียวปลอม**
+                # และบั๊ก P0 จริง 6 ตัวซ่อนอยู่ในจุดบอดนี้ทั้งหมด
+                # (ทีมตรวจรอบ 189 A14 — "checker ที่ครอบไม่ถึง = ไม่มีด่าน" F2 ข้อ 6)
                 head = ln[m.end():]
+                if "(" in head:
+                    depth, buf, k = 0, [], idx
+                    while k < len(lines):
+                        seg = lines[k] if k > idx else head
+                        for ch in seg:
+                            if ch == "(":
+                                depth += 1
+                                if depth == 1:
+                                    continue
+                            elif ch == ")":
+                                depth -= 1
+                                if depth == 0:
+                                    break
+                            if depth >= 1:
+                                buf.append(ch)
+                        if depth == 0 and buf:
+                            break
+                        k += 1
+                    head = "".join(buf)
                 for pm in re.finditer(r"(?<![?\w])string\s+([A-Z][A-Za-z0-9_]*)", head):
                     result[current].add(pm.group(1))
                 continue
@@ -173,9 +198,13 @@ def check_file(path: Path, props: dict):
                     prop = m.group(1)
                     if prop not in props[dto_type]:
                         continue
-                    if how.startswith("IsNullOrEmpt") or how.startswith("IsNullOrWhite"):
-                        if not tolerates_blank(method, m.end()):
-                            continue   # ด่านของเราเองก็ว่า "บังคับ" — สองชั้นเห็นตรงกัน ไม่ใช่บั๊ก
+                    # ใช้เกณฑ์เดียวกันกับ **ทุกรูปแบบ** — `?.`/`??` ก็เป็นการ "รับ null
+                    # ไว้ก่อนเพื่อจะปฏิเสธด้วยข้อความที่ดีกว่า" ได้เหมือนกัน
+                    # (เช่น `var p = request.Provider?.Trim() ?? ""; if (!IsSupported(p)) throw …`)
+                    # เวอร์ชันแรกฟ้อง `?.`/`??` แบบไม่มีเงื่อนไข ⇒ ฟ้องผิด 15 จุด
+                    # รวม `LoginRequest.Email` ที่ฟอร์มบังคับอยู่แล้ว (ทีมตรวจรอบ 189)
+                    if not tolerates_blank(method, m.end()):
+                        continue   # ชั้นนี้ก็ปฏิเสธเอง — สองชั้นเห็นตรงกัน ไม่ใช่บั๊ก
                     off = method[:m.start()].count("\n")
                     problems.append((line_no + off, dto_type, var, prop, how))
     # ยุบซ้ำ (property เดียวอาจโดนหลายรูปแบบในเมธอดเดียว)

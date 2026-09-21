@@ -410,7 +410,7 @@ public record LeaveTypeRequest(
     decimal AnnualQuota, bool IsPaid, bool AllowHalfDay,
     bool CarryForward, decimal? CarryForwardCap,
     int AdvanceNoticeDays, bool RequiresAttachment,
-    int SortOrder, bool IsActive, string Color, string? Icon);
+    int SortOrder, bool IsActive, string? Color, string? Icon);
 
 public record LeaveTypeResponse(
     Guid Id, string Code, string NameTh, string? NameEn,
@@ -421,7 +421,7 @@ public record LeaveTypeResponse(
 
 public record PublicHolidayRequest(
     DateTime Date, string NameTh, string? NameEn,
-    string Category, bool IsSubstitute);
+    string? Category, bool IsSubstitute);
 
 public record PublicHolidayResponse(
     Guid Id, DateTime Date, string NameTh, string? NameEn,

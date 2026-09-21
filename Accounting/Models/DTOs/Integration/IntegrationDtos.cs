@@ -62,7 +62,7 @@ public record SyncLogResponse(
 
 public record InboundCustomerRequest(
     string? ExternalId,
-    string Name, string? NameEn,
+    string? Name, string? NameEn,
     string? TaxId, string? Phone, string? Email,
     string? Address, string? SubDistrict, string? District, string? Province, string? PostalCode,
     string? ContactType,       // "Individual", "JuristicPerson", "GovernmentAgency"
@@ -176,7 +176,7 @@ public record InboundPaymentRequest(
     string? InvoiceExternalRef, Guid? DocumentId,
     string? CustomerExternalId, string? CustomerName,
     DateTime PaymentDate, decimal Amount,
-    string PaymentMethod,      // "Cash", "BankTransfer", "CreditCard", "PromptPay", "Cheque", "EWallet"
+    string? PaymentMethod,      // "Cash", "BankTransfer", "CreditCard", "PromptPay", "Cheque", "EWallet"
     string? BankAccountName, string? ReferenceNo, string? SlipUrl,
     string? Notes);
 

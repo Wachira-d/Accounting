@@ -58,7 +58,7 @@ public record CreateDocumentRequest(
     // Currency defaults to THB; ExchangeRate to 1. For non-THB docs the
     // service auto-fetches the BoT mid-rate at DocumentDate if ExchangeRate
     // is omitted; callers can override with a contracted rate.
-    string Currency = "THB",
+    string? Currency = "THB",
     decimal? ExchangeRate = null,
     // ===== Sensitivity classification (optional) =====
     // Internal callers (e.g. PayrollService) pass Sensitivity to gate the
@@ -384,7 +384,7 @@ public record SuggestPvAccountingRequest(
     string? VendorName,
     string? VendorTaxId,
     string? VendorIndustry,
-    string Currency,
+    string? Currency,
     IReadOnlyList<SuggestPvAccountingLine> Lines);
 
 public record SuggestPvAccountingLine(

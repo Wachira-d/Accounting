@@ -43,14 +43,22 @@ const API = {
 
   // หา input ของช่องชื่อนี้ — รองรับชื่อซ้อน ("lines[0].qty") โดยลองทั้งเส้นก่อน
   // แล้วค่อยถอยมาที่ส่วนท้าย (ฟอร์มส่วนใหญ่ตั้ง name เป็นชื่อช่องล้วน)
+  // ⚠️ ทั้ง wwwroot มี input ที่ตั้ง `name=` แค่ 143 จาก 2,271 ตัว (กระจุกใน 10 ไฟล์)
+  // — หน้าส่วนใหญ่ผูกช่องด้วย `id` แล้วอ่านด้วย `getElementById` ⇒ ถ้าหาด้วย
+  // `[name=…]` อย่างเดียว จะหาไม่เจอเกือบทั้งระบบ (ทีมตรวจรอบ 189 A13/E-06)
+  // ⇒ ลองทั้ง `name` · `data-field` · `id` ตามลำดับความชัดเจน
   _findFieldEl(name) {
     const tries = [name];
     const last = String(name).split('.').pop();
     if (last && last !== name) tries.push(last);
     for (const t of tries) {
-      let el = null;
-      try { el = document.querySelector(`[name="${CSS.escape(t)}"]`); } catch (_) { el = null; }
-      if (el) return el;
+      let esc = null;
+      try { esc = CSS.escape(t); } catch (_) { continue; }
+      for (const sel of [`[name="${esc}"]`, `[data-field="${esc}"]`, `#${esc}`]) {
+        let el = null;
+        try { el = document.querySelector(sel); } catch (_) { el = null; }
+        if (el && 'value' in el) return el;
+      }
     }
     return null;
   },
@@ -72,7 +80,11 @@ const API = {
       const el = this._findFieldEl(f);
       if (!el) {
         // ช่องนี้ไม่มีบนหน้าจอ — ฟอร์มส่งค่ามาเองโดยผู้ใช้ไม่เคยเห็น
-        parts.push(`«${f}» (ไม่มีช่องนี้บนหน้านี้ — ฟอร์มส่งค่ามาเอง กรุณาแจ้งผู้ดูแลระบบ): ${why}`);
+        // หาไม่เจอ = **หาไม่เจอ** เท่านั้น — ห้ามสรุปสาเหตุ (ช่องอาจมีอยู่แต่ผูกด้วย
+        // id/ชื่ออื่น หรืออยู่ในแท็บที่ยังไม่ถูกสร้าง) · ข้อความที่ระบุ "สาเหตุ"
+        // ต้องตรวจสาเหตุนั้นจริง (F2 ข้อ 7) — เดิมเขียนว่า "ฟอร์มส่งค่ามาเอง"
+        // ซึ่งผิดใน 94% ของหน้า (ทีมตรวจรอบ 189 A13)
+        parts.push(`ช่อง "${f}" (ระบบไฮไลต์ให้อัตโนมัติไม่ได้ — กรุณามองหาช่องนี้บนหน้าจอ): ${why}`);
         return;
       }
       el.classList.add('has-error');
