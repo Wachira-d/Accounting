@@ -153,7 +153,7 @@ public sealed class DocumentLabels
     public string TotalBeforeBillDiscount => this["total_before_bill_discount"];
     public string TotalBillDiscount => this["total_bill_discount"];
     public string TotalDepositApplied => this["total_deposit_applied"];
-    /// <summary>แถวหักท้ายบิลที่เป็น "มูลค่ามัดจำ (ก่อน VAT) ที่ออกใบกำกับไปแล้ว" — ดู DepositPolicyResolver.BillDeductionIsTaxedDeposit</summary>
+    /// <summary>แถวหักท้ายบิลที่เป็น "มูลค่ามัดจำ (ก่อน VAT) ที่ออกใบกำกับไปแล้ว" — ดู DepositPolicyResolver.TaxedDepositDeducted (ช่อง Document.DepositBaseDeducted · แยกจากส่วนลดท้ายบิล)</summary>
     public string TotalDepositTaxInvoiced => this["total_deposit_tax_invoiced"];
     /// <summary>รอบ 193: ผลต่างจากการปัดเศษ (Document.RoundingAdjustment — แสดงเมื่อ ≠ 0)</summary>
     public string TotalRounding => this["total_rounding"];

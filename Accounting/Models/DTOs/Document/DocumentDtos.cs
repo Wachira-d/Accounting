@@ -149,7 +149,10 @@ public record CreateDocumentRequest(
     // ใบสำคัญจ่าย: ส่วนต่างต้องอธิบายด้วย adjusting lines (Helpers/PaymentSettlementAdjustment) ก่อนอนุมัติ
     decimal? ActualPaidAmount = null,
     // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ (|x| < 1) — SubTotal = Σ บรรทัด + ค่านี้ · null/0 = ไม่มี
-    decimal? RoundingAdjustment = null);
+    decimal? RoundingAdjustment = null,
+    // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐาน (ก่อน VAT) ของมัดจำ "ออกใบกำกับแล้ว" ที่หักจากใบนี้ — แยกจากส่วนลดการค้า
+    // (BillDiscountAmount) · ต้องมี DepositAppliedRef · อนุมัติแล้วรับรู้มัดจำเท่าค่านี้ · null/0 = ไม่มี
+    decimal? DepositBaseDeducted = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -309,7 +312,9 @@ public record UpdateDocumentRequest(
     // รอบ 193: ยอดชำระจริง — null = ไม่แตะ · 0 = ล้าง (จ่ายเต็มตามยอด) · > 0 = ตั้งค่า
     decimal? ActualPaidAmount = null,
     // รอบ 193: ผลต่างจากการปัดเศษ — null = ไม่แตะ (ค่าเดิมยังอยู่ · SubTotal คิดใหม่ = Σ บรรทัด + ค่านี้) · 0 = ล้าง
-    decimal? RoundingAdjustment = null);
+    decimal? RoundingAdjustment = null,
+    // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำออกใบกำกับแล้วที่หัก — null = คงค่าเดิม · 0 = ล้าง (ต้องส่งบรรทัดมาด้วย)
+    decimal? DepositBaseDeducted = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -851,7 +856,9 @@ public record DocumentResponse(
     /// <summary>ยอดชำระจริงที่ต่างจากยอดเอกสาร (รอบ 193 — echo ให้ฟอร์ม hydrate · null = จ่ายเต็มตามยอด)</summary>
     decimal? ActualPaidAmount = null,
     /// <summary>ผลต่างจากการปัดเศษ (SubTotal = Σ บรรทัด + ค่านี้) — echo ให้ฟอร์ม/หน้ารายละเอียดแสดง · 0 = ไม่มี</summary>
-    decimal RoundingAdjustment = 0m);
+    decimal RoundingAdjustment = 0m,
+    // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำออกใบกำกับแล้วที่หัก (แยกจากส่วนลดท้ายบิล BillDiscountAmount)
+    decimal DepositBaseDeducted = 0m);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

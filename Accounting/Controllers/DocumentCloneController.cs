@@ -64,6 +64,9 @@ public class DocumentCloneController : ControllerBase
             paymentType = src.PaymentType,
             pricesIncludeVat = src.PricesIncludeVat,
             roundingAdjustment = src.RoundingAdjustment,
+            // ส่วนลดท้ายบิล (ส่วนลดการค้า) ตามต้นแบบ — ฐานมัดจำที่หัก (DepositBaseDeducted) ไม่ตาม: มัดจำใช้ได้ครั้งเดียว (ดู POST)
+            billDiscountPercent = src.BillDiscountPercent,
+            billDiscountAmount = src.BillDiscountPercent > 0 ? 0m : src.BillDiscountAmount,
             // ภาษาที่ตรึงกับใบต้นแบบตามไปด้วย — ลูกค้าประจำที่ใช้ใบอังกฤษ
             // คือกลุ่มเดียวกับที่ใช้ clone บ่อยที่สุด (ออกบิลซ้ำทุกเดือน)
             documentLanguage = src.DocumentLanguage,
@@ -163,7 +166,12 @@ public class DocumentCloneController : ControllerBase
             CustomFooterNotes: src.CustomFooterNotes,
             CustomTermsAndConditions: src.CustomTermsAndConditions,
             // รอบ 193 (ฝ่ายค้าน C2): โคลนยกทุกบรรทัดครบจำนวน ⇒ ผลต่างปัดเศษตามไป (Helpers/DocumentRounding.Inherit)
-            RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(src.RoundingAdjustment, true)
+            RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(src.RoundingAdjustment, true),
+            // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ส่วนลดท้ายบิล (ส่วนลดการค้า) ตามต้นแบบ — เดิมหาย ⇒ ใบโคลนแพงกว่าต้นแบบ ·
+            // **ฐานมัดจำที่หัก (DepositBaseDeducted) + เลขใบมัดจำ ไม่ตาม โดยเจตนา**: ใบโคลน = การขายใหม่ มัดจำใบเดิมถูกใช้/รับรู้
+            // กับใบต้นแบบไปแล้ว ⇒ พ่วงไป = หักมัดจำที่ใช้แล้วซ้ำ (อนุมัติล้ม หรือรับรู้มัดจำก้อนอื่นของลูกค้าเกิน)
+            BillDiscountPercent: src.BillDiscountPercent > 0 ? src.BillDiscountPercent : null,
+            BillDiscountAmount: src.BillDiscountPercent <= 0 && src.BillDiscountAmount > 0 ? src.BillDiscountAmount : null
         );
 
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —

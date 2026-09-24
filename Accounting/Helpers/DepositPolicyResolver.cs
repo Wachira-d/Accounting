@@ -238,13 +238,50 @@ public static class DepositPolicyResolver
         return string.IsNullOrWhiteSpace(existing) ? note : existing.TrimEnd() + " · " + note;
     }
 
-    /// <summary>แถว "หักท้ายบิล" ของใบนี้คือ "มูลค่ามัดจำที่ออกใบกำกับไปแล้ว" (ไม่ใช่ส่วนลดการค้า) หรือไม่ —
-    /// ตัวตัดสินตัวเดียวของทั้งสอง renderer (HTML + QuestPDF)
-    /// <para>รูปของใบสุดท้ายที่หักมัดจำโหมด <see cref="DepositVatTreatment.VatImmediate"/>: ลดฐานภาษีด้วย
-    /// <c>BillDiscountAmount</c> (= ฐานของมัดจำ) และจด <c>DepositAppliedRef</c> = เลขใบมัดจำ โดย
-    /// <c>DepositAppliedAmount = 0</c> (ยอดรวมของใบสุทธิแล้ว ไม่ได้หักจากยอดชำระอีกชั้น)</para></summary>
-    public static bool BillDeductionIsTaxedDeposit(decimal billDiscountAmount, decimal depositAppliedAmount, string? depositAppliedRef)
-        => billDiscountAmount > 0m && depositAppliedAmount <= 0m && !string.IsNullOrWhiteSpace(depositAppliedRef);
+    /// <summary>ใบนี้ "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี" หรือไม่ — ตัวตัดสินตัวเดียวของทั้งสอง renderer (HTML + QuestPDF)
+    /// และของการรับรู้มัดจำตอนอนุมัติ (<c>RealizeTaxedDepositDeductionsAsync</c>)
+    /// <para>รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำอยู่ช่องของตัวเอง (<c>Document.DepositBaseDeducted</c>) แยกจากส่วนลดการค้า
+    /// (<c>BillDiscountAmount</c>) — เดิมตัดสินจาก <c>BillDiscountAmount</c> ⇒ ส่วนลด 100 บาทถูกพิมพ์และรับรู้เป็น "มัดจำ" ·
+    /// ไม่ต้องดู <c>DepositAppliedAmount</c> อีก (ช่องใหม่มีแต่ฐานมัดจำออกใบกำกับ ⇒ ใบที่หักมัดจำ VAT พักเพิ่มภายหลังยังพิมพ์ถูก — B5)</para></summary>
+    public static bool TaxedDepositDeducted(decimal depositBaseDeducted, string? depositAppliedRef)
+        => depositBaseDeducted > 0m && !string.IsNullOrWhiteSpace(depositAppliedRef);
+
+    /// <summary>ส่วนหักท้ายบิลทั้งหมดของใบ (ก่อน VAT) = ส่วนลดการค้า + ฐานมัดจำออกใบกำกับแล้ว — ยอดก่อนหักท้ายบิลบนกระดาษ =
+    /// SubTotal + ค่านี้ · สัดส่วนที่ renderer ใช้ scale ยอดบรรทัดกลับ · ตัวเดียวของทั้งสอง renderer (R3-1 — ห้ามบวกเองที่ปลายทาง)</summary>
+    public static decimal BillDeductionTotal(decimal billDiscountAmount, decimal depositBaseDeducted)
+        => billDiscountAmount + depositBaseDeducted;
+
+    /// <summary>ด่านของค่าที่จะบันทึกลง <c>DepositBaseDeducted</c> (สร้าง/แก้) — null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ
+    /// (ผู้เรียกโยน <see cref="BusinessRuleException"/> พร้อม <see cref="ImmediateVatGrossApplyRuleCode"/>)</summary>
+    public static string? TaxedDepositDeductionProblem(
+        decimal depositBaseDeducted, string? depositAppliedRef, decimal depositAppliedAmount, bool drivesJournal, decimal billDiscountPercent)
+    {
+        if (depositBaseDeducted < 0m) return "ฐานมัดจำที่หักต้องไม่ติดลบ";
+        if (depositBaseDeducted == 0m) return null;
+        if (string.IsNullOrWhiteSpace(depositAppliedRef))
+            return "หักมูลค่ามัดจำ (ก่อน VAT) ต้องระบุเลขใบมัดจำที่ออกใบกำกับแล้ว (depositAppliedRef) — ไม่มีเลขอ้างอิง ระบบรับรู้มัดจำตอนอนุมัติไม่ได้";
+        if (depositAppliedAmount > 0m || drivesJournal)
+            return "หักมูลค่ามัดจำ (ก่อน VAT) แล้ว ห้ามหักมัดจำแบบยอดรวม VAT ซ้ำในใบเดียวกัน — เลือกอย่างใดอย่างหนึ่ง";
+        if (billDiscountPercent > 0m) return PercentWithTaxedDepositMessage;
+        return null;
+    }
+
+    /// <summary>ส่วนลดท้ายบิลแบบ % ใช้ร่วมกับหักมัดจำออกใบกำกับแล้วไม่ได้ (ตัวเฉลี่ยใช้ % แล้วทิ้งยอดบาท ⇒ ฐานมัดจำหายเงียบ)</summary>
+    public const string PercentWithTaxedDepositMessage =
+        "หักมัดจำที่ออกใบกำกับแล้วใช้ร่วมกับส่วนลดท้ายบิลแบบ % ไม่ได้ — เปลี่ยนส่วนลดท้ายบิลเป็นจำนวนบาท";
+
+    /// <summary>แยกยอดที่เฉลี่ยลงบรรทัดแล้ว (Σ ส่วนหักท้ายบิลจริง) กลับเป็น (ส่วนลดการค้า, ฐานมัดจำ) — ทั้งสองลดฐานภาษีเหมือนกัน
+    /// จึงเฉลี่ยรวมกันครั้งเดียว · <c>Ok = false</c> = ส่วนลด + มัดจำเกินยอดขาย (ตัวเฉลี่ยตัดยอดทิ้ง) ⇒ ผู้เรียกต้องล้มดัง
+    /// ห้ามให้ส่วนที่ถูกตัดไปหายเงียบจากช่องใดช่องหนึ่ง</summary>
+    public static (decimal TradeDiscount, decimal DepositBase, bool Ok) SplitBillDeduction(
+        decimal allocatedTotal, decimal requestedTrade, decimal depositBase)
+    {
+        if (depositBase <= 0m) return (allocatedTotal, 0m, true);
+        var want = Math.Round(Math.Max(0m, requestedTrade), 2, MidpointRounding.AwayFromZero) + depositBase;
+        return allocatedTotal == want
+            ? (allocatedTotal - depositBase, depositBase, true)
+            : (Math.Max(0m, allocatedTotal - depositBase), Math.Min(depositBase, allocatedTotal), false);
+    }
 
     /// <summary>P0-3: ใบมัดจำนี้ "ออกใบกำกับแล้ว" (VAT เข้า ภ.พ.30 เดือนที่รับเงิน) ⇒ ห้ามนำไปหัก <b>เต็มจำนวน</b>
     /// เข้าใบกำกับที่คิด VAT เต็ม (ปุ่มหักมัดจำ / หักแบบขับ JE) — เดิมเส้นนั้นกลับ Dr 21911 ของมัดจำแล้วให้ใบสุดท้าย
@@ -284,6 +321,16 @@ public static class DepositPolicyResolver
         }
         return (lines, left > 0.005m ? left : 0m);
     }
+
+    /// <summary>ข้อความของด่านใบเก่าที่ยังตั้ง "หักมัดจำแบบขับ JE" กับมัดจำออกใบกำกับแล้ว (ตอนอนุมัติ) — <b>ทางเดียว</b>
+    /// (รอบ 193 ฝ่ายค้านรอบสาม R3-5): เดิมต่อท้าย <see cref="GrossApplyBlockedMessage"/> ซึ่งสั่ง "รับรู้มัดจำที่หน้าเงินมัดจำ"
+    /// ขณะที่ทางแก้ของใบนี้ (บันทึกใหม่จากฟอร์ม) รับรู้ให้อัตโนมัติตอนอนุมัติ ⇒ ทำตามทั้งสองประโยค = รับรู้ซ้ำ</summary>
+    public static string DrivesGuardMessage(string depositNumber, string documentNumber) =>
+        $"⛔ ใบ {documentNumber} ตั้ง “หักมัดจำแบบลงบัญชีในใบเดียว” กับใบมัดจำ {depositNumber} ที่ออกเป็นใบกำกับภาษีแล้ว (§78/1) — "
+        + "อนุมัติแบบนี้ไม่ได้ เพราะผู้ซื้อจะได้ใบกำกับสองใบสำหรับภาษีก้อนเดียว · ทางไปต่อ: เปิดแก้ใบนี้แล้วกดบันทึกจากฟอร์ม "
+        + "(ระบบแปลงเป็น “หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี” และรับรู้มัดจำเป็นรายได้ให้เองตอนอนุมัติ) แล้วอนุมัติอีกครั้ง — "
+        + "ไม่ต้องไปรับรู้มัดจำที่หน้า “เงินมัดจำ” (จะรับรู้ซ้ำ) · ถ้าใบนี้ถือเลขจริงแล้ว (กู้คืนจากการยกเลิก) ระบบไม่ให้แก้ยอดย้อนหลัง "
+        + "ให้ยกเลิกใบนี้ถาวรแล้วสร้างใบใหม่จากฟอร์มแทน";
 
     /// <summary>ข้อความของด่าน P0-3 — บอกเหตุผล + ทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
     public static string GrossApplyBlockedMessage(string depositNumber) =>
