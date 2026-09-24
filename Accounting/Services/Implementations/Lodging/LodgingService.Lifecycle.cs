@@ -267,7 +267,7 @@ public partial class LodgingService
             {
                 r.Id, r.ReservationNumber, r.Status, r.Source, r.GuestName, r.GuestPhone, r.CheckInDate, r.CheckOutDate, r.Nights,
                 r.TotalAmount, r.FolioTotal, r.PaidAmount, r.DepositRequired, r.HoldExpiresAt, r.SlipUploadedAt, r.CreatedAt,
-                r.RefundAmount, r.RefundPaidAmount,
+                r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy,
                 Rooms = r.Rooms.Select(x => new { x.RoomTypeName, UnitNumber = x.Unit != null ? x.Unit.Number : null }).ToList(),
             }).ToListAsync();
         var list = items.Select(r => new LodgingReservationListItem

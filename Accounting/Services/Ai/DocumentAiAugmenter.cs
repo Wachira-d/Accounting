@@ -269,6 +269,7 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         try
         {
             var taxId = Accounting.Helpers.ThaiTaxId.Normalize(vendorTaxId);
+            var rawTaxId = (vendorTaxId ?? "").Trim();   // คีย์ VendorKey ของคลังผัง (กติกาเดียวกับ SuggestPaymentVoucherAccountingAsync)
             var nameKey = (vendorName ?? "").Trim();
             if (string.IsNullOrEmpty(taxId) && string.IsNullOrEmpty(nameKey))
                 return (empty, null, null, null);
