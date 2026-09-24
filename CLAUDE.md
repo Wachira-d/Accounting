@@ -361,6 +361,9 @@ await _recorder.RecordUserChoiceAsync(
 - [ ] **Retention superset** — ถ้า field อยู่ใต้หลายกฎหมาย ใช้ `MAX(retention)` + mark `legal_hold`
 - [ ] **Audit log append-only** `AuditLog(actorId, entityType, entityId, before, after, at, ip, reason)`
   — ห้าม UPDATE/DELETE; ใช้ hash chain (PrevHash + RowHash SHA-256) เป็น tamper-evident
+  (รอบ 193: สูตร canonical ตัวเดียว `AuditHashChain.Seal` ฝั่งเขียน / `Analyze` ฝั่งตรวจ — v2 normalize เวลา UTC ไมโครวินาทีให้ round-trip
+  ผ่าน PostgreSQL · ตัวตรวจแยก ถูกแก้ / ขาดตอน / แตกกิ่ง · เขียนแถว audit ผ่าน `AddChainedAuditLog` เท่านั้น · **ยังไม่ serialize ข้ามคำขอ**
+  และยังไม่มีเทสต์ผ่าน DB จริง — รอเจ้าของตัดสิน)
 - [ ] **Time zone** เก็บ `timestamptz` UTC, แสดง Asia/Bangkok (+07:00); พ.ศ. เฉพาะแบบยื่นภาษี/รายงานทางการ
 - [ ] **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft `DRAFT-{guid}`), gap-free ตาม §86/4
 - [ ] **Legal reference logging** — ทุก validation rule log `RuleCode` + `LegalReference`
