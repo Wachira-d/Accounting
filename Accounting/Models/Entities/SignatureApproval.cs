@@ -51,6 +51,10 @@ public class DocumentApproval : TenantEntity
     public string? Comments { get; set; }
     public string? IpAddress { get; set; }                   // IP ที่เซ็น (audit trail)
 
+    /// <summary>hash เนื้อหาเอกสาร ณ ตอนเซ็น (<c>Helpers/DocumentSignedContent.Hash</c>) — รอบ 193 R3-3: ลายเซ็นลูกค้าเดิมใช้ซ้ำได้
+    /// เฉพาะเมื่อเนื้อหาไม่เปลี่ยนตั้งแต่เซ็น · null = แถวก่อนรอบนี้ (ไม่รู้ว่าเซ็นเนื้อหาอะไร ⇒ ใช้ซ้ำไม่ได้)</summary>
+    public string? SignedContentHash { get; set; }
+
     // Auto-action after approval
     public string? PostApprovalAction { get; set; }          // "ConvertToInvoice", "ConvertToReceipt", "CreatePO", null
 }
