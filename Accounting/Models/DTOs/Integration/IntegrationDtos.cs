@@ -96,7 +96,7 @@ public record InboundInvoiceRequest(
     string? Description,
     List<InboundInvoiceLineRequest> Lines,
     string? PaymentMethod,
-    decimal? VatRate,
+    decimal? VatRate,          // อัตราทั้งใบเมื่อบรรทัดไม่ระบุ — ความหมาย 0/-1 เหมือน InboundInvoiceLineRequest.VatRate
     string? Currency,          // default "THB"
     string? Notes,
     bool IncludeVat = true,
@@ -172,7 +172,11 @@ public record InboundAttachment(
 public record InboundInvoiceLineRequest(
     string? ItemCode, string ItemName, decimal Quantity, decimal UnitPrice,
     decimal? DiscountAmount, string? AccountCode, string? Category,
-    string? Unit, decimal? VatRate,
+    string? Unit,
+    // อัตรา VAT ของบรรทัด (สัญญา API — INTEGRATION_RESYNC.md §11): null = อัตราตั้งต้นบริษัท · 7 = ปกติ ·
+    // 0 = ขายอัตราศูนย์ §80/1 (ส่งออก — ถือเป็นใบกำกับภาษีอัตรา 0) · -1 = ยกเว้น §81 (ไม่ใช่ใบกำกับ) —
+    // ห้ามส่ง 0 แทน "ยกเว้น" (ฝ่ายค้านรอบสาม B6)
+    decimal? VatRate,
     // Withholding-tax rate (%) for this line. Used on purchase-side docs
     // (Expense) so integration sync can auto-issue the WHT certificate.
     decimal? WithholdingTaxRate = null,

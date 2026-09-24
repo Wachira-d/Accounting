@@ -88,4 +88,28 @@ public class IntegrationVatSplitTests
         Assert.Equal(70m, vat);
         Assert.Equal(1070m, net + vat);       // ← Dr = Cr
     }
+
+    // ═══ ฝ่ายค้านรอบสาม B6 — อัตรา ≤ 0 ต้องได้ VAT 0 (เดิม −1 ยกเว้น §81 ได้ VAT ติดลบ 1%) ═══
+    [Theory]
+    [InlineData(-1, true)]    // ThaiVatTypeRule.ExemptRate — ยกเว้น §81
+    [InlineData(-1, false)]
+    [InlineData(0, true)]     // 0% §80/1 ส่งออก
+    [InlineData(0, false)]
+    public void อัตรายกเว้นหรือศูนย์_VAT_เป็นศูนย์_ไม่ติดลบ(int rate, bool includeVat)
+    {
+        var (net, vat) = DocumentLineVatConvention.SplitLine(1000m, rate, null, includeVat);
+        Assert.Equal(0m, vat);
+        Assert.Equal(1000m, net);
+    }
+
+    [Fact]
+    public void อัตรา_7_ไม่ถูกแตะโดยด่านอัตราศูนย์()
+    {
+        Assert.Equal((1000m, 70m), DocumentLineVatConvention.SplitLine(1070m, 7m, null, includeVat: true));
+        Assert.Equal((1000m, 70m), DocumentLineVatConvention.SplitLine(1000m, 7m, null, includeVat: false));
+    }
+
+    [Fact]
+    public void ยอด_VAT_ที่คู่ค้าคำนวณมาเองยังชนะแม้อัตราเป็นยกเว้น()
+        => Assert.Equal((930m, 70m), DocumentLineVatConvention.SplitLine(1000m, -1m, 70m, includeVat: true));
 }
