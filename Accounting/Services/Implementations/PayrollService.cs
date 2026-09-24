@@ -1124,7 +1124,7 @@ public class PayrollService : IPayrollService
         _db.Set<PayrollRun>().Add(run);
         await _db.SaveChangesAsync();
 
-        return MapToPayrollRunResponse(run);
+        return await ToRunResponseAsync(companyId, run);
     }
 
     /// <summary>
@@ -1406,7 +1406,7 @@ public class PayrollService : IPayrollService
         // อัตรา/เพดาน ปกส. ของปีนั้น — หน้าจอใช้คำนวณตัวอย่างตอนแก้ฐานค่าจ้าง
         // (ค่ามาจากเซิร์ฟเวอร์ ไม่ใช่ตารางที่หน้าเว็บฝังเอง)
         var ssoForUi = await GetSsoParamsAsync(companyId, run.Year, run.Month);
-        return MapToPayrollRunResponse(run) with
+        return (await ToRunResponseAsync(companyId, run)) with
         {
             Details = lines,
             SsoRatePercent = ssoForUi.Rate * 100m,
@@ -1602,8 +1602,11 @@ public class PayrollService : IPayrollService
             .Take(request.PageSize)
             .ToListAsync();
 
+        // หลักฐาน "ยื่น/นำส่ง/ปันต้นทุนแล้ว" ทั้งหน้าในรอบเดียว (batch) — ปุ่มคำนวณใหม่บนจอต้องตัดสิน
+        // จากหลักฐานชุดเดียวกับด่านใน CalculatePayrollAsync
+        var lockEvidence = await LoadRecalculateLockEvidenceAsync(companyId, items);
         return new PagedResponse<PayrollRunResponse>(
-            items.Select(MapToPayrollRunResponse).ToList(),
+            items.Select(r => MapToPayrollRunResponse(r, lockEvidence[r.Id])).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -1645,8 +1648,11 @@ public class PayrollService : IPayrollService
             // ถูกปฏิเสธพร้อมเหตุผล (ตัวตัดสินเดียว — Helpers/PayrollRunEditPolicy)
             // ⚠️ ล็อก FOR UPDATE ข้างบนยังกันการกดซ้อน: คลิกที่สองรอจนคลิกแรก commit
             //    แล้วคำนวณซ้ำจากข้อมูลชุดเดียวกัน = ได้ผลเดิม (idempotent) ไม่ใช่ชนกัน
+            // ★ รอบ 193 (ฝ่ายค้าน M2): Approved = อยู่ในไฟล์ยื่นแล้ว ⇒ ต้องดูหลักฐาน "ยื่น/นำส่ง/
+            //   ปันต้นทุนโครงการแล้ว" ด้วย (ตัวหาเดียวกับปุ่มบนจอ) — ไม่ใช่ดูแค่สถานะ
+            var lockEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { run }))[run.Id];
             var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
-                run.Status, run.ExternalSystem, run.ReopenedAt);
+                run.Status, run.ExternalSystem, run.ReopenedAt, lockEvidence);
             if (!canRecalc)
                 throw new Accounting.Helpers.BusinessRuleException(recalcReason!);
             // อนุมัติแล้วคำนวณใหม่ = ตัวเลขที่ผู้อนุมัติเห็นเปลี่ยนไป ⇒ การอนุมัติเดิม
@@ -2040,26 +2046,21 @@ public class PayrollService : IPayrollService
                 //   ฐานภาษีข้างบนหัก leaveDeduction แล้ว แต่ฐานนี้เคยไม่หัก ⇒ ลาไม่รับ
                 //   ค่าจ้างทั้งเดือน = รายได้ 0 แต่หัก ปกส. 875 · สุทธิ −875 และไฟล์
                 //   สปส.1-10 ประกาศค่าจ้าง 17,500 ในเดือนที่ไม่ได้จ่ายค่าจ้างเลย
-                var statutoryWage = Accounting.Helpers.SsoWageBase.GrossWage(
-                    Accounting.Helpers.SsoWageBase.SalaryPaidThisPeriod(proratedBaseSalary, leaveDeduction),
-                    ssoWageAllowances);
-
-                if (emp.IsSubjectToSocialSecurity)
-                {
-                    // ฐาน + การปัดเศษผ่านตัวกลางเดียว (Helpers/SsoWageBase) —
-                    // ทั้งสองฝั่งคิดจากฐานเดียวกันเสมอ และฐานถูกเก็บลงแถวเพื่อให้
-                    // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
-                    // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) —
-                    // เข้า/ออกกลางเดือนต้องใช้ยอดที่เฉลี่ยแล้ว ไม่ใช่เงินเดือนเต็ม
-                    // ไม่ได้จ่ายอะไรเลยในงวดนี้ = ฐาน 0 (ขั้นต่ำ 1,650 ใช้กับค่าจ้างที่จ่ายจริง
-                    // เท่านั้น — ไม่เสกค่าจ้างให้เดือนที่ไม่ได้จ่าย) · นอกนั้น = Clamp เดิมทุกบาท
-                    ssoWageBase = Accounting.Helpers.SsoWageBase.PeriodBase(
-                        statutoryWage, sso.MaxBase, grossIncome);
-                    ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
-                        ssoWageBase, sso.Rate, sso.MaxContribution);
-                    ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
-                        ssoWageBase, sso.EmployerRate, sso.EmployerMaxContribution);
-                }
+                // ★ รอบ 193 (ฝ่ายค้าน M2): ลำดับประกอบสูตร (หักลา → ค่าจ้าง → ฐาน → สมทบ) อยู่ที่
+                //   SsoWageBase.ForPeriod ตัวเดียว — เทสต์ SsoUnpaidLeaveWageTests เรียกตัวเดียวกันนี้
+                //   (เดิมเทสต์ประกอบสูตรเองในไฟล์เทสต์ ⇒ ถอดการหักลาที่นี่แล้วเทสต์ยังเขียว)
+                // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) — เข้า/ออกกลางเดือนใช้ยอดเฉลี่ยแล้ว ·
+                //   ไม่ได้จ่ายอะไรเลยในงวดนี้ = ฐาน 0 (ขั้นต่ำ 1,650 ใช้กับค่าจ้างที่จ่ายจริงเท่านั้น) ·
+                //   ฐานถูกเก็บลงแถวเพื่อให้ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
+                var ssoAmounts = Accounting.Helpers.SsoWageBase.ForPeriod(
+                    proratedBaseSalary, leaveDeduction, ssoWageAllowances,
+                    totalPaidThisPeriod: grossIncome, subjectToSso: emp.IsSubjectToSocialSecurity,
+                    ceiling: sso.MaxBase, rate: sso.Rate, maxContribution: sso.MaxContribution,
+                    employerRate: sso.EmployerRate, employerMaxContribution: sso.EmployerMaxContribution);
+                var statutoryWage = ssoAmounts.StatutoryWage;
+                ssoWageBase = ssoAmounts.BaseWage;
+                ssoEmployee = ssoAmounts.Employee;
+                ssoEmployer = ssoAmounts.Employer;
 
                 // กองทุนเงินทดแทน (กท.20ก) — นายจ้างฝ่ายเดียว, อัตรา 0.2–1.0%
                 // ตามประเภทกิจการ. ฐานต่อเดือน cap 20,000 (= 240,000/ปี ตาม
@@ -2271,7 +2272,7 @@ public class PayrollService : IPayrollService
                 message: $"พนักงาน {run.EmployeeCount} คน · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท" + ssoWarning,
                 entityId: run.Id);
 
-            return MapToPayrollRunResponse(run);
+            return await ToRunResponseAsync(companyId, run);
         }
         catch
         {
@@ -2308,7 +2309,7 @@ public class PayrollService : IPayrollService
             message: $"อนุมัติโดย {approvedBy} · ยอดรวมจ่ายสุทธิ {run.TotalNetPay:N2} บาท",
             entityId: run.Id);
 
-        return MapToPayrollRunResponse(run);
+        return await ToRunResponseAsync(companyId, run);
     }
 
     private int _lastPaySsoAdjustedCount;
@@ -2848,7 +2849,7 @@ public class PayrollService : IPayrollService
                 actionUrl: "/pages/salary-advance.html");
         }
 
-        return MapToPayrollRunResponse(run);
+        return await ToRunResponseAsync(companyId, run);
     }
 
     /// <summary>
@@ -3289,7 +3290,7 @@ public class PayrollService : IPayrollService
                    + "รอบกลับไปสถานะ \"อนุมัติแล้ว\" แก้ยอดได้ แล้วต้องกด \"จ่าย\" ใหม่",
             entityId: run.Id);
 
-        return MapToPayrollRunResponse(run);
+        return await ToRunResponseAsync(companyId, run);
     }
 
     /// <summary>
@@ -4340,7 +4341,87 @@ public class PayrollService : IPayrollService
                 : null);
     }
 
-    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r)
+    /// <summary>หลักฐานว่ารอบเงินเดือน "ออกไปนอกระบบแล้ว" (ยื่น · นำส่ง · ปันต้นทุนโครงการ) —
+    /// ตัวหาเดียวของทั้งด่านคำนวณใหม่ (<see cref="CalculatePayrollAsync"/>) และปุ่มบนจอ
+    /// (<see cref="MapToPayrollRunResponse"/>) · query แบบ batch ต่อหน้ารายการ (5 query คงที่ ไม่ใช่ต่อรอบ)
+    ///
+    /// <para>รอบ 193 (ฝ่ายค้าน M2 · คำตัดสินเจ้าของ #35 "รอบที่จ่าย/ยื่นแล้วห้ามแก้"): รอบ Approved
+    /// นับเข้าไฟล์ยื่นแล้ว (<see cref="PayrollRunFilingScope.FilingStatuses"/>) ⇒ ต้องรู้ว่างวดนั้น
+    /// "ถูกบันทึกว่ายื่น/นำส่ง" หรือยัง · ที่มาของแต่ละชั้นอธิบายไว้ที่ <see cref="PayrollRunLockEvidence"/>
+    /// · ทุก query กรอง <c>CompanyId</c> (กฎ M) · ไม่มี try/catch — ตารางหายต้องล้มดัง ไม่ใช่ตอบว่า "ไม่พบหลักฐาน"</para></summary>
+    private async Task<Dictionary<Guid, PayrollRunLockEvidence>> LoadRecalculateLockEvidenceAsync(
+        Guid companyId, IReadOnlyCollection<PayrollRun> runs)
+    {
+        var result = new Dictionary<Guid, PayrollRunLockEvidence>();
+        if (runs.Count == 0) return result;
+        var runIds = runs.Select(r => r.Id).ToList();
+        var years = runs.Select(r => r.Year).Distinct().ToList();
+
+        // ── ยื่นแล้ว (1) ปฏิทิน compliance — "บันทึกการยื่นด้วยมือ" ของ ภ.ง.ด.1 / สปส.1-10
+        var compliance = await _db.ComplianceFilings.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && years.Contains(f.Year)
+                && f.Month != null
+                && ((f.FilingType == "RD_WHT" && f.FormCode == "PND1")
+                    || (f.FilingType == "SSO_Contribution" && f.FormCode == "SSO1-10"))
+                && (f.Status == "Filed" || f.Status == "Accepted"))
+            .Select(f => new { f.FormCode, f.Year, Month = f.Month!.Value })
+            .ToListAsync();
+        // ── ยื่นแล้ว (2) รายงานภาษีชนิด ภ.ง.ด.1/ประกันสังคม ที่ประกาศว่ายื่นหรือถูกล็อก
+        //    (สร้างใหม่ไม่ได้แล้วตั้งแต่ CreateTaxReport ปฏิเสธสองชนิดนี้ แต่แถวเก่ายังอยู่)
+        var legacyReports = await _db.TaxReports.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && years.Contains(t.Year)
+                && (t.TaxType == TaxType.WithholdingTax1 || t.TaxType == TaxType.SocialSecurity)
+                && (t.Status != TaxReportStatus.Draft || t.FilingLockedAt != null))
+            .Select(t => new { t.TaxType, t.Year, t.Month })
+            .ToListAsync();
+        // ── ยื่นแล้ว (3) ไฟล์ e-Filing ภ.ง.ด.1 ที่ระบบสร้างและเก็บไว้เพื่ออัปโหลด
+        var efilings = await _db.EFilingExports.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted && years.Contains(e.PeriodYear)
+                && e.FormType == "PND.1")
+            .Select(e => new { e.PeriodYear, e.PeriodMonth })
+            .ToListAsync();
+        // ── นำส่งแล้ว — แถวนำส่งของงวด (รวมที่ลงมือเองสำหรับเงินเดือนที่ทำนอกระบบ)
+        var remits = await _db.StatutoryRemittances.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && years.Contains(r.PeriodYear)
+                && (r.RemittanceType == "SsoSps110" || r.RemittanceType == "WhtPnd1"))
+            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth })
+            .ToListAsync();
+        // ── ปันต้นทุนแรงงานเข้าโครงการแล้ว (HrAllocationService.AllocatePayrollRunAsync)
+        var allocated = await _db.EmployeeProjectTimes.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.IsAllocated
+                && t.AllocatedPayrollRunId != null && runIds.Contains(t.AllocatedPayrollRunId.Value))
+            .GroupBy(t => t.AllocatedPayrollRunId!.Value)
+            .Select(g => new { RunId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        foreach (var run in runs)
+        {
+            var (y, m) = (run.Year, run.Month);
+            var pnd1Filed = compliance.Any(c => c.FormCode == "PND1" && c.Year == y && c.Month == m)
+                || legacyReports.Any(t => t.TaxType == TaxType.WithholdingTax1 && t.Year == y && t.Month == m)
+                || efilings.Any(e => e.PeriodYear == y && e.PeriodMonth == m);
+            var ssoFiled = compliance.Any(c => c.FormCode == "SSO1-10" && c.Year == y && c.Month == m)
+                || legacyReports.Any(t => t.TaxType == TaxType.SocialSecurity && t.Year == y && t.Month == m);
+            var pnd1Remitted = remits.Any(r => r.RemittanceType == "WhtPnd1" && r.PeriodYear == y && r.PeriodMonth == m);
+            var ssoRemitted = run.SsoSettledAt.HasValue
+                || remits.Any(r => r.RemittanceType == "SsoSps110" && r.PeriodYear == y && r.PeriodMonth == m);
+            result[run.Id] = PayrollRunLockEvidence.From(pnd1Filed, ssoFiled, pnd1Remitted, ssoRemitted,
+                allocated.FirstOrDefault(a => a.RunId == run.Id)?.Count ?? 0);
+        }
+        return result;
+    }
+
+    /// <summary>response ของรอบเดียว — หาหลักฐานก่อนแปลง (ตัวเดียวกับเส้นคำนวณ)</summary>
+    private async Task<PayrollRunResponse> ToRunResponseAsync(Guid companyId, PayrollRun run)
+    {
+        var evidence = await LoadRecalculateLockEvidenceAsync(companyId, new[] { run });
+        return MapToPayrollRunResponse(run, evidence[run.Id]);
+    }
+
+    /// <summary>แปลงรอบเป็น response — <paramref name="lockEvidence"/> ต้องมาจาก
+    /// <see cref="LoadRecalculateLockEvidenceAsync"/> (บังคับ ไม่มีค่าเริ่มต้น: ปุ่ม "คำนวณใหม่" บนจอ
+    /// ต้องตัดสินจากหลักฐานชุดเดียวกับที่ <c>CalculatePayrollAsync</c> ใช้ปฏิเสธ)</summary>
+    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r, PayrollRunLockEvidence lockEvidence)
     {
         // ตัดสินสิทธิ์แก้ไขที่เซิร์ฟเวอร์ตัวเดียว (Helpers/PayrollRunEditPolicy)
         // แล้วส่ง "เหตุผลพร้อมทางแก้" ไปด้วย — หน้าเว็บห้ามคำนวณเองและห้ามซ่อน
@@ -4348,7 +4429,7 @@ public class PayrollService : IPayrollService
         var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts(r.Status);
         var (canReopen, reopenReason) = PayrollRunEditPolicy.CanReopen(r.Status, r.SsoSettledAt);
         var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
-            r.Status, r.ExternalSystem, r.ReopenedAt);
+            r.Status, r.ExternalSystem, r.ReopenedAt, lockEvidence);
         return new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
             r.Status, r.TotalGrossSalary, r.TotalDeductions, r.TotalNetPay,
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,

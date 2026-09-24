@@ -114,5 +114,34 @@ public static class PosCogsBooking
     public static decimal RestockUnitCost(decimal? bookedCost, decimal lineQuantity, decimal fallbackUnitCost)
         => bookedCost is decimal b && b > 0m && lineQuantity > 0m ? b / lineQuantity : fallbackUnitCost;
 
+    /// <summary>ต้นทุนวัตถุดิบตามสูตรของบรรทัดขาย 1 บรรทัด = ผลรวมต้นทุนที่ ledger ตัดออก <b>เฉพาะวัตถุดิบ
+    /// ที่ติดตามสต็อก</b> (รอบ 193 · ฝ่ายค้าน M2)
+    ///
+    /// <para>วัตถุดิบที่ <c>TrackStock = false</c> ถูกลงเป็นค่าใช้จ่ายตั้งแต่ตอนซื้อแล้ว (ฝั่งซื้อ Dr 11500
+    /// เฉพาะสินค้าที่ติดตามสต็อก) ⇒ นับเข้า COGS อีกรอบ = Dr 51110 / Cr 11500 ซ้ำ และสินค้าคงเหลือใน GL
+    /// ติดลบเรื่อย ๆ ทั้งที่ไม่เคยมียอดเข้าบัญชีนั้น · ledger ยังขยับจำนวนของวัตถุดิบเหล่านั้นตามเดิม
+    /// (ไม่เปลี่ยนพฤติกรรมสต็อก) — ตัวนี้ตัดสินแค่ "ต้นทุนไหนเข้า GL"</para></summary>
+    public static decimal RecipeCost(IEnumerable<(bool TrackStock, decimal MoveCost)> moves)
+        => moves.Where(m => m.TrackStock).Sum(m => m.MoveCost);
+
+    /// <summary>ต้นทุนต่อหน่วย <b>ณ วันขาย</b> ต่อสินค้า จาก movement ขาออกของบิล (ถัวน้ำหนักตามจำนวน ·
+    /// ไม่ปัด — เป็นอัตราต่อหน่วยที่ส่งต่อให้ ledger) · ใช้คืนวัตถุดิบตามสูตรตอนคืนเงิน/ยกเลิกบิล
+    /// ให้มูลค่าคลังที่กลับเข้า = ยอดที่ JE กลับ (รอบ 193 · ฝ่ายค้าน M2)
+    ///
+    /// <para>ขาเข้า (จำนวน ≥ 0) ถูกข้าม · สินค้าที่ต้นทุนรวม ≤ 0 ไม่ถูกคืนในผล (ผู้เรียกจะตกไปใช้ต้นทุน
+    /// วันนี้ ⇒ ไม่ส่งต้นทุน 0 เข้า ledger ซึ่งจะกดถัวเฉลี่ยลงเงียบ ๆ)</para></summary>
+    public static IReadOnlyDictionary<Guid, decimal> SaleUnitCostByProduct(
+        IEnumerable<(Guid ProductId, decimal Quantity, decimal UnitCost)> saleMovements)
+    {
+        var result = new Dictionary<Guid, decimal>();
+        foreach (var g in saleMovements.Where(m => m.Quantity < 0m).GroupBy(m => m.ProductId))
+        {
+            var qty = g.Sum(m => -m.Quantity);
+            var cost = g.Sum(m => -m.Quantity * m.UnitCost);
+            if (qty > 0m && cost > 0m) result[g.Key] = cost / qty;
+        }
+        return result;
+    }
+
     private static decimal Clamp(decimal qty, decimal max) => Math.Min(Math.Max(0m, qty), max);
 }

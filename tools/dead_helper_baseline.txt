@@ -35,7 +35,6 @@ OcrPredecessorMatcher.cs NormalizeForReference
 OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
 PayrollRunFilingScope.cs CanRemit
-PayrollRunFilingScope.cs CountsTowardFiling
 PiiMask.cs BankAccountNo
 PndTextFileFormat.cs DetailRow
 PndTextFileFormat.cs SplitName

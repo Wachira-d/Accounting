@@ -190,4 +190,61 @@ public class PosCogsBookingTests
         });
         Assert.Equal(0m, refund);
     }
+
+    // ═══════════════ รอบ 193 (ฝ่ายค้าน M2) — วัตถุดิบที่ไม่ติดตามสต็อก + คืนด้วยต้นทุน ณ วันขาย ═══════════════
+
+    [Fact]
+    public void Recipe_cost_excludes_untracked_ingredients_already_expensed_at_purchase()
+    {
+        // ชานม 1 แก้ว: ชา (TrackStock) 8.00 · นม (TrackStock) 4.00 · หลอด+แก้ว (ไม่ติดตาม — ลงค่าใช้จ่ายตอนซื้อ) 1.50
+        // เดิม: COGS 13.50 ⇒ Dr 51110 / Cr 11500 ของหลอด+แก้วซ้ำกับค่าใช้จ่ายตอนซื้อ และ 11500 ติดลบ 1.50 ทุกแก้ว
+        var moves = new[] { (true, 8.00m), (true, 4.00m), (false, 1.50m) };
+        Assert.Equal(12.00m, PosCogsBooking.RecipeCost(moves));
+    }
+
+    [Fact]
+    public void Recipe_cost_with_all_tracked_ingredients_unchanged()
+    {
+        // ครึ่งห้ามแตะ: ถ้าทุกวัตถุดิบติดตามสต็อก ต้นทุนเท่าผลรวมเดิมเป๊ะ (23.40 ของเทสต์ชานมไข่มุกข้างบน)
+        var moves = new[] { (true, 16.00m), (true, 4.40m), (true, 3.00m) };
+        Assert.Equal(23.40m, PosCogsBooking.RecipeCost(moves));
+        Assert.Equal(0m, PosCogsBooking.RecipeCost(new[] { (false, 5m) }));
+        Assert.Equal(0m, PosCogsBooking.RecipeCost(Array.Empty<(bool, decimal)>()));
+    }
+
+    [Fact]
+    public void Restock_unit_cost_is_taken_from_sale_movements_not_todays_average()
+    {
+        var tea = Guid.NewGuid();
+        var milk = Guid.NewGuid();
+        var costs = PosCogsBooking.SaleUnitCostByProduct(new[]
+        {
+            (tea, -0.4m, 20m),      // แก้วแรก
+            (tea, -0.4m, 20m),      // แก้วที่สอง (บิลเดียวกัน)
+            (milk, -0.2m, 22m),
+            (milk, 0.1m, 99m),      // ขาเข้า (ไม่ควรมี — แต่ถ้ามีต้องไม่ปน)
+        });
+        Assert.Equal(20m, costs[tea]);
+        Assert.Equal(22m, costs[milk]);
+        // ต้นทุนวันนี้ของชาขยับเป็น 25 แล้ว — ของที่คืนต้องเข้าที่ 20 (= ยอดที่ JE ขายลงไว้ และ JE กลับด้วยยอดนั้น)
+        Assert.NotEqual(25m, costs[tea]);
+    }
+
+    [Fact]
+    public void Restock_cost_weighted_when_same_ingredient_left_at_two_costs()
+    {
+        var sugar = Guid.NewGuid();
+        var costs = PosCogsBooking.SaleUnitCostByProduct(new[] { (sugar, -1m, 10m), (sugar, -3m, 14m) });
+        Assert.Equal(13m, costs[sugar]);   // (10 + 42) ÷ 4
+    }
+
+    [Fact]
+    public void Restock_cost_missing_or_zero_falls_back_to_todays_cost()
+    {
+        // ต้นทุนขายเป็น 0 ห้ามส่งเข้า ledger (จะกดถัวเฉลี่ยลงเงียบ ๆ) — ไม่อยู่ในผล ⇒ ผู้เรียกใช้ต้นทุนวันนี้
+        var free = Guid.NewGuid();
+        var costs = PosCogsBooking.SaleUnitCostByProduct(new[] { (free, -2m, 0m) });
+        Assert.False(costs.ContainsKey(free));
+        Assert.Empty(PosCogsBooking.SaleUnitCostByProduct(Array.Empty<(Guid, decimal, decimal)>()));
+    }
 }

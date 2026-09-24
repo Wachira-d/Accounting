@@ -200,6 +200,8 @@ public partial class PosService
         {
             if (plan.RestoreRemainingStock)
             {
+                // วัตถุดิบตามสูตรกลับเข้าคลังด้วยต้นทุน ณ วันขาย (JE ขายถูกกลับด้วยยอดวันขาย) — รอบ 193 M2
+                var saleUnitCosts = await LoadSaleUnitCostsAsync(companyId, order);
                 foreach (var item in liveItems.Where(i => i.ProductId.HasValue))
                 {
                     var remaining = Accounting.Helpers.PosVoidPlan.RemainingQuantity(item.Quantity, item.RefundedQuantity);
@@ -211,7 +213,8 @@ public partial class PosService
                     var rest = new PosOrderItem { Quantity = remaining };
                     foreach (var mod in item.Modifiers.Where(x => !x.IsDeleted)) rest.Modifiers.Add(mod);
                     var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, rest, product,
-                        +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId);
+                        +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId,
+                        saleUnitCosts);
                     if (!gaveBack.Handled && product.TrackStock)
                     {
                         await _stock.MoveAsync(new StockMoveRequest(
@@ -237,7 +240,41 @@ public partial class PosService
             // ทั้งก้อน (บิลยังเป็นสถานะเดิม) · ReverseJournalEntryAsync ใช้ธุรกรรมของผู้เรียกเมื่อมีอยู่
             var journalsToReverse = new List<(Guid Id, string Label)>();
             if (plan.ReverseSaleJournal)
-                journalsToReverse.Add((order.JournalEntryId!.Value, $"กลับรายการ POS ยกเลิกบิล #{order.OrderNumber}"));
+            {
+                // ★ รอบ 193 (ฝ่ายค้าน M2) — JE ขายอาจถูกผู้ทำบัญชีกลับรายการด้วยมือไปก่อนแล้ว (JE ขาย POS
+                // ไม่ผูกเอกสาร จึงกลับจากหน้า JE ได้) · เดิมกลับซ้ำ ⇒ ReverseJournalEntryAsync โยน ⇒ ยกเลิกบิล
+                // ล้มทุกครั้งโดยไม่มีทางไปต่อ · ตอนนี้อ่านทั้งสาย แล้วให้ตัวตัดสินเดียวบอกว่า กลับ/ข้าม/บล็อก
+                var chain = await LoadJournalChainAsync(companyId, order.JournalEntryId!.Value);
+                var saleJe = Accounting.Helpers.PosVoidSaleJournal.Decide(chain, order.OrderNumber);
+                switch (saleJe.Action)
+                {
+                    case Accounting.Helpers.PosVoidSaleJournalAction.Reverse:
+                        journalsToReverse.Add((saleJe.ReverseEntryId!.Value, $"กลับรายการ POS ยกเลิกบิล #{order.OrderNumber}"));
+                        break;
+                    case Accounting.Helpers.PosVoidSaleJournalAction.SkipAlreadyReversed:
+                        // ข้ามอย่างมีร่องรอย — ผู้สอบบัญชีต้องตอบได้ว่าทำไมยกเลิกบิลแล้วไม่มี JE กลับรายการ
+                        _db.AuditLogs.Add(new AuditLog
+                        {
+                            CompanyId = companyId,
+                            UserId = Guid.TryParse(userId, out var actorId) ? actorId : (Guid?)null,
+                            Action = AuditAction.Update,
+                            EntityType = "PosOrder.VoidSaleJournalSkipped",
+                            EntityId = order.Id.ToString(),
+                            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                            {
+                                order.OrderNumber,
+                                SaleJournalEntryId = order.JournalEntryId,
+                                Chain = chain.Select(c => new { c.Id, c.EntryNumber, Status = c.Status.ToString() }),
+                                Reason = saleJe.Message,
+                            }),
+                            Timestamp = DateTime.UtcNow,
+                        });
+                        _logger.LogInformation("ยกเลิกบิล POS {Order}: {Reason}", order.OrderNumber, saleJe.Message);
+                        break;
+                    default:
+                        throw new Accounting.Helpers.BusinessRuleException(saleJe.Message, "POS-VOID-SALE-JE-PARTIAL");
+                }
+            }
             if (plan.ReverseRefundJournals)
                 journalsToReverse.AddRange(refundJournalIds.Select(id =>
                     (id, $"กลับรายการคืนเงิน POS ยกเลิกบิล #{order.OrderNumber}")));
@@ -362,6 +399,9 @@ public partial class PosService
                 LegacyUnitCost: i.ProductId is Guid pid && legacyUnitCostByProduct.TryGetValue(pid, out var lc) ? lc : 0m))
             .ToList());
 
+        // วัตถุดิบตามสูตรกลับเข้าคลังด้วยต้นทุน ณ วันขาย ⇒ มูลค่าคลังที่กลับ = COGS ที่ JE คืนเงินกลับ (รอบ 193 M2)
+        var saleUnitCosts = await LoadSaleUnitCostsAsync(companyId, order);
+
         await using var txn = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -380,7 +420,7 @@ public partial class PosService
                         foreach (var mod in item.Modifiers.Where(x => !x.IsDeleted)) partial.Modifiers.Add(mod);
                         var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, partial, product,
                             +1, DateTime.UtcNow, $"REFUND-{order.OrderNumber}",
-                            "คืนวัตถุดิบจากการคืนเงิน POS", userId);
+                            "คืนวัตถุดิบจากการคืนเงิน POS", userId, saleUnitCosts);
                         if (!gaveBack.Handled && product.TrackStock)
                         {
                             await _stock.MoveAsync(new StockMoveRequest(
@@ -1345,10 +1385,19 @@ public partial class PosService
     /// <c>TotalCost</c> = ต้นทุนวัตถุดิบรวมของบรรทัดนี้ ใช้ลง COGS</para>
     ///
     /// <para><c>Handled = false</c> เมื่อสินค้าไม่ได้ตั้ง <c>ConsumesBomOnSale</c> →
-    /// ผู้เรียกตัดสต็อกตัวเองตามพฤติกรรมเดิมทุกประการ</para></summary>
+    /// ผู้เรียกตัดสต็อกตัวเองตามพฤติกรรมเดิมทุกประการ</para>
+    ///
+    /// <para>★ รอบ 193 (ฝ่ายค้าน M2) — สองเรื่องที่เส้นนี้ต้องตรงกับ GL:
+    /// (1) <c>TotalCost</c> นับเฉพาะวัตถุดิบที่ <b>ติดตามสต็อก</b> (<c>TrackStock</c>) — ของที่ไม่ติดตาม
+    /// ถูกลงค่าใช้จ่ายไปแล้วตอนซื้อ (ฝั่งซื้อ Dr 11500 เฉพาะ TrackStock) ⇒ นับซ้ำ = Dr 51110/Cr 11500
+    /// สองครั้ง และ 11500 ติดลบเรื่อย ๆ · ตัดสินที่ <c>PosCogsBooking.RecipeCost</c> ตัวเดียว
+    /// (2) ขาคืน (<paramref name="direction"/> &gt; 0) ใช้ต้นทุนต่อหน่วย <b>ณ วันขาย</b> จาก
+    /// <paramref name="restockUnitCostByComponent"/> (ผู้เรียกหาจาก movement ขาออกของบิลนั้น) —
+    /// JE กลับด้วยยอดที่ขายลงไว้ สต็อกต้องกลับด้วยต้นทุนเดียวกัน · ไม่มีค่า = ต้นทุนวันนี้ (พฤติกรรมเดิม)</para></summary>
     private async Task<(bool Handled, decimal TotalCost)> ApplyRecipeConsumptionAsync(
         Guid companyId, PosOrder order, PosOrderItem item, Product product,
-        int direction, DateTime movementDate, string reference, string note, string userId)
+        int direction, DateTime movementDate, string reference, string note, string userId,
+        IReadOnlyDictionary<Guid, decimal>? restockUnitCostByComponent = null)
     {
         if (!product.ConsumesBomOnSale) return (false, 0m);
 
@@ -1386,10 +1435,23 @@ public partial class PosService
                 .ToListAsync();
 
         var draws = Accounting.Helpers.BomConsumption.Resolve(recipe, modifiers, item.Quantity);
-        var totalCost = 0m;
+        // วัตถุดิบตัวไหนเป็น "สินค้าคงเหลือ" (TrackStock) — ชุดเดียวกับที่ฝั่งซื้อ Dr 11500
+        var componentIds = draws.Select(d => d.ComponentProductId).Distinct().ToList();
+        var trackedComponents = componentIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && componentIds.Contains(p.Id) && p.TrackStock)
+                .Select(p => p.Id)
+                .ToListAsync()).ToHashSet();
+        var moved = new List<(bool TrackStock, decimal MoveCost)>();
         foreach (var d in draws)
         {
             var qty = direction < 0 ? -d.Quantity : d.Quantity;
+            decimal? restockCost = direction > 0
+                && restockUnitCostByComponent != null
+                && restockUnitCostByComponent.TryGetValue(d.ComponentProductId, out var saleUnitCost)
+                && saleUnitCost > 0m
+                    ? saleUnitCost : null;
             var move = await _stock.MoveAsync(new StockMoveRequest(
                 CompanyId: companyId,
                 ProductId: d.ComponentProductId,
@@ -1401,10 +1463,52 @@ public partial class PosService
                 MovementDate: movementDate,
                 Notes: $"{note} ({product.Code}"
                      + (d.Source == Accounting.Helpers.BomDraw.FromModifier ? " · ท็อปปิ้ง" : " · สูตร") + ")",
+                // ขาคืน: ต้นทุน ณ วันขาย (null = ledger ใช้ต้นทุนวันนี้ — บิลที่หา movement ขายไม่เจอ)
+                UnitCostOverride: restockCost,
                 CreatedBy: userId));
-            totalCost += move.TotalCost;
+            moved.Add((trackedComponents.Contains(d.ComponentProductId), move.TotalCost));
         }
-        return (true, totalCost);
+        return (true, Accounting.Helpers.PosCogsBooking.RecipeCost(moved));
+    }
+
+    /// <summary>อ่านสาย JE "ใบเดิม → ตัวกลับ → …" ตาม <c>ReversedByEntryId</c> พร้อมบรรทัด (สำหรับ
+    /// <c>Helpers/PosVoidSaleJournal</c>) · กรอง CompanyId ทุกขั้น · กันวนด้วยชุด id ที่เห็นแล้ว</summary>
+    private async Task<List<Accounting.Helpers.PosJournalChainEntry>> LoadJournalChainAsync(Guid companyId, Guid firstId)
+    {
+        var chain = new List<Accounting.Helpers.PosJournalChainEntry>();
+        var seen = new HashSet<Guid>();
+        Guid? nextId = firstId;
+        while (nextId is Guid id && seen.Add(id) && chain.Count < 20)
+        {
+            var je = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.Id == id && j.CompanyId == companyId)
+                .Select(j => new
+                {
+                    j.Id, j.EntryNumber, j.Status, j.ReversedByEntryId,
+                    Lines = j.Lines.Where(l => !l.IsDeleted)
+                        .Select(l => new { l.AccountId, l.DebitAmount, l.CreditAmount }).ToList(),
+                })
+                .FirstOrDefaultAsync();
+            if (je == null) break;
+            chain.Add(new Accounting.Helpers.PosJournalChainEntry(je.Id, je.EntryNumber, je.Status,
+                je.Lines.Select(l => new Accounting.Helpers.PosJournalLineAmount(l.AccountId, l.DebitAmount, l.CreditAmount)).ToList()));
+            nextId = je.ReversedByEntryId;
+        }
+        return chain;
+    }
+
+    /// <summary>ต้นทุนต่อหน่วย <b>ณ วันขาย</b> ของทุกสินค้าที่บิลนี้ตัดออกจากคลัง — อ่านจาก movement ขาออก
+    /// ที่ <see cref="DeductSaleStockAsync"/> เขียนไว้ (อ้างอิง = เลขบิล · ขาคืน/ยกเลิกใช้อ้างอิง REFUND-/VOID-
+    /// จึงไม่ปน) · ใช้คืนวัตถุดิบตามสูตรด้วยต้นทุนเดียวกับที่ JE ขายลงไว้ (รอบ 193 · ฝ่ายค้าน M2)</summary>
+    private async Task<IReadOnlyDictionary<Guid, decimal>> LoadSaleUnitCostsAsync(Guid companyId, PosOrder order)
+    {
+        var outs = await _db.StockMovements.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && !m.IsDeleted
+                && m.Reference == order.OrderNumber && m.Quantity < 0m)
+            .Select(m => new { m.ProductId, m.Quantity, m.UnitCost })
+            .ToListAsync();
+        return Accounting.Helpers.PosCogsBooking.SaleUnitCostByProduct(
+            outs.Select(m => (m.ProductId, m.Quantity, m.UnitCost)));
     }
 
     /// <summary>ออก **เลขใบกำกับภาษีอย่างย่อ** (§86/6) ให้บิลที่ปิดแล้ว — ตรึงลงบิลพร้อม

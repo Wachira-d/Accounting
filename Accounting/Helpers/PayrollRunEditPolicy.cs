@@ -48,10 +48,19 @@ public static class PayrollRunEditPolicy
     /// อาจยื่นแล้ว) · <b>Voided</b> · <b>เคยจ่ายแล้วถูกกลับรายการ</b> (<paramref name="reopenedAt"/>
     /// มีค่า — ยอดชุดเดิมอาจอยู่ในแบบที่ยื่นไปแล้ว ⇒ แก้รายคนผ่าน "✏️ แก้ยอด" ที่มีร่องรอย
     /// ไม่ใช่ล้างทั้งรอบ) · <b>นำเข้าจากระบบนอก</b> (ยอดเป็นของระบบต้นทาง คำนวณทับด้วยสูตรเรา
-    /// = ตัวเลขสองแหล่งที่ไม่มีใครรู้ว่าอันไหนจริง)</para></summary>
+    /// = ตัวเลขสองแหล่งที่ไม่มีใครรู้ว่าอันไหนจริง)</para>
+    ///
+    /// <para><b>รอบ 193 (ฝ่ายค้าน M2)</b> — "ยื่นแล้วห้ามแก้" ต้องครอบรอบ <b>Approved</b> ด้วย:
+    /// รอบ Approved นับเข้าแบบยื่นแล้ว (<see cref="PayrollRunFilingScope.FilingStatuses"/> =
+    /// {Approved, Paid} · ไฟล์ ภ.ง.ด.1/สปส.1-10 ดาวน์โหลดได้ · 50 ทวิประจำปี · ภ.ง.ด.91) และ
+    /// ปันต้นทุนแรงงานเข้าโครงการได้แล้ว ⇒ ต้องดูหลักฐานใน <paramref name="evidence"/> ที่ service
+    /// หามาให้ (ตัวนี้ pure — ไม่แตะฐานข้อมูล) · พารามิเตอร์นี้<b>บังคับ</b> ไม่มีค่าเริ่มต้น
+    /// เพื่อไม่ให้ผู้เรียกลืมหาหลักฐานแล้วได้ "ผ่าน" จากการไม่รู้ (DOCTRINE §1: เงื่อนไขที่เป็นเท็จ
+    /// เพราะไม่มีข้อมูลห้ามตกเป็นผ่าน)</para></summary>
     public static (bool Can, string? Reason) CanRecalculate(
-        string? status, string? externalSystem, DateTime? reopenedAt)
+        string? status, string? externalSystem, DateTime? reopenedAt, PayrollRunLockEvidence evidence)
     {
+        ArgumentNullException.ThrowIfNull(evidence);
         if (status == Paid)
             return (false, "รอบนี้จ่ายและลงบัญชีไปแล้ว — ยอดที่จ่าย/ยื่นแล้วห้ามคำนวณใหม่ "
                 + "ถ้าต้องแก้ให้กด \"กลับรายการจ่าย\" แล้วแก้ยอดรายคนด้วย \"✏️ แก้ยอด\"");
@@ -67,6 +76,25 @@ public static class PayrollRunEditPolicy
                 + reopenedAt.Value.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)
                 + " — ยอดชุดเดิมอาจถูกยื่น ภ.ง.ด.1/สปส.1-10 ไปแล้ว จึงห้ามคำนวณใหม่ทั้งรอบ "
                 + "· แก้รายคนด้วย \"✏️ แก้ยอด\"");
+        // ── ยื่น/นำส่งแล้ว — เฉพาะรอบที่อยู่ในแบบยื่นแล้ว (Approved) ──
+        // Draft/Calculated ไม่เคยอยู่ในไฟล์ยื่น (FilingStatuses) ⇒ คำนวณใหม่ไม่เปลี่ยนสิ่งที่ยื่นไป
+        if (PayrollRunFilingScope.CountsTowardFiling(status))
+        {
+            if (evidence.FiledForms.Count > 0)
+                return (false, $"งวดของรอบนี้ถูกบันทึกว่ายื่น {string.Join(" / ", evidence.FiledForms)} แล้ว — "
+                    + "ยอดที่ยื่นแล้วห้ามคำนวณใหม่ (ไฟล์ที่ยื่นกับตัวเลขในระบบจะไม่ตรงกัน) · "
+                    + "ถ้าต้องแก้จริง: ยื่นแบบเพิ่มเติม/ยื่นแก้ไขกับหน่วยงานก่อน แล้วเปลี่ยนสถานะการยื่นของงวดนี้ "
+                    + "(หน้าปฏิทินภาษี/รายงานภาษี) กลับเป็นยังไม่ยื่น จึงจะคำนวณใหม่ได้");
+            if (evidence.RemittedForms.Count > 0)
+                return (false, $"งวดของรอบนี้นำส่ง {string.Join(" / ", evidence.RemittedForms)} ไปแล้ว — "
+                    + "คำนวณใหม่จะทำให้ยอดที่นำส่งกับยอดในรอบไม่ตรงกัน · "
+                    + "ต้องกลับรายการนำส่งที่หน้านำส่งภาษี/ประกันสังคมก่อน (และยื่นแบบแก้ไขถ้ายื่นไปแล้ว) "
+                    + "จึงจะคำนวณใหม่ได้");
+        }
+        if (evidence.ProjectCostAllocatedRows > 0)
+            return (false, $"ต้นทุนแรงงานของรอบนี้ถูกปันเข้าโครงการแล้ว ({evidence.ProjectCostAllocatedRows} แถวเวลาทำงาน) — "
+                + "คำนวณใหม่จะทำให้ต้นทุนโครงการไม่ตรงกับเงินเดือน · ระบบยังไม่มีปุ่มยกเลิกการปันต้นทุน "
+                + "⇒ แก้รายคนด้วย \"✏️ แก้ยอด\" แล้วปรับต้นทุนโครงการด้วยใบสำคัญปรับปรุง");
         return (true, null);
     }
 
@@ -117,5 +145,48 @@ public static class PayrollRunEditPolicy
                 + "จึงจะกลับรายการจ่ายได้");
 
         return (true, null);
+    }
+}
+
+/// <summary>หลักฐานว่ารอบเงินเดือน "ออกไปนอกระบบแล้ว" — service หามาแล้วส่งให้
+/// <see cref="PayrollRunEditPolicy.CanRecalculate"/> (ตัวนั้น pure)
+///
+/// <para>ที่มาของหลักฐาน (ตรวจแล้วรอบ 193 · M2 — ดู <c>PayrollService.LoadRecalculateLockEvidenceAsync</c>):
+/// <list type="bullet">
+/// <item><b>ยื่นแล้ว</b> — <c>ComplianceFiling</c> (PND1 / SSO1-10 สถานะ Filed/Accepted) · รายงานภาษีเก่า
+///   <c>TaxReport</c> ชนิด ภ.ง.ด.1/ประกันสังคมที่ประกาศว่ายื่นหรือถูกล็อก (สร้างใหม่ไม่ได้แล้ว แต่ข้อมูลเก่ายังอยู่) ·
+///   <c>EFilingExport</c> แบบ PND.1 ของงวด (ไฟล์ที่ระบบสร้างเพื่ออัปโหลด)</item>
+/// <item><b>นำส่งแล้ว</b> — <c>StatutoryRemittance</c> ชนิด SsoSps110/WhtPnd1 ของงวด · <c>PayrollRun.SsoSettledAt</c></item>
+/// <item><b>ปันต้นทุนแล้ว</b> — <c>EmployeeProjectTime.AllocatedPayrollRunId</c> = รอบนี้</item>
+/// </list>
+/// ⚠️ การ<b>ดาวน์โหลด</b>ไฟล์ ภ.ง.ด.1/สปส.1-10 จาก <c>TaxFilingExportService</c> ไม่ทิ้งร่องรอยใด ๆ ⇒
+/// ไม่ใช่หลักฐาน (และ "ดาวน์โหลด ≠ ยื่น" — ห้ามอนุมาน) · ผู้ใช้ที่ยื่นแล้วต้องบันทึกการยื่นในระบบ</para></summary>
+/// <param name="FiledForms">ป้ายแบบที่ถูกบันทึกว่ายื่นแล้วในงวดของรอบ (ว่าง = ไม่พบ)</param>
+/// <param name="RemittedForms">ป้ายแบบที่นำส่งเงินแล้วในงวดของรอบ</param>
+/// <param name="ProjectCostAllocatedRows">จำนวนแถวเวลาทำงานที่ปันต้นทุนจากรอบนี้แล้ว</param>
+public sealed record PayrollRunLockEvidence(
+    IReadOnlyList<string> FiledForms,
+    IReadOnlyList<string> RemittedForms,
+    int ProjectCostAllocatedRows)
+{
+    public const string Pnd1Label = "ภ.ง.ด.1";
+    public const string SsoLabel = "สปส.1-10";
+
+    /// <summary>ตรวจแล้ว ไม่พบหลักฐานใด (ไม่ใช่ "ยังไม่ได้ตรวจ" — ผู้เรียกต้องตรวจก่อนใช้ค่านี้)</summary>
+    public static readonly PayrollRunLockEvidence None =
+        new(Array.Empty<string>(), Array.Empty<string>(), 0);
+
+    /// <summary>ประกอบหลักฐานของรอบหนึ่งจากข้อเท็จจริงดิบ — ลำดับป้ายคงที่ (ภ.ง.ด.1 ก่อน สปส.)
+    /// เพื่อให้ข้อความเหมือนกันทุกครั้ง ไม่ขึ้นกับลำดับแถวที่ query คืน</summary>
+    public static PayrollRunLockEvidence From(
+        bool pnd1Filed, bool ssoFiled, bool pnd1Remitted, bool ssoRemitted, int allocatedRows)
+    {
+        var filed = new List<string>();
+        if (pnd1Filed) filed.Add(Pnd1Label);
+        if (ssoFiled) filed.Add(SsoLabel);
+        var remitted = new List<string>();
+        if (pnd1Remitted) remitted.Add(Pnd1Label);
+        if (ssoRemitted) remitted.Add(SsoLabel);
+        return new PayrollRunLockEvidence(filed, remitted, Math.Max(0, allocatedRows));
     }
 }

@@ -92,6 +92,37 @@ public static class CommissionPlanRules
         }
     }
 
+    /// <summary>คำขอแก้ไขนี้คือ "ปิดใช้งานอย่างเดียว" ไหม — <c>IsActive = false</c> และทุกช่องที่กำหนดแผน
+    /// (ชื่อ · คำอธิบาย · ฐาน · วิธี · อัตรา · ขั้น) ไม่ได้ส่งมา (null) หรือส่งมาเท่าค่าเดิม
+    ///
+    /// <para><b>ที่มา (รอบ 193 · ฝ่ายค้าน M2)</b>: Update ผสานค่าแล้วตรวจทั้งแผนด้วย <see cref="Validate"/> ⇒
+    /// แผนเก่าที่อัตรา null / ฐาน "Quantity" (ค้างจากฟอร์มก่อน A04) <b>ปิดใช้งานไม่ได้</b>จนกว่าจะแก้อัตรา —
+    /// ผู้ใช้ที่แค่อยากเลิกใช้แผนผิด ๆ ถูกบังคับให้แต่งตัวเลขที่ไม่ได้ตั้งใจ · การปิดใช้งานทำให้แผน
+    /// "ไม่ถูกนำไปคำนวณ" จึงไม่ต้องผ่านด่านความถูกต้องของอัตรา · การ<b>เปิด</b>ใช้งานยังต้องผ่านด่านเต็มเสมอ</para></summary>
+    public static bool IsDeactivateOnly(
+        bool? requestedActive,
+        string? name, string? description, string? basis, string? method,
+        decimal? flatRate, IReadOnlyList<CommissionTierSpec>? tiers,
+        string storedName, string? storedDescription, string storedBasis, string storedMethod,
+        decimal? storedFlatRate, IReadOnlyList<CommissionTierSpec> storedTiers)
+    {
+        if (requestedActive != false) return false;
+        static bool SameText(string? sent, string? stored)
+            => sent == null || string.Equals(sent.Trim(), (stored ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+        if (!SameText(name, storedName) || !SameText(basis, storedBasis) || !SameText(method, storedMethod))
+            return false;
+        // คำอธิบายเทียบตรงตัว (ตัวพิมพ์เล็กใหญ่มีความหมาย) · "" กับ null ของเดิมถือว่าเท่ากัน
+        if (description != null && description.Trim() != (storedDescription ?? "").Trim()) return false;
+        if (flatRate.HasValue && flatRate != storedFlatRate) return false;
+        if (tiers != null)
+        {
+            var a = tiers.OrderBy(t => t.FromAmount).ToList();
+            var b = storedTiers.OrderBy(t => t.FromAmount).ToList();
+            if (a.Count != b.Count || a.Zip(b).Any(p => p.First != p.Second)) return false;
+        }
+        return true;
+    }
+
     private static string Pick(string? value, IReadOnlyList<(string Value, string Label)> set,
         string fallback, string fieldLabel)
     {

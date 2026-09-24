@@ -11,8 +11,8 @@ namespace Accounting.Tests;
 /// "✏️ แก้ยอด" ซ่อมไม่ได้เพราะด่าน "ยอดสุทธิติดลบ" · ไฟล์ สปส.1-10 ประกาศค่าจ้าง 17,500
 /// ในเดือนที่ไม่ได้จ่ายค่าจ้างเลย</para>
 ///
-/// <para>เทสต์ประกอบสูตรด้วย helper <b>ชุดเดียวกับที่</b> <c>PayrollService.CalculatePayrollAsync</c>
-/// เรียก (<c>GrossWage(SalaryPaidThisPeriod(…))</c> → <c>PeriodBase</c> → <c>Contribution</c>) ·
+/// <para>เทสต์เรียก <c>SsoWageBase.ForPeriod</c> — <b>ฟังก์ชันเดียวกับที่</b> <c>PayrollService.CalculatePayrollAsync</c>
+/// เรียก (รอบ 193 M2: เดิมประกอบสูตรเองในเทสต์ ⇒ ถอดการแก้ใน service แล้วยังเขียว) ·
 /// สูตร "เดิม" ใน <see cref="Legacy"/> ยกมาจาก <c>git show 58203b2:Accounting/Services/Implementations/PayrollService.cs</c>
 /// บรรทัด 1962-1979 (<c>Clamp(GrossWage(proratedBaseSalary, ssoWageAllowances))</c>) ไม่ใช่เขียนจากความจำ</para>
 ///
@@ -35,13 +35,16 @@ public class SsoUnpaidLeaveWageTests
     {
         var taxableGross = proratedSalary - leaveDeduction + wageAllowances + otherIncome;
         var gross = taxableGross;   // ไม่มีสวัสดิการยกเว้นภาษีในเคสทดสอบ
-        var wage = SsoWageBase.GrossWage(
-            SsoWageBase.SalaryPaidThisPeriod(proratedSalary, leaveDeduction), wageAllowances);
-        var baseWage = SsoWageBase.PeriodBase(wage, Ceiling, gross);
-        var ee = SsoWageBase.Contribution(baseWage, Rate, MaxContribution);
-        var er = SsoWageBase.Contribution(baseWage, Rate, MaxContribution);
-        var wc = WorkersCompensationBase.Contribution(wage, wcRatePercent);
-        return new Row(wage, baseWage, ee, er, wc, gross, gross - ee);
+        // ★ รอบ 193 (ฝ่ายค้าน M2): เรียก **ตัวประกอบสูตรตัวเดียวกับที่ service เรียก** (SsoWageBase.ForPeriod)
+        //   ไม่ประกอบ GrossWage/SalaryPaidThisPeriod/PeriodBase เองในเทสต์ — เดิมประกอบเอง ⇒ ถอดการหักลาใน
+        //   service ทิ้งแล้วเทสต์ยังเขียว · checker tools/required_call_site_check.py ล็อกว่า
+        //   CalculatePayrollAsync ยังเรียก ForPeriod และไม่ประกอบสูตรเองซ้ำ
+        var a = SsoWageBase.ForPeriod(proratedSalary, leaveDeduction, wageAllowances,
+            totalPaidThisPeriod: gross, subjectToSso: true,
+            ceiling: Ceiling, rate: Rate, maxContribution: MaxContribution,
+            employerRate: Rate, employerMaxContribution: MaxContribution);
+        var wc = WorkersCompensationBase.Contribution(a.StatutoryWage, wcRatePercent);
+        return new Row(a.StatutoryWage, a.BaseWage, a.Employee, a.Employer, wc, gross, gross - a.Employee);
     }
 
     /// <summary>สูตรก่อนแก้ (58203b2) — ฐานไม่หักลา และไม่มีกรณี "ไม่ได้จ่ายเลย = 0"</summary>
@@ -166,5 +169,16 @@ public class SsoUnpaidLeaveWageTests
         foreach (var salary in new[] { 9_000m, 20_000m, 35_000m })
             Assert.Equal(Legacy(salary, 0m, wcRatePercent: rate).WorkersComp,
                 Current(salary, 0m, wcRatePercent: rate).WorkersComp);
+    }
+
+    [Fact]
+    public void ไม่อยู่ในระบบประกันสังคม_สมทบ0แต่ค่าจ้างยังคืนให้กองทุนเงินทดแทน()
+    {
+        var a = SsoWageBase.ForPeriod(20_000m, 0m, 0m, 20_000m, subjectToSso: false,
+            Ceiling, Rate, MaxContribution, Rate, MaxContribution);
+        Assert.Equal(20_000m, a.StatutoryWage);
+        Assert.Equal(0m, a.BaseWage);
+        Assert.Equal(0m, a.Employee);
+        Assert.Equal(0m, a.Employer);
     }
 }

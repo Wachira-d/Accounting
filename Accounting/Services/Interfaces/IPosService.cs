@@ -55,6 +55,8 @@ public interface IPosService
     // Service Component
     Task<ServicePackageResponse> AddComponentAsync(Guid companyId, Guid packageId, CreateServiceComponentRequest request);
     Task<ServicePackageResponse> UpdateComponentAsync(Guid companyId, Guid packageId, Guid componentId, UpdateServiceComponentRequest request);
+    /// <summary>รายงานอ่านอย่างเดียว — ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (รอบ 193 · M2)</summary>
+    Task<ServiceCommissionReviewReport> GetServiceCommissionReviewAsync(Guid companyId);
     Task RemoveComponentAsync(Guid companyId, Guid packageId, Guid componentId);
 
     // Service Activity

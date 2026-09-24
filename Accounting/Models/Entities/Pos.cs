@@ -274,6 +274,10 @@ public class ServiceComponent : BaseEntity
     // Commission settings
     public CommissionType CommissionType { get; set; } = CommissionType.Fixed;
     public decimal CommissionValue { get; set; }                 // จำนวนเงิน หรือ เปอร์เซ็นต์
+    /// <summary>เวลาที่ประเภทคอมมิชชันถูกบันทึกผ่านฟอร์ม/API ที่ส่งชื่อ enum ถูกแล้ว (รอบ 193) —
+    /// null = แถวเก่าที่อาจกลับด้านจากฟอร์มเดิม (option 0/1) ⇒ <c>Helpers/ServiceCommissionTypeReview</c>
+    /// ติดป้ายให้ตรวจ · ไม่ backfill (เจ้าของต้องตัดสินแถวค่า 1 ที่แยกที่มาไม่ได้)</summary>
+    public DateTime? CommissionTypeConfirmedAt { get; set; }
     public bool RequiresStaff { get; set; } = true;              // ต้องระบุพนักงานหรือไม่
 }
 

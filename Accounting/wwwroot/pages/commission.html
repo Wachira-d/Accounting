@@ -218,13 +218,34 @@ const Page = {
       document.getElementById('planActive').checked = p.isActive !== false;
       document.getElementById('planActiveGroup').style.display = '';
       this.onMethodChange();
+      // รอบ 193 (M2): จำหน้าตาฟอร์มหลังเติม — ถ้าผู้ใช้แค่ติ๊ก "ใช้งาน" ออก ให้ส่งเฉพาะการปิดใช้งาน
+      // (แผนเก่าที่อัตราว่าง/ฐานนอกชุดต้องปิดได้โดยไม่ถูกบังคับให้แต่งอัตรา)
+      this._editWasActive = p.isActive !== false;
+      this._editSnapshot = this._planFormState();
       Layout.openModal('planModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** สถานะช่องที่กำหนดแผน (ไม่รวมช่อง "ใช้งาน") — ใช้ตัดสินว่าผู้ใช้แก้อะไรนอกจากปิดใช้งานไหม */
+  _planFormState() {
+    const v = id => (document.getElementById(id)?.value ?? '').trim();
+    const tiers = [...document.querySelectorAll('#planTierBody tr')].map(tr =>
+      ['from', 'to', 'rate'].map(k => (tr.querySelector(`[data-k="${k}"]`)?.value ?? '').trim()).join('|'));
+    return JSON.stringify([v('planName'), v('planDesc'), v('planBasis'), v('planMethod'), v('planRate'), tiers]);
   },
 
   async savePlan() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('planId').value;
+    // ปิดใช้งานอย่างเดียว → ส่งแค่ isActive:false (เซิร์ฟเวอร์ข้ามด่านอัตรา — CommissionPlanRules.IsDeactivateOnly)
+    if (id && this._editWasActive && !document.getElementById('planActive').checked
+        && this._planFormState() === this._editSnapshot) {
+      try {
+        await api.updateCommissionPlan(id, { isActive: false });
+        Layout.toast('ปิดใช้งานแผนแล้ว'); Layout.closeModal('planModal'); this.loadPlans();
+      } catch (err) { Layout.toast(err.message, 'error'); }
+      return;
+    }
     const method = document.getElementById('planMethod').value;
     const data = {
       name: document.getElementById('planName').value.trim(),

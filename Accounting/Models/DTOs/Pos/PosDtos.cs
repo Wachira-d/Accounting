@@ -336,7 +336,20 @@ public record ServiceComponentResponse(
     int DurationMinutes,
     CommissionType CommissionType,
     decimal CommissionValue,
-    bool RequiresStaff);
+    bool RequiresStaff,
+    // รอบ 193 (M2): เซิร์ฟเวอร์ตัดสินว่าประเภทคอมมิชชันของแถวนี้เชื่อได้ไหม (Helpers/ServiceCommissionTypeReview)
+    // หน้าเว็บแค่แสดงป้าย + บังคับเลือกใหม่ — ห้ามเดาจากตัวเลขเอง
+    bool CommissionTypeNeedsReview = false,
+    string? CommissionTypeReviewNote = null);
+
+/// <summary>รายงานอ่านอย่างเดียว: ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (รอบ 193 · M2) — ไม่แก้ข้อมูลใด ๆ</summary>
+public record ServiceCommissionReviewRow(
+    Guid PackageId, string PackageName, Guid ComponentId, string ComponentName,
+    int StoredValue, string Clarity, string Note);
+
+public record ServiceCommissionReviewReport(
+    int UndefinedValueCount, int AmbiguousLegacyCount, int TotalToReview,
+    List<ServiceCommissionReviewRow> Rows);
 
 // ===== POS Service Activity =====
 public record UpdateServiceActivityRequest(

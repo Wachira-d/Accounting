@@ -34,6 +34,7 @@ public partial class PosService
         {
             foreach (var c in request.Components)
             {
+                Accounting.Helpers.ServiceCommissionTypeReview.EnsureDefined(c.CommissionType);
                 _db.ServiceComponents.Add(new ServiceComponent
                 {
                     PackageId = pkg.Id,
@@ -43,6 +44,7 @@ public partial class PosService
                     Description = c.Description,
                     DurationMinutes = c.DurationMinutes,
                     CommissionType = c.CommissionType,
+                    CommissionTypeConfirmedAt = DateTime.UtcNow,   // ส่งผ่านสัญญาชื่อ enum แล้ว (รอบ 193)
                     CommissionValue = c.CommissionValue,
                     RequiresStaff = c.RequiresStaff
                 });
@@ -106,6 +108,7 @@ public partial class PosService
         var pkg = await _db.ServicePackages.FirstOrDefaultAsync(p => p.Id == packageId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบแพ็คเกจบริการ");
 
+        Accounting.Helpers.ServiceCommissionTypeReview.EnsureDefined(request.CommissionType);
         _db.ServiceComponents.Add(new ServiceComponent
         {
             PackageId = packageId,
@@ -115,6 +118,7 @@ public partial class PosService
             Description = request.Description,
             DurationMinutes = request.DurationMinutes,
             CommissionType = request.CommissionType,
+            CommissionTypeConfirmedAt = DateTime.UtcNow,
             CommissionValue = request.CommissionValue,
             RequiresStaff = request.RequiresStaff
         });
@@ -133,7 +137,14 @@ public partial class PosService
         if (request.NameEn != null) comp.NameEn = request.NameEn;
         if (request.Description != null) comp.Description = request.Description;
         if (request.DurationMinutes.HasValue) comp.DurationMinutes = request.DurationMinutes.Value;
-        if (request.CommissionType.HasValue) comp.CommissionType = request.CommissionType.Value;
+        if (request.CommissionType.HasValue)
+        {
+            // รอบ 193 (M2): ค่านอก enum (เช่น 0 จากสคริปต์เก่า) ถูกปฏิเสธเป็นไทย · ค่าที่ส่งมา = ผู้ใช้เลือก
+            // ประเภทเองแล้ว ⇒ พ้นป้าย "ต้องตรวจ" ของแถวเก่า (ServiceCommissionTypeReview)
+            Accounting.Helpers.ServiceCommissionTypeReview.EnsureDefined(request.CommissionType.Value);
+            comp.CommissionType = request.CommissionType.Value;
+            comp.CommissionTypeConfirmedAt = DateTime.UtcNow;
+        }
         if (request.CommissionValue.HasValue) comp.CommissionValue = request.CommissionValue.Value;
         if (request.RequiresStaff.HasValue) comp.RequiresStaff = request.RequiresStaff.Value;
         await _db.SaveChangesAsync();
@@ -327,6 +338,41 @@ public partial class PosService
         p.Price, p.CostPrice, p.DurationMinutes, p.IsActive, p.IsVatIncluded,
         p.RevenueAccountId, p.ImageUrl, p.SortOrder,
         p.Components.Where(c => !c.IsDeleted).OrderBy(c => c.StepOrder)
-            .Select(c => new ServiceComponentResponse(c.Id, c.StepOrder, c.Name, c.NameEn, c.Description, c.DurationMinutes, c.CommissionType, c.CommissionValue, c.RequiresStaff))
+            .Select(MapComponent)
             .ToList());
+
+    private static ServiceComponentResponse MapComponent(ServiceComponent c)
+    {
+        var clarity = Accounting.Helpers.ServiceCommissionTypeReview.Judge(c.CommissionType, c.CommissionTypeConfirmedAt);
+        return new ServiceComponentResponse(c.Id, c.StepOrder, c.Name, c.NameEn, c.Description, c.DurationMinutes,
+            c.CommissionType, c.CommissionValue, c.RequiresStaff,
+            CommissionTypeNeedsReview: Accounting.Helpers.ServiceCommissionTypeReview.NeedsReview(clarity),
+            CommissionTypeReviewNote: Accounting.Helpers.ServiceCommissionTypeReview.Note(clarity));
+    }
+
+    /// <summary>รายงาน<b>อ่านอย่างเดียว</b>: ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (รอบ 193 · M2) —
+    /// ใช้ประเมินขอบเขตก่อนเจ้าของตัดสินเรื่องแปลงข้อมูลเก่า · ไม่เขียนอะไรลงฐาน</summary>
+    public async Task<ServiceCommissionReviewReport> GetServiceCommissionReviewAsync(Guid companyId)
+    {
+        var rows = await _db.ServiceComponents.AsNoTracking()
+            .Where(c => !c.IsDeleted && c.Package.CompanyId == companyId && !c.Package.IsDeleted)
+            .Select(c => new
+            {
+                c.PackageId, PackageName = c.Package.Name, c.Id, c.Name,
+                c.CommissionType, c.CommissionTypeConfirmedAt,
+            })
+            .ToListAsync();
+        var review = rows
+            .Select(r => (Row: r, Clarity: Accounting.Helpers.ServiceCommissionTypeReview.Judge(r.CommissionType, r.CommissionTypeConfirmedAt)))
+            .Where(x => Accounting.Helpers.ServiceCommissionTypeReview.NeedsReview(x.Clarity))
+            .OrderBy(x => x.Row.PackageName).ThenBy(x => x.Row.Name)
+            .Select(x => new ServiceCommissionReviewRow(x.Row.PackageId, x.Row.PackageName, x.Row.Id, x.Row.Name,
+                (int)x.Row.CommissionType, x.Clarity.ToString(),
+                Accounting.Helpers.ServiceCommissionTypeReview.Note(x.Clarity)!))
+            .ToList();
+        return new ServiceCommissionReviewReport(
+            review.Count(r => r.Clarity == nameof(Accounting.Helpers.ServiceCommissionTypeClarity.UndefinedValue)),
+            review.Count(r => r.Clarity == nameof(Accounting.Helpers.ServiceCommissionTypeClarity.AmbiguousLegacy)),
+            review.Count, review);
+    }
 }
