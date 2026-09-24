@@ -1,11 +1,10 @@
-# จุดที่ query ผู้ติดต่อด้วยเลขผู้เสียภาษีอย่างเดียว (ไม่มีสาขา) ณ รอบ 193 ทีม C3 — ก่อน C3 = 19 จุด/13 ไฟล์ · หลัง C3 = 7 จุด/4 ไฟล์
-# (รวมทุกสาขาของนิติบุคคลเดียวโดยตั้งใจ / ไฟล์ของทีมอื่นที่ยังไม่ได้ย้าย — รายละเอียด erp-review/2026-09-24/r193-C3.md)
+# จุดที่ query ผู้ติดต่อด้วยเลขผู้เสียภาษีอย่างเดียว (ไม่มีสาขา) + การถอยไปจับชื่อ/อีเมล/เบอร์นอก SoftScope (key `#soft`)
+# ประวัติ: ก่อน C3 = 19 จุด/13 ไฟล์ · หลัง C3 (4fcd06b) = 7 · หลังฝ่ายค้าน (C3 รอบ 2) = กติกา 1: 4 จุด/2 ไฟล์ + กติกา 2: 1 จุด
+# (รายละเอียด erp-review/2026-09-24/r193-C3.md หมวด "หลังฝ่ายค้าน") — ทุกแถวที่เหลือเป็นไฟล์ของทีมอื่นที่ห้ามแตะรอบนี้
 # ห้ามเพิ่มแถว/ตัวเลขเพื่อให้ checker เขียว — ratchet เดินทางเดียว: ย้ายไป Helpers/ContactTaxBranchKey แล้วลดตัวเลขลง
-# ↓ ตั้งใจ: รวมทุกสาขาของนิติบุคคลเดียว (ประวัติ WHT/ยอดสะสม/ค่าเฉลี่ย — บริบทให้ AI ไม่ผูกแถว) · มีคอมเมนต์ในโค้ด
-Services/Ai/DocumentAiAugmenter.cs = 2
-# ↓ ทีม V ถือไฟล์ — ยังไม่ได้ย้าย: FindAsync(branchCode: null) + ห้ามถอยไปจับด้วยอีเมลเมื่อ TaxIdExists
-Services/Implementations/CmsLeadService.cs = 1
-# ↓ ทีม O1 ถือไฟล์ — ยังไม่ได้ย้าย: สร้างผู้ติดต่อจากสแกน + ResolveContactIdByTaxIdAsync → ContactTaxBranchKey (+ สาขาจากสแกน)
+# ↓ ทีม O1 ถือไฟล์ — สร้างผู้ติดต่อจากสแกน + ResolveContactIdByTaxIdAsync → ContactTaxBranchKey.FindAsync (+ สาขาจากสแกน)
 Services/Implementations/OcrService.cs = 2
 # ↓ ทีม M2 ถือไฟล์ — ผู้รับเงินเป็นบุคคลธรรมดา (ไม่มีโครงสาขา) แต่ควรผ่านตัวจับคู่กลางตัวเดียว: FindAsync(branchCode: null)
 Services/Implementations/PayrollService.cs = 2
+# ↓ ทีม M2 ถือไฟล์ — POS จับด้วยชื่อหลัง FindAsync (มีด่านเองว่า "แถวไม่มีเลข" แต่ไม่รู้จัก "-" และไม่ผ่าน SoftScope)
+Services/Implementations/PosService.Orders.cs#soft = 1

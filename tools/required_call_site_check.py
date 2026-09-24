@@ -31,8 +31,58 @@ POS = "Services/Implementations/PosService.Orders.cs"
 BOT = "Services/Implementations/BotExchangeRateService.cs"
 COMMISSION = "Services/Implementations/CommissionService.cs"
 
+INTEG = "Services/Implementations/IntegrationService.cs"
+IMPORT = "Services/Implementations/ImportExportService.cs"
+DOCS_V1 = "Controllers/V1/DocumentsV1Controller.cs"
+CONTACTS_V1 = "Controllers/V1/ContactsV1Controller.cs"
+CMS_CUST = "Services/Implementations/CmsCustomerService.cs"
+CMS_LEAD = "Services/Implementations/CmsLeadService.cs"
+PLATFORM = "Services/Implementations/PlatformBillingDocumentIssuer.cs"
+XTENANT = "Services/Implementations/CrossTenantWorkflowService.cs"
+DUPDET = "Services/Implementations/Import/DuplicateDetector.cs"
+
 # (ไฟล์, เมธอด, must[], before[(a, b)], forbid[], เหตุผล)
 RULES = [
+    # ── รอบ 193 ทีม C3 หลังฝ่ายค้าน: คีย์เลขภาษี + สาขา (คำตัดสินเจ้าของข้อ 20) — ฝ่ายค้านถอดการแก้ออกจาก service แล้ว
+    #    ContactTaxBranchKeyTests ยังเขียว ⇒ ล็อกจุดเรียกของตัวจับคู่กลาง/SoftScope/ด่านเขียนทับในแต่ละทางเข้า ──
+    (INTEG, "ProcessCustomerAsync",
+     ["companyId, request.TaxId, request.BranchCode)", "ContactTaxBranchKey.SoftScope(",
+      "taxKey.MayOverwriteBranch", "ContactTaxBranchKey.MayWriteTaxId("],
+     [("ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(")], [],
+     "integration ลูกค้า: หาเลข+สาขาของ payload · ถอยไปชื่อบนชุด SoftScope เท่านั้น · ห้ามเขียนสาขา/เลขภาษีทับแถวที่ไม่ตรง (C-6)"),
+    (INTEG, "ResolveContactAsync",
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
+     "integration ใบขาย: ชื่อตรงห้ามได้นิติบุคคลอื่นที่ถือเลขอื่น (C-6)"),
+    (INTEG, "ResolveSupplierAsync",
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
+     "integration ผู้ขาย: ชื่อตรงห้ามได้นิติบุคคลอื่นที่ถือเลขอื่น (C-6)"),
+    (IMPORT, "ImportContactAsync",
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "taxKey.MayOverwriteBranch"], [], [],
+     "นำเข้าผู้ติดต่อ: อีเมลบนชุด SoftScope · รหัสสาขาในไฟล์เขียนทับได้เฉพาะแถวที่ตรงสาขาแล้ว"),
+    (DOCS_V1, "Create",
+     ["TryNormalize(req.ContactBranchCode", "TaxInvoiceCompletenessChecker.MissingBuyerFields("], [], [],
+     "API v1: รหัสสาขาผิดรูป = 400 · บอกช่องผู้ซื้อที่ขาดตาม §86/4 (เช่นที่อยู่ของแถวสาขาใหม่ — P-5)"),
+    (DOCS_V1, "ResolveContactAsync",
+     ["taxId, req.ContactBranchCode, ct)", "branchCode: req.ContactBranchCode", "ContactTaxBranchKey.SoftScope("], [], [],
+     "API v1: สาขาของ payload ต้องไปถึงการหา + การสร้าง (เดิมส่ง null ⇒ ใบกำกับออกในนาม สนญ.) · ชื่อบนชุด SoftScope"),
+    (CONTACTS_V1, "SyncCoreAsync",
+     ["ContactTaxBranchKey.Pick(", "TaxBranchCode.Normalize(item.BranchCode"], [], [],
+     "sync: ด่าน CONTACT-TAXID-OWNED ต้องเทียบเลข + สาขา (เดิมบล็อกสาขาของนิติบุคคลเดียวกัน)"),
+    (CMS_CUST, "AutoLinkToErpContactAsync",
+     ["customer.TaxId, customer.BranchCode)", "ContactTaxBranchKey.SoftScope("], [], [],
+     "CMS: ลูกค้าเว็บสาขา 8 ห้ามผูกผู้ติดต่อ สนญ. · อีเมลบนชุด SoftScope"),
+    (CMS_LEAD, "EnsureContactLinkedAsync",
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
+     "CMS lead: เลขภาษีผ่านตัวจับคู่กลาง · อีเมลบนชุด SoftScope (C-6)"),
+    (PLATFORM, "EnsureContactAsync",
+     ["ContactTaxBranchKey.HasTaxId(buyer.TaxId)", "taxId, buyerBranch)", "ContactTaxBranchKey.SoftScope("], [], [],
+     "ใบค่าบริการแพลตฟอร์ม: \"-\" ของบริษัทที่สมัครใหม่ไม่ใช่เลข (C-8) · เลข + สาขาของลูกค้า"),
+    (XTENANT, "FindPartnerContactAsync",
+     ["ContactTaxBranchKey.HasTaxId(partner.TaxId)", "ContactTaxBranchKey.FindAsync(", "partner.BranchCode"], [], [],
+     "ข้ามบริษัท: \"-\" ไม่ใช่เลข (C-8) · เลข + สาขาของบริษัทคู่ค้า"),
+    (DUPDET, "DetectContactAsync",
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
+     "ตัวตรวจซ้ำตอนนำเข้า: สาขาอื่นของเลขเดียวกันไม่ใช่ 'ซ้ำ' · ชื่อบนชุด SoftScope"),
     (PAYROLL, "CalculatePayrollAsync",
      ["LoadRecalculateLockEvidenceAsync(", "PayrollRunEditPolicy.CanRecalculate(", "SsoWageBase.ForPeriod("],
      [("PayrollRunEditPolicy.CanRecalculate(", "RemoveRange(run.Details)")],

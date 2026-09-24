@@ -550,8 +550,11 @@ public class IntegrationService : IIntegrationService
             if (taxKey.ContactId is Guid keyId)
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
             // มีผู้ติดต่อเลขนี้แต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
-            if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrEmpty(request.Name))
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
+            // ฝ่ายค้าน C-6: ถอยไปจับด้วยชื่อได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขนี้มีแล้วคนละสาขา ⇒ ห้าม) —
+            // เดิม `!taxKey.TaxIdExists` ปล่อยให้ชื่อตรงกับนิติบุคคลอื่นที่ถือเลขอื่น แล้วบล็อก update เขียนเลขใหม่ทับเลขของรายนั้น
+            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, request.TaxId, taxKey);
+            if (contact == null && softScope != null && !string.IsNullOrEmpty(request.Name))
+                contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
             // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
             // ระบบภายนอกส่งชื่อผิดมาได้ (ฟิลด์เหลื่อม/ตัดคำ) ทั้งที่เลขผู้เสียภาษีถูก
@@ -639,7 +642,8 @@ public class IntegrationService : IIntegrationService
                 if (request.Phone != null) contact.Phone = request.Phone;
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
-                if (request.TaxId != null) contact.TaxId = request.TaxId;
+                // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข หรือเลขเดียวกันต่างรูปแบบ
+                if (Accounting.Helpers.ContactTaxBranchKey.MayWriteTaxId(contact.TaxId, request.TaxId)) contact.TaxId = request.TaxId;
                 // §86/4: รหัสสาขา + ประเภทผู้ติดต่อ ต้องอัปเดตตอน resync ด้วย —
                 // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
@@ -1597,20 +1601,19 @@ public class IntegrationService : IIntegrationService
     {
         Contact? contact = null;
 
-        if (!string.IsNullOrEmpty(taxId))
-        {
-            // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
-            // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
-            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
-            // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-                _db.Set<Contact>(), companyId, taxId, branchCode: null);
-            if (taxKey.ContactId is Guid keyId)
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-        }
+        // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
+        // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
+        // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
+        // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            _db.Set<Contact>(), companyId, taxId, branchCode: null);
+        if (taxKey.ContactId is Guid keyId)
+            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
 
-        if (contact == null && !string.IsNullOrEmpty(name))
-            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
+        // ฝ่ายค้าน C-6: ชื่อตรงได้เฉพาะชุด SoftScope — เดิมเลขใหม่ + ชื่อตรง = ใบกำกับออกให้นิติบุคคลอื่นที่ถือเลขอื่น (§86/4)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxId, taxKey);
+        if (contact == null && softScope != null && !string.IsNullOrEmpty(name))
+            contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
 
         if (contact == null)
         {
@@ -1691,21 +1694,23 @@ public class IntegrationService : IIntegrationService
 
         // (3) เลขผู้เสียภาษี (+ สาขา) — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20) ·
         //     payload ไม่มีช่องสาขาผู้ขาย ⇒ แถวสำนักงานใหญ่ก่อน แทนแถวไหนก็ได้ของเลขนั้น
+        var taxKey = default(Accounting.Helpers.ContactKeyMatch);
         if (supplier == null && taxDigits.Length > 0)
         {
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
                 _db.Set<Contact>(), companyId, taxDigits, branchCode: null);
             if (taxKey.ContactId is Guid keyId)
                 supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
                     c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
         }
 
-        // (4) ชื่อ trim + case-insensitive
-        if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))
+        // (4) ชื่อ trim + case-insensitive — เฉพาะชุด SoftScope (ฝ่ายค้าน C-6: เลขใหม่ห้ามได้แถวที่ถือเลขอื่น)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxDigits, taxKey);
+        if (supplier == null && softScope != null && !string.IsNullOrWhiteSpace(nameTrim))
         {
             var lower = nameTrim.ToLower();
-            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.Name.Trim().ToLower() == lower && !c.IsDeleted);
+            supplier = await softScope.FirstOrDefaultAsync(c =>
+                c.Name.Trim().ToLower() == lower && !c.IsDeleted);
         }
 
         if (supplier == null)

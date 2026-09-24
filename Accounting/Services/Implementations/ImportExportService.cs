@@ -518,9 +518,10 @@ public class ImportExportService : IImportExportService
         if (taxKey.ContactId is Guid keyId)
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
                 c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
-        if (existing == null && !taxKey.TaxIdExists && !string.IsNullOrWhiteSpace(email))
-            existing = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && !c.IsDeleted && c.Email == email);
+        // ฝ่ายค้าน C-6: อีเมลจับได้เฉพาะชุด SoftScope — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (โหมด Overwrite จะทับข้อมูลคนละนิติบุคคล)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, taxId, taxKey);
+        if (existing == null && softScope != null && !string.IsNullOrWhiteSpace(email))
+            existing = await softScope.FirstOrDefaultAsync(c => !c.IsDeleted && c.Email == email);
 
         var isCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust;
         var isSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup;
@@ -1026,15 +1027,17 @@ public class ImportExportService : IImportExportService
         var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, contactTaxId, branchCode: null);
         if (taxKey.ContactId is Guid keyId)
             contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-        if (contact == null && !string.IsNullOrWhiteSpace(contactName))
-            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == contactName);
+        // ฝ่ายค้าน C-6: ชื่อจับได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ ห้ามได้แถวที่ถือเลขอื่น — ยอดยกมาจะไปลงลูกหนี้คนละราย)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, contactTaxId, taxKey);
+        if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(contactName))
+            contact = await softScope.FirstOrDefaultAsync(c => c.Name == contactName);
         // แถวที่เพิ่งสร้างในชุดเดียวกัน (ยังไม่ SaveChanges) — เลขภาษีผ่านตัวจับคู่กลางตัวเดียว (รอบ 193 ทีม C3 ·
         // ไฟล์ยกมาไม่มีคอลัมน์สาขา ⇒ "ไม่ระบุ") แล้วค่อยชื่อ
         var pending = _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity)
             .Where(c => c.CompanyId == companyId).ToList();
         contact ??= Accounting.Helpers.ContactTaxBranchKey.PickContact(pending, contactTaxId, branchCode: null);
         contact ??= string.IsNullOrWhiteSpace(contactName) ? null
-            : pending.FirstOrDefault(c => c.Name == contactName);
+            : Accounting.Helpers.ContactTaxBranchKey.SoftScope(pending, contactTaxId, taxKey).FirstOrDefault(c => c.Name == contactName);
         if (contact == null)
         {
             var newName = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName;
@@ -1587,8 +1590,10 @@ public class ImportExportService : IImportExportService
             var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, contactTaxId, branchCode: null);
             if (taxKey.ContactId is Guid keyId)
                 contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-            if (contact == null && !string.IsNullOrWhiteSpace(contactName))
-                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.Contains(contactName));
+            // ฝ่ายค้าน C-6: ชื่อจับได้เฉพาะชุด SoftScope (เลขในไฟล์เป็นเลขใหม่ ⇒ ห้ามได้แถวที่ถือเลขอื่น)
+            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, contactTaxId, taxKey);
+            if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(contactName))
+                contact = await softScope.FirstOrDefaultAsync(c => c.Name.Contains(contactName));
             if (contact == null)
                 throw new KeyNotFoundException($"ไม่พบผู้ติดต่อ '{contactName}' (TaxId {contactTaxId ?? "-"})");
 

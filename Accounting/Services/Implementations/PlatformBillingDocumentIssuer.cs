@@ -286,8 +286,11 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     /// ยอดขายรายลูกค้าของเราเองแตกเป็นหลายราย</para></summary>
     private async Task<Guid?> EnsureContactAsync(Guid tenantId, Company buyer)
     {
-        var taxId = string.IsNullOrWhiteSpace(buyer.TaxId) ? null : buyer.TaxId.Trim();
+        // ฝ่ายค้าน C-8: บริษัทที่สมัครใหม่มี TaxId = "-" (AuthService) — ค่าที่ไม่มีตัวเลขเลย = ไม่มีเลข ไม่ใช่กุญแจ ·
+        // เดิม "-" ถูกเทียบตรงตัว ⇒ ลูกค้ารายที่สองที่ยังไม่กรอกเลขได้ผู้ติดต่อ (ชื่อ/ที่อยู่) ของรายแรก และแถวใหม่เก็บ "-" สะสม
+        var taxId = Accounting.Helpers.ContactTaxBranchKey.HasTaxId(buyer.TaxId) ? buyer.TaxId!.Trim() : null;
         var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode;
+        var buyerKey = buyer.Id.ToString();
         Contact? existing;
         if (taxId != null)
         {
@@ -301,8 +304,15 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         }
         else
         {
-            existing = await _db.Contacts
-                .Where(c => c.CompanyId == tenantId && !c.IsDeleted && c.Name == buyer.Name)
+            // ไม่มีเลข: กุญแจแรก = แถวที่ผูกกับ tenant นี้ไว้แล้ว (ExternalSystem/ExternalId ที่แถวใหม่ข้างล่างประทับเอง) ·
+            // ถอยไปชื่อได้เฉพาะแถวที่ไม่ได้ผูกกับ tenant อื่น (ชื่อซ้ำข้ามลูกค้าที่ยังไม่กรอกเลข = คนละราย)
+            existing = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == tenantId && !c.IsDeleted
+                && c.ExternalSystem == "NextAccTenant" && c.ExternalId == buyerKey);
+            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, tenantId, taxId, default);
+            if (existing == null && softScope != null)
+                existing = await softScope
+                .Where(c => !c.IsDeleted && c.Name == buyer.Name
+                    && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != buyerKey))
                 .OrderByDescending(c => c.IsCustomer)
                 .FirstOrDefaultAsync();
         }
