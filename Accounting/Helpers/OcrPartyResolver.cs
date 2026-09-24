@@ -81,7 +81,69 @@ public static class OcrPartyResolver
 {
     public static OcrPartyResolution Resolve(
         string? rawText, OcrOurIdentity us, OcrPartyBlock vendor, OcrPartyBlock buyer)
-        => FillOurIdentity(ResolveCore(rawText, us, vendor, buyer), rawText, us);
+        => FillOurName(FillOurIdentity(ResolveCore(rawText, us, vendor, buyer), rawText, us), rawText, us);
+
+    /// <summary>เมื่อรู้แน่แล้วว่าเราอยู่ฝั่งไหน (≥ 0.85) แต่<b>ชื่อ</b>ในบล็อกของเราไม่ใช่เรา →
+    /// ใช้ชื่อบริษัทเรา<b>จากทะเบียน</b> (ขั้นที่เพิ่มรอบ 190 · ต่อท้าย <see cref="FillOurIdentity"/>)
+    ///
+    /// <para>═══ ที่มา (สแกนจริง 2026-09-24 · ใบ A Wine Pro) ═══ “Customer Info. [CZBNG2600843]”
+    /// แล้วบรรทัดถัดไป “หจก.แอม แฮปปี้เนส” + เลขภาษีเรา — engine หยิบ<b>รหัสลูกค้าของร้าน</b>
+    /// ไปเป็นชื่อผู้ซื้อ · ตัวตัดสินรู้อยู่แล้วว่าบล็อกนี้คือเรา (เลขภาษีตรง = 1.0) แต่เดิมเติมแค่
+    /// เลขภาษี ไม่ดูชื่อ ⇒ หน้ารีวิวโชว์ “[CZBNG2600843]” ในช่องชื่อผู้ซื้อ
+    /// (เจ้าของ: “ถ้าเจอ หจก.แอม แฮปปี้เนส ระบบต้องเข้าใจได้เลยว่าโซนนั้นคือข้อมูลผู้ซื้อ”)</para>
+    ///
+    /// <para>═══ เมื่อไรถึงแทน ═══ (ก) ชื่อเดิมว่าง / เป็นรหัส (<see cref="OcrPartyName.LooksLikeCode"/>)
+    /// / ไม่มีตัวอักษรเลย — และกระดาษมีเลขภาษีเรา<b>หรือ</b>ชื่อเรา (หลักฐานว่าเราอยู่บนใบ)
+    /// (ข) ชื่อเดิมเป็นชื่อจริงที่ไม่ใช่เรา — แทน<b>เฉพาะเมื่อชื่อเราอยู่บนกระดาษ</b> (เลขภาษีตรง
+    /// อย่างเดียวไม่พอจะทิ้งชื่อจริงที่อ่านได้ · G3 ไม่รู้ = ไม่แต่ง) · ชื่อที่เป็นเราอยู่แล้ว
+    /// (รูปใดก็ได้ เช่น “บจก. แอมแฮปปี้เนส”) <b>ไม่แตะ</b> — ตัวขยายชื่อ/ตัดป้ายสาขาดูแลรูปของมัน</para>
+    ///
+    /// <para>ค่าที่ใส่มาจาก<b>ทะเบียนของเราเอง</b> ไม่ใช่การแต่ง (เหตุผลเดียวกับ FillOurIdentity) ·
+    /// ชื่อที่ถูกแทนถูกบันทึกลง Reasons (G4 — เก็บผู้แพ้ไว้ไล่ย้อน)</para></summary>
+    private static OcrPartyResolution FillOurName(OcrPartyResolution r, string? rawText, OcrOurIdentity us)
+    {
+        if (r.Confidence < 0.85m || r.OurSide == OcrSelfSide.Unknown) return r;
+        var ourName = !string.IsNullOrWhiteSpace(us.Name) ? us.Name!.Trim()
+            : !string.IsNullOrWhiteSpace(us.NameEn) ? us.NameEn!.Trim() : null;
+        if (ourName == null) return r;
+
+        var mine = r.OurSide == OcrSelfSide.Buyer ? r.Buyer : r.Vendor;
+        if (IsUs(mine.Name, us)) return r;
+
+        var current = mine.Name?.Trim();
+        var notAName = string.IsNullOrWhiteSpace(current)
+            || OcrPartyName.LooksLikeCode(current)
+            || !current!.Any(char.IsLetter);
+        var nameOnPaper = OurNameOnPaper(rawText, us);
+        if (!notAName && !nameOnPaper) return r;
+        if (!nameOnPaper)
+        {
+            var (exact, near) = OurTaxIdOnPaper(rawText, ThaiTaxId.Normalize(us.TaxId));
+            if (!exact && near == null) return r;
+        }
+
+        var filled = mine with { Name = ourName };
+        var why = string.IsNullOrWhiteSpace(current)
+            ? $"ชื่อฝั่งเราว่าง → ใช้ชื่อบริษัทเราจากทะเบียน “{ourName}”"
+            : $"ชื่อฝั่งเรา “{current}” {(notAName ? "เป็นรหัส/ไม่ใช่ชื่อ" : "ไม่ใช่เรา ทั้งที่กระดาษพิมพ์ชื่อเรา")} → ใช้ชื่อบริษัทเราจากทะเบียน “{ourName}”";
+        var reasons = new List<string>(r.Reasons) { why };
+        return r.OurSide == OcrSelfSide.Buyer
+            ? r with { Buyer = filled, Reasons = reasons }
+            : r with { Vendor = filled, Reasons = reasons };
+    }
+
+    /// <summary>มีบรรทัดบนกระดาษที่เป็นชื่อบริษัทเรา (ไทยหรืออังกฤษ) ไหม — กติกาเทียบชื่อตัวเดียวกับ
+    /// <see cref="OcrSelfPartyGuard.NameOverlaps"/> (ตัดคำนำหน้านิติบุคคล/“สำนักงานใหญ่” แล้วครอบกัน)</summary>
+    internal static bool OurNameOnPaper(string? rawText, OcrOurIdentity us)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return false;
+        foreach (var line in rawText.Split('\n'))
+        {
+            if (OcrSelfPartyGuard.NameOverlaps(line, us.Name)) return true;
+            if (!string.IsNullOrWhiteSpace(us.NameEn) && OcrSelfPartyGuard.NameOverlaps(line, us.NameEn)) return true;
+        }
+        return false;
+    }
 
     /// <summary>เมื่อรู้แน่แล้วว่าเราอยู่ฝั่งไหน (≥ 0.85) และบล็อกของเรายัง<b>ไม่มีเลขภาษี</b>
     /// แต่กระดาษมีเลขเรา (ตรง หรือต่างหลักเดียวจน checksum ตก) → เติมเลขภาษี**ของจริงจาก DB**

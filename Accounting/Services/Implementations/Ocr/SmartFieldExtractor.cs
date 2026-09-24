@@ -276,6 +276,23 @@ internal static class SmartFieldExtractor
         // เต็มจากกระดาษที่**ครอบ**ค่าเดิม ทำ**ทั้งสองฝั่ง** (คู่สมมาตร — แก้ฝั่งเดียวคือ
         // เหลืออีกฝั่ง) · ตัวตัดสินอยู่ที่ Helpers/OcrPartyName
         {
+            // ป้ายสาขาท้ายชื่อ (“(สำนักงานใหญ่)” · “Branch 00012”) ไม่ใช่ส่วนของชื่อนิติบุคคล — ตัดออก
+            // ทั้งสองฝั่ง (รอบ 190 · ใบ A/B) · รหัสสาขาอ่านโดย BranchCodeExtractor ตัวเดียว (ไม่อ่านซ้ำที่นี่)
+            // · ต้องมาก่อนตัวตัดเศษชื่อออกจากที่อยู่ข้างล่าง ไม่งั้นเศษ “12” ของ “Branch 00012” ไปชน
+            //   เลขบ้าน “12/861” · ตัวตัดสินอยู่ที่ Helpers/OcrPartyName.StripBranchSuffix
+            var (vendorNoBranch, vendorBranchSuffix) = Accounting.Helpers.OcrPartyName.StripBranchSuffix(data.VendorName);
+            if (vendorBranchSuffix != null)
+            {
+                data.ReasoningTrace.Add($"[Vendor] ตัดป้ายสาขา “{vendorBranchSuffix}” ออกจากชื่อ → “{vendorNoBranch}”");
+                data.VendorName = vendorNoBranch;
+            }
+            var (buyerNoBranch, buyerBranchSuffix) = Accounting.Helpers.OcrPartyName.StripBranchSuffix(data.BuyerName);
+            if (buyerBranchSuffix != null)
+            {
+                data.ReasoningTrace.Add($"[Buyer] ตัดป้ายสาขา “{buyerBranchSuffix}” ออกจากชื่อ → “{buyerNoBranch}”");
+                data.BuyerName = buyerNoBranch;
+            }
+
             var paperNames = ExtractCompanyNames(text).Select(n => n.FullName).ToList();
             var fullBuyer = Accounting.Helpers.OcrPartyName.ExpandTruncated(data.BuyerName, paperNames, data.VendorName);
             if (fullBuyer != null)
