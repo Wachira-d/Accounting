@@ -1,4 +1,8 @@
+using System.Linq.Expressions;
 using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations.Ocr;
@@ -54,26 +58,51 @@ public class ActiveLearningRanker
         decimal PriorityScore,
         string ReasonHint);
 
+    /// <summary>นิยาม "สแกนที่อยู่ในคิว" <b>ตัวเดียว</b> — ใช้ทั้ง <see cref="RankAsync"/> และ <see cref="SummarizeAsync"/>
+    /// (ห้ามมีสองนิยาม) · อ่านเสร็จแล้ว และยังไม่มีผลลัพธ์ทางบัญชี หรือมีบรรทัดที่อาจเป็นสินทรัพย์ถาวรรอตัดสิน</summary>
+    /// <remarks>⚠️ เส้น "บันทึกเป็น JE อย่างเดียว" (OcrService.CreateJournalEntryFromScanAsync) ตั้ง CreatedJournalEntryId
+    /// แต่ไม่ตั้ง CreatedDocumentId ⇒ ต้องดูทั้งสองช่อง ("แก้เสร็จแล้วไม่หายจากคิว" — รอบ 190 ข้อ 1)</remarks>
+    private static readonly Expression<Func<OcrScanResult, bool>> QueuedScan = r =>
+        r.ScanStatus == "Completed"
+        && ((r.CreatedDocumentId == null && r.CreatedJournalEntryId == null) || r.HasPotentialFixedAsset);
+
+    /// <summary>วันที่ทางบัญชีของสแกน = วันที่บนกระดาษ · อ่านวันที่ไม่ได้ ⇒ วันที่อ่านเสร็จ/วันที่อัปโหลด</summary>
+    private static readonly Expression<Func<OcrScanResult, DateTime>> ScanAccountingDate =
+        r => r.ExtractedDate ?? r.ProcessedAt ?? r.CreatedAt;
+
+    /// <summary>งวดที่ปิดแล้วของบริษัท (Closed/Locked) — ขอบเขตของคิวคือ "ทุกใบในงวดที่ยังไม่ปิด"
+    /// (คำตัดสินเจ้าของ รอบ 193 ข้อ 32 · เดิม 30 วันล่าสุด ⇒ สแกนของงวดที่ยังเปิดแต่เก่ากว่า 30 วันหายจากคิว)</summary>
+    public async Task<IReadOnlyList<ClosedDateRange>> ClosedRangesAsync(Guid companyId)
+    {
+        var rows = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && f.Status != FiscalPeriodStatus.Open)
+            .Select(f => new { f.StartDate, f.EndDate, f.Status })
+            .ToListAsync();
+        return ClosedPeriodRanges.Build(rows.Select(r => (r.StartDate, r.EndDate, r.Status)));
+    }
+
+    private IQueryable<OcrScanResult> ScansInOpenPeriods(Guid companyId, IReadOnlyList<ClosedDateRange> closed)
+        => _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted)
+            .Where(ClosedPeriodRanges.NotInClosed(ScanAccountingDate, closed));
+
     public async Task<List<RankedScan>> RankAsync(Guid companyId, int limit = 20)
     {
         var now = DateTime.UtcNow;
         var sevenDaysAgo = now.AddDays(-7);
-        var thirtyDaysAgo = now.AddDays(-30);
+        var closed = await ClosedRangesAsync(companyId);
 
-        // Pull pending scans (Completed but not yet linked to a created doc, OR
-        // flagged as Needs-Review by HasPotentialFixedAsset). Skip very-old
-        // scans that the user is unlikely to ever come back to.
-        var scans = await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && !r.IsDeleted
-                && r.ScanStatus == "Completed"
-                && r.ProcessedAt >= thirtyDaysAgo
-                // ⚠️ เส้น "บันทึกเป็น JE อย่างเดียว" (OcrService.CreateJournalEntryFromScanAsync) ตั้ง
-                // CreatedJournalEntryId แต่ไม่ตั้ง CreatedDocumentId ⇒ เดิมใบที่ลงบัญชีไปแล้ว
-                // ค้างในคิวตลอด 30 วัน ("แก้เสร็จแล้วไม่หายจากคิว" — รอบ 190 ข้อ 1)
-                && ((r.CreatedDocumentId == null && r.CreatedJournalEntryId == null)
-                    || r.HasPotentialFixedAsset))
+        // ทุกสแกนที่รอตัดสินในงวดที่ยังไม่ปิด (ไม่ตัดที่ 30 วันแล้ว) · projection เฉพาะช่องที่ใช้จัดอันดับ ·
+        // เพดาน 1,000 ใบเป็นแค่กันหน่วยความจำ — จำนวนจริงอยู่ใน SummarizeAsync (หน้าเว็บบอก "แสดง N จาก M")
+        var scans = await ScansInOpenPeriods(companyId, closed)
+            .Where(QueuedScan)
             .OrderByDescending(r => r.ProcessedAt)
-            .Take(200)   // cap candidate pool; rank in memory
+            .Take(1000)
+            .Select(r => new
+            {
+                r.Id, r.ExtractedVendorName, r.OriginalFileName, r.ProcessedAt, r.CreatedAt, r.Confidence,
+                r.MatchedContactId, r.HasPotentialFixedAsset, r.HasHandwriting, r.IsDuplicate, r.UserCorrectedAt,
+            })
             .ToListAsync();
 
         if (scans.Count == 0) return new();
@@ -116,52 +145,102 @@ public class ActiveLearningRanker
         return ranked.OrderByDescending(x => x.PriorityScore).Take(limit).ToList();
     }
 
+    /// <summary>เอกสาร<b>ร่าง</b>ที่สร้างจากสแกนแล้วแต่ยังไม่อนุมัติ (คำตัดสินเจ้าของ รอบ 193 ข้อ 31) — เดิมสแกนออกจากคิว
+    /// ทันทีที่สร้างร่าง ⇒ ร่างที่ลืมอนุมัติไม่มีใครเห็น · กดแถวแล้วไปหน้ารายละเอียดเอกสาร (มีปุ่มอนุมัติ/แก้ไข)</summary>
+    public record DraftFromScan(
+        Guid DocumentId,
+        string DocumentNumber,
+        DocumentType DocumentType,
+        SensitivityKind Sensitivity,
+        string? ContactName,
+        DateTime DocumentDate,
+        decimal TotalAmount,
+        Guid ScanId,
+        string? OriginalFileName,
+        DateTime ScannedAt);
+
+    /// <summary>ร่างจากสแกนในงวดที่ยังไม่ปิด (วันที่เอกสารเป็นตัวตัดสินงวด) เรียงจากวันที่เอกสารเก่าสุด —
+    /// ร่างที่ค้างนานควรถูกเห็นก่อน · ผู้เรียกกรองสิทธิ์มองเห็นเอง (ฝั่งเอกสาร + ชั้นความลับ)</summary>
+    public async Task<List<DraftFromScan>> DraftsFromScansAsync(Guid companyId, IReadOnlyList<ClosedDateRange>? closed = null)
+    {
+        closed ??= await ClosedRangesAsync(companyId);
+        var fromScan = _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.CreatedDocumentId != null);
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status == DocumentStatus.Draft
+                && fromScan.Any(r => r.CreatedDocumentId == d.Id))
+            .Where(ClosedPeriodRanges.NotInClosed<Document>(d => d.DocumentDate, closed))
+            .OrderBy(d => d.DocumentDate)
+            .Take(1000)
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentType, d.Sensitivity, ContactName = d.Contact.Name,
+                d.DocumentDate, d.TotalAmount,
+            })
+            .ToListAsync();
+        if (docs.Count == 0) return new();
+
+        // สแกนต้นทางของแต่ละร่าง (ถ้ามีหลายใบชี้เอกสารเดียว — ใช้ใบล่าสุด) · สองคำสั่งแทน subquery ซ้อน
+        var docIds = docs.Select(d => d.Id).ToList();
+        var scanRows = await fromScan
+            .Where(r => docIds.Contains(r.CreatedDocumentId!.Value))
+            .Select(r => new { DocId = r.CreatedDocumentId!.Value, r.Id, r.OriginalFileName, r.CreatedAt })
+            .ToListAsync();
+        var scanByDoc = scanRows
+            .GroupBy(r => r.DocId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.CreatedAt).First());
+
+        var result = new List<DraftFromScan>();
+        foreach (var d in docs)
+        {
+            if (!scanByDoc.TryGetValue(d.Id, out var sc)) continue;
+            result.Add(new DraftFromScan(d.Id, d.DocumentNumber, d.DocumentType, d.Sensitivity, d.ContactName,
+                d.DocumentDate, d.TotalAmount, sc.Id, sc.OriginalFileName, sc.CreatedAt));
+        }
+        return result;
+    }
+
     /// <summary>ตัวเลขประกอบคิว — ให้หน้าเว็บบอกได้ว่า "ว่างเพราะอะไร" แทนจอเปล่า
-    /// (เดิมหน้าเขียนว่า "ระบบมั่นใจกับทุก scan" ทุกครั้งที่ว่าง ซึ่ง<b>ไม่เคยถูกตรวจจริง</b> —
-    /// ส่วนใหญ่ว่างเพราะสแกนทุกใบถูกสร้างเป็นเอกสารแล้ว หรือเก่ากว่า 30 วัน)</summary>
-    /// <param name="WindowDays">ช่วงเวลาที่นับ (วัน)</param>
-    /// <param name="Pending">ใบที่อยู่ในคิวจริง (ไม่ตัดตาม limit)</param>
-    /// <param name="ScannedInWindow">สแกนทั้งหมดในช่วง (ทุกสถานะ)</param>
+    /// (เดิมหน้าเขียนว่า "ระบบมั่นใจกับทุก scan" ทุกครั้งที่ว่าง ซึ่ง<b>ไม่เคยถูกตรวจจริง</b>)
+    /// · ขอบเขต = งวดบัญชีที่ยังไม่ปิด (รอบ 193 ข้อ 32 — เดิม 30 วันล่าสุด)</summary>
+    /// <param name="ClosedPeriodCount">จำนวนงวดที่ปิด/ล็อกแล้ว (0 = ยังไม่เคยปิดงวด ⇒ คิวครอบทุกใบ)</param>
+    /// <param name="Pending">สแกนที่อยู่ในคิวจริง (ไม่ตัดตาม limit)</param>
+    /// <param name="DraftPending">ร่างจากสแกนที่ยังไม่อนุมัติ (เติมโดยผู้เรียกหลังกรองสิทธิ์มองเห็น)</param>
+    /// <param name="ScannedInScope">สแกนทั้งหมดในงวดที่ยังไม่ปิด (ทุกสถานะ)</param>
     /// <param name="DocumentCreated">สร้างเป็นเอกสารแล้ว</param>
-    /// <param name="DocumentStillDraft">ในนั้นยังเป็นร่าง (รออนุมัติในหน้าเอกสาร ไม่ใช่ในคิวนี้)</param>
     /// <param name="JournalOnly">บันทึกเป็นสมุดรายวันอย่างเดียวแล้ว</param>
     /// <param name="Failed">อ่านไม่สำเร็จ</param>
     /// <param name="InProgress">กำลังอ่าน/รอคิวอ่าน</param>
-    /// <param name="OlderPending">ยังไม่ได้สร้างเอกสารแต่เก่ากว่าช่วงที่นับ (ไม่แสดงในคิว)</param>
+    /// <param name="InClosedPeriods">ยังรอตัดสินแต่วันที่อยู่ในงวดที่ปิดแล้ว (ไม่แสดงในคิว — ลงบัญชีในงวดที่ปิดไม่ได้)</param>
     public record QueueSummary(
-        int WindowDays,
+        int ClosedPeriodCount,
         int Pending,
-        int ScannedInWindow,
+        int DraftPending,
+        int ScannedInScope,
         int DocumentCreated,
-        int DocumentStillDraft,
         int JournalOnly,
         int Failed,
         int InProgress,
-        int OlderPending);
+        int InClosedPeriods);
 
-    public async Task<QueueSummary> SummarizeAsync(Guid companyId)
+    public async Task<QueueSummary> SummarizeAsync(Guid companyId, IReadOnlyList<ClosedDateRange>? closed = null)
     {
-        const int windowDays = 30;
-        var since = DateTime.UtcNow.AddDays(-windowDays);
-        var scans = _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && !r.IsDeleted);
-        // เงื่อนไข "อยู่ในคิว" ต้องตรงกับ RankAsync ทุกตัว (ห้ามมีสองนิยาม)
-        var pending = await scans.CountAsync(r => r.ScanStatus == "Completed"
-            && r.ProcessedAt >= since
-            && ((r.CreatedDocumentId == null && r.CreatedJournalEntryId == null) || r.HasPotentialFixedAsset));
-        var inWindow = scans.Where(r => r.CreatedAt >= since);
-        var scanned = await inWindow.CountAsync();
-        var created = await inWindow.CountAsync(r => r.CreatedDocumentId != null);
-        var draft = await _db.Documents.AsNoTracking()
-            .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.Status == Models.Enums.DocumentStatus.Draft
-                && inWindow.Any(r => r.CreatedDocumentId == d.Id));
-        var journalOnly = await inWindow.CountAsync(r => r.CreatedDocumentId == null && r.CreatedJournalEntryId != null);
-        var failed = await inWindow.CountAsync(r => r.ScanStatus == "Failed");
-        var inProgress = await inWindow.CountAsync(r => r.ScanStatus == "Pending" || r.ScanStatus == "Processing");
-        var older = await scans.CountAsync(r => r.ScanStatus == "Completed"
-            && r.ProcessedAt < since
-            && r.CreatedDocumentId == null && r.CreatedJournalEntryId == null);
-        return new QueueSummary(windowDays, pending, scanned, created, draft, journalOnly, failed, inProgress, older);
+        closed ??= await ClosedRangesAsync(companyId);
+        var inScope = ScansInOpenPeriods(companyId, closed);
+        // เงื่อนไข "อยู่ในคิว" = QueuedScan ตัวเดียวกับ RankAsync
+        var pending = await inScope.Where(QueuedScan).CountAsync();
+        var scanned = await inScope.CountAsync();
+        var created = await inScope.CountAsync(r => r.CreatedDocumentId != null);
+        var journalOnly = await inScope.CountAsync(r => r.CreatedDocumentId == null && r.CreatedJournalEntryId != null);
+        var failed = await inScope.CountAsync(r => r.ScanStatus == "Failed");
+        var inProgress = await inScope.CountAsync(r => r.ScanStatus == "Pending" || r.ScanStatus == "Processing");
+        var allQueued = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted)
+            .Where(QueuedScan)
+            .CountAsync();
+        var closedCount = await _db.FiscalPeriods.AsNoTracking()
+            .CountAsync(f => f.CompanyId == companyId && !f.IsDeleted && f.Status != FiscalPeriodStatus.Open);
+        return new QueueSummary(closedCount, pending, 0, scanned, created, journalOnly, failed, inProgress,
+            Math.Max(0, allQueued - pending));
     }
 }

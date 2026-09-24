@@ -5756,6 +5756,7 @@
               { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
             const j = await r.json().catch(() => ({}));
             if (!r.ok || j.success === false) failures.push(file.name + ': ' + (j.message || r.status));
+            else API.showStorageWarning(j);   // พื้นที่เกินแพ็กเกจ = บันทึกแล้วแต่เตือน (รอบ 193 ข้อ 30)
           } catch (e) { failures.push(file.name + ': ' + e.message); }
         }
         if (failures.length) Layout.toast('แนบไฟล์บางตัวไม่สำเร็จ: ' + failures.join(' | '), 'warning');

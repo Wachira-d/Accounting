@@ -49,6 +49,12 @@
   .empty-state h3 { text-align:center; margin:0 0 12px; font-size:16px; color:var(--gray-800); }
   .empty-state ul { margin:0 auto; max-width:640px; padding-left:20px; line-height:1.9; font-size:14px; }
   .queue-summary { font-size:13px; color:var(--gray-600); margin-bottom:12px; }
+  .queue-section-title { font-size:14px; font-weight:700; color:var(--gray-700); margin:16px 0 8px; }
+  .draft-card { border-left-color:#6366f1; }
+  .draft-flag {
+    background:#eef2ff; color:#3730a3; font-size:10px; font-weight:700;
+    padding:3px 8px; border-radius:4px; margin-left:6px;
+  }
   @media (max-width: 640px) {
     .queue-card { grid-template-columns:auto 1fr auto; }
     .queue-card .priority, .queue-card .queue-arrow { display:none; }
@@ -61,8 +67,8 @@
     <div>
       <h2 class="page-title">คิวรอตรวจ (OCR)</h2>
       <p class="page-subtitle">
-        สแกนที่ยังรอคนตัดสิน — ยังไม่ได้สร้างเอกสาร/บันทึกบัญชี หรือมีสินทรัพย์รอลงทะเบียน ·
-        เรียงให้ใบที่แก้แล้วระบบได้เรียนรู้มากที่สุดขึ้นก่อน
+        ทุกใบในงวดบัญชีที่ยังไม่ปิด: สแกนที่ยังรอคนตัดสิน (ยังไม่ได้สร้างเอกสาร/บันทึกบัญชี หรือมีสินทรัพย์รอลงทะเบียน)
+        และเอกสารร่างที่สร้างจากสแกนแต่ยังไม่อนุมัติ · สแกนเรียงให้ใบที่แก้แล้วระบบได้เรียนรู้มากที่สุดขึ้นก่อน
       </p>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
@@ -79,11 +85,14 @@
   <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.7;color:#065f46">
     💡 <b>ใช้อย่างไร</b>: กดที่แถวเพื่อเปิดหน้าตรวจของสแกนใบนั้น → แก้ช่องที่ผิด → กด "สร้างเอกสาร"
     (หรือบันทึกเป็นสมุดรายวัน / ลงทะเบียนสินทรัพย์) แล้วรายการจะออกจากคิวเอง · ทุกช่องที่แก้ถูกเก็บไว้สอนระบบ
+    <br><b>ร่างจากสแกน</b>: กดแถวเพื่อเปิดเอกสารร่างนั้น → ตรวจ → อนุมัติ แล้วรายการจะออกจากคิวเอง ·
+    คิวแสดง<b>ทุกใบในงวดที่ยังไม่ปิด</b> (ใบในงวดที่ปิดแล้วลงบัญชีไม่ได้ จึงไม่แสดง — หน้าจะบอกจำนวนไว้)
     <br><b>ลำดับมาจาก</b>: ระบบไม่มั่นใจแค่ไหน · เป็นผู้ขายใหม่ไหม · สแกนภายใน 7 วันไหม ·
     ธงเสริม (อาจเป็นสินทรัพย์ถาวร / มีลายมือ = ดันขึ้น · แก้ข้อมูลแล้วรอสร้างเอกสาร = เลื่อนลง)
   </div>
 
   <div id="queueSummary" class="queue-summary"></div>
+  <div id="draftSection"></div>
   <div id="queueList"></div>
 </div>
 
@@ -106,7 +115,9 @@
       const limit = parseInt(document.getElementById('limitSelect').value, 10) || 20;
       const listEl = document.getElementById('queueList');
       const sumEl = document.getElementById('queueSummary');
+      const draftEl = document.getElementById('draftSection');
       sumEl.textContent = '';
+      draftEl.innerHTML = '';
       if (!cid) {
         listEl.innerHTML = `<div class="empty-state"><div class="icon">🏢</div><h3>ยังไม่ได้เลือกบริษัท</h3></div>`;
         return;
@@ -124,17 +135,24 @@
         const data = res.data || {};
         // เซิร์ฟเวอร์รุ่นก่อนหน้าส่งเป็น array ล้วน — รับได้ทั้งสองรูป
         const items = Array.isArray(data) ? data : (data.items || []);
+        const drafts = Array.isArray(data) ? [] : (Array.isArray(data.drafts) ? data.drafts : []);
         const summary = Array.isArray(data) ? undefined : data.summary;
-        if (items.length === 0) {
+        draftEl.innerHTML = this.renderDrafts(drafts, summary);
+        if (items.length === 0 && drafts.length === 0) {
           listEl.innerHTML = this.renderEmpty(summary);
           return;
         }
         if (summary && typeof summary.pending === 'number') {
-          sumEl.textContent = summary.pending > items.length
-            ? `แสดง ${items.length} อันดับแรก จากทั้งหมด ${summary.pending} ใบที่รอตรวจ (สแกนใน ${summary.windowDays} วันล่าสุด)`
-            : `รอตรวจ ${summary.pending} ใบ (สแกนใน ${summary.windowDays} วันล่าสุด)`;
+          const n = (v) => Number(v || 0).toLocaleString('th-TH');
+          const scope = 'งวดบัญชีที่ยังไม่ปิด';
+          const hidden = summary.inClosedPeriods ? ` · ไม่แสดง ${n(summary.inClosedPeriods)} ใบที่อยู่ในงวดที่ปิดแล้ว` : '';
+          sumEl.textContent = (summary.pending > items.length
+            ? `สแกน: แสดง ${n(items.length)} อันดับแรก จากทั้งหมด ${n(summary.pending)} ใบที่รอตรวจ (${scope})`
+            : `สแกนรอตรวจ ${n(summary.pending)} ใบ (${scope})`) + hidden;
         }
-        listEl.innerHTML = items.map((s, i) => this.render(s, i + 1)).join('');
+        listEl.innerHTML = items.length
+          ? '<h3 class="queue-section-title">สแกนที่รอตรวจ</h3>' + items.map((s, i) => this.render(s, i + 1)).join('')
+          : '<p class="queue-summary">ไม่มีสแกนที่รอตัดสินในงวดที่ยังไม่ปิด</p>';
       } catch (err) {
         listEl.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><h3>โหลดคิวไม่สำเร็จ</h3><p style="text-align:center">${Layout.esc(err.message || err)}</p></div>`;
       }
@@ -145,27 +163,50 @@
     renderEmpty(sm) {
       const n = (v) => Number(v || 0).toLocaleString('th-TH');
       if (!sm) {
-        return `<div class="empty-state"><div class="icon">✅</div><h3>ไม่มีสแกนที่รอตรวจ</h3>
+        return `<div class="empty-state"><div class="icon">✅</div><h3>ไม่มีรายการที่รอตรวจ</h3>
           <p style="text-align:center;font-size:13px">ไม่มีข้อมูลสรุปจากเซิร์ฟเวอร์ — บอกเหตุผลที่ว่างไม่ได้</p></div>`;
       }
       const reasons = [];
-      if (!sm.scannedInWindow && !sm.olderPending) {
-        reasons.push(`ยังไม่มีการสแกนเอกสารใน ${sm.windowDays} วันที่ผ่านมา — <a href="/pages/document-scan.html">ไปหน้าสแกนเอกสาร</a>`);
+      const scope = sm.closedPeriodCount
+        ? `ในงวดบัญชีที่ยังไม่ปิด (ปิดแล้ว ${n(sm.closedPeriodCount)} งวด)`
+        : 'ทั้งหมด (ยังไม่เคยปิดงวดบัญชี)';
+      if (!sm.scannedInScope && !sm.inClosedPeriods) {
+        reasons.push(`ยังไม่มีการสแกนเอกสาร${Layout.esc(scope)} — <a href="/pages/document-scan.html">ไปหน้าสแกนเอกสาร</a>`);
       } else {
-        reasons.push(`สแกนใน ${sm.windowDays} วันล่าสุด ${n(sm.scannedInWindow)} ใบ`);
-        if (sm.documentCreated) {
-          reasons.push(`สร้างเป็นเอกสารแล้ว ${n(sm.documentCreated)} ใบ`
-            + (sm.documentStillDraft
-              ? ` — ในนั้น <b>ยังเป็นร่าง ${n(sm.documentStillDraft)} ใบ</b> (อนุมัติที่หน้า <a href="/pages/documents.html?side=expense">เอกสารฝั่งรายจ่าย</a> แล้วกรองสถานะ "ร่าง" — ไม่อยู่ในคิวนี้เพราะผ่านขั้นตรวจสแกนแล้ว)`
-              : ''));
-        }
+        reasons.push(`สแกน${Layout.esc(scope)} ${n(sm.scannedInScope)} ใบ`);
+        if (sm.documentCreated) reasons.push(`สร้างเป็นเอกสารแล้ว ${n(sm.documentCreated)} ใบ — ไม่มีร่างที่รออนุมัติ`);
         if (sm.journalOnly) reasons.push(`บันทึกเป็นสมุดรายวันแล้ว ${n(sm.journalOnly)} ใบ`);
         if (sm.failed) reasons.push(`อ่านไม่สำเร็จ ${n(sm.failed)} ใบ — สแกนใหม่หรือลบได้ที่ <a href="/pages/document-scan.html">หน้าสแกนเอกสาร</a>`);
         if (sm.inProgress) reasons.push(`กำลังอ่านอยู่ ${n(sm.inProgress)} ใบ — จะเข้าคิวเมื่ออ่านเสร็จ`);
-        if (sm.olderPending) reasons.push(`<b>ค้างเกิน ${sm.windowDays} วัน ${n(sm.olderPending)} ใบ</b> ที่ยังไม่ได้สร้างเอกสาร — ไม่แสดงในคิวนี้ เปิดได้จาก <a href="/pages/document-scan.html">หน้าสแกนเอกสาร</a>`);
+        if (sm.inClosedPeriods) reasons.push(`<b>ยังไม่ได้ลงบัญชี ${n(sm.inClosedPeriods)} ใบ แต่วันที่อยู่ในงวดที่ปิดแล้ว</b> — ไม่แสดงในคิวนี้ (ลงบัญชีในงวดที่ปิดไม่ได้) เปิดได้จาก <a href="/pages/document-scan.html">หน้าสแกนเอกสาร</a>`);
       }
-      return `<div class="empty-state"><div class="icon">✅</div><h3>ไม่มีสแกนที่รอตรวจ</h3>
+      return `<div class="empty-state"><div class="icon">✅</div><h3>ไม่มีรายการที่รอตรวจ</h3>
         <ul>${reasons.map(r => `<li>${r}</li>`).join('')}</ul></div>`;
+    },
+
+    /** ร่างจากสแกนที่ยังไม่อนุมัติ (รอบ 193 ข้อ 31) — กดแล้วเปิดหน้ารายละเอียดเอกสาร (มีปุ่มอนุมัติ/แก้ไข) */
+    renderDrafts(drafts, sm) {
+      if (!drafts.length) return '';
+      const n = (v) => Number(v || 0).toLocaleString('th-TH');
+      const total = sm && typeof sm.draftPending === 'number' ? sm.draftPending : drafts.length;
+      const more = total > drafts.length ? ` — แสดง ${n(drafts.length)} ใบที่ค้างนานสุด จาก ${n(total)} ใบ` : '';
+      const rows = drafts.map(d => {
+        const href = `/pages/documents.html?openDoc=${encodeURIComponent(d.documentId)}`;
+        const typeLabel = Layout.docTypeLabel ? Layout.docTypeLabel(d.documentType) : d.documentType;
+        return `
+        <a class="queue-card draft-card" href="${Layout.esc(href)}" title="เปิดเอกสารร่างนี้เพื่อตรวจและอนุมัติ">
+          <div class="queue-rank">📝</div>
+          <div class="queue-meta">
+            <div class="queue-vendor">${Layout.esc(d.contactName || '(ยังไม่ระบุผู้ติดต่อ)')}<span class="draft-flag">ร่าง · ${Layout.esc(typeLabel)}</span></div>
+            <div class="queue-filename">${Layout.esc(d.originalFileName || '')}</div>
+            <div class="queue-hint">วันที่เอกสาร ${Layout.esc(Layout.date(d.documentDate))} • สแกนเมื่อ ${Layout.esc(Layout.date(d.scannedAt))}</div>
+          </div>
+          <div class="priority" title="ยอดรวมของร่าง">${Layout.esc(Number(d.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}</div>
+          <div class="grade-badge" style="background:#6366f1" title="เอกสารร่าง — รออนุมัติ">ร</div>
+          <div class="queue-arrow" style="color:var(--gray-400);font-size:20px">→</div>
+        </a>`;
+      }).join('');
+      return `<h3 class="queue-section-title">ร่างจากสแกน — รออนุมัติ (${n(total)})${more}</h3>${rows}`;
     },
 
     render(scan, rank) {

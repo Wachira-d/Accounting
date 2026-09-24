@@ -507,7 +507,20 @@ const API = {
   // alias — 5 หน้า (employees/leave-types/project-time/roles) เรียก API.delete(...) ซึ่งไม่เคยมี
   // ⇒ TypeError ก่อนยิง request ⇒ ปุ่มลบตายเงียบตั้งแต่เขียนหน้า (ERP_REVIEW I-02)
   delete(url, signal) { return this.del(url, signal); },
-  upload(url, formData, signal) { return this.request('POST', url, formData, true, signal); },
+  async upload(url, formData, signal) {
+    const res = await this.request('POST', url, formData, true, signal);
+    this.showStorageWarning(res);
+    return res;
+  },
+  /** เพดานพื้นที่ของไฟล์แนบ = เตือน ไม่บล็อก (รอบ 193 ข้อ 30) — เซิร์ฟเวอร์บันทึกไฟล์แล้วและส่ง
+   *  `data.storageWarning` มาเมื่อเกิน/ใกล้เต็มแพ็กเกจ · ข้อความมาจากเซิร์ฟเวอร์ (หน้าไม่คำนวณเอง)
+   *  · หน้าที่ใช้ fetch ดิบเรียกตัวนี้กับ json ที่ได้เอง */
+  showStorageWarning(res) {
+    const w = res && res.data && typeof res.data.storageWarning === 'string' ? res.data.storageWarning : '';
+    if (w && typeof Layout !== 'undefined' && Layout.toast) {
+      try { Layout.toast(w, 'warning', 9000); } catch (_) {}
+    }
+  },
   _logError(method, url, status, msg) {
     try { fetch('/api/error-log/client', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestPath: url, httpMethod: method, statusCode: status, message: msg, source: 'Frontend' })
