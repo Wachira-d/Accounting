@@ -274,6 +274,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 return (empty, null, null, null);
 
             // หา contact ของผู้ขาย — เลขผู้เสียภาษีชนะชื่อเสมอ (ชื่อซ้ำกันได้)
+            // ตั้งใจใช้เลขภาษีอย่างเดียว ไม่ดูสาขา (รอบ 193 ทีม C3 · อยู่ใน tools/contact_taxid_only_match_baseline.txt):
+            // ผลคือ "ทุกสาขา" ของนิติบุคคลเดียว ⇒ ประวัติ WHT/ยอดสะสมปีภาษี (ด่าน ฿1,000 ท.ป.4/2528) นับต่อผู้มีเงินได้
+            // หนึ่งราย ไม่ใช่ต่อสถานประกอบการ — ใช้เป็นบริบทให้ AI ไม่ได้ผูกเอกสารกับแถวใด
             var payeeQuery = _db.Contacts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted);
             // TaxId ในฐานเก็บทั้งแบบมีขีดและไม่มี (แล้วแต่ทางเข้า) — เทียบทั้ง
@@ -509,6 +512,7 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             if (!string.IsNullOrEmpty(vendorKey))
             {
                 var since6 = DateTime.UtcNow.AddMonths(-6);
+                // ตั้งใจรวมทุกสาขาของเลขนี้ (รอบ 193 ทีม C3 · baseline): ค่าเฉลี่ยยอดต่อครั้งของนิติบุคคล — บริบทให้ AI เท่านั้น
                 var amounts = await _db.Documents.AsNoTracking()
                     .Where(d => d.CompanyId == companyId && !d.IsDeleted
                                 && d.DocumentDate > since6

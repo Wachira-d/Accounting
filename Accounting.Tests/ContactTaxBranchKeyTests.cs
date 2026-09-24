@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -57,13 +58,70 @@ public class ContactTaxBranchKeyTests
 
     // ───────── ครึ่งหลัง: ข้อมูลเดิมห้ามถูกสร้างซ้ำ / ห้ามเปลี่ยนคำตอบ ─────────
 
+    // ───────── รอบ 193 ทีม C3: แถวสาขาว่าง (≡ สนญ.) ห้ามถูก payload สาขาอื่นอ้าง ─────────
+    // เดิม payload สาขา 8 อ้างแถวสาขาว่างได้ (UnspecifiedBranchRow) แล้ว IntegrationService.ProcessCustomerAsync
+    // เขียน BranchCode = 00008 + ที่อยู่สาขาทับ ⇒ payload สำนักงานใหญ่ครั้งถัดไปสร้างแถวใหม่ และประวัติลูกหนี้ของ
+    // สำนักงานใหญ่ค้างอยู่ที่แถวที่กลายเป็น "สาขา 8"
+
     [Fact]
-    public void LegacyRowWithoutBranch_ClaimedByBranchPayload_NoDuplicate()
+    public void LegacyRowWithoutBranch_NotClaimedByBranch8Payload_CallerCreatesBranch8Row()
     {
-        // แถวที่สร้างก่อนทางเข้านี้ส่งสาขา (BranchCode ว่าง) — พฤติกรรมเดิม: ผูกแถวนี้ (ไม่สร้างแถวใหม่)
         var m = ContactTaxBranchKey.Pick(new[] { C(Blank, Tin, null) }, Tin, "00008");
+        Assert.False(m.Found);
+        Assert.True(m.TaxIdExists);   // ⇒ ผู้เรียกห้ามถอยไปจับด้วยชื่อ/อีเมล (จะได้แถวว่างเดิมกลับมา) — สร้างแถวสาขา 8
+    }
+
+    [Fact]
+    public void LegacyRowWithoutBranch_NotClaimedByBranchPayload_EvenWhenOnlyDigitsGiven()
+    {
+        var m = ContactTaxBranchKey.Pick(new[] { C(Blank, Tin, "  ") }, Tin, "8");
+        Assert.False(m.Found);
+        Assert.True(m.TaxIdExists);
+    }
+
+    [Fact]
+    public void Sequence_Branch8ThenHq_HqStillOwnsLegacyRow()
+    {
+        // ลำดับจริงที่ฝ่ายค้านเล่า: สาขา 8 มาก่อน (ได้แถวใหม่) → สำนักงานใหญ่มาทีหลังต้องยังได้แถวเดิมที่ถือประวัติ
+        var afterBranch8 = new[] { C(Blank, Tin, null), C(B8, Tin, "00008") };
+        Assert.Equal(B8, ContactTaxBranchKey.Pick(afterBranch8, Tin, "00008").ContactId);
+        var hq = ContactTaxBranchKey.Pick(afterBranch8, Tin, "00000");
+        Assert.Equal(Blank, hq.ContactId);
+        Assert.Equal(ContactKeyBasis.ExactBranch, hq.Basis);
+        // payload ไม่ระบุสาขา → แถว สนญ./ไม่ระบุ ก่อน ไม่ใช่แถวสาขา 8
+        Assert.Equal(Blank, ContactTaxBranchKey.Pick(afterBranch8, Tin, null).ContactId);
+    }
+
+    [Theory]
+    [InlineData("00000")]
+    [InlineData("0")]
+    [InlineData("000")]
+    public void LegacyRowWithoutBranch_StillClaimedByHqPayload_AnySpelling(string hqCode)
+    {
+        // ครึ่งที่ต้องยังถูก: payload สำนักงานใหญ่อ้างแถวว่างได้เหมือนเดิม (ไม่สร้างแถว สนญ. ซ้ำ)
+        var m = ContactTaxBranchKey.Pick(new[] { C(Blank, Tin, null) }, Tin, hqCode);
         Assert.Equal(Blank, m.ContactId);
-        Assert.Equal(ContactKeyBasis.UnspecifiedBranchRow, m.Basis);
+        Assert.Equal(ContactKeyBasis.ExactBranch, m.Basis);
+        Assert.True(m.MayOverwriteBranch);   // เติม 00000 ให้แถวว่างได้ — ความหมายเดิม
+    }
+
+    // ───────── MayOverwriteBranch: เขียนรหัสสาขาของ payload ลงแถวที่จับได้ ได้เฉพาะเมื่อสาขาตรงแล้ว ─────────
+
+    [Fact]
+    public void MayOverwriteBranch_False_WhenMalformedBranchFellBackToHq()
+    {
+        // "8A" = ไม่รู้ → ได้แถว สนญ. แต่ ContactTypeResolver.NormalizeBranchCode("8A") = 00008 ⇒ ถ้าเขียน สนญ. กลายเป็นสาขา 8
+        var m = ContactTaxBranchKey.Pick(new[] { C(Hq, Tin, "00000") }, Tin, "8A");
+        Assert.Equal(Hq, m.ContactId);
+        Assert.False(m.MayOverwriteBranch);
+    }
+
+    [Fact]
+    public void MayOverwriteBranch_True_ForExactBranch_And_NonTaxMatch()
+    {
+        Assert.True(ContactTaxBranchKey.Pick(new[] { C(B8, Tin, "00008") }, Tin, "00008").MayOverwriteBranch);
+        Assert.True(default(ContactKeyMatch).MayOverwriteBranch);   // จับด้วยชื่อ/อีเมล/สร้างใหม่ = พฤติกรรมเดิม
+        Assert.False(ContactTaxBranchKey.Pick(new[] { C(B8, Tin, "00008") }, Tin, null).MayOverwriteBranch);
     }
 
     [Fact]
@@ -140,6 +198,53 @@ public class ContactTaxBranchKeyTests
         var m = ContactTaxBranchKey.Pick(new[] { C(Other, "DE123456789", null) }, " DE123456789 ", "00008");
         Assert.Equal(Other, m.ContactId);
         Assert.Equal(ContactKeyBasis.RawTaxIdEquality, m.Basis);
+    }
+
+    // ───────── PickContact: ชุดนำเข้า/ change tracker (รอบ 193 ทีม C3) ─────────
+    // เดิม CompetitorImportFramework + หน้าพรีวิวนำเข้าใช้ ToDictionaryAsync(c => c.TaxId) ⇒ เลขเดียวกันสองสาขา
+    // (ถูกต้องตามประกาศฯ 199) = ArgumentException "same key" ทั้งไฟล์
+
+    private static Contact Row(Guid id, string? tax, string? branch)
+        => new() { Id = id, Name = "บริษัท เรดิสัน จำกัด", TaxId = tax, BranchCode = branch };
+
+    [Fact]
+    public void PickContact_TwoBranchesSameTaxId_NoThrow_ImportWithoutBranchGetsHq()
+    {
+        var rows = new List<Contact> { Row(B8, Tin, "00008"), Row(Hq, Tin, "00000") };
+        // สาธิตว่าของเดิมพังจริง: ToDictionary ด้วยเลขภาษีโยนทันที
+        Assert.Throws<ArgumentException>(() => rows.ToDictionary(c => c.TaxId!));
+        Assert.Equal(Hq, ContactTaxBranchKey.PickContact(rows, Tin, branchCode: null)!.Id);
+        Assert.Equal(B8, ContactTaxBranchKey.PickContact(rows, Tin, "00008")!.Id);
+    }
+
+    [Fact]
+    public void PickContact_NoRowForBranch_ReturnsNull_SoCallerCreatesBranchRow()
+    {
+        var rows = new List<Contact> { Row(Hq, Tin, "00000") };
+        Assert.Null(ContactTaxBranchKey.PickContact(rows, Tin, "00008"));
+        Assert.Null(ContactTaxBranchKey.PickContact(new List<Contact>(), Tin, null));
+        // ครึ่งที่ต้องยังถูก: ไฟล์ที่ไม่มีคอลัมน์สาขา กับเลขที่มีแถวเดียว ได้แถวนั้นเหมือน dictionary เดิม
+        Assert.Equal(Hq, ContactTaxBranchKey.PickContact(rows, Tin, null)!.Id);
+        Assert.Equal(Hq, ContactTaxBranchKey.PickContact(rows, "0-1055-51136-08-5", null)!.Id);
+    }
+
+    // ───────── ด่านกันชน /api/v1/contacts/sync: "เลขนี้เป็นของรหัสอื่น" ต้องเทียบเลข + สาขา ─────────
+    // ContactsV1Controller.Sync ส่ง owners (ไม่รวมรหัสเดียวกัน) + สาขาที่มีผล (TaxBranchCode.Normalize) เข้า Pick
+
+    [Fact]
+    public void SyncOwnerCheck_Branch8OfSameEntity_IsNotOwnedByHqCode()
+    {
+        // ERP ส่ง สนญ. (รหัส A มีอยู่แล้ว) แล้วส่งสาขา 8 (รหัส B) — เดิมบล็อก CONTACT-TAXID-OWNED ที่รหัส B เสมอ
+        var owners = new[] { C(Hq, Tin, "00000") };
+        Assert.False(ContactTaxBranchKey.Pick(owners, Tin, TaxBranchCode.Normalize("00008")).Found);
+    }
+
+    [Fact]
+    public void SyncOwnerCheck_SameBranchDifferentCode_StillOwned()
+    {
+        // ครึ่งที่ต้องยังถูก: รหัส B ส่ง สนญ. ของเลขที่รหัส A ถือ สนญ. อยู่ = คู่ค้าสองรายถือคีย์เดียวกัน ⇒ ยังบล็อก
+        Assert.Equal(Hq, ContactTaxBranchKey.Pick(new[] { C(Hq, Tin, "00000") }, Tin, TaxBranchCode.Normalize(null)).ContactId);
+        Assert.Equal(Blank, ContactTaxBranchKey.Pick(new[] { C(Blank, Tin, null) }, Tin, TaxBranchCode.Normalize("")).ContactId);
     }
 
     [Fact]

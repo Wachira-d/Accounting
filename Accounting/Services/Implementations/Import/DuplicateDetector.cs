@@ -117,14 +117,24 @@ public class DuplicateDetector : IDuplicateDetector
     {
         var taxId = Get(d, "TaxId", "taxId", "เลขผู้เสียภาษี");
         var name = Get(d, "Name", "name", "ชื่อ");
-        // 1.0 TaxId exact
+        // 1.0 TaxId + สาขา — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ทีม C3 · คำตัดสินเจ้าของข้อ 20):
+        // เดิม `c.TaxId == taxId` ⇒ แถวสาขา 8 ในไฟล์ถูกรายงานว่า "ซ้ำ" กับแถวสำนักงานใหญ่ (หรือแถวไหนก็ได้ของเลขนั้น)
+        // แล้วผู้ใช้เลือก "เขียนทับ" = ข้อมูลสาขา 8 ทับแถว สนญ. · ไม่มีคอลัมน์สาขา = "ไม่ระบุ" (แถว สนญ. ก่อน)
         if (!string.IsNullOrWhiteSpace(taxId))
         {
-            var hit = await _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == cid && !c.IsDeleted && c.TaxId == taxId)
-                .Select(c => new { c.Id, c.Name, c.TaxId, c.Phone, c.Email, c.Address })
-                .FirstOrDefaultAsync(ct);
-            if (hit != null) return Pack(cid, "Contact", d, hit.Id, hit, 1.0, "เลขผู้เสียภาษีตรงกัน", sid, sref, rn);
+            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Contacts.AsNoTracking().Where(c => !c.IsDeleted), cid, taxId,
+                Get(d, "BranchCode", "branchCode", "รหัสสาขา"), ct);
+            if (key.ContactId is Guid keyId)
+            {
+                var hit = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == keyId && c.CompanyId == cid)
+                    .Select(c => new { c.Id, c.Name, c.TaxId, c.Phone, c.Email, c.Address })
+                    .FirstOrDefaultAsync(ct);
+                if (hit != null) return Pack(cid, "Contact", d, hit.Id, hit, 1.0, "เลขผู้เสียภาษี + สาขาตรงกัน", sid, sref, rn);
+            }
+            // เลขนี้มีแล้วแต่คนละสาขา = ผู้ติดต่อรายใหม่ของสาขานั้น ไม่ใช่ "ชื่อซ้ำ (เลขต่างกัน)" — ห้ามถอยไปเทียบชื่อ
+            if (key.TaxIdExists) return null;
         }
         // 0.9 Name exact (case-insensitive)
         if (!string.IsNullOrWhiteSpace(name))

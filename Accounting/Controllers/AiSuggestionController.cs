@@ -947,11 +947,15 @@ public class AiSuggestionController : ControllerBase
             ? null : new string(req.TaxId.Where(char.IsDigit).ToArray());
 
         // Stage 1: exact TaxId hit wins (perfect signal — same legal entity)
+        // ตั้งใจคืน "ทุกสาขา" ของเลขนี้ (ไม่ใช้ Helpers/ContactTaxBranchKey): นี่คือรายการผู้สมัครให้ผู้ใช้เลือกตอนพิมพ์
+        // ผู้ติดต่อใหม่ ไม่ใช่การผูกอัตโนมัติ — แต่ต้องบอกสาขาของแต่ละแถว (รอบ 193 ทีม C3) มิฉะนั้นสำนักงานใหญ่กับ
+        // สาขา 8 หน้าตาเหมือนกันทุกตัวอักษร แล้วผู้ใช้กด "ใช้รายนี้" ผิดแถว
         if (!string.IsNullOrEmpty(taxIdDigits) && taxIdDigits.Length >= 10)
         {
             var byTaxId = await _db.Contacts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && c.TaxId != null && c.TaxId == taxIdDigits)
-                .Select(c => new { c.Id, c.Name, c.TaxId, c.IsCustomer, c.IsSupplier })
+                .OrderBy(c => c.BranchCode)
+                .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.IsCustomer, c.IsSupplier })
                 .Take(5)
                 .ToListAsync(ct);
             if (byTaxId.Count > 0)
@@ -960,9 +964,12 @@ public class AiSuggestionController : ControllerBase
                 {
                     matches = byTaxId.Select(c => new
                     {
-                        id = c.Id, name = c.Name, taxId = c.TaxId,
+                        id = c.Id, name = c.Name, taxId = c.TaxId, branchCode = c.BranchCode,
                         isCustomer = c.IsCustomer, isSupplier = c.IsSupplier,
-                        confidence = 1.00m, reason = "TaxId ตรง — เป็นนิติบุคคลเดียวกัน",
+                        confidence = 1.00m,
+                        reason = string.IsNullOrWhiteSpace(c.BranchCode)
+                            ? "TaxId ตรง — เป็นนิติบุคคลเดียวกัน"
+                            : $"TaxId ตรง — เป็นนิติบุคคลเดียวกัน · {Accounting.Helpers.TaxBranchCode.Label(c.BranchCode)}",
                     }),
                     feedbackId = (Guid?)null,
                 }));

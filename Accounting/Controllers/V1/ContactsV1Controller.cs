@@ -39,8 +39,10 @@ public class ContactsV1Controller : PublicApiControllerBase
     /// <summary>ใครถือเลขผู้เสียภาษีนี้อยู่แล้ว — ข้อเท็จจริงที่ป้อนให้
     /// <c>Helpers/PartnerSyncConflict</c> (ประกาศเป็น record แทน tuple โดยตั้งใจ:
     /// ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน C# จะทิ้งชื่อแล้วไป CS1061 ไกล ๆ —
-    /// tools/tuple_name_merge_check.py)</summary>
-    private sealed record TaxIdOwnerRow(string TaxId, string? ExternalId, string Name);
+    /// tools/tuple_name_merge_check.py) ·
+    /// รอบ 193 ทีม C3: เก็บ <c>Id</c> + <c>BranchCode</c> ด้วย — "ถือเลขเดียวกัน" ต้องหมายถึง<b>เลข + สาขา</b>เดียวกัน
+    /// (คำตัดสินเจ้าของข้อ 20 · ประกาศอธิบดีฯ 199) ไม่ใช่เลขอย่างเดียว</summary>
+    private sealed record TaxIdOwnerRow(Guid Id, string TaxId, string? BranchCode, string? ExternalId, string Name);
 
     public record ContactSyncItem(
         string ExternalId,
@@ -120,10 +122,10 @@ public class ContactsV1Controller : PublicApiControllerBase
             var rows = await Db.Contacts.AsNoTracking()
                 .Where(c => c.CompanyId == ctx!.CompanyId && c.TaxId != null
                          && incomingTaxIds.Contains(c.TaxId))
-                .Select(c => new { c.TaxId, c.ExternalId, c.Name })
+                .Select(c => new { c.Id, c.TaxId, c.BranchCode, c.ExternalId, c.Name })
                 .ToListAsync(ct);
             foreach (var r in rows)
-                taxIdOwners.Add(new TaxIdOwnerRow(r.TaxId!, r.ExternalId, r.Name));
+                taxIdOwners.Add(new TaxIdOwnerRow(r.Id, r.TaxId!, r.BranchCode, r.ExternalId, r.Name));
         }
 
         int created = 0, updated = 0, skipped = 0, rejected = 0;
@@ -161,9 +163,18 @@ public class ContactsV1Controller : PublicApiControllerBase
                 }
 
                 // ── ด่านกันชน — ก่อนแตะแถวใด ๆ ──
-                var owner = taxIdOwners.FirstOrDefault(o =>
-                    o.TaxId == taxId
-                    && !string.Equals(o.ExternalId, item.ExternalId, StringComparison.OrdinalIgnoreCase));
+                // รอบ 193 ทีม C3: "เลขนี้เป็นของคู่ค้ารายอื่น" ต้องเทียบด้วยคีย์ <b>เลขภาษี + สาขา</b> (ตัวจับคู่กลาง
+                // Helpers/ContactTaxBranchKey) — เดิมเทียบเลขอย่างเดียว ⇒ ERP ที่ sync สำนักงานใหญ่ (รหัส A) กับสาขา 8
+                // (รหัส B) ของนิติบุคคลเดียวกัน ถูกบล็อก CONTACT-TAXID-OWNED ที่รหัส B เสมอ ทั้งที่ถูกต้องตามประกาศฯ 199.
+                // สาขาที่ใช้เทียบ = ที่ส่งมา → ของแถวเดิม → ไม่มี (≡ สำนักงานใหญ่ ตาม FindDuplicateContactAsync)
+                var effectiveBranch = Helpers.TaxBranchCode.Normalize(item.BranchCode ?? c?.BranchCode);
+                var ownerKey = Helpers.ContactTaxBranchKey.Pick(
+                    taxIdOwners
+                        .Where(o => !string.Equals(o.ExternalId, item.ExternalId, StringComparison.OrdinalIgnoreCase)
+                                 && (c == null || o.Id != c.Id))
+                        .Select(o => new Helpers.ContactKeyCandidate(o.Id, o.TaxId, o.BranchCode)),
+                    taxId, effectiveBranch);
+                var owner = ownerKey.ContactId is Guid ownerId ? taxIdOwners.First(o => o.Id == ownerId) : null;
                 var clash = Helpers.PartnerSyncConflict.CheckContact(
                     externalId: item.ExternalId.Trim(),
                     incomingTaxId: taxId,
@@ -347,6 +358,9 @@ public class ContactsV1Controller : PublicApiControllerBase
 
         if (string.IsNullOrWhiteSpace(req?.Name) && string.IsNullOrWhiteSpace(req?.TaxId))
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุชื่อหรือเลขผู้เสียภาษี"));
+        // รหัสสาขาผิดรูป ("8A") = บอกผู้เรียก — ห้ามถือเป็น "ไม่ระบุ" แล้วตอบแถวสำนักงานใหญ่ว่า "ตรงกัน" (ด่านเดียวกับ /documents)
+        if (!Accounting.Helpers.TaxBranchCode.TryNormalize(req!.BranchCode, out _, out var branchError))
+            return BadRequest(new ApiResponse<string>(false, null, $"branchCode: {branchError}"));
 
         // 1) เลขผู้เสียภาษี (+ สาขา) ตรง = จบ ไม่ต้องเดา — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20)
         if (!string.IsNullOrWhiteSpace(req!.TaxId))
@@ -371,8 +385,13 @@ public class ContactsV1Controller : PublicApiControllerBase
                 return Ok(new ApiResponse<object>(true, new
                 {
                     matched = false,
+                    taxIdExists = true,
+                    // รอบ 193 ทีม C3: ข้อความต้องตรงพฤติกรรมจริง — เดิมบอกว่า "ระบบจะสร้างให้เมื่อสร้างเอกสาร" แต่
+                    // POST /api/v1/documents ไม่เคยรับสาขา (ส่ง null ⇒ ได้แถวสำนักงานใหญ่). ตอนนี้รับ contactBranchCode แล้ว
                     reason = $"มีผู้ติดต่อเลขผู้เสียภาษีนี้แล้ว แต่ไม่มี{Accounting.Helpers.TaxBranchCode.Label(req.BranchCode)} "
-                        + "— ระบบจะสร้างผู้ติดต่อของสาขานี้แยกเมื่อสร้างเอกสาร (เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ)",
+                        + "— ส่ง contactTaxId พร้อม contactBranchCode เดียวกันใน POST /api/v1/documents แล้วระบบจะสร้าง"
+                        + "ผู้ติดต่อของสาขานี้แยกให้ (เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ) · ถ้าไม่ส่ง contactBranchCode "
+                        + "เอกสารจะผูกกับผู้ติดต่อสำนักงานใหญ่",
                 }));
         }
 

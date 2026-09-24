@@ -43,6 +43,14 @@ for f in tools/*_check.py; do
 done
 [ $fail -eq 0 ] && green "✅ checker $(ls tools/*_check.py | wc -l) ตัวผ่าน"
 
+# ---------- 1a. negative test ของ checker ที่มี --self-test (F2 ข้อ 6: ด่านที่ไม่มี negative test = ไม่มีด่าน) ----------
+# รอบ 193 ทีม C3: เริ่มจาก contact_taxid_only_match_check — เพิ่มชื่อ checker ที่มี --self-test ต่อท้ายลิสต์นี้ได้
+for f in tools/contact_taxid_only_match_check.py; do
+  [ -e "$f" ] || continue
+  out=$(python3 "$f" --self-test 2>&1); rc=$?
+  if [ $rc -ne 0 ]; then red "❌ self-test $f"; echo "$out" | tail -20; fail=1; fi
+done
+
 # ---------- 1b. simulation ที่รันโค้ดจริง ----------
 # CLAUDE.md §F เขียนไว้ตั้งแต่รอบ 169 ว่า check_all.sh "รันทุกบรรทัดข้างบน" ซึ่งรวม
 # `node tools/vat_line_source_sim.js` — แต่จริง ๆ **ไม่เคยรัน** (ตรวจพบ 2026-09-21)

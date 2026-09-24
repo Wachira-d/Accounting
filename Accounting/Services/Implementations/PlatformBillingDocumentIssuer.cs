@@ -287,11 +287,25 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     private async Task<Guid?> EnsureContactAsync(Guid tenantId, Company buyer)
     {
         var taxId = string.IsNullOrWhiteSpace(buyer.TaxId) ? null : buyer.TaxId.Trim();
-        var existing = await _db.Contacts
-            .Where(c => c.CompanyId == tenantId && !c.IsDeleted
-                && ((taxId != null && c.TaxId == taxId) || (taxId == null && c.Name == buyer.Name)))
-            .OrderByDescending(c => c.IsCustomer)
-            .FirstOrDefaultAsync();
+        var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode;
+        Contact? existing;
+        if (taxId != null)
+        {
+            // รอบ 193 ทีม C3 (คำตัดสินเจ้าของข้อ 20): คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ใบกำกับค่าบริการ
+            // ต้องออกในนามสาขาที่ลูกค้าลงทะเบียนไว้ (§86/4) · เดิม `c.TaxId == taxId` หยิบแถวไหนก็ได้ของเลขนั้น ·
+            // เลขนี้มีแล้วแต่คนละสาขา ⇒ สร้างแถวสาขานี้ (ข้างล่าง) ไม่ใช่ผูกแถวสาขาอื่น
+            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, tenantId, taxId, buyerBranch);
+            existing = key.ContactId is Guid keyId
+                ? await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == tenantId && !c.IsDeleted)
+                : null;
+        }
+        else
+        {
+            existing = await _db.Contacts
+                .Where(c => c.CompanyId == tenantId && !c.IsDeleted && c.Name == buyer.Name)
+                .OrderByDescending(c => c.IsCustomer)
+                .FirstOrDefaultAsync();
+        }
         if (existing != null)
         {
             // ผู้ติดต่อเดิมอาจถูกสร้างไว้เป็นผู้ขายอย่างเดียว — ต้องเป็นลูกค้าด้วย
@@ -305,7 +319,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             CompanyId = tenantId,
             Name = buyer.Name,
             TaxId = taxId,
-            BranchCode = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode,
+            BranchCode = buyerBranch,
             ContactType = taxId != null && taxId.Length == 13 && taxId.StartsWith('0')
                 ? ContactType.JuristicPerson : ContactType.Individual,
             IsCustomer = true,

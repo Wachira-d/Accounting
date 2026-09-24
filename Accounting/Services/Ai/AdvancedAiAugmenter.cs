@@ -107,10 +107,12 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             object? vendorHistory = null;
             if (!string.IsNullOrEmpty(scan.ExtractedVendorTaxId))
             {
-                var contact = await _db.Contacts.AsNoTracking()
-                    .Where(c => c.CompanyId == companyId && c.TaxId == scan.ExtractedVendorTaxId)
-                    .Select(c => c.Id).FirstOrDefaultAsync(ct);
-                if (contact != Guid.Empty)
+                // รอบ 193 ทีม C3: เลือกแถวผู้ขายด้วยคีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — เดิม
+                // `c.TaxId == x` หยิบแถวไหนก็ได้ ⇒ ประวัติที่ส่งให้ AI มาจากสาขาที่ไม่ใช่สาขาบนกระดาษ ·
+                // สแกนไม่มีช่องสาขาผู้ขาย ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน (ความหมายเดียวกับทางเข้าอื่น)
+                var vendorKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                    _db.Contacts.AsNoTracking(), companyId, scan.ExtractedVendorTaxId, branchCode: null, ct);
+                if (vendorKey.ContactId is Guid contact)
                 {
                     vendorHistory = await _db.Documents.AsNoTracking()
                         .Where(d => d.CompanyId == companyId && d.ContactId == contact && !d.IsDeleted)

@@ -644,7 +644,10 @@ public class IntegrationService : IIntegrationService
                 // รหัสสาขาเป็นเรื่องของนิติบุคคล/ราชการ (§86/4(2) · ประกาศฯ 199) —
                 // ตัวตัดสินตัวเดียวเป็นคนบอกว่าเก็บได้ไหม เพื่อไม่ให้ "00000" ที่ระบบ
                 // ต้นทางใส่มาเป็น default ไปติดท้ายเลขบัตรประชาชนเป็น "(สำนักงานใหญ่)"
-                if (request.BranchCode != null)
+                // รอบ 193 ทีม C3: เขียนสาขาของ payload ได้เฉพาะเมื่อแถวที่จับได้ "ตรงสาขาแล้ว" (MayOverwriteBranch) —
+                // payload รหัสผิดรูป ("8A"/"สาขา 8") ถูกตัวจับคู่ถือว่า "ไม่รู้" แล้วได้แถว สนญ. แต่ BranchCodeFor ดึงเลขออกมา
+                // เป็น 00008 ⇒ ถ้าเขียน แถว สนญ. กลายเป็นสาขา 8 เงียบ ๆ (ช่องเดียวกับที่ข้อ 20 ปิด) · payload "" ก็ล้างสาขาทิ้งได้
+                if (request.BranchCode != null && taxKey.MayOverwriteBranch)
                     contact.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
                         contact.ContactType, request.BranchCode);
                 if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
