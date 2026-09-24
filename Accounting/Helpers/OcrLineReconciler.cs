@@ -20,6 +20,9 @@ public enum OcrLineReconcileCase
     /// <summary>Σ บรรทัด &gt; ยอดก่อน VAT แต่ไม่ตรงยอดรวม VAT และกระดาษไม่บอกส่วนลด —
     /// ตัดสินไม่ได้ว่า "ส่วนลดที่ไม่ได้พิมพ์" หรือ "OCR อ่านตัวเลขเพี้ยน" → ไม่แต่งตัวเลข ให้คนดู</summary>
     Ambiguous = 6,
+    /// <summary>(E) ราคาต่อหน่วยรวม VAT แล้ว <b>และ</b>มีส่วนลดท้ายบิลบนกระดาษ:
+    /// Σ บรรทัด − ส่วนลด ≈ ยอดรวมสุทธิ (บิลห้าง/ร้านค้าปลีกที่ลดท้ายบิล — เดิมตกเป็น Ambiguous ทุกใบ)</summary>
+    DiscountOnTotalInclVat = 7,
 }
 
 /// <summary>ผลลัพธ์: ปรับ document อย่างไร + ช่องว่างที่ต้องบอกผู้ใช้</summary>
@@ -94,6 +97,20 @@ public static class OcrLineReconciler
         if (headerVat > 0m && headerTotal > 0m && Math.Abs(grossSum - headerTotal) <= Tolerance)
             return new(OcrLineReconcileCase.PricesIncludeVat, true, 0m, null, 0m,
                 "ราคาต่อหน่วยบนกระดาษรวม VAT แล้ว — ระบบถอด VAT ออกจากยอดบรรทัด");
+
+        // (E) ราคารวม VAT + ส่วนลดท้ายบิลที่กระดาษพิมพ์ไว้ (รอบ 190 ข้อ 9):
+        //     บิลห้าง "สินค้า 1,070 (รวม VAT) · ส่วนลด 107 · รวม 963 · VAT 63" — Σ บรรทัด − ส่วนลด
+        //     = ยอดรวมสุทธิ ไม่ใช่ยอดก่อน VAT ⇒ เคส C ไม่ตรง (963 ≠ 900) เคส A ไม่ตรง (1,070 ≠ 963)
+        //     ⇒ เดิมตกเป็น Ambiguous ทุกใบ = ส่วนลดที่อ่านได้ถูกทิ้ง แล้วผู้ใช้ต้องกรอกเอง
+        //     · ส่วนลดคิดในโลก "รวม VAT" (ตรงกับ ComputeLineAmounts โหมด PricesIncludeVat ที่หัก
+        //     ส่วนลดจากยอดรวม VAT ก่อนถอด VAT) ⇒ เป้าของ Σ บรรทัดหลังลด = ยอดรวมสุทธิ
+        if (headerDiscount > 0m && headerVat > 0m && headerTotal > 0m
+            && Math.Abs(grossSum - headerDiscount - headerTotal) <= Tolerance)
+        {
+            var pct = Math.Round(headerDiscount / grossSum * 100m, 2, MidpointRounding.AwayFromZero);
+            return new(OcrLineReconcileCase.DiscountOnTotalInclVat, true, pct, headerTotal, 0m,
+                $"ราคาบนกระดาษรวม VAT แล้ว + ส่วนลดท้ายบิล {headerDiscount:N2} ({pct:0.##}%) กระจายลงทุกบรรทัด — ระบบถอด VAT ออกจากยอดหลังลด");
+        }
 
         // ใบไม่มียอดก่อน VAT (บิลเงินสด/ใบเสร็จไม่มี VAT): เทียบกับยอดรวมโดยตรง
         if (headerSubTotal <= 0m)

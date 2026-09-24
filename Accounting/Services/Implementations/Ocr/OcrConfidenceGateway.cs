@@ -57,6 +57,24 @@ public static class OcrConfidenceGateway
         var penalty = 0m;
         var mathConsistent = true;
 
+        // 0. ยอดก่อน VAT บนกระดาษเป็นยอด "ก่อนหักส่วนลด" (รอบ 190 ข้อ 9)
+        //
+        // กระดาษไทยส่วนใหญ่พิมพ์ "รวมเงิน 1,395.00 · ส่วนลด 69.75 · VAT 92.77 · รวมทั้งสิ้น 1,418.02"
+        // และ engine หยิบ "รวมเงิน" (ก่อนลด) เป็น SubTotal ⇒ ด่าน 2/2b/3 เดิมฟ้อง "คณิตศาสตร์ไม่ตรง"
+        // + "สามช่องขัดกันเอง" กับ**ทุกใบที่มีส่วนลดท้ายบิล** (ใบถูกต้อง) ⇒ ติด [MATH] ห้ามอนุมัติเองทุกใบ
+        // = คำเตือนที่ฟ้องใบถูก (ผู้ใช้เรียนรู้ที่จะเมิน แล้วคำเตือนจริงถูกเมินตาม)
+        // ตัดสินว่าเป็นยอดก่อนลดเมื่อ **ส่วนลดที่อ่านจากกระดาษ** อธิบายส่วนต่างได้พอดีเท่านั้น
+        // (ค่าที่อ่านมาจริงทั้งสี่ช่อง ไม่ใช่การแต่ง) — ไม่งั้นใช้ SubTotal ตามเดิมแล้วให้ด่านเดิมฟ้อง
+        var effSub = subTotal;
+        if (documentDiscount is > 0m && subTotal is > 0m && vatAmount.HasValue && total is > 0m
+            && Math.Abs(subTotal.Value + vatAmount.Value - total.Value) > OcrLineReconciler.Tolerance
+            && Math.Abs(subTotal.Value - documentDiscount.Value + vatAmount.Value - total.Value) <= OcrLineReconciler.Tolerance)
+        {
+            effSub = subTotal.Value - documentDiscount.Value;
+            notes.Add($"ยอดก่อน VAT บนกระดาษ {subTotal:N2} เป็นยอดก่อนหักส่วนลด {documentDiscount:N2} "
+                + $"— ฐานภาษีหลังส่วนลด = {effSub:N2}");
+        }
+
         // 1. Date sanity: not in future, not too old
         if (documentDate.HasValue)
         {
@@ -74,13 +92,13 @@ public static class OcrConfidenceGateway
         }
 
         // 2. Math consistency: SubTotal + VAT ≈ Total
-        if (subTotal.HasValue && vatAmount.HasValue && total.HasValue)
+        if (effSub.HasValue && vatAmount.HasValue && total.HasValue)
         {
-            var expected = subTotal.Value + vatAmount.Value;
+            var expected = effSub.Value + vatAmount.Value;
             var diff = Math.Abs(expected - total.Value);
             if (diff > config.MathTolerance)
             {
-                warnings.Add($"คณิตศาสตร์ไม่ตรง: {subTotal:N2} + {vatAmount:N2} = {expected:N2} ≠ {total:N2} (ห่าง {diff:N2})");
+                warnings.Add($"คณิตศาสตร์ไม่ตรง: {effSub:N2} + {vatAmount:N2} = {expected:N2} ≠ {total:N2} (ห่าง {diff:N2})");
                 penalty += config.MathPenalty;
                 mathConsistent = false;
             }
@@ -103,18 +121,18 @@ public static class OcrConfidenceGateway
         //
         // ค่าคลาดเคลื่อนที่ยอมรับ: การปัดเศษให้ผลต่างได้ไม่เกิน 1 สตางค์ต่อการปัด
         // 1 ครั้ง — ผลรวมจึงยอม ฿0.02 และ VAT ยอม 1 สตางค์ต่อบรรทัด (ขั้นต่ำ ฿0.02)
-        if (mathConsistent && subTotal.HasValue && vatAmount.HasValue && total.HasValue
-            && subTotal.Value > 0m && vatAmount.Value > 0m)
+        if (mathConsistent && effSub.HasValue && vatAmount.HasValue && total.HasValue
+            && effSub.Value > 0m && vatAmount.Value > 0m)
         {
-            var sumGap = Math.Abs(subTotal.Value + vatAmount.Value - total.Value);
-            var expectedVat = Math.Round(subTotal.Value * 0.07m, 2, MidpointRounding.AwayFromZero);
+            var sumGap = Math.Abs(effSub.Value + vatAmount.Value - total.Value);
+            var expectedVat = Math.Round(effSub.Value * 0.07m, 2, MidpointRounding.AwayFromZero);
             var vatGap = Math.Abs(vatAmount.Value - expectedVat);
             var vatSlack = Math.Max(0.02m, 0.01m * (lineItems?.Count ?? 0));
             if (sumGap > 0.02m && vatGap > vatSlack)
             {
                 warnings.Add(
-                    $"ตัวเลขสามช่องขัดกันเอง: {subTotal:N2} + {vatAmount:N2} = {(subTotal + vatAmount):N2} ≠ {total:N2} " +
-                    $"และ VAT 7% ของ {subTotal:N2} ควรเป็น {expectedVat:N2} ไม่ใช่ {vatAmount:N2} — อย่างน้อยหนึ่งช่องอ่านผิด");
+                    $"ตัวเลขสามช่องขัดกันเอง: {effSub:N2} + {vatAmount:N2} = {(effSub + vatAmount):N2} ≠ {total:N2} " +
+                    $"และ VAT 7% ของ {effSub:N2} ควรเป็น {expectedVat:N2} ไม่ใช่ {vatAmount:N2} — อย่างน้อยหนึ่งช่องอ่านผิด");
                 penalty += config.MathPenalty;
                 mathConsistent = false;
             }
@@ -137,9 +155,9 @@ public static class OcrConfidenceGateway
         // เคสนี้แยกกันด้วย <c>mathConsistent</c>: ใบผสมที่ผู้ขายพิมพ์เอง
         // Sub + VAT = Total **เป๊ะ** ส่วนใบที่อ่านขาดหลักจะไม่ลงตัว (ข้อ 2/2b
         // จับไปแล้ว) ⇒ ลงตัว = ข้อสังเกต (ไม่หักคะแนน) · ไม่ลงตัว = คำเตือน
-        if (subTotal.HasValue && vatAmount.HasValue && subTotal.Value > 0 && vatAmount.Value > 0)
+        if (effSub.HasValue && vatAmount.HasValue && effSub.Value > 0 && vatAmount.Value > 0)
         {
-            var rate = vatAmount.Value / subTotal.Value * 100m;
+            var rate = vatAmount.Value / effSub.Value * 100m;
             if (rate > 7.5m)
             {
                 warnings.Add($"อัตรา VAT ผิดปกติ: {rate:N1}% — สูงกว่าอัตราสูงสุดตามกฎหมาย (7%)");
@@ -218,19 +236,22 @@ public static class OcrConfidenceGateway
         // คนละสูตร = สำเนามือที่ drift แน่นอน. ตอนนี้เรียกตัวเดียวกัน:
         // เคส B (ตรง SubTotal) / A (ราคารวม VAT) / C (ส่วนลดที่กระดาษพิมพ์ไว้)
         // = ลงตัว ไม่ฟ้อง · LinesShort / Ambiguous = ฟ้องจริง
-        if (lineItems != null && lineItems.Count > 0 && subTotal.HasValue)
+        if (lineItems != null && lineItems.Count > 0 && effSub.HasValue)
         {
             var withAmounts = lineItems.Where(i => i.Amount.HasValue).ToList();
             if (withAmounts.Count > 0)
             {
                 var lineSum = withAmounts.Sum(i => i.Amount!.Value);
                 var recon = Accounting.Helpers.OcrLineReconciler.Classify(
-                    lineSum, subTotal.Value, vatAmount ?? 0m, total ?? 0m, documentDiscount ?? 0m);
+                    lineSum, effSub.Value, vatAmount ?? 0m, total ?? 0m, documentDiscount ?? 0m);
                 switch (recon.Case)
                 {
                     case Accounting.Helpers.OcrLineReconcileCase.PricesIncludeVat:
                     case Accounting.Helpers.OcrLineReconcileCase.DiscountOnSubTotal:
                     case Accounting.Helpers.OcrLineReconcileCase.DiscountOnTotal:
+                    // (E) ราคารวม VAT + ส่วนลดท้ายบิล — ลงตัวกับหัวใบแล้ว (รอบ 190) · ถ้าไม่ใส่ในลิสต์นี้
+                    // เคสจะตกไปไม่มีทั้ง note และ warning = ผู้ใช้ไม่รู้ว่าระบบหักส่วนลดให้
+                    case Accounting.Helpers.OcrLineReconcileCase.DiscountOnTotalInclVat:
                         notes.Add(recon.Note);
                         break;
                     case Accounting.Helpers.OcrLineReconcileCase.LinesShort:
@@ -270,16 +291,16 @@ public static class OcrConfidenceGateway
         // เคสที่ด่านนี้จับได้จริง: ผู้ขายคิด 3% จากยอด**รวม VAT** (ต้องคิดจากยอด
         // ก่อน VAT) · OCR อ่านอัตราเป็น 5% ทั้งที่กระดาษเขียน 3% · ยอดหักถูก
         // คีย์มือผิดหลัก
-        if (whtAmount.HasValue && whtRatePercent.HasValue && subTotal.HasValue
-            && subTotal.Value > 0 && whtRatePercent.Value > 0)
+        if (whtAmount.HasValue && whtRatePercent.HasValue && effSub.HasValue
+            && effSub.Value > 0 && whtRatePercent.Value > 0)
         {
-            var expectedWht = Math.Round(subTotal.Value * whtRatePercent.Value / 100m, 2,
+            var expectedWht = Math.Round(effSub.Value * whtRatePercent.Value / 100m, 2,
                 MidpointRounding.AwayFromZero);
             var diff = Math.Abs(expectedWht - whtAmount.Value);
             if (diff > config.MathTolerance)
             {
                 warnings.Add($"ภาษีหัก ณ ที่จ่ายบนกระดาษ {whtAmount:N2} ไม่ตรงสูตร "
-                    + $"({whtRatePercent}% × {subTotal:N2} = {expectedWht:N2}) — "
+                    + $"({whtRatePercent}% × {effSub:N2} = {expectedWht:N2}) — "
                     + "ตรวจว่าอัตราถูกอ่านถูกไหม และผู้ขายคิดจากยอดก่อน VAT หรือหลัง VAT");
                 penalty += config.MathPenalty * 0.5m;
             }

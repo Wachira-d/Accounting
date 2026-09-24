@@ -40,6 +40,33 @@ public static class OcrHeaderAmounts
             ? (total, vat, subTotal, true)
             : (subTotal, vat, total, false);
 
+    /// <summary>
+    /// **ยอดก่อน VAT "หลังหักส่วนลด" ของหัวใบ** — ค่าที่ลง <c>Document.SubTotal</c> (= ฐานภาษี §87)
+    ///
+    /// <para>ที่มา (รอบ 190 ข้อ 9 · ส่วนลดท้ายบิล): กระดาษไทยพิมพ์ "รวมเงิน 1,000 · ส่วนลด 50 ·
+    /// ภาษี 66.50 · รวมทั้งสิ้น 1,016.50" — ตัวเลือกเดิม (<c>OcrService.ResolveHeaderSubTotal</c>)
+    /// เห็นว่า 1,000 + 66.50 − 50 = 1,016.50 "ผูกกับยอดรวม" จึงคืน <b>1,000 (ก่อนหักส่วนลด)</b>
+    /// ⇒ <c>Document.SubTotal</c> = 1,000 ทั้งที่บรรทัดรวม 950 · รายงานภาษีซื้อ §87 อ่าน
+    /// <c>SubTotal</c> เป็นมูลค่าฐาน (<c>TaxService.VatableBase</c>) ⇒ ฐาน 1,000 คู่กับ VAT 66.50
+    /// (6.65%) และพอผู้ใช้เปิดแก้แล้วบันทึก <c>DocumentService</c> คิด SubTotal ใหม่เป็น 950
+    /// ⇒ "ยอดเปลี่ยนเองตอนกดบันทึก" · สัญญาของระบบคือ <c>SubTotal</c> = ยอด<b>หลัง</b>หักส่วนลด
+    /// (Σ NetAmount ของบรรทัด)</para>
+    ///
+    /// <para>กติกา: มีส่วนลดบนกระดาษ ⇒ ยอดก่อน VAT = ยอดรวม − VAT (ค่าที่อ่านมาจริงสองช่อง —
+    /// ไม่ใช่ค่าที่แต่ง) · ไม่มีส่วนลด ⇒ พฤติกรรมเดิมทุกประการ (ใช้ยอดก่อน VAT ที่อ่านได้เมื่อ
+    /// ผูกกับยอดรวม · ไม่ผูก ⇒ ถอยจากยอดรวม) · ไม่รู้ยอดรวม ⇒ คืนค่าที่อ่านได้ (ไม่มีหลักฐานให้ถอด)</para>
+    /// </summary>
+    public static decimal NetSubTotal(decimal? subTotal, decimal? vat, decimal? total, decimal discount)
+    {
+        var t = total ?? 0m;
+        var v = vat ?? 0m;
+        if (t <= 0m) return subTotal ?? 0m;
+        var fromTotal = Math.Max(0m, t - v);
+        if (discount > 0m) return fromTotal;
+        var ties = subTotal is > 0m && Math.Abs(subTotal.Value + v - t) <= Tolerance;
+        return ties ? subTotal!.Value : fromTotal;
+    }
+
     /// <summary>ข้อความเดียวที่ทุกจุดใช้บันทึกใน trace/ProcessingNotes เมื่อสลับกลับ
     /// (สองที่แต่งข้อความเองจะ drift)</summary>
     public static string SwapNote(decimal subBefore, decimal totalBefore)

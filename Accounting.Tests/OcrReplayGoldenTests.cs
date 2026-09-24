@@ -80,6 +80,44 @@ public class OcrReplayGoldenTests
         Assert.Equal("false", Val("export-zero-rated", "IsDeposit"));
     }
 
+    // ── รอบ 190 ข้อ 9: ส่วนลดท้ายบิล · ใบผสม VAT ─────────────────────────────
+
+    [Fact]
+    public void ใบร้านวัสดุ_ส่วนลดท้ายบิล6975_ฐานภาษีหลังลด132525()
+    {
+        Assert.Equal("69.75", Val("hardware-bill-discount", "BillDiscount"));
+        Assert.Equal("1325.25", Val("hardware-bill-discount", "NetSubTotal"));
+    }
+
+    [Fact]
+    public void ใบซูเปอร์มาร์เก็ต_ส่วนลดสมาชิก3870_ฐานภาษี68720()
+    {
+        Assert.Equal("38.70", Val("supermarket-member-discount", "BillDiscount"));
+        Assert.Equal("687.20", Val("supermarket-member-discount", "NetSubTotal"));
+    }
+
+    [Fact]
+    public void ใบค้าส่งผสม_อัตรารายบรรทัดตามสัญลักษณ์บนกระดาษ()
+        => Assert.Equal("-1,-1,-1,7,7,7", Val("wholesale-mixed-vat", "LineVatRates"));
+
+    [Fact]
+    public void ใบA_WinePro_ต้องไม่ถูกแตะ_ไม่มีส่วนลด_ฐานเดิม_ไม่ใช้สัญลักษณ์()
+    {
+        Assert.Null(Val("winepro-vat-included", "BillDiscount"));
+        Assert.Equal("3357.94", Val("winepro-vat-included", "NetSubTotal"));
+        Assert.Equal("(ไม่ใช้)", Val("winepro-vat-included", "LineVatRates"));
+        Assert.Equal("false", Val("winepro-vat-included", "HeaderSwapped"));
+    }
+
+    [Fact]
+    public void ใบเดิมในชุด_ไม่มีส่วนลด_ฐานภาษีเท่าเดิม()
+    {
+        Assert.Null(Val("makro-correct", "BillDiscount"));
+        Assert.Equal("951.00", Val("makro-correct", "NetSubTotal"));
+        Assert.Equal("1000.00", Val("luckyway-swapped", "NetSubTotal"));
+        Assert.Equal("100000.00", Val("export-zero-rated", "NetSubTotal"));
+    }
+
     // ── ตัวเครื่องมือเอง: ต้อง deterministic และต้อง "จับได้" เมื่อคำตอบเปลี่ยน ──
 
     [Fact]

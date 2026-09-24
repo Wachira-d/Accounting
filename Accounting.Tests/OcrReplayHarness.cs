@@ -8,7 +8,8 @@ namespace Accounting.Tests;
 public sealed record ReplayPaper(
     string Name, string RawText,
     decimal? EngineSubTotal = null, decimal? EngineVat = null, decimal? EngineTotal = null,
-    string? VendorNameFromEngine = null, decimal? BaseAmount = null);
+    string? VendorNameFromEngine = null, decimal? BaseAmount = null,
+    decimal[]? LineAmounts = null);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -82,6 +83,26 @@ public static class OcrReplayHarness
         new ReplayPaper("buyer-name-truncated",
             "ผู้ซื้อ\nหจก. แอม แฮปปี้เนส\nเลขประจำตัวผู้เสียภาษี 0105556000000",
             VendorNameFromEngine: "แอม แฮปปี้"),
+
+        // ── รอบ 190 ข้อ 9: ส่วนลดท้ายบิล · ใบผสม VAT/ไม่มี VAT (ข้อความเต็มใน OcrPaperSamples) ──
+
+        // ใบ A ของเจ้าของ (Wine Pro) — ใบที่ถูกอยู่แล้ว: V ทุกบรรทัด · บรรทัด 0.00 · VAT INCLUDED
+        new ReplayPaper("winepro-vat-included", OcrPaperSamples.WinePro,
+            EngineSubTotal: 3357.94m, EngineVat: 235.06m, EngineTotal: 3593m,
+            LineAmounts: new[] { 524m, 3069m, 0m }),
+
+        // ใบกำกับร้านวัสดุ ลดท้ายบิล 5% — ตัวอ่านเดิมหยิบ "ยอดหลังหักส่วนลด 1,325.25" เป็นส่วนลด
+        new ReplayPaper("hardware-bill-discount", OcrPaperSamples.HardwareBillDiscount,
+            EngineSubTotal: 1395m, EngineVat: 92.77m, EngineTotal: 1418.02m),
+
+        // ใบซูเปอร์มาร์เก็ตราคารวม VAT ลดสมาชิก (engine หยิบ "รวม 774" เป็น SubTotal)
+        new ReplayPaper("supermarket-member-discount", OcrPaperSamples.SupermarketMemberDiscount,
+            EngineSubTotal: 774m, EngineVat: 48.10m, EngineTotal: 735.30m),
+
+        // ใบค้าส่งผสมสินค้ายกเว้น §81 (N) กับสินค้า VAT (V)
+        new ReplayPaper("wholesale-mixed-vat", OcrPaperSamples.WholesaleMixedVat,
+            EngineSubTotal: 764m, EngineVat: 28m, EngineTotal: 792m,
+            LineAmounts: OcrPaperSamples.WholesaleLineAmounts),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -112,6 +133,21 @@ public static class OcrReplayHarness
             var lines = p.RawText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             result.Add(new(p.Name, "ExpandedName",
                 OcrPartyName.ExpandTruncated(p.VendorNameFromEngine, lines)));
+
+            // 5. ส่วนลดท้ายบิลบนกระดาษ (OcrBillDiscount) + ยอดก่อน VAT หลังส่วนลด (OcrHeaderAmounts.NetSubTotal)
+            var disc = OcrBillDiscount.Read(p.RawText, n.Total);
+            result.Add(new(p.Name, "BillDiscount", disc.Amount?.ToString("0.00")));
+            result.Add(new(p.Name, "NetSubTotal",
+                OcrHeaderAmounts.NetSubTotal(n.SubTotal, n.Vat, n.Total, disc.Amount ?? 0m).ToString("0.00")));
+
+            // 6. อัตรา VAT รายบรรทัดจากสัญลักษณ์บนกระดาษ (OcrLineVatMarks) — เฉพาะใบที่มีรายการ
+            if (p.LineAmounts is { } amounts)
+            {
+                var pick = OcrLineVatMarks.Assign(amounts, OcrLineVatMarks.Read(p.RawText), n.Vat ?? 0m);
+                result.Add(new(p.Name, "LineVatRates", pick.Applied
+                    ? string.Join(",", pick.Rates.Select(r => r?.ToString("0.##") ?? "-"))
+                    : "(ไม่ใช้)"));
+            }
         }
         return result;
     }

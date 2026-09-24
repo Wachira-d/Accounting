@@ -630,7 +630,13 @@ public class OcrService : IOcrService
                 whtRatePercent: whtRatePct,
                 documentNumber: extractedData.DocumentNumber,
                 vendorName: extractedData.VendorName,
-                documentDiscount: extractedData.DiscountAmount);
+                // ส่วนลดบนกระดาษต้องถึงด่านนี้ด้วย — ตัวเติม DiscountAmount จากข้อความ
+                // (EnrichFromRawText) รันหลังด่านนี้ ⇒ เดิมด่านไม่เคยรู้ส่วนลดบนเส้น Azure/local
+                // เลย แล้วฟ้อง "Σ บรรทัดไม่ตรง/คณิตศาสตร์ไม่ตรง" กับทุกใบที่มีส่วนลดท้ายบิล
+                // (รอบ 190 ข้อ 9) · ตัวอ่านเดียวกับ EnrichFromRawText (Helpers/OcrBillDiscount)
+                documentDiscount: extractedData.DiscountAmount
+                    ?? Accounting.Helpers.OcrBillDiscount.Read(
+                        Ocr.ThaiTextNormalizer.Normalize(extractedText), extractedData.TotalAmount).Amount);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
             // ── ผลของด่านคณิตศาสตร์ต้องมี "ผู้บริโภค" ไม่ใช่แค่หักคะแนน (D3-3) ──
@@ -6106,7 +6112,7 @@ public class OcrService : IOcrService
             ContactId = contactId.Value,
             SubTotal = headerSubTotal,
             VatAmount = result.ExtractedVatAmount ?? 0,
-            DiscountAmount = result.ExtractedDiscountAmount ?? 0,
+            DiscountAmount = 0m,   // เติมหลังสร้างบรรทัด = Σ ส่วนลดที่ลงบรรทัดจริง (ดูหลัง BuildScanLinesAsync)
             WithholdingTaxAmount = headerWht,
             TotalAmount = headerTotal,
             // Paid-evidence types are cash-settled at creation — the app's
@@ -6197,6 +6203,11 @@ public class OcrService : IOcrService
         // ⇒ กระดาษใบเดียวกันได้บรรทัดคนละแบบตามปุ่มที่กด — ผลตรวจ 2026-09-10)
         await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
             scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide);
+
+        // `Document.DiscountAmount` = Σ ส่วนลด "ที่ลงบรรทัดจริง" (สัญญาเดียวกับ DocumentService)
+        // — เดิมใส่ส่วนลดที่อ่านจากกระดาษตรง ๆ แม้ตัวกระทบยอดพิสูจน์ไม่ได้ (Σ-GAP) ⇒ PDF พิมพ์
+        // "รวมส่วนลด" ที่ไม่มีบรรทัดไหนหักจริง (หัวเอกสารกับบรรทัดขัดกันเองในใบเดียว — รอบ 190 ข้อ 9)
+        document.DiscountAmount = document.Lines.Sum(l => l.DiscountAmount);
 
         // เอกสารที่ scan ตรวจว่า "เคลมภาษีซื้อไม่ได้" ([VAT-CLAIM] เช่นใบกำกับ
         // อย่างย่อ §82/5(2) / ใบเสร็จไม่ใช่ใบกำกับเต็มรูป §82/5(1)) — ต้องปิด
@@ -6439,8 +6450,26 @@ public class OcrService : IOcrService
         Document? linkedPo, Dictionary<int, Guid?> poLineMap, Guid? scanDebitAccountId,
         decimal headerSubTotal, decimal hdrDiscRaw, decimal whtRate, decimal headerWht, bool isSalesSide)
     {
+        // สิ่งที่กระดาษบอกเรื่อง VAT รายบรรทัด (สัญลักษณ์ท้ายบรรทัด · ยอดต้องเสีย/ไม่ต้องเสียภาษี)
+        // — อ่านจากข้อความดิบตอนสร้าง (ไม่ใช่ตอนสแกน) เพื่อให้สแกนเก่าได้ประโยชน์ด้วยโดยไม่ต้อง migrate
+        var paperVatSplit = Accounting.Helpers.OcrLineVatMarks.Read(result.RawTextContent);
         if (items.Count > 0)
         {
+            // ★ ใบผสม VAT/ไม่มี VAT (รอบ 190 ข้อ 9): สัญลักษณ์ท้ายบรรทัดบนกระดาษ (V · N · E · ดอกจัน) ที่พิสูจน์
+            // ด้วยยอดบนกระดาษแล้ว = หลักฐานที่ใกล้ของจริงกว่าการเดาจากชื่อสินค้า (ThaiVatTypeRule)
+            // · ต้องจับคู่ด้วย "ยอดตามที่พิมพ์" จึงทำ**ก่อน**ขั้นกระจายส่วนลดข้างล่างที่เขียนทับ Amount
+            // · เติมเฉพาะบรรทัดที่ยังไม่มีอัตรา (ค่าจาก Azure/ผู้ใช้แก้ในหน้ารีวิวชนะเสมอ)
+            var markPick = Accounting.Helpers.OcrLineVatMarks.Assign(
+                items.Select(x => x.Amount ?? ((x.UnitPrice ?? 0m) * (x.Quantity ?? 1m))).ToList(),
+                paperVatSplit, result.ExtractedVatAmount ?? 0m);
+            if (markPick.Applied)
+            {
+                for (var mi = 0; mi < items.Count; mi++)
+                    if (!items[mi].VatRate.HasValue && markPick.Rates[mi] is decimal markRate)
+                        items[mi].VatRate = markRate;
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + markPick.Note;
+            }
+
             // 🔧 Reconcile line amounts — แยก 4 case (เลิกใส่ "ส่วนลด" มั่วๆ
             // เคสจริงเคยตีค่าขนส่ง 50฿ ใน OfficeMate เป็นส่วนลด 600฿ ผิดทั้งใบ):
             //   (A) ราคารวม VAT แล้ว (Unit Price Incl.VAT) — linesGross อยู่
@@ -6463,10 +6492,16 @@ public class OcrService : IOcrService
             //
             // ExtractedSubTotal บนกระดาษไทยมักเป็น "รวมเงิน" **ก่อน**หักส่วนลด — ถอดให้เป็น
             // ยอดก่อน VAT หลังส่วนลดก่อนเทียบ (สูตรเดียวกับ subTies ข้างบน)
+            //
+            // ★ มีส่วนลดบนกระดาษ ⇒ ใช้ตัวตัดสินตัวเดียวกับ Document.SubTotal
+            // (Helpers/OcrHeaderAmounts.NetSubTotal = ยอดรวม − VAT) — เดิมถอดเฉพาะเมื่อ
+            // "รวมเงิน − ส่วนลด + VAT = ยอดรวม" ⇒ บิลห้างที่ engine หยิบ "รวม (ราคารวม VAT
+            // ก่อนลด)" มาเป็น SubTotal ไม่เข้าเงื่อนไข แล้ว Σ บรรทัด = SubTotal นั้นพอดีจึงตกเคส B
+            // เงียบ ๆ ทั้งที่ Σ บรรทัด + VAT ≠ ยอดรวม (รอบ 190 ข้อ 9) · ไม่มีส่วนลด = สูตรเดิม
             var netSubForRecon = hdrSub;
-            if (hdrSub > 0m && hdrDiscRaw > 0m
-                && Math.Abs((hdrSub - hdrDiscRaw + hdrVatHdr) - hdrTotal) <= Accounting.Helpers.OcrLineReconciler.Tolerance)
-                netSubForRecon = hdrSub - hdrDiscRaw;
+            if (hdrDiscRaw > 0m && hdrTotal > 0m)
+                netSubForRecon = Accounting.Helpers.OcrHeaderAmounts.NetSubTotal(
+                    hdrSub, hdrVatHdr, hdrTotal, hdrDiscRaw);
             else if (hdrSub <= 0m && hdrTotal > 0m)
                 netSubForRecon = Math.Max(0m, hdrTotal - hdrVatHdr);
 
@@ -6543,17 +6578,22 @@ public class OcrService : IOcrService
                 items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m)).ToList(), headerVat);
             for (var vi = 0; vi < items.Count; vi++) items[vi].VatAmount = spreadVat[vi];
 
-            // ── ด่านตรวจ Σ (E-OCR-01) ──
-            // ถ้าเฉลี่ยแล้วไม่ตรงกับ VAT บนกระดาษ แปลว่าอัตราที่เดารายบรรทัดขัดกับ
-            // หัวใบ (เช่นทั้งใบถูกเดาว่ายกเว้นแต่กระดาษมี VAT) — ไม่แต่งตัวเลขให้
-            // ตรง แต่บันทึกไว้ให้หน้า review เตือน แล้วให้คนตัดสิน
-            var vatSum = spreadVat.Sum();
-            if (headerVat > 0m && Math.Abs(vatSum - headerVat) > 0.01m)
+            // ── ด่าน "เอกสารที่จะสร้าง ยอดตรงกับกระดาษไหม" (E-OCR-01 → รอบ 190 ข้อ 9) ──
+            // เดิมตรงนี้มีแค่ LogWarning เมื่อ Σ VAT ≠ หัวใบ (ไม่ใช่การดัง) และไม่มีใครถามว่า
+            // "อัตรา × ยอดของบรรทัดที่ติด 7% ให้ VAT เท่ากระดาษไหม" — Σ VAT ตรงเสมอโดยการสร้าง
+            // (เฉลี่ยจากหัวใบ) ⇒ ใบผสม VAT/ยกเว้นที่ติดอัตราผิดผ่านเงียบ แล้วยอดเปลี่ยนเองตอนผู้ใช้
+            // เปิดแก้ · ตัวตรวจอยู่ที่ Helpers/OcrAmountIntegrity (pure + เทสต์) — **ไม่แก้ตัวเลข**
+            // เขียนเป็น [Σ-GAP] ⇒ OcrPostingReadiness ห้ามอนุมัติเอง + หน้ารีวิว/LINE แสดงตัวเลข
+            var plannedLines = new List<Accounting.Helpers.OcrPlannedLine>(items.Count);
+            for (var pi = 0; pi < items.Count; pi++)
             {
-                _logger.LogWarning(
-                    "OCR scan {ScanId}: Σ VAT รายบรรทัด {Sum} ≠ VAT บนหัวใบ {Header} — " +
-                    "อัตรารายบรรทัดที่เดาไว้อาจขัดกับกระดาษ", result.Id, vatSum, headerVat);
+                var pAmt = items[pi].Amount ?? 0m;
+                plannedLines.Add(new Accounting.Helpers.OcrPlannedLine(
+                    document.PricesIncludeVat ? Math.Round(pAmt - spreadVat[pi], 2, MidpointRounding.AwayFromZero) : pAmt,
+                    items[pi].VatRate ?? standardVatRate, spreadVat[pi]));
             }
+            AppendAmountIntegrityGaps(result, plannedLines, headerVat,
+                alreadyReportedLineGap: recon.UnreconciledGap != 0m, paperVatSplit: paperVatSplit);
 
             int lineOrder = 1;
             // ปิดลูปการสอน local model (กฎเหล็ก #1): แนบ feedbackId ระดับ scan ไว้
@@ -6704,8 +6744,38 @@ public class OcrService : IOcrService
                 // แนบ feedbackId ระดับ scan ไว้ ให้ approve เรียนรู้ผัง GL.
                 GlAccountAiFeedbackId = scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
             });
+            // บรรทัดสรุปใบเดียวก็ต้องผ่านด่านเดียวกัน — ใบผสม VAT/ยกเว้นที่ไม่มีรายการ (Makro 951/49)
+            // จะได้บรรทัด 7% ที่ VAT ไม่เท่า 7% ของยอด ⇒ ฐานภาษีซื้อ §87 เกินจริง ต้องให้คนแยกบรรทัด
+            var summary = document.Lines.Last();
+            AppendAmountIntegrityGaps(result,
+                new[] { new Accounting.Helpers.OcrPlannedLine(summary.Amount, summary.VatRate, summary.VatAmount) },
+                result.ExtractedVatAmount ?? 0m, alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
         }
 
+    }
+
+    /// <summary>เขียนผลของ <see cref="Accounting.Helpers.OcrAmountIntegrity"/> เป็น <c>[Σ-GAP]</c>
+    /// — ต่อท้าย (ห้ามเขียนทับ ProcessingNotes · ธงของด่านอื่นอยู่ในช่องเดียวกัน)
+    ///
+    /// <para><paramref name="alreadyReportedLineGap"/> = ตัวกระทบยอดรายงานช่องว่าง Σ บรรทัดไปแล้ว ⇒
+    /// ไม่ซ้ำข้อ "ยอดรวมไม่ตรง" และข้อ "อัตรา × ยอด" (บรรทัดขาด/เกิน ทำให้ข้อนั้นชี้ผิดสาเหตุ)
+    /// — เหลือเฉพาะข้อที่เป็นอิสระจากบรรทัดขาด (บรรทัดติดลบ · กระดาษมี VAT แต่ทุกบรรทัดไม่มี)</para></summary>
+    private void AppendAmountIntegrityGaps(
+        OcrScanResult result, IReadOnlyList<Accounting.Helpers.OcrPlannedLine> planned, decimal paperVat,
+        bool alreadyReportedLineGap, Accounting.Helpers.OcrPaperVatSplit paperVatSplit)
+    {
+        var check = Accounting.Helpers.OcrAmountIntegrity.Check(
+            planned, paperVat, result.ExtractedTotalAmount ?? 0m,
+            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+        foreach (var p in check.Problems)
+        {
+            if (alreadyReportedLineGap
+                && p.Kind is Accounting.Helpers.OcrAmountIntegrityKind.TotalMismatch
+                          or Accounting.Helpers.OcrAmountIntegrityKind.VatRateMismatch)
+                continue;
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ-GAP] " + p.Message;
+            _logger.LogWarning("OCR scan {ScanId}: {Note}", result.Id, p.Message);
+        }
     }
 
     public async Task<OcrLinePreviewResponse> PreviewDocumentLinesAsync(
@@ -6815,19 +6885,15 @@ public class OcrService : IOcrService
             lines, string.IsNullOrWhiteSpace(delta) ? null : delta);
     }
 
-    /// <summary>ยอดก่อน VAT ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c> เฉพาะเมื่อ
-    /// ผูกกับยอดรวมได้ (รองรับ VAT-incl + ส่วนลดจริง) ไม่งั้นถอยจากยอดรวม (ตัวเลขเด่นที่
-    /// เชื่อถือได้สุด) เพื่อให้ subtotal/บรรทัด/ยอดรวมแตกกันไม่ได้ · สูตรเดียวทั้งสองทางเข้า</summary>
+    /// <summary>ยอดก่อน VAT <b>หลังหักส่วนลด</b> ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c>
+    /// เฉพาะเมื่อไม่มีส่วนลดและผูกกับยอดรวมได้ ไม่งั้นถอยจากยอดรวม − VAT (ตัวเลขเด่นที่เชื่อถือได้สุด)
+    /// เพื่อให้ subtotal/บรรทัด/ยอดรวมแตกกันไม่ได้ · สูตรเดียวทั้งสามทางเข้า (สร้าง · พรีวิว · repopulate)</summary>
     private static decimal ResolveHeaderSubTotal(OcrScanResult result, decimal hdrDiscRaw)
-    {
-        var hdrTotalRaw = result.ExtractedTotalAmount ?? 0;
-        var hdrVatRaw = result.ExtractedVatAmount ?? 0;
-        if (hdrTotalRaw <= 0) return result.ExtractedSubTotal ?? 0m;
-        var subFromTotal = Math.Max(0, hdrTotalRaw - hdrVatRaw);
-        var subTies = result.ExtractedSubTotal is > 0
-            && Math.Abs((result.ExtractedSubTotal!.Value + hdrVatRaw - hdrDiscRaw) - hdrTotalRaw) <= 1m;
-        return subTies ? result.ExtractedSubTotal!.Value : subFromTotal;
-    }
+        // ★ ตัวตัดสินอยู่ที่ Helpers/OcrHeaderAmounts.NetSubTotal (pure + เทสต์) — เดิมเมื่อกระดาษมี
+        // ส่วนลดท้ายบิล ที่นี่คืนยอด "ก่อนหักส่วนลด" ⇒ SubTotal ของเอกสาร ≠ Σ บรรทัด และฐานภาษีซื้อ
+        // §87 ผิดทั้งใบ (รอบ 190 ข้อ 9)
+        => Accounting.Helpers.OcrHeaderAmounts.NetSubTotal(
+            result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw);
 
     /// <summary>ผังเดบิตระดับสแกน (จาก SuggestedAccountsJson.DebitAccountCode) → Id ในผังของ
     /// บริษัท — ใช้เป็น fallback ของบรรทัดที่ไม่มีผังของตัวเอง · ตัวเดียวทั้งสองทางเข้า</summary>
@@ -8853,19 +8919,19 @@ public class OcrService : IOcrService
             catch { /* unparseable date — leave terms empty */ }
         }
 
-        // 2) Header discount ("ส่วนลด 500.00"). Sanity: must be positive and
-        //    smaller than the grand total, otherwise it's a misread.
+        // 2) ส่วนลดท้ายบิลที่พิมพ์บนกระดาษ — ตัวอ่านอยู่ที่ Helpers/OcrBillDiscount (pure + เทสต์)
+        //    ⚠️ regex เดิมที่ฝังตรงนี้หยิบ "ตัวแรกทั้งหน้า" ⇒ "ส่วนลด 10% 150.00" ได้ 10 ·
+        //    "ยอดหลังหักส่วนลด 900.00" ได้ 900 · "ส่วนลดท้ายบิล"/"-150.00" หาย (รอบ 190 ข้อ 9)
+        //    ตัวอ่านแค่ "เห็นอะไรบนกระดาษ" — ถูกใช้จริงเมื่อ OcrLineReconciler พิสูจน์ด้วยยอดหัวใบแล้ว
         if (!data.DiscountAmount.HasValue)
         {
-            var dm = System.Text.RegularExpressions.Regex.Match(text,
-                @"(?:ส่วนลด(?:รวม|การค้า)?|discount)\s*:?\s*(?:฿|บาท)?\s*([\d,]+(?:\.\d{1,2})?)",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (dm.Success
-                && decimal.TryParse(dm.Groups[1].Value.Replace(",", ""), out var disc)
-                && disc > 0 && disc < (data.TotalAmount ?? decimal.MaxValue))
+            var disc = Accounting.Helpers.OcrBillDiscount.Read(text, data.TotalAmount);
+            if (disc.Amount is decimal discAmt)
             {
-                data.DiscountAmount = disc;
-                data.ReasoningTrace.Add($"[Enrich] ส่วนลดบนเอกสาร ฿{disc:N2}");
+                data.DiscountAmount = discAmt;
+                data.ReasoningTrace.Add($"[Enrich] ส่วนลดบนเอกสาร ฿{discAmt:N2}"
+                    + (disc.FromTotalRow ? " (แถวรวมส่วนลด)" : disc.RowCount > 1 ? $" (รวม {disc.RowCount} แถว)" : "")
+                    + $" — จาก “{disc.Evidence}”");
             }
         }
 

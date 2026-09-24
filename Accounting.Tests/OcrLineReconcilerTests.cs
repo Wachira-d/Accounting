@@ -97,4 +97,44 @@ public class OcrLineReconcilerTests
         var r = OcrLineReconciler.Classify(500m, 0m, 0m, 0m);
         Assert.Equal(OcrLineReconcileCase.NoHeader, r.Case);
     }
+
+    // ═══ รอบ 190 ข้อ 9 — เคส E: ราคารวม VAT + ส่วนลดท้ายบิล (ใบซูเปอร์มาร์เก็ต) ═══
+
+    [Fact]
+    public void ราคารวมVATและส่วนลดสมาชิก_เดิมกำกวม_ตอนนี้กระจายส่วนลดบนยอดรวม()
+    {
+        // 159 + 438 + 177 = 774 (รวม VAT) · ส่วนลด 38.70 · สุทธิ 735.30 · มูลค่าสินค้า 687.20 · VAT 48.10
+        var r = OcrLineReconciler.Classify(774m, 687.20m, 48.10m, 735.30m, headerDiscount: 38.70m);
+        Assert.Equal(OcrLineReconcileCase.DiscountOnTotalInclVat, r.Case);
+        Assert.True(r.PricesIncludeVat);
+        Assert.Equal(5m, r.DiscountPercent);
+        Assert.Equal(735.30m, r.TargetLineSum);
+        Assert.Equal(0m, r.UnreconciledGap);
+    }
+
+    [Fact]
+    public void ราคารวมVATและส่วนลด_แต่ตัวอ่านส่วนลดไม่เห็น_ยังเป็นกำกวม_ไม่เดาส่วนลดจากส่วนต่าง()
+    {
+        // ทิศตรงข้าม: ส่วนต่าง 38.70 ห้ามถูกตีเป็นส่วนลดเอง — ต้องมีตัวเลขบนกระดาษ
+        var r = OcrLineReconciler.Classify(774m, 687.20m, 48.10m, 735.30m, headerDiscount: 0m);
+        Assert.Equal(OcrLineReconcileCase.Ambiguous, r.Case);
+        Assert.Equal(0m, r.DiscountPercent);
+    }
+
+    [Fact]
+    public void ส่วนลดที่อ่านได้ไม่อธิบายส่วนต่าง_ไม่เข้าเคสE()
+    {
+        // ส่วนลด 20 บนกระดาษ (อ่านผิดแถว) — 774 − 20 ≠ 735.30 ⇒ ยังตัดสินไม่ได้
+        var r = OcrLineReconciler.Classify(774m, 687.20m, 48.10m, 735.30m, headerDiscount: 20m);
+        Assert.Equal(OcrLineReconcileCase.Ambiguous, r.Case);
+    }
+
+    [Fact]
+    public void ใบร้านวัสดุลดท้ายบิล_ยังเป็นเคสCเหมือนเดิม_เคสEไม่แย่ง()
+    {
+        var r = OcrLineReconciler.Classify(1395m, 1325.25m, 92.77m, 1418.02m, headerDiscount: 69.75m);
+        Assert.Equal(OcrLineReconcileCase.DiscountOnSubTotal, r.Case);
+        Assert.False(r.PricesIncludeVat);
+        Assert.Equal(1325.25m, r.TargetLineSum);
+    }
 }
