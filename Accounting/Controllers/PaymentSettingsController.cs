@@ -117,7 +117,11 @@ public class PaymentSettingsController : ControllerBase
     ///
     /// <para>เพราะหน้าเว็บไม่เคยได้ secret กลับไป จึงส่งกลับมาไม่ได้ · ถ้าตีความว่างเป็น
     /// "ล้าง" ผู้ใช้จะลบคีย์ตัวเองทุกครั้งที่แก้ชื่อที่แสดง</para></summary>
+    // W2-C3 (ฝ่ายค้านรอบ 193 รอบสอง): เดิมมีแค่ [Authorize] ⇒ สมาชิกทุกบทบาท (และคีย์ acc_ ที่เขียนได้) แทนคีย์ลับของ gateway
+    // ด้วยบัญชีร้านค้าของตัวเองแล้วสลับ live ได้ ⇒ เงินที่ลูกค้าจ่ายเข้าบัญชีอื่น · คีย์ลับ/บัญชีพัก/โหมดเงินจริง = งานเจ้าของ
     [HttpPut]
+    [Accounting.Filters.RejectApiKey("ตั้งค่ารับชำระเงินออนไลน์")]
+    [Accounting.Filters.RequireOwner("ตั้งค่ารับชำระเงินออนไลน์", "คีย์ลับของผู้ให้บริการชำระเงินกำหนดว่าเงินของลูกค้าเข้าบัญชีไหน")]
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> Save(
         Guid companyId, [FromBody] SaveConfigRequest req, CancellationToken ct)
     {
@@ -165,6 +169,8 @@ public class PaymentSettingsController : ControllerBase
     }
 
     [HttpPost("{providerCode}/test")]
+    [Accounting.Filters.RejectApiKey("ทดสอบการเชื่อมต่อรับชำระเงิน")]
+    [Accounting.Filters.RequireOwner("ทดสอบการเชื่อมต่อรับชำระเงิน", "ผลทดสอบปลดล็อกการเปิดรับเงินจริง")]
     public async Task<ActionResult<ApiResponse<ProviderHealth>>> Test(
         Guid companyId, string providerCode, CancellationToken ct)
     {
@@ -192,6 +198,8 @@ public class PaymentSettingsController : ControllerBase
     /// <para>ไปทาง live ต้องผ่านด่าน · ไปทาง test ทำได้เสมอ (การถอยกลับมาทดสอบต้องไม่ถูกขวาง
     /// — ไม่งั้นเจอปัญหาแล้วแก้ไม่ได้)</para></summary>
     [HttpPost("{providerCode}/mode")]
+    [Accounting.Filters.RejectApiKey("สลับโหมดรับชำระเงิน")]
+    [Accounting.Filters.RequireOwner("สลับโหมดรับชำระเงิน", "โหมดใช้งานจริงรับเงินของลูกค้าจริง")]
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> SetMode(
         Guid companyId, string providerCode, [FromBody] SetModeRequest req, CancellationToken ct)
     {
@@ -213,7 +221,8 @@ public class PaymentSettingsController : ControllerBase
 
             cfg.LiveEnabledAt = DateTime.UtcNow;
             // การเปลี่ยนแปลงที่กระทบ "เงินจริง" ห้ามเงียบ — ต้องมีร่องรอยที่ผู้สอบบัญชีเห็น
-            _db.AuditLogs.Add(new AuditLog
+            // W2-C3: เข้า hash chain (เดิม AuditLogs.Add ตรง ⇒ RowHash=null อยู่นอก chain)
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 EntityType = nameof(PaymentProviderConfig),

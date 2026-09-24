@@ -10309,7 +10309,7 @@
                   <input id="seCc" class="form-input" type="text" placeholder="(ไม่บังคับ)"></div>
                 <div class="form-group" style="margin:0"><label class="form-label">หัวข้อ</label>
                   <input id="seSubject" class="form-input" type="text"></div>
-                <div class="form-group" style="margin:0"><label class="form-label">ข้อความ</label>
+                <div class="form-group" style="margin:0"><label class="form-label">ข้อความ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(รูปแบบ HTML — แก้ได้เฉพาะข้อความระหว่างแท็ก &lt;…&gt; · ไม่แก้ = ระบบส่งข้อความตามภาษาของ PDF)</span></label>
                   <textarea id="seBody" class="form-input" rows="5" style="resize:vertical"></textarea></div>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seAttachPdf" checked> แนบไฟล์ PDF</label>
                 <div id="seEtaxRow" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px">
@@ -10331,11 +10331,12 @@
         wrap.querySelector('#seSubject').value = '';
         wrap.querySelector('#seBody').value = '';
         this._seAuto = { subject: '', body: '' };
-        this._loadSendEmailTemplate(id);
-        wrap.querySelector('#seEtax').onchange = () => this._loadSendEmailTemplate(id);
         wrap.querySelector('#seAttachPdf').checked = true;
         wrap.querySelector('#seEtaxRow').style.display = etaxEligible ? 'block' : 'none';
+        // ตั้ง checkbox ก่อนโหลดหัว/เนื้อ (W2-C7 · ฝ่ายค้านรอบสอง): เดิมโหลดก่อนตั้ง ⇒ ใบที่เปิดมาเป็น e-Tax ได้หัวที่ไม่มี "[e-Tax]"
         wrap.querySelector('#seEtax').checked = !!(etaxEligible && preferEtax);
+        wrap.querySelector('#seEtax').onchange = () => this._loadSendEmailTemplate(id);
+        this._loadSendEmailTemplate(id);
         wrap.querySelector('#seError').style.display = 'none';
         wrap.querySelector('#seSendBtn').onclick = () => this._submitSendEmail(id, hasEtaxId);
         wrap.classList.add('active');
@@ -10347,8 +10348,11 @@
         const wrap = document.getElementById('sendEmailModal'); if (!wrap) return;
         const api = Layout.api(); if (!api) return;
         const asEtax = !!wrap.querySelector('#seEtax')?.checked;
+        // กัน "ใครมาก่อนชนะ" (กฎ #4 A): สลับ checkbox เร็ว ๆ แล้วคำตอบเก่ามาถึงทีหลัง ⇒ ทิ้งคำตอบที่ไม่ใช่คำขอล่าสุด
+        const seq = (this._seSeq = (this._seSeq || 0) + 1);
         let tpl = null;
         try { tpl = (await api.getDocumentEmailTemplate(id, asEtax))?.data || null; } catch (e) { tpl = null; }
+        if (seq !== this._seSeq) return;
         const subjEl = wrap.querySelector('#seSubject');
         const bodyEl = wrap.querySelector('#seBody');
         const prev = this._seAuto || { subject: '', body: '' };

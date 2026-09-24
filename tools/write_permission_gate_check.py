@@ -84,6 +84,18 @@ WATCHED = [
     # เพิ่มรอบ 193 (ฝ่ายค้านรอบสอง R2-C2 · P0) — อนุมัติ/ปฏิเสธ/จ่าย/ยกเลิก/แก้ใบเบิกค่าใช้จ่ายมีแค่ [Authorize] ⇒ ผู้ยื่นอนุมัติ
     # แล้วกดจ่ายใบของตัวเองได้ (เงินออก + PV อนุมัติ + JE) · "allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 8
     "Accounting/Controllers/ExpenseClaimController.cs",
+    # เพิ่มรอบ 193 ทีม W (ฝ่ายค้านรอบสอง W2-C3/C4/C5) — ใส่ตอนเขียวหลังปิดด่านแล้ว (ratchet):
+    # คีย์ลับ/โหมด live ของ payment gateway (เดิมไม่มีด่าน ⇒ ใครก็เปลี่ยนบัญชีรับเงินของลูกค้าได้) ·
+    # สิทธิ์ดูเอกสารลับ (doc "Owner only" แต่ไม่มีด่าน ⇒ Viewer เปิดสิทธิ์ดูเงินเดือนให้ตัวเอง) ·
+    # กฎการอนุมัติ (ใครก็ลบขั้นอนุมัติได้) · ผู้ส่งอีเมล/LINE (เดิมไม่มีด่าน) · งาน PDPA/DSR
+    # ⚠️ SubscriptionController ยังใส่ไม่ได้: IncrementUsage · UpdateNotificationSettings · SubmitPayment · UploadSlip ·
+    # StartTrial ยังไม่มีด่านบทบาท (W2-P4 — backlog/คำถามเจ้าของใน r193-W.md) — ใส่ไฟล์นี้ตอนที่เขียวแล้วเท่านั้น
+    "Accounting/Controllers/PaymentSettingsController.cs",
+    "Accounting/Controllers/SensitivityController.cs",
+    "Accounting/Controllers/ApprovalController.cs",
+    "Accounting/Controllers/EmailConfigController.cs",
+    "Accounting/Controllers/LineConfigController.cs",
+    "Accounting/Controllers/PdpaController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -121,6 +133,11 @@ GATE_MARKERS = (
     "EnsureOwnerAccessAsync",
     # รอบ 193 (ฝ่ายค้านรอบสอง R2-C2) — ด่านใบเบิก (Helpers/ExpenseClaimActionPolicy: คีย์ Expense.* + ห้ามผู้ยื่นตัดสินใบตัวเอง)
     "DenyClaimAsync",
+    # รอบ 193 ทีม W (ฝ่ายค้านรอบสอง) — ด่านเจ้าของแบบ attribute (Filters/RequireOwnerAttribute → Helpers/OwnerGateDecision:
+    # ปฏิเสธคีย์ + ต้องเป็น Owner/SystemAdmin ของบริษัท) · ⚠️ `RejectApiKey` อย่างเดียว**ไม่นับ** (ตอบแค่ "ไม่ใช่คีย์" ไม่ได้ตรวจบทบาท)
+    "RequireOwner(",
+    # ด่าน DPO ของ PdpaController (Pii.View)
+    "RequireDpoAsync",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
@@ -152,6 +169,14 @@ READ_ONLY_POSTS = {
 SELF_SERVICE_POSTS = {
     # สร้างใบเบิก: ผู้ยื่น = ผู้ล็อกอินเสมอ (SubmittedByUserId = userId) · ยังไม่มีเงินออก — ด่านอยู่ที่ส่ง/อนุมัติ/จ่าย
     ("ExpenseClaimController.cs", "Create"),
+    # PDPA: ยื่นคำขอของเจ้าของข้อมูล (DSR intake) และแจ้งเหตุละเมิด — ใครในบริษัทก็ต้องแจ้งได้ (ม.37(4) นับ 72 ชม.
+    # จากเวลาที่รู้ ⇒ ด่านที่กันคนแจ้ง = ทำให้แจ้งช้า) · งานตัดสิน/แก้/ลบ/ปิดงานต้องผ่าน RequireDpoAsync
+    ("PdpaController.cs", "Submit"),
+    ("PdpaController.cs", "ReportBreach"),
+    # ขออนุมัติ: ผู้ยื่นส่งรายการของตัวเองเข้า workflow (ยังไม่มีผลทางบัญชี) · ตัดสินขั้นอนุมัติ: service บังคับว่า
+    # ผู้กดต้องเป็นผู้อนุมัติของขั้นปัจจุบันและไม่ใช่ผู้ยื่น (ApprovalService.SubmitActionAsync)
+    ("ApprovalController.cs", "SubmitForApproval"),
+    ("ApprovalController.cs", "SubmitAction"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')

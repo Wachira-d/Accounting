@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -6,150 +8,38 @@ using Xunit;
 namespace Accounting.Tests;
 
 /// <summary>
-/// Round-trip test ของ audit hash chain — control ตาม พ.ร.บ.การบัญชี ม.11 ทวิ /
-/// SOC2 (append-only + tamper-evident)
+/// audit hash chain — control ตาม พ.ร.บ.การบัญชี ม.11 ทวิ / SOC2 (append-only + tamper-evident)
 ///
-/// ที่มา: ฝั่งเขียน (<c>AccountingDbContext.ApplyAuditHashChain</c>) กับฝั่งตรวจ
-/// (<c>AuditTrailService.VerifyHashChainAsync</c>) เคยเขียน canonical string แยกกัน
-/// แล้ว drift — ฝั่งหนึ่งใช้ <c>(int)Action</c> + มี <c>OldValues</c>, อีกฝั่งใช้ชื่อ
-/// enum + ตก <c>OldValues</c> ⇒ verify คืน invalid ที่แถวแรกของทุกบริษัท**เสมอ**
-/// แม้ไม่มีใครแก้ข้อมูล ⇒ งานตรวจรายสัปดาห์แจ้งเตือนหลอกทุก tenant และแยก
-/// "โดนแก้จริง" ออกจาก "mismatch ในตัว" ไม่ได้ = ควบคุมล้มเหลวเงียบ ๆ
+/// <para>═══ ขอบเขตที่เทสต์นี้พิสูจน์ได้และ<b>ไม่ได้</b> (ฝ่ายค้านรอบ 193 รอบสอง W2-C2 — เขียนไว้ตรง ๆ) ═══
+/// เรพนี้ไม่มี PostgreSQL ในเทสต์ ⇒ ขั้น "อ่านกลับจากฐาน" <b>จำลอง</b>ด้วย <see cref="PgRoundTrip"/> (ตัดเหลือไมโครวินาที + Kind=Unspecified
+/// ตามพฤติกรรมของคอลัมน์ timestamp without time zone + EnableLegacyTimestampBehavior) · เทสต์เรียก <c>Seal</c>/<c>Analyze</c> ตรง ๆ
+/// <b>ไม่ได้ผ่าน</b> <c>AccountingDbContext.ApplyAuditHashChain</c>, Npgsql หรือลำดับ Id ที่ฐานข้อมูลออกให้ ·
+/// การต่อสายของเส้นเขียน/ตรวจล็อกด้วย <c>tools/required_call_site_check.py</c> (ApplyAuditHashChain ต้องเรียก Seal+ResolveTip ·
+/// ห้ามสูตรอื่น) และสูตร v1 เป็น private แล้ว (เส้นเขียนเรียกไม่ได้) · เทสต์ผ่าน Npgsql จริง = backlog (Testcontainers/CI ที่มี PostgreSQL)</para>
 ///
-/// เทสต์ชุดนี้จำลอง chain แบบเดียวกับ production (ผูก PrevHash ต่อกัน) แล้ว
-/// ตรวจด้วย logic เดียวกับ verify — ถ้ามีใครแยก canonical เป็นสองที่อีก
-/// เทสต์นี้จะแดงทันที (กฎเหล็ก #4 C + G)
+/// <para>ประวัติ: ฝั่งเขียนกับฝั่งตรวจเคยเขียน canonical แยกกันแล้ว drift ⇒ verify ไม่ผ่านที่แถวแรกของทุกบริษัท · รอบ 193 พบอีกชั้น:
+/// เวลาที่อ่านกลับจากฐานไม่เท่ากับเวลาที่ hash (สูตร v1) ⇒ สูตร v2 · รอบสอง: chain แตกกิ่งเมื่อคำขอพร้อมกัน ⇒ ตัวตรวจแยกสาเหตุ</para>
 /// </summary>
 public class AuditHashChainTests
 {
-    private static AuditLog Row(int i, string? prevHash, AuditAction action = AuditAction.Update)
-        => new()
-        {
-            Id = i,
-            CompanyId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-            UserId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
-            UserEmail = $"user{i}@example.com",
-            Action = action,
-            EntityType = "Document",
-            EntityId = $"doc-{i}",
-            OldValues = $"{{\"amount\":{i * 100}}}",
-            NewValues = $"{{\"amount\":{i * 200}}}",
-            // เวลาคงที่ (ไม่ใช้ DateTime.UtcNow) — เทสต์ต้อง deterministic
-            Timestamp = new DateTime(2026, 1, 1, 0, 0, i, DateTimeKind.Utc),
-            PrevHash = prevHash,
-        };
+    private static readonly Guid Company = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
-    /// <summary>สร้าง chain แบบเดียวกับ ApplyAuditHashChain: PrevHash ของแถว i
-    /// = RowHash ของแถว i-1</summary>
-    private static List<AuditLog> BuildChain(int count)
+    /// <summary>เวลามีหลัก 100ns ไม่เป็นศูนย์ — แบบ DateTime.UtcNow จริง (เวลาวินาทีเต็มซ่อนบั๊ก round-trip)</summary>
+    private static AuditLog Row(int i, AuditAction action = AuditAction.Update) => new()
     {
-        var rows = new List<AuditLog>();
-        string? prev = null;
-        for (var i = 1; i <= count; i++)
-        {
-            var r = Row(i, prev);
-            r.RowHash = AuditHashChain.ComputeRowHash(r);
-            prev = r.RowHash;
-            rows.Add(r);
-        }
-        return rows;
-    }
+        Id = i,
+        CompanyId = Company,
+        UserId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+        UserEmail = $"user{i}@example.com",
+        Action = action,
+        EntityType = "Document",
+        EntityId = $"doc-{i}",
+        OldValues = $"{{\"amount\":{i * 100}}}",
+        NewValues = $"{{\"amount\":{i * 200}}}",
+        Timestamp = new DateTime(2026, 9, 24, 3, 4, 5, DateTimeKind.Utc).AddTicks(1234567 + i),
+    };
 
-    /// <summary>logic เดียวกับ AuditTrailService.VerifyHashChainAsync —
-    /// คืน index ของแถวที่ผิด (-1 = ทั้ง chain ถูกต้อง)</summary>
-    private static int VerifyChain(List<AuditLog> rows)
-    {
-        string? prev = null;
-        for (var i = 0; i < rows.Count; i++)
-        {
-            var r = rows[i];
-            if (r.PrevHash != prev) return i;
-            if (!string.Equals(AuditHashChain.ComputeRowHash(r), r.RowHash,
-                    StringComparison.OrdinalIgnoreCase)) return i;
-            prev = r.RowHash;
-        }
-        return -1;
-    }
-
-    [Fact]
-    public void Chain_ที่ไม่ถูกแก้_ต้องผ่านการตรวจ()
-    {
-        // นี่คือเคสที่บั๊กเดิมทำพัง: chain สะอาดแต่ verify บอกว่าโดนแก้
-        Assert.Equal(-1, VerifyChain(BuildChain(5)));
-    }
-
-    [Fact]
-    public void แก้ค่าในแถวกลาง_ต้องตรวจจับได้ที่แถวนั้น()
-    {
-        var rows = BuildChain(5);
-        rows[2].NewValues = "{\"amount\":999999}";   // insider แก้ยอดเงินย้อนหลัง
-        Assert.Equal(2, VerifyChain(rows));
-    }
-
-    [Fact]
-    public void ลบแถวกลางออก_ต้องตรวจจับได้จาก_PrevHash_ที่ขาดตอน()
-    {
-        var rows = BuildChain(5);
-        rows.RemoveAt(2);                            // ลบร่องรอยทิ้ง
-        Assert.Equal(2, VerifyChain(rows));          // แถวถัดไป PrevHash ไม่ต่อ
-    }
-
-    [Fact]
-    public void แก้แล้วคำนวณ_RowHash_ใหม่_ยังตรวจจับได้จากแถวถัดไป()
-    {
-        // ผู้โจมตีที่รู้สูตร แก้ค่า + คำนวณ hash แถวตัวเองใหม่ให้เนียน
-        var rows = BuildChain(5);
-        rows[1].NewValues = "{\"amount\":777}";
-        rows[1].RowHash = AuditHashChain.ComputeRowHash(rows[1]);
-        // แถว 1 ผ่าน แต่แถว 2 มี PrevHash เป็นค่าเดิม → ขาดตอน
-        Assert.Equal(2, VerifyChain(rows));
-    }
-
-    [Fact]
-    public void เปลี่ยนชนิด_Action_ต้องเปลี่ยน_hash()
-    {
-        // กันการ regress กลับไปใช้ชื่อ enum แทนเลข (หรือกลับกัน) แบบเงียบ ๆ
-        var a = AuditHashChain.ComputeRowHash(Row(1, null, AuditAction.Create));
-        var b = AuditHashChain.ComputeRowHash(Row(1, null, AuditAction.Delete));
-        Assert.NotEqual(a, b);
-    }
-
-    [Fact]
-    public void OldValues_ต้องอยู่ใน_canonical()
-    {
-        // บั๊กเดิมคือฝั่ง verify ตกช่องนี้ไป — ถ้าใครตัดออกอีก เทสต์นี้แดง
-        var r1 = Row(1, null);
-        var r2 = Row(1, null);
-        r2.OldValues = "{\"amount\":0}";
-        Assert.NotEqual(AuditHashChain.ComputeRowHash(r1), AuditHashChain.ComputeRowHash(r2));
-    }
-
-    [Fact]
-    public void PrevHash_ต้องอยู่ใน_canonical_ไม่งั้นสลับลำดับแถวได้()
-    {
-        var r1 = Row(1, null);
-        var r2 = Row(1, "ABCDEF");
-        Assert.NotEqual(AuditHashChain.ComputeRowHash(r1), AuditHashChain.ComputeRowHash(r2));
-    }
-
-    [Fact]
-    public void Canonical_มีครบ_9_ช่อง_ตามลำดับที่ตกลงไว้()
-    {
-        var canonical = AuditHashChain.Canonical(
-            new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
-            Guid.Empty, "a@b.c", AuditAction.Update, "Document", "d1", "new", "old", "PREV");
-        Assert.Equal(8, canonical.Count(ch => ch == '|'));      // 9 ช่อง = 8 คั่น
-        Assert.Contains($"|{(int)AuditAction.Update}|", canonical);  // เลข ไม่ใช่ชื่อ enum
-        Assert.EndsWith("|PREV", canonical);
-    }
-
-    // ==================================================================================
-    // Round-trip ผ่าน PostgreSQL (ฝ่ายค้านรอบ 193 PLAUSIBLE-1) — เทสต์ข้างบน hash ค่าในหน่วยความจำทั้งสองฝั่ง
-    // จึงผ่านได้ทั้งที่ของจริงตรวจไม่ผ่านทุกแถว. ชุดนี้จำลองสิ่งที่ Npgsql คืนมาจริง: คอลัมน์ timestamp without
-    // time zone + EnableLegacyTimestampBehavior ⇒ Kind=Unspecified และความละเอียดเหลือไมโครวินาที
-    // ==================================================================================
-
-    /// <summary>สิ่งที่ PostgreSQL เก็บ + Npgsql (legacy) คืนมา: ตัดเหลือไมโครวินาที · Kind=Unspecified</summary>
+    /// <summary>สิ่งที่ PostgreSQL เก็บ + Npgsql (legacy) คืนมา: ตัดเหลือไมโครวินาที · Kind=Unspecified (<b>จำลอง</b>)</summary>
     private static DateTime PgRoundTrip(DateTime t)
         => DateTime.SpecifyKind(new DateTime(t.Ticks - t.Ticks % 10), DateTimeKind.Unspecified);
 
@@ -160,138 +50,254 @@ public class AuditHashChainTests
         Timestamp = PgRoundTrip(r.Timestamp), PrevHash = r.PrevHash, RowHash = r.RowHash,
     };
 
-    /// <summary>เวลามีหลัก 100ns ไม่เป็นศูนย์ — แบบ DateTime.UtcNow จริง (Row() ข้างบนใช้วินาทีเต็มจึงซ่อนบั๊ก)</summary>
-    private static AuditLog LiveRow(int i)
+    /// <summary><b>สเปกที่แช่แข็ง</b>ของสูตร v1 (ก่อนรอบ 193) — สำเนาตั้งใจในเทสต์: ตัวจริงใน Helpers เป็น private แล้ว
+    /// (เส้นเขียนต้องเรียกไม่ได้) · ใช้สร้าง "แถวเก่า" ให้ตัวตรวจ legacy เท่านั้น</summary>
+    private static string FrozenV1Hash(AuditLog r) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+        $"{r.Timestamp:O}|{r.UserId}|{r.UserEmail}|{(int)r.Action}|{r.EntityType}|{r.EntityId}|{r.NewValues}|{r.OldValues}|{r.PrevHash}")));
+
+    /// <summary>ประทับแบบเดียวกับ ApplyAuditHashChain (ResolveTip + Seal ทีละแถว) แล้วอ่านกลับ</summary>
+    private static List<AuditLog> SealChain(int count)
     {
-        var r = Row(i, null);
-        r.Timestamp = new DateTime(2026, 9, 24, 3, 4, 5, DateTimeKind.Utc).AddTicks(1234567 + i);
-        return r;
+        var pending = new List<AuditLog>();
+        for (var i = 1; i <= count; i++)
+        {
+            var r = Row(i);
+            AuditHashChain.Seal(r, AuditHashChain.ResolveTip(pending, null));
+            pending.Add(r);
+        }
+        return pending.Select(ReadBack).ToList();
     }
 
-    private static List<AuditLog> SealChainV2(int count)
+    private static List<AuditLog> V1Chain(int count)
     {
         var rows = new List<AuditLog>();
         string? prev = null;
         for (var i = 1; i <= count; i++)
         {
-            var r = LiveRow(i);
-            AuditHashChain.Seal(r, prev);
+            var r = Row(i);
+            r.PrevHash = prev;
+            r.RowHash = FrozenV1Hash(r);
             prev = r.RowHash;
-            rows.Add(r);
+            rows.Add(ReadBack(r));
         }
         return rows;
     }
 
+    // ════════ round-trip (สูตร v2) ════════
+
     [Fact]
     public void V1_ค่าที่อ่านกลับจากฐาน_ไม่ตรงสูตรเดิมตรง_ๆ_นี่คือบั๊กที่ทำให้ตรวจไม่ผ่านทั้งระบบ()
     {
-        // reproduce: hash ตอนเขียน (ในหน่วยความจำ) ≠ hash ของค่าที่อ่านกลับ — ถ้าเทสต์นี้แดง แปลว่าสมมติฐานเรื่อง
-        // round-trip ผิด ต้องทบทวนทั้งชุด
-        var r = LiveRow(1);
-        r.RowHash = AuditHashChain.ComputeRowHash(r);
-        var back = ReadBack(r);
-        Assert.NotEqual(r.RowHash, AuditHashChain.ComputeRowHash(back));
+        var r = Row(1);
+        r.RowHash = FrozenV1Hash(r);
+        Assert.NotEqual(r.RowHash, FrozenV1Hash(ReadBack(r)));
     }
 
     [Fact]
-    public void V2_เขียนแล้วอ่านกลับจากฐาน_ตรวจผ่านทั้ง_chain()
+    public void V2_เขียนแล้วอ่านกลับ_ตรวจผ่านทั้ง_chain()
     {
-        var back = SealChainV2(5).Select(ReadBack).ToList();
-        Assert.Equal(-1, AuditHashChain.FirstBrokenIndex(back));
+        var back = SealChain(5);
+        var a = AuditHashChain.Analyze(back);
+        Assert.False(a.HasIntegrityFindings);
+        Assert.Equal(0, a.ForkCount);
+        Assert.Null(AuditHashChain.AlertMessage(a));
         Assert.All(back, r => Assert.StartsWith(AuditHashChain.V2Prefix, r.RowHash));
     }
 
     [Fact]
     public void V2_เวลาที่อ่านกลับเป็น_Local_ก็ยังตรวจผ่าน()
     {
-        // ถ้าวันหนึ่งคอลัมน์ถูกเปลี่ยนเป็น timestamptz (legacy mode คืน Kind=Local) — normalize ต้องคืนเป็น UTC ได้
-        var rows = SealChainV2(3).Select(ReadBack).ToList();
+        var rows = SealChain(3);
         foreach (var r in rows)
             r.Timestamp = DateTime.SpecifyKind(r.Timestamp, DateTimeKind.Utc).ToLocalTime();
-        Assert.Equal(-1, AuditHashChain.FirstBrokenIndex(rows));
+        Assert.False(AuditHashChain.Analyze(rows).HasIntegrityFindings);
     }
 
     [Fact]
     public void V2_Seal_ตั้งเวลาที่เก็บ_เท่ากับเวลาที่_hash()
     {
-        var r = LiveRow(1);
+        var r = Row(1);
         AuditHashChain.Seal(r, null);
         Assert.Equal(DateTimeKind.Utc, r.Timestamp.Kind);
-        Assert.Equal(0, r.Timestamp.Ticks % 10);            // ไม่มีหลักที่ฐานข้อมูลจะตัดทิ้ง
-        Assert.Equal(r.Timestamp.Ticks, ReadBack(r).Timestamp.Ticks);   // เก็บแล้วอ่านกลับ = ค่าที่ hash
+        Assert.Equal(0, r.Timestamp.Ticks % 10);
+        Assert.Equal(r.Timestamp.Ticks, ReadBack(r).Timestamp.Ticks);
     }
 
     [Fact]
-    public void V2_แก้ค่าหลังอ่านกลับ_ยังจับได้ที่แถวนั้น()
+    public void เปลี่ยน_Action_OldValues_PrevHash_ต้องเปลี่ยน_hash()
     {
-        // ทิศตรงข้าม: normalize ต้องไม่ทำให้ด่านหลวม
-        var back = SealChainV2(5).Select(ReadBack).ToList();
-        back[3].NewValues = "{\"amount\":1}";
-        Assert.Equal(3, AuditHashChain.FirstBrokenIndex(back));
+        var baseRow = Row(1);
+        AuditHashChain.Seal(baseRow, null);
+        var byAction = Row(1, AuditAction.Delete); AuditHashChain.Seal(byAction, null);
+        var byOld = Row(1); byOld.OldValues = "{\"amount\":0}"; AuditHashChain.Seal(byOld, null);
+        var byPrev = Row(1); AuditHashChain.Seal(byPrev, "ABCDEF");
+        Assert.NotEqual(baseRow.RowHash, byAction.RowHash);
+        Assert.NotEqual(baseRow.RowHash, byOld.RowHash);
+        Assert.NotEqual(baseRow.RowHash, byPrev.RowHash);
+    }
+
+    // ════════ ถูกแก้ (tampered) — รายงานทุกแถว ════════
+
+    [Fact]
+    public void แก้ค่าหลังอ่านกลับ_จับได้ที่แถวนั้น_และรายงานทุกแถวไม่ใช่แค่แถวแรก()
+    {
+        var back = SealChain(6);
+        back[1].NewValues = "{\"amount\":1}";
+        back[4].EntityId = "doc-อื่น";
+        var a = AuditHashChain.Analyze(back);
+        Assert.Equal(new long[] { 2, 5 }, a.Tampered.Select(r => r.Id).ToArray());
+        Assert.Empty(a.Dangling);
+        var msg = AuditHashChain.AlertMessage(a)!;
+        Assert.Contains("#2", msg);
+        Assert.Contains("#5", msg);
+        Assert.Contains("ถูกแก้หลังบันทึก", msg);
+        Assert.DoesNotContain("raw SQL", msg);   // ไม่อ้างวิธีที่ตรวจไม่ได้ (F2 ข้อ 7)
     }
 
     [Fact]
-    public void V2_แก้เวลาแม้แต่ไมโครวินาทีเดียว_จับได้()
+    public void แก้เวลาแม้แต่ไมโครวินาทีเดียว_จับได้()
     {
-        var back = SealChainV2(3).Select(ReadBack).ToList();
+        var back = SealChain(3);
         back[1].Timestamp = back[1].Timestamp.AddTicks(10);
-        Assert.Equal(1, AuditHashChain.FirstBrokenIndex(back));
+        Assert.Equal(new long[] { 2 }, AuditHashChain.Analyze(back).Tampered.Select(r => r.Id).ToArray());
     }
 
     [Fact]
-    public void V1_แถวเก่าที่อ่านกลับจากฐาน_ตรวจผ่านแบบ_legacy_ไม่ต้องเขียน_hash_ทับ()
+    public void แก้แล้วประทับ_RowHash_ใหม่_จับได้จากแถวถัดไปที่ขาดตอน()
     {
-        // แถวก่อนรอบ 193 ถูก hash ด้วย v1 จากเวลา 7 หลัก — ตาราง append-only เขียนทับไม่ได้และไม่ควรเขียนทับ
-        var rows = new List<AuditLog>();
-        string? prev = null;
-        for (var i = 1; i <= 4; i++)
-        {
-            var r = LiveRow(i);
-            r.PrevHash = prev;
-            r.RowHash = AuditHashChain.ComputeRowHash(r);
-            prev = r.RowHash;
-            rows.Add(ReadBack(r));
-        }
-        Assert.Equal(-1, AuditHashChain.FirstBrokenIndex(rows));
+        // ผู้แก้ที่รู้สูตรประทับแถวตัวเองใหม่ ⇒ แถวตัวเองผ่าน แต่แถวถัดไปชี้ hash เดิมที่ไม่มีใครถืออยู่แล้ว
+        var back = SealChain(4);
+        back[1].NewValues = "{\"amount\":777}";
+        AuditHashChain.Seal(back[1], back[1].PrevHash);
+        var a = AuditHashChain.Analyze(back);
+        Assert.Empty(a.Tampered);
+        Assert.Equal(new long[] { 3 }, a.Dangling.Select(r => r.Id).ToArray());
+        Assert.Contains("ขาดตอน", AuditHashChain.AlertMessage(a));
+    }
+
+    // ════════ ขาดตอน (dangling) ════════
+
+    [Fact]
+    public void ลบแถวกลางออก_จับได้เป็นขาดตอนที่แถวถัดไป()
+    {
+        var back = SealChain(5);
+        back.RemoveAt(2);                                // ลบ #3
+        var a = AuditHashChain.Analyze(back);
+        Assert.True(a.HasIntegrityFindings);
+        Assert.Equal(new long[] { 4 }, a.Dangling.Select(r => r.Id).ToArray());
     }
 
     [Fact]
-    public void V1_แถวเก่าที่ถูกแก้_legacy_ยังจับได้()
+    public void ลบแถวแรกออก_จับได้()
     {
-        var r = LiveRow(1);
-        r.RowHash = AuditHashChain.ComputeRowHash(r);
-        var back = ReadBack(r);
-        back.EntityId = "doc-อื่น";
-        Assert.False(AuditHashChain.VerifyRow(back));
+        var back = SealChain(3);
+        back.RemoveAt(0);
+        Assert.Equal(new long[] { 2 }, AuditHashChain.Analyze(back).Dangling.Select(r => r.Id).ToArray());
+    }
+
+    // ════════ แตกกิ่ง (fork) — ไม่ใช่การแก้ ════════
+
+    [Fact]
+    public void สองคำขอพร้อมกันอ่านปลายเดียวกัน_เป็น_fork_ไม่ใช่_tamper_และไม่แจ้งลูกค้า()
+    {
+        // W2-C1: คำขอ A และ B ของบริษัทเดียวกันอ่านปลาย chain (#1) พร้อมกัน ⇒ ทั้งคู่ได้ PrevHash = #1 · คำขอถัดไปต่อจาก Id สูงสุด
+        var r1 = Row(1); AuditHashChain.Seal(r1, null);
+        var a2 = Row(2); AuditHashChain.Seal(a2, r1.RowHash);
+        var b3 = Row(3); AuditHashChain.Seal(b3, r1.RowHash);
+        var c4 = Row(4); AuditHashChain.Seal(c4, b3.RowHash);
+        var a = AuditHashChain.Analyze(new[] { r1, a2, b3, c4 }.Select(ReadBack).ToList());
+        Assert.Equal(1, a.ForkCount);
+        Assert.False(a.HasIntegrityFindings);
+        Assert.Null(AuditHashChain.AlertMessage(a));
+    }
+
+    [Fact]
+    public void Fork_ไม่บังการแก้จริงที่เกิดทีหลัง()
+    {
+        // เดิมตัวตรวจหยุดที่แถวแรกที่ "พัง" (= จุด fork) ทุกสัปดาห์ ⇒ การแก้จริงหลังจุดนั้นไม่เคยถูกรายงาน
+        var r1 = Row(1); AuditHashChain.Seal(r1, null);
+        var a2 = Row(2); AuditHashChain.Seal(a2, r1.RowHash);
+        var b3 = Row(3); AuditHashChain.Seal(b3, r1.RowHash);
+        var c4 = Row(4); AuditHashChain.Seal(c4, b3.RowHash);
+        var rows = new[] { r1, a2, b3, c4 }.Select(ReadBack).ToList();
+        rows[3].NewValues = "{\"amount\":-1}";
+        var a = AuditHashChain.Analyze(rows);
+        Assert.Equal(1, a.ForkCount);
+        Assert.Equal(new long[] { 4 }, a.Tampered.Select(r => r.Id).ToArray());
+    }
+
+    [Fact]
+    public void แถวแรกพร้อมกันสองแถว_นับเป็น_fork()
+    {
+        var x = Row(1); AuditHashChain.Seal(x, null);
+        var y = Row(2); AuditHashChain.Seal(y, null);
+        var a = AuditHashChain.Analyze(new[] { x, y }.Select(ReadBack).ToList());
+        Assert.Equal(1, a.ForkCount);
+        Assert.False(a.HasIntegrityFindings);
+    }
+
+    [Fact]
+    public void ลำดับ_Id_สลับกับลำดับประทับ_ไม่ถูกฟ้อง()
+    {
+        // W2-P2: EF ไม่รับประกันลำดับ INSERT ในหนึ่ง SaveChanges ⇒ ตัวตรวจต้องไม่พึ่งลำดับ Id
+        var back = SealChain(4);
+        (back[1].Id, back[2].Id) = (back[2].Id, back[1].Id);
+        back.Reverse();
+        var a = AuditHashChain.Analyze(back);
+        Assert.False(a.HasIntegrityFindings);
+        Assert.Equal(0, a.ForkCount);
+    }
+
+    // ════════ แถวเก่า (v1) ════════
+
+    [Fact]
+    public void V1_แถวเก่าที่อ่านกลับ_ตรวจผ่านแบบ_legacy_ไม่ต้องเขียน_hash_ทับ()
+    {
+        Assert.False(AuditHashChain.Analyze(V1Chain(4)).HasIntegrityFindings);
+    }
+
+    [Fact]
+    public void V1_แถวเก่าที่ถูกแก้_ยังจับได้()
+    {
+        var rows = V1Chain(3);
+        rows[1].EntityId = "doc-อื่น";
+        Assert.Equal(new long[] { 2 }, AuditHashChain.Analyze(rows).Tampered.Select(r => r.Id).ToArray());
     }
 
     [Fact]
     public void Chain_ผสม_v1_แล้วต่อด้วย_v2_ตรวจผ่าน()
     {
-        // บริษัทที่มีแถวเก่า (v1) แล้วแถวใหม่หลัง deploy (v2) ผูกต่อจาก RowHash v1 ตัวท้าย
-        var old = LiveRow(1);
-        old.RowHash = AuditHashChain.ComputeRowHash(old);
-        var neu = LiveRow(2);
-        AuditHashChain.Seal(neu, old.RowHash);
-        Assert.Equal(-1, AuditHashChain.FirstBrokenIndex(new List<AuditLog> { ReadBack(old), ReadBack(neu) }));
+        var old = V1Chain(2);
+        var neu = Row(3);
+        AuditHashChain.Seal(neu, old[^1].RowHash);
+        old.Add(ReadBack(neu));
+        Assert.False(AuditHashChain.Analyze(old).HasIntegrityFindings);
     }
 
     [Fact]
     public void ปลอมป้ายรุ่น_v2_บนแถว_v1_ไม่ผ่าน()
     {
-        var r = LiveRow(1);
-        r.RowHash = AuditHashChain.V2Prefix + AuditHashChain.ComputeRowHash(r);
+        var r = Row(1);
+        r.RowHash = AuditHashChain.V2Prefix + FrozenV1Hash(r);
         Assert.False(AuditHashChain.VerifyRow(ReadBack(r)));
     }
 
-    // ---------- PLAUSIBLE-2: แถวที่ยังรอบันทึกต้องเป็นปลาย chain ----------
+    // ════════ ปลาย chain ของแถวที่รอบันทึก ════════
 
     [Fact]
     public void ResolveTip_แถวที่ยังรอบันทึก_ชนะแถวในฐาน()
     {
-        var a = LiveRow(1); AuditHashChain.Seal(a, "DBTIP");
-        var b = LiveRow(2); AuditHashChain.Seal(b, a.RowHash);
+        var a = Row(1); AuditHashChain.Seal(a, "DBTIP");
+        var b = Row(2); AuditHashChain.Seal(b, a.RowHash);
         Assert.Equal(b.RowHash, AuditHashChain.ResolveTip(new[] { a, b }, "DBTIP"));
+    }
+
+    [Fact]
+    public void ResolveTip_ไม่พึ่งลำดับของ_ChangeTracker()
+    {
+        var a = Row(1); AuditHashChain.Seal(a, "DBTIP");
+        var b = Row(2); AuditHashChain.Seal(b, a.RowHash);
+        Assert.Equal(b.RowHash, AuditHashChain.ResolveTip(new[] { b, a }, "DBTIP"));
     }
 
     [Fact]
@@ -299,20 +305,15 @@ public class AuditHashChainTests
     {
         Assert.Equal("DBTIP", AuditHashChain.ResolveTip(Array.Empty<AuditLog>(), "DBTIP"));
         Assert.Null(AuditHashChain.ResolveTip(Array.Empty<AuditLog>(), null));
+        var unsealed = Row(9);                       // แถวที่ AuditLogs.Add ตรง (RowHash=null) ไม่ใช่ปลาย chain
+        Assert.Equal("DBTIP", AuditHashChain.ResolveTip(new[] { unsealed }, "DBTIP"));
     }
 
     [Fact]
     public void เพิ่มสองแถวก่อนบันทึก_ต้องไม่แตกกิ่ง()
     {
-        // จำลอง AddChainedAuditLog ×2 ก่อน SaveChanges: เดิมทั้งคู่ได้ PrevHash = ปลายในฐาน ⇒ แถวที่สองตรวจไม่ผ่าน
-        var pending = new List<AuditLog>();
-        foreach (var i in new[] { 1, 2 })
-        {
-            var r = LiveRow(i);
-            AuditHashChain.Seal(r, AuditHashChain.ResolveTip(pending, null));
-            pending.Add(r);
-        }
-        Assert.Equal(pending[0].RowHash, pending[1].PrevHash);
-        Assert.Equal(-1, AuditHashChain.FirstBrokenIndex(pending.Select(ReadBack).ToList()));
+        var back = SealChain(2);
+        Assert.Equal(back[0].RowHash, back[1].PrevHash);
+        Assert.Equal(0, AuditHashChain.Analyze(back).ForkCount);
     }
 }

@@ -414,6 +414,44 @@ RULES += [
 ]
 
 
+# ── รอบ 193 ทีม W หลังฝ่ายค้านรอบสอง (W2-C2): audit hash chain — เรพไม่มี PostgreSQL ในเทสต์ ⇒ เทสต์เรียก Seal/Analyze ตรง
+# และ "ย้อนเส้นเขียนกลับไปสูตรเก่า/ถอด ResolveTip" เทสต์ยังเขียว ⇒ ล็อกการต่อสายของเส้นเขียน/ตรวจที่นี่ (สูตร v1 เป็น private แล้ว) ──
+AUDIT_CTX = "Data/AccountingDbContext.cs"
+AUDIT_SVC = "Services/Implementations/AuditTrailService.cs"
+AUDIT_CTRL = "Controllers/AuditTrailController.cs"
+AUDIT_JOB = "Services/Background/AuditChainVerifyJob.cs"
+AUDIT_HASH_FORBID = ["SHA256", "ComputeRowHash(", "ToHexString("]
+RULES += [
+    dict(file=AUDIT_CTX, method="ApplyAuditHashChain",
+         must=["AuditHashChain.Seal(", "AuditHashChain.ResolveTip("],
+         before=[("AuditHashChain.ResolveTip(", "AuditHashChain.Seal(")],
+         forbid=AUDIT_HASH_FORBID + ["e.RowHash ="],
+         why="W2-C2 เส้นเขียน audit มีทางเดียว: ปลาย chain จาก ResolveTip (รวมแถวที่รอบันทึก) แล้ว Seal สูตร v2 — ห้ามประกอบ hash เอง"),
+    dict(file=AUDIT_CTX, method="AddChainedAuditLog",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.Add(")],
+         why="W2-C2 แถว audit ที่เขียนตรงต้องถูกประทับก่อน Add (ไม่งั้น RowHash=null อยู่นอก chain)"),
+    dict(file=AUDIT_CTX, method="SaveChangesAsync",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.AddRange(")],
+         why="W2-C2 แถว audit จาก ChangeTracker ต้องถูกประทับก่อนบันทึก"),
+    dict(file=AUDIT_CTX, method="SaveChanges",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.AddRange(")],
+         why="W2-C2 เส้น sync ต้องประทับเหมือนเส้น async"),
+    dict(file=AUDIT_SVC, method="VerifyHashChainAsync",
+         must=["AuditHashChain.Analyze(", "AuditHashChain.AlertMessage("],
+         forbid=AUDIT_HASH_FORBID + ["PrevHash !="],
+         why="W2-C1/C2 ฝั่งตรวจตัวเดียว (แยก ถูกแก้/ขาดตอน/แตกกิ่ง · รายงานทุกแถว) — ห้ามเดิน chain/ประกอบ hash เอง"),
+    dict(file=AUDIT_CTRL, method="VerifyHashChain",
+         must=["AuditHashChain.Analyze("],
+         forbid=AUDIT_HASH_FORBID + ["PrevHash !="],
+         why="W2-C2 endpoint ตรวจใช้ตัวตรวจกลาง (เดิมมีสำเนา canonical ของตัวเอง)"),
+    dict(file=AUDIT_JOB, method="RunCycleAsync",
+         must=["result.AlertMessage", "result.ForkCount"],
+         why="W2-C1 ข้อความถึงลูกค้าตามสาเหตุที่ตรวจพบจริง · fork แยกรายงาน ไม่แจ้งว่า \"ถูกแก้\""),
+    dict(file="Controllers/PaymentSettingsController.cs", method="SetMode",
+         must=["AddChainedAuditLog("], forbid=["AuditLogs.Add("],
+         why="W2-C3 ร่องรอยการเปิดรับเงินจริงต้องอยู่ใน hash chain"),
+]
+
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -431,7 +469,9 @@ def mask(text: str, keep_strings: bool = False) -> str:
             interp |= text[j] == "$"
             verb |= text[j] == "@"
             j += 1
-        if text.startswith('"""', j):
+        # raw string literal เฉพาะเมื่อไม่ใช่ verbatim — `@"""IsActive"" = true"` คือ verbatim ที่ขึ้นต้นด้วย "" (escape)
+        # (ทีม W รอบสอง: เดิมตีเป็น raw string ⇒ ตัดโค้ดครึ่งหลังของ AccountingDbContext ทิ้งทั้งไฟล์ ⇒ "ไม่พบเมธอด")
+        if not verb and text.startswith('"""', j):
             end = text.find('"""', j + 3)
             return n if end < 0 else end + 3
         j += 1
@@ -705,6 +745,10 @@ def self_test() -> list:
         '    private void After() { Bar.Call(1); }\n'
         '}\n')
     errs = check_rule(sample, dict(file="x.cs", method="Foo", must=["Baz.Real(", "Bar.Call("], why="t"))
+    verbatim = ('class B {\n    void Cfg() { var f = @"""IsActive"" = true"; }\n'
+                '    private void Later()\n    {\n        Real.Call();\n    }\n}\n')
+    if check_rule(verbatim, dict(file="y.cs", method="Later", must=["Real.Call("], why="t")):
+        fails.append("self-test: verbatim string ที่ขึ้นต้นด้วย \"\" ถูกตีเป็น raw string (โค้ดหลังจากนั้นหายทั้งไฟล์)")
     if not (len(errs) == 1 and "Bar.Call(" in errs[0]):
         fails.append(f"self-test: ตัวตัดสตริงผิด — คาด 1 ข้อ ได้ {errs}")
     return fails

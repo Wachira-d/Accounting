@@ -109,11 +109,22 @@ public class AuditTrailService : IAuditTrailService
             .OrderBy(a => a.Id)
             .ToListAsync();
         // ใช้ฟังก์ชันกลางตัวเดียวกับฝั่งเขียน (Helpers/AuditHashChain — v2 + ตรวจแถว v1 แบบ legacy) —
-        // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจไม่มีวันผ่าน
-        var broken = Accounting.Helpers.AuditHashChain.FirstBrokenIndex(rows);
-        if (broken >= 0)
-            return new AuditChainVerifyResult(rows.Count, broken, rows[broken].Id.ToString(), rows[broken].Timestamp, false);
-        return new AuditChainVerifyResult(rows.Count, -1, null, null, true);
+        // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจไม่มีวันผ่าน ·
+        // รอบสอง W2-C1: แยก "ถูกแก้" / "ขาดตอน" / "แตกกิ่งจากคำขอพร้อมกัน" และรายงานทุกแถว ไม่ใช่แค่แถวแรก
+        var a = Accounting.Helpers.AuditHashChain.Analyze(rows);
+        var first = a.Tampered.Concat(a.Dangling).OrderBy(r => r.Id).FirstOrDefault();
+        return new AuditChainVerifyResult(
+            rows.Count,
+            first == null ? -1 : rows.IndexOf(first),
+            first?.Id.ToString(),
+            first?.Timestamp,
+            !a.HasIntegrityFindings,
+            a.Tampered.Count,
+            a.Dangling.Count,
+            a.ForkCount,
+            a.Tampered.Select(r => r.Id.ToString()).ToList(),
+            a.Dangling.Select(r => r.Id.ToString()).ToList(),
+            Accounting.Helpers.AuditHashChain.AlertMessage(a));
     }
 
     // ===== Static helper for SaveChanges audit logging =====
