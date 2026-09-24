@@ -614,6 +614,11 @@ public class OcrService : IOcrService
                 }
             }
 
+            // ── Total-first (รอบ 192): ยึด "ยอดรวมทั้งสิ้น" ก่อนด่านคณิต แล้วแตกยอดให้ตัวเลขอื่นอธิบายได้ ──
+            // ตัวตัดสินอยู่ที่ Helpers/OcrTotalAnchor + Helpers/OcrTotalDecomposer (pure + เทสต์ด้วยกระดาษจริง)
+            // ที่นี่แค่ต่อสาย · ข้าม e-Tax XML (ลงนามแล้ว = ความจริงตามกฎหมาย)
+            var totalShape = ApplyTotalFirst(scanResult, extractedData, extractedText, ocrEngineUsed);
+
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
             var gatewayConfig = BuildGatewayConfig(siteSettings);
             var lineItemsForValidation = extractedData.Items
@@ -671,7 +676,11 @@ public class OcrService : IOcrService
                 // (EnrichFromRawText) รันหลังด่านนี้ ⇒ เดิมด่านไม่เคยรู้ส่วนลดบนเส้น Azure/local
                 // เลย แล้วฟ้อง "Σ บรรทัดไม่ตรง/คณิตศาสตร์ไม่ตรง" กับทุกใบที่มีส่วนลดท้ายบิล
                 // (รอบ 190 ข้อ 9) · ตัวอ่านเดียวกับ EnrichFromRawText (Helpers/OcrBillDiscount)
-                documentDiscount: extractedData.DiscountAmount
+                // รอบ 192: ส่วนลดที่ "ปรับหลังยอดใบกำกับ" (Shopee: ส่วนลดพิเศษ 98 หลัง VAT) ไม่ใช่ส่วนลด
+                // ในใบกำกับ ⇒ ด่านห้ามใช้อธิบายฐานภาษี (ข้อ 0) — ตัวตัดสิน Helpers/OcrTotalDecomposer
+                documentDiscount: totalShape?.Placement == Accounting.Helpers.OcrDiscountPlacement.PostInvoice
+                    ? null
+                    : extractedData.DiscountAmount
                     ?? Accounting.Helpers.OcrBillDiscount.Read(
                         Ocr.ThaiTextNormalizer.Normalize(extractedText), extractedData.TotalAmount).Amount);
 
@@ -755,6 +764,16 @@ public class OcrService : IOcrService
             // (units persist into ExtractedItemsJson) and BEFORE the role
             // inferrer (derived credit terms flip the PV/PI decision).
             EnrichFromRawText(extractedData, extractedText, legalSource: ocrEngineUsed == "EtaxXml");
+            // รอบ 192: ส่วนลดที่ขั้นแตกยอดตัดสินว่าเป็นการปรับตอนชำระ (หลังยอดใบกำกับ/หลัง VAT) ไม่ใช่ส่วนลด
+            // ในใบกำกับ ⇒ ไม่เก็บเป็น DiscountAmount ของสแกน (ตัวเลขอยู่ในหมายเหตุ [PAY≠TOTAL] แทน)
+            if (totalShape?.Placement == Accounting.Helpers.OcrDiscountPlacement.PostInvoice
+                && extractedData.DiscountAmount is decimal postInvoiceDisc
+                && Math.Abs(postInvoiceDisc - totalShape.Discount) <= Accounting.Helpers.OcrPaperAmounts.ExactTol)
+            {
+                extractedData.DiscountAmount = null;
+                extractedData.ReasoningTrace.Add(
+                    $"[TOTAL] ส่วนลด {postInvoiceDisc:N2} เป็นการปรับตอนชำระ ไม่ใช่ส่วนลดในใบกำกับ — ไม่ลดฐาน/VAT");
+            }
 
             // ── เติมช่องที่ยังว่างด้วยแพตเทิร์นที่ระบบเรียนไว้ ──
             // จุดอ่านของตาราง OcrLearnedPatterns ซึ่งถูก**เขียน**ทุกครั้งที่ผู้ใช้
@@ -3461,6 +3480,8 @@ public class OcrService : IOcrService
             SubTotal = azure.SubTotal,
             VatAmount = azure.TotalTax,
             TotalAmount = azure.InvoiceTotal ?? azure.AmountDue,
+            // รอบ 192: เก็บ AmountDue ไว้เป็นผู้สมัครของขั้นยึดยอดรวม (เดิมถูกทิ้งเมื่อมี InvoiceTotal)
+            EngineAmountDue = azure.AmountDue,
             ZoneSummary = $"Azure DI {azure.ModelId}: confidence={azure.OverallConfidence:P0}",
         };
 
@@ -5472,8 +5493,10 @@ public class OcrService : IOcrService
             //   เลข 13 หลัก" ⇒ ใบเสร็จร้านที่พิมพ์ท้ายบิลว่า "ขอใบกำกับภาษีได้ที่
             //   เคาน์เตอร์" และใบที่ขายสินค้ายกเว้น §81 ก็ถูกแยก 7/107 ออกมาเป็น
             //   "ภาษีซื้อ" ที่ไม่มีอยู่จริง แล้วไหลไป ภ.พ.30 (ผลตรวจ T1-22)
+            //   รอบ 192: ส่งยอดรวมเข้าไปด้วย — กระดาษที่พิมพ์ VAT ไว้แล้ว (ตารางสรุปตามรหัส ภ.พ. ของห้าง)
+            //   ห้ามแต่ง 7/107 ที่ขัดกับตัวเลขนั้น (Makro 3/3: แต่ง 1,577.29 ทั้งที่พิมพ์ 1,148.28)
             var backCalc = Accounting.Helpers.VatBackCalcGuard.Decide(
-                text, data.VendorTaxId, data.Items.Select(i => i.Description));
+                text, data.VendorTaxId, data.Items.Select(i => i.Description), totalAmount: data.TotalAmount);
             if (backCalc.Allowed)
             {
                 data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
@@ -6011,7 +6034,7 @@ public class OcrService : IOcrService
         // ใช้ ExtractedSubTotal เฉพาะตอนที่ tie กับ grand total (รองรับ VAT-incl +
         // ส่วนลดจริง); ไม่งั้น derive จาก grand total (ตัวเลขเด่น/พาร์ทเนอร์ส่ง =
         // ตัวตั้งต้นที่เชื่อถือได้สุด) เพื่อให้ subtotal/line/total แตกกันไม่ได้.
-        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
@@ -6574,8 +6597,13 @@ public class OcrService : IOcrService
             var hdrSub   = result.ExtractedSubTotal   ?? 0m;
             var hdrTotal = result.ExtractedTotalAmount ?? 0m;
             var hdrVatHdr = result.ExtractedVatAmount  ?? 0m;
-            var grossSum = items.Sum(x =>
-                (x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m)));
+            // ยอดก่อนลดของแต่ละบรรทัด — ตัวเดียวของกระทบยอด/กระจายส่วนลด/ส่วนลดรายบรรทัด (รอบ 192:
+            // ยอดที่พิมพ์ชนะ ราคา×จำนวน เมื่อต่างแค่เศษปัดของราคาต่อหน่วย · Lazada 4,912.15 ไม่ใช่ 4,912.16)
+            // เก็บไว้ก่อนตัวกระจายส่วนลดเขียนทับ Amount
+            var lineGross = items
+                .Select(x => Accounting.Helpers.OcrTotalDecomposer.LineGross(x.Quantity, x.UnitPrice, x.Amount))
+                .ToList();
+            var grossSum = lineGross.Sum();
 
             // ★ ตัวจำแนกอยู่ใน Helpers/OcrLineReconciler (pure + มีเทสต์ด้วยตัวเลขจริง)
             // ผลตรวจ 2026-09-05 T2-05/T1-09: ตรรกะเดิมเทียบ Σ บรรทัด (ก่อน VAT) กับยอดรวม
@@ -6612,9 +6640,7 @@ public class OcrService : IOcrService
                 // ลด 33,333 คลาดถึง ฿33 · และตัวยัดเศษที่จำกัด ≤ ฿1 จะ "ยอมแพ้เงียบ" ⇒
                 // Σ Line.Amount ≠ SubTotal ⇒ ตอนอนุมัติ JE เดบิตจากบรรทัดแต่เครดิตจากยอดหัว
                 // ⇒ เด้ง "การบันทึกบัญชีไม่สมดุล" โดยผู้ใช้ไม่รู้ว่าเลขไหนผิด
-                var grossList = items
-                    .Select(x => x.UnitPrice.HasValue ? x.UnitPrice.Value * (x.Quantity ?? 1m) : (x.Amount ?? 0m))
-                    .ToList();
+                var grossList = lineGross;
                 var grossTotal = grossList.Sum();
                 if (grossTotal > 0m)
                 {
@@ -6766,9 +6792,11 @@ public class OcrService : IOcrService
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
                     DiscountPercent = docDiscountPercent,
+                    // รอบ 192: บรรทัดที่มีราคาต่อหน่วยใช้ยอดก่อนลดตัวเดียวกับที่ใช้กระจาย (lineGross — ยอดที่พิมพ์ชนะ
+                    // เศษปัดของราคาต่อหน่วย) ⇒ Σ ส่วนลดบรรทัด = ส่วนลดบนกระดาษพอดี · ไม่มีราคาต่อหน่วย = สูตรเดิม
                     DiscountAmount = docDiscountPercent > 0m
-                        ? Math.Round((item.UnitPrice ?? item.Amount ?? 0) * (item.Quantity ?? 1m)
-                            - amount, 2)
+                        ? Math.Round((item.UnitPrice.HasValue ? lineGross[i] : (item.Amount ?? 0) * (item.Quantity ?? 1m))
+                            - amount, 2, MidpointRounding.AwayFromZero)
                         : 0m,
                     // ⚠️ Case A (ราคา/หน่วยรวม VAT แล้ว): `DocumentLine.Amount` ต้องเป็น
                     // ยอด **ก่อน VAT** ตาม convention ของ DocumentService
@@ -6810,6 +6838,56 @@ public class OcrService : IOcrService
             var lineProjects = items.Select(x => x.ProjectId).Distinct().ToList();
             if (lineProjects.Count == 1 && lineProjects[0].HasValue)
                 document.ProjectId = lineProjects[0];
+        }
+        else if (Accounting.Helpers.OcrTotalDecomposer.SummaryGroupLines(
+                     Accounting.Helpers.OcrTotalDecomposer.Decompose(
+                         Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent), result.ExtractedSubTotal,
+                         result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw),
+                     result.ExtractedTotalAmount, result.ExtractedVatAmount, headerSubTotal) is var paperGroups
+                 && paperGroups.Count > 0 && headerWht == 0m)
+        {
+            // ★ รอบ 192 (Total-first · ใบ Makro หน้า 3/3): ไม่มีรายการสินค้าในไฟล์ แต่กระดาษพิมพ์ตารางสรุปตามกลุ่มภาษี
+            // (ยกเว้น 6,260.00 · มี VAT ฐาน 16,403.97 VAT 1,148.28) ⇒ บรรทัดสรุป<b>ต่อกลุ่ม</b>แทนบรรทัดเดียว 7% ทั้งใบ
+            // — ทุกตัวเลขพิมพ์บนกระดาษ (ตัวตัดสิน Helpers/OcrTotalDecomposer.SummaryGroupLines) · อ่านจากข้อความดิบ
+            // ตอนสร้าง ⇒ สแกนเก่าได้ด้วย · ไม่มีตาราง/ไม่ลงตัว ⇒ บรรทัดเดียวแบบเดิม (สาขาถัดไป)
+            var order = 1;
+            var planned = new List<Accounting.Helpers.OcrPlannedLine>(paperGroups.Count);
+            foreach (var grp in paperGroups)
+            {
+                var rate = grp.Kind switch
+                {
+                    Accounting.Helpers.OcrVatGroupKind.Standard7 => 7m,
+                    Accounting.Helpers.OcrVatGroupKind.ZeroRated => 0m,
+                    _ => Accounting.Helpers.ThaiVatTypeRule.ExemptRate,
+                };
+                var kindText = grp.Kind switch
+                {
+                    Accounting.Helpers.OcrVatGroupKind.Standard7 => "สินค้ามี VAT 7%",
+                    Accounting.Helpers.OcrVatGroupKind.ZeroRated => "สินค้าอัตรา 0%",
+                    _ => "สินค้ายกเว้น VAT",
+                };
+                var itemCountText = grp.ItemCount.HasValue ? $" · {grp.ItemCount.Value} ชิ้น" : "";
+                document.Lines.Add(new DocumentLine
+                {
+                    LineOrder = order,
+                    Description = $"{FallbackLineDescription(result.ExtractedDocumentNumber, result.ExtractedVendorName)} — "
+                        + $"{kindText} (รหัส {grp.PaperCode} บนกระดาษ{itemCountText})",
+                    Quantity = 1,
+                    UnitPrice = grp.Net,
+                    Amount = grp.Net,
+                    VatRate = rate,
+                    VatAmount = grp.Vat,
+                    AccountId = scanDebitAccountId,
+                    GlAccountAiFeedbackId = order == 1 && scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
+                });
+                planned.Add(new Accounting.Helpers.OcrPlannedLine(grp.Net, rate, grp.Vat));
+                order++;
+            }
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + "\n[Σ] ไม่มีรายการสินค้าในไฟล์ — สร้างบรรทัดสรุปตามกลุ่มภาษีที่กระดาษพิมพ์ไว้: "
+                + string.Join(" · ", paperGroups.Select(g => $"รหัส {g.PaperCode} ฐาน {g.Net:N2} VAT {g.Vat:N2}"));
+            AppendAmountIntegrityGaps(result, planned, result.ExtractedVatAmount ?? 0m,
+                alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
         }
         else
         {
@@ -6938,7 +7016,7 @@ public class OcrService : IOcrService
         }
 
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(docType, result.OurRole);
-        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
         var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
@@ -7010,6 +7088,71 @@ public class OcrService : IOcrService
         catch { /* malformed suggestion JSON — line GL stays empty */ }
         return null;
     }
+
+    /// <summary>
+    /// **Total-first (รอบ 192) — ต่อสายอย่างเดียว** ตัวตัดสินอยู่ใน <see cref="Accounting.Helpers.OcrTotalAnchor"/>
+    /// (ยอดไหนคือยอดรวมทั้งสิ้น) + <see cref="Accounting.Helpers.OcrTotalDecomposer"/> (ส่วนลดอยู่ตรงไหน ·
+    /// ยอดชำระ ≠ ยอดใบกำกับ) + <see cref="Accounting.Helpers.OcrPageSet"/> (หน้าไม่ครบ)
+    ///
+    /// <para>เขียนทับยอดรวมเฉพาะเมื่อ <c>Proven</c> (ชั้น VAT + ≥1 ชั้นอิสระ และค่าเดิมอธิบายบทบาทได้) ·
+    /// ขัดกัน/ไม่แน่ใจ ⇒ ไม่แตะค่า ลดความมั่นใจต่ำกว่า 0.85 + แท็ก · อื่น ๆ = พฤติกรรมเดิมทุกประการ ·
+    /// ไม่เรียก AI (kill-switch ผ่านโดยโครงสร้าง) · คืน null เมื่อไม่ได้ตรวจ (e-Tax XML / ไม่มีข้อความ)</para>
+    /// </summary>
+    private static Accounting.Helpers.OcrTotalDecomposition? ApplyTotalFirst(
+        OcrScanResult scanResult, OcrExtractedData data, string? rawText, string? engine)
+    {
+        if (engine == "EtaxXml" || string.IsNullOrWhiteSpace(rawText)) return null;
+        var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
+        var anchor = Accounting.Helpers.OcrTotalAnchor.Find(text, data.TotalAmount, data.EngineAmountDue);
+        var totalKey = Accounting.Helpers.OcrFieldKeys.TotalAmount;
+        const decimal provenConf = 0.95m;
+        if (anchor.Verdict == Accounting.Helpers.OcrTotalVerdict.Proven && anchor.Total is decimal anchored)
+        {
+            data.TotalAmount = anchored;
+            data.FieldConfidence[totalKey] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
+            data.Note(totalKey, anchored, Accounting.Helpers.OcrFieldSource.PaperLabel, provenConf, anchor.Reason);
+            // ฐาน/VAT ที่ถืออยู่ไม่ปิดยอดใหม่ ⇒ ใช้คู่ที่<b>พิมพ์บนกระดาษ</b>ซึ่งปิดยอดนี้ (ตารางสรุปตามกลุ่มภาษี/แถวฐาน+VAT)
+            if (anchor.PrintedBase is decimal printedBase && anchor.PrintedVat is decimal printedVat
+                && Math.Abs((data.SubTotal ?? 0m) + (data.VatAmount ?? 0m) - anchored) > Accounting.Helpers.OcrPaperAmounts.ExactTol)
+            {
+                data.SubTotal = printedBase;
+                data.VatAmount = printedVat;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
+                data.Note(Accounting.Helpers.OcrFieldKeys.SubTotal, printedBase, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                    provenConf, "ฐานที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น");
+                data.Note(Accounting.Helpers.OcrFieldKeys.VatAmount, printedVat, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                    provenConf, "VAT ที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น");
+            }
+        }
+        else if (anchor.Verdict is Accounting.Helpers.OcrTotalVerdict.Conflict or Accounting.Helpers.OcrTotalVerdict.Unsure)
+        {
+            var cap = Accounting.Helpers.OcrTotalAnchor.DisputedConfidenceCap;
+            data.FieldConfidence[totalKey] = Math.Min(data.FieldConfidence.GetValueOrDefault(totalKey, cap), cap);
+        }
+        if (anchor.Verdict != Accounting.Helpers.OcrTotalVerdict.NotChecked)
+            data.ReasoningTrace.Add("[TOTAL] " + anchor.Reason);
+        if (Accounting.Helpers.OcrTotalAnchor.Note(anchor) is string anchorNote)
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + anchorNote;
+
+        var shape = Accounting.Helpers.OcrTotalDecomposer.Decompose(
+            text, data.SubTotal, data.VatAmount, data.TotalAmount,
+            data.DiscountAmount ?? Accounting.Helpers.OcrBillDiscount.Read(text, data.TotalAmount).Amount ?? 0m);
+        if (Accounting.Helpers.OcrTotalDecomposer.PaymentNote(shape, data.TotalAmount) is string payNote)
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + payNote;
+        if (Accounting.Helpers.OcrPageSet.PartialNote(text) is string pagesNote)
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + pagesNote;
+        return shape;
+    }
+
+    /// <summary>ส่วนลดท้ายบิลของสแกนที่ตัวสร้างบรรทัด/ฐานหัวเอกสาร<b>ใช้ได้</b> — ตัวเดียวของสามทางเข้า
+    /// (สร้าง · พรีวิว · repopulate) · ส่วนลดที่เป็นการปรับตอนชำระ (หลังยอดใบกำกับ) = 0 (รอบ 192) ·
+    /// อ่านจากข้อความดิบตอนสร้าง ⇒ สแกนเก่าที่ persist ส่วนลดนั้นไว้แล้วก็ได้ผลเดียวกันโดยไม่ต้อง migrate</summary>
+    private static decimal ScanBillDiscount(OcrScanResult result)
+        => Accounting.Helpers.OcrTotalDecomposer.EffectiveBillDiscount(
+            Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent),
+            result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount,
+            result.ExtractedDiscountAmount ?? 0m);
 
     /// <summary>ป้ายยอดสลับ (SubTotal ↔ Total) ที่สแกน persist ไว้ — ซ่อมก่อนใช้สร้างบรรทัด
     /// ตัวตัดสิน = <see cref="Accounting.Helpers.OcrHeaderAmounts"/> ตัวเดียว · ใช้ทั้งสองทางเข้า</summary>
@@ -7088,7 +7231,7 @@ public class OcrService : IOcrService
         // (UnitPrice = item.UnitPrice, VAT 7% ทั้งใบ, ไม่รู้จัก PricesIncludeVat/ส่วนลด/VAT
         // รายบรรทัด/WHT) = สำเนาที่สองที่ให้คำตอบคนละแบบบนกระดาษใบเดียวกัน
         NormalizeSwappedHeaderAmounts(result);
-        var hdrDiscRaw = result.ExtractedDiscountAmount ?? 0;
+        var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(document.DocumentType, result.OurRole);
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
@@ -9554,6 +9697,9 @@ internal class OcrExtractedData
     public decimal? SubTotal { get; set; }
     public decimal? VatAmount { get; set; }
     public decimal? TotalAmount { get; set; }
+    /// <summary>ยอด AmountDue ที่ Azure DI คืน (null = engine อื่น/ไม่มี) — ผู้สมัครของ
+    /// <see cref="Accounting.Helpers.OcrTotalAnchor"/> เท่านั้น ไม่ใช่ยอดรวม (รอบ 192)</summary>
+    public decimal? EngineAmountDue { get; set; }
     public string? ExpenseCategory { get; set; }
     /// <summary>Header discount (ส่วนลด) read off the paper — flows to
     /// Document.DiscountAmount on creation.</summary>

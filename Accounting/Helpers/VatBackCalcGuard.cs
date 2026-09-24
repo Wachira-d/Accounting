@@ -47,10 +47,16 @@ public static class VatBackCalcGuard
         @"(?:ขอ|ติดต่อขอ|รับ)[ \t]*ใบกำกับภาษี|ใบกำกับภาษี[ \t]*(?:จะ)?(?:จัดส่ง|ส่งให้|ตามมา|ออกให้ภายหลัง)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <param name="totalAmount">ยอดรวมที่จะถูกแยก 7/107 — ส่งมาเมื่อรู้ เพื่อให้ด่านเทียบกับ VAT ที่<b>พิมพ์อยู่แล้ว</b>
+    /// (<see cref="PrintedVatContradicts"/>) · null = พฤติกรรมเดิม</param>
     public static VatBackCalcDecision Decide(
-        string? rawText, string? vendorTaxId, IEnumerable<string?>? lineDescriptions)
+        string? rawText, string? vendorTaxId, IEnumerable<string?>? lineDescriptions, decimal? totalAmount = null)
     {
         var text = rawText ?? "";
+
+        // กระดาษพิมพ์ยอด VAT ไว้แล้ว (ตารางสรุปตามกลุ่มภาษี/แถว VAT) และไม่ใช่ 7/107 ของยอดรวม ⇒ ห้ามแต่ง
+        if (totalAmount is decimal tot && PrintedVatContradicts(text, tot) is string printedWhy)
+            return new(false, 0d, printedWhy);
 
         if (!ThaiTaxId.IsValid(vendorTaxId))
             return new(false, 0d,
@@ -77,6 +83,30 @@ public static class VatBackCalcGuard
         return new(true, 0.50d,
             "กระดาษไม่ได้พิมพ์ยอด VAT ไว้ — ระบบคำนวณจากยอดรวม (7/107) ให้เป็นค่าเริ่มต้น "
             + "กรุณาตรวจกับใบจริงก่อนอนุมัติ");
+    }
+
+    /// <summary>
+    /// **VAT ที่จะแต่ง (7/107 ของยอดรวม) ขัดกับ VAT ที่กระดาษพิมพ์ไว้แล้วไหม** — null = ไม่ขัด (หรือกระดาษไม่พิมพ์ VAT)
+    ///
+    /// <para>ที่มา (รอบ 192 · ทีม B #3): ใบ Makro หน้า 3/3 พิมพ์ VAT 1,148.28 ไว้ใน<b>ตารางสรุปตามรหัส ภ.พ.</b>
+    /// (ไม่มีป้าย VAT บนแถวเดียวกับตัวเลข) ⇒ regex VAT ไม่เจอ ⇒ เส้น Tesseract แต่ง 7/107 ของ "TOTAL 24,110.00"
+    /// = <b>1,577.29</b> แล้ว AmountTriple ถือว่า "สอดคล้อง 7%" จึงไม่ค้นต่อ ⇒ ภาษีซื้อเกินจริง 429.01 โดยไม่มีด่านไหนหยุด ·
+    /// back-calc มีสองชุด (<c>OcrService.ParseThaiDocument</c> ผ่าน <see cref="Decide"/> ·
+    /// <c>SmartFieldExtractor.ApplyAmountMath</c> ไม่ผ่าน) — ทั้งคู่ต้องถามคำถามเดียวกันนี้</para>
+    ///
+    /// <para>หลักฐาน "VAT ที่พิมพ์" = แถวที่มีป้าย VAT + VAT รวมของตารางสรุปตามกลุ่มภาษี (<see cref="OcrPaperAmounts.VatAmounts"/>)
+    /// · มีตัวใดตัวหนึ่งเท่ากับ 7/107 (±0.02) = ไม่ขัด (ใบ Wine Pro ที่ VAT 235.06 = 7/107 ของ 3,593 ยังแยกได้ตามเดิม)</para>
+    /// </summary>
+    public static string? PrintedVatContradicts(string? rawText, decimal totalAmount)
+    {
+        if (totalAmount <= 0m || string.IsNullOrWhiteSpace(rawText)) return null;
+        var printed = OcrPaperAmounts.VatAmounts(rawText);
+        if (printed.Count == 0) return null;
+        var guessed = Math.Round(totalAmount * 7m / 107m, 2, MidpointRounding.AwayFromZero);
+        if (printed.Any(v => Math.Abs(v.Amount - guessed) <= OcrPaperAmounts.ExactTol)) return null;
+        var shown = string.Join(" / ", printed.Select(v => v.Amount.ToString("N2")).Distinct());
+        return $"กระดาษพิมพ์ VAT {shown} ไว้แล้ว แต่ 7/107 ของยอดรวม {totalAmount:N2} = {guessed:N2} "
+            + "— ไม่แต่ง VAT ที่ขัดกับกระดาษ (ใบอาจผสมสินค้ายกเว้น หรือยอดรวมที่อ่านได้เป็นยอดก่อนหักส่วนลด)";
     }
 
     private static int CountTaxInvoiceMentions(string text)
