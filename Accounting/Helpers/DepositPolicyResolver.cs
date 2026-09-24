@@ -254,10 +254,12 @@ public static class DepositPolicyResolver
     /// <summary>ด่านของค่าที่จะบันทึกลง <c>DepositBaseDeducted</c> (สร้าง/แก้) — null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ
     /// (ผู้เรียกโยน <see cref="BusinessRuleException"/> พร้อม <see cref="ImmediateVatGrossApplyRuleCode"/>)</summary>
     public static string? TaxedDepositDeductionProblem(
+        DocumentType documentType, bool? cnDnPurchaseSide,
         decimal depositBaseDeducted, string? depositAppliedRef, decimal depositAppliedAmount, bool drivesJournal, decimal billDiscountPercent)
     {
         if (depositBaseDeducted < 0m) return "ฐานมัดจำที่หักต้องไม่ติดลบ";
         if (depositBaseDeducted == 0m) return null;
+        if (!TaxedDepositDeductionAllowed(documentType, cnDnPurchaseSide)) return DeductionOnPurchaseSideMessage;
         if (string.IsNullOrWhiteSpace(depositAppliedRef))
             return "หักมูลค่ามัดจำ (ก่อน VAT) ต้องระบุเลขใบมัดจำที่ออกใบกำกับแล้ว (depositAppliedRef) — ไม่มีเลขอ้างอิง ระบบรับรู้มัดจำตอนอนุมัติไม่ได้";
         if (depositAppliedAmount > 0m || drivesJournal)
@@ -265,6 +267,16 @@ public static class DepositPolicyResolver
         if (billDiscountPercent > 0m) return PercentWithTaxedDepositMessage;
         return null;
     }
+
+    /// <summary>ชนิดเอกสารที่ "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี" ใช้ได้ — <b>ฝั่งขายเท่านั้น</b> (มัดจำคือเงินที่ลูกค้าจ่ายเรา) ·
+    /// ตัวตัดสินเดียวของด่านบันทึกและการรับรู้ตอนอนุมัติ (ฝ่ายค้านรอบสี่ P4-4: เดิมไม่จำกัดชนิด ⇒ API ตั้งบนใบแจ้งหนี้ซื้อแล้วอนุมัติ =
+    /// รับรู้มัดจำขายเป็นรายได้) · ใบลดหนี้/เพิ่มหนี้/ใบส่งของ (สองฝั่ง) ได้เมื่อไม่ได้ระบุว่าเป็นฝั่งซื้อ (ใบลูกที่แปลงจากใบกำกับขายสืบทอดมา)</summary>
+    public static bool TaxedDepositDeductionAllowed(DocumentType documentType, bool? cnDnPurchaseSide)
+        => DocumentSide.IsAmbiguous(documentType) ? cnDnPurchaseSide != true : DocumentSide.IsSales(documentType);
+
+    public const string DeductionOnPurchaseSideMessage =
+        "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี ใช้ได้กับเอกสารฝั่งขายเท่านั้น (มัดจำที่ลูกค้าจ่ายเรา) — เอกสารฝั่งซื้อ/ใบลดหนี้ฝั่งซื้อ "
+        + "ห้ามตั้ง depositBaseDeducted · มัดจำที่เราจ่ายผู้ขายให้บันทึกเป็นเงินจ่ายล่วงหน้าตามปกติ";
 
     /// <summary>ส่วนลดท้ายบิลแบบ % ใช้ร่วมกับหักมัดจำออกใบกำกับแล้วไม่ได้ (ตัวเฉลี่ยใช้ % แล้วทิ้งยอดบาท ⇒ ฐานมัดจำหายเงียบ)</summary>
     public const string PercentWithTaxedDepositMessage =

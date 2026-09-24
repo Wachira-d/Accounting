@@ -220,14 +220,34 @@ public class DepositPolicyResolverTests
     [Fact]
     public void ด่านฐานมัดจำที่หัก_ต้องมีเลขใบมัดจำ_ห้ามหักสองชั้น_ห้ามปนส่วนลดเปอร์เซ็นต์()
     {
-        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(0m, null, 2000m, true, 10m));       // ไม่มีฐานมัดจำ = ไม่ตรวจ
-        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, false, 0m));
-        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, null, 0m, false, 0m));
-        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 2000m, false, 0m));
-        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, true, 0m));
+        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 0m, null, 2000m, true, 10m));       // ไม่มีฐานมัดจำ = ไม่ตรวจ
+        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 1869.16m, "TIV-1", 0m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 1869.16m, null, 0m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 1869.16m, "TIV-1", 2000m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 1869.16m, "TIV-1", 0m, true, 0m));
         Assert.Equal(DepositPolicyResolver.PercentWithTaxedDepositMessage,
-            DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, false, 5m));
-        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(-1m, "TIV-1", 0m, false, 0m));
+            DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, 1869.16m, "TIV-1", 0m, false, 5m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(DocumentType.TaxInvoice, null, -1m, "TIV-1", 0m, false, 0m));
+    }
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice, null, true)]
+    [InlineData(DocumentType.Receipt, null, true)]
+    [InlineData(DocumentType.ReceiptVoucher, null, true)]
+    [InlineData(DocumentType.Invoice, null, true)]
+    [InlineData(DocumentType.CreditNote, null, true)]     // ใบลดหนี้ที่แปลงจากใบกำกับขาย (สืบทอดฐานมัดจำ)
+    [InlineData(DocumentType.CreditNote, false, true)]
+    [InlineData(DocumentType.CreditNote, true, false)]    // ใบลดหนี้ฝั่งซื้อ
+    [InlineData(DocumentType.PurchaseInvoice, null, false)]
+    [InlineData(DocumentType.Expense, null, false)]
+    [InlineData(DocumentType.PaymentVoucher, null, false)]
+    public void หักมูลค่ามัดจำ_เฉพาะฝั่งขาย(DocumentType type, bool? purchaseSide, bool allowed)
+    {
+        Assert.Equal(allowed, DepositPolicyResolver.TaxedDepositDeductionAllowed(type, purchaseSide));
+        var problem = DepositPolicyResolver.TaxedDepositDeductionProblem(type, purchaseSide, 1869.16m, "TIV-1", 0m, false, 0m);
+        Assert.Equal(allowed ? null : DepositPolicyResolver.DeductionOnPurchaseSideMessage, problem);
+        // ทิศตรงข้าม: ไม่มีฐานมัดจำ = ไม่ตรวจชนิด (ใบซื้อทั่วไปไม่ถูกแตะ)
+        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(type, purchaseSide, 0m, null, 0m, false, 0m));
     }
 
     [Fact]

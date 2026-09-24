@@ -482,6 +482,9 @@ public partial class LodgingService
             ContactType = isCompany ? ContactType.JuristicPerson : ContactType.Individual,
             IsCustomer = true, Email = email, Phone = phone, Address = r.GuestAddress, CreatedBy = actor,
         };
+        // ทีม C3 (ฝ่ายค้านรอบสี่ P4-5): เลขที่แขกกรอกไม่ผ่าน checksum/ศูนย์ล้วน ⇒ เก็บตามที่กรอก (หลักฐาน) แต่ติดป้าย [TAXID-CHECKSUM]
+        // บนผู้ติดต่อ ให้ตรวจก่อนออกใบกำกับ (ตัวกลางตัวเดียวกับทุกทางเข้าที่สร้างผู้ติดต่อจากเลขภายนอก)
+        Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(c);
         _db.Contacts.Add(c);
         await _db.SaveChangesAsync();
         return c.Id;

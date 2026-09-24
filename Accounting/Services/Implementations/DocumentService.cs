@@ -660,7 +660,9 @@ public partial class DocumentService : IDocumentService
         if (!split.Ok)
             throw new Accounting.Helpers.BusinessRuleException(
                 $"ส่วนลดท้ายบิล {tradeAmount:N2} + ฐานมัดจำที่หัก {depositBase:N2} เกินยอดขายก่อน VAT ของใบนี้ — "
-                + "ลดส่วนลดท้ายบิล หรือหักมัดจำให้น้อยลง (มัดจำส่วนที่เหลือคืนลูกค้า/ใช้กับใบถัดไป)",
+                // ฝ่ายค้านรอบสี่ P4-3: ทางไปต่อต้องทำได้จริงบนฟอร์ม — ฐานมัดจำไม่มีช่องแก้ตรง แต่เลือกมัดจำใหม่ได้ (ตัวแปลงแทนที่ฐานเดิม)
+                + "ลดส่วนลดท้ายบิล หรือติ๊ก “ขายเงินสดใบเดียว” แล้วเลือกมัดจำใหม่ในช่อง “หักมัดจำ” ด้วยยอดที่น้อยลง "
+                + "(ระบบแทนที่ฐานมัดจำเดิมตามที่เลือกใหม่ · มัดจำส่วนที่เหลือคืนลูกค้า/ใช้กับใบถัดไป)",
                 Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
         return (alloc, split.TradeDiscount, split.DepositBase);
     }
@@ -1081,7 +1083,8 @@ public partial class DocumentService : IDocumentService
                     DepositAppliedDrivesJournal = false,
                     DepositAppliedAmount = 0m,
                 };
-            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(request.DepositBaseDeducted ?? 0m,
+            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(
+                    request.DocumentType, request.CnDnPurchaseSideOverride, request.DepositBaseDeducted ?? 0m,
                     request.DepositAppliedRef, request.DepositAppliedAmount ?? 0m, request.DepositAppliedDrivesJournal ?? false,
                     request.BillDiscountPercent ?? 0m) is { } depDeductProblem)
                 throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
@@ -2215,7 +2218,8 @@ public partial class DocumentService : IDocumentService
             var effRef = request.DepositAppliedRef == null ? doc.DepositAppliedRef
                 : string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef;
             var effPct = request.BillDiscountPercent ?? (request.BillDiscountAmount.HasValue ? 0m : doc.BillDiscountPercent);
-            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(request.DepositBaseDeducted ?? doc.DepositBaseDeducted,
+            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(
+                    doc.DocumentType, doc.CnDnPurchaseSideOverride, request.DepositBaseDeducted ?? doc.DepositBaseDeducted,
                     effRef, request.DepositAppliedAmount ?? doc.DepositAppliedAmount,
                     request.DepositAppliedDrivesJournal ?? doc.DepositAppliedDrivesJournal, effPct) is { } depDeductProblem)
                 throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
@@ -15868,6 +15872,11 @@ public partial class DocumentService : IDocumentService
         if (doc.IsDeposit
             || !Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeducted(doc.DepositBaseDeducted, doc.DepositAppliedRef))
             return;
+        // ฝ่ายค้านรอบสี่ P4-4: ฝั่งซื้อห้ามรับรู้มัดจำขาย (ใบที่ตั้งผ่าน API ก่อนมีด่าน) — ล้มดังแทนการลงรายได้ผิดฝั่ง
+        if (!Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionAllowed(doc.DocumentType, doc.CnDnPurchaseSideOverride))
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DepositPolicyResolver.DeductionOnPurchaseSideMessage,
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
         // B2: ล็อกแถวใบมัดจำก่อนอ่านฐานคงเหลือ (แบบเดียวกับเส้นขับ JE) — อนุมัติสองใบพร้อมกันต้องต่อคิว ไม่ใช่รับรู้ทับกัน
         var taxed = await LoadTaxedDepositsByRefAsync(companyId, doc.DepositAppliedRef, lockRows: true);
         if (taxed.Count == 0)
