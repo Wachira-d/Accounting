@@ -520,20 +520,32 @@ public class ImportExportService : IImportExportService
                 c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
         // ฝ่ายค้าน C-6: อีเมลจับได้เฉพาะชุด SoftScope — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (โหมด Overwrite จะทับข้อมูลคนละนิติบุคคล)
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, taxId, taxKey);
+        var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         if (existing == null && softScope != null && !string.IsNullOrWhiteSpace(email))
+        {
             existing = await softScope.FirstOrDefaultAsync(c => !c.IsDeleted && c.Email == email);
+            matchedBy = Accounting.Helpers.ContactMatchKind.Email;
+        }
 
         var isCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust;
         var isSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup;
 
+        var action = "";
         if (existing != null)
         {
             var key = taxId ?? email ?? "";
-            var action = ResolveAction(resolutions, key, defaultAction);
+            action = ResolveAction(resolutions, key, defaultAction);
             if (action == "Skip") return;
             // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาจากไฟล์ — เดิมทั้ง Merge/Overwrite ไม่เขียน TaxId
-            // แต่ ContactType ถูกคำนวณจากเลขในไฟล์ ⇒ แถวเป็น "นิติบุคคลที่ไม่มีเลข" และนำเข้าซ้ำก็ไม่ติด
-            Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, row.GetValueOrDefault("BranchCode"));
+            // แต่ ContactType ถูกคำนวณจากเลขในไฟล์ ⇒ แถวเป็น "นิติบุคคลที่ไม่มีเลข" และนำเข้าซ้ำก็ไม่ติด ·
+            // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างแถวใหม่ของรายนี้ (ด้านล่าง)
+            if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, row.GetValueOrDefault("BranchCode"), matchedBy)
+                == Accounting.Helpers.ContactAdoptOutcome.Reject)
+                existing = null;
+        }
+
+        if (existing != null)
+        {
 
             // Merge (default): existing wins; new fills blanks + OR-merges flags.
             // Overwrite: non-empty incoming overrides existing.
@@ -1041,8 +1053,11 @@ public class ImportExportService : IImportExportService
         contact ??= Accounting.Helpers.ContactTaxBranchKey.PickContact(pending, contactTaxId, branchCode: null);
         contact ??= string.IsNullOrWhiteSpace(contactName) ? null
             : Accounting.Helpers.ContactTaxBranchKey.SoftScope(pending, contactTaxId, taxKey).FirstOrDefault(c => c.Name == contactName);
-        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ยังไม่มีเลข) รับเลขจากไฟล์ (บันทึกพร้อม SaveChanges ของชุดนำเข้า)
-        Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null);
+        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ยังไม่มีเลข) รับเลขจากไฟล์ (บันทึกพร้อม SaveChanges ของชุดนำเข้า) ·
+        // ทุกทางด้านบนจับด้วยเลขหรือชื่อ "==" ตรงตัว (ExactName) · รอบสาม: แถวลูกค้าทั่วไปไม่รับเลข ⇒ Reject = สร้างแถวใหม่ (ด้านล่าง)
+        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null,
+                Accounting.Helpers.ContactMatchKind.ExactName) == Accounting.Helpers.ContactAdoptOutcome.Reject)
+            contact = null;
         if (contact == null)
         {
             var newName = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName;
@@ -1597,9 +1612,24 @@ public class ImportExportService : IImportExportService
                 contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
             // ฝ่ายค้าน C-6: ชื่อจับได้เฉพาะชุด SoftScope (เลขในไฟล์เป็นเลขใหม่ ⇒ ห้ามได้แถวที่ถือเลขอื่น)
             var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, contactTaxId, taxKey);
+            // ฝ่ายค้านรอบสาม R3-2: ชื่อตรงตัวก่อน แล้วค่อย substring ที่เรียงแน่นอน (ชื่อสั้นสุด = ใกล้ที่สุด · แล้ว CreatedAt · Id) —
+            // เดิม `Name.Contains` ไม่มี OrderBy ⇒ "ABC" ได้ "ABC Trading" หรือ "ABC Holdings" แล้วแต่ลำดับจากฐาน
+            var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
             if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(contactName))
-                contact = await softScope.FirstOrDefaultAsync(c => c.Name.Contains(contactName));
-            Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null);   // R2-C5 (บันทึกพร้อมชุดนำเข้า)
+            {
+                contact = await softScope.FirstOrDefaultAsync(c => c.Name == contactName)
+                    ?? await softScope.Where(c => c.Name.Contains(contactName))
+                        .OrderBy(c => c.Name.Length).ThenBy(c => c.CreatedAt).ThenBy(c => c.Id)
+                        .FirstOrDefaultAsync();
+                matchedBy = Accounting.Helpers.ContactTaxBranchKey.NameMatchKind(contactName, contact?.Name);
+            }
+            // R2-C5: แถวที่จับได้รับเลขจากไฟล์ (บันทึกพร้อมชุดนำเข้า) · R3-2: จับได้แค่บางส่วนของชื่อ + ไฟล์มีเลขจริง ⇒ ห้ามใช้แถวนั้น
+            // (เลขของรายการในไฟล์จะติดแถวบริษัทอื่นถาวร) · แถวลูกค้าทั่วไปไม่รับเลข
+            var adoptOutcome = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null, matchedBy);
+            if (adoptOutcome == Accounting.Helpers.ContactAdoptOutcome.Reject)
+                throw new KeyNotFoundException(
+                    $"ชื่อ '{contactName}' ตรงกับผู้ติดต่อ '{contact!.Name}' แค่บางส่วน (หรือเป็นลูกค้าทั่วไป) และเลขผู้เสียภาษี {contactTaxId} ยังไม่มีในระบบ — "
+                    + "ไม่ผูกเอกสารเพื่อไม่ให้เลขนี้ติดผู้ติดต่อผิดราย · สร้าง/นำเข้าผู้ติดต่อรายนี้ก่อน แล้วนำเข้าเอกสารอีกครั้ง");
             if (contact == null)
                 throw new KeyNotFoundException($"ไม่พบผู้ติดต่อ '{contactName}' (TaxId {contactTaxId ?? "-"})");
 
