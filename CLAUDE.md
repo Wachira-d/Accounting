@@ -632,6 +632,9 @@ awk brace-balance                      # ทุก .cs ที่แก้
 1. **แก้ที่หนึ่ง grep ทั้งเรพ** — `python3 tools/callers.py <Symbol>` ก่อนแตะ · ตอบเป็นตัวเลขในคอมมิต ("รูปแบบเดิมเหลือ 0 จุด") ·
    คู่สมมาตร (`if (isSeller) … else …` · renderer HTML/QuestPDF/พรีวิว · ฝั่งอ่าน/ฝั่งเขียน · ทุกทางเข้าที่แตะข้อมูลชุดเดียวกัน) ต้องอ่านอีกฝั่งทันที
 2. **มี ≠ ถูกเรียก** — helper/ด่าน/doc-comment ที่ไม่มี call site = ไม่มี (`tools/dead_helper_check.py` ratchet · "ของที่ไม่มีใครเรียก" ต้องเลือกอย่างตั้งใจ: ต่อสาย หรือ ลบ)
+   · **ค่าตั้งที่เก็บ+echo กลับครบ ≠ มีผล** (รอบ 193: ~83 ค่าตั้งมีช่องบนจอแต่ไม่มีผู้อ่าน) — round-trip ต้องตามถึง "ผู้อ่านเชิงธุรกิจ" ทุกทางเข้า
+   (`tools/settings_reader_check.py` ratchet) · **เทสต์ที่เรียกแค่ helper ≠ ด่านถูกต่อสาย** — ถอดการเรียกใน service แล้วเทสต์ยังเขียว ⇒ ล็อกจุดเรียกด้วย
+   `tools/required_call_site_check.py` (มี/ลำดับ/ใช้ผล/ห้ามประกอบเอง) ทุกครั้งที่เพิ่มด่านเงิน/ภาษี/สิทธิ์
 3. **ค่าที่แต่งขึ้น / สถานะปลายทางที่ระบบประทับเอง อันตรายกว่าการไม่ตอบ** — ไม่รู้ = บอกว่าไม่รู้ แล้วให้ชั้นถัดไป (กฎ/คน/AI) ตัดสิน ·
    สถานะ "ระบบภายนอกรับแล้ว" ตั้งได้เฉพาะเมื่อภายนอกตอบกลับจริง · ตัวเลขล้วนไม่มี "การสะกดผิด" ห้าม fuzzy
 4. **ตัวตั้งตัวเดียว** — กติกา/ตาราง/สูตร/ชุดสถานะ/ชุดชนิดเอกสาร อยู่ใน `Helpers/` OWNER file เดียว · helper ต้อง "เรียกได้ในประโยคเดียว" ·
@@ -903,6 +906,12 @@ billing, quota resolution) → อัปเดตไฟล์ + ป้ายส�
   `Helpers/ArApScope` (ชุดชนิดลูกหนี้/เจ้าหนี้ — ใบวางบิล**ไม่ใช่**ลูกหนี้) ·
   `Helpers/TipAccountResolver` (บัญชีทิป POS/TipPayout — ห้าม 216xx) ·
   ทุกทางเข้าอนุมัติเอกสาร (เว็บ/กฎ/ลายเซ็น/มือถือ/LINE) ต้องผ่าน `DocumentPermissionHelper.CanApproveAsync`
+- helper กลางจากรอบ 193 (ทุกเส้นต้องใช้ ห้ามเขียนสำเนา): `Helpers/DepositPolicyResolver` (โหมดมัดจำ 3 แบบ) · `Helpers/ContactTaxBranchKey`
+  (คีย์ผู้ติดต่อ = เลขภาษี+สาขา · `SoftScope` · `AdoptTaxId(..., ContactMatchKind)`) · `IIssuedDocumentHooks.RunAsync` (e-Tax หลังออกเอกสาร
+  ทุกทางเข้า — หลัง commit) · `Helpers/CompanyVatStatus` + `CompanySettingsFactory` (ธง VAT · stopgap รอเจ้าของตัดสินต้นทาง) ·
+  `Helpers/InputVatVehicleRule` (§82/5(6)) · `Helpers/OwnerActionGuard` + `[RejectApiKey]`/`[RequireOwner]` (งานระดับเจ้าของห้ามคีย์ API) ·
+  `IAttachmentAccessGate` (ด่านไฟล์แนบ/สแกนตัวเดียว) · `Helpers/DocumentSignedContent` (ลายเซ็นลูกค้าผูก hash เนื้อหา) ·
+  `AuditHashChain.Seal/Analyze` (hash chain canonical ตัวเดียว)
 
 ## 📕 SYSTEM_REVIEW_2026-09.md — ลิสต์งานจากการตรวจทั้งระบบ (8 ทีม)
 
