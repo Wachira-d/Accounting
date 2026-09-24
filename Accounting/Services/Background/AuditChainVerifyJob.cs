@@ -101,7 +101,7 @@ public class AuditChainVerifyJob : BackgroundService
                         {
                             Title = result.TamperedCount > 0
                                 ? "🚨 Audit log บางแถวถูกแก้หลังบันทึก — ตรวจสอบด่วน"
-                                : "🚨 Audit log ขาดตอน (มีแถวหายไป) — ตรวจสอบด่วน",
+                                : "🚨 Audit log ขาดตอน (แถวก่อนหน้าถูกลบหรือถูกแก้) — ตรวจสอบด่วน",
                             // ข้อความตามสาเหตุที่ตรวจพบจริง + รายการแถวทั้งหมด (Helpers/AuditHashChain.AlertMessage) —
                             // เดิมอ้าง "raw SQL" ทุกกรณีและบอกแค่แถวแรก (F2 ข้อ 7)
                             Message = result.AlertMessage ?? "ตรวจพบความไม่ตรงกันใน audit log",

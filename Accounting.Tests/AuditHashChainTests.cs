@@ -172,7 +172,11 @@ public class AuditHashChainTests
         var a = AuditHashChain.Analyze(back);
         Assert.Empty(a.Tampered);
         Assert.Equal(new long[] { 3 }, a.Dangling.Select(r => r.Id).ToArray());
-        Assert.Contains("ขาดตอน", AuditHashChain.AlertMessage(a));
+        // P4-6 (ฝ่ายค้านรอบสี่): กรณีนี้คือ "แก้แล้วประทับใหม่" ไม่ใช่ "ลบ" — ตรวจแยกไม่ได้ ข้อความต้องครอบทั้งสองและไม่ฟันธงว่า "ถูกลบ"
+        var msg = AuditHashChain.AlertMessage(a)!;
+        Assert.Contains("ขาดตอน", msg);
+        Assert.Contains("ถูกแก้แล้วประทับ hash ใหม่", msg);
+        Assert.DoesNotContain("(ถูกลบ)", msg);
     }
 
     // ════════ ขาดตอน (dangling) ════════
@@ -184,6 +188,8 @@ public class AuditHashChainTests
         back.RemoveAt(2);                                // ลบ #3
         var a = AuditHashChain.Analyze(back);
         Assert.True(a.HasIntegrityFindings);
+        // ทิศตรงข้ามของ P4-6: กรณีลบจริงก็ต้องยังถูกครอบด้วยถ้อยคำเดียวกัน (ไม่ใช่ถอดคำว่า "ถูกลบ" ทิ้ง)
+        Assert.Contains("ถูกลบ", AuditHashChain.AlertMessage(a));
         Assert.Equal(new long[] { 4 }, a.Dangling.Select(r => r.Id).ToArray());
     }
 
