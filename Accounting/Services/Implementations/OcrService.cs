@@ -7232,8 +7232,8 @@ public class OcrService : IOcrService
         if (Accounting.Helpers.OcrTotalDecomposer.PaymentNote(shape, data.TotalAmount) is string payNote)
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + payNote;
         // รอบ 193: ข้อเสนอบรรทัดปรับ (ค่าส่ง 51120 · คูปอง 51150) — เส้นสร้างเอกสารอ่านกลับด้วย OcrSettlementProposal.Parse
-        if (Accounting.Helpers.OcrSettlementProposal.FromDecomposition(shape, data.TotalAmount) is { } plan)
-            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrSettlementProposal.Note(plan);
+        if (Accounting.Helpers.OcrSettlementProposal.FromDecomposition(shape, data.TotalAmount) is { } settlePlan)
+            scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrSettlementProposal.Note(settlePlan);
         if (Accounting.Helpers.OcrPageSet.PartialNote(text) is string pagesNote)
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + pagesNote;
         return shape;
