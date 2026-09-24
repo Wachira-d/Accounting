@@ -1773,14 +1773,16 @@
         } catch (e) { main.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; return; }
         document.title = `การจอง ${r.reservationNumber}`;
         const STATUS = { Pending: ['รอชำระมัดจำ', ''], Confirmed: ['ยืนยันแล้ว', 'ok'], CheckedIn: ['เช็คอินแล้ว', 'info'], CheckedOut: ['เช็คเอาต์แล้ว', 'info'], Cancelled: ['ยกเลิก', 'bad'], NoShow: ['ไม่มาเข้าพัก', 'bad'] };
-        const st = STATUS[r.status] || [r.status, ''];
+        // ป้ายจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — Pending ที่จ่ายมัดจำครบแล้วต้องไม่บอกว่า "รอชำระมัดจำ" (C9)
+        const st = [r.statusLabel || (STATUS[r.status] || [r.status])[0], (STATUS[r.status] || ['', ''])[1]];
         const info = await this.lodgingInfo();
         const canCancel = r.status === 'Pending' || r.status === 'Confirmed';
         // ปิดรับสลิปแล้ว = ยังจ่ายออนไลน์/ติดต่อที่พักได้ แต่ฟอร์มแนบสลิปต้องหายไป
         // (ห้ามให้กดส่งแล้วไปเจอ error ที่เซิร์ฟเวอร์ — ญาติของ silent no-op)
         const canSlip = (r.status === 'Pending' || (r.status === 'Confirmed' && r.balanceDue > 0))
           && !r.slipUploadBlocked;
-        const canPayOnline = r.status === 'Pending' || (r.status === 'Confirmed' && r.balanceDue > 0);
+        // ยอด/สิทธิ์จ่ายออนไลน์มาจากเซิร์ฟเวอร์ตัวเดียวกับที่ gateway เก็บจริง (C9 — เดิม JS คิดยอดเอง แขกเห็น 2,000 แต่ถูกเก็บ 5,450)
+        const canPayOnline = r.onlinePayableAmount != null && r.onlinePayableAmount > 0;
         main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:860px">
           ${banner ? `<div class="lg-badge ok" style="display:block;padding:12px;margin-bottom:14px;font-size:14px">${this.esc(banner)}</div>` : ''}
           <h1 style="margin-bottom:4px">การจอง ${this.esc(r.reservationNumber)} <span class="lg-badge ${st[1]}">${st[0]}</span></h1>
@@ -1795,10 +1797,10 @@
               <div class="row total"><span>ยอดรวม</span><span>฿${this._money(r.grandTotal)}</span></div>
               <div class="row"><span>ชำระแล้ว</span><span>฿${this._money(r.paidAmount)}</span></div>
               <div class="row"><span>คงเหลือ</span><b>฿${this._money(r.balanceDue)}</b></div>
-              ${r.status === 'Pending' && r.depositRequired > 0 ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
+              ${r.status === 'Pending' && r.depositRequired > r.depositPaid ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
               ${r.cancellationFee > 0 ? `<div class="row"><span>ค่าปรับยกเลิก</span><span>฿${this._money(r.cancellationFee)}</span></div>` : ''}
               ${r.refundAmount > 0 ? `<div class="row"><span>ยอดคืนเงิน</span><span>฿${this._money(r.refundAmount)}</span></div>` : ''}
-              ${r.refundPending > 0 ? `<div class="row" style="color:#92400E"><span>สถานะ</span><span>รอที่พักโอนคืน ฿${this._money(r.refundPending)}</span></div>` : (r.refundAmount > 0 && r.refundState === 'Paid' ? `<div class="row" style="color:#047857"><span>สถานะ</span><span>ที่พักโอนคืนแล้ว</span></div>` : '')}
+              ${r.refundPending > 0 ? `<div class="row" style="color:#92400E"><span>สถานะ</span><span>รอที่พักโอนคืน ฿${this._money(r.refundPending)}</span></div>` : (r.refundAmount > 0 && r.refundState === 'Paid' ? `<div class="row" style="color:#047857"><span>สถานะ</span><span>ที่พักโอนคืนแล้ว</span></div>` : (r.refundState === 'Unknown' ? `<div class="row"><span>สถานะ</span><span>ไม่มีข้อมูลการโอนคืน — สอบถามที่พัก</span></div>` : ''))}
             </div>
             <div class="lg-sum">
               <h3 style="margin:0 0 8px">ผู้เข้าพัก</h3>
@@ -1861,11 +1863,11 @@
         if (!box) return;
         const m = await this._payMethods();
         if (!m || !m.online || !(m.methods || []).length) { box.remove(); return; }
-        const due = r.status === 'Pending' && r.depositRequired > 0
-          ? Math.min(r.depositRequired, r.balanceDue) : r.balanceDue;
+        const due = r.onlinePayableAmount;
+        if (due == null || !(due > 0)) { box.remove(); return; }
         box.innerHTML = `<h3 style="margin:0 0 8px">💳 ชำระออนไลน์ทันที</h3>
           <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
-            จ่าย ฿${this._money(due)} แล้ว<b>ยืนยันการจองอัตโนมัติ</b> ไม่ต้องรอที่พักตรวจสลิป
+            ยอดชำระ <b>฿${this._money(due)}</b> · ${this.esc(r.onlinePaymentNote || '')}
             ${m.isTestMode ? ' · <span class="lg-badge">โหมดทดสอบ</span>' : ''}
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1880,7 +1882,7 @@
           // ตัวตนอยู่ใน URL (token ที่แขกถือ) — widget จึงไม่ต้องส่ง sourceId/amount
           publicBase: `/api/companies/${companyId}/public-pay/lodging/${siteId}/${encodeURIComponent(token)}`,
           method,
-          onPaid: () => { setTimeout(() => this.renderLodgingReservation(token, 'ชำระเงินสำเร็จ — ยืนยันการจองแล้ว'), 800); },
+          onPaid: () => { setTimeout(() => this.renderLodgingReservation(token, 'ชำระเงินสำเร็จ — สถานะการจองด้านล่างเป็นข้อมูลล่าสุดจากที่พัก'), 800); },
         });
       },
       async lodgingUploadSlip(ev, token) {

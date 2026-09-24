@@ -1049,6 +1049,27 @@ public class IntegrationService : IIntegrationService
                     await _db.SaveChangesAsync();
                     cashSaleNote = " (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03 · GL ขายเงินสด ไม่มีลูกหนี้)";
                 }
+                catch (Accounting.Helpers.BusinessRuleException exTiv)
+                    when (exTiv.RuleCode == Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode)
+                {
+                    // รอบ 193 หลังฝ่ายค้าน C1 — มัดจำออกใบกำกับแล้ว และงวดของมัดจำยื่นไปแล้ว: **ห้ามถอยไปตั้งหนี้**
+                    // (ตั้งหนี้ = Dr ลูกหนี้เต็ม + Cr 21911 เต็ม ⇒ VAT มัดจำซ้ำ · 217xx ค้าง · BalanceDue เต็มทำให้ต้นทาง
+                    // เก็บเงินซ้ำเท่ามัดจำ). ล้มดัง 3 ที่: ธงบนใบ · log PartialSuccess · คำตอบ success=false
+                    document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(
+                        document.InternalNotes, "[" + exTiv.RuleCode + "] ลงบัญชีไม่ได้ — " + exTiv.Message);
+                    await _db.SaveChangesAsync();
+                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว (งวดยื่นแล้ว) — ไม่ลงบัญชี ไม่ถอยไปตั้งหนี้",
+                        document.DocumentNumber);
+                    log.Status = "PartialSuccess";
+                    log.ErrorMessage = exTiv.Message;
+                    log.CreatedDocumentId = document.Id;
+                    log.CreatedContactId = contact.Id;
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(false,
+                        "สร้างเอกสารแล้วแต่ลงบัญชีไม่ได้ (ต้องให้นักบัญชีแก้ก่อน · ห้ามรับชำระยอดค้างของใบนี้): " + exTiv.Message,
+                        document.Id, contact.Id, null, null, docNumber);
+                }
                 catch (Exception exCash)
                 {
                     _logger.LogWarning(exCash,

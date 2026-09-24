@@ -49,6 +49,11 @@ CMS_LEAD = "Services/Implementations/CmsLeadService.cs"
 PLATFORM = "Services/Implementations/PlatformBillingDocumentIssuer.cs"
 XTENANT = "Services/Implementations/CrossTenantWorkflowService.cs"
 DUPDET = "Services/Implementations/Import/DuplicateDetector.cs"
+LODGING_LIFE = "Services/Implementations/Lodging/LodgingService.Lifecycle.cs"
+LODGING_RES = "Services/Implementations/Lodging/LodgingService.Reservations.cs"
+LODGING = "Services/Implementations/Lodging/LodgingService.cs"
+DOCSVC = "Services/Implementations/DocumentService.cs"
+INTEGRATION = "Services/Implementations/IntegrationService.cs"
 
 # (ไฟล์, เมธอด, must[], before[(a, b)], forbid[], เหตุผล)
 RULES = [
@@ -210,6 +215,67 @@ RULES = [
      ["CommissionPlanRules.IsDeactivateOnly(", "CommissionPlanRules.Validate("],
      [("CommissionPlanRules.IsDeactivateOnly(", "CommissionPlanRules.Validate(")], [],
      "ปิดใช้งานแผนเก่าต้องไม่ถูกบังคับให้แก้อัตรา"),
+    # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
+    (LODGING_LIFE, "CheckOutAsync",
+     ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
+      "LodgingPricingEngine.ChargeVatRate(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
+      "BillDiscountAmount: depositPlan.BaseDeducted"],
+     [("LodgingDepositSettlement.PlanCheckout(", "_docService.CreateDocumentAsync("),
+      ("FindOrCreateContactAsync(", "r.Charges.Add("),
+      ("_docService.ApproveDocumentAsync(", "r.Charges.Add(")],
+     ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null"],
+     "C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
+     "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
+    (LODGING_LIFE, "SettleCheckOutAsync",
+     ["new RealizeDepositRequest(d.Base, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId)",
+      "Math.Min(a.Gross, finalDoc.BalanceDue)", "r.RefundAmount = plan.ExcessGross"], [], [],
+     "C4 รับรู้มัดจำต้องผูกใบสุดท้าย (void กลับได้) · ตัดชำระไม่เกินยอดใบ · ส่วนเกินเป็นยอดค้างคืน"),
+    (LODGING_LIFE, "ResumeCheckOutAsync",
+     ["DepositRealizedForDocumentId == finalId", "LodgingDepositSettlement.PlanCheckout("], [], [],
+     "ทำเช็คเอาต์ต่อ: นับที่รับรู้เพื่อใบนี้ไปแล้ว ไม่ใช้มัดจำซ้ำ"),
+    (LODGING_LIFE, "CancelCoreAsync",
+     ["Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("],
+     [("Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("),
+      ("_db.SaveChangesAsync(", "RealizeDepositAsync(")],
+     ["RefundDepositAsync("],
+     "C3 ด่านสถานะอยู่ที่ตัวกลาง (เส้นแขกยกเลิกซ้ำได้) · บันทึกสถานะก่อนลงบัญชีส่วนริบ · ยกเลิกห้ามลงคืนเงิน (F-03)"),
+    (LODGING_LIFE, "RecordRefundPaidAsync",
+     ["JobLock.RunExclusiveAsync(", "RecordRefundPaidCoreAsync("], [], [],
+     "คืนเงินต้องล็อกระดับการจอง (สองคำขอพร้อมกัน = lost update)"),
+    (LODGING_LIFE, "RecordRefundPaidCoreAsync",
+     ["LodgingDepositSettlement.IsLegacyRefund(", "TaxFilingLockPolicy.DeclaredOrFiledStatuses",
+      "LodgingDepositSettlement.AllocateRefund(", "SyncRefundPaidFromDeposits("],
+     [("TaxFilingLockPolicy.DeclaredOrFiledStatuses", "RefundDepositAsync(")], [],
+     "C10 แถว legacy ห้ามลงคืนซ้ำ · ห้ามลงวันที่ย้อนเข้างวด ภ.พ.30 ที่ยื่นแล้ว · ยอดคืนแล้วตามใบมัดจำ"),
+    (LODGING_LIFE, "BuildChargeAsync",
+     ["LodgingPricingEngine.ChargeVatRate("], [], ["request.VatRate ??"],
+     "C8 อัตรา VAT รายการ folio ต้องผ่านด่าน §90/2"),
+    (LODGING_LIFE, "ConfirmAsync",
+     ["LodgingDepositSettlement.StatusAfterDeposit(", "request.ConfirmReservation"], [], [],
+     "S-06/C9 ปุ่มรับชำระเพิ่มไม่ใช่การยืนยัน — ตามค่าตั้ง AutoConfirmOnDeposit"),
+    (LODGING_RES, "FindOrCreateContactAsync",
+     ["ContactTaxBranchKey.SoftMatchScope(", "LodgingGuestContact.SoftCandidateAcceptable("], [],
+     ["softScope.FirstOrDefaultAsync("],
+     "C-7 แขกนิติบุคคลห้ามได้แถวบุคคลธรรมดาที่อีเมล/เบอร์ตรง (§86/4 ผู้ซื้อผิดตัว)"),
+    (LODGING, "EffectiveVatRateAsync",
+     ["CompanyVatStatus.ProfileAsync(", "LodgingPricingEngine.PropertyVatRate("], [], [],
+     "S-10 อัตรา VAT ที่พักผ่านตัวอ่านสถานะ VAT ตัวเดียว"),
+    (DOCSVC, "GuardDrivesGrossApplyAsync",
+     ["DepositPolicyResolver.DrivesGrossApply(", "TaxFilingLockPolicy.DeclaredOrFiledStatuses"], [], [],
+     "C1 เส้นขับ JE บล็อกเฉพาะงวดมัดจำยื่นแล้ว (เดิมบล็อกทุกกรณี ⇒ integration ถอยไปตั้งหนี้เงียบ)"),
+    (DOCSVC, "AutoPostToJournalAsync",
+     ["GuardDrivesGrossApplyAsync("], [], ["DepositPolicyResolver.GrossApplyBlocked("],
+     "C1 เส้นขับ JE ต้องผ่านตัวตัดสินที่ดูงวดที่ยื่นแล้ว ไม่ใช่ GrossApplyBlocked ตรง ๆ"),
+    (DOCSVC, "VoidDocumentAsync",
+     ["ReverseDepositRealizationsForAsync("], [], [],
+     "C4 void ใบสุดท้ายต้องกลับการรับรู้มัดจำที่ทำเพื่อใบนั้น"),
+    (DOCSVC, "RealizeDepositAsync",
+     ["DepositRealizedForDocumentId = realizedFor"], [], [],
+     "C4 FinalInvoiceId ต้องถูกอ่าน (เดิมไม่มีผู้อ่าน)"),
+    (INTEGRATION, "ProcessInvoiceAsync",
+     ["DepositPolicyResolver.ImmediateVatGrossApplyRuleCode"],
+     [("DepositPolicyResolver.ImmediateVatGrossApplyRuleCode", "catch (Exception exCash)")], [],
+     "C1 มัดจำออกใบกำกับแล้ว (งวดยื่นแล้ว) ห้ามถอยไปตั้งหนี้เงียบ — ต้องล้มดัง"),
 ]
 
 

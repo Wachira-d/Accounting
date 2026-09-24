@@ -1,5 +1,7 @@
 using Accounting.Helpers;
+using Accounting.Models.DTOs.Document;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -20,6 +22,10 @@ public class LodgingDepositSettlementTests
     private static LodgingDepositSnapshot Deposit2000(bool vatPending = false, decimal realized = 0m, decimal refunded = 0m, string no = "TIV-0001")
         => new(Guid.NewGuid(), no, Guest, 1869.16m, 130.84m, 2000m, vatPending, realized, refunded);
 
+    // ใบสุดท้ายยอดใหญ่กว่ามัดจำเสมอ (เส้นปกติ) — แผนใช้มัดจำครบทุกใบ
+    private static LodgingCheckoutDepositPlan PlanBig(IReadOnlyList<LodgingDepositSnapshot> deposits)
+        => LodgingDepositSettlement.PlanCheckout(deposits, 1_000_000m, _ => 1_000_000m);
+
     private static LodgingDepositSnapshot FullDeposit2000()
         => new(Guid.NewGuid(), "REC-0001", Guest, 2000m, 0m, 2000m, VatPending: true, 0m, 0m);
 
@@ -36,7 +42,7 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void VATทันที_ใบสุดท้ายหักฐานมัดจำ_VATไม่ซ้ำ()
     {
-        var plan = LodgingDepositSettlement.PlanCheckout(new[] { Deposit2000() });
+        var plan = PlanBig(new[] { Deposit2000() });
         Assert.Single(plan.Deduct);
         Assert.Empty(plan.Apply);
         Assert.Equal(1869.16m, plan.BaseDeducted);
@@ -54,7 +60,7 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void ภาษีรอเรียกเก็บ_ใบสุดท้ายเต็มจำนวน_นำมัดจำไปตัดชำระ()
     {
-        var plan = LodgingDepositSettlement.PlanCheckout(new[] { Deposit2000(vatPending: true) });
+        var plan = PlanBig(new[] { Deposit2000(vatPending: true) });
         Assert.Empty(plan.Deduct);
         Assert.Null(plan.DeductionRef);
         Assert.Equal(0m, plan.BaseDeducted);
@@ -67,7 +73,7 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void มัดจำเต็มยอด_ใบสุดท้ายเต็มจำนวน_นำมัดจำไปตัดชำระ()
     {
-        var plan = LodgingDepositSettlement.PlanCheckout(new[] { FullDeposit2000() });
+        var plan = PlanBig(new[] { FullDeposit2000() });
         Assert.Empty(plan.Deduct);
         Assert.Equal(2000m, Assert.Single(plan.Apply).Gross);
     }
@@ -76,7 +82,7 @@ public class LodgingDepositSettlementTests
     public void มัดจำที่ใช้หมดแล้ว_ไม่ถูกนำมาใช้ซ้ำ()
     {
         var used = Deposit2000(realized: 1869.16m);
-        var plan = LodgingDepositSettlement.PlanCheckout(new[] { used });
+        var plan = PlanBig(new[] { used });
         Assert.Empty(plan.Deduct);
         Assert.Empty(plan.Apply);
     }
@@ -84,7 +90,7 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void ไม่มีมัดจำ_ใบสุดท้ายไม่มีการหัก()
     {
-        var plan = LodgingDepositSettlement.PlanCheckout(Array.Empty<LodgingDepositSnapshot>());
+        var plan = PlanBig(Array.Empty<LodgingDepositSnapshot>());
         Assert.Equal(0m, plan.BaseDeducted);
         Assert.Empty(plan.Apply);
         Assert.Null(plan.DeductionRef);
@@ -93,7 +99,7 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void มัดจำสองใบผสมโหมด_แยกเส้นถูกใบ()
     {
-        var plan = LodgingDepositSettlement.PlanCheckout(new[] { Deposit2000(no: "TIV-1"), Deposit2000(vatPending: true, no: "REC-2") });
+        var plan = PlanBig(new[] { Deposit2000(no: "TIV-1"), Deposit2000(vatPending: true, no: "REC-2") });
         Assert.Equal("TIV-1", plan.DeductionRef);
         Assert.Equal("REC-2", Assert.Single(plan.Apply).Number);
     }
@@ -192,10 +198,10 @@ public class LodgingDepositSettlementTests
     [Fact]
     public void สถานะคืนเงิน_มาจากยอดที่ยืนยันเท่านั้น()
     {
-        Assert.Equal(LodgingRefundState.None, LodgingDepositSettlement.RefundStateOf(0m, 0m));
-        Assert.Equal(LodgingRefundState.Pending, LodgingDepositSettlement.RefundStateOf(1000m, 0m));   // ยกเลิกแล้ว ยังไม่โอน
-        Assert.Equal(LodgingRefundState.Pending, LodgingDepositSettlement.RefundStateOf(1000m, 400m));
-        Assert.Equal(LodgingRefundState.Paid, LodgingDepositSettlement.RefundStateOf(1000m, 1000m));
+        Assert.Equal(LodgingRefundState.None, LodgingDepositSettlement.RefundStateOf(0m, 0m, null));
+        Assert.Equal(LodgingRefundState.Pending, LodgingDepositSettlement.RefundStateOf(1000m, 0m, null));   // ยกเลิกแล้ว ยังไม่โอน
+        Assert.Equal(LodgingRefundState.Pending, LodgingDepositSettlement.RefundStateOf(1000m, 400m, null));
+        Assert.Equal(LodgingRefundState.Paid, LodgingDepositSettlement.RefundStateOf(1000m, 1000m, null));
         Assert.Equal(600m, LodgingDepositSettlement.RefundPending(1000m, 400m));
         Assert.Equal(0m, LodgingDepositSettlement.RefundPending(1000m, 1200m));
     }
@@ -232,4 +238,149 @@ public class LodgingDepositSettlementTests
     [InlineData(LodgingReservationStatus.CheckedIn)]
     public void รับชำระเพิ่มบนการจองที่ไม่ใช่รอมัดจำ_สถานะไม่ถอยกลับ(LodgingReservationStatus current)
         => Assert.Equal(current, LodgingDepositSettlement.StatusAfterDeposit(current, autoConfirmOnDeposit: true, explicitStaffConfirm: true));
+
+    // ═══ หลังฝ่ายค้าน C2: มัดจำมากกว่ายอดใบสุดท้าย ═══
+
+    // ใบสุดท้ายราคารวม VAT บรรทัดเดียว — ยอดจากตัวคำนวณจริงของ DocumentService (สูตรเดียวกับ CreateDocumentAsync)
+    private static List<DocumentLineRequest> Stay(decimal gross) => new()
+    {
+        new(Description: "ค่าห้องพัก", Quantity: 1, Unit: "รายการ", UnitPrice: gross, DiscountPercent: 0, VatRate: 7m,
+            WithholdingTaxRate: 0, AccountId: null),
+    };
+
+    private static LodgingCheckoutDepositPlan PlanFor(decimal finalGross, params LodgingDepositSnapshot[] deposits)
+    {
+        var lines = Stay(finalGross);
+        var full = DocumentService.PreviewTotals(lines, true, 0m);
+        return LodgingDepositSettlement.PlanCheckout(deposits, full.Net, d => DocumentService.PreviewTotals(lines, true, d).Total);
+    }
+
+    [Fact]
+    public void VATทันที_จ่ายเต็ม7450แล้วเลื่อนเหลือ5000_หักเท่าฐานใบสุดท้าย_ส่วนเกินค้างคืน()
+    {
+        var paidFull = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-1", Guest, 6962.62m, 487.38m, 7450m, false, 0m, 0m);
+        var plan = PlanFor(5000m, paidFull);
+        // ฐานใบสุดท้าย 5,000 = 4,672.90 → หักได้เท่านั้น (เดิม Realize เต็ม 6,962.62 = รายได้เกิน 2,289.72)
+        Assert.Equal(4672.90m, plan.BaseDeducted);
+        Assert.Equal(0m, DocumentService.PreviewTotals(Stay(5000m), true, plan.BaseDeducted).Total);
+        var ex = Assert.Single(plan.Excess);
+        Assert.Equal(2450m, ex.Gross);   // แขกจ่ายเกิน 2,450 ⇒ ค้างคืน (เดิมไม่มียอดค้างคืน)
+        Assert.Empty(plan.Apply);
+    }
+
+    [Theory]
+    [InlineData(true)]    // ภาษีรอเรียกเก็บ
+    [InlineData(false)]   // เต็มยอด
+    public void มัดจำพักหรือเต็มยอด_เกินยอดใบสุดท้าย_ตัดชำระเท่ายอดใบ_ส่วนเกินค้างคืน(bool pendingVat)
+    {
+        var d = pendingVat
+            ? new LodgingDepositSnapshot(Guid.NewGuid(), "REC-1", Guest, 6962.62m, 487.38m, 7450m, true, 0m, 0m)
+            : new LodgingDepositSnapshot(Guid.NewGuid(), "REC-1", Guest, 7450m, 0m, 7450m, true, 0m, 0m);
+        var plan = PlanFor(5000m, d);
+        // เดิม Apply 7,450 ชนด่าน "เกินยอดค้าง" หลังประทับเลขใบ ⇒ การจองค้างเช็คอินถาวร
+        Assert.Equal(5000m, Assert.Single(plan.Apply).Gross);
+        Assert.Equal(2450m, Assert.Single(plan.Excess).Gross);
+    }
+
+    [Fact]
+    public void ยอดใบสุดท้ายมากกว่ามัดจำ_ไม่มีส่วนเกิน_เส้นปกติไม่ถูกแตะ()
+    {
+        var plan = PlanFor(7450m, Deposit2000());
+        Assert.Equal(1869.16m, plan.BaseDeducted);
+        Assert.Empty(plan.Excess);
+        Assert.Equal(0m, plan.ExcessGross);
+        var planPending = PlanFor(7450m, Deposit2000(vatPending: true));
+        Assert.Equal(2000m, Assert.Single(planPending.Apply).Gross);
+        Assert.Empty(planPending.Excess);
+    }
+
+    [Fact]
+    public void ทำเช็คเอาต์ต่อ_มัดจำที่ตัดชำระใบนี้แล้วไม่ตัดซ้ำ()
+    {
+        var finalId = Guid.NewGuid();
+        var applied = new LodgingDepositSnapshot(Guid.NewGuid(), "REC-1", Guest, 1869.16m, 130.84m, 2000m, true, 1869.16m, 0m, finalId);
+        var notYet = new LodgingDepositSnapshot(Guid.NewGuid(), "REC-2", Guest, 1869.16m, 130.84m, 2000m, true, 0m, 0m);
+        var plan = LodgingDepositSettlement.PlanCheckout(new[] { applied, notYet }, 0m, _ => 3450m, finalId);
+        var a = Assert.Single(plan.Apply);
+        Assert.Equal("REC-2", a.Number);
+        Assert.Empty(plan.Excess);
+    }
+
+    // ═══ หลังฝ่ายค้าน C7: ยอดจริงผ่านตัวคำนวณของ DocumentService (ไม่ใช่สูตรของ helper ตรวจตัวเอง) ═══
+
+    [Fact]
+    public void เครื่องคำนวณจริง_7450หักฐานมัดจำ2000_ได้5450_VAT356_54()
+    {
+        var plan = PlanFor(7450m, Deposit2000());
+        var t = DocumentService.PreviewTotals(Stay(7450m), true, plan.BaseDeducted);
+        Assert.Equal(5093.46m, t.Net);
+        Assert.Equal(356.54m, t.Vat);
+        Assert.Equal(5450m, t.Total);
+        Assert.Equal(0m, LodgingDepositSettlement.RoundingDelta(7450m, plan.GrossDeducted, t.Total));
+    }
+
+    [Fact]
+    public void เครื่องคำนวณจริง_1000มัดจำ59_85_ส่วนต่างปัดเศษ_0_01_อยู่ที่VAT_ฐานไม่เพี้ยน()
+    {
+        var (depBase, depVat) = LodgingDepositSettlement.SplitInclusive(59.85m, 7m);   // 55.93 / 3.92
+        var d = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-5", Guest, depBase, depVat, 59.85m, false, 0m, 0m);
+        var plan = PlanFor(1000m, d);
+        var t = DocumentService.PreviewTotals(Stay(1000m), true, plan.BaseDeducted);
+        Assert.Equal(940.16m, t.Total);                                            // คู่ยอดที่ฝ่ายค้านยกมา
+        Assert.Equal(0.01m, LodgingDepositSettlement.RoundingDelta(1000m, plan.GrossDeducted, t.Total));
+        Assert.Equal(934.58m, depBase + t.Net);                                    // ฐานรวม = ฐานของ 1,000 พอดี
+        Assert.Equal(65.43m, depVat + t.Vat);                                      // VAT คิดรายใบ (ทิศที่เลือก)
+    }
+
+    // ═══ หลังฝ่ายค้าน C6: สูตรปัดตัวเดียวระหว่างแผนยกเลิกกับการแบ่งยอดคืน ═══
+
+    [Fact]
+    public void มัดจำสองใบ1000_ค่าปรับ1171_43_คืน828_57ได้ครบไม่ค้าง0_01()
+    {
+        var d1 = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-1", Guest, 934.58m, 65.42m, 1000m, false, 0m, 0m);
+        var d2 = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-2", Guest, 934.58m, 65.42m, 1000m, false, 0m, 0m);
+        var plan = LodgingDepositSettlement.PlanCancellation(1171.43m, 2000m, new[] { d1, d2 });
+        Assert.Equal(828.57m, plan.Refund);
+        var after = new[]
+        {
+            d1 with { RealizedBase = plan.Lines[0].ForfeitBase },
+            d2 with { RealizedBase = plan.Lines[1].ForfeitBase },
+        };
+        var alloc = LodgingDepositSettlement.AllocateRefund(plan.Refund, after);
+        Assert.Equal(828.57m, alloc.Sum(a => a.Gross));     // เดิมได้ 828.56 ⇒ ปฏิเสธ หรือค้าง 0.01 ถาวร
+        var one = Assert.Single(alloc);
+        Assert.Equal("TIV-2", one.Number);
+        Assert.Equal(774.36m, plan.Lines[1].RefundBase);     // แยกฐานด้วยสูตรเดียวกับ RefundDepositAsync
+        Assert.Equal(934.58m - 774.36m, plan.Lines[1].ForfeitBase);
+    }
+
+    [Fact]
+    public void มัดจำใบเดียว_ยอดคืนเท่าเดิม_สูตรใหม่ไม่เปลี่ยนเส้นที่ถูกอยู่แล้ว()
+    {
+        var plan = LodgingDepositSettlement.PlanCancellation(1000m, 2000m, new[] { Deposit2000() });
+        Assert.Equal(1000m, plan.Refund);
+        var after = new[] { Deposit2000(realized: plan.Lines[0].ForfeitBase) };
+        Assert.Equal(1000m, LodgingDepositSettlement.AllocateRefund(1000m, after).Sum(a => a.Gross));
+    }
+
+    // ═══ หลังฝ่ายค้าน C10: แถวยกเลิกก่อนรอบ 193 = ไม่มีข้อมูลการโอน (ไม่ใช่ "คืนแล้ว") ═══
+
+    [Fact]
+    public void แถวlegacy_สถานะไม่ทราบ_ยอดค้างที่กดคืนได้เป็นศูนย์()
+    {
+        const string legacy = LodgingDepositSettlement.LegacyRefundMarker + " (ก่อนรอบ 193)";
+        Assert.Equal(LodgingRefundState.Unknown, LodgingDepositSettlement.RefundStateOf(1000m, 0m, legacy));
+        Assert.Equal(0m, LodgingDepositSettlement.RefundPendingOf(1000m, 0m, legacy));
+        Assert.True(LodgingDepositSettlement.IsLegacyRefund(legacy));
+    }
+
+    [Fact]
+    public void แถวใหม่ไม่ถูกนับเป็นlegacy_ยอดค้างและสถานะตามจริง()
+    {
+        Assert.False(LodgingDepositSettlement.IsLegacyRefund("user-123"));
+        Assert.False(LodgingDepositSettlement.IsLegacyRefund(null));
+        Assert.Equal(LodgingRefundState.Paid, LodgingDepositSettlement.RefundStateOf(1000m, 1000m, "user-123"));
+        Assert.Equal(600m, LodgingDepositSettlement.RefundPendingOf(1000m, 400m, "user-123"));
+        Assert.Equal(LodgingRefundState.None, LodgingDepositSettlement.RefundStateOf(0m, 0m, LodgingDepositSettlement.LegacyRefundMarker));
+    }
 }
