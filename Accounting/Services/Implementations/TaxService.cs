@@ -3096,12 +3096,17 @@ public partial class TaxService : ITaxService
     /// (ภาระเกิดจาก tax point ไม่ใช่หัวกระดาษ) แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ —
     /// จึงติดธงไว้ในรายงานให้ตามแก้ได้ทั้งงวด</summary>
     internal static bool NotFullTaxInvoice(Document doc)
+        => NotFullTaxInvoice(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, doc.Contact);
+
+    /// <summary>แกนของ <see cref="NotFullTaxInvoice(Document)"/> — ให้ผู้เรียกที่ถือผู้ติดต่อแยกจากเอกสาร
+    /// (เช่น e-Tax hook ที่ได้เอกสารมาโดยไม่มี navigation) ใช้เกณฑ์<b>ตัวเดียวกัน</b> ไม่ต้องเขียนซ้ำ (รอบ 193 C-1)</summary>
+    internal static bool NotFullTaxInvoice(decimal vatAmount, bool buyerDeclinedTaxInvoice, Contact? contact)
     {
-        if (doc.VatAmount <= 0.005m) return false;
-        if (doc.BuyerDeclinedTaxInvoice) return true;
-        if (doc.Contact == null) return true;
-        if (doc.Contact.IsWalkInCustomer) return true;
-        return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(doc.Contact).Count > 0;
+        if (vatAmount <= 0.005m) return false;
+        if (buyerDeclinedTaxInvoice) return true;
+        if (contact == null) return true;
+        if (contact.IsWalkInCustomer) return true;
+        return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(contact).Count > 0;
     }
 
     internal static decimal VatableBase(Document doc)

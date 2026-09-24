@@ -821,6 +821,9 @@ public record DocumentResponse(
     string? InternalNotes = null,
     /// <summary>โมดูลที่สร้างเอกสารนี้ (Lodging/Pos/…) — หน้าเว็บใช้ติดป้าย "มาจากระบบจอง"</summary>
     string? OriginModule = null,
+    /// <summary>มีป้าย "ออก e-Tax อัตโนมัติไม่สำเร็จ" ค้างอยู่ (<c>Helpers/EtaxAutoFailedNote</c>) — เซิร์ฟเวอร์ตัดสิน
+    /// หน้าเว็บแสดงแถบเตือน (ห้ามค้นป้ายเองใน JS) · ป้ายถูกล้างเมื่อออก e-Tax สำเร็จ (รอบ 193 ฝ่ายค้าน P-3)</summary>
+    bool EtaxAutoFailed = false,
 
     // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
     /// <summary>ใบนี้ถูกแทนที่ด้วยใบกำกับเต็มรูปใบไหน (null = ยังไม่เคยออกใบแทน)

@@ -1067,7 +1067,7 @@ public class IntegrationService : IIntegrationService
 
             // ★ รอบ 193 S-02 — ใบกำกับที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
             // (ล้ม = ประทับ [ETAX-AUTO-FAILED] บนเอกสาร ไม่ทำให้ sync ล้ม)
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             // ⚠️ ห้ามทับสถานะ PartialSuccess ที่ PostMappingJournalAsync ตั้งไว้ —
             // "สร้างเอกสารได้แต่ลงบัญชีไม่ได้" ไม่ใช่ Success
@@ -1087,7 +1087,7 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true,
-                "Invoice created" + cashSaleNote + JeSkipSuffix(jeSkipReason),
+                "Invoice created" + cashSaleNote + JeSkipSuffix(jeSkipReason) + EtaxHookSuffix(etaxHook),
                 document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
@@ -1345,7 +1345,7 @@ public class IntegrationService : IIntegrationService
             }
 
             // ★ รอบ 193 S-02 — ใบลดหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -1353,7 +1353,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Credit Note created", document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Credit Note created" + EtaxHookSuffix(etaxHook), document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -1448,7 +1448,7 @@ public class IntegrationService : IIntegrationService
             var journalEntryId = await CreateDebitNoteJournalAsync(companyId, document);
 
             // ★ รอบ 193 S-02 — ใบเพิ่มหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -1456,7 +1456,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Debit Note created", document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Debit Note created" + EtaxHookSuffix(etaxHook), document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -2373,6 +2373,11 @@ public class IntegrationService : IIntegrationService
     /// ลงบัญชี — คู่ค้าต้องรู้ว่างานยังไม่จบ ไม่ใช่เห็นแค่คำว่า created</summary>
     private static string JeSkipSuffix(string? reason) =>
         string.IsNullOrWhiteSpace(reason) ? "" : $" ⚠ ยังไม่ลงบัญชี: {reason}";
+
+    /// <summary>ข้อความต่อท้ายคำตอบเมื่อ e-Tax อัตโนมัติของใบนี้ออกไม่สำเร็จ — ที่ที่สามของ "ล้มดัง" (F2 ข้อ 7)
+    /// ต่อจากป้ายบนเอกสารและ log (รอบ 193 ฝ่ายค้าน P-3)</summary>
+    private static string EtaxHookSuffix(IssuedDocumentHookResult hook) =>
+        hook.EtaxFailed ? $" ⚠ e-Tax อัตโนมัติไม่สำเร็จ (ยังไม่ถูกนำส่งกรมสรรพากร): {hook.EtaxFailureReason}" : "";
 
     /// <summary>บันทึกเหตุผลที่ "ไม่สร้างรายการบัญชี" ลง log ของเซิร์ฟเวอร์ **และ**
     /// ส่งต่อให้ผู้เรียก — จุดเดียวที่ทั้งสองอย่างเกิดพร้อมกัน ห้ามเขียนแยก</summary>

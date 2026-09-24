@@ -487,13 +487,10 @@ public class CmsBookingService : ICmsBookingService
 
         // บริษัทไม่จด VAT → ไม่คิด VAT ขายในเอกสารจอง (§90/2) มิฉะนั้นเอกสาร
         // จะติด hard-block ตอน approve และการจองจะ sync ไม่ผ่าน
-        // อัตราจาก OutputVatRate ตัวเดียว (อ่าน Company.VatRate — เดิม 7 ตายตัว · รอบ 193 S-10)
-        var bookingVatProfile = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId)
-            .Select(c => new { c.IsVatRegistered, c.VatRate })
-            .FirstOrDefaultAsync();
-        var bookingVatRate = bookingVatProfile == null ? 0m
-            : Accounting.Helpers.OutputVatRate.ForCompany(bookingVatProfile.IsVatRegistered, bookingVatProfile.VatRate);
+        // อัตราจาก OutputVatRate ตัวเดียว (เดิม 7 ตายตัว · รอบ 193 S-10) · สถานะ/อัตราจาก CompanyVatStatus ตัวเดียวกับ
+        // ด่าน §90/2 ที่จะอนุมัติใบนี้ (ฝ่ายค้าน P-6 — เดิมอ่าน Company ตรง ธงขัดกัน = sync ไม่ผ่าน/คิด VAT ผิดทิศ)
+        var (bookingVatRegistered, bookingDefaultRate) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+        var bookingVatRate = Accounting.Helpers.OutputVatRate.ForCompany(bookingVatRegistered, bookingDefaultRate);
 
         var request = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: docType,

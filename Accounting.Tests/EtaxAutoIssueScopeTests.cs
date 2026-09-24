@@ -14,8 +14,37 @@ namespace Accounting.Tests;
 public class EtaxAutoIssueScopeTests
 {
     private static EtaxAutoSkip Judge(DocumentType type, DocumentStatus status = DocumentStatus.Approved,
-        bool isDeposit = false, bool deferred = false, DateTime? recognizedAt = null, DocumentType? related = null)
-        => EtaxAutoIssueScope.Judge(type, status, isDeposit, deferred, recognizedAt, related);
+        bool isDeposit = false, bool deferred = false, DateTime? recognizedAt = null, DocumentType? related = null,
+        bool? byLaw = true, bool notFull = false)
+        => EtaxAutoIssueScope.Judge(type, status, isDeposit, deferred, recognizedAt, related, byLaw, notFull);
+
+    // ── ฝ่ายค้าน C-1/C-2: ใบที่ "ไม่ใช่ใบกำกับเต็มรูป" / ตรึงว่าไม่ใช่ใบกำกับ ต้องข้ามเงียบ ──
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice)]   // ขายหน้าร้าน/PMS ผ่าน API ผู้ซื้อ walk-in
+    [InlineData(DocumentType.Receipt)]
+    public void ไม่ใช่ใบกำกับเต็มรูป_walkin_หรือผู้ซื้อไม่ประสงค์รับ_ข้าม(DocumentType type)
+        => Assert.Equal(EtaxAutoSkip.NotFullTaxInvoice, Judge(type, notFull: true));
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice)]   // VAT 0 ทั้งใบ/ยกเว้น §81 ผ่าน API → หัว "ใบเสร็จ"
+    [InlineData(DocumentType.Receipt)]
+    public void ตรึงว่าไม่ใช่ใบกำกับตามกฎหมาย_ข้าม(DocumentType type)
+        => Assert.Equal(EtaxAutoSkip.NotTaxInvoiceByLaw, Judge(type, byLaw: false));
+
+    [Fact]
+    public void ใบก่อนมีธง_IsTaxInvoiceByLaw_null_ไม่ถูกตีความว่าไม่ใช่ใบกำกับ()
+        => Assert.Equal(EtaxAutoSkip.None, Judge(DocumentType.TaxInvoice, byLaw: null));
+
+    [Theory]
+    [InlineData(DocumentType.CreditNote)]   // §86/9-10 CN/DN ถือเป็นใบกำกับ — ธงหัวกระดาษ/ผู้ซื้อไม่ใช้ข้าม
+    [InlineData(DocumentType.DebitNote)]
+    public void ใบลดเพิ่มหนี้_ไม่ถูกข้ามด้วยธงหัวกระดาษหรือผู้ซื้อ(DocumentType type)
+        => Assert.Equal(EtaxAutoSkip.None, Judge(type, related: DocumentType.TaxInvoice, byLaw: false, notFull: true));
+
+    [Fact]
+    public void ใบกำกับเต็มรูปผู้ซื้อครบ_ยังออก_eTax()
+        => Assert.Equal(EtaxAutoSkip.None, Judge(DocumentType.TaxInvoice, byLaw: true, notFull: false));
 
     // ── ต้องออก e-Tax (ไม่ข้าม) ──
 

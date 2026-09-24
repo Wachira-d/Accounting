@@ -84,6 +84,45 @@ public class InputVatVehicleRuleTests
         => Assert.Equal(VehicleVatVerdict.NotVehicleCost,
             InputVatVehicleRule.Judge(line, "บจก. ผู้ขายทั่วไป", isVehicleDealer: false));
 
+    // ── ฝ่ายค้าน C-5: คำเตือนที่ด่านชุดที่สองเคยให้ ต้องกลับมาเป็น "เตือนให้ตรวจ" (ไม่ปิดเคลม) ──
+    // ตารางจำลองของฝ่ายค้าน (review193-V-C3 §C-5) — ผู้ขาย + รายการจากใบจริงแต่ละแบบ
+
+    [Theory]
+    [InlineData("อะไหล่ Toyota Altis", "บจ. โตโยต้า บางนา")]
+    [InlineData("น้ำมัน", "หจก. สมชายปิโตรเลียม")]                 // ปั๊มอิสระ (ไม่ใช่แบรนด์ในลิสต์หลัก)
+    [InlineData("เปลี่ยนน้ำมันเครื่อง Honda Civic", "บี-ควิก")]
+    [InlineData("ค่าซ่อมบำรุงรถยนต์นั่ง", "อู่ช่างสมศักดิ์")]
+    [InlineData("Fuel", "Fleet Card Co")]
+    public void ไม่ใช่_Dealer_กรณีกำกวม_กลับมาเตือนแต่ไม่ปิดเคลม(string line, string vendor)
+    {
+        var v = ProhibitedInputVatScreener.Screen(null, vendor, new[] { line }, isVehicleDealer: false);
+        Assert.Null(v.Claimable);                               // ไม่ปิดเคลม (หลักฐานไม่ชัด)
+        Assert.Equal("RD-82/5(6)", v.RuleCode);                 // แต่เตือนให้ตรวจ
+        Assert.Equal(VehicleVatVerdict.UnclearCheck, v.Vehicle);
+    }
+
+    [Theory]
+    [InlineData("ค่าซ่อมแอร์ สำนักงาน", "บจก. แอร์เซอร์วิส")]      // คำเตือนผิดของลิสต์ชุดที่สองเดิม — ต้องไม่กลับมา
+    [InlineData("น้ำมันพืช 18 ลิตร", "บจก. ค้าส่งอาหาร")]
+    [InlineData("Fuel surcharge", "DHL Express")]
+    [InlineData("Fuel Adjustment", "Thai Airways")]
+    [InlineData("ค่าบริการ service charge 10%", "โรงแรมโตโยต้าเฮาส์")]   // "service" ไม่อยู่ในลิสต์งานรถ
+    [InlineData("ซ่อมเครื่องปั่นไฟ Honda", "หจก. ช่างไฟ")]              // ยี่ห้อเดียวกันแต่ไม่ใช่รถยนต์
+    [InlineData("ยา 10 mg", "ร้านขายยา")]
+    public void ไม่ใช่_Dealer_คำเตือนผิดเดิมไม่กลับมา(string line, string vendor)
+        => Assert.Equal(VehicleVatVerdict.NotVehicleCost,
+            InputVatVehicleRule.Judge(line + "\n" + vendor, vendor, isVehicleDealer: false));
+
+    [Fact]
+    public void Dealer_กรณีกำกวม_ใช้ข้อความผู้ประกอบกิจการขายรถ()
+        => Assert.Equal(VehicleVatVerdict.VehicleDealerExempt,
+            InputVatVehicleRule.Judge("อะไหล่ Toyota Altis\nบจ. โตโยต้า บางนา", "บจ. โตโยต้า บางนา", isVehicleDealer: true));
+
+    [Fact]
+    public void กำกวมแต่ระบุรถที่เคลมได้_ใช้ผลรถเคลมได้()
+        => Assert.Equal(VehicleVatVerdict.ClaimableVehicleType,
+            InputVatVehicleRule.Judge("อะไหล่ Isuzu รถบรรทุก 6 ล้อ", "ตรีเพชรอีซูซุ", isVehicleDealer: false));
+
     [Fact]
     public void เฉพาะ_DefaultNotClaimable_ที่ปิดเคลม()
     {

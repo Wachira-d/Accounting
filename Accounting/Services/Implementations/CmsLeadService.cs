@@ -174,12 +174,9 @@ public class CmsLeadService
 
         // อัตรา VAT จาก OutputVatRate ตัวเดียว — เดิม 7 ตายตัว ⇒ ใบเสนอราคาของบริษัทที่ไม่จด VAT
         // เสนอ VAT 7% ให้ลูกค้า (§90/2 ถ้าใบนี้ถูกแปลงเป็นใบกำกับ) · รอบ 193 S-10
-        var vatProfile = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId)
-            .Select(c => new { c.IsVatRegistered, c.VatRate })
-            .FirstOrDefaultAsync();
-        var quoteVatRate = vatProfile == null ? 0m
-            : Accounting.Helpers.OutputVatRate.ForCompany(vatProfile.IsVatRegistered, vatProfile.VatRate);
+        // สถานะ/อัตราจาก CompanyVatStatus ตัวเดียวกับด่าน §90/2 ที่จะตัดสินใบนี้ตอนแปลงเป็นใบกำกับ (ฝ่ายค้าน P-6)
+        var (vatRegistered, vatDefaultRate) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+        var quoteVatRate = Accounting.Helpers.OutputVatRate.ForCompany(vatRegistered, vatDefaultRate);
 
         var docReq = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: Models.Enums.DocumentType.Quotation,

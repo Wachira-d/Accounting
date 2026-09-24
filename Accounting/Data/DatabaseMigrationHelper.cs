@@ -4854,6 +4854,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
             // ภาษาเอกสารที่ออก (th/en) — ค่าตั้งต้นระดับบริษัท + override รายใบ
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NOT NULL DEFAULT 'th';""",
+            // ===== ยืนยันสถานะจด VAT แล้วหรือยัง (รอบ 193 ฝ่ายค้าน C-9) =====
+            // DEFAULT now() ตอนเพิ่มคอลัมน์ = เติมเวลาให้แถว**ที่มีอยู่แล้ว**ครั้งเดียว (ไม่ถามซ้ำบริษัทเดิม) · IF NOT EXISTS
+            // ทำให้การเติมเกิดครั้งเดียว · แล้วถอด default ⇒ แถวใหม่ต้องได้ค่าจากคนยืนยันจริงเท่านั้น (สมัคร/SSO = null)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "VatStatusConfirmedAt" timestamptz NULL DEFAULT now();""",
+            """ALTER TABLE "CompanySettings" ALTER COLUMN "VatStatusConfirmedAt" DROP DEFAULT;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
 
             // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
