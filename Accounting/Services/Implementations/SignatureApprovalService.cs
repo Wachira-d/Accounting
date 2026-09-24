@@ -589,12 +589,12 @@ public class SignatureApprovalService : ISignatureApprovalService
             doc.Id, doc.DocumentNumber,
             ApprovalStatus.Approved,
             convertedDocId, convertedDocNum, convertedDocType,
-            convertedDocId.HasValue
+            (convertedDocId.HasValue
                 ? $"อนุมัติใบเสนอราคาสำเร็จ และสร้าง{convertedDocType}แล้ว"
                 : approvedByConcurrentCall
                     ? "ใบเสนอราคานี้อยู่ในสถานะอนุมัติแล้ว (น่าจะโดยคำขอที่ส่งมาพร้อมกัน) — ไม่แปลงเอกสารซ้ำ"
                     : "อนุมัติใบเสนอราคาสำเร็จ")
-                + (reusedSignature ? " · ใช้ลายเซ็นลูกค้าที่บันทึกไว้แล้วของเนื้อหาเดียวกัน (ไม่บันทึกซ้ำ)" : "");
+                + (reusedSignature ? " · ใช้ลายเซ็นลูกค้าที่บันทึกไว้แล้วของเนื้อหาเดียวกัน (ไม่บันทึกซ้ำ)" : ""));
     }
 
     // ==================== DOCUMENT SIGNATURES ====================
