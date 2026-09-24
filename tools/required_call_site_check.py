@@ -349,8 +349,10 @@ TUPLE_RULES = [
      "S-06/C9 ปุ่มรับชำระเพิ่มไม่ใช่การยืนยัน — ตามค่าตั้ง AutoConfirmOnDeposit"),
     (LODGING_RES, "FindOrCreateContactAsync",
      ["ContactTaxBranchKey.SoftMatchScope(", "LodgingGuestContact.SoftCandidateAcceptable(", "ContactTaxBranchKey.AdoptTaxId(",
-      "ContactMatchKind.Email", "ContactMatchKind.Phone", "ContactAdoptOutcome.Reject", "!x.IsWalkInCustomer"],
-     [("LodgingGuestContact.SoftCandidateAcceptable(", "ContactTaxBranchKey.AdoptTaxId(")],
+      "ContactMatchKind.Email", "ContactMatchKind.Phone", "ContactAdoptOutcome.Reject", "!x.IsWalkInCustomer",
+      "ContactTaxBranchKey.StampTaxIdWarning(c)"],
+     [("LodgingGuestContact.SoftCandidateAcceptable(", "ContactTaxBranchKey.AdoptTaxId("),
+      ("ContactTaxBranchKey.StampTaxIdWarning(c)", "_db.Contacts.Add(c)")],
      ["softScope.FirstOrDefaultAsync(", "c.TaxId = taxId", "BranchCode ??="],
      "C-7 แขกนิติบุคคลห้ามได้แถวบุคคลธรรมดาที่อีเมล/เบอร์ตรง (§86/4 ผู้ซื้อผิดตัว) · R3-2 ส่งชนิดการจับจริง · Reject = สร้างแถวใหม่ · "
      "แถว walk-in ไม่ใช่ตัวแขก"),
