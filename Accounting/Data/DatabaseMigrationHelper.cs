@@ -6667,6 +6667,34 @@ public static class DatabaseMigrationHelper
             // ไม่ถูกทับ) · **`AccountType` ไม่เปลี่ยน** เพราะการย้ายหมวดจะ re-sign
             // งบของงวดที่ปิด/ยื่นไปแล้วทั้งประวัติ
             """UPDATE "ChartOfAccounts" SET "AccountName" = 'ส่วนลดรับ (ส่วนลดเงินสด)', "AccountNameEn" = 'Cash Discounts Received' WHERE "AccountCode" = '43060' AND "AccountName" = 'ส่วนลดรับ' AND "IsDeleted" = false;""",
+            // ── ซ่อมตัวนับโควตา OCR ที่สะสมข้ามเดือน (รอบ 190 · เจ้าของรายงาน "สะสมมา 3 เดือน
+            //    จนเต็ม 200 แสกนต่อไม่ได้") — ต้นเหตุอยู่ที่ Helpers/SubscriptionUsageRollover ·
+            //    แก้โค้ดอย่างเดียวไม่พอ (F2 ข้อ 9) เพราะวันรีเซ็ตถูกเลื่อนไป 1 ต.ค. แล้ว ⇒ ผู้ใช้จะ
+            //    ติดต่ออีกหนึ่งสัปดาห์
+            // เพดานที่พิสูจน์ได้จากของจริง: โควตาถูกคิด **1 ครั้งต่อการสแกน** (คืนเมื่อสแกนล้ม/ซ้ำ)
+            //   ⇒ ตัวนับที่ถูกต้อง **ไม่มีทางเกิน** จำนวนแถวสแกนของเดือนนี้ (UTC — ขอบเดียวกับวันรีเซ็ต)
+            //   ⇒ LEAST(ตัวนับ, จำนวนสแกนเดือนนี้) **ตัดเฉพาะส่วนเกินที่พิสูจน์ได้ว่ามาจากเดือนก่อน**
+            //   ไม่เพิ่มค่าใคร ไม่แต่งตัวเลข (F2 ข้อ 3) · นับทุกแถวรวมที่ลบ/ล้มแล้ว เพื่อให้เป็นเพดานที่
+            //   หลวมที่สุด (ไม่มีทางตัดต่ำกว่าการใช้จริง) · **idempotent**: ตัวนับที่ถูกอยู่แล้วไม่ขยับ
+            //   จึงรันทุกครั้งที่เปิดเครื่องได้โดยไม่ต้องมีธง "รันแล้ว"
+            """
+            UPDATE "Subscriptions" s SET
+                "CurrentMonthOcrPages"      = LEAST(s."CurrentMonthOcrPages", c.n),
+                "CurrentMonthAzureOcrPages" = LEAST(s."CurrentMonthAzureOcrPages", c.n),
+                "CurrentMonthLocalOcrPages" = LEAST(s."CurrentMonthLocalOcrPages", c.n)
+            FROM (
+                SELECT sub."Id" AS sid, COUNT(r."Id")::int AS n
+                FROM "Subscriptions" sub
+                LEFT JOIN "OcrScanResults" r
+                       ON r."CompanyId" = sub."CompanyId"
+                      AND r."CreatedAt" >= date_trunc('month', timezone('UTC', now()))
+                GROUP BY sub."Id"
+            ) c
+            WHERE c.sid = s."Id"
+              AND (s."CurrentMonthOcrPages" > c.n
+                OR s."CurrentMonthAzureOcrPages" > c.n
+                OR s."CurrentMonthLocalOcrPages" > c.n);
+            """,
         };
 
         foreach (var sql in statements)

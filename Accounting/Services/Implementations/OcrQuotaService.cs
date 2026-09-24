@@ -29,12 +29,18 @@ public class OcrQuotaService : IOcrQuotaService
 
     private async Task<EffectiveOcr> ResolveEffectiveOcrAsync(Subscription sub)
     {
+        // ตัวนับที่ "ค้างจากเดือนก่อน" (ยังไม่มีใครเขียนเดือนนี้) ต้องนับเป็น 0 — เส้นอ่านหลายเส้น
+        // (ด่านก่อนสแกน · หน้าแสดงผล · ผลรวมบริษัทพี่น้องใต้ License) ไม่ได้ล็อกแถวเพื่อขึ้นเดือนใหม่
+        var now = DateTime.UtcNow;
+        int Eff(int counter, DateTime resetAt)
+            => Accounting.Helpers.SubscriptionUsageRollover.Effective(counter, resetAt, now);
+
         if (!sub.AccountSubscriptionId.HasValue)
         {
             return new EffectiveOcr(
-                sub.MaxOcrPagesPerMonth, sub.CurrentMonthOcrPages,
-                sub.AzureOcrPagesPerMonth, sub.CurrentMonthAzureOcrPages,
-                sub.LocalOcrPagesPerMonth, sub.CurrentMonthLocalOcrPages,
+                sub.MaxOcrPagesPerMonth, Eff(sub.CurrentMonthOcrPages, sub.UsageResetDate),
+                sub.AzureOcrPagesPerMonth, Eff(sub.CurrentMonthAzureOcrPages, sub.UsageResetDate),
+                sub.LocalOcrPagesPerMonth, Eff(sub.CurrentMonthLocalOcrPages, sub.UsageResetDate),
                 ViaLicense: false, LicenseId: null,
                 FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted);
         }
@@ -44,20 +50,22 @@ public class OcrQuotaService : IOcrQuotaService
         {
             // Dangling pointer — treat as per-company so the user isn't locked.
             return new EffectiveOcr(
-                sub.MaxOcrPagesPerMonth, sub.CurrentMonthOcrPages,
-                sub.AzureOcrPagesPerMonth, sub.CurrentMonthAzureOcrPages,
-                sub.LocalOcrPagesPerMonth, sub.CurrentMonthLocalOcrPages,
+                sub.MaxOcrPagesPerMonth, Eff(sub.CurrentMonthOcrPages, sub.UsageResetDate),
+                sub.AzureOcrPagesPerMonth, Eff(sub.CurrentMonthAzureOcrPages, sub.UsageResetDate),
+                sub.LocalOcrPagesPerMonth, Eff(sub.CurrentMonthLocalOcrPages, sub.UsageResetDate),
                 ViaLicense: false, LicenseId: null,
                 FallbackToLocalWhenAzureExhausted: sub.FallbackToLocalWhenAzureExhausted);
         }
         var agg = await _db.Subscriptions.AsNoTracking()
             .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
-            .Select(s => new { s.CurrentMonthOcrPages, s.CurrentMonthAzureOcrPages, s.CurrentMonthLocalOcrPages })
+            .Select(s => new { s.CurrentMonthOcrPages, s.CurrentMonthAzureOcrPages, s.CurrentMonthLocalOcrPages, s.UsageResetDate })
             .ToListAsync();
+        // บริษัทพี่น้องที่ยังไม่มีกิจกรรมเดือนนี้ ยังถือตัวนับของเดือนก่อน — ต้องนับเป็น 0
+        // ไม่งั้นผลรวมทั้ง License เต็มค้างจากเดือนก่อน (บั๊กเดียวกันในทรงหลายบริษัท)
         return new EffectiveOcr(
-            acct.MaxOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthOcrPages),
-            acct.AzureOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthAzureOcrPages),
-            acct.LocalOcrPagesPerMonth, agg.Sum(x => x.CurrentMonthLocalOcrPages),
+            acct.MaxOcrPagesPerMonth, agg.Sum(x => Eff(x.CurrentMonthOcrPages, x.UsageResetDate)),
+            acct.AzureOcrPagesPerMonth, agg.Sum(x => Eff(x.CurrentMonthAzureOcrPages, x.UsageResetDate)),
+            acct.LocalOcrPagesPerMonth, agg.Sum(x => Eff(x.CurrentMonthLocalOcrPages, x.UsageResetDate)),
             ViaLicense: true, LicenseId: acct.Id,
             // Per-company fallback flag — License doesn't have one of its own;
             // the per-company value is still used (consistent with engine-pick
@@ -169,7 +177,11 @@ public class OcrQuotaService : IOcrQuotaService
             BonusPages: effectiveBonus,
             CreditPagesRemaining: creditPages,
             TotalAvailable: Math.Max(0, totalAvailable),
-            UsageResetDate: sub.UsageResetDate,
+            // ตัวนับค้างจากเดือนก่อน = วันรีเซ็ตเป็นอดีต — แสดงวันรีเซ็ตรอบถัดไปแทน
+            // (ไม่งั้นหน้าจอบอก "รีเซ็ตวันที่ 1 ก.ค." ทั้งที่ตอนนี้เป็น ก.ย.)
+            UsageResetDate: Accounting.Helpers.SubscriptionUsageRollover.IsStale(sub.UsageResetDate, DateTime.UtcNow)
+                ? Accounting.Helpers.SubscriptionUsageRollover.NextResetDate(DateTime.UtcNow)
+                : sub.UsageResetDate,
             CreditPricePerPage: siteSettings?.OcrCreditPricePerPage ?? 2.0m,
             CreditMinPurchase: siteSettings?.OcrCreditMinPurchase ?? 100,
             // Per-engine breakdown so the user-facing UI can show
@@ -211,13 +223,9 @@ public class OcrQuotaService : IOcrQuotaService
                 .FirstOrDefaultAsync();
             if (sub == null) return false;
 
-            // Lazy monthly reset — if we've crossed the reset boundary, zero usage now
-            if (sub.UsageResetDate <= DateTime.UtcNow)
-            {
-                sub.CurrentMonthOcrPages = 0;
-                var now = DateTime.UtcNow;
-                sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
-            }
+            // Lazy monthly reset — ล้างตัวนับทุกตัวผ่านตัวกลางตัวเดียว (เดิมล้างแค่ OCR รวม
+            // ⇒ ตัวนับ Azure/local สะสมข้ามเดือนไม่รู้จบ) — Helpers/SubscriptionUsageRollover
+            Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, DateTime.UtcNow);
 
             // License path: lock the License row, sum every attached company's
             // counter, and only consume if the aggregate is still under the
@@ -338,15 +346,8 @@ public class OcrQuotaService : IOcrQuotaService
                 .FirstOrDefaultAsync();
             if (sub == null) { await tx.RollbackAsync(); return false; }
 
-            // Lazy monthly reset
-            if (sub.UsageResetDate <= DateTime.UtcNow)
-            {
-                sub.CurrentMonthOcrPages = 0;
-                sub.CurrentMonthAzureOcrPages = 0;
-                sub.CurrentMonthLocalOcrPages = 0;
-                var now = DateTime.UtcNow;
-                sub.UsageResetDate = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
-            }
+            // Lazy monthly reset — ตัวกลางตัวเดียว (Helpers/SubscriptionUsageRollover)
+            Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, DateTime.UtcNow);
 
             // Lock the License row when attached so the aggregate counters
             // we're about to read can't be stale-read by a concurrent consume
@@ -487,15 +488,15 @@ public class OcrQuotaService : IOcrQuotaService
     {
         // Idempotent — only resets subs whose UsageResetDate has passed.
         // Direct SQL UPDATE — no entity materialization for thousands of subs.
+        // โหลดเฉพาะแถวที่ถึงวันรีเซ็ต (ต้นเดือนครั้งเดียว) แล้วล้างผ่านตัวกลางตัวเดียว —
+        // เดิมเป็น ExecuteUpdate ที่พิมพ์รายชื่อตัวนับเอง แล้ว**ลืม Azure/local** (สำเนาที่สองของ
+        // กติกาเดียวกัน — F2 ข้อ 4) · ความถูกต้องสำคัญกว่าประหยัดการโหลดแถวเดือนละครั้ง
         var now = DateTime.UtcNow;
-        var startOfNextMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
-        var resetCount = await _db.Subscriptions
-            .Where(s => s.UsageResetDate <= now)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(x => x.CurrentMonthOcrPages, 0)
-                .SetProperty(x => x.CurrentMonthDocuments, 0)
-                .SetProperty(x => x.CurrentMonthJournalEntries, 0)
-                .SetProperty(x => x.UsageResetDate, startOfNextMonth));
+        var due = await _db.Subscriptions.Where(s => s.UsageResetDate <= now).ToListAsync();
+        var resetCount = 0;
+        foreach (var sub in due)
+            if (Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, now)) resetCount++;
+        if (resetCount > 0) await _db.SaveChangesAsync();
 
         _logger.LogInformation("Monthly usage reset for {Count} subscriptions", resetCount);
     }

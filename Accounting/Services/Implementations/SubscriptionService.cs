@@ -816,11 +816,11 @@ public class SubscriptionService : ISubscriptionService
         // Reset per-company monthly usage when the month rolls. Per-company
         // counters stay so the UI can show "Company X used 230 / 1,000" —
         // the AGGREGATE is what we enforce against when on an Account Plan.
-        if (DateTime.UtcNow >= sub.UsageResetDate)
+        // ⚠️ ต้องล้าง **ตัวนับทุกตัว** ที่วันรีเซ็ตนี้คุม (รวม OCR) — เดิมจุดนี้ล้างแค่เอกสาร/JE
+        // แล้วเลื่อนวันรีเซ็ต ⇒ ตัวนับ OCR ไม่เคยถูกล้าง สะสมข้ามเดือนจนผู้ใช้สแกนไม่ได้
+        // (เจ้าของรายงาน 2026-09-24) — ดู Helpers/SubscriptionUsageRollover
+        if (Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, DateTime.UtcNow))
         {
-            sub.CurrentMonthDocuments = 0;
-            sub.CurrentMonthJournalEntries = 0;
-            sub.UsageResetDate = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(1);
             // persist เฉพาะตอน tracker สะอาด (ดู trackerClean ด้านบน) — ค่าใน
             // memory ถูก reset แล้ว การเช็คด้านล่างใช้ค่าใหม่ถูกต้องเสมอ; แถวจะ
             // ถูก save จริงในรอบถัดไป/ตอน caller save เอง (sub เป็น tracked entity)
