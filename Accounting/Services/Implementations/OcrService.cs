@@ -8352,7 +8352,9 @@ public class OcrService : IOcrService
         if (attachment == null) return;
         // ฝ่ายค้านรอบ 193 (S2-C2): ย้ายเฉพาะไฟล์ที่ยังเป็นของสแกน — ไฟล์ของรายการอื่น (สแกนผ่าน POST ocr/scan/{fileId}) หรือของ
         // เอกสารใบอื่นอยู่แล้ว ห้ามย้าย (หลักฐานของรายการเดิมจะหาย) · ตัวตัดสินเดียวกับ LinkScanToExistingDocumentAsync
-        if (!Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(attachment.EntityType, attachment.EntityId, documentId))
+        // ฝ่ายค้านรอบสอง (R2-C1): ไฟล์ที่ชี้เอกสารร่างที่ถูกลบไปแล้ว = กลับเป็นของสแกน ย้ายเข้าใบใหม่ได้
+        var ownerExists = await ScanFileOwnerExistsAsync(companyId, attachment.EntityType, attachment.EntityId);
+        if (!Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(attachment.EntityType, attachment.EntityId, documentId, ownerExists))
         {
             _logger.LogInformation("ไม่ย้ายไฟล์ {FileId} ({EntityType}) ไปเป็นของเอกสาร {DocId} — ไฟล์เป็นของรายการอื่น",
                 attachment.Id, attachment.EntityType, documentId);
@@ -8362,6 +8364,15 @@ public class OcrService : IOcrService
         attachment.EntityId = documentId;
         await _db.SaveChangesAsync();
         _logger.LogInformation("Re-linked scan file {FileId} to Document {DocId}", attachment.Id, documentId);
+    }
+
+    /// <summary>เจ้าของไฟล์ของสแกนยังอยู่ไหม — ตรวจเฉพาะชนิดที่
+    /// <see cref="Accounting.Helpers.AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck"/> บอกว่าต้องตรวจ (เอกสาร) ·
+    /// ตัวเดียวกับที่ AttachmentAccessGate ใช้ตัดสินเจ้าของ (ฝ่ายค้านรอบสอง R2-C1)</summary>
+    private async Task<bool> ScanFileOwnerExistsAsync(Guid companyId, string? entityType, Guid entityId)
+    {
+        if (!Accounting.Helpers.AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck(entityType)) return true;
+        return await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted);
     }
 
     /// <summary>Public entry point — link an OCR scan's source file to a
@@ -8391,7 +8402,8 @@ public class OcrService : IOcrService
                 .Where(f => f.Id == fid && f.CompanyId == companyId)
                 .Select(f => new { f.EntityType, f.EntityId })
                 .FirstOrDefaultAsync();
-            if (file != null && !Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(file.EntityType, file.EntityId, documentId))
+            if (file != null && !Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(file.EntityType, file.EntityId, documentId,
+                    await ScanFileOwnerExistsAsync(companyId, file.EntityType, file.EntityId)))
                 throw new Accounting.Helpers.BusinessRuleException(
                     Accounting.Helpers.AttachmentPermissionScope.ScanFileNotRelinkableMessage, "OCR-LINK-FOREIGN-FILE");
         }
@@ -8730,7 +8742,8 @@ public class OcrService : IOcrService
                 var usedByOther = await _db.Set<OcrScanResult>().AsNoTracking()
                     .AnyAsync(r => r.CompanyId == companyId && r.Id != result.Id && r.FileAttachmentId == file.Id);
                 var action = Accounting.Helpers.OcrScanFileDisposal.Decide(
-                    file.EntityType, file.EntityId, usedByOther, cascadedDocId, cascadedDocStatus);
+                    file.EntityType, file.EntityId, usedByOther, cascadedDocId, cascadedDocStatus,
+                    fileOwnerExists: await ScanFileOwnerExistsAsync(companyId, file.EntityType, file.EntityId));
                 if (action == Accounting.Helpers.ScanFileDisposalAction.Remove)
                 {
                     try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); }
@@ -8743,6 +8756,14 @@ public class OcrService : IOcrService
                 }
                 else if (action == Accounting.Helpers.ScanFileDisposalAction.SoftDeleteKeepBytes)
                 {
+                    // relink พลาด (ไฟล์ยังเป็น OcrScan) แต่เก็บตามเอกสารที่ลบพร้อมกัน ⇒ ผูกเป็นของเอกสารนั้น — ไม่งั้นงานเก็บกวาดไฟล์สแกน
+                    // (AttachmentRetention.DeletedScanFileSweepable) จะลบทิ้งทั้งที่ตัดสินแล้วว่าต้องเก็บ
+                    if (cascadedDocId is { } keptDocId
+                        && string.Equals(file.EntityType, "OcrScan", StringComparison.OrdinalIgnoreCase))
+                    {
+                        file.EntityType = "Document";
+                        file.EntityId = keptDocId;
+                    }
                     file.IsDeleted = true;
                     file.UpdatedAt = DateTime.UtcNow;
                 }

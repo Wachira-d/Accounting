@@ -208,21 +208,28 @@ public class AttachmentAccessGate : IAttachmentAccessGate
             .Prepend(scan.CreatedDocumentId ?? Guid.Empty).Where(x => x != Guid.Empty).Distinct().ToList();
         var jeCandidates = siblings.Where(x => x.CreatedJournalEntryId != null).Select(x => x.CreatedJournalEntryId!.Value)
             .Prepend(scan.CreatedJournalEntryId ?? Guid.Empty).Where(x => x != Guid.Empty).Distinct().ToList();
-        var aliveDoc = docCandidates.Count == 0 ? (Guid?)null : await _db.Documents.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && docCandidates.Contains(x.Id))
-            .Select(x => (Guid?)x.Id).FirstOrDefaultAsync();
-        var aliveJe = jeCandidates.Count == 0 ? (Guid?)null : await _db.JournalEntries.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && jeCandidates.Contains(x.Id))
-            .Select(x => (Guid?)x.Id).FirstOrDefaultAsync();
+        var aliveDocIds = docCandidates.Count == 0 ? new List<Guid>() : await _db.Documents.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && docCandidates.Contains(x.Id))
+            .Select(x => x.Id).ToListAsync();
+        var aliveJeIds = jeCandidates.Count == 0 ? new List<Guid>() : await _db.JournalEntries.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && jeCandidates.Contains(x.Id))
+            .Select(x => x.Id).ToListAsync();
+        // แถวของตัวเองก่อน · ไม่งั้นใบที่ยังอยู่ที่ Guid น้อยสุด — ตัวเดียวกับ HiddenScanIdsAsync (ฝ่ายค้านรอบสอง Q3)
+        var aliveDoc = AttachmentPermissionScope.PickLinkedOwner(scan.CreatedDocumentId, aliveDocIds);
+        var aliveJe = AttachmentPermissionScope.PickLinkedOwner(scan.CreatedJournalEntryId, aliveJeIds);
+        // เจ้าของไฟล์ที่หายไปแล้ว (เอกสารร่างที่สร้างจากสแกนถูกลบ) ไม่ใช่เจ้าของ (ฝ่ายค้านรอบสอง R2-C1)
+        var fileOwnerId = file?.EntityId ?? Guid.Empty;
+        var fileOwnerExists = !(file != null && AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck(file.EntityType))
+            || await _db.Documents.AsNoTracking().AnyAsync(x => x.Id == fileOwnerId && x.CompanyId == companyId && !x.IsDeleted);
 
         var owner = AttachmentPermissionScope.ScanOwner(file?.EntityType, file?.EntityId,
-            aliveDoc, aliveDoc != null, aliveJe, aliveJe != null);
+            aliveDoc, aliveDoc != null, aliveJe, aliveJe != null, fileOwnerExists);
         if (owner is { } o)
             // อ่านส่ง id ของไฟล์ไปด้วย (ถังก่อนบันทึกตรวจผู้อัปโหลด) · เขียนไม่ส่ง — การแก้สแกนไม่ใช่การถอดไฟล์ของเจ้าของ
             return await DenyAttachmentAsync(companyId, userId, o.EntityType, o.EntityId, access, verb,
                 access == AttachmentAccess.Read ? scan.FileAttachmentId : null);
-        var keys = access == AttachmentAccess.Write && !unlinkedEditIsMemberLevel ? ocrRule.WriteAnyOf : ocrRule.ReadAnyOf;
-        return await DenyKeysAsync(companyId, userId, ocrRule, keys, verb);
+        return await DenyKeysAsync(companyId, userId, ocrRule,
+            AttachmentPermissionScope.UnlinkedScanKeys(ocrRule, access, unlinkedEditIsMemberLevel), verb);
     }
 
     public async Task<HashSet<Guid>> HiddenScanIdsAsync(Guid companyId, Guid userId, IReadOnlyCollection<Guid> scanIds)
@@ -261,7 +268,7 @@ public class AttachmentAccessGate : IAttachmentAccessGate
         var docs = candidateDocIds.Count == 0
             ? new Dictionary<Guid, (DocumentType Type, SensitivityKind Sensitivity)>()
             : (await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && candidateDocIds.Contains(d.Id))
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted && candidateDocIds.Contains(d.Id))
                 .Select(d => new { d.Id, d.DocumentType, d.Sensitivity })
                 .ToListAsync())
                 .ToDictionary(d => d.Id, d => (Type: d.DocumentType, Sensitivity: d.Sensitivity));
@@ -271,7 +278,7 @@ public class AttachmentAccessGate : IAttachmentAccessGate
         var jes = jeIds.Count == 0
             ? new Dictionary<Guid, SensitivityKind>()
             : await _db.JournalEntries.AsNoTracking()
-                .Where(j => j.CompanyId == companyId && jeIds.Contains(j.Id))
+                .Where(j => j.CompanyId == companyId && !j.IsDeleted && jeIds.Contains(j.Id))
                 .ToDictionaryAsync(j => j.Id, j => j.Sensitivity);
 
         DocumentVisibility? vis = null;
@@ -283,14 +290,19 @@ public class AttachmentAccessGate : IAttachmentAccessGate
             var sib = row.FileAttachmentId is { } sibFileId
                 ? siblingLinks.Where(x => x.FileId == sibFileId).ToList()
                 : new List<(Guid FileId, Guid? DocId, Guid? JeId)>();
-            Guid? aliveDoc = row.CreatedDocumentId is { } createdId && docs.ContainsKey(createdId)
-                ? createdId
-                : sib.Where(x => x.DocId != null && docs.ContainsKey(x.DocId.Value)).Select(x => x.DocId).FirstOrDefault();
-            Guid? aliveJe = row.CreatedJournalEntryId is { } rowJeId && jes.ContainsKey(rowJeId)
-                ? rowJeId
-                : sib.Where(x => x.JeId != null && jes.ContainsKey(x.JeId.Value)).Select(x => x.JeId).FirstOrDefault();
+            // ตัวเลือกเดียวกับ DenyScanCoreAsync (PickLinkedOwner) — สองประตูต้องตัดสินตรงกัน
+            var aliveDoc = AttachmentPermissionScope.PickLinkedOwner(row.CreatedDocumentId,
+                sib.Where(x => x.DocId != null).Select(x => x.DocId!.Value)
+                    .Concat(row.CreatedDocumentId is { } ownDoc ? new[] { ownDoc } : Array.Empty<Guid>())
+                    .Where(docs.ContainsKey));
+            var aliveJe = AttachmentPermissionScope.PickLinkedOwner(row.CreatedJournalEntryId,
+                sib.Where(x => x.JeId != null).Select(x => x.JeId!.Value)
+                    .Concat(row.CreatedJournalEntryId is { } ownJe ? new[] { ownJe } : Array.Empty<Guid>())
+                    .Where(jes.ContainsKey));
+            var fileOwnerExists = !(file is { } fo && AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck(fo.EntityType))
+                || (file is { } fo2 && docs.ContainsKey(fo2.EntityId));
             var owner = AttachmentPermissionScope.ScanOwner(file?.EntityType, file?.EntityId,
-                aliveDoc, aliveDoc != null, aliveJe, aliveJe != null);
+                aliveDoc, aliveDoc != null, aliveJe, aliveJe != null, fileOwnerExists);
             if (owner is not { } o) continue;   // ยังไม่ผูก — ด่าน OCR อ่านได้ระดับสมาชิก
             if (o.EntityType == "Document")
             {
@@ -324,7 +336,7 @@ public class AttachmentAccessGate : IAttachmentAccessGate
         if (file == null) return new(404, "ไม่พบไฟล์แนบนี้ในบริษัท");
         // ไฟล์ของรายการอื่น (สลิปเงินเดือน · ไฟล์แนบเอกสาร · ใบเบิก · ถัง 50 ทวิ ฯลฯ) ⇒ ต้องอ่านไฟล์นั้นได้ก่อนจึงจะสแกนได้
         // (ผลสแกนคืน RawText ของไฟล์ทั้งใบ = อ่านไฟล์) · สแกนใหม่จะได้ด่านของเจ้าของไฟล์ต่อเอง (ScanOwner)
-        if (!string.Equals(file.EntityType, "OcrScan", StringComparison.OrdinalIgnoreCase))
+        if (AttachmentPermissionScope.ScanSourceGate(file.EntityType) == ScanSourceCheck.FileOwnerReadGate)
             return await DenyAttachmentAsync(companyId, userId, file.EntityType, file.EntityId,
                 AttachmentAccess.Read, "สแกนไฟล์แนบ", fileAttachmentId);
         // ไฟล์ของสแกนเดิม ⇒ ด่านของสแกนเดิม (รวมสแกนพี่น้องที่ผูกเอกสาร/JE แล้ว)

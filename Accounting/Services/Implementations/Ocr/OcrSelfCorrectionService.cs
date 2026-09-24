@@ -183,21 +183,39 @@ public class OcrSelfCorrectionService
             var abandonedCutoff2 = DateTime.UtcNow.AddDays(-30);
 
             // Identify scan ids and their file ids in one query
+            // ฝ่ายค้านรอบสอง (R2-C4): สแกนที่ลง JE ตรง (ไฟล์ยังเป็น OcrScan) คือหลักฐานของ JE — ห้ามลบ (ม.10 · §87/3) ·
+            // ตัดสินด้วย AttachmentRetention.ScanFilePurgeable ตัวเดียวกับเส้นลบสแกน · กรองที่ query ด้วยเพื่อไม่ให้แถวที่ข้ามแน่ ๆ
+            // (และแถวที่ไฟล์ถูกลบไปแล้ว) กินโควตา 500 แถวทุกรอบจนแถวจริงไม่ถึงคิว
             var orphans = await _db.Set<Models.Entities.OcrScanResult>()
                 .Where(s =>
                     (s.ScanStatus == "Failed" && s.CreatedAt < failedCutoff) ||
                     (s.ScanStatus == "Completed" && s.CreatedDocumentId == null && s.CreatedAt < abandonedCutoff2))
-                .Where(s => s.FileAttachmentId != null)
-                .Select(s => new { s.Id, FileId = s.FileAttachmentId!.Value })
+                .Where(s => s.FileAttachmentId != null && s.CreatedJournalEntryId == null)
+                .Where(s => _db.FileAttachments.Any(f => f.Id == s.FileAttachmentId && f.CompanyId == s.CompanyId
+                    && f.EntityType == "OcrScan"))
+                .Select(s => new { s.Id, s.CompanyId, FileId = s.FileAttachmentId!.Value })
                 .Take(500)  // throttled per cycle
                 .ToListAsync(ct);
+
+            // สแกนพี่น้อง (retry · สแกนซ้ำ) ที่ชี้ไฟล์เดียวกันและผูกเอกสาร/JE แล้ว ⇒ ไฟล์นั้นเป็นหลักฐานของรายการนั้น
+            var orphanFileIds = orphans.Select(o => o.FileId).Distinct().ToList();
+            var linkedFiles = orphanFileIds.Count == 0
+                ? new HashSet<(Guid CompanyId, Guid FileId)>()
+                : (await _db.Set<Models.Entities.OcrScanResult>().AsNoTracking()
+                    .Where(s => s.FileAttachmentId != null && orphanFileIds.Contains(s.FileAttachmentId.Value)
+                        && (s.CreatedDocumentId != null || s.CreatedJournalEntryId != null))
+                    .Select(s => new { s.CompanyId, FileId = s.FileAttachmentId!.Value })
+                    .ToListAsync(ct))
+                    .Select(x => (x.CompanyId, x.FileId)).ToHashSet();
 
             foreach (var orphan in orphans)
             {
                 var attachment = await _db.FileAttachments
-                    .FirstOrDefaultAsync(f => f.Id == orphan.FileId
-                        && f.EntityType == "OcrScan", ct);   // only purge ones still tagged as scan
+                    .FirstOrDefaultAsync(f => f.Id == orphan.FileId && f.CompanyId == orphan.CompanyId, ct);
                 if (attachment == null) continue;
+                if (!Accounting.Helpers.AttachmentRetention.ScanFilePurgeable(attachment.EntityType,
+                        linkedToEntry: linkedFiles.Contains((orphan.CompanyId, orphan.FileId))))
+                    continue;
                 try
                 {
                     if (System.IO.File.Exists(attachment.StoragePath))
@@ -211,6 +229,45 @@ public class OcrSelfCorrectionService
                     _logger.LogWarning(ex, "Could not delete orphan file {Path}", attachment.StoragePath);
                 }
                 _db.FileAttachments.Remove(attachment);
+                orphanRowsDeleted++;
+            }
+
+            // ฝ่ายค้านรอบสอง (R2-C4): ไฟล์ของสแกนที่ถูกถอด (soft-delete) แล้วไม่มีสแกนแถวใดชี้อยู่ — เดิมไม่มีงานไหนเก็บกวาด ⇒
+            // ค้างดิสก์ตลอดไป (ข้อมูลส่วนบุคคลบนใบเสร็จอยู่เกินวัตถุประสงค์ · PDPA retention by purpose) · ครบระยะผ่อนแล้วลบจริง
+            var sweepNow = DateTime.UtcNow;
+            var sweepCutoff = sweepNow.AddDays(-Accounting.Helpers.AttachmentRetention.DeletedScanFileGraceDays);
+            var deletedScanFiles = await _db.FileAttachments.IgnoreQueryFilters()
+                .Where(f => f.IsDeleted && f.EntityType == "OcrScan" && (f.UpdatedAt ?? f.CreatedAt) < sweepCutoff)
+                .Take(500)
+                .ToListAsync(ct);
+            var sweepIds = deletedScanFiles.Select(f => f.Id).ToList();
+            var stillReferenced = sweepIds.Count == 0
+                ? new HashSet<(Guid CompanyId, Guid FileId)>()
+                : (await _db.Set<Models.Entities.OcrScanResult>().IgnoreQueryFilters().AsNoTracking()
+                    .Where(s => s.FileAttachmentId != null && sweepIds.Contains(s.FileAttachmentId.Value))
+                    .Select(s => new { s.CompanyId, FileId = s.FileAttachmentId!.Value })
+                    .ToListAsync(ct))
+                    .Select(x => (x.CompanyId, x.FileId)).ToHashSet();
+            foreach (var f in deletedScanFiles)
+            {
+                if (!Accounting.Helpers.AttachmentRetention.DeletedScanFileSweepable(f.EntityType,
+                        referencedByAnyScan: stillReferenced.Contains((f.CompanyId, f.Id)),
+                        deletedAtUtc: f.UpdatedAt ?? f.CreatedAt, nowUtc: sweepNow))
+                    continue;
+                try
+                {
+                    if (!string.IsNullOrEmpty(f.StoragePath) && System.IO.File.Exists(f.StoragePath))
+                    {
+                        System.IO.File.Delete(f.StoragePath);
+                        orphanFilesPurged++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "ลบไฟล์สแกนที่ถูกถอดแล้วไม่สำเร็จ {Path}", f.StoragePath);
+                    continue;   // ไฟล์จริงยังอยู่ — เก็บแถวไว้ให้รอบหน้าลองใหม่ (ไม่ทิ้งไฟล์กำพร้าที่ไม่มีแถวชี้)
+                }
+                _db.FileAttachments.Remove(f);
                 orphanRowsDeleted++;
             }
             await _db.SaveChangesAsync(ct);

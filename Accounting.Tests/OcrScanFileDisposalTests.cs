@@ -44,8 +44,15 @@ public class OcrScanFileDisposalTests
             OcrScanFileDisposal.Decide("Document", Doc, false, Doc, status));
 
     [Fact]
-    public void ไฟล์ของสแกนเอง_ถอดแถวแต่เก็บไฟล์จริงตามระยะเก็บรักษา()
+    public void relinkพลาดแต่เอกสารที่ลบพร้อมกันต้องเก็บ_ไฟล์ของสแกนเก็บตามเอกสารนั้น()
         => Assert.Equal(ScanFileDisposalAction.SoftDeleteKeepBytes,
+            OcrScanFileDisposal.Decide("OcrScan", Other, false, Doc, DocumentStatus.WaitingApproval));
+
+    [Fact]
+    public void ทิศตรงข้าม_ไฟล์ของสแกนที่ไม่เคยเป็นรายการบัญชี_ลบจริง_ไม่ค้างดิสก์ตลอดไป()
+        // ฝ่ายค้านรอบสอง R2-C4: เดิม SoftDeleteKeepBytes แต่ไม่มีงานไหนเก็บกวาด = ค้างตลอดไป · สแกนที่ลง JE ลบไม่ได้อยู่แล้ว
+        // (OCR-DELETE-HAS-JE) และสแกนที่ผูกเอกสารต้อง cascade ⇒ ไฟล์ OcrScan ที่มาถึงตรงนี้ไม่ใช่หลักฐานของรายการใด
+        => Assert.Equal(ScanFileDisposalAction.Remove,
             OcrScanFileDisposal.Decide("OcrScan", Other, false, null, null));
 
     // ── ครึ่งที่ 2 ──

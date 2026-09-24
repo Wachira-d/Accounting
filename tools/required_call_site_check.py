@@ -140,6 +140,27 @@ RULES = [
          why="ปิดใช้งานแผนเก่าต้องไม่ถูกบังคับให้แก้อัตรา"),
 ]
 
+# ── รอบ 193 ทีม S2 (ฝ่ายค้านรอบสอง R2-C2 · P0): ใบเบิกค่าใช้จ่าย — ด่านสิทธิ์ + SoD อยู่ใน service เอง ⇒ ทุกทางเข้า (เว็บ · มือถือ)
+#    ได้ด่านเดียวกัน · เทสต์ล็อกแค่ตัวตัดสิน pure (ExpenseClaimActionPolicyTests) — ที่นี่ล็อกว่าเมธอดเขียนทุกตัวเรียกด่านก่อนบันทึก ──
+EXPENSE = "Services/Implementations/ExpenseClaimService.cs"
+_EXPENSE_WHY = "R2-C2 เมธอดเขียนของใบเบิกต้องเรียกด่านสิทธิ์ (ExpenseClaimActionPolicy) ก่อนบันทึก — มือถือ/ทางเข้าอื่นพึ่งด่านนี้"
+RULES += [
+    dict(file=EXPENSE, method=m, must=["EnsureClaimActionAsync("],
+         before=[("EnsureClaimActionAsync(", "_db.SaveChangesAsync(")], why=_EXPENSE_WHY)
+    for m in ("UpdateAsync", "SubmitAsync", "ApproveAsync", "RejectAsync", "MarkAsPaidAsync", "VoidAsync")
+]
+RULES += [
+    dict(file=EXPENSE, method="MarkAsPaidAsync", call_args=[("ApproveDocumentAsync(", "payerUserId")],
+         why="R2-C2 ใบสำคัญจ่ายที่เกิดจากการจ่ายใบเบิกต้องอนุมัติในนามผู้กด (ไม่ใช่ \"system\") — ข้าม CanApproveAsync ไม่ได้"),
+    dict(file=EXPENSE, method="DenyClaimActionAsync",
+         must=["ExpenseClaimActionPolicy.Decide(", "ExpenseClaimActionPolicy.SelfDecisionAllowed(",
+               "DocumentPermissionHelper.CanApproveAsync(", "ExpenseClaimActionPolicy.ReviewerKeys("],
+         why="R2-C2 ด่านใบเบิกต้องรวบรวมหลักฐานครบ (คีย์ · SoD เจ้าของ/สวิตช์ · สิทธิ์อนุมัติ PV) แล้วให้ตัวตัดสินเดียวตัดสิน"),
+    dict(file=MOBILE, method="HandleExpenseClaimApprovalAsync", must=["ApproveAsync(", "RejectAsync("],
+         forbid=["ExpenseClaimStatus.Approved;", "ExpenseClaimStatus.Rejected;"],
+         why="R2-C2/Q7 มือถืออนุมัติใบเบิกต้องเดินเมธอดเดียวกับเว็บ (ด่านสิทธิ์ · SoD · §65 ทวิ · CertificateInLieu) — ห้ามตั้งสถานะเอง"),
+]
+
 # ── กติกาทรง tuple (ทีม C3 · O1 · L2 ฯลฯ) — `(ไฟล์, เมธอด, must[], before[(a, b)], forbid[], เหตุผล)` ──────────────
 # คงทรงเดิมไว้ให้ทีมอื่นเพิ่มต่อได้โดยไม่ต้องรู้ทรง dict · แปลงเป็นชนิด must/before/forbid ความหมายเดิมข้างล่าง
 # (ต่างจากเดิม 2 จุดที่เข้มขึ้น: ค้นแบบไม่สนช่องว่าง/ขึ้นบรรทัด · `before` ที่หา b ไม่เจอ = ฟ้อง ไม่ข้ามเงียบ)

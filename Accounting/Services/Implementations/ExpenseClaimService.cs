@@ -18,16 +18,69 @@ public class ExpenseClaimService : IExpenseClaimService
     private readonly IDocumentService? _documentService;
     private readonly INotificationEngine? _notify;
     private readonly ILogger<ExpenseClaimService>? _logger;
+    private readonly IPermissionService? _permissions;
 
     public ExpenseClaimService(AccountingDbContext db, IAccountingService? accountingService = null,
         IDocumentService? documentService = null, INotificationEngine? notify = null,
-        ILogger<ExpenseClaimService>? logger = null)
+        ILogger<ExpenseClaimService>? logger = null, IPermissionService? permissions = null)
     {
         _db = db;
         _accountingService = accountingService;
         _documentService = documentService;
         _notify = notify;
         _logger = logger;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// **ด่านสิทธิ์ของใบเบิก** (ฝ่ายค้านรอบสอง 193 · R2-C2) — ตัวตัดสินอยู่ที่ <see cref="Accounting.Helpers.ExpenseClaimActionPolicy"/> ตัวเดียว ·
+    /// ที่นี่แค่รวบรวมหลักฐาน (ผู้ยื่น · คีย์ · role เจ้าของ + สวิตช์แยกหน้าที่ · สิทธิ์อนุมัติใบสำคัญจ่าย) · ไม่พบใบ = <c>null</c>
+    /// (เมธอดปลายทางตอบ 404 เอง) · ไม่มีบริการสิทธิ์ = ปฏิเสธ (ทิศปิด — ห้ามผ่านเงียบเพราะ DI ไม่ครบ)
+    /// </summary>
+    public async Task<Accounting.Helpers.ExpenseClaimActionDenial?> DenyClaimActionAsync(Guid companyId, Guid claimId, Guid actorUserId,
+        Accounting.Helpers.ExpenseClaimAction action)
+    {
+        var claim = await _db.ExpenseClaims.AsNoTracking()
+            .Where(e => e.Id == claimId && e.CompanyId == companyId)
+            .Select(e => new { e.SubmittedByUserId, e.Status })
+            .FirstOrDefaultAsync();
+        if (claim == null) return null;
+        if (_permissions == null)
+            return new Accounting.Helpers.ExpenseClaimActionDenial(403, "ตรวจสิทธิ์ใบเบิกไม่ได้ (ไม่พบบริการสิทธิ์) — ติดต่อผู้ดูแลระบบ", "EXPENSE-PERM");
+
+        var isClaimOwner = claim.SubmittedByUserId == actorUserId;
+        var holdsKey = false;
+        foreach (var key in Accounting.Helpers.ExpenseClaimActionPolicy.ReviewerKeys(action))
+        {
+            if (!await _permissions.HasPermissionAsync(companyId, actorUserId, key)) continue;
+            holdsKey = true;
+            break;
+        }
+        var selfDecisionAllowed = false;
+        if (isClaimOwner && Accounting.Helpers.ExpenseClaimActionPolicy.IsDecision(action))
+        {
+            var role = await _db.Set<CompanyUser>().AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.UserId == actorUserId)
+                .Select(cu => (UserRole?)cu.Role)
+                .FirstOrDefaultAsync();
+            var sodOn = await _db.Set<CompanySettings>().AsNoTracking()
+                .Where(cs => cs.CompanyId == companyId)
+                .Select(cs => (bool?)cs.SodBlockSelfApproval)
+                .FirstOrDefaultAsync();
+            selfDecisionAllowed = Accounting.Helpers.ExpenseClaimActionPolicy.SelfDecisionAllowed(
+                actorIsCompanyOwner: role == UserRole.Owner, sodBlockSelfApproval: sodOn ?? false);
+        }
+        var canApprovePv = action != Accounting.Helpers.ExpenseClaimAction.Pay
+            || await Accounting.Helpers.DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, actorUserId, DocumentType.PaymentVoucher);
+        return Accounting.Helpers.ExpenseClaimActionPolicy.Decide(action, isClaimOwner, claim.Status, holdsKey, selfDecisionAllowed, canApprovePv);
+    }
+
+    /// <summary>ด่านเดียวกับ <see cref="DenyClaimActionAsync"/> ในรูป throw — ทุกเมธอดเขียนของ service เรียกก่อนแตะข้อมูล
+    /// (ทางเข้าอื่นที่เรียก service ตรง เช่น มือถือ ได้ด่านเดียวกับเว็บ)</summary>
+    private async Task EnsureClaimActionAsync(Guid companyId, Guid claimId, Guid actorUserId, Accounting.Helpers.ExpenseClaimAction action)
+    {
+        if (await DenyClaimActionAsync(companyId, claimId, actorUserId, action) is { } deny)
+            throw new Accounting.Helpers.BusinessRuleException(deny.Message, deny.RuleCode, deny.Status);
     }
 
     /// <summary>Fire-and-forget HR notification. Resolves the claim
@@ -170,8 +223,10 @@ public class ExpenseClaimService : IExpenseClaimService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
-    public async Task<ExpenseClaimResponse> UpdateAsync(Guid companyId, Guid claimId, UpdateExpenseClaimRequest request)
+    public async Task<ExpenseClaimResponse> UpdateAsync(Guid companyId, Guid claimId, UpdateExpenseClaimRequest request,
+        Guid actorUserId)
     {
+        await EnsureClaimActionAsync(companyId, claimId, actorUserId, Accounting.Helpers.ExpenseClaimAction.Edit);
         var claim = await _db.ExpenseClaims
             .Include(e => e.Lines)
             .FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
@@ -232,8 +287,9 @@ public class ExpenseClaimService : IExpenseClaimService
         => _db.Set<FileAttachment>().CountAsync(a => a.CompanyId == companyId
             && a.EntityType == "ExpenseClaim" && a.EntityId == claimId && !a.IsDeleted);
 
-    public async Task<ExpenseClaimResponse> SubmitAsync(Guid companyId, Guid claimId)
+    public async Task<ExpenseClaimResponse> SubmitAsync(Guid companyId, Guid claimId, Guid actorUserId)
     {
+        await EnsureClaimActionAsync(companyId, claimId, actorUserId, Accounting.Helpers.ExpenseClaimAction.Submit);
         var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
@@ -269,6 +325,7 @@ public class ExpenseClaimService : IExpenseClaimService
 
     public async Task<ExpenseClaimResponse> ApproveAsync(Guid companyId, Guid claimId, Guid approverUserId, ApproveExpenseClaimRequest request)
     {
+        await EnsureClaimActionAsync(companyId, claimId, approverUserId, Accounting.Helpers.ExpenseClaimAction.Approve);
         // Load lines + approver upfront — both are needed when this is a
         // no-receipt claim because we have to auto-generate the Document
         // (CertificateInLieu) before the SaveChanges below.
@@ -402,6 +459,7 @@ public class ExpenseClaimService : IExpenseClaimService
 
     public async Task<ExpenseClaimResponse> RejectAsync(Guid companyId, Guid claimId, Guid approverUserId, RejectExpenseClaimRequest request)
     {
+        await EnsureClaimActionAsync(companyId, claimId, approverUserId, Accounting.Helpers.ExpenseClaimAction.Reject);
         var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 
@@ -422,8 +480,10 @@ public class ExpenseClaimService : IExpenseClaimService
         return await GetByIdAsync(companyId, claim.Id);
     }
 
-    public async Task<ExpenseClaimResponse> MarkAsPaidAsync(Guid companyId, Guid claimId, PayExpenseClaimRequest request)
+    public async Task<ExpenseClaimResponse> MarkAsPaidAsync(Guid companyId, Guid claimId, PayExpenseClaimRequest request,
+        Guid payerUserId)
     {
+        await EnsureClaimActionAsync(companyId, claimId, payerUserId, Accounting.Helpers.ExpenseClaimAction.Pay);
         var claim = await _db.ExpenseClaims
             .Include(e => e.Lines).ThenInclude(l => l.Account)
             .Include(e => e.SubmittedByUser)
@@ -464,8 +524,11 @@ public class ExpenseClaimService : IExpenseClaimService
                 docLines,
                 ProjectId: claim.ProjectId);
 
+            // ผู้สร้าง = ระบบ (ใบเกิดจากใบเบิก) · ผู้อนุมัติ = <b>ผู้กดจ่าย</b> — เดิมอนุมัติในนาม "system:expense-claim" ⇒ ใบสำคัญจ่าย
+            // + JE เงินสดออกข้าม DocumentPermissionHelper.CanApproveAsync (ฝ่ายค้านรอบสอง R2-C2) · สิทธิ์อนุมัติ PV ตรวจแล้วที่
+            // EnsureClaimActionAsync(Pay) · SoD ของเอกสาร (SodBlockSelfApproval) เทียบผู้สร้างกับผู้อนุมัติได้ตามจริง
             var doc = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
-            await _documentService.ApproveDocumentAsync(companyId, doc.Id, "system:expense-claim");
+            await _documentService.ApproveDocumentAsync(companyId, doc.Id, payerUserId.ToString());
 
             claim.PaymentVoucherDocumentId = doc.Id;
             claim.Status = ExpenseClaimStatus.Paid;
@@ -475,7 +538,7 @@ public class ExpenseClaimService : IExpenseClaimService
             await _db.SaveChangesAsync();
 
             await NotifyClaimEventAsync(companyId, NotificationEvents.ExpensePaid, claim,
-                actorUserId: null,
+                actorUserId: payerUserId,
                 title: $"จ่ายเงินใบเบิก {claim.ClaimNumber} แล้ว",
                 message: $"{claim.Title} · {claim.TotalAmount:N2} บาท · ใบสำคัญจ่าย {doc.DocumentNumber}");
 
@@ -557,8 +620,9 @@ public class ExpenseClaimService : IExpenseClaimService
         return userContact.Id;
     }
 
-    public async Task VoidAsync(Guid companyId, Guid claimId)
+    public async Task VoidAsync(Guid companyId, Guid claimId, Guid actorUserId)
     {
+        await EnsureClaimActionAsync(companyId, claimId, actorUserId, Accounting.Helpers.ExpenseClaimAction.Void);
         var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบเบิกค่าใช้จ่าย");
 

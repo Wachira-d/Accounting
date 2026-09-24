@@ -154,11 +154,28 @@ public class FileAttachmentService : IFileAttachmentService
                 var alreadyIds = attachments.Select(a => a.Id).ToHashSet();
                 // ย้ายเฉพาะไฟล์ที่ยังเป็นของสแกน (EntityType "OcrScan") — ไฟล์ของรายการอื่นที่ถูกสแกนผ่าน POST ocr/scan/{fileId}
                 // หรือไฟล์ของเอกสารใบอื่น ห้ามดึงมาเป็นของใบนี้ (ฝ่ายค้านรอบ 193 · S2-C2 — เดิมย้ายไฟล์ใดก็ได้ที่สแกนชี้)
-                var orphanFiles = await _db.FileAttachments
+                // ฝ่ายค้านรอบสอง (R2-C1): ไฟล์ที่ยังชี้เอกสารร่างที่ถูกลบไปแล้วก็กลับเป็นของสแกน — ตัดสินด้วย ScanFileRelinkable
+                // ตัวเดียวกับเส้นสร้าง/ผูกเอกสาร (ไม่เขียนเงื่อนไขชนิดไฟล์เองที่นี่)
+                var candidates = await _db.FileAttachments
                     .Include(f => f.UploadedByUser)
                     .Where(f => f.CompanyId == companyId && scanFileIds.Contains(f.Id)
-                        && !f.IsDeleted && !alreadyIds.Contains(f.Id) && f.EntityType == "OcrScan")
+                        && !f.IsDeleted && !alreadyIds.Contains(f.Id)
+                        && (f.EntityType == "OcrScan" || f.EntityType == "Document"))
                     .ToListAsync();
+                var ownerDocIds = candidates
+                    .Where(f => Accounting.Helpers.AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck(f.EntityType))
+                    .Select(f => f.EntityId).Distinct().ToList();
+                var aliveOwnerDocIds = ownerDocIds.Count == 0
+                    ? new HashSet<Guid>()
+                    : (await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted && ownerDocIds.Contains(d.Id))
+                        .Select(d => d.Id).ToListAsync()).ToHashSet();
+                var orphanFiles = candidates
+                    .Where(f => Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(f.EntityType, f.EntityId, entityId,
+                        fileOwnerExists: !Accounting.Helpers.AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck(f.EntityType)
+                            || aliveOwnerDocIds.Contains(f.EntityId))
+                        && f.EntityId != entityId)
+                    .ToList();
 
                 if (orphanFiles.Count > 0)
                 {

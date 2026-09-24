@@ -264,7 +264,9 @@ public class WhtCreditService
         e.IncomeAmount = r.IncomeAmount;
         e.WhtRate = r.WhtRate;
         if (r.WhtAmount > 0) e.WhtAmount = r.WhtAmount;
-        if (r.AttachmentId.HasValue)
+        // ไฟล์เดิมของรายการ (ส่งกลับมาเหมือนเดิมตอนแก้ช่องอื่น) ไม่ต้องตัดสินซ้ำ — แถวเก่าที่ชี้ไฟล์ชนิดอื่นไว้ก่อนมีด่าน Q4
+        // ต้องยังแก้ช่องอื่นได้ (ไม่ถูกบังคับเปลี่ยนไฟล์)
+        if (r.AttachmentId.HasValue && r.AttachmentId != e.AttachmentId)
         {
             await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId, actor);
             e.AttachmentId = r.AttachmentId;
@@ -287,7 +289,7 @@ public class WhtCreditService
         GuardEditable(e);
         e.CertificateNumber = certificateNumber.Trim();
         e.CertificateDate = certificateDate;
-        if (attachmentId.HasValue)
+        if (attachmentId.HasValue && attachmentId != e.AttachmentId)
         {
             await AdoptUnsavedAttachmentAsync(companyId, e.Id, attachmentId, actor);
             e.AttachmentId = attachmentId;
@@ -318,7 +320,14 @@ public class WhtCreditService
             .FirstOrDefaultAsync(f => f.Id == fileId && f.CompanyId == companyId)
             ?? throw new Accounting.Helpers.BusinessRuleException(
                 "ไม่พบไฟล์หนังสือรับรองที่แนบไว้ในบริษัทนี้ — เลือกไฟล์ใหม่แล้วกดบันทึกอีกครั้ง");
-        if (string.Equals(file.EntityType, "WhtCredit", StringComparison.OrdinalIgnoreCase) && file.EntityId == Guid.Empty)
+        // ฝ่ายค้านรอบสอง (Q4): ตัวชี้ AttachmentId ต้องเป็นไฟล์ 50 ทวิ ของรายการนี้ หรือไฟล์ในถังก่อนบันทึกเท่านั้น — เดิมไฟล์ของ
+        // รายการอื่น (สลิปเงินเดือน · เอกสารใบอื่น · 50 ทวิ ของอีกรายการ) ถูกเก็บเป็นหลักฐานของเครดิตนี้ได้ (หลักฐานผิดชิ้น)
+        var adopt = Accounting.Helpers.AttachmentPermissionScope.WhtCreditFileLink(file.EntityType, file.EntityId, creditId);
+        if (adopt == Accounting.Helpers.WhtCreditFileLinkKind.Foreign)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไฟล์นี้เป็นไฟล์ของรายการอื่น — ใช้เป็นหนังสือรับรอง 50 ทวิ ของรายการนี้ไม่ได้ · "
+                + "แนบไฟล์หนังสือรับรองจากหน้านี้แล้วกดบันทึกอีกครั้ง", "WHT-CREDIT-FOREIGN-FILE");
+        if (adopt == Accounting.Helpers.WhtCreditFileLinkKind.AdoptFromBucket)
         {
             // ฝ่ายค้านรอบ 193 (S2-P7): ไฟล์ในถังของคนอื่นผูกเข้ารายการของตัวเองไม่ได้ (เดิมรู้ id ก็ผูกได้ แล้วไฟล์กลายเป็นระดับสมาชิก)
             // · ผู้อัปโหลดเอง หรือผู้ถือ Tax.File (เก็บกวาดไฟล์ค้าง) · ไม่รู้ผู้บันทึก (actor null) = ปฏิเสธ

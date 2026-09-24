@@ -502,7 +502,7 @@ public class MobileApiService : IMobileApiService
 
     private async Task<MobileApprovalResponse> HandleExpenseClaimApprovalAsync(Guid companyId, Guid entityId, bool isApprove, Guid userId)
     {
-        var claim = await _db.ExpenseClaims
+        var claim = await _db.ExpenseClaims.AsNoTracking()
             .FirstOrDefaultAsync(ec => ec.Id == entityId
                 && ec.CompanyId == companyId
                 && ec.Status == ExpenseClaimStatus.Submitted
@@ -513,29 +513,20 @@ public class MobileApiService : IMobileApiService
             return new MobileApprovalResponse(false, $"No pending expense claim found with ID {entityId}.", "ExpenseClaim", entityId);
         }
 
+        // ฝ่ายค้านรอบสอง 193 (R2-C2 · Q7): เดิมตั้งสถานะเองตรง ๆ — ไม่ตรวจสิทธิ์ (ผู้ยื่นอนุมัติใบตัวเองทางมือถือได้) และไม่สร้าง
+        // ใบรับรองแทนใบเสร็จ (§65 ทวิ) ของใบ no-receipt · ตอนนี้เดินเมธอดเดียวกับเว็บ (ExpenseClaimService.ApproveAsync/RejectAsync)
+        // ⇒ ด่านสิทธิ์ + SoD (Helpers/ExpenseClaimActionPolicy) · ตรวจหลักฐาน §65 ทวิ ซ้ำ · CertificateInLieu · แจ้งเตือน ครบเท่าเว็บ
+        // ข้อผิดพลาดทางธุรกิจ (ไม่มีสิทธิ์ · SoD · หลักฐานไม่ครบ) โยนขึ้นไปดัง ๆ เหมือนเส้นอนุมัติเอกสารของมือถือ
+        var claimSvc = _services.GetService(typeof(IExpenseClaimService)) as IExpenseClaimService
+            ?? throw new InvalidOperationException("ไม่พบบริการใบเบิก (IExpenseClaimService) — อนุมัติใบเบิกผ่านมือถือไม่ได้");
         if (isApprove)
-        {
-            // §65 ทวิ ตรวจซ้ำตอนอนุมัติ (ฝ่ายค้านรอบ 193 · S2-P1) — ตัวเดียวกับเว็บ (ExpenseClaimService.ApproveAsync)
-            var evidenceCount = await _db.Set<FileAttachment>().CountAsync(a => a.CompanyId == companyId
-                && a.EntityType == "ExpenseClaim" && a.EntityId == claim.Id && !a.IsDeleted);
-            var missing = ExpenseClaimEvidencePolicy.MissingEvidenceMessage(claim.NoReceipt, evidenceCount, atApproval: true);
-            if (missing != null)
-                return new MobileApprovalResponse(false, missing, "ExpenseClaim", entityId);
-
-            claim.Status = ExpenseClaimStatus.Approved;
-            claim.ApprovedByUserId = userId;
-            claim.ApprovedAt = DateTime.UtcNow;
-            claim.ApprovalNotes = "Approved via mobile";
-        }
+            await claimSvc.ApproveAsync(companyId, claim.Id, userId, new Accounting.Models.DTOs.Expense.ApproveExpenseClaimRequest("อนุมัติผ่านมือถือ"));
         else
-        {
-            claim.Status = ExpenseClaimStatus.Rejected;
-            claim.ApprovedByUserId = userId;
-            claim.ApprovedAt = DateTime.UtcNow;
-            claim.RejectionReason = "Rejected via mobile";
-        }
-
-        claim.UpdatedAt = DateTime.UtcNow;
+            await claimSvc.RejectAsync(companyId, claim.Id, userId, new Accounting.Models.DTOs.Expense.RejectExpenseClaimRequest("ปฏิเสธผ่านมือถือ"));
+        var newStatus = await _db.ExpenseClaims.AsNoTracking()
+            .Where(ec => ec.Id == claim.Id && ec.CompanyId == companyId)
+            .Select(ec => ec.Status)
+            .FirstAsync();
 
         // Enqueue sync entry
         var syncEntry = new SyncQueue
@@ -545,7 +536,7 @@ public class MobileApiService : IMobileApiService
             EntityType = "ExpenseClaim",
             EntityId = entityId,
             OperationType = "Update",
-            PayloadJson = JsonSerializer.Serialize(new { status = claim.Status.ToString(), approvedBy = userId }),
+            PayloadJson = JsonSerializer.Serialize(new { status = newStatus.ToString(), approvedBy = userId }),
             QueuedAt = DateTime.UtcNow,
             IsProcessed = true,
             ProcessedAt = DateTime.UtcNow
@@ -555,8 +546,8 @@ public class MobileApiService : IMobileApiService
         await _db.SaveChangesAsync();
 
         var message = isApprove
-            ? $"Expense claim {claim.ClaimNumber} has been approved."
-            : $"Expense claim {claim.ClaimNumber} has been rejected.";
+            ? $"อนุมัติใบเบิก {claim.ClaimNumber} แล้ว"
+            : $"ปฏิเสธใบเบิก {claim.ClaimNumber} แล้ว";
 
         return new MobileApprovalResponse(true, message, "ExpenseClaim", entityId);
     }
