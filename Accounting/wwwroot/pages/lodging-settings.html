@@ -112,7 +112,7 @@
             <div class="fld"><label>มัดจำสูงสุด</label><input class="form-input" type="number" step="0.01" name="depositMaxAmount" min="0"></div>
             <div class="fld"><label>กันห้องรอชำระมัดจำ (นาที)</label><input class="form-input" type="number" name="paymentHoldMinutes" min="15"><div class="hint">หมดเวลา = ปล่อยห้องอัตโนมัติ</div></div>
             <div class="fld"><label>ค่าปรับ no-show (% ของยอดรวม)</label><input class="form-input" type="number" step="0.01" name="noShowChargePercent" data-blank="0" min="0" max="100"></div>
-            <div class="fld"><label><input type="checkbox" name="autoConfirmOnDeposit"> ยืนยันอัตโนมัติเมื่อบันทึกรับมัดจำ</label></div>
+            <div class="fld"><label><input type="checkbox" name="autoConfirmOnDeposit"> ยืนยันอัตโนมัติเมื่อได้รับมัดจำ</label><div class="hint">ใช้กับเงินที่แขกจ่ายออนไลน์ และปุ่ม “รับชำระเพิ่ม” ของพนักงาน · ปุ่ม “ยืนยัน” ของพนักงานยืนยันเสมอ</div></div>
             <div class="fld"><label><input type="checkbox" name="confirmWithoutDeposit"> ยืนยันทันทีโดยไม่เก็บมัดจำ</label></div>
             <div class="fld"><label>นโยบายยกเลิก default</label><select class="form-input" name="defaultCancellationPolicyId" id="policySelect"><option value="">— ไม่มี —</option></select></div>
           </div>

@@ -434,8 +434,24 @@ public partial class LodgingService
         var softScope = soft == Accounting.Helpers.ContactSoftMatch.RowsWithoutTaxId
             ? _db.Contacts.Where(x => x.CompanyId == companyId && (x.TaxId == null || x.TaxId == ""))
             : _db.Contacts.Where(x => x.CompanyId == companyId);
-        if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None && !string.IsNullOrEmpty(email)) c = await softScope.FirstOrDefaultAsync(x => x.Email == email);
-        if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None && !string.IsNullOrEmpty(phone)) c = await softScope.FirstOrDefaultAsync(x => x.Phone == phone);
+        // รอบ 193 (ฝ่ายค้าน C-7): แขกที่ส่งเลขภาษี/ชื่อบริษัท ห้ามได้แถวบุคคลธรรมดา/แถวชื่ออื่นที่อีเมลหรือเบอร์บังเอิญตรง
+        // (ใบกำกับจะออกในชื่อบุคคลโดยไม่มีเลขผู้ซื้อ §86/4) — ตัวตัดสินตัวเดียว Helpers/LodgingGuestContact
+        if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None)
+        {
+            var candidates = new List<Contact>();
+            if (!string.IsNullOrEmpty(email)) candidates.AddRange(await softScope.Where(x => x.Email == email).OrderBy(x => x.CreatedAt).Take(20).ToListAsync());
+            if (!string.IsNullOrEmpty(phone)) candidates.AddRange(await softScope.Where(x => x.Phone == phone).OrderBy(x => x.CreatedAt).Take(20).ToListAsync());
+            c = candidates.FirstOrDefault(x => Accounting.Helpers.LodgingGuestContact.SoftCandidateAcceptable(
+                taxId, r.GuestCompanyName, x.Name, x.ContactType));
+            if (c != null && taxId != null && string.IsNullOrWhiteSpace(c.TaxId))
+            {
+                // แถวนิติบุคคลชื่อตรงที่ยังไม่มีเลข — เติมเลข/สาขาจากที่แขกกรอก ใบกำกับจึงมีเลขผู้ซื้อ
+                c.TaxId = taxId; c.BranchCode ??= "00000";
+                if (string.IsNullOrWhiteSpace(c.Address) && !string.IsNullOrWhiteSpace(r.GuestAddress)) c.Address = r.GuestAddress;
+                c.UpdatedBy = actor; c.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+        }
         if (c != null) return c.Id;
         var isCompany = !string.IsNullOrWhiteSpace(r.GuestCompanyName);
         c = new Contact

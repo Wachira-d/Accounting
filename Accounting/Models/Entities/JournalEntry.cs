@@ -44,6 +44,11 @@ public class JournalEntry : TenantEntity
     /// drives จะไม่กลับ deferred ของ journal นี้ซ้ำถ้าถูก mark แล้ว.
     /// Null = ยังไม่ถูกนำไปหัก (พฤติกรรมเดิมทุกอย่าง).</summary>
     public Guid? DepositAppliedToDocumentId { get; set; }
+    /// <summary>JE "รับรู้มัดจำเป็นรายได้" (RealizeDepositAsync) ที่ทำ <b>เพื่อใบสุดท้ายใบนี้</b> — เช็คเอาต์ที่พักโหมด VAT ทันที
+    /// (ใบสุดท้ายหักฐานมัดจำแล้ว Realize) · void ใบสุดท้าย ⇒ กลับ JE นี้ + คืนยอดมัดจำ (รอบ 193 ฝ่ายค้าน C4 — เดิมไม่มีลิงก์
+    /// ⇒ รายได้จากมัดจำค้างทั้งที่ใบถูกยกเลิก) · ห้ามใช้ <see cref="DepositAppliedToDocumentId"/> แทน (คนละความหมาย และ
+    /// ถ้าตั้งบนใบมัดจำ รายงานภาษีขายจะข้ามแถวมัดจำ VAT ทันที)</summary>
+    public Guid? DepositRealizedForDocumentId { get; set; }
 
     // Project / Branch / Cost Center allocation (header-level default)
     public Guid? ProjectId { get; set; }

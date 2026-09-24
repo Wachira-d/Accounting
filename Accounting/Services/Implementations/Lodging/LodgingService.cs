@@ -70,9 +70,9 @@ public partial class LodgingService : ILodgingService
     /// เดิมคืน 7 ตายตัว ไม่อ่านอัตราของบริษัท และ "คิด VAT เสมอ" ทำให้บริษัทที่ไม่จด VAT เก็บภาษีได้ ขัด §90/2)</summary>
     private async Task<decimal> EffectiveVatRateAsync(Guid companyId, LodgingProperty prop)
     {
-        var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
-            .Select(c => new { c.IsVatRegistered, c.VatRate }).FirstOrDefaultAsync();
-        return LodgingPricingEngine.PropertyVatRate(prop.ChargeVat, co?.IsVatRegistered ?? false, co?.VatRate ?? 0m);
+        // สถานะจด VAT ผ่านตัวอ่านตัวเดียว (CompanyVatStatus · ทีม V) — เดิมอ่าน Company.IsVatRegistered ตรง ๆ
+        var (registered, rate) = await CompanyVatStatus.ProfileAsync(_db, companyId);
+        return LodgingPricingEngine.PropertyVatRate(prop.ChargeVat, registered, rate);
     }
 
     /// <summary>วิธีบันทึกมัดจำที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositPolicyResolver.Resolve"/>

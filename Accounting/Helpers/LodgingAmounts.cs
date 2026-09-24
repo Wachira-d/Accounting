@@ -52,4 +52,35 @@ public static class LodgingAmounts
 
         return balance;
     }
+
+    /// <summary>ป้ายสถานะการจองภาษาไทย — ตัวเดียวของหน้าพนักงาน/หน้าแขก/ข้อความ error (C9 รอบ 193 หลังฝ่ายค้าน)
+    /// <para>"รอชำระมัดจำ" เป็นจริงเฉพาะเมื่อยังไม่ได้รับมัดจำ — ที่พักปิดยืนยันอัตโนมัติแล้วแขกจ่ายครบ สถานะยังเป็น Pending
+    /// แต่ป้ายต้องบอกว่า "ชำระมัดจำแล้ว รอที่พักยืนยัน" (เดิมทั้งสองหน้าบอกให้จ่ายอีก)</para></summary>
+    public static string StatusLabel(LodgingReservationStatus status, decimal depositRequired, decimal depositPaid) => status switch
+    {
+        LodgingReservationStatus.Pending => depositRequired > 0.005m && depositPaid + 0.005m >= depositRequired
+            ? "ชำระมัดจำแล้ว รอที่พักยืนยัน" : "รอชำระมัดจำ",
+        LodgingReservationStatus.Confirmed => "ยืนยันแล้ว",
+        LodgingReservationStatus.CheckedIn => "เช็คอินแล้ว",
+        LodgingReservationStatus.CheckedOut => "เช็คเอาต์แล้ว",
+        LodgingReservationStatus.Cancelled => "ยกเลิก",
+        LodgingReservationStatus.NoShow => "ไม่มาเข้าพัก",
+        _ => status.ToString(),
+    };
+
+    /// <summary>ข้อความในกล่อง "ชำระออนไลน์" ของหน้าแขก — คู่กับ <see cref="OnlinePayableAmount"/> (ยอดที่ gateway เก็บจริง)
+    /// · null = ไม่มีอะไรให้จ่าย · หน้าเว็บแสดงอย่างเดียว ห้ามคิดยอด/ข้อความเอง (F2 ข้อ 5 · C9)</summary>
+    public static string? OnlinePaymentNote(
+        LodgingReservationStatus status, decimal depositRequired, decimal depositPaid,
+        decimal totalAmount, decimal folioTotal, decimal paidAmount, bool autoConfirmOnDeposit)
+    {
+        if (OnlinePayableAmount(status, depositRequired, depositPaid, totalAmount, folioTotal, paidAmount) is null) return null;
+        if (status != LodgingReservationStatus.Pending) return "ชำระยอดคงเหลือของการจอง";
+        var depositLeft = depositRequired - depositPaid > 0.005m;
+        if (!depositLeft)
+            return "ได้รับมัดจำแล้ว — รอที่พักยืนยันการจอง · ชำระยอดคงเหลือได้ตอนนี้หรือที่ที่พัก";
+        return autoConfirmOnDeposit
+            ? "จ่ายมัดจำแล้วระบบยืนยันการจองอัตโนมัติ ไม่ต้องรอที่พักตรวจสลิป"
+            : "จ่ายมัดจำแล้วที่พักจะตรวจสอบและยืนยันการจองให้ (ไม่ได้ยืนยันอัตโนมัติ)";
+    }
 }

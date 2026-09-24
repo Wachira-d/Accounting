@@ -75,6 +75,17 @@ public sealed record DepositVatTreatmentOption(
 /// โหมดของใบที่ออกแล้วอ่านย้อนจากช่องที่ตรึงบนใบ (<see cref="OfDocument"/>) ไม่อ่านค่าบริษัทซ้ำ ·
 /// แผนตัวเลขของโมดูลที่พัก (หัก/ริบ/คืน) อยู่ที่ <c>Helpers/LodgingDepositSettlement</c> ซึ่งกินผลของไฟล์นี้
 /// </summary>
+/// <summary>ผลของเส้นหักมัดจำแบบขับ JE เมื่อมัดจำออกใบกำกับแล้ว (ดู <see cref="DepositPolicyResolver.DrivesGrossApply"/>)</summary>
+public enum DrivesGrossApplyVerdict
+{
+    /// <summary>มัดจำไม่มี VAT ที่รายงานแล้ว (พัก 21913 / เต็มยอด / ไม่จด VAT) — ลงได้ตามปกติ</summary>
+    Allowed,
+    /// <summary>มัดจำออกใบกำกับแล้ว แต่งวดยังไม่ยื่น — ลงได้ (สมดุล · VAT นับครั้งเดียว) + ธงว่า VAT ย้ายเดือน</summary>
+    AllowedVatMoved,
+    /// <summary>งวดของมัดจำยื่น/ประกาศว่ายื่นแล้ว — ลงไม่ได้ (จะรายงาน VAT ซ้ำกับแบบที่ยื่น)</summary>
+    Blocked,
+}
+
 public static class DepositPolicyResolver
 {
     /// <summary>รหัสกฎของด่าน "ห้ามหักมัดจำที่ออกใบกำกับแล้วแบบเต็มจำนวนเข้าใบกำกับที่คิด VAT เต็ม" (P0-3 รอบ 193)</summary>
@@ -254,6 +265,24 @@ public static class DepositPolicyResolver
     /// <param name="depositVatPending">VAT ยังพักอยู่ 21913 (ยังไม่เข้า ภ.พ.30)</param>
     public static bool GrossApplyBlocked(decimal depositVatAmount, bool depositVatPending)
         => depositVatAmount > 0.005m && !depositVatPending;
+
+    /// <summary>เส้น "หักมัดจำแบบขับ JE" (<c>DepositAppliedDrivesJournal</c> — ใบขายเงินสดของคู่ค้า/ฟอร์ม) ตัดสินต่างจากปุ่ม
+    /// "หักมัดจำ" เพราะยอดของใบถูกคำนวณมาแล้ว (คู่ค้าคิด · ห้ามแก้ยอดของคู่ค้า) และ JE ของเส้นนี้ <b>สมดุลและนับ VAT ครั้งเดียว</b>
+    /// (Dr 21911 ของมัดจำ net กับ Cr 21911 เต็มของใบ · รายงานภาษีขายข้ามแถวมัดจำที่ถูกหัก) — ปัญหาจริงมีเมื่อ
+    /// <b>งวดของมัดจำยื่นไปแล้ว</b> (ภาษีก้อนนั้นจ่ายไปแล้ว → รายงานซ้ำ) ⇒ บล็อกเฉพาะกรณีนั้น ·
+    /// งวดยังไม่ยื่น ⇒ ลงได้ แต่ต้องมีธงบนใบให้เห็นว่า VAT มัดจำย้ายเดือน (§78/1)
+    /// <para>รอบ 193 หลังฝ่ายค้าน C1: เดิมบล็อกทุกกรณี ⇒ integration จับ exception แล้วถอยไปตั้งหนี้เงียบ ๆ
+    /// ⇒ VAT ซ้ำ + 217xx ค้าง + ยอดค้างทำให้ต้นทางเก็บเงินซ้ำ (แย่กว่าก่อนแก้)</para></summary>
+    public static DrivesGrossApplyVerdict DrivesGrossApply(decimal depositVatAmount, bool depositVatPending, bool depositVatPeriodDeclared)
+        => !GrossApplyBlocked(depositVatAmount, depositVatPending) ? DrivesGrossApplyVerdict.Allowed
+           : depositVatPeriodDeclared ? DrivesGrossApplyVerdict.Blocked
+           : DrivesGrossApplyVerdict.AllowedVatMoved;
+
+    /// <summary>ธงบนหมายเหตุภายในของใบที่หักมัดจำ "ออกใบกำกับแล้ว" เต็มจำนวนผ่านเส้นขับ JE (งวดมัดจำยังไม่ยื่น)</summary>
+    public static string DrivesVatMovedNote(string depositNumber, decimal depositVat) =>
+        $"[{ImmediateVatGrossApplyRuleCode}-MOVED] หักมัดจำ {depositNumber} ที่ออกใบกำกับแล้วเต็มจำนวน — "
+        + $"VAT มัดจำ {depositVat:N2} ถูกย้ายมารายงานพร้อมใบนี้ (รายงานภาษีขายข้ามแถวมัดจำ) · §78/1 ให้รายงานเดือนที่รับเงิน · "
+        + "ถ้าเดือนต่างกัน ให้นักบัญชีตรวจ: ออกใบลดหนี้ใบนี้แล้วออกใหม่แบบหักฐานมัดจำ หรือยื่นเพิ่มเติม";
 
 
     /// <summary>ข้อความของด่าน P0-3 — บอกเหตุผล + ทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
