@@ -530,6 +530,13 @@ public class MobileApiService : IMobileApiService
 
         if (isApprove)
         {
+            // §65 ทวิ ตรวจซ้ำตอนอนุมัติ (ฝ่ายค้านรอบ 193 · S2-P1) — ตัวเดียวกับเว็บ (ExpenseClaimService.ApproveAsync)
+            var evidenceCount = await _db.Set<FileAttachment>().CountAsync(a => a.CompanyId == companyId
+                && a.EntityType == "ExpenseClaim" && a.EntityId == claim.Id && !a.IsDeleted);
+            var missing = ExpenseClaimEvidencePolicy.MissingEvidenceMessage(claim.NoReceipt, evidenceCount, atApproval: true);
+            if (missing != null)
+                return new MobileApprovalResponse(false, missing, "ExpenseClaim", entityId);
+
             claim.Status = ExpenseClaimStatus.Approved;
             claim.ApprovedByUserId = userId;
             claim.ApprovedAt = DateTime.UtcNow;

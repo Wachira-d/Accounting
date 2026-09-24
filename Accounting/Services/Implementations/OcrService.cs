@@ -8310,6 +8310,14 @@ public class OcrService : IOcrService
         var attachment = await _db.FileAttachments
             .FirstOrDefaultAsync(f => f.Id == fileAttachmentId.Value && f.CompanyId == companyId);
         if (attachment == null) return;
+        // ฝ่ายค้านรอบ 193 (S2-C2): ย้ายเฉพาะไฟล์ที่ยังเป็นของสแกน — ไฟล์ของรายการอื่น (สแกนผ่าน POST ocr/scan/{fileId}) หรือของ
+        // เอกสารใบอื่นอยู่แล้ว ห้ามย้าย (หลักฐานของรายการเดิมจะหาย) · ตัวตัดสินเดียวกับ LinkScanToExistingDocumentAsync
+        if (!Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(attachment.EntityType, attachment.EntityId, documentId))
+        {
+            _logger.LogInformation("ไม่ย้ายไฟล์ {FileId} ({EntityType}) ไปเป็นของเอกสาร {DocId} — ไฟล์เป็นของรายการอื่น",
+                attachment.Id, attachment.EntityType, documentId);
+            return;
+        }
         attachment.EntityType = "Document";
         attachment.EntityId = documentId;
         await _db.SaveChangesAsync();
@@ -8330,6 +8338,23 @@ public class OcrService : IOcrService
         var docExists = await _db.Documents
             .AnyAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
         if (!docExists) return false;
+        // ฝ่ายค้านรอบ 193 (S2-C2): ห้ามย้ายสแกนที่ผูกเอกสารใบอื่นที่ยังอยู่ และห้ามย้ายไฟล์ที่เป็นของรายการอื่น — เดิมเขียนทับ
+        // CreatedDocumentId + ย้ายไฟล์ไปใบปลายทางได้ทุกกรณี ⇒ ใบเดิมสูญหลักฐานต้นฉบับ
+        if (scan.CreatedDocumentId is { } current && current != documentId
+            && await _db.Documents.AnyAsync(d => d.Id == current && d.CompanyId == companyId && !d.IsDeleted))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "สแกนนี้ผูกกับเอกสารใบอื่นอยู่แล้ว — ย้ายไปผูกกับใบใหม่ไม่ได้ (กันเอกสารใบเดิมสูญไฟล์ต้นฉบับ) · "
+                + "ถ้าผูกผิด ให้ลบหรือยกเลิกเอกสารใบเดิมก่อน", "OCR-LINK-ALREADY-LINKED");
+        if (scan.FileAttachmentId is { } fid)
+        {
+            var file = await _db.FileAttachments.AsNoTracking()
+                .Where(f => f.Id == fid && f.CompanyId == companyId)
+                .Select(f => new { f.EntityType, f.EntityId })
+                .FirstOrDefaultAsync();
+            if (file != null && !Accounting.Helpers.AttachmentPermissionScope.ScanFileRelinkable(file.EntityType, file.EntityId, documentId))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.AttachmentPermissionScope.ScanFileNotRelinkableMessage, "OCR-LINK-FOREIGN-FILE");
+        }
         await RelinkScanFileToDocumentAsync(companyId, scan.FileAttachmentId, documentId);
         if (scan.CreatedDocumentId != documentId)
         {
@@ -8615,6 +8640,8 @@ public class OcrService : IOcrService
                 "OCR-DELETE-HAS-JE");
         }
 
+        Guid? cascadedDocId = null;
+        Models.Enums.DocumentStatus? cascadedDocStatus = null;
         if (result.CreatedDocumentId.HasValue)
         {
             if (!cascadeCreatedDocument)
@@ -8627,6 +8654,8 @@ public class OcrService : IOcrService
                     && d.CompanyId == companyId && !d.IsDeleted);
             if (doc != null)
             {
+                cascadedDocId = doc.Id;
+                cascadedDocStatus = doc.Status;
                 if (doc.Status != Models.Enums.DocumentStatus.Draft
                     && doc.Status != Models.Enums.DocumentStatus.WaitingApproval
                     && doc.Status != Models.Enums.DocumentStatus.Rejected)
@@ -8649,13 +8678,34 @@ public class OcrService : IOcrService
             }
         }
 
+        // ═══ ไฟล์ต้นฉบับ (ฝ่ายค้านรอบ 193 · S2-C1) ═══ เดิมลบไฟล์จริง + แถวไฟล์ของ scan.FileAttachmentId เสมอ ⇒ สแกนไฟล์ของ
+        // รายการอื่นแล้วลบสแกน = ลบหลักฐานของรายการนั้นถาวร · ตอนนี้ตัดสินด้วย Helpers/OcrScanFileDisposal ตัวเดียว
+        // (ไฟล์ของรายการอื่น/สแกนอื่นยังใช้ = ไม่แตะ · อยู่ในระยะเก็บรักษา = ถอดแถวแต่เก็บไฟล์จริง)
         if (result.FileAttachmentId.HasValue)
         {
-            var file = await _db.FileAttachments.FirstOrDefaultAsync(f => f.Id == result.FileAttachmentId);
+            var file = await _db.FileAttachments
+                .FirstOrDefaultAsync(f => f.Id == result.FileAttachmentId && f.CompanyId == companyId);
             if (file != null)
             {
-                try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); } catch { }
-                _db.FileAttachments.Remove(file);
+                var usedByOther = await _db.Set<OcrScanResult>().AsNoTracking()
+                    .AnyAsync(r => r.CompanyId == companyId && r.Id != result.Id && r.FileAttachmentId == file.Id);
+                var action = Accounting.Helpers.OcrScanFileDisposal.Decide(
+                    file.EntityType, file.EntityId, usedByOther, cascadedDocId, cascadedDocStatus);
+                if (action == Accounting.Helpers.ScanFileDisposalAction.Remove)
+                {
+                    try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "ลบไฟล์จริงของสแกน {ScanId} ไม่สำเร็จ ({Path}) — แถวไฟล์ถูกลบแล้ว ไฟล์ค้างบนดิสก์",
+                            scanResultId, file.StoragePath);
+                    }
+                    _db.FileAttachments.Remove(file);
+                }
+                else if (action == Accounting.Helpers.ScanFileDisposalAction.SoftDeleteKeepBytes)
+                {
+                    file.IsDeleted = true;
+                    file.UpdatedAt = DateTime.UtcNow;
+                }
             }
         }
 

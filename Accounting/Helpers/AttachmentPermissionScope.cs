@@ -9,6 +9,9 @@ public enum AttachmentAccess { Read, Write }
 /// <summary>ผลปฏิเสธของด่านไฟล์แนบ — สถานะ HTTP + ข้อความไทยที่บอกทางไปต่อ</summary>
 public sealed record AttachmentDenial(int Status, string Message);
 
+/// <summary>เจ้าของที่สแกนใบหนึ่งต้องใช้ด่าน (ผลของ <see cref="AttachmentPermissionScope.ScanOwner"/>)</summary>
+public readonly record struct ScanOwnerRef(string EntityType, Guid EntityId);
+
 /// <summary>ไฟล์แนบของเจ้าของชนิดนี้ต้องถามสิทธิ์แบบไหน — ผู้เรียก (controller) ใช้เลือกว่าต้องค้นแถวเจ้าของก่อนไหม</summary>
 public enum AttachmentOwnerKind
 {
@@ -27,7 +30,7 @@ public enum AttachmentOwnerKind
     /// <summary>ชนิดที่ตัดสินด้วยคีย์อย่างเดียว (ข้อมูลหลัก · สินทรัพย์ · ภาษี · บิลลิ่ง · ที่พัก · เว็บ)</summary>
     KeyGated,
     /// <summary>ไฟล์ต้นฉบับของสแกน — ถ้าสแกน<b>ผูกกับเอกสารแล้ว</b> ใช้ด่านของเอกสารนั้น (ใบเดียวกัน = ด่านเดียวกัน
-    /// ไม่ว่าจะเปิดผ่านไฟล์แนบของเอกสาร · รูปสแกน · หรือรายการสแกน) · ยังไม่ผูก ใช้คีย์ของ OCR (<see cref="ScanFileOwner"/>)</summary>
+    /// ไม่ว่าจะเปิดผ่านไฟล์แนบของเอกสาร · รูปสแกน · หรือรายการสแกน) · ยังไม่ผูก ใช้คีย์ของ OCR (<see cref="AttachmentPermissionScope.ScanOwner"/>)</summary>
     OcrScan,
 }
 
@@ -142,29 +145,51 @@ public static class AttachmentPermissionScope
          + "(กันหลักฐานบัญชีถูกแก้โดยไม่มีด่าน) · แนบไฟล์จากหน้าของรายการนั้นโดยตรง หรือแจ้งผู้ดูแลระบบ";
 
     /// <summary>
-    /// **ไฟล์ของสแกนใบนี้ต้องผ่านด่านของใคร** — ตัวตัดสินตัวเดียวของทุกเส้นที่เปิดไฟล์/ข้อมูลสแกน
-    /// (<c>GET ocr/{scanId}/image</c> · <c>GET ocr</c> · <c>GET ocr/{scanId}</c> · ดาวน์โหลดไฟล์แนบชนิด <c>OcrScan</c>)
+    /// **สแกนใบนี้ (ผลอ่าน · รูป · การแก้/ลบ) ต้องผ่านด่านของใคร** — ตัวตัดสินตัวเดียวของทุกเส้นที่เปิดหรือแก้ข้อมูลสแกน
+    /// (ทุก action ใน <c>OcrController</c> ที่รับ scanId · ดาวน์โหลดไฟล์แนบชนิด <c>OcrScan</c> · รายการ/คิวสแกน)
     ///
-    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · C3) ═══ พอสร้างเอกสารจากสแกน ไฟล์ต้นฉบับถูกย้ายไปเป็นไฟล์แนบของ
-    /// <c>Document</c> (<c>OcrService.RelinkScanFileToDocumentAsync</c>) และด่านของไฟล์แนบเอกสารปฏิเสธผู้ที่มองไม่เห็นฝั่ง/ชั้น
-    /// ความลับของใบนั้น — แต่ <c>GET ocr/{scanId}/image</c> อ่านไฟล์ตัวเดียวกันผ่าน <c>scan.FileAttachmentId</c> โดยมีแค่
-    /// <c>[Authorize]</c> ⇒ ใบเดียวกันมีสองประตู ประตูหนึ่งล็อก อีกประตูเปิด</para>
+    /// <para>═══ ที่มา ═══ รอบ 193 S2 (C3): สแกนที่ผูกเอกสารแล้วใช้ด่านเอกสาร · ฝ่ายค้านรอบ 193 (S2-C1): <c>POST ocr/scan/{fileId}</c>
+    /// สร้างสแกนจาก<b>ไฟล์แนบชนิดใดก็ได้</b> (สลิปเงินเดือน · ไฟล์ของเอกสารลับ) แล้วสแกนใหม่ "ยังไม่ผูก" จึงตกไปใช้ด่าน OCR
+    /// ระดับสมาชิก ⇒ ได้ทั้ง RawText และไฟล์ต้นฉบับ · (S2-P3) สแกนที่ลงเป็น JE ตรงไม่ดูชั้นความลับของ JE ⇒ ตอนนี้
+    /// <b>ด่านตามเจ้าของไฟล์เสมอ</b> ไม่ใช่ตามเส้นทางที่สแกนเกิดขึ้น</para>
     ///
-    /// <para>ลำดับ: (1) ไฟล์ถูกย้ายไปเป็นของเอกสารแล้ว → เอกสารนั้น · (2) สแกนชี้ไปเอกสารที่ยังมีอยู่ (relink พลาด —
-    /// เคสเดียวกับ fallback ใน <c>FileAttachmentService.GetByEntityAsync</c>) → เอกสารนั้น · (3) นอกนั้น → ด่านของ OCR ·
-    /// เอกสารที่ถูกลบไปแล้วไม่นับ (ตัวชี้ค้าง — <c>OcrCreatedDocumentLink</c>)</para>
+    /// <para>ลำดับ: (1) ไฟล์เป็นของรายการอื่นที่ไม่ใช่สแกน (เอกสารหลัง relink · สลิปเงินเดือน · ไฟล์ใบเบิก ฯลฯ) → ด่านของ
+    /// รายการนั้น · (2) สแกนชี้เอกสารที่ยังอยู่ (relink พลาด) → เอกสาร · (3) สแกนลงเป็น JE ที่ยังอยู่ → JE (ชั้นความลับ) ·
+    /// (4) นอกนั้น → ด่านของ OCR (<c>null</c>) · ตัวชี้ไปรายการที่ถูกลบแล้วไม่นับ</para>
     /// </summary>
-    /// <returns><c>DocumentId</c> ที่ต้องใช้ด่านของเอกสาร · <c>null</c> = ใช้ด่านของ OCR</returns>
-    public static Guid? ScanFileOwner(string? fileEntityType, Guid? fileEntityId,
-        Guid? createdDocumentId, bool createdDocumentExists)
+    public static ScanOwnerRef? ScanOwner(string? fileEntityType, Guid? fileEntityId,
+        Guid? createdDocumentId, bool createdDocumentExists,
+        Guid? createdJournalEntryId = null, bool createdJournalEntryExists = false)
     {
-        if (string.Equals((fileEntityType ?? "").Trim(), "Document", StringComparison.OrdinalIgnoreCase)
-            && fileEntityId is { } fe && fe != Guid.Empty)
-            return fe;
+        var ft = (fileEntityType ?? "").Trim();
+        if (ft.Length > 0 && !string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase) && fileEntityId is { } fe)
+            return new ScanOwnerRef(Resolve(ft).CanonicalType ?? ft, fe);
         if (createdDocumentId is { } d && d != Guid.Empty && createdDocumentExists)
-            return d;
+            return new ScanOwnerRef("Document", d);
+        if (createdJournalEntryId is { } j && j != Guid.Empty && createdJournalEntryExists)
+            return new ScanOwnerRef("JournalEntry", j);
         return null;
     }
+
+    /// <summary>
+    /// **ย้ายไฟล์ของสแกนไปเป็นของเอกสาร <paramref name="targetDocumentId"/> ได้ไหม** — ได้เฉพาะไฟล์ที่ยังเป็นของสแกน
+    /// (<c>OcrScan</c>) หรือเป็นของเอกสารใบนั้นอยู่แล้ว (idempotent)
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · S2-C2) ═══ <c>link-document</c> และ relink-on-read ใน
+    /// <c>FileAttachmentService.GetByEntityAsync</c> ตั้ง <c>EntityType="Document"</c> ให้ไฟล์โดยไม่ดูว่าไฟล์เป็นของใครอยู่
+    /// ⇒ ย้ายหลักฐานของใบ A (ที่มองไม่เห็น) ไปเป็นของใบ B (ที่มองเห็น) แล้วดาวน์โหลดได้ · ใบ A สูญหลักฐาน</para>
+    /// </summary>
+    public static bool ScanFileRelinkable(string? fileEntityType, Guid? fileEntityId, Guid targetDocumentId)
+    {
+        var ft = (fileEntityType ?? "").Trim();
+        if (string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase)) return true;
+        return string.Equals(ft, "Document", StringComparison.OrdinalIgnoreCase)
+               && fileEntityId == targetDocumentId && targetDocumentId != Guid.Empty;
+    }
+
+    public const string ScanFileNotRelinkableMessage =
+        "ไฟล์ต้นฉบับของสแกนนี้เป็นหลักฐานของรายการอื่นอยู่แล้ว — ระบบไม่ย้ายหลักฐานข้ามรายการ "
+        + "(กันเอกสารใบเดิมสูญไฟล์ต้นฉบับ) · ถ้าต้องการแนบไฟล์นี้กับเอกสารใบใหม่ ให้อัปโหลดไฟล์เข้าเอกสารใบนั้นโดยตรง";
 
     /// <summary>ผู้ใช้อ่านเอกสารใบนี้ได้ไหม (ฝั่งรายรับ/รายจ่าย + ชั้นความลับ) — ชุดเดียวกับด่านไฟล์แนบเอกสาร
     /// (<c>AttachmentAccessGate</c>) และลิสต์ร่างในคิวรอตรวจ · ใช้กับเส้นที่ตัดสินหลายใบพร้อมกัน (รายการสแกน)</summary>
@@ -174,14 +199,19 @@ public static class AttachmentPermissionScope
            && (sensitivity == SensitivityKind.None || visibleKinds.Contains(sensitivity));
 
     /// <summary>
-    /// **ไฟล์ที่แนบก่อนบันทึกรายการ (เจ้าของยังว่าง) ใครเห็นได้** — เฉพาะผู้อัปโหลดเอง
+    /// **ไฟล์ที่แนบก่อนบันทึกรายการ (เจ้าของยังว่าง) ใครเห็น/ใช้ได้** — ผู้อัปโหลดเอง หรือผู้ถือคีย์เขียนของโมดูล
+    /// (WhtCredit = Tax.File · Owner ผ่านอัตโนมัติ)
     ///
-    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · P7) ═══ หน้า 50 ทวิ ที่ลูกค้าหักเรา แนบไฟล์ด้วย <c>entityId = Guid.Empty</c>
-    /// ก่อนบันทึกรายการ ⇒ ไฟล์ของทุกคนทั้งบริษัทไปกองอยู่ที่ <c>WhtCredit/0000…</c> ถังเดียว และ
-    /// <c>GET attachments/WhtCredit/0000…</c> คืนทั้งถังให้สมาชิกทุกคน · ตอนนี้ถังว่างแยกตามผู้อัปโหลด และ
-    /// <c>WhtCreditService</c> ย้ายไฟล์ไปผูกกับรายการทันทีที่บันทึก</para>
+    /// <para>═══ ที่มา ═══ รอบ 193 S2 (P7): ไฟล์ 50 ทวิ ที่แนบก่อนบันทึกของทุกคนกองที่ <c>WhtCredit/0000…</c> ถังเดียวที่สมาชิก
+    /// ทุกคนเปิดได้ ⇒ แยกตามผู้อัปโหลด · ฝ่ายค้าน (S2-P6): ไฟล์ในถังที่ไม่มีรายการชี้ (ผู้อัปโหลดออกไปแล้ว) ไม่มีใครเปิดได้เลย
+    /// แม้ Owner ⇒ ผู้ถือคีย์ของโมดูลเปิดดูได้ · (S2-P7) ตอนบันทึกรายการ ใช้เกณฑ์เดียวกันตัดสินว่าผูกไฟล์ในถังเข้ารายการได้ไหม</para>
     /// </summary>
-    public static bool UnsavedFileVisible(Guid uploadedByUserId, Guid userId)
+    public static bool UnsavedFileVisible(Guid uploadedByUserId, Guid userId, bool holdsModuleWriteKey)
+        => holdsModuleWriteKey || (uploadedByUserId != Guid.Empty && uploadedByUserId == userId);
+
+    /// <summary>ลบไฟล์ในถังก่อนบันทึกได้ไหม — <b>เฉพาะผู้อัปโหลด</b> (ฝ่ายค้าน S2-P6: ผู้ถือ Tax.File ถอดไฟล์ที่คนอื่นเพิ่งแนบ
+    /// ก่อนกดบันทึกได้) · ผู้ถือคีย์ดูได้แต่ลบของคนอื่นไม่ได้</summary>
+    public static bool UnsavedFileRemovable(Guid uploadedByUserId, Guid userId)
         => uploadedByUserId != Guid.Empty && uploadedByUserId == userId;
 
     /// <summary>เจ้าของยังว่างและชนิดนี้รับเจ้าของว่าง ⇒ เป็น "ถังไฟล์ก่อนบันทึก" (<see cref="UnsavedFileVisible"/>)</summary>
@@ -189,8 +219,12 @@ public static class AttachmentPermissionScope
         => rule.AllowsUnsavedOwner && entityId == Guid.Empty;
 
     public const string UnsavedFileDeniedMessage =
-        "ไฟล์นี้แนบไว้ก่อนบันทึกรายการและยังไม่ถูกผูกกับรายการใด — เปิดได้เฉพาะผู้ที่อัปโหลด · "
+        "ไฟล์นี้แนบไว้ก่อนบันทึกรายการและยังไม่ถูกผูกกับรายการใด — เปิดได้เฉพาะผู้ที่อัปโหลดหรือผู้มีสิทธิ์ยื่นภาษี (Tax.File) · "
         + "ถ้าเป็นหลักฐานของรายการที่บันทึกแล้ว ให้เปิดจากหน้ารายการนั้น";
+
+    public const string UnsavedFileNotRemovableMessage =
+        "ไฟล์นี้แนบไว้ก่อนบันทึกรายการโดยผู้ใช้คนอื่น — ลบได้เฉพาะผู้ที่อัปโหลด (กันไฟล์ที่คนอื่นกำลังจะบันทึกหายไป) · "
+        + "ถ้าเป็นไฟล์ค้าง ให้ผู้อัปโหลดลบ หรือแจ้งเจ้าของบริษัท";
 
     /// <summary>ข้อความปฏิเสธที่บอก<b>ทางไปต่อ</b> — ชื่อคีย์ + ที่ที่เจ้าของไปเพิ่มสิทธิ์ได้</summary>
     public static string DeniedMessage(AttachmentScopeRule rule, string verb, IReadOnlyList<string> anyOfKeys)
