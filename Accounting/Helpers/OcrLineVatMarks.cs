@@ -303,6 +303,7 @@ public static class OcrLineVatMarks
         if (string.IsNullOrWhiteSpace(rawText)) return OcrVatGroupTable.None;
         var lines = rawText.Replace("\r", "").Split('\n');
         var legend = new Dictionary<string, (OcrVatGroupKind Kind, string Desc)>(StringComparer.Ordinal);
+        var letterLegend = new Dictionary<string, (OcrVatGroupKind Kind, string Desc)>(StringComparer.OrdinalIgnoreCase);
         var numeric = new List<(int Qty, string Code, decimal Net, decimal Vat, decimal Gross, int LineNo)>();
         var letter = new List<(string Code, decimal Rate, decimal Net, decimal Vat, decimal Gross, int LineNo)>();
         decimal totNet = 0m, totVat = 0m, totGross = 0m;
@@ -344,6 +345,12 @@ public static class OcrLineVatMarks
                 var desc = lg.Groups["desc"].Value.Trim();
                 legend[lg.Groups["code"].Value] = (KindFromLegend(desc), desc);
             }
+            // คำอธิบายรหัสตัวอักษร ("V = VATABLE  N = NON-VAT") — ใช้ตัดสินแถวสรุปอัตรา 0 (ฝ่ายค้าน P2)
+            foreach (Match lg in LegendRow.Matches(line))
+            {
+                var desc = lg.Groups["desc"].Value.Trim();
+                letterLegend[lg.Groups["code"].Value] = (KindFromLegend(desc), desc);
+            }
         }
 
         if (numeric.Count == 0 && letter.Count == 0) return OcrVatGroupTable.None;
@@ -358,10 +365,14 @@ public static class OcrLineVatMarks
         foreach (var r in letter)
         {
             if (Math.Abs(r.Net + r.Vat - r.Gross) > GroupTol) return OcrVatGroupTable.None;
+            // อัตรา 0 + VAT 0 = "ยกเว้น §81" หรือ "อัตราศูนย์ §80/1" ก็ได้ — ลงบัญชีคนละแบบ (0% เคลมภาษีซื้อได้ · ยกเว้นไม่ได้)
+            // ⇒ ตัดสินจากคำอธิบายรหัสบนกระดาษเท่านั้น · ไม่มีคำอธิบาย = Unknown (ฝ่ายค้าน P2 · ไม่แยกบรรทัดกลุ่ม)
             var kind = r.Rate == 7m && Math.Abs(Math.Round(r.Net * 0.07m, 2, MidpointRounding.AwayFromZero) - r.Vat) <= RateSlack(null)
                 ? OcrVatGroupKind.Standard7
-                : r.Rate == 0m && r.Vat == 0m ? OcrVatGroupKind.Exempt
-                : OcrVatGroupKind.Unknown;
+                : r.Rate == 0m && r.Vat == 0m && letterLegend.TryGetValue(r.Code, out var zeroLg)
+                    && zeroLg.Kind is OcrVatGroupKind.Exempt or OcrVatGroupKind.ZeroRated
+                    ? zeroLg.Kind
+                    : OcrVatGroupKind.Unknown;
             groups.Add(new OcrVatGroup(kind, r.Code, r.Net, r.Vat, r.Gross, null,
                 $"แถวสรุป “{r.Code} {r.Rate:0.##}” บนกระดาษ"));
         }
@@ -406,7 +417,9 @@ public static class OcrLineVatMarks
                 return (OcrVatGroupKind.Unknown, $"รหัส {code} “{lg.Desc}” แต่ VAT {vat:N2} ไม่ใช่ 7% ของ {net:N2} — ไม่เดา");
             return (lg.Kind, $"รหัส {code} = “{lg.Desc}” (คำอธิบายบนกระดาษ)");
         }
-        if (vat == 0m && net > 0m) return (OcrVatGroupKind.Exempt, $"รหัส {code}: VAT บนกระดาษ 0.00");
+        // VAT 0.00 ไม่บอกว่า "ยกเว้น" หรือ "อัตราศูนย์" — ไม่มีคำอธิบาย = ไม่รู้ (ฝ่ายค้าน P2)
+        if (vat == 0m && net > 0m)
+            return (OcrVatGroupKind.Unknown, $"รหัส {code}: VAT 0.00 แต่กระดาษไม่บอกว่ายกเว้นหรืออัตราศูนย์ — ไม่เดา");
         if (vat > 0m && sevenPct) return (OcrVatGroupKind.Standard7, $"รหัส {code}: VAT {vat:N2} = 7% ของ {net:N2}");
         return (OcrVatGroupKind.Unknown, $"รหัส {code}: ไม่มีคำอธิบายและตัวเลขไม่บอกอัตรา — ไม่เดา");
     }

@@ -49,7 +49,8 @@ public class OcrTotalDecomposerTests
     [Fact]
     public void Uptoyou_ส่วนลดที่ใช้ได้เป็นศูนย์_ตัวกระทบยอดได้เคสA_ไม่ใช่เคสE()
     {
-        var eff = OcrTotalDecomposer.EffectiveBillDiscount(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m);
+        var eff = OcrTotalDecomposer.ForScan(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m,
+            existingNotes: "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00").DiscountToSpread;
         Assert.Equal(0m, eff);
         // บรรทัด 2 × 268 = 536 (ราคารวม VAT) — เคส A ถอด VAT ออกจากยอดบรรทัด ไม่หักอะไร
         var recon = OcrLineReconciler.Classify(536m, 500.93m, 35.07m, 536m, eff);
@@ -96,6 +97,9 @@ public class OcrTotalDecomposerTests
     [Theory]
     // ส่วนลดรายบรรทัด (ต่างเกินเศษปัด) ⇒ สูตรเดิม ราคา×จำนวน · ไม่มียอดพิมพ์ ⇒ ราคา×จำนวน · ไม่มีราคา ⇒ ยอดที่พิมพ์
     [InlineData(2.0, 100.0, 180.0, 200.0)]
+    // ฝ่ายค้าน P5: จำนวน 100 · ส่วนลดรายบรรทัด 0.50 — เดิมเพดาน 0.005 × 100 = 0.50 กลืนส่วนลดจริงเป็น "เศษปัด"
+    [InlineData(100.0, 10.0, 999.50, 1000.0)]
+    [InlineData(3.0, 33.33, 100.00, 100.0)]
     [InlineData(1.0, 10.0, null, 10.0)]
     [InlineData(null, null, 5.0, 5.0)]
     [InlineData(12.0, 255.75, 3069.0, 3069.0)]
@@ -136,6 +140,42 @@ public class OcrTotalDecomposerTests
         Assert.Empty(OcrTotalDecomposer.SummaryGroupLines(d, 24110m, 1148.28m, headerSubTotal: 22961.72m));
         Assert.Equal(OcrDiscountPlacement.Unknown, d.Placement);
         Assert.Equal(297.75m, d.DiscountToSpread);   // ไม่ลงตัวแบบไหน ⇒ ส่งต่อเท่าเดิม
+    }
+
+    // ── รอบฝ่ายค้าน P1: สแกนเก่าที่ไม่มีแท็ก ต้องได้แท็กตอนสร้างเอกสาร ──────────────
+
+    [Fact]
+    public void P1_สแกนเก่าไม่มีแท็ก_ตอนสร้างเอกสารได้หมายเหตุPAY_NOT_TOTALให้ด่านอนุมัติเห็น()
+    {
+        var d = OcrTotalDecomposer.ForScan(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m,
+            existingNotes: "[Tier] Azure DI สำเร็จ");
+        Assert.Equal(0m, d.DiscountToSpread);
+        Assert.NotNull(d.NoteToAppend);
+        Assert.StartsWith(OcrTotalDecomposer.PayNotTotalTag, d.NoteToAppend);
+        // หมายเหตุหลังต่อท้าย ⇒ ตัวตัดสินอนุมัติเอง (เว็บ/LINE) หยุด
+        Assert.False(OcrPostingReadiness.Evaluate("[Tier] Azure DI สำเร็จ\n" + d.NoteToAppend, true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void P1_ทิศตรงข้าม_มีแท็กแล้วไม่ซ้ำ_ใบส่วนลดในใบกำกับไม่ได้แท็ก()
+    {
+        Assert.Null(OcrTotalDecomposer.ForScan(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m,
+            existingNotes: "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00").NoteToAppend);
+        var hw = OcrTotalDecomposer.ForScan(OcrPaperSamples.HardwareBillDiscount, 1395m, 92.77m, 1418.02m, 69.75m, null);
+        Assert.Equal(69.75m, hw.DiscountToSpread);
+        Assert.Null(hw.NoteToAppend);
+        var none = OcrTotalDecomposer.ForScan(OcrPaperSamples.WinePro, 3357.94m, 235.06m, 3593m, 0m, null);
+        Assert.Equal(0m, none.DiscountToSpread);
+        Assert.Null(none.NoteToAppend);
+    }
+
+    [Fact]
+    public void C2_ใบสองสกุลเงิน_ส่วนลดไม่ถูกเดาทิศ_ส่งต่อเท่าเดิม()
+    {
+        var d = OcrTotalDecomposer.Decompose(
+            "INVOICE\nAmount (USD) 1,000.00\nDiscount (USD) 50.00\nVAT 7% 66.50\nTotal 1,016.50\nPaid 966.50", 950m, 66.50m, 1016.50m, 50m);
+        Assert.Equal(OcrDiscountPlacement.Unknown, d.Placement);
+        Assert.Equal(50m, d.DiscountToSpread);
     }
 
     // ── ครึ่งที่ 2: ส่วนลดที่ส่งต่อเท่าเดิม ─────────────────────────────────────

@@ -181,6 +181,131 @@ public class OcrTotalAnchorTests
     public void ไม่มีข้อความ_NotChecked()
         => Assert.Equal(OcrTotalVerdict.NotChecked, OcrTotalAnchor.Find("  ", 100m).Verdict);
 
+    // ── รอบฝ่ายค้าน (C1 · C2 · C4 · C5) ──────────────────────────────────────
+
+    private const string RoundingReceipt =
+        "ร้านค้าปลีก\nมูลค่าสินค้า 1,153.50\nภาษีมูลค่าเพิ่ม 7% 80.75\nรวมทั้งสิ้น 1,234.25\nปัดเศษ -0.25\n"
+        + "ยอดชำระ 1,234.00\nเงินสด 1,300.00\nเงินทอน 66.00";
+
+    [Fact]
+    public void C1_ใบปัดเศษ_ยอดรวม1234_25_ยอดชำระ1234ไม่ใช่คู่แข่ง_ไม่มีConflict()
+    {
+        // เดิม: 1,234.00 × 7/107 = 80.73 ≈ 80.75 (±0.02) ⇒ "พิสูจน์ได้" ทั้งคู่ ⇒ [TOTAL-CONFLICT] บล็อกใบค้าปลีกทั่วไป
+        var r = OcrTotalAnchor.Find(RoundingReceipt, 1234.25m);
+        Assert.Equal(OcrTotalVerdict.Confirmed, r.Verdict);
+        Assert.Equal(1234.25m, r.Total);
+        Assert.False(r.Candidates.Single(c => c.Amount == 1234.00m).Strong);   // อัตราส่วนแพ้ฐาน+VAT ที่พิมพ์ตรงเป๊ะ
+        Assert.Null(OcrTotalAnchor.Note(r));
+    }
+
+    [Fact]
+    public void C1_engineหยิบยอดชำระหลังปัดเศษ_ยึด1234_25_ค่าเดิมคือยอดปัดเศษที่พิมพ์แถวไว้()
+    {
+        var r = OcrTotalAnchor.Find(RoundingReceipt, 1234.00m);
+        Assert.Equal(OcrTotalVerdict.Proven, r.Verdict);
+        Assert.Equal(1234.25m, r.Total);
+        Assert.Equal(OcrTotalRole.RoundedPayable, r.EngineRole);
+        // ไม่มี [PAY≠TOTAL]: ส่วนต่าง < 1 บาทที่กระดาษพิมพ์แถว "ปัดเศษ" เป็นเรื่องปกติของเงินสด (ไม่ใช่ส่วนลด/คูปอง)
+        Assert.True(OcrPostingReadiness.Evaluate(OcrTotalAnchor.Note(r), true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void C1_ทิศตรงข้าม_ส่วนต่างเศษสตางค์ที่ไม่มีแถวปัดเศษ_engineหยิบยอดที่ไม่ใช่ยอดVAT_ยังดัง()
+    {
+        const string paper = "ร้านค้าปลีก\nมูลค่าสินค้า 1,153.50\nภาษีมูลค่าเพิ่ม 7% 80.75\nรวมทั้งสิ้น 1,234.25\nยอดชำระ 1,234.00";
+        Assert.Equal(OcrTotalVerdict.Confirmed, OcrTotalAnchor.Find(paper, 1234.25m).Verdict);
+        // ส่วนต่าง 0.25 ไม่มีอะไรบนกระดาษอธิบาย ⇒ ไม่เขียนทับ · คนตัดสิน
+        Assert.Equal(OcrTotalVerdict.Conflict, OcrTotalAnchor.Find(paper, 1234.00m).Verdict);
+    }
+
+    [Theory]
+    [InlineData("INVOICE\nAmount (USD) 1,000.00\nVAT 7% (USD) 70.00\nTotal (USD) 1,070.00\nExchange rate 34.00\n"
+        + "Amount (THB) 34,000.00\nVAT (THB) 2,380.00\nTotal (THB) 36,380.00", 1070.00)]
+    [InlineData("INVOICE\nAmount 1,000.00\nVAT 7% 70.00\nTotal 1,070.00\nAmount (THB) 34,000.00\nVAT (THB) 2,380.00\nTotal (THB) 36,380.00", 1070.00)]
+    [InlineData("INVOICE\nAmount 1,000.00\nVAT 7% 70.00\nTotal 1,070.00\nAmount (THB) 34,000.00\nVAT (THB) 2,380.00\nTotal (THB) 36,380.00", 36380.00)]
+    public void C2_ใบสองสกุลเงิน_ไม่รู้_ไม่ใช่ขัดกัน(string paper, double engineTotal)
+    {
+        var r = OcrTotalAnchor.Find(paper, (decimal)engineTotal);
+        Assert.Equal(OcrTotalVerdict.Unknown, r.Verdict);
+        Assert.Null(OcrTotalAnchor.Note(r));
+    }
+
+    [Theory]
+    [InlineData("CREDIT NOTE\nOriginal invoice no. INV-001\nOriginal invoice amount 10,000.00\nVAT on original invoice 700.00\n"
+        + "Original invoice total 10,700.00\nCorrect amount 8,000.00\nDifference 2,000.00\nVAT 7% 140.00\nGrand Total 2,140.00")]
+    [InlineData("ใบลดหนี้\nมูลค่าตามใบกำกับภาษีเดิม 10,000.00\nภาษีมูลค่าเพิ่มตามใบกำกับภาษีเดิม 700.00\nมูลค่าที่ถูกต้อง 8,000.00\n"
+        + "ผลต่าง 2,000.00\nภาษีมูลค่าเพิ่ม 7% 140.00\nรวมทั้งสิ้น 2,140.00")]
+    public void C2_ใบลดหนี้_ยอดของใบเดิมไม่ใช่คู่แข่ง_ยอดใบนี้Confirmed(string paper)
+    {
+        var r = OcrTotalAnchor.Find(paper, 2140m);
+        Assert.Equal(OcrTotalVerdict.Confirmed, r.Verdict);
+        Assert.Equal(2140m, r.Total);
+        Assert.DoesNotContain(r.Candidates, c => c.Amount == 10700m && c.Strong);
+    }
+
+    [Fact]
+    public void C4_ฐานที่คำนวณจากยอดลบVAT_ไม่ถูกประทับว่าพิมพ์บนกระดาษ()
+    {
+        // มีแต่ VAT 70.00 กับยอด 1,070.00 พิมพ์ (ไม่มีแถวฐาน) · engine หยิบ 1,000 (ไม่ได้พิมพ์ = ยอดก่อน VAT)
+        const string paper = "ใบกำกับภาษี\nภาษีมูลค่าเพิ่ม 7% 70.00\nรวมทั้งสิ้น 1,070.00\n(หนึ่งพันเจ็ดสิบบาทถ้วน)";
+        var r = OcrTotalAnchor.Find(paper, 1000m);
+        Assert.Equal(OcrTotalVerdict.Proven, r.Verdict);
+        Assert.Equal(1070m, r.Total);
+        Assert.Equal(OcrTotalRole.NetBeforeVat, r.EngineRole);
+        Assert.Null(r.PrintedBase);        // 1,000 ไม่ได้พิมพ์บนกระดาษ
+        Assert.Equal(70m, r.PrintedVat);
+
+        var plan = OcrTotalAnchor.Plan(r, currentSub: null, currentVat: null);
+        Assert.Equal(1070m, plan.Total);
+        Assert.Equal(1000m, plan.SubTotal);
+        Assert.Equal(OcrFieldSource.Rule, plan.SubSource);                 // ไม่ใช่ PaperLabel
+        Assert.True(plan.SubConfidence < 0.85);                            // ไฮไลต์เหลือง
+        Assert.Equal(70m, plan.Vat);
+    }
+
+    [Fact]
+    public void Plan_Makroเส้นข้อความ_ฐานVATจากแถวรวมที่พิมพ์_PaperLabel()
+    {
+        // เส้น Tesseract: AmountTriple เติม 16,403.97/1,148.28 (กลุ่มย่อย) ⇒ ไม่ปิดยอดใหม่ ⇒ ใช้คู่ที่พิมพ์บนแถว "รวม"
+        var r = OcrTotalAnchor.Find(OcrPaperSamples.MakroPage3of3, 24110m);
+        var plan = OcrTotalAnchor.Plan(r, 16403.97m, 1148.28m);
+        Assert.Equal(23812.25m, plan.Total);
+        Assert.Equal(22663.97m, plan.SubTotal);
+        Assert.Equal(OcrFieldSource.PaperLabel, plan.SubSource);
+        Assert.Equal(1148.28m, plan.Vat);
+        Assert.StartsWith(OcrTotalAnchor.AnchoredTag, plan.Note);
+    }
+
+    [Fact]
+    public void Plan_ทิศตรงข้าม_Azureฐานปิดยอดอยู่แล้ว_ไม่แตะฐาน_Confirmedไม่เขียนอะไร()
+    {
+        var proven = OcrTotalAnchor.Plan(OcrTotalAnchor.Find(OcrPaperSamples.MakroPage3of3, 24110m), 22663.97m, 1148.28m);
+        Assert.Equal(23812.25m, proven.Total);
+        Assert.Null(proven.SubTotal);
+        var confirmed = OcrTotalAnchor.Plan(OcrTotalAnchor.Find(OcrPaperSamples.WinePro, 3593m), 3357.94m, 235.06m);
+        Assert.Null(confirmed.Total);
+        Assert.Null(confirmed.SubTotal);
+        Assert.Null(confirmed.TotalConfidenceCap);
+        Assert.Null(confirmed.Note);
+        var conflict = OcrTotalAnchor.Plan(OcrTotalAnchor.Find(
+            "ใบกำกับภาษี\nมูลค่าสินค้า 1,420.56\nภาษีมูลค่าเพิ่ม 7% 99.44\nรวมทั้งสิ้น 1,520.00\n(หนึ่งพันสองร้อยห้าสิบบาทถ้วน)", 1250m), null, null);
+        Assert.Null(conflict.Total);
+        Assert.Equal(OcrTotalAnchor.DisputedConfidenceCap, conflict.TotalConfidenceCap);
+    }
+
+    [Fact]
+    public void C5_แถวรวมของตารางแถวเดียว_นับเป็นหลักฐานชั้นเดียว()
+    {
+        // "รวมทั้งสิ้น ฐาน VAT รวม" แถวเดียว เข้าทั้งป้ายยอดรวมและแถวรวมของตารางกลุ่ม — เดิมนับเป็นสองชั้น ⇒ "พิสูจน์" จากแถวเดียว
+        const string paper = "ใบกำกับภาษี\n   17  1  6,260.00  0.00  6,260.00\n  134  2  16,403.97  1,148.28  17,552.25\n"
+            + "รวมทั้งสิ้น 22,663.97 1,148.28 23,812.25\n1=สินค้ายกเว้นภาษีมูลค่าเพิ่ม · 2=สินค้าที่ต้องเสียภาษีมูลค่าเพิ่ม";
+        var r = OcrTotalAnchor.Find(paper, 24000m);
+        var c = r.Candidates.Single(x => x.Amount == 23812.25m);
+        Assert.Equal(1, c.IndependentClasses);
+        Assert.False(c.Strong);
+        Assert.NotEqual(OcrTotalVerdict.Proven, r.Verdict);
+    }
+
     // ── แท็กใหม่ทั้งสองอยู่ในรายการห้ามอนุมัติเอง (และไม่ใช่ substring ของกันและกัน) ──
 
     [Fact]

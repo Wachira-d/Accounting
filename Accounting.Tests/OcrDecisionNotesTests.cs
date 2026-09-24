@@ -33,6 +33,33 @@ public class OcrDecisionNotesTests
         Assert.Equal(3, kept.Split('\n').Length);
     }
 
+    /// <summary>รอบ 192 ฝ่ายค้าน C3: แท็กห้ามอนุมัติใหม่ ([TOTAL-CONFLICT] · [PAY≠TOTAL]) และของเดิมที่หลุดลิสต์มือ
+    /// ([MATH] · [DATE-UNSURE] · [FX-UNKNOWN]) ต้องติดไปกับสำเนาเมื่ออัปไฟล์ซ้ำ — ไม่งั้นใบ Shopee ที่อัปซ้ำอนุมัติเองได้</summary>
+    [Fact]
+    public void แท็กห้ามอนุมัติทุกตัว_ติดไปกับสำเนา_และสำเนายังหยุดอนุมัติเอง()
+    {
+        foreach (var (tag, _) in OcrPostingReadiness.BlockingTags)
+            Assert.Contains(tag, OcrScanSnapshot.DecisionNoteTags);
+
+        const string notes = "[Tier] local\n[PAY≠TOTAL] ยอดตามใบกำกับ 536.00 · ยอดที่ชำระจริง 438.00\n"
+            + "[TOTAL-CONFLICT] พบยอดรวมที่ขัดกัน\n[MATH] ตัวเลขบนใบขัดกันเอง\n[PAGES-PARTIAL] ขาดหน้า 1, 2\n"
+            + "[TOTAL-UNSURE] ยอด\n[Reasoning]\n  • [Gateway] x";
+        var kept = OcrScanSnapshot.DecisionNotes(notes);
+        Assert.Contains("[PAY≠TOTAL]", kept);
+        Assert.Contains("[TOTAL-CONFLICT]", kept);
+        Assert.Contains("[MATH]", kept);
+        Assert.Contains("[PAGES-PARTIAL]", kept);
+        Assert.Contains("[TOTAL-UNSURE]", kept);
+        Assert.DoesNotContain("[Tier]", kept);
+        Assert.DoesNotContain("[Gateway]", kept);
+        // สำเนา (หมายเหตุ "Duplicate of scan …" + คำตัดสินที่ยกมา) ต้องยังห้ามอนุมัติเอง
+        Assert.False(OcrPostingReadiness.Evaluate("Duplicate of scan x\n" + kept, true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void ข้อสังเกตยึดยอด_TOTAL_ไม่ถูกยกไป_เป็นของการอัปโหลดครั้งนั้น()
+        => Assert.Equal(string.Empty, OcrScanSnapshot.DecisionNotes("[TOTAL] ยอดรวมทั้งสิ้น 23,812.25\n[Reasoning]\n  • [TOTAL] x"));
+
     [Fact]
     public void ไม่มีคำตัดสิน_คืนสตริงว่าง()
     {
