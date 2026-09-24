@@ -726,7 +726,10 @@ public class LineBotService : ILineBotService
         if (string.IsNullOrWhiteSpace(processingNotes)) return result;
         // [WHT-CERT] เคยตกหล่นจากลิสต์นี้ทั้งที่เป็น blocking tag ใน
         // OcrPostingReadiness ⇒ ปุ่มอนุมัติหายโดยไม่มีคำเตือนอธิบายว่าทำไม
-        string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[WHT-CERT]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]" };
+        // รอบ 192 (Total-first): แท็กยอดรวมขัดกัน/ยอดชำระ ≠ ยอดใบกำกับ/หน้าไม่ครบ — ชุดเดียวกับ parseScanNotes ของหน้าเว็บ
+        string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[WHT-CERT]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]",
+            Accounting.Helpers.OcrTotalAnchor.ConflictTag, Accounting.Helpers.OcrTotalDecomposer.PayNotTotalTag,
+            Accounting.Helpers.OcrTotalAnchor.UnsureTag, Accounting.Helpers.OcrPageSet.PartialTag };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();

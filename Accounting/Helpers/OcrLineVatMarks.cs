@@ -24,6 +24,47 @@ public sealed record OcrPaperVatSplit(
 /// <param name="Note">เหตุผลภาษาไทย — ทั้งตอนใช้และตอนไม่ใช้ (ให้คนตามรอยได้)</param>
 public sealed record OcrLineVatAssignment(bool Applied, decimal?[] Rates, string Note);
 
+/// <summary>กลุ่มภาษีของตารางสรุปท้ายใบ — <c>Unknown</c> = กระดาษไม่ได้บอกว่ารหัสนี้คืออะไร (ห้ามเดา)</summary>
+public enum OcrVatGroupKind
+{
+    Unknown = 0,
+    /// <summary>มี VAT 7%</summary>
+    Standard7 = 1,
+    /// <summary>อัตราศูนย์ §80/1 (คำอธิบายบนกระดาษระบุ 0%/zero เอง)</summary>
+    ZeroRated = 2,
+    /// <summary>ยกเว้น §81 / ไม่มี VAT</summary>
+    Exempt = 3,
+}
+
+/// <summary>แถวหนึ่งของตารางสรุปตามกลุ่มภาษี (ยอด<b>หลัง</b>หักส่วนลดของกลุ่มนั้นตามที่กระดาษพิมพ์)</summary>
+/// <param name="PaperCode">รหัสบนกระดาษ ("1" · "2" · "V")</param>
+/// <param name="Net">ฐานก่อน VAT ของกลุ่ม</param>
+/// <param name="Vat">VAT ของกลุ่ม</param>
+/// <param name="Gross">รวมของกลุ่ม (= Net + Vat บนกระดาษ)</param>
+/// <param name="ItemCount">จำนวนชิ้นที่กระดาษพิมพ์ (null = ไม่มีคอลัมน์นี้)</param>
+/// <param name="Evidence">ทำไมตีเป็นกลุ่มนี้ (คำอธิบายรหัสบนกระดาษ / VAT = 0 / VAT = 7% ของฐาน)</param>
+public sealed record OcrVatGroup(
+    OcrVatGroupKind Kind, string PaperCode, decimal Net, decimal Vat, decimal Gross, int? ItemCount, string Evidence);
+
+/// <summary>ตารางสรุปตามกลุ่มภาษีทั้งตาราง — <see cref="Found"/> = false แปลว่าไม่มีตารางที่ใช้ได้
+/// (ไม่มีเลย หรือผลรวมแถวไม่เท่าแถว "รวม" ⇒ ใช้ไม่ได้ทั้งตาราง ห้ามใช้ครึ่ง ๆ กลาง ๆ)</summary>
+/// <param name="Net">ฐานรวม (แถว "รวม" หรือ Σ แถว)</param>
+/// <param name="Vat">VAT รวม</param>
+/// <param name="Gross">รวมทั้งตาราง = ยอดใบกำกับ (เมื่อตารางครอบทุกกลุ่ม)</param>
+/// <param name="TotalLineNo">บรรทัดของแถว "รวม" (หรือแถวสุดท้ายของตาราง) · −1 = ไม่มีตาราง</param>
+/// <param name="Evidence">ข้อความสรุปที่มา — ใส่ trace/หมายเหตุได้ตรง ๆ</param>
+public sealed record OcrVatGroupTable(
+    IReadOnlyList<OcrVatGroup> Groups, decimal Net, decimal Vat, decimal Gross, int TotalLineNo, string Evidence)
+{
+    public bool Found => Groups.Count > 0;
+
+    /// <summary>ทุกกลุ่มรู้ชนิด (ไม่มี <see cref="OcrVatGroupKind.Unknown"/>) — เงื่อนไขก่อนใช้แยกบรรทัด</summary>
+    public bool AllKnown => Groups.Count > 0 && Groups.All(g => g.Kind != OcrVatGroupKind.Unknown);
+
+    public static OcrVatGroupTable None { get; } =
+        new(Array.Empty<OcrVatGroup>(), 0m, 0m, 0m, -1, "");
+}
+
 /// <summary>
 /// **ใบเดียวมีทั้งรายการ VAT 7% และไม่มี VAT — อ่าน "สัญลักษณ์ท้ายบรรทัด" ที่กระดาษพิมพ์ไว้**
 ///
@@ -220,6 +261,168 @@ public static class OcrLineVatMarks
             $"อัตรา VAT รายบรรทัดตามสัญลักษณ์บนกระดาษ: มี VAT {taxableSum:N2} · ไม่มี VAT {nonTaxSum:N2} "
             + $"({string.Join(" · ", proofs)})");
     }
+
+    // ═══ ตารางสรุปตามกลุ่มภาษี (รอบ 192 · Total-first) ═══════════════════════════════════════
+
+    /// <summary>ตารางสรุปตามรหัส ภ.พ. แบบห้าง: <c>จำนวนชิ้น · รหัส(ตัวเลข) · ฐาน · VAT · รวม</c>
+    /// (Makro: <c>17 1 6,260.00 0.00 6,260.00</c>) — <see cref="SummaryRow"/> เดิมรับแต่รหัสตัวอักษร+อัตรา</summary>
+    private static readonly Regex NumericCodeRow = new(
+        @"^[ \t]*(?<qty>\d{1,6})[ \t]+(?<code>\d)[ \t]+(?<net>" + Money + @")[ \t]+(?<vat>" + Money
+        + @")[ \t]+(?<gross>" + Money + @")[ \t]*$", RegexOptions.CultureInvariant);
+
+    /// <summary>แถว "รวม" ของตารางสรุป: <c>รวม 22,663.97 1,148.28 23,812.25</c> (จำนวนชิ้นรวมนำหน้าได้)</summary>
+    private static readonly Regex GroupTotalRow = new(
+        @"^[ \t]*(?:\d{1,6}[ \t]+)?(?:รวม(?:ทั้งสิ้น)?|total)[ \t]*:?[ \t]+(?<net>" + Money + @")[ \t]+(?<vat>"
+        + Money + @")[ \t]+(?<gross>" + Money + @")[ \t]*$", Opt);
+
+    /// <summary>คำอธิบายรหัสตัวเลข: <c>1=สินค้าได้รับการยกเว้นภาษีมูลค่าเพิ่ม · 2=สินค้าที่ต้องเสียภาษีมูลค่าเพิ่ม</c>
+    /// — หลายคู่ในบรรทัดเดียว (คำอธิบายหยุดก่อนคู่ถัดไป)</summary>
+    private static readonly Regex DigitLegend = new(
+        @"(?:^|[ \t(,/|·:])(?<code>\d)[ \t]*=[ \t]*(?<desc>[^=·|]+?)(?=[ \t]*[·,/|]?[ \t]*\d[ \t]*=|[ \t]*[·|]?[ \t]*$)",
+        RegexOptions.CultureInvariant);
+
+    private const decimal GroupTol = 0.02m;
+
+    /// <summary>
+    /// **อ่านตารางสรุปตามกลุ่มภาษีท้ายใบ** — ทั้งแบบรหัสตัวอักษร (<c>V 7 ฐาน VAT รวม</c>) และแบบห้างที่ใช้รหัส
+    /// <b>ตัวเลข</b> + คอลัมน์จำนวนชิ้น (<c>17 1 6,260.00 0.00 6,260.00</c>) · <see cref="Read"/>/<see cref="Assign"/>
+    /// เดิม<b>ไม่แตะ</b> (เพิ่มวิธีคิด ไม่รื้อ)
+    ///
+    /// <para>ที่มา (รอบ 192 · ใบ Makro หน้า 3/3): หน้าสุดท้ายมีแต่ตารางสรุปตามรหัส ภ.พ. — ยกเว้น 6,260.00 ·
+    /// มี VAT ฐาน 16,403.97 VAT 1,148.28 · รวม 23,812.25 — แต่ไม่มีตัวอ่าน ⇒ ใบถูกลงเป็นบรรทัดเดียว 7% ทั้งใบ
+    /// และเส้น Tesseract แต่ง VAT 7/107 = 1,577.29 ทั้งที่กระดาษพิมพ์ 1,148.28 ไว้</para>
+    ///
+    /// <para>กติกา (DECISION_DOCTRINE §1): ความหมายของรหัสมาจาก<b>คำอธิบายบนกระดาษ</b>ก่อน · ไม่มีคำอธิบาย ⇒
+    /// พิสูจน์ด้วยตัวเลขของแถว (VAT 0.00 = ไม่มี VAT · VAT = 7% ของฐาน = มี VAT) · รหัสที่คำอธิบายไม่บอก/
+    /// คำอธิบายขัดกับตัวเลข = <see cref="OcrVatGroupKind.Unknown"/> · ทุกแถวต้อง ฐาน + VAT = รวม และ
+    /// Σ แถว = แถว "รวม" (ตารางรหัสตัวเลข<b>ต้องมี</b>แถว "รวม" — กันแถวตัวเลขล้วนอื่นหลุดเข้ามา) ·
+    /// ไม่ผ่านข้อใด = <see cref="OcrVatGroupTable.None"/> ทั้งตาราง</para>
+    /// </summary>
+    public static OcrVatGroupTable ReadGroups(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return OcrVatGroupTable.None;
+        var lines = rawText.Replace("\r", "").Split('\n');
+        var legend = new Dictionary<string, (OcrVatGroupKind Kind, string Desc)>(StringComparer.Ordinal);
+        var numeric = new List<(int Qty, string Code, decimal Net, decimal Vat, decimal Gross, int LineNo)>();
+        var letter = new List<(string Code, decimal Rate, decimal Net, decimal Vat, decimal Gross, int LineNo)>();
+        decimal totNet = 0m, totVat = 0m, totGross = 0m;
+        var totLine = -1;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd();
+            if (line.Length == 0) continue;
+
+            var nm = NumericCodeRow.Match(line);
+            if (nm.Success)
+            {
+                numeric.Add((int.Parse(nm.Groups["qty"].Value, CultureInfo.InvariantCulture), nm.Groups["code"].Value,
+                    ParseMoney(nm.Groups["net"].Value), ParseMoney(nm.Groups["vat"].Value),
+                    ParseMoney(nm.Groups["gross"].Value), i));
+                continue;
+            }
+            var sm = SummaryRow.Match(line);
+            if (sm.Success)
+            {
+                letter.Add((sm.Groups["code"].Value,
+                    decimal.Parse(sm.Groups["rate"].Value, CultureInfo.InvariantCulture),
+                    ParseMoney(sm.Groups["net"].Value), ParseMoney(sm.Groups["vat"].Value),
+                    ParseMoney(sm.Groups["gross"].Value), i));
+                continue;
+            }
+            var tm = GroupTotalRow.Match(line);
+            if (tm.Success && (numeric.Count > 0 || letter.Count > 0) && totLine < 0)
+            {
+                totNet = ParseMoney(tm.Groups["net"].Value);
+                totVat = ParseMoney(tm.Groups["vat"].Value);
+                totGross = ParseMoney(tm.Groups["gross"].Value);
+                totLine = i;
+                continue;
+            }
+            foreach (Match lg in DigitLegend.Matches(line))
+            {
+                var desc = lg.Groups["desc"].Value.Trim();
+                legend[lg.Groups["code"].Value] = (KindFromLegend(desc), desc);
+            }
+        }
+
+        if (numeric.Count == 0 && letter.Count == 0) return OcrVatGroupTable.None;
+
+        var groups = new List<OcrVatGroup>();
+        foreach (var r in numeric)
+        {
+            if (Math.Abs(r.Net + r.Vat - r.Gross) > GroupTol) return OcrVatGroupTable.None;
+            var (kind, why) = NumericKind(r.Code, r.Net, r.Vat, r.Qty, legend);
+            groups.Add(new OcrVatGroup(kind, r.Code, r.Net, r.Vat, r.Gross, r.Qty, why));
+        }
+        foreach (var r in letter)
+        {
+            if (Math.Abs(r.Net + r.Vat - r.Gross) > GroupTol) return OcrVatGroupTable.None;
+            var kind = r.Rate == 7m && Math.Abs(Math.Round(r.Net * 0.07m, 2, MidpointRounding.AwayFromZero) - r.Vat) <= RateSlack(null)
+                ? OcrVatGroupKind.Standard7
+                : r.Rate == 0m && r.Vat == 0m ? OcrVatGroupKind.Exempt
+                : OcrVatGroupKind.Unknown;
+            groups.Add(new OcrVatGroup(kind, r.Code, r.Net, r.Vat, r.Gross, null,
+                $"แถวสรุป “{r.Code} {r.Rate:0.##}” บนกระดาษ"));
+        }
+
+        var sumNet = groups.Sum(g => g.Net);
+        var sumVat = groups.Sum(g => g.Vat);
+        var sumGross = groups.Sum(g => g.Gross);
+        if (totLine >= 0)
+        {
+            // Σ แถว ≠ แถว "รวม" = อ่านแถวใดแถวหนึ่งผิด/ขาด ⇒ ใช้ไม่ได้ทั้งตาราง
+            if (Math.Abs(sumNet - totNet) > GroupTol || Math.Abs(sumVat - totVat) > GroupTol
+                || Math.Abs(sumGross - totGross) > GroupTol)
+                return OcrVatGroupTable.None;
+        }
+        else if (numeric.Count > 0)
+            return OcrVatGroupTable.None;   // ตารางรหัสตัวเลขต้องมีแถว "รวม" ยืนยัน
+        else
+        {
+            totNet = sumNet; totVat = sumVat; totGross = sumGross;
+            totLine = letter[letter.Count - 1].LineNo;
+        }
+
+        var evidence = "ตารางสรุปตามกลุ่มภาษีบนกระดาษ: "
+            + string.Join(" · ", groups.Select(g => $"รหัส {g.PaperCode} ฐาน {g.Net:N2} VAT {g.Vat:N2}"))
+            + $" · รวม {totGross:N2}";
+        return new OcrVatGroupTable(groups, totNet, totVat, totGross, totLine, evidence);
+    }
+
+    private static (OcrVatGroupKind Kind, string Why) NumericKind(
+        string code, decimal net, decimal vat, int qty,
+        IReadOnlyDictionary<string, (OcrVatGroupKind Kind, string Desc)> legend)
+    {
+        var sevenPct = Math.Abs(Math.Round(net * 0.07m, 2, MidpointRounding.AwayFromZero) - vat) <= RateSlack(qty);
+        if (legend.Count > 0)
+        {
+            if (!legend.TryGetValue(code, out var lg))
+                return (OcrVatGroupKind.Unknown, $"รหัส {code} ไม่มีคำอธิบายบนกระดาษ — ไม่เดา");
+            // คำอธิบายขัดกับตัวเลขของแถว = ไม่รู้ (อ่านรหัส/ตัวเลขผิดสักตัว)
+            if (lg.Kind == OcrVatGroupKind.Exempt && vat != 0m)
+                return (OcrVatGroupKind.Unknown, $"รหัส {code} “{lg.Desc}” แต่แถวมี VAT {vat:N2} — ขัดกัน ไม่เดา");
+            if (lg.Kind == OcrVatGroupKind.Standard7 && !sevenPct)
+                return (OcrVatGroupKind.Unknown, $"รหัส {code} “{lg.Desc}” แต่ VAT {vat:N2} ไม่ใช่ 7% ของ {net:N2} — ไม่เดา");
+            return (lg.Kind, $"รหัส {code} = “{lg.Desc}” (คำอธิบายบนกระดาษ)");
+        }
+        if (vat == 0m && net > 0m) return (OcrVatGroupKind.Exempt, $"รหัส {code}: VAT บนกระดาษ 0.00");
+        if (vat > 0m && sevenPct) return (OcrVatGroupKind.Standard7, $"รหัส {code}: VAT {vat:N2} = 7% ของ {net:N2}");
+        return (OcrVatGroupKind.Unknown, $"รหัส {code}: ไม่มีคำอธิบายและตัวเลขไม่บอกอัตรา — ไม่เดา");
+    }
+
+    private static OcrVatGroupKind KindFromLegend(string desc)
+        => NonTaxableLabel.IsMatch(desc) ? OcrVatGroupKind.Exempt
+         : Regex.IsMatch(desc, @"อัตรา(?:ภาษี)?[ \t]*ศูนย์|zero|\b0[ \t]*%", Opt) ? OcrVatGroupKind.ZeroRated
+         : Regex.IsMatch(desc, @"ต้องเสียภาษี|ที่เสียภาษี|vatable|taxable|7[ \t]*%", Opt) ? OcrVatGroupKind.Standard7
+         : OcrVatGroupKind.Unknown;
+
+    /// <summary>ค่าเผื่อ "VAT = 7% ของฐาน" ของแถวสรุปที่รวมหลายชิ้น — VAT รายชิ้นปัดได้ครึ่งสตางค์ต่อชิ้น</summary>
+    private static decimal RateSlack(int? itemCount)
+        => Math.Max(0.10m, 0.005m * (itemCount ?? 0));
+
+    private static decimal ParseMoney(string s)
+        => decimal.Parse(s.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture);
 
     private static decimal? LastMoney(string text)
     {

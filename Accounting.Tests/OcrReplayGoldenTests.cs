@@ -118,6 +118,54 @@ public class OcrReplayGoldenTests
         Assert.Equal("100000.00", Val("export-zero-rated", "NetSubTotal"));
     }
 
+    // ── รอบ 192 Total-first: ใบจริง M/U/S ต้องถูก · ใบเดิมทุกใบต้องได้ยอด/ฐานเดิม ──────
+
+    [Fact]
+    public void ใบM_Makro_ยอดรวมทั้งสิ้น23812_25_ฐาน22663_97_ไม่ใช่ป้ายTOTAL24110()
+    {
+        Assert.Equal("24110.00", Val("makro-page3-total-first", "HeaderTotal"));      // ค่าที่ engine หยิบ (บั๊ก)
+        Assert.Equal("22961.72", Val("makro-page3-total-first", "NetSubTotal"));      // สูตรเดิมบนยอดผิด = 24,110 − VAT
+        Assert.Equal("Proven", Val("makro-page3-total-first", "AnchorVerdict"));
+        Assert.Equal("23812.25", Val("makro-page3-total-first", "AnchorTotal"));
+        Assert.Equal("22663.97", Val("makro-page3-total-first", "AnchoredNetSubTotal"));
+    }
+
+    [Fact]
+    public void ใบU_Shopee_ยอดใบกำกับ536_ส่วนลดพิเศษหลังVATไม่ถูกกระจาย()
+    {
+        Assert.Equal("Confirmed", Val("uptoyou-shopee-pay-not-total", "AnchorVerdict"));
+        Assert.Equal("536.00", Val("uptoyou-shopee-pay-not-total", "AnchorTotal"));
+        Assert.Equal("98.00", Val("uptoyou-shopee-pay-not-total", "BillDiscount"));   // ตัวอ่านเห็นบนกระดาษ…
+        Assert.Equal("PostInvoice", Val("uptoyou-shopee-pay-not-total", "DiscountPlacement"));
+        Assert.Equal("0.00", Val("uptoyou-shopee-pay-not-total", "DiscountToSpread")); // …แต่ไม่ใช่ส่วนลดในใบกำกับ
+        Assert.Equal("500.93", Val("uptoyou-shopee-pay-not-total", "AnchoredNetSubTotal"));
+    }
+
+    [Fact]
+    public void ใบS_Lazada_ส่วนลดก่อนVAT216_82_ฐาน4695_33()
+    {
+        Assert.Equal("Confirmed", Val("scommerce-lazada-prevat-discount", "AnchorVerdict"));
+        Assert.Equal("216.82", Val("scommerce-lazada-prevat-discount", "BillDiscount"));
+        Assert.Equal("PreVat", Val("scommerce-lazada-prevat-discount", "DiscountPlacement"));
+        Assert.Equal("216.82", Val("scommerce-lazada-prevat-discount", "DiscountToSpread"));
+        Assert.Equal("4695.33", Val("scommerce-lazada-prevat-discount", "AnchoredNetSubTotal"));
+    }
+
+    [Fact]
+    public void ใบเดิมทุกใบในชุด_ยอดรวมและฐานหลังขั้นยึดยอด_เท่าเดิมทุกใบ()
+    {
+        var newPapers = new[] { "makro-page3-total-first", "uptoyou-shopee-pay-not-total", "scommerce-lazada-prevat-discount" };
+        foreach (var p in OcrReplayHarness.Corpus.Where(x => !newPapers.Contains(x.Name)))
+        {
+            // ขั้นยึดยอดต้องไม่เขียนทับ/ขัดใบเดิมใบไหนเลย
+            Assert.Contains(Val(p.Name, "AnchorVerdict"), new[] { "Confirmed", "Unknown" });
+            Assert.Equal(Val(p.Name, "HeaderTotal"), Val(p.Name, "AnchorTotal"));
+            Assert.Equal(Val(p.Name, "NetSubTotal"), Val(p.Name, "AnchoredNetSubTotal"));
+            // ส่วนลดที่ส่งต่อให้ตัวสร้างบรรทัด = ส่วนลดที่อ่านได้เดิม
+            Assert.Equal(Val(p.Name, "BillDiscount") ?? "0.00", Val(p.Name, "DiscountToSpread"));
+        }
+    }
+
     // ── ตัวเครื่องมือเอง: ต้อง deterministic และต้อง "จับได้" เมื่อคำตอบเปลี่ยน ──
 
     [Fact]

@@ -103,6 +103,21 @@ public static class OcrReplayHarness
         new ReplayPaper("wholesale-mixed-vat", OcrPaperSamples.WholesaleMixedVat,
             EngineSubTotal: 764m, EngineVat: 28m, EngineTotal: 792m,
             LineAmounts: OcrPaperSamples.WholesaleLineAmounts),
+
+        // ── รอบ 192 (Total-first): กระดาษจริง 3 ใบของเจ้าของ (BRIEF-TOTAL) ──
+
+        // Makro หน้า 3/3 — engine หยิบป้าย "TOTAL 24,110.00" (ยอดก่อนหักส่วนลด 297.75)
+        new ReplayPaper("makro-page3-total-first", OcrPaperSamples.MakroPage3of3,
+            EngineSubTotal: 22663.97m, EngineVat: 1148.28m, EngineTotal: 24110.00m),
+
+        // Shopee — ใบกำกับ 536 · ส่วนลดพิเศษ 98 หลัง VAT · จ่าย 438
+        new ReplayPaper("uptoyou-shopee-pay-not-total", OcrPaperSamples.UptoyouShopee,
+            EngineSubTotal: 500.93m, EngineVat: 35.07m, EngineTotal: 536.00m,
+            LineAmounts: new[] { 536.00m }),
+
+        // Lazada — ส่วนลด 216.82 ก่อน VAT · แถว (0.00) ของกลุ่มยกเว้น
+        new ReplayPaper("scommerce-lazada-prevat-discount", OcrPaperSamples.ScommerceLazada,
+            EngineSubTotal: 4912.15m, EngineVat: 328.67m, EngineTotal: 5024.00m),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -139,6 +154,19 @@ public static class OcrReplayHarness
             result.Add(new(p.Name, "BillDiscount", disc.Amount?.ToString("0.00")));
             result.Add(new(p.Name, "NetSubTotal",
                 OcrHeaderAmounts.NetSubTotal(n.SubTotal, n.Vat, n.Total, disc.Amount ?? 0m).ToString("0.00")));
+
+            // 5b. รอบ 192 Total-first — ยอดรวมทั้งสิ้นที่ยึด (OcrTotalAnchor) + ส่วนลดอยู่ตรงไหน (OcrTotalDecomposer)
+            //     ช่องใหม่ = แถวใหม่เท่านั้น · ช่องเดิมของทุกใบต้องไม่เปลี่ยน
+            var anchor = OcrTotalAnchor.Find(p.RawText, n.Total);
+            var anchoredTotal = anchor.Verdict is OcrTotalVerdict.Proven or OcrTotalVerdict.Confirmed
+                ? anchor.Total : n.Total;
+            result.Add(new(p.Name, "AnchorVerdict", anchor.Verdict.ToString()));
+            result.Add(new(p.Name, "AnchorTotal", anchoredTotal?.ToString("0.00")));
+            var shape = OcrTotalDecomposer.Decompose(p.RawText, n.SubTotal, n.Vat, anchoredTotal, disc.Amount ?? 0m);
+            result.Add(new(p.Name, "DiscountPlacement", shape.Placement.ToString()));
+            result.Add(new(p.Name, "DiscountToSpread", shape.DiscountToSpread.ToString("0.00")));
+            result.Add(new(p.Name, "AnchoredNetSubTotal",
+                OcrHeaderAmounts.NetSubTotal(n.SubTotal, n.Vat, anchoredTotal, shape.DiscountToSpread).ToString("0.00")));
 
             // 6. อัตรา VAT รายบรรทัดจากสัญลักษณ์บนกระดาษ (OcrLineVatMarks) — เฉพาะใบที่มีรายการ
             if (p.LineAmounts is { } amounts)

@@ -1523,6 +1523,11 @@
             ...pick('DATE-UNSURE'),
             ...pick('TAX-INV-PENDING'),
             ...pick('WHT-CERT'),
+            // รอบ 192 (Total-first) — ข้อความ+ตัวเลขมาจากเซิร์ฟเวอร์ (Helpers/OcrTotalAnchor · OcrTotalDecomposer · OcrPageSet)
+            ...pick('TOTAL-CONFLICT'),
+            ...pick('PAY≠TOTAL'),
+            ...pick('TOTAL-UNSURE'),
+            ...pick('PAGES-PARTIAL'),
             ...skip,
           ],
         };

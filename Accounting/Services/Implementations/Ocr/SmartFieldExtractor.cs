@@ -516,11 +516,19 @@ internal static class SmartFieldExtractor
             data.VatAmount = total.Value - sub.Value;
             data.FieldConfidence["VatAmount"] = 0.9;
         }
+        else if (total.HasValue && !sub.HasValue && !vat.HasValue && LooksLikeVatDoc(text)
+                 && Accounting.Helpers.VatBackCalcGuard.PrintedVatContradicts(text, total.Value) is string printedVatWhy)
+        {
+            // รอบ 192 (ทีม B #3): back-calc ชุดที่สองนี้ไม่เคยผ่านด่านใดเลย — กระดาษที่พิมพ์ VAT ไว้แล้ว
+            // (ตารางสรุปตามรหัส ภ.พ. ของห้าง) ห้ามแต่ง 7/107 ที่ขัดกับตัวเลขนั้น · เว้นว่างให้ชั้นยึดยอดรวม
+            // (Helpers/OcrTotalAnchor) เติมจากตัวเลขที่พิมพ์
+            data.ReasoningTrace.Add("[VAT skip] " + printedVatWhy);
+        }
         else if (total.HasValue && !sub.HasValue && !vat.HasValue && LooksLikeVatDoc(text))
         {
             // Tax invoice with only the total visible — derive SubTotal/VAT
             // assuming standard 7% Thai VAT (Total = SubTotal × 1.07).
-            data.SubTotal = Math.Round(total.Value / (1m + ThaiVatRate), 2);
+            data.SubTotal = Math.Round(total.Value / (1m + ThaiVatRate), 2, MidpointRounding.AwayFromZero);
             data.VatAmount = total.Value - data.SubTotal.Value;
             data.FieldConfidence["SubTotal"] = 0.7;     // derived, not extracted
             data.FieldConfidence["VatAmount"] = 0.7;
