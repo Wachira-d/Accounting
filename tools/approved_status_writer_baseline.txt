@@ -1,0 +1,6 @@
+# จุดประทับ DocumentStatus.Approved นอก DocumentService ที่ตั้งใจ **ไม่**เรียก IssuedDocumentHooks (รอบ 193 · S-02)
+# ห้ามเพิ่มแถวเพื่อให้ checker เขียว — ตัดออกได้อย่างเดียว · ทุกแถวต้องมีเหตุผลหลัง #
+# (ณ HEAD ก่อนรอบนี้มี 10 เมธอด/11 จุด — POS 1 + Integration 6 ต่อสายแล้ว เหลือ 3 เมธอดนี้)
+Controllers/SampleDataController.cs:Seed = 2  # ข้อมูลตัวอย่าง (Invoice/Expense) — ห้ามออก e-Tax/นำส่งกรมสรรพากรจากใบสาธิต
+Services/Implementations/CrossTenantWorkflowService.cs:CreateDownstreamPoAsync = 1  # ใบสั่งซื้อ (PO) ข้ามบริษัท — ไม่ใช่เอกสารที่ออก e-Tax · ไม่ใช่การออกใบกำกับ
+Services/Implementations/ImportExportService.cs:ImportOpeningSubledgerAsync = 1  # ลูกหนี้/เจ้าหนี้ยกมา (Invoice/PurchaseInvoice · IsOpeningBalance) — ใบกำกับออกในระบบเดิมแล้ว ห้ามออก e-Tax ซ้ำ

@@ -93,8 +93,7 @@ public class OwnerConfigController : ControllerBase
             .FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (settings == null)
         {
-            settings = new CompanySettings { CompanyId = companyId };
-            _db.Set<CompanySettings>().Add(settings);
+            settings = await CompanySettingsFactory.AddNewAsync(_db, companyId, ct);   // seed VAT จากบริษัท (S-01)
         }
 
         // Disabled features: convert names → flags. Intersect with the

@@ -11,8 +11,9 @@ namespace Accounting.Tests;
 /// </summary>
 public class ProhibitedInputVatScreenerTests
 {
+    // บริษัททั่วไป (ไม่ใช่ผู้ประกอบกิจการขาย/ให้เช่ารถ) — ผลต้องเท่าเดิมทุกเคสหลังรอบ 193 S-05
     private static ProhibitedVatVerdict Screen(string text, string? vendor = null, params string[] lines)
-        => ProhibitedInputVatScreener.Screen(text, vendor, lines);
+        => ProhibitedInputVatScreener.Screen(text, vendor, lines, isVehicleDealer: false);
 
     // ── §82/5(4) ค่ารับรอง — ต้องห้ามเสมอ ────────────────────────────
 

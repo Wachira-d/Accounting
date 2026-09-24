@@ -17,7 +17,8 @@ public class CmsCommerceService : ICmsCommerceService
     private readonly string _encryptionKey;
     private readonly IImageProcessingService? _images;
     private readonly IDocumentService? _docService;
-    private readonly IEtaxInvoiceService? _etaxService;
+    /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — ตัวเดียวกับ ApproveDocumentAsync/POS/Integration (S-02)</summary>
+    private readonly IIssuedDocumentHooks? _issuedHooks;
     private readonly IProductService? _productService;
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
     /// แทน fallback ที่เคยเขียน `CurrentStock -=` เองเมื่อ DI ไม่ครบ</summary>
@@ -29,8 +30,14 @@ public class CmsCommerceService : ICmsCommerceService
         IConfiguration config, IImageProcessingService? images = null,
         IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
         IProductService? productService = null, IStockLedger? stock = null,
-        ICmsQuotaService? quota = null)
+        ICmsQuotaService? quota = null, IIssuedDocumentHooks? issuedHooks = null)
     {
+        // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) จุดเดียวกับเส้นเว็บ (S-02) · ไม่มี DI แต่มี e-Tax service
+        // → สร้างตัวจริงเอง ห้ามปล่อย null แล้วข้ามเงียบ
+        _issuedHooks = issuedHooks ?? (etaxService != null
+            ? new IssuedDocumentHooks(db, etaxService,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<IssuedDocumentHooks>.Instance)
+            : null);
         _quota = quota;
         _stock = stock;
         _db = db;
@@ -38,7 +45,6 @@ public class CmsCommerceService : ICmsCommerceService
         _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
         _images = images;
         _docService = docService;
-        _etaxService = etaxService;
         _productService = productService;
     }
 
@@ -1003,7 +1009,8 @@ public class CmsCommerceService : ICmsCommerceService
     /// 3. ApproveDocumentAsync ของ ERP doc → auto-post JE (Dr AR / Cr Revenue + Cr VAT)
     /// 4. CreatePaymentAsync ของ ERP doc → Dr Cash/Bank / Cr AR เคลียร์ยอด
     /// 5. DeductStockAsync — ตัด stock จริง
-    /// 6. (optional) GenerateEtax ถ้า RequestTaxInvoice=true + CompanySettings.EtaxAutoSubmit
+    /// 6. e-Tax อัตโนมัติผ่าน IssuedDocumentHooks (EtaxEnabled + EtaxAutoSign) — ในขั้น 3 อยู่แล้ว
+    ///    รันซ้ำเฉพาะเมื่อไม่ได้อนุมัติในรอบนี้ (รอบ 193 · S-02)
     ///
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
@@ -1067,12 +1074,15 @@ public class CmsCommerceService : ICmsCommerceService
         }
 
         // 3+4. Approve + Record payment (JE auto-post) — ดูเหตุผลของ syncFailures ข้างบน
+        // approvedNow = ApproveDocumentAsync สำเร็จในรอบนี้ ⇒ ผลข้างเคียงหลังออกเอกสาร (e-Tax) รันไปแล้วในตัวมัน
+        var approvedNow = false;
         if (order.ErpDocumentId.HasValue && _docService != null)
         {
             try
             {
                 await _docService.ApproveDocumentAsync(companyId, order.ErpDocumentId.Value,
                     actor, acknowledgeWarnings: true);
+                approvedNow = true;
             }
             catch (Exception ex)
             {
@@ -1131,23 +1141,13 @@ public class CmsCommerceService : ICmsCommerceService
             await _db.SaveChangesAsync();
         }
 
-        // 6. e-Tax (optional)
-        if (order.RequestTaxInvoice && order.ErpDocumentId.HasValue && _etaxService != null)
-        {
-            var etaxEnabled = await _db.CompanySettings.AsNoTracking()
-                .Where(s => s.CompanyId == companyId)
-                .Select(s => (bool?)s.EtaxEnabled).FirstOrDefaultAsync() ?? false;
-            if (etaxEnabled)
-            {
-                try
-                {
-                    await _etaxService.GenerateAsync(companyId,
-                        new Models.DTOs.DocumentTemplate.GenerateEtaxRequest(order.ErpDocumentId.Value, SignDigitally: true));
-                }
-                catch (Exception ex)
-                { _logger.LogWarning(ex, "ConfirmPayment: e-Tax generate failed for order {OrderId}", orderId); }
-            }
-        }
+        // 6. e-Tax — ★ รอบ 193 S-02: เดิมเรียก GenerateAsync ซ้ำเอง (หลัง ApproveDocumentAsync ออกให้แล้ว ⇒
+        // ได้ "มี e-Tax แล้ว" เป็น LogWarning ทุกใบ) ด้วย `SignDigitally: true` ตายตัว และล้มแล้วเงียบ ·
+        // ตอนนี้: ApproveDocumentAsync เรียก IssuedDocumentHooks อยู่แล้ว ⇒ รันซ้ำเฉพาะรอบที่ไม่ได้อนุมัติ
+        // ในครั้งนี้ (ยืนยันซ้ำ/อนุมัติไว้ก่อน) — ตัว hook อ่าน EtaxEnabled/EtaxAutoSign เอง · ข้ามใบที่ไม่ใช่
+        // ใบกำกับ (ลูกค้าไม่ขอใบกำกับ = ใบแจ้งหนี้) · idempotent · ล้ม = ประทับ [ETAX-AUTO-FAILED] บนเอกสาร
+        if (!approvedNow && order.ErpDocumentId.HasValue && _issuedHooks != null)
+            await _issuedHooks.RunAsync(companyId, order.ErpDocumentId.Value);
 
         return true;
     }

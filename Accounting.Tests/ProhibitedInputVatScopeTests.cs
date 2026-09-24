@@ -11,11 +11,12 @@ namespace Accounting.Tests;
 /// </summary>
 public class ProhibitedInputVatScopeTests
 {
+    // บริษัททั่วไป (ไม่ใช่ dealer) — ผลต้องเท่าเดิมทุกเคสหลังรอบ 193 S-05
     private static bool Blocked(string rawText, string vendor, params string[] lines)
-        => ProhibitedInputVatScreener.Screen(rawText, vendor, lines).Claimable == false;
+        => ProhibitedInputVatScreener.Screen(rawText, vendor, lines, isVehicleDealer: false).Claimable == false;
 
     private static bool Flagged(string rawText, string vendor, params string[] lines)
-        => ProhibitedInputVatScreener.Screen(rawText, vendor, lines).RuleCode != null;
+        => ProhibitedInputVatScreener.Screen(rawText, vendor, lines, isVehicleDealer: false).RuleCode != null;
 
     // ── ต้องไม่ปิดเคลม (ของจริงที่เคยพัง) ─────────────────────────────────
     [Fact]
@@ -53,7 +54,8 @@ public class ProhibitedInputVatScopeTests
     public void ค่าน้ำมันรถบรรทุก_เปิดเคลมแต่ยังเตือน()
     {
         var v = ProhibitedInputVatScreener.Screen(
-            "ค่าน้ำมัน รถบรรทุกหกล้อ ทะเบียน 70-1234", "บจก. ขนส่งไทย", new[] { "ค่าน้ำมัน" });
+            "ค่าน้ำมัน รถบรรทุกหกล้อ ทะเบียน 70-1234", "บจก. ขนส่งไทย", new[] { "ค่าน้ำมัน" },
+            isVehicleDealer: false);
         Assert.Null(v.Claimable);          // ไม่ปิดเคลม
         Assert.Equal("RD-82/5(6)", v.RuleCode);   // แต่ยังเตือนให้ยืนยันชนิดรถ
     }

@@ -446,6 +446,8 @@ builder.Services.AddSingleton<Accounting.Services.Implementations.Pdf.IHtmlPdfRe
     Accounting.Services.Implementations.Pdf.PuppeteerHtmlPdfRenderer>();
 builder.Services.AddScoped<IPdfGenerationService, PdfGenerationService>();
 builder.Services.AddScoped<IEtaxInvoiceService, EtaxInvoiceService>();
+// ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวของ ApproveDocumentAsync · POS · Integration · CMS (รอบ 193 · S-02)
+builder.Services.AddScoped<IIssuedDocumentHooks, IssuedDocumentHooks>();
 
 // Phase 1: Dimensional Accounting & Branches
 builder.Services.AddScoped<IDimensionalAccountingService, DimensionalAccountingService>();

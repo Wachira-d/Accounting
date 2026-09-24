@@ -263,15 +263,11 @@ public partial class TaxService : ITaxService
             .ToListAsync())
             .ToHashSet();
 
-        // §82/5(6) — รถยนต์นั่ง ≤ 10 ที่นั่ง + ค่าน้ำมัน/ซ่อม/เช่าซื้อ เคลม
-        // ภาษีซื้อไม่ได้ (ยกเว้นผู้ประกอบกิจการขายรถ/ให้เช่ารถ). โหลด flag
-        // IsVehicleDealer ครั้งเดียว → ถ้าไม่ใช่ vehicle dealer ระบบจะตรวจ
-        // keyword รถ/น้ำมัน บน line description แล้ว mark VAT ต้องห้ามอัตโนมัติ
-        // (เสริม account-level flag — กันเคสที่ผู้ใช้ไม่ได้ตั้งบัญชี nonClaimable).
-        var isVehicleDealer = await _db.Set<CompanySettings>().AsNoTracking()
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-            .Select(c => (bool?)c.IsVehicleDealer)
-            .FirstOrDefaultAsync() ?? false;
+        // §82/5(6) — รายงาน ภ.พ.30 **ไม่เดา**จาก keyword (ตัวตัดอัตโนมัติถูกถอดตามนโยบาย "เคลม/ไม่เคลม
+        // เป็นดุลพินิจผู้กรอก" — ดูหมายเหตุ (c) ในลูปข้างล่าง) ใช้เฉพาะธงรายบรรทัด + ผังต้องห้าม ·
+        // ตัวตัดสินรถ + ธง IsVehicleDealer อยู่ที่ Helpers/InputVatVehicleRule ซึ่งเส้น OCR/ด่านเตือนตอนอนุมัติเรียก ·
+        // (รอบ 193 S-05: เดิมตรงนี้อ่าน IsVehicleDealer แล้วไม่มีใครใช้ — ผลตรวจที่เขียนว่า "TaxService เคารพธง"
+        //  ไม่จริง จึงถอดการอ่านที่ตายทิ้ง ไม่ได้เปลี่ยนตัวเลขในรายงาน)
 
         // CN/DN cross-period side resolution. Previously the CreditNote /
         // DebitNote loop looked up its RelatedDocumentId ONLY in the current

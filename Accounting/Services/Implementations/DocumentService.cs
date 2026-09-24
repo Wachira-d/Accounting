@@ -49,6 +49,9 @@ public partial class DocumentService : IDocumentService
     /// null = ข้ามการขยับสต็อก **พร้อมบันทึกเสียงดังบนตัวเอกสาร** ห้ามเงียบ</summary>
     private readonly IStockLedger? _stock;
 
+    /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — ตัวเดียวกับ POS/Integration/CMS (S-02)</summary>
+    private readonly IIssuedDocumentHooks _issuedHooks;
+
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
@@ -70,8 +73,13 @@ public partial class DocumentService : IDocumentService
         Accounting.Services.Implementations.Inventory.IInventoryCostingService? inventoryCosting = null,
         IPermissionService? permissionService = null,
         IUsageMeteringService? metering = null,
-        IStockLedger? stock = null)
+        IStockLedger? stock = null,
+        IIssuedDocumentHooks? issuedHooks = null)
     {
+        // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวกับ POS/Integration/CMS (S-02) ·
+        // ไม่มี DI (สร้างเองนอก container) → สร้างตัวจริงจากของที่มีอยู่ ห้ามปล่อย null แล้วข้ามเงียบ
+        _issuedHooks = issuedHooks ?? new IssuedDocumentHooks(db, etaxService,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<IssuedDocumentHooks>.Instance);
         _stock = stock;
         _metering = metering;
         _fixedAssets = fixedAssets;
@@ -1350,9 +1358,8 @@ public partial class DocumentService : IDocumentService
 
             // บริษัทไม่จด VAT → เคลมภาษีซื้อไม่ได้ทุกบรรทัด — VAT ที่จ่ายผู้ขาย
             // รวมเป็นต้นทุน/ค่าใช้จ่าย ไม่เข้า 11610/11640 (เช็คครั้งเดียว)
-            var companyVatReg = await _db.CompanySettings.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
+            // ไม่มีแถวค่าตั้ง → ธงบริษัท (เดิม `?? true` = "จด" เสมอ · S-01) — ตัวอ่านตัวเดียว
+            var companyVatReg = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
 
             doc.PricesIncludeVat = request.PricesIncludeVat;
             // ต้องเป็นของบริษัทนี้เท่านั้น + Guid.Empty = ไม่เลือก (normalize ที่นี่
@@ -2386,9 +2393,7 @@ public partial class DocumentService : IDocumentService
                     .ToDictionaryAsync(a => a.Id);
             var accountFlags = updAccountMeta.ToDictionary(kv => kv.Key, kv => kv.Value.InputVatClaimable);
 
-            var companyVatReg = await _db.CompanySettings.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => (bool?)c.VatRegistered).FirstOrDefaultAsync() ?? true;
+            var companyVatReg = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
 
             // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata เหมือนตอน create.
             // request ไม่ส่งค่ามา (null) = คงค่าเดิมของเอกสาร
@@ -4766,14 +4771,11 @@ public partial class DocumentService : IDocumentService
 
         // ===== §90/2 — บริษัทไม่จดทะเบียน VAT ห้ามออกใบกำกับภาษี/เรียกเก็บ =====
         // VAT ขาย (hard block — เดิมเป็นแค่ warning กด acknowledge ผ่านได้).
-        // default VatRegistered=true → บริษัทที่ไม่เคยตั้งค่าไม่กระทบ; block
-        // เฉพาะที่ติ๊ก "ไม่จด" ชัดเจนในหน้าตั้งค่า. CN/DN ฝั่งซื้อ (supplier
-        // ออกให้เรา — related doc เป็น PI/Expense/GRN) ไม่ใช่การออกใบกำกับ
+        // สถานะจาก CompanyVatStatus ตัวเดียว: มีแถวค่าตั้ง = ธงค่าตั้ง (เดิม) · ไม่มีแถว = ธงบริษัท
+        // (เดิม `?? true` ⇒ บริษัทที่สร้างโดยไม่ติ๊ก "จด VAT" แต่ยังไม่มีแถวค่าตั้ง ผ่านด่านนี้ได้ · S-01).
+        // CN/DN ฝั่งซื้อ (supplier ออกให้เรา — related doc เป็น PI/Expense/GRN) ไม่ใช่การออกใบกำกับ
         // ของเรา → ไม่ block.
-        var companyVatRegistered = await _db.CompanySettings.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-            .Select(c => (bool?)c.VatRegistered)
-            .FirstOrDefaultAsync() ?? true;
+        var companyVatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
         if (!companyVatRegistered)
         {
             var purchaseSideCnDn = false;
@@ -5472,9 +5474,11 @@ public partial class DocumentService : IDocumentService
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so
         // an e-Tax failure (cert not configured, RD API down, etc.) doesn't
-        // roll back the approval. Failures are logged; the user can still
+        // roll back the approval. Failures are stamped on the document
+        // ([ETAX-AUTO-FAILED] in InternalNotes) + logged; the user can still
         // generate the e-Tax manually from the detail modal.
-        await TryAutoGenerateEtaxAsync(companyId, doc);
+        // จุดเดียวกับ POS/Integration/CMS — IssuedDocumentHooks (รอบ 193 · S-02)
+        await _issuedHooks.RunAsync(companyId, doc);
 
         // LINE notification (best-effort) — keeps the legacy broadcast room
         // hook for companies wired to a single LINE Notify channel.
@@ -5592,60 +5596,6 @@ public partial class DocumentService : IDocumentService
         }
 
         return approved;
-    }
-
-    /// <summary>
-    /// Auto-generate the e-Tax invoice record for eligible doc types when the
-    /// company has e-Tax enabled. Only runs after the document has reached
-    /// Approved status. Silently skips if the company isn't VAT-registered
-    /// (TaxId missing), the contact's TaxId is missing, or e-Tax is disabled.
-    /// </summary>
-    private async Task TryAutoGenerateEtaxAsync(Guid companyId, Document doc)
-    {
-        var eligibleTypes = new[] {
-            DocumentType.TaxInvoice, DocumentType.Receipt,
-            DocumentType.DebitNote, DocumentType.CreditNote
-        };
-        if (!eligibleTypes.Contains(doc.DocumentType)) return;
-
-        try
-        {
-            var settings = await _db.CompanySettings
-                .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.CompanyId == companyId);
-            if (settings?.EtaxEnabled != true) return;
-
-            // Skip if a (non-Error) e-Tax already exists — GenerateAsync will
-            // throw "เอกสารนี้มี e-Tax Invoice แล้ว" and we'd rather no-op silently.
-            var alreadyExists = await _db.EtaxInvoices
-                .AnyAsync(e => e.DocumentId == doc.Id && e.CompanyId == companyId
-                            && e.Status != EtaxStatus.Error);
-            if (alreadyExists) return;
-
-            await _etaxService.GenerateAsync(companyId,
-                new GenerateEtaxRequest(doc.Id, SignDigitally: settings.EtaxAutoSign));
-        }
-        catch (Exception ex)
-        {
-            // การอนุมัติสำเร็จไปแล้ว จึงไม่ throw (ล้มทั้งรายการ = ทิ้งข้อมูลผู้ใช้)
-            // — แต่ **ห้ามเงียบ**: log ของเซิร์ฟเวอร์ไม่ใช่ช่องทางแจ้งผู้ใช้
-            //
-            // ⚠️ ที่มา (ผลตรวจทีม B · SYSTEM_AUDIT_2026-09-07.md B-09): เดิมมีแค่
-            // `LogWarning` ⇒ บริษัทที่เปิด `EtaxAutoSign`/`EtaxAutoSubmit` ไว้เชื่อว่า
-            // ทุกใบที่อนุมัติถูกออก e-Tax ให้อัตโนมัติ แต่ใบที่ล้ม (เลขผู้เสียภาษี
-            // ผู้ซื้อไม่ครบ · ที่อยู่บริษัทไม่ครบ · ยังไม่ได้ตั้งค่า RD API) เงียบ
-            // สนิท ⇒ ไม่ถูกนำส่งภายในวันที่ 15 และไม่มีใครรู้จนสรรพากรทวง
-            //
-            // ดังใน 2 ที่ที่ผู้ใช้เปิดดูจริง: หมายเหตุภายในบนตัวเอกสาร + log
-            // (ห้ามใช้ `Notes` — PdfGenerationService พิมพ์ลงกระดาษที่ส่งให้ลูกค้า)
-            AppendInternalNote(doc,
-                $"[ETAX-AUTO-FAILED] ออก e-Tax อัตโนมัติไม่สำเร็จ: {ex.Message} — "
-                + "กด “สร้าง e-Tax” ที่หน้ารายละเอียดเอกสารเพื่อลองใหม่ "
-                + "(เอกสารนี้ยังไม่ถูกนำส่งกรมสรรพากร)");
-            _logger.LogWarning(ex,
-                "Auto e-Tax generation failed for document {DocId} ({DocNumber})",
-                doc.Id, doc.DocumentNumber);
-        }
     }
 
     /// <summary>เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่ approved แล้ว
@@ -9318,13 +9268,10 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync() ?? Models.Enums.WhtRecognitionBasis.Cash)
         == Models.Enums.WhtRecognitionBasis.Cash;
 
-    /// <summary>บริษัทนี้จดทะเบียน VAT อยู่หรือไม่ — ไม่เคยตั้งค่า = ถือว่าจด
-    /// (บริษัทเดิมที่ยังไม่ได้แตะหน้าตั้งค่าจะไม่ถูกบล็อกโดยไม่รู้ตัว)</summary>
-    private async Task<bool> IsCompanyVatRegisteredAsync(Guid companyId) =>
-        await _db.CompanySettings.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-            .Select(c => (bool?)c.VatRegistered)
-            .FirstOrDefaultAsync() ?? true;
+    /// <summary>บริษัทนี้จดทะเบียน VAT อยู่หรือไม่ — <see cref="Accounting.Helpers.CompanyVatStatus"/> ตัวเดียว
+    /// (ไม่มีแถวค่าตั้ง = ธงบริษัท · เดิม "ถือว่าจด" เสมอ — S-01)</summary>
+    private Task<bool> IsCompanyVatRegisteredAsync(Guid companyId) =>
+        Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
 
     /// <summary>รายการชนิดปลายทางที่แปลงได้ **จริง** สำหรับบริษัทนี้ — กรองชนิดที่
     /// ติดข้อจำกัดระดับบริษัทออก (ตอนนี้: ใบกำกับภาษีเมื่อยังไม่จด VAT §90/2)
@@ -16765,8 +16712,14 @@ public partial class DocumentService : IDocumentService
             && doc.VatAmount > 0.005m
             && doc.Lines.Any(l => l.IsVatClaimable))
         {
+            // ธงผู้ประกอบกิจการขาย/ให้เช่ารถ (ข้อยกเว้น §82/5(6)) เข้าตัวตัดสินตัวเดียวกับเส้น OCR —
+            // เดิมมีด่านรถชุดที่สองท้ายเมธอดนี้ (ลิสต์คำคนละชุด) ที่อ่านธงนี้อยู่ตัวเดียว (รอบ 193 · S-05)
+            var isVehicleDealer = await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+                .Select(s => (bool?)s.IsVehicleDealer)
+                .FirstOrDefaultAsync() ?? false;
             var verdict = Ocr.ProhibitedInputVatScreener.Screen(
-                null, doc.Contact?.Name, doc.Lines.Select(l => l.Description));
+                null, doc.Contact?.Name, doc.Lines.Select(l => l.Description), isVehicleDealer);
             if (!string.IsNullOrEmpty(verdict.Warning))
             {
                 var head = verdict.Claimable == false
@@ -17041,10 +16994,7 @@ public partial class DocumentService : IDocumentService
         if (doc.DocumentType is DocumentType.TaxInvoice or DocumentType.DebitNote or DocumentType.CreditNote
             && doc.VatAmount > 0)
         {
-            var vatRegistered = await _db.Set<CompanySettings>().AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => (bool?)c.VatRegistered)
-                .FirstOrDefaultAsync() ?? true;
+            var vatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
             if (!vatRegistered)
                 warnings.Add("⚠️ บริษัทยังไม่ได้จดทะเบียน VAT แต่กำลังออกใบกำกับภาษีที่มี VAT — " +
                     "ผู้ไม่จด VAT ห้ามออกใบกำกับ (§90/2) และต้องนำส่ง VAT ที่เรียกเก็บ. " +
@@ -17170,40 +17120,9 @@ public partial class DocumentService : IDocumentService
             }
         }
 
-        // §82/5(6) — รถยนต์นั่ง ≤10 ที่นั่ง: VAT ค่าน้ำมัน/ซ่อม/เช่าซื้อ
-        // เคลมไม่ได้ (ยกเว้นบริษัทเป็น vehicle dealer). detect จาก keyword
-        // ใน description ไม่ใช่แค่ผัง — vendor อาจไม่ตั้งผังแยก.
-        // override: ถ้า CompanySettings.IsVehicleDealer=true → ข้าม warning
-        // (บริษัทขายรถ/อู่ — รถเป็น inventory เคลมได้ตามปกติ)
-        var isVehicleDealer = await _db.CompanySettings.AsNoTracking()
-            .Where(s => s.CompanyId == companyId)
-            .Select(s => (bool?)s.IsVehicleDealer)
-            .FirstOrDefaultAsync() ?? false;
-        if (!isVehicleDealer && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
-            or DocumentType.PaymentVoucher)
-        {
-            var vehicleKw = new[] { "น้ำมัน", "เบนซิน", "ดีเซล", "ค่าซ่อม", "อะไหล่",
-                "ค่าเช่ารถ", "ค่าน้ำมันรถ", "fuel", "gasoline", "diesel" };
-            // ระบุชัดว่าเป็นรถบรรทุก/กระบะ/เครื่องจักร → เคลมได้แน่นอน ไม่ต้องเตือน
-            var truckKw = new[] { "กระบะ", "บรรทุก", "หกล้อ", "สิบล้อ", "แม็คโคร",
-                "แมคโคร", "แบคโฮ", "แบ็คโฮ", "รถขุด", "รถตัก", "รถไถ", "โฟล์คลิฟ",
-                "forklift", "เครน", "truck", "pickup", "รถตู้" };
-            foreach (var line in doc.Lines ?? new List<DocumentLine>())
-            {
-                var d = (line.Description ?? "").ToLowerInvariant();
-                if (line.IsVatClaimable
-                    && line.VatAmount > 0
-                    && vehicleKw.Any(k => d.Contains(k.ToLowerInvariant()))
-                    && !truckKw.Any(k => d.Contains(k.ToLowerInvariant())))
-                {
-                    warnings.Add($"§82/5(6): '{line.Description}' — เคลมภาษีซื้อ {line.VatAmount:N2} ได้เฉพาะเมื่อ"
-                        + "เป็นรถที่ไม่ใช่ \"รถยนต์นั่ง\": รถกระบะตอนเดียว/แค็บ, รถบรรทุก, รถตู้เกิน 10 ที่นั่ง, เครื่องจักร → เคลมได้. "
-                        + "รถเก๋ง/กระบะ 4 ประตู (จัดเป็นรถยนต์นั่งตามพิกัดสรรพสามิต) → เคลมไม่ได้ ให้ติ๊กออก '✓ เคลม VAT' ที่บรรทัดนี้. "
-                        + "แนะนำระบุชนิดรถในรายละเอียด เช่น \"ค่าน้ำมันรถกระบะทะเบียน...\" เพื่อเป็นหลักฐานตอนสรรพากรตรวจ");
-                    break;
-                }
-            }
-        }
+        // (§82/5(6) ด่านรถชุดที่สองที่เคยอยู่ตรงนี้ — ลิสต์คำของตัวเอง "น้ำมัน"/"ค่าซ่อม"/"fuel" เดี่ยว ๆ ⇒ เตือน
+        //  ค่าซ่อมแอร์/น้ำมันพืช/fuel surcharge — ถูกรวมเข้าด่าน §82/5(4)(6) ข้างบนแล้ว ซึ่งใช้ลิสต์ชุดเดียว
+        //  Helpers/InputVatVehicleRule + ธง IsVehicleDealer · รอบ 193 S-05)
 
         // Expense ที่มี VAT แต่ไม่ติ๊ก "ใช้งานใบกำกับภาษี" (HasTaxInvoiceReference
         // =false): §86/4 ไม่ครบ → เคลม VAT ไม่ได้ เตือนผู้ใช้ก่อน approve

@@ -1282,9 +1282,15 @@ public class OcrService : IOcrService
                 // ⇒ ยื่น ภ.พ.30 เกินสิทธิ์เงียบ ๆ (ผู้ใช้รายงาน)
                 if (role.OurRole == "Buyer" && docVat > 0)
                 {
+                    // ธงผู้ประกอบกิจการขาย/ให้เช่ารถ (ข้อยกเว้น §82/5(6)) — เดิมเส้นนี้ไม่รู้จัก ⇒ อู่/ผู้ขายรถ
+                    // ที่เปิดธงแล้วถูกตั้ง "ไม่เคลม" ทุกใบ แล้วผู้ใช้กด "ยืนยัน" ⇒ ภาษีซื้อหาย (รอบ 193 · S-05)
+                    var isVehicleDealer = await _db.CompanySettings.AsNoTracking()
+                        .Where(s => s.CompanyId == companyId && !s.IsDeleted)
+                        .Select(s => (bool?)s.IsVehicleDealer)
+                        .FirstOrDefaultAsync() ?? false;
                     var prohibited = ProhibitedInputVatScreener.Screen(
                         normalizedText, extractedData.VendorName,
-                        extractedData.Items.Select(i => i.Description));
+                        extractedData.Items.Select(i => i.Description), isVehicleDealer);
                     if (!string.IsNullOrEmpty(prohibited.Warning))
                     {
                         // Claimable=false → ใช้ prefix [VAT-CLAIM] ตัวเดียวกับ
