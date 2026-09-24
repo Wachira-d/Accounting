@@ -315,7 +315,10 @@ public static class DocumentZoneAnalyzer
 
         // --- Date: prefer header zone ---
         var dateResult = FieldExtractor.ExtractField(FieldType.Date, ctx, ZoneType.Header);
-        if (dateResult.Best != null && DateTime.TryParse(dateResult.Best.NormalizedValue, out var d))
+        // ตัวแปลงกลาง (ไม่ขึ้นกับ culture ของ process) — เดิม DateTime.TryParse เปล่า ๆ
+        // ⇒ th-TH อ่าน ISO เป็นปฏิทินพุทธ (T2-19 · รอบ 190 ข้อ 11)
+        if (dateResult.Best != null
+            && Accounting.Helpers.ThaiDate.TryParseFlexible(dateResult.Best.NormalizedValue, out var d))
             result.DocumentDate = d;
 
         // Amounts: use context-keyword scanning to distinguish subtotal/vat/total

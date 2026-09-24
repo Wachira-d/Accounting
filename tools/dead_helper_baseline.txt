@@ -29,7 +29,6 @@ OcrDuplicateScanRule.cs WithinWindow
 OcrEntryModeAdvisor.cs IndustryLabel
 OcrPartyLabels.cs FindBuyer
 OcrPartyLabels.cs FindSeller
-OcrPartyResolver.cs AddressLooksLikeOurs
 OcrPartyResolver.cs OurTaxIdNearMissOnPaper
 OcrPartyResolver.cs OurTaxIdOnPaper
 OcrPredecessorMatcher.cs LineOverlap
