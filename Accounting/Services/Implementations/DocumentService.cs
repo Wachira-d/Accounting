@@ -1327,6 +1327,10 @@ public partial class DocumentService : IDocumentService
                         "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่างเมื่อจ่ายเต็มตามยอดเอกสาร",
                         Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
                 doc.ActualPaidAmount = createActualPaid == 0m ? null : createActualPaid;
+                if (doc.ActualPaidAmount is decimal
+                    && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                        doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.RelatedDocumentId.HasValue) is string createNa)
+                    throw new Accounting.Helpers.BusinessRuleException(createNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
             }
             if (request.RoundingAdjustment is decimal createRounding && createRounding != 0m)
             {
@@ -1526,7 +1530,9 @@ public partial class DocumentService : IDocumentService
             {
                 try
                 {
-                    await ApproveDocumentAsync(companyId, doc.Id, createdBy, acknowledgeWarnings: true);
+                    // ระบบอนุมัติอัตโนมัติ — ไม่มีคนเห็นคำเตือน (รอบ 193 ฝ่ายค้าน C5: ห้ามประทับว่าผู้ใช้รับทราบ)
+                    await ApproveDocumentAsync(companyId, doc.Id, createdBy,
+                        Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 }
                 catch (Exception ex)
                 {
@@ -2389,6 +2395,10 @@ public partial class DocumentService : IDocumentService
                     "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่าง/0 เมื่อจ่ายเต็มตามยอดเอกสาร",
                     Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
             doc.ActualPaidAmount = updActualPaid == 0m ? null : updActualPaid;
+            if (doc.ActualPaidAmount is decimal
+                && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                    doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.RelatedDocumentId.HasValue) is string updNa)
+                throw new Accounting.Helpers.BusinessRuleException(updNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         }
         // ผลต่างปัดเศษ: null = ไม่แตะ (ค่าเดิมยังอยู่) · สัญญา SubTotal = Σ บรรทัด + ค่านี้ (Helpers/DocumentRounding)
         var roundingBefore = doc.RoundingAdjustment;
@@ -4659,8 +4669,33 @@ public partial class DocumentService : IDocumentService
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
         => ApproveDocumentAsync(companyId, documentId, approvedBy, acknowledgeWarnings: false);
 
-    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
+    public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
+        => ApproveDocumentAsync(companyId, documentId, approvedBy,
+            acknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User : Accounting.Helpers.ApprovalAckSource.None,
+            withAiHints: true);
+
+    /// <summary>คำเตือนก่อนอนุมัติของเอกสาร <b>โดยไม่อนุมัติ ไม่บันทึก ไม่เรียก AI</b> — ให้ทางเข้าที่มีหน้าจอของตัวเอง
+    /// (workflow เว็บ · มือถือ · API) ถามก่อนแล้วค่อยตัดสินว่าจะหยุดให้คนรับทราบ (รอบ 193 ฝ่ายค้าน C5/C6)</summary>
+    public async Task<IReadOnlyList<string>> PreviewApprovalWarningsAsync(Guid companyId, Guid documentId)
     {
+        var doc = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
+        return await CollectApprovalWarningsAsync(companyId, doc);
+    }
+
+    /// <param name="ackSource">ใคร "ผ่าน" คำเตือน — ตัวตัดสิน Helpers/ApprovalAcknowledgement (ห้ามระบบประทับรับทราบแทนคน)</param>
+    /// <param name="withAiHints">เสริมคำเตือนด้วย AI ตอนหยุด — false สำหรับทางเข้าที่ไม่มีหน้าจอแสดงคำแนะนำ (API) ⇒ ไม่เรียก AI
+    /// แล้วโยนคำตอบทิ้ง (กฎเหล็ก #1)</param>
+    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints)
+    {
+        // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
+        // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
+        var acknowledgeWarnings = ackSource is Accounting.Helpers.ApprovalAckSource.User
+            or Accounting.Helpers.ApprovalAckSource.SystemWorkflow;
         var doc = await _db.Documents
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -4699,15 +4734,17 @@ public partial class DocumentService : IDocumentService
         // typed exception the controller turns into a 422 with the list
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
-        if (warnings.Count > 0 && !acknowledgeWarnings)
+        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings);
+        if (unacknowledged.Count > 0)
         {
+            warnings = unacknowledged.ToList();
             // Enrich each warning with an AI-suggested fix when augmenter
             // is wired AND online. Done in parallel with a short overall
             // budget (8s) so the approval dialog isn't laggy. Each call
             // falls back to local on its own — overall request still
             // throws the 422 regardless of whether AI ran.
             IReadOnlyList<DocumentApprovalAiHint>? hints = null;
-            if (_aiAugmenter != null && warnings.Count > 0)
+            if (withAiHints && _aiAugmenter != null && warnings.Count > 0)
             {
                 try
                 {
@@ -4757,15 +4794,13 @@ public partial class DocumentService : IDocumentService
         // §86 แต่ยืนยัน" หน้าตาเหมือนใบที่ไม่เคยมีคำเตือนเลย ⇒ ผู้สอบบัญชี/
         // สรรพากรถามว่า "ทำไมออกใบแจ้งหนี้ทั้งที่มีสินค้า" แล้วไม่มีอะไรตอบได้
         // ต้องดังทั้งบน **ตัวเอกสาร** (ผู้ใช้เปิดดูเห็น) และใน **audit** (hash chain)
-        if (warnings.Count > 0 && acknowledgeWarnings)
+        if (warnings.Count > 0)
         {
             // ⚠️ ต้องลง **InternalNotes** ไม่ใช่ Notes — Notes ถูกพิมพ์ลงกระดาษ
             // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
             // โผล่บนใบที่ส่งให้ลูกค้า
-            var ackNote = "— รับทราบคำเตือนตอนอนุมัติ —\n"
-                + string.Join("\n", warnings.Select(w => "• " + w))
-                + $"\n(ยืนยันโดย {approvedBy} เมื่อ "
-                + $"{DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น. เวลาไทย)";
+            // รอบ 193 (ฝ่ายค้าน C5): ข้อความ/รหัสกฎแยก "ผู้ใช้รับทราบ" ออกจาก "ระบบ workflow/API ส่งผ่าน" — Helpers/ApprovalAcknowledgement
+            var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
             AppendInternalNote(doc, ackNote);
 
             _db.AuditLogs.Add(new AuditLog
@@ -4781,7 +4816,9 @@ public partial class DocumentService : IDocumentService
                     documentType = doc.DocumentType.ToString(),
                     warnings,
                     by = approvedBy,
-                    ruleCode = "APPROVE-ACK-WARNINGS",
+                    acknowledgedByPerson = Accounting.Helpers.ApprovalAcknowledgement.AcknowledgedByPerson(ackSource),
+                    ackSource = ackSource.ToString(),
+                    ruleCode = Accounting.Helpers.ApprovalAcknowledgement.RuleCode(ackSource),
                     legalReference = "RD-86 / RD-82/5(1)",
                 }),
             });
@@ -9680,7 +9717,10 @@ public partial class DocumentService : IDocumentService
                 : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
-            RelatedDocumentId: source.Id), createdBy,
+            RelatedDocumentId: source.Id,
+            // รอบ 193 (ฝ่ายค้าน C2): ผลต่างปัดเศษตามไปเมื่อยกทุกบรรทัดครบจำนวน — ไม่งั้น 5,024.00 → 5,024.01
+            RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(source.RoundingAdjustment,
+                spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity))), createdBy,
             isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
@@ -9857,7 +9897,8 @@ public partial class DocumentService : IDocumentService
         // ไม่มีทางรู้. ผู้เรียกต้องเช็คสิทธิ์อนุมัติมาก่อน (ดู controller)
         try
         {
-            await ApproveDocumentAsync(companyId, created.Id, actor, acknowledgeWarnings: true);
+            await ApproveDocumentAsync(companyId, created.Id, actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
         }
         catch (Exception ex) when (ex is not KeyNotFoundException)
         {
@@ -11010,9 +11051,13 @@ public partial class DocumentService : IDocumentService
 
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
-        // Validate Amount > 0
-        if (request.Amount <= 0)
-            throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+        // Validate Amount > 0 — ยกเว้น "ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว" (ฝ่ายค้าน C9 รอบ 193): ชำระ 438 ผ่าน integration/
+        // นำเข้าไฟล์ (ทางเข้าที่ไม่รู้จักบรรทัดปรับ) แล้วหนี้ค้าง 98 ⇒ ต้องปิดด้วยคูปอง −98 ได้โดยไม่ต้อง void การชำระเดิม
+        // (Amount = 0 + บรรทัดปรับ · PaymentSettlementAdjustment.Check ยังบังคับ "ยอดที่ปิด > 0 และไม่เกินยอดค้าง")
+        var closesByAdjustmentOnly = request.Amount == 0m && request.SettlementAdjustments is { Count: > 0 };
+        if (request.Amount < 0 || (request.Amount == 0 && !closesByAdjustmentOnly))
+            throw new InvalidOperationException(
+                "จำนวนเงินชำระต้องมากกว่า 0 — ถ้าต้องการปิดยอดค้างด้วยส่วนลด/คูปองโดยไม่มีเงินออก ให้ใส่บรรทัดปรับส่วนต่าง (จำนวนเงิน 0)");
 
         // Validate PaymentDate is not in the future
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
@@ -15280,8 +15325,15 @@ public partial class DocumentService : IDocumentService
         // ใบกำกับ (ยอดเอกสาร) 536 · จ่ายจริง 438 ⇒ ขาเงินสดข้างบนลง 536 แล้ว ⇒ Dr เงินสดกลับ 98 · ส่วนต่างต้องถูกอธิบายด้วย
         // adjusting lines (ค่าส่ง Dr 51120 +37 · คูปอง Cr 51150 −135) — ตัวตัดสิน Helpers/PaymentSettlementAdjustment
         // ส่วนต่าง 0 (ไม่ได้ระบุยอดชำระจริง/ชนิดอื่น) = กติกาเดิม "adjusting lines ต้อง net-zero" ทุกประการ
+        // ฝ่ายค้าน C1: ใบสำคัญจ่ายที่แปลงมาจากใบตั้งหนี้ (RelatedDocumentId · PaymentType=Credit ค่าเริ่มต้นของเส้นแปลง)
+        // ลงเงินสดเสมอ ⇒ ต้องนับเป็น "จ่ายในตัว" · ช่องที่ใช้ไม่ได้กับเอกสารนี้ = บอกผู้ใช้ ไม่ข้ามเงียบ
+        var settlesSource = doc.RelatedDocumentId.HasValue;
+        if (doc.ActualPaidAmount is decimal
+            && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource) is string actualPaidNa)
+            throw new Accounting.Helpers.BusinessRuleException(actualPaidNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         var settlementCashDelta = Accounting.Helpers.PaymentSettlementAdjustment.DocumentCashDelta(
-            doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.TotalAmount, doc.ActualPaidAmount);
+            doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource, doc.TotalAmount, doc.ActualPaidAmount);
         if (adjustingLines.Count == 0 && settlementCashDelta != 0m
             && Accounting.Helpers.PaymentSettlementAdjustment.CheckDocumentLines(
                 settlementCashDelta, 0m, 0m, doc.TotalAmount, doc.ActualPaidAmount) is string noAdjMsg)
@@ -15757,7 +15809,9 @@ public partial class DocumentService : IDocumentService
                 var apClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + payment.SettlementAdjustmentAmount;
                 pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
             }
-            pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // เงินออก 0 (ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว — ฝ่ายค้าน C9) ⇒ ไม่มีขาเงินสด
+            if (thbCash != 0m)
+                pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             // รอบ 193: บรรทัดปรับส่วนต่าง — บวก = Dr (ค่าส่งที่จ่ายเพิ่ม 51120) · ลบ = Cr (คูปอง/ส่วนลดลดต้นทุน 51150)
             foreach (var adj in settlementAdjustments ?? Array.Empty<(Guid AccountId, decimal Amount, string? Reason)>())
             {

@@ -52,7 +52,7 @@ public class PaymentSettlementAdjustmentTests
     public void Shopee_ใบสำคัญจ่ายจ่ายในตัว_ขาเงินสดลดลง98_บรรทัดปรับอธิบายได้พอดี_JEสมดุล()
     {
         var delta = PaymentSettlementAdjustment.DocumentCashDelta(
-            DocumentType.PaymentVoucher, PaymentType.Cash, isForeignService: false, 536.00m, 438.00m);
+            DocumentType.PaymentVoucher, PaymentType.Cash, isForeignService: false, settlesSourceDocument: false, 536.00m, 438.00m);
         Assert.Equal(98.00m, delta);
         Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(delta, 37.00m, 135.00m, 536.00m, 438.00m));
 
@@ -141,18 +141,75 @@ public class PaymentSettlementAdjustmentTests
     }
 
     [Theory]
-    [InlineData(DocumentType.PaymentVoucher, PaymentType.Credit, false)]   // PV เงินเชื่อ (legacy) ลงเจ้าหนี้ ไม่ใช่เงินสด
+    [InlineData(DocumentType.PaymentVoucher, PaymentType.Credit, false)]   // PV เงินเชื่อเดี่ยว (legacy · ไม่มีใบต้นทาง) ลงเจ้าหนี้ ไม่ใช่เงินสด
     [InlineData(DocumentType.PurchaseInvoice, null, false)]                  // ตั้งหนี้ — ส่วนต่างอยู่ที่การชำระ
     [InlineData(DocumentType.Expense, PaymentType.Credit, false)]
     [InlineData(DocumentType.PaymentVoucher, PaymentType.Cash, true)]        // ภ.พ.36 ขาเงินสดเป็นฐานเท่านั้น
     public void เอกสารที่ไม่จ่ายเงินในตัว_ส่วนต่างขาเงินสดเป็นศูนย์(DocumentType type, PaymentType? pt, bool foreign)
-        => Assert.Equal(0m, PaymentSettlementAdjustment.DocumentCashDelta(type, pt, foreign, 536.00m, 438.00m));
+        => Assert.Equal(0m, PaymentSettlementAdjustment.DocumentCashDelta(type, pt, foreign, settlesSourceDocument: false, 536.00m, 438.00m));
+
+    // ── ฝ่ายค้าน C1 รอบ 193 ──────────────────────────────────────────────────
+    // ใบสำคัญจ่ายที่แปลงจากใบตั้งหนี้ (RelatedDocumentId) ได้ PaymentType=Credit เป็นค่าเริ่มต้น แต่ JE สาขา settlement ลงเงินสด
+    // เสมอ ⇒ ต้องนับเป็น "จ่ายในตัว" — เดิมตอบ false ⇒ ยอดชำระจริง 438 ถูกข้ามเงียบ JE ลงเงินสด 536 (เทสต์เดิมล็อกสมมติฐานผิดไว้)
+
+    [Fact]
+    public void ใบสำคัญจ่ายที่แปลงจากใบตั้งหนี้_แม้เป็นCredit_ลงเงินสดจริง_ส่วนต่าง98()
+    {
+        Assert.True(PaymentSettlementAdjustment.PostsCashAtApproval(
+            DocumentType.PaymentVoucher, PaymentType.Credit, isForeignService: false, settlesSourceDocument: true));
+        var delta = PaymentSettlementAdjustment.DocumentCashDelta(
+            DocumentType.PaymentVoucher, PaymentType.Credit, false, settlesSourceDocument: true, 536.00m, 438.00m);
+        Assert.Equal(98.00m, delta);
+        // บรรทัดปรับ Dr 51120 37 / Cr 51150 135 ตามคำแนะนำ ⇒ ลงตัว (เดิมได้ "Adjusting JE Lines ไม่ balance")
+        Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(delta, 37.00m, 135.00m, 536.00m, 438.00m));
+        // JE settlement: Dr เจ้าหนี้ 536 · Cr เงินสด 536 + Dr เงินสด 98 (ส่วนต่าง) + Dr 51120 37 · Cr 51150 135 ⇒ เงินสดสุทธิ 438
+        var (backDr, backCr) = PaymentSettlementAdjustment.JournalSide(delta);
+        Assert.Equal(536.00m + backDr + 37.00m, 536.00m + backCr + 135.00m);
+        Assert.Null(PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+            DocumentType.PaymentVoucher, PaymentType.Credit, false, settlesSourceDocument: true));
+    }
+
+    [Theory]
+    [InlineData(DocumentType.PaymentVoucher, PaymentType.Credit, false)]   // PV เงินเชื่อเดี่ยว — ไม่มีเงินออกตอนอนุมัติ
+    [InlineData(DocumentType.PaymentVoucher, PaymentType.Cash, true)]      // ภ.พ.36
+    [InlineData(DocumentType.TaxInvoice, null, false)]                     // ฝั่งขาย
+    public void ช่องยอดชำระจริงที่ไม่มีผล_บอกผู้ใช้พร้อมทางไปต่อ_ไม่ข้ามเงียบ(DocumentType type, PaymentType? pt, bool foreign)
+    {
+        var why = PaymentSettlementAdjustment.ActualPaidNotApplicableReason(type, pt, foreign, settlesSourceDocument: false);
+        Assert.NotNull(why);
+        Assert.Contains("ยอดชำระจริง", why);
+        Assert.Contains("ล้างช่อง", why);
+    }
+
+    [Theory]
+    [InlineData(DocumentType.PurchaseInvoice, null)]    // ใช้เติมหน้าบันทึกการชำระ
+    [InlineData(DocumentType.Expense, PaymentType.Credit)]
+    [InlineData(DocumentType.PaymentVoucher, PaymentType.Cash)]
+    public void ช่องยอดชำระจริงที่มีผล_ไม่ถูกปฏิเสธ(DocumentType type, PaymentType? pt)
+        => Assert.Null(PaymentSettlementAdjustment.ActualPaidNotApplicableReason(type, pt, false, settlesSourceDocument: false));
+
+    [Fact]
+    public void ค่าเผื่อตัวเดียวกับด่านสมดุลของเอกสาร()
+        => Assert.Equal(DocumentSettlementState.Tolerance, PaymentSettlementAdjustment.MatchTolerance);
+
+    [Fact]
+    public void ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว_เงินศูนย์_ผ่าน_และไม่เกินยอดค้าง()
+    {
+        // ฝ่ายค้าน C9: ชำระ 438 ผ่านทางอื่นแล้ว หนี้ค้าง 98 ⇒ ปิดด้วยคูปอง −98 โดยไม่มีเงินออก
+        var ok = PaymentSettlementAdjustment.Check(0m, 98.00m, new[] { new SettlementAdjustmentLine("51150", -98.00m, "คูปอง") });
+        Assert.True(ok.Ok);
+        Assert.Equal(98.00m, ok.SettledAmount);
+        Assert.Equal(98.00m, ok.AdjustmentNet);
+        // ทิศตรงข้าม: ปิดเกินยอดค้าง / ไม่ได้ปิดอะไรเลย ⇒ ปฏิเสธ
+        Assert.False(PaymentSettlementAdjustment.Check(0m, 98.00m, new[] { new SettlementAdjustmentLine("51150", -135.00m, null) }).Ok);
+        Assert.False(PaymentSettlementAdjustment.Check(0m, 98.00m, new[] { new SettlementAdjustmentLine("51120", 37.00m, null) }).Ok);
+    }
 
     [Fact]
     public void ไม่ได้ระบุยอดชำระจริง_ส่วนต่างศูนย์_adjustingต้องnetzeroตามเดิม()
     {
         Assert.Equal(0m, PaymentSettlementAdjustment.DocumentCashDelta(
-            DocumentType.PaymentVoucher, PaymentType.Cash, false, 536.00m, null));
+            DocumentType.PaymentVoucher, PaymentType.Cash, false, false, 536.00m, null));
         Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(0m, 50.00m, 50.00m, 536.00m, null));
         var legacy = PaymentSettlementAdjustment.CheckDocumentLines(0m, 50.00m, 40.00m, 536.00m, null);
         Assert.NotNull(legacy);

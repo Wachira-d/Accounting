@@ -87,6 +87,32 @@ public class OcrSettlementProposalTests
         Assert.True(OcrPostingReadiness.Evaluate(settled, true).CanAutoApprove);
     }
 
+    [Fact]
+    public void ใบตั้งหนี้_ส่วนต่างรอลงตอนชำระ_อนุมัติเองได้_ทั้งมีและไม่มีข้อเสนอ()
+    {
+        // ฝ่ายค้าน C8: เดิมใบตั้งหนี้ไม่มีใครเขียนแท็กปลด ⇒ [PAY≠TOTAL] หยุดการอนุมัติเองตลอดไป (ชำระก่อนอนุมัติไม่ได้)
+        var plan = OcrSettlementProposal.FromDecomposition(ShopeeShape(OcrPaperSamples.UptoyouShopee), 536.00m)!;
+        var pay = "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00 · ยอดที่ชำระจริง 438.00";
+        var withPlan = OcrSettlementProposal.DeferredNote(plan, 536.00m);
+        Assert.StartsWith(OcrSettlementProposal.DeferredTag, withPlan);
+        Assert.Contains("51120 +37.00", withPlan);
+        Assert.True(OcrPostingReadiness.Evaluate(pay + "\n" + withPlan, true).CanAutoApprove);
+
+        var noPlan = OcrSettlementProposal.DeferredNote(null, 536.00m);
+        Assert.Contains("ใส่บรรทัดปรับเอง", noPlan);
+        Assert.True(OcrPostingReadiness.Evaluate(pay + "\n" + noPlan, true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void ข้อเสนอที่ต่างยอดเกินค่าเผื่อกลาง_ไม่ใช่ข้อเสนอ()
+    {
+        // ฝ่ายค้าน P3: ค่าเผื่อตัวเดียวกับ AutoPost (0.005) — เดิม 0.02 ⇒ ข้อเสนอต่าง 0.01 ปลดการอนุมัติแล้วไปล้มตอนลง JE
+        Assert.Null(OcrSettlementProposal.Parse(
+            "[PAY-PLAN] ข้อเสนอ: ใบกำกับ=536.00 · ชำระ=438.01 · 51150=-98.00 x"));
+        Assert.NotNull(OcrSettlementProposal.Parse(
+            "[PAY-PLAN] ข้อเสนอ: ใบกำกับ=536.00 · ชำระ=438.00 · 51150=-98.00 x"));
+    }
+
     // ── ครึ่งที่ 2 (ห้ามแตะ) ────────────────────────────────────────────────
 
     [Fact]
@@ -114,6 +140,8 @@ public class OcrSettlementProposalTests
     {
         var notes = "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00\n[PAY-SETTLED] บันทึกแล้ว\n[Σ-GAP] ยอดรวมไม่ตรง";
         Assert.False(OcrPostingReadiness.Evaluate(notes, true).CanAutoApprove);
+        var deferred = "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00\n[PAY-AT-PAYMENT] รอลงตอนชำระ\n[Σ-GAP] ยอดรวมไม่ตรง";
+        Assert.False(OcrPostingReadiness.Evaluate(deferred, true).CanAutoApprove);
     }
 
     [Fact]
@@ -130,5 +158,6 @@ public class OcrSettlementProposalTests
     {
         Assert.Contains(OcrSettlementProposal.PlanTag, OcrScanSnapshot.DecisionNoteTags);
         Assert.DoesNotContain(OcrSettlementProposal.SettledTag, OcrScanSnapshot.DecisionNoteTags);
+        Assert.DoesNotContain(OcrSettlementProposal.DeferredTag, OcrScanSnapshot.DecisionNoteTags);
     }
 }

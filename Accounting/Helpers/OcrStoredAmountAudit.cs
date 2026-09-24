@@ -59,7 +59,10 @@ public static class OcrStoredAmountAudit
                     $"ยอดรวมที่สแกนเก็บไว้ {storedTotal:N2} ไม่ใช่ยอดรวมทั้งสิ้นบนกระดาษ {paper:N2} — {anchor.Reason}"));
         }
 
-        if (hasText && r.ScanDiscount is decimal disc && disc > 0m)
+        // ฝ่ายค้าน P4 รอบ 193: สแกนใหม่ที่เก็บ "ส่วนลดพิเศษ" ไว้เหมือนเดิม แต่ตัวสร้างเอกสาร (ScanBillDiscount) ไม่หักแล้ว ⇒ เอกสารถูก
+        // ต้องไม่ถูกรายงานว่า "ข้อมูลเก่าที่ผิด" · ฟ้องเฉพาะเมื่อ<b>เอกสารที่สร้างจริง</b>ลดยอดตามส่วนลดนั้น (ยอดเอกสาร + หัก ณ ที่จ่าย < ยอดใบกำกับ)
+        if (hasText && r.ScanDiscount is decimal disc && disc > 0m
+            && r.HasDocument && r.ScanTotal is decimal invoiceTotal && r.DocTotal + r.DocWht < invoiceTotal - Tol)
         {
             var d = OcrTotalDecomposer.Decompose(r.NormalizedText, r.ScanSubTotal, r.ScanVat, r.ScanTotal, disc);
             if (d.Placement == OcrDiscountPlacement.PostInvoice)

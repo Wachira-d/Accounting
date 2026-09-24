@@ -442,8 +442,11 @@ public class SignatureApprovalService : ISignatureApprovalService
         // ที่อนุมัติผ่านลายเซ็น "หายจากบัญชี" ทั้งใบ). acknowledgeWarnings=true
         // เพราะผ่านการเซ็นหลายคนแล้ว = ระดับการยืนยันสูงกว่า warning dialog;
         // hard block (§86/4 ไม่ครบ ฯลฯ) ยัง throw ตามปกติ.
+        // รอบ 193 (ฝ่ายค้าน C5): ผู้เซ็นไม่เคยเห็นรายการคำเตือน ⇒ ลงร่องรอยว่า "ระบบ workflow ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ ·
+        // คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ระบบส่งผ่านไม่ได้ (ต้องมีคนรับทราบ) ⇒ หยุดพร้อมรายการ
         var approved = await _docService.ApproveDocumentAsync(
-            companyId, documentId, $"external:{request.ApproverName}", acknowledgeWarnings: true);
+            companyId, documentId, $"external:{request.ApproverName}",
+            Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
         doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
@@ -514,7 +517,9 @@ public class SignatureApprovalService : ISignatureApprovalService
 
         // อนุมัติผ่าน pipeline เต็ม (JE + สต๊อก + tax point + ออกเลข + validation)
         // — เดิมตั้ง Status ตรง ๆ ทำให้เอกสารข้ามการลงบัญชีทั้งหมด
-        await _docService.ApproveDocumentAsync(companyId, documentId, userId, acknowledgeWarnings: true);
+        // รอบ 193 (ฝ่ายค้าน C5): ผู้เซ็นครบทุกขั้นแต่ไม่มีใครเห็นคำเตือน ⇒ "ระบบ workflow ส่งผ่าน" (ไม่ประทับว่าผู้ใช้รับทราบ)
+        await _docService.ApproveDocumentAsync(companyId, documentId, userId,
+            Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
         doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 

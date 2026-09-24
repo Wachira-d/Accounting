@@ -90,7 +90,17 @@ public class ApprovalController : ControllerBase
         Guid companyId, Guid requestId, [FromBody] SubmitApprovalActionRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        var result = await _approvalService.SubmitActionAsync(companyId, requestId, userId, request);
-        return Ok(new ApiResponse<ApprovalRequestResponse>(true, result));
+        try
+        {
+            var result = await _approvalService.SubmitActionAsync(companyId, requestId, userId, request);
+            return Ok(new ApiResponse<ApprovalRequestResponse>(true, result));
+        }
+        catch (Accounting.Services.Implementations.DocumentApprovalWarningsException ex)
+        {
+            // รอบ 193 (ฝ่ายค้าน C5): ขั้นสุดท้ายของ workflow ต้องหยุดให้คนเห็นคำเตือนแล้วกด "รับทราบ" — รูปแบบเดียวกับหน้าเอกสาร
+            // (422 + ApprovalWarningsResponse) · หน้า approval.html ถามยืนยันแล้วส่งซ้ำพร้อม acknowledgeWarnings=true
+            return StatusCode(422, new ApiResponse<object>(false,
+                new Accounting.Models.DTOs.Document.ApprovalWarningsResponse(ex.Warnings, null), ex.Message));
+        }
     }
 }

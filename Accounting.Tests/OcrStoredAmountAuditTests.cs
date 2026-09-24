@@ -32,14 +32,27 @@ public class OcrStoredAmountAuditTests
         Assert.Equal(23812.25m, f.Expected);
     }
 
+    private static OcrStoredAmountRow ShopeeWithDoc(decimal docSub, decimal docVat, decimal docTotal)
+        => new(OcrPaperSamples.UptoyouShopee, false, 500.93m, 35.07m, 536.00m, 98.00m,
+            true, docSub, docVat, 0m, docTotal, 0m, docSub, docVat);
+
     [Fact]
-    public void Shopeeเก็บส่วนลดพิเศษ98เป็นส่วนลด_ฟ้องว่าเป็นการปรับตอนชำระ()
+    public void Shopeeเอกสารเก่าลดยอดตามส่วนลดพิเศษ98_ฟ้องว่าเป็นการปรับตอนชำระ()
     {
-        var f = Assert.Single(OcrStoredAmountAudit.Evaluate(
-            ScanOnly(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m)));
+        // เอกสารเก่า: ฐาน 409.35 + VAT 28.65 = 438 (ลดตามคูปอง ⇒ ภาษีซื้อต่ำกว่าใบกำกับ)
+        var f = Assert.Single(OcrStoredAmountAudit.Evaluate(ShopeeWithDoc(409.35m, 28.65m, 438.00m)));
         Assert.Equal(OcrStoredAmountIssue.ScanDiscountIsSettlement, f.Kind);
         Assert.Equal(98.00m, f.Stored);
         Assert.Equal(0m, f.Expected);
+    }
+
+    [Fact]
+    public void Shopeeสแกนใหม่ที่สร้างเอกสารถูกแล้ว_หรือยังไม่สร้างเอกสาร_ไม่ฟ้อง()
+    {
+        // ฝ่ายค้าน P4: สแกนหลังรอบ 192 ยังเก็บส่วนลด 98 ไว้ แต่เอกสารลงยอดเต็ม 536 ตามใบกำกับ
+        Assert.Empty(OcrStoredAmountAudit.Evaluate(ShopeeWithDoc(500.93m, 35.07m, 536.00m)));
+        // ยังไม่สร้างเอกสาร — ตัวสร้างเอกสารตอนนี้ไม่หักส่วนลดนี้อยู่แล้ว
+        Assert.Empty(OcrStoredAmountAudit.Evaluate(ScanOnly(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m)));
     }
 
     [Fact]
@@ -76,7 +89,8 @@ public class OcrStoredAmountAuditTests
     [Fact]
     public void สแกนจากXMLที่ลงนาม_ไม่ตรวจกับข้อความ()
         => Assert.Empty(OcrStoredAmountAudit.Evaluate(
-            ScanOnly(OcrPaperSamples.UptoyouShopee, 500.93m, 35.07m, 536.00m, 98.00m, xml: true)));
+            new OcrStoredAmountRow(OcrPaperSamples.UptoyouShopee, true, 500.93m, 35.07m, 536.00m, 98.00m,
+                true, 409.35m, 28.65m, 0m, 438.00m, 0m, 409.35m, 28.65m)));
 
     [Fact]
     public void เอกสารที่ลงตัว_รวมใบที่มีผลต่างปัดเศษ_และหักณที่จ่าย_ไม่ฟ้อง()

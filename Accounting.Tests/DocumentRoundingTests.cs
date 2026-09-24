@@ -77,6 +77,63 @@ public class DocumentRoundingTests
         Assert.Equal(AccountType.Expense, acct.Type);
     }
 
+    // ── ฝ่ายค้านรอบ 193 (C2 · C4 · P2) ──────────────────────────────────────
+
+    [Fact]
+    public void แปลงหรือโคลนทุกบรรทัดครบจำนวน_สืบทอดผลต่าง_ยอดลูกเท่าแม่5024()
+    {
+        var inherited = DocumentRounding.Inherit(-0.01m, carriesEveryLineInFull: true);
+        Assert.Equal(-0.01m, inherited);
+        // ใบลูก: บรรทัด 4,695.34 (จำนวน × ราคา − ส่วนลด คิดใหม่ได้ค่าเดิม) + ผลต่าง ⇒ ฐาน 4,695.33 · รวม 5,024.00 = ใบแม่
+        Assert.Equal(5024.00m, 4695.34m + inherited!.Value + 328.67m);
+    }
+
+    [Fact]
+    public void แปลงบางส่วน_ไม่สืบทอดผลต่าง_ไม่มีผลต่างก็ไม่สืบทอด()
+    {
+        Assert.Null(DocumentRounding.Inherit(-0.01m, carriesEveryLineInFull: false));
+        Assert.Null(DocumentRounding.Inherit(0m, carriesEveryLineInFull: true));
+    }
+
+    [Fact]
+    public void eTaxขาออก_LineTotalเท่าผลรวมบรรทัด_ผลต่างเป็นส่วนลดระดับเอกสาร_TaxBasisเท่าฐานหัวเอกสาร()
+    {
+        var sum = DocumentRounding.EtaxSummation(4695.33m, -0.01m);
+        Assert.Equal(4695.34m, sum.LineTotal);                     // = Σ NetLineTotalAmount
+        Assert.Equal(0.01m, sum.Allowance);
+        Assert.Equal(0m, sum.Charge);
+        Assert.Equal(4695.33m, sum.TaxBasis);
+        Assert.Equal(sum.TaxBasis, sum.LineTotal - sum.Allowance + sum.Charge);   // สเปก CII
+        var up = DocumentRounding.EtaxSummation(100.01m, 0.01m);
+        Assert.Equal((100.00m, 0m, 0.01m, 100.01m), (up.LineTotal, up.Allowance, up.Charge, up.TaxBasis));
+    }
+
+    [Fact]
+    public void eTaxขาออก_ไม่มีผลต่าง_ค่าเดิมทุกช่อง()
+    {
+        var sum = DocumentRounding.EtaxSummation(3357.94m, 0m);
+        Assert.Equal((3357.94m, 0m, 0m, 3357.94m), (sum.LineTotal, sum.Allowance, sum.Charge, sum.TaxBasis));
+    }
+
+    [Fact]
+    public void ผลต่างสะสมเกินหนึ่งบาท_ไม่ย้ายบรรทัดเลย_และเตือน()
+    {
+        var shifts = Enumerable.Repeat(0.01m, 120).ToList();   // ใบ 120 บรรทัด เศษไปทางเดียวกัน = 1.20
+        var (applied, warning) = DocumentRounding.CapShifts(shifts);
+        Assert.All(applied, x => Assert.Equal(0m, x));
+        Assert.NotNull(warning);
+        Assert.Contains("1.20", warning);
+    }
+
+    [Fact]
+    public void ผลต่างเศษปกติ_ย้ายตามเดิม_ไม่เตือน()
+    {
+        var shifts = new[] { 0.01m, 0m, -0.01m, 0.01m };
+        var (applied, warning) = DocumentRounding.CapShifts(shifts);
+        Assert.Equal(shifts, applied);
+        Assert.Null(warning);
+    }
+
     // ── ครึ่งที่ 2 (ห้ามแตะ) ────────────────────────────────────────────────
 
     [Theory]

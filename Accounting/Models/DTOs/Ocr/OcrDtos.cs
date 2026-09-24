@@ -187,7 +187,11 @@ public record OcrLinePreviewResponse(
     decimal HeaderTotal,
     decimal HeaderWht,
     IReadOnlyList<OcrLinePreviewLineDto> Lines,
-    string? Notes);
+    string? Notes,
+    // รอบ 193 (ฝ่ายค้าน C3): เส้น "แก้ในฟอร์มก่อน" ต้องได้ผลต่างปัดเศษชุดเดียวกับเส้นสร้างเอกสาร (BuildScanLinesAsync) —
+    // เดิมไม่มีช่องนี้ ⇒ ฟอร์มคิดใหม่ได้ 5,024.01 ≠ กระดาษ · ยอดชำระจริงส่งเฉพาะเอกสารตั้งหนี้ฝั่งซื้อ (ใช้เติมหน้าบันทึกการชำระ)
+    decimal RoundingAdjustment = 0m,
+    decimal? ActualPaidAmount = null);
 
 /// <param name="SourceItemIndex">ลำดับของ <c>ExtractedItems[i]</c> ที่บรรทัดนี้มาจาก
 /// — หน้า review ใช้จับคู่กลับไปยังแถวในตาราง "รายการที่อ่านได้" เพื่อโชว์อัตรา VAT

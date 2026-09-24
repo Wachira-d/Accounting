@@ -329,6 +329,18 @@ public class ApprovalService : IApprovalService
             .FirstOrDefault(a => a.ApproverUserId == userId && a.StepOrder == request.CurrentStep && a.Status == ApprovalStatus.Pending)
             ?? throw new InvalidOperationException("คุณไม่มีสิทธิ์อนุมัติขั้นตอนนี้");
 
+        // รอบ 193 (ฝ่ายค้าน C5): ขั้นสุดท้ายของเอกสาร = การอนุมัติเอกสารจริง ⇒ คำเตือนก่อนอนุมัติต้องถึงตาคนกด (422) ก่อนบันทึกอะไร
+        // — เดิม finalize ส่ง acknowledgeWarnings:true ในนามระบบ ⇒ audit บอกว่า "รับทราบ" ทั้งที่ไม่มีใครเห็น [Σ-GAP]
+        //   และเว็บกับมือถือ (ที่หยุดให้กดรับทราบ) ทำตัวคนละแบบ
+        if (actionRequest.Status == ApprovalStatus.Approved && request.EntityType == "Document"
+            && request.CurrentStep >= request.Actions.Max(a => a.StepOrder) && !actionRequest.AcknowledgeWarnings
+            && _services.GetService(typeof(IDocumentService)) is IDocumentService previewSvc)
+        {
+            var pending = await previewSvc.PreviewApprovalWarningsAsync(companyId, request.EntityId);
+            if (pending.Count > 0)
+                throw new DocumentApprovalWarningsException(pending);
+        }
+
         action.Status = actionRequest.Status;
         action.ActionAt = DateTime.UtcNow;
         action.Comments = actionRequest.Comments;
@@ -402,7 +414,7 @@ public class ApprovalService : IApprovalService
         // intervention.
         if (request.OverallStatus == ApprovalStatus.Approved)
         {
-            await TryFinalizeApprovedEntityAsync(companyId, request.EntityType, request.EntityId, actionRequest);
+            await TryFinalizeApprovedEntityAsync(companyId, request.EntityType, request.EntityId, actionRequest, userId);
         }
 
         return MapRequestToResponse(request);
@@ -416,7 +428,7 @@ public class ApprovalService : IApprovalService
     /// (via console for now) so a failed downstream finalize never
     /// blocks the approval state save.</summary>
     private async Task TryFinalizeApprovedEntityAsync(Guid companyId, string entityType, Guid entityId,
-        SubmitApprovalActionRequest actionRequest)
+        SubmitApprovalActionRequest actionRequest, Guid finalApproverUserId)
     {
         try
         {
@@ -426,10 +438,13 @@ public class ApprovalService : IApprovalService
                 {
                     var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService;
                     if (docSvc == null) return;
-                    // Use the last approver's display as the audit "approvedBy" —
-                    // pulled from the action's comment when blank.
-                    var who = $"approval-rule:{actionRequest.Comments ?? "auto"}";
-                    await docSvc.ApproveDocumentAsync(companyId, entityId, who, acknowledgeWarnings: true);
+                    // รอบ 193 (ฝ่ายค้าน C5): ผู้อนุมัติขั้นสุดท้ายตัวจริง (ไม่ใช่ป้าย "approval-rule") · รับทราบคำเตือนได้เฉพาะเมื่อ
+                    // คนกด "รับทราบ" บนหน้าจอแล้ว (SubmitActionAsync หยุดให้เห็นรายการก่อน) — ห้ามประทับแทน
+                    var who = finalApproverUserId.ToString();
+                    await docSvc.ApproveDocumentAsync(companyId, entityId, who,
+                        actionRequest.AcknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User
+                                                          : Accounting.Helpers.ApprovalAckSource.None,
+                        withAiHints: false);
                     break;
                 }
                 // Future hooks: case "JournalEntry": ...

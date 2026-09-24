@@ -151,6 +151,25 @@ public class EtaxPdfXmlExtractorTests
         Assert.Equal("Receipt", EtaxPdfXmlExtractor.MapTypeCodeToInternal(null, "Receipt_CrossIndustryInvoice"));
     }
 
+    [Theory]
+    [InlineData("T05")]
+    [InlineData("t06")]
+    public void ใบอย่างย่อT05T06_ปิดเคลมภาษีซื้อ82_5_2(string code)
+    {
+        // ฝ่ายค้าน P6: map เป็น Receipt แล้วเส้นสร้างเอกสารพัก 11640 รอใบจริง — ใบอย่างย่อไม่มีวันเคลมได้
+        var msg = EtaxPdfXmlExtractor.AbbreviatedClaimBlock(code);
+        Assert.NotNull(msg);
+        Assert.Contains("82/5(2)", msg);
+    }
+
+    [Theory]
+    [InlineData("T03")]
+    [InlineData("388")]
+    [InlineData("T01")]
+    [InlineData(null)]
+    public void ใบเต็มรูปหรือใบรับธรรมดา_ไม่ใช่ใบอย่างย่อ(string? code)
+        => Assert.Null(EtaxPdfXmlExtractor.AbbreviatedClaimBlock(code));
+
     [Fact]
     public void PDFไม่มีไฟล์แนบ_หรือไม่ใช่PDF_คืนnull()
     {

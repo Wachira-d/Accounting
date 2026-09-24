@@ -883,8 +883,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         //     doc.TotalAmount เพราะหัก WHT ออก (WHT แยกตอนจ่าย ไม่ใช่ face value
         //     ของใบกำกับ) → ถ้าใช้จะทำให้ TaxBasis+Tax ≠ Grand เมื่อมี WHT
         var inv2 = CultureInfo.InvariantCulture;
+        // รอบ 193 (ฝ่ายค้าน C4): ผลต่างปัดเศษ (Document.RoundingAdjustment · SubTotal = Σ บรรทัด + ผลต่าง) ต้องแสดงเป็น
+        // ส่วนลด/ค่าบริการระดับเอกสาร — LineTotal = Σ NetLineTotalAmount ตามสเปก · TaxBasis = LineTotal − Allowance + Charge
+        // ตัวแตกยอดตัวเดียว: Helpers/DocumentRounding.EtaxSummation (ผลต่าง 0 = ค่าเดิมทุกช่อง)
+        var roundingSum = Accounting.Helpers.DocumentRounding.EtaxSummation(doc.SubTotal, doc.RoundingAdjustment);
         summationElements.Add(new XElement(ram + "LineTotalAmount",
-            doc.SubTotal.ToString("0.##", inv2)));
+            roundingSum.LineTotal.ToString("0.##", inv2)));
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
             // ผลต่าง (§86/9-10) = มูลค่าของ CN/DN ใบนี้เอง — บรรทัดใน CN คือ
@@ -894,9 +898,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             summationElements.Add(new XElement(ram + "DifferenceInformationAmount",
                 doc.SubTotal.ToString("0.##", inv2)));
         }
-        summationElements.Add(new XElement(ram + "AllowanceTotalAmount", "0.00"));
+        summationElements.Add(new XElement(ram + "AllowanceTotalAmount",
+            roundingSum.Allowance.ToString("0.00", inv2)));
+        if (roundingSum.Charge > 0m)
+            summationElements.Add(new XElement(ram + "ChargeTotalAmount",
+                roundingSum.Charge.ToString("0.00", inv2)));
         summationElements.Add(new XElement(ram + "TaxBasisTotalAmount",
-            doc.SubTotal.ToString("0.##", inv2)));
+            roundingSum.TaxBasis.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "TaxTotalAmount",
             doc.VatAmount.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "GrandTotalAmount",
@@ -990,6 +998,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                             new XAttribute("listID", "ISO 4217 3A"),
                             currency),
                         headerTradeTax,
+                        // ผลต่างปัดเศษระดับเอกสาร (มีเมื่อ ≠ 0 เท่านั้น) — คู่กับ Allowance/ChargeTotalAmount ข้างบน
+                        doc.RoundingAdjustment != 0m
+                            ? new XElement(ram + "SpecifiedTradeAllowanceCharge",
+                                new XElement(ram + "ChargeIndicator", doc.RoundingAdjustment > 0m ? "true" : "false"),
+                                new XElement(ram + "ActualAmount",
+                                    Math.Abs(doc.RoundingAdjustment).ToString("0.00", CultureInfo.InvariantCulture)),
+                                new XElement(ram + "Reason", Accounting.Helpers.DocumentRounding.AccountName))
+                            : null,
                         new XElement(ram + "SpecifiedTradeSettlementHeaderMonetarySummation",
                             summationElements.Where(e => e != null))),
                     lineItems

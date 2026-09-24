@@ -1835,7 +1835,8 @@ public partial class TaxService : ITaxService
             {
                 // WHT อยู่ระดับเอกสาร (กรอกยอดตอนบันทึกจ่าย) — เดิมใบแบบนี้
                 // "หาย" จากรายงานทั้งใบเพราะ loop รายบรรทัดไม่เจออะไร
-                var docBase = doc.Lines.Sum(l => l.Amount);
+                // + ผลต่างปัดเศษ (รอบ 193 ฝ่ายค้าน P5): ฐานเงินได้ = ฐานหัวเอกสาร (SubTotal = Σ บรรทัด + ผลต่าง) ไม่ใช่ Σ บรรทัดเดี่ยว ๆ
+                var docBase = doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment;
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
