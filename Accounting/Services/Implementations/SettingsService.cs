@@ -29,7 +29,22 @@ public class SettingsService : ISettingsService
         var settings = await GetOrCreateSettingsAsync(companyId);
         // เมนู CMS ที่ควรแสดง — คำนวณที่นี่ (request เดียวที่ layout.js ยิงอยู่แล้วตอนโหลดบริษัท
         // ตามกติกา "reuse /settings ไม่เพิ่ม request ต่อธง") — เส้น update อื่นคืน null = ไม่แตะเมนู
-        return MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) };
+        return await WithDepositVatInfoAsync(companyId,
+            MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) });
+    }
+
+    /// <summary>เติมผลตัดสิน "วิธีบันทึกเงินมัดจำ" (รอบ 193 #34) — ค่าตั้งต้นตามประเภทธุรกิจมาจาก Company.IndustryType
+    /// ตัวตัดสินตัวเดียว Helpers/DepositVatTreatmentPolicy (หน้าเว็บห้ามคำนวณเอง)</summary>
+    private async Task<CompanySettingsResponse> WithDepositVatInfoAsync(Guid companyId, CompanySettingsResponse r)
+    {
+        var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
+        return r with
+        {
+            DepositVatTreatmentInfo = Accounting.Helpers.DepositVatTreatmentPolicy.Resolve(
+                Accounting.Helpers.DepositVatTreatmentPolicy.NatureOf(industry), r.DepositVatTreatment),
+            DepositVatTreatmentOptions = Accounting.Helpers.DepositVatTreatmentPolicy.Options,
+        };
     }
 
     /// <summary>ข้อเท็จจริงระดับบริษัทสำหรับ <see cref="CmsModuleResolver"/> — ทุก query กรอง CompanyId
@@ -81,6 +96,16 @@ public class SettingsService : ISettingsService
             settings.ReceiptIssueMode = request.ReceiptIssueMode.Value;
         if (request.UnifyTaxInvoiceNumberSeries.HasValue)
             settings.UnifyTaxInvoiceNumberSeries = request.UnifyTaxInvoiceNumberSeries.Value;
+        // วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ค่าที่ไม่มีในระบบ = ปฏิเสธดัง ๆ (ไม่ใช่ข้ามเงียบ = silent no-op)
+        if (request.DepositVatTreatmentClear == true)
+            settings.DepositVatTreatment = null;
+        else if (request.DepositVatTreatment.HasValue)
+        {
+            if (!Accounting.Helpers.DepositVatTreatmentPolicy.IsDefined(request.DepositVatTreatment))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "วิธีบันทึกเงินมัดจำไม่ถูกต้อง — กรุณาเลือกหนึ่งในตัวเลือกที่แสดงบนหน้าตั้งค่า", "DEPOSIT-VAT-TREATMENT");
+            settings.DepositVatTreatment = request.DepositVatTreatment.Value;
+        }
         // ใบเสร็จ standalone ที่มีสินค้าคงคลัง — รับเฉพาะค่าที่นิยามไว้จริง
         if (request.CashSaleStockPolicy.HasValue
             && Enum.IsDefined(typeof(CashSaleStockPolicy), request.CashSaleStockPolicy.Value))
@@ -213,7 +238,7 @@ public class SettingsService : ISettingsService
             settings.BookkeeperCpdNumber = string.IsNullOrWhiteSpace(request.BookkeeperCpdNumber) ? null : request.BookkeeperCpdNumber.Trim();
 
         await _db.SaveChangesAsync();
-        return MapToResponse(companyId, settings);
+        return await WithDepositVatInfoAsync(companyId, MapToResponse(companyId, settings));
     }
 
     // ===== Logo Management =====
@@ -624,7 +649,8 @@ public class SettingsService : ISettingsService
         s.CashSaleStockPolicy,
         Accounting.Helpers.CashSaleStockRules.Describe(s.CashSaleStockPolicy),
         s.PosTipPayableAccountCode,
-        Accounting.Helpers.TipAccountResolver.CodeCandidates(s.PosTipPayableAccountCode)[0]);
+        Accounting.Helpers.TipAccountResolver.CodeCandidates(s.PosTipPayableAccountCode)[0],
+        s.DepositVatTreatment);
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,

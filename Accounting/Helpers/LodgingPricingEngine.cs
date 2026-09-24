@@ -162,18 +162,40 @@ public static class LodgingPricingEngine
             R2(roomRate + extraGuestCharge + extraBedCharge));
     }
 
-    /// <summary>ราคาบริการเสริมตามโหมด</summary>
+    /// <summary>ราคาบริการเสริมตามโหมด
+    ///
+    /// <para>⚠️ รอบ 193 (#36 · F-01): วิธีคิดราคาที่ไม่มีในระบบ (เช่น 0 จาก dropdown ว่างของรอบ 159–188)
+    /// <b>ต้องปฏิเสธ</b> — เดิมตกที่ <c>_ => 1</c> = คิดครั้งเดียวทั้งทริป ("อาหารเช้า ฿250/คน/คืน"
+    /// 2 คน 3 คืน ได้ 250 แทน 1,500) โดยไม่มีอะไรฟ้อง · ผู้เรียกตรวจก่อนด้วย <see cref="ExtraConfigProblem"/>
+    /// แล้วแสดงข้อความไทย — ถึงตรงนี้ได้แปลว่ามีทางเข้าที่ลืมตรวจ จึงโยนแทนการเดาค่า</para></summary>
     public static decimal ExtraTotal(LodgingExtraInput extra, int nights, int guests)
     {
         var qty = Math.Max(0, extra.Quantity);
         var mult = extra.PriceMode switch
         {
+            LodgingExtraPriceMode.PerStay => 1,
             LodgingExtraPriceMode.PerNight => nights,
             LodgingExtraPriceMode.PerPerson => Math.Max(1, guests),
             LodgingExtraPriceMode.PerPersonPerNight => nights * Math.Max(1, guests),
-            _ => 1,
+            _ => throw new ArgumentOutOfRangeException(nameof(extra),
+                ExtraConfigProblem(extra.PriceMode, LodgingExtraCategory.Other) + $" (บริการ: {extra.Name})"),
         };
         return R2(extra.UnitPrice * qty * mult);
+    }
+
+    /// <summary>ปัญหาการตั้งค่าบริการเสริมที่ทำให้คิดราคา/บันทึกไม่ได้ (ข้อความไทยบอกทางไปต่อ) — null = ใช้ได้
+    /// · ตัวตัดสินตัวเดียวของ: ด่านบันทึก (SaveExtraAsync) · ตัวคิดราคา (BuildQuote) · ป้ายเตือนในหน้าตั้งค่า
+    /// · รายงานแถวที่ต้องเลือกใหม่ — ห้ามเขียนเงื่อนไข "0 = ผิด" ซ้ำที่อื่น</summary>
+    public static string? ExtraConfigProblem(LodgingExtraPriceMode? priceMode, LodgingExtraCategory? category)
+    {
+        var badMode = priceMode is not LodgingExtraPriceMode m || !Enum.IsDefined(m);
+        var badCat = category is not LodgingExtraCategory c || !Enum.IsDefined(c);
+        if (!badMode && !badCat) return null;
+        var parts = new List<string>();
+        if (badMode) parts.Add("วิธีคิดราคา (ต่อการเข้าพัก / ต่อคืน / ต่อคน / ต่อคนต่อคืน)");
+        if (badCat) parts.Add("หมวด");
+        return $"ยังไม่ได้เลือก{string.Join(" และ ", parts)} — ค่าที่บันทึกไว้ไม่มีในระบบ ระบบจึงไม่คิดราคาบริการนี้ "
+            + "กรุณาเปิด “แก้ไข” แล้วเลือกให้ถูกต้องก่อนเปิดขาย";
     }
 
     /// <summary>รวมยอดทั้งการจอง + คำนวณ service charge / VAT / มัดจำ

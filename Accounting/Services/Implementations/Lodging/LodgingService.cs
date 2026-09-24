@@ -74,6 +74,17 @@ public partial class LodgingService : ILodgingService
         return vat == true ? 7m : 0m;
     }
 
+    /// <summary>วิธีบันทึกมัดจำที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositVatTreatmentPolicy.Resolve"/>
+    /// · ค่าห้องพักเป็น "บริการ" โดยสภาพ (§78/1) ไม่ว่าบริษัทจะตั้งประเภทธุรกิจเป็นอะไร</summary>
+    private async Task<DepositVatTreatmentDecision> DepositTreatmentForAsync(Guid companyId, LodgingProperty prop, bool ignoreOverride = false)
+    {
+        var companySetting = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
+        return DepositVatTreatmentPolicy.Resolve(DepositSupplyNature.Service, companySetting,
+            ignoreOverride ? null : prop.DepositVatTreatment);
+    }
+
     private async Task<LodgingProperty> RequirePropertyAsync(Guid companyId, Guid propertyId, bool tracking = false)
     {
         var q = tracking ? _db.LodgingProperties : _db.LodgingProperties.AsNoTracking();
@@ -134,7 +145,11 @@ public partial class LodgingService : ILodgingService
     {
         var p = await RequirePropertyAsync(companyId, propertyId, tracking: true);
         var prevMode = p.AccountingMode;
+        var prevTreatment = p.DepositVatTreatment;
         Apply(p, dto);
+        if (prevTreatment != p.DepositVatTreatment)
+            _logger.LogInformation("ที่พัก {Prop} เปลี่ยนวิธีบันทึกมัดจำ {From} → {To} โดย {User} (มีผลกับมัดจำใบใหม่เท่านั้น)",
+                p.Id, prevTreatment?.ToString() ?? "ตามบริษัท", p.DepositVatTreatment?.ToString() ?? "ตามบริษัท", userId);
         await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, prevMode, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
@@ -231,7 +246,18 @@ public partial class LodgingService : ILodgingService
         p.DepositPercent = Math.Clamp(d.DepositPercent, 0, 100); p.DepositFixedAmount = d.DepositFixedAmount;
         p.DepositMinAmount = Math.Max(0, d.DepositMinAmount); p.DepositMaxAmount = d.DepositMaxAmount;
         p.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(d.DepositDeferredAccountCode) ? null : d.DepositDeferredAccountCode.Trim();
-        p.DepositOutputVatDeferred = d.DepositOutputVatDeferred;
+        // วิธีบันทึกมัดจำ (รอบ 193 #34) — null = ตามบริษัท · ค่าที่ไม่มีในระบบ = ปฏิเสธ (ไม่ตกไปค่าไหนเงียบ ๆ)
+        if (d.DepositVatTreatment is DepositVatTreatment dt)
+        {
+            if (!DepositVatTreatmentPolicy.IsDefined(dt))
+                throw new BusinessRuleException("วิธีบันทึกเงินมัดจำไม่ถูกต้อง — กรุณาเลือกใหม่ในหน้าตั้งค่าที่พัก", "DEPOSIT-VAT-TREATMENT");
+            p.DepositVatTreatment = dt;
+        }
+        else
+            // client เก่าที่ยังส่งแต่ธงเดิม: true = พัก 21913 (ความหมายเดิมตรงตัว) · false/ไม่ส่ง = ตามบริษัท
+            p.DepositVatTreatment = d.DepositOutputVatDeferred ? DepositVatTreatment.VatPendingUndue : null;
+        // ช่องเดิมเป็นสำเนาเท่านั้น — เขียนตามโหมดทุกครั้ง ⇒ migration ย้ายค่าเดิมรันซ้ำได้โดยไม่ทับสิ่งที่ผู้ใช้เลือก
+        p.DepositOutputVatDeferred = p.DepositVatTreatment == DepositVatTreatment.VatPendingUndue;
         p.AccountingMode = d.AccountingMode;
         p.PricesIncludeVat = d.PricesIncludeVat; p.ChargeVat = d.ChargeVat;
         p.ServiceChargePercent = Math.Clamp(d.ServiceChargePercent, 0, 100);
@@ -271,7 +297,11 @@ public partial class LodgingService : ILodgingService
             RequireGuestIdNumber = p.RequireGuestIdNumber,
             DepositPercent = p.DepositPercent, DepositFixedAmount = p.DepositFixedAmount, DepositMinAmount = p.DepositMinAmount,
             DepositMaxAmount = p.DepositMaxAmount, DepositDeferredAccountCode = p.DepositDeferredAccountCode,
-            DepositOutputVatDeferred = p.DepositOutputVatDeferred,
+            DepositVatTreatment = p.DepositVatTreatment,
+            DepositOutputVatDeferred = p.DepositVatTreatment == DepositVatTreatment.VatPendingUndue,
+            DepositVatTreatmentInfo = await DepositTreatmentForAsync(companyId, p),
+            DepositVatTreatmentInherited = await DepositTreatmentForAsync(companyId, p, ignoreOverride: true),
+            DepositVatTreatmentOptions = DepositVatTreatmentPolicy.Options,
             AccountingMode = p.AccountingMode,
             AccountingModeAcknowledged = p.AccountingModeAckAt != null,
             PricesIncludeVat = p.PricesIncludeVat, ChargeVat = p.ChargeVat, ServiceChargePercent = p.ServiceChargePercent,
@@ -664,13 +694,38 @@ public partial class LodgingService : ILodgingService
         Id = x.Id, PropertyId = x.PropertyId, Name = x.Name, NameEn = x.NameEn, Description = x.Description, Category = x.Category,
         PriceMode = x.PriceMode, Price = x.Price, MaxQuantity = x.MaxQuantity, ProductId = x.ProductId,
         ShowOnWebsite = x.ShowOnWebsite, IsActive = x.IsActive, SortOrder = x.SortOrder,
+        // echo ค่าจริงของแถว (รวม 0 ที่ไม่มีในระบบ) + บอกว่าติดอะไร — ห้ามแต่งค่าให้ (#36 · ห้ามเดาค่า)
+        ConfigProblem = LodgingPricingEngine.ExtraConfigProblem(x.PriceMode, x.Category),
     };
+
+    /// <summary>บริการเสริมที่ต้องเลือกวิธีคิดราคา/หมวดใหม่ ทุกที่พักของบริษัทนี้ (รอบ 193 #36 · F-01)
+    /// — ค่า 0 ที่บันทึกไว้ตอน dropdown ว่าง (รอบ 159–188) · ไม่เดาค่าแทน แค่รายงานให้เจ้าของเลือก ·
+    /// tenant-safe: กรอง CompanyId ทั้งสองตาราง</summary>
+    public async Task<List<LodgingExtraNeedsReselectItem>> ListExtrasNeedingReselectAsync(Guid companyId)
+    {
+        var validModes = Enum.GetValues<LodgingExtraPriceMode>().ToList();
+        var validCats = Enum.GetValues<LodgingExtraCategory>().ToList();
+        var rows = await (from x in _db.LodgingExtras.AsNoTracking()
+                          join p in _db.LodgingProperties.AsNoTracking() on x.PropertyId equals p.Id
+                          where x.CompanyId == companyId && p.CompanyId == companyId
+                                && (!validModes.Contains(x.PriceMode) || !validCats.Contains(x.Category))
+                          orderby p.Name, x.SortOrder
+                          select new { x.Id, x.PropertyId, PropertyName = p.Name, x.Name, x.PriceMode, x.Category, x.Price, x.IsActive })
+            .ToListAsync();
+        return rows.Select(r => new LodgingExtraNeedsReselectItem(r.Id, r.PropertyId, r.PropertyName, r.Name,
+                (int)r.PriceMode, (int)r.Category, r.Price, r.IsActive,
+                LodgingPricingEngine.ExtraConfigProblem(r.PriceMode, r.Category) ?? ""))
+            .ToList();
+    }
 
     public async Task<LodgingExtraDto> SaveExtraAsync(Guid companyId, LodgingExtraDto dto, string userId)
     {
         await RequirePropertyAsync(companyId, dto.PropertyId);
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อบริการเสริม");
         if (dto.Price < 0) throw new BusinessRuleException("ราคาต้องไม่ติดลบ");
+        // #36 — บังคับเลือกวิธีคิดราคา/หมวดที่มีจริงก่อนบันทึก (ค่าเก่า 0 ห้ามถูกบันทึกทับซ้ำ)
+        var problem = LodgingPricingEngine.ExtraConfigProblem(dto.PriceMode, dto.Category);
+        if (problem != null) throw new BusinessRuleException(problem, "LODGING-EXTRA-PRICEMODE");
         LodgingExtra x;
         if (dto.Id is Guid id)
         {
@@ -679,8 +734,8 @@ public partial class LodgingService : ILodgingService
             x.UpdatedBy = userId; x.UpdatedAt = DateTime.UtcNow;
         }
         else { x = new LodgingExtra { CompanyId = companyId, PropertyId = dto.PropertyId, CreatedBy = userId }; _db.LodgingExtras.Add(x); }
-        x.Name = dto.Name.Trim(); x.NameEn = dto.NameEn?.Trim(); x.Description = dto.Description; x.Category = dto.Category;
-        x.PriceMode = dto.PriceMode; x.Price = dto.Price; x.MaxQuantity = dto.MaxQuantity is int mq && mq > 0 ? mq : null;
+        x.Name = dto.Name.Trim(); x.NameEn = dto.NameEn?.Trim(); x.Description = dto.Description; x.Category = dto.Category!.Value;
+        x.PriceMode = dto.PriceMode!.Value; x.Price = dto.Price; x.MaxQuantity = dto.MaxQuantity is int mq && mq > 0 ? mq : null;
         x.ProductId = dto.ProductId; x.ShowOnWebsite = dto.ShowOnWebsite; x.IsActive = dto.IsActive; x.SortOrder = dto.SortOrder;
         await _db.SaveChangesAsync();
         return ToDto(x);

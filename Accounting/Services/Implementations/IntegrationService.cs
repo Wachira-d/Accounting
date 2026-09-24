@@ -952,6 +952,9 @@ public class IntegrationService : IIntegrationService
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal,
                 Lines = lines
             };
+            // รอบ 193 #34 — จังหวะ VAT ของมัดจำที่คู่ค้าแจ้งขัดกับการตั้งค่าบริษัท ⇒ ธงให้นักบัญชีเห็น (ไม่แก้ยอดของคู่ค้า)
+            document.InternalNotes = Accounting.Helpers.DepositVatTreatmentPolicy.AppendNoteOnce(document.InternalNotes,
+                await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
@@ -1841,6 +1844,24 @@ public class IntegrationService : IIntegrationService
     /// เพราะใบมัดจำ/สินค้าคงเหลือใช้จริง).</summary>
     private static bool IsWrongSideAccount(AccountType type, bool expenseSide)
         => expenseSide ? type == AccountType.Revenue : type == AccountType.Expense;
+
+    /// <summary>ธงรอบ 193 #34: ใบที่ระบบต้นทาง (เช่น TakeTime) ส่งมาพร้อม "หักมัดจำ" และบอกจังหวะ VAT ของมัดจำ
+    /// (<c>DepositOutputVatDeferred</c>) ขัดกับวิธีบันทึกมัดจำของบริษัท — คืนข้อความสำหรับหมายเหตุภายใน · null = ไม่มีมัดจำ
+    /// หรือสอดคล้องกัน · <b>ไม่แก้ยอด/บัญชีที่คู่ค้าคำนวณ</b> (เราไม่รู้ว่าเขายื่นภาษีงวดมัดจำไปแล้วอย่างไร)</summary>
+    private async Task<string?> DepositTreatmentMismatchNoteAsync(Guid companyId, bool payloadDeferred, decimal depositApplied)
+    {
+        if (depositApplied <= 0m) return null;
+        var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
+        var setting = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
+        var decision = Accounting.Helpers.DepositVatTreatmentPolicy.Resolve(
+            Accounting.Helpers.DepositVatTreatmentPolicy.NatureOf(industry), setting);
+        var note = Accounting.Helpers.DepositVatTreatmentPolicy.IntegrationMismatchNote(payloadDeferred, decision);
+        if (note != null)
+            _logger.LogWarning("Integration deposit VAT timing mismatch company {Company}: {Note}", companyId, note);
+        return note;
+    }
 
     /// <summary>
     /// สถานะ VAT ของบริษัทนี้ — **จุดอ่านเดียวของทั้งไฟล์** (เดิมไม่มีเลย จึงเกิด
@@ -2756,6 +2777,8 @@ public class IntegrationService : IIntegrationService
         // → stamp ยอดตรง ๆ ปลอดภัย (ไม่มี settle มาชนแล้ว)
         existing.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal;
         existing.DepositOutputVatDeferred = request.DepositOutputVatDeferred;
+        existing.InternalNotes = Accounting.Helpers.DepositVatTreatmentPolicy.AppendNoteOnce(existing.InternalNotes,
+            await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
         existing.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef)
             ? null : request.DepositAppliedRef.Trim();
         existing.DepositAppliedAmount = request.DepositAppliedAmount > 0m ? request.DepositAppliedAmount : 0m;

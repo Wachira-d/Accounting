@@ -4676,6 +4676,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "UnifyTaxInvoiceNumberSeries" boolean NULL;""",
             """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP NOT NULL;""",
             """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP DEFAULT;""",
+            // วิธีบันทึกเงินมัดจำฝั่งขาย (รอบ 193 #34) — **nullable โดยตั้งใจ**: NULL = ยังไม่เคยตั้ง
+            // → Helpers/DepositVatTreatmentPolicy ใช้ค่าตามประเภทธุรกิจ · ห้าม UPDATE ไล่ตั้งค่า
+            // (migration รันทุกครั้งที่สตาร์ท ⇒ จะทับเจตนาผู้ใช้)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DepositVatTreatment" integer NULL;""",
             // บทบาททางกฎหมายของเอกสาร ตรึงตอนอนุมัติพร้อมเลขที่ — nullable เพราะ
             // ใบที่อนุมัติก่อนมีฟีเจอร์นี้ "ยังไม่เคยตรึง" (≠ ไม่ใช่ใบกำกับ)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsTaxInvoiceByLaw" boolean NULL;""",
@@ -6580,6 +6584,22 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipRejectedAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipUploadBlocked" boolean NOT NULL DEFAULT false;""",
             """CREATE INDEX IF NOT EXISTS "IX_LodgingReservations_Metered" ON "LodgingReservations" ("CompanyId", "MeteredPeriod");""",
+            // รอบ 193 #34 — วิธีบันทึกมัดจำรายที่พัก (NULL = ตามบริษัท) + ย้ายค่าเดิม: ช่องเดิม
+            // DepositOutputVatDeferred=true (พัก 21913) ⇒ VatPendingUndue (2) · **รันซ้ำได้**: แตะเฉพาะแถวที่
+            // โหมดยังว่าง และหน้าตั้งค่าเขียนช่องเดิมตามโหมดทุกครั้งที่บันทึก (เลือก "ตามบริษัท" ⇒ ช่องเดิม=false)
+            // ⇒ ไม่มีวันทับสิ่งที่ผู้ใช้เลือกทีหลัง · false (ค่าเดิมของทุกแถว) = NULL = พฤติกรรมเดิม (ออกใบกำกับทันที)
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "DepositVatTreatment" integer NULL;""",
+            """UPDATE "LodgingProperties" SET "DepositVatTreatment" = 2 WHERE "DepositOutputVatDeferred" = true AND "DepositVatTreatment" IS NULL;""",
+            // รอบ 193 F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ยอดที่ยืนยันว่าคืนจริง + หลักฐาน
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",
+            // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** ⇒ แถวเหล่านั้น
+            // ในบัญชี "คืนแล้ว" ไปแล้ว — ประทับให้ตรงกับบัญชี (ไม่แตะเอกสาร/JE) พร้อมป้าย legacy ให้รายงาน
+            // r193-L2 ดึงไปตรวจว่าโอนคืนจริงไหม · ตัวแยก: เส้นใหม่ไม่หัก PaidAmount จนกว่าจะคืนจริง ⇒
+            // แถวที่ PaidAmount ถูกหักไปแล้วแต่ RefundPaidAmount = 0 คือแถวเดิมเท่านั้น · รันซ้ำได้ (แถวที่ตั้งแล้ว ≠ 0)
+            """UPDATE "LodgingReservations" SET "RefundPaidAmount" = "RefundAmount", "RefundPaidAt" = "CancelledAt", "RefundPaidBy" = 'legacy:posted-at-cancel (ก่อนรอบ 193 — ตรวจว่าโอนคืนจริง)' WHERE "Status" IN (4, 5) AND "RefundAmount" > 0 AND "RefundPaidAmount" = 0 AND "PaidAmount" <= "DepositPaid" - "RefundAmount" + 0.005;""",
 
             // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
             // ให้เป็น "วันสิ้นรอบบัญชี + 5 ปี" (§87/3 นับจากวันยื่นแบบ · ม.10 นับจาก

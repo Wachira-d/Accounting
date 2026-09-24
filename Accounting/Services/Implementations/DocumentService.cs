@@ -3793,7 +3793,12 @@ public partial class DocumentService : IDocumentService
         var outVatAcc = doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null
             ? await FindAccountAsync(companyId, "21913")
             : await FindAccountAsync(companyId, "21911");
-        var moneyAcc = await FindAccountAsync(companyId, "111");
+        // บัญชีที่เงินออกจริง (F-03 รอบ 193) — ผู้เรียกระบุได้ (ต้องเป็นผังของบริษัทนี้) · ไม่ระบุ = 111 ตามเดิม
+        var moneyAcc = request.MoneyAccountId is Guid moneyAccId
+            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == moneyAccId && a.CompanyId == companyId)
+                ?? throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบบัญชีเงินที่เลือกสำหรับคืนมัดจำ หรือไม่ใช่ของบริษัทนี้ — เลือกบัญชีใหม่", "DEPOSIT-REFUND-MONEY-ACCOUNT")
+            : await FindAccountAsync(companyId, "111");
         if (deferredAcc == null || moneyAcc == null)
             throw new InvalidOperationException("ไม่พบผังบัญชีขายรอรับรู้/เงินสดสำหรับคืนมัดจำ");
         // ⚠️ ผลตรวจทีม C · C-01: บรรทัดภาษีขายถูกใส่แบบมีเงื่อนไข

@@ -151,6 +151,8 @@ public sealed class DocumentLabels
     public string TotalBeforeBillDiscount => this["total_before_bill_discount"];
     public string TotalBillDiscount => this["total_bill_discount"];
     public string TotalDepositApplied => this["total_deposit_applied"];
+    /// <summary>แถวหักท้ายบิลที่เป็น "มูลค่ามัดจำ (ก่อน VAT) ที่ออกใบกำกับไปแล้ว" — ดู DepositVatTreatmentPolicy.BillDeductionIsTaxedDeposit</summary>
+    public string TotalDepositTaxInvoiced => this["total_deposit_tax_invoiced"];
     public string TotalDiscount => this["total_discount"];
     public string TotalGrand => this["total_grand"];
     public string TotalNet => this["total_net"];
@@ -206,6 +208,7 @@ public sealed class DocumentLabels
         ["total_vat"] = "ภาษีมูลค่าเพิ่ม",
         ["total_wht"] = "ภาษีหัก ณ ที่จ่าย",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
+        ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_grand"] = "ยอดรวมทั้งสิ้น",
         ["total_net"] = "ยอดรวมสุทธิ",
         ["total_net_payable"] = "ยอดชำระสุทธิ",
@@ -298,6 +301,7 @@ public sealed class DocumentLabels
         ["total_vat"] = "VAT",
         ["total_wht"] = "Withholding tax",
         ["total_deposit_applied"] = "Less deposit",
+        ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_grand"] = "Grand total",
         ["total_net"] = "Net total",
         ["total_net_payable"] = "Net payable",

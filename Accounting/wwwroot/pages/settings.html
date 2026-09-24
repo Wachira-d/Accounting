@@ -477,6 +477,12 @@
           </span>
         </label>
       </div>
+      <!-- วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ตัวเลือก/คำอธิบาย/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด (DepositVatTreatmentPolicy) -->
+      <div class="form-group" style="max-width:640px;margin-top:14px" id="sDepositVatBox">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🤝 วิธีบันทึกเงินมัดจำ (VAT ของมัดจำ)</div>
+        <div id="sDepositVatOptions" class="text-xs text-gray-500">กำลังโหลด…</div>
+        <div id="sDepositVatInfo" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
+      </div>
 
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
       <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
@@ -1270,6 +1276,28 @@
         if (vg) vg.innerHTML = this.TITLE_VARIANTS.map(v => field(v.k, v.label, v.def)).join('');
         const bg = document.getElementById('titleOverridesBaseGrid');
         if (bg) bg.innerHTML = this.TITLE_BASE.map(([k, def]) => field(k, def, def)).join('');
+      },
+      // วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — เซิร์ฟเวอร์ส่งตัวเลือก + คำอธิบาย + มาตรา + คำเตือนตามลักษณะธุรกิจ
+      // หน้านี้แค่วาดและเลือกข้อความที่จะโชว์ตาม nature ที่เซิร์ฟเวอร์บอก (ไม่มีสำเนากติกาใน JS — F2 ข้อ 5)
+      renderDepositVat(current) {
+        const box = document.getElementById('sDepositVatOptions'); const dv = this._depositVat;
+        if (!box || !dv) return;
+        const esc = Layout.esc; const info = dv.info || {};
+        const natureTh = { Service: 'ธุรกิจบริการ', Goods: 'ขายสินค้า', Unknown: 'ยังไม่ทราบประเภทธุรกิจ' }[info.nature] || '';
+        box.innerHTML = `<label style="display:block;font-size:13px;margin-bottom:4px;cursor:pointer"><input type="radio" name="sDepositVat" value="" ${current ? '' : 'checked'} onchange="Page.renderDepositVatInfo()"> ตามประเภทธุรกิจ (${esc(natureTh)}) — ใช้ “${esc(info.source === 'BusinessTypeDefault' ? info.label || '' : (dv.options.find(o => o.value === 'VatImmediate')?.label || ''))}”</label>`
+          + dv.options.map(o => `<label style="display:block;font-size:13px;margin-bottom:4px;cursor:pointer"><input type="radio" name="sDepositVat" value="${esc(o.value)}" ${o.value === current ? 'checked' : ''} onchange="Page.renderDepositVatInfo()"> <b>${esc(o.label)}</b><br><span class="text-xs text-gray-500" style="margin-left:22px;display:inline-block">${esc(o.description)} <i>(${esc(o.legalReference)})</i></span></label>`).join('');
+        this.renderDepositVatInfo();
+      },
+      renderDepositVatInfo() {
+        const el = document.getElementById('sDepositVatInfo'); const dv = this._depositVat; if (!el || !dv) return;
+        const esc = Layout.esc; const info = dv.info || {};
+        const v = document.querySelector('input[name="sDepositVat"]:checked')?.value ?? '';
+        const opt = dv.options.find(o => o.value === v);
+        // คำเตือนของตัวเลือกที่เพิ่งเลือก (ยังไม่บันทึก) — เลือกชุด "บริการ"/"อื่น ๆ" ตาม nature จากเซิร์ฟเวอร์
+        const warn = opt ? (info.nature === 'Service' ? opt.serviceWarning : opt.otherWarning) : null;
+        el.innerHTML = `${esc(info.explanation || '')}`
+          + (info.needsOwnerChoice && !v ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#EFF6FF;border:1px solid #93C5FD;color:#1E40AF">ประเภทธุรกิจของบริษัทยังระบุไม่ได้ว่าเป็นบริการหรือขายสินค้า — ระบบใช้ “ออกใบกำกับทันที” (พฤติกรรมเดิม) · กรุณาเลือกให้ตรงกับธุรกิจจริง</div>` : '')
+          + (warn ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#FEF3C7;border:1px solid #F59E0B;color:#92400E">${esc(warn)}</div>` : '');
       },
       collectTitleOverrides() {
         const ov = {};
@@ -2199,6 +2227,8 @@
           // ต้องตรงกับ TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled ฝั่งเซิร์ฟเวอร์
           const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
           if (_uniCb) _uniCb.checked = (s.unifyTaxInvoiceNumberSeries ?? true) !== false;
+          this._depositVat = { info: s.depositVatTreatmentInfo, options: s.depositVatTreatmentOptions || [] };
+          this.renderDepositVat(s.depositVatTreatment || '');
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -2425,6 +2455,11 @@
             // "" = ล้างกลับค่าแนะนำ (server: null=ไม่แก้ · ""=ล้าง · ค่าอื่นต้องมีในผัง)
             posTipPayableAccountCode: (document.getElementById('sPosTipAccountCode')?.value ?? '').trim(),
             unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
+            // วิธีบันทึกเงินมัดจำ — "" = กลับไปใช้ค่าตามประเภทธุรกิจ (ล้างค่า) · ไม่โหลดตัวเลือก = ไม่แตะ
+            ...(this._depositVat ? (() => {
+              const v = document.querySelector('input[name="sDepositVat"]:checked')?.value ?? '';
+              return v ? { depositVatTreatment: v } : { depositVatTreatmentClear: true };
+            })() : {}),
             // ตราประทับบริษัท — ขนาด/ตำแหน่ง (รูปอัปโหลดแยก)
             stampWidthMm: parseFloat(document.getElementById('sStampW')?.value || '32'),
             stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),

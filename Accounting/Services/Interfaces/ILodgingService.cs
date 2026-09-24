@@ -39,6 +39,8 @@ public interface ILodgingService
     Task<List<LodgingExtraDto>> GetExtrasAsync(Guid companyId, Guid propertyId, bool includeInactive = false);
     Task<LodgingExtraDto> SaveExtraAsync(Guid companyId, LodgingExtraDto dto, string userId);
     Task<bool> DeleteExtraAsync(Guid companyId, Guid extraId);
+    /// <summary>บริการเสริมที่ต้องเลือกวิธีคิดราคา/หมวดใหม่ ทุกที่พักของบริษัท (รอบ 193 #36) — รายงานอย่างเดียว ไม่เดาค่า</summary>
+    Task<List<LodgingExtraNeedsReselectItem>> ListExtrasNeedingReselectAsync(Guid companyId);
 
     // ── หน้าเว็บสาธารณะ (scope ด้วย siteId — ไม่ต้องล็อกอิน) ──
     Task<LodgingPublicInfo?> GetPublicInfoAsync(Guid companyId, Guid siteId);
@@ -80,6 +82,9 @@ public interface ILodgingService
     Task<LodgingReservationResponse> CancelChargeAsync(Guid companyId, Guid reservationId, Guid chargeId, string userId);
     Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId);
     Task<LodgingReservationResponse> CancelAsync(Guid companyId, Guid reservationId, LodgingCancelRequest request, string userId, bool noShow = false);
+    /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น
+    /// (ยกเลิกแค่ตั้ง "ยอดค้างคืน" ไม่แตะเงินสด)</summary>
+    Task<LodgingReservationResponse> RecordRefundPaidAsync(Guid companyId, Guid reservationId, LodgingRefundPaidRequest request, string userId);
     Task<LodgingReservationResponse> RescheduleAsync(Guid companyId, Guid reservationId, LodgingRescheduleRequest request, string userId);
 
     // ── หลังบ้าน: แม่บ้าน / คำขอแขก ──

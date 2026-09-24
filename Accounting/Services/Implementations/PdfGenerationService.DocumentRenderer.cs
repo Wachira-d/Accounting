@@ -913,7 +913,12 @@ public partial class PdfGenerationService
                 Row(L.TotalDiscount, doc.DiscountAmount.ToString("N2"));
             if (doc.BillDiscountAmount > 0)
             {
-                Row(L.TotalBillDiscount, $"({doc.BillDiscountAmount:N2})");
+                // มัดจำที่ออกใบกำกับแล้ว (รอบ 193 #34) — ตัวตัดสินเดียวกับ HTML renderer (ห้าม drift)
+                Row(Accounting.Helpers.DepositVatTreatmentPolicy.BillDeductionIsTaxedDeposit(
+                        doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
+                        ? $"{L.TotalDepositTaxInvoiced} {doc.DepositAppliedRef}"
+                        : L.TotalBillDiscount,
+                    $"({doc.BillDiscountAmount:N2})");
                 // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
                 // (ลำดับถูกหลักบัญชี: รวม → หักส่วนลด → ฐานภาษี → VAT → WHT → สุทธิ)
                 if (!hideVatBreakdown)

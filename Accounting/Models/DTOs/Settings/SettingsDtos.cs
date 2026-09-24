@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Settings;
@@ -124,7 +125,11 @@ public record UpdateCompanySettingsRequest(
     // ใบเสร็จ standalone ที่มีสินค้าคงคลัง (null = ไม่แก้) · กติกาอยู่ที่ Helpers/CashSaleStockRules
     CashSaleStockPolicy? CashSaleStockPolicy = null,
     // บัญชีทิปพนักงานค้างจ่าย: "" = ล้าง (กลับไปใช้ค่าแนะนำ) · null = ไม่แก้ · ต้องมีในผังบัญชีจริง
-    string? PosTipPayableAccountCode = null);
+    string? PosTipPayableAccountCode = null,
+    // วิธีบันทึกเงินมัดจำฝั่งขาย (รอบ 193 #34): null = ไม่แก้ · ค่าที่ไม่มีในระบบ = ปฏิเสธ ·
+    // DepositVatTreatmentClear=true = ล้างกลับเป็น "ตามประเภทธุรกิจ" (กติกาอยู่ที่ Helpers/DepositVatTreatmentPolicy)
+    DepositVatTreatment? DepositVatTreatment = null,
+    bool? DepositVatTreatmentClear = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -229,8 +234,16 @@ public record CompanySettingsResponse(
     string? CashSaleStockPolicyDescription = null,
     // บัญชีทิปพนักงานค้างจ่าย (null = ใช้ค่าแนะนำ) + รหัสที่ระบบจะใช้จริงตอนนี้
     string? PosTipPayableAccountCode = null,
-    string? PosTipPayableAccountCodeEffective = null)
+    string? PosTipPayableAccountCodeEffective = null,
+    // วิธีบันทึกเงินมัดจำที่บริษัทตั้งเอง (null = ยังไม่เคยตั้ง → ตามประเภทธุรกิจ)
+    DepositVatTreatment? DepositVatTreatment = null)
 {
+    /// <summary>วิธีบันทึกมัดจำที่ใช้จริง + ที่มา + คำอธิบาย/คำเตือน (เซิร์ฟเวอร์คำนวณจาก Company.IndustryType ·
+    /// หน้าเว็บแสดงอย่างเดียว) — null = ยังไม่ได้คำนวณ (เส้นที่ไม่ใช่ GET/UPDATE settings)</summary>
+    public DepositVatTreatmentDecision? DepositVatTreatmentInfo { get; init; }
+    /// <summary>ตัวเลือกทั้งหมด (ชื่อ enum + ป้าย + คำอธิบาย + มาตรา) — หน้าเว็บสร้าง radio จากลิสต์นี้</summary>
+    public IReadOnlyList<DepositVatTreatmentOption>? DepositVatTreatmentOptions { get; init; }
+
     /// <summary>โมดูล CMS ที่บริษัทนี้ใช้จริง ("orders" · "bookings" · "lodging" · "leads") —
     /// คำนวณโดย <c>CmsModuleResolver</c> ฝั่งเซิร์ฟเวอร์ ให้ layout.js ซ่อนเมนูที่ไม่เกี่ยว
     /// (กติกาเดียวกับ VatRegistered/EtaxEnabled: null = ยังไม่ได้คำนวณ → หน้าเว็บต้องแสดงไว้ก่อน)</summary>

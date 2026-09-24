@@ -181,6 +181,11 @@ public class LodgingController : ControllerBase
     public async Task<ActionResult<ApiResponse<LodgingExtraDto>>> SaveExtra(Guid companyId, [FromBody] LodgingExtraDto dto)
         => Wrap(await _svc.SaveExtraAsync(companyId, dto, Uid), "บันทึกบริการเสริมแล้ว");
 
+    /// <summary>บริการเสริมที่ต้องเลือกวิธีคิดราคา/หมวดใหม่ ทุกที่พักของบริษัท (รอบ 193 #36) — อ่านอย่างเดียว</summary>
+    [HttpGet("extras/needs-reselect")]
+    public async Task<ActionResult<ApiResponse<List<LodgingExtraNeedsReselectItem>>>> ExtrasNeedingReselect(Guid companyId)
+        => Wrap(await _svc.ListExtrasNeedingReselectAsync(companyId));
+
     [HttpDelete("extras/{extraId:guid}")]
     [RequirePermission(PermissionKeys.LodgingSettings)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteExtra(Guid companyId, Guid extraId)
@@ -301,7 +306,16 @@ public class LodgingController : ControllerBase
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> Cancel(Guid companyId, Guid id, [FromBody] LodgingCancelRequest? req)
     {
         var r = await _svc.CancelAsync(companyId, id, req ?? new LodgingCancelRequest(), Uid);
-        return Wrap(r, $"ยกเลิกแล้ว · ค่าปรับ {r.CancellationFee:N2} · คืนเงิน {r.RefundAmount:N2}");
+        return Wrap(r, $"ยกเลิกแล้ว · ค่าปรับ {r.CancellationFee:N2}" + (r.RefundPending > 0 ? $" · ค้างคืนเงินแขก {r.RefundPending:N2} (กด “ยืนยันคืนเงินแล้ว” เมื่อโอนจริง)" : ""));
+    }
+
+    /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น</summary>
+    [HttpPost("reservations/{id:guid}/refund-paid")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> RefundPaid(Guid companyId, Guid id, [FromBody] LodgingRefundPaidRequest? req)
+    {
+        var r = await _svc.RecordRefundPaidAsync(companyId, id, req ?? new LodgingRefundPaidRequest(), Uid);
+        return Wrap(r, $"บันทึกคืนเงินแล้ว {r.RefundPaidAmount:N2}" + (r.RefundPending > 0 ? $" · ยังค้างคืน {r.RefundPending:N2}" : " · คืนครบ"));
     }
 
     [HttpPost("reservations/{id:guid}/no-show")]
@@ -309,7 +323,7 @@ public class LodgingController : ControllerBase
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> NoShow(Guid companyId, Guid id, [FromBody] LodgingCancelRequest? req)
     {
         var r = await _svc.CancelAsync(companyId, id, req ?? new LodgingCancelRequest(), Uid, noShow: true);
-        return Wrap(r, $"บันทึก no-show แล้ว · ริบ {r.CancellationFee:N2} · คืนเงิน {r.RefundAmount:N2}");
+        return Wrap(r, $"บันทึก no-show แล้ว · ค่าปรับ {r.CancellationFee:N2}" + (r.RefundPending > 0 ? $" · ค้างคืนเงินแขก {r.RefundPending:N2}" : ""));
     }
 
     [HttpPost("reservations/{id:guid}/reschedule")]

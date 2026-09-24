@@ -84,8 +84,12 @@ public class LodgingProperty : TenantEntity
     public decimal? DepositMaxAmount { get; set; }
     /// <summary>ผังบัญชีพักมัดจำ (null = 21712 ค่า default ของระบบ)</summary>
     public string? DepositDeferredAccountCode { get; set; }
-    /// <summary>true = มัดจำยังไม่เกิด tax point (พัก 21913 จนเช็คอิน) — ปกติ false:
-    /// มัดจำค่าห้องเป็น "ส่วนหนึ่งของราคา" tax point เกิดเมื่อรับเงิน (§78/1)</summary>
+    /// <summary>วิธีบันทึกมัดจำของที่พักนี้ (ตั้งทับค่าบริษัท) — null = ตามค่าตั้งต้นบริษัท/ประเภทธุรกิจ
+    /// ตัวตัดสิน = <c>Helpers/DepositVatTreatmentPolicy.Resolve</c> (รอบ 193 #34)</summary>
+    public DepositVatTreatment? DepositVatTreatment { get; set; }
+    /// <summary>⚠️ ช่องเดิม (ก่อนรอบ 193) — ตอนนี้เป็น <b>สำเนาที่ระบบเขียนตาม</b> <see cref="DepositVatTreatment"/>
+    /// (= VatPendingUndue) เท่านั้น ห้ามอ่านไปตัดสินอะไรอีก · คงไว้ให้ migration ย้ายค่าเดิมแบบรันซ้ำได้
+    /// (true + โหมดยังว่าง ⇒ VatPendingUndue) โดยไม่ทับสิ่งที่ผู้ใช้เลือกทีหลัง</summary>
     public bool DepositOutputVatDeferred { get; set; } = false;
 
     // ── ภาษี/ค่าบริการ ──
@@ -406,7 +410,14 @@ public class LodgingReservation : TenantEntity
     public DateTime? CancelledAt { get; set; }
     public string? CancellationReason { get; set; }
     public decimal CancellationFee { get; set; }
+    /// <summary>ยอดที่ต้องคืนแขกตามนโยบาย (ตั้งตอนยกเลิก) — <b>ไม่ใช่</b>หลักฐานว่าคืนแล้ว (F-03 รอบ 193)</summary>
     public decimal RefundAmount { get; set; }
+    /// <summary>ยอดที่พนักงาน<b>ยืนยันว่าโอน/จ่ายคืนแล้วจริง</b> — JE คืนเงิน + ใบลดหนี้เกิดตอนนี้เท่านั้น
+    /// (สถานะ "คืนแล้ว" ตั้งจากหลักฐาน ไม่ใช่จากการตัดสินใจจะคืน · DECISION_DOCTRINE R1)</summary>
+    public decimal RefundPaidAmount { get; set; }
+    public DateTime? RefundPaidAt { get; set; }
+    public string? RefundPaidBy { get; set; }
+    public string? RefundReference { get; set; }
     public string? InternalNotes { get; set; }
     public string? ConfirmedBy { get; set; }
 

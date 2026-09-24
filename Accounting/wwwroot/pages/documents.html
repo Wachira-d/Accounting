@@ -1601,6 +1601,8 @@
           // "ล็อกช่อง/ซ่อนตัวเลือก + บอกเหตุผล" ให้ตรงกับที่เซิร์ฟเวอร์จะทำจริง
           this._receiptMode = this._normReceiptMode(sr?.data?.receiptIssueMode);
           this._receiptModeText = sr?.data?.receiptIssueModeDescription || '';
+          // วิธีบันทึกเงินมัดจำของบริษัท (รอบ 193 #34) — เซิร์ฟเวอร์ตัดสิน (DepositVatTreatmentPolicy) หน้านี้ใช้เป็นค่าเริ่มต้นของใบใหม่
+          this._depositVatInfo = sr?.data?.depositVatTreatmentInfo || null;
         }
         catch { this._vatRegistered = true; this._showProject = true; this._showCostCenter = true; }
         this.applyReceiptIssueMode();
@@ -4690,6 +4692,23 @@
         if (lEl) lEl.textContent = label;
       },
 
+      /** ใบใหม่: ตั้ง "จังหวะภาษีขายของมัดจำ" ตามวิธีบันทึกของบริษัท (ห้ามค้างค่าของใบก่อน — กฎ B "reset ตอนฟอร์มใหม่")
+       *  ฟอร์มนี้มีสองทาง (ทันที/รอเรียกเก็บ) · โหมด "มัดจำเต็มยอด ไม่แยก VAT" ฟอร์มนี้ยังตั้ง VAT บรรทัดให้ไม่ได้ → บอกตรง ๆ */
+      _resetDepositVatDefault() {
+        const t = this._depositVatInfo?.treatment || 'VatImmediate';
+        const val = t === 'VatImmediate' ? 'immediate' : 'deferred';
+        const radio = document.querySelector(`input[name="fDepositVat"][value="${val}"]`);
+        if (radio) radio.checked = true;
+        const fdAcc = document.getElementById('fDepositDeferredAcc'); if (fdAcc) fdAcc.value = '';
+        let note = document.getElementById('fDepositVatDefaultNote');
+        const panel = document.getElementById('depositOptions');
+        if (!note && panel) { panel.insertAdjacentHTML('beforeend', '<div id="fDepositVatDefaultNote" class="text-xs" style="margin-top:8px;color:#6b21a8"></div>'); note = document.getElementById('fDepositVatDefaultNote'); }
+        if (note) note.textContent = this._depositVatInfo
+          ? `ค่าตั้งต้นบริษัท: ${this._depositVatInfo.label}` + (t === 'FullDeposit'
+              ? ' — ฟอร์มนี้ยังตั้ง VAT บรรทัดเป็น 0 ให้อัตโนมัติไม่ได้ (ยังไม่รองรับ): ตั้ง VAT ของบรรทัดมัดจำเป็น 0 เอง แล้วเลือก "ยังไม่ถึงกำหนด"'
+              : '') + (this._depositVatInfo.warning ? ` · ${this._depositVatInfo.warning}` : '')
+          : '';
+      },
       onDepositToggle() {
         const on = document.getElementById('fIsDeposit')?.checked || false;
         const panel = document.getElementById('depositOptions');
@@ -7950,6 +7969,7 @@
         if (_paidCb) _paidCb.checked = false;
         const _paidRow = document.getElementById('fPaidOnIssueDerivedRow');
         if (_paidRow) _paidRow.style.display = 'none';
+        this._resetDepositVatDefault();
         document.getElementById('fCustomAppendix').value = '';
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';

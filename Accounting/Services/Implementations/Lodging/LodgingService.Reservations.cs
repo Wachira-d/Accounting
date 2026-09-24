@@ -163,7 +163,8 @@ public partial class LodgingService
             ServiceChargePercent = p.ServiceChargePercent, HouseRules = p.HouseRules, ConfirmationMessage = p.ConfirmationMessage,
             PaymentHoldMinutes = p.PaymentHoldMinutes, Currency = site?.DefaultCurrency ?? "THB",
             RoomTypes = await GetRoomTypesAsync(companyId, p.Id),
-            Extras = (await GetExtrasAsync(companyId, p.Id)).Where(e => e.ShowOnWebsite).ToList(),
+            // บริการที่ตั้งค่าไม่ครบ (#36) ไม่โชว์ให้แขกเลือก — คิดราคาไม่ได้ · เจ้าของเห็นป้ายเตือนในหน้าตั้งค่า
+            Extras = (await GetExtrasAsync(companyId, p.Id)).Where(e => e.ShowOnWebsite && e.ConfigProblem == null).ToList(),
             RatePlans = (await GetRatePlansAsync(companyId, p.Id)).Where(r => r.IsActive).ToList(),
             Policies = (await GetPoliciesAsync(companyId, p.Id)).Where(r => r.IsActive).ToList(),
         };
@@ -280,6 +281,9 @@ public partial class LodgingService
             if (e.Quantity <= 0) continue;
             var ex = ctx.Extras.FirstOrDefault(x => x.Id == e.ExtraId);
             if (ex == null) { res.Errors.Add("ไม่พบบริการเสริมที่เลือก"); continue; }
+            // #36 — วิธีคิดราคาที่ไม่มีในระบบ = ปฏิเสธการคิดราคา (เดิมตกเป็น "ครั้งเดียว" เงียบ ๆ = เก็บเงินขาด)
+            if (LodgingPricingEngine.ExtraConfigProblem(ex.PriceMode, ex.Category) is string extraProblem)
+            { res.Errors.Add($"{ex.Name}: {extraProblem}"); continue; }
             var qty = ex.MaxQuantity is int mq ? Math.Min(mq, e.Quantity) : e.Quantity;
             var t = LodgingPricingEngine.ExtraTotal(new LodgingExtraInput(ex.Name, ex.PriceMode, ex.Price, qty), nights, totalGuests);
             res.Extras.Add(new LodgingQuoteExtraLine { ExtraId = ex.Id, Name = ex.Name, PriceMode = ex.PriceMode, UnitPrice = ex.Price, Quantity = qty, Total = t });
