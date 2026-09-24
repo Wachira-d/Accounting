@@ -60,7 +60,12 @@ public static class DocumentLineVatConvention
             var n = includeVat ? amount - v : amount;
             return (Math.Round(n, 2, MidpointRounding.AwayFromZero), v);
         }
-        if (includeVat && vatRate > 0m)
+        // อัตรา ≤ 0 = ไม่มี VAT: 0 (§80/1 ส่งออก) หรือ −1 (ยกเว้น §81 — ThaiVatTypeRule.ExemptRate) · เดิมไหลลงสูตร
+        // `net × rate / 100` ข้างล่าง ⇒ −1 ได้ VAT **ติดลบ** 1% ของยอด (ฝ่ายค้านรอบสาม B6 — สัญญา API บอกให้คู่ค้าส่ง −1
+        // สำหรับของยกเว้น จึงต้องปลอดภัยก่อน)
+        if (vatRate <= 0m)
+            return (Math.Round(amount, 2, MidpointRounding.AwayFromZero), 0m);
+        if (includeVat)
         {
             var net = Math.Round(amount * 100m / (100m + vatRate), 2, MidpointRounding.AwayFromZero);
             return (net, Math.Round(amount - net, 2, MidpointRounding.AwayFromZero));
