@@ -781,6 +781,16 @@ public partial class LodgingService
         return await SettleCheckOutAsync(companyId, r, finalDoc, plan, request, userId);
     }
 
+    /// <summary>ฐานมัดจำที่รับรู้เพื่อใบสุดท้ายใบนี้แล้ว แยกตามใบมัดจำ (JE ที่ผูก <c>DepositRealizedForDocumentId</c> · ไม่นับที่ถูกกลับ)</summary>
+    private async Task<Dictionary<Guid, decimal>> RealizedForFinalByDepositAsync(Guid companyId, Guid finalId)
+        => await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.DepositRealizedForDocumentId == finalId && j.SourceDocumentId != null
+                && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+            .GroupBy(j => j.SourceDocumentId!.Value)
+            .Select(g => new { Id = g.Key, Sum = g.Sum(x => x.TotalDebit) })
+            .ToDictionaryAsync(x => x.Id, x => x.Sum);
+
     /// <summary>ขั้นใช้มัดจำ + ปิดการเข้าพัก (ใช้ทั้งเช็คเอาต์ปกติและทำต่อ) — ล้มกลางทาง = ล้มดัง 3 ที่ และกดเช็คเอาต์ซ้ำทำต่อได้</summary>
     private async Task<LodgingReservationResponse> SettleCheckOutAsync(
         Guid companyId, LodgingReservation r, DocumentResponse finalDoc, LodgingCheckoutDepositPlan plan,
@@ -792,9 +802,16 @@ public partial class LodgingService
         {
             // ออกใบกำกับแล้ว → รับรู้ฐานมัดจำเป็นรายได้ (Dr 217xx / Cr รายได้) · VAT มัดจำอยู่งวดเดิม ไม่ถูกกลับ ·
             // ผูก JE กับใบสุดท้าย (FinalInvoiceId) ⇒ void ใบสุดท้ายแล้วกลับการรับรู้นี้ได้ (C4)
+            // รอบ 193 ฝ่ายค้านรอบสอง: การอนุมัติใบสุดท้ายรับรู้ฐานมัดจำให้แล้ว (DocumentService.RealizeTaxedDepositDeductionsAsync —
+            // ตัวเดียวของทุกเส้น) ⇒ ที่นี่รับรู้เฉพาะส่วนที่ยังขาด (ใบที่ออกก่อนมีตัวนั้น / ทำเช็คเอาต์ต่อ) — ไม่รับรู้ซ้ำ
+            var realizedFor = await RealizedForFinalByDepositAsync(companyId, finalId);
             foreach (var d in plan.Deduct)
+            {
+                var left = d.Base - realizedFor.GetValueOrDefault(d.Id);
+                if (left <= 0.005m) continue;
                 await _docService.RealizeDepositAsync(companyId, d.Id,
-                    new RealizeDepositRequest(d.Base, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId), userId);
+                    new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId), userId);
+            }
             // เต็มยอด/ภาษีรอเรียกเก็บ → ตัดชำระใบสุดท้าย (Dr 217xx [+ 21913] / Cr ลูกหนี้) · ไม่เกินยอดค้างของใบ (วางแผนไว้แล้ว)
             foreach (var a in plan.Apply)
             {
@@ -830,6 +847,8 @@ public partial class LodgingService
         r.PaidAmount += collected;
         // C2 — มัดจำเกินยอดใบสุดท้าย = ค้างคืนแขก (ยังไม่ลงบัญชีคืนเงิน · กด “ยืนยันคืนเงินแล้ว” เมื่อโอนจริง — กลไกเดียวกับการยกเลิก)
         r.RefundAmount = plan.ExcessGross;
+        if (plan.ExcessGross > 0.005m)
+            r.RefundBaselineGross = (await LoadDepositSnapshotsAsync(companyId, r)).Sum(d => d.RefundedGross);
         if (plan.ExcessGross > 0.005m)
             AppendInternal(r, $"มัดจำเกินยอดใบ {finalDoc.DocumentNumber} — ค้างคืนเงินแขก {plan.ExcessGross:N2} "
                 + $"({string.Join(", ", plan.Excess.Select(x => $"{x.Number} {x.Gross:N2}"))}) · กด “ยืนยันคืนเงินแล้ว” เมื่อโอนคืนจริง");
@@ -951,6 +970,8 @@ public partial class LodgingService
         // ลง JE/ใบลดหนี้ซ้ำ · ตอนนี้บันทึกสถานะ + ยอดค้างคืนก่อน (กดซ้ำถูกด่าน "อยู่ในสถานะยกเลิกแล้ว" กันไว้)
         r.Status = noShow ? LodgingReservationStatus.NoShow : LodgingReservationStatus.Cancelled;
         r.CancelledAt = DateTime.UtcNow; r.CancellationReason = reason; r.CancellationFee = fee; r.RefundAmount = plan.Refund; r.HoldExpiresAt = null;
+        // N3 — จุดตั้งยอดค้างคืน: การคืนบนใบมัดจำก่อนจุดนี้ถูกหักออกจากยอดต้องคืนแล้ว (ไม่ใช่การคืนของยอดนี้)
+        r.RefundBaselineGross = deposits.Sum(d => d.RefundedGross);
         // PaidAmount ไม่ลดที่นี่ — เงินยังอยู่กับที่พักจนกว่าจะโอนคืนจริง (ลดใน RecordRefundPaidAsync)
         if (plan.Refund > 0.005m)
             AppendInternal(r, $"ค้างคืนเงินแขก {plan.Refund:N2} — ยังไม่ได้ลงบัญชีคืนเงิน · กด “ยืนยันคืนเงินแล้ว” เมื่อโอนคืนจริง (ระบบจะออกใบลดหนี้ตอนนั้น)");
@@ -1036,7 +1057,20 @@ public partial class LodgingService
             ? await LoadDepositSnapshotsAsync(companyId, r) : new List<LodgingDepositSnapshot>();
         // ยอดที่ "คืนแล้ว" ตามบัญชีจริง = ยอดคืนบนใบมัดจำ (แหล่งความจริงเดียว) — ถ้าคำขอก่อนล้มหลัง RefundDepositAsync commit
         // แต่ก่อนบันทึกการจอง ยอดค้างจะซ่อมตัวเองที่นี่ (เดิมกดซ้ำแล้วชนด่าน "คืนเกิน" ค้างถาวร)
-        if (deposits.Count > 0) SyncRefundPaidFromDeposits(r, deposits, userId);
+        var caughtUp = deposits.Count > 0 ? SyncRefundPaidFromDeposits(r, deposits, userId) : 0m;
+        if (caughtUp > 0m)
+        {
+            // N3 — บันทึกผลซ่อม**ก่อน**ตรวจยอด (เดิม throw ก่อน SaveChanges ⇒ สิ่งที่ซ่อมหาย ค้างถาวร)
+            await _db.SaveChangesAsync();
+            if (LodgingDepositSettlement.RefundPending(r.RefundAmount, r.RefundPaidAmount) <= 0.005m)
+            {
+                // ใบมัดจำลงคืนครบแล้ว (คำขอก่อนหน้าล้มหลัง commit) — จบแบบสำเร็จ ไม่ลงคืนซ้ำ
+                r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
+                _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new { action = "RefundPaidCaughtUp", amount = caughtUp, by = userId }));
+                await _db.SaveChangesAsync();
+                return;
+            }
+        }
         var pending = LodgingDepositSettlement.RefundPending(r.RefundAmount, r.RefundPaidAmount);
         var amount = Math.Round(request.Amount ?? pending, 2, MidpointRounding.AwayFromZero);
         if (LodgingDepositSettlement.ValidateRefundPayment(amount, r.RefundAmount, r.RefundPaidAmount) is string invalid)
@@ -1089,15 +1123,16 @@ public partial class LodgingService
 
     /// <summary>ยอดคืนแล้วบนการจอง ↔ ยอดคืนจริงบนใบมัดจำ (แหล่งความจริง) — ถ้าใบมัดจำคืนไปมากกว่าที่การจองรู้
     /// (คำขอก่อนล้มกลางทาง) ให้การจองตามทัน · ไม่ลดยอด (คืนด้วยมือที่หน้า "เงินมัดจำ" ก็นับเป็นคืนแล้วเช่นกัน)</summary>
-    private void SyncRefundPaidFromDeposits(LodgingReservation r, IReadOnlyList<LodgingDepositSnapshot> deposits, string userId)
+    private decimal SyncRefundPaidFromDeposits(LodgingReservation r, IReadOnlyList<LodgingDepositSnapshot> deposits, string userId)
     {
-        var refundedOnDocs = deposits.Sum(d => d.RefundedGross);
-        var gap = Math.Round(Math.Min(refundedOnDocs, r.RefundAmount) - r.RefundPaidAmount, 2, MidpointRounding.AwayFromZero);
-        if (gap <= 0.005m) return;
+        var gap = LodgingDepositSettlement.RefundPaidCatchUp(r.RefundAmount, r.RefundPaidAmount,
+            deposits.Sum(d => d.RefundedGross), r.RefundBaselineGross);
+        if (gap <= 0.005m) return 0m;
         r.RefundPaidAmount += gap;
         r.PaidAmount = Math.Max(0, r.PaidAmount - gap);
         r.RefundPaidBy ??= userId;
         AppendInternal(r, $"ปรับยอดคืนแล้วให้ตรงใบมัดจำ +{gap:N2} (มีการคืนเงินที่ลงบัญชีแล้วแต่การจองยังไม่ได้บันทึก)");
+        return gap;
     }
 
     /// <summary>บัญชีที่เงินคืนออก — (1) บัญชีธนาคารที่พนักงานเลือก (ผังที่ผูกไว้) (2) ขาเงินเข้าของใบมัดจำ

@@ -237,29 +237,67 @@ public class DepositPolicyResolverTests
         Assert.False(DepositPolicyResolver.DrivesJournalSupported(DocumentType.Invoice, false));
     }
 
-    // ═══ C1 รอบ 193 หลังฝ่ายค้าน — เส้นขับ JE (ใบขายเงินสดของคู่ค้า) บล็อกเฉพาะงวดมัดจำยื่นแล้ว ═══
+    // ═══ ฝ่ายค้านรอบสอง N1 — ทุกเส้นหักมัดจำที่ออกใบกำกับแล้วแบบ "หักมูลค่าก่อน VAT" (ไม่มีใบกำกับซ้ำ) ═══
 
     [Fact]
-    public void เส้นขับJE_มัดจำออกใบกำกับแล้ว_งวดยังไม่ยื่น_ลงได้พร้อมธง_ไม่ถอยไปตั้งหนี้()
+    public void แปลงยอดหักมัดจำรวมVATเป็นฐาน_เต็มใบ_และบางส่วน()
     {
-        Assert.Equal(DrivesGrossApplyVerdict.AllowedVatMoved,
-            DepositPolicyResolver.DrivesGrossApply(130.84m, depositVatPending: false, depositVatPeriodDeclared: false));
-        var note = DepositPolicyResolver.DrivesVatMovedNote("TIV-0001", 130.84m);
-        Assert.Contains("TIV-0001", note);
-        Assert.Contains("130.84", note);
-        Assert.Contains(DepositPolicyResolver.ImmediateVatGrossApplyRuleCode, note);
+        // มัดจำ 2,000 (ฐาน 1,869.16) ทั้งใบ → ฐาน 1,869.16 · ครึ่งใบ 1,000 → 934.58
+        Assert.Equal(1869.16m, DepositPolicyResolver.TaxedDepositBase(2000m, 1869.16m, 2000m, 1869.16m));
+        Assert.Equal(934.58m, DepositPolicyResolver.TaxedDepositBase(1000m, 1869.16m, 2000m, 1869.16m));
     }
 
     [Fact]
-    public void เส้นขับJE_มัดจำออกใบกำกับแล้ว_งวดยื่นแล้ว_บล็อก()
-        => Assert.Equal(DrivesGrossApplyVerdict.Blocked,
-            DepositPolicyResolver.DrivesGrossApply(130.84m, depositVatPending: false, depositVatPeriodDeclared: true));
+    public void แปลงฐาน_ไม่เกินฐานคงเหลือ_และยอดศูนย์ไม่แปลง()
+    {
+        Assert.Equal(500m, DepositPolicyResolver.TaxedDepositBase(2000m, 1869.16m, 2000m, 500m));
+        Assert.Equal(0m, DepositPolicyResolver.TaxedDepositBase(0m, 1869.16m, 2000m, 1869.16m));
+        Assert.Equal(0m, DepositPolicyResolver.TaxedDepositBase(2000m, 1869.16m, 2000m, 0m));
+    }
 
-    [Theory]
-    [InlineData(130.84, true, true)]    // VAT พัก 21913 — ยังไม่เคยรายงาน
-    [InlineData(0, false, true)]        // เต็มยอด/ไม่จด VAT
-    [InlineData(0, true, false)]
-    public void เส้นขับJE_มัดจำไม่มีVATที่รายงานแล้ว_ลงได้ตามปกติไม่ว่างวดไหน(double vat, bool pending, bool declared)
-        => Assert.Equal(DrivesGrossApplyVerdict.Allowed,
-            DepositPolicyResolver.DrivesGrossApply((decimal)vat, pending, declared));
+    [Fact]
+    public void กระจายฐานที่ต้องรับรู้_ใบเก่าสุดก่อน_ไม่เกินคงเหลือของแต่ละใบ()
+    {
+        var a = Guid.NewGuid(); var b = Guid.NewGuid();
+        var (lines, shortfall) = DepositPolicyResolver.AllocateBaseDeduction(2500m, new[] { (a, 1869.16m), (b, 1869.16m) });
+        Assert.Equal(0m, shortfall);
+        Assert.Equal(2, lines.Count);
+        Assert.Equal((a, 1869.16m), lines[0]);
+        Assert.Equal((b, 630.84m), lines[1]);
+    }
+
+    [Fact]
+    public void กระจายฐาน_มัดจำไม่พอ_บอกส่วนขาดให้ล้มดัง_ทิศตรงข้ามพอดีไม่ขาด()
+    {
+        var a = Guid.NewGuid();
+        Assert.Equal(130.84m, DepositPolicyResolver.AllocateBaseDeduction(2000m, new[] { (a, 1869.16m) }).Shortfall);
+        Assert.Equal(0m, DepositPolicyResolver.AllocateBaseDeduction(1869.16m, new[] { (a, 1869.16m) }).Shortfall);
+        Assert.Empty(DepositPolicyResolver.AllocateBaseDeduction(0m, new[] { (a, 1869.16m) }).Lines);
+    }
+
+    // ═══ ฝ่ายค้านรอบสอง N4 — แยกยอดคืนมัดจำ (ตัวเดียวของ RefundDepositAsync + ที่พัก) ═══
+
+    [Fact]
+    public void คืนสองงวด_4727_07_ค่าปรับ1500_51_คืน72_02แล้วงวดสุดท้าย3154_54ผ่าน_VATรวมเท่าคืนครั้งเดียว()
+    {
+        const decimal sub = 4417.82m, vat = 309.25m, total = 4727.07m, realized = 1402.35m;
+        var first = DepositReversalMath.RefundSplit(72.02m, sub, vat, total, realized, 0m);
+        Assert.True(first.Ok);
+        var last = DepositReversalMath.RefundSplit(3154.54m, sub, vat, total, realized, 72.02m);
+        Assert.True(last.Ok);                                   // เดิม: ฐาน 2,948.17 > คงเหลือ 2,948.16 ⇒ ปฏิเสธ ค้าง 0.01
+        Assert.Equal(2948.16m, last.Base);
+        var once = DepositReversalMath.RefundSplit(3226.56m, sub, vat, total, realized, 0m);
+        Assert.Equal(once.Vat, first.Vat + last.Vat);           // 211.09 เท่าคืนครั้งเดียว
+        Assert.Equal(once.Base, first.Base + last.Base);
+    }
+
+    [Fact]
+    public void คืนครั้งเดียวจากศูนย์_สูตรเดิม_และคืนเกินยอดใบถูกปฏิเสธ()
+    {
+        var ok = DepositReversalMath.RefundSplit(1000m, 934.58m, 65.42m, 1000m, 0m, 0m);
+        Assert.True(ok.Ok);
+        Assert.Equal((934.58m, 65.42m), (ok.Base, ok.Vat));
+        Assert.False(DepositReversalMath.RefundSplit(1000.01m, 934.58m, 65.42m, 1000m, 0m, 0m).Ok);
+        Assert.False(DepositReversalMath.RefundSplit(0m, 934.58m, 65.42m, 1000m, 0m, 0m).Ok);
+    }
 }

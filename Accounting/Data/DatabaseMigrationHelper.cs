@@ -6646,6 +6646,8 @@ public static class DatabaseMigrationHelper
             """UPDATE "LodgingProperties" SET "DepositVatTreatment" = 2 WHERE "DepositOutputVatDeferred" = true AND "DepositVatTreatment" IS NULL;""",
             // รอบ 193 F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ยอดที่ยืนยันว่าคืนจริง + หลักฐาน
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // รอบ 193 ฝ่ายค้านรอบสอง N3 — ยอดคืนบนใบมัดจำ ณ ตอนยกเลิก/เช็คเอาต์ (การคืนก่อนหน้านั้นไม่ใช่การคืนของยอดค้างนี้)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundBaselineGross" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",

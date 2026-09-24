@@ -712,7 +712,12 @@ public class IntegrationService : IIntegrationService
                 {
                     // ── Resync update: partner ส่งข้อมูลแก้ไขมาพร้อม flag ──
                     if (request.ResyncUpdate)
+                    {
+                        // N2 — resync ของใบขายเงินสดที่หักมัดจำออกใบกำกับแล้วแบบขับ JE ห้ามถอยไปลง JE ตั้งหนี้ (ผลเดิมของ C1)
+                        if (await TaxedDrivesRejectionAsync(companyId, request) is string resyncReject)
+                            return await RejectTaxedDrivesAsync(log, integrationId, sw, resyncReject, existing.Id, existing.DocumentNumber);
                         return await ResyncUpdateInvoiceAsync(companyId, integrationId, existing, request, log, sw);
+                    }
 
                     // ยิงซ้ำ (idempotent): เอกสารมีอยู่แล้ว + JE โพสต์ครบตั้งแต่ create
                     // (ขายเงินสด = clean JE / ตั้งหนี้ = mapping JE). ถ้า create ล้มทั้ง
@@ -980,6 +985,11 @@ public class IntegrationService : IIntegrationService
                 integrationSeriesType = Accounting.Helpers.TaxInvoiceSeriesPolicy
                     .SeriesTypeOverride(roleProbe, integrationCarriesTaxInvoice) ?? DocumentType.TaxInvoice;
             }
+            // รอบ 193 ฝ่ายค้านรอบสอง N1/N2 — ใบขายเงินสดที่หักมัดจำ "ออกใบกำกับแล้ว" เต็มจำนวนแบบขับ JE: ปฏิเสธ **ก่อนออกเลข**
+            // (ไม่มีใบ Approved ที่ไม่มี JE · ยิงซ้ำ/resync/รับชำระ ไม่มีใบให้กลับไปผลเดิมของ C1) · คู่ค้าต้องส่งแบบหักฐาน
+            if (await TaxedDrivesRejectionAsync(companyId, request) is string createReject)
+                return await RejectTaxedDrivesAsync(log, integrationId, sw, createReject, null, null);
+
             var docNumber = await _settingsService.GetNextNumberAsync(
                 companyId, integrationSeriesType, request.DocumentDate);
 
@@ -1052,23 +1062,15 @@ public class IntegrationService : IIntegrationService
                 catch (Accounting.Helpers.BusinessRuleException exTiv)
                     when (exTiv.RuleCode == Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode)
                 {
-                    // รอบ 193 หลังฝ่ายค้าน C1 — มัดจำออกใบกำกับแล้ว และงวดของมัดจำยื่นไปแล้ว: **ห้ามถอยไปตั้งหนี้**
-                    // (ตั้งหนี้ = Dr ลูกหนี้เต็ม + Cr 21911 เต็ม ⇒ VAT มัดจำซ้ำ · 217xx ค้าง · BalanceDue เต็มทำให้ต้นทาง
-                    // เก็บเงินซ้ำเท่ามัดจำ). ล้มดัง 3 ที่: ธงบนใบ · log PartialSuccess · คำตอบ success=false
+                    // ตาข่าย (ด่านก่อนออกเลขอ่านจากช่องของใบมัดจำ · AutoPost อ่านจาก GL — ถ้าสองชั้นเห็นต่าง): **ห้ามถอยไปตั้งหนี้**
+                    // และห้ามปล่อยใบ Approved ที่ไม่มี JE (ภ.พ.30 นับ VAT ทั้งที่ GL ไม่มี · รับชำระได้ · ยิงซ้ำตอบ "Already synced")
+                    // ⇒ ยกเลิกใบ (เลขคงอยู่ — ไม่มีช่องว่างของเลข §86/4) + ธงบนใบ + log Failed + คำตอบ success=false
                     document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(
-                        document.InternalNotes, "[" + exTiv.RuleCode + "] ลงบัญชีไม่ได้ — " + exTiv.Message);
+                        document.InternalNotes, "[" + exTiv.RuleCode + "] ยกเลิกอัตโนมัติ — " + exTiv.Message);
                     await _db.SaveChangesAsync();
-                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว (งวดยื่นแล้ว) — ไม่ลงบัญชี ไม่ถอยไปตั้งหนี้",
-                        document.DocumentNumber);
-                    log.Status = "PartialSuccess";
-                    log.ErrorMessage = exTiv.Message;
-                    log.CreatedDocumentId = document.Id;
-                    log.CreatedContactId = contact.Id;
-                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
-                    await SaveSyncLog(log, integrationId);
-                    return new InboundSyncResponse(false,
-                        "สร้างเอกสารแล้วแต่ลงบัญชีไม่ได้ (ต้องให้นักบัญชีแก้ก่อน · ห้ามรับชำระยอดค้างของใบนี้): " + exTiv.Message,
-                        document.Id, contact.Id, null, null, docNumber);
+                    await _documentService!.VoidDocumentAsync(companyId, document.Id);
+                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ยกเลิกใบ ไม่ถอยไปตั้งหนี้", document.DocumentNumber);
+                    return await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, document.Id, document.DocumentNumber);
                 }
                 catch (Exception exCash)
                 {
@@ -3159,6 +3161,39 @@ public class IntegrationService : IIntegrationService
         }
 
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>ใบขายเงินสดของคู่ค้าที่หักมัดจำ "ออกใบกำกับแล้ว" แบบขับ JE — ตัวตัดสินเดียวกับปุ่ม/AutoPost
+    /// (<c>DepositPolicyResolver.GrossApplyBlocked</c>) อ่านจากใบมัดจำที่อ้าง (เลขเรา/เลขต้นทาง · tenant-safe) ·
+    /// null = ไม่ติด · ข้อความ = เหตุผล + รูปที่คู่ค้าต้องส่งแทน</summary>
+    private async Task<string?> TaxedDrivesRejectionAsync(Guid companyId, InboundInvoiceRequest request)
+    {
+        if (!request.IsCashSale || !request.DepositAppliedDrivesJournal || request.DepositAppliedAmount <= 0m) return null;
+        var refs = DepositReversalMath.ParseDepositRefs(request.DepositAppliedRef);
+        if (refs.Length == 0) return null;
+        var deposits = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && (refs.Contains(d.DocumentNumber) || (d.Reference != null && refs.Contains(d.Reference))))
+            .Select(d => new { d.DocumentNumber, d.VatAmount, Pending = d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null })
+            .ToListAsync();
+        var taxed = deposits.FirstOrDefault(d => Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(d.VatAmount, d.Pending));
+        if (taxed == null) return null;
+        return Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(taxed.DocumentNumber)
+            + " · คู่ค้า: ส่งใบนี้แบบหักมูลค่ามัดจำ (ก่อน VAT) ออกจากราคาบรรทัด ไม่ตั้ง depositAppliedDrivesJournal "
+            + "หรือส่งมัดจำเป็นแบบภาษีรอเรียกเก็บ (depositOutputVatDeferred) · ไม่มีการสร้างเอกสาร/ออกเลข";
+    }
+
+    /// <summary>ล้มดัง 3 ที่ของใบที่ถูกปฏิเสธ: log Failed · คำตอบ success=false · (ถ้ามีใบ) ธงบนใบถูกเขียนโดยผู้เรียกแล้ว</summary>
+    private async Task<InboundSyncResponse> RejectTaxedDrivesAsync(
+        IntegrationSyncLog log, Guid integrationId, Stopwatch sw, string message, Guid? documentId, string? documentNumber)
+    {
+        log.Status = "Failed";
+        log.ErrorMessage = message;
+        log.CreatedDocumentId = documentId;
+        log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+        await SaveSyncLog(log, integrationId);
+        return new InboundSyncResponse(false, message, documentId, null, null, null, documentNumber);
     }
 
     private async Task<InboundSyncResponse> HandleSyncError(IntegrationSyncLog log, Guid integrationId, Exception ex, Stopwatch sw)

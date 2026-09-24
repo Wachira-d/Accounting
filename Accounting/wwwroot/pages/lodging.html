@@ -243,6 +243,7 @@
         document.getElementById('resBody').innerHTML = `
           ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
           ${r.slipRejectedCount > 0 ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">⚠️ สลิปถูกปฏิเสธมาแล้ว ${r.slipRejectedCount} ครั้ง${r.slipRejectedReason ? ` — ล่าสุด: ${esc(r.slipRejectedReason)}` : ''}${r.slipUploadBlocked ? ' · <b>ปิดรับสลิปของใบนี้แล้ว</b> (แขกยังชำระออนไลน์/ติดต่อที่พักได้)' : ''}</div>` : ''}
+          ${r.finalDocumentNote ? `<div class="warn">⚠️ ${esc(r.finalDocumentNote)}</div>` : ''}
           ${r.status === 'Pending' && r.holdExpiresAt ? `<div class="hint" style="margin-bottom:8px">กันห้องถึง ${new Date(r.holdExpiresAt).toLocaleString('th-TH')}</div>` : ''}
           <div class="grid grid-2 gap-4">
             <div class="card"><h4>👤 ผู้เข้าพัก</h4><div><b>${esc(r.guestName)}</b>${r.guestCompanyName ? ` · ${esc(r.guestCompanyName)}` : ''}</div><div class="hint">📱 ${esc(r.guestPhone || '-')} · 📧 ${esc(r.guestEmail || '-')}${r.guestNationality ? ' · ' + esc(r.guestNationality) : ''}</div>

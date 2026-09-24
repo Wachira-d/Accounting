@@ -383,4 +383,55 @@ public class LodgingDepositSettlementTests
         Assert.Equal(600m, LodgingDepositSettlement.RefundPendingOf(1000m, 400m, "user-123"));
         Assert.Equal(LodgingRefundState.None, LodgingDepositSettlement.RefundStateOf(0m, 0m, LodgingDepositSettlement.LegacyRefundMarker));
     }
+
+    // ═══ ฝ่ายค้านรอบสอง N3 — ยอดคืนแล้วตามใบมัดจำ นับเฉพาะการคืนหลังจุดตั้งยอดค้างคืน ═══
+
+    [Fact]
+    public void คืนจากหน้าเงินมัดจำก่อนยกเลิก_ไม่ถูกนับเป็นการคืนของยอดค้าง_แขกยังได้คืน500()
+        // มัดจำ 2,000 · คืน 500 ก่อนยกเลิก · ค่าปรับ 1,000 ⇒ ค้างคืน 500 · baseline = 500 (เดิมนับซ้ำ ⇒ ยอดค้าง 0 ⇒ throw ถาวร)
+        => Assert.Equal(0m, LodgingDepositSettlement.RefundPaidCatchUp(500m, 0m, refundedOnDocsNow: 500m, refundBaseline: 500m));
+
+    [Fact]
+    public void คำขอก่อนล้มหลังลงบัญชีคืนครบแล้ว_ตามทันเท่ายอดค้างทั้งหมด()
+    {
+        Assert.Equal(1000m, LodgingDepositSettlement.RefundPaidCatchUp(1000m, 0m, refundedOnDocsNow: 1000m, refundBaseline: 0m));
+        Assert.Equal(300m, LodgingDepositSettlement.RefundPaidCatchUp(1000m, 400m, refundedOnDocsNow: 700m, refundBaseline: 0m));
+        Assert.Equal(0m, LodgingDepositSettlement.RefundPaidCatchUp(1000m, 400m, refundedOnDocsNow: 400m, refundBaseline: 0m));
+    }
+
+    // ═══ ฝ่ายค้านรอบสอง N4 — คืนสองงวดไม่ค้าง 0.01 (คู่ยอดของฝ่ายค้าน) ═══
+
+    [Fact]
+    public void คืนสองงวด_72_02_แล้ว3154_54_ครบ3226_56_ไม่ค้าง()
+    {
+        var d = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-7", Guest, 4417.82m, 309.25m, 4727.07m, false, 0m, 0m);
+        var plan = LodgingDepositSettlement.PlanCancellation(1500.51m, 4727.07m, new[] { d });
+        Assert.Equal(3226.56m, plan.Refund);
+        var afterForfeit = d with { RealizedBase = plan.Lines[0].ForfeitBase };
+        Assert.Equal(72.02m, LodgingDepositSettlement.AllocateRefund(72.02m, new[] { afterForfeit }).Sum(a => a.Gross));
+        var afterFirst = afterForfeit with { RefundedGross = 72.02m };
+        Assert.Equal(3154.54m, LodgingDepositSettlement.AllocateRefund(3154.54m, new[] { afterFirst }).Sum(a => a.Gross));
+    }
+
+    // ═══ ฝ่ายค้านรอบสอง — สาขา "ตัดชำระใบนี้ไปแล้ว" ของการทำเช็คเอาต์ต่อ (เดิมเทสต์ไม่ถึงสาขานี้) ═══
+
+    [Fact]
+    public void ทำเช็คเอาต์ต่อ_มัดจำที่ตัดชำระใบนี้บางส่วนแล้ว_ส่วนที่เหลือเป็นค้างคืน_ไม่ตัดซ้ำ()
+    {
+        var finalId = Guid.NewGuid();
+        // มัดจำพัก VAT 2,000 ตัดชำระใบนี้ไปแล้ว 1,500 (ฐาน 1,401.87) ⇒ เหลือ 500 = ส่วนเกินที่ต้องคืน
+        var partlyApplied = new LodgingDepositSnapshot(Guid.NewGuid(), "REC-1", Guest, 1869.16m, 130.84m, 2000m, true, 1401.87m, 0m, finalId);
+        var plan = LodgingDepositSettlement.PlanCheckout(new[] { partlyApplied }, 0m, _ => 999m, finalId);
+        Assert.Empty(plan.Apply);
+        Assert.Equal(500m, Assert.Single(plan.Excess).Gross);
+    }
+
+    [Fact]
+    public void เช็คเอาต์ครั้งแรก_มัดจำใบเดียวกันที่ยังไม่ผูกใบนี้_ตัดชำระตามปกติ()
+    {
+        var d = new LodgingDepositSnapshot(Guid.NewGuid(), "REC-1", Guest, 1869.16m, 130.84m, 2000m, true, 1401.87m, 0m);
+        var plan = LodgingDepositSettlement.PlanCheckout(new[] { d }, 0m, _ => 999m, Guid.NewGuid());
+        Assert.Equal(500m, Assert.Single(plan.Apply).Gross);
+        Assert.Empty(plan.Excess);
+    }
 }

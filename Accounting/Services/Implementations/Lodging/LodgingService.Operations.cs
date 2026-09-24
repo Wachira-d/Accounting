@@ -45,6 +45,18 @@ public partial class LodgingService
             if (dep != null) depTreatment = DepositPolicyResolver.OfDocument(dep.IsDeposit, dep.VatAmount, dep.DepositOutputVatDeferred);
         }
 
+        // C4 (ฝ่ายค้านรอบสอง) — ใบเช็คเอาต์ถูกยกเลิก: มัดจำกลับเป็นคงค้างแล้ว (void กลับการรับรู้/ตัดชำระ) · บอกทางออกใบใหม่
+        string? finalNote = null;
+        if (r.FinalDocumentId is Guid finalDocId)
+        {
+            var finalStatus = await _db.Documents.AsNoTracking().Where(d => d.Id == finalDocId && d.CompanyId == companyId)
+                .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync();
+            if (finalStatus == DocumentStatus.Voided)
+                finalNote = $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว — มัดจำกลับเป็นยอดคงค้าง · ออกใบใหม่ที่หน้า “เอกสาร”: "
+                    + "ใบกำกับภาษีถึงลูกค้าเดิม ติ๊ก “ขายเงินสดใบเดียว” แล้วเลือกหักมัดจำใบเดิม (มัดจำที่ออกใบกำกับแล้ว ระบบหักมูลค่าก่อน VAT "
+                    + "และรับรู้ให้เมื่ออนุมัติ) · มัดจำแบบภาษีรอเรียกเก็บ/เต็มยอด ใช้ปุ่ม “หักมัดจำ” หลังอนุมัติ";
+        }
+
         var res = new LodgingReservationResponse
         {
             Id = r.Id, PropertyId = r.PropertyId, PropertyName = prop.Name, ReservationNumber = r.ReservationNumber,
@@ -76,6 +88,7 @@ public partial class LodgingService
             DepositVatTreatment = depTreatment,
             DepositVatTreatmentLabel = depTreatment is DepositVatTreatment dvt ? DepositPolicyResolver.LabelOf(dvt) : null,
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
+            FinalDocumentNote = includeInternal ? finalNote : null,
             OnlinePayableAmount = LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
             OnlinePaymentNote = LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,

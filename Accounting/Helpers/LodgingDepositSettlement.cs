@@ -93,13 +93,12 @@ public static class LodgingDepositSettlement
 
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
-    /// <summary>แยก gross ที่คืน → (ฐาน, VAT) ด้วยสูตรเดียวกับ <c>RefundDepositAsync</c>:
-    /// vat = round(gross × Vat/Total) · base = gross − vat</summary>
-    private static (decimal Base, decimal Vat) SplitRefund(decimal gross, decimal docTotal, decimal docVat)
+    /// <summary>แยก gross ที่คืน → (ฐาน, VAT) + ผ่านด่านคืนเกินไหม — <b>ตัวเดียวกับ <c>RefundDepositAsync</c></b>
+    /// (<see cref="DepositReversalMath.RefundSplit"/> · VAT คิดจากยอดคืนสะสม ⇒ คืนหลายงวดไม่ค้าง 0.01)</summary>
+    private static (decimal Base, decimal Vat, bool Ok) SplitRefund(LodgingDepositSnapshot d, decimal gross)
     {
-        var portion = docTotal > 0m ? docVat / docTotal : 0m;
-        var vat = R2(gross * portion);
-        return (gross - vat, vat);
+        var r = DepositReversalMath.RefundSplit(gross, d.SubTotal, d.VatAmount, d.TotalAmount, d.RealizedBase, d.RefundedGross);
+        return (r.Base, r.Vat, r.Ok);
     }
 
     /// <summary>ฐานของยอดที่ตัดชำระ — สูตรเดียวกับ <c>ApplyDepositToInvoiceCoreAsync</c>: base = round(gross × (1 − Vat/Total))</summary>
@@ -143,7 +142,7 @@ public static class LodgingDepositSettlement
         {
             var g = rem.Gross + 0.01m * k;
             if (g <= 0m) continue;
-            if (SplitRefund(g, d.TotalAmount, d.VatAmount).Base <= rem.Base + 0.0001m) best = Math.Max(best, g);
+            if (SplitRefund(d, g).Ok) best = Math.Max(best, g);
         }
         return best;
     }
@@ -254,7 +253,7 @@ public static class LodgingDepositSettlement
             var forfeitGross = Math.Min(feeLeft, refundable);
             feeLeft -= forfeitGross;
             var refundGross = refundable - forfeitGross;
-            var (refundBase, refundVat) = refundGross > 0m ? SplitRefund(refundGross, d.TotalAmount, d.VatAmount) : (0m, 0m);
+            var (refundBase, refundVat, _) = refundGross > 0m ? SplitRefund(d, refundGross) : (0m, 0m, true);
             // ฐานที่ริบ = ฐานคงเหลือ − ฐานที่จะคืน (คำนวณด้วยสูตรเดียวกับตอนคืนจริง) ⇒ คืนภายหลังไม่ติดด่าน
             // "คืนเกินคงเหลือ" และ Σ ฐาน = ฐานของใบพอดีไม่มีเศษค้าง 217xx
             var forfeitBase = Math.Max(0m, Remaining(d).Base - refundBase);
@@ -278,6 +277,13 @@ public static class LodgingDepositSettlement
 
     /// <summary>ยอดที่ยังต้องคืน (ไม่ติดลบ)</summary>
     public static decimal RefundPending(decimal refundDue, decimal refundPaid) => Math.Max(0m, R2(refundDue - refundPaid));
+
+    /// <summary>ยอด "คืนแล้ว" ที่การจองยังไม่รู้ ทั้งที่ใบมัดจำลงคืนไปแล้ว (คำขอก่อนล้มหลัง <c>RefundDepositAsync</c> commit) —
+    /// นับเฉพาะการคืนบนใบมัดจำที่เกิด<b>หลังจุดตั้งยอดค้างคืน</b> (<paramref name="refundBaseline"/>) · ไม่เกินยอดต้องคืน
+    /// <para>N3 รอบ 193: เดิมนับการคืนทุกครั้งบนใบ รวมที่คืนจากหน้า "เงินมัดจำ" ก่อนยกเลิก ซึ่งแผนยกเลิกหักออกจากยอดต้องคืนไปแล้ว ⇒
+    /// นับซ้ำ ⇒ ยอดค้างเป็น 0 แล้วตรวจยอด throw ก่อนบันทึก ⇒ แขกไม่ได้เงิน 500 และกดบันทึกไม่ได้ตลอดไป</para></summary>
+    public static decimal RefundPaidCatchUp(decimal refundDue, decimal refundPaid, decimal refundedOnDocsNow, decimal refundBaseline)
+        => Math.Max(0m, R2(Math.Min(refundedOnDocsNow - refundBaseline, refundDue) - refundPaid));
 
     /// <summary>แถวยกเลิกก่อนรอบ 193 ที่ระบบเดิมลงคืนเงินให้เอง (ไม่มีหลักฐานการโอน)</summary>
     public static bool IsLegacyRefund(string? refundPaidBy)
