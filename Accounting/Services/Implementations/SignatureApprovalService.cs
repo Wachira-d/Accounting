@@ -405,68 +405,120 @@ public class SignatureApprovalService : ISignatureApprovalService
                 throw new DocumentApprovalWarningsException(pendingWarnings);
         }
 
-        // กันลายเซ็นซ้ำ: ลูกค้าเซ็นไปแล้วแต่อนุมัติเอกสารไม่ผ่าน (ด่านบัญชี/ภาษี) ⇒ ครั้งถัดไปใช้ลายเซ็นเดิม ไม่สร้างขั้นใหม่/ลายเซ็นใหม่
-        var alreadySigned = await _db.Set<DocumentApproval>()
-            .AnyAsync(a => a.DocumentId == documentId && a.ApproverRole == "Customer"
-                && a.Status == ApprovalStatus.Approved && !a.IsDeleted);
-        if (!alreadySigned)
+        // รอบ 193 ฝ่ายค้านรอบสาม R3-3: ลายเซ็นลูกค้าเดิมใช้ซ้ำได้เฉพาะเมื่อ "เนื้อหาเอกสารไม่เปลี่ยนตั้งแต่เซ็น" (hash ตัวเดียว
+        // Helpers/DocumentSignedContent ทั้งตอนเขียนและตอนตรวจ) และคำขอเป็นการเรียกซ้ำของผู้เซ็นคนเดิมด้วยลายเซ็นเดิม —
+        // เดิมเช็คแค่ "มีขั้นลูกค้าที่ Approved แล้วไหม" ⇒ แก้ราคาแล้วเรียกซ้ำ ใบถูกอนุมัติด้วยลายเซ็นที่ลูกค้าให้กับราคาเดิม
+        // และลายเซ็น/ชื่อในคำขอใหม่ถูกทิ้งเงียบ · ลายเซ็นที่ใช้ไม่ได้ถูก "แทนที่" (soft-delete + หมายเหตุ ⇒ ไม่ขึ้นบน PDF อีก)
+        // แล้วบันทึกลายเซ็นใหม่จากคำขอนี้
+        // B9 (race): เดิมกันซ้ำด้วย AnyAsync อย่างเดียว ⇒ เรียกพร้อมกันสองครั้งได้ขั้นลูกค้า + ลายเซ็นซ้ำ ⇒ ล็อกแถวเอกสาร
+        // (FOR UPDATE ใน transaction) รอบ "ตรวจ → บันทึก" · ไม่ใช้ unique index เพราะฐานที่ใช้งานอยู่มีแถวซ้ำจากพฤติกรรมเดิมแล้ว
+        // (CREATE UNIQUE INDEX จะล้มตอน migrate)
+        var reusedSignature = false;
+        string signerName = request.ApproverName;
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-        // Find or create customer approval step
-        var customerApproval = await _db.Set<DocumentApproval>()
-            .FirstOrDefaultAsync(a => a.DocumentId == documentId && a.ApproverRole == "Customer"
-                && a.Status == ApprovalStatus.Pending && !a.IsDeleted);
+            await using var signTx = await _db.Database.BeginTransactionAsync();
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                documentId, companyId);
+            await _db.Entry(doc).ReloadAsync();   // เนื้อหา/สถานะล่าสุดใต้ล็อก
+            if (doc.Status == DocumentStatus.Approved)
+                throw new InvalidOperationException("ใบเสนอราคานี้อนุมัติแล้ว");
 
-        if (customerApproval == null)
-        {
-            // Auto-create customer approval step
-            var maxStep = await _db.Set<DocumentApproval>()
-                .Where(a => a.DocumentId == documentId && !a.IsDeleted)
-                .MaxAsync(a => (int?)a.StepOrder) ?? 0;
+            var lines = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == documentId && !l.IsDeleted)
+                .ToListAsync();
+            var contentHash = DocumentSignedContent.Hash(doc, lines);
 
-            customerApproval = new DocumentApproval
+            var signedSteps = await _db.Set<DocumentApproval>()
+                .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && a.ApproverRole == "Customer"
+                    && a.Status == ApprovalStatus.Approved && !a.IsDeleted)
+                .ToListAsync();
+            var reusable = signedSteps.FirstOrDefault(a => DocumentSignedContent.CanReuseSignature(
+                a.SignedContentHash, contentHash, a.SignatureData, a.ApproverName,
+                request.SignatureData, request.ApproverName));
+
+            if (reusable != null)
             {
-                CompanyId = companyId,
-                DocumentId = documentId,
-                ApprovalType = "Customer",
-                ApproverRole = "Customer",
-                StepOrder = maxStep + 1,
-                ApproverName = request.ApproverName,
-                ApproverEmail = request.ApproverEmail,
-                ApproverTitle = request.ApproverTitle,
-                PostApprovalAction = request.AutoConvert ? "ConvertToInvoice" : null
-            };
-            _db.Set<DocumentApproval>().Add(customerApproval);
-            await _db.SaveChangesAsync();
-        }
+                // เรียกซ้ำด้วยเนื้อหาเดิม + ลายเซ็นเดิม ⇒ ไม่สร้างขั้น/ลายเซ็นซ้ำ · ผู้อนุมัติ = ผู้เซ็นที่เก็บไว้ (ไม่ใช่ชื่อในคำขอ)
+                reusedSignature = true;
+                signerName = reusable.ApproverName ?? request.ApproverName;
+            }
+            else
+            {
+                foreach (var stale in signedSteps)
+                    SupersedeCustomerSignature(stale, string.Equals(stale.SignedContentHash, contentHash, StringComparison.Ordinal)
+                        ? "ลูกค้าเซ็นใหม่ (ลายเซ็น/ชื่อผู้เซ็นต่างจากเดิม)"
+                        : "เนื้อหาเอกสารเปลี่ยนหลังลูกค้าเซ็น (หรือแถวก่อนรอบ 193 ที่ไม่รู้ว่าเซ็นเนื้อหาอะไร) — ต้องเซ็นใหม่");
+                if (signedSteps.Count > 0)
+                {
+                    var staleIds = signedSteps.Select(a => a.Id).ToList();
+                    var staleSigs = await _db.Set<DocumentSignature>()
+                        .Where(s => s.CompanyId == companyId && s.DocumentId == documentId
+                            && staleIds.Contains(s.DocumentApprovalId) && !s.IsDeleted)
+                        .ToListAsync();
+                    foreach (var s in staleSigs) { s.IsDeleted = true; s.UpdatedAt = DateTime.UtcNow; }
+                }
 
-        // Approve
-        customerApproval.Status = ApprovalStatus.Approved;
-        customerApproval.ApprovedAt = DateTime.UtcNow;
-        customerApproval.ApproverName = request.ApproverName;
-        customerApproval.ApproverEmail = request.ApproverEmail;
-        customerApproval.ApproverTitle = request.ApproverTitle;
-        customerApproval.SignatureData = request.SignatureData;
-        customerApproval.SignatureFormat = request.SignatureFormat;
-        customerApproval.Comments = request.Comments;
-        customerApproval.IpAddress = ipAddress;
+                // Find or create customer approval step
+                var customerApproval = await _db.Set<DocumentApproval>()
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.DocumentId == documentId && a.ApproverRole == "Customer"
+                        && a.Status == ApprovalStatus.Pending && !a.IsDeleted);
 
-        // Create document signature
-        _db.Set<DocumentSignature>().Add(new DocumentSignature
-        {
-            CompanyId = companyId,
-            DocumentId = documentId,
-            DocumentApprovalId = customerApproval.Id,
-            SignerRole = "ผู้ซื้อ",
-            SignerName = request.ApproverName,
-            SignerTitle = request.ApproverTitle,
-            SignatureData = request.SignatureData,
-            SignatureFormat = request.SignatureFormat,
-            SignedAt = DateTime.UtcNow,
-            IpAddress = ipAddress
+                if (customerApproval == null)
+                {
+                    // Auto-create customer approval step
+                    var maxStep = await _db.Set<DocumentApproval>()
+                        .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && !a.IsDeleted)
+                        .MaxAsync(a => (int?)a.StepOrder) ?? 0;
+
+                    customerApproval = new DocumentApproval
+                    {
+                        CompanyId = companyId,
+                        DocumentId = documentId,
+                        ApprovalType = "Customer",
+                        ApproverRole = "Customer",
+                        StepOrder = maxStep + 1,
+                        ApproverName = request.ApproverName,
+                        ApproverEmail = request.ApproverEmail,
+                        ApproverTitle = request.ApproverTitle,
+                        PostApprovalAction = request.AutoConvert ? "ConvertToInvoice" : null
+                    };
+                    _db.Set<DocumentApproval>().Add(customerApproval);
+                }
+
+                // Approve
+                customerApproval.Status = ApprovalStatus.Approved;
+                customerApproval.ApprovedAt = DateTime.UtcNow;
+                customerApproval.ApproverName = request.ApproverName;
+                customerApproval.ApproverEmail = request.ApproverEmail;
+                customerApproval.ApproverTitle = request.ApproverTitle;
+                customerApproval.SignatureData = request.SignatureData;
+                customerApproval.SignatureFormat = request.SignatureFormat;
+                customerApproval.Comments = request.Comments;
+                customerApproval.IpAddress = ipAddress;
+                customerApproval.SignedContentHash = contentHash;   // ลูกค้าเซ็น "เนื้อหานี้" — ตัวตรวจตอนเรียกซ้ำ
+
+                // Create document signature
+                _db.Set<DocumentSignature>().Add(new DocumentSignature
+                {
+                    CompanyId = companyId,
+                    DocumentId = documentId,
+                    DocumentApprovalId = customerApproval.Id,
+                    SignerRole = "ผู้ซื้อ",
+                    SignerName = request.ApproverName,
+                    SignerTitle = request.ApproverTitle,
+                    SignatureData = request.SignatureData,
+                    SignatureFormat = request.SignatureFormat,
+                    SignedAt = DateTime.UtcNow,
+                    IpAddress = ipAddress
+                });
+            }
+
+            await _db.SaveChangesAsync();   // เก็บลายเซ็น/approval row ก่อนอนุมัติ (อนุมัติมี transaction + ล็อกของตัวเอง)
+            await signTx.CommitAsync();
         });
-
-        await _db.SaveChangesAsync();   // เก็บลายเซ็น/approval row ก่อน
-        }
 
         // อนุมัติผ่าน "pipeline เต็ม" ของ DocumentService — ห้ามตั้ง Status ตรง ๆ
         // (เดิมข้าม JE/สต๊อก/tax point/§86-4/§65ตรี ทั้งหมด → เอกสารการเงิน
@@ -475,10 +527,11 @@ public class SignatureApprovalService : ISignatureApprovalService
         // hard block (§86/4 ไม่ครบ ฯลฯ) ยัง throw ตามปกติ.
         // รอบ 193 (ฝ่ายค้าน C5): ผู้เซ็นไม่เคยเห็นรายการคำเตือน ⇒ ลงร่องรอยว่า "ระบบ workflow ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ ·
         // คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ระบบส่งผ่านไม่ได้ (ต้องมีคนรับทราบ) ⇒ หยุดพร้อมรายการ
+        var approvedByConcurrentCall = false;
         try
         {
             await _docService.ApproveDocumentAsync(
-                companyId, documentId, $"external:{request.ApproverName}",
+                companyId, documentId, $"external:{signerName}",
                 request.AcknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User
                                             : Accounting.Helpers.ApprovalAckSource.SystemWorkflow,
                 withAiHints: false);
@@ -486,11 +539,21 @@ public class SignatureApprovalService : ISignatureApprovalService
         catch (Exception ex) when (ex is DocumentApprovalWarningsException or InvalidOperationException
                                        or Accounting.Helpers.BusinessRuleException)
         {
-            // ลายเซ็นลูกค้าถูกเก็บแล้ว (ครั้งถัดไปไม่สร้างซ้ำ — ดู alreadySigned) · บอกทางไปต่อ ไม่ใช่ 500
-            throw new Accounting.Helpers.BusinessRuleException(
-                "บันทึกลายเซ็นลูกค้าแล้ว แต่ระบบอนุมัติใบเสนอราคายังไม่ได้: " + DocumentApprovalWarningsException.DescribeForUser(ex)
-                + " — แก้ตามข้อความแล้วเรียกซ้ำ (ระบบใช้ลายเซ็นเดิม ไม่บันทึกซ้ำ) หรือกด \"อนุมัติ\" ที่หน้าเอกสาร",
-                "SIGN-APPROVE-PENDING", 422);
+            // B9: คำขอพร้อมกันอีกตัวอนุมัติใบนี้ไปแล้วระหว่างรอ ⇒ ไม่ใช่ความล้มเหลว — ห้ามตอบ 422 "อนุมัติไม่ได้" ทั้งที่ใบอนุมัติแล้ว
+            // และห้ามแปลงเอกสารซ้ำ (คำขอที่อนุมัติจริงเป็นผู้แปลง)
+            var nowStatus = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => d.Status).FirstAsync();
+            if (nowStatus != DocumentStatus.Approved)
+            {
+                // ลายเซ็นลูกค้าถูกเก็บแล้ว — ข้อความต้องไม่สัญญาว่า "ใช้ลายเซ็นเดิม" แบบไม่มีเงื่อนไข (R3-3): ใช้ซ้ำได้เฉพาะเนื้อหาเดิม
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "บันทึกลายเซ็นลูกค้าแล้ว แต่ระบบอนุมัติใบเสนอราคายังไม่ได้: " + DocumentApprovalWarningsException.DescribeForUser(ex)
+                    + " — แก้ตามข้อความแล้วเรียกซ้ำ หรือกด \"อนุมัติ\" ที่หน้าเอกสาร · ถ้าการแก้ไม่แตะเนื้อหาใบ (บรรทัด/ราคา/ยอด/ผู้ซื้อ/เงื่อนไข) "
+                    + "เรียกซ้ำด้วยลายเซ็นเดิมได้ ระบบไม่บันทึกซ้ำ · ถ้าแก้เนื้อหา ลายเซ็นนี้ใช้ไม่ได้แล้ว ต้องให้ลูกค้าเซ็นใหม่กับเนื้อหาที่แก้",
+                    "SIGN-APPROVE-PENDING", 422);
+            }
+            approvedByConcurrentCall = true;
         }
         doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
@@ -500,7 +563,7 @@ public class SignatureApprovalService : ISignatureApprovalService
         string? convertedDocNum = null;
         string? convertedDocType = null;
 
-        if (request.AutoConvert)
+        if (request.AutoConvert && !approvedByConcurrentCall)
         {
             try
             {
@@ -528,7 +591,10 @@ public class SignatureApprovalService : ISignatureApprovalService
             convertedDocId, convertedDocNum, convertedDocType,
             convertedDocId.HasValue
                 ? $"อนุมัติใบเสนอราคาสำเร็จ และสร้าง{convertedDocType}แล้ว"
-                : "อนุมัติใบเสนอราคาสำเร็จ");
+                : approvedByConcurrentCall
+                    ? "ใบเสนอราคานี้อยู่ในสถานะอนุมัติแล้ว (น่าจะโดยคำขอที่ส่งมาพร้อมกัน) — ไม่แปลงเอกสารซ้ำ"
+                    : "อนุมัติใบเสนอราคาสำเร็จ")
+                + (reusedSignature ? " · ใช้ลายเซ็นลูกค้าที่บันทึกไว้แล้วของเนื้อหาเดียวกัน (ไม่บันทึกซ้ำ)" : "");
     }
 
     // ==================== DOCUMENT SIGNATURES ====================
@@ -543,6 +609,15 @@ public class SignatureApprovalService : ISignatureApprovalService
     }
 
     // ==================== HELPERS ====================
+
+    /// <summary>ลายเซ็นลูกค้าที่ใช้ต่อไม่ได้ (R3-3) — ไม่ลบจริง: soft-delete (ไม่ขึ้น PDF · ไม่นับเป็นขั้นที่ผ่าน) + หมายเหตุเหตุผลไว้ตามรอย</summary>
+    private static void SupersedeCustomerSignature(DocumentApproval stale, string reason)
+    {
+        stale.IsDeleted = true;
+        stale.UpdatedAt = DateTime.UtcNow;
+        var note = $"[ถูกแทนที่ {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC] {reason}";
+        stale.Comments = string.IsNullOrWhiteSpace(stale.Comments) ? note : stale.Comments + "\n" + note;
+    }
 
     private async Task CheckAllApprovedAndProcessAsync(Guid companyId, Guid documentId, string userId,
         Accounting.Helpers.ApprovalAckSource ackSource)

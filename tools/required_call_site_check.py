@@ -408,9 +408,15 @@ RULES += [
          before=[("PreviewApprovalWarningsAsync(", "approval.Status = ApprovalStatus.Approved")],
          why="N6: ถามคำเตือนก่อนบันทึกลายเซ็นขั้นสุดท้าย (ไม่งั้นลายเซ็นครบแต่เอกสารค้างเงียบ)"),
     dict(file=SIGN, method="ExternalApproveQuotationAsync",
-         must_re=[r"if\s*\(\s*!\s*alreadySigned\s*\)"],
-         before=[("PreviewApprovalWarningsAsync(", "_db.Set<DocumentSignature>().Add(")],
-         why="N6: ถามคำเตือนก่อนเก็บลายเซ็นลูกค้า · เรียกซ้ำต้องไม่สร้างขั้นลูกค้า/ลายเซ็นซ้ำ"),
+         must=["DocumentSignedContent.Hash(", "DocumentSignedContent.CanReuseSignature(",
+               "SignedContentHash = contentHash", "SupersedeCustomerSignature("],
+         must_lit=["FOR UPDATE"],
+         call_args=[("DocumentSignedContent.CanReuseSignature(", "request.SignatureData")],
+         before=[("PreviewApprovalWarningsAsync(", "_db.Set<DocumentSignature>().Add("),
+                 ("DocumentSignedContent.CanReuseSignature(", "_db.Set<DocumentSignature>().Add("),
+                 ("SupersedeCustomerSignature(", "_db.Set<DocumentSignature>().Add(")],
+         why="N6 + R3-3: ถามคำเตือนก่อนเก็บลายเซ็น · ลายเซ็นเดิมใช้ซ้ำได้เฉพาะเนื้อหาเดิม (hash) + ลายเซ็นเดิม · "
+             "ไม่งั้นแทนที่แล้วบันทึกใหม่ · ล็อกแถวเอกสารกันเรียกพร้อมกัน (B9)"),
 ]
 
 

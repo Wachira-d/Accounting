@@ -6561,6 +6561,8 @@ public static class DatabaseMigrationHelper
             // ยอดหนี้ที่การชำระปิดด้วยบรรทัดปรับ (ไม่ใช่เงินสด) + บรรทัดปรับทั้งชุด — 0/NULL = ไม่มี (พฤติกรรมเดิม)
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementAdjustmentAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementAdjustmentsJson" text NULL;""",
+            // hash เนื้อหาเอกสารตอนลูกค้าเซ็น (R3-3) — NULL = แถวเก่า ⇒ ลายเซ็นนั้นใช้ซ้ำไม่ได้ ต้องเซ็นใหม่ (ทิศปลอดภัย)
+            """ALTER TABLE "DocumentApprovals" ADD COLUMN IF NOT EXISTS "SignedContentHash" text NULL;""",
 
             // อัตรา/เพดานประกันสังคมมีผลเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี — แถวเก่า
             // default 1–12 = ทั้งปี จึงให้ผลเหมือนเดิมทุกประการ
