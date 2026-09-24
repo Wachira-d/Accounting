@@ -120,4 +120,35 @@ public class OcrGatewayFalseAlarmTests
         Assert.True(Warned(r, "ตรวจสอบราคาต่อหน่วย"));
         Assert.False(r.MathConsistent);
     }
+
+    // ═══ รอบ 190 ข้อ 9 — "รวมเงิน" บนกระดาษเป็นยอดก่อนหักส่วนลด ═══
+
+    [Fact]
+    public void รวมเงินก่อนหักส่วนลด_และส่วนลดอธิบายส่วนต่างพอดี_เป็นข้อสังเกตไม่ใช่คำเตือน()
+    {
+        // ใบร้านวัสดุ: รวมเงิน 1,395 · ลด 69.75 · VAT 92.77 · รวม 1,418.02 — เดิมติด "คณิตศาสตร์ไม่ตรง" ทุกใบ
+        var r = Run(1395m, 92.77m, 1418.02m, new[] { 370m, 890m, 135m }, discount: 69.75m);
+        Assert.Empty(r.Warnings);
+        Assert.True(r.MathConsistent);
+        Assert.True(Noted(r, "ก่อนหักส่วนลด"));
+        Assert.Equal(0.95m, r.AdjustedConfidence);
+    }
+
+    [Fact]
+    public void รวมเงินก่อนลดแต่ไม่มีส่วนลดบนกระดาษ_ยังต้องฟ้อง()
+    {
+        // ทิศตรงข้าม: ตัวเลขชุดเดียวกันแต่ตัวอ่านส่วนลดไม่เห็นอะไร ⇒ ยังต้องหยุด (ห้ามเดาส่วนลดจากส่วนต่าง)
+        var r = Run(1395m, 92.77m, 1418.02m, new[] { 370m, 890m, 135m });
+        Assert.True(Warned(r, "คณิตศาสตร์ไม่ตรง"));
+        Assert.False(r.MathConsistent);
+    }
+
+    [Fact]
+    public void ราคารวม_VAT_และส่วนลดสมาชิก_เป็นข้อสังเกตไม่ใช่คำเตือน()
+    {
+        var r = Run(687.20m, 48.10m, 735.30m, new[] { 159m, 438m, 177m }, discount: 38.70m);
+        Assert.False(Warned(r, "Σ บรรทัด"));
+        Assert.True(Noted(r, "ส่วนลดท้ายบิล"));
+        Assert.True(r.MathConsistent);
+    }
 }

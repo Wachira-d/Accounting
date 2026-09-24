@@ -3031,6 +3031,18 @@
           if (td.textContent.trim() === '…') td.textContent = '-';
         });
         if (!summaryEl) return;
+        // ── ยอดที่จะได้ ≠ กระดาษ → เตือนเป็นตัวเลข **ก่อน**กดสร้าง/อนุมัติ (รอบ 190 ข้อ 9) ──
+        // เซิร์ฟเวอร์ตัดสินแล้วใน BuildScanLinesAsync (Helpers/OcrAmountIntegrity + OcrLineReconciler)
+        // แล้วเขียนเป็นแท็ก [Σ-GAP] ใน notes ของพรีวิว — หน้านี้อ่านด้วยตัวอ่านแท็กตัวเดียว
+        // (parseScanNotes) ห้ามคำนวณ Σ เอง · และห้ามโชว์ป้ายเขียว "ผลรวมบรรทัดตรง" ทับคำเตือน
+        const previewGaps = Page.parseScanNotes(preview.notes).gaps;
+        if (previewGaps.length) {
+          summaryEl.innerHTML = `<div style="font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;color:#991b1b;border-radius:6px;padding:8px 10px;line-height:1.6">
+               <div style="font-weight:700">⛔ ยอดที่ระบบจะสร้างไม่ตรงกับกระดาษ — ระบบจะไม่อนุมัติให้อัตโนมัติ ตรวจก่อนยืนยัน</div>
+               ${previewGaps.map(g => `<div style="margin-top:2px">• ${Layout.esc(g)}</div>`).join('')}
+             </div>`;
+          return;
+        }
         const sub = Number(preview.headerSubTotal) || 0;
         const vat = Number(preview.headerVat) || 0;
         const tot = Number(preview.headerTotal) || 0;
@@ -4455,7 +4467,9 @@
         // ส่วนลดท้ายบิลถูกกระจายลงบรรทัดโดยตัวสร้างแล้ว (Σ บรรทัด = ยอดก่อน VAT บนกระดาษ)
         // ช่องว่างที่กระทบไม่ได้ ([Σ-GAP]) เซิร์ฟเวอร์รายงานเป็นข้อความให้คนตัดสิน ไม่แต่งบรรทัด
         const billDiscountAmount = 0;
-        if (preview.notes) Layout.toast(preview.notes, 'info');
+        // ยอดไม่ตรงกระดาษ ([Σ-GAP]) ต้องเป็นคำเตือน ไม่ใช่ข้อมูลทั่วไป — ผู้ใช้กำลังจะแก้ในฟอร์มเอง
+        if (preview.notes) Layout.toast(preview.notes,
+          Page.parseScanNotes(preview.notes).gaps.length ? 'warning' : 'info', 12000);
 
         // Derive a due date from the credit terms the OCR read ("Net 30" →
         // PaymentTermsDays = 30) so AR/AP documents land with วันครบกำหนด

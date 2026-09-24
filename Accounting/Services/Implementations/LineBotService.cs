@@ -790,6 +790,24 @@ public class LineBotService : ILineBotService
             return $"ℹ️ เอกสาร {doc.DocumentNumber} {statusTh}ไปแล้ว — ไม่ต้องทำซ้ำ";
         }
 
+        // ด่าน "พร้อมลงบัญชีเองไหม" ต้องตรวจซ้ำ**ตอนกด** ไม่ใช่เชื่อการ์ดที่วาดไว้ก่อน (รอบ 190 ข้อ 9)
+        // — postback data ปลอม/ส่งซ้ำได้ (doc-comment ข้างบน) และการ์ดเก่าในแชทยังกดได้หลังผลสแกน
+        // ถูกตรวจใหม่ ⇒ เอกสารที่มาจากสแกนต้องผ่านตัวตัดสินตัวเดียวกับเว็บ (Helpers/OcrPostingReadiness)
+        // เช่น [Σ-GAP] "ยอดที่สร้างไม่ตรงกระดาษ" ห้ามลง JE จากแชทเงียบ ๆ · เอกสารที่ไม่ได้มาจากสแกน
+        // ไม่มีแถวให้ตรวจ = ข้ามด่านนี้ (ไม่ใช่ "ไม่ผ่าน")
+        var scanGate = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == doc.CompanyId && r.CreatedDocumentId == doc.Id)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new { r.ProcessingNotes, r.ExtractedDate })
+            .FirstOrDefaultAsync();
+        if (scanGate != null)
+        {
+            var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
+                scanGate.ProcessingNotes, scanGate.ExtractedDate != null);
+            if (!readiness.CanAutoApprove)
+                return "⛔ ยังอนุมัติจากแชทไม่ได้ — " + readiness.Reason;
+        }
+
         try
         {
             await _docService.ApproveDocumentAsync(doc.CompanyId, doc.Id, user.Email);
