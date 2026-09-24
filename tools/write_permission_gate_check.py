@@ -81,6 +81,9 @@ WATCHED = [
     # เพิ่มรอบ 193 — ลงทะเบียน webhook = ส่งต่อเหตุการณ์การเงินทุกตัวของบริษัทออกไปข้างนอก · มีด่านเจ้าของครบแล้ว
     # (ratchet: ใส่ตอนที่ยังเขียว)
     "Accounting/Controllers/WebhookController.cs",
+    # เพิ่มรอบ 193 (ฝ่ายค้านรอบสอง R2-C2 · P0) — อนุมัติ/ปฏิเสธ/จ่าย/ยกเลิก/แก้ใบเบิกค่าใช้จ่ายมีแค่ [Authorize] ⇒ ผู้ยื่นอนุมัติ
+    # แล้วกดจ่ายใบของตัวเองได้ (เงินออก + PV อนุมัติ + JE) · "allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 8
+    "Accounting/Controllers/ExpenseClaimController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -116,6 +119,8 @@ GATE_MARKERS = (
     # รอบ 193 (ฝ่ายค้าน C1) — ด่านเจ้าของของ CompanyService (role Owner/SystemAdmin **และ** ปฏิเสธ API key ผ่าน
     # Helpers/OwnerActionGuard) — ใช้ใน SettingsController(api-keys) · WebhookController
     "EnsureOwnerAccessAsync",
+    # รอบ 193 (ฝ่ายค้านรอบสอง R2-C2) — ด่านใบเบิก (Helpers/ExpenseClaimActionPolicy: คีย์ Expense.* + ห้ามผู้ยื่นตัดสินใบตัวเอง)
+    "DenyClaimAsync",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
@@ -140,6 +145,13 @@ READ_ONLY_POSTS = {
     "ClaimReward",
     "SuggestPvAccounting",   # ถาม AI แนะนำผังบัญชี — ไม่เขียนเอกสาร
     "ParseAddress",          # แปลงที่อยู่ free-text → structured
+}
+
+# POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
+# เพราะ "Create" มีทุกคอนโทรลเลอร์ (ชื่อลอย = เปิดช่องให้ Create ของไฟล์อื่นเขียวไปด้วย)
+SELF_SERVICE_POSTS = {
+    # สร้างใบเบิก: ผู้ยื่น = ผู้ล็อกอินเสมอ (SubmittedByUserId = userId) · ยังไม่มีเงินออก — ด่านอยู่ที่ส่ง/อนุมัติ/จ่าย
+    ("ExpenseClaimController.cs", "Create"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')
@@ -180,6 +192,8 @@ def scan(path):
         nm = NAME_RE.search(body)
         name = nm.group(1) if nm else "?"
         if name in READ_ONLY_POSTS:
+            continue
+        if (os.path.basename(path), name) in SELF_SERVICE_POSTS:
             continue
         if any(k in body for k in GATE_MARKERS) or ATTR_GATE_RE.search(body):
             continue

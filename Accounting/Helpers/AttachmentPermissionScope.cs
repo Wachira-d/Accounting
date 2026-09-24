@@ -12,6 +12,26 @@ public sealed record AttachmentDenial(int Status, string Message);
 /// <summary>เจ้าของที่สแกนใบหนึ่งต้องใช้ด่าน (ผลของ <see cref="AttachmentPermissionScope.ScanOwner"/>)</summary>
 public readonly record struct ScanOwnerRef(string EntityType, Guid EntityId);
 
+/// <summary>ผลของ <see cref="AttachmentPermissionScope.WhtCreditFileLink"/></summary>
+public enum WhtCreditFileLinkKind
+{
+    /// <summary>ไฟล์ในถังก่อนบันทึก (WhtCredit/Guid.Empty) — ผูกเข้ารายการนี้ (ตรวจผู้อัปโหลดต่อ)</summary>
+    AdoptFromBucket,
+    /// <summary>ไฟล์ของรายการนี้อยู่แล้ว — ไม่ต้องทำอะไร</summary>
+    AlreadyThis,
+    /// <summary>ไฟล์ของรายการอื่น/ชนิดอื่น — ห้ามเก็บเป็นตัวชี้</summary>
+    Foreign,
+}
+
+/// <summary>ผลของ <see cref="AttachmentPermissionScope.ScanSourceGate"/></summary>
+public enum ScanSourceCheck
+{
+    /// <summary>ไฟล์ของรายการอื่น — ต้องผ่านด่านอ่านของรายการนั้น</summary>
+    FileOwnerReadGate,
+    /// <summary>ไฟล์ของสแกน — ต้องผ่านด่านของสแกนเดิมที่ชี้ไฟล์นี้</summary>
+    ExistingScanGate,
+}
+
 /// <summary>ไฟล์แนบของเจ้าของชนิดนี้ต้องถามสิทธิ์แบบไหน — ผู้เรียก (controller) ใช้เลือกว่าต้องค้นแถวเจ้าของก่อนไหม</summary>
 public enum AttachmentOwnerKind
 {
@@ -157,12 +177,16 @@ public static class AttachmentPermissionScope
     /// รายการนั้น · (2) สแกนชี้เอกสารที่ยังอยู่ (relink พลาด) → เอกสาร · (3) สแกนลงเป็น JE ที่ยังอยู่ → JE (ชั้นความลับ) ·
     /// (4) นอกนั้น → ด่านของ OCR (<c>null</c>) · ตัวชี้ไปรายการที่ถูกลบแล้วไม่นับ</para>
     /// </summary>
+    /// <param name="fileOwnerExists">รายการที่ไฟล์เป็นของยังอยู่ไหม — ฝ่ายค้านรอบสอง (R2-C1): ลบเอกสารร่างที่สร้างจากสแกนแล้ว
+    /// ไฟล์ยังชี้เอกสารที่ไม่มีแล้ว ⇒ เดิมข้อ 1 ถือว่าเจ้าของคือเอกสารที่ถูกลบ แล้วด่านเขียนตอบ 404 ทุก action ของสแกนนั้น
+    /// (ทางแก้ของบั๊กผู้ใช้ 2026-09-18 "ลบร่างแล้วสร้างใหม่จากสแกนเดิม" พังกลับ) · เจ้าของที่หายไป = ไม่ใช่เจ้าของ</param>
     public static ScanOwnerRef? ScanOwner(string? fileEntityType, Guid? fileEntityId,
         Guid? createdDocumentId, bool createdDocumentExists,
-        Guid? createdJournalEntryId = null, bool createdJournalEntryExists = false)
+        Guid? createdJournalEntryId = null, bool createdJournalEntryExists = false, bool fileOwnerExists = true)
     {
         var ft = (fileEntityType ?? "").Trim();
-        if (ft.Length > 0 && !string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase) && fileEntityId is { } fe)
+        if (ft.Length > 0 && !string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase) && fileEntityId is { } fe
+            && fileOwnerExists)
             return new ScanOwnerRef(Resolve(ft).CanonicalType ?? ft, fe);
         if (createdDocumentId is { } d && d != Guid.Empty && createdDocumentExists)
             return new ScanOwnerRef("Document", d);
@@ -179,12 +203,66 @@ public static class AttachmentPermissionScope
     /// <c>FileAttachmentService.GetByEntityAsync</c> ตั้ง <c>EntityType="Document"</c> ให้ไฟล์โดยไม่ดูว่าไฟล์เป็นของใครอยู่
     /// ⇒ ย้ายหลักฐานของใบ A (ที่มองไม่เห็น) ไปเป็นของใบ B (ที่มองเห็น) แล้วดาวน์โหลดได้ · ใบ A สูญหลักฐาน</para>
     /// </summary>
-    public static bool ScanFileRelinkable(string? fileEntityType, Guid? fileEntityId, Guid targetDocumentId)
+    /// <param name="fileOwnerExists">เอกสารที่ไฟล์เป็นของยังอยู่ไหม — เอกสารร่างที่สร้างจากสแกนถูกลบไปแล้ว (R2-C1) ⇒ ไฟล์กลับเป็น
+    /// ของสแกน ย้ายเข้าเอกสารใบใหม่ได้ (ร่างไม่ใช่รายการบัญชี ไม่มีหลักฐานให้สูญ)</param>
+    public static bool ScanFileRelinkable(string? fileEntityType, Guid? fileEntityId, Guid targetDocumentId,
+        bool fileOwnerExists = true)
     {
         var ft = (fileEntityType ?? "").Trim();
         if (string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase)) return true;
-        return string.Equals(ft, "Document", StringComparison.OrdinalIgnoreCase)
-               && fileEntityId == targetDocumentId && targetDocumentId != Guid.Empty;
+        if (!string.Equals(ft, "Document", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!fileOwnerExists) return targetDocumentId != Guid.Empty;
+        return fileEntityId == targetDocumentId && targetDocumentId != Guid.Empty;
+    }
+
+    /// <summary>
+    /// **ไฟล์นี้เป็นหนังสือรับรอง 50 ทวิ ของรายการเครดิตภาษีนี้ได้ไหม** (ฝ่ายค้านรอบสอง Q4) — ได้เฉพาะไฟล์ชนิด <c>WhtCredit</c> ที่อยู่ในถัง
+    /// ก่อนบันทึก หรือเป็นของรายการนี้อยู่แล้ว · ไฟล์ของ 50 ทวิ รายการอื่น / ชนิดอื่นทุกชนิด = <see cref="WhtCreditFileLinkKind.Foreign"/>
+    /// </summary>
+    public static WhtCreditFileLinkKind WhtCreditFileLink(string? fileEntityType, Guid fileEntityId, Guid creditId)
+    {
+        if (!string.Equals((fileEntityType ?? "").Trim(), "WhtCredit", StringComparison.OrdinalIgnoreCase))
+            return WhtCreditFileLinkKind.Foreign;
+        if (fileEntityId == Guid.Empty) return WhtCreditFileLinkKind.AdoptFromBucket;
+        return fileEntityId == creditId && creditId != Guid.Empty
+            ? WhtCreditFileLinkKind.AlreadyThis
+            : WhtCreditFileLinkKind.Foreign;
+    }
+
+    /// <summary>ไฟล์ชนิดนี้ต้องตรวจว่า "เจ้าของยังอยู่ไหม" ก่อนใช้เป็นเจ้าของของสแกน — เอกสารเป็นชนิดเดียวที่ถูกลบจริง
+    /// (hard-delete ร่าง) ขณะที่ไฟล์ยังชี้อยู่ · ชนิดอื่นถือว่าอยู่ (ด่านของชนิดนั้นตัดสิน 404 เอง)</summary>
+    public static bool ScanFileOwnerNeedsExistenceCheck(string? fileEntityType)
+        => string.Equals((fileEntityType ?? "").Trim(), "Document", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// **สแกนไฟล์แนบตัวนี้ (<c>POST ocr/scan/{fileId}</c>) ต้องผ่านด่านอะไร** — ไฟล์ของรายการอื่นทุกชนิด ⇒ ด่านอ่านของรายการนั้น ·
+    /// ไฟล์ของสแกน ⇒ ด่านของสแกนเดิม (S2-C1) · แยกเป็น pure เพื่อให้เทสต์ล็อก "ทุกชนิดที่ไม่ใช่สแกน" (ฝ่ายค้านรอบสอง A6 —
+    /// ถอยให้ตรวจเฉพาะ Document แล้ว checker/เทสต์ไม่ฟ้อง)
+    /// </summary>
+    public static ScanSourceCheck ScanSourceGate(string? fileEntityType)
+        => string.Equals((fileEntityType ?? "").Trim(), "OcrScan", StringComparison.OrdinalIgnoreCase)
+            ? ScanSourceCheck.ExistingScanGate
+            : ScanSourceCheck.FileOwnerReadGate;
+
+    /// <summary>
+    /// **คีย์ของ OCR ที่สแกน "ยังไม่ผูก" ต้องใช้** — อ่าน = ReadAnyOf · เขียนผ่านหน้าไฟล์แนบ = WriteAnyOf (คีย์สร้างเอกสาร) ·
+    /// แก้ผลอ่านจากหน้ารีวิว (<paramref name="unlinkedEditIsMemberLevel"/>) = ReadAnyOf (ระดับสมาชิกเหมือนเดิม) ·
+    /// แยกเป็น pure เพื่อให้เทสต์ล็อก (ฝ่ายค้านรอบสอง A5 — ถอยให้ใช้ ReadAnyOf เสมอแล้วไม่มีอะไรฟ้อง)
+    /// </summary>
+    public static IReadOnlyList<string> UnlinkedScanKeys(AttachmentScopeRule ocrRule, AttachmentAccess access,
+        bool unlinkedEditIsMemberLevel)
+        => access == AttachmentAccess.Write && !unlinkedEditIsMemberLevel ? ocrRule.WriteAnyOf : ocrRule.ReadAnyOf;
+
+    /// <summary>
+    /// **สแกนพี่น้องหลายแถวชี้รายการคนละใบ เลือกใบไหนเป็นเจ้าของ** — แถวของตัวเองก่อน ถ้ายังอยู่ · ไม่งั้นใบที่ยังอยู่ที่ Guid
+    /// น้อยสุด (กำหนดได้แน่นอน) · ตัวเดียวของด่านรายใบและด่านรายการ (ฝ่ายค้านรอบสอง Q3 — เดิม FirstOrDefault ไม่มีลำดับ
+    /// ⇒ สองประตูตัดสินต่างกันได้)
+    /// </summary>
+    public static Guid? PickLinkedOwner(Guid? own, IEnumerable<Guid> aliveCandidates)
+    {
+        var alive = aliveCandidates.ToHashSet();
+        if (own is { } o && o != Guid.Empty && alive.Contains(o)) return o;
+        return alive.Count == 0 ? null : alive.Min();
     }
 
     public const string ScanFileNotRelinkableMessage =

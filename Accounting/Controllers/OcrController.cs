@@ -48,6 +48,18 @@ public class OcrController : ControllerBase
         return denial is { } d ? StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message)) : null;
     }
 
+    /// <summary>
+    /// **ด่านคีย์ของโมดูลปลายทาง** สำหรับ action ของสแกนที่สร้างผลทางบัญชี/สต็อก (ฝ่ายค้านรอบสอง R2-C3) — ด่านของสแกนเองเป็น
+    /// ระดับสมาชิกเมื่อสแกนยังไม่ผูก ⇒ ต้องมีด่านนี้ต่อท้ายเสมอ · ตาราง "ผล → คีย์" อยู่ที่ <c>Helpers/OcrScanPostingKeys</c> ตัวเดียว
+    /// </summary>
+    private async Task<ObjectResult?> PostingGateAsync(Guid companyId, OcrScanPostingTarget target)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        foreach (var key in OcrScanPostingKeys.AnyOf(target))
+            if (await _perms.HasPermissionAsync(companyId, uid, key)) return null;
+        return StatusCode(403, new ApiResponse<object>(false, null, OcrScanPostingKeys.DeniedMessage(target)));
+    }
+
     /// <summary>ชนิดเอกสารที่สแกนนี้จะกลายเป็น — ผ่าน <c>Helpers.OcrTargetDocumentType</c>
     /// ตัวเดียวกับที่ <c>OcrService.CreateDocumentFromScanAsync</c> ใช้จริง
     ///
@@ -779,6 +791,8 @@ public class OcrController : ControllerBase
     {
         var deny = await ScanGateAsync(companyId, scanId, "ลงทะเบียนสินทรัพย์จากสแกน", write: true);
         if (deny != null) return deny;
+        var postDeny = await PostingGateAsync(companyId, OcrScanPostingTarget.FixedAsset);
+        if (postDeny != null) return postDeny;
         var result = await _service.RegisterAssetFromScanAsync(companyId, scanId, req,
             assetService, User.Identity?.Name ?? "ocr-asset-register");
         return Ok(new ApiResponse<object>(true, result, "ลงทะเบียนสินทรัพย์ถาวรเรียบร้อย"));
@@ -1001,6 +1015,14 @@ public class OcrController : ControllerBase
         if (deny != null) return deny;
         if (req?.Lines == null || req.Lines.Count == 0)
             return BadRequest(new ApiResponse<OcrStockImportResult>(false, null, "ไม่มีรายการที่จะนำเข้า"));
+        // ฝ่ายค้านรอบสอง R2-C3: ทุกผลที่คำขอนี้สร้าง (สินทรัพย์ + JE · สินค้า + สต็อก) ต้องมีคีย์ของโมดูลนั้น
+        foreach (var postTarget in OcrScanPostingKeys.TargetsForImport(
+                     anyFixedAssetLine: req.Lines.Any(l => l.Destination == OcrImportDestination.FixedAsset),
+                     anyStockOrSuppliesLine: req.Lines.Any(l => l.Destination != OcrImportDestination.FixedAsset)))
+        {
+            var postDeny = await PostingGateAsync(companyId, postTarget);
+            if (postDeny != null) return postDeny;
+        }
 
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)

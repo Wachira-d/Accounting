@@ -22,27 +22,39 @@ public enum ScanFileDisposalAction
 /// (พ.ร.บ.การบัญชี ม.10 · §87/3) · และ retry สร้างแถวใหม่ที่ชี้ไฟล์เดิม ⇒ ลบแถวหนึ่งทำให้อีกแถวเปิดรูปไม่ได้</para>
 ///
 /// <para>กติกา: (1) สแกนอื่นยังชี้ไฟล์นี้ → ไม่แตะ · (2) ไฟล์เป็นของเอกสารที่ถูกลบพร้อมสแกน (cascade) → ตาม
-/// <see cref="AttachmentRetention.MustKeepPhysicalFile"/> ของเอกสารนั้น · (3) ไฟล์เป็นของรายการอื่น (เอกสารใบอื่น ·
-/// ชนิดอื่นทุกชนิด · ชนิดที่ไม่รู้จัก) → ไม่แตะ · (4) ไฟล์ของสแกนเอง (<c>OcrScan</c>) → ตามระยะเก็บรักษา</para>
+/// <see cref="AttachmentRetention.MustKeepPhysicalFile"/> ของเอกสารนั้น · (3) ไฟล์เป็นของรายการอื่นที่ยังอยู่ (เอกสารใบอื่น ·
+/// ชนิดอื่นทุกชนิด · ชนิดที่ไม่รู้จัก) → ไม่แตะ · (4) ไฟล์ของสแกนเอง (<c>OcrScan</c>) หรือไฟล์ที่ยังชี้เอกสารร่างที่ถูกลบไปแล้ว
+/// (ฝ่ายค้านรอบสอง R2-C1) → ตาม <see cref="AttachmentRetention.ScanFilePurgeable"/> (R2-C4 — สแกนที่ถูกลบได้ไม่เคยเป็นรายการ
+/// บัญชี: สแกนที่ลง JE ลบไม่ได้ `OCR-DELETE-HAS-JE` · สแกนที่ผูกเอกสารต้อง cascade ⇒ ลบจริง ไม่ใช่ค้างดิสก์ตลอดไป)</para>
 /// </summary>
 public static class OcrScanFileDisposal
 {
+    /// <param name="fileOwnerExists">เอกสารที่ไฟล์ชี้อยู่ยังมีไหม (ใช้เฉพาะไฟล์ชนิด Document —
+    /// <see cref="AttachmentPermissionScope.ScanFileOwnerNeedsExistenceCheck"/>)</param>
     public static ScanFileDisposalAction Decide(string? fileEntityType, Guid fileEntityId,
-        bool usedByOtherScan, Guid? cascadedDocumentId, DocumentStatus? cascadedDocumentStatus)
+        bool usedByOtherScan, Guid? cascadedDocumentId, DocumentStatus? cascadedDocumentStatus, bool fileOwnerExists = true)
     {
         if (usedByOtherScan) return ScanFileDisposalAction.Leave;
         var ft = (fileEntityType ?? "").Trim();
         if (string.Equals(ft, "Document", StringComparison.OrdinalIgnoreCase))
         {
-            if (cascadedDocumentId is not { } docId || docId != fileEntityId) return ScanFileDisposalAction.Leave;
-            return AttachmentRetention.MustKeepPhysicalFile("Document", cascadedDocumentStatus)
-                ? ScanFileDisposalAction.SoftDeleteKeepBytes
-                : ScanFileDisposalAction.Remove;
+            if (cascadedDocumentId is { } docId && docId == fileEntityId)
+                return AttachmentRetention.MustKeepPhysicalFile("Document", cascadedDocumentStatus)
+                    ? ScanFileDisposalAction.SoftDeleteKeepBytes
+                    : ScanFileDisposalAction.Remove;
+            // เอกสารเจ้าของหายไปแล้ว (ร่างถูกลบ — DeleteDocumentAsync ไม่แตะแถวไฟล์) ⇒ ไฟล์กลับเป็นของสแกน
+            if (!fileOwnerExists) return ScanFileDisposalAction.Remove;
+            return ScanFileDisposalAction.Leave;
         }
         if (string.Equals(ft, "OcrScan", StringComparison.OrdinalIgnoreCase))
-            return AttachmentRetention.MustKeepPhysicalFile("OcrScan", null)
-                ? ScanFileDisposalAction.SoftDeleteKeepBytes
-                : ScanFileDisposalAction.Remove;
+        {
+            // relink พลาด: ไฟล์ยังเป็นของสแกนแต่เอกสารที่ลบพร้อมกันเป็นใบที่ต้องเก็บ → เก็บตามเอกสารนั้น
+            if (cascadedDocumentId != null && AttachmentRetention.MustKeepPhysicalFile("Document", cascadedDocumentStatus))
+                return ScanFileDisposalAction.SoftDeleteKeepBytes;
+            return AttachmentRetention.ScanFilePurgeable(ft, linkedToEntry: false)
+                ? ScanFileDisposalAction.Remove
+                : ScanFileDisposalAction.SoftDeleteKeepBytes;
+        }
         return ScanFileDisposalAction.Leave;
     }
 }
