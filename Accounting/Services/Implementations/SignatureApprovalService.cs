@@ -194,11 +194,15 @@ public class SignatureApprovalService : ISignatureApprovalService
             .OrderBy(s => s.SignedAt)
             .ToListAsync();
 
+        // R4-1: ลายเซ็นลูกค้าที่เซ็นกับเนื้อหาก่อนแก้ — แสดงแถวพร้อมเหตุผล และไม่ส่งภาพลายเซ็นนั้นเป็น "ลายเซ็นบนเอกสาร"
+        var stale = await StaleSignatureApprovalIdsAsync(companyId, documentId);
         return new DocumentWithApprovalsResponse(
             doc.Id, doc.DocumentNumber, doc.DocumentType.ToString(), doc.Status.ToString(),
             doc.TotalAmount, doc.Contact?.Name,
-            approvals.Select(MapApproval).ToList(),
-            signatures.Select(MapDocSig).ToList());
+            approvals.Select(a => stale.Contains(a.Id)
+                ? MapApproval(a) with { SignatureStaleReason = DocumentSignedContent.StaleReason }
+                : MapApproval(a)).ToList(),
+            signatures.Where(s => !stale.Contains(s.DocumentApprovalId)).Select(MapDocSig).ToList());
     }
 
     public async Task<List<DocumentApprovalResponse>> GetPendingApprovalsAsync(Guid companyId, Guid userId)
@@ -448,9 +452,9 @@ public class SignatureApprovalService : ISignatureApprovalService
             else
             {
                 foreach (var stale in signedSteps)
-                    SupersedeCustomerSignature(stale, string.Equals(stale.SignedContentHash, contentHash, StringComparison.Ordinal)
+                    DocumentSignedContent.Supersede(stale, string.Equals(stale.SignedContentHash, contentHash, StringComparison.Ordinal)
                         ? "ลูกค้าเซ็นใหม่ (ลายเซ็น/ชื่อผู้เซ็นต่างจากเดิม)"
-                        : "เนื้อหาเอกสารเปลี่ยนหลังลูกค้าเซ็น (หรือแถวก่อนรอบ 193 ที่ไม่รู้ว่าเซ็นเนื้อหาอะไร) — ต้องเซ็นใหม่");
+                        : DocumentSignedContent.StaleReason, DateTime.UtcNow);
                 if (signedSteps.Count > 0)
                 {
                     var staleIds = signedSteps.Select(a => a.Id).ToList();
@@ -458,7 +462,7 @@ public class SignatureApprovalService : ISignatureApprovalService
                         .Where(s => s.CompanyId == companyId && s.DocumentId == documentId
                             && staleIds.Contains(s.DocumentApprovalId) && !s.IsDeleted)
                         .ToListAsync();
-                    foreach (var s in staleSigs) { s.IsDeleted = true; s.UpdatedAt = DateTime.UtcNow; }
+                    foreach (var staleSig in staleSigs) { staleSig.IsDeleted = true; staleSig.UpdatedAt = DateTime.UtcNow; }
                 }
 
                 // Find or create customer approval step
@@ -549,8 +553,8 @@ public class SignatureApprovalService : ISignatureApprovalService
                 // ลายเซ็นลูกค้าถูกเก็บแล้ว — ข้อความต้องไม่สัญญาว่า "ใช้ลายเซ็นเดิม" แบบไม่มีเงื่อนไข (R3-3): ใช้ซ้ำได้เฉพาะเนื้อหาเดิม
                 throw new Accounting.Helpers.BusinessRuleException(
                     "บันทึกลายเซ็นลูกค้าแล้ว แต่ระบบอนุมัติใบเสนอราคายังไม่ได้: " + DocumentApprovalWarningsException.DescribeForUser(ex)
-                    + " — แก้ตามข้อความแล้วเรียกซ้ำ หรือกด \"อนุมัติ\" ที่หน้าเอกสาร · ถ้าการแก้ไม่แตะเนื้อหาใบ (บรรทัด/ราคา/ยอด/ผู้ซื้อ/เงื่อนไข) "
-                    + "เรียกซ้ำด้วยลายเซ็นเดิมได้ ระบบไม่บันทึกซ้ำ · ถ้าแก้เนื้อหา ลายเซ็นนี้ใช้ไม่ได้แล้ว ต้องให้ลูกค้าเซ็นใหม่กับเนื้อหาที่แก้",
+                    + " — แก้ตามข้อความแล้วเรียกซ้ำ หรือกด \"อนุมัติ\" ที่หน้าเอกสาร · ลายเซ็นนี้นับเฉพาะเนื้อหาที่ลูกค้าเซ็น: ถ้าแก้เนื้อหาใบ "
+                    + "(บรรทัด/ราคา/ยอด/ผู้ซื้อ/เงื่อนไข/ข้อความบนใบ) ลายเซ็นนี้ใช้ไม่ได้ทั้งสองทาง (ด่านอนุมัติและ PDF ไม่นับ) ต้องให้ลูกค้าเซ็นใหม่กับเนื้อหาที่แก้",
                     "SIGN-APPROVE-PENDING", 422);
             }
             approvedByConcurrentCall = true;
@@ -605,19 +609,25 @@ public class SignatureApprovalService : ISignatureApprovalService
             .Where(s => s.DocumentId == documentId && s.CompanyId == companyId && !s.IsDeleted)
             .OrderBy(s => s.SignedAt)
             .ToListAsync();
-        return sigs.Select(MapDocSig).ToList();
+        var stale = await StaleSignatureApprovalIdsAsync(companyId, documentId);
+        return sigs.Where(s => !stale.Contains(s.DocumentApprovalId)).Select(MapDocSig).ToList();
+    }
+
+    /// <summary>แถวอนุมัติที่ลายเซ็นลูกค้า "ไม่นับ" กับเนื้อหาตอนนี้ (R4-1) — ตัดสินด้วย <c>DocumentSignedContent.IsSignatureCurrent</c> ตัวเดียว</summary>
+    private async Task<HashSet<Guid>> StaleSignatureApprovalIdsAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
+        if (doc == null) return new HashSet<Guid>();
+        var approvals = await _db.Set<DocumentApproval>().AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && !a.IsDeleted
+                && a.Status == ApprovalStatus.Approved)
+            .ToListAsync();
+        return approvals.Where(a => !DocumentSignedContent.IsSignatureCurrent(a, doc, doc.Lines))
+            .Select(a => a.Id).ToHashSet();
     }
 
     // ==================== HELPERS ====================
-
-    /// <summary>ลายเซ็นลูกค้าที่ใช้ต่อไม่ได้ (R3-3) — ไม่ลบจริง: soft-delete (ไม่ขึ้น PDF · ไม่นับเป็นขั้นที่ผ่าน) + หมายเหตุเหตุผลไว้ตามรอย</summary>
-    private static void SupersedeCustomerSignature(DocumentApproval stale, string reason)
-    {
-        stale.IsDeleted = true;
-        stale.UpdatedAt = DateTime.UtcNow;
-        var note = $"[ถูกแทนที่ {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC] {reason}";
-        stale.Comments = string.IsNullOrWhiteSpace(stale.Comments) ? note : stale.Comments + "\n" + note;
-    }
 
     private async Task CheckAllApprovedAndProcessAsync(Guid companyId, Guid documentId, string userId,
         Accounting.Helpers.ApprovalAckSource ackSource)
@@ -633,8 +643,17 @@ public class SignatureApprovalService : ISignatureApprovalService
         // approval flow can't be tricked into mutating a foreign document by
         // mismatched IDs.
         var doc = await _db.Documents
+            .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
         if (doc == null) return;
+
+        // รอบ 193 ฝ่ายค้านรอบสี่ R4-1: ขั้นลูกค้าที่เซ็นกับเนื้อหาก่อนแก้ ไม่นับว่า "เซ็นครบ" (ตัวตัดสินตัวเดียว DocumentSignedContent.IsSignatureCurrent)
+        // — ลายเซ็นขั้นนี้บันทึกแล้ว ⇒ บอกเหตุผล + ทางไปต่อ (ไม่ใช่ปล่อยให้ด่านใน ApproveDocumentAsync ตอบข้อความกลาง ๆ)
+        if (allApprovals.Any(a => !DocumentSignedContent.IsSignatureCurrent(a, doc, doc.Lines)))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บันทึกลายเซ็นขั้นนี้แล้ว แต่ลายเซ็นลูกค้าในเอกสารนี้ไม่นับ: " + DocumentSignedContent.StaleReason
+                + " — ส่งให้ลูกค้าเซ็นใหม่ (บันทึกการอนุมัติจากลูกค้าอีกครั้ง) แล้วจึงอนุมัติเอกสาร",
+                "SIGN-CUSTOMER-STALE", 422);
 
         // อนุมัติผ่าน pipeline เต็ม (JE + สต๊อก + tax point + ออกเลข + validation)
         // — เดิมตั้ง Status ตรง ๆ ทำให้เอกสารข้ามการลงบัญชีทั้งหมด
