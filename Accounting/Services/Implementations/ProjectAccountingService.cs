@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Project;
 using Accounting.Models.Entities;
@@ -37,6 +38,9 @@ public class ProjectAccountingService : IProjectAccountingService
 
     public async Task<ProjectResponse> CreateAsync(Guid companyId, CreateProjectRequest request)
     {
+        // ตรวจก่อนแตะ DB — ค่านอกชุดโยนไทยทันที · ว่าง = ค่าเริ่มต้น (ตัวตั้งตัวเดียว)
+        var billingMethod = ProjectContractMethods.NormalizeBilling(request.BillingMethod);
+        var revenueRecognitionMethod = ProjectContractMethods.NormalizeRevenueRecognition(request.RevenueRecognitionMethod);
         var existing = await _db.Projects.AnyAsync(p => p.CompanyId == companyId && p.Code == request.Code);
         if (existing)
             throw new InvalidOperationException($"รหัสโครงการ {request.Code} ซ้ำ");
@@ -75,8 +79,8 @@ public class ProjectAccountingService : IProjectAccountingService
             EndDate = request.EndDate,
             BudgetAmount = request.BudgetAmount,
             ContractAmount = request.ContractAmount,
-            BillingMethod = request.BillingMethod,
-            RevenueRecognitionMethod = request.RevenueRecognitionMethod,
+            BillingMethod = billingMethod,
+            RevenueRecognitionMethod = revenueRecognitionMethod,
             DimensionId = request.DimensionId,
             Status = "Active",
             ExternalId = request.ExternalId,
@@ -725,7 +729,8 @@ public class ProjectAccountingService : IProjectAccountingService
         p.StartDate, p.EndDate, p.Status,
         p.BudgetAmount, p.ContractAmount, p.ActualCost, p.ActualRevenue,
         p.CompletionPercent, p.BillingMethod, p.CreatedAt,
-        p.ExternalId, p.ExternalSystem, p.ExternalUrl, p.LastSyncedAt);
+        p.ExternalId, p.ExternalSystem, p.ExternalUrl, p.LastSyncedAt,
+        p.RevenueRecognitionMethod);
 
     private static ProjectTaskResponse MapTaskToResponse(ProjectTask t) => new(
         t.Id, t.ProjectId, t.Name, t.Description,

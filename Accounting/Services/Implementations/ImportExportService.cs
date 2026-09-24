@@ -1381,7 +1381,8 @@ public class ImportExportService : IImportExportService
             Status = row.GetValueOrDefault("Status") ?? "Active",
             BudgetAmount = decimal.TryParse(row.GetValueOrDefault("BudgetAmount"), out var ba) ? ba : 0,
             ContractAmount = decimal.TryParse(row.GetValueOrDefault("ContractAmount"), out var ca) ? ca : 0,
-            BillingMethod = row.GetValueOrDefault("BillingMethod") ?? "FixedPrice",
+            // ชุดค่าเดียวกับฟอร์ม/API (ProjectContractMethods) — เดิมเก็บข้อความอะไรก็ได้ที่อยู่ในไฟล์
+            BillingMethod = Accounting.Helpers.ProjectContractMethods.NormalizeBilling(row.GetValueOrDefault("BillingMethod")),
             CreatedBy = performedBy
         });
     }
@@ -2717,8 +2718,10 @@ public class ImportExportService : IImportExportService
                     new List<string> { "Active", "OnHold", "Completed", "Cancelled" }),
                 new("BudgetAmount", "งบประมาณ", "decimal", false, null, null),
                 new("ContractAmount", "มูลค่าสัญญา", "decimal", false, null, null),
-                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false, "default = FixedPrice",
-                    new List<string> { "FixedPrice", "TimeAndMaterial", "Milestone" }),
+                // ชุดค่ามาจากตัวตั้งเดียวกับฟอร์ม/API — ห้ามพิมพ์สำเนาที่สอง (F2 ข้อ 4)
+                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false,
+                    "default = " + Accounting.Helpers.ProjectContractMethods.DefaultBilling,
+                    Accounting.Helpers.ProjectContractMethods.Billing.Select(x => x.Value).ToList()),
             },
             "employees" => new List<ImportField>
             {

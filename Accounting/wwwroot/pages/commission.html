@@ -48,18 +48,22 @@
         <div class="modal-header"><h3 class="modal-title" id="planTitle">สร้างแผนคอมมิชชัน</h3><button class="modal-close" onclick="Layout.closeModal('planModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="planId">
-          <div class="form-group"><label class="form-label">ชื่อแผน *</label><input type="text" class="form-input" id="planName" placeholder="เช่น คอมมิชชันทีมขาย"></div>
+          <!-- รอบ 193 · A04: ฟอร์มเดิมส่ง {commissionType, rate, minimumSales, cap} ซึ่งเซิร์ฟเวอร์ไม่รู้จักเลย
+               (สัญญาจริง = ฐานคำนวณ + วิธีคำนวณ + flatRate/ขั้น) ⇒ สร้างแผนไม่ได้ · "ยอดขายขั้นต่ำ"/"เพดาน"
+               ถูกถอดออกเพราะเส้นคำนวณไม่มีที่ใช้ (ห้ามมีช่องที่เซิร์ฟเวอร์ไม่รู้จัก) · ตัวเลือกมาจาก GET commissions/options -->
+          <div class="form-group"><label class="form-label" for="planName">ชื่อแผน *</label><input type="text" class="form-input" id="planName" name="name" placeholder="เช่น คอมมิชชันทีมขาย"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภท *</label>
-              <select class="form-select" id="planType"><option value="Percentage">เปอร์เซ็นต์</option><option value="Fixed">จำนวนคงที่</option><option value="Tiered">ตามขั้น (Tier)</option></select>
-            </div>
-            <div class="form-group"><label class="form-label">อัตรา *</label><input type="number" class="form-input" id="planRate" step="0.01" placeholder="เช่น 5 (%)"></div>
+            <div class="form-group"><label class="form-label" for="planBasis">ฐานคำนวณ *</label><select class="form-select" id="planBasis" name="calculationBasis"></select></div>
+            <div class="form-group"><label class="form-label" for="planMethod">วิธีคำนวณ *</label><select class="form-select" id="planMethod" name="calculationMethod" onchange="Page.onMethodChange()"></select></div>
           </div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">ยอดขายขั้นต่ำ</label><input type="number" class="form-input" id="planMinSales" step="0.01"></div>
-            <div class="form-group"><label class="form-label">เพดานคอมมิชชัน</label><input type="number" class="form-input" id="planCap" step="0.01"></div>
+          <div class="form-group" id="planRateGroup"><label class="form-label" for="planRate" id="planRateLabel">อัตรา (%) *</label><input type="number" class="form-input" id="planRate" name="flatRate" step="0.01" min="0"></div>
+          <div class="form-group" id="planTierGroup" style="display:none">
+            <label class="form-label">ขั้นบันได * <span class="text-xs text-gray-500">(ยอดส่วนที่อยู่ในช่วงคิดอัตราของขั้นนั้น · เว้น "ถึง" ว่างได้เฉพาะขั้นสุดท้าย)</span></label>
+            <table class="table"><thead><tr><th>ยอดตั้งแต่ (บาท)</th><th>ถึง (บาท)</th><th>อัตรา (%)</th><th></th></tr></thead><tbody id="planTierBody"></tbody></table>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.addTierRow()">+ เพิ่มขั้น</button>
           </div>
-          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="planDesc" rows="2"></textarea></div>
+          <div class="form-group"><label class="form-label" for="planDesc" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="planDesc" name="description" rows="2"></textarea></div>
+          <div class="form-group" id="planActiveGroup" style="display:none"><label><input type="checkbox" id="planActive" name="isActive"> ใช้งานแผนนี้ (ปิด = ไม่ถูกนำไปคำนวณคอมมิชชัน)</label></div>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('planModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.savePlan()" data-i18n="common.save">บันทึก</button></div>
       </div>
@@ -99,19 +103,44 @@ const Page = {
     document.querySelectorAll('.tabs .tab').forEach((t, i) => t.classList.toggle('active', ['plans','calculate'][i] === tab));
   },
 
+  _opts: null,
+  /** ตัวเลือก + ป้ายไทยจากเซิร์ฟเวอร์ (ตัวตั้ง = Helpers/CommissionPlanRules) */
+  async loadOptions() {
+    if (this._opts) return this._opts;
+    const api = Layout.api(); if (!api) return null;
+    const res = await api.getCommissionOptions();
+    this._opts = res.data;
+    const fill = (id, list) => {
+      document.getElementById(id).innerHTML = (list || [])
+        .map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+    };
+    fill('planBasis', this._opts.bases);
+    fill('planMethod', this._opts.methods);
+    return this._opts;
+  },
+  label(kind, v) {
+    const hit = (this._opts?.[kind] || []).find(o => o.value === v);
+    return hit ? hit.label : (v || '-');
+  },
+
   async loadPlans() {
     const api = Layout.api(); if (!api) return;
     try {
+      try { await this.loadOptions(); } catch (_) { /* ป้ายไม่มา = แสดงค่าดิบ */ }
       const res = await api.getCommissionPlans();
       const items = res.data?.items || res.data || [];
       const tbody = document.getElementById('planBody');
-      const typeMap = {Percentage:'เปอร์เซ็นต์',Fixed:'คงที่',Tiered:'ตามขั้น'};
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีแผนคอมมิชชัน</td></tr>'; return; }
+      // อ่านฟิลด์ของ CommissionPlanResponse จริง — เดิมอ่าน type/rate/assignedCount ที่ไม่มีใครส่ง ⇒ "-"/"0 คน" ทุกแถว
+      const rateText = p => p.calculationMethod === 'Tiered'
+        ? `${(p.tiers || []).length} ขั้น`
+        : p.flatRate == null ? 'ไม่มีข้อมูล'
+        : p.calculationMethod === 'Percentage' ? `${p.flatRate}%` : Layout.money(p.flatRate);
       tbody.innerHTML = items.map(p => `<tr>
-        <td><span class="font-medium">${p.name || '-'}</span></td>
-        <td>${typeMap[p.type || p.commissionType] || p.type || '-'}</td>
-        <td>${p.rate || p.percentage || '-'}${p.type === 'Percentage' ? '%' : ''}</td>
-        <td>${p.assignedCount || p.employeeCount || 0} คน</td>
+        <td><span class="font-medium">${Layout.esc(p.name || '-')}</span></td>
+        <td>${Layout.esc(this.label('methods', p.calculationMethod))}<div class="text-xs text-gray-500">${Layout.esc(this.label('bases', p.calculationBasis))}</div></td>
+        <td>${Layout.esc(rateText(p))}</td>
+        <td>${p.assignedCount ?? 0} คน</td>
         <td>${Layout.statusBadge(p.isActive !== false ? 'Active' : 'Inactive')}</td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="Page.editPlan('${p.id}')" data-i18n="common.edit">แก้ไข</button>
@@ -121,20 +150,109 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
-  openCreatePlan() {
+  /** ค่าเดิมที่ไม่อยู่ในชุด (ข้อมูลเก่า) แสดงตามจริง — ไม่ปล่อยให้ select ว่างเงียบ ๆ */
+  setSelect(id, value) {
+    const sel = document.getElementById(id);
+    sel.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+    if (value && ![...sel.options].some(o => o.value === value)) {
+      const o = document.createElement('option');
+      o.value = value; o.textContent = `(ค่าเดิม: ${value})`; o.dataset.legacy = '1';
+      sel.appendChild(o);
+    }
+    if (value) sel.value = value;
+  },
+
+  onMethodChange() {
+    const m = document.getElementById('planMethod').value;
+    const tiered = m === 'Tiered';
+    document.getElementById('planTierGroup').style.display = tiered ? '' : 'none';
+    document.getElementById('planRateGroup').style.display = tiered ? 'none' : '';
+    document.getElementById('planRateLabel').textContent = m === 'Fixed' ? 'จำนวนเงินต่อเดือน (บาท) *' : 'อัตรา (%) *';
+    if (tiered && !document.querySelector('#planTierBody tr')) this.addTierRow();
+  },
+
+  addTierRow(t) {
+    const tr = document.createElement('tr');
+    const v = x => (x === null || x === undefined) ? '' : Layout.esc(String(x));
+    tr.innerHTML = `<td><input type="number" class="form-input" data-k="from" step="0.01" min="0" value="${v(t?.fromAmount)}"></td>
+      <td><input type="number" class="form-input" data-k="to" step="0.01" min="0" value="${v(t?.toAmount)}" placeholder="ไม่จำกัด"></td>
+      <td><input type="number" class="form-input" data-k="rate" step="0.01" min="0" value="${v(t?.rate)}"></td>
+      <td><button type="button" class="btn btn-sm btn-ghost" onclick="this.closest('tr').remove()">ลบ</button></td>`;
+    document.getElementById('planTierBody').appendChild(tr);
+  },
+
+  resetPlanForm() {
+    ['planName','planRate','planDesc'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('planTierBody').innerHTML = '';
+    document.getElementById('planActive').checked = true;
+  },
+
+  async openCreatePlan() {
+    try { await this.loadOptions(); }
+    catch (e) { Layout.toast('โหลดตัวเลือกแผนคอมมิชชันไม่สำเร็จ: ' + e.message, 'error'); return; }
     document.getElementById('planTitle').textContent = 'สร้างแผนคอมมิชชัน';
     document.getElementById('planId').value = '';
-    ['planName','planRate','planMinSales','planCap','planDesc'].forEach(id => document.getElementById(id).value = '');
+    this.resetPlanForm();
+    this.setSelect('planBasis', this._opts.defaultBasis);
+    this.setSelect('planMethod', this._opts.defaultMethod);
+    document.getElementById('planActiveGroup').style.display = 'none';
+    this.onMethodChange();
     Layout.openModal('planModal');
   },
 
-  editPlan(id) { document.getElementById('planTitle').textContent = 'แก้ไขแผน'; document.getElementById('planId').value = id; Layout.openModal('planModal'); },
+  /** รอบ 193 · A17: เดิมตั้งแค่ id + หัวข้อ ⇒ เห็นฟอร์มว่าง/ค่าของแผนก่อนหน้า แล้วบันทึกทับ */
+  async editPlan(id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await this.loadOptions();
+      const p = (await api.getCommissionPlan(id)).data;
+      document.getElementById('planTitle').textContent = 'แก้ไขแผน';
+      document.getElementById('planId').value = p.id;
+      this.resetPlanForm();
+      document.getElementById('planName').value = p.name || '';
+      document.getElementById('planDesc').value = p.description || '';
+      this.setSelect('planBasis', p.calculationBasis);
+      this.setSelect('planMethod', p.calculationMethod);
+      document.getElementById('planRate').value = p.flatRate ?? '';
+      (p.tiers || []).forEach(t => this.addTierRow(t));
+      document.getElementById('planActive').checked = p.isActive !== false;
+      document.getElementById('planActiveGroup').style.display = '';
+      this.onMethodChange();
+      Layout.openModal('planModal');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
 
   async savePlan() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('planId').value;
-    const data = { name: document.getElementById('planName').value, commissionType: document.getElementById('planType').value, rate: parseFloat(document.getElementById('planRate').value) || 0, minimumSales: Layout.numOrNull('planMinSales') /* 0 = ได้คอมตั้งแต่บาทแรก */, cap: parseFloat(document.getElementById('planCap').value) || null, description: document.getElementById('planDesc').value };
-    if (!data.name || !data.rate) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    const method = document.getElementById('planMethod').value;
+    const data = {
+      name: document.getElementById('planName').value.trim(),
+      description: document.getElementById('planDesc').value,
+      calculationBasis: document.getElementById('planBasis').value,
+      calculationMethod: method,
+    };
+    if (!data.name) { Layout.toast('กรุณาระบุชื่อแผน', 'error'); return; }
+    if (method === 'Tiered') {
+      const tiers = [];
+      for (const [i, tr] of [...document.querySelectorAll('#planTierBody tr')].entries()) {
+        const val = k => tr.querySelector(`[data-k="${k}"]`).value.trim();
+        if (val('from') === '' || val('rate') === '') { Layout.toast(`ขั้นที่ ${i + 1}: กรุณากรอกยอดตั้งแต่และอัตรา`, 'error'); return; }
+        const tier = { fromAmount: parseFloat(val('from')), rate: parseFloat(val('rate')) };
+        if (val('to') !== '') tier.toAmount = parseFloat(val('to'));   // ว่าง = ไม่จำกัด (ตัดคีย์ทิ้ง)
+        tiers.push(tier);
+      }
+      if (!tiers.length) { Layout.toast('แผนแบบขั้นบันไดต้องมีอย่างน้อย 1 ขั้น', 'error'); return; }
+      data.tiers = tiers;
+    } else {
+      const raw = document.getElementById('planRate').value.trim();
+      if (raw === '' || !(parseFloat(raw) > 0)) {
+        Layout.toast(method === 'Fixed' ? 'กรุณากรอกจำนวนเงิน (มากกว่า 0)' : 'กรุณากรอกอัตรา % (มากกว่า 0)', 'error'); return;
+      }
+      data.flatRate = parseFloat(raw);
+      data.tiers = [];   // เปลี่ยนจากขั้นบันไดมาเป็นแบบอื่น = ล้างขั้นเดิม
+    }
+    if (id) data.isActive = document.getElementById('planActive').checked;
     try {
       if (id) await api.updateCommissionPlan(id, data); else await api.createCommissionPlan(data);
       Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ'); Layout.closeModal('planModal'); this.loadPlans();
@@ -147,8 +265,9 @@ const Page = {
     try {
       const res = await api.getEmployees('?pageSize=200');
       const items = res.data?.items || res.data || [];
-      document.getElementById('assignEmployee').innerHTML = items.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('');
-    } catch (err) { /* ignore */ }
+      // EmployeeResponse ส่ง firstNameTh/lastNameTh — เดิมอ่าน firstName/lastName ⇒ "undefined undefined"
+      document.getElementById('assignEmployee').innerHTML = items.map(e => `<option value="${e.id}">${Layout.esc([e.employeeCode, e.firstNameTh, e.lastNameTh].filter(Boolean).join(' '))}</option>`).join('');
+    } catch (err) { Layout.toast('โหลดรายชื่อพนักงานไม่สำเร็จ: ' + err.message, 'error'); return; }
     document.getElementById('assignStart').value = Layout.dateInput(new Date());
     Layout.openModal('assignModal');
   },

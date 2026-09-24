@@ -176,11 +176,13 @@
       <div class="form-row">
         <div class="form-group">
           <label>Provider Type</label>
+          <!-- รอบ 193: ค่าเป็น "ชื่อ enum" AiProviderType — API ส่งชื่อ (JsonStringEnumConverter)
+               option ตัวเลขทำให้เปิดแก้ provider แล้ว select ว่าง และบันทึกได้ 400 (NaN → null) -->
           <select id="provType">
-            <option value="1">DeepSeek</option>
-            <option value="2">OpenAI</option>
-            <option value="5">LocalLlama</option>
-            <option value="99">Custom (OpenAI-compatible)</option>
+            <option value="DeepSeek">DeepSeek</option>
+            <option value="OpenAi">OpenAI</option>
+            <option value="LocalLlama">LocalLlama</option>
+            <option value="Custom">Custom (OpenAI-compatible)</option>
           </select>
         </div>
         <div class="form-group">
@@ -424,7 +426,7 @@
         } else {
           document.getElementById('providerModalTitle').textContent = 'เพิ่ม Provider';
           document.getElementById('provId').value = '';
-          document.getElementById('provType').value = 1;
+          document.getElementById('provType').value = 'DeepSeek';
           document.getElementById('provDisplayName').value = '';
           document.getElementById('provEndpoint').value = '';
           document.getElementById('provModel').value = 'deepseek-chat';
@@ -448,9 +450,16 @@
 
       async saveProvider() {
         const id = document.getElementById('provId').value;
+        // ช่องตัวเลขที่ DTO เป็น non-nullable (temperature/maxTokens/timeout) — ว่าง = NaN → null ⇒ body ถูกทิ้ง
+        // ทั้งก้อน (A16) · ตัดคีย์ทิ้งก็ไม่ได้เพราะจะได้ 0 เงียบ ๆ ⇒ ฟ้องไทยก่อนยิง
+        const numBlank = [['provTemp', 'Temperature'], ['provMaxTokens', 'Max output tokens'], ['provTimeout', 'Timeout (วินาที)']]
+          .filter(([fid]) => document.getElementById(fid).value.trim() === '').map(([, label]) => label);
+        if (numBlank.length) { alert('กรุณากรอก: ' + numBlank.join(', ')); return; }
+        const provType = document.getElementById('provType').value;
+        if (!provType) { alert('กรุณาเลือก Provider Type'); return; }
         const body = {
           id: id || null,
-          providerType: parseInt(document.getElementById('provType').value),
+          providerType: provType,   // ชื่อ enum (JsonStringEnumConverter อ่านได้) — ไม่ parseInt
           displayName: document.getElementById('provDisplayName').value,
           endpoint: document.getElementById('provEndpoint').value || null,
           apiKey: document.getElementById('provApiKey').value || null,

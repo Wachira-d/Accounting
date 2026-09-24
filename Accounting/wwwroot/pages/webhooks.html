@@ -106,7 +106,7 @@
       </div>
       <div class="table-container">
         <table class="table">
-          <thead><tr><th>URL</th><th>Events</th><th data-i18n="common.status">สถานะ</th><th>ส่งล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+          <thead><tr><th>ชื่อ / URL</th><th>Events</th><th data-i18n="common.status">สถานะ</th><th>ส่งล่าสุด</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
           <tbody id="webhookBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
@@ -139,8 +139,10 @@
         <div class="modal-header"><h3 class="modal-title" id="whTitle">สร้าง Webhook</h3><button class="modal-close" onclick="Layout.closeModal('webhookModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="whId">
-          <div class="form-group"><label class="form-label">URL *</label><input type="url" class="form-input" id="whUrl" placeholder="https://your-server.com/webhook"></div>
-          <div class="form-group"><label class="form-label">Secret (สำหรับ verify signature)</label><input type="text" class="form-input" id="whSecret" placeholder="webhook_secret_key"></div>
+          <!-- รอบ 193 · A08: API บังคับ "ชื่อ" มาตลอดแต่ฟอร์มไม่มีช่อง ⇒ สร้าง Webhook ไม่ได้เลย -->
+          <div class="form-group"><label class="form-label" for="whName">ชื่อ *</label><input type="text" class="form-input" id="whName" name="name" placeholder="เช่น ส่งใบแจ้งหนี้เข้า ERP"></div>
+          <div class="form-group"><label class="form-label" for="whUrl">URL *</label><input type="url" class="form-input" id="whUrl" placeholder="https://your-server.com/webhook"></div>
+          <div class="form-group"><label class="form-label">Secret (สำหรับ verify signature)</label><input type="text" class="form-input" id="whSecret" name="secret" placeholder="webhook_secret_key"></div>
           <div class="form-group"><label class="form-label">Events ที่ต้องการรับ *</label>
             <div id="whEvents" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:200px;overflow-y:auto"></div>
           </div>
@@ -309,13 +311,14 @@ const Page = {
     try {
       const res = await api.getWebhooks();
       const items = res.data?.items || res.data || [];
+      this.webhooks = items;   // ใช้ hydrate ฟอร์มแก้ไข (ไม่มี GET รายตัว)
       const tbody = document.getElementById('webhookBody');
       if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มี Webhook</td></tr>'; return; }
       tbody.innerHTML = items.map(w => `<tr>
-        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><span class="font-medium text-sm" style="font-family:monospace">${Layout.esc(w.url || '-')}</span></td>
-        <td><span class="text-sm">${Layout.esc((w.events || w.eventTypes || []).slice(0,3).join(', '))}${(w.events||w.eventTypes||[]).length > 3 ? '...' : ''}</span></td>
+        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis"><div class="font-medium">${Layout.esc(w.name || '-')}</div><span class="text-sm" style="font-family:monospace">${Layout.esc(w.url || '-')}</span></td>
+        <td><span class="text-sm">${Layout.esc(this.splitEvents(w.eventTypes).slice(0,3).join(', '))}${this.splitEvents(w.eventTypes).length > 3 ? '...' : ''}</span></td>
         <td>${Layout.statusBadge(w.isActive !== false ? 'Active' : 'Inactive')}</td>
-        <td class="text-sm">${w.lastDeliveryAt ? Layout.date(w.lastDeliveryAt) : 'ยังไม่เคยส่ง'}</td>
+        <td class="text-sm">${w.lastTriggeredAt ? Layout.date(w.lastTriggeredAt) : 'ยังไม่เคยส่ง'}</td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="Page.editWebhook('${w.id}')" data-i18n="common.edit">แก้ไข</button>
           <button class="btn btn-sm btn-info" onclick="Page.testWebhook('${w.id}')">ทดสอบ</button>
@@ -326,20 +329,49 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
+  webhooks: [],
+  /** EventTypes ของ API เป็นสตริงคั่น "," — เดิมหน้าเว็บ .slice/.join เหมือน array ⇒ ตาราง "doc..." */
+  splitEvents(v) {
+    return String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+  },
+  /** ชื่อ event จาก WebhookEventTypeResponse = `eventType` (เดิมอ่าน e.name ⇒ value="[object Object]") */
+  eventName(e) { return typeof e === 'string' ? e : (e.eventType || e.name || ''); },
+
+  renderEventChecks(checked) {
+    const events = this.eventTypes.length ? this.eventTypes : ['document.created','document.approved','payment.received'];
+    const all = checked.includes('*');
+    document.getElementById('whEvents').innerHTML = events.map(e => {
+      const n = this.eventName(e);
+      const on = all || checked.includes(n) || checked.some(c => c.endsWith('.*') && n.startsWith(c.slice(0, -1)));
+      return `<label class="text-sm" title="${Layout.esc(e.description || '')}"><input type="checkbox" value="${Layout.esc(n)}" ${on ? 'checked' : ''}> ${Layout.esc(n)}</label>`;
+    }).join('');
+  },
+
   openCreateWebhook() {
     document.getElementById('whTitle').textContent = 'สร้าง Webhook';
     document.getElementById('whId').value = '';
+    document.getElementById('whName').value = '';
     document.getElementById('whUrl').value = '';
     document.getElementById('whSecret').value = '';
+    document.getElementById('whSecret').placeholder = 'webhook_secret_key (ไม่บังคับ)';
     document.getElementById('whActive').checked = true;
-    const events = this.eventTypes.length ? this.eventTypes : ['document.created','document.approved','payment.received'];
-    document.getElementById('whEvents').innerHTML = events.map(e => `<label class="text-sm"><input type="checkbox" value="${Layout.esc(e.name||e)}" checked> ${Layout.esc(e.displayName||e.name||e)}</label>`).join('');
+    this.renderEventChecks(this.eventTypes.map(e => this.eventName(e)));
     Layout.openModal('webhookModal');
   },
 
+  /** รอบ 193 · A17: เดิมตั้งแค่ id ⇒ ฟอร์มว่าง/ค่าของรายการก่อนหน้า แล้วบันทึกทับ */
   editWebhook(id) {
+    const w = this.webhooks.find(x => x.id === id);
+    if (!w) { Layout.toast('ไม่พบ Webhook นี้ในรายการ — ลองรีเฟรชหน้า', 'error'); return; }
     document.getElementById('whTitle').textContent = 'แก้ไข Webhook';
     document.getElementById('whId').value = id;
+    document.getElementById('whName').value = w.name || '';
+    document.getElementById('whUrl').value = w.url || '';
+    // secret ถูกเข้ารหัสและไม่ถูกส่งกลับ (ตั้งใจ) — ว่าง = ใช้ค่าเดิม
+    document.getElementById('whSecret').value = '';
+    document.getElementById('whSecret').placeholder = 'เว้นว่าง = ใช้ secret เดิม';
+    document.getElementById('whActive').checked = w.isActive !== false;
+    this.renderEventChecks(this.splitEvents(w.eventTypes));
     Layout.openModal('webhookModal');
   },
 
@@ -347,7 +379,16 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('whId').value;
     const checkedEvents = [...document.querySelectorAll('#whEvents input:checked')].map(cb => cb.value);
-    const data = { url: document.getElementById('whUrl').value, secret: document.getElementById('whSecret').value, events: checkedEvents, isActive: document.getElementById('whActive').checked };
+    // สัญญาจริง: name + eventTypes (สตริงคั่น ",") — เดิมส่ง events: [...] และไม่มี name ⇒ สร้างไม่ได้เลย
+    const data = {
+      name: document.getElementById('whName').value.trim(),
+      url: document.getElementById('whUrl').value.trim(),
+      eventTypes: checkedEvents.join(','),
+      isActive: document.getElementById('whActive').checked,
+    };
+    const secret = document.getElementById('whSecret').value;
+    if (secret) data.secret = secret;   // แก้ไข: ว่าง = ไม่แตะ secret เดิม
+    if (!data.name) { Layout.toast('กรุณาระบุชื่อ Webhook', 'error'); return; }
     if (!data.url || !checkedEvents.length) { Layout.toast('กรุณากรอก URL และเลือก Event', 'error'); return; }
     try {
       if (id) await api.updateWebhook(id, data); else await api.createWebhook(data);

@@ -1,8 +1,11 @@
 namespace Accounting.Models.DTOs.Fpa;
 
+/// <summary>รอบ 193 · A10: <c>BaselineType</c>/<c>BaselineScenarioId</c> เดิมบังคับ (non-nullable/ไม่มี default)
+/// แต่ฟอร์มไม่เคยส่ง ⇒ สร้าง Scenario ไม่ได้เลย. ค่านี้ derive ได้: <c>FpaService.CalculateScenarioAsync</c> คำนวณฐานจาก
+/// ข้อมูลบัญชีจริง (GL) เท่านั้น ⇒ null = "Actual" · ค่าอื่นถูกปฏิเสธเป็นไทย (รับไว้ = ป้ายโกหก)</summary>
 public record CreateScenarioRequest(
     string Name, string? Description, string ScenarioType,
-    int FiscalYear, string BaselineType, Guid? BaselineScenarioId);
+    int FiscalYear, string? BaselineType = null, Guid? BaselineScenarioId = null);
 
 public record UpdateScenarioRequest(
     string? Name, string? Description, string? Status);
