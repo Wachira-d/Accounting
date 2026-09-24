@@ -47,7 +47,7 @@ def main():
     problems = []
 
     for f in sorted(SRC.rglob("*.cs")):
-        if any(part in {"obj", "bin"} for part in f.parts):
+        if any(part in {"obj", "bin", ".claude"} for part in f.parts):
             continue
         src = f.read_text(encoding="utf-8", errors="replace")
         if "ProcessAndSaveAsync(" not in src:
