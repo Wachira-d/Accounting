@@ -156,6 +156,11 @@ RULES += [
          must=["ExpenseClaimActionPolicy.Decide(", "ExpenseClaimActionPolicy.SelfDecisionAllowed(",
                "DocumentPermissionHelper.CanApproveAsync(", "ExpenseClaimActionPolicy.ReviewerKeys("],
          why="R2-C2 ด่านใบเบิกต้องรวบรวมหลักฐานครบ (คีย์ · SoD เจ้าของ/สวิตช์ · สิทธิ์อนุมัติ PV) แล้วให้ตัวตัดสินเดียวตัดสิน"),
+    # ฝ่ายค้านรอบสาม (B7 · กฎ #4 D watermark): งานกวาดไฟล์สแกนต้องตัดแถวที่ข้ามแน่ที่ query + เรียงแน่นอน + เลื่อนแถวที่ลบไม่ได้
+    dict(file="Services/Implementations/Ocr/OcrSelfCorrectionService.cs", method="RunMaintenanceAsync",
+         must=["ThenBy(s => s.Id)", "ThenBy(f => f.Id)", "f.UpdatedAt = sweepNow",
+               "o.FileAttachmentId == f.Id", "o.CreatedJournalEntryId != null"],
+         why="B7 แถวที่กวาดไม่ได้ต้องไม่ค้างหัวคิว Take(500) ทุกคืน (head-of-line) — ตัดที่ query · เรียงด้วย id · ประทับเวลาแถวที่ลบไม่ได้"),
     dict(file=MOBILE, method="HandleExpenseClaimApprovalAsync", must=["ApproveAsync(", "RejectAsync("],
          forbid=["ExpenseClaimStatus.Approved;", "ExpenseClaimStatus.Rejected;"],
          why="R2-C2/Q7 มือถืออนุมัติใบเบิกต้องเดินเมธอดเดียวกับเว็บ (ด่านสิทธิ์ · SoD · §65 ทวิ · CertificateInLieu) — ห้ามตั้งสถานะเอง"),

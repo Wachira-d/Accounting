@@ -193,6 +193,11 @@ public class OcrSelfCorrectionService
                 .Where(s => s.FileAttachmentId != null && s.CreatedJournalEntryId == null)
                 .Where(s => _db.FileAttachments.Any(f => f.Id == s.FileAttachmentId && f.CompanyId == s.CompanyId
                     && f.EntityType == "OcrScan"))
+                // ฝ่ายค้านรอบสาม (B7): สแกนพี่น้องที่ผูกเอกสาร/JE ⇒ ข้ามแน่ทุกคืน — ตัดที่ query ไม่ให้ค้างหัวคิว (head-of-line)
+                .Where(s => !_db.Set<Models.Entities.OcrScanResult>().Any(o => o.CompanyId == s.CompanyId
+                    && o.FileAttachmentId == s.FileAttachmentId
+                    && (o.CreatedDocumentId != null || o.CreatedJournalEntryId != null)))
+                .OrderBy(s => s.CreatedAt).ThenBy(s => s.Id)
                 .Select(s => new { s.Id, s.CompanyId, FileId = s.FileAttachmentId!.Value })
                 .Take(500)  // throttled per cycle
                 .ToListAsync(ct);
@@ -236,8 +241,14 @@ public class OcrSelfCorrectionService
             // ค้างดิสก์ตลอดไป (ข้อมูลส่วนบุคคลบนใบเสร็จอยู่เกินวัตถุประสงค์ · PDPA retention by purpose) · ครบระยะผ่อนแล้วลบจริง
             var sweepNow = DateTime.UtcNow;
             var sweepCutoff = sweepNow.AddDays(-Accounting.Helpers.AttachmentRetention.DeletedScanFileGraceDays);
+            // ฝ่ายค้านรอบสาม (B7 · กฎ #4 D): แถวที่ "ยังมีสแกนชี้" ข้ามแน่ ⇒ ตัดที่ query (เดิมถูกข้ามแต่ยังอยู่ใน Take(500) ⇒
+            // ถ้าเกิน 500 แถว งานวนเจอชุดเดิมทุกคืน) · แถวที่ลบไฟล์จริงไม่สำเร็จ ถูกประทับ UpdatedAt ใหม่ (ข้างล่าง) ⇒ พ้นเกณฑ์ไปอีก
+            // หนึ่งระยะผ่อน = watermark ต่อแถวโดยไม่ต้องมีตาราง · เรียงด้วยวันที่ถอด + id ให้คิวเดินหน้าแน่นอน
             var deletedScanFiles = await _db.FileAttachments.IgnoreQueryFilters()
                 .Where(f => f.IsDeleted && f.EntityType == "OcrScan" && (f.UpdatedAt ?? f.CreatedAt) < sweepCutoff)
+                .Where(f => !_db.Set<Models.Entities.OcrScanResult>().IgnoreQueryFilters()
+                    .Any(o => o.CompanyId == f.CompanyId && o.FileAttachmentId == f.Id))
+                .OrderBy(f => f.UpdatedAt ?? f.CreatedAt).ThenBy(f => f.Id)
                 .Take(500)
                 .ToListAsync(ct);
             var sweepIds = deletedScanFiles.Select(f => f.Id).ToList();
@@ -264,8 +275,12 @@ public class OcrSelfCorrectionService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "ลบไฟล์สแกนที่ถูกถอดแล้วไม่สำเร็จ {Path}", f.StoragePath);
-                    continue;   // ไฟล์จริงยังอยู่ — เก็บแถวไว้ให้รอบหน้าลองใหม่ (ไม่ทิ้งไฟล์กำพร้าที่ไม่มีแถวชี้)
+                    _logger.LogWarning(ex, "ลบไฟล์สแกนที่ถูกถอดแล้วไม่สำเร็จ {Path} — เลื่อนไปลองใหม่อีก {Days} วัน", f.StoragePath,
+                        Accounting.Helpers.AttachmentRetention.DeletedScanFileGraceDays);
+                    // ไฟล์จริงยังอยู่ — เก็บแถวไว้ (ไม่ทิ้งไฟล์กำพร้าที่ไม่มีแถวชี้) แต่ประทับเวลาใหม่ให้พ้นหัวคิว (B7 — ไม่งั้นแถวที่ลบ
+                    // ไม่ได้ถาวร เช่น สิทธิ์ดิสก์ ค้างหัวคิวทุกคืน)
+                    f.UpdatedAt = sweepNow;
+                    continue;
                 }
                 _db.FileAttachments.Remove(f);
                 orphanRowsDeleted++;
