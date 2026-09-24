@@ -151,8 +151,13 @@ public partial class PosService
     {
         var order = await _db.PosOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบออเดอร์");
+        // ★ E193-1 (รอบ 193) — เดิมเขียนสถานะตรง ๆ ⇒ ตั้ง Completed ได้โดยไม่ตัดสต็อก/ไม่ลง JE/
+        // ไม่ออกเลข §86/6 และดึงบิลที่ปิดแล้วกลับมาปิดซ้ำได้ · ตอนนี้สลับได้เฉพาะสถานะที่ยังเปิด
+        // สถานะปลายทางต้องไปเส้นของตัวเอง (ปิดบิล/ยกเลิก/คืนเงิน) — ตัดสินที่ helper ตัวเดียว
+        var blocked = Accounting.Helpers.PosOrderStatusTransition.Check(order.Status, request.Status);
+        if (blocked != null)
+            throw new Accounting.Helpers.BusinessRuleException(blocked, "POS-STATUS-TRANSITION");
         order.Status = request.Status;
-        if (request.Status == PosOrderStatus.Completed) order.CompletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return await GetOrderAsync(companyId, orderId);
     }
@@ -167,58 +172,99 @@ public partial class PosService
         if (order.Status == PosOrderStatus.Voided) throw new InvalidOperationException("ออเดอร์นี้ถูกยกเลิกไปแล้ว");
 
         var wasCompleted = order.Status == PosOrderStatus.Completed;
+        var liveItems = order.Items.Where(i => !i.IsDeleted).ToList();
+
+        // ★ E193-2 (รอบ 193) — บิลที่คืนเงินไปบางส่วนแล้ว: กลับเฉพาะส่วนที่ยังค้าง
+        // (สต็อก = จำนวนที่ยังไม่คืน · GL = กลับ JE ขาย + JE คืนเงินทุกใบ ⇒ สุทธิ = ส่วนที่เหลือ)
+        // เดิมคืนสต็อกเต็มจำนวนและกลับ JE ขายทั้งใบ ⇒ ส่วนที่คืนไปแล้วถูกกลับซ้ำ
+        var refundRef = $"REFUND-{order.OrderNumber}";
+        var refundJournalIds = wasCompleted
+            ? await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && j.Reference == refundRef
+                         && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null)
+                .OrderBy(j => j.CreatedAt)
+                .Select(j => j.Id)
+                .ToListAsync()
+            : new List<Guid>();
+        var plan = Accounting.Helpers.PosVoidPlan.Decide(
+            wasCompleted, order.JournalEntryId.HasValue,
+            anyRefunded: liveItems.Any(i => i.RefundedQuantity > 0m),
+            postedRefundJournalCount: refundJournalIds.Count);
+        if (plan.Blocked)
+            throw new Accounting.Helpers.BusinessRuleException(plan.BlockedMessage!, "POS-VOID-PARTIAL-REFUND");
 
         // ธุรกรรมชัดเจน — `IStockLedger` ล็อกด้วย `pg_advisory_xact_lock` ซึ่ง**ปล่อยทันที
         // ถ้าไม่มีธุรกรรมครอบ** (บทเรียน AdvisoryLockKey) ⇒ ไม่มีธุรกรรม = ไม่กันอะไรเลย
         await using var voidTxn = await _db.Database.BeginTransactionAsync();
-        if (wasCompleted)
+        try
         {
-            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
+            if (plan.RestoreRemainingStock)
             {
-                var product = await _db.Products.FindAsync(item.ProductId);
-                if (product == null) continue;
-                // บิลที่กินสูตรตอนขาย ต้อง **คืนวัตถุดิบ** ไม่ใช่คืนตัวสินค้าแม่
-                var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
-                    +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId);
-                if (!gaveBack.Handled && product.TrackStock)
+                foreach (var item in liveItems.Where(i => i.ProductId.HasValue))
                 {
-                    await _stock.MoveAsync(new StockMoveRequest(
-                        CompanyId: companyId,
-                        ProductId: product.Id,
-                        Quantity: item.Quantity,          // + = คืนเข้าคลัง
-                        MovementType: "IN",
-                        Reference: $"VOID-{order.OrderNumber}",
-                        WarehouseId: order.WarehouseId,   // null = คลังหลัก (บริษัทที่ไม่ใช้ระบบคลัง)
-                        PosOrderId: order.Id,
-                        // JE ขายถูกกลับทั้งใบ (ReverseJournalEntryAsync) ⇒ ของต้องกลับเข้าคลังด้วย
-                        // ต้นทุนเดียวกับที่ขายออกไป (★ E-01 · ตัวเดียวกับเส้นคืนเงิน)
-                        UnitCostOverride: Accounting.Helpers.PosCogsBooking.RestockUnitCost(
-                            item.CostOfGoodsSold, item.Quantity, EffectiveUnitCost(product)),
-                        Notes: "คืนสต็อกจากการยกเลิกออเดอร์",
-                        CreatedBy: userId));
+                    var remaining = Accounting.Helpers.PosVoidPlan.RemainingQuantity(item.Quantity, item.RefundedQuantity);
+                    if (remaining <= 0m) continue;          // คืนเงินครบบรรทัดแล้ว — สต็อกกลับไปตอนคืนเงิน
+                    var product = await _db.Products.FindAsync(item.ProductId!.Value);
+                    if (product == null) continue;
+                    // บิลที่กินสูตรตอนขาย ต้อง **คืนวัตถุดิบ** ไม่ใช่คืนตัวสินค้าแม่ · บรรทัดจำลองที่มีแต่
+                    // จำนวนที่เหลือ ให้ตัวคิดสูตรตัวเดียวกันคิดสัดส่วน (แบบเดียวกับเส้นคืนเงิน)
+                    var rest = new PosOrderItem { Quantity = remaining };
+                    foreach (var mod in item.Modifiers.Where(x => !x.IsDeleted)) rest.Modifiers.Add(mod);
+                    var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, rest, product,
+                        +1, DateTime.UtcNow, $"VOID-{order.OrderNumber}", "คืนวัตถุดิบจากการยกเลิกออเดอร์", userId);
+                    if (!gaveBack.Handled && product.TrackStock)
+                    {
+                        await _stock.MoveAsync(new StockMoveRequest(
+                            CompanyId: companyId,
+                            ProductId: product.Id,
+                            Quantity: remaining,              // + = คืนเข้าคลัง (เฉพาะที่ยังไม่คืน)
+                            MovementType: "IN",
+                            Reference: $"VOID-{order.OrderNumber}",
+                            WarehouseId: order.WarehouseId,   // null = คลังหลัก (บริษัทที่ไม่ใช้ระบบคลัง)
+                            PosOrderId: order.Id,
+                            // ของกลับเข้าคลังด้วยต้นทุนเดียวกับที่ขายออกไป (★ E-01 · ตัวเดียวกับเส้นคืนเงิน)
+                            UnitCostOverride: Accounting.Helpers.PosCogsBooking.RestockUnitCost(
+                                item.CostOfGoodsSold, item.Quantity, EffectiveUnitCost(product)),
+                            Notes: "คืนสต็อกจากการยกเลิกออเดอร์",
+                            CreatedBy: userId));
+                    }
                 }
             }
+
+            // ★ E193-3 (รอบ 193) — กลับ JE **ในธุรกรรมเดียวกับการคืนสต็อก/เปลี่ยนสถานะ** และไม่กลืน error
+            // เดิมกลับ JE หลัง commit แล้ว catch → LogError ⇒ สต็อกกลับ บิลเป็น Voided แต่รายได้/
+            // ภาษีขาย/เงินยังอยู่ใน GL โดยไม่มีใครเห็น (กฎเหล็ก #4 E) · ตอนนี้กลับไม่ได้ = ยกเลิกไม่สำเร็จ
+            // ทั้งก้อน (บิลยังเป็นสถานะเดิม) · ReverseJournalEntryAsync ใช้ธุรกรรมของผู้เรียกเมื่อมีอยู่
+            var journalsToReverse = new List<(Guid Id, string Label)>();
+            if (plan.ReverseSaleJournal)
+                journalsToReverse.Add((order.JournalEntryId!.Value, $"กลับรายการ POS ยกเลิกบิล #{order.OrderNumber}"));
+            if (plan.ReverseRefundJournals)
+                journalsToReverse.AddRange(refundJournalIds.Select(id =>
+                    (id, $"กลับรายการคืนเงิน POS ยกเลิกบิล #{order.OrderNumber}")));
+            foreach (var (jeId, label) in journalsToReverse)
+            {
+                try
+                {
+                    await _accountingService.ReverseJournalEntryAsync(companyId, jeId, DateTime.UtcNow, label, true);
+                }
+                catch (Exception ex) when (ex is not Accounting.Helpers.BusinessRuleException)
+                {
+                    // ไม่ใช่การกลืน — ห่อเป็นข้อความถึงผู้ใช้ที่บอกว่าบิลยังไม่ถูกยกเลิก แล้วโยนต่อ ⇒ rollback
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ยกเลิกบิล #{order.OrderNumber} ไม่สำเร็จ: กลับรายการบัญชีไม่ได้ ({ex.Message}) — "
+                        + "บิลยังไม่ถูกยกเลิก สต็อกและบัญชีไม่เปลี่ยน · แก้สาเหตุ (เช่น เปิดงวดบัญชี) แล้วยกเลิกใหม่",
+                        ex, "POS-VOID-JE-REVERSAL");
+                }
+            }
+
+            order.Status = PosOrderStatus.Voided;
+            await _db.SaveChangesAsync();
+            await voidTxn.CommitAsync();
         }
-
-        order.Status = PosOrderStatus.Voided;
-        await _db.SaveChangesAsync();
-        await voidTxn.CommitAsync();
-
-        // Reverse the sales journal entry — voiding a completed POS sale must
-        // back out the GL impact (cash/revenue/VAT/COGS), else revenue and
-        // cash stay overstated.
-        if (wasCompleted && order.JournalEntryId.HasValue)
+        catch
         {
-            try
-            {
-                await _accountingService.ReverseJournalEntryAsync(companyId, order.JournalEntryId.Value,
-                    DateTime.UtcNow, $"กลับรายการ POS ยกเลิกบิล #{order.OrderNumber}", true);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "POS void: JE reversal failed for order {OrderNumber} in company {CompanyId}",
-                    order.OrderNumber, companyId);
-            }
+            await voidTxn.RollbackAsync();
+            throw;
         }
     }
 
