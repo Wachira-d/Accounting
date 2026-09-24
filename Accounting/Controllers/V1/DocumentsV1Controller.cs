@@ -186,6 +186,8 @@ public class DocumentsV1Controller : PublicApiControllerBase
                     branchCode = contactExt?.BranchCode,
                     // §86/4: ช่องผู้ซื้อที่ยังขาด (เช่น "ที่อยู่ผู้ซื้อ" ของผู้ติดต่อสาขาใหม่) — ว่าง = ครบ
                     missingBuyerFields = missingBuyer,
+                    // ฝ่ายค้านรอบสี่ P4-5: เลขที่ส่งมาใช้ไม่ได้ (checksum/ศูนย์ล้วน) — แถวใหม่เก็บพร้อมป้ายเตือน · แถวเดิมไม่ถูกเติมเลขนี้
+                    taxIdWarning = Helpers.ContactTaxBranchKey.TaxIdChecksumWarning(req.ContactTaxId),
                 },
                 billing = new { charged = usage.ChargedAmount, coveredByFreeQuota = usage.CoveredByFreeQuota },
             }, missingBuyer.Count == 0
@@ -419,6 +421,7 @@ public class DocumentsV1Controller : PublicApiControllerBase
             IsActive = true,
             CreatedBy = "api:v1:auto-contact",
         };
+        Helpers.ContactTaxBranchKey.StampTaxIdWarning(created);   // ฝ่ายค้านรอบสี่ P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
         Db.Contacts.Add(created);
         await Db.SaveChangesAsync(ct);
         return created.Id;

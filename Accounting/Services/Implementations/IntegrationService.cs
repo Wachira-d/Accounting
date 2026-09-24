@@ -628,6 +628,8 @@ public class IntegrationService : IIntegrationService
                     PostalCode = postalCode,
                     InternalNotes = syncNote,
                 };
+                // ฝ่ายค้านรอบสี่ P4-5: เก็บเลขที่ต้นทางส่ง (หลักฐาน) แต่ติดป้ายเตือนเมื่อไม่ผ่าน checksum — ตัวตัดสินเดียวกับการเติมเลข
+                Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(contact);
                 _db.Set<Contact>().Add(contact);
             }
             else
@@ -693,7 +695,10 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Customer synced", null, contact.Id, null, null, null);
+            // เลขที่ใช้ไม่ได้ ⇒ บอกต้นทางใน response (แถวใหม่ติดป้าย · แถวเดิมไม่ถูกเติมเลขผิด) — ฝ่ายค้านรอบสี่ P4-5
+            var taxWarn = Accounting.Helpers.ContactTaxBranchKey.TaxIdChecksumWarning(request.TaxId);
+            return new InboundSyncResponse(true, "Customer synced", null, contact.Id, null, null, null,
+                Warnings: taxWarn == null ? null : new List<string> { taxWarn });
         }
         catch (Exception ex)
         {
@@ -1748,6 +1753,7 @@ public class IntegrationService : IIntegrationService
                 // ตัวตัดสิน ภ.ง.ด.3 vs 53 — ทะเบียนยืนยันแล้ว หรือเลขขึ้นต้น "0" = นิติบุคคล
                 ContactType = ResolveContactType(null, taxId, dbdDoc.Matched, resolvedName ?? name),
             };
+            Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(contact);   // P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
             _db.Set<Contact>().Add(contact);
             await _db.SaveChangesAsync();
         }
@@ -1830,6 +1836,7 @@ public class IntegrationService : IIntegrationService
                 IsSupplier = true,
                 IsActive = true
             };
+            Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(supplier);   // P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
             _db.Set<Contact>().Add(supplier);
             await _db.SaveChangesAsync();
             return supplier;

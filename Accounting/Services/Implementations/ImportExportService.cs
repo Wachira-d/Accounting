@@ -1077,6 +1077,7 @@ public class ImportExportService : IImportExportService
                 IsActive = true,
                 CreatedBy = performedBy,
             };
+            Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(contact);   // ฝ่ายค้านรอบสี่ P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
             _db.Contacts.Add(contact);
         }
         else if (isReceivable) { contact.IsCustomer = true; }
