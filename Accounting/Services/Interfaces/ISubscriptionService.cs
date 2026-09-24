@@ -35,6 +35,13 @@ public interface ISubscriptionService
     /// pool. Returns false when the upload would exceed the cap.</summary>
     Task<bool> CanFitStorageAsync(Guid companyId, long additionalBytes);
 
+    /// <summary>พื้นที่ที่ใช้จริง (Σ ไฟล์แนบ + สื่อ CMS ของ pool) + เพดาน — <c>null</c> = ไม่มี subscription.
+    /// เส้นไฟล์แนบใช้ตัวนี้เพื่อ<b>เตือน</b> (ไม่บล็อกหลักฐานบัญชี — รอบ 193 ข้อ 30)</summary>
+    Task<StorageStatus?> GetStorageStatusAsync(Guid companyId);
+
+    /// <summary>พื้นที่ที่ใช้จริงรายบริษัท (แทนคอลัมน์ <c>Subscription.CurrentStorageUsed</c> ที่ไม่มีใครเขียน)</summary>
+    Task<Dictionary<Guid, long>> GetStorageBytesByCompanyAsync(IReadOnlyCollection<Guid> companyIds);
+
     // Admin: Plan Templates
     Task<PlanTemplateResponse> CreatePlanTemplateAsync(CreatePlanTemplateRequest request);
     Task<List<PlanTemplateResponse>> GetPlanTemplatesAsync(bool includeInactive = false);
@@ -73,3 +80,6 @@ public interface ISubscriptionService
     Task ProcessSubscriptionNotificationsAsync(); // ตรวจสอบและส่งแจ้งเตือน
     Task ProcessExpiredSubscriptionsAsync();       // ตรวจสอบ subscription หมดอายุ
 }
+
+/// <summary>พื้นที่ที่ใช้จริงของ pool (ไบต์) + เพดานของแพ็กเกจ</summary>
+public record StorageStatus(long UsedBytes, long MaxBytes);

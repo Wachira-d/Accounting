@@ -1145,6 +1145,7 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ReviewQueue(
         Guid companyId,
         [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker,
+        [FromServices] Services.Interfaces.ISensitivityService sensitivity,
         [FromQuery] int limit = 20)
     {
         var ranked = await ranker.RankAsync(companyId, Math.Clamp(limit, 1, 100));
@@ -1172,11 +1173,34 @@ public class OcrController : ControllerBase
                 Quality = grade != null ? new { grade.Letter, grade.Score, grade.Color } : null,
             };
         }).ToList();
-        // ตัวเลขประกอบ — หน้าเว็บใช้บอก "ว่างเพราะอะไร" (เดิมจอว่างบอกว่า "ระบบมั่นใจทุกใบ"
-        // โดยไม่เคยตรวจ) · รูปคำตอบเปลี่ยนจาก array เป็น { items, summary } —
-        // ผู้เรียกมีหน้าเดียว (review-queue.html) แก้ในคอมมิตเดียวกัน
-        var summary = await ranker.SummarizeAsync(companyId);
-        return Ok(new ApiResponse<object>(true, new { Items = result, Summary = summary }));
+        // ═══ ร่างจากสแกนที่ยังไม่อนุมัติ (คำตัดสินเจ้าของ รอบ 193 ข้อ 31) ═══
+        // เดิมสแกนออกจากคิวทันทีที่สร้างร่าง ⇒ ร่างที่ลืมอนุมัติไม่มีใครเห็น · กรองด้วยสิทธิ์มองเห็นชุดเดียวกับลิสต์เอกสาร
+        // (ฝั่งรายรับ/รายจ่าย + ชั้นความลับของใบ) — คิวต้องไม่เปิดเผยเลขที่/ยอดของใบที่ผู้ใช้เปิดในหน้าเอกสารไม่ได้
+        var closed = await ranker.ClosedRangesAsync(companyId);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var vis = await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, userId);
+        var kinds = await sensitivity.GetVisibleKindsAsync(companyId, userId);
+        var drafts = (await ranker.DraftsFromScansAsync(companyId, closed))
+            .Where(x => vis.Allows(x.DocumentType)
+                && (x.Sensitivity == Models.Enums.SensitivityKind.None || kinds.Contains(x.Sensitivity)))
+            .ToList();
+        var draftItems = drafts.Take(Math.Clamp(limit, 1, 100)).Select(x => new
+        {
+            x.DocumentId,
+            x.DocumentNumber,
+            DocumentType = x.DocumentType.ToString(),   // enum ออกเป็น "ชื่อ" เสมอ
+            x.ContactName,
+            x.DocumentDate,
+            x.TotalAmount,
+            x.ScanId,
+            x.OriginalFileName,
+            x.ScannedAt,
+        }).ToList();
+
+        // ตัวเลขประกอบ — หน้าเว็บใช้บอก "ว่างเพราะอะไร" (เดิมจอว่างบอกว่า "ระบบมั่นใจทุกใบ" โดยไม่เคยตรวจ)
+        // · ขอบเขต = งวดที่ยังไม่ปิด (รอบ 193 ข้อ 32) · ผู้เรียกมีหน้าเดียว (review-queue.html) แก้ในคอมมิตเดียวกัน
+        var summary = (await ranker.SummarizeAsync(companyId, closed)) with { DraftPending = drafts.Count };
+        return Ok(new ApiResponse<object>(true, new { Items = result, Drafts = draftItems, Summary = summary }));
     }
 
     /// <summary>

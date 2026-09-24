@@ -58,7 +58,7 @@ WATCHED = [
     "Accounting/Controllers/ImportExportController.cs",
     # เพิ่มรอบ 190 — แนบ/ลบไฟล์หลักฐานของเอกสาร (หลักฐานประกอบรายการบัญชีที่ต้องเก็บ 5 ปี
     # ตาม พ.ร.บ.การบัญชี ม.10) มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ สมาชิกคนไหนก็ลบหลักฐาน
-    # ของใบที่อนุมัติแล้วได้ · ด่านตอนนี้ครอบ entityType = "Document" (DenyDocAsync)
+    # ของใบที่อนุมัติแล้วได้ · รอบ 193: ครอบทุกชนิด (DenyAttachmentAsync — แนบ/ลบ/ดู/ดาวน์โหลด)
     "Accounting/Controllers/FileAttachmentController.cs",
     # เพิ่มรอบ 193 (G2-01) — ออก/แก้/ลบ/สร้างคีย์ integration ใหม่ + ผูกผู้ใช้ที่คีย์สวมได้ = "การให้สิทธิ์"
     # แต่มีแค่ [Authorize] ⇒ พนักงานดูอย่างเดียวออกคีย์เขียน/ลบได้ทุกอย่างแล้วสวมเป็นเจ้าของ ·
@@ -73,6 +73,9 @@ WATCHED = [
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
 GATE_MARKERS = (
     "DenyDocAsync",
+    # ด่านไฟล์แนบทุกชนิด (รอบ 193 ข้อ 29) — ตาราง "ชนิด → คีย์ของโมดูล" อยู่ที่ Helpers/AttachmentPermissionScope ·
+    # ชนิดที่ไม่รู้จัก = ห้ามเขียน
+    "DenyAttachmentAsync",
     "DenyKeyAsync",
     # ด่านของเส้นนำเข้า/ส่งออกไฟล์ (รอบ 184) — เป็น **เมธอด** ไม่ใช่ attribute เพราะ
     # คีย์ที่ต้องใช้ขึ้นกับ `entityType` ใน body ซึ่ง attribute คงที่มองไม่เห็น
