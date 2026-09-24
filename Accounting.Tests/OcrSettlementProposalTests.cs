@@ -88,19 +88,34 @@ public class OcrSettlementProposalTests
     }
 
     [Fact]
-    public void ใบตั้งหนี้_ส่วนต่างรอลงตอนชำระ_อนุมัติเองได้_ทั้งมีและไม่มีข้อเสนอ()
+    public void ใบตั้งหนี้_ข้อเสนอตรงยอดเอกสาร_แท็กรอลงตอนชำระ_อนุมัติเองได้()
     {
         // ฝ่ายค้าน C8: เดิมใบตั้งหนี้ไม่มีใครเขียนแท็กปลด ⇒ [PAY≠TOTAL] หยุดการอนุมัติเองตลอดไป (ชำระก่อนอนุมัติไม่ได้)
         var plan = OcrSettlementProposal.FromDecomposition(ShopeeShape(OcrPaperSamples.UptoyouShopee), 536.00m)!;
-        var pay = "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00 · ยอดที่ชำระจริง 438.00";
-        var withPlan = OcrSettlementProposal.DeferredNote(plan, 536.00m);
-        Assert.StartsWith(OcrSettlementProposal.DeferredTag, withPlan);
-        Assert.Contains("51120 +37.00", withPlan);
-        Assert.True(OcrPostingReadiness.Evaluate(pay + "\n" + withPlan, true).CanAutoApprove);
+        var fits = OcrSettlementProposal.FitsDocument(plan, documentTotal: 536.00m, headerWht: 0m);
+        Assert.Same(plan, fits);
+        var note = OcrSettlementProposal.DeferredNote(fits!);
+        Assert.StartsWith(OcrSettlementProposal.DeferredTag, note);
+        Assert.Contains("51120 +37.00", note);
+        Assert.True(OcrPostingReadiness.Evaluate("[PAY≠TOTAL] ยอดตามใบกำกับ 536.00\n" + note, true).CanAutoApprove);
+    }
 
-        var noPlan = OcrSettlementProposal.DeferredNote(null, 536.00m);
-        Assert.Contains("ใส่บรรทัดปรับเอง", noPlan);
-        Assert.True(OcrPostingReadiness.Evaluate(pay + "\n" + noPlan, true).CanAutoApprove);
+    [Fact]
+    public void ใบตั้งหนี้_ไม่มีข้อเสนอ_มีหักณที่จ่าย_หรือข้อเสนอขัดกับยอดเอกสาร_คงการหยุด()
+    {
+        // ฝ่ายค้านรอบสอง N5: เดิมเขียน [PAY-AT-PAYMENT] ทุกกรณีแล้วประกาศว่า "ถูกต้อง" ⇒ อนุมัติอัตโนมัติผ่านทั้งเว็บ/LINE
+        var plan = OcrSettlementProposal.FromDecomposition(ShopeeShape(OcrPaperSamples.UptoyouShopee), 536.00m)!;
+        Assert.Null(OcrSettlementProposal.FitsDocument(null, 536.00m, 0m));
+        Assert.Null(OcrSettlementProposal.FitsDocument(plan, 536.00m, headerWht: 15.00m));
+        Assert.Null(OcrSettlementProposal.FitsDocument(plan, documentTotal: 438.00m, headerWht: 0m));   // ยอดรวมที่อ่านได้อาจผิดตัว
+        Assert.Contains("ยังไม่ได้ตรวจส่วนต่าง", OcrSettlementProposal.UnverifiedReason(null, 536.00m, 0m));
+        var mismatch = OcrSettlementProposal.UnverifiedReason(plan, 438.00m, 0m);
+        Assert.Contains("536.00", mismatch);
+        Assert.Contains("438.00", mismatch);
+        Assert.DoesNotContain("ถูกต้อง", mismatch);
+        // หมายเหตุ [Σ] ที่เขียนแทนแท็ก ไม่ปลด [PAY≠TOTAL]
+        Assert.False(OcrPostingReadiness.Evaluate(
+            "[PAY≠TOTAL] ยอดตามใบกำกับ 536.00\n[Σ] " + mismatch, true).CanAutoApprove);
     }
 
     [Fact]

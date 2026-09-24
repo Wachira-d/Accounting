@@ -86,8 +86,18 @@ public class DocumentApprovalController : ControllerBase
         Guid companyId, Guid approvalId, [FromBody] ApproveDocumentRequest req)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _svc.ApproveAsync(companyId, approvalId, req, UserId, ip);
-        return Ok(new ApiResponse<DocumentApprovalResponse>(true, result, "อนุมัติสำเร็จ"));
+        try
+        {
+            var result = await _svc.ApproveAsync(companyId, approvalId, req, UserId, ip);
+            return Ok(new ApiResponse<DocumentApprovalResponse>(true, result, "อนุมัติสำเร็จ"));
+        }
+        catch (Accounting.Services.Implementations.DocumentApprovalWarningsException ex)
+        {
+            // รอบ 193 (ฝ่ายค้านรอบสอง N6): ลายเซ็นขั้นสุดท้ายเจอคำเตือน — ยังไม่มีอะไรถูกบันทึก · 422 รูปเดียวกับหน้าเอกสาร/workflow
+            return StatusCode(422, new ApiResponse<object>(false,
+                new Accounting.Models.DTOs.Document.ApprovalWarningsResponse(ex.Warnings, null),
+                "เอกสารมีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนลายเซ็นขั้นสุดท้าย (ยังไม่ได้บันทึกลายเซ็น): " + string.Join(" · ", ex.Warnings)));
+        }
     }
 
     // ===== Reject =====
@@ -126,8 +136,19 @@ public class ExternalApprovalController : ControllerBase
         Guid companyId, Guid documentId, [FromBody] ExternalApproveRequest req)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _svc.ExternalApproveQuotationAsync(companyId, documentId, req, ip,
-            JwtHelper.GetUserIdFromClaims(User).ToString());
-        return Ok(new ApiResponse<QuotationApprovalResult>(true, result, result.Message));
+        try
+        {
+            var result = await _svc.ExternalApproveQuotationAsync(companyId, documentId, req, ip,
+                JwtHelper.GetUserIdFromClaims(User).ToString());
+            return Ok(new ApiResponse<QuotationApprovalResult>(true, result, result.Message));
+        }
+        catch (Accounting.Services.Implementations.DocumentApprovalWarningsException ex)
+        {
+            // รอบ 193 (ฝ่ายค้านรอบสอง N6): ยังไม่บันทึกลายเซ็นลูกค้า — เรียกซ้ำพร้อม acknowledgeWarnings=true หลังตรวจรายการ
+            return StatusCode(422, new ApiResponse<object>(false,
+                new Accounting.Models.DTOs.Document.ApprovalWarningsResponse(ex.Warnings, null),
+                "ใบเสนอราคามีคำเตือนที่ต้องรับทราบก่อนบันทึกลายเซ็นลูกค้า (ยังไม่ได้บันทึก) — ส่งซ้ำพร้อม acknowledgeWarnings=true: "
+                + string.Join(" · ", ex.Warnings)));
+        }
     }
 }

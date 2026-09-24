@@ -181,6 +181,36 @@ public class PaymentSettlementAdjustmentTests
         Assert.Contains("ล้างช่อง", why);
     }
 
+    [Fact]
+    public void ใบตั้งหนี้แบบจ่ายทันที_ช่องยอดชำระจริงไม่มีผล_ต้องบอก()
+    {
+        // ฝ่ายค้านรอบสอง P-e: PI จ่ายทันทีปิดยอดตั้งแต่สร้าง ⇒ ไม่มีขั้นบันทึกการชำระให้ใช้ค่า ⇒ silent no-op
+        var why = PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+            DocumentType.PurchaseInvoice, PaymentType.Cash, false, settlesSourceDocument: false);
+        Assert.NotNull(why);
+        Assert.Contains("ใบสำคัญจ่าย", why);
+    }
+
+    [Theory]
+    [InlineData("11111")]   // เงินสด
+    [InlineData("11122")]   // เงินฝากออมทรัพย์
+    [InlineData(" 11131")]  // เช็คในมือ (ช่องว่างนำหน้า)
+    public void บรรทัดปรับใช้ผังเงินสดเงินฝากไม่ได้(string code)
+    {
+        // ฝ่ายค้านรอบสอง P-d: ผังเงินสด −98 กับเงิน 0 ⇒ GL เงินออก 98 แต่ Payment.Amount = 0 และยอดธนาคารไม่ขยับ
+        Assert.True(PaymentSettlementAdjustment.IsMoneyAccountCode(code));
+        var c = PaymentSettlementAdjustment.Check(0m, 98.00m, new[] { new SettlementAdjustmentLine(code, -98.00m, null) });
+        Assert.False(c.Ok);
+        Assert.Contains("จำนวนเงิน", c.Error);
+    }
+
+    [Theory]
+    [InlineData("51120")]
+    [InlineData("51150")]
+    [InlineData("11200")]   // เงินลงทุนชั่วคราว — ไม่ใช่หมวดเงินสด
+    public void ผังที่ไม่ใช่เงินสด_ไม่ถูกกัน(string code)
+        => Assert.False(PaymentSettlementAdjustment.IsMoneyAccountCode(code));
+
     [Theory]
     [InlineData(DocumentType.PurchaseInvoice, null)]    // ใช้เติมหน้าบันทึกการชำระ
     [InlineData(DocumentType.Expense, PaymentType.Credit)]

@@ -1551,6 +1551,15 @@ public partial class DocumentService : IDocumentService
                     await ApproveDocumentAsync(companyId, doc.Id, createdBy,
                         Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 }
+                catch (DocumentApprovalWarningsException warn)
+                {
+                    // ฝ่ายค้านรอบสอง N6: ค้างเป็นร่างเพราะคำเตือนที่ต้องมีคนรับทราบ — ต้องบอกบนตัวเอกสาร (ไม่ใช่แค่ log)
+                    // ด่านคำเตือนหยุดก่อนแตะเลขเอกสาร/JE ⇒ บันทึกหมายเหตุได้ปลอดภัย
+                    AppendInternalNote(doc, "— อนุมัติอัตโนมัติไม่สำเร็จ: มีคำเตือนที่ต้องมีคนรับทราบ —\n"
+                        + string.Join("\n", warn.Warnings.Select(w => "• " + w))
+                        + "\n(เปิดเอกสารนี้แล้วกด \"อนุมัติ\" — ระบบจะถามให้รับทราบคำเตือน)");
+                    await _db.SaveChangesAsync();
+                }
                 catch (Exception ex)
                 {
                     _logger.LogInformation(ex,
@@ -11224,6 +11233,14 @@ public partial class DocumentService : IDocumentService
                     ?? throw new Accounting.Helpers.BusinessRuleException(
                         $"ไม่พบผังบัญชี {sl.AccountCode} ในผังของบริษัท (หรือถูกปิดใช้) — เพิ่ม/เปิดผังนี้ก่อน หรือเลือกผังอื่นในบรรทัดปรับ",
                         Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+                // ฝ่ายค้านรอบสอง P-d: ผังที่ผูกกับบัญชีธนาคาร = เงินจริง ห้ามเป็นบรรทัดปรับ (รหัส 111xx ถูกกันที่ตัวตรวจกลางแล้ว)
+                if (Accounting.Helpers.PaymentSettlementAdjustment.IsMoneyAccountCode(sl.AccountCode)
+                    || await _db.BankAccounts.AsNoTracking()
+                        .AnyAsync(b => b.CompanyId == companyId && b.LinkedAccountId == slAccountId && !b.IsDeleted))
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"บรรทัดปรับใช้ผัง {sl.AccountCode} (เงินสด/เงินฝาก/ผูกกับบัญชีธนาคาร) ไม่ได้ — เงินที่จ่ายจริงใส่ในช่อง \"จำนวนเงิน\" "
+                        + "(ระบบลงขาเงินสดและยอดบัญชีธนาคารให้)",
+                        Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
                 settleAccounts.Add((slAccountId, sl.Amount, sl.Reason, sl.AccountCode));
             }
         }
@@ -11244,7 +11261,14 @@ public partial class DocumentService : IDocumentService
         // WHT on installment 1). Cumulative WHT across all settled payments
         // can't exceed source.WithholdingTaxAmount — that's the legal cap.
         decimal paymentWht = 0m;
-        if (doc.WithholdingTaxAmount > 0m)
+        // ฝ่ายค้านรอบสอง P-c: ปิดยอดด้วยบรรทัดปรับอย่างเดียว (เงิน 0) ไม่มีเงินให้หัก ⇒ ไม่หัก ณ ที่จ่ายและไม่ออก 50 ทวิ
+        // (เดิม "งวดสุดท้าย" หยิบ WHT ที่เหลือทั้งก้อน ⇒ 50 ทวิ Issued ลงวันที่ที่ไม่มีเงินออก)
+        if (closesByAdjustmentOnly && request.WithholdingTaxAmount is > 0m)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "การปิดยอดด้วยบรรทัดปรับอย่างเดียว (จำนวนเงิน 0) หัก ณ ที่จ่ายไม่ได้ — ภาษีหัก ณ ที่จ่ายต้องหักจากเงินที่จ่ายจริง · "
+                + "ถ้าต้องออก 50 ทวิ ให้บันทึกการชำระที่มีเงินออกจริง",
+                Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+        if (doc.WithholdingTaxAmount > 0m && !closesByAdjustmentOnly)
         {
             // Sum WHT from BOTH Payment rows AND Receipt-document children
             // referencing this Invoice via RelatedDocumentId — operators can
