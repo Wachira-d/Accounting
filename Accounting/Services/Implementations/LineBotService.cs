@@ -729,7 +729,10 @@ public class LineBotService : ILineBotService
         // รอบ 192 (Total-first): แท็กยอดรวมขัดกัน/ยอดชำระ ≠ ยอดใบกำกับ/หน้าไม่ครบ — ชุดเดียวกับ parseScanNotes ของหน้าเว็บ
         string[] tags = { "[VAT-CLAIM]", "[Σ-GAP]", "[WHT-SUGGEST]", "[WHT-CERT]", "[TAX-INV-PENDING]", "[PP36]", "[DATE-UNKNOWN]", "[FX-UNKNOWN]",
             Accounting.Helpers.OcrTotalAnchor.ConflictTag, Accounting.Helpers.OcrTotalDecomposer.PayNotTotalTag,
-            Accounting.Helpers.OcrTotalAnchor.UnsureTag, Accounting.Helpers.OcrPageSet.PartialTag };
+            Accounting.Helpers.OcrTotalAnchor.UnsureTag, Accounting.Helpers.OcrPageSet.PartialTag,
+            // รอบ 193 — ชุดเดียวกับ parseScanNotes ของหน้าเว็บ (ไม่มีรายการสินค้า · บันทึกบรรทัดปรับส่วนต่างยอดชำระแล้ว)
+            Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, Accounting.Helpers.OcrSettlementProposal.PlanTag,
+            Accounting.Helpers.OcrSettlementProposal.SettledTag };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();

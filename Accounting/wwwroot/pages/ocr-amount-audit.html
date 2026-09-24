@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตรวจยอดสแกนเก่า — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!--
+    รอบ 193 (คำตัดสินเจ้าของข้อ 14): "ข้อมูลเก่าที่ผิด (สแกน/เอกสารที่ฐานภาษีเกินเพราะส่วนลด) → รายงานให้บัญชีตรวจ ห้ามแก้หลังบ้าน"
+    หน้านี้ **อ่านอย่างเดียว** — ทุกคำตัดสินมาจากเซิร์ฟเวอร์ (Helpers/OcrStoredAmountAudit ใช้ตัวตัดสินชุดเดียวกับไปป์ไลน์สแกน)
+    หน้าเว็บแค่แสดงผล ไม่มีสูตร/กติกาในฝั่ง JS (F2 ข้อ 5)
+  -->
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ตรวจยอดสแกนเก่า</h2>
+        <p class="page-subtitle">สแกน/เอกสารที่สร้างก่อนแก้ตรรกะส่วนลด–ยอดรวม ซึ่งตัวเลขที่เก็บไว้อาจผิด — รายงานให้นักบัญชีตรวจ ระบบไม่แก้ข้อมูลให้</p>
+      </div>
+      <div><a class="btn btn-secondary" href="/pages/document-scan.html">← กลับหน้าสแกนเอกสาร</a></div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <div style="padding:18px">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="fFrom">สแกนตั้งแต่วันที่</label>
+            <input type="date" class="form-input" id="fFrom">
+          </div>
+          <div class="form-group"><label class="form-label" for="fTo">ถึงวันที่</label>
+            <input type="date" class="form-input" id="fTo">
+          </div>
+          <div class="form-group"><label class="form-label" for="fTake">จำนวนสแกนล่าสุดที่ตรวจ</label>
+            <select class="form-select" id="fTake">
+              <option value="300">300</option>
+              <option value="600">600</option>
+              <option value="1000">1,000</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btnRun">🔎 ตรวจ</button>
+        <p style="color:#64748b;font-size:12px;margin-top:10px">
+          ชนิดที่ตรวจ: ยอดรวมที่เก็บไม่ใช่ยอดรวมทั้งสิ้นบนกระดาษ · ส่วนลดที่เก็บไว้เป็นการปรับตอนชำระ (คูปอง/ค่าส่งหลังยอดรวม) ·
+          ฐานภาษีหัวเอกสาร ≠ ผลรวมรายการ · ยอดรวมเอกสาร ≠ รายการ + VAT − หัก ณ ที่จ่าย
+        </p>
+      </div>
+    </div>
+
+    <div id="resultBox"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      issueLabels: {
+        ScanTotalNotPaperTotal: 'ยอดรวมสแกนไม่ใช่ยอดบนกระดาษ',
+        ScanDiscountIsSettlement: 'ส่วนลดที่เก็บเป็นการปรับตอนชำระ',
+        DocSubTotalNotLines: 'ฐานภาษีหัวเอกสาร ≠ รายการ',
+        DocTotalNotLines: 'ยอดรวมเอกสาร ≠ รายการ',
+      },
+      init() {
+        if (!Layout.init('document-scan')) return;
+        Layout.setTitle('ตรวจยอดสแกนเก่า');
+        document.getElementById('btnRun').addEventListener('click', () => this.run());
+      },
+      async run() {
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('resultBox');
+        box.innerHTML = '<div class="card"><div style="padding:18px;color:#64748b">กำลังตรวจ…</div></div>';
+        try {
+          const res = await api.getOcrAmountAudit({
+            from: document.getElementById('fFrom').value || null,
+            to: document.getElementById('fTo').value || null,
+            take: parseInt(document.getElementById('fTake').value, 10) || 300,
+          });
+          this.render(Array.isArray(res?.data) ? res.data : null);
+        } catch (e) {
+          box.innerHTML = '';
+          Layout.toast(e.message, 'error');
+        }
+      },
+      render(rows) {
+        const box = document.getElementById('resultBox');
+        // undefined/null = ตรวจไม่สำเร็จ (ไม่ใช่ "ไม่พบปัญหา") — F2 ข้อ 5
+        if (rows == null) {
+          box.innerHTML = '<div class="card"><div style="padding:18px;color:#b91c1c">ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์</div></div>';
+          return;
+        }
+        if (rows.length === 0) {
+          box.innerHTML = '<div class="card"><div style="padding:18px;color:#15803d">✓ ไม่พบสแกน/เอกสารที่ตัวเลขที่เก็บไว้ผิดในช่วงที่ตรวจ</div></div>';
+          return;
+        }
+        const esc = (v) => Layout.esc(v == null ? '' : String(v));
+        const tr = rows.map(r => `
+          <tr>
+            <td>${esc(Layout.date ? Layout.date(r.scannedAt) : r.scannedAt)}</td>
+            <td>${esc(r.vendorName)}<div style="font-size:11px;color:#94a3b8">${esc(r.documentNumberOnPaper)} · ${esc(r.originalFileName)}</div></td>
+            <td>${r.documentId
+              ? `<a href="/pages/documents.html?id=${encodeURIComponent(r.documentId)}">${esc(r.documentNumber)}</a><div style="font-size:11px;color:#94a3b8">${esc(r.documentStatus)}</div>`
+              : '<span style="color:#94a3b8">ยังไม่สร้างเอกสาร</span>'}</td>
+            <td><span class="badge" style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:6px;font-size:11px">${esc(this.issueLabels[r.issue] || r.issue)}</span></td>
+            <td style="text-align:right">${esc(Layout.money(r.stored))}</td>
+            <td style="text-align:right">${esc(Layout.money(r.expected))}</td>
+            <td style="font-size:12px">${esc(r.message)}</td>
+          </tr>`).join('');
+        box.innerHTML = `
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">พบ ${rows.length} รายการที่ควรให้นักบัญชีตรวจ</h3></div>
+            <div style="padding:0 18px 18px;overflow-x:auto">
+              <table class="data-table" style="font-size:13px">
+                <thead><tr><th>วันที่สแกน</th><th>ผู้ขาย / เลขที่บนกระดาษ</th><th>เอกสาร</th><th>ชนิด</th>
+                  <th style="text-align:right">ค่าที่เก็บไว้</th><th style="text-align:right">ค่าที่ควรเป็น</th><th>คำอธิบาย</th></tr></thead>
+                <tbody>${tr}</tbody>
+              </table>
+              <p style="color:#64748b;font-size:12px;margin-top:10px">
+                ระบบไม่แก้ข้อมูลเหล่านี้ให้ (คำตัดสินเจ้าของ) — เอกสารที่ยังเป็นฉบับร่างแก้ในหน้าเอกสารได้ · เอกสารที่อนุมัติแล้ว/ยื่นภาษีแล้ว
+                ให้นักบัญชีพิจารณาออกใบลดหนี้/ปรับปรุงรายการตามความจำเป็น
+              </p>
+            </div>
+          </div>`;
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

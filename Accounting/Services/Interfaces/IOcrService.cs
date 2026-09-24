@@ -133,4 +133,10 @@ public interface IOcrService
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
         Controllers.OcrController.RegisterAssetFromScanRequest req,
         IFixedAssetService assetService, string createdBy);
+
+    /// <summary>รอบ 193: ข้อเสนอบรรทัดปรับส่วนต่างยอดชำระของเอกสารที่สร้างจากสแกน (null = ไม่มี) — อ่านอย่างเดียว</summary>
+    Task<OcrSettlementProposalResponse?> GetSettlementProposalAsync(Guid companyId, Guid documentId);
+
+    /// <summary>รอบ 193 (เจ้าของข้อ 14): รายงานสแกน/เอกสารเก่าที่ตัวเลขที่เก็บไว้ผิดเพราะตรรกะส่วนลด/ยอดรวมแบบเดิม — อ่านอย่างเดียว</summary>
+    Task<List<OcrStoredAmountAuditRow>> GetStoredAmountAuditAsync(Guid companyId, DateTime? from, DateTime? to, int take);
 }

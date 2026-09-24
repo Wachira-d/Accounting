@@ -38,8 +38,9 @@ public static class OcrPostingReadiness
         // รอบ 192 (Total-first): ยอดรวมที่มีหลักฐานแข็งขัดกันและอธิบายกันไม่ได้ — ผู้เขียน Helpers/OcrTotalAnchor
         (OcrTotalAnchor.ConflictTag, "พบยอดรวมทั้งสิ้นสองค่าที่ต่างมีหลักฐานบนกระดาษ — ยังไม่รู้ว่ายอดไหนถูก"),
         // รอบ 192: ยอดที่จ่ายจริง ≠ ยอดใบกำกับ (คูปองแพลตฟอร์ม/ค่าส่งหลังยอดรวม) — ผู้เขียน Helpers/OcrTotalDecomposer
-        // วิธีลงส่วนต่างยังเป็นคำถามของเจ้าของ ⇒ ต้องมีคนดูก่อนเสมอ
-        (OcrTotalDecomposer.PayNotTotalTag, "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ (มีส่วนลด/ค่าปรับหลังยอดรวม)"),
+        // รอบ 193: เจ้าของตัดสินวิธีลงแล้ว (บรรทัดปรับตอนชำระ 51120/51150) — ยังหยุดจนกว่าบรรทัดปรับจะถูกบันทึกลงเอกสาร
+        // (แท็ก OcrSettlementProposal.SettledTag ปลดตัวนี้ตัวเดียว ดู Evaluate)
+        (OcrTotalDecomposer.PayNotTotalTag, "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ (มีส่วนลด/ค่าปรับหลังยอดรวม) — ยังไม่ได้บันทึกบรรทัดปรับส่วนต่าง"),
     };
 
     /// <summary>ผลการตัดสิน</summary>
@@ -98,8 +99,12 @@ public static class OcrPostingReadiness
                 + "เปิดใบ Draft ยืนยันวันที่ก่อนกดอนุมัติ");
 
         var notes = processingNotes ?? "";
+        // รอบ 193 (คำตัดสินเจ้าของข้อ 1): [PAY≠TOTAL] หยุดการอนุมัติเอง "จนกว่าบรรทัดปรับส่วนต่างจะถูกบันทึก"
+        // — ผู้เขียน [PAY-SETTLED] คือเส้นสร้างเอกสารจากสแกนเมื่อลงบรรทัดปรับ (Helpers/OcrSettlementProposal) แล้วเท่านั้น
+        var paySettled = notes.Contains(OcrSettlementProposal.SettledTag, StringComparison.Ordinal);
         foreach (var (tag, why) in BlockingTags)
         {
+            if (paySettled && tag == OcrTotalDecomposer.PayNotTotalTag) continue;
             if (notes.Contains(tag, StringComparison.Ordinal))
                 return new Verdict(false, why + " — เปิดใบ Draft ตรวจแล้วกดอนุมัติเอง");
         }

@@ -82,6 +82,9 @@ public static class OcrScanSnapshot
         new[] { "[VAT-CLAIM]", "[VAT-NOTE]", "[TAX-INV-PENDING]", "[DATE-UNKNOWN]", "[WHT-CERT]", "[Σ-GAP]" }
             .Concat(OcrPostingReadiness.BlockingTags.Select(t => t.Tag))
             .Concat(new[] { OcrTotalAnchor.UnsureTag, OcrPageSet.PartialTag })
+            // รอบ 193: ข้อเสนอบรรทัดปรับเป็นคำตัดสินเรื่องตัวกระดาษ (ติดไปกับสำเนา) · [PAY-SETTLED] ห้ามติดไป —
+            // มันบอกว่า "เอกสารของสแกนต้นฉบับ" ลงบรรทัดปรับแล้ว ถ้าสำเนาได้ไปด้วย [PAY≠TOTAL] ของสำเนาจะเลิกหยุดทั้งที่ยังไม่ได้บันทึก
+            .Concat(new[] { OcrSettlementProposal.PlanTag })
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 

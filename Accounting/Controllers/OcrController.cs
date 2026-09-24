@@ -390,6 +390,21 @@ public class OcrController : ControllerBase
             await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
             "ดึงรายการจาก OCR สำเร็จ"));
 
+    /// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): ข้อเสนอบรรทัดปรับส่วนต่าง "ยอดตามใบกำกับ ↔ ยอดชำระจริง" ของเอกสารที่สร้างจากสแกน
+    /// — หน้าบันทึกการชำระเติมให้ยืนยันคลิกเดียว · อ่านอย่างเดียว · null = ไม่มีข้อเสนอ</summary>
+    [HttpGet("documents/{documentId:guid}/settlement-proposal")]
+    public async Task<ActionResult<ApiResponse<OcrSettlementProposalResponse?>>> GetSettlementProposal(Guid companyId, Guid documentId)
+        => Ok(new ApiResponse<OcrSettlementProposalResponse?>(true,
+            await _service.GetSettlementProposalAsync(companyId, documentId)));
+
+    /// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 14): รายงานสแกน/เอกสารเก่าที่ตัวเลขที่เก็บไว้ผิดเพราะตรรกะส่วนลด/ยอดรวมแบบเดิม
+    /// — <b>อ่านอย่างเดียว</b> ให้นักบัญชีตรวจ (ห้ามแก้หลังบ้าน) · กรองบริษัท · <paramref name="take"/> ≤ 1,000 สแกนล่าสุด</summary>
+    [HttpGet("amount-audit")]
+    public async Task<ActionResult<ApiResponse<List<OcrStoredAmountAuditRow>>>> GetStoredAmountAudit(
+        Guid companyId, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] int take = 300)
+        => Ok(new ApiResponse<List<OcrStoredAmountAuditRow>>(true,
+            await _service.GetStoredAmountAuditAsync(companyId, from, to, take)));
+
     /// <summary>ตรวจความครบถ้วนตามกรมสรรพากรซ้ำ จากผลสแกนที่เก็บไว้ —
     /// ใช้ล้างคำเตือนค้างของใบที่สแกนก่อน validator จะถูกปรับปรุง
     /// (ไม่ต้องอัปโหลด/สแกนใหม่)</summary>

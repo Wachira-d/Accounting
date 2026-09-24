@@ -908,6 +908,9 @@ public partial class PdfGenerationService
             var hideVatBreakdown = IsDeferredVatDeposit(doc);
             // ส่วนลดท้ายบิล: SubTotal = หลังหักท้ายบิล → โชว์ยอดก่อนหัก + บรรทัดส่วนลด
             var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+            // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ ก่อน "รวมเงิน" (คู่กับ HTML renderer ใน PdfGenerationService)
+            if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
+                Row(L.TotalRounding, doc.RoundingAdjustment.ToString("+#,##0.00;-#,##0.00"));
             if (t.ShowSubTotal && !hideVatBreakdown) Row(L.TotalSubtotal, preBillSubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row(L.TotalDiscount, doc.DiscountAmount.ToString("N2"));

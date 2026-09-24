@@ -179,22 +179,26 @@ internal static class EtaxPdfXmlExtractor
         return int.TryParse(pdfText.AsSpan(objStart, sp - objStart), out var n) ? n : -1;
     }
 
+    /// <summary>ตำแหน่งของ Filespec ทุกตัวในไฟล์ (ทั้งแบบ <c>/Type /Filespec</c> และ <c>/Type/Filespec</c>) เรียงตามตำแหน่ง</summary>
+    private static readonly System.Text.RegularExpressions.Regex FilespecMarker = new(
+        @"/Type[ \t\r\n]*/Filespec\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     private static (int efObjNum, string fileName)? FindFilespecXmlRef(string pdfText)
     {
         // Scan all Filespec objects in the file and pick the first whose
         // /F or /UF ends with .xml — extract the /EF target object number.
-        int pos = 0;
-        while ((pos = pdfText.IndexOf("/Type /Filespec", pos, StringComparison.Ordinal)) >= 0
-            || (pos = pdfText.IndexOf("/Type/Filespec", pos, StringComparison.Ordinal)) >= 0)
+        // รอบ 193: เดิมใช้ `IndexOf(a) >= 0 || (pos = IndexOf(b, pos)) >= 0` — พอ a ไม่เจอ pos = −1 แล้ว IndexOf(b, −1)
+        // โยน ArgumentOutOfRange ⇒ PDF ที่มี Filespec ตัวแรกไม่ใช่ .xml (เช่นรูปโลโก้) ทั้งไฟล์ถูกทิ้งกลับไป OCR เงียบ ๆ
+        foreach (System.Text.RegularExpressions.Match marker in FilespecMarker.Matches(pdfText))
         {
-            var objStart = FindObjStart(pdfText, pos);
-            if (objStart < 0) { pos++; continue; }
+            var objStart = FindObjStart(pdfText, marker.Index);
+            if (objStart < 0) continue;
             var objEnd = pdfText.IndexOf("endobj", objStart, StringComparison.Ordinal);
             if (objEnd < 0) break;
             var body = pdfText.AsSpan(objStart, objEnd - objStart).ToString();
 
-            // /F (filename.xml) — extract the parenthesised literal.
-            var fname = ExtractParenLiteral(body, "/F ") ?? ExtractParenLiteral(body, "/UF ");
+            // /F (filename.xml) หรือ /F <hex> (ชื่อไฟล์ UTF-16 ที่ PDFKit/pdfmake เข้ารหัสเมื่อมีอักษรนอก ASCII)
+            var fname = ExtractNameLiteral(body, "/F") ?? ExtractNameLiteral(body, "/UF");
             if (fname != null && fname.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             {
                 // /EF << /F 42 0 R /UF 42 0 R >>
@@ -202,34 +206,89 @@ internal static class EtaxPdfXmlExtractor
                 if (efIdx > 0)
                 {
                     var rest = body.Substring(efIdx);
-                    var m = System.Text.RegularExpressions.Regex.Match(rest, @"/F\s+(\d+)\s+\d+\s+R");
+                    var m = System.Text.RegularExpressions.Regex.Match(rest, @"/U?F\s+(\d+)\s+\d+\s+R");
                     if (m.Success && int.TryParse(m.Groups[1].Value, out var efNum))
                         return (efNum, fname);
                 }
             }
-            pos = objEnd + 6;
         }
         return null;
     }
 
-    private static string? ExtractParenLiteral(string s, string key)
+    /// <summary>ค่าของคีย์ชื่อไฟล์ <paramref name="key"/> (<c>/F</c> หรือ <c>/UF</c>) — string literal <c>(…)</c> หรือ hex <c>&lt;…&gt;</c>
+    /// · คีย์ต้องตามด้วยช่องว่าง/วงเล็บ/&lt; ทันที (กัน <c>/Filespec</c> · <c>/Filter</c> · <c>/F 12 0 R</c>)</summary>
+    private static string? ExtractNameLiteral(string s, string key)
     {
-        var i = s.IndexOf(key, StringComparison.Ordinal);
-        if (i < 0) return null;
-        var open = s.IndexOf('(', i);
-        if (open < 0) return null;
-        var close = s.IndexOf(')', open + 1);
-        if (close < 0) return null;
-        return s.Substring(open + 1, close - open - 1);
+        var m = System.Text.RegularExpressions.Regex.Match(s,
+            System.Text.RegularExpressions.Regex.Escape(key)
+            + @"[ \t\r\n]*(?:\((?<lit>[^)]*)\)|<(?<hex>[0-9A-Fa-f \t\r\n]*)>(?!>))");
+        if (!m.Success) return null;
+        if (m.Groups["lit"].Success) return DecodeLiteral(m.Groups["lit"].Value);
+        return DecodeHex(m.Groups["hex"].Value);
     }
+
+    /// <summary>ถอด string literal ของ PDF: UTF-16BE ที่ขึ้นต้นด้วย BOM (ไบต์ FE FF) · อื่น ๆ = ตัวอักษรตามไบต์ (PDFDocEncoding ≈ Latin1)
+    /// · escape ฐานแปด (สามหลัก) และตัวอักษรหลัง backslash — พอสำหรับชื่อไฟล์</summary>
+    private static string DecodeLiteral(string raw)
+    {
+        var bytes = new List<byte>();
+        for (var i = 0; i < raw.Length; i++)
+        {
+            var c = raw[i];
+            if (c == '\\' && i + 1 < raw.Length)
+            {
+                var n = raw[i + 1];
+                if (n >= '0' && n <= '7')
+                {
+                    var len = 1;
+                    while (len < 3 && i + 1 + len < raw.Length && raw[i + 1 + len] >= '0' && raw[i + 1 + len] <= '7') len++;
+                    bytes.Add((byte)Convert.ToInt32(raw.Substring(i + 1, len), 8));
+                    i += len;
+                    continue;
+                }
+                bytes.Add((byte)n);
+                i++;
+                continue;
+            }
+            bytes.Add((byte)c);
+        }
+        return DecodePdfTextBytes(bytes.ToArray());
+    }
+
+    private static string? DecodeHex(string hex)
+    {
+        var digits = new string(hex.Where(Uri.IsHexDigit).ToArray());
+        if (digits.Length == 0) return null;
+        if (digits.Length % 2 == 1) digits += "0";
+        var bytes = new byte[digits.Length / 2];
+        for (var i = 0; i < bytes.Length; i++)
+            bytes[i] = Convert.ToByte(digits.Substring(i * 2, 2), 16);
+        return DecodePdfTextBytes(bytes);
+    }
+
+    private static string DecodePdfTextBytes(byte[] b)
+        => b.Length >= 2 && b[0] == 0xFE && b[1] == 0xFF
+            ? Encoding.BigEndianUnicode.GetString(b, 2, b.Length - 2)
+            : Encoding.Latin1.GetString(b);
 
     private static string? FindFilespecPointingTo(string pdfText, int targetObjNum)
     {
-        var re = new System.Text.RegularExpressions.Regex(@"/Type\s*/?Filespec[^]*?/EF[^]*?/F\s+" +
-            targetObjNum + @"\s+\d+\s+R", System.Text.RegularExpressions.RegexOptions.Singleline);
-        var m = re.Match(pdfText);
-        if (!m.Success) return null;
-        return ExtractParenLiteral(m.Value, "/F ") ?? ExtractParenLiteral(m.Value, "/UF ");
+        // รอบ 193: เดิมเขียนคลาสตัวอักษรแบบ JS ("ทุกตัวอักษร") ซึ่ง .NET อ่านเป็นคลาสคนละความหมาย ⇒ ไม่เคยแมตช์ ⇒ ชื่อไฟล์เป็น
+        // "embedded.xml" เสมอบนเส้น /Subtype · ไล่ Filespec ทีละตัวแทน (ตัวอ่านชื่อเดียวกับเส้นหลัก)
+        foreach (System.Text.RegularExpressions.Match marker in FilespecMarker.Matches(pdfText))
+        {
+            var objStart = FindObjStart(pdfText, marker.Index);
+            if (objStart < 0) continue;
+            var objEnd = pdfText.IndexOf("endobj", objStart, StringComparison.Ordinal);
+            if (objEnd < 0) break;
+            var body = pdfText.AsSpan(objStart, objEnd - objStart).ToString();
+            var efIdx = body.IndexOf("/EF", StringComparison.Ordinal);
+            if (efIdx < 0) continue;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(body.Substring(efIdx),
+                    @"/U?F\s+" + targetObjNum + @"\s+\d+\s+R")) continue;
+            return ExtractNameLiteral(body, "/F") ?? ExtractNameLiteral(body, "/UF");
+        }
+        return null;
     }
 
     private static (int efObjNum, string fileName)? FindFilespecForStream(string pdfText, int streamObjNum)
@@ -238,11 +297,17 @@ internal static class EtaxPdfXmlExtractor
         return name != null ? (streamObjNum, name) : null;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex StreamKeyword = new(
+        @">>[ \t\r\n]*stream(?=\r?\n)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     private static (string? xml, byte[]? rawBytes) ReadStream(byte[] pdf, string pdfText, int objStart)
     {
         // Body between "<<...>>" + "stream\n" ... "\nendstream".
-        var streamMarker = pdfText.IndexOf("stream", objStart, StringComparison.Ordinal);
-        if (streamMarker < 0) return (null, null);
+        // รอบ 193: เดิม IndexOf("stream") เฉย ๆ ⇒ dict ที่มี "/Subtype /application#2Foctet-stream" ถูกตัดตรงคำ "octet-stream"
+        // แล้วอ่านข้อมูลผิดตำแหน่งทั้งสตรีม · คีย์เวิร์ดจริงต้องตามหลัง ">>" ของ dict และตามด้วยขึ้นบรรทัด
+        var sm = StreamKeyword.Match(pdfText, objStart);
+        if (!sm.Success) return (null, null);
+        var streamMarker = sm.Index + sm.Length - 6;
         // Advance past stream + newline (could be \n or \r\n).
         var afterStream = streamMarker + 6;
         if (afterStream < pdf.Length && pdf[afterStream] == '\r') afterStream++;
@@ -326,7 +391,8 @@ internal static class EtaxPdfXmlExtractor
     public static ExtractResult? ParseEtaxXml(string xmlContent)
     {
         XDocument doc;
-        try { doc = XDocument.Parse(xmlContent); }
+        // ไฟล์ ETDA จริงขึ้นต้นด้วย BOM (U+FEFF) — ถ้าถูกถอดเป็นสตริงโดยไม่ตัด BOM, XDocument.Parse ปฏิเสธทั้งไฟล์
+        try { doc = XDocument.Parse(xmlContent.TrimStart('\uFEFF', ' ', '\t', '\r', '\n')); }
         catch { return null; }
 
         var root = doc.Root;
@@ -430,7 +496,12 @@ internal static class EtaxPdfXmlExtractor
                 if (settlementL != null)
                 {
                     var monSum = FindElement(settlementL, "SpecifiedTradeSettlementLineMonetarySummation");
-                    if (monSum != null) item.Amount = ParseDecimal(TextOf(monSum, "LineTotalAmount"));
+                    // รอบ 193 (ไฟล์จริงใบ Shopee): ETDA ใช้ NetLineTotalAmount (ยอดก่อน VAT หลังส่วนลดรายบรรทัด) — ไม่มี
+                    // LineTotalAmount ⇒ เดิมยอดบรรทัดว่างทุกบรรทัด แล้วตัวสร้างบรรทัดต้องคูณราคา×จำนวนเอง (250.47 × 2 = 500.94
+                    // ≠ 500.93 ที่ XML ประกาศ) · ลำดับ: Net ก่อน (ตรงสเปก ขมธอ.3-2560) แล้วค่อยชื่อเดิม
+                    if (monSum != null)
+                        item.Amount = ParseDecimal(TextOf(monSum, "NetLineTotalAmount"))
+                            ?? ParseDecimal(TextOf(monSum, "LineTotalAmount"));
                 }
                 r.Items.Add(item);
             }
@@ -499,16 +570,22 @@ internal static class EtaxPdfXmlExtractor
     }
 
     /// <summary>
-    /// Map ETDA UN/EDIFACT 1001 TypeCode → internal DocumentType name.
-    /// 388 = TaxInvoice, T03 = Receipt, 80 = DebitNote, 81 = CreditNote.
+    /// Map ETDA TypeCode (ขมธอ.3-2560) → internal paper type name.
+    /// <para>รอบ 193 (ไฟล์จริงใบ Shopee <c>T03</c> "ใบกำกับภาษี/ใบเสร็จรับเงิน"): เดิม map T03 = "Receipt" ⇒ กระดาษถูกตีว่า
+    /// "ไม่ใช่ใบกำกับภาษี" (เส้นสร้างเอกสารพักภาษีซื้อ 11640 + [TAX-INV-PENDING]) ทั้งที่ T03 คือใบกำกับเต็มรูปที่เป็นใบเสร็จด้วย ·
+    /// T02 ใบแจ้งหนี้/ใบกำกับ · T03 ใบเสร็จ/ใบกำกับ · T04 ใบส่งของ/ใบกำกับ · 388 ใบกำกับ ⇒ TaxInvoice ·
+    /// T01 ใบรับ (ใบเสร็จ) · T05/T06 ใบกำกับอย่างย่อ (ไม่ใช่เต็มรูป — §82/5(2)) ⇒ Receipt · 380 ใบแจ้งหนี้ ⇒ Invoice ·
+    /// 80 ใบเพิ่มหนี้ · 81 ใบลดหนี้ · T07 ใบแจ้งยกเลิก ⇒ ไม่ใช่เอกสารลงบัญชี (null)</para>
     /// Falls back to root element prefix when TypeCode is missing.
     /// </summary>
-    private static string? MapTypeCodeToInternal(string? typeCode, string rootLocal)
+    internal static string? MapTypeCodeToInternal(string? typeCode, string rootLocal)
     {
-        return typeCode switch
+        return typeCode?.Trim().ToUpperInvariant() switch
         {
-            "388" => "TaxInvoice",
-            "T03" => "Receipt",
+            "388" or "T02" or "T03" or "T04" => "TaxInvoice",
+            "T01" or "T05" or "T06" => "Receipt",
+            "380" => "Invoice",
+            "T07" => null,
             "80" => "DebitNote",
             "81" => "CreditNote",
             _ => rootLocal switch

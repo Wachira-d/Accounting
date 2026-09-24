@@ -24,7 +24,11 @@ public record MobileQuickActionsResponse(
 public record MobileQuickAction(string ActionType, string Title, string? EntityType, Guid? EntityId);
 
 public record MobileApprovalResponse(
-    bool Success, string? Message, string EntityType, Guid EntityId);
+    bool Success, string? Message, string EntityType, Guid EntityId,
+    // รอบ 193 (คำตัดสินเจ้าของข้อ 12): คำเตือนที่ต้องกด "รับทราบ" ก่อนอนุมัติ (ยอดจากสแกนไม่ตรงกระดาษ [Σ-GAP]) —
+    // RequiresAcknowledgement = true ⇒ ยังไม่อนุมัติ แอปแสดง Warnings แล้วเรียกซ้ำด้วย acknowledgeWarnings=true
+    IReadOnlyList<string>? Warnings = null,
+    bool RequiresAcknowledgement = false);
 
 public record SyncQueueItem(string EntityType, Guid EntityId, string OperationType, string PayloadJson);
 public record SyncQueueResponse(string EntityType, Guid EntityId, string OperationType, string PayloadJson, DateTime ChangedAt);

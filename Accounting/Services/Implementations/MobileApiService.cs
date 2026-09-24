@@ -328,7 +328,8 @@ public class MobileApiService : IMobileApiService
         );
     }
 
-    public async Task<MobileApprovalResponse> QuickApproveAsync(Guid companyId, Guid entityId, string entityType, string action, Guid userId)
+    public async Task<MobileApprovalResponse> QuickApproveAsync(Guid companyId, Guid entityId, string entityType, string action, Guid userId,
+        bool acknowledgeWarnings = false)
     {
         var isApprove = action.Equals("approve", StringComparison.OrdinalIgnoreCase);
         var isReject = action.Equals("reject", StringComparison.OrdinalIgnoreCase);
@@ -356,6 +357,23 @@ public class MobileApiService : IMobileApiService
         if (approvalRequest is null)
         {
             return new MobileApprovalResponse(false, $"No pending approval request found for {entityType} {entityId}.", entityType, entityId);
+        }
+
+        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 12): ขั้นสุดท้ายที่จะอนุมัติเอกสารจริง ──
+        // เส้นนี้ส่ง acknowledgeWarnings:true ให้ ApproveDocumentAsync (แอปไม่มีหน้าต่างยืนยันคำเตือน) ⇒ คำเตือน
+        // "ยอดจากสแกนไม่ตรงกระดาษ" ต้องถูกแสดงให้คนกดรับทราบ**ก่อน** — คืนรายการโดยยังไม่บันทึกอะไรเลย
+        if (isApprove && !acknowledgeWarnings && entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
+        {
+            var stepsTotal = await _db.Set<ApprovalStep>()
+                .CountAsync(s => s.ApprovalRuleId == approvalRequest.ApprovalRuleId);
+            if (approvalRequest.CurrentStep >= stepsTotal)
+            {
+                var gapWarnings = await LoadScanGapWarningsAsync(companyId, entityId);
+                if (gapWarnings.Count > 0)
+                    return new MobileApprovalResponse(false,
+                        "มีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนอนุมัติ: " + string.Join(" · ", gapWarnings),
+                        entityType, entityId, Warnings: gapWarnings, RequiresAcknowledgement: true);
+            }
         }
 
         var newStatus = isApprove ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
@@ -475,6 +493,27 @@ public class MobileApiService : IMobileApiService
     }
 
     // ==================== Private Helpers ====================
+
+    /// <summary>คำเตือน [Σ-GAP] ของเอกสารที่สร้างจากสแกน — ข้อความ/ตัวเลขจาก Helpers/OcrApprovalGapWarning ตัวเดียวกับ
+    /// ด่านอนุมัติบนเว็บ (DocumentService.CollectApprovalWarningsAsync) · เอกสารที่ไม่ได้มาจากสแกน = ว่าง</summary>
+    private async Task<IReadOnlyList<string>> LoadScanGapWarningsAsync(Guid companyId, Guid documentId)
+    {
+        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount })
+            .FirstOrDefaultAsync();
+        if (scan == null) return Array.Empty<string>();
+        var doc = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.RoundingAdjustment })
+            .FirstOrDefaultAsync();
+        if (doc == null) return Array.Empty<string>();
+        var linesTotal = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == documentId && !l.IsDeleted)
+            .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
+        return OcrApprovalGapWarning.Build(scan.ProcessingNotes, scan.ExtractedTotalAmount, linesTotal + doc.RoundingAdjustment);
+    }
 
     private async Task<MobileApprovalResponse> HandleExpenseClaimApprovalAsync(Guid companyId, Guid entityId, bool isApprove, Guid userId)
     {

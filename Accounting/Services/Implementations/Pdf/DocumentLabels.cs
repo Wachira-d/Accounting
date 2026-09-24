@@ -151,6 +151,8 @@ public sealed class DocumentLabels
     public string TotalBeforeBillDiscount => this["total_before_bill_discount"];
     public string TotalBillDiscount => this["total_bill_discount"];
     public string TotalDepositApplied => this["total_deposit_applied"];
+    /// <summary>รอบ 193: ผลต่างจากการปัดเศษ (Document.RoundingAdjustment — แสดงเมื่อ ≠ 0)</summary>
+    public string TotalRounding => this["total_rounding"];
     public string TotalDiscount => this["total_discount"];
     public string TotalGrand => this["total_grand"];
     public string TotalNet => this["total_net"];
@@ -206,6 +208,7 @@ public sealed class DocumentLabels
         ["total_vat"] = "ภาษีมูลค่าเพิ่ม",
         ["total_wht"] = "ภาษีหัก ณ ที่จ่าย",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
+        ["total_rounding"] = "ผลต่างจากการปัดเศษ",
         ["total_grand"] = "ยอดรวมทั้งสิ้น",
         ["total_net"] = "ยอดรวมสุทธิ",
         ["total_net_payable"] = "ยอดชำระสุทธิ",
@@ -298,6 +301,7 @@ public sealed class DocumentLabels
         ["total_vat"] = "VAT",
         ["total_wht"] = "Withholding tax",
         ["total_deposit_applied"] = "Less deposit",
+        ["total_rounding"] = "Rounding adjustment",
         ["total_grand"] = "Grand total",
         ["total_net"] = "Net total",
         ["total_net_payable"] = "Net payable",

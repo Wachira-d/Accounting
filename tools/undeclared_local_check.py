@@ -121,6 +121,9 @@ DECL_PATTERNS = [
     rf"\bforeach\s*\(\s*(?:var|[A-Za-z_][\w\.<>,\[\]\?]*)\s+({IDENT})\b",
     rf"\bcatch\s*\([^)]*\s+({IDENT})\s*\)",
     rf"\bis\s+[A-Za-z_][\w\.<>,\[\]\?]*\s+({IDENT})\b",          # pattern: is Foo f
+    # รอบ 193: `x is not decimal t` (ผูก t ในทางที่เงื่อนไขเป็นเท็จ — C# 9) — แถวบนจับ "not" เป็นชนิดแล้วได้ "decimal"
+    # เป็นชื่อตัวแปร ⇒ เคยฟ้องผิด `t` ใน Helpers/OcrSettlementProposal ทั้งที่คอมไพล์ผ่าน
+    rf"\bis\s+not\s+[A-Za-z_][\w\.<>,\[\]\?]*\s+({IDENT})\b",   # pattern: is not Foo f
     rf"\bis\s*\{{[^{{}}]*\}}\s*({IDENT})\b",                       # property pattern: is { } f
     # ตัวแปรที่ผูกใน **subpattern ซ้อน** ของ recursive pattern:
     #   `x is { Matched: true, Status: { } s }`  ·  `x is { Inner: Foo f }`

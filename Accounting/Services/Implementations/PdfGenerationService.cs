@@ -2120,6 +2120,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ส่วนลดท้ายบิล: SubTotal เก็บเป็นยอด "หลังหักท้ายบิล" → แสดง "ยอดรวมก่อน VAT"
         // เป็นยอดก่อนหัก (SubTotal + BillDiscount) แล้วโชว์บรรทัด "ส่วนลดท้ายบิล"
         var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+        // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ — SubTotal = Σ บรรทัด + ค่านี้ ⇒ แสดงก่อน "รวมเงิน" ให้บรรทัดรวมได้ยอดนั้น
+        // (คู่กับ DocumentRenderer — สอง renderer ห้าม drift)
+        if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
+            sb.AppendLine($"<div class='sum-row'><span>{L.TotalRounding}</span><span>{doc.RoundingAdjustment:+#,##0.00;-#,##0.00}</span></div>");
         if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalSubtotal}</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalDiscount}</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (doc.BillDiscountAmount > 0)

@@ -6504,6 +6504,29 @@ public static class DatabaseMigrationHelper
             // ของตัวเองคือ lodging.stay) ดู Helpers/DocumentQuotaPolicy
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OriginModule" varchar(40) NULL;""",
 
+            // รอบ 193 (เจ้าของข้อ 8): ผังผลต่างจากการปัดเศษ 54960 — ขา JE ของ Document.RoundingAdjustment (Helpers/DocumentRounding)
+            // ใส่ให้ทุกบริษัทที่มีผังแล้ว (ไม่ผูกกับชุดผังสินค้าข้างบน — ใบบริการก็มีเศษปัดได้) · ไม่เคลมภาษีซื้อ ·
+            // ON CONFLICT DO NOTHING (unique CompanyId+AccountCode) ⇒ รันซ้ำได้ ไม่ทับผังที่ลูกค้าตั้งรหัสเดียวกันไว้เอง
+            """
+            INSERT INTO "ChartOfAccounts"
+                ("Id","CompanyId","AccountCode","AccountName","AccountNameEn","AccountType",
+                 "ParentAccountId","Level","IsActive","IsSystemAccount","InputVatClaimable",
+                 "CashFlowSection","CreatedAt","IsDeleted")
+            SELECT gen_random_uuid(), p."CompanyId", '54960', 'ผลต่างจากการปัดเศษ', 'Rounding Difference', 5,
+                   NULL, 4, true, true, false, 0, now() at time zone 'utc', false
+            FROM (SELECT DISTINCT "CompanyId" FROM "ChartOfAccounts" WHERE "IsDeleted" = false) AS p
+            ON CONFLICT DO NOTHING;
+            """,
+
+            // ── รอบ 193 (คำตัดสินเจ้าของข้อ 1/3/4/8) ──
+            // ผลต่างจากการปัดเศษ (SubTotal = Σ บรรทัด + ค่านี้) — 0 = พฤติกรรมเดิมทุกแถว
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RoundingAdjustment" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // ยอดชำระจริงที่ต่างจากยอดเอกสาร (Shopee ใบกำกับ 536 · จ่าย 438) — NULL = จ่ายเต็มตามยอด (พฤติกรรมเดิม)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ActualPaidAmount" numeric(18,2) NULL;""",
+            // ยอดหนี้ที่การชำระปิดด้วยบรรทัดปรับ (ไม่ใช่เงินสด) + บรรทัดปรับทั้งชุด — 0/NULL = ไม่มี (พฤติกรรมเดิม)
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementAdjustmentAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementAdjustmentsJson" text NULL;""",
+
             // อัตรา/เพดานประกันสังคมมีผลเป็น "ช่วงเดือน" ไม่ใช่ทั้งปี — แถวเก่า
             // default 1–12 = ทั้งปี จึงให้ผลเหมือนเดิมทุกประการ
             """ALTER TABLE "SsoYearConfigs" ADD COLUMN IF NOT EXISTS "EffectiveFromMonth" integer NOT NULL DEFAULT 1;""",
