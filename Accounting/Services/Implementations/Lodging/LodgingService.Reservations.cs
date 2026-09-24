@@ -431,25 +431,45 @@ public partial class LodgingService
         // รอบ 193 (ฝ่ายค้าน C3): เดิมถอยไปจับด้วยอีเมล/เบอร์เสมอ ⇒ แขกนิติบุคคลที่เลขมีอยู่แล้วแต่คนละสาขา หรือเลขใหม่ที่อีเมลตรงกับ
         // ผู้ติดต่อเลขอื่น ได้แถวของคนอื่นไปออกใบกำกับ (§86/4 ผู้ซื้อผิดตัว) — ตัดสินขอบเขตด้วยตัวกลางตัวเดียว
         var soft = Accounting.Helpers.ContactTaxBranchKey.SoftMatchScope(taxId, taxKey);
+        // แถว "ลูกค้าทั่วไป" (walk-in) ไม่ใช่ตัวแขก — ห้ามถอยไปจับ (ใบกำกับจะพิมพ์ชื่อกลาง · ทีม C3: แถว walk-in ไม่รับเลข)
         var softScope = soft == Accounting.Helpers.ContactSoftMatch.RowsWithoutTaxId
-            ? _db.Contacts.Where(x => x.CompanyId == companyId && (x.TaxId == null || x.TaxId == ""))
-            : _db.Contacts.Where(x => x.CompanyId == companyId);
+            ? _db.Contacts.Where(x => x.CompanyId == companyId && !x.IsWalkInCustomer && (x.TaxId == null || x.TaxId == ""))
+            : _db.Contacts.Where(x => x.CompanyId == companyId && !x.IsWalkInCustomer);
         // รอบ 193 (ฝ่ายค้าน C-7): แขกที่ส่งเลขภาษี/ชื่อบริษัท ห้ามได้แถวบุคคลธรรมดา/แถวชื่ออื่นที่อีเมลหรือเบอร์บังเอิญตรง
         // (ใบกำกับจะออกในชื่อบุคคลโดยไม่มีเลขผู้ซื้อ §86/4) — ตัวตัดสินตัวเดียว Helpers/LodgingGuestContact
         if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None)
         {
-            var candidates = new List<Contact>();
-            if (!string.IsNullOrEmpty(email)) candidates.AddRange(await softScope.Where(x => x.Email == email).OrderBy(x => x.CreatedAt).Take(20).ToListAsync());
-            if (!string.IsNullOrEmpty(phone)) candidates.AddRange(await softScope.Where(x => x.Phone == phone).OrderBy(x => x.CreatedAt).Take(20).ToListAsync());
-            c = candidates.FirstOrDefault(x => Accounting.Helpers.LodgingGuestContact.SoftCandidateAcceptable(
-                taxId, r.GuestCompanyName, x.Name, x.ContactType));
-            // แถวนิติบุคคลชื่อตรงที่ยังไม่มีเลข — "จับได้แล้วต้องเติมเลข" ผ่านตัวกลางตัวเดียว (ContactTaxBranchKey.AdoptTaxId · ทีม C3:
-            // ไม่ทับเลขของนิติบุคคลอื่น · ชนิด/สาขาผ่าน ContactTypeResolver) ⇒ ใบกำกับมีเลขผู้ซื้อ · ฟอร์มจองไม่มีช่องสาขา = สำนักงานใหญ่
-            if (c != null && Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(c, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice))
+            // ชนิดการจับจริงของแต่ละผู้สมัคร (อีเมลก่อน แล้วเบอร์) — ส่งเข้า AdoptTaxId ให้ตัวกลางตัดสินว่าเติมเลขได้ไหม
+            var candidates = new List<(Contact Row, Accounting.Helpers.ContactMatchKind Kind)>();
+            if (!string.IsNullOrEmpty(email))
+                candidates.AddRange((await softScope.Where(x => x.Email == email).OrderBy(x => x.CreatedAt).Take(20).ToListAsync())
+                    .Select(x => (x, Accounting.Helpers.ContactMatchKind.Email)));
+            if (!string.IsNullOrEmpty(phone))
+                candidates.AddRange((await softScope.Where(x => x.Phone == phone).OrderBy(x => x.CreatedAt).Take(20).ToListAsync())
+                    .Select(x => (x, Accounting.Helpers.ContactMatchKind.Phone)));
+            var pick = candidates.FirstOrDefault(x => Accounting.Helpers.LodgingGuestContact.SoftCandidateAcceptable(
+                taxId, r.GuestCompanyName, x.Row.Name, x.Row.ContactType));
+            // แถวนิติบุคคลชื่อตรงที่ยังไม่มีเลข — "จับได้แล้วต้องเติมเลข" ผ่านตัวกลางตัวเดียว (ContactTaxBranchKey.AdoptTaxId รูปใหม่ของ
+            // ทีม C3: ไม่ทับเลขของนิติบุคคลอื่น · ชนิด/สาขาผ่าน ContactTypeResolver · Reject = ห้ามใช้แถว ⇒ สร้างแถวใหม่) ·
+            // ฟอร์มจองไม่มีช่องสาขา = สำนักงานใหญ่
+            if (pick.Row != null)
             {
-                if (string.IsNullOrWhiteSpace(c.Address) && !string.IsNullOrWhiteSpace(r.GuestAddress)) c.Address = r.GuestAddress;
-                c.UpdatedBy = actor;
-                await _db.SaveChangesAsync();
+                switch (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(pick.Row, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice, pick.Kind))
+                {
+                    case Accounting.Helpers.ContactAdoptOutcome.Adopted:
+                        if (string.IsNullOrWhiteSpace(pick.Row.Address) && !string.IsNullOrWhiteSpace(r.GuestAddress)) pick.Row.Address = r.GuestAddress;
+                        pick.Row.UpdatedBy = actor;
+                        await _db.SaveChangesAsync();
+                        c = pick.Row;
+                        break;
+                    case Accounting.Helpers.ContactAdoptOutcome.Keep:
+                        c = pick.Row;
+                        break;
+                    case Accounting.Helpers.ContactAdoptOutcome.Reject:   // ห้ามใช้แถวนี้ ⇒ สร้างแถวใหม่ด้านล่าง
+                    default:
+                        c = null;
+                        break;
+                }
             }
         }
         if (c != null) return c.Id;
