@@ -291,36 +291,53 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         var taxId = Accounting.Helpers.ContactTaxBranchKey.HasTaxId(buyer.TaxId) ? buyer.TaxId!.Trim() : null;
         var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode;
         var buyerKey = buyer.Id.ToString();
-        Contact? existing;
-        if (taxId != null)
+
+        // (1) กุญแจแรก**เสมอ** = แถวที่ผูกกับ tenant นี้ไว้แล้ว (ExternalSystem/ExternalId ที่แถวใหม่ข้างล่างประทับเอง) — ฝ่ายค้านรอบสอง
+        //     R2-C9: เดิมใช้เฉพาะกิ่ง "ไม่มีเลข" ⇒ tenant ที่บิลแรกตอนเลขยังเป็น "-" แล้วกรอกเลขทีหลัง ได้ผู้ติดต่อแถวที่สอง
+        //     (ลูกหนี้/ประวัติใบกำกับแยกสองแถว แถวเก่าไม่เคยได้เลข) · ข้ามแถวนี้เฉพาะเมื่อมันถือเลข/สาขา**อื่น**แล้ว
+        //     (ลูกค้าเปลี่ยนสาขาที่ลงทะเบียน ⇒ ต้องเป็นผู้ติดต่อของสาขาใหม่ §86/4)
+        var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == tenantId && !c.IsDeleted
+            && c.ExternalSystem == "NextAccTenant" && c.ExternalId == buyerKey);
+        if (existing != null && taxId != null && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(existing.TaxId)
+            && !Accounting.Helpers.ContactTaxBranchKey.Pick(
+                new[] { new Accounting.Helpers.ContactKeyCandidate(existing.Id, existing.TaxId, existing.BranchCode) },
+                taxId, buyerBranch).Found)
+            existing = null;
+
+        // (2) เลขภาษี + สาขา (คำตัดสินเจ้าของข้อ 20) — ใบกำกับค่าบริการต้องออกในนามสาขาที่ลูกค้าลงทะเบียนไว้ (§86/4)
+        var key = default(Accounting.Helpers.ContactKeyMatch);
+        if (existing == null && taxId != null)
         {
-            // รอบ 193 ทีม C3 (คำตัดสินเจ้าของข้อ 20): คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ใบกำกับค่าบริการ
-            // ต้องออกในนามสาขาที่ลูกค้าลงทะเบียนไว้ (§86/4) · เดิม `c.TaxId == taxId` หยิบแถวไหนก็ได้ของเลขนั้น ·
-            // เลขนี้มีแล้วแต่คนละสาขา ⇒ สร้างแถวสาขานี้ (ข้างล่าง) ไม่ใช่ผูกแถวสาขาอื่น
-            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, tenantId, taxId, buyerBranch);
-            existing = key.ContactId is Guid keyId
-                ? await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == tenantId && !c.IsDeleted)
-                : null;
+            key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, tenantId, taxId, buyerBranch);
+            if (key.ContactId is Guid keyId)
+                existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == tenantId && !c.IsDeleted);
         }
-        else
-        {
-            // ไม่มีเลข: กุญแจแรก = แถวที่ผูกกับ tenant นี้ไว้แล้ว (ExternalSystem/ExternalId ที่แถวใหม่ข้างล่างประทับเอง) ·
-            // ถอยไปชื่อได้เฉพาะแถวที่ไม่ได้ผูกกับ tenant อื่น (ชื่อซ้ำข้ามลูกค้าที่ยังไม่กรอกเลข = คนละราย)
-            existing = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == tenantId && !c.IsDeleted
-                && c.ExternalSystem == "NextAccTenant" && c.ExternalId == buyerKey);
-            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, tenantId, taxId, default);
-            if (existing == null && softScope != null)
-                existing = await softScope
+
+        // (3) ชื่อ — บนชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขมีแล้วคนละสาขา ⇒ ห้าม) และไม่เอาแถวที่ผูกกับ tenant อื่น
+        //     (ชื่อซ้ำข้ามลูกค้าที่ยังไม่กรอกเลข = คนละราย)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, tenantId, taxId, key);
+        if (existing == null && softScope != null)
+            existing = await softScope
                 .Where(c => !c.IsDeleted && c.Name == buyer.Name
                     && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != buyerKey))
                 .OrderByDescending(c => c.IsCustomer)
                 .FirstOrDefaultAsync();
-        }
+
         if (existing != null)
         {
+            // แถวที่ยังไม่มีเลข (บิลก่อนลูกค้ากรอกเลข) รับเลข + สาขาปัจจุบัน — ตัวช่วยเดียวของทุกทางเข้า (R2-C5/R2-C9)
+            var dirty = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, buyerBranch);
             // ผู้ติดต่อเดิมอาจถูกสร้างไว้เป็นผู้ขายอย่างเดียว — ต้องเป็นลูกค้าด้วย
             // ไม่งั้นสร้างเอกสารฝั่งขายไม่ผ่าน validation บทบาทคู่ค้า
-            if (!existing.IsCustomer) { existing.IsCustomer = true; await _db.SaveChangesAsync(); }
+            if (!existing.IsCustomer) { existing.IsCustomer = true; dirty = true; }
+            // ผูกกุญแจ tenant ให้แถวที่จับได้ด้วยเลข/ชื่อ (ถ้ายังไม่ผูกกับระบบใด) — รอบหน้าเจอด้วยกุญแจ (1) ทันที
+            if (string.IsNullOrWhiteSpace(existing.ExternalSystem) && string.IsNullOrWhiteSpace(existing.ExternalId))
+            {
+                existing.ExternalSystem = "NextAccTenant";
+                existing.ExternalId = buyerKey;
+                dirty = true;
+            }
+            if (dirty) await _db.SaveChangesAsync();
             return existing.Id;
         }
 

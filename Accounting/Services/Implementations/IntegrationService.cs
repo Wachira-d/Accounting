@@ -643,7 +643,8 @@ public class IntegrationService : IIntegrationService
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
                 // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข หรือเลขเดียวกันต่างรูปแบบ
-                if (Accounting.Helpers.ContactTaxBranchKey.MayWriteTaxId(contact.TaxId, request.TaxId)) contact.TaxId = request.TaxId;
+                // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข ผ่านตัวช่วยเดียวของทุกทางเข้า (R2-C5)
+                Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, request.TaxId, request.BranchCode);
                 // §86/4: รหัสสาขา + ประเภทผู้ติดต่อ ต้องอัปเดตตอน resync ด้วย —
                 // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
@@ -1635,6 +1636,10 @@ public class IntegrationService : IIntegrationService
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxId, taxKey);
         if (contact == null && softScope != null && !string.IsNullOrEmpty(name))
             contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
+        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ยังไม่มีเลข) ต้องรับเลขของ payload — มิฉะนั้นใบกำกับออกให้ผู้ซื้อไม่มีเลข
+        // (= ใบอย่างย่อ/ใบเสร็จ ผู้ซื้อเคลมภาษีซื้อไม่ได้) และ e-Tax ถูกข้ามเงียบ
+        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, taxId, branchCode: null))
+            await _db.SaveChangesAsync();
 
         if (contact == null)
         {
@@ -1764,11 +1769,8 @@ public class IntegrationService : IIntegrationService
                     .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
             dirty = true;
         }
-        if (string.IsNullOrWhiteSpace(supplier.TaxId) && taxDigits.Length > 0)
-        {
-            supplier.TaxId = taxDigits;
-            dirty = true;
-        }
+        // เติมเลข/สาขาให้แถวที่ยังไม่มีเลข (รวม "-") ผ่านตัวช่วยเดียวของทุกทางเข้า (ฝ่ายค้านรอบสอง R2-C5)
+        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(supplier, taxDigits, branchCode: null)) dirty = true;
         if (!supplier.IsSupplier) { supplier.IsSupplier = true; dirty = true; }
         if (dirty) await _db.SaveChangesAsync();
 

@@ -42,6 +42,9 @@ public class ContactsV1Controller : PublicApiControllerBase
     /// tools/tuple_name_merge_check.py) ·
     /// รอบ 193 ทีม C3: เก็บ <c>Id</c> + <c>BranchCode</c> ด้วย — "ถือเลขเดียวกัน" ต้องหมายถึง<b>เลข + สาขา</b>เดียวกัน
     /// (คำตัดสินเจ้าของข้อ 20 · ประกาศอธิบดีฯ 199) ไม่ใช่เลขอย่างเดียว</summary>
+    /// <summary>ผู้สมัครของ /contacts/resolve (record แทน anonymous type — ต้องสร้างลิสต์ว่างได้เมื่อ SoftScope ห้ามเทียบ)</summary>
+    private sealed record ResolveCandidateRow(Guid Id, string Name, string? TaxId, string? ExternalId, string? ExternalSystem);
+
     private sealed record TaxIdOwnerRow(Guid Id, string TaxId, string? BranchCode, string? ExternalId, string Name);
 
     public record ContactSyncItem(
@@ -361,9 +364,10 @@ public class ContactsV1Controller : PublicApiControllerBase
             return BadRequest(new ApiResponse<string>(false, null, $"branchCode: {branchError}"));
 
         // 1) เลขผู้เสียภาษี (+ สาขา) ตรง = จบ ไม่ต้องเดา — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20)
+        var taxKey = default(Accounting.Helpers.ContactKeyMatch);
         if (!string.IsNullOrWhiteSpace(req!.TaxId))
         {
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
                 Db.Contacts.AsNoTracking().Where(c => c.IsActive), ctx!.CompanyId, req.TaxId, req.BranchCode, ct);
             var byTax = taxKey.ContactId is Guid keyId
                 ? await Db.Contacts.AsNoTracking()
@@ -397,10 +401,14 @@ public class ContactsV1Controller : PublicApiControllerBase
         if (string.IsNullOrWhiteSpace(req.Name))
             return Ok(new ApiResponse<object>(true, new { matched = false, reason = "ไม่พบเลขผู้เสียภาษีนี้ในทะเบียน" }));
 
-        var candidates = await Db.Contacts.AsNoTracking()
-            .Where(c => c.CompanyId == ctx!.CompanyId && c.IsActive)
-            .Select(c => new { c.Id, c.Name, c.TaxId, c.ExternalId, c.ExternalSystem })
-            .ToListAsync(ct);
+        // ฝ่ายค้านรอบสอง (probe C3 · คลาส C-6): ผู้สมัครเทียบชื่อมาจากชุด SoftScope ตัวเดียว — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข
+        // (เดิมเทียบทุกแถว ⇒ เลขใหม่ + ชื่อคล้าย = ตอบ matched กับนิติบุคคลอื่นที่ถือเลขอื่น แล้วพาร์ตเนอร์ผูกรหัสผิดราย)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(
+            Db.Contacts.AsNoTracking().Where(c => c.IsActive), ctx!.CompanyId, req.TaxId, taxKey);
+        var candidates = softScope == null ? new List<ResolveCandidateRow>()
+            : await softScope
+                .Select(c => new ResolveCandidateRow(c.Id, c.Name, c.TaxId, c.ExternalId, c.ExternalSystem))
+                .ToListAsync(ct);
 
         var best = CounterpartyNameMatcher.Best(req.Name, candidates, c => c.Name);
         if (best == null)

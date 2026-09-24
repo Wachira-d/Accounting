@@ -450,31 +450,58 @@ public class CrossTenantWorkflowService
     }
 
     /// <summary>ผู้ติดต่อที่แทน "บริษัทคู่ค้าในระบบเดียวกัน" ในผังผู้ติดต่อของ <paramref name="ownerCompanyId"/> —
-    /// คีย์ = เลขภาษี + สาขาของบริษัทนั้น (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า · รอบ 193 ทีม C3).
-    /// เลขนี้มีแล้วแต่คนละสาขา ⇒ คืน null ให้ผู้เรียกสร้างแถวของสาขานั้น (ห้ามถอยไปจับด้วยชื่อ) ·
-    /// บริษัทคู่ค้าไม่มีเลขภาษี ⇒ จับด้วยชื่อตรงตัว (เดิม EF แปล <c>TaxId == null</c> เป็น IS NULL = ผู้ติดต่อไม่มีเลขรายไหนก็ได้)</summary>
+    /// ลำดับกุญแจ: (1) แถวที่ผูกกับบริษัทนั้นแล้ว (ExternalSystem "NextAccTenant" + Id บริษัท) → (2) เลขภาษี + สาขา
+    /// (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า) → (3) ชื่อบนชุด SoftScope · เลขนี้มีแล้วแต่คนละสาขา ⇒ คืน null ให้ผู้เรียกสร้างแถว
+    /// ของสาขานั้น · แถวที่จับได้และยังไม่มีเลขรับเลขของคู่ค้า (AdoptTaxId) · "-" = ไม่มีเลข (รอบ 193 ทีม C3 + ฝ่ายค้านสองรอบ)</summary>
     private async Task<Contact?> FindPartnerContactAsync(Guid ownerCompanyId, Company partner, bool asSupplier)
     {
+        var partnerKey = partner.Id.ToString();
+        var branch = string.IsNullOrWhiteSpace(partner.BranchCode) ? Accounting.Helpers.TaxBranchCode.HeadOffice : partner.BranchCode;
         // ฝ่ายค้าน C-8: "-" (บริษัทที่สมัครใหม่ยังไม่กรอกเลข · AuthService) = ไม่มีเลข — เดิมถูกเทียบตรงตัว
         // ⇒ บริษัทคู่ค้ารายที่สองที่ยังไม่มีเลขได้ผู้ติดต่อ "-" ของรายแรก
-        if (Accounting.Helpers.ContactTaxBranchKey.HasTaxId(partner.TaxId))
+        var taxId = Accounting.Helpers.ContactTaxBranchKey.HasTaxId(partner.TaxId) ? partner.TaxId : null;
+
+        // (1) กุญแจแรกเสมอ = แถวที่ผูกกับบริษัทคู่ค้านี้แล้ว (ฝ่ายค้านรอบสอง R2-C9 — เดิมไม่มีกุญแจนี้ ⇒ คู่ค้าที่กรอกเลขทีหลัง
+        //     ได้ผู้ติดต่อแถวที่สอง) · ข้ามเมื่อแถวนั้นถือเลข/สาขาอื่นแล้ว (คู่ค้าเปลี่ยนสาขา ⇒ ผู้ติดต่อของสาขาใหม่ §86/4)
+        var found = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == ownerCompanyId && !c.IsDeleted
+            && c.ExternalSystem == "NextAccTenant" && c.ExternalId == partnerKey);
+        if (found != null && taxId != null && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(found.TaxId)
+            && !Accounting.Helpers.ContactTaxBranchKey.Pick(
+                new[] { new Accounting.Helpers.ContactKeyCandidate(found.Id, found.TaxId, found.BranchCode) }, taxId, branch).Found)
+            found = null;
+
+        // (2) เลขภาษี + สาขา
+        var key = default(Accounting.Helpers.ContactKeyMatch);
+        if (found == null && taxId != null)
         {
-            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-                _db.Contacts, ownerCompanyId, partner.TaxId,
-                string.IsNullOrWhiteSpace(partner.BranchCode) ? Accounting.Helpers.TaxBranchCode.HeadOffice : partner.BranchCode);
-            return key.ContactId is Guid id
-                ? await _db.Contacts.FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == ownerCompanyId && !c.IsDeleted)
-                : null;
+            key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, ownerCompanyId, taxId, branch);
+            if (key.ContactId is Guid id)
+                found = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == ownerCompanyId && !c.IsDeleted);
         }
-        if (string.IsNullOrWhiteSpace(partner.Name)) return null;
-        // ไม่มีเลข ⇒ ชุด SoftScope = ทุกแถว (ตัวตัดสินตัวเดียวกับทุกทางเข้า — ฝ่ายค้าน C-6)
-        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, ownerCompanyId, partner.TaxId, default);
-        if (softScope == null) return null;
-        return await softScope
-            .Where(c => !c.IsDeleted && c.Name == partner.Name
-                && (asSupplier ? c.IsSupplier : c.IsCustomer))
-            .OrderBy(c => c.CreatedAt)
-            .FirstOrDefaultAsync();
+
+        // (3) ชื่อ บนชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขมีแล้วคนละสาขา ⇒ ห้าม) · ไม่เอาแถวที่ผูกกับบริษัทอื่น
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, ownerCompanyId, taxId, key);
+        if (found == null && softScope != null && !string.IsNullOrWhiteSpace(partner.Name))
+            found = await softScope
+                .Where(c => !c.IsDeleted && c.Name == partner.Name
+                    && (asSupplier ? c.IsSupplier : c.IsCustomer)
+                    && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != partnerKey))
+                .OrderBy(c => c.CreatedAt)
+                .FirstOrDefaultAsync();
+
+        if (found != null)
+        {
+            // แถวที่ยังไม่มีเลขรับเลข + สาขาของคู่ค้า (ตัวช่วยเดียวของทุกทางเข้า — R2-C5/R2-C9) · ผูกกุญแจถ้ายังไม่ผูกกับระบบใด
+            var dirty = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(found, taxId, branch);
+            if (string.IsNullOrWhiteSpace(found.ExternalSystem) && string.IsNullOrWhiteSpace(found.ExternalId))
+            {
+                found.ExternalSystem = "NextAccTenant";
+                found.ExternalId = partnerKey;
+                dirty = true;
+            }
+            if (dirty) await _db.SaveChangesAsync();
+        }
+        return found;
     }
 
     /// <summary>แถวผู้ติดต่อใหม่ของบริษัทคู่ค้า — ชนิด + รหัสสาขาจากตัวตัดสินตัวเดียว (Helpers/ContactTypeResolver)
@@ -495,6 +522,9 @@ public class CrossTenantWorkflowService
             Address = partner.Address,
             IsSupplier = asSupplier,
             IsCustomer = !asSupplier,
+            // ผูกกลับไปยังบริษัทคู่ค้า — กุญแจแรกของ FindPartnerContactAsync (R2-C9 · ชื่อระบบเดียวกับใบค่าบริการแพลตฟอร์ม)
+            ExternalSystem = "NextAccTenant",
+            ExternalId = partner.Id.ToString(),
             CreatedBy = "cross-tenant-routing",
         };
     }
