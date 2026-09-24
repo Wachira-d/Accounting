@@ -131,6 +131,9 @@ public class OwnerConfigController : ControllerBase
 
     private async Task<bool> IsOwnerAsync(Guid companyId, CancellationToken ct)
     {
+        // ซ่อนเมนู/ปิดฟีเจอร์ของทั้งบริษัท = ค่าตั้งเจ้าของ ⇒ API key ห้าม แม้ตัวตนที่คีย์ถือเป็นเจ้าของ
+        // (ฝ่ายค้านรอบ 193 C1 · ด่านตัวเดียว OwnerActionGuard)
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext)) return false;
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var role = await _db.CompanyUsers.AsNoTracking()
             .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)

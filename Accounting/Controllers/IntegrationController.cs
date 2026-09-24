@@ -46,9 +46,10 @@ public class IntegrationController : ControllerBase
     /// </summary>
     private async Task<ActionResult?> RequireOwnerAsync(Guid companyId, string verb)
     {
-        if (HttpContext.Items.TryGetValue("IsApiKeyAuth", out var ak) && ak is true)
-            return StatusCode(403, new ApiResponse<object>(false, null,
-                $"{verb}ด้วย API key ไม่ได้ — ต้องเข้าสู่ระบบเป็นเจ้าของบริษัท"));
+        // ตัวบอก "เป็นคำขอจากคีย์" ตัวเดียวกับทุกงานระดับเจ้าของ (ฝ่ายค้านรอบ 193 C1 — เดิมเป็นสำเนาเช็กของไฟล์นี้เอง)
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext))
+            return StatusCode(403, new ApiResponse<object>(false, new { ruleCode = OwnerActionGuard.RuleCode },
+                OwnerActionGuard.DeniedMessage(verb)));
 
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var role = await _db.CompanyUsers.AsNoTracking()

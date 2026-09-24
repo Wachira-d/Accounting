@@ -130,6 +130,12 @@ public class AuthService : IAuthService
         if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email))
             throw new InvalidOperationException("อีเมลนี้ถูกใช้งานแล้ว");
 
+        // ด่าน "เปิดรับสมัคร" ของแพลตฟอร์ม (S-08 · รอบ 193) — เดิมกันแค่หน้า register.html ⇒ ยิง API ตรงยังสมัครได้ ·
+        // ปิดอยู่ + มีคำเชิญของอีเมลนี้ = สมัครได้แต่ห้ามสร้างบริษัท (เข้าบริษัทที่เชิญเท่านั้น)
+        var registration = await EvaluateRegistrationAsync(email, request.InvitationToken);
+        if (!registration.Allowed)
+            throw new BusinessRuleException(registration.Message!, RegistrationPolicy.RuleCode, registration.StatusCode);
+
         // ตั๋ว SSO ต้องยังไม่ถูกใช้ผูกกับใคร — ตรวจ**ก่อน**สร้างผู้ใช้ ไม่งั้น
         // จะได้บัญชีที่สร้างสำเร็จแต่ผูกไม่ได้ (ตั๋วใบเดียวสมัครหลายบัญชีได้ใน
         // 20 นาที เพราะไม่มีใครเก็บ jti)
@@ -196,7 +202,8 @@ public class AuthService : IAuthService
         // Create company if companyName provided AND the user wasn't routed
         // through an invitation. An invited member shouldn't auto-spawn a
         // stub company they didn't ask for.
-        if (!consumedInvite && !string.IsNullOrWhiteSpace(request.CompanyName))
+        // + ปิดรับสมัครอยู่ = ห้ามสร้างบริษัทแม้คำเชิญจะใช้ไม่สำเร็จในจังหวะนี้ (RegistrationPolicy.MayCreateCompany)
+        if (!consumedInvite && registration.MayCreateCompany && !string.IsNullOrWhiteSpace(request.CompanyName))
         {
             var company = new Company
             {
@@ -634,6 +641,13 @@ public class AuthService : IAuthService
                 // ⇒ **พาไปเลย** พร้อมตั๋วที่มีชื่อ/อีเมล/รูป — หน้าสมัครเติมให้หมด
                 // ผู้ใช้กรอกเพิ่มแค่รหัสผ่าน (หรือผูกกับบัญชีเดิมถ้าเคยสมัครด้วยอีเมลอื่น)
                 // ไม่ต้องกดปุ่ม provider ซ้ำ (code ใช้ได้ครั้งเดียว)
+                // ด่าน "เปิดรับสมัคร" ตัวเดียวกับ RegisterAsync (S-08) — ตรวจ**ก่อน**พาไปหน้าสมัคร/สร้างบัญชี
+                // (ปิดอยู่ + ไม่มีคำเชิญ = บอกตรงนี้เลย ไม่ใช่พาไปหน้าสมัครที่ปิดอยู่)
+                var ssoRegistration = await EvaluateRegistrationAsync(emailNonNull, request.InvitationToken);
+                if (!ssoRegistration.Allowed)
+                    throw new BusinessRuleException(ssoRegistration.Message!, RegistrationPolicy.RuleCode,
+                        ssoRegistration.StatusCode);
+
                 if (!request.AcceptedTerms)
                     throw new SsoSignupRequiredException(provider,
                         JwtHelper.GenerateSsoSignupTicket(provider, providerUserId,
@@ -668,8 +682,8 @@ public class AuthService : IAuthService
                 // ที่เชิญ ต้องให้แอดมินเชิญซ้ำ (ใช้ helper ตัวเดียวกับ RegisterAsync)
                 var consumedInvite = await ConsumeInvitationAsync(user, request.InvitationToken);
 
-                // Create company if provided
-                if (!consumedInvite && !string.IsNullOrWhiteSpace(request.CompanyName))
+                // Create company if provided (ปิดรับสมัคร + เข้ามาด้วยคำเชิญ = ห้ามสร้างบริษัท · S-08)
+                if (!consumedInvite && ssoRegistration.MayCreateCompany && !string.IsNullOrWhiteSpace(request.CompanyName))
                 {
                     var company = new Company { Name = request.CompanyName, TaxId = "-" };
                     _db.Companies.Add(company);
@@ -1141,6 +1155,27 @@ public class AuthService : IAuthService
         return FirstNonEmpty(baseUrl, _config["App:BaseUrl"]);
     }
 
+    /// <summary>ด่าน "เปิดรับสมัคร" ของแพลตฟอร์ม (S-08) — โหลดหลักฐาน (สวิตช์ SiteSettings + คำเชิญที่แนบมา) แล้วให้
+    /// <see cref="RegistrationPolicy"/> ตัดสิน · ใช้ทั้ง RegisterAsync และเส้นสมัครผ่าน SSO</summary>
+    private async Task<RegistrationDecision> EvaluateRegistrationAsync(string email, string? invitationToken)
+    {
+        var enabled = await _db.SiteSettings.AsNoTracking()
+            .Select(s => (bool?)s.RegistrationEnabled).FirstOrDefaultAsync();
+        if (RegistrationPolicy.IsOpen(enabled)) return RegistrationPolicy.EvaluateNewAccount(enabled, false);
+
+        var usableInvite = false;
+        if (!string.IsNullOrWhiteSpace(invitationToken))
+        {
+            var inv = await _db.CompanyInvitations.AsNoTracking()
+                .Where(i => i.Token == invitationToken && !i.IsDeleted)
+                .Select(i => new { i.Status, i.ExpiresAt, i.Email })
+                .FirstOrDefaultAsync();
+            usableInvite = inv != null
+                && RegistrationPolicy.IsInvitationUsable(inv.Status, inv.ExpiresAt, inv.Email, email, DateTime.UtcNow);
+        }
+        return RegistrationPolicy.EvaluateNewAccount(enabled, usableInvite);
+    }
+
     /// <summary>ใช้คำเชิญเข้าบริษัท (ถ้ามีและยังใช้ได้) — helper ตัวเดียวที่ทั้ง
     /// <c>RegisterAsync</c> และ <c>SsoLoginAsync</c> เรียก. คืน true = เข้าบริษัท
     /// ผู้เชิญแล้ว ผู้เรียกต้อง**ไม่**สร้างบริษัท stub ให้อีก</summary>
@@ -1150,10 +1185,10 @@ public class AuthService : IAuthService
 
         var inv = await _db.CompanyInvitations
             .FirstOrDefaultAsync(i => i.Token == invitationToken && !i.IsDeleted);
+        // predicate ตัวเดียวกับด่านเปิดรับสมัคร (RegistrationPolicy.IsInvitationUsable) — "ผ่านด่านด้วยคำเชิญ"
+        // ต้องแปลว่าคำเชิญใช้ได้จริงที่นี่
         if (inv != null
-            && inv.Status == Models.Enums.InvitationStatus.Pending
-            && inv.ExpiresAt > DateTime.UtcNow
-            && string.Equals(inv.Email, user.Email, StringComparison.OrdinalIgnoreCase))
+            && RegistrationPolicy.IsInvitationUsable(inv.Status, inv.ExpiresAt, inv.Email, user.Email, DateTime.UtcNow))
         {
             // เส้น SSO ของ "บัญชีเดิม" เรียกเมธอดนี้ได้ด้วย ⇒ ผู้ใช้อาจเป็นสมาชิก
             // บริษัทนั้นอยู่แล้ว การ Add ซ้ำจะได้สองสิทธิ์ในบริษัทเดียว (บทบาทไหน

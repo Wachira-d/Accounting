@@ -157,6 +157,31 @@ public static class IntegrationKeyPolicy
         => legacyPrivilegeActive && !mappedMemberUserId.HasValue
            && !string.IsNullOrWhiteSpace(actingKey) && actingKey.Contains('@');
 
+    /// <summary>ช่วงเวลาที่บันทึกร่องรอย "คีย์รุ่นเก่าสวมผู้ใช้ด้วยอีเมล" ได้ครั้งเดียวต่อคีย์ต่อผู้ใช้
+    /// (ฝ่ายค้านรอบ 193 P2 — เดิมบันทึกทุก request ⇒ SaveChanges + LogWarning ทุกครั้งที่ TakeTime ยิง)</summary>
+    public static readonly TimeSpan LegacyEmailMatchAuditWindow = TimeSpan.FromHours(1);
+
+    /// <summary>ควรบันทึกร่องรอย email-match รอบนี้ไหม · ไม่เคยบันทึก = บันทึก · นาฬิกาถอยหลัง = บันทึก (ไม่เงียบ)</summary>
+    public static bool ShouldRecordLegacyEmailMatch(DateTime? lastRecordedUtc, DateTime nowUtc)
+        => !lastRecordedUtc.HasValue
+           || nowUtc < lastRecordedUtc.Value
+           || nowUtc - lastRecordedUtc.Value >= LegacyEmailMatchAuditWindow;
+
+    /// <summary>ค่าที่อ่านจากคอลัมน์ <c>timestamp</c> (ไม่มีโซน — <c>EnableLegacyTimestampBehavior</c>) ได้
+    /// <c>Kind=Unspecified</c> ⇒ JSON ไม่มี <c>Z</c> ⇒ เบราว์เซอร์ตีเป็นเวลาท้องถิ่น เลื่อน 7 ชม. (ฝ่ายค้านรอบ 193 P5) ·
+    /// ค่าในคอลัมน์นี้เขียนเป็น UTC เสมอ (migration ใช้ <c>timezone('UTC', now())</c>) จึงประทับ Kind=Utc ก่อนส่งออก</summary>
+    public static DateTime? AsUtc(DateTime? storedUtc)
+        => storedUtc.HasValue ? DateTime.SpecifyKind(storedUtc.Value, DateTimeKind.Utc) : null;
+
+    /// <summary>เหลือกี่วันก่อนคีย์รุ่นเก่าหมดช่วงผ่อนผัน (ปัดขึ้น · หมดแล้ว = 0) · ไม่ใช่คีย์รุ่นเก่า/ไม่รู้วัน = null
+    /// — หน้าเว็บแสดงตัวเลขนี้ตรง ๆ ไม่คำนวณเอง (server computes · page displays)</summary>
+    public static int? LegacyDaysRemaining(bool isLegacyKey, DateTime? legacyDeprecatesAtUtc, DateTime nowUtc)
+    {
+        if (!isLegacyKey || !legacyDeprecatesAtUtc.HasValue) return null;
+        var left = legacyDeprecatesAtUtc.Value - nowUtc;
+        return left <= TimeSpan.Zero ? 0 : (int)Math.Ceiling(left.TotalDays);
+    }
+
     /// <summary>ค่า response header <c>X-Acting-User-Resolved</c> — บอกคู่ค้าตรง ๆ ว่า header ของเขาถูกตีความยังไง
     /// (ส่งมาแต่ไม่ถูกผูก ต้องไม่เงียบ)</summary>
     public static string ResolvedHeaderValue(ActingUserPath path) => path switch

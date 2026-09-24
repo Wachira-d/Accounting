@@ -31,6 +31,9 @@ public class BulkCleanupController : ControllerBase
 
     private async Task<bool> IsOwnerAsync(Guid companyId, Guid userId)
     {
+        // "เจ้าของเท่านั้น" = คนที่ล็อกอิน ไม่ใช่คีย์ที่สวมเป็นเจ้าของ (ฝ่ายค้านรอบ 193 C1 · OwnerActionGuard)
+        // — เส้นที่ตั้งใจให้คีย์เรียกได้ ตรวจ IsCompanyScopedApiKey แยกไว้ก่อนเรียกเมธอดนี้อยู่แล้ว
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext)) return false;
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         if (user?.IsSystemAdmin == true) return true;
         var cu = await _db.CompanyUsers.AsNoTracking()

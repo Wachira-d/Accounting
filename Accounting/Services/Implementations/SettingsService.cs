@@ -460,8 +460,10 @@ public class SettingsService : ISettingsService
     public async Task<ApiKeyCreatedResponse> CreateApiKeyAsync(Guid companyId, Guid userId, CreateApiKeyRequest request)
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
-        if (!settings.EnableApiAccess)
-            throw new InvalidOperationException("API access ยังไม่เปิดใช้งาน กรุณาเปิดในการตั้งค่า");
+        // สวิตช์ตัวเดียวกับตอน "ใช้" คีย์ใน ApiKeyMiddleware (S-04) — ออกไม่ได้ = ใช้ไม่ได้
+        if (!Accounting.Helpers.ApiAccessPolicy.CanIssueKey(settings.EnableApiAccess))
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.ApiAccessPolicy.IssueDisabledMessage, Accounting.Helpers.ApiAccessPolicy.RuleCode);
 
         var currentKeys = await _db.Set<ApiKey>()
             .CountAsync(k => k.CompanyId == companyId && k.Status == ApiKeyStatus.Active);

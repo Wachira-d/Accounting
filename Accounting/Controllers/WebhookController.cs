@@ -48,9 +48,14 @@ public class WebhookController : ControllerBase
         return NoContent();
     }
 
+    // รอบ 193 (ฝ่ายค้าน C1 · เพิ่ม WebhookController เข้า write_permission_gate_check): ทดสอบ/ส่งซ้ำ = ยิงข้อมูลออกไป
+    // ปลายทางที่เจ้าของตั้ง — ใช้ด่านเดียวกับการลงทะเบียน (เดิมสมาชิกคนไหน/คีย์ไหนก็สั่งส่งซ้ำเหตุการณ์การเงินได้)
     [HttpPost("{webhookId:guid}/test")]
     public async Task<ActionResult<ApiResponse<WebhookRegistrationResponse>>> Test(Guid companyId, Guid webhookId)
-        => Ok(new ApiResponse<WebhookRegistrationResponse>(true, await _service.TestAsync(companyId, webhookId)));
+    {
+        await _companyService.EnsureOwnerAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User));
+        return Ok(new ApiResponse<WebhookRegistrationResponse>(true, await _service.TestAsync(companyId, webhookId)));
+    }
 
     [HttpGet("{webhookId:guid}/deliveries")]
     public async Task<ActionResult<ApiResponse<PagedResponse<WebhookDeliveryResponse>>>> GetDeliveries(Guid companyId, Guid webhookId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -58,7 +63,11 @@ public class WebhookController : ControllerBase
 
     [HttpPost("deliveries/{deliveryId:guid}/retry")]
     public async Task<ActionResult<ApiResponse<bool>>> Retry(Guid companyId, Guid deliveryId)
-    { await _service.RetryAsync(companyId, deliveryId); return Ok(new ApiResponse<bool>(true, true)); }
+    {
+        await _companyService.EnsureOwnerAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User));
+        await _service.RetryAsync(companyId, deliveryId);
+        return Ok(new ApiResponse<bool>(true, true));
+    }
 
     [HttpGet("event-types")]
     public async Task<ActionResult<ApiResponse<List<WebhookEventTypeResponse>>>> GetEventTypes()

@@ -346,7 +346,8 @@ const Page = {
     list.innerHTML = this.integrations.map(i => {
       const health = this.getHealth(i);
       const full = this.fullIntegrations.find(x => x.id === i.id);
-      const legacyBadge = full?.isLegacyKey ? ' <span class="badge badge-warning" style="font-size:10px">คีย์รุ่นเก่า</span>' : '';
+      const legacyDays = typeof full?.legacyDaysRemaining === 'number' ? ` · เหลือ ${full.legacyDaysRemaining} วัน` : '';
+      const legacyBadge = full?.isLegacyKey ? ` <span class="badge badge-warning" style="font-size:10px">คีย์รุ่นเก่า${legacyDays}</span>` : '';
       return `<div class="int-card ${this.selectedId===i.id?'selected':''}" onclick="Page.showDetail('${i.id}')">
         <div style="display:flex;align-items:center;gap:12px">
           <span class="health-dot health-${health.color}" title="${Layout.esc(health.text)}"></span>
@@ -433,10 +434,14 @@ const Page = {
     document.getElementById('detailScopes').textContent = this.scopeText(full.effectiveCanRead, full.effectiveCanWrite, full.effectiveCanDelete);
     document.getElementById('detailStoredScopes').textContent = this.scopeText(full.canRead, full.canWrite, full.canDelete);
     if (!full.isLegacyKey) { notice.style.display = 'none'; return; }
-    const until = full.legacyDeprecatesAt ? new Date(full.legacyDeprecatesAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+    // legacyDeprecatesAt ส่งมาเป็น UTC (มี Z) ตั้งแต่รอบ 193 P5 — แสดงเป็นเวลาไทยพร้อมเวลา ไม่ใช่แค่วัน
+    const until = full.legacyDeprecatesAt ? new Date(full.legacyDeprecatesAt).toLocaleString('th-TH', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : null;
+    // จำนวนวันที่เหลือคำนวณที่เซิร์ฟเวอร์ (legacyDaysRemaining) — undefined = ไม่มีข้อมูล ไม่ใช่ 0
+    const days = typeof full.legacyDaysRemaining === 'number' ? full.legacyDaysRemaining : null;
+    const daysText = days === null ? '' : ` — <b style="color:${days <= 14 ? '#b91c1c' : '#92400e'}">เหลืออีก ${days} วัน</b>`;
     notice.style.display = '';
     notice.innerHTML = full.legacyPrivilegeActive
-      ? `<b>⚠️ คีย์รุ่นเก่า — กำลังจะเลิกใช้สิทธิ์แบบเดิม</b><br>
+      ? `<b>⚠️ คีย์รุ่นเก่า — กำลังจะเลิกใช้สิทธิ์แบบเดิม</b>${daysText}<br>
          ตอนนี้คีย์นี้ยัง <b>อ่าน/เขียน/ลบได้ทั้งหมด</b> และสวมผู้ใช้ด้วยอีเมลได้ จนถึง <b>${Layout.esc(until || '-')}</b> ·
          หลังจากนั้นจะเหลือสิทธิ์ตาม "ที่ตั้งไว้" และสวมได้เฉพาะผู้ใช้ที่ผูกไว้ด้านล่าง —
          เจ้าของบริษัทควรกด "แก้ไข" เลือกสิทธิ์ที่ระบบภายนอกใช้จริง และผูกผู้ใช้ให้ครบก่อนวันดังกล่าว`
@@ -601,7 +606,14 @@ const Page = {
   },
 
   async regenerateKey() {
-    if (!this.selectedId || !confirm('สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีกทันที')) return;
+    // คีย์รุ่นเก่า: การสร้างคีย์ใหม่ย้ายเข้านโยบายใหม่ทันที (รอบ 193 P3 — server ตั้ง IsLegacyKey=false) ต้องบอกก่อนกด
+    const cur = this.fullIntegrations.find(x => x.id === this.selectedId);
+    const msg = cur?.isLegacyKey
+      ? 'สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีกทันที\n\n⚠️ คีย์นี้เป็นรุ่นเก่า — คีย์ใหม่จะใช้นโยบายใหม่ทันที: '
+        + 'สิทธิ์ตาม "ที่ตั้งไว้" (' + this.scopeText(cur.canRead, cur.canWrite, cur.canDelete) + ') และสวมได้เฉพาะผู้ใช้ที่ผูกไว้ · '
+        + 'ถ้าระบบภายนอกต้องบันทึกข้อมูล ให้กด "แก้ไข" เลือกสิทธิ์ และผูกผู้ใช้ก่อนนำคีย์ใหม่ไปใช้'
+      : 'สร้าง API Key ใหม่? Key เดิมจะใช้ไม่ได้อีกทันที';
+    if (!this.selectedId || !confirm(msg)) return;
     try {
       const res = await this.api.regenerateIntegrationKey(this.selectedId);
       // The raw key is shown only once — surface it in the result modal so

@@ -81,6 +81,10 @@ public class PermissionCatalogController : ControllerBase
         // Only Owner / SystemAdmin can spawn template roles — RolesManage
         // perm exists but for the initial template installation we keep
         // it tighter so a bug doesn't escalate.
+        // สร้าง role จาก template = การให้สิทธิ์ ⇒ API key ห้าม (ฝ่ายค้านรอบ 193 C1)
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext))
+            return StatusCode(403, new ApiResponse<object>(false, new { ruleCode = OwnerActionGuard.RuleCode },
+                OwnerActionGuard.DeniedMessage("สร้างบทบาทจากแม่แบบ")));
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var role = await _db.CompanyUsers.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.UserId == userId)

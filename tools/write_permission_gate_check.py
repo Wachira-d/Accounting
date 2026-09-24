@@ -68,6 +68,13 @@ WATCHED = [
     # เพิ่มรอบ 193 (B-04) — ยื่นแบบ · บันทึกเลขรับ (ล็อกงวด) · ปลดล็อก · ลบรายงาน · Reject & Reverse (JE)
     # มีแค่ [Authorize] ระดับคลาสมาตลอด ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 7)
     "Accounting/Controllers/TaxController.cs",
+    # เพิ่มรอบ 193 (ฝ่ายค้าน C1) — PUT settings เปิด EnableApiAccess/ปิดการอนุมัติ/เปลี่ยนนโยบายภาษีได้โดยไม่มีด่าน
+    # (มีแค่ [Authorize]) และเป็นขั้นที่ 2 ของเส้น "คีย์สวมเป็นเจ้าของ → ออกคีย์สิทธิ์เต็มไม่หมดอายุ" ·
+    # ก่อนแก้ฟ้อง 7 จุด (settings · logo ×2 · stamp ×2 · number-series ×2) — api-keys ×2 มีด่านเจ้าของอยู่แล้ว
+    "Accounting/Controllers/SettingsController.cs",
+    # เพิ่มรอบ 193 — ลงทะเบียน webhook = ส่งต่อเหตุการณ์การเงินทุกตัวของบริษัทออกไปข้างนอก · มีด่านเจ้าของครบแล้ว
+    # (ratchet: ใส่ตอนที่ยังเขียว)
+    "Accounting/Controllers/WebhookController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -100,6 +107,9 @@ GATE_MARKERS = (
     # รอบ 193 — ด่านคีย์สิทธิ์ของ Account Mapping (CompanySettings.Edit) และของ TaxController (Tax.File/Tax.Export/Journal.Manage)
     "RequireSettingsAsync",
     "RequireTaxAsync",
+    # รอบ 193 (ฝ่ายค้าน C1) — ด่านเจ้าของของ CompanyService (role Owner/SystemAdmin **และ** ปฏิเสธ API key ผ่าน
+    # Helpers/OwnerActionGuard) — ใช้ใน SettingsController(api-keys) · WebhookController
+    "EnsureOwnerAccessAsync",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
