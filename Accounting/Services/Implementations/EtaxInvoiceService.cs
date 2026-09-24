@@ -96,9 +96,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
         await _db.HydrateContactAsync(companyId, document);
 
-        // Only TaxInvoice, Receipt, DebitNote, CreditNote can be e-Tax
-        if (document.DocumentType != DocumentType.TaxInvoice && document.DocumentType != DocumentType.Receipt
-            && document.DocumentType != DocumentType.DebitNote && document.DocumentType != DocumentType.CreditNote)
+        // Only TaxInvoice, Receipt, DebitNote, CreditNote can be e-Tax — ชุดชนิดจาก EtaxAutoIssueScope ตัวเดียว
+        // (hook e-Tax อัตโนมัติใช้ชุดเดียวกัน · รอบ 193 S-02)
+        if (!EtaxAutoIssueScope.IsEtaxType(document.DocumentType))
             throw new InvalidOperationException("สามารถสร้าง e-Tax ได้เฉพาะใบกำกับภาษี, ใบเสร็จรับเงิน, ใบเพิ่มหนี้, ใบลดหนี้ เท่านั้น");
 
         if (document.Status == DocumentStatus.Draft)
@@ -129,8 +129,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         {
             // มัดจำที่ VAT ยังพักรอ (tax point ยังไม่เกิด) — ใบกำกับตัวจริงจะออก
             // ตอนส่งมอบ/รับรู้ ค่อยสร้าง e-Tax ที่ใบนั้น
-            if (document.IsDeposit && document.DepositOutputVatDeferred
-                && document.DepositOutputVatRecognizedAt == null)
+            if (EtaxAutoIssueScope.IsDeferredDepositReceipt(document.IsDeposit,
+                    document.DepositOutputVatDeferred, document.DepositOutputVatRecognizedAt))
                 throw new InvalidOperationException(
                     $"ใบมัดจำ {document.DocumentNumber} ตั้งค่าเป็น \"VAT รอเรียกเก็บ\" (ยังไม่ถึงจุดรับผิด §78) "
                     + "จึงยังไม่ใช่ใบกำกับภาษี — ออก e-Tax ไม่ได้. "
@@ -189,8 +189,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 .Where(d => d.Id == document.RelatedDocumentId.Value && d.CompanyId == companyId)
                 .Select(d => (DocumentType?)d.DocumentType)
                 .FirstOrDefaultAsync();
-            if (cnDnSrcType is DocumentType.PurchaseInvoice or DocumentType.Expense
-                or DocumentType.CertificateInLieu or DocumentType.PaymentVoucher)
+            // ชุดชนิดต้นทางฝั่งซื้อจาก AdjustmentNoteAccount ตัวเดียว (hook e-Tax อัตโนมัติใช้ชุดเดียวกัน)
+            if (cnDnSrcType is DocumentType srcType && AdjustmentNoteAccount.SourceIsPurchaseSide(srcType))
                 throw new InvalidOperationException(
                     $"{cnDnLabel}นี้เป็นฝั่งซื้อ (อ้างเอกสารซื้อ) — ผู้ขายเป็นผู้ออกใบจริง เราเป็นเพียงผู้บันทึก"
                     + " จึงออก e-Tax แทนผู้ขายไม่ได้ (ไฟล์ e-Tax ต้องมาจากระบบของผู้ขาย)");

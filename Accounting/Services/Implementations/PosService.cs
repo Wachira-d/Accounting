@@ -21,11 +21,14 @@ public partial class PosService : IPosService
     /// optional เพื่อให้เทสต์/เส้นทางเดิมที่ไม่ผูก gateway สร้าง PosService ได้ตามเดิม
     /// (null = ใช้ผังตามวิธีจ่ายเหมือนก่อนมีฟีเจอร์นี้ทุกประการ)</summary>
     private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
+    /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — ใบกำกับเต็มรูปจาก POS ต้องเดินขั้นเดียวกับเส้นเว็บ (S-02)</summary>
+    private readonly IIssuedDocumentHooks _issuedHooks;
 
     public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger,
-        IStockLedger stock, IEmailSenderFactory? emailFactory = null,
+        IStockLedger stock, IIssuedDocumentHooks issuedHooks, IEmailSenderFactory? emailFactory = null,
         Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
     {
+        _issuedHooks = issuedHooks;
         _db = db;
         _accountingService = accountingService;
         _logger = logger;

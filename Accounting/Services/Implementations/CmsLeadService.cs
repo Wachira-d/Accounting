@@ -172,21 +172,47 @@ public class CmsLeadService
                      : $"คำขอจาก lead {lead.LeadNumber} ({lead.LeadType})";
         var amount = req.EstimatedAmount ?? 0m;
 
+        // อัตรา VAT จาก OutputVatRate ตัวเดียว — เดิม 7 ตายตัว ⇒ ใบเสนอราคาของบริษัทที่ไม่จด VAT
+        // เสนอ VAT 7% ให้ลูกค้า (§90/2 ถ้าใบนี้ถูกแปลงเป็นใบกำกับ) · รอบ 193 S-10
+        var vatProfile = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.VatRate })
+            .FirstOrDefaultAsync();
+        var quoteVatRate = vatProfile == null ? 0m
+            : Accounting.Helpers.OutputVatRate.ForCompany(vatProfile.IsVatRegistered, vatProfile.VatRate);
+
         var docReq = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: Models.Enums.DocumentType.Quotation,
             DocumentDate: DateTime.UtcNow.Date,
             DueDate: null,
             ContactId: lead.ContactId.Value,
             Reference: lead.LeadNumber,
-            Notes: string.IsNullOrEmpty(lead.InternalNotes) ? null : lead.InternalNotes,
+            // ★ รอบ 193 — เดิมส่ง `lead.InternalNotes` เข้า `Notes` ซึ่ง **พิมพ์ลงใบเสนอราคาที่ส่งลูกค้า**
+            // ⇒ บันทึกภายในของทีมขาย (เช่น "ลูกค้าต่อราคาเก่ง") หลุดถึงลูกค้า · ย้ายไป InternalNotes ข้างล่าง
+            Notes: null,
             Lines: new List<Models.DTOs.Document.DocumentLineRequest>
             {
                 new(Description: lineDesc, Quantity: 1m, Unit: "งาน",
-                    UnitPrice: amount, DiscountPercent: 0m, VatRate: 7m,
+                    UnitPrice: amount, DiscountPercent: 0m, VatRate: quoteVatRate,
                     WithholdingTaxRate: 0m, AccountId: null)
             });
 
         var doc = await _docService.CreateDocumentAsync(companyId, docReq, userId);
+
+        // บันทึกภายในของ lead → หมายเหตุภายในของเอกสาร (ไม่พิมพ์ · ช่องเดียวกับที่ DocumentService ใช้แทน Notes)
+        // CreateDocumentRequest ไม่มีช่อง InternalNotes จึงเติมหลังสร้าง (เอกสารยังเป็นร่าง)
+        if (!string.IsNullOrWhiteSpace(lead.InternalNotes))
+        {
+            var quote = await _db.Documents
+                .FirstOrDefaultAsync(d => d.Id == doc.Id && d.CompanyId == companyId);
+            if (quote != null)
+            {
+                var carried = $"[จาก lead {lead.LeadNumber}] {lead.InternalNotes!.Trim()}";
+                quote.InternalNotes = string.IsNullOrWhiteSpace(quote.InternalNotes)
+                    ? carried
+                    : quote.InternalNotes.TrimEnd() + "\n\n" + carried;
+            }
+        }
 
         lead.ErpDocumentId = doc.Id;
         lead.Status = LeadStatus.Quoted;

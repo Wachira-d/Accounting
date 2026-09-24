@@ -561,6 +561,8 @@ public partial class PosService
         // เลขใบที่ออกจริง — ต้องส่งกลับให้หน้าเว็บ (pos.html อ่าน `documentNumber`
         // มาตลอดแต่ MapOrder ส่ง null เสมอ = "หน้าเว็บอ่านฟิลด์ที่เซิร์ฟเวอร์ไม่เคยส่ง")
         string? issuedNumber = null;
+        // ใบที่ออกจริง — ส่งต่อให้ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) หลัง commit (S-02)
+        Models.Entities.Document? issuedDoc = null;
 
         await using var txn = await _db.Database.BeginTransactionAsync();
         try
@@ -739,6 +741,7 @@ public partial class PosService
             }
 
             issuedNumber = doc.DocumentNumber;
+            issuedDoc = doc;
             await _db.SaveChangesAsync();
             await txn.CommitAsync();
         }
@@ -747,6 +750,13 @@ public partial class PosService
             await txn.RollbackAsync();
             throw;
         }
+
+        // ★ รอบ 193 S-02 — ใบกำกับเต็มรูปจาก POS ประทับ Approved เอง (ไม่ผ่าน ApproveDocumentAsync)
+        // ⇒ เดิมไม่เคยได้ e-Tax อัตโนมัติ แม้บริษัทเปิดไว้ · เรียกจุดเดียวกับเส้นเว็บ **หลัง commit**
+        // (e-Tax ล้ม = ใบขายไม่ล้ม แต่ถูกประทับ [ETAX-AUTO-FAILED] บนตัวเอกสาร)
+        // ไม่รวมวงเงินอนุมัติ/SoD/Budget — รอคำตัดสินเจ้าของ Q2
+        if (issuedDoc != null) await _issuedHooks.RunAsync(companyId, issuedDoc);
+
         var response = await GetOrderAsync(companyId, orderId);
         return response with { DocumentNumber = issuedNumber };
     }

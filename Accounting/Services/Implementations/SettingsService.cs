@@ -553,8 +553,8 @@ public class SettingsService : ISettingsService
         var settings = await _db.Set<CompanySettings>().FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (settings == null)
         {
-            settings = new CompanySettings { CompanyId = companyId };
-            _db.Set<CompanySettings>().Add(settings);
+            // seed สถานะ/อัตรา VAT จากบริษัท — ห้าม new เอง (ค่า default ของ entity = "จด VAT" เสมอ · S-01)
+            settings = await CompanySettingsFactory.AddNewAsync(_db, companyId);
             await _db.SaveChangesAsync();
         }
         return settings;

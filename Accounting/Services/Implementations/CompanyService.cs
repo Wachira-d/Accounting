@@ -74,6 +74,9 @@ public class CompanyService : ICompanyService
         company.Address = request.Address ?? ComposeAddress(company);
 
         _db.Companies.Add(company);
+        // แถวค่าตั้งเกิดพร้อมบริษัท + seed สถานะ/อัตรา VAT จากที่วิซาร์ดเลือก (S-01) — เดิมไม่สร้าง แล้วปล่อยให้
+        // หน้าตั้งค่าสร้างแบบ lazy ด้วย "จด VAT" ของ entity ⇒ กดบันทึกหน้าตั้งค่าครั้งแรกพลิก Company.IsVatRegistered เป็น true
+        _db.CompanySettings.Add(Accounting.Helpers.CompanySettingsFactory.NewFor(company));
 
         // Add creator as Owner
         _db.CompanyUsers.Add(new CompanyUser
@@ -294,6 +297,7 @@ public class CompanyService : ICompanyService
         if (request.IsVatRegistered.HasValue || request.VatRate.HasValue)
         {
             var cs = await _db.CompanySettings.FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+            // ยังไม่มีแถว = ข้ามได้: แถวที่สร้างทีหลังทุกทางผ่าน CompanySettingsFactory ซึ่ง seed จากบริษัท (S-01)
             if (cs != null)
             {
                 if (request.IsVatRegistered.HasValue) cs.VatRegistered = request.IsVatRegistered.Value;

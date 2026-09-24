@@ -37,6 +37,8 @@ public class IntegrationService : IIntegrationService
     private readonly IDocumentService? _documentService;
     private readonly IWithholdingTaxCertService? _whtCertService;
     private readonly ISecretProtector _secrets;
+    /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — เอกสารที่ API ประทับ Approved เอง ต้องเดินขั้นเดียวกับเส้นเว็บ (S-02)</summary>
+    private readonly IIssuedDocumentHooks _issuedHooks;
     private readonly Accounting.Services.Interfaces.IDbdLookupService? _dbd;
     // AI fallback สำหรับเลือกผังบัญชี GL — เมื่อระบบภายนอกส่ง line.AccountCode
     // มาว่าง/หาไม่เจอใน chart, เรียก local distillation model ก่อน (student-first)
@@ -47,6 +49,7 @@ public class IntegrationService : IIntegrationService
     public IntegrationService(AccountingDbContext db, ISettingsService settingsService, ILogger<IntegrationService> logger,
         Accounting.Services.Implementations.Ocr.VendorIntelligenceService vendorIntel,
         ISecretProtector secrets,
+        IIssuedDocumentHooks issuedHooks,
         IDocumentService? documentService = null,
         IWithholdingTaxCertService? whtCertService = null,
         Accounting.Services.Interfaces.IDbdLookupService? dbd = null,
@@ -57,6 +60,7 @@ public class IntegrationService : IIntegrationService
         _logger = logger;
         _vendorIntel = vendorIntel;
         _secrets = secrets;
+        _issuedHooks = issuedHooks;
         _documentService = documentService;
         _whtCertService = whtCertService;
         _dbd = dbd;
@@ -1049,6 +1053,10 @@ public class IntegrationService : IIntegrationService
                 (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "invoice", log);
             }
 
+            // ★ รอบ 193 S-02 — ใบกำกับที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
+            // (ล้ม = ประทับ [ETAX-AUTO-FAILED] บนเอกสาร ไม่ทำให้ sync ล้ม)
+            await _issuedHooks.RunAsync(companyId, document);
+
             // ⚠️ ห้ามทับสถานะ PartialSuccess ที่ PostMappingJournalAsync ตั้งไว้ —
             // "สร้างเอกสารได้แต่ลงบัญชีไม่ได้" ไม่ใช่ Success
             if (log.Status != "PartialSuccess") log.Status = "Success";
@@ -1324,6 +1332,9 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
+            // ★ รอบ 193 S-02 — ใบลดหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
+            await _issuedHooks.RunAsync(companyId, document);
+
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
             log.CreatedJournalEntryId = journalEntryId;
@@ -1423,6 +1434,9 @@ public class IntegrationService : IIntegrationService
             // Create journal entry for debit note
             // ใบเพิ่มหนี้ (ฝั่งรายรับ): Dr ลูกหนี้การค้า, Cr รายได้ + Cr ภาษีขาย
             var journalEntryId = await CreateDebitNoteJournalAsync(companyId, document);
+
+            // ★ รอบ 193 S-02 — ใบเพิ่มหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
+            await _issuedHooks.RunAsync(companyId, document);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -1919,22 +1933,14 @@ public class IntegrationService : IIntegrationService
     /// `request.VatRate` ถอยไปหาเลข 7 ตายตัว 6 จุด + `defaultVatRate = 7` อีก 2 จุด
     /// โดยไม่มีใครรู้ว่า tenant จด VAT หรือไม่ — DECISION_AUDIT §3 D8-4)
     ///
-    /// <para>อ่านจาก <c>CompanySettings</c> ชุดเดียวกับ <c>DocumentService</c> และ
-    /// ด่าน §90/2 ที่มีอยู่แล้วในไฟล์นี้ (คู่ <c>Company.IsVatRegistered</c>/<c>VatRate</c>
-    /// ถูก sync ให้ตรงกันเสมอที่ <c>CompanyService</c>/<c>SettingsService</c>)</para>
-    ///
-    /// <para>ยังไม่เคยตั้งค่า = ถือว่า "จด + 7%" — ตรงกับพฤติกรรมเดิมของบริษัทที่ยัง
-    /// ไม่แตะหน้าตั้งค่า จึงไม่มีใครถูกบล็อกโดยไม่รู้ตัวจากการแก้รอบนี้</para>
+    /// <para>อ่านผ่าน <see cref="Accounting.Helpers.CompanyVatStatus"/> ตัวเดียวกับ <c>DocumentService</c>
+    /// และด่าน §90/2 · มีแถวค่าตั้ง = ธงค่าตั้ง (เดิม) · ยังไม่มีแถว = ธง/อัตราของ <c>Company</c>
+    /// (เดิม "ถือว่าจด + 7%" เสมอ ⇒ บริษัทที่ไม่ติ๊กจด VAT ตอนสร้าง ถูกคิด VAT ผ่าน API ได้ — S-01)</para>
     /// </summary>
     private async Task<(bool Registered, decimal DefaultRate)> GetCompanyVatProfileAsync(Guid companyId)
     {
-        var row = await _db.CompanySettings.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-            .Select(c => new { c.VatRegistered, c.DefaultVatRate })
-            .FirstOrDefaultAsync();
-        var rate = row?.DefaultVatRate ?? Accounting.Helpers.PartnerVatRate.StatutoryRate;
-        return (row?.VatRegistered ?? true,
-            rate > 0m ? rate : Accounting.Helpers.PartnerVatRate.StatutoryRate);
+        var (registered, rate) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+        return (registered, rate > 0m ? rate : Accounting.Helpers.PartnerVatRate.StatutoryRate);
     }
 
     /// <param name="outputVatAllowed">false = บริษัทยังไม่จด VAT และเอกสารนี้ **เราเป็นผู้ออก**
@@ -3385,6 +3391,9 @@ public class IntegrationService : IIntegrationService
                 // self-sufficient (no separate manual WHT step). Best-effort — a
                 // failure here must not fail the already-committed expense sync.
                 whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: false);
+                // ผลข้างเคียงหลังออกเอกสารจุดเดียว (S-02) — ใบค่าใช้จ่ายไม่มี e-Tax (ข้ามในตัว hook)
+                // แต่ทุกจุดที่ประทับ Approved เดินขั้นเดียวกัน (approved_status_writer_check)
+                await _issuedHooks.RunAsync(companyId, document);
             }
 
             if (log.Status != "PartialSuccess") log.Status = "Success";
@@ -3510,6 +3519,8 @@ public class IntegrationService : IIntegrationService
                 // Auto-issue the WHT certificate — a paid voucher with withholding
                 // is exactly when the 50 ทวิ must be handed to the supplier.
                 whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: true);
+                // ผลข้างเคียงหลังออกเอกสารจุดเดียว (S-02) — PV ไม่มี e-Tax (ข้ามในตัว hook)
+                await _issuedHooks.RunAsync(companyId, document);
             }
 
             log.Status = "Success";
@@ -3755,6 +3766,8 @@ public class IntegrationService : IIntegrationService
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             var (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "expense", log);
+            // ผลข้างเคียงหลังออกเอกสารจุดเดียว (S-02) — ใบรับรองแทนใบเสร็จไม่มี e-Tax (ข้ามในตัว hook)
+            await _issuedHooks.RunAsync(companyId, document);
 
             if (log.Status != "PartialSuccess") log.Status = "Success";
             log.CreatedDocumentId = document.Id;

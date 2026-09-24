@@ -91,8 +91,7 @@ public class EmailConfigController : ControllerBase
         var s = await _db.CompanySettings.FirstOrDefaultAsync(x => x.CompanyId == companyId);
         if (s == null)
         {
-            s = new CompanySettings { CompanyId = companyId };
-            _db.CompanySettings.Add(s);
+            s = await CompanySettingsFactory.AddNewAsync(_db, companyId);   // seed VAT จากบริษัท (S-01)
             await _db.SaveChangesAsync();
         }
         return s;
