@@ -217,6 +217,7 @@ const WB = {
         <div class="grid2" style="margin-top:12px">
           <div class="fld"><label>ผู้ขาย</label><input id="f${i}_vendor" value="${this.esc(d.extractedVendorName || '')}" class="${low ? 'low' : ''}"></div>
           <div class="fld"><label>เลขผู้เสียภาษีผู้ขาย</label><input id="f${i}_taxid" value="${this.esc(d.extractedVendorTaxId || '')}" class="${low ? 'low' : ''}"></div>
+          <div class="fld"><label>รหัสสาขาผู้ขาย (5 หลัก · 00000 = สำนักงานใหญ่)</label><input id="f${i}_branch" inputmode="numeric" maxlength="5" value="${this.esc(d.vendorBranchCode || '')}"></div>
           <div class="fld"><label>เลขที่เอกสาร</label><input id="f${i}_docno" value="${this.esc(d.extractedDocumentNumber || '')}"></div>
           <div class="fld"><label>วันที่</label><input type="date" id="f${i}_date" value="${d.extractedDate ? String(d.extractedDate).slice(0, 10) : ''}"></div>
           <div class="fld"><label>ยอดก่อน VAT</label><input type="number" step="0.01" id="f${i}_sub" value="${d.extractedSubTotal ?? ''}"></div>
@@ -235,12 +236,15 @@ const WB = {
   async resolveContact(i) {
     const name = document.getElementById(`f${i}_vendor`).value;
     const taxId = document.getElementById(`f${i}_taxid`).value;
+    // รอบ 193 ทีม C3: เลขภาษี + สาขา = ตัวตนคู่ค้า — ส่งสาขาไปด้วย มิฉะนั้นได้แถวสำนักงานใหญ่ของเลขเดียวกัน
+    const branchCode = document.getElementById(`f${i}_branch`)?.value || null;
     const out = document.getElementById(`f${i}_resolve`);
     out.textContent = 'กำลังค้นหา…';
     try {
-      const r = await this.post(`/api/v1/contacts/resolve`, { name, taxId });
+      const r = await this.post(`/api/v1/contacts/resolve`, { name, taxId, branchCode });
       const d = r?.data || {};
-      if (!d.contactId) { out.innerHTML = '<span style="color:var(--g500)">ไม่พบในทะเบียน — จะสร้างรายใหม่ให้</span>'; return; }
+      // ข้อความจากเซิร์ฟเวอร์ (เช่น "มีเลขนี้แล้วแต่ไม่มีสาขาที่ 00008 — ระบบจะสร้างสาขานี้แยก") ชนะข้อความสำเร็จรูป
+      if (!d.contactId) { out.innerHTML = `<span style="color:var(--g500)">${this.esc(d.reason || 'ไม่พบในทะเบียน — จะสร้างรายใหม่ให้')}</span>`; return; }
       document.getElementById(`f${i}_extid`).value = d.externalId || '';
       const pct = Math.round((d.confidence || 0) * 100);
       out.innerHTML = d.matched
@@ -262,6 +266,7 @@ const WB = {
       supplierInvoiceNumber: g('docno'),
       contactName: g('vendor'),
       contactTaxId: g('taxid'),
+      contactBranchCode: g('branch') || null,
       contactExternalId: g('extid'),
       lines: [{
         description: `ตามเอกสาร ${g('docno') || '-'}`,

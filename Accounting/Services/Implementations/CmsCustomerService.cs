@@ -336,14 +336,20 @@ public class CmsCustomerService : ICmsCustomerService
         var customer = await _db.SiteCustomers.FirstOrDefaultAsync(c => c.Id == customerId && c.CompanyId == companyId);
         if (customer == null || customer.ContactId.HasValue) return false;
 
-        // Try matching by email
-        var contact = await _db.Contacts.FirstOrDefaultAsync(c =>
-            c.CompanyId == companyId && c.Email == customer.Email && c.IsActive);
+        // รอบ 193 ทีม C3 (คำตัดสินเจ้าของข้อ 20): คีย์เลขภาษี + สาขา ก่อนอีเมล — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey.
+        // เดิมจับอีเมลก่อนแล้วค่อยเลขภาษีอย่างเดียว ⇒ ลูกค้าเว็บของสาขา 8 ผูกเข้าผู้ติดต่อสำนักงานใหญ่ (แถวไหนก็ได้ของเลขนั้น)
+        // ⇒ ใบกำกับจากคำสั่งซื้อเว็บออกสาขาผิดตาม §86/4 · SiteCustomer.BranchCode ว่าง = "ไม่ระบุ" (แถว สนญ. ก่อน)
+        Contact? contact = null;
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            _db.Contacts.Where(c => c.IsActive), companyId, customer.TaxId, customer.BranchCode);
+        if (taxKey.ContactId is Guid keyId)
+            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
 
-        // Try matching by TaxId
-        if (contact == null && !string.IsNullOrEmpty(customer.TaxId))
+        // มีผู้ติดต่อเลขนี้แล้วแต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยอีเมล (อีเมลเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) —
+        // ไม่ผูก ให้ผู้ใช้สร้าง/เลือกผู้ติดต่อของสาขานั้นเอง (เมธอดนี้ไม่สร้างผู้ติดต่อ)
+        if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrWhiteSpace(customer.Email))
             contact = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.TaxId == customer.TaxId && c.IsActive);
+                c.CompanyId == companyId && c.Email == customer.Email && c.IsActive);
 
         if (contact != null)
         {

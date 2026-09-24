@@ -379,20 +379,14 @@ public class CrossTenantWorkflowService
             .FirstOrDefaultAsync(c => c.Id == approvedQuoteLink.SourceCompanyId);
         if (supplier == null) return;
 
-        var supplierContact = await _db.Contacts
-            .FirstOrDefaultAsync(c => c.CompanyId == approvedQuoteLink.TargetCompanyId
-                && c.TaxId == supplier.TaxId && !c.IsDeleted);
+        // รอบ 193 ทีม C3: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — สาขาของบริษัทคู่ค้า = Company.BranchCode
+        // เดิม `c.TaxId == supplier.TaxId` หยิบแถวไหนก็ได้ของเลขนั้น และเมื่อบริษัทคู่ค้าไม่มีเลขภาษี EF แปลเป็น
+        // `TaxId IS NULL` ⇒ ผูกผู้ติดต่อรายแรกที่ไม่มีเลข (คนละรายสิ้นเชิง)
+        var supplierContact = await FindPartnerContactAsync(
+            approvedQuoteLink.TargetCompanyId, supplier, asSupplier: true);
         if (supplierContact == null)
         {
-            supplierContact = new Contact
-            {
-                CompanyId = approvedQuoteLink.TargetCompanyId,
-                Name = supplier.Name,
-                TaxId = supplier.TaxId,
-                IsSupplier = true,
-                IsCustomer = false,
-                CreatedBy = "cross-tenant-routing",
-            };
+            supplierContact = NewPartnerContact(approvedQuoteLink.TargetCompanyId, supplier, asSupplier: true);
             _db.Contacts.Add(supplierContact);
             await _db.SaveChangesAsync();
         }
@@ -455,6 +449,51 @@ public class CrossTenantWorkflowService
             await CreateDownstreamInvoiceAsync(poLink, actingUserId);
     }
 
+    /// <summary>ผู้ติดต่อที่แทน "บริษัทคู่ค้าในระบบเดียวกัน" ในผังผู้ติดต่อของ <paramref name="ownerCompanyId"/> —
+    /// คีย์ = เลขภาษี + สาขาของบริษัทนั้น (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า · รอบ 193 ทีม C3).
+    /// เลขนี้มีแล้วแต่คนละสาขา ⇒ คืน null ให้ผู้เรียกสร้างแถวของสาขานั้น (ห้ามถอยไปจับด้วยชื่อ) ·
+    /// บริษัทคู่ค้าไม่มีเลขภาษี ⇒ จับด้วยชื่อตรงตัว (เดิม EF แปล <c>TaxId == null</c> เป็น IS NULL = ผู้ติดต่อไม่มีเลขรายไหนก็ได้)</summary>
+    private async Task<Contact?> FindPartnerContactAsync(Guid ownerCompanyId, Company partner, bool asSupplier)
+    {
+        if (!string.IsNullOrWhiteSpace(partner.TaxId))
+        {
+            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Contacts, ownerCompanyId, partner.TaxId,
+                string.IsNullOrWhiteSpace(partner.BranchCode) ? Accounting.Helpers.TaxBranchCode.HeadOffice : partner.BranchCode);
+            return key.ContactId is Guid id
+                ? await _db.Contacts.FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == ownerCompanyId && !c.IsDeleted)
+                : null;
+        }
+        if (string.IsNullOrWhiteSpace(partner.Name)) return null;
+        return await _db.Contacts
+            .Where(c => c.CompanyId == ownerCompanyId && !c.IsDeleted && c.Name == partner.Name
+                && (asSupplier ? c.IsSupplier : c.IsCustomer))
+            .OrderBy(c => c.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>แถวผู้ติดต่อใหม่ของบริษัทคู่ค้า — ชนิด + รหัสสาขาจากตัวตัดสินตัวเดียว (Helpers/ContactTypeResolver)
+    /// เพื่อให้ใบกำกับที่ออกให้คู่ค้ารายนี้มีสาขาตาม §86/4 (เดิมไม่ตั้งสาขาเลย)</summary>
+    private static Contact NewPartnerContact(Guid ownerCompanyId, Company partner, bool asSupplier)
+    {
+        var identity = Accounting.Helpers.ContactTypeResolver.ResolveWithBranch(
+            declared: null, taxId: partner.TaxId,
+            branchCode: string.IsNullOrWhiteSpace(partner.BranchCode) ? Accounting.Helpers.TaxBranchCode.HeadOffice : partner.BranchCode,
+            name: partner.Name);
+        return new Contact
+        {
+            CompanyId = ownerCompanyId,
+            Name = partner.Name,
+            TaxId = partner.TaxId,
+            BranchCode = identity.BranchCode,
+            ContactType = identity.Type,
+            Address = partner.Address,
+            IsSupplier = asSupplier,
+            IsCustomer = !asSupplier,
+            CreatedBy = "cross-tenant-routing",
+        };
+    }
+
     private async Task CreateDownstreamInvoiceAsync(CrossTenantDocumentLink poLink, Guid actingUserId)
     {
         var po = await _db.Documents
@@ -467,20 +506,12 @@ public class CrossTenantWorkflowService
             .FirstOrDefaultAsync(c => c.Id == poLink.SourceCompanyId);
         if (buyer == null) return;
 
-        var buyerContact = await _db.Contacts
-            .FirstOrDefaultAsync(c => c.CompanyId == poLink.TargetCompanyId
-                && c.TaxId == buyer.TaxId && !c.IsDeleted);
+        // รอบ 193 ทีม C3: คีย์เลขภาษี + สาขา — ใบกำกับที่ออกให้ผู้ซื้อต้องเป็นสาขาของผู้ซื้อจริง (§86/4)
+        var buyerContact = await FindPartnerContactAsync(
+            poLink.TargetCompanyId, buyer, asSupplier: false);
         if (buyerContact == null)
         {
-            buyerContact = new Contact
-            {
-                CompanyId = poLink.TargetCompanyId,
-                Name = buyer.Name,
-                TaxId = buyer.TaxId,
-                IsCustomer = true,
-                IsSupplier = false,
-                CreatedBy = "cross-tenant-routing",
-            };
+            buyerContact = NewPartnerContact(poLink.TargetCompanyId, buyer, asSupplier: false);
             _db.Contacts.Add(buyerContact);
             await _db.SaveChangesAsync();
         }

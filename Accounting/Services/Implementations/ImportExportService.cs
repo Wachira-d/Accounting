@@ -134,16 +134,18 @@ public class ImportExportService : IImportExportService
         {
             case "contacts":
             {
-                var taxIds = request.Data
-                    .Select(r => r.GetValueOrDefault("TaxId"))
-                    .Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
-                var existing = await _db.Contacts
-                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
-                    .ToDictionaryAsync(c => c.TaxId!);
+                // รอบ 193 ทีม C3: คีย์เลขภาษี + สาขา — ตัวตัดสินเดียวกับ ImportContactAsync (Helpers/ContactTaxBranchKey)
+                // เดิม ToDictionaryAsync(c => c.TaxId) โยน ArgumentException ทั้งหน้าพรีวิวทันทีที่เลขเดียวกันมีสองสาขา
+                // และตัวชี้ "ซ้ำ/ขัด" ต้องตรงกับแถวที่การนำเข้าจริงจะไปแตะ (คอลัมน์ BranchCode ว่าง = "ไม่ระบุ")
+                var existingRows = await Accounting.Helpers.ContactTaxBranchKey.LoadByTaxIdsAsync(
+                    _db.Contacts.Where(c => !c.IsDeleted), companyId,
+                    request.Data.Select(r => r.GetValueOrDefault("TaxId")));
                 foreach (var row in request.Data)
                 {
                     var taxId = row.GetValueOrDefault("TaxId");
-                    if (string.IsNullOrWhiteSpace(taxId) || !existing.TryGetValue(taxId, out var ex))
+                    if (string.IsNullOrWhiteSpace(taxId)) { newCount++; continue; }
+                    var ex = Accounting.Helpers.ContactTaxBranchKey.PickContact(existingRows, taxId, row.GetValueOrDefault("BranchCode"));
+                    if (ex == null)
                     { newCount++; continue; }
                     var name = row.GetValueOrDefault("Name");
                     var phone = row.GetValueOrDefault("Phone");
@@ -553,7 +555,9 @@ public class ImportExportService : IImportExportService
             existing.ContactType = Accounting.Helpers.ContactTypeResolver.ApplyToExisting(
                 existing.ContactType, row.GetValueOrDefault("ContactType"),
                 taxId ?? existing.TaxId, existing.Name).Type;
-            var branchIn = string.IsNullOrWhiteSpace(row.GetValueOrDefault("BranchCode"))
+            // รอบ 193 ทีม C3: รหัสสาขาในไฟล์เขียนทับได้เฉพาะแถวที่ "ตรงสาขาแล้ว" — รหัสผิดรูป ("8A") ได้แถว สนญ. จากกติกา
+            // "ไม่ระบุ" แต่ BranchCodeFor ดึงเลขเป็น 00008 ⇒ ห้ามเขียน มิฉะนั้นแถว สนญ. กลายเป็นสาขา 8
+            var branchIn = string.IsNullOrWhiteSpace(row.GetValueOrDefault("BranchCode")) || !taxKey.MayOverwriteBranch
                 ? existing.BranchCode : row.GetValueOrDefault("BranchCode");
             existing.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
                 existing.ContactType, branchIn);
@@ -1024,10 +1028,13 @@ public class ImportExportService : IImportExportService
             contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
         if (contact == null && !string.IsNullOrWhiteSpace(contactName))
             contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == contactName);
-        contact ??= _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity)
-            .FirstOrDefault(c => c.CompanyId == companyId && (
-                (!string.IsNullOrWhiteSpace(contactTaxId) && c.TaxId == contactTaxId) ||
-                (!string.IsNullOrWhiteSpace(contactName) && c.Name == contactName)));
+        // แถวที่เพิ่งสร้างในชุดเดียวกัน (ยังไม่ SaveChanges) — เลขภาษีผ่านตัวจับคู่กลางตัวเดียว (รอบ 193 ทีม C3 ·
+        // ไฟล์ยกมาไม่มีคอลัมน์สาขา ⇒ "ไม่ระบุ") แล้วค่อยชื่อ
+        var pending = _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity)
+            .Where(c => c.CompanyId == companyId).ToList();
+        contact ??= Accounting.Helpers.ContactTaxBranchKey.PickContact(pending, contactTaxId, branchCode: null);
+        contact ??= string.IsNullOrWhiteSpace(contactName) ? null
+            : pending.FirstOrDefault(c => c.Name == contactName);
         if (contact == null)
         {
             var newName = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName;

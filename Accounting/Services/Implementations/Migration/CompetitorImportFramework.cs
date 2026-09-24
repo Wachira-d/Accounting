@@ -151,10 +151,11 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
         var resolutions = options.Resolutions ?? new Dictionary<string, ConflictAction>();
 
         // Preload all existing contacts that might match — avoids N round-trips.
-        var taxIds = rows.Select(r => r.TaxId).Where(t => !string.IsNullOrEmpty(t)).Distinct().ToList();
-        var existingByTaxId = await _db.Contacts
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
-            .ToDictionaryAsync(c => c.TaxId!, ct);
+        // รอบ 193 ทีม C3: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — เดิม ToDictionaryAsync(c => c.TaxId)
+        // โยน ArgumentException ทั้งไฟล์ทันทีที่เลขเดียวกันมีผู้ติดต่อสองสาขา (ซึ่งถูกต้องตามประกาศอธิบดีฯ 199) ·
+        // ไฟล์ของระบบคู่แข่งไม่มีคอลัมน์สาขา ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน
+        var existingRows = await Accounting.Helpers.ContactTaxBranchKey.LoadByTaxIdsAsync(
+            _db.Contacts.Where(c => !c.IsDeleted), companyId, rows.Select(r => r.TaxId), ct);
 
         int rowIdx = 0;
         foreach (var row in rows)
@@ -165,9 +166,7 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
 
             try
             {
-                Contact? existing = null;
-                if (!string.IsNullOrEmpty(row.TaxId))
-                    existingByTaxId.TryGetValue(row.TaxId, out existing);
+                var existing = Accounting.Helpers.ContactTaxBranchKey.PickContact(existingRows, row.TaxId, branchCode: null);
 
                 if (existing == null)
                 {
@@ -241,10 +240,9 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
     private async Task<(List<RowConflict>, int newCount, int exactDupCount)>
         DetectConflictsAsync(Guid companyId, List<IncomingContact> rows, CancellationToken ct)
     {
-        var taxIds = rows.Select(r => r.TaxId).Where(t => !string.IsNullOrEmpty(t)).Distinct().ToList();
-        var existing = await _db.Contacts
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted && taxIds.Contains(c.TaxId!))
-            .ToDictionaryAsync(c => c.TaxId!, ct);
+        // รอบ 193 ทีม C3: ตัวจับคู่กลางเดียวกับ ImportAsync (เดิม ToDictionaryAsync(c => c.TaxId) พังเมื่อเลขเดียวมีหลายสาขา)
+        var existingRows = await Accounting.Helpers.ContactTaxBranchKey.LoadByTaxIdsAsync(
+            _db.Contacts.Where(c => !c.IsDeleted), companyId, rows.Select(r => r.TaxId), ct);
 
         var conflicts = new List<RowConflict>();
         int newCount = 0, exactDupCount = 0;
@@ -253,8 +251,8 @@ public abstract class ContactImportAdapterBase : ICompetitorImportAdapter
         foreach (var row in rows)
         {
             if (string.IsNullOrWhiteSpace(row.Name)) continue;
-            if (string.IsNullOrEmpty(row.TaxId)
-                || !existing.TryGetValue(row.TaxId, out var ex))
+            var ex = Accounting.Helpers.ContactTaxBranchKey.PickContact(existingRows, row.TaxId, branchCode: null);
+            if (ex == null)
             {
                 newCount++;
                 continue;

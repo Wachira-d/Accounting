@@ -20,7 +20,8 @@ namespace Accounting.Controllers.V1;
 ///
 /// **ผู้ติดต่อ resolve 3 ชั้น** (ตามลำดับความแน่นอน):
 ///   1. `contactExternalId` — รหัสในระบบลูกค้า แน่นอนที่สุด
-///   2. เลขผู้เสียภาษี — กุญแจที่ไม่กำกวม
+///   2. เลขผู้เสียภาษี + <c>contactBranchCode</c> (Helpers/ContactTaxBranchKey) — เลขนี้มีอยู่แล้วแต่ไม่มีสาขาที่ส่งมา
+///      ⇒ สร้างผู้ติดต่อของสาขานั้นแยก (ไม่ถอยไปเทียบชื่อ ซึ่งจะได้แถวสาขาอื่นของเลขเดียวกันกลับมา)
 ///   3. ชื่อ (ข้ามภาษา/ทนชื่อถูกตัด) — หลักฐานอ่อน ใช้เมื่อไม่มี 2 อย่างแรก
 ///   ไม่เจอเลย → สร้าง contact ใหม่ **ที่ยังไม่มี ExternalId** แล้วโผล่ใน
 ///   `/contacts/unmapped` ให้ลูกค้ามาผูกรหัสภายหลัง (ปิดวงจร ไม่ปล่อยค้าง)
@@ -55,7 +56,10 @@ public class DocumentsV1Controller : PublicApiControllerBase
         string? ContactExternalId,
         string? ContactTaxId,
         string? ContactName,
-        List<LineRequest>? Lines);
+        List<LineRequest>? Lines,
+        // รหัสสาขา 5 หลักของคู่ค้า (ไม่บังคับ · รอบ 193 ทีม C3) — ใช้คู่กับ contactTaxId: เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ
+        // (ประกาศอธิบดีฯ 199 · §86/4) · ไม่ส่ง = "ไม่ระบุ" (แถวสำนักงานใหญ่ก่อน) · ส่งมาแล้วยังไม่มีแถวสาขานี้ = สร้างให้
+        string? ContactBranchCode = null);
 
     /// <summary>สร้างเอกสาร (ค่าเริ่มต้นเป็นฉบับร่าง — เลขจริงออกตอนอนุมัติตาม §86/4)
     ///
@@ -87,7 +91,11 @@ public class DocumentsV1Controller : PublicApiControllerBase
         if (req!.Lines == null || req.Lines.Count == 0)
             return BadRequest(new ApiResponse<string>(false, null, "ต้องมีรายการอย่างน้อย 1 บรรทัด"));
 
-        var contactId = await ResolveContactAsync(ctx!.CompanyId, req, ct);
+        // รหัสสาขาผิดรูป = ตอบ 400 ชี้ช่อง — ห้ามถือเป็น "ไม่ระบุ" แล้วออกใบกำกับในนามสำนักงานใหญ่เงียบ ๆ (§86/4)
+        if (!Helpers.TaxBranchCode.TryNormalize(req.ContactBranchCode, out _, out var branchError))
+            return BadRequest(new ApiResponse<string>(false, null, $"contactBranchCode: {branchError}"));
+
+        var contactId = await ResolveContactAsync(ctx!.CompanyId, req, docType, ct);
         if (contactId == null)
             return BadRequest(new ApiResponse<string>(false, null,
                 "ระบุผู้ติดต่อไม่ได้ — ส่ง contactId, contactExternalId, contactTaxId หรือ contactName อย่างน้อยหนึ่งอย่าง"));
@@ -280,7 +288,7 @@ public class DocumentsV1Controller : PublicApiControllerBase
     /// <summary>
     /// resolve ผู้ติดต่อตามลำดับความแน่นอน — ดูหมายเหตุบนคลาส
     /// </summary>
-    private async Task<Guid?> ResolveContactAsync(Guid companyId, CreateRequest req, CancellationToken ct)
+    private async Task<Guid?> ResolveContactAsync(Guid companyId, CreateRequest req, DocumentType docType, CancellationToken ct)
     {
         if (req.ContactId.HasValue &&
             await Db.Contacts.AnyAsync(c => c.Id == req.ContactId.Value && c.CompanyId == companyId, ct))
@@ -295,24 +303,59 @@ public class DocumentsV1Controller : PublicApiControllerBase
         }
 
         var taxId = Helpers.ThaiTaxIdValidator.Normalize(req.ContactTaxId);
+        var taxIdExists = false;
         if (!string.IsNullOrWhiteSpace(taxId))
         {
-            // รอบ 193 ข้อ 20: ตัวจับคู่กลาง (เลขภาษี + สาขา) — payload ไม่มีช่องสาขา ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน
-            // (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
-            var taxKey = await Helpers.ContactTaxBranchKey.FindAsync(Db.Contacts.AsNoTracking(), companyId, taxId, null, ct);
+            // รอบ 193 ข้อ 20 + ทีม C3: ตัวจับคู่กลาง (เลขภาษี + สาขา) — ส่ง contactBranchCode ต่อจนถึงการหา/สร้าง
+            // (เดิมส่ง null เสมอ ⇒ ผู้ซื้อสาขา 8 ได้ผู้ติดต่อสำนักงานใหญ่ = ใบกำกับสาขาผิดตาม §86/4 ทั้งที่
+            // /contacts/resolve บอกพาร์ตเนอร์ว่า "ระบบจะสร้างผู้ติดต่อของสาขานี้แยก")
+            var taxKey = await Helpers.ContactTaxBranchKey.FindAsync(
+                Db.Contacts.AsNoTracking(), companyId, taxId, req.ContactBranchCode, ct);
             if (taxKey.ContactId.HasValue) return taxKey.ContactId;
+            taxIdExists = taxKey.TaxIdExists;
         }
 
-        if (string.IsNullOrWhiteSpace(req.ContactName)) return null;
+        if (string.IsNullOrWhiteSpace(req.ContactName) && !taxIdExists) return null;
 
         // เทียบชื่อข้ามภาษา — จับได้แม้เอกสารพิมพ์ไทยแต่ทะเบียนเก็บอังกฤษ
-        var candidates = await Db.Contacts.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && c.IsActive)
-            .Select(c => new { c.Id, c.Name })
-            .ToListAsync(ct);
-        var best = CounterpartyNameMatcher.Best(req.ContactName, candidates, c => c.Name);
-        if (best != null && best.Value.Match.Score >= CounterpartyNameMatcher.ConfidentThreshold)
-            return best.Value.Item.Id;
+        // มีผู้ติดต่อเลขนี้แล้วแต่คนละสาขา ⇒ ห้ามเทียบชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
+        if (!taxIdExists)
+        {
+            var candidates = await Db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.IsActive)
+                .Select(c => new { c.Id, c.Name })
+                .ToListAsync(ct);
+            var best = CounterpartyNameMatcher.Best(req.ContactName!, candidates, c => c.Name);
+            if (best != null && best.Value.Match.Score >= CounterpartyNameMatcher.ConfidentThreshold)
+                return best.Value.Item.Id;
+        }
+
+        // ผู้ติดต่อสาขาใหม่ของเลขที่มีอยู่แล้ว: นิติบุคคลเดียวกัน ⇒ ชื่อ (เมื่อไม่ได้ส่งมา) + บทบาทลูกค้า/ผู้จำหน่าย
+        // ตามแถวเดิม (ตัวจับคู่กลาง กติกา "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน) — มิฉะนั้นใบกำกับของสาขาใหม่ตกด่าน
+        // "ผู้ติดต่อไม่ได้ตั้งค่าเป็นลูกค้า" ใน CreateDocumentAsync
+        var newName = req.ContactName?.Trim();
+        bool siblingIsCustomer = false, siblingIsSupplier = false;
+        if (taxIdExists)
+        {
+            var sibling = await Helpers.ContactTaxBranchKey.FindAsync(
+                Db.Contacts.AsNoTracking(), companyId, taxId, branchCode: null, ct);
+            var sib = sibling.ContactId is Guid siblingId
+                ? await Db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == siblingId && c.CompanyId == companyId)
+                    .Select(c => new { c.Name, c.IsCustomer, c.IsSupplier })
+                    .FirstOrDefaultAsync(ct)
+                : null;
+            if (sib != null)
+            {
+                if (string.IsNullOrWhiteSpace(newName)) newName = sib.Name;
+                siblingIsCustomer = sib.IsCustomer;
+                siblingIsSupplier = sib.IsSupplier;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(newName)) return null;
+        // บทบาทของแถวใหม่: ตามฝั่งของเอกสารที่กำลังสร้าง (Helpers/DocumentSide ตัวเดียว) + บทบาทของแถวเลขเดียวกัน ·
+        // เดิมตั้ง IsSupplier เสมอ ⇒ เอกสารฝั่งขายของคู่ค้ารายใหม่ตกด่านบทบาทใน CreateDocumentAsync
+        var isSalesDoc = Helpers.DocumentSide.IsSales(docType);
 
         // ไม่เจอ → สร้างใหม่ **โดยไม่ใส่ ExternalId** เพื่อให้โผล่ใน /contacts/unmapped
         // ลูกค้าจะได้เห็นและผูกรหัส แทนที่จะปล่อยค้างจนเอกสารยิงกลับไม่ได้
@@ -322,18 +365,19 @@ public class DocumentsV1Controller : PublicApiControllerBase
         // มาแต่ชื่อกลายเป็น "บุคคลธรรมดาที่พิสูจน์แล้ว" เงียบ ๆ แล้วไปโผล่ใน ภ.ง.ด.3
         // ⇒ ตอนนี้ตัดสินไม่ได้ = ContactType.Unknown ที่เห็นได้บนหน้าผู้ติดต่อ
         var identity = Helpers.ContactTypeResolver.ResolveWithBranch(
-            declared: null, taxId: taxId, branchCode: null, name: req.ContactName);
+            declared: null, taxId: taxId, branchCode: req.ContactBranchCode, name: newName);
         var created = new Contact
         {
             CompanyId = companyId,
-            Name = req.ContactName.Trim(),
+            Name = newName,
             TaxId = taxId,
             ContactType = identity.Type,
             BranchCode = identity.BranchCode,
             InternalNotes = identity.IsResolved
                 ? null
                 : $"[สร้างจาก /api/v1/documents] ยังระบุชนิดผู้ติดต่อไม่ได้ — {identity.Reason}",
-            IsSupplier = true,
+            IsCustomer = isSalesDoc || siblingIsCustomer,
+            IsSupplier = !isSalesDoc || siblingIsSupplier,
             IsActive = true,
             CreatedBy = "api:v1:auto-contact",
         };

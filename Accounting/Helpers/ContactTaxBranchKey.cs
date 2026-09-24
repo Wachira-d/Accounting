@@ -11,8 +11,6 @@ public enum ContactKeyBasis
 {
     /// <summary>เลขภาษี + สาขาตรงกัน (แถวที่ไม่เคยระบุสาขา ≡ 00000 ตาม <c>FindDuplicateContactAsync</c>)</summary>
     ExactBranch,
-    /// <summary>payload ระบุสาขา N · ไม่มีแถว N แต่มีแถวเลขเดียวกันที่<b>ไม่เคยระบุสาขา</b> (ข้อมูลเก่า) — ผูกแถวนั้นแทนการสร้างซ้ำ</summary>
-    UnspecifiedBranchRow,
     /// <summary>payload ไม่ระบุสาขา → แถวสำนักงานใหญ่ (หรือแถวที่ไม่เคยระบุสาขา)</summary>
     HeadOfficeForMissingBranch,
     /// <summary>payload ไม่ระบุสาขา · เลขนี้มีแถวเดียว (สาขาอะไรก็ได้) — พฤติกรรมเดิม ไม่สร้างแถวใหม่</summary>
@@ -28,6 +26,17 @@ public enum ContactKeyBasis
 public readonly record struct ContactKeyMatch(Guid? ContactId, ContactKeyBasis? Basis, bool TaxIdExists)
 {
     public bool Found => ContactId != null;
+
+    /// <summary>
+    /// ผู้เรียกเขียน "รหัสสาขาของ payload" ลงแถวที่จับได้ได้ไหม (รอบ 193 ทีม C3) —
+    /// ได้เฉพาะเมื่อแถวนั้น<b>ตรงสาขาแล้ว</b> (<see cref="ContactKeyBasis.ExactBranch"/>: เขียนซ้ำค่าเดิม หรือเติม 00000
+    /// ให้แถวเก่าที่ไม่เคยระบุสาขาตอน payload เป็นสำนักงานใหญ่) · หรือไม่ได้จับด้วยเลขภาษีเลย (<see cref="Basis"/> = null:
+    /// จับด้วยชื่อ/อีเมล/รหัสภายนอก = พฤติกรรมเดิม) · หรือเลขไม่ใช่ 13 หลัก (ไม่มีโครงสาขา).
+    /// <para><b>ห้าม</b>เมื่อจับได้ด้วยกติกา "ไม่ระบุสาขา" (HeadOffice/Only/Lowest) — เกิดเมื่อ payload ส่งรหัสสาขา
+    /// ที่<b>ผิดรูป</b> ("8A" · "สาขา 8") ซึ่งตัวจับคู่ถือว่า "ไม่รู้" แต่ <c>ContactTypeResolver.NormalizeBranchCode</c>
+    /// ดึงเลขออกมาเป็น 00008 ⇒ ถ้าเขียน แถวสำนักงานใหญ่จะกลายเป็นสาขา 8 เงียบ ๆ (ช่องเดียวกับที่ข้อ 20 ปิด)</para>
+    /// </summary>
+    public bool MayOverwriteBranch => Basis is null or ContactKeyBasis.ExactBranch or ContactKeyBasis.RawTaxIdEquality;
 }
 
 /// <summary>
@@ -42,8 +51,10 @@ public readonly record struct ContactKeyMatch(Guid? ContactId, ContactKeyBasis? 
 ///
 /// <para><b>กติกา</b> (ทุกข้อเรียงแถวแน่นอน — ผลไม่ขึ้นกับลำดับที่ฐานคืน):</para>
 /// <list type="number">
-/// <item>payload ระบุสาขา → แถวที่สาขาตรง (แถวไม่ระบุสาขา ≡ 00000) · ไม่มี → แถวที่<b>ไม่เคยระบุสาขา</b> (ข้อมูลเก่า —
-///   กันสร้างแถวซ้ำ) · ไม่มีอีก → ไม่พบ (<see cref="ContactKeyMatch.TaxIdExists"/> = true) ⇒ ผู้เรียกสร้างแถวของสาขานั้น</item>
+/// <item>payload ระบุสาขา → แถวที่สาขาตรง · แถวที่<b>ไม่เคยระบุสาขา</b> ≡ 00000 จึงถูกอ้างได้<b>เฉพาะ payload สำนักงานใหญ่</b> ·
+///   ไม่มี → ไม่พบ (<see cref="ContactKeyMatch.TaxIdExists"/> = true) ⇒ ผู้เรียกสร้างแถวของสาขานั้น.
+///   (รอบ 193 ทีม C3: เดิม payload สาขา 8 อ้างแถวสาขาว่างได้ด้วย แล้ว integration เขียน 00008 + ที่อยู่สาขาทับ ⇒
+///   payload สำนักงานใหญ่ครั้งถัดไปสร้างแถวใหม่ และประวัติลูกหนี้เดิมค้างอยู่ที่แถวที่กลายเป็น "สาขา 8")</item>
 /// <item>payload <b>ไม่</b>ระบุสาขา ("ไม่รู้" ไม่ใช่ 00000 — ผู้เรียกที่ความหมายเดิมคือ สนญ. ต้องส่ง "00000" เอง) →
 ///   แถว สนญ./ไม่ระบุสาขา → แถวเดียวที่มี → แถวรหัสต่ำสุด (ไม่สร้างแถวใหม่ให้ข้อมูลเดิม)</item>
 /// <item>รหัสสาขาผิดรูป ("8A") = ไม่รู้ → กติกาข้อ 2</item>
@@ -79,10 +90,13 @@ public static class ContactTaxBranchKey
         {
             var exact = same.FirstOrDefault(c => IsSpecified(c.BranchCode) && TaxBranchCode.Normalize(c.BranchCode) == wanted);
             if (exact != null) return new ContactKeyMatch(exact.Id, ContactKeyBasis.ExactBranch, true);
-            var unspecified = same.FirstOrDefault(c => !IsSpecified(c.BranchCode));
-            if (unspecified != null)
-                return new ContactKeyMatch(unspecified.Id,
-                    wanted == TaxBranchCode.HeadOffice ? ContactKeyBasis.ExactBranch : ContactKeyBasis.UnspecifiedBranchRow, true);
+            // แถวที่ไม่เคยระบุสาขา ≡ สำนักงานใหญ่ (FindDuplicateContactAsync ถือแบบเดียวกัน) — อ้างได้เฉพาะ payload 00000.
+            // payload สาขาอื่นห้ามอ้าง: ผู้เรียกจะเขียนรหัส/ที่อยู่สาขาทับแถวที่ถือประวัติของสำนักงานใหญ่อยู่
+            if (wanted == TaxBranchCode.HeadOffice)
+            {
+                var unspecified = same.FirstOrDefault(c => !IsSpecified(c.BranchCode));
+                if (unspecified != null) return new ContactKeyMatch(unspecified.Id, ContactKeyBasis.ExactBranch, true);
+            }
             return new ContactKeyMatch(null, null, true);
         }
 
@@ -110,6 +124,34 @@ public static class ContactTaxBranchKey
             .Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode))
             .ToListAsync(ct);
         return Pick(rows, raw, branchCode);
+    }
+
+    /// <summary>
+    /// ตัวจับคู่เดียวกับ <see cref="Pick"/> บนแถว <see cref="Contact"/> ที่โหลดไว้แล้ว (ชุดนำเข้า/change tracker) —
+    /// คืนแถวที่ตรงคีย์ เลขภาษี + สาขา หรือ null (รอบ 193 ทีม C3 · แทน <c>ToDictionary(c =&gt; c.TaxId)</c> ที่
+    /// <b>โยน ArgumentException ทันทีที่เลขเดียวกันมีสองสาขา</b> และ <c>FirstOrDefault(c =&gt; c.TaxId == x)</c> ที่หยิบแถวไหนก็ได้)
+    /// </summary>
+    public static Contact? PickContact(IEnumerable<Contact> rows, string? taxId, string? branchCode)
+    {
+        var list = rows as IReadOnlyCollection<Contact> ?? rows.ToList();
+        var m = Pick(list.Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode)), taxId, branchCode);
+        return m.ContactId is Guid id ? list.First(c => c.Id == id) : null;
+    }
+
+    /// <summary>
+    /// โหลดผู้ติดต่อ (tracked) ทุกแถว<b>ทุกสาขา</b>ของชุดเลขภาษีครั้งเดียว — ให้เส้นนำเข้าเป็นชุดเลี่ยง N+1 แล้วตัดสินทีละแถวด้วย
+    /// <see cref="PickContact"/> · กรอง <c>CompanyId</c> เสมอ · เทียบทั้งค่าที่ส่งมาและตัวเลขล้วน
+    /// </summary>
+    public static async Task<List<Contact>> LoadByTaxIdsAsync(IQueryable<Contact> scope, Guid companyId,
+        IEnumerable<string?> taxIds, CancellationToken ct = default)
+    {
+        var keys = taxIds.Where(t => !string.IsNullOrWhiteSpace(t))
+            .SelectMany(t => new[] { t!.Trim(), Digits(t) })
+            .Where(t => t.Length > 0).Distinct().ToList();
+        if (keys.Count == 0) return new List<Contact>();
+        return await scope
+            .Where(c => c.CompanyId == companyId && c.TaxId != null && keys.Contains(c.TaxId))
+            .ToListAsync(ct);
     }
 
     private static string? WantedBranch(string? branchCode)
