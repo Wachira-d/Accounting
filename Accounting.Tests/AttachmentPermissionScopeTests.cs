@@ -42,6 +42,7 @@ public class AttachmentPermissionScopeTests
     [InlineData("ExpenseClaim", AttachmentOwnerKind.ExpenseClaim)]
     [InlineData("PayrollRun", AttachmentOwnerKind.PayrollRun)]
     [InlineData("JournalEntry", AttachmentOwnerKind.JournalEntry)]
+    [InlineData("OcrScan", AttachmentOwnerKind.OcrScan)]   // รอบ 193 S2 — สแกนที่ผูกเอกสารแล้วใช้ด่านเอกสาร (C3)
     public void ชนิดที่ต้องค้นแถวเจ้าของ_ตัดสินด้วยข้อมูลของแถวนั้น(string entityType, AttachmentOwnerKind kind)
         => Assert.Equal(kind, AttachmentPermissionScope.Resolve(entityType).Kind);
 

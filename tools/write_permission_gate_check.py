@@ -68,6 +68,12 @@ WATCHED = [
     # เพิ่มรอบ 193 (B-04) — ยื่นแบบ · บันทึกเลขรับ (ล็อกงวด) · ปลดล็อก · ลบรายงาน · Reject & Reverse (JE)
     # มีแค่ [Authorize] ระดับคลาสมาตลอด ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 7)
     "Accounting/Controllers/TaxController.cs",
+    # เพิ่มรอบ 193 (S2 · C2) — แนบใบเสร็จนำส่ง (หลักฐานการนำส่งภาษี/ปกส.) มีแค่ [Authorize] ขณะที่ Remit/RecognizePp36
+    # ในไฟล์เดียวกันมี Tax.File ครบ ("ทางเข้าอื่นไม่เดินด่านเดียวกัน" — R5)
+    "Accounting/Controllers/StatutoryRemittanceController.cs",
+    # เพิ่มรอบ 193 (S2 — กวาดทางเข้า IFormFile) — นำเข้า/เขียนทับผังบัญชี · สินค้า · ผู้ติดต่อ จากไฟล์ของโปรแกรมอื่น
+    # มีแค่ [Authorize] ขณะที่ข้อมูลชุดเดียวกันผ่าน ImportExportController ต้องมีคีย์
+    "Accounting/Controllers/CompetitorImportController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

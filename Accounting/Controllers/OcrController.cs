@@ -287,13 +287,34 @@ public class OcrController : ControllerBase
             $"สแกนใหม่แล้ว (ไม่ใช้โควต้า) — ผลอยู่ที่รายการสแกนใหม่ {result.Id} · รายการเดิมยังเก็บผลอ่านครั้งก่อนไว้เพื่อเปรียบเทียบ"));
     }
 
+    // ═══ ด่านอ่านของสแกน (ฝ่ายค้านรอบ 193 · C3) ═══ สแกนที่ผูกเอกสารแล้ว = ใบเดียวกับเอกสารนั้น ⇒ ผลอ่าน/รูป/แถวในรายการ
+    // ต้องผ่านด่านเดียวกับไฟล์แนบของเอกสาร (ฝั่งรายรับ/รายจ่าย + ชั้นความลับ) · ยังไม่ผูก = ด่านของ OCR ·
+    // ตัวตัดสินอยู่ที่ IAttachmentAccessGate ตัวเดียว (tools/attachment_gate_check.py ตรวจว่าสามเส้นนี้เรียกจริง)
     [HttpGet("{scanId:guid}")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> GetResult(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.GetResultAsync(companyId, scanId)));
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> GetResult(Guid companyId, Guid scanId,
+        [FromServices] IAttachmentAccessGate gate)
+    {
+        var deny = await gate.DenyScanAsync(companyId, JwtHelper.GetUserIdFromClaims(User), scanId,
+            AttachmentAccess.Read, "ดูผลสแกน");
+        if (deny is { } d) return StatusCode(d.Status, new ApiResponse<OcrResultResponse>(false, null, d.Message));
+        return Ok(new ApiResponse<OcrResultResponse>(true, await _service.GetResultAsync(companyId, scanId)));
+    }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<PagedResponse<OcrResultResponse>>>> GetResults(Guid companyId, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => Ok(new ApiResponse<PagedResponse<OcrResultResponse>>(true, await _service.GetResultsAsync(companyId, status, new PagedRequest(page, pageSize))));
+    public async Task<ActionResult<ApiResponse<PagedResponse<OcrResultResponse>>>> GetResults(Guid companyId,
+        [FromServices] IAttachmentAccessGate gate,
+        [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var result = await _service.GetResultsAsync(companyId, status, new PagedRequest(page, pageSize));
+        // ตัดแถวของใบที่ผู้ใช้เปิดเอกสารไม่ได้ (ไม่คืนชื่อผู้ขาย/ยอด/ลิงก์รูป) · คงยอด TotalCount/TotalPages จาก server
+        // เหมือนลิสต์เอกสาร (DocumentController.GetDocuments) — recompute จากหน้าเดียวทำ paging พัง
+        var hidden = await gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            result.Items.Select(x => x.Id).ToList());
+        if (hidden.Count > 0)
+            result = new PagedResponse<OcrResultResponse>(result.Items.Where(x => !hidden.Contains(x.Id)).ToList(),
+                result.TotalCount, result.Page, result.PageSize, result.TotalPages);
+        return Ok(new ApiResponse<PagedResponse<OcrResultResponse>>(true, result));
+    }
 
     [HttpPost("{scanId:guid}/create-document")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> CreateDocument(
@@ -1161,9 +1182,15 @@ public class OcrController : ControllerBase
         Guid companyId,
         [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker,
         [FromServices] Services.Interfaces.ISensitivityService sensitivity,
+        [FromServices] IAttachmentAccessGate gate,
         [FromQuery] int limit = 20)
     {
         var ranked = await ranker.RankAsync(companyId, Math.Clamp(limit, 1, 100));
+        // คิวรวมสแกนที่ผูกเอกสารแล้วแต่ยังติดธงสินทรัพย์ (QueuedScan · HasPotentialFixedAsset) ⇒ ชื่อผู้ขาย/ชื่อไฟล์ของใบที่
+        // ผู้ใช้เปิดเอกสารไม่ได้ต้องไม่หลุดทางนี้ — ด่านเดียวกับรายการสแกน (รอบ 193 S2 · C3)
+        var hidden = await gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            ranked.Select(x => x.ScanId).ToList());
+        if (hidden.Count > 0) ranked = ranked.Where(x => !hidden.Contains(x.ScanId)).ToList();
         // Annotate with letter-grade quality for at-a-glance UI rendering
         var scans = await _db.Set<Accounting.Models.Entities.OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && ranked.Select(x => x.ScanId).Contains(r.Id))
@@ -1366,8 +1393,13 @@ public class OcrController : ControllerBase
         => Ok(new ApiResponse<List<OcrCreditPurchaseResponse>>(true, await _quota.GetPurchaseHistoryAsync(companyId)));
 
     [HttpGet("{scanId:guid}/image")]
-    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)
+    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId, [FromServices] IAttachmentAccessGate gate)
     {
+        // ไฟล์ต้นฉบับที่ย้ายไปเป็นไฟล์แนบของเอกสารแล้ว เปิดได้เท่ากับไฟล์แนบของเอกสารนั้น (C3)
+        var deny = await gate.DenyScanAsync(companyId, JwtHelper.GetUserIdFromClaims(User), scanId,
+            AttachmentAccess.Read, "ดูรูปสแกน");
+        if (deny is { } d) return StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message));
+
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanId);
         if (scan?.FileAttachmentId == null)

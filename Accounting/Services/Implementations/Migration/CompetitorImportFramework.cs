@@ -528,6 +528,10 @@ public class FlowAccountContactsAdapter : ContactImportAdapterBase
 /// </summary>
 public interface ICompetitorImportCoordinator
 {
+    /// <summary>ไฟล์นี้เป็นของ adapter ตัวไหน (ยังไม่อ่าน/เขียนฐาน) — ผู้เรียกใช้ <c>EntityKind</c> ตัดสินสิทธิ์
+    /// <b>ก่อน</b> preview (ซึ่งเปิดเผยแถวเดิมที่ขัดแย้ง) หรือ import (ซึ่งเขียนผังบัญชี/สินค้า/ผู้ติดต่อ) — รอบ 193 S2</summary>
+    ICompetitorImportAdapter? Detect(string fileContent, string filename);
+
     Task<(ICompetitorImportAdapter? Adapter, ImportPreview? Preview)> PreviewAsync(
         Guid companyId, string fileContent, string filename, CancellationToken ct);
 
@@ -544,10 +548,13 @@ public class CompetitorImportCoordinator : ICompetitorImportCoordinator
         ILogger<CompetitorImportCoordinator> logger)
     { _adapters = adapters; _logger = logger; }
 
+    public ICompetitorImportAdapter? Detect(string fileContent, string filename)
+        => _adapters.FirstOrDefault(a => a.CanHandle(fileContent, filename));
+
     public async Task<(ICompetitorImportAdapter? Adapter, ImportPreview? Preview)> PreviewAsync(
         Guid companyId, string fileContent, string filename, CancellationToken ct)
     {
-        var adapter = _adapters.FirstOrDefault(a => a.CanHandle(fileContent, filename));
+        var adapter = Detect(fileContent, filename);
         if (adapter == null) return (null, null);
         var preview = await adapter.PreviewAsync(companyId, fileContent, ct);
         return (adapter, preview);
@@ -556,7 +563,7 @@ public class CompetitorImportCoordinator : ICompetitorImportCoordinator
     public async Task<ImportResult?> ImportAsync(Guid companyId, string fileContent, string filename,
         ImportOptions options, CancellationToken ct)
     {
-        var adapter = _adapters.FirstOrDefault(a => a.CanHandle(fileContent, filename));
+        var adapter = Detect(fileContent, filename);
         if (adapter == null)
         {
             _logger.LogWarning("No adapter found for filename {File}", filename);

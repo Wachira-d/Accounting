@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Accounting.Data;
 using Accounting.Filters;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Services.Interfaces;
@@ -112,18 +113,41 @@ public class StatutoryRemittanceController : ControllerBase
         }
     }
 
-    /// <summary>แนบไฟล์ใบเสร็จ/หลักฐานการนำส่งเข้ารายการที่นำส่งแล้ว.</summary>
+    /// <summary>แนบไฟล์ใบเสร็จ/หลักฐานการนำส่งเข้ารายการที่นำส่งแล้ว.
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · C2) ═══ เส้นนี้เป็นทางเข้าที่สองของไฟล์ชนิด <c>StatutoryRemittance</c> (ทางแรกคือ
+    /// <c>FileAttachmentController</c> ซึ่งมีด่านแล้ว) แต่มีแค่ <c>[Authorize]</c> · เขียนไฟล์<b>ก่อน</b>ตรวจว่ารายการนำส่งเป็นของ
+    /// บริษัทนี้ (ไฟล์กำพร้าค้างในตารางเมื่อ id ผิด) · และเชื่อ Content-Type/นามสกุลจาก client (HTML ที่ตั้งชื่อ .pdf ผ่านได้)
+    /// ⇒ ตอนนี้: (1) รายการต้องมีอยู่ในบริษัทนี้ (2) ด่านเดียวกับไฟล์แนบ (<see cref="IAttachmentAccessGate"/> ⇒ Tax.File ตาม
+    /// <see cref="Accounting.Helpers.AttachmentPermissionScope"/>) (3) ชนิดไฟล์ตัดสินจากไบต์จริง
+    /// (<see cref="Accounting.Helpers.UploadFileType.SniffAttachment"/> ตัวเดียวกับเส้นไฟล์แนบ) — นามสกุลที่เก็บและ Content-Type
+    /// มาจากผลตรวจไบต์เท่านั้น</para></summary>
     [HttpPost("{remittanceId:guid}/receipt")]
+    [RequestSizeLimit(25 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<object>>> UploadReceipt(
-        Guid companyId, Guid remittanceId, IFormFile file)
+        Guid companyId, Guid remittanceId, IFormFile file, [FromServices] IAttachmentAccessGate gate)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไม่พบไฟล์"));
+
+        // ด่านของโมดูล + รายการต้องมีอยู่จริงในบริษัทนี้ (ตรวจใน gate — 404 ถ้าไม่พบ) — ก่อนแตะไฟล์ใด ๆ
+        var deny = await gate.DenyAttachmentAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            "StatutoryRemittance", remittanceId, AttachmentAccess.Write, "แนบใบเสร็จนำส่ง");
+        if (deny is { } d) return StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message));
+
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
+        var bytes = ms.ToArray();
+        // ไบต์ตัดสินชนิด — UnsupportedUploadException = 400 ข้อความไทย (ExceptionMiddleware)
+        var kind = UploadFileType.SniffAttachment(
+                bytes.AsSpan(0, Math.Min(bytes.Length, UploadFileType.HeaderBytes)), file.FileName)
+            ?? throw new UnsupportedUploadException(UploadFileType.AttachmentRejectMessage);
+        var baseName = Path.GetFileNameWithoutExtension(file.FileName);
+        var displayName = (string.IsNullOrWhiteSpace(baseName) ? "receipt" : baseName) + kind.Extension;
+
         var uid = await ResolveUserIdAsync(companyId);
         var att = await _files.UploadBytesAsync(companyId, "StatutoryRemittance", remittanceId,
-            file.FileName, file.ContentType ?? "application/octet-stream", ms.ToArray(), uid);
+            displayName, kind.ContentType, bytes, uid);
         await _service.AttachReceiptAsync(companyId, remittanceId, att.Id);
         return Ok(new ApiResponse<object>(true, new { attachmentId = att.Id }, "แนบใบเสร็จแล้ว"));
     }

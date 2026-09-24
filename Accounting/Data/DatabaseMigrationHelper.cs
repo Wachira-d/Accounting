@@ -5644,6 +5644,17 @@ public static class DatabaseMigrationHelper
                 END IF;
             END $$;
             """,
+            // รอบ 193 S2 (P7): ไฟล์ 50 ทวิ ที่แนบก่อนบันทึกค้างอยู่ในถังเจ้าของว่าง (WhtCredit/0000…) ทั้งที่รายการชี้มาแล้ว
+            // ⇒ ย้ายไปผูกกับรายการที่ชี้ถึง (ตัวเดียวกับที่ WhtCreditService.AdoptUnsavedAttachmentAsync ทำตอนบันทึก) · idempotent
+            """
+            UPDATE "FileAttachments" f
+               SET "EntityId" = w."Id", "UpdatedAt" = now()
+              FROM "WhtCreditsReceived" w
+             WHERE w."AttachmentId" = f."Id"
+               AND w."CompanyId" = f."CompanyId"
+               AND f."EntityType" = 'WhtCredit'
+               AND f."EntityId" = '00000000-0000-0000-0000-000000000000';
+            """,
             """
             CREATE TABLE IF NOT EXISTS "DocumentRevisions" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),

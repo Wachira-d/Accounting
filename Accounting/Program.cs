@@ -426,6 +426,8 @@ builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
 builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
+// ด่านไฟล์แนบตัวเดียวของทุกทางเข้า (ไฟล์แนบ · ใบเสร็จนำส่ง · รูป/รายการสแกน) — รอบ 193 S2
+builder.Services.AddScoped<IAttachmentAccessGate, AttachmentAccessGate>();
 builder.Services.AddScoped<ICurrencyService, CurrencyService>();
 builder.Services.AddScoped<IBudgetService, BudgetService>();
 
