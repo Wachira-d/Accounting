@@ -115,14 +115,32 @@ public class IntegrationService : IIntegrationService
 
     public async Task<List<IntegrationResponse>> GetIntegrationsAsync(Guid companyId)
     {
-        return await _db.Set<ExternalIntegration>()
+        var rows = await _db.Set<ExternalIntegration>().AsNoTracking()
             .Where(i => i.CompanyId == companyId && !i.IsDeleted)
             .OrderByDescending(i => i.CreatedAt)
-            .Select(i => new IntegrationResponse(
-                i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
-                i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
-                i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt))
             .ToListAsync();
+        var now = DateTime.UtcNow;
+        return rows.Select(i => ToResponse(i, now)).ToList();
+    }
+
+    /// <summary>ตัวสร้าง <see cref="IntegrationResponse"/> ตัวเดียว (list + update) — สิทธิ์ที่บังคับใช้จริง
+    /// คิดจาก <c>IntegrationKeyPolicy</c> ที่นี่ หน้าเว็บไม่ต้องรู้กติกาช่วงผ่อนผัน (รอบ 193 · G2-01)</summary>
+    private static IntegrationResponse ToResponse(ExternalIntegration i, DateTime nowUtc)
+    {
+        var stored = new Accounting.Helpers.IntegrationKeyScopes(i.CanRead, i.CanWrite, i.CanDelete);
+        var legacyActive = Accounting.Helpers.IntegrationKeyPolicy.IsLegacyPrivilegeActive(
+            i.IsLegacyKey, i.LegacyDeprecatesAt, nowUtc);
+        var effective = Accounting.Helpers.IntegrationKeyPolicy.EffectiveScopes(
+            i.IsLegacyKey, i.LegacyDeprecatesAt, stored, nowUtc);
+        return new IntegrationResponse(
+            i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
+            i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
+            i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt,
+            CanRead: i.CanRead, CanWrite: i.CanWrite, CanDelete: i.CanDelete,
+            IsLegacyKey: i.IsLegacyKey, LegacyDeprecatesAt: i.LegacyDeprecatesAt,
+            LegacyPrivilegeActive: legacyActive,
+            EffectiveCanRead: effective.CanRead, EffectiveCanWrite: effective.CanWrite,
+            EffectiveCanDelete: effective.CanDelete);
     }
 
     public async Task<IntegrationCreatedResponse> CreateIntegrationAsync(Guid companyId, CreateIntegrationRequest request)
@@ -136,9 +154,18 @@ public class IntegrationService : IIntegrationService
         // Generate HMAC secret
         var secretKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
+        // คีย์ที่ออกใหม่ = นโยบายใหม่เสมอ: ไม่ใช่รุ่นเก่า · สิทธิ์ที่ไม่ได้เลือก = อ่านอย่างเดียว (G2-01)
+        var scopes = Accounting.Helpers.IntegrationKeyPolicy.ScopesForNewKey(
+            request.CanRead, request.CanWrite, request.CanDelete);
+
         var integration = new ExternalIntegration
         {
             CompanyId = companyId,
+            CanRead = scopes.CanRead,
+            CanWrite = scopes.CanWrite,
+            CanDelete = scopes.CanDelete,
+            IsLegacyKey = false,
+            LegacyDeprecatesAt = null,
             SystemName = request.SystemName,
             SystemType = request.SystemType,
             SystemVersion = request.SystemVersion,
@@ -177,13 +204,22 @@ public class IntegrationService : IIntegrationService
         if (request.WebhookUrl != null) integration.WebhookUrl = request.WebhookUrl;
         if (request.WebhookEnabled.HasValue) integration.WebhookEnabled = request.WebhookEnabled.Value;
 
+        // สิทธิ์ของคีย์ — ส่งมาอย่างน้อยหนึ่งช่อง = เจ้าของเลือกเองแล้ว ⇒ ย้ายเข้านโยบายใหม่ (G2-01)
+        // ไม่ส่งเลย = ไม่แตะ (แก้ชื่อ/เปิดปิดต้องไม่ทำให้คีย์รุ่นเก่าเสียสิทธิ์เงียบ ๆ)
+        var (scopes, scopesChanged) = Accounting.Helpers.IntegrationKeyPolicy.ApplyScopeUpdate(
+            new Accounting.Helpers.IntegrationKeyScopes(integration.CanRead, integration.CanWrite, integration.CanDelete),
+            request.CanRead, request.CanWrite, request.CanDelete);
+        if (scopesChanged)
+        {
+            integration.CanRead = scopes.CanRead;
+            integration.CanWrite = scopes.CanWrite;
+            integration.CanDelete = scopes.CanDelete;
+            integration.IsLegacyKey = false;
+        }
+
         await _db.SaveChangesAsync();
 
-        return new IntegrationResponse(
-            integration.Id, integration.SystemName, integration.SystemType, integration.SystemVersion,
-            integration.BaseUrl, integration.ApiKeyPrefix, integration.IsActive, integration.LastSyncAt,
-            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute,
-            integration.WebhookUrl, integration.WebhookEnabled, integration.CreatedAt);
+        return ToResponse(integration, DateTime.UtcNow);
     }
 
     public async Task DeleteIntegrationAsync(Guid companyId, Guid integrationId)
@@ -347,7 +383,7 @@ public class IntegrationService : IIntegrationService
 
     // ===== API Key Validation =====
 
-    public async Task<(Guid CompanyId, Guid IntegrationId)?> ValidateApiKeyAsync(string apiKey)
+    public async Task<(Guid CompanyId, Guid IntegrationId, Accounting.Helpers.IntegrationKeyScopes Scopes)?> ValidateApiKeyAsync(string apiKey)
     {
         if (string.IsNullOrEmpty(apiKey) || apiKey.Length < 8)
             return null;
@@ -355,13 +391,21 @@ public class IntegrationService : IIntegrationService
         var prefix = apiKey[..8];
         var candidates = await _db.Set<ExternalIntegration>()
             .Where(i => i.ApiKeyPrefix == prefix && i.IsActive && !i.IsDeleted)
-            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash })
+            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash,
+                i.CanRead, i.CanWrite, i.CanDelete, i.IsLegacyKey, i.LegacyDeprecatesAt })
             .ToListAsync();
 
         foreach (var candidate in candidates)
         {
             if (BCrypt.Net.BCrypt.Verify(apiKey, candidate.ApiKeyHash))
-                return (candidate.CompanyId, candidate.Id);
+            {
+                // สิทธิ์ที่บังคับใช้จริง — ตัวตัดสินเดียวกับเส้น X-Api-Key ใน ApiKeyMiddleware (G2-01)
+                var scopes = Accounting.Helpers.IntegrationKeyPolicy.EffectiveScopes(
+                    candidate.IsLegacyKey, candidate.LegacyDeprecatesAt,
+                    new Accounting.Helpers.IntegrationKeyScopes(candidate.CanRead, candidate.CanWrite, candidate.CanDelete),
+                    DateTime.UtcNow);
+                return (candidate.CompanyId, candidate.Id, scopes);
+            }
         }
 
         return null;

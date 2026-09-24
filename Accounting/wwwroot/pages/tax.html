@@ -219,7 +219,12 @@
         sel.value = String(curYear);
         const api = Layout.api();
         if (api) {
-          try { await api.autoRefreshTaxReports(2); } catch (e) { console.error('autoRefresh:', e); }
+          // รอบ 193 (B-04): คำนวณร่างใหม่ต้องมีสิทธิ์ Tax.File — ผู้ที่ไม่มีสิทธิ์ต้อง "รู้" ว่าร่างที่เห็นอาจไม่ใช่ล่าสุด (ห้ามเงียบ)
+          try { await api.autoRefreshTaxReports(2); } catch (e) {
+            console.error('autoRefresh:', e);
+            if (String(e?.message || '').includes('Tax.File'))
+              Layout.toast('รายงานภาษีร่างที่แสดงอาจยังไม่ใช่ยอดล่าสุด — การคำนวณใหม่ต้องมีสิทธิ์ Tax.File', 'info');
+          }
         }
         await this.load();
       },

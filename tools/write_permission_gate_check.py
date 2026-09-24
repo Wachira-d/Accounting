@@ -60,6 +60,14 @@ WATCHED = [
     # ตาม พ.ร.บ.การบัญชี ม.10) มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ สมาชิกคนไหนก็ลบหลักฐาน
     # ของใบที่อนุมัติแล้วได้ · ด่านตอนนี้ครอบ entityType = "Document" (DenyDocAsync)
     "Accounting/Controllers/FileAttachmentController.cs",
+    # เพิ่มรอบ 193 (G2-01) — ออก/แก้/ลบ/สร้างคีย์ integration ใหม่ + ผูกผู้ใช้ที่คีย์สวมได้ = "การให้สิทธิ์"
+    # แต่มีแค่ [Authorize] ⇒ พนักงานดูอย่างเดียวออกคีย์เขียน/ลบได้ทุกอย่างแล้วสวมเป็นเจ้าของ ·
+    # ไฟล์นี้มี ExternalIntegrationController (ทางเข้าคีย์ X-Integration-Key) อยู่ด้วย — ด่านของมันคือ
+    # คีย์ + สิทธิ์ของคีย์ (ดู CONDITIONAL_MARKERS)
+    "Accounting/Controllers/IntegrationController.cs",
+    # เพิ่มรอบ 193 (B-04) — ยื่นแบบ · บันทึกเลขรับ (ล็อกงวด) · ปลดล็อก · ลบรายงาน · Reject & Reverse (JE)
+    # มีแค่ [Authorize] ระดับคลาสมาตลอด ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 7)
+    "Accounting/Controllers/TaxController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -84,7 +92,20 @@ GATE_MARKERS = (
     # ⚠️ ถ้าไม่มีบรรทัดนี้ `LodgingController` (มีด่านครบ 41 จุด) จะถูกฟ้องผิดทันที
     # ที่ใครเพิ่มมันเข้า WATCHED — checker ที่ฟ้องผิด = checker ที่พัง (F2 ข้อ 6)
     "RequirePermission(",
+    # รอบ 193 — ด่านเจ้าของบริษัท (CompanyUser.Role Owner/SystemAdmin · ปฏิเสธ API key) ของ IntegrationController
+    "RequireOwnerAsync",
+    # รอบ 193 — ด่านคีย์สิทธิ์ของ Account Mapping (CompanySettings.Edit) และของ TaxController (Tax.File/Tax.Export/Journal.Manage)
+    "RequireSettingsAsync",
+    "RequireTaxAsync",
 )
+
+# ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
+# (`[AllowAnonymous]` + ตรวจคีย์เอง) ไม่มีผู้ใช้ให้ตรวจสิทธิ์ ด่านของมันคือ "คีย์ถูก + คีย์มีสิทธิ์ทำ method นี้"
+# ⇒ การเรียก AuthenticateIntegration() อย่างเดียวไม่พอ ต้องมีตัวตัดสินสิทธิ์ของคีย์ในไฟล์เดียวกันด้วย
+# (ไม่งั้นคีย์ "อ่านอย่างเดียว" ยังเขียนได้ผ่านทางเข้านี้ — R5 · รอบ 193)
+CONDITIONAL_MARKERS = {
+    "AuthenticateIntegration(": "IntegrationKeyPolicy.Allows(",
+}
 
 # `[Authorize(Roles = "…")]` / `[Authorize(Policy = "…")]` **บน action** ก็เป็นด่าน
 # — ต่างจาก `[Authorize]` เปล่า ๆ ซึ่งตอบแค่ "ล็อกอินอยู่ไหม" (บทเรียนใน CLAUDE.md).
@@ -109,7 +130,8 @@ NAME_RE = re.compile(r'>+\s+(\w+)\s*\(')
 def scan(path):
     """คืนลิสต์ (line, verb, route, name) ของ action ที่เขียนข้อมูลแต่ไม่มีด่าน"""
     with open(path, encoding="utf-8") as f:
-        lines = f.read().split("\n")
+        text = f.read()
+    lines = text.split("\n")
 
     acts = []
     for i, line in enumerate(lines):
@@ -142,6 +164,8 @@ def scan(path):
             continue
         if any(k in body for k in GATE_MARKERS) or ATTR_GATE_RE.search(body):
             continue
+        if any(m in body and req in text for m, req in CONDITIONAL_MARKERS.items()):
+            continue
         bad.append((i + 1, verb, route, name))
     return bad
 
@@ -169,6 +193,39 @@ public class FakeController : ControllerBase
         await DenyKeyAsync("x");
         return Ok();
     }
+
+    [HttpDelete("e")]
+    public async Task<IActionResult> OwnerGate()
+    {
+        if (await RequireOwnerAsync(companyId, "x") is { } deny) return deny;
+        return Ok();
+    }
+
+    [HttpPost("f")]
+    public async Task<IActionResult> KeyAuthNoScopeFilter()
+    {
+        var auth = await AuthenticateIntegration();
+        return Ok();
+    }
+}
+"""
+
+# ไฟล์ที่มีตัวตัดสินสิทธิ์ของคีย์ ⇒ AuthenticateIntegration() นับเป็นด่านได้
+SELF_TEST_SRC_WITH_SCOPE = """
+public class FakeExternalController : ControllerBase, IAsyncActionFilter
+{
+    public async Task OnActionExecutionAsync(ActionExecutingContext c, ActionExecutionDelegate next)
+    {
+        if (!IntegrationKeyPolicy.Allows(scopes, Request.Method)) return;
+        await next();
+    }
+
+    [HttpPost("g")]
+    public async Task<IActionResult> KeyAuthWithScopeFilter()
+    {
+        var auth = await AuthenticateIntegration();
+        return Ok();
+    }
 }
 """
 
@@ -185,13 +242,19 @@ def self_test():
     with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
         f.write(SELF_TEST_SRC)
         tmp = f.name
+    with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+        f.write(SELF_TEST_SRC_WITH_SCOPE)
+        tmp2 = f.name
     try:
-        found = {name for _, _, _, name in scan(tmp)}
+        found = {name for _, _, _, name in scan(tmp)} | {name for _, _, _, name in scan(tmp2)}
     finally:
         os.unlink(tmp)
+        os.unlink(tmp2)
 
-    expect_bad = {"NoGateAtAll"}
-    expect_ok = {"AttrBelowHttp", "AttrAboveHttp", "GateInBody", "ReadThing"}
+    # KeyAuthNoScopeFilter: เรียก AuthenticateIntegration() แต่ไฟล์ไม่มีตัวตัดสินสิทธิ์ของคีย์ ⇒ ต้องฟ้อง
+    expect_bad = {"NoGateAtAll", "KeyAuthNoScopeFilter"}
+    expect_ok = {"AttrBelowHttp", "AttrAboveHttp", "GateInBody", "ReadThing", "OwnerGate",
+                 "KeyAuthWithScopeFilter"}
     missing = expect_bad - found
     wrong = found & expect_ok
     if missing:
@@ -201,7 +264,8 @@ def self_test():
         print(f"❌ self-test: ฟ้องผิด (endpoint ที่มีด่านแล้ว) {sorted(wrong)}")
         ok = False
     if ok:
-        print("✅ self-test ผ่าน 3 ทิศ (ไม่มีด่าน=ฟ้อง · attr ใต้/เหนือ [Http…]=ไม่ฟ้อง)")
+        print("✅ self-test ผ่าน 5 ทิศ (ไม่มีด่าน=ฟ้อง · attr ใต้/เหนือ [Http…]=ไม่ฟ้อง · "
+              "ด่านเจ้าของ=ไม่ฟ้อง · คีย์ภายนอกไม่มีตัวตัดสินสิทธิ์=ฟ้อง/มี=ไม่ฟ้อง)")
     return 0 if ok else 1
 
 
