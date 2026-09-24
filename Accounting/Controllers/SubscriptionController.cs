@@ -64,20 +64,12 @@ public class SubscriptionController : ControllerBase
 
     /// <summary>**ด่านเจ้าของของการเงิน subscription** (ฝ่ายค้านรอบ 193 W-C3) — ยกเลิก/เปลี่ยนแพ็กเกจ/แปลง trial/ขยาย trial
     /// เดิมมีแค่ <c>[Authorize]</c> ⇒ พนักงานบทบาท "ดูอย่างเดียว" หรือคีย์ใดก็ได้ยกเลิก subscription ของบริษัทได้ ·
-    /// คีย์ถูกปฏิเสธด้วย <c>OwnerActionGuard</c> ตัวเดียว · ผู้ดูแลแพลตฟอร์มผ่าน · ปฏิเสธเป็น 403 + ข้อความไทย (ไม่ใช่ 401 ที่พาไปหน้า login)</summary>
+    /// คีย์ถูกปฏิเสธด้วย <c>OwnerActionGuard</c> ตัวเดียว · ผู้ดูแลแพลตฟอร์มผ่าน · ปฏิเสธเป็น 403 + ข้อความไทย (ไม่ใช่ 401 ที่พาไปหน้า login)
+    /// <para>ฝ่ายค้านรอบสอง: ตัวตัดสินย้ายไปที่ <c>Helpers/OwnerGateDecision</c> ตัวเดียว (ใช้ร่วมกับ <c>[RequireOwner]</c> ของ
+    /// PaymentSettings/Sensitivity) — ที่นี่แค่ส่ง companyId ของ route เข้าไป</para></summary>
     private async Task<ActionResult?> RequireOwnerAsync(Guid companyId, string verb)
-    {
-        if (OwnerActionGuard.DenyResult(HttpContext, verb) is { } key) return key;
-        if (User.IsInRole("SystemAdmin")) return null;
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        var role = await _db.CompanyUsers.AsNoTracking()
-            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
-            .Select(cu => (Models.Enums.UserRole?)cu.Role)
-            .FirstOrDefaultAsync();
-        if (role is Models.Enums.UserRole.Owner or Models.Enums.UserRole.SystemAdmin) return null;
-        return StatusCode(403, new ApiResponse<object>(false, new { requiredRole = "Owner" },
-            $"ไม่มีสิทธิ์{verb} — เรื่องแพ็กเกจและการชำระค่าบริการทำได้เฉพาะเจ้าของบริษัท กรุณาติดต่อเจ้าของบริษัท"));
-    }
+        => await Accounting.Filters.RequireOwnerAttribute.DenyAsync(HttpContext, _db, companyId, verb,
+            "เรื่องแพ็กเกจและการชำระค่าบริการ");
 
     private async Task<ActionResult?> DenyForeignPaymentAsync(Guid paymentId)
     {

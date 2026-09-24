@@ -1945,14 +1945,8 @@ public partial class DocumentService : IDocumentService
         return new PagedResponse<DocumentResponse>(redactedItems, page.TotalCount, page.Page, page.PageSize, page.TotalPages);
     }
 
-    private static string SensitivityRedactReason(SensitivityKind kind) => kind switch
-    {
-        SensitivityKind.Payroll      => "ต้องมีสิทธิ์ดูข้อมูลเงินเดือน (perm:Payroll.View)",
-        SensitivityKind.ExecutivePay => "ต้องมีสิทธิ์ดูข้อมูลค่าตอบแทนผู้บริหาร",
-        SensitivityKind.HrPersonal   => "ต้องมีสิทธิ์ดูข้อมูลบุคลากร",
-        SensitivityKind.Confidential => "ต้องมีสิทธิ์ดูเอกสารลับ (perm:SensitiveDocs.View)",
-        _                            => "ต้องมีสิทธิ์เพิ่มเติม"
-    };
+    // ข้อความชุดเดียวกับทางอ่านอื่นของเอกสารลับ (อีเมล — ฝ่ายค้านรอบ 193 รอบสอง W2-P6) · ตัวตั้งอยู่ที่ Helpers/SensitivityAccess
+    private static string SensitivityRedactReason(SensitivityKind kind) => Accounting.Helpers.SensitivityAccess.RedactReason(kind);
 
     public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
     {

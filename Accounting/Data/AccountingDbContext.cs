@@ -3547,7 +3547,9 @@ public class AccountingDbContext : DbContext
                 .Select(a => a.RowHash)
                 .FirstOrDefault();
             // แถวที่ Add แล้วแต่ยังไม่ SaveChanges (AddChainedAuditLog ก่อนหน้าในคำขอเดียวกัน) ต้องเป็นปลาย chain
-            // ไม่งั้นสองแถวได้ PrevHash เดียวกัน = chain แตกกิ่ง (ฝ่ายค้านรอบ 193 PLAUSIBLE-2) · ChangeTracker เรียงตามลำดับ Add
+            // ไม่งั้นสองแถวได้ PrevHash เดียวกัน = chain แตกกิ่ง (ฝ่ายค้านรอบ 193 PLAUSIBLE-2)
+            // ปลายจริงของกลุ่มที่รอบันทึก (ไม่พึ่งลำดับ ChangeTracker — W2-P2) · ⚠️ ยังไม่ serialize ข้ามคำขอพร้อมกัน (W2-C1(ข)
+            // = คำถามเจ้าของ) — ตัวตรวจแยก "แตกกิ่ง" ออกจาก "ถูกแก้" แล้ว (AuditHashChain.Analyze)
             var pending = ChangeTracker.Entries<Models.Entities.AuditLog>()
                 .Where(en => en.State == EntityState.Added
                              && (en.Entity.CompanyId ?? Guid.Empty) == grp.Key
@@ -3558,7 +3560,7 @@ public class AccountingDbContext : DbContext
             {
                 var e = x.Entry;
                 // ฝั่งเขียนตัวเดียว (Helpers/AuditHashChain.Seal — สูตร v2 ที่ round-trip ผ่าน PostgreSQL ได้)
-                // ฝั่ง verify ใช้ AuditHashChain.FirstBrokenIndex ตัวเดียวกัน — ห้ามเขียน format string ที่นี่อีก
+                // ฝั่ง verify ใช้ AuditHashChain.Analyze ตัวเดียวกัน — ห้ามเขียน format string ที่นี่อีก
                 Accounting.Helpers.AuditHashChain.Seal(e, lastHash);
                 lastHash = e.RowHash;
             }

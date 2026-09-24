@@ -41,6 +41,23 @@ public class DocumentController : ControllerBase
     private ActionResult<ApiResponse<T>> Forbid403<T>(string th)
         => StatusCode(403, new ApiResponse<T>(false, default, th));
 
+    /// <summary>ด่านชั้นความลับของทางอ่าน/ส่งออกเอกสารใบเดียว (null = ผ่าน) — ด่านเดียวกับหน้าเอกสาร
+    /// (<c>ISensitivityService.CanViewAsync</c> + ข้อความจาก <c>Helpers/SensitivityAccess</c>) · ฝ่ายค้านรอบ 193 รอบสอง W2-P6:
+    /// เดิม email-template ส่งชื่อลูกค้า+ยอดของใบลับ และ send-email ส่ง PDF ทั้งใบ ให้ผู้ที่มีแค่ Document.Create ·
+    /// ไม่มี ISensitivityService ใน DI = ผ่าน (พฤติกรรมเดียวกับ <c>DocumentService.GetDocumentForUserAsync</c>)</summary>
+    private async Task<string?> DenySensitiveAsync(Guid companyId, Guid documentId, string verb)
+    {
+        var kind = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => d.Sensitivity).FirstOrDefaultAsync();
+        if (!Accounting.Helpers.SensitivityAccess.NeedsCheck(kind)) return null;
+        var svc = HttpContext.RequestServices.GetService(typeof(ISensitivityService)) as ISensitivityService;
+        if (svc == null) return null;
+        return await svc.CanViewAsync(companyId, JwtHelper.GetUserIdFromClaims(User), kind)
+            ? null
+            : Accounting.Helpers.SensitivityAccess.DeniedMessage(kind, verb);
+    }
+
     /// <summary>ระดับสิทธิ์ที่ action ต้องการ — ใช้กับ <see cref="DenyDocAsync"/></summary>
     private enum DocPerm { Create, Approve, Void }
 
@@ -93,6 +110,8 @@ public class DocumentController : ControllerBase
         var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             docType.Value, DocPerm.Create, "ส่งอีเมล");
         if (deny != null) return Forbid403<DocumentEmailLogResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
+            return Forbid403<DocumentEmailLogResponse>(hidden);
         var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
         var log = await _docEmailService.SendDocumentEmailAsync(companyId, documentId, request, actor);
         var dto = MapEmailLog(log);
@@ -112,6 +131,8 @@ public class DocumentController : ControllerBase
         var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             docType.Value, DocPerm.Create, "ส่งอีเมล");
         if (deny != null) return Forbid403<EmailTemplate>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
+            return Forbid403<EmailTemplate>(hidden);
         var tpl = await _docEmailService.GetDefaultTemplateAsync(companyId, documentId, etax);
         return Ok(new ApiResponse<EmailTemplate>(true, tpl));
     }

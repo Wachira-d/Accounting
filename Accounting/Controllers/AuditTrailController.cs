@@ -53,7 +53,11 @@ public class AuditTrailController : ControllerBase
     /// บริษัทถึงปัจจุบัน, recompute hash ของแต่ละ row + compare กับที่เก็บไว้
     /// + check link กับ PrevHash ของ row ถัดไป. คืนรายการ tampered rows
     /// (ถ้ามี). Admin role only — endpoint forensic-grade.</summary>
+    // W2-P7: doc เขียน "Admin role only" แต่มีแค่ [Authorize] ⇒ สมาชิก/คีย์ใดก็สั่งคำนวณ SHA-256 ถึง 1 ล้านแถวได้ ·
+    // ไม่มีหน้าเว็บเรียก endpoint นี้ (งานตรวจรายสัปดาห์เรียก service ตรง) ⇒ ปิดไว้ที่เจ้าของ/ผู้ได้ CompanySettings.Edit + ปฏิเสธคีย์
     [HttpGet("verify-hash-chain")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ตรวจ hash chain ของ audit")]
     public async Task<ActionResult<ApiResponse<object>>> VerifyHashChain(
         Guid companyId,
         [FromServices] Accounting.Data.AccountingDbContext db,
@@ -70,24 +74,23 @@ public class AuditTrailController : ControllerBase
             .ToListAsync();
         var unchained = await db.AuditLogs.AsNoTracking()
             .CountAsync(a => a.CompanyId == companyId && a.RowHash == null);
-        var tampered = new List<object>();
-        string? expectedPrev = null;
-        foreach (var e in rows)
-        {
-            if (e.PrevHash != expectedPrev)
-                tampered.Add(new { e.Id, issue = "broken chain", e.PrevHash, expected = expectedPrev });
-            if (!Accounting.Helpers.AuditHashChain.VerifyRow(e))
-                tampered.Add(new { e.Id, issue = "row mutated", stored = e.RowHash });
-            expectedPrev = e.RowHash;
-        }
+        // ตัวตรวจกลางตัวเดียวกับ service/job (รอบสอง: เดิม controller เดิน chain ด้วยลูปของตัวเอง = ตรรกะเช็กลิงก์ชุดที่สอง)
+        var a = Accounting.Helpers.AuditHashChain.Analyze(rows);
         return Ok(new ApiResponse<object>(true, new
         {
             scanned = rows.Count,
-            tamperedCount = tampered.Count,
-            valid = tampered.Count == 0,
+            valid = !a.HasIntegrityFindings,
+            tamperedCount = a.Tampered.Count,
+            danglingCount = a.Dangling.Count,
+            // แตกกิ่งจากคำขอพร้อมกัน — ไม่ใช่หลักฐานการแก้ (แยกแสดง ไม่นับเป็น invalid)
+            forkCount = a.ForkCount,
             // แถวที่ไม่เคยเข้า chain (ไม่ใช่หลักฐานว่าถูกแก้ แต่ก็ไม่ได้รับการป้องกัน) — แสดงแยก ไม่ซ่อน
             unchainedCount = unchained,
-            firstTen = tampered.Take(10),
+            // ถูกตัดที่ maxRows ⇒ แถวที่ชี้ไปยังแถวนอกช่วงอาจถูกนับเป็นขาดตอน — บอกผู้เรียกตรง ๆ
+            truncated = rows.Count >= maxRows,
+            tampered = a.Tampered.Take(100).Select(e => new { e.Id, e.Timestamp, e.EntityType, e.EntityId }),
+            dangling = a.Dangling.Take(100).Select(e => new { e.Id, e.Timestamp, e.EntityType, e.EntityId }),
+            message = Accounting.Helpers.AuditHashChain.AlertMessage(a),
         }));
     }
 

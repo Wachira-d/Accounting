@@ -28,7 +28,11 @@ public class ApprovalController : ControllerBase
         return Ok(new ApiResponse<List<ApprovalRuleResponse>>(true, result));
     }
 
+    // W2-C5 (ฝ่ายค้านรอบ 193 รอบสอง): กฎการอนุมัติคือด่านควบคุมภายในชุดเดียวกับ RequireApprovalForDocuments/SodBlockSelfApproval
+    // ในหน้าตั้งค่า (CompanySettings.Edit + ปฏิเสธคีย์) — เดิมเส้นนี้ไม่มีประตูเลย ⇒ ใครก็ลบขั้นอนุมัติหรือเปลี่ยนผู้อนุมัติเป็นตัวเองได้
     [HttpPost("rules")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("สร้างกฎการอนุมัติ")]
     public async Task<ActionResult<ApiResponse<ApprovalRuleResponse>>> CreateRule(
         Guid companyId, [FromBody] CreateApprovalRuleRequest request)
     {
@@ -37,6 +41,8 @@ public class ApprovalController : ControllerBase
     }
 
     [HttpPut("rules/{ruleId:guid}")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("แก้กฎการอนุมัติ")]
     public async Task<ActionResult<ApiResponse<ApprovalRuleResponse>>> UpdateRule(
         Guid companyId, Guid ruleId, [FromBody] CreateApprovalRuleRequest request)
     {
@@ -45,6 +51,8 @@ public class ApprovalController : ControllerBase
     }
 
     [HttpDelete("rules/{ruleId:guid}")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ลบกฎการอนุมัติ")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteRule(Guid companyId, Guid ruleId)
     {
         await _approvalService.DeleteRuleAsync(companyId, ruleId);
