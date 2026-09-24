@@ -72,7 +72,9 @@ public readonly record struct OcrDateCheck(OcrDateVerdict Verdict, DateTime? Dat
 ///   ครบกำหนด/พิมพ์/หมดอายุ/ส่งของ <b>ไม่มีสิทธิ์</b>เป็นวันที่เอกสาร (ป้าย "Due Date" มีคำว่า
 ///   Date อยู่ข้างใน — ต้องตรวจป้ายชนิดอื่นก่อน)</item>
 /// <item><b>แบบไทยก่อน</b>: ตัวเลขสามก้อนอ่านเป็น วัน/เดือน/ปี · ปีผ่าน <see cref="ThaiDate.NormalizeYear"/>
-///   ตัวเดียว (69 = พ.ศ. ย่อ · 26 = ค.ศ. ย่อ) · ถ้าแบบไทยไม่สมเหตุสมผลค่อยลองแบบอื่น</item>
+///   ตัวเดียว (69 = พ.ศ. ย่อ · 26 = ค.ศ. ย่อ) · ถ้าแบบไทยไม่สมเหตุสมผลค่อยลองแบบอื่น ·
+///   <b>ยกเว้น</b> (รอบ 193 · คำตัดสินเจ้าของข้อ 22): ใบภาษาอังกฤษล้วน + สกุลเงินต่างประเทศ
+///   (<see cref="IsForeignEnglishPaper"/>) ที่ engine อ่านก้อนเดียวกันเป็นอีกลำดับซึ่งสมเหตุสมผล ⇒ เชื่อ engine</item>
 /// <item><b>ปีต้องอยู่ในช่วงเทียบวันอัปโหลด</b> (<see cref="MaxPastDays"/> · <see cref="MaxFutureDays"/>)
 ///   — ใช้<b>เลือกการตีความ</b> และ<b>ลดความมั่นใจ</b> ไม่ใช่ล้างทิ้ง (เอกสารเก่าที่สแกนตามเก็บมีจริง)</item>
 /// <item><b>engine อ่านก้อนเดียวกันแต่เรียงผิด</b> (ค่าของ engine เป็นหนึ่งใน <see cref="OcrDateCandidate.Readings"/>
@@ -290,10 +292,18 @@ public static class OcrDateReader
 
         // (ก) engine อ่าน "ก้อนเดียวกัน" แต่เรียงวัน/เดือน/ปีต่างจากแบบไทย
         if (pick.Plausible && pick.Readings.Any(r => r.Date == e.Date))
+        {
+            // รอบ 193 · คำตัดสินเจ้าของข้อ 22 (team-L Q1 ข้อ ข): ใบภาษาอังกฤษล้วน + สกุลเงินต่างประเทศ
+            // (AWS/Google/Amazon ที่พิมพ์ MM/dd) ⇒ เชื่อลำดับที่ engine อ่าน · ใบไทย/บาท คงแบบไทยก่อน
+            if (ePlausible && IsForeignEnglishPaper(text))
+                return new OcrDateCheck(OcrDateVerdict.Confirmed, e, PickConfidence(pick, cands),
+                    $"“{pick.Token}” อ่านได้ทั้ง วัน/เดือน และ เดือน/วัน — ใบภาษาอังกฤษล้วนและเป็นสกุลเงินต่างประเทศ "
+                    + $"⇒ เชื่อลำดับที่ engine อ่าน = {Show(e)} (ไม่ใช้แบบไทย {Show(pick.Date)})");
             return new OcrDateCheck(OcrDateVerdict.Replaced, Utc(pick.Date), ReplacedConfidence,
                 $"engine ตีความ “{pick.Token}” เป็น {Show(e)} — กระดาษไทยเรียง วัน/เดือน/ปี "
                 + $"และปีต้องใกล้วันอัปโหลด ⇒ ใช้ {Show(pick.Date)} (ตรวจอีกครั้ง)")
                 { FromPaperLabel = pick.Label == OcrDateLabel.DocumentDate };
+        }
 
         // (ข) engine หยิบวันที่อีกก้อนบนกระดาษ
         var other = cands.FirstOrDefault(c => !ReferenceEquals(c, pick) && c.Readings.Any(r => r.Date == e.Date));
@@ -321,6 +331,24 @@ public static class OcrDateReader
         return ePlausible
             ? new(OcrDateVerdict.NoChange, e, 0m, "วันที่ engine ไม่ขัดกับหลักฐานที่มีป้ายบนกระดาษ")
             : Doubt(e, reference, "ไม่มีป้ายวันที่บนกระดาษให้เทียบ");
+    }
+
+    /// <summary>
+    /// กระดาษเป็น<b>ภาษาอังกฤษล้วน</b> (ไม่มีอักษรไทยเลย และมีอักษรละติน) <b>และ</b>มีสกุลเงินต่างประเทศ
+    /// (<see cref="OcrPaperAmounts.HasForeignCurrency"/> — ตัวตรวจสกุลเงินตัวเดียวกับขั้นยึดยอด) —
+    /// เงื่อนไขของคำตัดสินเจ้าของข้อ 22 ที่ให้เชื่อลำดับวันที่ของ engine เมื่อกำกวม ·
+    /// ใบไทยที่มีคำอังกฤษปน (หัวสองภาษา) หรือใบอังกฤษที่เป็นเงินบาท = ไม่เข้า (คงแบบไทยก่อน)
+    /// </summary>
+    internal static bool IsForeignEnglishPaper(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var hasLatin = false;
+        foreach (var ch in text)
+        {
+            if (ch >= '\u0E01' && ch <= '\u0E5B') return false;   // อักษร/เลขไทย
+            if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) hasLatin = true;
+        }
+        return hasLatin && OcrPaperAmounts.HasForeignCurrency(text);
     }
 
     private static OcrDateCheck Doubt(DateTime e, DateTime reference, string context)

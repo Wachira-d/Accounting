@@ -297,10 +297,10 @@ public class DocumentsV1Controller : PublicApiControllerBase
         var taxId = Helpers.ThaiTaxIdValidator.Normalize(req.ContactTaxId);
         if (!string.IsNullOrWhiteSpace(taxId))
         {
-            var byTax = await Db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && c.TaxId == taxId)
-                .Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
-            if (byTax.HasValue) return byTax;
+            // รอบ 193 ข้อ 20: ตัวจับคู่กลาง (เลขภาษี + สาขา) — payload ไม่มีช่องสาขา ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน
+            // (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+            var taxKey = await Helpers.ContactTaxBranchKey.FindAsync(Db.Contacts.AsNoTracking(), companyId, taxId, null, ct);
+            if (taxKey.ContactId.HasValue) return taxKey.ContactId;
         }
 
         if (string.IsNullOrWhiteSpace(req.ContactName)) return null;

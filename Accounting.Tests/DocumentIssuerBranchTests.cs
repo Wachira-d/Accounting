@@ -55,7 +55,7 @@ public class DocumentIssuerBranchTests
         // เคสจริง: กิจการมีที่เดียวแต่จดเป็น "สาขาที่ 2" (สำนักงานใหญ่ปิดไปแล้ว)
         var r = DocumentIssuerBranch.Resolve(null, null, "00002", "สาขาสีลม");
         Assert.Equal("00002", r.Code);
-        Assert.Equal("สาขาที่ 2 (สาขาสีลม)", r.Label);
+        Assert.Equal("สาขาที่ 00002 (สาขาสีลม)", r.Label);   // รอบ 193 ข้อ 21: รหัส 5 หลักเต็ม
     }
 
     // ═══════════ 2. ใบที่ออกจากสาขา ═══════════
@@ -66,7 +66,7 @@ public class DocumentIssuerBranchTests
         var r = DocumentIssuerBranch.Resolve(null, ChiangMai, "00000", "สำนักงานใหญ่");
 
         Assert.Equal("00003", r.Code);
-        Assert.Equal("สาขาที่ 3 (เชียงใหม่)", r.Label);
+        Assert.Equal("สาขาที่ 00003 (เชียงใหม่)", r.Label);
         Assert.Equal(ChiangMai.Address, r.Address);
         Assert.Equal("053-111111", r.Phone);
         Assert.True(r.FromBranchRegistry);
@@ -76,7 +76,7 @@ public class DocumentIssuerBranchTests
     public void โหมดอังกฤษ_ใช้ชื่อสาขาภาษาอังกฤษ()
     {
         var r = DocumentIssuerBranch.Resolve(null, ChiangMai, "00000", null, isEnglish: true);
-        Assert.Equal("Branch 3 (Chiang Mai)", r.Label);
+        Assert.Equal("Branch 00003 (Chiang Mai)", r.Label);
     }
 
     [Fact]
@@ -115,14 +115,14 @@ public class DocumentIssuerBranchTests
         // "สาขาที่ 3 (เชียงใหม่)" จะเป็นการอ้างสถานประกอบการผิด
         var renamed = ChiangMai with { TaxBranchCode = "00007" };
         var r = DocumentIssuerBranch.Resolve("00003", renamed, "00000", null);
-        Assert.Equal("สาขาที่ 3", r.Label);
+        Assert.Equal("สาขาที่ 00003", r.Label);
     }
 
     [Fact]
     public void snapshot_ตรงกับทะเบียน_ยังพิมพ์ชื่อสาขาต่อท้ายตามปกติ()
     {
         var r = DocumentIssuerBranch.Resolve("00003", ChiangMai, "00000", null);
-        Assert.Equal("สาขาที่ 3 (เชียงใหม่)", r.Label);
+        Assert.Equal("สาขาที่ 00003 (เชียงใหม่)", r.Label);
     }
 
     [Fact]

@@ -529,11 +529,16 @@ public class IntegrationService : IIntegrationService
 
         try
         {
-            // Find existing contact by TaxId or Name
+            // Find existing contact by (TaxId + BranchCode) or Name — รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา
+            // (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า) · เดิม TaxId อย่างเดียว ⇒ payload สาขา 8 หยิบแถว
+            // สำนักงานใหญ่ แล้วบล็อก update ด้านล่างเขียน BranchCode = 00008 ทับแถวนั้น
             Contact? contact = null;
-            if (!string.IsNullOrEmpty(request.TaxId))
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.TaxId && !c.IsDeleted);
-            if (contact == null && !string.IsNullOrEmpty(request.Name))
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, request.TaxId, request.BranchCode);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+            // มีผู้ติดต่อเลขนี้แต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
+            if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrEmpty(request.Name))
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
             // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
@@ -1568,19 +1573,12 @@ public class IntegrationService : IIntegrationService
         {
             // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
             // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
-            var taxDigits = DocumentService.NormalizeTaxDigits(taxId);
-            if (taxDigits.Length >= 10)
-            {
-                var hit = (await _db.Set<Contact>().AsNoTracking()
-                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
-                        && c.TaxId != null && c.TaxId != "")
-                    .Select(c => new { c.Id, c.TaxId })
-                    .ToListAsync())
-                    .FirstOrDefault(c => DocumentService.NormalizeTaxDigits(c.TaxId) == taxDigits);
-                if (hit != null)
-                    contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == hit.Id);
-            }
-            contact ??= await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted);
+            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
+            // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, taxId, branchCode: null);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
         }
 
         if (contact == null && !string.IsNullOrEmpty(name))
@@ -1663,10 +1661,16 @@ public class IntegrationService : IIntegrationService
             supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
                 c.CompanyId == companyId && c.ExternalId == extId && !c.IsDeleted);
 
-        // (3) เลขผู้เสียภาษี normalize ตัวเลขล้วน (stored ถูก normalize แล้วใน migration)
+        // (3) เลขผู้เสียภาษี (+ สาขา) — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20) ·
+        //     payload ไม่มีช่องสาขาผู้ขาย ⇒ แถวสำนักงานใหญ่ก่อน แทนแถวไหนก็ได้ของเลขนั้น
         if (supplier == null && taxDigits.Length > 0)
-            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.TaxId == taxDigits && !c.IsDeleted);
+        {
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, taxDigits, branchCode: null);
+            if (taxKey.ContactId is Guid keyId)
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                    c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+        }
 
         // (4) ชื่อ trim + case-insensitive
         if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))

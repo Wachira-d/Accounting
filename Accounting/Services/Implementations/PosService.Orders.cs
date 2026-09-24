@@ -525,8 +525,11 @@ public partial class PosService
             var buyerAddress = string.IsNullOrWhiteSpace(request.BuyerAddress) ? null : request.BuyerAddress!.Trim();
 
             Models.Entities.Contact? contact = null;
-            if (taxId != null)
-                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId);
+            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า) — ผู้ซื้อสาขา 8
+            // ต้องไม่ได้ใบกำกับในนามแถวสำนักงานใหญ่ · สาขาว่าง = "ไม่ระบุ" (แถว สนญ. ก่อน) ตามความหมายเดิม
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, taxId, buyerBranch);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
             // ★ D8-1 — จับคู่ด้วย **ชื่อ** ได้เฉพาะตอนที่ยังไม่มีเลขภาษีมาชน: ชื่อซ้ำกันได้
             // (ชื่อเล่น/สาขา/บุคคลธรรมดาชื่อเหมือนกัน) การผูกใบกำกับเข้ากับผู้ติดต่อที่ถือ
             // **เลขภาษีคนละเลข** = ออกใบกำกับให้ผิดนิติบุคคล แก้ย้อนหลังไม่ได้ (§86/4)

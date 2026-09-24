@@ -261,18 +261,19 @@ public class ThaiGovIntegrationService : IThaiGovIntegrationService
             if (!response.IsSuccessStatusCode) return null;
 
             var body = await response.Content.ReadAsStringAsync();
-            var branchName = ExtractXmlValue(body, "vBranchName");
-            var branchTitle = ExtractXmlValue(body, "vBranchTitleName");
-            var address = BuildAddressFromXml(body);
-
-            if (string.IsNullOrWhiteSpace(branchName) && string.IsNullOrWhiteSpace(branchTitle))
+            // รอบ 193 (คำตัดสินเจ้าของข้อ 18): ตัวเลือกแถวกลางตัวเดียวกับ DbdLookupService — "ทั้งแถว" ที่
+            // vBranchNumber ตรง (เดิมหยิบค่าแรกของแต่ละช่องแยกกัน ⇒ ชื่อสาขา/ที่อยู่ปนข้ามสถานประกอบการได้)
+            var pick = Accounting.Helpers.RdVatBranchRecords.PickForBranch(body, branchCode);
+            if (pick == null || pick.Basis == Accounting.Helpers.RdVatRowBasis.NameOnly) return null;
+            var rec = pick.Record;
+            if (string.IsNullOrWhiteSpace(rec.BranchName) && string.IsNullOrWhiteSpace(rec.BranchTitle))
                 return null;
 
             return new RdBranchInfo(
                 TaxId: taxId,
                 BranchCode: branchCode,
-                BranchName: string.Join(" ", new[] { branchTitle, branchName }.Where(s => !string.IsNullOrEmpty(s))),
-                Address: address,
+                BranchName: string.Join(" ", new[] { rec.BranchTitle, rec.BranchName }.Where(s => !string.IsNullOrEmpty(s))),
+                Address: rec.Address,
                 Status: "Active");
         }
         catch (Exception ex)
@@ -382,33 +383,6 @@ public class ThaiGovIntegrationService : IThaiGovIntegrationService
         };
 
         return new CustomsDutyInfo(hsCode, rate, null, null, null, null, "Approximate general rate by HS chapter");
-    }
-
-    private static string? ExtractXmlValue(string xml, string tag)
-    {
-        var match = System.Text.RegularExpressions.Regex.Match(xml,
-            $"<{tag}>(.*?)</{tag}>",
-            System.Text.RegularExpressions.RegexOptions.Singleline);
-        if (!match.Success) return null;
-
-        var inner = match.Groups[1].Value;
-        var anyMatch = System.Text.RegularExpressions.Regex.Match(inner, @"<anyType[^>]*>([^<]*)</anyType>");
-        return anyMatch.Success ? anyMatch.Groups[1].Value.Trim() : inner.Trim();
-    }
-
-    private static string BuildAddressFromXml(string xml)
-    {
-        var parts = new List<string>();
-        var fields = new[] { "vHouseNumber", "vRoomNumber", "vFloorNumber", "vBuildingName",
-                             "vMooNumber", "vSoiName", "vStreetName", "vThambol", "vAmphur", "vProvince", "vPostCode" };
-
-        foreach (var f in fields)
-        {
-            var val = ExtractXmlValue(xml, f);
-            if (!string.IsNullOrWhiteSpace(val) && val != "-") parts.Add(val);
-        }
-
-        return string.Join(" ", parts);
     }
 
     private static string? GetStr(JsonElement el, params string[] props)

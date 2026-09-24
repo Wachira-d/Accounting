@@ -35,7 +35,7 @@ public class OcrVendorBranchContactTests
         Assert.Equal(Hq, pick.ContactId);             // ผูกแถวเดิม (พฤติกรรมเดิม — ไม่สร้างแถวเองจนกว่าเจ้าของตัดสิน)
         Assert.Equal("00008", pick.ScannedBranch);    // สาขาของใบยังไปที่เอกสาร
         Assert.False(pick.MayEnrichMatchedRow);       // ⬅ เดิม: ที่อยู่สาขาที่ 8 ทับแถว สนญ. ได้
-        Assert.Contains("สาขาที่ 8", pick.Trace);
+        Assert.Contains("สาขาที่ 00008", pick.Trace);   // ป้ายจาก TaxBranchCode.Label — รอบ 193 ข้อ 21 = 5 หลักเต็ม
         Assert.Contains("สำนักงานใหญ่", pick.Trace);
     }
 

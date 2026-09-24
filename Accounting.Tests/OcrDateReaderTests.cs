@@ -239,4 +239,68 @@ public class OcrDateReaderTests
             new OcrDateCheck(OcrDateVerdict.NoChange, D(2026, 9, 18), 0.95m, "")));
         Assert.True(OcrPostingReadiness.Evaluate("", hasUsableDate: true).CanAutoApprove);
     }
+
+    // ═════════ รอบ 193 · คำตัดสินเจ้าของข้อ 22 — วันที่กำกวมบนใบอังกฤษล้วน + สกุลเงินต่างประเทศ ═════════
+    // "05/08/2026" อ่านได้ทั้ง 5 ส.ค. (ไทย) และ 8 พ.ค. (อเมริกัน) — ทั้งคู่อยู่ในช่วงเทียบวันอัปโหลด 24 ก.ย. 2026
+
+    private const string AwsLike =
+        "Amazon Web Services, Inc.\nTax Invoice\nInvoice Number: 1234567890\nInvoice Date: 05/08/2026\n"
+        + "Bill to: Example Co., Ltd.\nTotal amount due USD 12.34\n";
+
+    [Fact]
+    public void ใบอังกฤษล้วน_สกุลUSD_engine_อ่านเดือนก่อนวัน_ต้องเชื่อengine()
+    {
+        Assert.True(OcrDateReader.IsForeignEnglishPaper(AwsLike));
+        var r = OcrDateReader.CrossCheck(D(2026, 5, 8), AwsLike, Uploaded);
+        Assert.Equal(OcrDateVerdict.Confirmed, r.Verdict);   // ⬅ เดิม: Replaced เป็น 2026-08-05
+        Assert.Equal(D(2026, 5, 8), r.Date);
+        Assert.False(OcrDateReader.NeedsHumanConfirm(r));
+    }
+
+    [Fact]
+    public void ใบอังกฤษล้วน_สกุลUSD_engine_อ่านแบบไทยอยู่แล้ว_ยังยืนยันตามเดิม()
+    {
+        var r = OcrDateReader.CrossCheck(D(2026, 8, 5), AwsLike, Uploaded);
+        Assert.Equal(OcrDateVerdict.Confirmed, r.Verdict);
+        Assert.Equal(D(2026, 8, 5), r.Date);
+    }
+
+    [Fact]
+    public void ใบอังกฤษล้วน_สกุลUSD_engineไม่ได้วันที่_ยังเติมแบบไทยก่อน()
+    {
+        // คำตัดสินให้ "เชื่อ engine" — ไม่มีค่าของ engine ก็ไม่มีอะไรให้เชื่อ ⇒ กติกาเดิม
+        var r = OcrDateReader.CrossCheck(null, AwsLike, Uploaded);
+        Assert.Equal(OcrDateVerdict.Filled, r.Verdict);
+        Assert.Equal(D(2026, 8, 5), r.Date);
+    }
+
+    [Fact]
+    public void ใบอังกฤษล้วน_แต่เป็นเงินบาท_ยังแบบไทยก่อน()
+    {
+        var thb = AwsLike.Replace("USD 12.34", "12.34");
+        Assert.False(OcrDateReader.IsForeignEnglishPaper(thb));
+        var r = OcrDateReader.CrossCheck(D(2026, 5, 8), thb, Uploaded);
+        Assert.Equal(OcrDateVerdict.Replaced, r.Verdict);
+        Assert.Equal(D(2026, 8, 5), r.Date);
+    }
+
+    [Fact]
+    public void ใบมีภาษาไทยปน_แม้เป็นUSD_ยังแบบไทยก่อน()
+    {
+        var bilingual = AwsLike.Replace("Tax Invoice", "Tax Invoice / ใบกำกับภาษี");
+        Assert.False(OcrDateReader.IsForeignEnglishPaper(bilingual));
+        var r = OcrDateReader.CrossCheck(D(2026, 5, 8), bilingual, Uploaded);
+        Assert.Equal(OcrDateVerdict.Replaced, r.Verdict);
+        Assert.Equal(D(2026, 8, 5), r.Date);
+    }
+
+    [Fact]
+    public void ใบอังกฤษล้วน_USD_แต่engineให้ปีผิดช่วง_ยังซ่อมจากกระดาษตามเดิม()
+    {
+        // engine อ่าน "18/09/26" เป็น 2018-09-26 (ห่างวันอัปโหลดเกิน 2 ปี) — ข้อยกเว้นใช้เฉพาะเมื่อ engine สมเหตุสมผล
+        const string text = "Invoice\nDate: 18/09/26\nTotal USD 99.00\n";
+        var r = OcrDateReader.CrossCheck(D(2018, 9, 26), text, Uploaded);
+        Assert.Equal(OcrDateVerdict.Replaced, r.Verdict);
+        Assert.Equal(D(2026, 9, 18), r.Date);
+    }
 }

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตรวจข้อมูลผู้ติดต่อ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ตรวจข้อมูลผู้ติดต่อ</h2>
+        <p class="page-subtitle">
+          รายงานอย่างเดียว — ระบบ<b>ไม่แก้ข้อมูลให้</b> · กด "เปิดผู้ติดต่อ" แล้วแก้เอง หรือกด "ดึงข้อมูล DBD" ในฟอร์มผู้ติดต่อ
+        </p>
+      </div>
+      <div class="flex gap-2">
+        <a class="btn btn-secondary" href="/pages/contacts.html">← ผู้ติดต่อ</a>
+        <button class="btn btn-secondary" onclick="Page.load(0)">ตรวจอีกครั้ง</button>
+      </div>
+    </div>
+
+    <div class="card" id="summary" style="margin-bottom:16px"></div>
+    <div class="card" id="truncated" style="margin-bottom:16px"></div>
+    <div class="card" id="hq"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      _offset: 0,
+      async init() {
+        if (!Layout.init('contacts')) return;
+        Layout.setTitle('ตรวจข้อมูลผู้ติดต่อ');
+        await this.load();
+      },
+      async load(offset) {
+        const api = Layout.api(); if (!api) return;
+        this._offset = typeof offset === 'number' ? offset : 0;
+        const loading = '<div class="text-center text-gray-400" style="padding:32px">กำลังตรวจ… (ถามทะเบียนกรมสรรพากรอาจใช้เวลาสักครู่)</div>';
+        document.getElementById('summary').innerHTML = loading;
+        document.getElementById('truncated').innerHTML = '';
+        document.getElementById('hq').innerHTML = '';
+        try {
+          const res = await api.getContactHygiene(20, this._offset);
+          this.render(res.data || {});
+        } catch (e) {
+          document.getElementById('summary').innerHTML =
+            `<div class="text-center text-danger" style="padding:32px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+      _openLink(id) {
+        return `<a class="btn btn-sm btn-primary" href="/pages/contacts.html?id=${encodeURIComponent(id)}">เปิดผู้ติดต่อ</a>`;
+      },
+      render(d) {
+        const trunc = Array.isArray(d.truncatedAddresses) ? d.truncatedAddresses : [];
+        const sus = Array.isArray(d.headOfficeSuspects) ? d.headOfficeSuspects : [];
+        const unchecked = typeof d.headOfficeUnchecked === 'number' ? d.headOfficeUnchecked : null;
+        document.getElementById('summary').innerHTML = `
+          <div style="padding:12px 16px;font-size:14px;line-height:1.7">
+            ที่อยู่ขึ้นต้น "/เลข" (เลขบ้านหาย): <b>${trunc.length}</b> ราย ·
+            สำนักงานใหญ่ที่อาจถูกที่อยู่สาขาทับ: <b>${sus.length}</b> ราย
+            ${typeof d.headOfficeCandidates === 'number'
+              ? `<div class="text-xs text-gray-500">ตรวจแถวสำนักงานใหญ่ที่ OCR สร้าง/แก้ ${d.headOfficeCandidates} ราย · เทียบกับทะเบียนแล้ว ${Layout.esc(String(d.headOfficeRegistryChecked ?? '-'))} ราย`
+                + (unchecked ? ` · <span style="color:#b45309">ยังไม่ได้เทียบทะเบียน ${unchecked} ราย (ไม่ได้แปลว่าไม่มีปัญหา — แถวเหล่านี้ขึ้นเฉพาะเมื่อมีใบสาขาพิมพ์ที่อยู่เดียวกัน)</span>` : '')
+                + (typeof d.nextRegistryOffset === 'number'
+                    ? ` <button class="btn btn-sm btn-secondary" onclick="Page.load(${Number(d.nextRegistryOffset)})">ตรวจทะเบียนชุดถัดไป →</button>` : '')
+                + '</div>'
+              : '<div class="text-xs text-gray-500">ไม่มีข้อมูลจำนวนแถวที่ตรวจ</div>'}
+          </div>`;
+
+        document.getElementById('truncated').innerHTML = `
+          <div style="padding:12px 16px;font-weight:700">ที่อยู่ขึ้นต้นด้วย "/เลข"</div>
+          ${trunc.length ? `
+          <div class="table-container" style="border:none"><table class="table">
+            <thead><tr><th>ผู้ติดต่อ</th><th>เลขผู้เสียภาษี</th><th>ที่อยู่ในระบบ</th><th>สร้าง/แก้โดย</th><th></th></tr></thead>
+            <tbody>${trunc.map(r => `<tr>
+              <td class="font-medium">${Layout.esc(r.name || '-')}</td>
+              <td>${Layout.esc(r.taxId || '-')}</td>
+              <td style="color:#b91c1c">${Layout.esc(r.address || '')}</td>
+              <td class="text-xs">${Layout.esc(r.updatedBy || r.createdBy || '-')}</td>
+              <td class="text-right">${this._openLink(r.contactId)}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>` : '<div class="text-center text-gray-400" style="padding:20px">✓ ไม่พบ</div>'}`;
+
+        document.getElementById('hq').innerHTML = `
+          <div style="padding:12px 16px;font-weight:700">สำนักงานใหญ่ที่อาจถูกที่อยู่สาขาทับ</div>
+          ${sus.length ? `
+          <div class="table-container" style="border:none"><table class="table">
+            <thead><tr><th>ผู้ติดต่อ</th><th>ที่อยู่ในระบบ</th><th>ที่อยู่สำนักงานใหญ่ตามทะเบียน</th><th>เหตุผล</th><th></th></tr></thead>
+            <tbody>${sus.map(r => `<tr>
+              <td class="font-medium">${Layout.esc(r.name || '-')}<div class="text-xs text-gray-500">${Layout.esc(r.taxId || '')}</div></td>
+              <td>${Layout.esc(r.address || '')}</td>
+              <td>${r.registryChecked ? Layout.esc(r.registryAddress || '(ทะเบียนไม่คืนที่อยู่)') : '<span class="text-gray-400">ยังไม่ได้ตรวจ</span>'}</td>
+              <td class="text-xs" style="color:#b45309">${Layout.esc(r.reason || '')}</td>
+              <td class="text-right">${this._openLink(r.contactId)}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>` : '<div class="text-center text-gray-400" style="padding:20px">✓ ไม่พบในแถวที่ตรวจแล้ว</div>'}`;
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>
