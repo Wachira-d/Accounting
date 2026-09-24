@@ -75,7 +75,9 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
     }
 
+    // ฝ่ายค้านรอบ 193 W-C1: ลบ 50 ทวิถาวร (หลักฐานนำส่งภาษี) — งานของคน ไม่ใช่คีย์
     [HttpDelete("{certId:guid}")]
+    [Accounting.Filters.RejectApiKey("ลบหนังสือรับรองหัก ณ ที่จ่ายถาวร")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid certId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

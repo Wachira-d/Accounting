@@ -328,6 +328,16 @@ public class DocumentEmailService : IDocumentEmailService
     public EmailTemplate BuildDefaultTemplate(Document doc, Accounting.Models.DTOs.DocumentTemplate.DocumentHeading heading, bool isEtaxByEmail)
         => ComposeDefaultTemplate(doc, heading, isEtaxByEmail);
 
+    public async Task<EmailTemplate> GetDefaultTemplateAsync(Guid companyId, Guid documentId, bool isEtaxByEmail)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, doc.Id);
+        return BuildDefaultTemplate(doc, heading, isEtaxByEmail);
+    }
+
     /// <summary>หัว/เนื้ออีเมลเริ่มต้นของเอกสาร — <b>pure</b> (เทสต์ได้) ·
     /// <paramref name="heading"/> ต้องมาจาก <c>PdfGenerationService.ResolveDocumentHeadingAsync</c> เท่านั้น
     ///

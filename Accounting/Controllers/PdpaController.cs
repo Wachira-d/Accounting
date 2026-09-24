@@ -201,7 +201,9 @@ public class PdpaController : ControllerBase
     /// retention 5 ปี (พ.ร.บ.บัญชี ม.10) จะคงไว้แต่ replace identifying fields
     /// ด้วย "[ANONYMIZED]". DPO ต้องยืนยันก่อนเรียก endpoint นี้ (ส่ง
     /// Acknowledgement = "I confirm" ใน body)</summary>
+    // รอบ 193 (W-C1 ไล่ทางทำลายข้อมูลถาวรอื่น): anonymize ถาวร — คีย์ที่ถือตัวตนเจ้าของผ่าน Pii.View เสมอ ⇒ ต้องเป็นคน
     [HttpPost("dsr/erase")]
+    [Accounting.Filters.RejectApiKey("ลบข้อมูลส่วนบุคคลถาวร (DSR erase)")]
     public async Task<ActionResult<ApiResponse<int>>> DsrErase(
         Guid companyId, [FromBody] DsrEraseRequest req, CancellationToken ct)
     {

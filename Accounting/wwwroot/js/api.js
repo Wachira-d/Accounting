@@ -1441,6 +1441,8 @@ const API = {
       // Document email
       sendDocumentEmail: (documentId, d) => API.post(`${base}/document/${documentId}/send-email`, d),
       getDocumentEmailLogs: (documentId) => API.get(`${base}/document/${documentId}/email-logs`),
+      // หัว/เนื้ออีเมลเริ่มต้นจาก server (ภาษา+หัวเดียวกับ PDF) — W-C4 รอบ 193
+      getDocumentEmailTemplate: (documentId, etax) => API.get(`${base}/document/${documentId}/email-template?etax=${etax ? 'true' : 'false'}`),
       // Aging
       getAgingReceivables: (q = '') => API.get(`${base}/aging/receivables${q}`),
       getAgingPayables: (q = '') => API.get(`${base}/aging/payables${q}`),

@@ -304,6 +304,7 @@ public class EtaxController : ControllerBase
 
     /// <summary>บันทึกการตั้งค่า e-Tax mode + RD registration</summary>
     [HttpPut("config")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่า e-Tax")]
     public async Task<ActionResult<ApiResponse<EtaxConfigResponse>>> UpdateConfig(
         Guid companyId, [FromBody] UpdateEtaxConfigRequest req)
     {

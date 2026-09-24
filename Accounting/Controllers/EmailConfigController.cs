@@ -34,7 +34,10 @@ public class EmailConfigController : ControllerBase
         return Ok(new ApiResponse<EmailConfigResponse>(true, BuildResponse(s)));
     }
 
+    // รอบ 193 (ฝ่ายค้าน W-C2 · ญาติของ PUT settings): เดิมไม่มีด่านเลย — สมาชิกคนไหน/คีย์ไหนก็เปลี่ยนข้อมูลรับรองผู้ส่งอีเมลได้
     [HttpPut]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ตั้งค่าผู้ส่งอีเมล")]
     public async Task<ActionResult<ApiResponse<EmailConfigResponse>>> Update(
         Guid companyId, [FromBody] UpdateEmailConfigRequest req)
     {
@@ -75,6 +78,7 @@ public class EmailConfigController : ControllerBase
     }
 
     [HttpPost("test")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<EmailTestResult>>> TestSend(
         Guid companyId, [FromBody] TestEmailRequest req)
     {

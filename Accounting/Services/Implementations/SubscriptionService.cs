@@ -279,7 +279,8 @@ public class SubscriptionService : ISubscriptionService
             tc.ExtensionDays);
     }
 
-    public async Task<TrialStatusResponse> ExtendTrialAsync(Guid companyId, ExtendTrialRequest request, string performedBy)
+    public async Task<TrialStatusResponse> ExtendTrialAsync(Guid companyId, ExtendTrialRequest request, string performedBy,
+        bool allowCustomDays = false)
     {
         var sub = await _db.Subscriptions
             .Include(s => s.TrialConfig)
@@ -295,7 +296,10 @@ public class SubscriptionService : ISubscriptionService
         if (tc.ExtensionsUsed >= tc.MaxExtensions)
             throw new InvalidOperationException($"ใช้สิทธิ์ขยายเวลาครบแล้ว ({tc.MaxExtensions} ครั้ง)");
 
-        var additionalDays = request.AdditionalDays > 0 ? request.AdditionalDays : tc.ExtensionDays;
+        // เพดานที่ server (ฝ่ายค้านรอบ 193 W-C3): เดิมผู้เรียกกำหนดจำนวนวันเองไม่มีเพดาน ⇒ ขยายครั้งเดียว 36,500 วันได้ ·
+        // ลูกค้า = ไม่เกินค่าที่แพลตฟอร์มตั้งต่อครั้ง · ผู้ดูแลแพลตฟอร์ม (AdminController) กำหนดเองได้
+        var additionalDays = Accounting.Helpers.TrialExtensionPolicy.ResolveDays(
+            request.AdditionalDays, tc.ExtensionDays, allowCustomDays);
         tc.TrialEndDate = tc.TrialEndDate.AddDays(additionalDays);
         tc.ExtensionsUsed++;
         tc.TrialStatus = TrialStatus.Extended;

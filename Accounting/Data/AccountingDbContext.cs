@@ -3528,8 +3528,7 @@ public class AccountingDbContext : DbContext
     /// <summary>F14 — append-only hash chain สำหรับ audit logs. ทุก row ใหม่
     /// link ไปยัง RowHash ของ row ก่อนหน้า (ภายใน CompanyId เดียวกัน) →
     /// แก้/ลบ row กลางทาง = chain แตก ตรวจ detect ได้.
-    /// Canonical form (deterministic — เรียงตามชื่อ field) → SHA-256:
-    ///   Timestamp|UserId|UserEmail|Action|EntityType|EntityId|NewValues|PrevHash
+    /// Canonical form + SHA-256 อยู่ที่ Helpers/AuditHashChain ตัวเดียว (Seal = สูตร v2)
     /// Forensic-grade: SOC2 compliance + protection against insider tamper
     /// of audit trail.</summary>
     private void ApplyAuditHashChain(List<Models.Entities.AuditLog> newEntries)
@@ -3542,18 +3541,25 @@ public class AccountingDbContext : DbContext
         foreach (var grp in byCompany)
         {
             // โหลด PrevHash ล่าสุดของบริษัทนี้จาก DB — chain ต่อจากเดิม
-            var lastHash = AuditLogs
+            var persisted = AuditLogs
                 .Where(a => a.CompanyId == grp.Key && a.RowHash != null)
                 .OrderByDescending(a => a.Id)
                 .Select(a => a.RowHash)
                 .FirstOrDefault();
+            // แถวที่ Add แล้วแต่ยังไม่ SaveChanges (AddChainedAuditLog ก่อนหน้าในคำขอเดียวกัน) ต้องเป็นปลาย chain
+            // ไม่งั้นสองแถวได้ PrevHash เดียวกัน = chain แตกกิ่ง (ฝ่ายค้านรอบ 193 PLAUSIBLE-2) · ChangeTracker เรียงตามลำดับ Add
+            var pending = ChangeTracker.Entries<Models.Entities.AuditLog>()
+                .Where(en => en.State == EntityState.Added
+                             && (en.Entity.CompanyId ?? Guid.Empty) == grp.Key
+                             && !newEntries.Contains(en.Entity))
+                .Select(en => en.Entity);
+            var lastHash = Accounting.Helpers.AuditHashChain.ResolveTip(pending, persisted);
             foreach (var x in grp.OrderBy(x => x.Order))
             {
                 var e = x.Entry;
-                e.PrevHash = lastHash;
-                // canonical + hash มาจากฟังก์ชันกลางตัวเดียว (Helpers/AuditHashChain)
-                // ที่ฝั่ง verify ใช้ตัวเดียวกัน — ห้ามเขียน format string ที่นี่อีก
-                e.RowHash = Accounting.Helpers.AuditHashChain.ComputeRowHash(e);
+                // ฝั่งเขียนตัวเดียว (Helpers/AuditHashChain.Seal — สูตร v2 ที่ round-trip ผ่าน PostgreSQL ได้)
+                // ฝั่ง verify ใช้ AuditHashChain.FirstBrokenIndex ตัวเดียวกัน — ห้ามเขียน format string ที่นี่อีก
+                Accounting.Helpers.AuditHashChain.Seal(e, lastHash);
                 lastHash = e.RowHash;
             }
         }

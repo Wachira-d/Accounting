@@ -53,4 +53,12 @@ public static class OwnerActionGuard
         if (IsApiKeyRequest(ctx))
             throw new BusinessRuleException(DeniedMessage(verb), RuleCode, 403);
     }
+
+    /// <summary>ผลปฏิเสธ 403 สำหรับชั้น controller (null = ไม่ใช่คำขอจากคีย์ ทำต่อได้) — ตัวเดียวที่
+    /// <c>Filters/RejectApiKeyAttribute</c> และด่านเจ้าของแบบ inline ของ controller ใช้</summary>
+    public static Microsoft.AspNetCore.Mvc.ObjectResult? DenyResult(HttpContext? ctx, string? verb = null)
+        => IsApiKeyRequest(ctx)
+            ? new Microsoft.AspNetCore.Mvc.ObjectResult(new Accounting.Models.DTOs.ApiResponse<object>(
+                false, new { ruleCode = RuleCode }, DeniedMessage(verb))) { StatusCode = 403 }
+            : null;
 }

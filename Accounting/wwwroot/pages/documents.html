@@ -2892,7 +2892,7 @@
           subj.readOnly = !!on;
           subj.style.background = on ? '#f1f5f9' : '';
           subj.style.cursor = on ? 'not-allowed' : '';
-          subj.placeholder = on ? '(สรรพากรกำหนดอัตโนมัติเมื่อบันทึก)' : '';
+          subj.placeholder = on ? '(สรรพากรกำหนดอัตโนมัติเมื่อบันทึก)' : 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
         }
         if (badge) badge.style.display = on ? 'inline-block' : 'none';
         if (hint) hint.style.display = on ? 'block' : 'none';
@@ -6860,52 +6860,24 @@
         el.style.display = show ? 'block' : 'none';
       },
       /**
-       * Build a Thai-language subject + HTML body from the current form state.
-       * Mirrors DocumentEmailService.BuildDefaultTemplate so the preview matches
-       * what the server would generate if the fields are left blank.
+       * หัว/เนื้ออีเมลของฟอร์มสร้างเอกสาร — **ไม่ประกอบเองอีกแล้ว** (ฝ่ายค้านรอบ 193 W-C4)
        *
-       * Only overwrites fEmailSubject / fEmailBody if they're empty or still
-       * contain the auto-generated text — preserves any manual edits.
+       * เดิมประกอบหัว `${ชนิด} - ${ลูกค้า}` + เนื้อ HTML ภาษาไทยเสมอจากตารางชื่อชนิดของ JS แล้วส่งเป็นค่าไม่ว่าง
+       * ⇒ server ไม่เคยใช้ resolver ภาษา/หัวเอกสาร (S-12) · ใบภาษาอังกฤษได้ "เรียน …" ไทยครอบ PDF อังกฤษ ·
+       * และชื่อลูกค้าต่อเข้า HTML โดยไม่หนี. ตอนนี้: ปล่อยว่างพร้อม placeholder ⇒ ส่ง null ⇒ server เติมหัว/เนื้อ
+       * ตามหัวเอกสารของ PDF (ใบยังไม่บันทึก = ยังไม่มีเลขที่/หัวจริงให้แสดงล่วงหน้า) · ค่าที่ผู้ใช้พิมพ์เองยังชนะเสมอ
        */
       refreshEmailTemplate() {
-        const contactId = document.getElementById('fContactId').value;
-        const docType = document.getElementById('fDocType').value;
-        const dateStr = document.getElementById('fDate').value;
-        const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
-        const docTypeLabel = Layout.docTypeLabel(docType) || 'เอกสาร';
-        const customerName = c?.name || 'ลูกค้า';
-        const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
-        const companyName = company.name || '';
-        const total = parseFloat(document.getElementById('sumTotal')?.textContent?.replace(/,/g, '')) || 0;
-        const dateLabel = dateStr
-          ? new Date(dateStr).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' })
-          : '—';
-
-        const subject = `${docTypeLabel} - ${customerName}`;
-        // Use simple HTML so it renders in plain mail clients too. Doc number is
-        // unknown until the document is saved, so we leave it as a placeholder
-        // the server fills in from BuildDefaultTemplate when it arrives.
-        const body =
-`<div style="font-family:'Noto Sans Thai',sans-serif;max-width:600px;color:#1e293b">
-  <h2 style="color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px">${docTypeLabel}</h2>
-  <p>เรียน คุณ${customerName}</p>
-  <p>${companyName ? companyName + ' ' : ''}ขอส่ง${docTypeLabel}ลงวันที่ <strong>${dateLabel}</strong>${total > 0 ? ` ยอดสุทธิ <strong>${total.toLocaleString('en-US',{minimumFractionDigits:2})} บาท</strong>` : ''} ถึงท่าน ตามไฟล์แนบ</p>
-  <p>หากท่านมีข้อสงสัย หรือต้องการสอบถามรายละเอียดเพิ่มเติม กรุณาติดต่อกลับมายังอีเมลนี้</p>
-  <p style="margin-top:24px">ขอแสดงความนับถือ<br>${companyName || '(ระบบบัญชี Next Acc)'}</p>
-</div>`;
-
-        // Only fill subject/body if empty OR currently contains the previous
-        // auto-template (so user edits are preserved across contact/type changes).
         const subjEl = document.getElementById('fEmailSubject');
-        if (subjEl && (!subjEl.value || subjEl.value === this._lastAutoSubject)) {
-          subjEl.value = subject;
-          this._lastAutoSubject = subject;
-        }
         const bodyEl = document.getElementById('fEmailBody');
-        if (bodyEl && (!bodyEl.value || bodyEl.value === this._lastAutoBody)) {
-          bodyEl.value = body;
-          this._lastAutoBody = body;
-        }
+        // ล้างค่าที่หน้ารุ่นก่อนเติมอัตโนมัติไว้ (ไม่แตะค่าที่ผู้ใช้พิมพ์เอง)
+        if (subjEl && this._lastAutoSubject && subjEl.value === this._lastAutoSubject) subjEl.value = '';
+        if (bodyEl && this._lastAutoBody && bodyEl.value === this._lastAutoBody) bodyEl.value = '';
+        this._lastAutoSubject = '';
+        this._lastAutoBody = '';
+        const asEtax = document.getElementById('fEmailAsEtax')?.checked;
+        if (subjEl && !asEtax) subjEl.placeholder = 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
+        if (bodyEl) bodyEl.placeholder = 'เว้นว่าง = ระบบเติมข้อความตามภาษาของเอกสาร';
       },
       async exportAll(format) {
         const api = Layout.api(); if (!api) return;
@@ -10309,8 +10281,7 @@
         const defTo = (d?.contact?.email || d?.contactEmail || d?.emailTo || '');
         const docNum = d?.documentNumber || '';
         const hasEtaxId = !!d?.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
-        const defSubject = `${docNum ? docNum + ' ' : ''}จาก ${d?.companyName || 'บริษัท'}`.trim();
-        const defBody = `เรียน ${d?.contact?.name || d?.contactName || 'ลูกค้า'}\n\nบริษัทขอนำส่งเอกสาร ${docNum} มาพร้อมอีเมลนี้ (ไฟล์แนบ PDF)\nหากมีข้อสงสัยกรุณาติดต่อกลับ\n\nขอแสดงความนับถือ`;
+        // หัว/เนื้อเริ่มต้นมาจาก server (W-C4) — เติมหลังเปิดหน้าต่าง · ไม่มีสำเนาข้อความในหน้า
         let wrap = document.getElementById('sendEmailModal');
         if (!wrap) {
           wrap = document.createElement('div');
@@ -10348,8 +10319,11 @@
         // populate
         wrap.querySelector('#seTo').value = defTo;
         wrap.querySelector('#seCc').value = '';
-        wrap.querySelector('#seSubject').value = defSubject;
-        wrap.querySelector('#seBody').value = defBody;
+        wrap.querySelector('#seSubject').value = '';
+        wrap.querySelector('#seBody').value = '';
+        this._seAuto = { subject: '', body: '' };
+        this._loadSendEmailTemplate(id);
+        wrap.querySelector('#seEtax').onchange = () => this._loadSendEmailTemplate(id);
         wrap.querySelector('#seAttachPdf').checked = true;
         wrap.querySelector('#seEtaxRow').style.display = etaxEligible ? 'block' : 'none';
         wrap.querySelector('#seEtax').checked = !!(etaxEligible && preferEtax);
@@ -10358,14 +10332,38 @@
         wrap.classList.add('active');
         setTimeout(() => wrap.querySelector('#seTo').focus(), 50);
       },
+      /** เติมหัว/เนื้อจาก server (ภาษา+หัวเดียวกับ PDF) · แทนเฉพาะช่องที่ยังเป็นค่าอัตโนมัติเดิม (ผู้ใช้แก้แล้ว = ไม่แตะ) ·
+       *  โหลดไม่ได้ = ปล่อยว่าง (server เติมเองตอนส่ง) */
+      async _loadSendEmailTemplate(id) {
+        const wrap = document.getElementById('sendEmailModal'); if (!wrap) return;
+        const api = Layout.api(); if (!api) return;
+        const asEtax = !!wrap.querySelector('#seEtax')?.checked;
+        let tpl = null;
+        try { tpl = (await api.getDocumentEmailTemplate(id, asEtax))?.data || null; } catch (e) { tpl = null; }
+        const subjEl = wrap.querySelector('#seSubject');
+        const bodyEl = wrap.querySelector('#seBody');
+        const prev = this._seAuto || { subject: '', body: '' };
+        if (!tpl) {
+          subjEl.placeholder = 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF';
+          bodyEl.placeholder = 'เว้นว่าง = ระบบเติมข้อความตามภาษาของเอกสาร';
+          return;
+        }
+        if (subjEl.value === prev.subject) subjEl.value = tpl.subject || '';
+        if (bodyEl.value === prev.body) bodyEl.value = tpl.htmlBody || '';
+        this._seAuto = { subject: tpl.subject || '', body: tpl.htmlBody || '' };
+      },
       async _submitSendEmail(id, hasEtaxId) {
         const wrap = document.getElementById('sendEmailModal');
         const err = wrap.querySelector('#seError');
         const to = wrap.querySelector('#seTo').value.trim();
         if (!to) { err.textContent = 'กรุณากรอกอีเมลผู้รับ'; err.style.display = 'block'; return; }
         const cc = wrap.querySelector('#seCc').value.trim() || null;
-        const subject = wrap.querySelector('#seSubject').value.trim() || null;
-        const body = wrap.querySelector('#seBody').value.trim() || null;
+        // ยังเป็นค่าที่ server เติมให้ = ส่ง null ให้ server ประกอบเอง (ตรงกับ PDF เสมอ แม้สลับ e-Tax หลังโหลด)
+        const auto = this._seAuto || { subject: '', body: '' };
+        const rawSubject = wrap.querySelector('#seSubject').value;
+        const rawBody = wrap.querySelector('#seBody').value;
+        const subject = (rawSubject === auto.subject ? '' : rawSubject).trim() || null;
+        const body = (rawBody === auto.body ? '' : rawBody).trim() || null;
         const attachPdf = wrap.querySelector('#seAttachPdf').checked;
         const asEtax = wrap.querySelector('#seEtax').checked;
         const api = Layout.api(); if (!api) return;

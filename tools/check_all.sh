@@ -47,16 +47,13 @@ done
 
 # ---------- 1a. negative test ของ checker ที่มี --self-test (F2 ข้อ 6: ด่านที่ไม่มี negative test = ไม่มีด่าน) ----------
 # รอบ 193 ทีม C3: เริ่มจาก contact_taxid_only_match_check — เพิ่มชื่อ checker ที่มี --self-test ต่อท้ายลิสต์นี้ได้
-for f in tools/contact_taxid_only_match_check.py; do
+# settings_reader_check (ทีม W): --self-test รวม negative test กับเรพจริง (ถอดผู้อ่าน AutoAttachWhtCertPdf แล้วต้องฟ้อง)
+# owner_action_wiring_check (ทีม W หลังฝ่ายค้าน): ถอดด่านเจ้าของ/คีย์ออกจากไฟล์จริงแล้วต้องฟ้อง
+for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py; do
   [ -e "$f" ] || continue
   out=$(python3 "$f" --self-test 2>&1); rc=$?
   if [ $rc -ne 0 ]; then red "❌ self-test $f"; echo "$out" | tail -20; fail=1; fi
 done
-# ---------- 1b. negative test ของ checker ที่ต้องพิสูจน์กับเรพจริง ----------
-# settings_reader_check (รอบ 193): ถอดผู้อ่านของ CompanySettings.AutoAttachWhtCertPdf ในเรพจริงแล้วต้องฟ้อง —
-# ตัว glob ข้างบนรันแค่ self-test สังเคราะห์ ถ้า regex ของ checker เพี้ยนกับโค้ดจริง จะจับได้ที่นี่ (F2 ข้อ 6)
-out=$(python3 tools/settings_reader_check.py --self-test 2>&1); rc=$?
-if [ $rc -ne 0 ]; then red "❌ tools/settings_reader_check.py --self-test"; echo "$out" | tail -20; fail=1; fi
 
 # ---------- 1b. simulation ที่รันโค้ดจริง ----------
 # CLAUDE.md §F เขียนไว้ตั้งแต่รอบ 169 ว่า check_all.sh "รันทุกบรรทัดข้างบน" ซึ่งรวม

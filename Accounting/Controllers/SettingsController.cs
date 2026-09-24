@@ -16,11 +16,14 @@ public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;
     private readonly ICompanyService _companyService;
+    private readonly IPermissionService? _permissions;
 
-    public SettingsController(ISettingsService settingsService, ICompanyService companyService)
+    public SettingsController(ISettingsService settingsService, ICompanyService companyService,
+        IPermissionService? permissions = null)
     {
         _settingsService = settingsService;
         _companyService = companyService;
+        _permissions = permissions;
     }
 
     // ===== Public: Landing Page Services =====
@@ -39,6 +42,19 @@ public class SettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> GetSettings(Guid companyId)
     {
         var result = await _settingsService.GetSettingsAsync(companyId);
+        // W-C7: บอกหน้าเว็บก่อนให้กรอกว่าบันทึกได้ไหม + ข้อความเดียวกับที่ PUT จะตอบ (server ตัดสิน · หน้าแสดง)
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext))
+            result = result with { CanEdit = false, EditDeniedMessage = OwnerActionGuard.DeniedMessage("บันทึกการตั้งค่าบริษัท") };
+        else if (_permissions != null)
+        {
+            var can = await _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+                PermissionKeys.CompanySettingsEdit);
+            result = result with
+            {
+                CanEdit = can,
+                EditDeniedMessage = can ? null : PermissionKeys.DeniedMessage(PermissionKeys.CompanySettingsEdit),
+            };
+        }
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result));
     }
 
@@ -49,17 +65,11 @@ public class SettingsController : ControllerBase
     /// <c>MaxApiKeys</c>) ห้ามถูกเปลี่ยนด้วยคีย์เอง แม้คีย์นั้นสวมเป็นเจ้าของ — ส่งค่าเดิมกลับมา (GET แล้ว PUT ทั้งก้อน) ยังผ่าน</para></summary>
     [HttpPut]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("บันทึกการตั้งค่าบริษัท")]
     public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UpdateSettings(Guid companyId, [FromBody] UpdateCompanySettingsRequest request)
     {
-        if (OwnerActionGuard.IsApiKeyRequest(HttpContext)
-            && (request.EnableApiAccess.HasValue || request.MaxApiKeys.HasValue))
-        {
-            var current = await _settingsService.GetSettingsAsync(companyId);
-            if ((request.EnableApiAccess.HasValue && request.EnableApiAccess.Value != current.EnableApiAccess)
-                || (request.MaxApiKeys.HasValue && request.MaxApiKeys.Value != current.MaxApiKeys))
-                return StatusCode(403, new ApiResponse<object>(false, new { ruleCode = OwnerActionGuard.RuleCode },
-                    OwnerActionGuard.DeniedMessage("เปิด/ปิด API Access หรือเปลี่ยนจำนวนคีย์สูงสุด")));
-        }
+        // ฝ่ายค้านรอบ 193 W-C2: เดิมกันคีย์เฉพาะ EnableApiAccess/MaxApiKeys ⇒ คีย์ที่ถือตัวตนเจ้าของยังปิดการอนุมัติ/SoD/
+        // เปลี่ยนนโยบายภาษีและข้อมูลรับรอง e-Tax ได้ (RequirePermission ปล่อยเจ้าของผ่านเสมอ) ⇒ ทั้งเส้นเป็นงานของคน
         var result = await _settingsService.UpdateSettingsAsync(companyId, request);
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพเดทการตั้งค่าสำเร็จ"));
     }
@@ -68,6 +78,7 @@ public class SettingsController : ControllerBase
 
     [HttpPost("logo")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("อัปโหลดโลโก้บริษัท")]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
     public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadLogo(Guid companyId, IFormFile file)
     {
@@ -81,6 +92,7 @@ public class SettingsController : ControllerBase
 
     [HttpDelete("logo")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("ลบโลโก้บริษัท")]
     public async Task<IActionResult> DeleteLogo(Guid companyId)
     {
         await _settingsService.DeleteLogoAsync(companyId);
@@ -106,6 +118,7 @@ public class SettingsController : ControllerBase
     /// </summary>
     [HttpPost("stamp")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("อัปโหลดตราประทับบริษัท")]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
     public async Task<ActionResult<ApiResponse<object>>> UploadStamp(Guid companyId, IFormFile file)
     {
@@ -124,6 +137,7 @@ public class SettingsController : ControllerBase
 
     [HttpDelete("stamp")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("ลบตราประทับบริษัท")]
     public async Task<IActionResult> DeleteStamp(Guid companyId)
     {
         await _settingsService.DeleteStampAsync(companyId);
@@ -141,6 +155,7 @@ public class SettingsController : ControllerBase
 
     [HttpPost("number-series")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("ตั้งตัวย่อเลขที่เอกสาร")]
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> CreateNumberSeries(Guid companyId, [FromBody] CreateNumberSeriesRequest request)
     {
         var result = await _settingsService.CreateNumberSeriesAsync(companyId, request);
@@ -149,6 +164,7 @@ public class SettingsController : ControllerBase
 
     [HttpPut("number-series/{seriesId:guid}")]
     [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RejectApiKey("แก้ตัวย่อเลขที่เอกสาร")]
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> UpdateNumberSeries(Guid companyId, Guid seriesId, [FromBody] UpdateNumberSeriesRequest request)
     {
         var result = await _settingsService.UpdateNumberSeriesAsync(companyId, seriesId, request);

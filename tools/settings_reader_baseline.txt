@@ -23,7 +23,6 @@ CompanySettings.ReceiptNotes
 DocumentTemplate.DigitalCertificatePassword
 DocumentTemplate.DigitalCertificatePath
 LodgingProperty.AccountingModeAckBy
-LodgingProperty.AutoConfirmOnDeposit
 SiteCommerceConfig.AbandonedCartHours
 SiteCommerceConfig.AutoConfirmOrders
 SiteCommerceConfig.AutoDeductStock

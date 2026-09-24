@@ -120,6 +120,7 @@ public class AccountSubscriptionController : ControllerBase
     /// at create time so admin plan changes don't silently shrink an
     /// established account.</summary>
     [HttpPost("start-trial")]
+    [Accounting.Filters.RejectApiKey("เริ่มทดลองใช้ Account Plan")]
     public async Task<ActionResult<ApiResponse<AccountSubDto>>> StartTrial([FromBody] StartTrialRequest req)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -171,7 +172,10 @@ public class AccountSubscriptionController : ControllerBase
     /// <summary>Attach a Company under the user's Account Plan. The user must
     /// be Owner of the Company. Reduces the company to the account's quota
     /// (account features win). Respects MaxCompanies.</summary>
+    // ฝ่ายค้านรอบ 193 W-C3: CompanyId มาจาก body — คีย์ของบริษัท A (ตัวตนเจ้าของ) เคยผูก/ถอดบริษัท B ของเจ้าของคนเดียวกันได้
+    // (TenantAccessMiddleware ดูแค่ route) ⇒ คีย์ห้าม · คนที่ล็อกอินยังต้องเป็น Owner ของบริษัทใน body (ตรวจด้านล่าง)
     [HttpPost("attach")]
+    [Accounting.Filters.RejectApiKey("ผูกบริษัทเข้า Account Plan")]
     public async Task<ActionResult<ApiResponse<string>>> Attach([FromBody] AttachRequest req)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -183,7 +187,9 @@ public class AccountSubscriptionController : ControllerBase
         // Ownership check — only Owner of the Company can attach it.
         var isOwner = await _db.CompanyUsers.AnyAsync(cu => cu.UserId == userId && cu.CompanyId == req.CompanyId
             && cu.Role == UserRole.Owner);
-        if (!isOwner) return Forbid();
+        if (!isOwner)
+            return StatusCode(403, new ApiResponse<string>(false, null,
+                "ทำได้เฉพาะเจ้าของบริษัทนั้น — ผูก/ถอดได้เฉพาะบริษัทที่คุณเป็นเจ้าของ (Owner)"));
 
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == req.CompanyId && !s.IsDeleted);
         if (sub == null) return BadRequest(new ApiResponse<string>(false, null, "บริษัทยังไม่มี Subscription"));
@@ -210,12 +216,15 @@ public class AccountSubscriptionController : ControllerBase
     /// plan that's still on file). Useful when selling a company or when a
     /// holding decides to split bills.</summary>
     [HttpPost("detach")]
+    [Accounting.Filters.RejectApiKey("ถอดบริษัทออกจาก Account Plan")]
     public async Task<ActionResult<ApiResponse<string>>> Detach([FromBody] AttachRequest req)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var isOwner = await _db.CompanyUsers.AnyAsync(cu => cu.UserId == userId && cu.CompanyId == req.CompanyId
             && cu.Role == UserRole.Owner);
-        if (!isOwner) return Forbid();
+        if (!isOwner)
+            return StatusCode(403, new ApiResponse<string>(false, null,
+                "ทำได้เฉพาะเจ้าของบริษัทนั้น — ผูก/ถอดได้เฉพาะบริษัทที่คุณเป็นเจ้าของ (Owner)"));
 
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == req.CompanyId && !s.IsDeleted);
         if (sub == null) return NotFound();

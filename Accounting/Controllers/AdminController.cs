@@ -1290,7 +1290,7 @@ public class AdminController : ControllerBase
     public async Task<ActionResult<ApiResponse<TrialStatusResponse>>> ExtendTrial(Guid companyId, [FromBody] ExtendTrialRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _subscriptionService.ExtendTrialAsync(companyId, request, userId);
+        var result = await _subscriptionService.ExtendTrialAsync(companyId, request, userId, allowCustomDays: true);
         return Ok(new ApiResponse<TrialStatusResponse>(true, result, "ขยายเวลา trial สำเร็จ"));
     }
 
@@ -1824,7 +1824,8 @@ public class AdminController : ControllerBase
             settings.RegistrationEnabled = request.RegistrationEnabled.Value;
         if (request.MaintenanceMode.HasValue)
             settings.MaintenanceMode = request.MaintenanceMode.Value;
-        settings.MaintenanceMessage = request.MaintenanceMessage;
+        // ไม่ส่ง = คงเดิม (ฝ่ายค้านรอบ 193 W-C5): หน้า site-settings เลิกส่งช่องนี้ตั้งแต่ถูกล็อก (S-06) — เดิมเขียนทับเป็น null ทุกครั้งที่บันทึก
+        if (request.MaintenanceMessage != null) settings.MaintenanceMessage = request.MaintenanceMessage;
         if (request.DefaultLanguage != null)
             settings.DefaultLanguage = request.DefaultLanguage;
 

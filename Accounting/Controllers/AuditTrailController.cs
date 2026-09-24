@@ -60,22 +60,24 @@ public class AuditTrailController : ControllerBase
         [FromQuery] int maxRows = 100000)
     {
         if (maxRows < 1 || maxRows > 1_000_000) maxRows = 100_000;
-        var rows = await db.AuditLogs
-            .Where(a => a.CompanyId == companyId)
+        // ฝ่ายค้านรอบ 193 PLAUSIBLE-1: endpoint นี้เคยมีสำเนา canonical format ของตัวเอง (สำเนาที่สองของ
+        // Helpers/AuditHashChain — defect class "hash มี canonical function เดียว") + นับแถวที่ไม่อยู่ใน chain
+        // (RowHash = null — เขียนตรงไม่ผ่าน AddChainedAuditLog) เป็น "ถูกแก้" ⇒ ใช้ตัวตรวจกลางตัวเดียว + แยกนับแถวนอก chain
+        var rows = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.RowHash != null)
             .OrderBy(a => a.Id)
             .Take(maxRows)
             .ToListAsync();
-        using var sha = System.Security.Cryptography.SHA256.Create();
+        var unchained = await db.AuditLogs.AsNoTracking()
+            .CountAsync(a => a.CompanyId == companyId && a.RowHash == null);
         var tampered = new List<object>();
         string? expectedPrev = null;
         foreach (var e in rows)
         {
             if (e.PrevHash != expectedPrev)
                 tampered.Add(new { e.Id, issue = "broken chain", e.PrevHash, expected = expectedPrev });
-            var canonical = $"{e.Timestamp:O}|{e.UserId}|{e.UserEmail}|{(int)e.Action}|{e.EntityType}|{e.EntityId}|{e.NewValues}|{e.OldValues}|{e.PrevHash}";
-            var recomputed = Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical)));
-            if (recomputed != e.RowHash)
-                tampered.Add(new { e.Id, issue = "row mutated", stored = e.RowHash, recomputed });
+            if (!Accounting.Helpers.AuditHashChain.VerifyRow(e))
+                tampered.Add(new { e.Id, issue = "row mutated", stored = e.RowHash });
             expectedPrev = e.RowHash;
         }
         return Ok(new ApiResponse<object>(true, new
@@ -83,6 +85,8 @@ public class AuditTrailController : ControllerBase
             scanned = rows.Count,
             tamperedCount = tampered.Count,
             valid = tampered.Count == 0,
+            // แถวที่ไม่เคยเข้า chain (ไม่ใช่หลักฐานว่าถูกแก้ แต่ก็ไม่ได้รับการป้องกัน) — แสดงแยก ไม่ซ่อน
+            unchainedCount = unchained,
             firstTen = tampered.Take(10),
         }));
     }
