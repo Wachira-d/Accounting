@@ -24,9 +24,29 @@ public class OcrController : ControllerBase
     // ด่านสิทธิ์ (ผลตรวจ 2026-09-05 T1-06): เส้น "สร้าง+อนุมัติ" และ "บันทึก JE" จากหน้าสแกน
     // เป็นทางอนุมัติทางที่ 4 ที่ไม่มีด่าน — ใช้ตัวตัดสินกลางเดียวกับเว็บ/ลายเซ็น/LINE/มือถือ
     private readonly IPermissionService _perms;
+    // ด่านสแกน/ไฟล์ตัวเดียวของระบบ (รอบ 193 S2) — ทุก action ที่รับ scanId ต้องผ่าน ScanGateAsync (tools/attachment_gate_check.py)
+    private readonly IAttachmentAccessGate _gate;
     public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db,
-        IDocumentService documentService, IPermissionService perms)
-    { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; }
+        IDocumentService documentService, IPermissionService perms, IAttachmentAccessGate gate)
+    { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; _gate = gate; }
+
+    /// <summary>
+    /// **ด่านของสแกนหนึ่งใบ — ทุก action ที่รับ <c>scanId</c> ต้องเรียกตัวนี้ก่อนแตะสแกน** · คืน <c>null</c> = ผ่าน
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · S2-C3) ═══ ด่านอ่านเดิมอยู่แค่ GetResult/GetImage แต่ endpoint อื่นอีก ~20 ตัวคืนผลอ่าน
+    /// เต็มใบ (match-contact · retry · line-preview · stock-preview · open-pos · predecessor-candidates) หรือแก้สแกนของใบที่
+    /// ผู้ใช้มองไม่เห็นได้ ⇒ ด่านอ่านของ GET ถูกข้ามได้ด้วย endpoint ข้าง ๆ · ตอนนี้: อ่าน = ด่านอ่านของเจ้าของไฟล์ ·
+    /// เขียน = อ่าน + ด่านเขียนของเจ้าของ (สแกนที่ยังไม่ผูก = ระดับสมาชิก เหมือนเดิม — พื้นที่ทำงานก่อนลงบัญชี)</para>
+    /// </summary>
+    private async Task<ObjectResult?> ScanGateAsync(Guid companyId, Guid scanId, string verb, bool write)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var denial = await _gate.DenyScanAsync(companyId, uid, scanId, AttachmentAccess.Read, verb);
+        if (denial == null && write)
+            denial = await _gate.DenyScanAsync(companyId, uid, scanId, AttachmentAccess.Write, verb,
+                unlinkedEditIsMemberLevel: true);
+        return denial is { } d ? StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message)) : null;
+    }
 
     /// <summary>ชนิดเอกสารที่สแกนนี้จะกลายเป็น — ผ่าน <c>Helpers.OcrTargetDocumentType</c>
     /// ตัวเดียวกับที่ <c>OcrService.CreateDocumentFromScanAsync</c> ใช้จริง
@@ -224,6 +244,12 @@ public class OcrController : ControllerBase
         Guid companyId, Guid fileAttachmentId, [FromQuery] bool? autoCreate = null,
         [FromBody] OcrScanMetadataRequest? body = null)
     {
+        // ═══ ด่านไฟล์ต้นทาง (ฝ่ายค้านรอบ 193 · S2-C1) ═══ เดิมรับ id ของไฟล์แนบ**ชนิดใดก็ได้**ในบริษัท แล้วคืน RawText +
+        // สร้างสแกน "ยังไม่ผูก" ที่เปิดไฟล์ต้นฉบับได้ระดับสมาชิก ⇒ สลิปเงินเดือน/ไฟล์ของเอกสารลับหลุด · ตอนนี้ต้องอ่านไฟล์นั้นได้
+        // ก่อน และสแกนใหม่ได้ด่านของเจ้าของไฟล์ต่อ (AttachmentPermissionScope.ScanOwner)
+        var deny = await DenyScanSourceAsync(companyId, fileAttachmentId);
+        if (deny != null) return deny;
+
         // Same auto-create defaulting as /upload — integration partners using
         // the two-step upload-then-scan flow keep their zero-touch behavior;
         // web/JWT callers default to suggest-only.
@@ -239,6 +265,30 @@ public class OcrController : ControllerBase
                 autoCreate: effective)));
     }
 
+    private async Task<ObjectResult?> DenyScanSourceAsync(Guid companyId, Guid fileAttachmentId)
+    {
+        var denial = await _gate.DenyScanSourceAsync(companyId, JwtHelper.GetUserIdFromClaims(User), fileAttachmentId);
+        return denial is { } d ? StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message)) : null;
+    }
+
+    /// <summary>ด่านของเอกสาร (อ่าน = ฝั่ง + ชั้นความลับ · เขียน = สร้าง/อนุมัติชนิดนั้น + ชั้นความลับ) — ตัวเดียวกับไฟล์แนบของเอกสาร</summary>
+    private async Task<ObjectResult?> DocGateAsync(Guid companyId, Guid documentId, AttachmentAccess access, string verb)
+    {
+        var denial = await _gate.DenyAttachmentAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            "Document", documentId, access, verb);
+        return denial is { } d ? StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message)) : null;
+    }
+
+    /// <summary>เอกสารที่ผู้ใช้เลือกมาผูก (PO · ใบต้นทาง) ต้องเป็นใบที่ผู้ใช้มองเห็น — ไม่งั้นผูกกับใบที่มองไม่เห็นแล้วได้บรรทัด/ยอดมา</summary>
+    private async Task<ObjectResult?> DenyHiddenDocumentAsync(Guid companyId, Guid documentId)
+    {
+        var hidden = await _gate.HiddenDocumentIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), new[] { documentId });
+        return hidden.Contains(documentId)
+            ? StatusCode(403, new ApiResponse<object>(false, null,
+                "ไม่มีสิทธิ์ดูเอกสารที่เลือก (ฝั่งรายรับ/รายจ่ายหรือชั้นความลับ) — เลือกใบอื่น หรือขอสิทธิ์จากเจ้าของบริษัท"))
+            : null;
+    }
+
     /// <summary>Body ของ /scan สำหรับ flow 2 ขั้น — แนบ metadata (ยอดที่ระบบ
     /// ภายนอกกรอก/แหล่งเงิน/project) + เลือก engine ได้. ทุก field optional.</summary>
     public record OcrScanMetadataRequest(string? Metadata = null, string? Engine = null);
@@ -250,6 +300,8 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/retry")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> Retry(Guid companyId, Guid scanId)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "สแกนซ้ำ", write: true);
+        if (deny != null) return deny;
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.Id == scanId && r.CompanyId == companyId);
         if (scan == null)
@@ -291,24 +343,21 @@ public class OcrController : ControllerBase
     // ต้องผ่านด่านเดียวกับไฟล์แนบของเอกสาร (ฝั่งรายรับ/รายจ่าย + ชั้นความลับ) · ยังไม่ผูก = ด่านของ OCR ·
     // ตัวตัดสินอยู่ที่ IAttachmentAccessGate ตัวเดียว (tools/attachment_gate_check.py ตรวจว่าสามเส้นนี้เรียกจริง)
     [HttpGet("{scanId:guid}")]
-    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> GetResult(Guid companyId, Guid scanId,
-        [FromServices] IAttachmentAccessGate gate)
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> GetResult(Guid companyId, Guid scanId)
     {
-        var deny = await gate.DenyScanAsync(companyId, JwtHelper.GetUserIdFromClaims(User), scanId,
-            AttachmentAccess.Read, "ดูผลสแกน");
-        if (deny is { } d) return StatusCode(d.Status, new ApiResponse<OcrResultResponse>(false, null, d.Message));
+        var deny = await ScanGateAsync(companyId, scanId, "ดูผลสแกน", write: false);
+        if (deny != null) return deny;
         return Ok(new ApiResponse<OcrResultResponse>(true, await _service.GetResultAsync(companyId, scanId)));
     }
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<OcrResultResponse>>>> GetResults(Guid companyId,
-        [FromServices] IAttachmentAccessGate gate,
         [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var result = await _service.GetResultsAsync(companyId, status, new PagedRequest(page, pageSize));
         // ตัดแถวของใบที่ผู้ใช้เปิดเอกสารไม่ได้ (ไม่คืนชื่อผู้ขาย/ยอด/ลิงก์รูป) · คงยอด TotalCount/TotalPages จาก server
         // เหมือนลิสต์เอกสาร (DocumentController.GetDocuments) — recompute จากหน้าเดียวทำ paging พัง
-        var hidden = await gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+        var hidden = await _gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             result.Items.Select(x => x.Id).ToList());
         if (hidden.Count > 0)
             result = new PagedResponse<OcrResultResponse>(result.Items.Where(x => !hidden.Contains(x.Id)).ToList(),
@@ -324,6 +373,8 @@ public class OcrController : ControllerBase
         // ทุกปุ่มจึงถูกกันเหมือนกันหมด ไม่ใช่แค่ปุ่มที่หน้าเว็บนึกจะเช็ค
         [FromQuery] bool allowDuplicate = false)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "สร้างเอกสารจากสแกน", write: true);
+        if (deny != null) return deny;
         // Pass the user GUID (not Identity.Name, which is the email) so the
         // created document's CreatedBy resolves to a real user → its
         // signature prints. The service still owner-falls-back if empty.
@@ -407,24 +458,45 @@ public class OcrController : ControllerBase
     /// page calls this). Refuses if the document already has real lines.</summary>
     [HttpPost("documents/{documentId:guid}/repopulate-lines")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> RepopulateLines(Guid companyId, Guid documentId)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
+    {
+        // แก้บรรทัดของเอกสาร = ด่านเขียนของเอกสาร (S2 · ฝ่ายค้าน C3/C7)
+        var deny = await DocGateAsync(companyId, documentId, AttachmentAccess.Write, "ดึงรายการจากสแกนเข้าเอกสาร");
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
             await _service.RepopulateDocumentLinesFromScanAsync(companyId, documentId, User.Identity?.Name ?? ""),
             "ดึงรายการจาก OCR สำเร็จ"));
+    }
 
     /// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): ข้อเสนอบรรทัดปรับส่วนต่าง "ยอดตามใบกำกับ ↔ ยอดชำระจริง" ของเอกสารที่สร้างจากสแกน
     /// — หน้าบันทึกการชำระเติมให้ยืนยันคลิกเดียว · อ่านอย่างเดียว · null = ไม่มีข้อเสนอ</summary>
     [HttpGet("documents/{documentId:guid}/settlement-proposal")]
     public async Task<ActionResult<ApiResponse<OcrSettlementProposalResponse?>>> GetSettlementProposal(Guid companyId, Guid documentId)
-        => Ok(new ApiResponse<OcrSettlementProposalResponse?>(true,
+    {
+        // ยอดตามใบ/ยอดจ่ายของเอกสาร = อ่านเอกสาร (ฝ่ายค้านงาน O1 · C7)
+        var deny = await DocGateAsync(companyId, documentId, AttachmentAccess.Read, "ดูข้อเสนอปรับส่วนต่าง");
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrSettlementProposalResponse?>(true,
             await _service.GetSettlementProposalAsync(companyId, documentId)));
+    }
 
     /// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 14): รายงานสแกน/เอกสารเก่าที่ตัวเลขที่เก็บไว้ผิดเพราะตรรกะส่วนลด/ยอดรวมแบบเดิม
     /// — <b>อ่านอย่างเดียว</b> ให้นักบัญชีตรวจ (ห้ามแก้หลังบ้าน) · กรองบริษัท · <paramref name="take"/> ≤ 1,000 สแกนล่าสุด</summary>
     [HttpGet("amount-audit")]
     public async Task<ActionResult<ApiResponse<List<OcrStoredAmountAuditRow>>>> GetStoredAmountAudit(
         Guid companyId, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] int take = 300)
-        => Ok(new ApiResponse<List<OcrStoredAmountAuditRow>>(true,
-            await _service.GetStoredAmountAuditAsync(companyId, from, to, take)));
+    {
+        var rows = await _service.GetStoredAmountAuditAsync(companyId, from, to, take);
+        // ฝ่ายค้านงาน O1 (C7): รายงานคืนชื่อผู้ขาย · ชื่อไฟล์ · ยอด ของสแกนได้ถึง 1,000 ใบให้สมาชิกทุกคน ⇒ ตัดแถวที่ผู้ใช้เปิดสแกน
+        // หรือเอกสารนั้นไม่ได้ (ด่านเดียวกับรายการสแกน)
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var hidden = await _gate.HiddenScanIdsAsync(companyId, uid, rows.Select(r => r.ScanId).ToList());
+        var hiddenDocs = await _gate.HiddenDocumentIdsAsync(companyId, uid,
+            rows.Where(r => r.DocumentId != null).Select(r => r.DocumentId!.Value).Distinct().ToList());
+        if (hidden.Count > 0 || hiddenDocs.Count > 0)
+            rows = rows.Where(r => !hidden.Contains(r.ScanId)
+                && !(r.DocumentId is { } did && hiddenDocs.Contains(did))).ToList();
+        return Ok(new ApiResponse<List<OcrStoredAmountAuditRow>>(true, rows));
+    }
 
     /// <summary>ตรวจความครบถ้วนตามกรมสรรพากรซ้ำ จากผลสแกนที่เก็บไว้ —
     /// ใช้ล้างคำเตือนค้างของใบที่สแกนก่อน validator จะถูกปรับปรุง
@@ -432,6 +504,9 @@ public class OcrController : ControllerBase
     [HttpPost("documents/{documentId:guid}/recheck-compliance")]
     public async Task<ActionResult<ApiResponse<object>>> RecheckCompliance(Guid companyId, Guid documentId)
     {
+        // บันทึกผลตรวจลงเอกสาร = ด่านเขียนของเอกสาร
+        var deny = await DocGateAsync(companyId, documentId, AttachmentAccess.Write, "ตรวจความครบถ้วนซ้ำ");
+        if (deny != null) return deny;
         var (status, issuesJson) = await _service.RecheckRdComplianceAsync(companyId, documentId);
         return Ok(new ApiResponse<object>(true, new { status, issuesJson }, "ตรวจซ้ำแล้ว"));
     }
@@ -443,6 +518,12 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> LinkScanToDocument(
         Guid companyId, Guid scanId, Guid documentId)
     {
+        // ═══ ฝ่ายค้านรอบ 193 (S2-C2) ═══ เดิมไม่มีด่าน ⇒ ย้ายไฟล์ของใบ A (ที่มองไม่เห็น) ไปเป็นของใบ B แล้วดาวน์โหลดได้ ·
+        // ตอนนี้: ด่านเขียนของสแกน (ตามเจ้าของไฟล์ปัจจุบัน) + ด่านเขียนของเอกสารปลายทาง · service ปฏิเสธไฟล์ที่เป็นของรายการอื่น
+        var deny = await ScanGateAsync(companyId, scanId, "ผูกสแกนเข้าเอกสาร", write: true);
+        if (deny != null) return deny;
+        var docDeny = await DocGateAsync(companyId, documentId, AttachmentAccess.Write, "ผูกสแกนเข้าเอกสาร");
+        if (docDeny != null) return docDeny;
         var ok = await _service.LinkScanToExistingDocumentAsync(companyId, scanId, documentId);
         if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบ scan หรือเอกสาร"));
         return Ok(new ApiResponse<bool>(true, true, "ผูกไฟล์ต้นฉบับเข้าเอกสารแล้ว"));
@@ -455,6 +536,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> CreateJournalEntry(
         Guid companyId, Guid scanId, [FromBody] Models.DTOs.Ocr.CreateJeFromScanRequest request)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "บันทึก JE จากสแกน", write: true);
+        if (deny != null) return deny;
         // T1-06: ลง JE จริงต้องมีสิทธิ์จัดการใบสำคัญ (คีย์เดียวกับหน้า JE manual)
         var jeUser = JwtHelper.GetUserIdFromClaims(User);
         if (!await _perms.HasPermissionAsync(companyId, jeUser, Models.Constants.PermissionKeys.JournalManage))
@@ -475,6 +558,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> SetAllLinesProject(
         Guid companyId, Guid scanId, [FromBody] SetAllLinesProjectRequest req)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ตั้งโปรเจกต์ของสแกน", write: true);
+        if (deny != null) return deny;
         await _service.SetAllExtractedLineProjectsAsync(companyId, scanId,
             req.ProjectId, req.ProjectName, req.OnlyEmpty);
         var verb = req.OnlyEmpty ? "เติม project ให้บรรทัดว่าง" : "ตั้ง project ทุกบรรทัด";
@@ -491,8 +576,12 @@ public class OcrController : ControllerBase
     [HttpGet("{scanId:guid}/line-preview")]
     public async Task<ActionResult<ApiResponse<OcrLinePreviewResponse>>> LinePreview(
         Guid companyId, Guid scanId, [FromQuery] string? targetType = null)
-        => Ok(new ApiResponse<OcrLinePreviewResponse>(true,
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ดูบรรทัดของสแกน", write: false);
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrLinePreviewResponse>(true,
             await _service.PreviewDocumentLinesAsync(companyId, scanId, targetType)));
+    }
 
     /// <summary>List the matched vendor's open Purchase Orders for the
     /// review modal's "เลือก PO" picker — each PO comes back with its
@@ -500,8 +589,16 @@ public class OcrController : ControllerBase
     /// a second call.</summary>
     [HttpGet("{scanId:guid}/open-pos")]
     public async Task<ActionResult<ApiResponse<List<OpenPurchaseOrderDto>>>> GetOpenPos(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<List<OpenPurchaseOrderDto>>(true,
-            await _service.GetOpenPosForScanAsync(companyId, scanId)));
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ดูใบสั่งซื้อของสแกน", write: false);
+        if (deny != null) return deny;
+        var pos = await _service.GetOpenPosForScanAsync(companyId, scanId);
+        // ใบสั่งซื้อที่ผู้ใช้เปิดในหน้าเอกสารไม่ได้ (ฝั่ง/ชั้นความลับ) ต้องไม่โผล่ทางนี้ (S2-C3)
+        var hiddenPos = await _gate.HiddenDocumentIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            pos.Select(x => x.Id).ToList());
+        return Ok(new ApiResponse<List<OpenPurchaseOrderDto>>(true,
+            hiddenPos.Count == 0 ? pos : pos.Where(x => !hiddenPos.Contains(x.Id)).ToList()));
+    }
 
     /// <summary>Link this scan to one of the vendor's open POs and record the
     /// per-line OCR↔PO mappings (the "ฟังก์ชันชื่อแทน" function). When
@@ -510,37 +607,65 @@ public class OcrController : ControllerBase
     [HttpPost("{scanId:guid}/link-po")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> LinkPo(
         Guid companyId, Guid scanId, [FromBody] LinkPurchaseOrderRequest request)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ผูกสแกนกับใบสั่งซื้อ", write: true);
+        if (deny != null) return deny;
+        var poDeny = await DenyHiddenDocumentAsync(companyId, request.PurchaseOrderId);
+        if (poDeny != null) return poDeny;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
             await _service.LinkPurchaseOrderAsync(companyId, scanId, request, User.Identity?.Name ?? "ocr-po-link"),
             "ผูกกับใบสั่งซื้อสำเร็จ"));
+    }
 
     /// <summary>Remove the PO linkage from a scan (no document yet created).
     /// Lets the operator re-pick or fall back to plain expense entry.</summary>
     [HttpDelete("{scanId:guid}/link-po")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UnlinkPo(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ยกเลิกการผูกใบสั่งซื้อ", write: true);
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
             await _service.UnlinkPurchaseOrderAsync(companyId, scanId),
             "ยกเลิกการผูก PO แล้ว"));
+    }
 
     /// <summary>ใบต้นทางทุกชนิดที่อาจตรงกับสแกน (PO/GRN · ใบเสนอราคา/ใบวางบิล/ใบส่งของ · ใบแจ้งหนี้/ใบกำกับ)
     /// — เซิร์ฟเวอร์ให้เหตุผลและระดับความแน่นมาแล้ว หน้าเว็บแสดงอย่างเดียว</summary>
     [HttpGet("{scanId:guid}/predecessor-candidates")]
     public async Task<ActionResult<ApiResponse<List<PredecessorCandidateDto>>>> PredecessorCandidates(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<List<PredecessorCandidateDto>>(true,
-            await _service.GetPredecessorCandidatesAsync(companyId, scanId)));
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ดูใบต้นทางของสแกน", write: false);
+        if (deny != null) return deny;
+        var candidates = await _service.GetPredecessorCandidatesAsync(companyId, scanId);
+        // เลขที่/ยอด/ยอดค้างของใบที่ผู้ใช้เปิดไม่ได้ต้องไม่โผล่ (ฝ่ายค้านรอบ 193 · S2-P4)
+        var hiddenDocs = await _gate.HiddenDocumentIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            candidates.Select(x => x.DocumentId).ToList());
+        return Ok(new ApiResponse<List<PredecessorCandidateDto>>(true,
+            hiddenDocs.Count == 0 ? candidates : candidates.Where(x => !hiddenDocs.Contains(x.DocumentId)).ToList()));
+    }
 
     [HttpPost("{scanId:guid}/link-predecessor")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> LinkPredecessor(
         Guid companyId, Guid scanId, [FromBody] LinkPredecessorRequest request)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ผูกสแกนกับใบต้นทาง", write: true);
+        if (deny != null) return deny;
+        var predDeny = await DenyHiddenDocumentAsync(companyId, request.DocumentId);
+        if (predDeny != null) return predDeny;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
             await _service.LinkPredecessorAsync(companyId, scanId, request, User.Identity?.Name ?? "ocr-link"),
             "ผูกกับเอกสารต้นทางแล้ว"));
+    }
 
     [HttpDelete("{scanId:guid}/link-predecessor")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> UnlinkPredecessor(Guid companyId, Guid scanId)
-        => Ok(new ApiResponse<OcrResultResponse>(true,
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ยกเลิกการผูกใบต้นทาง", write: true);
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrResultResponse>(true,
             await _service.UnlinkPredecessorAsync(companyId, scanId),
             "ยกเลิกการผูกเอกสารต้นทางแล้ว"));
+    }
 
     public sealed record SetLineProjectRequest(int LineIndex, Guid? ProjectId, string? ProjectName);
 
@@ -553,6 +678,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> SetLineProject(
         Guid companyId, Guid scanId, [FromBody] SetLineProjectRequest req)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ตั้งโปรเจกต์ของบรรทัด", write: true);
+        if (deny != null) return deny;
         await _service.SetExtractedLineProjectAsync(companyId, scanId,
             req.LineIndex, req.ProjectId, req.ProjectName);
         return Ok(new ApiResponse<object>(true, new
@@ -577,6 +704,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> SetLineFields(
         Guid companyId, Guid scanId, [FromBody] SetLineFieldsRequest req)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "แก้บรรทัดของสแกน", write: true);
+        if (deny != null) return deny;
         var amount = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
             req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode);
         return Ok(new ApiResponse<object>(true, new
@@ -591,6 +720,8 @@ public class OcrController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ModifyLine(
         Guid companyId, Guid scanId, [FromBody] ModifyLineRequest req)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "เพิ่ม/ลบบรรทัดของสแกน", write: true);
+        if (deny != null) return deny;
         var count = await _service.ModifyExtractedLineAsync(companyId, scanId, req.Action, req.LineIndex);
         return Ok(new ApiResponse<object>(true, new { lineCount = count },
             req.Action == "add" ? "เพิ่มบรรทัดแล้ว" : "ลบบรรทัดแล้ว"));
@@ -598,11 +729,17 @@ public class OcrController : ControllerBase
 
     [HttpPost("{scanId:guid}/match-contact/{contactId:guid}")]
     public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchContact(Guid companyId, Guid scanId, Guid contactId)
-        => Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "จับคู่ผู้ติดต่อของสแกน", write: true);
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
+    }
 
     [HttpPost("{scanId:guid}/correct")]
     public async Task<ActionResult<ApiResponse<object>>> SubmitCorrection(Guid companyId, Guid scanId, [FromBody] OcrCorrectionRequest correction)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "แก้ผลอ่านของสแกน", write: true);
+        if (deny != null) return deny;
         await _service.SubmitCorrectionAsync(companyId, scanId, correction);
         return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
     }
@@ -640,6 +777,8 @@ public class OcrController : ControllerBase
         Guid companyId, Guid scanId, [FromBody] RegisterAssetFromScanRequest req,
         [FromServices] Services.Interfaces.IFixedAssetService assetService)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ลงทะเบียนสินทรัพย์จากสแกน", write: true);
+        if (deny != null) return deny;
         var result = await _service.RegisterAssetFromScanAsync(companyId, scanId, req,
             assetService, User.Identity?.Name ?? "ocr-asset-register");
         return Ok(new ApiResponse<object>(true, result, "ลงทะเบียนสินทรัพย์ถาวรเรียบร้อย"));
@@ -663,6 +802,8 @@ public class OcrController : ControllerBase
         [FromServices] Services.Implementations.Ocr.GlobalProductLearner globalLearner,
         [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ดูพรีวิวสต็อกของสแกน", write: false);
+        if (deny != null) return deny;
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
             .FirstOrDefaultAsync();
@@ -856,6 +997,8 @@ public class OcrController : ControllerBase
         [FromServices] Services.Interfaces.IFixedAssetService assetService,
         [FromServices] Services.Implementations.Ocr.GlobalAssetCategoryLearner globalAssetLearner)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "นำเข้าสต็อกจากสแกน", write: true);
+        if (deny != null) return deny;
         if (req?.Lines == null || req.Lines.Count == 0)
             return BadRequest(new ApiResponse<OcrStockImportResult>(false, null, "ไม่มีรายการที่จะนำเข้า"));
 
@@ -1143,6 +1286,8 @@ public class OcrController : ControllerBase
         [FromBody] OcrRejectMatchRequest req,
         [FromServices] Services.Implementations.Ocr.ProductMatcher matcher)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ปฏิเสธการจับคู่สินค้า", write: true);
+        if (deny != null) return deny;
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.Id == scanId && !s.IsDeleted)
             .FirstOrDefaultAsync();
@@ -1182,13 +1327,12 @@ public class OcrController : ControllerBase
         Guid companyId,
         [FromServices] Services.Implementations.Ocr.ActiveLearningRanker ranker,
         [FromServices] Services.Interfaces.ISensitivityService sensitivity,
-        [FromServices] IAttachmentAccessGate gate,
         [FromQuery] int limit = 20)
     {
         var ranked = await ranker.RankAsync(companyId, Math.Clamp(limit, 1, 100));
         // คิวรวมสแกนที่ผูกเอกสารแล้วแต่ยังติดธงสินทรัพย์ (QueuedScan · HasPotentialFixedAsset) ⇒ ชื่อผู้ขาย/ชื่อไฟล์ของใบที่
         // ผู้ใช้เปิดเอกสารไม่ได้ต้องไม่หลุดทางนี้ — ด่านเดียวกับรายการสแกน (รอบ 193 S2 · C3)
-        var hidden = await gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+        var hidden = await _gate.HiddenScanIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             ranked.Select(x => x.ScanId).ToList());
         if (hidden.Count > 0) ranked = ranked.Where(x => !hidden.Contains(x.ScanId)).ToList();
         // Annotate with letter-grade quality for at-a-glance UI rendering
@@ -1259,6 +1403,8 @@ public class OcrController : ControllerBase
         // audit log before the row is removed.
         [FromQuery] string? reason = null)
     {
+        var deny = await ScanGateAsync(companyId, scanId, "ลบสแกน", write: true);
+        if (deny != null) return deny;
         // Capture the operator id so the audit row records WHO labelled+deleted,
         // not just when. Falls back to Guid.Empty when the caller is an int_
         // key with no real user (passed as null so the audit row stays clean).
@@ -1393,12 +1539,11 @@ public class OcrController : ControllerBase
         => Ok(new ApiResponse<List<OcrCreditPurchaseResponse>>(true, await _quota.GetPurchaseHistoryAsync(companyId)));
 
     [HttpGet("{scanId:guid}/image")]
-    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId, [FromServices] IAttachmentAccessGate gate)
+    public async Task<IActionResult> GetImage(Guid companyId, Guid scanId)
     {
-        // ไฟล์ต้นฉบับที่ย้ายไปเป็นไฟล์แนบของเอกสารแล้ว เปิดได้เท่ากับไฟล์แนบของเอกสารนั้น (C3)
-        var deny = await gate.DenyScanAsync(companyId, JwtHelper.GetUserIdFromClaims(User), scanId,
-            AttachmentAccess.Read, "ดูรูปสแกน");
-        if (deny is { } d) return StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message));
+        // ไฟล์ต้นฉบับเปิดได้เท่ากับไฟล์ของเจ้าของ (เอกสาร · JE · รายการที่ไฟล์เป็นของ) — C3 / S2-C1
+        var deny = await ScanGateAsync(companyId, scanId, "ดูรูปสแกน", write: false);
+        if (deny != null) return deny;
 
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanId);

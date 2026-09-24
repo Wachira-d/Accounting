@@ -227,6 +227,11 @@ public class ExpenseClaimService : IExpenseClaimService
         return await GetByIdAsync(companyId, claim.Id);
     }
 
+    /// <summary>จำนวนหลักฐานที่ยังแนบอยู่ของใบเบิก (ไม่นับที่ถอดแล้ว) — ใช้ทั้งตอนส่งและตอนอนุมัติ</summary>
+    private Task<int> CountClaimEvidenceAsync(Guid companyId, Guid claimId)
+        => _db.Set<FileAttachment>().CountAsync(a => a.CompanyId == companyId
+            && a.EntityType == "ExpenseClaim" && a.EntityId == claimId && !a.IsDeleted);
+
     public async Task<ExpenseClaimResponse> SubmitAsync(Guid companyId, Guid claimId)
     {
         var claim = await _db.ExpenseClaims.FirstOrDefaultAsync(e => e.Id == claimId && e.CompanyId == companyId)
@@ -246,15 +251,9 @@ public class ExpenseClaimService : IExpenseClaimService
         // reviews the evidence before approving.
         if (claim.NoReceipt)
         {
-            var attachmentCount = await _db.Set<FileAttachment>()
-                .CountAsync(a => a.CompanyId == companyId
-                    && a.EntityType == "ExpenseClaim"
-                    && a.EntityId == claim.Id
-                    && !a.IsDeleted);
-            if (attachmentCount == 0)
-                throw new InvalidOperationException(
-                    "เบิกแบบไม่มีใบเสร็จต้องแนบหลักฐานอย่างน้อย 1 ไฟล์ก่อนส่งอนุมัติ " +
-                    "(เช่น รูปสินค้า, รูป meter taxi, slip การโอน, statement บัตรเครดิต) — §65 ทวิ");
+            var missing = Accounting.Helpers.ExpenseClaimEvidencePolicy.MissingEvidenceMessage(
+                claim.NoReceipt, await CountClaimEvidenceAsync(companyId, claim.Id), atApproval: false);
+            if (missing != null) throw new InvalidOperationException(missing);
         }
 
         claim.Status = ExpenseClaimStatus.Submitted;
@@ -281,6 +280,12 @@ public class ExpenseClaimService : IExpenseClaimService
 
         if (claim.Status != ExpenseClaimStatus.Submitted)
             throw new InvalidOperationException("สามารถอนุมัติได้เฉพาะใบเบิกที่ Submitted");
+
+        // §65 ทวิ ตรวจซ้ำตอนอนุมัติ (ฝ่ายค้านรอบ 193 · S2-P1) — เดิมตรวจแค่ตอนส่ง ⇒ ผู้ยื่นถอดหลักฐานหลังส่งแล้วใบยังอนุมัติได้ ·
+        // ตัวเดียวกับเส้นมือถือ (MobileApiService.HandleExpenseClaimApprovalAsync)
+        var missingEvidence = Accounting.Helpers.ExpenseClaimEvidencePolicy.MissingEvidenceMessage(
+            claim.NoReceipt, await CountClaimEvidenceAsync(companyId, claim.Id), atApproval: true);
+        if (missingEvidence != null) throw new InvalidOperationException(missingEvidence);
 
         var approver = await _db.Users.FirstOrDefaultAsync(u => u.Id == approverUserId);
 
