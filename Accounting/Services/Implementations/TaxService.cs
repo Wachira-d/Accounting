@@ -3110,6 +3110,16 @@ public partial class TaxService : ITaxService
         return Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(contact).Count > 0;
     }
 
+    /// <summary>ไม่ใช่ใบกำกับเต็มรูป **โดยเจตนา** — ผู้ซื้อไม่ประสงค์รับ · walk-in · ผู้ซื้อบุคคลธรรมดาข้อมูลไม่ครบ
+    /// (เส้นเว็บ downgrade หัวเป็นใบย่อ/ใบเสร็จเอง) · <b>ไม่รวม</b>ผู้ซื้อนิติบุคคลที่ข้อมูล §86/4 ไม่ครบ ซึ่งเส้นเว็บ
+    /// <b>บล็อกอนุมัติ</b> — ใบแบบนั้นที่มาทางเข้าอื่น = "ควรเป็นใบกำกับแต่ข้อมูลไม่พอ" ต้องล้มดัง ไม่ใช่ข้ามเงียบ
+    /// (รอบ 193 ฝ่ายค้านรอบสอง R2-C6) · ไม่มีผู้ติดต่อเลย = ไม่ใช่เจตนา (ดัง)</summary>
+    internal static bool NotFullTaxInvoiceByDesign(decimal vatAmount, bool buyerDeclinedTaxInvoice, Contact? contact)
+        => NotFullTaxInvoice(vatAmount, buyerDeclinedTaxInvoice, contact)
+           && (buyerDeclinedTaxInvoice
+               || contact?.IsWalkInCustomer == true
+               || (contact != null && !Tax.TaxInvoiceCompletenessChecker.IsJuristicBuyer(contact)));
+
     internal static decimal VatableBase(Document doc)
     {
         if (doc.Lines == null || doc.Lines.Count == 0) return doc.SubTotal;

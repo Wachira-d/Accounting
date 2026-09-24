@@ -773,7 +773,9 @@ public class IntegrationService : IIntegrationService
 
             // ⚠️ เลขที่เอกสารถูกย้ายไปออก **หลังคำนวณยอด** — กติกา "หัวมีคำว่า
             // ใบกำกับภาษี → เลขชุด TIV เสมอ" ต้องรู้ VAT ก่อนถึงจะเลือกชุดได้
-            // (ใบที่ VAT=0 หัวพิมพ์ "ใบเสร็จรับเงิน" จึงต้องไปชุด REC)
+            // (ใบที่ VAT=0 เพราะยกเว้น §81 ล้วน หรือผู้ซื้อ walk-in ไม่ใช่ใบกำกับตามกฎหมาย จึงไปชุด REC ·
+            // ใบ 0% §80/1 ที่ผู้ซื้อระบุตัว = ใบกำกับอัตรา 0 → ชุด TIV — R2-C7 · ⚠️ หัวกระดาษของ TaxInvoice
+            // ยกเว้นล้วนยังพิมพ์ "ใบกำกับภาษี" (ComputeDocumentTitle ไม่ดูอัตรา) — จดไว้ใน r193-V ไม่ได้แก้รอบนี้)
             // ย้ายได้ปลอดภัยเพราะตัวออกเลขนับจากเอกสารที่มีอยู่จริง — เลขที่ขอไว้
             // แล้วไม่ได้ใช้ (เส้นทาง fail ด้านล่าง) ไม่ทำให้เกิดช่องว่างอยู่แล้ว
 
@@ -964,13 +966,17 @@ public class IntegrationService : IIntegrationService
             // "TaxInvoice ที่มี VAT = ใบกำกับเสมอ" ครอบเคสของ endpoint นี้ครบ:
             // ขายสด/ผู้ซื้อไม่ครบ §86/4 หัวยังมีคำว่าใบกำกับทั้งคู่) — ห้ามเขียน
             // เงื่อนไข VAT>0 เองซ้ำที่นี่ จะกลายเป็นสำเนาที่ drift
+            // R2-C7 (รอบ 193): ใส่บรรทัด + ผู้ติดต่อให้ probe ด้วย — ขาย 0% (§80/1) ของผู้จด VAT ต้องเป็นใบกำกับ
+            // (กระดาษพิมพ์ "ใบกำกับภาษี") แต่ยกเว้น §81 (-1) ไม่ใช่ · เดิม probe มีแค่ VatAmount ⇒ 0% กับ -1 ได้ธงเดียวกัน
             var roleProbe = new Document
             {
                 DocumentType = DocumentType.TaxInvoice,
                 VatAmount = totalVat,
+                Contact = contact,
+                Lines = lines,
             };
             var integrationCarriesTaxInvoice = Accounting.Helpers.TaxInvoiceSeriesPolicy
-                .CarriesTaxInvoiceRole(roleProbe, resolvedTitle: null);
+                .CarriesTaxInvoiceRole(roleProbe, resolvedTitle: null, companyVatRegistered: vatRegistered);
             var integrationSeriesType = DocumentType.TaxInvoice;
             if (Accounting.Helpers.TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(
                     await _db.CompanySettings.AsNoTracking()

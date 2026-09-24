@@ -171,7 +171,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             // ใบที่ข้อมูลผู้ซื้อไม่ครบ §86/4 / ผู้ซื้อไม่ประสงค์รับใบกำกับ / walk-in →
             // หัวกระดาษไม่ใช่ใบกำกับเต็มรูป ส่ง T01/T03 ไม่ได้ (เดิมตรวจเฉพาะใบเสร็จ — ใบกำกับ walk-in
             // ไปล้มที่ "กรุณาระบุเลขผู้ซื้อ" แทน · ใบกำกับที่ผู้ซื้อไม่ประสงค์รับแต่มีเลขครบ ถูกส่งเป็น T01 ได้)
-            // เกณฑ์ตัวเดียวกับ hook e-Tax อัตโนมัติ (ข้ามเงียบ — ฝ่ายค้าน C-1) และหัว PDF
+            // เกณฑ์ตัวเดียวกับหัว PDF · hook e-Tax อัตโนมัติข้ามเงียบเฉพาะส่วน "โดยเจตนา"
+            // (TaxService.NotFullTaxInvoiceByDesign — R2-C6) ส่วนที่เหลือ (นิติบุคคลข้อมูลไม่ครบ) มาล้มดังที่นี่
             if (document.VatAmount > 0.005m && TaxService.NotFullTaxInvoice(document))
             {
                 var missing = document.Contact == null

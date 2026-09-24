@@ -141,8 +141,10 @@ public class SettingsService : ISettingsService
         if (request.VatRegistered.HasValue)
         {
             settings.VatRegistered = request.VatRegistered.Value;
-            // ผู้ใช้ส่งคำตอบเรื่อง VAT มาเอง (หน้าตั้งค่าส่งเฉพาะเมื่อโหลดค่าจริงจากเซิร์ฟเวอร์สำเร็จ · P-8) = ยืนยันแล้ว (C-9)
-            settings.VatStatusConfirmedAt = DateTime.UtcNow;
+            // "ยืนยันแล้ว" (C-9) เฉพาะเมื่อผู้ใช้แตะ/ยืนยันช่อง VAT จริง — เดิมประทับทุกครั้งที่ช่องนี้ติดมากับการบันทึก
+            // เรื่องอื่น (ภาษาเอกสาร/หัวอีเมล) ⇒ แถบเตือนหายโดยไม่มีใครตอบคำถาม (ฝ่ายค้านรอบสอง R2-C8)
+            if (request.ConfirmVatStatus == true)
+                settings.VatStatusConfirmedAt = DateTime.UtcNow;
         }
         // เกณฑ์รับรู้ WHT — เปลี่ยนแล้วมีผลกับ JE ของ "เอกสารที่อนุมัติหลังจากนี้"
         // เท่านั้น (ใบเก่าที่ post ไปแล้วไม่ถูกแก้ย้อนหลัง — ถ้าจะย้ายเกณฑ์กลางปี

@@ -183,9 +183,11 @@
       <div class="form-row">
         <div class="form-group" style="flex:1">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
-            <input type="checkbox" id="cVatRegistered" onchange="var o=document.getElementById('sVatRegistered');if(o)o.checked=this.checked">
+            <input type="checkbox" id="cVatRegistered" onchange="Page.markVatTouched();var o=document.getElementById('sVatRegistered');if(o)o.checked=this.checked">
             <span>จดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</span>
           </label>
+          <!-- R2-C8: ยังไม่มีใครยืนยันสถานะ VAT — ปุ่มนี้ยืนยันค่าที่แสดงอยู่โดยไม่ต้องติ๊กเปลี่ยน (ซ่อนเมื่อยืนยันแล้ว) -->
+          <button type="button" class="btn btn-secondary btn-sm hidden" data-vat-confirm style="margin-top:6px" onclick="Page.confirmVatAsShown()">ยืนยันสถานะ VAT ตามที่เลือกอยู่</button>
         </div>
         <div class="form-group"><label class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
       </div>
@@ -522,7 +524,8 @@
       <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
       <div class="form-row">
         <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
-        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" onchange="var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
+        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" onchange="Page.markVatTouched();var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label>
+          <button type="button" class="btn btn-secondary btn-sm hidden" data-vat-confirm style="margin-left:8px" onclick="Page.confirmVatAsShown()">ยืนยันสถานะ VAT ตามที่เลือกอยู่</button></div>
       </div>
       <div class="form-row" style="margin-top:12px">
         <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
@@ -1859,6 +1862,18 @@
         };
         try { await api.updateEtaxConfig(data); } catch (e) { /* fallback to legacy */ }
       },
+      /** ผู้ใช้แตะช่องจด VAT (แท็บใดก็ได้ — สองช่องสะท้อนกัน) = ตอบคำถาม VAT แล้ว (R2-C8) */
+      markVatTouched() { this._vatTouched = true; },
+      /** ยืนยันค่าที่แสดงอยู่โดยไม่ต้องเปลี่ยน — มีผลเมื่อกดบันทึก */
+      confirmVatAsShown() {
+        this._vatTouched = true;
+        document.querySelectorAll('[data-vat-confirm]').forEach(b => { b.disabled = true; b.textContent = '✓ จะยืนยันเมื่อกดบันทึก'; });
+        Layout.toast('กดบันทึกเพื่อยืนยันสถานะ VAT');
+      },
+      /** บันทึกคำตอบ VAT แล้ว — ซ่อนปุ่มยืนยันทั้งสองแท็บ (แถบเตือนบนหน้าเอกสารหายเองรอบโหลดถัดไป) */
+      _vatConfirmedSaved() {
+        document.querySelectorAll('[data-vat-confirm]').forEach(b => b.classList.add('hidden'));
+      },
       async loadCompanyProfile() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
@@ -1866,6 +1881,10 @@
           const c = res.data;
           if (!c) return;
           this._companyData = c;
+          // โหลดข้อมูลบริษัทสำเร็จ — ปุ่มบันทึกส่งอัตรา VAT ได้ · ช่องจด VAT ส่งได้เมื่อมีค่าจริง (R2-C8/P-8: โหลดล้ม =
+          // ฟอร์มเปล่า ห้ามเอาค่าบนฟอร์มเปล่าไปทับธงบริษัท)
+          this._companyLoaded = true;
+          this._companyVatLoaded = typeof c.isVatRegistered === 'boolean';
           document.getElementById('cName').value = c.name || '';
           document.getElementById('cNameEn').value = c.nameEn || '';
           document.getElementById('cAddressEn').value = c.addressEn || '';
@@ -1882,7 +1901,7 @@
           // undefined = เซิร์ฟเวอร์ยังไม่ส่งฟิลด์ → ปล่อยว่าง ไม่ใช่โชว์ 0
           document.getElementById('cPaidUpCapital').value =
             (c.paidUpCapital ?? 0) > 0 ? c.paidUpCapital : '';
-          document.getElementById('cVatRegistered').checked = c.isVatRegistered || false;
+          document.getElementById('cVatRegistered').checked = c.isVatRegistered === true;
           document.getElementById('cRetailApproved').checked = c.isRetailApproved || false;
           document.getElementById('cPhoR06Date').value = c.phoR06ApprovedDate
             ? String(c.phoR06ApprovedDate).slice(0, 10) : '';
@@ -2119,11 +2138,16 @@
             juristicId: document.getElementById('cJuristicId').value || null,
             // ว่าง = ไม่แตะค่าเดิม (null) · 0 ที่ผู้ใช้พิมพ์เองส่งไปตามจริง
             paidUpCapital: Layout.numOrNull('cPaidUpCapital'),
-            isVatRegistered: document.getElementById('cVatRegistered').checked,
+            // ช่องจด VAT ส่งเฉพาะเมื่อผู้ใช้แตะ/กดยืนยันจริง (R2-C8) และโหลดค่าเดิมสำเร็จ (P-8) — ส่งแล้วเซิร์ฟเวอร์
+            // ประทับ "ยืนยันสถานะ VAT แล้ว" · บันทึกชื่อ/ที่อยู่เฉย ๆ ต้องไม่ถูกตีความว่าตอบคำถาม VAT
+            ...(this._companyVatLoaded && this._vatTouched ? {
+              isVatRegistered: document.getElementById('cVatRegistered').checked,
+              confirmVatStatus: true,
+            } : {}),
             isRetailApproved: document.getElementById('cRetailApproved').checked,
             phoR06ApprovedDate: document.getElementById('cPhoR06Date').value || null,
             // 0% เป็นค่าที่ตั้งใจได้ (ยังไม่จด VAT / zero-rated) — ว่างเท่านั้นที่ = 7
-          vatRate: Layout.numOrNull('cVatRate') ?? 7,
+            ...(this._companyLoaded ? { vatRate: Layout.numOrNull('cVatRate') ?? 7 } : {}),
             isWhtRegistered: document.getElementById('cWhtRegistered').checked,
             isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
             socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
@@ -2146,6 +2170,7 @@
             isSetupComplete: true,
           });
           if (!res || !res.success) throw new Error(res?.message || 'บันทึกไม่สำเร็จ');
+          if (this._companyVatLoaded && this._vatTouched) this._vatConfirmedSaved();
           // Update localStorage and Layout with the server response (authoritative)
           const serverCompany = res.data || { ...Layout.currentCompany, name, isSetupComplete: true };
           Layout.currentCompany = serverCompany;
@@ -2281,6 +2306,11 @@
           document.getElementById('sVatRegistered').checked = s.vatRegistered === true;
           // โหลดค่า VAT จริงสำเร็จแล้ว — ปุ่มบันทึกส่งช่อง VAT ได้ (โหลดล้ม = ไม่ส่ง ห้ามเอาค่าบนฟอร์มเปล่าไปทับธงบริษัท)
           this._vatLoaded = typeof s.vatRegistered === 'boolean';
+          // ยังไม่มีใครยืนยันสถานะ VAT (บริษัทจากหน้าสมัคร/SSO — C-9) ⇒ โชว์ปุ่ม "ยืนยันตามที่เลือกอยู่" ทั้งสองแท็บ
+          // (เซิร์ฟเวอร์ตัดสิน หน้าแค่แสดง · ไม่มีฟิลด์ = ไม่รู้ → ไม่โชว์)
+          document.querySelectorAll('[data-vat-confirm]').forEach(b =>
+            b.classList.toggle('hidden', s.vatStatusConfirmed !== false));
+          this._vehicleDealerLoaded = typeof s.isVehicleDealer === 'boolean';
           const wrb = document.getElementById('sWhtRecognitionBasis');
           if (wrb) wrb.value = s.whtRecognitionBasis || 'Cash';
           document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
@@ -2498,14 +2528,19 @@
             emailFromName: document.getElementById('sEmailFromName').value,
             emailReplyTo: document.getElementById('sEmailReplyTo').value,
             // Tax
-            // ช่อง VAT ส่งเฉพาะเมื่อโหลดค่าจริงสำเร็จ (P-8) — ส่งแล้วเซิร์ฟเวอร์ถือว่า "ยืนยันสถานะ VAT แล้ว" (C-9)
+            // อัตรา VAT ส่งเมื่อโหลดค่าจริงสำเร็จ (P-8) · ช่องจด VAT ส่งเฉพาะเมื่อผู้ใช้แตะ/กดยืนยันจริงด้วย (R2-C8) —
+            // ส่งแล้วเซิร์ฟเวอร์ประทับ "ยืนยันสถานะ VAT แล้ว" (C-9) · บันทึกเรื่องอื่นต้องไม่ถูกตีความว่าตอบคำถาม VAT
             ...(this._vatLoaded ? {
               defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
-              vatRegistered: document.getElementById('sVatRegistered').checked,
+              ...(this._vatTouched ? {
+                vatRegistered: document.getElementById('sVatRegistered').checked,
+                confirmVatStatus: true,
+              } : {}),
             } : {}),
             whtRecognitionBasis: document.getElementById('sWhtRecognitionBasis')?.value || null,
             vatRegistrationDate: document.getElementById('sVatRegistrationDate').value,
-            isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
+            // โหลดค่าตั้งล้ม = ช่องเป็นค่าว่างของฟอร์ม ⇒ ไม่ส่ง (P-8 · ไม่งั้นบันทึกแล้วปิดสิทธิ์ผู้ค้ารถเงียบ ๆ)
+            ...(this._vehicleDealerLoaded ? { isVehicleDealer: document.getElementById('sIsVehicleDealer').checked } : {}),
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
             // OCR แหล่งเงิน default — ว่าง = Guid.Empty (service แปลงเป็น null = auto-pick)
@@ -2546,6 +2581,7 @@
           if (document.querySelector('input[name="etaxMode"]:checked')) {
             await this.saveEtaxConfig();
           }
+          if (this._vatLoaded && this._vatTouched) this._vatConfirmedSaved();
           Layout.toast('บันทึกการตั้งค่าสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

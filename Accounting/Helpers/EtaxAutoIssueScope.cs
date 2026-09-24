@@ -22,8 +22,9 @@ public enum EtaxAutoSkip
     /// <summary>ใบกำกับ/ใบเสร็จที่ตรึงไว้ว่า "ไม่ได้ทำหน้าที่ใบกำกับตามกฎหมาย" (<c>IsTaxInvoiceByLaw == false</c> —
     /// หัวกระดาษไม่มีคำว่าใบกำกับ เช่น VAT 0 ทั้งใบ/ยกเว้น §81) — XML ประกาศเป็นใบกำกับไม่ได้ (ฝ่ายค้าน C-2)</summary>
     NotTaxInvoiceByLaw = 7,
-    /// <summary>ไม่ใช่ใบกำกับ<b>เต็มรูป</b> — ผู้ซื้อ walk-in · ผู้ซื้อไม่ประสงค์รับใบกำกับ · ข้อมูลผู้ซื้อ §86/4 ไม่ครบ
-    /// (เกณฑ์ <c>TaxService.NotFullTaxInvoice</c> ตัวเดียวกับหัว PDF) — ขายหน้าร้าน/PMS ผ่าน API (ฝ่ายค้าน C-1)</summary>
+    /// <summary>ไม่ใช่ใบกำกับ<b>เต็มรูปโดยเจตนา</b> — walk-in · ผู้ซื้อไม่ประสงค์รับ · ผู้ซื้อบุคคลธรรมดาข้อมูลไม่ครบ · <b>ไม่รวม</b>
+    /// นิติบุคคลข้อมูล §86/4 ไม่ครบ (ต้องล้มดัง — ฝ่ายค้านรอบสอง R2-C6)
+    /// (เกณฑ์ <c>TaxService.NotFullTaxInvoiceByDesign</c>) — ขายหน้าร้าน/PMS ผ่าน API (ฝ่ายค้าน C-1)</summary>
     NotFullTaxInvoice = 8,
 }
 
@@ -77,7 +78,7 @@ public static class EtaxAutoIssueScope
     /// <param name="relatedDocumentType">ชนิดของใบต้นทาง (<c>RelatedDocumentId</c>) · <c>null</c> = ไม่มี/ไม่รู้
     /// ⇒ ไม่ข้าม (ให้ตัวออก e-Tax ตัดสินแล้วดังถ้าขาดใบอ้างอิง — "ไม่รู้" ห้ามตกเป็น "เงียบ")</param>
     /// <param name="isTaxInvoiceByLaw"><c>Document.IsTaxInvoiceByLaw</c> (ตรึงตอนออก)</param>
-    /// <param name="notFullTaxInvoice">ผลของ <c>TaxService.NotFullTaxInvoice</c> (ผู้เรียกคำนวณ — ต้องใช้ผู้ติดต่อ)</param>
+    /// <param name="notFullTaxInvoice">ผลของ <c>TaxService.NotFullTaxInvoiceByDesign</c> (ผู้เรียกคำนวณ — ต้องใช้ผู้ติดต่อ)</param>
     public static EtaxAutoSkip Judge(DocumentType type, DocumentStatus status,
         bool isDeposit, bool depositOutputVatDeferred, DateTime? depositOutputVatRecognizedAt,
         DocumentType? relatedDocumentType, bool? isTaxInvoiceByLaw, bool notFullTaxInvoice)

@@ -6040,10 +6040,12 @@
           if (!c || c.dataset.claim !== 'false' || c.dataset.noVat === '1') return;
           if (c.dataset.userOverride === '1') return;             // ผู้ใช้ตั้งเองมาก่อน — เคารพ
           const reason = c.dataset.reason || '';
-          const permanent = /§82\/5\((3|4|6)\)|ค่ารับรอง|รถยนต์นั่ง|น้ำมัน/.test(reason);
+          // รหัสจากเซิร์ฟเวอร์เป็นรูป "RD-82/5(n)" (ตัวคัดกรองกลาง) — เดิมเช็กแค่ "§82/5(n)" ของ regex หน้าเว็บที่ถอดไปแล้ว
+          const permanent = /(?:§|RD-)82\/5\((3|4|6)\)|ค่ารับรอง|รถยนต์นั่ง|น้ำมัน/.test(reason);
           if (permanent) return;
           c.dataset.claim = 'true';
           c.dataset.reason = '';
+          delete c.dataset.autoSrc;
           c.textContent = '✓';
           c.style.color = '';
           c.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
@@ -7765,6 +7767,7 @@
         const nxt = !cur;
         el.dataset.claim = nxt ? 'true' : 'false';
         el.dataset.userOverride = '1';
+        delete el.dataset.autoSrc;   // ค่าผู้ใช้ชนะเสมอ — ตัวคัดกรองห้ามย้อนค่านี้ (กฎ #4 A)
         if (nxt) {
           el.textContent = '✓';
           el.style.color = '';
@@ -7779,11 +7782,12 @@
         this.refreshVatProhibitedBanner();
       },
 
-      // ภาษีซื้อต้องห้าม §82/5(4)(6) ตอนพิมพ์รายการ — **เซิร์ฟเวอร์ตัดสิน** (InputVatScreenController →
-      // ProhibitedInputVatScreener ตัวเดียวกับ OCR/ด่านอนุมัติ · รู้จัก IsVehicleDealer) หน้าแค่แสดง
-      // (รอบ 193 ฝ่ายค้าน C-4: เดิมมีลิสต์คำรถ/ค่ารับรองของตัวเองที่ปิดเคลมอู่/ผู้ขายรถ + "น้ำมันพืช")
-      // ปิดเคลมเฉพาะเมื่อเซิร์ฟเวอร์ตอบ claimable=false · คำเตือนอื่นขึ้นเป็น tooltip ไม่ปิดเคลม ·
-      // ค่าผู้ใช้ชนะเสมอ (userOverride) · ผลที่ตอบกลับช้ากว่าการพิมพ์ครั้งถัดไปถูกทิ้ง (ลำดับ response ไม่มีผล)
+      // ภาษีซื้อต้องห้าม §82/5(1)(4)(6) ตอนพิมพ์รายการ — **เซิร์ฟเวอร์ตัดสินทั้งหมด** (InputVatScreenController →
+      // ProhibitedInputVatScreener ตัวเดียวกับ OCR/ด่านอนุมัติ + ManualInputVatLineRule สำหรับบรรทัดที่พิมพ์เอง) หน้าแค่แสดง
+      // (รอบ 193 ฝ่ายค้าน C-4 ถอดลิสต์คำรถ · รอบสองถอด regex ค่ารับรอง/บิลเงินสดที่เหลือ — JS ไม่มีสำเนากติกาแล้ว)
+      // ปิดเคลมเฉพาะเมื่อเซิร์ฟเวอร์ตอบ claimable=false แล้วติดป้าย autoSrc · คำอธิบายเปลี่ยนจนไม่เข้าข่ายแล้ว →
+      // ย้อนเฉพาะที่ระบบปิดเอง (ไม่ค้าง — กฎ #4 A) · ค่าผู้ใช้ชนะเสมอ (userOverride) · ผลที่ตอบกลับช้ากว่าการพิมพ์
+      // ครั้งถัดไปถูกทิ้ง (ลำดับ response ไม่มีผล)
       suggestVatClaim(row) {
         const indicator = row.querySelector('[data-f="vatClaim"]');
         if (!indicator || indicator.dataset.userOverride) return;
@@ -7791,26 +7795,12 @@
         const seq = String((Number(row.dataset.vatScreenSeq) || 0) + 1);
         row.dataset.vatScreenSeq = seq;
         clearTimeout(row._vatScreenTimer);
-        // ⚠️ สองกติกาที่ยังอยู่ใน JS (นอกขอบเขต C-4 ซึ่งถอดเฉพาะลิสต์คำรถ — จดค้างไว้ใน r193-V):
-        //   §82/5(1) บิลเงินสด · ค่ารับรองแบบกว้าง (เลี้ยง/กอล์ฟ/พาลูกค้า) ที่ลิสต์เซิร์ฟเวอร์ยังไม่ครอบ —
-        //   ถอดเมื่อย้ายคำเหล่านี้เข้าตัวคัดกรองฝั่งเซิร์ฟเวอร์พร้อมเทสต์กระดาษจริง
-        const localRules = [
-          { re: /รับรอง|เลี้ยง(?:ลูกค้า|รับรอง)?|กระเช้า|ของขวัญลูกค้า|กอล์ฟ|พาลูกค้า/i, code: '§82/5(4)', label: 'ค่ารับรอง' },
-          { re: /ใบเสร็จเงินสด|บิลเงินสด/i, code: '§82/5(1)', label: 'ใบกำกับฯ ไม่สมบูรณ์' },
-        ];
-        const local = localRules.find(r => r.re.test(desc));
-        if (local) {
-          this._applyVatScreen(indicator, { claimable: false, ruleCode: local.code, warning: local.label });
-          return;
-        }
-        if (!desc.trim()) return;
+        if (!desc.trim()) { this._applyVatScreen(indicator, null); return; }
         row._vatScreenTimer = setTimeout(async () => {
           try {
-            const qs = new URLSearchParams();
-            qs.append('lines', desc);
             const vendor = (document.getElementById('fContact')?.value || '').trim();
-            if (vendor) qs.append('vendorName', vendor);
-            const res = await API.get(`/api/companies/${Layout.getCompanyId()}/input-vat/screen?${qs.toString()}`);
+            const res = await API.post(`/api/companies/${Layout.getCompanyId()}/input-vat/screen`,
+              { lines: [desc], vendorName: vendor || null });
             if (row.dataset.vatScreenSeq !== seq || indicator.dataset.userOverride) return;   // มีการพิมพ์ใหม่/ผู้ใช้ตัดสินแล้ว
             const r = Array.isArray(res?.data) ? res.data[0] : null;
             if (r) this._applyVatScreen(indicator, r);
@@ -7818,17 +7808,36 @@
         }, 400);
       },
 
-      /** แสดงผลคัดกรองจากเซิร์ฟเวอร์บนไอคอนเคลม VAT ของบรรทัด — ปิดเคลมเฉพาะ claimable=false · ไม่ย้อนการปิดที่ผู้ใช้ทำเอง */
+      /** แสดงผลคัดกรองจากเซิร์ฟเวอร์บนไอคอนเคลม VAT ของบรรทัด — ปิดเคลมเฉพาะ claimable=false (ติดป้าย autoSrc) ·
+       *  ผลที่ไม่เข้าข่ายแล้ว (หรือ r=null = คำอธิบายว่าง) ย้อนเฉพาะการปิดที่ระบบทำเอง · ไม่แตะค่าที่ผู้ใช้/ใบเดิมตั้งไว้ */
       _applyVatScreen(indicator, r) {
-        if (r.claimable === false) {
-          if (indicator.dataset.claim !== 'true') return;
+        if (indicator.dataset.userOverride) return;
+        if (r && r.claimable === false) {
+          if (indicator.dataset.claim !== 'true' && !indicator.dataset.autoSrc) return;   // ปิดอยู่แล้วโดยผู้ใช้/ใบเดิม
           indicator.dataset.claim = 'false';
+          indicator.dataset.autoSrc = 'screen';
           indicator.dataset.reason = `${r.ruleCode || ''} ${r.warning ? r.warning.split(' — ')[0] : ''}`.trim();
           indicator.textContent = '🚫';
           indicator.style.color = '#dc2626';
           indicator.title = `ระบบตรวจพบ: ${r.ruleCode || ''} — ${r.warning || 'เคลมไม่ได้'} (คลิกเพื่อสลับกลับ)`;
           this.refreshVatProhibitedBanner();
-        } else if (r.warning && indicator.dataset.claim === 'true') {
+          return;
+        }
+        if (indicator.dataset.autoSrc === 'screen' && indicator.dataset.noVat === '1') {
+          // บรรทัดเปลี่ยนเป็น 0%/ยกเว้นแล้ว (ไม่มีอะไรให้เคลม) — ล้างแค่เหตุผลที่ระบบใส่ ไม่แตะสถานะ "—"
+          delete indicator.dataset.autoSrc;
+          indicator.dataset.reason = '';
+        } else if (indicator.dataset.autoSrc === 'screen') {
+          // ระบบเคยปิดเคลมเพราะคำอธิบายก่อนหน้า — ตอนนี้ไม่เข้าข่ายแล้ว ⇒ คืนค่าเคลม (ห้ามค้าง)
+          delete indicator.dataset.autoSrc;
+          indicator.dataset.claim = 'true';
+          indicator.dataset.reason = '';
+          indicator.textContent = '✓';
+          indicator.style.color = '';
+          indicator.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
+          this.refreshVatProhibitedBanner();
+        }
+        if (r && r.warning && indicator.dataset.claim === 'true') {
           // เตือนให้ตรวจ (รถที่เคลมได้/กำกวม/ผู้ประกอบกิจการขายรถ) — คงเคลมไว้
           indicator.title = `VAT เคลมได้ — ตรวจ ${r.ruleCode || ''}: ${r.warning}`;
         }
@@ -8537,7 +8546,7 @@
               vatRows.forEach(r => {
                 const c = r.querySelector('[data-f="vatClaim"]');
                 if (!c) return;
-                c.dataset.claim = 'true'; c.dataset.reason = '';
+                c.dataset.claim = 'true'; c.dataset.reason = ''; delete c.dataset.autoSrc;
                 c.textContent = '✓'; c.style.color = '';
                 c.title = 'VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ';
               });
@@ -10478,10 +10487,9 @@
           // (เดิมลิสต์คำของหน้าเอง ชุดเดียวกับที่ถอดจากเซิร์ฟเวอร์ใน S-05) · คัดกรองไม่ได้ = ถามแบบทั่วไปไว้ก่อน
           let vehicleWarn = null;
           try {
-            const qs = new URLSearchParams();
-            (d.lines || []).forEach(l => qs.append('lines', l.description || ''));
-            if (d.contact?.name) qs.append('vendorName', d.contact.name);
-            const res = await API.get(`/api/companies/${Layout.getCompanyId()}/input-vat/screen?${qs.toString()}`);
+            // POST body — ใบที่มีหลายสิบบรรทัดยาวเกิน URL (414) ถ้าส่งเป็น query (ฝ่ายค้านรอบสอง)
+            const res = await API.post(`/api/companies/${Layout.getCompanyId()}/input-vat/screen`,
+              { lines: (d.lines || []).map(l => l.description || ''), vendorName: d.contact?.name || null });
             const hit = (res?.data || []).find(r => r.ruleCode === 'RD-82/5(6)' && r.warning
               && r.vehicle !== 'VehicleDealerExempt');
             vehicleWarn = hit ? hit.warning : null;
