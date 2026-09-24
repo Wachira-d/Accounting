@@ -287,8 +287,8 @@ public class DbdLookupService : IDbdLookupService
             var client = _httpClientFactory.CreateClient("Dbd");
             client.Timeout = TimeSpan.FromSeconds(15);
             var body = await PostRdVatAsync(client, juristicId, int.Parse(code));
-            var records = Accounting.Helpers.RdVatBranchRecords.Parse(body);
-            var rec = Accounting.Helpers.RdVatBranchRecords.PickBranch(records, code);
+            // ตัวเลือกแถวกลางตัวเดียวกับเส้นสำนักงานใหญ่ (รอบ 193 ข้อ 18) — สาขา N ต้องมี vBranchNumber ตรงเท่านั้น
+            var rec = Accounting.Helpers.RdVatBranchRecords.PickForBranch(body, code)?.Record;
             if (rec != null)
                 result = new DbdCompanyResult(
                     JuristicId: juristicId,
@@ -371,75 +371,26 @@ public class DbdLookupService : IDbdLookupService
         _logger.LogInformation("RD VAT ({Status}): {Len} chars", response.StatusCode, body.Length);
         if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body)) return null;
 
-        // Lightweight XML parsing — extract values without bringing in System.Xml.Linq overhead
-        string PickFirst(string tag)
-        {
-            // Match <tag>...<anyValue>VAL</anyValue>...</tag> or direct text
-            var m = System.Text.RegularExpressions.Regex.Match(body,
-                $"<{tag}>(.*?)</{tag}>",
-                System.Text.RegularExpressions.RegexOptions.Singleline);
-            if (!m.Success) return "";
-            var inner = m.Groups[1].Value;
-            // RD wraps results inside <anyType xsi:type="xsd:string">VAL</anyType>
-            var anyMatches = System.Text.RegularExpressions.Regex.Matches(inner,
-                @"<anyType[^>]*>([^<]*)</anyType>");
-            if (anyMatches.Count == 0) return inner.Trim();
-            foreach (System.Text.RegularExpressions.Match am in anyMatches)
-            {
-                var v = am.Groups[1].Value.Trim();
-                if (!string.IsNullOrEmpty(v) && v != "-") return v;
-            }
-            return "";
-        }
+        // รอบ 193 (คำตัดสินเจ้าของข้อ 18): เลือก "ทั้งแถว" ของสำนักงานใหญ่ (vBranchNumber = 0) ผ่านตัวเลือกกลาง
+        // RdVatBranchRecords.PickForBranch — เดิมหยิบ "ค่าแรกที่ไม่ว่าง" ทีละช่อง ⇒ ถ้า RD คืนหลายสถานประกอบการ
+        // เลขบ้านกับตำบลอาจมาจากคนละแถว · ระบุแถว สนญ. ไม่ได้ = ชื่ออย่างเดียว ที่อยู่ว่าง (ไม่ประกอบข้ามแถว)
+        // ⚠ ยังไม่ได้ยืนยันกับคำตอบจริงของ RD (สร้างบนรูป SOAP ที่ตัวอ่านเดิมรองรับ)
+        var pick = Accounting.Helpers.RdVatBranchRecords.PickForBranch(body, Accounting.Helpers.TaxBranchCode.HeadOffice);
+        if (pick == null || string.IsNullOrWhiteSpace(pick.Record.Name)) return null;
+        if (pick.Basis == Accounting.Helpers.RdVatRowBasis.NameOnly)
+            _logger.LogInformation("RD VAT {Tin}: ระบุแถวสำนักงานใหญ่ไม่ได้ — ใช้ชื่ออย่างเดียว ไม่ใช้ที่อยู่", tin);
 
-        var titleTh = PickFirst("vtitleName");
-        var nameTh = PickFirst("vName");
-        var surnameTh = PickFirst("vSurname");
-        var fullNameTh = string.Join(" ", new[] { titleTh, nameTh, surnameTh }.Where(s => !string.IsNullOrEmpty(s)));
-
-        if (string.IsNullOrWhiteSpace(fullNameTh)) return null;
-
-        var building = PickFirst("vBuildingName");
-        var floor = PickFirst("vFloorNumber");
-        var village = PickFirst("vVillageName");
-        var room = PickFirst("vRoomNumber");
-        var house = PickFirst("vHouseNumber");
-        var moo = PickFirst("vMooNumber");
-        var soi = PickFirst("vSoiName");
-        var street = PickFirst("vStreetName");
-        var thambol = PickFirst("vThambol");
-        var amphur = PickFirst("vAmphur");
-        var province = PickFirst("vProvince");
-        var postcode = PickFirst("vPostCode");
-
-        var parts = new List<string>();
-        if (!string.IsNullOrEmpty(house)) parts.Add(house);
-        if (!string.IsNullOrEmpty(room)) parts.Add($"ห้อง {room}");
-        if (!string.IsNullOrEmpty(floor)) parts.Add($"ชั้น {floor}");
-        if (!string.IsNullOrEmpty(building)) parts.Add($"อาคาร {building}");
-        if (!string.IsNullOrEmpty(village)) parts.Add($"หมู่บ้าน {village}");
-        if (!string.IsNullOrEmpty(moo)) parts.Add($"หมู่ {moo}");
-        if (!string.IsNullOrEmpty(soi)) parts.Add($"ซอย {soi}");
-        if (!string.IsNullOrEmpty(street)) parts.Add($"ถนน {street}");
-        if (!string.IsNullOrEmpty(thambol)) parts.Add($"ตำบล {thambol}");
-        if (!string.IsNullOrEmpty(amphur)) parts.Add($"อำเภอ {amphur}");
-        if (!string.IsNullOrEmpty(province)) parts.Add($"จังหวัด {province}");
-        if (!string.IsNullOrEmpty(postcode)) parts.Add(postcode);
-
-        var address = string.Join(" ", parts);
-
-        var branchTitle = PickFirst("vBranchTitleName");
-        var branchName = PickFirst("vBranchName");
-        var branch = string.Join(" ", new[] { branchTitle, branchName }.Where(s => !string.IsNullOrEmpty(s)));
+        var rec = pick.Record;
+        var branch = string.Join(" ", new[] { rec.BranchTitle, rec.BranchName }.Where(s => !string.IsNullOrEmpty(s)));
 
         return new DbdCompanyResult(
             JuristicId: tin,
-            NameTh: fullNameTh,
+            NameTh: rec.Name,
             NameEn: null,
-            JuristicType: titleTh,
+            JuristicType: rec.Title ?? "",
             Status: "Active",
             RegisteredCapital: null,
-            Address: address,
+            Address: rec.Address,
             RegisterDate: null,
             Objective: string.IsNullOrEmpty(branch) ? null : $"สาขา: {branch}"
         );

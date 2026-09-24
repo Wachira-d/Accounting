@@ -9,11 +9,28 @@ public sealed record RdVatBranchRecord(
     string Name,
     string? BranchTitle,
     string? BranchName,
-    string Address)
+    string Address,
+    string? Title = null)
 {
     /// <summary>รหัส 5 หลักตามประกาศอธิบดีฯ 199 (null เมื่อ RD ไม่ส่งเลขสาขา)</summary>
     public string? BranchCode => BranchNumber is int n && n >= 0 ? n.ToString("D5") : null;
 }
+
+/// <summary>เลือกแถวได้ด้วยเหตุอะไร — ผู้เรียกใช้ตัดสินว่าจะเชื่อที่อยู่ได้แค่ไหน (NameOnly = ไม่มีที่อยู่)</summary>
+public enum RdVatRowBasis
+{
+    /// <summary><c>vBranchNumber</c> ตรงกับสาขาที่ถาม</summary>
+    BranchNumberMatch,
+    /// <summary>RD ไม่ส่งเลขสาขา และมีแถวเดียว (ถามสำนักงานใหญ่)</summary>
+    SingleRow,
+    /// <summary>RD ไม่ส่งเลขสาขา หลายแถวแต่ที่อยู่เหมือนกันทุกแถว (ถามสำนักงานใหญ่)</summary>
+    SameAddressAllRows,
+    /// <summary>ระบุแถวสำนักงานใหญ่ไม่ได้ — มีแต่ชื่อ ที่อยู่ว่าง</summary>
+    NameOnly,
+}
+
+/// <summary>แถวที่เลือก + เหตุผลที่เลือก</summary>
+public sealed record RdVatPick(RdVatBranchRecord Record, RdVatRowBasis Basis);
 
 /// <summary>
 /// อ่านผลของ <c>rdws.rd.go.th/serviceRD3/vatserviceRD3</c> (SOAP) เป็น <b>รายสถานประกอบการ</b>
@@ -71,18 +88,75 @@ public static class RdVatBranchRecords
                 bn, fullName,
                 NullIfEmpty(At(branchTitle, i)),
                 NullIfEmpty(At(branchName, i)),
-                ComposeAddress(k => At(addr[k], i))));
+                ComposeAddress(k => At(addr[k], i)),
+                NullIfEmpty(At(title, i))));
         }
         return result;
     }
 
     /// <summary>แถวของสาขาที่ถาม — เทียบด้วย "เลขสาขา" ที่ RD ส่งมาเท่านั้น (00008 ≡ 8)</summary>
-    public static RdVatBranchRecord? PickBranch(IReadOnlyList<RdVatBranchRecord> records, string? branchCode)
+    internal static RdVatBranchRecord? PickBranch(IReadOnlyList<RdVatBranchRecord> records, string? branchCode)
     {
         if (records == null || records.Count == 0) return null;
         if (!TaxBranchCode.TryNormalize(branchCode, out var code, out _) || code == null) return null;
         var want = int.Parse(code);
         return records.FirstOrDefault(r => r.BranchNumber == want);
+    }
+
+    /// <summary>
+    /// ตัวเลือกแถว<b>ตัวเดียว</b>ของทุกทางเข้าที่อ่านทะเบียน VAT (รอบ 193 · คำตัดสินเจ้าของข้อ 18) —
+    /// <c>DbdLookupService.LookupRdVatAsync</c> (สำนักงานใหญ่) · <c>DbdLookupService.GetBranchAsync</c> (สาขา N) ·
+    /// <c>ThaiGovIntegrationService.LookupBranchAsync</c>. เดิมเส้นสำนักงานใหญ่หยิบ "ค่าแรกที่ไม่ว่าง" <b>ทีละช่อง</b>
+    /// ⇒ ถ้า RD คืนหลายสถานประกอบการ เลขบ้านกับตำบลอาจมาจากคนละแถว
+    ///
+    /// <para>กติกา (ทุกข้อคืน "ทั้งแถว" หรือ "ไม่รู้" — ไม่ประกอบช่องข้ามแถว):</para>
+    /// <list type="number">
+    /// <item><c>vBranchNumber</c> ตรงกับสาขาที่ถาม → แถวนั้น (<see cref="RdVatRowBasis.BranchNumberMatch"/>)</item>
+    /// <item>ถามสาขา N (ไม่ใช่ 00000) แล้วไม่มีแถวที่เลขตรง → <c>null</c> — ห้ามคืนแถวสำนักงานใหญ่แทน</item>
+    /// <item>ถามสำนักงานใหญ่ · RD ไม่ส่งเลขสาขา · มีแถวเดียว → แถวนั้น (<see cref="RdVatRowBasis.SingleRow"/> =
+    ///   พฤติกรรมเดิมทุกประการ เพราะแถวเดียว "ค่าแรกที่ไม่ว่าง" = ค่าของแถวนั้นอยู่แล้ว)</item>
+    /// <item>ถามสำนักงานใหญ่ · หลายแถวที่ที่อยู่เหมือนกันทุกแถว → แถวแรก (<see cref="RdVatRowBasis.SameAddressAllRows"/>)</item>
+    /// <item>ถามสำนักงานใหญ่ · ระบุแถว สนญ. ไม่ได้ (ไม่มีเลข 0 / ไม่มีเลขสาขาแต่ที่อยู่ต่างกัน / ลิสต์ยาวไม่เท่ากัน) →
+    ///   <b>ชื่ออย่างเดียว ที่อยู่ว่าง</b> (<see cref="RdVatRowBasis.NameOnly"/>) — ชื่อนิติบุคคลเป็นของเลขภาษี
+    ///   (ทุกแถวชื่อเดียวกัน) จึงยังใช้ยืนยันตัวตนได้ · ที่อยู่ที่จัดแถวไม่ได้ = "ไม่รู้" ให้ชั้นถัดไป (กระดาษ/ผู้ใช้)</item>
+    /// </list>
+    /// <para>⚠ ยังไม่ได้ยืนยันกับคำตอบจริงของ RD (เครื่องที่เขียนยิงเครือข่ายไม่ได้) — สร้างบนรูป SOAP ที่ตัวอ่านเดิมรองรับ</para>
+    /// </summary>
+    public static RdVatPick? PickForBranch(string? xml, string? branchCode)
+    {
+        if (string.IsNullOrWhiteSpace(xml)) return null;
+        var askHq = TaxBranchCode.IsHeadOffice(branchCode);
+        var records = Parse(xml);
+
+        var exact = PickBranch(records, askHq ? TaxBranchCode.HeadOffice : branchCode);
+        if (exact != null) return new RdVatPick(exact, RdVatRowBasis.BranchNumberMatch);
+        if (!askHq) return null;
+
+        if (records.Count > 0 && records.All(r => r.BranchNumber == null))
+        {
+            if (records.Count == 1) return new RdVatPick(records[0], RdVatRowBasis.SingleRow);
+            if (records.Select(r => r.Address).Distinct(StringComparer.Ordinal).Count() == 1)
+                return new RdVatPick(records[0], RdVatRowBasis.SameAddressAllRows);
+        }
+
+        // ระบุแถว สนญ. ไม่ได้ — คืนชื่อ (ของเลขภาษี) โดยไม่มีที่อยู่
+        var name = records.Count > 0 ? records[0].Name : FirstNameAcrossRows(xml);
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var title = records.Count > 0 ? records[0].Title : NullIfEmpty(Values(xml, "vtitleName").FirstOrDefault(v => v.Length > 0) ?? "");
+        return new RdVatPick(new RdVatBranchRecord(null, name, null, null, "", title), RdVatRowBasis.NameOnly);
+    }
+
+    /// <summary>ชื่อจากลิสต์ที่จัดแถวไม่ได้ — ใช้ "ดัชนีแรกที่ชื่อไม่ว่าง" ของ vName แล้วเอาคำนำหน้า/นามสกุล
+    /// <b>ดัชนีเดียวกัน</b> เมื่อลิสต์นั้นยาวพอ (ไม่ประกอบข้ามดัชนี)</summary>
+    private static string FirstNameAcrossRows(string xml)
+    {
+        var name = Values(xml, "vName");
+        var i = name.FindIndex(v => v.Length > 0);
+        if (i < 0) return "";
+        var title = Values(xml, "vtitleName");
+        var surname = Values(xml, "vSurname");
+        string At(List<string> l) => i < l.Count ? l[i] : "";
+        return string.Join(" ", new[] { At(title), name[i], At(surname) }.Where(s => s.Length > 0));
     }
 
     /// <summary>ที่อยู่รูปเดียวกับตัวประกอบเดิม (บ้านเลขที่ ห้อง ชั้น อาคาร หมู่บ้าน หมู่ ซอย ถนน ตำบล อำเภอ จังหวัด ไปรษณีย์)</summary>

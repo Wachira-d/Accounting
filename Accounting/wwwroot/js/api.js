@@ -606,6 +606,8 @@ const API = {
       getContactDepositSummary: (contactId) => API.get(`${base}/document/contacts/${contactId}/deposit-summary`),
       getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
+      // รายงานผู้ติดต่อข้อมูลเสีย (อ่านอย่างเดียว · รอบ 193 ข้อ 19) — ที่อยู่ขึ้นต้น "/เลข" · สนญ. ที่อาจถูกที่อยู่สาขาทับ
+      getContactHygiene: (registryLimit = 20, registryOffset = 0) => API.get(`${base}/contact-hygiene?registryLimit=${encodeURIComponent(registryLimit)}&registryOffset=${encodeURIComponent(registryOffset)}`),
       // ตรวจ §86/4 ของใบกำกับซื้อบนฟอร์ม ด้วยตัวตรวจเดียวกับตัวลงบัญชี (อ่านผู้ติดต่อจากฐาน)
       checkSupplierTaxInvoice: ({ contactId, branchCode, invoiceNumber, invoiceDate } = {}) => {
         const q = new URLSearchParams();

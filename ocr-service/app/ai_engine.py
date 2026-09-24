@@ -3,6 +3,8 @@ import logging
 import httpx
 import os
 
+from .date_reader import read_document_date
+
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -239,38 +241,11 @@ def rule_based_extraction(text: str) -> dict:
             result["document_number"] = match.group(1)
             break
 
-    date_patterns = [
-        r"(\d{1,2})\s*[/\-\.]\s*(\d{1,2})\s*[/\-\.]\s*(\d{4})",
-        r"(\d{1,2})\s+(ม\.?ค\.?|ก\.?พ\.?|มี\.?ค\.?|เม\.?ย\.?|พ\.?ค\.?|มิ\.?ย\.?|ก\.?ค\.?|ส\.?ค\.?|ก\.?ย\.?|ต\.?ค\.?|พ\.?ย\.?|ธ\.?ค\.?)\s+(\d{4})",
-    ]
-    for pattern in date_patterns:
-        match = re.search(pattern, text)
-        if match:
-            groups = match.groups()
-            if len(groups) == 3 and groups[0].isdigit():
-                day = int(groups[0])
-                month_str = groups[1]
-                year = int(groups[2])
-                if year > 2500:
-                    year -= 543
-                if month_str.isdigit():
-                    month = int(month_str)
-                else:
-                    thai_months = {
-                        "ม.ค": 1, "มค": 1, "ก.พ": 2, "กพ": 2,
-                        "มี.ค": 3, "มีค": 3, "เม.ย": 4, "เมย": 4,
-                        "พ.ค": 5, "พค": 5, "มิ.ย": 6, "มิย": 6,
-                        "ก.ค": 7, "กค": 7, "ส.ค": 8, "สค": 8,
-                        "ก.ย": 9, "กย": 9, "ต.ค": 10, "ตค": 10,
-                        "พ.ย": 11, "พย": 11, "ธ.ค": 12, "ธค": 12,
-                    }
-                    month = 1
-                    for key, val in thai_months.items():
-                        if key in month_str:
-                            month = val
-                            break
-                result["document_date"] = f"{year:04d}-{month:02d}-{day:02d}"
-            break
+    # รอบ 193 (คำตัดสินเจ้าของข้อ 27): ป้ายก่อนตำแหน่ง · แบบไทยก่อน · ปี 2 หลักได้ — ตัวเดิมรู้จักแต่ปี 4 หลัก
+    # และหยิบวันที่ตัวแรกของหน้า (วันครบกำหนดได้เป็นวันที่เอกสาร) · ฝั่ง C# (OcrDateReader) ยังตรวจซ้ำทุกใบ
+    document_date = read_document_date(text)
+    if document_date:
+        result["document_date"] = document_date
 
     amount_patterns = [
         (r"(?:รวม(?:เงิน)?(?:ทั้งสิ้น|ทั้งหมด|สุทธิ)|TOTAL|GRAND\s*TOTAL|ยอดรวม(?:สุทธิ)?)\s*[:：]?\s*([\d,]+\.?\d*)", "total_amount"),

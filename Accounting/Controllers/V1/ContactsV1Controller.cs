@@ -327,7 +327,9 @@ public class ContactsV1Controller : PublicApiControllerBase
             "ผูกรหัสเรียบร้อย — เอกสารที่สร้างจากผู้ติดต่อรายนี้จะอ้างรหัสนี้กลับไป"));
     }
 
-    public record ResolveRequest(string? Name, string? TaxId);
+    /// <param name="BranchCode">รหัสสาขา 5 หลักของคู่ค้า (ไม่บังคับ · รอบ 193 ข้อ 20) — ไม่ส่ง = "ไม่ระบุ"
+    /// (แถวสำนักงานใหญ่ก่อน) · ส่งมา = ต้องตรงสาขา (เลขเดียวกันคนละสาขา = คนละผู้ติดต่อตามประกาศอธิบดีฯ 199)</param>
+    public record ResolveRequest(string? Name, string? TaxId, string? BranchCode = null);
 
     /// <summary>
     /// หาผู้ติดต่อที่ตรงกับชื่อ/เลขภาษีที่อ่านได้จากเอกสาร
@@ -346,19 +348,31 @@ public class ContactsV1Controller : PublicApiControllerBase
         if (string.IsNullOrWhiteSpace(req?.Name) && string.IsNullOrWhiteSpace(req?.TaxId))
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุชื่อหรือเลขผู้เสียภาษี"));
 
-        // 1) เลขผู้เสียภาษีตรง = จบ ไม่ต้องเดา
+        // 1) เลขผู้เสียภาษี (+ สาขา) ตรง = จบ ไม่ต้องเดา — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20)
         if (!string.IsNullOrWhiteSpace(req!.TaxId))
         {
-            var byTax = await Db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == ctx!.CompanyId && c.TaxId == req.TaxId.Trim() && c.IsActive)
-                .Select(c => new { c.Id, c.Name, c.TaxId, c.ExternalId, c.ExternalSystem })
-                .FirstOrDefaultAsync(ct);
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                Db.Contacts.AsNoTracking().Where(c => c.IsActive), ctx!.CompanyId, req.TaxId, req.BranchCode, ct);
+            var byTax = taxKey.ContactId is Guid keyId
+                ? await Db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == keyId && c.CompanyId == ctx!.CompanyId)
+                    .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.ExternalId, c.ExternalSystem })
+                    .FirstOrDefaultAsync(ct)
+                : null;
             if (byTax != null)
                 return Ok(new ApiResponse<object>(true, new
                 {
                     matched = true, confidence = 1.0, reason = "เลขผู้เสียภาษีตรงกัน",
-                    contactId = byTax.Id, byTax.Name, byTax.TaxId,
+                    contactId = byTax.Id, byTax.Name, byTax.TaxId, branchCode = byTax.BranchCode,
                     externalId = byTax.ExternalId, externalSystem = byTax.ExternalSystem,
+                }));
+            // เลขนี้มีแล้วแต่คนละสาขา — ห้ามถอยไปเทียบชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน)
+            if (taxKey.TaxIdExists)
+                return Ok(new ApiResponse<object>(true, new
+                {
+                    matched = false,
+                    reason = $"มีผู้ติดต่อเลขผู้เสียภาษีนี้แล้ว แต่ไม่มี{Accounting.Helpers.TaxBranchCode.Label(req.BranchCode)} "
+                        + "— ระบบจะสร้างผู้ติดต่อของสาขานี้แยกเมื่อสร้างเอกสาร (เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ)",
                 }));
         }
 
