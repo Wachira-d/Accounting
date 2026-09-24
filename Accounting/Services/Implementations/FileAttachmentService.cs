@@ -16,7 +16,7 @@ public class FileAttachmentService : IFileAttachmentService
     // Allowed file extensions (whitelist)
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+        ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff",
         ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt",
         ".zip", ".rar", ".7z"
     };

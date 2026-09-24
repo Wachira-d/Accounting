@@ -1,9 +1,12 @@
+using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.FileAttachment;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -14,11 +17,60 @@ public class FileAttachmentController : ControllerBase
 {
     private readonly IFileAttachmentService _attachmentService;
     private readonly IImageProcessingService _images;
+    private readonly AccountingDbContext _db;
+    private readonly IPermissionService _permissions;
 
-    public FileAttachmentController(IFileAttachmentService attachmentService, IImageProcessingService images)
+    public FileAttachmentController(IFileAttachmentService attachmentService, IImageProcessingService images,
+        AccountingDbContext db, IPermissionService permissions)
     {
         _attachmentService = attachmentService;
         _images = images;
+        _db = db;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// **ด่านของไฟล์แนบเอกสาร** — คืน <c>null</c> = ผ่าน · คืน (สถานะ HTTP, ข้อความไทย) = ปฏิเสธ
+    ///
+    /// <para>═══ ที่มา (รอบ 190 ข้อ 7) ═══ เดิม endpoint นี้มีแค่ <c>[Authorize]</c> ระดับคลาส
+    /// (ตอบแค่ "ล็อกอินไหม") + <c>TenantAccessMiddleware</c> (ตอบแค่ "เป็นสมาชิกบริษัทไหม")
+    /// ⇒ สมาชิกทุกคนแนบ/ลบไฟล์ของเอกสารใดก็ได้ และ <c>entityId</c> ไม่ถูกตรวจว่ามีอยู่จริงในบริษัท</para>
+    ///
+    /// <para>ใช้สิทธิ์ "สร้าง <b>หรือ</b> อนุมัติ เอกสารประเภทนั้น" — คนทำเอกสารและคนอนุมัติต้องแนบ
+    /// หลักฐานได้ · <b>ไม่ดูสถานะเอกสาร</b>: การแนบไฟล์ไม่แก้เลขที่ ยอดเงิน หรือ JE จึงทำได้ทุกสถานะ
+    /// (รวมเอกสารที่อนุมัติ/ยกเลิกแล้ว — หลักฐานมักมาถึงทีหลัง)</para>
+    ///
+    /// <para>⚠️ ครอบเฉพาะ <c>entityType = "Document"</c> — ชนิดอื่น (ผู้ติดต่อ · ใบเบิกของพนักงาน ·
+    /// รอบเงินเดือน …) ยังไม่มีด่านสิทธิ์ต่อชนิด (คำถามเจ้าของ ใน erp-review/2026-09-24/team-U.md)</para>
+    /// </summary>
+    private async Task<(int Status, string Message)?> DenyDocAsync(Guid companyId, Guid documentId, string verb)
+    {
+        var type = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        if (type == null) return (404, "ไม่พบเอกสารนี้ในบริษัท");
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, type.Value)
+            || await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, type.Value))
+            return null;
+        return (403, $"ไม่มีสิทธิ์{verb}ของเอกสาร {type.Value} (ต้องมีสิทธิ์สร้างหรืออนุมัติเอกสารประเภทนี้)");
+    }
+
+    /// <summary>อ่านหัวไฟล์ให้ได้ครบ <see cref="UploadFileType.HeaderBytes"/> (หรือจนจบไฟล์) —
+    /// <c>ReadAsync</c> ครั้งเดียวอาจคืนน้อยกว่าที่ขอ</summary>
+    private static async Task<byte[]> ReadHeadAsync(IFormFile file)
+    {
+        var buf = new byte[UploadFileType.HeaderBytes];
+        var total = 0;
+        await using var s = file.OpenReadStream();
+        while (total < buf.Length)
+        {
+            var n = await s.ReadAsync(buf.AsMemory(total, buf.Length - total));
+            if (n <= 0) break;
+            total += n;
+        }
+        return buf.AsSpan(0, total).ToArray();
     }
 
     [HttpPost("{entityType}/{entityId:guid}")]
@@ -38,17 +90,34 @@ public class FileAttachmentController : ControllerBase
         if (!allowedEntityTypes.Contains(entityType))
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, "ประเภทไม่ถูกต้อง"));
 
+        // ด่านสิทธิ์ + เอกสารต้องมีอยู่จริงในบริษัทนี้ (ดู DenyDocAsync) — ไม่ดูสถานะเอกสาร:
+        // แนบไฟล์เพิ่มบนใบที่อนุมัติแล้วได้ เพราะไม่แตะเลขที่/ยอด/JE
+        if (entityType == "Document")
+        {
+            var deny = await DenyDocAsync(companyId, entityId, "แนบไฟล์");
+            if (deny is { } d) return StatusCode(d.Status, new ApiResponse<FileAttachmentResponse>(false, null!, d.Message));
+        }
+
         var userId = JwtHelper.GetUserIdFromClaims(User);
+
+        // ═══ ชนิดไฟล์ตัดสินจาก **ไบต์จริง** (รอบ 190 ข้อ 7) ═══
+        // เดิมเชื่อ Content-Type + นามสกุลจาก client แล้วเก็บ Content-Type นั้นไว้ตอบตอนดาวน์โหลด
+        // ⇒ HTML ที่ตั้งชื่อ .csv / Content-Type ปลอมผ่านได้ · ตอนนี้: นามสกุลที่เซฟและ
+        // Content-Type ที่เก็บมาจากผลตรวจไบต์เท่านั้น (UnsupportedUploadException → 400 ข้อความไทย)
+        var head = await ReadHeadAsync(file);
+        var kind = UploadFileType.SniffAttachment(head, file.FileName)
+            ?? throw new UnsupportedUploadException(UploadFileType.AttachmentRejectMessage);
+
         var storageDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "attachments", companyId.ToString());
         Directory.CreateDirectory(storageDir);
 
         string fileName; string storagePath; long finalSize;
-        if (_images.IsProcessableImage(file.ContentType))
+        if (kind.IsImage)
         {
             // Choose profile by entity type — slip-like things stay readable, the rest get the generic cap.
             var profile = entityType is "Payment" or "Document" or "PayrollRun" ? ImageProfile.Slip : ImageProfile.Generic;
             await using var s = file.OpenReadStream();
-            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, storageDir, $"/uploads/attachments/{companyId}", profile);
+            var processed = await _images.ProcessAndSaveAsync(s, kind.ContentType, file.FileName, storageDir, $"/uploads/attachments/{companyId}", profile);
             fileName = Path.GetFileName(processed.AbsolutePath);
             storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
             finalSize = processed.FinalBytes;
@@ -56,7 +125,7 @@ public class FileAttachmentController : ControllerBase
         else
         {
             var shortGuid = Guid.NewGuid().ToString("N")[..8];
-            fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(file.FileName)}";
+            fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{kind.Extension}";
             storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
             var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
             using (var stream = new FileStream(fullPath, FileMode.Create))
@@ -66,8 +135,15 @@ public class FileAttachmentController : ControllerBase
             finalSize = file.Length;
         }
 
+        // ชื่อที่ผู้ใช้เห็น = ชื่อเดิม + นามสกุลของไฟล์ที่เก็บจริง (รูปที่ถูกย่ออาจกลายเป็น .jpg) ·
+        // service ใช้นามสกุลของชื่อนี้ตั้งชื่อไฟล์ปลายทาง ⇒ ต้องตรงกับไบต์ ไม่ใช่คำบอกของ client
+        var finalExt = Path.GetExtension(fileName);
+        var baseName = Path.GetFileNameWithoutExtension(file.FileName);
+        var displayName = (string.IsNullOrWhiteSpace(baseName) ? "attachment" : baseName) + finalExt;
+        var contentType = UploadFileType.ContentTypeForExtension(finalExt);
+
         var result = await _attachmentService.UploadAsync(companyId, entityType, entityId,
-            fileName, file.FileName, file.ContentType, finalSize, storagePath, userId);
+            fileName, displayName, contentType, finalSize, storagePath, userId);
 
         return StatusCode(201, new ApiResponse<FileAttachmentResponse>(true, result, "อัพโหลดไฟล์สำเร็จ"));
     }
@@ -83,6 +159,13 @@ public class FileAttachmentController : ControllerBase
     [HttpDelete("{attachmentId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid attachmentId)
     {
+        var att = await _attachmentService.GetByIdAsync(companyId, attachmentId);
+        if (att == null) return NotFound(new ApiResponse<string>(false, null!, "ไม่พบไฟล์แนบ"));
+        if (att.EntityType == "Document")
+        {
+            var deny = await DenyDocAsync(companyId, att.EntityId, "ลบไฟล์แนบ");
+            if (deny is { } d) return StatusCode(d.Status, new ApiResponse<string>(false, null!, d.Message));
+        }
         await _attachmentService.DeleteAsync(companyId, attachmentId);
         return NoContent();
     }

@@ -109,8 +109,94 @@ public static class UploadFileType
         ".tif" or ".tiff" => "image/tiff",
         ".pdf" => "application/pdf",
         ".ico" => "image/x-icon",
+        // ชนิดของไฟล์แนบเอกสาร (SniffAttachment) — ไม่กระทบเส้นสื่อ CMS/โลโก้
+        // เพราะเส้นนั้นได้นามสกุลจาก Sniff() ซึ่งไม่เคยคืนชนิดเหล่านี้
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".doc" => "application/msword",
+        ".xls" => "application/vnd.ms-excel",
+        ".zip" => "application/zip",
+        ".rar" => "application/vnd.rar",
+        ".7z" => "application/x-7z-compressed",
+        ".csv" => "text/csv",
+        ".txt" => "text/plain",
         _ => "application/octet-stream",
     };
+
+    /// <summary>
+    /// **allow-list ของ "ไฟล์แนบเอกสาร"** (ใบเสร็จ/สัญญา/สลิป ที่แนบกับเอกสาร ผู้ติดต่อ ฯลฯ)
+    /// — กว้างกว่า <see cref="Sniff"/> เพราะหลักฐานประกอบรายการบัญชีมักเป็น Excel/Word/ZIP
+    ///
+    /// <para>═══ ที่มา (รอบ 190 ข้อ 7) ═══ <c>FileAttachmentController.Upload</c> เชื่อ
+    /// <c>Content-Type</c> และนามสกุลที่ client บอก (allow-list นามสกุลอย่างเดียว) ⇒ ไฟล์
+    /// HTML ที่ตั้งชื่อ <c>x.csv</c> หรือ Content-Type ปลอมผ่านได้ และค่า Content-Type ปลอม
+    /// ถูกเก็บแล้วตอบกลับตอนดาวน์โหลด</para>
+    ///
+    /// <para>กติกาเดียวกับ <see cref="Sniff"/>: <b>ไบต์ตัดสิน</b> · ชื่อไฟล์ของ client ใช้
+    /// ได้แค่ "แยกชนิดย่อย" ในกรณีที่ไบต์ยืนยันตระกูลแล้ว (ZIP → docx/xlsx · OLE2 → doc/xls)
+    /// และข้อความล้วน (csv/txt) ต้องไม่มีไบต์ 0 และไม่ขึ้นต้นด้วย <c>&lt;</c> (กัน HTML/SVG/XML
+    /// ที่ปลอมเป็น CSV) · ICO ไม่ใช่หลักฐานบัญชี จึงไม่รับ</para>
+    /// </summary>
+    /// <returns><c>null</c> = ไม่อยู่ใน allow-list — ผู้เรียกต้องปฏิเสธด้วย <see cref="AttachmentRejectMessage"/></returns>
+    public static UploadFileKind? SniffAttachment(ReadOnlySpan<byte> head, string? clientFileName)
+    {
+        var ext = (Path.GetExtension(clientFileName ?? "") ?? "").ToLowerInvariant();
+
+        if (Sniff(head) is UploadFileKind k)
+            return k.Extension == ".ico" ? (UploadFileKind?)null : k;
+
+        // ZIP — "PK\x03\x04" (docx/xlsx คือ ZIP ที่มีโครง OOXML ข้างใน)
+        if (head.Length >= 4 && head[0] == 'P' && head[1] == 'K' && head[2] == 0x03 && head[3] == 0x04)
+            return ext switch
+            {
+                ".docx" => new UploadFileKind(".docx", ContentTypeForExtension(".docx"), false),
+                ".xlsx" => new UploadFileKind(".xlsx", ContentTypeForExtension(".xlsx"), false),
+                _ => new UploadFileKind(".zip", "application/zip", false),
+            };
+
+        // OLE2 Compound File — D0 CF 11 E0 A1 B1 1A E1 (Word/Excel รุ่นเก่า)
+        if (head.Length >= 8 && head[0] == 0xD0 && head[1] == 0xCF && head[2] == 0x11 && head[3] == 0xE0
+            && head[4] == 0xA1 && head[5] == 0xB1 && head[6] == 0x1A && head[7] == 0xE1)
+            return ext switch
+            {
+                ".doc" => new UploadFileKind(".doc", ContentTypeForExtension(".doc"), false),
+                ".xls" => new UploadFileKind(".xls", ContentTypeForExtension(".xls"), false),
+                _ => (UploadFileKind?)null,   // OLE2 อื่น (msi/msg ฯลฯ) ไม่ใช่เอกสารที่รองรับ
+            };
+
+        // RAR — "Rar!\x1A\x07"
+        if (head.Length >= 6 && head[0] == 'R' && head[1] == 'a' && head[2] == 'r' && head[3] == '!'
+            && head[4] == 0x1A && head[5] == 0x07)
+            return new UploadFileKind(".rar", "application/vnd.rar", false);
+
+        // 7z — 37 7A BC AF 27 1C
+        if (head.Length >= 6 && head[0] == 0x37 && head[1] == 0x7A && head[2] == 0xBC && head[3] == 0xAF
+            && head[4] == 0x27 && head[5] == 0x1C)
+            return new UploadFileKind(".7z", "application/x-7z-compressed", false);
+
+        // ข้อความล้วน — ไม่มี magic bytes จึงรับเฉพาะเมื่อชื่อบอกว่าเป็น csv/txt **และ** ไบต์ดูเป็นข้อความ
+        if ((ext == ".csv" || ext == ".txt") && LooksLikePlainText(head))
+            return new UploadFileKind(ext, ContentTypeForExtension(ext), false);
+
+        return null;
+    }
+
+    /// <summary>ไบต์หัวไฟล์ดูเป็นข้อความธรรมดา (ไม่ใช่ไบนารี · ไม่ใช่ markup)</summary>
+    private static bool LooksLikePlainText(ReadOnlySpan<byte> head)
+    {
+        if (head.Length == 0) return false;
+        var i = 0;
+        if (head.Length >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF) i = 3;   // UTF-8 BOM
+        for (var j = i; j < head.Length; j++)
+            if (head[j] == 0x00) return false;   // ไบนารี (หรือ UTF-16 ที่เราไม่รองรับ)
+        while (i < head.Length && (head[i] == ' ' || head[i] == '\t' || head[i] == '\r' || head[i] == '\n')) i++;
+        return i < head.Length && head[i] != '<';   // HTML/SVG/XML ที่ปลอมเป็น .csv/.txt
+    }
+
+    /// <summary>ข้อความปฏิเสธของไฟล์แนบ — บอกสิ่งที่รับได้</summary>
+    public const string AttachmentRejectMessage =
+        "แนบไฟล์นี้ไม่ได้ — ระบบตรวจจากเนื้อไฟล์จริง (ไม่ใช่นามสกุล) แล้วไม่ใช่ชนิดที่รองรับ · " +
+        "รองรับ PDF · รูปภาพ (JPG PNG GIF WebP BMP TIFF) · Word (doc docx) · Excel (xls xlsx) · CSV · TXT · ZIP · RAR · 7z";
 
     /// <summary>ข้อความปฏิเสธมาตรฐาน — บอกสิ่งที่รับได้ ไม่ใช่แค่ "ไฟล์ไม่ถูกต้อง"</summary>
     public const string RejectMessage =

@@ -9546,7 +9546,12 @@
               extraSections += `<div id="docAssetPanel_${d.id}" style="margin-top:16px"></div>`;
             }
             if (extraSections) {
-              document.getElementById('detailContent').innerHTML += extraSections;
+              // ⚠️ ห้าม `innerHTML +=` — มันแปลง DOM ทั้งก้อนเป็นข้อความแล้ว parse ใหม่ ⇒
+              // listener ทุกตัวที่ผูกด้วย addEventListener บนลูกของ detailContent หายเงียบ
+              // (บั๊กจริง รอบ 190 ข้อ 7: กล่องไฟล์แนบของเอกสาร**ที่อนุมัติแล้ว** คลิก/ลากไม่ได้
+              // เพราะใบอนุมัติมี JE ⇒ มาถึงบรรทัดนี้หลัง renderAttachmentSection ผูก listener
+              // ไปแล้ว · ใบร่างไม่มี JE/การชำระ ⇒ ไม่มาถึงบรรทัดนี้ ⇒ ใช้ได้ปกติ)
+              document.getElementById('detailContent').insertAdjacentHTML('beforeend', extraSections);
             }
             if (journals.length) this.renderDocJournalSection(d.id);
             if (this._docHasAssetAccountLine(d)) this.renderDocAssetSection(d.id);
@@ -11164,60 +11169,81 @@
               <span style="font-size:11px;font-weight:400;color:var(--gray-400);margin-left:auto">คลิกเพื่อ${_attOpen ? 'พับ' : 'ดู/แนบไฟล์'}</span>
             </summary>
           <div style="margin-top:8px">${list}</div>
-          <div id="dropZone_${documentId}"
+          <div id="dropZone_${documentId}" role="button" tabindex="0"
+            onclick="Page.attPick('${documentId}')"
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();Page.attPick('${documentId}')}"
+            ondragover="Page.attDragOver(event, this)"
+            ondragleave="Page.attDragLeave(this)"
+            ondrop="Page.attDrop(event, this, '${documentId}')"
             style="margin-top:8px;padding:16px;border:2px dashed var(--gray-300);border-radius:8px;text-align:center;cursor:pointer;background:#fafbfc;transition:all .2s">
-            <input type="file" id="attachFile_${documentId}" multiple style="display:none">
+            <input type="file" id="attachFile_${documentId}" multiple style="display:none"
+              onclick="event.stopPropagation()" onchange="Page.attPicked(this, '${documentId}')">
             <div style="font-size:13px;color:var(--gray-600)">
               <span style="font-size:24px;display:block;margin-bottom:4px">📥</span>
               คลิกหรือลากไฟล์มาวางที่นี่เพื่อแนบ
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px">
-                รองรับ: PDF, รูปภาพ, Excel, Word — สูงสุด 25MB
+                รองรับ: PDF, รูปภาพ, Excel, Word, CSV, ZIP — สูงสุด 25MB ·
+                แนบเพิ่มได้ทุกสถานะเอกสาร (ไม่แก้เลขที่ ยอดเงิน หรือรายการบัญชี)
               </div>
             </div>
           </div>
           </details>`;
 
-        // รูปย่อโหลดเฉพาะตอน "กาง" — ปิดไว้ = ไม่มี network request เลย
+        // ⚠️ ผูก handler เป็น **attribute** (onclick/ondrop/ontoggle) ไม่ใช่ addEventListener —
+        // attribute รอดการ re-parse ของ innerHTML ส่วน listener ไม่รอด. เดิมผูกด้วย
+        // addEventListener แล้วส่วนประวัติการชำระ/JE ต่อท้าย detailContent ด้วย `innerHTML +=`
+        // ⇒ ใบที่อนุมัติแล้ว (มี JE) คลิก/ลากไฟล์แล้ว "ไม่มีอะไรเกิดขึ้น" (รอบ 190 ข้อ 7)
+        this._attListByDoc = this._attListByDoc || {};
+        this._attListByDoc[documentId] = attachments;
         const _attDetails = document.getElementById('attDetails_' + documentId);
         if (_attDetails) {
-          const _hydrateOnce = () => {
-            if (_attDetails.dataset.thumbsLoaded === '1') return;
-            _attDetails.dataset.thumbsLoaded = '1';
-            this.hydrateAttachmentThumbs(attachments);
-          };
-          if (_attDetails.open) _hydrateOnce();
-          _attDetails.addEventListener('toggle', () => {
-            // จำสถานะไว้ให้ re-render (อัปโหลด/ลบไฟล์) ไม่พับกลับเอง
-            this._attachmentsExpanded = _attDetails.open;
-            if (_attDetails.open) _hydrateOnce();
-          });
+          _attDetails.setAttribute('ontoggle', `Page.attToggled(this, '${documentId}')`);
+          if (_attDetails.open) this.attToggled(_attDetails, documentId);
         }
+      },
 
-        // Wire up drag-drop + click-to-pick
-        const dropZone = document.getElementById('dropZone_' + documentId);
-        const fileInput = document.getElementById('attachFile_' + documentId);
-        if (dropZone && fileInput) {
-          dropZone.addEventListener('click', () => fileInput.click());
-          dropZone.addEventListener('dragover', e => {
-            e.preventDefault(); e.stopPropagation();
-            dropZone.style.borderColor = 'var(--primary)';
-            dropZone.style.background = '#eff6ff';
-          });
-          dropZone.addEventListener('dragleave', () => {
-            dropZone.style.borderColor = 'var(--gray-300)';
-            dropZone.style.background = '#fafbfc';
-          });
-          dropZone.addEventListener('drop', async e => {
-            e.preventDefault(); e.stopPropagation();
-            dropZone.style.borderColor = 'var(--gray-300)';
-            dropZone.style.background = '#fafbfc';
-            await this.uploadAttachments(documentId, e.dataTransfer.files);
-          });
-          fileInput.addEventListener('change', async e => {
-            await this.uploadAttachments(documentId, e.target.files);
-            e.target.value = ''; // reset so same file can be picked again
-          });
+      /** กาง/พับกล่องไฟล์แนบ — รูปย่อโหลดเฉพาะตอนกางครั้งแรก (ปิดไว้ = ไม่มี network request) */
+      attToggled(detailsEl, documentId) {
+        // จำสถานะไว้ให้ re-render (อัปโหลด/ลบไฟล์) ไม่พับกลับเอง
+        this._attachmentsExpanded = !!detailsEl.open;
+        if (!detailsEl.open || detailsEl.dataset.thumbsLoaded === '1') return;
+        detailsEl.dataset.thumbsLoaded = '1';
+        this.hydrateAttachmentThumbs((this._attListByDoc || {})[documentId] || []);
+      },
+
+      attPick(documentId) {
+        const input = document.getElementById('attachFile_' + documentId);
+        if (!input) { Layout.toast('ไม่พบช่องเลือกไฟล์ — ปิดแล้วเปิดเอกสารใหม่อีกครั้ง', 'error'); return; }
+        input.click();
+      },
+
+      attDragOver(e, zone) {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = 'var(--primary)';
+        zone.style.background = '#eff6ff';
+      },
+
+      attDragLeave(zone) {
+        zone.style.borderColor = 'var(--gray-300)';
+        zone.style.background = '#fafbfc';
+      },
+
+      async attDrop(e, zone, documentId) {
+        e.preventDefault(); e.stopPropagation();
+        this.attDragLeave(zone);
+        const files = e.dataTransfer ? e.dataTransfer.files : null;
+        if (!files || files.length === 0) {
+          // ห้ามเงียบ — ลากข้อความ/ลิงก์/รูปจากหน้าเว็บอื่นมาวางไม่ใช่ไฟล์
+          Layout.toast('สิ่งที่ลากมาไม่ใช่ไฟล์ — ลากไฟล์จากเครื่อง หรือคลิกเพื่อเลือกไฟล์', 'error');
+          return;
         }
+        await this.uploadAttachments(documentId, files);
+      },
+
+      async attPicked(input, documentId) {
+        const files = Array.from(input.files || []);
+        input.value = ''; // reset so same file can be picked again
+        await this.uploadAttachments(documentId, files);
       },
 
       async uploadAttachments(documentId, files) {

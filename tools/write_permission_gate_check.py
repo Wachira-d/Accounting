@@ -56,6 +56,10 @@ WATCHED = [
     # เงินเดือนทั้งบริษัท แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
     # ("allow-list ครบไหม ≠ ผ่านไหม" — รอบที่ 6 ของบทเรียนเดียวกัน)
     "Accounting/Controllers/ImportExportController.cs",
+    # เพิ่มรอบ 190 — แนบ/ลบไฟล์หลักฐานของเอกสาร (หลักฐานประกอบรายการบัญชีที่ต้องเก็บ 5 ปี
+    # ตาม พ.ร.บ.การบัญชี ม.10) มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ สมาชิกคนไหนก็ลบหลักฐาน
+    # ของใบที่อนุมัติแล้วได้ · ด่านตอนนี้ครอบ entityType = "Document" (DenyDocAsync)
+    "Accounting/Controllers/FileAttachmentController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

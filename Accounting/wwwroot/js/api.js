@@ -1,3 +1,245 @@
+// ===== ตัวแสดง "กำลังทำงาน" กลาง — ทุกหน้าได้อัตโนมัติผ่าน API.request =====
+//
+// ที่มา (เจ้าของรายงาน รอบ 190 ข้อ 4): "หลังกดปุ่มคำสั่ง ระบบนิ่งเหมือนค้าง ไม่รู้ว่าทำงานอยู่
+// ผู้ใช้จะไปกดเมนูอื่นต่อ" — ทั้งเว็บไม่มีตัวบอกสถานะกลางเลย แต่ละหน้าต่างคนต่างทำ (หรือไม่ทำ)
+//
+// กติกา (ล็อกด้วย tools/api_busy_indicator_sim.js ที่รันโค้ดไฟล์นี้จริง):
+//   1. คำขอค้าง ≥ DELAY_MS (400ms) → แถบบนสุดของจอ + ข้อความว่ากำลังทำอะไร
+//      คำขอที่จบก่อนนั้น → ไม่มีอะไรโผล่เลย (ไม่กระพริบ)
+//   2. หลายคำขอซ้อนกัน → ซ่อนเมื่อ "หมดทุกตัว" เท่านั้น
+//   3. คำสั่งเขียน (POST/PUT/PATCH/DELETE) ที่เกิดจากการกดปุ่ม → ปุ่มนั้นกดซ้ำไม่ได้ทันที
+//      (ดักคลิกซ้ำแบบมองไม่เห็น) และเมื่อเกิน DELAY_MS ปุ่มถูก disable + ขึ้น "กำลังดำเนินการ…"
+//      · ถ้าหน้าจัดการปุ่มเอง (disable ไว้ก่อนแล้ว) = ไม่แตะ · คืนสภาพเดิมเมื่อคำขอจบ (สำเร็จหรือล้ม)
+//   4. นานเกิน LONG_MS → บอกเวลาที่ผ่านไป + "อย่าปิดหรือเปลี่ยนหน้า"
+//   5. ล้ม/throw/redirect → ซ่อนเสมอ (finally ใน request)
+//   6. งานเบื้องหลังที่ผู้ใช้ไม่ได้สั่ง (เช่นนับแจ้งเตือน) → ห่อด้วย API.quietly(() => …)
+//
+// ⚠️ หน้าที่เรียก fetch() ดิบข้าม API.request จะไม่ได้ตัวแสดงนี้ — ให้ย้ายมาใช้ API.get/post
+const ApiBusy = {
+  DELAY_MS: 400,
+  LONG_MS: 8000,
+  /** คลิกที่เกิดก่อนคำสั่งเขียนไม่เกินเท่านี้ ถือว่าเป็นปุ่มที่สั่งคำสั่งนั้น
+   *  (เผื่อ confirm() ที่ผู้ใช้อ่านนาน) — คลิกถูก "ใช้แล้ว" เมื่อคำสั่งชุดนั้นจบ */
+  CLICK_WINDOW_MS: 15000,
+  BUTTON_SELECTOR: 'button, input[type="submit"], input[type="button"], a.btn, [role="button"]',
+  BUSY_TEXT: 'กำลังดำเนินการ…',
+
+  _active: new Set(),
+  _btn: new Map(),
+  _lastClick: null,
+  _quiet: 0,
+  _showTimer: null,
+  _hideTimer: null,
+  _tickTimer: null,
+  _shown: false,
+  _installed: false,
+  _el: null,
+
+  _now() { return Date.now(); },
+  _hasDom() { return typeof document !== 'undefined' && !!document.body; },
+
+  /** ข้อความบอกว่ากำลังทำอะไร — ดูจาก method + URL (ป้ายหน้าจอเท่านั้น ไม่ใช่กติกาธุรกิจ) */
+  labelFor(method, url) {
+    const m = String(method || 'GET').toUpperCase();
+    const full = String(url || '').toLowerCase();
+    const u = full.split('?')[0];
+    if (/\/ocr\/(upload|scan|batch|bulk)|\/ocr\/[^/]+\/(retry|rescan)/.test(u)) return 'กำลังอ่านเอกสารด้วย OCR… อาจใช้เวลาถึง 1 นาที';
+    if (/(bulk|batch)/.test(u) && /approve/.test(u)) return 'กำลังอนุมัติเอกสารเป็นชุด…';
+    if (/\/approve(\/|$)/.test(u) || /[?&]approve=true/.test(full)) return 'กำลังอนุมัติ…';
+    if (/\/(void|cancel)(\/|$)/.test(u)) return 'กำลังยกเลิกเอกสาร…';
+    if (m === 'POST' && /\/attachments\//.test(u)) return 'กำลังอัปโหลดไฟล์แนบ…';
+    if (/(bulk|batch|import)/.test(u)) return 'กำลังประมวลผลเป็นชุด…';
+    if (/(pdf|export|download|xml)/.test(u)) return 'กำลังสร้างไฟล์…';
+    if (m === 'GET') return 'กำลังโหลดข้อมูล…';
+    if (m === 'DELETE') return 'กำลังลบ…';
+    return 'กำลังบันทึก…';
+  },
+
+  /** ดักคลิก (capture) — จำปุ่มที่ผู้ใช้กดล่าสุด + กันกดซ้ำระหว่างคำสั่งยังไม่จบ */
+  install() {
+    if (this._installed || typeof document === 'undefined' || !document.addEventListener) return;
+    this._installed = true;
+    document.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest(this.BUTTON_SELECTOR) : null;
+      if (t && t.hasAttribute && t.hasAttribute('data-api-busy')) {
+        // ปุ่มนี้กำลังรอคำสั่งเดิม — กลืนคลิกซ้ำ (ไม่ให้ยิงคำสั่งเดียวกันสองรอบ)
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (t && !(t.hasAttribute && t.hasAttribute('data-no-busy'))) this._lastClick = { el: t, at: this._now() };
+    }, true);
+    // กด Enter ส่งฟอร์ม/พิมพ์ต่อ = ไม่ใช่ปุ่มที่คลิกไว้ก่อนหน้า — ห้ามผูกคำสั่งถัดไปกับปุ่มเก่า
+    document.addEventListener('keydown', () => { this._lastClick = null; }, true);
+    // ปิด/เปลี่ยนหน้าระหว่างคำสั่งที่ผู้ใช้สั่งยังไม่จบ → ให้เบราว์เซอร์ถามก่อน
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('beforeunload', (e) => {
+        if (!this.hasPendingCommand()) return;
+        e.preventDefault();
+        e.returnValue = '';
+      });
+    }
+  },
+
+  /** มีคำสั่งเขียนที่ผู้ใช้กดปุ่มสั่ง ค้างเกิน DELAY_MS อยู่ไหม */
+  hasPendingCommand() {
+    const now = this._now();
+    for (const t of this._active) if (t.btn && now - t.at >= this.DELAY_MS) return true;
+    return false;
+  },
+
+  begin(method, url) {
+    if (this._quiet > 0) return null;
+    this.install();
+    const m = String(method || 'GET').toUpperCase();
+    const tok = { method: m, url, label: this.labelFor(m, url), at: this._now(), btn: null };
+    this._active.add(tok);
+    if (m !== 'GET') tok.btn = this._attachButton();
+    if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
+    if (this._shown) this._render();
+    else if (!this._showTimer) this._showTimer = setTimeout(() => { this._showTimer = null; this._show(); }, this.DELAY_MS);
+    return tok;
+  },
+
+  end(tok) {
+    if (!tok || !this._active.delete(tok)) return;   // เรียกซ้ำได้ไม่พัง
+    if (tok.btn) this._detachButton(tok.btn);
+    if (this._active.size === 0) {
+      if (this._showTimer) { clearTimeout(this._showTimer); this._showTimer = null; }
+      // ซ่อนหลังหนึ่ง tick — คำสั่งที่ยิงต่อกันใน await chain เดียว (บันทึก → อนุมัติ)
+      // ต้องไม่ทำให้แถบดับแล้วติดใหม่ (กระพริบ) · ถ้ายังไม่เคยโชว์ก็ไม่มีอะไรให้ซ่อน
+      if (this._shown && !this._hideTimer) {
+        this._hideTimer = setTimeout(() => { this._hideTimer = null; if (this._active.size === 0) this._hide(); }, 0);
+      }
+    } else if (this._shown) this._render();
+  },
+
+  // ─── ปุ่ม ───
+  _attachButton() {
+    const lc = this._lastClick;
+    if (!lc || !lc.el || this._now() - lc.at > this.CLICK_WINDOW_MS) return null;
+    const el = lc.el;
+    if (el.isConnected === false) return null;
+    let st = this._btn.get(el);
+    if (!st) {
+      if (el.disabled) return null;   // หน้าจัดการสถานะปุ่มเองอยู่แล้ว — ไม่แย่ง
+      st = { n: 0, applied: false, timer: null, release: null };
+      this._btn.set(el, st);
+      el.setAttribute('data-api-busy', '1');   // กันคลิกซ้ำทันที (ยังไม่เปลี่ยนหน้าตา = ไม่กระพริบ)
+      st.timer = setTimeout(() => { st.timer = null; this._applyButton(el, st); }, this.DELAY_MS);
+    }
+    if (st.release) { clearTimeout(st.release); st.release = null; }
+    st.n++;
+    return el;
+  },
+
+  _applyButton(el, st) {
+    if (st.n <= 0 || el.disabled) return;   // หน้าไป disable เองระหว่างรอ = ปล่อยให้หน้าคุม
+    st.applied = true;
+    st.prevHtml = el.innerHTML;
+    st.prevMinWidth = el.style ? el.style.minWidth : '';
+    if (el.style && el.offsetWidth) el.style.minWidth = el.offsetWidth + 'px';   // ปุ่มไม่หดจนเลย์เอาต์กระโดด
+    el.disabled = true;
+    el.setAttribute('aria-busy', 'true');
+    el.setAttribute('aria-disabled', 'true');
+    if (el.classList) el.classList.add('api-busy-btn');
+    el.innerHTML = '<span class="api-busy-spin" aria-hidden="true"></span>' + this.BUSY_TEXT;
+    st.busyHtml = el.innerHTML;   // อ่านกลับหลัง serialize — ใช้เทียบตอนคืนสภาพ
+  },
+
+  _detachButton(el) {
+    const st = this._btn.get(el);
+    if (!st) return;
+    st.n--;
+    if (st.n > 0) return;
+    // เลื่อนไปหนึ่ง tick: handler ที่ยิงคำสั่งต่อกันใน await chain เดียว (บันทึก → อนุมัติ)
+    // จะผูกกลับเข้าปุ่มเดิมก่อนปุ่มถูกปล่อย — ไม่มีช่องให้กดซ้ำระหว่างสองคำสั่ง
+    st.release = setTimeout(() => this._releaseButton(el, st), 0);
+  },
+
+  _releaseButton(el, st) {
+    st.release = null;
+    if (st.n > 0) return;
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+    this._btn.delete(el);
+    el.removeAttribute('data-api-busy');
+    if (st.applied) {
+      // คืนข้อความเดิมเฉพาะเมื่อหน้ายังไม่ได้เขียนทับเอง (หน้าที่ตั้งข้อความผลลัพธ์ต้องชนะ)
+      if (el.innerHTML === st.busyHtml) el.innerHTML = st.prevHtml;
+      el.disabled = false;
+      el.removeAttribute('aria-busy');
+      el.removeAttribute('aria-disabled');
+      if (el.classList) el.classList.remove('api-busy-btn');
+      if (el.style) el.style.minWidth = st.prevMinWidth || '';
+    }
+    if (this._lastClick && this._lastClick.el === el) this._lastClick = null;   // คลิกนี้ใช้แล้ว
+  },
+
+  // ─── แถบบนสุด ───
+  _currentLabel() {
+    let pick = null;
+    for (const t of this._active) {
+      // คำสั่งเขียนสำคัญกว่าการโหลด · ในกลุ่มเดียวกันเอาตัวที่เริ่มก่อน (ค้างนานสุด)
+      if (!pick || (t.method !== 'GET' && pick.method === 'GET')) pick = t;
+    }
+    if (!pick) return '';
+    const ms = this._now() - pick.at;
+    return ms >= this.LONG_MS
+      ? `${pick.label} ยังทำงานอยู่ (${Math.floor(ms / 1000)} วินาที) — กรุณาอย่าปิดหรือเปลี่ยนหน้า`
+      : pick.label;
+  },
+
+  _ensureEl() {
+    if (this._el || !this._hasDom()) return this._el;
+    if (!document.getElementById('apiBusyStyle')) {
+      const st = document.createElement('style');
+      st.id = 'apiBusyStyle';
+      st.textContent =
+        '#apiBusyBar{position:fixed;top:0;left:0;right:0;z-index:100000;pointer-events:none;display:none}' +
+        '#apiBusyBar.show{display:block}' +
+        '#apiBusyBar .api-busy-track{height:3px;background:linear-gradient(90deg,transparent,#3b82f6,transparent);background-size:50% 100%;background-repeat:no-repeat;animation:apiBusySlide 1.1s linear infinite}' +
+        '#apiBusyBar .api-busy-label{margin:6px auto 0;width:max-content;max-width:calc(100vw - 32px);background:#1e293b;color:#fff;font-size:13px;padding:6px 14px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.2);display:flex;align-items:center;gap:8px}' +
+        '.api-busy-spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:apiBusySpin .7s linear infinite;vertical-align:-2px;margin-right:6px}' +
+        '#apiBusyBar .api-busy-spin{margin-right:0}' +
+        '.api-busy-btn{cursor:progress !important;opacity:.85}' +
+        '@keyframes apiBusySlide{0%{background-position:-50% 0}100%{background-position:150% 0}}' +
+        '@keyframes apiBusySpin{to{transform:rotate(360deg)}}';
+      (document.head || document.body).appendChild(st);
+    }
+    const el = document.createElement('div');
+    el.id = 'apiBusyBar';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.innerHTML = '<div class="api-busy-track"></div><div class="api-busy-label"><span class="api-busy-spin" aria-hidden="true"></span><span class="api-busy-text"></span></div>';
+    document.body.appendChild(el);
+    this._el = el;
+    return el;
+  },
+
+  _render() {
+    const el = this._ensureEl();
+    if (!el) return;
+    const txt = el.querySelector('.api-busy-text');
+    if (txt) txt.textContent = this._currentLabel();   // textContent = ไม่มีทาง inject HTML
+  },
+
+  _show() {
+    if (this._active.size === 0) return;
+    this._shown = true;
+    const el = this._ensureEl();
+    if (el) { el.classList.add('show'); document.body.setAttribute('aria-busy', 'true'); }
+    this._render();
+    if (!this._tickTimer) this._tickTimer = setInterval(() => this._render(), 1000);
+  },
+
+  _hide() {
+    this._shown = false;
+    if (this._tickTimer) { clearInterval(this._tickTimer); this._tickTimer = null; }
+    if (this._el) this._el.classList.remove('show');
+    if (this._hasDom()) document.body.removeAttribute('aria-busy');
+  },
+};
+
 // ===== API Client =====
 const API = {
   baseUrl: '',
@@ -112,7 +354,25 @@ const API = {
     return `${head}: ${parts.join(' · ')}`;
   },
 
+  /** งานเบื้องหลังที่ผู้ใช้ไม่ได้สั่ง (badge แจ้งเตือน · poll) — ไม่ขึ้นตัวแสดง "กำลังทำงาน"
+   *  ใช้: `API.quietly(() => API.get(url))` · ต้องเรียก API ภายใน fn แบบ synchronous
+   *  (ตัวนับถูกอ่านตอนเริ่มคำขอ ก่อน await แรก) */
+  quietly(fn) {
+    ApiBusy._quiet++;
+    try { return fn(); } finally { ApiBusy._quiet--; }
+  },
+
   async request(method, url, data = null, isFormData = false, signal = null) {
+    // ตัวแสดง "กำลังทำงาน" กลาง — เริ่มก่อน await แรก จบใน finally เสมอ (ล้ม/redirect ก็ซ่อน)
+    const busyTok = ApiBusy.begin(method, url);
+    try {
+      return await this._requestCore(method, url, data, isFormData, signal);
+    } finally {
+      ApiBusy.end(busyTok);
+    }
+  },
+
+  async _requestCore(method, url, data = null, isFormData = false, signal = null) {
     // Re-read token from localStorage on each request (handles token refresh by other tabs)
     this.token = localStorage.getItem('token');
     const headers = {};
