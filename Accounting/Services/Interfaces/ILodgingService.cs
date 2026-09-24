@@ -74,8 +74,10 @@ public interface ILodgingService
     /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·
     /// ค่านี้มาจาก <c>IGatewayAccountResolver</c> ตัวเดียว — <b>พารามิเตอร์ของเมธอด
     /// ไม่ใช่ช่องใน DTO</b> เหตุผลเดียวกับ originModule</param>
+    /// <param name="fromOnlinePayment">true = เงินเข้าเองจาก gateway (ไม่มีพนักงานกด) ⇒ เปลี่ยนเป็น "ยืนยันแล้ว"
+    /// เฉพาะเมื่อที่พักเปิด <c>AutoConfirmOnDeposit</c> (S-06 รอบ 193) · false = พนักงานกดยืนยันเอง</param>
     Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId,
-        LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null);
+        LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null, bool fromOnlinePayment = false);
     Task<LodgingReservationResponse> AssignUnitAsync(Guid companyId, Guid reservationId, LodgingAssignUnitRequest request, string userId);
     Task<LodgingReservationResponse> CheckInAsync(Guid companyId, Guid reservationId, LodgingCheckInRequest request, string userId);
     Task<LodgingReservationResponse> AddChargeAsync(Guid companyId, Guid reservationId, LodgingAddChargeRequest request, string userId);

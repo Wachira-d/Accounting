@@ -48,9 +48,10 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
             return;
         }
 
-        // ยืนยันไปแล้วและมัดจำครบ = webhook ซ้ำ → no-op (ไม่ใช่ error)
-        if (r.Status is LodgingReservationStatus.Confirmed or LodgingReservationStatus.CheckedIn
-                or LodgingReservationStatus.CheckedOut
+        // บันทึกรับมัดจำไปแล้ว = webhook ซ้ำ → no-op (ไม่ใช่ error) · รวม "รอมัดจำ" ด้วย เพราะที่พักที่ปิด
+        // AutoConfirmOnDeposit (S-06 รอบ 193) รับเงินแล้วยังคงสถานะรอพนักงานยืนยัน — ไม่งั้น webhook ซ้ำออกใบมัดจำสองใบ
+        if (r.Status is LodgingReservationStatus.Pending or LodgingReservationStatus.Confirmed
+                or LodgingReservationStatus.CheckedIn or LodgingReservationStatus.CheckedOut
             && r.DepositPaid >= intent.Amount - 0.005m)
         {
             _logger.LogInformation("การจอง {Res} ยืนยันและรับมัดจำแล้ว — ข้าม intent {Intent}",
@@ -68,6 +69,7 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
             BankAccountId: null,
             Note: "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
             intent.ConfirmedBy ?? "payment-gateway",
-            moneyInAccountId: moneyIn);
+            moneyInAccountId: moneyIn,
+            fromOnlinePayment: true);
     }
 }

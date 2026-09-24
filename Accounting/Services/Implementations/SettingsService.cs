@@ -34,16 +34,16 @@ public class SettingsService : ISettingsService
     }
 
     /// <summary>เติมผลตัดสิน "วิธีบันทึกเงินมัดจำ" (รอบ 193 #34) — ค่าตั้งต้นตามประเภทธุรกิจมาจาก Company.IndustryType
-    /// ตัวตัดสินตัวเดียว Helpers/DepositVatTreatmentPolicy (หน้าเว็บห้ามคำนวณเอง)</summary>
+    /// ตัวตัดสินตัวเดียว Helpers/DepositPolicyResolver (หน้าเว็บห้ามคำนวณเอง)</summary>
     private async Task<CompanySettingsResponse> WithDepositVatInfoAsync(Guid companyId, CompanySettingsResponse r)
     {
         var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
         return r with
         {
-            DepositVatTreatmentInfo = Accounting.Helpers.DepositVatTreatmentPolicy.Resolve(
-                Accounting.Helpers.DepositVatTreatmentPolicy.NatureOf(industry), r.DepositVatTreatment),
-            DepositVatTreatmentOptions = Accounting.Helpers.DepositVatTreatmentPolicy.Options,
+            DepositVatTreatmentInfo = Accounting.Helpers.DepositPolicyResolver.Resolve(
+                Accounting.Helpers.DepositPolicyResolver.NatureOf(industry), r.DepositVatTreatment),
+            DepositVatTreatmentOptions = Accounting.Helpers.DepositPolicyResolver.Options,
         };
     }
 
@@ -101,7 +101,7 @@ public class SettingsService : ISettingsService
             settings.DepositVatTreatment = null;
         else if (request.DepositVatTreatment.HasValue)
         {
-            if (!Accounting.Helpers.DepositVatTreatmentPolicy.IsDefined(request.DepositVatTreatment))
+            if (!Accounting.Helpers.DepositPolicyResolver.IsDefined(request.DepositVatTreatment))
                 throw new Accounting.Helpers.BusinessRuleException(
                     "วิธีบันทึกเงินมัดจำไม่ถูกต้อง — กรุณาเลือกหนึ่งในตัวเลือกที่แสดงบนหน้าตั้งค่า", "DEPOSIT-VAT-TREATMENT");
             settings.DepositVatTreatment = request.DepositVatTreatment.Value;

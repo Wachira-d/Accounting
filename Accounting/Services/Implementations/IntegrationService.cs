@@ -1002,7 +1002,7 @@ public class IntegrationService : IIntegrationService
                 Lines = lines
             };
             // รอบ 193 #34 — จังหวะ VAT ของมัดจำที่คู่ค้าแจ้งขัดกับการตั้งค่าบริษัท ⇒ ธงให้นักบัญชีเห็น (ไม่แก้ยอดของคู่ค้า)
-            document.InternalNotes = Accounting.Helpers.DepositVatTreatmentPolicy.AppendNoteOnce(document.InternalNotes,
+            document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(document.InternalNotes,
                 await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
 
             _db.Documents.Add(document);
@@ -1903,9 +1903,9 @@ public class IntegrationService : IIntegrationService
             .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
         var setting = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
             .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
-        var decision = Accounting.Helpers.DepositVatTreatmentPolicy.Resolve(
-            Accounting.Helpers.DepositVatTreatmentPolicy.NatureOf(industry), setting);
-        var note = Accounting.Helpers.DepositVatTreatmentPolicy.IntegrationMismatchNote(payloadDeferred, decision);
+        var decision = Accounting.Helpers.DepositPolicyResolver.Resolve(
+            Accounting.Helpers.DepositPolicyResolver.NatureOf(industry), setting);
+        var note = Accounting.Helpers.DepositPolicyResolver.IntegrationMismatchNote(payloadDeferred, decision);
         if (note != null)
             _logger.LogWarning("Integration deposit VAT timing mismatch company {Company}: {Note}", companyId, note);
         return note;
@@ -2825,7 +2825,7 @@ public class IntegrationService : IIntegrationService
         // → stamp ยอดตรง ๆ ปลอดภัย (ไม่มี settle มาชนแล้ว)
         existing.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal;
         existing.DepositOutputVatDeferred = request.DepositOutputVatDeferred;
-        existing.InternalNotes = Accounting.Helpers.DepositVatTreatmentPolicy.AppendNoteOnce(existing.InternalNotes,
+        existing.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(existing.InternalNotes,
             await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
         existing.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef)
             ? null : request.DepositAppliedRef.Trim();

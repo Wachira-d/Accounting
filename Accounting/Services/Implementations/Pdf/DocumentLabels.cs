@@ -153,7 +153,7 @@ public sealed class DocumentLabels
     public string TotalBeforeBillDiscount => this["total_before_bill_discount"];
     public string TotalBillDiscount => this["total_bill_discount"];
     public string TotalDepositApplied => this["total_deposit_applied"];
-    /// <summary>แถวหักท้ายบิลที่เป็น "มูลค่ามัดจำ (ก่อน VAT) ที่ออกใบกำกับไปแล้ว" — ดู DepositVatTreatmentPolicy.BillDeductionIsTaxedDeposit</summary>
+    /// <summary>แถวหักท้ายบิลที่เป็น "มูลค่ามัดจำ (ก่อน VAT) ที่ออกใบกำกับไปแล้ว" — ดู DepositPolicyResolver.BillDeductionIsTaxedDeposit</summary>
     public string TotalDepositTaxInvoiced => this["total_deposit_tax_invoiced"];
     public string TotalDiscount => this["total_discount"];
     public string TotalGrand => this["total_grand"];

@@ -183,6 +183,12 @@ public static class LodgingPricingEngine
         return R2(extra.UnitPrice * qty * mult);
     }
 
+    /// <summary>อัตรา VAT ของที่พัก (S-10 รอบ 193) — อัตราของบริษัทผ่าน <see cref="OutputVatRate.ForCompany"/> ตัวเดียวกับ
+    /// POS/TimeBilling (เดิมฝังเลข 7 ตายตัวสองจุด) · ที่พักตั้ง "ไม่คิด VAT" = 0 · ตั้ง "คิด VAT" หรือไม่ตั้ง = อัตราบริษัท ·
+    /// <b>บริษัทไม่จด VAT = 0 เสมอแม้ที่พักตั้งให้คิด</b> (§90/2 — ห้ามเก็บภาษีขายโดยไม่มีสิทธิ์)</summary>
+    public static decimal PropertyVatRate(bool? chargeVat, bool companyVatRegistered, decimal companyVatRate)
+        => chargeVat == false ? 0m : OutputVatRate.ForCompany(companyVatRegistered, companyVatRate);
+
     /// <summary>ปัญหาการตั้งค่าบริการเสริมที่ทำให้คิดราคา/บันทึกไม่ได้ (ข้อความไทยบอกทางไปต่อ) — null = ใช้ได้
     /// · ตัวตัดสินตัวเดียวของ: ด่านบันทึก (SaveExtraAsync) · ตัวคิดราคา (BuildQuote) · ป้ายเตือนในหน้าตั้งค่า
     /// · รายงานแถวที่ต้องเลือกใหม่ — ห้ามเขียนเงื่อนไข "0 = ผิด" ซ้ำที่อื่น</summary>

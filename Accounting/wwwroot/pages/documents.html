@@ -1601,7 +1601,7 @@
           // "ล็อกช่อง/ซ่อนตัวเลือก + บอกเหตุผล" ให้ตรงกับที่เซิร์ฟเวอร์จะทำจริง
           this._receiptMode = this._normReceiptMode(sr?.data?.receiptIssueMode);
           this._receiptModeText = sr?.data?.receiptIssueModeDescription || '';
-          // วิธีบันทึกเงินมัดจำของบริษัท (รอบ 193 #34) — เซิร์ฟเวอร์ตัดสิน (DepositVatTreatmentPolicy) หน้านี้ใช้เป็นค่าเริ่มต้นของใบใหม่
+          // วิธีบันทึกเงินมัดจำของบริษัท (รอบ 193 #34) — เซิร์ฟเวอร์ตัดสิน (DepositPolicyResolver) หน้านี้ใช้เป็นค่าเริ่มต้นของใบใหม่
           this._depositVatInfo = sr?.data?.depositVatTreatmentInfo || null;
         }
         catch { this._vatRegistered = true; this._showProject = true; this._showCostCenter = true; }

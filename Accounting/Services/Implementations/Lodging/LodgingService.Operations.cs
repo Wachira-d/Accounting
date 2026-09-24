@@ -42,7 +42,7 @@ public partial class LodgingService
         {
             var dep = await _db.Documents.AsNoTracking().Where(d => d.Id == depDocId && d.CompanyId == companyId)
                 .Select(d => new { d.IsDeposit, d.VatAmount, d.DepositOutputVatDeferred }).FirstOrDefaultAsync();
-            if (dep != null) depTreatment = DepositVatTreatmentPolicy.OfDocument(dep.IsDeposit, dep.VatAmount, dep.DepositOutputVatDeferred);
+            if (dep != null) depTreatment = DepositPolicyResolver.OfDocument(dep.IsDeposit, dep.VatAmount, dep.DepositOutputVatDeferred);
         }
 
         var res = new LodgingReservationResponse
@@ -74,7 +74,7 @@ public partial class LodgingService
             RefundPending = LodgingDepositSettlement.RefundPending(r.RefundAmount, r.RefundPaidAmount),
             RefundState = LodgingDepositSettlement.RefundStateOf(r.RefundAmount, r.RefundPaidAmount),
             DepositVatTreatment = depTreatment,
-            DepositVatTreatmentLabel = depTreatment is DepositVatTreatment dvt ? DepositVatTreatmentPolicy.LabelOf(dvt) : null,
+            DepositVatTreatmentLabel = depTreatment is DepositVatTreatment dvt ? DepositPolicyResolver.LabelOf(dvt) : null,
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,

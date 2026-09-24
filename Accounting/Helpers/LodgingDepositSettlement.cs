@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Helpers;
 
 /// <summary>ภาพถ่ายของใบมัดจำ 1 ใบ ณ ตอนตัดสิน (อ่านจาก <c>Document</c> ที่ <c>IsDeposit</c>)</summary>
@@ -164,6 +166,18 @@ public static class LodgingDepositSettlement
         }
         return new LodgingCancelPlan(fee, forfeit, refund, lines);
     }
+
+    /// <summary>สถานะหลังบันทึกรับมัดจำ (S-06 รอบ 193 · ต่อสาย <c>AutoConfirmOnDeposit</c> ที่เดิมไม่มีใครอ่าน)
+    /// <list type="bullet">
+    /// <item>พนักงานกด "ยืนยัน" เอง → ยืนยันเสมอ (การกระทำนั้นคือการยืนยัน)</item>
+    /// <item>เงินเข้าเองจากช่องทางออนไลน์ → ยืนยันเฉพาะเมื่อที่พักเปิด "ยืนยันอัตโนมัติเมื่อรับมัดจำ" · ปิด = รอพนักงานกด</item>
+    /// <item>การจองที่ไม่ใช่ "รอมัดจำ" → สถานะไม่เปลี่ยน (เดิมรับชำระเพิ่มบนการจองที่เช็คอินแล้วทำให้ย้อนกลับเป็น "ยืนยันแล้ว")</item>
+    /// </list></summary>
+    public static LodgingReservationStatus StatusAfterDeposit(
+        LodgingReservationStatus current, bool autoConfirmOnDeposit, bool explicitStaffConfirm)
+        => current != LodgingReservationStatus.Pending ? current
+         : explicitStaffConfirm || autoConfirmOnDeposit ? LodgingReservationStatus.Confirmed
+         : LodgingReservationStatus.Pending;
 
     /// <summary>ยอดที่ยังต้องคืน (ไม่ติดลบ)</summary>
     public static decimal RefundPending(decimal refundDue, decimal refundPaid) => Math.Max(0m, R2(refundDue - refundPaid));

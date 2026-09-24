@@ -67,13 +67,20 @@ public sealed record DepositVatTreatmentOption(
 /// เงียบ ๆ · ธุรกิจที่บอกประเภทไม่ได้ได้ธง <c>NeedsOwnerChoice</c> ให้หน้าตั้งค่าแสดงเด่น
 ///
 /// ⚠️ มีผลกับ "มัดจำใบใหม่" เท่านั้น — ใบที่ออกแล้วไม่ถูกเขียนย้อน (§86/4)
+///
+/// ═══ owner file ═══ ตรงกับข้อเสนอของทีมตรวจวงจรมัดจำ (<c>erp-review/2026-09-24/audit-deposit.md</c> §6
+/// "Helpers/DepositPolicyResolver ตัวเดียว") — ชื่อโหมดใช้ตามที่เจ้าของระบุ (FullDeposit ≙ NoVatUntilFinal ·
+/// VatPendingUndue ≙ VatUndue · VatImmediate) · "วิธีหักที่ใบสุดท้าย" ไม่ใช่ค่าตั้งแยก แต่<b>ตามมาจากโหมดของใบมัดจำ</b>
+/// (VatImmediate ⇒ หักฐานก่อนคิด VAT · อีกสองโหมด ⇒ ใบเต็ม + ตัดชำระด้วยมัดจำ) จึงไม่มีคู่ที่ผิดกฎหมายให้เลือกได้ ·
+/// โหมดของใบที่ออกแล้วอ่านย้อนจากช่องที่ตรึงบนใบ (<see cref="OfDocument"/>) ไม่อ่านค่าบริษัทซ้ำ ·
+/// แผนตัวเลขของโมดูลที่พัก (หัก/ริบ/คืน) อยู่ที่ <c>Helpers/LodgingDepositSettlement</c> ซึ่งกินผลของไฟล์นี้
 /// </summary>
-public static class DepositVatTreatmentPolicy
+public static class DepositPolicyResolver
 {
+    /// <summary>รหัสกฎของด่าน "ห้ามหักมัดจำที่ออกใบกำกับแล้วแบบเต็มจำนวนเข้าใบกำกับที่คิด VAT เต็ม" (P0-3 รอบ 193)</summary>
+    public const string ImmediateVatGrossApplyRuleCode = "RD-86/4-DEPOSIT-TIV-DOUBLE";
     public const string ServiceNonImmediateRuleCode = "RD-78/1-DEPOSIT-VAT";
     public const string GoodsNonImmediateRuleCode = "RD-78-DEPOSIT-VAT";
-
-    private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
     public static string LabelOf(DepositVatTreatment t) => t switch
     {
@@ -238,4 +245,33 @@ public static class DepositVatTreatmentPolicy
     /// <c>DepositAppliedAmount = 0</c> (ยอดรวมของใบสุทธิแล้ว ไม่ได้หักจากยอดชำระอีกชั้น)</para></summary>
     public static bool BillDeductionIsTaxedDeposit(decimal billDiscountAmount, decimal depositAppliedAmount, string? depositAppliedRef)
         => billDiscountAmount > 0m && depositAppliedAmount <= 0m && !string.IsNullOrWhiteSpace(depositAppliedRef);
+
+    /// <summary>P0-3: ใบมัดจำนี้ "ออกใบกำกับแล้ว" (VAT เข้า ภ.พ.30 เดือนที่รับเงิน) ⇒ ห้ามนำไปหัก <b>เต็มจำนวน</b>
+    /// เข้าใบกำกับที่คิด VAT เต็ม (ปุ่มหักมัดจำ / หักแบบขับ JE) — เดิมเส้นนั้นกลับ Dr 21911 ของมัดจำแล้วให้ใบสุดท้าย
+    /// รายงาน VAT เต็ม + รายงานภาษีขายข้ามแถวมัดจำ ⇒ ผู้ซื้อถือใบกำกับสองใบสำหรับ VAT ก้อนเดียว (618.22 แทน 487.38)
+    /// และ VAT มัดจำย้ายไปเดือนของใบสุดท้าย (§78/1 ช้า) · เดิมด่านมีเฉพาะ "งวดยื่นแล้ว" และเฉพาะปุ่ม ไม่ครอบเส้นขับ JE</summary>
+    /// <param name="depositVatAmount">VAT ของใบมัดจำ (หรือขา Cr 21911 จริงใน GL)</param>
+    /// <param name="depositVatPending">VAT ยังพักอยู่ 21913 (ยังไม่เข้า ภ.พ.30)</param>
+    public static bool GrossApplyBlocked(decimal depositVatAmount, bool depositVatPending)
+        => depositVatAmount > 0.005m && !depositVatPending;
+
+
+    /// <summary>ข้อความของด่าน P0-3 — บอกเหตุผล + ทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
+    public static string GrossApplyBlockedMessage(string depositNumber) =>
+        $"⛔ ใบมัดจำ {depositNumber} ออกเป็นใบกำกับภาษีแล้ว (ภาษีขายเข้า ภ.พ.30 เดือนที่รับเงิน §78/1) — "
+        + "หักเข้าใบกำกับที่คิด VAT เต็มจำนวนไม่ได้ เพราะผู้ซื้อจะได้ใบกำกับสองใบสำหรับภาษีก้อนเดียว และภาษีมัดจำจะย้ายเดือน · "
+        + "ทางที่ถูก เลือกอย่างใดอย่างหนึ่ง: "
+        + "① ออกใบกำกับใบสุดท้าย “หักมูลค่ามัดจำ (ก่อน VAT) ออกจากฐานภาษี” (ส่วนหักท้ายบิล = ฐานของมัดจำ) "
+        + "แล้วรับรู้มัดจำเป็นรายได้ที่หน้า “เงินมัดจำ” — โมดูลที่พักทำให้อัตโนมัติ · "
+        + "② ออกใบลดหนี้ (§86/10) ยกเลิกใบกำกับมัดจำเดิมก่อน แล้วค่อยออกใบกำกับเต็มจำนวน";
+
+    /// <summary>"หักมัดจำแบบขับ JE" (<c>DepositAppliedDrivesJournal</c>) ใช้ได้กับชนิดที่ AutoPost อ่านธงนี้จริงเท่านั้น
+    /// (ใบเสร็จ/ใบสำคัญรับ · ใบกำกับขายเงินสดใบเดียว) — ใบเครดิตรับธงแล้วไม่มีผล = silent no-op (P0-1 รอบ 193)</summary>
+    public static bool DrivesJournalSupported(DocumentType type, bool issuedAsCashReceipt)
+        => type is DocumentType.Receipt or DocumentType.ReceiptVoucher
+           || (type == DocumentType.TaxInvoice && issuedAsCashReceipt);
+
+    public const string DrivesUnsupportedMessage =
+        "“หักมัดจำแบบลงบัญชีในใบเดียว” ใช้ได้กับใบเสร็จรับเงิน/ใบสำคัญรับ หรือใบกำกับภาษีแบบขายเงินสดใบเดียวเท่านั้น — "
+        + "ใบแจ้งหนี้/ใบกำกับแบบเครดิตให้บันทึกใบก่อน แล้วกด “หักมัดจำ” หลังอนุมัติ (ระบบตัดลูกหนี้ด้วยมัดจำให้)";
 }

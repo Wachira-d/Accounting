@@ -127,7 +127,7 @@ public record UpdateCompanySettingsRequest(
     // บัญชีทิปพนักงานค้างจ่าย: "" = ล้าง (กลับไปใช้ค่าแนะนำ) · null = ไม่แก้ · ต้องมีในผังบัญชีจริง
     string? PosTipPayableAccountCode = null,
     // วิธีบันทึกเงินมัดจำฝั่งขาย (รอบ 193 #34): null = ไม่แก้ · ค่าที่ไม่มีในระบบ = ปฏิเสธ ·
-    // DepositVatTreatmentClear=true = ล้างกลับเป็น "ตามประเภทธุรกิจ" (กติกาอยู่ที่ Helpers/DepositVatTreatmentPolicy)
+    // DepositVatTreatmentClear=true = ล้างกลับเป็น "ตามประเภทธุรกิจ" (กติกาอยู่ที่ Helpers/DepositPolicyResolver)
     DepositVatTreatment? DepositVatTreatment = null,
     bool? DepositVatTreatmentClear = null);
 

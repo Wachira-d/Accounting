@@ -2126,7 +2126,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             // มัดจำที่ออกใบกำกับแล้ว (โหมด VatImmediate · รอบ 193 #34) หักออกจากฐานภาษี — ป้ายต้องบอกว่าเป็น
             // "มูลค่ามัดจำตามใบกำกับเลขที่ …" ไม่ใช่ส่วนลดการค้า · ตัวตัดสินเดียวกับ QuestPDF renderer
-            var billLabel = Accounting.Helpers.DepositVatTreatmentPolicy.BillDeductionIsTaxedDeposit(
+            var billLabel = Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(
                     doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
                 ? $"{L.TotalDepositTaxInvoiced} {WebUtility.HtmlEncode(doc.DepositAppliedRef)}"
                 : L.TotalBillDiscount;

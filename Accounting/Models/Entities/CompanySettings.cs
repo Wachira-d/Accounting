@@ -305,7 +305,7 @@ public class CompanySettings : TenantEntity
     // **null = ยังไม่เคยตั้ง** → ตัวตัดสินใช้ค่าตามประเภทธุรกิจ (Company.IndustryType) ซึ่งทุกประเภท
     // = VatImmediate (บริการ = §78/1 · สินค้า/ไม่ทราบ = พฤติกรรมเดิม) และหน้าตั้งค่าแสดงช่องนี้เด่น
     // เมื่อประเภทธุรกิจบอกไม่ได้ · ใช้กับ "มัดจำใบใหม่" เท่านั้น (ใบที่ออกแล้วไม่ถูกเขียนย้อน)
-    // กติกาอยู่ที่ Helpers/DepositVatTreatmentPolicy ตัวเดียว
+    // กติกาอยู่ที่ Helpers/DepositPolicyResolver ตัวเดียว
     public DepositVatTreatment? DepositVatTreatment { get; set; }
 
     // ── กองทุนเงินทดแทน (กท.20ก, พ.ร.บ.เงินทดแทน §44) ──

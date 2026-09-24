@@ -255,4 +255,22 @@ public class LodgingAvailabilityTests
         Assert.Equal(1, LodgingAvailability.AvailableRooms(D10, D10.AddDays(1), 5, 1, full, Array.Empty<LodgingOverrideInput>(), Now));
         Assert.Equal(0, LodgingAvailability.AvailableRooms(D10, D10.AddDays(1), 5, 0, full, Array.Empty<LodgingOverrideInput>(), Now));
     }
+
+    // ═══ S-10: อัตรา VAT ของที่พักมาจากบริษัท ไม่ใช่ 7 ตายตัว ═══
+
+    [Fact]
+    public void อัตราVATที่พัก_ตามอัตราบริษัท_เมื่อจดVAT()
+    {
+        Assert.Equal(7m, LodgingPricingEngine.PropertyVatRate(null, companyVatRegistered: true, companyVatRate: 7m));
+        Assert.Equal(10m, LodgingPricingEngine.PropertyVatRate(true, companyVatRegistered: true, companyVatRate: 10m));
+    }
+
+    [Fact]
+    public void อัตราVATที่พัก_ไม่จดVATหรือตั้งไม่คิด_เป็นศูนย์()
+    {
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(false, companyVatRegistered: true, companyVatRate: 7m));
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(null, companyVatRegistered: false, companyVatRate: 7m));
+        // §90/2 — ตั้ง "คิด VAT เสมอ" บนบริษัทที่ไม่จดทะเบียน ต้องไม่เก็บภาษี (เดิมคืน 7)
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(true, companyVatRegistered: false, companyVatRate: 7m));
+    }
 }

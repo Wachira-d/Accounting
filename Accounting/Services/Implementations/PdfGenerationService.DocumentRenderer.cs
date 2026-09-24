@@ -914,7 +914,7 @@ public partial class PdfGenerationService
             if (doc.BillDiscountAmount > 0)
             {
                 // มัดจำที่ออกใบกำกับแล้ว (รอบ 193 #34) — ตัวตัดสินเดียวกับ HTML renderer (ห้าม drift)
-                Row(Accounting.Helpers.DepositVatTreatmentPolicy.BillDeductionIsTaxedDeposit(
+                Row(Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(
                         doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
                         ? $"{L.TotalDepositTaxInvoiced} {doc.DepositAppliedRef}"
                         : L.TotalBillDiscount,

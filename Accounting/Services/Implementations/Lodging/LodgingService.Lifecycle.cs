@@ -11,7 +11,7 @@ namespace Accounting.Services.Implementations.Lodging;
 /// <summary>โมดูลที่พัก — lifecycle ของการจอง + เอกสารบัญชี (partial 3/4)
 ///
 /// เส้นเงิน (ทุกใบผ่าน IDocumentService — เลข gap-free §86/4):
-///   ยืนยัน+รับมัดจำ → Receipt(IsDeposit) ⇒ Cr 217xx ตาม "วิธีบันทึกมัดจำ" (DepositVatTreatmentPolicy · รอบ 193 #34):
+///   ยืนยัน+รับมัดจำ → Receipt(IsDeposit) ⇒ Cr 217xx ตาม "วิธีบันทึกมัดจำ" (DepositPolicyResolver · รอบ 193 #34):
 ///                    เต็มยอดไม่แยก VAT · แยก VAT รอเรียกเก็บ 21913 · ออกใบกำกับ VAT ทันที 21911 (§78/1 ค่าเริ่มต้น)
 ///   เช็คเอาต์      → TaxInvoice/Invoice ทั้งการเข้าพัก + folio แล้วใช้มัดจำตามโหมดของแต่ละใบ (LodgingDepositSettlement):
 ///                    ออกใบกำกับแล้ว → หักฐานมัดจำออกจากฐานภาษีใบสุดท้าย + RealizeDeposit (VAT ไม่ซ้ำ) ·
@@ -302,7 +302,7 @@ public partial class LodgingService
 
     // ═══════════════════════════ Confirm + deposit ═══════════════════════════
 
-    public async Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null)
+    public async Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null, bool fromOnlinePayment = false)
     {
         var r = await RequireReservationAsync(companyId, reservationId);
         if (Terminal.Contains(r.Status)) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — ยืนยันไม่ได้");
@@ -339,13 +339,19 @@ public partial class LodgingService
             if (!string.IsNullOrWhiteSpace(request.PaymentReference)) r.PaymentReference = request.PaymentReference;
         }
         var wasPending = r.Status == LodgingReservationStatus.Pending;
-        r.Status = LodgingReservationStatus.Confirmed;
-        r.ConfirmedAt ??= DateTime.UtcNow; r.ConfirmedBy ??= userId; r.HoldExpiresAt = null;
+        // S-06 — เงินเข้าจากช่องทางออนไลน์ยืนยันเฉพาะเมื่อที่พักเปิด AutoConfirmOnDeposit · พนักงานกดเอง = ยืนยันเสมอ
+        r.Status = LodgingDepositSettlement.StatusAfterDeposit(r.Status, r.Property.AutoConfirmOnDeposit, explicitStaffConfirm: !fromOnlinePayment);
+        var confirmedNow = wasPending && r.Status == LodgingReservationStatus.Confirmed;
+        if (confirmedNow) { r.ConfirmedAt ??= DateTime.UtcNow; r.ConfirmedBy ??= userId; }
+        // hold ถูกล้างเสมอเมื่อมีเงินเข้า — การจองที่รับมัดจำแล้วห้ามถูกยกเลิกอัตโนมัติเพราะหมดเวลาถือห้อง
+        if (amount > 0 || confirmedNow) r.HoldExpiresAt = null;
+        if (wasPending && !confirmedNow && amount > 0)
+            AppendInternal(r, $"รับมัดจำ {amount:N2} ผ่านช่องทางออนไลน์แล้ว — ที่พักตั้งไม่ยืนยันอัตโนมัติ รอพนักงานกด “ยืนยัน”");
         if (!string.IsNullOrWhiteSpace(request.Note)) AppendInternal(r, request.Note);
         r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
         _db.AuditLogs.Add(Audit(companyId, AuditAction.Approve, r, new { action = "Confirm", depositReceived = amount, method = request.PaymentMethod.ToString(), by = userId }));
         await _db.SaveChangesAsync();
-        if (wasPending) await TryNotifyAsync(companyId, r.Id, "confirmed");
+        if (confirmedNow) await TryNotifyAsync(companyId, r.Id, "confirmed");
         return await MapAsync(companyId, r, true, true);
     }
 
@@ -358,7 +364,7 @@ public partial class LodgingService
         var prop = r.Property;
         var vatRate = await EffectiveVatRateAsync(companyId, prop);
         var treatment = await DepositTreatmentForAsync(companyId, prop);
-        var shape = DepositVatTreatmentPolicy.ShapeFor(treatment.Treatment, vatRate);
+        var shape = DepositPolicyResolver.ShapeFor(treatment.Treatment, vatRate);
         var product = await FirstRoomProductCodeAsync(companyId, r);
         var request = new CreateDocumentRequest(
             DocumentType: DocumentType.Receipt,
@@ -386,16 +392,24 @@ public partial class LodgingService
             PaymentType: null);
         var created = await _docService.CreateDocumentAsync(companyId, request, userId, LodgingOrigin);
         // ตรึง "ใช้วิธีไหน · ใครตั้ง" ลงหมายเหตุภายในของใบมัดจำ (ตัวโหมดเองอ่านย้อนได้จากช่องที่ตรึงบนใบ —
-        // DepositVatTreatmentPolicy.OfDocument) + คำเตือน §78/1 ถ้าบริการเลือกโหมดที่ไม่ใช่ VAT ทันที
+        // DepositPolicyResolver.OfDocument) + คำเตือน §78/1 ถ้าบริการเลือกโหมดที่ไม่ใช่ VAT ทันที
         var depDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
         if (depDoc != null)
-            depDoc.InternalNotes = DepositVatTreatmentPolicy.AppendNoteOnce(depDoc.InternalNotes,
+            depDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(depDoc.InternalNotes,
                 $"[วิธีบันทึกมัดจำ] {treatment.Label} · ที่มา: {TreatmentSourceTh(treatment.Source)} · "
-                + DepositVatTreatmentPolicy.DescribePosting(treatment.Treatment, amount, vatRate)
+                + DepositPolicyResolver.DescribePosting(treatment.Treatment, amount, vatRate)
                 + (treatment.Warning != null ? $" · {treatment.WarningRuleCode}: {treatment.Warning}" : ""));
-        await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
+        await _db.SaveChangesAsync();   // บันทึกหมายเหตุก่อนอนุมัติ — ขั้นอนุมัติอาจ reload เอกสารจาก DB
+        var approvedDeposit = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
         if (treatment.Warning != null)
             AppendInternal(r, $"มัดจำ {amount:N2} บันทึกแบบ \"{treatment.Label}\" — {treatment.Warning}");
+        // audit: ใช้โหมดไหน · ใครตั้ง · ยอด JE ที่คาดหวังของโหมดนั้น (ให้ผู้ตรวจเทียบกับ JE จริงของใบได้)
+        _db.AuditLogs.Add(Audit(companyId, AuditAction.Create, r, new
+        {
+            action = "DepositReceipt", document = approvedDeposit.DocumentNumber,
+            treatment = treatment.Treatment.ToString(), source = treatment.Source.ToString(), ruleCode = treatment.WarningRuleCode,
+            expectedPosting = DepositPolicyResolver.PreviewReceipt(treatment.Treatment, amount, vatRate), by = userId,
+        }));
         return created;
     }
 
@@ -838,11 +852,9 @@ public partial class LodgingService
             : new List<LodgingDepositSnapshot>();
         var plan = LodgingDepositSettlement.PlanCancellation(fee, deposit, deposits);
 
-        // ส่วนที่ริบ = เหตุการณ์เกิดแล้วจริง → รับรู้รายได้ทันที (ฐานคำนวณให้ส่วนที่คืนภายหลังผ่านด่าน "คืนเกินคงเหลือ" พอดี)
-        foreach (var line in plan.Lines.Where(l => l.ForfeitBase > 0.005m))
-            await _docService.RealizeDepositAsync(companyId, line.Id,
-                new RealizeDepositRequest(line.ForfeitBase, DateTime.UtcNow, r.Property.CancellationFeeAccountCode ?? r.Property.RoomRevenueAccountCode), actor);
-
+        // ── ปิดสถานะก่อน แล้วค่อยลงบัญชีส่วนที่ริบ (P0-2 รอบ 193 · atomicity) ──
+        // เดิมลง JE ก่อนแล้วค่อยเปลี่ยนสถานะ ⇒ JE ใบแรก commit แล้วใบถัดไปล้ม = การจองยังไม่ยกเลิก ⇒ กดซ้ำ
+        // ลง JE/ใบลดหนี้ซ้ำ · ตอนนี้บันทึกสถานะ + ยอดค้างคืนก่อน (กดซ้ำถูกด่าน "อยู่ในสถานะยกเลิกแล้ว" กันไว้)
         r.Status = noShow ? LodgingReservationStatus.NoShow : LodgingReservationStatus.Cancelled;
         r.CancelledAt = DateTime.UtcNow; r.CancellationReason = reason; r.CancellationFee = fee; r.RefundAmount = plan.Refund; r.HoldExpiresAt = null;
         // PaidAmount ไม่ลดที่นี่ — เงินยังอยู่กับที่พักจนกว่าจะโอนคืนจริง (ลดใน RecordRefundPaidAsync)
@@ -856,6 +868,32 @@ public partial class LodgingService
         if (noShow || deposit > 0 || fee > 0) await MeterStayAsync(companyId, r, noShow ? "no-show" : "cancel");
         _db.AuditLogs.Add(Audit(companyId, noShow ? AuditAction.Update : AuditAction.Delete, r, new { action = noShow ? "NoShow" : "Cancel", reason, fee, refundDue = plan.Refund, forfeit = plan.Forfeit, refundPaid = 0m, by = actor }));
         await _db.SaveChangesAsync();
+
+        // ส่วนที่ริบ = เหตุการณ์เกิดแล้วจริง → รับรู้รายได้ (ฐาน ไม่ใช่ gross — P0-2 · ฐานคำนวณให้ส่วนที่คืนภายหลังผ่านด่าน
+        // "คืนเกินคงเหลือ" พอดี) · VAT ของส่วนที่ริบ: โหมด VAT ทันที = คงอยู่งวดเดิม · ภาษีรอเรียกเก็บ = ย้ายเข้า 21911 ตอนนี้
+        // (RealizeDepositAsync) · มัดจำเต็มยอด = รายได้ไม่มี VAT (ตามที่เจ้าของเลือกโหมด — คำถามนักบัญชีในรายงาน r193-L2)
+        var realized = new List<string>();
+        try
+        {
+            foreach (var line in plan.Lines.Where(l => l.ForfeitBase > 0.005m))
+            {
+                await _docService.RealizeDepositAsync(companyId, line.Id,
+                    new RealizeDepositRequest(line.ForfeitBase, DateTime.UtcNow, r.Property.CancellationFeeAccountCode ?? r.Property.RoomRevenueAccountCode), actor);
+                realized.Add(line.Number);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ล้มดัง 3 ที่: หมายเหตุบนการจอง · audit · คำตอบผู้เรียก — สถานะยกเลิกคงไว้ (ห้ามลงซ้ำตอนกดใหม่)
+            var pendingForfeit = string.Join(", ", plan.Lines.Where(l => l.ForfeitBase > 0.005m && !realized.Contains(l.Number))
+                .Select(l => $"{l.Number} ฐาน {l.ForfeitBase:N2}"));
+            AppendInternal(r, $"⚠️ ยกเลิกแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — ต้องรับรู้ที่หน้า “เงินมัดจำ”: {pendingForfeit}");
+            _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new { action = "CancelForfeitFailed", error = ex.Message, pending = pendingForfeit, by = actor }));
+            await _db.SaveChangesAsync();
+            throw new BusinessRuleException(
+                $"ยกเลิกการจองแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — ให้เจ้าหน้าที่รับรู้มัดจำ {pendingForfeit} ที่หน้า “เงินมัดจำ”",
+                "LODGING-CANCEL-FORFEIT");
+        }
         _logger.LogInformation("Lodging reservation {No} {Action}: fee {Fee} refund-due {Refund} forfeit {Forfeit}", r.ReservationNumber, noShow ? "no-show" : "cancelled", fee, plan.Refund, plan.Forfeit);
     }
 
@@ -876,25 +914,43 @@ public partial class LodgingService
         var reference = string.IsNullOrWhiteSpace(request.Reference) ? null : request.Reference.Trim();
 
         var creditNotesFor = new List<string>();
+        var posted = false;
         if (r.Property.AccountingMode != LodgingAccountingMode.Off)
         {
             var deposits = await LoadDepositSnapshotsAsync(companyId, r);
             if (deposits.Count > 0)
             {
                 var moneyAccountId = await ResolveRefundMoneyAccountAsync(companyId, request.BankAccountId, deposits);
-                foreach (var (id, number, gross) in LodgingDepositSettlement.AllocateRefund(amount, deposits))
+                var allocation = LodgingDepositSettlement.AllocateRefund(amount, deposits);
+                var allocated = allocation.Sum(a => a.Gross);
+                if (allocated < amount - 0.005m)
+                    throw new BusinessRuleException(
+                        $"มัดจำคงเหลือในเอกสาร ({allocated:N2}) น้อยกว่ายอดที่จะคืน ({amount:N2}) — มัดจำอาจถูกรับรู้/คืนไปบางส่วนแล้ว "
+                        + "· ตรวจที่หน้า “เงินมัดจำ” ก่อนบันทึกคืนเงิน", "LODGING-REFUND");
+                foreach (var (id, number, gross) in allocation)
                 {
                     await _docService.RefundDepositAsync(companyId, id, new RefundDepositRequest(gross, paidAt,
                         $"คืนเงินแขก — {(r.Status == LodgingReservationStatus.NoShow ? "no-show" : "ยกเลิก")} {r.ReservationNumber}"
                         + (reference != null ? $" · อ้างอิง {reference}" : ""), moneyAccountId), userId);
                     creditNotesFor.Add(number);
+                    // บันทึกทีละใบ — ใบถัดไปล้มแล้วกดซ้ำ ต้องไม่คืนใบที่คืนไปแล้วซ้ำ (ยอดค้างลดตามจริงทุกใบ)
+                    r.RefundPaidAmount = Math.Round(r.RefundPaidAmount + gross, 2, MidpointRounding.AwayFromZero);
+                    r.PaidAmount = Math.Max(0, r.PaidAmount - gross);
+                    r.RefundPaidAt = paidAt; r.RefundPaidBy = userId;
+                    await _db.SaveChangesAsync();
                 }
+                posted = true;
             }
         }
 
-        r.RefundPaidAmount = Math.Round(r.RefundPaidAmount + amount, 2, MidpointRounding.AwayFromZero);
-        r.RefundPaidAt = paidAt; r.RefundPaidBy = userId; r.RefundReference = reference ?? r.RefundReference;
-        r.PaidAmount = Math.Max(0, r.PaidAmount - amount);
+        if (!posted)
+        {
+            // โหมดไม่ออกเอกสาร — บันทึกบนการจองอย่างเดียว (ไม่มี JE ให้ลง)
+            r.RefundPaidAmount = Math.Round(r.RefundPaidAmount + amount, 2, MidpointRounding.AwayFromZero);
+            r.PaidAmount = Math.Max(0, r.PaidAmount - amount);
+            r.RefundPaidAt = paidAt; r.RefundPaidBy = userId;
+        }
+        r.RefundReference = reference ?? r.RefundReference;
         AppendInternal(r, $"ยืนยันคืนเงินแขก {amount:N2}{(reference != null ? $" (อ้างอิง {reference})" : "")}"
             + (creditNotesFor.Count > 0 ? $" · ลงบัญชีคืนมัดจำ + ใบลดหนี้จาก {string.Join(", ", creditNotesFor)}" : "")
             + (!string.IsNullOrWhiteSpace(request.Note) ? $" — {request.Note!.Trim()}" : ""));

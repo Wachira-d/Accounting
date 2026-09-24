@@ -85,7 +85,7 @@ public class LodgingProperty : TenantEntity
     /// <summary>ผังบัญชีพักมัดจำ (null = 21712 ค่า default ของระบบ)</summary>
     public string? DepositDeferredAccountCode { get; set; }
     /// <summary>วิธีบันทึกมัดจำของที่พักนี้ (ตั้งทับค่าบริษัท) — null = ตามค่าตั้งต้นบริษัท/ประเภทธุรกิจ
-    /// ตัวตัดสิน = <c>Helpers/DepositVatTreatmentPolicy.Resolve</c> (รอบ 193 #34)</summary>
+    /// ตัวตัดสิน = <c>Helpers/DepositPolicyResolver.Resolve</c> (รอบ 193 #34)</summary>
     public DepositVatTreatment? DepositVatTreatment { get; set; }
     /// <summary>⚠️ ช่องเดิม (ก่อนรอบ 193) — ตอนนี้เป็น <b>สำเนาที่ระบบเขียนตาม</b> <see cref="DepositVatTreatment"/>
     /// (= VatPendingUndue) เท่านั้น ห้ามอ่านไปตัดสินอะไรอีก · คงไว้ให้ migration ย้ายค่าเดิมแบบรันซ้ำได้

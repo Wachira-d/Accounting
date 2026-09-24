@@ -4685,7 +4685,7 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP NOT NULL;""",
             """ALTER TABLE "CompanySettings" ALTER COLUMN "UnifyTaxInvoiceNumberSeries" DROP DEFAULT;""",
             // วิธีบันทึกเงินมัดจำฝั่งขาย (รอบ 193 #34) — **nullable โดยตั้งใจ**: NULL = ยังไม่เคยตั้ง
-            // → Helpers/DepositVatTreatmentPolicy ใช้ค่าตามประเภทธุรกิจ · ห้าม UPDATE ไล่ตั้งค่า
+            // → Helpers/DepositPolicyResolver ใช้ค่าตามประเภทธุรกิจ · ห้าม UPDATE ไล่ตั้งค่า
             // (migration รันทุกครั้งที่สตาร์ท ⇒ จะทับเจตนาผู้ใช้)
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DepositVatTreatment" integer NULL;""",
             // บทบาททางกฎหมายของเอกสาร ตรึงตอนอนุมัติพร้อมเลขที่ — nullable เพราะ

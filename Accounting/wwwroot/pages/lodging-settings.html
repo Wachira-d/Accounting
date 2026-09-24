@@ -370,7 +370,7 @@
         document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
       },
       // ═══ วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ตัวเลือก/ป้าย/คำอธิบาย/คำเตือน มาจากเซิร์ฟเวอร์ทั้งหมด ═══
-      // (DepositVatTreatmentPolicy · F2 ข้อ 5) หน้านี้แค่เลือกว่าจะโชว์ข้อความไหน · ค่าว่าง = ตามค่าตั้งต้นบริษัท
+      // (DepositPolicyResolver · F2 ข้อ 5) หน้านี้แค่เลือกว่าจะโชว์ข้อความไหน · ค่าว่าง = ตามค่าตั้งต้นบริษัท
       renderDepositVatSelect(p) {
         const sel = document.getElementById('depVatSel'); if (!sel) return;
         if (p && p.depositVatTreatmentOptions) this._depVatOptions = p.depositVatTreatmentOptions;

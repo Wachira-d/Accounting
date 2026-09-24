@@ -66,22 +66,23 @@ public partial class LodgingService : ILodgingService
         return slug.Trim('-');
     }
 
+    /// <summary>อัตรา VAT ที่ที่พักใช้จริง — ตัวตัดสิน <see cref="LodgingPricingEngine.PropertyVatRate"/> (S-10 รอบ 193:
+    /// เดิมคืน 7 ตายตัว ไม่อ่านอัตราของบริษัท และ "คิด VAT เสมอ" ทำให้บริษัทที่ไม่จด VAT เก็บภาษีได้ ขัด §90/2)</summary>
     private async Task<decimal> EffectiveVatRateAsync(Guid companyId, LodgingProperty prop)
     {
-        if (prop.ChargeVat is bool cv) return cv ? 7m : 0m;
-        var vat = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
-            .Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync();
-        return vat == true ? 7m : 0m;
+        var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.IsVatRegistered, c.VatRate }).FirstOrDefaultAsync();
+        return LodgingPricingEngine.PropertyVatRate(prop.ChargeVat, co?.IsVatRegistered ?? false, co?.VatRate ?? 0m);
     }
 
-    /// <summary>วิธีบันทึกมัดจำที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositVatTreatmentPolicy.Resolve"/>
+    /// <summary>วิธีบันทึกมัดจำที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositPolicyResolver.Resolve"/>
     /// · ค่าห้องพักเป็น "บริการ" โดยสภาพ (§78/1) ไม่ว่าบริษัทจะตั้งประเภทธุรกิจเป็นอะไร</summary>
     private async Task<DepositVatTreatmentDecision> DepositTreatmentForAsync(Guid companyId, LodgingProperty prop, bool ignoreOverride = false)
     {
         var companySetting = await _db.CompanySettings.AsNoTracking()
             .Where(s => s.CompanyId == companyId)
             .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
-        return DepositVatTreatmentPolicy.Resolve(DepositSupplyNature.Service, companySetting,
+        return DepositPolicyResolver.Resolve(DepositSupplyNature.Service, companySetting,
             ignoreOverride ? null : prop.DepositVatTreatment);
     }
 
@@ -249,7 +250,7 @@ public partial class LodgingService : ILodgingService
         // วิธีบันทึกมัดจำ (รอบ 193 #34) — null = ตามบริษัท · ค่าที่ไม่มีในระบบ = ปฏิเสธ (ไม่ตกไปค่าไหนเงียบ ๆ)
         if (d.DepositVatTreatment is DepositVatTreatment dt)
         {
-            if (!DepositVatTreatmentPolicy.IsDefined(dt))
+            if (!DepositPolicyResolver.IsDefined(dt))
                 throw new BusinessRuleException("วิธีบันทึกเงินมัดจำไม่ถูกต้อง — กรุณาเลือกใหม่ในหน้าตั้งค่าที่พัก", "DEPOSIT-VAT-TREATMENT");
             p.DepositVatTreatment = dt;
         }
@@ -301,7 +302,7 @@ public partial class LodgingService : ILodgingService
             DepositOutputVatDeferred = p.DepositVatTreatment == DepositVatTreatment.VatPendingUndue,
             DepositVatTreatmentInfo = await DepositTreatmentForAsync(companyId, p),
             DepositVatTreatmentInherited = await DepositTreatmentForAsync(companyId, p, ignoreOverride: true),
-            DepositVatTreatmentOptions = DepositVatTreatmentPolicy.Options,
+            DepositVatTreatmentOptions = DepositPolicyResolver.Options,
             AccountingMode = p.AccountingMode,
             AccountingModeAcknowledged = p.AccountingModeAckAt != null,
             PricesIncludeVat = p.PricesIncludeVat, ChargeVat = p.ChargeVat, ServiceChargePercent = p.ServiceChargePercent,

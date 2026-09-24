@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Enums;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -208,4 +209,27 @@ public class LodgingDepositSettlementTests
         Assert.NotNull(LodgingDepositSettlement.ValidateRefundPayment(0m, 1000m, 0m));
         Assert.NotNull(LodgingDepositSettlement.ValidateRefundPayment(100m, 1000m, 1000m));   // คืนครบแล้ว
     }
+
+    // ═══ S-06: AutoConfirmOnDeposit ต่อสายแล้ว ═══
+
+    [Fact]
+    public void เงินเข้าออนไลน์_ที่พักปิดยืนยันอัตโนมัติ_การจองยังรอพนักงาน()
+        => Assert.Equal(LodgingReservationStatus.Pending,
+            LodgingDepositSettlement.StatusAfterDeposit(LodgingReservationStatus.Pending, autoConfirmOnDeposit: false, explicitStaffConfirm: false));
+
+    [Fact]
+    public void เงินเข้าออนไลน์_ที่พักเปิดยืนยันอัตโนมัติ_ยืนยันทันที_พฤติกรรมเดิม()
+        => Assert.Equal(LodgingReservationStatus.Confirmed,
+            LodgingDepositSettlement.StatusAfterDeposit(LodgingReservationStatus.Pending, autoConfirmOnDeposit: true, explicitStaffConfirm: false));
+
+    [Fact]
+    public void พนักงานกดยืนยันเอง_ยืนยันเสมอ_ไม่ว่าตั้งค่าไหน()
+        => Assert.Equal(LodgingReservationStatus.Confirmed,
+            LodgingDepositSettlement.StatusAfterDeposit(LodgingReservationStatus.Pending, autoConfirmOnDeposit: false, explicitStaffConfirm: true));
+
+    [Theory]
+    [InlineData(LodgingReservationStatus.Confirmed)]
+    [InlineData(LodgingReservationStatus.CheckedIn)]
+    public void รับชำระเพิ่มบนการจองที่ไม่ใช่รอมัดจำ_สถานะไม่ถอยกลับ(LodgingReservationStatus current)
+        => Assert.Equal(current, LodgingDepositSettlement.StatusAfterDeposit(current, autoConfirmOnDeposit: true, explicitStaffConfirm: true));
 }

@@ -1496,8 +1496,8 @@ public enum ReceiptIssueMode
 ///
 /// ลำดับชั้น: ค่าตั้งต้นบริษัท (<c>CompanySettings.DepositVatTreatment</c> · NULL = ตามประเภทธุรกิจ) →
 /// ตั้งทับรายที่พัก (<c>LodgingProperty.DepositVatTreatment</c>) · ตัวตัดสินตัวเดียว =
-/// <c>Helpers/DepositVatTreatmentPolicy.Resolve</c> · ใบมัดจำที่ออกแล้วอ่านโหมดย้อนได้จากช่องที่ตรึงตอนสร้าง
-/// (<c>VatAmount</c> + <c>DepositOutputVatDeferred</c>) ผ่าน <c>DepositVatTreatmentPolicy.OfDocument</c>
+/// <c>Helpers/DepositPolicyResolver.Resolve</c> · ใบมัดจำที่ออกแล้วอ่านโหมดย้อนได้จากช่องที่ตรึงตอนสร้าง
+/// (<c>VatAmount</c> + <c>DepositOutputVatDeferred</c>) ผ่าน <c>DepositPolicyResolver.OfDocument</c>
 ///
 /// ⚠️ ค่าตัวเลขต้องคงที่ — persist ลง CompanySettings / LodgingProperties
 /// </summary>
