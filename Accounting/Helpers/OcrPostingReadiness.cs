@@ -40,7 +40,7 @@ public static class OcrPostingReadiness
         // รอบ 192: ยอดที่จ่ายจริง ≠ ยอดใบกำกับ (คูปองแพลตฟอร์ม/ค่าส่งหลังยอดรวม) — ผู้เขียน Helpers/OcrTotalDecomposer
         // รอบ 193: เจ้าของตัดสินวิธีลงแล้ว (บรรทัดปรับตอนชำระ 51120/51150) — ยังหยุดจนกว่าบรรทัดปรับจะถูกบันทึกลงเอกสาร
         // (แท็ก OcrSettlementProposal.SettledTag ปลดตัวนี้ตัวเดียว ดู Evaluate)
-        (OcrTotalDecomposer.PayNotTotalTag, "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ (มีส่วนลด/ค่าปรับหลังยอดรวม) — ยังไม่ได้บันทึกบรรทัดปรับส่วนต่าง"),
+        (OcrTotalDecomposer.PayNotTotalTag, "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ (มีส่วนลด/ค่าส่งหลังยอดรวม) และกระดาษอธิบายส่วนต่างไม่ได้ครบ — ใส่ \"ยอดชำระจริง\" + บรรทัดปรับในหน้า 'ปรับปรุงรายการบัญชี' ของใบ (ใบสำคัญจ่าย) หรือลงตอนบันทึกการชำระ (ใบตั้งหนี้)"),
     };
 
     /// <summary>ผลการตัดสิน</summary>
@@ -101,7 +101,9 @@ public static class OcrPostingReadiness
         var notes = processingNotes ?? "";
         // รอบ 193 (คำตัดสินเจ้าของข้อ 1): [PAY≠TOTAL] หยุดการอนุมัติเอง "จนกว่าบรรทัดปรับส่วนต่างจะถูกบันทึก"
         // — ผู้เขียน [PAY-SETTLED] คือเส้นสร้างเอกสารจากสแกนเมื่อลงบรรทัดปรับ (Helpers/OcrSettlementProposal) แล้วเท่านั้น
-        var paySettled = notes.Contains(OcrSettlementProposal.SettledTag, StringComparison.Ordinal);
+        // · หรือ [PAY-AT-PAYMENT] (เอกสารตั้งหนี้ — ส่วนต่างเป็นเรื่องขั้นชำระ ยอดเอกสารถูกแล้ว · ฝ่ายค้าน C8)
+        var paySettled = notes.Contains(OcrSettlementProposal.SettledTag, StringComparison.Ordinal)
+            || notes.Contains(OcrSettlementProposal.DeferredTag, StringComparison.Ordinal);
         foreach (var (tag, why) in BlockingTags)
         {
             if (paySettled && tag == OcrTotalDecomposer.PayNotTotalTag) continue;

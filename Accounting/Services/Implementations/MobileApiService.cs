@@ -368,11 +368,15 @@ public class MobileApiService : IMobileApiService
                 .CountAsync(s => s.ApprovalRuleId == approvalRequest.ApprovalRuleId);
             if (approvalRequest.CurrentStep >= stepsTotal)
             {
-                var gapWarnings = await LoadScanGapWarningsAsync(companyId, entityId);
-                if (gapWarnings.Count > 0)
+                // รอบ 193 (ฝ่ายค้าน C5): คำเตือนก่อนอนุมัติ<b>ทุกชุด</b> (ตัวเดียวกับเว็บ — ไม่เรียก AI) · เดิมดูแค่ [Σ-GAP]
+                // แล้วส่ง acknowledgeWarnings:true ⇒ คำเตือนชนิดอื่นถูกประทับ "รับทราบ" ในนามผู้ใช้ที่ไม่เคยเห็น
+                var docSvcPreview = _services.GetService(typeof(IDocumentService)) as IDocumentService
+                    ?? throw new InvalidOperationException("ไม่พบบริการเอกสาร (IDocumentService) — อนุมัติผ่านมือถือไม่ได้");
+                var pendingWarnings = await docSvcPreview.PreviewApprovalWarningsAsync(companyId, entityId);
+                if (pendingWarnings.Count > 0)
                     return new MobileApprovalResponse(false,
-                        "มีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนอนุมัติ: " + string.Join(" · ", gapWarnings),
-                        entityType, entityId, Warnings: gapWarnings, RequiresAcknowledgement: true);
+                        "มีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนอนุมัติ: " + string.Join(" · ", pendingWarnings),
+                        entityType, entityId, Warnings: pendingWarnings, RequiresAcknowledgement: true);
             }
         }
 
@@ -430,8 +434,10 @@ public class MobileApiService : IMobileApiService
                         throw new BusinessRuleException(
                             $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType} (ต้องการ Document.Approve หรือสิทธิ์อนุมัติฝั่งซื้อ/ขาย)",
                             "PERM-DOC-APPROVE", 403);
-                    var approved = await docSvc.ApproveDocumentAsync(companyId, entityId,
-                        $"mobile:{userId}", acknowledgeWarnings: true);
+                    // ผู้ใช้เห็นรายการแล้วกดรับทราบ = User · ไม่มีคำเตือนตอนถาม = None (ถ้าเกิดคำเตือนใหม่ระหว่างนั้น ⇒ หยุด ไม่ประทับแทน)
+                    var approved = await docSvc.ApproveDocumentAsync(companyId, entityId, userId.ToString(),
+                        acknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User : Accounting.Helpers.ApprovalAckSource.None,
+                        withAiHints: false);
                     approvedDocumentCompanyId = companyId;
                     approvedDocumentId = approved.Id;
                 }
@@ -494,27 +500,6 @@ public class MobileApiService : IMobileApiService
 
     // ==================== Private Helpers ====================
 
-    /// <summary>คำเตือน [Σ-GAP] ของเอกสารที่สร้างจากสแกน — ข้อความ/ตัวเลขจาก Helpers/OcrApprovalGapWarning ตัวเดียวกับ
-    /// ด่านอนุมัติบนเว็บ (DocumentService.CollectApprovalWarningsAsync) · เอกสารที่ไม่ได้มาจากสแกน = ว่าง</summary>
-    private async Task<IReadOnlyList<string>> LoadScanGapWarningsAsync(Guid companyId, Guid documentId)
-    {
-        var scan = await _db.Set<OcrScanResult>().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount })
-            .FirstOrDefaultAsync();
-        if (scan == null) return Array.Empty<string>();
-        var doc = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new { d.RoundingAdjustment })
-            .FirstOrDefaultAsync();
-        if (doc == null) return Array.Empty<string>();
-        var linesTotal = await _db.DocumentLines.AsNoTracking()
-            .Where(l => l.DocumentId == documentId && !l.IsDeleted)
-            .SumAsync(l => (decimal?)(l.Amount + l.VatAmount)) ?? 0m;
-        return OcrApprovalGapWarning.Build(scan.ProcessingNotes, scan.ExtractedTotalAmount, linesTotal + doc.RoundingAdjustment);
-    }
-
     private async Task<MobileApprovalResponse> HandleExpenseClaimApprovalAsync(Guid companyId, Guid entityId, bool isApprove, Guid userId)
     {
         var claim = await _db.ExpenseClaims
@@ -530,6 +515,13 @@ public class MobileApiService : IMobileApiService
 
         if (isApprove)
         {
+            // §65 ทวิ ตรวจซ้ำตอนอนุมัติ (ฝ่ายค้านรอบ 193 · S2-P1) — ตัวเดียวกับเว็บ (ExpenseClaimService.ApproveAsync)
+            var evidenceCount = await _db.Set<FileAttachment>().CountAsync(a => a.CompanyId == companyId
+                && a.EntityType == "ExpenseClaim" && a.EntityId == claim.Id && !a.IsDeleted);
+            var missing = ExpenseClaimEvidencePolicy.MissingEvidenceMessage(claim.NoReceipt, evidenceCount, atApproval: true);
+            if (missing != null)
+                return new MobileApprovalResponse(false, missing, "ExpenseClaim", entityId);
+
             claim.Status = ExpenseClaimStatus.Approved;
             claim.ApprovedByUserId = userId;
             claim.ApprovedAt = DateTime.UtcNow;

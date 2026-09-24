@@ -4,8 +4,10 @@ namespace Accounting.Services.Implementations.Ocr;
 /// <param name="Claimable">false = ต้องห้ามแน่ (default ไม่เคลม) · null = ไม่เข้าข่าย/ตัดสินไม่ได้</param>
 /// <param name="RuleCode">อ้างมาตรา เช่น "RD-82/5(6)" — ลง audit ตามกฎ M</param>
 /// <param name="Warning">ข้อความอธิบายถึงผู้ใช้ (แสดงเป็น banner + วิธีเคลมได้เมื่อไร)</param>
+/// <param name="Vehicle">ผล §82/5(6) ละเอียด (ชื่อ enum ส่งให้หน้าเว็บตัดสินการแสดงผลได้โดยไม่ต้องมีลิสต์คำเอง · C-4)</param>
 internal readonly record struct ProhibitedVatVerdict(
-    bool? Claimable, string? RuleCode, string? Warning);
+    bool? Claimable, string? RuleCode, string? Warning,
+    Accounting.Helpers.VehicleVatVerdict Vehicle = Accounting.Helpers.VehicleVatVerdict.NotVehicleCost);
 
 /// <summary>
 /// คัดกรอง "ภาษีซื้อต้องห้าม" ตามชนิดรายจ่าย (§82/5(4)/(6)) จากข้อความบนเอกสาร —
@@ -67,6 +69,6 @@ internal static class ProhibitedInputVatScreener
         var warning = Accounting.Helpers.InputVatVehicleRule.Warning(vehicle);
         if (warning == null) return new(null, null, null);
         return new(Accounting.Helpers.InputVatVehicleRule.DisablesClaim(vehicle) ? false : null,
-            Accounting.Helpers.InputVatVehicleRule.RuleCode, warning);
+            Accounting.Helpers.InputVatVehicleRule.RuleCode, warning, vehicle);
     }
 }

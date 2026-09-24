@@ -152,10 +152,12 @@ public class FileAttachmentService : IFileAttachmentService
             if (scanFileIds.Count > 0)
             {
                 var alreadyIds = attachments.Select(a => a.Id).ToHashSet();
+                // ย้ายเฉพาะไฟล์ที่ยังเป็นของสแกน (EntityType "OcrScan") — ไฟล์ของรายการอื่นที่ถูกสแกนผ่าน POST ocr/scan/{fileId}
+                // หรือไฟล์ของเอกสารใบอื่น ห้ามดึงมาเป็นของใบนี้ (ฝ่ายค้านรอบ 193 · S2-C2 — เดิมย้ายไฟล์ใดก็ได้ที่สแกนชี้)
                 var orphanFiles = await _db.FileAttachments
                     .Include(f => f.UploadedByUser)
                     .Where(f => f.CompanyId == companyId && scanFileIds.Contains(f.Id)
-                        && !f.IsDeleted && !alreadyIds.Contains(f.Id))
+                        && !f.IsDeleted && !alreadyIds.Contains(f.Id) && f.EntityType == "OcrScan")
                     .ToListAsync();
 
                 if (orphanFiles.Count > 0)
@@ -166,7 +168,12 @@ public class FileAttachmentService : IFileAttachmentService
                         f.EntityType = "Document";
                         f.EntityId = entityId;
                     }
-                    try { await _db.SaveChangesAsync(); } catch { /* read path — best-effort */ }
+                    try { await _db.SaveChangesAsync(); }
+                    catch (Exception ex)
+                    {
+                        // read path — ซ่อมไม่สำเร็จไม่ทำให้การอ่านล้ม (ไฟล์ยังถูกคืนในรอบนี้) แต่ต้องทิ้งร่องรอย
+                        _logger.LogWarning(ex, "relink-on-read ของเอกสาร {DocId} ไม่สำเร็จ", entityId);
+                    }
                     attachments.AddRange(orphanFiles);
                     attachments = attachments.OrderByDescending(f => f.CreatedAt).ToList();
                 }

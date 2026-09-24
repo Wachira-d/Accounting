@@ -455,7 +455,9 @@ public class CrossTenantWorkflowService
     /// บริษัทคู่ค้าไม่มีเลขภาษี ⇒ จับด้วยชื่อตรงตัว (เดิม EF แปล <c>TaxId == null</c> เป็น IS NULL = ผู้ติดต่อไม่มีเลขรายไหนก็ได้)</summary>
     private async Task<Contact?> FindPartnerContactAsync(Guid ownerCompanyId, Company partner, bool asSupplier)
     {
-        if (!string.IsNullOrWhiteSpace(partner.TaxId))
+        // ฝ่ายค้าน C-8: "-" (บริษัทที่สมัครใหม่ยังไม่กรอกเลข · AuthService) = ไม่มีเลข — เดิมถูกเทียบตรงตัว
+        // ⇒ บริษัทคู่ค้ารายที่สองที่ยังไม่มีเลขได้ผู้ติดต่อ "-" ของรายแรก
+        if (Accounting.Helpers.ContactTaxBranchKey.HasTaxId(partner.TaxId))
         {
             var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
                 _db.Contacts, ownerCompanyId, partner.TaxId,
@@ -465,8 +467,11 @@ public class CrossTenantWorkflowService
                 : null;
         }
         if (string.IsNullOrWhiteSpace(partner.Name)) return null;
-        return await _db.Contacts
-            .Where(c => c.CompanyId == ownerCompanyId && !c.IsDeleted && c.Name == partner.Name
+        // ไม่มีเลข ⇒ ชุด SoftScope = ทุกแถว (ตัวตัดสินตัวเดียวกับทุกทางเข้า — ฝ่ายค้าน C-6)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, ownerCompanyId, partner.TaxId, default);
+        if (softScope == null) return null;
+        return await softScope
+            .Where(c => !c.IsDeleted && c.Name == partner.Name
                 && (asSupplier ? c.IsSupplier : c.IsCustomer))
             .OrderBy(c => c.CreatedAt)
             .FirstOrDefaultAsync();
@@ -484,7 +489,7 @@ public class CrossTenantWorkflowService
         {
             CompanyId = ownerCompanyId,
             Name = partner.Name,
-            TaxId = partner.TaxId,
+            TaxId = Accounting.Helpers.ContactTaxBranchKey.HasTaxId(partner.TaxId) ? partner.TaxId : null,   // "-" ไม่ใช่เลข (C-8)
             BranchCode = identity.BranchCode,
             ContactType = identity.Type,
             Address = partner.Address,

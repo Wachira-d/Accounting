@@ -19,10 +19,20 @@ public interface IAttachmentAccessGate
     Task<AttachmentDenial?> DenyAttachmentAsync(Guid companyId, Guid userId, string? entityType, Guid entityId,
         AttachmentAccess access, string verb, Guid? attachmentId = null);
 
-    /// <summary>ด่านของสแกนหนึ่งใบ (รูปต้นฉบับ · ผลอ่าน) — ผูกเอกสารแล้วใช้ด่านเอกสาร ยังไม่ผูกใช้ด่าน OCR ·
+    /// <summary>ด่านของสแกนหนึ่งใบ (รูปต้นฉบับ · ผลอ่าน · การแก้/ลบ) — ตามเจ้าของไฟล์ (<see cref="AttachmentPermissionScope.ScanOwner"/>) ·
     /// ไม่พบสแกน = <c>null</c> (ให้เส้นนั้นตอบ 404 เอง)</summary>
-    Task<AttachmentDenial?> DenyScanAsync(Guid companyId, Guid userId, Guid scanId, AttachmentAccess access, string verb);
+    /// <param name="unlinkedEditIsMemberLevel">แก้สแกนที่ยังไม่ผูกจากหน้ารีวิว = ระดับสมาชิก (พฤติกรรมเดิม)</param>
+    Task<AttachmentDenial?> DenyScanAsync(Guid companyId, Guid userId, Guid scanId, AttachmentAccess access, string verb,
+        bool unlinkedEditIsMemberLevel = false);
+
+    /// <summary>ผู้ใช้สแกนไฟล์แนบตัวนี้ (<c>POST ocr/scan/{fileId}</c>) ได้ไหม — ไฟล์ของรายการอื่นต้องอ่านไฟล์นั้นได้ ·
+    /// ไฟล์ของสแกนเดิมต้องผ่านด่านของสแกนเดิม · ไม่พบไฟล์ = 404 (ฝ่ายค้านรอบ 193 · S2-C1)</summary>
+    Task<AttachmentDenial?> DenyScanSourceAsync(Guid companyId, Guid userId, Guid fileAttachmentId);
 
     /// <summary>สแกนในชุดนี้ใบไหนที่ผู้ใช้<b>อ่านไม่ได้</b> (สำหรับเส้นรายการ — คิวรีเดียวต่อชุด ไม่ใช่ต่อใบ)</summary>
     Task<HashSet<Guid>> HiddenScanIdsAsync(Guid companyId, Guid userId, IReadOnlyCollection<Guid> scanIds);
+
+    /// <summary>เอกสารในชุดนี้ใบไหนที่ผู้ใช้<b>อ่านไม่ได้</b> (ฝั่ง + ชั้นความลับ) — ใช้กรองรายการเอกสารที่เส้น OCR คืน
+    /// (PO เปิด · ใบต้นทางที่น่าจะเป็น · รายงานตรวจยอด) ให้ตรงกับที่ผู้ใช้เห็นในหน้าเอกสาร</summary>
+    Task<HashSet<Guid>> HiddenDocumentIdsAsync(Guid companyId, Guid userId, IReadOnlyCollection<Guid> documentIds);
 }

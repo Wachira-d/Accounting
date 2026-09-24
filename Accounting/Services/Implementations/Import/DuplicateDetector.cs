@@ -120,9 +120,10 @@ public class DuplicateDetector : IDuplicateDetector
         // 1.0 TaxId + สาขา — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ทีม C3 · คำตัดสินเจ้าของข้อ 20):
         // เดิม `c.TaxId == taxId` ⇒ แถวสาขา 8 ในไฟล์ถูกรายงานว่า "ซ้ำ" กับแถวสำนักงานใหญ่ (หรือแถวไหนก็ได้ของเลขนั้น)
         // แล้วผู้ใช้เลือก "เขียนทับ" = ข้อมูลสาขา 8 ทับแถว สนญ. · ไม่มีคอลัมน์สาขา = "ไม่ระบุ" (แถว สนญ. ก่อน)
+        var key = default(Accounting.Helpers.ContactKeyMatch);
         if (!string.IsNullOrWhiteSpace(taxId))
         {
-            var key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
                 _db.Contacts.AsNoTracking().Where(c => !c.IsDeleted), cid, taxId,
                 Get(d, "BranchCode", "branchCode", "รหัสสาขา"), ct);
             if (key.ContactId is Guid keyId)
@@ -136,15 +137,17 @@ public class DuplicateDetector : IDuplicateDetector
             // เลขนี้มีแล้วแต่คนละสาขา = ผู้ติดต่อรายใหม่ของสาขานั้น ไม่ใช่ "ชื่อซ้ำ (เลขต่างกัน)" — ห้ามถอยไปเทียบชื่อ
             if (key.TaxIdExists) return null;
         }
-        // 0.9 Name exact (case-insensitive)
-        if (!string.IsNullOrWhiteSpace(name))
+        // 0.9 Name exact (case-insensitive) — บนชุด SoftScope ตัวเดียวกับทุกทางเข้า (ฝ่ายค้าน C-6): เลขในไฟล์เป็นเลขใหม่
+        // ⇒ เสนอเฉพาะแถวที่ยังไม่มีเลข (แถวชื่อเดียวกันที่ถือเลขอื่น = คนละนิติบุคคล — เสนอ "เขียนทับ" = ทับข้อมูลคนละราย)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts.AsNoTracking(), cid, taxId, key);
+        if (softScope != null && !string.IsNullOrWhiteSpace(name))
         {
             var lower = name.ToLowerInvariant().Trim();
-            var hit = await _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == cid && !c.IsDeleted && c.Name.ToLower() == lower)
+            var hit = await softScope
+                .Where(c => !c.IsDeleted && c.Name.ToLower() == lower)
                 .Select(c => new { c.Id, c.Name, c.TaxId, c.Phone, c.Email, c.Address })
                 .FirstOrDefaultAsync(ct);
-            if (hit != null) return Pack(cid, "Contact", d, hit.Id, hit, 0.9, "ชื่อตรงกัน (เลขผู้เสียภาษีต่างกัน)", sid, sref, rn);
+            if (hit != null) return Pack(cid, "Contact", d, hit.Id, hit, 0.9, string.IsNullOrWhiteSpace(taxId) ? "ชื่อตรงกัน" : "ชื่อตรงกัน (ผู้ติดต่อเดิมยังไม่มีเลขผู้เสียภาษี)", sid, sref, rn);
         }
         return null;
     }

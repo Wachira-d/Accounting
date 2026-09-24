@@ -63,6 +63,7 @@ public class DocumentCloneController : ControllerBase
             exchangeRate = src.ExchangeRate,
             paymentType = src.PaymentType,
             pricesIncludeVat = src.PricesIncludeVat,
+            roundingAdjustment = src.RoundingAdjustment,
             // ภาษาที่ตรึงกับใบต้นแบบตามไปด้วย — ลูกค้าประจำที่ใช้ใบอังกฤษ
             // คือกลุ่มเดียวกับที่ใช้ clone บ่อยที่สุด (ออกบิลซ้ำทุกเดือน)
             documentLanguage = src.DocumentLanguage,
@@ -113,7 +114,10 @@ public class DocumentCloneController : ControllerBase
             ProjectId: l.ProjectId,
             ProductCode: l.ProductCode,
             IsVatClaimable: l.IsVatClaimable,
-            VatNonClaimableReason: l.VatNonClaimableReason
+            VatNonClaimableReason: l.VatNonClaimableReason,
+            // ส่วนลดบาทรายบรรทัดต้องตามไปเหมือนเส้นแปลง (ConvertCoreAsync) — เดิมหาย ⇒ ใบโคลนแพงกว่าต้นแบบ
+            // และผลต่างปัดเศษที่ยกไปจะไม่ใช่ของบรรทัดชุดเดียวกัน
+            DiscountAmount: l.DiscountAmount > 0 ? l.DiscountAmount : null
         )).ToList();
 
         var docDate = options?.OverrideDate ?? DateTime.UtcNow.Date;
@@ -157,7 +161,9 @@ public class DocumentCloneController : ControllerBase
             // ข้อความเฉพาะฉบับที่ลูกค้าเห็นบนกระดาษ — สืบทอดเช่นเดียวกับ convert
             CustomAppendix: src.CustomAppendix,
             CustomFooterNotes: src.CustomFooterNotes,
-            CustomTermsAndConditions: src.CustomTermsAndConditions
+            CustomTermsAndConditions: src.CustomTermsAndConditions,
+            // รอบ 193 (ฝ่ายค้าน C2): โคลนยกทุกบรรทัดครบจำนวน ⇒ ผลต่างปัดเศษตามไป (Helpers/DocumentRounding.Inherit)
+            RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(src.RoundingAdjustment, true)
         );
 
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —

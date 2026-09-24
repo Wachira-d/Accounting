@@ -174,12 +174,9 @@ public class CmsLeadService
 
         // อัตรา VAT จาก OutputVatRate ตัวเดียว — เดิม 7 ตายตัว ⇒ ใบเสนอราคาของบริษัทที่ไม่จด VAT
         // เสนอ VAT 7% ให้ลูกค้า (§90/2 ถ้าใบนี้ถูกแปลงเป็นใบกำกับ) · รอบ 193 S-10
-        var vatProfile = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId)
-            .Select(c => new { c.IsVatRegistered, c.VatRate })
-            .FirstOrDefaultAsync();
-        var quoteVatRate = vatProfile == null ? 0m
-            : Accounting.Helpers.OutputVatRate.ForCompany(vatProfile.IsVatRegistered, vatProfile.VatRate);
+        // สถานะ/อัตราจาก CompanyVatStatus ตัวเดียวกับด่าน §90/2 ที่จะตัดสินใบนี้ตอนแปลงเป็นใบกำกับ (ฝ่ายค้าน P-6)
+        var (vatRegistered, vatDefaultRate) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+        var quoteVatRate = Accounting.Helpers.OutputVatRate.ForCompany(vatRegistered, vatDefaultRate);
 
         var docReq = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: Models.Enums.DocumentType.Quotation,
@@ -234,21 +231,18 @@ public class CmsLeadService
         // Match by tax-id first (most reliable for businesses),
         // then by email. Skip name-only matching — too many false
         // positives, the user can manually merge later if needed.
+        // รอบ 193 ทีม C3 (ฝ่ายค้าน C-6 · แก้เฉพาะการจับคู่ผู้ติดต่อ): คีย์เลขภาษี + สาขาตัวเดียว (Helpers/ContactTaxBranchKey)
+        // — lead ไม่มีช่องสาขา ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน (เดิม `c.TaxId ==` หยิบแถวไหนก็ได้ของเลขนั้น) ·
+        // อีเมลจับได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข — เดิมอีเมลตรงแถวที่ถือเลขอื่น = ผูกคนละนิติบุคคล)
         Contact? existing = null;
-        if (!string.IsNullOrEmpty(lead.CustomerTaxId))
-        {
-            existing = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == lead.CompanyId
-                    && !c.IsDeleted
-                    && c.TaxId == lead.CustomerTaxId);
-        }
-        if (existing == null && !string.IsNullOrEmpty(lead.CustomerEmail))
-        {
-            existing = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == lead.CompanyId
-                    && !c.IsDeleted
-                    && c.Email == lead.CustomerEmail);
-        }
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            _db.Contacts.Where(c => !c.IsDeleted), lead.CompanyId, lead.CustomerTaxId, branchCode: null);
+        if (taxKey.ContactId is Guid keyId)
+            existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == lead.CompanyId);
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(
+            _db.Contacts.Where(c => !c.IsDeleted), lead.CompanyId, lead.CustomerTaxId, taxKey);
+        if (existing == null && softScope != null && !string.IsNullOrEmpty(lead.CustomerEmail))
+            existing = await softScope.FirstOrDefaultAsync(c => c.Email == lead.CustomerEmail);
 
         if (existing != null)
         {

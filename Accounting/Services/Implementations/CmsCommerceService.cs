@@ -887,8 +887,9 @@ public class CmsCommerceService : ICmsCommerceService
 
         // บริษัทไม่จด VAT → ห้ามออกใบกำกับ + ไม่คิด VAT ขาย (§90/2). บังคับเป็น
         // ใบแจ้งหนี้ + zero VAT ทุกบรรทัด มิฉะนั้นเอกสารติด hard-block ตอน approve
-        var storeVatRegistered = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId).Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync() == true;
+        // ธงเดียวกับด่าน §90/2 ที่จะตัดสินใบนี้ตอนอนุมัติ (CompanyVatStatus · ฝ่ายค้าน P-6) — เดิมอ่าน Company ตรง
+        // ⇒ บริษัทที่สองธงขัดกันได้เอกสารที่อนุมัติไม่ผ่าน/หรือคิด VAT ทั้งที่ด่านถือว่าไม่จด
+        var storeVatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
         var docType = (order.RequestTaxInvoice && storeVatRegistered) ? DocumentType.TaxInvoice : DocumentType.Invoice;
 
         // Route ผ่าน IDocumentService.CreateDocumentAsync = ผ่าน:

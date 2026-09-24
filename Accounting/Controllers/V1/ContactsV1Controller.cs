@@ -119,11 +119,9 @@ public class ContactsV1Controller : PublicApiControllerBase
         var taxIdOwners = new List<TaxIdOwnerRow>();
         if (incomingTaxIds.Count > 0)
         {
-            var rows = await Db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == ctx!.CompanyId && c.TaxId != null
-                         && incomingTaxIds.Contains(c.TaxId))
-                .Select(c => new { c.Id, c.TaxId, c.BranchCode, c.ExternalId, c.Name })
-                .ToListAsync(ct);
+            // โหลดทุกสาขาของชุดเลขผ่านตัวช่วยกลาง (เทียบเลขแบบมีขีดด้วย) แล้วตัดสินทีละรายการด้วย ContactTaxBranchKey.Pick ข้างล่าง
+            var rows = await Helpers.ContactTaxBranchKey.LoadByTaxIdsAsync(
+                Db.Contacts.AsNoTracking(), ctx!.CompanyId, incomingTaxIds, ct);
             foreach (var r in rows)
                 taxIdOwners.Add(new TaxIdOwnerRow(r.Id, r.TaxId!, r.BranchCode, r.ExternalId, r.Name));
         }

@@ -1,6 +1,9 @@
+using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,7 +19,16 @@ namespace Accounting.Controllers;
 public class WhtCreditController : ControllerBase
 {
     private readonly WhtCreditService _service;
-    public WhtCreditController(WhtCreditService service) => _service = service;
+    private readonly IPermissionService _permissions;
+    public WhtCreditController(WhtCreditService service, IPermissionService permissions)
+    { _service = service; _permissions = permissions; }
+
+    /// <summary>ผู้บันทึก + ถือ Tax.File ไหม — service ใช้ตัดสินการผูกไฟล์ในถังก่อนบันทึก (ฝ่ายค้านรอบ 193 · S2-P7)</summary>
+    private async Task<WhtCreditService.AttachmentActor> ActorAsync(Guid companyId)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        return new(uid, await _permissions.HasPermissionAsync(companyId, uid, PermissionKeys.TaxFile));
+    }
 
     public record UpsertBody(
         int TaxYear, string? CertificateNumber, DateTime? CertificateDate,
@@ -52,14 +64,14 @@ public class WhtCreditController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<Guid>>> Create(Guid companyId, [FromBody] UpsertBody b)
     {
-        var id = await _service.CreateAsync(companyId, Map(b));
+        var id = await _service.CreateAsync(companyId, Map(b), await ActorAsync(companyId));
         return StatusCode(201, new ApiResponse<Guid>(true, id, "บันทึกรายการภาษีถูกหักแล้ว"));
     }
 
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Update(Guid companyId, Guid id, [FromBody] UpsertBody b)
     {
-        await _service.UpdateAsync(companyId, id, Map(b));
+        await _service.UpdateAsync(companyId, id, Map(b), await ActorAsync(companyId));
         return Ok(new ApiResponse<bool>(true, true, "แก้ไขแล้ว"));
     }
 
@@ -68,7 +80,8 @@ public class WhtCreditController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> MarkReceived(
         Guid companyId, Guid id, [FromBody] MarkReceivedBody b)
     {
-        await _service.MarkReceivedAsync(companyId, id, b.CertificateNumber, b.CertificateDate, b.AttachmentId);
+        await _service.MarkReceivedAsync(companyId, id, b.CertificateNumber, b.CertificateDate, b.AttachmentId,
+            await ActorAsync(companyId));
         return Ok(new ApiResponse<bool>(true, true, "บันทึกหนังสือรับรองแล้ว — ใช้เป็นเครดิตได้"));
     }
 

@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""จุดประทับ `Status = DocumentStatus.Approved` นอก DocumentService ที่ไม่เรียก "ผลข้างเคียงหลังออกเอกสาร"
-ในเมธอดเดียวกัน — ratchet กับ baseline
+"""เอกสารที่ "ออกโดยไม่ผ่าน ApproveDocumentAsync" แต่ไม่เรียกผลข้างเคียงหลังออกเอกสาร — ratchet กับ baseline
 
-═══ ที่มา (รอบ 193 · ผลตรวจ S-02 `erp-review/2026-09-24/audit-settings.md`) ═══
+═══ ที่มา (รอบ 193 · ผลตรวจ S-02 `erp-review/2026-09-24/audit-settings.md` + ฝ่ายค้าน C-3) ═══
 ค่าตั้งที่มีผล "ตอนออกเอกสาร" (e-Tax อัตโนมัติ `EtaxEnabled`/`EtaxAutoSign`) เคยอยู่ใน
 `ApproveDocumentAsync` เท่านั้น แต่ POS (ใบกำกับเต็มรูป) และ Integration (TIV/CN/DN) สร้างเอกสารเป็น
-`Approved` ตรง ๆ ⇒ บริษัทที่เปิด e-Tax อัตโนมัติ ได้ e-Tax เฉพาะใบจากเว็บ ใบจาก POS/API ไม่เคยถูกออก
-และไม่มีอะไรเตือน ⇒ ไม่ถูกนำส่งภายในวันที่ 15. แก้แล้วด้วย `IIssuedDocumentHooks.RunAsync` จุดเดียว —
-checker นี้กันไม่ให้ทางเข้าที่ **สาม** เกิดโดยลืมเรียก (ราก R5 "ทางเข้าอื่นไม่เดินด่าน")
+`Approved` ตรง ๆ ⇒ ใบจากสองทางนี้ไม่เคยถูกออก e-Tax. แก้ด้วย `IIssuedDocumentHooks.RunAsync` จุดเดียว.
+รอบแรกของ checker นี้ **มองไม่เห็น** ใบเสร็จ settlement ที่เกิดเป็น `Paid` และทำหน้าที่ใบกำกับ ณ วันรับเงิน
+(§78/1 · `DocumentService.CreateSettlementReceiptAsync`) เพราะจับแค่ `Approved` และข้าม DocumentService ทั้งไฟล์
+(ฝ่ายค้าน C-3) ⇒ รอบนี้ขยายขอบเขตโดยแยก "เกิดมาออกแล้ว" ออกจาก "เปลี่ยนสถานะตามการชำระ"
 
-═══ กติกา ═══
-  * จับ **การกำหนดค่า** `Status = … DocumentStatus.Approved …` (รวม object initializer และ ternary
-    `Status = auto ? DocumentStatus.Approved : …`) — ไม่จับ `==`/`!=`/การอ่าน/คอมเมนต์
-  * ไฟล์เจ้าของ (`Services/Implementations/DocumentService*.cs`) ไม่ตรวจ — `ApproveDocumentAsync` เรียก hook เอง
-    (จุดประทับอื่นในไฟล์นั้น เช่น CN คืนมัดจำ อยู่ในความรับผิดชอบของเจ้าของไฟล์ — ดูรายงาน r193-V)
-  * ผ่านเมื่อ **เมธอดเดียวกัน** มีการเรียก `…IssuedHooks.RunAsync(` / `issuedHooks.RunAsync(`
-  * จุดที่ตั้งใจยกเว้นอยู่ใน `tools/approved_status_writer_baseline.txt` (คีย์ `ไฟล์:เมธอด = จำนวน` ทนเลขบรรทัดเลื่อน)
-    — **ห้ามเพิ่มแถวเพื่อให้เขียว** ตัดออกได้อย่างเดียว (ratchet ทางเดียว)
+═══ กติกา — สองรูปที่นับเป็น "การออกเอกสาร" ═══
+  (ก) **สร้างเอกสารใหม่ที่เกิดมาในสถานะออกแล้ว**: ใน `new Document { … }` ช่อง `Status = <expr>` (ข้ามบรรทัดได้)
+      ฟ้องเมื่อ expr อ้างสถานะที่ไม่ใช่ Draft/WaitingApproval/Rejected **หรือ** ไม่อ้างสถานะใดเลย
+      (มาจากตัวแปร = "ไม่รู้" ⇒ นับว่าออก — ห้ามตกเป็นผ่าน)
+  (ข) **ประทับอนุมัติบนเอกสารเดิม** `x.Status = DocumentStatus.Approved;` (ค่าตรงตัว)
+      — ไม่นับ `x.Status = paid ? … : DocumentStatus.Approved` (คำนวณสถานะคืนเมื่อยกเลิก/ลดยอดชำระ = ไม่ใช่การออกใหม่)
+  ผ่านเมื่อ: เมธอดที่ครอบเรียก `…IssuedHooks.RunAsync(` **หรือ** เมธอดนั้นเป็นตัวช่วยที่ไม่ save เอง และ **ทุก**
+  call site ในไฟล์เดียวกันอยู่ในเมธอดที่เรียก hook (เช่น `CreateSettlementReceiptAsync` ← ผู้เรียก 2 ตัวหลัง commit)
+  จุดที่ตั้งใจยกเว้นอยู่ใน `tools/approved_status_writer_baseline.txt` (`ไฟล์:เมธอด = จำนวน`) — ห้ามเพิ่มแถวเพื่อให้เขียว
 
 ใช้: python3 tools/approved_status_writer_check.py [--all] [--self-test] [--write-baseline]
 
-═══ negative test (F2 ข้อ 6) ═══
-`--self-test`: ไฟล์ที่ประทับแล้วไม่เรียก hook ต้องถูกฟ้อง · ไฟล์ที่เรียก hook ในเมธอดเดียวกันไม่ถูกฟ้อง ·
-การเปรียบเทียบ `==` และคอมเมนต์ไม่ถูกฟ้อง · ไฟล์เจ้าของไม่ถูกฟ้อง · hook ใน**เมธอดอื่น**ของไฟล์เดียวกันไม่นับ
+═══ negative test (F2 ข้อ 6) ═══ `--self-test`: ลืม hook · Paid ข้ามบรรทัด · สถานะจากตัวแปร · ตัวช่วยที่ผู้เรียกหนึ่งตัวลืม hook
+= ต้องฟ้อง · เรียก hook แล้ว · ตัวช่วยที่ผู้เรียกครบ · `==`/คอมเมนต์ · คำนวณสถานะคืนแบบ ternary บนเอกสารเดิม · ร่าง = ต้องไม่ฟ้อง
 """
 import os
 import re
@@ -34,13 +34,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "Accounting")
 BASELINE = os.path.join(ROOT, "tools", "approved_status_writer_baseline.txt")
 
-OWNER_RE = re.compile(r"^Services/Implementations/DocumentService(\.[\w]+)?\.cs$")
-STAMP_RE = re.compile(r"\bStatus\s*=(?!=)[^;,\n]*?\bDocumentStatus\s*\.\s*Approved\b")
+NOT_ISSUED = {"Draft", "WaitingApproval", "Rejected"}
+NEW_DOC_RE = re.compile(r"\bnew\s+(?:global::)?(?:Accounting\.)?(?:Models\.Entities\.)?Document\s*(?:\(\s*\))?\s*\{")
+APPROVE_ASSIGN_RE = re.compile(
+    r"\.\s*Status\s*=(?!=)\s*(?:Accounting\.)?(?:Models\.Enums\.)?DocumentStatus\s*\.\s*Approved\s*;")
+STATUS_MEMBER_RE = re.compile(r"(?<![\w.])Status\s*=(?!=)")
 HOOK_RE = re.compile(r"[iI]ssuedHooks\s*[!]?\s*\.\s*RunAsync\s*\(")
 METHOD_RE = re.compile(
     r"^[ \t]*(?:\[[^\]]*\][ \t]*)*(?:(?:public|private|internal|protected|static|async|override|virtual|sealed|new|partial)\s+)+"
     r"[\w<>\[\]?,.\s()]+?\s+(\w+)\s*(?:<[^>()]*>)?\s*\([^;{]*?\)\s*(?:where[^{]*)?\{",
     re.M | re.S)
+KEYWORDS = ("if", "for", "foreach", "while", "switch", "catch", "using", "lock", "return")
 
 
 def strip(text: str) -> str:
@@ -62,7 +66,6 @@ def strip(text: str) -> str:
             j = text.find("*/", i + 2)
             j = n if j < 0 else j + 2
             out.append(blank(text[i:j])); i = j; continue
-        # verbatim / interpolated-verbatim
         m = re.match(r'(\$@|@\$|@)"', text[i:i + 3])
         if m:
             j = i + len(m.group(0))
@@ -86,29 +89,103 @@ def strip(text: str) -> str:
     return "".join(out)
 
 
+def close_brace(body: str, start: int) -> int:
+    """ตำแหน่งปีกกาปิดที่คู่กับ `{` ที่ start"""
+    depth, j = 0, start
+    while j < len(body):
+        if body[j] == "{":
+            depth += 1
+        elif body[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return len(body) - 1
+
+
 def methods(body: str):
-    """คืน [(ชื่อ, start, end)] ของเมธอดทุกตัว — end = ปีกกาปิดที่คู่กัน"""
+    """[(ชื่อ, start, end)] ของเมธอดทุกตัว"""
     res = []
     for m in METHOD_RE.finditer(body):
-        name = m.group(1)
-        if name in ("if", "for", "foreach", "while", "switch", "catch", "using", "lock", "return"):
+        if m.group(1) in KEYWORDS:
             continue
-        start = m.end() - 1  # ตำแหน่ง '{'
-        depth, j = 0, start
-        while j < len(body):
-            if body[j] == "{":
-                depth += 1
-            elif body[j] == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        res.append((name, start, j))
+        start = m.end() - 1
+        res.append((m.group(1), start, close_brace(body, start)))
     return res
 
 
+def outer_method(ms, pos):
+    encl = sorted([mm for mm in ms if mm[1] <= pos <= mm[2]], key=lambda mm: mm[1])
+    return encl[0] if encl else None
+
+
+def status_expr(body: str, i: int, end: int) -> str:
+    """อ่าน expr หลัง `Status =` ใน initializer จนถึง `,`/`}` ระดับเดียวกัน (ข้ามบรรทัดได้)"""
+    depth, j = 0, i
+    while j < end:
+        ch = body[j]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            break
+        j += 1
+    return body[i:j]
+
+
+def issued_expr(expr: str) -> bool:
+    """expr นี้ทำให้เอกสาร "เกิดมาออกแล้ว" ได้ไหม — ไม่อ้างสถานะใดเลย (ตัวแปร) = ได้ ("ไม่รู้" ห้ามเป็นผ่าน)"""
+    names = re.findall(r"DocumentStatus\s*\.\s*(\w+)", expr)
+    if not names:
+        return True
+    return any(nm not in NOT_ISSUED for nm in names)
+
+
+def stamps(body: str):
+    """ตำแหน่งการ "ออกเอกสาร" ทั้งสองรูป"""
+    out = []
+    for m in NEW_DOC_RE.finditer(body):
+        start = m.end() - 1
+        end = close_brace(body, start)
+        # ช่องของ initializer ชั้นนอกสุดเท่านั้น (ไม่ใช่ Lines = { new DocumentLine { Status… } })
+        depth, j = 0, start + 1
+        while j < end:
+            ch = body[j]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif depth == 0:
+                sm = STATUS_MEMBER_RE.match(body, j)
+                if sm:
+                    expr = status_expr(body, sm.end(), end)
+                    if issued_expr(expr):
+                        out.append(j)
+                    j = sm.end() + len(expr)
+                    continue
+            j += 1
+    out.extend(m.start() for m in APPROVE_ASSIGN_RE.finditer(body))
+    return sorted(out)
+
+
+def hooked_via_callers(body: str, ms, method_name: str) -> bool:
+    """ตัวช่วยที่ไม่ save เอง — ผ่านเมื่อ call site ทุกจุดในไฟล์อยู่ในเมธอดที่เรียก hook (อย่างน้อย 1 จุด)"""
+    calls = [m.start() for m in re.finditer(r"(?<![\w.])" + re.escape(method_name) + r"\s*\(", body)]
+    sites = []
+    for c in calls:
+        om = outer_method(ms, c)
+        # signature ของตัวเองอยู่ก่อน `{` ของเมธอด ⇒ ไม่มีเมธอดครอบ = ไม่ใช่ call site
+        if om is None:
+            continue
+        sites.append(om)
+    return bool(sites) and all(om[0] != method_name and HOOK_RE.search(body, om[1], om[2] + 1) for om in sites)
+
+
 def scan():
-    hits = {}  # key -> [บรรทัด]
+    hits = {}
     for dirpath, dirnames, filenames in os.walk(SRC):
         dirnames[:] = [d for d in dirnames if d not in ("bin", "obj", "node_modules", "wwwroot")]
         for fn in filenames:
@@ -116,28 +193,22 @@ def scan():
                 continue
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, SRC).replace(os.sep, "/")
-            if OWNER_RE.match(rel):
-                continue
             try:
                 raw = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
             body = strip(raw)
-            stamps = list(STAMP_RE.finditer(body))
-            if not stamps:
+            ss = stamps(body)
+            if not ss:
                 continue
             ms = methods(body)
-            for s in stamps:
-                encl = [mm for mm in ms if mm[1] <= s.start() <= mm[2]]
-                # เมธอดในสุด (local function/lambda ซ้อน) = ตัวที่ start มากสุด
-                encl.sort(key=lambda mm: mm[1])
-                name, a, b = encl[-1] if encl else ("<นอกเมธอด>", 0, len(body))
-                # hook ต้องอยู่ในเมธอดนอกสุดที่ครอบจุดประทับ (เมธอดจริง ไม่ใช่ lambda ย่อย)
-                outer = encl[0] if encl else (name, a, b)
-                if HOOK_RE.search(body, outer[1], outer[2] + 1):
+            for s in ss:
+                om = outer_method(ms, s) or ("<นอกเมธอด>", 0, len(body) - 1)
+                if HOOK_RE.search(body, om[1], om[2] + 1):
                     continue
-                key = f"{rel}:{outer[0]}"
-                hits.setdefault(key, []).append(body.count("\n", 0, s.start()) + 1)
+                if om[0] != "<นอกเมธอด>" and hooked_via_callers(body, ms, om[0]):
+                    continue
+                hits.setdefault(f"{rel}:{om[0]}", []).append(body.count("\n", 0, s) + 1)
     return hits
 
 
@@ -160,10 +231,69 @@ def load_baseline():
 
 def write_baseline(hits):
     with open(BASELINE, "w", encoding="utf-8") as f:
-        f.write("# จุดประทับ DocumentStatus.Approved นอก DocumentService ที่ตั้งใจ **ไม่**เรียก IssuedDocumentHooks\n")
+        f.write("# จุดออกเอกสารนอก ApproveDocumentAsync ที่ตั้งใจ **ไม่**เรียก IssuedDocumentHooks\n")
         f.write("# ห้ามเพิ่มแถวเพื่อให้ checker เขียว — ตัดออกได้อย่างเดียว · ทุกแถวต้องมีเหตุผลหลัง #\n")
         for k, lines in sorted(hits.items()):
             f.write(f"{k} = {len(lines)}  # TODO เหตุผล\n")
+
+
+SELF_TEST_FILES = {
+    "BadService.cs": (
+        "class Bad {\n"
+        "  public async Task Make(Guid c) {\n"
+        "    var doc = new Document { Status = DocumentStatus.Approved, Notes = \"{ }\" };\n"
+        "    await _db.SaveChangesAsync();\n"
+        "  }\n"
+        "  public async Task Other(Guid c, Document doc) { await _issuedHooks.RunAsync(c, doc); }\n"
+        "}\n"),
+    "PaidService.cs": (
+        "class Paid {\n"
+        "  public async Task Receipt(bool ok) {\n"
+        "    var r = new Models.Entities.Document {\n"
+        "      DocumentType = DocumentType.Receipt,\n"
+        "      Status = ok\n"
+        "          ? DocumentStatus.Paid\n"
+        "          : DocumentStatus.Draft,\n"
+        "    };\n"
+        "  }\n"
+        "  public void FromVar(DocumentStatus st) { var d = new Document { Status = st }; }\n"
+        "  public void Stamp(Document d) { d.Status = DocumentStatus.Approved; }\n"
+        "}\n"),
+    "HelperService.cs": (
+        "class Helper {\n"
+        "  private Document Build(bool ok) {\n"
+        "    return new Document { Status = ok ? DocumentStatus.Paid : DocumentStatus.Draft };\n"
+        "  }\n"
+        "  public async Task A() { var d = Build(true); await _db.SaveChangesAsync(); await _issuedHooks.RunAsync(c, d); }\n"
+        "  public async Task B() { var d = Build(true); await _db.SaveChangesAsync(); if (d != null) await _issuedHooks.RunAsync(c, d); }\n"
+        "}\n"),
+    "HelperMissService.cs": (
+        "class HelperMiss {\n"
+        "  private Document Build2(bool ok) {\n"
+        "    return new Document { Status = ok ? DocumentStatus.Paid : DocumentStatus.Draft };\n"
+        "  }\n"
+        "  public async Task A() { var d = Build2(true); await _issuedHooks.RunAsync(c, d); }\n"
+        "  public async Task B() { var d = Build2(true); await _db.SaveChangesAsync(); }\n"
+        "}\n"),
+    "GoodService.cs": (
+        "class Good {\n"
+        "  public async Task Make(Guid c, bool auto) {\n"
+        "    var doc = new Document { Status = auto ? DocumentStatus.Approved : DocumentStatus.Draft };\n"
+        "    if (auto) { await _issuedHooks.RunAsync(c, doc); }\n"
+        "  }\n"
+        "  public void Draft() { var d = new Document { Status = DocumentStatus.Draft, Lines = { new DocumentLine { } } }; }\n"
+        "  public void NoStatus() { var d = new Document { DocumentType = DocumentType.Quotation }; }\n"
+        "}\n"),
+    "ReaderService.cs": (
+        "class Reader {\n"
+        "  // doc.Status = DocumentStatus.Approved;  <- คอมเมนต์ ไม่ใช่การประทับ\n"
+        "  public bool M(Document d) => d.Status == DocumentStatus.Approved;\n"
+        "  public void Revert(Document inv) {\n"
+        "    inv.Status = inv.PaidAmount <= 0.01m ? DocumentStatus.Approved\n"
+        "        : DocumentStatus.PartiallyPaid;\n"
+        "  }\n"
+        "}\n"),
+}
 
 
 def self_test():
@@ -172,46 +302,25 @@ def self_test():
     with tempfile.TemporaryDirectory() as tmp:
         d = os.path.join(tmp, "Services", "Implementations")
         os.makedirs(d)
-        open(os.path.join(d, "BadService.cs"), "w", encoding="utf-8").write(
-            "class Bad {\n"
-            "  public async Task Make(Guid c) {\n"
-            "    var doc = new Document { Status = DocumentStatus.Approved, Notes = \"{ }\" };\n"
-            "    await _db.SaveChangesAsync();\n"
-            "  }\n"
-            "  public async Task Other(Guid c, Document doc) { await _issuedHooks.RunAsync(c, doc); }\n"
-            "}\n")
-        open(os.path.join(d, "GoodService.cs"), "w", encoding="utf-8").write(
-            "class Good {\n"
-            "  public async Task Make(Guid c, bool auto) {\n"
-            "    var doc = new Document { Status = auto ? DocumentStatus.Approved : DocumentStatus.Draft };\n"
-            "    if (auto) { await _issuedHooks.RunAsync(c, doc); }\n"
-            "  }\n"
-            "}\n")
-        open(os.path.join(d, "ReaderService.cs"), "w", encoding="utf-8").write(
-            "class Reader {\n"
-            "  // doc.Status = DocumentStatus.Approved;  <- คอมเมนต์ ไม่ใช่การประทับ\n"
-            "  public bool M(Document d) => d.Status == DocumentStatus.Approved;\n"
-            "  public bool N(Document d) { var ok = d.Status != DocumentStatus.Approved; return ok; }\n"
-            "}\n")
-        open(os.path.join(d, "DocumentService.cs"), "w", encoding="utf-8").write(
-            "class DocumentService {\n"
-            "  public void Approve(Document d) { d.Status = DocumentStatus.Approved; }\n"
-            "}\n")
+        for name, text in SELF_TEST_FILES.items():
+            open(os.path.join(d, name), "w", encoding="utf-8").write(text)
         saved, SRC = SRC, tmp
         try:
-            keys = set(scan().keys())
+            hits = scan()
         finally:
             SRC = saved
-    if "Services/Implementations/BadService.cs:Make" not in keys:
-        print("❌ self-test: ไม่จับการประทับที่ไม่มี hook (hook ในเมธอดอื่นต้องไม่นับ)", keys); ok = False
-    if any("GoodService" in k for k in keys):
-        print("❌ self-test: ฟ้องเมธอดที่เรียก hook แล้ว (false positive)"); ok = False
-    if any("ReaderService" in k for k in keys):
-        print("❌ self-test: ฟ้องการอ่าน/คอมเมนต์ (false positive)"); ok = False
-    if any("DocumentService" in k for k in keys):
-        print("❌ self-test: ฟ้องไฟล์เจ้าของ (false positive)"); ok = False
+    keys = set(hits.keys())
+    must = ["BadService.cs:Make", "PaidService.cs:Receipt", "PaidService.cs:FromVar",
+            "PaidService.cs:Stamp", "HelperMissService.cs:Build2"]
+    for k in must:
+        if f"Services/Implementations/{k}" not in keys:
+            print(f"❌ self-test: ไม่จับ {k}", sorted(keys)); ok = False
+    for bad in ("GoodService", "ReaderService", "HelperService.cs"):
+        if any(bad in k for k in keys):
+            print(f"❌ self-test: ฟ้องผิด {bad}", sorted(keys)); ok = False
     if ok:
-        print("✅ self-test ผ่าน — จับจุดที่ลืม hook · ไม่ฟ้องจุดที่เรียกแล้ว/การอ่าน/คอมเมนต์/เจ้าของ")
+        print("✅ self-test ผ่าน — จับ: ลืม hook · Paid ข้ามบรรทัด · สถานะจากตัวแปร · ประทับตรง · ตัวช่วยที่ผู้เรียกลืม · "
+              "ไม่ฟ้อง: เรียก hook แล้ว · ตัวช่วยที่ผู้เรียกครบ · ร่าง · การอ่าน/คอมเมนต์ · คำนวณสถานะคืน")
     return 0 if ok else 1
 
 
@@ -231,20 +340,20 @@ def main():
             print(f"  [{mark}] {k} (บรรทัด {', '.join(map(str, lines))})")
     new = {k: v for k, v in hits.items() if len(v) > base.get(k, 0)}
     gone = sorted(k for k in base if base[k] > len(hits.get(k, [])))
-    print(f"จุดประทับ Approved นอก DocumentService ที่ไม่เรียก IssuedDocumentHooks: "
+    print(f"จุดออกเอกสารนอก ApproveDocumentAsync ที่ไม่เรียก IssuedDocumentHooks: "
           f"{sum(len(v) for v in hits.values())} (baseline {sum(base.values())})")
     if gone:
         print(f"ℹ️  baseline ลดลง {len(gone)} รายการ — ตัดแถวออกจาก baseline ในคอมมิตเดียวกัน:")
         for g in gone:
             print(f"   - {g}")
     if new:
-        print(f"❌ จุดประทับ Approved **ใหม่** ที่ไม่เรียก IssuedDocumentHooks {len(new)} รายการ:")
+        print(f"❌ จุดออกเอกสาร**ใหม่** ที่ไม่เรียก IssuedDocumentHooks {len(new)} รายการ:")
         for k, lines in sorted(new.items()):
             print(f"   {k} (บรรทัด {', '.join(map(str, lines))}) — baseline {base.get(k, 0)} → ปัจจุบัน {len(lines)}")
-        print("   → เรียก `_issuedHooks.RunAsync(companyId, doc)` หลัง commit ในเมธอดเดียวกัน (e-Tax อัตโนมัติ ฯลฯ)")
+        print("   → เรียก `_issuedHooks.RunAsync(companyId, doc)` หลัง commit ในเมธอดเดียวกัน (หรือในผู้เรียกทุกตัว)")
         print("   → หรืออนุมัติผ่าน ApproveDocumentAsync · ห้ามเติม baseline เพื่อให้ผ่าน")
         return 1
-    print("✅ ทุกจุดประทับ Approved นอกเจ้าของเรียกผลข้างเคียงหลังออกเอกสาร (หรืออยู่ใน baseline พร้อมเหตุผล)")
+    print("✅ ทุกจุดออกเอกสารนอก ApproveDocumentAsync เรียกผลข้างเคียงหลังออกเอกสาร (หรืออยู่ใน baseline พร้อมเหตุผล)")
     return 0
 
 

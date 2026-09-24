@@ -22,7 +22,7 @@ public class CompanyVatStatusTests
     public void บริษัทไม่จด_VAT_แถวค่าตั้งใหม่ต้องไม่ติ๊กจด()
     {
         var company = new Company { Name = "ร้านไม่จด", TaxId = "-", IsVatRegistered = false, VatRate = 7m };
-        var s = CompanySettingsFactory.NewFor(company);
+        var s = CompanySettingsFactory.NewFor(company, vatStatusConfirmed: true);
         Assert.False(s.VatRegistered);          // เดิม = true จากค่า default ของ entity
         Assert.Equal(company.Id, s.CompanyId);
     }
@@ -32,14 +32,14 @@ public class CompanyVatStatusTests
     {
         // AuthService/SSO สร้างบริษัทแค่ Name + TaxId "-" — ค่าเริ่มต้นของ Company = ไม่จด
         var company = new Company { Name = "สมัครใหม่", TaxId = "-" };
-        Assert.False(CompanySettingsFactory.NewFor(company).VatRegistered);
+        Assert.False(CompanySettingsFactory.NewFor(company, vatStatusConfirmed: true).VatRegistered);
     }
 
     [Fact]
     public void บริษัทจด_VAT_แถวค่าตั้งใหม่ยังติ๊กจดเหมือนเดิม()
     {
         var company = new Company { Name = "บจก. จด VAT", TaxId = "0105556000001", IsVatRegistered = true, VatRate = 7m };
-        var s = CompanySettingsFactory.NewFor(company);
+        var s = CompanySettingsFactory.NewFor(company, vatStatusConfirmed: true);
         Assert.True(s.VatRegistered);
         Assert.Equal(7m, s.DefaultVatRate);
     }
@@ -48,7 +48,7 @@ public class CompanyVatStatusTests
     public void อัตราตั้งต้นของแถวใหม่มาจากบริษัท_ไม่ใช่เลข_7_ของ_entity()
     {
         var company = new Company { Name = "x", TaxId = "-", IsVatRegistered = true, VatRate = 10m };
-        Assert.Equal(10m, CompanySettingsFactory.NewFor(company).DefaultVatRate);
+        Assert.Equal(10m, CompanySettingsFactory.NewFor(company, vatStatusConfirmed: true).DefaultVatRate);
     }
 
     [Fact]
@@ -56,11 +56,30 @@ public class CompanyVatStatusTests
     {
         // ตัวสร้างแตะแค่ธง/อัตรา VAT — ค่าอื่นต้องเหมือน new CompanySettings() เดิมทุกช่องที่ใช้บ่อย
         var fresh = new CompanySettings();
-        var s = CompanySettingsFactory.NewFor(new Company { Name = "x", TaxId = "-" });
+        var s = CompanySettingsFactory.NewFor(new Company { Name = "x", TaxId = "-" }, vatStatusConfirmed: true);
         Assert.Equal(fresh.EtaxEnabled, s.EtaxEnabled);
         Assert.Equal(fresh.IsVehicleDealer, s.IsVehicleDealer);
         Assert.Equal(fresh.WhtRecognitionBasis, s.WhtRecognitionBasis);
         Assert.Equal(fresh.EnforceFullTaxInvoiceFields, s.EnforceFullTaxInvoiceFields);
+    }
+
+    // ── ฝ่ายค้าน C-9: "ยังไม่มีใครตอบเรื่อง VAT" ต้องแยกได้จาก "ไม่จด" ──
+
+    [Fact]
+    public void เส้นสมัคร_SSO_ไม่ถาม_VAT_แถวใหม่ยังไม่ยืนยัน()
+    {
+        var s = CompanySettingsFactory.NewFor(new Company { Name = "สมัครใหม่", TaxId = "-" }, vatStatusConfirmed: false);
+        Assert.Null(s.VatStatusConfirmedAt);     // ⇒ หน้าเอกสาร/แดชบอร์ดขึ้นแถบให้ไปตั้งค่า
+        Assert.False(s.VatRegistered);           // และระหว่างนี้ถือว่าไม่จด (ทิศที่มองเห็นได้ — ไม่เปลี่ยนค่าเริ่มต้นกลับ)
+    }
+
+    [Fact]
+    public void เส้นวิซาร์ดที่ถาม_VAT_แล้ว_แถวใหม่ยืนยันแล้ว()
+    {
+        var s = CompanySettingsFactory.NewFor(
+            new Company { Name = "บจก. วิซาร์ด", TaxId = "0105556000001", IsVatRegistered = true }, vatStatusConfirmed: true);
+        Assert.NotNull(s.VatStatusConfirmedAt);
+        Assert.True(s.VatRegistered);
     }
 
     // ── ตัวอ่านสถานะ (ผู้อ่านฝั่งค่าตั้งทุกตัว — DocumentService 5 จุด · IntegrationService) ──
@@ -102,7 +121,7 @@ public class CompanyVatStatusTests
         foreach (var registered in new[] { true, false })
         {
             var c = new Company { Name = "x", TaxId = "-", IsVatRegistered = registered };
-            var s = CompanySettingsFactory.NewFor(c);
+            var s = CompanySettingsFactory.NewFor(c, vatStatusConfirmed: true);
             Assert.Equal(VatFlagAgreement.Agree, CompanyVatStatus.Compare(c.IsVatRegistered, s.VatRegistered));
         }
     }

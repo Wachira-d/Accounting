@@ -113,6 +113,9 @@ public static class AdvisoryLockKey
     public const string AssetDepreciation = "asset-dep";
     /// <summary>เลขการจองที่พัก — part = prefix รวมงวด</summary>
     public const string ReservationSequence = "resv-seq";
+    /// <summary>บันทึก "คืนเงินแขกแล้ว" ของการจองที่พัก — part = id การจอง (รอบ 193 ฝ่ายค้าน: สองคำขอพร้อมกันผ่านด่านทั้งคู่
+    /// แล้ว RefundPaidAmount ถูกเขียนทับ)</summary>
+    public const string LodgingRefundPaid = "lodging-refund";
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>

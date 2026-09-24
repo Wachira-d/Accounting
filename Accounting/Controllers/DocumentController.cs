@@ -292,8 +292,14 @@ public class DocumentController : ControllerBase
     /// Returns the scan id + filename when found, success-with-null when
     /// the document wasn't created from a scan.</summary>
     [HttpGet("{documentId:guid}/linked-scan")]
-    public async Task<ActionResult<ApiResponse<object>>> GetLinkedScan(Guid companyId, Guid documentId)
+    public async Task<ActionResult<ApiResponse<object>>> GetLinkedScan(Guid companyId, Guid documentId,
+        [FromServices] IAttachmentAccessGate gate)
     {
+        // ฝ่ายค้านรอบ 193 (S2-C2): เดิมไม่มีด่าน ⇒ รู้แค่ docId ก็ได้ scanId ของใบที่มองไม่เห็นไปใช้กับ link-document ·
+        // ตอนนี้เดินด่านอ่านของเอกสาร (ฝั่ง + ชั้นความลับ) ตัวเดียวกับไฟล์แนบของเอกสาร
+        var deny = await gate.DenyAttachmentAsync(companyId, JwtHelper.GetUserIdFromClaims(User), "Document", documentId,
+            AttachmentAccess.Read, "ดูสแกนของเอกสาร");
+        if (deny != null) return StatusCode(deny.Status, new ApiResponse<object>(false, null, deny.Message));
         var scan = await _db.OcrScanResults
             .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == documentId)
             .OrderByDescending(s => s.CreatedAt)

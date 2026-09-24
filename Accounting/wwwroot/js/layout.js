@@ -656,6 +656,9 @@ const Layout = {
         // โมดูล CMS ที่บริษัทใช้จริง (orders/bookings/lodging/leads) — เซิร์ฟเวอร์คำนวณ
         // (CmsModuleResolver) หน้าเว็บแค่แสดง · null/ไม่มีฟิลด์ (เซิร์ฟเวอร์เก่า) = ไม่รู้ → แสดงไว้ก่อน
         if (Array.isArray(res.data.cmsModules)) this._cmsModules = new Set(res.data.cmsModules);
+        // สถานะจด VAT ที่ยังไม่มีใครยืนยัน (บริษัทจากหน้าสมัคร/SSO ไม่เคยถูกถาม) — เซิร์ฟเวอร์ตัดสิน หน้าแค่แสดง
+        // (รอบ 193 ฝ่ายค้าน C-9) · ไม่มีฟิลด์ (เซิร์ฟเวอร์เก่า) = ไม่รู้ → ไม่แสดง
+        this._showVatStatusBanner(res.data.vatStatusConfirmed === false);
         try {
           localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered));
           localStorage.setItem('etaxOn:' + this.currentCompany.id, String(this._etaxEnabled));
@@ -664,6 +667,25 @@ const Layout = {
         this._refreshNavMenu();
       }
     } catch { /* keep default (show) */ }
+  },
+
+  /** แถบ "ยังไม่ได้ระบุว่าบริษัทจด VAT หรือไม่" — เฉพาะหน้าเอกสาร/แดชบอร์ด (ที่การตัดสิน VAT มีผลทันที)
+   *  บริษัทที่ยังไม่ยืนยัน ระบบถือว่า "ไม่จด" (ออกใบกำกับ/เก็บ VAT ไม่ได้) จนกว่าจะเลือกในหน้าตั้งค่า */
+  _showVatStatusBanner(show) {
+    const existing = document.getElementById('vatStatusBanner');
+    const path = location.pathname || '';
+    const onTargetPage = /\/pages\/(documents|dashboard)\.html$/.test(path);
+    if (!show || !onTargetPage) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    const banner = document.createElement('div');
+    banner.id = 'vatStatusBanner';
+    banner.style.cssText = 'background:#fef3c7;color:#78350f;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #fde68a';
+    banner.innerHTML = `
+      <span style="font-size:18px">⚠️</span>
+      <div style="flex:1">ยังไม่ได้ระบุว่าบริษัทจดทะเบียนภาษีมูลค่าเพิ่ม (VAT) หรือไม่ — ระหว่างนี้ระบบถือว่า <strong>ไม่จด VAT</strong>
+        (ออกใบกำกับภาษี/เก็บ VAT ไม่ได้)</div>
+      <a href="/pages/settings.html" style="background:#78350f;color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;white-space:nowrap">ตั้งค่า</a>`;
+    document.body.insertBefore(banner, document.body.firstChild);
   },
 
   async loadMyPermissions() {

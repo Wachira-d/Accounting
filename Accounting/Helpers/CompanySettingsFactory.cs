@@ -21,16 +21,22 @@ namespace Accounting.Helpers;
 public static class CompanySettingsFactory
 {
     /// <summary>แถวค่าตั้งใหม่ของบริษัทนี้ (ยังไม่ Add เข้า DbContext) — pure</summary>
-    public static CompanySettings NewFor(Company company)
-        => NewFor(company.Id, company.IsVatRegistered, company.VatRate);
+    /// <param name="vatStatusConfirmed">ผู้ใช้<b>ตอบ</b>เรื่องจด VAT มาแล้วในเส้นที่สร้างบริษัท (วิซาร์ด = true) ·
+    /// หน้าสมัคร/SSO ไม่ถาม = false ⇒ <c>VatStatusConfirmedAt = null</c> ⇒ หน้าเอกสารขึ้นแถบให้ไปตั้งค่า (ฝ่ายค้าน C-9) ·
+    /// บังคับส่งทุกครั้ง — ห้ามมีค่าเริ่มต้นที่ทำให้ "ไม่รู้" กลายเป็น "ยืนยันแล้ว" เงียบ ๆ</param>
+    public static CompanySettings NewFor(Company company, bool vatStatusConfirmed)
+        => NewFor(company.Id, company.IsVatRegistered, company.VatRate,
+            vatStatusConfirmed ? DateTime.UtcNow : null);
 
-    /// <summary>แกนกลางของ <see cref="NewFor(Company)"/> — ค่าอื่นทุกช่องใช้ค่า default ของ entity ตามเดิม</summary>
-    internal static CompanySettings NewFor(Guid companyId, bool companyIsVatRegistered, decimal companyVatRate)
+    /// <summary>แกนกลางของ <see cref="NewFor(Company, bool)"/> — ค่าอื่นทุกช่องใช้ค่า default ของ entity ตามเดิม</summary>
+    internal static CompanySettings NewFor(Guid companyId, bool companyIsVatRegistered, decimal companyVatRate,
+        DateTime? vatStatusConfirmedAt)
         => new()
         {
             CompanyId = companyId,
             VatRegistered = companyIsVatRegistered,
             DefaultVatRate = companyVatRate,
+            VatStatusConfirmedAt = vatStatusConfirmedAt,
         };
 
     /// <summary>lazy-create: อ่านธง VAT ของบริษัทแล้ว <c>Add</c> แถวใหม่เข้า <paramref name="db"/>
@@ -43,7 +49,8 @@ public static class CompanySettingsFactory
             .Select(c => new { c.IsVatRegistered, c.VatRate })
             .FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท — สร้างค่าตั้งบริษัทไม่ได้");
-        var s = NewFor(companyId, co.IsVatRegistered, co.VatRate);
+        // lazy (บริษัทเก่าที่ยังไม่มีแถว) — ไม่มีใครตอบเรื่อง VAT ในเส้นนี้ = ยังไม่ยืนยัน
+        var s = NewFor(companyId, co.IsVatRegistered, co.VatRate, vatStatusConfirmedAt: null);
         db.CompanySettings.Add(s);
         return s;
     }

@@ -54,4 +54,7 @@ public record ApprovalActionResponse(
 
 public record SubmitApprovalActionRequest(
     ApprovalStatus Status,
-    string? Comments);
+    string? Comments,
+    // รอบ 193 (ฝ่ายค้าน C5): ขั้นสุดท้ายที่อนุมัติเอกสารจริง — ผู้อนุมัติต้องเห็นคำเตือนแล้วกด "รับทราบ" เอง
+    // (เหมือนหน้าเอกสาร/มือถือ) · false + มีคำเตือน ⇒ 422 พร้อมรายการ
+    bool AcknowledgeWarnings = false);

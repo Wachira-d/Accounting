@@ -2122,6 +2122,16 @@
           if (bd) bd.value = payload.billDiscountAmount;
           if (bm) bm.value = 'amt';
         }
+        // รอบ 193 (ฝ่ายค้าน C3): ผลต่างปัดเศษ/ยอดชำระจริงที่เซิร์ฟเวอร์คำนวณจากสแกน (line-preview) — ต้องเติมก่อน calcSum
+        // ไม่งั้นยอดสุทธิบนฟอร์ม 5,024.01 ≠ กระดาษ 5,024.00 (ใบ Lazada 1,228.04 × 4)
+        if (payload.roundingAdjustment != null) {
+          const fr = document.getElementById('fRoundingAdjustment');
+          if (fr) fr.value = Number(payload.roundingAdjustment) || 0;
+        }
+        if (payload.actualPaidAmount != null) {
+          const fa = document.getElementById('fActualPaidAmount');
+          if (fa) fa.value = payload.actualPaidAmount;
+        }
         this.calcSum();
 
         // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่
@@ -7797,28 +7807,58 @@
         this.refreshVatProhibitedBanner();
       },
 
-      // Heuristic regex: คำที่บ่งบอกค่าใช้จ่ายต้องห้าม §82/5(3)(6) —
-      // ตรวจอัตโนมัติเมื่อ user พิมพ์รายการ. ถ้ามี match + user ยังไม่
-      // override → set 🚫 + reason. User override = ล็อค.
+      // ภาษีซื้อต้องห้าม §82/5(4)(6) ตอนพิมพ์รายการ — **เซิร์ฟเวอร์ตัดสิน** (InputVatScreenController →
+      // ProhibitedInputVatScreener ตัวเดียวกับ OCR/ด่านอนุมัติ · รู้จัก IsVehicleDealer) หน้าแค่แสดง
+      // (รอบ 193 ฝ่ายค้าน C-4: เดิมมีลิสต์คำรถ/ค่ารับรองของตัวเองที่ปิดเคลมอู่/ผู้ขายรถ + "น้ำมันพืช")
+      // ปิดเคลมเฉพาะเมื่อเซิร์ฟเวอร์ตอบ claimable=false · คำเตือนอื่นขึ้นเป็น tooltip ไม่ปิดเคลม ·
+      // ค่าผู้ใช้ชนะเสมอ (userOverride) · ผลที่ตอบกลับช้ากว่าการพิมพ์ครั้งถัดไปถูกทิ้ง (ลำดับ response ไม่มีผล)
       suggestVatClaim(row) {
         const indicator = row.querySelector('[data-f="vatClaim"]');
         if (!indicator || indicator.dataset.userOverride) return;
-        const desc = (row.querySelector('[data-f="desc"]').value || '').toLowerCase();
-        const rules = [
-          { re: /รับรอง|เลี้ยง(?:ลูกค้า|รับรอง)?|กระเช้า|ของขวัญลูกค้า|กอล์ฟ|พาลูกค้า/i, code: '§82/5(3)', label: 'ค่ารับรอง' },
-          { re: /น้ำมัน(?:รถ|เชื้อเพลิง)?|เติมน้ำมัน|ปั๊มน้ำมัน|ปตท|บางจาก|เชลล์|ค่าน้ำมัน/i, code: '§82/5(6)', label: 'น้ำมันรถยนต์นั่ง' },
-          { re: /ซ่อมรถ|อะไหล่รถ|ประกันรถยนต์|พรบ\.?รถยนต์|ค่าทางด่วน|ค่าทางพิเศษ/i, code: '§82/5(6)', label: 'รถยนต์นั่ง' },
-          { re: /ใบเสร็จเงินสด|บิลเงินสด/i, code: '§82/5(1)', label: 'ใบกำกับฯ ไม่สมบูรณ์' }
+        const desc = (row.querySelector('[data-f="desc"]').value || '');
+        const seq = String((Number(row.dataset.vatScreenSeq) || 0) + 1);
+        row.dataset.vatScreenSeq = seq;
+        clearTimeout(row._vatScreenTimer);
+        // ⚠️ สองกติกาที่ยังอยู่ใน JS (นอกขอบเขต C-4 ซึ่งถอดเฉพาะลิสต์คำรถ — จดค้างไว้ใน r193-V):
+        //   §82/5(1) บิลเงินสด · ค่ารับรองแบบกว้าง (เลี้ยง/กอล์ฟ/พาลูกค้า) ที่ลิสต์เซิร์ฟเวอร์ยังไม่ครอบ —
+        //   ถอดเมื่อย้ายคำเหล่านี้เข้าตัวคัดกรองฝั่งเซิร์ฟเวอร์พร้อมเทสต์กระดาษจริง
+        const localRules = [
+          { re: /รับรอง|เลี้ยง(?:ลูกค้า|รับรอง)?|กระเช้า|ของขวัญลูกค้า|กอล์ฟ|พาลูกค้า/i, code: '§82/5(4)', label: 'ค่ารับรอง' },
+          { re: /ใบเสร็จเงินสด|บิลเงินสด/i, code: '§82/5(1)', label: 'ใบกำกับฯ ไม่สมบูรณ์' },
         ];
-        let matched = null;
-        for (const r of rules) { if (r.re.test(desc)) { matched = r; break; } }
-        if (matched && indicator.dataset.claim === 'true') {
+        const local = localRules.find(r => r.re.test(desc));
+        if (local) {
+          this._applyVatScreen(indicator, { claimable: false, ruleCode: local.code, warning: local.label });
+          return;
+        }
+        if (!desc.trim()) return;
+        row._vatScreenTimer = setTimeout(async () => {
+          try {
+            const qs = new URLSearchParams();
+            qs.append('lines', desc);
+            const vendor = (document.getElementById('fContact')?.value || '').trim();
+            if (vendor) qs.append('vendorName', vendor);
+            const res = await API.get(`/api/companies/${Layout.getCompanyId()}/input-vat/screen?${qs.toString()}`);
+            if (row.dataset.vatScreenSeq !== seq || indicator.dataset.userOverride) return;   // มีการพิมพ์ใหม่/ผู้ใช้ตัดสินแล้ว
+            const r = Array.isArray(res?.data) ? res.data[0] : null;
+            if (r) this._applyVatScreen(indicator, r);
+          } catch { /* คัดกรองไม่ได้ = ไม่แตะธง (ด่านอนุมัติฝั่งเซิร์ฟเวอร์ยังเตือนอยู่) */ }
+        }, 400);
+      },
+
+      /** แสดงผลคัดกรองจากเซิร์ฟเวอร์บนไอคอนเคลม VAT ของบรรทัด — ปิดเคลมเฉพาะ claimable=false · ไม่ย้อนการปิดที่ผู้ใช้ทำเอง */
+      _applyVatScreen(indicator, r) {
+        if (r.claimable === false) {
+          if (indicator.dataset.claim !== 'true') return;
           indicator.dataset.claim = 'false';
-          indicator.dataset.reason = `${matched.code} ${matched.label}`;
+          indicator.dataset.reason = `${r.ruleCode || ''} ${r.warning ? r.warning.split(' — ')[0] : ''}`.trim();
           indicator.textContent = '🚫';
           indicator.style.color = '#dc2626';
-          indicator.title = `AI ตรวจพบ: ${matched.code} ${matched.label} — เคลมไม่ได้ (คลิกเพื่อสลับกลับ)`;
+          indicator.title = `ระบบตรวจพบ: ${r.ruleCode || ''} — ${r.warning || 'เคลมไม่ได้'} (คลิกเพื่อสลับกลับ)`;
           this.refreshVatProhibitedBanner();
+        } else if (r.warning && indicator.dataset.claim === 'true') {
+          // เตือนให้ตรวจ (รถที่เคลมได้/กำกวม/ผู้ประกอบกิจการขายรถ) — คงเคลมไว้
+          indicator.title = `VAT เคลมได้ — ตรวจ ${r.ruleCode || ''}: ${r.warning}`;
         }
       },
 
@@ -9674,6 +9714,9 @@
             ${d.taxInvoiceTitleNotice ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px">
               <div class="text-xs" style="color:#991B1B;font-weight:600">⚠️ หัวเอกสารพิมพ์เป็น "ใบเสร็จรับเงิน" (ไม่ใช่ใบกำกับภาษีอย่างย่อ)</div>
               <div class="text-sm">${this.escapeHtml(d.taxInvoiceTitleNotice)}</div></div>` : ''}
+            ${d.etaxAutoFailed === true ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px">
+              <div class="text-xs" style="color:#991B1B;font-weight:600">⚠️ ออก e-Tax อัตโนมัติไม่สำเร็จ — ใบนี้ยังไม่ถูกนำส่งกรมสรรพากร</div>
+              <div class="text-sm">ดูสาเหตุในหมายเหตุภายในด้านล่าง แล้วกด “สร้าง e-Tax” เพื่อลองใหม่ (แถบนี้หายเองเมื่อออกสำเร็จ)</div></div>` : ''}
             ${d.internalNotes ? `<div style="margin-top:12px;padding:12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px">
               <div class="text-xs" style="color:#92400E;font-weight:600">🔒 หมายเหตุภายใน (ไม่พิมพ์ลงเอกสาร)</div>
               <div class="text-sm" style="white-space:pre-line">${this.escapeHtml(d.internalNotes)}</div></div>` : ''}
@@ -10433,17 +10476,20 @@
         const d = this._currentDoc || {};
         const revert = () => { if (el) el.checked = !claim; };
         if (claim) {
-          const vehicleKw = ['น้ำมัน','เบนซิน','ดีเซล','ค่าซ่อม','อะไหล่','ค่าเช่ารถ','fuel','gasoline','diesel'];
-          const truckKw = ['กระบะ','บรรทุก','หกล้อ','สิบล้อ','แม็คโคร','แมคโคร','แบคโฮ','แบ็คโฮ','รถขุด','รถตัก','รถไถ','โฟล์คลิฟ','forklift','เครน','truck','pickup','รถตู้'];
-          const risky = (d.lines || []).some(l => {
-            const s = (l.description || '').toLowerCase();
-            return vehicleKw.some(k => s.includes(k)) && !truckKw.some(k => s.includes(k));
-          });
-          if (risky && !confirm('⚠️ §82/5(6) — พบรายการน้ำมัน/ค่าซ่อม/อะไหล่รถ:\n\n'
-            + '• รถกระบะตอนเดียว/แค็บ, รถบรรทุก, รถตู้เกิน 10 ที่นั่ง, เครื่องจักร → เคลมได้\n'
-            + '• รถเก๋ง / กระบะ 4 ประตู (นับเป็นรถยนต์นั่งตามพิกัดสรรพสามิต) → เคลมไม่ได้\n\n'
-            + 'แนะนำระบุชนิดรถ+ทะเบียนในรายละเอียดบรรทัดเป็นหลักฐาน\n\n'
-            + 'ยืนยันว่าเป็นรถประเภทที่เคลมได้ และเปิดเคลมภาษีซื้อใบนี้?')) { revert(); return; }
+          // §82/5(6) — เซิร์ฟเวอร์ตัดสิน (ตัวคัดกรองเดียวกับ OCR/ด่านอนุมัติ · รู้จัก IsVehicleDealer) — ฝ่ายค้าน C-4
+          // (เดิมลิสต์คำของหน้าเอง ชุดเดียวกับที่ถอดจากเซิร์ฟเวอร์ใน S-05) · คัดกรองไม่ได้ = ถามแบบทั่วไปไว้ก่อน
+          let vehicleWarn = null;
+          try {
+            const qs = new URLSearchParams();
+            (d.lines || []).forEach(l => qs.append('lines', l.description || ''));
+            if (d.contact?.name) qs.append('vendorName', d.contact.name);
+            const res = await API.get(`/api/companies/${Layout.getCompanyId()}/input-vat/screen?${qs.toString()}`);
+            const hit = (res?.data || []).find(r => r.ruleCode === 'RD-82/5(6)' && r.warning
+              && r.vehicle !== 'VehicleDealerExempt');
+            vehicleWarn = hit ? hit.warning : null;
+          } catch { vehicleWarn = 'ตรวจรายการรถอัตโนมัติไม่สำเร็จ — ตรวจเองว่าไม่ใช่ค่าใช้จ่ายรถยนต์นั่ง ≤ 10 ที่นั่ง'; }
+          if (vehicleWarn && !confirm('⚠️ §82/5(6) — ' + vehicleWarn
+            + '\n\nยืนยันว่าเป็นรถประเภทที่เคลมได้ และเปิดเคลมภาษีซื้อใบนี้?')) { revert(); return; }
         } else {
           if (!confirm('เลิกเคลมภาษีซื้อใบนี้?\n\nระบบจะสร้าง JE ย้าย VAT ออกจากภาษีซื้อ (11610/11640) '
             + 'ไปลงค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" และใบนี้จะไม่ขึ้น ภ.พ.30\n(กลับมาติ๊กเคลมใหม่ได้'
@@ -11125,9 +11171,12 @@
           const paymentMethod = document.getElementById('rpMethod').value || 'BankTransfer';
           const reference = (document.getElementById('rpRef').value || '').trim() || null;
           const notes = (document.getElementById('rpNotes').value || '').trim() || null;
-          if (isNaN(amount) || amount <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
           // รอบ 193: มีบรรทัดปรับ ⇒ ยอดที่ปิดหนี้ = เงินที่จ่าย − Σ บรรทัดปรับ (เซิร์ฟเวอร์ตรวจซ้ำด้วยตัวตัดสินกลาง)
           const settleAdjustments = (rpSettleRow && rpSettleRow.style.display !== 'none') ? this._rpSettleRead() : [];
+          // เงิน 0 ได้เฉพาะ "ปิดยอดค้างด้วยบรรทัดปรับอย่างเดียว" (เช่น ชำระ 438 ผ่านทางอื่นแล้ว เหลือคูปอง 98 — ฝ่ายค้าน C9)
+          if (isNaN(amount) || amount < 0 || (amount === 0 && !settleAdjustments.length)) {
+            Layout.toast('จำนวนเงินไม่ถูกต้อง — ถ้าปิดยอดค้างด้วยคูปอง/ส่วนลดโดยไม่มีเงินออก ให้ใส่ 0 พร้อมบรรทัดปรับ', 'error'); return;
+          }
           const settleNet = settleAdjustments.reduce((s2, a) => s2 + a.amount, 0);
           if (amount - settleNet > balanceDue + 0.01) { Layout.toast('ยอดที่ปิดหนี้มากกว่ายอดค้างชำระ', 'error'); return; }
           if (!paymentDate) { Layout.toast('กรุณาระบุวันที่ชำระ', 'error'); return; }

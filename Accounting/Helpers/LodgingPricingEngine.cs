@@ -189,6 +189,12 @@ public static class LodgingPricingEngine
     public static decimal PropertyVatRate(bool? chargeVat, bool companyVatRegistered, decimal companyVatRate)
         => chargeVat == false ? 0m : OutputVatRate.ForCompany(companyVatRegistered, companyVatRate);
 
+    /// <summary>อัตรา VAT ของรายการ folio (C8 รอบ 193 หลังฝ่ายค้าน) — บริษัทไม่จด VAT = 0 เสมอ (§90/2) ไม่ว่าผู้ใช้พิมพ์อะไรมา
+    /// หรือแถวเดิมเก็บ 7 ไว้ (DDL default) · จด VAT = อัตราที่ผู้ใช้ระบุ (ถ้ามี) ไม่งั้นอัตราของที่พัก
+    /// <para>ใช้ทั้งตอนเพิ่มรายการ และตอนเช็คเอาต์ (บรรทัดจากรายการที่เก็บไว้ก่อนรอบนี้)</para></summary>
+    public static decimal ChargeVatRate(decimal? requestedRate, bool companyVatRegistered, decimal propertyRate)
+        => !companyVatRegistered ? 0m : requestedRate ?? propertyRate;
+
     /// <summary>ปัญหาการตั้งค่าบริการเสริมที่ทำให้คิดราคา/บันทึกไม่ได้ (ข้อความไทยบอกทางไปต่อ) — null = ใช้ได้
     /// · ตัวตัดสินตัวเดียวของ: ด่านบันทึก (SaveExtraAsync) · ตัวคิดราคา (BuildQuote) · ป้ายเตือนในหน้าตั้งค่า
     /// · รายงานแถวที่ต้องเลือกใหม่ — ห้ามเขียนเงื่อนไข "0 = ผิด" ซ้ำที่อื่น</summary>

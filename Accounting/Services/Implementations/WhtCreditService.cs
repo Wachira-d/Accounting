@@ -219,7 +219,7 @@ public class WhtCreditService
         decimal IncomeAmount, decimal WhtRate, decimal WhtAmount,
         Guid? DocumentId, Guid? AttachmentId, string? Notes);
 
-    public async Task<Guid> CreateAsync(Guid companyId, UpsertRequest r)
+    public async Task<Guid> CreateAsync(Guid companyId, UpsertRequest r, AttachmentActor? actor = null)
     {
         if (r.WhtAmount <= 0) throw new InvalidOperationException("ยอดภาษีที่ถูกหักต้องมากกว่า 0");
         var e = new WhtCreditReceived
@@ -243,13 +243,13 @@ public class WhtCreditService
             Status = string.IsNullOrWhiteSpace(r.CertificateNumber)
                 ? WhtCreditStatus.Pending : WhtCreditStatus.Received,
         };
-        await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId);
+        await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId, actor);
         _db.WhtCreditsReceived.Add(e);
         await _db.SaveChangesAsync();
         return e.Id;
     }
 
-    public async Task UpdateAsync(Guid companyId, Guid id, UpsertRequest r)
+    public async Task UpdateAsync(Guid companyId, Guid id, UpsertRequest r, AttachmentActor? actor = null)
     {
         var e = await Load(companyId, id);
         GuardEditable(e);
@@ -266,7 +266,7 @@ public class WhtCreditService
         if (r.WhtAmount > 0) e.WhtAmount = r.WhtAmount;
         if (r.AttachmentId.HasValue)
         {
-            await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId);
+            await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId, actor);
             e.AttachmentId = r.AttachmentId;
         }
         e.Notes = Trim(r.Notes);
@@ -279,7 +279,7 @@ public class WhtCreditService
 
     /// <summary>แนบสแกนหนังสือรับรอง + ระบุเลขที่/วันที่ → เปลี่ยนเป็น "ได้รับแล้ว"</summary>
     public async Task MarkReceivedAsync(Guid companyId, Guid id,
-        string certificateNumber, DateTime? certificateDate, Guid? attachmentId)
+        string certificateNumber, DateTime? certificateDate, Guid? attachmentId, AttachmentActor? actor = null)
     {
         if (string.IsNullOrWhiteSpace(certificateNumber))
             throw new InvalidOperationException("ต้องระบุเลขที่หนังสือรับรอง — กฎหมายให้เครดิตเฉพาะรายการที่มีใบจริง");
@@ -289,7 +289,7 @@ public class WhtCreditService
         e.CertificateDate = certificateDate;
         if (attachmentId.HasValue)
         {
-            await AdoptUnsavedAttachmentAsync(companyId, e.Id, attachmentId);
+            await AdoptUnsavedAttachmentAsync(companyId, e.Id, attachmentId, actor);
             e.AttachmentId = attachmentId;
         }
         e.Status = WhtCreditStatus.Received;
@@ -307,7 +307,11 @@ public class WhtCreditService
     /// <para>ไฟล์ต้องเป็นของบริษัทนี้ (ไม่พบ = ปฏิเสธพร้อมทางไปต่อ — เดิมรับ Guid อะไรก็ได้เก็บเป็นตัวชี้) · ไฟล์ที่ผูกกับ
     /// รายการอื่นอยู่แล้วไม่ถูกย้าย (ไม่แย่งหลักฐานของรายการอื่น) · บันทึกพร้อม SaveChanges ของผู้เรียก</para>
     /// </summary>
-    private async Task AdoptUnsavedAttachmentAsync(Guid companyId, Guid creditId, Guid? attachmentId)
+    /// <summary>ผู้บันทึกรายการ — ใช้ตัดสินว่าผูกไฟล์ในถังก่อนบันทึกเข้ารายการได้ไหม
+    /// (<see cref="Accounting.Helpers.AttachmentPermissionScope.UnsavedFileVisible"/>)</summary>
+    public sealed record AttachmentActor(Guid UserId, bool HoldsTaxFile);
+
+    private async Task AdoptUnsavedAttachmentAsync(Guid companyId, Guid creditId, Guid? attachmentId, AttachmentActor? actor)
     {
         if (attachmentId is not { } fileId) return;
         var file = await _db.FileAttachments
@@ -316,6 +320,13 @@ public class WhtCreditService
                 "ไม่พบไฟล์หนังสือรับรองที่แนบไว้ในบริษัทนี้ — เลือกไฟล์ใหม่แล้วกดบันทึกอีกครั้ง");
         if (string.Equals(file.EntityType, "WhtCredit", StringComparison.OrdinalIgnoreCase) && file.EntityId == Guid.Empty)
         {
+            // ฝ่ายค้านรอบ 193 (S2-P7): ไฟล์ในถังของคนอื่นผูกเข้ารายการของตัวเองไม่ได้ (เดิมรู้ id ก็ผูกได้ แล้วไฟล์กลายเป็นระดับสมาชิก)
+            // · ผู้อัปโหลดเอง หรือผู้ถือ Tax.File (เก็บกวาดไฟล์ค้าง) · ไม่รู้ผู้บันทึก (actor null) = ปฏิเสธ
+            if (actor == null
+                || !Accounting.Helpers.AttachmentPermissionScope.UnsavedFileVisible(file.UploadedByUserId, actor.UserId, actor.HoldsTaxFile))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไฟล์หนังสือรับรองนี้ถูกแนบโดยผู้ใช้คนอื่นและยังไม่ได้ผูกกับรายการใด — ผูกเข้ารายการของคุณไม่ได้ · "
+                    + "เลือกไฟล์ของคุณเองแล้วกดบันทึกอีกครั้ง หรือให้ผู้มีสิทธิ์ยื่นภาษี (Tax.File) ทำให้", statusCode: 403);
             file.EntityId = creditId;
             file.UpdatedAt = DateTime.UtcNow;
         }

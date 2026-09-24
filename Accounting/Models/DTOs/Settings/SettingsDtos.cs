@@ -248,6 +248,11 @@ public record CompanySettingsResponse(
     /// คำนวณโดย <c>CmsModuleResolver</c> ฝั่งเซิร์ฟเวอร์ ให้ layout.js ซ่อนเมนูที่ไม่เกี่ยว
     /// (กติกาเดียวกับ VatRegistered/EtaxEnabled: null = ยังไม่ได้คำนวณ → หน้าเว็บต้องแสดงไว้ก่อน)</summary>
     public IReadOnlyList<string>? CmsModules { get; init; }
+
+    /// <summary>มีคนยืนยันสถานะจด VAT ของบริษัทนี้แล้วหรือยัง (<c>CompanySettings.VatStatusConfirmedAt</c>) —
+    /// false = บริษัทจากหน้าสมัคร/SSO ที่ไม่เคยถูกถาม ⇒ หน้าเอกสาร/แดชบอร์ดขึ้นแถบให้ไปตั้งค่า (รอบ 193 ฝ่ายค้าน C-9) ·
+    /// null = เส้นที่ไม่ได้คำนวณ (หน้าเว็บต้องไม่แสดงแถบ)</summary>
+    public bool? VatStatusConfirmed { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

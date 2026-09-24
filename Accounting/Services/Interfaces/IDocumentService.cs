@@ -114,6 +114,12 @@ public interface IDocumentService
     /// return 422 with the warning list. Frontend re-issues with true to
     /// proceed.</summary>
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings);
+    /// <summary>รอบ 193 (ฝ่ายค้าน C5/C6): อนุมัติโดยบอก "แหล่งของการรับทราบคำเตือน" ตรง ๆ — ระบบ/workflow/API
+    /// ห้ามประทับว่า "ผู้ใช้รับทราบ" แทนคน · <paramref name="withAiHints"/> = false ⇒ ไม่เรียก AI เสริมคำเตือน</summary>
+    Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints);
+    /// <summary>คำเตือนก่อนอนุมัติของเอกสาร — ไม่อนุมัติ ไม่บันทึก ไม่เรียก AI</summary>
+    Task<IReadOnlyList<string>> PreviewApprovalWarningsAsync(Guid companyId, Guid documentId);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     /// <param name="reversalDate">วันที่ลงรายการกลับบัญชี — null = วันที่ของ
     /// เอกสารเอง (ไม่ใช่วันที่กดยกเลิก) เพื่อให้รายการกลับอยู่งวดเดียวกับต้นฉบับ</param>

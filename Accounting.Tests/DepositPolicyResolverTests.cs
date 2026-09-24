@@ -236,4 +236,30 @@ public class DepositPolicyResolverTests
         Assert.False(DepositPolicyResolver.DrivesJournalSupported(DocumentType.TaxInvoice, issuedAsCashReceipt: false));
         Assert.False(DepositPolicyResolver.DrivesJournalSupported(DocumentType.Invoice, false));
     }
+
+    // ═══ C1 รอบ 193 หลังฝ่ายค้าน — เส้นขับ JE (ใบขายเงินสดของคู่ค้า) บล็อกเฉพาะงวดมัดจำยื่นแล้ว ═══
+
+    [Fact]
+    public void เส้นขับJE_มัดจำออกใบกำกับแล้ว_งวดยังไม่ยื่น_ลงได้พร้อมธง_ไม่ถอยไปตั้งหนี้()
+    {
+        Assert.Equal(DrivesGrossApplyVerdict.AllowedVatMoved,
+            DepositPolicyResolver.DrivesGrossApply(130.84m, depositVatPending: false, depositVatPeriodDeclared: false));
+        var note = DepositPolicyResolver.DrivesVatMovedNote("TIV-0001", 130.84m);
+        Assert.Contains("TIV-0001", note);
+        Assert.Contains("130.84", note);
+        Assert.Contains(DepositPolicyResolver.ImmediateVatGrossApplyRuleCode, note);
+    }
+
+    [Fact]
+    public void เส้นขับJE_มัดจำออกใบกำกับแล้ว_งวดยื่นแล้ว_บล็อก()
+        => Assert.Equal(DrivesGrossApplyVerdict.Blocked,
+            DepositPolicyResolver.DrivesGrossApply(130.84m, depositVatPending: false, depositVatPeriodDeclared: true));
+
+    [Theory]
+    [InlineData(130.84, true, true)]    // VAT พัก 21913 — ยังไม่เคยรายงาน
+    [InlineData(0, false, true)]        // เต็มยอด/ไม่จด VAT
+    [InlineData(0, true, false)]
+    public void เส้นขับJE_มัดจำไม่มีVATที่รายงานแล้ว_ลงได้ตามปกติไม่ว่างวดไหน(double vat, bool pending, bool declared)
+        => Assert.Equal(DrivesGrossApplyVerdict.Allowed,
+            DepositPolicyResolver.DrivesGrossApply((decimal)vat, pending, declared));
 }

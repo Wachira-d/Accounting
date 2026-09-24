@@ -952,12 +952,14 @@ public class AiSuggestionController : ControllerBase
         // สาขา 8 หน้าตาเหมือนกันทุกตัวอักษร แล้วผู้ใช้กด "ใช้รายนี้" ผิดแถว
         if (!string.IsNullOrEmpty(taxIdDigits) && taxIdDigits.Length >= 10)
         {
-            var byTaxId = await _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && c.TaxId != null && c.TaxId == taxIdDigits)
-                .OrderBy(c => c.BranchCode)
+            var sameEntityIds = (await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
+                _db.Contacts.AsNoTracking(), companyId, taxIdDigits, ct)).Take(5).ToList();
+            var byTaxId = (await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && sameEntityIds.Contains(c.Id))
                 .Select(c => new { c.Id, c.Name, c.TaxId, c.BranchCode, c.IsCustomer, c.IsSupplier })
-                .Take(5)
-                .ToListAsync(ct);
+                .ToListAsync(ct))
+                .OrderBy(c => sameEntityIds.IndexOf(c.Id))   // ลำดับสาขาจากตัวช่วยกลาง (สนญ. ก่อน)
+                .ToList();
             if (byTaxId.Count > 0)
             {
                 return Ok(new ApiResponse<object>(true, new

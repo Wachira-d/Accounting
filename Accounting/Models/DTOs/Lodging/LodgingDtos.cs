@@ -530,6 +530,12 @@ public class LodgingReservationResponse
     /// <summary>วิธีบันทึกมัดจำของใบมัดจำใบแรก (อ่านย้อนจากช่องที่ตรึงบนเอกสาร) — null = ไม่มีใบมัดจำ</summary>
     public DepositVatTreatment? DepositVatTreatment { get; set; }
     public string? DepositVatTreatmentLabel { get; set; }
+    /// <summary>ป้ายสถานะภาษาไทยจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — หน้าเว็บห้ามมีตารางป้ายของตัวเอง</summary>
+    public string? StatusLabel { get; set; }
+    /// <summary>ยอดที่ gateway จะเก็บจริงเมื่อแขกกดจ่ายออนไลน์ (null = ไม่มีอะไรให้จ่าย) — ตัวเดียวกับ PublicPaymentResolver</summary>
+    public decimal? OnlinePayableAmount { get; set; }
+    /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>
+    public string? OnlinePaymentNote { get; set; }
     public string? InternalNotes { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<LodgingReservationRoomDto> Rooms { get; set; } = new();
@@ -638,7 +644,9 @@ public record LodgingConfirmRequest(
     string? PaymentReference = null,
     DateTime? PaymentDate = null,
     Guid? BankAccountId = null,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>true/null = ปุ่ม "ยืนยัน" (ยืนยันการจองเสมอ) · false = "รับชำระเพิ่ม" (สถานะตามค่าตั้ง AutoConfirmOnDeposit)</summary>
+    bool? ConfirmReservation = null);
 
 public record LodgingAssignUnitRequest(Guid ReservationRoomId, Guid? UnitId);
 

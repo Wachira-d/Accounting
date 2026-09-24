@@ -578,6 +578,15 @@ internal static class EtaxPdfXmlExtractor
     /// 80 ใบเพิ่มหนี้ · 81 ใบลดหนี้ · T07 ใบแจ้งยกเลิก ⇒ ไม่ใช่เอกสารลงบัญชี (null)</para>
     /// Falls back to root element prefix when TypeCode is missing.
     /// </summary>
+    /// <summary>ใบกำกับภาษีอย่างย่อ (T05 ใบกำกับอย่างย่อ · T06 ใบเสร็จ/ใบกำกับอย่างย่อ) ⇒ ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
+    /// — คืนข้อความ [VAT-CLAIM] (null = ไม่ใช่อย่างย่อ) · ฝ่ายค้าน P6 รอบ 193: T05/T06 map เป็น "Receipt" ⇒ เส้นสร้างเอกสารตีเป็น
+    /// "ยังไม่ใช่ใบกำกับ" แล้วพัก 11640 รอใบจริง (ผิด — ใบอย่างย่อไม่มีวันกลายเป็นเคลมได้)</summary>
+    internal static string? AbbreviatedClaimBlock(string? typeCode)
+        => typeCode?.Trim().ToUpperInvariant() is "T05" or "T06"
+            ? $"(RD-82/5(2)-ETAX) e-Tax รหัส {typeCode!.Trim().ToUpperInvariant()} เป็นใบกำกับภาษีอย่างย่อ — ผู้ซื้อนำภาษีซื้อมาเคลม ภ.พ.30 ไม่ได้ "
+              + "(ป.รัษฎากร ม.82/5(2)) ระบบปิดการเคลมและรวม VAT เป็นต้นทุน · ถ้าต้องการเคลม ให้ขอใบกำกับภาษีเต็มรูป (T02/T03/T04/388) จากผู้ขาย"
+            : null;
+
     internal static string? MapTypeCodeToInternal(string? typeCode, string rootLocal)
     {
         return typeCode?.Trim().ToUpperInvariant() switch

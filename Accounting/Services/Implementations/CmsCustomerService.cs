@@ -347,9 +347,11 @@ public class CmsCustomerService : ICmsCustomerService
 
         // มีผู้ติดต่อเลขนี้แล้วแต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยอีเมล (อีเมลเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) —
         // ไม่ผูก ให้ผู้ใช้สร้าง/เลือกผู้ติดต่อของสาขานั้นเอง (เมธอดนี้ไม่สร้างผู้ติดต่อ)
-        if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrWhiteSpace(customer.Email))
-            contact = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.Email == customer.Email && c.IsActive);
+        // ฝ่ายค้าน C-6: อีเมลจับได้เฉพาะชุด SoftScope — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (อีเมลเดียวกันบนแถวที่ถือเลขอื่น = คนละนิติบุคคล)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(
+            _db.Contacts.Where(c => c.IsActive), companyId, customer.TaxId, taxKey);
+        if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(customer.Email))
+            contact = await softScope.FirstOrDefaultAsync(c => c.Email == customer.Email);
 
         if (contact != null)
         {

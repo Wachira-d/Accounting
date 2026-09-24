@@ -164,7 +164,8 @@
         if (name === 'list') this.loadList(); if (name === 'cal') this.loadCal(); if (name === 'hk') this.loadHk(); if (name === 'req') this.loadReq();
       },
       debounce() { clearTimeout(this._t); this._t = setTimeout(() => this.loadList(), 300); },
-      pill(s) { return `<span class="pill st-${s}">${ST[s] || s}</span>`; },
+      // label จากเซิร์ฟเวอร์ (statusLabel) ชนะตารางในหน้า — Pending ที่รับมัดจำแล้วแต่รอยืนยัน (C9)
+      pill(s, label) { return `<span class="pill st-${s}">${esc(label || ST[s] || s)}</span>`; },
       resRow(r) {
         return `<tr class="booking-row" onclick="Page.openReservation('${r.id}')"><td><b>${esc(r.reservationNumber)}</b>${r.hasSlip && r.status === 'Pending' ? ' 📎' : ''}${r.refundPending > 0 ? ` <span class="pill" style="background:#FEF3C7;color:#92400E">ค้างคืน ${money(r.refundPending)}</span>` : ''}</td><td>${esc(r.guestName)}<div class="hint">${esc(r.guestPhone || '')}</div></td>
           <td>${Layout.date(r.checkInDate)} → ${Layout.date(r.checkOutDate)} <span class="hint">${r.nights} คืน</span></td><td>${esc(r.roomSummary)}${r.unitNumbers ? `<div class="hint">ห้อง ${esc(r.unitNumbers)}</div>` : ''}</td>
@@ -225,7 +226,7 @@
       },
       renderReservation(r) {
         this.current = r;
-        document.getElementById('resTitle').innerHTML = `${esc(r.reservationNumber)} ${this.pill(r.status)} <span class="hint">${SRC[r.source] || r.source}${r.sourceReference ? ' · ' + esc(r.sourceReference) : ''}</span>`;
+        document.getElementById('resTitle').innerHTML = `${esc(r.reservationNumber)} ${this.pill(r.status, r.statusLabel)} <span class="hint">${SRC[r.source] || r.source}${r.sourceReference ? ' · ' + esc(r.sourceReference) : ''}</span>`;
         const unitOpts = (roomTypeId, cur) => `<option value="">— ยังไม่จัด —</option>` + this.units.filter(u => u.isActive && !u.isOutOfService).map(u => `<option value="${u.id}" ${u.id === cur ? 'selected' : ''}>${esc(u.number)} (${esc(u.roomTypeName)})${u.roomTypeId !== roomTypeId ? ' ⚠' : ''}</option>`).join('');
         const rooms = r.rooms.map(x => `<div class="kv"><span>${esc(x.roomTypeName)} · ${x.adults} ผู้ใหญ่${x.children ? ' ' + x.children + ' เด็ก' : ''}${x.extraBeds ? ' · เตียงเสริม ' + x.extraBeds : ''}</span>
           <span>${r.status === 'Pending' || r.status === 'Confirmed' || r.status === 'CheckedIn' ? `<select class="form-input" style="width:180px;padding:4px" onchange="Page.assign('${x.id}', this.value)">${unitOpts(x.roomTypeId, x.unitId)}</select>` : esc(x.unitNumber || '-')} ${money(x.subtotal)}</span></div>`).join('');
@@ -237,7 +238,7 @@
         if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()');
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
         // F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ลงบัญชีคืนเงิน + ใบลดหนี้เมื่อพนักงานยืนยันว่าโอนจริงเท่านั้น
-        if ((r.status === 'Cancelled' || r.status === 'NoShow') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
+        if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
         document.getElementById('resBody').innerHTML = `
           ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
@@ -315,10 +316,10 @@
           <div class="fld"><label>อ้างอิง (เลขที่โอน)</label><input class="form-input" name="ref" value="${esc(r.paymentReference || '')}"></div>
           <div class="fld"><label>วันที่รับเงิน</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div>
-          <div class="hint" style="grid-column:1/-1">ยอด > 0 จะออก <b>ใบเสร็จมัดจำ</b> (Cr ขายรอรับรู้) ผ่านเลขเอกสาร gap-free และยืนยันห้องให้ทันที</div></form>`, async () => {
+          <div class="hint" style="grid-column:1/-1">ยอด > 0 จะออก <b>ใบเสร็จมัดจำ</b> (Cr ขายรอรับรู้) ผ่านเลขเอกสาร gap-free${extra ? ' · <b>ไม่เปลี่ยนสถานะการจอง</b> (ยกเว้นที่พักเปิด “ยืนยันอัตโนมัติเมื่อได้รับมัดจำ”)' : ' และยืนยันห้องให้ทันที'}</div></form>`, async () => {
           const f = document.getElementById('cf');
-          await this.call(() => Layout.api().lodgingConfirm(r.id, { depositAmount: +f.amount.value, paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, note: f.note.value || null }));
-        }, 'ยืนยัน');
+          await this.call(() => Layout.api().lodgingConfirm(r.id, { depositAmount: +f.amount.value, paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, note: f.note.value || null, confirmReservation: !extra }));
+        }, extra ? 'บันทึกรับชำระ' : 'ยืนยัน');
       },
       checkInForm() {
         const r = this.current;

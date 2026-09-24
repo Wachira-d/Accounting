@@ -625,6 +625,23 @@ public partial class DocumentService : IDocumentService
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
     }
 
+    /// <summary>ยอดของเอกสาร (ฐาน · VAT · รวม) <b>ด้วยสูตรเดียวกับ CreateDocumentAsync</b> (ส่วนลดท้ายบิล →
+    /// ComputeLineAmounts → ReconcileTaxRounding) โดยไม่สร้างเอกสาร — ให้ผู้เรียกวางแผนก่อนออกเลขใบ
+    /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น</summary>
+    internal static (decimal Net, decimal Vat, decimal Total) PreviewTotals(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount)
+    {
+        var alloc = AllocateBillDiscount(lines, pricesIncludeVat, 0m, billDiscountAmount);
+        var amts = new LineAmounts[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        var net = amts.Sum(a => a.NetAmount);
+        var vat = amts.Sum(a => a.VatAmount);
+        var wht = amts.Sum(a => a.WhtAmount);
+        return (net, vat, net + vat - wht);
+    }
+
     /// <summary>เฉลี่ยส่วนลด "ท้ายบิล" (จากยอดรวม) ลงแต่ละบรรทัดแบบ pro-rata ตาม
     /// สัดส่วน net (ex-VAT) ก่อนหักท้ายบิล. คืน array ยอดส่วนลด ex-VAT ต่อบรรทัด
     /// (index ตรงกับ request.Lines). billPercent > 0 = คิดเป็น % ของยอดรวม;
@@ -1327,6 +1344,10 @@ public partial class DocumentService : IDocumentService
                         "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่างเมื่อจ่ายเต็มตามยอดเอกสาร",
                         Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
                 doc.ActualPaidAmount = createActualPaid == 0m ? null : createActualPaid;
+                if (doc.ActualPaidAmount is decimal
+                    && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                        doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.RelatedDocumentId.HasValue) is string createNa)
+                    throw new Accounting.Helpers.BusinessRuleException(createNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
             }
             if (request.RoundingAdjustment is decimal createRounding && createRounding != 0m)
             {
@@ -1526,7 +1547,9 @@ public partial class DocumentService : IDocumentService
             {
                 try
                 {
-                    await ApproveDocumentAsync(companyId, doc.Id, createdBy, acknowledgeWarnings: true);
+                    // ระบบอนุมัติอัตโนมัติ — ไม่มีคนเห็นคำเตือน (รอบ 193 ฝ่ายค้าน C5: ห้ามประทับว่าผู้ใช้รับทราบ)
+                    await ApproveDocumentAsync(companyId, doc.Id, createdBy,
+                        Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 }
                 catch (Exception ex)
                 {
@@ -2389,6 +2412,10 @@ public partial class DocumentService : IDocumentService
                     "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่าง/0 เมื่อจ่ายเต็มตามยอดเอกสาร",
                     Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
             doc.ActualPaidAmount = updActualPaid == 0m ? null : updActualPaid;
+            if (doc.ActualPaidAmount is decimal
+                && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                    doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.RelatedDocumentId.HasValue) is string updNa)
+                throw new Accounting.Helpers.BusinessRuleException(updNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         }
         // ผลต่างปัดเศษ: null = ไม่แตะ (ค่าเดิมยังอยู่) · สัญญา SubTotal = Σ บรรทัด + ค่านี้ (Helpers/DocumentRounding)
         var roundingBefore = doc.RoundingAdjustment;
@@ -3373,6 +3400,15 @@ public partial class DocumentService : IDocumentService
         }
         var vatMove = recognizeDeferredVat ? doc.VatAmount : 0m;
 
+        // ใบสุดท้ายที่การรับรู้นี้ทำเพื่อ (เช็คเอาต์ที่พักโหมด VAT ทันที) — ต้องเป็นของบริษัทนี้ · void ใบนั้นแล้วกลับ JE นี้ได้ (C4)
+        Guid? realizedFor = null;
+        if (request.FinalInvoiceId is Guid finalId)
+        {
+            var ok = await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == finalId && d.CompanyId == companyId && !d.IsDeposit);
+            if (!ok) throw new InvalidOperationException("ไม่พบใบสุดท้ายที่อ้างสำหรับรับรู้มัดจำ หรือไม่ใช่ของบริษัทนี้");
+            realizedFor = finalId;
+        }
+
         var entryNumber = await GetNextJournalEntryNumberAsync(companyId, "JV");
         var period = await RequireOpenFiscalPeriodAsync(companyId, when, "รายการรับรู้มัดจำ");
         var je = new JournalEntry
@@ -3381,6 +3417,7 @@ public partial class DocumentService : IDocumentService
             EntryNumber = entryNumber,
             EntryDate = when,
             JournalType = JournalType.General,
+            DepositRealizedForDocumentId = realizedFor,
             Description = $"รับรู้รายได้จากมัดจำ - {doc.DocumentNumber}",
             Reference = doc.DocumentNumber,
             Status = JournalEntryStatus.Posted,
@@ -4659,8 +4696,33 @@ public partial class DocumentService : IDocumentService
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
         => ApproveDocumentAsync(companyId, documentId, approvedBy, acknowledgeWarnings: false);
 
-    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
+    public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
+        => ApproveDocumentAsync(companyId, documentId, approvedBy,
+            acknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User : Accounting.Helpers.ApprovalAckSource.None,
+            withAiHints: true);
+
+    /// <summary>คำเตือนก่อนอนุมัติของเอกสาร <b>โดยไม่อนุมัติ ไม่บันทึก ไม่เรียก AI</b> — ให้ทางเข้าที่มีหน้าจอของตัวเอง
+    /// (workflow เว็บ · มือถือ · API) ถามก่อนแล้วค่อยตัดสินว่าจะหยุดให้คนรับทราบ (รอบ 193 ฝ่ายค้าน C5/C6)</summary>
+    public async Task<IReadOnlyList<string>> PreviewApprovalWarningsAsync(Guid companyId, Guid documentId)
     {
+        var doc = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
+        return await CollectApprovalWarningsAsync(companyId, doc);
+    }
+
+    /// <param name="ackSource">ใคร "ผ่าน" คำเตือน — ตัวตัดสิน Helpers/ApprovalAcknowledgement (ห้ามระบบประทับรับทราบแทนคน)</param>
+    /// <param name="withAiHints">เสริมคำเตือนด้วย AI ตอนหยุด — false สำหรับทางเข้าที่ไม่มีหน้าจอแสดงคำแนะนำ (API) ⇒ ไม่เรียก AI
+    /// แล้วโยนคำตอบทิ้ง (กฎเหล็ก #1)</param>
+    public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints)
+    {
+        // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
+        // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
+        var acknowledgeWarnings = ackSource is Accounting.Helpers.ApprovalAckSource.User
+            or Accounting.Helpers.ApprovalAckSource.SystemWorkflow;
         var doc = await _db.Documents
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
@@ -4699,15 +4761,17 @@ public partial class DocumentService : IDocumentService
         // typed exception the controller turns into a 422 with the list
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
-        if (warnings.Count > 0 && !acknowledgeWarnings)
+        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings);
+        if (unacknowledged.Count > 0)
         {
+            warnings = unacknowledged.ToList();
             // Enrich each warning with an AI-suggested fix when augmenter
             // is wired AND online. Done in parallel with a short overall
             // budget (8s) so the approval dialog isn't laggy. Each call
             // falls back to local on its own — overall request still
             // throws the 422 regardless of whether AI ran.
             IReadOnlyList<DocumentApprovalAiHint>? hints = null;
-            if (_aiAugmenter != null && warnings.Count > 0)
+            if (withAiHints && _aiAugmenter != null && warnings.Count > 0)
             {
                 try
                 {
@@ -4757,15 +4821,13 @@ public partial class DocumentService : IDocumentService
         // §86 แต่ยืนยัน" หน้าตาเหมือนใบที่ไม่เคยมีคำเตือนเลย ⇒ ผู้สอบบัญชี/
         // สรรพากรถามว่า "ทำไมออกใบแจ้งหนี้ทั้งที่มีสินค้า" แล้วไม่มีอะไรตอบได้
         // ต้องดังทั้งบน **ตัวเอกสาร** (ผู้ใช้เปิดดูเห็น) และใน **audit** (hash chain)
-        if (warnings.Count > 0 && acknowledgeWarnings)
+        if (warnings.Count > 0)
         {
             // ⚠️ ต้องลง **InternalNotes** ไม่ใช่ Notes — Notes ถูกพิมพ์ลงกระดาษ
             // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
             // โผล่บนใบที่ส่งให้ลูกค้า
-            var ackNote = "— รับทราบคำเตือนตอนอนุมัติ —\n"
-                + string.Join("\n", warnings.Select(w => "• " + w))
-                + $"\n(ยืนยันโดย {approvedBy} เมื่อ "
-                + $"{DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น. เวลาไทย)";
+            // รอบ 193 (ฝ่ายค้าน C5): ข้อความ/รหัสกฎแยก "ผู้ใช้รับทราบ" ออกจาก "ระบบ workflow/API ส่งผ่าน" — Helpers/ApprovalAcknowledgement
+            var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
             AppendInternalNote(doc, ackNote);
 
             _db.AuditLogs.Add(new AuditLog
@@ -4781,7 +4843,9 @@ public partial class DocumentService : IDocumentService
                     documentType = doc.DocumentType.ToString(),
                     warnings,
                     by = approvedBy,
-                    ruleCode = "APPROVE-ACK-WARNINGS",
+                    acknowledgedByPerson = Accounting.Helpers.ApprovalAcknowledgement.AcknowledgedByPerson(ackSource),
+                    ackSource = ackSource.ToString(),
+                    ruleCode = Accounting.Helpers.ApprovalAcknowledgement.RuleCode(ackSource),
                     legalReference = "RD-86 / RD-82/5(1)",
                 }),
             });
@@ -7352,6 +7416,10 @@ public partial class DocumentService : IDocumentService
                     doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
                 }
 
+                // 2b-R) รอบ 193 (ฝ่ายค้าน C4) — กลับ "รับรู้มัดจำที่ออกใบกำกับแล้ว" ที่ทำเพื่อใบนี้ (เช็คเอาต์ที่พักโหมด VAT
+                //   ทันที: ใบนี้หักฐานมัดจำ + RealizeDeposit) · เดิมไม่มีลิงก์ ⇒ void แล้วรายได้จากมัดจำค้าง + มัดจำดูเหมือนใช้แล้ว
+                await ReverseDepositRealizationsForAsync(companyId, doc, deleteMode: false, reversalDate: effectiveReversalDate);
+
                 // 3) Void linked EtaxInvoice (keep XML/PDF for audit; only flag status).
                 // รวม Submitted ด้วย (ยังไม่ได้รับตอบรับ RD → ยกเลิกได้พร้อมเอกสาร);
                 // Accepted ถูกกันตั้งแต่ guard ด้านบนแล้ว (มาไม่ถึงตรงนี้).
@@ -7936,6 +8004,54 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>กลับ (void) หรือลบ (purge) JE "รับรู้มัดจำเป็นรายได้" ที่ทำเพื่อใบสุดท้ายใบนี้
+    /// (<c>JournalEntry.DepositRealizedForDocumentId</c>) แล้วคืนยอดมัดจำให้เป็น "คงค้าง" — รอบ 193 ฝ่ายค้าน C4
+    /// <para>ฐานที่คืน = ขา Dr ผังหนี้สินมัดจำ (215/217) ของ JE นั้น · มีขา Dr 21913 (ย้าย VAT พักเข้า 21911) ⇒ ล้าง RecognizedAt ด้วย</para></summary>
+    private async Task ReverseDepositRealizationsForAsync(Guid companyId, Document doc, bool deleteMode, DateTime? reversalDate)
+    {
+        var jes = await _db.JournalEntries.Include(j => j.Lines)
+            .Where(j => j.CompanyId == companyId && j.DepositRealizedForDocumentId == doc.Id
+                && j.SourceDocumentId != null
+                && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
+            .ToListAsync();
+        if (jes.Count == 0) return;
+        var acctIds = jes.SelectMany(j => j.Lines).Select(l => l.AccountId).Distinct().ToList();
+        var codes = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && acctIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync();
+        string CodeOf(Guid id) => codes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+        foreach (var je in jes)
+        {
+            var dep = await _db.Documents.FirstOrDefaultAsync(d =>
+                d.Id == je.SourceDocumentId && d.CompanyId == companyId && d.IsDeposit);
+            var baseAmt = je.Lines.Where(l => !l.IsDeleted && l.DebitAmount > 0
+                    && (CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215")))
+                .Sum(l => l.DebitAmount);
+            var had21913 = je.Lines.Any(l => !l.IsDeleted && l.DebitAmount > 0 && CodeOf(l.AccountId) == "21913");
+            if (deleteMode)
+            {
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""JournalEntryLines"" WHERE ""JournalEntryId"" = {0}", je.Id);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM ""JournalEntries"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}", je.Id, companyId);
+                _db.Entry(je).State = EntityState.Detached;
+            }
+            else
+            {
+                await _accountingService.ReverseJournalEntryAsync(companyId, je.Id,
+                    reversalDate: (reversalDate ?? DateTime.UtcNow).Date,
+                    description: $"ยกเลิกเอกสาร {doc.DocumentNumber} — กลับการรับรู้มัดจำ {dep?.DocumentNumber}",
+                    systemTriggered: true);
+            }
+            if (dep == null) continue;
+            dep.DepositRealizedAmount = Math.Max(0m, dep.DepositRealizedAmount - baseAmt);
+            if (dep.SubTotal - dep.DepositRealizedAmount > 0.005m) dep.DepositRealizedAt = null;
+            if (had21913) dep.DepositOutputVatRecognizedAt = null;
+            dep.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
     /// <summary>กลับ/ลบ "JV มัดจำ raw (non-drives)" ทุกตัวที่ apply เข้าใบ docNumber
     /// แล้ว un-mark JV ต้นทางให้ resync ได้. JV apply = JE ที่ SourceDocumentId=null,
     /// Reference=docNumber, IsAutoGenerated, มีทั้งขา Cr ลูกหนี้ (113) และ Dr มัดจำ
@@ -8150,9 +8266,10 @@ public partial class DocumentService : IDocumentService
             //   3 JV apply (Dr 21510/Cr 113) ค้างเป็น orphan หลังลบใบ + JV mark ค้าง
             //   (นำไป apply ใบใหม่ไม่ได้) = เคสจริงที่หัก JV ซ้ำ 3 ครั้ง
             await ReverseOrphanJvDepositAppliesAsync(companyId, doc.DocumentNumber, deleteMode: true);
+            // 0c-R) mirror ของ void 2b-R (C4) — ลบ JE รับรู้มัดจำที่ทำเพื่อใบนี้ + คืนยอดมัดจำ
+            await ReverseDepositRealizationsForAsync(companyId, doc, deleteMode: true, reversalDate: null);
 
-            if (purgeAppliedDeposits.Count > 0)
-                await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync();
 
             // 0d. กลับ "ผลข้างเคียงนอก GL" ของการ approve — mirror VoidDocumentAsync
             //     (เดิม purge ลบแค่ JE/Payment → สต๊อกค้างตัดของเอกสารผี, ยอดใบต้นทาง
@@ -9680,7 +9797,10 @@ public partial class DocumentService : IDocumentService
                 : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
-            RelatedDocumentId: source.Id), createdBy,
+            RelatedDocumentId: source.Id,
+            // รอบ 193 (ฝ่ายค้าน C2): ผลต่างปัดเศษตามไปเมื่อยกทุกบรรทัดครบจำนวน — ไม่งั้น 5,024.00 → 5,024.01
+            RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(source.RoundingAdjustment,
+                spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity))), createdBy,
             isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
@@ -9857,7 +9977,8 @@ public partial class DocumentService : IDocumentService
         // ไม่มีทางรู้. ผู้เรียกต้องเช็คสิทธิ์อนุมัติมาก่อน (ดู controller)
         try
         {
-            await ApproveDocumentAsync(companyId, created.Id, actor, acknowledgeWarnings: true);
+            await ApproveDocumentAsync(companyId, created.Id, actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
         }
         catch (Exception ex) when (ex is not KeyNotFoundException)
         {
@@ -10993,6 +11114,10 @@ public partial class DocumentService : IDocumentService
             payment.ReceiptDocumentId = receipt.Id;
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+            // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่ถือ VAT = ใบกำกับ ณ วันรับเงิน (§78/1) เกิดเป็น Paid ไม่ผ่าน
+            // ApproveDocumentAsync ⇒ เดิมไม่เคยได้ e-Tax อัตโนมัติ · hook ตัดสินขอบเขตเอง (ใบเสร็จเปล่า/ร่าง = ข้าม)
+            // เรียกหลัง commit · ล้ม = ป้ายบนเอกสาร ไม่ย้อนการออกใบ
+            await _issuedHooks.RunAsync(companyId, receipt);
             return new IssuedReceiptResult(receipt.Id, receipt.DocumentNumber,
                 receipt.DocumentDate, receipt.Status == DocumentStatus.Draft, AlreadyExisted: false);
         }
@@ -11006,9 +11131,13 @@ public partial class DocumentService : IDocumentService
 
     public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
-        // Validate Amount > 0
-        if (request.Amount <= 0)
-            throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
+        // Validate Amount > 0 — ยกเว้น "ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว" (ฝ่ายค้าน C9 รอบ 193): ชำระ 438 ผ่าน integration/
+        // นำเข้าไฟล์ (ทางเข้าที่ไม่รู้จักบรรทัดปรับ) แล้วหนี้ค้าง 98 ⇒ ต้องปิดด้วยคูปอง −98 ได้โดยไม่ต้อง void การชำระเดิม
+        // (Amount = 0 + บรรทัดปรับ · PaymentSettlementAdjustment.Check ยังบังคับ "ยอดที่ปิด > 0 และไม่เกินยอดค้าง")
+        var closesByAdjustmentOnly = request.Amount == 0m && request.SettlementAdjustments is { Count: > 0 };
+        if (request.Amount < 0 || (request.Amount == 0 && !closesByAdjustmentOnly))
+            throw new InvalidOperationException(
+                "จำนวนเงินชำระต้องมากกว่า 0 — ถ้าต้องการปิดยอดค้างด้วยส่วนลด/คูปองโดยไม่มีเงินออก ให้ใส่บรรทัดปรับส่วนต่าง (จำนวนเงิน 0)");
 
         // Validate PaymentDate is not in the future
         if (request.PaymentDate > DateTime.UtcNow.Date.AddDays(1))
@@ -11027,6 +11156,9 @@ public partial class DocumentService : IDocumentService
         // ทันที → ชำระพร้อมกัน 2 รายการ ผ่าน balance check ทั้งคู่ → ตัด AR ซ้ำ
         // (over-relief). await using = rollback อัตโนมัติถ้า throw ก่อน commit.
         await using var transaction = await _db.Database.BeginTransactionAsync();
+        // ใบเสร็จ settlement ที่ออกในรอบนี้ — ส่งให้ผลข้างเคียงหลังออกเอกสาร **หลัง commit** (C-3)
+        // (reset ทุกรอบของ execution strategy — รอบที่ rollback ต้องไม่ค้างค่า)
+        Document? issuedSettlementReceipt = null;
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
             .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", request.DocumentId, companyId)
@@ -11333,6 +11465,7 @@ public partial class DocumentService : IDocumentService
                     var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove, carryVat);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
+                    issuedSettlementReceipt = receiptDoc;
                 }
                 catch (Exception ex)
                 {
@@ -11392,6 +11525,11 @@ public partial class DocumentService : IDocumentService
                 await TryReclassifyUndueOutputVatAsync(companyId, doc.Id, payment.PaymentDate, createdBy);
 
             await transaction.CommitAsync();
+
+            // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
+            // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
+            if (issuedSettlementReceipt != null)
+                await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
 
             try
             {
@@ -14684,11 +14822,8 @@ public partial class DocumentService : IDocumentService
                                 .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
                                 .FirstOrDefault(x => x.Net > 0.005m);
                             var mVat = mV13 ?? mV11;
-                            // P0-3 รอบ 193 — มัดจำที่ออกใบกำกับแล้ว (Cr 21911 จริง) ห้ามหักเต็มจำนวนเข้าใบที่คิด VAT เต็ม
-                            if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(mV11?.Net ?? 0m, depositVatPending: mV13 != null))
-                                throw new Accounting.Helpers.BusinessRuleException(
-                                    Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(mDeposit.DocumentNumber),
-                                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+                            // P0-3 รอบ 193 (หลังฝ่ายค้าน C1) — มัดจำที่ออกใบกำกับแล้ว: บล็อกเฉพาะงวดมัดจำยื่นแล้ว · ยังไม่ยื่น = ลง + ธง
+                            await GuardDrivesGrossApplyAsync(companyId, doc, mDeposit, mV11?.Net ?? 0m, depositVatPending: mV13 != null);
                             if (mDef == null && mVat == null)
                                 throw new InvalidOperationException(
                                     $"หักมัดจำหลายใบ: ใบมัดจำ {mDeposit.DocumentNumber} ไม่มียอดรับล่วงหน้าคงเหลือใน GL (ถูกรับรู้/หักไปแล้ว)");
@@ -14814,11 +14949,8 @@ public partial class DocumentService : IDocumentService
                             vatAcctId = depVatAcc?.Id;
                         }
 
-                        // P0-3 รอบ 193 — มัดจำที่ออกใบกำกับแล้ว ห้ามหักเต็มจำนวนเข้าใบที่คิด VAT เต็ม (ด่านเดียวกับปุ่มหักมัดจำ)
-                        if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(depVat, depVatDeferredPending))
-                            throw new Accounting.Helpers.BusinessRuleException(
-                                Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(deposit.DocumentNumber),
-                                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+                        // P0-3 รอบ 193 (หลังฝ่ายค้าน C1) — มัดจำที่ออกใบกำกับแล้ว: บล็อกเฉพาะงวดมัดจำยื่นแล้ว · ยังไม่ยื่น = ลง + ธง
+                        await GuardDrivesGrossApplyAsync(companyId, doc, deposit, depVat, depVatDeferredPending);
 
                         // (2) over-apply guard (audit F4): ห้ามหักเกิน "มัดจำคงเหลือจริง"
                         //     GL-driven → เทียบ net คงเหลือใน GL ของใบมัดจำเอง (Realize/
@@ -15267,8 +15399,15 @@ public partial class DocumentService : IDocumentService
         // ใบกำกับ (ยอดเอกสาร) 536 · จ่ายจริง 438 ⇒ ขาเงินสดข้างบนลง 536 แล้ว ⇒ Dr เงินสดกลับ 98 · ส่วนต่างต้องถูกอธิบายด้วย
         // adjusting lines (ค่าส่ง Dr 51120 +37 · คูปอง Cr 51150 −135) — ตัวตัดสิน Helpers/PaymentSettlementAdjustment
         // ส่วนต่าง 0 (ไม่ได้ระบุยอดชำระจริง/ชนิดอื่น) = กติกาเดิม "adjusting lines ต้อง net-zero" ทุกประการ
+        // ฝ่ายค้าน C1: ใบสำคัญจ่ายที่แปลงมาจากใบตั้งหนี้ (RelatedDocumentId · PaymentType=Credit ค่าเริ่มต้นของเส้นแปลง)
+        // ลงเงินสดเสมอ ⇒ ต้องนับเป็น "จ่ายในตัว" · ช่องที่ใช้ไม่ได้กับเอกสารนี้ = บอกผู้ใช้ ไม่ข้ามเงียบ
+        var settlesSource = doc.RelatedDocumentId.HasValue;
+        if (doc.ActualPaidAmount is decimal
+            && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource) is string actualPaidNa)
+            throw new Accounting.Helpers.BusinessRuleException(actualPaidNa, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         var settlementCashDelta = Accounting.Helpers.PaymentSettlementAdjustment.DocumentCashDelta(
-            doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.TotalAmount, doc.ActualPaidAmount);
+            doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource, doc.TotalAmount, doc.ActualPaidAmount);
         if (adjustingLines.Count == 0 && settlementCashDelta != 0m
             && Accounting.Helpers.PaymentSettlementAdjustment.CheckDocumentLines(
                 settlementCashDelta, 0m, 0m, doc.TotalAmount, doc.ActualPaidAmount) is string noAdjMsg)
@@ -15469,6 +15608,33 @@ public partial class DocumentService : IDocumentService
                 LineOrder = order++,
                 ProjectId = lineProjects[i]
             });
+        }
+    }
+
+    /// <summary>ด่าน P0-3 ของเส้นหักมัดจำแบบขับ JE (ตัวตัดสิน <c>DepositPolicyResolver.DrivesGrossApply</c>) —
+    /// งวด ภ.พ.30 ของใบมัดจำยื่น/ประกาศว่ายื่นแล้ว ⇒ throw <c>RD-86/4-DEPOSIT-TIV-DOUBLE</c> (ผู้เรียกห้ามถอยไปตั้งหนี้) ·
+    /// ยังไม่ยื่น ⇒ ลงตามเดิม + ธงบนหมายเหตุภายในของใบ</summary>
+    private async Task GuardDrivesGrossApplyAsync(Guid companyId, Document doc, Document deposit, decimal depositVat, bool depositVatPending)
+    {
+        if (!Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(depositVat, depositVatPending)) return;
+        var tp = deposit.TaxPointDate ?? deposit.DocumentDate;
+        var declared = await _db.TaxReports.AsNoTracking()
+            .AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.TaxType == TaxType.VAT
+                && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status)
+                && t.Year == tp.Year && t.Month == tp.Month);
+        switch (Accounting.Helpers.DepositPolicyResolver.DrivesGrossApply(depositVat, depositVatPending, declared))
+        {
+            case Accounting.Helpers.DrivesGrossApplyVerdict.Blocked:
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(deposit.DocumentNumber)
+                    + $" · งวด {tp:MM/yyyy} ของใบมัดจำยื่นแล้ว",
+                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+            case Accounting.Helpers.DrivesGrossApplyVerdict.AllowedVatMoved:
+                doc.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(doc.InternalNotes,
+                    Accounting.Helpers.DepositPolicyResolver.DrivesVatMovedNote(deposit.DocumentNumber, depositVat));
+                _logger.LogWarning("Drives apply: deposit {Dep} (VAT {Vat}) ออกใบกำกับแล้ว หักเต็มจำนวนเข้า {Doc} — VAT ย้ายเดือน (ธงบนใบ)",
+                    deposit.DocumentNumber, depositVat, doc.DocumentNumber);
+                break;
         }
     }
 
@@ -15744,7 +15910,9 @@ public partial class DocumentService : IDocumentService
                 var apClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + payment.SettlementAdjustmentAmount;
                 pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
             }
-            pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // เงินออก 0 (ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว — ฝ่ายค้าน C9) ⇒ ไม่มีขาเงินสด
+            if (thbCash != 0m)
+                pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
             // รอบ 193: บรรทัดปรับส่วนต่าง — บวก = Dr (ค่าส่งที่จ่ายเพิ่ม 51120) · ลบ = Cr (คูปอง/ส่วนลดลดต้นทุน 51150)
             foreach (var adj in settlementAdjustments ?? Array.Empty<(Guid AccountId, decimal Amount, string? Reason)>())
             {
@@ -16141,6 +16309,7 @@ public partial class DocumentService : IDocumentService
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
+        EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,
         ReplacesDocumentId: d.ReplacesDocumentId,
         ReplacementReason: d.ReplacementReason,

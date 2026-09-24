@@ -285,4 +285,74 @@ public class ContactTaxBranchKeyTests
         Assert.Equal(id, m.ContactId);
         Assert.Equal(ContactSoftMatch.None, ContactTaxBranchKey.SoftMatchScope("0105560113122", m));
     }
+
+    // ── รอบ 193 ทีม C3 หลังฝ่ายค้าน (review193-V-C3) ──
+
+    // C-8: AuthService สร้างบริษัทที่สมัครใหม่ด้วย TaxId = "-" ⇒ เดิม "-" ถูกเทียบตรงตัว = ลูกค้ารายที่สองได้ผู้ติดต่อของรายแรก
+    [Theory]
+    [InlineData("-")]
+    [InlineData(" - ")]
+    [InlineData("N/A")]
+    public void Placeholder_WithoutDigits_IsNoTaxId_NeverMatches(string placeholder)
+    {
+        var first = Guid.Parse("00000000-0000-0000-0000-00000000000a");
+        var m = ContactTaxBranchKey.Pick(new[] { C(first, "-", null) }, placeholder, "00000");
+        Assert.False(m.Found);
+        Assert.False(m.TaxIdExists);
+        Assert.False(ContactTaxBranchKey.HasTaxId(placeholder));
+        // ไม่มีเลข ⇒ ถอยไปจับด้วยชื่อได้ทุกแถว (ความหมายเดียวกับ payload ที่ไม่ส่งเลข)
+        Assert.Equal(ContactSoftMatch.AnyRow, ContactTaxBranchKey.SoftMatchScope(placeholder, m));
+        Assert.Null(ContactTaxBranchKey.PickContact(new List<Contact> { Row(first, "-", null) }, placeholder, null));
+    }
+
+    [Fact]
+    public void Placeholder_DoesNotBreakRealTaxIds()
+    {
+        // ครึ่งที่ต้องยังถูก: เลขจริงยังจับได้ (รวมแบบมีขีด) · เลขต่างประเทศที่มีตัวเลขยังเทียบตรงตัวได้
+        Assert.True(ContactTaxBranchKey.HasTaxId(Tin));
+        Assert.True(ContactTaxBranchKey.HasTaxId("0-1055-51136-08-5"));
+        Assert.Equal(Hq, ContactTaxBranchKey.Pick(new[] { C(Hq, "0-1055-51136-08-5", "00000") }, Tin, "00000").ContactId);
+        Assert.Equal(Other, ContactTaxBranchKey.Pick(new[] { C(Other, "DE123456789", null) }, "DE123456789", null).ContactId);
+    }
+
+    // C-6: หลังคีย์เลขภาษีไม่เจอ การถอยไปจับชื่อ/อีเมล (ชุดในหน่วยความจำ — ตัวเดียวกับ SoftScope บน IQueryable)
+    [Fact]
+    public void SoftScope_NewTaxId_ExcludesRowsHoldingAnotherTaxId()
+    {
+        var other = Row(Other, "0105500000001", "00000");      // นิติบุคคลอื่น ชื่อ/อีเมลเดียวกัน
+        var noTax = Row(Blank, null, null);
+        var dash = Row(Guid.Parse("00000000-0000-0000-0000-0000000000dd"), "-", null);
+        var key = ContactTaxBranchKey.Pick(new[] { C(Other, "0105500000001", "00000") }, Tin, "00000");
+        Assert.False(key.Found);
+        Assert.False(key.TaxIdExists);   // เลขใหม่
+        var scope = ContactTaxBranchKey.SoftScope(new List<Contact> { other, noTax, dash }, Tin, key).Select(c => c.Id).ToList();
+        Assert.DoesNotContain(Other, scope);   // เดิม: ชื่อตรง ⇒ ได้แถวนี้ แล้ว integration เขียน Tin ทับเลขของรายนี้
+        Assert.Contains(Blank, scope);
+        Assert.Contains(dash.Id, scope);        // "-" = ยังไม่มีเลข
+    }
+
+    [Fact]
+    public void SoftScope_NoTaxIdInPayload_AllRows_UnchangedBehaviour()
+    {
+        var rows = new List<Contact> { Row(Other, "0105500000001", "00000"), Row(Blank, null, null) };
+        Assert.Equal(2, ContactTaxBranchKey.SoftScope(rows, null, default).Count());
+        Assert.Equal(2, ContactTaxBranchKey.SoftScope(rows, "-", default).Count());
+    }
+
+    [Fact]
+    public void SoftScope_TaxIdExistsOtherBranch_Empty()
+    {
+        var m = ContactTaxBranchKey.Pick(new[] { C(Hq, Tin, "00000") }, Tin, "00008");
+        Assert.Empty(ContactTaxBranchKey.SoftScope(new List<Contact> { Row(Hq, Tin, "00000"), Row(Blank, null, null) }, Tin, m));
+    }
+
+    [Theory]
+    [InlineData(null, Tin, true)]                       // แถวยังไม่มีเลข ⇒ เติมได้
+    [InlineData("-", Tin, true)]                        // placeholder ⇒ เติมได้
+    [InlineData("0-1055-51136-08-5", Tin, true)]        // เลขเดียวกันต่างรูปแบบ
+    [InlineData("0105500000001", Tin, false)]           // เลขของนิติบุคคลอื่น ⇒ ห้ามทับ (C-6)
+    [InlineData(Tin, null, false)]                      // payload ไม่มีเลข ⇒ ไม่แตะ
+    [InlineData(Tin, "-", false)]                       // payload "-" ⇒ ไม่แตะ (ห้ามล้างเลขจริงด้วย placeholder)
+    public void MayWriteTaxId_NeverOverwritesAnotherEntitysTaxId(string? existing, string? incoming, bool expected)
+        => Assert.Equal(expected, ContactTaxBranchKey.MayWriteTaxId(existing, incoming));
 }

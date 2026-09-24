@@ -79,6 +79,9 @@ public static class ContactTaxBranchKey
         var raw = taxId?.Trim();
         if (string.IsNullOrEmpty(raw) || candidates == null) return default;
         var tax = Digits(raw);
+        // ค่าที่ไม่มีตัวเลขเลย ("-" ที่ AuthService ใส่ให้บริษัทที่สมัครใหม่ · "N/A") = ไม่มีเลข — ห้ามเทียบตรงตัว
+        // มิฉะนั้นบริษัทที่ยังไม่กรอกเลขทุกรายได้ผู้ติดต่อ "-" ของรายแรก (ฝ่ายค้าน C-8 รอบ 193)
+        if (tax.Length == 0) return default;
 
         if (tax.Length != 13)
         {
@@ -126,7 +129,7 @@ public static class ContactTaxBranchKey
         string? taxId, string? branchCode, CancellationToken ct = default)
     {
         var raw = taxId?.Trim();
-        if (string.IsNullOrEmpty(raw)) return default;
+        if (!HasTaxId(raw)) return default;   // "-" / ว่าง = ไม่มีเลข (C-8)
         var digits = Digits(raw);
         // เลขที่เก็บถูก normalize เป็นตัวเลขล้วนแล้ว (migration) — ยังดึงแถวที่มีขีด/ช่องว่างมาเทียบในหน่วยความจำด้วย
         var rows = await scope
@@ -156,12 +159,14 @@ public static class ContactTaxBranchKey
     public static async Task<List<Contact>> LoadByTaxIdsAsync(IQueryable<Contact> scope, Guid companyId,
         IEnumerable<string?> taxIds, CancellationToken ct = default)
     {
-        var keys = taxIds.Where(t => !string.IsNullOrWhiteSpace(t))
+        var keys = taxIds.Where(HasTaxId)
             .SelectMany(t => new[] { t!.Trim(), Digits(t) })
             .Where(t => t.Length > 0).Distinct().ToList();
         if (keys.Count == 0) return new List<Contact>();
+        // ดึงแถวที่เก็บเลขแบบมีขีด/ช่องว่างด้วย (แบบเดียวกับ FindAsync — ฝ่ายค้าน P-6) แล้วให้ PickContact เทียบตัวเลขล้วน
         return await scope
-            .Where(c => c.CompanyId == companyId && c.TaxId != null && keys.Contains(c.TaxId))
+            .Where(c => c.CompanyId == companyId && c.TaxId != null
+                && (keys.Contains(c.TaxId) || c.TaxId.Contains("-") || c.TaxId.Contains(" ")))
             .ToListAsync(ct);
     }
 
@@ -176,10 +181,80 @@ public static class ContactTaxBranchKey
     /// </summary>
     public static ContactSoftMatch SoftMatchScope(string? payloadTaxId, ContactKeyMatch taxKey)
     {
-        if (string.IsNullOrWhiteSpace(payloadTaxId)) return ContactSoftMatch.AnyRow;
+        if (!HasTaxId(payloadTaxId)) return ContactSoftMatch.AnyRow;   // "-" = ไม่มีเลข (C-8)
         if (taxKey.Found || taxKey.TaxIdExists) return ContactSoftMatch.None;
         return ContactSoftMatch.RowsWithoutTaxId;
     }
+
+    /// <summary>
+    /// ผู้ติดต่อ<b>ทุกสาขา</b>ของนิติบุคคลเดียว (เลขภาษีเดียวกัน) เรียงรหัสสาขา — ทางที่ตั้งใจสำหรับงานที่ต้องรวมทุกสาขาจริง
+    /// (ประวัติ WHT/ยอดสะสมต่อผู้มีเงินได้ · รายการผู้สมัครให้คนเลือก · ด่าน "เลขนี้เป็นของรหัสอื่น") แทนการเขียน
+    /// <c>c.TaxId == x</c> เอง (รอบ 193 ทีม C3 หลังฝ่ายค้าน — ให้ checker แยก "ตั้งใจรวมสาขา" ออกจาก "ลืมสาขา" ได้) ·
+    /// "-"/ว่าง = ไม่มีเลข ⇒ ว่าง · กรอง <c>CompanyId</c> เสมอ
+    /// </summary>
+    public static async Task<List<Guid>> AllBranchIdsAsync(IQueryable<Contact> scope, Guid companyId,
+        string? taxId, CancellationToken ct = default)
+    {
+        if (!HasTaxId(taxId)) return new List<Guid>();
+        var raw = taxId!.Trim();
+        var digits = Digits(raw);
+        var rows = await scope
+            .Where(c => c.CompanyId == companyId && c.TaxId != null
+                && (c.TaxId == raw || c.TaxId == digits || c.TaxId.Contains("-") || c.TaxId.Contains(" ")))
+            .Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode))
+            .ToListAsync(ct);
+        return rows.Where(r => SameTaxId(r.TaxId, raw))
+            .OrderBy(r => IsSpecified(r.BranchCode) ? TaxBranchCode.Normalize(r.BranchCode) : TaxBranchCode.HeadOffice, StringComparer.Ordinal)
+            .ThenBy(r => r.Id)
+            .Select(r => r.Id).ToList();
+    }
+
+    /// <summary>เลขเดียวกันไหม (ไม่ดูสาขา) — 13 หลักเทียบตัวเลขล้วน · อื่น ๆ ตรงตัวหรือตัวเลขล้วน ≥ 10 หลัก (กติกาเดียวกับ <see cref="Pick"/>)</summary>
+    private static bool SameTaxId(string? candidate, string raw)
+    {
+        var t = Digits(raw);
+        if (t.Length == 0) return false;
+        if (t.Length == 13) return Digits(candidate) == t;
+        return string.Equals(candidate?.Trim(), raw, StringComparison.Ordinal) || (t.Length >= 10 && Digits(candidate) == t);
+    }
+
+    /// <summary>ค่าที่เก็บไว้ในช่องเลขภาษีแต่<b>ไม่ใช่เลข</b> (placeholder) — ใช้ใน SQL ของ <see cref="SoftScope(IQueryable{Contact}, Guid, string?, ContactKeyMatch)"/>
+    /// (ฝั่งหน่วยความจำใช้กติกา "ไม่มีตัวเลขเลย" ของ <see cref="HasTaxId"/>)</summary>
+    private static readonly string[] NoTaxIdPlaceholders = { "", "-", "--", "N/A", "n/a", "NA", "ไม่มี" };
+
+    /// <summary>มีเลขผู้เสียภาษีจริงไหม — ค่าที่ไม่มีตัวเลขเลย ("-" ของบริษัทที่สมัครใหม่ · "N/A") = ไม่มี (ฝ่ายค้าน C-8)</summary>
+    public static bool HasTaxId(string? taxId) => Digits(taxId).Length > 0;
+
+    /// <summary>
+    /// **ชุดผู้ติดต่อที่ถอยไปจับด้วยชื่อ/อีเมล/เบอร์ได้** หลังคีย์เลขภาษีไม่เจอ — ทุกทางเข้าต้องจับ soft match บนชุดนี้เท่านั้น
+    /// (รอบ 193 ฝ่ายค้าน C-6: เดิมแต่ละทางเข้าเขียน <c>!taxKey.TaxIdExists</c> เอง ซึ่งไม่กัน "เลขใหม่ + ชื่อ/อีเมลตรงกับนิติบุคคลอื่น"
+    /// ⇒ integration เขียนเลขใหม่ทับเลขภาษีของผู้ติดต่อรายอื่น · ใบขาย/เอกสาร API ออกใบกำกับให้นิติบุคคลอื่น).
+    /// คืน <c>null</c> = ห้ามถอย (สร้างแถวใหม่) · กรอง <c>CompanyId</c> ที่นี่ด้วย (กฎ M)
+    /// </summary>
+    public static IQueryable<Contact>? SoftScope(IQueryable<Contact> scope, Guid companyId, string? payloadTaxId, ContactKeyMatch taxKey)
+        => SoftMatchScope(payloadTaxId, taxKey) switch
+        {
+            ContactSoftMatch.None => null,
+            ContactSoftMatch.RowsWithoutTaxId => scope.Where(c => c.CompanyId == companyId
+                && (c.TaxId == null || NoTaxIdPlaceholders.Contains(c.TaxId.Trim()))),
+            _ => scope.Where(c => c.CompanyId == companyId),
+        };
+
+    /// <summary>ตัวเดียวกับ <see cref="SoftScope(IQueryable{Contact}, Guid, string?, ContactKeyMatch)"/> บนแถวในหน่วยความจำ (change tracker)</summary>
+    public static IEnumerable<Contact> SoftScope(IEnumerable<Contact> rows, string? payloadTaxId, ContactKeyMatch taxKey)
+        => SoftMatchScope(payloadTaxId, taxKey) switch
+        {
+            ContactSoftMatch.None => Enumerable.Empty<Contact>(),
+            ContactSoftMatch.RowsWithoutTaxId => rows.Where(c => !HasTaxId(c.TaxId)),
+            _ => rows,
+        };
+
+    /// <summary>
+    /// เขียนเลขภาษีของ payload ลงแถวที่จับได้ได้ไหม — ได้เมื่อ payload มีเลขจริง และแถวยังไม่มีเลข หรือเลขเดียวกัน (ต่างรูปแบบ).
+    /// <b>ห้ามเขียนทับเลขของนิติบุคคลอื่น</b> (ฝ่ายค้าน C-6: <c>ProcessCustomerAsync</c> เคยเขียน <c>contact.TaxId = request.TaxId</c> ทับแถวที่จับด้วยชื่อ)
+    /// </summary>
+    public static bool MayWriteTaxId(string? existing, string? incoming)
+        => HasTaxId(incoming) && (!HasTaxId(existing) || Digits(existing) == Digits(incoming));
 
     private static string? WantedBranch(string? branchCode)
         => TaxBranchCode.TryNormalize(branchCode, out var code, out _) ? code : null;

@@ -550,8 +550,11 @@ public class IntegrationService : IIntegrationService
             if (taxKey.ContactId is Guid keyId)
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
             // มีผู้ติดต่อเลขนี้แต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
-            if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrEmpty(request.Name))
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
+            // ฝ่ายค้าน C-6: ถอยไปจับด้วยชื่อได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขนี้มีแล้วคนละสาขา ⇒ ห้าม) —
+            // เดิม `!taxKey.TaxIdExists` ปล่อยให้ชื่อตรงกับนิติบุคคลอื่นที่ถือเลขอื่น แล้วบล็อก update เขียนเลขใหม่ทับเลขของรายนั้น
+            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, request.TaxId, taxKey);
+            if (contact == null && softScope != null && !string.IsNullOrEmpty(request.Name))
+                contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
             // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
             // ระบบภายนอกส่งชื่อผิดมาได้ (ฟิลด์เหลื่อม/ตัดคำ) ทั้งที่เลขผู้เสียภาษีถูก
@@ -639,7 +642,8 @@ public class IntegrationService : IIntegrationService
                 if (request.Phone != null) contact.Phone = request.Phone;
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
-                if (request.TaxId != null) contact.TaxId = request.TaxId;
+                // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข หรือเลขเดียวกันต่างรูปแบบ
+                if (Accounting.Helpers.ContactTaxBranchKey.MayWriteTaxId(contact.TaxId, request.TaxId)) contact.TaxId = request.TaxId;
                 // §86/4: รหัสสาขา + ประเภทผู้ติดต่อ ต้องอัปเดตตอน resync ด้วย —
                 // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
@@ -1045,6 +1049,27 @@ public class IntegrationService : IIntegrationService
                     await _db.SaveChangesAsync();
                     cashSaleNote = " (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03 · GL ขายเงินสด ไม่มีลูกหนี้)";
                 }
+                catch (Accounting.Helpers.BusinessRuleException exTiv)
+                    when (exTiv.RuleCode == Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode)
+                {
+                    // รอบ 193 หลังฝ่ายค้าน C1 — มัดจำออกใบกำกับแล้ว และงวดของมัดจำยื่นไปแล้ว: **ห้ามถอยไปตั้งหนี้**
+                    // (ตั้งหนี้ = Dr ลูกหนี้เต็ม + Cr 21911 เต็ม ⇒ VAT มัดจำซ้ำ · 217xx ค้าง · BalanceDue เต็มทำให้ต้นทาง
+                    // เก็บเงินซ้ำเท่ามัดจำ). ล้มดัง 3 ที่: ธงบนใบ · log PartialSuccess · คำตอบ success=false
+                    document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(
+                        document.InternalNotes, "[" + exTiv.RuleCode + "] ลงบัญชีไม่ได้ — " + exTiv.Message);
+                    await _db.SaveChangesAsync();
+                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว (งวดยื่นแล้ว) — ไม่ลงบัญชี ไม่ถอยไปตั้งหนี้",
+                        document.DocumentNumber);
+                    log.Status = "PartialSuccess";
+                    log.ErrorMessage = exTiv.Message;
+                    log.CreatedDocumentId = document.Id;
+                    log.CreatedContactId = contact.Id;
+                    log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                    await SaveSyncLog(log, integrationId);
+                    return new InboundSyncResponse(false,
+                        "สร้างเอกสารแล้วแต่ลงบัญชีไม่ได้ (ต้องให้นักบัญชีแก้ก่อน · ห้ามรับชำระยอดค้างของใบนี้): " + exTiv.Message,
+                        document.Id, contact.Id, null, null, docNumber);
+                }
                 catch (Exception exCash)
                 {
                     _logger.LogWarning(exCash,
@@ -1063,7 +1088,7 @@ public class IntegrationService : IIntegrationService
 
             // ★ รอบ 193 S-02 — ใบกำกับที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
             // (ล้ม = ประทับ [ETAX-AUTO-FAILED] บนเอกสาร ไม่ทำให้ sync ล้ม)
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             // ⚠️ ห้ามทับสถานะ PartialSuccess ที่ PostMappingJournalAsync ตั้งไว้ —
             // "สร้างเอกสารได้แต่ลงบัญชีไม่ได้" ไม่ใช่ Success
@@ -1083,7 +1108,7 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true,
-                "Invoice created" + cashSaleNote + JeSkipSuffix(jeSkipReason),
+                "Invoice created" + cashSaleNote + JeSkipSuffix(jeSkipReason) + EtaxHookSuffix(etaxHook),
                 document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
@@ -1341,7 +1366,7 @@ public class IntegrationService : IIntegrationService
             }
 
             // ★ รอบ 193 S-02 — ใบลดหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -1349,7 +1374,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Credit Note created", document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Credit Note created" + EtaxHookSuffix(etaxHook), document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -1444,7 +1469,7 @@ public class IntegrationService : IIntegrationService
             var journalEntryId = await CreateDebitNoteJournalAsync(companyId, document);
 
             // ★ รอบ 193 S-02 — ใบเพิ่มหนี้ที่ API ประทับ Approved เอง: e-Tax อัตโนมัติจุดเดียวกับเส้นเว็บ
-            await _issuedHooks.RunAsync(companyId, document);
+            var etaxHook = await _issuedHooks.RunAsync(companyId, document);
 
             log.Status = "Success";
             log.CreatedDocumentId = document.Id;
@@ -1452,7 +1477,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Debit Note created", document.Id, contact.Id, journalEntryId, null, docNumber);
+            return new InboundSyncResponse(true, "Debit Note created" + EtaxHookSuffix(etaxHook), document.Id, contact.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
         {
@@ -1597,20 +1622,19 @@ public class IntegrationService : IIntegrationService
     {
         Contact? contact = null;
 
-        if (!string.IsNullOrEmpty(taxId))
-        {
-            // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
-            // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
-            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
-            // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-                _db.Set<Contact>(), companyId, taxId, branchCode: null);
-            if (taxKey.ContactId is Guid keyId)
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-        }
+        // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
+        // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
+        // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
+        // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            _db.Set<Contact>(), companyId, taxId, branchCode: null);
+        if (taxKey.ContactId is Guid keyId)
+            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
 
-        if (contact == null && !string.IsNullOrEmpty(name))
-            contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
+        // ฝ่ายค้าน C-6: ชื่อตรงได้เฉพาะชุด SoftScope — เดิมเลขใหม่ + ชื่อตรง = ใบกำกับออกให้นิติบุคคลอื่นที่ถือเลขอื่น (§86/4)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxId, taxKey);
+        if (contact == null && softScope != null && !string.IsNullOrEmpty(name))
+            contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
 
         if (contact == null)
         {
@@ -1691,21 +1715,23 @@ public class IntegrationService : IIntegrationService
 
         // (3) เลขผู้เสียภาษี (+ สาขา) — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20) ·
         //     payload ไม่มีช่องสาขาผู้ขาย ⇒ แถวสำนักงานใหญ่ก่อน แทนแถวไหนก็ได้ของเลขนั้น
+        var taxKey = default(Accounting.Helpers.ContactKeyMatch);
         if (supplier == null && taxDigits.Length > 0)
         {
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
                 _db.Set<Contact>(), companyId, taxDigits, branchCode: null);
             if (taxKey.ContactId is Guid keyId)
                 supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
                     c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
         }
 
-        // (4) ชื่อ trim + case-insensitive
-        if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))
+        // (4) ชื่อ trim + case-insensitive — เฉพาะชุด SoftScope (ฝ่ายค้าน C-6: เลขใหม่ห้ามได้แถวที่ถือเลขอื่น)
+        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxDigits, taxKey);
+        if (supplier == null && softScope != null && !string.IsNullOrWhiteSpace(nameTrim))
         {
             var lower = nameTrim.ToLower();
-            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.Name.Trim().ToLower() == lower && !c.IsDeleted);
+            supplier = await softScope.FirstOrDefaultAsync(c =>
+                c.Name.Trim().ToLower() == lower && !c.IsDeleted);
         }
 
         if (supplier == null)
@@ -2368,6 +2394,11 @@ public class IntegrationService : IIntegrationService
     /// ลงบัญชี — คู่ค้าต้องรู้ว่างานยังไม่จบ ไม่ใช่เห็นแค่คำว่า created</summary>
     private static string JeSkipSuffix(string? reason) =>
         string.IsNullOrWhiteSpace(reason) ? "" : $" ⚠ ยังไม่ลงบัญชี: {reason}";
+
+    /// <summary>ข้อความต่อท้ายคำตอบเมื่อ e-Tax อัตโนมัติของใบนี้ออกไม่สำเร็จ — ที่ที่สามของ "ล้มดัง" (F2 ข้อ 7)
+    /// ต่อจากป้ายบนเอกสารและ log (รอบ 193 ฝ่ายค้าน P-3)</summary>
+    private static string EtaxHookSuffix(IssuedDocumentHookResult hook) =>
+        hook.EtaxFailed ? $" ⚠ e-Tax อัตโนมัติไม่สำเร็จ (ยังไม่ถูกนำส่งกรมสรรพากร): {hook.EtaxFailureReason}" : "";
 
     /// <summary>บันทึกเหตุผลที่ "ไม่สร้างรายการบัญชี" ลง log ของเซิร์ฟเวอร์ **และ**
     /// ส่งต่อให้ผู้เรียก — จุดเดียวที่ทั้งสองอย่างเกิดพร้อมกัน ห้ามเขียนแยก</summary>

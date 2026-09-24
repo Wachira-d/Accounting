@@ -25,6 +25,12 @@ ratchet เดินทางเดียว (เหมือน `terminal_statu
 
 ใช้: python3 tools/contact_taxid_only_match_check.py [--all] [--self-test] [--write-baseline]
 negative test: --self-test (ใส่บั๊กกลับต้องจับได้ · รูปที่ถูกต้องไม่ถูกฟ้อง · โฟลเดอร์ที่ข้ามไม่ถูกสแกน)
+
+═══ หลังฝ่ายค้าน (review193-V-C3) ═══
+กติกา 1 ปิดจุดบอด: list ที่ await แล้ว · `string.Equals(c.TaxId, x)` · ยกเว้นเฉพาะเมื่อสาขาถูก**เทียบ**/ป้อนตัวตัดสินที่ดูสาขา
+(ไม่ใช่แค่มีคำว่า BranchCode) · navigation `x.Contact.TaxId` นับเฉพาะ x ที่เป็นพารามิเตอร์ lambda (ไม่ฟ้อง `doc.Contact.TaxId == company.TaxId`)
+กติกา 2 (key `ไฟล์#soft`): หลัง `ContactTaxBranchKey.FindAsync` ในเมธอดเดียวกัน การจับผู้ติดต่อด้วย Name/Email/Phone บนแหล่ง
+ผู้ติดต่อตรง ๆ ต้องผ่าน `ContactTaxBranchKey.SoftScope` (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขมีแล้วคนละสาขา ⇒ ห้าม)
 """
 import os
 import re
@@ -40,16 +46,35 @@ OWNERS = {"Helpers/ContactTaxBranchKey.cs"}
 CONTACT_SRC = re.compile(
     r"\.Contacts\b|\bSet\s*<\s*(?:Accounting\.)?(?:Models\.Entities\.)?Contact\s*>\s*\(|"
     r"\bEntries\s*<\s*(?:Accounting\.)?(?:Models\.Entities\.)?Contact\s*>\s*\(")
-NAV_CMP = re.compile(r"\.(?:Payee)?Contact\s*\.\s*TaxId\s*(?:==|\.Equals\()")
+# navigation `x.Contact.TaxId ==` นับเฉพาะเมื่อ x เป็นพารามิเตอร์ของ lambda ในประโยคเดียวกัน (= query) —
+# `doc.Contact.TaxId == company.TaxId` (ตรวจ "ออกใบให้ตัวเอง" บนออบเจกต์) ไม่ใช่การหาผู้ติดต่อ (ฝ่ายค้าน: เคยฟ้องผิด)
+NAV_CMP = r"\b{p}\s*\.\s*(?:Payee)?Contact\s*\.\s*TaxId\s*(?:==|\.Equals\()"
+LAMBDA_PARAM = re.compile(r"\b(\w+)\s*=>")
 TAX_CMP = re.compile(
     r"\.TaxId\s*==\s*(?!\s*null\b)(?!\s*\"\")"              # c.TaxId == x
     r"|(?<![=!<>])==\s*[\w.()?!\[\]]*\.TaxId\b"              # x == c.TaxId
     r"|\.Contains\(\s*\w+\s*\.\s*TaxId\s*!?\s*\)"            # ids.Contains(c.TaxId)
     r"|\.TaxId\s*\.\s*Equals\("                              # c.TaxId.Equals(x)
-    r"|\w\(\s*\w+\s*\.\s*TaxId\s*\)\s*==(?!\s*null\b)"           # Normalize(c.TaxId) == x
+    r"|\w\(\s*\w+\s*\.\s*TaxId\s*\)\s*==(?!\s*null\b)"       # Normalize(c.TaxId) == x
+    r"|\bstring\s*\.\s*Equals\s*\([^;]*?\.TaxId\b"            # string.Equals(c.TaxId, x) (ฝ่ายค้าน: จุดบอด)
 )
-EXEMPT = re.compile(r"\bBranchCode\b|\bContactTaxBranchKey\b")
+# ยกเว้นเฉพาะเมื่อสาขาถูก "เทียบ" ในประโยคเดียวกัน หรือผ่านตัวจับคู่กลาง — แค่มีคำว่า BranchCode (เช่น .Select(new { c.BranchCode }))
+# ไม่นับ (ฝ่ายค้าน: เคยเป็นจุดบอด)
+EXEMPT = re.compile(
+    r"\bContactTaxBranchKey\b|\bContactKeyCandidate\b|\bOcrVendorBranchContact\b"   # ป้อนตัวตัดสินที่ดูสาขา
+    r"|\.BranchCode\s*(?:==|!=|\.Equals\()"
+    r"|(?:==|!=)\s*[\w.()?!]*\.BranchCode\b"
+    r"|\w\(\s*\w+\s*\.\s*BranchCode\s*\)\s*(?:==|!=)")
+# ตัวแปรที่มาจากผู้ติดต่อ: ทั้ง IQueryable (ยังไม่ await) และ list ที่ await ToListAsync แล้ว (ฝ่ายค้าน: จุดบอด)
 QUERY_VAR = re.compile(r"\b(\w+)\s*=\s*(?:\(\s*IQueryable<[^>]*>\s*\))?[^;=]*?(?:\.Contacts\b|Set\s*<\s*(?:Models\.Entities\.)?Contact\s*>\s*\()")
+TAINT_USE = r"\b{v}\s*\.\s*(?:Where|Any|All|First|FirstOrDefault|Single|SingleOrDefault|Count|Select|OrderBy|ToDictionary|GroupBy)\b"
+
+# ── กติกา 2 (ฝ่ายค้าน C-6): หลังคีย์เลขภาษี (ContactTaxBranchKey.FindAsync) ในเมธอดเดียวกัน ห้ามถอยไปจับผู้ติดต่อด้วย
+# ชื่อ/อีเมล/เบอร์ บนแหล่งผู้ติดต่อตรง ๆ — ต้องจับบนชุด ContactTaxBranchKey.SoftScope(...) เท่านั้น
+SOFT_CMP = re.compile(
+    r"\.(?:Name|Email|Phone)\b(?:\s*\.\s*(?:Trim|ToLower|ToUpper|ToLowerInvariant|ToUpperInvariant)\s*\(\s*\))*\s*=="
+    r"|\.(?:Name|Email|Phone)\s*\.\s*(?:Contains|StartsWith|Equals)\s*\(")
+METHOD_DECL = re.compile(r"^[ \t]*(?:public|private|internal|protected)\b[^;\n]*\(", re.M)
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 
@@ -66,33 +91,51 @@ def strip_comments(text):
     return "\n".join(out)
 
 
-def scan_text(body):
-    """คืนเลขบรรทัดของประโยคที่ฟ้อง"""
-    tainted = set()
+def _statements(body):
+    pos = 0
     for stmt in body.split(";"):
-        if "await" in stmt:
-            continue
+        yield pos, stmt
+        pos += len(stmt) + 1
+
+
+def scan_text(body):
+    """กติกา 1 — คืนเลขบรรทัดของประโยคที่หา/จับคู่ผู้ติดต่อด้วยเลขภาษีโดยไม่มีสาขา"""
+    tainted = set()
+    for _, stmt in _statements(body):
         for m in QUERY_VAR.finditer(stmt):
             tainted.add(m.group(1))
     hits = []
-    pos = 0
-    for stmt in body.split(";"):
-        start = pos
-        pos += len(stmt) + 1
+    for start, stmt in _statements(body):
         if EXEMPT.search(stmt):
             continue
         is_contact = bool(CONTACT_SRC.search(stmt)) or any(
-            re.search(r"\b" + re.escape(v) + r"\s*\.\s*(?:Where|Any|All|First|Single|Count|Select|OrderBy)", stmt)
-            for v in tainted)
-        m = None
-        if is_contact:
-            m = TAX_CMP.search(stmt)
+            re.search(TAINT_USE.format(v=re.escape(v)), stmt) for v in tainted)
+        m = TAX_CMP.search(stmt) if is_contact else None
         if m is None:
-            m = NAV_CMP.search(stmt)
+            for p in set(LAMBDA_PARAM.findall(stmt)):
+                m = re.search(NAV_CMP.format(p=re.escape(p)), stmt)
+                if m:
+                    break
         if m is None:
             continue
         hits.append(body.count("\n", 0, start + m.start()) + 1)
     return hits
+
+
+def scan_soft(body):
+    """กติกา 2 — คืนเลขบรรทัดของการถอยไปจับชื่อ/อีเมล/เบอร์บนแหล่งผู้ติดต่อตรง ๆ หลัง FindAsync ในเมธอดเดียวกัน"""
+    hits = []
+    decls = [m.start() for m in METHOD_DECL.finditer(body)] + [len(body)]
+    for fm in re.finditer(r"ContactTaxBranchKey\s*\.\s*FindAsync\s*\(", body):
+        end = next((d for d in decls if d > fm.start()), len(body))
+        window = body[fm.end():end]
+        for start, stmt in _statements(window):
+            if "SoftScope" in stmt or not CONTACT_SRC.search(stmt):
+                continue
+            m = SOFT_CMP.search(stmt)
+            if m:
+                hits.append(body.count("\n", 0, fm.end() + start + m.start()) + 1)
+    return sorted(set(hits))
 
 
 def scan(src=None):
@@ -111,9 +154,13 @@ def scan(src=None):
                 raw = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
-            lines = scan_text(strip_comments(raw))
+            body = strip_comments(raw)
+            lines = scan_text(body)
             if lines:
                 out.append((rel, lines))
+            soft = scan_soft(body)
+            if soft:
+                out.append((rel + "#soft", soft))
     out.sort()
     return out
 
@@ -157,6 +204,29 @@ def self_test():
         "Services/BadNormalize.cs": ("class A { async Task M() { var id = (await _db.Contacts.Select(c => new { c.Id, c.TaxId }).ToListAsync())\n"
                                      "  .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == d).Select(c => c.Id).FirstOrDefault(); } }\n", True),
         "Services/BadNav.cs": ("class A { void M() { var r = _db.Documents.Where(d => d.Contact.TaxId == t); } }\n", True),
+        # ── จุดบอดที่ฝ่ายค้านพบ (รอบ 193) ──
+        "Services/BadMaterialized.cs": ("class A { async Task M() { var all = await _db.Contacts.Where(c => c.CompanyId == cid).ToListAsync();\n"
+                                        "  var hit = all.FirstOrDefault(c => c.TaxId == t); } }\n", True),
+        "Services/BadStringEquals.cs": ("class A { void M() { var r = _db.Contacts.FirstOrDefault(c => string.Equals(c.TaxId, t)); } }\n", True),
+        "Services/BadBranchOnlySelected.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == t).Select(c => new { c.Id, c.BranchCode }).ToList(); } }\n", True),
+        "Services/OkSelfInvoiceCheck.cs": ("class A { bool M(Document doc, Company company) { return doc.Contact.TaxId == company.TaxId; } }\n", False),
+        "Services/OkBranchDecider.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId != null).ToList()\n"
+                                        "  .Where(c => Norm(c.TaxId) == d).Select(c => new OcrVendorBranchContact.Candidate(c.Id, c.Name, c.BranchCode)).ToList(); } }\n", False),
+        # ── กติกา 2: ถอยไปชื่อ/อีเมล/เบอร์หลัง FindAsync ต้องผ่าน SoftScope ──
+        "Services/SoftBad.cs": ("class A {\n  private async Task M() {\n"
+                                "    var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b);\n"
+                                "    if (k.ContactId == null && !k.TaxIdExists) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == cid && x.Email == email);\n"
+                                "  }\n}\n", True),
+        "Services/SoftBadName.cs": ("class A {\n  private async Task M() {\n"
+                                    "    var k = await ContactTaxBranchKey.FindAsync(_db.Set<Contact>(), cid, t, null);\n"
+                                    "    c = await _db.Set<Contact>().FirstOrDefaultAsync(x => x.Name.ToLower() == n.ToLower());\n"
+                                    "  }\n}\n", True),
+        "Services/SoftOk.cs": ("class A {\n  private async Task M() {\n"
+                               "    var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b);\n"
+                               "    var soft = ContactTaxBranchKey.SoftScope(_db.Contacts, cid, t, k);\n"
+                               "    if (soft != null) c = await soft.FirstOrDefaultAsync(x => x.Email == email);\n"
+                               "  }\n"
+                               "  private async Task Other() { var x = await _db.Contacts.FirstOrDefaultAsync(c => c.Name == n); }\n}\n", False),
         "Services/OkBranch.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == t && c.BranchCode == b); } }\n", False),
         "Services/OkKey.cs": ("class A { async Task M() { var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b); } }\n", False),
         "Services/OkNullCheck.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == null || c.TaxId == \"\"); } }\n", False),
@@ -174,14 +244,14 @@ def self_test():
             p = os.path.join(tmp, rel)
             os.makedirs(os.path.dirname(p), exist_ok=True)
             open(p, "w", encoding="utf-8").write(content)
-        found = {rel for rel, _ in scan(tmp)}
+        found = {rel.split("#")[0] for rel, _ in scan(tmp)}
     for rel, (_, expect) in cases.items():
         got = rel in found
         if got != expect:
             ok = False
             print(f"❌ self-test: {rel} — คาด {'ฟ้อง' if expect else 'ไม่ฟ้อง'} แต่{'ฟ้อง' if got else 'ไม่ฟ้อง'}")
     if ok:
-        print("✅ self-test ผ่าน — จับ TaxId-only 6 รูปได้ · ไม่ฟ้องรูปที่มีสาขา/ตัวจับคู่กลาง/null-check/Company/Vendor/คอมเมนต์ · ข้าม bin obj .claude")
+        print("✅ self-test ผ่าน — จับ TaxId-only 9 รูป + soft match นอก SoftScope 2 รูป · ไม่ฟ้องรูปที่ถูก 10 รูป (สาขา/ตัวจับคู่กลาง/ตัวตัดสินสาขา/null-check/Company/Vendor/ออกใบให้ตัวเอง/คอมเมนต์/SoftScope/เมธอดอื่น) · ข้าม bin obj .claude")
     return 0 if ok else 1
 
 
@@ -211,7 +281,8 @@ def main():
         print(f"❌ จุด**ใหม่** {len(new)} ไฟล์ — หา/จับคู่ผู้ติดต่อด้วยเลขภาษีโดยไม่มีสาขา (§86/4 · ประกาศอธิบดีฯ 199):")
         for rel, lines in new:
             print(f"   {rel} (บรรทัด {', '.join(map(str, lines))}) — baseline {base.get(rel, 0)} → ปัจจุบัน {len(lines)}")
-        print("   → ใช้ Helpers/ContactTaxBranchKey.FindAsync/Pick (เลขภาษี + สาขา) แทน `c.TaxId == x`")
+        print("   → ใช้ Helpers/ContactTaxBranchKey.FindAsync/Pick (เลขภาษี + สาขา) แทน `c.TaxId == x` · ตั้งใจรวมทุกสาขา = AllBranchIdsAsync")
+        print("   → แถว #soft: หลัง FindAsync ห้ามจับชื่อ/อีเมล/เบอร์บน _db.Contacts ตรง ๆ — ใช้ ContactTaxBranchKey.SoftScope(...)")
         print("   → ถ้าตั้งใจรวมทุกสาขาจริง ให้ใส่ BranchCode ในนิพจน์ไม่ได้ — ปรึกษาก่อน ห้ามเติม baseline เพื่อให้ผ่าน")
         return 1
     print("✅ ไม่มี query ผู้ติดต่อด้วยเลขภาษีอย่างเดียวจุดใหม่")

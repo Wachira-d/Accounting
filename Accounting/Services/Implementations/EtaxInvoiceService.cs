@@ -153,9 +153,25 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                     + "— ใบกำกับตัวจริงคือใบต้นทาง (VAT อยู่ใน ภ.พ.30 ที่ใบนั้น). "
                     + "ให้สร้าง e-Tax ที่ **ใบกำกับภาษีต้นทาง** แทน มิฉะนั้นจะเป็นการแจ้งใบกำกับ "
                     + "ซ้ำสองใบจากการขายครั้งเดียว");
+        }
 
-            // ใบที่ข้อมูลผู้ซื้อไม่ครบ §86/4 / ผู้ซื้อไม่ประสงค์รับใบกำกับ →
-            // หัวกระดาษไม่มีคำว่าใบกำกับ ส่ง T03 ไม่ได้เช่นกัน
+        // ===== ใบที่ตรึงไว้ว่า "ไม่ใช่ใบกำกับตามกฎหมาย" (รอบ 193 ฝ่ายค้าน C-2) =====
+        // IsTaxInvoiceByLaw ตรึงพร้อมเลขที่จากหัวกระดาษ (TaxInvoiceSeriesPolicy) — false = กระดาษไม่มีคำว่า
+        // ใบกำกับ (เช่น ขาย VAT 0 ทั้งใบ/ยกเว้น §81 ผ่าน API → หัว "ใบเสร็จ" เลขชุด REC). เดิมไม่มีใครดูธงนี้ ⇒
+        // XML T01/T02 ประกาศต่อ RD ว่าเป็นใบกำกับ ขัดกับกระดาษ · §81 ห้ามออกใบกำกับ (กฎเหล็ก #2 D)
+        // null = ใบก่อนมีฟีเจอร์ ห้ามตีความว่า false · CN/DN ไม่ใช้ธงนี้ (§86/9-10 ถือเป็นใบกำกับอยู่แล้ว)
+        if (EtaxAutoIssueScope.DeclaredNotTaxInvoice(document.DocumentType, document.IsTaxInvoiceByLaw))
+            throw new InvalidOperationException(
+                $"เอกสาร {document.DocumentNumber} ถูกออกเป็นเอกสารที่ไม่ใช่ใบกำกับภาษี (หัวกระดาษไม่มีคำว่าใบกำกับ "
+                + "เช่น ไม่มี VAT หรือเป็นรายการยกเว้น VAT §81) — e-Tax คือใบกำกับภาษีในรูปอิเล็กทรอนิกส์ จึงส่งไม่ได้. "
+                + "ถ้าการขายนี้ต้องมีใบกำกับ ให้ออกใบกำกับภาษีใบใหม่ที่ถูกต้องแทน");
+
+        if (EtaxAutoIssueScope.IsTitleDecidedType(document.DocumentType))
+        {
+            // ใบที่ข้อมูลผู้ซื้อไม่ครบ §86/4 / ผู้ซื้อไม่ประสงค์รับใบกำกับ / walk-in →
+            // หัวกระดาษไม่ใช่ใบกำกับเต็มรูป ส่ง T01/T03 ไม่ได้ (เดิมตรวจเฉพาะใบเสร็จ — ใบกำกับ walk-in
+            // ไปล้มที่ "กรุณาระบุเลขผู้ซื้อ" แทน · ใบกำกับที่ผู้ซื้อไม่ประสงค์รับแต่มีเลขครบ ถูกส่งเป็น T01 ได้)
+            // เกณฑ์ตัวเดียวกับ hook e-Tax อัตโนมัติ (ข้ามเงียบ — ฝ่ายค้าน C-1) และหัว PDF
             if (document.VatAmount > 0.005m && TaxService.NotFullTaxInvoice(document))
             {
                 var missing = document.Contact == null
@@ -244,6 +260,16 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         await using var dbTransaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // ── กันออกซ้ำเมื่อถูกเรียกพร้อมกัน (รอบ 193 ฝ่ายค้าน P-2) ──
+            // ด่าน "มี e-Tax แล้ว" ข้างบนอยู่นอกธุรกรรม ⇒ webhook/ยืนยันชำระซ้ำพร้อมกัน สองตัวผ่านด่านได้ทั้งคู่
+            // (ไม่มี unique index — แถวสถานะ Error ต้องสร้างใหม่ได้) ⇒ ล็อกแถวเอกสารในธุรกรรมแล้วตรวจซ้ำ
+            // ตัวที่สองจะรอจนตัวแรก commit แล้วเห็นแถวที่เพิ่งสร้าง
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"Documents\" WHERE \"Id\" = {document.Id} AND \"CompanyId\" = {companyId} FOR UPDATE");
+            if (await _db.EtaxInvoices.AnyAsync(e => e.DocumentId == document.Id && e.CompanyId == companyId
+                    && e.Status != EtaxStatus.Error))
+                throw new InvalidOperationException("เอกสารนี้มี e-Tax Invoice แล้ว");
+
             // เลข ETAX ต้องไม่ซ้ำและไม่ "วนกลับ" — เดิมใช้ `CountAsync() + 1` ซึ่งพลาด
             // 3 อย่างตามบทเรียน `Helpers/SequenceNumber`: ไม่มีล็อก (สอง instance ได้
             // เลขเดียวกัน) · นับจากจำนวนแถวไม่ใช่เลขสูงสุด (ลบแถวทิ้ง = เลขวนกลับไป
@@ -312,6 +338,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             };
 
             _db.EtaxInvoices.Add(etax);
+            // ออกสำเร็จ ⇒ ล้างป้าย [ETAX-AUTO-FAILED] ของรอบก่อน (ฝ่ายค้าน P-3 — เดิมค้างตลอดไปแม้สร้างมือสำเร็จ)
+            // บันทึกในธุรกรรมเดียวกับแถว e-Tax · ไม่มีป้าย = ค่าเดิมทุกตัวอักษร (ไม่แตะช่อง)
+            var clearedNotes = EtaxAutoFailedNote.Clear(document.InternalNotes);
+            if (!string.Equals(clearedNotes, document.InternalNotes, StringComparison.Ordinal))
+                document.InternalNotes = clearedNotes;
             await _db.SaveChangesAsync();
             await dbTransaction.CommitAsync();
 
@@ -852,8 +883,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         //     doc.TotalAmount เพราะหัก WHT ออก (WHT แยกตอนจ่าย ไม่ใช่ face value
         //     ของใบกำกับ) → ถ้าใช้จะทำให้ TaxBasis+Tax ≠ Grand เมื่อมี WHT
         var inv2 = CultureInfo.InvariantCulture;
+        // รอบ 193 (ฝ่ายค้าน C4): ผลต่างปัดเศษ (Document.RoundingAdjustment · SubTotal = Σ บรรทัด + ผลต่าง) ต้องแสดงเป็น
+        // ส่วนลด/ค่าบริการระดับเอกสาร — LineTotal = Σ NetLineTotalAmount ตามสเปก · TaxBasis = LineTotal − Allowance + Charge
+        // ตัวแตกยอดตัวเดียว: Helpers/DocumentRounding.EtaxSummation (ผลต่าง 0 = ค่าเดิมทุกช่อง)
+        var roundingSum = Accounting.Helpers.DocumentRounding.EtaxSummation(doc.SubTotal, doc.RoundingAdjustment);
         summationElements.Add(new XElement(ram + "LineTotalAmount",
-            doc.SubTotal.ToString("0.##", inv2)));
+            roundingSum.LineTotal.ToString("0.##", inv2)));
         if (doc.DocumentType == DocumentType.CreditNote || doc.DocumentType == DocumentType.DebitNote)
         {
             // ผลต่าง (§86/9-10) = มูลค่าของ CN/DN ใบนี้เอง — บรรทัดใน CN คือ
@@ -863,9 +898,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             summationElements.Add(new XElement(ram + "DifferenceInformationAmount",
                 doc.SubTotal.ToString("0.##", inv2)));
         }
-        summationElements.Add(new XElement(ram + "AllowanceTotalAmount", "0.00"));
+        summationElements.Add(new XElement(ram + "AllowanceTotalAmount",
+            roundingSum.Allowance.ToString("0.00", inv2)));
+        if (roundingSum.Charge > 0m)
+            summationElements.Add(new XElement(ram + "ChargeTotalAmount",
+                roundingSum.Charge.ToString("0.00", inv2)));
         summationElements.Add(new XElement(ram + "TaxBasisTotalAmount",
-            doc.SubTotal.ToString("0.##", inv2)));
+            roundingSum.TaxBasis.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "TaxTotalAmount",
             doc.VatAmount.ToString("0.##", inv2)));
         summationElements.Add(new XElement(ram + "GrandTotalAmount",
@@ -959,6 +998,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                             new XAttribute("listID", "ISO 4217 3A"),
                             currency),
                         headerTradeTax,
+                        // ผลต่างปัดเศษระดับเอกสาร (มีเมื่อ ≠ 0 เท่านั้น) — คู่กับ Allowance/ChargeTotalAmount ข้างบน
+                        doc.RoundingAdjustment != 0m
+                            ? new XElement(ram + "SpecifiedTradeAllowanceCharge",
+                                new XElement(ram + "ChargeIndicator", doc.RoundingAdjustment > 0m ? "true" : "false"),
+                                new XElement(ram + "ActualAmount",
+                                    Math.Abs(doc.RoundingAdjustment).ToString("0.00", CultureInfo.InvariantCulture)),
+                                new XElement(ram + "Reason", Accounting.Helpers.DocumentRounding.AccountName))
+                            : null,
                         new XElement(ram + "SpecifiedTradeSettlementHeaderMonetarySummation",
                             summationElements.Where(e => e != null))),
                     lineItems

@@ -88,4 +88,35 @@ public class LodgingAmountsTests
         Assert.Null(LodgingAmounts.OnlinePayableAmount(
             LodgingReservationStatus.Confirmed, 0m, 0m, 1000.004m, 0m, 1000m));
     }
+
+    // ═══ C9 รอบ 193 หลังฝ่ายค้าน — หน้าแขกแสดงยอด/ข้อความจากเซิร์ฟเวอร์ ═══
+
+    [Fact]
+    public void ปิดยืนยันอัตโนมัติ_จ่ายมัดจำครบแล้ว_ป้ายไม่บอกให้จ่ายมัดจำอีก_ยอดคือยอดคงเหลือ()
+    {
+        Assert.Equal("ชำระมัดจำแล้ว รอที่พักยืนยัน", LodgingAmounts.StatusLabel(LodgingReservationStatus.Pending, 2000m, 2000m));
+        Assert.Equal(5450m, LodgingAmounts.OnlinePayableAmount(LodgingReservationStatus.Pending, 2000m, 2000m, 7450m, 0m, 2000m));
+        var note = LodgingAmounts.OnlinePaymentNote(LodgingReservationStatus.Pending, 2000m, 2000m, 7450m, 0m, 2000m, autoConfirmOnDeposit: false);
+        Assert.Contains("รอที่พักยืนยัน", note);
+        Assert.DoesNotContain("อัตโนมัติ", note);
+    }
+
+    [Fact]
+    public void ยังไม่จ่ายมัดจำ_ข้อความตามค่าตั้งยืนยันอัตโนมัติ_สองทิศ()
+    {
+        Assert.Equal("รอชำระมัดจำ", LodgingAmounts.StatusLabel(LodgingReservationStatus.Pending, 2000m, 0m));
+        var on = LodgingAmounts.OnlinePaymentNote(LodgingReservationStatus.Pending, 2000m, 0m, 7450m, 0m, 0m, autoConfirmOnDeposit: true);
+        var off = LodgingAmounts.OnlinePaymentNote(LodgingReservationStatus.Pending, 2000m, 0m, 7450m, 0m, 0m, autoConfirmOnDeposit: false);
+        Assert.Contains("ยืนยันการจองอัตโนมัติ", on);
+        Assert.Contains("ไม่ได้ยืนยันอัตโนมัติ", off);
+    }
+
+    [Fact]
+    public void ไม่มีอะไรให้จ่าย_ไม่มีข้อความ_และสถานะอื่นป้ายเดิม()
+    {
+        Assert.Null(LodgingAmounts.OnlinePaymentNote(LodgingReservationStatus.CheckedOut, 0m, 0m, 7450m, 0m, 7450m, true));
+        Assert.Null(LodgingAmounts.OnlinePaymentNote(LodgingReservationStatus.Confirmed, 2000m, 2000m, 7450m, 0m, 7450m, true));
+        Assert.Equal("ยืนยันแล้ว", LodgingAmounts.StatusLabel(LodgingReservationStatus.Confirmed, 2000m, 2000m));
+        Assert.Equal("รอชำระมัดจำ", LodgingAmounts.StatusLabel(LodgingReservationStatus.Pending, 0m, 0m));
+    }
 }

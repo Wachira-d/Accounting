@@ -157,11 +157,15 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
             // คืนรหัสเจ้าหนี้ในระบบลูกค้าไปด้วย — ERP ปลายทางเอาไป map ต่อได้ทันที
             var contactExt = await Db.Contacts.AsNoTracking()
-                .Where(c => c.Id == contactId.Value && c.CompanyId == ctx.CompanyId)
-                .Select(c => new { c.ExternalId, c.Name, c.ContactType })
-                .FirstOrDefaultAsync(ct);
+                .FirstOrDefaultAsync(c => c.Id == contactId.Value && c.CompanyId == ctx.CompanyId, ct);
 
             var contactType = contactExt?.ContactType ?? ContactType.Unknown;
+            // ฝ่ายค้าน P-5 (รอบ 193): ผู้ติดต่อของสาขาใหม่ที่ระบบสร้างให้ไม่มีที่อยู่ (ห้ามลอกที่อยู่ สนญ. — คนละสถานประกอบการ)
+            // ⇒ บอกผู้เรียกตั้งแต่ตอนสร้างว่าอะไรยังขาดตาม §86/4 ก่อนอนุมัติ แทนที่จะไปตกด่านตอน /approve
+            // (ตัวตรวจตัวเดียวกับด่านอนุมัติ/POS/PDF: TaxInvoiceCompletenessChecker.MissingBuyerFields · เฉพาะเอกสารฝั่งขาย)
+            var missingBuyer = Helpers.DocumentSide.IsSales(docType)
+                ? Accounting.Services.Implementations.Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(contactExt)
+                : Array.Empty<string>();
             return Ok(new ApiResponse<object>(true, new
             {
                 documentId = doc.Id,
@@ -179,9 +183,15 @@ public class DocumentsV1Controller : PublicApiControllerBase
                     needsContactType = contactType == ContactType.Unknown,
                     // ไม่มีรหัส = ลูกค้าต้องไปผูกก่อน ไม่งั้น import ฝั่งเขาจะพัง
                     needsMapping = string.IsNullOrEmpty(contactExt?.ExternalId),
+                    branchCode = contactExt?.BranchCode,
+                    // §86/4: ช่องผู้ซื้อที่ยังขาด (เช่น "ที่อยู่ผู้ซื้อ" ของผู้ติดต่อสาขาใหม่) — ว่าง = ครบ
+                    missingBuyerFields = missingBuyer,
                 },
                 billing = new { charged = usage.ChargedAmount, coveredByFreeQuota = usage.CoveredByFreeQuota },
-            }, "สร้างเอกสารสำเร็จ (ฉบับร่าง) — เรียก /approve เพื่อออกเลขที่จริงและลงบัญชี"));
+            }, missingBuyer.Count == 0
+                ? "สร้างเอกสารสำเร็จ (ฉบับร่าง) — เรียก /approve เพื่อออกเลขที่จริงและลงบัญชี"
+                : "สร้างเอกสารสำเร็จ (ฉบับร่าง) — ผู้ติดต่อยังขาด " + string.Join(", ", missingBuyer)
+                  + " (§86/4) · เติมผ่าน POST /api/v1/contacts/sync หรือหน้าผู้ติดต่อก่อนเรียก /approve"));
         }
         catch (InvalidOperationException ex)
         {
@@ -235,21 +245,14 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
         try
         {
-            DocumentResponse doc;
-            IReadOnlyList<string> scanGapWarnings = Array.Empty<string>();
-            try
-            {
-                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1");
-            }
-            catch (Accounting.Services.Implementations.DocumentApprovalWarningsException w)
-                when (w.Warnings.Count > 0 && w.Warnings.All(Helpers.OcrApprovalGapWarning.IsGapWarning))
-            {
-                // รอบ 193 (คำตัดสินเจ้าของข้อ 12): คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ([Σ-GAP]) ห้ามขัดจังหวะ API —
-                // อนุมัติต่อ (ร่องรอย APPROVE-ACK-WARNINGS + หมายเหตุภายในบนเอกสาร โดย "api:v1") แล้วคืนธง/ข้อความในโครงเดิม
-                // · คำเตือนชนิดอื่นยังเดินทางเดิม (ไม่เปลี่ยนพฤติกรรม)
-                scanGapWarnings = w.Warnings;
-                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1", acknowledgeWarnings: true);
-            }
+            // รอบ 193 (ฝ่ายค้าน C6): ถามคำเตือนก่อน (ไม่อนุมัติ ไม่เรียก AI) แล้วค่อยอนุมัติครั้งเดียว — เดิมเรียกอนุมัติแบบไม่รับทราบ
+            // ⇒ ด่านเรียก AI เสริมคำเตือน (สูงสุด 8 วินาที) แล้ว API โยนคำตอบทิ้ง = จ่าย token ฟรี + แถว feedback ที่ loop ไม่มีวันปิด
+            // · [Σ-GAP] ห้ามขัดจังหวะ API (คำตัดสินข้อ 12) ⇒ แหล่ง ApiClient ผ่านเฉพาะชุดนั้น แล้วคืนธงในโครงเดิม ·
+            // คำเตือนชนิดอื่นยังหยุด (ไม่เสริม AI) · ร่องรอยบอกว่า "API ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ (Helpers/ApprovalAcknowledgement)
+            var preview = await _documents.PreviewApprovalWarningsAsync(ctx!.CompanyId, documentId);
+            IReadOnlyList<string> scanGapWarnings = preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning).ToList();
+            var doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1",
+                Helpers.ApprovalAckSource.ApiClient, withAiHints: false);
             return Ok(new ApiResponse<object>(true, new
             {
                 documentId = doc.Id,
@@ -323,12 +326,13 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
         var taxId = Helpers.ThaiTaxIdValidator.Normalize(req.ContactTaxId);
         var taxIdExists = false;
+        var taxKey = default(Helpers.ContactKeyMatch);
         if (!string.IsNullOrWhiteSpace(taxId))
         {
             // รอบ 193 ข้อ 20 + ทีม C3: ตัวจับคู่กลาง (เลขภาษี + สาขา) — ส่ง contactBranchCode ต่อจนถึงการหา/สร้าง
             // (เดิมส่ง null เสมอ ⇒ ผู้ซื้อสาขา 8 ได้ผู้ติดต่อสำนักงานใหญ่ = ใบกำกับสาขาผิดตาม §86/4 ทั้งที่
             // /contacts/resolve บอกพาร์ตเนอร์ว่า "ระบบจะสร้างผู้ติดต่อของสาขานี้แยก")
-            var taxKey = await Helpers.ContactTaxBranchKey.FindAsync(
+            taxKey = await Helpers.ContactTaxBranchKey.FindAsync(
                 Db.Contacts.AsNoTracking(), companyId, taxId, req.ContactBranchCode, ct);
             if (taxKey.ContactId.HasValue) return taxKey.ContactId;
             taxIdExists = taxKey.TaxIdExists;
@@ -338,10 +342,13 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
         // เทียบชื่อข้ามภาษา — จับได้แม้เอกสารพิมพ์ไทยแต่ทะเบียนเก็บอังกฤษ
         // มีผู้ติดต่อเลขนี้แล้วแต่คนละสาขา ⇒ ห้ามเทียบชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
-        if (!taxIdExists)
+        // ฝ่ายค้าน C-6: ผู้สมัครเทียบชื่อมาจากชุด SoftScope ตัวเดียว — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (เดิมเทียบทุกผู้ติดต่อ
+        // ⇒ เลขใหม่ + ชื่อคล้าย = เอกสารผูกกับนิติบุคคลอื่นที่ถือเลขอื่น) · เลขนี้มีแล้วคนละสาขา ⇒ null = ห้ามเทียบ
+        var softScope = Helpers.ContactTaxBranchKey.SoftScope(Db.Contacts.AsNoTracking(), companyId, taxId, taxKey);
+        if (softScope != null && !string.IsNullOrWhiteSpace(req.ContactName))
         {
-            var candidates = await Db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && c.IsActive)
+            var candidates = await softScope
+                .Where(c => c.IsActive)
                 .Select(c => new { c.Id, c.Name })
                 .ToListAsync(ct);
             var best = CounterpartyNameMatcher.Best(req.ContactName!, candidates, c => c.Name);

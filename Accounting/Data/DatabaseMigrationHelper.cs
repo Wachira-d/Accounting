@@ -960,6 +960,9 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "DepositAppliedToDocumentId" uuid NULL;
             """,
+            """
+            ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "DepositRealizedForDocumentId" uuid NULL;
+            """,
 
             // ===== SiteSettings: global site configuration (singleton) =====
             // ===== BankTransactions: AI Reconciliation MatchGroupId =====
@@ -4854,6 +4857,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentTitleOverridesJson" text NULL;""",
             // ภาษาเอกสารที่ออก (th/en) — ค่าตั้งต้นระดับบริษัท + override รายใบ
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NOT NULL DEFAULT 'th';""",
+            // ===== ยืนยันสถานะจด VAT แล้วหรือยัง (รอบ 193 ฝ่ายค้าน C-9) =====
+            // DEFAULT now() ตอนเพิ่มคอลัมน์ = เติมเวลาให้แถว**ที่มีอยู่แล้ว**ครั้งเดียว (ไม่ถามซ้ำบริษัทเดิม) · IF NOT EXISTS
+            // ทำให้การเติมเกิดครั้งเดียว · แล้วถอด default ⇒ แถวใหม่ต้องได้ค่าจากคนยืนยันจริงเท่านั้น (สมัคร/SSO = null)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "VatStatusConfirmedAt" timestamptz NULL DEFAULT now();""",
+            """ALTER TABLE "CompanySettings" ALTER COLUMN "VatStatusConfirmedAt" DROP DEFAULT;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentLanguage" varchar(5) NULL;""",
 
             // ===== ลูกค้าเงินสดไม่ประสงค์รับใบกำกับ (ผู้ซื้อกลางของใบกำกับขายปลีก) =====
@@ -6641,11 +6649,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",
-            // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** ⇒ แถวเหล่านั้น
-            // ในบัญชี "คืนแล้ว" ไปแล้ว — ประทับให้ตรงกับบัญชี (ไม่แตะเอกสาร/JE) พร้อมป้าย legacy ให้รายงาน
-            // r193-L2 ดึงไปตรวจว่าโอนคืนจริงไหม · ตัวแยก: เส้นใหม่ไม่หัก PaidAmount จนกว่าจะคืนจริง ⇒
-            // แถวที่ PaidAmount ถูกหักไปแล้วแต่ RefundPaidAmount = 0 คือแถวเดิมเท่านั้น · รันซ้ำได้ (แถวที่ตั้งแล้ว ≠ 0)
-            """UPDATE "LodgingReservations" SET "RefundPaidAmount" = "RefundAmount", "RefundPaidAt" = "CancelledAt", "RefundPaidBy" = 'legacy:posted-at-cancel (ก่อนรอบ 193 — ตรวจว่าโอนคืนจริง)' WHERE "Status" IN (4, 5) AND "RefundAmount" > 0 AND "RefundPaidAmount" = 0 AND "PaidAmount" <= "DepositPaid" - "RefundAmount" + 0.005;""",
+            // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** โดยไม่มีหลักฐานว่าโอนคืนจริง ⇒
+            // ติดป้าย legacy ใน RefundPaidBy **อย่างเดียว** — ห้ามประทับ RefundPaidAmount (= "คืนแล้ว" สถานะปลายทางที่ระบบแต่งเอง ·
+            // ฝ่ายค้าน C10 · DECISION_DOCTRINE R1) ⇒ หน้าจอแสดง "ไม่มีข้อมูลการโอนคืน" (LodgingRefundState.Unknown) และห้ามกดคืนซ้ำ
+            // (JE/ใบลดหนี้เดิมลงไปแล้ว) · ตัวแยก: เส้นใหม่ไม่หัก PaidAmount จนกว่าจะคืนจริง ⇒ แถวที่ PaidAmount ถูกหักแล้วคือแถวเดิม
+            // · รันซ้ำได้ (RefundPaidBy IS NULL) · ป้ายต้องตรง LodgingDepositSettlement.LegacyRefundMarker
+            """UPDATE "LodgingReservations" SET "RefundPaidAmount" = 0, "RefundPaidAt" = NULL WHERE "RefundPaidBy" LIKE 'legacy:posted-at-cancel%' AND "RefundPaidAmount" <> 0;""",
+            """UPDATE "LodgingReservations" SET "RefundPaidBy" = 'legacy:posted-at-cancel (ก่อนรอบ 193 — ไม่มีข้อมูลการโอนคืน ระบบเดิมลงบัญชีคืนเงินตอนยกเลิก)' WHERE "Status" IN (4, 5) AND "RefundAmount" > 0 AND "RefundPaidAmount" = 0 AND "RefundPaidBy" IS NULL AND "PaidAmount" <= "DepositPaid" - "RefundAmount" + 0.005;""",
 
             // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
             // ให้เป็น "วันสิ้นรอบบัญชี + 5 ปี" (§87/3 นับจากวันยื่นแบบ · ม.10 นับจาก

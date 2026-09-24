@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""attachment_gate_check.py — ทุก action ที่อ่าน/เขียนไฟล์แนบต้อง **เรียกด่านกลางจริงในตัวเมธอด**
+"""attachment_gate_check.py — ทุก action ที่อ่าน/เขียนไฟล์แนบหรือสแกนต้อง **เรียกด่านกลางจริงในตัวเมธอด**
 
-═══ ที่มา (ฝ่ายค้านรอบ 193 · P6) ═══
+═══ ที่มา (ฝ่ายค้านรอบ 193 · P6 · S2-C4) ═══
 เทสต์ของด่านไฟล์แนบ (U2) ทดสอบแค่ตาราง `AttachmentPermissionScope` (pure) — ถอดการเรียกด่านออกจาก
 controller แล้วเทสต์ยังเขียวทุกตัว · repo นี้ไม่มี WebApplicationFactory / DB ในเทสต์ จึงยิง endpoint จริงไม่ได้
-และ `write_permission_gate_check` นับ "มีคำนี้อยู่ในช่วงข้อความของ action" ⇒ มองไม่เห็นกรณีที่พบจริงในรอบนี้:
-`StatutoryRemittanceController.UploadReceipt` ไม่มีด่านเลย แต่ช่วงข้อความของมันลากไปถึงเมธอด private
-`ResolveUserIdAsync` ข้างล่างที่มีคำว่า `UserRole.Owner` ⇒ checker ตัวนั้นเขียว (false negative)
+และ `write_permission_gate_check` นับ "มีคำนี้อยู่ในช่วงข้อความของ action" ⇒ มองไม่เห็น `UploadReceipt` ที่ไม่มีด่าน
+เพราะช่วงข้อความลากไปถึงเมธอด private ข้างล่างที่มีคำว่า `UserRole.Owner` (false negative)
+ฝ่ายค้านรอบถัดมา (S2-C4) ลอง mutation แล้วเขียวผิด: ใช้ผลด่านแต่ไม่ return · เรียกด่านด้วยชนิด/ทิศผิด · ห่อด่านไว้ใน if ·
+ค้นทางเข้าไม่เจอเมื่อ field เป็น `IFileAttachmentService?` / อ่านผ่าน `Set<FileAttachment>()` / สแกนไฟล์ผ่าน `IOcrService.ScanAsync`
 
 ═══ กติกา (ต่อ action ใน TARGETS) ═══
 1. หาเมธอดด้วยการ parse (ตัดคอมเมนต์/สตริงออกก่อน) ⇒ ชื่อด่านในคอมเมนต์หรือในสตริง **ไม่นับ**
-2. ต้อง `await` ด่านที่กำหนด **ในตัวเมธอดนั้นเอง** และเก็บผลไว้ในตัวแปร
-3. ตัวแปรนั้นต้องถูกใช้ตัดสินจริง (`if (deny …)` / `hidden.Contains(…)`) — เรียกแล้วทิ้งผล = ไม่มีด่าน
-4. การเรียกด่านต้องมา **ก่อน** จุดที่แตะไฟล์/ข้อมูล (sink) ตัวแรกในเมธอด
-5. ไม่พบเมธอด = ฟ้อง (เปลี่ยนชื่อ action แล้ว checker ห้ามเขียวเงียบ)
+2. ต้อง `var x = await <ด่าน>(...)` ที่**ระดับบนสุดของตัวเมธอด** (ไม่อยู่ใน if/loop) และเก็บผลไว้ในตัวแปร
+3. ตัวแปรนั้นต้องถูกใช้ตัดสินจริง: `if (x …) return …` (ด่านเดี่ยว) หรือ `x.Contains(…)` (ตัวกรองรายการ)
+4. อาร์กิวเมนต์ของการเรียกต้องตรงที่กำหนด (ชนิดเจ้าของ · ทิศอ่าน/เขียน) — เรียกด่านด้วยชนิด/ทิศผิดคือไม่มีด่าน
+5. การเรียกด่านต้องมา **ก่อน** จุดที่แตะไฟล์/ข้อมูล (sink) ตัวแรกในเมธอด
+6. ไม่พบเมธอด = ฟ้อง (เปลี่ยนชื่อ action แล้ว checker ห้ามเขียวเงียบ)
+
+═══ กติกาเชิงโครงสร้างของ OcrController ═══
+ทุก action (`[Http…]`) ที่รับ `Guid scanId` ต้องผ่าน `ScanGateAsync` · รับ `Guid fileAttachmentId` ต้องผ่าน
+`DenyScanSourceAsync` · รับ `Guid documentId` ต้องผ่าน `DocGateAsync` (หรือ `ScanGateAsync` + `DocGateAsync`) — action ใหม่
+ไม่ต้องรอให้ใครจำมาเพิ่มใน TARGETS
 
 ═══ ค้นหาทางเข้าใหม่ (allow-list ครบไหม ≠ ผ่านไหม) ═══
-ทุกเมธอดใน `Accounting/Controllers/**` ที่เรียก service ไฟล์แนบ (field ชนิด `IFileAttachmentService`) หรือแตะ
-`.FileAttachments` ต้องอยู่ใน TARGETS หรือ EXEMPT (พร้อมเหตุผล) — ทางเข้าใหม่ที่ไม่มีใครตัดสินจะถูกฟ้อง ·
+ทุกเมธอดใน `Accounting/Controllers/**` ที่เรียก service ไฟล์แนบ (field ชนิด `IFileAttachmentService` / `IFileAttachmentService?`) ·
+แตะ `.FileAttachments` / `Set<FileAttachment>` · หรือเรียก `IOcrService` เส้นที่รับ id ของไฟล์/สแกน (`ScanAsync` ·
+`DeleteScanAsync` · `LinkScanToExistingDocumentAsync`) ต้องอยู่ใน TARGETS / กติกา OcrController หรือ EXEMPT (พร้อมเหตุผล) ·
 ข้าม `.claude` `bin` `obj`
 
 รันเปล่า ๆ = ตรวจเรพ **และ** negative test (ถอดการเรียกด่านจากไฟล์จริงทีละ target แล้วต้องฟ้อง) ·
@@ -32,62 +40,90 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTROLLERS = os.path.join(ROOT, "Accounting", "Controllers")
 SKIP_DIRS = {".claude", "bin", "obj", ".git", "node_modules"}
 
-DENY_USE = r"\bif\s*\(\s*{v}\b"                   # if (deny is { } d) / if (deny != null)
+# ใช้ผลด่าน = if (x …) return  (บรรทัดเดียวกัน — ตัวอย่าง `if (deny != null) return deny;` · `if (deny is { } d) return …`)
+DENY_USE = r"\bif\s*\(\s*{v}\b[^\n]*?\)\s*return\b"
 HIDDEN_USE = r"\b{v}\s*\.\s*Contains\s*\("        # hidden.Contains(x.Id)
 
-# (ไฟล์, เมธอด, regex ของการเรียกด่าน, regex ของการใช้ผล, sinks — ต้องมาหลังด่าน)
+OCR = "Accounting/Controllers/OcrController.cs"
+FAC = "Accounting/Controllers/FileAttachmentController.cs"
+
+# (ไฟล์, เมธอด, regex ของการเรียกด่าน, regex ของการใช้ผล, sinks, regex ที่อาร์กิวเมนต์ของการเรียกต้องมี [ตรวจบนข้อความจริง])
 TARGETS = [
     # ── FileAttachmentController: ทุก action ผ่าน wrapper ที่ส่งต่อไป IAttachmentAccessGate ──
-    ("Accounting/Controllers/FileAttachmentController.cs", "Upload",
-     r"DenyAttachmentAsync\s*\(", DENY_USE,
-     [r"\bReadHeadAsync\s*\(", r"\bProcessAndSaveAsync\s*\(", r"\bFileStream\b", r"\.UploadAsync\s*\("]),
-    ("Accounting/Controllers/FileAttachmentController.cs", "GetByEntity",
-     r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\.GetByEntityAsync\s*\("]),
-    ("Accounting/Controllers/FileAttachmentController.cs", "Delete",
-     r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\.DeleteAsync\s*\("]),
-    ("Accounting/Controllers/FileAttachmentController.cs", "Download",
-     r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\bPhysicalFile\s*\(", r"File\.Exists\s*\("]),
+    (FAC, "Upload", r"DenyAttachmentAsync\s*\(", DENY_USE,
+     [r"\bReadHeadAsync\s*\(", r"\bProcessAndSaveAsync\s*\(", r"\bFileStream\b", r"\.UploadAsync\s*\("],
+     [r"AttachmentAccess\.Write"]),
+    (FAC, "GetByEntity", r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\.GetByEntityAsync\s*\("],
+     [r"AttachmentAccess\.Read"]),
+    (FAC, "Delete", r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\.DeleteAsync\s*\("],
+     [r"AttachmentAccess\.Write", r"\batt\.Id\b"]),
+    (FAC, "Download", r"DenyAttachmentAsync\s*\(", DENY_USE, [r"\bPhysicalFile\s*\(", r"File\.Exists\s*\("],
+     [r"AttachmentAccess\.Read", r"\battachment\.Id\b"]),
     # ── ใบเสร็จนำส่ง (C2) ──
     ("Accounting/Controllers/StatutoryRemittanceController.cs", "UploadReceipt",
      r"\.DenyAttachmentAsync\s*\(", DENY_USE,
-     [r"\.CopyToAsync\s*\(", r"\.UploadBytesAsync\s*\(", r"\.AttachReceiptAsync\s*\("]),
-    # ── รูป/ผลอ่าน/รายการสแกน (C3) ──
-    ("Accounting/Controllers/OcrController.cs", "GetImage",
-     r"\.DenyScanAsync\s*\(", DENY_USE, [r"\.FileAttachments\b", r"\bPhysicalFile\s*\("]),
-    ("Accounting/Controllers/OcrController.cs", "GetResult",
-     r"\.DenyScanAsync\s*\(", DENY_USE, [r"\.GetResultAsync\s*\("]),
-    ("Accounting/Controllers/OcrController.cs", "GetResults",
-     r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("]),
-    # คิวรอตรวจรวมสแกนที่ผูกเอกสารแล้วแต่ติดธงสินทรัพย์ ⇒ ชื่อผู้ขาย/ชื่อไฟล์ต้องผ่านด่านเดียวกัน
-    ("Accounting/Controllers/OcrController.cs", "ReviewQueue",
-     r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"ScanQualityGrader\s*\.", r"\bOk\s*\("]),
+     [r"\.CopyToAsync\s*\(", r"\.UploadBytesAsync\s*\(", r"\.AttachReceiptAsync\s*\("],
+     [r'"StatutoryRemittance"', r"\bremittanceId\b", r"AttachmentAccess\.Write"]),
+    # ── รายการสแกน/คิว/รายงาน (ตัวกรองแถว) ──
+    (OCR, "GetResults", r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
+    (OCR, "ReviewQueue", r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"ScanQualityGrader\s*\.", r"\bOk\s*\("], []),
+    # ฝ่ายค้านงาน O1 (C7): รายงานตรวจยอดคืนชื่อผู้ขาย/ชื่อไฟล์/ยอดของสแกนได้ถึง 1,000 ใบ
+    (OCR, "GetStoredAmountAudit", r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
+    (OCR, "GetStoredAmountAudit", r"\.HiddenDocumentIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
+    (OCR, "GetOpenPos", r"\.HiddenDocumentIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
+    (OCR, "PredecessorCandidates", r"\.HiddenDocumentIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
+    # ── เอกสาร → สแกนที่ผูก (S2-C2) ──
+    ("Accounting/Controllers/DocumentController.cs", "GetLinkedScan", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
+     [r"\.OcrScanResults\b"], [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read"]),
 ]
 
-# ด่านชั้นใน — wrapper/ตัวตัดสินต้อง "ส่งต่อจริง" (ไม่ใช่ return null) · (ไฟล์, เมธอด, regex ที่ต้องเรียก)
+# กติกาเชิงโครงสร้าง: controller → [(regex ของพารามิเตอร์, regex ของด่าน, regex อาร์กิวเมนต์ที่ต้องมี)]
+PARAM_RULES = {
+    OCR: [
+        (r"\bGuid\s+scanId\b", r"\bScanGateAsync\s*\(", [r"\bscanId\b"]),
+        (r"\bGuid\s+fileAttachmentId\b", r"\bDenyScanSourceAsync\s*\(", [r"\bfileAttachmentId\b"]),
+        (r"\bGuid\s+documentId\b", r"\bDocGateAsync\s*\(", [r"\bdocumentId\b"]),
+    ],
+}
+
+# ด่านชั้นใน — wrapper/ตัวตัดสินต้อง "ส่งต่อจริง" (ไม่ใช่ return null) · (ไฟล์, เมธอด, regex ที่ต้องเรียก, ตรวจบนข้อความจริงไหม)
+GATE = "Accounting/Services/Implementations/AttachmentAccessGate.cs"
+OCRSVC = "Accounting/Services/Implementations/OcrService.cs"
 DELEGATES = [
-    # wrapper ใน controller ต้องส่งต่อไป service จริง
-    ("Accounting/Controllers/FileAttachmentController.cs", "DenyAttachmentAsync",
-     [r"_gate\s*\.\s*DenyAttachmentAsync\s*\("]),
-    # ใบเบิก (P1): เจ้าของใบแนบ/ถอดได้ตามสถานะใบเท่านั้น · สแกนที่ผูกเอกสาร (C3): ใช้ด่านเอกสาร
-    ("Accounting/Services/Implementations/AttachmentAccessGate.cs", "DenyAttachmentAsync",
-     [r"ExpenseClaimEvidencePolicy\s*\.\s*OwnerMayChange\s*\(", r"\bDenyScanCoreAsync\s*\(",
-      r"AttachmentPermissionScope\s*\.\s*IsUnsavedBucket\s*\(", r"AttachmentPermissionScope\s*\.\s*UnsavedFileVisible\s*\("]),
-    ("Accounting/Services/Implementations/AttachmentAccessGate.cs", "DenyScanCoreAsync",
-     [r"AttachmentPermissionScope\s*\.\s*ScanFileOwner\s*\(", r"\bDenyDocAsync\s*\("]),
-    ("Accounting/Services/Implementations/AttachmentAccessGate.cs", "HiddenScanIdsAsync",
-     [r"AttachmentPermissionScope\s*\.\s*ScanFileOwner\s*\(", r"AttachmentPermissionScope\s*\.\s*DocumentReadable\s*\("]),
+    (FAC, "DenyAttachmentAsync", [r"_gate\s*\.\s*DenyAttachmentAsync\s*\("], False),
+    (OCR, "ScanGateAsync", [r"_gate\s*\.\s*DenyScanAsync\s*\([^;]*AttachmentAccess\.Read",
+                            r"_gate\s*\.\s*DenyScanAsync\s*\([^;]*AttachmentAccess\.Write"], False),
+    (OCR, "DocGateAsync", [r"_gate\s*\.\s*DenyAttachmentAsync\s*\(", r'"Document"'], True),
+    (OCR, "DenyScanSourceAsync", [r"_gate\s*\.\s*DenyScanSourceAsync\s*\("], False),
+    # ใบเบิก (P1/S2-P1/P2) · สแกน (C3/S2-C1) · ถังก่อนบันทึก (P7/S2-P6)
+    (GATE, "DenyAttachmentAsync",
+     [r"ExpenseClaimEvidencePolicy\s*\.\s*OwnerMayChange\s*\(", r"ExpenseClaimEvidencePolicy\s*\.\s*ReviewerKeyApplies\s*\(",
+      r"\bDenyScanCoreAsync\s*\(", r"AttachmentPermissionScope\s*\.\s*IsUnsavedBucket\s*\(",
+      r"AttachmentPermissionScope\s*\.\s*UnsavedFileVisible\s*\(", r"AttachmentPermissionScope\s*\.\s*UnsavedFileRemovable\s*\("],
+     False),
+    (GATE, "DenyScanCoreAsync", [r"AttachmentPermissionScope\s*\.\s*ScanOwner\s*\(", r"\bDenyAttachmentAsync\s*\("], False),
+    (GATE, "HiddenScanIdsAsync", [r"AttachmentPermissionScope\s*\.\s*ScanOwner\s*\(",
+                                  r"AttachmentPermissionScope\s*\.\s*DocumentReadable\s*\("], False),
+    (GATE, "DenyScanSourceAsync", [r"\bDenyAttachmentAsync\s*\(", r"\bDenyScanAsync\s*\("], False),
+    # ไฟล์ของรายการอื่นห้ามถูกลบ/ย้ายเพราะสแกน (S2-C1/C2)
+    (OCRSVC, "DeleteScanAsync", [r"OcrScanFileDisposal\s*\.\s*Decide\s*\("], False),
+    (OCRSVC, "RelinkScanFileToDocumentAsync", [r"AttachmentPermissionScope\s*\.\s*ScanFileRelinkable\s*\("], False),
+    (OCRSVC, "LinkScanToExistingDocumentAsync", [r"AttachmentPermissionScope\s*\.\s*ScanFileRelinkable\s*\("], False),
+    ("Accounting/Services/Implementations/FileAttachmentService.cs", "GetByEntityAsync",
+     [r'EntityType\s*==\s*"OcrScan"'], True),
 ]
 
 # ทางเข้าที่แตะไฟล์แนบแต่ตั้งใจไม่ผ่านด่านนี้ — ต้องมีเหตุผลทุกแถว (เพิ่มแถว = การตัดสินใจที่ตั้งใจ)
 EXEMPT = {
     ("Accounting/Controllers/IntegrationController.cs", "AttachFilesAsync"):
         "แนบไฟล์ให้เอกสารที่คีย์ integration เพิ่งสร้างในคำขอเดียวกัน — ด่านคือคีย์ + scope (write_permission_gate_check)",
-    ("Accounting/Controllers/OcrController.cs", "UploadAndScan"):
-        "สร้างไฟล์ต้นฉบับของสแกนใหม่ (ยังไม่ผูกเอกสาร) · เส้นอัปโหลดอยู่กับทีม O1 รอบ 193 — backlog ใน r193-S2.md",
+    (OCR, "UploadAndScan"):
+        "สร้างไฟล์ต้นฉบับของสแกนใหม่จากไฟล์ที่ผู้ใช้เพิ่งอัปโหลด (ไม่ใช่ไฟล์ของรายการอื่น) — สแกนใหม่ได้ด่าน OCR",
     ("Accounting/Controllers/V1/OcrV1Controller.cs", "SaveUploadAsync"):
         "API v1 — ผู้เรียก (Scan) ผ่าน ResolveCallerAsync(\"ocr:write\") ก่อน · ไฟล์เป็นของสแกนใหม่",
+    ("Accounting/Controllers/V1/OcrV1Controller.cs", "Scan"):
+        "สแกนเฉพาะไฟล์ที่เส้นนี้เพิ่งบันทึกเอง (SaveUploadAsync) — ไม่รับ id ของไฟล์เดิมจากผู้เรียก",
 }
-
 
 # ─────────────────────────── C# lexer (ตัดคอมเมนต์/สตริง คงตำแหน่ง) ───────────────────────────
 
@@ -185,8 +221,8 @@ def _match_paren(s, i):
     return len(s)
 
 
-def methods(stripped):
-    """คืน list ของ (name, body_start, body_end) — body = ช่วงหลัง signature ถึงปิดเมธอด"""
+def methods_ex(stripped):
+    """คืน list ของ (name, decl_start, body_start, body_end) — body = ช่วงหลัง signature ถึงปิดเมธอด"""
     res = []
     for dm in DECL_LINE.finditer(stripped):
         line_end = stripped.find("\n", dm.start())
@@ -214,7 +250,7 @@ def methods(stripped):
                     if depth == 0:
                         break
                 j += 1
-            res.append((nm.group(1), k, j + 1))
+            res.append((nm.group(1), dm.start(), k, j + 1))
         elif stripped.startswith("=>", k):
             depth = 0
             j = k + 2
@@ -227,8 +263,13 @@ def methods(stripped):
                 elif ch == ";" and depth == 0:
                     break
                 j += 1
-            res.append((nm.group(1), k, j + 1))
+            res.append((nm.group(1), dm.start(), k, j + 1))
     return res
+
+
+def methods(stripped):
+    """คืน list ของ (name, body_start, body_end)"""
+    return [(n, a, b) for n, _, a, b in methods_ex(stripped)]
 
 
 def find_method(stripped, name):
@@ -238,6 +279,7 @@ def find_method(stripped, name):
     return None
 
 
+
 # ─────────────────────────── ตัวตรวจ ───────────────────────────
 
 def _human(rx):
@@ -245,47 +287,117 @@ def _human(rx):
     return re.sub(r"\\s\*", "", rx).replace("\\.", ".").replace("\\(", "(").replace("\\b", "") + ")"
 
 
-def check_target(text, name, gate_re, use_re, sinks):
+def _find_gate_assignments(body, gate_re):
+    """คืน list ของ (match ของการ assign, ตำแหน่ง '(' ของการเรียก) ใน body ที่ตัดสตริงแล้ว"""
+    out = []
+    for m in re.finditer(r"(?:\bvar|[\w<>\?\[\],]+)\s+(\w+)\s*=\s*await\s+[\w\.\s]*?(" + gate_re + ")", body):
+        out.append((m, m.end() - 1))
+    return out
+
+
+def _depth_at(body, pos):
+    """ความลึกปีกกาที่ตำแหน่ง pos (body เริ่มที่ '{' ของเมธอด ⇒ ระดับบนสุด = 1)"""
+    return body.count("{", 0, pos) - body.count("}", 0, pos)
+
+
+def check_target(text, name, gate_re, use_re, sinks, arg_res=()):
     """คืนข้อความปัญหา (str) หรือ None"""
     s = strip_code(text)
     span = find_method(s, name)
     if span is None:
         return f"ไม่พบเมธอด {name} — เปลี่ยนชื่อแล้วให้แก้ TARGETS ด้วย (ห้ามเขียวเงียบ)"
-    body = s[span[0]:span[1]]
-    assign = re.search(r"(?:\bvar|[\w<>\?\[\],]+)\s+(\w+)\s*=\s*await\s+[\w\.\s]*?" + gate_re, body)
-    if not assign:
+    a, b = span
+    body = s[a:b]
+    if not body.startswith("{"):
+        return f"{name}: ต้องเป็นเมธอดแบบมีปีกกา (expression-bodied ใส่ด่านไม่ได้)"
+    found = _find_gate_assignments(body, gate_re)
+    if not found:
         if re.search(gate_re, body):
             return f"{name}: เรียกด่านแต่ไม่ได้ await/เก็บผลไว้ตัดสิน"
         return f"{name}: ไม่เรียกด่านในตัวเมธอด ({_human(gate_re)})"
-    var = assign.group(1)
-    after = body[assign.end():]
-    if not re.search(use_re.format(v=re.escape(var)), after):
-        return f"{name}: เรียกด่านแล้วไม่ได้ใช้ผล `{var}` ตัดสิน (เรียกแล้วทิ้ง = ไม่มีด่าน)"
-    first_sink = min((m.start() for r in sinks for m in [re.search(r, body)] if m), default=None)
-    if first_sink is not None and first_sink < assign.start():
-        return f"{name}: แตะไฟล์/ข้อมูลก่อนเรียกด่าน (sink ที่ตำแหน่งก่อนด่าน)"
-    return None
+    problems = []
+    for m, paren in found:
+        var = m.group(1)
+        if _depth_at(body, m.start()) != 1:
+            problems.append(f"{name}: ด่าน {_human(gate_re)} อยู่ในบล็อกเงื่อนไข/วนซ้ำ — ต้องเรียกที่ระดับบนสุดของเมธอด")
+            continue
+        after = body[m.end():]
+        if not re.search(use_re.format(v=re.escape(var)), after):
+            kind = "if (… ) return" if use_re == DENY_USE else ".Contains(…)"
+            problems.append(f"{name}: เรียกด่านแล้วไม่ได้ใช้ผล `{var}` ตัดสินแบบ {kind} (เรียกแล้วทิ้ง = ไม่มีด่าน)")
+            continue
+        close = _match_paren(s, a + paren)
+        args = text[a + paren + 1:close - 1]
+        miss = [r for r in arg_res if not re.search(r, args)]
+        if miss:
+            problems.append(f"{name}: เรียกด่านด้วยอาร์กิวเมนต์ผิด (ต้องมี {', '.join(miss)}) — ชนิด/ทิศผิดคือไม่มีด่าน")
+            continue
+        first_sink = min((x.start() for r in sinks for x in [re.search(r, body)] if x), default=None)
+        if first_sink is not None and first_sink < m.start():
+            problems.append(f"{name}: แตะไฟล์/ข้อมูลก่อนเรียกด่าน (sink ที่ตำแหน่งก่อนด่าน)")
+            continue
+        return None   # มีการเรียกที่ถูกต้องอย่างน้อยหนึ่งครั้ง
+    return problems[0]
 
 
-def check_delegate(text, name, required):
+def check_delegate(text, name, required, raw=False):
     s = strip_code(text)
     span = find_method(s, name)
     if span is None:
         return f"ไม่พบเมธอด {name} (ด่านชั้นใน) — เปลี่ยนชื่อแล้วให้แก้ DELEGATES"
-    body = s[span[0]:span[1]]
+    body = (text if raw else s)[span[0]:span[1]]
     miss = [r for r in required if not re.search(r, body)]
     if miss:
         return f"{name}: ไม่เรียก {', '.join(miss)} ในตัวเมธอด"
     return None
 
 
-def attachment_touchers(text):
-    """เมธอดในไฟล์ controller ที่แตะไฟล์แนบ (service ไฟล์แนบ / DbSet FileAttachments)"""
+HTTP_ATTR = re.compile(r"\[Http(Get|Post|Put|Delete|Patch)\b")
+
+
+def actions(text):
+    """(ชื่อ, ข้อความ attribute+signature, span ของ body) ของ action ที่มี [Http…] — ข้อความที่ตัดคอมเมนต์/สตริงแล้ว"""
     s = strip_code(text)
-    fields = set(re.findall(r"\bIFileAttachmentService\s+(\w+)\s*[;,=)]", s))
-    pats = [r"\.FileAttachments\b"]
+    out = []
+    for nm, ds, a, b in methods_ex(s):
+        k = ds
+        while True:   # ย้อนขึ้นไปเก็บบรรทัด attribute/บรรทัดว่าง (คอมเมนต์ถูกตัดเป็นช่องว่างแล้ว) เหนือ signature
+            prev_end = s.rfind("\n", 0, k)
+            if prev_end < 0:
+                break
+            prev_start = s.rfind("\n", 0, prev_end) + 1
+            line = s[prev_start:prev_end].strip()
+            if line == "" or line.startswith("["):
+                k = prev_start
+                continue
+            break
+        head = s[k:a]
+        if HTTP_ATTR.search(head):
+            out.append((nm, head, (a, b)))
+    return out
+
+
+def check_param_rules(text, rules):
+    problems = []
+    for nm, head, _ in actions(text):
+        for param_re, gate_re, arg_res in rules:
+            if re.search(param_re, head):
+                msg = check_target(text, nm, gate_re, DENY_USE, [], arg_res)
+                if msg:
+                    problems.append(msg + f" — action ที่รับ {param_re.replace(chr(92) + 'b', '').replace(chr(92) + 's+', ' ')} ต้องผ่านด่าน")
+    return problems
+
+
+def attachment_touchers(text):
+    """เมธอดในไฟล์ controller ที่แตะไฟล์แนบ/สแกนจาก id (service ไฟล์แนบ · DbSet FileAttachments · IOcrService ที่รับ id)"""
+    s = strip_code(text)
+    fields = set(re.findall(r"\bIFileAttachmentService\??\s+(\w+)\s*[;,=)]", s))
+    ocr_fields = set(re.findall(r"\bIOcrService\??\s+(\w+)\s*[;,=)]", s))
+    pats = [r"\.FileAttachments\b", r"\bSet\s*<\s*(?:[\w\.]*\.)?FileAttachment\s*>"]
     for f in fields:
         pats.append(r"\b" + re.escape(f) + r"\s*\.\s*(UploadAsync|UploadBytesAsync|GetByEntityAsync|GetByIdAsync|DeleteAsync)\s*\(")
+    for f in ocr_fields:
+        pats.append(r"\b" + re.escape(f) + r"\s*\.\s*(ScanAsync|DeleteScanAsync|LinkScanToExistingDocumentAsync)\s*\(")
     out = []
     for nm, a, b in methods(s):
         if any(re.search(p, s[a:b]) for p in pats):
@@ -325,24 +437,31 @@ def run_checks(root=ROOT, overrides=None):
     def text_of(rel):
         return overrides[rel] if rel in overrides else read(rel, root)
 
-    for rel, name, gate, use, sinks in TARGETS:
+    for rel, name, gate, use, sinks, args in TARGETS:
         try:
-            msg = check_target(text_of(rel), name, gate, use, sinks)
+            msg = check_target(text_of(rel), name, gate, use, sinks, args)
         except FileNotFoundError:
             msg = f"ไม่พบไฟล์ {rel}"
         if msg:
             problems.append(f"{rel}: {msg}")
-    for rel, name, req in DELEGATES:
+    for rel, rules in PARAM_RULES.items():
+        for msg in check_param_rules(text_of(rel), rules):
+            problems.append(f"{rel}: {msg}")
+    for rel, name, req, raw in DELEGATES:
         try:
-            msg = check_delegate(text_of(rel), name, req)
+            msg = check_delegate(text_of(rel), name, req, raw)
         except FileNotFoundError:
             msg = f"ไม่พบไฟล์ {rel}"
         if msg:
             problems.append(f"{rel}: {msg}")
-    listed = {(r, n) for r, n, *_ in TARGETS} | set(EXEMPT)
+    listed = {(t[0], t[1]) for t in TARGETS} | set(EXEMPT)
+    for rel in PARAM_RULES:
+        for nm, head, _ in actions(text_of(rel)):
+            if any(re.search(pr, head) for pr, _, _ in PARAM_RULES[rel]):
+                listed.add((rel, nm))
     for rel, nm in sorted(discover(root)):
         if (rel, nm) not in listed:
-            problems.append(f"{rel}: {nm} แตะไฟล์แนบแต่ไม่อยู่ใน TARGETS/EXEMPT — "
+            problems.append(f"{rel}: {nm} แตะไฟล์แนบ/สแกนแต่ไม่อยู่ใน TARGETS/กติกา OcrController/EXEMPT — "
                             "ต้องเรียก IAttachmentAccessGate แล้วเพิ่มเข้า TARGETS (หรือ EXEMPT พร้อมเหตุผล)")
     return problems
 
@@ -381,6 +500,26 @@ public class FakeController : ControllerBase
 }
 '''
 
+SYNTH_OCR = '''
+public class OcrLike : ControllerBase
+{
+    private readonly IOcrService _service;
+    [HttpGet("{scanId:guid}/good")]
+    public async Task<IActionResult> Good(Guid companyId, Guid scanId)
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ดู", write: false);
+        if (deny != null) return deny;
+        return Ok();
+    }
+
+    [HttpPost("{scanId:guid}/bad")]
+    public async Task<IActionResult> NewActionWithoutGate(Guid companyId, Guid scanId)
+        => Ok(await _service.MatchContactAsync(companyId, scanId, Guid.Empty));
+
+    private async Task<IActionResult> Helper(Guid companyId, Guid scanId) => Ok();
+}
+'''
+
 
 def self_test(root=ROOT):
     ok = True
@@ -392,51 +531,94 @@ def self_test(root=ROOT):
             ok = False
 
     # 1. ถอดการเรียกด่านออกจากไฟล์จริงทีละ target ⇒ ต้องฟ้อง target นั้น
-    for rel, name, gate, use, sinks in TARGETS:
+    for rel, name, gate, use, sinks, args in TARGETS:
         mutated = _remove_gate_statement(read(rel, root), name, gate)
         expect(mutated is not None, f"หาประโยคด่านใน {rel}:{name} ไม่เจอ (สร้าง mutation ไม่ได้)")
         if mutated is None:
             continue
-        msg = check_target(mutated, name, gate, use, sinks)
-        expect(msg is not None, f"ถอดด่านจาก {rel}:{name} แล้วไม่ฟ้อง")
+        expect(check_target(mutated, name, gate, use, sinks, args) is not None, f"ถอดด่านจาก {rel}:{name} แล้วไม่ฟ้อง")
+    # 1b. ถอด ScanGateAsync ออกจาก action จริงใน OcrController ทีละตัว ⇒ กติกาเชิงโครงสร้างต้องฟ้อง
+    ocr_text = read(OCR, root)
+    scan_actions = [nm for nm, head, _ in actions(ocr_text) if re.search(r"\bGuid\s+scanId\b", head)]
+    expect(len(scan_actions) >= 20, f"หา action ที่รับ scanId ใน OcrController ได้แค่ {len(scan_actions)} ตัว (parser พัง?)")
+    for nm in scan_actions:
+        mutated = _remove_gate_statement(ocr_text, nm, r"\bScanGateAsync\s*\(")
+        if mutated is None:
+            expect(False, f"{nm}: ไม่พบ ScanGateAsync ให้ถอด")
+            continue
+        expect(any(nm + ":" in p for p in check_param_rules(mutated, PARAM_RULES[OCR])),
+               f"ถอด ScanGateAsync จาก {nm} แล้วกติกา OcrController ไม่ฟ้อง")
 
-    # 2. ชื่อด่านอยู่ในคอมเมนต์/สตริง ≠ เรียกจริง
     gate = r"\.DenyAttachmentAsync\s*\("
     base = SYNTH_OK
-    expect(check_target(base, "Download", gate, DENY_USE, [r"\bPhysicalFile\s*\("]) is None,
-           "ไฟล์ที่ถูกต้อง (มีสตริงปีกกาซ้อน) ถูกฟ้องผิด")
+    sink = [r"\bPhysicalFile\s*\("]
+    expect(check_target(base, "Download", gate, DENY_USE, sink) is None, "ไฟล์ที่ถูกต้อง (มีสตริงปีกกาซ้อน) ถูกฟ้องผิด")
+    # 2. ชื่อด่านอยู่ในคอมเมนต์/สตริง ≠ เรียกจริง
     in_comment = base.replace("        var deny = await gate.DenyAttachmentAsync",
                               "        var deny = (AttachmentDenial?)null; // await gate.DenyAttachmentAsync")
-    expect(check_target(in_comment, "Download", gate, DENY_USE, [r"\bPhysicalFile\s*\("]) is not None,
-           "ด่านที่อยู่ในคอมเมนต์ถูกนับว่าเรียกจริง")
+    expect(check_target(in_comment, "Download", gate, DENY_USE, sink) is not None, "ด่านที่อยู่ในคอมเมนต์ถูกนับว่าเรียกจริง")
     in_string = base.replace('var deny = await gate.DenyAttachmentAsync(companyId, uid, "X", id, AttachmentAccess.Read, "ดู");',
                              'var deny = "await gate.DenyAttachmentAsync(";')
-    expect(check_target(in_string, "Download", gate, DENY_USE, [r"\bPhysicalFile\s*\("]) is not None,
-           "ด่านที่อยู่ในสตริงถูกนับว่าเรียกจริง")
-    # 3. เรียกแล้วทิ้งผล
+    expect(check_target(in_string, "Download", gate, DENY_USE, sink) is not None, "ด่านที่อยู่ในสตริงถูกนับว่าเรียกจริง")
+    # 3. เรียกแล้วทิ้งผล · ใช้ผลแต่ไม่ return (S2-C4)
     unused = base.replace("        if (deny is { } d) return StatusCode(d.Status, d.Message);\n", "")
-    expect(check_target(unused, "Download", gate, DENY_USE, [r"\bPhysicalFile\s*\("]) is not None,
-           "เรียกด่านแล้วไม่ใช้ผล ไม่ถูกฟ้อง")
+    expect(check_target(unused, "Download", gate, DENY_USE, sink) is not None, "เรียกด่านแล้วไม่ใช้ผล ไม่ถูกฟ้อง")
+    no_return = base.replace("if (deny is { } d) return StatusCode(d.Status, d.Message);",
+                             "if (deny is { } d) { Console.WriteLine(d.Message); }")
+    expect(check_target(no_return, "Download", gate, DENY_USE, sink) is not None, "ใช้ผลด่านแต่ไม่ return ไม่ถูกฟ้อง")
     # 4. แตะไฟล์ก่อนเรียกด่าน
     late = base.replace("        var att = await _files.GetByIdAsync(companyId, id);\n", "").replace(
         "        var s = $", "        var att0 = PhysicalFile(\"p\", \"x\");\n        var s = $")
-    expect(check_target(late, "Download", gate, DENY_USE, [r"\bPhysicalFile\s*\("]) is not None,
-           "แตะไฟล์ก่อนเรียกด่าน ไม่ถูกฟ้อง")
-    # 5. ทางเข้าใหม่ที่แตะไฟล์แนบต้องถูกค้นเจอ · เมธอดในคอมเมนต์ไม่นับ
-    touch = attachment_touchers(SYNTH_OK + "\n// public Task X() { _files.GetByIdAsync(a, b); }\n")
-    expect(touch == ["Download"], f"ค้นทางเข้าที่แตะไฟล์แนบผิด: {touch}")
-    # 6. wrapper ที่ไม่ส่งต่อไป service ต้องถูกฟ้อง
-    rel, name, req = DELEGATES[0]
+    expect(check_target(late, "Download", gate, DENY_USE, sink) is not None, "แตะไฟล์ก่อนเรียกด่าน ไม่ถูกฟ้อง")
+    # 5. ห่อด่านไว้ใน if (S2-C4)
+    wrapped = base.replace(
+        '        var deny = await gate.DenyAttachmentAsync(companyId, uid, "X", id, AttachmentAccess.Read, "ดู");\n'
+        '        if (deny is { } d) return StatusCode(d.Status, d.Message);\n',
+        '        if (id == Guid.Empty)\n        {\n'
+        '            var deny = await gate.DenyAttachmentAsync(companyId, uid, "X", id, AttachmentAccess.Read, "ดู");\n'
+        '            if (deny is { } d) return StatusCode(d.Status, d.Message);\n        }\n')
+    expect(check_target(wrapped, "Download", gate, DENY_USE, sink) is not None, "ด่านที่ห่อไว้ใน if ไม่ถูกฟ้อง")
+    # 6. อาร์กิวเมนต์ผิด (ชนิด/ทิศ) บนไฟล์จริง (S2-C4)
+    rel = "Accounting/Controllers/StatutoryRemittanceController.cs"
+    t = next(x for x in TARGETS if x[1] == "UploadReceipt")
+    real = read(rel, root)
+    expect(check_target(real.replace('"StatutoryRemittance", remittanceId, AttachmentAccess.Write',
+                                     '"Document", Guid.Empty, AttachmentAccess.Read'),
+                        t[1], t[2], t[3], t[4], t[5]) is not None,
+           "เรียกด่านด้วยชนิด/ทิศผิด (Document · Guid.Empty · Read) ไม่ถูกฟ้อง")
+    expect(check_target(real.replace("AttachmentAccess.Write, \"แนบใบเสร็จนำส่ง\"", "AttachmentAccess.Read, \"แนบใบเสร็จนำส่ง\""),
+                        t[1], t[2], t[3], t[4], t[5]) is not None, "เรียกด่านทิศอ่านแทนทิศเขียน ไม่ถูกฟ้อง")
+    # 7. กติกา OcrController: action ใหม่ที่รับ scanId โดยไม่มีด่าน (รวม expression-bodied) ต้องถูกฟ้อง · ตัวที่มีด่านไม่ฟ้อง ·
+    #    เมธอด private ที่ไม่มี [Http…] ไม่นับ
+    probs = check_param_rules(SYNTH_OCR, PARAM_RULES[OCR])
+    expect(any("NewActionWithoutGate" in p for p in probs), f"action ใหม่ที่รับ scanId โดยไม่มีด่านไม่ถูกฟ้อง: {probs}")
+    expect(not any("Good:" in p or "Helper" in p for p in probs), f"กติกา OcrController ฟ้องผิด: {probs}")
+    # 8. ค้นทางเข้าใหม่: field nullable · Set<FileAttachment> · IOcrService.ScanAsync — และเมธอดในคอมเมนต์ไม่นับ
+    synth = '''
+public class X : ControllerBase
+{
+    private readonly IFileAttachmentService? _x;
+    private readonly IOcrService _ocr;
+    public async Task<IActionResult> A(Guid c, Guid id) { var f = await _x.GetByIdAsync(c, id); return Ok(); }
+    public async Task<IActionResult> B(Guid c, Guid id) { var f = await _db.Set<FileAttachment>().FindAsync(id); return Ok(); }
+    public async Task<IActionResult> C(Guid c, Guid id) { return Ok(await _ocr.ScanAsync(c, id)); }
+    public async Task<IActionResult> D(Guid c) { return Ok(); }
+}
+// public Task E() { _x.GetByIdAsync(a, b); }
+'''
+    touch = sorted(attachment_touchers(synth))
+    expect(touch == ["A", "B", "C"], f"ค้นทางเข้าที่แตะไฟล์แนบ/สแกนผิด: {touch}")
+    # 9. wrapper ที่ไม่ส่งต่อไป service ต้องถูกฟ้อง
+    rel, name, req, raw = DELEGATES[0]
     broken = read(rel, root).replace("=> _gate.DenyAttachmentAsync(", "=> NotTheGate(")
-    expect(check_delegate(broken, name, req) is not None, "wrapper ที่ไม่ส่งต่อไป IAttachmentAccessGate ไม่ถูกฟ้อง")
+    expect(check_delegate(broken, name, req, raw) is not None, "wrapper ที่ไม่ส่งต่อไป IAttachmentAccessGate ไม่ถูกฟ้อง")
     return ok
 
 
 def main():
     if "--self-test" in sys.argv:
         ok = self_test()
-        print("✅ self-test ผ่าน (ถอดด่านจากไฟล์จริงทุก target=ฟ้อง · คอมเมนต์/สตริง/ทิ้งผล/ด่านมาทีหลัง=ฟ้อง · "
-              "ทางเข้าใหม่ถูกค้นเจอ)" if ok else "❌ self-test ล้ม")
+        print("✅ self-test ผ่าน" if ok else "❌ self-test ล้ม")
         return 0 if ok else 1
     problems = run_checks()
     for p in problems:
@@ -446,8 +628,9 @@ def main():
         print(f"\n❌ attachment_gate_check: พบ {len(problems)} จุด"
               + ("" if ok else " + negative test ล้ม (checker จับบั๊กที่ใส่กลับไม่ได้ = ไม่มีด่าน)"))
         return 1
-    print(f"✅ ทุกทางเข้าไฟล์แนบเรียกด่านกลางจริง ({len(TARGETS)} action · {len(DELEGATES)} ด่านชั้นใน · "
-          f"ยกเว้นพร้อมเหตุผล {len(EXEMPT)}) · negative test ผ่าน")
+    n_scan = len([1 for nm, head, _ in actions(read(OCR)) if re.search(r"\bGuid\s+(scanId|fileAttachmentId|documentId)\b", head)])
+    print(f"✅ ทุกทางเข้าไฟล์แนบ/สแกนเรียกด่านกลางจริง ({len(TARGETS)} target · OcrController {n_scan} action ตามกติกาพารามิเตอร์ · "
+          f"{len(DELEGATES)} ด่านชั้นใน · ยกเว้นพร้อมเหตุผล {len(EXEMPT)}) · negative test ผ่าน")
     return 0
 
 
