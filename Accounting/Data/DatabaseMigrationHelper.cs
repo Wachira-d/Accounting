@@ -3579,6 +3579,9 @@ public static class DatabaseMigrationHelper
 
             // ===== PosOrderItems.RefundedQuantity: POS partial refunds =====
             """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RefundedQuantity" numeric NOT NULL DEFAULT 0;""",
+            // ===== PosOrderItems.CostOfGoodsSold: COGS ที่บิลขายลงไว้จริง (E-01 รอบ 193) =====
+            // NULL = บิลเก่า → คืนเงินกลับตามสูตรขายเดิม (Helpers/PosCogsBooking.LegacyUnitCost) · ไม่ backfill
+            """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "CostOfGoodsSold" numeric NULL;""",
 
             // ===== PosOrders.ClientOrderId: offline-sale idempotency key =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "ClientOrderId" uuid NULL;""",
