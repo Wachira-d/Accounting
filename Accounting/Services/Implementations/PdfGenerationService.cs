@@ -1052,13 +1052,19 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
 
         // slot 2 — external/customer signature captured via the approval flow.
-        var custSig = await _db.DocumentApprovals.AsNoTracking()
-            .Where(a => a.DocumentId == doc.Id
+        // รอบ 193 ฝ่ายค้านรอบสี่ R4-1: พิมพ์เฉพาะลายเซ็นลูกค้าที่ "ยังมีผล" กับเนื้อหาใบนี้ — ตัดสินด้วย
+        // DocumentSignedContent.IsSignatureCurrent ตัวเดียว (ตัวเดียวกับด่านอนุมัติ/ขั้นเซ็นครบ/API) · ใช้ร่วมทั้ง HTML และ QuestPDF
+        // (ทั้งคู่รับ signers จากเมธอดนี้) · ใบที่อนุมัติแล้ว (เนื้อหาล็อก) ยังพิมพ์ลายเซ็นเดิม รวมแถวเก่าที่ไม่มี hash (§H)
+        var custCandidates = await _db.DocumentApprovals.AsNoTracking()
+            .Where(a => a.CompanyId == doc.CompanyId && a.DocumentId == doc.Id
                         && a.SignatureData != null
                         && (a.ApprovalType == "Customer" || a.ApprovalType == "External"))
             .OrderByDescending(a => a.ApprovedAt)
+            .ToListAsync();
+        var custSig = custCandidates
+            .Where(a => Accounting.Helpers.DocumentSignedContent.IsSignatureCurrent(a, doc, doc.Lines))
             .Select(a => new { a.SignatureData, a.ApproverName, a.ApproverTitle })
-            .FirstOrDefaultAsync();
+            .FirstOrDefault();
         if (custSig != null && !string.IsNullOrWhiteSpace(custSig.SignatureData))
         {
             var raw = custSig.SignatureData!.Trim();

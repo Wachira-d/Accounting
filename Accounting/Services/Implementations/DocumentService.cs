@@ -4824,6 +4824,18 @@ public partial class DocumentService : IDocumentService
 
         await EnsureCashSaleStockPolicyAllowsAsync(companyId, doc);   // นโยบาย Block (ERP_REVIEW A-06) — ก่อนออกเลข
 
+        // รอบ 193 ฝ่ายค้านรอบสี่ R4-1: ลายเซ็นลูกค้าที่เซ็นกับ "เนื้อหาก่อนแก้" (hash ไม่ตรง / ไม่มี hash) ไม่นับ — ตัดสินด้วย
+        // DocumentSignedContent.IsSignatureCurrent ตัวเดียว (ตัวเดียวกับ PDF/ขั้นเซ็นครบ/API สถานะเซ็น) · คำนวณก่อนขั้นซ่อมบรรทัดใด ๆ
+        // ข้างล่าง (ซ่อมแล้ว hash เปลี่ยน = ลายเซ็นหลุดทั้งที่เนื้อหาไม่ได้แก้) · ใช้สองที่: (1) ด่านเซ็นครบไม่นับ (2) ตอนอนุมัติ
+        // ลายเซ็นพวกนี้ถูก "แทนที่" (soft-delete + เหตุผล) ⇒ PDF ของใบที่อนุมัติแล้ว (เนื้อหาล็อก) พิมพ์เฉพาะลายเซ็นที่ตรงเนื้อหา
+        var staleCustomerSignatures = (await _db.Set<DocumentApproval>()
+                .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && !a.IsDeleted
+                    && a.Status == ApprovalStatus.Approved)
+                .ToListAsync())
+            .Where(a => !DocumentSignedContent.IsSignatureCurrent(a, doc, doc.Lines))
+            .ToList();
+        var staleCustomerSignatureIds = staleCustomerSignatures.Select(a => a.Id).ToHashSet();
+
         // ── ซ่อมบรรทัดที่เก็บ "ยอดรวม VAT" ลง Amount (ผิด convention) ─────────
         // เอกสารที่ OCR สร้างไว้ก่อน 2026-08-14 เก็บ Line.Amount เป็นยอดรวม VAT
         // ⇒ JE ลง Dr ค่าใช้จ่าย(รวม VAT) + Dr ภาษีซื้อ(VAT ซ้ำ) = เดบิตเกินเครดิต
@@ -5174,10 +5186,17 @@ public partial class DocumentService : IDocumentService
             if (doc.TotalAmount >= threshold)
             {
                 var sigRows = await _db.Set<DocumentApproval>().AsNoTracking()
-                    .Where(a => a.DocumentId == documentId && !a.IsDeleted)
-                    .Select(a => a.Status)
+                    .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && !a.IsDeleted)
+                    .Select(a => new { a.Id, a.Status })
                     .ToListAsync();
-                var fullySigned = sigRows.Count > 0 && sigRows.All(s => s == ApprovalStatus.Approved);
+                // R4-1: ขั้นลูกค้าที่เซ็นกับเนื้อหาก่อนแก้ ไม่นับว่าเซ็นแล้ว
+                var fullySigned = sigRows.Count > 0
+                    && sigRows.All(s => s.Status == ApprovalStatus.Approved && !staleCustomerSignatureIds.Contains(s.Id));
+                if (!fullySigned && sigRows.Any(s => staleCustomerSignatureIds.Contains(s.Id)))
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติตรง ({threshold:N2}) และลายเซ็นลูกค้าในกระบวนการเซ็นไม่นับ: "
+                        + DocumentSignedContent.StaleReason + " — ส่งให้ลูกค้าเซ็นใหม่กับเนื้อหาปัจจุบันก่อน แล้วจึงอนุมัติ",
+                        "SIGN-CUSTOMER-STALE", 422);
                 if (!fullySigned)
                     throw new InvalidOperationException(
                         $"เอกสารยอด {doc.TotalAmount:N2} บาท เกินวงเงินอนุมัติตรง ({threshold:N2}) — " +
@@ -5244,6 +5263,20 @@ public partial class DocumentService : IDocumentService
                     .FirstAsync();
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+
+                // R4-1: หลังอนุมัติเนื้อหาถูกล็อก (IsSignatureCurrent ถือว่าลายเซ็นที่เหลือมีผล) ⇒ ลายเซ็นลูกค้าที่ไม่ตรงเนื้อหาต้องถูก
+                // "แทนที่" ในธุรกรรมเดียวกับการอนุมัติ — ไม่งั้น PDF ของใบที่อนุมัติแล้วพิมพ์ลายเซ็นที่ลูกค้าให้กับเนื้อหาเดิม
+                if (staleCustomerSignatures.Count > 0)
+                {
+                    var nowUtc = DateTime.UtcNow;
+                    foreach (var stale in staleCustomerSignatures)
+                        DocumentSignedContent.Supersede(stale, DocumentSignedContent.StaleReason, nowUtc);
+                    var staleSigs = await _db.Set<DocumentSignature>()
+                        .Where(x => x.CompanyId == companyId && x.DocumentId == documentId && !x.IsDeleted
+                            && staleCustomerSignatureIds.Contains(x.DocumentApprovalId))
+                        .ToListAsync();
+                    foreach (var staleSig in staleSigs) { staleSig.IsDeleted = true; staleSig.UpdatedAt = nowUtc; }
+                }
 
                 // Multi-level approval gate. ถ้า ApprovalRule match doc นี้ →
                 // ต้องผ่าน workflow ก่อน. user ที่ submit direct approve

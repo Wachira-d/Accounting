@@ -237,6 +237,9 @@ public class CrossTenantWorkflowService
             ApprovedAt = DateTime.UtcNow,
             Comments = comment,
             PostApprovalAction = link.LinkType == CrossTenantLinkType.QuotationFlow ? "CreatePO" : null,
+            // รอบ 193 R4-1: ลายเซ็นคู่ค้า (บทบาท Customer) ต้องผูกกับเนื้อหาที่เซ็น — ตัวเดียวกับเส้นลายเซ็นลูกค้า
+            // (ไม่มี hash ⇒ ใบที่ยังเป็นร่างไม่นับลายเซ็นนี้ · ใบที่อนุมัติแล้วไม่กระทบ)
+            SignedContentHash = Accounting.Helpers.DocumentSignedContent.Hash(link.SourceDocument, link.SourceDocument.Lines),
         };
         _db.DocumentApprovals.Add(approval);
 

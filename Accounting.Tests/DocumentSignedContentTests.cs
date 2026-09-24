@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -164,6 +165,138 @@ public class DocumentSignedContentTests
         var a = Quote();
         var b = Quote(); b.Lines[0].AccountId = Guid.NewGuid();
         Assert.Equal(H(a), H(b));
+    }
+
+    // ── รอบสี่ R4-2 (v2): ช่องที่พิมพ์บนใบและลูกค้าเห็น ──
+
+    [Theory]
+    [InlineData("terms")]
+    [InlineData("appendix")]
+    [InlineData("footer")]
+    [InlineData("docdate")]
+    [InlineData("delivery")]
+    [InlineData("bank")]
+    [InlineData("language")]
+    [InlineData("brand")]
+    [InlineData("issuerbranch")]
+    [InlineData("reference")]
+    [InlineData("booking")]
+    [InlineData("depositref")]
+    [InlineData("depositbase")]
+    [InlineData("paymenttype")]
+    public void CustomerVisibleText_ChangedAfterSigning_RequiresNewSignature(string what)
+    {
+        var q = Quote();
+        q.Doc.CustomTermsAndConditions = "รับประกัน 1 ปี";
+        var signed = H(q);
+        switch (what)
+        {
+            case "terms": q.Doc.CustomTermsAndConditions = "ไม่รับประกัน"; break;
+            case "appendix": q.Doc.CustomAppendix = "ขอบเขตงาน: ติดตั้งเท่านั้น"; break;
+            case "footer": q.Doc.CustomFooterNotes = "ราคานี้ไม่รวมค่าขนส่ง"; break;
+            case "docdate": q.Doc.DocumentDate = new DateTime(2026, 9, 30); break;
+            case "delivery": q.Doc.DeliveryDate = new DateTime(2026, 10, 15); break;
+            case "bank": q.Doc.BankAccountId = Guid.NewGuid(); break;
+            case "language": q.Doc.DocumentLanguage = "en"; break;
+            case "brand": q.Doc.BrandId = Guid.NewGuid(); break;
+            case "issuerbranch": q.Doc.IssuerBranchCode = "00002"; break;
+            case "reference": q.Doc.Reference = "PO-778"; break;
+            case "booking": q.Doc.BookingNumber = "RES-12"; break;
+            case "depositref": q.Doc.DepositAppliedRef = "DEP-001"; break;
+            case "depositbase": q.Doc.DepositBaseDeducted = 100m; break;
+            case "paymenttype": q.Doc.PaymentType = PaymentType.Cash; break;
+        }
+        Assert.NotEqual(signed, H(q));
+    }
+
+    [Fact]
+    public void V1Hash_IsLegacy_NotEqualToV2()
+    {
+        var h = H(Quote());
+        Assert.StartsWith("v2:", h);
+        Assert.False(DocumentSignedContent.CanReuseSignature("v1:" + h.Substring(3), h, "SIG", "คุณเอ", "SIG", "คุณเอ"));
+    }
+
+    // ── รอบสี่ R4-1: ตัวตัดสินตัวเดียว IsSignatureCurrent ──
+
+    private static DocumentApproval CustomerSig(string? hash) => new()
+    {
+        ApprovalType = "Customer", ApproverRole = "Customer", Status = ApprovalStatus.Approved,
+        SignatureData = "SIG", ApproverName = "คุณเอ", SignedContentHash = hash,
+    };
+
+    [Fact]
+    public void Draft_EditedAfterSigning_SignatureNotCurrent()
+    {
+        var q = Quote();
+        var sig = CustomerSig(H(q));
+        q.Lines[0].UnitPrice = 1200m; q.Lines[0].Amount = 1200m; q.Doc.SubTotal = 1700m;
+        Assert.False(DocumentSignedContent.IsSignatureCurrent(sig, q.Doc, q.Lines));
+    }
+
+    [Theory]
+    [InlineData(DocumentStatus.Draft)]
+    [InlineData(DocumentStatus.WaitingApproval)]
+    [InlineData(DocumentStatus.Rejected)]
+    public void NotIssued_LegacyOrV1Signature_NotCurrent(DocumentStatus status)
+    {
+        var q = Quote(); q.Doc.Status = status;
+        Assert.False(DocumentSignedContent.IsSignatureCurrent(CustomerSig(null), q.Doc, q.Lines));
+        Assert.False(DocumentSignedContent.IsSignatureCurrent(CustomerSig("v1:abc"), q.Doc, q.Lines));
+    }
+
+    [Fact]
+    public void Draft_SameContent_SignatureCurrent()
+    {
+        var q = Quote();
+        var sig = CustomerSig(H(q));
+        Assert.True(DocumentSignedContent.IsSignatureCurrent(sig, q.Doc, q.Lines));
+    }
+
+    [Theory]
+    [InlineData(DocumentStatus.Approved)]
+    [InlineData(DocumentStatus.Sent)]
+    [InlineData(DocumentStatus.Paid)]
+    [InlineData(DocumentStatus.Voided)]
+    public void IssuedDocument_LegacySignatureWithoutHash_StillPrints(DocumentStatus status)
+    {
+        // §H: ใบที่อนุมัติไปก่อนรอบนี้ (แถวไม่มี hash) ต้องไม่เสียลายเซ็นบน PDF
+        var q = Quote(); q.Doc.Status = status;
+        Assert.True(DocumentSignedContent.IsSignatureCurrent(CustomerSig(null), q.Doc, q.Lines));
+    }
+
+    [Fact]
+    public void InternalSignature_NotJudgedByContentHash()
+    {
+        var q = Quote();
+        var internalStep = new DocumentApproval
+        {
+            ApprovalType = "Internal", ApproverRole = "Approver", Status = ApprovalStatus.Approved, SignedContentHash = null,
+        };
+        Assert.True(DocumentSignedContent.IsSignatureCurrent(internalStep, q.Doc, q.Lines));
+    }
+
+    [Fact]
+    public void CrossTenantExternalSignature_IsJudgedAsCustomerSignature()
+    {
+        // ลายเซ็นคู่ค้าข้ามบริษัท (ApprovalType External) บนร่างที่ไม่มี hash ⇒ ไม่นับ (อยู่ในกติกาเดียวกับลายเซ็นลูกค้า)
+        var q = Quote();
+        var external = new DocumentApproval { ApprovalType = "External", ApproverRole = "Customer", Status = ApprovalStatus.Approved };
+        Assert.False(DocumentSignedContent.IsSignatureCurrent(external, q.Doc, q.Lines));
+        external.SignedContentHash = H(q);
+        Assert.True(DocumentSignedContent.IsSignatureCurrent(external, q.Doc, q.Lines));
+    }
+
+    [Fact]
+    public void Supersede_SoftDeletesAndKeepsReason()
+    {
+        var a = CustomerSig("v2:x"); a.Comments = "ตกลงตามนี้";
+        var now = new DateTime(2026, 9, 24, 3, 0, 0, DateTimeKind.Utc);
+        DocumentSignedContent.Supersede(a, DocumentSignedContent.StaleReason, now);
+        Assert.True(a.IsDeleted);
+        Assert.Equal(now, a.UpdatedAt);
+        Assert.StartsWith("ตกลงตามนี้", a.Comments);
+        Assert.Contains(DocumentSignedContent.StaleReason, a.Comments);
     }
 
     [Fact]

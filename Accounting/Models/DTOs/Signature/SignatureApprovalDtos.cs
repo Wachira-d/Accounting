@@ -63,7 +63,9 @@ public record DocumentApprovalResponse(
     Guid? ApproverUserId, string? ApproverName, string? ApproverEmail, string? ApproverTitle,
     bool HasSignature,
     DateTime? ApprovedAt, DateTime? RejectedAt, string? Comments,
-    string? PostApprovalAction);
+    string? PostApprovalAction,
+    // รอบ 193 R4-1: มีค่า = ลายเซ็นลูกค้าแถวนี้ไม่นับกับเนื้อหาตอนนี้ (เซ็นกับเนื้อหาก่อนแก้) — ข้อความจาก DocumentSignedContent.StaleReason
+    string? SignatureStaleReason = null);
 
 public record DocumentApprovalDetailResponse(
     Guid Id, Guid DocumentId, string DocumentNumber, string DocumentType,
