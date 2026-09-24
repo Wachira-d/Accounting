@@ -36,6 +36,22 @@ public class ExternalIntegration : TenantEntity
     // Rate limiting
     public int RateLimitPerMinute { get; set; } = 60;
 
+    // ── สิทธิ์ของคีย์ (G2-01 · คำตัดสินเจ้าของข้อ 37 รอบ 193) ──
+    // ตัวตัดสินสิทธิ์ที่บังคับใช้จริงคือ Helpers/IntegrationKeyPolicy.EffectiveScopes
+    // — อย่าอ่านสามช่องนี้ตรง ๆ เพื่อตัดสิน (คีย์รุ่นเก่าในช่วงผ่อนผันได้สิทธิ์เต็ม)
+    /// <summary>อ่านข้อมูลได้ (GET) — คีย์ใหม่ default = true</summary>
+    public bool CanRead { get; set; } = true;
+    /// <summary>เขียนข้อมูลได้ (POST/PUT/PATCH) — คีย์ใหม่ default = false (เจ้าของเลือกเอง)</summary>
+    public bool CanWrite { get; set; }
+    /// <summary>ลบข้อมูลได้ (DELETE) — คีย์ใหม่ default = false · เขียนได้ ≠ ลบได้</summary>
+    public bool CanDelete { get; set; }
+    /// <summary>คีย์ที่ออกก่อนนโยบายสิทธิ์แยก — migration ติดป้ายให้แถวที่มีอยู่ ณ วันเพิ่มคอลัมน์
+    /// · คีย์ที่ออกใหม่เป็น false เสมอ · เจ้าของตั้งสิทธิ์เอง = ย้ายเข้านโยบายใหม่ (false)</summary>
+    public bool IsLegacyKey { get; set; }
+    /// <summary>วันสิ้นสุดช่วงผ่อนผันของคีย์รุ่นเก่า (UTC) — หลังจากนี้ใช้สิทธิ์ที่เก็บไว้ +
+    /// สวมผู้ใช้ได้เฉพาะที่ผูกไว้ · null บนคีย์รุ่นเก่า = ไม่ได้สิทธิ์ผ่อนผัน (fail closed)</summary>
+    public DateTime? LegacyDeprecatesAt { get; set; }
+
     public ICollection<IntegrationSyncLog> SyncLogs { get; set; } = new List<IntegrationSyncLog>();
     public ICollection<IntegrationAccountMapping> AccountMappings { get; set; } = new List<IntegrationAccountMapping>();
     public ICollection<IntegrationUserMapping> UserMappings { get; set; } = new List<IntegrationUserMapping>();
@@ -47,10 +63,14 @@ public class ExternalIntegration : TenantEntity
 /// person who actually performed it on the partner side — and the document's
 /// creator signature reflects that real operator instead of falling back to
 /// the company Owner. The partner sends the operator in the X-Acting-User
-/// header (an email, or any agreed external user id). NextAcc resolves it:
-///   1. an explicit row here (ExternalUserKey → UserId), else
-///   2. a direct email match against a company member,
-///   3. else falls back to the Owner.
+/// header (an email, or any agreed external user id). NextAcc resolves it
+/// via Helpers/IntegrationKeyPolicy.ResolveActingUser (รอบ 193 · G2-01):
+///   1. an explicit row here (ExternalUserKey → UserId) — the ONLY path for
+///      keys issued under the new policy,
+///   2. a direct email match against a company member — legacy keys only,
+///      until ExternalIntegration.LegacyDeprecatesAt (logged + audited each use),
+///   3. else no acting user (identity = the integration; downstream falls back
+///      to the Owner for the creator signature only, not for permissions).
 /// </summary>
 public class IntegrationUserMapping : TenantEntity
 {

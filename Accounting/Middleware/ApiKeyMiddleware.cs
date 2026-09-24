@@ -13,10 +13,12 @@ namespace Accounting.Middleware;
 public class ApiKeyMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly ILogger<ApiKeyMiddleware> _logger;
 
-    public ApiKeyMiddleware(RequestDelegate next)
+    public ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
     }
 
     // ── แคชผลตรวจ BCrypt (ผลตรวจ F-11) ──
@@ -178,10 +180,12 @@ public class ApiKeyMiddleware
     /// <summary>
     /// Fallback path for integration (int_) keys stored in the
     /// ExternalIntegrations table. Mirrors the acc_ key flow: prefix lookup
-    /// → BCrypt hash verify → rate limit → claims/context. Integration keys
-    /// carry no granular CanRead/CanWrite/CanDelete flags (none exist on the
-    /// entity) so they're granted full access within their company — the same
-    /// capability they already have on the /api/integration/* routes.
+    /// → BCrypt hash verify → rate limit → claims/context.
+    ///
+    /// <para>⚠️ รอบ 193 (G2-01 · คำตัดสินเจ้าของข้อ 37): เดิมคีย์ชนิดนี้ได้
+    /// <c>ApiKeyCanRead/Write/Delete = true</c> <b>ตายตัว</b> ⇒ <c>ApiKeyScopeFilter</c> เป็น no-op ·
+    /// ตอนนี้อ่านสิทธิ์จากคอลัมน์ของคีย์ผ่าน <c>IntegrationKeyPolicy.EffectiveScopes</c> (คีย์รุ่นเก่าได้สิทธิ์เต็ม
+    /// จนถึง <c>LegacyDeprecatesAt</c> · คีย์ใหม่ได้ตามที่เจ้าของเลือก ค่าเริ่มต้นอ่านอย่างเดียว)</para>
     /// This helper fully owns the response on failure: it writes the 401 when
     /// no integration matches, or a 429 when the per-key rate limit is hit.
     /// Returns true only when authentication succeeded and the request should
@@ -195,7 +199,8 @@ public class ApiKeyMiddleware
         // IntegrationService.ValidateApiKeyAsync).
         var candidates = await db.Set<Models.Entities.ExternalIntegration>()
             .Where(i => i.ApiKeyPrefix == keyPrefix && i.IsActive && !i.IsDeleted)
-            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash, i.RateLimitPerMinute })
+            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash, i.RateLimitPerMinute,
+                i.CanRead, i.CanWrite, i.CanDelete, i.IsLegacyKey, i.LegacyDeprecatesAt })
             .ToListAsync();
 
         // ⚠️ ที่มา (ผลตรวจทีม A · SYSTEM_AUDIT_2026-09-07.md A-05): เส้นนี้เรียก
@@ -219,15 +224,29 @@ public class ApiKeyMiddleware
         if (!EnforceRateLimit(context, match.Id, match.RateLimitPerMinute))
             return false;  // 429 already written
 
+        var nowUtc = DateTime.UtcNow;
+        var legacyActive = Helpers.IntegrationKeyPolicy.IsLegacyPrivilegeActive(
+            match.IsLegacyKey, match.LegacyDeprecatesAt, nowUtc);
+        var scopes = Helpers.IntegrationKeyPolicy.EffectiveScopes(
+            match.IsLegacyKey, match.LegacyDeprecatesAt,
+            new Helpers.IntegrationKeyScopes(match.CanRead, match.CanWrite, match.CanDelete), nowUtc);
+
         // ── Operator attribution ────────────────────────────────────────
-        // The partner can name the real operator in the X-Acting-User header
-        // (their user's email, or any external id we've mapped). We resolve it
-        // to a genuine NextAcc user so the document's CreatedBy / creator
-        // signature reflects who actually did the work — instead of the
-        // company Owner fallback. When unresolved, NameIdentifier stays the
-        // IntegrationId and downstream falls back to Owner as before.
-        var actingUserId = await ResolveActingUserAsync(db, match.CompanyId, match.Id,
-            FirstHeader(context, "X-Acting-User", "X-Operator-Email", "X-Operator"));
+        // The partner can name the real operator in the X-Acting-User header.
+        // รอบ 193 (G2-01): attribution เคยกลายเป็น authorization — คีย์ส่งอีเมลเจ้าของมา
+        // แล้วได้สิทธิ์เจ้าของ ⇒ ตอนนี้สวมได้เฉพาะผู้ใช้ที่เจ้าของผูกไว้ใน IntegrationUserMapping
+        // · เส้น email match เหลือเฉพาะคีย์รุ่นเก่าในช่วงผ่อนผัน และ log + audit ทุกครั้งที่ใช้
+        // When unresolved, NameIdentifier stays the IntegrationId (not a member
+        // ⇒ permission-gated endpoints deny; creator signature falls back to Owner).
+        var actingKey = FirstHeader(context, "X-Acting-User", "X-Operator-Email", "X-Operator");
+        var acting = await ResolveActingUserAsync(db, match.CompanyId, match.Id, actingKey, legacyActive);
+        var actingUserId = acting.UserId;
+        if (acting.Path != Helpers.ActingUserPath.None)
+            context.Response.Headers["X-Acting-User-Resolved"] =
+                Helpers.IntegrationKeyPolicy.ResolvedHeaderValue(acting.Path);
+        if (acting.Path == Helpers.ActingUserPath.LegacyEmailMatch && actingUserId.HasValue)
+            await RecordLegacyEmailMatchAsync(context, db, match.CompanyId, match.Id,
+                actingUserId.Value, match.LegacyDeprecatesAt);
 
         var nameId = actingUserId?.ToString() ?? match.Id.ToString();
         var claims = new List<Claim>
@@ -242,12 +261,54 @@ public class ApiKeyMiddleware
 
         context.Items["CompanyId"] = match.CompanyId;
         context.Items["IntegrationId"] = match.Id;
-        context.Items["ApiKeyCanRead"] = true;
-        context.Items["ApiKeyCanWrite"] = true;
-        context.Items["ApiKeyCanDelete"] = true;
+        // สิทธิ์จริงของคีย์ (ไม่ใช่ true ตายตัว) — ApiKeyScopeFilter อ่านสามค่านี้ (G2-01)
+        context.Items["ApiKeyCanRead"] = scopes.CanRead;
+        context.Items["ApiKeyCanWrite"] = scopes.CanWrite;
+        context.Items["ApiKeyCanDelete"] = scopes.CanDelete;
         context.Items["IsApiKeyAuth"] = true;
 
         return true;
+    }
+
+    /// <summary>ร่องรอยทุกครั้งที่คีย์รุ่นเก่าใช้เส้น "สวมผู้ใช้ด้วยอีเมล" (คำตัดสินเจ้าของข้อ 37) — warning
+    /// ใน log + แถว AuditLog (hash chain คำนวณที่ SaveChanges) · audit ล้มต้อง<b>ไม่</b>ทำ request ล้ม
+    /// (ไม่ใช่เส้นเงิน) แต่ต้องถอดแถวที่ค้างออกจาก context ไม่งั้น SaveChanges ของงานจริงจะล้มตาม</summary>
+    private async Task RecordLegacyEmailMatchAsync(HttpContext context, AccountingDbContext db,
+        Guid companyId, Guid integrationId, Guid actingUserId, DateTime? deprecatesAt)
+    {
+        _logger.LogWarning(
+            "[G2-01] คีย์ integration รุ่นเก่า {IntegrationId} (บริษัท {CompanyId}) สวมผู้ใช้ {UserId} ด้วยการจับคู่อีเมล — "
+            + "เส้นนี้จะปิดเมื่อ {DeprecatesAt} · ให้เจ้าของผูกผู้ใช้ในหน้าเชื่อมต่อระบบ",
+            integrationId, companyId, actingUserId, deprecatesAt);
+
+        var row = new Models.Entities.AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actingUserId,
+            Action = AuditAction.ApiAccess,
+            EntityType = "IntegrationActingUser",
+            EntityId = integrationId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                path = Helpers.IntegrationKeyPolicy.ResolvedHeaderValue(Helpers.ActingUserPath.LegacyEmailMatch),
+                integrationId,
+                legacyDeprecatesAt = deprecatesAt,
+                method = context.Request.Method,
+                requestPath = context.Request.Path.Value,
+            }),
+            IpAddress = context.Connection.RemoteIpAddress?.ToString(),
+        };
+        db.AuditLogs.Add(row);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            db.Entry(row).State = EntityState.Detached;
+            _logger.LogError(ex,
+                "[G2-01] บันทึก AuditLog ของการสวมผู้ใช้ด้วยอีเมล (integration {IntegrationId}) ไม่สำเร็จ", integrationId);
+        }
     }
 
     /// <summary>First non-empty value among the given header names.</summary>
@@ -262,21 +323,23 @@ public class ApiKeyMiddleware
     }
 
     /// <summary>Resolve the partner-supplied operator key (X-Acting-User) to a
-    /// real NextAcc user that belongs to the company. Order:
-    ///   1. an explicit IntegrationUserMapping row (ExternalUserKey → UserId),
-    ///   2. a direct email match against a company member,
-    ///   3. null (caller keeps the IntegrationId → Owner fallback downstream).
-    /// Always verifies the resolved user is an active member of the company so
-    /// a partner can't attribute actions to an unrelated account.</summary>
-    private static async Task<Guid?> ResolveActingUserAsync(
-        AccountingDbContext db, Guid companyId, Guid integrationId, string? actingKey)
+    /// real NextAcc user that belongs to the company. ลำดับและกติกาตัดสินที่
+    /// <c>Helpers/IntegrationKeyPolicy.ResolveActingUser</c> ตัวเดียว (G2-01):
+    ///   1. แถว IntegrationUserMapping ที่เจ้าของผูกไว้ (ต้องยังเป็นสมาชิก),
+    ///   2. email match — <b>เฉพาะคีย์รุ่นเก่าในช่วงผ่อนผัน</b>,
+    ///   3. ไม่สวมใคร.
+    /// เมธอดนี้ทำแค่ query หลักฐาน · ไม่ตัดสินเอง.</summary>
+    private static async Task<Helpers.ActingUserDecision> ResolveActingUserAsync(
+        AccountingDbContext db, Guid companyId, Guid integrationId, string? actingKey, bool legacyActive)
     {
-        if (string.IsNullOrWhiteSpace(actingKey)) return null;
+        if (string.IsNullOrWhiteSpace(actingKey))
+            return Helpers.IntegrationKeyPolicy.ResolveActingUser(false, null, legacyActive, null);
         var key = actingKey.Trim();
 
         // 1) Explicit mapping configured in NextAcc for this integration.
+        Guid? mappedMember = null;
         var mapped = await db.Set<Models.Entities.IntegrationUserMapping>()
-            .Where(m => m.IntegrationId == integrationId && !m.IsDeleted
+            .Where(m => m.IntegrationId == integrationId && m.CompanyId == companyId && !m.IsDeleted
                         && m.ExternalUserKey.ToLower() == key.ToLower())
             .Select(m => (Guid?)m.UserId)
             .FirstOrDefaultAsync();
@@ -284,20 +347,21 @@ public class ApiKeyMiddleware
         {
             var isMember = await db.Set<Models.Entities.CompanyUser>()
                 .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == mapped.Value);
-            if (isMember) return mapped.Value;
+            if (isMember) mappedMember = mapped.Value;
         }
 
-        // 2) Direct email match against a company member.
-        if (key.Contains('@'))
+        // 2) Direct email match against a company member — legacy keys only.
+        Guid? emailMember = null;
+        if (Helpers.IntegrationKeyPolicy.ShouldTryLegacyEmailMatch(legacyActive, mappedMember, key))
         {
-            var userId = await (
+            emailMember = await (
                 from u in db.Set<Models.Entities.User>()
                 join cu in db.Set<Models.Entities.CompanyUser>() on u.Id equals cu.UserId
                 where cu.CompanyId == companyId && u.Email.ToLower() == key.ToLower()
                 select (Guid?)u.Id).FirstOrDefaultAsync();
-            if (userId.HasValue) return userId;
         }
-        return null;
+
+        return Helpers.IntegrationKeyPolicy.ResolveActingUser(true, mappedMember, legacyActive, emailMember);
     }
 
     /// <summary>

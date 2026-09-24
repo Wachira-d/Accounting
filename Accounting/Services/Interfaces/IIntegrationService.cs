@@ -51,7 +51,9 @@ public interface IIntegrationService
     Task<List<OutboundAccountBalanceResponse>> GetAccountBalancesForExternalAsync(Guid companyId);
 
     // Authentication
-    Task<(Guid CompanyId, Guid IntegrationId)?> ValidateApiKeyAsync(string apiKey);
+    /// <summary>ตรวจคีย์ int_ ของทางเข้า X-Integration-Key — คืนสิทธิ์ที่บังคับใช้จริงด้วย
+    /// (<c>IntegrationKeyPolicy.EffectiveScopes</c>) เพื่อให้ทางเข้านี้เดินด่านเดียวกับ X-Api-Key (G2-01)</summary>
+    Task<(Guid CompanyId, Guid IntegrationId, Accounting.Helpers.IntegrationKeyScopes Scopes)?> ValidateApiKeyAsync(string apiKey);
 
     // Revenue Reports
     Task<List<RevenueByCategoryItem>> GetRevenueByCategoryAsync(Guid companyId, DateTime? from, DateTime? to);

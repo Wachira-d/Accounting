@@ -4,23 +4,34 @@ namespace Accounting.Models.DTOs.Integration;
 
 // ===== Integration Configuration =====
 
+/// <remarks>สิทธิ์ของคีย์ (รอบ 193 · G2-01): <c>CanRead/CanWrite/CanDelete</c> = ค่าที่เก็บ (สิ่งที่เจ้าของตั้ง) ·
+/// <c>Effective*</c> = สิ่งที่บังคับใช้จริงตอนนี้ (คีย์รุ่นเก่าในช่วงผ่อนผันได้สิทธิ์เต็ม) — เซิร์ฟเวอร์คิดจาก
+/// <c>Helpers/IntegrationKeyPolicy</c> หน้าเว็บแสดงอย่างเดียว</remarks>
 public record IntegrationResponse(
     Guid Id, string SystemName, string SystemType, string? SystemVersion, string? BaseUrl,
     string ApiKeyPrefix, bool IsActive, DateTime? LastSyncAt, int TotalSyncCount, int ErrorCount,
-    int RateLimitPerMinute, string? WebhookUrl, bool WebhookEnabled, DateTime CreatedAt);
+    int RateLimitPerMinute, string? WebhookUrl, bool WebhookEnabled, DateTime CreatedAt,
+    bool CanRead = true, bool CanWrite = false, bool CanDelete = false,
+    bool IsLegacyKey = false, DateTime? LegacyDeprecatesAt = null, bool LegacyPrivilegeActive = false,
+    bool EffectiveCanRead = true, bool EffectiveCanWrite = false, bool EffectiveCanDelete = false);
 
+/// <remarks>สิทธิ์ที่ไม่ได้ส่งมา = อ่านอย่างเดียว (<c>IntegrationKeyPolicy.ScopesForNewKey</c>) — ห้ามตีความเป็น "ให้ทั้งหมด"</remarks>
 public record CreateIntegrationRequest(
     string SystemName, string SystemType, string? SystemVersion, string? BaseUrl,
     int RateLimitPerMinute = 60,
-    string? WebhookUrl = null, bool WebhookEnabled = false);
+    string? WebhookUrl = null, bool WebhookEnabled = false,
+    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null);
 
 public record IntegrationCreatedResponse(
     Guid Id, string SystemName, string ApiKey, string ApiKeyPrefix, string? SecretKey, DateTime CreatedAt);
 
+/// <remarks>ส่งสิทธิ์มาอย่างน้อยหนึ่งช่อง = เจ้าของเลือกสิทธิ์เองแล้ว ⇒ คีย์รุ่นเก่าย้ายเข้านโยบายใหม่ทันที ·
+/// ไม่ส่งเลย (null ทั้งสาม) = ไม่แตะสิทธิ์ (เช่น แก้ชื่อ/เปิดปิด ต้องไม่ทำให้คีย์รุ่นเก่าเสียสิทธิ์เงียบ ๆ)</remarks>
 public record UpdateIntegrationRequest(
     string? SystemName, string? SystemType, string? SystemVersion, string? BaseUrl,
     bool? IsActive, int? RateLimitPerMinute,
-    string? WebhookUrl, bool? WebhookEnabled);
+    string? WebhookUrl, bool? WebhookEnabled,
+    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null);
 
 // ===== Account Mapping =====
 

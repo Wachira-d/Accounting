@@ -28,7 +28,9 @@ namespace Accounting.Services.Implementations.Tax;
 /// </summary>
 public interface ITaxComplianceChecker
 {
-    Task<TaxComplianceReport> CheckAsync(Guid taxReportId, CancellationToken ct = default);
+    /// <summary>ตรวจรายงานภาษีของ <paramref name="companyId"/> — รายงานของบริษัทอื่นตอบ "ไม่พบ"
+    /// (ผลตรวจ B-03 · รอบ 193: เดิมไม่มี companyId ⇒ อ่านยอด VAT/WHT ข้ามบริษัทได้ด้วย reportId)</summary>
+    Task<TaxComplianceReport> CheckAsync(Guid companyId, Guid taxReportId, CancellationToken ct = default);
 }
 
 public sealed record TaxComplianceFinding(
@@ -51,13 +53,15 @@ public class TaxComplianceChecker : ITaxComplianceChecker
 
     public TaxComplianceChecker(AccountingDbContext db) { _db = db; }
 
-    public async Task<TaxComplianceReport> CheckAsync(Guid taxReportId, CancellationToken ct = default)
+    public async Task<TaxComplianceReport> CheckAsync(Guid companyId, Guid taxReportId, CancellationToken ct = default)
     {
+        // กฎ M: กรอง CompanyId ที่แหล่ง (global query filter กรองแค่ IsDeleted) — ผ่านตัวกรองกลาง
+        // Helpers/TaxReportTenantScope ที่มีเทสต์ทั้งสองทิศ
         var report = await _db.TaxReports.AsNoTracking()
             .Include(r => r.Lines)
-            .FirstOrDefaultAsync(r => r.Id == taxReportId, ct);
+            .FirstOrDefaultAsync(Accounting.Helpers.TaxReportTenantScope.ById(companyId, taxReportId), ct);
         if (report == null)
-            throw new InvalidOperationException("TaxReport not found.");
+            throw new KeyNotFoundException("ไม่พบรายงานภาษีนี้ในบริษัทที่เลือก");
 
         var findings = new List<TaxComplianceFinding>();
 

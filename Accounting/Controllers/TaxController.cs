@@ -1,3 +1,4 @@
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Enums;
@@ -15,11 +16,38 @@ public class TaxController : ControllerBase
 {
     private readonly ITaxService _taxService;
     private readonly IPdfGenerationService _pdfService;
+    private readonly IPermissionService _permissions;
 
-    public TaxController(ITaxService taxService, IPdfGenerationService pdfService)
+    public TaxController(ITaxService taxService, IPdfGenerationService pdfService, IPermissionService permissions)
     {
         _taxService = taxService;
         _pdfService = pdfService;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// **ด่านสิทธิ์ของทุก endpoint ที่เขียนข้อมูลภาษี** (ผลตรวจ B-04 · รอบ 193)
+    ///
+    /// <para>เดิมคอนโทรลเลอร์นี้มีแค่ <c>[Authorize]</c> ระดับคลาส (= "ล็อกอินไหม") ⇒ สมาชิกคนไหนก็ยื่นแบบ ·
+    /// บันทึกเลขรับ (ล็อกงวดทั้งเดือน) · ปลดล็อกการยื่น · ลบรายงาน · Reject &amp; Reverse (สร้าง JE) ได้ ·
+    /// ใช้คีย์ที่มีอยู่แล้วเท่านั้น (ไม่สร้างคีย์ใหม่): <see cref="PermissionKeys.TaxFile"/> = งานเตรียม/ยื่นแบบ ·
+    /// <see cref="PermissionKeys.TaxExport"/> = ไฟล์ e-Filing · งานย้อนผลการยื่น (ปลดล็อก · Reject &amp; Reverse)
+    /// ต้องมี<b>ทั้ง</b> TaxFile และ <see cref="PermissionKeys.JournalManage"/> = ระดับเจ้าของ/นักบัญชี
+    /// (ทั้งสองบทบาทได้สองคีย์นี้อัตโนมัติใน <c>PermissionService</c>)</para>
+    ///
+    /// <para>ข้อความ 403 ชี้คีย์ที่ขาดจริง (ตรวจสาเหตุนั้นจริง ไม่เดา)</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireTaxAsync(Guid companyId, string verb, params string[] permKeys)
+    {
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User);
+        foreach (var key in permKeys)
+        {
+            if (await _permissions.HasPermissionAsync(companyId, userId, key)) continue;
+            var name = key.Replace("perm:", "");
+            return StatusCode(403, new ApiResponse<object>(false, new { requiredPermission = name },
+                $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \u201c{name}\u201d จากเจ้าของบริษัทก่อน"));
+        }
+        return null;
     }
 
     [HttpGet]
@@ -40,6 +68,7 @@ public class TaxController : ControllerBase
     [HttpPost("generate")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> GenerateTaxReport(Guid companyId, [FromBody] CreateTaxReportRequest request)
     {
+        if (await RequireTaxAsync(companyId, "สร้างรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.GenerateTaxReportAsync(companyId, request);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีสำเร็จ"));
     }
@@ -53,6 +82,7 @@ public class TaxController : ControllerBase
     [HttpPost("{reportId:guid}/file")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> FileTaxReport(Guid companyId, Guid reportId)
     {
+        if (await RequireTaxAsync(companyId, "บันทึกการยื่นแบบ", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.FileTaxReportAsync(companyId, reportId);
         var message = result.FilingPeriodLocked
             ? $"บันทึกการยื่นพร้อมเลขรับ {result.FilingNumber} แล้ว — งวดนี้ถูกล็อก"
@@ -64,6 +94,7 @@ public class TaxController : ControllerBase
     [HttpPut("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> UpdateTaxReport(Guid companyId, Guid reportId, [FromBody] UpdateTaxReportRequest request)
     {
+        if (await RequireTaxAsync(companyId, "แก้รายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.UpdateTaxReportAsync(companyId, reportId, request);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "แก้ไขรายงานภาษีสำเร็จ"));
     }
@@ -71,6 +102,7 @@ public class TaxController : ControllerBase
     [HttpPost("{reportId:guid}/regenerate")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RegenerateTaxReport(Guid companyId, Guid reportId)
     {
+        if (await RequireTaxAsync(companyId, "สร้างรายงานภาษีใหม่", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.RegenerateTaxReportAsync(companyId, reportId);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีใหม่สำเร็จ"));
     }
@@ -90,6 +122,7 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> PullDocument(
         Guid companyId, Guid reportId, [FromBody] PullDocumentRequest request)
     {
+        if (await RequireTaxAsync(companyId, "ดึงเอกสารเข้ารายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         try
         {
             var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId);
@@ -133,6 +166,7 @@ public class TaxController : ControllerBase
     [HttpDelete("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> DeleteTaxReport(Guid companyId, Guid reportId)
     {
+        if (await RequireTaxAsync(companyId, "ลบรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         await _taxService.DeleteTaxReportAsync(companyId, reportId);
         return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
     }
@@ -140,6 +174,7 @@ public class TaxController : ControllerBase
     [HttpPost("auto-refresh")]
     public async Task<ActionResult<ApiResponse<object>>> AutoRefresh(Guid companyId, [FromQuery] int months = 2)
     {
+        if (await RequireTaxAsync(companyId, "คำนวณรายงานภาษีร่างใหม่", PermissionKeys.TaxFile) is { } deny) return deny;
         var count = await _taxService.AutoRefreshReportsAsync(companyId, months);
         return Ok(new ApiResponse<object>(true, new { refreshed = count }));
     }
@@ -159,6 +194,7 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> DeferInputVat(
         Guid companyId, [FromBody] DeferInputVatRequest request)
     {
+        if (await RequireTaxAsync(companyId, "เลื่อนภาษีซื้อไปงวดอื่น", PermissionKeys.TaxFile) is { } deny) return deny;
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var d = await _taxService.DeferInputVatAsync(companyId, request.DocumentId, request.DeferredToPeriod, request.Reason, userId);
         return Ok(new ApiResponse<object>(true,
@@ -172,6 +208,7 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> UnlockTaxFiling(
         Guid companyId, Guid reportId, [FromBody] UnlockTaxFilingRequest request)
     {
+        if (await RequireTaxAsync(companyId, "ปลดล็อกการยื่นภาษี", PermissionKeys.TaxFile, PermissionKeys.JournalManage) is { } deny) return deny;
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         await _taxService.UnlockTaxFilingAsync(companyId, reportId, userId, request.Reason);
         return Ok(new ApiResponse<string>(true, null, "ปลดล็อกการยื่นภาษีสำเร็จ"));
@@ -188,6 +225,7 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RejectAndReverse(
         Guid companyId, Guid reportId, [FromBody] RejectTaxReportRequest request)
     {
+        if (await RequireTaxAsync(companyId, "Reject & Reverse รายงานภาษี", PermissionKeys.TaxFile, PermissionKeys.JournalManage) is { } deny) return deny;
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _taxService.RejectAndReverseTaxReportAsync(companyId, reportId, request.Reason, request.NonClaimableVatAccountId, userId);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "Reject + Reverse สำเร็จ — สร้าง reversal JE แล้ว"));
@@ -205,6 +243,7 @@ public class TaxController : ControllerBase
         Guid companyId, string formType, [FromQuery] int year, [FromQuery] int month,
         [FromServices] Data.AccountingDbContext db, CancellationToken ct = default)
     {
+        if (await RequireTaxAsync(companyId, "สร้างไฟล์ยื่นแบบ e-Filing", PermissionKeys.TaxExport) is { } deny) return deny;
         var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var export = await _taxService.GenerateEFilingAsync(companyId, formType, year, month, userId);
 
@@ -252,6 +291,7 @@ public class TaxController : ControllerBase
         [FromServices] Data.AccountingDbContext db,
         CancellationToken ct)
     {
+        if (await RequireTaxAsync(companyId, "บันทึกเลขรับจากกรมสรรพากร", PermissionKeys.TaxFile) is { } deny) return deny;
         var report = await db.TaxReports.FirstOrDefaultAsync(
             r => r.Id == reportId && r.CompanyId == companyId, ct);
         if (report == null) return NotFound(new ApiResponse<object>(false, null, "TaxReport not found"));
@@ -318,7 +358,9 @@ public class TaxController : ControllerBase
         [FromServices] Services.Implementations.Tax.ITaxComplianceChecker checker,
         CancellationToken ct)
     {
-        var report = await checker.CheckAsync(reportId, ct);
+        // B-03 (รอบ 193): ส่ง companyId จาก route ลงไปกรองที่แหล่ง — เดิม CheckAsync ไม่มี companyId
+        // ⇒ ใส่ reportId ของบริษัทอื่นแล้วได้ยอด VAT/WHT ของเขากลับมาในข้อความ finding
+        var report = await checker.CheckAsync(companyId, reportId, ct);
         return Ok(new ApiResponse<Services.Implementations.Tax.TaxComplianceReport>(true, report));
     }
 }

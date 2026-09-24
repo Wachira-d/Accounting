@@ -1,9 +1,13 @@
+using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Integration;
+using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Ocr;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
@@ -18,11 +22,56 @@ public class IntegrationController : ControllerBase
 {
     private readonly IIntegrationService _service;
     private readonly IFileAttachmentService _attachmentService;
+    private readonly Data.AccountingDbContext _db;
+    private readonly IPermissionService _permissions;
 
-    public IntegrationController(IIntegrationService service, IFileAttachmentService attachmentService)
+    public IntegrationController(IIntegrationService service, IFileAttachmentService attachmentService,
+        Data.AccountingDbContext db, IPermissionService permissions)
     {
         _service = service;
         _attachmentService = attachmentService;
+        _db = db;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// **ด่าน "เจ้าของเท่านั้น" ของการออก/แก้/ลบ/สร้างคีย์ใหม่ + การผูกผู้ใช้ที่คีย์สวมได้** (G2-01 · คำตัดสินข้อ 37)
+    ///
+    /// <para>การออกคีย์คือ "การให้สิทธิ์" — เดิม endpoint มีแค่ <c>[Authorize]</c> (= ล็อกอินไหม) ⇒ พนักงาน
+    /// "ดูอย่างเดียว" ออกคีย์เขียน/ลบได้ทุกอย่าง แล้วสวมเป็นเจ้าของด้วย <c>X-Acting-User</c></para>
+    ///
+    /// <para>ใช้กลไกเดิมของระบบ: <c>CompanyUser.Role</c> = Owner/SystemAdmin (แบบเดียวกับ
+    /// <c>OwnerConfigController</c>/<c>PermissionCatalogController</c>) · <b>ปฏิเสธเสมอเมื่อเข้ามาด้วย API key</b> —
+    /// คีย์ออกคีย์เองไม่ได้ (ไม่งั้นคีย์รุ่นเก่าที่สวมเป็นเจ้าของด้วยอีเมลจะออกคีย์ใหม่สิทธิ์เต็มให้ตัวเองได้)</para>
+    /// </summary>
+    private async Task<ActionResult?> RequireOwnerAsync(Guid companyId, string verb)
+    {
+        if (HttpContext.Items.TryGetValue("IsApiKeyAuth", out var ak) && ak is true)
+            return StatusCode(403, new ApiResponse<object>(false, null,
+                $"{verb}ด้วย API key ไม่ได้ — ต้องเข้าสู่ระบบเป็นเจ้าของบริษัท"));
+
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var role = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => (UserRole?)cu.Role)
+            .FirstOrDefaultAsync();
+        if (role == UserRole.Owner || role == UserRole.SystemAdmin) return null;
+
+        return StatusCode(403, new ApiResponse<object>(false, new { requiredRole = "Owner" },
+            $"ไม่มีสิทธิ์{verb} — การออก/แก้/ลบคีย์เชื่อมต่อระบบและการผูกผู้ใช้ที่คีย์สวมได้ ทำได้เฉพาะเจ้าของบริษัท"));
+    }
+
+    /// <summary>ด่านของ Account Mapping (ผูก category ภายนอก → ผังบัญชี) — ไม่ใช่การให้สิทธิ์คีย์
+    /// จึงใช้คีย์สิทธิ์ที่มีอยู่แล้ว <see cref="PermissionKeys.CompanySettingsEdit"/> (Owner ผ่านอัตโนมัติ)</summary>
+    private async Task<ActionResult?> RequireSettingsAsync(Guid companyId, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.CompanySettingsEdit))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = PermissionKeys.CompanySettingsEdit.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \u201c{PermissionKeys.CompanySettingsEdit.Replace("perm:", "")}\u201d จากเจ้าของบริษัทก่อน"));
     }
 
     // ===== Integration Config =====
@@ -37,6 +86,7 @@ public class IntegrationController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<IntegrationCreatedResponse>>> CreateIntegration(Guid companyId, [FromBody] CreateIntegrationRequest request)
     {
+        if (await RequireOwnerAsync(companyId, "ออกคีย์เชื่อมต่อระบบ") is { } deny) return deny;
         var result = await _service.CreateIntegrationAsync(companyId, request);
         return StatusCode(201, new ApiResponse<IntegrationCreatedResponse>(true, result, "สร้าง Integration สำเร็จ (เก็บ API Key ไว้ จะแสดงครั้งเดียว)"));
     }
@@ -44,6 +94,7 @@ public class IntegrationController : ControllerBase
     [HttpPut("{integrationId:guid}")]
     public async Task<ActionResult<ApiResponse<IntegrationResponse>>> UpdateIntegration(Guid companyId, Guid integrationId, [FromBody] UpdateIntegrationRequest request)
     {
+        if (await RequireOwnerAsync(companyId, "แก้คีย์เชื่อมต่อระบบ") is { } deny) return deny;
         var result = await _service.UpdateIntegrationAsync(companyId, integrationId, request);
         return Ok(new ApiResponse<IntegrationResponse>(true, result));
     }
@@ -51,6 +102,7 @@ public class IntegrationController : ControllerBase
     [HttpDelete("{integrationId:guid}")]
     public async Task<IActionResult> DeleteIntegration(Guid companyId, Guid integrationId)
     {
+        if (await RequireOwnerAsync(companyId, "ลบคีย์เชื่อมต่อระบบ") is { } deny) return deny;
         await _service.DeleteIntegrationAsync(companyId, integrationId);
         return NoContent();
     }
@@ -58,6 +110,7 @@ public class IntegrationController : ControllerBase
     [HttpPost("{integrationId:guid}/regenerate-key")]
     public async Task<ActionResult<ApiResponse<IntegrationCreatedResponse>>> RegenerateKey(Guid companyId, Guid integrationId)
     {
+        if (await RequireOwnerAsync(companyId, "สร้างคีย์เชื่อมต่อระบบใหม่") is { } deny) return deny;
         var result = await _service.RegenerateApiKeyAsync(companyId, integrationId);
         return Ok(new ApiResponse<IntegrationCreatedResponse>(true, result, "สร้าง API Key ใหม่สำเร็จ"));
     }
@@ -74,6 +127,7 @@ public class IntegrationController : ControllerBase
     [HttpPost("{integrationId:guid}/mappings")]
     public async Task<ActionResult<ApiResponse<AccountMappingResponse>>> CreateMapping(Guid companyId, Guid integrationId, [FromBody] CreateAccountMappingRequest request)
     {
+        if (await RequireSettingsAsync(companyId, "เพิ่ม Account Mapping") is { } deny) return deny;
         var result = await _service.CreateMappingAsync(companyId, integrationId, request);
         return StatusCode(201, new ApiResponse<AccountMappingResponse>(true, result));
     }
@@ -81,6 +135,7 @@ public class IntegrationController : ControllerBase
     [HttpPut("{integrationId:guid}/mappings/{mappingId:guid}")]
     public async Task<ActionResult<ApiResponse<AccountMappingResponse>>> UpdateMapping(Guid companyId, Guid integrationId, Guid mappingId, [FromBody] UpdateAccountMappingRequest request)
     {
+        if (await RequireSettingsAsync(companyId, "แก้ Account Mapping") is { } deny) return deny;
         var result = await _service.UpdateMappingAsync(companyId, integrationId, mappingId, request);
         return Ok(new ApiResponse<AccountMappingResponse>(true, result));
     }
@@ -88,6 +143,7 @@ public class IntegrationController : ControllerBase
     [HttpDelete("{integrationId:guid}/mappings/{mappingId:guid}")]
     public async Task<IActionResult> DeleteMapping(Guid companyId, Guid integrationId, Guid mappingId)
     {
+        if (await RequireSettingsAsync(companyId, "ลบ Account Mapping") is { } deny) return deny;
         await _service.DeleteMappingAsync(companyId, integrationId, mappingId);
         return NoContent();
     }
@@ -95,8 +151,9 @@ public class IntegrationController : ControllerBase
     // ===== Operator (user) mapping =====
     // Map the partner's operator key (sent in X-Acting-User) → a NextAcc user
     // so integration-created documents carry the real operator's creator
-    // signature. Email keys auto-match against company members without a row
-    // here; this is for non-email external ids.
+    // signature. รอบ 193 (G2-01): แถวที่นี่คือ **ทางเดียว** ที่คีย์ใหม่สวมผู้ใช้ได้
+    // (email match เหลือเฉพาะคีย์รุ่นเก่าในช่วงผ่อนผัน) ⇒ การเขียนแถว = การให้สิทธิ์
+    // ⇒ เจ้าของบริษัทเท่านั้น
 
     public sealed record UserMappingRequest(string ExternalUserKey, Guid UserId, string? ExternalUserName);
 
@@ -118,12 +175,17 @@ public class IntegrationController : ControllerBase
         Guid companyId, Guid integrationId, [FromBody] UserMappingRequest req,
         [FromServices] Data.AccountingDbContext db)
     {
+        if (await RequireOwnerAsync(companyId, "ผูกผู้ใช้ที่คีย์สวมได้") is { } deny) return deny;
         if (string.IsNullOrWhiteSpace(req.ExternalUserKey))
             return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุ ExternalUserKey"));
         // The target user must be a member of this company.
         var isMember = await db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == req.UserId);
         if (!isMember)
             return BadRequest(new ApiResponse<object>(false, null, "ผู้ใช้ที่เลือกไม่ได้เป็นสมาชิกของบริษัทนี้"));
+        // integration ต้องเป็นของบริษัทนี้ (กฎ M) — เดิมรับ integrationId จาก URL โดยไม่ตรวจ
+        var ownsIntegration = await db.ExternalIntegrations.AnyAsync(i => i.Id == integrationId && i.CompanyId == companyId);
+        if (!ownsIntegration)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ Integration"));
 
         var key = req.ExternalUserKey.Trim();
         var existing = await db.IntegrationUserMappings
@@ -151,6 +213,7 @@ public class IntegrationController : ControllerBase
     public async Task<IActionResult> DeleteUserMapping(
         Guid companyId, Guid integrationId, Guid mappingId, [FromServices] Data.AccountingDbContext db)
     {
+        if (await RequireOwnerAsync(companyId, "ลบการผูกผู้ใช้ที่คีย์สวมได้") is { } deny) return deny;
         var row = await db.IntegrationUserMappings
             .FirstOrDefaultAsync(m => m.Id == mappingId && m.CompanyId == companyId && m.IntegrationId == integrationId);
         if (row == null) return NotFound();
@@ -224,7 +287,7 @@ public class IntegrationController : ControllerBase
 [ApiController]
 [Route("api/integration")]
 [AllowAnonymous]
-public class ExternalIntegrationController : ControllerBase
+public class ExternalIntegrationController : ControllerBase, IAsyncActionFilter
 {
     private readonly IIntegrationService _service;
     private readonly IFileAttachmentService _attachmentService;
@@ -233,6 +296,41 @@ public class ExternalIntegrationController : ControllerBase
     {
         _service = service;
         _attachmentService = attachmentService;
+    }
+
+    // ผลตรวจคีย์ของ request นี้ (controller เป็น per-request) — ตรวจครั้งเดียวในฟิลเตอร์ แล้วทุก action
+    // ใช้ซ้ำผ่าน AuthenticateIntegration() ไม่ต้องเสีย BCrypt ซ้ำ
+    private bool _authResolved;
+    private (Guid CompanyId, Guid IntegrationId, IntegrationKeyScopes Scopes)? _auth;
+
+    /// <summary>
+    /// **ด่านสิทธิ์ของคีย์บนทางเข้า X-Integration-Key** (รอบ 193 · G2-01)
+    ///
+    /// <para>ทางเข้านี้เป็น <c>[AllowAnonymous]</c> + ตรวจคีย์เอง จึง<b>ไม่ผ่าน</b> <c>ApiKeyScopeFilter</c>
+    /// (ซึ่งทำงานเฉพาะ X-Api-Key) ⇒ ถ้าไม่มีด่านนี้ คีย์ใหม่ที่เจ้าของตั้ง "อ่านอย่างเดียว" จะยังสร้างใบกำกับ/
+    /// ยกเลิกเอกสาร/กลับรายการ JE ได้ผ่านทางเข้านี้ (R5 "ทางเข้าอื่นไม่เดินด่าน") · method → สิทธิ์ ตัดสินที่
+    /// <c>IntegrationKeyPolicy</c> ตัวเดียวกับ X-Api-Key</para>
+    ///
+    /// <para>ไม่มีคีย์/คีย์ผิด ⇒ ปล่อยให้ action ตอบ 401 แบบเดิม (สัญญากับคู่ค้าไม่เปลี่ยน)</para>
+    /// </summary>
+    [NonAction]
+    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        var auth = await AuthenticateIntegration();
+        if (auth != null && !IntegrationKeyPolicy.Allows(auth.Value.Scopes, Request.Method))
+        {
+            var scope = IntegrationKeyPolicy.RequiredScope(Request.Method);
+            context.Result = new ObjectResult(new
+            {
+                success = false,
+                message = $"API key นี้ไม่มีสิทธิ์{IntegrationKeyPolicy.ScopeLabel(scope)} — "
+                    + "เจ้าของบริษัทแก้สิทธิ์ของคีย์ได้ที่หน้าเชื่อมต่อระบบ",
+                requiredScope = IntegrationKeyPolicy.ScopeName(scope),
+            })
+            { StatusCode = StatusCodes.Status403Forbidden };
+            return;
+        }
+        await next();
     }
 
     // ===== Inbound endpoints (external systems push data TO Next Acc) =====
@@ -520,13 +618,16 @@ public class ExternalIntegrationController : ControllerBase
         return Ok(result);
     }
 
-    private async Task<(Guid CompanyId, Guid IntegrationId)?> AuthenticateIntegration()
+    private async Task<(Guid CompanyId, Guid IntegrationId, IntegrationKeyScopes Scopes)?> AuthenticateIntegration()
     {
+        if (_authResolved) return _auth;
+        _authResolved = true;
+
         var apiKey = Request.Headers["X-Integration-Key"].FirstOrDefault()
             ?? Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");
 
-        if (string.IsNullOrEmpty(apiKey)) return null;
-        return await _service.ValidateApiKeyAsync(apiKey);
+        if (string.IsNullOrEmpty(apiKey)) return _auth = null;
+        return _auth = await _service.ValidateApiKeyAsync(apiKey);
     }
 
     /// <summary>

@@ -55,7 +55,10 @@
         <b>ใช้สร้าง/อนุมัติเอกสารแทนผู้ใช้ (เช่น OCR) ไม่ได้</b><br>
         • <b>acc_</b> = ให้<u>สคริปต์/automation ของคุณเอง</u>เรียก API (เช่น OCR สร้าง-อนุมัติเอกสาร, n8n)
         ผูกกับ user + กำหนดสิทธิ์ละเอียดได้ → จัดการที่
-        <a href="/pages/webhooks.html" style="color:#0369a1;font-weight:600">Webhooks &amp; API → แท็บ API Keys</a>
+        <a href="/pages/webhooks.html" style="color:#0369a1;font-weight:600">Webhooks &amp; API → แท็บ API Keys</a><br>
+        • <b>การออก/แก้/ลบคีย์ int_ และการผูกผู้ใช้ที่คีย์สวมได้ ทำได้เฉพาะเจ้าของบริษัท</b> ·
+        คีย์ใหม่เริ่มที่ <b>อ่านอย่างเดียว</b> (เลือกเพิ่ม เขียน/ลบ เองตอนสร้าง) ·
+        header <code>X-Acting-User</code> ของคีย์ใหม่สวมได้เฉพาะผู้ใช้ที่ผูกไว้ในหัวข้อ "ผู้ใช้ที่คีย์สวมได้"
       </div>
 
       <!-- Dashboard Stats -->
@@ -120,6 +123,29 @@
               </span>
               <span class="info-label">Webhook URL</span><span class="info-value" id="detailWebhook" style="word-break:break-all">-</span>
               <span class="info-label">สร้างเมื่อ</span><span class="info-value" id="detailCreated">-</span>
+            </div>
+          </div>
+
+          <!-- สิทธิ์ของคีย์ (รอบ 193 · G2-01) — ค่าที่บังคับใช้จริงคำนวณที่เซิร์ฟเวอร์ (effective*) -->
+          <div class="detail-section">
+            <h4>สิทธิ์ของคีย์</h4>
+            <div id="detailLegacyNotice" style="display:none;font-size:12.5px;line-height:1.7;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px"></div>
+            <div class="info-grid">
+              <span class="info-label">ใช้ได้ตอนนี้</span><span class="info-value" id="detailScopes">-</span>
+              <span class="info-label">ที่ตั้งไว้</span><span class="info-value" id="detailStoredScopes">-</span>
+            </div>
+            <div class="text-xs" style="color:var(--gray-500);margin-top:6px">แก้สิทธิ์ได้ที่ปุ่ม "แก้ไข" (เฉพาะเจ้าของบริษัท)</div>
+          </div>
+
+          <!-- ผู้ใช้ที่คีย์สวมได้ (X-Acting-User → IntegrationUserMapping) -->
+          <div class="detail-section">
+            <h4>ผู้ใช้ที่คีย์สวมได้ (X-Acting-User)</h4>
+            <div class="text-xs" style="color:var(--gray-500);margin-bottom:8px">ระบบภายนอกส่งรหัส/อีเมลผู้ปฏิบัติงานใน header <code>X-Acting-User</code> — ต้องผูกกับผู้ใช้ในบริษัทที่นี่ก่อน ไม่งั้นระบบจะไม่สวมใคร (เอกสารลงชื่อเจ้าของ และด่านสิทธิ์ของผู้ใช้จะไม่ผ่าน)</div>
+            <div id="detailUserMappings" style="font-size:13px;margin-bottom:8px">-</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <input type="text" id="umKey" class="form-input" style="width:auto;min-width:160px;flex:1" placeholder="รหัส/อีเมลจากระบบภายนอก">
+              <select id="umUser" class="form-input" style="width:auto;min-width:160px;flex:1"><option value="">-- เลือกผู้ใช้ --</option></select>
+              <button class="btn btn-sm btn-outline" onclick="Page.addUserMapping()">ผูก</button>
             </div>
           </div>
 
@@ -201,6 +227,15 @@
             <div class="form-group"><label class="form-label">Webhook URL</label><input type="text" id="fWebhook" class="form-input" placeholder="https://your-system/webhook"></div>
           </div>
           <div class="form-group"><label><input type="checkbox" id="fWebhookEnabled"> เปิดใช้งาน Webhook</label></div>
+          <div class="form-group">
+            <label class="form-label">สิทธิ์ของคีย์</label>
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <label><input type="checkbox" id="fCanRead" onchange="Page.scopeTouched=true"> อ่านข้อมูล (GET)</label>
+              <label><input type="checkbox" id="fCanWrite" onchange="Page.scopeTouched=true"> เขียนข้อมูล (สร้าง/แก้ · POST/PUT)</label>
+              <label><input type="checkbox" id="fCanDelete" onchange="Page.scopeTouched=true"> ลบข้อมูล (DELETE)</label>
+            </div>
+            <div class="text-xs" id="fScopeHint" style="color:var(--gray-500);margin-top:4px">คีย์ใหม่เริ่มที่อ่านอย่างเดียว — เลือกเพิ่มเฉพาะสิทธิ์ที่ระบบภายนอกต้องใช้จริง</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-outline" onclick="Page.closeModal('intModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -259,12 +294,14 @@
 <script>
 const Page = {
   api: null, integrations: [], fullIntegrations: [], accounts: [], selectedId: null, editMappingId: null, editMode: false, recentSyncs: [],
+  members: [], scopeTouched: false, companyId: null,
 
   async init() {
     Layout.init('integrations');
     const company = JSON.parse(localStorage.getItem('currentCompany') || 'null');
     if (!company) return;
     this.api = API.c(company.id);
+    this.companyId = company.id;
     await this.loadDashboard();
     await this.loadAccounts();
   },
@@ -294,6 +331,7 @@ const Page = {
       // Load full integration data
       const fullRes = await this.api.getIntegrations();
       this.fullIntegrations = fullRes.data || [];
+      this.renderIntegrationList();
       if (this.selectedId) this.showDetail(this.selectedId);
     } catch(e) { Layout.toast(e.message, 'error'); }
   },
@@ -307,12 +345,14 @@ const Page = {
     }
     list.innerHTML = this.integrations.map(i => {
       const health = this.getHealth(i);
+      const full = this.fullIntegrations.find(x => x.id === i.id);
+      const legacyBadge = full?.isLegacyKey ? ' <span class="badge badge-warning" style="font-size:10px">คีย์รุ่นเก่า</span>' : '';
       return `<div class="int-card ${this.selectedId===i.id?'selected':''}" onclick="Page.showDetail('${i.id}')">
         <div style="display:flex;align-items:center;gap:12px">
-          <span class="health-dot health-${health.color}" title="${health.text}"></span>
+          <span class="health-dot health-${health.color}" title="${Layout.esc(health.text)}"></span>
           <div style="flex:1">
-            <div style="font-weight:600;font-size:14px">${i.systemName}</div>
-            <div class="text-sm text-gray-500">${i.systemType}${i.lastSyncAt ? ' &middot; Sync: '+new Date(i.lastSyncAt).toLocaleString('th-TH') : ''}</div>
+            <div style="font-weight:600;font-size:14px">${Layout.esc(i.systemName)}${legacyBadge}</div>
+            <div class="text-sm text-gray-500">${Layout.esc(i.systemType)}${i.lastSyncAt ? ' &middot; Sync: '+new Date(i.lastSyncAt).toLocaleString('th-TH') : ''}</div>
           </div>
           <div style="text-align:right">
             <div class="text-sm" style="font-weight:600">${i.totalSyncCount.toLocaleString()}</div>
@@ -356,6 +396,8 @@ const Page = {
     document.getElementById('detailKeyPrefix').textContent = (full?.apiKeyPrefix || '???') + '...';
     document.getElementById('detailWebhook').textContent = full?.webhookUrl || '(ไม่ได้ตั้งค่า)';
     document.getElementById('detailCreated').textContent = full ? new Date(full.createdAt).toLocaleString('th-TH') : '-';
+    this.renderScopes(full);
+    this.loadUserMappings(id);
 
     // Recent logs for this integration
     const logs = this.recentSyncs.filter(l => l.systemName === i.systemName).slice(0, 8);
@@ -371,6 +413,82 @@ const Page = {
       : '<span class="text-sm text-gray-400">ยังไม่มีรายการ</span>';
 
     this.renderIntegrationList(); // re-render to highlight selected
+  },
+
+  // ── สิทธิ์ของคีย์ — ค่าทุกตัวมาจากเซิร์ฟเวอร์ (effective* / legacyPrivilegeActive) ไม่คิดกติกาเองในหน้า ──
+  scopeText(r, w, d) {
+    const parts = [];
+    if (r) parts.push('อ่าน'); if (w) parts.push('เขียน'); if (d) parts.push('ลบ');
+    return parts.length ? parts.join(' · ') : 'ไม่มีสิทธิ์';
+  },
+
+  renderScopes(full) {
+    const notice = document.getElementById('detailLegacyNotice');
+    if (!full) {
+      document.getElementById('detailScopes').textContent = 'ไม่มีข้อมูล';
+      document.getElementById('detailStoredScopes').textContent = 'ไม่มีข้อมูล';
+      notice.style.display = 'none';
+      return;
+    }
+    document.getElementById('detailScopes').textContent = this.scopeText(full.effectiveCanRead, full.effectiveCanWrite, full.effectiveCanDelete);
+    document.getElementById('detailStoredScopes').textContent = this.scopeText(full.canRead, full.canWrite, full.canDelete);
+    if (!full.isLegacyKey) { notice.style.display = 'none'; return; }
+    const until = full.legacyDeprecatesAt ? new Date(full.legacyDeprecatesAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+    notice.style.display = '';
+    notice.innerHTML = full.legacyPrivilegeActive
+      ? `<b>⚠️ คีย์รุ่นเก่า — กำลังจะเลิกใช้สิทธิ์แบบเดิม</b><br>
+         ตอนนี้คีย์นี้ยัง <b>อ่าน/เขียน/ลบได้ทั้งหมด</b> และสวมผู้ใช้ด้วยอีเมลได้ จนถึง <b>${Layout.esc(until || '-')}</b> ·
+         หลังจากนั้นจะเหลือสิทธิ์ตาม "ที่ตั้งไว้" และสวมได้เฉพาะผู้ใช้ที่ผูกไว้ด้านล่าง —
+         เจ้าของบริษัทควรกด "แก้ไข" เลือกสิทธิ์ที่ระบบภายนอกใช้จริง และผูกผู้ใช้ให้ครบก่อนวันดังกล่าว`
+      : `<b>⚠️ คีย์รุ่นเก่า — หมดช่วงผ่อนผันแล้ว${until ? ' (' + Layout.esc(until) + ')' : ''}</b><br>
+         ตอนนี้ใช้สิทธิ์ตาม "ที่ตั้งไว้" และสวมได้เฉพาะผู้ใช้ที่ผูกไว้ · ถ้าระบบภายนอกบันทึกข้อมูลไม่ได้ (403)
+         ให้เจ้าของบริษัทกด "แก้ไข" เพิ่มสิทธิ์ที่จำเป็น`;
+  },
+
+  async loadMembers() {
+    if (this.members.length) return;
+    try { const res = await this.api.getMembers(); this.members = res.data || []; } catch (e) { this.members = []; }
+    const sel = document.getElementById('umUser');
+    sel.innerHTML = '<option value="">-- เลือกผู้ใช้ --</option>' + this.members.map(m =>
+      `<option value="${Layout.esc(m.userId)}">${Layout.esc(m.fullName || m.email)}${m.email ? ' (' + Layout.esc(m.email) + ')' : ''}</option>`).join('');
+  },
+
+  async loadUserMappings(intId) {
+    const box = document.getElementById('detailUserMappings');
+    box.textContent = 'กำลังโหลด...';
+    this.loadMembers();
+    try {
+      const res = await API.get(`/api/companies/${this.companyId}/integrations/${intId}/user-mappings`);
+      const rows = res.data || [];
+      if (!rows.length) { box.innerHTML = '<span class="text-sm text-gray-400">ยังไม่ได้ผูกผู้ใช้</span>'; return; }
+      box.innerHTML = rows.map(r => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--gray-100)">
+          <code style="font-size:12px">${Layout.esc(r.externalUserKey)}</code>
+          <span style="flex:1">→ ${Layout.esc(r.userName || r.userEmail || r.userId)}</span>
+          <button class="btn btn-sm btn-danger-outline" data-mid="${Layout.esc(r.id)}" onclick="Page.deleteUserMapping(this.dataset.mid)">ลบ</button>
+        </div>`).join('');
+    } catch (e) { box.textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
+  },
+
+  async addUserMapping() {
+    if (!this.selectedId) return;
+    const externalUserKey = document.getElementById('umKey').value.trim();
+    const userId = document.getElementById('umUser').value;
+    if (!externalUserKey || !userId) { Layout.toast('กรอกรหัส/อีเมลจากระบบภายนอก และเลือกผู้ใช้', 'error'); return; }
+    try {
+      await API.post(`/api/companies/${this.companyId}/integrations/${this.selectedId}/user-mappings`, { externalUserKey, userId });
+      document.getElementById('umKey').value = '';
+      Layout.toast('ผูกผู้ใช้สำเร็จ');
+      this.loadUserMappings(this.selectedId);
+    } catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async deleteUserMapping(mid) {
+    if (!this.selectedId || !confirm('ยกเลิกการผูกผู้ใช้นี้? คีย์จะสวมผู้ใช้นี้ไม่ได้อีก')) return;
+    try {
+      await API.del(`/api/companies/${this.companyId}/integrations/${this.selectedId}/user-mappings/${mid}`);
+      Layout.toast('ยกเลิกการผูกสำเร็จ');
+      this.loadUserMappings(this.selectedId);
+    } catch (e) { Layout.toast(e.message, 'error'); }
   },
 
   populateIntSelect() {
@@ -401,6 +519,12 @@ const Page = {
     document.getElementById('fType').value = 'POS';
     document.getElementById('fRate').value = '60';
     document.getElementById('fWebhookEnabled').checked = false;
+    // คีย์ใหม่ = อ่านอย่างเดียว (ห้ามค้างค่าของใบก่อน)
+    document.getElementById('fCanRead').checked = true;
+    document.getElementById('fCanWrite').checked = false;
+    document.getElementById('fCanDelete').checked = false;
+    document.getElementById('fScopeHint').textContent = 'คีย์ใหม่เริ่มที่อ่านอย่างเดียว — เลือกเพิ่มเฉพาะสิทธิ์ที่ระบบภายนอกต้องใช้จริง';
+    this.scopeTouched = false;
     document.getElementById('intModal').classList.add('active');
   },
 
@@ -417,6 +541,14 @@ const Page = {
     document.getElementById('fRate').value = i.rateLimitPerMinute || 60;
     document.getElementById('fWebhook').value = i.webhookUrl || '';
     document.getElementById('fWebhookEnabled').checked = i.webhookEnabled || false;
+    // hydrate ด้วยสิทธิ์ที่ "ใช้ได้ตอนนี้" — คีย์รุ่นเก่าในช่วงผ่อนผันจึงเห็นครบสามช่อง ไม่ใช่ค่าหลังหมดช่วง
+    document.getElementById('fCanRead').checked = !!i.effectiveCanRead;
+    document.getElementById('fCanWrite').checked = !!i.effectiveCanWrite;
+    document.getElementById('fCanDelete').checked = !!i.effectiveCanDelete;
+    document.getElementById('fScopeHint').textContent = i.isLegacyKey
+      ? 'คีย์รุ่นเก่า: ถ้าแก้ช่องสิทธิ์แล้วบันทึก คีย์จะย้ายเข้านโยบายใหม่ทันที (ใช้สิทธิ์ตามที่เลือก · สวมได้เฉพาะผู้ใช้ที่ผูกไว้) · ไม่แตะช่องสิทธิ์ = สิทธิ์เดิมไม่เปลี่ยน'
+      : 'ไม่แตะช่องสิทธิ์ = สิทธิ์เดิมไม่เปลี่ยน';
+    this.scopeTouched = false;
     document.getElementById('intModal').classList.add('active');
   },
 
@@ -432,6 +564,16 @@ const Page = {
       webhookUrl: document.getElementById('fWebhook').value || null,
       webhookEnabled: document.getElementById('fWebhookEnabled').checked
     };
+    // สิทธิ์: ตอนสร้างส่งเสมอ · ตอนแก้ส่งเฉพาะเมื่อผู้ใช้แตะช่อง (ไม่งั้นแก้ชื่อคีย์รุ่นเก่า = เสียสิทธิ์เงียบ ๆ)
+    const sendScopes = !this.editMode || this.scopeTouched;
+    if (sendScopes) {
+      data.canRead = document.getElementById('fCanRead').checked;
+      data.canWrite = document.getElementById('fCanWrite').checked;
+      data.canDelete = document.getElementById('fCanDelete').checked;
+      const cur = this.fullIntegrations.find(x => x.id === this.selectedId);
+      if (this.editMode && cur?.isLegacyKey
+          && !confirm('คีย์นี้เป็นรุ่นเก่า — บันทึกสิทธิ์แล้วคีย์จะย้ายเข้านโยบายใหม่ทันที (ใช้สิทธิ์ตามที่เลือก · สวมผู้ใช้ได้เฉพาะที่ผูกไว้) ยืนยัน?')) return;
+    }
     try {
       if (this.editMode && this.selectedId) {
         await this.api.updateIntegration(this.selectedId, data);
