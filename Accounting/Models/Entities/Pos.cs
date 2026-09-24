@@ -172,6 +172,11 @@ public class PosOrderItem : BaseEntity
     /// <summary>How much of this line has been refunded (partial refunds).
     /// Refundable remaining = Quantity − RefundedQuantity.</summary>
     public decimal RefundedQuantity { get; set; } = 0;
+    /// <summary>ต้นทุนขาย (COGS) ของ**ทั้งบรรทัด**ที่ JE ขายลงไว้จริง — ตรึงตอนปิดบิลจากต้นทุนที่
+    /// ออกจากคลังจริง (สูตร → วัตถุดิบรวม · ตัวสินค้า → movement · อื่น ๆ → 0) · การคืนเงินกลับ
+    /// รายการตามสัดส่วนของค่านี้ (<c>Helpers/PosCogsBooking</c>) ไม่คิดใหม่ ·
+    /// <c>null</c> = บิลที่ปิดก่อนรอบ 193 / ยังไม่ปิดบิล (E-01)</summary>
+    public decimal? CostOfGoodsSold { get; set; }
     public string? Unit { get; set; }                            // หน่วย: ชิ้น, แก้ว, ครั้ง
     public decimal UnitPrice { get; set; }
     public decimal DiscountAmount { get; set; }

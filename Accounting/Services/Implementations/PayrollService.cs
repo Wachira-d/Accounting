@@ -222,11 +222,16 @@ public class PayrollService : IPayrollService
         if (request.BaseSalary < 0)
             throw new InvalidOperationException("เงินเดือนฐานต้องไม่ติดลบ");
 
-        if (request.StartDate > DateTime.UtcNow.AddYears(1))
-            throw new InvalidOperationException("วันเริ่มงานต้องไม่เกิน 1 ปีข้างหน้า");
+        if (EmployeeRecordEdit.StartDateError(request.StartDate, DateTime.UtcNow) is { } startErr)
+            throw new BusinessRuleException(startErr);
 
-        if (!string.IsNullOrEmpty(request.CitizenId) && !Regex.IsMatch(request.CitizenId, @"^\d{13}$"))
-            throw new InvalidOperationException("เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก");
+        // เลขบัตร/เลขผู้เสียภาษี — ตัวตัดสินเดียวกับเส้นแก้ไข (13 หลัก + checksum กลาง ·
+        // ตัดขีด/ช่องว่าง) · เดิมตรวจแค่ regex 13 หลัก ⇒ เลขที่พิมพ์ผิดหนึ่งหลักผ่านเข้าไป
+        // แล้วไหลลง ภ.ง.ด.1/สปส.1-10 ที่ สปส./สรรพากรตีกลับ
+        var citizenEdit = EmployeeRecordEdit.ThaiIdNumber(request.CitizenId, null, "เลขบัตรประชาชน");
+        if (citizenEdit.Error != null) throw new BusinessRuleException(citizenEdit.Error);
+        var taxIdEdit = EmployeeRecordEdit.ThaiIdNumber(request.TaxId, null, "เลขประจำตัวผู้เสียภาษี");
+        if (taxIdEdit.Error != null) throw new BusinessRuleException(taxIdEdit.Error);
 
         var existing = await _db.Set<Employee>()
             .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == request.EmployeeCode);
@@ -242,7 +247,8 @@ public class PayrollService : IPayrollService
             LastNameTh = request.LastNameTh,
             FirstNameEn = request.FirstNameEn,
             LastNameEn = request.LastNameEn,
-            CitizenId = request.CitizenId,
+            CitizenId = citizenEdit.Value,
+            TaxId = taxIdEdit.Value,
             DateOfBirth = request.DateOfBirth,
             Gender = request.Gender,
             Address = request.Address,
@@ -319,7 +325,16 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
-        return MapToEmployeeResponse(employee, includePii, includeSalary);
+        // ฟอร์มแก้ไขใช้ endpoint ตัวนี้ — บอกล่วงหน้าว่าช่องรหัสแก้ได้ไหม + เหตุผล
+        // (ห้ามปล่อยให้กดบันทึกแล้วค่อยเจอ error หรือเงียบ — กฎเหล็ก #4 A)
+        var hasPayrollHistory = await _db.Set<PayrollDetail>()
+            .AnyAsync(d => d.CompanyId == companyId && d.EmployeeId == employeeId);
+        var codeLockReason = EmployeeRecordEdit.CodeLockReason(hasPayrollHistory);
+        return MapToEmployeeResponse(employee, includePii, includeSalary) with
+        {
+            EmployeeCodeLocked = codeLockReason != null,
+            EmployeeCodeLockReason = codeLockReason,
+        };
     }
 
     public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true)
@@ -360,13 +375,57 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(e => e.Id == employeeId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบพนักงาน");
 
+        // ═══ A05 / D-07 / D-01 (รอบ 193): ช่องตัวตนที่ฟอร์มให้แก้แต่เดิมเซิร์ฟเวอร์ไม่รับ ═══
+        // ตัดสินทุกช่องก่อน แล้วค่อยเขียน — ช่องใดถูกปฏิเสธ ต้องไม่มีช่องไหนถูกเขียนไปครึ่งทาง
+        var hasPayrollHistory = request.EmployeeCode != null
+            && await _db.Set<PayrollDetail>().AnyAsync(d => d.CompanyId == companyId && d.EmployeeId == employeeId);
+        var codeEdit = EmployeeRecordEdit.EmployeeCode(request.EmployeeCode, employee.EmployeeCode, hasPayrollHistory);
+        var firstNameEdit = EmployeeRecordEdit.RequiredText(request.FirstNameTh, "ชื่อ (ไทย)");
+        var lastNameEdit = EmployeeRecordEdit.RequiredText(request.LastNameTh, "นามสกุล (ไทย)");
+        var citizenEdit = EmployeeRecordEdit.ThaiIdNumber(request.CitizenId, employee.CitizenId, "เลขบัตรประชาชน");
+        var taxIdEdit = EmployeeRecordEdit.ThaiIdNumber(request.TaxId, employee.TaxId, "เลขประจำตัวผู้เสียภาษี");
+        var firstError = new[] { codeEdit, firstNameEdit, lastNameEdit, citizenEdit, taxIdEdit }
+            .Select(x => x.Error).FirstOrDefault(x => x != null);
+        if (firstError != null) throw new BusinessRuleException(firstError);
+        if (request.StartDate.HasValue
+            && EmployeeRecordEdit.StartDateError(request.StartDate.Value, DateTime.UtcNow) is { } startErr)
+            throw new BusinessRuleException(startErr);
+        if (codeEdit.Changes)
+        {
+            var newCode = codeEdit.Value!;
+            if (await _db.Set<Employee>().AnyAsync(e => e.CompanyId == companyId
+                    && e.Id != employeeId && e.EmployeeCode == newCode))
+                throw new BusinessRuleException($"รหัสพนักงาน {newCode} ซ้ำกับพนักงานคนอื่น");
+            employee.EmployeeCode = newCode;
+        }
+        if (request.TitleTh != null) employee.TitleTh = ThaiTitleHelper.Normalize(request.TitleTh);
+        if (firstNameEdit.Changes) employee.FirstNameTh = firstNameEdit.Value!;
+        if (lastNameEdit.Changes) employee.LastNameTh = lastNameEdit.Value!;
+        var firstNameEnEdit = EmployeeRecordEdit.OptionalText(request.FirstNameEn);
+        if (firstNameEnEdit.Changes) employee.FirstNameEn = firstNameEnEdit.Value;
+        var lastNameEnEdit = EmployeeRecordEdit.OptionalText(request.LastNameEn);
+        if (lastNameEnEdit.Changes) employee.LastNameEn = lastNameEnEdit.Value;
+        if (citizenEdit.Changes) employee.CitizenId = citizenEdit.Value;
+        if (taxIdEdit.Changes) employee.TaxId = taxIdEdit.Value;
+        var empTypeEdit = EmployeeRecordEdit.OptionalText(request.EmploymentType);
+        if (empTypeEdit.Changes) employee.EmploymentType = empTypeEdit.Value;
+        if (request.StartDate.HasValue) employee.StartDate = request.StartDate.Value;
+        var bankAcctNameEdit = EmployeeRecordEdit.OptionalText(request.BankAccountName);
+        if (bankAcctNameEdit.Changes) employee.BankAccountName = bankAcctNameEdit.Value;
+
         if (request.Position != null) employee.Position = request.Position;
         if (request.Department != null) employee.Department = request.Department;
-        if (request.Phone != null) employee.Phone = request.Phone;
-        if (request.Email != null) employee.Email = request.Email;
+        // เบอร์/อีเมล/เลขบัญชี: ผู้ไม่มีสิทธิ์ pii:view ได้ค่าปิดบังไปเติมฟอร์ม — ค่าที่ส่ง
+        // กลับมาเท่ากับค่าปิดบังของเดิม = ไม่ได้แก้ ห้ามเขียนดาว/X ทับของจริง
+        if (request.Phone != null && !EmployeeRecordEdit.IsMaskedEcho(request.Phone, PiiMask.Phone(employee.Phone)))
+            employee.Phone = request.Phone;
+        if (request.Email != null && !EmployeeRecordEdit.IsMaskedEcho(request.Email, PiiMask.Email(employee.Email)))
+            employee.Email = request.Email;
         if (request.BaseSalary.HasValue) employee.BaseSalary = request.BaseSalary.Value;
         if (request.BankName != null) employee.BankName = request.BankName;
-        if (request.BankAccountNumber != null) employee.BankAccountNumber = request.BankAccountNumber;
+        if (request.BankAccountNumber != null
+            && !EmployeeRecordEdit.IsMaskedEcho(request.BankAccountNumber, PiiMask.BankAccountNo(employee.BankAccountNumber)))
+            employee.BankAccountNumber = request.BankAccountNumber;
         if (request.SocialSecurityHospital != null) employee.SocialSecurityHospital = request.SocialSecurityHospital;
         if (request.HasProvidentFund.HasValue) employee.HasProvidentFund = request.HasProvidentFund.Value;
         if (request.ProvidentFundEmployeePercent.HasValue) employee.ProvidentFundEmployeePercent = request.ProvidentFundEmployeePercent.Value;
@@ -1579,9 +1638,27 @@ public class PayrollService : IPayrollService
                 .Include(r => r.Details)
                 .FirstAsync(r => r.Id == payrollRunId && r.CompanyId == companyId);
 
-            if (run.Status != "Draft")
-                throw new InvalidOperationException(
-                    "สามารถคำนวณได้เฉพาะรอบที่เป็น Draft เท่านั้น — รอบนี้ถูกคำนวณ/อนุมัติไปแล้วโดยผู้ใช้งานคนอื่น");
+            // ═══ คำตัดสิน #35 (รอบ 193): คำนวณใหม่ได้เฉพาะรอบที่ยังไม่จ่าย ═══
+            // เดิมรับเฉพาะ Draft ⇒ รอบที่คำนวณ/อนุมัติไปก่อนแก้สูตร D-02 (ฐาน ปกส.
+            // ไม่หักลาไม่รับค่าจ้าง) ติดตัวเลขผิดถาวร · ตอนนี้ Calculated/Approved
+            // คำนวณซ้ำได้ ส่วน Paid/Voided/เคยจ่ายแล้วกลับรายการ/นำเข้าจากระบบนอก
+            // ถูกปฏิเสธพร้อมเหตุผล (ตัวตัดสินเดียว — Helpers/PayrollRunEditPolicy)
+            // ⚠️ ล็อก FOR UPDATE ข้างบนยังกันการกดซ้อน: คลิกที่สองรอจนคลิกแรก commit
+            //    แล้วคำนวณซ้ำจากข้อมูลชุดเดียวกัน = ได้ผลเดิม (idempotent) ไม่ใช่ชนกัน
+            var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
+                run.Status, run.ExternalSystem, run.ReopenedAt);
+            if (!canRecalc)
+                throw new Accounting.Helpers.BusinessRuleException(recalcReason!);
+            // อนุมัติแล้วคำนวณใหม่ = ตัวเลขที่ผู้อนุมัติเห็นเปลี่ยนไป ⇒ การอนุมัติเดิม
+            // ใช้กับตัวเลขชุดใหม่ไม่ได้ ต้องกลับไปรออนุมัติ (status = Calculated ข้างล่าง)
+            if (run.Status == PayrollRunEditPolicy.Approved)
+            {
+                _logger?.LogInformation(
+                    "คำนวณรอบเงินเดือน {Run} ใหม่หลังอนุมัติแล้ว (อนุมัติโดย {By} เมื่อ {At}) — ล้างการอนุมัติ ต้องอนุมัติใหม่",
+                    run.Id, run.ApprovedBy, run.ApprovedAt);
+                run.ApprovedBy = null;
+                run.ApprovedAt = null;
+            }
 
             // Remove existing details
             _db.Set<PayrollDetail>().RemoveRange(run.Details);
@@ -1959,8 +2036,13 @@ public class PayrollService : IPayrollService
                 //   เท่าเดิมเป๊ะ — ดูคำตัดสิน DECISION_AUDIT §9.2 Q1
                 //   ฐานเดียวกันนี้ใช้กับกองทุนเงินทดแทนด้วย (นิยาม ม.5 ตัวเดียวกัน
                 //   คนละเพดาน)
+                // ★ D-02 (คำตัดสิน #35 รอบ 193): ฐานต้องหัก "ลาไม่รับค่าจ้าง" ด้วย —
+                //   ฐานภาษีข้างบนหัก leaveDeduction แล้ว แต่ฐานนี้เคยไม่หัก ⇒ ลาไม่รับ
+                //   ค่าจ้างทั้งเดือน = รายได้ 0 แต่หัก ปกส. 875 · สุทธิ −875 และไฟล์
+                //   สปส.1-10 ประกาศค่าจ้าง 17,500 ในเดือนที่ไม่ได้จ่ายค่าจ้างเลย
                 var statutoryWage = Accounting.Helpers.SsoWageBase.GrossWage(
-                    proratedBaseSalary, ssoWageAllowances);
+                    Accounting.Helpers.SsoWageBase.SalaryPaidThisPeriod(proratedBaseSalary, leaveDeduction),
+                    ssoWageAllowances);
 
                 if (emp.IsSubjectToSocialSecurity)
                 {
@@ -1969,7 +2051,10 @@ public class PayrollService : IPayrollService
                     // ไฟล์ สปส.1-10 รายงานค่าจ้างที่ตรงกับยอดสมทบ
                     // ★ D-S3: ฐานค่าจ้างต้องเป็น "ที่จ่ายจริงในงวดนี้" (ม.5) —
                     // เข้า/ออกกลางเดือนต้องใช้ยอดที่เฉลี่ยแล้ว ไม่ใช่เงินเดือนเต็ม
-                    ssoWageBase = Accounting.Helpers.SsoWageBase.Clamp(statutoryWage, sso.MaxBase);
+                    // ไม่ได้จ่ายอะไรเลยในงวดนี้ = ฐาน 0 (ขั้นต่ำ 1,650 ใช้กับค่าจ้างที่จ่ายจริง
+                    // เท่านั้น — ไม่เสกค่าจ้างให้เดือนที่ไม่ได้จ่าย) · นอกนั้น = Clamp เดิมทุกบาท
+                    ssoWageBase = Accounting.Helpers.SsoWageBase.PeriodBase(
+                        statutoryWage, sso.MaxBase, grossIncome);
                     ssoEmployee = Accounting.Helpers.SsoWageBase.Contribution(
                         ssoWageBase, sso.Rate, sso.MaxContribution);
                     ssoEmployer = Accounting.Helpers.SsoWageBase.Contribution(
@@ -2888,16 +2973,22 @@ public class PayrollService : IPayrollService
     /// <summary>Build a Contact-shaped object holding the employee's identity
     /// + address — the cert renderer expects PayeeContact. Not saved to DB —
     /// purely a transport for the PDF builder.</summary>
-    private static Contact BuildEmployeeAsContact(Employee e) => new()
+    private static Contact BuildEmployeeAsContact(Employee e)
     {
-        Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
-        TaxId = e.CitizenId,
-        // ContactType heuristic mirrors what BuildContactInfo does elsewhere —
-        // CitizenId เริ่มต้นด้วย 0 = นิติบุคคล (rare for an employee), else บุคคล.
-        ContactType = !string.IsNullOrEmpty(e.CitizenId) && e.CitizenId.StartsWith("0")
-            ? ContactType.JuristicPerson : ContactType.Individual,
-        Address = e.Address,
-    };
+        // D-01: เลขผู้เสียภาษีผ่าน resolver กลางตัวเดียวกับ 50 ทวิรายเดือน/ไฟล์ยื่น
+        // (เดิมใช้ CitizenId ตรง ๆ ⇒ พนักงานต่างด้าวที่มีแต่ TaxId ได้ใบรายปีเลขว่าง)
+        var taxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId);
+        return new()
+        {
+            Name = $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
+            TaxId = taxId,
+            // ContactType heuristic mirrors what BuildContactInfo does elsewhere —
+            // เลขเริ่มต้นด้วย 0 = นิติบุคคล (rare for an employee), else บุคคล.
+            ContactType = taxId != null && taxId.StartsWith("0")
+                ? ContactType.JuristicPerson : ContactType.Individual,
+            Address = e.Address,
+        };
+    }
 
     public async Task VoidPayrollAsync(Guid companyId, Guid payrollRunId)
     {
@@ -3261,12 +3352,18 @@ public class PayrollService : IPayrollService
                     skipped.Add($"พนักงาน {d.EmployeeId} (ไม่พบระเบียนพนักงาน)");
                     continue;
                 }
-                if (string.IsNullOrWhiteSpace(emp.TaxId))
+                // ═══ D-01 (P0 · รอบ 193) ═══ เดิมด่านนี้อ่าน `emp.TaxId` เดี่ยว ๆ ซึ่ง
+                // **ไม่มีจุดเขียนเลยทั้งเรพ** ⇒ ทุกคนถูกข้ามทุกงวด และนำส่ง ภ.ง.ด.1 ถูก
+                // บล็อกตลอดกาล · บุคคลไทย เลขผู้เสียภาษี = เลขบัตรประชาชน ⇒ resolver
+                // กลางตัวเดียว (TaxId ที่กรอก → เลขบัตร → ไม่รู้) ใช้ทั้งด่าน ค้น cert
+                // ที่ออกมือ ค้น/สร้าง Contact — ค่าเดียวกันทั้งสี่จุด
+                var payeeTaxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId);
+                if (payeeTaxId == null)
                 {
                     // ⚠️ ห้าม log เลขบัตร/เลขผู้เสียภาษีเต็ม (PDPA ม.26) — ใช้
                     // รหัสพนักงาน + ชื่อ ซึ่งเป็นสิ่งที่ HR ใช้ค้นในระบบอยู่แล้ว
                     skipped.Add($"{emp.EmployeeCode} {emp.FirstNameTh} {emp.LastNameTh}".Trim()
-                        + " (ยังไม่ได้กรอกเลขประจำตัวผู้เสียภาษี)");
+                        + " (ยังไม่ได้กรอกเลขบัตรประชาชนหรือเลขประจำตัวผู้เสียภาษี)");
                     continue;
                 }
 
@@ -3278,19 +3375,19 @@ public class PayrollService : IPayrollService
                         && c.TaxFormType == TaxType.WithholdingTax1
                         && c.SourcePayrollRunId == null
                         && c.Status != WithholdingTaxCertStatus.Voided
-                        && c.PayeeContact.TaxId == emp.TaxId);
+                        && c.PayeeContact.TaxId == payeeTaxId);
                 if (manualExists) continue;
 
                 // ค้น/สร้าง contact ของพนักงาน (employee-as-contact)
                 var contact = await _db.Set<Contact>()
-                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == emp.TaxId);
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == payeeTaxId);
                 if (contact == null)
                 {
                     contact = new Contact
                     {
                         CompanyId = companyId,
                         Name = $"{emp.TitleTh} {emp.FirstNameTh} {emp.LastNameTh}".Trim(),
-                        TaxId = emp.TaxId,
+                        TaxId = payeeTaxId,
                         ContactType = ContactType.Individual,
                         IsSupplier = true
                     };
@@ -3354,7 +3451,8 @@ public class PayrollService : IPayrollService
                     title: $"⚠️ ออกหนังสือรับรอง 50 ทวิ ไม่ครบ — งวด {run.Month:D2}/{run.Year}",
                     message: $"พนักงาน {skipped.Count} คนยังไม่มีหนังสือรับรองหัก ณ ที่จ่าย: {who} · "
                         + "ยอด ภ.ง.ด.1 ของงวดนี้จึงยังนำส่งไม่ได้จนกว่าจะออกใบครบ "
-                        + "— กรอกเลขประจำตัวผู้เสียภาษีที่หน้าพนักงาน แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน",
+                        + "— กรอกเลขบัตรประชาชน (หรือเลขประจำตัวผู้เสียภาษีสำหรับผู้ที่ไม่มีบัตรไทย) "
+                        + "ที่หน้าพนักงาน แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน",
                     entityId: run.Id);
             }
         }
@@ -4185,6 +4283,11 @@ public class PayrollService : IPayrollService
     private static EmployeeResponse MapToEmployeeResponse(Employee e, bool includePii = false, bool includeSalary = true)
     {
         var citizenId = includePii ? e.CitizenId : Accounting.Helpers.PiiMask.CitizenId(e.CitizenId);
+        // เลขผู้เสียภาษีของ "บุคคล" = เลขบัตรประชาชน ⇒ ปิดบังแบบเลขบัตร (เปิดหลักแรก+หลักท้าย)
+        // ไม่ใช่แบบ PiiMask.TaxId ที่เปิด 7 หลักแรก (ใช้กับนิติบุคคล) · ตัวปิดบังต้องเป็น
+        // ตัวเดียวกับที่ EmployeeRecordEdit.ThaiIdNumber ใช้จับ "ค่าปิดบังที่ส่งกลับมา"
+        var taxId = includePii ? e.TaxId : Accounting.Helpers.PiiMask.CitizenId(e.TaxId);
+        var bankAccountNo = includePii ? e.BankAccountNumber : Accounting.Helpers.PiiMask.BankAccountNo(e.BankAccountNumber);
         var phone = includePii ? e.Phone : Accounting.Helpers.PiiMask.Phone(e.Phone);
         var email = includePii ? e.Email : Accounting.Helpers.PiiMask.Email(e.Email);
         // เงินเดือน = ข้อมูลอ่อนไหว (payroll sensitivity) — ผู้ไม่มีสิทธิ์ดูเงินเดือน
@@ -4208,7 +4311,13 @@ public class PayrollService : IPayrollService
             // แล้วบันทึก ค่าที่เคยกรอกหายเงียบ ๆ (กฎเหล็ก #4 A)
             e.HasSpouseAllowance, e.ChildAllowanceCount, e.SecondAndLaterChildren,
             e.ParentAllowanceCount, e.LifeInsurancePremium, e.RmfSsfContribution,
-            e.DonationAmount, e.TaxAllowances);
+            e.DonationAmount, e.TaxAllowances,
+            // A05/D-07/D-01 — echo ทุกช่องที่ฟอร์มแก้ได้ (ธนาคารเคยไม่ echo ⇒ ฟอร์มค้าง
+            // เลขบัญชีของคนก่อนแล้วส่งไปทับอีกคน = เงินเดือนเข้าบัญชีผิดคน)
+            TaxId: taxId,
+            BankName: e.BankName,
+            BankAccountNumber: bankAccountNo,
+            BankAccountName: e.BankAccountName);
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i)
@@ -4238,6 +4347,8 @@ public class PayrollService : IPayrollService
         // ปุ่มเงียบ ๆ (กฎเหล็ก #4 A: resolver กลาง + ห้าม silent no-op)
         var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts(r.Status);
         var (canReopen, reopenReason) = PayrollRunEditPolicy.CanReopen(r.Status, r.SsoSettledAt);
+        var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
+            r.Status, r.ExternalSystem, r.ReopenedAt);
         return new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
             r.Status, r.TotalGrossSalary, r.TotalDeductions, r.TotalNetPay,
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,
@@ -4248,7 +4359,8 @@ public class PayrollService : IPayrollService
             JournalEntryId: r.JournalEntryId,
             CanEditAmounts: canEdit, EditLockReason: editReason,
             CanReopen: canReopen, ReopenBlockReason: reopenReason,
-            ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason);
+            ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason,
+            CanRecalculate: canRecalc, RecalculateBlockReason: recalcReason);
     }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>

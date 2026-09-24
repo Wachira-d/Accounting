@@ -11,4 +11,6 @@ public record FileAttachmentResponse(
     string EntityType,
     Guid EntityId,
     string UploadedByName,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // คำเตือนพื้นที่เกิน/ใกล้เต็มแพ็กเกจ — ตั้งเฉพาะตอนอัปโหลด (ไฟล์ถูกบันทึกแล้วเสมอ · รอบ 193 ข้อ 30)
+    string? StorageWarning = null);

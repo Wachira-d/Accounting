@@ -72,10 +72,23 @@ public class DocumentLabelsTests
     }
 
     [Fact]
-    public void Branch_other_renders_branch_number_without_leading_zeros()
+    public void Branch_other_renders_full_five_digit_code()
     {
-        Assert.Equal("สาขาที่ 3", DocumentLabels.For("th").Branch("00003"));
-        Assert.Equal("Branch 12", DocumentLabels.For("en").Branch("00012"));
+        // รอบ 193 คำตัดสินเจ้าของข้อ 21: "สาขาที่ 00008" (เดิมตัดศูนย์นำ "สาขาที่ 3")
+        Assert.Equal("สาขาที่ 00003", DocumentLabels.For("th").Branch("00003"));
+        Assert.Equal("Branch 00012", DocumentLabels.For("en").Branch("00012"));
+        Assert.Equal("สาขาที่ 00008", DocumentLabels.For("th").Branch("8"));
+    }
+
+    [Fact]
+    public void Branch_labels_match_the_central_resolver_used_by_both_renderers()
+    {
+        // สอง renderer (HTML + QuestPDF) พิมพ์ผ่าน TaxBranchCode.LabelWithName — DocumentLabels ต้องได้คำเดียวกัน
+        foreach (var code in new[] { "00000", "00001", "00008", "00123", "0" })
+        {
+            Assert.Equal(Accounting.Helpers.TaxBranchCode.Label(code), DocumentLabels.For("th").Branch(code));
+            Assert.Equal(Accounting.Helpers.TaxBranchCode.Label(code, isEnglish: true), DocumentLabels.For("en").Branch(code));
+        }
     }
 
     [Fact]

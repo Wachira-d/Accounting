@@ -83,9 +83,11 @@
         <div class="form-group">
           <label>ผู้ให้บริการ (Provider)</label>
           <select id="provider" onchange="switchProvider()">
-            <option value="0">SMTP (Gmail, Office 365, ฯลฯ)</option>
-            <option value="1">Microsoft Graph API</option>
-            <option value="2">Gmail API</option>
+            <!-- รอบ 193 · A06: API ส่ง/รับ enum เป็น "ชื่อ" (JsonStringEnumConverter) — option ตัวเลขทำให้
+                 select ว่าง · การ์ดหายทั้งสาม · บันทึกได้ 400 ทุกครั้ง. ใช้ชื่อแบบเดียวกับ pages/settings.html -->
+            <option value="Smtp">SMTP (Gmail, Office 365, ฯลฯ)</option>
+            <option value="MicrosoftGraph">Microsoft Graph API</option>
+            <option value="GmailApi">Gmail API</option>
           </select>
           <div class="hint">SMTP ใช้ได้กับ Gmail (App Password), Office 365, และ SMTP server ทั่วไป</div>
         </div>
@@ -261,7 +263,15 @@
         const d = res.data;
         currentConfig = d;
 
-        document.getElementById('provider').value = d.provider;
+        const provSel = document.getElementById('provider');
+        provSel.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+        if (d.provider && ![...provSel.options].some(o => o.value === d.provider)) {
+          // ค่าที่ตั้งไว้แต่หน้านี้ไม่มีการ์ดตั้งค่า (เช่น SendGrid) — แสดงตามจริง ไม่ปล่อย select ว่าง
+          const o = document.createElement('option');
+          o.value = d.provider; o.textContent = `${d.provider} (ตั้งค่าจากหน้านี้ไม่ได้)`; o.dataset.legacy = '1';
+          provSel.appendChild(o);
+        }
+        provSel.value = d.provider || 'Smtp';
         document.getElementById('fromAddress').value = d.fromAddress || '';
         document.getElementById('fromName').value = d.fromName || '';
         document.getElementById('replyTo').value = d.replyTo || '';
@@ -322,7 +332,8 @@
           ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         lines.push(`<span style="color:#991b1b">${esc(d.secretWarning)}</span>`);
       }
-      lines.push(`Provider: <strong>${['SMTP', 'Microsoft Graph', 'Gmail API'][d.provider] || 'SMTP'}</strong>`);
+      const provLabel = { Smtp: 'SMTP', MicrosoftGraph: 'Microsoft Graph', GmailApi: 'Gmail API' }[d.provider] || d.provider || 'ไม่มีข้อมูล';
+      lines.push(`Provider: <strong>${AdminLayout.esc(provLabel)}</strong>`);
       if (d.fromAddress) lines.push(`ผู้ส่ง: <strong>${d.fromName || ''} &lt;${AdminLayout.esc(d.fromAddress)}&gt;</strong>`);
       if (d.lastTestedAt) {
         const date = new Date(d.lastTestedAt).toLocaleString('th-TH');
@@ -333,9 +344,9 @@
 
     function switchProvider() {
       const v = document.getElementById('provider').value;
-      document.getElementById('provider-smtp').classList.toggle('active', v === '0');
-      document.getElementById('provider-msgraph').classList.toggle('active', v === '1');
-      document.getElementById('provider-gmail').classList.toggle('active', v === '2');
+      document.getElementById('provider-smtp').classList.toggle('active', v === 'Smtp');
+      document.getElementById('provider-msgraph').classList.toggle('active', v === 'MicrosoftGraph');
+      document.getElementById('provider-gmail').classList.toggle('active', v === 'GmailApi');
     }
 
     async function saveSettings() {
@@ -344,7 +355,8 @@
       btn.textContent = 'กำลังบันทึก...';
 
       try {
-        const provider = parseInt(document.getElementById('provider').value);
+        // ส่งเป็นชื่อ enum — parseInt("Smtp") = NaN → null ⇒ body ถูกทิ้งทั้งก้อน (คลาสรอบ 188)
+        const provider = document.getElementById('provider').value;
         const payload = {
           provider,
           fromAddress: document.getElementById('fromAddress').value || null,
@@ -353,7 +365,7 @@
           appBaseUrl: document.getElementById('appBaseUrl').value || null,
         };
 
-        if (provider === 0) {
+        if (provider === 'Smtp') {
           payload.smtp = {
             host: document.getElementById('smtpHost').value || null,
             port: parseInt(document.getElementById('smtpPort').value) || 587,
@@ -361,14 +373,14 @@
             password: document.getElementById('smtpPassword').value || null,
             useSsl: document.getElementById('smtpUseSsl').checked,
           };
-        } else if (provider === 1) {
+        } else if (provider === 'MicrosoftGraph') {
           payload.microsoft = {
             tenantId: document.getElementById('msTenantId').value || null,
             clientId: document.getElementById('msClientId').value || null,
             clientSecret: document.getElementById('msClientSecret').value || null,
             senderUpn: document.getElementById('msSenderUpn').value || null,
           };
-        } else if (provider === 2) {
+        } else if (provider === 'GmailApi') {
           payload.gmail = {
             clientId: document.getElementById('gmailClientId').value || null,
             clientSecret: document.getElementById('gmailClientSecret').value || null,

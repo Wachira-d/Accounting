@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Currency;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -22,23 +23,52 @@ public class CurrencyService : ICurrencyService
 
     public async Task<CompanyCurrencyResponse> AddCurrencyAsync(Guid companyId, CreateCompanyCurrencyRequest request)
     {
+        var code = NormalizeCurrencyCode(request.CurrencyCode, "รหัสสกุลเงิน");
+        if (request.InitialRate.HasValue && request.InitialRate.Value <= 0)
+            throw new BusinessRuleException("อัตราแลกเปลี่ยนเริ่มต้นต้องมากกว่า 0 — ถ้ายังไม่ทราบให้เว้นว่างไว้");
+
         var exists = await _db.CompanyCurrencies
-            .AnyAsync(c => c.CompanyId == companyId && c.CurrencyCode == request.CurrencyCode);
+            .AnyAsync(c => c.CompanyId == companyId && c.CurrencyCode == code);
         if (exists)
-            throw new InvalidOperationException($"สกุลเงิน {request.CurrencyCode} มีอยู่แล้ว");
+            throw new BusinessRuleException($"สกุลเงิน {code} มีอยู่แล้ว");
 
         var currency = new CompanyCurrency
         {
             CompanyId = companyId,
-            CurrencyCode = request.CurrencyCode,
-            CurrencyName = request.CurrencyName,
+            CurrencyCode = code,
+            // ไม่ส่งชื่อมา = ใช้รหัสเป็นชื่อ (derive ได้ ไม่ต้องบังคับผู้ใช้/partner)
+            CurrencyName = string.IsNullOrWhiteSpace(request.CurrencyName) ? code : request.CurrencyName.Trim(),
             Symbol = request.Symbol,
             DecimalPlaces = request.DecimalPlaces
         };
 
         _db.CompanyCurrencies.Add(currency);
+
+        // ช่อง "อัตราแลกเปลี่ยนเริ่มต้น (1 หน่วย = ? THB)" บนฟอร์ม — เดิมถูกทิ้งเงียบ ๆ
+        if (request.InitialRate.HasValue)
+        {
+            _db.CurrencyRates.Add(new CurrencyRate
+            {
+                CompanyId = companyId,
+                FromCurrency = code,
+                ToCurrency = "THB",
+                EffectiveDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow),
+                MidRate = request.InitialRate.Value,
+                Source = "Manual"
+            });
+        }
+
         await _db.SaveChangesAsync();
         return MapCurrencyToResponse(currency);
+    }
+
+    /// <summary>รหัส ISO 4217 — ตัวพิมพ์ใหญ่ 3 ตัว; ผิดรูป = ข้อความไทยที่ชี้ช่อง</summary>
+    private static string NormalizeCurrencyCode(string? raw, string fieldLabel)
+    {
+        var code = (raw ?? "").Trim().ToUpperInvariant();
+        if (code.Length != 3 || !code.All(c => c >= 'A' && c <= 'Z'))
+            throw new BusinessRuleException($"{fieldLabel}ต้องเป็นตัวอักษรภาษาอังกฤษ 3 ตัวตาม ISO 4217 (เช่น USD)");
+        return code;
     }
 
     public async Task<List<CompanyCurrencyResponse>> GetCurrenciesAsync(Guid companyId)
@@ -89,11 +119,21 @@ public class CurrencyService : ICurrencyService
 
     public async Task<CurrencyRateResponse> AddRateAsync(Guid companyId, CreateCurrencyRateRequest request)
     {
+        var from = NormalizeCurrencyCode(request.FromCurrency, "สกุลเงินต้นทาง");
+        var to = NormalizeCurrencyCode(request.ToCurrency, "สกุลเงินปลายทาง");
+        if (from == to)
+            throw new BusinessRuleException("สกุลเงินต้นทางและปลายทางต้องไม่ใช่สกุลเดียวกัน");
+        // อัตรา 0 = "ค่าที่แต่งขึ้น" ที่ทำให้ทุกการแปลงค่าเงินได้ 0 เงียบ ๆ (DOCTRINE §1) — ปฏิเสธ
+        if (request.MidRate <= 0)
+            throw new BusinessRuleException("อัตราแลกเปลี่ยนต้องมากกว่า 0");
+        if (request.BuyRate < 0 || request.SellRate < 0)
+            throw new BusinessRuleException("อัตราซื้อ/อัตราขายต้องไม่ติดลบ (เว้นว่าง = ใช้อัตรากลาง)");
+
         var rate = new CurrencyRate
         {
             CompanyId = companyId,
-            FromCurrency = request.FromCurrency,
-            ToCurrency = request.ToCurrency,
+            FromCurrency = from,
+            ToCurrency = to,
             EffectiveDate = request.EffectiveDate,
             BuyRate = request.BuyRate,
             SellRate = request.SellRate,
@@ -126,7 +166,9 @@ public class CurrencyService : ICurrencyService
     public async Task<CurrencyRateResponse?> GetLatestRateAsync(Guid companyId, string fromCurrency, string toCurrency)
     {
         var rate = await _db.CurrencyRates
-            .Where(r => r.CompanyId == companyId && r.FromCurrency == fromCurrency && r.ToCurrency == toCurrency)
+            // MidRate > 0: แถวอัตรา 0 ที่ค้างจากบั๊กฟอร์มก่อนรอบ 193 (A03) ไม่ถูกหยิบมาใช้
+            .Where(r => r.CompanyId == companyId && r.FromCurrency == fromCurrency && r.ToCurrency == toCurrency
+                && r.MidRate > 0)
             .OrderByDescending(r => r.EffectiveDate)
             .FirstOrDefaultAsync();
 
@@ -149,7 +191,9 @@ public class CurrencyService : ICurrencyService
             .Where(r => r.CompanyId == companyId
                 && r.FromCurrency == fromCurrency
                 && r.ToCurrency == toCurrency
-                && r.EffectiveDate <= date)
+                && r.EffectiveDate <= date
+                // แถว MidRate 0 (ค้างจากบั๊ก A03 ก่อนรอบ 193) = ไม่มีอัตรา ไม่ใช่ "อัตรา 0"
+                && r.MidRate > 0)
             .OrderByDescending(r => r.EffectiveDate)
             .FirstOrDefaultAsync();
 
@@ -169,7 +213,8 @@ public class CurrencyService : ICurrencyService
             .Where(r => r.CompanyId == companyId
                 && r.FromCurrency == toCurrency
                 && r.ToCurrency == fromCurrency
-                && r.EffectiveDate <= date)
+                && r.EffectiveDate <= date
+                && r.MidRate > 0)
             .OrderByDescending(r => r.EffectiveDate)
             .FirstOrDefaultAsync();
 
@@ -200,7 +245,8 @@ public class CurrencyService : ICurrencyService
                 .Where(r => r.CompanyId == companyId
                     && r.FromCurrency == account.Currency
                     && r.ToCurrency == baseCurrency
-                    && r.EffectiveDate <= asOfDate)
+                    && r.EffectiveDate <= asOfDate
+                    && r.MidRate > 0)
                 .OrderByDescending(r => r.EffectiveDate)
                 .FirstOrDefaultAsync();
 
@@ -213,7 +259,8 @@ public class CurrencyService : ICurrencyService
                 .Where(r => r.CompanyId == companyId
                     && r.FromCurrency == account.Currency
                     && r.ToCurrency == baseCurrency
-                    && r.EffectiveDate <= asOfDate.AddMonths(-1))
+                    && r.EffectiveDate <= asOfDate.AddMonths(-1)
+                    && r.MidRate > 0)
                 .OrderByDescending(r => r.EffectiveDate)
                 .FirstOrDefaultAsync();
 

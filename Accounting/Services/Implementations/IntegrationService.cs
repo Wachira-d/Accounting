@@ -115,14 +115,32 @@ public class IntegrationService : IIntegrationService
 
     public async Task<List<IntegrationResponse>> GetIntegrationsAsync(Guid companyId)
     {
-        return await _db.Set<ExternalIntegration>()
+        var rows = await _db.Set<ExternalIntegration>().AsNoTracking()
             .Where(i => i.CompanyId == companyId && !i.IsDeleted)
             .OrderByDescending(i => i.CreatedAt)
-            .Select(i => new IntegrationResponse(
-                i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
-                i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
-                i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt))
             .ToListAsync();
+        var now = DateTime.UtcNow;
+        return rows.Select(i => ToResponse(i, now)).ToList();
+    }
+
+    /// <summary>ตัวสร้าง <see cref="IntegrationResponse"/> ตัวเดียว (list + update) — สิทธิ์ที่บังคับใช้จริง
+    /// คิดจาก <c>IntegrationKeyPolicy</c> ที่นี่ หน้าเว็บไม่ต้องรู้กติกาช่วงผ่อนผัน (รอบ 193 · G2-01)</summary>
+    private static IntegrationResponse ToResponse(ExternalIntegration i, DateTime nowUtc)
+    {
+        var stored = new Accounting.Helpers.IntegrationKeyScopes(i.CanRead, i.CanWrite, i.CanDelete);
+        var legacyActive = Accounting.Helpers.IntegrationKeyPolicy.IsLegacyPrivilegeActive(
+            i.IsLegacyKey, i.LegacyDeprecatesAt, nowUtc);
+        var effective = Accounting.Helpers.IntegrationKeyPolicy.EffectiveScopes(
+            i.IsLegacyKey, i.LegacyDeprecatesAt, stored, nowUtc);
+        return new IntegrationResponse(
+            i.Id, i.SystemName, i.SystemType, i.SystemVersion, i.BaseUrl,
+            i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
+            i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt,
+            CanRead: i.CanRead, CanWrite: i.CanWrite, CanDelete: i.CanDelete,
+            IsLegacyKey: i.IsLegacyKey, LegacyDeprecatesAt: i.LegacyDeprecatesAt,
+            LegacyPrivilegeActive: legacyActive,
+            EffectiveCanRead: effective.CanRead, EffectiveCanWrite: effective.CanWrite,
+            EffectiveCanDelete: effective.CanDelete);
     }
 
     public async Task<IntegrationCreatedResponse> CreateIntegrationAsync(Guid companyId, CreateIntegrationRequest request)
@@ -136,9 +154,18 @@ public class IntegrationService : IIntegrationService
         // Generate HMAC secret
         var secretKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
+        // คีย์ที่ออกใหม่ = นโยบายใหม่เสมอ: ไม่ใช่รุ่นเก่า · สิทธิ์ที่ไม่ได้เลือก = อ่านอย่างเดียว (G2-01)
+        var scopes = Accounting.Helpers.IntegrationKeyPolicy.ScopesForNewKey(
+            request.CanRead, request.CanWrite, request.CanDelete);
+
         var integration = new ExternalIntegration
         {
             CompanyId = companyId,
+            CanRead = scopes.CanRead,
+            CanWrite = scopes.CanWrite,
+            CanDelete = scopes.CanDelete,
+            IsLegacyKey = false,
+            LegacyDeprecatesAt = null,
             SystemName = request.SystemName,
             SystemType = request.SystemType,
             SystemVersion = request.SystemVersion,
@@ -177,13 +204,22 @@ public class IntegrationService : IIntegrationService
         if (request.WebhookUrl != null) integration.WebhookUrl = request.WebhookUrl;
         if (request.WebhookEnabled.HasValue) integration.WebhookEnabled = request.WebhookEnabled.Value;
 
+        // สิทธิ์ของคีย์ — ส่งมาอย่างน้อยหนึ่งช่อง = เจ้าของเลือกเองแล้ว ⇒ ย้ายเข้านโยบายใหม่ (G2-01)
+        // ไม่ส่งเลย = ไม่แตะ (แก้ชื่อ/เปิดปิดต้องไม่ทำให้คีย์รุ่นเก่าเสียสิทธิ์เงียบ ๆ)
+        var (scopes, scopesChanged) = Accounting.Helpers.IntegrationKeyPolicy.ApplyScopeUpdate(
+            new Accounting.Helpers.IntegrationKeyScopes(integration.CanRead, integration.CanWrite, integration.CanDelete),
+            request.CanRead, request.CanWrite, request.CanDelete);
+        if (scopesChanged)
+        {
+            integration.CanRead = scopes.CanRead;
+            integration.CanWrite = scopes.CanWrite;
+            integration.CanDelete = scopes.CanDelete;
+            integration.IsLegacyKey = false;
+        }
+
         await _db.SaveChangesAsync();
 
-        return new IntegrationResponse(
-            integration.Id, integration.SystemName, integration.SystemType, integration.SystemVersion,
-            integration.BaseUrl, integration.ApiKeyPrefix, integration.IsActive, integration.LastSyncAt,
-            integration.TotalSyncCount, integration.ErrorCount, integration.RateLimitPerMinute,
-            integration.WebhookUrl, integration.WebhookEnabled, integration.CreatedAt);
+        return ToResponse(integration, DateTime.UtcNow);
     }
 
     public async Task DeleteIntegrationAsync(Guid companyId, Guid integrationId)
@@ -347,7 +383,7 @@ public class IntegrationService : IIntegrationService
 
     // ===== API Key Validation =====
 
-    public async Task<(Guid CompanyId, Guid IntegrationId)?> ValidateApiKeyAsync(string apiKey)
+    public async Task<(Guid CompanyId, Guid IntegrationId, Accounting.Helpers.IntegrationKeyScopes Scopes)?> ValidateApiKeyAsync(string apiKey)
     {
         if (string.IsNullOrEmpty(apiKey) || apiKey.Length < 8)
             return null;
@@ -355,13 +391,21 @@ public class IntegrationService : IIntegrationService
         var prefix = apiKey[..8];
         var candidates = await _db.Set<ExternalIntegration>()
             .Where(i => i.ApiKeyPrefix == prefix && i.IsActive && !i.IsDeleted)
-            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash })
+            .Select(i => new { i.Id, i.CompanyId, i.ApiKeyHash,
+                i.CanRead, i.CanWrite, i.CanDelete, i.IsLegacyKey, i.LegacyDeprecatesAt })
             .ToListAsync();
 
         foreach (var candidate in candidates)
         {
             if (BCrypt.Net.BCrypt.Verify(apiKey, candidate.ApiKeyHash))
-                return (candidate.CompanyId, candidate.Id);
+            {
+                // สิทธิ์ที่บังคับใช้จริง — ตัวตัดสินเดียวกับเส้น X-Api-Key ใน ApiKeyMiddleware (G2-01)
+                var scopes = Accounting.Helpers.IntegrationKeyPolicy.EffectiveScopes(
+                    candidate.IsLegacyKey, candidate.LegacyDeprecatesAt,
+                    new Accounting.Helpers.IntegrationKeyScopes(candidate.CanRead, candidate.CanWrite, candidate.CanDelete),
+                    DateTime.UtcNow);
+                return (candidate.CompanyId, candidate.Id, scopes);
+            }
         }
 
         return null;
@@ -485,11 +529,16 @@ public class IntegrationService : IIntegrationService
 
         try
         {
-            // Find existing contact by TaxId or Name
+            // Find existing contact by (TaxId + BranchCode) or Name — รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา
+            // (Helpers/ContactTaxBranchKey ตัวเดียวกับทุกทางเข้า) · เดิม TaxId อย่างเดียว ⇒ payload สาขา 8 หยิบแถว
+            // สำนักงานใหญ่ แล้วบล็อก update ด้านล่างเขียน BranchCode = 00008 ทับแถวนั้น
             Contact? contact = null;
-            if (!string.IsNullOrEmpty(request.TaxId))
-                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == request.TaxId && !c.IsDeleted);
-            if (contact == null && !string.IsNullOrEmpty(request.Name))
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, request.TaxId, request.BranchCode);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+            // มีผู้ติดต่อเลขนี้แต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยชื่อ (ชื่อเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) → สร้างแถวสาขานี้
+            if (contact == null && !taxKey.TaxIdExists && !string.IsNullOrEmpty(request.Name))
                 contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
 
             // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
@@ -1527,19 +1576,12 @@ public class IntegrationService : IIntegrationService
         {
             // normalize เลขภาษี (ตัวเลขล้วน) — เทียบ == ตรง ๆ พลาดเมื่อ format ต่าง
             // (ขีด/เว้นวรรค) → สร้าง contact ซ้ำทุก sync
-            var taxDigits = DocumentService.NormalizeTaxDigits(taxId);
-            if (taxDigits.Length >= 10)
-            {
-                var hit = (await _db.Set<Contact>().AsNoTracking()
-                    .Where(c => c.CompanyId == companyId && !c.IsDeleted
-                        && c.TaxId != null && c.TaxId != "")
-                    .Select(c => new { c.Id, c.TaxId })
-                    .ToListAsync())
-                    .FirstOrDefault(c => DocumentService.NormalizeTaxDigits(c.TaxId) == taxDigits);
-                if (hit != null)
-                    contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == hit.Id);
-            }
-            contact ??= await _db.Set<Contact>().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == taxId && !c.IsDeleted);
+            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขาตัวเดียวของทุกทางเข้า — payload ใบขายไม่มีช่องสาขาผู้ซื้อ
+            // ⇒ "ไม่ระบุสาขา" = แถวสำนักงานใหญ่ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, taxId, branchCode: null);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Set<Contact>().FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
         }
 
         if (contact == null && !string.IsNullOrEmpty(name))
@@ -1622,10 +1664,16 @@ public class IntegrationService : IIntegrationService
             supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
                 c.CompanyId == companyId && c.ExternalId == extId && !c.IsDeleted);
 
-        // (3) เลขผู้เสียภาษี normalize ตัวเลขล้วน (stored ถูก normalize แล้วใน migration)
+        // (3) เลขผู้เสียภาษี (+ สาขา) — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey (รอบ 193 ข้อ 20) ·
+        //     payload ไม่มีช่องสาขาผู้ขาย ⇒ แถวสำนักงานใหญ่ก่อน แทนแถวไหนก็ได้ของเลขนั้น
         if (supplier == null && taxDigits.Length > 0)
-            supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && c.TaxId == taxDigits && !c.IsDeleted);
+        {
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+                _db.Set<Contact>(), companyId, taxDigits, branchCode: null);
+            if (taxKey.ContactId is Guid keyId)
+                supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
+                    c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+        }
 
         // (4) ชื่อ trim + case-insensitive
         if (supplier == null && !string.IsNullOrWhiteSpace(nameTrim))

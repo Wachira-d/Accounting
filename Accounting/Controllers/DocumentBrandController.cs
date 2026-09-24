@@ -298,8 +298,8 @@ public class DocumentBrandController : ControllerBase
         }));
     }
 
-    // เดิมคำนวณเอง → ได้ "สาขาที่ 00003" (เลขศูนย์นำหน้าติดมาด้วย) ไม่ตรงถ้อยคำ
-    // ตามประกาศอธิบดีฯ ฉบับที่ 199 — ย้ายไปใช้ resolver กลางตัวเดียวทั้งระบบ
+    // เดิมคำนวณเอง (สูตรคนละชุดกับ renderer) — ย้ายไปใช้ resolver กลางตัวเดียวทั้งระบบ
+    // (รอบ 193 ข้อ 21: ถ้อยคำคือ "สาขาที่ 00003" 5 หลักเต็ม ตาม TaxBranchCode.LabelWithName)
     private static string FormatBranchLabel(string? code, string? name)
         => TaxBranchCode.LabelWithName(code, name);
 

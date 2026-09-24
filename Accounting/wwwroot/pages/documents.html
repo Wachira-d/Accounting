@@ -4226,7 +4226,7 @@
         const code = b?.taxBranchCode || '';
         const label = !code || /^0*$/.test(code)
           ? 'สำนักงานใหญ่'
-          : `สาขาที่ ${String(parseInt(code, 10))}`;
+          : `สาขาที่ ${String(code).replace(/\D/g, '').padStart(5, '0').slice(-5)}`;   // รอบ 193 ข้อ 21: พิมพ์รหัส 5 หลักเต็ม ตรง TaxBranchCode.Label
         hint.textContent = `ใบนี้จะพิมพ์ "${label}" ต่อท้ายเลขผู้เสียภาษี`
           + (b?.address ? ' และใช้ที่อยู่ของสาขานี้' : ' (สาขานี้ยังไม่ได้กรอกที่อยู่ → ใช้ที่อยู่บริษัท)')
           + (code ? '' : ' — ยังไม่ได้กรอกรหัสสาขาสรรพากรให้สาขานี้');
@@ -5775,6 +5775,7 @@
               { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
             const j = await r.json().catch(() => ({}));
             if (!r.ok || j.success === false) failures.push(file.name + ': ' + (j.message || r.status));
+            else API.showStorageWarning(j);   // พื้นที่เกินแพ็กเกจ = บันทึกแล้วแต่เตือน (รอบ 193 ข้อ 30)
           } catch (e) { failures.push(file.name + ': ' + e.message); }
         }
         if (failures.length) Layout.toast('แนบไฟล์บางตัวไม่สำเร็จ: ' + failures.join(' | '), 'warning');

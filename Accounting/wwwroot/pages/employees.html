@@ -58,7 +58,10 @@
         <div class="modal-body">
           <input type="hidden" id="fId">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="fCode" placeholder="EMP001"></div>
+            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="fCode" placeholder="EMP001">
+              <!-- ล็อกเมื่อเซิร์ฟเวอร์บอกว่ามีประวัติเงินเดือนแล้ว (employeeCodeLocked) พร้อมเหตุผล — ห้ามล็อก/ปลดเงียบ ๆ -->
+              <div id="fCodeLockHint" style="display:none;font-size:11px;color:#b45309;margin-top:4px"></div>
+            </div>
             <div class="form-group"><label class="form-label">คำนำหน้า</label>
               <!-- ตัวเลือกสร้างจาก /api/reference/titles ตอน init — ห้ามพิมพ์ลิสต์ที่นี่
                    (เดิมมี 4 ตัว ขาด เด็กชาย/เด็กหญิง ⇒ พนักงานผู้เยาว์เลือกไม่ได้) -->
@@ -75,7 +78,9 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">เลขบัตรประชาชน (13 หลัก)</label><input type="text" class="form-input" id="fCitizenId" maxlength="13"></div>
-            <div class="form-group"><label class="form-label">เลขประจำตัวผู้เสียภาษี</label><input type="text" class="form-input" id="fTaxId"></div>
+            <div class="form-group"><label class="form-label">เลขประจำตัวผู้เสียภาษี</label><input type="text" class="form-input" id="fTaxId" maxlength="17">
+              <div style="font-size:11px;color:#64748b;margin-top:4px">เว้นว่าง = ใช้เลขบัตรประชาชน (บุคคลไทย) · กรอกเฉพาะผู้ที่ไม่มีบัตรไทย — ใช้ออก 50 ทวิ / ภ.ง.ด.1</div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
@@ -394,7 +399,8 @@
         ['fCode','fFirstNameTh','fLastNameTh','fFirstNameEn','fLastNameEn','fCitizenId',
          'fTaxId','fPhone','fEmail','fDept','fPos','fBankName','fBankAcct','fBankAcctName',
          'fExtSys','fExtId'].forEach(id => document.getElementById(id).value = '');
-        document.getElementById('fCode').disabled = false;
+        Page._setCodeLock(false, null);
+        document.getElementById('fStart').dataset.orig = '';
         document.getElementById('fTitle').value = 'นาย';
         document.getElementById('fEmpType').value = 'FullTime';
         document.getElementById('fStart').value = Layout.toDateInput(new Date());
@@ -414,23 +420,34 @@
           document.getElementById('formTitle').textContent = `แก้ไข ${e.employeeCode}`;
           document.getElementById('fId').value = e.id;
           document.getElementById('fCode').value = e.employeeCode;
-          document.getElementById('fCode').disabled = true;
+          // undefined = เซิร์ฟเวอร์ยังไม่ได้ตรวจ ⇒ ล็อกไว้ก่อน (ทิศปลอดภัย — เดิมล็อกเสมอ)
+          Page._setCodeLock(e.employeeCodeLocked !== false, e.employeeCodeLockReason);
           Layout.setTitleSelectValue('fTitle', e.titleTh || 'นาย');
           document.getElementById('fFirstNameTh').value = e.firstNameTh || '';
           document.getElementById('fLastNameTh').value = e.lastNameTh || '';
           document.getElementById('fFirstNameEn').value = e.firstNameEn || '';
           document.getElementById('fLastNameEn').value = e.lastNameEn || '';
           document.getElementById('fCitizenId').value = e.citizenId || '';
+          // เลข/บัญชีที่ถูกปิดบัง (ไม่มีสิทธิ์ pii:view) ส่งกลับไปตามเดิมได้ — เซิร์ฟเวอร์
+          // รู้จัก "ค่าปิดบังของของเดิม" และไม่เขียนทับ (Helpers/EmployeeRecordEdit)
+          document.getElementById('fTaxId').value = e.taxId || '';
           document.getElementById('fPhone').value = e.phone || '';
           document.getElementById('fEmail').value = e.email || '';
           document.getElementById('fDept').value = e.department || '';
           document.getElementById('fPos').value = e.position || '';
           document.getElementById('fEmpType').value = e.employmentType || 'FullTime';
           document.getElementById('fStart').value = Layout.toDateInput(new Date(e.startDate));
+          // ส่งวันเริ่มงานเฉพาะเมื่อผู้ใช้เปลี่ยนจริง — กันการแปลงเขตเวลาไป-กลับขยับค่าเดิมเงียบ ๆ
+          document.getElementById('fStart').dataset.orig = document.getElementById('fStart').value;
           document.getElementById('fSalary').value = e.baseSalary;
           document.getElementById('fSalaryType').value = e.salaryType || 'Monthly';
           document.getElementById('fCostBehavior').value = e.costBehavior || 'Fixed';
           Page._setAllowances(e);
+          // D-07: ธนาคาร/ธง ปกส. เดิมไม่ hydrate ⇒ ฟอร์มค้างค่าของคนก่อนแล้วส่งไปทับอีกคน
+          document.getElementById('fSso').checked = e.isSubjectToSocialSecurity !== false;
+          document.getElementById('fBankName').value = e.bankName || '';
+          document.getElementById('fBankAcct').value = e.bankAccountNumber || '';
+          document.getElementById('fBankAcctName').value = e.bankAccountName || '';
           document.getElementById('fExtSys').value = e.externalSystem || '';
           document.getElementById('fExtId').value = e.externalId || '';
           Layout.openModal('formModal');
@@ -450,6 +467,7 @@
             firstNameEn: document.getElementById('fFirstNameEn').value.trim() || null,
             lastNameEn: document.getElementById('fLastNameEn').value.trim() || null,
             citizenId: document.getElementById('fCitizenId').value.trim() || null,
+            taxId: document.getElementById('fTaxId').value.trim() || null,
             dateOfBirth: null, gender: null, address: null,
             phone: document.getElementById('fPhone').value.trim() || null,
             email: document.getElementById('fEmail').value.trim() || null,
@@ -483,15 +501,31 @@
             await this.load();
           } catch (err) { Layout.toast(err.message, 'error'); }
         } else {
-          // Update
+          // Update — ส่ง**ทุกช่องที่ openEdit hydrate** (A05/D-07: เดิมส่งคนละชุดกับที่
+          // hydrate ⇒ ชื่อ/เลขบัตร/วันเริ่มงาน/ธง ปกส. กดบันทึกแล้วเงียบ) · ""=ล้างค่า
+          // (ช่องไม่บังคับ) · ชุดช่องนี้ถูกล็อกด้วย tools/employee_form_contract_sim.js
+          const v = (id) => document.getElementById(id).value.trim();
+          const startEl = document.getElementById('fStart');
           const body = {
-            position: document.getElementById('fPos').value.trim() || null,
-            department: document.getElementById('fDept').value.trim() || null,
-            phone: document.getElementById('fPhone').value.trim() || null,
-            email: document.getElementById('fEmail').value.trim() || null,
+            employeeCode: v('fCode'),
+            titleTh: document.getElementById('fTitle').value,
+            firstNameTh: v('fFirstNameTh'),
+            lastNameTh: v('fLastNameTh'),
+            firstNameEn: v('fFirstNameEn'),
+            lastNameEn: v('fLastNameEn'),
+            citizenId: v('fCitizenId'),
+            taxId: v('fTaxId'),
+            employmentType: document.getElementById('fEmpType').value,
+            startDate: startEl.value && startEl.value !== startEl.dataset.orig ? startEl.value : null,
+            isSubjectToSocialSecurity: document.getElementById('fSso').checked,
+            position: v('fPos'),
+            department: v('fDept'),
+            phone: v('fPhone'),
+            email: v('fEmail'),
             baseSalary: sal,
-            bankName: document.getElementById('fBankName').value.trim() || null,
-            bankAccountNumber: document.getElementById('fBankAcct').value.trim() || null,
+            bankName: v('fBankName'),
+            bankAccountNumber: v('fBankAcct'),
+            bankAccountName: v('fBankAcctName'),
             socialSecurityHospital: null,
             hasProvidentFund: null,
             providentFundEmployeePercent: null,
@@ -503,6 +537,9 @@
             salaryType: document.getElementById('fSalaryType').value,
             ...Page._readAllowances(),
           };
+          if (!body.employeeCode || !body.firstNameTh || !body.lastNameTh) {
+            Layout.toast('กรอกรหัส ชื่อ และนามสกุล (ไทย) ให้ครบ', 'error'); return;
+          }
           try {
             await API.put(`/api/companies/${cid}/payroll/employees/${id}`, body);
             Layout.closeModal('formModal');
@@ -510,6 +547,15 @@
             await this.load();
           } catch (err) { Layout.toast(err.message, 'error'); }
         }
+      },
+      /** ล็อก/ปลดช่องรหัสพนักงานตามที่เซิร์ฟเวอร์ตัดสิน + แสดงเหตุผล (ห้ามล็อกเงียบ) */
+      _setCodeLock(locked, reason) {
+        const el = document.getElementById('fCode');
+        const hint = document.getElementById('fCodeLockHint');
+        el.disabled = !!locked;
+        el.title = locked ? (reason || 'แก้รหัสพนักงานไม่ได้') : '';
+        hint.textContent = locked ? '🔒 ' + (reason || 'แก้รหัสพนักงานไม่ได้') : '';
+        hint.style.display = locked ? 'block' : 'none';
       },
       /** ค่าลดหย่อนภาษี §47 — helper คู่เดียวใช้ทั้งสร้าง/แก้ไข/รีเซ็ต/hydrate
        *  เพื่อไม่ให้ 4 จุดเขียนรายการช่องแยกกันแล้ว drift (D-T2) */

@@ -55,14 +55,16 @@ public sealed class DocumentLabels
         ? d.ToString("dd MMM yyyy", System.Globalization.CultureInfo.InvariantCulture)
         : d.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture);
 
-    /// <summary>รหัสสาขาแบบอ่านออก — "00000" = สำนักงานใหญ่ (ประกาศอธิบดีฯ 199)</summary>
+    /// <summary>รหัสสาขาแบบอ่านออก — "00000" = สำนักงานใหญ่ · อื่น = "สาขาที่ 00003" (รหัส 5 หลักเต็ม ·
+    /// ประกาศอธิบดีฯ 199 · คำตัดสินเจ้าของข้อ 21 รอบ 193) — ตัวเลขผ่าน <see cref="Accounting.Helpers.TaxBranchCode.Normalize"/>
+    /// ตัวเดียวกับ <see cref="Accounting.Helpers.TaxBranchCode.LabelWithName"/> ที่สอง renderer ใช้ ⇒ ห้าม drift</summary>
     public string Branch(string? code)
     {
         var c = (code ?? "").Trim();
         if (c.Length == 0) return "";
-        return c == "00000"
+        return Accounting.Helpers.TaxBranchCode.IsHeadOffice(c)
             ? this["branch_head_office"]
-            : string.Format(this["branch_number"], c.TrimStart('0').Length == 0 ? c : c.TrimStart('0'));
+            : string.Format(this["branch_number"], Accounting.Helpers.TaxBranchCode.Normalize(c));
     }
 
 

@@ -150,6 +150,8 @@ const Page = {
         const rateRes = await api.getExchangeRates('');
         const rates = rateRes.data?.items || rateRes.data || [];
         for (const r of rates) {
+          // แถวอัตรา 0 (ค้างจากบั๊กฟอร์มก่อนรอบ 193) เซิร์ฟเวอร์ไม่ใช้คำนวณ — หน้านี้ก็ไม่ถือเป็น "อัตราล่าสุด"
+          if (!(r.midRate > 0)) continue;
           const key = r.fromCurrency;
           if (!latestRates[key] || new Date(r.effectiveDate) > new Date(latestRates[key].effectiveDate)) latestRates[key] = r;
         }
@@ -162,7 +164,7 @@ const Page = {
         <td>${c.symbol || '-'}</td>
         <td class="text-right">${latestRates[c.currencyCode || c.code]?.midRate != null ? latestRates[c.currencyCode || c.code].midRate.toFixed(4) : '-'}</td>
         <td>${Layout.statusBadge(c.isActive !== false ? 'Active' : 'Inactive')}</td>
-        <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')" data-i18n="common.edit">แก้ไข</button></td>
+        <td><button class="btn btn-sm btn-secondary" onclick="Page.editCurrency('${c.id}')">${c.isActive !== false ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button></td>
       </tr>`).join('');
 
       // Populate filter selects
@@ -171,14 +173,29 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
-  openAddCurrency() { Layout.openModal('currModal'); },
+  openAddCurrency() {
+    document.getElementById('newCurrRate').value = '';
+    Layout.openModal('currModal');
+  },
 
   async saveCurrency() {
     const api = Layout.api(); if (!api) return;
-    const code = document.getElementById('newCurrCode').value;
-    const rate = parseFloat(document.getElementById('newCurrRate').value) || null;
+    const sel = document.getElementById('newCurrCode');
+    const code = sel.value;
+    // ชื่อสกุลเงินจากตัวเลือกที่ผู้ใช้เห็น ("USD - ดอลลาร์สหรัฐ" → "ดอลลาร์สหรัฐ") — เดิมไม่ส่ง
+    // ⇒ CurrencyName ที่ API บังคับหาย ⇒ เพิ่มสกุลเงินไม่ได้เลย (รอบ 193 · A02)
+    const optText = sel.options[sel.selectedIndex]?.textContent || '';
+    const name = optText.includes(' - ') ? optText.split(' - ').slice(1).join(' - ').trim() : '';
+    const data = { currencyCode: code, currencyName: name || null };
+    // ช่องตัวเลขว่าง = ตัดคีย์ทิ้ง (ไม่ใช่ null/0) · กรอกแล้วต้อง > 0
+    const rateRaw = document.getElementById('newCurrRate').value.trim();
+    if (rateRaw !== '') {
+      const rate = parseFloat(rateRaw);
+      if (!(rate > 0)) { Layout.toast('อัตราแลกเปลี่ยนเริ่มต้นต้องมากกว่า 0 — ถ้ายังไม่ทราบให้เว้นว่าง', 'error'); return; }
+      data.initialRate = rate;
+    }
     try {
-      await api.addCurrency({ currencyCode: code, code, initialRate: rate });
+      await api.addCurrency(data);
       Layout.toast('เพิ่มสกุลเงินสำเร็จ');
       Layout.closeModal('currModal');
       this.loadCurrencies();
@@ -210,31 +227,39 @@ const Page = {
         <td>${Layout.date(r.effectiveDate || r.date)}</td>
         <td>${r.fromCurrency || r.sourceCurrency}</td>
         <td>${r.toCurrency || r.targetCurrency}</td>
-        <td class="text-right font-medium">${(r.midRate ?? r.buyRate)?.toFixed(4) || '-'}</td>
+        <td class="text-right font-medium">${r.midRate > 0 ? r.midRate.toFixed(4) : '<span class="text-danger" title="อัตรา 0 ที่บันทึกไว้ก่อนแก้บั๊กฟอร์ม — ระบบไม่ใช้คำนวณ กรุณาเพิ่มอัตราที่ถูกต้อง">0 (ไม่ถูกใช้)</span>'}</td>
         <td>${r.source || 'Manual'}</td>
       </tr>`).join('');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   openAddRate() {
-    const items = this.currencies;
-    ['addRateFrom','addRateTo'].forEach(id => {
-      const sel = document.getElementById(id);
-      sel.innerHTML = items.map(c => `<option value="${c.code||c.currencyCode}">${c.code||c.currencyCode}</option>`).join('');
-    });
+    const codes = this.currencies.map(c => c.code || c.currencyCode);
+    // "เป็นสกุลเงิน" ต้องมี THB (สกุลเงินหลัก) — เดิมมีแต่สกุลต่างประเทศ ⇒ เลือกได้แค่ USD→USD
+    const toCodes = ['THB', ...codes.filter(c => c !== 'THB')];
+    document.getElementById('addRateFrom').innerHTML = codes.map(c => `<option value="${Layout.esc(c)}">${Layout.esc(c)}</option>`).join('');
+    document.getElementById('addRateTo').innerHTML = toCodes.map(c => `<option value="${Layout.esc(c)}">${Layout.esc(c)}</option>`).join('');
+    document.getElementById('addRateTo').value = 'THB';
+    document.getElementById('addRateValue').value = '';
     document.getElementById('addRateDate').value = Layout.dateInput(new Date());
     Layout.openModal('rateModal');
   },
 
   async saveRate() {
     const api = Layout.api(); if (!api) return;
+    // รอบ 193 · A03: เดิมส่ง `rate` ซึ่งสัญญาไม่มี ⇒ Buy/Sell/Mid = 0 ถูกบันทึกจริงแล้วขึ้น "สำเร็จ"
+    // ช่อง "อัตรา" = อัตรากลาง (midRate) · อัตราซื้อ/ขายไม่ส่ง = ใช้อัตรากลาง
     const data = {
       fromCurrency: document.getElementById('addRateFrom').value,
       toCurrency: document.getElementById('addRateTo').value,
-      rate: parseFloat(document.getElementById('addRateValue').value),
+      midRate: parseFloat(document.getElementById('addRateValue').value),
       effectiveDate: document.getElementById('addRateDate').value,
+      source: 'Manual',
     };
-    if (!data.rate) { Layout.toast('กรุณากรอกอัตรา', 'error'); return; }
+    if (!data.fromCurrency) { Layout.toast('ยังไม่มีสกุลเงินต่างประเทศ — เพิ่มสกุลเงินก่อน', 'error'); return; }
+    if (data.fromCurrency === data.toCurrency) { Layout.toast('สกุลเงินต้นทางและปลายทางต้องต่างกัน', 'error'); return; }
+    if (!(data.midRate > 0)) { Layout.toast('กรุณากรอกอัตรา (มากกว่า 0)', 'error'); return; }
+    if (!data.effectiveDate) { Layout.toast('กรุณาเลือกวันที่', 'error'); return; }
     try {
       await api.addExchangeRate(data);
       Layout.toast('เพิ่มอัตราแลกเปลี่ยนสำเร็จ');

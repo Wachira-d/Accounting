@@ -198,7 +198,11 @@
       async saveScenario() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('sId').value;
-        const data = { name: document.getElementById('sName').value, scenarioType: document.getElementById('sType').value, fiscalYear: parseInt(document.getElementById('sYear').value), description: document.getElementById('sDesc').value || null };
+        const data = { name: document.getElementById('sName').value.trim(), scenarioType: document.getElementById('sType').value, fiscalYear: parseInt(document.getElementById('sYear').value), description: document.getElementById('sDesc').value || null };
+        // ฐานเปรียบเทียบไม่ต้องส่ง — เซิร์ฟเวอร์ใช้ข้อมูลบัญชีจริง (Actual) แบบเดียวที่คำนวณได้ (รอบ 193 · A10)
+        if (!data.name) { Layout.toast('กรุณาระบุชื่อ Scenario', 'error'); return; }
+        // ปีงบว่าง → NaN → null ⇒ int แปลงไม่ได้ ⇒ body ถูกทิ้งทั้งก้อน (คลาสรอบ 188) — ฟ้องไทยก่อนยิง
+        if (!Number.isInteger(data.fiscalYear)) { Layout.toast('กรุณากรอกปีงบ (ค.ศ.)', 'error'); return; }
         try {
           if (id) await api.updateScenario(id, data);
           else await api.createScenario(data);

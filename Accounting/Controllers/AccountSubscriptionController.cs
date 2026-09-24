@@ -66,7 +66,7 @@ public class AccountSubscriptionController : ControllerBase
         }
 
         var usedCount = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted);
-        var attached = await _db.Subscriptions
+        var attachedRaw = await _db.Subscriptions
             .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
             .Include(s => s.Company)
             .Select(s => new
@@ -75,9 +75,19 @@ public class AccountSubscriptionController : ControllerBase
                 // Per-company breakdown for the "X used in Co A · Y used in
                 // Co B" gauge — sum of these = the aggregate displayed below.
                 s.CurrentMonthDocuments, s.CurrentMonthJournalEntries,
-                s.CurrentStorageUsed, s.CurrentMonthOcrPages,
+                s.CurrentMonthOcrPages,
             })
             .ToListAsync();
+        // พื้นที่รายบริษัทคิดจากของจริง (Σ ไฟล์แนบ + สื่อ CMS) — คอลัมน์ Subscription.CurrentStorageUsed ไม่มีใครเขียน
+        // ⇒ เดิมหน้านี้โชว์ 0 ทุกบริษัท (รอบ 193 ข้อ 30) · ชื่อช่องเดิม (currentStorageUsed) คงไว้ให้หน้าเว็บอ่านได้เหมือนเดิม
+        var storageByCompany = await _subSvc.GetStorageBytesByCompanyAsync(attachedRaw.Select(x => x.CompanyId).ToList());
+        var attached = attachedRaw.Select(x => new
+        {
+            x.CompanyId, x.CompanyName, x.Status,
+            x.CurrentMonthDocuments, x.CurrentMonthJournalEntries,
+            CurrentStorageUsed = storageByCompany.TryGetValue(x.CompanyId, out var companyBytes) ? companyBytes : 0L,
+            x.CurrentMonthOcrPages,
+        }).ToList();
 
         // Owner-of-but-not-yet-attached so the UI can prompt "ผูกบริษัท X ?"
         var ownedNotAttached = await (from cu in _db.CompanyUsers

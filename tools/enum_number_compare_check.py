@@ -52,6 +52,14 @@ TYPEOF_GUARD = re.compile(r"typeof\s+\w+\.\w+\s*===\s*'number'")
 
 SKIP_DIRS = {'lib', 'vendor', 'node_modules'}
 
+# 3) (รอบ 193 · A06) <select> ที่ option เป็นตัวเลขล้วน แต่ถูก hydrate จากพร็อพเพอร์ตี้ enum ของ API
+#    `document.getElementById('provider').value = d.provider` — API ส่ง "Smtp" ⇒ ตั้งไม่ติด
+#    (selectedIndex -1, value "") ⇒ การ์ดที่ผูกกับค่าหายทั้งหมด และตอนบันทึก parseInt("") = NaN → null
+#    ⇒ enum non-nullable โยน body ทิ้งทั้งก้อน. กติกา CMP/IDX ข้างบนมองไม่เห็นเพราะไม่มีการเทียบตัวเลขในบรรทัดเดียว
+HYDRATE_PROP = r'\w*(?:status|Status|type|Type|mode|Mode|kind|Kind|provider|Provider)'
+SELECT_BLOCK = re.compile(r'<select\b[^>]*\bid="(?P<id>[\w-]+)"[^>]*>(?P<body>.*?)</select>', re.S)
+OPTION_VALUE = re.compile(r'<option\b[^>]*\bvalue="([^"]*)"')
+
 
 def scan(path, rel, problems):
     try:
@@ -94,7 +102,57 @@ def scan(path, rel, problems):
                 problems.append((rel, i, f'{name.group(1)}[.{m.group(1)}] (คีย์ตัวเลข)', raw.strip()[:110]))
 
 
+def scan_numeric_select_hydrate(text, rel, problems):
+    """กติกาที่ 3 — select ตัวเลขล้วนที่ถูกตั้งค่าจาก `<obj>.<enumish>` ของ API"""
+    lines = text.split('\n')
+    for m in SELECT_BLOCK.finditer(text):
+        values = [v for v in OPTION_VALUE.findall(m.group('body')) if v != '']
+        if len(values) < 2 or not all(v.isdigit() for v in values):
+            continue
+        sid = re.escape(m.group('id'))
+        hyd = re.compile(r"getElementById\(\s*['\"]" + sid + r"['\"]\s*\)\.value\s*=\s*\w+\??\.(" + HYDRATE_PROP + r")\b(?!\s*[!=]==?)")   # `x.t === 'ภ.ง.ด.3' ? '3' : '53'` = แปลงเองแล้ว
+        for h in hyd.finditer(text):
+            line_no = text.count('\n', 0, h.start()) + 1
+            line = lines[line_no - 1]
+            code = re.sub(r'//.*$', '', line)
+            if h.group(0) not in code or TYPEOF_GUARD.search(line):
+                continue      # อยู่ในคอมเมนต์ / ตรวจชนิดก่อนแล้ว
+            problems.append((rel, line_no,
+                             f'<select id="{m.group("id")}"> option ตัวเลข ← .{h.group(1)}',
+                             line.strip()[:110]))
+
+
+SELF_TEST_BAD = """<select id="provider" onchange="sw()">
+  <option value="0">SMTP</option><option value="1">Graph</option><option value="2">Gmail</option>
+</select>
+<script>
+  document.getElementById('provider').value = d.provider;
+</script>"""
+
+SELF_TEST_OK = """<select id="provider"><option value="Smtp">SMTP</option><option value="GmailApi">Gmail</option></select>
+<select id="calcMonth"><option value="1">ม.ค.</option><option value="2">ก.พ.</option></select>
+<select id="mForm"><option value="3">3</option><option value="53">53</option></select>
+<script>
+  document.getElementById('provider').value = d.provider;
+  document.getElementById('calcMonth').value = r.month;
+  document.getElementById('mForm').value = r.payerFormType === 'X' ? '3' : '53';
+</script>"""
+
+
+def self_test():
+    """negative test ของกติกาที่ 3 — ต้องจับหน้าก่อนแก้ และไม่ฟ้อง option ชื่อ/ตัวเลขที่ไม่ใช่ enum (F2 ข้อ 6)"""
+    bad, ok = [], []
+    scan_numeric_select_hydrate(SELF_TEST_BAD, 'bad.html', bad)
+    scan_numeric_select_hydrate(SELF_TEST_OK, 'ok.html', ok)
+    passed = len(bad) == 1 and not ok
+    print('✅ self-test ผ่าน 2 ทิศ (จับ select ตัวเลข←enum · ไม่ฟ้อง option ชื่อ/เดือน/ค่าที่แปลงเองด้วย ===)' if passed
+          else f'❌ self-test ไม่ผ่าน — bad={bad} ok={ok}')
+    return 0 if passed else 1
+
+
 def main():
+    if '--self-test' in sys.argv:
+        return self_test()
     problems = []
     for base, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -103,6 +161,12 @@ def main():
                 continue
             path = os.path.join(base, fn)
             scan(path, os.path.relpath(path, ROOT), problems)
+            if fn.endswith('.html'):
+                try:
+                    txt = open(path, encoding='utf-8', errors='replace').read()
+                except OSError:
+                    continue
+                scan_numeric_select_hydrate(txt, os.path.relpath(path, ROOT), problems)
 
     for rel, line, what, src in problems:
         print(f'❌ {rel}:{line}: {what} — enum ของ API มาเป็น "ชื่อ" ไม่ใช่ตัวเลข')

@@ -419,7 +419,14 @@ public partial class LodgingService
         var taxId = string.IsNullOrWhiteSpace(r.GuestTaxId) ? null : ThaiTaxId.Normalize(r.GuestTaxId);
         var email = r.GuestEmail?.Trim(); var phone = r.GuestPhone?.Trim();
         Contact? c = null;
-        if (taxId != null) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.TaxId == taxId);
+        // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ฟอร์มจองไม่มีช่องสาขา และเส้นนี้สร้างผู้ติดต่อ
+        // เป็น "00000" เสมอ ⇒ ความหมายเดิม = สำนักงานใหญ่ จึงส่ง "00000" (ไม่หยิบแถวสาขาอื่นของเลขเดียวกัน)
+        if (taxId != null)
+        {
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice);
+            if (taxKey.ContactId is Guid keyId)
+                c = await _db.Contacts.FirstOrDefaultAsync(x => x.Id == keyId && x.CompanyId == companyId);
+        }
         if (c == null && !string.IsNullOrEmpty(email)) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Email == email);
         if (c == null && !string.IsNullOrEmpty(phone)) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Phone == phone);
         if (c != null) return c.Id;

@@ -249,9 +249,14 @@
           const res = await fetch(`/api/companies/${cid}/attachments/ExpenseClaim/${id}`, {
             headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
           });
-          const json = await res.json();
-          const list = (json.data || json || []);
+          const json = await res.json().catch(() => ({}));
           const el = document.getElementById('fNoReceiptAttachList');
+          // ไม่มีสิทธิ์ดู (ใบเบิกของคนอื่น — รอบ 193 ข้อ 29) ต้องบอกตรง ๆ ห้ามแสดงว่า "ยังไม่มีหลักฐาน"
+          if (!res.ok || json.success === false) {
+            el.innerHTML = `<em style="color:#b91c1c">${Layout.esc(json.message || ('โหลดหลักฐานไม่สำเร็จ (HTTP ' + res.status + ')'))}</em>`;
+            return;
+          }
+          const list = Array.isArray(json.data) ? json.data : (Array.isArray(json) ? json : []);
           if (!list.length) {
             el.innerHTML = '<em style="color:#a16207">ยังไม่มีหลักฐานแนบ — ต้องอย่างน้อย 1 ไฟล์</em>';
             return;
@@ -274,18 +279,25 @@
         const input = document.getElementById('fNoReceiptFile');
         const files = Array.from(input.files || []);
         if (!files.length) return;
+        // เดิมไม่ดูผลตอบกลับเลย แล้วขึ้น "สำเร็จ" ทุกครั้ง — ตอนนี้เซิร์ฟเวอร์มีด่านสิทธิ์ต่อชนิด (รอบ 193 ข้อ 29)
+        // ⇒ ต้องนับเฉพาะที่สำเร็จจริง และบอกเหตุผลของไฟล์ที่ไม่ผ่าน
+        let ok = 0;
         for (const file of files) {
           const fd = new FormData();
           fd.append('file', file);
           try {
-            await fetch(`/api/companies/${cid}/attachments/ExpenseClaim/${id}`, {
+            const res = await fetch(`/api/companies/${cid}/attachments/ExpenseClaim/${id}`, {
               method: 'POST', body: fd,
               headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok || j.success === false) {
+              Layout.toast('อัพโหลด ' + file.name + ' ไม่สำเร็จ: ' + (j.message || ('HTTP ' + res.status)), 'error');
+            } else { ok++; API.showStorageWarning(j); }
           } catch (e) { Layout.toast('อัพโหลด ' + file.name + ' ไม่สำเร็จ', 'error'); }
         }
         input.value = '';
-        Layout.toast(`อัพโหลด ${files.length} ไฟล์สำเร็จ`);
+        if (ok) Layout.toast(`อัพโหลด ${ok} ไฟล์สำเร็จ`);
         this.loadNoReceiptEvidence();
       },
 
@@ -293,10 +305,14 @@
         const cid = Layout.getCompanyId(); if (!cid) return;
         if (!confirm('ลบหลักฐานนี้?')) return;
         try {
-          await fetch(`/api/companies/${cid}/attachments/${attId}`, {
+          const res = await fetch(`/api/companies/${cid}/attachments/${attId}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
           });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            Layout.toast('ลบหลักฐานไม่สำเร็จ: ' + (j.message || ('HTTP ' + res.status)), 'error');
+          }
           this.loadNoReceiptEvidence();
         } catch (e) { Layout.toast('ลบไม่สำเร็จ', 'error'); }
       },

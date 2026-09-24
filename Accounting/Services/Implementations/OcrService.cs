@@ -984,6 +984,21 @@ public class OcrService : IOcrService
                     }
                     NoteOurRegistryName(Accounting.Helpers.OcrFieldKeys.BuyerName, buyerNameBefore, b.Name);
                     NoteOurRegistryName(Accounting.Helpers.OcrFieldKeys.SellerName, vendorNameBefore, v.Name);
+                    // ที่อยู่ผู้ซื้อว่าง + ผู้ซื้อคือเรา (≥ 0.85) → ที่อยู่บริษัทเราจากฐาน สีเหลือง (รอบ 193 ข้อ 26 ·
+                    // Helpers/OcrOurAddressFill — ห้ามทับที่อยู่ที่พิมพ์ · ข้าม e-Tax XML)
+                    if (!isEtaxXml)
+                    {
+                        var ourAddr = Accounting.Helpers.OcrOurAddressFill.ForBuyer(partyResolution.OurSide,
+                            partyResolution.Confidence, extractedData.BuyerAddress, extractedData.BuyerBranchCode, ourIdentity);
+                        if (ourAddr != null)
+                        {
+                            extractedData.BuyerAddress = ourAddr.Address;
+                            extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerAddress] = (double)ourAddr.Confidence;
+                            extractedData.Note(Accounting.Helpers.OcrFieldKeys.BuyerAddress, ourAddr.Address,
+                                Accounting.Helpers.OcrFieldSource.VendorHistory, ourAddr.Confidence, ourAddr.Reason);
+                            extractedData.ReasoningTrace.Add("[Party] " + ourAddr.Reason);
+                        }
+                    }
                     foreach (var r in partyResolution.Reasons)
                         extractedData.ReasoningTrace.Add("[Party] " + r);
                     if (partyResolution.Decision != Accounting.Helpers.OcrPartyDecision.Unchanged)

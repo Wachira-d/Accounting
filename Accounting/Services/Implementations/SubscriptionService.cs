@@ -235,6 +235,8 @@ public class SubscriptionService : ISubscriptionService
 
         var tc = sub.TrialConfig
             ?? throw new InvalidOperationException("ไม่มีข้อมูล trial config");
+        // พื้นที่จริง (Σ ไฟล์แนบ + สื่อ CMS) — Subscription.CurrentStorageUsed ไม่มีใครเขียน ⇒ เดิมโชว์ 0 ตลอด
+        var trialStorageUsed = await StorageBytesForPoolAsync(await ResolvePoolCompanyIdsAsync(sub));
 
         var now = DateTime.UtcNow;
         var daysRemaining = Math.Max(0, (int)(tc.TrialEndDate - now).TotalDays);
@@ -263,7 +265,7 @@ public class SubscriptionService : ISubscriptionService
                 tc.TrialMaxJournalEntriesPerMonth,
                 userCount,
                 tc.TrialMaxUsers,
-                sub.CurrentStorageUsed,
+                trialStorageUsed,
                 sub.MaxStorageBytes),
             new TrialExpiryBehavior(
                 tc.BlockAccessOnExpiry,
@@ -846,12 +848,14 @@ public class SubscriptionService : ISubscriptionService
         }
 
         // Per-company plan path — original behavior.
+        // storage: คิดจากของจริง ไม่ใช่ Subscription.CurrentStorageUsed ที่ไม่มีใครเขียน (เดิมผ่านเสมอ — รอบ 193 ข้อ 30)
+        if (limitType == "storage")
+            return await StorageBytesForPoolAsync(new List<Guid> { sub.CompanyId }) < sub.MaxStorageBytes;
         return limitType switch
         {
             "document" => sub.CurrentMonthDocuments < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
                 sub.MaxDocumentsPerMonth, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
             "journal" => sub.CurrentMonthJournalEntries < sub.MaxJournalEntriesPerMonth,
-            "storage" => sub.CurrentStorageUsed < sub.MaxStorageBytes,
             _ => true
         };
     }
@@ -903,8 +907,18 @@ public class SubscriptionService : ISubscriptionService
     public async Task<bool> CanFitStorageAsync(Guid companyId, long additionalBytes)
     {
         if (additionalBytes < 0) return true;
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
-        if (sub == null) return false;
+        var status = await GetStorageStatusAsync(companyId);
+        if (status == null) return false;
+        return status.UsedBytes + additionalBytes <= status.MaxBytes;
+    }
+
+    /// <summary>พื้นที่ที่ใช้จริง + เพดานของ pool (บริษัทเดี่ยว หรือทุกบริษัทใต้ License เดียวกัน) —
+    /// ตัวเดียวที่ <see cref="CanFitStorageAsync"/> (CMS บล็อก) และเส้นไฟล์แนบ (เตือน ไม่บล็อก — รอบ 193 ข้อ 30) ใช้
+    /// · <c>null</c> = ไม่มี subscription (ไม่รู้เพดาน)</summary>
+    public async Task<StorageStatus?> GetStorageStatusAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return null;
 
         long maxBytes;
         List<Guid> poolCompanyIds;
@@ -938,7 +952,29 @@ public class SubscriptionService : ISubscriptionService
         // ⇒ ด่านนี้ผ่านทุกครั้ง (ด่านที่เขียนไว้แต่ไม่มีอินพุตจริง = ไม่มีด่าน). ใช้สูตรเดียว
         // กับที่หน้าจอโชว์ (StorageBytesForPoolAsync) — ไฟล์บัญชี + สื่อ CMS แชร์งบเดียวกัน
         var usedBytes = await StorageBytesForPoolAsync(poolCompanyIds);
-        return usedBytes + additionalBytes <= maxBytes;
+        return new StorageStatus(usedBytes, maxBytes);
+    }
+
+    /// <summary>พื้นที่ที่ใช้จริง<b>รายบริษัท</b> (ไฟล์แนบ + สื่อ CMS) — แทนการอ่านคอลัมน์
+    /// <c>Subscription.CurrentStorageUsed</c> ที่ไม่มีใครเขียน (หน้าแพ็กเกจกลุ่มบริษัท/พอร์ทัลแอดมินเคยโชว์ 0 ทุกบริษัท)</summary>
+    public async Task<Dictionary<Guid, long>> GetStorageBytesByCompanyAsync(IReadOnlyCollection<Guid> companyIds)
+    {
+        var ids = companyIds.Distinct().ToList();
+        var result = ids.ToDictionary(id => id, _ => 0L);
+        if (ids.Count == 0) return result;
+        var files = await _db.FileAttachments.AsNoTracking()
+            .Where(f => ids.Contains(f.CompanyId))
+            .GroupBy(f => f.CompanyId)
+            .Select(g => new { CompanyId = g.Key, Bytes = g.Sum(f => f.FileSize) })
+            .ToListAsync();
+        foreach (var f in files) result[f.CompanyId] += f.Bytes;
+        var cms = await _db.Sites.AsNoTracking()
+            .Where(s => ids.Contains(s.CompanyId) && !s.IsDeleted)
+            .GroupBy(s => s.CompanyId)
+            .Select(g => new { CompanyId = g.Key, Bytes = g.Sum(s => s.CurrentStorageUsed) })
+            .ToListAsync();
+        foreach (var c in cms) result[c.CompanyId] += c.Bytes;
+        return result;
     }
 
     public record AggregateUsage(
@@ -963,11 +999,12 @@ public class SubscriptionService : ISubscriptionService
             .Select(s => new {
                 s.CurrentMonthDocuments,
                 s.CurrentMonthJournalEntries,
-                s.CurrentStorageUsed,
+                s.CompanyId,
                 s.CurrentMonthOcrPages,
                 s.UsageResetDate,
             })
             .ToListAsync();
+        var poolStorage = await StorageBytesForPoolAsync(subs.Select(s => s.CompanyId).ToList());
 
         // counter รายเดือนของบริษัทพี่น้องที่ "ยังไม่ถูก reset" (เดือนใหม่แล้วแต่
         // ไม่มีใครเรียกเช็ค limit ของบริษัทนั้น) ห้ามนับรวม — ไม่งั้น usage ตกค้าง
@@ -978,7 +1015,9 @@ public class SubscriptionService : ISubscriptionService
             MaxDocuments: acct.MaxDocumentsPerMonth,
             JournalEntries: subs.Sum(s => Stale(s.UsageResetDate) ? 0 : s.CurrentMonthJournalEntries),
             MaxJournalEntries: acct.MaxJournalEntriesPerMonth,
-            StorageBytes: subs.Sum(s => s.CurrentStorageUsed),   // storage ไม่ใช่รายเดือน — นับเสมอ
+            // storage ไม่ใช่รายเดือน — นับเสมอ · คิดจากของจริง (Σ ไฟล์แนบ + สื่อ CMS ของ pool) ไม่ใช่
+            // Subscription.CurrentStorageUsed ที่ไม่มีใครเขียน (เดิมหน้าแพ็กเกจกลุ่มโชว์ 0 ตลอด — รอบ 193 ข้อ 30)
+            StorageBytes: poolStorage,
             MaxStorageBytes: acct.MaxStorageBytes,
             OcrPages: subs.Sum(s => Stale(s.UsageResetDate) ? 0 : s.CurrentMonthOcrPages),
             MaxOcrPages: acct.MaxOcrPagesPerMonth,
@@ -1451,7 +1490,7 @@ public class SubscriptionService : ISubscriptionService
                 // so the dashboard's "X / Y" matches what enforcement sees.
                 var agg = await _db.Subscriptions.AsNoTracking()
                     .Where(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted)
-                    .Select(s => new { s.CurrentStorageUsed, s.CurrentMonthDocuments, s.CurrentMonthJournalEntries, s.CurrentMonthOcrPages })
+                    .Select(s => new { s.CurrentMonthOcrPages })
                     .ToListAsync();
                 // docs/journals/storage รวม pool มาแล้วจาก GetUsageCurrentAsync — เหลือ OCR
                 ocrUsed = agg.Sum(x => x.CurrentMonthOcrPages);

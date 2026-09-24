@@ -3110,6 +3110,11 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_IntegrationUserMappings_Integration_Key"
                 ON "IntegrationUserMappings" ("IntegrationId", "ExternalUserKey");
             """,
+            // ── สิทธิ์ของคีย์ integration + ธงคีย์รุ่นเก่า (รอบ 193 · G2-01 · คำตัดสินเจ้าของข้อ 37) ──
+            // SQL อยู่กับนโยบายที่ Helpers/IntegrationKeyPolicy.MigrationStatements (ตัวตั้งตัวเดียวของ
+            // LegacyGraceDays) · แถวที่มีอยู่ ณ วันเพิ่มคอลัมน์ = คีย์รุ่นเก่า (สิทธิ์เต็มจนถึงวันเลิกใช้) ·
+            // idempotent: ADD เป็น no-op เมื่อรันซ้ำ และ UPDATE แตะเฉพาะแถวรุ่นเก่าที่ยังไม่มีวัน
+            .. Accounting.Helpers.IntegrationKeyPolicy.MigrationStatements(),
             // ===== Bank reconciliation: rejected-match memory + audit log =====
             // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
             // first startup after deploy (the GenerateCreateScript path also
@@ -3579,6 +3584,9 @@ public static class DatabaseMigrationHelper
 
             // ===== PosOrderItems.RefundedQuantity: POS partial refunds =====
             """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RefundedQuantity" numeric NOT NULL DEFAULT 0;""",
+            // ===== PosOrderItems.CostOfGoodsSold: COGS ที่บิลขายลงไว้จริง (E-01 รอบ 193) =====
+            // NULL = บิลเก่า → คืนเงินกลับตามสูตรขายเดิม (Helpers/PosCogsBooking.LegacyUnitCost) · ไม่ backfill
+            """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "CostOfGoodsSold" numeric NULL;""",
 
             // ===== PosOrders.ClientOrderId: offline-sale idempotency key =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "ClientOrderId" uuid NULL;""",

@@ -29,13 +29,13 @@ public sealed class ApiKeyScopeFilter : IAsyncAuthorizationFilter
         var items = context.HttpContext.Items;
         if (items["IsApiKeyAuth"] is not true) return Task.CompletedTask;
 
-        var method = context.HttpContext.Request.Method;
-        var (needed, label) = method switch
-        {
-            "GET" or "HEAD" or "OPTIONS" => ("ApiKeyCanRead", "อ่านข้อมูล"),
-            "DELETE" => ("ApiKeyCanDelete", "ลบข้อมูล"),
-            _ => ("ApiKeyCanWrite", "เขียนข้อมูล"),   // POST · PUT · PATCH
-        };
+        // method → สิทธิ์ ตัดสินที่ IntegrationKeyPolicy.RequiredScope ตัวเดียว (รอบ 193) — ทางเข้า
+        // X-Integration-Key ของ ExternalIntegrationController ใช้ตัวเดียวกัน ห้ามมีตาราง method ชุดที่สอง
+        var scope = Accounting.Helpers.IntegrationKeyPolicy.RequiredScope(context.HttpContext.Request.Method);
+        var needed = "ApiKey" + Accounting.Helpers.IntegrationKeyPolicy.ScopeName(scope);
+        var label = Accounting.Helpers.IntegrationKeyPolicy.ScopeLabel(scope);
+        // คีย์ int_ แก้สิทธิ์ที่หน้า "เชื่อมต่อระบบ" · คีย์ acc_ ที่หน้า Webhooks & API
+        var where = items.ContainsKey("IntegrationId") ? "หน้าเชื่อมต่อระบบ (เจ้าของบริษัท)" : "หน้าตั้งค่า API";
 
         // ค่าที่ middleware ไม่ได้ตั้ง (คีย์รุ่นเก่า / เส้นที่ยังไม่ผ่าน middleware)
         // ถือว่า **ไม่อนุญาต** — fail closed. คีย์ที่ควรทำได้ต้องมีค่า true จริง
@@ -45,7 +45,7 @@ public sealed class ApiKeyScopeFilter : IAsyncAuthorizationFilter
         context.Result = new ObjectResult(new
         {
             success = false,
-            message = $"API key นี้ไม่มีสิทธิ์{label} — แก้สิทธิ์ของคีย์ในหน้าตั้งค่า API",
+            message = $"API key นี้ไม่มีสิทธิ์{label} — แก้สิทธิ์ของคีย์ใน{where}",
             requiredScope = needed.Replace("ApiKey", ""),
         })
         { StatusCode = StatusCodes.Status403Forbidden };

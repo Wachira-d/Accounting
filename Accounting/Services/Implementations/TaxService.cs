@@ -2411,7 +2411,7 @@ public partial class TaxService : ITaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                TaxPayerId = emp.CitizenId,
+                TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
                 TaxPayerName = $"{emp.TitleTh}{emp.FirstNameTh} {emp.LastNameTh}",
                 TransactionDate = new DateTime(year, 12, 31),
                 Description = $"รหัส {emp.EmployeeCode} | เงินได้รวม {annualGross:N2} | หักค่าลดหย่อน {totalDeductions:N2}",
@@ -2429,7 +2429,7 @@ public partial class TaxService : ITaxService
                 {
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
-                    TaxPayerId = emp.CitizenId,
+                    TaxPayerId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId),
                     TaxPayerName = $"{emp.FirstNameTh} {emp.LastNameTh}",
                     TransactionDate = new DateTime(year, 12, 31),
                     Description = taxDiff > 0

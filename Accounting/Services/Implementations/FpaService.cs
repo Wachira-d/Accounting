@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Fpa;
 using Accounting.Models.Entities;
@@ -21,6 +22,11 @@ public class FpaService : IFpaService
 
     public async Task<ScenarioResponse> CreateScenarioAsync(Guid companyId, CreateScenarioRequest request)
     {
+        // ฐานเปรียบเทียบที่เส้นคำนวณรองรับจริงมีแบบเดียว (ข้อมูลบัญชีจริง) — ดู CalculateScenarioAsync
+        var baselineType = string.IsNullOrWhiteSpace(request.BaselineType) ? "Actual" : request.BaselineType.Trim();
+        if (!string.Equals(baselineType, "Actual", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                $"ฐานเปรียบเทียบ \"{baselineType}\" ยังไม่รองรับ — ระบบคำนวณ Scenario จากข้อมูลบัญชีจริง (Actual) เท่านั้น");
         var scenario = new FinancialScenario
         {
             CompanyId = companyId,
@@ -28,7 +34,7 @@ public class FpaService : IFpaService
             Description = request.Description,
             ScenarioType = request.ScenarioType,
             FiscalYear = request.FiscalYear,
-            BaselineType = request.BaselineType,
+            BaselineType = "Actual",
             BaselineScenarioId = request.BaselineScenarioId,
             Status = "Draft"
         };

@@ -106,16 +106,26 @@ public class AdminAccountSubscriptionController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (a == null) return NotFound();
 
-        var attached = await _db.Subscriptions
+        var attachedRaw = await _db.Subscriptions
             .Where(s => s.AccountSubscriptionId == id && !s.IsDeleted)
             .Include(s => s.Company)
             .Select(s => new
             {
                 s.CompanyId, CompanyName = s.Company.Name, s.Company.TaxId, s.Status,
                 s.CurrentMonthDocuments, s.CurrentMonthJournalEntries,
-                s.CurrentStorageUsed, s.CurrentMonthOcrPages,
+                s.CurrentMonthOcrPages,
             })
             .ToListAsync();
+        // พื้นที่รายบริษัทคิดจากของจริง (Σ ไฟล์แนบ + สื่อ CMS) — คอลัมน์ Subscription.CurrentStorageUsed ไม่มีใครเขียน
+        // ⇒ เดิมหน้านี้โชว์ 0 ทุกบริษัท (รอบ 193 ข้อ 30) · ชื่อช่องเดิม (currentStorageUsed) คงไว้ให้หน้าเว็บอ่านได้เหมือนเดิม
+        var storageByCompany = await _subSvc.GetStorageBytesByCompanyAsync(attachedRaw.Select(x => x.CompanyId).ToList());
+        var attached = attachedRaw.Select(x => new
+        {
+            x.CompanyId, x.CompanyName, x.TaxId, x.Status,
+            x.CurrentMonthDocuments, x.CurrentMonthJournalEntries,
+            CurrentStorageUsed = storageByCompany.TryGetValue(x.CompanyId, out var companyBytes) ? companyBytes : 0L,
+            x.CurrentMonthOcrPages,
+        }).ToList();
 
         var agg = await _subSvc.GetAggregateUsageAsync(id);
 

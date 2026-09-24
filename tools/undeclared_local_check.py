@@ -301,7 +301,7 @@ def declared_in(body: str, params: str):
 
 def main():
     files = sorted(p for p in ROOT.rglob("*.cs")
-                   if not any(part in {"obj", "bin"} for part in p.parts))
+                   if not any(part in {"obj", "bin", ".claude"} for part in p.parts))
     problems = []
     for f in files:
         raw = f.read_text(encoding="utf-8", errors="replace")

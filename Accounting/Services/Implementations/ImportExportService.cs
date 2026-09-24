@@ -507,12 +507,16 @@ public class ImportExportService : IImportExportService
             taxId = Accounting.Helpers.ThaiTaxIdValidator.Normalize(rawTaxId);
         }
 
-        // Idempotent on re-import: match by TaxId, then Email.
+        // Idempotent on re-import: match by (TaxId + BranchCode), then Email — รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา
+        // (Helpers/ContactTaxBranchKey) · คอลัมน์ BranchCode ว่าง = "ไม่ระบุ" (แถว สนญ. ก่อน → แถวเดียวที่มี) ไม่ใช่ 00000
+        // ⇒ นำเข้าไฟล์เดิมซ้ำไม่สร้างแถวใหม่ · มีเลขนี้แต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยอีเมล (จะได้แถวสาขาอื่น)
         Contact? existing = null;
-        if (!string.IsNullOrWhiteSpace(taxId))
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
+            _db.Contacts, companyId, taxId, row.GetValueOrDefault("BranchCode"));
+        if (taxKey.ContactId is Guid keyId)
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
-                c.CompanyId == companyId && !c.IsDeleted && c.TaxId == taxId);
-        if (existing == null && !string.IsNullOrWhiteSpace(email))
+                c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+        if (existing == null && !taxKey.TaxIdExists && !string.IsNullOrWhiteSpace(email))
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
                 c.CompanyId == companyId && !c.IsDeleted && c.Email == email);
 
@@ -1013,8 +1017,11 @@ public class ImportExportService : IImportExportService
         // change tracker, else two rows for the same new contact would each
         // insert a duplicate.
         Contact? contact = null;
-        if (!string.IsNullOrWhiteSpace(contactTaxId))
-            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == contactTaxId);
+        // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ไฟล์ยกมาไม่มีคอลัมน์สาขา ⇒ "ไม่ระบุ"
+        // = แถว สนญ. ก่อน (เดิม FirstOrDefault หยิบแถวไหนก็ได้ของเลขนั้น)
+        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, contactTaxId, branchCode: null);
+        if (taxKey.ContactId is Guid keyId)
+            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
         if (contact == null && !string.IsNullOrWhiteSpace(contactName))
             contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name == contactName);
         contact ??= _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity)
@@ -1381,7 +1388,8 @@ public class ImportExportService : IImportExportService
             Status = row.GetValueOrDefault("Status") ?? "Active",
             BudgetAmount = decimal.TryParse(row.GetValueOrDefault("BudgetAmount"), out var ba) ? ba : 0,
             ContractAmount = decimal.TryParse(row.GetValueOrDefault("ContractAmount"), out var ca) ? ca : 0,
-            BillingMethod = row.GetValueOrDefault("BillingMethod") ?? "FixedPrice",
+            // ชุดค่าเดียวกับฟอร์ม/API (ProjectContractMethods) — เดิมเก็บข้อความอะไรก็ได้ที่อยู่ในไฟล์
+            BillingMethod = Accounting.Helpers.ProjectContractMethods.NormalizeBilling(row.GetValueOrDefault("BillingMethod")),
             CreatedBy = performedBy
         });
     }
@@ -1568,8 +1576,10 @@ public class ImportExportService : IImportExportService
             var contactTaxId = row.GetValueOrDefault("ContactTaxId");
             // Tax id is a stronger key — try that first.
             Contact? contact = null;
-            if (!string.IsNullOrWhiteSpace(contactTaxId))
-                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.TaxId == contactTaxId);
+            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ไฟล์ไม่มีคอลัมน์สาขา ⇒ แถว สนญ. ก่อน
+            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, contactTaxId, branchCode: null);
+            if (taxKey.ContactId is Guid keyId)
+                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
             if (contact == null && !string.IsNullOrWhiteSpace(contactName))
                 contact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.Contains(contactName));
             if (contact == null)
@@ -2717,8 +2727,10 @@ public class ImportExportService : IImportExportService
                     new List<string> { "Active", "OnHold", "Completed", "Cancelled" }),
                 new("BudgetAmount", "งบประมาณ", "decimal", false, null, null),
                 new("ContractAmount", "มูลค่าสัญญา", "decimal", false, null, null),
-                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false, "default = FixedPrice",
-                    new List<string> { "FixedPrice", "TimeAndMaterial", "Milestone" }),
+                // ชุดค่ามาจากตัวตั้งเดียวกับฟอร์ม/API — ห้ามพิมพ์สำเนาที่สอง (F2 ข้อ 4)
+                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false,
+                    "default = " + Accounting.Helpers.ProjectContractMethods.DefaultBilling,
+                    Accounting.Helpers.ProjectContractMethods.Billing.Select(x => x.Value).ToList()),
             },
             "employees" => new List<ImportField>
             {

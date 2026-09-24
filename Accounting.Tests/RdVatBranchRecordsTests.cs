@@ -90,4 +90,99 @@ public class RdVatBranchRecordsTests
         Assert.Empty(RdVatBranchRecords.Parse(null));
         Assert.Empty(RdVatBranchRecords.Parse("<soap:Fault>err</soap:Fault>"));
     }
+
+    // ═══════════ รอบ 193 · คำตัดสินเจ้าของข้อ 18 — PickForBranch: ตัวเลือกแถวตัวเดียวของทุกทางเข้าทะเบียน VAT ═══════════
+    // ⚠ ข้อความ XML ทุกชุดเป็นของสังเคราะห์ตามรูปที่ตัวอ่านเดิมรองรับ — ยังไม่ได้ยืนยันกับคำตอบจริงของ RD
+
+    // สนญ. อยู่ดัชนีที่ 2 และเลขบ้านของ สนญ. เป็น "-" — ตัวอ่านเดิม ("ค่าแรกที่ไม่ว่าง" ทีละช่อง) จะได้
+    // เลขบ้าน 854/2 (ของสาขา 8) + ตำบลชะอำ ⇒ ที่อยู่สาขาถูกติดป้ายเป็นที่อยู่ สนญ.
+    private static readonly string HqSecondWithDashHouse = Xml(
+        "<anyType>8</anyType><anyType>0</anyType>",
+        "<anyType>854/2</anyType><anyType>-</anyType>",
+        "<anyType>ชะอำ</anyType><anyType>ปากเกร็ด</anyType>");
+
+    [Fact]
+    public void Pick_HeadOffice_TakesWholeRowWithBranchNumberZero_EvenWhenItIsNotFirst()
+    {
+        var pick = RdVatBranchRecords.PickForBranch(HqSecondWithDashHouse, "00000");
+        Assert.NotNull(pick);
+        Assert.Equal(RdVatRowBasis.BranchNumberMatch, pick!.Basis);
+        Assert.Equal(0, pick.Record.BranchNumber);
+        Assert.DoesNotContain("854/2", pick.Record.Address);   // ⬅ เดิม: เลขบ้านของสาขา 8 ปนเข้าที่อยู่ สนญ.
+        Assert.DoesNotContain("ชะอำ", pick.Record.Address);
+        Assert.Contains("ปากเกร็ด", pick.Record.Address);
+        Assert.Equal("บริษัท", pick.Record.Title);
+    }
+
+    [Fact]
+    public void Pick_Branch8_TakesItsOwnRow_AndUnknownBranchIsNull()
+    {
+        var b8 = RdVatBranchRecords.PickForBranch(HqSecondWithDashHouse, "00008");
+        Assert.Equal(RdVatRowBasis.BranchNumberMatch, b8!.Basis);
+        Assert.StartsWith("854/2", b8.Record.Address);
+        Assert.Null(RdVatBranchRecords.PickForBranch(HqSecondWithDashHouse, "00003"));   // ห้ามคืนแถว สนญ. แทน
+    }
+
+    [Fact]
+    public void Pick_HeadOffice_SingleRowWithoutBranchNumber_SameAsLegacy()
+    {
+        // ครึ่ง "ของที่ถูกอยู่แล้ว": แถวเดียว ไม่มีเลขสาขา = พฤติกรรมเดิม (ค่าแรกที่ไม่ว่าง = ค่าของแถวนั้น)
+        var xml = """
+        <ServiceResult>
+          <vtitleName><anyType>บริษัท</anyType></vtitleName>
+          <vName><anyType>ตัวอย่าง จำกัด</anyType></vName>
+          <vHouseNumber><anyType>99/1</anyType></vHouseNumber>
+          <vProvince><anyType>กรุงเทพมหานคร</anyType></vProvince>
+          <vPostCode><anyType>10110</anyType></vPostCode>
+        </ServiceResult>
+        """;
+        var pick = RdVatBranchRecords.PickForBranch(xml, null);
+        Assert.Equal(RdVatRowBasis.SingleRow, pick!.Basis);
+        Assert.Equal("บริษัท ตัวอย่าง จำกัด", pick.Record.Name);
+        Assert.Equal("99/1 จังหวัด กรุงเทพมหานคร 10110", pick.Record.Address);
+        // ถามสาขา 8 กับคำตอบที่ไม่มีเลขสาขา = ไม่ยืนยัน
+        Assert.Null(RdVatBranchRecords.PickForBranch(xml, "00008"));
+    }
+
+    [Fact]
+    public void Pick_HeadOffice_TwoRowsNoBranchNumber_DifferentAddress_NameOnly_NoMixedAddress()
+    {
+        var xml = Xml("", "<anyType>200</anyType><anyType>854/2</anyType>",
+            "<anyType>ปากเกร็ด</anyType><anyType>ชะอำ</anyType>").Replace("<vBranchNumber></vBranchNumber>", "");
+        var pick = RdVatBranchRecords.PickForBranch(xml, "00000");
+        Assert.Equal(RdVatRowBasis.NameOnly, pick!.Basis);
+        Assert.Equal("บริษัท เดสติเนชั่น รีสอร์ทส์ จำกัด", pick.Record.Name);   // ชื่อยังยืนยันตัวตนได้
+        Assert.Equal("", pick.Record.Address);                                  // ที่อยู่ = ไม่รู้
+    }
+
+    [Fact]
+    public void Pick_HeadOffice_TwoRowsNoBranchNumber_SameAddress_UsesIt()
+    {
+        var xml = Xml("", "<anyType>200</anyType><anyType>200</anyType>",
+            "<anyType>ปากเกร็ด</anyType><anyType>ปากเกร็ด</anyType>").Replace("<vBranchNumber></vBranchNumber>", "")
+            .Replace("<anyType>76120</anyType>", "<anyType>11120</anyType>")
+            .Replace("<vBranchTitleName><anyType>-</anyType><anyType>สาขา</anyType></vBranchTitleName>", "")
+            .Replace("<vBranchName><anyType>-</anyType><anyType>ชะอำ</anyType></vBranchName>", "");
+        var pick = RdVatBranchRecords.PickForBranch(xml, "00000");
+        Assert.Equal(RdVatRowBasis.SameAddressAllRows, pick!.Basis);
+        Assert.StartsWith("200", pick.Record.Address);
+    }
+
+    [Fact]
+    public void Pick_HeadOffice_MisalignedLists_NameOnly_NeverGuessAddress()
+    {
+        var xml = Xml("<anyType>0</anyType><anyType>8</anyType>", "<anyType>200</anyType>",
+            "<anyType>ปากเกร็ด</anyType><anyType>ชะอำ</anyType>");
+        var pick = RdVatBranchRecords.PickForBranch(xml, "00000");
+        Assert.Equal(RdVatRowBasis.NameOnly, pick!.Basis);
+        Assert.Equal("บริษัท เดสติเนชั่น รีสอร์ทส์ จำกัด", pick.Record.Name);
+        Assert.Equal("", pick.Record.Address);
+    }
+
+    [Fact]
+    public void Pick_NoNameOrEmpty_Null()
+    {
+        Assert.Null(RdVatBranchRecords.PickForBranch(null, "00000"));
+        Assert.Null(RdVatBranchRecords.PickForBranch("<soap:Fault>err</soap:Fault>", "00000"));
+    }
 }
