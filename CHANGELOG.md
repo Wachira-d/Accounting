@@ -3280,10 +3280,15 @@ S2 C3 M2) · ฝ่ายค้าน 3 รอบ (`review193-*.md` · `review19
 - **ฝ่ายค้านรอบ 3 → แก้** (`review193-r3.md`): O1 132c2b5 (R3-3 ลายเซ็นลูกค้าใช้ซ้ำได้เฉพาะเนื้อหาเดิม `DocumentSignedContent.Hash` + ล็อกแถว B9) · C3 85dfda8 (R3-2
   เติมเลขภาษีเฉพาะชื่อตรงตัว · fuzzy + เลขจริง = แถวใหม่ · mod-11 · walk-in ไม่รับเลข B8) · V 41bb2c8 (R3-4 ค่ารับรองที่หลุดกลับมาปิดเคลม — baseline จาก git · B6 อัตรา −1
   ไม่ได้ VAT ติดลบ + สัญญา `INTEGRATION_RESYNC.md` §11) · S2 3da2760 (B7 งานกวาดไฟล์สแกนไม่ค้างหัวคิว)
-- **ยังเปิดหลังฝ่ายค้านรอบ 3 (ไม่มีคอมมิตแก้)**: **R3-1 P1** ส่วนลดท้ายบิลแบบบาทถูกรวมกับฐานมัดจำใน `BillDiscountAmount` (อนุมัติล้ม/รับรู้มัดจำเกินเงียบ —
-  รอเลือก "ฟิลด์แยก" หรือ "ปฏิเสธส่วนลดบาท") · R3-5 ข้อความด่าน drives เก่าชี้ให้รับรู้มัดจำเองซ้ำ · R3-6 idempotency integration ไม่มี OrderBy (ได้ใบ Voided แล้วสร้างซ้ำ) ·
-  B1 void ของตาข่าย integration ล้มได้ · B2 `RealizeTaxedDepositDeductionsAsync` ไม่ล็อกแถวมัดจำ · B3/B4 ข้อความชี้ผิด · B5 ที่พักมัดจำสองแบบป้ายกระดาษเป็นส่วนลด ·
-  ที่พักยังเรียก `AdoptTaxId` รูป `[Obsolete]`
+- **ฝ่ายค้านรอบ 3 → แก้ (ต่อ)**: L2 04ce362 — **R3-1** ฐานมัดจำช่องแยก `Document.DepositBaseDeducted` (`BillDiscountAmount` = ส่วนลดการค้าอย่างเดียว ·
+  `AllocateBillDeductions` ตัวเดียว · `SplitBillDeduction` เกินยอดขาย = ล้มดัง · `TaxedDepositDeductionProblem` · renderer ×2 สองแถว · echo + revision ·
+  migration ย้ายค่าเดิม · convert สืบทอดตามสัดส่วนและนับการรับรู้ของใบแม่ · clone พ่วงส่วนลดแต่ไม่พ่วงมัดจำ) · **R3-5** `DrivesGuardMessage` ทางเดียว ·
+  **R3-6** idempotency Integration กรอง Voided ในคิวรี + ใหม่สุดก่อน ครบ 6 เมธอด · **B1** ตาข่าย void ยกเลิกก่อนประทับ · ล้ม = `ChangeTracker.Clear` +
+  หมายเหตุจริง + ยิงซ้ำล้มดัง (`TaxedDrivesVoidFailedMarker`) · **B2** รับรู้มัดจำตอนอนุมัติ `FOR UPDATE` · **B3** "ปนกัน" ตัดสินจากเลขที่ชี้มัดจำจริง · **B4** ด่านสถานะ
+  ก่อนตัวแปลง + "หักมูลค่ามัดจำ" ห้ามแก้ย้อนหลัง · **B5** ปิดตามโดยผลข้างเคียง (แถวมัดจำดูช่องใหม่) · ที่พักใช้ `AdoptTaxId(..., ContactMatchKind)` + ลบรูป
+  `[Obsolete]` · main 1aa8ef3 แก้ CS0029 หลัง merge O1 (CI run 36047169474) · เทสต์ `TaxedDepositDeductionTests` (6) · `DepositPolicyResolverTests` (+4)
+- **ความเสี่ยงที่รู้ (ไม่ใช่บั๊กค้าง)**: ร่างที่มีฐานมัดจำแล้วเลือกมัดจำ VAT พักแบบขับ JE ⇒ ด่าน "ห้ามหักสองชั้น" ล้ม (ยังไม่มีปุ่มล้างฐานมัดจำ — สร้างใบใหม่) ·
+  ป้ายแถวมัดจำพิมพ์ `DepositAppliedRef` ทั้งสตริง · `required_call_site_check` ช้าลง ~87 → ~124 วินาที (ควรแคชผล mask ต่อไฟล์)
 - **เครื่องมือใหม่ (ทั้งหมดอยู่ใน `check_all.sh` + CLAUDE.md หมวด F)**: `required_call_site_check` · `settings_reader_check` · `approved_status_writer_check` ·
   `company_settings_factory_check` · `contact_taxid_only_match_check` · `attachment_gate_check` · `owner_action_wiring_check` · `tools/employee_form_contract_sim.js` ·
   `write_permission_gate_check` WATCHED +13 ไฟล์

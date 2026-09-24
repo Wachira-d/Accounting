@@ -514,8 +514,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (ทั้งสร้างใหม่และก่อน resync) พร้อมบอกรูปที่ต้องส่ง (หักมูลค่ามัดจำก่อน VAT จากราคาบรรทัด · หรือส่งมัดจำแบบ VAT รอเรียกเก็บ)
     — ไม่แปลงยอดของคู่ค้าเอง (#34 "ห้ามแก้ยอดคู่ค้า") · ตาข่าย: ถ้ายังหลุดถึงการลงบัญชีแล้วล้ม ⇒ **ยกเลิกใบ** (`VoidDocumentAsync` ·
     เลขคงอยู่ไม่มีช่องว่าง) + ธง `RD-86/4-DEPOSIT-TIV-DOUBLE` บนหมายเหตุ + log `Failed` + `success=false` · **ไม่ถอยไปตั้งหนี้เงียบ**
-    (กติกา `required_call_site_check`) · ⚠️ ยังเปิด: void ของตาข่ายเองล้มได้ (งวดยื่น/ปิด) ⇒ ใบ Approved ไม่มี JE ค้าง (B1) · idempotency
-    `Reference == ExternalRef` ไม่มี OrderBy ⇒ ได้ใบ Voided แล้วสร้างใบซ้ำ (R3-6) · มัดจำ VAT พัก (`depositOutputVatDeferred`) ผ่านตามเดิม · payload ที่ขัดกับค่าตั้งมัดจำของบริษัท ⇒
+    (กติกา `required_call_site_check`) · **ตาข่ายของตาข่าย (ฝ่ายค้านรอบสาม B1 · 04ce362)**: `ProcessInvoiceAsync` **ยกเลิกก่อน** แล้วค่อยประทับหมายเหตุ
+    "ยกเลิกอัตโนมัติ" · ยกเลิกล้ม (งวดยื่น/ปิด) ⇒ `ChangeTracker.Clear()` กันสภาพครึ่ง void ถูกบันทึกตาม → อ่านใบใหม่ → หมายเหตุจริง "ลงบัญชีไม่ได้และยกเลิก
+    อัตโนมัติไม่สำเร็จ … ต้องยกเลิก/ออกใบลดหนี้ด้วยมือ" + LogError + log `Failed` + `success=false` · **คู่ค้ายิงซ้ำเจอใบนี้ = ล้มดังด้วยเหตุเดิม** (ไม่ตอบ
+    "มีอยู่แล้ว" เงียบ) — ป้าย `IntegrationService.TaxedDrivesVoidFailedMarker` ตัวเดียวทั้งฝั่งเขียน/อ่าน · **idempotency ข้ามใบ Voided (R3-6 · 04ce362)**:
+    คิวรีหา `Reference == ExternalRef` กรอง `Status != Voided` **ในคิวรี** + เรียงใหม่สุดก่อน ครบ **6 เมธอด** (ใบกำกับ · ใบลดหนี้ · ใบเพิ่มหนี้ · ค่าใช้จ่าย ·
+    ใบสำคัญจ่าย · ใบแทนหนังสือรับรอง — รูปเดิมเหลือ 0 จุด) ⇒ ใบที่ตาข่ายยกเลิกแล้ว + คู่ค้าส่งใหม่ = เจอใบใหม่ ไม่สร้างซ้ำ · มีแต่ใบ Voided = สร้างใหม่ได้ตามเดิม · มัดจำ VAT พัก (`depositOutputVatDeferred`) ผ่านตามเดิม · payload ที่ขัดกับค่าตั้งมัดจำของบริษัท ⇒
     หมายเหตุภายใน (`DepositPolicyResolver.IntegrationMismatchNote`) ทั้งตอนสร้างและ resync · ⚠️ drives บนใบ**เครดิต** ของ integration
     ยังลง mapping JE เต็มโดย drives ไม่มีผล (audit-deposit P1-8 — ด่าน `DEPOSIT-DRIVES-UNSUPPORTED` อยู่เฉพาะเส้น Create/Update ของ DocumentService)
   - **ผังบัญชีรายบรรทัดที่ partner ส่งมา (`AccountCode`)**:
@@ -707,7 +711,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     | --- | --- | --- | --- | --- |
     | `FullDeposit` = 1 รับเต็มยอด ไม่แยก VAT (เงินประกัน/ต้องคืน) | ใบเสร็จ VAT บรรทัด 0 + ธงพัก | Cr 217xx 1,000 | ไม่เข้า | เต็มราคา + ตัดชำระ (`ApplyDepositToInvoiceAsync`) |
     | `VatPendingUndue` = 2 VAT รอเรียกเก็บ (`DepositOutputVatDeferred=true` เดิม) | ใบเสร็จ — **ห้ามมีคำว่าใบกำกับภาษี** | Cr 217xx 934.58 + Cr 21913 65.42 | ยังไม่ จนกว่า `DepositOutputVatRecognizedAt` | เต็มราคา + ตัดชำระ (Dr 217xx + Dr 21913 / Cr ลูกหนี้) |
-    | `VatImmediate` = 3 ออกใบกำกับทันที §78/1 (`Deferred=false` เดิม) | ใบกำกับภาษี/ใบเสร็จ (เลขชุด TIV เมื่อผู้ซื้อครบ §86/4) | Cr 217xx 934.58 + Cr 21911 65.42 | **ใช่** เดือนที่รับเงิน | **หักฐานมัดจำออกจากฐานภาษี** — แถว "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี {เลข}" (`DocumentLabels.TotalDepositTaxInvoiced` · ทั้งสอง renderer · ตัวตัดสิน `BillDeductionIsTaxedDeposit`) + รับรู้ฐานมัดจำตอนอนุมัติ |
+    | `VatImmediate` = 3 ออกใบกำกับทันที §78/1 (`Deferred=false` เดิม) | ใบกำกับภาษี/ใบเสร็จ (เลขชุด TIV เมื่อผู้ซื้อครบ §86/4) | Cr 217xx 934.58 + Cr 21911 65.42 | **ใช่** เดือนที่รับเงิน | **หักฐานมัดจำออกจากฐานภาษี** — แถว "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี {เลข}" (`DocumentLabels.TotalDepositTaxInvoiced` · ทั้งสอง renderer · ตัวตัดสิน `DepositPolicyResolver.TaxedDepositDeducted` บนช่อง `Document.DepositBaseDeducted`) + รับรู้ฐานมัดจำตอนอนุมัติ |
     - ตัวเลขใบสุดท้าย 7,450 − มัดจำ 2,000 (VAT ทันที): ฐาน 6,962.62 − 1,869.16 = 5,093.46 · VAT 356.54 · เก็บ 5,450 · VAT ทั้งเรื่อง
       130.84 + 356.54 = 487.38 ครั้งเดียว · VAT ใบสุดท้ายคิดบนฐานของใบเอง ⇒ ผลต่าง ±0.01 อยู่ที่ VAT (ฐานไม่เพี้ยน · `LodgingDepositSettlement.RoundingDelta` ≠ 0 ⇒ หมายเหตุ + audit)
     - **มัดจำที่ออกใบกำกับแล้วหักได้แบบเดียวทุกเส้น (L2 N1)** — ฟอร์ม "ขายเงินสดใบเดียว" ที่ส่ง drives ⇒ `CreateDocumentAsync`/`UpdateDocumentAsync`
@@ -715,11 +719,26 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       **การรับรู้ฐานมัดจำอยู่ในธุรกรรมอนุมัติ** (`RealizeTaxedDepositDeductionsAsync` ใน `AutoPostToJournalAsync` · ผูก
       `JournalEntries.DepositRealizedForDocumentId` · รับรู้แล้วไม่ทำซ้ำ · ฐานไม่พอ = ล้มดัง) · เส้นขับ JE ที่ยังอ้างมัดจำออกใบกำกับเต็มจำนวน
       (`GuardDrivesGrossApplyAsync`) = **บล็อกทุกงวด** เท่าปุ่ม · integration ปฏิเสธก่อนออกเลข (ข้างบน)
-    - ⚠️ **ยังเปิด (ฝ่ายค้านรอบสาม R3-1 · P1 — รอคำตัดสิน)**: ฐานมัดจำที่แปลงแล้วถูก**บวกรวม**ใน `BillDiscountAmount` ช่องเดียวกับส่วนลดท้ายบิลแบบบาทที่ผู้ใช้กรอก
-      (ตัวแปลงคืน `billDiscountAmount + baseSum` · การรับรู้ตอนอนุมัติใช้ `BillDiscountAmount − already` ทั้งก้อน · ป้ายกระดาษพิมพ์ทั้งก้อนเป็น "หักมูลค่ามัดจำ") ⇒
-      มัดจำใช้เต็ม + ส่วนลด 100 = อนุมัติล้ม "ฐานไม่พอ" · มัดจำใช้บางส่วน + ส่วนลด 100 = รับรู้มัดจำเกิน 100 เงียบ (ลูกค้าได้คืนขาด · รายได้/VAT เกิน) ·
-      ทางแก้ที่เสนอ: ฟิลด์ฐานมัดจำแยก หรือปฏิเสธส่วนลดบาทร่วมกับมัดจำที่ออกใบกำกับแล้ว (เหมือนกรณี %) · R3-5 ข้อความด่าน drives เก่าชี้ให้รับรู้มัดจำเองซ้ำ ·
-      B2 `RealizeTaxedDepositDeductionsAsync` ไม่ล็อกแถวใบมัดจำ · B5 ที่พักมัดจำสองแบบ = ป้ายกระดาษตกเป็นส่วนลดธรรมดา
+    - **ฐานมัดจำอยู่ช่องของตัวเอง `Document.DepositBaseDeducted` (ฝ่ายค้านรอบสาม R3-1 · 04ce362)** — `BillDiscountAmount` = **ส่วนลดการค้าอย่างเดียว** ·
+      ยอดก่อนหักท้ายบิล = `SubTotal + BillDiscountAmount + DepositBaseDeducted` (`DepositPolicyResolver.BillDeductionTotal` ตัวเดียวของทั้งสอง renderer — ห้ามบวกเอง) ·
+      ทั้งสองลดฐานภาษีเหมือนกันจึงเฉลี่ยลงบรรทัดครั้งเดียวผ่าน `DocumentService.AllocateBillDeductions` (ตัวเดียวของสร้าง/แก้/`PreviewTotals`) แล้วแยกกลับสองช่อง
+      (`SplitBillDeduction` · ส่วนลด + มัดจำเกินยอดขาย = ล้มดัง ไม่ตัดช่องใดเงียบ) · ตัวแปลง `ConvertTaxedDrivesAsync` คืน**ฐานมัดจำอย่างเดียว** และ**แทนที่**ค่าเดิม
+      ตามเลขอ้างอิงชุดใหม่ (ไม่บวกซ้ำเมื่อเลือกมัดจำเดิมซ้ำ) · อนุมัติรับรู้ `DepositBaseDeducted − ที่รับรู้แล้ว` · ด่านค่าที่บันทึก `TaxedDepositDeductionProblem`
+      (ต้องมีเลขใบมัดจำ · ห้ามหักสองชั้นกับ `DepositAppliedAmount`/ขับ JE · ห้ามปนส่วนลด %) ทั้งสร้างและแก้ · **กระดาษสองแถวแยก** (ส่วนลดท้ายบิล / "หักมูลค่ามัดจำ
+      (ก่อน VAT) ตามใบกำกับภาษี {เลข}") ทั้ง HTML + QuestPDF + หน้ารายละเอียด `documents.html` · `DocumentResponse.DepositBaseDeducted` (echo) · snapshot revision ·
+      migration `ADD COLUMN IF NOT EXISTS` + ย้ายค่าเดิม (อนุมัติแล้ว = ยอดที่รับรู้จริง · ร่าง = ทั้งก้อนตามความหมายเดิม · รันซ้ำได้) · ที่พักส่งฐานมัดจำเข้าช่องนี้
+      (สร้าง + เช็คเอาต์ต่อ) · ตัวเลข: ขายสด 7,450 ส่วนลด 100 + มัดจำ 2,000 ใช้เต็ม ⇒ 4,993.46 / 349.54 / 5,343.00 รับรู้ 1,869.16 (เดิมล้ม "ขาด 100") ·
+      มัดจำใช้บางส่วน ⇒ รับรู้ 2,000 ไม่ใช่ 2,100 (เดิมเกิน 100 เงียบ)
+    - **เอกสารลูก (R3-1)**: **convert** สืบทอดฐานมัดจำตามสัดส่วนที่ยก (สูตรเดียวกับส่วนลดบาท) + เลขใบมัดจำ ⇒ ยอดลูกตรงแม่ · **ไม่รับรู้ซ้ำ**: "รับรู้แล้ว" นับ JE ที่รับรู้
+      เพื่อใบแม่ด้วย (`RelatedDocumentId`) · **clone** พ่วงส่วนลดการค้า (เดิมหาย — ใบโคลนแพงกว่า) แต่**ไม่พ่วงฐานมัดจำ/เลขใบมัดจำโดยเจตนา** (ใบโคลน = การขายใหม่
+      มัดจำใช้แล้ว ⇒ พ่วง = หักซ้ำ) · recurring ไม่พ่วง · กติกา call-site ห้าม clone อ้าง `DepositBaseDeducted`/`DepositAppliedRef`
+    - **ด่านรอบสาม (04ce362)**: ใบขับ JE เก่าที่อ้างมัดจำออกใบกำกับ ⇒ `DepositPolicyResolver.DrivesGuardMessage` **ทางเดียว** (เปิดแก้แล้วบันทึกจากฟอร์ม ระบบแปลงและรับรู้ให้
+      ตอนอนุมัติ · บอกตรง ๆ ว่าไม่ต้องไปรับรู้ที่หน้าเงินมัดจำ · ใบถือเลขจริงแล้ว = ยกเลิกถาวรแล้วสร้างใหม่ — R3-5) · ปุ่ม/Integration ยังใช้ `GrossApplyBlockedMessage` ·
+      รับรู้ตอนอนุมัติล็อกแถวใบมัดจำ `FOR UPDATE` เรียงตาม Id แล้ว reload ก่อนอ่านฐานคงเหลือ (`LoadTaxedDepositsByRefAsync(lockRows: true)` — B2) · "ปนกัน" ตัดสินจาก
+      เลขที่ชี้ใบมัดจำ VAT พัก/เต็มยอดจริง · เลขที่ไม่ใช่มัดจำใช้งาน (JV/ร่าง/ยกเลิก/พิมพ์ผิด) ได้ข้อความของเหตุนั้น (B3) · `UpdateDocumentAsync` ตรวจสถานะก่อนตัวแปลง
+      + "หักมูลค่ามัดจำ" อยู่ในรายการช่องที่ห้ามแก้ย้อนหลัง §86/4 (B4) · แถวมัดจำบนกระดาษดู `DepositBaseDeducted` ไม่ดู `DepositAppliedAmount` ⇒ ที่พักมัดจำสองแบบพิมพ์ถูก (B5)
+      · ⚠️ ที่รู้: ร่างที่มีฐานมัดจำแล้วเลือกมัดจำ VAT พักแบบขับ JE เพิ่ม ⇒ ด่าน "ห้ามหักสองชั้น" ล้ม (ฟอร์มยังไม่มีปุ่มล้างฐานมัดจำ — ทางไปต่อ: สร้างใบใหม่) ·
+      ป้ายแถวมัดจำพิมพ์ `DepositAppliedRef` ทั้งสตริง (รวมเลขมัดจำ VAT พักที่ `MergeDepositRef` ต่อท้าย)
     - **void/purge ใบสุดท้าย** ⇒ `ReverseDepositRealizationsForAsync` กลับ/ลบ JE รับรู้ที่ผูกใบนั้น + คืน `DepositRealizedAmount` (ล้าง RecognizedAt เมื่อ JE มีขา 21913) ·
       กู้ใบแล้วอนุมัติใหม่ = รับรู้อีกครั้ง (ไม่นับ JE ที่ถูกกลับ)
     - deferred → recognize (`RealizeDepositAsync`): JE ย้าย 21913 → 21911 +
@@ -1196,7 +1215,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > **`[Σ-GAP]` ตอนอนุมัติด้วยมือ** (`Helpers/OcrApprovalGapWarning` ใน `CollectApprovalWarningsAsync`): ข้อความบอก "ตอนนี้รายการรวมเท่าไร ·
 > กระดาษเท่าไร" จาก Σ บรรทัด (ไม่ใช่ `TotalAmount` ที่ตั้งตามกระดาษเสมอ) · ซ้ำ = ครั้งเดียว · แก้จนตรงแล้ว/ไม่รู้ยอดกระดาษ = ไม่เตือน
 
-**`DocumentService.ApproveDocumentAsync` (`:4758`)** ทำตามลำดับ:
+**`DocumentService.ApproveDocumentAsync` (`:4809`)** ทำตามลำดับ:
 
 0. **ด่านงวดปิด** (`RequireOpenFiscalPeriodAsync` — `DocumentService.cs:12041`)
    — ทุกจุดที่ **จะลง JE จริง** ต้องผ่านก่อน: งวดของวันที่รายการต้องเป็น
@@ -1298,7 +1317,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
    - payment voucher: Dr AP/Expense / Cr Cash/Bank
    - WHT: Cr 21915/21916 ตามประเภทเงินได้
    - **ใบที่หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี** → `RealizeTaxedDepositDeductionsAsync` รับรู้ฐานมัดจำเป็นรายได้**ในธุรกรรมเดียวกัน**
-     (ผังรายได้ = ผังของบรรทัดหลักของใบ · ผูก `DepositRealizedForDocumentId` · รับรู้แล้วไม่ทำซ้ำ · ฐานไม่พอ = `RD-86/4-DEPOSIT-TIV-DOUBLE`) (§2.3)
+     (ยอด = `DepositBaseDeducted` − ที่รับรู้แล้วเพื่อใบนี้/ใบแม่ · ล็อกแถวมัดจำ `FOR UPDATE` · ผังรายได้ = ผังของบรรทัดหลักของใบ · ผูก `DepositRealizedForDocumentId` ·
+     รับรู้แล้วไม่ทำซ้ำ · ฐานไม่พอ = `RD-86/4-DEPOSIT-TIV-DOUBLE`) (§3.2 เงินมัดจำ)
    - **ใบสำคัญจ่ายที่จ่ายในตัว + `ActualPaidAmount` ≠ ยอดใบ** (คำตัดสิน #1/#4) → adjusting lines ต้องอธิบายส่วนต่าง**พอดี**
      (net = −ส่วนต่าง · `PaymentSettlementAdjustment.MatchTolerance` 0.005) + ขาเงินสดตามส่วนต่างที่ `moneyAccount` เดียวกับขาเงินสดหลัก ·
      ไม่มีบรรทัดปรับ = `BusinessRuleException` พร้อมทางไปต่อ · ใบที่ช่องนี้ไม่มีผล (ไม่จ่ายในตัว) = ปฏิเสธตั้งแต่บันทึก
@@ -1488,7 +1508,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เคลมเต็ม — #2 คงเดิม) · ส่วนต่างลงที่การชำระ: `Payment.SettlementAdjustmentAmount` + `SettlementAdjustmentsJson` (บรรทัดปรับ: ค่าส่ง +37 → **51120** ·
   คูปองแพลตฟอร์ม −135 → **51150** ส่วนลดรับ · "ส่วนลดพิเศษ X" ไม่มีรายละเอียด → 51150 ก้อนเดียว) · ตัวตัดสิน `Helpers/PaymentSettlementAdjustment.Check`
   (ยอดที่ปิด = เงินสด − Σ ปรับ · ห้ามจ่ายเกินผ่าน `DocumentSettlementState.WouldOverpay` · บรรทัดปรับห้ามผังเงินสด/เงินฝาก 111xx หรือผังที่ผูกบัญชีธนาคาร) ·
-  `CreatePaymentAsync` (`:11171`) PI/Expense · THB เท่านั้น · ผังต้องมีและเปิดใช้ · `PaidAmount += เงิน + fee + ปรับ` · JE (`CreatePaymentJournalAsync` `:15880`):
+  `CreatePaymentAsync` (`:11227`) PI/Expense · THB เท่านั้น · ผังต้องมีและเปิดใช้ · `PaidAmount += เงิน + fee + ปรับ` · JE (`CreatePaymentJournalAsync` `:15975`):
   Dr เจ้าหนี้ 536 + Dr 51120 37 / Cr เงินสด 438 + Cr 51150 135 · **ชำระเงิน 0 + บรรทัดปรับ** = ปิดยอดค้างด้วยคูปองโดยไม่ต้อง void (ไม่มีขาเงินสด 0 ·
   ไม่หัก ณ ที่จ่าย/ไม่ออก 50 ทวิ · ส่ง WHT มาด้วย = ปฏิเสธ) · void คืนยอดรวมส่วนปรับ · **ชำระหลายใบพร้อมบรรทัดปรับ = throw** (ห้าม silent no-op) ·
   ช่อง `Document.ActualPaidAmount` (null = จ่ายเต็ม · echo ใน `DocumentResponse` · ฟอร์ม `fActualPaidAmount` ซ่อนฝั่งรายได้) — ใบตั้งหนี้แบบจ่ายทันที
@@ -1640,16 +1660,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - **`VatPendingUndue`** (`DepositOutputVatDeferred = true`): Cr 21913 "ภาษีขายรอเรียกเก็บ"
     — ยังไม่เข้า ภ.พ.30 จนกว่าจะ realize
   - **`FullDeposit`**: VAT บรรทัด 0 + ธงพัก ⇒ Cr 217xx เต็มจำนวน
-- **Realize**: `RealizeDepositAsync(amount, revenueAccountCode, FinalInvoiceId?)` (`DocumentService.cs:3371` → ตัวลงบัญชีไม่ SaveChanges
+- **Realize**: `RealizeDepositAsync(amount, revenueAccountCode, FinalInvoiceId?)` (`DocumentService.cs:3422` → ตัวลงบัญชีไม่ SaveChanges
   `RealizeDepositCoreAsync` `:3390` ใช้ร่วมกับการรับรู้ตอนอนุมัติใบสุดท้าย) → `amount` = **ฐาน** (ไม่รวม VAT) ·
   Dr 217xx / Cr รายได้ (41xxx/42xxx); ถ้า deferred → ย้าย 21913 → 21911
   พร้อม `DepositOutputVatRecognizedAt = now` · `FinalInvoiceId` (ตรวจ tenant) ผูก JE ด้วย `JournalEntries.DepositRealizedForDocumentId` ⇒
   void/purge ใบสุดท้ายกลับได้ (`ReverseDepositRealizationsForAsync`) · ⚠️ audit-deposit P1-2 ยังเปิด: realize หลังคืนบางส่วนของโหมดรอเรียกเก็บ
   ย้าย 21913 ทั้งก้อน (เส้นที่พักเลี่ยงแล้ว — ริบก่อนคืนเสมอ)
-- **Refund**: `RefundDepositAsync` (`:3889`) → reverse + ออกใบลดหนี้ภาษีขาย · `amount` = **gross** · VAT ของยอดคืนคิดจาก**ยอดคืนสะสม**
+- **Refund**: `RefundDepositAsync` (`:3940`) → reverse + ออกใบลดหนี้ภาษีขาย · `amount` = **gross** · VAT ของยอดคืนคิดจาก**ยอดคืนสะสม**
   (`DepositReversalMath.RefundSplit`: vat = round((คืนแล้ว+ยอดนี้)×VAT/รวม) − round(คืนแล้ว×VAT/รวม) ⇒ คืนหลายงวดไม่ค้าง 0.01 ·
   คืนครั้งเดียวจากศูนย์ = สูตรเดิม) · บัญชีเงินออก `RefundDepositRequest.MoneyAccountId` (ต้องเป็นผังของบริษัทนี้ · null = 111 เดิม)
-- **Apply**: `ApplyDepositToInvoiceAsync` → `ApplyDepositToInvoiceCoreAsync` (`:4088`) → ใน 1 transaction:
+- **Apply**: `ApplyDepositToInvoiceAsync` → `ApplyDepositToInvoiceCoreAsync` (`:4139`) → ใน 1 transaction:
   0. **FX guard**: ถ้า `invoice.Currency != deposit.Currency` หรือ
      `|invoice.ExchangeRate − deposit.ExchangeRate| > 0.0001` → throw
      (กัน FX silent corruption ตาม IAS 21 — ระบบยังไม่รองรับการบันทึก
@@ -2877,8 +2897,8 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 **หน้าแขก (C9)**: เซิร์ฟเวอร์ส่ง `StatusLabel` · `OnlinePayableAmount` (ตัวเดียวกับ gateway) · `OnlinePaymentNote` — หน้าแสดงอย่างเดียว (ถอดสูตรใน JS)
 **ผู้ติดต่อแขก**: `FindOrCreateContactAsync` จับด้วยเลขภาษี + `"00000"` · เลขนี้มีแล้วคนละแถว ⇒ ไม่ถอยไปจับอีเมล/เบอร์ (de97a95) ·
 แขกที่ส่งเลขภาษี/ชื่อบริษัท: แถวที่จับด้วยอีเมล/เบอร์ต้องไม่ใช่บุคคลธรรมดาและชื่อตรงชื่อบริษัท (`Helpers/LodgingGuestContact` · ไม่ fuzzy) ไม่งั้นสร้างแถวใหม่ ·
-แถวที่ยังไม่มีเลข → เติมผ่าน `ContactTaxBranchKey.AdoptTaxId` (§6.2i) — ⚠️ ยังเรียก**รูปเดิม `[Obsolete]`** (bool · ถือเป็น Email ·
-Reject ยุบเป็น false) ที่ `LodgingService.Reservations.cs:448` — ต้องย้ายไปรูปใหม่ (`ContactMatchKind` + จัดการ `Reject`) แล้วลบรูปเดิม (backlog)
+แถวที่ยังไม่มีเลข → เติมผ่าน `ContactTaxBranchKey.AdoptTaxId(row, taxId, branch, ContactMatchKind)` (§6.2i · 04ce362) ส่งชนิดการจับจริงต่อผู้สมัคร
+(อีเมลก่อน แล้วเบอร์ — `LodgingService.Reservations.cs:457`) · `Reject` ⇒ สร้างแถวใหม่ · แถว walk-in ไม่เข้าข่ายผู้สมัครเลย · รูปเดิม `[Obsolete]` ถูกลบแล้ว (ผู้เรียก 0)
 
 **ราคา** (`LodgingPricingEngine.NightlyRate` ต่อคืน): ฐาน → แผนราคา (Absolute/Multiplier/Delta) → ฤดูกาล (ช่วงแคบกว่าชนะ · recurring ข้ามปีได้ · จำกัดประเภทห้องได้) → สุดสัปดาห์ (`WeekendMultiplier`×mask) → override รายวัน **แทนที่ทั้งหมด** · แขกเกิน `StandardOccupancy` × `ExtraGuestPrice` · เตียงเสริม · PerPerson = ราคา×คน · `Totals`: ราคารวม VAT → VAT = total×r/(100+r) (informational — ตัวจริงคำนวณอีกครั้งตอนออกเอกสารด้วยสูตรเดียวกัน) · มัดจำ = %/คงที่ + min/max · ขั้นต่ำคืน = max(ที่พัก, ห้อง, ฤดูกาล, override). ห้องว่าง (`LodgingAvailability.AvailableRooms`): ต่อคืน min(capacity(allotment) + overbooking − ที่กัน) · Pending กันเฉพาะที่ hold ยังไม่หมด · StopSell = 0 · unit ปิดซ่อมไม่นับ
 
@@ -2930,11 +2950,11 @@ Reject ยุบเป็น false) ที่ `LodgingService.Reservations.cs:44
 | แก้การคิดส่วนลด/VAT ต่อบรรทัด | `DocumentService.ComputeLineAmounts :254` — รองรับ `DiscountPercent` + `DiscountAmount` (ยอดเงิน, มาตรฐานสากล: ใบระบุส่วนลดเป็นบาท). amount > 0 ชนะ % |
 | เศษสตางค์ VAT/WHT (ปัดรายบรรทัดแล้วรวมเพี้ยน ±0.01) | `DocumentService.ReconcileTaxRounding` — หลังคิดทุกบรรทัด (create+update) กระทบยอดต่อกลุ่มอัตรา: ΣVAT/WHT ของกลุ่ม = round(Σฐาน × อัตรา) ตรงเครื่องคิดเลข; เศษเกลี่ยเข้าบรรทัดฐานสูงสุด; ข้าม `VatAmountOverride`; โหมดราคารวม VAT ขยับ net สวนทางคง gross. frontend mirror ใน `documents.html calcSum` (allocation+reconcile แบบเดียวกัน — ยอดก่อน/หลังบันทึกตรงกัน) |
 | เพิ่ม `DocumentType` ใหม่ | `Models/Enums/AllEnums.cs:305` + `DocumentService.cs` หลายจุด (search by enum literal) |
-| แก้ flow Approve | `DocumentService.ApproveDocumentAsync :4758` · คำเตือน `CollectApprovalWarningsAsync :17072` · แหล่งการรับทราบ `Helpers/ApprovalAcknowledgement` |
-| แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :13787+` |
+| แก้ flow Approve | `DocumentService.ApproveDocumentAsync :4809` · คำเตือน `CollectApprovalWarningsAsync :17169` · แหล่งการรับทราบ `Helpers/ApprovalAcknowledgement` |
+| แก้ flow JE per type | `DocumentService.AutoPostToJournalAsync :13843+` |
 | **ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ)** | `Services/Implementations/IssuedDocumentHooks.cs` (`IIssuedDocumentHooks.RunAsync`) + ขอบเขต `Helpers/EtaxAutoIssueScope` + ป้าย `Helpers/EtaxAutoFailedNote` · ทุกเส้นที่ประทับ `Approved` เอง ต้องเรียกหลัง commit (`tools/approved_status_writer_check.py`) |
 | **วิธีบันทึกเงินมัดจำ (3 โหมด)** | `Helpers/DepositPolicyResolver.cs` (owner file) · ที่พัก `Helpers/LodgingDepositSettlement.cs` · คืนเงิน `Helpers/DepositReversalMath.RefundSplit` |
-| **ยอดชำระจริง ≠ ยอดใบกำกับ (ค่าส่ง/คูปอง)** | `Helpers/PaymentSettlementAdjustment.cs` · `DocumentService.CreatePaymentAsync :11171` / `CreatePaymentJournalAsync :15880` · ข้อเสนอจากสแกน `Helpers/OcrSettlementProposal` (§3.4) |
+| **ยอดชำระจริง ≠ ยอดใบกำกับ (ค่าส่ง/คูปอง)** | `Helpers/PaymentSettlementAdjustment.cs` · `DocumentService.CreatePaymentAsync :11227` / `CreatePaymentJournalAsync :15975` · ข้อเสนอจากสแกน `Helpers/OcrSettlementProposal` (§3.4) |
 | **ผลต่างปัดเศษ (54960)** | `Helpers/DocumentRounding.cs` (§6.2j) |
 | **หาผู้ติดต่อด้วยเลขภาษี + สาขา** | `Helpers/ContactTaxBranchKey.cs` (§6.2i) · checker `tools/contact_taxid_only_match_check.py` |
 | **ด่านไฟล์แนบ/สแกน** | `Services/Implementations/AttachmentAccessGate.cs` + `Helpers/AttachmentPermissionScope.cs` (§6.2h) · checker `tools/attachment_gate_check.py` |
@@ -2949,7 +2969,7 @@ Reject ยุบเป็น false) ที่ `LodgingService.Reservations.cs:44
 | แก้ §86/4 completeness | `Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs` |
 | แก้ fixed asset auto-register / ขึ้นทะเบียนจากเอกสาร | `FixedAssetService.RegisterFromDocumentAsync` (ตัวเดียว — `DocumentService.AutoRegisterFixedAssetsAsync` แค่มอบต่อ) · ลิสต์ชนิดที่รองรับ `FixedAssetService.SupportsAutoRegister` |
 | แก้ผัง 11640 ↔ 11610 reclassify | `DocumentService.ReclassifyUndueInputVatAsync :1137` |
-| แก้ deposit Realize/Refund/Apply | `DocumentService.cs` — `RealizeDepositAsync :3371` / `RefundDepositAsync :3889` / `ApplyDepositToInvoiceCoreAsync :4088` · หักฐานมัดจำออกใบกำกับแล้ว `ConvertTaxedDrivesAsync :15713` / `RealizeTaxedDepositDeductionsAsync :15747` · กลับตอน void `ReverseDepositRealizationsForAsync :8049` |
+| แก้ deposit Realize/Refund/Apply | `DocumentService.cs` — `RealizeDepositAsync :3422` / `RefundDepositAsync :3940` / `ApplyDepositToInvoiceCoreAsync :4139` · หักฐานมัดจำออกใบกำกับแล้ว `ConvertTaxedDrivesAsync :15783` / `RealizeTaxedDepositDeductionsAsync :15832` · กลับตอน void `ReverseDepositRealizationsForAsync :8100` · ฐานมัดจำช่องแยก `Document.DepositBaseDeducted` + `AllocateBillDeductions :650` + `DepositPolicyResolver.BillDeductionTotal/SplitBillDeduction/TaxedDepositDeductionProblem/DrivesGuardMessage` |
 | แก้ราคาที่พัก/ห้องว่าง (ฤดูกาล/แผนราคา/override/มัดจำ/ค่าปรับยกเลิก) | `Helpers/LodgingPricingEngine.cs` (pure + `Accounting.Tests/LodgingPricingEngineTests.cs`) — service แค่โหลดข้อมูลส่งเข้า `BuildQuote` (`LodgingService.Reservations.cs`) |
 | แก้เอกสารตอนยืนยันมัดจำ/เช็คเอาต์/ยกเลิกที่พัก | `Services/Implementations/Lodging/LodgingService.Lifecycle.cs` — `CreateDepositReceiptAsync` · `CheckOutAsync`/`SettleCheckOutAsync`/`ResumeCheckOutAsync` · `CancelCoreAsync` · `RecordRefundPaidAsync` (§6.5) · แผนเงิน `Helpers/LodgingDepositSettlement` |
 | seed ที่พักตอนสร้างเว็บโรงแรม | `Services/Implementations/Cms/LodgingSeeder.cs` ← `CmsSiteService.CreateSiteAsync` (IndustryType.Hotel) |
@@ -3034,4 +3054,4 @@ Reject ยุบเป็น false) ที่ `LodgingService.Reservations.cs:44
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · รายละเอียดรอบ `CHANGELOG.md` — commit <pending>)_
+_Last verified against codebase: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · รายละเอียดรอบ `CHANGELOG.md` — commit <pending>)_
