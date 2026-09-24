@@ -320,7 +320,9 @@ public class CompanyService : ICompanyService
                 if (request.IsVatRegistered.HasValue)
                 {
                     cs.VatRegistered = request.IsVatRegistered.Value;
-                    cs.VatStatusConfirmedAt = DateTime.UtcNow;   // ผู้ใช้ตอบเรื่อง VAT ที่หน้าข้อมูลบริษัท (ฝ่ายค้าน C-9)
+                    // ผู้ใช้แตะ/ยืนยันช่อง VAT ที่หน้าข้อมูลบริษัทจริง (C-9) — ไม่ใช่แค่ช่องติดมากับการบันทึกเรื่องอื่น (R2-C8)
+                    if (request.ConfirmVatStatus == true)
+                        cs.VatStatusConfirmedAt = DateTime.UtcNow;
                 }
                 if (request.VatRate.HasValue) cs.DefaultVatRate = request.VatRate.Value;
             }

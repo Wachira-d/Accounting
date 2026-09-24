@@ -56,10 +56,29 @@ public static class TaxInvoiceSeriesPolicy
     /// <para><b>พื้นบังคับ</b>: <c>TaxInvoice</c> ที่มี VAT ถือเป็นใบกำกับเสมอ
     /// ไม่ว่าหัวจะถูก override เป็นอะไร — กันเคสที่ผู้ใช้ตั้งหัวเอง
     /// (<c>template.CustomTitle</c>) แล้วเผลอลบคำนั้นออก ซึ่งจะทำให้ใบกำกับตัวจริง
-    /// หลุดออกจากเล่มหลักโดยไม่ตั้งใจ</para></summary>
-    public static bool CarriesTaxInvoiceRole(Document doc, string? resolvedTitle)
-        => (doc.DocumentType == DocumentType.TaxInvoice && doc.VatAmount > 0)
+    /// หลุดออกจากเล่มหลักโดยไม่ตั้งใจ</para>
+    ///
+    /// <para><b>พื้นบังคับข้อสอง — ขายอัตรา 0% (§80/1)</b> (รอบ 193 · ฝ่ายค้านรอบสอง R2-C7): ผู้จด VAT ที่ขายส่งออก/บริการ
+    /// ใช้ต่างประเทศ<b>ต้องออกใบกำกับภาษีอัตรา 0</b> (กฎเหล็ก #2 D) — ต่างจากยกเว้น §81 (<c>VatRate = -1</c>) ที่ห้ามออก.
+    /// เดิมพื้นดูแค่ <c>VatAmount &gt; 0</c> ⇒ ผู้เรียกที่ไม่มีหัวกระดาษ (Integration) ตรึงใบ 0% เป็น "ไม่ใช่ใบกำกับ"
+    /// แล้ว e-Tax ถูกข้าม/ถูกปฏิเสธทั้งที่กระดาษพิมพ์ "ใบกำกับภาษี". ใช้ได้เฉพาะเมื่อผู้เรียกยืนยันว่าบริษัทจด VAT
+    /// (<paramref name="companyVatRegistered"/> — ผู้ไม่จดออกใบกำกับไม่ได้ §86 แม้ทุกบรรทัดเป็น 0) · ค่าเริ่มต้น <c>false</c>
+    /// = พฤติกรรมเดิมของผู้เรียกที่ไม่ส่ง (POS)</para></summary>
+    public static bool CarriesTaxInvoiceRole(Document doc, string? resolvedTitle, bool companyVatRegistered = false)
+        => (doc.DocumentType == DocumentType.TaxInvoice
+               && (doc.VatAmount > 0 || (companyVatRegistered && IsZeroRatedFullTaxInvoice(doc))))
            || (resolvedTitle?.Contains(TaxInvoiceKeyword, StringComparison.Ordinal) ?? false);
+
+    /// <summary>ใบกำกับขาย 0% (§80/1) ที่กระดาษพิมพ์หัว "ใบกำกับภาษี" — ตรงกับ <c>PdfGenerationService.ComputeDocumentTitle</c>:
+    /// TaxInvoice ที่ VAT = 0 และผู้ซื้อ<b>ไม่</b>ปฏิเสธใบกำกับ/ไม่ใช่ walk-in คงหัว "ใบกำกับภาษี" (ถ้าปฏิเสธ → หัว
+    /// "ใบเสร็จรับเงิน" ⇒ ไม่ใช่ใบกำกับ) · ต้องมีบรรทัดอัตรา 0 จริงอย่างน้อยหนึ่งบรรทัด — ใบที่ทุกบรรทัดยกเว้น §81
+    /// (<c>-1</c>) หรือไม่มีบรรทัด <b>ไม่</b>นับ</summary>
+    public static bool IsZeroRatedFullTaxInvoice(Document doc)
+        => doc.DocumentType == DocumentType.TaxInvoice
+           && doc.VatAmount == 0m
+           && !doc.BuyerDeclinedTaxInvoice
+           && doc.Contact?.IsWalkInCustomer != true
+           && doc.Lines.Any(l => !l.IsDeleted && l.VatRate == 0m);
 
     /// <summary>ใบที่ "หัวประกาศตัวเป็นใบกำกับภาษี" ทั้งที่ชนิดเอกสารเข้าเล่ม TIV
     /// ไม่ได้ — ต้อง**บล็อกตอนอนุมัติ** ไม่ใช่ปล่อยผ่าน

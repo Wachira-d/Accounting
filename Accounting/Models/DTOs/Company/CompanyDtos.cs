@@ -70,7 +70,10 @@ public record UpdateCompanyRequest(
     DateTime? PhoR06ApprovedDate = null,
     // ทุนจดทะเบียนที่ชำระแล้ว — ใช้ตัดสินอัตรา CIT (SME ≤ 5 ล.) และเพดาน
     // ค่ารับรอง §65 ตรี(4) · null = ไม่แตะ · 0 = "ยังไม่ได้กรอก" (ดู CitRateTable)
-    decimal? PaidUpCapital = null);
+    decimal? PaidUpCapital = null,
+    // ผู้ใช้ "แตะ/ยืนยัน" ช่องจด VAT จริง (ฝ่ายค้านรอบสอง R2-C8) — ประทับ CompanySettings.VatStatusConfirmedAt
+    // เฉพาะเมื่อ true **และ** ส่ง IsVatRegistered มาด้วย · ไม่ส่ง = บันทึกข้อมูลบริษัทเรื่องอื่น
+    bool? ConfirmVatStatus = null);
 
 public record CompanyResponse(
     Guid Id,

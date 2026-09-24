@@ -65,7 +65,8 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
                     .Select(d => (DocumentType?)d.DocumentType)
                     .FirstOrDefaultAsync(ct);
 
-            // "ไม่ใช่ใบกำกับเต็มรูป" (walk-in · ไม่ประสงค์รับ · ผู้ซื้อ §86/4 ไม่ครบ) — เกณฑ์ TaxService.NotFullTaxInvoice
+            // "ไม่ใช่ใบกำกับเต็มรูปโดยเจตนา" (walk-in · ไม่ประสงค์รับ · บุคคลธรรมดาข้อมูลไม่ครบ) — TaxService.NotFullTaxInvoiceByDesign
+            // ผู้ซื้อนิติบุคคลข้อมูล §86/4 ไม่ครบ ⇒ ไม่ข้าม ปล่อยให้ GenerateAsync ล้มแล้วประทับป้าย (เส้นเว็บบล็อกกรณีนี้ · R2-C6)
             // ตัวเดียวกับหัว PDF/GenerateAsync · ต้องใช้ผู้ติดต่อ: เส้น API/POS อาจไม่มี navigation ⇒ อ่านแยก
             // (IgnoreQueryFilters — ผู้ติดต่อที่ถูกลบภายหลังยังเป็นผู้ซื้อของใบนี้ · กรอง CompanyId เอง) · ฝ่ายค้าน C-1
             var notFull = false;
@@ -73,7 +74,7 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
             {
                 var buyer = doc.Contact ?? await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                     .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == companyId, ct);
-                notFull = TaxService.NotFullTaxInvoice(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer);
+                notFull = TaxService.NotFullTaxInvoiceByDesign(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer);
             }
 
             var skip = EtaxAutoIssueScope.Judge(doc.DocumentType, doc.Status,

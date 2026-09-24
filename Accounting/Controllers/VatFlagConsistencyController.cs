@@ -35,6 +35,14 @@ public record VatFlagConsistencyRow(
 public record VatFlagConsistencyCompanyReport(VatFlagConsistencyRow Company,
     List<VatFlagConflictDocument> Documents, bool DocumentsTruncated, string Guidance);
 
+/// <summary>ใบขาย 0% หนึ่งใบที่ถูกตรึง <c>IsTaxInvoiceByLaw=false</c> (R2-C7)</summary>
+public record ZeroRatedNotByLawDocument(Guid DocumentId, string DocumentNumber, string Status,
+    DateTime DocumentDate, decimal TotalAmount, string? OriginModule);
+
+/// <summary>รายงาน R2-C7 — <c>CompanyVatRegistered=false</c> ⇒ ไม่ได้ค้น (ผู้ไม่จดออกใบกำกับไม่ได้)</summary>
+public record ZeroRatedNotByLawReport(bool CompanyVatRegistered, List<ZeroRatedNotByLawDocument> Documents,
+    bool DocumentsTruncated, string Guidance);
+
 /// <summary>รายงานทั้งแพลตฟอร์ม — เฉพาะบริษัทที่ธงขัดกัน</summary>
 public record VatFlagConsistencyPlatformReport(int CompaniesChecked, int CompaniesWithoutSettingsRow,
     int ConflictCount, List<VatFlagConsistencyRow> Conflicts, string Guidance);
@@ -109,6 +117,52 @@ public class VatFlagConsistencyController : ControllerBase
         return Ok(new ApiResponse<VatFlagConsistencyCompanyReport>(true,
             new VatFlagConsistencyCompanyReport(row, docs, truncated, Guidance)));
     }
+
+    /// <summary>
+    /// **ใบกำกับขาย 0% (§80/1) ที่ถูกตรึงว่า "ไม่ใช่ใบกำกับตามกฎหมาย"** — อ่านอย่างเดียว (ฝ่ายค้านรอบสอง R2-C7 ·
+    /// คำตัดสินเจ้าของข้อ 14 "ห้ามแก้ข้อมูลเก่าหลังบ้าน")
+    ///
+    /// <para>ก่อนรอบ 193 (R2-C7) Integration ตรึง <c>IsTaxInvoiceByLaw</c> ด้วยพื้น "VAT &gt; 0" อย่างเดียว ⇒ ใบขายส่งออก
+    /// อัตรา 0 ที่ผู้ซื้อระบุตัวถูกตรึง <c>false</c> ทั้งที่กระดาษพิมพ์ "ใบกำกับภาษี" ⇒ ออก e-Tax ไม่ได้ทั้งอัตโนมัติและด้วยมือ.
+    /// เกณฑ์ของรายการ = <see cref="TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice"/> (ตัวเดียวกับตัวตรึงธงของใบใหม่)
+    /// · ธงของใบที่ออกไปแล้ว<b>ไม่ถูกแก้</b> — เลขชุด/ธงตรึงพร้อมเลข (§86/4) ให้นักบัญชีตัดสินรายใบ</para>
+    /// </summary>
+    [HttpGet("zero-rated-tax-invoices")]
+    public async Task<ActionResult<ApiResponse<ZeroRatedNotByLawReport>>> ZeroRatedNotByLaw(Guid companyId, CancellationToken ct = default)
+    {
+        var registered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+        if (!registered)
+            return Ok(new ApiResponse<ZeroRatedNotByLawReport>(true,
+                new ZeroRatedNotByLawReport(false, new List<ZeroRatedNotByLawDocument>(), false,
+                    "บริษัทไม่ได้จด VAT — ผู้ไม่จดออกใบกำกับภาษีไม่ได้ (§86) รายการนี้จึงไม่เกี่ยว")));
+
+        // DB กรองหยาบ (ชนิด · ธง false · VAT 0 · ออกแล้ว) แล้วตัดสินรายใบด้วย **ตัวตัดสินตัวเดียวกับตัวตรึงธงของใบใหม่**
+        // (TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice) — ไม่เขียนเกณฑ์สำเนาที่สองเป็น LINQ
+        var candidates = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .Include(d => d.Contact)
+            .Where(d => d.CompanyId == companyId
+                && d.DocumentType == Models.Enums.DocumentType.TaxInvoice
+                && d.IsTaxInvoiceByLaw == false
+                && d.VatAmount == 0m
+                && !DocumentStatusRules.NotIssued.Contains(d.Status))
+            .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber)
+            .ToListAsync(ct);
+        var rows = candidates.Where(TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice).ToList();
+        var truncated = rows.Count > MaxDocuments;
+        var docs = rows.Take(MaxDocuments)
+            .Select(d => new ZeroRatedNotByLawDocument(d.Id, d.DocumentNumber, d.Status.ToString(),
+                d.DocumentDate, d.TotalAmount, d.OriginModule))
+            .ToList();
+        return Ok(new ApiResponse<ZeroRatedNotByLawReport>(true,
+            new ZeroRatedNotByLawReport(true, docs, truncated, ZeroRatedGuidance)));
+    }
+
+    internal const string ZeroRatedGuidance =
+        "รายงานนี้อ่านอย่างเดียว — ใบขายอัตรา 0% (§80/1) ในรายการถูกบันทึกว่า \"ไม่ใช่ใบกำกับภาษีตามกฎหมาย\" "
+        + "(บั๊กก่อนรอบ 193 ของทางเข้า API) จึงออก e-Tax ไม่ได้ · ระบบไม่ได้แก้ธงของใบที่ออกไปแล้ว — "
+        + "ให้นักบัญชีตรวจว่าใบใดเป็นการขายส่งออก/บริการใช้ต่างประเทศจริง แล้วออกใบแทนตามที่นักบัญชีแนะนำ "
+        + "(ห้ามแก้ใบที่ออกแล้วย้อนหลัง §86/4)";
 
     internal const string Guidance =
         "รายงานนี้อ่านอย่างเดียว — ระบบยังไม่ได้แก้ธงใด ๆ ให้. ให้เจ้าของบริษัท/นักบัญชียืนยันสถานะจด VAT ที่ถูกต้อง "

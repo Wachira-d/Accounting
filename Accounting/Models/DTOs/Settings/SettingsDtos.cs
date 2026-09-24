@@ -129,7 +129,10 @@ public record UpdateCompanySettingsRequest(
     // วิธีบันทึกเงินมัดจำฝั่งขาย (รอบ 193 #34): null = ไม่แก้ · ค่าที่ไม่มีในระบบ = ปฏิเสธ ·
     // DepositVatTreatmentClear=true = ล้างกลับเป็น "ตามประเภทธุรกิจ" (กติกาอยู่ที่ Helpers/DepositPolicyResolver)
     DepositVatTreatment? DepositVatTreatment = null,
-    bool? DepositVatTreatmentClear = null);
+    bool? DepositVatTreatmentClear = null,
+    // ผู้ใช้ "แตะ/ยืนยัน" ช่องจด VAT จริง (ฝ่ายค้านรอบสอง R2-C8) — ประทับ VatStatusConfirmedAt เฉพาะเมื่อ true
+    // **และ** ส่ง VatRegistered มาด้วย · ไม่ส่ง = บันทึกเรื่องอื่น ห้ามตีความว่าตอบคำถาม VAT แล้ว
+    bool? ConfirmVatStatus = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
