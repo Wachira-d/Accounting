@@ -9604,6 +9604,9 @@
               <div class="text-sm font-semibold" style="color:#0369a1">รับชำระสุทธิ: ${Layout.money(Number(d.totalAmount) - Number(d.depositAppliedAmount))}</div>` : ''}
               ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
+            ${d.taxInvoiceTitleNotice ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px">
+              <div class="text-xs" style="color:#991B1B;font-weight:600">⚠️ หัวเอกสารพิมพ์เป็น "ใบเสร็จรับเงิน" (ไม่ใช่ใบกำกับภาษีอย่างย่อ)</div>
+              <div class="text-sm">${this.escapeHtml(d.taxInvoiceTitleNotice)}</div></div>` : ''}
             ${d.internalNotes ? `<div style="margin-top:12px;padding:12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px">
               <div class="text-xs" style="color:#92400E;font-weight:600">🔒 หมายเหตุภายใน (ไม่พิมพ์ลงเอกสาร)</div>
               <div class="text-sm" style="white-space:pre-line">${this.escapeHtml(d.internalNotes)}</div></div>` : ''}

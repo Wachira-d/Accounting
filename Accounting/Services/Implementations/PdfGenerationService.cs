@@ -1617,6 +1617,30 @@ public partial class PdfGenerationService : IPdfGenerationService
                || (doc.Contact?.IsWalkInCustomer ?? false)
                || Buyer864Incomplete(doc));
 
+    /// <summary>ใบนี้ "ควรเป็นใบกำกับภาษีอย่างย่อ" (มี VAT · ผู้ซื้อไม่มีข้อมูล §86/4 ครบ) แต่หัวถูกลดเป็น
+    /// "ใบเสร็จรับเงิน" เพราะบริษัทยังไม่มีสิทธิ์ §86/6 — คืนข้อความบอกผู้ใช้ (null = ไม่ได้ถูกลด)
+    ///
+    /// <para>ที่มา (ผู้ใช้รายงานรอบ 191 "ทำไมกลับมาเป็นใบเสร็จรับเงินอย่างเดียวอีกแล้ว"): ด่าน ภ.พ.06 ของรอบ 183
+    /// (D1-B4) ลดหัว<b>เงียบ ๆ</b> — ไม่มีคำเตือนบนจอ · ใบจากระบบภายนอก/ที่พักถูกอนุมัติเองจึงไม่มีใครเห็น ·
+    /// และเพราะหัวไม่มีคำว่า "ใบกำกับภาษี" เลขจึงไปอยู่ชุด REC แทน TIV (<c>TaxInvoiceSeriesPolicy</c>) ·
+    /// ผลคือผู้ใช้เห็นแค่ว่า "เคยได้ แล้วหายไป" (F2 ข้อ 7 — ล้มต้องดังในที่ที่ผู้ใช้เปิดดู)</para>
+    ///
+    /// <para>รูปของใบใช้ <see cref="IsAbbreviatedTaxInvoiceDoc"/> ตัวเดียวกับหัวกระดาษ (ถามว่า "ถ้ามีสิทธิ์
+    /// จะเป็นอย่างย่อไหม") · เหตุผลใช้ <see cref="Accounting.Helpers.AbbreviatedTaxInvoiceRule.Message"/>
+    /// ตัวเดียวกับสลิป POS — ไม่มีกติกาสำเนาที่สอง</para></summary>
+    internal static string? AbbreviatedDowngradeNotice(Document doc,
+        Accounting.Helpers.AbbreviatedInvoiceBlockReason reason)
+    {
+        if (reason == Accounting.Helpers.AbbreviatedInvoiceBlockReason.None) return null;
+        if (!IsAbbreviatedTaxInvoiceDoc(doc, companyMayIssueAbbreviated: true)) return null;
+        var why = Accounting.Helpers.AbbreviatedTaxInvoiceRule.Message(reason);
+        if (why == null) return null;
+        return "ใบนี้มีภาษีมูลค่าเพิ่ม และผู้ซื้อไม่มีข้อมูลครบสำหรับใบกำกับเต็มรูป จึงควรเป็น "
+            + "\"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" แต่ " + why
+            + " · ถ้ากิจการไม่มีสิทธิ์ ภ.พ.06 ต้องออกใบกำกับภาษีเต็มรูปแทน (เก็บชื่อ+ที่อยู่ผู้ซื้อ) — "
+            + "ผู้จด VAT ต้องออกใบกำกับทุกครั้งที่ขาย (§86)";
+    }
+
     /// <summary>ตั้ง doc.ServedAsReceipt: ใบกำกับภาษีที่ชำระครบ ณ วันออก (cash
     /// sale) และไม่มีใบเสร็จ/ใบสำคัญรับแยกอ้างถึง → ทำหน้าที่เป็นใบเสร็จในตัว
     /// → หัวพิมพ์ "ใบกำกับภาษี/ใบเสร็จรับเงิน". ใบรวม (CombinedInvoiceTaxInvoice)

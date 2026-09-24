@@ -1631,6 +1631,30 @@ public partial class DocumentService : IDocumentService
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
         };
 
+        // หัวถูกลดจากใบกำกับอย่างย่อเป็นใบเสร็จเพราะยังไม่มีสิทธิ์ §86/6 → บอกบนจอ (รอบ 191 — เดิมเงียบ)
+        // ตัวตัดสินสิทธิ์ตัวเดียว AbbreviatedTaxInvoiceRule · ไม่พบแถว SiteSettings = บังคับ (ทิศเข้ม)
+        if (doc.VatAmount > 0 && doc.DocumentType is DocumentType.TaxInvoice
+                or DocumentType.Receipt or DocumentType.ReceiptVoucher)
+        {
+            var issuer = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate })
+                .FirstOrDefaultAsync();
+            if (issuer != null)
+            {
+                var requirePhoR06 = await _db.SiteSettings.AsNoTracking()
+                    .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice)
+                    .FirstOrDefaultAsync() ?? true;
+                var reason = Accounting.Helpers.AbbreviatedTaxInvoiceRule.Judge(
+                    issuer.IsVatRegistered, issuer.IsRetailApproved, issuer.PhoR06ApprovedDate,
+                    doc.DocumentDate, requirePhoR06);
+                resp = resp with
+                {
+                    TaxInvoiceTitleNotice = PdfGenerationService.AbbreviatedDowngradeNotice(doc, reason),
+                };
+            }
+        }
+
         // ── ใบกำกับภาษีเต็มรูปที่ออก "แทน" (§86/6 → §86/4) ──
         // ปุ่ม/ป้ายบนหน้าเว็บต้องอ่านค่าที่**เซิร์ฟเวอร์คำนวณ**เท่านั้น
         // (กติกาอยู่ใน FullTaxInvoiceReplacement.Check ตัวเดียวกับ endpoint)

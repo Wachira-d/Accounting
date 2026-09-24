@@ -828,7 +828,11 @@ public record DocumentResponse(
     /// null = เส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ) ≠ "ทำไม่ได้"</para></summary>
     bool? CanIssueFullTaxInvoice = null,
     /// <summary>เหตุผลที่กดไม่ได้ (ข้อความไทยพร้อมโชว์) — null เมื่อกดได้</summary>
-    string? FullTaxInvoiceBlockedReason = null);
+    string? FullTaxInvoiceBlockedReason = null,
+    /// <summary>หัวเอกสารถูกลดจาก "ใบกำกับภาษีอย่างย่อ" เป็น "ใบเสร็จรับเงิน" เพราะบริษัทยังไม่มีสิทธิ์ §86/6
+    /// — ข้อความไทยพร้อมทางไปต่อ (<c>PdfGenerationService.AbbreviatedDowngradeNotice</c>) ·
+    /// null = ไม่ได้ถูกลด หรือเส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ)</summary>
+    string? TaxInvoiceTitleNotice = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
