@@ -3287,6 +3287,15 @@ S2 C3 M2) · ฝ่ายค้าน 3 รอบ (`review193-*.md` · `review19
   หมายเหตุจริง + ยิงซ้ำล้มดัง (`TaxedDrivesVoidFailedMarker`) · **B2** รับรู้มัดจำตอนอนุมัติ `FOR UPDATE` · **B3** "ปนกัน" ตัดสินจากเลขที่ชี้มัดจำจริง · **B4** ด่านสถานะ
   ก่อนตัวแปลง + "หักมูลค่ามัดจำ" ห้ามแก้ย้อนหลัง · **B5** ปิดตามโดยผลข้างเคียง (แถวมัดจำดูช่องใหม่) · ที่พักใช้ `AdoptTaxId(..., ContactMatchKind)` + ลบรูป
   `[Obsolete]` · main 1aa8ef3 แก้ CS0029 หลัง merge O1 (CI run 36047169474) · เทสต์ `TaxedDepositDeductionTests` (6) · `DepositPolicyResolverTests` (+4)
+- **ฝ่ายค้านรอบ 4 → แก้** (`review193-r4.md` · d0ca176e): O1 de5dc4cd (**R4-1** ตัวตัดสินเดียว `DocumentSignedContent.IsSignatureCurrent` ทุกเส้นที่อ่านลายเซ็นลูกค้า —
+  ด่านเซ็นครบใน `ApproveDocumentAsync` 422 `SIGN-CUSTOMER-STALE` · แทนที่ลายเซ็นที่ไม่ตรงเนื้อหาตอนอนุมัติ · PDF ×2 ผ่าน `ResolveSignersAsync` · API `SignatureStaleReason` ·
+  ข้ามบริษัทบันทึก hash · **R4-2** hash v2 ครอบวันที่/เงื่อนไข/ภาคผนวก/บัญชีธนาคาร/ภาษา/แบรนด์/สาขา/อ้างอิง/มัดจำ/ประเภทชำระ) · L2 c3820dce (**R4-3**
+  `DepositBaseSplitMigrationSql` ครั้งเดียวจริง: advisory lock → `information_schema` → มีคอลัมน์แล้ว = ไม่ย้าย · **P4-1** ป้าย `[DEPOSIT-BASE-SPLIT]` · **P4-3**
+  ข้อความทางไปต่อที่ทำได้จริง · **P4-4** `TaxedDepositDeductionAllowed` ฝั่งขายเท่านั้น · ที่พัก `StampTaxIdWarning`) · C3 cb552889 (**R4-4** `NameMatchKind` = ชื่อแกน +
+  คลาสรูปนิติบุคคล `EntityFormOf` · **P4-5** `TaxIdChecksumWarning`/`StampTaxIdWarning` ป้าย `[TAXID-CHECKSUM]` · integration `Warnings` / API v1 `contact.taxIdWarning`) ·
+  W 960e98cd (**P4-6** ข้อความขาดตอนไม่ฟันธงว่าถูกลบ) · main 8a8372c0/cb3d62aa (CLAUDE.md F2 ข้อ 2 · helper กลาง · กฎ M hash chain v2)
+- **ยังเปิดหลังฝ่ายค้านรอบ 4**: P4-2 (ใบอนุมัติช่วง d788c2a→198fb5c ที่รับรู้จากหน้าเงินมัดจำไม่ถูกย้าย — อยู่บน branch ที่ยังไม่ deploy) · P4-7 (`generate-pdf`/`generate-html`
+  ของเอกสารลับยังไม่เดินด่านชั้นความลับ — backlog ทีม W) · แถวผู้ติดต่อเก่าที่เก็บเลข checksum ผิดไม่ติดป้ายย้อนหลัง (เจ้าของตัดสิน)
 - **ความเสี่ยงที่รู้ (ไม่ใช่บั๊กค้าง)**: ร่างที่มีฐานมัดจำแล้วเลือกมัดจำ VAT พักแบบขับ JE ⇒ ด่าน "ห้ามหักสองชั้น" ล้ม (ยังไม่มีปุ่มล้างฐานมัดจำ — สร้างใบใหม่) ·
   ป้ายแถวมัดจำพิมพ์ `DepositAppliedRef` ทั้งสตริง · `required_call_site_check` ช้าลง ~87 → ~124 วินาที (ควรแคชผล mask ต่อไฟล์)
 - **เครื่องมือใหม่ (ทั้งหมดอยู่ใน `check_all.sh` + CLAUDE.md หมวด F)**: `required_call_site_check` · `settings_reader_check` · `approved_status_writer_check` ·
@@ -3304,5 +3313,5 @@ S2 C3 M2) · ฝ่ายค้าน 3 รอบ (`review193-*.md` · `review19
   ที่ถูกทับ · สต็อก: E-02 `CostingMethod` ต่อสายหรือแก้ศูนย์ช่วยเหลือ · JE ขายเมนูสูตรเก่าที่ COGS 0
 - เอกสาร: DOCUMENT_FLOW §2.2 · §2.3 · §2.5 · §2.6 · §2.8 · §3.2 · §3.3 · §3.4 · §3.7 · **§3.8 ใหม่** · §5.2 · §6.1 · §6.2 · §6.2h · **§6.2i/§6.2j ใหม่** · §6.3 · §6.5 · §7 · §8 ·
   ACCOUNT_STRUCTURE §3.1 · **§3.1c ใหม่** · §4 · §5 · TEST_PLAN (ตารางรอบ 193 · BOM-04/12/13 · ADM-U08) · lessons +12 · ติ๊ก DECISIONS/audit-settings/audit-deposit/
-  report-A/B/D/E/F/G (2026-09-21) · SYSTEM_REVIEW W1 · OCR_PIPELINE T4-14
-— commit <pending>)_
+  report-A/B/D/E/F/G (2026-09-21) · SYSTEM_REVIEW W1 · OCR_PIPELINE T4-14 · review193-r3/r4 (ติ๊ก)
+— commit 7a16f097)_

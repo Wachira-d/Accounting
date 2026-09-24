@@ -478,7 +478,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **จับผู้ติดต่อด้วย "เลขภาษี + สาขา"** ทุกทางเข้า (ลูกค้า/ใบขาย/ผู้จำหน่าย) — `ContactTaxBranchKey` · ดู §6.2i
 - **Connected API `/api/v1/documents`** (รอบ 193 C3): รับ `contactBranchCode` (ผิดรูป = 400 ชี้ช่อง) · เลขมีแล้วคนละสาขา ⇒ **สร้างผู้ติดต่อสาขาใหม่** (ไม่เทียบชื่อ ·
   บทบาทลูกค้า/ผู้จำหน่ายตามแถว สนญ. + ฝั่งของเอกสาร `DocumentSide.IsSales`) · เลขจริง + ชื่อคล้าย (fuzzy) ⇒ ผู้ติดต่อใหม่ ไม่ผูกแถวเดิม · ใบฝั่งขายตอบ
-  `contact.missingBuyerFields` (ตัวตรวจเดียวกับด่านอนุมัติ `TaxInvoiceCompletenessChecker.MissingBuyerFields`) + `branchCode` · approve = §3.2 ApiClient ·
+  `contact.missingBuyerFields` (ตัวตรวจเดียวกับด่านอนุมัติ `TaxInvoiceCompletenessChecker.MissingBuyerFields`) + `branchCode` + `contact.taxIdWarning`
+  (เลข checksum ผิด · แถวใหม่ติด `[TAXID-CHECKSUM]` — §6.2i) · approve = §3.2 ApiClient ·
   สัญญาเต็ม `ACCOUNT_STRUCTURE.md` §3.2
 - **e-Tax อัตโนมัติ**: ทุกเมธอดที่ประทับ `Approved` เอง (TIV/CN/DN · Expense/PV/CIL) เรียก `IIssuedDocumentHooks.RunAsync` หลังบันทึก ·
   TIV/CN/DN ต่อข้อความเตือน (`EtaxHookSuffix`) ในคำตอบเมื่อออก e-Tax ไม่สำเร็จ · §3.2 ขั้น e-Tax
@@ -726,7 +727,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ตามเลขอ้างอิงชุดใหม่ (ไม่บวกซ้ำเมื่อเลือกมัดจำเดิมซ้ำ) · อนุมัติรับรู้ `DepositBaseDeducted − ที่รับรู้แล้ว` · ด่านค่าที่บันทึก `TaxedDepositDeductionProblem`
       (ต้องมีเลขใบมัดจำ · ห้ามหักสองชั้นกับ `DepositAppliedAmount`/ขับ JE · ห้ามปนส่วนลด %) ทั้งสร้างและแก้ · **กระดาษสองแถวแยก** (ส่วนลดท้ายบิล / "หักมูลค่ามัดจำ
       (ก่อน VAT) ตามใบกำกับภาษี {เลข}") ทั้ง HTML + QuestPDF + หน้ารายละเอียด `documents.html` · `DocumentResponse.DepositBaseDeducted` (echo) · snapshot revision ·
-      migration `ADD COLUMN IF NOT EXISTS` + ย้ายค่าเดิม (อนุมัติแล้ว = ยอดที่รับรู้จริง · ร่าง = ทั้งก้อนตามความหมายเดิม · รันซ้ำได้) · ที่พักส่งฐานมัดจำเข้าช่องนี้
+      migration **ครั้งเดียวจริง** `DatabaseMigrationHelper.DepositBaseSplitMigrationSql` (ฝ่ายค้านรอบสี่ R4-3 · c3820dce — เดิมคำสั่งย้ายรันทุกบูตในชุดที่กลืน error):
+      บล็อก `DO` เดียว `pg_advisory_xact_lock(AdvisoryLockKey.For("db-migration","Documents.DepositBaseDeducted"))` → ตรวจ `information_schema.columns` →
+      **มีคอลัมน์แล้ว = ไม่ย้าย** → `ADD COLUMN` → ย้ายค่าในธุรกรรมเดียวกัน (อนุมัติแล้ว = ยอดที่รับรู้จริง · ร่าง = ทั้งก้อน) · ทุกใบที่ย้ายติดหมายเหตุ
+      `[DEPOSIT-BASE-SPLIT] ย้าย X …` (อนุมัติแล้ว: ให้ตรวจมัดจำลูกค้าถ้าก้อนนั้นมีส่วนลดการค้า · ร่าง: หมายเหตุบอกว่าถ้ามีส่วนลดรวมอยู่ห้ามอนุมัติ — สร้างใบใหม่จากฟอร์มแล้วลบร่าง ·
+      **เป็นข้อความเตือน ไม่ใช่ด่านที่บล็อก** · P4-1) · ⚠️ P4-2 ไม่แก้: ใบอนุมัติช่วง d788c2a→198fb5c ที่รับรู้จากหน้าเงินมัดจำ (ไม่มี JE ผูก) ไม่ถูกย้าย · ฐานที่เคยบูตด้วย 04ce362 มีคอลัมน์แล้ว ⇒ ตรวจมือ ·
+      **ฝั่งขายเท่านั้น** `DepositPolicyResolver.TaxedDepositDeductionAllowed(type, cnDnPurchaseSide)` (`DocumentSide.IsSales` · CN/DN/ใบส่งของได้เมื่อไม่ได้ระบุฝั่งซื้อ)
+      ใช้ทั้งด่านบันทึกและการรับรู้ตอนอนุมัติ (ใบซื้อที่ตั้งผ่าน API ก่อนมีด่าน ⇒ ล้มดัง ไม่ลงรายได้ · P4-4) · ข้อความ "ส่วนลด + ฐานมัดจำเกินยอดขาย" ชี้ทางที่ฟอร์มทำได้:
+      ลดส่วนลดท้ายบิล หรือเลือกมัดจำใหม่ด้วยยอดที่น้อยลง (P4-3) · ที่พักส่งฐานมัดจำเข้าช่องนี้
       (สร้าง + เช็คเอาต์ต่อ) · ตัวเลข: ขายสด 7,450 ส่วนลด 100 + มัดจำ 2,000 ใช้เต็ม ⇒ 4,993.46 / 349.54 / 5,343.00 รับรู้ 1,869.16 (เดิมล้ม "ขาด 100") ·
       มัดจำใช้บางส่วน ⇒ รับรู้ 2,000 ไม่ใช่ 2,100 (เดิมเกิน 100 เงียบ)
     - **เอกสารลูก (R3-1)**: **convert** สืบทอดฐานมัดจำตามสัดส่วนที่ยก (สูตรเดียวกับส่วนลดบาท) + เลขใบมัดจำ ⇒ ยอดลูกตรงแม่ · **ไม่รับรู้ซ้ำ**: "รับรู้แล้ว" นับ JE ที่รับรู้
@@ -1138,12 +1146,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
 - ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
 - **ลายเซ็นลูกค้าผ่านขั้นอนุมัติ** (`SignatureApprovalService.ExternalApproveQuotationAsync` · รอบ 193 O1 R3-3/B9): ถามคำเตือนก่อนบันทึกลายเซ็น (§3.2) ·
-  ลายเซ็นเดิม**ใช้ซ้ำได้เฉพาะเนื้อหาเดิม** — ตัวตั้ง canonical ตัวเดียว `Helpers/DocumentSignedContent.Hash(doc, lines)` (`v1:` + SHA-256 · ครอบผู้ซื้อ ·
-  สกุลเงิน/อัตรา · ราคารวม VAT · ส่วนลดท้ายบิล · ยอดหัวทุกช่อง · ครบกำหนด/เครดิต/เงื่อนไขชำระ/หมายเหตุ · ทุกบรรทัดที่ลูกค้าเห็น · ไม่ครอบผังบัญชีภายใน)
+  ลายเซ็นเดิม**ใช้ซ้ำได้เฉพาะเนื้อหาเดิม** — ตัวตั้ง canonical ตัวเดียว `Helpers/DocumentSignedContent.Hash(doc, lines)` (**`v2:`** + SHA-256 · ครอบผู้ซื้อ ·
+  สกุลเงิน/อัตรา · ราคารวม VAT · ส่วนลดท้ายบิล · ยอดหัวทุกช่อง · ครบกำหนด/เครดิต/เงื่อนไขชำระ/หมายเหตุ · ทุกบรรทัดที่ลูกค้าเห็น · **v2 (ฝ่ายค้านรอบสี่ R4-2 ·
+  de5dc4cd) เพิ่ม**: วันที่เอกสาร · วันส่งมอบ · `CustomTermsAndConditions` · `CustomAppendix` · `CustomFooterNotes` · `BankAccountId` · `DocumentLanguage` · `BrandId` ·
+  `IssuerBranchCode` · `Reference` · `BookingNumber` · `DepositAppliedRef` · `DepositAppliedAmount` · `DepositBaseDeducted` · `PaymentType` · ไม่ครอบ: แม่แบบหน้าตา ·
+  `PreparerName` · ผังบัญชี/โปรเจกต์ · ช่องที่เกิดหลังอนุมัติ · ลายเซ็น v1 = แถวเก่า)
   เขียนตอนเซ็นลง `DocumentApproval.SignedContentHash` และคำนวณซ้ำตอนเรียกซ้ำด้วยฟังก์ชันเดียวกัน · `CanReuseSignature` = hash ตรง **และ** ลายเซ็น/ชื่อเดิม
   (hash ว่าง = แถวก่อนรอบนี้ = ใช้ซ้ำไม่ได้) · อย่างอื่น ⇒ ลายเซ็นเดิมถูก**แทนที่** (`SupersedeCustomerSignature` soft-delete ขั้น + `DocumentSignature` + เหตุผลใน
   `Comments` ⇒ ไม่ขึ้น PDF) แล้วบันทึกลายเซ็นใหม่ · ล็อกแถวเอกสาร `FOR UPDATE` ครอบ "ตรวจ → บันทึกลายเซ็น" (คำขอพร้อมกันไม่ซ้ำแถว · ไม่ใช้ unique index เพราะ
   ฐานมีแถวซ้ำเดิมแล้ว) · ⚠️ ลายเซ็นขั้นภายในยังไม่บันทึก hash (ไม่มีการใช้ซ้ำ)
+- **ลายเซ็นลูกค้า "ยังนับไหม" — ตัวตัดสินตัวเดียว `DocumentSignedContent.IsSignatureCurrent(approval, doc, lines)`** (ฝ่ายค้านรอบสี่ R4-1 · de5dc4cd):
+  ขั้นภายใน ⇒ ไม่อยู่ในกติกา · เอกสารออกแล้ว (`DocumentStatusRules.IsIssued` — เนื้อหาล็อก) ⇒ นับ (ใบเก่า/แถวไม่มี hash ยังพิมพ์ลายเซ็นเดิม — กฎ #4 H) ·
+  ร่าง/รออนุมัติ/ถูกปฏิเสธ ⇒ นับเฉพาะ hash ตรง (ไม่มี hash / v1 = ไม่นับ) · ลายเซ็นคู่ค้า External อยู่ในกติกา · ข้อความเดียว `StaleReason` · ตัวแทนที่
+  `DocumentSignedContent.Supersede` (soft-delete + เหตุผลต่อท้ายหมายเหตุเดิม) ใช้ร่วมสองเส้น · ผู้อ่านทุกเส้น: ① `ApproveDocumentAsync` คำนวณชุดที่ไม่นับ**ก่อน**ขั้นซ่อม
+  บรรทัด · ด่านเซ็นครบ (`RequireApprovalForDocuments` เกินวงเงิน) ไม่นับ ⇒ 422 `SIGN-CUSTOMER-STALE` · ในธุรกรรมอนุมัติ ลายเซ็นที่ไม่นับถูกแทนที่ ⇒ PDF หลังอนุมัติ
+  พิมพ์เฉพาะลายเซ็นที่ตรงเนื้อหา (ครอบกรณีปิด `RequireApprovalForDocuments` แล้วอนุมัติที่หน้า) ② `CheckAllApprovedAndProcessAsync` เซ็นครบแต่ลายเซ็นลูกค้าไม่นับ ⇒ 422
+  พร้อมทางไปต่อ ③ PDF `ResolveSignersAsync` (HTML + QuestPDF ใช้ร่วม) ④ API `GetDocumentWithApprovalsAsync` (แถวไม่นับได้ `SignatureStaleReason`) +
+  `GetDocumentSignaturesAsync` (ไม่ส่งภาพลายเซ็นที่ไม่นับ) ⑤ `CrossTenantWorkflowService.ApproveIncomingAsync` บทบาท Customer **บันทึก hash** (ทางเข้าที่สาม) ·
+  ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
 - **สร้างลิงก์**: `POST /document/{id}/delivery-sign-link` — เฉพาะ DeliveryNote
@@ -1194,7 +1214,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 > กติกา: ห้ามเขียน `Document.Status` นอก `IDocumentService` — ทางเข้าใหม่ทุกทางต้องเรียก
 > `ApproveDocumentAsync` (checker `document_status_writer_check` อยู่ในลิสต์ที่ควรมี §8 ของ ERP_REVIEW)
 > RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
-> (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง)
+> (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง) — **"เซ็นครบ" ไม่นับลายเซ็นลูกค้าที่ไม่ตรงเนื้อหาปัจจุบัน** (`IsSignatureCurrent` · 422
+> `SIGN-CUSTOMER-STALE` · รอบ 193 R4-1) และลายเซ็นที่ไม่นับถูกแทนที่ในธุรกรรมอนุมัติ (§2.8)
 
 > **การรับทราบคำเตือน — แหล่ง 4 แบบ (รอบ 193 · คำตัดสิน #12 · `Helpers/ApprovalAcknowledgement` + enum
 > `ApprovalAckSource {None, User, SystemWorkflow, ApiClient}` · overload ใหม่ของ `ApproveDocumentAsync`)**:
@@ -2321,7 +2342,9 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   เพิ่มแถวเอง · ฝั่งตรวจ `Analyze` แยก **ถูกแก้** (เนื้อไม่ตรง RowHash) / **ขาดตอน** (PrevHash ชี้ hash ที่ไม่มีแถวไหนถือ) / **แตกกิ่ง** (หลายแถวชี้
   PrevHash เดียวกัน = คำขอพร้อมกัน · ไม่ใช่หลักฐานการแก้ · ไม่แจ้งลูกค้าแต่ log warning) · รายงานทุกแถว ไม่พึ่งลำดับ Id · แถว v1 เดิมตรวจแบบ
   legacy (สูตร v1 เป็น private · ลองคืนหลัก 100ns ที่ PostgreSQL ตัด) · แถวนอก chain (`RowHash=null`) นับแยก `unchainedCount` (ไม่ใช่ "ถูกแก้") ·
-  `AuditChainVerifyJob` แจ้งด้วย `AlertMessage` ตามสาเหตุที่ตรวจพบจริง · `verify-hash-chain` endpoint ต้อง `CompanySettings.Edit` + ปฏิเสธ API key ·
+  `AuditChainVerifyJob` แจ้งด้วย `AlertMessage` ตามสาเหตุที่ตรวจพบจริง · **ขาดตอนไม่ฟันธงว่า "ถูกลบ"** (ฝ่ายค้านรอบสี่ P4-6 · 960e98cd): ผู้แก้ที่ประทับ RowHash
+  ใหม่ (สูตร v2 ไม่มีกุญแจ) ทิ้งร่องรอยแบบเดียวกับการลบ ⇒ ข้อความ "แถวก่อนหน้า…ถูกลบ หรือถูกแก้แล้วประทับ hash ใหม่ (ระบบแยกสองกรณีนี้ไม่ได้) หรือแถวนี้ไม่ได้บันทึก
+  โดยระบบ" · หัวแจ้งเตือน job "ขาดตอน (แถวก่อนหน้าถูกลบหรือถูกแก้)" · `verify-hash-chain` endpoint ต้อง `CompanySettings.Edit` + ปฏิเสธ API key ·
   _ที่มา: `Timestamp` เป็น `timestamp without time zone` ⇒ อ่านกลับ `Kind=Unspecified` ความละเอียดไมโครวินาที ⇒ สูตรเดิม (`"O"`) ตรวจไม่ผ่าน
   **ทุกแถวของทุกบริษัท** · `AuditTrailController` มี canonical สำเนาที่สองของตัวเอง_ · ⚠️ เทสต์ `AuditHashChainTests` **จำลอง** การอ่านกลับ ไม่ผ่าน
   PostgreSQL จริง · สองเครื่องเขียนพร้อมกันยังได้ fork (serialize การประทับ = คำถามเจ้าของ) · `AuditLogs.Add(...)` ตรงยังเหลือหลายจุด (นอก chain)
@@ -2539,7 +2562,15 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
 - **เติมเลขให้แถวที่จับได้** ด้วย `AdoptTaxId(row, taxId, branch, ContactMatchKind)` → `ContactAdoptOutcome {Keep, Adopted, Reject}` เท่านั้น
   (`MayWriteTaxId` เป็น private): ห้ามทับเลขนิติบุคคลอื่น/ล้างเลขจริงด้วย "-" · 13 หลักต้องผ่าน mod-11 (`ThaiTaxId.IsValid`) · ศูนย์ล้วนไม่รับ · แถว walk-in
   ไม่รับเลข (ผู้ซื้อมีเลขจริง ⇒ Reject) · **จับด้วยชื่อแบบ fuzzy/substring + payload มีเลขจริง ⇒ Reject** (ผู้เรียกสร้างแถวใหม่/ไม่ผูก) ·
-  `NameMatchKind` = ExactName เมื่อชื่อเท่ากันหลัง normalize (ตัวพิมพ์ · เว้นวรรค · "บริษัท/จำกัด/บจก/หจก/Co./Ltd./PLC…") อื่น ๆ = Fuzzy (superstring ไม่ใช่ fuzzy)
+  `NameMatchKind` = ExactName เมื่อ**ชื่อแกนเท่ากัน และรูปนิติบุคคลเท่ากัน** (ฝ่ายค้านรอบสี่ R4-4 · cb552889 — เดิมตัดคำบอกรูปทิ้ง ⇒ "บจก. เอ" = "บริษัท เอ จำกัด
+  (มหาชน)") · `EntityFormOf` คลาส: บริษัทจำกัด (บจก./บจ./บริษัท…จำกัด/Co., Ltd./Company Limited/Ltd.) · มหาชน (บมจ./(มหาชน)/Public Company/PCL/PLC) · หจก.
+  (ห้างหุ้นส่วนจำกัด/Limited Partnership) · หสน. — ตรวจตามลำดับ มหาชน → หจก. → หสน. → บริษัท · **คลาสต่างกัน / ฝั่งใดไม่รู้รูป (รวมบุคคลธรรมดาทั้งคู่ ·
+  ป้ายร้าน) = Fuzzy** · ผู้เรียก: API v1 · นำเข้าเอกสาร (เส้นที่จับด้วย `==` ส่ง `ExactName` เอง) · superstring ไม่ใช่ exact
+- **เลขที่ใช้ไม่ได้ได้ผลเดียวกันทุกทาง** (P4-5 · cb552889): `ContactTaxBranchKey.TaxIdChecksumWarning(taxId)` (13 หลักไม่ผ่าน mod-11 · ศูนย์ล้วน) +
+  `StampTaxIdWarning(contact)` ต่อท้าย `InternalNotes` ด้วยป้าย `[TAXID-CHECKSUM]` (ไม่ติดซ้ำ · ไม่ทับ) — **แถวใหม่เก็บค่าที่คู่ค้าส่งไว้เป็นหลักฐานแต่ติดป้าย** ·
+  แถวเดิมไม่ถูกเติมเลขนี้ (`AdoptTaxId` = Keep) · ผู้เรียก: Integration ลูกค้า (+ `InboundSyncResponse.Warnings`) / ใบขาย / ผู้จำหน่าย · API v1 `/documents`
+  (`contact.taxIdWarning` + ป้ายบนแถวใหม่) · CMS lead · ยอดยกมา · ที่พัก (c3820dce) · นำเข้าผู้ติดต่อ / `ContactsV1` sync ปฏิเสธเลข checksum ผิดอยู่แล้ว ·
+  แถวเก่าที่เก็บเลขผิดไม่ติดป้ายย้อนหลัง (ให้เจ้าของตัดสิน)
 - ทางเข้าที่เดินตัวนี้: Integration ลูกค้า/ใบขาย/ผู้จำหน่าย · นำเข้าผู้ติดต่อ (คอลัมน์ BranchCode) / ยอดยกมา / เอกสาร (ชื่อตรงตัวก่อน แล้ว substring เรียงแน่นอน ·
   Reject ⇒ `KeyNotFoundException` ไทย "สร้าง/นำเข้าผู้ติดต่อก่อน") · พรีวิวนำเข้า + `CompetitorImportFramework` (เดิม `ToDictionary(TaxId)` **โยนทั้งไฟล์**เมื่อเลขเดียวมีสองสาขา) ·
   POS ใบกำกับเต็มรูป (`BuyerBranchCode`) · ที่พัก ("00000") · API v1 (`/documents` · `/contacts/resolve` · `/contacts/sync` — `ACCOUNT_STRUCTURE.md` §3.2) · CMS AutoLink
@@ -2898,7 +2929,8 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 **ผู้ติดต่อแขก**: `FindOrCreateContactAsync` จับด้วยเลขภาษี + `"00000"` · เลขนี้มีแล้วคนละแถว ⇒ ไม่ถอยไปจับอีเมล/เบอร์ (de97a95) ·
 แขกที่ส่งเลขภาษี/ชื่อบริษัท: แถวที่จับด้วยอีเมล/เบอร์ต้องไม่ใช่บุคคลธรรมดาและชื่อตรงชื่อบริษัท (`Helpers/LodgingGuestContact` · ไม่ fuzzy) ไม่งั้นสร้างแถวใหม่ ·
 แถวที่ยังไม่มีเลข → เติมผ่าน `ContactTaxBranchKey.AdoptTaxId(row, taxId, branch, ContactMatchKind)` (§6.2i · 04ce362) ส่งชนิดการจับจริงต่อผู้สมัคร
-(อีเมลก่อน แล้วเบอร์ — `LodgingService.Reservations.cs:457`) · `Reject` ⇒ สร้างแถวใหม่ · แถว walk-in ไม่เข้าข่ายผู้สมัครเลย · รูปเดิม `[Obsolete]` ถูกลบแล้ว (ผู้เรียก 0)
+(อีเมลก่อน แล้วเบอร์) · `Reject` ⇒ สร้างแถวใหม่ (เรียก `StampTaxIdWarning` ก่อน `Add` — เลข checksum ผิดติด `[TAXID-CHECKSUM]` · c3820dce) · แถว walk-in ไม่เข้าข่าย
+ผู้สมัครเลย · รูปเดิม `[Obsolete]` ถูกลบแล้ว (ผู้เรียก 0)
 
 **ราคา** (`LodgingPricingEngine.NightlyRate` ต่อคืน): ฐาน → แผนราคา (Absolute/Multiplier/Delta) → ฤดูกาล (ช่วงแคบกว่าชนะ · recurring ข้ามปีได้ · จำกัดประเภทห้องได้) → สุดสัปดาห์ (`WeekendMultiplier`×mask) → override รายวัน **แทนที่ทั้งหมด** · แขกเกิน `StandardOccupancy` × `ExtraGuestPrice` · เตียงเสริม · PerPerson = ราคา×คน · `Totals`: ราคารวม VAT → VAT = total×r/(100+r) (informational — ตัวจริงคำนวณอีกครั้งตอนออกเอกสารด้วยสูตรเดียวกัน) · มัดจำ = %/คงที่ + min/max · ขั้นต่ำคืน = max(ที่พัก, ห้อง, ฤดูกาล, override). ห้องว่าง (`LodgingAvailability.AvailableRooms`): ต่อคืน min(capacity(allotment) + overbooking − ที่กัน) · Pending กันเฉพาะที่ hold ยังไม่หมด · StopSell = 0 · unit ปิดซ่อมไม่นับ
 
@@ -3054,4 +3086,4 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · รายละเอียดรอบ `CHANGELOG.md` — commit <pending>)_
+_Last verified against codebase: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · **หลังฝ่ายค้านรอบสี่**: ลายเซ็นลูกค้า `IsSignatureCurrent` + hash v2 (§2.8/§3.2 · de5dc4cd) · migration ฐานมัดจำครั้งเดียว + `[DEPOSIT-BASE-SPLIT]` + ฝั่งขายเท่านั้น (c3820dce) · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคล · `[TAXID-CHECKSUM]` (§6.2i · cb552889) · ข้อความขาดตอน (§6.1 · 960e98cd) · รายละเอียดรอบ `CHANGELOG.md` — commit 7a16f097)_
