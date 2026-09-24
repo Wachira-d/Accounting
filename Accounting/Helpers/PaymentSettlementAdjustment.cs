@@ -52,6 +52,11 @@ public static class PaymentSettlementAdjustment
 
     private const decimal Tol = DocumentSettlementState.Tolerance;
 
+    /// <summary>ค่าเผื่อ<b>ตัวเดียว</b>ของ "ข้อเสนอลงตัวไหม / ยอดข้อเสนอตรงยอดเอกสารไหม / บรรทัดปรับอธิบายส่วนต่างพอดีไหม"
+    /// — ฝ่ายค้าน P3 รอบ 193: เดิมข้อเสนอใช้ 0.02 (OcrPaperAmounts.ExactTol) แต่ AutoPost ตรวจที่ 0.005 ⇒ ข้อเสนอที่ต่าง 0.01–0.02
+    /// ปลด [PAY≠TOTAL] แล้วไปล้มตอนอนุมัติ · ตอนนี้ทุกจุดใช้ค่านี้ (= <see cref="DocumentSettlementState.Tolerance"/>)</summary>
+    public const decimal MatchTolerance = Tol;
+
     /// <summary>ตรวจบรรทัดปรับของการชำระ (ทางเข้า 1) — เงินที่จ่าย + บรรทัดปรับ ต้องปิดหนี้ได้ไม่เกินยอดค้าง</summary>
     /// <param name="cashPaid">เงินที่จ่ายจริงของการชำระครั้งนี้ (<c>Payment.Amount</c>)</param>
     /// <param name="balanceDue">ยอดค้างของเอกสารก่อนการชำระครั้งนี้</param>
@@ -85,19 +90,49 @@ public static class PaymentSettlementAdjustment
         return new(true, settled, settled - cashPaid, null);
     }
 
-    /// <summary>เอกสารชนิดที่ "จ่ายเงินในตัว" ตอนอนุมัติ (ขาเงินสดอยู่ใน JE ของเอกสาร) ซึ่งยอดชำระจริงเปลี่ยนขาเงินสดได้ —
-    /// ใบสำคัญจ่ายที่ไม่ใช่เงินเชื่อ และไม่ใช่บริการต่างประเทศ (ขาเงินสดของ ภ.พ.36 เป็นฐานเท่านั้น)</summary>
-    public static bool PostsCashAtApproval(DocumentType type, PaymentType? paymentType, bool isForeignService)
-        => type == DocumentType.PaymentVoucher && paymentType != PaymentType.Credit && !isForeignService;
+    /// <summary>เอกสารชนิดที่ "จ่ายเงินในตัว" ตอนอนุมัติ (ขาเงินสดอยู่ใน JE ของเอกสาร) ซึ่งยอดชำระจริงเปลี่ยนขาเงินสดได้
+    /// — ตัดสินจาก<b>สาขา JE ที่ลงเงินสดจริง</b> (AutoPostToJournalAsync) ไม่ใช่จาก PaymentType อย่างเดียว:
+    /// <list type="bullet">
+    /// <item>ใบสำคัญจ่ายที่ปิดหนี้ของเอกสารต้นทาง (<paramref name="settlesSourceDocument"/> = มี RelatedDocumentId — เส้นแปลง
+    ///   ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย → ใบสำคัญจ่าย) ⇒ ลง Dr เจ้าหนี้ / Cr เงินสด <b>เสมอ</b> แม้ PaymentType จะเป็น Credit
+    ///   (ค่าเริ่มต้นของเส้นแปลง) — ฝ่ายค้าน C1 รอบ 193: เดิมตอบ false ⇒ "ยอดชำระจริง" ถูกข้ามเงียบ JE ลงเงินสด 536 แทน 438</item>
+    /// <item>ใบสำคัญจ่ายเดี่ยวที่ไม่ใช่เงินเชื่อ และไม่ใช่บริการต่างประเทศ (ขาเงินสดของ ภ.พ.36 เป็นฐานเท่านั้น)</item>
+    /// </list></summary>
+    public static bool PostsCashAtApproval(
+        DocumentType type, PaymentType? paymentType, bool isForeignService, bool settlesSourceDocument)
+        => type == DocumentType.PaymentVoucher
+           && (settlesSourceDocument || (paymentType != PaymentType.Credit && !isForeignService));
 
     /// <summary>ส่วนต่างที่ขาเงินสดของ JE ต้องถูก<b>ลด</b> (Dr เงินสดกลับ) = ยอดเอกสาร − ยอดชำระจริง ·
     /// 0 เมื่อไม่ได้ระบุยอดชำระจริง หรือเอกสารชนิดนี้ไม่จ่ายเงินในตัว (พฤติกรรมเดิมทุกประการ)</summary>
     public static decimal DocumentCashDelta(
-        DocumentType type, PaymentType? paymentType, bool isForeignService, decimal totalAmount, decimal? actualPaidAmount)
+        DocumentType type, PaymentType? paymentType, bool isForeignService, bool settlesSourceDocument,
+        decimal totalAmount, decimal? actualPaidAmount)
     {
-        if (actualPaidAmount is not decimal paid || !PostsCashAtApproval(type, paymentType, isForeignService))
+        if (actualPaidAmount is not decimal paid
+            || !PostsCashAtApproval(type, paymentType, isForeignService, settlesSourceDocument))
             return 0m;
         return totalAmount - paid;
+    }
+
+    /// <summary>ช่อง "ยอดชำระจริง" <b>ใช้ไม่ได้</b>กับเอกสารนี้ไหม — คืนเหตุผลพร้อมทางไปต่อ (null = ใช้ได้)
+    /// <para>ใช้ได้เมื่อ: เอกสารจ่ายเงินในตัว (<see cref="PostsCashAtApproval"/>) ⇒ ลดขาเงินสดตอนอนุมัติ ·
+    /// หรือเอกสารตั้งหนี้ฝั่งซื้อ (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) ⇒ เป็นยอดเสนอในหน้าบันทึกการชำระ (บรรทัดปรับอยู่ที่การชำระ)</para>
+    /// <para>ที่เหลือ (ใบสำคัญจ่ายเงินเชื่อแบบเก่า · บริการต่างประเทศ · ฝั่งขาย) ⇒ ค่าไม่มีผลที่ไหนเลย = silent no-op (กฎ #4 A)
+    /// ⇒ ด่านบันทึก/อนุมัติต้องบอกผู้ใช้ ไม่ใช่ปล่อยให้ JE ลงยอดเต็มเงียบ ๆ</para></summary>
+    public static string? ActualPaidNotApplicableReason(
+        DocumentType type, PaymentType? paymentType, bool isForeignService, bool settlesSourceDocument)
+    {
+        if (PostsCashAtApproval(type, paymentType, isForeignService, settlesSourceDocument)) return null;
+        if (type is DocumentType.PurchaseInvoice or DocumentType.Expense) return null;
+        return type == DocumentType.PaymentVoucher
+            ? (isForeignService
+                ? "ช่อง \"ยอดชำระจริง\" ใช้กับใบสำคัญจ่ายบริการต่างประเทศ (ภ.พ.36) ไม่ได้ — ขาเงินสดเป็นฐานภาษีเท่านั้น · "
+                  + "ล้างช่องนี้ แล้วบันทึกส่วนต่าง (ค่าส่ง/คูปอง) ด้วยสมุดรายวันทั่วไป"
+                : "ช่อง \"ยอดชำระจริง\" ใช้กับใบสำคัญจ่ายแบบเงินเชื่อไม่ได้ (ไม่มีเงินออกตอนอนุมัติ) — "
+                  + "ล้างช่องนี้ หรือเปลี่ยนเป็นจ่ายทันที")
+            : $"ช่อง \"ยอดชำระจริง\" ใช้ได้เฉพาะเอกสารจ่ายเงินฝั่งซื้อ (ใบสำคัญจ่าย · ใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย) — "
+              + $"เอกสารชนิด {type} ไม่มีขาเงินสดให้ปรับ · ล้างช่องนี้";
     }
 
     /// <summary>adjusting lines ของเอกสาร (Dr รวม/Cr รวม) ต้องอธิบายส่วนต่างยอดชำระจริงได้พอดี:

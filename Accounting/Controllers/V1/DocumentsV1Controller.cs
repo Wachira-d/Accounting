@@ -235,21 +235,14 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
         try
         {
-            DocumentResponse doc;
-            IReadOnlyList<string> scanGapWarnings = Array.Empty<string>();
-            try
-            {
-                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1");
-            }
-            catch (Accounting.Services.Implementations.DocumentApprovalWarningsException w)
-                when (w.Warnings.Count > 0 && w.Warnings.All(Helpers.OcrApprovalGapWarning.IsGapWarning))
-            {
-                // รอบ 193 (คำตัดสินเจ้าของข้อ 12): คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ([Σ-GAP]) ห้ามขัดจังหวะ API —
-                // อนุมัติต่อ (ร่องรอย APPROVE-ACK-WARNINGS + หมายเหตุภายในบนเอกสาร โดย "api:v1") แล้วคืนธง/ข้อความในโครงเดิม
-                // · คำเตือนชนิดอื่นยังเดินทางเดิม (ไม่เปลี่ยนพฤติกรรม)
-                scanGapWarnings = w.Warnings;
-                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1", acknowledgeWarnings: true);
-            }
+            // รอบ 193 (ฝ่ายค้าน C6): ถามคำเตือนก่อน (ไม่อนุมัติ ไม่เรียก AI) แล้วค่อยอนุมัติครั้งเดียว — เดิมเรียกอนุมัติแบบไม่รับทราบ
+            // ⇒ ด่านเรียก AI เสริมคำเตือน (สูงสุด 8 วินาที) แล้ว API โยนคำตอบทิ้ง = จ่าย token ฟรี + แถว feedback ที่ loop ไม่มีวันปิด
+            // · [Σ-GAP] ห้ามขัดจังหวะ API (คำตัดสินข้อ 12) ⇒ แหล่ง ApiClient ผ่านเฉพาะชุดนั้น แล้วคืนธงในโครงเดิม ·
+            // คำเตือนชนิดอื่นยังหยุด (ไม่เสริม AI) · ร่องรอยบอกว่า "API ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ (Helpers/ApprovalAcknowledgement)
+            var preview = await _documents.PreviewApprovalWarningsAsync(ctx!.CompanyId, documentId);
+            IReadOnlyList<string> scanGapWarnings = preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning).ToList();
+            var doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1",
+                Helpers.ApprovalAckSource.ApiClient, withAiHints: false);
             return Ok(new ApiResponse<object>(true, new
             {
                 documentId = doc.Id,

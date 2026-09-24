@@ -297,6 +297,7 @@ public class OcrService : IOcrService
             // that fall through to local get both signals — clean digital
             // characters + spatial OCR — fed into ParseThaiDocument.
             string? pdfTextLayer = null;
+            string? etaxTypeCode = null;   // รอบ 193 (ฝ่ายค้าน P6): รหัสชนิด ETDA ของ XML ที่ฝัง — ใช้ตัดสินใบอย่างย่อ §82/5(2)
             string? pdfTextLayerReason = null;
 
             // Pre-tier diagnostic: WHY would Azure not even be tried?
@@ -328,6 +329,7 @@ public class OcrService : IOcrService
                         extractedData = MapEtaxToOcrData(etax);
                         extractedText = etax.XmlContent ?? "";
                         ocrEngineUsed = "EtaxXml";
+                        etaxTypeCode = etax.DocumentTypeCode;
                         // รอบ 193 (เจ้าของข้อ 10): ข้อความหน้า PDF ไว้หา "การปรับตอนชำระ" ที่ XML ไม่มี (ส่วนลดพิเศษ/ยอดชำระ)
                         // — XML ยังเป็นตัวตั้งของยอดทุกตัว · อ่านไม่ได้ = ไม่ตรวจส่วนนี้ (พฤติกรรมเดิม)
                         try
@@ -1280,7 +1282,15 @@ public class OcrService : IOcrService
                 // เก็บลง ProcessingNotes (โชว์ในหน้า review + carry ผ่าน handoff)
                 // ด้วย prefix [VAT-CLAIM] ให้ frontend ดึงมาแสดงเป็น banner ได้.
                 var docVat = extractedData.VatAmount ?? 0m;
-                if (role.InputVatClaimable == false && docVat > 0 && !string.IsNullOrEmpty(role.InputVatClaimWarning))
+                // e-Tax XML ที่ประกาศตัวเองว่า "อย่างย่อ" (T05/T06) — หลักฐานชั้นสูงสุด ชนะการอนุมานจากข้อความ (ฝ่ายค้าน P6)
+                if (ocrEngineUsed == "EtaxXml" && role.OurRole == "Buyer" && docVat > 0
+                    && Ocr.EtaxPdfXmlExtractor.AbbreviatedClaimBlock(etaxTypeCode) is string abbrevBlock
+                    && !(scanResult.ProcessingNotes ?? "").Contains("[VAT-CLAIM]", StringComparison.Ordinal))
+                {
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n[VAT-CLAIM] " + abbrevBlock;
+                    extractedData.ReasoningTrace.Add("[VAT-CLAIM] " + abbrevBlock);
+                }
+                else if (role.InputVatClaimable == false && docVat > 0 && !string.IsNullOrEmpty(role.InputVatClaimWarning))
                 {
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                         + "\n[VAT-CLAIM] " + role.InputVatClaimWarning;
@@ -6791,6 +6801,15 @@ public class OcrService : IOcrService
             // (Lazada 1,228.04 × 4 = 4,912.16 · พิมพ์ 4,912.15) บรรทัดใช้ 4,912.16 แล้วส่วนต่างไปอยู่ที่ผลต่างปัดเศษของหัวเอกสาร
             // ⇒ SubTotal/ยอดรวมยังตรงกระดาษ · ห้ามทศนิยม 4 ตำแหน่ง · ห้ามบรรทัดติดลบ (ตัวตัดสิน Helpers/DocumentRounding)
             decimal lineRoundingShift = 0m;
+            // ฝ่ายค้าน P2: เพดานผลต่างรวมทั้งใบ — เกิน = ไม่ใช่เศษปัด ⇒ คงยอดตามกระดาษ + เตือน (Helpers/DocumentRounding.CapShifts)
+            // ฝ่ายค้าน P5: บรรทัดที่กระดาษบอกว่าไม่มี VAT (ยกเว้น/0%) ไม่ย้าย — ผลต่างปัดเศษหัวเอกสารถูกนับในคอลัมน์ 7% ของรายงาน
+            // ภาษี (TaxService.VatableBase = SubTotal − บรรทัดยกเว้น) ⇒ ผลต่างต้องมาจากบรรทัดที่มี VAT เท่านั้น
+            var (priceShifts, priceShiftWarning) = Accounting.Helpers.DocumentRounding.CapShifts(items
+                .Select((it, idx) => it.VatRate is decimal itRate && itRate <= 0m ? 0m
+                    : Accounting.Helpers.DocumentRounding.FromPrintedLine(it.Quantity, it.UnitPrice, lineGross[idx]).Shift)
+                .ToList());
+            if (priceShiftWarning != null)
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + priceShiftWarning;
             for (var i = 0; i < items.Count; i++)
             {
                 var item = items[i];
@@ -6829,9 +6848,8 @@ public class OcrService : IOcrService
                 var lineAccountId = accountPick.AccountId;
 
                 var amount = item.Amount ?? 0;
-                var priceRounding = Accounting.Helpers.DocumentRounding.FromPrintedLine(
-                    item.Quantity, item.UnitPrice, lineGross[i]);
-                lineRoundingShift += priceRounding.Shift;
+                var priceShift = priceShifts[i];
+                lineRoundingShift += priceShift;
                 // Last line absorbs the rounding remainder (both VAT and WHT)
                 // so the line sums tie out exactly to the header figures.
                 var lineVat = spreadVat[i];
@@ -6885,7 +6903,7 @@ public class OcrService : IOcrService
                     // หักออกแล้วยอดตรงกับที่ ComputeLineAmounts คำนวณเป๊ะ ⇒ เปิดแก้ไข
                     // เอกสารแล้วบันทึกใหม่ ตัวเลขไม่ขยับ
                     // + priceRounding.Shift: บรรทัดโตตาม จำนวน × ราคา (ส่วนลดคงตามกระดาษ) — ส่วนต่างกลับไปที่ RoundingAdjustment
-                    Amount = (document.PricesIncludeVat ? Math.Round(amount - lineVat, 2) : amount) + priceRounding.Shift,
+                    Amount = (document.PricesIncludeVat ? Math.Round(amount - lineVat, 2) : amount) + priceShift,
                     VatRate = item.VatRate ?? standardVatRate,
                     VatAmount = lineVat,
                     // WHT read off the paper → pre-fill rate + baht per line so
@@ -7139,7 +7157,16 @@ public class OcrService : IOcrService
             resolvedTarget.IsDeposit ? Accounting.Helpers.OcrTargetDocumentType.DepositPseudoType : docType.ToString(),
             isSalesSide, document.PricesIncludeVat,
             headerSubTotal, result.ExtractedVatAmount ?? 0m, result.ExtractedTotalAmount ?? 0m, headerWht,
-            lines, string.IsNullOrWhiteSpace(delta) ? null : delta);
+            lines, string.IsNullOrWhiteSpace(delta) ? null : delta,
+            RoundingAdjustment: document.RoundingAdjustment,
+            // เฉพาะใบตั้งหนี้ฝั่งซื้อที่ข้อเสนอลงตัวกับยอดใบ (ตัวอ่านเดียวกับเส้นสร้างเอกสาร) — ใบสำคัญจ่ายต้องมีบรรทัดปรับคู่กัน
+            // ซึ่งเส้นฟอร์มไม่ได้ยกไป จึงไม่ส่ง (ปุ่ม "สร้างเอกสาร" ลงให้ครบทั้งคู่)
+            ActualPaidAmount: !isSalesSide && headerWht == 0m
+                && (docType is DocumentType.PurchaseInvoice or DocumentType.Expense)
+                && Accounting.Helpers.OcrSettlementProposal.Parse(notesAfter) is { } previewPlan
+                && Math.Abs(previewPlan.InvoiceTotal - (result.ExtractedTotalAmount ?? 0m))
+                    <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance
+                ? previewPlan.AmountPaid : null);
     }
 
     /// <summary>ยอดก่อน VAT <b>หลังหักส่วนลด</b> ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c>
@@ -7361,8 +7388,24 @@ public class OcrService : IOcrService
     private async Task ApplyScanSettlementPlanAsync(
         Guid companyId, OcrScanResult result, Document document, decimal headerWht, string createdBy)
     {
-        if (Accounting.Helpers.OcrSettlementProposal.Parse(result.ProcessingNotes) is not { } plan) return;
-        if (headerWht != 0m || Math.Abs(plan.InvoiceTotal - document.TotalAmount) > Accounting.Helpers.OcrPaperAmounts.ExactTol)
+        var parsedPlan = Accounting.Helpers.OcrSettlementProposal.Parse(result.ProcessingNotes);
+        var postsCash = Accounting.Helpers.PaymentSettlementAdjustment.PostsCashAtApproval(
+            document.DocumentType, document.PaymentType, document.IsForeignService, document.RelatedDocumentId.HasValue);
+        // เอกสารตั้งหนี้ (ข้อ 1: ยอด 536 ตามใบกำกับถูกแล้ว) — ส่วนต่างเป็นเรื่องขั้นชำระ ⇒ อนุมัติได้ตามปกติ
+        // (ฝ่ายค้าน C8: เดิมไม่เขียนอะไร ⇒ [PAY≠TOTAL] หยุดการอนุมัติเองตลอดไป เพราะบันทึกการชำระก่อนอนุมัติไม่ได้)
+        if (!postsCash && (document.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense)
+            && (result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrTotalDecomposer.PayNotTotalTag, StringComparison.Ordinal))
+        {
+            var planFits = parsedPlan is { } pf && headerWht == 0m
+                && Math.Abs(pf.InvoiceTotal - document.TotalAmount) <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance;
+            if (planFits) document.ActualPaidAmount = parsedPlan!.AmountPaid;
+            if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.DeferredTag, StringComparison.Ordinal))
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+                    + Accounting.Helpers.OcrSettlementProposal.DeferredNote(planFits ? parsedPlan : null, document.TotalAmount);
+            return;
+        }
+        if (parsedPlan is not { } plan || !postsCash) return;
+        if (headerWht != 0m || Math.Abs(plan.InvoiceTotal - document.TotalAmount) > Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance)
         {
             result.ProcessingNotes = (result.ProcessingNotes ?? "")
                 + $"\n[Σ] ข้อเสนอลงส่วนต่างยอดชำระ ({plan.AmountPaid:N2}) ไม่ถูกบันทึกอัตโนมัติ — "
@@ -7371,9 +7414,6 @@ public class OcrService : IOcrService
             return;
         }
         document.ActualPaidAmount = plan.AmountPaid;
-        if (!Accounting.Helpers.PaymentSettlementAdjustment.PostsCashAtApproval(
-                document.DocumentType, document.PaymentType, document.IsForeignService))
-            return;   // เอกสารตั้งหนี้ — บรรทัดปรับอยู่ที่ขั้นบันทึกการชำระ (ข้อเสนอเดียวกันเติมให้ในหน้าชำระเงิน)
         if ((result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.SettledTag, StringComparison.Ordinal))
             return;
 

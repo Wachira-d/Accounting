@@ -4571,6 +4571,10 @@
           // ส่วนลดระดับใบ (จาก reconcile ยึดยอดรวมทั้งสิ้น) → ช่อง "ส่วนลด
           // ท้ายบิล" ในฟอร์ม — ห้ามกระจายใส่บรรทัด (ดูคอมเมนต์ reconcile)
           billDiscountAmount,
+          // รอบ 193 (ฝ่ายค้าน C3): ผลต่างปัดเศษ + ยอดชำระจริง จากตัวสร้างบรรทัดตัวเดียวกับปุ่ม "สร้างเอกสาร"
+          // (เดิมไม่ส่ง ⇒ ฟอร์มคิดใหม่ได้ 5,024.01 ≠ กระดาษ) — หน้าเว็บส่งต่ออย่างเดียว ไม่คำนวณเอง
+          roundingAdjustment: Number(preview.roundingAdjustment) || 0,
+          actualPaidAmount: preview.actualPaidAmount ?? null,
           currency,
           pricesIncludeVat,
           headerVatRate,

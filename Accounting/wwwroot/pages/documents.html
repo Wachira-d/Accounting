@@ -2122,6 +2122,16 @@
           if (bd) bd.value = payload.billDiscountAmount;
           if (bm) bm.value = 'amt';
         }
+        // รอบ 193 (ฝ่ายค้าน C3): ผลต่างปัดเศษ/ยอดชำระจริงที่เซิร์ฟเวอร์คำนวณจากสแกน (line-preview) — ต้องเติมก่อน calcSum
+        // ไม่งั้นยอดสุทธิบนฟอร์ม 5,024.01 ≠ กระดาษ 5,024.00 (ใบ Lazada 1,228.04 × 4)
+        if (payload.roundingAdjustment != null) {
+          const fr = document.getElementById('fRoundingAdjustment');
+          if (fr) fr.value = Number(payload.roundingAdjustment) || 0;
+        }
+        if (payload.actualPaidAmount != null) {
+          const fa = document.getElementById('fActualPaidAmount');
+          if (fa) fa.value = payload.actualPaidAmount;
+        }
         this.calcSum();
 
         // กฎเหล็ก #3: ฟอร์ม OCR ต้อง pre-fill ครบ + highlight field ที่
@@ -11125,9 +11135,12 @@
           const paymentMethod = document.getElementById('rpMethod').value || 'BankTransfer';
           const reference = (document.getElementById('rpRef').value || '').trim() || null;
           const notes = (document.getElementById('rpNotes').value || '').trim() || null;
-          if (isNaN(amount) || amount <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
           // รอบ 193: มีบรรทัดปรับ ⇒ ยอดที่ปิดหนี้ = เงินที่จ่าย − Σ บรรทัดปรับ (เซิร์ฟเวอร์ตรวจซ้ำด้วยตัวตัดสินกลาง)
           const settleAdjustments = (rpSettleRow && rpSettleRow.style.display !== 'none') ? this._rpSettleRead() : [];
+          // เงิน 0 ได้เฉพาะ "ปิดยอดค้างด้วยบรรทัดปรับอย่างเดียว" (เช่น ชำระ 438 ผ่านทางอื่นแล้ว เหลือคูปอง 98 — ฝ่ายค้าน C9)
+          if (isNaN(amount) || amount < 0 || (amount === 0 && !settleAdjustments.length)) {
+            Layout.toast('จำนวนเงินไม่ถูกต้อง — ถ้าปิดยอดค้างด้วยคูปอง/ส่วนลดโดยไม่มีเงินออก ให้ใส่ 0 พร้อมบรรทัดปรับ', 'error'); return;
+          }
           const settleNet = settleAdjustments.reduce((s2, a) => s2 + a.amount, 0);
           if (amount - settleNet > balanceDue + 0.01) { Layout.toast('ยอดที่ปิดหนี้มากกว่ายอดค้างชำระ', 'error'); return; }
           if (!paymentDate) { Layout.toast('กรุณาระบุวันที่ชำระ', 'error'); return; }

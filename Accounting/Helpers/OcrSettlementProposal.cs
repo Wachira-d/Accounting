@@ -36,7 +36,13 @@ public static class OcrSettlementProposal
     /// <summary>บันทึกบรรทัดปรับลงเอกสารแล้ว — แท็ก <c>[PAY≠TOTAL]</c> เลิกหยุดการอนุมัติเอง</summary>
     public const string SettledTag = "[PAY-SETTLED]";
 
-    private const decimal Tol = OcrPaperAmounts.ExactTol;
+    /// <summary>เอกสารตั้งหนี้ (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) ที่ส่วนต่าง "รอลงที่ขั้นบันทึกการชำระ" — ยอดเอกสารตามใบกำกับถูกแล้ว (ข้อ 1)
+    /// จึงไม่มีอะไรต้องแก้ก่อนอนุมัติ ⇒ <c>[PAY≠TOTAL]</c> เลิกหยุดการอนุมัติเอง (ฝ่ายค้าน C8 รอบ 193: เดิมไม่มีใครเขียนแท็กปลดให้
+    /// ใบตั้งหนี้ และชำระก่อนอนุมัติไม่ได้ ⇒ อนุมัติเองไม่ได้ตลอดไป) · ไม่ติดไปกับการอัปไฟล์ซ้ำ (ขึ้นกับชนิดเอกสารที่สร้าง)</summary>
+    public const string DeferredTag = "[PAY-AT-PAYMENT]";
+
+    // ค่าเผื่อตัวเดียวกับ AutoPost/ด่านเอกสาร (ฝ่ายค้าน P3 — เดิม 0.02 กับ 0.005)
+    private const decimal Tol = PaymentSettlementAdjustment.MatchTolerance;
     private const RegexOptions Opt = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
     /// <summary>ป้ายค่าขนส่งที่แพลตฟอร์ม/ขนส่งเก็บ (ไม่อยู่ในใบกำกับของผู้ขาย) ⇒ 51120</summary>
@@ -149,6 +155,20 @@ public static class OcrSettlementProposal
             + string.Join(" · ", plan.Lines.Select(l =>
                 $"{l.AccountCode} {(l.Amount >= 0m ? "+" : "−")}{Math.Abs(l.Amount):N2}{(string.IsNullOrEmpty(l.Reason) ? "" : " " + l.Reason)}"))
             + " (ตรวจ/แก้ได้ที่หน้า 'ปรับปรุงรายการบัญชี' ก่อนอนุมัติ)";
+
+    /// <summary>หมายเหตุ <see cref="DeferredTag"/> — เอกสารตั้งหนี้ ยอดตามใบกำกับ · ส่วนต่างลงตอนบันทึกการชำระ
+    /// (หน้าบันทึกการชำระเติมเงินที่จ่ายจริง + บรรทัดปรับชุดเดียวกันให้)</summary>
+    /// <param name="plan">ข้อเสนอที่ลงตัวกับยอดเอกสาร — null = กระดาษอธิบายส่วนต่างไม่ครบ/มีหัก ณ ที่จ่าย (ผู้ใช้ใส่บรรทัดปรับเองตอนชำระ)</param>
+    /// <param name="documentTotal">ยอดเอกสาร (ตามใบกำกับ)</param>
+    public static string DeferredNote(OcrSettlementPlan? plan, decimal documentTotal)
+        => plan is null
+            ? $"{DeferredTag} เอกสารตั้งหนี้ลงยอดตามใบกำกับ {documentTotal:N2} (ถูกต้อง อนุมัติได้ตามปกติ) — "
+              + "ส่วนต่างกับเงินที่จ่ายจริงลงที่ขั้นบันทึกการชำระ (กระดาษอธิบายส่วนต่างไม่ครบ — ใส่บรรทัดปรับเองในหน้าบันทึกการชำระ)"
+            : $"{DeferredTag} เอกสารตั้งหนี้ลงยอดตามใบกำกับ {plan.InvoiceTotal:N2} (ถูกต้อง อนุมัติได้ตามปกติ) — "
+              + $"ส่วนต่างกับเงินที่จ่ายจริง {plan.AmountPaid:N2} ลงที่ขั้นบันทึกการชำระ: "
+              + string.Join(" · ", plan.Lines.Select(l =>
+                  $"{l.AccountCode} {(l.Amount >= 0m ? "+" : "−")}{Math.Abs(l.Amount):N2}{(string.IsNullOrEmpty(l.Reason) ? "" : " " + l.Reason)}"))
+              + " (หน้าบันทึกการชำระเติมให้)";
 
     /// <summary>ป้ายสั้น ๆ ที่ไม่มีตัวคั่นของรูปแบบหมายเหตุ ("·" · ขึ้นบรรทัด)</summary>
     private static string Clean(string? label)

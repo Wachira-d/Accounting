@@ -218,7 +218,7 @@
         if (!this.detailId) return;
         const api = Layout.api(); if (!api) return;
         try {
-          await api.submitAction(this.detailId, { status, comments: document.getElementById('detailComments').value || null });
+          if (!await this._submitWithAck(api, this.detailId, { status, comments: document.getElementById('detailComments').value || null })) return;
           Layout.closeModal('detailModal');
           Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
           await this.load();
@@ -227,7 +227,7 @@
       async quickApprove(id) {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.submitAction(id, { status: 'Approved', comments: null });
+          if (!await this._submitWithAck(api, id, { status: 'Approved', comments: null })) return;
           Layout.toast('อนุมัติสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -241,11 +241,25 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('actionId').value;
         try {
-          await api.submitAction(id, { status, comments: document.getElementById('actionComments').value || null });
+          if (!await this._submitWithAck(api, id, { status, comments: document.getElementById('actionComments').value || null })) return;
           Layout.closeModal('actionModal');
           Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** ส่งผลอนุมัติ — ขั้นสุดท้ายของเอกสารที่มีคำเตือน เซิร์ฟเวอร์ตอบ 422 พร้อมรายการ ⇒ ให้คนอ่านแล้วกดรับทราบเอง
+       *  (รูปแบบเดียวกับหน้าเอกสาร/มือถือ — รอบ 193 ฝ่ายค้าน C5: เดิม workflow ประทับ "รับทราบ" แทนคน) · คืน false เมื่อผู้ใช้ยกเลิก */
+      async _submitWithAck(api, id, body) {
+        try { await api.submitAction(id, body); return true; }
+        catch (e) {
+          const warnings = e && e.status === 422 ? (e.body?.data?.warnings || []) : null;
+          if (!warnings || !warnings.length) throw e;
+          const ok = confirm('เอกสารมีคำเตือนก่อนอนุมัติ:\n\n' + warnings.map(w => '• ' + w).join('\n')
+            + '\n\nกด OK = รับทราบและอนุมัติ (ระบบบันทึกว่าคุณเป็นผู้รับทราบ) · Cancel = กลับไปตรวจเอกสาร');
+          if (!ok) return false;
+          await api.submitAction(id, Object.assign({}, body, { acknowledgeWarnings: true }));
+          return true;
+        }
       },
       async batchApprove() { await this.batchAction('Approved'); },
       async batchReject() { await this.batchAction('Rejected'); },
@@ -254,11 +268,14 @@
         if (!checked.length) { Layout.toast('เลือกรายการก่อน', 'error'); return; }
         if (status === 'Rejected' && !confirm(`ปฏิเสธ ${checked.length} รายการ?`)) return;
         const api = Layout.api(); if (!api) return;
-        let ok = 0;
+        let ok = 0, needAck = 0;
         for (const cb of checked) {
-          try { await api.submitAction(cb.value, { status, comments: null }); ok++; } catch (e) {}
+          // อนุมัติหลายรายการพร้อมกันไม่ข้ามคำเตือน — ใบที่มีคำเตือนต้องเปิดดูและกดรับทราบทีละใบ (รอบ 193 ฝ่ายค้าน C5)
+          try { await api.submitAction(cb.value, { status, comments: null }); ok++; }
+          catch (e) { if (e && e.status === 422) needAck++; }
         }
-        Layout.toast(`${status === 'Approved' ? 'อนุมัติ' : 'ปฏิเสธ'}สำเร็จ ${ok} รายการ`);
+        Layout.toast(`${status === 'Approved' ? 'อนุมัติ' : 'ปฏิเสธ'}สำเร็จ ${ok} รายการ`
+          + (needAck ? ` · ${needAck} รายการมีคำเตือนที่ต้องเปิดดูและกดรับทราบทีละใบ` : ''), needAck ? 'warning' : 'success');
         await this.load();
       },
       // === RULES ===
