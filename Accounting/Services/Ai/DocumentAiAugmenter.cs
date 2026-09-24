@@ -274,18 +274,15 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 return (empty, null, null, null);
 
             // หา contact ของผู้ขาย — เลขผู้เสียภาษีชนะชื่อเสมอ (ชื่อซ้ำกันได้)
-            // ตั้งใจใช้เลขภาษีอย่างเดียว ไม่ดูสาขา (รอบ 193 ทีม C3 · อยู่ใน tools/contact_taxid_only_match_baseline.txt):
-            // ผลคือ "ทุกสาขา" ของนิติบุคคลเดียว ⇒ ประวัติ WHT/ยอดสะสมปีภาษี (ด่าน ฿1,000 ท.ป.4/2528) นับต่อผู้มีเงินได้
-            // หนึ่งราย ไม่ใช่ต่อสถานประกอบการ — ใช้เป็นบริบทให้ AI ไม่ได้ผูกเอกสารกับแถวใด
-            var payeeQuery = _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted);
-            // TaxId ในฐานเก็บทั้งแบบมีขีดและไม่มี (แล้วแต่ทางเข้า) — เทียบทั้ง
-            // ค่าที่ normalize แล้วและค่าดิบที่ผู้เรียกส่งมา
-            var rawTaxId = (vendorTaxId ?? "").Trim();
-            payeeQuery = !string.IsNullOrEmpty(taxId)
-                ? payeeQuery.Where(c => c.TaxId == taxId || c.TaxId == rawTaxId)
-                : payeeQuery.Where(c => c.Name == nameKey);
-            var payeeIds = await payeeQuery.Select(c => c.Id).ToListAsync(ct);
+            // ตั้งใจรวม "ทุกสาขา" ของนิติบุคคลเดียว (ContactTaxBranchKey.AllBranchIdsAsync — ทางที่ประกาศว่ารวมสาขา) ⇒ ประวัติ
+            // WHT/ยอดสะสมปีภาษี (ด่าน ฿1,000 ท.ป.4/2528) นับต่อผู้มีเงินได้หนึ่งราย ไม่ใช่ต่อสถานประกอบการ — บริบทให้ AI เท่านั้น
+            // (เลขที่เก็บแบบมีขีด/ช่องว่างถูกเทียบด้วยตัวเลขล้วนในตัวช่วยนั้นแล้ว)
+            var payeeIds = !string.IsNullOrEmpty(taxId)
+                ? await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
+                    _db.Contacts.AsNoTracking().Where(c => !c.IsDeleted), companyId, vendorTaxId, ct)
+                : await _db.Contacts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name == nameKey)
+                    .Select(c => c.Id).ToListAsync(ct);
 
             decimal? paidThisYear = null, avg6 = null;
             var history = empty;
@@ -512,13 +509,17 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             if (!string.IsNullOrEmpty(vendorKey))
             {
                 var since6 = DateTime.UtcNow.AddMonths(-6);
-                // ตั้งใจรวมทุกสาขาของเลขนี้ (รอบ 193 ทีม C3 · baseline): ค่าเฉลี่ยยอดต่อครั้งของนิติบุคคล — บริบทให้ AI เท่านั้น
-                var amounts = await _db.Documents.AsNoTracking()
-                    .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                                && d.DocumentDate > since6
-                                && d.Contact.TaxId == vendorTaxId)
-                    .Select(d => d.TotalAmount)
-                    .ToListAsync(ct);
+                // ตั้งใจรวมทุกสาขาของเลขนี้ (AllBranchIdsAsync): ค่าเฉลี่ยยอดต่อครั้งของนิติบุคคล — บริบทให้ AI เท่านั้น ·
+                // ไม่มีเลข ⇒ ไม่มีค่าเฉลี่ย (เดิม `d.Contact.TaxId == null` แปลเป็น IS NULL = เฉลี่ยทุกผู้ติดต่อที่ไม่มีเลข)
+                var vendorContactIds = await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
+                    _db.Contacts.AsNoTracking(), companyId, vendorTaxId, ct);
+                var amounts = vendorContactIds.Count == 0 ? new List<decimal>()
+                    : await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                                    && d.DocumentDate > since6
+                                    && vendorContactIds.Contains(d.ContactId))
+                        .Select(d => d.TotalAmount)
+                        .ToListAsync(ct);
                 if (amounts.Count > 0) avg6 = amounts.Average();
             }
             var vendor = new BulkPvAccountingPrompt.VendorContext(
