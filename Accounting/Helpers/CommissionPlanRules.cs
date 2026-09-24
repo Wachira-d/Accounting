@@ -107,9 +107,13 @@ public static class CommissionPlanRules
         decimal? storedFlatRate, IReadOnlyList<CommissionTierSpec> storedTiers)
     {
         if (requestedActive != false) return false;
-        static bool SameText(string? sent, string? stored)
+        // ฐาน/วิธีเป็นรหัสจากชุดปิด (Pick ไม่สนตัวพิมพ์) ⇒ เทียบแบบไม่สนตัวพิมพ์ได้ ·
+        // **ชื่อ**เป็นข้อความอิสระ ⇒ เทียบตรงตัว (ฝ่ายค้าน P7: เปลี่ยนแค่ตัวพิมพ์ของชื่อพร้อมปิดใช้งาน
+        // เคยถูกนับเป็น "ปิดอย่างเดียว" แล้วชื่อใหม่หายเงียบ)
+        static bool SameCode(string? sent, string? stored)
             => sent == null || string.Equals(sent.Trim(), (stored ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
-        if (!SameText(name, storedName) || !SameText(basis, storedBasis) || !SameText(method, storedMethod))
+        if (name != null && name.Trim() != storedName.Trim()) return false;
+        if (!SameCode(basis, storedBasis) || !SameCode(method, storedMethod))
             return false;
         // คำอธิบายเทียบตรงตัว (ตัวพิมพ์เล็กใหญ่มีความหมาย) · "" กับ null ของเดิมถือว่าเท่ากัน
         if (description != null && description.Trim() != (storedDescription ?? "").Trim()) return false;

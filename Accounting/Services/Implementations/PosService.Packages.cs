@@ -44,7 +44,8 @@ public partial class PosService
                     Description = c.Description,
                     DurationMinutes = c.DurationMinutes,
                     CommissionType = c.CommissionType,
-                    CommissionTypeConfirmedAt = DateTime.UtcNow,   // ส่งผ่านสัญญาชื่อ enum แล้ว (รอบ 193)
+                    // ประทับเฉพาะเมื่อผู้เรียกยืนยันว่าผู้ใช้เลือกเอง (หน้าเก่าที่แคชไว้ส่งเลข 1 = "เปอร์เซ็นต์" เดิม · ฝ่ายค้าน P6)
+                    CommissionTypeConfirmedAt = c.CommissionTypeConfirmed ? DateTime.UtcNow : null,
                     CommissionValue = c.CommissionValue,
                     RequiresStaff = c.RequiresStaff
                 });
@@ -118,7 +119,7 @@ public partial class PosService
             Description = request.Description,
             DurationMinutes = request.DurationMinutes,
             CommissionType = request.CommissionType,
-            CommissionTypeConfirmedAt = DateTime.UtcNow,
+            CommissionTypeConfirmedAt = request.CommissionTypeConfirmed ? DateTime.UtcNow : null,
             CommissionValue = request.CommissionValue,
             RequiresStaff = request.RequiresStaff
         });
@@ -143,7 +144,9 @@ public partial class PosService
             // ประเภทเองแล้ว ⇒ พ้นป้าย "ต้องตรวจ" ของแถวเก่า (ServiceCommissionTypeReview)
             Accounting.Helpers.ServiceCommissionTypeReview.EnsureDefined(request.CommissionType.Value);
             comp.CommissionType = request.CommissionType.Value;
-            comp.CommissionTypeConfirmedAt = DateTime.UtcNow;
+            // ฝ่ายค้าน P6: ยืนยันได้เฉพาะเมื่อผู้ใช้เลือกบนฟอร์มใหม่ (ส่ง commissionTypeConfirmed=true) — หน้าเก่าที่แคช
+            // ส่งเลข 1 (แปลว่า "เปอร์เซ็นต์" ในฟอร์มเดิม) มาโดยไม่มีช่องนี้ ⇒ ต้องไม่ลบป้ายของค่าที่กำกวมที่สุด
+            if (request.CommissionTypeConfirmed == true) comp.CommissionTypeConfirmedAt = DateTime.UtcNow;
         }
         if (request.CommissionValue.HasValue) comp.CommissionValue = request.CommissionValue.Value;
         if (request.RequiresStaff.HasValue) comp.RequiresStaff = request.RequiresStaff.Value;

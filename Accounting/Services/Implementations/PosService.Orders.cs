@@ -253,7 +253,8 @@ public partial class PosService
                         break;
                     case Accounting.Helpers.PosVoidSaleJournalAction.SkipAlreadyReversed:
                         // ข้ามอย่างมีร่องรอย — ผู้สอบบัญชีต้องตอบได้ว่าทำไมยกเลิกบิลแล้วไม่มี JE กลับรายการ
-                        _db.AuditLogs.Add(new AuditLog
+                        // (ต้องอยู่ใน hash chain — AddChainedAuditLog · ฝ่ายค้าน C4: Add ตรง = RowHash null มองไม่เห็นตอน verify)
+                        _db.AddChainedAuditLog(new AuditLog
                         {
                             CompanyId = companyId,
                             UserId = Guid.TryParse(userId, out var actorId) ? actorId : (Guid?)null,
@@ -398,6 +399,17 @@ public partial class PosService
                 RefundNow: refundNowByItem.TryGetValue(i.Id, out var now) ? now : 0m,
                 LegacyUnitCost: i.ProductId is Guid pid && legacyUnitCostByProduct.TryGetValue(pid, out var lc) ? lc : 0m))
             .ToList());
+
+        // ★ รอบ 193 หลังฝ่ายค้าน (P3) — ทางเข้าที่สองที่แตะ JE ขาย: ถ้าผู้ทำบัญชีกลับ JE ขายไปแล้ว การคืนเงินจะลง
+        //   Dr รายได้/ภาษีขายซ้ำ ⇒ ติดลบ · ตัดสินด้วยตัวเดียวกับยกเลิกบิล (PosVoidSaleJournal) ไม่ตีความสายเอง
+        if (order.JournalEntryId is Guid saleJeId)
+        {
+            var saleChain = await LoadJournalChainAsync(companyId, saleJeId);
+            var refundBlock = Accounting.Helpers.PosVoidSaleJournal.RefundBlockMessage(
+                Accounting.Helpers.PosVoidSaleJournal.Decide(saleChain, order.OrderNumber), order.OrderNumber);
+            if (refundBlock != null)
+                throw new Accounting.Helpers.BusinessRuleException(refundBlock, "POS-REFUND-SALE-JE-REVERSED");
+        }
 
         // วัตถุดิบตามสูตรกลับเข้าคลังด้วยต้นทุน ณ วันขาย ⇒ มูลค่าคลังที่กลับ = COGS ที่ JE คืนเงินกลับ (รอบ 193 M2)
         var saleUnitCosts = await LoadSaleUnitCostsAsync(companyId, order);
@@ -1491,7 +1503,8 @@ public partial class PosService
         while (nextId is Guid id && seen.Add(id) && chain.Count < 20)
         {
             var je = await _db.JournalEntries.AsNoTracking()
-                .Where(j => j.Id == id && j.CompanyId == companyId)
+                // !IsDeleted: JE ที่ถูก soft-delete ต้องตกเป็น "หา JE ไม่พบ" (บล็อก) ไม่ใช่ถูกตัดสินว่ากลับได้ (ฝ่ายค้าน P4)
+                .Where(j => j.Id == id && j.CompanyId == companyId && !j.IsDeleted)
                 .Select(j => new
                 {
                     j.Id, j.EntryNumber, j.Status, j.ReversedByEntryId,
@@ -1947,9 +1960,28 @@ public partial class PosService
             .OrderByDescending(s => s.TotalCommission)
             .ToListAsync();
 
+        // ★ รอบ 193 หลังฝ่ายค้าน (C5): ธงที่จุดเงินไหล — กิจกรรมจากขั้นตอนที่ประเภทคอมมิชชันต้องตรวจ
+        //   (ข้อมูลเก่าคิดกลับด้าน รอเจ้าของตัดสิน ห้ามแปลง) ⇒ นับต่อพนักงานในช่วงของแถวสรุป
+        var staffIds = summaries.Select(s => s.StaffId).Distinct().ToList();
+        var reviewRows = staffIds.Count == 0 ? new List<(Guid StaffId, DateTime At)>() : (await (
+            from a in _db.Set<PosServiceActivity>().AsNoTracking()
+            join oi in _db.Set<PosOrderItem>().AsNoTracking() on a.OrderItemId equals oi.Id
+            join o in _db.Set<PosOrder>().AsNoTracking() on oi.OrderId equals o.Id
+            join c in _db.Set<ServiceComponent>().AsNoTracking() on a.ComponentId equals c.Id
+            where o.CompanyId == companyId && a.StaffId != null && staffIds.Contains(a.StaffId.Value)
+                && o.CreatedAt >= periodStart && o.CreatedAt <= periodEnd
+            select new { StaffId = a.StaffId!.Value, o.CreatedAt, c.CommissionType, c.CommissionTypeConfirmedAt }
+        ).ToListAsync())
+            .Where(r => Accounting.Helpers.ServiceCommissionTypeReview.NeedsReview(
+                Accounting.Helpers.ServiceCommissionTypeReview.Judge(r.CommissionType, r.CommissionTypeConfirmedAt)))
+            .Select(r => (StaffId: r.StaffId, At: r.CreatedAt))
+            .ToList();
+
         return summaries.Select(s => new CommissionSummaryResponse(
             s.Id, s.StaffId, s.StaffName, s.PeriodStart, s.PeriodEnd,
-            s.TotalActivities, s.TotalCommission, s.PaidAmount, s.RemainingAmount, s.IsPaid
+            s.TotalActivities, s.TotalCommission, s.PaidAmount, s.RemainingAmount, s.IsPaid,
+            ActivitiesNeedingTypeReview: reviewRows.Count(r => r.StaffId == s.StaffId
+                && r.At >= s.PeriodStart && r.At <= s.PeriodEnd)
         )).ToList();
     }
 
@@ -1981,15 +2013,23 @@ public partial class PosService
                 Status = a.Status,
                 a.CompletedAt,
                 a.CommissionAmount,
-                a.Notes
+                a.Notes,
+                c.CommissionType,
+                c.CommissionTypeConfirmedAt,
             }
         ).ToListAsync();
 
-        return rows.Select(r => new CommissionDetailResponse(
-            r.Id, r.OrderId, r.OrderNumber, r.OrderDate, r.OrderItemId,
-            r.ItemName, r.ComponentName, r.Status.ToString(), r.CompletedAt,
-            r.CommissionAmount, r.Notes
-        )).ToList();
+        return rows.Select(r =>
+        {
+            // ★ รอบ 193 หลังฝ่ายค้าน (C5): ยอดคอมของขั้นตอนที่ประเภทยังไม่ยืนยันอาจคิดกลับด้าน — ธงจากเซิร์ฟเวอร์
+            var clarity = Accounting.Helpers.ServiceCommissionTypeReview.Judge(r.CommissionType, r.CommissionTypeConfirmedAt);
+            return new CommissionDetailResponse(
+                r.Id, r.OrderId, r.OrderNumber, r.OrderDate, r.OrderItemId,
+                r.ItemName, r.ComponentName, r.Status.ToString(), r.CompletedAt,
+                r.CommissionAmount, r.Notes,
+                CommissionTypeNeedsReview: Accounting.Helpers.ServiceCommissionTypeReview.NeedsReview(clarity),
+                CommissionTypeReviewNote: Accounting.Helpers.ServiceCommissionTypeReview.Note(clarity));
+        }).ToList();
     }
 
     // ==================== Helpers ====================

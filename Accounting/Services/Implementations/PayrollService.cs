@@ -1425,7 +1425,7 @@ public class PayrollService : IPayrollService
 
         // แก้แหล่งจ่ายได้เฉพาะก่อนจ่าย — Paid แล้ว JE ออกไปแล้ว ต้องกลับรายการก่อน
         // (กติกาเดียวกับแก้ยอด — อยู่ที่ Helpers/PayrollRunEditPolicy ตัวเดียว)
-        var (canSetAccount, setAccountReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status);
+        var (canSetAccount, setAccountReason) = PayrollRunEditPolicy.CanSetPaymentAccount(run.Status);
         if (!canSetAccount)
             throw new InvalidOperationException(setAccountReason!);
 
@@ -1461,9 +1461,11 @@ public class PayrollService : IPayrollService
 
         // แก้ยอดได้เฉพาะรอบที่ยังไม่ลง GL — Paid แล้วต้อง "กลับรายการจ่าย"
         // (ReopenPaidRunAsync) ให้ JE ถูกกลับก่อน ข้อความชี้ทางแก้อยู่ในนโยบาย
-        var (canEditAmt, editAmtReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status);
+        // ★ รอบ 193 (ฝ่ายค้าน C3): #35 "รอบที่ยื่นแล้วห้ามแก้" ครอบการแก้รายคนด้วย — หลักฐานชุดเดียวกับคำนวณใหม่
+        var editEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { run }))[run.Id];
+        var (canEditAmt, editAmtReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status, editEvidence);
         if (!canEditAmt)
-            throw new InvalidOperationException(editAmtReason!);
+            throw new Accounting.Helpers.BusinessRuleException(editAmtReason!, "PAYROLL-EDIT-LOCKED");
 
         var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
@@ -4347,7 +4349,7 @@ public class PayrollService : IPayrollService
     ///
     /// <para>รอบ 193 (ฝ่ายค้าน M2 · คำตัดสินเจ้าของ #35 "รอบที่จ่าย/ยื่นแล้วห้ามแก้"): รอบ Approved
     /// นับเข้าไฟล์ยื่นแล้ว (<see cref="PayrollRunFilingScope.FilingStatuses"/>) ⇒ ต้องรู้ว่างวดนั้น
-    /// "ถูกบันทึกว่ายื่น/นำส่ง" หรือยัง · ที่มาของแต่ละชั้นอธิบายไว้ที่ <see cref="PayrollRunLockEvidence"/>
+    /// "ถูกบันทึกว่ายื่น" (ต่องวด) / "นำส่งแล้ว" (ต่อรอบ) หรือยัง · ที่มาของแต่ละชั้นอธิบายไว้ที่ <see cref="PayrollRunLockEvidence"/>
     /// · ทุก query กรอง <c>CompanyId</c> (กฎ M) · ไม่มี try/catch — ตารางหายต้องล้มดัง ไม่ใช่ตอบว่า "ไม่พบหลักฐาน"</para></summary>
     private async Task<Dictionary<Guid, PayrollRunLockEvidence>> LoadRecalculateLockEvidenceAsync(
         Guid companyId, IReadOnlyCollection<PayrollRun> runs)
@@ -4357,7 +4359,15 @@ public class PayrollService : IPayrollService
         var runIds = runs.Select(r => r.Id).ToList();
         var years = runs.Select(r => r.Year).Distinct().ToList();
 
-        // ── ยื่นแล้ว (1) ปฏิทิน compliance — "บันทึกการยื่นด้วยมือ" ของ ภ.ง.ด.1 / สปส.1-10
+        // ── ยื่นแล้ว (1) ปฏิทินภาษี — ทางเดียวบนจอที่ผู้ใช้บันทึกว่ายื่น ภ.ง.ด.1/สปส.1-10 แล้ว
+        //    (tax-calendar.html → TaxCalendarService.UpdateEventAsync · ฝ่ายค้าน C1: เดิมไม่ถูกอ่านเลย)
+        var calendar = await _db.TaxCalendarEvents.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted && years.Contains(e.Year)
+                && (e.TaxFormCode == PayrollRunLockEvidence.Pnd1Label || e.TaxFormCode == PayrollRunLockEvidence.SsoLabel)
+                && e.Status == "Filed")
+            .Select(e => new { e.TaxFormCode, e.Year, e.Month })
+            .ToListAsync();
+        // ── ยื่นแล้ว (2) ปฏิทิน compliance — บันทึกการยื่นผ่าน API (ไม่มีหน้าจอ)
         var compliance = await _db.ComplianceFilings.AsNoTracking()
             .Where(f => f.CompanyId == companyId && !f.IsDeleted && years.Contains(f.Year)
                 && f.Month != null
@@ -4366,7 +4376,7 @@ public class PayrollService : IPayrollService
                 && (f.Status == "Filed" || f.Status == "Accepted"))
             .Select(f => new { f.FormCode, f.Year, Month = f.Month!.Value })
             .ToListAsync();
-        // ── ยื่นแล้ว (2) รายงานภาษีชนิด ภ.ง.ด.1/ประกันสังคม ที่ประกาศว่ายื่นหรือถูกล็อก
+        // ── ยื่นแล้ว (3) รายงานภาษีชนิด ภ.ง.ด.1/ประกันสังคม ที่ประกาศว่ายื่นหรือถูกล็อก
         //    (สร้างใหม่ไม่ได้แล้วตั้งแต่ CreateTaxReport ปฏิเสธสองชนิดนี้ แต่แถวเก่ายังอยู่)
         var legacyReports = await _db.TaxReports.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted && years.Contains(t.Year)
@@ -4374,17 +4384,11 @@ public class PayrollService : IPayrollService
                 && (t.Status != TaxReportStatus.Draft || t.FilingLockedAt != null))
             .Select(t => new { t.TaxType, t.Year, t.Month })
             .ToListAsync();
-        // ── ยื่นแล้ว (3) ไฟล์ e-Filing ภ.ง.ด.1 ที่ระบบสร้างและเก็บไว้เพื่ออัปโหลด
+        // ── สร้างไฟล์ยื่นแล้ว (เตือนเท่านั้น — "สร้างไฟล์ ≠ ยื่น" · ฝ่ายค้าน P1)
         var efilings = await _db.EFilingExports.AsNoTracking()
             .Where(e => e.CompanyId == companyId && !e.IsDeleted && years.Contains(e.PeriodYear)
                 && e.FormType == "PND.1")
             .Select(e => new { e.PeriodYear, e.PeriodMonth })
-            .ToListAsync();
-        // ── นำส่งแล้ว — แถวนำส่งของงวด (รวมที่ลงมือเองสำหรับเงินเดือนที่ทำนอกระบบ)
-        var remits = await _db.StatutoryRemittances.AsNoTracking()
-            .Where(r => r.CompanyId == companyId && !r.IsDeleted && years.Contains(r.PeriodYear)
-                && (r.RemittanceType == "SsoSps110" || r.RemittanceType == "WhtPnd1"))
-            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth })
             .ToListAsync();
         // ── ปันต้นทุนแรงงานเข้าโครงการแล้ว (HrAllocationService.AllocatePayrollRunAsync)
         var allocated = await _db.EmployeeProjectTimes.AsNoTracking()
@@ -4393,20 +4397,25 @@ public class PayrollService : IPayrollService
             .GroupBy(t => t.AllocatedPayrollRunId!.Value)
             .Select(g => new { RunId = g.Key, Count = g.Count() })
             .ToListAsync();
+        // นำส่งแล้ว: ผูกกับ **รอบ** (SsoSettledAt) ไม่ใช่เดือน — ยอดนำส่งมาจากรอบ Paid เท่านั้น และแถว
+        // StatutoryRemittance ไม่ถูกล้างเมื่อกลับรายการนำส่ง (ฝ่ายค้าน C2) ⇒ ไม่ใช้เป็นหลักฐานของรอบ
 
         foreach (var run in runs)
         {
             var (y, m) = (run.Year, run.Month);
-            var pnd1Filed = compliance.Any(c => c.FormCode == "PND1" && c.Year == y && c.Month == m)
-                || legacyReports.Any(t => t.TaxType == TaxType.WithholdingTax1 && t.Year == y && t.Month == m)
-                || efilings.Any(e => e.PeriodYear == y && e.PeriodMonth == m);
-            var ssoFiled = compliance.Any(c => c.FormCode == "SSO1-10" && c.Year == y && c.Month == m)
-                || legacyReports.Any(t => t.TaxType == TaxType.SocialSecurity && t.Year == y && t.Month == m);
-            var pnd1Remitted = remits.Any(r => r.RemittanceType == "WhtPnd1" && r.PeriodYear == y && r.PeriodMonth == m);
-            var ssoRemitted = run.SsoSettledAt.HasValue
-                || remits.Any(r => r.RemittanceType == "SsoSps110" && r.PeriodYear == y && r.PeriodMonth == m);
-            result[run.Id] = PayrollRunLockEvidence.From(pnd1Filed, ssoFiled, pnd1Remitted, ssoRemitted,
-                allocated.FirstOrDefault(a => a.RunId == run.Id)?.Count ?? 0);
+            var marks = new List<PayrollFilingMark>();
+            foreach (var c in calendar.Where(c => c.Year == y && c.Month == m))
+                marks.Add(new PayrollFilingMark(c.TaxFormCode, PayrollFilingSource.TaxCalendar));
+            foreach (var c in compliance.Where(c => c.Year == y && c.Month == m))
+                marks.Add(new PayrollFilingMark(c.FormCode == "PND1" ? PayrollRunLockEvidence.Pnd1Label : PayrollRunLockEvidence.SsoLabel,
+                    PayrollFilingSource.ComplianceFiling));
+            foreach (var t in legacyReports.Where(t => t.Year == y && t.Month == m))
+                marks.Add(new PayrollFilingMark(t.TaxType == TaxType.WithholdingTax1 ? PayrollRunLockEvidence.Pnd1Label : PayrollRunLockEvidence.SsoLabel,
+                    PayrollFilingSource.LegacyTaxReport));
+            result[run.Id] = PayrollRunLockEvidence.From(marks,
+                runSsoSettled: run.SsoSettledAt.HasValue,
+                allocatedRows: allocated.FirstOrDefault(a => a.RunId == run.Id)?.Count ?? 0,
+                pnd1FileGenerated: efilings.Any(e => e.PeriodYear == y && e.PeriodMonth == m));
         }
         return result;
     }
@@ -4426,7 +4435,7 @@ public class PayrollService : IPayrollService
         // ตัดสินสิทธิ์แก้ไขที่เซิร์ฟเวอร์ตัวเดียว (Helpers/PayrollRunEditPolicy)
         // แล้วส่ง "เหตุผลพร้อมทางแก้" ไปด้วย — หน้าเว็บห้ามคำนวณเองและห้ามซ่อน
         // ปุ่มเงียบ ๆ (กฎเหล็ก #4 A: resolver กลาง + ห้าม silent no-op)
-        var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts(r.Status);
+        var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts(r.Status, lockEvidence);
         var (canReopen, reopenReason) = PayrollRunEditPolicy.CanReopen(r.Status, r.SsoSettledAt);
         var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
             r.Status, r.ExternalSystem, r.ReopenedAt, lockEvidence);
@@ -4441,7 +4450,9 @@ public class PayrollService : IPayrollService
             CanEditAmounts: canEdit, EditLockReason: editReason,
             CanReopen: canReopen, ReopenBlockReason: reopenReason,
             ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason,
-            CanRecalculate: canRecalc, RecalculateBlockReason: recalcReason);
+            CanRecalculate: canRecalc, RecalculateBlockReason: recalcReason,
+            RecalculateWarning: PayrollRunEditPolicy.RecalculateWarning(lockEvidence),
+            CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can);
     }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>

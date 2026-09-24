@@ -1537,6 +1537,8 @@ const API = {
       // POS - Service Package
       getPosPackages: (q = '') => API.get(`${base}/pos/packages${q}`),
       getPosPackage: (id) => API.get(`${base}/pos/packages/${id}`),
+      // รอบ 193: รายงานอ่านอย่างเดียว — ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (ข้อมูลเก่าจากฟอร์ม option 0/1)
+      getPosCommissionReview: () => API.get(`${base}/pos/packages/commission-review`),
       createPosPackage: (d) => API.post(`${base}/pos/packages`, d),
       updatePosPackage: (id, d) => API.put(`${base}/pos/packages/${id}`, d),
       deletePosPackage: (id) => API.del(`${base}/pos/packages/${id}`),

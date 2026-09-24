@@ -331,7 +331,11 @@ public record PayrollRunResponse(
     // ── คำนวณ/คำนวณใหม่ทั้งรอบ (คำตัดสิน #35 รอบ 193) — เซิร์ฟเวอร์ตัดสินที่
     // PayrollRunEditPolicy.CanRecalculate ตัวเดียว หน้าเว็บแสดงปุ่ม/เหตุผลตามนี้
     bool CanRecalculate = false,
-    string? RecalculateBlockReason = null);
+    string? RecalculateBlockReason = null,
+    // คำเตือน (ไม่ล็อก) — เช่นระบบเคยสร้างไฟล์ e-Filing ของงวดนี้แล้ว ("สร้างไฟล์ ≠ ยื่น") · รอบ 193 หลังฝ่ายค้าน
+    string? RecalculateWarning = null,
+    // แหล่งจ่ายรายคน — ไม่อยู่ในแบบยื่น จึงไม่ถูกล็อกด้วยหลักฐานการยื่นแบบ ✏️ แก้ยอด (PayrollRunEditPolicy.CanSetPaymentAccount)
+    bool CanSetPaymentAccount = false);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/

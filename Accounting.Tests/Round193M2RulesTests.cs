@@ -90,6 +90,9 @@ public class Round193M2RulesTests
             null, null, null, null, 7m, null, "แผน", null, "Revenue", "Percentage", 5m, NoTiers));
         Assert.False(CommissionPlanRules.IsDeactivateOnly(false,
             "ชื่อใหม่", null, null, null, null, null, "แผน", null, "Revenue", "Percentage", 5m, NoTiers));
+        // ฝ่ายค้าน P7: เปลี่ยนแค่ตัวพิมพ์ของชื่อ = แก้ชื่อ ⇒ ต้องเดินเส้นเต็ม (ไม่งั้นชื่อใหม่หายเงียบ)
+        Assert.False(CommissionPlanRules.IsDeactivateOnly(false,
+            "Sales Plan", null, null, null, null, null, "sales plan", null, "Revenue", "Percentage", 5m, NoTiers));
         Assert.False(CommissionPlanRules.IsDeactivateOnly(false,
             null, null, null, null, null, new[] { new CommissionTierSpec(0m, null, 3m) },
             "แผน", null, "Revenue", "Tiered", null, NoTiers));
@@ -101,16 +104,21 @@ public class Round193M2RulesTests
     public void แถวอัตรา0ค้าง_syncธปท_เขียนทับ()
     {
         // เดิม: มีแถวอยู่แล้ว → ข้าม ⇒ ตัวอ่านที่กรอง MidRate > 0 ใช้อัตราวันก่อนเงียบ ๆ
-        Assert.Equal(CurrencyRateSyncAction.ReplaceUnusableRow, CurrencyRateSync.Decide(0m, 36.25m));
-        Assert.Equal(CurrencyRateSyncAction.ReplaceUnusableRow, CurrencyRateSync.Decide(-1m, 36.25m));
+        Assert.Equal(CurrencyRateSyncAction.ReplaceUnusableRow, CurrencyRateSync.Decide((0m, 0m, 0m), 36.25m));
+        Assert.Equal(CurrencyRateSyncAction.ReplaceUnusableRow, CurrencyRateSync.Decide((-1m, 0m, 0m), 36.25m));
+        Assert.Equal(CurrencyRateSyncAction.ReplaceUnusableRow, CurrencyRateSync.Decide((0m, 35m, 0m), 36.25m));
     }
 
     [Fact]
     public void แถวที่ใช้ได้อยู่แล้ว_ไม่ถูกทับ_และไม่สร้างแถว0ใหม่()
     {
-        Assert.Equal(CurrencyRateSyncAction.KeepExisting, CurrencyRateSync.Decide(35.10m, 36.25m));
+        Assert.Equal(CurrencyRateSyncAction.KeepExisting, CurrencyRateSync.Decide((35.10m, 0m, 0m), 36.25m));
+        // ฝ่ายค้าน P2: แถว manual ที่ Mid = 0 แต่กรอกราคาซื้อ/ขายครบ = ใช้ได้ (นิยามเดียวกับตัวแนะนำอัตรา) ⇒ ห้ามทับ
+        Assert.Equal(CurrencyRateSyncAction.KeepExisting, CurrencyRateSync.Decide((0m, 35.80m, 36.40m), 36.25m));
+        Assert.True(CurrencyRateSync.IsUsable(0m, 35.80m, 36.40m));
+        Assert.False(CurrencyRateSync.IsUsable(0m, 35.80m, 0m));
         Assert.Equal(CurrencyRateSyncAction.Insert, CurrencyRateSync.Decide(null, 36.25m));
         Assert.Equal(CurrencyRateSyncAction.SkipInvalidIncoming, CurrencyRateSync.Decide(null, 0m));
-        Assert.Equal(CurrencyRateSyncAction.SkipInvalidIncoming, CurrencyRateSync.Decide(0m, 0m));
+        Assert.Equal(CurrencyRateSyncAction.SkipInvalidIncoming, CurrencyRateSync.Decide((0m, 0m, 0m), 0m));
     }
 }

@@ -1386,9 +1386,10 @@ public class AiSuggestionController : ControllerBase
             .Where(r => r.CompanyId == companyId && r.FromCurrency == ccy && r.ToCurrency == "THB"
                 && r.EffectiveDate <= asOf
                 // รอบ 193 (M2): แถวอัตรา 0 ที่ค้างจากฟอร์มเก่า (A03) = "ไม่มีอัตรา" ไม่ใช่ "อัตรา 0" —
-                // เดิมถูกหยิบเป็นแถวล่าสุดแล้วแนะนำอัตรา 0 · เกณฑ์เดียวกับ CurrencyService (MidRate > 0)
-                // เว้นแต่มีราคาซื้อ/ขายครบ (สูตร fallback ข้างล่างใช้ได้)
-                && (r.MidRate > 0 || (r.BuyRate > 0 && r.SellRate > 0)))
+                // เดิมถูกหยิบเป็นแถวล่าสุดแล้วแนะนำอัตรา 0 · นิยาม "ใช้ได้" ตัวเดียวกับ BOT sync
+                // (Helpers/CurrencyRateSync.IsUsableRow — Mid > 0 หรือมีราคาซื้อ/ขายครบ ⇒ สูตร fallback ข้างล่างใช้ได้)
+                )
+            .Where(Accounting.Helpers.CurrencyRateSync.IsUsableRow)
             .OrderByDescending(r => r.EffectiveDate)
             .Select(r => new { r.MidRate, r.BuyRate, r.SellRate, r.EffectiveDate, r.Source })
             .FirstOrDefaultAsync(ct);

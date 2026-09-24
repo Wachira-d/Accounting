@@ -74,53 +74,87 @@ public class PayrollRunRecalculatePolicyTests
         Assert.True(PayrollRunEditPolicy.CanRecalculate("Calculated", "  ", null, None).Can);
     }
 
-    // ═══════════ รอบ 193 (ฝ่ายค้าน M2) — "ยื่นแล้วห้ามแก้" ครอบรอบ Approved ═══════════
-    // รอบ Approved นับเข้าไฟล์ยื่นแล้ว (PayrollRunFilingScope.FilingStatuses) · ครึ่งแรก: Approved ที่
-    // ยังไม่ยื่น/นำส่ง/ปันต้นทุน ต้องยังคำนวณใหม่ได้ (ไม่งั้นการแก้ D-02 ไม่ถึงข้อมูลที่ค้าง) ·
-    // ครึ่งหลัง: มีหลักฐานออกนอกระบบแล้ว = ปฏิเสธพร้อมทางไปต่อ
+    // ═══════════ รอบ 193 (ฝ่ายค้าน M2 + หลังฝ่ายค้าน C1/C2/C3) — "ยื่นแล้วห้ามแก้" ครอบรอบ Approved ═══════════
+    // สองครึ่ง: Approved ที่ยังไม่ยื่น/นำส่ง/ปันต้นทุน ยังคำนวณใหม่/แก้ยอดได้ · มีหลักฐาน = ปฏิเสธพร้อมทางไปต่อที่มีจริง
+
+    private static PayrollFilingMark Mark(string form, PayrollFilingSource src) => new(form, src);
+    private static PayrollRunLockEvidence Filed(params PayrollFilingMark[] marks)
+        => PayrollRunLockEvidence.From(marks, runSsoSettled: false, allocatedRows: 0);
 
     [Fact]
-    public void Approvedที่ยังไม่ยื่น_ยังคำนวณใหม่ได้()
+    public void Approvedที่ยังไม่ยื่น_ยังคำนวณใหม่และแก้ยอดได้()
     {
-        var (can, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null, None);
-        Assert.True(can);
-        Assert.Null(reason);
+        Assert.Equal((true, (string?)null), PayrollRunEditPolicy.CanRecalculate("Approved", null, null, None));
+        Assert.Equal((true, (string?)null), PayrollRunEditPolicy.CanEditAmounts("Approved", None));
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public void Approvedที่งวดถูกบันทึกว่ายื่นแล้ว_ห้ามคำนวณใหม่_และบอกทางไปต่อ(bool pnd1, bool sso)
+    [InlineData("ภ.ง.ด.1")]
+    [InlineData("สปส.1-10")]
+    public void บันทึกยื่นที่ปฏิทินภาษี_ล็อกทั้งคำนวณใหม่และแก้ยอด_และบอกให้กลับไปที่ปฏิทินภาษี(string form)
     {
-        var ev = PayrollRunLockEvidence.From(pnd1Filed: pnd1, ssoFiled: sso,
-            pnd1Remitted: false, ssoRemitted: false, allocatedRows: 0);
+        // ฝ่ายค้าน C1: ปฏิทินภาษีคือทางเดียวบนจอที่ผู้ใช้บันทึกการยื่น — เดิมไม่ถูกอ่าน ⇒ ล็อกไม่เคยทำงานกับข้อมูลใหม่
+        var ev = Filed(Mark(form, PayrollFilingSource.TaxCalendar));
         var (can, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev);
         Assert.False(can);
-        Assert.Contains("ยื่น", reason);
-        Assert.Contains("ยื่นแบบเพิ่มเติม", reason);           // ทางไปต่อ ไม่ใช่แค่ "ห้าม"
-        if (pnd1) Assert.Contains(PayrollRunLockEvidence.Pnd1Label, reason);
-        if (sso) Assert.Contains(PayrollRunLockEvidence.SsoLabel, reason);
+        Assert.Contains(form, reason);
+        Assert.Contains("ปฏิทินภาษี", reason);
+        Assert.Contains("รอยื่น", reason);                // ทางปลดที่มีจริงบนจอ
+        Assert.Contains("ยื่นแบบเพิ่มเติม", reason);
+        var (canEdit, editReason) = PayrollRunEditPolicy.CanEditAmounts("Approved", ev);
+        Assert.False(canEdit);                            // C3: ✏️ ถูกล็อกด้วยหลักฐานชุดเดียวกัน
+        Assert.DoesNotContain("✏️", editReason);          // ข้อความล็อกห้ามชี้ไปที่ปุ่มที่ถูกล็อก
+        Assert.DoesNotContain("✏️", reason);
     }
 
     [Fact]
-    public void Approvedที่นำส่งแล้ว_ห้ามคำนวณใหม่_ชี้ให้กลับรายการนำส่งก่อน()
+    public void ยื่นผ่านปฏิทินcompliance_ทางไปต่อต้องบอกว่าไม่มีหน้าจอ_ไม่ใช่ชี้ปฏิทินภาษี()
     {
-        var ev = PayrollRunLockEvidence.From(false, false, pnd1Remitted: false, ssoRemitted: true, allocatedRows: 0);
-        var (can, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev);
-        Assert.False(can);
-        Assert.Contains("กลับรายการนำส่ง", reason);
-        Assert.Contains(PayrollRunLockEvidence.SsoLabel, reason);
+        var (_, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null,
+            Filed(Mark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.ComplianceFiling)));
+        Assert.Contains("compliance", reason);
+        Assert.DoesNotContain("หน้า \"ปฏิทินภาษี\"", reason);
     }
 
     [Fact]
-    public void ปันต้นทุนแรงงานเข้าโครงการแล้ว_ห้ามคำนวณใหม่()
+    public void รอบนี้นำส่งปกสแล้ว_ล็อก_และชี้ปุ่มกลับรายการนำส่งที่มีจริง()
     {
-        var ev = PayrollRunLockEvidence.From(false, false, false, false, allocatedRows: 12);
+        var ev = PayrollRunLockEvidence.From(Array.Empty<PayrollFilingMark>(), runSsoSettled: true, allocatedRows: 0);
+        var (can, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev);
+        Assert.False(can);
+        Assert.Contains("↩️ กลับรายการนำส่ง", reason);   // ป้ายปุ่มจริงใน payroll.html
+        Assert.False(PayrollRunEditPolicy.CanEditAmounts("Approved", ev).Can);
+    }
+
+    [Fact]
+    public void รอบโบนัสApprovedในเดือนที่รอบอื่นนำส่งแล้ว_ไม่ถูกล็อก()
+    {
+        // ฝ่ายค้าน C2: หลักฐานนำส่งผูกกับรอบ (SsoSettledAt ของรอบนี้) ไม่ใช่เดือน — รอบนี้ยังไม่อยู่ในเงินที่นำส่ง
+        var ev = PayrollRunLockEvidence.From(Array.Empty<PayrollFilingMark>(), runSsoSettled: false, allocatedRows: 0);
+        Assert.True(PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev).Can);
+        Assert.True(PayrollRunEditPolicy.CanEditAmounts("Approved", ev).Can);
+    }
+
+    [Fact]
+    public void ปันต้นทุนแรงงานเข้าโครงการแล้ว_ห้ามคำนวณใหม่_แต่แก้ยอดรายคนได้ตามที่ข้อความแนะนำ()
+    {
+        var ev = PayrollRunLockEvidence.From(Array.Empty<PayrollFilingMark>(), false, allocatedRows: 12);
         var (can, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev);
         Assert.False(can);
         Assert.Contains("ปันเข้าโครงการ", reason);
         Assert.Contains("12", reason);
+        Assert.Contains("✏️", reason);
+        Assert.True(PayrollRunEditPolicy.CanEditAmounts("Approved", ev).Can);   // ปุ่มที่ข้อความชี้ต้องใช้ได้จริง
+        Assert.False(PayrollRunEditPolicy.CanRecalculate("Calculated", null, null, ev).Can);
+    }
+
+    [Fact]
+    public void ยื่นแล้วและเคยจ่ายแล้วกลับรายการ_ข้อความยื่นแล้วชนะ_ไม่แนะนำปุ่มที่ถูกล็อก()
+    {
+        var ev = Filed(Mark(PayrollRunLockEvidence.SsoLabel, PayrollFilingSource.TaxCalendar));
+        var (_, reason) = PayrollRunEditPolicy.CanRecalculate("Approved", "TakeTime", new DateTime(2026, 9, 20), ev);
+        Assert.DoesNotContain("✏️", reason);
+        Assert.Contains("ปฏิทินภาษี", reason);
     }
 
     [Theory]
@@ -128,27 +162,45 @@ public class PayrollRunRecalculatePolicyTests
     [InlineData("Calculated")]
     public void รอบที่ยังไม่อยู่ในไฟล์ยื่น_หลักฐานการยื่นของงวดไม่ล็อก(string status)
     {
-        // Draft/Calculated ไม่เคยอยู่ในไฟล์ ภ.ง.ด.1/สปส.1-10 (FilingStatuses = Approved/Paid) ⇒ รอบที่สอง
-        // ของเดือนเดียวกัน (เช่นรอบโบนัส) ต้องคำนวณได้แม้งวดนั้นยื่นรอบแรกไปแล้ว — ห้ามเข้มเกินเหตุ
-        var ev = PayrollRunLockEvidence.From(true, true, true, true, allocatedRows: 0);
+        // Draft/Calculated ไม่เคยอยู่ในไฟล์ ภ.ง.ด.1/สปส.1-10 (FilingStatuses = Approved/Paid) ⇒ รอบที่สองของเดือน
+        // (เช่นรอบโบนัส) ต้องคำนวณ/แก้ได้แม้งวดนั้นยื่นรอบแรกไปแล้ว — ห้ามเข้มเกินเหตุ
+        var ev = Filed(Mark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.TaxCalendar),
+            Mark(PayrollRunLockEvidence.SsoLabel, PayrollFilingSource.ComplianceFiling));
         Assert.True(PayrollRunEditPolicy.CanRecalculate(status, null, null, ev).Can);
+        if (status == "Calculated") Assert.True(PayrollRunEditPolicy.CanEditAmounts(status, ev).Can);
     }
 
     [Fact]
-    public void ปันต้นทุนแล้ว_ล็อกทุกสถานะที่ยังคำนวณได้()
+    public void ไฟล์eFilingที่ระบบสร้าง_เป็นแค่คำเตือน_ไม่ล็อก()
     {
-        var ev = PayrollRunLockEvidence.From(false, false, false, false, allocatedRows: 1);
-        Assert.False(PayrollRunEditPolicy.CanRecalculate("Calculated", null, null, ev).Can);
+        // ฝ่ายค้าน P1: "สร้างไฟล์ ≠ ยื่น" และแถว EFilingExport ลบไม่ได้ ⇒ ถ้าล็อก = ล็อกถาวร
+        var ev = PayrollRunLockEvidence.From(Array.Empty<PayrollFilingMark>(), false, 0, pnd1FileGenerated: true);
+        Assert.True(PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev).Can);
+        Assert.Contains("ภ.ง.ด.1", PayrollRunEditPolicy.RecalculateWarning(ev));
+        Assert.Null(PayrollRunEditPolicy.RecalculateWarning(None));
     }
 
     [Fact]
-    public void หลักฐานเรียงป้ายคงที่_ไม่ขึ้นกับลำดับแถวที่ค้นเจอ()
+    public void แหล่งจ่ายไม่อยู่ในแบบยื่น_เปลี่ยนได้แม้ยื่นแล้ว()
     {
-        var ev = PayrollRunLockEvidence.From(true, true, true, true, -3);
-        Assert.Equal(new[] { "ภ.ง.ด.1", "สปส.1-10" }, ev.FiledForms);
-        Assert.Equal(new[] { "ภ.ง.ด.1", "สปส.1-10" }, ev.RemittedForms);
+        Assert.True(PayrollRunEditPolicy.CanSetPaymentAccount("Approved").Can);
+        Assert.False(PayrollRunEditPolicy.CanSetPaymentAccount("Paid").Can);
+    }
+
+    [Fact]
+    public void หลักฐานเรียงป้ายคงที่_ตัดซ้ำ_ไม่ขึ้นกับลำดับแถวที่ค้นเจอ()
+    {
+        var ev = PayrollRunLockEvidence.From(new[]
+        {
+            Mark("สปส.1-10", PayrollFilingSource.ComplianceFiling),
+            Mark("ภ.ง.ด.1", PayrollFilingSource.LegacyTaxReport),
+            Mark("ภ.ง.ด.1", PayrollFilingSource.TaxCalendar),
+            Mark("ภ.ง.ด.1", PayrollFilingSource.TaxCalendar),
+        }, false, -3);
+        Assert.Equal(new[] { "ภ.ง.ด.1", "ภ.ง.ด.1", "สปส.1-10" }, ev.FiledMarks.Select(m => m.Form));
+        Assert.Equal(PayrollFilingSource.TaxCalendar, ev.FiledMarks[0].Source);
         Assert.Equal(0, ev.ProjectCostAllocatedRows);
-        Assert.Empty(PayrollRunLockEvidence.None.FiledForms);
+        Assert.Empty(PayrollRunLockEvidence.None.FiledMarks);
     }
 
     [Fact]
@@ -157,5 +209,7 @@ public class PayrollRunRecalculatePolicyTests
         // "ยังไม่ได้ตรวจ" ต้องไม่กลายเป็น "ไม่มีหลักฐาน = คำนวณได้" (DOCTRINE §1)
         Assert.Throws<ArgumentNullException>(() =>
             PayrollRunEditPolicy.CanRecalculate("Approved", null, null, null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            PayrollRunEditPolicy.CanEditAmounts("Approved", null!));
     }
 }
