@@ -97,7 +97,7 @@ public class EmailScheduleService : IEmailScheduleService
                         ToEmail = email!,
                         BccEmail = rule.BccEmails,
                         Subject = Render(rule.SubjectTemplate ?? "สลิปเงินเดือน {Period}", ctx),
-                        Body = Render(rule.BodyTemplate ?? DefaultPayslipBody(), ctx),
+                        Body = Render(rule.BodyTemplate ?? DefaultPayslipBody(), ctx, htmlEncodeValues: true),
                         AttachPdf = true,
                         ScheduledFor = sendUtc,
                         IdempotencyKey = idem,
@@ -150,7 +150,7 @@ public class EmailScheduleService : IEmailScheduleService
                     ToEmail = email,
                     BccEmail = rule.BccEmails,
                     Subject = Render(rule.SubjectTemplate ?? "หนังสือรับรองหัก ณ ที่จ่าย {DocNumber}", ctx),
-                    Body = Render(rule.BodyTemplate ?? DefaultWhtBody(), ctx),
+                    Body = Render(rule.BodyTemplate ?? DefaultWhtBody(), ctx, htmlEncodeValues: true),
                     AttachPdf = true,
                     ScheduledFor = sendUtc,
                     IdempotencyKey = idem,
@@ -323,7 +323,7 @@ public class EmailScheduleService : IEmailScheduleService
 
                 var subject = Render(rule.SubjectTemplate ?? "สรุปรายการเดือน {Period} — {CompanyName}", ctx);
                 var body = !string.IsNullOrEmpty(rule.BodyTemplate)
-                    ? Render(rule.BodyTemplate, ctx)
+                    ? Render(rule.BodyTemplate, ctx, htmlEncodeValues: true)
                     : $@"<div style='font-family:sans-serif;max-width:680px'>
                         <p>เรียน คุณ{System.Net.WebUtility.HtmlEncode(contact.Name)}</p>
                         <p>สรุปรายการของเดือน <strong>{period}</strong> จำนวน {monthDocs.Count} รายการ ยอดรวม <strong>{totalAmount:N2} บาท</strong>
@@ -527,17 +527,17 @@ public class EmailScheduleService : IEmailScheduleService
         var companyRow = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == doc.CompanyId)
             .Select(c => new { c.Name, c.NameEn }).FirstOrDefaultAsync(ct);
-        // ภาษาเนื้ออีเมล default ตามชั้นเดียวกับเอกสารแนบ: ตรึงกับใบ > ค่าบริษัท
-        // (rule ที่ผู้ใช้เขียน template เองไม่ถูกแตะ — เฉพาะ default fallback)
-        var coLang = await _db.CompanySettings.AsNoTracking()
-            .Where(s => s.CompanyId == doc.CompanyId)
-            .Select(s => s.DocumentLanguage).FirstOrDefaultAsync(ct);
-        var isEn = (doc.DocumentLanguage ?? coLang) == "en";
+        // ภาษา + หัวเอกสารของเนื้ออีเมล default = ตัวกลางตัวเดียวกับ PDF ที่แนบ (S-12 รอบ 193) — เดิมคำนวณ
+        // `doc ?? company` เอง (ข้ามภาษาของเทมเพลต) และหัวเรื่องเขียนแค่ "เอกสาร {DocNumber}"
+        // (rule ที่ผู้ใช้เขียน template เองไม่ถูกแตะ — ได้ placeholder {DocTitle} เพิ่มให้ใช้)
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, doc.CompanyId, doc.Id);
+        var isEn = heading.IsEnglish;
         var company = (isEn && !string.IsNullOrWhiteSpace(companyRow?.NameEn)
             ? companyRow!.NameEn : companyRow?.Name) ?? "";
         var ctx = new Dictionary<string, string?>
         {
             ["DocNumber"] = doc.DocumentNumber,
+            ["DocTitle"] = heading.Title,
             ["ContactName"] = doc.Contact?.Name ?? "",
             ["DueDate"] = doc.DueDate?.ToString("dd/MM/yyyy") ?? "",
             ["Amount"] = doc.TotalAmount.ToString("N2"),
@@ -556,7 +556,7 @@ public class EmailScheduleService : IEmailScheduleService
             ToEmail = email!,
             BccEmail = rule.BccEmails,
             Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx),
-            Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx),
+            Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx, htmlEncodeValues: true),
             AttachPdf = true,
             ScheduledFor = sendUtc,
             IdempotencyKey = idem,
@@ -566,36 +566,41 @@ public class EmailScheduleService : IEmailScheduleService
 
     private static string ResolveEmployeeEmail(Employee e) => e.Email ?? "";
 
-    private static string Render(string template, Dictionary<string, string?> ctx)
+    /// <summary>แทน placeholder · <paramref name="htmlEncodeValues"/> = true สำหรับ<b>เนื้อ</b>อีเมล (HTML) — ค่าที่แทนลงไป
+    /// (ชื่อลูกค้า/พนักงาน/เลขเอกสาร/หัวเอกสาร) ผู้ใช้คุมได้ ต้องหนีก่อนต่อเข้า HTML (กฎ #4 C) · หัวเรื่องเป็นข้อความล้วน ไม่หนี</summary>
+    internal static string Render(string template, Dictionary<string, string?> ctx, bool htmlEncodeValues = false)
     {
         if (string.IsNullOrEmpty(template)) return "";
         var result = template;
-        foreach (var (k, v) in ctx) result = result.Replace("{" + k + "}", v ?? "");
+        foreach (var (k, v) in ctx)
+            result = result.Replace("{" + k + "}",
+                htmlEncodeValues ? System.Net.WebUtility.HtmlEncode(v ?? "") : v ?? "");
         return result;
     }
 
     // default (ตอน rule ไม่มี template ของตัวเอง) เลือกภาษาตามใบ — เนื้ออีเมล
     // ไทยครอบไฟล์แนบอังกฤษ = ลูกค้าต่างชาติอ่านไม่ออกว่าโดนทวงอะไร
-    private static string DefaultDocSubject(string trigger, bool isEn = false) => trigger switch
+    // ชื่อชนิดเอกสารมาจาก {DocTitle} (= หัวที่ PDF แนบพิมพ์จริง) — ห้ามมีตารางชื่อชนิดเอกสารของตัวเอง (S-12)
+    internal static string DefaultDocSubject(string trigger, bool isEn = false) => trigger switch
     {
-        "DocumentDueSoon" => isEn ? "Payment due soon: {DocNumber}" : "ครบกำหนดชำระเร็ว ๆ นี้: {DocNumber}",
-        "DocumentOverdue" => isEn ? "Payment overdue: {DocNumber}" : "เกินกำหนดชำระ: {DocNumber}",
-        _ => isEn ? "Document {DocNumber}" : "เอกสาร {DocNumber}",
+        "DocumentDueSoon" => isEn ? "Payment due soon: {DocTitle} No. {DocNumber}" : "ครบกำหนดชำระเร็ว ๆ นี้: {DocTitle} เลขที่ {DocNumber}",
+        "DocumentOverdue" => isEn ? "Payment overdue: {DocTitle} No. {DocNumber}" : "เกินกำหนดชำระ: {DocTitle} เลขที่ {DocNumber}",
+        _ => isEn ? "{DocTitle} No. {DocNumber}" : "{DocTitle} เลขที่ {DocNumber}",
     };
 
-    private static string DefaultDocBody(string trigger, bool isEn = false)
+    internal static string DefaultDocBody(string trigger, bool isEn = false)
     {
         var heading = trigger switch
         {
             "DocumentDueSoon" => isEn
-                ? "Dear {ContactName},<br>Document {DocNumber} is due on {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>"
-                : "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} ใกล้ครบกำหนดชำระวันที่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong>",
+                ? "Dear {ContactName},<br>{DocTitle} No. {DocNumber} is due on {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>"
+                : "เรียน คุณ{ContactName}<br>{DocTitle} เลขที่ {DocNumber} ใกล้ครบกำหนดชำระวันที่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong>",
             "DocumentOverdue" => isEn
-                ? "Dear {ContactName},<br>Document {DocNumber} has been overdue since {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>. Please arrange payment at your earliest convenience."
-                : "เรียน คุณ{ContactName}<br>เอกสารเลขที่ {DocNumber} เกินกำหนดชำระตั้งแต่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong> กรุณาดำเนินการชำระโดยเร็ว",
+                ? "Dear {ContactName},<br>{DocTitle} No. {DocNumber} has been overdue since {DueDate}.<br>Outstanding balance: <strong>THB {BalanceDue}</strong>. Please arrange payment at your earliest convenience."
+                : "เรียน คุณ{ContactName}<br>{DocTitle} เลขที่ {DocNumber} เกินกำหนดชำระตั้งแต่ {DueDate}<br>ยอดค้างชำระ <strong>{BalanceDue} บาท</strong> กรุณาดำเนินการชำระโดยเร็ว",
             _ => isEn
-                ? "Dear {ContactName},<br>Please find attached document {DocNumber} for a total of THB {Amount}."
-                : "เรียน คุณ{ContactName}<br>แนบเอกสารเลขที่ {DocNumber} ยอดรวม {Amount} บาท",
+                ? "Dear {ContactName},<br>Please find attached {DocTitle} No. {DocNumber} for a total of THB {Amount}."
+                : "เรียน คุณ{ContactName}<br>แนบ{DocTitle} เลขที่ {DocNumber} ยอดรวม {Amount} บาท",
         };
         var footer = isEn ? "Sent automatically by {CompanyName}" : "ส่งโดย {CompanyName} โดยอัตโนมัติ";
         return $@"<div style='font-family:sans-serif;max-width:600px'>

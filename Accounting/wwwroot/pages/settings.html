@@ -296,9 +296,12 @@
         <div class="form-group"><label class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
       </div>
       <div class="form-row">
-        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose"><label for="sAutoClose">ปิดงวดอัตโนมัติ</label></div>
-        <div class="form-group"><label class="form-label">วันปิดงวด</label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28"></div>
+        <!-- S-06 (รอบ 193): ไม่มี job ปิดงวดอัตโนมัติ และไม่มีผู้อ่านค่าสองช่องนี้ ⇒ ล็อกช่อง + บอกเหตุผล (กฎ #4 A ห้าม silent no-op)
+             ไม่ส่งสองค่านี้ตอนบันทึก (ค่าเดิมคงอยู่ · ห้ามลบฟิลด์ — รอเจ้าของตัดสิน Q3 "ต่อสาย หรือ ลบ") -->
+        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose" disabled><label for="sAutoClose" style="color:#94a3b8">ปิดงวดอัตโนมัติ</label><span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></div>
+        <div class="form-group"><label class="form-label" style="color:#94a3b8">วันปิดงวด<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28" disabled></div>
       </div>
+      <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบยังไม่มีการปิดงวดอัตโนมัติตามวันที่</div>
 
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ปรับเมนูที่แสดง</h4>
       <p style="color:#64748b;margin-bottom:12px;font-size:13px">ติ๊กเมนูที่ไม่ได้ใช้งานเพื่อซ่อนจาก sidebar (เก็บเป็นการตั้งค่าส่วนตัวของบริษัทนี้บนเครื่องนี้)</p>
@@ -319,28 +322,33 @@
     <!-- ===== Document Settings Tab ===== -->
     <div id="tabDocument" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าเอกสาร</h3>
-      <p style="color:#64748b;margin-bottom:16px;font-size:14px">ข้อความเหล่านี้จะแสดงในเอกสารทุกฉบับตามประเภท (สามารถแก้ไขได้เฉพาะเอกสาร)</p>
+      <!-- S-06 (รอบ 193): 5 ช่องหมายเหตุ/ข้อความท้ายด้านล่าง **ไม่มีผู้อ่าน** — PDF ทั้งสอง renderer อ่าน DocumentTemplate.FooterNotes
+           ⇒ ล็อกช่อง + ชี้ไปที่ของจริง · ไม่ส่งค่าตอนบันทึก (ค่าเดิมคงอยู่ · รอเจ้าของตัดสิน Q3) -->
+      <div style="padding:10px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-left:4px solid #64748b;border-radius:8px;font-size:13px;color:#334155;margin-bottom:16px;line-height:1.7">
+        <b>หมายเหตุ/ข้อความท้ายเอกสาร 5 ช่องนี้ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</b> (ไม่ถูกพิมพ์บนเอกสาร) ·
+        ข้อความที่พิมพ์จริงบนเอกสารตั้งที่ <a href="/pages/document-templates.html" style="color:#0369a1;font-weight:600">หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร</a> (แยกตามรูปแบบเอกสาร ทั้งภาษาไทยและอังกฤษ)
+      </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="form-group">
           <label class="form-label">หมายเหตุใบแจ้งหนี้</label>
-          <textarea class="form-textarea" id="sInvoiceNotes" rows="3" placeholder="ข้อความที่แสดงในใบแจ้งหนี้ทุกฉบับ..."></textarea>
+          <textarea class="form-textarea" id="sInvoiceNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบแจ้งหนี้ทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
           <label class="form-label">หมายเหตุใบเสร็จ</label>
-          <textarea class="form-textarea" id="sReceiptNotes" rows="3" placeholder="ข้อความที่แสดงในใบเสร็จทุกฉบับ..."></textarea>
+          <textarea class="form-textarea" id="sReceiptNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบเสร็จทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
           <label class="form-label">หมายเหตุใบเสนอราคา</label>
-          <textarea class="form-textarea" id="sQuotationNotes" rows="3" placeholder="ข้อความที่แสดงในใบเสนอราคาทุกฉบับ..."></textarea>
+          <textarea class="form-textarea" id="sQuotationNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบเสนอราคาทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
           <label class="form-label">ข้อความท้ายใบแจ้งหนี้</label>
-          <textarea class="form-textarea" id="sInvoiceFooter" rows="3" placeholder="เช่น เงื่อนไขการชำระ, ข้อมูลธนาคาร..."></textarea>
+          <textarea class="form-textarea" id="sInvoiceFooter" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="เช่น เงื่อนไขการชำระ, ข้อมูลธนาคาร..."></textarea>
         </div>
         <div class="form-group" style="grid-column:1/3">
           <label class="form-label">ข้อความท้ายใบเสร็จ</label>
-          <textarea class="form-textarea" id="sReceiptFooter" rows="3" placeholder="เช่น ขอบคุณที่ใช้บริการ..."></textarea>
+          <textarea class="form-textarea" id="sReceiptFooter" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="เช่น ขอบคุณที่ใช้บริการ..."></textarea>
         </div>
         <div class="form-group" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
@@ -494,8 +502,11 @@
         <div class="form-group"><label class="form-label">ชื่อผู้ส่ง</label><input type="text" class="form-input" id="sEmailFromName" placeholder="ชื่อบริษัท"></div>
         <div class="form-group"><label class="form-label">ตอบกลับไปที่</label><input type="email" class="form-input" id="sEmailReplyTo" placeholder="email@company.com"></div>
       </div>
-      <div class="form-group"><label class="form-label">หัวข้ออีเมลใบแจ้งหนี้</label><input type="text" class="form-input" id="sInvoiceEmailSubject" placeholder="ใบแจ้งหนี้จาก {company}"></div>
-      <div class="form-group"><label class="form-label">เนื้อหาอีเมลใบแจ้งหนี้</label><textarea class="form-textarea" id="sInvoiceEmailBody" rows="4" placeholder="เรียน {customer}\n\nแนบใบแจ้งหนี้เลขที่ {docNumber}..."></textarea></div>
+      <!-- S-06 (รอบ 193): หัว/เนื้ออีเมลสองช่องนี้ไม่มีผู้อ่าน — DocumentEmailService ประกอบหัว/เนื้อจากหัวเอกสารของ PDF เอง
+           ⇒ ล็อกช่อง + บอกเหตุผล · ไม่ส่งค่าตอนบันทึก (ค่าเดิมคงอยู่ · รอเจ้าของตัดสิน Q3) -->
+      <div class="form-group"><label class="form-label" style="color:#94a3b8">หัวข้ออีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="text" class="form-input" id="sInvoiceEmailSubject" placeholder="ใบแจ้งหนี้จาก {company}" disabled></div>
+      <div class="form-group"><label class="form-label" style="color:#94a3b8">เนื้อหาอีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><textarea class="form-textarea" id="sInvoiceEmailBody" rows="4" placeholder="เรียน {customer}\n\nแนบใบแจ้งหนี้เลขที่ {docNumber}..." disabled></textarea></div>
+      <div class="text-xs text-gray-500" style="margin-top:-6px">อีเมลที่ส่งเอกสารใช้หัวเรื่องตามหัวเอกสารที่พิมพ์บน PDF (เช่น "ใบแจ้งหนี้ เลขที่ …") ในภาษาเดียวกับ PDF · แก้หัว/เนื้อได้ทีละฉบับในหน้าต่างส่งอีเมล · อีเมลอัตโนมัติตั้งเทมเพลตได้ที่หน้า <a href="/pages/email-schedule.html" style="color:#0369a1">ตั้งเวลาส่งอีเมล</a></div>
     </div>
 
     <!-- ===== Tax Tab ===== -->
@@ -677,14 +688,14 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
             <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
               <h4 style="margin:0 0 12px;font-size:14px;color:#334155">ใบรับรองดิจิทัล (X.509)</h4>
-              <div class="form-group"><label class="form-label">ไฟล์ Certificate (.p12/.pfx)</label><input type="text" class="form-input" id="sEtaxCertPath" placeholder="/path/to/certificate.p12"></div>
-              <div class="form-group"><label class="form-label">รหัสผ่าน Certificate</label><input type="password" class="form-input" id="sEtaxCertPassword" placeholder="Certificate password"></div>
+              <div class="form-group"><label class="form-label">ไฟล์ Certificate (.p12/.pfx)</label><input type="text" class="form-input" id="sEtaxCertPath" placeholder="/path/to/certificate.p12 (เว้นว่าง = ใช้ค่าเดิม)"></div>
+              <div class="form-group"><label class="form-label">รหัสผ่าน Certificate</label><input type="password" class="form-input" id="sEtaxCertPassword" placeholder="เว้นว่าง = ใช้รหัสผ่านเดิม"></div>
               <div id="etaxCertStatus"></div>
             </div>
             <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
               <h4 style="margin:0 0 12px;font-size:14px;color:#334155">API กรมสรรพากร</h4>
-              <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="sEtaxApiKey" placeholder="RD API Key"></div>
-              <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="sEtaxApiSecret" placeholder="RD API Secret"></div>
+              <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="sEtaxApiKey" placeholder="RD API Key (เว้นว่าง = ใช้ค่าเดิม)"></div>
+              <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="sEtaxApiSecret" placeholder="เว้นว่าง = ใช้ค่าเดิม"></div>
               <div class="form-group"><label class="form-label">ผู้ให้บริการ</label>
                 <select id="sEtaxProvider" class="form-select"><option value="RD">กรมสรรพากร (RD)</option><option value="INET">INET</option><option value="OTHER">อื่นๆ</option></select>
               </div>
@@ -2384,7 +2395,8 @@
           }
           try {
             if (id) await api.updateNumberSeries(id, { prefix: want });
-            else await api.createNumberSeries({ documentType: type, prefix: want, suffix: null, format: '{PREFIX}-{YYYY}{MM}-{SEQ:4}' });
+            // ส่งเฉพาะตัวย่อ — ช่องอื่น (suffix/format/เลขเริ่ม/รอบนับใหม่) ตัวออกเลขไม่ใช้ และเซิร์ฟเวอร์ปฏิเสธถ้าต่างจากค่าเริ่มต้น (S-20)
+            else await api.createNumberSeries({ documentType: type, prefix: want });
             changed++;
           } catch (e) { Layout.toast(e.message, 'error'); failed++; }
         }
@@ -2399,16 +2411,12 @@
             // General
             primaryColor: document.getElementById('sPrimaryColor').value,
             secondaryColor: document.getElementById('sSecondaryColor').value,
-            defaultPaymentTerms: document.getElementById('sPaymentTerms').value || null,
+            // S-13 (รอบ 193): ช่องข้อความส่ง "" เมื่อผู้ใช้ลบ = ล้างค่า (server: null = ไม่แก้ · "" = ล้าง) — เดิม `|| null`
+            // ทำให้ลบแล้วกดบันทึก ค่าเดิมยังอยู่เงียบ ๆ (กฎ #4 A)
+            defaultPaymentTerms: document.getElementById('sPaymentTerms').value,
             defaultPaymentDueDays: parseInt(document.getElementById('sPaymentDueDays').value),
-            autoCloseMonthEnd: document.getElementById('sAutoClose').checked,
-            monthEndClosingDay: parseInt(document.getElementById('sCloseDay').value),
-            // Document notes/footer
-            invoiceNotes: document.getElementById('sInvoiceNotes').value || null,
-            receiptNotes: document.getElementById('sReceiptNotes').value || null,
-            quotationNotes: document.getElementById('sQuotationNotes').value || null,
-            invoiceFooter: document.getElementById('sInvoiceFooter').value || null,
-            receiptFooter: document.getElementById('sReceiptFooter').value || null,
+            // S-06: autoCloseMonthEnd/monthEndClosingDay · หมายเหตุ/ข้อความท้าย 5 ช่อง · หัว/เนื้ออีเมลใบแจ้งหนี้ ไม่ส่ง —
+            // ช่องถูกล็อกเพราะค่ายังไม่มีผลกับระบบ (ค่าเดิมในฐานคงอยู่ ไม่ถูกล้าง)
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
             documentLanguage: document.getElementById('sDocumentLanguage').value,
             showProjectOnDocuments: document.getElementById('sShowProjectOnDocuments').checked,
@@ -2431,15 +2439,13 @@
             stampHeightMm: parseFloat(document.getElementById('sStampH')?.value || '32'),
             stampAlign: document.getElementById('sStampAlign')?.value || 'Right',
             // Email
-            emailFromName: document.getElementById('sEmailFromName').value || null,
-            emailReplyTo: document.getElementById('sEmailReplyTo').value || null,
-            invoiceEmailSubject: document.getElementById('sInvoiceEmailSubject').value || null,
-            invoiceEmailBody: document.getElementById('sInvoiceEmailBody').value || null,
+            emailFromName: document.getElementById('sEmailFromName').value,
+            emailReplyTo: document.getElementById('sEmailReplyTo').value,
             // Tax
             defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
             vatRegistered: document.getElementById('sVatRegistered').checked,
             whtRecognitionBasis: document.getElementById('sWhtRecognitionBasis')?.value || null,
-            vatRegistrationDate: document.getElementById('sVatRegistrationDate').value || null,
+            vatRegistrationDate: document.getElementById('sVatRegistrationDate').value,
             isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
@@ -2450,10 +2456,13 @@
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
             autoAttachWhtCertPdf: document.getElementById('sAutoAttachWhtCert')?.checked || false,
             // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
-            bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim() || null,
-            bookkeeperCpdNumber: document.getElementById('sBookkeeperCpdNumber')?.value?.trim() || null,
+            // ไม่มีช่องบนหน้า = undefined (ไม่ส่งคีย์ = ไม่แก้) · มีช่องแต่ว่าง = "" (ล้าง)
+            bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim(),
+            bookkeeperCpdNumber: document.getElementById('sBookkeeperCpdNumber')?.value?.trim(),
             // e-Tax
             etaxEnabled: document.getElementById('sEtaxEnabled').checked,
+            // ช่องลับ/ช่องที่ไม่ได้เติมค่าเดิมกลับมาให้ (ใบรับรอง · รหัสผ่าน · API key/secret) = "ว่าง = ไม่เปลี่ยน" โดยตั้งใจ
+            // (ไม่มีค่าเดิมบนจอให้ลบ — ถ้าส่ง "" จะล้างของจริงทุกครั้งที่บันทึกหน้านี้) · placeholder ของช่องบอกไว้แล้ว
             etaxCertificatePath: document.getElementById('sEtaxCertPath').value || null,
             etaxCertificatePassword: document.getElementById('sEtaxCertPassword').value || null,
             etaxRdApiKey: document.getElementById('sEtaxApiKey').value || null,

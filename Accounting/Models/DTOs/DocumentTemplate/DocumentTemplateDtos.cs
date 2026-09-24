@@ -353,6 +353,14 @@ public record DocumentTemplateListResponse(
     DateTime CreatedAt);
 
 // ===== PDF Generation =====
+/// <summary>ภาษา ("th"/"en") + หัวเอกสารที่ PDF ของใบนี้พิมพ์จริง — ผลของ
+/// <c>PdfGenerationService.ResolveDocumentHeadingAsync</c> · ช่องทางที่ไม่ใช่ PDF (อีเมล/LINE) ต้องใช้ค่านี้
+/// ห้ามคำนวณภาษาหรือชื่อชนิดเอกสารเอง (S-12 รอบ 193)</summary>
+public record DocumentHeading(string Language, string Title)
+{
+    public bool IsEnglish => Language == "en";
+}
+
 public record GeneratePdfRequest(
     Guid DocumentId,
     Guid? TemplateId,               // null = ใช้ default template

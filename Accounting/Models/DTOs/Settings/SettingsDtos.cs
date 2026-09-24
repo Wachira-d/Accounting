@@ -340,11 +340,12 @@ public record LandingPageResponse(
     string? BusinessHours = null);
 
 // ===== Number Series =====
+/// <remarks>ตัวออกเลขใช้แค่ <c>Prefix</c> — ช่องอื่นต้องเป็นค่าเริ่มต้น (ต่าง = 400 ภาษาไทย · <c>NumberSeriesFieldPolicy</c> · S-20)</remarks>
 public record CreateNumberSeriesRequest(
     DocumentType DocumentType,
     string Prefix,
-    string? Suffix,
-    string Format,
+    string? Suffix = null,
+    string? Format = null,
     int StartNumber = 1,
     int ResetPeriod = 0);
 

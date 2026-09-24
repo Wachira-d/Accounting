@@ -317,7 +317,7 @@
           <div class="toggle-group">
             <div>
               <label>เปิดรับสมัครสมาชิก</label>
-              <div class="help-text">อนุญาตให้ผู้ใช้ใหม่สมัครสมาชิกได้</div>
+              <div class="help-text">อนุญาตให้ผู้ใช้ใหม่สมัครสมาชิกได้ — ปิดแล้วสมัครใหม่/เปิดบริษัทใหม่ไม่ได้ทุกทาง (ฟอร์ม · Google/LINE · API) ยกเว้นคนที่มีลิงก์คำเชิญเข้าบริษัทเดิม · ผู้ดูแลแพลตฟอร์มยังเปิดบริษัทให้ลูกค้าได้</div>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="registrationEnabled" checked>
@@ -326,17 +326,19 @@
           </div>
           <div class="toggle-group">
             <div>
-              <label>โหมดปิดปรับปรุง (Maintenance)</label>
-              <div class="help-text">แสดงหน้าปิดปรับปรุงแทนเว็บหลัก</div>
+              <!-- S-06 (รอบ 193): ไม่มี middleware/หน้าเว็บตัวไหนอ่าน MaintenanceMode/MaintenanceMessage ⇒ ล็อก + บอกเหตุผล
+                   · ไม่ส่งสองค่านี้ตอนบันทึก (ค่าเดิมคงอยู่ · รอเจ้าของตัดสิน Q3 "ต่อสาย หรือ ลบ") -->
+              <label style="color:#94a3b8">โหมดปิดปรับปรุง (Maintenance)<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label>
+              <div class="help-text">แสดงหน้าปิดปรับปรุงแทนเว็บหลัก — ยังไม่มีส่วนไหนของระบบอ่านค่านี้ เปิดแล้วเว็บยังใช้งานได้ตามปกติ</div>
             </div>
             <label class="toggle-switch">
-              <input type="checkbox" id="maintenanceMode">
+              <input type="checkbox" id="maintenanceMode" disabled>
               <span class="slider"></span>
             </label>
           </div>
           <div class="form-group" style="margin-top:8px">
-            <label>ข้อความแจ้งปิดปรับปรุง</label>
-            <textarea id="maintenanceMessage" rows="2" placeholder="ระบบกำลังปรับปรุง กรุณากลับมาใหม่ภายหลัง"></textarea>
+            <label style="color:#94a3b8">ข้อความแจ้งปิดปรับปรุง<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label>
+            <textarea id="maintenanceMessage" rows="2" placeholder="ระบบกำลังปรับปรุง กรุณากลับมาใหม่ภายหลัง" disabled></textarea>
           </div>
         </div>
 
@@ -750,9 +752,8 @@
           youTubeUrl: document.getElementById('youtubeUrl').value || null,
           instagramUrl: document.getElementById('instagramUrl').value || null,
           registrationEnabled: document.getElementById('registrationEnabled').checked,
-          maintenanceMode: document.getElementById('maintenanceMode').checked,
+          // maintenanceMode/maintenanceMessage ไม่ส่ง — ช่องถูกล็อกเพราะยังไม่มีผล (S-06)
           requirePhoR06ForAbbreviatedTaxInvoice: document.getElementById('requirePhoR06').checked,
-          maintenanceMessage: document.getElementById('maintenanceMessage').value || null,
           defaultLanguage: document.getElementById('defaultLanguage').value,
           services: validServices,
         };

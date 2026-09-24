@@ -50,23 +50,11 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
             return false;
         }
 
-        // ข้อความ LINE ภาษาเดียวกับเอกสาร (ชั้น: ตรึงกับใบ > ค่าบริษัท) —
-        // ลูกค้าต่างชาติที่ได้ใบ en ต้องอ่านข้อความแจ้งได้ด้วย
-        var coLang = await _db.CompanySettings.AsNoTracking()
-            .Where(s => s.CompanyId == companyId)
-            .Select(s => s.DocumentLanguage).FirstOrDefaultAsync(ct);
-        var isEn = (doc.DocumentLanguage ?? coLang) == "en";
-
-        var typeLabel = doc.DocumentType switch
-        {
-            Models.Enums.DocumentType.Invoice => isEn ? "Invoice" : "ใบแจ้งหนี้",
-            Models.Enums.DocumentType.TaxInvoice => isEn ? "Tax Invoice" : "ใบกำกับภาษี",
-            Models.Enums.DocumentType.Receipt => isEn ? "Receipt" : "ใบเสร็จรับเงิน",
-            Models.Enums.DocumentType.Quotation => isEn ? "Quotation" : "ใบเสนอราคา",
-            Models.Enums.DocumentType.CreditNote => isEn ? "Credit Note" : "ใบลดหนี้",
-            Models.Enums.DocumentType.DebitNote => isEn ? "Debit Note" : "ใบเพิ่มหนี้",
-            _ => isEn ? "Document" : "เอกสาร",
-        };
+        // ภาษา + หัวเอกสารจากตัวกลางตัวเดียวกับ PDF (S-12 รอบ 193) — เดิมคำนวณ `doc ?? company` เอง (ข้ามภาษาของ
+        // เทมเพลต) และมีตารางชื่อชนิดเอกสาร 6 ชนิดของตัวเอง ⇒ LINE บอก "ใบแจ้งหนี้" ขณะที่ลิงก์เปิด PDF หัวอื่น/ภาษาอื่น
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, doc.Id);
+        var isEn = heading.IsEnglish;
+        var typeLabel = heading.Title;
 
         var dueText = doc.DueDate.HasValue
             ? (isEn ? $"Due {doc.DueDate.Value:dd/MM/yyyy}" : $"กำหนดชำระ {doc.DueDate.Value:dd/MM/yyyy}")
@@ -79,7 +67,7 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
             {
                 type = "box", layout = "vertical", spacing = "md", contents = new object[]
                 {
-                    new { type = "text", text = typeLabel, weight = "bold", size = "lg", color = "#1e40af" },
+                    new { type = "text", text = typeLabel, weight = "bold", size = "lg", color = "#1e40af", wrap = true },
                     new { type = "text", text = doc.DocumentNumber, weight = "bold", size = "xl" },
                     new {
                         type = "box", layout = "vertical", margin = "md", spacing = "sm",

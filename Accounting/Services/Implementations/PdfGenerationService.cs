@@ -76,7 +76,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         //  3. (Inside RenderDocumentPdfNative) last-resort HTML→QuestPDF
         //     parser path so a composition bug can never blank the document.
         var signers = await ResolveSignersAsync(document);
-        await ResolveServedAsReceiptAsync(companyId, document);
+        await ResolveServedAsReceiptAsync(_db, companyId, document);
         // GL posting summary at the foot of the document — only when the
         // company turned it on (CompanySettings.ShowGlEntryOnDocument). Used
         // for internal audit. Was previously fetched CLIENT-side only, so the
@@ -106,7 +106,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                     // Title ของ PDF/A-3 เป็นไทย (ไม่ตรงกันในไฟล์เดียว)
                     pdfTitle: $"{GetDocumentTitle(document.DocumentType, ResolveDocumentLanguage(request.Language, document, template, settings))} {document.DocumentNumber}",
                     pdfAuthor: company.Name,
-                    requirePhoR06: await RequirePhoR06Async());
+                    requirePhoR06: await RequirePhoR06Async(_db));
                 var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
                 // ชื่อไฟล์ XML แนบต้องเป็น ETDA-invoice.xml (ETDA spec) — ดู EtdaEmbeddedXmlFileName
                 var xmlFileName = EtdaEmbeddedXmlFileName;
@@ -129,11 +129,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (_htmlPdf is { Enabled: true })
         {
             var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies, freeCredit,
-                await RequirePhoR06Async());
+                await RequirePhoR06Async(_db));
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
         pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, freeCredit,
-            requirePhoR06: await RequirePhoR06Async());
+            requirePhoR06: await RequirePhoR06Async(_db));
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -161,14 +161,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         var template = await ResolveDocumentTemplateAsync(_db, companyId, document, request.TemplateId);
         ApplyDefaultSignatureLabels(template, document.DocumentType);
         var signers = await ResolveSignersAsync(document);
-        await ResolveServedAsReceiptAsync(companyId, document);
+        await ResolveServedAsReceiptAsync(_db, companyId, document);
         var gl = settings?.ShowGlEntryOnDocument == true
             ? await LoadGlPostingAsync(companyId, document) : null;
         var depositApplies = document.DepositAppliedAmount > 0
             ? await LoadDepositApplyBreakdownAsync(companyId, document) : null;
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride,
             request.Language, signers, gl, depositApplies, await IsFreeTierAsync(companyId),
-            await RequirePhoR06Async());
+            await RequirePhoR06Async(_db));
     }
 
     /// <summary>Build a printable 50 ทวิ from an IN-MEMORY (un-saved) cert
@@ -1391,8 +1391,8 @@ public partial class PdfGenerationService : IPdfGenerationService
     ///
     /// <para>แถว <c>SiteSettings</c> ยังไม่ถูกสร้าง (ระบบใหม่) → คืน <c>true</c>
     /// ไม่ใช่ <c>false</c>: "ยังไม่ได้ตั้งค่า" ต้องไม่แปลว่า "ปิดด่านกฎหมาย"</para></summary>
-    private async Task<bool> RequirePhoR06Async()
-        => await _db.SiteSettings.AsNoTracking()
+    private static async Task<bool> RequirePhoR06Async(AccountingDbContext db)
+        => await db.SiteSettings.AsNoTracking()
             .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice)
             .FirstOrDefaultAsync() ?? true;
 
@@ -1508,6 +1508,49 @@ public partial class PdfGenerationService : IPdfGenerationService
         AccountingDbContext db, Guid companyId, Document doc)
         => (await ResolveDocumentTitlesAsync(db, companyId, new[] { doc }))
             .GetValueOrDefault(doc.Id);
+
+    /// <summary>
+    /// <b>ภาษา + หัวเอกสาร "ที่ PDF ของใบนี้พิมพ์จริง"</b> สำหรับช่องทางที่ไม่ใช่ PDF (อีเมลเอกสาร · e-Tax by Email ·
+    /// LINE · อีเมลตั้งเวลา) — ผลตรวจ S-12 รอบ 193
+    ///
+    /// <para>═══ ที่มา ═══ สามช่องทางนั้นคำนวณภาษาเองด้วย <c>doc.DocumentLanguage ?? settings.DocumentLanguage</c>
+    /// (ข้ามภาษาของ<b>เทมเพลต</b>) และมีตารางชื่อชนิดเอกสาร 6 ชนิดของตัวเอง (ไม่รู้จัก
+    /// <c>DocumentTitleOverridesJson</c> · <c>template.CustomTitle</c> · หัวรวม/อย่างย่อ/มัดจำ) ⇒ อีเมลบอก "ใบแจ้งหนี้"
+    /// แต่ PDF แนบหัว "ใบแจ้งหนี้/ใบกำกับภาษี" หรือคนละภาษา</para>
+    ///
+    /// <para>เดินขั้นเดียวกับ <see cref="GenerateDocumentPdfAsync"/> ทุกขั้นที่มีผลกับหัว: เลือกเทมเพลต
+    /// (<see cref="ResolveDocumentTemplateAsync"/>) → ServedAsReceipt/SettlesTaxInvoiceSource
+    /// (<see cref="ResolveServedAsReceiptAsync"/>) → ภาษา (<see cref="ResolveDocumentLanguage"/> ไม่มีภาษาจากคำขอ —
+    /// เหมือนตอนแนบ PDF) → สิทธิ์ §86/6 → <see cref="ComputeDocumentTitle"/> · ไม่ tracking (ไม่แตะ entity ของผู้เรียก)</para>
+    /// </summary>
+    internal static async Task<DocumentHeading> ResolveDocumentHeadingAsync(
+        AccountingDbContext db, Guid companyId, Guid documentId)
+    {
+        var document = await db.Documents.AsNoTracking()
+            .Include(d => d.Brand)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก เหมือนเส้น PDF
+        await db.HydrateContactAsync(companyId, document);
+        var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var template = await ResolveDocumentTemplateAsync(db, companyId, document, null);
+        await ResolveServedAsReceiptAsync(db, companyId, document);
+        var mayAbbrev = AbbreviatedTaxInvoiceRule.CanIssue(
+            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+            document.DocumentDate, await RequirePhoR06Async(db));
+        return ComputeDocumentHeading(document, template, settings, mayAbbrev);
+    }
+
+    /// <summary>ส่วน pure ของ <see cref="ResolveDocumentHeadingAsync"/> — ภาษาจากคำขอ = ไม่มี (เหมือนตอนแนบ PDF กับอีเมล) ·
+    /// ภาษาและหัวมาจาก resolver ตัวเดียวกับทั้งสอง renderer</summary>
+    internal static DocumentHeading ComputeDocumentHeading(
+        Document doc, DocumentTemplate template, CompanySettings? settings, bool companyMayIssueAbbreviated)
+    {
+        var lang = ResolveDocumentLanguage(null, doc, template, settings);
+        return new DocumentHeading(lang, ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated));
+    }
 
     /// <summary>หัวเอกสารของทั้งหน้า (รายการเอกสาร) — query คงที่ 3 ครั้งต่อหน้า
     /// ไม่ว่ากี่แถว (เทมเพลตของบริษัท · ตั้งค่าบริษัท · แบรนด์+ใบต้นทางของหน้านี้)
@@ -1655,20 +1698,22 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// เดียวที่ใช้ร่วมทุกจุด (กฎเหล็ก #4 C ห้ามเขียนซ้ำสองที่)</summary>
     /// <summary>รูปแบบการออกใบกำกับ/ใบเสร็จของบริษัท — คิวรีเดียว ไม่มีแถว
     /// CompanySettings (tenant ใหม่) = <c>Combined</c> ซึ่งเป็นพฤติกรรมเดิม</summary>
-    private async Task<ReceiptIssueMode> GetReceiptIssueModeAsync(Guid companyId) =>
-        await _db.CompanySettings.AsNoTracking()
+    private static async Task<ReceiptIssueMode> GetReceiptIssueModeAsync(AccountingDbContext db, Guid companyId) =>
+        await db.CompanySettings.AsNoTracking()
             .Where(s => s.CompanyId == companyId)
             .Select(s => (ReceiptIssueMode?)s.ReceiptIssueMode)
             .FirstOrDefaultAsync() ?? ReceiptIssueMode.Combined;
 
-    private Task<bool> HasSeparateReceiptAsync(Guid companyId, Guid documentId) =>
-        _db.Documents.AsNoTracking().AnyAsync(r =>
+    private static Task<bool> HasSeparateReceiptAsync(AccountingDbContext db, Guid companyId, Guid documentId) =>
+        db.Documents.AsNoTracking().AnyAsync(r =>
             r.CompanyId == companyId && r.RelatedDocumentId == documentId
             && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
             && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Draft
             && r.Status != DocumentStatus.Rejected && !r.IsDeleted);
 
-    private async Task ResolveServedAsReceiptAsync(Guid companyId, Document doc)
+    // static + รับ db (รอบ 193 ทีม W · S-12) — ให้ ResolveDocumentHeadingAsync ของช่องทางอีเมล/LINE เดินขั้นเดียวกับ PDF ได้
+    // โดยไม่ต้องมี instance ของ service นี้ (ห้ามมีสำเนากติกา ServedAsReceipt ชุดที่สอง)
+    private static async Task ResolveServedAsReceiptAsync(AccountingDbContext db, Guid companyId, Document doc)
     {
         doc.ServedAsReceipt = false;
         doc.SettlesTaxInvoiceSource = false;
@@ -1677,7 +1722,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
             && doc.RelatedDocumentId.HasValue)
         {
-            var srcType = await _db.Documents.AsNoTracking()
+            var srcType = await db.Documents.AsNoTracking()
                 .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
                 .Select(d => (DocumentType?)d.DocumentType)
                 .FirstOrDefaultAsync();
@@ -1690,7 +1735,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             if (doc.RelatedDocumentId.HasValue)
             {
-                var orig = await _db.Documents.AsNoTracking()
+                var orig = await db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
                     .Select(d => new { d.DocumentNumber, d.DocumentDate, d.SubTotal,
                         d.DocumentType, d.SupplierInvoiceNumber, d.SupplierTaxInvoiceDate,
@@ -1749,7 +1794,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // (กติกาอยู่ที่ Helpers/ReceiptIssuePolicy — mirror: DocumentService
         //  .ComputeServedAsReceipt แก้ที่ใดที่หนึ่งต้องแก้อีกที่เสมอ)
         if (!ReceiptIssuePolicy.AllowsCombinedReceiptHeader(
-                await GetReceiptIssueModeAsync(companyId))) return;
+                await GetReceiptIssueModeAsync(db, companyId))) return;
         // ชำระครบวันเดียวกัน (same-day settlement) → ใบกำกับทำหน้าที่ใบเสร็จในตัว.
         // เดิมบังคับ Status == Paid เป๊ะ → พลาดเคสที่ balance = 0 แต่ label ยัง
         // Approved/PartiallyPaid (เช่น หักมัดจำผ่าน flow อื่น / rounding) — คำขอ
@@ -1765,7 +1810,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             // ต้องเช็คใบเสร็จแยกด้วย ให้ตรงกับ ComputeServedAsReceipt ฝั่ง API
             // (เคสจริง: ใบที่ถูกคืนชีพเป็นร่างแต่มีใบเสร็จลูกยัง active — หน้าจอ
             //  ขึ้น "ใบกำกับภาษี" แต่ PDF พิมพ์หัวรวม ทั้งที่ใบเสร็จตัวจริงออกแยกแล้ว)
-            doc.ServedAsReceipt = doc.PaidOnIssue && !await HasSeparateReceiptAsync(companyId, doc.Id);
+            doc.ServedAsReceipt = doc.PaidOnIssue && !await HasSeparateReceiptAsync(db, companyId, doc.Id);
             return;
         }
         if (doc.BalanceDue > 0.01m || doc.PaidAmount <= 0.005m) return;
@@ -1774,11 +1819,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         // "same-day settlement" ที่คอมเมนต์ข้างบนเขียนไว้ตั้งแต่ต้น — เดิม**ไม่เคย
         // เทียบวันที่จริง** (ผู้ใช้รายงาน 2026-09-10: ใบลงวันที่ 5 ส.ค. รับเงินคนละวัน
         // แล้วกระดาษยกหัวเป็น "…/ใบเสร็จรับเงิน" = ใบรับลงวันที่เท็จ ม.105)
-        var settledOn = await DocumentService.LoadSettlementDatesAsync(_db, companyId, new[] { doc.Id });
+        var settledOn = await DocumentService.LoadSettlementDatesAsync(db, companyId, new[] { doc.Id });
         if (!ReceiptIssuePolicy.SettledSameDay(doc.DocumentDate,
                 settledOn.TryGetValue(doc.Id, out var paidOn) ? paidOn : null)) return;
         // ชำระผ่านการออกใบเสร็จแยก (Receipt/RV อ้างใบนี้) → ใบเสร็จคือคนละใบ
-        doc.ServedAsReceipt = !await HasSeparateReceiptAsync(companyId, doc.Id);
+        doc.ServedAsReceipt = !await HasSeparateReceiptAsync(db, companyId, doc.Id);
     }
 
     /// <param name="requirePhoR06">นโยบายแพลตฟอร์ม (<c>SiteSettings</c>) ว่าบังคับ ภ.พ.06

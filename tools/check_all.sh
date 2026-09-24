@@ -43,6 +43,12 @@ for f in tools/*_check.py; do
 done
 [ $fail -eq 0 ] && green "✅ checker $(ls tools/*_check.py | wc -l) ตัวผ่าน"
 
+# ---------- 1a. negative test ของ checker ที่ต้องพิสูจน์กับเรพจริง ----------
+# settings_reader_check (รอบ 193): ถอดผู้อ่านของ CompanySettings.AutoAttachWhtCertPdf ในเรพจริงแล้วต้องฟ้อง —
+# ตัว glob ข้างบนรันแค่ self-test สังเคราะห์ ถ้า regex ของ checker เพี้ยนกับโค้ดจริง จะจับได้ที่นี่ (F2 ข้อ 6)
+out=$(python3 tools/settings_reader_check.py --self-test 2>&1); rc=$?
+if [ $rc -ne 0 ]; then red "❌ tools/settings_reader_check.py --self-test"; echo "$out" | tail -20; fail=1; fi
+
 # ---------- 1b. simulation ที่รันโค้ดจริง ----------
 # CLAUDE.md §F เขียนไว้ตั้งแต่รอบ 169 ว่า check_all.sh "รันทุกบรรทัดข้างบน" ซึ่งรวม
 # `node tools/vat_line_source_sim.js` — แต่จริง ๆ **ไม่เคยรัน** (ตรวจพบ 2026-09-21)
