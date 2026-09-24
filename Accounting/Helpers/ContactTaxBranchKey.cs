@@ -253,8 +253,34 @@ public static class ContactTaxBranchKey
     /// เขียนเลขภาษีของ payload ลงแถวที่จับได้ได้ไหม — ได้เมื่อ payload มีเลขจริง และแถวยังไม่มีเลข หรือเลขเดียวกัน (ต่างรูปแบบ).
     /// <b>ห้ามเขียนทับเลขของนิติบุคคลอื่น</b> (ฝ่ายค้าน C-6: <c>ProcessCustomerAsync</c> เคยเขียน <c>contact.TaxId = request.TaxId</c> ทับแถวที่จับด้วยชื่อ)
     /// </summary>
-    public static bool MayWriteTaxId(string? existing, string? incoming)
+    private static bool MayWriteTaxId(string? existing, string? incoming)   // ผู้เรียกภายนอกใช้ AdoptTaxId (R2-C5)
         => HasTaxId(incoming) && (!HasTaxId(existing) || Digits(existing) == Digits(incoming));
+
+    /// <summary>
+    /// **"จับได้แล้วต้องเติมเลข"** — แถวที่ได้มาจาก soft match (<see cref="SoftScope(IQueryable{Contact}, Guid, string?, ContactKeyMatch)"/>
+    /// ชุด "แถวที่ยังไม่มีเลข") รับเลขภาษี + สาขาของ payload ตัวเดียวของทุกทางเข้า (รอบ 193 ฝ่ายค้านรอบสอง R2-C5: เดิม 4 ทางเข้า
+    /// จับแถวไม่มีเลขได้แล้ว<b>ไม่เติมเลข</b> ⇒ ใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข = ใบอย่างย่อ/ใบเสร็จ และ e-Tax ถูกข้ามเงียบ)
+    /// <list type="bullet">
+    /// <item>เติมได้เฉพาะแถวที่<b>ยังไม่มีเลข</b> (null/ว่าง/"-") และ payload มีเลขจริง — แถวที่ถือเลขอื่นไม่ถูกแตะ (<see cref="MayWriteTaxId"/>)</item>
+    /// <item>ชนิดผู้ติดต่อผ่าน <c>ContactTypeResolver.ApplyToExisting</c> (เลขที่ checksum ผ่านชนะการอนุมาน · ราชการไม่ถูกลดระดับ)</item>
+    /// <item>สาขา: เติมเฉพาะเมื่อแถวยังไม่ระบุ — รหัสของ payload (ผิดรูป/ไม่ส่ง = สำนักงานใหญ่) ผ่าน <c>ContactTypeResolver.BranchCodeFor</c>
+    ///   (บุคคลธรรมดาไม่ได้ "00000")</item>
+    /// </list>
+    /// คืน true เมื่อแก้แถว — ผู้เรียกต้อง <c>SaveChanges</c> (แถวต้องเป็นแถวที่ context ติดตามอยู่)
+    /// </summary>
+    public static bool AdoptTaxId(Contact? row, string? taxId, string? branchCode)
+    {
+        if (row == null || HasTaxId(row.TaxId) || !MayWriteTaxId(row.TaxId, taxId)) return false;
+        var raw = taxId!.Trim();
+        var digits = Digits(raw);
+        row.TaxId = digits.Length == 13 ? digits : raw;
+        row.ContactType = ContactTypeResolver.ApplyToExisting(row.ContactType, null, row.TaxId, row.Name).Type;
+        if (!IsSpecified(row.BranchCode))
+            row.BranchCode = ContactTypeResolver.BranchCodeFor(row.ContactType,
+                WantedBranch(branchCode) ?? TaxBranchCode.HeadOffice);
+        row.UpdatedAt = DateTime.UtcNow;
+        return true;
+    }
 
     private static string? WantedBranch(string? branchCode)
         => TaxBranchCode.TryNormalize(branchCode, out var code, out _) ? code : null;

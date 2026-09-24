@@ -531,6 +531,9 @@ public class ImportExportService : IImportExportService
             var key = taxId ?? email ?? "";
             var action = ResolveAction(resolutions, key, defaultAction);
             if (action == "Skip") return;
+            // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาจากไฟล์ — เดิมทั้ง Merge/Overwrite ไม่เขียน TaxId
+            // แต่ ContactType ถูกคำนวณจากเลขในไฟล์ ⇒ แถวเป็น "นิติบุคคลที่ไม่มีเลข" และนำเข้าซ้ำก็ไม่ติด
+            Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, row.GetValueOrDefault("BranchCode"));
 
             // Merge (default): existing wins; new fills blanks + OR-merges flags.
             // Overwrite: non-empty incoming overrides existing.
@@ -1038,6 +1041,8 @@ public class ImportExportService : IImportExportService
         contact ??= Accounting.Helpers.ContactTaxBranchKey.PickContact(pending, contactTaxId, branchCode: null);
         contact ??= string.IsNullOrWhiteSpace(contactName) ? null
             : Accounting.Helpers.ContactTaxBranchKey.SoftScope(pending, contactTaxId, taxKey).FirstOrDefault(c => c.Name == contactName);
+        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ยังไม่มีเลข) รับเลขจากไฟล์ (บันทึกพร้อม SaveChanges ของชุดนำเข้า)
+        Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null);
         if (contact == null)
         {
             var newName = string.IsNullOrWhiteSpace(contactName) ? contactTaxId! : contactName;
@@ -1594,6 +1599,7 @@ public class ImportExportService : IImportExportService
             var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, contactTaxId, taxKey);
             if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(contactName))
                 contact = await softScope.FirstOrDefaultAsync(c => c.Name.Contains(contactName));
+            Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null);   // R2-C5 (บันทึกพร้อมชุดนำเข้า)
             if (contact == null)
                 throw new KeyNotFoundException($"ไม่พบผู้ติดต่อ '{contactName}' (TaxId {contactTaxId ?? "-"})");
 
