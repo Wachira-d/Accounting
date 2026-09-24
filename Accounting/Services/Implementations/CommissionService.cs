@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Commission;
 using Accounting.Models.Entities;
@@ -21,43 +22,64 @@ public class CommissionService : ICommissionService
 
     public async Task<CommissionPlanResponse> CreatePlanAsync(Guid companyId, CreateCommissionPlanRequest request)
     {
+        // ตัวตรวจตัวเดียวของสร้าง+แก้ไข (รอบ 193 · A04) — ผิดกติกา = ข้อความไทยก่อนแตะ DB
+        var spec = CommissionPlanRules.Validate(request.Name, request.CalculationBasis,
+            request.CalculationMethod, request.FlatRate, ToTierSpecs(request.Tiers));
+
         var plan = new CommissionPlan
         {
             CompanyId = companyId,
-            Name = request.Name,
+            Name = spec.Name,
             Description = request.Description,
-            CalculationBasis = request.CalculationBasis,
-            CalculationMethod = request.CalculationMethod,
-            FlatRate = request.FlatRate,
-            IsActive = true
+            CalculationBasis = spec.CalculationBasis,
+            CalculationMethod = spec.CalculationMethod,
+            FlatRate = spec.FlatRate,
+            // เดิมตั้ง true ตายตัว ทั้งที่สัญญารับ IsActive มา (default true) — ค่าที่ส่งมาต้องมีผล
+            IsActive = request.IsActive
         };
 
         _db.CommissionPlans.Add(plan);
-
-        if (request.Tiers != null)
-        {
-            foreach (var tier in request.Tiers)
-            {
-                var commissionTier = new CommissionTier
-                {
-                    CompanyId = companyId,
-                    CommissionPlanId = plan.Id,
-                    FromAmount = tier.FromAmount,
-                    ToAmount = tier.ToAmount,
-                    Rate = tier.Rate
-                };
-                _db.CommissionTiers.Add(commissionTier);
-            }
-        }
+        AddTiers(companyId, plan.Id, spec.Tiers);
 
         await _db.SaveChangesAsync();
 
         var tiers = await _db.CommissionTiers
-            .Where(t => t.CommissionPlanId == plan.Id)
+            .Where(t => t.CommissionPlanId == plan.Id && t.CompanyId == companyId)
             .OrderBy(t => t.FromAmount)
             .ToListAsync();
 
-        return MapPlanToResponse(plan, tiers);
+        return MapPlanToResponse(plan, tiers, 0);
+    }
+
+    private static List<CommissionTierSpec>? ToTierSpecs(List<CommissionTierRequest>? tiers)
+        => tiers?.Select(t => new CommissionTierSpec(t.FromAmount, t.ToAmount, t.Rate)).ToList();
+
+    private void AddTiers(Guid companyId, Guid planId, IReadOnlyList<CommissionTierSpec> tiers)
+    {
+        foreach (var tier in tiers)
+        {
+            _db.CommissionTiers.Add(new CommissionTier
+            {
+                CompanyId = companyId,
+                CommissionPlanId = planId,
+                FromAmount = tier.FromAmount,
+                ToAmount = tier.ToAmount,
+                Rate = tier.Rate
+            });
+        }
+    }
+
+    /// <summary>จำนวนการกำหนดแผนที่ยังมีผล (ยังไม่สิ้นสุด) ต่อแผน</summary>
+    private async Task<Dictionary<Guid, int>> CountActiveAssignmentsAsync(Guid companyId, IEnumerable<Guid> planIds)
+    {
+        var ids = planIds.ToList();
+        var now = DateTime.UtcNow;
+        return await _db.CommissionAssignments
+            .Where(a => a.CompanyId == companyId && ids.Contains(a.CommissionPlanId)
+                && (a.EndDate == null || a.EndDate >= now))
+            .GroupBy(a => a.CommissionPlanId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
     }
 
     public async Task<CommissionPlanResponse> GetPlanByIdAsync(Guid companyId, Guid planId)
@@ -67,11 +89,12 @@ public class CommissionService : ICommissionService
             ?? throw new KeyNotFoundException("ไม่พบแผนค่าคอมมิชชัน");
 
         var tiers = await _db.CommissionTiers
-            .Where(t => t.CommissionPlanId == planId)
+            .Where(t => t.CommissionPlanId == planId && t.CompanyId == companyId)
             .OrderBy(t => t.FromAmount)
             .ToListAsync();
 
-        return MapPlanToResponse(plan, tiers);
+        var counts = await CountActiveAssignmentsAsync(companyId, new[] { planId });
+        return MapPlanToResponse(plan, tiers, counts.GetValueOrDefault(planId));
     }
 
     public async Task DeletePlanAsync(Guid companyId, Guid planId)
@@ -100,15 +123,17 @@ public class CommissionService : ICommissionService
 
         var planIds = plans.Select(p => p.Id).ToList();
         var allTiers = await _db.CommissionTiers
-            .Where(t => planIds.Contains(t.CommissionPlanId))
+            .Where(t => t.CompanyId == companyId && planIds.Contains(t.CommissionPlanId))
             .OrderBy(t => t.FromAmount)
             .ToListAsync();
 
         var tiersByPlan = allTiers.GroupBy(t => t.CommissionPlanId)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var counts = await CountActiveAssignmentsAsync(companyId, planIds);
 
         return plans.Select(p => MapPlanToResponse(p,
-            tiersByPlan.GetValueOrDefault(p.Id, new List<CommissionTier>()))).ToList();
+            tiersByPlan.GetValueOrDefault(p.Id, new List<CommissionTier>()),
+            counts.GetValueOrDefault(p.Id))).ToList();
     }
 
     public async Task<CommissionPlanResponse> UpdatePlanAsync(Guid companyId, Guid planId, UpdateCommissionPlanRequest request)
@@ -117,19 +142,47 @@ public class CommissionService : ICommissionService
             .FirstOrDefaultAsync(p => p.Id == planId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบแผนค่าคอมมิชชัน");
 
-        if (request.Name != null) plan.Name = request.Name;
+        var existingTiers = await _db.CommissionTiers
+            .Where(t => t.CommissionPlanId == planId && t.CompanyId == companyId)
+            .OrderBy(t => t.FromAmount)
+            .ToListAsync();
+
+        // ผสาน "ที่ส่งมา" กับ "ค่าเดิม" แล้วตรวจทั้งก้อนด้วยตัวตรวจเดียวกับตอนสร้าง — แก้ประเภทได้จริง
+        // (เดิมรับแค่ชื่อ/อัตรา/สถานะ ขณะที่ฟอร์มเปิดให้เปลี่ยนประเภท = silent no-op)
+        var spec = CommissionPlanRules.Validate(
+            request.Name ?? plan.Name,
+            request.CalculationBasis ?? plan.CalculationBasis,
+            request.CalculationMethod ?? plan.CalculationMethod,
+            request.FlatRate ?? plan.FlatRate,
+            ToTierSpecs(request.Tiers)
+                ?? existingTiers.Select(t => new CommissionTierSpec(t.FromAmount, t.ToAmount, t.Rate)).ToList());
+
+        plan.Name = spec.Name;
         if (request.Description != null) plan.Description = request.Description;
-        if (request.FlatRate.HasValue) plan.FlatRate = request.FlatRate.Value;
+        plan.CalculationBasis = spec.CalculationBasis;
+        plan.CalculationMethod = spec.CalculationMethod;
+        plan.FlatRate = spec.FlatRate;
         if (request.IsActive.HasValue) plan.IsActive = request.IsActive.Value;
+
+        // ขั้นชุดใหม่แทนที่ชุดเดิมทั้งชุด (รวมกรณีเปลี่ยนจากขั้นบันไดเป็นแบบอื่น ⇒ spec.Tiers ว่าง)
+        var tiersChanged = existingTiers.Count != spec.Tiers.Count
+            || existingTiers.Zip(spec.Tiers).Any(p => p.First.FromAmount != p.Second.FromAmount
+                || p.First.ToAmount != p.Second.ToAmount || p.First.Rate != p.Second.Rate);
+        if (tiersChanged)
+        {
+            _db.CommissionTiers.RemoveRange(existingTiers);
+            AddTiers(companyId, planId, spec.Tiers);
+        }
 
         await _db.SaveChangesAsync();
 
         var tiers = await _db.CommissionTiers
-            .Where(t => t.CommissionPlanId == planId)
+            .Where(t => t.CommissionPlanId == planId && t.CompanyId == companyId)
             .OrderBy(t => t.FromAmount)
             .ToListAsync();
 
-        return MapPlanToResponse(plan, tiers);
+        var counts = await CountActiveAssignmentsAsync(companyId, new[] { planId });
+        return MapPlanToResponse(plan, tiers, counts.GetValueOrDefault(planId));
     }
 
     // ===== Assignments =====
@@ -386,8 +439,9 @@ public class CommissionService : ICommissionService
 
     // ===== Mappers =====
 
-    private static CommissionPlanResponse MapPlanToResponse(CommissionPlan plan, List<CommissionTier> tiers) => new(
+    private static CommissionPlanResponse MapPlanToResponse(CommissionPlan plan, List<CommissionTier> tiers, int assignedCount) => new(
         plan.Id, plan.Name, plan.Description,
         plan.CalculationBasis, plan.CalculationMethod, plan.FlatRate, plan.IsActive,
-        tiers.Select(t => new CommissionTierResponse(t.FromAmount, t.ToAmount, t.Rate)).ToList());
+        tiers.Select(t => new CommissionTierResponse(t.FromAmount, t.ToAmount, t.Rate)).ToList(),
+        assignedCount);
 }

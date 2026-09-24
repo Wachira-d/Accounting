@@ -27,6 +27,18 @@ public class ProjectController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<ProjectResponse>>>> GetAll(Guid companyId, [FromQuery] string? status, [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => Ok(new ApiResponse<PagedResponse<ProjectResponse>>(true, await _service.GetAllAsync(companyId, status, new PagedRequest(page, pageSize, search))));
 
+    /// <summary>ตัวเลือก "วิธีเรียกเก็บเงิน" + "วิธีรับรู้รายได้" พร้อมป้ายไทย — หน้าเว็บสร้าง dropdown
+    /// จากที่นี่ (server computes · page displays) แทนการพิมพ์ชุดค่าซ้ำใน JS</summary>
+    [HttpGet("methods")]
+    public ActionResult<ApiResponse<object>> GetMethods(Guid companyId)
+        => Ok(new ApiResponse<object>(true, new
+        {
+            billing = Accounting.Helpers.ProjectContractMethods.Billing.Select(x => new { value = x.Value, label = x.Label }),
+            revenueRecognition = Accounting.Helpers.ProjectContractMethods.RevenueRecognition.Select(x => new { value = x.Value, label = x.Label }),
+            defaultBilling = Accounting.Helpers.ProjectContractMethods.DefaultBilling,
+            defaultRevenueRecognition = Accounting.Helpers.ProjectContractMethods.DefaultRevenueRecognition,
+        }));
+
     [HttpGet("active")]
     public async Task<ActionResult<ApiResponse<List<ProjectResponse>>>> GetActive(Guid companyId)
         => Ok(new ApiResponse<List<ProjectResponse>>(true, await _service.GetActiveListAsync(companyId)));

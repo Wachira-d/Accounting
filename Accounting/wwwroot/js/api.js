@@ -1044,6 +1044,7 @@ const API = {
       getProjects: (q = '') => API.get(`${base}/projects${q}`),
       getActiveProjects: () => API.get(`${base}/projects/active`),
       getProject: (id) => API.get(`${base}/projects/${id}`),
+      getProjectMethods: () => API.get(`${base}/projects/methods`),
       createProject: (d) => API.post(`${base}/projects`, d),
       updateProject: (id, d) => API.put(`${base}/projects/${id}`, d),
       completeProject: (id) => API.post(`${base}/projects/${id}/complete`),
@@ -1241,6 +1242,8 @@ const API = {
       getEliminations: (gid) => API.get(`${base}/consolidation/groups/${gid}/eliminations`),
       // Commission
       getCommissionPlans: () => API.get(`${base}/commissions/plans`),
+      getCommissionPlan: (id) => API.get(`${base}/commissions/plans/${id}`),
+      getCommissionOptions: () => API.get(`${base}/commissions/options`),
       createCommissionPlan: (d) => API.post(`${base}/commissions/plans`, d),
       updateCommissionPlan: (id, d) => API.put(`${base}/commissions/plans/${id}`, d),
       assignCommissionPlan: (id, d) => API.post(`${base}/commissions/plans/${id}/assign`, d),

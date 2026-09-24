@@ -63,7 +63,8 @@
           <input type="hidden" id="rId">
           <div class="form-group"><label class="form-label">ชื่อรายงาน *</label><input type="text" class="form-input" id="rName" placeholder="เช่น Monthly Revenue by Department"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">Data Source *</label><select class="form-select" id="rDataSource" onchange="Page.loadDataSourceColumns()"></select></div>
+            <div class="form-group"><label class="form-label">Data Source *</label><select class="form-select" id="rDataSource" onchange="Page.loadDataSourceColumns()"></select>
+              <p class="text-xs text-gray-500" id="rDsHint" style="display:none">เปลี่ยน Data Source ของรายงานที่สร้างแล้วไม่ได้ (คอลัมน์ที่เลือกผูกกับแหล่งข้อมูลเดิม) — ใช้ "สร้างรายงาน" ใหม่แทน</p></div>
             <div class="form-group"><label class="form-label">หมวด</label><input type="text" class="form-input" id="rCategory" placeholder="เช่น Finance"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-input" id="rDesc" rows="2"></textarea></div>
@@ -337,6 +338,8 @@
         document.getElementById('rChart').value = '';
         document.getElementById('rTotals').checked = true;
         document.getElementById('reportFormTitle').textContent = 'สร้างรายงานกำหนดเอง';
+        document.getElementById('rDataSource').disabled = false;
+        document.getElementById('rDsHint').style.display = 'none';
         this.selectedColumns = [];
         try {
           const res = await api.getReportDataSources();
@@ -369,16 +372,21 @@
       async saveReport() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('rId').value;
+        // รอบ 193 · A09: ชนิดรายงาน (ReportType) เซิร์ฟเวอร์ derive จาก chart · หมวดว่าง = "Custom"
+        // แก้ไข: ว่าง = "ล้างค่า" ("" / "[]") — เดิมส่ง null ซึ่งแปลว่า "ไม่แก้" ⇒ ล้างคำอธิบาย/กราฟ/group ไม่ได้
+        const groupBy = document.getElementById('rGroupBy').value;
         const data = {
-          name: document.getElementById('rName').value,
-          dataSourceType: document.getElementById('rDataSource').value,
-          category: document.getElementById('rCategory').value || null,
-          description: document.getElementById('rDesc').value || null,
+          name: document.getElementById('rName').value.trim(),
+          category: document.getElementById('rCategory').value.trim() || (id ? '' : null),
+          description: document.getElementById('rDesc').value || (id ? '' : null),
           columnsJson: JSON.stringify(this.selectedColumns),
-          groupingJson: document.getElementById('rGroupBy').value ? JSON.stringify([document.getElementById('rGroupBy').value]) : null,
-          chartType: document.getElementById('rChart').value || null,
+          groupingJson: groupBy ? JSON.stringify([groupBy]) : (id ? '[]' : null),
+          chartType: document.getElementById('rChart').value || (id ? '' : null),
           showTotals: document.getElementById('rTotals').checked
         };
+        if (!id) data.dataSourceType = document.getElementById('rDataSource').value;   // แก้ไข: ล็อกช่อง + เซิร์ฟเวอร์ไม่รับ
+        if (!data.name) { Layout.toast('กรุณาระบุชื่อรายงาน', 'error'); return; }
+        if (!id && !data.dataSourceType) { Layout.toast('กรุณาเลือก Data Source', 'error'); return; }
         try {
           if (id) await api.updateCustomReport(id, data);
           else await api.createCustomReport(data);
@@ -404,6 +412,9 @@
           this.dataSources = sources;
           const sel = document.getElementById('rDataSource');
           sel.innerHTML = sources.map(s => `<option value="${Layout.esc(s.type||s.name)}" ${(s.type||s.name)===r.dataSourceType?'selected':''}>${Layout.esc(s.displayName||s.name)}</option>`).join('');
+          // UpdateCustomReportRequest ไม่รับ DataSourceType — ล็อก + บอกเหตุผล (ห้าม silent no-op)
+          sel.disabled = true;
+          document.getElementById('rDsHint').style.display = '';
           await this.loadDataSourceColumns();
           if (r.groupingJson) { try { const g = JSON.parse(r.groupingJson); if (g.length) document.getElementById('rGroupBy').value = g[0]; } catch (e) { console.error('parseGrouping:', e); } }
           Layout.openModal('reportModal');

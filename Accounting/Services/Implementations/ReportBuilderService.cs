@@ -24,8 +24,8 @@ public class ReportBuilderService : IReportBuilderService
             CompanyId = companyId,
             Name = request.Name,
             Description = request.Description,
-            ReportType = request.ReportType,
-            Category = request.Category,
+            ReportType = ResolveReportType(request.ReportType, request.ChartType),
+            Category = ResolveCategory(request.Category),
             DataSourceType = request.DataSourceType,
             FilterJson = request.FilterJson,
             ColumnsJson = request.ColumnsJson,
@@ -49,6 +49,15 @@ public class ReportBuilderService : IReportBuilderService
 
         return MapToResponse(report);
     }
+
+    /// <summary>ชนิดรายงานที่ไม่ได้ระบุ derive จาก chart — ฟอร์มไม่มีช่องนี้ (รอบ 193 · A09)</summary>
+    private static string ResolveReportType(string? reportType, string? chartType)
+        => !string.IsNullOrWhiteSpace(reportType) ? reportType.Trim()
+         : !string.IsNullOrWhiteSpace(chartType) ? "Chart" : "Table";
+
+    /// <summary>หมวดว่าง = "Custom" (รายงานที่ผู้ใช้สร้างเอง) — ฟอร์มถือว่าช่องนี้ไม่บังคับ</summary>
+    private static string ResolveCategory(string? category)
+        => string.IsNullOrWhiteSpace(category) ? "Custom" : category.Trim();
 
     public async Task<CustomReportResponse> GetByIdAsync(Guid companyId, Guid reportId)
     {
@@ -81,13 +90,21 @@ public class ReportBuilderService : IReportBuilderService
             ?? throw new InvalidOperationException("Custom report not found.");
 
         if (request.Name != null) report.Name = request.Name;
-        if (request.Description != null) report.Description = request.Description;
+        // "" = ล้างค่า (เดิมหน้าเว็บส่ง null เมื่อว่าง ⇒ ล้างคำอธิบาย/กราฟไม่ได้เลย)
+        if (request.Description != null) report.Description = request.Description.Length == 0 ? null : request.Description;
+        if (request.Category != null) report.Category = ResolveCategory(request.Category);
         if (request.FilterJson != null) report.FilterJson = request.FilterJson;
         if (request.ColumnsJson != null) report.ColumnsJson = request.ColumnsJson;
         if (request.SortingJson != null) report.SortingJson = request.SortingJson;
         if (request.GroupingJson != null) report.GroupingJson = request.GroupingJson;
         if (request.AggregationJson != null) report.AggregationJson = request.AggregationJson;
-        if (request.ChartType != null) report.ChartType = request.ChartType;
+        if (request.ChartType != null)
+        {
+            report.ChartType = request.ChartType.Length == 0 ? null : request.ChartType;
+            // ชนิดที่ derive จาก chart ต้องตามกันเมื่อเปลี่ยน — Pivot/Dashboard ที่ตั้งผ่าน API ไม่ถูกแตะ
+            if (report.ReportType is "Chart" or "Table")
+                report.ReportType = ResolveReportType(null, report.ChartType);
+        }
         if (request.ShowTotals.HasValue) report.ShowTotals = request.ShowTotals.Value;
         if (request.IsPublic.HasValue) report.IsPublic = request.IsPublic.Value;
         if (request.IsScheduled.HasValue) report.IsScheduled = request.IsScheduled.Value;
@@ -602,5 +619,5 @@ public class ReportBuilderService : IReportBuilderService
     private static CustomReportResponse MapToResponse(CustomReport r) => new(
         r.Id, r.Name, r.Description, r.ReportType, r.Category, r.DataSourceType,
         r.FilterJson, r.ColumnsJson, r.GroupingJson, r.ChartType,
-        r.IsPublic, r.IsScheduled, r.CreatedAt);
+        r.IsPublic, r.IsScheduled, r.CreatedAt, r.ShowTotals);
 }

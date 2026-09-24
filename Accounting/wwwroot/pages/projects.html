@@ -48,6 +48,13 @@
             <div class="form-group"><label class="form-label">งบประมาณ *</label><input type="number" class="form-input" id="fBudget" step="0.01"></div>
             <div class="form-group"><label class="form-label">มูลค่าสัญญา</label><input type="number" class="form-input" id="fContract" step="0.01"></div>
           </div>
+          <!-- รอบ 193 · A01: สองช่องนี้เคยไม่มีบนฟอร์ม ทั้งที่ API บังคับ ⇒ สร้างโครงการไม่ได้เลย
+               ตัวเลือก + ป้ายไทยมาจากเซิร์ฟเวอร์ (GET projects/methods) — ไม่พิมพ์ชุดค่าซ้ำใน JS -->
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="fBilling">วิธีเรียกเก็บเงิน *</label><select class="form-select" id="fBilling" name="billingMethod"></select></div>
+            <div class="form-group"><label class="form-label" for="fRevRec">วิธีรับรู้รายได้ *</label><select class="form-select" id="fRevRec" name="revenueRecognitionMethod"></select></div>
+          </div>
+          <p class="text-xs text-gray-500" id="fMethodHint" style="display:none">วิธีเรียกเก็บเงินและวิธีรับรู้รายได้กำหนดได้ตอนสร้างโครงการเท่านั้น — การเปลี่ยนกลางสัญญาคือการเปลี่ยนนโยบายบัญชี ระบบจึงไม่รับค่าที่แก้ตรงนี้</p>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -184,7 +191,42 @@
           </tr>`}).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() {
+      _methods: null,
+      /** ตัวเลือกวิธีเรียกเก็บ/รับรู้รายได้จากเซิร์ฟเวอร์ (ตัวตั้ง = Helpers/ProjectContractMethods) */
+      async loadMethods() {
+        if (this._methods) return this._methods;
+        const api = Layout.api(); if (!api) return null;
+        const res = await api.getProjectMethods();
+        this._methods = res.data;
+        const fill = (id, list) => {
+          document.getElementById(id).innerHTML = (list || [])
+            .map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        };
+        fill('fBilling', this._methods.billing);
+        fill('fRevRec', this._methods.revenueRecognition);
+        return this._methods;
+      },
+      /** ตั้งค่า select — ค่าเดิมที่ไม่อยู่ในชุด (ข้อมูลเก่า/นำเข้า) แสดงตามจริง ไม่ปล่อยให้ select ว่างเงียบ ๆ */
+      setMethodValue(id, value) {
+        const sel = document.getElementById(id);
+        sel.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+        if (value && ![...sel.options].some(o => o.value === value)) {
+          const o = document.createElement('option');
+          o.value = value; o.textContent = `(ค่าเดิม: ${value})`; o.dataset.legacy = '1';
+          sel.appendChild(o);
+        }
+        if (value) sel.value = value;
+      },
+      setMethodsLocked(locked) {
+        ['fBilling', 'fRevRec'].forEach(id => { document.getElementById(id).disabled = locked; });
+        document.getElementById('fMethodHint').style.display = locked ? '' : 'none';
+      },
+      async openCreate() {
+        try { await this.loadMethods(); }
+        catch (e) { Layout.toast('โหลดตัวเลือกวิธีเรียกเก็บเงินไม่สำเร็จ: ' + e.message, 'error'); return; }
+        this.setMethodValue('fBilling', this._methods.defaultBilling);
+        this.setMethodValue('fRevRec', this._methods.defaultRevenueRecognition);
+        this.setMethodsLocked(false);
         document.getElementById('formTitle').textContent = 'สร้างโครงการ';
         document.getElementById('fId').value = '';
         document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
@@ -201,6 +243,11 @@
         try {
           const res = await api.getProject(id);
           const p = res.data;
+          await this.loadMethods();
+          // echo จาก ProjectResponse — แสดงค่าจริงแต่ล็อกไว้ (UpdateProjectRequest ไม่รับ = ห้าม silent no-op)
+          this.setMethodValue('fBilling', p.billingMethod);
+          this.setMethodValue('fRevRec', p.revenueRecognitionMethod);
+          this.setMethodsLocked(true);
           // เรียกได้จาก footer ของ detail modal ด้วย — ปิดก่อนเปิดฟอร์มซ้อน
           Layout.closeModal('detailModal');
           document.getElementById('formTitle').textContent = 'แก้ไขโครงการ';
@@ -228,6 +275,13 @@
           budgetAmount: parseFloat(document.getElementById('fBudget').value) || 0,
           contractAmount: parseFloat(document.getElementById('fContract').value) || 0,
         };
+        if (!id) {
+          // สร้างเท่านั้น — ตอนแก้ไขช่องถูกล็อกและเซิร์ฟเวอร์ไม่รับ จึงไม่ส่ง
+          data.billingMethod = document.getElementById('fBilling').value || null;
+          data.revenueRecognitionMethod = document.getElementById('fRevRec').value || null;
+        }
+        if (!data.code.trim() || !data.name.trim()) { Layout.toast('กรุณากรอกรหัสโครงการและชื่อโครงการ', 'error'); return; }
+        if (!data.startDate) { Layout.toast('กรุณาเลือกวันเริ่ม', 'error'); return; }
         try {
           if (id) { await api.updateProject(id, data); }
           else { await api.createProject(data); }
@@ -243,12 +297,20 @@
           const overBudget = p.actualCost > p.budgetAmount;
           const profit = (p.contractAmount || 0) - (p.actualCost || 0);
 
+          try { await this.loadMethods(); } catch (_) { /* ป้ายไม่มา = แสดงค่าดิบ */ }
+          const methodLabel = (kind, v) => {
+            if (!v) return 'ไม่มีข้อมูล';
+            const hit = (this._methods?.[kind] || []).find(o => o.value === v);
+            return hit ? hit.label : v;
+          };
           document.getElementById('detailTitle').textContent = `${p.code} - ${p.name}`;
           document.getElementById('detailInfo').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
               <div><div class="text-xs text-gray-500">ระยะเวลา</div><div>${Layout.date(p.startDate)} - ${Layout.date(p.endDate)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(p.status)}</div></div>
               <div><div class="text-xs text-gray-500">ความคืบหน้า</div><div class="font-semibold">${p.completionPercent || 0}%</div></div>
+              <div><div class="text-xs text-gray-500">วิธีเรียกเก็บเงิน</div><div>${Layout.esc(methodLabel('billing', p.billingMethod))}</div></div>
+              <div><div class="text-xs text-gray-500">วิธีรับรู้รายได้</div><div>${Layout.esc(methodLabel('revenueRecognition', p.revenueRecognitionMethod))}</div></div>
             </div>
             <div class="grid grid-4 gap-4" style="margin-bottom:16px">
               <div class="kpi-card"><div class="kpi-label">งบประมาณ</div><div class="kpi-value">${Layout.money(p.budgetAmount)}</div></div>

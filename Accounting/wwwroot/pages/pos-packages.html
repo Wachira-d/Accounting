@@ -74,7 +74,7 @@
               <div class="form-row">
                 <div class="form-group"><label class="form-label">ระยะเวลา (นาที) *</label><input type="number" class="form-input" id="cDuration" min="1"></div>
                 <div class="form-group"><label class="form-label">ประเภทค่าคอม</label>
-                  <select class="form-select" id="cCommType"><option value="0">คงที่ (Fixed)</option><option value="1">เปอร์เซ็นต์ (Percentage)</option></select>
+                  <select class="form-select" id="cCommType"><option value="Fixed">คงที่ (Fixed)</option><option value="Percentage">เปอร์เซ็นต์ (Percentage)</option></select>
                 </div>
                 <div class="form-group"><label class="form-label">ค่าคอมมิชชั่น</label><input type="number" class="form-input" id="cCommValue" step="0.01" value="0"></div>
               </div>
@@ -258,7 +258,7 @@
         ['cName','cNameEn','cDesc'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('cStepOrder').value = '1';
         document.getElementById('cDuration').value = '';
-        document.getElementById('cCommType').value = '0';
+        document.getElementById('cCommType').value = 'Fixed';
         document.getElementById('cCommValue').value = '0';
         document.getElementById('cRequiresStaff').checked = false;
         document.getElementById('componentForm').style.display = '';
@@ -273,7 +273,9 @@
         document.getElementById('cNameEn').value = c.nameEn || '';
         document.getElementById('cDesc').value = c.description || '';
         document.getElementById('cDuration').value = c.durationMinutes || '';
-        document.getElementById('cCommType').value = c.commissionType ?? 0;
+        // รอบ 193: API ส่งชื่อ enum — เดิม option 0/1 ขณะที่ enum คือ Fixed=1/Percentage=2
+        // ⇒ เลือก "เปอร์เซ็นต์" แล้วบันทึกเป็น Fixed (1) · เลือก "คงที่" ได้ 0 ซึ่งไม่อยู่ใน enum
+        document.getElementById('cCommType').value = c.commissionType || 'Fixed';
         document.getElementById('cCommValue').value = c.commissionValue || 0;
         document.getElementById('cRequiresStaff').checked = !!c.requiresStaff;
         document.getElementById('componentForm').style.display = '';
@@ -295,7 +297,7 @@
           nameEn: document.getElementById('cNameEn').value || null,
           description: document.getElementById('cDesc').value || null,
           durationMinutes: parseInt(duration),
-          commissionType: parseInt(document.getElementById('cCommType').value),
+          commissionType: document.getElementById('cCommType').value,
           commissionValue: parseFloat(document.getElementById('cCommValue').value) || 0,
           requiresStaff: document.getElementById('cRequiresStaff').checked,
         };

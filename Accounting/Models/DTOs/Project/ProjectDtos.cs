@@ -1,11 +1,15 @@
 namespace Accounting.Models.DTOs.Project;
 
+/// <summary>BillingMethod / RevenueRecognitionMethod: <c>string?</c> โดยตั้งใจ (รอบ 193 · A01) —
+/// เดิม non-nullable ⇒ ASP.NET ใส่ [Required] โดยปริยาย ขณะที่ฟอร์มไม่เคยส่ง ⇒ สร้างโครงการ
+/// ไม่ได้เลย. ตอนนี้ฟอร์มมี dropdown ให้เลือก และ null (API ที่ไม่ส่ง) = ค่าเริ่มต้นจาก
+/// <see cref="Accounting.Helpers.ProjectContractMethods"/> · ค่านอกชุด = BusinessRuleException ไทย</summary>
 public record CreateProjectRequest(
     string Code, string Name, string? NameEn, string? Description,
     Guid? ContactId, string? ProjectManagerName,
     DateTime StartDate, DateTime? EndDate,
     decimal BudgetAmount, decimal ContractAmount,
-    string BillingMethod, string RevenueRecognitionMethod,
+    string? BillingMethod, string? RevenueRecognitionMethod,
     Guid? DimensionId,
     // External-system linkage at creation time — partner can both
     // create + claim the external id in one POST instead of needing
@@ -34,7 +38,9 @@ public record ProjectResponse(
     string? ExternalId = null,
     string? ExternalSystem = null,
     string? ExternalUrl = null,
-    DateTime? LastSyncedAt = null);
+    DateTime? LastSyncedAt = null,
+    // echo กลับ (กฎเหล็ก #4 A) — รับตอนสร้างแต่เดิมไม่เคยคืน ⇒ ฟอร์มแก้ไขแสดงค่าจริงไม่ได้
+    string? RevenueRecognitionMethod = null);
 
 public record CreateProjectTaskRequest(
     string Name, string? Description, Guid? ParentTaskId,

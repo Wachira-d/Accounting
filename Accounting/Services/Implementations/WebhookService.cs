@@ -56,7 +56,7 @@ public class WebhookService : IWebhookService
             MaxRetries = request.MaxRetries > 0 ? request.MaxRetries : 3,
             TimeoutSeconds = request.TimeoutSeconds > 0 ? request.TimeoutSeconds : 30,
             HeadersJson = request.HeadersJson,
-            IsActive = true,
+            IsActive = request.IsActive,
             FailureCount = 0
         };
 
