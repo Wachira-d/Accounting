@@ -49,7 +49,11 @@ public record CreateEmployeeRequest(
     decimal LifeInsurancePremium = 0m,
     decimal RmfSsfContribution = 0m,
     decimal DonationAmount = 0m,
-    int TaxAllowances = 0);
+    int TaxAllowances = 0,
+    /// <summary>D-01 — เลขประจำตัวผู้เสียภาษี (เว้นว่าง = ใช้เลขบัตรประชาชน ซึ่งคือเลข
+    /// ผู้เสียภาษีของบุคคลไทย · กรอกเฉพาะผู้ที่ไม่มีบัตรไทย) · เดิมไม่มีใน DTO ทั้ง 3 ตัว
+    /// ทั้งที่ฟอร์มมีช่อง ⇒ 50 ทวิ ภ.ง.ด.1 ไม่เคยออกให้ใครเลย</summary>
+    string? TaxId = null);
 
 public record UpdateEmployeeRequest(
     string? Position, string? Department, string? Phone,
@@ -87,7 +91,25 @@ public record UpdateEmployeeRequest(
     decimal? LifeInsurancePremium = null,
     decimal? RmfSsfContribution = null,
     decimal? DonationAmount = null,
-    int? TaxAllowances = null);
+    int? TaxAllowances = null,
+    // ═══ A05 / D-07 (P0 รอบ 189 · แก้รอบ 193) — ช่องที่ฟอร์ม "ให้แก้" แต่เซิร์ฟเวอร์
+    // ไม่เคยรับ ⇒ กดบันทึก → toast "แก้ไขสำเร็จ" → เปิดใหม่ค่าเดิมกลับมาทุกช่อง
+    // (เลขบัตรที่พิมพ์ผิดตอนสร้างแก้ผ่าน UI ไม่ได้ตลอดกาล · ชื่อ/เลขบัตรไหลลง
+    // ภ.ง.ด.1/สปส.1-10) · กติกา: null = ไม่แตะ · "" = ล้างค่า (ช่องที่ไม่บังคับ) ·
+    // เลขบัตร/เลขผู้เสียภาษีที่ส่งกลับมาเป็น "ค่าที่ถูกปิดบัง" ของเดิม = ไม่แตะ
+    // (ผู้ไม่มีสิทธิ์ pii:view เห็นแต่ค่าปิดบัง — ห้ามเขียนทับของจริงด้วยมัน)
+    // ตัวตัดสินอยู่ที่ Helpers/EmployeeRecordEdit ตัวเดียว
+    string? EmployeeCode = null,
+    string? TitleTh = null,
+    string? FirstNameTh = null,
+    string? LastNameTh = null,
+    string? FirstNameEn = null,
+    string? LastNameEn = null,
+    string? CitizenId = null,
+    string? TaxId = null,
+    string? EmploymentType = null,
+    DateTime? StartDate = null,
+    string? BankAccountName = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -117,7 +139,17 @@ public record EmployeeResponse(
     decimal LifeInsurancePremium = 0m,
     decimal RmfSsfContribution = 0m,
     decimal DonationAmount = 0m,
-    int TaxAllowances = 0);
+    int TaxAllowances = 0,
+    // ═══ echo กลับให้ครบทุกช่องที่ฟอร์มแก้ได้ (A05/D-07/D-01) ═══
+    // เลขผู้เสียภาษี/เลขบัญชี ปิดบังตาม PDPA ม.26 เว้นแต่ผู้เรียกมีสิทธิ์ pii:view
+    string? TaxId = null,
+    string? BankName = null,
+    string? BankAccountNumber = null,
+    string? BankAccountName = null,
+    /// <summary>null = ยังไม่ได้ตรวจ (ลิสต์ไม่ตรวจเพื่อไม่ให้เป็น N+1) · true = แก้รหัส
+    /// พนักงานไม่ได้เพราะมีประวัติเงินเดือนแล้ว (เหตุผลอยู่ใน EmployeeCodeLockReason)</summary>
+    bool? EmployeeCodeLocked = null,
+    string? EmployeeCodeLockReason = null);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows
@@ -295,7 +327,11 @@ public record PayrollRunResponse(
     // ไปเขียนใหม่ใน JS = คิดผิดตลอดไป — กฎเหล็ก #4). เติมเฉพาะตอนดึง run เดี่ยว
     decimal SsoRatePercent = 5m,
     decimal SsoEmployerRatePercent = 5m,
-    decimal SsoWageCeiling = 0m);
+    decimal SsoWageCeiling = 0m,
+    // ── คำนวณ/คำนวณใหม่ทั้งรอบ (คำตัดสิน #35 รอบ 193) — เซิร์ฟเวอร์ตัดสินที่
+    // PayrollRunEditPolicy.CanRecalculate ตัวเดียว หน้าเว็บแสดงปุ่ม/เหตุผลตามนี้
+    bool CanRecalculate = false,
+    string? RecalculateBlockReason = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/

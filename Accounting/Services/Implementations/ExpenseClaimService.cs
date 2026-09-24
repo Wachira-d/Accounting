@@ -518,7 +518,7 @@ public class ExpenseClaimService : IExpenseClaimService
             {
                 CompanyId = companyId,
                 Name = string.IsNullOrWhiteSpace(fullName) ? employee.EmployeeCode : fullName,
-                TaxId = employee.TaxId ?? employee.CitizenId,
+                TaxId = Accounting.Helpers.EmployeeTaxIdentity.Resolve(employee.TaxId, employee.CitizenId),
                 ContactType = ContactType.Individual,
                 IsSupplier = true,
                 IsCustomer = false,
