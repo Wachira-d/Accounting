@@ -27,7 +27,6 @@ JwtHelper.cs StorefrontAudience
 LodgingPricingEngine.cs SeasonFor
 OcrDuplicateScanRule.cs WithinWindow
 OcrEntryModeAdvisor.cs IndustryLabel
-OcrPartyLabels.cs FindBuyer
 OcrPartyLabels.cs FindSeller
 OcrPartyResolver.cs OurTaxIdNearMissOnPaper
 OcrPartyResolver.cs OurTaxIdOnPaper

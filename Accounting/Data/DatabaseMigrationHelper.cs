@@ -4918,6 +4918,13 @@ public static class DatabaseMigrationHelper
             // — ทีมตรวจ 2026-09-11: กติกา "ชื่อมีคำของเราอยู่" จะลบผู้ขายจริงของ tenant ที่ชื่อสั้น
             // ("สยาม") ทุกรายซ้ำทุกครั้งที่บูต (ลิสต์นี้รันทุก startup) = ระบบไม่มีวันเรียนผู้ขายเหล่านั้น
             """DELETE FROM "VendorKnownGoodValues" v USING "Companies" c WHERE v."CompanyId" = c."Id" AND v."VendorTaxId" IS NOT NULL AND regexp_replace(v."VendorTaxId", '[^0-9]', '', 'g') = regexp_replace(c."TaxId", '[^0-9]', '', 'g');""",
+            // ── ที่อยู่ผู้ขายที่ถูกตัดเลขบ้านทิ้งแล้ว "จำไว้ว่าถูก" (รอบ 190 · ใบ Wine Pro "12/861" → "/861") ──
+            // OcrPartyAddress.StripLeakedNameFragment เคยตีเลข "12" ท้าย "Branch 00012" ว่าเป็นเศษชื่อ แล้ว
+            // ตัดเลขบ้านทิ้ง · ตัวเรียนรู้ Azure จำค่านั้นเป็น known-good ⇒ แม้แก้โค้ดแล้ว ใบถัดไปที่อ่าน
+            // "12/861 …" ถูก จะถูก VendorKnownGoodCorrector (similarity ≥ 0.80) ดึง "/861 …" กลับมาทับ ·
+            // ลบตาม**รูปของค่า**ที่เป็นไปไม่ได้ (ที่อยู่ขึ้นต้นด้วย "/เลข" ไม่มีจริง) ไม่ใช่ตามความคล้าย
+            // · ไม่แตะแถว UserCorrection (ผู้ใช้ยืนยันเอง = ตัดสินแล้ว)
+            """DELETE FROM "VendorKnownGoodValues" WHERE "FieldName" = 'VendorAddress' AND "Source" <> 'UserCorrection' AND "Value" ~ '^[[:space:]]*/[0-9]';""",
             """DELETE FROM "OcrLearnedPatterns" p USING "Companies" c WHERE p."CompanyId" = c."Id" AND p."VendorTaxId" IS NOT NULL AND regexp_replace(p."VendorTaxId", '[^0-9]', '', 'g') = regexp_replace(c."TaxId", '[^0-9]', '', 'g');""",
             // แถวสแกนที่โดนอาการ "ย้ายแล้วไม่ sync": ผู้ขาย = ผู้ซื้อ (สตริงเดียวกันหลัง normalize)
             // ทั้งที่บทบาทคือผู้ซื้อ ⇒ ล้างช่องผู้ขายให้ตรงกับที่หน่วยความจำตัดสินไว้ — เทียบ**เท่ากัน**

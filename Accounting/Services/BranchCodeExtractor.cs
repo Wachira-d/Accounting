@@ -20,9 +20,11 @@ namespace Accounting.Services;
 /// </summary>
 public static class BranchCodeExtractor
 {
-    /// <summary>"สาขาที่ 3" / "BRANCH: 00003" / "สาขา เลขที่ 3"</summary>
+    /// <summary>"สาขาที่ 3" / "BRANCH: 00003" / "สาขา เลขที่ 3" / "Branch No. 8" / "สาขาที 3"
+    /// (รอบ 190: ยอม "ที" ที่ OCR ทำไม้เอกหล่น และ "No." ของหัวกระดาษอังกฤษ — เดิมสองรูปนี้
+    /// ไม่เจอตัวเลขแล้วตกไปอ่าน "สำนักงานใหญ่" ของหัวกระดาษแทน)</summary>
     private static readonly Regex BranchRegex = new(
-        @"(?:สาขา(?:ที่)?|BRANCH)\s*(?:เลข(?:ที่)?\s*)?[:：]?\s*(\d{1,5})",
+        @"(?:สาขา(?:ที่|ที)?|BRANCH)\s*(?:เลข(?:ที่)?\s*|NO\.?\s*|#\s*)?[:：]?\s*(\d{1,5})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex HeadOfficeRegex = new(
@@ -62,16 +64,32 @@ public static class BranchCodeExtractor
     {
         if (string.IsNullOrWhiteSpace(rawText)) return new Result(null, null);
 
+        // ── ขั้นที่ 0 (รอบ 190): ประโยคที่ประกาศตรง ๆ ว่า "สาขาที่ออกใบกำกับภาษีคือ สาขาที่ 8" ──
+        // หลักฐานชั้นสูงสุดเรื่องสาขาผู้ออกใบ — ชนะ "สำนักงานใหญ่/Head Office" ในหัวกระดาษเดียวกัน
+        // (ใบ B Radisson: หัวพิมพ์ทั้งสำนักงานใหญ่และสาขาผู้ออก) · ตัวตัดสินอยู่ Helpers/OcrIssuerBranch
+        var issuer = Accounting.Helpers.OcrIssuerBranch.Detect(rawText)?.Code;
+
+        var buyerAnchorIndex = -1;
         var buyerAnchor = BuyerAnchorRegex.Match(rawText);
-        if (!buyerAnchor.Success)
+        if (buyerAnchor.Success) buyerAnchorIndex = buyerAnchor.Index;
+        else
+        {
+            // ── ขั้นสำรอง (รอบ 190): ป้ายผู้ซื้อชุดกลางของระบบ (Helpers/OcrPartyLabels) ──
+            // ใบเสร็จ "ได้รับเงินจาก / Received From" ไม่อยู่ในรายการคำของตัวนี้ ⇒ เดิมทั้งหน้า
+            // (รวม ☑ สำนักงานใหญ่ ในช่องติ๊กของผู้ซื้อ) ถูกอ่านเป็นของผู้ขาย · ใช้เฉพาะเมื่อรายการ
+            // เดิมหาไม่เจอ ⇒ ใบที่เคยแยกบล็อกได้อยู่แล้ว ผลไม่ขยับ
+            var label = Accounting.Helpers.OcrPartyLabels.FindBuyer(rawText);
+            if (label > 0) buyerAnchorIndex = label;
+        }
+        if (buyerAnchorIndex < 0)
         {
             // ไม่มีบล็อกผู้ซื้อให้แยก (ใบเสร็จร้านค้า/สลิป) — พฤติกรรมเดิม:
             // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ
-            return new Result(FromSegment(rawText), null);
+            return new Result(issuer ?? FromSegment(rawText), null);
         }
 
-        var sellerSegment = rawText[..buyerAnchor.Index];
-        var buyerStart = buyerAnchor.Index;
+        var sellerSegment = rawText[..buyerAnchorIndex];
+        var buyerStart = buyerAnchorIndex;
         var buyerEnd = Math.Min(rawText.Length, buyerStart + BuyerWindowChars);
         var buyerSegment = rawText[buyerStart..buyerEnd];
 
@@ -80,7 +98,7 @@ public static class BranchCodeExtractor
         if (tableAnchor.Success && tableAnchor.Index > 0)
             buyerSegment = buyerSegment[..tableAnchor.Index];
 
-        var seller = FromSegment(sellerSegment);
+        var seller = issuer ?? FromSegment(sellerSegment);
         // บล็อกผู้ขายมักอยู่หัวกระดาษเสมอ — แต่ถ้าหน้าตัดมาแล้วไม่เจอ (เช่น
         // ผู้ซื้ออยู่บนสุด) ยอมถอยไปอ่านทั้งหน้าเพื่อไม่ให้แย่กว่าเดิม
         seller ??= FromSegment(rawText);

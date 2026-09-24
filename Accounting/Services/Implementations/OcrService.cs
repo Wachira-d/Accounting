@@ -700,6 +700,22 @@ public class OcrService : IOcrService
                 extractedData.FieldConfidence["DocumentNumber"] = cleanDocNo == null ? 0.25 : 0.85;
                 extractedData.ReasoningTrace.Add("[DocNo] " + docNoNote);
             }
+            // ── ใบแบบเล่ม: เลขที่ = <เล่ม>/<เลขที่> (รอบ 190 · ใบ B "เล่มที่ 066 เลขที่ 3267") ──
+            // เลขที่รันใหม่ทุกเล่ม ⇒ เลขที่เดี่ยวไม่ใช่ตัวระบุใบ · รวมเฉพาะเมื่อเลขที่ของ engine คือเลขที่
+            // ที่อยู่คู่กับป้าย "เล่มที่" บนกระดาษ — ใบที่ไม่มีเล่ม ไม่แตะ (ตัวตัดสิน Helpers/OcrBookSerial)
+            // e-Tax XML: เลขที่มาจาก XML ที่ลงนาม — ไม่แตะ
+            if (ocrEngineUsed != "EtaxXml")
+            {
+                var book = Accounting.Helpers.OcrBookSerial.Combine(extractedData.DocumentNumber, extractedText);
+                if (book.Changed)
+                {
+                    extractedData.DocumentNumber = book.DocumentNumber;
+                    extractedData.FieldConfidence["DocumentNumber"] = 0.85;
+                    extractedData.Note(Accounting.Helpers.OcrFieldKeys.DocumentNumber, book.DocumentNumber,
+                        Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m, "ป้าย เล่มที่/เลขที่ บนกระดาษ");
+                    extractedData.ReasoningTrace.Add("[DocNo] " + book.Reason);
+                }
+            }
 
             scanResult.DocumentType = extractedData.DocumentType;
             scanResult.Confidence = extractedData.Confidence;
@@ -724,7 +740,7 @@ public class OcrService : IOcrService
             // straight off the raw text. Must run BEFORE items serialization
             // (units persist into ExtractedItemsJson) and BEFORE the role
             // inferrer (derived credit terms flip the PV/PI decision).
-            EnrichFromRawText(extractedData, extractedText);
+            EnrichFromRawText(extractedData, extractedText, legalSource: ocrEngineUsed == "EtaxXml");
 
             // ── เติมช่องที่ยังว่างด้วยแพตเทิร์นที่ระบบเรียนไว้ ──
             // จุดอ่านของตาราง OcrLearnedPatterns ซึ่งถูก**เขียน**ทุกครั้งที่ผู้ใช้
@@ -904,6 +920,8 @@ public class OcrService : IOcrService
                     var b = partyResolution.Buyer;
                     var vendorNameCleared = !string.IsNullOrWhiteSpace(extractedData.VendorName) && string.IsNullOrWhiteSpace(v.Name);
                     var buyerNameCleared = !string.IsNullOrWhiteSpace(extractedData.BuyerName) && string.IsNullOrWhiteSpace(b.Name);
+                    var vendorNameBefore = extractedData.VendorName;
+                    var buyerNameBefore = extractedData.BuyerName;
                     extractedData.VendorName = v.Name; extractedData.VendorTaxId = v.TaxId;
                     extractedData.VendorAddress = v.Address; extractedData.VendorBranchCode = v.BranchCode;
                     extractedData.BuyerName = b.Name; extractedData.BuyerTaxId = b.TaxId;
@@ -912,6 +930,20 @@ public class OcrService : IOcrService
                     // ห้ามปล่อยให้ช่องว่างดูเหมือนมั่นใจ และห้ามแต่งชื่อขึ้นมาเอง
                     if (vendorNameCleared) extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.20;
                     if (buyerNameCleared) extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerName] = 0.20;
+                    // ชื่อฝั่งเราถูกแทนด้วยชื่อบริษัทเราจากทะเบียน (OcrPartyResolver.FillOurName · รอบ 190 ใบ A
+                    // "[CZBNG2600843]") — บันทึกที่มาให้หน้ารีวิวบอกได้ว่าค่านี้มาจากไหน (G4)
+                    void NoteOurRegistryName(string key, string? before, string? after)
+                    {
+                        if (string.IsNullOrWhiteSpace(after) || string.Equals(before?.Trim(), after.Trim(), StringComparison.Ordinal)) return;
+                        if (!string.Equals(after.Trim(), ourIdentity.Name?.Trim(), StringComparison.Ordinal)
+                            && !string.Equals(after.Trim(), ourIdentity.NameEn?.Trim(), StringComparison.Ordinal)) return;
+                        extractedData.FieldConfidence[key] = 0.95;
+                        extractedData.Note(key, after, Accounting.Helpers.OcrFieldSource.VendorHistory, 0.95m,
+                            "ชื่อบริษัทเราจากทะเบียน — เลขภาษี/ชื่อเราบนกระดาษยืนยันว่าฝั่งนี้คือเรา"
+                            + (string.IsNullOrWhiteSpace(before) ? "" : $" (engine อ่านได้ “{before}”)"));
+                    }
+                    NoteOurRegistryName(Accounting.Helpers.OcrFieldKeys.BuyerName, buyerNameBefore, b.Name);
+                    NoteOurRegistryName(Accounting.Helpers.OcrFieldKeys.SellerName, vendorNameBefore, v.Name);
                     foreach (var r in partyResolution.Reasons)
                         extractedData.ReasoningTrace.Add("[Party] " + r);
                     if (partyResolution.Decision != Accounting.Helpers.OcrPartyDecision.Unchanged)
@@ -2595,7 +2627,12 @@ public class OcrService : IOcrService
                 && !string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
                 // ───── Branch 1: DBD verified ─────
-                var addressParts = ParseAddressIntoParts(extractedData.DbdAddress);
+                // ที่อยู่: ทะเบียน = สำนักงานใหญ่ ⇒ Contact ของสาขาที่ใบนี้ประกาศไว้ใช้ที่อยู่สาขานั้นก่อน
+                // (ตัวตัดสินกลาง OcrIssuerBranch.ContactAddress — ตัวเดียวกับ EnrichContactAddress)
+                var (newContactAddr, _) = Accounting.Helpers.OcrIssuerBranch.ContactAddress(
+                    extractedData.VendorBranchCode, extractedData.VendorBranchCode, dbdMatched: true,
+                    extractedData.DbdAddress, extractedData.VendorAddress, extractedData.VendorAddressFromIssuerBranch);
+                var addressParts = ParseAddressIntoParts(newContactAddr);
 
                 var newContact = new Contact
                 {
@@ -2606,7 +2643,7 @@ public class OcrService : IOcrService
                     IsCustomer = false,
                     IsSupplier = true,
                     ContactType = ContactType.JuristicPerson,
-                    Address = extractedData.DbdAddress,
+                    Address = newContactAddr,
                     Phone = SanePhone(extractedData.VendorPhone),
                     Email = extractedData.VendorEmail,
                     BuildingNumber = addressParts.BuildingNumber,
@@ -3153,13 +3190,17 @@ public class OcrService : IOcrService
     /// คืน true เมื่อมีการเปลี่ยนแปลง.</summary>
     private static bool EnrichContactAddress(Contact c, OcrExtractedData data)
     {
-        var dbdMatched = data.DbdMatched && !string.IsNullOrWhiteSpace(data.DbdAddress);
-        var freeAddr = dbdMatched ? data.DbdAddress : data.VendorAddress;
+        // ทะเบียน (DBD/RD) = ที่ตั้ง**สำนักงานใหญ่** — เลือกแหล่งผ่านตัวตัดสินกลางตามสาขาของ Contact
+        // กับสาขาที่ใบนี้ออก (รอบ 190 · ใบ B สาขาที่ 8): ห้ามเอาที่อยู่สาขาจากกระดาษไปใส่ Contact
+        // สำนักงานใหญ่ · Contact ของสาขาใช้ที่อยู่ที่ใบของสาขานั้นประกาศไว้ก่อนทะเบียน
+        var (freeAddr, fromRegistry) = Accounting.Helpers.OcrIssuerBranch.ContactAddress(
+            c.BranchCode, data.VendorBranchCode, data.DbdMatched, data.DbdAddress,
+            data.VendorAddress, data.VendorAddressFromIssuerBranch);
         if (string.IsNullOrWhiteSpace(freeAddr)) return false;
 
         var ocrManaged = (c.CreatedBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase)
                       || (c.UpdatedBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase);
-        var allowOverwrite = dbdMatched && ocrManaged;
+        var allowOverwrite = fromRegistry && ocrManaged;
 
         var parts = ParseAddressIntoParts(freeAddr);
         bool changed = false;
@@ -8775,7 +8816,7 @@ public class OcrService : IOcrService
     /// <summary>Engine-agnostic raw-text enrichment — fields no structured
     /// extractor returns today. Fail-safe: any regex/date mishap simply leaves
     /// the field null (the user can still key it in the review UI).</summary>
-    private void EnrichFromRawText(OcrExtractedData data, string? rawText)
+    private void EnrichFromRawText(OcrExtractedData data, string? rawText, bool legalSource = false)
     {
         if (string.IsNullOrEmpty(rawText)) return;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
@@ -8804,6 +8845,55 @@ public class OcrService : IOcrService
                 data.BuyerBranchCode = br.BuyerBranchCode;
                 data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerBranchCode] = 0.85;
                 data.ReasoningTrace.Add($"[Enrich] รหัสสาขาผู้ซื้อจากกระดาษ {br.BuyerBranchCode}");
+            }
+        }
+
+        // ── สาขาผู้ออกใบที่กระดาษ "ประกาศ" ไว้ + ที่อยู่ของสาขานั้น (รอบ 190 · ใบ B Radisson) ──
+        // หัวกระดาษพิมพ์ทั้ง "สำนักงานใหญ่" และ "สาขาที่ออกใบกำกับภาษีคือ สาขาที่ 8" ⇒ ผู้ออกใบคือสาขาที่ 8
+        // บล็อกเติมข้างบนเป็น "เติมเฉพาะช่องว่าง" จึงแก้ 00000 ที่มาก่อนไม่ได้ (บทเรียน §H "ตัวเติมเฉพาะ
+        // เมื่อว่างไม่มีวันซ่อมค่าที่ผิด") ⇒ ประโยคประกาศ (หลักฐานมีป้ายกำกับ · G1) ชนะ 00000 ได้ แต่
+        // **ไม่ทับ**รหัสสาขาอื่นที่ไม่ใช่ 00000 (ขัดกัน = ลดคะแนนให้ไฮไลต์ · G4) และไม่แตะ e-Tax XML
+        // ที่ลงนามแล้ว (ความจริงตามกฎหมาย > ข้อความบนกระดาษ)
+        if (!legalSource)
+        {
+            var issuer = Accounting.Helpers.OcrIssuerBranch.Detect(text);
+            if (issuer != null)
+            {
+                var cur = data.VendorBranchCode;
+                var (action, useAddress) = Accounting.Helpers.OcrIssuerBranch.Reconcile(cur, issuer);
+                if (action == Accounting.Helpers.OcrIssuerBranchAction.Replace)
+                {
+                    data.VendorBranchCode = issuer.Code;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.90;
+                    data.Note(Accounting.Helpers.OcrFieldKeys.SellerBranchCode, issuer.Code,
+                        Accounting.Helpers.OcrFieldSource.PaperLabel, 0.90m, issuer.Evidence);
+                    data.ReasoningTrace.Add(
+                        $"[Branch] กระดาษประกาศสาขาผู้ออกใบ “{issuer.Evidence}” → {issuer.Code}"
+                        + (string.IsNullOrWhiteSpace(cur) ? "" : $" (แทน {cur} ที่ได้จากคำว่า สำนักงานใหญ่ บนหัวกระดาษ)"));
+                }
+                else if (action == Accounting.Helpers.OcrIssuerBranchAction.Conflict)
+                {
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.50;
+                    data.ReasoningTrace.Add(
+                        $"[Branch] ⚠️ รหัสสาขาผู้ขาย {cur} ขัดกับประโยคบนกระดาษ “{issuer.Evidence}” ({issuer.Code}) — กรุณาตรวจ");
+                }
+
+                // ที่อยู่ผู้ขาย = ที่อยู่ของสาขาที่ออกใบ (ไม่ใช่ที่อยู่สำนักงานใหญ่ที่หัวกระดาษพิมพ์ไว้ด้วย)
+                if (useAddress)
+                {
+                    var before = data.VendorAddress;
+                    if (!string.Equals(before?.Trim(), issuer.Address, StringComparison.Ordinal))
+                    {
+                        data.VendorAddress = issuer.Address;
+                        data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.85;
+                        data.Note(Accounting.Helpers.OcrFieldKeys.SellerAddress, issuer.Address,
+                            Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m, $"ที่อยู่ต่อจาก “{issuer.Evidence}”");
+                        data.ReasoningTrace.Add(
+                            $"[Branch] ที่อยู่ผู้ขาย = ที่อยู่ของสาขาผู้ออกใบ “{issuer.Address}”"
+                            + (string.IsNullOrWhiteSpace(before) ? "" : $" (แทน “{before}”)"));
+                    }
+                    data.VendorAddressFromIssuerBranch = true;
+                }
             }
         }
 
@@ -9480,6 +9570,10 @@ internal class OcrExtractedData
     public string? VendorPhone { get; set; }
     public string? VendorEmail { get; set; }
     public string? VendorBranchCode { get; set; }
+    /// <summary><see cref="VendorAddress"/> มาจากที่อยู่ที่พิมพ์ต่อจาก "สาขาที่ออกใบกำกับภาษีคือ …"
+    /// (<see cref="Accounting.Helpers.OcrIssuerBranch"/>) — ที่อยู่ของ<b>สาขาผู้ออกใบ</b>จริง ⇒ ใช้กับ
+    /// Contact ของสาขานั้นแทนที่อยู่สำนักงานใหญ่จากทะเบียนได้ (รอบ 190 · ใบ B)</summary>
+    public bool VendorAddressFromIssuerBranch { get; set; }
     public string? BuyerAddress { get; set; }
     public string? BuyerPhone { get; set; }
     public string? BuyerEmail { get; set; }
