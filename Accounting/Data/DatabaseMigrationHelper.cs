@@ -37,7 +37,67 @@ public static class DatabaseMigrationHelper
         }
     }
 
-    private static List<string> GetAlterStatements()
+    /// <summary>ฝ่ายค้านรอบสี่ R4-3 — สร้างคอลัมน์ <c>Documents.DepositBaseDeducted</c> และย้ายค่าเดิมจาก <c>BillDiscountAmount</c>
+    /// <b>ในขั้นเดียวกับที่คอลัมน์ถูกสร้างเท่านั้น</b> (ตรวจ information_schema ก่อน · มีคอลัมน์แล้ว = ไม่ย้าย) · ครอบด้วย
+    /// <c>pg_advisory_xact_lock</c> คีย์คงที่ (<see cref="Accounting.Helpers.AdvisoryLockKey"/>) ⇒ สองเครื่องบูตพร้อมกันย้ายครั้งเดียว.
+    /// เดิมเป็น UPDATE ที่รันทุกครั้งที่บูต ⇒ จับแถวที่โค้ดใหม่สร้างได้ (อ้างเลขใบมัดจำ + ส่วนลดบาท · ฐานมัดจำ 0) แล้วย้ายส่วนลดการค้า
+    /// เป็นฐานมัดจำ (R3-1 กลับมาเงียบ) และหักซ้ำเมื่อบูตพร้อมกัน.
+    /// <para>ข้อมูลที่ต้องย้ายมาจากโค้ดรอบ 193 ก่อนแยกช่องเท่านั้น (ยังไม่อยู่ใน master): อนุมัติแล้ว = ยอดที่รับรู้มัดจำจริง
+    /// (JE ผูก <c>DepositRealizedForDocumentId</c>) · ยังไม่อนุมัติ = ทั้งก้อน (ความหมายเดิม) · <b>ทุกใบที่ถูกย้ายติดหมายเหตุภายใน</b>
+    /// <c>[DEPOSIT-BASE-SPLIT]</c> ให้ตรวจ — ก้อนเดิมอาจมีส่วนลดการค้ารวมอยู่ (แยกจากข้อมูลไม่ได้)</para></summary>
+    internal static string DepositBaseSplitMigrationSql()
+    {
+        return """
+        DO $mig$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(__LOCK_KEY__);
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'Documents' AND column_name = 'DepositBaseDeducted') THEN
+            RETURN;
+          END IF;
+          ALTER TABLE "Documents" ADD COLUMN "DepositBaseDeducted" numeric(18,2) NOT NULL DEFAULT 0;
+          WITH cand AS (
+            SELECT d."Id",
+              (d."Status" IN (2,3,4,5,7)) AS posted,
+              CASE WHEN d."Status" IN (2,3,4,5,7) THEN LEAST(d."BillDiscountAmount", COALESCE((
+                     SELECT SUM(j."TotalDebit") FROM "JournalEntries" j
+                      WHERE j."CompanyId" = d."CompanyId" AND j."DepositRealizedForDocumentId" = d."Id"
+                        AND j."OriginalEntryId" IS NULL AND j."ReversedByEntryId" IS NULL
+                        AND j."Status" = 1 AND j."IsDeleted" = false), 0))
+                   WHEN d."DepositAppliedAmount" <= 0 THEN d."BillDiscountAmount"
+                   ELSE 0 END AS mv
+              FROM "Documents" d
+             WHERE d."BillDiscountAmount" > 0 AND d."IsDeposit" = false
+               AND COALESCE(btrim(d."DepositAppliedRef"), '') <> ''
+               AND EXISTS (
+                 SELECT 1 FROM "Documents" p
+                  WHERE p."CompanyId" = d."CompanyId" AND p."IsDeposit" = true AND p."IsDeleted" = false
+                    AND p."Status" NOT IN (0, 6, 8) AND p."VatAmount" > 0.005
+                    AND NOT (p."DepositOutputVatDeferred" = true AND p."DepositOutputVatRecognizedAt" IS NULL)
+                    AND (p."DocumentNumber" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)
+                      OR p."Reference" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)))
+          )
+          UPDATE "Documents" t
+             SET "DepositBaseDeducted" = c.mv,
+                 "BillDiscountAmount" = t."BillDiscountAmount" - c.mv,
+                 "InternalNotes" = CASE WHEN COALESCE(t."InternalNotes", '') = '' THEN '' ELSE t."InternalNotes" || ' · ' END
+                   || '[DEPOSIT-BASE-SPLIT] ย้าย ' || to_char(c.mv, 'FM999,999,999,990.00')
+                   || CASE WHEN c.posted
+                        THEN ' จากส่วนหักท้ายบิลเป็น “ฐานมัดจำที่หัก” ตามยอดที่รับรู้มัดจำไว้ (ระบบรุ่นก่อนแยกช่องเก็บส่วนลดการค้ากับฐานมัดจำรวมกัน) — ถ้ายอดนี้มีส่วนลดการค้ารวมอยู่ มัดจำลูกค้าถูกรับรู้เกิน ให้ตรวจที่หน้า “เงินมัดจำ”'
+                        ELSE ' จากส่วนหักท้ายบิลเป็น “ฐานมัดจำที่หัก” ทั้งก้อน (ระบบรุ่นก่อนแยกช่อง) — ถ้าก้อนนี้มีส่วนลดการค้ารวมอยู่ ห้ามอนุมัติใบนี้: สร้างใบใหม่จากฟอร์ม (ขายเงินสดใบเดียว + เลือกมัดจำ + ส่วนลดท้ายบิล) แล้วลบร่างนี้'
+                      END
+            FROM cand c
+           WHERE t."Id" = c."Id" AND c.mv > 0 AND t."DepositBaseDeducted" = 0;
+        END
+        $mig$;
+        """.Replace("__LOCK_KEY__", DepositBaseSplitLockKey, StringComparison.Ordinal);
+    }
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์/ย้ายค่าข้างบน — deterministic ข้ามเครื่อง (FNV ผ่าน AdvisoryLockKey · ห้าม GetHashCode)</summary>
+    internal static string DepositBaseSplitLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Documents.DepositBaseDeducted").ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    internal static List<string> GetAlterStatements()
     {
         return
         [
@@ -3175,7 +3235,25 @@ public static class DatabaseMigrationHelper
     /// </summary>
     public static void ApplyFullTextSearchIndexes(AccountingDbContext db)
     {
-        var statements = new[]
+        var statements = GetFullTextSearchStatements();
+        foreach (var sql in statements)
+        {
+            try
+            {
+                db.Database.ExecuteSqlRaw(sql);
+            }
+            catch
+            {
+                // Index may already exist or table may not exist — safe to skip
+            }
+        }
+    }
+
+    /// <summary>คำสั่งชุดหลัง (index + คอลัมน์/ย้ายค่าที่ถูกต่อท้ายไว้ที่นี่) — แยกเป็นเมธอดให้เทสต์ตรวจ "คำสั่งที่รันจริง" ได้
+    /// (รอบ 193 ฝ่ายค้านรอบสี่ R4-3: ล็อกว่าการย้ายค่าไป DepositBaseDeducted มีคำสั่งเดียว)</summary>
+    internal static string[] GetFullTextSearchStatements()
+    {
+        return new[]
         {
             // Enable pg_trgm for trigram-based LIKE/ILIKE optimization
             """CREATE EXTENSION IF NOT EXISTS pg_trgm;""",
@@ -6651,37 +6729,8 @@ public static class DatabaseMigrationHelper
             // รอบ 193 ฝ่ายค้านรอบสอง N3 — ยอดคืนบนใบมัดจำ ณ ตอนยกเลิก/เช็คเอาต์ (การคืนก่อนหน้านั้นไม่ใช่การคืนของยอดค้างนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundBaselineGross" numeric(18,2) NOT NULL DEFAULT 0;""",
             // รอบ 193 ฝ่ายค้านรอบสาม R3-1 — ฐานมัดจำ "ออกใบกำกับแล้ว" ที่หักจากใบสุดท้าย แยกจากส่วนลดการค้า (เดิมรวมใน BillDiscountAmount)
-            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositBaseDeducted" numeric(18,2) NOT NULL DEFAULT 0;""",
-            // ย้ายค่าเดิม (แถวที่เกิดจากโค้ดรอบ 193 ก่อนแยกช่อง): ใบที่อ้างมัดจำออกใบกำกับแล้ว (ตัวกรองเดียวกับ LoadTaxedDepositsByRefAsync)
-            // · อนุมัติแล้ว ⇒ ย้ายเท่ายอดที่รับรู้ไปจริง (JE ผูก DepositRealizedForDocumentId ที่ยังไม่ถูกกลับ) — ส่วนที่เหลือคือส่วนลดการค้า
-            // · ยังไม่อนุมัติ + ไม่มียอดหักแบบเงินรวม ⇒ ย้ายทั้งก้อน (= ความหมายเดิม: โค้ดเดิมรับรู้ทั้งก้อนตอนอนุมัติ)
-            // · รันซ้ำได้: แตะเฉพาะแถวที่ช่องใหม่ยังเป็น 0 · แถวก่อนรอบ 193 ไม่มี JE ผูก/ไม่มีรูปนี้ ⇒ ไม่ถูกแตะ
-            """
-            WITH cand AS (
-              SELECT d."Id",
-                CASE WHEN d."Status" IN (2,3,4,5,7) THEN LEAST(d."BillDiscountAmount", COALESCE((
-                       SELECT SUM(j."TotalDebit") FROM "JournalEntries" j
-                        WHERE j."CompanyId" = d."CompanyId" AND j."DepositRealizedForDocumentId" = d."Id"
-                          AND j."OriginalEntryId" IS NULL AND j."ReversedByEntryId" IS NULL
-                          AND j."Status" = 1 AND j."IsDeleted" = false), 0))
-                     WHEN d."DepositAppliedAmount" <= 0 THEN d."BillDiscountAmount"
-                     ELSE 0 END AS mv
-                FROM "Documents" d
-               WHERE d."DepositBaseDeducted" = 0 AND d."BillDiscountAmount" > 0 AND d."IsDeposit" = false
-                 AND COALESCE(btrim(d."DepositAppliedRef"), '') <> ''
-                 AND EXISTS (
-                   SELECT 1 FROM "Documents" p
-                    WHERE p."CompanyId" = d."CompanyId" AND p."IsDeposit" = true AND p."IsDeleted" = false
-                      AND p."Status" NOT IN (0, 6, 8) AND p."VatAmount" > 0.005
-                      AND NOT (p."DepositOutputVatDeferred" = true AND p."DepositOutputVatRecognizedAt" IS NULL)
-                      AND (p."DocumentNumber" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)
-                        OR p."Reference" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)))
-            )
-            UPDATE "Documents" t
-               SET "DepositBaseDeducted" = c.mv, "BillDiscountAmount" = t."BillDiscountAmount" - c.mv
-              FROM cand c
-             WHERE t."Id" = c."Id" AND c.mv > 0;
-            """,
+            // ฝ่ายค้านรอบสี่ R4-3: สร้างคอลัมน์ + ย้ายค่าเดิม **ครั้งเดียวจริง** — ดู DepositBaseSplitMigrationSql (ห้ามมีคำสั่งย้ายค่าที่อื่น)
+            DepositBaseSplitMigrationSql(),
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",
@@ -6815,17 +6864,5 @@ public static class DatabaseMigrationHelper
                 OR s."CurrentMonthLocalOcrPages" > c.n);
             """,
         };
-
-        foreach (var sql in statements)
-        {
-            try
-            {
-                db.Database.ExecuteSqlRaw(sql);
-            }
-            catch
-            {
-                // Index may already exist or table may not exist — safe to skip
-            }
-        }
     }
 }
