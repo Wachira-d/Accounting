@@ -23,20 +23,28 @@ public static class TaxInvoiceCompletenessChecker
     public sealed record Result(bool IsClaimable, IReadOnlyList<string> MissingFields)
     {
         public string MissingSummary => string.Join(", ", MissingFields);
+
+        /// <summary>ส่วนของ <see cref="MissingFields"/> ที่ต้องแก้ที่ <b>ข้อมูลผู้ติดต่อ</b>
+        /// (ชื่อ/เลขผู้เสียภาษี/ที่อยู่) — ไม่ใช่ช่องบนเอกสาร. หน้าจอใช้บอกผู้ใช้ว่า
+        /// "แก้ที่ไหน" โดยไม่ต้องมีสำเนากติกาใน JS (รอบ 190 ทีม C — ข้อ 3 ของเจ้าของ:
+        /// ช่องเลขผู้เสียภาษีบนจอแสดงค่าหนึ่ง แต่ตัวตรวจ JS อ่านอีกแหล่ง)</summary>
+        public IReadOnlyList<string> MissingContactFields { get; init; } = Array.Empty<string>();
     }
 
     public static Result Evaluate(Document doc, Contact? supplier)
     {
         var missing = new List<string>();
+        var missingAtContact = new List<string>();
+        void AtContact(string field) { missing.Add(field); missingAtContact.Add(field); }
 
         if (string.IsNullOrWhiteSpace(supplier?.Name))
-            missing.Add("ชื่อผู้ขาย");
+            AtContact("ชื่อผู้ขาย");
 
         if (!IsValidThaiTaxId(supplier?.TaxId))
-            missing.Add("เลขผู้เสียภาษีผู้ขาย (13 หลัก + mod-11)");
+            AtContact("เลขผู้เสียภาษีผู้ขาย (13 หลัก + mod-11)");
 
         if (string.IsNullOrWhiteSpace(supplier?.Address))
-            missing.Add("ที่อยู่ผู้ขาย");
+            AtContact("ที่อยู่ผู้ขาย");
 
         // branch code: header snapshot ก่อน, fallback Contact (เพราะเอกสารเก่า
         // อาจยังไม่ snapshot). "00000" = สำนักงานใหญ่ นับเป็นครบ.
@@ -50,7 +58,7 @@ public static class TaxInvoiceCompletenessChecker
         if (!doc.SupplierTaxInvoiceDate.HasValue)
             missing.Add("วันที่ใบกำกับภาษีจากผู้ขาย");
 
-        return new Result(missing.Count == 0, missing);
+        return new Result(missing.Count == 0, missing) { MissingContactFields = missingAtContact };
     }
 
     // ══════════════════════════════════════════════════════════════════

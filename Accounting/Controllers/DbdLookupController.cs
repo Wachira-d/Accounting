@@ -26,13 +26,20 @@ public class DbdLookupController : ControllerBase
         return Ok(new ApiResponse<List<DbdCompanyResult>>(true, results));
     }
 
-    /// <summary>ดึงข้อมูลนิติบุคคลจากเลขทะเบียน 13 หลัก</summary>
+    /// <summary>ดึงข้อมูลนิติบุคคลจากเลขทะเบียน 13 หลัก · <c>?branch=00008</c> = ข้อมูลของสาขานั้น
+    /// (ชื่อ/ที่อยู่สาขา จากทะเบียน VAT กรมสรรพากร) — ว่าง/00000 = สำนักงานใหญ่ (เส้นเดิม)</summary>
     [HttpGet("juristic/{juristicId}")]
-    public async Task<ActionResult<ApiResponse<DbdCompanyResult>>> GetByJuristicId(string juristicId)
+    public async Task<ActionResult<ApiResponse<DbdCompanyResult>>> GetByJuristicId(
+        string juristicId, [FromQuery] string? branch = null)
     {
-        var result = await _dbdService.GetByJuristicIdAsync(juristicId);
+        var isBranch = !Accounting.Helpers.TaxBranchCode.IsHeadOffice(branch);
+        var result = isBranch
+            ? await _dbdService.GetBranchAsync(juristicId, branch)
+            : await _dbdService.GetByJuristicIdAsync(juristicId);
         if (result == null)
-            return NotFound(new ApiResponse<DbdCompanyResult>(false, null, "ไม่พบข้อมูลนิติบุคคล"));
+            return NotFound(new ApiResponse<DbdCompanyResult>(false, null, isBranch
+                ? $"ทะเบียนไม่ยืนยันว่ามี {Accounting.Helpers.TaxBranchCode.Label(branch)} ของเลขนี้ — ตรวจเลขสาขา หรือกรอกที่อยู่สาขาเอง"
+                : "ไม่พบข้อมูลนิติบุคคล"));
         return Ok(new ApiResponse<DbdCompanyResult>(true, result));
     }
 

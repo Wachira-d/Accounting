@@ -1220,7 +1220,37 @@ public record ContactResponse(
     string? NameEn = null,
     string? AddressEn = null,
     // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
-    [property: StringLength(50)] string? TitleTh = null);
+    [property: StringLength(50)] string? TitleTh = null,
+    // ป้ายสาขาตามประกาศอธิบดีฯ 199 ("สำนักงานใหญ่" / "สาขาที่ 8") — **เซิร์ฟเวอร์คำนวณ**
+    // จาก Helpers/TaxBranchCode ตัวเดียว ให้ตัวเลือกผู้ติดต่อบนหน้าสร้างเอกสารแสดงว่า
+    // "เลือกสาขาไหน" (เลขภาษีเดียวกันมีได้หลายแถว = หลายสาขา) · null = ไม่ใช่ผู้ประกอบการ
+    // จดทะเบียน (บุคคลธรรมดาไม่มีสาขา) — ห้าม JS เดาป้ายเอง (รอบ 190 ทีม C ข้อ 6)
+    string? BranchLabel = null);
+
+/// <summary>
+/// ผลตรวจ "ใบกำกับภาษีซื้อบนฟอร์มนี้ ครบ §86/4 พอจะเคลม ภ.พ.30 ไหม" — ตัวตรวจ**ตัวเดียวกับ
+/// ตัวลงบัญชี** (<c>TaxInvoiceCompletenessChecker.Evaluate</c>) อ่านผู้ติดต่อจากฐานข้อมูล
+/// ไม่ใช่จากช่องบนหน้าจอ (รอบ 190 ทีม C ข้อ 3: ช่องเลขผู้เสียภาษีขึ้นค่าแล้ว แต่กล่องแดง
+/// ของตัวตรวจ JS ยังบอกว่า "ขาด" เพราะสองอย่างอ่านคนละแหล่ง/คนละเวลา)
+/// </summary>
+/// <param name="IsClaimable">true = ตอนอนุมัติ VAT จะลง 11610 (เคลมได้) · false = พัก 11640</param>
+/// <param name="MissingFields">สิ่งที่ขาด (ถ้อยคำเดียวกับหน้า "ภาษีซื้อยังไม่ถึงกำหนด")</param>
+/// <param name="MissingContactFields">ส่วนที่ต้องแก้ที่ข้อมูลผู้ติดต่อ (ไม่ใช่ช่องบนเอกสาร)</param>
+/// <param name="ContactTaxId">เลขผู้เสียภาษีที่ระบบจะใช้เคลมจริง (ของผู้ติดต่อ) — หน้าจอแสดงค่านี้</param>
+/// <param name="ContactBranchCode">รหัสสาขาที่บันทึกไว้กับผู้ติดต่อ</param>
+/// <param name="EffectiveBranchCode">สาขาที่จะถูกบันทึกลงเอกสารถ้ากดบันทึกตอนนี้
+/// (ลำดับเดียวกับ CreateDocumentAsync: ช่องบนฟอร์ม → ผู้ติดต่อ → 00000)</param>
+/// <param name="EffectiveBranchLabel">ป้ายของ <paramref name="EffectiveBranchCode"/> ตามประกาศฯ 199</param>
+/// <param name="BranchCodeError">รหัสสาขาที่กรอกผิดรูป (ไม่ใช่ตัวเลข 5 หลัก) — null = ถูกรูป/ไม่ได้กรอก</param>
+public record SupplierTaxInvoiceCheckResponse(
+    bool IsClaimable,
+    List<string> MissingFields,
+    List<string> MissingContactFields,
+    string? ContactTaxId,
+    string? ContactBranchCode,
+    string EffectiveBranchCode,
+    string EffectiveBranchLabel,
+    string? BranchCodeError);
 
 /// <summary>Request body for the smart-parse endpoint — paste address text, get structured fields.</summary>
 public record ParseAddressRequest(string Address);

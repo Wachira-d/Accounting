@@ -606,6 +606,15 @@ const API = {
       getContactDepositSummary: (contactId) => API.get(`${base}/document/contacts/${contactId}/deposit-summary`),
       getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
+      // ตรวจ §86/4 ของใบกำกับซื้อบนฟอร์ม ด้วยตัวตรวจเดียวกับตัวลงบัญชี (อ่านผู้ติดต่อจากฐาน)
+      checkSupplierTaxInvoice: ({ contactId, branchCode, invoiceNumber, invoiceDate } = {}) => {
+        const q = new URLSearchParams();
+        if (contactId) q.set('contactId', contactId);
+        if (branchCode) q.set('branchCode', branchCode);
+        if (invoiceNumber) q.set('invoiceNumber', invoiceNumber);
+        if (invoiceDate) q.set('invoiceDate', invoiceDate);
+        return API.get(`${base}/document/supplier-tax-invoice-check?${q.toString()}`);
+      },
       suggestPvAccounting: (body) => API.post(`${base}/document/ai-suggest-pv-accounting`, body),
       // reversalDate: วันที่ลงรายการกลับบัญชี (ว่าง = วันที่ของเอกสารเอง)
       voidDocument: (id, reversalDate) => API.post(

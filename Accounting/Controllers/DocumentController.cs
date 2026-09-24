@@ -393,6 +393,19 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<UndueInputVatSummary>>(true, result));
     }
 
+    /// <summary>ตรวจสดขณะกรอกฟอร์ม "มีใบกำกับภาษีซื้อ": ใบนี้จะเคลม ภ.พ.30 ได้ (11610) หรือถูก
+    /// พัก 11640 — ด้วยตัวตรวจตัวเดียวกับตัวลงบัญชี + ข้อมูลผู้ติดต่อจากฐาน (อ่านอย่างเดียว).
+    /// หน้าเว็บแสดงผลนี้แทนการตรวจช่องบนจอเอง (รอบ 190 ทีม C ข้อ 3)</summary>
+    [HttpGet("supplier-tax-invoice-check")]
+    public async Task<ActionResult<ApiResponse<SupplierTaxInvoiceCheckResponse>>> CheckSupplierTaxInvoice(
+        Guid companyId, [FromQuery] Guid? contactId, [FromQuery] string? branchCode,
+        [FromQuery] string? invoiceNumber, [FromQuery] DateTime? invoiceDate)
+    {
+        var result = await _documentService.CheckSupplierTaxInvoiceAsync(
+            companyId, contactId, branchCode, invoiceNumber, invoiceDate);
+        return Ok(new ApiResponse<SupplierTaxInvoiceCheckResponse>(true, result));
+    }
+
     /// <summary>§82/3: reclassify ภาษีซื้อ 11640 ที่พ้น 6 เดือน (ใบกำกับไม่ครบ) →
     /// ค่าใช้จ่าย. ล้าง 11640 ที่ค้างเป็น asset ลอย. คืนจำนวนเอกสารที่จัดการ.</summary>
     [HttpPost("undue-input-vat/reclassify-expired")]

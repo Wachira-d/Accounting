@@ -3000,7 +3000,7 @@ const Layout = {
       if (!contacts.length && !onCreateNew) { dropdown.style.display = 'none'; return; }
       const itemsHtml = contacts.map(c => `<div class="ac-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
         <div class="font-medium">${Layout.esc(c.name)}</div>
-        <div class="text-xs text-gray-500">${Layout.esc(c.taxId || '')} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
+        <div class="text-xs text-gray-500">${Layout.esc(c.taxId || '')}${c.branchLabel ? ` · <b style="color:#0f766e">${Layout.esc(c.branchLabel)}</b>` : ''} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
       </div>`).join('');
       // Footer "create new" affordance. A 13-digit query is treated as a Tax
       // ID → offer DBD-assisted auto-create; otherwise create by name.
