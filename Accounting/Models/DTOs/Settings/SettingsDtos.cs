@@ -236,7 +236,10 @@ public record CompanySettingsResponse(
     string? PosTipPayableAccountCode = null,
     string? PosTipPayableAccountCodeEffective = null,
     // วิธีบันทึกเงินมัดจำที่บริษัทตั้งเอง (null = ยังไม่เคยตั้ง → ตามประเภทธุรกิจ)
-    DepositVatTreatment? DepositVatTreatment = null)
+    DepositVatTreatment? DepositVatTreatment = null,
+    // ผู้เรียกบันทึกหน้าตั้งค่าได้ไหม (server ตัดสิน · หน้าแสดง — W-C7) · null = ไม่ได้ตรวจ (ผู้เรียกภายใน) ≠ false
+    bool? CanEdit = null,
+    string? EditDeniedMessage = null)
 {
     /// <summary>วิธีบันทึกมัดจำที่ใช้จริง + ที่มา + คำอธิบาย/คำเตือน (เซิร์ฟเวอร์คำนวณจาก Company.IndustryType ·
     /// หน้าเว็บแสดงอย่างเดียว) — null = ยังไม่ได้คำนวณ (เส้นที่ไม่ใช่ GET/UPDATE settings)</summary>

@@ -36,6 +36,10 @@ public interface IDocumentEmailService
     /// <summary>หัว/เนื้ออีเมลเริ่มต้น — ภาษาและชื่อเอกสารมาจาก <paramref name="heading"/> ซึ่งต้องได้จาก
     /// <c>PdfGenerationService.ResolveDocumentHeadingAsync</c> (ตัวเดียวกับ PDF ที่แนบ · S-12 รอบ 193)</summary>
     EmailTemplate BuildDefaultTemplate(Document doc, Accounting.Models.DTOs.DocumentTemplate.DocumentHeading heading, bool isEtaxByEmail);
+
+    /// <summary>หัว/เนื้อเริ่มต้นของใบที่บันทึกแล้ว — ให้หน้าต่างส่งอีเมลบนเว็บแสดงค่าเดียวกับที่ server จะส่ง
+    /// (ฝ่ายค้านรอบ 193 W-C4: เดิมหน้าเว็บประกอบหัว/เนื้อไทยเองแล้วส่งเป็นค่าไม่ว่าง ⇒ resolver ของ S-12 ไม่ถูกใช้)</summary>
+    Task<EmailTemplate> GetDefaultTemplateAsync(Guid companyId, Guid documentId, bool isEtaxByEmail);
 }
 
 public record EmailTestResult(bool Success, string? ErrorMessage, DateTime TestedAt);

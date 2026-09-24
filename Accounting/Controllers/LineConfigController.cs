@@ -39,7 +39,10 @@ public class LineConfigController : ControllerBase
         return Ok(new ApiResponse<LineConfigResponse>(true, Build(s)));
     }
 
+    // รอบ 193 (ฝ่ายค้าน W-C2): เดิมไม่มีด่านเลย — สมาชิกคนไหน/คีย์ไหนก็เปลี่ยน LINE channel token/secret ได้
     [HttpPut]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ตั้งค่า LINE")]
     public async Task<ActionResult<ApiResponse<LineConfigResponse>>> Update(
         Guid companyId, [FromBody] UpdateLineConfigRequest req)
     {
@@ -59,6 +62,7 @@ public class LineConfigController : ControllerBase
     }
 
     [HttpPost("test")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<LineTestResult>>> Test(
         Guid companyId, [FromBody] TestLineConfigRequest req)
     {

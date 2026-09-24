@@ -57,8 +57,10 @@ public sealed class RequirePermissionAttribute : Attribute, IAsyncAuthorizationF
 
         if (!await perms.HasPermissionAsync(companyId, userId, _key))
         {
-            ctx.Result = new ObjectResult(new ApiResponse<object>(false, null,
-                $"ไม่มีสิทธิ์เข้าถึง (ต้องการ {_key.Replace("perm:", "")})"))
+            // ข้อความบอกทางไปต่อ (W-C7) — ตัวสร้างข้อความตัวเดียวที่ PermissionKeys
+            ctx.Result = new ObjectResult(new ApiResponse<object>(false,
+                new { requiredPermission = _key.Replace("perm:", "") },
+                Accounting.Models.Constants.PermissionKeys.DeniedMessage(_key)))
             { StatusCode = 403 };
         }
     }

@@ -8,7 +8,9 @@ public interface ISubscriptionService
     // Trial Management
     Task<TrialStatusResponse> StartTrialAsync(StartTrialRequest request, string performedBy);
     Task<TrialStatusResponse> GetTrialStatusAsync(Guid companyId);
-    Task<TrialStatusResponse> ExtendTrialAsync(Guid companyId, ExtendTrialRequest request, string performedBy);
+    /// <param name="allowCustomDays">true = ผู้ดูแลแพลตฟอร์ม กำหนดจำนวนวันเองได้ · false (ลูกค้า) = ไม่เกิน <c>TrialConfig.ExtensionDays</c></param>
+    Task<TrialStatusResponse> ExtendTrialAsync(Guid companyId, ExtendTrialRequest request, string performedBy,
+        bool allowCustomDays = false);
     Task ExpireTrialAsync(Guid companyId, string performedBy);
 
     // Subscription Management

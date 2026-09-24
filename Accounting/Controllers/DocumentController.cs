@@ -101,6 +101,21 @@ public class DocumentController : ControllerBase
             : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
     }
 
+    /// <summary>หัว/เนื้ออีเมลเริ่มต้น "ตามที่ server จะส่ง" (ภาษา+หัวเอกสารเดียวกับ PDF ที่แนบ · ค่าที่ผู้ใช้คุมได้ถูกหนีแล้ว) —
+    /// หน้าต่างส่งอีเมลบนเว็บเติมจากตัวนี้แทนการประกอบเอง (ฝ่ายค้านรอบ 193 W-C4)</summary>
+    [HttpGet("{documentId:guid}/email-template")]
+    public async Task<ActionResult<ApiResponse<EmailTemplate>>> GetEmailTemplate(
+        Guid companyId, Guid documentId, [FromQuery] bool etax = false)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<EmailTemplate>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "ส่งอีเมล");
+        if (deny != null) return Forbid403<EmailTemplate>(deny);
+        var tpl = await _docEmailService.GetDefaultTemplateAsync(companyId, documentId, etax);
+        return Ok(new ApiResponse<EmailTemplate>(true, tpl));
+    }
+
     [HttpGet("{documentId:guid}/email-logs")]
     public async Task<ActionResult<ApiResponse<List<DocumentEmailLogResponse>>>> GetEmailLogs(
         Guid companyId, Guid documentId)
@@ -911,7 +926,10 @@ public class DocumentController : ControllerBase
     /// <summary>ลบเอกสารถาวร — เฉพาะ Owner/SystemAdmin. เอกสารในช่วงเก็บรักษา
     /// §87/3 ปกติ block (ใช้ Void แทน) แต่ override ได้ด้วย ?force=true&reason=...
     /// (audit log ว่าใคร/ทำไม — ความเสี่ยงทางกฎหมายเป็นของผู้ override).</summary>
+    // ฝ่ายค้านรอบ 193 W-C1 (P0): force=true ข้ามช่วงเก็บรักษา 5 ปี (พ.ร.บ.บัญชี ม.10 · §87/3) — เดิมเช็กแค่ role Owner
+    // ⇒ คีย์ acc_ ที่มี CanDelete (ตัวตน = เจ้าของผู้ออกคีย์) และคีย์ int_ รุ่นเก่าที่สวมเจ้าของทำได้จากเครื่องที่ไม่มีคนนั่ง
     [HttpDelete("{documentId:guid}/purge")]
+    [Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]
     public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId,
         [FromQuery] bool force = false, [FromQuery] string? reason = null)
     {

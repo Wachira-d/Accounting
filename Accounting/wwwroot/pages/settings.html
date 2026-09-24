@@ -52,6 +52,8 @@
       <div class="tab" onclick="Page.showTab('signature',this)">ลายเซ็นของฉัน</div>
       <div class="tab" onclick="Page.showTab('security',this)">🔐 ความปลอดภัยบัญชี</div>
     </div>
+    <!-- W-C7 (รอบ 193): server บอกก่อนให้กรอกว่าบันทึกได้ไหม (canEdit/editDeniedMessage) — เดิมผู้ใช้กรอกทั้งหน้าก่อนจึงรู้ว่าบันทึกไม่ได้ -->
+    <div id="settingsEditDenied" style="display:none;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;font-size:13px;color:#7f1d1d;margin:12px 0;line-height:1.7"></div>
 
     <!-- Setup Banner (shown on first setup) -->
     <div id="setupBanner" class="hidden" style="padding:16px 20px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
@@ -685,7 +687,8 @@
           <div id="etaxSenderMismatchWarning" style="display:none;padding:10px;background:#fee2e2;border-radius:6px;font-size:12px;color:#991b1b;margin-top:8px"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
             <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailEmbedXml" checked><label for="sEtaxByEmailEmbedXml">ฝัง XML ใน PDF/A-3 (สรรพากรกำหนด)</label></div>
-            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailAutoSend"><label for="sEtaxByEmailAutoSend">ส่งอัตโนมัติเมื่อ approve เอกสาร</label></div>
+            <!-- W-C6 (รอบ 193): ยังไม่มีงานส่ง e-Tax by Email อัตโนมัติตอนอนุมัติ (ส่งได้เฉพาะกดส่งเองจากเอกสาร) ⇒ ล็อก + ป้าย · ไม่ส่งค่าตอนบันทึก -->
+            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailAutoSend" disabled><label for="sEtaxByEmailAutoSend" style="color:#94a3b8">ส่งอัตโนมัติเมื่อ approve เอกสาร</label><span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span><div style="font-size:11px;color:#64748b;margin-top:2px">ตอนนี้ส่ง e-Tax by Email ได้จากปุ่ม "ส่งอีเมล" ของเอกสารแต่ละใบ</div></div>
           </div>
         </div>
 
@@ -1851,7 +1854,7 @@
           byEmailSenderEmail: document.getElementById('sEtaxByEmailSender').value || null,
           byEmailRdTimestampAddress: document.getElementById('sEtaxByEmailRdCc').value || null,
           byEmailEmbedXml: document.getElementById('sEtaxByEmailEmbedXml').checked,
-          byEmailAutoSendOnApprove: document.getElementById('sEtaxByEmailAutoSend').checked,
+          // byEmailAutoSendOnApprove ไม่ส่ง — ช่องถูกล็อกเพราะยังไม่มีผล (W-C6) · server: HasValue = ไม่ส่งคือคงเดิม
           serviceProvider: document.getElementById('sEtaxProvider').value
         };
         try { await api.updateEtaxConfig(data); } catch (e) { /* fallback to legacy */ }
@@ -2171,12 +2174,27 @@
           if (currentId && currentId !== '00000000-0000-0000-0000-000000000000') sel.value = currentId;
         } catch (e) { /* non-critical — dropdown เหลือแค่ตัวเลือก auto */ }
       },
+      /** canEdit มาจาก server (สิทธิ์ CompanySettings.Edit / คำขอจากคีย์) · undefined/null = ไม่ได้ตรวจ ⇒ ไม่ล็อก
+       *  (ไม่เดาแทน server) · false = บอกเหตุผล+ทางไปต่อ และปิดปุ่มบันทึกของฟอร์มหลัก */
+      applyEditPermission(s) {
+        const box = document.getElementById('settingsEditDenied');
+        if (!box) return;
+        const denied = s.canEdit === false;
+        box.style.display = denied ? '' : 'none';
+        box.textContent = denied ? ('🔒 ' + (s.editDeniedMessage || 'ไม่มีสิทธิ์บันทึกการตั้งค่าบริษัท')) : '';
+        document.querySelectorAll('button[onclick="Page.save()"]').forEach(b => {
+          b.disabled = denied;
+          b.title = denied ? (s.editDeniedMessage || '') : '';
+        });
+      },
+
       async loadSettings() {
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.getSettings();
           const s = res.data;
           if (!s) return;
+          this.applyEditPermission(s);
           // Logo
           if (s.logoUrl) {
             document.getElementById('logoPreview').innerHTML = `<img src="${s.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain">`;

@@ -17,7 +17,10 @@ property ค่าตั้งของ entity ที่อยู่ใน `ENTI
   * การ echo ออก response (ภายใน `new XxxResponse(…)`/`new XxxDto(…)`/`new XxxSummary(…)` · anonymous `new { … }` ·
     target-typed `new(…)` ของ mapper)
   * หน้าเว็บที่เป็น "หน้าแก้ค่านั้นเอง" (ช่องที่ 3 ของ `ENTITIES`) — hydrate ฟอร์มไม่ใช่การใช้ค่า
-ผู้อ่านที่นับ: C# `x.P` / `x?.P` / property pattern `is { P: … }` · JS `.p` (camelCase) ในหน้าที่ไม่ใช่หน้าแก้
+ผู้อ่านที่นับ: C# `x.P` / `x?.P` / property pattern `is { P: … }` · JS `.p` (camelCase) ในหน้าที่ไม่ใช่หน้าแก้ ·
+  object initializer ของชนิดที่ไม่ใช่ echo/entity (`new PricingInput { Mask = s.Mask }` = ส่งค่าเข้าตัวคำนวณ) ·
+  raw SQL ที่อ่านคอลัมน์ (`"SELECT \"P\" …"` · `WHERE "P" …`) · ตัวแปรชื่อคำขอ (`model`/`input`/…) ที่ประกาศเป็นชนิด entity
+  (ฝ่ายค้านรอบ 193 §3.1 — ฟ้องผิด 3 แบบนี้ถูกปิดแล้ว พร้อมกรณีใน --self-test)
 
   * baseline (`tools/settings_reader_baseline.txt`) = ของที่ไม่มีผู้อ่าน ณ วันเขียน · **ห้ามเพิ่มแถว** · ตัดออกเมื่อ
     ต่อสาย/ลบ — checker ล้มเมื่อมีตัว**ใหม่**ที่ไม่มีผู้อ่าน (ฟิลด์ค่าตั้งใหม่ที่ไม่ต่อสาย หรือถอดผู้อ่านตัวสุดท้าย) ·
@@ -58,7 +61,8 @@ ENTITIES = {
     'DocumentTemplate': ('Accounting/Models/Entities/DocumentTemplate.cs', None,
                          ['Accounting/wwwroot/pages/document-templates.html']),
     'TrialConfig': ('Accounting/Models/Entities/Subscription.cs', None, ['Accounting/wwwroot/admin/plans.html']),
-    'TaxRuleConfig': ('Accounting/Models/Entities/Payroll.cs', None, []),
+    # payroll.html = หน้าแก้ตารางภาษีเงินได้ (แท็บ tax-rule) — ช่องที่แสดงค่าแบบล็อกไว้ไม่ใช่ผู้อ่าน (ฝ่ายค้านรอบ 193 W-C6)
+    'TaxRuleConfig': ('Accounting/Models/Entities/Payroll.cs', None, ['Accounting/wwwroot/pages/payroll.html']),
 }
 
 # property ที่ไม่ใช่ "ค่าตั้ง" ของทุก entity (กุญแจ · audit · navigation)
@@ -236,20 +240,56 @@ def is_echo(text, pos):
 _RECV_RE = re.compile(r'(\w+)\s*\??\s*$')
 
 
+# ชื่อคลาส entity (ตั้งใน analyse) — ใช้แยก "ตัวแปรชื่อคำขอแต่ชนิด entity" และ "initializer ที่ clone entity"
+_ENTITY_NAMES = set()
+_NEW_TYPE_RE = re.compile(r'new\s+([\w.]+)\s*(?:<[^<>]*>)?\s*(?:\(\s*\))?\s*$')
+# raw SQL ที่ "อ่าน" คอลัมน์: ชื่อคอลัมน์ในเครื่องหมายคำพูด (\"P\" · ""P"" · "P" ใน raw string) โดยมีคำสั่งอ่านอยู่ก่อนหน้า
+_SQL_READ_KW = re.compile(r'\b(SELECT|WHERE|JOIN|RETURNING|ORDER\s+BY|GROUP\s+BY|CASE\s+WHEN)\b')  # ตัวใหญ่ = SQL ไม่ใช่ .Where(
+
+
+def _receiver_is_entity(text, recv):
+    """ตัวแปรชื่อคำขอ (`model`/`input`/…) ที่ประกาศในไฟล์เป็นชนิด entity = ของ entity ไม่ใช่ของคำขอ"""
+    for m in re.finditer(r'\b([A-Z]\w*)\??\s+' + recv + r'\b\s*[,)=;]', text):
+        if m.group(1) in _ENTITY_NAMES:
+            return True
+    return False
+
+
+def _initializer_target(text, pos):
+    """ถ้า pos อยู่ใน object initializer `new T { … }` คืนชื่อ T (ไม่ใช่ = None)"""
+    opener, before, _at = enclosing_opener(text, pos)
+    if opener != '{':
+        return None
+    m = _NEW_TYPE_RE.search(before.rstrip())
+    return m.group(1).split('.')[-1] if m else None
+
+
 def cs_reads(text, name):
     """ตำแหน่งที่อ่าน property `name` ในไฟล์ C# ที่ผ่านการตัดคอมเมนต์แล้ว (generator — ผู้เรียกหยุดที่ตัวแรกได้)"""
     for m in re.finditer(r'\.\s*' + name + r'\b(?!\s*(?:=(?![=>])|\+=|-=|\?\?=))(?!\s*\()', text):
         rm = _RECV_RE.search(text[max(0, m.start() - 40):m.start()])
-        if rm and rm.group(1) in REQUEST_RECEIVERS:
+        if rm and rm.group(1) in REQUEST_RECEIVERS and not _receiver_is_entity(text, rm.group(1)):
             continue
-        # คัดลอกผ่าน (`x.P = y.P` · `P = y.P` ใน initializer) — ค่าไหลจากคำขอ/entity หนึ่งไปอีกที่ ไม่ได้ถูกใช้ตัดสินอะไร
+        before = text[max(0, m.start() - 160):m.start()]
+        # คัดลอกผ่านแบบคำสั่ง (`x.P = y.P`) — ค่าไหลจากคำขอ/entity หนึ่งไปอีก entity ไม่ได้ถูกใช้ตัดสินอะไร
         # (`p.AutoConfirmOnDeposit = d.AutoConfirmOnDeposit` ใน LodgingService คือตัวเขียน ไม่ใช่ผู้อ่าน)
-        if re.search(r'\b' + name + r'\s*=(?![=>])\s*\(?\s*\w+\s*\??\s*$',
-                     text[max(0, m.start() - 160):m.start()]):
+        if re.search(r'\.\s*' + name + r'\s*=(?![=>])\s*\(?\s*\w+\s*\??\s*$', before):
             continue
+        # คัดลอกผ่านแบบ initializer (`P = y.P`) — ไม่นับเฉพาะเมื่อเป้าหมายเป็น entity (clone) · echo ให้ is_echo ตัดสิน ·
+        # ชนิดอื่น (input ของตัวคำนวณ) = ผู้อ่านจริง (ฝ่ายค้านรอบ 193: `new PricingInput { WeekendMask = s.WeekendMask }`)
+        if re.search(r'(?<![.\w])' + name + r'\s*=(?![=>])\s*\(?\s*\w+\s*\??\s*$', before):
+            target = _initializer_target(text, m.start())
+            if target is not None and target in _ENTITY_NAMES:
+                continue
         if is_echo(text, m.start()):
             continue
         yield m.start()
+    # raw SQL (`"SELECT \"P\" …"`) — มองไม่เห็นด้วยกฎ `.P` (ฝ่ายค้านรอบ 193)
+    for m in re.finditer(r'(?:\\"|"")?"?' + name + r'(?:\\"|"")"?|"' + name + r'"', text):
+        window = text[max(0, m.start() - 300):m.start()]
+        window = window[window.rfind(';') + 1:]            # เฉพาะคำสั่งเดียวกัน (UPDATE … SET "P" ถัดจาก SELECT ไม่นับ)
+        if _SQL_READ_KW.search(window):
+            yield m.start()
     # property pattern: `is { P: … }` / `is X { P: … }` / `, P: …` ภายใน pattern
     for m in re.finditer(r'\bis\s+(?:not\s+)?(?:[\w.]+\s*)?\{[^{}]*\b' + name + r'\s*:', text):
         yield m.start()
@@ -266,6 +306,8 @@ def analyse(root, cs=None, web=None):
         cs, web = load_corpus(root)
     unread = []
     entity_names = entity_class_names(root)
+    _ENTITY_NAMES.clear()
+    _ENTITY_NAMES.update(entity_names)
     for cls, (rel, only, editors) in ENTITIES.items():
         if not os.path.exists(os.path.join(root, rel)):
             continue
@@ -307,6 +349,11 @@ public class CompanySettings : TenantEntity
     public int TargetTypedBiz { get; set; }
     public int TargetTypedEcho { get; set; }
     public bool CopyOnly { get; set; }
+    public int InitIntoCalc { get; set; }
+    public int CloneOnly { get; set; }
+    public bool SqlRead { get; set; }
+    public bool SqlWriteOnly { get; set; }
+    public bool ModelEntityRead { get; set; }
     public Thing? Nav { get; set; }
     public ICollection<Thing> Things { get; set; } = new List<Thing>();
 }
@@ -330,6 +377,11 @@ SELF_TEST_SVC = '''class S {
     private static SettingsResponse MapIt(CompanySettings p) => new(
         p.TargetTypedEcho);
     void Copy(CompanySettings p, Other d) { p.CopyOnly = d.CopyOnly; }
+    PricingInput Calc(CompanySettings s) => new PricingInput { Mask = 1, InitIntoCalc = s.InitIntoCalc };
+    CompanySettings Clone(CompanySettings s) => new CompanySettings { CloneOnly = s.CloneOnly };
+    string Sql = "SELECT \\"SqlRead\\" FROM \\"CompanySettings\\" WHERE 1=1";
+    string Sql2 = "UPDATE \\"CompanySettings\\" SET \\"SqlWriteOnly\\" = true";
+    bool M(CompanySettings model) => model.ModelEntityRead;
     // s.EchoOnly ในคอมเมนต์ไม่นับ
 }
 '''
@@ -355,8 +407,10 @@ def self_test():
             got = analyse(td, cs, web)
             # TargetTypedBiz = อ่านจริง (ส่งเข้า target-typed new ของ input ธุรกิจ — บั๊กของ checker ที่เจอตอนเขียน:
             # LodgingProperty.WeekendDaysMask ถูกฟ้องผิด) · Nav = navigation ไม่ใช่ค่าตั้ง
-            want = ['CompanySettings.CopyOnly', 'CompanySettings.EchoOnly', 'CompanySettings.RequestOnly',
-                    'CompanySettings.TargetTypedEcho']
+            # ฝ่ายค้านรอบ 193 §3.1: InitIntoCalc (initializer ของ input) · SqlRead (raw SQL) · ModelEntityRead
+            # (ตัวแปรชื่อ model ชนิด entity) = ผู้อ่านจริง · CloneOnly (initializer ของ entity) · SqlWriteOnly (UPDATE) = ไม่ใช่
+            want = ['CompanySettings.CloneOnly', 'CompanySettings.CopyOnly', 'CompanySettings.EchoOnly',
+                    'CompanySettings.RequestOnly', 'CompanySettings.SqlWriteOnly', 'CompanySettings.TargetTypedEcho']
             if got != want:
                 print(f'❌ self-test: คาด {want} ได้ {got}')
                 ok = False

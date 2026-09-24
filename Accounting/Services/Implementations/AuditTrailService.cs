@@ -97,30 +97,22 @@ public class AuditTrailService : IAuditTrailService
         return logs.Select(MapToResponse).ToList();
     }
 
-    /// <summary>Re-compute RowHash ของแต่ละ row เรียงตาม Timestamp + เทียบกับ
+    /// <summary>Re-compute RowHash ของแต่ละ row เรียงตาม Id + เทียบกับ
     /// stored hash. ถ้ามี mismatch = chain ถูก tamper (แก้/แทรก/ลบหลัง insert).
-    /// algorithm ตรงกับ AccountingDbContext.HashChain insert path: SHA-256 ของ
-    /// "Timestamp|UserId|UserEmail|Action|EntityType|EntityId|NewValues|PrevHash"</summary>
+    /// สูตรอยู่ที่ <c>Helpers/AuditHashChain</c> ตัวเดียว (v2 = round-trip ผ่าน PostgreSQL ได้ · v1 ตรวจแบบ legacy)</summary>
     public async Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId)
     {
+        // เรียงตาม Id = ลำดับเดียวกับที่ฝั่งเขียนหา hash ก่อนหน้า (เดิมเรียง Timestamp ก่อน — เวลาข้ามเครื่องไม่ตรงกัน
+        // ⇒ ลำดับไม่ตรงลำดับเขียน ⇒ ฟ้องว่าถูกแก้ทั้งที่ไม่มีใครแตะ)
         var rows = await _db.AuditLogs.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.RowHash != null)
-            .OrderBy(a => a.Timestamp).ThenBy(a => a.Id)
+            .OrderBy(a => a.Id)
             .ToListAsync();
-        string? prev = null;
-        for (int i = 0; i < rows.Count; i++)
-        {
-            var r = rows[i];
-            if (r.PrevHash != prev)
-                return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
-            // ใช้ฟังก์ชันกลางตัวเดียวกับฝั่งเขียน (Helpers/AuditHashChain) —
-            // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจ
-            // ไม่มีวันผ่าน (ดู comment ใน AuditHashChain)
-            var expected = Accounting.Helpers.AuditHashChain.ComputeRowHash(r);
-            if (!string.Equals(expected, r.RowHash, StringComparison.OrdinalIgnoreCase))
-                return new AuditChainVerifyResult(rows.Count, i, r.Id.ToString(), r.Timestamp, false);
-            prev = r.RowHash;
-        }
+        // ใช้ฟังก์ชันกลางตัวเดียวกับฝั่งเขียน (Helpers/AuditHashChain — v2 + ตรวจแถว v1 แบบ legacy) —
+        // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจไม่มีวันผ่าน
+        var broken = Accounting.Helpers.AuditHashChain.FirstBrokenIndex(rows);
+        if (broken >= 0)
+            return new AuditChainVerifyResult(rows.Count, broken, rows[broken].Id.ToString(), rows[broken].Timestamp, false);
         return new AuditChainVerifyResult(rows.Count, -1, null, null, true);
     }
 

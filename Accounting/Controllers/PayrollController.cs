@@ -858,11 +858,14 @@ public class PayrollController : ControllerBase
         decimal ChildAllowance,
         decimal ChildAllowancePost2561,
         decimal ParentAllowance,
-        decimal Section42TwiCap,
+        // null = ไม่แก้ (คงค่าเดิม · แถวใหม่ = ค่าตามกฎหมาย) — ฝ่ายค้านรอบ 193 W-C6: หน้า payroll ไม่มีช่องของสามค่านี้แต่
+        // เคยส่งตัวเลขตายตัว (100,000 / 25,000 / 100,000) ทุกครั้งที่กดบันทึกแถว ⇒ ค่าที่ตั้งผ่าน API ถูกทับเงียบ ๆ ·
+        // HealthInsuranceCap/MortgageInterestCap ยังไม่มีผู้อ่าน (ตัวคำนวณ ภ.ง.ด.1 ไม่หักสองรายการนี้ — S-16)
+        decimal? Section42TwiCap,
         decimal LifeInsuranceCap,
-        decimal HealthInsuranceCap,
+        decimal? HealthInsuranceCap,
         decimal PvdCap,
-        decimal MortgageInterestCap,
+        decimal? MortgageInterestCap,
         decimal DonationCapPercent,
         string? Notes);
 
@@ -910,6 +913,7 @@ public class PayrollController : ControllerBase
     }
 
     [HttpPut("tax-rule-config")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่ากฎภาษีเงินได้")]
     public async Task<ActionResult<ApiResponse<object>>> UpsertTaxRuleConfig(
         Guid companyId, [FromBody] TaxRuleConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
@@ -935,11 +939,11 @@ public class PayrollController : ControllerBase
         existing.ChildAllowance = req.ChildAllowance;
         existing.ChildAllowancePost2561 = req.ChildAllowancePost2561;
         existing.ParentAllowance = req.ParentAllowance;
-        existing.Section42TwiCap = req.Section42TwiCap;
+        if (req.Section42TwiCap.HasValue) existing.Section42TwiCap = req.Section42TwiCap.Value;
         existing.LifeInsuranceCap = req.LifeInsuranceCap;
-        existing.HealthInsuranceCap = req.HealthInsuranceCap;
+        if (req.HealthInsuranceCap.HasValue) existing.HealthInsuranceCap = req.HealthInsuranceCap.Value;
         existing.PvdCap = req.PvdCap;
-        existing.MortgageInterestCap = req.MortgageInterestCap;
+        if (req.MortgageInterestCap.HasValue) existing.MortgageInterestCap = req.MortgageInterestCap.Value;
         existing.DonationCapPercent = req.DonationCapPercent;
         existing.Notes = req.Notes;
         existing.UpdatedAt = DateTime.UtcNow;
@@ -949,6 +953,7 @@ public class PayrollController : ControllerBase
     }
 
     [HttpDelete("tax-rule-config/{year:int}")]
+    [Accounting.Filters.RejectApiKey("ลบกฎภาษีเงินได้")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteTaxRuleConfig(
         Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db)
     {

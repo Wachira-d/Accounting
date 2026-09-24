@@ -898,6 +898,8 @@ const Page = {
         <th style="padding:8px 10px;text-align:right">บุตรคนที่2+ (พ.ศ.2561+)</th>
         <th style="padding:8px 10px;text-align:right">บิดามารดา</th>
         <th style="padding:8px 10px;text-align:right">ประกันชีวิต</th>
+        <th style="padding:8px 10px;text-align:right;color:#94a3b8">ประกันสุขภาพ<span title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ: ตัวคำนวณภาษีหัก ณ ที่จ่ายเงินเดือน (ภ.ง.ด.1) ยังไม่หักรายการนี้" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 4px;font-size:10px;font-weight:600;margin-left:4px">ยังไม่รองรับ</span></th>
+        <th style="padding:8px 10px;text-align:right;color:#94a3b8">ดอกเบี้ยที่อยู่อาศัย<span title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ: ตัวคำนวณภาษีหัก ณ ที่จ่ายเงินเดือน (ภ.ง.ด.1) ยังไม่หักรายการนี้" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 4px;font-size:10px;font-weight:600;margin-left:4px">ยังไม่รองรับ</span></th>
         <th style="padding:8px 10px;text-align:right">PVD รวม</th>
         <th style="padding:8px 10px;text-align:right">บริจาค%</th>
         <th style="padding:8px 10px;text-align:center">สถานะ</th>
@@ -911,6 +913,9 @@ const Page = {
         <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="childAllowancePost2561" value="${r.childAllowancePost2561}" style="width:90px"></td>
         <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="parentAllowance" value="${r.parentAllowance}" style="width:80px"></td>
         <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="lifeInsuranceCap" value="${r.lifeInsuranceCap}" style="width:90px"></td>
+        <!-- W-C6 (รอบ 193): สองช่องนี้ยังไม่มีผล (ตัวคำนวณ ภ.ง.ด.1 ไม่หัก) ⇒ แสดงค่า + ล็อก · ไม่ส่งตอนบันทึก (ค่าเดิมคงอยู่) -->
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" value="${Number(r.healthInsuranceCap) || 0}" style="width:90px" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ"></td>
+        <td style="padding:4px 8px"><input type="number" class="form-input text-right" value="${Number(r.mortgageInterestCap) || 0}" style="width:90px" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ"></td>
         <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="pvdCap" value="${r.pvdCap}" style="width:100px"></td>
         <td style="padding:4px 8px"><input type="number" class="form-input text-right" data-f="donationCapPercent" value="${r.donationCapPercent}" step="0.1" style="width:60px"></td>
         <td style="padding:6px 10px;text-align:center"><span class="pill pill-${r.isOverride ? 'warning' : 'info'}">${r.isOverride ? 'Override' : 'Default'}</span></td>
@@ -935,11 +940,9 @@ const Page = {
       childAllowance: get('childAllowance'),
       childAllowancePost2561: get('childAllowancePost2561'),
       parentAllowance: get('parentAllowance'),
-      section42TwiCap: 100000,
+      // section42TwiCap / healthInsuranceCap / mortgageInterestCap ไม่ส่ง = คงค่าเดิม (W-C6) — เดิมส่งตัวเลขตายตัวทับทุกครั้ง
       lifeInsuranceCap: get('lifeInsuranceCap'),
-      healthInsuranceCap: 25000,
       pvdCap: get('pvdCap'),
-      mortgageInterestCap: 100000,
       donationCapPercent: get('donationCapPercent'),
       notes: null,
     };

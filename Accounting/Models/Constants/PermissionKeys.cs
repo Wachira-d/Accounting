@@ -292,4 +292,14 @@ public static class PermissionKeys
     /// was meant for permission gating, not menu access). Used so the
     /// permission lookup ignores legacy menu rows in the same table.</summary>
     public static bool IsPermissionKey(string? key) => key != null && key.StartsWith(P);
+
+    /// <summary>ชื่อไทยของสิทธิ์จาก <see cref="Catalog"/> (ไม่พบ = ชื่อคีย์ไม่มี prefix)</summary>
+    public static string LabelOf(string key)
+        => Catalog.FirstOrDefault(m => m.Key == key)?.LabelTh ?? key.Replace(P, "");
+
+    /// <summary>ข้อความ 403 ตัวเดียวของด่านสิทธิ์ — บอกว่าขาดสิทธิ์อะไร และ<b>ขอจากใคร ที่ไหน</b> (ฝ่ายค้านรอบ 193 W-C7 ·
+    /// F2 ข้อ 8 "ทางไปต่อของผู้ใช้") · ใช้ทั้ง <c>RequirePermissionAttribute</c> และหน้าตั้งค่าที่ตรวจสิทธิ์ก่อนให้กรอก</summary>
+    public static string DeniedMessage(string key)
+        => $"ไม่มีสิทธิ์ \u201c{LabelOf(key)}\u201d ({key.Replace(P, "")}) — ขอให้เจ้าของบริษัทเปิดสิทธิ์นี้ให้บทบาทของคุณ"
+           + " ที่หน้า \u201cบทบาทและสิทธิ์\u201d (/pages/roles.html)";
 }

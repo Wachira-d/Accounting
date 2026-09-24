@@ -62,6 +62,23 @@ public class SubscriptionController : ControllerBase
         return isMember ? null : NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
     }
 
+    /// <summary>**ด่านเจ้าของของการเงิน subscription** (ฝ่ายค้านรอบ 193 W-C3) — ยกเลิก/เปลี่ยนแพ็กเกจ/แปลง trial/ขยาย trial
+    /// เดิมมีแค่ <c>[Authorize]</c> ⇒ พนักงานบทบาท "ดูอย่างเดียว" หรือคีย์ใดก็ได้ยกเลิก subscription ของบริษัทได้ ·
+    /// คีย์ถูกปฏิเสธด้วย <c>OwnerActionGuard</c> ตัวเดียว · ผู้ดูแลแพลตฟอร์มผ่าน · ปฏิเสธเป็น 403 + ข้อความไทย (ไม่ใช่ 401 ที่พาไปหน้า login)</summary>
+    private async Task<ActionResult?> RequireOwnerAsync(Guid companyId, string verb)
+    {
+        if (OwnerActionGuard.DenyResult(HttpContext, verb) is { } key) return key;
+        if (User.IsInRole("SystemAdmin")) return null;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var role = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => (Models.Enums.UserRole?)cu.Role)
+            .FirstOrDefaultAsync();
+        if (role is Models.Enums.UserRole.Owner or Models.Enums.UserRole.SystemAdmin) return null;
+        return StatusCode(403, new ApiResponse<object>(false, new { requiredRole = "Owner" },
+            $"ไม่มีสิทธิ์{verb} — เรื่องแพ็กเกจและการชำระค่าบริการทำได้เฉพาะเจ้าของบริษัท กรุณาติดต่อเจ้าของบริษัท"));
+    }
+
     private async Task<ActionResult?> DenyForeignPaymentAsync(Guid paymentId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -114,6 +131,7 @@ public class SubscriptionController : ControllerBase
     [HttpPost("{companyId:guid}/trial/extend")]
     public async Task<ActionResult<ApiResponse<TrialStatusResponse>>> ExtendTrial(Guid companyId, [FromBody] ExtendTrialRequest request)
     {
+        if (await RequireOwnerAsync(companyId, "ขยายเวลาทดลองใช้") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ExtendTrialAsync(companyId, request, userId);
         return Ok(new ApiResponse<TrialStatusResponse>(true, result, "ขยายเวลาทดลองใช้สำเร็จ"));
@@ -137,6 +155,7 @@ public class SubscriptionController : ControllerBase
     [HttpPost("{companyId:guid}/convert")]
     public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
     {
+        if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ConvertTrialAsync(companyId, request, userId);
         return Ok(new ApiResponse<SubscriptionResponse>(true, result, "อัพเกรดสำเร็จ"));
@@ -148,6 +167,7 @@ public class SubscriptionController : ControllerBase
     [HttpPut("{companyId:guid}/plan")]
     public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
     {
+        if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ChangeSubscriptionAsync(companyId, request, userId);
         return Ok(new ApiResponse<SubscriptionResponse>(true, result, "เปลี่ยน plan สำเร็จ"));
@@ -159,6 +179,7 @@ public class SubscriptionController : ControllerBase
     [HttpPost("{companyId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<string>>> Cancel(Guid companyId)
     {
+        if (await RequireOwnerAsync(companyId, "ยกเลิก subscription") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _subscriptionService.CancelSubscriptionAsync(companyId, userId);
         return Ok(new ApiResponse<string>(true, null, "ยกเลิก subscription สำเร็จ"));
