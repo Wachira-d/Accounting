@@ -850,9 +850,11 @@ public partial class PdfGenerationService
                 // ส่วนลดท้ายบิลแสดงเป็นแถวเดียวในสรุปท้ายบิล
                 // (เฉพาะ path ที่พิมพ์จาก line.Amount — โหมด PricesIncludeVat คิดจาก
                 //  qty×price ซึ่งเป็นยอดก่อนหักท้ายบิลอยู่แล้ว ห้าม scale ซ้ำ)
-                if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m
+                // (รอบ 193 R3-1: ส่วนหักท้ายบิล = ส่วนลดการค้า + ฐานมัดจำออกใบกำกับแล้ว — ตัวรวมเดียวกับ HTML renderer)
+                var billDeductLine = Accounting.Helpers.DepositPolicyResolver.BillDeductionTotal(doc.BillDiscountAmount, doc.DepositBaseDeducted);
+                if (billDeductLine > 0 && doc.SubTotal > 0.005m
                     && !IsDeferredVatDeposit(doc) && !doc.PricesIncludeVat)
-                    printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
+                    printedAmount = Math.Round(printedAmount * (doc.SubTotal + billDeductLine) / doc.SubTotal, 2, MidpointRounding.AwayFromZero);
                 // รายการย่อย/บรรยายงาน (ไม่ระบุราคา): ราคา 0 + ยอด 0 → เว้นช่อง
                 // ตัวเลขว่างแทน "0.00" — ใช้แจกแจงงานย่อยใต้บรรทัดแม่ที่ถือราคา
                 // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
@@ -907,21 +909,25 @@ public partial class PdfGenerationService
             }
             var hideVatBreakdown = IsDeferredVatDeposit(doc);
             // ส่วนลดท้ายบิล: SubTotal = หลังหักท้ายบิล → โชว์ยอดก่อนหัก + บรรทัดส่วนลด
-            var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+            var billDeductTotal = Accounting.Helpers.DepositPolicyResolver.BillDeductionTotal(doc.BillDiscountAmount, doc.DepositBaseDeducted);
+            var preBillSubTotal = doc.SubTotal + billDeductTotal;
             // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ ก่อน "รวมเงิน" (คู่กับ HTML renderer ใน PdfGenerationService)
             if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
                 Row(L.TotalRounding, doc.RoundingAdjustment.ToString("+#,##0.00;-#,##0.00"));
             if (t.ShowSubTotal && !hideVatBreakdown) Row(L.TotalSubtotal, preBillSubTotal.ToString("N2"));
             if (t.ShowDiscountTotal && doc.DiscountAmount > 0)
                 Row(L.TotalDiscount, doc.DiscountAmount.ToString("N2"));
-            if (doc.BillDiscountAmount > 0)
+            if (billDeductTotal > 0)
             {
-                // มัดจำที่ออกใบกำกับแล้ว (รอบ 193 #34) — ตัวตัดสินเดียวกับ HTML renderer (ห้าม drift)
-                Row(Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(
-                        doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
-                        ? $"{L.TotalDepositTaxInvoiced} {doc.DepositAppliedRef}"
-                        : L.TotalBillDiscount,
-                    $"({doc.BillDiscountAmount:N2})");
+                // รอบ 193 ฝ่ายค้านรอบสาม R3-1: สองแถวแยก — ส่วนลดการค้า / หักมูลค่ามัดจำที่ออกใบกำกับแล้ว
+                // ตัวตัดสินเดียวกับ HTML renderer (ห้าม drift)
+                if (doc.BillDiscountAmount > 0)
+                    Row(L.TotalBillDiscount, $"({doc.BillDiscountAmount:N2})");
+                if (doc.DepositBaseDeducted > 0)
+                    Row(Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeducted(doc.DepositBaseDeducted, doc.DepositAppliedRef)
+                            ? $"{L.TotalDepositTaxInvoiced} {doc.DepositAppliedRef}"
+                            : L.TotalDepositTaxInvoiced,
+                        $"({doc.DepositBaseDeducted:N2})");
                 // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
                 // (ลำดับถูกหลักบัญชี: รวม → หักส่วนลด → ฐานภาษี → VAT → WHT → สุทธิ)
                 if (!hideVatBreakdown)

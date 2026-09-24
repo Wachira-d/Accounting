@@ -252,7 +252,7 @@ public class LodgingDepositSettlementTests
     {
         var lines = Stay(finalGross);
         var full = DocumentService.PreviewTotals(lines, true, 0m);
-        return LodgingDepositSettlement.PlanCheckout(deposits, full.Net, d => DocumentService.PreviewTotals(lines, true, d).Total);
+        return LodgingDepositSettlement.PlanCheckout(deposits, full.Net, d => DocumentService.PreviewTotals(lines, true, 0m, d).Total);
     }
 
     [Fact]
@@ -262,7 +262,7 @@ public class LodgingDepositSettlementTests
         var plan = PlanFor(5000m, paidFull);
         // ฐานใบสุดท้าย 5,000 = 4,672.90 → หักได้เท่านั้น (เดิม Realize เต็ม 6,962.62 = รายได้เกิน 2,289.72)
         Assert.Equal(4672.90m, plan.BaseDeducted);
-        Assert.Equal(0m, DocumentService.PreviewTotals(Stay(5000m), true, plan.BaseDeducted).Total);
+        Assert.Equal(0m, DocumentService.PreviewTotals(Stay(5000m), true, 0m, plan.BaseDeducted).Total);
         var ex = Assert.Single(plan.Excess);
         Assert.Equal(2450m, ex.Gross);   // แขกจ่ายเกิน 2,450 ⇒ ค้างคืน (เดิมไม่มียอดค้างคืน)
         Assert.Empty(plan.Apply);
@@ -312,7 +312,9 @@ public class LodgingDepositSettlementTests
     public void เครื่องคำนวณจริง_7450หักฐานมัดจำ2000_ได้5450_VAT356_54()
     {
         var plan = PlanFor(7450m, Deposit2000());
-        var t = DocumentService.PreviewTotals(Stay(7450m), true, plan.BaseDeducted);
+        var t = DocumentService.PreviewTotals(Stay(7450m), true, 0m, plan.BaseDeducted);
+        Assert.Equal(1869.16m, t.DepositBase);   // R3-1: ลงช่องฐานมัดจำ ไม่ใช่ส่วนลดการค้า
+        Assert.Equal(0m, t.TradeDiscount);
         Assert.Equal(5093.46m, t.Net);
         Assert.Equal(356.54m, t.Vat);
         Assert.Equal(5450m, t.Total);
@@ -325,7 +327,7 @@ public class LodgingDepositSettlementTests
         var (depBase, depVat) = LodgingDepositSettlement.SplitInclusive(59.85m, 7m);   // 55.93 / 3.92
         var d = new LodgingDepositSnapshot(Guid.NewGuid(), "TIV-5", Guest, depBase, depVat, 59.85m, false, 0m, 0m);
         var plan = PlanFor(1000m, d);
-        var t = DocumentService.PreviewTotals(Stay(1000m), true, plan.BaseDeducted);
+        var t = DocumentService.PreviewTotals(Stay(1000m), true, 0m, plan.BaseDeducted);
         Assert.Equal(940.16m, t.Total);                                            // คู่ยอดที่ฝ่ายค้านยกมา
         Assert.Equal(0.01m, LodgingDepositSettlement.RoundingDelta(1000m, plan.GrossDeducted, t.Total));
         Assert.Equal(934.58m, depBase + t.Net);                                    // ฐานรวม = ฐานของ 1,000 พอดี

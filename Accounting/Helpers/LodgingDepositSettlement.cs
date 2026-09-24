@@ -32,7 +32,7 @@ public sealed record LodgingCheckoutDepositPlan(
     IReadOnlyList<PendingVatDepositApply> Apply,
     IReadOnlyList<LodgingDepositExcess> Excess)
 {
-    /// <summary>ฐานภาษีที่หักออกจากใบสุดท้าย (= <c>BillDiscountAmount</c>)</summary>
+    /// <summary>ฐานภาษีที่หักออกจากใบสุดท้าย (= <c>Document.DepositBaseDeducted</c> — ช่องแยกจากส่วนลดการค้า · R3-1)</summary>
     public decimal BaseDeducted => Deduct.Sum(x => x.Base);
     public decimal VatDeducted => Deduct.Sum(x => x.Vat);
     public decimal GrossDeducted => Deduct.Sum(x => x.Gross);

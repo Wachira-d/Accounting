@@ -9675,12 +9675,15 @@
             </div>
             <div id="docFulfillment_${d.id}" style="margin-top:14px"></div>
             <div style="margin-top:16px;text-align:right;padding:16px;background:var(--gray-50);border-radius:8px">
+              ${(Number(d.billDiscountAmount || 0) > 0 || Number(d.depositBaseDeducted || 0) > 0) ? `
+              <div class="text-sm">ยอดรวมก่อนส่วนลดท้ายบิล: <strong>${Layout.money(Number(d.subTotal) + Number(d.billDiscountAmount || 0) + Number(d.depositBaseDeducted || 0))}</strong></div>` : ''}
               ${Number(d.billDiscountAmount || 0) > 0 ? `
-              <div class="text-sm">ยอดรวมก่อนส่วนลดท้ายบิล: <strong>${Layout.money(Number(d.subTotal) + Number(d.billDiscountAmount))}</strong></div>
               <div class="text-sm">ส่วนลดท้ายบิล${Number(d.billDiscountPercent || 0) > 0 ? ` (${d.billDiscountPercent}%)` : ''}: <strong>-${Layout.money(d.billDiscountAmount)}</strong></div>` : ''}
+              ${Number(d.depositBaseDeducted || 0) > 0 ? `
+              <div class="text-sm" title="ฐาน (ก่อน VAT) ของมัดจำที่ออกใบกำกับภาษีไปแล้ว — ระบบรับรู้มัดจำเป็นรายได้ให้เองตอนอนุมัติ">หักมูลค่ามัดจำตามใบกำกับภาษี ${this.escapeHtml(d.depositAppliedRef || '')}: <strong>-${Layout.money(d.depositBaseDeducted)}</strong></div>` : ''}
               ${Number(d.roundingAdjustment || 0) !== 0 ? `
               <div class="text-sm" title="เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย กับยอดบนกระดาษ — ลงบัญชี 54960">ผลต่างจากการปัดเศษ: <strong>${Number(d.roundingAdjustment) > 0 ? '+' : '-'}${Layout.money(Math.abs(Number(d.roundingAdjustment)))}</strong></div>` : ''}
-              <div class="text-sm">ยอดรวมก่อน VAT${Number(d.billDiscountAmount || 0) > 0 ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
+              <div class="text-sm">ยอดรวมก่อน VAT${(Number(d.billDiscountAmount || 0) > 0 || Number(d.depositBaseDeducted || 0) > 0) ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `
               <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>` : ''}

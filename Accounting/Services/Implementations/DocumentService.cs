@@ -627,11 +627,13 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>ยอดของเอกสาร (ฐาน · VAT · รวม) <b>ด้วยสูตรเดียวกับ CreateDocumentAsync</b> (ส่วนลดท้ายบิล →
     /// ComputeLineAmounts → ReconcileTaxRounding) โดยไม่สร้างเอกสาร — ให้ผู้เรียกวางแผนก่อนออกเลขใบ
-    /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น</summary>
-    internal static (decimal Net, decimal Vat, decimal Total) PreviewTotals(
-        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount)
+    /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น
+    /// <para>รอบ 193 ฝ่ายค้านรอบสาม R3-1: รับส่วนลดการค้า (<paramref name="billDiscountAmount"/>) กับฐานมัดจำออกใบกำกับแล้ว
+    /// (<paramref name="depositBaseDeducted"/>) แยกกัน แล้วคืนสองช่องที่จะถูกบันทึก — ตัวเดียวกับ <see cref="AllocateBillDeductions"/></para></summary>
+    internal static (decimal Net, decimal Vat, decimal Total, decimal TradeDiscount, decimal DepositBase) PreviewTotals(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount, decimal depositBaseDeducted = 0m)
     {
-        var alloc = AllocateBillDiscount(lines, pricesIncludeVat, 0m, billDiscountAmount);
+        var (alloc, trade, depositBase) = AllocateBillDeductions(lines, pricesIncludeVat, 0m, billDiscountAmount, depositBaseDeducted);
         var amts = new LineAmounts[lines.Count];
         for (int i = 0; i < lines.Count; i++)
             amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
@@ -639,7 +641,28 @@ public partial class DocumentService : IDocumentService
         var net = amts.Sum(a => a.NetAmount);
         var vat = amts.Sum(a => a.VatAmount);
         var wht = amts.Sum(a => a.WhtAmount);
-        return (net, vat, net + vat - wht);
+        return (net, vat, net + vat - wht, trade, depositBase);
+    }
+
+    /// <summary>ส่วนหักท้ายบิลทั้งหมด = ส่วนลดการค้า + ฐานมัดจำออกใบกำกับแล้ว — ลดฐานภาษีเหมือนกันจึงเฉลี่ยลงบรรทัดครั้งเดียว
+    /// แล้วแยกกลับเป็นสองช่องที่บันทึก (<c>BillDiscountAmount</c> · <c>DepositBaseDeducted</c>) · ตัวเดียวของสร้าง/แก้/พรีวิว
+    /// (รอบ 193 ฝ่ายค้านรอบสาม R3-1 — เดิมรวมในช่องเดียว ⇒ ตอนอนุมัติรับรู้ส่วนลดการค้าเป็นมัดจำ) · เกินยอดขาย ⇒ ล้มดัง</summary>
+    internal static (decimal[] Alloc, decimal TradeDiscount, decimal DepositBase) AllocateBillDeductions(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billPercent, decimal tradeAmount, decimal depositBase)
+    {
+        depositBase = Math.Round(Math.Max(0m, depositBase), 2, MidpointRounding.AwayFromZero);
+        if (depositBase > 0m && billPercent > 0m)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DepositPolicyResolver.PercentWithTaxedDepositMessage,
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        var alloc = AllocateBillDiscount(lines, pricesIncludeVat, billPercent, tradeAmount + depositBase);
+        var split = Accounting.Helpers.DepositPolicyResolver.SplitBillDeduction(alloc.Sum(), tradeAmount, depositBase);
+        if (!split.Ok)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ส่วนลดท้ายบิล {tradeAmount:N2} + ฐานมัดจำที่หัก {depositBase:N2} เกินยอดขายก่อน VAT ของใบนี้ — "
+                + "ลดส่วนลดท้ายบิล หรือหักมัดจำให้น้อยลง (มัดจำส่วนที่เหลือคืนลูกค้า/ใช้กับใบถัดไป)",
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        return (alloc, split.TradeDiscount, split.DepositBase);
     }
 
     /// <summary>เฉลี่ยส่วนลด "ท้ายบิล" (จากยอดรวม) ลงแต่ละบรรทัดแบบ pro-rata ตาม
@@ -1049,14 +1072,20 @@ public partial class DocumentService : IDocumentService
 
             // รอบ 193 ฝ่ายค้านรอบสอง N1 — หักมัดจำที่ออกใบกำกับแล้ว (ติ๊ก "ขายเงินสดใบเดียว" ในฟอร์ม) ⇒ แปลงเป็น
             // "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี" ทันทีที่บันทึก (ใบร่างแสดงยอดสุทธิ + VAT ส่วนคงเหลือให้เห็นก่อนอนุมัติ)
+            // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำลงช่องของตัวเอง (DepositBaseDeducted) — ส่วนลดการค้าที่ผู้ใช้กรอกคงอยู่ใน BillDiscountAmount
             if (await ConvertTaxedDrivesAsync(companyId, request.DepositAppliedDrivesJournal ?? false, request.DepositAppliedAmount ?? 0m,
-                    request.DepositAppliedRef, request.BillDiscountAmount, request.BillDiscountPercent) is { } convCreate)
+                    request.DepositAppliedRef, request.BillDiscountPercent) is { } convCreate)
                 request = request with
                 {
-                    BillDiscountAmount = convCreate.BillDiscount,
-                    DepositAppliedDrivesJournal = convCreate.Drives,
-                    DepositAppliedAmount = convCreate.Applied,
+                    DepositBaseDeducted = convCreate.DepositBase,
+                    DepositAppliedDrivesJournal = false,
+                    DepositAppliedAmount = 0m,
                 };
+            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(request.DepositBaseDeducted ?? 0m,
+                    request.DepositAppliedRef, request.DepositAppliedAmount ?? 0m, request.DepositAppliedDrivesJournal ?? false,
+                    request.BillDiscountPercent ?? 0m) is { } depDeductProblem)
+                throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
+                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
 
             // P0-1 รอบ 193: ธง "หักมัดจำแบบขับ JE" บนชนิดที่ AutoPost ไม่อ่าน = silent no-op (ลูกหนี้เต็ม · มัดจำค้าง)
             if ((request.DepositAppliedDrivesJournal ?? false)
@@ -1426,8 +1455,8 @@ public partial class DocumentService : IDocumentService
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
             var createLines = request.Lines ?? [];
-            var billAlloc = AllocateBillDiscount(createLines, request.PricesIncludeVat,
-                request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m);
+            var (billAlloc, createTradeDiscount, createDepositBase) = AllocateBillDeductions(createLines, request.PricesIncludeVat,
+                request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m, request.DepositBaseDeducted ?? 0m);
             // คิดยอดครบทุกบรรทัดก่อน แล้วกระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — ให้
             // ΣVAT/WHT ตรงกับการคิดจากฐานรวม (เครื่องคิดเลข) ก่อนค่อยเขียนบรรทัด
             var createAmts = new LineAmounts[createLines.Count];
@@ -1513,7 +1542,8 @@ public partial class DocumentService : IDocumentService
             // subTotal เป็น "หลังหักท้ายบิลแล้ว" (= Σ line.Amount คงตัว invariant) →
             // PDF แสดง "รวมก่อนหักท้ายบิล" = SubTotal + BillDiscountAmount
             doc.BillDiscountPercent = request.BillDiscountPercent ?? 0m;
-            doc.BillDiscountAmount = billAlloc.Sum();
+            doc.BillDiscountAmount = createTradeDiscount;
+            doc.DepositBaseDeducted = createDepositBase;   // R3-1: ยอดก่อนหักท้ายบิล = SubTotal + BillDiscountAmount + DepositBaseDeducted
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
@@ -2147,25 +2177,6 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        // รอบ 193 ฝ่ายค้านรอบสอง N1 — ด่านเดียวกับตอนสร้าง: หักมัดจำที่ออกใบกำกับแล้วแบบขับ JE ⇒ แปลงเป็นหักฐาน
-        if (await ConvertTaxedDrivesAsync(companyId,
-                request.DepositAppliedDrivesJournal ?? doc.DepositAppliedDrivesJournal,
-                request.DepositAppliedAmount ?? doc.DepositAppliedAmount,
-                request.DepositAppliedRef ?? doc.DepositAppliedRef,
-                request.BillDiscountAmount ?? doc.BillDiscountAmount,
-                request.BillDiscountPercent ?? doc.BillDiscountPercent) is { } convUpdate)
-            request = request with
-            {
-                BillDiscountAmount = convUpdate.BillDiscount,
-                BillDiscountPercent = 0m,
-                DepositAppliedDrivesJournal = convUpdate.Drives,
-                DepositAppliedAmount = convUpdate.Applied,
-                // บรรทัดต้องคิดใหม่ด้วยส่วนหักท้ายบิลใหม่ — ฟอร์มส่งบรรทัดมาทุกครั้ง · ผู้เรียกที่ไม่ส่ง = ล้มดังพร้อมทางไปต่อ
-                Lines = request.Lines ?? throw new Accounting.Helpers.BusinessRuleException(
-                    "หักมัดจำที่ออกใบกำกับแล้วต้องคิดยอดบรรทัดใหม่ — ส่งรายการบรรทัดมาพร้อมการแก้ (บันทึกจากฟอร์มเอกสาร)",
-                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode),
-            };
-
         // ── Document revision: เอกสาร operational ที่อนุมัติ/ส่งแล้ว "แก้ได้" ──
         // เกณฑ์เดียว: เอกสารที่ **ไม่มี JE / ไม่ขยับสต๊อก / ไม่เข้ารายงานภาษี**
         // แก้หลังอนุมัติได้โดยไม่กระทบบัญชี ตามธรรมเนียมการค้า (เลขที่คงเดิม +
@@ -2182,6 +2193,40 @@ public partial class DocumentService : IDocumentService
                 RevisableTypes.Contains(doc.DocumentType)
                     ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ ร่าง/ถูกตีกลับ หรือออก Rev ใหม่จาก Approved/Sent)"
                     : "แก้ไขได้เฉพาะเอกสารร่างหรือใบที่ถูกตีกลับเท่านั้น");
+
+        // รอบ 193 ฝ่ายค้านรอบสอง N1 — ด่านเดียวกับตอนสร้าง: หักมัดจำที่ออกใบกำกับแล้วแบบขับ JE ⇒ แปลงเป็นหักฐาน
+        // (ฝ่ายค้านรอบสาม B4: อยู่หลังด่านสถานะ — ใบที่แก้ไม่ได้ต้องได้ข้อความสถานะ ไม่ใช่ข้อความของตัวแปลง ·
+        //  R3-1: ฐานมัดจำลงช่อง DepositBaseDeducted แทนที่ค่าเดิมตามเลขอ้างอิงชุดใหม่ ส่วนลดการค้าคงเดิม)
+        if (await ConvertTaxedDrivesAsync(companyId,
+                request.DepositAppliedDrivesJournal ?? doc.DepositAppliedDrivesJournal,
+                request.DepositAppliedAmount ?? doc.DepositAppliedAmount,
+                request.DepositAppliedRef ?? doc.DepositAppliedRef,
+                request.BillDiscountPercent ?? doc.BillDiscountPercent) is { } convUpdate)
+            request = request with
+            {
+                DepositBaseDeducted = convUpdate.DepositBase,
+                DepositAppliedDrivesJournal = false,
+                DepositAppliedAmount = 0m,
+                // บรรทัดต้องคิดใหม่ด้วยส่วนหักท้ายบิลใหม่ — ฟอร์มส่งบรรทัดมาทุกครั้ง · ผู้เรียกที่ไม่ส่ง = ล้มดังพร้อมทางไปต่อ
+                Lines = request.Lines ?? throw new Accounting.Helpers.BusinessRuleException(
+                    "หักมัดจำที่ออกใบกำกับแล้วต้องคิดยอดบรรทัดใหม่ — ส่งรายการบรรทัดมาพร้อมการแก้ (บันทึกจากฟอร์มเอกสาร)",
+                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode),
+            };
+        if (request.DepositBaseDeducted.HasValue && request.DepositBaseDeducted.Value != doc.DepositBaseDeducted && request.Lines == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "แก้ฐานมัดจำที่หักต้องคิดยอดบรรทัดใหม่ — ส่งรายการบรรทัดมาพร้อมการแก้ (บันทึกจากฟอร์มเอกสาร)",
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        {
+            // ค่าที่จะมีผลหลังบันทึก (null = คงค่าเดิม · "" = ล้างเลขอ้างอิง) ต้องสอดคล้องกัน — ล้างเลขมัดจำทิ้งแต่ฐานยังหักอยู่ = ห้าม
+            var effRef = request.DepositAppliedRef == null ? doc.DepositAppliedRef
+                : string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef;
+            var effPct = request.BillDiscountPercent ?? (request.BillDiscountAmount.HasValue ? 0m : doc.BillDiscountPercent);
+            if (Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeductionProblem(request.DepositBaseDeducted ?? doc.DepositBaseDeducted,
+                    effRef, request.DepositAppliedAmount ?? doc.DepositAppliedAmount,
+                    request.DepositAppliedDrivesJournal ?? doc.DepositAppliedDrivesJournal, effPct) is { } depDeductProblem)
+                throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
+                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        }
 
         if (isDocRevision)
         {
@@ -2274,6 +2319,8 @@ public partial class DocumentService : IDocumentService
                 && request.BillDiscountPercent.Value != doc.BillDiscountPercent) blocked.Add("ส่วนลดท้ายบิล");
             if (request.BillDiscountAmount.HasValue
                 && request.BillDiscountAmount.Value != doc.BillDiscountAmount) blocked.Add("ส่วนลดท้ายบิล");
+            if (request.DepositBaseDeducted.HasValue
+                && request.DepositBaseDeducted.Value != doc.DepositBaseDeducted) blocked.Add("หักมูลค่ามัดจำ");
             if (request.PricesIncludeVat.HasValue
                 && request.PricesIncludeVat.Value != doc.PricesIncludeVat) blocked.Add("รูปแบบราคารวม VAT");
             if (blocked.Count > 0)
@@ -2525,7 +2572,9 @@ public partial class DocumentService : IDocumentService
             var updBillPct = request.BillDiscountPercent ?? doc.BillDiscountPercent;
             var updBillAmt = request.BillDiscountAmount
                 ?? (request.BillDiscountPercent.HasValue ? 0m : doc.BillDiscountAmount);
-            var updBillAlloc = AllocateBillDiscount(request.Lines, doc.PricesIncludeVat, updBillPct, updBillAmt);
+            // R3-1: ฐานมัดจำออกใบกำกับแล้ว — null = คงค่าเดิม (ฟอร์มไม่ส่งช่องนี้ ⇒ แก้บรรทัด/ส่วนลดแล้วฐานมัดจำไม่หาย)
+            var (updBillAlloc, updTradeDiscount, updDepositBase) = AllocateBillDeductions(request.Lines, doc.PricesIncludeVat,
+                updBillPct, updBillAmt, request.DepositBaseDeducted ?? doc.DepositBaseDeducted);
             // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — เหมือน create path (แก้แล้วต้องไม่เพี้ยนกลับ)
             var updAmts = new LineAmounts[request.Lines.Count];
             for (int i = 0; i < request.Lines.Count; i++)
@@ -2605,7 +2654,8 @@ public partial class DocumentService : IDocumentService
             doc.SubTotal = subTotal + doc.RoundingAdjustment;
             doc.DiscountAmount = totalDiscount;
             doc.BillDiscountPercent = updBillPct;
-            doc.BillDiscountAmount = updBillAlloc.Sum();
+            doc.BillDiscountAmount = updTradeDiscount;
+            doc.DepositBaseDeducted = updDepositBase;
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
@@ -3063,6 +3113,7 @@ public partial class DocumentService : IDocumentService
             discountAmount = doc.DiscountAmount,
             billDiscountPercent = doc.BillDiscountPercent,
             billDiscountAmount = doc.BillDiscountAmount,
+            depositBaseDeducted = doc.DepositBaseDeducted,
             vatAmount = doc.VatAmount,
             withholdingTaxAmount = doc.WithholdingTaxAmount,
             totalAmount = doc.TotalAmount,
@@ -9779,7 +9830,11 @@ public partial class DocumentService : IDocumentService
         // ยกเว้นโหมด "ราคารวม VAT + ส่วนลดท้ายบิล" ที่การ back-out ทำให้ net
         // ของใบลูกไม่ตรงกับต้นทางอยู่ดี — เคสนั้นคงพฤติกรรมเดิม (คิดใหม่)
         var carryStoredVat = !(source.PricesIncludeVat
-            && (source.BillDiscountPercent > 0 || source.BillDiscountAmount > 0));
+            && (source.BillDiscountPercent > 0 || source.BillDiscountAmount > 0 || source.DepositBaseDeducted > 0));
+        // สัดส่วนฐาน ex-VAT ที่ยกไป (ใช้ทั้งส่วนลดท้ายบิลแบบบาทและฐานมัดจำที่หัก — เฉลี่ยลงบรรทัดด้วยตัวเดียวกัน)
+        var carriedBaseRatio = Math.Min(1m, source.SubTotal > 0
+            ? spec.Sum(s => s.Line.Amount * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m)) / source.SubTotal
+            : 1m);
 
         // SourceLineId travels through the DTO so CreateDocumentAsync stamps
         // it inside its own transaction — every new line is linked 1:1 to the
@@ -9833,13 +9888,14 @@ public partial class DocumentService : IDocumentService
             // บาท) หารด้วยฐาน ex-VAT → ยกส่วนลดเกินสัดส่วน ~7% ทุกครั้ง →
             // Σส่วนลดใบลูก > ต้นทาง + ฐานภาษีใบลูกต่ำเกินจริง
             BillDiscountAmount: source.BillDiscountPercent <= 0 && source.BillDiscountAmount > 0
-                ? Math.Round(source.BillDiscountAmount * Math.Min(1m,
-                    source.SubTotal > 0
-                        ? spec.Sum(s => s.Line.Amount
-                            * (s.Line.Quantity > 0 ? s.Qty / s.Line.Quantity : 1m))
-                          / source.SubTotal
-                        : 1m), 2)
+                ? Math.Round(source.BillDiscountAmount * carriedBaseRatio, 2, MidpointRounding.AwayFromZero)
                 : null,
+            // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำออกใบกำกับแล้วที่หัก + เลขใบมัดจำ ตามไปด้วย (ใบลูกยอดต้องตรงใบแม่ ·
+            // กระดาษอ้างใบมัดจำเดิม) · ใบลูกไม่รับรู้มัดจำซ้ำ — RealizeTaxedDepositDeductionsAsync นับยอดที่รับรู้เพื่อใบแม่แล้ว
+            DepositBaseDeducted: source.DepositBaseDeducted > 0
+                ? Math.Round(source.DepositBaseDeducted * carriedBaseRatio, 2, MidpointRounding.AwayFromZero)
+                : null,
+            DepositAppliedRef: source.DepositBaseDeducted > 0 ? source.DepositAppliedRef : null,
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
             RelatedDocumentId: source.Id,
@@ -15682,24 +15738,35 @@ public partial class DocumentService : IDocumentService
     {
         if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(depositVat, depositVatPending))
             throw new Accounting.Helpers.BusinessRuleException(
-                Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(deposit.DocumentNumber)
-                + $" · ใบ {doc.DocumentNumber} ตั้ง “หักมัดจำแบบลงบัญชีในใบเดียว” — แก้ใบ (บันทึกใหม่จากฟอร์ม ระบบแปลงเป็นหักฐานให้) แล้วอนุมัติอีกครั้ง",
+                // ฝ่ายค้านรอบสาม R3-5: ข้อความทางเดียวของใบนี้ — ห้ามต่อท้าย GrossApplyBlockedMessage (สั่งรับรู้ที่หน้าเงินมัดจำ ⇒ รับรู้ซ้ำ)
+                Accounting.Helpers.DepositPolicyResolver.DrivesGuardMessage(deposit.DocumentNumber, doc.DocumentNumber),
                 Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
         return Task.CompletedTask;
     }
 
     /// <summary>ใบมัดจำ "ออกใบกำกับแล้ว" ที่อ้างด้วยเลขใน <paramref name="refs"/> (เลขเรา หรือเลขระบบต้นทาง) — ใบเก่าสุดก่อน ·
-    /// tenant-safe · ตัดใบร่าง/ยกเลิก</summary>
-    private async Task<List<Document>> LoadTaxedDepositsByRefAsync(Guid companyId, string? refs)
+    /// tenant-safe · ตัดใบร่าง/ยกเลิก · <paramref name="lockRows"/> = ล็อกแถวใบมัดจำ (FOR UPDATE เรียงตาม Id กัน deadlock) ก่อนอ่านยอด
+    /// แล้วอ่านค่าล่าสุดของแถวที่ context ถืออยู่ (ฝ่ายค้านรอบสาม B2 — อนุมัติใบสุดท้ายสองใบที่อ้างมัดจำเดียวกันพร้อมกัน = lost update)</summary>
+    private async Task<List<Document>> LoadTaxedDepositsByRefAsync(Guid companyId, string? refs, bool lockRows = false)
     {
         var list = DepositReversalMath.ParseDepositRefs(refs);
         if (list.Length == 0) return new();
-        var rows = await _db.Documents
+        var query = _db.Documents
             .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
-                && (list.Contains(d.DocumentNumber) || (d.Reference != null && list.Contains(d.Reference))))
-            .OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt)
-            .ToListAsync();
+                && (list.Contains(d.DocumentNumber) || (d.Reference != null && list.Contains(d.Reference))));
+        if (lockRows)
+        {
+            var ids = await query.AsNoTracking().Select(d => d.Id).OrderBy(id => id).ToListAsync();
+            if (ids.Count > 0)
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
+                    ids.ToArray(), companyId);
+        }
+        var rows = await query.OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt).ToListAsync();
+        if (lockRows)
+            foreach (var r in rows)
+                if (_db.Entry(r).State == EntityState.Unchanged) await _db.Entry(r).ReloadAsync();
         return rows.Where(d => Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(
                 d.VatAmount, d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null))
             .GroupBy(d => d.Id).Select(g => g.First()).ToList();
@@ -15714,22 +15781,40 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>แปลง "หักมัดจำแบบขับ JE" ที่อ้างมัดจำ<b>ออกใบกำกับแล้ว</b> เป็น "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี"
     /// ตอนบันทึกจากฟอร์ม (สร้าง/แก้ร่าง) — ใบร่างแสดงยอดใหม่ให้ผู้ใช้เห็นก่อนอนุมัติ (ไม่เงียบ) · มัดจำ VAT พัก/เต็มยอด ไม่แตะ
-    /// (ขับ JE ได้ตามเดิม) · ผสมสองแบบในใบเดียว / ส่วนลดท้ายบิลเป็น % ⇒ ปฏิเสธพร้อมทางไปต่อ</summary>
-    /// <returns>(ส่วนหักท้ายบิลใหม่, ธงขับ JE ใหม่, ยอดหักมัดจำใหม่) หรือ null = ไม่ต้องแปลง</returns>
-    private async Task<(decimal BillDiscount, bool Drives, decimal Applied)?> ConvertTaxedDrivesAsync(
-        Guid companyId, bool drives, decimal appliedGross, string? refs, decimal? billDiscountAmount, decimal? billDiscountPercent)
+    /// (ขับ JE ได้ตามเดิม) · ผสมสองแบบในใบเดียว / ส่วนลดท้ายบิลเป็น % ⇒ ปฏิเสธพร้อมทางไปต่อ
+    /// <para>รอบ 193 ฝ่ายค้านรอบสาม: R3-1 คืน<b>ฐานมัดจำอย่างเดียว</b> (ผู้เรียกเก็บลง <c>DepositBaseDeducted</c> ส่วนลดการค้าไม่ถูกแตะ) ·
+    /// B3 "ปนกัน" ตัดสินจากเลขอ้างอิงที่ชี้ใบมัดจำ VAT พัก/เต็มยอดจริง — เลขที่ไม่ใช่มัดจำออกใบกำกับด้วยเหตุอื่น (สมุดรายวันมัดจำ ·
+    /// ใบร่าง/ยกเลิก · ไม่พบ) ได้ข้อความของเหตุนั้น · เลขซ้ำ/เลขเดียวชนสองใบไม่นับเป็นปนกัน</para></summary>
+    /// <returns>ฐานมัดจำที่จะหัก หรือ null = ไม่ต้องแปลง</returns>
+    private async Task<(decimal DepositBase, bool Drives, decimal Applied)?> ConvertTaxedDrivesAsync(
+        Guid companyId, bool drives, decimal appliedGross, string? refs, decimal? billDiscountPercent)
     {
         if (!drives || appliedGross <= 0m || string.IsNullOrWhiteSpace(refs)) return null;
         var taxed = await LoadTaxedDepositsByRefAsync(companyId, refs);
         if (taxed.Count == 0) return null;
-        if (DepositReversalMath.ParseDepositRefs(refs).Length != taxed.Count)
+        var unresolved = DepositReversalMath.ParseDepositRefs(refs).Distinct(StringComparer.Ordinal)
+            .Where(r => !taxed.Any(d => d.DocumentNumber == r || d.Reference == r)).ToList();
+        if (unresolved.Count > 0)
+        {
+            var otherDeposits = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                    && (unresolved.Contains(d.DocumentNumber) || (d.Reference != null && unresolved.Contains(d.Reference))))
+                .Select(d => new { d.DocumentNumber, d.Reference })
+                .ToListAsync();
+            var mixed = unresolved.Where(r => otherDeposits.Any(d => d.DocumentNumber == r || d.Reference == r)).ToList();
+            var notDeposit = unresolved.Except(mixed).ToList();
             throw new Accounting.Helpers.BusinessRuleException(
-                "หักมัดจำหลายใบที่ปนกันระหว่าง “ออกใบกำกับแล้ว” กับ “VAT พัก/เต็มยอด” ในใบเดียวไม่ได้ — แยกเป็นสองรายการ "
-                + "(มัดจำที่ออกใบกำกับแล้วหักจากฐานภาษี · มัดจำที่เหลือใช้ “หักมัดจำ” หลังอนุมัติ)",
+                mixed.Count > 0
+                    ? $"หักมัดจำหลายใบที่ปนกันระหว่าง “ออกใบกำกับแล้ว” กับ “VAT พัก/เต็มยอด” ({string.Join(", ", mixed)}) ในใบเดียวไม่ได้ — แยกเป็นสองรายการ "
+                      + "(มัดจำที่ออกใบกำกับแล้วหักจากฐานภาษี · มัดจำที่เหลือใช้ “หักมัดจำ” หลังอนุมัติ)"
+                    : $"เลขอ้างอิง {string.Join(", ", notDeposit)} ไม่ใช่ใบมัดจำที่ใช้งานอยู่ (อาจเป็นสมุดรายวันมัดจำ · ใบร่าง/ยกเลิก · หรือพิมพ์เลขผิด) — "
+                      + "หักรวมกับมัดจำที่ออกใบกำกับแล้วในใบเดียวไม่ได้ · เอาเลขนั้นออก แล้วหักมัดจำส่วนนั้นด้วย “หักมัดจำ” หลังอนุมัติ",
                 Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        }
         if ((billDiscountPercent ?? 0m) > 0m)
             throw new Accounting.Helpers.BusinessRuleException(
-                "หักมัดจำที่ออกใบกำกับแล้วใช้ช่อง “ส่วนหักท้ายบิล” เป็นจำนวนเงิน — ใช้ร่วมกับส่วนลดท้ายบิลแบบ % ไม่ได้ · เปลี่ยนส่วนลดเป็นบาท",
+                Accounting.Helpers.DepositPolicyResolver.PercentWithTaxedDepositMessage,
                 Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
         decimal baseSum = 0m, leftGross = appliedGross;
         foreach (var d in taxed)
@@ -15744,7 +15829,7 @@ public partial class DocumentService : IDocumentService
             leftGross -= useGross;
         }
         if (baseSum <= 0m) return null;
-        return ((billDiscountAmount ?? 0m) + baseSum, false, 0m);
+        return (baseSum, false, 0m);
     }
 
     /// <summary>ใบที่ "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี" — รับรู้ฐานของมัดจำที่อ้างเป็นรายได้ <b>ในธุรกรรมอนุมัติเดียวกัน</b>
@@ -15752,22 +15837,32 @@ public partial class DocumentService : IDocumentService
     /// (<c>DepositRealizedForDocumentId</c>) ⇒ void ใบนี้กลับได้ · รับรู้เพื่อใบนี้ไปแล้วเท่าไรไม่ทำซ้ำ · มัดจำไม่พอ ⇒ ล้มดัง</summary>
     private async Task RealizeTaxedDepositDeductionsAsync(Guid companyId, Document doc, string actor)
     {
+        // ฝ่ายค้านรอบสาม R3-1: อ่านฐานมัดจำจากช่องของตัวเอง — ส่วนลดการค้า (BillDiscountAmount) ไม่ใช่มัดจำ ห้ามรับรู้
         if (doc.IsDeposit
-            || !Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef))
+            || !Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeducted(doc.DepositBaseDeducted, doc.DepositAppliedRef))
             return;
-        var taxed = await LoadTaxedDepositsByRefAsync(companyId, doc.DepositAppliedRef);
-        if (taxed.Count == 0) return;   // อ้างเลขที่ไม่ใช่มัดจำออกใบกำกับ = ส่วนลดการค้าธรรมดา (ป้าย PDF ใช้ตัวตัดสินเดียวกัน)
+        // B2: ล็อกแถวใบมัดจำก่อนอ่านฐานคงเหลือ (แบบเดียวกับเส้นขับ JE) — อนุมัติสองใบพร้อมกันต้องต่อคิว ไม่ใช่รับรู้ทับกัน
+        var taxed = await LoadTaxedDepositsByRefAsync(companyId, doc.DepositAppliedRef, lockRows: true);
+        if (taxed.Count == 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ใบ {doc.DocumentNumber} หักมูลค่ามัดจำ {doc.DepositBaseDeducted:N2} แต่ไม่พบใบมัดจำที่ออกใบกำกับแล้วเลข {doc.DepositAppliedRef} "
+                + "(อาจถูกยกเลิก/ลบ) — แก้ใบนี้ให้อ้างใบมัดจำที่ถูกต้อง หรือสร้างใบใหม่โดยไม่หักมัดจำ",
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+        // ยอดที่รับรู้ไปแล้วเพื่อใบนี้ — รวมที่รับรู้เพื่อใบแม่ (ใบที่แปลงมา: ใบเสร็จ/ใบลดหนี้จากใบกำกับที่หักมัดจำ สืบทอดฐานมัดจำ
+        // เพื่อให้ยอดตรงใบแม่ ไม่ใช่เพื่อรับรู้ซ้ำ) · ยกเลิกใบแม่แล้ว JE ถูกกลับ ⇒ ไม่นับ
+        var realizedFor = doc.RelatedDocumentId is Guid parentId ? new[] { doc.Id, parentId } : new[] { doc.Id };
         var already = await _db.JournalEntries.AsNoTracking()
-            .Where(j => j.CompanyId == companyId && j.DepositRealizedForDocumentId == doc.Id
+            .Where(j => j.CompanyId == companyId && j.DepositRealizedForDocumentId != null
+                && realizedFor.Contains(j.DepositRealizedForDocumentId.Value)
                 && j.OriginalEntryId == null && j.ReversedByEntryId == null
                 && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
             .SumAsync(j => (decimal?)j.TotalDebit) ?? 0m;
         var (lines, shortfall) = Accounting.Helpers.DepositPolicyResolver.AllocateBaseDeduction(
-            doc.BillDiscountAmount - already, taxed.Select(d => (d.Id, DepositRemainingBase(d))).ToList());
+            doc.DepositBaseDeducted - already, taxed.Select(d => (d.Id, DepositRemainingBase(d))).ToList());
         if (shortfall > 0m)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ใบ {doc.DocumentNumber} หักมูลค่ามัดจำ {doc.BillDiscountAmount:N2} แต่มัดจำ {doc.DepositAppliedRef} เหลือฐานไม่พอ (ขาด {shortfall:N2}) "
-                + "— มัดจำอาจถูกรับรู้/คืนไปแล้ว · ตรวจที่หน้า “เงินมัดจำ” แล้วแก้ส่วนหักท้ายบิลของใบนี้",
+                $"ใบ {doc.DocumentNumber} หักมูลค่ามัดจำ {doc.DepositBaseDeducted:N2} แต่มัดจำ {doc.DepositAppliedRef} เหลือฐานไม่พอ (ขาด {shortfall:N2}) "
+                + "— มัดจำอาจถูกรับรู้/คืนไปแล้ว · ตรวจที่หน้า “เงินมัดจำ” แล้วสร้างใบนี้ใหม่ให้หักเท่ามัดจำที่เหลือ",
                 Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
         // รายได้ของมัดจำ = ผังของบรรทัดหลักของใบนี้ (บรรทัดยอดสูงสุดที่มีผัง) · ไม่มี = ค่าตั้งต้นของตัวรับรู้ (41000)
         var mainLineAccountId = (doc.Lines ?? new List<DocumentLine>())
@@ -16462,7 +16557,9 @@ public partial class DocumentService : IDocumentService
         ReplacedAt: d.ReplacedAt,
         // รอบ 193 — เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A)
         ActualPaidAmount: d.ActualPaidAmount,
-        RoundingAdjustment: d.RoundingAdjustment);
+        RoundingAdjustment: d.RoundingAdjustment,
+        // รอบ 193 ฝ่ายค้านรอบสาม R3-1 — echo ให้หน้ารายละเอียดแสดงแถวหักมูลค่ามัดจำแยกจากส่วนลด (กฎ #4 A "เก็บแล้วต้อง echo กลับ")
+        DepositBaseDeducted: d.DepositBaseDeducted);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
