@@ -21,6 +21,34 @@ public enum ContactKeyBasis
     RawTaxIdEquality,
 }
 
+/// <summary>แถวผู้ติดต่อได้มาด้วยอะไร — ป้อน <see cref="ContactTaxBranchKey.AdoptTaxId"/> ให้ตัดสินเองว่าเติมเลขได้ไหม (ฝ่ายค้านรอบสาม R3-2)</summary>
+public enum ContactMatchKind
+{
+    /// <summary>คีย์เลขภาษี + สาขา (<see cref="ContactTaxBranchKey.FindAsync"/>)</summary>
+    TaxKey,
+    /// <summary>รหัสภายนอก/Id ที่ผูกไว้ (ExternalId · ContactId)</summary>
+    ExternalKey,
+    /// <summary>ชื่อเท่ากันหลัง normalize (<see cref="ContactTaxBranchKey.NameMatchKind"/>)</summary>
+    ExactName,
+    /// <summary>อีเมลตรงกัน</summary>
+    Email,
+    /// <summary>เบอร์โทรตรงกัน</summary>
+    Phone,
+    /// <summary>ชื่อคล้าย/ข้ามภาษา/substring — <b>ห้ามเติมเลข</b> · payload มีเลขจริง ⇒ ห้ามใช้แถว</summary>
+    FuzzyName,
+}
+
+/// <summary>ผลของ <see cref="ContactTaxBranchKey.AdoptTaxId"/></summary>
+public enum ContactAdoptOutcome
+{
+    /// <summary>ใช้แถวนี้ตามเดิม (ไม่มีอะไรเปลี่ยน)</summary>
+    Keep,
+    /// <summary>ใช้แถวนี้ — เติมเลข/สาขาแล้ว ผู้เรียกต้อง SaveChanges</summary>
+    Adopted,
+    /// <summary><b>ห้ามใช้แถวนี้</b> — payload มีเลขจริงแต่จับได้แค่ชื่อคล้าย หรือแถวเป็นลูกค้าทั่วไป ⇒ สร้างแถวใหม่/ไม่ผูก</summary>
+    Reject,
+}
+
 /// <summary>ขอบเขตการถอยไปจับด้วยอีเมล/เบอร์/ชื่อ — ดู <see cref="ContactTaxBranchKey.SoftMatchScope"/></summary>
 public enum ContactSoftMatch
 {
@@ -260,17 +288,25 @@ public static class ContactTaxBranchKey
     /// **"จับได้แล้วต้องเติมเลข"** — แถวที่ได้มาจาก soft match (<see cref="SoftScope(IQueryable{Contact}, Guid, string?, ContactKeyMatch)"/>
     /// ชุด "แถวที่ยังไม่มีเลข") รับเลขภาษี + สาขาของ payload ตัวเดียวของทุกทางเข้า (รอบ 193 ฝ่ายค้านรอบสอง R2-C5: เดิม 4 ทางเข้า
     /// จับแถวไม่มีเลขได้แล้ว<b>ไม่เติมเลข</b> ⇒ ใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข = ใบอย่างย่อ/ใบเสร็จ และ e-Tax ถูกข้ามเงียบ)
+    /// <para><b>ตัดสินจาก "จับมาด้วยอะไร" (<paramref name="matchedBy"/>) ในตัว</b> — ฝ่ายค้านรอบสาม R3-2: เดิมผู้เรียกที่จับด้วยชื่อ<b>คล้าย</b>
+    /// (<c>CounterpartyNameMatcher</c>) หรือ <b>substring</b> (<c>Name.Contains</c>) ก็เติมเลขถาวร ⇒ เลขของ A ติดแถว B แล้วใบกำกับของ A
+    /// ทุกใบพิมพ์ชื่อ B (§86/4 ผู้ซื้อผิดตัว · ขัดกฎ #4 H "superstring ไม่ใช่ fuzzy"). คำตัดสิน main agent: จับแบบ fuzzy ต่อได้เมื่อ payload
+    /// ไม่มีเลข (ไม่ถดถอย) · payload มีเลขจริง + จับได้แค่ fuzzy ⇒ <see cref="ContactAdoptOutcome.Reject"/> = ผู้เรียกสร้างแถวใหม่</para>
     /// <list type="bullet">
-    /// <item>เติมได้เฉพาะแถวที่<b>ยังไม่มีเลข</b> (null/ว่าง/"-") และ payload มีเลขจริง — แถวที่ถือเลขอื่นไม่ถูกแตะ (<see cref="MayWriteTaxId"/>)</item>
-    /// <item>ชนิดผู้ติดต่อผ่าน <c>ContactTypeResolver.ApplyToExisting</c> (เลขที่ checksum ผ่านชนะการอนุมาน · ราชการไม่ถูกลดระดับ)</item>
-    /// <item>สาขา: เติมเฉพาะเมื่อแถวยังไม่ระบุ — รหัสของ payload (ผิดรูป/ไม่ส่ง = สำนักงานใหญ่) ผ่าน <c>ContactTypeResolver.BranchCodeFor</c>
-    ///   (บุคคลธรรมดาไม่ได้ "00000")</item>
+    /// <item>เติมได้เฉพาะแถวที่<b>ยังไม่มีเลข</b> (null/ว่าง/"-") ด้วยเลขที่<b>ใช้ได้จริง</b> — 13 หลักต้องผ่าน mod-11 (<c>ThaiTaxId.IsValid</c>) ·
+    ///   "0000000000000" (ค่ามาตรฐาน "ลูกค้าทั่วไป" ของ POS หลายเจ้า) ไม่ใช่เลข</item>
+    /// <item>แถว walk-in / ลูกค้าทั่วไป (<c>IsWalkInCustomer</c>) <b>ไม่รับเลขใด ๆ</b> — ผู้ซื้อที่มีเลขจริงไม่ใช่ลูกค้าทั่วไป ⇒ Reject</item>
+    /// <item>ชนิดผ่าน <c>ContactTypeResolver.ApplyToExisting</c> · สาขาเฉพาะเมื่อแถวยังไม่ระบุ ผ่าน <c>BranchCodeFor</c></item>
     /// </list>
-    /// คืน true เมื่อแก้แถว — ผู้เรียกต้อง <c>SaveChanges</c> (แถวต้องเป็นแถวที่ context ติดตามอยู่)
+    /// ผู้เรียก: <see cref="ContactAdoptOutcome.Adopted"/> = ใช้แถว + SaveChanges · Keep = ใช้แถวตามเดิม · Reject = <b>ห้ามใช้แถวนี้</b>
     /// </summary>
-    public static bool AdoptTaxId(Contact? row, string? taxId, string? branchCode)
+    public static ContactAdoptOutcome AdoptTaxId(Contact? row, string? taxId, string? branchCode, ContactMatchKind matchedBy)
     {
-        if (row == null || HasTaxId(row.TaxId) || !MayWriteTaxId(row.TaxId, taxId)) return false;
+        if (row == null) return ContactAdoptOutcome.Keep;
+        var usable = IsUsableTaxId(taxId);
+        if (matchedBy == ContactMatchKind.FuzzyName && usable) return ContactAdoptOutcome.Reject;
+        if (row.IsWalkInCustomer) return usable ? ContactAdoptOutcome.Reject : ContactAdoptOutcome.Keep;
+        if (!usable || HasTaxId(row.TaxId) || !MayWriteTaxId(row.TaxId, taxId)) return ContactAdoptOutcome.Keep;
         var raw = taxId!.Trim();
         var digits = Digits(raw);
         row.TaxId = digits.Length == 13 ? digits : raw;
@@ -279,7 +315,52 @@ public static class ContactTaxBranchKey
             row.BranchCode = ContactTypeResolver.BranchCodeFor(row.ContactType,
                 WantedBranch(branchCode) ?? TaxBranchCode.HeadOffice);
         row.UpdatedAt = DateTime.UtcNow;
-        return true;
+        return ContactAdoptOutcome.Adopted;
+    }
+
+    /// <summary>รูปเดิม (ก่อนฝ่ายค้านรอบสาม) — คงไว้ให้ผู้เรียกในไฟล์ที่ทีมอื่นถือ (ที่พัก · ทีม L2) คอมไพล์ได้จนกว่าจะย้ายไปรูปที่ส่ง
+    /// <see cref="ContactMatchKind"/> · ถือเป็นการจับด้วยอีเมล/เบอร์ (ตรงกับผู้เรียกเดียวที่เหลือ) · Reject ถูกยุบเป็น false (ไม่เติม)
+    /// ⇒ ผู้เรียกยังใช้แถวเดิมได้ ซึ่ง<b>ไม่ปลอดภัยกับแถว walk-in</b> — ย้ายไปรูปใหม่แล้วลบตัวนี้ทิ้ง</summary>
+    [Obsolete("ส่ง ContactMatchKind แล้วจัดการ ContactAdoptOutcome.Reject (ฝ่ายค้านรอบสาม R3-2)")]
+    public static bool AdoptTaxId(Contact? row, string? taxId, string? branchCode)
+        => AdoptTaxId(row, taxId, branchCode, ContactMatchKind.Email) == ContactAdoptOutcome.Adopted;
+
+    /// <summary>เลขที่เติมลงผู้ติดต่อได้: มีตัวเลข · ไม่ใช่ศูนย์ล้วน · 13 หลักต้องผ่าน <c>ThaiTaxId.IsValid</c> (mod-11 · ตัวตรวจ canonical ตัวเดียว) ·
+    /// เลขต่างประเทศ/ไม่ใช่ 13 หลักรับตามเดิม (ไม่มีสูตรตรวจ)</summary>
+    private static bool IsUsableTaxId(string? taxId)
+    {
+        var d = Digits(taxId);
+        if (d.Length == 0 || d.TrimStart('0').Length == 0) return false;
+        return d.Length != 13 || ThaiTaxId.IsValid(d);
+    }
+
+    /// <summary>
+    /// จับด้วยชื่อแบบไหน — ชื่อที่ส่งมากับชื่อของแถว<b>เท่ากันหลัง normalize</b> (ตัวพิมพ์ · เว้นวรรค/เครื่องหมาย · คำนำหน้า/ลงท้ายนิติบุคคล
+    /// "บริษัท … จำกัด" / "Co., Ltd.") = <see cref="ContactMatchKind.ExactName"/> · อื่น ๆ (คล้าย/ข้ามภาษา/substring) = FuzzyName
+    /// (ฝ่ายค้านรอบสาม R3-2 — ผู้เรียกที่ใช้ตัวเทียบแบบคล้ายต้องส่งผลนี้เข้า <see cref="AdoptTaxId"/>)
+    /// </summary>
+    public static ContactMatchKind NameMatchKind(string? given, string? stored)
+    {
+        var a = CanonicalName(given);
+        return a.Length > 0 && a == CanonicalName(stored) ? ContactMatchKind.ExactName : ContactMatchKind.FuzzyName;
+    }
+
+    private static readonly string[] NameMarkersTh =
+        { "ห้างหุ้นส่วนจำกัด", "ห้างหุ้นส่วนสามัญ", "ห้างหุ้นส่วน", "บริษัท", "จำกัด", "มหาชน", "บมจ", "บจก", "บจ", "หจก", "หสน" };
+
+    private static readonly System.Text.RegularExpressions.Regex NameMarkersEn = new(
+        @"\b(?:co|ltd|company|limited|plc|public|inc|corp|corporation|partnership)\b",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string CanonicalName(string? name)
+    {
+        var s = (name ?? "").ToLowerInvariant();
+        foreach (var m in NameMarkersTh) s = s.Replace(m, " ");
+        s = NameMarkersEn.Replace(s, " ");
+        // เก็บตัวอักษร/ตัวเลข + สระ/วรรณยุกต์ไทย (NonSpacingMark) — ทิ้งเว้นวรรค/จุด/วงเล็บ/ขีด
+        return new string(s.Where(ch => char.IsLetterOrDigit(ch)
+            || char.GetUnicodeCategory(ch) is System.Globalization.UnicodeCategory.NonSpacingMark
+                or System.Globalization.UnicodeCategory.SpacingCombiningMark).ToArray());
     }
 
     private static string? WantedBranch(string? branchCode)

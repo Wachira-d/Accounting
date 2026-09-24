@@ -553,8 +553,17 @@ public class IntegrationService : IIntegrationService
             // ฝ่ายค้าน C-6: ถอยไปจับด้วยชื่อได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขนี้มีแล้วคนละสาขา ⇒ ห้าม) —
             // เดิม `!taxKey.TaxIdExists` ปล่อยให้ชื่อตรงกับนิติบุคคลอื่นที่ถือเลขอื่น แล้วบล็อก update เขียนเลขใหม่ทับเลขของรายนั้น
             var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, request.TaxId, taxKey);
+            var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
             if (contact == null && softScope != null && !string.IsNullOrEmpty(request.Name))
+            {
                 contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == request.Name.ToLower() && !c.IsDeleted);
+                matchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
+            }
+            // เติมเลข/สาขาให้แถวที่จับได้ (ยังไม่มีเลข) · แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างแถวใหม่ของผู้ซื้อรายนี้
+            // (ตัวตัดสินตัวเดียว ContactTaxBranchKey.AdoptTaxId — ฝ่ายค้าน R2-C5 / R3-2 / B8)
+            if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, request.TaxId, request.BranchCode, matchedBy)
+                == Accounting.Helpers.ContactAdoptOutcome.Reject)
+                contact = null;
 
             // ── ตรวจกับทะเบียนราชการก่อนเสมอ (ไม่ใช่เฉพาะตอนไม่มีชื่อมา) ──
             // ระบบภายนอกส่งชื่อผิดมาได้ (ฟิลด์เหลื่อม/ตัดคำ) ทั้งที่เลขผู้เสียภาษีถูก
@@ -643,8 +652,7 @@ public class IntegrationService : IIntegrationService
                 if (request.Email != null) contact.Email = request.Email;
                 if (request.Address != null) contact.Address = request.Address;
                 // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข หรือเลขเดียวกันต่างรูปแบบ
-                // ห้ามเขียนทับเลขภาษีที่ต่างจากเดิม (ฝ่ายค้าน C-6) — เติมได้เมื่อแถวยังไม่มีเลข ผ่านตัวช่วยเดียวของทุกทางเข้า (R2-C5)
-                Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, request.TaxId, request.BranchCode);
+                // เลขภาษี: ห้ามเขียนทับเลขที่ต่างจากเดิม (ฝ่ายค้าน C-6) — การเติมเลขให้แถวที่ยังไม่มีเลขทำแล้วข้างบน (AdoptTaxId)
                 // §86/4: รหัสสาขา + ประเภทผู้ติดต่อ ต้องอัปเดตตอน resync ด้วย —
                 // เดิม set เฉพาะตอน create → contact นิติบุคคลเก่า (สร้างก่อน
                 // TakeTime ส่ง branchCode) ไม่มีวันได้รหัสสาขา → ใบกำกับเต็มรูป
@@ -1642,12 +1650,17 @@ public class IntegrationService : IIntegrationService
 
         // ฝ่ายค้าน C-6: ชื่อตรงได้เฉพาะชุด SoftScope — เดิมเลขใหม่ + ชื่อตรง = ใบกำกับออกให้นิติบุคคลอื่นที่ถือเลขอื่น (§86/4)
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Set<Contact>(), companyId, taxId, taxKey);
+        var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         if (contact == null && softScope != null && !string.IsNullOrEmpty(name))
+        {
             contact = await softScope.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower() && !c.IsDeleted);
+            matchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
+        }
         // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ยังไม่มีเลข) ต้องรับเลขของ payload — มิฉะนั้นใบกำกับออกให้ผู้ซื้อไม่มีเลข
-        // (= ใบอย่างย่อ/ใบเสร็จ ผู้ซื้อเคลมภาษีซื้อไม่ได้) และ e-Tax ถูกข้ามเงียบ
-        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, taxId, branchCode: null))
-            await _db.SaveChangesAsync();
+        // (= ใบอย่างย่อ/ใบเสร็จ ผู้ซื้อเคลมภาษีซื้อไม่ได้) และ e-Tax ถูกข้ามเงียบ · รอบสาม: แถวลูกค้าทั่วไปไม่รับเลข ⇒ สร้างแถวใหม่
+        var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, taxId, branchCode: null, matchedBy);
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Reject) contact = null;
+        else if (adopt == Accounting.Helpers.ContactAdoptOutcome.Adopted) await _db.SaveChangesAsync();
 
         if (contact == null)
         {
@@ -1715,6 +1728,7 @@ public class IntegrationService : IIntegrationService
         var extId = string.IsNullOrWhiteSpace(supplierExternalId) ? null : supplierExternalId!.Trim();
 
         Contact? supplier = null;
+        var supplierMatchedBy = Accounting.Helpers.ContactMatchKind.ExternalKey;   // (1)/(2) · (3) = TaxKey · (4) = ExactName
 
         // (1) Contact.Id ตรง ๆ
         if (supplierContactId is { } cid && cid != Guid.Empty)
@@ -1736,6 +1750,7 @@ public class IntegrationService : IIntegrationService
             if (taxKey.ContactId is Guid keyId)
                 supplier = await _db.Set<Contact>().FirstOrDefaultAsync(c =>
                     c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
+            if (supplier != null) supplierMatchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         }
 
         // (4) ชื่อ trim + case-insensitive — เฉพาะชุด SoftScope (ฝ่ายค้าน C-6: เลขใหม่ห้ามได้แถวที่ถือเลขอื่น)
@@ -1745,7 +1760,13 @@ public class IntegrationService : IIntegrationService
             var lower = nameTrim.ToLower();
             supplier = await softScope.FirstOrDefaultAsync(c =>
                 c.Name.Trim().ToLower() == lower && !c.IsDeleted);
+            if (supplier != null) supplierMatchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
         }
+
+        // เติมเลข/สาขาให้แถวที่ยังไม่มีเลข (รวม "-") ผ่านตัวช่วยเดียวของทุกทางเข้า (ฝ่ายค้านรอบสอง R2-C5) ·
+        // แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างผู้จำหน่ายแถวใหม่ (รอบสาม B8)
+        var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(supplier, taxDigits, branchCode: null, supplierMatchedBy);
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Reject) supplier = null;
 
         if (supplier == null)
         {
@@ -1777,8 +1798,7 @@ public class IntegrationService : IIntegrationService
                     .Where(i => i.Id == integrationId).Select(i => i.SystemName).FirstOrDefaultAsync();
             dirty = true;
         }
-        // เติมเลข/สาขาให้แถวที่ยังไม่มีเลข (รวม "-") ผ่านตัวช่วยเดียวของทุกทางเข้า (ฝ่ายค้านรอบสอง R2-C5)
-        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(supplier, taxDigits, branchCode: null)) dirty = true;
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Adopted) dirty = true;
         if (!supplier.IsSupplier) { supplier.IsSupplier = true; dirty = true; }
         if (dirty) await _db.SaveChangesAsync();
 

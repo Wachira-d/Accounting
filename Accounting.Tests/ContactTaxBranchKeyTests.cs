@@ -357,7 +357,7 @@ public class ContactTaxBranchKeyTests
     {
         // เดิมล็อกผ่าน MayWriteTaxId (public) — ตอนนี้เป็น private ของ AdoptTaxId (ผู้เรียกภายนอกมีทางเดียว · dead_helper_check)
         var row = new Contact { Id = Blank, Name = "x", TaxId = existing };
-        Assert.Equal(expected, ContactTaxBranchKey.AdoptTaxId(row, incoming, null));
+        Assert.Equal(expected, ContactTaxBranchKey.AdoptTaxId(row, incoming, null, ContactMatchKind.Email) == ContactAdoptOutcome.Adopted);
         if (!expected) Assert.Equal(existing, row.TaxId);
     }
 
@@ -369,7 +369,7 @@ public class ContactTaxBranchKeyTests
         // แถวที่จับได้ด้วยชื่อ/อีเมล (ยังไม่มีเลข) — เดิม 4 ทางเข้าไม่เติม ⇒ ใบกำกับออกให้ผู้ซื้อไม่มีเลข + e-Tax ข้ามเงียบ
         var row = new Contact { Id = Blank, Name = "บริษัท เรดิสัน จำกัด", TaxId = null, BranchCode = null,
             ContactType = Accounting.Models.Enums.ContactType.Unknown };
-        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, "0-1055-51136-08-5", "8"));
+        Assert.Equal(ContactAdoptOutcome.Adopted, ContactTaxBranchKey.AdoptTaxId(row, "0-1055-51136-08-5", "8", ContactMatchKind.Email));
         Assert.Equal(Tin, row.TaxId);                       // เก็บเป็นตัวเลขล้วน
         Assert.Equal(Accounting.Models.Enums.ContactType.JuristicPerson, row.ContactType);
         Assert.Equal("00008", row.BranchCode);
@@ -381,7 +381,7 @@ public class ContactTaxBranchKeyTests
     public void AdoptTaxId_PlaceholderRow_IsFilled_BranchDefaultsToHq(string placeholder)
     {
         var row = new Contact { Id = Blank, Name = "บริษัท เรดิสัน จำกัด", TaxId = placeholder };
-        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, Tin, null));
+        Assert.Equal(ContactAdoptOutcome.Adopted, ContactTaxBranchKey.AdoptTaxId(row, Tin, null, ContactMatchKind.Email));
         Assert.Equal(Tin, row.TaxId);
         Assert.Equal("00000", row.BranchCode);
     }
@@ -391,16 +391,16 @@ public class ContactTaxBranchKeyTests
     {
         // ครึ่งที่ต้องยังถูก: แถวที่มีเลขแล้ว (อื่น/เดียวกัน) ไม่ถูกแตะ · payload ไม่มีเลข ไม่แตะ · null ไม่พัง
         var other = new Contact { Id = Other, Name = "x", TaxId = "0105500000001", BranchCode = "00003" };
-        Assert.False(ContactTaxBranchKey.AdoptTaxId(other, Tin, "00008"));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(other, Tin, "00008", ContactMatchKind.Email));
         Assert.Equal("0105500000001", other.TaxId);
         Assert.Equal("00003", other.BranchCode);
         var same = new Contact { Id = Hq, Name = "x", TaxId = "0-1055-51136-08-5", BranchCode = "00000" };
-        Assert.False(ContactTaxBranchKey.AdoptTaxId(same, Tin, "00008"));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(same, Tin, "00008", ContactMatchKind.Email));
         Assert.Equal("00000", same.BranchCode);
         var noTax = new Contact { Id = Blank, Name = "x", TaxId = null };
-        Assert.False(ContactTaxBranchKey.AdoptTaxId(noTax, "-", null));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(noTax, "-", null, ContactMatchKind.Email));
         Assert.Null(noTax.TaxId);
-        Assert.False(ContactTaxBranchKey.AdoptTaxId(null, Tin, null));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(null, Tin, null, ContactMatchKind.Email));
     }
 
     [Fact]
@@ -413,8 +413,81 @@ public class ContactTaxBranchKeyTests
         var citizen = first12 + (char)('0' + (11 - sum % 11) % 10);
         var row = new Contact { Id = Blank, Name = "นาย ก", TaxId = null,
             ContactType = Accounting.Models.Enums.ContactType.Individual };
-        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, citizen, null));
+        Assert.Equal(ContactAdoptOutcome.Adopted, ContactTaxBranchKey.AdoptTaxId(row, citizen, null, ContactMatchKind.Email));
         Assert.Equal(citizen, row.TaxId);
         Assert.Null(row.BranchCode);
+    }
+
+    // ── ฝ่ายค้านรอบสาม R3-2 / B8: เติมเลขได้เฉพาะเมื่อจับด้วยชื่อตรงตัว · เลขต้องใช้ได้จริง · แถวลูกค้าทั่วไปไม่รับเลข ──
+
+    [Fact]
+    public void AdoptTaxId_FuzzyNameWithRealTaxId_Rejects_RowUntouched()
+    {
+        // ไฟล์/พาร์ตเนอร์ส่ง "ABC" + เลขของ ABC · ระบบจับได้ "ABC Trading" แบบ substring/คล้าย ⇒ ห้ามเขียนเลขลงแถวนั้น (สร้างใหม่แทน)
+        var abcTrading = new Contact { Id = Other, Name = "ABC Trading", TaxId = null };
+        Assert.Equal(ContactMatchKind.FuzzyName, ContactTaxBranchKey.NameMatchKind("ABC", abcTrading.Name));
+        Assert.Equal(ContactAdoptOutcome.Reject,
+            ContactTaxBranchKey.AdoptTaxId(abcTrading, Tin, null, ContactMatchKind.FuzzyName));
+        Assert.Null(abcTrading.TaxId);
+        Assert.Null(abcTrading.BranchCode);
+    }
+
+    [Fact]
+    public void AdoptTaxId_FuzzyNameWithoutTaxId_KeepsRow_UnchangedBehaviour()
+    {
+        // ทิศตรงข้าม: payload ไม่มีเลข (หรือเลขใช้ไม่ได้) ⇒ ผูกด้วยชื่อคล้ายได้ตามเดิม ไม่ถดถอย
+        var row = new Contact { Id = Other, Name = "ABC Trading", TaxId = null };
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(row, null, null, ContactMatchKind.FuzzyName));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(row, "-", null, ContactMatchKind.FuzzyName));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(row, "0000000000000", null, ContactMatchKind.FuzzyName));
+        Assert.Null(row.TaxId);
+    }
+
+    [Theory]
+    [InlineData("บริษัท เรดิสัน จำกัด", "เรดิสัน")]
+    [InlineData("บริษัท  เรดิสัน  จำกัด (มหาชน)", "บมจ. เรดิสัน")]
+    [InlineData("Radisson Co., Ltd.", "RADISSON COMPANY LIMITED")]
+    [InlineData("หจก. แอม แฮปปี้เนส", "ห้างหุ้นส่วนจำกัด แอมแฮปปี้เนส")]
+    public void NameMatchKind_SameNameAfterNormalize_IsExact(string given, string stored)
+        => Assert.Equal(ContactMatchKind.ExactName, ContactTaxBranchKey.NameMatchKind(given, stored));
+
+    [Theory]
+    [InlineData("ABC", "ABC Trading")]
+    [InlineData("แอม แฮปปี้", "หจก. แอม แฮปปี้เนส")]            // ชื่อถูกตัด ≠ ชื่อเดียวกัน (กฎ #4 H)
+    [InlineData("Radisson", "เรดิสัน")]                         // ข้ามภาษา = คล้าย ไม่ใช่ตรงตัว
+    [InlineData("", "")]
+    public void NameMatchKind_PartialOrCrossLanguage_IsFuzzy(string given, string stored)
+        => Assert.Equal(ContactMatchKind.FuzzyName, ContactTaxBranchKey.NameMatchKind(given, stored));
+
+    [Theory]
+    [InlineData("0000000000000")]          // ค่ามาตรฐาน "ลูกค้าทั่วไป" ของ POS หลายเจ้า
+    [InlineData("0105551136086")]          // checksum ผิด (หลักสุดท้ายของ Tin คือ 5)
+    public void AdoptTaxId_InvalidChecksumOrZeros_NotAdopted(string bad)
+    {
+        var row = new Contact { Id = Blank, Name = "x", TaxId = null };
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(row, bad, null, ContactMatchKind.ExactName));
+        Assert.Null(row.TaxId);
+    }
+
+    [Fact]
+    public void AdoptTaxId_WalkInRow_NeverTakesTaxId()
+    {
+        var walkIn = new Contact { Id = Blank, Name = "ลูกค้าทั่วไป", TaxId = null, IsWalkInCustomer = true };
+        // ผู้ซื้อที่มีเลขจริงไม่ใช่ลูกค้าทั่วไป ⇒ ห้ามใช้แถวกลาง (สร้างแถวใหม่)
+        Assert.Equal(ContactAdoptOutcome.Reject, ContactTaxBranchKey.AdoptTaxId(walkIn, Tin, null, ContactMatchKind.ExactName));
+        // "0000000000000"/ไม่มีเลข ⇒ ยังเป็นลูกค้าทั่วไปได้ตามเดิม แต่ไม่รับเลขปลอม
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(walkIn, "0000000000000", null, ContactMatchKind.ExactName));
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(walkIn, null, null, ContactMatchKind.ExactName));
+        Assert.Null(walkIn.TaxId);
+    }
+
+    [Fact]
+    public void AdoptTaxId_ExactNameWithRealTaxId_StillAdopts()
+    {
+        // ครึ่งที่ต้องยังถูก (R2-C5): ชื่อตรงตัว/อีเมล + เลขใช้ได้ ⇒ เติมเลขตามเดิม
+        var row = new Contact { Id = Blank, Name = "บริษัท เรดิสัน จำกัด", TaxId = null };
+        Assert.Equal(ContactAdoptOutcome.Adopted, ContactTaxBranchKey.AdoptTaxId(row, Tin, null,
+            ContactTaxBranchKey.NameMatchKind("เรดิสัน จำกัด", row.Name)));
+        Assert.Equal(Tin, row.TaxId);
     }
 }
