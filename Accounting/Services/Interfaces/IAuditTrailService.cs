@@ -18,9 +18,18 @@ public interface IAuditTrailService
     Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId);
 }
 
+/// <summary>ผลตรวจ hash chain — <c>IsValid</c> = ไม่มีหลักฐานการแก้/ลบ (fork จากคำขอพร้อมกันไม่นับ — รายงานแยกใน
+/// <c>ForkCount</c>) · <c>FirstBroken*</c> = แถวแรก (ตาม Id) ที่ถูกแก้หรือขาดตอน · รายการเต็มอยู่ใน
+/// <c>TamperedLogIds</c>/<c>DanglingLogIds</c> · <c>AlertMessage</c> = ข้อความถึงลูกค้าตามสาเหตุที่ตรวจพบ (ฝ่ายค้านรอบ 193 รอบสอง W2-C1)</summary>
 public record AuditChainVerifyResult(
     int TotalRows,
     int FirstBrokenRow,
     string? FirstBrokenLogId,
     DateTime? FirstBrokenAt,
-    bool IsValid);
+    bool IsValid,
+    int TamperedCount = 0,
+    int DanglingCount = 0,
+    int ForkCount = 0,
+    IReadOnlyList<string>? TamperedLogIds = null,
+    IReadOnlyList<string>? DanglingLogIds = null,
+    string? AlertMessage = null);

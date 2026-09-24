@@ -156,6 +156,11 @@ RULES += [
          must=["ExpenseClaimActionPolicy.Decide(", "ExpenseClaimActionPolicy.SelfDecisionAllowed(",
                "DocumentPermissionHelper.CanApproveAsync(", "ExpenseClaimActionPolicy.ReviewerKeys("],
          why="R2-C2 ด่านใบเบิกต้องรวบรวมหลักฐานครบ (คีย์ · SoD เจ้าของ/สวิตช์ · สิทธิ์อนุมัติ PV) แล้วให้ตัวตัดสินเดียวตัดสิน"),
+    # ฝ่ายค้านรอบสาม (B7 · กฎ #4 D watermark): งานกวาดไฟล์สแกนต้องตัดแถวที่ข้ามแน่ที่ query + เรียงแน่นอน + เลื่อนแถวที่ลบไม่ได้
+    dict(file="Services/Implementations/Ocr/OcrSelfCorrectionService.cs", method="RunMaintenanceAsync",
+         must=["ThenBy(s => s.Id)", "ThenBy(f => f.Id)", "f.UpdatedAt = sweepNow",
+               "o.FileAttachmentId == f.Id", "o.CreatedJournalEntryId != null"],
+         why="B7 แถวที่กวาดไม่ได้ต้องไม่ค้างหัวคิว Take(500) ทุกคืน (head-of-line) — ตัดที่ query · เรียงด้วย id · ประทับเวลาแถวที่ลบไม่ได้"),
     dict(file=MOBILE, method="HandleExpenseClaimApprovalAsync", must=["ApproveAsync(", "RejectAsync("],
          forbid=["ExpenseClaimStatus.Approved;", "ExpenseClaimStatus.Rejected;"],
          why="R2-C2/Q7 มือถืออนุมัติใบเบิกต้องเดินเมธอดเดียวกับเว็บ (ด่านสิทธิ์ · SoD · §65 ทวิ · CertificateInLieu) — ห้ามตั้งสถานะเอง"),
@@ -170,54 +175,56 @@ TUPLE_RULES = [
     #    ContactTaxBranchKeyTests ยังเขียว ⇒ ล็อกจุดเรียกของตัวจับคู่กลาง/SoftScope/ด่านเขียนทับในแต่ละทางเข้า ──
     (INTEG, "ProcessCustomerAsync",
      ["companyId, request.TaxId, request.BranchCode)", "ContactTaxBranchKey.SoftScope(",
-      "taxKey.MayOverwriteBranch", "ContactTaxBranchKey.AdoptTaxId("],
+      "taxKey.MayOverwriteBranch", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"],
      [("ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(")], [],
      "integration ลูกค้า: หาเลข+สาขาของ payload · ถอยไปชื่อบนชุด SoftScope เท่านั้น · ห้ามเขียนสาขา/เลขภาษีทับแถวที่ไม่ตรง (C-6)"),
     (INTEG, "ResolveContactAsync",
-     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "integration ใบขาย: ชื่อตรงห้ามได้นิติบุคคลอื่นที่ถือเลขอื่น (C-6)"),
     (INTEG, "ResolveSupplierAsync",
-     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "integration ผู้ขาย: ชื่อตรงห้ามได้นิติบุคคลอื่นที่ถือเลขอื่น (C-6)"),
     (IMPORT, "ImportContactAsync",
      ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "taxKey.MayOverwriteBranch",
-      "ContactTaxBranchKey.AdoptTaxId("], [], [],
+      "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "นำเข้าผู้ติดต่อ: อีเมลบนชุด SoftScope · รหัสสาขาในไฟล์เขียนทับได้เฉพาะแถวที่ตรงสาขาแล้ว"),
     (DOCS_V1, "Create",
      ["TryNormalize(req.ContactBranchCode", "TaxInvoiceCompletenessChecker.MissingBuyerFields("], [], [],
      "API v1: รหัสสาขาผิดรูป = 400 · บอกช่องผู้ซื้อที่ขาดตาม §86/4 (เช่นที่อยู่ของแถวสาขาใหม่ — P-5)"),
     (DOCS_V1, "ResolveContactAsync",
      ["taxId, req.ContactBranchCode, ct)", "branchCode: req.ContactBranchCode", "ContactTaxBranchKey.SoftScope(",
-      "ContactTaxBranchKey.AdoptTaxId("], [], [],
+      "ContactTaxBranchKey.NameMatchKind(",
+      "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "API v1: สาขาของ payload ต้องไปถึงการหา + การสร้าง (เดิมส่ง null ⇒ ใบกำกับออกในนาม สนญ.) · ชื่อบนชุด SoftScope"),
     (CONTACTS_V1, "SyncCoreAsync",
      ["ContactTaxBranchKey.Pick(", "TaxBranchCode.Normalize(item.BranchCode"], [], [],
      "sync: ด่าน CONTACT-TAXID-OWNED ต้องเทียบเลข + สาขา (เดิมบล็อกสาขาของนิติบุคคลเดียวกัน)"),
     (CMS_CUST, "AutoLinkToErpContactAsync",
-     ["customer.TaxId, customer.BranchCode)", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
+     ["customer.TaxId, customer.BranchCode)", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "CMS: ลูกค้าเว็บสาขา 8 ห้ามผูกผู้ติดต่อ สนญ. · อีเมลบนชุด SoftScope"),
     (CMS_LEAD, "EnsureContactLinkedAsync",
-     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "CMS lead: เลขภาษีผ่านตัวจับคู่กลาง · อีเมลบนชุด SoftScope (C-6)"),
     (PLATFORM, "EnsureContactAsync",
      ["ContactTaxBranchKey.HasTaxId(buyer.TaxId)", "c.ExternalId == buyerKey", "taxId, buyerBranch)",
-      "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("],
+      "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"],
      [("c.ExternalId == buyerKey", "ContactTaxBranchKey.FindAsync(")], [],
      "ใบค่าบริการแพลตฟอร์ม: \"-\" ของบริษัทที่สมัครใหม่ไม่ใช่เลข (C-8) · เลข + สาขาของลูกค้า"),
     (XTENANT, "FindPartnerContactAsync",
      ["ContactTaxBranchKey.HasTaxId(partner.TaxId)", "c.ExternalId == partnerKey", "ContactTaxBranchKey.FindAsync(",
-      "partner.BranchCode", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("],
+      "partner.BranchCode", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"],
      [("c.ExternalId == partnerKey", "ContactTaxBranchKey.FindAsync(")], [],
      "ข้ามบริษัท: \"-\" ไม่ใช่เลข (C-8) · เลข + สาขาของบริษัทคู่ค้า"),
     (CONTACTS_V1, "Resolve",
      ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
      "resolve: ผู้สมัครเทียบชื่อจากชุด SoftScope (เลขใหม่ห้ามตอบ matched กับนิติบุคคลอื่น)"),
     (IMPORT, "ImportOpeningSubledgerAsync",
-     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "ยอดยกมา: ชื่อบน SoftScope · แถวที่จับได้รับเลขจากไฟล์ (R2-C5)"),
     (IMPORT, "ImportDocumentAsync",
-     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId("], [], [],
-     "นำเข้าเอกสาร: ชื่อบน SoftScope · แถวที่จับได้รับเลขจากไฟล์ (R2-C5)"),
+     ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.NameMatchKind(",
+      "OrderBy(c => c.Name.Length)", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
+     "นำเข้าเอกสาร: ชื่อบน SoftScope · substring เรียงแน่นอน · เติมเลขเฉพาะชื่อตรงตัว (R3-2) · แถวที่จับได้รับเลขจากไฟล์ (R2-C5)"),
     (DUPDET, "DetectContactAsync",
      ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
      "ตัวตรวจซ้ำตอนนำเข้า: สาขาอื่นของเลขเดียวกันไม่ใช่ 'ซ้ำ' · ชื่อบนชุด SoftScope"),
@@ -414,6 +421,44 @@ RULES += [
 ]
 
 
+# ── รอบ 193 ทีม W หลังฝ่ายค้านรอบสอง (W2-C2): audit hash chain — เรพไม่มี PostgreSQL ในเทสต์ ⇒ เทสต์เรียก Seal/Analyze ตรง
+# และ "ย้อนเส้นเขียนกลับไปสูตรเก่า/ถอด ResolveTip" เทสต์ยังเขียว ⇒ ล็อกการต่อสายของเส้นเขียน/ตรวจที่นี่ (สูตร v1 เป็น private แล้ว) ──
+AUDIT_CTX = "Data/AccountingDbContext.cs"
+AUDIT_SVC = "Services/Implementations/AuditTrailService.cs"
+AUDIT_CTRL = "Controllers/AuditTrailController.cs"
+AUDIT_JOB = "Services/Background/AuditChainVerifyJob.cs"
+AUDIT_HASH_FORBID = ["SHA256", "ComputeRowHash(", "ToHexString("]
+RULES += [
+    dict(file=AUDIT_CTX, method="ApplyAuditHashChain",
+         must=["AuditHashChain.Seal(", "AuditHashChain.ResolveTip("],
+         before=[("AuditHashChain.ResolveTip(", "AuditHashChain.Seal(")],
+         forbid=AUDIT_HASH_FORBID + ["e.RowHash ="],
+         why="W2-C2 เส้นเขียน audit มีทางเดียว: ปลาย chain จาก ResolveTip (รวมแถวที่รอบันทึก) แล้ว Seal สูตร v2 — ห้ามประกอบ hash เอง"),
+    dict(file=AUDIT_CTX, method="AddChainedAuditLog",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.Add(")],
+         why="W2-C2 แถว audit ที่เขียนตรงต้องถูกประทับก่อน Add (ไม่งั้น RowHash=null อยู่นอก chain)"),
+    dict(file=AUDIT_CTX, method="SaveChangesAsync",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.AddRange(")],
+         why="W2-C2 แถว audit จาก ChangeTracker ต้องถูกประทับก่อนบันทึก"),
+    dict(file=AUDIT_CTX, method="SaveChanges",
+         must=["ApplyAuditHashChain("], before=[("ApplyAuditHashChain(", "AuditLogs.AddRange(")],
+         why="W2-C2 เส้น sync ต้องประทับเหมือนเส้น async"),
+    dict(file=AUDIT_SVC, method="VerifyHashChainAsync",
+         must=["AuditHashChain.Analyze(", "AuditHashChain.AlertMessage("],
+         forbid=AUDIT_HASH_FORBID + ["PrevHash !="],
+         why="W2-C1/C2 ฝั่งตรวจตัวเดียว (แยก ถูกแก้/ขาดตอน/แตกกิ่ง · รายงานทุกแถว) — ห้ามเดิน chain/ประกอบ hash เอง"),
+    dict(file=AUDIT_CTRL, method="VerifyHashChain",
+         must=["AuditHashChain.Analyze("],
+         forbid=AUDIT_HASH_FORBID + ["PrevHash !="],
+         why="W2-C2 endpoint ตรวจใช้ตัวตรวจกลาง (เดิมมีสำเนา canonical ของตัวเอง)"),
+    dict(file=AUDIT_JOB, method="RunCycleAsync",
+         must=["result.AlertMessage", "result.ForkCount"],
+         why="W2-C1 ข้อความถึงลูกค้าตามสาเหตุที่ตรวจพบจริง · fork แยกรายงาน ไม่แจ้งว่า \"ถูกแก้\""),
+    dict(file="Controllers/PaymentSettingsController.cs", method="SetMode",
+         must=["AddChainedAuditLog("], forbid=["AuditLogs.Add("],
+         why="W2-C3 ร่องรอยการเปิดรับเงินจริงต้องอยู่ใน hash chain"),
+]
+
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -431,7 +476,9 @@ def mask(text: str, keep_strings: bool = False) -> str:
             interp |= text[j] == "$"
             verb |= text[j] == "@"
             j += 1
-        if text.startswith('"""', j):
+        # raw string literal เฉพาะเมื่อไม่ใช่ verbatim — `@"""IsActive"" = true"` คือ verbatim ที่ขึ้นต้นด้วย "" (escape)
+        # (ทีม W รอบสอง: เดิมตีเป็น raw string ⇒ ตัดโค้ดครึ่งหลังของ AccountingDbContext ทิ้งทั้งไฟล์ ⇒ "ไม่พบเมธอด")
+        if not verb and text.startswith('"""', j):
             end = text.find('"""', j + 3)
             return n if end < 0 else end + 3
         j += 1
@@ -705,6 +752,10 @@ def self_test() -> list:
         '    private void After() { Bar.Call(1); }\n'
         '}\n')
     errs = check_rule(sample, dict(file="x.cs", method="Foo", must=["Baz.Real(", "Bar.Call("], why="t"))
+    verbatim = ('class B {\n    void Cfg() { var f = @"""IsActive"" = true"; }\n'
+                '    private void Later()\n    {\n        Real.Call();\n    }\n}\n')
+    if check_rule(verbatim, dict(file="y.cs", method="Later", must=["Real.Call("], why="t")):
+        fails.append("self-test: verbatim string ที่ขึ้นต้นด้วย \"\" ถูกตีเป็น raw string (โค้ดหลังจากนั้นหายทั้งไฟล์)")
     if not (len(errs) == 1 and "Bar.Call(" in errs[0]):
         fails.append(f"self-test: ตัวตัดสตริงผิด — คาด 1 ข้อ ได้ {errs}")
     return fails

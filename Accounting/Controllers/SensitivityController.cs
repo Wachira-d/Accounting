@@ -22,8 +22,12 @@ public class SensitivityController : ControllerBase
 
     public record UpdateRuleRequest(SensitivityKind Kind, UserRole Role, bool CanView);
 
-    /// <summary>Toggle one role's access to one Kind. Owner only.</summary>
+    /// <summary>Toggle one role's access to one Kind. Owner only.
+    /// <para>W2-C4 (ฝ่ายค้านรอบ 193 รอบสอง): doc เขียน "Owner only" มาตลอดแต่ไม่มีด่าน ⇒ Viewer เปิดสิทธิ์ดูเอกสารเงินเดือน/ลับ
+    /// ให้บทบาทตัวเองได้ (privilege escalation · PDPA ม.37 RBAC) ⇒ ด่านเจ้าของ + ปฏิเสธคีย์</para></summary>
     [HttpPost("rules")]
+    [Accounting.Filters.RejectApiKey("ตั้งสิทธิ์ดูเอกสารลับ")]
+    [Accounting.Filters.RequireOwner("ตั้งสิทธิ์ดูเอกสารลับ", "เป็นการให้สิทธิ์ดูข้อมูลเงินเดือน/ข้อมูลส่วนบุคคล")]
     public async Task<ActionResult<ApiResponse<string>>> SetRule(Guid companyId, [FromBody] UpdateRuleRequest req)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();

@@ -356,11 +356,15 @@ public class DocumentsV1Controller : PublicApiControllerBase
             {
                 // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ชุด SoftScope = ยังไม่มีเลข) รับเลข + สาขาของ payload —
                 // มิฉะนั้นใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข (ใบอย่างย่อ/ใบเสร็จ) และ e-Tax ถูกข้ามเงียบ
+                // ฝ่ายค้านรอบสาม R3-2: ตัวเทียบนี้จับชื่อ "คล้าย/ข้ามภาษา" ได้ — เติมเลขได้เฉพาะเมื่อชื่อเท่ากันหลัง normalize
+                // (NameMatchKind) · ชื่อแค่คล้าย + payload มีเลขจริง ⇒ Reject = ไม่ใช้แถวนั้น สร้างผู้ติดต่อใหม่ข้างล่าง
+                // (เดิมเลขของผู้ซื้อ A ติดแถว B ถาวร แล้วใบกำกับของ A ทุกใบพิมพ์ชื่อ B) · payload ไม่มีเลข = ผูกด้วยชื่อคล้ายได้ตามเดิม
                 var matchedId = best.Value.Item.Id;
                 var matched = await Db.Contacts.FirstOrDefaultAsync(c => c.Id == matchedId && c.CompanyId == companyId, ct);
-                if (Helpers.ContactTaxBranchKey.AdoptTaxId(matched, taxId, req.ContactBranchCode))
-                    await Db.SaveChangesAsync(ct);
-                return matchedId;
+                var adopt = Helpers.ContactTaxBranchKey.AdoptTaxId(matched, taxId, req.ContactBranchCode,
+                    Helpers.ContactTaxBranchKey.NameMatchKind(req.ContactName, matched?.Name));
+                if (adopt == Helpers.ContactAdoptOutcome.Adopted) await Db.SaveChangesAsync(ct);
+                if (adopt != Helpers.ContactAdoptOutcome.Reject) return matchedId;
             }
         }
 

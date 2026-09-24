@@ -72,6 +72,14 @@ public class AuditChainVerifyJob : BackgroundService
             try
             {
                 var result = await audit.VerifyHashChainAsync(companyId);
+                if (result.ForkCount > 0)
+                {
+                    // แตกกิ่งจากคำขอพร้อมกัน (ฝ่ายค้านรอบ 193 รอบสอง W2-C1) — ไม่ใช่หลักฐานการแก้ ⇒ ไม่แจ้งลูกค้าว่า "ถูกแก้"
+                    // แต่ไม่เงียบ: เป็นข้อบกพร่องของระบบฝั่งเรา (ยังไม่ serialize การประทับ — คำถามเจ้าของใน r193-W.md)
+                    _logger.LogWarning(
+                        "Audit chain of {CompanyId} has {Forks} fork(s) from concurrent writes (not tampering)",
+                        companyId, result.ForkCount);
+                }
                 if (result.IsValid)
                 {
                     _logger.LogInformation(
@@ -81,8 +89,8 @@ public class AuditChainVerifyJob : BackgroundService
                 }
 
                 _logger.LogError(
-                    "🚨 Audit chain TAMPERED for {CompanyId} at row {Row} (log {LogId} @ {At}) — {Total} total rows",
-                    companyId, result.FirstBrokenRow, result.FirstBrokenLogId,
+                    "🚨 Audit chain integrity findings for {CompanyId}: tampered {Tampered} · dangling {Dangling} (first log {LogId} @ {At}) — {Total} total rows",
+                    companyId, result.TamperedCount, result.DanglingCount, result.FirstBrokenLogId,
                     result.FirstBrokenAt, result.TotalRows);
 
                 if (notify != null)
@@ -91,9 +99,12 @@ public class AuditChainVerifyJob : BackgroundService
                     {
                         await notify.DispatchAsync(companyId, NotificationEvents.AuditChainTampered, new NotificationContext
                         {
-                            Title = "🚨 Audit log ถูกแก้ไข — ตรวจสอบด่วน",
-                            Message = $"พบ tamper ที่แถว #{result.FirstBrokenRow + 1} (log {result.FirstBrokenLogId} เวลา {result.FirstBrokenAt:yyyy-MM-dd HH:mm}). " +
-                                      "Hash chain ของ AuditLog ไม่ match — มีคนแก้/แทรก/ลบจาก raw SQL หลัง insert.",
+                            Title = result.TamperedCount > 0
+                                ? "🚨 Audit log บางแถวถูกแก้หลังบันทึก — ตรวจสอบด่วน"
+                                : "🚨 Audit log ขาดตอน (มีแถวหายไป) — ตรวจสอบด่วน",
+                            // ข้อความตามสาเหตุที่ตรวจพบจริง + รายการแถวทั้งหมด (Helpers/AuditHashChain.AlertMessage) —
+                            // เดิมอ้าง "raw SQL" ทุกกรณีและบอกแค่แถวแรก (F2 ข้อ 7)
+                            Message = result.AlertMessage ?? "ตรวจพบความไม่ตรงกันใน audit log",
                             ActionUrl = "/pages/audit-log.html",
                             EntityType = "AuditLog", EntityId = companyId,
                         });

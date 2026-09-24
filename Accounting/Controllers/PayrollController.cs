@@ -760,6 +760,7 @@ public class PayrollController : ControllerBase
     /// normalize ให้). ใช้เมื่อประกาศ/พรฎ. ฉบับใหม่เปลี่ยนเพดานหรืออัตรา
     /// (รวมกรณีลดอัตราชั่วคราว) โดยไม่ต้องรออัปเดตระบบ.</summary>
     [HttpPut("sso-config")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่าอัตราประกันสังคม")]   // W2-C6: ตารางกฎหมายชุดเดียวกับ tax-rule-config
     public async Task<ActionResult<ApiResponse<object>>> UpsertSsoConfig(
         Guid companyId, [FromBody] SsoYearConfigRequest req,
         [FromServices] Accounting.Data.AccountingDbContext db)
@@ -820,6 +821,7 @@ public class PayrollController : ControllerBase
 
     /// <summary>Remove a year override — the statutory default takes over.</summary>
     [HttpDelete("sso-config/{year:int}")]
+    [Accounting.Filters.RejectApiKey("ลบค่าอัตราประกันสังคม")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteSsoConfig(
         Guid companyId, int year, [FromServices] Accounting.Data.AccountingDbContext db,
         [FromQuery] int? fromMonth = null, [FromQuery] int? toMonth = null)

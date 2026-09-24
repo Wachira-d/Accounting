@@ -258,6 +258,10 @@ public class PdpaController : ControllerBase
     public async Task<ActionResult<ApiResponse<PdpaConsentRecord>>> GrantConsent(
         Guid companyId, [FromBody] GrantConsentRequest req, CancellationToken ct)
     {
+        // รอบ 193 ทีม W (ฝ่ายค้านรอบสอง · เพิ่ม PdpaController เข้า write_permission_gate_check): บันทึกความยินยอม "แทนเจ้าของข้อมูล"
+        // เป็นหลักฐานทางกฎหมาย (ม.19) — เดิมใครก็บันทึกได้ ⇒ ปลอมความยินยอมได้ · หน้าเดียวที่เรียก (pdpa.html) เป็นหน้าของ DPO
+        // ซึ่งงานอื่นในหน้าเดียวกันต้องมี Pii.View อยู่แล้ว ⇒ ด่านเดียวกับถอนความยินยอม
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
         var row = await _svc.GrantConsentAsync(companyId, req.SubjectUserId, req.SubjectContactId,
             req.SubjectContact, req.Purpose, req.PolicyVersion ?? "1.0", req.Channel, ip,

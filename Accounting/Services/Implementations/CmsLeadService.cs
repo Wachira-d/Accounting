@@ -244,7 +244,11 @@ public class CmsLeadService
         if (existing == null && softScope != null && !string.IsNullOrEmpty(lead.CustomerEmail))
             existing = await softScope.FirstOrDefaultAsync(c => c.Email == lead.CustomerEmail);
         // ฝ่ายค้านรอบสอง R2-C5: จับด้วยอีเมลแล้วต้องรับเลขของ lead (บันทึกพร้อม SaveChanges ของผู้เรียกเหมือน IsCustomer)
-        Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, lead.CustomerTaxId, branchCode: null);
+        // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างผู้ติดต่อใหม่ของ lead รายนี้ (ด้านล่าง)
+        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, lead.CustomerTaxId, branchCode: null,
+                taxKey.Found ? Accounting.Helpers.ContactMatchKind.TaxKey : Accounting.Helpers.ContactMatchKind.Email)
+            == Accounting.Helpers.ContactAdoptOutcome.Reject)
+            existing = null;
 
         if (existing != null)
         {

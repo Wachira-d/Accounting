@@ -303,6 +303,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 new[] { new Accounting.Helpers.ContactKeyCandidate(existing.Id, existing.TaxId, existing.BranchCode) },
                 taxId, buyerBranch).Found)
             existing = null;
+        var matchedBy = Accounting.Helpers.ContactMatchKind.ExternalKey;
 
         // (2) เลขภาษี + สาขา (คำตัดสินเจ้าของข้อ 20) — ใบกำกับค่าบริการต้องออกในนามสาขาที่ลูกค้าลงทะเบียนไว้ (§86/4)
         var key = default(Accounting.Helpers.ContactKeyMatch);
@@ -311,22 +312,30 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, tenantId, taxId, buyerBranch);
             if (key.ContactId is Guid keyId)
                 existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == tenantId && !c.IsDeleted);
+            matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         }
 
         // (3) ชื่อ — บนชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขมีแล้วคนละสาขา ⇒ ห้าม) และไม่เอาแถวที่ผูกกับ tenant อื่น
         //     (ชื่อซ้ำข้ามลูกค้าที่ยังไม่กรอกเลข = คนละราย)
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, tenantId, taxId, key);
         if (existing == null && softScope != null)
+        {
+            matchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
             existing = await softScope
                 .Where(c => !c.IsDeleted && c.Name == buyer.Name
                     && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != buyerKey))
                 .OrderByDescending(c => c.IsCustomer)
                 .FirstOrDefaultAsync();
+        }
+
+        // แถวที่ยังไม่มีเลข (บิลก่อนลูกค้ากรอกเลข) รับเลข + สาขาปัจจุบัน — ตัวช่วยเดียวของทุกทางเข้า (R2-C5/R2-C9) ·
+        // แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างแถวใหม่ (ฝ่ายค้านรอบสาม B8)
+        var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, buyerBranch, matchedBy);
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Reject) existing = null;
 
         if (existing != null)
         {
-            // แถวที่ยังไม่มีเลข (บิลก่อนลูกค้ากรอกเลข) รับเลข + สาขาปัจจุบัน — ตัวช่วยเดียวของทุกทางเข้า (R2-C5/R2-C9)
-            var dirty = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, buyerBranch);
+            var dirty = adopt == Accounting.Helpers.ContactAdoptOutcome.Adopted;
             // ผู้ติดต่อเดิมอาจถูกสร้างไว้เป็นผู้ขายอย่างเดียว — ต้องเป็นลูกค้าด้วย
             // ไม่งั้นสร้างเอกสารฝั่งขายไม่ผ่าน validation บทบาทคู่ค้า
             if (!existing.IsCustomer) { existing.IsCustomer = true; dirty = true; }

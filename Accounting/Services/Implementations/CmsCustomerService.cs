@@ -352,8 +352,12 @@ public class CmsCustomerService : ICmsCustomerService
             _db.Contacts.Where(c => c.IsActive), companyId, customer.TaxId, taxKey);
         if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(customer.Email))
             contact = await softScope.FirstOrDefaultAsync(c => c.Email == customer.Email);
-        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาของลูกค้าเว็บ — ใบกำกับจากคำสั่งซื้อจึงมีเลขผู้ซื้อ
-        Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, customer.TaxId, customer.BranchCode);
+        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาของลูกค้าเว็บ — ใบกำกับจากคำสั่งซื้อจึงมีเลขผู้ซื้อ ·
+        // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = ไม่ผูก (เมธอดนี้ไม่สร้างผู้ติดต่อ)
+        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, customer.TaxId, customer.BranchCode,
+                taxKey.Found ? Accounting.Helpers.ContactMatchKind.TaxKey : Accounting.Helpers.ContactMatchKind.Email)
+            == Accounting.Helpers.ContactAdoptOutcome.Reject)
+            contact = null;
 
         if (contact != null)
         {

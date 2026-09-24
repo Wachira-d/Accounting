@@ -469,6 +469,7 @@ public class CrossTenantWorkflowService
             && !Accounting.Helpers.ContactTaxBranchKey.Pick(
                 new[] { new Accounting.Helpers.ContactKeyCandidate(found.Id, found.TaxId, found.BranchCode) }, taxId, branch).Found)
             found = null;
+        var matchedBy = Accounting.Helpers.ContactMatchKind.ExternalKey;
 
         // (2) เลขภาษี + สาขา
         var key = default(Accounting.Helpers.ContactKeyMatch);
@@ -477,22 +478,30 @@ public class CrossTenantWorkflowService
             key = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, ownerCompanyId, taxId, branch);
             if (key.ContactId is Guid id)
                 found = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == ownerCompanyId && !c.IsDeleted);
+            matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         }
 
         // (3) ชื่อ บนชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข · เลขมีแล้วคนละสาขา ⇒ ห้าม) · ไม่เอาแถวที่ผูกกับบริษัทอื่น
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, ownerCompanyId, taxId, key);
         if (found == null && softScope != null && !string.IsNullOrWhiteSpace(partner.Name))
+        {
+            matchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
             found = await softScope
                 .Where(c => !c.IsDeleted && c.Name == partner.Name
                     && (asSupplier ? c.IsSupplier : c.IsCustomer)
                     && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != partnerKey))
                 .OrderBy(c => c.CreatedAt)
                 .FirstOrDefaultAsync();
+        }
+
+        // แถวที่ยังไม่มีเลขรับเลข + สาขาของคู่ค้า (ตัวช่วยเดียวของทุกทางเข้า — R2-C5/R2-C9) · แถวลูกค้าทั่วไปไม่รับเลข ⇒ สร้างใหม่ (B8)
+        var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(found, taxId, branch, matchedBy);
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Reject) found = null;
 
         if (found != null)
         {
-            // แถวที่ยังไม่มีเลขรับเลข + สาขาของคู่ค้า (ตัวช่วยเดียวของทุกทางเข้า — R2-C5/R2-C9) · ผูกกุญแจถ้ายังไม่ผูกกับระบบใด
-            var dirty = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(found, taxId, branch);
+            // ผูกกุญแจถ้ายังไม่ผูกกับระบบใด
+            var dirty = adopt == Accounting.Helpers.ContactAdoptOutcome.Adopted;
             if (string.IsNullOrWhiteSpace(found.ExternalSystem) && string.IsNullOrWhiteSpace(found.ExternalId))
             {
                 found.ExternalSystem = "NextAccTenant";
