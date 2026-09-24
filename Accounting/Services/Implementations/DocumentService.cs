@@ -4489,6 +4489,51 @@ public partial class DocumentService : IDocumentService
         return new SuggestPvAccountingResponse(results, bulk.CrossLineObservations, bulk.UsedAi);
     }
 
+    public async Task<SupplierTaxInvoiceCheckResponse> CheckSupplierTaxInvoiceAsync(Guid companyId, Guid? contactId,
+        string? supplierBranchCode, string? supplierInvoiceNumber, DateTime? supplierTaxInvoiceDate)
+    {
+        // ผู้ติดต่ออ่านจาก**ฐานข้อมูล** (แหล่งเดียวกับที่ตัวลงบัญชีใช้ตอนอนุมัติ) ไม่ใช่จากช่อง
+        // บนหน้าจอ — ช่องบนจออาจมาจากสแกน/แคช/ค่าค้างของใบก่อน (รอบ 190 ทีม C ข้อ 3)
+        Contact? contact = null;
+        if (contactId is Guid cid)
+            contact = await _db.Contacts.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == cid && c.CompanyId == companyId && !c.IsDeleted);
+
+        // สาขาที่จะถูกบันทึก: ลำดับเดียวกับ CreateDocumentAsync (ช่องบนฟอร์ม → ผู้ติดต่อ → 00000)
+        var typedBranch = string.IsNullOrWhiteSpace(supplierBranchCode) ? null : supplierBranchCode.Trim();
+        string? branchError = null;
+        if (typedBranch != null
+            && !Accounting.Helpers.TaxBranchCode.TryNormalize(typedBranch, out _, out branchError))
+        { /* branchError ถูกตั้งแล้ว — แสดงคู่กับผลตรวจ ไม่ใช่ throw (ผู้ใช้กำลังพิมพ์) */ }
+        var effectiveBranch = typedBranch ?? contact?.BranchCode ?? Accounting.Helpers.TaxBranchCode.HeadOffice;
+
+        var probe = new Document
+        {
+            CompanyId = companyId,
+            ContactId = contact?.Id ?? Guid.Empty,
+            HasTaxInvoiceReference = true,
+            SupplierBranchCode = effectiveBranch,
+            SupplierInvoiceNumber = string.IsNullOrWhiteSpace(supplierInvoiceNumber) ? null : supplierInvoiceNumber.Trim(),
+            SupplierTaxInvoiceDate = supplierTaxInvoiceDate,
+        };
+        var result = TaxInvoiceCompletenessChecker.Evaluate(probe, contact);
+        // ยังไม่ได้เลือกผู้ติดต่อ: บอกเรื่องเดียวที่ต้องทำก่อน (ไม่ไล่ชื่อ/เลข/ที่อยู่ผู้ขายทีละช่อง)
+        var missing = contact != null
+            ? result.MissingFields.ToList()
+            : new[] { "ผู้ติดต่อ (ผู้ขาย) — ยังไม่ได้เลือก" }
+                .Concat(result.MissingFields.Except(result.MissingContactFields)).ToList();
+
+        return new SupplierTaxInvoiceCheckResponse(
+            IsClaimable: result.IsClaimable && contact != null,
+            MissingFields: missing,
+            MissingContactFields: contact != null ? result.MissingContactFields.ToList() : new List<string>(),
+            ContactTaxId: contact?.TaxId,
+            ContactBranchCode: contact?.BranchCode,
+            EffectiveBranchCode: effectiveBranch,
+            EffectiveBranchLabel: Accounting.Helpers.TaxBranchCode.Label(effectiveBranch),
+            BranchCodeError: branchError);
+    }
+
     public async Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId)
     {
         // เอกสารที่ VAT ค้าง 11640 รอใบกำกับครบ (ยังไม่ reclassify)
@@ -16128,7 +16173,10 @@ public partial class DocumentService : IDocumentService
         PaymentTerms: c.PaymentTerms,
         DocumentLanguage: c.DocumentLanguage,
         NameEn: c.NameEn,
-        AddressEn: c.AddressEn);
+        AddressEn: c.AddressEn,
+        BranchLabel: TaxInvoiceCompletenessChecker.IsJuristicBuyer(c)
+            ? Accounting.Helpers.TaxBranchCode.LabelWithName(c.BranchCode, c.BranchName)
+            : null);
 
     // ==================== Smart Defaults ====================
 
@@ -17139,6 +17187,25 @@ public partial class DocumentService : IDocumentService
             && doc.VatAmount > 0
             && !doc.HasTaxInvoiceReference)
             warnings.Add($"เอกสารค่าใช้จ่ายมี VAT {doc.VatAmount:N2} แต่ไม่ระบุข้อมูลใบกำกับ — §86/4 ไม่ครบ ภาษีซื้อจะลง 11640 (ยังไม่ถึงกำหนด) เคลมไม่ได้จนกว่าจะเติมข้อมูลใบ");
+
+        // ติ๊ก "มีใบกำกับภาษีซื้อ" แล้วแต่ภาษีซื้อจะถูกพัก 11640 เพราะ §86/4 ไม่ครบ —
+        // ตัดสินด้วยตัวตรวจ**ตัวเดียวกับ**ตัวลงบัญชี (ResolveInputVatAccountAsync)
+        // (เดิมไม่มีคำเตือนเลย — ผู้ติดต่อไม่มีที่อยู่/เลข checksum ผิด/ใบจาก API ที่ไม่มี
+        // เลขที่ใบกำกับ พักเงียบ ๆ ทั้งที่ผู้ใช้ประกาศเจตนาเคลม · รอบ 190 ทีม C)
+        if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                or DocumentType.PaymentVoucher)
+        {
+            var parkCheck = TaxInvoiceCompletenessChecker.Evaluate(doc, doc.Contact);
+            var parkWarn = Accounting.Helpers.InputVatParkingNotice.Build(
+                isPurchaseInputVatType: true,
+                isForeignService: doc.IsForeignService,
+                inputVatAccountCodeOverride: doc.InputVatAccountCodeOverride,
+                claimableVat: doc.Lines?.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount) ?? 0m,
+                claimIntentDeclared: doc.HasTaxInvoiceReference,
+                missingFields: parkCheck.MissingFields,
+                missingContactFields: parkCheck.MissingContactFields);
+            if (parkWarn != null) warnings.Add(parkWarn);
+        }
 
         // Foreign currency without explicit FX rate (means the rate was
         // either captured at create-time or fell back to BoT) — surface so

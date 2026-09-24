@@ -89,8 +89,14 @@
             <div style="font-weight:600;color:#92400e;margin-bottom:6px">⚠️ อาจซ้ำกับผู้ติดต่อในระบบ:</div>
             <div id="fuzzyMatchList"></div>
           </div>
-          <div class="form-row" id="taxIdRow">
-            <div class="form-group" style="flex:1"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
+          <!-- เลขผู้เสียภาษี + รหัสสาขา อยู่แถวเดียวกัน (รอบ 190 ทีม C ข้อ 5 — เจ้าของเสนอ):
+               ตัวตนทางภาษีของคู่ค้าคือ "เลข 13 หลัก + สาขา 5 หลัก" คู่กันเสมอ (ประกาศอธิบดีฯ 199) ·
+               เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ · เดิมช่องสาขาซ่อนอยู่ท้ายกล่องที่อยู่ จึงถูกปล่อยว่าง/
+               00000 ทั้งที่คู่ค้าเป็นสาขา · กรอกสาขาก่อนกด "ดึงข้อมูล DBD" = ได้ชื่อ/ที่อยู่ของสาขานั้น -->
+          <div class="form-row" id="taxIdRow" style="flex-wrap:wrap">
+            <div class="form-group" style="flex:2;min-width:240px"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
+            <div class="form-group" id="branchCodeGroup" style="flex:1;min-width:130px"><label class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
           </div>
           <!-- ฟิลด์เฉพาะนิติบุคคล -->
           <div id="juristicFields" style="margin-bottom:12px">
@@ -248,10 +254,6 @@
             <div class="form-row">
               <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
               <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
-            </div>
-            <div class="form-row" id="branchRow">
-              <div class="form-group" id="branchCodeGroup"><label class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
-              <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
             </div>
           </div>
           </div><!-- /addrThaiBox -->
@@ -558,7 +560,7 @@
           const ctCode = (c) => Layout.contactTypeCode(c.contactType);
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${Layout.esc(c.name)}</td>
-            <td>${Layout.esc(c.taxId || '-')}${c.branchCode && Layout.isJuristicContact(c.contactType) ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchCode)})</span>` : ''}</td>
+            <td>${Layout.esc(c.taxId || '-')}${c.branchLabel ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchLabel)} · ${Layout.esc(c.branchCode || '00000')})</span>` : ''}</td>
             <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':ctCode(c)===0?'badge-warning':'badge-gray'}" ${ctCode(c)===0?'title="ชนิดผู้ติดต่อตัดสินแบบยื่น ภ.ง.ด.3/53 และ scheme ของ e-Tax — กดแก้ไขเพื่อเลือก"':''}>${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
@@ -659,6 +661,13 @@
           if (result.juristicType) document.getElementById('fJuristicType').value = result.juristicType;
           if (result.registeredCapital) document.getElementById('fRegisteredCapital').value = Number(result.registeredCapital).toLocaleString('th-TH') + ' บาท';
           if (result.status) document.getElementById('fDbdStatus').value = result.status;
+          // ผลของ "สาขาที่ระบุ" (ทะเบียน VAT ยืนยันสาขานั้น) → ใช้รหัส/ชื่อสาขาจากทะเบียน
+          // ชื่อสาขาเดิมที่เป็นค่าเริ่มต้น "สำนักงานใหญ่" ถือว่ายังไม่ได้กรอก
+          if (result.branchCode) {
+            document.getElementById('fBranch').value = result.branchCode;
+            const bn = document.getElementById('fBranchName');
+            if (result.branchName && (!bn.value || bn.value === 'สำนักงานใหญ่')) bn.value = result.branchName;
+          }
           // Default branch to 00000 (head office) for juristic
           if (!document.getElementById('fBranch').value) document.getElementById('fBranch').value = '00000';
           if (!document.getElementById('fBranchName').value) document.getElementById('fBranchName').value = 'สำนักงานใหญ่';
@@ -716,7 +725,8 @@
           document.getElementById('fTaxId'),
           fillFromDbd,
           document.getElementById('fDbdBtn'),
-          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2 }
+          { enabledCheck: () => parseInt(document.getElementById('fContactType').value) === 2,
+            branchInput: document.getElementById('fBranch') }
         );
       },
       _allFieldIds: [

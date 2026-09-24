@@ -2377,12 +2377,12 @@ public class OcrService : IOcrService
                 || Accounting.Helpers.OcrSelfPartyGuard.IsSelf(name, companyContext?.Name)
                 || Accounting.Helpers.OcrSelfPartyGuard.IsSelf(name, companyContext?.NameEn);
 
+            // ผลตัดสิน "ใบนี้เป็นของผู้ติดต่อแถวไหน (สาขาไหน)" — null = ไม่ได้จับด้วยเลขผู้เสียภาษี
+            Accounting.Helpers.OcrVendorBranchPick? vendorBranchPick = null;
             if (!string.IsNullOrEmpty(extractedData.VendorTaxId))
             {
                 // Same juristic TaxId can exist as SEVERAL contacts — one per
-                // branch (สำนักงานใหญ่ 00000 + สาขา 00001, …). Pick the contact
-                // whose BranchCode matches the OCR'd branch; blank/absent codes
-                // normalize to head-office 00000 so legacy rows still match.
+                // branch (สำนักงานใหญ่ 00000 + สาขา 00001, …) ตามที่ FindDuplicateContactAsync ถือ.
                 // ⚠️ เทียบเลขภาษีแบบ normalize (ตัวเลขล้วน) ใน memory — เดิมเทียบ
                 // == ตรง ๆ: contact เก่าที่เก็บมีขีด/เว้นวรรค ("0-2735-...") ไม่
                 // match กับ OCR ("0273563000920") → หลุดไปสร้างซ้ำทุกสแกน
@@ -2395,33 +2395,16 @@ public class OcrService : IOcrService
                     .ToListAsync())
                     .Where(c => DocumentService.NormalizeTaxDigits(c.TaxId) == ocrTaxDigits)
                     .Where(c => !IsOurOwnContact(c.TaxId, c.Name))
-                    .Select(c => new { c.Id, c.Name, c.BranchCode })
+                    .Select(c => new Accounting.Helpers.OcrVendorBranchContact.Candidate(c.Id, c.Name, c.BranchCode))
                     .ToList();
-                if (taxMatches.Count == 1)
-                {
-                    scanResult.MatchedContactId = taxMatches[0].Id;
-                }
-                else if (taxMatches.Count > 1)
-                {
-                    static string NormBranch(string? b)
-                    {
-                        var digits = new string((b ?? "").Where(char.IsDigit).ToArray());
-                        return digits.Length == 0 ? "00000" : digits.PadLeft(5, '0');
-                    }
-                    var ocrBranch = NormBranch(extractedData.VendorBranchCode);
-                    var byBranch = taxMatches.FirstOrDefault(c => NormBranch(c.BranchCode) == ocrBranch);
-                    // Deterministic fallback: head office (00000) first, then
-                    // lowest branch code — an unordered query made the pick
-                    // change between scans.
-                    var pick = byBranch ?? taxMatches
-                        .OrderBy(c => NormBranch(c.BranchCode))
-                        .ThenBy(c => c.Id)
-                        .First();
-                    scanResult.MatchedContactId = pick.Id;
-                    extractedData.ReasoningTrace.Add(byBranch != null
-                        ? $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ — เลือกตามสาขา {ocrBranch}: '{pick.Name}'"
-                        : $"[Branch] TaxID ตรง {taxMatches.Count} รายชื่อ แต่ไม่มีสาขา {ocrBranch} — ใช้รายแรก '{pick.Name}' (โปรดตรวจสอบ)");
-                }
+                // ตัวตัดสินตัวเดียว (pure + เทสต์ใบ B Radisson "สาขาที่ 8") — เดิมแถวเดียว = หยิบเลย
+                // ไม่ดูสาขา และตัวเติม [Enrich] เอาที่อยู่ของใบสาขาไปทับแถวสำนักงานใหญ่ได้
+                vendorBranchPick = Accounting.Helpers.OcrVendorBranchContact.Decide(
+                    taxMatches, extractedData.VendorBranchCode);
+                if (vendorBranchPick.ContactId.HasValue)
+                    scanResult.MatchedContactId = vendorBranchPick.ContactId;
+                if (!string.IsNullOrEmpty(vendorBranchPick.Trace))
+                    extractedData.ReasoningTrace.Add(vendorBranchPick.Trace);
             }
 
             // ⚠️ จับคู่ด้วย "ชื่อ" เป็นเส้นเสี่ยงที่สุด — ผูกเอกสารผิดรายได้ทั้งใบ
@@ -2574,6 +2557,8 @@ public class OcrService : IOcrService
                     Name = extractedData.DbdCanonicalName ?? extractedData.VendorName ?? $"ผู้ขาย (TaxID: {extractedData.VendorTaxId})",
                     TaxId = extractedData.VendorTaxId,
                     BranchCode = extractedData.VendorBranchCode,
+                    // ชื่อสาขาจากทะเบียน VAT (มีเฉพาะเมื่อทะเบียนยืนยันสาขาที่อ่านได้ — ดู EnrichFromDbdAsync)
+                    BranchName = extractedData.DbdBranchName,
                     IsCustomer = false,
                     IsSupplier = true,
                     ContactType = ContactType.JuristicPerson,
@@ -2693,7 +2678,10 @@ public class OcrService : IOcrService
             //       มาเห็น "(ผู้ติดต่อยังไม่มีเลขผู้เสียภาษี)" ทั้งที่ OCR มี.
             //   (2) DBD enrichment fields (address/phone/email/branch) — รัน
             //       เฉพาะตอนมีข้อมูล (กันเขียนทับด้วยค่าว่าง).
-            if (!contactJustCreated && scanResult.MatchedContactId.HasValue)
+            // ⚠️ แถวที่ผูกเป็น "คนละสาขา" กับกระดาษ ห้ามเติม/ทับด้วยข้อมูลจากกระดาษ — ที่อยู่ของ
+            // สาขาที่ 8 ต้องไม่ไปลงแถวสำนักงานใหญ่ (OcrVendorBranchContact.MayEnrichMatchedRow)
+            if (!contactJustCreated && scanResult.MatchedContactId.HasValue
+                && (vendorBranchPick?.MayEnrichMatchedRow ?? true))
             {
                 var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == scanResult.MatchedContactId);
                 if (existing != null)
@@ -4980,6 +4968,26 @@ public class OcrService : IOcrService
         data.DbdMatched = true;
         data.DbdCanonicalName = dbd.NameTh;
         data.DbdAddress = dbd.Address;
+        // ใบออกโดย "สาขา" (เช่นใบ B Radisson "สาขาที่ออกใบกำกับภาษีคือ สาขาที่ 8") — ที่อยู่ที่ค้นได้
+        // ข้างบนเป็นของสำนักงานใหญ่ ⇒ ขอที่อยู่ของสาขานั้นจากทะเบียน VAT (รอบ 190 ทีม C ข้อ 5)
+        // ทะเบียนไม่ยืนยันสาขา = บอกตามจริง ไม่ติดป้ายที่อยู่สำนักงานใหญ่ว่าเป็นของสาขา
+        if (!string.IsNullOrWhiteSpace(data.VendorBranchCode)
+            && !Accounting.Helpers.TaxBranchCode.IsHeadOffice(data.VendorBranchCode))
+        {
+            var branchLabel = Accounting.Helpers.TaxBranchCode.Label(data.VendorBranchCode);
+            DbdCompanyResult? branchInfo = null;
+            try { branchInfo = await _dbdLookup.GetBranchAsync(data.VendorTaxId!, data.VendorBranchCode); }
+            catch (Exception ex) { _logger.LogWarning(ex, "RD branch lookup failed for {TaxId}/{Branch}", data.VendorTaxId, data.VendorBranchCode); }
+            if (branchInfo != null && !string.IsNullOrWhiteSpace(branchInfo.Address))
+            {
+                data.DbdAddress = branchInfo.Address;
+                data.DbdBranchName = string.IsNullOrWhiteSpace(branchInfo.BranchName) ? null : branchInfo.BranchName;
+                data.ReasoningTrace.Add($"[DBD] ใบออกโดย{branchLabel} — ใช้ที่อยู่ของสาขานี้จากทะเบียน VAT: {branchInfo.Address}");
+            }
+            else
+                data.ReasoningTrace.Add($"[DBD] ใบออกโดย{branchLabel} แต่ทะเบียนไม่คืนข้อมูลของสาขานี้ — "
+                    + "ที่อยู่จากทะเบียนเป็นของสำนักงานใหญ่ โปรดตรวจที่อยู่สาขาในผู้ติดต่อ");
+        }
         data.DbdJuristicType = dbd.JuristicType;
         data.DbdStatus = dbd.Status;
         data.VendorName = dbd.NameTh;   // ใช้การสะกดทางการเสมอ (§86/4 ต้องการชื่อนิติบุคคล)
@@ -9413,6 +9421,9 @@ internal class OcrExtractedData
     public bool DbdMatched { get; set; }
     public string? DbdCanonicalName { get; set; }
     public string? DbdAddress { get; set; }
+    /// <summary>ชื่อสาขาตามทะเบียน VAT — ตั้งเมื่อทะเบียนยืนยันสาขาที่อ่านได้จากกระดาษ (ไม่ใช่สำนักงานใหญ่)
+    /// ซึ่งตอนนั้น <see cref="DbdAddress"/> คือที่อยู่ของสาขานั้นด้วย · null = ผลค้นแบบเดิม (≈ สำนักงานใหญ่)</summary>
+    public string? DbdBranchName { get; set; }
     public string? DbdJuristicType { get; set; }
     public string? DbdStatus { get; set; }
     public List<OcrExtractedLineItem> Items { get; set; } = new();

@@ -269,6 +269,75 @@ public class DbdLookupService : IDbdLookupService
         }
     }
 
+    public async Task<DbdCompanyResult?> GetBranchAsync(string juristicId, string? branchCode)
+    {
+        if (string.IsNullOrWhiteSpace(juristicId) || juristicId.Length != 13) return null;
+        // สำนักงานใหญ่/ไม่ระบุ = เส้นเดิมทุกประการ (ไม่เปลี่ยนพฤติกรรมของผู้เรียกเดิม)
+        if (Accounting.Helpers.TaxBranchCode.IsHeadOffice(branchCode))
+            return await GetByJuristicIdAsync(juristicId);
+        if (!Accounting.Helpers.TaxBranchCode.TryNormalize(branchCode, out var code, out _) || code == null)
+            return null;
+
+        var cacheKey = $"dbd:{juristicId}:b{code}";
+        if (_cache.TryGetValue<DbdCompanyResult?>(cacheKey, out var cached)) return cached;
+
+        DbdCompanyResult? result = null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient("Dbd");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            var body = await PostRdVatAsync(client, juristicId, int.Parse(code));
+            var records = Accounting.Helpers.RdVatBranchRecords.Parse(body);
+            var rec = Accounting.Helpers.RdVatBranchRecords.PickBranch(records, code);
+            if (rec != null)
+                result = new DbdCompanyResult(
+                    JuristicId: juristicId,
+                    NameTh: rec.Name,
+                    NameEn: null,
+                    JuristicType: null,
+                    Status: "Active",
+                    RegisteredCapital: null,
+                    Address: rec.Address,
+                    RegisterDate: null,
+                    Objective: null,
+                    BranchCode: rec.BranchCode,
+                    BranchName: string.Join(" ", new[] { rec.BranchTitle, rec.BranchName }
+                        .Where(s => !string.IsNullOrWhiteSpace(s))));
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "RD VAT branch lookup failed for {Id}/{Branch}", juristicId, code); }
+
+        _cache.Set(cacheKey, result, result != null ? PositiveTtl : NegativeTtl);
+        return result;
+    }
+
+    /// <summary>ยิง SOAP ของทะเบียน VAT กรมสรรพากรด้วยเลขสาขาที่ระบุ — คืนเนื้อ XML ดิบ (null = ไม่สำเร็จ)</summary>
+    private async Task<string?> PostRdVatAsync(HttpClient client, string tin, int branchNumber)
+    {
+        var soapBody = $"""
+        <?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <Service xmlns="https://rdws.rd.go.th/serviceRD3/vatserviceRD3">
+              <username>anonymous</username>
+              <password>anonymous</password>
+              <TIN>{tin}</TIN>
+              <ProvinceCode>0</ProvinceCode>
+              <BranchNumber>{branchNumber}</BranchNumber>
+              <AmphurCode>0</AmphurCode>
+            </Service>
+          </soap:Body>
+        </soap:Envelope>
+        """;
+        var req = new HttpRequestMessage(HttpMethod.Post, "https://rdws.rd.go.th/serviceRD3/vatserviceRD3.asmx")
+        {
+            Content = new StringContent(soapBody, System.Text.Encoding.UTF8, "text/xml")
+        };
+        req.Headers.Add("SOAPAction", "https://rdws.rd.go.th/serviceRD3/vatserviceRD3/Service");
+        var response = await client.SendAsync(req);
+        var body = await response.Content.ReadAsStringAsync();
+        return response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body) ? body : null;
+    }
+
     /// <summary>
     /// Revenue Department VAT lookup — public SOAP service, no API key needed.
     /// Returns full company name + branch + address for VAT-registered juristic persons.

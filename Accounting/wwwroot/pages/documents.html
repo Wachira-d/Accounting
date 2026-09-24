@@ -452,6 +452,9 @@
                   title="เพิ่มผู้ติดต่อใหม่ (เปิดแท็บใหม่)"
                   onclick="Page.openCreateContact()" style="white-space:nowrap">+ สร้างใหม่</button>
               </div>
+              <!-- สาขาของผู้ติดต่อที่เลือก (ประกาศอธิบดีฯ 199) + สาขาอื่นของเลขผู้เสียภาษีเดียวกันให้สลับได้
+                   — ผู้ติดต่อ 1 แถว = 1 สาขา ⇒ เลือกแถว = เลือกสาขา · ป้ายมาจากเซิร์ฟเวอร์ (รอบ 190 ทีม C ข้อ 6) -->
+              <div id="fContactBranchHint" class="form-help" style="display:none;margin-top:4px;line-height:1.9"></div>
             </div>
           </div>
           <!-- มัดจำคงค้างของลูกค้านี้ — แสดงเฉพาะฝั่ง sales (Invoice/TaxInvoice)
@@ -1102,8 +1105,10 @@
                 <span id="taxInvVatPreview" style="font-weight:600;color:var(--gray-800)"></span>
               </div>
               <div id="taxInvIncompleteWarn" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b">
-                ⚠️ <b>ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span><br>
-                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)
+                ⚠️ <b id="taxInvWarnTitle">ใบกำกับยังไม่ครบตาม §86/4</b> — <span id="taxInvMissingList"></span>
+                <span id="taxInvFixAtContact" style="display:none"><br>👉 ส่วนนี้แก้ที่ <b>ข้อมูลผู้ติดต่อ</b> (ระบบเคลมด้วยข้อมูลในผู้ติดต่อ ไม่ใช่ช่องบนฟอร์มนี้): <span id="taxInvContactFields"></span></span>
+                <span id="taxInvParkNote"><br>
+                ระบบจะ <b>พักภาษีซื้อไว้ที่ 11640 "ยังไม่ถึงกำหนด"</b> (ยังเคลม ภ.พ.30 ไม่ได้) จนกว่าจะเติมข้อมูลครบ — เติมภายหลังได้ที่หน้า "ภาษีซื้อยังไม่ถึงกำหนด" (ต้องเคลมภายใน 6 เดือน §82/3)</span>
               </div>
             </div>
           </div>
@@ -1563,6 +1568,7 @@
             this._contactAC.setValue(d.contactId, d.name || '');
             this._selectedContact = { id: d.contactId, name: d.name, taxId: d.taxId };
             Layout.toast(`เลือกผู้ติดต่อใหม่: ${d.name || d.contactId}`);
+            this._refreshContactBranchHint();
           }
         });
 
@@ -2034,6 +2040,7 @@
         // accept the document (save() enforces non-empty fContactId).
         if (payload.contactId && this._contactAC) {
           this._contactAC.setValue(payload.contactId, payload.contactName || '');
+          this._refreshContactBranchHint();
         } else if (payload.contactName) {
           const inp = document.getElementById('fContact');
           if (inp) {
@@ -3006,6 +3013,7 @@
       onContactChange() {
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
+        this._refreshContactBranchHint();
         // Fill recipient email if empty (don't clobber user-entered address)
         if (c?.email) {
           const toEl = document.getElementById('fEmailTo');
@@ -3019,6 +3027,9 @@
           this._fillSupplierTaxIdFromContact(true);      // force — เปลี่ยนตามผู้ติดต่อที่เพิ่งเลือก
           this._fillSupplierBranchFromContact(true);     // สาขาผู้ขาย ดึงจาก contact ที่เลือกด้วย
           this._loadTaxInvoiceSourceDocs();
+          // ผู้ขายเปลี่ยน = คำตอบ §86/4 เปลี่ยน — เดิมไม่ตรวจใหม่ ⇒ กล่องแดงค้างของผู้ติดต่อ
+          // ก่อนหน้า (ข้อ 3 ของเจ้าของ: ช่องขึ้นเลขแล้วแต่ยังบอกว่า "ขาดเลขผู้เสียภาษี")
+          this._validateTaxInvoiceClaim();
         }
         // ใบเสร็จรับเงิน: reload รายการใบค้าง (AR) ของลูกค้าที่เพิ่งเลือก
         this._loadReceiptSourceDocs();
@@ -5967,8 +5978,8 @@
         // ผูก live validation กับการแก้ field ใบกำกับ (ครั้งเดียว)
         if (!this._taxInvWatchBound) {
           ['fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV','fSupplierBranchCode']
-            .forEach(id => document.getElementById(id)
-              ?.addEventListener('input', () => this._validateTaxInvoiceClaim()));
+            .forEach(id => ['input', 'change'].forEach(ev => document.getElementById(id)
+              ?.addEventListener(ev, () => this._validateTaxInvoiceClaim())));
           this._taxInvWatchBound = true;
         }
         this._validateTaxInvoiceClaim();
@@ -6005,28 +6016,79 @@
       /**
        * ตรวจว่าใบกำกับภาษีของผู้ขายครบตาม §86/4 พอจะเคลมภาษีซื้อ (ภ.พ.30) ไหม.
        * ไม่ hard-block (backend พักไว้ 11640 ให้อยู่แล้ว) แต่เตือนชัดเจนว่าจะยัง
-       * เคลมไม่ได้จนกว่าจะครบ — ตอบโจทย์ "ติ๊กใช้เคลม VAT ไม่ได้ถ้าใบไม่ครบ".
-       * คืน true เมื่อครบ.
+       * เคลมไม่ได้จนกว่าจะครบ.
+       *
+       * ★ รอบ 190 ทีม C (ข้อ 3 ของเจ้าของ) — **เซิร์ฟเวอร์ตัดสิน หน้าจอแสดงผล**:
+       * เดิมตัวนี้ตรวจ "ช่องบนฟอร์ม" เอง แต่ตัวลงบัญชีตอนอนุมัติตรวจ "ผู้ติดต่อในฐาน"
+       * (TaxInvoiceCompletenessChecker) ⇒ สองแหล่งตอบไม่ตรงกันได้ทั้งสองทิศ:
+       *  (ก) กล่องแดง "ขาด: เลขผู้เสียภาษีผู้ขาย" ทั้งที่ช่องแสดง 0765560001108 แล้ว —
+       *      ตัวตรวจรันตอนช่องยังว่าง แล้ว**ไม่เคยรันใหม่**เมื่อเลือกผู้ติดต่อ/ตัวเติม async
+       *      เขียนค่าลงช่อง (ช่อง readonly ไม่ยิง input event) + เปิดฟอร์มใหม่แล้วกล่อง/ติ๊ก
+       *      ค้างจากใบก่อน
+       *  (ข) กล่องเงียบทั้งที่ลงบัญชีจะพัก 11640 — ข้อความ "(ผู้ติดต่อยังไม่มีเลข…)" ในช่อง
+       *      นับเป็น "มีค่า" · ไม่ตรวจที่อยู่ผู้ขาย · ไม่ตรวจ checksum
+       * ตอนนี้ถามเซิร์ฟเวอร์ (ตัวตรวจเดียวกับตัวลงบัญชี) · คำตอบล่าสุดชนะ (seq) ·
+       * เรียกซ้ำได้ทุกครั้งที่อินพุตเปลี่ยน (debounce 250ms)
        */
       _validateTaxInvoiceClaim() {
         const warn = document.getElementById('taxInvIncompleteWarn');
-        const checked = document.getElementById('fHasTaxInvoiceRef')?.checked;
-        if (!warn) return true;
-        if (!checked) { warn.style.display = 'none'; return true; }
-        const missing = [];
-        if (!document.getElementById('fSupplierInvoiceNumberPV')?.value.trim())
-          missing.push('เลขที่ใบกำกับ');
-        if (!document.getElementById('fSupplierTaxInvoiceDatePV')?.value)
-          missing.push('วันที่ใบกำกับ');
-        const branch = document.getElementById('fSupplierBranchCode')?.value.trim();
-        if (!branch || !/^\d{5}$/.test(branch))
-          missing.push('รหัสสาขา (5 หลัก)');
-        if (!document.getElementById('fSupplierTaxIdReadonly')?.value.trim())
-          missing.push('เลขผู้เสียภาษีผู้ขาย (จาก contact)');
-        if (missing.length === 0) { warn.style.display = 'none'; return true; }
-        document.getElementById('taxInvMissingList').textContent = 'ขาด: ' + missing.join(', ');
+        if (!warn) return;
+        clearTimeout(this._taxInvCheckTimer);
+        if (!document.getElementById('fHasTaxInvoiceRef')?.checked) {
+          this._taxInvCheckSeq = (this._taxInvCheckSeq || 0) + 1;   // ทิ้งคำตอบที่ยังค้างอยู่
+          warn.style.display = 'none';
+          return;
+        }
+        this._taxInvCheckTimer = setTimeout(() => this._runTaxInvoiceCheck(), 250);
+      },
+
+      async _runTaxInvoiceCheck() {
+        const warn = document.getElementById('taxInvIncompleteWarn');
+        if (!warn) return;
+        const seq = this._taxInvCheckSeq = (this._taxInvCheckSeq || 0) + 1;
+        const val = id => (document.getElementById(id)?.value || '').trim();
+        let r;
+        try {
+          const res = await Layout.api()?.checkSupplierTaxInvoice({
+            contactId: val('fContactId'),
+            // ส่งค่าเดียวกับที่ปุ่มบันทึกส่ง (ว่าง → 00000) — ผลตรวจต้องเป็นของ "สิ่งที่จะถูกบันทึก"
+            branchCode: val('fSupplierBranchCode') || '00000',
+            invoiceNumber: val('fSupplierInvoiceNumberPV'),
+            invoiceDate: val('fSupplierTaxInvoiceDatePV'),
+          });
+          r = res?.data;
+        } catch (_) { r = undefined; }
+        if (seq !== this._taxInvCheckSeq) return;                   // มีคำถามใหม่กว่าแล้ว
+        if (!document.getElementById('fHasTaxInvoiceRef')?.checked) { warn.style.display = 'none'; return; }
+        const title = document.getElementById('taxInvWarnTitle');
+        const list = document.getElementById('taxInvMissingList');
+        const fixBox = document.getElementById('taxInvFixAtContact');
+        const fixList = document.getElementById('taxInvContactFields');
+        const park = document.getElementById('taxInvParkNote');
+        // undefined = "ยังตรวจไม่ได้" ≠ "ครบ" — บอกตรง ๆ ไม่เงียบ
+        if (!r) {
+          if (title) title.textContent = 'ยังตรวจความครบถ้วนของใบกำกับไม่ได้';
+          if (list) list.textContent = 'เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ — ระบบจะตรวจอีกครั้งตอนอนุมัติ';
+          if (fixBox) fixBox.style.display = 'none';
+          if (park) park.style.display = 'none';
+          warn.style.display = 'block';
+          return;
+        }
+        // ช่องเลขผู้เสียภาษีแสดง "เลขที่ระบบจะใช้เคลมจริง" = เลขของผู้ติดต่อ (แหล่งเดียวกับผลตรวจ)
+        // ผู้ติดต่อยังไม่มีเลข → คงค่าที่อยู่ในช่อง (เช่นเลขจากสแกน) ไว้ให้เห็น แต่ผลตรวจจะบอกว่าขาด
+        const taxInp = document.getElementById('fSupplierTaxIdReadonly');
+        if (taxInp && r.contactTaxId) taxInp.value = r.contactTaxId;
+        const problems = [...(r.missingFields || [])];
+        if (r.branchCodeError) problems.push(r.branchCodeError);
+        if (problems.length === 0) { warn.style.display = 'none'; return; }
+        if (title) title.textContent = 'ใบกำกับยังไม่ครบตาม §86/4';
+        if (list) list.textContent = 'ขาด: ' + problems.join(', ');
+        const atContact = r.missingContactFields || [];
+        if (fixBox) fixBox.style.display = atContact.length ? '' : 'none';
+        if (fixList) fixList.textContent = atContact.join(', ');
+        // ข้อความ "จะพัก 11640" แสดงเฉพาะเมื่อเซิร์ฟเวอร์บอกว่าจะพักจริง (รหัสสาขาผิดรูปอย่างเดียว ≠ พัก)
+        if (park) park.style.display = r.isClaimable ? 'none' : '';
         warn.style.display = 'block';
-        return false;
       },
 
       /**
@@ -6097,6 +6159,7 @@
         // เก็บ relatedDocumentId hidden ลง form state เพื่อส่งกลับ
         this._linkedTaxInvoiceSourceId = id;
         this._updateTaxInvVatPreview(d);
+        this._validateTaxInvoiceClaim();   // เลขที่/วันที่/สาขาเพิ่งถูกเติมด้วยโค้ด (ไม่มี input event)
       },
 
       // ===== §78/1 live-lock: ใบแจ้งหนี้ + รับเงินแล้ว + มี VAT → บังคับใบรวม =====
@@ -6569,6 +6632,58 @@
           }
         }
         Layout.toast(`อ้างอิง ${printedRef} แล้ว — แก้บรรทัดเป็นยอดที่${isCn ? 'ลด' : 'เพิ่ม'}จริงก่อนบันทึก`, 'info', 6000);
+      },
+
+      /**
+       * แสดง "สาขาของผู้ติดต่อที่เลือก" ใต้ช่องผู้ติดต่อ + ปุ่มสลับไปสาขาอื่นของเลขผู้เสียภาษีเดียวกัน
+       * (รอบ 190 ทีม C ข้อ 6 — "เลือกผู้ติดต่อแล้วจะรู้ได้ยังไงว่าเป็นสาขาไหน ถ้ามีหลายสาขา").
+       * ป้ายมาจากเซิร์ฟเวอร์ (`branchLabel` = Helpers/TaxBranchCode) — หน้าไม่แต่งป้ายเอง ·
+       * คำตอบล่าสุดชนะ (seq) · ไม่ใช่นิติบุคคล (branchLabel = null) = ไม่แสดง
+       */
+      async _refreshContactBranchHint() {
+        const el = document.getElementById('fContactBranchHint');
+        if (!el) return;
+        const seq = this._branchHintSeq = (this._branchHintSeq || 0) + 1;
+        const cid = document.getElementById('fContactId')?.value;
+        const hide = () => { el.style.display = 'none'; el.textContent = ''; };
+        if (!cid) { hide(); return; }
+        const api = Layout.api();
+        if (!api) { hide(); return; }
+        let c = (this._selectedContact && this._selectedContact.id === cid && ('branchLabel' in this._selectedContact))
+          ? this._selectedContact : null;
+        if (!c) { try { c = (await api.getContact(cid))?.data || null; } catch (_) { c = null; } }
+        if (seq !== this._branchHintSeq) return;
+        if (!c || !c.branchLabel) { hide(); return; }
+        let siblings = [];
+        const tax = (c.taxId || '').replace(/\D/g, '');
+        if (tax.length === 13) {
+          try {
+            const res = await api.getContacts('?pageSize=50&search=' + encodeURIComponent(tax));
+            siblings = (res.data?.items || res.data || []).filter(x => x.id !== c.id && x.isActive !== false
+              && (x.taxId || '').replace(/\D/g, '') === tax);
+          } catch (_) { siblings = []; }
+        }
+        if (seq !== this._branchHintSeq) return;
+        this._branchSiblings = {};
+        siblings.forEach(x => { this._branchSiblings[x.id] = x; });
+        const esc = Layout.esc;
+        el.innerHTML = `🏢 ผู้ติดต่อนี้คือ <b>${esc(c.branchLabel)}</b> (รหัสสาขา ${esc(c.branchCode || '00000')})`
+          + (siblings.length
+            ? ' · เลขผู้เสียภาษีเดียวกันมีสาขาอื่นในระบบ — กดเพื่อสลับ: '
+              + siblings.map(x => `<button type="button" class="btn btn-sm btn-secondary" data-sib="${esc(x.id)}" `
+                + `style="padding:1px 8px;font-size:11px">${esc(x.branchLabel || x.branchCode || '-')}</button>`).join(' ')
+            : '');
+        el.querySelectorAll('[data-sib]').forEach(b => { b.onclick = () => this._switchContactBranch(b.dataset.sib); });
+        el.style.display = '';
+      },
+
+      _switchContactBranch(id) {
+        const x = this._branchSiblings?.[id];
+        if (!x || !this._contactAC) return;
+        this._contactAC.setValue(x.id, x.name);
+        this._selectedContact = x;
+        this.onContactChange();
+        Layout.toast(`เปลี่ยนเป็น ${x.branchLabel || 'สาขา ' + (x.branchCode || '')} ของ ${x.name}`, 'info');
       },
 
       _fillSupplierTaxIdFromContact(force = false) {
@@ -7817,6 +7932,14 @@
         }
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
+        // ติ๊ก "มีใบกำกับภาษีซื้อ" + กล่องเตือน §86/4 — เดิมไม่ถูกล้าง ⇒ ใบใหม่เปิดมาพร้อมติ๊ก
+        // ของใบก่อน (ช่องข้างในถูกล้างแล้ว) และกล่องแดงค้างผลตรวจของใบก่อน (ข้อ 3 ของเจ้าของ)
+        {
+          const htr = document.getElementById('fHasTaxInvoiceRef');
+          if (htr && htr.checked) { htr.checked = false; this.onTaxInvoiceRefToggle(); }
+          const w = document.getElementById('taxInvIncompleteWarn');
+          if (w) w.style.display = 'none';
+        }
         // ล้าง contact cache ที่ใช้เติมเลขผู้เสียภาษีผู้ขาย เพื่อไม่ให้ใบใหม่ค้างของเก่า
         this._selectedContact = null;
         document.getElementById('fRef').value = '';
@@ -7831,6 +7954,7 @@
         document.getElementById('fCustomFooterNotes').value = '';
         document.getElementById('fCustomTerms').value = '';
         if (this._contactAC) this._contactAC.clear();
+        this._refreshContactBranchHint();   // ไม่มีผู้ติดต่อ = ซ่อนป้ายสาขาของใบก่อน
         // Reset PV payment-type suggestion state for the fresh form.
         this._paymentTypeTouched = false;
         this._lastPaymentTypeFeedbackId = null;
@@ -8021,6 +8145,7 @@
             }
           }
           if (this._contactAC) this._contactAC.setValue(d.contactId || d.contact?.id || '', d.contactName || d.contact?.name || '');
+          this._refreshContactBranchHint();
           document.getElementById('fDate').value = Layout.dateInput(d.documentDate);
           document.getElementById('fDueDate').value = d.dueDate ? Layout.dateInput(d.dueDate) : '';
           // Tax Point §78 inputs — hydrate ทั้ง 3 fields ถ้ามี
@@ -8080,7 +8205,10 @@
               if (fStdPV) fStdPV.value = d.supplierTaxInvoiceDate ? Layout.dateInput(d.supplierTaxInvoiceDate) : '';
               const fBr = document.getElementById('fSupplierBranchCode');
               if (fBr) fBr.value = d.supplierBranchCode || '00000';
-              setTimeout(() => { this._fillSupplierTaxIdFromContact(); this._loadTaxInvoiceSourceDocs(); }, 50);
+              setTimeout(() => {
+                this._fillSupplierTaxIdFromContact(); this._loadTaxInvoiceSourceDocs();
+                this._validateTaxInvoiceClaim();   // เดิมไม่ตรวจเลยตอนเปิดแก้ — กล่องค้างสถานะของใบก่อน
+              }, 50);
             }
           }
           // ใบลดหนี้/เพิ่มหนี้ที่บันทึกไว้แล้ว — ฟอร์มต้องสะท้อนฝั่งที่เก็บไว้จริง

@@ -105,8 +105,13 @@ const DbdLookup = {
       // Show loading state
       if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'กำลังค้นหา...'; }
 
+      // สาขา (ถ้าหน้าส่งช่องสาขามา) — ไม่ใช่สำนักงานใหญ่ = ขอข้อมูลของ "สาขานั้น" จากทะเบียน VAT
+      // (ที่อยู่สาขา ไม่ใช่ที่อยู่สำนักงานใหญ่ · รอบ 190 ทีม C ข้อ 5) · ว่าง/00000 = เส้นเดิม
+      const branchRaw = (options.branchInput?.value || '').replace(/[^0-9]/g, '');
+      const branch = branchRaw && /[1-9]/.test(branchRaw) ? branchRaw.padStart(5, '0').slice(-5) : '';
       try {
-        const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(taxId)}`);
+        const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(taxId)}`
+          + (branch ? `?branch=${encodeURIComponent(branch)}` : ''));
         if (res.data) {
           const d = res.data;
           const hasName = d.nameTh || d.nameEn;
@@ -125,6 +130,11 @@ const DbdLookup = {
           if (typeof Layout !== 'undefined') Layout.toast('ไม่พบข้อมูลนิติบุคคล', 'error');
         }
       } catch (e) {
+        // ขอข้อมูลสาขาแล้วทะเบียนไม่ยืนยัน — บอกตามจริง (ไม่ใช่ "ไม่พบนิติบุคคล")
+        if (branch) {
+          if (typeof Layout !== 'undefined') Layout.toast(e?.message || 'ทะเบียนไม่ยืนยันสาขานี้', 'info', 7000);
+          return;
+        }
         // Try TIN verification as fallback
         try {
           const tinRes = await API.get(`/api/dbd/verify-tin/${encodeURIComponent(taxId)}`);

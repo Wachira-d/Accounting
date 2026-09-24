@@ -93,6 +93,10 @@ public interface IDocumentService
     /// <summary>รายการเอกสารที่ภาษีซื้อค้าง 11640 รอใบกำกับครบ §86/4 (สำหรับ
     /// dashboard ภาษีซื้อยังไม่ถึงกำหนด) + 6-month aging §82/3.</summary>
     Task<List<UndueInputVatSummary>> GetUndueInputVatAsync(Guid companyId);
+    /// <summary>ตรวจสด ๆ ขณะกรอกฟอร์ม: ใบกำกับภาษีซื้อที่ระบุ + ผู้ติดต่อในฐาน ครบ §86/4
+    /// พอเคลม ภ.พ.30 ไหม — ตัวตรวจตัวเดียวกับตัวลงบัญชี (ไม่บันทึกอะไร)</summary>
+    Task<SupplierTaxInvoiceCheckResponse> CheckSupplierTaxInvoiceAsync(Guid companyId, Guid? contactId,
+        string? supplierBranchCode, string? supplierInvoiceNumber, DateTime? supplierTaxInvoiceDate);
     /// <summary>§82/3: reclassify ภาษีซื้อ 11640 ที่พ้น 6 เดือน → ค่าใช้จ่าย. คืนจำนวนที่จัดการ.</summary>
     Task<int> ReclassifyExpiredUndueInputVatAsync(Guid companyId, string actor);
     /// <summary>ถาม AI ให้แนะนำผังบัญชี GL สำหรับทุกบรรทัดของใบสำคัญจ่าย (PV)
