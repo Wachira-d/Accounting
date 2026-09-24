@@ -1,0 +1,99 @@
+﻿<rsm:TaxInvoice_CrossIndustryInvoice xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ram="urn:etda:uncefact:data:standard:TaxInvoice_ReusableAggregateBusinessInformationEntity:2" xsi:schemaLocation="rsm file:../data/standard/TaxInvoice_CrossIndustryInvoice_2p0.xsd" xmlns:rsm="urn:etda:uncefact:data:standard:TaxInvoice_CrossIndustryInvoice:2">
+  <rsm:ExchangedDocumentContext>
+    <ram:GuidelineSpecifiedDocumentContextParameter>
+      <ram:ID schemeAgencyID="ETDA" schemeVersionID="v2.0">ER3-2560</ram:ID>
+    </ram:GuidelineSpecifiedDocumentContextParameter>
+  </rsm:ExchangedDocumentContext>
+  <rsm:ExchangedDocument>
+    <ram:ID>INV2026090199</ram:ID>
+    <ram:Name>ใบกำกับภาษี/ใบเสร็จรับเงิน</ram:Name>
+    <ram:TypeCode>T03</ram:TypeCode>
+    <ram:IssueDateTime>2026-09-17T00:00:00</ram:IssueDateTime>
+    <ram:CreationDateTime>2026-09-22T07:51:41.491</ram:CreationDateTime>
+  </rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:SellerTradeParty>
+        <ram:Name>ห้างหุ้นส่วนจำกัด อัพทูยู บีเค</ram:Name>
+        <ram:SpecifiedTaxRegistration>
+          <ram:ID schemeID="TXID">012356500300500000</ram:ID>
+        </ram:SpecifiedTaxRegistration>
+        <ram:PostalTradeAddress>
+          <ram:PostcodeCode>11140</ram:PostcodeCode>
+          <ram:CityName>1203</ram:CityName>
+          <ram:CitySubDivisionName>120304</ram:CitySubDivisionName>
+          <ram:CountryID schemeID="3166-1 alpha-2">TH</ram:CountryID>
+          <ram:CountrySubDivisionID>12</ram:CountrySubDivisionID>
+          <ram:BuildingNumber>49/199</ram:BuildingNumber>
+        </ram:PostalTradeAddress>
+      </ram:SellerTradeParty>
+      <ram:BuyerTradeParty>
+        <ram:Name>ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส</ram:Name>
+        <ram:SpecifiedTaxRegistration>
+          <ram:ID schemeID="TXID">020356200587100000</ram:ID>
+        </ram:SpecifiedTaxRegistration>
+        <ram:PostalTradeAddress>
+          <ram:PostcodeCode>20110</ram:PostcodeCode>
+          <ram:LineOne>202/24 ซอยบ้านห้วยกุ่ม4 หมู่5 ตำบลบางพระ อำเภอศรีราชา ชลบุรี</ram:LineOne>
+          <ram:CountryID schemeID="3166-1 alpha-2">TH</ram:CountryID>
+        </ram:PostalTradeAddress>
+      </ram:BuyerTradeParty>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeDelivery />
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:InvoiceCurrencyCode listID="ISO 4217 3A">THB</ram:InvoiceCurrencyCode>
+      <ram:ApplicableTradeTax>
+        <ram:TypeCode>VAT</ram:TypeCode>
+        <ram:CalculatedRate>7</ram:CalculatedRate>
+        <ram:BasisAmount>500.93</ram:BasisAmount>
+        <ram:CalculatedAmount>35.07</ram:CalculatedAmount>
+      </ram:ApplicableTradeTax>
+      <ram:SpecifiedTradeAllowanceCharge>
+        <ram:ChargeIndicator>false</ram:ChargeIndicator>
+        <ram:ActualAmount>0.00</ram:ActualAmount>
+        <ram:TypeCode>95</ram:TypeCode>
+      </ram:SpecifiedTradeAllowanceCharge>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:LineTotalAmount>500.93</ram:LineTotalAmount>
+        <ram:AllowanceTotalAmount>0.00</ram:AllowanceTotalAmount>
+        <ram:TaxBasisTotalAmount>500.93</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount>35.07</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount>536.00</ram:GrandTotalAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument>
+        <ram:LineID>1</ram:LineID>
+      </ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedTradeProduct>
+        <ram:Name>[ซัก+ปรับ] ไฮยีน เลิฟทัช น้ำยาปรับผ้านุ่ม 1000 มล. + น้ำยาซักผ้า 1400 มล. [แพ็คคู่]</ram:Name>
+      </ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement>
+        <ram:GrossPriceProductTradePrice>
+          <ram:ChargeAmount>250.47</ram:ChargeAmount>
+        </ram:GrossPriceProductTradePrice>
+      </ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeDelivery>
+        <ram:BilledQuantity unitCode="">2</ram:BilledQuantity>
+      </ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax>
+          <ram:TypeCode>VAT</ram:TypeCode>
+          <ram:CalculatedRate>7</ram:CalculatedRate>
+          <ram:BasisAmount>500.93</ram:BasisAmount>
+          <ram:CalculatedAmount>35.07</ram:CalculatedAmount>
+        </ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeAllowanceCharge>
+          <ram:ChargeIndicator>false</ram:ChargeIndicator>
+          <ram:ActualAmount>0.00</ram:ActualAmount>
+          <ram:TypeCode>95</ram:TypeCode>
+        </ram:SpecifiedTradeAllowanceCharge>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation>
+          <ram:TaxTotalAmount>35.07</ram:TaxTotalAmount>
+          <ram:NetLineTotalAmount currencyID="THB">500.93</ram:NetLineTotalAmount>
+          <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">536.00</ram:NetIncludingTaxesLineTotalAmount>
+        </ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:TaxInvoice_CrossIndustryInvoice>
