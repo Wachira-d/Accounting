@@ -1,7 +1,9 @@
 using System.Text;
 using System.Text.Json;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Services.Implementations.Migration;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -13,9 +15,28 @@ namespace Accounting.Controllers;
 public class CompetitorImportController : ControllerBase
 {
     private readonly ICompetitorImportCoordinator _coordinator;
+    private readonly IPermissionService _permissions;
 
-    public CompetitorImportController(ICompetitorImportCoordinator coordinator)
-    { _coordinator = coordinator; }
+    public CompetitorImportController(ICompetitorImportCoordinator coordinator, IPermissionService permissions)
+    { _coordinator = coordinator; _permissions = permissions; }
+
+    /// <summary>
+    /// ด่านสิทธิ์ของการย้ายข้อมูลจากโปรแกรมอื่น — คีย์ตามชนิดข้อมูลในไฟล์ (<c>EntityKind</c> ของ adapter:
+    /// ผังบัญชี = ChartOfAccounts.Edit · สินค้า = Product.Edit · ผู้ติดต่อ = Contact.Edit) จากตารางเดียวกับเส้นนำเข้าไฟล์
+    /// (<see cref="ImportExportPermissionScope.ForImport"/>)
+    ///
+    /// <para>═══ ที่มา (รอบ 193 S2 — กวาดทางเข้า <c>IFormFile</c>) ═══ controller นี้มีแค่ <c>[Authorize]</c> ⇒ สมาชิกคนไหนก็
+    /// นำเข้า/เขียนทับผังบัญชีทั้งผังได้ ขณะที่ข้อมูลชุดเดียวกันผ่าน <c>ImportExportController</c> ต้องมีคีย์ (ทางเข้าอื่นไม่เดิน
+    /// ด่านเดียวกัน — R5) · preview ก็ต้องมีด่าน เพราะคืน "แถวเดิมที่ขัดแย้ง" จากฐาน (ชุดเดียวกับ preview-conflicts)</para>
+    /// </summary>
+    private async Task<ActionResult?> DenyAsync(Guid companyId, string entityKind)
+    {
+        var key = ImportExportPermissionScope.ForImport(entityKind);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, key)) return null;
+        return StatusCode(403, new ApiResponse<object>(false, null,
+            ImportExportPermissionScope.DeniedMessage(entityKind, key, isExport: false)));
+    }
 
     /// <summary>Sniff which competitor format the file belongs to,
     /// return sample rows AND a list of TaxId-conflict rows so the
@@ -28,6 +49,12 @@ public class CompetitorImportController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไฟล์ว่าง"));
         var content = await ReadAsync(file);
+        var detected = _coordinator.Detect(content, file.FileName);
+        if (detected == null)
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ไม่สามารถระบุประเภทไฟล์ — รองรับ Express / PEAK / FlowAccount"));
+        var deny = await DenyAsync(companyId, detected.EntityKind);
+        if (deny != null) return deny;
         var (adapter, preview) = await _coordinator.PreviewAsync(companyId, content, file.FileName, ct);
         if (adapter == null)
             return BadRequest(new ApiResponse<object>(false, null,
@@ -55,6 +82,12 @@ public class CompetitorImportController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไฟล์ว่าง"));
         var content = await ReadAsync(file);
+        var detected = _coordinator.Detect(content, file.FileName);
+        if (detected == null)
+            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบ adapter ที่รองรับไฟล์นี้"));
+        // ทดสอบ (dryRun) ก็ต้องเดินด่านเดียวกัน — ไม่งั้นผู้ใช้เห็น "ผ่าน" แล้วไปเจอ 403 ตอนนำเข้าจริง
+        var deny = await DenyAsync(companyId, detected.EntityKind);
+        if (deny != null) return deny;
 
         Dictionary<string, ConflictAction>? resolutions = null;
         if (!string.IsNullOrWhiteSpace(resolutionsJson))

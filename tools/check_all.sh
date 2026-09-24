@@ -37,6 +37,8 @@ red()  { printf '\033[31m%s\033[0m\n' "$*"; }
 green(){ printf '\033[32m%s\033[0m\n' "$*"; }
 
 # ---------- 1. checker ทุกตัว ----------
+# (glob รวม checker ใหม่เอง — เช่น attachment_gate_check.py รอบ 193 S2 ซึ่งรัน negative test "ถอดด่านจากไฟล์จริง
+#  แล้วต้องฟ้อง" ทุกครั้งที่รันปกติ ⇒ checker ที่จับบั๊กที่ใส่กลับไม่ได้จะแดงที่นี่ ไม่ต้องจำไปรัน --self-test เอง)
 for f in tools/*_check.py; do
   out=$(python3 "$f" 2>&1); rc=$?
   if [ $rc -ne 0 ]; then red "❌ $f"; echo "$out" | tail -40; fail=1; fi

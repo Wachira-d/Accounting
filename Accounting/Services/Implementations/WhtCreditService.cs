@@ -243,6 +243,7 @@ public class WhtCreditService
             Status = string.IsNullOrWhiteSpace(r.CertificateNumber)
                 ? WhtCreditStatus.Pending : WhtCreditStatus.Received,
         };
+        await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId);
         _db.WhtCreditsReceived.Add(e);
         await _db.SaveChangesAsync();
         return e.Id;
@@ -263,7 +264,11 @@ public class WhtCreditService
         e.IncomeAmount = r.IncomeAmount;
         e.WhtRate = r.WhtRate;
         if (r.WhtAmount > 0) e.WhtAmount = r.WhtAmount;
-        if (r.AttachmentId.HasValue) e.AttachmentId = r.AttachmentId;
+        if (r.AttachmentId.HasValue)
+        {
+            await AdoptUnsavedAttachmentAsync(companyId, e.Id, r.AttachmentId);
+            e.AttachmentId = r.AttachmentId;
+        }
         e.Notes = Trim(r.Notes);
         // มีเลขที่ใบ = ถือว่าได้รับใบแล้ว (เครดิตได้); ลบเลขออก = กลับไปรอใบ
         e.Status = string.IsNullOrWhiteSpace(e.CertificateNumber)
@@ -282,10 +287,38 @@ public class WhtCreditService
         GuardEditable(e);
         e.CertificateNumber = certificateNumber.Trim();
         e.CertificateDate = certificateDate;
-        if (attachmentId.HasValue) e.AttachmentId = attachmentId;
+        if (attachmentId.HasValue)
+        {
+            await AdoptUnsavedAttachmentAsync(companyId, e.Id, attachmentId);
+            e.AttachmentId = attachmentId;
+        }
         e.Status = WhtCreditStatus.Received;
         e.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// ไฟล์ 50 ทวิ ที่แนบ<b>ก่อน</b>บันทึกรายการ (เจ้าของว่าง) → ผูกกับรายการนี้ทันทีที่บันทึก
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · P7) ═══ หน้า wht-credit แนบไฟล์ด้วย <c>entityId = Guid.Empty</c> แล้วส่งแค่
+    /// <c>AttachmentId</c> มากับรายการ · ไม่มีใครย้ายแถวไฟล์ไปผูกกับรายการ ⇒ ไฟล์ทุกใบของทั้งบริษัทค้างอยู่ในถัง
+    /// <c>WhtCredit/0000…</c> ตลอดไป (ถังนี้เปิดได้เฉพาะผู้อัปโหลด — <c>AttachmentPermissionScope.UnsavedFileVisible</c>)</para>
+    ///
+    /// <para>ไฟล์ต้องเป็นของบริษัทนี้ (ไม่พบ = ปฏิเสธพร้อมทางไปต่อ — เดิมรับ Guid อะไรก็ได้เก็บเป็นตัวชี้) · ไฟล์ที่ผูกกับ
+    /// รายการอื่นอยู่แล้วไม่ถูกย้าย (ไม่แย่งหลักฐานของรายการอื่น) · บันทึกพร้อม SaveChanges ของผู้เรียก</para>
+    /// </summary>
+    private async Task AdoptUnsavedAttachmentAsync(Guid companyId, Guid creditId, Guid? attachmentId)
+    {
+        if (attachmentId is not { } fileId) return;
+        var file = await _db.FileAttachments
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.CompanyId == companyId)
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบไฟล์หนังสือรับรองที่แนบไว้ในบริษัทนี้ — เลือกไฟล์ใหม่แล้วกดบันทึกอีกครั้ง");
+        if (string.Equals(file.EntityType, "WhtCredit", StringComparison.OrdinalIgnoreCase) && file.EntityId == Guid.Empty)
+        {
+            file.EntityId = creditId;
+            file.UpdatedAt = DateTime.UtcNow;
+        }
     }
 
     public async Task DeleteAsync(Guid companyId, Guid id)

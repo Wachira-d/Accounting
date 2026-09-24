@@ -1,6 +1,13 @@
 using Accounting.Models.Constants;
+using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
+
+/// <summary>ทิศของการเข้าถึงไฟล์แนบ — อ่าน (ดูรายการ/ดาวน์โหลด/ดูรูปสแกน) หรือเขียน (แนบ/ลบ)</summary>
+public enum AttachmentAccess { Read, Write }
+
+/// <summary>ผลปฏิเสธของด่านไฟล์แนบ — สถานะ HTTP + ข้อความไทยที่บอกทางไปต่อ</summary>
+public sealed record AttachmentDenial(int Status, string Message);
 
 /// <summary>ไฟล์แนบของเจ้าของชนิดนี้ต้องถามสิทธิ์แบบไหน — ผู้เรียก (controller) ใช้เลือกว่าต้องค้นแถวเจ้าของก่อนไหม</summary>
 public enum AttachmentOwnerKind
@@ -17,8 +24,11 @@ public enum AttachmentOwnerKind
     PayrollRun,
     /// <summary>ใบสำคัญ (JE) — เขียนต้องมีคีย์ · อ่านต้องผ่านชั้นความลับของใบ</summary>
     JournalEntry,
-    /// <summary>ชนิดที่ตัดสินด้วยคีย์อย่างเดียว (ข้อมูลหลัก · สินทรัพย์ · ภาษี · บิลลิ่ง · ที่พัก · เว็บ · สแกน)</summary>
+    /// <summary>ชนิดที่ตัดสินด้วยคีย์อย่างเดียว (ข้อมูลหลัก · สินทรัพย์ · ภาษี · บิลลิ่ง · ที่พัก · เว็บ)</summary>
     KeyGated,
+    /// <summary>ไฟล์ต้นฉบับของสแกน — ถ้าสแกน<b>ผูกกับเอกสารแล้ว</b> ใช้ด่านของเอกสารนั้น (ใบเดียวกัน = ด่านเดียวกัน
+    /// ไม่ว่าจะเปิดผ่านไฟล์แนบของเอกสาร · รูปสแกน · หรือรายการสแกน) · ยังไม่ผูก ใช้คีย์ของ OCR (<see cref="ScanFileOwner"/>)</summary>
+    OcrScan,
 }
 
 /// <summary>ผลของ <see cref="AttachmentPermissionScope.Resolve"/></summary>
@@ -86,7 +96,7 @@ public static class AttachmentPermissionScope
     {
         var contact = Rule("Contact", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.ContactEdit }, None, true, "ผู้ติดต่อ");
         var product = Rule("Product", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.ProductEdit }, None, true, "สินค้า/บริการ");
-        var ocr = Rule("OcrScan", AttachmentOwnerKind.KeyGated, AnyDocumentCreate, None, false, "สแกนเอกสาร (OCR)");
+        var ocr = Rule("OcrScan", AttachmentOwnerKind.OcrScan, AnyDocumentCreate, None, false, "สแกนเอกสาร (OCR)");
         var t = new Dictionary<string, AttachmentScopeRule>(StringComparer.OrdinalIgnoreCase)
         {
             ["Document"] = Rule("Document", AttachmentOwnerKind.Document, None, None, true, "เอกสาร"),
@@ -130,6 +140,57 @@ public static class AttachmentPermissionScope
     public static string UnknownTypeMessage(string? entityType)
         => $"ไม่รู้จักชนิดรายการ \"{entityType}\" ของไฟล์แนบ — ระบบไม่อนุญาตให้แนบหรือลบไฟล์ของชนิดที่ไม่รู้ว่าใครมีสิทธิ์ "
          + "(กันหลักฐานบัญชีถูกแก้โดยไม่มีด่าน) · แนบไฟล์จากหน้าของรายการนั้นโดยตรง หรือแจ้งผู้ดูแลระบบ";
+
+    /// <summary>
+    /// **ไฟล์ของสแกนใบนี้ต้องผ่านด่านของใคร** — ตัวตัดสินตัวเดียวของทุกเส้นที่เปิดไฟล์/ข้อมูลสแกน
+    /// (<c>GET ocr/{scanId}/image</c> · <c>GET ocr</c> · <c>GET ocr/{scanId}</c> · ดาวน์โหลดไฟล์แนบชนิด <c>OcrScan</c>)
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · C3) ═══ พอสร้างเอกสารจากสแกน ไฟล์ต้นฉบับถูกย้ายไปเป็นไฟล์แนบของ
+    /// <c>Document</c> (<c>OcrService.RelinkScanFileToDocumentAsync</c>) และด่านของไฟล์แนบเอกสารปฏิเสธผู้ที่มองไม่เห็นฝั่ง/ชั้น
+    /// ความลับของใบนั้น — แต่ <c>GET ocr/{scanId}/image</c> อ่านไฟล์ตัวเดียวกันผ่าน <c>scan.FileAttachmentId</c> โดยมีแค่
+    /// <c>[Authorize]</c> ⇒ ใบเดียวกันมีสองประตู ประตูหนึ่งล็อก อีกประตูเปิด</para>
+    ///
+    /// <para>ลำดับ: (1) ไฟล์ถูกย้ายไปเป็นของเอกสารแล้ว → เอกสารนั้น · (2) สแกนชี้ไปเอกสารที่ยังมีอยู่ (relink พลาด —
+    /// เคสเดียวกับ fallback ใน <c>FileAttachmentService.GetByEntityAsync</c>) → เอกสารนั้น · (3) นอกนั้น → ด่านของ OCR ·
+    /// เอกสารที่ถูกลบไปแล้วไม่นับ (ตัวชี้ค้าง — <c>OcrCreatedDocumentLink</c>)</para>
+    /// </summary>
+    /// <returns><c>DocumentId</c> ที่ต้องใช้ด่านของเอกสาร · <c>null</c> = ใช้ด่านของ OCR</returns>
+    public static Guid? ScanFileOwner(string? fileEntityType, Guid? fileEntityId,
+        Guid? createdDocumentId, bool createdDocumentExists)
+    {
+        if (string.Equals((fileEntityType ?? "").Trim(), "Document", StringComparison.OrdinalIgnoreCase)
+            && fileEntityId is { } fe && fe != Guid.Empty)
+            return fe;
+        if (createdDocumentId is { } d && d != Guid.Empty && createdDocumentExists)
+            return d;
+        return null;
+    }
+
+    /// <summary>ผู้ใช้อ่านเอกสารใบนี้ได้ไหม (ฝั่งรายรับ/รายจ่าย + ชั้นความลับ) — ชุดเดียวกับด่านไฟล์แนบเอกสาร
+    /// (<c>AttachmentAccessGate</c>) และลิสต์ร่างในคิวรอตรวจ · ใช้กับเส้นที่ตัดสินหลายใบพร้อมกัน (รายการสแกน)</summary>
+    public static bool DocumentReadable(DocumentVisibility visibility, DocumentType type,
+        SensitivityKind sensitivity, IReadOnlySet<SensitivityKind> visibleKinds)
+        => visibility.Allows(type)
+           && (sensitivity == SensitivityKind.None || visibleKinds.Contains(sensitivity));
+
+    /// <summary>
+    /// **ไฟล์ที่แนบก่อนบันทึกรายการ (เจ้าของยังว่าง) ใครเห็นได้** — เฉพาะผู้อัปโหลดเอง
+    ///
+    /// <para>═══ ที่มา (ฝ่ายค้านรอบ 193 · P7) ═══ หน้า 50 ทวิ ที่ลูกค้าหักเรา แนบไฟล์ด้วย <c>entityId = Guid.Empty</c>
+    /// ก่อนบันทึกรายการ ⇒ ไฟล์ของทุกคนทั้งบริษัทไปกองอยู่ที่ <c>WhtCredit/0000…</c> ถังเดียว และ
+    /// <c>GET attachments/WhtCredit/0000…</c> คืนทั้งถังให้สมาชิกทุกคน · ตอนนี้ถังว่างแยกตามผู้อัปโหลด และ
+    /// <c>WhtCreditService</c> ย้ายไฟล์ไปผูกกับรายการทันทีที่บันทึก</para>
+    /// </summary>
+    public static bool UnsavedFileVisible(Guid uploadedByUserId, Guid userId)
+        => uploadedByUserId != Guid.Empty && uploadedByUserId == userId;
+
+    /// <summary>เจ้าของยังว่างและชนิดนี้รับเจ้าของว่าง ⇒ เป็น "ถังไฟล์ก่อนบันทึก" (<see cref="UnsavedFileVisible"/>)</summary>
+    public static bool IsUnsavedBucket(AttachmentScopeRule rule, Guid entityId)
+        => rule.AllowsUnsavedOwner && entityId == Guid.Empty;
+
+    public const string UnsavedFileDeniedMessage =
+        "ไฟล์นี้แนบไว้ก่อนบันทึกรายการและยังไม่ถูกผูกกับรายการใด — เปิดได้เฉพาะผู้ที่อัปโหลด · "
+        + "ถ้าเป็นหลักฐานของรายการที่บันทึกแล้ว ให้เปิดจากหน้ารายการนั้น";
 
     /// <summary>ข้อความปฏิเสธที่บอก<b>ทางไปต่อ</b> — ชื่อคีย์ + ที่ที่เจ้าของไปเพิ่มสิทธิ์ได้</summary>
     public static string DeniedMessage(AttachmentScopeRule rule, string verb, IReadOnlyList<string> anyOfKeys)

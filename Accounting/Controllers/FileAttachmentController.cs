@@ -19,176 +19,28 @@ public class FileAttachmentController : ControllerBase
     private readonly IFileAttachmentService _attachmentService;
     private readonly IImageProcessingService _images;
     private readonly AccountingDbContext _db;
-    private readonly IPermissionService _permissions;
-    private readonly ISensitivityService _sensitivity;
+    private readonly IAttachmentAccessGate _gate;
     private readonly ISubscriptionService _subscriptions;
 
     public FileAttachmentController(IFileAttachmentService attachmentService, IImageProcessingService images,
-        AccountingDbContext db, IPermissionService permissions, ISensitivityService sensitivity,
-        ISubscriptionService subscriptions)
+        AccountingDbContext db, IAttachmentAccessGate gate, ISubscriptionService subscriptions)
     {
         _attachmentService = attachmentService;
         _images = images;
         _db = db;
-        _permissions = permissions;
-        _sensitivity = sensitivity;
+        _gate = gate;
         _subscriptions = subscriptions;
     }
 
-    private enum Access { Read, Write }
-
     /// <summary>
-    /// **ด่านของไฟล์แนบทุกชนิด** — คืน <c>null</c> = ผ่าน · คืน (สถานะ HTTP, ข้อความไทย) = ปฏิเสธ
-    ///
-    /// <para>═══ ที่มา ═══ รอบ 190 (ข้อ 7) ใส่ด่านให้ <c>"Document"</c> ชนิดเดียว — ชนิดอื่นมีแค่ <c>[Authorize]</c>
-    /// ระดับคลาส (ตอบแค่ "ล็อกอินไหม") · รอบ 193 (คำตัดสินเจ้าของข้อ 29): <b>ทุกชนิดผูกกับสิทธิ์ของโมดูลนั้น</b>
-    /// ทั้งแนบ/ลบ (<see cref="Access.Write"/>) และดูรายการ/ดาวน์โหลด (<see cref="Access.Read"/>) —
-    /// ตาราง "ชนิด → คีย์" อยู่ที่ <see cref="AttachmentPermissionScope"/> ตัวเดียว</para>
-    ///
-    /// <para>ชนิดที่ไม่รู้จัก: <b>ห้ามเขียน</b> (ทิศปลอดภัย — ไม่รู้ว่าใครมีสิทธิ์ = ไม่ให้แก้หลักฐาน) · อ่านได้ระดับสมาชิก
-    /// (พฤติกรรมเดิม — ไฟล์ถูกกรอง CompanyId อยู่แล้ว) · <b>ไม่ดูสถานะเอกสาร</b>: การแนบไฟล์ไม่แก้เลขที่/ยอด/JE
-    /// จึงทำได้ทุกสถานะ (หลักฐานมักมาถึงทีหลัง)</para>
+    /// **ด่านของไฟล์แนบทุกชนิด** — คืน <c>null</c> = ผ่าน · ตัวตัดสินจริงอยู่ที่ <see cref="IAttachmentAccessGate"/>
+    /// (service ตัวเดียวที่ทุกทางเข้าเรียก — ย้ายออกจาก controller นี้ในรอบ 193 S2 เพราะทางเข้าอื่นที่แตะไฟล์ชุดเดียวกัน
+    /// เรียกเมธอด private ไม่ได้ จึงไม่มีด่านเลย) · ตาราง "ชนิด → คีย์" อยู่ที่ <see cref="AttachmentPermissionScope"/>
     /// </summary>
-    private async Task<(int Status, string Message)?> DenyAttachmentAsync(
-        Guid companyId, string? entityType, Guid entityId, Access access, string verb)
-    {
-        var rule = AttachmentPermissionScope.Resolve(entityType);
-        if (!rule.IsKnown)
-        {
-            if (access == Access.Write) return (403, AttachmentPermissionScope.UnknownTypeMessage(entityType));
-            return null;
-        }
-
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        switch (rule.Kind)
-        {
-            case AttachmentOwnerKind.Document:
-                return await DenyDocAsync(companyId, entityId, access, verb, rule);
-
-            case AttachmentOwnerKind.Payment:
-            {
-                // การชำระ = ด่านของเอกสารที่ถูกชำระ (ชุดเดียวกับ CreatePayment/VoidPayment ใน DocumentController)
-                var docId = await _db.Payments.AsNoTracking()
-                    .Where(p => p.Id == entityId && p.CompanyId == companyId)
-                    .Select(p => (Guid?)p.DocumentId)
-                    .FirstOrDefaultAsync();
-                if (docId == null)
-                {
-                    if (access == Access.Write) return (404, "ไม่พบรายการชำระเงินนี้ในบริษัท");
-                    return null;
-                }
-                return await DenyDocAsync(companyId, docId.Value, access, verb, rule);
-            }
-
-            case AttachmentOwnerKind.ExpenseClaim:
-            {
-                // เจ้าของใบเบิกแนบ/ดูหลักฐานของตัวเองได้เสมอ (flow §65 ทวิ "ไม่มีใบเสร็จ" บังคับให้พนักงานแนบเอง)
-                // · ของคนอื่นต้องเป็นผู้ตรวจ (HR.Admin / Expense.Approve — ชุดเดียวกับ ExpenseClaimController.GetAll)
-                var owner = await _db.ExpenseClaims.AsNoTracking()
-                    .Where(c => c.Id == entityId && c.CompanyId == companyId)
-                    .Select(c => (Guid?)c.SubmittedByUserId)
-                    .FirstOrDefaultAsync();
-                if (owner == null && access == Access.Write) return (404, "ไม่พบใบเบิกนี้ในบริษัท");
-                if (owner != null && owner.Value == userId) return null;
-                return await DenyKeysAsync(companyId, userId, rule,
-                    access == Access.Write ? rule.WriteAnyOf : rule.ReadAnyOf, verb);
-            }
-
-            case AttachmentOwnerKind.PayrollRun:
-            {
-                // สลิปโอนเงินเดือน/ใบนำส่ง ปกส. มีเงินเดือนรายคน (PDPA ม.26) ⇒ ด่านความลับ Payroll ทั้งอ่านและเขียน
-                // (ชุดเดียวกับ PayrollController.CheckPayrollAccessAsync) · เขียนต้องมี Payroll.Run เพิ่ม
-                if (!await _sensitivity.CanViewAsync(companyId, userId, SensitivityKind.Payroll))
-                    return (403, $"ไม่มีสิทธิ์{verb}ของ{rule.ModuleTh} (ต้องมีสิทธิ์ดูข้อมูลเงินเดือน — "
-                        + PermissionKeys.PayrollView.Replace("perm:", "") + ")");
-                if (access == Access.Read) return null;
-                if (!await _db.PayrollRuns.AsNoTracking().AnyAsync(r => r.Id == entityId && r.CompanyId == companyId))
-                    return (404, "ไม่พบรอบเงินเดือนนี้ในบริษัท");
-                return await DenyKeysAsync(companyId, userId, rule, rule.WriteAnyOf, verb);
-            }
-
-            case AttachmentOwnerKind.JournalEntry:
-            {
-                var sens = await _db.JournalEntries.AsNoTracking()
-                    .Where(j => j.Id == entityId && j.CompanyId == companyId)
-                    .Select(j => (SensitivityKind?)j.Sensitivity)
-                    .FirstOrDefaultAsync();
-                if (sens == null && access == Access.Write) return (404, "ไม่พบใบสำคัญนี้ในบริษัท");
-                if (sens is { } k && k != SensitivityKind.None
-                    && !await _sensitivity.CanViewAsync(companyId, userId, k))
-                    return (403, $"ไม่มีสิทธิ์{verb}ของใบสำคัญที่เป็นข้อมูลลับ ({k})");
-                if (access == Access.Read) return null;
-                return await DenyKeysAsync(companyId, userId, rule, rule.WriteAnyOf, verb);
-            }
-
-            default: // AttachmentOwnerKind.KeyGated
-            {
-                if (access == Access.Read)
-                    return await DenyKeysAsync(companyId, userId, rule, rule.ReadAnyOf, verb);
-                if (!(rule.AllowsUnsavedOwner && entityId == Guid.Empty)
-                    && !await OwnerExistsAsync(rule.CanonicalType, companyId, entityId))
-                    return (404, $"ไม่พบ{rule.ModuleTh}นี้ในบริษัท");
-                return await DenyKeysAsync(companyId, userId, rule, rule.WriteAnyOf, verb);
-            }
-        }
-    }
-
-    /// <summary>ผ่านเมื่อมีคีย์อย่างน้อยหนึ่งตัว · รายการว่าง = ไม่มีเงื่อนไขคีย์ (ผ่าน)</summary>
-    private async Task<(int Status, string Message)?> DenyKeysAsync(
-        Guid companyId, Guid userId, AttachmentScopeRule rule, IReadOnlyList<string> anyOf, string verb)
-    {
-        if (anyOf.Count == 0) return null;
-        foreach (var key in anyOf)
-            if (await _permissions.HasPermissionAsync(companyId, userId, key)) return null;
-        return (403, AttachmentPermissionScope.DeniedMessage(rule, verb, anyOf));
-    }
-
-    /// <summary>เจ้าของไฟล์มีอยู่จริงในบริษัทนี้ไหม (ชนิดที่ตัดสินด้วยคีย์) — กัน entityId มั่ว/ข้ามบริษัท ·
-    /// ชนิดที่ไม่มีตารางให้ค้นตรงนี้ (แนบโดยระบบ) ⇒ ถือว่ามี (เส้นอัปโหลดจากหน้าเว็บไม่รับชนิดเหล่านั้นอยู่แล้ว ·
-    /// เส้นลบใช้แถวไฟล์ที่มีอยู่จริง)</summary>
-    private Task<bool> OwnerExistsAsync(string? canonicalType, Guid companyId, Guid entityId) => canonicalType switch
-    {
-        "Contact" => _db.Contacts.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
-        "Product" => _db.Products.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
-        "Project" => _db.Projects.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
-        "FixedAsset" => _db.FixedAssets.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
-        "WhtCredit" => _db.WhtCreditsReceived.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
-        _ => Task.FromResult(true),
-    };
-
-    /// <summary>ด่านของเอกสาร (รวมเจ้าของที่เป็นการชำระของเอกสาร) —
-    /// เขียน = สิทธิ์ "สร้าง <b>หรือ</b> อนุมัติ" ชนิดนั้น (<see cref="DocumentPermissionHelper"/>) — คนทำเอกสารและคนอนุมัติ
-    /// ต้องแนบหลักฐานได้ · อ่าน = ฝั่งเอกสารที่ผู้ใช้มองเห็น (<see cref="DocumentPermissionHelper.VisibleDirectionsAsync"/>)
-    /// · ทั้งสองทิศต้องผ่านชั้นความลับของใบ (โบนัสผู้บริหาร/เงินเดือน)</summary>
-    private async Task<(int Status, string Message)?> DenyDocAsync(
-        Guid companyId, Guid documentId, Access access, string verb, AttachmentScopeRule rule)
-    {
-        var doc = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => new { d.DocumentType, d.Sensitivity })
-            .FirstOrDefaultAsync();
-        if (doc == null)
-        {
-            // อ่าน: ไฟล์ถูกกรองตามบริษัทอยู่แล้ว และเอกสารที่ถูกลบไม่มีด่านให้เทียบ ⇒ ไม่เพิ่มเงื่อนไข
-            if (access == Access.Write) return (404, "ไม่พบเอกสารนี้ในบริษัท");
-            return null;
-        }
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        if (doc.Sensitivity != SensitivityKind.None
-            && !await _sensitivity.CanViewAsync(companyId, userId, doc.Sensitivity))
-            return (403, $"ไม่มีสิทธิ์{verb}ของเอกสารที่เป็นข้อมูลลับ ({doc.Sensitivity})");
-        if (access == Access.Read)
-        {
-            var vis = await DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, userId);
-            if (vis.Allows(doc.DocumentType)) return null;
-            return (403, $"ไม่มีสิทธิ์{verb}ของเอกสาร {doc.DocumentType} (ต้องมีสิทธิ์ดูเอกสาร"
-                + (DocumentPermissionHelper.IsRevenue(doc.DocumentType) ? "ฝั่งรายรับ" : "ฝั่งรายจ่าย") + ")");
-        }
-        if (await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, doc.DocumentType)
-            || await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, doc.DocumentType))
-            return null;
-        return (403, $"ไม่มีสิทธิ์{verb}ของ{rule.ModuleTh} {doc.DocumentType} (ต้องมีสิทธิ์สร้างหรืออนุมัติเอกสารประเภทนี้)");
-    }
+    private Task<AttachmentDenial?> DenyAttachmentAsync(
+        Guid companyId, string? entityType, Guid entityId, AttachmentAccess access, string verb, Guid? attachmentId = null)
+        => _gate.DenyAttachmentAsync(companyId, JwtHelper.GetUserIdFromClaims(User), entityType, entityId,
+            access, verb, attachmentId);
 
     /// <summary>อ่านหัวไฟล์ให้ได้ครบ <see cref="UploadFileType.HeaderBytes"/> (หรือจนจบไฟล์) —
     /// <c>ReadAsync</c> ครั้งเดียวอาจคืนน้อยกว่าที่ขอ</summary>
@@ -226,7 +78,7 @@ public class FileAttachmentController : ControllerBase
 
         // ด่านสิทธิ์ของโมดูลนั้น + เจ้าของต้องมีอยู่จริงในบริษัทนี้ — ไม่ดูสถานะเอกสาร:
         // แนบไฟล์เพิ่มบนใบที่อนุมัติแล้วได้ เพราะไม่แตะเลขที่/ยอด/JE
-        var deny = await DenyAttachmentAsync(companyId, entityType, entityId, Access.Write, "แนบไฟล์");
+        var deny = await DenyAttachmentAsync(companyId, entityType, entityId, AttachmentAccess.Write, "แนบไฟล์");
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<FileAttachmentResponse>(false, null!, d.Message));
 
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -293,7 +145,7 @@ public class FileAttachmentController : ControllerBase
     {
         // ดูรายการไฟล์ = สิทธิ์อ่านของโมดูลนั้น (รอบ 193 ข้อ 29) — สลิปเงินเดือนต้องผ่านด่านความลับ Payroll ·
         // ใบเบิกของคนอื่นต้องเป็นผู้ตรวจ · เอกสารต้องอยู่ฝั่งที่มองเห็น
-        var deny = await DenyAttachmentAsync(companyId, entityType, entityId, Access.Read, "ดูไฟล์แนบ");
+        var deny = await DenyAttachmentAsync(companyId, entityType, entityId, AttachmentAccess.Read, "ดูไฟล์แนบ");
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<List<FileAttachmentResponse>>(false, null, d.Message));
         var canonical = AttachmentPermissionScope.Resolve(entityType).CanonicalType ?? entityType;
         var result = await _attachmentService.GetByEntityAsync(companyId, canonical, entityId);
@@ -306,7 +158,7 @@ public class FileAttachmentController : ControllerBase
         var att = await _attachmentService.GetByIdAsync(companyId, attachmentId);
         if (att == null) return NotFound(new ApiResponse<string>(false, null!, "ไม่พบไฟล์แนบ"));
         // ทุกชนิดผ่านด่านของโมดูลเจ้าของ (รอบ 193 ข้อ 29) · ชนิดที่ไม่รู้จัก = ห้ามลบ
-        var deny = await DenyAttachmentAsync(companyId, att.EntityType, att.EntityId, Access.Write, "ลบไฟล์แนบ");
+        var deny = await DenyAttachmentAsync(companyId, att.EntityType, att.EntityId, AttachmentAccess.Write, "ลบไฟล์แนบ", att.Id);
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<string>(false, null!, d.Message));
         // ★ หลักฐานประกอบรายการบัญชีต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · §87/3) — ฝ่ายค้านรอบ 190:
         // เปิดให้แนบ/ลบบนใบที่อนุมัติแล้ว แต่ DeleteAsync ลบไฟล์จริง ⇒ ผู้มีสิทธิ์สร้างใบลบหลักฐานของใบที่ยื่น
@@ -336,7 +188,7 @@ public class FileAttachmentController : ControllerBase
         if (attachment == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์"));
         // ดาวน์โหลด = สิทธิ์อ่านของโมดูลเจ้าของไฟล์ (รอบ 193 ข้อ 29) — เดิมสมาชิกทุกคนโหลดสลิปเงินเดือนได้ถ้ารู้ id
-        var deny = await DenyAttachmentAsync(companyId, attachment.EntityType, attachment.EntityId, Access.Read, "ดาวน์โหลดไฟล์แนบ");
+        var deny = await DenyAttachmentAsync(companyId, attachment.EntityType, attachment.EntityId, AttachmentAccess.Read, "ดาวน์โหลดไฟล์แนบ", attachment.Id);
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message));
 
         var fullPath = Path.IsPathRooted(attachment.StoragePath)
