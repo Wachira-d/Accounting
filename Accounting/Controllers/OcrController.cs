@@ -1171,7 +1171,11 @@ public class OcrController : ControllerBase
                 Quality = grade != null ? new { grade.Letter, grade.Score, grade.Color } : null,
             };
         }).ToList();
-        return Ok(new ApiResponse<object>(true, result));
+        // ตัวเลขประกอบ — หน้าเว็บใช้บอก "ว่างเพราะอะไร" (เดิมจอว่างบอกว่า "ระบบมั่นใจทุกใบ"
+        // โดยไม่เคยตรวจ) · รูปคำตอบเปลี่ยนจาก array เป็น { items, summary } —
+        // ผู้เรียกมีหน้าเดียว (review-queue.html) แก้ในคอมมิตเดียวกัน
+        var summary = await ranker.SummarizeAsync(companyId);
+        return Ok(new ApiResponse<object>(true, new { Items = result, Summary = summary }));
     }
 
     /// <summary>

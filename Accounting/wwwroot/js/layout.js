@@ -2162,7 +2162,8 @@ const Layout = {
 
   async loadNotificationCount() {
     try {
-      const res = await API.get('/api/notification/count');
+      // งานเบื้องหลัง (ผู้ใช้ไม่ได้สั่ง) — ไม่ขึ้นแถบ "กำลังทำงาน" ของ api.js
+      const res = await (API.quietly ? API.quietly(() => API.get('/api/notification/count')) : API.get('/api/notification/count'));
       const count = res.data?.unread || 0;
       const dot = document.getElementById('notifDot');
       if (dot) dot.classList.toggle('hidden', count === 0);
