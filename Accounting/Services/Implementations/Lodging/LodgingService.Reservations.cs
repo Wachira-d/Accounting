@@ -443,12 +443,12 @@ public partial class LodgingService
             if (!string.IsNullOrEmpty(phone)) candidates.AddRange(await softScope.Where(x => x.Phone == phone).OrderBy(x => x.CreatedAt).Take(20).ToListAsync());
             c = candidates.FirstOrDefault(x => Accounting.Helpers.LodgingGuestContact.SoftCandidateAcceptable(
                 taxId, r.GuestCompanyName, x.Name, x.ContactType));
-            if (c != null && taxId != null && string.IsNullOrWhiteSpace(c.TaxId))
+            // แถวนิติบุคคลชื่อตรงที่ยังไม่มีเลข — "จับได้แล้วต้องเติมเลข" ผ่านตัวกลางตัวเดียว (ContactTaxBranchKey.AdoptTaxId · ทีม C3:
+            // ไม่ทับเลขของนิติบุคคลอื่น · ชนิด/สาขาผ่าน ContactTypeResolver) ⇒ ใบกำกับมีเลขผู้ซื้อ · ฟอร์มจองไม่มีช่องสาขา = สำนักงานใหญ่
+            if (c != null && Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(c, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice))
             {
-                // แถวนิติบุคคลชื่อตรงที่ยังไม่มีเลข — เติมเลข/สาขาจากที่แขกกรอก ใบกำกับจึงมีเลขผู้ซื้อ
-                c.TaxId = taxId; c.BranchCode ??= "00000";
                 if (string.IsNullOrWhiteSpace(c.Address) && !string.IsNullOrWhiteSpace(r.GuestAddress)) c.Address = r.GuestAddress;
-                c.UpdatedBy = actor; c.UpdatedAt = DateTime.UtcNow;
+                c.UpdatedBy = actor;
                 await _db.SaveChangesAsync();
             }
         }

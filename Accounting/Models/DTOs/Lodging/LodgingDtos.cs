@@ -532,6 +532,8 @@ public class LodgingReservationResponse
     public string? DepositVatTreatmentLabel { get; set; }
     /// <summary>ป้ายสถานะภาษาไทยจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — หน้าเว็บห้ามมีตารางป้ายของตัวเอง</summary>
     public string? StatusLabel { get; set; }
+    /// <summary>ใบเช็คเอาต์ถูกยกเลิก — ข้อความบอกทางออกใบใหม่ (เฉพาะหน้าพนักงาน) · null = ไม่มีปัญหา</summary>
+    public string? FinalDocumentNote { get; set; }
     /// <summary>ยอดที่ gateway จะเก็บจริงเมื่อแขกกดจ่ายออนไลน์ (null = ไม่มีอะไรให้จ่าย) — ตัวเดียวกับ PublicPaymentResolver</summary>
     public decimal? OnlinePayableAmount { get; set; }
     /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>

@@ -287,9 +287,10 @@ TUPLE_RULES = [
      "C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
      "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
     (LODGING_LIFE, "SettleCheckOutAsync",
-     ["new RealizeDepositRequest(d.Base, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId)",
-      "Math.Min(a.Gross, finalDoc.BalanceDue)", "r.RefundAmount = plan.ExcessGross"], [], [],
-     "C4 รับรู้มัดจำต้องผูกใบสุดท้าย (void กลับได้) · ตัดชำระไม่เกินยอดใบ · ส่วนเกินเป็นยอดค้างคืน"),
+     ["RealizedForFinalByDepositAsync(", "new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId)",
+      "Math.Min(a.Gross, finalDoc.BalanceDue)", "r.RefundAmount = plan.ExcessGross", "r.RefundBaselineGross ="],
+     [("RealizedForFinalByDepositAsync(", "RealizeDepositAsync(")], [],
+     "C4/N1 รับรู้เฉพาะส่วนที่อนุมัติยังไม่ได้รับรู้ (ห้ามซ้ำ) · ผูกใบสุดท้าย · ตัดชำระไม่เกินยอดใบ · ส่วนเกิน = ค้างคืน + จุดตั้งยอด (N3)"),
     (LODGING_LIFE, "ResumeCheckOutAsync",
      ["DepositRealizedForDocumentId == finalId", "LodgingDepositSettlement.PlanCheckout("], [], [],
      "ทำเช็คเอาต์ต่อ: นับที่รับรู้เพื่อใบนี้ไปแล้ว ไม่ใช้มัดจำซ้ำ"),
@@ -305,7 +306,9 @@ TUPLE_RULES = [
     (LODGING_LIFE, "RecordRefundPaidCoreAsync",
      ["LodgingDepositSettlement.IsLegacyRefund(", "TaxFilingLockPolicy.DeclaredOrFiledStatuses",
       "LodgingDepositSettlement.AllocateRefund(", "SyncRefundPaidFromDeposits("],
-     [("TaxFilingLockPolicy.DeclaredOrFiledStatuses", "RefundDepositAsync(")], [],
+     [("TaxFilingLockPolicy.DeclaredOrFiledStatuses", "RefundDepositAsync("),
+      ("SyncRefundPaidFromDeposits(", "LodgingDepositSettlement.ValidateRefundPayment("),
+      ("_db.SaveChangesAsync(", "LodgingDepositSettlement.ValidateRefundPayment(")], [],
      "C10 แถว legacy ห้ามลงคืนซ้ำ · ห้ามลงวันที่ย้อนเข้างวด ภ.พ.30 ที่ยื่นแล้ว · ยอดคืนแล้วตามใบมัดจำ"),
     (LODGING_LIFE, "BuildChargeAsync",
      ["LodgingPricingEngine.ChargeVatRate("], [], ["request.VatRate ??"],
@@ -314,28 +317,52 @@ TUPLE_RULES = [
      ["LodgingDepositSettlement.StatusAfterDeposit(", "request.ConfirmReservation"], [], [],
      "S-06/C9 ปุ่มรับชำระเพิ่มไม่ใช่การยืนยัน — ตามค่าตั้ง AutoConfirmOnDeposit"),
     (LODGING_RES, "FindOrCreateContactAsync",
-     ["ContactTaxBranchKey.SoftMatchScope(", "LodgingGuestContact.SoftCandidateAcceptable("], [],
-     ["softScope.FirstOrDefaultAsync("],
+     ["ContactTaxBranchKey.SoftMatchScope(", "LodgingGuestContact.SoftCandidateAcceptable(", "ContactTaxBranchKey.AdoptTaxId("],
+     [("LodgingGuestContact.SoftCandidateAcceptable(", "ContactTaxBranchKey.AdoptTaxId(")],
+     ["softScope.FirstOrDefaultAsync(", "c.TaxId = taxId", "BranchCode ??="],
      "C-7 แขกนิติบุคคลห้ามได้แถวบุคคลธรรมดาที่อีเมล/เบอร์ตรง (§86/4 ผู้ซื้อผิดตัว)"),
     (LODGING, "EffectiveVatRateAsync",
      ["CompanyVatStatus.ProfileAsync(", "LodgingPricingEngine.PropertyVatRate("], [], [],
      "S-10 อัตรา VAT ที่พักผ่านตัวอ่านสถานะ VAT ตัวเดียว"),
     (DOCSVC, "GuardDrivesGrossApplyAsync",
-     ["DepositPolicyResolver.DrivesGrossApply(", "TaxFilingLockPolicy.DeclaredOrFiledStatuses"], [], [],
-     "C1 เส้นขับ JE บล็อกเฉพาะงวดมัดจำยื่นแล้ว (เดิมบล็อกทุกกรณี ⇒ integration ถอยไปตั้งหนี้เงียบ)"),
+     ["DepositPolicyResolver.GrossApplyBlocked(", "throw new"], [], ["TaxReports", "AllowedVatMoved"],
+     "N1 เส้นขับ JE เข้มเท่าปุ่มทุกงวด (ผ่อนตามงวด ⇒ ผู้ซื้อได้ใบกำกับสองใบ VAT 618.22)"),
     (DOCSVC, "AutoPostToJournalAsync",
-     ["GuardDrivesGrossApplyAsync("], [], ["DepositPolicyResolver.GrossApplyBlocked("],
-     "C1 เส้นขับ JE ต้องผ่านตัวตัดสินที่ดูงวดที่ยื่นแล้ว ไม่ใช่ GrossApplyBlocked ตรง ๆ"),
+     ["GuardDrivesGrossApplyAsync(", "RealizeTaxedDepositDeductionsAsync("], [], [],
+     "N1/C4 เส้นขับ JE ผ่านด่าน · ใบที่หักมูลค่ามัดจำก่อน VAT รับรู้มัดจำในธุรกรรมเดียวกับการลงบัญชี (กู้ใบ void แล้วอนุมัติใหม่ก็รับรู้)"),
+    (DOCSVC, "RealizeTaxedDepositDeductionsAsync",
+     ["DepositPolicyResolver.BillDeductionIsTaxedDeposit(", "DepositPolicyResolver.AllocateBaseDeduction(",
+      "DepositRealizedForDocumentId == doc.Id", "RealizeDepositCoreAsync("],
+     [("DepositRealizedForDocumentId == doc.Id", "RealizeDepositCoreAsync(")], [],
+     "N1 รับรู้เฉพาะที่ยังไม่ได้รับรู้เพื่อใบนี้ · มัดจำไม่พอ = ล้มดัง"),
+    (DOCSVC, "CreateDocumentAsync",
+     ["ConvertTaxedDrivesAsync("], [("ConvertTaxedDrivesAsync(", "DepositPolicyResolver.DrivesJournalSupported(")], [],
+     "N1 ฟอร์มติ๊กขายเงินสดใบเดียว + มัดจำออกใบกำกับแล้ว ⇒ แปลงเป็นหักฐานตอนบันทึก (เว็บเลี่ยงปุ่มไม่ได้)"),
+    (DOCSVC, "UpdateDocumentAsync",
+     ["ConvertTaxedDrivesAsync("], [], [],
+     "N1 ทางแก้ร่างเดินด่านเดียวกับตอนสร้าง"),
+    (DOCSVC, "RefundDepositAsync",
+     ["DepositReversalMath.RefundSplit("], [], ["Math.Round(request.Amount * vatPortion"],
+     "N4 แยกยอดคืนด้วยตัวเดียวกับตัววางแผนที่พัก (VAT จากยอดสะสม ⇒ คืนหลายงวดไม่ค้าง 0.01)"),
+    (DOCSVC, "PurgeDocumentAsync#2",
+     ["ReverseDepositRealizationsForAsync("], [], [],
+     "C4 ลบใบสุดท้ายต้องลบ JE รับรู้มัดจำที่ทำเพื่อใบนั้นด้วย (ฝ่ายค้านรอบสอง: ถอดแล้วเขียว)"),
     (DOCSVC, "VoidDocumentAsync",
      ["ReverseDepositRealizationsForAsync("], [], [],
      "C4 void ใบสุดท้ายต้องกลับการรับรู้มัดจำที่ทำเพื่อใบนั้น"),
     (DOCSVC, "RealizeDepositAsync",
-     ["DepositRealizedForDocumentId = realizedFor"], [], [],
-     "C4 FinalInvoiceId ต้องถูกอ่าน (เดิมไม่มีผู้อ่าน)"),
+     ["RealizeDepositCoreAsync("], [], [],
+     "ปุ่มรับรู้มัดจำกับการรับรู้ตอนอนุมัติใช้ตัวรับรู้ตัวเดียว"),
+    (DOCSVC, "RealizeDepositCoreAsync",
+     ["DepositRealizedForDocumentId = realizedFor"], [], ["SaveChangesAsync("],
+     "C4 FinalInvoiceId ต้องถูกอ่าน · ตัวรับรู้ห้าม SaveChanges เอง (เรียกในธุรกรรมอนุมัติ)"),
     (INTEGRATION, "ProcessInvoiceAsync",
-     ["DepositPolicyResolver.ImmediateVatGrossApplyRuleCode"],
-     [("DepositPolicyResolver.ImmediateVatGrossApplyRuleCode", "catch (Exception exCash)")], [],
-     "C1 มัดจำออกใบกำกับแล้ว (งวดยื่นแล้ว) ห้ามถอยไปตั้งหนี้เงียบ — ต้องล้มดัง"),
+     ["DepositPolicyResolver.ImmediateVatGrossApplyRuleCode", "TaxedDrivesRejectionAsync(", "VoidDocumentAsync(", "RejectTaxedDrivesAsync("],
+     [("TaxedDrivesRejectionAsync(", "_settingsService.GetNextNumberAsync("),
+      ("TaxedDrivesRejectionAsync(", "ResyncUpdateInvoiceAsync("),
+      ("VoidDocumentAsync(", "catch (Exception exCash)"),
+      ("DepositPolicyResolver.ImmediateVatGrossApplyRuleCode", "catch (Exception exCash)")], [],
+     "N1/N2 ปฏิเสธก่อนออกเลขและก่อน resync · ตาข่ายยกเลิกใบ (ห้ามใบ Approved ไม่มี JE · ห้ามถอยไปตั้งหนี้)"),
 ]
 
 RULES += [dict(file=f, method=m, must=list(mu), before=list(b), forbid=list(fo), why=w)
@@ -469,9 +496,16 @@ RE_DECL = r"^[ \t]*(?:public|private|internal|protected)\b[^;\n=]*?\b{name}\s*(?
 
 
 def method_body(masked: str, name: str):
-    m = re.search(RE_DECL.format(name=re.escape(name)), masked, flags=re.M)
-    if not m:
+    # "ชื่อ#n" = การประกาศลำดับที่ n (นับจาก 0) ของเมธอด overload ชื่อเดียวกัน (รอบ 193 L2: PurgeDocumentAsync มี 3 ตัว
+    # ตัวที่ทำงานจริงคือตัวสุดท้าย) · ไม่มี # = ตัวแรก (พฤติกรรมเดิม)
+    nth = 0
+    if "#" in name:
+        name, nth_s = name.split("#", 1)
+        nth = int(nth_s)
+    found = list(re.finditer(RE_DECL.format(name=re.escape(name)), masked, flags=re.M))
+    if len(found) <= nth:
         return None
+    m = found[nth]
     j, depth = m.end() - 1, 0
     while j < len(masked):
         if masked[j] == "(":

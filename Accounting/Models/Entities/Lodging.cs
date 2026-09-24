@@ -415,6 +415,9 @@ public class LodgingReservation : TenantEntity
     /// <summary>ยอดที่พนักงาน<b>ยืนยันว่าโอน/จ่ายคืนแล้วจริง</b> — JE คืนเงิน + ใบลดหนี้เกิดตอนนี้เท่านั้น
     /// (สถานะ "คืนแล้ว" ตั้งจากหลักฐาน ไม่ใช่จากการตัดสินใจจะคืน · DECISION_DOCTRINE R1)</summary>
     public decimal RefundPaidAmount { get; set; }
+    /// <summary>ผลรวมยอดคืนบนใบมัดจำ (<c>DepositRefundedAmount</c>) ณ ตอนตั้งยอดค้างคืน (ยกเลิก/เช็คเอาต์) — ตัวซ่อม
+    /// "ยอดคืนแล้วตามใบมัดจำ" นับเฉพาะการคืนที่เกิดหลังจุดนี้ (N3: เดิมนับการคืนก่อนยกเลิกซ้ำ ⇒ ค้างคืนถาวร)</summary>
+    public decimal RefundBaselineGross { get; set; }
     public DateTime? RefundPaidAt { get; set; }
     public string? RefundPaidBy { get; set; }
     public string? RefundReference { get; set; }

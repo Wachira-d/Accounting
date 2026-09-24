@@ -75,17 +75,6 @@ public sealed record DepositVatTreatmentOption(
 /// โหมดของใบที่ออกแล้วอ่านย้อนจากช่องที่ตรึงบนใบ (<see cref="OfDocument"/>) ไม่อ่านค่าบริษัทซ้ำ ·
 /// แผนตัวเลขของโมดูลที่พัก (หัก/ริบ/คืน) อยู่ที่ <c>Helpers/LodgingDepositSettlement</c> ซึ่งกินผลของไฟล์นี้
 /// </summary>
-/// <summary>ผลของเส้นหักมัดจำแบบขับ JE เมื่อมัดจำออกใบกำกับแล้ว (ดู <see cref="DepositPolicyResolver.DrivesGrossApply"/>)</summary>
-public enum DrivesGrossApplyVerdict
-{
-    /// <summary>มัดจำไม่มี VAT ที่รายงานแล้ว (พัก 21913 / เต็มยอด / ไม่จด VAT) — ลงได้ตามปกติ</summary>
-    Allowed,
-    /// <summary>มัดจำออกใบกำกับแล้ว แต่งวดยังไม่ยื่น — ลงได้ (สมดุล · VAT นับครั้งเดียว) + ธงว่า VAT ย้ายเดือน</summary>
-    AllowedVatMoved,
-    /// <summary>งวดของมัดจำยื่น/ประกาศว่ายื่นแล้ว — ลงไม่ได้ (จะรายงาน VAT ซ้ำกับแบบที่ยื่น)</summary>
-    Blocked,
-}
-
 public static class DepositPolicyResolver
 {
     /// <summary>รหัสกฎของด่าน "ห้ามหักมัดจำที่ออกใบกำกับแล้วแบบเต็มจำนวนเข้าใบกำกับที่คิด VAT เต็ม" (P0-3 รอบ 193)</summary>
@@ -266,24 +255,35 @@ public static class DepositPolicyResolver
     public static bool GrossApplyBlocked(decimal depositVatAmount, bool depositVatPending)
         => depositVatAmount > 0.005m && !depositVatPending;
 
-    /// <summary>เส้น "หักมัดจำแบบขับ JE" (<c>DepositAppliedDrivesJournal</c> — ใบขายเงินสดของคู่ค้า/ฟอร์ม) ตัดสินต่างจากปุ่ม
-    /// "หักมัดจำ" เพราะยอดของใบถูกคำนวณมาแล้ว (คู่ค้าคิด · ห้ามแก้ยอดของคู่ค้า) และ JE ของเส้นนี้ <b>สมดุลและนับ VAT ครั้งเดียว</b>
-    /// (Dr 21911 ของมัดจำ net กับ Cr 21911 เต็มของใบ · รายงานภาษีขายข้ามแถวมัดจำที่ถูกหัก) — ปัญหาจริงมีเมื่อ
-    /// <b>งวดของมัดจำยื่นไปแล้ว</b> (ภาษีก้อนนั้นจ่ายไปแล้ว → รายงานซ้ำ) ⇒ บล็อกเฉพาะกรณีนั้น ·
-    /// งวดยังไม่ยื่น ⇒ ลงได้ แต่ต้องมีธงบนใบให้เห็นว่า VAT มัดจำย้ายเดือน (§78/1)
-    /// <para>รอบ 193 หลังฝ่ายค้าน C1: เดิมบล็อกทุกกรณี ⇒ integration จับ exception แล้วถอยไปตั้งหนี้เงียบ ๆ
-    /// ⇒ VAT ซ้ำ + 217xx ค้าง + ยอดค้างทำให้ต้นทางเก็บเงินซ้ำ (แย่กว่าก่อนแก้)</para></summary>
-    public static DrivesGrossApplyVerdict DrivesGrossApply(decimal depositVatAmount, bool depositVatPending, bool depositVatPeriodDeclared)
-        => !GrossApplyBlocked(depositVatAmount, depositVatPending) ? DrivesGrossApplyVerdict.Allowed
-           : depositVatPeriodDeclared ? DrivesGrossApplyVerdict.Blocked
-           : DrivesGrossApplyVerdict.AllowedVatMoved;
+    /// <summary>ฐาน (ก่อน VAT) ของมัดจำที่ออกใบกำกับแล้วที่จะหักออกจากฐานภาษีของใบสุดท้าย เมื่อผู้ใช้/คู่ค้าระบุ
+    /// "หักมัดจำ" เป็นยอดรวม VAT (<paramref name="appliedGross"/>) — ตัวแปลงตัวเดียวของทุกเส้น (ปุ่ม · ฟอร์มขายเงินสด ·
+    /// เช็คเอาต์ที่พัก) ให้ได้รูป "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี" ⇒ VAT สองใบรวม = VAT ของยอดเต็ม ผู้ซื้อไม่ได้
+    /// ใบกำกับสองใบสำหรับภาษีก้อนเดียว (รอบ 193 ฝ่ายค้านรอบสอง N1)
+    /// <para>ยอดเต็มคงเหลือ = ฐานคงเหลือ (ไม่ต้องปัด) · บางส่วน = round(gross × ฐาน/รวม) ไม่เกินฐานคงเหลือ</para></summary>
+    public static decimal TaxedDepositBase(decimal appliedGross, decimal depositSubTotal, decimal depositTotal, decimal remainingBase)
+    {
+        if (appliedGross <= 0m || depositTotal <= 0m || remainingBase <= 0m) return 0m;
+        var b = Math.Round(appliedGross * depositSubTotal / depositTotal, 2, MidpointRounding.AwayFromZero);
+        return Math.Min(b, remainingBase);
+    }
 
-    /// <summary>ธงบนหมายเหตุภายในของใบที่หักมัดจำ "ออกใบกำกับแล้ว" เต็มจำนวนผ่านเส้นขับ JE (งวดมัดจำยังไม่ยื่น)</summary>
-    public static string DrivesVatMovedNote(string depositNumber, decimal depositVat) =>
-        $"[{ImmediateVatGrossApplyRuleCode}-MOVED] หักมัดจำ {depositNumber} ที่ออกใบกำกับแล้วเต็มจำนวน — "
-        + $"VAT มัดจำ {depositVat:N2} ถูกย้ายมารายงานพร้อมใบนี้ (รายงานภาษีขายข้ามแถวมัดจำ) · §78/1 ให้รายงานเดือนที่รับเงิน · "
-        + "ถ้าเดือนต่างกัน ให้นักบัญชีตรวจ: ออกใบลดหนี้ใบนี้แล้วออกใหม่แบบหักฐานมัดจำ หรือยื่นเพิ่มเติม";
-
+    /// <summary>กระจายฐานที่ต้องรับรู้เป็นรายได้ (= ส่วนหักท้ายบิลของใบสุดท้าย − ที่รับรู้เพื่อใบนี้ไปแล้ว) ลงใบมัดจำ
+    /// ที่อ้างถึง ใบเก่าสุดก่อน ไม่เกินฐานคงเหลือของแต่ละใบ · <c>Shortfall</c> &gt; 0 = มัดจำไม่พอกับที่ใบหักไว้ (ต้องล้มดัง)</summary>
+    public static (IReadOnlyList<(Guid Id, decimal Base)> Lines, decimal Shortfall) AllocateBaseDeduction(
+        decimal baseToRealize, IReadOnlyList<(Guid Id, decimal RemainingBase)> depositsOldestFirst)
+    {
+        var lines = new List<(Guid, decimal)>();
+        var left = Math.Max(0m, baseToRealize);
+        foreach (var (id, rem) in depositsOldestFirst)
+        {
+            if (left <= 0.005m) break;
+            var take = Math.Min(left, Math.Max(0m, rem));
+            if (take <= 0.005m) continue;
+            lines.Add((id, take));
+            left -= take;
+        }
+        return (lines, left > 0.005m ? left : 0m);
+    }
 
     /// <summary>ข้อความของด่าน P0-3 — บอกเหตุผล + ทางไปต่อทั้งสองทาง (ห้ามตันเฉย ๆ)</summary>
     public static string GrossApplyBlockedMessage(string depositNumber) =>

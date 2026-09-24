@@ -33,4 +33,23 @@ public static class DepositReversalMath
     public static string[] ParseDepositRefs(string? refs) =>
         (refs ?? string.Empty)
             .Split(',', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// แยกยอด "คืนมัดจำ" (gross) เป็นฐาน + VAT พร้อมด่าน "คืนเกินคงเหลือ" — ตัวเดียวของ <c>RefundDepositAsync</c>
+    /// และตัววางแผนคืนเงินของที่พัก (รอบ 193 ฝ่ายค้านรอบสอง N4)
+    /// <para><b>VAT คิดจากยอดคืนสะสม</b>: vat = round((คืนแล้ว + gross) × VAT/รวม) − round(คืนแล้ว × VAT/รวม) · ฐาน = gross − vat ·
+    /// ฐานคงเหลือ = ฐาน − รับรู้แล้ว − (คืนแล้ว − round(คืนแล้ว × VAT/รวม)) ⇒ ด่านขึ้นกับ <b>ยอดคืนสะสม</b> อย่างเดียว
+    /// ไม่ว่าจะแบ่งกี่งวด (เดิมปัด VAT ทีละงวดแต่เทียบกับฐานที่ปัดจากยอดสะสม ⇒ คืน 72.02 แล้ว 3,154.54 ไม่ผ่าน ค้าง 0.01 ถาวร)
+    /// · คืนครั้งเดียวจากศูนย์ = สูตรเดิมทุกประการ</para></summary>
+    public static (decimal Base, decimal Vat, bool Ok, decimal RemainingBase) RefundSplit(
+        decimal gross, decimal subTotal, decimal vatAmount, decimal total, decimal realizedBase, decimal refundedGross)
+    {
+        const System.MidpointRounding R = System.MidpointRounding.AwayFromZero;
+        var portion = total > 0m ? vatAmount / total : 0m;
+        var vatBefore = System.Math.Round(refundedGross * portion, 2, R);
+        var vat = System.Math.Round((refundedGross + gross) * portion, 2, R) - vatBefore;
+        var baseAmt = gross - vat;
+        var remainingBase = subTotal - realizedBase - (refundedGross - vatBefore);
+        return (baseAmt, vat, gross > 0m && baseAmt <= remainingBase + 0.005m, remainingBase);
+    }
 }
