@@ -75,6 +75,9 @@ public static class PaymentSettlementAdjustment
                 return Fail(cashPaid, $"บรรทัดปรับ {l.AccountCode} ยอดเป็นศูนย์ — ลบบรรทัดนั้นทิ้ง หรือใส่ยอด (+ จ่ายเกิน · − ปิดหนี้โดยไม่จ่ายเงิน)");
             if (decimal.Round(l.Amount, 2) != l.Amount)
                 return Fail(cashPaid, $"บรรทัดปรับ {l.AccountCode} ต้องเป็นทศนิยมไม่เกิน 2 ตำแหน่ง");
+            if (IsMoneyAccountCode(l.AccountCode))
+                return Fail(cashPaid, $"บรรทัดปรับใช้ผังเงินสด/เงินฝาก ({l.AccountCode}) ไม่ได้ — เงินที่จ่ายจริงใส่ในช่อง \"จำนวนเงิน\" "
+                    + "(ระบบลงขาเงินสดและยอดบัญชีธนาคารให้) · บรรทัดปรับใช้กับค่าส่ง (51120) / คูปอง-ส่วนลด (51150) ฯลฯ");
         }
 
         var net = lines.Sum(l => l.Amount);
@@ -103,6 +106,12 @@ public static class PaymentSettlementAdjustment
         => type == DocumentType.PaymentVoucher
            && (settlesSourceDocument || (paymentType != PaymentType.Credit && !isForeignService));
 
+    /// <summary>ผังหมวดเงินสดและรายการเทียบเท่าเงินสด (111xx — เงินสด · เงินสดย่อย · เงินฝาก · เช็คในมือ) ห้ามเป็นบรรทัดปรับ
+    /// — ฝ่ายค้านรอบสอง P-d: บรรทัดปรับผังเงินสด −98 กับเงิน 0 ⇒ GL เงินออก 98 แต่ Payment.Amount = 0 และยอดบัญชีธนาคารไม่ขยับ
+    /// (ผังที่ผูกกับบัญชีธนาคารแต่รหัสไม่ขึ้นต้น 111 ถูกตรวจเพิ่มที่ service)</summary>
+    public static bool IsMoneyAccountCode(string? accountCode)
+        => (accountCode ?? "").Trim().StartsWith("111", StringComparison.Ordinal);
+
     /// <summary>ส่วนต่างที่ขาเงินสดของ JE ต้องถูก<b>ลด</b> (Dr เงินสดกลับ) = ยอดเอกสาร − ยอดชำระจริง ·
     /// 0 เมื่อไม่ได้ระบุยอดชำระจริง หรือเอกสารชนิดนี้ไม่จ่ายเงินในตัว (พฤติกรรมเดิมทุกประการ)</summary>
     public static decimal DocumentCashDelta(
@@ -124,7 +133,12 @@ public static class PaymentSettlementAdjustment
         DocumentType type, PaymentType? paymentType, bool isForeignService, bool settlesSourceDocument)
     {
         if (PostsCashAtApproval(type, paymentType, isForeignService, settlesSourceDocument)) return null;
-        if (type is DocumentType.PurchaseInvoice or DocumentType.Expense) return null;
+        // ฝ่ายค้านรอบสอง P-e: ใบตั้งหนี้แบบ "จ่ายทันที" ปิดยอดตั้งแต่สร้าง (BalanceDue = 0) ⇒ ไม่มีขั้นบันทึกการชำระให้ใช้ค่านี้
+        if (type is DocumentType.PurchaseInvoice or DocumentType.Expense)
+            return paymentType == PaymentType.Cash
+                ? "ช่อง \"ยอดชำระจริง\" ใช้กับใบตั้งหนี้แบบจ่ายทันทีไม่ได้ (ปิดยอดตั้งแต่สร้าง ไม่มีขั้นบันทึกการชำระ) — "
+                  + "ล้างช่องนี้ แล้วบันทึกการจ่ายด้วยใบสำคัญจ่าย (ช่องยอดชำระจริง + บรรทัดปรับ) หรือเปลี่ยนเป็นเงินเชื่อแล้วบันทึกการชำระ"
+                : null;
         return type == DocumentType.PaymentVoucher
             ? (isForeignService
                 ? "ช่อง \"ยอดชำระจริง\" ใช้กับใบสำคัญจ่ายบริการต่างประเทศ (ภ.พ.36) ไม่ได้ — ขาเงินสดเป็นฐานภาษีเท่านั้น · "

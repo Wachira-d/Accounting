@@ -7394,14 +7394,24 @@ public class OcrService : IOcrService
         // เอกสารตั้งหนี้ (ข้อ 1: ยอด 536 ตามใบกำกับถูกแล้ว) — ส่วนต่างเป็นเรื่องขั้นชำระ ⇒ อนุมัติได้ตามปกติ
         // (ฝ่ายค้าน C8: เดิมไม่เขียนอะไร ⇒ [PAY≠TOTAL] หยุดการอนุมัติเองตลอดไป เพราะบันทึกการชำระก่อนอนุมัติไม่ได้)
         if (!postsCash && (document.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense)
+            && Accounting.Helpers.PaymentSettlementAdjustment.ActualPaidNotApplicableReason(
+                document.DocumentType, document.PaymentType, document.IsForeignService, document.RelatedDocumentId.HasValue) is null
             && (result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrTotalDecomposer.PayNotTotalTag, StringComparison.Ordinal))
         {
-            var planFits = parsedPlan is { } pf && headerWht == 0m
-                && Math.Abs(pf.InvoiceTotal - document.TotalAmount) <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance;
-            if (planFits) document.ActualPaidAmount = parsedPlan!.AmountPaid;
+            // ฝ่ายค้านรอบสอง N5: ปลด [PAY≠TOTAL] (แท็ก [PAY-AT-PAYMENT]) ได้เฉพาะเมื่อ "กระดาษอธิบายส่วนต่างได้ครบ และยอดใบกำกับในข้อเสนอ
+            // ตรงยอดเอกสาร" (ตัวเลือกยอดเดียว — Helpers/OcrSettlementProposal.FitsDocument) · ไม่มีข้อเสนอ / มีหัก ณ ที่จ่าย / ข้อเสนอขัดกับ
+            // ยอดเอกสาร = ระบบ "ยังไม่รู้" ว่ายอดถูก ⇒ คงการหยุดไว้ + บอกเหตุผลและทางไปต่อ (ห้ามประกาศว่าถูกต้อง)
+            var fittingPlan = Accounting.Helpers.OcrSettlementProposal.FitsDocument(parsedPlan, document.TotalAmount, headerWht);
+            if (fittingPlan is null)
+            {
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] "
+                    + Accounting.Helpers.OcrSettlementProposal.UnverifiedReason(parsedPlan, document.TotalAmount, headerWht);
+                return;
+            }
+            document.ActualPaidAmount = fittingPlan.AmountPaid;
             if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.DeferredTag, StringComparison.Ordinal))
                 result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
-                    + Accounting.Helpers.OcrSettlementProposal.DeferredNote(planFits ? parsedPlan : null, document.TotalAmount);
+                    + Accounting.Helpers.OcrSettlementProposal.DeferredNote(fittingPlan);
             return;
         }
         if (parsedPlan is not { } plan || !postsCash) return;

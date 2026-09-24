@@ -234,7 +234,17 @@ const Page = {
     const sigId = document.getElementById('approveSignatureId').value || null;
     const comments = document.getElementById('approveComments').value || null;
     try {
-      await API.c(cid).approveDoc(this.currentApprovalId, { signatureId: sigId, comments });
+      try {
+        await API.c(cid).approveDoc(this.currentApprovalId, { signatureId: sigId, comments });
+      } catch (e) {
+        // รอบ 193 (ฝ่ายค้านรอบสอง N6): ลายเซ็นขั้นสุดท้ายเจอคำเตือน (422 · ยังไม่บันทึกลายเซ็น) — ให้คนอ่านแล้วกดรับทราบเอง
+        const warnings = e && e.status === 422 ? (e.body?.data?.warnings || []) : null;
+        if (!warnings || !warnings.length) throw e;
+        const ok = confirm('เอกสารมีคำเตือนก่อนอนุมัติ (ลายเซ็นนี้เป็นขั้นสุดท้าย):\n\n' + warnings.map(w => '• ' + w).join('\n')
+          + '\n\nกด OK = รับทราบและเซ็นอนุมัติ (ระบบบันทึกว่าคุณเป็นผู้รับทราบ) · Cancel = กลับไปตรวจเอกสาร');
+        if (!ok) return;
+        await API.c(cid).approveDoc(this.currentApprovalId, { signatureId: sigId, comments, acknowledgeWarnings: true });
+      }
       this.closeModal('approveModal');
       await this.loadPending();
       alert('อนุมัติสำเร็จ');

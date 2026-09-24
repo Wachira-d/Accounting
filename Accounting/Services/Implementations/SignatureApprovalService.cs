@@ -270,6 +270,19 @@ public class SignatureApprovalService : ISignatureApprovalService
             }
         }
 
+        // รอบ 193 (ฝ่ายค้านรอบสอง N6): ลายเซ็นขั้นสุดท้าย = การอนุมัติเอกสารจริง ⇒ ถามคำเตือนก่อน "บันทึกลายเซ็น" — เดิมบันทึกลายเซ็นก่อน
+        // แล้วค่อยอนุมัติ ⇒ เจอ [Σ-GAP] ได้ 500 ข้อความกลาง ๆ · ลายเซ็นครบแต่เอกสารค้างโดยไม่มีใครบอก · ตอนนี้ 422 พร้อมรายการ
+        // ให้ผู้เซ็นกดรับทราบ (ส่งซ้ำพร้อม acknowledgeWarnings) เหมือนหน้าเอกสาร/workflow/มือถือ · ยังไม่มีอะไรถูกบันทึก
+        var lastStep = !await _db.Set<DocumentApproval>()
+            .AnyAsync(a => a.DocumentId == approval.DocumentId && a.Id != approval.Id
+                && a.Status == ApprovalStatus.Pending && !a.IsDeleted);
+        if (lastStep && !request.AcknowledgeWarnings)
+        {
+            var pendingWarnings = await _docService.PreviewApprovalWarningsAsync(companyId, approval.DocumentId);
+            if (pendingWarnings.Count > 0)
+                throw new DocumentApprovalWarningsException(pendingWarnings);
+        }
+
         // Update approval
         approval.Status = ApprovalStatus.Approved;
         approval.ApprovedAt = DateTime.UtcNow;
@@ -305,7 +318,9 @@ public class SignatureApprovalService : ISignatureApprovalService
         await _db.SaveChangesAsync();
 
         // Check if all steps approved → update document + run post-action
-        await CheckAllApprovedAndProcessAsync(companyId, approval.DocumentId, userId);
+        // ผู้เซ็นกดรับทราบเอง = User · ไม่ได้กด (ไม่มีคำเตือนตอนถาม) = ระบบส่งผ่านคำเตือนทั่วไปที่เกิดใหม่ได้ แต่ [Σ-GAP] ไม่ได้
+        await CheckAllApprovedAndProcessAsync(companyId, approval.DocumentId, userId,
+            request.AcknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User : Accounting.Helpers.ApprovalAckSource.SystemWorkflow);
 
         return MapApproval(approval);
     }
@@ -381,6 +396,21 @@ public class SignatureApprovalService : ISignatureApprovalService
         if (internalPending)
             throw new InvalidOperationException("ยังมีขั้นอนุมัติภายในที่รออยู่ — อนุมัติภายในให้ครบก่อน แล้วจึงบันทึกการอนุมัติจากลูกค้า");
 
+        // รอบ 193 (ฝ่ายค้านรอบสอง N6): ถามคำเตือนก่อนบันทึกลายเซ็นลูกค้า (ผู้บันทึกคือสมาชิกที่ล็อกอินและมีสิทธิ์อนุมัติ ⇒ รับทราบแทน
+        // ตัวเองได้) — เดิมบันทึกลายเซ็นก่อนแล้วค่อยเจอคำเตือน ⇒ 500 · กดซ้ำได้ขั้นลูกค้าใหม่ + ลายเซ็นซ้ำ
+        if (!request.AcknowledgeWarnings)
+        {
+            var pendingWarnings = await _docService.PreviewApprovalWarningsAsync(companyId, documentId);
+            if (pendingWarnings.Count > 0)
+                throw new DocumentApprovalWarningsException(pendingWarnings);
+        }
+
+        // กันลายเซ็นซ้ำ: ลูกค้าเซ็นไปแล้วแต่อนุมัติเอกสารไม่ผ่าน (ด่านบัญชี/ภาษี) ⇒ ครั้งถัดไปใช้ลายเซ็นเดิม ไม่สร้างขั้นใหม่/ลายเซ็นใหม่
+        var alreadySigned = await _db.Set<DocumentApproval>()
+            .AnyAsync(a => a.DocumentId == documentId && a.ApproverRole == "Customer"
+                && a.Status == ApprovalStatus.Approved && !a.IsDeleted);
+        if (!alreadySigned)
+        {
         // Find or create customer approval step
         var customerApproval = await _db.Set<DocumentApproval>()
             .FirstOrDefaultAsync(a => a.DocumentId == documentId && a.ApproverRole == "Customer"
@@ -436,6 +466,7 @@ public class SignatureApprovalService : ISignatureApprovalService
         });
 
         await _db.SaveChangesAsync();   // เก็บลายเซ็น/approval row ก่อน
+        }
 
         // อนุมัติผ่าน "pipeline เต็ม" ของ DocumentService — ห้ามตั้ง Status ตรง ๆ
         // (เดิมข้าม JE/สต๊อก/tax point/§86-4/§65ตรี ทั้งหมด → เอกสารการเงิน
@@ -444,9 +475,23 @@ public class SignatureApprovalService : ISignatureApprovalService
         // hard block (§86/4 ไม่ครบ ฯลฯ) ยัง throw ตามปกติ.
         // รอบ 193 (ฝ่ายค้าน C5): ผู้เซ็นไม่เคยเห็นรายการคำเตือน ⇒ ลงร่องรอยว่า "ระบบ workflow ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ ·
         // คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ระบบส่งผ่านไม่ได้ (ต้องมีคนรับทราบ) ⇒ หยุดพร้อมรายการ
-        var approved = await _docService.ApproveDocumentAsync(
-            companyId, documentId, $"external:{request.ApproverName}",
-            Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
+        try
+        {
+            await _docService.ApproveDocumentAsync(
+                companyId, documentId, $"external:{request.ApproverName}",
+                request.AcknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User
+                                            : Accounting.Helpers.ApprovalAckSource.SystemWorkflow,
+                withAiHints: false);
+        }
+        catch (Exception ex) when (ex is DocumentApprovalWarningsException or InvalidOperationException
+                                       or Accounting.Helpers.BusinessRuleException)
+        {
+            // ลายเซ็นลูกค้าถูกเก็บแล้ว (ครั้งถัดไปไม่สร้างซ้ำ — ดู alreadySigned) · บอกทางไปต่อ ไม่ใช่ 500
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บันทึกลายเซ็นลูกค้าแล้ว แต่ระบบอนุมัติใบเสนอราคายังไม่ได้: " + DocumentApprovalWarningsException.DescribeForUser(ex)
+                + " — แก้ตามข้อความแล้วเรียกซ้ำ (ระบบใช้ลายเซ็นเดิม ไม่บันทึกซ้ำ) หรือกด \"อนุมัติ\" ที่หน้าเอกสาร",
+                "SIGN-APPROVE-PENDING", 422);
+        }
         doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 
@@ -499,7 +544,8 @@ public class SignatureApprovalService : ISignatureApprovalService
 
     // ==================== HELPERS ====================
 
-    private async Task CheckAllApprovedAndProcessAsync(Guid companyId, Guid documentId, string userId)
+    private async Task CheckAllApprovedAndProcessAsync(Guid companyId, Guid documentId, string userId,
+        Accounting.Helpers.ApprovalAckSource ackSource)
     {
         var allApprovals = await _db.Set<DocumentApproval>()
             .Where(a => a.DocumentId == documentId && !a.IsDeleted)
@@ -518,8 +564,26 @@ public class SignatureApprovalService : ISignatureApprovalService
         // อนุมัติผ่าน pipeline เต็ม (JE + สต๊อก + tax point + ออกเลข + validation)
         // — เดิมตั้ง Status ตรง ๆ ทำให้เอกสารข้ามการลงบัญชีทั้งหมด
         // รอบ 193 (ฝ่ายค้าน C5): ผู้เซ็นครบทุกขั้นแต่ไม่มีใครเห็นคำเตือน ⇒ "ระบบ workflow ส่งผ่าน" (ไม่ประทับว่าผู้ใช้รับทราบ)
-        await _docService.ApproveDocumentAsync(companyId, documentId, userId,
-            Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
+        // (ฝ่ายค้านรอบสอง N6) ลายเซ็นครบถูกบันทึกแล้ว ⇒ ถ้าอนุมัติไม่ผ่าน ต้องบอกผู้เซ็นว่าเอกสาร "เซ็นครบ รออนุมัติด้วยมือ" พร้อมเหตุผล
+        // และทางไปต่อ (422 ข้อความไทย) — ไม่ใช่ 500 ข้อความกลาง ๆ ที่ทำให้ไม่มีใครรู้ว่าต้องไปกดอนุมัติที่หน้าเอกสาร
+        try
+        {
+            await _docService.ApproveDocumentAsync(companyId, documentId, userId,
+                ackSource == Accounting.Helpers.ApprovalAckSource.User
+                    ? Accounting.Helpers.ApprovalAckSource.User
+                    : Accounting.Helpers.ApprovalAckSource.SystemWorkflow,
+                withAiHints: false);
+        }
+        catch (Exception ex) when (ex is DocumentApprovalWarningsException or InvalidOperationException
+                                       or Accounting.Helpers.BusinessRuleException)
+        {
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ลายเซ็นครบทุกขั้นถูกบันทึกแล้ว แต่ระบบอนุมัติเอกสารยังไม่ได้: "
+                + DocumentApprovalWarningsException.DescribeForUser(ex)
+                + " — เอกสารอยู่ในสถานะ \"เซ็นครบ รออนุมัติด้วยมือ\" · ให้ผู้มีสิทธิ์เปิดหน้าเอกสารแล้วกด \"อนุมัติ\" "
+                + "(ระบบจะถามให้รับทราบคำเตือน) เพื่อออกเลขและลงบัญชี",
+                "SIGN-APPROVE-PENDING", 422);
+        }
         doc = await _db.Documents.FirstAsync(d => d.Id == documentId && d.CompanyId == companyId);
         await _vendorIntel.TryTrainAsync(doc.CompanyId, doc.Id);
 

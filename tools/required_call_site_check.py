@@ -326,6 +326,30 @@ TUPLE_RULES = [
 RULES += [dict(file=f, method=m, must=list(mu), before=list(b), forbid=list(fo), why=w)
           for (f, m, mu, b, fo, w) in TUPLE_RULES]
 
+# ── รอบ 193 ทีม O1 หลังฝ่ายค้านรอบสอง (C10 บางส่วน): ล็อก "ผลต้องถูกใช้" ไม่ใช่แค่ "มีการเรียก" ─────────────────
+RULES += [
+    dict(file=OCR, method="ApplyScanSettlementPlanAsync",
+         must=["OcrSettlementProposal.FitsDocument("],
+         must_re=[r"if\s*\(\s*fittingPlan\s+is\s+null\s*\)"],
+         call_args=[("OcrSettlementProposal.DeferredNote(", "fittingPlan")],
+         why="N5/C8: [PAY-AT-PAYMENT] ปลดการหยุดได้เฉพาะข้อเสนอที่ตรงยอดเอกสาร — ไม่มี/ขัดกัน/มี WHT ต้องคงการหยุด"),
+    dict(file=DOC, method="CreatePaymentJournalAsync",
+         must_re=[r"if\s*\(\s*thbCash\s*!=\s*0m\s*\)\s*pendingLines\s*\.\s*Add\s*\(\s*\(\s*cashAccount\s*\.\s*Id\s*,\s*0\s*,\s*thbCash"],
+         why="C9: ข้ามขาเงินสดเฉพาะเมื่อเงินออก 0 (ปิดยอดด้วยบรรทัดปรับ) — ห้ามข้ามทั้งที่มีเงินออก"),
+    dict(file=DOC, method="CreatePaymentAsync",
+         must_re=[r"closesByAdjustmentOnly\s*=\s*request\s*\.\s*Amount\s*==\s*0m\s*&&\s*request\s*\.\s*SettlementAdjustments\s+is\s*\{\s*Count\s*:\s*>\s*0\s*\}",
+                  r"request\s*\.\s*Amount\s*==\s*0\s*&&\s*!\s*closesByAdjustmentOnly",
+                  r"doc\s*\.\s*WithholdingTaxAmount\s*>\s*0m\s*&&\s*!\s*closesByAdjustmentOnly"],
+         why="C9/P-c: เงิน 0 ได้เฉพาะเมื่อมีบรรทัดปรับ · ไม่หัก ณ ที่จ่าย/ไม่ออก 50 ทวิ ในงวดที่ไม่มีเงินออก"),
+    dict(file=SIGN, method="ApproveAsync",
+         before=[("PreviewApprovalWarningsAsync(", "approval.Status = ApprovalStatus.Approved")],
+         why="N6: ถามคำเตือนก่อนบันทึกลายเซ็นขั้นสุดท้าย (ไม่งั้นลายเซ็นครบแต่เอกสารค้างเงียบ)"),
+    dict(file=SIGN, method="ExternalApproveQuotationAsync",
+         must_re=[r"if\s*\(\s*!\s*alreadySigned\s*\)"],
+         before=[("PreviewApprovalWarningsAsync(", "_db.Set<DocumentSignature>().Add(")],
+         why="N6: ถามคำเตือนก่อนเก็บลายเซ็นลูกค้า · เรียกซ้ำต้องไม่สร้างขั้นลูกค้า/ลายเซ็นซ้ำ"),
+]
+
 
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
