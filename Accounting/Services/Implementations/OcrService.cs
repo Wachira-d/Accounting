@@ -577,6 +577,35 @@ public class OcrService : IOcrService
 
             scanResult.OcrEngine = ocrEngineUsed;
 
+            // ── ตรวจวันที่เอกสารกับกระดาษ — ขั้นเดียวของ**ทุก engine** (รอบ 190 · ข้อ 11) ──
+            // ตัวอ่านวันที่ 6 ชุดกติกาไม่ตรงกัน (Azure ตีความเองตาม locale · python ปี 4 หลัก ·
+            // "Due Date" แมตช์ป้าย Date ฯลฯ) ⇒ ใบที่พิมพ์ "18/09/26" ลงผิดปีได้เงียบ ๆ ·
+            // ตัดสินที่ Helpers/OcrDateReader (ป้าย > ตำแหน่ง · แบบไทยก่อน · ปีใกล้วันอัปโหลด)
+            // ข้าม e-Tax XML (ลงนามแล้ว = ความจริงตามกฎหมาย) · ก่อนด่านคณิต + ก่อน sync ลงแถวสแกน
+            if (ocrEngineUsed != "EtaxXml" && !string.IsNullOrWhiteSpace(extractedText))
+            {
+                var dateCheck = Accounting.Helpers.OcrDateReader.CrossCheck(
+                    extractedData.DocumentDate, Ocr.ThaiTextNormalizer.Normalize(extractedText),
+                    scanResult.CreatedAt);
+                if (dateCheck.Verdict != Accounting.Helpers.OcrDateVerdict.NoChange)
+                {
+                    extractedData.DocumentDate = dateCheck.Date;
+                    var dateKey = Accounting.Helpers.OcrFieldKeys.DocumentDate;
+                    extractedData.FieldConfidence[dateKey] =
+                        dateCheck.Verdict == Accounting.Helpers.OcrDateVerdict.Confirmed
+                            ? Math.Max(extractedData.FieldConfidence.GetValueOrDefault(dateKey, 0), (double)dateCheck.Confidence)
+                            : (double)dateCheck.Confidence;
+                    if (dateCheck.Verdict is Accounting.Helpers.OcrDateVerdict.Filled
+                        or Accounting.Helpers.OcrDateVerdict.Replaced)
+                        extractedData.Note(dateKey, dateCheck.Date,
+                            dateCheck.FromPaperLabel
+                                ? Accounting.Helpers.OcrFieldSource.PaperLabel
+                                : Accounting.Helpers.OcrFieldSource.Engine,
+                            dateCheck.Confidence, dateCheck.Reason);
+                    extractedData.ReasoningTrace.Add("[Date] " + dateCheck.Reason);
+                }
+            }
+
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
             var gatewayConfig = BuildGatewayConfig(siteSettings);
             var lineItemsForValidation = extractedData.Items
@@ -8792,6 +8821,34 @@ public class OcrService : IOcrService
                     data.VendorAddress = candidate;
                     data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.7;
                     data.ReasoningTrace.Add("[Enrich] ที่อยู่ผู้ขายจากข้อความบนกระดาษ");
+                }
+            }
+        }
+
+        // ── ที่อยู่ผู้ซื้อจากข้อความ — ทุก engine (รอบ 190 · ข้อ 11 "local จับที่อยู่ผู้ซื้อไม่ได้") ──
+        // Azure ได้ CustomerAddress จากโมเดลของมัน · python/Tesseract ไม่มีตัวอ่านที่อยู่ผู้ซื้อเลย
+        // และ VendorAddressRegex ข้างบนหยิบป้าย "ที่อยู่" ตัวแรกของหน้า ⇒ บนใบที่หัวร้านไม่มีป้าย
+        // (POS Wine Pro · ใบเขียนมือ Radisson) ที่อยู่ของ**เรา**ไปอยู่ช่องผู้ขาย
+        // ตัวอ่านกลาง: Helpers/OcrBuyerAddressReader (ป้ายผู้ซื้อจาก OcrPartyLabels → ป้าย "ที่อยู่" ใต้นั้น)
+        {
+            var buyerAddr = Accounting.Helpers.OcrBuyerAddressReader.Read(text, data.BuyerTaxId);
+            if (buyerAddr.Found)
+            {
+                if (string.IsNullOrWhiteSpace(data.BuyerAddress))
+                {
+                    data.BuyerAddress = buyerAddr.Address;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.BuyerAddress] = (double)buyerAddr.Confidence;
+                    data.Note(Accounting.Helpers.OcrFieldKeys.BuyerAddress, buyerAddr.Address,
+                        Accounting.Helpers.OcrFieldSource.PaperLabel, buyerAddr.Confidence, buyerAddr.Reason);
+                    data.ReasoningTrace.Add("[Enrich] " + buyerAddr.Reason);
+                }
+                // invariant: ที่อยู่เดียวกันเป็นของสองฝั่งไม่ได้ — บล็อกใต้ป้ายผู้ซื้อเป็นของผู้ซื้อ
+                // (ล้างแล้วคะแนนต่ำ ⇒ ไฮไลต์ · ทะเบียน DBD/ประวัติผู้ขายเติมที่อยู่จริงให้ในชั้นถัดไป)
+                if (Accounting.Helpers.OcrBuyerAddressReader.IsPartOf(data.VendorAddress, buyerAddr.Address))
+                {
+                    data.ReasoningTrace.Add($"[Enrich] ที่อยู่ผู้ขาย “{data.VendorAddress}” คือบล็อกใต้ป้ายผู้ซื้อ — ล้างออกจากช่องผู้ขาย");
+                    data.VendorAddress = null;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.30;
                 }
             }
         }

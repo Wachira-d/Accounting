@@ -369,9 +369,9 @@ public static class FieldPatternLibrary
         {
             int day = int.Parse(m.Groups[1].Value);
             int month = int.Parse(m.Groups[2].Value);
-            int year = int.Parse(m.Groups[3].Value);
-            if (year > 2400) year -= 543;          // Buddhist → Gregorian
-            if (year < 100) year += 2000;          // 2-digit year
+            // ตัวแปลงปีกลาง Helpers/ThaiDate.NormalizeYear — เดิม `year < 100 → +2000`
+            // ⇒ พ.ศ. ย่อ "69" กลายเป็น ค.ศ. 2069 (อีกเส้นทางได้ 2026) · รอบ 190 ข้อ 11
+            int year = Accounting.Helpers.ThaiDate.NormalizeYear(int.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture));
             if (TryBuildDate(year, month, day, out var d))
             {
                 var v = m.Value;
@@ -379,7 +379,8 @@ public static class FieldPatternLibrary
                 double score = ctx.Contains("วันที่") || ctx.Contains("Date", StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.6;
                 results.Add(new FieldCandidate
                 {
-                    Value = v, NormalizedValue = d.ToString("yyyy-MM-dd"),
+                    // InvariantCulture: process ที่ตั้ง th-TH จะได้ปี พ.ศ. ในสตริง ISO
+                    Value = v, NormalizedValue = d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     Position = m.Index, Length = m.Length,
                     Score = score,
                     FieldType = FieldType.Date,
@@ -393,8 +394,7 @@ public static class FieldPatternLibrary
         {
             int day = int.Parse(m.Groups[1].Value);
             string monthStr = m.Groups[2].Value;
-            int year = int.Parse(m.Groups[3].Value);
-            if (year > 2400) year -= 543;
+            int year = Accounting.Helpers.ThaiDate.NormalizeYear(int.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture));
             // ตารางชื่อเดือนอยู่ที่ Helpers/ThaiMonthName ตัวเดียว — เดิมไฟล์นี้มี
             // สำเนาของตัวเอง ซึ่งรู้จักชื่อเต็มแต่เส้นทางหลักไม่รู้จัก ⇒ ใบเดียวกัน
             // อ่านวันที่ได้/ไม่ได้ต่างกันตาม engine ที่ใช้ (ผลตรวจ 2026-09-06 · T2-13)
@@ -403,7 +403,7 @@ public static class FieldPatternLibrary
             {
                 results.Add(new FieldCandidate
                 {
-                    Value = m.Value, NormalizedValue = d.ToString("yyyy-MM-dd"),
+                    Value = m.Value, NormalizedValue = d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     Position = m.Index, Length = m.Length,
                     Score = 0.95,
                     FieldType = FieldType.Date,

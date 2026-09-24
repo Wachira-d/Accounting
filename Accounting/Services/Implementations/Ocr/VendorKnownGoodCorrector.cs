@@ -158,6 +158,33 @@ public class VendorKnownGoodCorrector
             swaps++;
         }
 
+        // ── ช่องที่ engine อ่าน**ไม่ได้เลย** — เติมจากคลังที่ Azure/ผู้ใช้สอนไว้ (รอบ 190 · ข้อ 11) ──
+        // BestMatch ข้างบนซ่อมได้แต่ค่าที่ "มีแต่เพี้ยน" ⇒ engine ในเครื่องที่ไม่คืนที่อยู่เลย (python
+        // ไม่มีช่องนี้ · Tesseract บนใบ POS) ไม่เคยได้ใช้ค่าที่ Azure สอนไว้ · ด่านกันคลังเอียง
+        // (ต้องยืนยัน/เห็นซ้ำ · ค่าเดียว · สาขาไม่ขัด · ไม่ใช่ที่อยู่เรา) อยู่ใน Helpers/OcrKnownGoodAddressFill
+        if (string.IsNullOrWhiteSpace(data.VendorAddress)
+            && known.Any(k => k.FieldName == Accounting.Helpers.OcrKnownGoodAddressFill.AddressField))
+        {
+            var ourAddress = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId && !c.IsDeleted)
+                .Select(c => c.Address)
+                .FirstOrDefaultAsync(ct);
+            var fill = Accounting.Helpers.OcrKnownGoodAddressFill.Decide(
+                data.VendorAddress, data.VendorBranchCode,
+                known.Select(k => new Accounting.Helpers.OcrKnownGoodRow(
+                    k.FieldName, k.Value, k.ConfirmedCount, k.Source)).ToList(),
+                ourAddress, data.BuyerAddress);
+            if (fill.Value != null)
+            {
+                data.VendorAddress = fill.Value;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = (double)fill.Confidence;
+                data.Note(Accounting.Helpers.OcrFieldKeys.SellerAddress, fill.Value,
+                    Accounting.Helpers.OcrFieldSource.VendorHistory, fill.Confidence, fill.Reason);
+                data.ReasoningTrace.Add("[KnownGood] " + fill.Reason);
+                swaps++;
+            }
+        }
+
         if (swaps > 0)
         {
             _logger.LogDebug("KnownGood corrector: {Count} field swaps for vendor {Vendor}",

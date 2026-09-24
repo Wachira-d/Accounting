@@ -45,6 +45,23 @@ public static class ThaiMonthName
         ("aug", 8), ("sep", 9), ("oct", 10), ("nov", 11), ("dec", 12),
     };
 
+    /// <summary>
+    /// แบบ<b>ตรงทั้งคำ</b> — ใช้เมื่อผู้เรียก "กวาด" คำใดก็ได้ที่อยู่ระหว่างตัวเลขสองก้อน
+    /// (ตัวอ่านวันที่ <see cref="OcrDateReader"/>) ซึ่ง <see cref="TryParse"/> แบบ Contains
+    /// อันตราย: "5 <b>mar</b>ket 2026" · "3 <b>may</b>or 26" · "1 ห<b>มค</b>..." จะกลายเป็นวันที่
+    /// ⇒ ตัดจุด/ช่องว่างแล้วต้อง<b>เท่ากับ</b>ชื่อเดือนในตารางเดียวกันนี้เท่านั้น (+ "sept")
+    /// </summary>
+    public static int? TryParseExact(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var t = new string(token.Where(c => c != '.' && !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
+        if (t.Length == 0) return null;
+        if (t == "sept") return 9;
+        foreach (var (name, month) in Tokens)
+            if (string.Equals(name.Replace(".", ""), t, StringComparison.Ordinal)) return month;
+        return null;
+    }
+
     /// <summary>คืนเลขเดือน 1–12 หรือ <c>null</c> เมื่อ<b>ไม่รู้จัก</b>
     /// (ห้ามให้ผู้เรียกเดาเป็นมกราคม — ดูหมายเหตุที่หัวคลาส)</summary>
     public static int? TryParse(string? token)
