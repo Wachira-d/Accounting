@@ -37,7 +37,9 @@ public record ApproveDocumentRequest(
     string? Comments = null,
     string? ApproverName = null,     // ชื่อผู้อนุมัติ (สำหรับ external API)
     string? ApproverEmail = null,
-    string? ApproverTitle = null);
+    string? ApproverTitle = null,
+    // รอบ 193 (ฝ่ายค้านรอบสอง N6): ขั้นสุดท้ายที่ทำให้เอกสารอนุมัติจริง — ผู้เซ็นเห็นคำเตือนแล้วกด "รับทราบ" (422 → ส่งซ้ำพร้อม true)
+    bool AcknowledgeWarnings = false);
 
 public record RejectDocumentRequest(
     string Comments);
@@ -50,7 +52,8 @@ public record ExternalApproveRequest(
     string? ApproverTitle = null,    // ตำแหน่ง
     string? ApproverEmail = null,
     string? Comments = null,
-    bool AutoConvert = true);        // อนุมัติแล้วสร้างเอกสารต่อ (Quotation → Invoice)
+    bool AutoConvert = true,         // อนุมัติแล้วสร้างเอกสารต่อ (Quotation → Invoice)
+    bool AcknowledgeWarnings = false); // ผู้บันทึก (สมาชิกที่ล็อกอิน) เห็นคำเตือนแล้วกดรับทราบ — รอบ 193 N6
 
 // ===== Responses =====
 public record DocumentApprovalResponse(

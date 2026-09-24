@@ -158,17 +158,31 @@ public static class OcrSettlementProposal
 
     /// <summary>หมายเหตุ <see cref="DeferredTag"/> — เอกสารตั้งหนี้ ยอดตามใบกำกับ · ส่วนต่างลงตอนบันทึกการชำระ
     /// (หน้าบันทึกการชำระเติมเงินที่จ่ายจริง + บรรทัดปรับชุดเดียวกันให้)</summary>
-    /// <param name="plan">ข้อเสนอที่ลงตัวกับยอดเอกสาร — null = กระดาษอธิบายส่วนต่างไม่ครบ/มีหัก ณ ที่จ่าย (ผู้ใช้ใส่บรรทัดปรับเองตอนชำระ)</param>
-    /// <param name="documentTotal">ยอดเอกสาร (ตามใบกำกับ)</param>
-    public static string DeferredNote(OcrSettlementPlan? plan, decimal documentTotal)
-        => plan is null
-            ? $"{DeferredTag} เอกสารตั้งหนี้ลงยอดตามใบกำกับ {documentTotal:N2} (ถูกต้อง อนุมัติได้ตามปกติ) — "
-              + "ส่วนต่างกับเงินที่จ่ายจริงลงที่ขั้นบันทึกการชำระ (กระดาษอธิบายส่วนต่างไม่ครบ — ใส่บรรทัดปรับเองในหน้าบันทึกการชำระ)"
-            : $"{DeferredTag} เอกสารตั้งหนี้ลงยอดตามใบกำกับ {plan.InvoiceTotal:N2} (ถูกต้อง อนุมัติได้ตามปกติ) — "
-              + $"ส่วนต่างกับเงินที่จ่ายจริง {plan.AmountPaid:N2} ลงที่ขั้นบันทึกการชำระ: "
-              + string.Join(" · ", plan.Lines.Select(l =>
-                  $"{l.AccountCode} {(l.Amount >= 0m ? "+" : "−")}{Math.Abs(l.Amount):N2}{(string.IsNullOrEmpty(l.Reason) ? "" : " " + l.Reason)}"))
-              + " (หน้าบันทึกการชำระเติมให้)";
+    /// <param name="plan">ข้อเสนอที่ผ่าน <see cref="FitsDocument"/> แล้วเท่านั้น</param>
+    public static string DeferredNote(OcrSettlementPlan plan)
+        => $"{DeferredTag} เอกสารตั้งหนี้ลงยอดตามใบกำกับ {plan.InvoiceTotal:N2} (กระดาษอธิบายส่วนต่างได้ครบ) — "
+            + $"ส่วนต่างกับเงินที่จ่ายจริง {plan.AmountPaid:N2} ลงที่ขั้นบันทึกการชำระ: "
+            + string.Join(" · ", plan.Lines.Select(l =>
+                $"{l.AccountCode} {(l.Amount >= 0m ? "+" : "−")}{Math.Abs(l.Amount):N2}{(string.IsNullOrEmpty(l.Reason) ? "" : " " + l.Reason)}"))
+            + " (หน้าบันทึกการชำระเติมให้)";
+
+    /// <summary>ข้อเสนอนี้ "ใช้ปลดการหยุดได้" ไหม — ต้องมีข้อเสนอ · ไม่มีหัก ณ ที่จ่าย · ยอดใบกำกับในข้อเสนอตรงยอดเอกสาร
+    /// (± <see cref="PaymentSettlementAdjustment.MatchTolerance"/>) · คืนข้อเสนอเมื่อผ่าน / null เมื่อระบบยังไม่รู้ว่ายอดถูก
+    /// <para>ฝ่ายค้านรอบสอง N5: เดิมปลดทุกใบตั้งหนี้ที่มี [PAY≠TOTAL] แล้วประกาศว่า "ถูกต้อง" ทั้งที่ข้อเสนอขัดกับยอดเอกสาร —
+    /// ข้อเสนอที่ขัดกันคือหลักฐานว่าตัวแยกยอดอาจเลือกยอดรวมผิดตัว ⇒ ต้องหยุดให้คนดู</para></summary>
+    public static OcrSettlementPlan? FitsDocument(OcrSettlementPlan? plan, decimal documentTotal, decimal headerWht)
+        => plan is { } p && headerWht == 0m
+           && Math.Abs(p.InvoiceTotal - documentTotal) <= PaymentSettlementAdjustment.MatchTolerance
+            ? p : null;
+
+    /// <summary>เหตุผลที่ยังปลด [PAY≠TOTAL] ไม่ได้ (คู่กับ <see cref="FitsDocument"/> = null) — บอก "ยังไม่ได้ตรวจ" ไม่ใช่ "ถูกต้อง"</summary>
+    public static string UnverifiedReason(OcrSettlementPlan? plan, decimal documentTotal, decimal headerWht)
+        => (plan is null
+                ? "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ แต่กระดาษอธิบายส่วนต่างไม่ครบ — ระบบยังไม่ได้ตรวจส่วนต่าง"
+                : headerWht != 0m
+                    ? $"ยอดที่ชำระจริง {plan.AmountPaid:N2} ไม่เท่ายอดตามใบกำกับ และเอกสารมีหัก ณ ที่จ่าย — ระบบยังไม่ได้ตรวจส่วนต่าง"
+                    : $"ข้อเสนอจากกระดาษบอกยอดใบกำกับ {plan.InvoiceTotal:N2} แต่เอกสารลงยอด {documentTotal:N2} — ยอดรวมที่อ่านได้อาจผิดตัว")
+           + " · ตรวจยอดกับกระดาษ แล้วกดอนุมัติเองที่หน้าเอกสาร (ส่วนต่างบันทึกตอนชำระ)";
 
     /// <summary>ป้ายสั้น ๆ ที่ไม่มีตัวคั่นของรูปแบบหมายเหตุ ("·" · ขึ้นบรรทัด)</summary>
     private static string Clean(string? label)

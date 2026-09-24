@@ -353,7 +353,15 @@ public class DocumentsV1Controller : PublicApiControllerBase
                 .ToListAsync(ct);
             var best = CounterpartyNameMatcher.Best(req.ContactName!, candidates, c => c.Name);
             if (best != null && best.Value.Match.Score >= CounterpartyNameMatcher.ConfidentThreshold)
-                return best.Value.Item.Id;
+            {
+                // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยชื่อ (ชุด SoftScope = ยังไม่มีเลข) รับเลข + สาขาของ payload —
+                // มิฉะนั้นใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข (ใบอย่างย่อ/ใบเสร็จ) และ e-Tax ถูกข้ามเงียบ
+                var matchedId = best.Value.Item.Id;
+                var matched = await Db.Contacts.FirstOrDefaultAsync(c => c.Id == matchedId && c.CompanyId == companyId, ct);
+                if (Helpers.ContactTaxBranchKey.AdoptTaxId(matched, taxId, req.ContactBranchCode))
+                    await Db.SaveChangesAsync(ct);
+                return matchedId;
+            }
         }
 
         // ผู้ติดต่อสาขาใหม่ของเลขที่มีอยู่แล้ว: นิติบุคคลเดียวกัน ⇒ ชื่อ (เมื่อไม่ได้ส่งมา) + บทบาทลูกค้า/ผู้จำหน่าย

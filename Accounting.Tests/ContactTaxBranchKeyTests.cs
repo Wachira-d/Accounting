@@ -349,10 +349,72 @@ public class ContactTaxBranchKeyTests
     [Theory]
     [InlineData(null, Tin, true)]                       // แถวยังไม่มีเลข ⇒ เติมได้
     [InlineData("-", Tin, true)]                        // placeholder ⇒ เติมได้
-    [InlineData("0-1055-51136-08-5", Tin, true)]        // เลขเดียวกันต่างรูปแบบ
+    [InlineData("0-1055-51136-08-5", Tin, false)]       // เลขเดียวกันต่างรูปแบบ ⇒ ไม่ต้องแตะ
     [InlineData("0105500000001", Tin, false)]           // เลขของนิติบุคคลอื่น ⇒ ห้ามทับ (C-6)
     [InlineData(Tin, null, false)]                      // payload ไม่มีเลข ⇒ ไม่แตะ
     [InlineData(Tin, "-", false)]                       // payload "-" ⇒ ไม่แตะ (ห้ามล้างเลขจริงด้วย placeholder)
-    public void MayWriteTaxId_NeverOverwritesAnotherEntitysTaxId(string? existing, string? incoming, bool expected)
-        => Assert.Equal(expected, ContactTaxBranchKey.MayWriteTaxId(existing, incoming));
+    public void AdoptTaxId_NeverOverwritesAnotherEntitysTaxId(string? existing, string? incoming, bool expected)
+    {
+        // เดิมล็อกผ่าน MayWriteTaxId (public) — ตอนนี้เป็น private ของ AdoptTaxId (ผู้เรียกภายนอกมีทางเดียว · dead_helper_check)
+        var row = new Contact { Id = Blank, Name = "x", TaxId = existing };
+        Assert.Equal(expected, ContactTaxBranchKey.AdoptTaxId(row, incoming, null));
+        if (!expected) Assert.Equal(existing, row.TaxId);
+    }
+
+    // ── ฝ่ายค้านรอบสอง R2-C5 / R2-C9: "จับได้แล้วต้องเติมเลข" ตัวช่วยเดียวของทุกทางเข้า ──
+
+    [Fact]
+    public void AdoptTaxId_RowWithoutTaxId_GetsPayloadTaxIdAndBranch()
+    {
+        // แถวที่จับได้ด้วยชื่อ/อีเมล (ยังไม่มีเลข) — เดิม 4 ทางเข้าไม่เติม ⇒ ใบกำกับออกให้ผู้ซื้อไม่มีเลข + e-Tax ข้ามเงียบ
+        var row = new Contact { Id = Blank, Name = "บริษัท เรดิสัน จำกัด", TaxId = null, BranchCode = null,
+            ContactType = Accounting.Models.Enums.ContactType.Unknown };
+        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, "0-1055-51136-08-5", "8"));
+        Assert.Equal(Tin, row.TaxId);                       // เก็บเป็นตัวเลขล้วน
+        Assert.Equal(Accounting.Models.Enums.ContactType.JuristicPerson, row.ContactType);
+        Assert.Equal("00008", row.BranchCode);
+    }
+
+    [Theory]
+    [InlineData("-")]
+    [InlineData("")]
+    public void AdoptTaxId_PlaceholderRow_IsFilled_BranchDefaultsToHq(string placeholder)
+    {
+        var row = new Contact { Id = Blank, Name = "บริษัท เรดิสัน จำกัด", TaxId = placeholder };
+        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, Tin, null));
+        Assert.Equal(Tin, row.TaxId);
+        Assert.Equal("00000", row.BranchCode);
+    }
+
+    [Fact]
+    public void AdoptTaxId_NeverTouchesRowHoldingAnotherOrSameTaxId()
+    {
+        // ครึ่งที่ต้องยังถูก: แถวที่มีเลขแล้ว (อื่น/เดียวกัน) ไม่ถูกแตะ · payload ไม่มีเลข ไม่แตะ · null ไม่พัง
+        var other = new Contact { Id = Other, Name = "x", TaxId = "0105500000001", BranchCode = "00003" };
+        Assert.False(ContactTaxBranchKey.AdoptTaxId(other, Tin, "00008"));
+        Assert.Equal("0105500000001", other.TaxId);
+        Assert.Equal("00003", other.BranchCode);
+        var same = new Contact { Id = Hq, Name = "x", TaxId = "0-1055-51136-08-5", BranchCode = "00000" };
+        Assert.False(ContactTaxBranchKey.AdoptTaxId(same, Tin, "00008"));
+        Assert.Equal("00000", same.BranchCode);
+        var noTax = new Contact { Id = Blank, Name = "x", TaxId = null };
+        Assert.False(ContactTaxBranchKey.AdoptTaxId(noTax, "-", null));
+        Assert.Null(noTax.TaxId);
+        Assert.False(ContactTaxBranchKey.AdoptTaxId(null, Tin, null));
+    }
+
+    [Fact]
+    public void AdoptTaxId_Individual_DoesNotGetHeadOfficeSuffix()
+    {
+        // บุคคลธรรมดา (เลขบัตรขึ้นต้น 1) — ไม่มีโครงสาขา ⇒ ไม่เติม "00000" (ContactTypeResolver.BranchCodeFor)
+        var first12 = "110554013452";
+        var sum = 0;
+        for (var i = 0; i < 12; i++) sum += (first12[i] - '0') * (13 - i);
+        var citizen = first12 + (char)('0' + (11 - sum % 11) % 10);
+        var row = new Contact { Id = Blank, Name = "นาย ก", TaxId = null,
+            ContactType = Accounting.Models.Enums.ContactType.Individual };
+        Assert.True(ContactTaxBranchKey.AdoptTaxId(row, citizen, null));
+        Assert.Equal(citizen, row.TaxId);
+        Assert.Null(row.BranchCode);
+    }
 }

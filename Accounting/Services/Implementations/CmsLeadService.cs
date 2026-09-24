@@ -243,6 +243,8 @@ public class CmsLeadService
             _db.Contacts.Where(c => !c.IsDeleted), lead.CompanyId, lead.CustomerTaxId, taxKey);
         if (existing == null && softScope != null && !string.IsNullOrEmpty(lead.CustomerEmail))
             existing = await softScope.FirstOrDefaultAsync(c => c.Email == lead.CustomerEmail);
+        // ฝ่ายค้านรอบสอง R2-C5: จับด้วยอีเมลแล้วต้องรับเลขของ lead (บันทึกพร้อม SaveChanges ของผู้เรียกเหมือน IsCustomer)
+        Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, lead.CustomerTaxId, branchCode: null);
 
         if (existing != null)
         {

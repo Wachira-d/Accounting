@@ -61,9 +61,13 @@ TAX_CMP = re.compile(
 # ยกเว้นเฉพาะเมื่อสาขาถูก "เทียบ" ในประโยคเดียวกัน หรือผ่านตัวจับคู่กลาง — แค่มีคำว่า BranchCode (เช่น .Select(new { c.BranchCode }))
 # ไม่นับ (ฝ่ายค้าน: เคยเป็นจุดบอด)
 EXEMPT = re.compile(
-    r"\bContactTaxBranchKey\b|\bContactKeyCandidate\b|\bOcrVendorBranchContact\b"   # ป้อนตัวตัดสินที่ดูสาขา
-    r"|\.BranchCode\s*(?:==|!=|\.Equals\()"
-    r"|(?:==|!=)\s*[\w.()?!]*\.BranchCode\b"
+    # ฝ่ายค้านรอบสอง R2-C10: ยกเว้นเฉพาะนิพจน์ที่เรียกตัวจับคู่กลาง "จริง" — ไม่ใช่แค่มีคำ ContactTaxBranchKey (HasTaxId ในหัว if ก็เคยนับ)
+    r"\bContactTaxBranchKey\s*\.\s*(?:FindAsync|Pick|PickContact|LoadByTaxIdsAsync|AllBranchIdsAsync|SoftScope)\b"
+    r"|\bContactKeyCandidate\b|\bOcrVendorBranchContact\b"   # ป้อนตัวตัดสินที่ดูสาขา
+    # สาขาถูก "เทียบกับค่า" — `c.BranchCode != null` ไม่ใช่การเทียบสาขา (R2 probe C5)
+    r"|\.BranchCode\s*(?:==|!=)(?!\s*null\b)"
+    r"|\.BranchCode\s*\.\s*Equals\("
+    r"|(?<!null)\s(?:==|!=)\s*[\w.()?!]*\.BranchCode\b"
     r"|\w\(\s*\w+\s*\.\s*BranchCode\s*\)\s*(?:==|!=)")
 # ตัวแปรที่มาจากผู้ติดต่อ: ทั้ง IQueryable (ยังไม่ await) และ list ที่ await ToListAsync แล้ว (ฝ่ายค้าน: จุดบอด)
 QUERY_VAR = re.compile(r"\b(\w+)\s*=\s*(?:\(\s*IQueryable<[^>]*>\s*\))?[^;=]*?(?:\.Contacts\b|Set\s*<\s*(?:Models\.Entities\.)?Contact\s*>\s*\()")
@@ -72,8 +76,10 @@ TAINT_USE = r"\b{v}\s*\.\s*(?:Where|Any|All|First|FirstOrDefault|Single|SingleOr
 # ── กติกา 2 (ฝ่ายค้าน C-6): หลังคีย์เลขภาษี (ContactTaxBranchKey.FindAsync) ในเมธอดเดียวกัน ห้ามถอยไปจับผู้ติดต่อด้วย
 # ชื่อ/อีเมล/เบอร์ บนแหล่งผู้ติดต่อตรง ๆ — ต้องจับบนชุด ContactTaxBranchKey.SoftScope(...) เท่านั้น
 SOFT_CMP = re.compile(
-    r"\.(?:Name|Email|Phone)\b(?:\s*\.\s*(?:Trim|ToLower|ToUpper|ToLowerInvariant|ToUpperInvariant)\s*\(\s*\))*\s*=="
-    r"|\.(?:Name|Email|Phone)\s*\.\s*(?:Contains|StartsWith|Equals)\s*\(")
+    r"\.(?:Name|NameEn|ContactPerson|Email|Phone)\b(?:\s*\.\s*(?:Trim|ToLower|ToUpper|ToLowerInvariant|ToUpperInvariant)\s*\(\s*\))*\s*=="
+    r"|\.(?:Name|NameEn|ContactPerson|Email|Phone)\s*\.\s*(?:Contains|StartsWith|Equals)\s*\(")
+# ผู้สมัครเทียบชื่อแบบ fuzzy (CounterpartyNameMatcher) โหลดจากแหล่งผู้ติดต่อตรง ๆ (R2 probe C3)
+NAME_CANDIDATES = re.compile(r"Select\s*\(\s*\w+\s*=>\s*new\s*\{[^}]*\.Name(?:En)?\b")
 METHOD_DECL = re.compile(r"^[ \t]*(?:public|private|internal|protected)\b[^;\n]*\(", re.M)
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -106,10 +112,15 @@ def scan_text(body):
             tainted.add(m.group(1))
     hits = []
     for start, stmt in _statements(body):
+        # R2-C10: ตัดหัวบล็อกที่ติดมากับประโยคแรก (`if (ContactTaxBranchKey.HasTaxId(x)) {`) — เริ่มพิจารณาที่บรรทัดของแหล่งผู้ติดต่อ
+        src_hits = [m.start() for m in [CONTACT_SRC.search(stmt)] if m] + [
+            m.start() for v in tainted for m in [re.search(TAINT_USE.format(v=re.escape(v)), stmt)] if m]
+        if src_hits:
+            cut = stmt.rfind("\n", 0, min(src_hits)) + 1
+            start, stmt = start + cut, stmt[cut:]
         if EXEMPT.search(stmt):
             continue
-        is_contact = bool(CONTACT_SRC.search(stmt)) or any(
-            re.search(TAINT_USE.format(v=re.escape(v)), stmt) for v in tainted)
+        is_contact = bool(src_hits)
         m = TAX_CMP.search(stmt) if is_contact else None
         if m is None:
             for p in set(LAMBDA_PARAM.findall(stmt)):
@@ -129,10 +140,13 @@ def scan_soft(body):
     for fm in re.finditer(r"ContactTaxBranchKey\s*\.\s*FindAsync\s*\(", body):
         end = next((d for d in decls if d > fm.start()), len(body))
         window = body[fm.end():end]
+        fuzzy = "CounterpartyNameMatcher" in window
         for start, stmt in _statements(window):
             if "SoftScope" in stmt or not CONTACT_SRC.search(stmt):
                 continue
-            m = SOFT_CMP.search(stmt)
+            # ผู้สมัครแบบ fuzzy — ไม่นับ query ที่ดึงแถวเดียวด้วย Id (เช่นอ่านชื่อของแถวที่รู้ตัวแล้ว)
+            m = SOFT_CMP.search(stmt) or (NAME_CANDIDATES.search(stmt)
+                                          if fuzzy and not re.search(r"\.Id\s*==", stmt) else None)
             if m:
                 hits.append(body.count("\n", 0, fm.end() + start + m.start()) + 1)
     return sorted(set(hits))
@@ -227,6 +241,28 @@ def self_test():
                                "    if (soft != null) c = await soft.FirstOrDefaultAsync(x => x.Email == email);\n"
                                "  }\n"
                                "  private async Task Other() { var x = await _db.Contacts.FirstOrDefaultAsync(c => c.Name == n); }\n}\n", False),
+        # ── ฝ่ายค้านรอบสอง (probe C2–C5) ──
+        "Services/BadInsideHasTaxIdBlock.cs": ("class A {\n  private async Task<Contact?> M() {\n"
+                                               "    if (ContactTaxBranchKey.HasTaxId(partner.TaxId))\n    {\n"
+                                               "      return await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == o && c.TaxId == partner.TaxId);\n"
+                                               "    }\n    return null;\n  }\n}\n", True),
+        "Services/BadBranchNotNull.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == t && c.BranchCode != null).ToList(); } }\n", True),
+        "Services/SoftBadNameEn.cs": ("class A {\n  private async Task M() {\n"
+                                      "    var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b);\n"
+                                      "    c = await _db.Contacts.FirstOrDefaultAsync(x => x.NameEn == n);\n  }\n}\n", True),
+        "Services/SoftBadFuzzy.cs": ("class A {\n  private async Task M() {\n"
+                                     "    var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b);\n"
+                                     "    var cands = await _db.Contacts.Where(c => c.CompanyId == cid).Select(c => new { c.Id, c.Name }).ToListAsync();\n"
+                                     "    var best = CounterpartyNameMatcher.Best(n, cands, c => c.Name);\n  }\n}\n", True),
+        "Services/OkBranchCompared.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == t && c.BranchCode == b).ToList(); } }\n", False),
+        "Services/OkFindInIf.cs": ("class A {\n  private async Task M() {\n"
+                                   "    if (ContactTaxBranchKey.HasTaxId(t))\n    {\n"
+                                   "      var key = await ContactTaxBranchKey.FindAsync(_db.Contacts, o, t, b);\n    }\n  }\n}\n", False),
+        "Services/SoftOkFuzzy.cs": ("class A {\n  private async Task M() {\n"
+                                    "    var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b);\n"
+                                    "    var soft = ContactTaxBranchKey.SoftScope(_db.Contacts, cid, t, k);\n"
+                                    "    var cands = await soft.Select(c => new { c.Id, c.Name }).ToListAsync();\n"
+                                    "    var best = CounterpartyNameMatcher.Best(n, cands, c => c.Name);\n  }\n}\n", False),
         "Services/OkBranch.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == t && c.BranchCode == b); } }\n", False),
         "Services/OkKey.cs": ("class A { async Task M() { var k = await ContactTaxBranchKey.FindAsync(_db.Contacts, cid, t, b); } }\n", False),
         "Services/OkNullCheck.cs": ("class A { void M() { var r = _db.Contacts.Where(c => c.TaxId == null || c.TaxId == \"\"); } }\n", False),
@@ -251,7 +287,7 @@ def self_test():
             ok = False
             print(f"❌ self-test: {rel} — คาด {'ฟ้อง' if expect else 'ไม่ฟ้อง'} แต่{'ฟ้อง' if got else 'ไม่ฟ้อง'}")
     if ok:
-        print("✅ self-test ผ่าน — จับ TaxId-only 9 รูป + soft match นอก SoftScope 2 รูป · ไม่ฟ้องรูปที่ถูก 10 รูป (สาขา/ตัวจับคู่กลาง/ตัวตัดสินสาขา/null-check/Company/Vendor/ออกใบให้ตัวเอง/คอมเมนต์/SoftScope/เมธอดอื่น) · ข้าม bin obj .claude")
+        print("✅ self-test ผ่าน — จับ TaxId-only 11 รูป + soft match นอก SoftScope 4 รูป · ไม่ฟ้องรูปที่ถูก 13 รูป (สาขา/ตัวจับคู่กลาง/ตัวตัดสินสาขา/null-check/Company/Vendor/ออกใบให้ตัวเอง/คอมเมนต์/SoftScope/เมธอดอื่น/FindAsync ในบล็อก if/fuzzy บน SoftScope) · ข้าม bin obj .claude")
     return 0 if ok else 1
 
 
