@@ -147,6 +147,20 @@ public class CommissionService : ICommissionService
             .OrderBy(t => t.FromAmount)
             .ToListAsync();
 
+        // ★ รอบ 193 (ฝ่ายค้าน M2): "ปิดใช้งานอย่างเดียว" ไม่ต้องผ่านด่านอัตรา — แผนเก่าที่อัตรา null/ฐานนอกชุด
+        // ต้องปิดได้โดยไม่ถูกบังคับให้แต่งตัวเลข (ตัดสินที่ CommissionPlanRules.IsDeactivateOnly ตัวเดียว)
+        if (CommissionPlanRules.IsDeactivateOnly(request.IsActive,
+                request.Name, request.Description, request.CalculationBasis, request.CalculationMethod,
+                request.FlatRate, ToTierSpecs(request.Tiers),
+                plan.Name, plan.Description, plan.CalculationBasis, plan.CalculationMethod,
+                plan.FlatRate, existingTiers.Select(t => new CommissionTierSpec(t.FromAmount, t.ToAmount, t.Rate)).ToList()))
+        {
+            plan.IsActive = false;
+            await _db.SaveChangesAsync();
+            var deactivatedCounts = await CountActiveAssignmentsAsync(companyId, new[] { planId });
+            return MapPlanToResponse(plan, existingTiers, deactivatedCounts.GetValueOrDefault(planId));
+        }
+
         // ผสาน "ที่ส่งมา" กับ "ค่าเดิม" แล้วตรวจทั้งก้อนด้วยตัวตรวจเดียวกับตอนสร้าง — แก้ประเภทได้จริง
         // (เดิมรับแค่ชื่อ/อัตรา/สถานะ ขณะที่ฟอร์มเปิดให้เปลี่ยนประเภท = silent no-op)
         var spec = CommissionPlanRules.Validate(

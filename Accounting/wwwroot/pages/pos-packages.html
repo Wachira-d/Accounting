@@ -73,8 +73,9 @@
               </div>
               <div class="form-row">
                 <div class="form-group"><label class="form-label">ระยะเวลา (นาที) *</label><input type="number" class="form-input" id="cDuration" min="1"></div>
-                <div class="form-group"><label class="form-label">ประเภทค่าคอม</label>
-                  <select class="form-select" id="cCommType"><option value="Fixed">คงที่ (Fixed)</option><option value="Percentage">เปอร์เซ็นต์ (Percentage)</option></select>
+                <div class="form-group"><label class="form-label">ประเภทค่าคอม *</label>
+                  <select class="form-select" id="cCommType" name="commissionType"><option value="">— กรุณาเลือก —</option><option value="Fixed">คงที่ (Fixed)</option><option value="Percentage">เปอร์เซ็นต์ (Percentage)</option></select>
+                  <div id="cCommTypeWarn" class="text-xs" style="display:none; color:#b45309; margin-top:4px"></div>
                 </div>
                 <div class="form-group"><label class="form-label">ค่าคอมมิชชั่น</label><input type="number" class="form-input" id="cCommValue" step="0.01" value="0"></div>
               </div>
@@ -200,7 +201,8 @@
             <td>${c.stepOrder}</td>
             <td class="font-medium">${c.name}</td>
             <td class="text-right">${c.durationMinutes || '-'} นาที</td>
-            <td>${c.commissionType === 'Percentage' ? c.commissionValue + '%' : Layout.money(c.commissionValue || 0)}</td>
+            <td>${c.commissionType === 'Percentage' ? c.commissionValue + '%' : Layout.money(c.commissionValue || 0)}${c.commissionTypeNeedsReview
+              ? ` <span class="badge badge-warning" title="${Layout.esc(c.commissionTypeReviewNote || '')}">⚠️ กรุณาตรวจประเภทคอมมิชชันแล้วบันทึกใหม่</span>` : ''}</td>
             <td>${c.requiresStaff ? '<span class="badge badge-success" data-i18n="common.yes">ใช่</span>' : '<span class="badge badge-gray" data-i18n="common.no">ไม่</span>'}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.editComponent('${c.id}')" data-i18n="common.edit">แก้ไข</button>
@@ -259,6 +261,7 @@
         document.getElementById('cStepOrder').value = '1';
         document.getElementById('cDuration').value = '';
         document.getElementById('cCommType').value = 'Fixed';
+        this._setCommTypeWarning(null);
         document.getElementById('cCommValue').value = '0';
         document.getElementById('cRequiresStaff').checked = false;
         document.getElementById('componentForm').style.display = '';
@@ -275,10 +278,19 @@
         document.getElementById('cDuration').value = c.durationMinutes || '';
         // รอบ 193: API ส่งชื่อ enum — เดิม option 0/1 ขณะที่ enum คือ Fixed=1/Percentage=2
         // ⇒ เลือก "เปอร์เซ็นต์" แล้วบันทึกเป็น Fixed (1) · เลือก "คงที่" ได้ 0 ซึ่งไม่อยู่ใน enum
-        document.getElementById('cCommType').value = c.commissionType || 'Fixed';
+        // รอบ 193 (M2): แถวเก่าที่เซิร์ฟเวอร์ติดป้าย "ต้องตรวจ" → ปล่อย select ว่างให้ผู้ใช้เลือกเอง (ห้ามเดาเป็น
+        // "คงที่" เงียบ ๆ — เดิม `0 || 'Fixed'` เติมคงที่ให้แถวค่า 0 ซึ่งตอนขายระบบคิดเป็นเปอร์เซ็นต์)
+        const knownType = c.commissionType === 'Fixed' || c.commissionType === 'Percentage';
+        document.getElementById('cCommType').value = (!c.commissionTypeNeedsReview && knownType) ? c.commissionType : '';
+        this._setCommTypeWarning(c.commissionTypeNeedsReview ? (c.commissionTypeReviewNote || 'กรุณาตรวจประเภทคอมมิชชันแล้วบันทึกใหม่') : null);
         document.getElementById('cCommValue').value = c.commissionValue || 0;
         document.getElementById('cRequiresStaff').checked = !!c.requiresStaff;
         document.getElementById('componentForm').style.display = '';
+      },
+      _setCommTypeWarning(note) {
+        const el = document.getElementById('cCommTypeWarn');
+        el.textContent = note ? '⚠️ ' + note : '';
+        el.style.display = note ? '' : 'none';
       },
       hideComponentForm() {
         document.getElementById('componentForm').style.display = 'none';
@@ -291,13 +303,18 @@
         const duration = document.getElementById('cDuration').value;
         if (!name) { Layout.toast('กรุณาระบุชื่อขั้นตอน', 'error'); return; }
         if (!duration) { Layout.toast('กรุณาระบุระยะเวลา', 'error'); return; }
+        // ห้ามส่ง "" — enum bind ไม่ได้ ⇒ 400 ภาษาอังกฤษ (รอบ 193 M2) · แถวเก่าที่ต้องตรวจถูกปล่อยว่างไว้โดยตั้งใจ
+        const commType = document.getElementById('cCommType').value;
+        if (commType !== 'Fixed' && commType !== 'Percentage') {
+          Layout.toast('กรุณาเลือกประเภทค่าคอม (คงที่ หรือ เปอร์เซ็นต์)', 'error'); return;
+        }
         const payload = {
           stepOrder: parseInt(document.getElementById('cStepOrder').value) || 1,
           name: name,
           nameEn: document.getElementById('cNameEn').value || null,
           description: document.getElementById('cDesc').value || null,
           durationMinutes: parseInt(duration),
-          commissionType: document.getElementById('cCommType').value,
+          commissionType: commType,
           commissionValue: parseFloat(document.getElementById('cCommValue').value) || 0,
           requiresStaff: document.getElementById('cRequiresStaff').checked,
         };

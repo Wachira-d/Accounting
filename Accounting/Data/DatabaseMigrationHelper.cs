@@ -3588,6 +3588,10 @@ public static class DatabaseMigrationHelper
             // NULL = บิลเก่า → คืนเงินกลับตามสูตรขายเดิม (Helpers/PosCogsBooking.LegacyUnitCost) · ไม่ backfill
             """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "CostOfGoodsSold" numeric NULL;""",
 
+            // ===== ServiceComponents.CommissionTypeConfirmedAt (รอบ 193 · M2) =====
+            // NULL = แถวที่บันทึกก่อนแก้ฟอร์ม pos-packages (option 0/1 กลับด้าน) → ติดป้ายให้ตรวจ · ไม่ backfill
+            """ALTER TABLE "ServiceComponents" ADD COLUMN IF NOT EXISTS "CommissionTypeConfirmedAt" timestamp NULL;""",
+
             // ===== PosOrders.ClientOrderId: offline-sale idempotency key =====
             """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "ClientOrderId" uuid NULL;""",
             """

@@ -105,7 +105,7 @@ public static class SsoWageBase
     ///
     /// <para>แยกเป็นฟังก์ชันเพื่อให้ "ฐานของ ปกส." กับ "ฐานของกองทุนเงินทดแทน"
     /// อ่านนิยาม ม.5 ตัวเดียวกัน (เพดานคนละตัวจึง clamp คนละที่)</para></summary>
-    public static decimal GrossWage(decimal proratedBaseSalary, decimal wageAllowances)
+    internal static decimal GrossWage(decimal proratedBaseSalary, decimal wageAllowances)
         => Math.Max(0m, proratedBaseSalary + wageAllowances);
 
     // ══════════════════════════════════════════════════════════════════════
@@ -129,7 +129,7 @@ public static class SsoWageBase
     /// <summary>เงินเดือนที่จ่ายจริงในงวด = เงินเดือนที่เฉลี่ยตามวันที่เป็นลูกจ้าง
     /// − ยอดหักลาไม่รับค่าจ้าง · ไม่ติดลบ (ลาเกินวันที่เป็นลูกจ้างต้องไม่ไป
     /// "กิน" เบี้ยเลี้ยงที่เป็นค่าจ้าง)</summary>
-    public static decimal SalaryPaidThisPeriod(decimal proratedBaseSalary, decimal unpaidLeaveDeduction)
+    internal static decimal SalaryPaidThisPeriod(decimal proratedBaseSalary, decimal unpaidLeaveDeduction)
         => Math.Max(0m, proratedBaseSalary - Math.Max(0m, unpaidLeaveDeduction));
 
     /// <summary>ฐานเงินสมทบของงวด — **ไม่ได้จ่ายอะไรเลยในงวดนี้** (ค่าจ้าง ≤ 0 และรายได้
@@ -142,8 +142,33 @@ public static class SsoWageBase
     /// ถ้าตัดเป็น 0 ตามค่าจ้างที่ระบบเห็น จะนำส่ง<b>ขาด</b>เงียบ ๆ (ทิศที่มองไม่เห็นจนวันตรวจ
     /// — DOCTRINE G5) · คงขั้นต่ำ 1,650 ไว้เหมือนเดิมเมื่อมีเงินจ่ายออกไปจริง</para></summary>
     /// <param name="totalPaidThisPeriod">รายได้รวมที่จ่ายในงวด (GrossIncome ของแถว)</param>
-    public static decimal PeriodBase(decimal statutoryWage, decimal ceiling, decimal totalPaidThisPeriod)
+    internal static decimal PeriodBase(decimal statutoryWage, decimal ceiling, decimal totalPaidThisPeriod)
         => statutoryWage <= 0m && totalPaidThisPeriod <= 0m ? 0m : Clamp(statutoryWage, ceiling);
+
+    /// <summary>ฐาน + เงินสมทบ ปกส. ของพนักงาน 1 คนใน 1 งวด — <b>ตัวประกอบสูตรตัวเดียว</b>ที่
+    /// <c>PayrollService.CalculatePayrollAsync</c> เรียก (รอบ 193 · ฝ่ายค้าน M2)
+    ///
+    /// <para>ที่มา: เทสต์ D-02 เดิมประกอบ <c>GrossWage(SalaryPaidThisPeriod(…))</c> → <c>PeriodBase</c> →
+    /// <c>Contribution</c> <b>เองในไฟล์เทสต์</b> ⇒ ถ้า service กลับไปเรียก <c>GrossWage(proratedBaseSalary, …)</c>
+    /// (ไม่หักลา) เทสต์ยังเขียวอยู่ดี = ด่านที่ไม่ได้ล็อกโค้ดจริง · ยุบลำดับประกอบมาไว้ที่นี่ แล้วให้ทั้ง
+    /// service และเทสต์เรียกฟังก์ชันนี้ตัวเดียว (checker <c>tools/required_call_site_check.py</c> ล็อกว่า
+    /// service ยังเรียกตัวนี้ และไม่ประกอบสูตรเองซ้ำ)</para>
+    ///
+    /// <para><paramref name="subjectToSso"/> = false ⇒ ฐาน/สมทบเป็น 0 แต่ <c>StatutoryWage</c> ยังคืนค่าจริง
+    /// (กองทุนเงินทดแทนใช้ค่าจ้างตัวเดียวกัน — ผู้เรียกตัดสินเองว่าจะคิดเงินทดแทนไหม)</para></summary>
+    public static SsoPeriodAmounts ForPeriod(
+        decimal proratedBaseSalary, decimal unpaidLeaveDeduction, decimal wageAllowances,
+        decimal totalPaidThisPeriod, bool subjectToSso,
+        decimal ceiling, decimal rate, decimal maxContribution,
+        decimal employerRate, decimal employerMaxContribution)
+    {
+        var wage = GrossWage(SalaryPaidThisPeriod(proratedBaseSalary, unpaidLeaveDeduction), wageAllowances);
+        if (!subjectToSso) return new SsoPeriodAmounts(wage, 0m, 0m, 0m);
+        var baseWage = PeriodBase(wage, ceiling, totalPaidThisPeriod);
+        return new SsoPeriodAmounts(wage, baseWage,
+            Contribution(baseWage, rate, maxContribution),
+            Contribution(baseWage, employerRate, employerMaxContribution));
+    }
 
     /// <summary>เงินสมทบจากฐาน — ปัด 2 ตำแหน่งแบบ AwayFromZero (ไม่ใช่ banker's
     /// rounding) และไม่เกินเพดานสมทบของปีนั้น</summary>
@@ -303,3 +328,7 @@ public sealed record SsoPairResult(
     /// <summary>มีอะไรต้องเขียนลงแถวไหม</summary>
     public bool Changed => BaseFilled || EmployerAdjusted;
 }
+
+/// <summary>ผลของ <see cref="SsoWageBase.ForPeriod"/> — ค่าจ้างตาม ม.5 (ก่อนบีบกรอบ) · ฐานที่บีบแล้ว ·
+/// เงินสมทบฝ่ายลูกจ้าง/นายจ้าง</summary>
+public sealed record SsoPeriodAmounts(decimal StatutoryWage, decimal BaseWage, decimal Employee, decimal Employer);

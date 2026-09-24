@@ -266,6 +266,13 @@ public class PosController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<ServicePackageResponse>>>> GetPackages(Guid companyId, [FromQuery] string? category = null)
         => Ok(new ApiResponse<List<ServicePackageResponse>>(true, await _pos.GetServicePackagesAsync(companyId, category)));
 
+    /// <summary>อ่านอย่างเดียว: นับขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (แถวเก่าจากฟอร์มที่ option 0/1
+    /// กลับด้าน) — ไม่แปลงข้อมูล (เจ้าของต้องตัดสิน) · รอบ 193 M2</summary>
+    [HttpGet("packages/commission-review")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<ServiceCommissionReviewReport>>> GetCommissionReview(Guid companyId)
+        => Ok(new ApiResponse<ServiceCommissionReviewReport>(true, await _pos.GetServiceCommissionReviewAsync(companyId)));
+
     [HttpGet("packages/{packageId:guid}")]
     public async Task<ActionResult<ApiResponse<ServicePackageResponse>>> GetPackage(Guid companyId, Guid packageId)
         => Ok(new ApiResponse<ServicePackageResponse>(true, await _pos.GetServicePackageAsync(companyId, packageId)));

@@ -88,13 +88,35 @@ public class BotExchangeRateService : IBotExchangeRateService
         var synced = 0;
         foreach (var rate in rates)
         {
+            // วันเดียวกันอาจมีหลายแถว (ผู้ใช้เพิ่มเอง) — เอาแถวที่ใช้ได้ก่อน เพื่อไม่ให้แถว 0 ที่ค้างบังแถวดี
             var existing = await _db.CurrencyRates
-                .FirstOrDefaultAsync(r => r.CompanyId == companyId
+                .Where(r => r.CompanyId == companyId
                     && r.FromCurrency == rate.CurrencyCode
                     && r.ToCurrency == "THB"
-                    && r.EffectiveDate.Date == rate.Period.Date);
+                    && r.EffectiveDate.Date == rate.Period.Date)
+                .OrderByDescending(r => r.MidRate > 0)
+                .FirstOrDefaultAsync();
 
-            if (existing != null) continue;
+            // ★ รอบ 193 (ฝ่ายค้าน M2): เดิม `existing != null → continue` ⇒ วันที่มีแถวอัตรา 0 ค้าง (บั๊กฟอร์ม A03)
+            //   ธปท. ไม่มีวันเติมให้ และตัวอ่านที่กรอง MidRate > 0 ถอยไปใช้อัตราวันก่อนเงียบ ๆ ·
+            //   ตัดสินที่ Helpers/CurrencyRateSync ตัวเดียว (เกณฑ์ "ใช้ได้" ตัวเดียวกับตัวอ่าน)
+            var action = Accounting.Helpers.CurrencyRateSync.Decide(existing?.MidRate, rate.MidRate);
+            if (action is Accounting.Helpers.CurrencyRateSyncAction.KeepExisting
+                       or Accounting.Helpers.CurrencyRateSyncAction.SkipInvalidIncoming)
+                continue;
+            if (action == Accounting.Helpers.CurrencyRateSyncAction.ReplaceUnusableRow && existing != null)
+            {
+                _logger.LogInformation(
+                    "เขียนทับอัตรา {Ccy} วันที่ {Date:yyyy-MM-dd} ที่เป็น 0 (ค้างจากฟอร์มเก่า) ด้วยอัตรา ธปท. {Mid}",
+                    rate.CurrencyCode, rate.Period, rate.MidRate);
+                existing.BuyRate = rate.BuyingTransfer;
+                existing.SellRate = rate.Selling;
+                existing.MidRate = rate.MidRate;
+                existing.Source = "BOT";
+                existing.UpdatedAt = DateTime.UtcNow;
+                synced++;
+                continue;
+            }
 
             _db.CurrencyRates.Add(new CurrencyRate
             {
