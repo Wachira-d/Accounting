@@ -33,8 +33,9 @@ public interface IDocumentEmailService
     /// <summary>Get email send history for an e-Tax invoice.</summary>
     Task<List<DocumentEmailLog>> GetEtaxEmailLogsAsync(Guid companyId, Guid etaxInvoiceId);
 
-    /// <summary>Build default subject/body templates for a document type.</summary>
-    EmailTemplate BuildDefaultTemplate(Document doc, CompanySettings settings, bool isEtaxByEmail);
+    /// <summary>หัว/เนื้ออีเมลเริ่มต้น — ภาษาและชื่อเอกสารมาจาก <paramref name="heading"/> ซึ่งต้องได้จาก
+    /// <c>PdfGenerationService.ResolveDocumentHeadingAsync</c> (ตัวเดียวกับ PDF ที่แนบ · S-12 รอบ 193)</summary>
+    EmailTemplate BuildDefaultTemplate(Document doc, Accounting.Models.DTOs.DocumentTemplate.DocumentHeading heading, bool isEtaxByEmail);
 }
 
 public record EmailTestResult(bool Success, string? ErrorMessage, DateTime TestedAt);

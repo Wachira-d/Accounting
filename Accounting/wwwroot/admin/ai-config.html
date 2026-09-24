@@ -99,11 +99,13 @@
         <div class="form-row">
           <div class="form-group" style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:12px 16px;border-radius:10px;border:1px solid #e2e8f0">
             <div>
-              <div style="font-weight:700;color:#1e293b">ตรวจซ้ำตามกฎภาษีไทย</div>
-              <div style="font-size:12px;color:#64748b">Reject คำตอบ AI ที่ผิดกฎ RD (Tax ID format, VAT rate, WHT code...)</div>
+              <!-- S-06 (รอบ 193): สามค่านี้ (ตรวจซ้ำ · threshold · sampling) ไม่มีผู้อ่าน — ของจริงอยู่ที่ routing ต่อฟีเจอร์
+                   (AiFeatureRoutingResolver) ⇒ ล็อก + บอกเหตุผล · หน้ายังส่งค่าเดิมกลับตอนบันทึก (API บังคับ) = ไม่เปลี่ยนค่า -->
+              <div style="font-weight:700;color:#94a3b8">ตรวจซ้ำตามกฎภาษีไทย<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></div>
+              <div style="font-size:12px;color:#64748b">Reject คำตอบ AI ที่ผิดกฎ RD (Tax ID format, VAT rate, WHT code...) — ยังไม่มีส่วนไหนของระบบอ่านค่านี้</div>
             </div>
             <label class="toggle-switch">
-              <input type="checkbox" id="settingsCompliance" onchange="Page.markDirty()">
+              <input type="checkbox" id="settingsCompliance" onchange="Page.markDirty()" disabled>
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -115,14 +117,14 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Confidence Threshold (Local→AI Review)</label>
-            <input type="number" id="settingsThreshold" min="0" max="1" step="0.05" value="0.65" onchange="Page.markDirty()">
-            <div class="hint">Local confidence ต่ำกว่าค่านี้ → ยิงถาม AI</div>
+            <label style="color:#94a3b8">Confidence Threshold (Local→AI Review)<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label>
+            <input type="number" id="settingsThreshold" min="0" max="1" step="0.05" value="0.65" onchange="Page.markDirty()" disabled>
+            <div class="hint">ค่านี้ยังไม่มีผล — เกณฑ์ "ถาม local ก่อน แล้วค่อยถาม AI" ตั้งต่อฟีเจอร์ที่หน้า <a href="/admin/ai-models.html">AI Models (Routing mode)</a></div>
           </div>
           <div class="form-group">
-            <label>Sampling Rate (high-confidence cases)</label>
-            <input type="number" id="settingsSampling" min="0" max="1" step="0.05" value="0.10" onchange="Page.markDirty()">
-            <div class="hint">% ของ case ที่ local มั่นใจสูง แต่ยังยิงถาม AI เพื่อ calibrate</div>
+            <label style="color:#94a3b8">Sampling Rate (high-confidence cases)<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label>
+            <input type="number" id="settingsSampling" min="0" max="1" step="0.05" value="0.10" onchange="Page.markDirty()" disabled>
+            <div class="hint">ค่านี้ยังไม่มีผล — ยังไม่มีการสุ่มส่งเคสที่ local มั่นใจสูงไปถาม AI</div>
           </div>
         </div>
         <button class="btn-primary" id="saveSettingsBtn" onclick="Page.saveSettings()">บันทึก settings</button>

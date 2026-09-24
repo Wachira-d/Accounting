@@ -3514,6 +3514,17 @@ public class AccountingDbContext : DbContext
         return result;
     }
 
+    /// <summary>เพิ่มแถว <see cref="Models.Entities.AuditLog"/> ที่เขียน<b>ตรง</b> (ไม่ได้มาจาก ChangeTracker) ให้เข้า hash chain
+    /// ของบริษัท — ฝ่ายค้านรอบ 193 P2: <c>AuditLogs.Add(row)</c> ตรง ๆ ข้าม <see cref="ApplyAuditHashChain"/> (ซึ่งใส่ hash
+    /// เฉพาะแถวจาก <c>CaptureAuditEntries</c>) ⇒ <c>RowHash = null</c> = อยู่นอก chain และ <c>VerifyHashChainAsync</c> ไม่เห็น ·
+    /// ใช้ canonical ตัวเดียวกับฝั่ง verify (Helpers/AuditHashChain) · ผู้เรียกต้อง SaveChanges เอง
+    /// <para>⚠️ ยังมีอีก 9 จุดในเรพที่ Add ตรง (backlog ใน r193-W.md) — ย้ายมาใช้เมธอดนี้ทีละจุด</para></summary>
+    public void AddChainedAuditLog(Models.Entities.AuditLog row)
+    {
+        ApplyAuditHashChain(new List<Models.Entities.AuditLog> { row });
+        AuditLogs.Add(row);
+    }
+
     /// <summary>F14 — append-only hash chain สำหรับ audit logs. ทุก row ใหม่
     /// link ไปยัง RowHash ของ row ก่อนหน้า (ภายใน CompanyId เดียวกัน) →
     /// แก้/ลบ row กลางทาง = chain แตก ตรวจ detect ได้.

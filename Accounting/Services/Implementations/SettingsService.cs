@@ -72,13 +72,15 @@ public class SettingsService : ISettingsService
 
         if (request.PrimaryColor != null) settings.PrimaryColor = request.PrimaryColor;
         if (request.SecondaryColor != null) settings.SecondaryColor = request.SecondaryColor;
-        if (request.DefaultPaymentTerms != null) settings.DefaultPaymentTerms = request.DefaultPaymentTerms;
+        // ช่องข้อความ: null = ไม่แก้ · "" (หรือช่องว่างล้วน) = ล้างค่า — กติกาเดียวกับ AuthorizedSignatoryName (S-13 รอบ 193:
+        // เดิมเก็บ "" ลงตรง ๆ หรือหน้าเว็บส่ง null เมื่อว่าง ⇒ ลบค่าแล้วกดบันทึก ค่าเดิมยังอยู่เงียบ ๆ)
+        if (request.DefaultPaymentTerms != null) settings.DefaultPaymentTerms = TextOrNull(request.DefaultPaymentTerms);
         if (request.DefaultPaymentDueDays.HasValue) settings.DefaultPaymentDueDays = request.DefaultPaymentDueDays.Value;
-        if (request.InvoiceNotes != null) settings.InvoiceNotes = request.InvoiceNotes;
-        if (request.ReceiptNotes != null) settings.ReceiptNotes = request.ReceiptNotes;
-        if (request.QuotationNotes != null) settings.QuotationNotes = request.QuotationNotes;
-        if (request.InvoiceFooter != null) settings.InvoiceFooter = request.InvoiceFooter;
-        if (request.ReceiptFooter != null) settings.ReceiptFooter = request.ReceiptFooter;
+        if (request.InvoiceNotes != null) settings.InvoiceNotes = MultilineOrNull(request.InvoiceNotes);
+        if (request.ReceiptNotes != null) settings.ReceiptNotes = MultilineOrNull(request.ReceiptNotes);
+        if (request.QuotationNotes != null) settings.QuotationNotes = MultilineOrNull(request.QuotationNotes);
+        if (request.InvoiceFooter != null) settings.InvoiceFooter = MultilineOrNull(request.InvoiceFooter);
+        if (request.ReceiptFooter != null) settings.ReceiptFooter = MultilineOrNull(request.ReceiptFooter);
         if (request.ShowGlEntryOnDocument.HasValue) settings.ShowGlEntryOnDocument = request.ShowGlEntryOnDocument.Value;
         if (request.ShowProjectOnDocuments.HasValue) settings.ShowProjectOnDocuments = request.ShowProjectOnDocuments.Value;
         if (request.ShowCostCenterOnDocuments.HasValue) settings.ShowCostCenterOnDocuments = request.ShowCostCenterOnDocuments.Value;
@@ -154,12 +156,12 @@ public class SettingsService : ISettingsService
                 if (request.DefaultVatRate.HasValue) comp.VatRate = request.DefaultVatRate.Value;
             }
         }
-        if (request.VatRegistrationDate != null) settings.VatRegistrationDate = request.VatRegistrationDate;
+        if (request.VatRegistrationDate != null) settings.VatRegistrationDate = TextOrNull(request.VatRegistrationDate);
         if (request.IsVehicleDealer.HasValue) settings.IsVehicleDealer = request.IsVehicleDealer.Value;
-        if (request.EmailFromName != null) settings.EmailFromName = request.EmailFromName;
-        if (request.EmailReplyTo != null) settings.EmailReplyTo = request.EmailReplyTo;
-        if (request.InvoiceEmailSubject != null) settings.InvoiceEmailSubject = request.InvoiceEmailSubject;
-        if (request.InvoiceEmailBody != null) settings.InvoiceEmailBody = request.InvoiceEmailBody;
+        if (request.EmailFromName != null) settings.EmailFromName = TextOrNull(request.EmailFromName);
+        if (request.EmailReplyTo != null) settings.EmailReplyTo = TextOrNull(request.EmailReplyTo);
+        if (request.InvoiceEmailSubject != null) settings.InvoiceEmailSubject = MultilineOrNull(request.InvoiceEmailSubject);
+        if (request.InvoiceEmailBody != null) settings.InvoiceEmailBody = MultilineOrNull(request.InvoiceEmailBody);
         if (request.RequireApprovalForDocuments.HasValue) settings.RequireApprovalForDocuments = request.RequireApprovalForDocuments.Value;
         if (request.ApprovalThresholdAmount.HasValue) settings.ApprovalThresholdAmount = request.ApprovalThresholdAmount.Value;
         if (request.EnableApiAccess.HasValue) settings.EnableApiAccess = request.EnableApiAccess.Value;
@@ -399,6 +401,9 @@ public class SettingsService : ISettingsService
             .AnyAsync(n => n.CompanyId == companyId && n.DocumentType == request.DocumentType && n.IsActive);
         if (existing)
             throw new InvalidOperationException("มี number series สำหรับประเภทเอกสารนี้อยู่แล้ว");
+        // ช่องที่ตัวออกเลขไม่ใช้ ห้ามรับเงียบ (S-20) — ต่างจากค่าเริ่มต้น = ปฏิเสธก่อนบันทึก
+        NumberSeriesFieldPolicy.ThrowIfAny(NumberSeriesFieldPolicy.ChangedOnCreate(
+            request.Suffix, request.Format, request.StartNumber, request.ResetPeriod));
         request = request with { Prefix = NormalizePrefix(request.Prefix) };
 
         var series = new NumberSeries
@@ -406,9 +411,10 @@ public class SettingsService : ISettingsService
             CompanyId = companyId,
             DocumentType = request.DocumentType,
             Prefix = request.Prefix,
-            Suffix = request.Suffix,
-            Format = request.Format,
-            CurrentNumber = request.StartNumber - 1,
+            // ค่าเริ่มต้นเสมอ (ผ่านด่านข้างบนแล้ว) — เก็บไว้ให้ตรงกับ entity/คอลัมน์เดิม
+            Suffix = null,
+            Format = NumberSeriesFieldPolicy.DefaultFormat,
+            CurrentNumber = NumberSeriesFieldPolicy.DefaultStartNumber - 1,
             ResetPeriod = request.ResetPeriod
         };
 
@@ -434,11 +440,13 @@ public class SettingsService : ISettingsService
             .FirstOrDefaultAsync(n => n.Id == seriesId && n.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ number series");
 
+        // ช่องที่ตัวออกเลขไม่ใช้ (Suffix/Format/CurrentNumber/ResetPeriod) — เดิมรับ-เก็บ-ตอบกลับ "สำเร็จ" ทั้งที่ไม่มีผล
+        // (S-20 · กฎ #4 A) ⇒ ต่างจากค่าเดิม = ปฏิเสธทั้งคำขอก่อนแตะอะไร · ส่งค่าเดิมกลับมา = ผ่าน
+        NumberSeriesFieldPolicy.ThrowIfAny(NumberSeriesFieldPolicy.ChangedOnUpdate(
+            series.Suffix, series.Format, series.CurrentNumber, series.ResetPeriod,
+            request.Suffix, request.Format, request.CurrentNumber, request.ResetPeriod));
+
         if (request.Prefix != null) series.Prefix = NormalizePrefix(request.Prefix);
-        if (request.Suffix != null) series.Suffix = request.Suffix;
-        if (request.Format != null) series.Format = request.Format;
-        if (request.CurrentNumber.HasValue) series.CurrentNumber = request.CurrentNumber.Value;
-        if (request.ResetPeriod.HasValue) series.ResetPeriod = request.ResetPeriod.Value;
         if (request.IsActive.HasValue) series.IsActive = request.IsActive.Value;
 
         await _db.SaveChangesAsync();
@@ -485,8 +493,10 @@ public class SettingsService : ISettingsService
     public async Task<ApiKeyCreatedResponse> CreateApiKeyAsync(Guid companyId, Guid userId, CreateApiKeyRequest request)
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
-        if (!settings.EnableApiAccess)
-            throw new InvalidOperationException("API access ยังไม่เปิดใช้งาน กรุณาเปิดในการตั้งค่า");
+        // สวิตช์ตัวเดียวกับตอน "ใช้" คีย์ใน ApiKeyMiddleware (S-04) — ออกไม่ได้ = ใช้ไม่ได้
+        if (!Accounting.Helpers.ApiAccessPolicy.CanIssueKey(settings.EnableApiAccess))
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.ApiAccessPolicy.IssueDisabledMessage, Accounting.Helpers.ApiAccessPolicy.RuleCode);
 
         var currentKeys = await _db.Set<ApiKey>()
             .CountAsync(k => k.CompanyId == companyId && k.Status == ApiKeyStatus.Active);
@@ -547,6 +557,13 @@ public class SettingsService : ISettingsService
     }
 
     // ===== Helpers =====
+
+    /// <summary>ช่องข้อความบรรทัดเดียวของหน้าตั้งค่า: ว่าง/ช่องว่างล้วน = ล้าง (null) · นอกนั้นตัดช่องว่างหัวท้าย (S-13)</summary>
+    internal static string? TextOrNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>ช่องข้อความหลายบรรทัด (หมายเหตุ/เนื้ออีเมล): ว่าง/ช่องว่างล้วน = ล้าง · นอกนั้นเก็บตามที่พิมพ์
+    /// (ไม่ตัดขึ้นบรรทัด/ย่อหน้าที่ผู้ใช้ตั้งใจใส่) (S-13)</summary>
+    internal static string? MultilineOrNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private async Task<CompanySettings> GetOrCreateSettingsAsync(Guid companyId)
     {

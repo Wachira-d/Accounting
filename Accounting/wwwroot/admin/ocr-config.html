@@ -175,9 +175,10 @@
             <div class="hint">เว้นว่าง = ข้าม tier 2 ไป Embedded เลย</div>
           </div>
           <div class="form-group">
-            <label>Auto-Create Threshold</label>
-            <input type="number" id="ocrAutoCreateThreshold" step="0.01" min="0" max="1" placeholder="0.85">
-            <div class="hint">ความมั่นใจขั้นต่ำที่จะสร้างเอกสารอัตโนมัติ</div>
+            <!-- S-06 (รอบ 193): ไม่มีผู้อ่านค่านี้ — เกณฑ์อนุมัติอัตโนมัติจริงคือ Helpers/OcrPostingReadiness ⇒ ล็อก + บอกเหตุผล -->
+            <label style="color:#94a3b8">Auto-Create Threshold<span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label>
+            <input type="number" id="ocrAutoCreateThreshold" step="0.01" min="0" max="1" placeholder="0.85" disabled>
+            <div class="hint">ค่านี้ยังไม่มีผลกับระบบ — การสร้าง/อนุมัติเอกสารจาก OCR อัตโนมัติตัดสินด้วยเกณฑ์ความพร้อมลงบัญชีของแต่ละใบ (ครบช่อง §86/4 · ยอดลงตัว ฯลฯ) ไม่ใช่ค่ากลางนี้</div>
           </div>
         </div>
       </div>
@@ -1055,7 +1056,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
         const body = {
           ocrProvider: document.getElementById('ocrProvider').value || null,
           ocrLocalServiceUrl: document.getElementById('ocrLocalServiceUrl').value || null,
-          ocrAutoCreateThreshold: parseFloat(document.getElementById('ocrAutoCreateThreshold').value),
+          // ocrAutoCreateThreshold ไม่ส่ง — ช่องถูกล็อกเพราะยังไม่มีผล (S-06)
           azureDiEndpoint: document.getElementById('azureDiEndpoint').value || null,
           azureDiEnabled: document.getElementById('azureDiEnabled').checked,
           azureDiModelId: document.getElementById('azureDiModelId').value,

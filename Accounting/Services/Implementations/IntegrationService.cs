@@ -141,8 +141,11 @@ public class IntegrationService : IIntegrationService
             i.ApiKeyPrefix, i.IsActive, i.LastSyncAt, i.TotalSyncCount, i.ErrorCount,
             i.RateLimitPerMinute, i.WebhookUrl, i.WebhookEnabled, i.CreatedAt,
             CanRead: i.CanRead, CanWrite: i.CanWrite, CanDelete: i.CanDelete,
-            IsLegacyKey: i.IsLegacyKey, LegacyDeprecatesAt: i.LegacyDeprecatesAt,
+            // Kind=Utc ก่อนส่งออก (ฝ่ายค้าน P5 — คอลัมน์ timestamp ไม่มีโซน ⇒ JSON ไม่มี Z ⇒ หน้าเว็บเลื่อน 7 ชม.)
+            IsLegacyKey: i.IsLegacyKey, LegacyDeprecatesAt: Accounting.Helpers.IntegrationKeyPolicy.AsUtc(i.LegacyDeprecatesAt),
             LegacyPrivilegeActive: legacyActive,
+            LegacyDaysRemaining: Accounting.Helpers.IntegrationKeyPolicy.LegacyDaysRemaining(
+                i.IsLegacyKey, i.LegacyDeprecatesAt, nowUtc),
             EffectiveCanRead: effective.CanRead, EffectiveCanWrite: effective.CanWrite,
             EffectiveCanDelete: effective.CanDelete);
     }
@@ -248,6 +251,11 @@ public class IntegrationService : IIntegrationService
         integration.ApiKeyHash = BCrypt.Net.BCrypt.HashPassword(rawKey);
         integration.ApiKeyPrefix = rawKey[..8];
         integration.ConsecutiveErrors = 0;
+        // คีย์ใหม่ = นโยบายใหม่เสมอ (คำตัดสินข้อ 37 · ฝ่ายค้านรอบ 193 P3) — เดิม secret ใหม่ของคีย์รุ่นเก่ายังได้สิทธิ์เต็ม +
+        // สวมผู้ใช้ด้วยอีเมลได้ต่อ ⇒ เจ้าของหมุนคีย์เพราะพนักงานเก่าออก แต่คีย์ใหม่ยังมีอำนาจเต็มถึงวันเลิกใช้.
+        // หลังหมุน: สิทธิ์ = ค่าที่ตั้งไว้ (คีย์รุ่นเก่าที่ไม่เคยแก้ = อ่านอย่างเดียวตาม migration) · สวมได้เฉพาะผู้ใช้ที่ผูกไว้ ·
+        // หน้าเว็บเตือนก่อนกด (integrations.html regenerateKey) ว่าต้องตั้งสิทธิ์/ผูกผู้ใช้ต่อ
+        integration.IsLegacyKey = false;
         await _db.SaveChangesAsync();
 
         // Return the raw key so the caller can show it ONCE — it is hashed in

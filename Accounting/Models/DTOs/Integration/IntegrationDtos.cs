@@ -13,7 +13,9 @@ public record IntegrationResponse(
     int RateLimitPerMinute, string? WebhookUrl, bool WebhookEnabled, DateTime CreatedAt,
     bool CanRead = true, bool CanWrite = false, bool CanDelete = false,
     bool IsLegacyKey = false, DateTime? LegacyDeprecatesAt = null, bool LegacyPrivilegeActive = false,
-    bool EffectiveCanRead = true, bool EffectiveCanWrite = false, bool EffectiveCanDelete = false);
+    bool EffectiveCanRead = true, bool EffectiveCanWrite = false, bool EffectiveCanDelete = false,
+    // จำนวนวันที่เหลือก่อนคีย์รุ่นเก่าหมดช่วงผ่อนผัน (server คำนวณ · null = ไม่ใช่คีย์รุ่นเก่า) — ฝ่ายค้านรอบ 193 P5
+    int? LegacyDaysRemaining = null);
 
 /// <remarks>สิทธิ์ที่ไม่ได้ส่งมา = อ่านอย่างเดียว (<c>IntegrationKeyPolicy.ScopesForNewKey</c>) — ห้ามตีความเป็น "ให้ทั้งหมด"</remarks>
 public record CreateIntegrationRequest(

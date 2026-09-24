@@ -8,7 +8,7 @@ namespace Accounting.Middleware;
 /// <summary>
 /// Middleware: API Key Authentication
 /// รองรับ header: X-Api-Key
-/// ตรวจสอบ: status, expiry, IP, rate limit
+/// ตรวจสอบ: status, expiry, สวิตช์ API Access ของบริษัท (คีย์ acc_ — <c>ApiAccessPolicy</c>), IP, rate limit
 /// </summary>
 public class ApiKeyMiddleware
 {
@@ -121,6 +121,28 @@ public class ApiKeyMiddleware
             await db.SaveChangesAsync();
             context.Response.StatusCode = 401;
             await context.Response.WriteAsJsonAsync(new { success = false, message = "API key expired" });
+            return;
+        }
+
+        // สวิตช์ "เปิดใช้งาน API Access" ของบริษัท (ผลตรวจ S-04 · รอบ 193) — เดิมตรวจแค่ตอนออกคีย์
+        // ⇒ ปิดสวิตช์แล้วคีย์เดิมยังใช้ได้. อ่านจาก DB <b>ทุก request</b> แบบเดียวกับสถานะคีย์ (Revoked/Expired
+        // ด้านบน — ที่ถูกแคชในไฟล์นี้มีแค่ผล BCrypt) ⇒ ปิดแล้วมีผลทันทีทุกเครื่อง ไม่ต้องรอแคชหมดอายุ
+        // (กรณีใช้งานจริงคือ "สงสัยคีย์รั่ว" — ช้าไปแม้นาทีเดียวก็คือข้อมูลรั่วต่อ) · query เดียว ดัชนี CompanyId
+        // · ขอบเขต: คีย์ acc_ เท่านั้น (คีย์ int_ ไปเส้น TryAuthenticateIntegrationAsync ข้างบนแล้ว ไม่ผ่านตรงนี้)
+        var enableApiAccess = await db.Set<Models.Entities.CompanySettings>()
+            .Where(s => s.CompanyId == apiKey.CompanyId)
+            .Select(s => (bool?)s.EnableApiAccess)
+            .FirstOrDefaultAsync();
+        var access = Helpers.ApiAccessPolicy.EvaluateAccountKey(enableApiAccess);
+        if (!access.Allowed)
+        {
+            context.Response.StatusCode = access.StatusCode;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                success = false,
+                message = access.Message,
+                code = access.RuleCode,
+            });
             return;
         }
 
@@ -270,12 +292,24 @@ public class ApiKeyMiddleware
         return true;
     }
 
-    /// <summary>ร่องรอยทุกครั้งที่คีย์รุ่นเก่าใช้เส้น "สวมผู้ใช้ด้วยอีเมล" (คำตัดสินเจ้าของข้อ 37) — warning
-    /// ใน log + แถว AuditLog (hash chain คำนวณที่ SaveChanges) · audit ล้มต้อง<b>ไม่</b>ทำ request ล้ม
+    /// <summary>ครั้งล่าสุดที่บันทึกร่องรอย email-match ต่อ (คีย์, ผู้ใช้ที่สวม) — ต่อเครื่อง (หลายเครื่อง = ซ้ำได้เครื่องละแถว
+    /// ต่อช่วง ซึ่งไม่ทำให้ร่องรอยหาย) · ฝ่ายค้านรอบ 193 P2: เดิมบันทึก + LogWarning <b>ทุก request</b> ของ TakeTime</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid, Guid), DateTime>
+        _legacyEmailMatchLogged = new();
+
+    /// <summary>ร่องรอยการใช้เส้น "สวมผู้ใช้ด้วยอีเมล" ของคีย์รุ่นเก่า (คำตัดสินเจ้าของข้อ 37) — warning ใน log + แถว AuditLog
+    /// <b>ที่เข้า hash chain</b> (<c>AddChainedAuditLog</c>) · <b>ครั้งเดียวต่อคีย์ต่อผู้ใช้ต่อช่วง</b>
+    /// (<c>IntegrationKeyPolicy.ShouldRecordLegacyEmailMatch</c>) · audit ล้มต้อง<b>ไม่</b>ทำ request ล้ม
     /// (ไม่ใช่เส้นเงิน) แต่ต้องถอดแถวที่ค้างออกจาก context ไม่งั้น SaveChanges ของงานจริงจะล้มตาม</summary>
     private async Task RecordLegacyEmailMatchAsync(HttpContext context, AccountingDbContext db,
         Guid companyId, Guid integrationId, Guid actingUserId, DateTime? deprecatesAt)
     {
+        var nowUtc = DateTime.UtcNow;
+        var throttleKey = (integrationId, actingUserId);
+        DateTime? last = _legacyEmailMatchLogged.TryGetValue(throttleKey, out var at) ? at : null;
+        if (!Helpers.IntegrationKeyPolicy.ShouldRecordLegacyEmailMatch(last, nowUtc)) return;
+        _legacyEmailMatchLogged[throttleKey] = nowUtc;
+
         _logger.LogWarning(
             "[G2-01] คีย์ integration รุ่นเก่า {IntegrationId} (บริษัท {CompanyId}) สวมผู้ใช้ {UserId} ด้วยการจับคู่อีเมล — "
             + "เส้นนี้จะปิดเมื่อ {DeprecatesAt} · ให้เจ้าของผูกผู้ใช้ในหน้าเชื่อมต่อระบบ",
@@ -298,7 +332,7 @@ public class ApiKeyMiddleware
             }),
             IpAddress = context.Connection.RemoteIpAddress?.ToString(),
         };
-        db.AuditLogs.Add(row);
+        db.AddChainedAuditLog(row);
         try
         {
             await db.SaveChangesAsync();
@@ -306,6 +340,7 @@ public class ApiKeyMiddleware
         catch (Exception ex)
         {
             db.Entry(row).State = EntityState.Detached;
+            _legacyEmailMatchLogged.TryRemove(throttleKey, out _);   // บันทึกไม่สำเร็จ = ลองใหม่ request ถัดไป
             _logger.LogError(ex,
                 "[G2-01] บันทึก AuditLog ของการสวมผู้ใช้ด้วยอีเมล (integration {IntegrationId}) ไม่สำเร็จ", integrationId);
         }

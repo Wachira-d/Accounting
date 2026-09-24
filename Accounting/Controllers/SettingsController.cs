@@ -1,4 +1,6 @@
+using Accounting.Filters;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Settings;
 using Accounting.Services.Interfaces;
@@ -40,9 +42,24 @@ public class SettingsController : ControllerBase
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result));
     }
 
+    /// <summary>บันทึกค่าตั้งบริษัท — ต้องมีสิทธิ์ <c>CompanySettings.Edit</c> (เจ้าของผ่านอัตโนมัติ)
+    ///
+    /// <para>ฝ่ายค้านรอบ 193 C1: เดิมไม่มีด่านเลย (มีแค่ <c>[Authorize]</c> = ล็อกอินไหม) ⇒ สมาชิกคนไหน/คีย์ไหนก็เปิด
+    /// <c>EnableApiAccess</c> · ปิดการอนุมัติ · เปลี่ยนนโยบายภาษีได้ · และสวิตช์ที่คุม "คีย์" (<c>EnableApiAccess</c> ·
+    /// <c>MaxApiKeys</c>) ห้ามถูกเปลี่ยนด้วยคีย์เอง แม้คีย์นั้นสวมเป็นเจ้าของ — ส่งค่าเดิมกลับมา (GET แล้ว PUT ทั้งก้อน) ยังผ่าน</para></summary>
     [HttpPut]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UpdateSettings(Guid companyId, [FromBody] UpdateCompanySettingsRequest request)
     {
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext)
+            && (request.EnableApiAccess.HasValue || request.MaxApiKeys.HasValue))
+        {
+            var current = await _settingsService.GetSettingsAsync(companyId);
+            if ((request.EnableApiAccess.HasValue && request.EnableApiAccess.Value != current.EnableApiAccess)
+                || (request.MaxApiKeys.HasValue && request.MaxApiKeys.Value != current.MaxApiKeys))
+                return StatusCode(403, new ApiResponse<object>(false, new { ruleCode = OwnerActionGuard.RuleCode },
+                    OwnerActionGuard.DeniedMessage("เปิด/ปิด API Access หรือเปลี่ยนจำนวนคีย์สูงสุด")));
+        }
         var result = await _settingsService.UpdateSettingsAsync(companyId, request);
         return Ok(new ApiResponse<CompanySettingsResponse>(true, result, "อัพเดทการตั้งค่าสำเร็จ"));
     }
@@ -50,6 +67,7 @@ public class SettingsController : ControllerBase
     // ===== Logo Upload =====
 
     [HttpPost("logo")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
     public async Task<ActionResult<ApiResponse<CompanySettingsResponse>>> UploadLogo(Guid companyId, IFormFile file)
     {
@@ -62,6 +80,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpDelete("logo")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<IActionResult> DeleteLogo(Guid companyId)
     {
         await _settingsService.DeleteLogoAsync(companyId);
@@ -86,6 +105,7 @@ public class SettingsController : ControllerBase
     /// อ่าน `url`/`relativeUrl`
     /// </summary>
     [HttpPost("stamp")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
     public async Task<ActionResult<ApiResponse<object>>> UploadStamp(Guid companyId, IFormFile file)
     {
@@ -103,6 +123,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpDelete("stamp")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<IActionResult> DeleteStamp(Guid companyId)
     {
         await _settingsService.DeleteStampAsync(companyId);
@@ -119,6 +140,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPost("number-series")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> CreateNumberSeries(Guid companyId, [FromBody] CreateNumberSeriesRequest request)
     {
         var result = await _settingsService.CreateNumberSeriesAsync(companyId, request);
@@ -126,6 +148,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPut("number-series/{seriesId:guid}")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<NumberSeriesResponse>>> UpdateNumberSeries(Guid companyId, Guid seriesId, [FromBody] UpdateNumberSeriesRequest request)
     {
         var result = await _settingsService.UpdateNumberSeriesAsync(companyId, seriesId, request);

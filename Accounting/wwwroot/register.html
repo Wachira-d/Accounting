@@ -630,8 +630,10 @@
         const json = await res.json();
         const d = json.data;
         if (!d) return;
-        if (d.registrationEnabled === false) {
-          document.querySelector('.auth-form').innerHTML = '<h1>ปิดรับสมัครชั่วคราว</h1><p>ระบบปิดรับสมัครสมาชิกใหม่ในขณะนี้ กรุณาติดต่อผู้ดูแลระบบ</p><a href="/" class="btn btn-primary" style="margin-top:16px">กลับหน้าแรก</a>';
+        // ปิดรับสมัคร: คนที่มาจากลิงก์คำเชิญ (?invite=) ยังสมัครเพื่อเข้าบริษัทที่เชิญได้ — เซิร์ฟเวอร์ตัดสินจริงด้วย
+        // RegistrationPolicy (คำเชิญต้องยังใช้ได้ + อีเมลตรง) · เดิมซ่อนฟอร์มทุกกรณี ⇒ คนที่ถูกเชิญสมัครไม่ได้ (S-08 · รอบ 193)
+        if (d.registrationEnabled === false && !_inviteToken()) {
+          document.querySelector('.auth-form').innerHTML = '<h1>ปิดรับสมัครชั่วคราว</h1><p>ระบบปิดรับสมัครสมาชิกใหม่ในขณะนี้ — ถ้าคุณได้รับคำเชิญเข้าบริษัท ให้เปิดลิงก์ในอีเมลคำเชิญ · ถ้ามีบัญชีอยู่แล้ว <a href="/login.html">เข้าสู่ระบบ</a> ได้ตามปกติ</p><a href="/" class="btn btn-primary" style="margin-top:16px">กลับหน้าแรก</a>';
           return;
         }
         if (d.siteLogoUrl || d.siteName) {

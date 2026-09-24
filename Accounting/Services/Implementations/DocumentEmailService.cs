@@ -53,7 +53,9 @@ public class DocumentEmailService : IDocumentEmailService
             throw new InvalidOperationException("เอกสารถูกยกเลิกแล้ว ไม่สามารถส่งอีเมลได้");
 
         var settings = await GetOrCreateSettings(companyId);
-        var template = BuildDefaultTemplate(doc, settings, isEtaxByEmail: false);
+        // ภาษา + หัวเอกสารจากตัวกลางตัวเดียวกับ PDF ที่แนบ (S-12) — ห้ามคำนวณเอง
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, doc.Id);
+        var template = BuildDefaultTemplate(doc, heading, isEtaxByEmail: false);
 
         var subject = string.IsNullOrWhiteSpace(req.Subject) ? template.Subject : req.Subject!;
         var body = string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : req.Body!;
@@ -147,7 +149,8 @@ public class DocumentEmailService : IDocumentEmailService
         if (string.IsNullOrWhiteSpace(etax.EtaxRefNumber))
             throw new InvalidOperationException("ไม่พบเลขที่เอกสาร e-Tax — ไม่สามารถสร้าง subject ตามรูปแบบ RD ได้");
 
-        var template = BuildDefaultTemplate(etax.Document, settings, isEtaxByEmail: true);
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, etax.DocumentId);
+        var template = BuildDefaultTemplate(etax.Document, heading, isEtaxByEmail: true);
         // RD spec: Subject MUST be exactly "{SellerTaxId}.{EtaxRefNumber}" for the ETDA
         // time-stamp service to parse and apply the time stamp. Any other format means
         // the document will not be recognized and the time stamp will not be applied,
@@ -322,29 +325,29 @@ public class DocumentEmailService : IDocumentEmailService
             .ToListAsync();
     }
 
-    public EmailTemplate BuildDefaultTemplate(Document doc, CompanySettings settings, bool isEtaxByEmail)
-    {
-        // เนื้ออีเมลต้องภาษาเดียวกับเอกสารแนบ — เดิมไทยตายตัว ⇒ ลูกค้าต่างชาติ
-        // ได้ "เรียน คุณ..." ครอบ PDF อังกฤษ. ใช้ชั้นภาษาเดียวกับ renderer:
-        // ตรึงกับใบ > ค่าบริษัท (template ไม่เกี่ยวเพราะอีเมลไม่ได้ผูก template)
-        var isEn = (doc.DocumentLanguage ?? settings.DocumentLanguage) == "en";
+    public EmailTemplate BuildDefaultTemplate(Document doc, Accounting.Models.DTOs.DocumentTemplate.DocumentHeading heading, bool isEtaxByEmail)
+        => ComposeDefaultTemplate(doc, heading, isEtaxByEmail);
 
-        var docTypeText = doc.DocumentType switch
-        {
-            DocumentType.TaxInvoice => isEn ? "Tax Invoice" : "ใบกำกับภาษี",
-            DocumentType.Receipt => isEn ? "Receipt" : "ใบเสร็จรับเงิน",
-            DocumentType.Invoice => isEn ? "Invoice" : "ใบแจ้งหนี้",
-            DocumentType.Quotation => isEn ? "Quotation" : "ใบเสนอราคา",
-            DocumentType.CreditNote => isEn ? "Credit Note" : "ใบลดหนี้",
-            DocumentType.DebitNote => isEn ? "Debit Note" : "ใบเพิ่มหนี้",
-            _ => isEn ? "Document" : "เอกสาร"
-        };
+    /// <summary>หัว/เนื้ออีเมลเริ่มต้นของเอกสาร — <b>pure</b> (เทสต์ได้) ·
+    /// <paramref name="heading"/> ต้องมาจาก <c>PdfGenerationService.ResolveDocumentHeadingAsync</c> เท่านั้น
+    ///
+    /// <para>═══ ที่มา (S-12 รอบ 193) ═══ เดิมหาภาษาเองด้วย <c>doc.DocumentLanguage ?? settings.DocumentLanguage</c>
+    /// (ข้ามภาษาของเทมเพลต) และมีตารางชื่อชนิดเอกสาร 6 ชนิดของตัวเอง ⇒ อีเมลบอก "ใบแจ้งหนี้" ครอบ PDF ที่พิมพ์
+    /// "ใบแจ้งหนี้/ใบกำกับภาษี" หรือหัวที่เจ้าของตั้งเอง (<c>DocumentTitleOverridesJson</c>) / คนละภาษากับ PDF ·
+    /// และต่อชื่อลูกค้า/เลขเอกสารเข้า HTML โดยไม่หนี (กฎ #4 C)</para></summary>
+    internal static EmailTemplate ComposeDefaultTemplate(Document doc, Accounting.Models.DTOs.DocumentTemplate.DocumentHeading heading, bool isEtaxByEmail)
+    {
+        var isEn = heading.IsEnglish;
+        // หัวเรื่องอีเมลเป็นข้อความล้วน (ไม่หนี) · ในเนื้อ HTML ต้องหนีทุกค่าที่ผู้ใช้คุมได้
+        var titleText = heading.Title;
+        var docTypeText = System.Net.WebUtility.HtmlEncode(heading.Title);
+        var docNo = System.Net.WebUtility.HtmlEncode(doc.DocumentNumber ?? "");
 
         var subject = isEtaxByEmail
-            ? (isEn ? $"[e-Tax] {docTypeText} No. {doc.DocumentNumber}" : $"[e-Tax] {docTypeText} เลขที่ {doc.DocumentNumber}")
-            : (isEn ? $"{docTypeText} No. {doc.DocumentNumber}" : $"{docTypeText} เลขที่ {doc.DocumentNumber}");
+            ? (isEn ? $"[e-Tax] {titleText} No. {doc.DocumentNumber}" : $"[e-Tax] {titleText} เลขที่ {doc.DocumentNumber}")
+            : (isEn ? $"{titleText} No. {doc.DocumentNumber}" : $"{titleText} เลขที่ {doc.DocumentNumber}");
 
-        var customerName = doc.Contact?.Name ?? (isEn ? "Customer" : "ลูกค้า");
+        var customerName = System.Net.WebUtility.HtmlEncode(doc.Contact?.Name ?? (isEn ? "Customer" : "ลูกค้า"));
         // หมายเหตุ e-Tax คงไทยเสมอ (สาระทางกฎหมายไทย — timestamp ETDA/สรรพากร)
         // แต่โหมด en เติมสรุปอังกฤษให้ผู้รับต่างชาติเข้าใจว่าห้ามลบอีเมล
         var rdNote = isEtaxByEmail
@@ -359,10 +362,10 @@ public class DocumentEmailService : IDocumentEmailService
             ? $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b'>
             <h2 style='color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px'>{docTypeText}</h2>
             <p>Dear {customerName},</p>
-            <p>Please find attached {docTypeText} No. <strong>{doc.DocumentNumber}</strong> dated <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>
+            <p>Please find attached {docTypeText} No. <strong>{docNo}</strong> dated <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>
             for the amount of <strong>THB {doc.TotalAmount:N2}</strong>.</p>
             <table style='width:100%;border-collapse:collapse;margin-top:16px'>
-                <tr><td style='padding:8px;background:#f1f5f9'>Document No.</td><td style='padding:8px'>{doc.DocumentNumber}</td></tr>
+                <tr><td style='padding:8px;background:#f1f5f9'>Document No.</td><td style='padding:8px'>{docNo}</td></tr>
                 <tr><td style='padding:8px;background:#f1f5f9'>Date</td><td style='padding:8px'>{doc.DocumentDate:dd/MM/yyyy}</td></tr>
                 <tr><td style='padding:8px;background:#f1f5f9'>Total amount</td><td style='padding:8px'><strong>THB {doc.TotalAmount:N2}</strong></td></tr>
             </table>
@@ -372,10 +375,10 @@ public class DocumentEmailService : IDocumentEmailService
             : $@"<div style='font-family:sans-serif;max-width:600px;margin:0 auto;color:#1e293b'>
             <h2 style='color:#4F46E5;border-bottom:2px solid #4F46E5;padding-bottom:8px'>{docTypeText}</h2>
             <p>เรียน คุณ{customerName}</p>
-            <p>โปรดตรวจสอบ {docTypeText} เลขที่ <strong>{doc.DocumentNumber}</strong> ลงวันที่ <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>
+            <p>โปรดตรวจสอบ {docTypeText} เลขที่ <strong>{docNo}</strong> ลงวันที่ <strong>{doc.DocumentDate:dd/MM/yyyy}</strong>
             จำนวนเงิน <strong>{doc.TotalAmount:N2} บาท</strong> ตามไฟล์แนบ</p>
             <table style='width:100%;border-collapse:collapse;margin-top:16px'>
-                <tr><td style='padding:8px;background:#f1f5f9'>เลขที่เอกสาร</td><td style='padding:8px'>{doc.DocumentNumber}</td></tr>
+                <tr><td style='padding:8px;background:#f1f5f9'>เลขที่เอกสาร</td><td style='padding:8px'>{docNo}</td></tr>
                 <tr><td style='padding:8px;background:#f1f5f9'>วันที่</td><td style='padding:8px'>{doc.DocumentDate:dd/MM/yyyy}</td></tr>
                 <tr><td style='padding:8px;background:#f1f5f9'>มูลค่ารวม</td><td style='padding:8px'><strong>{doc.TotalAmount:N2} บาท</strong></td></tr>
             </table>

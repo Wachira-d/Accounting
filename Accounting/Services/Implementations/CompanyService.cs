@@ -17,12 +17,14 @@ public class CompanyService : ICompanyService
     private readonly IEmailService? _emailService;
     private readonly ILogger<CompanyService>? _logger;
     private readonly IConfiguration? _config;
+    private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _http;
 
     public CompanyService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService? subscriptionService = null,
         IEmailService? emailService = null,
         ILogger<CompanyService>? logger = null,
-        IConfiguration? config = null)
+        IConfiguration? config = null,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         _db = db;
         _accountingService = accountingService;
@@ -30,6 +32,7 @@ public class CompanyService : ICompanyService
         _emailService = emailService;
         _logger = logger;
         _config = config;
+        _http = http;
     }
 
     /// <summary>Lowercase + trim — the canonical form we store, search, and
@@ -40,6 +43,20 @@ public class CompanyService : ICompanyService
 
     public async Task<CompanyResponse> CreateAsync(Guid userId, CreateCompanyRequest request)
     {
+        // ด่าน "เปิดรับสมัคร" ของแพลตฟอร์ม (S-08 · รอบ 193) — ปิดรับสมัคร = ปิดการเปิดบริษัทใหม่ (tenant ใหม่) ด้วย ·
+        // ผู้ดูแลแพลตฟอร์มยังเปิดให้ลูกค้าได้ · บริษัทที่มีอยู่/คำเชิญเข้าบริษัทเดิมไม่ถูกแตะ
+        var registrationEnabled = await _db.SiteSettings.AsNoTracking()
+            .Select(s => (bool?)s.RegistrationEnabled).FirstOrDefaultAsync();
+        if (!Accounting.Helpers.RegistrationPolicy.IsOpen(registrationEnabled))
+        {
+            var isPlatformAdmin = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
+            var decision = Accounting.Helpers.RegistrationPolicy.EvaluateNewCompany(registrationEnabled, isPlatformAdmin);
+            if (!decision.Allowed)
+                throw new Accounting.Helpers.BusinessRuleException(decision.Message!,
+                    Accounting.Helpers.RegistrationPolicy.RuleCode, decision.StatusCode);
+        }
+
         var company = new Company
         {
             Name = request.Name,
@@ -577,6 +594,12 @@ public class CompanyService : ICompanyService
 
     public async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
     {
+        // ฝ่ายค้านรอบ 193 C1: งานระดับเจ้าของ (ออกคีย์ · เชิญ/เปลี่ยนบทบาท/ถอดสมาชิก · webhook · แก้ข้อมูลบริษัท ·
+        // ปิดงวด/ปิดปี) ต้องมาจากคนที่ล็อกอิน — คีย์ที่สวมเป็นเจ้าของด้วย X-Acting-User (หรือคีย์ acc_ ที่ถือ id
+        // ของเจ้าของที่ออกมัน) เคยผ่านด่านนี้เพราะดูแค่ role ⇒ ออกคีย์สิทธิ์เต็มไม่หมดอายุให้ตัวเองได้.
+        // ตรวจก่อน role เสมอ — ตัวตัดสินตัวเดียว Helpers/OwnerActionGuard (ผู้เรียก 17 จุดได้ด่านนี้พร้อมกัน)
+        Accounting.Helpers.OwnerActionGuard.EnsureNotApiKey(_http?.HttpContext);
+
         // Platform SystemAdmin bypasses company-level owner check
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user?.IsSystemAdmin == true) return;

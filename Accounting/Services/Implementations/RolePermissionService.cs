@@ -10,10 +10,13 @@ namespace Accounting.Services.Implementations;
 public class RolePermissionService : IRolePermissionService
 {
     private readonly AccountingDbContext _db;
+    private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _http;
 
-    public RolePermissionService(AccountingDbContext db)
+    public RolePermissionService(AccountingDbContext db,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
     {
         _db = db;
+        _http = http;
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)
@@ -341,6 +344,9 @@ public class RolePermissionService : IRolePermissionService
 
     private async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
     {
+        // สร้าง/แก้/ลบ role และสิทธิ์ = การให้สิทธิ์ ⇒ API key ห้าม (ฝ่ายค้านรอบ 193 C1 · ด่านตัวเดียวกับ CompanyService)
+        Accounting.Helpers.OwnerActionGuard.EnsureNotApiKey(_http?.HttpContext, "จัดการบทบาทและสิทธิ์");
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user?.IsSystemAdmin == true) return;
 
