@@ -13,12 +13,12 @@
 | ไฟล์ | หมวด | จำนวน |
 | --- | --- | --- |
 | `build-errors.md` | คอมไพล์/บิลด์ล้ม (CSxxxx · ล้มทั้ง solution) | 20 |
-| `ocr-pipeline.md` | ไปป์ไลน์ OCR → เอกสาร (กระดาษ · สกัดข้อมูล · AI/นักเรียน) | 55 |
-| `money-tax.md` | เงิน · ภาษี · บัญชี (VAT · WHT · ปกส · JE · ค่าเสื่อม · กำหนดยื่น) | 36 |
-| `security-tenant.md` | ความปลอดภัย · สิทธิ์ · tenant · PDPA · SSO | 19 |
-| `checker-writing.md` | การเขียน checker / negative test / simulation | 3 |
+| `ocr-pipeline.md` | ไปป์ไลน์ OCR → เอกสาร (กระดาษ · สกัดข้อมูล · AI/นักเรียน) | 57 |
+| `money-tax.md` | เงิน · ภาษี · บัญชี (VAT · WHT · ปกส · JE · ค่าเสื่อม · กำหนดยื่น) | 38 |
+| `security-tenant.md` | ความปลอดภัย · สิทธิ์ · tenant · PDPA · SSO | 21 |
+| `checker-writing.md` | การเขียน checker / negative test / simulation | 5 |
 | `ui-frontend.md` | หน้าเว็บ · JS · CSS · เมนู · ลิงก์ | 8 |
 | `process-docs.md` | กระบวนการ · เอกสาร · การตรวจ · "มี ≠ ถูกเรียก" | 8 |
-| `general-design.md` | การออกแบบทั่วไป (ค่า default · สถานะ · ด่าน · fail loud) | 4 |
+| `general-design.md` | การออกแบบทั่วไป (ค่า default · สถานะ · ด่าน · fail loud) | 8 |
 
-รวม 153 ข้อ · หลักการที่กลั่นจากทั้งหมดอยู่ใน `CLAUDE.md` กฎเหล็ก #4 F2 (10 ข้อ) · บทเรียนที่ยังอยู่ใน CLAUDE.md: หมวด A–E (checklist) · G (Testing) · H (กันถดถอย — 9 ข้อ)
+รวม 165 ข้อ (รอบ 193 +12) · หลักการที่กลั่นจากทั้งหมดอยู่ใน `CLAUDE.md` กฎเหล็ก #4 F2 (10 ข้อ) · บทเรียนที่ยังอยู่ใน CLAUDE.md: หมวด A–E (checklist) · G (Testing) · H (กันถดถอย — 9 ข้อ)

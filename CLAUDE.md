@@ -601,8 +601,19 @@ node tools/validation_field_label_sim.js # ข้อความ validation ต�
 python3 tools/blank_number_null_check.py # ช่องตัวเลขที่เว้นว่างถูกส่งเป็น `null` → System.Text.Json แปลงเข้า int/decimal ไม่ได้ ⇒ โยน body ทิ้งทั้งก้อน ⇒ ไม่มีอะไรถูกบันทึกและ error ชี้ไปที่ "dto" ที่ไม่มีบนหน้าจอ
 node tools/blank_number_form_sim.js # ล็อก "ว่าง = ตัดคีย์ทิ้ง · data-blank=\"0\" = ศูนย์ · 0 ที่พิมพ์เองต้องไม่หาย" ด้วยโค้ดจริงจากหน้าเว็บ
 # ↑ `tools/*_sim.js` ทุกตัวถูก check_all.sh กวาดรันเอง (แก้ 2026-09-21 — เดิมเขียนไว้ว่ารันแต่ **ไม่เคยรัน**)
-python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-"
+python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-" · select option ตัวเลขที่ hydrate จาก enum (กติกา 3 · รอบ 193)
 python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
+python3 tools/terminal_status_writer_check.py # สถานะปลายทาง (Filed/Matched/Approved/NoShow/StockDeducted) ประทับนอกเจ้าของกติกา — ratchet baseline (ราก R1)
+python3 tools/ai_feedback_source_check.py # หน้าเว็บบันทึก "คำตอบที่ผู้ใช้เลือก" โดยไม่ส่ง `source` → นับเป็น Implicit ⇒ คลังเรียนรู้ทันทีตายเงียบ
+python3 tools/required_call_site_check.py # ด่านเงิน/ภาษี/สต็อก/สิทธิ์ที่มีแต่ service ไม่เรียก — ล็อกจุดเรียกรายเมธอด 7 ชนิด (must · must_re · must_lit · call_args · before · forbid · `ชื่อ#n` overload) · negative test ในตัวรันทุกครั้ง (ลบ/คอมเมนต์/สลับลำดับ/ใส่สูตรต้องห้าม แล้วต้องฟ้อง) · "เทสต์เรียกแค่ helper" เขียวแม้ถอดการแก้ — ตัวนี้ล็อกว่า service เรียกจริง (รอบ 193)
+python3 tools/settings_reader_check.py # ค่าตั้งที่เก็บ+echo ครบแต่ไม่มีผู้อ่าน ("มีช่อง ≠ มีผล") — ratchet กับ settings_reader_baseline.txt · `--self-test` ถอดผู้อ่านจริงแล้วต้องฟ้อง (รอบ 193)
+python3 tools/approved_status_writer_check.py # เอกสารเกิดมา/ถูกตั้ง `Approved` นอกเส้นที่เรียก `IIssuedDocumentHooks.RunAsync` (e-Tax หลังออกเอกสาร) · hook ต้องอยู่หลัง `CommitAsync` บนเส้นเดียวกัน — ratchet baseline (รอบ 193)
+python3 tools/company_settings_factory_check.py # `new CompanySettings` นอก `Helpers/CompanySettingsFactory` → แถวค่าตั้งเกิดด้วยค่า default ที่ขัดกับธงบริษัท (VAT สองธง · รอบ 193)
+python3 tools/contact_taxid_only_match_check.py # query ผู้ติดต่อด้วยเลขภาษีอย่างเดียวไม่ดูสาขา (กติกา 1) · จับชื่อ/อีเมล/เบอร์หลัง `ContactTaxBranchKey.FindAsync` นอก `SoftScope` (กติกา 2 `#soft`) — ratchet baseline (รอบ 193)
+python3 tools/attachment_gate_check.py # ทางเข้าที่แตะไฟล์แนบ/สแกนแต่ไม่เรียก `IAttachmentAccessGate` (หรือเรียกแล้วทิ้งผล/เรียกหลังแตะไฟล์) · ทุก action ของ OcrController ที่รับ scanId/fileAttachmentId/documentId · negative test ถอดด่านจากไฟล์จริงในตัว (รอบ 193)
+python3 tools/owner_action_wiring_check.py # ด่านเจ้าของ/ปฏิเสธ API key (`[RejectApiKey]` · `[RequireOwner]` · `OwnerActionGuard` · `ApiAccessPolicy` · `RegistrationPolicy`) ต้องอยู่ที่จุดเรียกจริงและ "ใช้ผล" — `--self-test` ถอดทีละแถวจากไฟล์จริง (รอบ 193)
+node tools/api_busy_indicator_sim.js # ตัวแสดง "กำลังทำงาน" กลาง (`ApiBusy` ใน api.js) — นานแสดง · สั้นไม่กระพริบ · ปุ่มกันกดซ้ำ (โค้ดจริง + negative test ในตัว)
+node tools/employee_form_contract_sim.js # ฟอร์มพนักงาน ↔ API: hydrate↔payload สองทิศ · คีย์ ⊆ DTO · ทุกช่องในโมดัลถูก hydrate (ซอร์สจริง · baseline จากคอมมิตก่อนแก้ · รอบ 193)
 python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
 python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
 python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
