@@ -282,6 +282,10 @@ public static class ChartOfAccountTemplates
             new("54930", "ค่าหนังสือพิมพ์/วารสาร", "Newspapers and Periodicals", AccountType.Expense, 4),
             new("54940", "เงินบริจาค/การกุศล", "Donations / Charity", AccountType.Expense, 4),
             new("54950", "ขาดทุนจากอัตราแลกเปลี่ยน", "Foreign Exchange Loss", AccountType.Expense, 4),
+            // รอบ 193 (เจ้าของข้อ 8): ขา JE ของ Document.RoundingAdjustment — เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย
+            // กับยอดที่กระดาษพิมพ์ (Lazada −0.01) · เดบิต = ขาดทุนจากปัดเศษ · เครดิต = กำไรจากปัดเศษ (หักในบัญชีเดียวกัน)
+            // ⚠️ รหัสเดียวกับ Helpers/DocumentRounding.AccountCode · บริษัทเดิมได้จาก DatabaseMigrationHelper (ON CONFLICT DO NOTHING)
+            new("54960", "ผลต่างจากการปัดเศษ", "Rounding Difference", AccountType.Expense, 4),
 
             // --- 55 ต้นทุนทางการเงิน ---
             new("55", "ต้นทุนทางการเงิน", "Finance Costs", AccountType.Expense, 2),

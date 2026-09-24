@@ -1311,6 +1311,22 @@ public partial class DocumentService : IDocumentService
             if (!string.IsNullOrWhiteSpace(request.InputVatClaimPeriod))
                 await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
 
+            // รอบ 193 (เจ้าของข้อ 1/4/8): ยอดชำระจริง + ผลต่างปัดเศษ — ค่าที่ client ส่งมาต้องผ่านตัวตรวจกลาง
+            if (request.ActualPaidAmount is decimal createActualPaid)
+            {
+                if (createActualPaid < 0m)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่างเมื่อจ่ายเต็มตามยอดเอกสาร",
+                        Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+                doc.ActualPaidAmount = createActualPaid == 0m ? null : createActualPaid;
+            }
+            if (request.RoundingAdjustment is decimal createRounding && createRounding != 0m)
+            {
+                if (Accounting.Helpers.DocumentRounding.Validate(createRounding) is string createRoundErr)
+                    throw new Accounting.Helpers.BusinessRuleException(createRoundErr, Accounting.Helpers.DocumentRounding.RuleCode);
+                doc.RoundingAdjustment = createRounding;
+            }
+
             _db.Documents.Add(doc);
 
             decimal subTotal = 0, totalDiscount = 0, totalVat = 0, totalWht = 0;
@@ -1451,7 +1467,8 @@ public partial class DocumentService : IDocumentService
                 });
             }
 
-            doc.SubTotal = subTotal;
+            // รอบ 193: SubTotal = Σ บรรทัด + ผลต่างปัดเศษ (0 = สูตรเดิมทุกประการ — Helpers/DocumentRounding)
+            doc.SubTotal = subTotal + doc.RoundingAdjustment;
             doc.DiscountAmount = totalDiscount;
             // ส่วนลดท้ายบิล: เก็บ % ที่กรอก + ยอด ex-VAT ที่หักจริง (Σ ที่เฉลี่ยลงบรรทัด)
             // subTotal เป็น "หลังหักท้ายบิลแล้ว" (= Σ line.Amount คงตัว invariant) →
@@ -1460,7 +1477,7 @@ public partial class DocumentService : IDocumentService
             doc.BillDiscountAmount = billAlloc.Sum();
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
-            doc.TotalAmount = subTotal + totalVat - totalWht;
+            doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
             // Cash-settled documents carry no outstanding balance — the cash
             // already moved, so PaidAmount = Total and BalanceDue = 0. This is
             // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report
@@ -2356,6 +2373,34 @@ public partial class DocumentService : IDocumentService
         if (request.WitnessPosition != null) doc.WitnessPosition = request.WitnessPosition;
         if (request.PaymentDate.HasValue) doc.PaymentDate = request.PaymentDate.Value;
 
+        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 1/4/8) — ยอดชำระจริง + ผลต่างจากการปัดเศษ ──
+        // ยอดชำระจริง: null = ไม่แตะ · 0 = ล้าง (จ่ายเต็มตามยอด) · > 0 = ตั้ง — ตัวตัดสินขา JE คือ Helpers/PaymentSettlementAdjustment
+        if (request.ActualPaidAmount is decimal updActualPaid)
+        {
+            if (updActualPaid < 0m)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ยอดชำระจริงต้องไม่ติดลบ — เว้นว่าง/0 เมื่อจ่ายเต็มตามยอดเอกสาร",
+                    Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+            doc.ActualPaidAmount = updActualPaid == 0m ? null : updActualPaid;
+        }
+        // ผลต่างปัดเศษ: null = ไม่แตะ (ค่าเดิมยังอยู่) · สัญญา SubTotal = Σ บรรทัด + ค่านี้ (Helpers/DocumentRounding)
+        var roundingBefore = doc.RoundingAdjustment;
+        if (request.RoundingAdjustment is decimal updRounding)
+        {
+            if (Accounting.Helpers.DocumentRounding.Validate(updRounding) is string roundErr)
+                throw new Accounting.Helpers.BusinessRuleException(roundErr, Accounting.Helpers.DocumentRounding.RuleCode);
+            doc.RoundingAdjustment = updRounding;
+        }
+        if (request.Lines == null && doc.RoundingAdjustment != roundingBefore)
+        {
+            // ไม่ได้ส่งบรรทัดมา แต่เปลี่ยนผลต่างปัดเศษ ⇒ หัวเอกสารขยับตามส่วนต่าง (บรรทัดเดิมไม่แตะ)
+            var roundingDelta = doc.RoundingAdjustment - roundingBefore;
+            doc.SubTotal += roundingDelta;
+            doc.TotalAmount += roundingDelta;
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = doc.TotalAmount; doc.BalanceDue = 0m; }
+            else doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        }
+
         if (request.Lines != null)
         {
             // Re-validate on edit — the create path's guards must hold here too
@@ -2485,13 +2530,14 @@ public partial class DocumentService : IDocumentService
                 });
             }
 
-            doc.SubTotal = subTotal;
+            // รอบ 193: SubTotal = Σ บรรทัด + ผลต่างปัดเศษ (0 = สูตรเดิมทุกประการ)
+            doc.SubTotal = subTotal + doc.RoundingAdjustment;
             doc.DiscountAmount = totalDiscount;
             doc.BillDiscountPercent = updBillPct;
             doc.BillDiscountAmount = updBillAlloc.Sum();
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
-            doc.TotalAmount = subTotal + totalVat - totalWht;
+            doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
 
             // Preserve / apply the settlement basis on edit. A cash-settled
             // voucher must stay fully paid (BalanceDue = 0, no due date) even
@@ -8717,7 +8763,8 @@ public partial class DocumentService : IDocumentService
         }
 
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
-        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount - payment.FeeAmount);
+        // + หนี้ที่เคยปิดด้วยบรรทัดปรับ (รอบ 193 — ขา JE ถูกกลับพร้อม JE การชำระข้างบนแล้ว)
+        doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount - payment.FeeAmount - payment.SettlementAdjustmentAmount);
         doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
         if (doc.Status != DocumentStatus.Voided)
         {
@@ -11064,10 +11111,48 @@ public partial class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     "ค่าธรรมเนียมหักจากยอดโอน ใช้ได้เฉพาะเอกสารฝั่งขาย (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้)");
         }
+        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): บรรทัดปรับส่วนต่าง "ยอดหนี้ตามใบ ↔ เงินที่จ่ายจริง" ──
+        // ใบกำกับซื้อ 536 (ยอดตั้งหนี้ห้ามแก้) · จ่ายจริง 438 · ค่าส่ง +37 → 51120 · คูปอง −135 → 51150 ⇒ ปิดหนี้ 536
+        // ตัวตรวจ Helpers/PaymentSettlementAdjustment (pure + เทสต์) · ไม่มีบรรทัดปรับ = พฤติกรรมเดิมทุกประการ
+        var settleLines = (request.SettlementAdjustments ?? new List<PaymentSettlementAdjustmentRequest>())
+            .Select(a => new Accounting.Helpers.SettlementAdjustmentLine(
+                (a.AccountCode ?? "").Trim(), Math.Round(a.Amount, 2, MidpointRounding.AwayFromZero),
+                string.IsNullOrWhiteSpace(a.Reason) ? null : a.Reason.Trim()))
+            .ToList();
+        decimal settleNet = 0m;
+        var settleAccounts = new List<(Guid AccountId, decimal Amount, string? Reason, string Code)>();
+        if (settleLines.Count > 0)
+        {
+            if (doc.DocumentType is not (DocumentType.PurchaseInvoice or DocumentType.Expense))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "บรรทัดปรับส่วนต่างยอดชำระใช้ได้กับเอกสารตั้งหนี้ฝั่งซื้อ (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) เท่านั้น — "
+                    + "ฝั่งขายที่ถูกหักค่าธรรมเนียมจากยอดโอนให้ใช้ช่อง \"ค่าธรรมเนียม\" · ใบสำคัญจ่ายที่จ่ายในตัวให้ใช้ช่อง "
+                    + "\"ยอดชำระจริง\" + ปรับปรุงรายการบัญชีของเอกสาร",
+                    Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+            if (doc.ExchangeRate != 1m)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "บรรทัดปรับส่วนต่างยอดชำระยังรองรับเฉพาะเอกสารสกุลบาท — เอกสารสกุลต่างประเทศให้บันทึกส่วนต่างด้วยสมุดรายวันทั่วไป",
+                    Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+            var settleCheck = Accounting.Helpers.PaymentSettlementAdjustment.Check(request.Amount, doc.BalanceDue, settleLines);
+            if (!settleCheck.Ok)
+                throw new Accounting.Helpers.BusinessRuleException(settleCheck.Error!, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+            settleNet = settleCheck.AdjustmentNet;
+            foreach (var sl in settleLines)
+            {
+                var slAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == sl.AccountCode && a.IsActive && !a.IsDeleted)
+                    .Select(a => (Guid?)a.Id).FirstOrDefaultAsync()
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผังบัญชี {sl.AccountCode} ในผังของบริษัท (หรือถูกปิดใช้) — เพิ่ม/เปิดผังนี้ก่อน หรือเลือกผังอื่นในบรรทัดปรับ",
+                        Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+                settleAccounts.Add((slAccountId, sl.Amount, sl.Reason, sl.AccountCode));
+            }
+        }
+
         // ด่านจ่ายเกิน — เกณฑ์เดียวกับทุกทางเข้า (Integration/นำเข้าไฟล์) ผ่าน
         // `DocumentSettlementState.WouldOverpay` (ผลตรวจ D4-3: เดิมเว็บใช้ 0.01
-        // · integration ใช้ 0.005 · นำเข้าไฟล์ไม่มีด่านเลย)
-        if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(
+        // · integration ใช้ 0.005 · นำเข้าไฟล์ไม่มีด่านเลย) · มีบรรทัดปรับ = ตรวจยอดที่ปิดจริงใน Check ข้างบนแล้ว
+        if (settleLines.Count == 0 && Accounting.Helpers.DocumentSettlementState.WouldOverpay(
                 doc.BalanceDue, request.Amount + paymentFee))
             throw new InvalidOperationException(
                 $"เงินสุทธิ ({request.Amount:N2}) + ค่าธรรมเนียม ({paymentFee:N2}) มากกว่ายอดค้างชำระ ({doc.BalanceDue:N2})");
@@ -11109,7 +11194,8 @@ public partial class DocumentService : IDocumentService
             // Without this, proportional rounding leaves a satang-level gap
             // (115.38 + 115.38 + 69.23 = 299.99 ≠ 300.00) and the WHT cert
             // numbers don't reconcile with ภ.ง.ด.3/53 filings.
-            var isFinalPayment = request.Amount + paymentFee + 0.01m >= doc.BalanceDue;
+            // settleNet (รอบ 193) = หนี้ที่ปิดด้วยบรรทัดปรับ — นับเป็นการปิดหนี้ของงวดนี้ด้วย
+            var isFinalPayment = request.Amount + paymentFee + settleNet + 0.01m >= doc.BalanceDue;
 
             if (request.WithholdingTaxAmount.HasValue)
             {
@@ -11133,7 +11219,7 @@ public partial class DocumentService : IDocumentService
                 // total WHT. Capped at the remaining slice so rounding can't
                 // overshoot on the last payment.
                 var proportional = doc.TotalAmount > 0m
-                    ? Math.Round(request.Amount * doc.WithholdingTaxAmount / doc.TotalAmount, 2, MidpointRounding.AwayFromZero)
+                    ? Math.Round((request.Amount + settleNet) * doc.WithholdingTaxAmount / doc.TotalAmount, 2, MidpointRounding.AwayFromZero)
                     : 0m;
                 paymentWht = Math.Min(proportional, remainingCap);
             }
@@ -11190,12 +11276,16 @@ public partial class DocumentService : IDocumentService
                 ExchangeRate = doc.ExchangeRate != 1m ? request.ExchangeRate : null,
                 FeeAmount = paymentFee,
                 FeeAccountId = request.FeeAccountId,
+                // รอบ 193: หนี้ที่ปิดด้วยบรรทัดปรับ + บรรทัดทั้งชุด (ขา JE อยู่ใน CreatePaymentJournalAsync)
+                SettlementAdjustmentAmount = settleNet,
+                SettlementAdjustmentsJson = settleLines.Count == 0 ? null
+                    : System.Text.Json.JsonSerializer.Serialize(settleLines),
                 CreatedBy = createdBy
             };
 
             _db.Payments.Add(payment);
 
-            doc.PaidAmount += request.Amount + paymentFee;
+            doc.PaidAmount += request.Amount + paymentFee + settleNet;
             var paySettle = Accounting.Helpers.DocumentSettlementState.Apply(
                 doc.TotalAmount, doc.PaidAmount, doc.Status);
             doc.BalanceDue = paySettle.BalanceDue;
@@ -11213,8 +11303,10 @@ public partial class DocumentService : IDocumentService
 
             await _db.SaveChangesAsync();
 
-            // Create journal entry for payment
-            await CreatePaymentJournalAsync(companyId, doc, payment, createdBy);
+            // Create journal entry for payment (+ บรรทัดปรับส่วนต่าง รอบ 193)
+            await CreatePaymentJournalAsync(companyId, doc, payment, createdBy,
+                settleAccounts.Count == 0 ? null
+                    : settleAccounts.Select(a => (a.AccountId, a.Amount, a.Reason)).ToList());
 
             await _db.SaveChangesAsync();
 
@@ -11424,6 +11516,11 @@ public partial class DocumentService : IDocumentService
     {
         if (request.Allocations == null || request.Allocations.Count == 0)
             throw new InvalidOperationException("Allocations ต้องมีอย่างน้อย 1 รายการ");
+        // รอบ 193: บรรทัดปรับส่วนต่างผูกกับ "หนี้ใบเดียว" — ห้ามหายเงียบเมื่อส่งมากับการชำระหลายใบ (ห้าม silent no-op)
+        if (request.SettlementAdjustments is { Count: > 0 })
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บรรทัดปรับส่วนต่างยอดชำระใช้ได้กับการชำระเอกสารทีละใบ — แยกบันทึกการชำระใบที่มีคูปอง/ค่าส่งออกมา",
+                Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         if (request.Amount <= 0)
             throw new InvalidOperationException("จำนวนเงินชำระต้องมากกว่า 0");
         if (request.ExchangeRate is <= 0)
@@ -11845,7 +11942,9 @@ public partial class DocumentService : IDocumentService
                 PayerSignatureName: p.PayerSignatureName,
                 ReceiptDocumentId: rec.Id,
                 ReceiptDocumentNumber: rec.Number,
-                SourceServesAsReceipt: ServedFor(p));
+                SourceServesAsReceipt: ServedFor(p),
+                SettlementAdjustmentAmount: p.SettlementAdjustmentAmount,
+                SettlementAdjustmentsJson: p.SettlementAdjustmentsJson);
         }).ToList();
 
         // ── รวมเอกสาร settle จากเส้น "แปลงเอกสาร" (ไม่มี Payment row) ──
@@ -15217,15 +15316,23 @@ public partial class DocumentService : IDocumentService
             .Where(a => a.DocumentId == doc.Id && !a.IsDeleted)
             .OrderBy(a => a.LineOrder)
             .ToListAsync();
+        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 1/4): ใบสำคัญจ่ายที่ "ยอดชำระจริง" ≠ ยอดเอกสาร ──
+        // ใบกำกับ (ยอดเอกสาร) 536 · จ่ายจริง 438 ⇒ ขาเงินสดข้างบนลง 536 แล้ว ⇒ Dr เงินสดกลับ 98 · ส่วนต่างต้องถูกอธิบายด้วย
+        // adjusting lines (ค่าส่ง Dr 51120 +37 · คูปอง Cr 51150 −135) — ตัวตัดสิน Helpers/PaymentSettlementAdjustment
+        // ส่วนต่าง 0 (ไม่ได้ระบุยอดชำระจริง/ชนิดอื่น) = กติกาเดิม "adjusting lines ต้อง net-zero" ทุกประการ
+        var settlementCashDelta = Accounting.Helpers.PaymentSettlementAdjustment.DocumentCashDelta(
+            doc.DocumentType, doc.PaymentType, doc.IsForeignService, doc.TotalAmount, doc.ActualPaidAmount);
+        if (adjustingLines.Count == 0 && settlementCashDelta != 0m
+            && Accounting.Helpers.PaymentSettlementAdjustment.CheckDocumentLines(
+                settlementCashDelta, 0m, 0m, doc.TotalAmount, doc.ActualPaidAmount) is string noAdjMsg)
+            throw new Accounting.Helpers.BusinessRuleException(noAdjMsg, Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
         if (adjustingLines.Count > 0)
         {
             var adjDr = adjustingLines.Sum(a => a.DebitAmount);
             var adjCr = adjustingLines.Sum(a => a.CreditAmount);
-            if (Math.Round(adjDr, 2, MidpointRounding.AwayFromZero) != Math.Round(adjCr, 2, MidpointRounding.AwayFromZero))
-                throw new InvalidOperationException(
-                    $"⛔ Adjusting JE Lines ไม่ balance: เดบิต {adjDr:N2} ≠ เครดิต {adjCr:N2} — " +
-                    "ผลรวม Dr และ Cr ของ adjusting lines ต้องเท่ากัน (กัน JE หลักเสียสมดุล). " +
-                    "แก้ที่หน้า 'ปรับปรุงรายการบัญชี' ของเอกสารก่อนอนุมัติ");
+            if (Accounting.Helpers.PaymentSettlementAdjustment.CheckDocumentLines(
+                    settlementCashDelta, adjDr, adjCr, doc.TotalAmount, doc.ActualPaidAmount) is string adjMsg)
+                throw new InvalidOperationException(adjMsg);
             // ห้าม adjusting line มีทั้ง Dr และ Cr ในบรรทัดเดียวกัน
             foreach (var a in adjustingLines)
             {
@@ -15243,6 +15350,38 @@ public partial class DocumentService : IDocumentService
                         ? $"ปรับปรุง — {doc.DocumentNumber}"
                         : $"ปรับปรุง: {a.Description}",
                     a.ProjectId);
+            }
+        }
+        if (settlementCashDelta != 0m)
+        {
+            // ขาเงินสดตามยอดชำระจริง: เงินสดที่ลงไว้ตามยอดเอกสาร ปรับด้วยส่วนต่าง (ผังเดียวกับขาเงินสดข้างบน — moneyAccount)
+            if (moneyAccount == null)
+                throw new InvalidOperationException(
+                    "ไม่พบบัญชีเงินสด/ธนาคารของเอกสาร — ลงส่วนต่างยอดชำระจริงไม่ได้ (เลือกแหล่งเงินก่อนอนุมัติ)");
+            var (deltaDr, deltaCr) = Accounting.Helpers.PaymentSettlementAdjustment.JournalSide(settlementCashDelta);
+            AddLine(moneyAccount.Id, deltaDr, deltaCr,
+                $"ส่วนต่างยอดชำระจริง {doc.ActualPaidAmount:N2} (ยอดเอกสาร {doc.TotalAmount:N2}) - {doc.DocumentNumber}");
+        }
+
+        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 8): ผลต่างจากการปัดเศษ ──
+        // สัญญา SubTotal = Σ บรรทัด + RoundingAdjustment ⇒ ขาที่ลงตามยอดบรรทัดกับขาที่ลงตามยอดรวมต่างกันเท่าผลต่างนี้พอดี
+        // ⇒ ลงส่วนนั้นที่ผัง Helpers/DocumentRounding.AccountCode ในทิศที่ปิดสมดุล · ต่างไม่เท่าที่ประกาศ = ไม่ลง (ด่านสมดุลข้างล่างฟ้อง)
+        if (doc.RoundingAdjustment != 0m)
+        {
+            var roundingJe = Accounting.Helpers.DocumentRounding.JournalLine(
+                pendingLines.Sum(l => l.Debit) - pendingLines.Sum(l => l.Credit), Conv(doc.RoundingAdjustment));
+            if (roundingJe is { } roundingSide)
+            {
+                var (rDr, rCr) = roundingSide;
+                var roundingAccount = await FindAccountAsync(companyId, Accounting.Helpers.DocumentRounding.AccountCode)
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผังบัญชี {Accounting.Helpers.DocumentRounding.AccountCode} "
+                        + $"\"{Accounting.Helpers.DocumentRounding.AccountName}\" — เพิ่มผังนี้ที่หน้าผังบัญชี "
+                        + $"(ใช้ลงผลต่างปัดเศษ {doc.RoundingAdjustment:N2} ของเอกสารนี้) แล้วอนุมัติอีกครั้ง",
+                        Accounting.Helpers.DocumentRounding.RuleCode);
+                // pendingLines เป็นยอดบาทแล้ว (Conv) — เพิ่มตรง ไม่ผ่าน AddLine ที่จะแปลงสกุลซ้ำ
+                pendingLines.Add((roundingAccount.Id, rDr, rCr, $"{Accounting.Helpers.DocumentRounding.AccountName} - {doc.DocumentNumber}"));
+                lineProjects.Add(doc.ProjectId);
             }
         }
 
@@ -15485,7 +15624,8 @@ public partial class DocumentService : IDocumentService
         return cashAccount ?? await FindAccountAsync(companyId, "111");
     }
 
-    private async Task CreatePaymentJournalAsync(Guid companyId, Document doc, Payment payment, string createdBy)
+    private async Task CreatePaymentJournalAsync(Guid companyId, Document doc, Payment payment, string createdBy,
+        IReadOnlyList<(Guid AccountId, decimal Amount, string? Reason)>? settlementAdjustments = null)
     {
         var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
             DocumentType.DebitNote, DocumentType.BillingNote, DocumentType.ReceiptVoucher };
@@ -15653,10 +15793,18 @@ public partial class DocumentService : IDocumentService
             var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
             if (apAccount != null)
             {
-                var apClear = postPerPaymentWht ? thbAmount + thbWht : thbAmount;
+                // + หนี้ที่ปิดด้วยบรรทัดปรับ (รอบ 193 · เอกสารสกุลบาทเท่านั้น — ตรวจที่ CreatePaymentAsync)
+                var apClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + payment.SettlementAdjustmentAmount;
                 pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
             }
             pendingLines.Add((cashAccount.Id, 0, thbCash, $"จ่ายชำระ - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            // รอบ 193: บรรทัดปรับส่วนต่าง — บวก = Dr (ค่าส่งที่จ่ายเพิ่ม 51120) · ลบ = Cr (คูปอง/ส่วนลดลดต้นทุน 51150)
+            foreach (var adj in settlementAdjustments ?? Array.Empty<(Guid AccountId, decimal Amount, string? Reason)>())
+            {
+                var (adjDr, adjCr) = Accounting.Helpers.PaymentSettlementAdjustment.JournalSide(adj.Amount);
+                pendingLines.Add((adj.AccountId, adjDr, adjCr,
+                    $"ปรับส่วนต่างยอดชำระ{(string.IsNullOrWhiteSpace(adj.Reason) ? "" : ": " + adj.Reason)} - {doc.DocumentNumber} ({payment.PaymentNumber})"));
+            }
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
@@ -16049,7 +16197,10 @@ public partial class DocumentService : IDocumentService
         ReplacedByDocumentId: d.ReplacedByDocumentId,
         ReplacesDocumentId: d.ReplacesDocumentId,
         ReplacementReason: d.ReplacementReason,
-        ReplacedAt: d.ReplacedAt);
+        ReplacedAt: d.ReplacedAt,
+        // รอบ 193 — เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A)
+        ActualPaidAmount: d.ActualPaidAmount,
+        RoundingAdjustment: d.RoundingAdjustment);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -17440,6 +17591,22 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync();
         if (dup != null)
             warnings.Add($"อาจเป็นเอกสารซ้ำ — มี {dup} ของผู้ติดต่อรายนี้ ยอด {doc.TotalAmount:N2} ในช่วงวันที่เดียวกัน ตรวจสอบก่อนอนุมัติ");
+
+        // 7. รอบ 193 (คำตัดสินเจ้าของข้อ 12): เอกสารจากสแกนที่ตอนสร้างระบบพบ "ยอดไม่ตรงกระดาษ" ([Σ-GAP]) —
+        //    เว็บ/มือถือต้องกด "รับทราบ" (audit APPROVE-ACK-WARNINGS ด้านบน) · API แยกคำเตือนชุดนี้ด้วย
+        //    OcrApprovalGapWarning.IsGapWarning แล้วไม่ขัดจังหวะ (DocumentsV1Controller) · ข้อความ+ตัวเลขจาก helper ตัวเดียว
+        var gapScan = await _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount })
+            .FirstOrDefaultAsync();
+        if (gapScan != null)
+        {
+            var liveLines = doc.Lines.Where(l => !l.IsDeleted).ToList();
+            warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
+                gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
+                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment));
+        }
 
         return warnings;
     }

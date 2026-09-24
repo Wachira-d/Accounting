@@ -338,3 +338,29 @@ public record CreateJeFromScanRequest(
     // ผู้ใช้ยืนยันแล้วว่าเป็นคนละใบจริง แม้เลขที่จะซ้ำ — ทรงเดียวกับเส้นสร้าง
     // เอกสาร (ผลตรวจ T1-14: เส้น JE ตรงเดิมไม่มีด่านกันซ้ำเลย)
     bool AllowDuplicate = false);
+
+/// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): ข้อเสนอบรรทัดปรับส่วนต่าง "ยอดตามใบกำกับ ↔ ยอดชำระจริง" ของเอกสารที่สร้างจากสแกน
+/// — หน้าบันทึกการชำระใช้เติมให้ผู้ใช้ยืนยันคลิกเดียว (ตัวตัดสิน Helpers/OcrSettlementProposal · ไม่มี = null)</summary>
+public record OcrSettlementProposalResponse(
+    decimal InvoiceTotal,
+    decimal AmountPaid,
+    IReadOnlyList<OcrSettlementProposalLine> Lines);
+
+/// <summary>บรรทัดปรับหนึ่งบรรทัด — Amount มีเครื่องหมาย (+ = จ่ายเกินยอดหนี้ Dr · − = ปิดหนี้โดยไม่จ่ายเงิน Cr)</summary>
+public record OcrSettlementProposalLine(string AccountCode, string? AccountName, decimal Amount, string? Reason);
+
+/// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 14): หนึ่งแถวของรายงาน "ตัวเลขที่เก็บไว้แล้วผิดเพราะตรรกะส่วนลด/ยอดรวมแบบเดิม"
+/// — อ่านอย่างเดียว ห้ามแก้หลังบ้าน (ตัวตัดสิน Helpers/OcrStoredAmountAudit)</summary>
+public record OcrStoredAmountAuditRow(
+    Guid ScanId,
+    DateTime ScannedAt,
+    string? OriginalFileName,
+    string? VendorName,
+    string? DocumentNumberOnPaper,
+    Guid? DocumentId,
+    string? DocumentNumber,
+    string? DocumentStatus,
+    string Issue,
+    decimal Stored,
+    decimal Expected,
+    string Message);

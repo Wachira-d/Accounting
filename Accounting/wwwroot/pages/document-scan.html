@@ -316,7 +316,11 @@
         <h2 class="page-title">ประมวลผลเอกสาร</h2>
         <p class="page-subtitle">สแกน วิเคราะห์ และแนะนำหมวดเอกสาร — คุณตรวจสอบและยืนยันก่อนสร้างเสมอ</p>
       </div>
-      <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <!-- รอบ 193 (เจ้าของข้อ 14): รายงานอ่านอย่างเดียว — สแกน/เอกสารเก่าที่ตัวเลขที่เก็บไว้ผิดเพราะตรรกะส่วนลดแบบเดิม -->
+        <a class="btn btn-secondary" href="/pages/ocr-amount-audit.html" title="สแกน/เอกสารเก่าที่ยอดรวม/ส่วนลด/ฐานภาษีที่เก็บไว้อาจผิด — ให้นักบัญชีตรวจ">🔎 ตรวจยอดสแกนเก่า</a>
+        <button class="btn btn-secondary" onclick="Page.refreshAll()">&#x21bb; รีเฟรช</button>
+      </div>
     </div>
 
     <!-- OCR Quota Bar -->
@@ -1528,6 +1532,10 @@
             ...pick('PAY≠TOTAL'),
             ...pick('TOTAL-UNSURE'),
             ...pick('PAGES-PARTIAL'),
+            // รอบ 193 — ไม่มีรายการสินค้า (ตัดสต็อกเอง) · ข้อเสนอ/บันทึกบรรทัดปรับส่วนต่างยอดชำระ (ข้อความจากเซิร์ฟเวอร์)
+            ...pick('NO-ITEMS'),
+            ...pick('PAY-PLAN'),
+            ...pick('PAY-SETTLED'),
             ...skip,
           ],
         };

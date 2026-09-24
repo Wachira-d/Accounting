@@ -227,14 +227,33 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
         try
         {
-            var doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1");
+            DocumentResponse doc;
+            IReadOnlyList<string> scanGapWarnings = Array.Empty<string>();
+            try
+            {
+                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1");
+            }
+            catch (Accounting.Services.Implementations.DocumentApprovalWarningsException w)
+                when (w.Warnings.Count > 0 && w.Warnings.All(Helpers.OcrApprovalGapWarning.IsGapWarning))
+            {
+                // รอบ 193 (คำตัดสินเจ้าของข้อ 12): คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ([Σ-GAP]) ห้ามขัดจังหวะ API —
+                // อนุมัติต่อ (ร่องรอย APPROVE-ACK-WARNINGS + หมายเหตุภายในบนเอกสาร โดย "api:v1") แล้วคืนธง/ข้อความในโครงเดิม
+                // · คำเตือนชนิดอื่นยังเดินทางเดิม (ไม่เปลี่ยนพฤติกรรม)
+                scanGapWarnings = w.Warnings;
+                doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1", acknowledgeWarnings: true);
+            }
             return Ok(new ApiResponse<object>(true, new
             {
                 documentId = doc.Id,
                 documentNumber = doc.DocumentNumber,
                 status = doc.Status.ToString(),
                 doc.TotalAmount,
-            }, $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber}"));
+                // รอบ 193: ธงให้ระบบปลายทางรู้ว่าใบนี้มาจากสแกนที่ยอดไม่ตรงกระดาษ (อนุมัติแล้ว ไม่ได้หยุด)
+                scanAmountGap = scanGapWarnings.Count > 0,
+                warnings = scanGapWarnings,
+            }, scanGapWarnings.Count > 0
+                ? $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber} · หมายเหตุ: {string.Join(" · ", scanGapWarnings)}"
+                : $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber}"));
         }
         catch (InvalidOperationException ex)
         {

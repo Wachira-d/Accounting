@@ -39,10 +39,12 @@ public class MobileController : ControllerBase
         => Ok(new ApiResponse<MobileQuickActionsResponse>(true, await _service.GetQuickActionsAsync(companyId)));
 
     [HttpPost("companies/{companyId:guid}/approve")]
-    public async Task<ActionResult<ApiResponse<MobileApprovalResponse>>> QuickApprove(Guid companyId, [FromQuery] Guid entityId, [FromQuery] string entityType, [FromQuery] string action)
+    public async Task<ActionResult<ApiResponse<MobileApprovalResponse>>> QuickApprove(Guid companyId, [FromQuery] Guid entityId, [FromQuery] string entityType, [FromQuery] string action,
+        // รอบ 193: ผู้ใช้กด "รับทราบ" คำเตือนยอดจากสแกนแล้ว (ดู MobileApprovalResponse.RequiresAcknowledgement)
+        [FromQuery] bool acknowledgeWarnings = false)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        return Ok(new ApiResponse<MobileApprovalResponse>(true, await _service.QuickApproveAsync(companyId, entityId, entityType, action, userId)));
+        return Ok(new ApiResponse<MobileApprovalResponse>(true, await _service.QuickApproveAsync(companyId, entityId, entityType, action, userId, acknowledgeWarnings)));
     }
 
     [HttpPost("companies/{companyId:guid}/sync")]

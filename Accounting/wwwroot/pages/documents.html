@@ -991,6 +991,18 @@
                 <strong id="sumAfterDisc" style="text-align:right;display:none">0.00</strong>
                 <span style="color:var(--gray-500)">VAT</span><strong id="sumVat" style="text-align:right">0.00</strong>
                 <span style="color:var(--gray-500)">หัก ณ ที่จ่าย</span><strong id="sumWht" style="text-align:right">0.00</strong>
+                <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 8): ผลต่างจากการปัดเศษ — SubTotal = Σ รายการ + ค่านี้ (|x| < 1 บาท) ·
+                     ใบจากสแกนที่ราคาต่อหน่วย × จำนวน ต่างจากยอดที่พิมพ์ (Lazada −0.01) ระบบเติมให้ · ลงบัญชี 54960 -->
+                <span id="rowRoundingLabel" style="color:var(--gray-500)" title="เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย กับยอดบนกระดาษ — ลงบัญชีผลต่างจากการปัดเศษ (54960)">ผลต่างจากการปัดเศษ</span>
+                <span id="rowRoundingInput" style="display:flex;justify-content:flex-end">
+                  <input type="number" id="fRoundingAdjustment" inputmode="decimal" value="0" step="0.01" min="-0.99" max="0.99" oninput="Page.calcSum()" style="width:84px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+                </span>
+                <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 1/4): ยอดชำระจริง (ฝั่งซื้อ) — ใบกำกับคงยอดเต็มตามใบ · ส่วนต่าง (ค่าส่ง/คูปอง)
+                     ลงที่ "ปรับปรุงรายการบัญชี" ของใบสำคัญจ่าย หรือที่บรรทัดปรับตอนบันทึกการชำระของใบตั้งหนี้ -->
+                <span id="rowActualPaidLabel" style="color:var(--gray-500);display:none" title="เงินที่จ่ายจริงเมื่อต่างจากยอดตามใบกำกับ (เช่น คูปองแพลตฟอร์ม/ค่าส่ง) — เว้นว่างถ้าจ่ายเต็ม">ยอดชำระจริง</span>
+                <span id="rowActualPaidInput" style="display:none;justify-content:flex-end">
+                  <input type="number" id="fActualPaidAmount" inputmode="decimal" min="0" step="0.01" placeholder="= ยอดสุทธิ" style="width:104px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+                </span>
               </div>
               <!-- ใบเก่า/ใบที่นำเข้ามาอาจเก็บ VAT ที่ต่างจากการคิดจากฐานรวมอยู่
                    ระดับสตางค์ — ระบบคง "ยอดที่บันทึกไว้" ไว้ (ไม่แก้เงียบ ๆ)
@@ -7622,7 +7634,9 @@
             keptNote.style.display = 'none';
           }
         }
-        const totalCalc = (sub - billDisc) + vat - wht;
+        // รอบ 193: ผลต่างจากการปัดเศษ — mirror ฝั่งเซิร์ฟเวอร์ (SubTotal = Σ รายการ + ค่านี้ · TotalAmount = SubTotal + VAT − WHT)
+        const roundingAdj = parseFloat(document.getElementById('fRoundingAdjustment')?.value) || 0;
+        const totalCalc = (sub - billDisc) + roundingAdj + vat - wht;
         document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
         // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
         const wordsEl = document.getElementById('sumTotalWords');
@@ -7638,6 +7652,15 @@
         this.updateDepositSummary(totalCalc);
         // §78/1 live-lock — VAT ต่อบรรทัดเปลี่ยน (เพิ่ม/เอาออก) กระทบเงื่อนไขบังคับใบรวม
         this.syncCombinedForPaid?.();
+      },
+
+      /** รอบ 193: แถว "ยอดชำระจริง" ใช้กับฝั่งซื้อเท่านั้น (ใบกำกับซื้อที่จ่ายน้อย/มากกว่ายอดตามใบ — คูปอง/ค่าส่ง) ·
+       *  ฝั่งขายซ่อนไว้ (ค่าที่ส่งคือช่องว่าง = ไม่ตั้ง) — ไม่ใช่ silent no-op เพราะเซิร์ฟเวอร์ไม่ใช้ช่องนี้กับเอกสารขาย */
+      _toggleActualPaidRow(show) {
+        ['rowActualPaidLabel', 'rowActualPaidInput'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.style.display = show ? (id === 'rowActualPaidInput' ? 'flex' : '') : 'none';
+        });
       },
 
       /** แสดงยอดมัดจำที่เลือกหัก (จะ apply ตอน "บันทึกและอนุมัติ") ใน totals box —
@@ -7996,6 +8019,10 @@
         if (certSection) certSection.style.display = 'none';
         // reset ส่วนลดท้ายบิล สำหรับเอกสารใหม่
         if (document.getElementById('fBillDiscount')) document.getElementById('fBillDiscount').value = 0;
+        // รอบ 193: ผลต่างปัดเศษ + ยอดชำระจริง ห้ามค้างจากใบก่อน · แถวยอดชำระจริงแสดงเฉพาะฝั่งซื้อ
+        { const fr = document.getElementById('fRoundingAdjustment'); if (fr) fr.value = 0; }
+        { const fa = document.getElementById('fActualPaidAmount'); if (fa) fa.value = ''; }
+        this._toggleActualPaidRow(isExpense);
         if (document.getElementById('fBillDiscountMode')) document.getElementById('fBillDiscountMode').value = 'amt';
         document.getElementById('linesBody').innerHTML = '';
         this.lineCount = 0;
@@ -8175,6 +8202,10 @@
           _setDate('fOwnershipTransferDate', d.ownershipTransferDate);
           _setDate('fServiceUsedDate', d.serviceUsedDate);
           const fBn = document.getElementById('fBookingNumber'); if (fBn) fBn.value = d.bookingNumber || '';
+          // รอบ 193 — echo ที่เก็บไว้กลับเข้าฟอร์ม (ไม่งั้นเปิดแก้แล้วบันทึก ค่าหายเงียบ — กฎเหล็ก #4 A)
+          { const fr = document.getElementById('fRoundingAdjustment'); if (fr) fr.value = Number(d.roundingAdjustment || 0); }
+          { const fa = document.getElementById('fActualPaidAmount'); if (fa) fa.value = d.actualPaidAmount != null ? d.actualPaidAmount : ''; }
+          this._toggleActualPaidRow(linesTbl ? linesTbl.dataset.docSide === 'expense' : false);
           const fIvao = document.getElementById('fInputVatAccountCodeOverride');
           if (fIvao) fIvao.value = d.inputVatAccountCodeOverride || '';
           const fSin = document.getElementById('fSupplierInvoiceNumber');
@@ -8752,6 +8783,17 @@
           ownershipTransferDate: document.getElementById('fOwnershipTransferDate')?.value || null,
           serviceUsedDate: document.getElementById('fServiceUsedDate')?.value || null,
           bookingNumber: _txt('fBookingNumber'),
+          // รอบ 193: ผลต่างปัดเศษ (ว่าง = 0 · 0 = ไม่มี/ล้าง) + ยอดชำระจริง (สร้าง: ว่าง = ไม่ส่ง · แก้ไข: ว่าง = 0 = ล้าง)
+          roundingAdjustment: (() => {
+            const n = parseFloat(document.getElementById('fRoundingAdjustment')?.value);
+            return Number.isFinite(n) ? n : 0;
+          })(),
+          ...(() => {
+            const raw = (document.getElementById('fActualPaidAmount')?.value || '').trim();
+            if (raw === '') return this.editingId ? { actualPaidAmount: 0 } : {};
+            const n = parseFloat(raw);
+            return Number.isFinite(n) ? { actualPaidAmount: n } : {};
+          })(),
           contactId,
           // เลขใบกำกับเดิมนอกระบบ (CN/DN) ชนะช่องอ้างอิงทั่วไป — ใช้ผ่าน hard gate
           // §86/9-10 และพิมพ์บนกระดาษ
@@ -9615,11 +9657,15 @@
               ${Number(d.billDiscountAmount || 0) > 0 ? `
               <div class="text-sm">ยอดรวมก่อนส่วนลดท้ายบิล: <strong>${Layout.money(Number(d.subTotal) + Number(d.billDiscountAmount))}</strong></div>
               <div class="text-sm">ส่วนลดท้ายบิล${Number(d.billDiscountPercent || 0) > 0 ? ` (${d.billDiscountPercent}%)` : ''}: <strong>-${Layout.money(d.billDiscountAmount)}</strong></div>` : ''}
+              ${Number(d.roundingAdjustment || 0) !== 0 ? `
+              <div class="text-sm" title="เศษสตางค์ระหว่าง จำนวน × ราคาต่อหน่วย กับยอดบนกระดาษ — ลงบัญชี 54960">ผลต่างจากการปัดเศษ: <strong>${Number(d.roundingAdjustment) > 0 ? '+' : '-'}${Layout.money(Math.abs(Number(d.roundingAdjustment)))}</strong></div>` : ''}
               <div class="text-sm">ยอดรวมก่อน VAT${Number(d.billDiscountAmount || 0) > 0 ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `
               <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>` : ''}
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
+              ${d.actualPaidAmount != null ? `
+              <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}
               ${Number(d.depositAppliedAmount || 0) > 0 ? `
               <div class="text-sm" style="color:#0369a1">หักเงินมัดจำที่รับไว้: <strong>-${Layout.money(d.depositAppliedAmount)}</strong></div>
               <div class="text-sm font-semibold" style="color:#0369a1">รับชำระสุทธิ: ${Layout.money(Number(d.totalAmount) - Number(d.depositAppliedAmount))}</div>` : ''}
@@ -10870,6 +10916,14 @@
                   <label class="form-label">ค่าธรรมเนียมหักจากยอดโอน — ถ้ามี <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(marketplace/gateway/ธนาคาร — เอกสารถูกล้างที่ ยอดรับ+ค่าธรรมเนียม)</span></label>
                   <input id="rpFee" class="form-input" type="number" step="0.01" min="0" placeholder="0.00">
                 </div>
+                <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): ฝั่งซื้อ — ใบกำกับคงยอดเต็ม ส่วนต่างกับเงินที่จ่ายจริงลงเป็นบรรทัดปรับ -->
+                <div id="rpSettleRow" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px 12px">
+                  <div class="form-label" style="color:#9a3412">บรรทัดปรับส่วนต่าง (ยอดตามใบ ↔ เงินที่จ่ายจริง) — ถ้ามี</div>
+                  <div class="form-help" style="color:#9a3412">+ = จ่ายเพิ่มจากยอดหนี้ (เช่น ค่าส่ง → 51120) · − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (เช่น คูปองแพลตฟอร์ม → 51150) · ยอดที่ปิดหนี้ = จำนวนเงินที่จ่าย − ผลรวมบรรทัดปรับ</div>
+                  <div id="rpSettleLines" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
+                  <button type="button" class="btn btn-sm btn-secondary" id="rpSettleAdd" style="margin-top:6px">+ เพิ่มบรรทัดปรับ</button>
+                  <div id="rpSettleHint" class="form-help" style="color:#9a3412;margin-top:4px"></div>
+                </div>
                 <div class="form-group">
                   <label class="form-label">เลขอ้างอิง (slip/เช็ค) — ถ้ามี</label>
                   <input id="rpRef" class="form-input" type="text" placeholder="เลขที่ใบโอน, slip, เช็ค ฯลฯ">
@@ -10902,6 +10956,29 @@
         document.getElementById('rpFee').value = '';
         document.getElementById('rpNotes').value = '';
         document.getElementById('rpMethod').value = 'BankTransfer';
+        // รอบ 193: บรรทัดปรับส่วนต่าง — เฉพาะเอกสารตั้งหนี้ฝั่งซื้อ (เซิร์ฟเวอร์รับเฉพาะ PurchaseInvoice/Expense)
+        const _settleDoc = this._currentDoc?.documentType;
+        const _settleAllowed = (_settleDoc === 'PurchaseInvoice' || _settleDoc === 'Expense') && (currency || 'THB') === 'THB';
+        const rpSettleRow = document.getElementById('rpSettleRow');
+        const rpSettleLines = document.getElementById('rpSettleLines');
+        if (rpSettleLines) rpSettleLines.innerHTML = '';
+        if (rpSettleRow) rpSettleRow.style.display = _settleAllowed ? 'block' : 'none';
+        const _settleRefresh = () => this._rpSettleRefreshHint(amountEl, balanceDue);
+        const rpSettleAdd = document.getElementById('rpSettleAdd');
+        if (rpSettleAdd) rpSettleAdd.onclick = () => { this._rpSettleAddRow('', '', '', _settleRefresh); _settleRefresh(); };
+        if (_settleAllowed && this._currentDoc?.actualPaidAmount != null) {
+          // ยอดชำระจริงที่เก็บไว้ (สแกน [PAY≠TOTAL]) + ข้อเสนอบรรทัดปรับจากกระดาษ — ผู้ใช้ตรวจแล้วกดบันทึกคลิกเดียว
+          amountEl.value = Number(this._currentDoc.actualPaidAmount).toFixed(2);
+          const _apiSettle = Layout.api();
+          _apiSettle?.getOcrSettlementProposal?.(docId).then(r => {
+            const plan = r?.data;
+            if (!plan || !Array.isArray(plan.lines)) return;
+            plan.lines.forEach(l => this._rpSettleAddRow(l.accountCode || '', Number(l.amount || 0).toFixed(2), l.reason || '', _settleRefresh));
+            _settleRefresh();
+          }).catch(() => { /* ไม่มีข้อเสนอ = ผู้ใช้กรอกเอง */ });
+        }
+        amountEl.onchange = _settleRefresh;
+        _settleRefresh();
         // ออกใบเสร็จรับเงิน — เฉพาะฝั่งขาย (ลูกค้าจ่ายเรา). ฝั่งซื้อ (PV/Expense) ซ่อน
         const _rpDt = this._currentDoc?.documentType;
         const _salesSide = _rpDt === 'Invoice' || _rpDt === 'TaxInvoice' || _rpDt === 'DebitNote';
@@ -11049,7 +11126,10 @@
           const reference = (document.getElementById('rpRef').value || '').trim() || null;
           const notes = (document.getElementById('rpNotes').value || '').trim() || null;
           if (isNaN(amount) || amount <= 0) { Layout.toast('จำนวนเงินไม่ถูกต้อง', 'error'); return; }
-          if (amount > balanceDue + 0.01) { Layout.toast('จำนวนเงินมากกว่ายอดค้างชำระ', 'error'); return; }
+          // รอบ 193: มีบรรทัดปรับ ⇒ ยอดที่ปิดหนี้ = เงินที่จ่าย − Σ บรรทัดปรับ (เซิร์ฟเวอร์ตรวจซ้ำด้วยตัวตัดสินกลาง)
+          const settleAdjustments = (rpSettleRow && rpSettleRow.style.display !== 'none') ? this._rpSettleRead() : [];
+          const settleNet = settleAdjustments.reduce((s2, a) => s2 + a.amount, 0);
+          if (amount - settleNet > balanceDue + 0.01) { Layout.toast('ยอดที่ปิดหนี้มากกว่ายอดค้างชำระ', 'error'); return; }
           if (!paymentDate) { Layout.toast('กรุณาระบุวันที่ชำระ', 'error'); return; }
           const api = Layout.api(); if (!api) return;
           // ใบแจ้งหนี้มี VAT + รับ "บางส่วน" → tax point §78/1 เกิดเต็มจำนวนที่งวด
@@ -11095,6 +11175,8 @@
               // ออกใบเสร็จรับเงินหลักฐานคู่กับการชำระ (default เปิดฝั่งขาย) —
               // backend สร้าง Receipt อ้างอิงเอกสาร ไม่ลง JE ซ้ำ ลงวันที่รับเงิน
               issueReceiptDocument: document.getElementById('rpIssueReceipt')?.checked || false,
+              // รอบ 193: บรรทัดปรับส่วนต่าง (ว่าง = ไม่ส่งคีย์ — พฤติกรรมเดิม)
+              ...(settleAdjustments.length ? { settlementAdjustments: settleAdjustments } : {}),
             });
             const _issued = document.getElementById('rpIssueReceipt')?.checked;
             Layout.toast(_issued
@@ -11112,6 +11194,53 @@
         wrap.classList.add('active');
         setTimeout(() => amountEl.focus(), 50);
       },
+      /** รอบ 193: เพิ่มแถวบรรทัดปรับในหน้าบันทึกการชำระ (สร้างด้วย DOM — ค่าผู้ใช้/เซิร์ฟเวอร์ไม่ผ่าน innerHTML) */
+      _rpSettleAddRow(code, amount, reason, onChange) {
+        const host = document.getElementById('rpSettleLines');
+        if (!host) return;
+        const row = document.createElement('div');
+        row.className = 'rp-settle-line';
+        row.style.cssText = 'display:grid;grid-template-columns:90px 100px 1fr 28px;gap:6px;align-items:center';
+        const mk = (type, value, placeholder, cls) => {
+          const el = document.createElement('input');
+          el.type = type; el.className = 'form-input ' + cls; el.value = value; el.placeholder = placeholder;
+          if (type === 'number') el.step = '0.01';
+          el.addEventListener('input', () => onChange && onChange());
+          return el;
+        };
+        row.appendChild(mk('text', code, 'ผัง เช่น 51120', 'rp-settle-code'));
+        row.appendChild(mk('number', amount, '+37 / -135', 'rp-settle-amount'));
+        row.appendChild(mk('text', reason, 'เหตุผล เช่น ค่าจัดส่ง', 'rp-settle-reason'));
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'btn btn-sm btn-secondary'; del.textContent = '×';
+        del.title = 'ลบบรรทัดนี้';
+        del.onclick = () => { row.remove(); onChange && onChange(); };
+        row.appendChild(del);
+        host.appendChild(row);
+      },
+
+      /** อ่านบรรทัดปรับที่กรอกครบ (ผัง + ยอด ≠ 0) — แถวที่ว่างทั้งแถวข้ามไป */
+      _rpSettleRead() {
+        return [...document.querySelectorAll('#rpSettleLines .rp-settle-line')].map(r => ({
+          accountCode: (r.querySelector('.rp-settle-code')?.value || '').trim(),
+          amount: parseFloat(r.querySelector('.rp-settle-amount')?.value || ''),
+          reason: (r.querySelector('.rp-settle-reason')?.value || '').trim() || null,
+        })).filter(a => a.accountCode && Number.isFinite(a.amount) && a.amount !== 0);
+      },
+
+      /** ข้อความใต้บรรทัดปรับ: ยอดที่ปิดหนี้ = เงินที่จ่าย − Σ บรรทัดปรับ (แสดงผลเท่านั้น — ตัวตัดสินอยู่ที่เซิร์ฟเวอร์) */
+      _rpSettleRefreshHint(amountEl, balanceDue) {
+        const hint = document.getElementById('rpSettleHint');
+        if (!hint) return;
+        const adj = this._rpSettleRead();
+        if (!adj.length) { hint.textContent = ''; return; }
+        const paid = parseFloat(amountEl?.value || '0') || 0;
+        const net = adj.reduce((s2, a) => s2 + a.amount, 0);
+        const settled = Math.round((paid - net) * 100) / 100;
+        hint.textContent = `ยอดที่ปิดหนี้ ${Layout.money(settled)} (จ่าย ${Layout.money(paid)} ${net >= 0 ? '−' : '+'} ${Layout.money(Math.abs(net))}) · `
+          + (Math.abs(settled - balanceDue) < 0.005 ? 'ปิดยอดค้างครบ' : `ยอดค้างชำระ ${Layout.money(balanceDue)}`);
+      },
+
       /** เสนอออกใบเสร็จรับเงิน (Receipt) หลังชำระครบ — แปลง Invoice/TaxInvoice
        *  → Receipt อ้างอิงเอกสารเดิม. VAT รับรู้ที่ใบกำกับแล้ว ไม่คิดซ้ำ. */
       async _offerIssueReceipt(docId, dt) {

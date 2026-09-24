@@ -92,6 +92,16 @@ public class Payment : TenantEntity
     /// <summary>ผังบัญชีค่าธรรมเนียม — null = default 53xxx/ค้นชื่อ "ค่าธรรมเนียม".</summary>
     public Guid? FeeAccountId { get; set; }
 
+    /// <summary>ยอดหนี้ที่การชำระนี้ปิดด้วย "บรรทัดปรับ" (ไม่ใช่เงินสด) = ยอดที่ปิด − <c>Amount</c> — รอบ 193 เจ้าของข้อ 1/3
+    /// <para>Shopee: จ่าย 438 · ค่าส่ง +37 (Dr 51120) · คูปอง −135 (Cr 51150) ⇒ 98 ⇒ เอกสาร 536 ปิดครบ ·
+    /// เอกสาร <c>PaidAmount</c> บวก/ลบ ยอดนี้คู่กับ <c>Amount</c> ทั้งตอนบันทึกและตอนยกเลิก · 0 = ไม่มีบรรทัดปรับ (พฤติกรรมเดิม)
+    /// · ห้ามปนกับ <see cref="FeeAmount"/> (ค่าธรรมเนียมฝั่งขาย — คนละความหมาย)</para></summary>
+    public decimal SettlementAdjustmentAmount { get; set; }
+
+    /// <summary>บรรทัดปรับทั้งชุดที่บันทึกคู่การชำระนี้ (JSON ของ <c>Helpers/SettlementAdjustmentLine</c>) — ไว้แสดง/ตรวจย้อน
+    /// (ขา JE อยู่ในสมุดรายวันของการชำระแล้ว · null = ไม่มี)</summary>
+    public string? SettlementAdjustmentsJson { get; set; }
+
     /// <summary>ใบเสร็จรับเงิน (Document) ที่ออกคู่กับการชำระนี้ (ตอนติ๊ก "ออก
     /// ใบเสร็จรับเงิน"). ตอน void payment → ใบเสร็จนี้ถูก void ตามด้วย.</summary>
     public Guid? ReceiptDocumentId { get; set; }

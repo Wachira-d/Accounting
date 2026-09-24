@@ -144,7 +144,12 @@ public record CreateDocumentRequest(
     // ให้ priority เหนือ CreatedBy; ช่อง "ผู้มีอำนาจลงนาม" (slot 1) คงเป็นกรรมการ.
     // เหมือน integration PV/invoice. null = fallback CreatedBy user เหมือนเดิม.
     string? PreparerName = null,
-    string? PreparerSignatureBase64 = null);
+    string? PreparerSignatureBase64 = null,
+    // รอบ 193 (เจ้าของข้อ 1/4): ยอดชำระจริงที่ต่างจากยอดเอกสาร (ใบกำกับ 536 · จ่าย 438) — null = จ่ายเต็มตามยอด
+    // ใบสำคัญจ่าย: ส่วนต่างต้องอธิบายด้วย adjusting lines (Helpers/PaymentSettlementAdjustment) ก่อนอนุมัติ
+    decimal? ActualPaidAmount = null,
+    // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ (|x| < 1) — SubTotal = Σ บรรทัด + ค่านี้ · null/0 = ไม่มี
+    decimal? RoundingAdjustment = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -300,7 +305,11 @@ public record UpdateDocumentRequest(
     // เก็บลง snapshot ก่อน reset เสมอ ไม่หาย). ใบที่ยังไม่ถูกยอมรับ = ไม่ต้องส่ง
     bool? AcknowledgeRevisionResetsAcceptance = null,
     // เหตุผลการแก้ (บันทึกลงประวัติ revision — เช่น "ลูกค้าต่อราคา")
-    string? RevisionReason = null);
+    string? RevisionReason = null,
+    // รอบ 193: ยอดชำระจริง — null = ไม่แตะ · 0 = ล้าง (จ่ายเต็มตามยอด) · > 0 = ตั้งค่า
+    decimal? ActualPaidAmount = null,
+    // รอบ 193: ผลต่างจากการปัดเศษ — null = ไม่แตะ (ค่าเดิมยังอยู่ · SubTotal คิดใหม่ = Σ บรรทัด + ค่านี้) · 0 = ล้าง
+    decimal? RoundingAdjustment = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -835,7 +844,11 @@ public record DocumentResponse(
     /// <summary>หัวเอกสารถูกลดจาก "ใบกำกับภาษีอย่างย่อ" เป็น "ใบเสร็จรับเงิน" เพราะบริษัทยังไม่มีสิทธิ์ §86/6
     /// — ข้อความไทยพร้อมทางไปต่อ (<c>PdfGenerationService.AbbreviatedDowngradeNotice</c>) ·
     /// null = ไม่ได้ถูกลด หรือเส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ)</summary>
-    string? TaxInvoiceTitleNotice = null);
+    string? TaxInvoiceTitleNotice = null,
+    /// <summary>ยอดชำระจริงที่ต่างจากยอดเอกสาร (รอบ 193 — echo ให้ฟอร์ม hydrate · null = จ่ายเต็มตามยอด)</summary>
+    decimal? ActualPaidAmount = null,
+    /// <summary>ผลต่างจากการปัดเศษ (SubTotal = Σ บรรทัด + ค่านี้) — echo ให้ฟอร์ม/หน้ารายละเอียดแสดง · 0 = ไม่มี</summary>
+    decimal RoundingAdjustment = 0m);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
@@ -1348,7 +1361,16 @@ public record CreatePaymentRequest(
     /// default true (ฝั่งขาย Invoice/TaxInvoice/DebitNote). ใบเสร็จนี้ผูกกับ
     /// Payment, ลงวันที่ชำระ, ไม่ลง JE ซ้ำ (Payment ลง Dr เงินสด/Cr ลูกหนี้ แล้ว)
     /// และไม่คิด VAT ซ้ำ (VAT อยู่ที่ใบกำกับ). null = true.</summary>
-    bool? IssueReceiptDocument = null);
+    bool? IssueReceiptDocument = null,
+    /// <summary>รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): บรรทัดปรับส่วนต่าง "ยอดหนี้ตามใบ ↔ เงินที่จ่ายจริง" — เฉพาะเอกสารตั้งหนี้
+    /// ฝั่งซื้อ (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) · <c>Amount</c> = เงินที่จ่ายจริง · ยอดหนี้ที่ปิด = Amount − Σ บรรทัดปรับ
+    /// (Shopee: จ่าย 438 · 51120 +37 ค่าส่ง · 51150 −135 คูปอง ⇒ ปิดหนี้ 536) · ตัวตรวจ Helpers/PaymentSettlementAdjustment ·
+    /// null/ว่าง = พฤติกรรมเดิม</summary>
+    List<PaymentSettlementAdjustmentRequest>? SettlementAdjustments = null);
+
+/// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
+/// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>
+public record PaymentSettlementAdjustmentRequest(string AccountCode, decimal Amount, string? Reason = null);
 
 public record PaymentAllocationRequest(
     Guid DocumentId,
@@ -1414,7 +1436,11 @@ public record PaymentResponse(
     ///
     /// <para>เซิร์ฟเวอร์คำนวณด้วย <c>DocumentService.ComputeServedAsReceipt</c> ตัวเดียว
     /// กับที่ตัดสินหัวกระดาษ — ห้ามให้ JS เดาจากชนิด/ยอดเอง (สำเนามือ = drift)</para></summary>
-    bool SourceServesAsReceipt = false);
+    bool SourceServesAsReceipt = false,
+    /// <summary>รอบ 193: ยอดหนี้ที่การชำระนี้ปิดด้วยบรรทัดปรับ (ไม่ใช่เงินสด) — ยอดที่ปิดทั้งหมด = Amount + ค่านี้ · 0 = ไม่มี</summary>
+    decimal SettlementAdjustmentAmount = 0m,
+    /// <summary>รอบ 193: บรรทัดปรับทั้งชุด (JSON — AccountCode/Amount/Reason) · null = ไม่มี</summary>
+    string? SettlementAdjustmentsJson = null);
 
 
 /// <summary>ผลของการ "ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว"

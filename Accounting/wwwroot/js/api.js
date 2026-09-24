@@ -1377,6 +1377,16 @@ const API = {
       ocrPredecessorCandidates: (scanId) => API.get(`${base}/ocr/${scanId}/predecessor-candidates`),
       ocrLinkPredecessor: (scanId, documentId) => API.post(`${base}/ocr/${scanId}/link-predecessor`, { documentId }),
       ocrUnlinkPredecessor: (scanId) => API.del(`${base}/ocr/${scanId}/link-predecessor`),
+      // รอบ 193: ข้อเสนอบรรทัดปรับส่วนต่างยอดชำระของเอกสารที่มาจากสแกน (หน้าบันทึกการชำระ) + รายงานตัวเลขเก่าที่ผิด (อ่านอย่างเดียว)
+      getOcrSettlementProposal: (documentId) => API.get(`${base}/ocr/documents/${documentId}/settlement-proposal`),
+      getOcrAmountAudit: (params = {}) => {
+        const qs = new URLSearchParams();
+        if (params.from) qs.set('from', params.from);
+        if (params.to) qs.set('to', params.to);
+        if (params.take) qs.set('take', String(params.take));
+        const q = qs.toString();
+        return API.get(`${base}/ocr/amount-audit${q ? '?' + q : ''}`);
+      },
       // Webhooks
       getWebhooks: () => API.get(`${base}/webhooks`),
       createWebhook: (d) => API.post(`${base}/webhooks`, d),

@@ -454,6 +454,19 @@ public class Document : TenantEntity
     public decimal PaidAmount { get; set; }
     public decimal BalanceDue { get; set; }
 
+    /// <summary>ผลต่างจากการปัดเศษระดับเอกสาร (มีเครื่องหมาย · |x| &lt; 1 บาท) — รอบ 193 คำตัดสินเจ้าของข้อ 8
+    /// <para>สัญญา: <c>SubTotal = Σ Line.Amount + RoundingAdjustment</c> · <c>TotalAmount = SubTotal + VAT − WHT</c> (สูตรเดิม)
+    /// — บรรทัดยังเป็น จำนวน × ราคาต่อหน่วย (§86/4) ขณะที่ฐาน/ยอดรวมหัวเอกสารตรงกระดาษ (Lazada 1,228.04 × 4 = 4,912.16 ·
+    /// พิมพ์ 4,912.15 ⇒ −0.01) · JE ลงส่วนต่างที่ผัง <c>Helpers/DocumentRounding.AccountCode</c> · 0 = พฤติกรรมเดิม</para></summary>
+    public decimal RoundingAdjustment { get; set; }
+
+    /// <summary>ยอดชำระจริง (Payment Amount) ที่ต่างจากยอดเอกสาร — รอบ 193 คำตัดสินเจ้าของข้อ 1/4
+    /// <para>ใบกำกับ = เอกสารตั้งหนี้ยอดเต็มตามใบ (Shopee 536) · เงินที่จ่ายจริง (438) เก็บที่นี่ · null = จ่ายเต็มตามยอดเอกสาร
+    /// (พฤติกรรมเดิม) · ใบสำคัญจ่ายที่จ่ายในตัว: ขาเงินสดของ JE = ช่องนี้ และส่วนต่างต้องถูกอธิบายด้วย adjusting lines
+    /// (ค่าส่ง Dr 51120 · คูปอง Cr 51150) — ตัวตัดสิน <c>Helpers/PaymentSettlementAdjustment</c> ·
+    /// เอกสารตั้งหนี้: เป็นข้อเสนอยอดเงินของการชำระ (บรรทัดปรับอยู่ที่ <c>Payment</c>)</para></summary>
+    public decimal? ActualPaidAmount { get; set; }
+
     // Notes
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }

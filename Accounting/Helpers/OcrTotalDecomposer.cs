@@ -203,6 +203,16 @@ public static class OcrTotalDecomposer
         return g.Groups.Where(x => x.Net > 0m).ToList();
     }
 
+    /// <summary>คำเตือน (ไม่บล็อก) ของใบที่ไม่มีรายการสินค้า — ผู้เขียนคือเส้นสร้างบรรทัดสรุปต่อกลุ่มภาษี</summary>
+    public const string NoItemsTag = "[NO-ITEMS]";
+
+    /// <summary>ข้อความคำเตือนเมื่อสร้าง <see cref="SummaryGroupLines"/> (คำตัดสินเจ้าของ รอบ 193 ข้อ 5: ยอมรับบรรทัดสรุปต่อกลุ่มภาษี
+    /// + เตือนเรื่องสต็อก) · <b>ไม่อยู่ใน</b> <see cref="OcrPostingReadiness.BlockingTags"/> — ยอด/ภาษีถูกตามกระดาษแล้ว
+    /// ที่ขาดคือรายการสินค้าสำหรับตัดสต็อก ซึ่งเป็นงานที่ผู้ใช้เลือกทำเอง</summary>
+    public static string NoItemsNote(IReadOnlyList<OcrVatGroup> groups)
+        => $"{NoItemsTag} ไม่มีรายการสินค้า หากต้องตัดสต็อกให้ครบถ้วน กรุณาบันทึกรายการย่อยเอง "
+            + $"(ระบบสร้างบรรทัดสรุป {groups.Count} บรรทัดตามกลุ่มภาษีที่กระดาษพิมพ์ — ยอดและภาษีตรงกระดาษแล้ว)";
+
     private static IReadOnlyList<OcrPaymentAdjustment> ReadAdjustments(string rawText, decimal discount)
     {
         var list = new List<OcrPaymentAdjustment>();
