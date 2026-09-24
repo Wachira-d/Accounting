@@ -705,7 +705,7 @@ public partial class LodgingService
         // (เดิม: VAT ทันทีรับรู้รายได้เกินจริง · สองโหมดที่เหลือ Apply ล้มหลังประทับเลขใบ ⇒ การจองค้าง "เช็คอิน" ถาวร)
         var full = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m);
         var depositPlan = LodgingDepositSettlement.PlanCheckout(deposits, full.Net,
-            deducted => DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, deducted).Total);
+            deducted => DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, deducted).Total);
 
         var create = new CreateDocumentRequest(
             DocumentType: docType, DocumentDate: DateTime.UtcNow, DueDate: request.CollectBalanceNow ? null : DateTime.UtcNow.AddDays(30),
@@ -714,9 +714,10 @@ public partial class LodgingService
             Lines: lines,
             // มัดจำที่ออกใบกำกับแล้ว (VAT เข้า ภ.พ.30 เดือนที่รับ): หักฐานออกจากฐานภาษีใบนี้ (รูปแบบ B ·
             // DOCUMENT_FLOW §2.3) ⇒ VAT ใบนี้ = VAT ของยอดคงเหลือเท่านั้น · renderer พิมพ์ป้าย "หักมูลค่ามัดจำ
-            // ตามใบกำกับภาษี {เลข}" จากคู่ BillDiscount + DepositAppliedRef (DepositAppliedAmount = 0)
+            // ตามใบกำกับภาษี {เลข}" จากคู่ DepositBaseDeducted + DepositAppliedRef · ฝ่ายค้านรอบสาม R3-1: ช่องของตัวเอง
+            // (ไม่ใช่ BillDiscountAmount ซึ่งเป็นส่วนลดการค้า) ⇒ ตอนอนุมัติรับรู้มัดจำเท่าฐานนี้เท่านั้น
             DepositAppliedRef: depositPlan.DeductionRef,
-            BillDiscountAmount: depositPlan.BaseDeducted > 0m ? depositPlan.BaseDeducted : null,
+            DepositBaseDeducted: depositPlan.BaseDeducted > 0m ? depositPlan.BaseDeducted : null,
             PricesIncludeVat: prop.PricesIncludeVat,
             BankAccountId: request.BankAccountId,
             BranchId: prop.BranchId,
@@ -776,7 +777,7 @@ public partial class LodgingService
                 && j.Status == JournalEntryStatus.Posted && !j.IsDeleted)
             .SumAsync(j => (decimal?)j.TotalDebit) ?? 0m;
         var plan = LodgingDepositSettlement.PlanCheckout(deposits,
-            Math.Max(0m, finalDoc.BillDiscountAmount - realizedForFinal), _ => finalDoc.BalanceDue, finalId);
+            Math.Max(0m, finalDoc.DepositBaseDeducted - realizedForFinal), _ => finalDoc.BalanceDue, finalId);
         AppendInternal(r, $"ทำเช็คเอาต์ที่ค้างต่อ (ใบ {finalDoc.DocumentNumber} ออกแล้ว) — รับรู้ฐาน {plan.BaseDeducted:N2} · ตัดชำระ {plan.GrossApplied:N2} · ค้างคืน {plan.ExcessGross:N2}");
         return await SettleCheckOutAsync(companyId, r, finalDoc, plan, request, userId);
     }

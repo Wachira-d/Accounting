@@ -159,7 +159,7 @@ public class OcrV1Controller : PublicApiControllerBase
         var askedIds = req.Fields.Where(x => x.FeedbackId.HasValue).Select(x => x.FeedbackId!.Value).Distinct().ToList();
         var ownIds = askedIds.Count == 0 ? new HashSet<Guid>()
             : (await Db.AiSuggestionFeedbacks.AsNoTracking()
-                .Where(x => x.CompanyId == ctx.CompanyId && askedIds.Contains(x.Id))
+                .Where(x => x.CompanyId == ctx!.CompanyId && askedIds.Contains(x.Id))
                 .Select(x => x.Id).ToListAsync(ct)).ToHashSet();
 
         var recorded = 0;

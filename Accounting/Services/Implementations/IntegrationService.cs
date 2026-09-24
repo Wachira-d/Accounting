@@ -712,12 +712,17 @@ public class IntegrationService : IIntegrationService
             // return it instead of creating a duplicate. This makes re-syncs safe.
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
+                // ฝ่ายค้านรอบสาม R3-6: หาใบที่ "ยังไม่ยกเลิก" ในคิวรีเอง (เดิม FirstOrDefault ไม่มีลำดับแล้วค่อยข้ามใบ Voided ⇒
+                // มีทั้งใบ Voided (เช่นจากตาข่าย N2) และใบใช้งานของ ExternalRef เดียวกัน การยิงซ้ำที่ได้ใบ Voided กลับมา = สร้างใบกำกับซ้ำ)
                 var existing = await _db.Documents
-                    .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    .Where(d => d.CompanyId == companyId
                         && d.Reference == request.ExternalRef
                         && !d.IsDeleted
-                        && d.DocumentType == DocumentType.TaxInvoice);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                        && d.DocumentType == DocumentType.TaxInvoice
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     // ── Resync update: partner ส่งข้อมูลแก้ไขมาพร้อม flag ──
                     if (request.ResyncUpdate)
@@ -727,6 +732,12 @@ public class IntegrationService : IIntegrationService
                             return await RejectTaxedDrivesAsync(log, integrationId, sw, resyncReject, existing.Id, existing.DocumentNumber);
                         return await ResyncUpdateInvoiceAsync(companyId, integrationId, existing, request, log, sw);
                     }
+
+                    // B1: ใบที่ตาข่ายยกเลิกไม่สำเร็จ (อนุมัติแต่ไม่มี JE) — ยิงซ้ำต้องล้มดังด้วยเหตุเดิม ไม่ใช่ตอบ "มีอยู่แล้ว" เงียบ ๆ
+                    if (existing.InternalNotes != null && existing.InternalNotes.Contains(TaxedDrivesVoidFailedMarker, StringComparison.Ordinal))
+                        return await RejectTaxedDrivesAsync(log, integrationId, sw,
+                            $"{TaxedDrivesVoidFailedMarker} — ใบ {existing.DocumentNumber} ค้างอนุมัติโดยไม่มีรายการบัญชี ต้องยกเลิก/ออกใบลดหนี้ด้วยมือก่อนส่งใหม่",
+                            existing.Id, existing.DocumentNumber);
 
                     // ยิงซ้ำ (idempotent): เอกสารมีอยู่แล้ว + JE โพสต์ครบตั้งแต่ create
                     // (ขายเงินสด = clean JE / ตั้งหนี้ = mapping JE). ถ้า create ล้มทั้ง
@@ -1080,12 +1091,38 @@ public class IntegrationService : IIntegrationService
                     // ตาข่าย (ด่านก่อนออกเลขอ่านจากช่องของใบมัดจำ · AutoPost อ่านจาก GL — ถ้าสองชั้นเห็นต่าง): **ห้ามถอยไปตั้งหนี้**
                     // และห้ามปล่อยใบ Approved ที่ไม่มี JE (ภ.พ.30 นับ VAT ทั้งที่ GL ไม่มี · รับชำระได้ · ยิงซ้ำตอบ "Already synced")
                     // ⇒ ยกเลิกใบ (เลขคงอยู่ — ไม่มีช่องว่างของเลข §86/4) + ธงบนใบ + log Failed + คำตอบ success=false
+                    // ฝ่ายค้านรอบสาม B1: ยกเลิก**ก่อน** แล้วค่อยประทับหมายเหตุ "ยกเลิกอัตโนมัติ" เมื่อยกเลิกสำเร็จจริง (R1 — ห้ามประทับ
+                    // สถานะที่ไม่ได้เกิด) · ยกเลิกล้ม (งวดยื่นแล้ว/งวดบัญชีปิด) ⇒ ล้มดัง 3 ที่ด้วยข้อความที่ตรงความจริง:
+                    // ใบยังอนุมัติอยู่ + ไม่มี JE ⇒ ต้องยกเลิก/ออกใบลดหนี้ด้วยมือ · ยิงซ้ำก็ยังล้ม (ดูด่าน idempotent ด้านบน)
+                    var voidedId = document.Id;
+                    var voidedNo = document.DocumentNumber;
+                    try
+                    {
+                        await _documentService!.VoidDocumentAsync(companyId, voidedId);
+                    }
+                    catch (Exception exVoid)
+                    {
+                        // void ล้มกลางทาง ⇒ สิ่งที่ค้างใน context ห้ามถูกบันทึกตามไปกับหมายเหตุ — ล้างแล้วอ่านใบใหม่
+                        _db.ChangeTracker.Clear();
+                        var stuck = await _db.Documents.FirstOrDefaultAsync(d => d.Id == voidedId && d.CompanyId == companyId);
+                        var stuckMsg = $"{TaxedDrivesVoidFailedMarker} — ใบ {voidedNo} ยังเป็นสถานะอนุมัติแต่ไม่มีรายการบัญชี "
+                            + $"(ยกเลิกไม่ได้เพราะ: {exVoid.Message}) · ต้องยกเลิกใบนี้ด้วยมือ หรือออกใบลดหนี้ถ้างวดภาษียื่นแล้ว "
+                            + "แล้วให้คู่ค้าส่งใหม่แบบหักมูลค่ามัดจำ (ก่อน VAT) · เหตุเดิม: " + exTiv.Message;
+                        if (stuck != null)
+                        {
+                            stuck.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(
+                                stuck.InternalNotes, "[" + exTiv.RuleCode + "] " + stuckMsg);
+                            await _db.SaveChangesAsync();
+                        }
+                        _logger.LogError(exVoid, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ลงบัญชีไม่ได้และยกเลิกอัตโนมัติไม่สำเร็จ ใบค้างอนุมัติไม่มี JE",
+                            voidedNo);
+                        return await RejectTaxedDrivesAsync(log, integrationId, sw, stuckMsg, voidedId, voidedNo);
+                    }
                     document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(
                         document.InternalNotes, "[" + exTiv.RuleCode + "] ยกเลิกอัตโนมัติ — " + exTiv.Message);
                     await _db.SaveChangesAsync();
-                    await _documentService!.VoidDocumentAsync(companyId, document.Id);
-                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ยกเลิกใบ ไม่ถอยไปตั้งหนี้", document.DocumentNumber);
-                    return await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, document.Id, document.DocumentNumber);
+                    _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ยกเลิกใบ ไม่ถอยไปตั้งหนี้", voidedNo);
+                    return await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, voidedId, voidedNo);
                 }
                 catch (Exception exCash)
                 {
@@ -1275,10 +1312,15 @@ public class IntegrationService : IIntegrationService
             // Idempotent re-sync: skip if same ExternalRef already created
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
-                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
-                    && d.Reference == request.ExternalRef && !d.IsDeleted
-                    && d.DocumentType == DocumentType.CreditNote);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                // R3-6 (คลาสเดียวกับใบกำกับ): ใบที่ยังไม่ยกเลิกก่อน — ใบ Voided ของ ExternalRef เดียวกันต้องไม่ทำให้สร้างซ้ำ
+                var existing = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.CreditNote
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
@@ -1409,10 +1451,15 @@ public class IntegrationService : IIntegrationService
             // Idempotent re-sync: skip if same ExternalRef already created
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
-                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
-                    && d.Reference == request.ExternalRef && !d.IsDeleted
-                    && d.DocumentType == DocumentType.DebitNote);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                // R3-6 (คลาสเดียวกับใบกำกับ): ใบที่ยังไม่ยกเลิกก่อน — ใบ Voided ของ ExternalRef เดียวกันต้องไม่ทำให้สร้างซ้ำ
+                var existing = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.DebitNote
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
@@ -3212,6 +3259,10 @@ public class IntegrationService : IIntegrationService
             + "หรือส่งมัดจำเป็นแบบภาษีรอเรียกเก็บ (depositOutputVatDeferred) · ไม่มีการสร้างเอกสาร/ออกเลข";
     }
 
+    /// <summary>ป้ายบนหมายเหตุภายในของใบขายเงินสดที่ลงบัญชีไม่ได้ (หักมัดจำออกใบกำกับแล้วแบบขับ JE) และตาข่ายยกเลิกไม่สำเร็จ —
+    /// ตัวเดียวที่ทั้งตัวเขียน (ตาข่าย) และตัวอ่าน (ด่านยิงซ้ำ) ใช้ (ฝ่ายค้านรอบสาม B1)</summary>
+    private const string TaxedDrivesVoidFailedMarker = "ลงบัญชีไม่ได้และยกเลิกอัตโนมัติไม่สำเร็จ";
+
     /// <summary>ล้มดัง 3 ที่ของใบที่ถูกปฏิเสธ: log Failed · คำตอบ success=false · (ถ้ามีใบ) ธงบนใบถูกเขียนโดยผู้เรียกแล้ว</summary>
     private async Task<InboundSyncResponse> RejectTaxedDrivesAsync(
         IntegrationSyncLog log, Guid integrationId, Stopwatch sw, string message, Guid? documentId, string? documentNumber)
@@ -3391,10 +3442,15 @@ public class IntegrationService : IIntegrationService
             // (→ Document.Reference) ก่อน ถ้าไม่มีก็ fallback ด้วย ExternalId จาก sync log
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
-                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
-                    && d.Reference == request.ExternalRef && !d.IsDeleted
-                    && d.DocumentType == DocumentType.Expense);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                // R3-6 (คลาสเดียวกับใบกำกับ): ใบที่ยังไม่ยกเลิกก่อน — ใบ Voided ของ ExternalRef เดียวกันต้องไม่ทำให้สร้างซ้ำ
+                var existing = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.Expense
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     if (request.ResyncUpdate)
                         return await ResyncUpdateExpenseAsync(companyId, integrationId, existing, request, log, sw);
@@ -3526,10 +3582,15 @@ public class IntegrationService : IIntegrationService
             // Idempotency: กัน retry สร้างใบสำคัญจ่ายซ้ำ
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
-                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
-                    && d.Reference == request.ExternalRef && !d.IsDeleted
-                    && d.DocumentType == DocumentType.PaymentVoucher);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                // R3-6 (คลาสเดียวกับใบกำกับ): ใบที่ยังไม่ยกเลิกก่อน — ใบ Voided ของ ExternalRef เดียวกันต้องไม่ทำให้สร้างซ้ำ
+                var existing = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.PaymentVoucher
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;
@@ -3793,10 +3854,15 @@ public class IntegrationService : IIntegrationService
             // Idempotency: กัน retry สร้างใบแทนหนังสือรับรองหักภาษีซ้ำ
             if (!string.IsNullOrEmpty(request.ExternalRef))
             {
-                var existing = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId
-                    && d.Reference == request.ExternalRef && !d.IsDeleted
-                    && d.DocumentType == DocumentType.CertificateInLieu);
-                if (existing != null && existing.Status != DocumentStatus.Voided)
+                // R3-6 (คลาสเดียวกับใบกำกับ): ใบที่ยังไม่ยกเลิกก่อน — ใบ Voided ของ ExternalRef เดียวกันต้องไม่ทำให้สร้างซ้ำ
+                var existing = await _db.Documents
+                    .Where(d => d.CompanyId == companyId
+                        && d.Reference == request.ExternalRef && !d.IsDeleted
+                        && d.DocumentType == DocumentType.CertificateInLieu
+                        && d.Status != DocumentStatus.Voided)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (existing != null)
                 {
                     log.Status = "Skipped";
                     log.CreatedDocumentId = existing.Id;

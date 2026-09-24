@@ -2137,8 +2137,10 @@ public partial class PdfGenerationService : IPdfGenerationService
             // บนกระดาษต้องโชว์ยอดก่อนหักท้ายบิล — ไม่งั้นบรรทัดขัดกันเอง
             // (1 × 19,650 − ส่วนลด 0 = 17,526.76 ??) และไม่ตรงหน้าแก้ไข. scale
             // กลับตามสัดส่วนที่เฉลี่ย; ส่วนลดแสดงรวมเป็นแถวเดียวในสรุปท้ายบิล
-            if (doc.BillDiscountAmount > 0 && doc.SubTotal > 0.005m && !inclVat && !IsDeferredVatDeposit(doc))
-                printedAmount = Math.Round(printedAmount * (doc.SubTotal + doc.BillDiscountAmount) / doc.SubTotal, 2);
+            // (รอบ 193 R3-1: ส่วนหักท้ายบิล = ส่วนลดการค้า + ฐานมัดจำออกใบกำกับแล้ว — ตัวรวมเดียวกับ QuestPDF)
+            var billDeductLine = Accounting.Helpers.DepositPolicyResolver.BillDeductionTotal(doc.BillDiscountAmount, doc.DepositBaseDeducted);
+            if (billDeductLine > 0 && doc.SubTotal > 0.005m && !inclVat && !IsDeferredVatDeposit(doc))
+                printedAmount = Math.Round(printedAmount * (doc.SubTotal + billDeductLine) / doc.SubTotal, 2, MidpointRounding.AwayFromZero);
             // รายการย่อย/บรรยายงาน (ไม่ระบุราคา) — ดูคอมเมนต์ใน native renderer
             var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
             sb.AppendLine("<tr>");
@@ -2164,22 +2166,27 @@ public partial class PdfGenerationService : IPdfGenerationService
         sb.AppendLine("<div class='summary'>");
         // ส่วนลดท้ายบิล: SubTotal เก็บเป็นยอด "หลังหักท้ายบิล" → แสดง "ยอดรวมก่อน VAT"
         // เป็นยอดก่อนหัก (SubTotal + BillDiscount) แล้วโชว์บรรทัด "ส่วนลดท้ายบิล"
-        var preBillSubTotal = doc.SubTotal + doc.BillDiscountAmount;
+        var billDeductTotal = Accounting.Helpers.DepositPolicyResolver.BillDeductionTotal(doc.BillDiscountAmount, doc.DepositBaseDeducted);
+        var preBillSubTotal = doc.SubTotal + billDeductTotal;
         // รอบ 193 (เจ้าของข้อ 8): ผลต่างจากการปัดเศษ — SubTotal = Σ บรรทัด + ค่านี้ ⇒ แสดงก่อน "รวมเงิน" ให้บรรทัดรวมได้ยอดนั้น
         // (คู่กับ DocumentRenderer — สอง renderer ห้าม drift)
         if (doc.RoundingAdjustment != 0m && !hideVatBreakdown)
             sb.AppendLine($"<div class='sum-row'><span>{L.TotalRounding}</span><span>{doc.RoundingAdjustment:+#,##0.00;-#,##0.00}</span></div>");
         if (template.ShowSubTotal && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalSubtotal}</span><span>{preBillSubTotal:N2}</span></div>");
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalDiscount}</span><span>{doc.DiscountAmount:N2}</span></div>");
-        if (doc.BillDiscountAmount > 0)
+        if (billDeductTotal > 0)
         {
-            // มัดจำที่ออกใบกำกับแล้ว (โหมด VatImmediate · รอบ 193 #34) หักออกจากฐานภาษี — ป้ายต้องบอกว่าเป็น
-            // "มูลค่ามัดจำตามใบกำกับเลขที่ …" ไม่ใช่ส่วนลดการค้า · ตัวตัดสินเดียวกับ QuestPDF renderer
-            var billLabel = Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(
-                    doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
-                ? $"{L.TotalDepositTaxInvoiced} {WebUtility.HtmlEncode(doc.DepositAppliedRef)}"
-                : L.TotalBillDiscount;
-            sb.AppendLine($"<div class='sum-row'><span>{billLabel}</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+            // รอบ 193 ฝ่ายค้านรอบสาม R3-1: สองแถวแยก — ส่วนลดการค้า / หักมูลค่ามัดจำที่ออกใบกำกับแล้ว (§78/1 · VatImmediate)
+            // เดิมรวมเป็นแถวเดียวที่ติดป้าย "มัดจำ" ⇒ ส่วนลด 100 หายจากกระดาษ · ตัวตัดสินเดียวกับ QuestPDF renderer
+            if (doc.BillDiscountAmount > 0)
+                sb.AppendLine($"<div class='sum-row'><span>{L.TotalBillDiscount}</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+            if (doc.DepositBaseDeducted > 0)
+            {
+                var depDeductLabel = Accounting.Helpers.DepositPolicyResolver.TaxedDepositDeducted(doc.DepositBaseDeducted, doc.DepositAppliedRef)
+                    ? $"{L.TotalDepositTaxInvoiced} {WebUtility.HtmlEncode(doc.DepositAppliedRef)}"
+                    : L.TotalDepositTaxInvoiced;
+                sb.AppendLine($"<div class='sum-row'><span>{depDeductLabel}</span><span>({doc.DepositBaseDeducted:N2})</span></div>");
+            }
             // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
             if (!hideVatBreakdown)
                 sb.AppendLine($"<div class='sum-row'><span>{L.TotalAfterDiscountBase}</span><span>{doc.SubTotal:N2}</span></div>");

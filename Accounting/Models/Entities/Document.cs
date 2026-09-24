@@ -448,6 +448,12 @@ public class Document : TenantEntity
     /// <summary>ส่วนลดท้ายบิลที่หักจริง (ex-VAT, เฉลี่ย pro-rata ลงบรรทัดแล้ว).
     /// SubTotal เป็นยอด "หลังหักท้ายบิล" → ยอดก่อนหัก = SubTotal + BillDiscountAmount.</summary>
     public decimal BillDiscountAmount { get; set; }
+    /// <summary>รอบ 193 ฝ่ายค้านรอบสาม R3-1 — ฐาน (ก่อน VAT) ของมัดจำ "ออกใบกำกับแล้ว" ที่หักออกจากใบนี้ (§78/1: VAT ส่วนนี้
+    /// ออกไปแล้วกับใบมัดจำ) · <b>ช่องแยกจาก <see cref="BillDiscountAmount"/></b> (ส่วนลดการค้า) — เดิมรวมไว้ช่องเดียว ⇒ ตอนอนุมัติ
+    /// รับรู้ส่วนลดการค้าเป็นมัดจำด้วย (ลูกค้าเสียมัดจำ · รายได้/VAT เกิน · กระดาษไม่มีแถวส่วนลด) · เฉลี่ยลงบรรทัดรวมกับส่วนลด
+    /// ท้ายบิล (ลดฐานภาษีเหมือนกัน) ⇒ ยอดก่อนหักท้ายบิล = SubTotal + BillDiscountAmount + DepositBaseDeducted · ต้องมี
+    /// <see cref="DepositAppliedRef"/> · อนุมัติแล้วรับรู้มัดจำเท่าค่านี้ (<c>RealizeTaxedDepositDeductionsAsync</c>)</summary>
+    public decimal DepositBaseDeducted { get; set; }
     public decimal VatAmount { get; set; }
     public decimal WithholdingTaxAmount { get; set; }
     public decimal TotalAmount { get; set; }

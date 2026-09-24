@@ -190,14 +190,58 @@ public class DepositPolicyResolverTests
     // ── ป้ายบนใบสุดท้าย (สอง renderer ใช้ตัวนี้ตัวเดียว) ──
 
     [Fact]
-    public void แถวหักท้ายบิล_เป็นมัดจำที่ออกใบกำกับแล้ว_เฉพาะรูปของเช็คเอาต์()
+    public void แถวหักมูลค่ามัดจำ_ตัดสินจากช่องฐานมัดจำ_ไม่ใช่ส่วนลดการค้า()
     {
-        Assert.True(DepositPolicyResolver.BillDeductionIsTaxedDeposit(1869.16m, 0m, "TIV-2026-0001"));
-        // ส่วนลดการค้าธรรมดา — ไม่มีเลขใบมัดจำ
-        Assert.False(DepositPolicyResolver.BillDeductionIsTaxedDeposit(100m, 0m, null));
-        // เส้น "หักเงินมัดจำจากยอดชำระ" (ApplyDeposit) — เป็นแถวคนละแถว
-        Assert.False(DepositPolicyResolver.BillDeductionIsTaxedDeposit(100m, 2000m, "REC-0001"));
-        Assert.False(DepositPolicyResolver.BillDeductionIsTaxedDeposit(0m, 0m, "TIV-2026-0001"));
+        // R3-1: ช่องของตัวเอง — มีฐาน + เลขใบมัดจำ ⇒ แถว "หักมูลค่ามัดจำตามใบกำกับ"
+        Assert.True(DepositPolicyResolver.TaxedDepositDeducted(1869.16m, "TIV-2026-0001"));
+        // ส่วนลดการค้าอยู่อีกช่อง (BillDiscountAmount) — ช่องฐานมัดจำเป็น 0 ⇒ ไม่ใช่มัดจำแม้มีเลขอ้างอิง
+        Assert.False(DepositPolicyResolver.TaxedDepositDeducted(0m, "TIV-2026-0001"));
+        Assert.False(DepositPolicyResolver.TaxedDepositDeducted(1869.16m, null));
+        Assert.False(DepositPolicyResolver.TaxedDepositDeducted(1869.16m, " "));
+    }
+
+    [Fact]
+    public void ส่วนหักท้ายบิลรวม_คือส่วนลดการค้าบวกฐานมัดจำ()
+    {
+        Assert.Equal(1969.16m, DepositPolicyResolver.BillDeductionTotal(100m, 1869.16m));
+        Assert.Equal(100m, DepositPolicyResolver.BillDeductionTotal(100m, 0m));
+    }
+
+    [Fact]
+    public void แยกยอดที่เฉลี่ยแล้ว_กลับเป็นส่วนลดการค้ากับฐานมัดจำ()
+    {
+        Assert.Equal((100m, 1869.16m, true), DepositPolicyResolver.SplitBillDeduction(1969.16m, 100m, 1869.16m));
+        // ไม่มีมัดจำ = พฤติกรรมเดิมทุกประการ (ส่วนลด = ยอดที่เฉลี่ยได้จริง แม้ถูกตัดที่ยอดขาย)
+        Assert.Equal((80m, 0m, true), DepositPolicyResolver.SplitBillDeduction(80m, 100m, 0m));
+        // ส่วนลด + มัดจำเกินยอดขาย (ตัวเฉลี่ยตัดทิ้ง) ⇒ ไม่ผ่าน — ผู้เรียกต้องล้มดัง
+        Assert.False(DepositPolicyResolver.SplitBillDeduction(5000m, 100m, 5000m).Ok);
+    }
+
+    [Fact]
+    public void ด่านฐานมัดจำที่หัก_ต้องมีเลขใบมัดจำ_ห้ามหักสองชั้น_ห้ามปนส่วนลดเปอร์เซ็นต์()
+    {
+        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(0m, null, 2000m, true, 10m));       // ไม่มีฐานมัดจำ = ไม่ตรวจ
+        Assert.Null(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, null, 0m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 2000m, false, 0m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, true, 0m));
+        Assert.Equal(DepositPolicyResolver.PercentWithTaxedDepositMessage,
+            DepositPolicyResolver.TaxedDepositDeductionProblem(1869.16m, "TIV-1", 0m, false, 5m));
+        Assert.NotNull(DepositPolicyResolver.TaxedDepositDeductionProblem(-1m, "TIV-1", 0m, false, 0m));
+    }
+
+    [Fact]
+    public void ข้อความด่านใบขับJEเก่า_บอกทางเดียว_ไม่สั่งรับรู้มัดจำเองที่หน้าเงินมัดจำ()
+    {
+        // R3-5: เดิมต่อท้ายข้อความปุ่ม (ข้อ ① "แล้วรับรู้มัดจำเป็นรายได้ที่หน้าเงินมัดจำ") ⇒ ทำตามทั้งคู่ = รับรู้ซ้ำ
+        var msg = DepositPolicyResolver.DrivesGuardMessage("TIV-DEP-1", "RE-0009");
+        Assert.Contains("TIV-DEP-1", msg);
+        Assert.Contains("RE-0009", msg);
+        Assert.Contains("รับรู้มัดจำเป็นรายได้ให้เองตอนอนุมัติ", msg);
+        Assert.DoesNotContain("แล้วรับรู้มัดจำเป็นรายได้ที่หน้า", msg);
+        Assert.DoesNotContain("①", msg);
+        // ทิศตรงข้าม: ข้อความของปุ่ม/Integration (ไม่รับรู้อัตโนมัติ) ยังบอกให้รับรู้ที่หน้าเงินมัดจำตามเดิม
+        Assert.Contains("แล้วรับรู้มัดจำเป็นรายได้ที่หน้า", DepositPolicyResolver.GrossApplyBlockedMessage("TIV-DEP-1"));
     }
 
     [Fact]

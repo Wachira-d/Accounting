@@ -318,13 +318,6 @@ public static class ContactTaxBranchKey
         return ContactAdoptOutcome.Adopted;
     }
 
-    /// <summary>รูปเดิม (ก่อนฝ่ายค้านรอบสาม) — คงไว้ให้ผู้เรียกในไฟล์ที่ทีมอื่นถือ (ที่พัก · ทีม L2) คอมไพล์ได้จนกว่าจะย้ายไปรูปที่ส่ง
-    /// <see cref="ContactMatchKind"/> · ถือเป็นการจับด้วยอีเมล/เบอร์ (ตรงกับผู้เรียกเดียวที่เหลือ) · Reject ถูกยุบเป็น false (ไม่เติม)
-    /// ⇒ ผู้เรียกยังใช้แถวเดิมได้ ซึ่ง<b>ไม่ปลอดภัยกับแถว walk-in</b> — ย้ายไปรูปใหม่แล้วลบตัวนี้ทิ้ง</summary>
-    [Obsolete("ส่ง ContactMatchKind แล้วจัดการ ContactAdoptOutcome.Reject (ฝ่ายค้านรอบสาม R3-2)")]
-    public static bool AdoptTaxId(Contact? row, string? taxId, string? branchCode)
-        => AdoptTaxId(row, taxId, branchCode, ContactMatchKind.Email) == ContactAdoptOutcome.Adopted;
-
     /// <summary>เลขที่เติมลงผู้ติดต่อได้: มีตัวเลข · ไม่ใช่ศูนย์ล้วน · 13 หลักต้องผ่าน <c>ThaiTaxId.IsValid</c> (mod-11 · ตัวตรวจ canonical ตัวเดียว) ·
     /// เลขต่างประเทศ/ไม่ใช่ 13 หลักรับตามเดิม (ไม่มีสูตรตรวจ)</summary>
     private static bool IsUsableTaxId(string? taxId)

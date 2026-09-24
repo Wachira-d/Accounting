@@ -6650,6 +6650,38 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             // รอบ 193 ฝ่ายค้านรอบสอง N3 — ยอดคืนบนใบมัดจำ ณ ตอนยกเลิก/เช็คเอาต์ (การคืนก่อนหน้านั้นไม่ใช่การคืนของยอดค้างนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundBaselineGross" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // รอบ 193 ฝ่ายค้านรอบสาม R3-1 — ฐานมัดจำ "ออกใบกำกับแล้ว" ที่หักจากใบสุดท้าย แยกจากส่วนลดการค้า (เดิมรวมใน BillDiscountAmount)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositBaseDeducted" numeric(18,2) NOT NULL DEFAULT 0;""",
+            // ย้ายค่าเดิม (แถวที่เกิดจากโค้ดรอบ 193 ก่อนแยกช่อง): ใบที่อ้างมัดจำออกใบกำกับแล้ว (ตัวกรองเดียวกับ LoadTaxedDepositsByRefAsync)
+            // · อนุมัติแล้ว ⇒ ย้ายเท่ายอดที่รับรู้ไปจริง (JE ผูก DepositRealizedForDocumentId ที่ยังไม่ถูกกลับ) — ส่วนที่เหลือคือส่วนลดการค้า
+            // · ยังไม่อนุมัติ + ไม่มียอดหักแบบเงินรวม ⇒ ย้ายทั้งก้อน (= ความหมายเดิม: โค้ดเดิมรับรู้ทั้งก้อนตอนอนุมัติ)
+            // · รันซ้ำได้: แตะเฉพาะแถวที่ช่องใหม่ยังเป็น 0 · แถวก่อนรอบ 193 ไม่มี JE ผูก/ไม่มีรูปนี้ ⇒ ไม่ถูกแตะ
+            """
+            WITH cand AS (
+              SELECT d."Id",
+                CASE WHEN d."Status" IN (2,3,4,5,7) THEN LEAST(d."BillDiscountAmount", COALESCE((
+                       SELECT SUM(j."TotalDebit") FROM "JournalEntries" j
+                        WHERE j."CompanyId" = d."CompanyId" AND j."DepositRealizedForDocumentId" = d."Id"
+                          AND j."OriginalEntryId" IS NULL AND j."ReversedByEntryId" IS NULL
+                          AND j."Status" = 1 AND j."IsDeleted" = false), 0))
+                     WHEN d."DepositAppliedAmount" <= 0 THEN d."BillDiscountAmount"
+                     ELSE 0 END AS mv
+                FROM "Documents" d
+               WHERE d."DepositBaseDeducted" = 0 AND d."BillDiscountAmount" > 0 AND d."IsDeposit" = false
+                 AND COALESCE(btrim(d."DepositAppliedRef"), '') <> ''
+                 AND EXISTS (
+                   SELECT 1 FROM "Documents" p
+                    WHERE p."CompanyId" = d."CompanyId" AND p."IsDeposit" = true AND p."IsDeleted" = false
+                      AND p."Status" NOT IN (0, 6, 8) AND p."VatAmount" > 0.005
+                      AND NOT (p."DepositOutputVatDeferred" = true AND p."DepositOutputVatRecognizedAt" IS NULL)
+                      AND (p."DocumentNumber" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)
+                        OR p."Reference" IN (SELECT btrim(x) FROM unnest(string_to_array(d."DepositAppliedRef", ',')) x)))
+            )
+            UPDATE "Documents" t
+               SET "DepositBaseDeducted" = c.mv, "BillDiscountAmount" = t."BillDiscountAmount" - c.mv
+              FROM cand c
+             WHERE t."Id" = c."Id" AND c.mv > 0;
+            """,
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",
