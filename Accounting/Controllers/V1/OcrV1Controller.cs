@@ -154,10 +154,19 @@ public class OcrV1Controller : PublicApiControllerBase
         if (req?.Fields == null || req.Fields.Count == 0)
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาส่งรายการฟิลด์ที่ยืนยัน"));
 
+        // รอบ 193 (ฝ่ายค้านรอบสอง): recorder ค้น feedback ด้วย Id อย่างเดียว ⇒ พาร์ตเนอร์ที่รู้ GUID ของบริษัทอื่น
+        // เขียนทับคำตอบสอนโมเดลของบริษัทนั้นได้ — กรองให้เหลือเฉพาะ feedback ของบริษัทผู้เรียกก่อน (กฎ M tenant isolation)
+        var askedIds = req.Fields.Where(x => x.FeedbackId.HasValue).Select(x => x.FeedbackId!.Value).Distinct().ToList();
+        var ownIds = askedIds.Count == 0 ? new HashSet<Guid>()
+            : (await Db.AiSuggestionFeedbacks.AsNoTracking()
+                .Where(x => x.CompanyId == ctx.CompanyId && askedIds.Contains(x.Id))
+                .Select(x => x.Id).ToListAsync(ct)).ToHashSet();
+
         var recorded = 0;
         foreach (var f in req.Fields)
         {
             if (!f.FeedbackId.HasValue || string.IsNullOrWhiteSpace(f.FinalValue)) continue;
+            if (!ownIds.Contains(f.FeedbackId.Value)) continue;   // ไม่ใช่ของบริษัทนี้ = ไม่มีอยู่ (ไม่บอกว่ามีของคนอื่น)
             try
             {
                 // acceptedAi ตัดสินที่ recorder โดยเทียบกับคำตอบเดิมที่บันทึกไว้
