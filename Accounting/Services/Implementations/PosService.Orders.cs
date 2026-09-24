@@ -190,7 +190,10 @@ public partial class PosService
                         Reference: $"VOID-{order.OrderNumber}",
                         WarehouseId: order.WarehouseId,   // null = คลังหลัก (บริษัทที่ไม่ใช้ระบบคลัง)
                         PosOrderId: order.Id,
-                        UnitCostOverride: EffectiveUnitCost(product),
+                        // JE ขายถูกกลับทั้งใบ (ReverseJournalEntryAsync) ⇒ ของต้องกลับเข้าคลังด้วย
+                        // ต้นทุนเดียวกับที่ขายออกไป (★ E-01 · ตัวเดียวกับเส้นคืนเงิน)
+                        UnitCostOverride: Accounting.Helpers.PosCogsBooking.RestockUnitCost(
+                            item.CostOfGoodsSold, item.Quantity, EffectiveUnitCost(product)),
                         Notes: "คืนสต็อกจากการยกเลิกออเดอร์",
                         CreatedBy: userId));
                 }
@@ -252,15 +255,20 @@ public partial class PosService
         var lineGrossTotal = order.Items.Where(i => !i.IsDeleted).Sum(i => i.TotalAmount);
 
         // Validate + collect the refund lines (proportional to each line).
-        decimal refundCogs = 0;
         var refundLines = new List<Accounting.Helpers.PosRefundLine>();
         var toRestore = new List<(PosOrderItem Item, decimal Qty)>();
+        // จำนวนที่ขอคืน**ในคำขอนี้**ต่อบรรทัด — คำขอที่ส่งบรรทัดเดียวกันซ้ำสองแถวต้องถูกนับรวม
+        // (เดิมแต่ละแถวเทียบกับยอดคงเหลือเดิม ⇒ บรรทัดขาย 1 แก้วคืนได้ 2 ครั้งในคำขอเดียว =
+        // คืนเงินเกิน + สต็อกกลับเกิน) · ทางไปต่อ: รวมเป็นแถวเดียวหรือส่งไม่เกินยอดคงเหลือ
+        var askedInThisRequest = new Dictionary<Guid, decimal>();
         foreach (var line in request.Lines)
         {
             if (line.Quantity <= 0) continue;
-            var item = order.Items.FirstOrDefault(i => i.Id == line.ItemId)
+            var item = order.Items.FirstOrDefault(i => i.Id == line.ItemId && !i.IsDeleted)
                 ?? throw new InvalidOperationException("ไม่พบรายการในออเดอร์นี้");
-            var remaining = item.Quantity - item.RefundedQuantity;
+            var askedBefore = askedInThisRequest.TryGetValue(item.Id, out var ab) ? ab : 0m;
+            askedInThisRequest[item.Id] = askedBefore + line.Quantity;
+            var remaining = item.Quantity - item.RefundedQuantity - askedBefore;
             if (line.Quantity > remaining + 0.0001m)
                 throw new InvalidOperationException(
                     $"รายการ '{item.ItemName}' คืนได้ไม่เกิน {remaining:0.##} (ขอคืน {line.Quantity:0.##})");
@@ -281,10 +289,37 @@ public partial class PosService
         var refundVat = refund.Vat;
         var refundNet = refund.Net;
 
+        // ★ E-01 (รอบ 193) — ต้นทุนที่กลับรายการ = **ส่วนของที่บิลขายลงไว้จริง**
+        // (`PosOrderItem.CostOfGoodsSold`) ตามสัดส่วนจำนวน ไม่คิดใหม่จากต้นทุน/สูตรวันนี้ ·
+        // เดิมบวก `gaveBack.TotalCost` (ต้นทุนวัตถุดิบเต็ม) ทั้งที่ JE ขายของเมนูชงสดลงไว้ 0
+        // ⇒ ต้นทุนขายติดลบ · ต้องคิด **ก่อน** ขยับ RefundedQuantity (ใช้ยอดคืนสะสมก่อนคืน)
+        // บิลเก่า (ไม่มีค่าตรึง) กลับตามสูตรขายเดิม — ตัดสินที่ Helpers/PosCogsBooking ตัวเดียว
+        var refundNowByItem = toRestore.GroupBy(t => t.Item.Id)
+            .ToDictionary(g => g.Key, g => g.Sum(t => t.Qty));
+        var legacyProductIds = order.Items
+            .Where(i => !i.IsDeleted && i.CostOfGoodsSold == null && i.ProductId.HasValue
+                     && refundNowByItem.ContainsKey(i.Id))
+            .Select(i => i.ProductId!.Value).Distinct().ToList();
+        var legacyUnitCostByProduct = legacyProductIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && legacyProductIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id,
+                    p => Accounting.Helpers.PosCogsBooking.LegacyUnitCost(p.TrackStock, EffectiveUnitCost(p)));
+        var refundCogs = Accounting.Helpers.PosCogsBooking.RefundCogs(order.Items
+            .Where(i => !i.IsDeleted)
+            .Select(i => new Accounting.Helpers.PosCogsRefundLine(
+                BookedCost: i.CostOfGoodsSold,
+                LineQuantity: i.Quantity,
+                RefundedBefore: i.RefundedQuantity,
+                RefundNow: refundNowByItem.TryGetValue(i.Id, out var now) ? now : 0m,
+                LegacyUnitCost: i.ProductId is Guid pid && legacyUnitCostByProduct.TryGetValue(pid, out var lc) ? lc : 0m))
+            .ToList());
+
         await using var txn = await _db.Database.BeginTransactionAsync();
         try
         {
-            // Restore stock + accumulate COGS for stock-tracked products.
+            // Restore stock (ยอดต้นทุนที่กลับใน JE คิดไว้แล้วข้างบน — ไม่บวกจากผลคืนสต็อก)
             foreach (var (item, qty) in toRestore)
             {
                 item.RefundedQuantity += qty;
@@ -300,14 +335,9 @@ public partial class PosService
                         var gaveBack = await ApplyRecipeConsumptionAsync(companyId, order, partial, product,
                             +1, DateTime.UtcNow, $"REFUND-{order.OrderNumber}",
                             "คืนวัตถุดิบจากการคืนเงิน POS", userId);
-                        if (gaveBack.Handled)
+                        if (!gaveBack.Handled && product.TrackStock)
                         {
-                            // ต้นทุนที่กลับเข้ามา = ต้นทุนวัตถุดิบรวมของบรรทัดที่คืน
-                            refundCogs += gaveBack.TotalCost;
-                        }
-                        else if (product.TrackStock)
-                        {
-                            var move = await _stock.MoveAsync(new StockMoveRequest(
+                            await _stock.MoveAsync(new StockMoveRequest(
                                 CompanyId: companyId,
                                 ProductId: product.Id,
                                 Quantity: qty,                    // + = คืนเข้าคลัง
@@ -315,15 +345,15 @@ public partial class PosService
                                 Reference: $"REFUND-{order.OrderNumber}",
                                 WarehouseId: order.WarehouseId,
                                 PosOrderId: order.Id,
-                                UnitCostOverride: EffectiveUnitCost(product),
+                                // ของกลับเข้าคลังด้วยต้นทุนที่ขายออกไป ⇒ มูลค่าคลัง = ยอดที่ JE กลับ
+                                UnitCostOverride: Accounting.Helpers.PosCogsBooking.RestockUnitCost(
+                                    item.CostOfGoodsSold, item.Quantity, EffectiveUnitCost(product)),
                                 Notes: "คืนสินค้าจากการคืนเงิน POS",
                                 CreatedBy: userId));
-                            refundCogs += move.TotalCost;
                         }
                     }
                 }
             }
-            refundCogs = Math.Round(refundCogs, 2, MidpointRounding.AwayFromZero);
 
             // Reversal journal entry — back out the refunded portion:
             //   Dr รายได้ขาย / Dr ภาษีขาย   Cr เงินสด
@@ -345,7 +375,9 @@ public partial class PosService
             });
 
             // Fully refunded → mark the order Refunded.
-            if (order.Items.All(i => i.RefundedQuantity >= i.Quantity - 0.0001m))
+            // เฉพาะบรรทัดที่ยังอยู่ — บรรทัดที่ถูกลบไม่ได้ขาย (ไม่ถูกตัดสต็อก/ไม่อยู่ในยอด) จึงคืนไม่ได้
+            // และต้องไม่กันบิลจากสถานะ "คืนครบ" (ฐานเดียวกับ lineGrossTotal ข้างบน)
+            if (order.Items.Where(i => !i.IsDeleted).All(i => i.RefundedQuantity >= i.Quantity - 0.0001m))
                 order.Status = PosOrderStatus.Refunded;
 
             await _db.SaveChangesAsync();
@@ -755,29 +787,11 @@ public partial class PosService
             order.CompletedAt = request.CompletedAt;
             await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
 
-            // GL + stock — same as the online CompleteOrderAsync.
-            await CreateSalesJournalEntryAsync(companyId, order, createdBy);
-            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
-            {
-                var product = await _db.Products.FindAsync(item.ProductId);
-                if (product == null) continue;
-                var ateOffline = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
-                    -1, request.CompletedAt, order.OrderNumber, "วัตถุดิบตามสูตร POS (offline sync)", createdBy);
-                if (!ateOffline.Handled && product.TrackStock)
-                {
-                    await _stock.MoveAsync(new StockMoveRequest(
-                        CompanyId: companyId,
-                        ProductId: product.Id,
-                        Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
-                        MovementType: "OUT",
-                        Reference: order.OrderNumber,
-                        WarehouseId: order.WarehouseId,
-                        PosOrderId: order.Id,
-                        MovementDate: request.CompletedAt,
-                        Notes: "POS Sale (offline sync)",
-                        CreatedBy: createdBy));
-                }
-            }
+            // Stock + GL — ตัวเดียวกับ CompleteOrderAsync และลำดับเดียวกัน (★ E-01):
+            // ตัดสต็อกก่อนเพื่อให้ JE ได้ต้นทุนที่ออกจากคลังจริง
+            var saleCogs = await DeductSaleStockAsync(companyId, order, request.CompletedAt,
+                "วัตถุดิบตามสูตร POS (offline sync)", "POS Sale (offline sync)", createdBy);
+            await CreateSalesJournalEntryAsync(companyId, order, createdBy, saleCogs);
 
             await _db.SaveChangesAsync();
             await txn.CommitAsync();
@@ -1195,31 +1209,13 @@ public partial class PosService
             }
         }
 
-        // Create journal entry for accounting integration
-        await CreateSalesJournalEntryAsync(companyId, order, userId);
+        // ★ E-01 (รอบ 193) — ลำดับ "ตัดสต็อก → รู้ต้นทุน → JE" · เดิม JE มาก่อน ⇒ ต้นทุน
+        // วัตถุดิบตามสูตรไม่มีทางถึง JE (เมนูชงสด COGS = 0 แต่คืนเงินกลับเต็ม)
+        var saleCogs = await DeductSaleStockAsync(companyId, order, DateTime.UtcNow,
+            "วัตถุดิบตามสูตร POS", "POS Sale", userId);
 
-        // Deduct stock for product items
-        foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
-        {
-            var product = await _db.Products.FindAsync(item.ProductId);
-            if (product == null) continue;
-            // สินค้าที่ชงสด (`ConsumesBomOnSale`) กินวัตถุดิบตามสูตรแทนการตัดตัวเอง
-            var ate = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
-                -1, DateTime.UtcNow, order.OrderNumber, "วัตถุดิบตามสูตร POS", userId);
-            if (!ate.Handled && product.TrackStock)
-            {
-                await _stock.MoveAsync(new StockMoveRequest(
-                    CompanyId: companyId,
-                    ProductId: product.Id,
-                    Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
-                    MovementType: "OUT",
-                    Reference: order.OrderNumber,
-                    WarehouseId: order.WarehouseId,   // คลังของสาขาที่ขาย (null = คลังหลัก)
-                    PosOrderId: order.Id,
-                    Notes: "POS Sale",
-                    CreatedBy: userId));
-            }
-        }
+        // Create journal entry for accounting integration
+        await CreateSalesJournalEntryAsync(companyId, order, userId, saleCogs);
 
         await _db.SaveChangesAsync();
         await txn.CommitAsync();
@@ -1240,6 +1236,53 @@ public partial class PosService
     private static decimal EffectiveUnitCost(Product p) =>
         p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
             ? p.AverageUnitCost : p.CostPrice;
+
+    /// <summary>ตัดสต็อกของบิลขายทั้งใบ (สูตร → วัตถุดิบ · ไม่ใช่สูตร+TrackStock → ตัวสินค้า) แล้ว
+    /// **ตรึงต้นทุนที่ออกจากคลังจริง** ลง <c>PosOrderItem.CostOfGoodsSold</c> ทุกบรรทัด ·
+    /// คืนยอด COGS รวม (ปัดแล้ว) ให้ JE ขายใช้ — ตัวเดียวของเส้นขายออนไลน์และ sync ออฟไลน์
+    ///
+    /// <para>★ E-01 (รอบ 193): ต้องเรียก **ก่อน** <see cref="CreateSalesJournalEntryAsync"/> เสมอ ·
+    /// การตัดสินต้นทุนต่อบรรทัดอยู่ที่ <c>Helpers/PosCogsBooking.SaleLineCost</c> ตัวเดียว ·
+    /// ไม่มี catch — ตัดสต็อกไม่ผ่าน (ด่านติดลบ/ไม่พบสินค้า) ต้องล้มทั้งบิล (กฎเหล็ก #4 E)</para></summary>
+    private async Task<decimal> DeductSaleStockAsync(Guid companyId, PosOrder order,
+        DateTime movementDate, string recipeNote, string ownNote, string userId)
+    {
+        var lineCosts = new List<decimal>();
+        foreach (var item in order.Items.Where(i => !i.IsDeleted))
+        {
+            var lineCost = 0m;
+            if (item.ProductId is Guid productId)
+            {
+                var product = await _db.Products.FindAsync(productId);
+                if (product != null)
+                {
+                    // สินค้าที่ชงสด (`ConsumesBomOnSale`) กินวัตถุดิบตามสูตรแทนการตัดตัวเอง
+                    var ate = await ApplyRecipeConsumptionAsync(companyId, order, item, product,
+                        -1, movementDate, order.OrderNumber, recipeNote, userId);
+                    decimal? ownMoveCost = null;
+                    if (!ate.Handled && product.TrackStock)
+                    {
+                        var move = await _stock.MoveAsync(new StockMoveRequest(
+                            CompanyId: companyId,
+                            ProductId: product.Id,
+                            Quantity: -item.Quantity,         // − = ตัดออกจากคลัง
+                            MovementType: "OUT",
+                            Reference: order.OrderNumber,
+                            WarehouseId: order.WarehouseId,   // คลังของสาขาที่ขาย (null = คลังหลัก)
+                            PosOrderId: order.Id,
+                            MovementDate: movementDate,
+                            Notes: ownNote,
+                            CreatedBy: userId));
+                        ownMoveCost = move.TotalCost;
+                    }
+                    lineCost = Accounting.Helpers.PosCogsBooking.SaleLineCost(ate.Handled, ate.TotalCost, ownMoveCost);
+                }
+            }
+            item.CostOfGoodsSold = lineCost;
+            lineCosts.Add(lineCost);
+        }
+        return Accounting.Helpers.PosCogsBooking.SaleTotal(lineCosts);
+    }
 
 
 
@@ -1389,7 +1432,9 @@ public partial class PosService
         order.AbbreviatedInvoiceNumber = $"{prefix}{seq:D5}";
     }
 
-    private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId)
+    /// <summary>JE ขาย POS · <paramref name="saleCogs"/> = ต้นทุนที่ออกจากคลังจริงของบิลนี้ จาก
+    /// <see cref="DeductSaleStockAsync"/> (★ E-01 — เดิมคิดเองจาก TrackStock ของตัวแม่ ⇒ สูตร = 0)</summary>
+    private async Task CreateSalesJournalEntryAsync(Guid companyId, PosOrder order, string userId, decimal saleCogs)
     {
         // เครื่องที่เปิดกะนี้ — ใช้เลือกบัญชีเงินสด/ธนาคารของสาขา (null ได้ = ใช้ผังมาตรฐาน)
         var jeTerminal = await _db.PosSessions.AsNoTracking()
@@ -1489,25 +1534,13 @@ public partial class PosService
             lines.Add(new(tipAccount.Id, 0, order.TipAmount, $"ทิปลูกค้า POS #{order.OrderNumber}"));
         }
 
-        // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — record cost of goods sold so
-        // the P&L gross profit is correct (was previously omitted).
-        var prodIds = order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted)
-            .Select(i => i.ProductId!.Value).Distinct().ToList();
-        if (prodIds.Count > 0)
+        // COGS: Dr ต้นทุนขาย / Cr สินค้าคงเหลือ — ยอด = ต้นทุนที่ออกจากคลังจริง ซึ่งผู้เรียกตัด
+        // สต็อกแล้วส่งมา (★ E-01 รอบ 193) · เดิมคิดตรงนี้จาก `Products.Where(p => p.TrackStock)`
+        // ของ**ตัวแม่** ⇒ เมนูชงสดที่ตัดวัตถุดิบตามสูตร (ตัวแม่ TrackStock=false) ได้ 0 เสมอ
+        // ขณะที่คืนเงินกลับต้นทุนวัตถุดิบเต็ม = ต้นทุนขายติดลบ · สินค้าปกติได้ตัวเลขเท่าเดิม
+        // (ต้นทุนขาออกของ ledger = ถัวเฉลี่ย/CostPrice ตัวเดียวกับสูตรเดิม, ปัดครั้งเดียวเหมือนเดิม)
         {
-            // ต้นทุนตาม CostingMethod ของสินค้า: WeightedAverage ใช้ค่าเฉลี่ย
-            // ถ่วงน้ำหนักปัจจุบัน (AverageUnitCost) ไม่ใช่ CostPrice นิ่ง ๆ
-            // — ไม่งั้นสินค้าที่ราคาซื้อขยับ COGS จะผิดตาม TFRS NPAEs บทที่ 8
-            var costByProduct = await _db.Products
-                .Where(p => prodIds.Contains(p.Id) && p.TrackStock)
-                .ToDictionaryAsync(p => p.Id,
-                    p => p.CostingMethod == CostingMethod.WeightedAverage && p.AverageUnitCost > 0
-                        ? p.AverageUnitCost : p.CostPrice);
-            decimal totalCogs = 0;
-            foreach (var item in order.Items.Where(i => i.ProductId.HasValue && !i.IsDeleted))
-                if (costByProduct.TryGetValue(item.ProductId!.Value, out var cost))
-                    totalCogs += item.Quantity * cost;
-            totalCogs = Math.Round(totalCogs, 2, MidpointRounding.AwayFromZero);
+            var totalCogs = saleCogs;
             if (totalCogs > 0)
             {
                 var cogsAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "51110")
