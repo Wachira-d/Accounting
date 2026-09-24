@@ -338,7 +338,10 @@ public record RealizeDepositRequest(
 public record RefundDepositRequest(
     decimal Amount,
     DateTime? RefundDate = null,
-    string? Reason = null);
+    string? Reason = null,
+    // ผังบัญชี (ChartOfAccount.Id) ที่เงินคืน "ออกจริง" — ต้องเป็นบัญชีของบริษัทนี้ · null = 111 เงินสด
+    // (พฤติกรรมเดิม) · ที่มา F-03 รอบ 193: มัดจำที่เข้ามาทาง gateway/ธนาคาร ต้องคืนจากบัญชีเดิม ไม่ใช่ 111 ตายตัว
+    Guid? MoneyAccountId = null);
 
 /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset). ระบบรับรู้
 /// รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) + ลด BalanceDue ของใบสุดท้าย

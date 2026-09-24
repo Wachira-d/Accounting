@@ -1797,7 +1797,8 @@
               <div class="row"><span>คงเหลือ</span><b>฿${this._money(r.balanceDue)}</b></div>
               ${r.status === 'Pending' && r.depositRequired > 0 ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
               ${r.cancellationFee > 0 ? `<div class="row"><span>ค่าปรับยกเลิก</span><span>฿${this._money(r.cancellationFee)}</span></div>` : ''}
-              ${r.refundAmount > 0 ? `<div class="row"><span>คืนเงิน</span><span>฿${this._money(r.refundAmount)}</span></div>` : ''}
+              ${r.refundAmount > 0 ? `<div class="row"><span>ยอดคืนเงิน</span><span>฿${this._money(r.refundAmount)}</span></div>` : ''}
+              ${r.refundPending > 0 ? `<div class="row" style="color:#92400E"><span>สถานะ</span><span>รอที่พักโอนคืน ฿${this._money(r.refundPending)}</span></div>` : (r.refundAmount > 0 && r.refundState === 'Paid' ? `<div class="row" style="color:#047857"><span>สถานะ</span><span>ที่พักโอนคืนแล้ว</span></div>` : '')}
             </div>
             <div class="lg-sum">
               <h3 style="margin:0 0 8px">ผู้เข้าพัก</h3>

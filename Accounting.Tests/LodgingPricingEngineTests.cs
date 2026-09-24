@@ -117,6 +117,30 @@ public class LodgingPricingEngineTests
         Assert.Equal(1500m, LodgingPricingEngine.ExtraTotal(new("อาหารเช้า", LodgingExtraPriceMode.PerPersonPerNight, 250m, 1), 3, 2));
     }
 
+    /// <summary>รอบ 193 #36 (F-01): วิธีคิดราคา 0 (ค่าที่บันทึกไว้ตอน dropdown ว่าง) ต้องปฏิเสธ —
+    /// เดิมตก `_ => 1` ⇒ "อาหารเช้า ฿250/คน/คืน" 2 คน 3 คืน ได้ 250 แทน 1,500 โดยไม่มีอะไรฟ้อง</summary>
+    [Fact]
+    public void บริการเสริม_วิธีคิดราคาไม่มีในระบบ_ปฏิเสธไม่คิดครั้งเดียวเงียบๆ()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            LodgingPricingEngine.ExtraTotal(new("อาหารเช้า", (LodgingExtraPriceMode)0, 250m, 1), 3, 2));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            LodgingPricingEngine.ExtraTotal(new("อาหารเช้า", (LodgingExtraPriceMode)9, 250m, 1), 3, 2));
+    }
+
+    [Fact]
+    public void บริการเสริม_ตัวตรวจการตั้งค่า_สองทิศ()
+    {
+        // แถวที่ต้องเลือกใหม่
+        Assert.Contains("วิธีคิดราคา", LodgingPricingEngine.ExtraConfigProblem((LodgingExtraPriceMode)0, LodgingExtraCategory.Breakfast));
+        Assert.Contains("หมวด", LodgingPricingEngine.ExtraConfigProblem(LodgingExtraPriceMode.PerNight, (LodgingExtraCategory)0));
+        Assert.NotNull(LodgingPricingEngine.ExtraConfigProblem(null, null));
+        // แถวที่ถูกอยู่แล้ว — ไม่ถูกแตะ (ทุกโหมด/ทุกหมวดที่มีจริง)
+        foreach (var m in Enum.GetValues<LodgingExtraPriceMode>())
+            foreach (var c in Enum.GetValues<LodgingExtraCategory>())
+                Assert.Null(LodgingPricingEngine.ExtraConfigProblem(m, c));
+    }
+
     [Fact]
     public void ยอดรวมราคารวมVAT_serviceCharge10_มัดจำ50()
     {
@@ -230,5 +254,23 @@ public class LodgingAvailabilityTests
         var full = new[] { B(10, 11, 5) };
         Assert.Equal(1, LodgingAvailability.AvailableRooms(D10, D10.AddDays(1), 5, 1, full, Array.Empty<LodgingOverrideInput>(), Now));
         Assert.Equal(0, LodgingAvailability.AvailableRooms(D10, D10.AddDays(1), 5, 0, full, Array.Empty<LodgingOverrideInput>(), Now));
+    }
+
+    // ═══ S-10: อัตรา VAT ของที่พักมาจากบริษัท ไม่ใช่ 7 ตายตัว ═══
+
+    [Fact]
+    public void อัตราVATที่พัก_ตามอัตราบริษัท_เมื่อจดVAT()
+    {
+        Assert.Equal(7m, LodgingPricingEngine.PropertyVatRate(null, companyVatRegistered: true, companyVatRate: 7m));
+        Assert.Equal(10m, LodgingPricingEngine.PropertyVatRate(true, companyVatRegistered: true, companyVatRate: 10m));
+    }
+
+    [Fact]
+    public void อัตราVATที่พัก_ไม่จดVATหรือตั้งไม่คิด_เป็นศูนย์()
+    {
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(false, companyVatRegistered: true, companyVatRate: 7m));
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(null, companyVatRegistered: false, companyVatRate: 7m));
+        // §90/2 — ตั้ง "คิด VAT เสมอ" บนบริษัทที่ไม่จดทะเบียน ต้องไม่เก็บภาษี (เดิมคืน 7)
+        Assert.Equal(0m, LodgingPricingEngine.PropertyVatRate(true, companyVatRegistered: false, companyVatRate: 7m));
     }
 }

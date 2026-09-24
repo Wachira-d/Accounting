@@ -36,6 +36,14 @@ public partial class LodgingService
             policyName = await _db.LodgingCancellationPolicies.AsNoTracking().Where(p => p.Id == pid && p.CompanyId == companyId).Select(p => p.Name).FirstOrDefaultAsync();
         var requests = await _db.LodgingGuestRequests.AsNoTracking().Where(g => g.CompanyId == companyId && g.ReservationId == r.Id)
             .OrderByDescending(g => g.CreatedAt).ToListAsync();
+        // วิธีบันทึกของใบมัดจำ — อ่านย้อนจากช่องที่ตรึงบนใบ (ไม่ใช่จากการตั้งค่าปัจจุบัน ซึ่งอาจเปลี่ยนไปแล้ว)
+        DepositVatTreatment? depTreatment = null;
+        if (r.DepositDocumentId is Guid depDocId)
+        {
+            var dep = await _db.Documents.AsNoTracking().Where(d => d.Id == depDocId && d.CompanyId == companyId)
+                .Select(d => new { d.IsDeposit, d.VatAmount, d.DepositOutputVatDeferred }).FirstOrDefaultAsync();
+            if (dep != null) depTreatment = DepositPolicyResolver.OfDocument(dep.IsDeposit, dep.VatAmount, dep.DepositOutputVatDeferred);
+        }
 
         var res = new LodgingReservationResponse
         {
@@ -61,6 +69,12 @@ public partial class LodgingService
             SlipRejectedAt = r.SlipRejectedAt, SlipUploadBlocked = r.SlipUploadBlocked,
             ConfirmedAt = r.ConfirmedAt, CheckedInAt = r.CheckedInAt, CheckedOutAt = r.CheckedOutAt, CancelledAt = r.CancelledAt,
             CancellationReason = r.CancellationReason, CancellationFee = r.CancellationFee, RefundAmount = r.RefundAmount,
+            // F-03 — "ต้องคืน" กับ "คืนแล้ว" แยกกัน · สถานะคำนวณจากสองตัวเลขนี้เท่านั้น
+            RefundPaidAmount = r.RefundPaidAmount, RefundPaidAt = r.RefundPaidAt,
+            RefundPending = LodgingDepositSettlement.RefundPending(r.RefundAmount, r.RefundPaidAmount),
+            RefundState = LodgingDepositSettlement.RefundStateOf(r.RefundAmount, r.RefundPaidAmount),
+            DepositVatTreatment = depTreatment,
+            DepositVatTreatmentLabel = depTreatment is DepositVatTreatment dvt ? DepositPolicyResolver.LabelOf(dvt) : null,
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,

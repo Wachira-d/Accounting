@@ -1022,6 +1022,12 @@ public partial class DocumentService : IDocumentService
                     "ใบมัดจำต้องเป็นเอกสาร standalone — ห้ามอ้างเอกสารต้นทาง " +
                     "(ใบเสร็จที่อ้างใบแจ้งหนี้ = การตัดชำระ ไม่ใช่การรับมัดจำ)");
 
+            // P0-1 รอบ 193: ธง "หักมัดจำแบบขับ JE" บนชนิดที่ AutoPost ไม่อ่าน = silent no-op (ลูกหนี้เต็ม · มัดจำค้าง)
+            if ((request.DepositAppliedDrivesJournal ?? false)
+                && !Accounting.Helpers.DepositPolicyResolver.DrivesJournalSupported(request.DocumentType, request.IssuedAsCashReceipt ?? false))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositPolicyResolver.DrivesUnsupportedMessage, "DEPOSIT-DRIVES-UNSUPPORTED");
+
             var doc = new Document
             {
                 CompanyId = companyId,
@@ -2263,7 +2269,15 @@ public partial class DocumentService : IDocumentService
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
-        if (request.DepositAppliedDrivesJournal.HasValue) doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
+        if (request.DepositAppliedDrivesJournal.HasValue)
+        {
+            // P0-1 รอบ 193 — ด่านเดียวกับตอนสร้าง (ห้ามให้ทางแก้ไขเลี่ยงด่านได้)
+            if (request.DepositAppliedDrivesJournal.Value
+                && !Accounting.Helpers.DepositPolicyResolver.DrivesJournalSupported(doc.DocumentType, request.IssuedAsCashReceipt ?? doc.IssuedAsCashReceipt))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositPolicyResolver.DrivesUnsupportedMessage, "DEPOSIT-DRIVES-UNSUPPORTED");
+            doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
+        }
         if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — ใช้ได้เฉพาะ doc ชนิด TaxInvoice.
         // เดิมชนิดไม่ตรง = ดรอปธงเงียบ ๆ (silent no-op): ผู้ใช้ติ๊กบนใบแจ้งหนี้
@@ -3793,7 +3807,12 @@ public partial class DocumentService : IDocumentService
         var outVatAcc = doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null
             ? await FindAccountAsync(companyId, "21913")
             : await FindAccountAsync(companyId, "21911");
-        var moneyAcc = await FindAccountAsync(companyId, "111");
+        // บัญชีที่เงินออกจริง (F-03 รอบ 193) — ผู้เรียกระบุได้ (ต้องเป็นผังของบริษัทนี้) · ไม่ระบุ = 111 ตามเดิม
+        var moneyAcc = request.MoneyAccountId is Guid moneyAccId
+            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == moneyAccId && a.CompanyId == companyId)
+                ?? throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบบัญชีเงินที่เลือกสำหรับคืนมัดจำ หรือไม่ใช่ของบริษัทนี้ — เลือกบัญชีใหม่", "DEPOSIT-REFUND-MONEY-ACCOUNT")
+            : await FindAccountAsync(companyId, "111");
         if (deferredAcc == null || moneyAcc == null)
             throw new InvalidOperationException("ไม่พบผังบัญชีขายรอรับรู้/เงินสดสำหรับคืนมัดจำ");
         // ⚠️ ผลตรวจทีม C · C-01: บรรทัดภาษีขายถูกใส่แบบมีเงื่อนไข
@@ -3959,34 +3978,16 @@ public partial class DocumentService : IDocumentService
         if (deposit.ContactId != invoice.ContactId)
             throw new InvalidOperationException("มัดจำกับใบแจ้งหนี้ต้องเป็นลูกค้ารายเดียวกัน");
 
-        // ── กัน VAT ซ้ำ: มัดจำที่ "ยื่น ภ.พ.30 ไปแล้ว" ห้ามหักเข้าใบกำกับเต็มจำนวน ──
-        // การหักมัดจำเข้าใบปลายทางลง JE กลับ Dr 21911 ("ล้าง VAT มัดจำ") แล้วให้
-        // ใบปลายทาง Cr 21911 เต็มจำนวน — สมมติฐานคือ "VAT ของมัดจำยังไม่ถูกนำส่ง"
-        // ถ้างวดของใบมัดจำยื่นไปแล้ว ภาษีก้อนนั้นจ่ายกรมสรรพากรไปแล้ว จะกลับใน GL
-        // ไม่ได้ (GL จะไม่ตรงกับแบบที่ยื่น) และใบปลายทางจะรายงานซ้ำอีกรอบ
-        // ทางออกที่ถูกต้องมี 2 ทาง — บอกไว้ในข้อความ ผู้ใช้ไม่ตัน
-        var depositVatReported = !deposit.DepositOutputVatDeferred && deposit.VatAmount > 0.005m;
-        if (depositVatReported)
-        {
-            var depTaxPoint = deposit.TaxPointDate ?? deposit.DocumentDate;
-            var filedPeriod = await _db.TaxReports.AsNoTracking()
-                .Where(t => t.CompanyId == companyId && !t.IsDeleted
-                    && t.TaxType == TaxType.VAT
-                    // ★ รอบ 183 — เหมือนกัน: ประกาศว่ายื่นแล้ว = แก้ใบมัดจำของงวดนั้นไม่ได้
-                    && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status)
-                    && t.Year == depTaxPoint.Year && t.Month == depTaxPoint.Month)
-                .AnyAsync();
-            if (filedPeriod)
-                throw new InvalidOperationException(
-                    $"⛔ ใบมัดจำ {deposit.DocumentNumber} ออกเป็นใบกำกับภาษีและนำส่ง ภ.พ.30 "
-                    + $"งวด {depTaxPoint:MM/yyyy} ไปแล้ว — หักเข้าใบกำกับเต็มจำนวนไม่ได้ "
-                    + "เพราะจะรายงาน VAT ซ้ำและ GL ไม่ตรงกับแบบที่ยื่น\n"
-                    + "ทางที่ถูก เลือกอย่างใดอย่างหนึ่ง:\n"
-                    + "① ออกใบกำกับภาษีใบนี้ \"เฉพาะยอดคงเหลือ\" (หักมัดจำที่ออกใบกำกับไปแล้วออกจากฐาน) "
-                    + "แล้วบันทึกมัดจำเป็นการรับชำระ ไม่ต้องกดหักมัดจำ\n"
-                    + "② ถ้าต้องการใบกำกับใบเดียวเต็มจำนวน ต้องออกใบลดหนี้ (§86/10) "
-                    + "ยกเลิกใบกำกับมัดจำเดิมก่อน แล้วค่อยออกใบเต็ม");
-        }
+        // ── กัน VAT ซ้ำ: มัดจำที่ "ออกใบกำกับแล้ว" (VAT ทันที) ห้ามหักเข้าใบกำกับเต็มจำนวน ──
+        // P0-3 รอบ 193 (คำตัดสินเจ้าของ #34): เดิมบล็อกเฉพาะเมื่อ "งวดของใบมัดจำยื่นแล้ว" — งวดที่ยังไม่ยื่น
+        // ก็ผิดเหมือนกัน: การหักลง Dr 21911 ของมัดจำ + ใบปลายทางรายงาน VAT เต็ม + รายงานภาษีขายข้ามแถวมัดจำ
+        // ⇒ VAT มัดจำย้ายไปเดือนของใบปลายทาง (§78/1 ช้า) และผู้ซื้อถือใบกำกับสองใบสำหรับภาษีก้อนเดียว
+        // ตัวตัดสิน/ข้อความอยู่ที่ Helpers/DepositPolicyResolver ตัวเดียว (ใช้ร่วมกับเส้นขับ JE ใน AutoPost)
+        if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(deposit.VatAmount,
+                deposit.DepositOutputVatDeferred && deposit.DepositOutputVatRecognizedAt == null))
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(deposit.DocumentNumber),
+                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
 
         // Multi-currency guard — IAS 21: ถ้าสกุล/rate ของมัดจำกับใบแจ้งหนี้
         // ต่างกัน ต้องคำนวณกำไรขาดทุนอัตราแลกเปลี่ยน. ระบบนี้ยังไม่ post FX
@@ -14637,6 +14638,11 @@ public partial class DocumentService : IDocumentService
                                 .GroupBy(l => l.AccountId).Select(g => new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
                                 .FirstOrDefault(x => x.Net > 0.005m);
                             var mVat = mV13 ?? mV11;
+                            // P0-3 รอบ 193 — มัดจำที่ออกใบกำกับแล้ว (Cr 21911 จริง) ห้ามหักเต็มจำนวนเข้าใบที่คิด VAT เต็ม
+                            if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(mV11?.Net ?? 0m, depositVatPending: mV13 != null))
+                                throw new Accounting.Helpers.BusinessRuleException(
+                                    Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(mDeposit.DocumentNumber),
+                                    Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
                             if (mDef == null && mVat == null)
                                 throw new InvalidOperationException(
                                     $"หักมัดจำหลายใบ: ใบมัดจำ {mDeposit.DocumentNumber} ไม่มียอดรับล่วงหน้าคงเหลือใน GL (ถูกรับรู้/หักไปแล้ว)");
@@ -14761,6 +14767,12 @@ public partial class DocumentService : IDocumentService
                                 : null;
                             vatAcctId = depVatAcc?.Id;
                         }
+
+                        // P0-3 รอบ 193 — มัดจำที่ออกใบกำกับแล้ว ห้ามหักเต็มจำนวนเข้าใบที่คิด VAT เต็ม (ด่านเดียวกับปุ่มหักมัดจำ)
+                        if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(depVat, depVatDeferredPending))
+                            throw new Accounting.Helpers.BusinessRuleException(
+                                Accounting.Helpers.DepositPolicyResolver.GrossApplyBlockedMessage(deposit.DocumentNumber),
+                                Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
 
                         // (2) over-apply guard (audit F4): ห้ามหักเกิน "มัดจำคงเหลือจริง"
                         //     GL-driven → เทียบ net คงเหลือใน GL ของใบมัดจำเอง (Realize/

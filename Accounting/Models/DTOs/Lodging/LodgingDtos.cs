@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Lodging;
@@ -63,6 +64,10 @@ public class LodgingPropertyDto
     public decimal DepositMinAmount { get; set; }
     public decimal? DepositMaxAmount { get; set; }
     public string? DepositDeferredAccountCode { get; set; }
+    /// <summary>วิธีบันทึกมัดจำของที่พักนี้ (ตั้งทับค่าบริษัท) — null = ตามค่าตั้งต้นบริษัท/ประเภทธุรกิจ (รอบ 193 #34)</summary>
+    public DepositVatTreatment? DepositVatTreatment { get; set; }
+    /// <summary>⚠️ ช่องเดิม — echo = สำเนาของ <see cref="DepositVatTreatment"/> (= VatPendingUndue) ·
+    /// รับเข้าเฉพาะ client เก่าที่ไม่ส่ง <see cref="DepositVatTreatment"/> (true ⇒ VatPendingUndue) ห้ามมีทางอื่น</summary>
     public bool DepositOutputVatDeferred { get; set; }
     public LodgingAccountingMode AccountingMode { get; set; } = LodgingAccountingMode.Full;
     /// <summary>ผู้ใช้ติ๊กยืนยันว่าออกใบกำกับจากระบบอื่น (จำเป็นเมื่อเลือก Off + จด VAT)</summary>
@@ -99,6 +104,12 @@ public class LodgingPropertyDto
     public string? SiteName { get; set; }
     /// <summary>อัตรา VAT ที่ใช้จริง (คำนวณจาก ChargeVat ?? Company.IsVatRegistered) — หน้าเว็บแสดงอย่างเดียว</summary>
     public decimal EffectiveVatRate { get; set; }
+    /// <summary>วิธีบันทึกมัดจำที่ใช้จริง + ที่มา + คำอธิบาย/คำเตือน — เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว</summary>
+    public DepositVatTreatmentDecision? DepositVatTreatmentInfo { get; set; }
+    /// <summary>ค่าที่จะได้ถ้าเลือก "ตามค่าตั้งต้นบริษัท" (ไม่ตั้งทับ) — ให้หน้าเว็บบอกได้ว่าตัวเลือกว่างหมายถึงอะไร</summary>
+    public DepositVatTreatmentDecision? DepositVatTreatmentInherited { get; set; }
+    /// <summary>ตัวเลือกทั้งหมด (ชื่อ enum + ป้าย + คำอธิบาย + มาตรา) — หน้าเว็บสร้างตัวเลือกจากลิสต์นี้</summary>
+    public IReadOnlyList<DepositVatTreatmentOption>? DepositVatTreatmentOptions { get; set; }
 }
 
 public class LodgingRoomTypeDto
@@ -248,15 +259,25 @@ public class LodgingExtraDto
     public string Name { get; set; } = "";
     public string? NameEn { get; set; }
     public string? Description { get; set; }
-    public LodgingExtraCategory Category { get; set; } = LodgingExtraCategory.Other;
-    public LodgingExtraPriceMode PriceMode { get; set; } = LodgingExtraPriceMode.PerStay;
+    /// <summary>nullable โดยตั้งใจ (รอบ 193 #36): ค่าที่ไม่ได้เลือก/ไม่มีในระบบ ต้องถึงด่านในเซิร์ฟเวอร์เพื่อได้ข้อความไทย
+    /// ("กรุณาเลือกหมวด") ไม่ใช่ถูก JSON ตีกลับเป็นอังกฤษก่อนถึงโค้ดเรา · echo แถวเก่าที่ค่าเป็น 0 ตามจริง (ไม่แต่งค่าให้)</summary>
+    public LodgingExtraCategory? Category { get; set; } = LodgingExtraCategory.Other;
+    /// <summary>วิธีคิดราคา — null/0 = ยังไม่ได้เลือก ⇒ ตัวคิดราคาปฏิเสธ (ไม่ตกไปคิดครั้งเดียวเงียบ ๆ แบบเดิม)</summary>
+    public LodgingExtraPriceMode? PriceMode { get; set; }
     public decimal Price { get; set; }
     public int? MaxQuantity { get; set; }
     public Guid? ProductId { get; set; }
     public bool ShowOnWebsite { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
+    /// <summary>response-only: ปัญหาการตั้งค่าที่ทำให้คิดราคาไม่ได้ (ไทย) — null = ใช้ได้ · หน้าตั้งค่าแสดงป้ายเตือน</summary>
+    public string? ConfigProblem { get; set; }
 }
+
+/// <summary>บริการเสริมที่ต้องเลือกวิธีคิดราคา/หมวดใหม่ (รายงานข้ามที่พักของบริษัทเดียว · รอบ 193 #36)</summary>
+public record LodgingExtraNeedsReselectItem(
+    Guid ExtraId, Guid PropertyId, string PropertyName, string Name, int PriceModeValue, int CategoryValue,
+    decimal Price, bool IsActive, string Problem);
 
 // ───────────────────────────── 2. หน้าเว็บสาธารณะ ─────────────────────────────
 
@@ -497,7 +518,18 @@ public class LodgingReservationResponse
     public DateTime? CancelledAt { get; set; }
     public string? CancellationReason { get; set; }
     public decimal CancellationFee { get; set; }
+    /// <summary>ยอดที่ต้องคืนตามนโยบาย (ไม่ใช่หลักฐานว่าคืนแล้ว)</summary>
     public decimal RefundAmount { get; set; }
+    /// <summary>ยอดที่ยืนยันว่าโอนคืนแล้วจริง</summary>
+    public decimal RefundPaidAmount { get; set; }
+    public DateTime? RefundPaidAt { get; set; }
+    /// <summary>ยอดที่ยังต้องคืน = RefundAmount − RefundPaidAmount (ไม่ติดลบ)</summary>
+    public decimal RefundPending { get; set; }
+    /// <summary>None · Pending · Paid (ชื่อ enum)</summary>
+    public LodgingRefundState RefundState { get; set; }
+    /// <summary>วิธีบันทึกมัดจำของใบมัดจำใบแรก (อ่านย้อนจากช่องที่ตรึงบนเอกสาร) — null = ไม่มีใบมัดจำ</summary>
+    public DepositVatTreatment? DepositVatTreatment { get; set; }
+    public string? DepositVatTreatmentLabel { get; set; }
     public string? InternalNotes { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<LodgingReservationRoomDto> Rooms { get; set; } = new();
@@ -579,10 +611,22 @@ public class LodgingReservationListItem
     public decimal DepositRequired { get; set; }
     public DateTime? HoldExpiresAt { get; set; }
     public bool HasSlip { get; set; }
+    /// <summary>ยอดที่ยังต้องคืนแขก (ยกเลิกแล้วยังไม่ยืนยันว่าโอนคืน) — 0 = ไม่มี</summary>
+    public decimal RefundPending { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 
 public record LodgingCancelRequest(string? Reason = null);
+
+/// <summary>ยืนยันว่า "โอน/จ่ายคืนแขกแล้วจริง" (F-03) — ตอนนี้เท่านั้นที่ลง JE คืนเงิน + ใบลดหนี้
+/// <para><c>BankAccountId</c> = บัญชีที่เงินออก (null = บัญชีเดียวกับที่รับมัดจำเข้ามา อ่านจาก JE ของใบมัดจำ ·
+/// หาไม่ได้ = ปฏิเสธให้เลือก ไม่เดา 111)</para></summary>
+public record LodgingRefundPaidRequest(
+    decimal? Amount = null,
+    DateTime? PaidAt = null,
+    Guid? BankAccountId = null,
+    string? Reference = null,
+    string? Note = null);
 
 // ───────────────────────────── 3. หลังบ้าน ─────────────────────────────
 

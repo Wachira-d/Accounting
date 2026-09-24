@@ -1491,6 +1491,33 @@ public enum ReceiptIssueMode
 }
 
 /// <summary>
+/// วิธีบันทึก **เงินมัดจำ/รับล่วงหน้า** ฝั่งขาย — "แยก VAT เมื่อไร และลงบัญชีไหน" (รอบ 193 · คำตัดสินเจ้าของ #34
+/// + คำชี้แจง "ขึ้นอยู่กับประเภทธุรกิจ · ต้องตั้งค่าได้ทั้งหมด")
+///
+/// ลำดับชั้น: ค่าตั้งต้นบริษัท (<c>CompanySettings.DepositVatTreatment</c> · NULL = ตามประเภทธุรกิจ) →
+/// ตั้งทับรายที่พัก (<c>LodgingProperty.DepositVatTreatment</c>) · ตัวตัดสินตัวเดียว =
+/// <c>Helpers/DepositPolicyResolver.Resolve</c> · ใบมัดจำที่ออกแล้วอ่านโหมดย้อนได้จากช่องที่ตรึงตอนสร้าง
+/// (<c>VatAmount</c> + <c>DepositOutputVatDeferred</c>) ผ่าน <c>DepositPolicyResolver.OfDocument</c>
+///
+/// ⚠️ ค่าตัวเลขต้องคงที่ — persist ลง CompanySettings / LodgingProperties
+/// </summary>
+public enum DepositVatTreatment
+{
+    /// <summary>รับเป็นเงินมัดจำเต็มยอด ไม่แยก VAT — Dr เงิน / Cr มัดจำรับ (217xx) เต็มจำนวน ·
+    /// VAT เกิดครั้งเดียวที่ใบสุดท้ายเต็มราคา · เหมาะกับเงินประกัน/มัดจำที่ต้องคืน (ยังไม่เกิด tax point)</summary>
+    FullDeposit = 1,
+
+    /// <summary>แยก VAT เป็น "ภาษีขายรอเรียกเก็บ" (ยังไม่ถึงกำหนด) — Dr เงิน / Cr มัดจำรับ (ฐาน) / Cr 21913 ·
+    /// ย้ายเข้าภาษีขาย (21911) ตอนออกใบสุดท้าย · = <c>DepositOutputVatDeferred=true</c> เดิม</summary>
+    VatPendingUndue = 2,
+
+    /// <summary>ออกใบกำกับภาษี รับรู้ VAT ทันที — Dr เงิน / Cr มัดจำรับ (ฐาน) / Cr ภาษีขาย 21911 เข้า ภ.พ.30
+    /// เดือนที่รับเงิน (§78/1 บริการ) · ใบสุดท้ายหักฐานมัดจำออกจากฐานภาษี ไม่นับ VAT ซ้ำ ·
+    /// = <c>DepositOutputVatDeferred=false</c> เดิม (พฤติกรรมเดิมของทุกทางเข้า)</summary>
+    VatImmediate = 3,
+}
+
+/// <summary>
 /// ใบเสร็จรับเงิน/ใบสำคัญรับ **standalone** (ไม่อ้างใบแจ้งหนี้ · ไม่ใช่มัดจำ) ที่มีบรรทัดสินค้า
 /// คงคลัง ต้องทำอะไรกับสต๊อก — เดิม `ApplyStockMovementsAsync` ไม่รู้จัก Receipt/RV เลย
 /// (`_ => 0`) ทั้งที่ ValidConversions ให้ Quotation/BillingNote → Receipt ⇒ ขายสินค้าด้วย

@@ -2124,7 +2124,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (template.ShowDiscountTotal && doc.DiscountAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalDiscount}</span><span>{doc.DiscountAmount:N2}</span></div>");
         if (doc.BillDiscountAmount > 0)
         {
-            sb.AppendLine($"<div class='sum-row'><span>{L.TotalBillDiscount}</span><span>({doc.BillDiscountAmount:N2})</span></div>");
+            // มัดจำที่ออกใบกำกับแล้ว (โหมด VatImmediate · รอบ 193 #34) หักออกจากฐานภาษี — ป้ายต้องบอกว่าเป็น
+            // "มูลค่ามัดจำตามใบกำกับเลขที่ …" ไม่ใช่ส่วนลดการค้า · ตัวตัดสินเดียวกับ QuestPDF renderer
+            var billLabel = Accounting.Helpers.DepositPolicyResolver.BillDeductionIsTaxedDeposit(
+                    doc.BillDiscountAmount, doc.DepositAppliedAmount, doc.DepositAppliedRef)
+                ? $"{L.TotalDepositTaxInvoiced} {WebUtility.HtmlEncode(doc.DepositAppliedRef)}"
+                : L.TotalBillDiscount;
+            sb.AppendLine($"<div class='sum-row'><span>{billLabel}</span><span>({doc.BillDiscountAmount:N2})</span></div>");
             // ยอดหลังหักส่วนลด = ฐานภาษี — ให้เห็นชัดว่า VAT/WHT คิดจากยอดนี้
             if (!hideVatBreakdown)
                 sb.AppendLine($"<div class='sum-row'><span>{L.TotalAfterDiscountBase}</span><span>{doc.SubTotal:N2}</span></div>");

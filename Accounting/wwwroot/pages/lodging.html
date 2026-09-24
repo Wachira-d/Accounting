@@ -67,7 +67,7 @@
 
     <div id="tabList" class="hidden">
       <div class="toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-        <select class="filter-select" id="viewFilter" onchange="Page.loadList()"><option value="">ทั้งหมด (ช่วงวันที่)</option><option value="pending">รอชำระมัดจำ</option><option value="slips">มีสลิปรอตรวจ</option><option value="arrivals">เข้าพักวันนี้</option><option value="inhouse">กำลังพัก</option><option value="departures">ออกวันนี้</option></select>
+        <select class="filter-select" id="viewFilter" onchange="Page.loadList()"><option value="">ทั้งหมด (ช่วงวันที่)</option><option value="pending">รอชำระมัดจำ</option><option value="slips">มีสลิปรอตรวจ</option><option value="refunds">ต้องคืนเงินแขก</option><option value="arrivals">เข้าพักวันนี้</option><option value="inhouse">กำลังพัก</option><option value="departures">ออกวันนี้</option></select>
         <select class="filter-select" id="statusFilter" onchange="Page.loadList()"><option value="">ทุกสถานะ</option><option value="Pending">รอมัดจำ</option><option value="Confirmed">ยืนยันแล้ว</option><option value="CheckedIn">เช็คอินแล้ว</option><option value="CheckedOut">เช็คเอาต์แล้ว</option><option value="Cancelled">ยกเลิก</option><option value="NoShow">No-show</option></select>
         <input type="date" class="form-input" id="fromFilter" onchange="Page.loadList()"><input type="date" class="form-input" id="toFilter" onchange="Page.loadList()">
         <input type="text" class="search-input" id="searchInput" placeholder="เลขจอง / ชื่อ / โทร" oninput="Page.debounce()">
@@ -166,7 +166,7 @@
       debounce() { clearTimeout(this._t); this._t = setTimeout(() => this.loadList(), 300); },
       pill(s) { return `<span class="pill st-${s}">${ST[s] || s}</span>`; },
       resRow(r) {
-        return `<tr class="booking-row" onclick="Page.openReservation('${r.id}')"><td><b>${esc(r.reservationNumber)}</b>${r.hasSlip && r.status === 'Pending' ? ' 📎' : ''}</td><td>${esc(r.guestName)}<div class="hint">${esc(r.guestPhone || '')}</div></td>
+        return `<tr class="booking-row" onclick="Page.openReservation('${r.id}')"><td><b>${esc(r.reservationNumber)}</b>${r.hasSlip && r.status === 'Pending' ? ' 📎' : ''}${r.refundPending > 0 ? ` <span class="pill" style="background:#FEF3C7;color:#92400E">ค้างคืน ${money(r.refundPending)}</span>` : ''}</td><td>${esc(r.guestName)}<div class="hint">${esc(r.guestPhone || '')}</div></td>
           <td>${Layout.date(r.checkInDate)} → ${Layout.date(r.checkOutDate)} <span class="hint">${r.nights} คืน</span></td><td>${esc(r.roomSummary)}${r.unitNumbers ? `<div class="hint">ห้อง ${esc(r.unitNumbers)}</div>` : ''}</td>
           <td class="text-right">${money(r.totalAmount + r.folioTotal)}</td><td class="text-right ${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</td><td>${this.pill(r.status)}</td><td>${SRC[r.source] || r.source}</td></tr>`;
       },
@@ -236,6 +236,8 @@
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('🛬 เช็คอิน', 'checkInForm()', r.status === 'Confirmed' ? 'btn-primary' : 'btn-secondary') + A('📅 เลื่อนวัน', 'rescheduleForm()') + A('รับชำระเพิ่ม', 'confirmForm(true)');
         if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()');
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
+        // F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ลงบัญชีคืนเงิน + ใบลดหนี้เมื่อพนักงานยืนยันว่าโอนจริงเท่านั้น
+        if ((r.status === 'Cancelled' || r.status === 'NoShow') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
         document.getElementById('resBody').innerHTML = `
           ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
@@ -256,7 +258,8 @@
               <div class="kv"><span>มัดจำที่ต้องเก็บ / รับแล้ว</span><span>${money(r.depositRequired)} / <b>${money(r.depositPaid)}</b></span></div>
               <div class="kv"><span>ชำระแล้วทั้งหมด</span><span>${money(r.paidAmount)}</span></div><div class="kv"><span>คงเหลือ</span><b class="${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</b></div>
               ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.finalDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
-              ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · คืนเงิน ${money(r.refundAmount)} — ${esc(r.cancellationReason || '')}</div>` : ''}
+              ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
+              ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
             </div>
           </div>
           <div class="card"><h4>🛏️ ห้อง</h4>${rooms}${r.extras.map(e => `<div class="kv"><span>➕ ${esc(e.name)} ×${e.quantity}</span><span>${money(e.total)}</span></div>`).join('')}</div>
@@ -348,7 +351,7 @@
       checkOutForm() {
         const r = this.current;
         this.sub('เช็คเอาต์ + ออกเอกสาร', `<form id="cof" class="grid2">
-          <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ทั้งการเข้าพัก (ค่าห้อง + บริการเสริม + folio + service charge) หักมัดจำ ${money(r.depositPaid)} แล้วรับชำระส่วนที่เหลือ ${money(r.balanceDue)}</div>
+          <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ทั้งการเข้าพัก (ค่าห้อง + บริการเสริม + folio + service charge) หักมัดจำ ${money(r.depositPaid)} ตามวิธีบันทึกของใบมัดจำ${r.depositVatTreatmentLabel ? ' (' + esc(r.depositVatTreatmentLabel) + ')' : ''} แล้วรับชำระส่วนที่เหลือ ${money(r.balanceDue)}</div>
           <div class="fld"><label>ค่าเสียหาย/ของหาย (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="dmg" value="0"></div>
           <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
           <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
@@ -362,9 +365,25 @@
           await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null }));
         }, 'เช็คเอาต์');
       },
+      // ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง — บัญชีที่เงินออก: เลือกเอง หรือปล่อยว่าง = บัญชีเดียวกับที่รับมัดจำเข้ามา
+      async refundPaidForm() {
+        const r = this.current;
+        let banks = [];
+        try { const b = await Layout.api().getBankAccounts(); banks = b.data?.items || b.data || []; } catch { banks = []; }
+        this.sub('ยืนยันคืนเงินแขกแล้ว', `<form id="rpf" class="grid2">
+          <div class="fld"><label>ยอดที่คืน (ค้างคืน ${money(r.refundPending)})</label><input class="form-input" type="number" step="0.01" min="0.01" name="amount" value="${r.refundPending}"></div>
+          <div class="fld"><label>วันที่โอนคืน</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
+          <div class="fld"><label>โอนจากบัญชี</label><select class="form-input" name="bank"><option value="">บัญชีเดียวกับที่รับมัดจำเข้ามา</option>${banks.map(b => `<option value="${esc(b.id)}">${esc(b.accountName || b.bankName || '')} ${esc(b.accountNumber || '')}</option>`).join('')}</select></div>
+          <div class="fld"><label>เลขอ้างอิงการโอน</label><input class="form-input" name="ref"></div>
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div>
+          <div class="hint" style="grid-column:1/-1">ระบบจะลงบัญชีคืนมัดจำ (ตัดเงินจากบัญชีที่เลือก) และออก <b>ใบลดหนี้</b> สำหรับส่วน VAT ที่เคยรายงาน — กดเมื่อเงินออกจากบัญชีจริงแล้วเท่านั้น</div></form>`, async () => {
+          const f = document.getElementById('rpf');
+          await this.call(() => Layout.api().lodgingRefundPaid(r.id, { amount: f.amount.value === '' ? null : +f.amount.value, paidAt: f.date.value ? f.date.value + 'T00:00:00' : null, bankAccountId: f.bank.value || null, reference: f.ref.value || null, note: f.note.value || null }));
+        }, 'ยืนยันคืนเงิน');
+      },
       async cancel(noShow) {
         const r = this.current;
-        const reason = prompt(noShow ? 'บันทึก no-show — เหตุผล/หมายเหตุ' : `ยกเลิกการจอง ${r.reservationNumber} — เหตุผล (ค่าปรับคิดตามนโยบาย ส่วนที่เหลือคืนเงินอัตโนมัติ)`);
+        const reason = prompt(noShow ? 'บันทึก no-show — เหตุผล/หมายเหตุ' : `ยกเลิกการจอง ${r.reservationNumber} — เหตุผล (ค่าปรับคิดตามนโยบาย · ส่วนที่ต้องคืนจะขึ้นเป็น "ค้างคืน" จนกว่าจะกดยืนยันว่าโอนคืนแล้ว)`);
         if (reason === null) return;
         await this.call(() => noShow ? Layout.api().lodgingNoShow(r.id, { reason }) : Layout.api().lodgingCancel(r.id, { reason }));
       },

@@ -39,6 +39,8 @@ public interface ILodgingService
     Task<List<LodgingExtraDto>> GetExtrasAsync(Guid companyId, Guid propertyId, bool includeInactive = false);
     Task<LodgingExtraDto> SaveExtraAsync(Guid companyId, LodgingExtraDto dto, string userId);
     Task<bool> DeleteExtraAsync(Guid companyId, Guid extraId);
+    /// <summary>บริการเสริมที่ต้องเลือกวิธีคิดราคา/หมวดใหม่ ทุกที่พักของบริษัท (รอบ 193 #36) — รายงานอย่างเดียว ไม่เดาค่า</summary>
+    Task<List<LodgingExtraNeedsReselectItem>> ListExtrasNeedingReselectAsync(Guid companyId);
 
     // ── หน้าเว็บสาธารณะ (scope ด้วย siteId — ไม่ต้องล็อกอิน) ──
     Task<LodgingPublicInfo?> GetPublicInfoAsync(Guid companyId, Guid siteId);
@@ -72,14 +74,19 @@ public interface ILodgingService
     /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·
     /// ค่านี้มาจาก <c>IGatewayAccountResolver</c> ตัวเดียว — <b>พารามิเตอร์ของเมธอด
     /// ไม่ใช่ช่องใน DTO</b> เหตุผลเดียวกับ originModule</param>
+    /// <param name="fromOnlinePayment">true = เงินเข้าเองจาก gateway (ไม่มีพนักงานกด) ⇒ เปลี่ยนเป็น "ยืนยันแล้ว"
+    /// เฉพาะเมื่อที่พักเปิด <c>AutoConfirmOnDeposit</c> (S-06 รอบ 193) · false = พนักงานกดยืนยันเอง</param>
     Task<LodgingReservationResponse> ConfirmAsync(Guid companyId, Guid reservationId,
-        LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null);
+        LodgingConfirmRequest request, string userId, Guid? moneyInAccountId = null, bool fromOnlinePayment = false);
     Task<LodgingReservationResponse> AssignUnitAsync(Guid companyId, Guid reservationId, LodgingAssignUnitRequest request, string userId);
     Task<LodgingReservationResponse> CheckInAsync(Guid companyId, Guid reservationId, LodgingCheckInRequest request, string userId);
     Task<LodgingReservationResponse> AddChargeAsync(Guid companyId, Guid reservationId, LodgingAddChargeRequest request, string userId);
     Task<LodgingReservationResponse> CancelChargeAsync(Guid companyId, Guid reservationId, Guid chargeId, string userId);
     Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId);
     Task<LodgingReservationResponse> CancelAsync(Guid companyId, Guid reservationId, LodgingCancelRequest request, string userId, bool noShow = false);
+    /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น
+    /// (ยกเลิกแค่ตั้ง "ยอดค้างคืน" ไม่แตะเงินสด)</summary>
+    Task<LodgingReservationResponse> RecordRefundPaidAsync(Guid companyId, Guid reservationId, LodgingRefundPaidRequest request, string userId);
     Task<LodgingReservationResponse> RescheduleAsync(Guid companyId, Guid reservationId, LodgingRescheduleRequest request, string userId);
 
     // ── หลังบ้าน: แม่บ้าน / คำขอแขก ──
