@@ -253,4 +253,36 @@ public class ContactTaxBranchKeyTests
         Assert.False(ContactTaxBranchKey.Pick(new[] { C(Hq, Tin, "00000") }, null, "00000").Found);
         Assert.False(ContactTaxBranchKey.Pick(new[] { C(Hq, Tin, "00000") }, "  ", null).TaxIdExists);
     }
+
+    // ── รอบ 193 ฝ่ายค้าน C3: ขอบเขตการถอยไปจับด้วยอีเมล/เบอร์ (ที่พัก) ──
+
+    [Fact]
+    public void SoftMatch_NoTaxId_AnyRow_UnchangedBehaviour()
+        => Assert.Equal(ContactSoftMatch.AnyRow, ContactTaxBranchKey.SoftMatchScope(null, default));
+
+    [Fact]
+    public void SoftMatch_TaxIdExistsOtherBranch_None()
+    {
+        var m = ContactTaxBranchKey.Pick(new[] { new ContactKeyCandidate(Guid.NewGuid(), "0105560113122", "00005") },
+            "0105560113122", "00000");
+        Assert.False(m.Found);
+        Assert.True(m.TaxIdExists);
+        Assert.Equal(ContactSoftMatch.None, ContactTaxBranchKey.SoftMatchScope("0105560113122", m));
+    }
+
+    [Fact]
+    public void SoftMatch_NewTaxId_OnlyRowsWithoutTaxId()
+    {
+        var m = ContactTaxBranchKey.Pick(Array.Empty<ContactKeyCandidate>(), "0105560113122", "00000");
+        Assert.Equal(ContactSoftMatch.RowsWithoutTaxId, ContactTaxBranchKey.SoftMatchScope("0105560113122", m));
+    }
+
+    [Fact]
+    public void SoftMatch_FoundByKey_None()
+    {
+        var id = Guid.NewGuid();
+        var m = ContactTaxBranchKey.Pick(new[] { new ContactKeyCandidate(id, "0105560113122", "00000") }, "0105560113122", "00000");
+        Assert.Equal(id, m.ContactId);
+        Assert.Equal(ContactSoftMatch.None, ContactTaxBranchKey.SoftMatchScope("0105560113122", m));
+    }
 }

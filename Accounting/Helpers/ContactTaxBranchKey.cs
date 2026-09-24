@@ -21,6 +21,17 @@ public enum ContactKeyBasis
     RawTaxIdEquality,
 }
 
+/// <summary>ขอบเขตการถอยไปจับด้วยอีเมล/เบอร์/ชื่อ — ดู <see cref="ContactTaxBranchKey.SoftMatchScope"/></summary>
+public enum ContactSoftMatch
+{
+    /// <summary>ห้ามถอย — สร้างแถวใหม่</summary>
+    None,
+    /// <summary>ถอยได้ทุกแถว (payload ไม่มีเลขภาษี)</summary>
+    AnyRow,
+    /// <summary>ถอยได้เฉพาะแถวที่ยังไม่มีเลขภาษี</summary>
+    RowsWithoutTaxId,
+}
+
 /// <summary>ผลจับคู่ · <see cref="TaxIdExists"/> = มีผู้ติดต่อเลขนี้อยู่แล้ว (แม้สาขาไม่ตรง) —
 /// ผู้เรียกต้อง<b>ไม่</b>ถอยไปจับคู่ด้วยชื่อ/อีเมลเมื่อเป็นจริง (จะได้แถวสาขาอื่นของเลขเดียวกันกลับมา)</summary>
 public readonly record struct ContactKeyMatch(Guid? ContactId, ContactKeyBasis? Basis, bool TaxIdExists)
@@ -152,6 +163,22 @@ public static class ContactTaxBranchKey
         return await scope
             .Where(c => c.CompanyId == companyId && c.TaxId != null && keys.Contains(c.TaxId))
             .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// ถอยไปจับคู่ด้วยอีเมล/เบอร์โทร/ชื่อ ("soft match") ได้แค่ไหน หลังจับด้วยเลขภาษีไม่เจอ (รอบ 193 ฝ่ายค้าน C3 → ที่พัก) —
+    /// ตัวตัดสินตัวเดียว แทนการเขียน <c>!taxKey.TaxIdExists</c> เองทีละทางเข้า:
+    /// <list type="bullet">
+    /// <item>payload ไม่มีเลขภาษี → จับได้ทุกแถว (พฤติกรรมเดิม)</item>
+    /// <item>มีเลขภาษีและเลขนี้<b>มีอยู่แล้ว</b>แต่สาขาไม่ตรง → <b>ห้าม</b> (จะได้แถวสาขาอื่นของเลขเดียวกัน หรือแถวของคนอื่น) ⇒ สร้างแถวใหม่</item>
+    /// <item>มีเลขภาษีแต่เลขนี้<b>ยังไม่มี</b>ในระบบ → จับได้เฉพาะแถวที่<b>ยังไม่มีเลขภาษี</b> (แถวที่มีเลขอื่น = คนละนิติบุคคล ห้ามหยิบ)</item>
+    /// </list>
+    /// </summary>
+    public static ContactSoftMatch SoftMatchScope(string? payloadTaxId, ContactKeyMatch taxKey)
+    {
+        if (string.IsNullOrWhiteSpace(payloadTaxId)) return ContactSoftMatch.AnyRow;
+        if (taxKey.Found || taxKey.TaxIdExists) return ContactSoftMatch.None;
+        return ContactSoftMatch.RowsWithoutTaxId;
     }
 
     private static string? WantedBranch(string? branchCode)

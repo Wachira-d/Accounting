@@ -421,14 +421,21 @@ public partial class LodgingService
         Contact? c = null;
         // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ฟอร์มจองไม่มีช่องสาขา และเส้นนี้สร้างผู้ติดต่อ
         // เป็น "00000" เสมอ ⇒ ความหมายเดิม = สำนักงานใหญ่ จึงส่ง "00000" (ไม่หยิบแถวสาขาอื่นของเลขเดียวกัน)
+        var taxKey = default(Accounting.Helpers.ContactKeyMatch);
         if (taxId != null)
         {
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice);
+            taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, taxId, Accounting.Helpers.TaxBranchCode.HeadOffice);
             if (taxKey.ContactId is Guid keyId)
                 c = await _db.Contacts.FirstOrDefaultAsync(x => x.Id == keyId && x.CompanyId == companyId);
         }
-        if (c == null && !string.IsNullOrEmpty(email)) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Email == email);
-        if (c == null && !string.IsNullOrEmpty(phone)) c = await _db.Contacts.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Phone == phone);
+        // รอบ 193 (ฝ่ายค้าน C3): เดิมถอยไปจับด้วยอีเมล/เบอร์เสมอ ⇒ แขกนิติบุคคลที่เลขมีอยู่แล้วแต่คนละสาขา หรือเลขใหม่ที่อีเมลตรงกับ
+        // ผู้ติดต่อเลขอื่น ได้แถวของคนอื่นไปออกใบกำกับ (§86/4 ผู้ซื้อผิดตัว) — ตัดสินขอบเขตด้วยตัวกลางตัวเดียว
+        var soft = Accounting.Helpers.ContactTaxBranchKey.SoftMatchScope(taxId, taxKey);
+        var softScope = soft == Accounting.Helpers.ContactSoftMatch.RowsWithoutTaxId
+            ? _db.Contacts.Where(x => x.CompanyId == companyId && (x.TaxId == null || x.TaxId == ""))
+            : _db.Contacts.Where(x => x.CompanyId == companyId);
+        if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None && !string.IsNullOrEmpty(email)) c = await softScope.FirstOrDefaultAsync(x => x.Email == email);
+        if (c == null && soft != Accounting.Helpers.ContactSoftMatch.None && !string.IsNullOrEmpty(phone)) c = await softScope.FirstOrDefaultAsync(x => x.Phone == phone);
         if (c != null) return c.Id;
         var isCompany = !string.IsNullOrWhiteSpace(r.GuestCompanyName);
         c = new Contact
