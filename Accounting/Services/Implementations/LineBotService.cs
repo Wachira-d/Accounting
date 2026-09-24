@@ -819,7 +819,8 @@ public class LineBotService : ILineBotService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "LINE postback approve failed for doc {DocId}", doc.Id);
-            return "❌ อนุมัติไม่สำเร็จ: " + ex.Message + "\nเปิดดู/แก้ไขได้ที่หน้าเว็บ";
+            return "❌ อนุมัติไม่สำเร็จ: " + DocumentApprovalWarningsException.DescribeForUser(ex)
+                + "\nเปิดดู/แก้ไขได้ที่หน้าเว็บ";
         }
     }
 

@@ -166,7 +166,18 @@ public class FileAttachmentController : ControllerBase
             var deny = await DenyDocAsync(companyId, att.EntityId, "ลบไฟล์แนบ");
             if (deny is { } d) return StatusCode(d.Status, new ApiResponse<string>(false, null!, d.Message));
         }
-        await _attachmentService.DeleteAsync(companyId, attachmentId);
+        // ★ หลักฐานประกอบรายการบัญชีต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · §87/3) — ฝ่ายค้านรอบ 190:
+        // เปิดให้แนบ/ลบบนใบที่อนุมัติแล้ว แต่ DeleteAsync ลบไฟล์จริง ⇒ ผู้มีสิทธิ์สร้างใบลบหลักฐานของใบที่ยื่น
+        // ภ.พ.30 ไปแล้วได้ถาวร · ตอนนี้: ใบร่าง = ลบจริงได้ (ยังไม่ใช่รายการบัญชี) · นอกนั้นถอดจากรายการแต่
+        // เก็บไฟล์จริงไว้ (soft-delete) — ผู้ใช้ยังถอดไฟล์ที่แนบผิดได้เหมือนเดิม
+        DocumentStatus? docStatus = att.EntityType == "Document"
+            ? await _db.Documents.AsNoTracking()
+                .Where(x => x.Id == att.EntityId && x.CompanyId == companyId)
+                .Select(x => (DocumentStatus?)x.Status)
+                .FirstOrDefaultAsync()
+            : null;
+        var keepFile = AttachmentRetention.MustKeepPhysicalFile(att.EntityType, docStatus);
+        await _attachmentService.DeleteAsync(companyId, attachmentId, keepFile);
         return NoContent();
     }
 

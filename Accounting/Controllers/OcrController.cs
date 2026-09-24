@@ -359,7 +359,8 @@ public class OcrController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    approveNote = "\n[APPROVE-FAIL] " + ex.Message;
+                    approveNote = "\n[APPROVE-FAIL] "
+                        + Accounting.Services.Implementations.DocumentApprovalWarningsException.DescribeForUser(ex).Replace('\n', ' ');
                 }
             }
             if (approveNote != null)

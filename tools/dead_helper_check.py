@@ -43,9 +43,50 @@ SKIP_DIRS = {'bin', 'obj', 'node_modules', '.git'}
 
 
 def strip_comments(text):
-    """ตัด // และ /* */ ออก โดยคงจำนวนบรรทัด — ไม่แตะ `//` ที่ตามหลัง `:` (URL ในสตริง)"""
-    text = re.sub(r'/\*.*?\*/', lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text, flags=re.S)
-    return re.sub(r'(?<!:)//[^\n]*', '', text)
+    """ตัด // และ /* */ ออก โดยคงจำนวนบรรทัด — สแกนทีละตัวอักษรครั้งเดียว ตัวที่มาก่อนชนะ
+
+    เดิมตัด `/* … */` ทั้งไฟล์ก่อน แล้วค่อยตัด `//` ⇒ คอมเมนต์ `// (V/N/E/*)` ทำให้ `/*` ในคอมเมนต์บรรทัด
+    เปิด "บล็อกคอมเมนต์" กลืนโค้ดจริงไปจนเจอ `*/` ตัวถัดไป ⇒ ฟ้องว่า helper ไม่มีผู้เรียกทั้งที่มี (รอบ 190 ทีม M) ·
+    สตริง (ธรรมดา/verbatim/char) ถูกคงไว้และไม่ถูกตีความเป็นคอมเมนต์ (URL `https://` ในสตริงจึงปลอดภัยโดยไม่ต้องเดา)"""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        nx = text[i + 1] if i + 1 < n else ''
+        if c == '/' and nx == '/':
+            j = text.find('\n', i)
+            i = n if j < 0 else j
+            continue
+        if c == '/' and nx == '*':
+            j = text.find('*/', i + 2)
+            end = n if j < 0 else j + 2
+            out.append(re.sub(r'[^\n]', ' ', text[i:end]))
+            i = end
+            continue
+        if c == '@' and nx == '"' or (c == '$' and nx == '@' and i + 2 < n and text[i + 2] == '"') \
+                or (c == '@' and nx == '$' and i + 2 < n and text[i + 2] == '"'):
+            q = text.index('"', i)
+            j = q + 1
+            while j < n:
+                if text[j] == '"':
+                    if j + 1 < n and text[j + 1] == '"':
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
+        if c == '"' or c == "'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != '\n':
+                j += 2 if text[j] == '\\' else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
 
 
 def collect(root):

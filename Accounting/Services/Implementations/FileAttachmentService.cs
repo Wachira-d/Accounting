@@ -184,7 +184,7 @@ public class FileAttachmentService : IFileAttachmentService
         return attachment == null ? null : MapToResponse(attachment, attachment.UploadedByUser?.FullName ?? "");
     }
 
-    public async Task DeleteAsync(Guid companyId, Guid attachmentId)
+    public async Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false)
     {
         var attachment = await _db.FileAttachments
             .FirstOrDefaultAsync(f => f.Id == attachmentId && f.CompanyId == companyId)
@@ -194,7 +194,12 @@ public class FileAttachmentService : IFileAttachmentService
         attachment.IsDeleted = true;
         await _db.SaveChangesAsync();
 
-        // Delete physical file
+        // Delete physical file — ยกเว้นหลักฐานที่ต้องเก็บตามกฎหมาย (ผู้เรียกตัดสินผ่าน keepPhysicalFile)
+        if (keepPhysicalFile)
+        {
+            _logger.LogInformation("Attachment {Id} soft-deleted; physical file retained (legal retention)", attachmentId);
+            return;
+        }
         if (!string.IsNullOrEmpty(attachment.StoragePath) && File.Exists(attachment.StoragePath))
         {
             try

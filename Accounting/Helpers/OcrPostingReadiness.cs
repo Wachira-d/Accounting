@@ -16,6 +16,9 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class OcrPostingReadiness
 {
+    /// <summary>แท็กวันที่ไม่แน่นอน — ผู้เขียนคือ <c>OcrService</c> หลัง <c>OcrDateReader.CrossCheck</c></summary>
+    public const string DateUnsureTag = "[DATE-UNSURE]";
+
     /// <summary>แท็กใน <c>ProcessingNotes</c> ที่แปลว่า "ระบบยังไม่แน่ใจ" → ห้ามอนุมัติเอง</summary>
     public static readonly (string Tag, string Why)[] BlockingTags =
     {
@@ -27,6 +30,8 @@ public static class OcrPostingReadiness
         // (เดิม `GatewayResult.MathConsistent` ไม่มีผู้อ่านทั้งเรพ)
         ("[MATH]",            "ตัวเลขบนใบขัดกันเอง (ยอดหัวใบไม่ลงตัว หรือ Σ บรรทัดไม่ตรงหัวใบ)"),
         ("[DATE-UNKNOWN]",    "อ่านวันที่บนกระดาษไม่ได้ (ระบบเติมวันนี้ให้ชั่วคราว)"),
+        // รอบ 190: วันที่ที่ OcrDateReader เติม/ทับ/สงสัยด้วยความมั่นใจ < 0.85 (ไม่ใช่ "ตรงกับป้าย")
+        (DateUnsureTag,       "วันที่เอกสารไม่แน่นอน (ระบบเลือกจากตัวเลขบนกระดาษ หรือขัดกับที่ engine อ่าน)"),
         ("[FX-UNKNOWN]",      "เอกสารสกุลต่างประเทศแต่ยังไม่มีอัตราแลกเปลี่ยน"),
         ("[TAX-INV-PENDING]", "กระดาษยังไม่ใช่ใบกำกับภาษี — VAT พักไว้รอใบจริง"),
         ("[WHT-CERT]",        "เป็นหนังสือรับรองหัก ณ ที่จ่าย ไม่ใช่เอกสารขาย/ซื้อใบใหม่"),

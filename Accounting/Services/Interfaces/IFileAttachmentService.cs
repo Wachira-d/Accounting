@@ -17,5 +17,7 @@ public interface IFileAttachmentService
     /// <summary>Fetch a single attachment by id, scoped to the calling tenant.
     /// Returns null if the attachment doesn't exist or belongs to another company.</summary>
     Task<FileAttachmentResponse?> GetByIdAsync(Guid companyId, Guid attachmentId);
-    Task DeleteAsync(Guid companyId, Guid attachmentId);
+    /// <param name="keepPhysicalFile">true = ถอดจากรายการ (soft-delete) แต่เก็บไฟล์จริงไว้ — หลักฐานประกอบรายการบัญชี
+    /// ที่ต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3)</param>
+    Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false);
 }

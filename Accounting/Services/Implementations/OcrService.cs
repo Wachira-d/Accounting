@@ -603,6 +603,14 @@ public class OcrService : IOcrService
                                 : Accounting.Helpers.OcrFieldSource.Engine,
                             dateCheck.Confidence, dateCheck.Reason);
                     extractedData.ReasoningTrace.Add("[Date] " + dateCheck.Reason);
+                    // ★ วันที่ที่ "เดา/ทับ/สงสัย" ต่ำกว่า 0.85 = ไฮไลต์เหลือง ⇒ ต้องมีคนดูก่อนลงบัญชี
+                    // (ฝ่ายค้านรอบ 190: เดิม engine ไม่ได้วันที่ ⇒ [DATE-UNKNOWN] ⇒ ไม่อนุมัติเอง ·
+                    // หลังเพิ่มตัวตรวจ วันที่ที่หยิบจากตัวเลขลอย ๆ บนกระดาษ (0.40–0.80) ทำให้แท็กนั้น
+                    // ไม่เกิด ⇒ ใบอนุมัติเองด้วยวันที่เดา = งวด ภ.พ.30/tax point/นาฬิกา §82/3 ผิดเงียบ)
+                    if (Accounting.Helpers.OcrDateReader.NeedsHumanConfirm(dateCheck))
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                            + "\n" + Accounting.Helpers.OcrPostingReadiness.DateUnsureTag + " " + dateCheck.Reason
+                            + " — กรุณายืนยันวันที่ก่อนอนุมัติ (งวดภาษี §78/§82/3)";
                 }
             }
 
@@ -943,9 +951,16 @@ public class OcrService : IOcrService
                         if (string.IsNullOrWhiteSpace(after) || string.Equals(before?.Trim(), after.Trim(), StringComparison.Ordinal)) return;
                         if (!string.Equals(after.Trim(), ourIdentity.Name?.Trim(), StringComparison.Ordinal)
                             && !string.Equals(after.Trim(), ourIdentity.NameEn?.Trim(), StringComparison.Ordinal)) return;
-                        extractedData.FieldConfidence[key] = 0.95;
-                        extractedData.Note(key, after, Accounting.Helpers.OcrFieldSource.VendorHistory, 0.95m,
-                            "ชื่อบริษัทเราจากทะเบียน — เลขภาษี/ชื่อเราบนกระดาษยืนยันว่าฝั่งนี้คือเรา"
+                        // ★ ชื่อเราพิมพ์อยู่บนกระดาษ = ยืนยันได้ (0.95) · มีแต่เลขภาษี (ชื่อบนกระดาษเป็นรหัส/ว่าง)
+                        // = ค่าที่เติมถูก แต่ใบกำกับอาจ**ไม่ได้ระบุชื่อผู้ซื้อ**ตาม §86/4 ⇒ ห้ามดูมั่นใจจนไม่มีไฮไลต์
+                        // (ฝ่ายค้านรอบ 190: 0.95 ซ่อนข้อบกพร่องของใบกำกับไว้หลังช่องที่ไม่ขึ้นสีเหลือง)
+                        var onPaper = Accounting.Helpers.OcrPartyResolver.OurNameOnPaper(normalizedText, ourIdentity);
+                        var conf = onPaper ? 0.95 : 0.80;
+                        extractedData.FieldConfidence[key] = conf;
+                        extractedData.Note(key, after, Accounting.Helpers.OcrFieldSource.VendorHistory, (decimal)conf,
+                            (onPaper
+                                ? "ชื่อบริษัทเราจากทะเบียน — ชื่อเราบนกระดาษยืนยันว่าฝั่งนี้คือเรา"
+                                : "ชื่อบริษัทเราจากทะเบียน (ยืนยันด้วยเลขภาษี) — กระดาษไม่ได้พิมพ์ชื่อเรา ตรวจว่าใบกำกับระบุชื่อผู้ซื้อครบตาม §86/4")
                             + (string.IsNullOrWhiteSpace(before) ? "" : $" (engine อ่านได้ “{before}”)"));
                     }
                     NoteOurRegistryName(Accounting.Helpers.OcrFieldKeys.BuyerName, buyerNameBefore, b.Name);

@@ -243,6 +243,16 @@ public static class OcrDateReader
         return distinct <= 1 ? UnlabelledSingleConfidence : UnlabelledAmbiguousConfidence;
     }
 
+    /// <summary>ผลตรวจนี้ต้องให้คนยืนยันก่อนลงบัญชีไหม (ห้ามอนุมัติอัตโนมัติ) — จริงเมื่อระบบ<b>เติม/ทับ/สงสัย</b>
+    /// วันที่ด้วยความมั่นใจต่ำกว่า 0.85 (= ช่องขึ้นไฮไลต์เหลือง) · "ตรงกับป้าย" และ "ไม่แตะ" ไม่ต้อง.
+    /// <para>ที่มา (ฝ่ายค้านรอบ 190): ก่อนมีตัวตรวจ engine ไม่ได้วันที่ ⇒ <c>[DATE-UNKNOWN]</c> ⇒ ไม่อนุมัติเอง ·
+    /// พอตัวตรวจเติมวันที่จากตัวเลขลอย ๆ บนกระดาษ แท็กนั้นไม่เกิด ⇒ ใบอนุมัติเองด้วยวันที่เดา ⇒ งวด ภ.พ.30 ·
+    /// tax point · นาฬิกา §82/3 ผิดเงียบ</para></summary>
+    public static bool NeedsHumanConfirm(OcrDateCheck check)
+        => check.Verdict is not (OcrDateVerdict.NoChange or OcrDateVerdict.Confirmed)
+           && check.Confidence < 0.85m;
+
+
     /// <summary>
     /// <b>ขั้นตรวจท้ายสุด</b> — เทียบวันที่ที่ engine ให้ กับวันที่ที่มีป้ายบนกระดาษ
     /// </summary>

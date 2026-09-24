@@ -215,4 +215,28 @@ public class OcrDateReaderTests
         Assert.Equal(D(2026, 9, 18), c[0].Date);
         Assert.Equal(D(2026, 9, 12), c[1].Date);
     }
+
+    // ── ด่านอนุมัติอัตโนมัติ (ฝ่ายค้านรอบ 190) — วันที่ที่ระบบเดา/ทับ ต้องให้คนยืนยันก่อน ──
+
+    [Fact]
+    public void ด่านอนุมัติ_วันที่ที่ทับ_engine_หรือเติมให้_ต้องให้คนยืนยัน_และแท็กบล็อกการอนุมัติเอง()
+    {
+        var replaced = OcrDateReader.CrossCheck(D(2018, 9, 26), WinePro, Uploaded);
+        var filled = OcrDateReader.CrossCheck(null, WinePro, Uploaded);
+        Assert.True(OcrDateReader.NeedsHumanConfirm(replaced));
+        Assert.True(OcrDateReader.NeedsHumanConfirm(filled));
+        var notes = "\n" + OcrPostingReadiness.DateUnsureTag + " " + replaced.Reason;
+        Assert.False(OcrPostingReadiness.Evaluate(notes, hasUsableDate: true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void ด่านอนุมัติ_ทิศตรงข้าม_engine_อ่านตรงกับป้าย_ไม่ต้องให้คนยืนยัน_อนุมัติเองได้เหมือนเดิม()
+    {
+        var confirmed = OcrDateReader.CrossCheck(D(2026, 9, 18), WinePro, Uploaded);
+        Assert.Equal(OcrDateVerdict.Confirmed, confirmed.Verdict);
+        Assert.False(OcrDateReader.NeedsHumanConfirm(confirmed));
+        Assert.False(OcrDateReader.NeedsHumanConfirm(
+            new OcrDateCheck(OcrDateVerdict.NoChange, D(2026, 9, 18), 0.95m, "")));
+        Assert.True(OcrPostingReadiness.Evaluate("", hasUsableDate: true).CanAutoApprove);
+    }
 }

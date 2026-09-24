@@ -17430,6 +17430,15 @@ public class DocumentApprovalWarningsException : Exception
         Warnings = warnings;
         AiHints = aiHints;
     }
+
+    /// <summary>ข้อความเหตุผลที่ "อนุมัติไม่สำเร็จ" สำหรับทางอนุมัติที่ไม่มีหน้าต่างยืนยันคำเตือน
+    /// (OCR อนุมัติอัตโนมัติ → <c>[APPROVE-FAIL]</c> · ปุ่ม LINE) — ต้องบอก<b>ตัวคำเตือน</b> ไม่ใช่แค่จำนวน
+    /// <para>ที่มา (ฝ่ายค้านรอบ 190): คำเตือน "ภาษีซื้อจะถูกพัก 11640" ทำให้ใบจากสแกนค้าง Draft
+    /// แต่ผู้ใช้เห็นแค่ "มีจุดที่ต้องตรวจ (1 รายการ)" — ไม่รู้ว่าต้องไปแก้อะไรที่ไหน</para></summary>
+    public static string DescribeForUser(Exception ex)
+        => ex is DocumentApprovalWarningsException w && w.Warnings.Count > 0
+            ? w.Message + ": " + string.Join(" · ", w.Warnings)
+            : ex.Message;
 }
 
 /// <summary>

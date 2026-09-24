@@ -120,6 +120,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - **ผู้ติดต่อตามสาขา** — `Helpers/OcrVendorBranchContact` จับแถวผู้ติดต่อด้วย (เลขภาษี + สาขา) · ไม่มีแถวสาขานั้น ⇒ ผูกแถวเดิม
     (สาขาของใบอยู่ที่เอกสาร) **ไม่สร้างแถวใหม่เอง** (รอเจ้าของตัดสิน) · ที่อยู่สาขาจากทะเบียน VAT ผ่าน
     `IDbdLookupService.GetBranchAsync` + `Helpers/RdVatBranchRecords`
+  - **วันที่ที่ระบบเดา/ทับ/สงสัย** (`OcrDateReader.NeedsHumanConfirm` — ความมั่นใจ < 0.85 และไม่ใช่ "ตรงกับป้าย") ⇒ แท็ก
+    `[DATE-UNSURE]` ใน ProcessingNotes ⇒ `OcrPostingReadiness` ห้ามอนุมัติอัตโนมัติ (ทุกช่องทาง) — ฝ่ายค้านรอบ 190: ไม่งั้นวันที่
+    ที่เติมจากตัวเลขลอย ๆ ทำให้ `[DATE-UNKNOWN]` ไม่เกิด แล้วใบลงงวด ภ.พ.30 ผิดเงียบ
+  - **ส่วนลดท้ายบิล / VAT ผสม (ทีม M)** — ตัวอ่านส่วนลดตัวเดียว `Helpers/OcrBillDiscount` (เดิมหยิบ "ส่วนลด" ตัวแรกของหน้า ⇒ ได้
+    "ยอดหลังหักส่วนลด" เป็นส่วนลด) · ด่านคณิตรู้ส่วนลด (ส่วนลดที่อธิบายส่วนต่างพอดี = ใช้ฐานหลังลด) · `Document.SubTotal` จากสแกน =
+    ยอด**หลัง**ส่วนลด (`OcrHeaderAmounts.NetSubTotal` ทั้งสร้าง/พรีวิว/repopulate — เดิมก่อนลด ⇒ ฐานภาษีซื้อ §87 เกิน) ·
+    `Document.DiscountAmount` = Σ ส่วนลดที่ลงบรรทัดจริง · `OcrLineReconciler` เคส E `DiscountOnTotalInclVat` (ราคารวม VAT + ส่วนลด) ·
+    อัตรา VAT รายบรรทัดจากสัญลักษณ์บนกระดาษ (V/N · ตารางสรุป VAT) **ก่อน**ตัวเดาจากชื่อสินค้า — ใช้เฉพาะเมื่อยอดบนกระดาษพิสูจน์ได้
+    (`Helpers/OcrLineVatMarks`) · ด่าน `Helpers/OcrAmountIntegrity` ตรวจบรรทัดที่จะเขียนจริง (ติดลบ · Σ ยอด · Σ VAT · อัตรา×ยอด
+    คำนวณอิสระ) ⇒ `[Σ-GAP]` พร้อมตัวเลข · ไม่แก้ตัวเลขใด ๆ · ปุ่ม LINE postback ตรวจ readiness ซ้ำตอนกด · หน้ารีวิวแบนเนอร์แดง
+    พร้อมตัวเลขก่อนกดสร้าง (เดิมป้ายเขียว "ผลรวมตรง" โดยไม่ดูผลตรวจ)
   - **local เรียนจาก Azure** — ที่อยู่ผู้ขายที่ว่างเติมจากคลัง known-good ได้ (ด่าน `OcrKnownGoodAddressFill`) · ช่องอื่นยังไม่เรียน
     (สถานะจริงอยู่ใน `erp-review/2026-09-24/team-L.md` §0)
 - **ทางออกจาก review modal 4 ทาง**: `📝 ยืนยันในฟอร์ม` (แนะนำ — ผ่าน
@@ -2168,8 +2179,12 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
 - **ไฟล์แนบของเอกสาร** แนบ/ลบได้ทุกสถานะ (รวมใบที่อนุมัติแล้ว — ไฟล์หลักฐานไม่ใช่เนื้อใบกำกับ จึงไม่ขัด "ห้ามแก้ย้อนหลัง")
   · ต้องมีสิทธิ์**สร้างหรืออนุมัติ**ประเภทเอกสารนั้น (ด่านใน `FileAttachmentController` — เดิมแค่ `[Authorize]`) ·
   ชนิดไฟล์ตัดสินจาก**ไบต์** (`UploadFileType.SniffAttachment`) ไม่ใช่นามสกุล (HTML ที่ตั้งชื่อ `.csv` ถูกปฏิเสธ) ·
-  ⚠️ ลบไฟล์แนบของใบที่อนุมัติแล้วยังลบไฟล์จริง และเส้นนี้ยังไม่ตรวจเพดานพื้นที่ (`CanFitStorageAsync` มีผู้เรียกแค่ CMS) —
-  รอเจ้าของตัดสิน (`erp-review/2026-09-24/team-U.md` คำถาม 1)
+  **ลบ** = ถอดจากรายการ · ไฟล์จริงถูกลบเฉพาะใบร่างและข้อมูลหลัก (ผู้ติดต่อ/สินค้า) — นอกนั้นเก็บไฟล์ไว้ (soft-delete ·
+  `Helpers/AttachmentRetention` · พ.ร.บ.การบัญชี ม.10 / §87/3 · ชนิดที่ไม่รู้จัก = เก็บ) · ⚠️ ยังไม่ตรวจเพดานพื้นที่
+  (`CanFitStorageAsync` มีผู้เรียกแค่ CMS) และด่านสิทธิ์ครอบเฉพาะ `EntityType = "Document"` — รอเจ้าของตัดสิน
+  (`erp-review/2026-09-24/team-U.md` คำถาม 1–2)
+- **ทางอนุมัติที่ไม่มีหน้าต่างยืนยันคำเตือน** (OCR อนุมัติอัตโนมัติ `[APPROVE-FAIL]` · ปุ่ม LINE) ได้ข้อความคำเตือนเต็มผ่าน
+  `DocumentApprovalWarningsException.DescribeForUser` (เดิมได้แค่ "มีจุดที่ต้องตรวจ (1 รายการ)")
 - **ด่าน §86/4 ของใบกำกับซื้อบนฟอร์ม = เซิร์ฟเวอร์ตัดสิน** — `GET /api/companies/{cid}/document/supplier-tax-invoice-check`
   (`DocumentService.CheckSupplierTaxInvoiceAsync`) เรียก `TaxInvoiceCompletenessChecker.Evaluate` **ตัวเดียวกับตัวลงบัญชี 11610/11640**
   กับผู้ติดต่อจากฐาน · คืน `IsClaimable` · `MissingFields` · `MissingContactFields` · `ContactTaxId` · `BranchCodeError` ⇒ กล่องแดง
