@@ -3233,3 +3233,76 @@ _Last verified against codebase: 2026-09-24 (รอบ 192 — **"หายอ�
 - คำถามเจ้าของ: วิธีลงส่วนต่าง 98 ของใบ Shopee · `[PAGES-PARTIAL]` ควรบล็อกไหม · บรรทัดสรุปต่อกลุ่มภาษี · เก็บยอดที่จ่ายเป็นคอลัมน์ไหม
 - สแกนเก่าที่เก็บยอด 24,110 ไว้ไม่มี migration — ตอนสร้างเอกสาร `[Σ-GAP]` ฟ้อง · สแกนใหม่ได้ผลถูก
 — commit 85bfb98)_
+
+_Last verified against codebase: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ (`erp-review/2026-09-24/DECISIONS.md`) + ผลตรวจ "การตั้งค่าถูกเรียกใช้
+ครบทุกส่วนงานไหม" (`audit-settings.md` · P0 1 · P1 7 · P2 12) + ผลตรวจวงจรเงินมัดจำ (`audit-deposit.md` · P0 3)** · 13 ทีม (E S F U2 P2 O2 → L2 O1 V W
+S2 C3 M2) · ฝ่ายค้าน 3 รอบ (`review193-*.md` · `review193-r2-*.md` · `review193-r3.md`) · รายงานต่อทีม `erp-review/2026-09-24/r193-*.md`
+- **E (สต็อก/POS · 725fe03 · a967b9e)** — E-01 P0: POS ขายเมนูสูตรลง COGS 0 และคืนเงินกลับ COGS เต็ม ⇒ ตัดสต็อกก่อน JE (`DeductSaleStockAsync`) + ต้นทุนตรึงบรรทัด
+  (`PosCogsBooking` · `PosOrderItem.CostOfGoodsSold`) · คืนปัดสะสม Σ = ยอดขาย · E193-1 ปุ่มสถานะปิดบิลเองไม่ได้ (`PosOrderStatusTransition`) · E193-2 void บิลที่คืน
+  บางส่วน = กลับเฉพาะส่วนค้าง (`PosVoidPlan` · กลับ JE ขาย + JE คืนเงินทุกใบ) · E193-3 กลับ JE ในธุรกรรมเดียว ล้ม = ยกเลิกไม่สำเร็จ · E-02 `CostingMethod` ไม่มีผู้เขียน = คำถามเจ้าของ
+- **S (security · d334f1d)** — #37/G2-01 คีย์ `int_` ออก/ผูกผู้ใช้เฉพาะเจ้าของ · สิทธิ์ `CanRead/CanWrite/CanDelete` (ใหม่ = อ่านอย่างเดียว) · legacy 90 วัน ·
+  `X-Acting-User` คีย์ใหม่ = mapping เท่านั้น · B-03 precheck กรองบริษัท (`TaxReportTenantScope`) · B-04 `TaxController` 12 endpoint เขียนมีด่าน
+- **F (สัญญาฟอร์ม↔API · 52d82b3)** — A01 A02 A03 A04 A06 A08 A09 A10 (+A16/A17 บางส่วน) ปิด "กดสร้างแล้วไม่มีทางสำเร็จ" 6 หน้า · อัตรา ≤ 0 ถูกปฏิเสธ + ตัวอ่าน
+  กรอง `MidRate > 0` · `enum_number_compare_check` กติกา 3
+- **U2 (ไฟล์แนบ/คิว · f04c145)** — #29 ด่านไฟล์แนบทุกชนิดตามสิทธิ์โมดูลเจ้าของ (`AttachmentPermissionScope`) · #30 เพดานพื้นที่ = เตือน (`Subscription.CurrentStorageUsed` ไม่มี
+  ผู้อ่านแล้ว — คิดจากของจริง) · #31 คิวรวมร่างจากสแกน · #32 คิวครอบงวดที่ยังไม่ปิด (`ClosedPeriodRanges`)
+- **P2 (เงินเดือน · 34e62a3)** — #35/D-02 ฐาน ปกส. หักลาไม่รับค่าจ้าง (ไม่ได้จ่ายอะไรเลย = 0) + คำนวณใหม่รอบที่ยังไม่จ่าย · D-01 50 ทวิ ภ.ง.ด.1 ใช้ `EmployeeTaxIdentity`
+  (เดิม `Employee.TaxId` ไม่มีผู้เขียน ⇒ ไม่เคยออก) · A05/D-07 แก้พนักงานไม่หายเงียบ (`EmployeeRecordEdit` · ค่าปิดบังไม่ทับของจริง)
+- **O2 (ชื่อ/ที่อยู่/สาขา/วันที่ · abd33a7)** — #18 ทะเบียน RD แยกสาขาทั้งแถว · #19 รายงานผู้ติดต่อข้อมูลเสีย · #20 คีย์เลขภาษี+สาขา (`ContactTaxBranchKey`) ·
+  #21 "สาขาที่ 00008" · #22 ใบอังกฤษ+สกุลต่างประเทศเชื่อ engine · #26 ที่อยู่ผู้ซื้อจากบริษัทเรา 0.70 · #27 python date reader · #15 ตรงแล้ว
+- **L2 (มัดจำ/ที่พัก · 5721ebd)** — #34 มัดจำ 3 โหมด `DepositPolicyResolver` (ที่พัก → บริษัท → ประเภทธุรกิจ · ค่าเริ่มต้น VAT ทันที = ไม่เปลี่ยนใครเงียบ) ·
+  P0-1 เช็คเอาต์ที่พักใช้มัดจำจริง (VAT ทันที = หักฐานก่อน VAT) · P0-2/F-03 ยกเลิกไม่ลงคืนเงินจนพนักงานยืนยัน `refund-paid` · P0-3 ห้ามหักมัดจำออกใบกำกับเต็มจำนวน
+  ทุกงวด · #36/F-01 บริการเสริมราคา 0 · S-06 `AutoConfirmOnDeposit` ต่อสาย · S-10 VAT ที่พักตามบริษัท
+- **O1 (OCR ยอดเงิน · 8561d5e)** — #1/#3/#4 ยอดชำระจริง + บรรทัดปรับ 51120/51150 ที่ขั้นชำระ · #5 `[NO-ITEMS]` · #8 ผลต่างปัดเศษ 54960 (`DocumentRounding`) ·
+  #9 §82/5(1) ผู้ซื้อบนกระดาษ · #10 e-Tax XML ใน PDF แก้ 7 ช่องที่ตกไป OCR เงียบ · #12 `[Σ-GAP]` ต้องรับทราบ (API ไม่ขัดจังหวะ) · #14 รายงานข้อมูลเก่า
+- **V (ค่าตั้งถึงทุกส่วนงาน · 8bcc733)** — S-01 ธง VAT สองตัว stopgap (`CompanySettingsFactory` · `CompanyVatStatus` · รายงาน `vat-flag-consistency`) · S-02 e-Tax
+  หลังออกเอกสารจุดเดียว `IssuedDocumentHooks` (POS/Integration/CMS/ใบเสร็จ settlement) · S-05 `IsVehicleDealer` ถึง §82/5(6) (`InputVatVehicleRule` ชุดเดียว) ·
+  S-10 VAT CMS · ของแถม: บันทึกภายใน lead ไม่หลุดถึงลูกค้า
+- **W (ค่าตั้งมีผลจริง · 11e79b2 · 10ed065)** — ฝ่ายค้าน C1: งานเจ้าของต้องทำโดยคนที่ล็อกอิน (`OwnerActionGuard`) · S-04 สวิตช์ API Access คุมคีย์ที่ออกแล้ว ·
+  S-08 ปิดรับสมัครกันที่ server (`RegistrationPolicy` · คำเชิญยังได้) · S-12 อีเมล/LINE/อีเมลตั้งเวลาใช้หัว+ภาษาเดียวกับ PDF (+ HtmlEncode) · S-13 "" = ล้าง ·
+  S-20 number-series ปฏิเสธช่องที่ไม่มีผล · S-06 ช่องที่ไม่มีผลถูกล็อก+ป้าย · checker `settings_reader_check`
+- **S2 (ทางเข้าอื่นของไฟล์แนบ · fd880c2)** — ด่านเป็น service `IAttachmentAccessGate` ตัวเดียว: ใบเสร็จนำส่ง · รูป/ผลอ่าน/รายการ/คิวของสแกน (ด่านของเจ้าของไฟล์) ·
+  ใบเบิกหลังอนุมัติ · ถัง 50 ทวิ ก่อนบันทึก · นำเข้าจากโปรแกรมอื่น · checker `attachment_gate_check`
+- **C3 (คีย์ผู้ติดต่อต่อ · 4fcd06b)** — API v1 `contactBranchCode` · แถวสาขาว่างเป็นของ สนญ. เท่านั้น · 19 → 7 จุดที่จับด้วยเลขอย่างเดียว · checker `contact_taxid_only_match_check`
+- **M2 (เงินรอบฝ่ายค้าน · fc503b5)** — #35 รอบ Approved ที่ยื่น/นำส่ง/ปันต้นทุนแล้วห้ามคำนวณใหม่ · POS COGS สูตรเฉพาะวัตถุดิบ TrackStock · คืนวัตถุดิบต้นทุนวันขาย ·
+  void เมื่อ JE ขายถูกกลับด้วยมือ (`PosVoidSaleJournal`) · pos-packages ประเภทคอมมิชชัน (option 0/1 เก็บกลับด้าน) · อัตราแลกเปลี่ยน 0 · checker `required_call_site_check`
+- **ฝ่ายค้านรอบ 1 → แก้** (`review193-security/money/L2/O1/V-C3/S2/M2/W.md`): L2 198fb5c (C1–C10: integration ไม่ถอยไปตั้งหนี้เงียบ · มัดจำเกินยอด = ค้างคืน ·
+  ยกเลิกซ้ำ · void กลับรับรู้มัดจำ · สูตรปัดตัวเดียว) · O1 f7bad8d (`ApprovalAcknowledgement` 4 แหล่ง · convert/clone สืบทอดผลต่างปัดเศษ · e-Tax Allowance/Charge ·
+  `[PAY-AT-PAYMENT]` · T05/T06 §82/5(2)) · V 7601891 (e-Tax ข้ามใบไม่ใช่ใบกำกับเต็มรูป · ใบเสร็จ §78/1 ได้ hook · ลิสต์รถ JS → เซิร์ฟเวอร์ · `VatStatusConfirmedAt`) ·
+  C3 6b2e7fb (`SoftScope` ทุกทางเข้า · "-" ไม่ใช่เลขภาษี) · S2 f4aa7d4 (สแกนใช้ด่านเจ้าของไฟล์ทุก action · ห้ามย้าย/ลบไฟล์ของรายการอื่น · ใบเบิก SoD) ·
+  M2 4cbb715 (หลักฐานยื่น = ปฏิทินภาษี · นำส่งผูกรอบ · ✏️ ล็อกด้วยหลักฐานเดียวกัน · checker 7 ชนิด) · W c5df11c (คีย์ห้ามทำลายหลักฐาน/ตั้งนโยบาย ·
+  subscription เจ้าของเท่านั้น · email-template จาก server · **hash chain v2** round-trip ได้)
+- **ฝ่ายค้านรอบ 2 → แก้** (`review193-r2-money/sec-tax/W.md`): L2 979eefe (N1 มัดจำออกใบกำกับแล้วหักแบบ "ฐานก่อน VAT" **ทุกเส้น** — ยกเลิกทาง "ลงได้+ธง" ของรอบ 1 ·
+  integration ปฏิเสธก่อนออกเลข · N4 VAT คืนคิดจากยอดสะสม) · O1 0eb8492 (N5 `FitsDocument` · N6 ลายเซ็นถามคำเตือนก่อนบันทึก · ปิดยอดด้วยบรรทัดปรับไม่หัก WHT) ·
+  V c641f6c (ข้ามเงียบเฉพาะเจตนา · ใบ 0% เป็นใบกำกับ · ยืนยัน VAT เมื่อแตะจริง · `ManualInputVatLineRule` · checker hook หลัง commit) · C3 69ccf37 (`AdoptTaxId` ·
+  กุญแจ tenant ก่อน) · S2 0a82911 (ใบเบิกด่านสิทธิ์ใน service + SoD · ลบร่างแล้วสแกนกลับมาใช้ได้ · คีย์โมดูล register-asset/import-stock · ระยะเก็บไฟล์สแกน 30 วัน) ·
+  W b371d4c (`Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · `[RequireOwner]` gateway/เอกสารลับ/กฎอนุมัติ · `GrantConsent` ต้อง Pii.View) · main 208f44d (API v1 OCR confirm กรองบริษัท)
+- **ฝ่ายค้านรอบ 3 → แก้** (`review193-r3.md`): O1 132c2b5 (R3-3 ลายเซ็นลูกค้าใช้ซ้ำได้เฉพาะเนื้อหาเดิม `DocumentSignedContent.Hash` + ล็อกแถว B9) · C3 85dfda8 (R3-2
+  เติมเลขภาษีเฉพาะชื่อตรงตัว · fuzzy + เลขจริง = แถวใหม่ · mod-11 · walk-in ไม่รับเลข B8) · V 41bb2c8 (R3-4 ค่ารับรองที่หลุดกลับมาปิดเคลม — baseline จาก git · B6 อัตรา −1
+  ไม่ได้ VAT ติดลบ + สัญญา `INTEGRATION_RESYNC.md` §11) · S2 3da2760 (B7 งานกวาดไฟล์สแกนไม่ค้างหัวคิว)
+- **ฝ่ายค้านรอบ 3 → แก้ (ต่อ)**: L2 04ce362 — **R3-1** ฐานมัดจำช่องแยก `Document.DepositBaseDeducted` (`BillDiscountAmount` = ส่วนลดการค้าอย่างเดียว ·
+  `AllocateBillDeductions` ตัวเดียว · `SplitBillDeduction` เกินยอดขาย = ล้มดัง · `TaxedDepositDeductionProblem` · renderer ×2 สองแถว · echo + revision ·
+  migration ย้ายค่าเดิม · convert สืบทอดตามสัดส่วนและนับการรับรู้ของใบแม่ · clone พ่วงส่วนลดแต่ไม่พ่วงมัดจำ) · **R3-5** `DrivesGuardMessage` ทางเดียว ·
+  **R3-6** idempotency Integration กรอง Voided ในคิวรี + ใหม่สุดก่อน ครบ 6 เมธอด · **B1** ตาข่าย void ยกเลิกก่อนประทับ · ล้ม = `ChangeTracker.Clear` +
+  หมายเหตุจริง + ยิงซ้ำล้มดัง (`TaxedDrivesVoidFailedMarker`) · **B2** รับรู้มัดจำตอนอนุมัติ `FOR UPDATE` · **B3** "ปนกัน" ตัดสินจากเลขที่ชี้มัดจำจริง · **B4** ด่านสถานะ
+  ก่อนตัวแปลง + "หักมูลค่ามัดจำ" ห้ามแก้ย้อนหลัง · **B5** ปิดตามโดยผลข้างเคียง (แถวมัดจำดูช่องใหม่) · ที่พักใช้ `AdoptTaxId(..., ContactMatchKind)` + ลบรูป
+  `[Obsolete]` · main 1aa8ef3 แก้ CS0029 หลัง merge O1 (CI run 36047169474) · เทสต์ `TaxedDepositDeductionTests` (6) · `DepositPolicyResolverTests` (+4)
+- **ความเสี่ยงที่รู้ (ไม่ใช่บั๊กค้าง)**: ร่างที่มีฐานมัดจำแล้วเลือกมัดจำ VAT พักแบบขับ JE ⇒ ด่าน "ห้ามหักสองชั้น" ล้ม (ยังไม่มีปุ่มล้างฐานมัดจำ — สร้างใบใหม่) ·
+  ป้ายแถวมัดจำพิมพ์ `DepositAppliedRef` ทั้งสตริง · `required_call_site_check` ช้าลง ~87 → ~124 วินาที (ควรแคชผล mask ต่อไฟล์)
+- **เครื่องมือใหม่ (ทั้งหมดอยู่ใน `check_all.sh` + CLAUDE.md หมวด F)**: `required_call_site_check` · `settings_reader_check` · `approved_status_writer_check` ·
+  `company_settings_factory_check` · `contact_taxid_only_match_check` · `attachment_gate_check` · `owner_action_wiring_check` · `tools/employee_form_contract_sim.js` ·
+  `write_permission_gate_check` WATCHED +13 ไฟล์
+- **ข้อมูลเก่า — ไม่แก้หลังบ้าน (คำตัดสิน #14) · มีรายงาน/SQL ให้คนตัดสิน**: `GET /api/ocr/amount-audit` · `GET …/contact-hygiene` · `GET …/vat-flag-consistency(/zero-rated-tax-invoices)` ·
+  `GET …/pos/packages/commission-review` · `GET /lodging/extras/needs-reselect` · SQL ใน `r193-L2.md` §3/§9 · `r193-E.md` §4b (JE ขายเมนูสูตรที่ลง COGS 0)
+- **คำถามเจ้าของที่ค้าง (ห้ามเดาแทน — รายละเอียดท้ายรายงานแต่ละทีม)**: Q1 ธง VAT ไหนเป็นต้นทาง · Q2 วงเงิน/SoD/Budget ของ POS/Integration · Q3 ค่าตั้งที่ไม่มีผล
+  "ต่อสาย หรือ ลบ" (baseline 82 แถว) · Q4 `EnforceFullTaxInvoiceFields` · Q5 opt-out ข้อมูลเรียนรู้ข้ามบริษัท · Q6 LINE OA ต่อบริษัท · มัดจำ: VAT ของมัดจำที่ริบ ·
+  ผังพักมัดจำที่พัก 21510/21713 · WHT จากมัดจำ · คืนเงินผ่าน gateway อัตโนมัติ · TakeTime มัดจำ VAT ทันที (Q8) · ปัด ±0.01 (Q9) · สิทธิ์ "คืนเงินแล้ว" (Q10) ·
+  ใบเช็คเอาต์ที่ void (Q11) · เงินเดือน: ฐาน ปกส. นับเบี้ยเลี้ยงที่ไม่ใช่ค่าจ้าง · "ยื่นแล้ว" ต้องมีเลขรับไหม · ยกเลิกการปันต้นทุน · `RevenueRecognitionMethod`
+  ต่อสายหรือถอด · คอมมิชชันเก่าคิดกลับด้าน (0 = % · 1 = บาท) · `StaffCommissionSummaries` ไม่มีผู้เขียน · สิทธิ์: Accountant ได้ `CompanySettings.Edit`
+  โดยปริยายไหม · 401 → 403 · serialize การประทับ audit (sealer job vs advisory lock) · เทสต์ hash chain บน PostgreSQL จริง · ใครอ่าน audit log ได้ ·
+  ไฟล์แนบ: static `/uploads/` · คีย์ "ดู" ของโมดูล · SoD บริษัทคนเดียว · ระยะผ่อน 30 วันของไฟล์สแกน · ผู้ติดต่อ: migrate "-" → NULL · data-fix แถว สนญ.
+  ที่ถูกทับ · สต็อก: E-02 `CostingMethod` ต่อสายหรือแก้ศูนย์ช่วยเหลือ · JE ขายเมนูสูตรเก่าที่ COGS 0
+- เอกสาร: DOCUMENT_FLOW §2.2 · §2.3 · §2.5 · §2.6 · §2.8 · §3.2 · §3.3 · §3.4 · §3.7 · **§3.8 ใหม่** · §5.2 · §6.1 · §6.2 · §6.2h · **§6.2i/§6.2j ใหม่** · §6.3 · §6.5 · §7 · §8 ·
+  ACCOUNT_STRUCTURE §3.1 · **§3.1c ใหม่** · §4 · §5 · TEST_PLAN (ตารางรอบ 193 · BOM-04/12/13 · ADM-U08) · lessons +12 · ติ๊ก DECISIONS/audit-settings/audit-deposit/
+  report-A/B/D/E/F/G (2026-09-21) · SYSTEM_REVIEW W1 · OCR_PIPELINE T4-14
+— commit <pending>)_

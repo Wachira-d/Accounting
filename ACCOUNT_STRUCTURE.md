@@ -63,12 +63,13 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | Entity | ไฟล์ | หมายเหตุ |
 | --- | --- | --- |
 | `Company` | `Models/Entities/Company.cs` | tenant; มี `BranchCode` (สำนักงานใหญ่ 00000) |
+| **`Company` ↔ `CompanySettings` (แถวค่าตั้ง)** | `Helpers/CompanySettingsFactory.cs` · `Helpers/CompanyVatStatus.cs` | ✅ รอบ 193 (S-01 stopgap): แถวค่าตั้งเกิด**พร้อมบริษัท**ทุกทาง (สร้าง `CompanyService.CreateAsync` · สมัคร · SSO) + lazy-create 6 จุดเรียก `AddNewAsync` ตัวเดียว (seed `VatRegistered`/`DefaultVatRate` จาก `Company` · `new CompanySettings` นอก factory = 0 จุด — `tools/company_settings_factory_check.py`) · ธง VAT อ่านผ่าน `CompanyVatStatus.IsRegistered(companyFlag, settingsFlag?)` (มีแถว = ค่าตั้ง · ไม่มี = บริษัท · ลำดับรอ Q1) · `CompanySettings.VatStatusConfirmedAt` (วิซาร์ด = ยืนยัน · สมัคร/SSO/lazy = ยังไม่ · ประทับเฉพาะ payload มีช่อง VAT + `confirmVatStatus:true`) → แถบเตือน `layout.js` · รายงานอ่านอย่างเดียว `GET /api/companies/{id}/vat-flag-consistency` (+ `/zero-rated-tax-invoices`) สิทธิ์ `CompanySettings.Edit` · `GET /api/admin/vat-flag-consistency` (SystemAdmin · เฉพาะบริษัทที่ขัดกัน + `companiesWithoutSettingsRow`) · **ไม่ migrate** ธงที่ขัดกัน (คำตัดสิน #14 — ให้คนตัดสิน) · ไม่มีหน้าเว็บของรายงาน |
 | `Branch` | `Models/Entities/DimensionalAccounting.cs:37` | `TaxBranchCode`, `IsHeadOffice`, ที่อยู่ครบ; `BranchId` ใช้บน JournalEntry/Payroll แล้ว — ทะเบียน + API + หน้าตั้งค่า ✅ (§3.1a) |
-| `TaxBranchCode` (resolver) | `Helpers/TaxBranchCode.cs` | ✅ ตัวเดียวของระบบ: `TryNormalize` (เติม 0 ให้ครบ 5 หลัก) · `Label`/`LabelWithName` ("สำนักงานใหญ่" / "สาขาที่ 3") ตามประกาศอธิบดีฯ ฉบับที่ 199 |
+| `TaxBranchCode` (resolver) | `Helpers/TaxBranchCode.cs` | ✅ ตัวเดียวของระบบ: `TryNormalize` (เติม 0 ให้ครบ 5 หลัก) · `Label`/`LabelWithName` ("สำนักงานใหญ่" / **"สาขาที่ 00008" — 5 หลัก ตั้งแต่รอบ 193 คำตัดสิน #21**) ตามประกาศอธิบดีฯ ฉบับที่ 199 |
 | `AccountSubscription` | `Models/Entities/AccountSubscription.cs` | แพลนครอบหลายบริษัท **แต่ผูก `OwnerUserId` (คน)** — จุดอ่อนที่ §8 แก้ |
 | `Subscription` (ต่อบริษัท) | `Models/Entities/Subscription.cs` | ชนะ AccountSubscription เมื่อบริษัทมีของตัวเอง (resolution order §6.3) |
 | `ConsolidationGroup/Member` | `DimensionalAccounting.cs:122` | งบรวม + %ถือหุ้น — **เรื่องการเงิน แยกจาก billing เด็ดขาด** |
-| `ExternalIntegration` + `ApiKeyMiddleware` | `Models/Entities/`, `Middleware/` | ต้นแบบของ ApiClient (TakeTime ใช้อยู่) |
+| `ExternalIntegration` + `ApiKeyMiddleware` | `Models/Entities/`, `Middleware/` | ต้นแบบของ ApiClient (TakeTime ใช้อยู่) · ✅ **รอบ 193 (คำตัดสิน #37)**: สิทธิ์แยก `CanRead/CanWrite/CanDelete` + `IsLegacyKey`/`LegacyDeprecatesAt` · ออก/แก้/ลบคีย์ + ผูกผู้ใช้เฉพาะ Owner — §3.1c |
 | `CompanyUser` | `Models/Entities/User.cs:75` | สิทธิ์ราย user รายบริษัท |
 | **`BillingAccount`** | `Models/Entities/BillingAccount.cs` | ✅ องค์กรผู้จ่ายเงิน — Name/TaxId/BillingMode/PaymentModel/CreditBalance/PostpaidCreditLimit/GracePeriodDays/IsSandbox/Status |
 | **`BillingAccountAdmin`** | `Models/Entities/BillingAccount.cs` | ✅ M:N account↔user + `IsPrimary`; unique ต่อ (account,user) |
@@ -91,8 +92,9 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **`/api/v1/bank`** | `Controllers/V1/BankV1Controller.cs` | ✅ `statements` (dedupe ด้วย ExternalId, คิดตามบรรทัดที่ประมวลผล) + `matches/confirm` |
 | **Portal `/connect`** | `wwwroot/connect/index.html` | ✅ ภาพรวม+ขั้นตอนเริ่มต้น · เลือกฟีเจอร์ (ยืนยันพร้อมราคา) · usage รายเดือน · ยอดรวมกลุ่ม — **ยิงเฉพาะ API สาธารณะ** |
 | **Workbench** | `wwwroot/connect/workbench.html` | ✅ โต๊ะทำงานจริง: โยนเอกสาร→OCR→ตรวจ→สร้างใบสำคัญจ่าย · วาง statement (รับ พ.ศ.)→จับคู่→ยืนยัน · ผูกรหัสผู้ติดต่อ |
-| **`/api/v1/contacts`** | `Controllers/V1/ContactsV1Controller.cs` | ✅ `sync` (upsert ด้วย ExternalId) · `unmapped` · `map` · `resolve` (เลขภาษีชนะชื่อ, ชื่อใช้ตัวเทียบข้ามภาษา) |
-| **`/api/v1/documents`** | `Controllers/V1/DocumentsV1Controller.cs` | ✅ สร้างเอกสาร (resolve ผู้ติดต่อ 4 ชั้น) + `approve` (ออกเลข gap-free) + คืน `contact.needsMapping` |
+| **`/api/v1/contacts`** | `Controllers/V1/ContactsV1Controller.cs` | ✅ `sync` (upsert ด้วย ExternalId · ด่าน `CONTACT-TAXID-OWNED` เทียบ **เลข + สาขา** ผ่าน `ContactTaxBranchKey.Pick` — สาขา 8 ของนิติบุคคลเดียวกับ สนญ. ไม่ถูกบล็อก) · `unmapped` · `map` · `resolve` (รับ `branchCode` optional · รหัสผิดรูป = 400 · ตอบ `branchCode` + `taxIdExists` · เลขมีแต่สาขาไม่ตรง = `matched:false` + เหตุผล ไม่ถอยไปเทียบชื่อ · ผู้สมัครเทียบชื่อข้ามภาษามาจากชุด `SoftScope` เท่านั้น — เลขใหม่ + ชื่อคล้ายไม่ตอบ matched กับนิติบุคคลที่ถือเลขอื่น) — รอบ 193 |
+| **`/api/v1/documents`** | `Controllers/V1/DocumentsV1Controller.cs` | ✅ สร้างเอกสาร (resolve ผู้ติดต่อ 4 ชั้น) + `approve` (ออกเลข gap-free) + คืน `contact.needsMapping` · **รอบ 193**: รับ `contactBranchCode` (ผิดรูป = 400) · เลขมีแล้วคนละสาขา ⇒ สร้างผู้ติดต่อสาขาใหม่ (ไม่เทียบชื่อ · บทบาทตามฝั่งเอกสาร) · เลขจริง + ชื่อคล้าย ⇒ ผู้ติดต่อใหม่ · ใบฝั่งขายตอบ `contact.missingBuyerFields` + `branchCode` (ตัวตรวจเดียวกับด่านอนุมัติ) · `approve` = พรีวิวคำเตือนไม่เรียก AI (`PreviewApprovalWarningsAsync`) → คำเตือนเป็น `[Σ-GAP]` ทั้งหมด = อนุมัติต่อแล้วคืน `scanAmountGap:true` + `warnings[]` (API ไม่ขัดจังหวะ · คำตัดสิน #12) · ไม่ override ด่านงบ/วงเงิน/วางบิลเกิน |
+| **`/api/v1/ocr/confirm`** กรองบริษัท | `Controllers/V1/OcrV1Controller.cs` | ✅ รอบ 193: กรอง `feedbackId` ให้เป็นของบริษัทผู้เรียกก่อนบันทึก (208f44d) |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
 ล้วน — `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN IF NOT EXISTS` (nullable/มี default
@@ -111,6 +113,58 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 > `Subscription.AccountSubscriptionId` เหมือนเดิม 100% และยังไม่มี call site ไหน
 > เรียก `RecordAsync` (จะต่อพร้อม `/api/v1` ในขั้นถัดไป). ฟีเจอร์ทุกตัว default
 > **ปิด** → ต่อให้ต่อ endpoint แล้วก็ยังไม่มีใครถูกคิดเงินจนกว่าจะกดเปิดเอง
+
+### 3.1c การเข้าถึงด้วย API key · งานระดับเจ้าของ · สมัครสมาชิก ✅ รอบ 193 (คำตัดสิน #37 · ทีม S/W + ฝ่ายค้าน 2 รอบ)
+
+**คีย์ integration (`int_` — `ExternalIntegration`)**
+| เรื่อง | พฤติกรรม | โค้ด |
+| --- | --- | --- |
+| ออก/แก้/ลบ/สร้างคีย์ใหม่ · ผูก/ลบผู้ใช้ที่คีย์สวมได้ (`user-mappings`) | **Owner/SystemAdmin ที่ล็อกอินเท่านั้น** · คำขอจาก API key ถูกปฏิเสธเสมอ (คีย์ออกคีย์ไม่ได้) · user-mapping ตรวจ `ExternalIntegrations.CompanyId` | `IntegrationController.RequireOwnerAsync` → `OwnerActionGuard.IsApiKeyRequest` |
+| Account Mapping (`mappings` POST/PUT/DELETE) | `CompanySettings.Edit` (ไม่ใช่การให้สิทธิ์คีย์ จึงไม่บังคับ Owner) | `IntegrationController` |
+| สิทธิ์ของคีย์ | คอลัมน์ `CanRead/CanWrite/CanDelete` · **คีย์ใหม่ = อ่านอย่างเดียว** (`ScopesForNewKey`: ไม่ส่ง ≠ "ทั้งหมด") · method → สิทธิ์ `IntegrationKeyPolicy.RequiredScope` ตัวเดียว (ฟิลเตอร์ `acc_` ใช้ตัวเดียวกัน · method ไม่รู้จัก = เขียน · fail closed) · ทั้งทาง `X-Api-Key` (middleware) และ `X-Integration-Key` (`ExternalIntegrationController : IAsyncActionFilter` → `Allows`) เดิน `EffectiveScopes` ตัวเดียว | `Helpers/IntegrationKeyPolicy.cs` |
+| คีย์เดิม (legacy · TakeTime) | migration ติด `IsLegacyKey=true` + `LegacyDeprecatesAt = deploy + 90 วัน` (`LegacyGraceDays` · idempotent) · ในช่วงผ่อนผัน = สิทธิ์เต็มเหมือนเดิม · หลังวันนั้น = ค่าที่เก็บ (อ่านอย่างเดียว) ⇒ เขียน 403 พร้อมข้อความ · `LegacyDaysRemaining` (server คำนวณ · null ≠ 0) บนหน้า integrations (แดงเมื่อ ≤ 14 วัน) · **regenerate = ย้ายเข้านโยบายใหม่** (`IsLegacyKey=false` · หน้าเตือนก่อนกด) | `IntegrationService.RegenerateApiKeyAsync` |
+| `X-Acting-User` | คีย์ใหม่ = แถว `IntegrationUserMapping` เท่านั้น · legacy ในช่วงผ่อนผัน = email match ได้แต่ `LogWarning` + `AuditLog` (`IntegrationActingUser` · `AddChainedAuditLog` · ครั้งเดียวต่อ (คีย์, ผู้ใช้) ต่อชั่วโมง) · response header `X-Acting-User-Resolved: mapping\|legacy-email-match\|unmapped` | `ApiKeyMiddleware` |
+| หน้า `integrations.html` | ช่องสิทธิ์ในฟอร์มสร้าง/แก้ (แก้: ส่งสิทธิ์เฉพาะเมื่อแตะ) · แผงสิทธิ์ (ค่าจาก server) · ประกาศคีย์รุ่นเก่า + วันเลิกใช้ · แผงผู้ใช้ที่คีย์สวมได้ | — |
+
+**คีย์บัญชี (`acc_` — `ApiKey`)**: สวิตช์ `CompanySettings.EnableApiAccess` **มีผลกับคีย์ที่ออกแล้ว** — ปิด = 403 ทันที (อ่าน DB ทุกคำขอ ·
+ไม่มีแถว = ไม่ผ่าน · ข้อความไทยบอกทางไปต่อ) · ออกคีย์ใช้สวิตช์เดียวกัน (`ApiAccessPolicy.EvaluateAccountKey`/`CanIssueKey` ใน `ApiKeyMiddleware` +
+`SettingsService.CreateApiKeyAsync`) · คีย์ `int_` ไม่ขึ้นกับสวิตช์นี้ (S-04)
+
+**งานระดับเจ้าของ — ต้องทำโดยคนที่ล็อกอิน (ปฏิเสธ API key ทุกชนิด)**: ตัวบอก "คำขอจากคีย์" ตัวเดียว `Helpers/OwnerActionGuard`
+(`Items["IsApiKeyAuth"]` **หรือ** claim `AuthMethod ∈ {ApiKey, IntegrationKey}` · `EnsureNotApiKey` → `BusinessRuleException` 403 `OWNER-ACTION-NO-API-KEY`)
+- ใน service: `CompanyService.EnsureOwnerAccessAsync` (ผู้เรียก 17 จุด: ออก/เพิกถอน api-key · webhook ลงทะเบียน/แก้/ลบ/test/retry · soft-close/reopen/ปิดปี/ยอดยกมา ·
+  แก้ข้อมูลบริษัท · เชิญ · เปลี่ยนบทบาท/ถอด/โอนเจ้าของ) · `RolePermissionService.EnsureOwnerAccessAsync` (role) · `OwnerConfigController` · `PermissionCatalogController`
+  (template apply) · `SampleDataController` · `BulkCleanupController` (เส้นที่ตั้งใจให้คีย์เรียกยังตรวจ `IsCompanyScopedApiKey` แยก)
+- attribute **`[RejectApiKey("…")]`** (`Filters/RejectApiKeyAttribute.cs` → `OwnerActionGuard.DenyResult`): `PUT settings` · โลโก้/ตรายาง POST/DELETE · number-series POST/PUT ·
+  `PUT email-config` · `PUT line-config` · `PUT etax/config` · `PUT/DELETE payroll/tax-rule-config` · `PUT/DELETE payroll/sso-config` · Payment gateway Save/Test/SetMode ·
+  Sensitivity `SetRule` · กฎการอนุมัติ POST/PUT/DELETE · Account Plan start-trial/attach/detach (ปิดเส้น "คีย์บริษัท A ผูก/ถอดบริษัท B ผ่าน `CompanyId` ใน body") ·
+  `verify-hash-chain` · **ทำลายหลักฐาน**: ลบเอกสารถาวร (`force`) · ลบ 50 ทวิถาวร · DSR erase
+- attribute **`[RequireOwner]`** (`Filters/RequireOwnerAttribute.cs` → `Helpers/OwnerGateDecision` ตัวตัดสินเดียว · คีย์/บทบาทอื่น/ไม่ใช่สมาชิก = ปฏิเสธ ·
+  Owner/SystemAdmin/แอดมินแพลตฟอร์ม = ผ่าน): Payment gateway Save/Test/SetMode (บันทึกการเปิด live → `AddChainedAuditLog`) · Sensitivity `SetRule` ·
+  `SubscriptionController.RequireOwnerAsync` ใช้ตัวเดียวกัน
+- ด่านสิทธิ์ที่เพิ่ม: `PUT settings`/logo/stamp/number-series + **`PUT email-config`/`PUT line-config` และปุ่มทดสอบ (เดิมไม่มีด่านเลย — สมาชิกทุกบทบาทเปลี่ยน
+  ผู้ส่งอีเมล/LINE ได้)** + กฎการอนุมัติ ⇒ `RequirePermission(CompanySettings.Edit)` · ข้อความ 403 ตัวเดียว `PermissionKeys.DeniedMessage(key)` (ชื่อสิทธิ์ไทย +
+  คีย์ + ให้ขอเจ้าของที่ `/pages/roles.html`) · `GET settings` ส่ง `canEdit`/`editDeniedMessage` (server ตัดสิน · null = ไม่ได้ตรวจ ⇒ ไม่ล็อก)
+- ล็อกจุดเรียก: `tools/owner_action_wiring_check.py` (64 แถว · ต้อง "ใช้ผล" · `--self-test` ถอดทีละแถวจากไฟล์จริง) · `tools/write_permission_gate_check.py` WATCHED
+  (+Integration/Tax/Settings/Webhook/PaymentSettings/Sensitivity/Approval/EmailConfig/LineConfig/Pdpa/StatutoryRemittance/CompetitorImport/ExpenseClaim)
+- ⚠️ เปลี่ยนพฤติกรรม: Accountant ที่ไม่มี `CompanySettings.Edit` บันทึกหน้าตั้งค่าไม่ได้แล้ว (คำถามเจ้าของ: ให้โดยปริยายไหม) · สคริปต์ `acc_` ที่เรียกปิดงวด/ปิดปี/
+  webhook/แก้บริษัท ได้ 403 · `CompanyService.EnsureOwnerAccessAsync` ยังโยน 401 (ไม่ใช่ 403) ให้สมาชิกที่ไม่ใช่เจ้าของ (คำถามเจ้าของ) · ยังไม่ครอบ:
+  `SubscriptionController` `IncrementUsage/UpdateNotificationSettings/SubmitPayment/UploadSlip/StartTrial` · `DocumentTemplateController` · `NotificationConfigController` ฯลฯ (backlog)
+
+**Subscription (ต่อบริษัท)**: trial/extend · convert · `PUT plan` · cancel → **Owner เท่านั้น** (`RequireOwnerAsync` · คีย์ = 403 · SystemAdmin แพลตฟอร์มผ่าน) ·
+เพดานวันขยาย trial ที่ server `Helpers/TrialExtensionPolicy.ResolveDays` (ขอเกิน `TrialConfig.ExtensionDays` = ปฏิเสธพร้อมบอกเพดาน ไม่ตัดเงียบ · แอดมินแพลตฟอร์ม
+กำหนดเองได้ด้วย `allowCustomDays: true`)
+
+**ปิดรับสมัคร (`SiteSettings.RegistrationEnabled`) กันที่ server** (S-08 · `Helpers/RegistrationPolicy`): `IsOpen` (ไม่มีแถว = เปิด) · `IsInvitationUsable`
+(predicate เดียวกับ `AuthService.ConsumeInvitationAsync`) · `EvaluateNewAccount` (ปิด + มีคำเชิญของอีเมลนี้ = สมัครได้แต่ `MayCreateCompany=false`) ·
+`EvaluateNewCompany` (แอดมินแพลตฟอร์มยังเปิดบริษัทให้ลูกค้าได้) · ทางเข้า: `AuthService.RegisterAsync` · SSO บัญชีใหม่ (ตรวจก่อนพาไปหน้าสมัคร) ·
+`CompanyService.CreateAsync` (ผู้ใช้เดิมเปิดบริษัทเพิ่มไม่ได้เมื่อปิด) · `register.html` ไม่ซ่อนฟอร์มเมื่อมี `?invite=`
+
+**ภาษีรายงานข้ามบริษัท (B-03/B-04)**: `ITaxComplianceChecker.CheckAsync(companyId, taxReportId)` ค้นผ่าน `Helpers/TaxReportTenantScope.ById` (ไม่พบ = 404) ·
+`TaxController` endpoint เขียน 12 จุด ⇒ `Tax.File` (+ `Tax.Export` สำหรับ e-filing · `Tax.File` **และ** `Journal.Manage` สำหรับ unlock-filing/reject-reverse)
+
+**อัตรา VAT รายบรรทัดของ integration** (สัญญา — `INTEGRATION_RESYNC.md` §11): `null` = ตามบริษัท · `7` · **`0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 · ห้ามส่ง 0 แทนยกเว้น)** ·
+**`-1` = ยกเว้น §81 (ไม่ใช่ใบกำกับ)** · อัตรา ≤ 0 ⇒ VAT 0 (`DocumentLineVatConvention.SplitLine`) · ใบ 0% เดิมที่ธงบอกไม่ใช่ใบกำกับ → รายงาน `zero-rated-tax-invoices`
 
 ### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
 
@@ -235,6 +289,10 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 | Subdomain (`{slug}.nextacc.app`) | ✔ ตั้งเองทันที | — | — | — | auto จากชื่อ account |
 | Custom domain (โดเมนตัวเอง) | ✔ + ต้อง verify DNS TXT | — | — | — | ไม่มี |
 | วิธี login ที่อนุญาต (`AllowedAuthMethods`) | ✔ (เช่นบังคับ O365 อย่างเดียว) | — | — | — | ทุกวิธี |
+| เปิด API Access (`EnableApiAccess` — คุมคีย์ `acc_` ที่ออกแล้วด้วย) ✅ | — | ✔ (เจ้าของ · ปฏิเสธ API key) | — | — | ไม่มีแถว = ปิด |
+| สิทธิ์คีย์ integration (`CanRead/CanWrite/CanDelete`) ✅ | — | ✔ Owner เท่านั้น | — | — | อ่านอย่างเดียว (legacy = เต็มจนถึงวันเลิกใช้) |
+| วิธีบันทึกเงินมัดจำ (`DepositVatTreatment`) ✅ รอบ 193 | — | ✔ (`CompanySettings` · NULL = ตามประเภทธุรกิจ) | ที่พักตั้งทับได้ (`LodgingProperty`) | — | VAT ทันที (ทุกประเภท — ไม่เปลี่ยนพฤติกรรมเดิม) |
+| สถานะจด VAT (`VatRegistered` — stopgap สองธง) ✅ | — | ✔ (`Company` + `CompanySettings` · `CompanyVatStatus`) | — | — | ตามที่เลือกในวิซาร์ด (แถวค่าตั้งเกิดพร้อมบริษัท) |
 
 ---
 
@@ -249,6 +307,12 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 - Pool นับ**รวมทุกบริษัทใต้ account** (ปรัชญาเดิมของ AccountSubscription — ถูกแล้ว)
 - เพดานย่อยต่อบริษัท (optional): เตือนที่ 80% → block ที่ 100% → AccountAdmin ปลดได้เอง
 - สาขา**ไม่มีโควตา** — คุมพฤติกรรมด้วย rate limit ของ ApiClient ที่ผูกสาขาแทน
+- **พื้นที่เก็บไฟล์ (รอบ 193 · คำตัดสิน #30 · ทีม U2)** ✅ — คิดจาก**ของจริง** Σ `FileAttachments.FileSize` + สื่อ CMS ทุกจุด ผ่าน
+  `ISubscriptionService.GetStorageStatusAsync` (สูตรเดียวกับ `CanFitStorageAsync`) / `GetStorageBytesByCompanyAsync`: aggregate ของกลุ่ม · trial ·
+  รายบริษัท (`AccountSubscriptionController` · `AdminAccountSubscriptionController`) · `CheckUsageLimitAsync("storage")` — ชื่อช่อง JSON `currentStorageUsed` คงเดิม ·
+  **`Subscription.CurrentStorageUsed` ไม่มีผู้เขียนและไม่มีผู้อ่านแล้ว** (เดิมผู้อ่าน 5 จุดได้ 0 เงียบ ⇒ หน้าแพ็กเกจโชว์ 0 และด่าน storage ผ่านเสมอ) ·
+  **ไฟล์แนบเกินเพดาน = บันทึกและเตือน** (`storageWarning` · `Helpers/AttachmentStorageNotice` Near ≥90%/Over พร้อม MB · ไม่รู้เพดาน = ไม่เตือน) · **CMS ยังบล็อก** ·
+  ไฟล์ที่ soft-delete แต่เก็บไฟล์จริง (`AttachmentRetention`) ไม่ถูกนับ (คำถามเจ้าของ)
 
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
@@ -259,7 +323,7 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 | --- | --- | --- |
 | `MaxPages` | `ICmsQuotaService.PageUsageAsync` → `CmsQuotaUsage.BlockReason()` | `CmsContentService.CreatePageAsync` · `CmsSiteService.ApplyTemplateCoreAsync` (นับทีละหลายหน้า) |
 | `MaxProducts` | `ProductUsageAsync` | `CmsCommerceService.AddProductAsync` (โยน) · auto-publish ตอนสร้างเว็บ (**ตัดให้พอดี ไม่โยน**) |
-| `MaxStorageBytes` | `ISubscriptionService.CanFitStorageAsync` (pool ของ License) | `CmsContentService.UploadMediaAsync` — ของเดิม ไม่เปลี่ยน |
+| `MaxStorageBytes` | `ISubscriptionService.CanFitStorageAsync` (pool ของ License · รอบ 193 เรียก `GetStorageStatusAsync` = Σ ไฟล์แนบ + สื่อ CMS) | `CmsContentService.UploadMediaAsync` — ยังบล็อก (ไฟล์แนบบัญชีแค่เตือน §5) |
 
 - **ตัวนับตัวเดียว**: `GetQuotaStatusAsync` (ตัวเลขบนหน้าจอ) และด่านทั้งหมดอ่านจาก
   `PageUsageAsync`/`ProductUsageAsync` ตัวเดียวกัน — ห้ามจุดไหนนับเอง ไม่งั้นจอบอก
@@ -723,6 +787,12 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-09-24 (rev 28 · รอบ 193 — **§3.1c การเข้าถึงด้วย API key**: คีย์ `int_` สิทธิ์แยก อ่าน/เขียน/ลบ + legacy 90 วัน ·_
+_ออก/ผูกผู้ใช้เฉพาะเจ้าของ · `EnableApiAccess` คุมคีย์ `acc_` ที่ออกแล้ว · งานเจ้าของ/ทำลายหลักฐาน/ตั้งนโยบายปฏิเสธ API key (`OwnerActionGuard` ·_
+_`[RejectApiKey]` · `[RequireOwner]`) · Subscription เจ้าของเท่านั้น + `TrialExtensionPolicy` · ปิดรับสมัครกันที่ server (`RegistrationPolicy`) ·_
+_§3.1 `/api/v1` contactBranchCode/taxIdExists/missingBuyerFields/scanAmountGap · แถวค่าตั้งเกิดพร้อมบริษัท + `CompanyVatStatus` ·_
+_§4 ค่าตั้งใหม่ · §5 พื้นที่เก็บไฟล์คิดจากของจริง + เกินเพดาน = เตือน — commit <pending>)_
 
 _Last verified against codebase: 2026-09-11 (rev 27 — **§5.1 โควตาเว็บ CMS บังคับจริง**:_
 _`CmsQuotaUsage` เป็นตัวนับตัวเดียวของทั้งด่านและตัวเลขบนหน้าจอ · ต่อสายที่ `CreatePageAsync` ·_

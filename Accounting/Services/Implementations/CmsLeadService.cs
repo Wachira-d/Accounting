@@ -280,6 +280,7 @@ public class CmsLeadService
             IsSupplier = false,
             CreatedBy = "lead-qualify"
         };
+        Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(contact);   // ฝ่ายค้านรอบสี่ P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
         _db.Contacts.Add(contact);
         await _db.SaveChangesAsync();
         lead.ContactId = contact.Id;

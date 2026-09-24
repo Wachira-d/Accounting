@@ -273,6 +273,10 @@ CompleteOrderAsync / SyncOfflineOrderAsync (PosService.Orders.cs:555 และ�
 - **COGS**: Σ (component qty × AverageUnitCost) ณ วันขาย → JE ขาย Dr ต้นทุนขาย / Cr
   สินค้าคงเหลือ(วัตถุดิบ) — ใช้ `InventoryCostingService` เดิม (costing ระดับบริษัท ตาม
   ข้อสรุป 2)
+- **สถานะจริงของโค้ด (รอบ 193 · E-01 — แก้ doc)**: ลำดับคือ **ตัดสต็อกก่อน → ต้นทุน → JE** ทั้ง `CompleteOrderAsync` และ `SyncOfflineOrderAsync`
+  ผ่าน `DeductSaleStockAsync` ตัวเดียว (เดิม JE ถูกสร้างก่อนตัดสต็อกและ COGS คิดจากต้นทุน "ตัวแม่" ที่ TrackStock ⇒ เมนูชงสด COGS 0) · ต้นทุนต่อบรรทัด
+  = ต้นทุนที่ ledger ตัดจริง **เฉพาะวัตถุดิบ TrackStock** (`Helpers/PosCogsBooking.SaleLineCost/RecipeCost`) ตรึงที่ `PosOrderItem.CostOfGoodsSold` ·
+  คืน/ยกเลิกกลับตามสัดส่วนของยอดที่ลงไว้ (ปัดสะสม) + วัตถุดิบกลับที่ต้นทุน ณ วันขาย · ดู `DOCUMENT_FLOW.md` §2.6
 - **Void/Refund**: กลับรายการ component ตามที่ตัดไปจริง (อ่านจาก `StockMovement` ที่
   `PosOrderId` ตรง ไม่คำนวณใหม่จากสูตร — สูตรอาจเปลี่ยนไปแล้ว)
 - **Offline**: สูตรต้องถูกส่งลง `sw.js`/IndexedDB พร้อมสินค้า เพื่อให้ตอน sync ตัดตาม

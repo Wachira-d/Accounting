@@ -53,7 +53,7 @@
 
 ## 3. Findings เรียงความรุนแรง
 
-### P0-1 เช็คเอาต์ที่พัก: "หักมัดจำ" ไม่มีผลต่อบัญชีเลย → เก็บเงินเต็มซ้ำ + VAT ซ้ำ
+### ✅ 5721ebd (+198fb5c C2) P0-1 เช็คเอาต์ที่พัก: "หักมัดจำ" ไม่มีผลต่อบัญชีเลย → เก็บเงินเต็มซ้ำ + VAT ซ้ำ
 - `LodgingService.Lifecycle.cs:581` สร้าง `TaxInvoice` (หรือ `Invoice` เมื่อไม่มี VAT) แบบเครดิต + `DepositAppliedDrivesJournal=true` (`:609-611`)
 - แต่ drives ถูกอ่าน**เฉพาะ** branch ใบเสร็จ/ขายเงินสดใบเดียว (`DocumentService.cs:14415-14420, 14534`) · branch ใบกำกับเครดิต `:13669-13745` ลง `Dr AR = TotalAmount` เต็ม ·
   `BalanceDue = TotalAmount` (`:1469`) · ไม่มีผู้อ่าน `DepositAppliedAmount` อื่นใน approve/payment (ไล่ผู้อ่านครบ 33 จุดแล้ว)
@@ -64,14 +64,14 @@
 - DOCUMENT_FLOW `:2529` เขียนว่า "DocumentService ตัด 217xx + guard over-apply ให้" = **ไม่จริง** · ไม่มีเทสต์ใดครอบเส้นนี้
 - ทางแก้: ให้ credit branch อ่าน drives ผ่านตัวสร้างขาเดียวกับ `:14569-14915` (ห้ามเขียนชุดที่สอง) และ `BalanceDue = Total − ส่วนที่หัก` · หรือเช็คเอาต์เรียก `ApplyDepositToInvoiceAsync` หลัง approve · ถ้ายังไม่แก้ ต้อง throw เมื่อ drives อยู่บนใบที่ไม่รองรับ (ห้าม silent no-op)
 
-### P0-2 ยกเลิก/no-show ที่พักที่มี VAT ล้มเสมอ และล้มกลางทาง
+### ✅ 5721ebd (+198fb5c C3/C6) P0-2 ยกเลิก/no-show ที่พักที่มี VAT ล้มเสมอ และล้มกลางทาง
 - `LodgingService.Lifecycle.cs:728-736` ส่ง `forfeit` (ยอด **gross**) เข้า `RealizeDepositRequest.Amount` ซึ่งเป็น **ฐาน** (`DocumentService.cs:3267-3273` เทียบกับ `SubTotal`)
 - no-show: fee 7,450 → forfeit 2,000 > ฐานคงค้าง 1,869.16 → `InvalidOperationException` → **no-show/ยกเลิกแบบไม่คืนเงินทำไม่ได้เลย** เมื่อที่พักจด VAT
 - ยกเลิกค่าปรับ 1,000: Refund 1,000 **commit แล้ว** (tx ของตัวเอง `:3767-3899` + ใบลดหนี้) → Realize 1,000 > ฐานคงเหลือ 934.58 → throw → การจองยังเป็น Confirmed
   → กดซ้ำ: guard คืนเงินผ่านอีกรอบ (refundBase 934.58 ≤ 934.58) = **คืน/ใบลดหนี้ซ้ำ**
 - ไม่มี transaction ครอบ `CancelCoreAsync` · ไม่มีเทสต์ (`grep` เทสต์พบแค่ `DepositReversalMathTests` กับ path-parity ใน `SimulationRound7Tests.cs:87-90`)
 
-### P0-3 มัดจำ "VAT ทันที" + หักเข้าใบกำกับเต็มจำนวน = ใบกำกับสองใบ, แถวภาษีขายย้ายเดือน
+### ✅ 5721ebd (+979eefe N1 ทุกเส้นหักฐานก่อน VAT · ⚠️ R3-1 ยังเปิด) P0-3 มัดจำ "VAT ทันที" + หักเข้าใบกำกับเต็มจำนวน = ใบกำกับสองใบ, แถวภาษีขายย้ายเดือน
 - ใบมัดจำ Imm พิมพ์หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน (เงินมัดจำ)" (`PdfGenerationService.cs:1442-1446, 1472`) และออก e-Tax ได้ (`EtaxInvoiceService.cs:132` ไม่กัน)
 - ใบสุดท้ายคิด VAT **เต็ม 487.38** แล้วหักมัดจำ gross หลังยอดรวม (`:2136-2151` / `DocumentRenderer.cs:928-934`) ⇒ ลูกค้านิติบุคคลถือใบกำกับรวม VAT 618.22 สำหรับ VAT จริง 487.38
 - `TaxService.cs:606-620` **ข้ามแถวมัดจำ Imm ที่ถูกหักแล้ว** ⇒ ถ้าออกรายงานเดือนมัดจำหลังเช็คเอาต์ (มัดจำ 25 ส.ค. · เช็คเอาต์ 2 ก.ย. · ทำ ภ.พ.30 ส.ค. วันที่ 10 ก.ย.)

@@ -272,3 +272,21 @@
   _(Upsert/Delete/Upload) ผูก `[Authorize(Roles = "SystemAdmin")]` อยู่แล้ว ส่วน_
   _`RecordView` เป็นตัวนับยอดดูที่ตั้งใจให้สมาชิกทุกคนกดได้ และเนื้อหาเป็นของ_
   _แพลตฟอร์ม ไม่แตะเงิน/ภาษี/ข้อมูลพนักงานตามเกณฑ์ของลิสต์นั้น)_
+
+- **Hash chain ต้อง round-trip ผ่านฐานข้อมูลจริง — เทสต์ในหน่วยความจำพิสูจน์ไม่ได้** (รอบ 193 · ทีม W · ฝ่ายค้าน PLAUSIBLE → ยืนยันแล้ว) —
+  คอลัมน์ `AuditLogs.Timestamp` เป็น `timestamp without time zone` (`Program.cs` แปลง timestamptz ทิ้ง) ⇒ อ่านกลับได้ `Kind=Unspecified` ความละเอียด
+  **ไมโครวินาที** ขณะที่ตอนเขียนเป็น UTC ความละเอียด 100ns ⇒ สูตรเดิมที่ใช้ `Timestamp.ToString("O")` ให้สตริงคนละตัวตอนตรวจ ⇒ **ตรวจไม่ผ่านทุกแถว
+  ของทุกบริษัท** — control เชิง compliance ที่ไม่เคยทำงาน (กฎ #4 G "round-trip test" จดไว้แล้ว แต่เทสต์ที่มี write→verify ในหน่วยความจำ ไม่ผ่าน Npgsql) ·
+  และ `AuditTrailController.VerifyHashChain` มี **canonical สำเนาที่สอง** ของตัวเอง (กฎ #4 C) + นับแถวนอก chain (`RowHash=null`) เป็น "ถูกแก้"
+  → แก้แบบ **versioning ไม่เขียน hash ทับ**: สูตร v2 (`AuditHashChain.Seal` · normalize UTC + ตัดเหลือไมโครวินาที + format ตายตัว · ตั้ง `row.Timestamp` =
+  ค่าที่ hash) · แถว v1 ตรวจแบบ legacy · ฝั่งตรวจตัวเดียว `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · สูตร v1 เป็น private ⇒ เส้นเขียนมีทางเดียว ·
+  `required_call_site_check` ห้ามประกอบ SHA256 เอง
+  → **ยังค้าง (เขียนตรง ๆ ในหัวไฟล์เทสต์)**: `AuditHashChainTests` **จำลอง**การอ่านกลับ ไม่ได้ผ่าน PostgreSQL จริง — ต้องมี Testcontainers/CI job ที่มี
+  PostgreSQL ≥ 3 กรณี (แถวเดียว · หลายแถวใน SaveChanges เดียว · `AddChainedAuditLog` ×2) · control ที่ยืนยันด้วยการจำลองเท่านั้น = ยังไม่ใช่ control เต็มตัว
+
+- **"คีย์ API สวมตัวเจ้าของ" — ด่าน role ไม่พอเมื่อตัวตนมาจากคีย์** (รอบ 193 · ฝ่ายค้าน review193-security C1 · ทีม W) — คีย์ integration ที่ map ผู้ใช้
+  ด้วยอีเมล (รวมอีเมลเจ้าของ) ได้ `CompanyUser.Role = Owner` ⇒ ผ่าน `EnsureOwnerAccessAsync` ⇒ **คีย์ออกคีย์ใหม่ได้ · ลงทะเบียน webhook · ปิดงวด ·
+  โอนเจ้าของ · ลบเอกสารถาวรข้ามช่วงเก็บ 5 ปี** · และ `PUT email-config`/`line-config` ไม่มีด่านเลย
+  → กติกา: งานระดับเจ้าของ/ตั้งนโยบาย/ทำลายหลักฐาน ต้องถามสองคำถาม — "บทบาทอะไร" **และ** "ยืนยันตัวด้วยอะไร" · ตัวบอกตัวเดียว `OwnerActionGuard`
+  (ดูทั้ง `Items` และ claim — ด่านไม่หายเงียบถ้ามีคนย้ายการตั้ง Items) · `[RejectApiKey]` ไม่นับเป็นด่านสิทธิ์ใน `write_permission_gate_check`
+  (ไม่ตรวจบทบาท) · ล็อกจุดเรียกด้วย `owner_action_wiring_check`

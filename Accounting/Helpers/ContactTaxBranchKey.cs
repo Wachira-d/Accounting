@@ -318,6 +318,41 @@ public static class ContactTaxBranchKey
         return ContactAdoptOutcome.Adopted;
     }
 
+    /// <summary>ป้ายใน <c>InternalNotes</c> ของผู้ติดต่อที่ถือเลขผู้เสียภาษีไม่ผ่าน checksum — ผู้อ่านค้นด้วยป้ายนี้</summary>
+    public const string TaxIdChecksumFlag = "[TAXID-CHECKSUM]";
+
+    /// <summary>
+    /// ข้อความเตือนเมื่อเลขผู้เสียภาษีที่คู่ค้าส่งมา<b>ใช้ไม่ได้</b> (13 หลักแต่ไม่ผ่าน mod-11 · ศูนย์ล้วน) — null = ไม่มีปัญหา/ไม่ใช่เลข 13 หลัก.
+    /// <para><b>ฝ่ายค้านรอบสี่ P4-5</b>: เลขเดียวกันเคยได้สองผล — แถวที่จับได้ "ไม่เติมเงียบ ๆ" (<see cref="AdoptTaxId(Contact?, string?, string?, ContactMatchKind)"/>
+    /// = Keep) แต่แถวใหม่ "เก็บเลขผิดเงียบ ๆ". ตอนนี้ทั้งสองทางใช้ตัวนี้: แถวใหม่ยังเก็บค่าที่คู่ค้าส่ง (หลักฐาน) แต่ติดป้ายบนผู้ติดต่อ
+    /// (<see cref="StampTaxIdWarning"/>) และผู้เรียกส่งข้อความนี้กลับใน response · แถวเดิมไม่ถูกเติมเลขผิด (คงเดิม)</para>
+    /// </summary>
+    public static string? TaxIdChecksumWarning(string? taxId)
+    {
+        var d = Digits(taxId);
+        if (d.Length == 0) return null;
+        if (d.TrimStart('0').Length == 0)
+            return $"เลขผู้เสียภาษี \"{taxId?.Trim()}\" เป็นศูนย์ล้วน — ไม่ใช่เลขจริง (ค่ามาตรฐาน \"ลูกค้าทั่วไป\" ของบางระบบ) · ไม่ถูกใช้เป็นเลขผู้ซื้อ";
+        if (d.Length == 13 && !ThaiTaxId.IsValid(d))
+            return $"เลขผู้เสียภาษี \"{taxId?.Trim()}\" ไม่ผ่าน checksum (mod-11) — ตรวจกับเอกสารจริงแล้วแก้ที่ผู้ติดต่อ · "
+                 + "ใบกำกับภาษีที่ออกด้วยเลขนี้ผู้ซื้อเคลมภาษีซื้อไม่ได้ (§86/4 · §82/5(1))";
+        return null;
+    }
+
+    /// <summary>ติดป้าย <see cref="TaxIdChecksumFlag"/> + ข้อความใน <c>InternalNotes</c> ของผู้ติดต่อที่ถือเลขใช้ไม่ได้ (ต่อท้าย ไม่ทับ · ไม่ติดซ้ำ) —
+    /// คืนข้อความเตือน (หรือ null) ให้ผู้เรียกส่งกลับใน response ด้วย</summary>
+    public static string? StampTaxIdWarning(Contact? row)
+    {
+        if (row == null) return null;
+        var warn = TaxIdChecksumWarning(row.TaxId);
+        if (warn == null) return null;
+        if (!(row.InternalNotes ?? "").Contains(TaxIdChecksumFlag, StringComparison.Ordinal))
+            row.InternalNotes = string.IsNullOrWhiteSpace(row.InternalNotes)
+                ? $"{TaxIdChecksumFlag} {warn}"
+                : $"{row.InternalNotes}\n{TaxIdChecksumFlag} {warn}";
+        return warn;
+    }
+
     /// <summary>เลขที่เติมลงผู้ติดต่อได้: มีตัวเลข · ไม่ใช่ศูนย์ล้วน · 13 หลักต้องผ่าน <c>ThaiTaxId.IsValid</c> (mod-11 · ตัวตรวจ canonical ตัวเดียว) ·
     /// เลขต่างประเทศ/ไม่ใช่ 13 หลักรับตามเดิม (ไม่มีสูตรตรวจ)</summary>
     private static bool IsUsableTaxId(string? taxId)
@@ -328,23 +363,54 @@ public static class ContactTaxBranchKey
     }
 
     /// <summary>
-    /// จับด้วยชื่อแบบไหน — ชื่อที่ส่งมากับชื่อของแถว<b>เท่ากันหลัง normalize</b> (ตัวพิมพ์ · เว้นวรรค/เครื่องหมาย · คำนำหน้า/ลงท้ายนิติบุคคล
-    /// "บริษัท … จำกัด" / "Co., Ltd.") = <see cref="ContactMatchKind.ExactName"/> · อื่น ๆ (คล้าย/ข้ามภาษา/substring) = FuzzyName
-    /// (ฝ่ายค้านรอบสาม R3-2 — ผู้เรียกที่ใช้ตัวเทียบแบบคล้ายต้องส่งผลนี้เข้า <see cref="AdoptTaxId"/>)
+    /// จับด้วยชื่อแบบไหน — <see cref="ContactMatchKind.ExactName"/> เมื่อ <b>ชื่อแกนเท่ากัน และรูปนิติบุคคลเป็นคลาสเดียวกัน</b> ·
+    /// อื่น ๆ (คล้าย/ข้ามภาษา/substring/ชื่อถูกตัด/คนละรูป/ไม่รู้รูป) = FuzzyName (ผู้เรียกที่ใช้ตัวเทียบแบบคล้ายต้องส่งผลนี้เข้า <see cref="AdoptTaxId(Contact?, string?, string?, ContactMatchKind)"/>)
+    /// <para><b>ฝ่ายค้านรอบสี่ R4-4</b>: รอบสามตัดคำบอกรูปทิ้งทั้งหมด ⇒ "บจก. เอ" = "บริษัท เอ จำกัด (มหาชน)" = "หจก. เอ" = "เอ" (บุคคล) ⇒ เลขภาษีของนิติบุคคลหนึ่ง
+    /// ติดแถวของอีกนิติบุคคล (บจก./บมจ./หจก./บุคคล = คนละผู้เสียภาษี). คำตัดสิน main agent: รูปเป็นส่วนของคีย์ —
+    /// รูปย่อ/รูปเต็ม/อังกฤษของ<b>รูปเดียวกัน</b>ถือว่าเท่ากัน (บจก. ↔ บริษัท … จำกัด ↔ Co., Ltd.) · คนละคลาส = Fuzzy ·
+    /// ฝั่งใดฝั่งหนึ่งไม่มีคำบอกรูป = ไม่รู้ = Fuzzy (ไม่เติมเลข)</para>
     /// </summary>
     public static ContactMatchKind NameMatchKind(string? given, string? stored)
     {
+        var fa = EntityFormOf(given);
+        if (fa == LegalEntityForm.Unknown || fa != EntityFormOf(stored)) return ContactMatchKind.FuzzyName;
         var a = CanonicalName(given);
         return a.Length > 0 && a == CanonicalName(stored) ? ContactMatchKind.ExactName : ContactMatchKind.FuzzyName;
+    }
+
+    /// <summary>คลาสรูปนิติบุคคลที่อ่านจากชื่อ — ใช้เป็นส่วนของคีย์ใน <see cref="NameMatchKind"/> เท่านั้น
+    /// (ไม่ใช่ตัวตัดสินชนิดผู้ติดต่อ — นั่นคือ <c>ContactTypeResolver</c>)</summary>
+    private enum LegalEntityForm { Unknown, Company, PublicCompany, LimitedPartnership, OrdinaryPartnership }
+
+    private static readonly System.Text.RegularExpressions.Regex FormPublicEn = new(
+        @"\b(?:public company|public co|pcl|plc)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex FormLpEn = new(
+        @"\blimited partnership\b|\bltd\.?\s*,?\s*part\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex FormOpEn = new(
+        @"\bordinary partnership\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex FormCompanyEn = new(
+        @"\b(?:co\.?\s*,?\s*ltd|company limited|limited|ltd)\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>ลำดับสำคัญ: มหาชน → หจก. → หสน. → บริษัทจำกัด (เพราะ "ห้างหุ้นส่วนจำกัด"/"Public Company Limited" มีคำของรูปถัดไปอยู่ในตัว)</summary>
+    private static LegalEntityForm EntityFormOf(string? name)
+    {
+        var s = (name ?? "").ToLowerInvariant();
+        if (s.Contains("มหาชน") || s.Contains("บมจ") || FormPublicEn.IsMatch(s)) return LegalEntityForm.PublicCompany;
+        if (s.Contains("ห้างหุ้นส่วนจำกัด") || s.Contains("หจก") || FormLpEn.IsMatch(s)) return LegalEntityForm.LimitedPartnership;
+        if (s.Contains("ห้างหุ้นส่วนสามัญ") || s.Contains("หสน") || FormOpEn.IsMatch(s)) return LegalEntityForm.OrdinaryPartnership;
+        if (s.Contains("บริษัท") || s.Contains("บจก") || s.Contains("บจ.") || s.Contains("จำกัด") || FormCompanyEn.IsMatch(s))
+            return LegalEntityForm.Company;
+        return LegalEntityForm.Unknown;
     }
 
     private static readonly string[] NameMarkersTh =
         { "ห้างหุ้นส่วนจำกัด", "ห้างหุ้นส่วนสามัญ", "ห้างหุ้นส่วน", "บริษัท", "จำกัด", "มหาชน", "บมจ", "บจก", "บจ", "หจก", "หสน" };
 
     private static readonly System.Text.RegularExpressions.Regex NameMarkersEn = new(
-        @"\b(?:co|ltd|company|limited|plc|public|inc|corp|corporation|partnership)\b",
+        @"\b(?:co|ltd|company|limited|plc|pcl|public|inc|corp|corporation|partnership|part|ordinary|registered)\b",
         System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    /// <summary>ชื่อแกน — ตัดคำบอกรูป (ซึ่งเทียบแยกด้วย <see cref="EntityFormOf"/>) + ตัวพิมพ์/เว้นวรรค/เครื่องหมาย</summary>
     private static string CanonicalName(string? name)
     {
         var s = (name ?? "").ToLowerInvariant();

@@ -443,15 +443,26 @@ public class ContactTaxBranchKeyTests
         Assert.Null(row.TaxId);
     }
 
+    // ฝ่ายค้านรอบสี่ R4-4: เดิม ("บริษัท เรดิสัน จำกัด", "เรดิสัน") อยู่ในชุดนี้ = ล็อกพฤติกรรมผิด (ตัดรูปนิติบุคคลทิ้ง) — ย้ายไปชุด Fuzzy แล้ว
     [Theory]
-    [InlineData("บริษัท เรดิสัน จำกัด", "เรดิสัน")]
+    [InlineData("บจก. เอ", "บริษัท เอ จำกัด")]                 // รูปย่อ ↔ รูปเต็มของรูปเดียวกัน
+    [InlineData("บจ. เอ", "บริษัท เอ จำกัด")]
     [InlineData("บริษัท  เรดิสัน  จำกัด (มหาชน)", "บมจ. เรดิสัน")]
+    [InlineData("ABC Limited Partnership", "หจก. ABC")]
+    [InlineData("ห้างหุ้นส่วนสามัญ เอ", "หสน. เอ")]
     [InlineData("Radisson Co., Ltd.", "RADISSON COMPANY LIMITED")]
     [InlineData("หจก. แอม แฮปปี้เนส", "ห้างหุ้นส่วนจำกัด แอมแฮปปี้เนส")]
     public void NameMatchKind_SameNameAfterNormalize_IsExact(string given, string stored)
         => Assert.Equal(ContactMatchKind.ExactName, ContactTaxBranchKey.NameMatchKind(given, stored));
 
     [Theory]
+    [InlineData("บจก. เอ", "บมจ. เอ")]                         // R4-4: คนละรูปนิติบุคคล = คนละผู้เสียภาษี
+    [InlineData("หจก. เอ", "บริษัท เอ จำกัด")]
+    [InlineData("ABC Co., Ltd.", "ABC Public Company Limited")]
+    [InlineData("หจก. เอ", "เอ")]                               // ฝั่งหนึ่งไม่มีคำบอกรูป = ไม่รู้ ⇒ ไม่เติมเลข
+    [InlineData("บริษัท เรดิสัน จำกัด", "เรดิสัน")]
+    [InlineData("สมชาย ใจดี", "บริษัท สมชาย ใจดี จำกัด")]
+    [InlineData("สมชาย ใจดี", "สมชาย ใจดี")]                   // บุคคลทั้งคู่ = ไม่รู้รูป ⇒ Fuzzy (คำตัดสิน main agent)
     [InlineData("ABC", "ABC Trading")]
     [InlineData("แอม แฮปปี้", "หจก. แอม แฮปปี้เนส")]            // ชื่อถูกตัด ≠ ชื่อเดียวกัน (กฎ #4 H)
     [InlineData("Radisson", "เรดิสัน")]                         // ข้ามภาษา = คล้าย ไม่ใช่ตรงตัว
@@ -489,5 +500,40 @@ public class ContactTaxBranchKeyTests
         Assert.Equal(ContactAdoptOutcome.Adopted, ContactTaxBranchKey.AdoptTaxId(row, Tin, null,
             ContactTaxBranchKey.NameMatchKind("เรดิสัน จำกัด", row.Name)));
         Assert.Equal(Tin, row.TaxId);
+    }
+
+    // ── ฝ่ายค้านรอบสี่ P4-5: เลขไม่ผ่าน checksum ได้ผลเดียวกันทุกทาง — แถวใหม่เก็บ + ติดป้าย · แถวเดิมไม่ถูกเติม ──
+
+    [Theory]
+    [InlineData("0105551136086")]
+    [InlineData("0000000000000")]
+    public void TaxIdChecksumWarning_BadNumber_Warns_AndStampsNewRowOnce(string bad)
+    {
+        Assert.NotNull(ContactTaxBranchKey.TaxIdChecksumWarning(bad));
+        var created = new Contact { Id = Blank, Name = "x", TaxId = bad, InternalNotes = "[ตรวจข้อมูลขาเข้า] เดิม" };
+        Assert.NotNull(ContactTaxBranchKey.StampTaxIdWarning(created));
+        ContactTaxBranchKey.StampTaxIdWarning(created);                       // เรียกซ้ำไม่ติดซ้ำ
+        Assert.Equal(bad, created.TaxId);                                     // เก็บค่าที่คู่ค้าส่ง (หลักฐาน)
+        Assert.StartsWith("[ตรวจข้อมูลขาเข้า] เดิม", created.InternalNotes);  // ต่อท้าย ไม่ทับ
+        Assert.Equal(1, created.InternalNotes!.Split(ContactTaxBranchKey.TaxIdChecksumFlag).Length - 1);
+        // ทางแถวเดิม: ไม่เติมเลขนี้ (Keep) — ผลสอดคล้องกัน
+        var existing = new Contact { Id = Other, Name = "x", TaxId = null };
+        Assert.Equal(ContactAdoptOutcome.Keep, ContactTaxBranchKey.AdoptTaxId(existing, bad, null, ContactMatchKind.Email));
+        Assert.Null(existing.TaxId);
+    }
+
+    [Theory]
+    [InlineData(Tin)]
+    [InlineData("0-1055-51136-08-5")]
+    [InlineData(null)]
+    [InlineData("-")]
+    [InlineData("DE123456789")]
+    public void TaxIdChecksumWarning_GoodOrNoNumber_Silent(string? ok)
+    {
+        // ทิศตรงข้าม: เลขถูก/ไม่มีเลข/เลขต่างประเทศ ⇒ ไม่เตือน ไม่ติดป้าย
+        Assert.Null(ContactTaxBranchKey.TaxIdChecksumWarning(ok));
+        var row = new Contact { Id = Blank, Name = "x", TaxId = ok };
+        Assert.Null(ContactTaxBranchKey.StampTaxIdWarning(row));
+        Assert.Null(row.InternalNotes);
     }
 }

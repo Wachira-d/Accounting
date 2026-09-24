@@ -72,7 +72,7 @@
 
 ### P0
 
-**S-01 สถานะ VAT เก็บสองธง ค่าเริ่มต้นตรงข้ามกัน และเส้นสร้างบริษัทไม่ sync ⇒ บริษัทที่ "ไม่จด VAT" ออกใบกำกับภาษีเก็บ VAT 7% ได้ (§90/2)**
+✅ 8bcc733 (stopgap — +7601891 · c641f6c · ลำดับ "ธงไหนเป็นต้นทาง" รอ Q1) **S-01 สถานะ VAT เก็บสองธง ค่าเริ่มต้นตรงข้ามกัน และเส้นสร้างบริษัทไม่ sync ⇒ บริษัทที่ "ไม่จด VAT" ออกใบกำกับภาษีเก็บ VAT 7% ได้ (§90/2)**
 - `Company.IsVatRegistered` default **false** (`Company.cs:48`) · `CompanySettings.VatRegistered` default **true** (`CompanySettings.cs:115`)
   และทุกผู้อ่านฝั่ง settings ใช้ `?? true` (`DocumentService.cs:1353,2389,4773,9323`)
 - สร้างบริษัท: `CompanyService.CreateAsync:53` / สมัครสมาชิก `AuthService.cs:201` เขียน**เฉพาะ** `Company` · แถว `CompanySettings`
@@ -92,7 +92,7 @@
 
 ### P1
 
-**S-02 ค่าตั้งที่บังคับ "ตอนอนุมัติ" ไม่ถึงทางเข้าที่ประทับ `Approved` เอง** — `TryAutoGenerateEtaxAsync` (e-Tax อัตโนมัติ) ·
+✅ 8bcc733 (ส่วน e-Tax เท่านั้น — `IssuedDocumentHooks` · +7601891 · c641f6c · วงเงิน/SoD/Budget รอ Q2) **S-02 ค่าตั้งที่บังคับ "ตอนอนุมัติ" ไม่ถึงทางเข้าที่ประทับ `Approved` เอง** — `TryAutoGenerateEtaxAsync` (e-Tax อัตโนมัติ) ·
 วงเงินอนุมัติ · SoD · Budget commitment · `EnforceFullTaxInvoiceFields` · §90/2 อยู่ใน `ApproveDocumentAsync` เท่านั้น แต่:
 POS ใบกำกับเต็มรูป `PosService.Orders.cs:615` · Integration TIV/CN/DN/CIL `IntegrationService.cs:968,1264,1394,3705` · นำเข้า
 `ImportExportService.cs:1069` สร้างเป็น `Approved` ตรง (ไม่มีการเรียก e-Tax เลย — grep "etax" ในสองไฟล์ = 0)
@@ -113,18 +113,18 @@ POS ใบกำกับเต็มรูป `PosService.Orders.cs:615` · Int
 - **ไม่ทราบ**: มีลูกค้ารายใดใช้ OA ของตัวเองแล้วหรือยัง · **แก้**: `LineChannelResolver(companyId)` ตัวเดียวให้ทั้ง push/reply/verify +
   webhook `api/line-webhook/{channelKey}` · หน้าตั้งค่าแสดง URL webhook ที่ต้องใส่ใน LINE Developers
 
-**S-04 ปิด "เปิดใช้งาน API Access" แล้วคีย์เดิมยังใช้ได้** — `EnableApiAccess` ถูกตรวจแค่ตอนสร้างคีย์ (`SettingsService.cs:463`) ·
+✅ 11e79b2 **S-04 ปิด "เปิดใช้งาน API Access" แล้วคีย์เดิมยังใช้ได้** — `EnableApiAccess` ถูกตรวจแค่ตอนสร้างคีย์ (`SettingsService.cs:463`) ·
 `ApiKeyMiddleware.cs:79-82` รับทุกคีย์ `Active` · **สถานการณ์**: เจ้าของสงสัยคีย์รั่ว กดปิดสวิตช์ → คู่ค้ายังอ่าน/เขียนข้อมูลได้ ·
 **แก้**: middleware ตรวจธงของบริษัท (แคชสั้นเหมือนสถานะคีย์) + ข้อความ 403 ภาษาไทย · เทสต์ทิศตรงข้าม: เปิดอยู่ → คีย์ใช้ได้
 
-**S-05 `IsVehicleDealer` ไม่ถึงตัวคัดกรอง §82/5(6) — OCR ตั้ง "ไม่เคลม" ให้บริษัทขาย/ซ่อมรถทุกใบ**
+✅ 8bcc733 (+7601891 · c641f6c · 41bb2c8 — `InputVatVehicleRule` · `ManualInputVatLineRule`) **S-05 `IsVehicleDealer` ไม่ถึงตัวคัดกรอง §82/5(6) — OCR ตั้ง "ไม่เคลม" ให้บริษัทขาย/ซ่อมรถทุกใบ**
 - `ProhibitedInputVatScreener.Screen` ไม่มีพารามิเตอร์นี้ → OCR (`OcrService.cs:1270`) ใส่ `[VAT-CLAIM]` = ปิดเคลมรายบรรทัด ·
   `DocumentService.cs:16768` เตือนซ้ำ · ขณะที่ด่านเตือนอีกตัว**ในเมธอดเดียวกัน** (`:17178`) และ `TaxService.cs:273` เคารพธง ⇒ ด่านรถสองชุด
   คำคีย์คนละลิสต์ (ราก R4 "สองด่านในเมธอดเดียว")
 - **สถานการณ์**: อู่ซ่อมรถเปิดธง → สแกนใบค่าอะไหล่/น้ำมันรถลูกค้า → ฟอร์มเติม "ไม่เคลม" → ผู้ใช้กด "ยืนยัน" (1-click ตามกฎเหล็ก #3) ⇒ ภาษีซื้อหาย
 - **แก้**: `Helpers/InputVatVehicleRule` ตัวเดียวรับ `isVehicleDealer` ใช้ทั้ง OCR/เว็บ/TaxService · ถอดลิสต์คำคู่ที่ `:17178`
 
-**S-06 ค่าตั้งที่มีช่องบนหน้าจอแต่ไม่มีผลเลย (18 ตัว)** — ผิดกฎเหล็ก #4 A "ห้าม silent no-op" ในระดับ "ทั้งฟีเจอร์"
+✅ 10ed065 (ช่วงรอ Q3: ล็อก + ป้าย "ยังไม่รองรับ" · `AutoConfirmOnDeposit` ต่อสายแล้ว 5721ebd · `EtaxByEmailAutoSendOnApprove` ล็อก c5df11c · checker `settings_reader_check`) **S-06 ค่าตั้งที่มีช่องบนหน้าจอแต่ไม่มีผลเลย (18 ตัว)** — ผิดกฎเหล็ก #4 A "ห้าม silent no-op" ในระดับ "ทั้งฟีเจอร์"
 | ค่าตั้ง | ช่องบนหน้า | สิ่งที่ผู้ใช้คาด | ความรุนแรง |
 |---|---|---|---|
 | `EtaxByEmailAutoSendOnApprove` · `EtaxByEmailEmbedXml` | `settings.html:670-671` | ส่ง e-Tax by Email ให้ลูกค้า/สรรพากรเองเมื่ออนุมัติ | **P1** (หน้าที่ส่งมอบตามกฎหมาย) |
@@ -142,23 +142,23 @@ POS ใบกำกับเต็มรูป `PosService.Orders.cs:615` · Int
 ใบลด/เพิ่มหนี้ · บริษัทที่เคยเปิด = ไม่บังคับ — พฤติกรรมภาษีขึ้นกับ "เคยคลิกหน้าไหนมา" · ไม่มี DTO/UI ให้เลือก (CHANGELOG:1093 จดไว้แค่ "ไม่มี UI")
 - **แก้**: ตัดสินค่าเดียว (Q4) · ใส่ใน DTO + หน้าตั้งค่า · migration ตั้งค่าให้ตรงกับที่ตัดสิน · เทสต์ "มีแถว/ไม่มีแถว ให้ผลเดียวกัน"
 
-**S-08 ปิดรับสมัครสมาชิก (`RegistrationEnabled`) กันแค่หน้าเว็บ** — `register.html:633` ซ่อนฟอร์ม แต่ endpoint สมัคร (`AuthService` —
+✅ 11e79b2 **S-08 ปิดรับสมัครสมาชิก (`RegistrationEnabled`) กันแค่หน้าเว็บ** — `register.html:633` ซ่อนฟอร์ม แต่ endpoint สมัคร (`AuthService` —
 grep `RegistrationEnabled` = 0) และเส้น social login ที่สร้างบริษัท (`AuthService.cs:674`) ไม่ตรวจ ⇒ ยิง API ตรงยังสร้างบัญชี+บริษัทได้ ·
 **แก้**: ตรวจที่ service ทุกทางสร้างผู้ใช้ (ด่านเดียว `RegistrationPolicy`)
 
 ### P2
 
-- **S-10 อัตรา VAT ตายตัว 7 แทน `Company.VatRate`**: `LodgingService.cs:71,74` · `CmsBookingService.cs:491` · **`CmsLeadService.cs:185`
+- ✅ 8bcc733 (CMS booking/lead) + 5721ebd (ที่พัก) **S-10 อัตรา VAT ตายตัว 7 แทน `Company.VatRate`**: `LodgingService.cs:71,74` · `CmsBookingService.cs:491` · **`CmsLeadService.cs:185`
   ใบเสนอราคาจาก lead ใส่ VAT 7% แม้บริษัทไม่จด VAT** · (แพลตฟอร์ม `PlatformBillingDocumentIssuer:124,182,236` อ่าน `PlatformIsVatRegistered` — ยอมรับได้)
   ⇒ ใช้ `OutputVatRate.ForCompany` ตัวเดียว (มีอยู่แล้ว ใช้แค่ POS/TimeBilling)
 - **S-11 `SiteCommerceConfig` ~37 ฟิลด์ไม่มีผู้อ่าน** (`CheckoutMode` `AutoSyncToErp` `AutoConfirmOrders` `EnableTaxInvoice` `DefaultVatRate`
   `PricesIncludeVat` `AutoDeductStock` `EnableCod/OnlinePayment/BankTransfer` `OrderNumberPrefix` `LowStockThresholdJson`(ไม่มีผู้เขียนด้วย) …)
   ไม่มี UI · service ทำพฤติกรรมตายตัว ⇒ กอง "ต่อสาย หรือ ลบ" ของ SYSTEM_REVIEW (Q3)
-- **S-12 ภาษา/หัวเรื่องในช่องทางที่ไม่ใช่ PDF คำนวณเอง**: `DocumentEmailService.cs:330` · `DocumentLineDeliveryService.cs:58` ·
+- ✅ 10ed065 (+c5df11c `GET documents/{id}/email-template`) **S-12 ภาษา/หัวเรื่องในช่องทางที่ไม่ใช่ PDF คำนวณเอง**: `DocumentEmailService.cs:330` · `DocumentLineDeliveryService.cs:58` ·
   `EmailScheduleService.cs:535` ใช้ `doc ?? company` ข้าม `template.Language` · หัวอีเมลใช้ตาราง `docTypeText` ของตัวเอง (`:332-341`) ไม่ผ่าน
   `DocumentTitleOverridesJson`/`DocumentLabels` ⇒ อีเมลบอก "ใบแจ้งหนี้" แต่ PDF แนบหัว "ใบวางบิล/ใบแจ้งหนี้" (หรือคนละภาษา) ·
   แก้: เรียก `ResolveDocumentLanguage` + `ComputeDocumentTitle` (กฎ #4 A "Resolver กลาง")
-- **S-13 ล้างค่าข้อความในหน้าตั้งค่าไม่ได้**: `settings.html:2401-2436` ส่ง `value || null` · `SettingsService.cs:60-66,134-137` ตีความ null =
+- ✅ 10ed065 **S-13 ล้างค่าข้อความในหน้าตั้งค่าไม่ได้**: `settings.html:2401-2436` ส่ง `value || null` · `SettingsService.cs:60-66,134-137` ตีความ null =
   "ไม่แก้" ⇒ ลบ `EmailFromName`/`EmailReplyTo`/`DefaultPaymentTerms` แล้วกดบันทึก ค่าเดิมยังอยู่ (silent no-op) · แก้: `""` = ล้าง (แบบ
   `AuthorizedSignatoryName` `:72`)
 - **S-14 `EclLossRatesJson` ไม่มีผู้เขียน** — `EclAllowanceJob.cs:31` เขียนว่า "ปรับได้" แต่ไม่มี DTO/UI ⇒ อัตราสูญเสียต่อบริษัท (TFRS บทที่ 9) ใช้ไม่ได้
@@ -171,11 +171,25 @@ grep `RegistrationEnabled` = 0) และเส้น social login ที่ส�
 - **S-19 `DocumentTemplate`**: 12 ฟิลด์ไม่มีผู้อ่าน+ไม่มี UI (`IsEtaxTemplate` `AutoGenerateEtaxXml` `ShowQrCode` `QrCodeType` `PromptPayId`
   `QrCodeCustomData` `DefaultCopies` `CopyLabels` `ShowBilingual` `HeaderTextColor` `DigitalCertificatePath/Password`) · drift เล็ก:
   `HeaderBackgroundColor` (`PdfGenerationService.cs:2874`) และ `LogoWidth` (`:1869`) มีผลเฉพาะ HTML ไม่ถึง QuestPDF
-- **S-20 `NumberSeries.Suffix/Format/ResetPeriod/CurrentNumber`** API รับ-เก็บ-ตอบกลับ แต่ตัวออกเลขจงใจไม่ใช้ (`DocumentNumberGenerator.cs:51-59`)
+- ✅ 10ed065 **S-20 `NumberSeries.Suffix/Format/ResetPeriod/CurrentNumber`** API รับ-เก็บ-ตอบกลับ แต่ตัวออกเลขจงใจไม่ใช้ (`DocumentNumberGenerator.cs:51-59`)
   ⇒ ควร reject ด้วยข้อความไทย แทนการรับเงียบ
 - **S-21 `PosTerminal.SettingsJson`** เก็บ/คืนอย่างเดียว · `LodgingProperty.AccountingModeAckBy` เขียนไม่อ่าน (audit พอ — ต่ำ)
-- **ของแถม (นอกขอบเขต แต่เจอระหว่างตรวจ)**: `CmsLeadService.cs:180` ส่ง `Notes: lead.InternalNotes` เข้าใบเสนอราคา — `Notes` พิมพ์บนกระดาษ
+- ✅ 8bcc733 **ของแถม (นอกขอบเขต แต่เจอระหว่างตรวจ)**: `CmsLeadService.cs:180` ส่ง `Notes: lead.InternalNotes` เข้าใบเสนอราคา — `Notes` พิมพ์บนกระดาษ
   ที่ส่งลูกค้า (คอมเมนต์ `DocumentService.cs:5640,13031` ห้ามใช้ `Notes` ด้วยเหตุนี้) ⇒ บันทึกภายในหลุดถึงลูกค้า · ส่งทีม CMS
+
+### 3b. สถานะหลังรอบ 193 (ติ๊กโดยทีมเอกสาร — sha = คอมมิตที่ปิดจริง)
+
+- **ปิดแล้ว**: S-01 (stopgap) · S-02 (e-Tax) · S-04 · S-05 · S-06 (ล็อก+ป้าย) · S-08 · S-10 · S-12 · S-13 · S-20 · ของแถม lead — ดูป้าย ✅ ในแต่ละข้อ
+- **ยังเปิด**: S-03 (LINE ต่อบริษัท — Q6) · S-07 (`EnforceFullTaxInvoiceFields` — Q4) · S-11 · S-14 · S-15 (Q5) · S-16 · S-17 · S-18 · S-19 · S-21 ·
+  S-02 ส่วนวงเงิน/SoD/Budget ของ POS/Integration (Q2) · S-01 ต้นทางธง (Q1) · S-06 "ต่อสาย หรือ ลบ" รายช่อง (Q3 — baseline `tools/settings_reader_baseline.txt`)
+- **ตรวจแล้วไม่จริง/ไม่ตรง (ห้ามรายงานซ้ำ)**:
+  - S-02 "นำเข้า `ImportExportService.cs:1069` สร้าง Approved โดยไม่มี e-Tax" — เป็น `ImportOpeningSubledgerAsync` (ลูกหนี้/เจ้าหนี้ยกมา) ซึ่ง**ห้าม**ออก e-Tax
+    (ใบกำกับออกในระบบเดิมแล้ว) ⇒ อยู่ใน baseline ของ `approved_status_writer_check` พร้อมเหตุผล (ทีม V)
+  - S-02 ข้อย่อย "CMS `SignDigitally: true` ตายตัว ไม่อ่าน `EtaxAutoSign`" — ผลจริงเท่ากับอ่านค่าตั้ง (`GenerateAsync` ลงนามเมื่อ `AutoSign && SignDigitally`) ·
+    ปัญหาจริงคือเรียก `GenerateAsync` ซ้ำหลังอนุมัติ — แก้แล้ว (ทีม V)
+  - S-05 "`TaxService.cs:273` เคารพธง" — TaxService อ่านธงแล้ว**ไม่มีใครใช้** (ตัวตัด keyword ถูกถอดตามนโยบาย "ดุลพินิจผู้กรอก") ⇒ ถอดการอ่านทิ้ง ไม่ได้เพิ่มตัวตัด (ทีม V)
+  - S-04 "แคชสั้นแบบเดียวกับที่ middleware แคชสถานะคีย์" — middleware ไม่ได้แคชสถานะคีย์ (แคชเฉพาะผล BCrypt) ⇒ อ่าน DB ทุกคำขอ (ทีม W)
+  - S-06 "`EtaxByEmailAutoSendOnApprove/EmbedXml` ไม่มีตัวส่ง" — ตัวส่งมีแล้ว (`DocumentEmailService.SendEtaxByEmailAsync` จากปุ่ม) ขาดแค่ตัวกระตุ้นตอนอนุมัติ (ทีม W)
 
 ## 4. รู้แล้ว-ยังไม่ปิด (ยืนยันซ้ำวันนี้ ไม่นับเป็นข้อใหม่)
 
