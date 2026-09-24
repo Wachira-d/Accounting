@@ -19,6 +19,12 @@ public enum EtaxAutoSkip
     ReceiptSettlesTaxInvoice = 5,
     /// <summary>ใบลด/เพิ่มหนี้ฝั่งซื้อ — ผู้ขายเป็นผู้ออก เราออก e-Tax แทนไม่ได้</summary>
     PurchaseSideAdjustment = 6,
+    /// <summary>ใบกำกับ/ใบเสร็จที่ตรึงไว้ว่า "ไม่ได้ทำหน้าที่ใบกำกับตามกฎหมาย" (<c>IsTaxInvoiceByLaw == false</c> —
+    /// หัวกระดาษไม่มีคำว่าใบกำกับ เช่น VAT 0 ทั้งใบ/ยกเว้น §81) — XML ประกาศเป็นใบกำกับไม่ได้ (ฝ่ายค้าน C-2)</summary>
+    NotTaxInvoiceByLaw = 7,
+    /// <summary>ไม่ใช่ใบกำกับ<b>เต็มรูป</b> — ผู้ซื้อ walk-in · ผู้ซื้อไม่ประสงค์รับใบกำกับ · ข้อมูลผู้ซื้อ §86/4 ไม่ครบ
+    /// (เกณฑ์ <c>TaxService.NotFullTaxInvoice</c> ตัวเดียวกับหัว PDF) — ขายหน้าร้าน/PMS ผ่าน API (ฝ่ายค้าน C-1)</summary>
+    NotFullTaxInvoice = 8,
 }
 
 /// <summary>
@@ -58,12 +64,23 @@ public static class EtaxAutoIssueScope
         => relatedDocumentId.HasValue
            && type is DocumentType.Receipt or DocumentType.CreditNote or DocumentType.DebitNote;
 
+    /// <summary>ชนิดที่ "หัวกระดาษ" ตัดสินว่าเป็นใบกำกับหรือไม่ (ใบกำกับ · ใบเสร็จ) — ใบลด/เพิ่มหนี้ถือเป็นใบกำกับตาม
+    /// §86/9-10 อยู่แล้ว (<c>TaxInvoiceSeriesPolicy.IsTaxTitleOnPlainInvoice</c> ห้ามขยายไป CN/DN ด้วยเหตุเดียวกัน)</summary>
+    public static bool IsTitleDecidedType(DocumentType type)
+        => type is DocumentType.TaxInvoice or DocumentType.Receipt;
+
+    /// <summary>ใบที่ตรึงแล้วว่าไม่ใช่ใบกำกับตามกฎหมาย — <c>null</c> (ใบก่อนมีฟีเจอร์) ห้ามตีความว่า false</summary>
+    public static bool DeclaredNotTaxInvoice(DocumentType type, bool? isTaxInvoiceByLaw)
+        => IsTitleDecidedType(type) && isTaxInvoiceByLaw == false;
+
     /// <summary>ใบนี้ "ข้ามโดยเจตนา" ไหม — <see cref="EtaxAutoSkip.None"/> = ควรมี e-Tax (ออกไม่ได้ = ต้องดัง)</summary>
     /// <param name="relatedDocumentType">ชนิดของใบต้นทาง (<c>RelatedDocumentId</c>) · <c>null</c> = ไม่มี/ไม่รู้
     /// ⇒ ไม่ข้าม (ให้ตัวออก e-Tax ตัดสินแล้วดังถ้าขาดใบอ้างอิง — "ไม่รู้" ห้ามตกเป็น "เงียบ")</param>
+    /// <param name="isTaxInvoiceByLaw"><c>Document.IsTaxInvoiceByLaw</c> (ตรึงตอนออก)</param>
+    /// <param name="notFullTaxInvoice">ผลของ <c>TaxService.NotFullTaxInvoice</c> (ผู้เรียกคำนวณ — ต้องใช้ผู้ติดต่อ)</param>
     public static EtaxAutoSkip Judge(DocumentType type, DocumentStatus status,
         bool isDeposit, bool depositOutputVatDeferred, DateTime? depositOutputVatRecognizedAt,
-        DocumentType? relatedDocumentType)
+        DocumentType? relatedDocumentType, bool? isTaxInvoiceByLaw, bool notFullTaxInvoice)
     {
         if (!IsEtaxType(type)) return EtaxAutoSkip.NotEtaxType;
         if (!DocumentStatusRules.IsIssued(status)) return EtaxAutoSkip.NotIssued;
@@ -79,6 +96,8 @@ public static class EtaxAutoIssueScope
             && relatedDocumentType is DocumentType rel
             && AdjustmentNoteAccount.SourceIsPurchaseSide(rel))
             return EtaxAutoSkip.PurchaseSideAdjustment;
+        if (DeclaredNotTaxInvoice(type, isTaxInvoiceByLaw)) return EtaxAutoSkip.NotTaxInvoiceByLaw;
+        if (IsTitleDecidedType(type) && notFullTaxInvoice) return EtaxAutoSkip.NotFullTaxInvoice;
         return EtaxAutoSkip.None;
     }
 }

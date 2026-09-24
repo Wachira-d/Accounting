@@ -10993,6 +10993,10 @@ public partial class DocumentService : IDocumentService
             payment.ReceiptDocumentId = receipt.Id;
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+            // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่ถือ VAT = ใบกำกับ ณ วันรับเงิน (§78/1) เกิดเป็น Paid ไม่ผ่าน
+            // ApproveDocumentAsync ⇒ เดิมไม่เคยได้ e-Tax อัตโนมัติ · hook ตัดสินขอบเขตเอง (ใบเสร็จเปล่า/ร่าง = ข้าม)
+            // เรียกหลัง commit · ล้ม = ป้ายบนเอกสาร ไม่ย้อนการออกใบ
+            await _issuedHooks.RunAsync(companyId, receipt);
             return new IssuedReceiptResult(receipt.Id, receipt.DocumentNumber,
                 receipt.DocumentDate, receipt.Status == DocumentStatus.Draft, AlreadyExisted: false);
         }
@@ -11027,6 +11031,9 @@ public partial class DocumentService : IDocumentService
         // ทันที → ชำระพร้อมกัน 2 รายการ ผ่าน balance check ทั้งคู่ → ตัด AR ซ้ำ
         // (over-relief). await using = rollback อัตโนมัติถ้า throw ก่อน commit.
         await using var transaction = await _db.Database.BeginTransactionAsync();
+        // ใบเสร็จ settlement ที่ออกในรอบนี้ — ส่งให้ผลข้างเคียงหลังออกเอกสาร **หลัง commit** (C-3)
+        // (reset ทุกรอบของ execution strategy — รอบที่ rollback ต้องไม่ค้างค่า)
+        Document? issuedSettlementReceipt = null;
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
             .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", request.DocumentId, companyId)
@@ -11333,6 +11340,7 @@ public partial class DocumentService : IDocumentService
                     var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove, carryVat);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
+                    issuedSettlementReceipt = receiptDoc;
                 }
                 catch (Exception ex)
                 {
@@ -11392,6 +11400,11 @@ public partial class DocumentService : IDocumentService
                 await TryReclassifyUndueOutputVatAsync(companyId, doc.Id, payment.PaymentDate, createdBy);
 
             await transaction.CommitAsync();
+
+            // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
+            // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
+            if (issuedSettlementReceipt != null)
+                await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
 
             try
             {
@@ -16141,6 +16154,7 @@ public partial class DocumentService : IDocumentService
         // ต้อง echo กลับ ไม่งั้นร่องรอยอยู่แต่ในฐานข้อมูลกับ audit ผู้ใช้ไม่เห็น
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
+        EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,
         ReplacesDocumentId: d.ReplacesDocumentId,
         ReplacementReason: d.ReplacementReason,

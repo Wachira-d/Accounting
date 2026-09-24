@@ -520,7 +520,7 @@
       <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
       <div class="form-row">
         <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
-        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" checked onchange="var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
+        <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" onchange="var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label></div>
       </div>
       <div class="form-row" style="margin-top:12px">
         <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
@@ -2259,7 +2259,10 @@
           document.getElementById('sInvoiceEmailBody').value = s.invoiceEmailBody || '';
           // Tax
           document.getElementById('sVatRate').value = s.defaultVatRate ?? 7;
-          document.getElementById('sVatRegistered').checked = s.vatRegistered !== false;
+          // แสดงตามค่าจริงจากเซิร์ฟเวอร์เท่านั้น (ฝ่ายค้าน P-8 — เดิม markup ติ๊กไว้ + `!== false` ⇒ ไม่มีค่า = "จด")
+          document.getElementById('sVatRegistered').checked = s.vatRegistered === true;
+          // โหลดค่า VAT จริงสำเร็จแล้ว — ปุ่มบันทึกส่งช่อง VAT ได้ (โหลดล้ม = ไม่ส่ง ห้ามเอาค่าบนฟอร์มเปล่าไปทับธงบริษัท)
+          this._vatLoaded = typeof s.vatRegistered === 'boolean';
           const wrb = document.getElementById('sWhtRecognitionBasis');
           if (wrb) wrb.value = s.whtRecognitionBasis || 'Cash';
           document.getElementById('sVatRegistrationDate').value = s.vatRegistrationDate || '';
@@ -2477,8 +2480,11 @@
             emailFromName: document.getElementById('sEmailFromName').value,
             emailReplyTo: document.getElementById('sEmailReplyTo').value,
             // Tax
-            defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
-            vatRegistered: document.getElementById('sVatRegistered').checked,
+            // ช่อง VAT ส่งเฉพาะเมื่อโหลดค่าจริงสำเร็จ (P-8) — ส่งแล้วเซิร์ฟเวอร์ถือว่า "ยืนยันสถานะ VAT แล้ว" (C-9)
+            ...(this._vatLoaded ? {
+              defaultVatRate: parseFloat(document.getElementById('sVatRate').value),
+              vatRegistered: document.getElementById('sVatRegistered').checked,
+            } : {}),
             whtRecognitionBasis: document.getElementById('sWhtRecognitionBasis')?.value || null,
             vatRegistrationDate: document.getElementById('sVatRegistrationDate').value,
             isVehicleDealer: document.getElementById('sIsVehicleDealer').checked,

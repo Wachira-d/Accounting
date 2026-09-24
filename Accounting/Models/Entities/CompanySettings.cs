@@ -114,6 +114,11 @@ public class CompanySettings : TenantEntity
     public decimal DefaultVatRate { get; set; } = 7;
     public bool VatRegistered { get; set; } = true;
     public string? VatRegistrationDate { get; set; }
+    /// <summary>เวลาที่มีคน**ยืนยัน**สถานะจด VAT (วิซาร์ดสร้างบริษัท · บันทึกหน้าตั้งค่า/ข้อมูลบริษัทที่ส่งช่อง VAT) ·
+    /// null = ยังไม่มีใครถาม (บริษัทจากหน้าสมัคร/SSO) ⇒ ระบบถือว่าไม่จดไปก่อน + หน้าเอกสาร/แดชบอร์ดขึ้นแถบให้ตั้งค่า
+    /// (รอบ 193 ฝ่ายค้าน C-9 — "ไม่รู้" ต้องแยกได้จาก "ไม่จด") · แถวที่มีอยู่ก่อนคอลัมน์นี้ถูกเติมเวลาตอนเพิ่มคอลัมน์
+    /// (ไม่ถามซ้ำบริษัทเดิมที่ใช้งานมาแล้ว)</summary>
+    public DateTime? VatStatusConfirmedAt { get; set; }
 
     /// <summary>§82/5(6) override — ระบบ default จะเตือนว่า VAT ของ
     /// ค่าน้ำมัน/ซ่อม/เช่ารถยนต์นั่ง ≤10 ที่นั่ง เคลมไม่ได้ (ประกาศอธิบดีฯ

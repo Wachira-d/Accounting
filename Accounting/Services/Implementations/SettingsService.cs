@@ -138,7 +138,12 @@ public class SettingsService : ISettingsService
         if (request.LeaveQuotasJson != null) settings.LeaveQuotasJson = request.LeaveQuotasJson;
         if (request.EnforceManagerApproval.HasValue) settings.EnforceManagerApproval = request.EnforceManagerApproval.Value;
         if (request.DefaultVatRate.HasValue) settings.DefaultVatRate = request.DefaultVatRate.Value;
-        if (request.VatRegistered.HasValue) settings.VatRegistered = request.VatRegistered.Value;
+        if (request.VatRegistered.HasValue)
+        {
+            settings.VatRegistered = request.VatRegistered.Value;
+            // ผู้ใช้ส่งคำตอบเรื่อง VAT มาเอง (หน้าตั้งค่าส่งเฉพาะเมื่อโหลดค่าจริงจากเซิร์ฟเวอร์สำเร็จ · P-8) = ยืนยันแล้ว (C-9)
+            settings.VatStatusConfirmedAt = DateTime.UtcNow;
+        }
         // เกณฑ์รับรู้ WHT — เปลี่ยนแล้วมีผลกับ JE ของ "เอกสารที่อนุมัติหลังจากนี้"
         // เท่านั้น (ใบเก่าที่ post ไปแล้วไม่ถูกแก้ย้อนหลัง — ถ้าจะย้ายเกณฑ์กลางปี
         // ต้องกลับรายการใบเก่าเอง) จึงไม่ทำ migration อัตโนมัติที่นี่
@@ -667,7 +672,11 @@ public class SettingsService : ISettingsService
         Accounting.Helpers.CashSaleStockRules.Describe(s.CashSaleStockPolicy),
         s.PosTipPayableAccountCode,
         Accounting.Helpers.TipAccountResolver.CodeCandidates(s.PosTipPayableAccountCode)[0],
-        s.DepositVatTreatment);
+        s.DepositVatTreatment)
+    {
+        // มีคนยืนยันสถานะ VAT แล้วหรือยัง — หน้าเอกสาร/แดชบอร์ดใช้ขึ้นแถบให้ไปตั้งค่า (ฝ่ายค้าน C-9)
+        VatStatusConfirmed = s.VatStatusConfirmedAt != null,
+    };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
         n.Id, n.DocumentType, n.Prefix, n.Suffix, n.Format,
