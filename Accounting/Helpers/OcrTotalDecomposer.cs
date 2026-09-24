@@ -25,6 +25,9 @@ public enum OcrDiscountPlacement
 /// <summary>รายการปรับหลังยอดใบกำกับที่กระดาษพิมพ์พร้อมเครื่องหมาย (<c>ค่าจัดส่ง +฿37</c> · <c>Shopee Voucher -฿135</c>)</summary>
 public sealed record OcrPaymentAdjustment(string Label, decimal Amount);
 
+/// <summary>ผลของ <see cref="OcrTotalDecomposer.ForScan"/> — ส่วนลดที่ใช้ได้ + หมายเหตุที่สแกนยังขาด (null = ไม่ต้องเติม)</summary>
+public readonly record struct OcrScanDiscountDecision(decimal DiscountToSpread, string? NoteToAppend);
+
 /// <summary>ผลการแตกยอด</summary>
 /// <param name="Discount">ส่วนลดที่พิมพ์ (0 = ไม่มี)</param>
 /// <param name="DiscountToSpread">ส่วนลดที่ตัวสร้างบรรทัด<b>ยอมให้</b>กระจาย/ลดฐาน — PostInvoice = 0 · อื่น ๆ = เท่าเดิม</param>
@@ -67,6 +70,9 @@ public static class OcrTotalDecomposer
     public const string PayNotTotalTag = "[PAY≠TOTAL]";
 
     private const decimal Tol = OcrPaperAmounts.ExactTol;
+
+    /// <summary>ยอดบรรทัดที่พิมพ์ชนะ ราคา×จำนวน ได้เมื่อต่างไม่เกิน 1 สตางค์ (เศษปัดของราคาต่อหน่วย)</summary>
+    public const decimal LinePrintedTol = 0.01m;
     private const RegexOptions Opt = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
     /// <summary>รายการปรับที่พิมพ์พร้อมเครื่องหมายและสัญลักษณ์เงิน: <c>ค่าจัดส่ง +฿37</c> · <c>Voucher -฿135</c></summary>
@@ -90,6 +96,10 @@ public static class OcrTotalDecomposer
         var d = billDiscount;
         if (string.IsNullOrWhiteSpace(rawText) || total is not > 0m)
             return new(OcrDiscountPlacement.Unknown, d, d, null, none, groups, "ไม่รู้ยอดรวม/ไม่มีข้อความ — ใช้ส่วนลดตามเดิม");
+
+        // ใบหลายสกุลเงิน — ตัวเลขสองชุดลงตัวได้ทั้งคู่ ⇒ ไม่เดาทิศ ส่งส่วนลดเดิมต่อ (ฝ่ายค้าน C2)
+        if (OcrPaperAmounts.HasForeignCurrency(rawText))
+            return new(OcrDiscountPlacement.Unknown, d, d, null, none, groups, "ใบมีสกุลเงินต่างประเทศ — ใช้ส่วนลดตามเดิม");
 
         var t = total.Value;
         var printed = OcrPaperAmounts.AllPrinted(rawText);
@@ -135,12 +145,25 @@ public static class OcrTotalDecomposer
             + "⇒ เป็นการปรับตอนชำระเงิน ไม่ใช่ส่วนลดในใบกำกับ (ไม่ลดฐาน/VAT)");
     }
 
-    /// <summary>ส่วนลดที่ตัวสร้างบรรทัด/ฐานภาษีหัวเอกสาร<b>ใช้ได้</b> — ตัวตัดสินตัวเดียวของ
-    /// ทุกทางเข้า (สร้าง · พรีวิว · repopulate · ด่านคณิตตอนสแกน)</summary>
-    public static decimal EffectiveBillDiscount(
-        string? rawText, decimal? subTotal, decimal? vat, decimal? total, decimal billDiscount)
-        => billDiscount <= 0m ? billDiscount
-            : Decompose(rawText, subTotal, vat, total, billDiscount).DiscountToSpread;
+    /// <summary>
+    /// **ส่วนลดที่ตัวสร้างบรรทัด/ฐานภาษีหัวเอกสาร<b>ใช้ได้</b> + หมายเหตุที่สแกนต้องมี** — ตัวตัดสินตัวเดียวของทุกทางเข้า
+    /// ฝั่งสร้างเอกสาร (สร้าง · พรีวิว · repopulate)
+    ///
+    /// <para>ฝ่ายค้าน P1: สแกนเก่า (ก่อนรอบ 192) ที่ persist ส่วนลด 98 ของใบ Shopee ไว้ — ตัวสร้างอ่านข้อความดิบแล้วรู้ว่าเป็น
+    /// การปรับตอนชำระ (กระจาย 0) แต่หมายเหตุ <c>[PAY≠TOTAL]</c> ไม่เคยถูกเขียนบนสแกนนั้น ⇒ ด่านอนุมัติเอง
+    /// (<see cref="OcrPostingReadiness"/> ที่เว็บ/LINE อ่านจากหมายเหตุของสแกน) ไม่เห็น ⇒ คืนหมายเหตุที่ต้องต่อท้าย
+    /// เมื่อยังไม่มี (มีแล้ว = null · ไม่ซ้ำ)</para>
+    /// </summary>
+    /// <param name="existingNotes">ProcessingNotes ปัจจุบันของสแกน</param>
+    public static OcrScanDiscountDecision ForScan(
+        string? rawText, decimal? subTotal, decimal? vat, decimal? total, decimal billDiscount, string? existingNotes)
+    {
+        if (billDiscount <= 0m) return new OcrScanDiscountDecision(billDiscount, null);
+        var d = Decompose(rawText, subTotal, vat, total, billDiscount);
+        var note = PaymentNote(d, total);
+        var missing = note is not null && !(existingNotes ?? "").Contains(PayNotTotalTag, StringComparison.Ordinal);
+        return new OcrScanDiscountDecision(d.DiscountToSpread, missing ? note : null);
+    }
 
     /// <summary>ข้อความ <c>[PAY≠TOTAL]</c> พร้อมตัวเลข — null เมื่อยอดชำระไม่ต่างจากยอดใบกำกับ</summary>
     public static string? PaymentNote(OcrTotalDecomposition d, decimal? total)
@@ -160,7 +183,8 @@ public static class OcrTotalDecomposer
         if (unitPrice is not decimal up) return amount ?? 0m;
         var q = quantity ?? 1m;
         var calc = up * q;
-        if (amount is decimal a && a > 0m && Math.Abs(calc - a) <= Math.Max(0.01m, 0.005m * Math.Abs(q)))
+        // เพดาน 1 สตางค์ (ฝ่ายค้าน P5): เดิม 0.005 × จำนวน ⇒ ที่จำนวน 100 กลืนส่วนลดรายบรรทัดจริง 0.50 ได้
+        if (amount is decimal a && a > 0m && Math.Abs(calc - a) <= LinePrintedTol)
             return a;
         return calc;
     }

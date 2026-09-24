@@ -72,9 +72,18 @@ public static class OcrScanSnapshot
     /// "ไฟล์ซ้ำ" เขียนทับทั้งก้อนด้วย <c>"Duplicate of scan …"</c> ⇒ ธง
     /// <c>[VAT-CLAIM]</c> (§82/5 เคลมภาษีซื้อไม่ได้) หายไปด้วย และระบบ<b>ไม่มีคอลัมน์
     /// อื่นเก็บคำตัดสินนี้เลย</b> — คำตัดสินทางกฎหมายอยู่ในสตริงล้วน ⇒
-    /// <b>อัปไฟล์เดิมซ้ำ = ใบกำกับอย่างย่อ/ค่ารับรอง กลับมาเคลมภาษีซื้อได้</b></para></summary>
+    /// <b>อัปไฟล์เดิมซ้ำ = ใบกำกับอย่างย่อ/ค่ารับรอง กลับมาเคลมภาษีซื้อได้</b></para>
+    /// <para>รอบ 192 ฝ่ายค้าน C3: ลิสต์นี้เคยเขียนมือแยกจาก <see cref="OcrPostingReadiness.BlockingTags"/> ⇒ แท็กห้ามอนุมัติ
+    /// ใหม่ (<c>[TOTAL-CONFLICT]</c> · <c>[PAY≠TOTAL]</c> — และของเดิม <c>[MATH]</c> · <c>[DATE-UNSURE]</c> · <c>[FX-UNKNOWN]</c>)
+    /// หลุดตอนอัปไฟล์ซ้ำ ⇒ ใบ Shopee ที่อัปซ้ำกลายเป็นอนุมัติเองได้ · ตอนนี้ <b>ทุกแท็กห้ามอนุมัติ</b> ติดไปด้วยเสมอ (ตัวตั้งตัวเดียว)
+    /// + ข้อสังเกตเรื่องตัวกระดาษที่ไม่บล็อก (ยอดรวมไม่แน่ใจ · หน้าไม่ครบ) · <c>[TOTAL]</c> ไม่อยู่ในลิสต์ — ยอดที่ยึดแล้วถูกคัดลอกเป็นค่าอยู่แล้ว
+    /// และคำเดียวกันอยู่ในบรรทัดเหตุผล (<c>[Reasoning]</c>) ซึ่งเป็นของการอัปโหลดครั้งนั้น</para></summary>
     public static readonly string[] DecisionNoteTags =
-        { "[VAT-CLAIM]", "[VAT-NOTE]", "[TAX-INV-PENDING]", "[DATE-UNKNOWN]", "[WHT-CERT]", "[Σ-GAP]" };
+        new[] { "[VAT-CLAIM]", "[VAT-NOTE]", "[TAX-INV-PENDING]", "[DATE-UNKNOWN]", "[WHT-CERT]", "[Σ-GAP]" }
+            .Concat(OcrPostingReadiness.BlockingTags.Select(t => t.Tag))
+            .Concat(new[] { OcrTotalAnchor.UnsureTag, OcrPageSet.PartialTag })
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     /// <summary>คัดเฉพาะบรรทัดที่เป็นคำตัดสินจากหมายเหตุของสแกนต้นฉบับ</summary>
     public static string DecisionNotes(string? processingNotes)

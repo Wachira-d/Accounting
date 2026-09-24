@@ -43,8 +43,21 @@ public static class OcrPaperAmounts
     /// "ยกเว้น" · "Included/Excluded VAT" · "ต้องเสียภาษี") หรือเลขทะเบียน</summary>
     private static readonly Regex VatLabelNotAmount = new(
         @"รวม[ \t]*(?:ภาษี|vat)|ก่อน[ \t]*(?:ภาษี|vat)|ยกเว้น|ต้องเสียภาษี|ไม่เสียภาษี|หลังหัก|"
-        + @"incl(?:uded|usive|\.)?[ \t]*vat|vat[ \t]*incl|excl(?:uded|usive|\.)?[ \t]*vat|vat[ \t]*excl|"
-        + @"non[- \t]?vat|vatable|exempt|regist|reg\.|เลขประจำตัว|เลขทะเบียน", Opt);
+        + @"incl\w*\.?[ \t]*(?:of[ \t]+)?vat|vat[ \t]*incl|excl\w*\.?[ \t]*(?:of[ \t]+)?vat|vat[ \t]*excl|before[ \t]*vat|"
+        + @"non[- \t]?vat|vatable|exempt|regist|reg\.|เลขประจำตัว|เลขทะเบียน|"
+        // รอบ 192 ฝ่ายค้าน C2: ยอดของ "ใบเดิม" บนใบลด/เพิ่มหนี้ ("VAT on original invoice 700.00") ไม่ใช่ VAT ของใบนี้
+        + OriginalDocWords, Opt);
+
+    /// <summary>คำที่บอกว่าตัวเลขบนแถวเป็นของ<b>เอกสารฉบับเดิม</b> (ใบลด/เพิ่มหนี้อ้างใบกำกับเดิม) — ไม่ใช่ยอดของใบนี้</summary>
+    public const string OriginalDocWords =
+        @"(?<![A-Za-z])(?:original|previous|prior)(?![A-Za-z])|ใบ(?:กำกับ(?:ภาษี)?|แจ้งหนี้)?เดิม|เดิม";
+
+    /// <summary>แถว "อัตรา VAT" ที่ตัวเลขเป็นอัตรา (VAT RATE 7.00) — ไม่ใช่ยอดภาษี</summary>
+    private static readonly Regex RateWord = new(@"(?<![A-Za-z])rate(?![A-Za-z])|อัตรา", Opt);
+
+    /// <summary>สกุลเงินต่างประเทศบนกระดาษ — ใบสองสกุลมีชุดตัวเลขสองชุดที่ต่างก็ "ลงตัว" (ฝ่ายค้าน C2)</summary>
+    private static readonly Regex ForeignCurrency = new(
+        @"(?<![A-Za-z])(?:USD|EUR|JPY|SGD|CNY|RMB|GBP|HKD|AUD|MYR|KRW|TWD|VND|CHF|INR|IDR|PHP)(?![A-Za-z])|US\$|€|£|¥", Opt);
 
     private static readonly Regex DiscountLabel = new(@"ส่วนลด[ก-๙]*|(?<![A-Za-z])discounts?(?![A-Za-z])", Opt);
 
@@ -101,6 +114,8 @@ public static class OcrPaperAmounts
             if (!VatLabel.IsMatch(line) || VatLabelNotAmount.IsMatch(line)) continue;
             var money = MoneyOn(line);
             if (money.Count == 0 || money[money.Count - 1] <= 0m) continue;
+            // "VAT RATE 7.00" / "อัตราภาษี 7.00" — ตัวเลขคืออัตรา (ฝ่ายค้าน P3)
+            if (RateWord.IsMatch(line) && money[money.Count - 1] == 7m) continue;
             list.Add(new OcrPrintedAmount(money[money.Count - 1], i, line.Trim()));
         }
         var table = OcrLineVatMarks.ReadGroups(rawText);
@@ -108,6 +123,26 @@ public static class OcrPaperAmounts
             list.Add(new OcrPrintedAmount(table.Vat, table.TotalLineNo, table.Evidence));
         return list;
     }
+
+    /// <summary>
+    /// กระดาษมีตัวเลข<b>มากกว่าหนึ่งสกุลเงิน</b> — ขั้นยึดยอด/แตกยอดถอยเป็น "ไม่รู้" (ห้ามตัดสินข้ามสกุล · ฝ่ายค้าน C2)
+    /// <para>สัญญาณ: รหัส/สัญลักษณ์สกุลต่างประเทศ (USD/EUR/…/$/€) · คำว่าอัตราแลกเปลี่ยน · หรือบางแถวยอดเงินติดป้าย THB
+    /// ขณะที่แถวยอด/VAT อื่นไม่ติด (ใบ "Total 1,070.00 … Total (THB) 36,380.00" — ชุดที่ไม่ติดป้ายคือสกุลอื่น) ·
+    /// ใบไทยทั่วไปไม่พิมพ์ THB บนแถวยอด ⇒ ไม่เข้าข้อนี้</para>
+    /// </summary>
+    public static bool HasForeignCurrency(string? rawText)
+    {
+        if (string.IsNullOrEmpty(rawText)) return false;
+        if (ForeignCurrency.IsMatch(rawText) || ExchangeRateWords.IsMatch(rawText)) return true;
+        var lines = Lines(rawText);
+        var thbMoney = lines.Any(l => ThbCode.IsMatch(l) && MoneyOn(l).Count > 0);
+        return thbMoney && lines.Any(l => !ThbCode.IsMatch(l) && AmountLabelLine.IsMatch(l) && MoneyOn(l).Count > 0);
+    }
+
+    private static readonly Regex ThbCode = new(@"(?<![A-Za-z])THB(?![A-Za-z])", Opt);
+    private static readonly Regex ExchangeRateWords = new(@"exchange[ \t]*rate|rate[ \t]*of[ \t]*exchange|อัตราแลกเปลี่ยน", Opt);
+    private static readonly Regex AmountLabelLine = new(
+        @"(?<![A-Za-z])(?:total|amount|vat)(?![A-Za-z])|ภาษีมูลค่าเพิ่ม|รวม", Opt);
 
     /// <summary>แถวส่วนลดที่มีเงินจริง (ไม่รวมแถว "หลัง/ก่อนหักส่วนลด" · ไม่รวมแถวยอด 0)</summary>
     public static IReadOnlyList<OcrPrintedAmount> DiscountRows(string? rawText)

@@ -7104,35 +7104,34 @@ public class OcrService : IOcrService
         if (engine == "EtaxXml" || string.IsNullOrWhiteSpace(rawText)) return null;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
         var anchor = Accounting.Helpers.OcrTotalAnchor.Find(text, data.TotalAmount, data.EngineAmountDue);
+        // สิ่งที่ต้องเขียนตัดสินใน helper (OcrTotalAnchor.Plan — เทสต์ได้) · ที่นี่เขียนตามอย่างเดียว
+        var plan = Accounting.Helpers.OcrTotalAnchor.Plan(anchor, data.SubTotal, data.VatAmount);
         var totalKey = Accounting.Helpers.OcrFieldKeys.TotalAmount;
-        const decimal provenConf = 0.95m;
-        if (anchor.Verdict == Accounting.Helpers.OcrTotalVerdict.Proven && anchor.Total is decimal anchored)
+        if (plan.Total is decimal anchored)
         {
             data.TotalAmount = anchored;
             data.FieldConfidence[totalKey] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
-            data.Note(totalKey, anchored, Accounting.Helpers.OcrFieldSource.PaperLabel, provenConf, anchor.Reason);
-            // ฐาน/VAT ที่ถืออยู่ไม่ปิดยอดใหม่ ⇒ ใช้คู่ที่<b>พิมพ์บนกระดาษ</b>ซึ่งปิดยอดนี้ (ตารางสรุปตามกลุ่มภาษี/แถวฐาน+VAT)
-            if (anchor.PrintedBase is decimal printedBase && anchor.PrintedVat is decimal printedVat
-                && Math.Abs((data.SubTotal ?? 0m) + (data.VatAmount ?? 0m) - anchored) > Accounting.Helpers.OcrPaperAmounts.ExactTol)
-            {
-                data.SubTotal = printedBase;
-                data.VatAmount = printedVat;
-                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
-                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
-                data.Note(Accounting.Helpers.OcrFieldKeys.SubTotal, printedBase, Accounting.Helpers.OcrFieldSource.PaperLabel,
-                    provenConf, "ฐานที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น");
-                data.Note(Accounting.Helpers.OcrFieldKeys.VatAmount, printedVat, Accounting.Helpers.OcrFieldSource.PaperLabel,
-                    provenConf, "VAT ที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น");
-            }
+            data.Note(totalKey, anchored, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                (decimal)Accounting.Helpers.OcrTotalAnchor.ProvenConfidence, anchor.Reason);
         }
-        else if (anchor.Verdict is Accounting.Helpers.OcrTotalVerdict.Conflict or Accounting.Helpers.OcrTotalVerdict.Unsure)
+        if (plan.SubTotal is decimal planSub && plan.Vat is decimal planVat)
         {
-            var cap = Accounting.Helpers.OcrTotalAnchor.DisputedConfidenceCap;
-            data.FieldConfidence[totalKey] = Math.Min(data.FieldConfidence.GetValueOrDefault(totalKey, cap), cap);
+            // ฐานที่พิมพ์ = PaperLabel 0.95 · ฐานที่คำนวณ (ยอด − VAT) = Rule 0.80 (เหลือง) — ห้ามประทับค่าคำนวณว่าอ่านจากกระดาษ
+            data.SubTotal = planSub;
+            data.VatAmount = planVat;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = plan.SubConfidence;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = Accounting.Helpers.OcrTotalAnchor.ProvenConfidence;
+            data.Note(Accounting.Helpers.OcrFieldKeys.SubTotal, planSub, plan.SubSource, (decimal)plan.SubConfidence,
+                plan.SubSource == Accounting.Helpers.OcrFieldSource.PaperLabel
+                    ? "ฐานที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น" : "คำนวณ: ยอดรวมทั้งสิ้น − VAT ที่พิมพ์");
+            data.Note(Accounting.Helpers.OcrFieldKeys.VatAmount, planVat, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                (decimal)Accounting.Helpers.OcrTotalAnchor.ProvenConfidence, "VAT ที่พิมพ์ซึ่งปิดยอดรวมทั้งสิ้น");
         }
-        if (anchor.Verdict != Accounting.Helpers.OcrTotalVerdict.NotChecked)
-            data.ReasoningTrace.Add("[TOTAL] " + anchor.Reason);
-        if (Accounting.Helpers.OcrTotalAnchor.Note(anchor) is string anchorNote)
+        if (plan.TotalConfidenceCap is double cap)
+            data.FieldConfidence[totalKey] = Math.Min(data.FieldConfidence.GetValueOrDefault(totalKey, cap), cap);
+        if (plan.Trace is string anchorTrace)
+            data.ReasoningTrace.Add("[TOTAL] " + anchorTrace);
+        if (plan.Note is string anchorNote)
             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + anchorNote;
 
         var shape = Accounting.Helpers.OcrTotalDecomposer.Decompose(
@@ -7147,12 +7146,19 @@ public class OcrService : IOcrService
 
     /// <summary>ส่วนลดท้ายบิลของสแกนที่ตัวสร้างบรรทัด/ฐานหัวเอกสาร<b>ใช้ได้</b> — ตัวเดียวของสามทางเข้า
     /// (สร้าง · พรีวิว · repopulate) · ส่วนลดที่เป็นการปรับตอนชำระ (หลังยอดใบกำกับ) = 0 (รอบ 192) ·
-    /// อ่านจากข้อความดิบตอนสร้าง ⇒ สแกนเก่าที่ persist ส่วนลดนั้นไว้แล้วก็ได้ผลเดียวกันโดยไม่ต้อง migrate</summary>
+    /// อ่านจากข้อความดิบตอนสร้าง ⇒ สแกนเก่าที่ persist ส่วนลดนั้นไว้แล้วก็ได้ผลเดียวกันโดยไม่ต้อง migrate ·
+    /// และเติม <c>[PAY≠TOTAL]</c> ลงหมายเหตุของสแกนเก่าที่ยังไม่มี ⇒ ด่านอนุมัติเอง (เว็บ/LINE อ่านหมายเหตุสแกน) เห็นเหมือนสแกนใหม่
+    /// (ฝ่ายค้าน P1 · ตัวตัดสิน Helpers/OcrTotalDecomposer.ForScan)</summary>
     private static decimal ScanBillDiscount(OcrScanResult result)
-        => Accounting.Helpers.OcrTotalDecomposer.EffectiveBillDiscount(
+    {
+        var decision = Accounting.Helpers.OcrTotalDecomposer.ForScan(
             Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent),
             result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount,
-            result.ExtractedDiscountAmount ?? 0m);
+            result.ExtractedDiscountAmount ?? 0m, result.ProcessingNotes);
+        if (decision.NoteToAppend is string payNote)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + payNote;
+        return decision.DiscountToSpread;
+    }
 
     /// <summary>ป้ายยอดสลับ (SubTotal ↔ Total) ที่สแกน persist ไว้ — ซ่อมก่อนใช้สร้างบรรทัด
     /// ตัวตัดสิน = <see cref="Accounting.Helpers.OcrHeaderAmounts"/> ตัวเดียว · ใช้ทั้งสองทางเข้า</summary>

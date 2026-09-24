@@ -43,13 +43,27 @@ public class OcrVatGroupTableTests
     }
 
     [Fact]
-    public void ไม่มีคำอธิบายรหัส_พิสูจน์ด้วยตัวเลขของแถว()
+    public void ไม่มีคำอธิบายรหัส_VAT7พิสูจน์ได้_แต่VATศูนย์ไม่รู้ว่ายกเว้นหรืออัตราศูนย์()
     {
+        // ฝ่ายค้าน P2: VAT 0.00 เป็นได้ทั้งยกเว้น §81 (เคลมไม่ได้) และ 0% §80/1 (เคลมได้) ⇒ ไม่มีคำอธิบาย = ไม่รู้ ⇒ ไม่แยกบรรทัดกลุ่ม
         var t = OcrLineVatMarks.ReadGroups(
             "   17  1  6,260.00  0.00  6,260.00\n  134  2  16,403.97  1,148.28  17,552.25\n  รวม  22,663.97  1,148.28  23,812.25");
-        Assert.True(t.AllKnown);
-        Assert.Equal(OcrVatGroupKind.Exempt, t.Groups[0].Kind);      // VAT 0.00
+        Assert.True(t.Found);
+        Assert.Equal(OcrVatGroupKind.Unknown, t.Groups[0].Kind);     // VAT 0.00 — ไม่เดา
         Assert.Equal(OcrVatGroupKind.Standard7, t.Groups[1].Kind);   // VAT = 7% ของฐาน
+        Assert.False(t.AllKnown);
+    }
+
+    [Theory]
+    // แถวอัตรา 0 ของตารางรหัสตัวอักษร: ไม่มีคำอธิบาย ⇒ Unknown · คำอธิบายบอก 0% ⇒ ZeroRated · คำอธิบายบอก NON-VAT ⇒ Exempt
+    [InlineData("V 7 1,000.00 70.00 1,070.00\nZ 0 500.00 0.00 500.00", OcrVatGroupKind.Unknown)]
+    [InlineData("V 7 1,000.00 70.00 1,070.00\nZ 0 500.00 0.00 500.00\nV = VATABLE  Z = ZERO RATE 0%", OcrVatGroupKind.ZeroRated)]
+    [InlineData("V 7 1,000.00 70.00 1,070.00\nN 0 500.00 0.00 500.00\nV = VATABLE  N = NON-VAT", OcrVatGroupKind.Exempt)]
+    public void แถวอัตราศูนย์_ตัดสินจากคำอธิบายบนกระดาษเท่านั้น(string paper, OcrVatGroupKind expected)
+    {
+        var t = OcrLineVatMarks.ReadGroups(paper);
+        Assert.Equal(OcrVatGroupKind.Standard7, t.Groups[0].Kind);
+        Assert.Equal(expected, t.Groups[1].Kind);
     }
 
     [Fact]
@@ -124,6 +138,24 @@ public class OcrVatGroupTableTests
         Assert.False(OcrPaperAmounts.IsPrinted(OcrPaperAmounts.AllPrinted(OcrPaperSamples.UptoyouShopee), 402.93m));
     }
 
+    [Fact]
+    public void แถวที่ไม่ใช่ยอดVATของใบนี้_ไม่ถูกนับเป็นVAT_ก่อนVAT_ไม่รวมVAT_ใบเดิม_อัตรา()
+    {
+        // ฝ่ายค้าน C2/P3: "Amount before VAT" · "excluding VAT" · "exclusive of VAT" · ยอดของใบเดิมบนใบลดหนี้ · "VAT RATE 7.00"
+        const string paper = "Amount before VAT 1,000.00\nTotal excluding VAT 1,000.00\nPrice exclusive of VAT 1,000.00\n"
+            + "VAT on original invoice 700.00\nภาษีมูลค่าเพิ่มตามใบกำกับภาษีเดิม 700.00\nVAT RATE 7.00\nVAT 7% 70.00";
+        Assert.Equal(new[] { 70m }, OcrPaperAmounts.VatAmounts(paper).Select(v => v.Amount).ToArray());
+    }
+
+    [Theory]
+    [InlineData("INVOICE\nAmount (USD) 1,000.00\nVAT 7% 70.00\nTotal 1,070.00", true)]
+    [InlineData("INVOICE\nAmount 1,000.00\nVAT 7% 70.00\nTotal 1,070.00\nVAT (THB) 2,380.00\nTotal (THB) 36,380.00", true)]
+    [InlineData("INVOICE\nTotal 1,070.00\nExchange rate 34.00", true)]
+    // ใบไทยทั่วไป · มีแค่บรรทัด "สกุลเงิน THB" ที่ไม่มียอด ⇒ ไม่ใช่หลายสกุล
+    [InlineData("ใบกำกับภาษี\nมูลค่าสินค้า 1,000.00\nภาษีมูลค่าเพิ่ม 70.00\nรวมทั้งสิ้น 1,070.00\nสกุลเงิน THB", false)]
+    public void ใบหลายสกุลเงิน_ตรวจเจอ_ใบไทยทั่วไปไม่เข้า(string paper, bool expected)
+        => Assert.Equal(expected, OcrPaperAmounts.HasForeignCurrency(paper));
+
     // ── ห้ามแต่ง VAT ที่ขัดกับกระดาษ (back-calc 7/107 ทั้งสองชุด) ──────────────
 
     [Fact]
@@ -141,6 +173,11 @@ public class OcrVatGroupTableTests
     [Fact]
     public void WinePro_VATพิมพ์เท่ากับ7ส่วน107_ไม่ขัด_แยกได้ตามเดิม()
         => Assert.Null(VatBackCalcGuard.PrintedVatContradicts(OcrPaperSamples.WinePro, 3593m));
+
+    [Fact]
+    public void แถวอัตราVAT_ไม่ทำให้แยกVATที่ถูกต้องถูกปฏิเสธ()
+        // ฝ่ายค้าน P3: "VAT RATE 7.00" เคยถูกอ่านเป็นยอด VAT 7.00 ⇒ back-calc 70.00 ที่ถูกต้องถูกปฏิเสธ
+        => Assert.Null(VatBackCalcGuard.PrintedVatContradicts("ใบกำกับภาษี\nVAT RATE 7.00\nรวม 1,070.00", 1070m));
 
     [Fact]
     public void กระดาษไม่พิมพ์VATเลย_ไม่ขัด_พฤติกรรมเดิม()
