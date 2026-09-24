@@ -119,7 +119,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             var payDateThai = $"{payDate.Day:D2}/{payDate.Month:D2}/{payDate.Year + 543}";
             // D|Seq|TitleCode|FirstName|LastName|CitizenId|PaymentDate|IncomeType(1=§40(1))|Income|Tax|Condition(1=หักภาษี ณ ที่จ่าย)
             var income = IncomeForTax(detail);
-            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{payDateThai}|1|{income:F2}|{detail.WithholdingTax:F2}|1");
+            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)}|{payDateThai}|1|{income:F2}|{detail.WithholdingTax:F2}|1");
         }
 
         // Trailer: T|TotalRecords|TotalIncome|TotalTax — required by RD parser
@@ -262,7 +262,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             var startThai = $"{start.Day:D2}/{start.Month:D2}/{start.Year + 543}";
             var endThai = $"{end.Day:D2}/{end.Month:D2}/{end.Year + 543}";
             var taxableBase = Math.Max(0, emp.TotalIncome - emp.TotalSSO - emp.TotalPVD);
-            sb.AppendLine($"D|{seq++}|{TitleCode(e.TitleTh)}|{e.FirstNameTh}|{e.LastNameTh}|{e.CitizenId ?? e.TaxId}|{startThai}|{endThai}|{emp.MonthCount}|1|{emp.TotalIncome:F2}|{emp.TotalPVD:F2}|{emp.TotalSSO:F2}|0.00|{taxableBase:F2}|{emp.TotalTax:F2}|1");
+            sb.AppendLine($"D|{seq++}|{TitleCode(e.TitleTh)}|{e.FirstNameTh}|{e.LastNameTh}|{EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId)}|{startThai}|{endThai}|{emp.MonthCount}|1|{emp.TotalIncome:F2}|{emp.TotalPVD:F2}|{emp.TotalSSO:F2}|0.00|{taxableBase:F2}|{emp.TotalTax:F2}|1");
         }
         sb.AppendLine($"T|{empGroups.Count}|{totalIncome:F2}|{totalTax:F2}");
 
@@ -840,7 +840,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var x in byEmployee)
         {
             var emp = x.Employee;
-            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.CitizenId ?? emp.TaxId}|{x.Months}|{x.YtdGross:F2}|{x.YtdSso:F2}|{x.YtdPf:F2}|{x.YtdWht:F2}");
+            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)}|{x.Months}|{x.YtdGross:F2}|{x.YtdSso:F2}|{x.YtdPf:F2}|{x.YtdWht:F2}");
         }
         sb.AppendLine($"T|{byEmployee.Count}|{totalIncome:F2}|{totalWht:F2}");
 

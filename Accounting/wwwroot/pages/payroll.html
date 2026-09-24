@@ -264,7 +264,10 @@
         <div class="modal-body">
           <input type="hidden" id="empId">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="empCode" placeholder="EMP001"></div>
+            <div class="form-group"><label class="form-label">รหัสพนักงาน *</label><input type="text" class="form-input" id="empCode" placeholder="EMP001">
+              <!-- ล็อกเมื่อเซิร์ฟเวอร์บอกว่ามีประวัติเงินเดือนแล้ว (employeeCodeLocked) พร้อมเหตุผล -->
+              <div id="empCodeLockHint" style="display:none;font-size:11px;color:#b45309;margin-top:4px"></div>
+            </div>
             <div class="form-group"><label class="form-label">คำนำหน้า</label>
               <select class="form-select" id="empTitle"></select>
             </div>
@@ -274,8 +277,14 @@
             <div class="form-group"><label class="form-label">นามสกุล *</label><input type="text" class="form-input" id="empLastName"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เลขบัตรประชาชน</label><input type="text" class="form-input" id="empIdCard" maxlength="13"></div>
+            <div class="form-group"><label class="form-label">เลขบัตรประชาชน</label><input type="text" class="form-input" id="empIdCard" maxlength="17"></div>
             <div class="form-group"><label class="form-label">วันเริ่มงาน *</label><input type="date" class="form-input" id="empStartDate"></div>
+          </div>
+          <div class="form-row">
+            <!-- D-01: 50 ทวิ ภ.ง.ด.1 ใช้เลขนี้ ถ้าว่างใช้เลขบัตรประชาชน (บุคคลไทย = เลขเดียวกัน) -->
+            <div class="form-group"><label class="form-label">เลขประจำตัวผู้เสียภาษี</label><input type="text" class="form-input" id="empTaxId" maxlength="17">
+              <div style="font-size:11px;color:#94a3b8;margin-top:3px">เว้นว่าง = ใช้เลขบัตรประชาชน · กรอกเฉพาะผู้ที่ไม่มีบัตรไทย — ใช้ออก 50 ทวิ / ภ.ง.ด.1</div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ตำแหน่ง (ข้อความ — สำหรับ payslip)</label><input type="text" class="form-input" id="empPosition"></div>
@@ -1018,8 +1027,11 @@ const Page = {
     document.getElementById('empId').value = '';
     document.getElementById('empActiveRow').style.display = 'none';
     document.getElementById('empSso').checked = true;   // default ตามกฎหมาย (D-S1)
-    ['empCode','empFirstName','empLastName','empIdCard','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone','empLineId'].forEach(id => document.getElementById(id).value = '');
+    ['empCode','empFirstName','empLastName','empIdCard','empTaxId','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone','empLineId'].forEach(id => document.getElementById(id).value = '');
+    Layout.setTitleSelectValue('empTitle', 'นาย');   // ห้ามค้างคำนำหน้าของคนที่เปิดแก้ก่อนหน้า
+    this._setEmpCodeLock(false, null);
     document.getElementById('empStartDate').value = Layout.dateInput(new Date());
+    document.getElementById('empStartDate').dataset.orig = '';
     await this._loadOrgDropdowns(null);
     ['empDepartmentRef','empPositionRef','empDirectManager'].forEach(id => document.getElementById(id).value = '');
     Layout.openModal('empModal');
@@ -1039,13 +1051,25 @@ const Page = {
       document.getElementById('empModalTitle').textContent = 'แก้ไขพนักงาน';
       document.getElementById('empId').value = e.id;
       document.getElementById('empCode').value = e.employeeCode || e.code || '';
+      // undefined = เซิร์ฟเวอร์ยังไม่ได้ตรวจ ⇒ ล็อกไว้ก่อน (ทิศปลอดภัย)
+      this._setEmpCodeLock(e.employeeCodeLocked !== false, e.employeeCodeLockReason);
+      // A05: เดิมไม่ hydrate คำนำหน้า ⇒ select ค้าง "นาย" แล้ว (เมื่อเซิร์ฟเวอร์รับช่องนี้แล้ว)
+      // จะเขียนทับ "นางสาว" เงียบ ๆ
+      Layout.setTitleSelectValue('empTitle', e.titleTh || 'นาย');
       document.getElementById('empFirstName').value = e.firstNameTh || e.firstName || '';
       document.getElementById('empLastName').value = e.lastNameTh || e.lastName || '';
+      // เลขที่ถูกปิดบัง (ไม่มีสิทธิ์ pii:view) ส่งกลับไปตามเดิมได้ — เซิร์ฟเวอร์รู้จัก
+      // "ค่าปิดบังของของเดิม" และไม่เขียนทับ (Helpers/EmployeeRecordEdit)
       document.getElementById('empIdCard').value = e.citizenId || e.idCardNumber || e.nationalId || '';
+      document.getElementById('empTaxId').value = e.taxId || '';
       document.getElementById('empStartDate').value = Layout.dateInput(e.startDate || e.hireDate);
+      // ส่งวันเริ่มงานเฉพาะเมื่อผู้ใช้เปลี่ยนจริง — กันการแปลงเขตเวลาไป-กลับขยับค่าเดิม
+      document.getElementById('empStartDate').dataset.orig = document.getElementById('empStartDate').value;
       document.getElementById('empPosition').value = e.position || '';
       document.getElementById('empDepartment').value = e.department || '';
       document.getElementById('empSalary').value = e.baseSalary || e.salary || '';
+      // D-07: response เพิ่งมี bankAccountNumber (ปิดบังถ้าไม่มีสิทธิ์ pii:view) — ส่งกลับ
+      // ตามเดิมได้ เซิร์ฟเวอร์ไม่เขียนค่าปิดบังทับของจริง
       document.getElementById('empBankAccount').value = e.bankAccount || e.bankAccountNumber || '';
       document.getElementById('empEmail').value = e.email || '';
       document.getElementById('empPhone').value = e.phone || '';
@@ -1062,22 +1086,45 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
+  /** ล็อก/ปลดช่องรหัสพนักงานตามที่เซิร์ฟเวอร์ตัดสิน + แสดงเหตุผล (ห้ามล็อกเงียบ) */
+  _setEmpCodeLock(locked, reason) {
+    const el = document.getElementById('empCode');
+    const hint = document.getElementById('empCodeLockHint');
+    el.disabled = !!locked;
+    el.title = locked ? (reason || 'แก้รหัสพนักงานไม่ได้') : '';
+    hint.textContent = locked ? '🔒 ' + (reason || 'แก้รหัสพนักงานไม่ได้') : '';
+    hint.style.display = locked ? 'block' : 'none';
+  },
+
   async saveEmployee() {
     const api = Layout.api(); if (!api) return;
     const id = document.getElementById('empId').value;
+    // A05: ช่องเดียวกันทั้งสร้างและแก้ไข — ตอนแก้ไขเซิร์ฟเวอร์รับครบทุกช่องแล้ว (เดิม
+    // UpdateEmployeeRequest ไม่มีรหัส/คำนำหน้า/ชื่อ/เลขบัตร/วันเริ่มงาน ⇒ toast
+    // "แก้ไขสำเร็จ" แต่ไม่มีอะไรเปลี่ยน) · สร้าง: ว่าง = null · แก้ไข: "" = ล้างค่า
+    // ชุดช่องนี้ถูกล็อกด้วย tools/employee_form_contract_sim.js
+    const txt = (elId) => {
+      const t = document.getElementById(elId).value.trim();
+      return id ? t : (t || null);
+    };
+    const startEl = document.getElementById('empStartDate');
     const data = {
-      employeeCode: document.getElementById('empCode').value,
+      employeeCode: document.getElementById('empCode').value.trim(),
       titleTh: document.getElementById('empTitle').value,
-      firstNameTh: document.getElementById('empFirstName').value,
-      lastNameTh: document.getElementById('empLastName').value,
-      citizenId: document.getElementById('empIdCard').value || null,
-      startDate: document.getElementById('empStartDate').value,
-      position: document.getElementById('empPosition').value || null,
-      department: document.getElementById('empDepartment').value || null,
+      firstNameTh: document.getElementById('empFirstName').value.trim(),
+      lastNameTh: document.getElementById('empLastName').value.trim(),
+      citizenId: txt('empIdCard'),
+      taxId: txt('empTaxId'),
+      // แก้ไข: ส่งเฉพาะเมื่อเปลี่ยนจริง (null = ไม่แตะ) · สร้าง: บังคับ
+      startDate: id
+        ? (startEl.value && startEl.value !== startEl.dataset.orig ? startEl.value : null)
+        : startEl.value,
+      position: txt('empPosition'),
+      department: txt('empDepartment'),
       baseSalary: parseFloat(document.getElementById('empSalary').value) || 0,
-      bankAccountNumber: document.getElementById('empBankAccount').value || null,
-      email: document.getElementById('empEmail').value || null,
-      phone: document.getElementById('empPhone').value || null,
+      bankAccountNumber: txt('empBankAccount'),
+      email: txt('empEmail'),
+      phone: txt('empPhone'),
       lineId: document.getElementById('empLineId').value || null,
       isSubjectToSocialSecurity: document.getElementById('empSso').checked,
       // Org structure (preferred — drives cost-centre + approval routing)
@@ -1137,7 +1184,7 @@ const Page = {
         <td>${Layout.statusBadge(r.status || 'Draft')}</td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="Page.viewRun('${r.id}')" data-i18n="common.view">ดู</button>
-          ${r.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.calculateRun('${r.id}')">คำนวณ</button>` : ''}
+          ${Page._recalcButton(r)}
           ${r.status === 'Calculated' ? `<button class="btn btn-sm btn-success" onclick="Page.approveRun('${r.id}')">อนุมัติ</button>` : ''}
           ${r.status === 'Approved' ? `<button class="btn btn-sm btn-primary" onclick="Page.payRun('${r.id}')">จ่าย</button>` : ''}
           ${(r.status === 'Paid' && ssoTotal > 0 && !r.ssoSettledAt) ? `<button class="btn btn-sm btn-warning" onclick="Page.openSettleSso('${r.id}')" title="นำส่งเงินสมทบประกันสังคมให้ สปส. — สร้าง JE Dr 21815 / Cr Bank อัตโนมัติ">💸 นำส่ง สปส.</button>` : ''}
@@ -1194,11 +1241,33 @@ const Page = {
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
-  async calculateRun(id) {
+  /** ปุ่ม "คำนวณ / 🔄 คำนวณใหม่" — เซิร์ฟเวอร์ตัดสินว่ากดได้ไหม (PayrollRunEditPolicy.CanRecalculate
+   *  → canRecalculate/recalculateBlockReason) หน้าเว็บแค่แสดง · คำตัดสินเจ้าของ #35 (รอบ 193):
+   *  คำนวณใหม่ได้เฉพาะรอบที่ยังไม่จ่าย — รอบที่ยังไม่จ่ายแต่ถูกปฏิเสธ (นำเข้าจากระบบนอก /
+   *  เคยจ่ายแล้วกลับรายการ) ต้อง**เห็นปุ่มที่ล็อกพร้อมเหตุผล** ไม่ใช่ปุ่มหายเงียบ ๆ */
+  _recalcButton(r) {
+    const isDraft = r.status === 'Draft';
+    // undefined = เซิร์ฟเวอร์รุ่นเก่าที่ยังไม่ส่งช่องนี้ → พฤติกรรมเดิม (เฉพาะ Draft)
+    const can = r.canRecalculate === undefined ? isDraft : !!r.canRecalculate;
+    if (can) {
+      return `<button class="btn btn-sm ${isDraft ? 'btn-primary' : 'btn-secondary'}" onclick="Page.calculateRun('${r.id}', ${isDraft ? 'false' : 'true'})"`
+        + (isDraft ? '' : ` title="คำนวณใหม่ทั้งรอบด้วยข้อมูลพนักงาน/วันลา/สูตรปัจจุบัน"`)
+        + `>${isDraft ? 'คำนวณ' : '🔄 คำนวณใหม่'}</button>`;
+    }
+    if ((r.status === 'Calculated' || r.status === 'Approved') && r.recalculateBlockReason) {
+      return `<button class="btn btn-sm btn-secondary" disabled title="${Layout.esc(r.recalculateBlockReason)}">🔒 คำนวณใหม่</button>`;
+    }
+    return '';
+  },
+
+  async calculateRun(id, isRecalc) {
     const api = Layout.api(); if (!api) return;
+    if (isRecalc && !confirm('คำนวณใหม่ทั้งรอบ?\n\n'
+      + '• ยอดที่แก้มือรายคน (✏️ แก้ยอด) และแหล่งจ่ายรายคน จะถูกแทนด้วยผลคำนวณใหม่\n'
+      + '• รอบที่อนุมัติแล้วจะกลับเป็น "คำนวณแล้ว" และต้องอนุมัติใหม่')) return;
     try {
       await api.calculatePayroll(id);
-      Layout.toast('คำนวณเงินเดือนสำเร็จ');
+      Layout.toast(isRecalc ? 'คำนวณเงินเดือนใหม่สำเร็จ — ตรวจยอดแล้วกดอนุมัติอีกครั้ง' : 'คำนวณเงินเดือนสำเร็จ');
       this.loadRuns();
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
