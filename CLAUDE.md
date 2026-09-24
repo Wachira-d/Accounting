@@ -397,7 +397,12 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
       service → `EmbeddedTesseractOcrService` (ตัวสุดท้ายคืน**ข้อความล้วน**
       ไม่มีโครงตาราง)
    2. **สกัดจากข้อความ** — `SmartFieldExtractor.Enrich` + `EnrichFromRawText`
-      (รหัสสาขา §86/4, เครดิตเทอม, ส่วนลด, หน่วยนับ, จำนวนเงินตัวอักษร)
+      (รหัสสาขา §86/4, เครดิตเทอม, ส่วนลด, หน่วยนับ, จำนวนเงินตัวอักษร ·
+      รอบ 190: ป้ายสาขาท้ายชื่อ `OcrPartyName.StripBranchSuffix` · ประโยคประกาศสาขาผู้ออกใบ
+      `OcrIssuerBranch` · เล่มที่/เลขที่ `OcrBookSerial` · ที่อยู่ผู้ซื้อ `OcrBuyerAddressReader`
+      + invariant "ที่อยู่ผู้ขายที่เป็นบล็อกผู้ซื้อถูกล้าง") · แล้ว**ตรวจวันที่กับป้ายบนกระดาษ**
+      (`OcrDateReader.CrossCheck`) ทุก engine ก่อนด่านคณิต · ชื่อฝั่งเราที่เป็นรหัส/ว่าง →
+      ชื่อบริษัทจากทะเบียน (`OcrPartyResolver.FillOurName`)
    3. **แพตเทิร์นที่เรียนไว้** — `DocumentZoneAnalyzer.ApplyLearnedPatternsTo`
       อ่าน `OcrLearnedPatterns` ของผู้ขายรายนั้น (เติมเฉพาะช่องที่ยังว่าง)
    4. **วิเคราะห์โซน** — `DocumentZoneAnalyzer.Analyze` ทำงานเมื่อ pipeline
@@ -411,7 +416,8 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
       ของจริงมีสองชั้น:
       - `VendorKnownGoodCorrector.ApplyAsync` — ค่าที่เคยยืนยันแล้วของผู้ขายราย
         นั้น (คีย์ = เลขผู้เสียภาษี) โดย `Source = "UserCorrection"` ชนะ `"AzureDI"`
-        · รันทุก tier รวม **Azure** (เดิมเรียกเฉพาะ tier 2/3)
+        · รันทุก tier รวม **Azure** (เดิมเรียกเฉพาะ tier 2/3) · รอบ 190: **เติม**ที่อยู่ผู้ขาย
+        ที่ว่างจากคลังได้ด้วย (ด่าน `OcrKnownGoodAddressFill`) — เดิมซ่อมได้แค่ค่าที่อ่านมาเพี้ยน
       - `EnrichFromDbdAsync` — เอาเลขผู้เสียภาษีไปค้นทะเบียน (RD VAT → DBD)
         แล้ว **`Helpers/DbdIdentityGuard` ตัวเดียว** ตัดสินว่าทะเบียนชนะไหม
         โดยถามว่า "**กุญแจ**ถูกไหม" (`Helpers/OcrVendorKeyEvidence`: ป้ายกำกับบน
