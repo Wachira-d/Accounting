@@ -13,6 +13,7 @@
       <div><h2 class="page-title">แพ็คเกจบริการ</h2><p class="page-subtitle">จัดการแพ็คเกจบริการ POS</p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ เพิ่มแพ็คเกจ</button>
     </div>
+    <div id="commissionReviewBanner" style="display:none; margin-bottom:12px; padding:10px 12px; border:1px solid #FDE68A; border-radius:8px; background:#FFFBEB; color:#b45309; font-size:13px"></div>
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหาแพ็คเกจ..." id="searchInput" oninput="Page.load()">
       <select class="filter-select" id="categoryFilter" onchange="Page.load()">
@@ -109,6 +110,25 @@
         if (!Layout.init('pos-packages')) return;
         Layout.setTitle('แพ็คเกจบริการ');
         await this.load();
+        await this.loadCommissionReview();
+      },
+      /** รอบ 193 หลังฝ่ายค้าน (C5): จำนวนขั้นตอนที่ประเภทคอมมิชชันต้องตรวจ — ตัวเลขจากเซิร์ฟเวอร์ (รายงานอ่านอย่างเดียว)
+       *  ระหว่างรอเจ้าของตัดสินเรื่องแปลงข้อมูลเก่า การขายยังคิดคอมตามค่าที่เก็บ (อาจกลับด้าน) จึงต้องเห็นตรงนี้ */
+      async loadCommissionReview() {
+        const api = Layout.api(); if (!api) return;
+        const el = document.getElementById('commissionReviewBanner');
+        try {
+          const r = (await api.getPosCommissionReview()).data;
+          const n = r?.totalToReview || 0;
+          el.style.display = n ? '' : 'none';
+          if (n) el.textContent = `⚠️ มีขั้นตอนบริการ ${n} รายการที่ประเภทคอมมิชชันต้องตรวจ `
+            + `(ค่าที่ระบบไม่รู้จัก ${r.undefinedValueCount || 0} · บันทึกก่อนแก้ฟอร์ม ${r.ambiguousLegacyCount || 0}) — `
+            + 'ตอนขายระบบคิดคอมตามค่าที่เก็บไว้ซึ่งอาจกลับด้านกับที่ตั้งใจ · เปิดแพ็คเกจที่มีป้าย ⚠️ แล้วเลือกประเภทใหม่แล้วบันทึก';
+        } catch (e) {
+          // ไม่มีสิทธิ์ PosManager = ไม่เห็นรายงาน (ไม่ใช่ "ไม่มีรายการต้องตรวจ") — บอกตรง ๆ ไม่ซ่อนเงียบ
+          el.style.display = '';
+          el.textContent = 'ตรวจจำนวนขั้นตอนที่ประเภทคอมมิชชันต้องตรวจไม่ได้: ' + e.message;
+        }
       },
       async load() {
         const api = Layout.api(); if (!api) return;
@@ -315,6 +335,8 @@
           description: document.getElementById('cDesc').value || null,
           durationMinutes: parseInt(duration),
           commissionType: commType,
+          // ผู้ใช้เลือกประเภทเองบนฟอร์มนี้แล้ว ⇒ ให้เซิร์ฟเวอร์ประทับ "ยืนยันแล้ว" (หน้าเก่าไม่ส่งช่องนี้ · ฝ่ายค้าน P6)
+          commissionTypeConfirmed: true,
           commissionValue: parseFloat(document.getElementById('cCommValue').value) || 0,
           requiresStaff: document.getElementById('cRequiresStaff').checked,
         };
@@ -326,6 +348,7 @@
           }
           Layout.toast(compId ? 'แก้ไขขั้นตอนสำเร็จ' : 'เพิ่มขั้นตอนสำเร็จ');
           this.hideComponentForm();
+          this.loadCommissionReview();
           const res = await api.getPosPackage(pkgId);
           const pkg = res.data || res;
           this._cache[pkgId] = pkg;

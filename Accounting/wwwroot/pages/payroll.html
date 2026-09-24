@@ -1247,6 +1247,9 @@ const Page = {
    *  เคยจ่ายแล้วกลับรายการ) ต้อง**เห็นปุ่มที่ล็อกพร้อมเหตุผล** ไม่ใช่ปุ่มหายเงียบ ๆ */
   _recalcButton(r) {
     const isDraft = r.status === 'Draft';
+    // คำเตือนที่เซิร์ฟเวอร์คิดให้ (เช่นเคยสร้างไฟล์ e-Filing ของงวดนี้) — เก็บตาม id ไว้ให้ confirm อ่าน
+    // (ไม่ฝังลง onclick: ข้อความอิสระใน JS string ของ onclick = ช่องโหว่ที่ checker ห้าม)
+    (this._recalcWarn ||= {})[r.id] = r.recalculateWarning || null;
     // undefined = เซิร์ฟเวอร์รุ่นเก่าที่ยังไม่ส่งช่องนี้ → พฤติกรรมเดิม (เฉพาะ Draft)
     const can = r.canRecalculate === undefined ? isDraft : !!r.canRecalculate;
     if (can) {
@@ -1267,8 +1270,12 @@ const Page = {
       + '• รอบที่อนุมัติแล้วจะกลับเป็น "คำนวณแล้ว" และต้องอนุมัติใหม่\n'
       // รอบ 193 (M2): ระบบล็อกเองเมื่อมี "บันทึกการยื่น/นำส่ง" ของงวด — แต่การดาวน์โหลดไฟล์ยื่น
       // ไม่ทิ้งร่องรอย (ดาวน์โหลด ≠ ยื่น) จึงต้องเตือนคนที่ยื่นไปแล้วแต่ยังไม่ได้บันทึก
+      // รอบ 193 หลังฝ่ายค้าน C1: ตัวหาหลักฐานอ่านสถานะ "ยื่นแล้ว" ของปฏิทินภาษี (TaxCalendarEvent) แล้ว
+      // ⇒ ประโยค "ระบบจะล็อกรอบให้" เป็นจริง (ล็อกทั้ง 🔄 คำนวณใหม่ และ ✏️ แก้ยอด ของรอบที่อนุมัติแล้วในเดือนนั้น)
       + '• ถ้าดาวน์โหลดไฟล์ ภ.ง.ด.1/สปส.1-10 ของงวดนี้ไปยื่นแล้ว ห้ามคำนวณใหม่ — '
-      + 'ให้บันทึกการยื่นที่ปฏิทินภาษีก่อน (ระบบจะล็อกรอบให้) แล้วยื่นแบบเพิ่มเติมถ้ายอดผิด')) return;
+      + 'ให้เปลี่ยนสถานะแบบนั้นที่หน้าปฏิทินภาษีเป็น "ยื่นแล้ว" ก่อน (ระบบจะล็อกรอบที่อนุมัติแล้วของเดือนนั้นให้) '
+      + 'แล้วยื่นแบบเพิ่มเติมถ้ายอดผิด'
+      + ((this._recalcWarn || {})[id] ? '\n\n⚠️ ' + this._recalcWarn[id] : ''))) return;
     try {
       await api.calculatePayroll(id);
       Layout.toast(isRecalc ? 'คำนวณเงินเดือนใหม่สำเร็จ — ตรวจยอดแล้วกดอนุมัติอีกครั้ง' : 'คำนวณเงินเดือนสำเร็จ');
@@ -1640,6 +1647,8 @@ const Page = {
         ? (r.status === 'Calculated' || r.status === 'Approved')
         : !!r.canEditAmounts;
       const lockReason = r.editLockReason || '';
+      // แหล่งจ่ายไม่อยู่ในแบบยื่น ⇒ เซิร์ฟเวอร์ตัดสินแยกจาก ✏️ แก้ยอด (รอบ 193 หลังฝ่ายค้าน C3)
+      const payAccountEditable = (r.canSetPaymentAccount === undefined) ? payEditable : !!r.canSetPaymentAccount;
       const payOpts = (cur) => {
         let h = '<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>';
         const banks = (this._bankAccts || []).filter(b => b.linkedAccountCode);
@@ -1696,7 +1705,7 @@ const Page = {
           const rowDiff = Math.round(((d.grossIncome||0) - (d.withholdingTax||0) - (d.socialSecurityEmployee||0)
             - otherDed - (d.netPay||0)) * 100) / 100;
           const rowBroken = Math.abs(rowDiff) > 0.01;
-          const payCell = payEditable
+          const payCell = payAccountEditable
             ? `<select class="form-input" style="font-size:12px;padding:4px 6px;min-width:170px" data-prev="${Layout.esc(cur)}" onchange="Page.setPayAccount('${id}','${empId}',this)">${payOpts(cur)}</select>`
             : (cur
                 ? `<span class="text-xs">${Layout.esc(cur)}</span>`
@@ -1716,7 +1725,7 @@ const Page = {
             <button class="btn btn-sm btn-secondary" onclick="Page.sendPayslipLine('${id}','${empId}')" title="ส่งสลิปนี้ให้พนักงานทาง LINE">📤 LINE</button>
           </td>
         </tr>`;}).join('') : '<tr><td colspan="10" class="text-center text-gray-400">ยังไม่ได้คำนวณ</td></tr>'}</tbody></table></div>
-        ${payEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
+        ${payAccountEditable && details.length ? '<div class="text-xs text-gray-400" style="margin-top:6px">💡 เลือกแหล่งจ่ายรายคนได้ — ตอนกด "จ่าย" ระบบจะแยกเครดิตเงินสด/ธนาคารตามบัญชีของแต่ละคน (ว่าง = ใช้บัญชีเริ่มต้นของบริษัท)</div>' : ''}`;
       const jeBtn = r.journalEntryId
         ? `<a class="btn btn-secondary" href="/pages/journals.html?entryId=${r.journalEntryId}" title="ดู JE ที่ลงบัญชีตอนจ่ายเงินเดือน (Dr เงินเดือน / Cr ปกส.+ภงด.1+ธนาคาร)">🧾 ดูรายการบัญชี (JE)</a>`
         : (r.status === 'Paid' ? '' : '<span class="text-xs text-gray-400" style="align-self:center">* JE จะลงเมื่อกด “จ่าย”</span>');

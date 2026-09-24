@@ -480,6 +480,7 @@
                     </button>
                   </div>
                 </div>
+                ${s.activitiesNeedingTypeReview ? `<div class="text-xs" style="color:#b45309;margin-bottom:6px">⚠️ ${s.activitiesNeedingTypeReview} กิจกรรมมาจากขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ — ยอดคอมอาจคิดกลับด้าน (คงที่ ↔ เปอร์เซ็นต์) · ตรวจที่หน้าแพ็คเกจบริการก่อนจ่ายคอม</div>` : ''}
                 <div class="cc-detail">
                   <span>ออเดอร์: ${s.orderCount || '-'}</span>
                   <span>รายการ: ${s.totalActivities || s.serviceCount || '-'}</span>
@@ -508,6 +509,7 @@
           body.innerHTML = !rows.length
             ? '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีกิจกรรมในช่วงเวลานี้</p>'
             : `
+              ${rows.some(r => r.commissionTypeNeedsReview) ? `<div class="text-xs" style="color:#b45309;margin-bottom:8px">⚠️ ${rows.filter(r => r.commissionTypeNeedsReview).length} กิจกรรมคิดคอมจากขั้นตอนที่ประเภทคอมมิชชันยังไม่ยืนยัน — ยอดอาจกลับด้าน ตรวจก่อนจ่าย</div>` : ''}
               <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
                 รวมทั้งสิ้น <strong>${rows.length}</strong> กิจกรรม
                 รวมเป็นเงิน <strong style="color:var(--success);">${Layout.money(total)}</strong>
@@ -526,7 +528,8 @@
                         <td>${Layout.esc(r.itemName)}</td>
                         <td>${Layout.esc(r.componentName)}</td>
                         <td>${this.activityStatusLabel(r.status)}</td>
-                        <td class="text-right">${Layout.money(r.commissionAmount)}</td>
+                        <td class="text-right">${Layout.money(r.commissionAmount)}${r.commissionTypeNeedsReview
+                          ? ` <span class="badge badge-warning" title="${Layout.esc(r.commissionTypeReviewNote || '')}">⚠️ ตรวจประเภท</span>` : ''}</td>
                       </tr>
                     `).join('')}
                   </tbody>

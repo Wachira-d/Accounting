@@ -94,20 +94,22 @@ public class BotExchangeRateService : IBotExchangeRateService
                     && r.FromCurrency == rate.CurrencyCode
                     && r.ToCurrency == "THB"
                     && r.EffectiveDate.Date == rate.Period.Date)
-                .OrderByDescending(r => r.MidRate > 0)
+                .OrderByDescending(r => r.MidRate > 0 || (r.BuyRate > 0 && r.SellRate > 0))
                 .FirstOrDefaultAsync();
 
             // ★ รอบ 193 (ฝ่ายค้าน M2): เดิม `existing != null → continue` ⇒ วันที่มีแถวอัตรา 0 ค้าง (บั๊กฟอร์ม A03)
             //   ธปท. ไม่มีวันเติมให้ และตัวอ่านที่กรอง MidRate > 0 ถอยไปใช้อัตราวันก่อนเงียบ ๆ ·
-            //   ตัดสินที่ Helpers/CurrencyRateSync ตัวเดียว (เกณฑ์ "ใช้ได้" ตัวเดียวกับตัวอ่าน)
-            var action = Accounting.Helpers.CurrencyRateSync.Decide(existing?.MidRate, rate.MidRate);
+            //   ตัดสินที่ Helpers/CurrencyRateSync ตัวเดียว · หลังฝ่ายค้าน P2: "ใช้ได้" = นิยามเดียวกับตัวแนะนำอัตรา
+            //   (Mid > 0 หรือ Buy/Sell ครบ) ⇒ แถวที่ผู้ใช้กรอกราคาซื้อ/ขายไว้ไม่ถูกทับ
+            var action = Accounting.Helpers.CurrencyRateSync.Decide(
+                existing == null ? null : (existing.MidRate, existing.BuyRate, existing.SellRate), rate.MidRate);
             if (action is Accounting.Helpers.CurrencyRateSyncAction.KeepExisting
                        or Accounting.Helpers.CurrencyRateSyncAction.SkipInvalidIncoming)
                 continue;
             if (action == Accounting.Helpers.CurrencyRateSyncAction.ReplaceUnusableRow && existing != null)
             {
                 _logger.LogInformation(
-                    "เขียนทับอัตรา {Ccy} วันที่ {Date:yyyy-MM-dd} ที่เป็น 0 (ค้างจากฟอร์มเก่า) ด้วยอัตรา ธปท. {Mid}",
+                    "เขียนทับอัตรา {Ccy} วันที่ {Date:yyyy-MM-dd} ที่ใช้ไม่ได้ (Mid ≤ 0 และไม่มีราคาซื้อ/ขาย — ค้างจากฟอร์มเก่า) ด้วยอัตรา ธปท. {Mid}",
                     rate.CurrencyCode, rate.Period, rate.MidRate);
                 existing.BuyRate = rate.BuyingTransfer;
                 existing.SellRate = rate.Selling;

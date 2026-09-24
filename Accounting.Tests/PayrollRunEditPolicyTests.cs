@@ -23,7 +23,7 @@ public class PayrollRunEditPolicyTests
     [InlineData("Approved")]
     public void แก้ยอดได้เฉพาะรอบที่ยังไม่ลงบัญชี(string status)
     {
-        var (can, reason) = PayrollRunEditPolicy.CanEditAmounts(status);
+        var (can, reason) = PayrollRunEditPolicy.CanEditAmounts(status, PayrollRunLockEvidence.None);
         Assert.True(can);
         Assert.Null(reason);
     }
@@ -36,7 +36,7 @@ public class PayrollRunEditPolicyTests
     [InlineData(null)]
     public void แก้ยอดไม่ได้ต้องมีเหตุผลเสมอ(string? status)
     {
-        var (can, reason) = PayrollRunEditPolicy.CanEditAmounts(status);
+        var (can, reason) = PayrollRunEditPolicy.CanEditAmounts(status, PayrollRunLockEvidence.None);
         Assert.False(can);
         Assert.False(string.IsNullOrWhiteSpace(reason));
     }
@@ -44,7 +44,7 @@ public class PayrollRunEditPolicyTests
     [Fact]
     public void เหตุผลของรอบที่จ่ายแล้วต้องชี้ทางแก้ไปที่กลับรายการจ่าย()
     {
-        var (_, reason) = PayrollRunEditPolicy.CanEditAmounts("Paid");
+        var (_, reason) = PayrollRunEditPolicy.CanEditAmounts("Paid", PayrollRunLockEvidence.None);
         Assert.Contains("กลับรายการจ่าย", reason);
     }
 

@@ -121,4 +121,29 @@ public class PosVoidSaleJournalTests
         Assert.Equal(PosVoidSaleJournalAction.Block, d.Action);
         Assert.Contains("POS-0011", d.Message);
     }
+
+    // ═══════════ หลังฝ่ายค้าน (P3) — คืนเงินใช้ตัวตัดสินเดียวกัน ═══════════
+
+    [Fact]
+    public void คืนเงิน_JE_ขายยังอยู่ใน_GL_คืนได้()
+    {
+        var sale = Je("SV-020", JournalEntryStatus.Posted, SaleLines());
+        Assert.Null(PosVoidSaleJournal.RefundBlockMessage(PosVoidSaleJournal.Decide(new[] { sale }, "POS-0020"), "POS-0020"));
+        // กลับแล้วกลับคืน = ยอดขายกลับมามีผล ⇒ คืนเงินได้
+        var chain = new[] { Je("SV-021", JournalEntryStatus.Reversed, SaleLines()),
+            Je("SV-022", JournalEntryStatus.Reversed, Mirror(SaleLines())), Je("SV-023", JournalEntryStatus.Posted, SaleLines()) };
+        Assert.Null(PosVoidSaleJournal.RefundBlockMessage(PosVoidSaleJournal.Decide(chain, "POS-0021"), "POS-0021"));
+    }
+
+    [Fact]
+    public void คืนเงิน_JE_ขายถูกกลับด้วยมือแล้ว_บล็อก_ชี้ให้ใช้ยกเลิกบิล()
+    {
+        // เดิม: คืนเงินลง Dr รายได้/ภาษีขายซ้ำกับที่ถูกกลับไปแล้ว ⇒ รายได้ของบิลติดลบ
+        var chain = new[] { Je("SV-024", JournalEntryStatus.Reversed, SaleLines()),
+            Je("SV-025", JournalEntryStatus.Posted, Mirror(SaleLines())) };
+        var msg = PosVoidSaleJournal.RefundBlockMessage(PosVoidSaleJournal.Decide(chain, "POS-0024"), "POS-0024");
+        Assert.NotNull(msg);
+        Assert.Contains("ติดลบ", msg);
+        Assert.Contains("ยกเลิกบิล", msg);
+    }
 }

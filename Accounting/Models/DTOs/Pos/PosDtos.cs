@@ -315,7 +315,10 @@ public record CreateServiceComponentRequest(
     int DurationMinutes,
     CommissionType CommissionType = CommissionType.Fixed,
     decimal CommissionValue = 0,
-    bool RequiresStaff = true);
+    bool RequiresStaff = true,
+    // รอบ 193 หลังฝ่ายค้าน (P6): ยืนยันประเภทคอมมิชชัน "ผู้ใช้เลือกเองบนฟอร์มใหม่" — หน้าเก่าที่แคชไว้ไม่ส่งช่องนี้
+    // (ส่งแค่เลข 1 ที่แปลว่า "เปอร์เซ็นต์" ในฟอร์มเดิม) ⇒ ไม่ประทับ CommissionTypeConfirmedAt ⇒ ป้ายต้องตรวจยังอยู่
+    bool CommissionTypeConfirmed = false);
 
 public record UpdateServiceComponentRequest(
     int? StepOrder,
@@ -325,7 +328,9 @@ public record UpdateServiceComponentRequest(
     int? DurationMinutes,
     CommissionType? CommissionType,
     decimal? CommissionValue,
-    bool? RequiresStaff);
+    bool? RequiresStaff,
+    // ดู CreateServiceComponentRequest.CommissionTypeConfirmed — true เฉพาะฟอร์มใหม่ที่ผู้ใช้เลือกประเภทเอง
+    bool? CommissionTypeConfirmed = null);
 
 public record ServiceComponentResponse(
     Guid Id,
@@ -433,7 +438,10 @@ public record CommissionSummaryResponse(
     decimal TotalCommission,
     decimal PaidAmount,
     decimal RemainingAmount,
-    bool IsPaid);
+    bool IsPaid,
+    // รอบ 193 หลังฝ่ายค้าน (C5): จำนวนกิจกรรมของพนักงานในช่วงนี้ที่มาจากขั้นตอนบริการซึ่ง "ประเภทคอมมิชชันต้องตรวจ"
+    // (ฟอร์มเก่าบันทึกกลับด้าน ⇒ ยอดคอมอาจผิด) — เซิร์ฟเวอร์นับ หน้าแสดงธง
+    int ActivitiesNeedingTypeReview = 0);
 
 /// <summary>คอมมิชชั่นรายกิจกรรม — ใช้ตรวจสอบ / audit ว่ามาจากออเดอร์ใด ทำเมื่อไหร่ คิดยังไง</summary>
 public record CommissionDetailResponse(
@@ -447,7 +455,10 @@ public record CommissionDetailResponse(
     string Status,             // Pending / InProgress / Completed
     DateTime? CompletedAt,
     decimal CommissionAmount,
-    string? Notes);
+    string? Notes,
+    // รอบ 193 หลังฝ่ายค้าน (C5): ยอดนี้มาจากขั้นตอนที่ประเภทคอมมิชชันยังไม่ยืนยัน (Helpers/ServiceCommissionTypeReview)
+    bool CommissionTypeNeedsReview = false,
+    string? CommissionTypeReviewNote = null);
 
 // ===== POS Daily Summary =====
 public record PosDailySummaryResponse(

@@ -89,6 +89,20 @@ public static class PosVoidSaleJournal
             + "เป็นศูนย์ แล้วยกเลิกบิลอีกครั้ง หรือทำ \"คืนเงิน\" รายการที่เหลือแทนการยกเลิก");
     }
 
+    /// <summary>ด่านของ<b>คืนเงิน</b> — ทางเข้าที่สองที่แตะ JE ขายชุดเดียวกัน (ฝ่ายค้าน P3): JE คืนเงินลง Dr รายได้/ภาษีขาย
+    /// ⇒ ถ้า JE ขายถูกกลับไปแล้ว (ด้วยมือ) การคืนเงินทำให้รายได้/ภาษีขายของบิลนี้<b>ติดลบ</b> · คืน null = คืนเงินได้
+    /// (ยอดขายยังอยู่ใน GL) · ใช้ผลของ <see cref="Decide"/> ตัวเดียวกับยกเลิกบิล (ห้ามตีความสายเอง)</summary>
+    public static string? RefundBlockMessage(PosVoidSaleJournalDecision saleJournal, string orderNumber)
+        => saleJournal.Action switch
+        {
+            PosVoidSaleJournalAction.Reverse => null,
+            PosVoidSaleJournalAction.SkipAlreadyReversed =>
+                $"คืนเงินบิล #{orderNumber} ไม่ได้: {saleJournal.Message} — ยอดขายของบิลนี้ไม่อยู่ใน GL แล้ว "
+                + "การคืนเงินจะทำให้รายได้/ภาษีขายติดลบ · ใช้ \"ยกเลิกบิล\" แทน (ระบบจะข้ามการกลับ JE ขายและคืนสต็อกให้) "
+                + "หรือให้ผู้ทำบัญชีกลับรายการของการกลับ JE ขายก่อน",
+            _ => $"คืนเงินบิล #{orderNumber} ไม่ได้ — สาย JE ขายต้องได้รับการตรวจก่อน (ผลตรวจเดียวกับการยกเลิกบิล): {saleJournal.Message}",
+        };
+
     private static bool InLedger(PosJournalChainEntry e)
         => e.Status is JournalEntryStatus.Posted or JournalEntryStatus.Reversed;
 
