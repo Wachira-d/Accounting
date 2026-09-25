@@ -14,7 +14,7 @@ namespace Accounting.Tests;
 /// </summary>
 public class VatBackCalcGuardTests
 {
-    private const string GoodTaxId = "0105558123456";
+    private const string GoodTaxId = "0105556012341"; // ผ่าน mod-11 (เดิม 0105558123456 ไม่ผ่าน ⇒ Decide ปฏิเสธที่ด่านเลขภาษีก่อนถึงกติกาที่เทสต์ตั้งใจตรวจ)
 
     [Fact]
     public void ผู้ขายไม่มีเลขสิบสามหลักที่ถูกต้อง_ห้ามแยก_VAT()
