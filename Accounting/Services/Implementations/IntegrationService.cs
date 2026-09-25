@@ -1258,6 +1258,11 @@ public class IntegrationService : IIntegrationService
                 }
             }
 
+            // ── ผังบัญชีของ JE รับ/จ่ายชำระ ต้องหาได้ **ก่อน** บันทึกการชำระ (รอบ 198 I-1) ──
+            // เดิมบันทึกการชำระ + ตัดยอดเอกสารก่อน แล้ว JE `return null` เงียบเมื่อหาผังไม่เจอ ⇒ ใบถูกตัดชำระแต่ไม่มี
+            // รายการบัญชี · หาไม่เจอตอนนี้ = ล้มดังพร้อมทางไปต่อ (sync log = Failed) โดยยังไม่มีอะไรถูกบันทึก
+            var payAccounts = await ResolvePaymentJournalAccountsAsync(companyId, document, request);
+
             // Create payment
             var paymentNumber = await GetNextPaymentNumberAsync(companyId);
             var payment = new Payment
@@ -1296,7 +1301,7 @@ public class IntegrationService : IIntegrationService
             await _db.SaveChangesAsync();
 
             // Create journal entry for payment
-            var journalEntryId = await CreatePaymentJournalAsync(companyId, integrationId, payment, document, request);
+            var journalEntryId = await CreatePaymentJournalAsync(companyId, payment, document, request, payAccounts);
 
             log.Status = "Success";
             log.CreatedPaymentId = payment.Id;
@@ -2310,8 +2315,8 @@ public class IntegrationService : IIntegrationService
                 // Dr: ลูกหนี้การค้า (113xx) = TotalAmount (รวม VAT)
                 // Cr: รายได้ (4xxxx) = SubTotal (ก่อน VAT)
                 // Cr: ภาษีขาย (2151x) = VatAmount
-                var arAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+                // ผังลูกหนี้ตัวเดียวกับเส้นรับชำระ (รอบ 198 I-1) — เดิม StartsWith("113") ไม่เรียง ⇒ ใบกับการรับชำระลงคนละผังได้
+                var arAccount = await ResolveReceivableAccountAsync(companyId, document);
                 var revenueAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
                 var vatAccount = document.VatAmount > 0
@@ -2673,21 +2678,81 @@ public class IntegrationService : IIntegrationService
         return original.Id;
     }
 
-    private async Task<Guid?> CreatePaymentJournalAsync(Guid companyId, Guid integrationId, Payment payment, Document document, InboundPaymentRequest request)
-    {
-        // Find cash/bank account for the money side.
-        var paymentMethod = request.PaymentMethod?.ToLower();
-        var cashAccountCode = paymentMethod switch
-        {
-            "cash" => "111",         // เงินสด
-            "banktransfer" or "promptpay" => "112", // เงินฝากธนาคาร
-            "creditcard" => "112",
-            _ => "111"
-        };
-        var cashAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(cashAccountCode) && a.IsActive);
-        if (cashAccount == null) return null;
+    /// <summary>ผังบัญชีของ JE รับ/จ่ายชำระจาก integration — หาครบก่อนบันทึกการชำระ (รอบ 198 I-1)</summary>
+    private sealed record PaymentJournalAccounts(bool IsRevenue, ChartOfAccount Money, ChartOfAccount Counterpart);
 
+    /// <summary>ผังลูกหนี้ของเอกสาร — ตัวเดียวกับทุกเส้นใน integration (ใบแจ้งหนี้ · ใบลด/เพิ่มหนี้ · รับชำระ)
+    /// ผ่าน <see cref="Accounting.Helpers.TradeReceivableAccount"/> (ผังที่ปักไว้บนลูกค้า → 11310)</summary>
+    private async Task<ChartOfAccount?> ResolveReceivableAccountAsync(Guid companyId, Document document)
+    {
+        Guid? pinned = null;
+        if (document.ContactId != Guid.Empty)
+            pinned = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == document.ContactId && c.CompanyId == companyId)
+                .Select(c => c.DefaultArAccountId)
+                .FirstOrDefaultAsync();
+        return await Accounting.Helpers.TradeReceivableAccount.ResolveAsync(_db, companyId, pinned);
+    }
+
+    /// <summary>ขา "เงิน" ของการรับ/จ่ายชำระจาก integration — ผ่าน <see cref="Accounting.Helpers.MoneyAccountFallback"/>
+    /// ตัวเดียวกับ POS: บัญชีธนาคารที่ระบุชื่อมา (ผูกผังแล้ว) → ตามวิธีจ่าย (เงินสด 11111 · e-Wallet 11113 · เช็ค 11131 ·
+    /// บัตร 11340) → โอน/พร้อมเพย์ = บัญชีธนาคารที่ผูกผังไว้บัญชีเดียว · หาไม่ได้ = ล้มดัง
+    /// <para>เดิม prefix "112" = <b>เงินลงทุนชั่วคราว</b> (ผังมาตรฐาน) ด้วย StartsWith ไม่เรียง · หาไม่เจอ return null เงียบ</para></summary>
+    private async Task<ChartOfAccount> ResolveMoneyAccountAsync(Guid companyId, InboundPaymentRequest request)
+    {
+        var kind = Accounting.Helpers.MoneyAccountFallback.KindOf(ParsePaymentMethod(request.PaymentMethod));
+
+        var banks = await _db.Set<BankAccount>().AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId != null)
+            .Select(b => new { b.AccountName, b.AccountNumber, b.BankName, b.LinkedAccountId })
+            .ToListAsync();
+
+        // บัญชีธนาคารที่ระบบต้นทางระบุชื่อ/เลขบัญชีมา (ตรงตัว) ชนะ — ยกเว้นรับเงินสด
+        var named = (request.BankAccountName ?? "").Trim();
+        if (kind != Accounting.Helpers.MoneyAccountKind.Cash && named.Length > 0)
+        {
+            var hit = banks.Where(b => string.Equals(b.AccountName?.Trim(), named, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(b.AccountNumber?.Trim(), named, StringComparison.OrdinalIgnoreCase))
+                .Select(b => b.LinkedAccountId)
+                .Distinct()
+                .ToList();
+            if (hit.Count == 1 && hit[0] is Guid namedGl)
+            {
+                var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.Id == namedGl && a.CompanyId == companyId && a.IsActive && !a.IsDeleted);
+                if (acc != null) return acc;
+            }
+        }
+
+        var code = Accounting.Helpers.MoneyAccountFallback.StandardCode(kind);
+        if (code != null)
+        {
+            return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode == code && a.IsActive && !a.IsDeleted)
+                ?? throw new Accounting.Helpers.BusinessRuleException(
+                    $"ไม่พบผังบัญชี {code} สำหรับรับ/จ่ายชำระด้วยวิธี \"{request.PaymentMethod}\" — เพิ่มผังบัญชีนี้ก่อน "
+                    + "แล้วให้ระบบต้นทางส่งรายการชำระเงินซ้ำ (ยังไม่มีอะไรถูกบันทึก)", "INT-NO-MONEY-ACCOUNT");
+        }
+
+        var outcome = Accounting.Helpers.MoneyAccountFallback.PickBank(
+            banks.Where(b => b.LinkedAccountId != null).Select(b => b.LinkedAccountId!.Value).ToList(), out var picked);
+        if (picked is Guid bankGl)
+        {
+            var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == bankGl && a.CompanyId == companyId && a.IsActive && !a.IsDeleted);
+            if (acc != null) return acc;
+        }
+        throw new Accounting.Helpers.BusinessRuleException(
+            Accounting.Helpers.MoneyAccountFallback.BankNotResolvedMessage(outcome,
+                "ให้ระบบต้นทางส่งชื่อบัญชี/เลขบัญชีธนาคารที่รับเงิน (bankAccountName) ให้ตรงกับบัญชีธนาคารในระบบ "
+                + "แล้วส่งรายการชำระเงินซ้ำ (ยังไม่มีอะไรถูกบันทึก)"),
+            "INT-NO-BANK-ACCOUNT");
+    }
+
+    /// <summary>หาผังบัญชีทั้งสองขาของ JE รับ/จ่ายชำระ — <b>ไม่พบ = throw</b> (ผู้เรียกเรียกก่อนบันทึกการชำระ)</summary>
+    private async Task<PaymentJournalAccounts> ResolvePaymentJournalAccountsAsync(
+        Guid companyId, Document document, InboundPaymentRequest request)
+    {
         // DIRECTION FIX: branch by document type. The integration path used to
         // ALWAYS post Dr Cash / Cr AR(113) — correct for receiving customer
         // money, but WRONG for a Payment Voucher / expense settlement, which
@@ -2699,12 +2764,17 @@ public class IntegrationService : IIntegrationService
             DocumentType.ReceiptVoucher };
         var isRevenue = revenueTypes.Contains(document.DocumentType);
 
-        // AR for revenue (113); AP for expense (211 → 212 fallback).
+        var money = await ResolveMoneyAccountAsync(companyId, request);
+
         ChartOfAccount? counterpart = null;
         if (isRevenue)
         {
-            counterpart = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+            counterpart = await ResolveReceivableAccountAsync(companyId, document);
+            if (counterpart == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ไม่พบผังบัญชีลูกหนี้การค้า ({Accounting.Helpers.TradeReceivableAccount.StandardCode}) ที่ใช้งานอยู่ — "
+                    + "เพิ่มผังบัญชีนี้ หรือปักผังลูกหนี้ไว้ที่ผู้ติดต่อ แล้วส่งรายการชำระเงินซ้ำ (ยังไม่มีอะไรถูกบันทึก)",
+                    "INT-NO-AR-ACCOUNT");
         }
         else
         {
@@ -2728,9 +2798,18 @@ public class IntegrationService : IIntegrationService
                     .FirstOrDefaultAsync()
                 ?? await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
+            if (counterpart == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบผังบัญชีเจ้าหนี้ที่ใช้งานอยู่ — เพิ่มผังบัญชีเจ้าหนี้ แล้วส่งรายการจ่ายชำระซ้ำ (ยังไม่มีอะไรถูกบันทึก)",
+                    "INT-NO-AP-ACCOUNT");
         }
-        if (counterpart == null) return null;
 
+        return new PaymentJournalAccounts(isRevenue, money, counterpart);
+    }
+
+    private async Task<Guid?> CreatePaymentJournalAsync(Guid companyId, Payment payment, Document document,
+        InboundPaymentRequest request, PaymentJournalAccounts accounts)
+    {
         // Find fiscal period
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>
             f.CompanyId == companyId
@@ -2738,6 +2817,9 @@ public class IntegrationService : IIntegrationService
             && f.EndDate >= payment.PaymentDate
             && f.Status == FiscalPeriodStatus.Open);
 
+        var isRevenue = accounts.IsRevenue;
+        var cashAccount = accounts.Money;
+        var counterpart = accounts.Counterpart;
         var prefix = isRevenue ? "RV" : "PV";
         var payJournalNumber = await GetNextJournalNumberAsync(companyId, prefix);
         var je = new JournalEntry
@@ -2785,8 +2867,7 @@ public class IntegrationService : IIntegrationService
     /// </summary>
     private async Task<Guid?> CreateCreditNoteJournalAsync(Guid companyId, Document document)
     {
-        var arAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+        var arAccount = await ResolveReceivableAccountAsync(companyId, document);
         var revenueAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
         var vatAccount = document.VatAmount > 0
@@ -2870,8 +2951,7 @@ public class IntegrationService : IIntegrationService
     /// </summary>
     private async Task<Guid?> CreateDebitNoteJournalAsync(Guid companyId, Document document)
     {
-        var arAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive);
+        var arAccount = await ResolveReceivableAccountAsync(companyId, document);
         var revenueAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive);
         var vatAccount = document.VatAmount > 0
@@ -4640,7 +4720,7 @@ public class IntegrationService : IIntegrationService
             {
                 new("PRODUCT_SALES", "รายได้ขายสินค้า", "113", "411"),
                 new("SHIPPING_INCOME", "รายได้ค่าจัดส่ง", "111", "419"),
-                new("PLATFORM_FEE", "ค่าธรรมเนียมแพลตฟอร์ม", "519", "112"),
+                new("PLATFORM_FEE", "ค่าธรรมเนียมแพลตฟอร์ม", "519", "11340"),   // รอบ 198 I-1: เดิม "112" = เงินลงทุนชั่วคราว
                 new("REFUND", "คืนเงิน", "411", "113"),
                 new("COD_RECEIVED", "รับเงิน COD", "111", "113")
             }),
@@ -4663,9 +4743,9 @@ public class IntegrationService : IIntegrationService
             new("general", "ทั่วไป", new List<MappingTemplateItem>
             {
                 new("REVENUE", "รายได้", "113", "411"),
-                new("EXPENSE", "ค่าใช้จ่าย", "511", "112"),
+                new("EXPENSE", "ค่าใช้จ่าย", "511", "1112"),   // รอบ 198 I-1: เดิม "112" = เงินลงทุนชั่วคราว · 1112x = เงินฝากธนาคาร
                 new("PAYMENT_RECEIVED", "รับชำระเงิน", "111", "113"),
-                new("PAYMENT_MADE", "จ่ายชำระเงิน", "211", "112"),
+                new("PAYMENT_MADE", "จ่ายชำระเงิน", "211", "1112"),   // รอบ 198 I-1 (ขา Dr "211" = เงินเบิกเกินบัญชี — ยังไม่แก้ รอทีมถัดไป)
                 new("DEPOSIT_RECEIVED", "มัดจำรับ", "111", "215")
             })
         };

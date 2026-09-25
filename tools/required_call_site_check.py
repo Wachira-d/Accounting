@@ -942,6 +942,63 @@ RULES += [
          why="รอบ 196: ข้อความป้ายของชนิดต้นทางมาจาก helper ตัวเดียว (บอกชนิดใบลูก) — ห้ามกลับไปพิมพ์ป้ายเอง"),
 ]
 
+# ── รอบ 198 ทีม E (settlement เฟส 0): ด่านเงินของ gateway / ทางเข้าเก่า — เทสต์ล็อกแค่ helper pure (GatewayRefundMath ·
+#    GatewaySettlementMath · MoneyAccountFallback · TradeReceivableAccount) · ที่นี่ล็อกว่า service/controller เรียกจริงและเรียงถูก ──
+GW_SETTLE = "Services/Payments/GatewaySettlementService.cs"
+GW_REFUND = "Services/Payments/GatewayRefundService.cs"
+GW_CTL = "Controllers/PaymentGatewayController.cs"
+SUBLEDGER = "Services/Implementations/SubLedgerReconciliationService.cs"
+RULES += [
+    dict(file=GW_REFUND, method="RefundCoreAsync",
+         must=["GatewayRefundMath.Check(", "_accounts.ResolveMoneyInAccountAsync(", "TradeReceivableAccount.ResolveAsync(",
+               "JournalEntryBuilder.ClosedPeriodReasonAsync(", "JournalEntryBuilder.For(", "intent.RefundedAmount = check.NewRefundedTotal"],
+         must_re=[r"if\s*\(\s*!\s*check\s*\.\s*Ok\s*\)\s*return\b"],
+         before=[("TradeReceivableAccount.ResolveAsync(", "provider.RefundAsync("),
+                 ("JournalEntryBuilder.ClosedPeriodReasonAsync(", "provider.RefundAsync("),
+                 ("provider.RefundAsync(", "JournalEntryBuilder.For(")],
+         forbid=["new JournalEntry", "catch {"],
+         why="G-1 คืนเงินต้องมี JE (Dr ลูกหนี้ / Cr บัญชีพัก) · ตรวจยอดสะสม+ผัง+งวดก่อนเงินออก · ห้ามกลืน error หลังเงินออก"),
+    dict(file=GW_REFUND, method="RefundAsync", must=["RefundCoreAsync(", "_intents.ApplyChargeAsync("],
+         why="G-1 สถานะคืนเงินเดินผ่านเครื่องสถานะตัวเดียว (PaymentIntentService) ไม่ประทับเอง"),
+    dict(file=GW_CTL, method="Refund", must=["refunds.RefundAsync("], forbid=["provider.RefundAsync(", ".RefundAsync(intent"],
+         why="G-1 endpoint คืนเงินห้ามเรียกผู้ให้บริการตรง (เส้นเดิมที่ไม่ลงบัญชี)"),
+    dict(file=GW_SETTLE, method="BuildPlanAsync",
+         must=["SelectCandidatesAsync(", "GatewaySettlementMath.Plan(", "CompanyVatStatus.IsRegisteredAsync(",
+               "JournalEntryBuilder.ClosedPeriodReasonAsync("],
+         why="G-2/G-3/G-5 แผนรอบโอน: ชุดรายการเดียวกับหน้าค้างโอน · VAT ค่าธรรมเนียมตามสถานะจด VAT · ด่านงวดปิดในพรีวิว"),
+    dict(file=GW_SETTLE, method="SelectCandidatesAsync",
+         must=["i.RefundedAmount > 0m", "i.RefundedAmount > i.RefundSettledAmount"],
+         must_re=[r"i\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="G-2 คืนบางส่วน/คืนหลังรอบโอนต้องเข้าในรอบโอน (เดิมกรองแค่ Succeeded ⇒ บล็อกถาวร) · tenant ทุก query"),
+    dict(file=GW_SETTLE, method="ListPendingAsync", must=["SelectCandidatesAsync(", "GatewaySettlementMath.Contribution("],
+         why="G-2 หน้ารายการค้างโอนใช้เกณฑ์+สูตรเดียวกับแผน JE (ห้ามสูตรที่สอง)"),
+    dict(file=GW_SETTLE, method="RecordAsync", must=["JournalEntryBuilder.For(", "intent.RefundSettledAmount = intent.RefundedAmount"],
+         forbid=["new JournalEntry"],
+         why="G-5 JE รอบโอนผ่าน JournalEntryBuilder (Dr=Cr + ด่านงวดปิด) · มาร์กยอดคืนที่ถูกหักแล้ว"),
+    dict(file=GW_SETTLE, method="ResolveAccountsAsync", must=["_accounts.ResolveClearingAccountAsync("],
+         why="G-1/G-5 บัญชีพักตัวเดียวกับขาเงินเข้าและ JE คืนเงิน"),
+    dict(file=GW_SETTLE, method="CorrectFeeAsync", must=["_db.AddChainedAuditLog("], forbid=["AuditLogs.Add("],
+         why="G-6 แก้ค่าธรรมเนียมที่จะลงบัญชีต้องอยู่ใน hash chain"),
+    dict(file=GW_CTL, method="PendingSettlement", must=["settlements.ListPendingAsync("],
+         forbid=["i.Status == PaymentIntentStatus.Succeeded"],
+         why="G-2 ห้ามเขียนเกณฑ์เลือกรายการค้างโอนซ้ำใน controller"),
+    dict(file=INTEG, method="ProcessPaymentAsync", must=["ResolvePaymentJournalAccountsAsync("],
+         before=[("ResolvePaymentJournalAccountsAsync(", "_db.Set<Payment>().Add(")],
+         why="I-1 หาผังของ JE รับชำระให้ได้ก่อนบันทึกการชำระ (เดิม return null เงียบหลังตัดยอดแล้ว)"),
+    dict(file=INTEG, method="ResolveMoneyAccountAsync",
+         must=["MoneyAccountFallback.KindOf(", "MoneyAccountFallback.StandardCode(", "MoneyAccountFallback.PickBank("],
+         forbid=["StartsWith(cashAccountCode)"],
+         why="I-1 ขาเงินจาก integration ห้ามค้นด้วย prefix 112 (= เงินลงทุนชั่วคราว)"),
+    dict(file=INTEG, method="ResolveReceivableAccountAsync", must=["TradeReceivableAccount.ResolveAsync("],
+         why="I-1 ผังลูกหนี้ตัวเดียวของใบแจ้งหนี้/ใบลด-เพิ่มหนี้/รับชำระ"),
+    dict(file=POS, method="ResolvePaymentAccountAsync",
+         must=["MoneyAccountFallback.KindOf(", "MoneyAccountFallback.StandardCode(", "MoneyAccountFallback.PickBank("],
+         forbid=["StartsWith(prefix)"],
+         why="P-1 ผังสำรองของ POS = รหัสเต็มผังมาตรฐาน (เดิม 1011/1012/1131 → prefix 112/113)"),
+    dict(file=SUBLEDGER, method="ReconcileAsync", must=["TradeReceivableAccount.IsTradeReceivableControl("],
+         why="S-1 บัญชีพัก gateway (11340) ไม่ใช่ลูกหนี้การค้าในรายงานกระทบบัญชีย่อย"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

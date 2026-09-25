@@ -6200,6 +6200,13 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "GatewayFeeAmount" numeric(18,2) NULL;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "GatewayRef" varchar(200) NULL;""",
             """ALTER TABLE "PosPayments" ADD COLUMN IF NOT EXISTS "PaymentIntentId" uuid NULL;""",
+            // รอบ 198 (G-1/G-2/G-3) — ยอดคืนเงินสะสม + ส่วนที่หักในรอบโอนแล้ว + JE คืนเงิน · VAT ของค่าธรรมเนียม
+            // ค่าเดิมทุกแถว = 0/NULL = "ไม่มีข้อมูลยอดคืน" (ห้ามเติมย้อนหลังด้วยยอดเต็ม — ไม่มี JE คืนเงินรองรับ)
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundSettledAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundedAt" timestamptz NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundJournalEntryId" uuid NULL;""",
+            """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "FeeVatMode" integer NOT NULL DEFAULT 0;""",
 
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",

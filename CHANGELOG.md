@@ -3382,3 +3382,25 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แ�
 - เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
   checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
 — commit c69a0b62)_
+
+
+_รอบ 198 ทีม E — settlement เฟส 0 (erp-review/2026-09-25/settlement/report-S2.md §4 · report-S1.md §2)
+- **G-8 P0** `PaymentGatewayController` ด่านสิทธิ์ทุก endpoint เขียน (`Helpers/PaymentGatewayPermissionScope` · คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` ·
+  รอบโอน/ค่าธรรมเนียม `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง) + `[RejectApiKey]` · ไฟล์เข้า WATCHED + แถว owner_action_wiring 8 แถว ·
+  webhook นับด่าน `VerifyWebhookAsync(` (self-test เพิ่มทิศ)
+- **G-1 P0** `GatewayRefundService` + `Helpers/GatewayRefundMath`: JE คืนเงิน PV Dr ลูกหนี้การค้า / Cr บัญชีพัก · `PaymentIntent.RefundedAmount/RefundSettledAmount/
+  LastRefundedAt/LastRefundJournalEntryId` (migration) · ยอดคืนสะสมห้ามเกินยอดรับ (เดิมเทียบยอดครั้งเดียว) · ตรวจผัง/งวดก่อนเงินออก · เงินออกแล้วลงบัญชีไม่ได้ = ล้มดัง ·
+  `GET pay/intents` ส่ง `creditNoteState/needsCreditNote/refundUntracked` + ป้ายบนหน้า
+- **G-2 P0** รอบโอนนับคืนบางส่วน (ยอดหลังคืน) · คืนเต็ม (0 + ค่าธรรมเนียม) · คืนหลังรอบโอน (ติดลบในรอบถัดไป) · ผู้เลือกรายการตัวเดียวกับหน้าค้างโอน (`ListPendingAsync`)
+- **G-3** `PaymentProviderConfig.FeeVatMode` (None/IncludedInFee/AddedOnTop · echo + หน้าตั้งค่า) → Dr 11630 · ไม่จด VAT ไม่มีขา 11630
+- **G-4** ฐาน WHT = ค่าธรรมเนียมก่อน VAT · แผนที่มี WHT = `WhtCertificateRequired` บล็อก (พรีวิวยังเห็นบรรทัด) — เทสต์เดิม 4 ตัวปรับเป็นทิศใหม่
+- **G-5** JE รอบโอน/คืนเงินผ่าน `JournalEntryBuilder` (+`NumberPrefix` · `FindPeriodAsync`/`ClosedPeriodReasonAsync` ตัวเดียวกับ PostAsync · ตรวจงวดก่อนออกเลข)
+- **G-6** `PUT pay/intents/{id}/fee` (เหตุผล · `AddChainedAuditLog`) + ปุ่มบนหน้า intents/settlements · ข้อความ "ยอดไม่ตรง" ชี้ปุ่มนี้
+- **I-1** Integration รับชำระ: ขาเงิน `Helpers/MoneyAccountFallback` (ห้าม prefix 112) · ลูกหนี้ `Helpers/TradeReceivableAccount` (4 จุดใน IntegrationService) ·
+  หาผังก่อนบันทึกการชำระ · template mapping "112" → 1112/11340 · SQL นับ JE เก่า `erp-review/2026-09-25/settlement/I1-legacy-query.sql` (ไม่ซ่อม — รอเจ้าของ)
+- **P-1** POS ผังสำรองรหัสเต็ม (11111/11113/11131/11340 · โอน = บัญชีธนาคารผูกผังบัญชีเดียว) · `continue` เงียบ → ล้มดัง · เครื่องที่ปักบัญชีไม่ถูกแตะ
+- **F-1** ค่าธรรมเนียมหักจากยอดโอน: ผังสำรอง 54710 รหัสเต็ม (เดิม 53200 + ค้นชื่อไม่เรียง) · `documents.html` ช่อง `rpFeeAccount` ส่ง `feeAccountId`
+- **S-1** กระทบบัญชีย่อยไม่นับ 11340/บัญชีพักที่ตั้งเป็นลูกหนี้การค้า
+- **G-9** doc: DOCUMENT_FLOW §2.3/§2.6/§2.6b/ค่าธรรมเนียม · PAYMENT_GATEWAY_DESIGN §0 (สถานะปัจจุบัน) · §5 · §7.1 แถวเฟส 0
+- เทสต์ `SettlementPhase0Tests` (สองครึ่งทุกกลุ่ม) · checker `required_call_site_check` +15 กติกา
+— commit <pending>)_

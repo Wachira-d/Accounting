@@ -153,7 +153,11 @@
               <div class="stat ok"><div class="k">ควรได้รับสุทธิ</div><div class="v">${Layout.money(p?.expectedNet || 0)}</div></div>
             </div>
             ${anyEst ? `<div class="hint">⚠️ ค่าธรรมเนียมบางรายการยัง<b>เป็นตัวประมาณ</b> (ผู้ให้บริการยังไม่ส่งตัวจริงมา)
-              — ถ้ายอดโอนจริงไม่ตรง ให้ตรวจตัวเลขนี้ก่อน</div>` : ''}
+              — ถ้ายอดโอนจริงไม่ตรง ให้กดปุ่ม <b>"แก้ค่าธรรมเนียม"</b> ของรายการนั้นในตารางด้านล่าง</div>` : ''}
+            ${p?.legacyRefundedCount ? `<div class="banner bad" style="margin-top:8px">
+              มี <b>${p.legacyRefundedCount}</b> รายการที่คืนเงินแล้วแต่<b>ไม่มียอดคืนที่ระบบบันทึก</b> (คืนก่อนระบบเริ่มบันทึก
+              หรือลงบัญชีคืนเงินไม่สำเร็จ) — ไม่ถูกนับในรอบโอน · ตรวจที่
+              <a href="/pages/payment-intents.html">หน้ารายการรับชำระออนไลน์</a> แล้วบันทึกรายการบัญชีด้วยมือ</div>` : ''}
             ${this.renderItems(p?.items || [])}
           </div>
 
@@ -161,8 +165,8 @@
             <h3>บันทึกเงินที่โอนเข้าธนาคาร</h3>
             <p class="sub">
               กรอกยอดสุทธิที่<b>เข้าบัญชีธนาคารจริง</b>ตามสเตทเมนต์ — ระบบจะตรวจกับผลรวมข้างบน
-              แล้วลงบัญชีให้: <b>Dr ธนาคาร + Dr ค่าธรรมเนียม = Cr บัญชีพัก 11340</b>
-              (ถ้าเปิดหัก ณ ที่จ่ายค่าธรรมเนียม จะมีบรรทัด ภ.ง.ด.53 เพิ่ม)
+              แล้วลงบัญชีให้: <b>Dr ธนาคาร + Dr ค่าธรรมเนียม (+ Dr 11630 VAT ค่าธรรมเนียม) = Cr บัญชีพัก 11340</b>
+              · รายการที่คืนเงินบางส่วนนับยอดหลังคืน · คืนเงินหลังรอบโอนก่อนถูกหักในรอบนี้
             </p>
             <div class="fgrid">
               <div><label>ตั้งแต่วันที่ (วันที่รับเงิน)</label>
@@ -194,17 +198,37 @@
         return `<div class="scroll-x" style="margin-top:12px"><table class="tbl">
           <thead><tr>
             <th>วันที่รับเงิน</th><th>ที่มา</th><th>อ้างอิง</th>
-            <th class="num">ยอด</th><th class="num">ค่าธรรมเนียม</th><th class="num">สุทธิ</th>
+            <th class="num">ยอด</th><th class="num">คืนแล้ว</th><th class="num">ค่าธรรมเนียม</th><th class="num">สุทธิ</th><th></th>
           </tr></thead><tbody>
           ${items.map(i => `<tr>
             <td>${Layout.date(i.confirmedAt)}</td>
             <td>${Layout.esc(i.sourceKind || '')}</td>
             <td style="font-family:ui-monospace,monospace;font-size:11.5px">${Layout.esc(i.providerRef || '—')}</td>
             <td class="num">${Layout.money(i.amount)}</td>
-            <td class="num">${Layout.money(i.fee)}${i.feeIsEstimated ? ' <span class="pill est">ประมาณ</span>' : ''}</td>
-            <td class="num">${Layout.money((i.amount || 0) - (i.fee || 0))}</td>
+            <td class="num">${Number(i.refundedAmount) > 0 ? Layout.money(i.refundedAmount) : '—'}
+              ${i.isRefundAfterSettlement ? '<div class="hint">คืนหลังรอบโอนก่อน — หักในรอบนี้</div>' : ''}</td>
+            <td class="num">${Layout.money(i.fee)}${i.feeIsEstimated ? ' <span class="pill est">ประมาณ</span>' : ''}
+              ${Number(i.feeVat) > 0 ? `<div class="hint">รวม VAT ${Layout.money(i.feeVat)}</div>` : ''}</td>
+            <td class="num">${Layout.money(i.net)}</td>
+            <td>${i.isRefundAfterSettlement ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${i.id}', ${Number(i.fee) || 0})">แก้ค่าธรรมเนียม</button>`}</td>
           </tr>`).join('')}
           </tbody></table></div>`;
+      },
+
+      // แก้ค่าธรรมเนียมจริงรายรายการ (รอบ 198 G-6) — ปลายทางของข้อความ "ยอดไม่ตรง" · บังคับเหตุผล (เซิร์ฟเวอร์ audit)
+      async editFee(id, current) {
+        const api = Layout.api(); if (!api) return;
+        const raw = prompt('ค่าธรรมเนียมจริงของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):', Number(current || 0).toFixed(2));
+        if (raw === null || raw.trim() === '') return;
+        const fee = Number(raw);
+        if (!(fee >= 0)) { Layout.toast('ค่าธรรมเนียมไม่ถูกต้อง', 'error'); return; }
+        const reason = prompt('เหตุผลที่แก้ (ผู้สอบบัญชีจะเห็นข้อความนี้):', 'ตามสเตทเมนต์ผู้ให้บริการ');
+        if (!reason) return;
+        try {
+          const res = await api.updatePaymentIntentFee(id, fee, reason);
+          Layout.toast(res?.message || 'แก้ค่าธรรมเนียมแล้ว');
+          await this.loadPending();
+        } catch (e) { Layout.toast(e.message || 'แก้ค่าธรรมเนียมไม่สำเร็จ', 'error'); }
       },
 
       defaultFrom() { const d = new Date(); d.setDate(d.getDate() - 14); return d; },
@@ -275,6 +299,8 @@
             <div class="stat"><div class="k">รายการ</div><div class="v">${plan.count || 0}</div></div>
             <div class="stat"><div class="k">ยอดรับชำระ</div><div class="v">${Layout.money(plan.gross || 0)}</div></div>
             <div class="stat"><div class="k">ค่าธรรมเนียม (จ่ายจริง)</div><div class="v">${Layout.money(plan.feeNetPaid || 0)}</div></div>
+            ${plan.feeVat ? `<div class="stat"><div class="k">VAT ค่าธรรมเนียม (11630)</div><div class="v">${Layout.money(plan.feeVat)}</div></div>` : ''}
+            ${plan.refundDeducted ? `<div class="stat"><div class="k">หักคืนเงินหลังรอบก่อน</div><div class="v">${Layout.money(plan.refundDeducted)}</div></div>` : ''}
             ${plan.whtOnFee ? `<div class="stat"><div class="k">หัก ณ ที่จ่าย 3%</div><div class="v">${Layout.money(plan.whtOnFee)}</div></div>` : ''}
             <div class="stat ${ok ? 'ok' : 'bad'}"><div class="k">ผลต่าง</div><div class="v">${Layout.money(plan.difference || 0)}</div></div>
           </div>

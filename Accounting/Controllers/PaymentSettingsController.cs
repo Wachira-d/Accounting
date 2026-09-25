@@ -47,7 +47,9 @@ public class PaymentSettingsController : ControllerBase
         string? TestSecretHint, string? LiveSecretHint,
         DateTime? LastTestPassedAt, DateTime? LastWebhookAt, DateTime? LiveEnabledAt,
         bool CanEnableLive, string WebhookUrl,
-        List<string> EnabledMethods, bool IsActive);
+        List<string> EnabledMethods, bool IsActive,
+        // รอบ 198 — การลงบัญชีค่าธรรมเนียม (เก็บแล้วต้อง echo กลับ · enum เป็นชื่อ)
+        string FeeVatMode, string WhtOnFee, Guid? ClearingAccountId, Guid? FeeExpenseAccountId);
 
     private static string? Hint(ISecretProtector p, string? protectedValue)
     {
@@ -69,7 +71,11 @@ public class PaymentSettingsController : ControllerBase
                        && _secrets.IsUsable(c.LiveSecretKeyProtected),
         WebhookUrl: WebhookUrl(c.ProviderCode),
         EnabledMethods: ParseMethods(c.EnabledMethodsJson),
-        IsActive: c.IsActive);
+        IsActive: c.IsActive,
+        FeeVatMode: c.FeeVatMode.ToString(),
+        WhtOnFee: c.WhtOnFee.ToString(),
+        ClearingAccountId: c.ClearingAccountId,
+        FeeExpenseAccountId: c.FeeExpenseAccountId);
 
     private static List<string> ParseMethods(string? json)
     {
@@ -111,7 +117,9 @@ public class PaymentSettingsController : ControllerBase
         string? LivePublicKey, string? LiveSecretKey,
         List<string>? EnabledMethods, bool? IsActive,
         Guid? ClearingAccountId, Guid? FeeExpenseAccountId,
-        GatewayFeeWhtMode? WhtOnFee);
+        GatewayFeeWhtMode? WhtOnFee,
+        // รอบ 198 G-3 — VAT ของค่าธรรมเนียมอยู่ตรงไหน (null = ไม่เปลี่ยน)
+        GatewayFeeVatMode? FeeVatMode = null);
 
     /// <summary>สร้าง/แก้ไขการตั้งค่า — คีย์ที่เว้นว่าง = **ไม่เปลี่ยน** (ไม่ใช่ล้างทิ้ง)
     ///
@@ -162,6 +170,7 @@ public class PaymentSettingsController : ControllerBase
         if (req.FeeExpenseAccountId.HasValue)
             cfg.FeeExpenseAccountId = req.FeeExpenseAccountId == Guid.Empty ? null : req.FeeExpenseAccountId;
         if (req.WhtOnFee.HasValue) cfg.WhtOnFee = req.WhtOnFee.Value;
+        if (req.FeeVatMode.HasValue) cfg.FeeVatMode = req.FeeVatMode.Value;
 
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

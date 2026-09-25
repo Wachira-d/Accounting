@@ -16,6 +16,10 @@ namespace Accounting.Controllers;
 /// <para>ไม่มีชื่อผู้ให้บริการในไฟล์นี้เลย (บังคับด้วย
 /// <c>tools/payment_provider_boundary_check.py</c>) — เปลี่ยน/เพิ่มเจ้าใหม่ = เพิ่ม
 /// adapter ใน <c>Services/Payments/Providers/</c> อย่างเดียว</para>
+///
+/// <para>รอบ 198 (G-8): ทุก endpoint ที่เขียนมีด่านสิทธิ์จาก <see cref="PaymentGatewayPermissionScope"/> (คืนเงิน = สั่งโอนเงินออก ·
+/// ยืนยันเงินเข้าด้วยมือ = กระทบยอดธนาคาร · รอบโอน/ค่าธรรมเนียม = ลง JE) + คืนเงิน/ยืนยันมือ/รอบโอนห้ามคีย์ API ·
+/// ไฟล์นี้อยู่ใน WATCHED ของ <c>tools/write_permission_gate_check.py</c> แล้ว</para>
 /// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/pay")]
@@ -24,9 +28,17 @@ public class PaymentGatewayController : ControllerBase
 {
     private readonly IPaymentIntentService _intents;
     private readonly AccountingDbContext _db;
+    private readonly Accounting.Services.Interfaces.IPermissionService _permissions;
 
-    public PaymentGatewayController(IPaymentIntentService intents, AccountingDbContext db)
-    { _intents = intents; _db = db; }
+    public PaymentGatewayController(IPaymentIntentService intents, AccountingDbContext db,
+        Accounting.Services.Interfaces.IPermissionService permissions)
+    { _intents = intents; _db = db; _permissions = permissions; }
+
+    /// <summary>ด่านสิทธิ์ที่คีย์ขึ้นกับข้อมูลในคำขอ (attribute คงที่มองไม่เห็น) — null = ผ่าน</summary>
+    private async Task<string?> DenyKeyAsync(Guid companyId, string key, string verb)
+        => await _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), key)
+            ? null
+            : $"ไม่มีสิทธิ์{verb} (ต้องการ {key.Replace("perm:", "")})";
 
     public sealed record CreateIntentRequest(
         PaymentSourceKind SourceKind, Guid SourceId, decimal Amount, PaymentMethodKind Method,
@@ -52,6 +64,12 @@ public class PaymentGatewayController : ControllerBase
     public async Task<ActionResult<ApiResponse<IntentResponse>>> Create(
         Guid companyId, [FromBody] CreateIntentRequest req, CancellationToken ct)
     {
+        // สิทธิ์ของโมดูลต้นทาง (ใบแจ้งหนี้ · ออเดอร์เว็บ · การจอง · บิล POS · ค่าบริการ) — ลูกค้าปลายทางที่ไม่ล็อกอิน
+        // เดินทาง PublicPaymentController ไม่ใช่ที่นี่
+        var deny = await DenyKeyAsync(companyId, PaymentGatewayPermissionScope.StartKeyFor(req.SourceKind),
+            "เริ่มรับชำระเงินของรายการนี้");
+        if (deny != null)
+            return StatusCode(403, new ApiResponse<IntentResponse>(false, null, deny));
         try
         {
             var intent = await _intents.StartAsync(companyId, new StartPaymentRequest(
@@ -86,7 +104,8 @@ public class PaymentGatewayController : ControllerBase
     /// <summary>รายการชำระเงินของบริษัท — หน้าติดตาม/ตรวจสอบของผู้ดูแล</summary>
     [HttpGet("intents")]
     public async Task<ActionResult<ApiResponse<object>>> List(
-        Guid companyId, [FromQuery] string? status, [FromQuery] int limit = 100,
+        Guid companyId, [FromServices] IGatewayRefundService refunds,
+        [FromQuery] string? status, [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
         var q = _db.PaymentIntents.AsNoTracking().Where(i => i.CompanyId == companyId);
@@ -100,9 +119,37 @@ public class PaymentGatewayController : ControllerBase
                 i.Amount, status = i.Status.ToString(), method = i.MethodKind.ToString(),
                 i.ProviderRef, i.FailureMessage, i.ConfirmedAt, i.ConfirmedBy,
                 i.FeeActual, i.SettledAt, i.CreatedAt,
+                i.RefundedAmount, i.LastRefundedAt, i.LastRefundJournalEntryId,
+                isSettled = i.SettlementJournalEntryId != null,
             })
             .ToListAsync(ct);
-        return Ok(new ApiResponse<object>(true, rows));
+
+        // "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" (§86/10 · รอบ 198 G-1) — ตัดสินที่เซิร์ฟเวอร์ตัวเดียว หน้าเว็บแค่ติดป้าย
+        var cn = await refunds.CreditNoteStatesAsync(companyId,
+            rows.Where(r => r.RefundedAmount > 0m).Select(r => r.Id).ToList(), ct);
+        var shaped = rows.Select(r =>
+        {
+            cn.TryGetValue(r.Id, out var v);
+            // คืนแล้วแต่ไม่มียอดคืน = คืนก่อนระบบบันทึกยอดคืน / ลงบัญชีคืนเงินไม่สำเร็จ ⇒ ต้องตรวจมือ (ไม่ใช่ "ครบ")
+            var legacyRefund = r.RefundedAmount == 0m && (r.status == nameof(PaymentIntentStatus.Refunded)
+                || r.status == nameof(PaymentIntentStatus.PartiallyRefunded));
+            return new
+            {
+                r.Id, r.ProviderCode, r.sourceKind, r.SourceId, r.Amount, r.status, r.method,
+                r.ProviderRef, r.FailureMessage, r.ConfirmedAt, r.ConfirmedBy, r.FeeActual, r.SettledAt,
+                r.CreatedAt, r.RefundedAmount, r.LastRefundedAt, r.LastRefundJournalEntryId, r.isSettled,
+                refundableRemaining = GatewayRefundMath.Remaining(r.Amount, r.RefundedAmount),
+                creditNoteState = v?.State,
+                needsCreditNote = v?.NeedsCreditNote ?? false,
+                refundUntracked = legacyRefund,
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            items = shaped,
+            refundedAwaitingCreditNote = shaped.Count(x => x.needsCreditNote),
+            refundUntracked = shaped.Count(x => x.refundUntracked),
+        }));
     }
 
     /// <summary>กระทบยอดเงินที่รับผ่าน gateway ของงวดหนึ่ง
@@ -127,7 +174,8 @@ public class PaymentGatewayController : ControllerBase
             .Select(i => new GatewayIntentAmounts(
                 i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
                 i.Status == PaymentIntentStatus.Refunded,
-                i.SettledAt != null))
+                i.SettledAt != null,
+                i.RefundedAmount))
             .ToListAsync(ct);
 
         var result = GatewayReconciliation.Compute(rows);
@@ -142,7 +190,7 @@ public class PaymentGatewayController : ControllerBase
     }
 
     public sealed record ManualConfirmRequest(string Reason);
-    public sealed record RefundRequest(decimal? Amount, string Reason);
+    public sealed record RefundRequest(decimal? Amount, string? Reason);
 
     /// <summary>**ยืนยันด้วยมือ** — เงินเข้าจริงแล้ว (เห็นในบัญชีธนาคาร/แดชบอร์ดผู้ให้บริการ)
     /// แต่ระบบยังไม่รู้ เพราะ webhook หายและถามสถานะสดก็ยังไม่ขึ้น
@@ -154,6 +202,8 @@ public class PaymentGatewayController : ControllerBase
     /// <para><b>ต้องระบุเหตุผล</b> และถูกบันทึกว่า <c>manual:{user}</c> —
     /// การยืนยันด้วยมือคือจุดที่ผู้สอบบัญชีถามเสมอว่าใครกดและเพราะอะไร</para></summary>
     [HttpPost("intents/{intentId:guid}/confirm-manually")]
+    [Accounting.Filters.RejectApiKey("ยืนยันการรับเงินด้วยมือ")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
     public async Task<ActionResult<ApiResponse<IntentResponse>>> ConfirmManually(
         Guid companyId, Guid intentId, [FromBody] ManualConfirmRequest req, CancellationToken ct)
     {
@@ -180,70 +230,57 @@ public class PaymentGatewayController : ControllerBase
             "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
     }
 
-    /// <summary>คืนเงินผ่านผู้ให้บริการ
+    /// <summary>คืนเงินผ่านผู้ให้บริการ — <b>ลงบัญชีคืนเงินเสมอ</b> (รอบ 198 G-1 · <see cref="IGatewayRefundService"/>)
     ///
-    /// <para><b>ไม่สร้างใบลดหนี้ให้อัตโนมัติ</b>โดยตั้งใจ: §86/10 บังคับให้ใบลดหนี้มี
-    /// "เหตุผล" ตาม closed list · ต้องอ้างใบกำกับเดิม · และยอดสะสมของใบลดหนี้ห้ามเกิน
-    /// ใบเดิม — สิ่งเหล่านี้ต้องให้คนตัดสิน ระบบเดาแทนไม่ได้ · คำตอบจึงชี้ทางต่อว่า
-    /// ให้ไปออกใบลดหนี้จากเอกสารต้นทาง (ซึ่งมีด่าน §86/10 ครบอยู่แล้ว)</para></summary>
+    /// <para>JE: <c>Dr ลูกหนี้การค้า / Cr บัญชีพักผู้ให้บริการ</c> — ตั้งยอด "รอใบลดหนี้" ที่ลูกหนี้ · ยอดคืนสะสมห้ามเกินยอดรับ ·
+    /// ตรวจผัง/งวดก่อนเงินออก · เงินออกแล้วแต่ลงบัญชีไม่ได้ = ล้มดัง (ไม่กลืน)</para>
+    ///
+    /// <para><b>ไม่สร้างใบลดหนี้ให้อัตโนมัติ</b>โดยตั้งใจ: §86/10 บังคับให้ใบลดหนี้มี "เหตุผล" ตาม closed list · ต้องอ้างใบกำกับเดิม ·
+    /// และยอดสะสมของใบลดหนี้ห้ามเกินใบเดิม — ต้องให้คนตัดสิน · หน้ารายการติดป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" แทน</para></summary>
     [HttpPost("intents/{intentId:guid}/refund")]
+    [Accounting.Filters.RejectApiKey("คืนเงินลูกค้า")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.Refund)]
     public async Task<ActionResult<ApiResponse<object>>> Refund(
         Guid companyId, Guid intentId, [FromBody] RefundRequest req,
-        [FromServices] IEnumerable<IPaymentProvider> providers, CancellationToken ct)
+        [FromServices] IGatewayRefundService refunds, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.Reason))
-            return BadRequest(new ApiResponse<object>(false, null!, "กรุณาระบุเหตุผลการคืนเงิน"));
-
-        var intent = await _db.PaymentIntents
-            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
-        if (intent == null) return NotFound(new ApiResponse<object>(false, null!, "ไม่พบรายการชำระเงิน"));
-        if (intent.Status is not (PaymentIntentStatus.Succeeded or PaymentIntentStatus.PartiallyRefunded))
-            return BadRequest(new ApiResponse<object>(false, null!,
-                "คืนเงินได้เฉพาะรายการที่รับเงินสำเร็จแล้ว"));
-
-        var amount = req.Amount ?? intent.Amount;
-        if (amount <= 0 || amount > intent.Amount + 0.005m)
-            return BadRequest(new ApiResponse<object>(false, null!,
-                $"ยอดคืนต้องมากกว่า 0 และไม่เกินยอดที่รับไว้ ({intent.Amount:N2})"));
-
-        var provider = providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
-        if (provider == null)
-            return BadRequest(new ApiResponse<object>(false, null!,
-                $"ไม่รู้จักช่องทางชำระเงิน \"{intent.ProviderCode}\""));
-        if (!provider.Capabilities.SupportsRefund)
-            return BadRequest(new ApiResponse<object>(false, null!,
-                "ช่องทางนี้คืนเงินผ่านระบบไม่ได้ — ต้องคืนที่ธนาคาร/แดชบอร์ดของผู้ให้บริการเอง "
-                + "แล้วออกใบลดหนี้ในระบบ (§86/10)"));
-
-        var config = intent.ProviderConfigId is Guid cid
-            ? await _db.PaymentProviderConfigs.FirstOrDefaultAsync(c => c.Id == cid, ct)
-            : null;
-
-        var result = await provider.RefundAsync(intent, amount, req.Reason.Trim(),
-            config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
-
-        if (!result.Succeeded)
-            return BadRequest(new ApiResponse<object>(false, null!,
-                result.FailureMessage ?? "ผู้ให้บริการปฏิเสธการคืนเงิน"));
-
-        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
-        var full = amount >= intent.Amount - 0.005m;
-        await _intents.ApplyChargeAsync(intentId,
-            new ProviderCharge(intent.ProviderRef ?? string.Empty,
-                full ? PaymentIntentStatus.Refunded : PaymentIntentStatus.PartiallyRefunded,
-                "refunded", intent.Amount),
-            PaymentEventSource.Manual, $"{actor} · คืนเงิน {amount:N2}: {req.Reason.Trim()}", ct);
-
-        return Ok(new ApiResponse<object>(true, new
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await refunds.RefundAsync(companyId, intentId, req.Amount, req.Reason ?? string.Empty, actor, ct);
+        var data = new
         {
-            refundRef = result.ProviderRefundRef,
-            amount,
-            isFullRefund = full,
+            refundRef = r.RefundRef,
+            amount = r.Amount,
+            isFullRefund = r.IsFullRefund,
+            refundedTotal = r.RefundedTotal,
+            journalEntryId = r.JournalEntryId,
+            journalEntryNumber = r.JournalEntryNumber,
+            creditNoteState = r.CreditNoteState,
             // ขั้นถัดไปที่ระบบทำแทนไม่ได้ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้ผู้ใช้เดา
-            nextStep = "เปิดเอกสารต้นทางแล้วออก \"ใบลดหนี้\" (§86/10) เพื่อลดภาษีขาย — "
-                + "ระบบไม่ออกให้อัตโนมัติเพราะใบลดหนี้ต้องระบุเหตุผลตามที่กฎหมายกำหนด "
-                + "และยอดสะสมห้ามเกินใบเดิม ซึ่งต้องให้คนตัดสิน",
-        }, $"คืนเงิน {amount:N2} บาทเรียบร้อย"));
+            nextStep = r.NextStep,
+        };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
+
+    public sealed record FeeCorrectionRequest(decimal FeeActual, string? Reason);
+
+    /// <summary>แก้ค่าธรรมเนียมจริงรายรายการ (รอบ 198 G-6) — ข้อความบล็อกรอบโอน "ยอดไม่ตรง" ชี้มาที่ปุ่มนี้ ·
+    /// เดิมไม่มีที่แก้เลย (<c>FeeEstimated</c> = 0 เสมอ) ⇒ ข้อความบอกทางแก้ที่ไม่มีอยู่จริง</summary>
+    [HttpPut("intents/{intentId:guid}/fee")]
+    [Accounting.Filters.RejectApiKey("แก้ค่าธรรมเนียมรับชำระเงิน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PostSettlement)]
+    public async Task<ActionResult<ApiResponse<object>>> CorrectFee(
+        Guid companyId, Guid intentId, [FromBody] FeeCorrectionRequest req,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await settlements.CorrectFeeAsync(companyId, intentId, req.FeeActual, req.Reason ?? string.Empty,
+            actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        var data = new { oldFee = r.OldFee, newFee = r.NewFee };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -272,6 +309,8 @@ public class PaymentGatewayController : ControllerBase
         feeNetPaid = outcome.Plan.FeeNetPaid,
         feeGrossedUp = outcome.Plan.FeeGrossedUp,
         whtOnFee = outcome.Plan.WhtOnFee,
+        feeVat = outcome.Plan.FeeVat,
+        refundDeducted = outcome.Plan.RefundDeducted,
         outcome.Plan.ExpectedNet,
         outcome.Plan.ActualNet,
         outcome.Plan.Difference,
@@ -281,42 +320,39 @@ public class PaymentGatewayController : ControllerBase
         outcome.JournalEntryNumber,
     };
 
-    /// <summary>รายการที่ "รับเงินแล้วแต่ยังไม่โอนเข้าธนาคาร" — ตั้งต้นของหน้าบันทึกการโอน</summary>
+    /// <summary>รายการที่ "รับเงินแล้วแต่ยังไม่โอนเข้าธนาคาร" — ตั้งต้นของหน้าบันทึกการโอน
+    ///
+    /// <para>รอบ 198: เกณฑ์เลือก + ตัวเลขทุกช่องมาจาก service ตัวเดียวกับแผน JE (<see cref="IGatewaySettlementService.ListPendingAsync"/>)
+    /// — เดิมเขียนเงื่อนไขซ้ำที่นี่ (เฉพาะ Succeeded) ⇒ รายการคืนบางส่วนหายจากทั้งหน้าและแผน</para></summary>
     [HttpGet("settlements/pending")]
     public async Task<ActionResult<ApiResponse<object>>> PendingSettlement(
-        Guid companyId, [FromQuery] string? providerCode, CancellationToken ct)
+        Guid companyId, [FromQuery] string? providerCode,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
     {
-        var rows = await _db.PaymentIntents.AsNoTracking()
-            .Where(i => i.CompanyId == companyId
-                && i.Status == PaymentIntentStatus.Succeeded
-                && i.SettlementJournalEntryId == null
-                && i.ConfirmedAt != null
-                && (providerCode == null || i.ProviderCode == providerCode))
-            .OrderBy(i => i.ConfirmedAt)
-            .Select(i => new
-            {
-                i.Id, i.ProviderCode, i.ConfirmedAt, i.Amount,
-                fee = i.FeeActual ?? i.FeeEstimated,
-                feeIsEstimated = i.FeeActual == null,
-                i.ProviderRef, sourceKind = i.SourceKind.ToString(),
-            })
-            .ToListAsync(ct);
-
+        var v = await settlements.ListPendingAsync(companyId, providerCode, ct);
         return Ok(new ApiResponse<object>(true, new
         {
-            count = rows.Count,
-            gross = rows.Sum(r => r.Amount),
-            fee = rows.Sum(r => r.fee),
-            expectedNet = rows.Sum(r => r.Amount - r.fee),
+            count = v.Count,
+            gross = v.Gross,
+            fee = v.Fee,
+            expectedNet = v.ExpectedNet,
             // ค่าธรรมเนียมที่ยังเป็นตัวประมาณต้องติดป้าย — ตัวเลขประมาณที่ไม่ติดป้าย
             // จะถูกอ่านเป็นตัวจริงแล้วนำไปตัดสินใจผิด
-            anyFeeEstimated = rows.Any(r => r.feeIsEstimated),
-            items = rows,
+            anyFeeEstimated = v.AnyFeeEstimated,
+            feeVatMode = v.FeeVatMode,
+            legacyRefundedCount = v.LegacyRefundedCount,
+            items = v.Items.Select(i => new
+            {
+                i.Id, i.ProviderCode, i.ConfirmedAt, i.Amount, i.RefundedAmount, i.Clearing,
+                fee = i.Fee, i.FeeVat, i.FeeIsEstimated, i.Net, i.IsRefundAfterSettlement,
+                i.ProviderRef, i.SourceKind, i.Status,
+            }),
         }));
     }
 
     /// <summary>ดูตัวอย่างก่อนบันทึก — ไม่เขียนอะไรเลย (ให้ผู้ใช้เห็น JE ก่อนกดจริง)</summary>
     [HttpPost("settlements/preview")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PreviewSettlement)]
     public async Task<ActionResult<ApiResponse<object>>> PreviewSettlement(
         Guid companyId, [FromBody] SettlementRequestDto req,
         [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
@@ -326,6 +362,8 @@ public class PaymentGatewayController : ControllerBase
     }
 
     [HttpPost("settlements")]
+    [Accounting.Filters.RejectApiKey("บันทึกรอบโอนเงินรับออนไลน์")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PostSettlement)]
     public async Task<ActionResult<ApiResponse<object>>> RecordSettlement(
         Guid companyId, [FromBody] SettlementRequestDto req,
         [FromServices] IGatewaySettlementService settlements, CancellationToken ct)

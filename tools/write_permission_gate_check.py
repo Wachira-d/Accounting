@@ -99,6 +99,10 @@ WATCHED = [
     # เพิ่มรอบ 194 ทีม C — ประเภทเงินมัดจำ = นโยบาย VAT ของมัดจำ (ลักษณะเงิน/โหมด/บัญชี) · ใส่ตอนเขียว (ratchet) ·
     # ด่าน = CompanySettings.Edit ชุดเดียวกับ SettingsController
     "Accounting/Controllers/DepositKindsController.cs",
+    # เพิ่มรอบ 198 ทีม E (G-8 · P0) — คืนเงินลูกค้าจริงผ่านผู้ให้บริการ · ยืนยันเงินเข้าด้วยมือ (ออกใบเสร็จ/ตัดหนี้ตามมา) ·
+    # ลง JE รอบโอน มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ สมาชิกทุกบทบาทกดคืนเงินได้ ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 9) ·
+    # ด่านจาก Helpers/PaymentGatewayPermissionScope ตัวเดียว
+    "Accounting/Controllers/PaymentGatewayController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -141,6 +145,9 @@ GATE_MARKERS = (
     "RequireOwner(",
     # ด่าน DPO ของ PdpaController (Pii.View)
     "RequireDpoAsync",
+    # รอบ 198 — webhook ของผู้ให้บริการรับชำระเงิน (PaymentWebhookController อยู่ไฟล์เดียวกับ PaymentGatewayController):
+    # ไม่มีผู้ใช้ให้ตรวจสิทธิ์ ด่านคือ "adapter ยืนยันเหตุการณ์กับผู้ให้บริการ" (HMAC/re-fetch) — ไม่ผ่าน = ไม่แตะข้อมูล
+    "VerifyWebhookAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
@@ -262,6 +269,13 @@ public class FakeController : ControllerBase
         return Ok();
     }
 
+    [HttpPost("w")]
+    public async Task<IActionResult> ProviderWebhook()
+    {
+        var verified = await provider.VerifyWebhookAsync(raw, headers, cfg, ct);
+        return Ok();
+    }
+
     [HttpPost("f")]
     public async Task<IActionResult> KeyAuthNoScopeFilter()
     {
@@ -315,7 +329,7 @@ def self_test():
     # KeyAuthNoScopeFilter: เรียก AuthenticateIntegration() แต่ไฟล์ไม่มีตัวตัดสินสิทธิ์ของคีย์ ⇒ ต้องฟ้อง
     expect_bad = {"NoGateAtAll", "KeyAuthNoScopeFilter"}
     expect_ok = {"AttrBelowHttp", "AttrAboveHttp", "GateInBody", "ReadThing", "OwnerGate",
-                 "KeyAuthWithScopeFilter"}
+                 "KeyAuthWithScopeFilter", "ProviderWebhook"}
     missing = expect_bad - found
     wrong = found & expect_ok
     if missing:

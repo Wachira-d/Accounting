@@ -483,6 +483,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ที่ระบบออกตอน Approve); ยังบังคับ วันที่ + ยอดรวม + contact match เหมือนเดิม
 
 ### 2.3 Integration ภายนอก
+- **รับ/จ่ายชำระ (`ProcessPaymentAsync` · รอบ 198 I-1)**: หาผังของ JE **ก่อน**บันทึกการชำระ (`ResolvePaymentJournalAccountsAsync`) — ขาเงิน
+  `ResolveMoneyAccountAsync` (บัญชีธนาคารที่ `bankAccountName` ระบุตรงชื่อ/เลขบัญชี → `MoneyAccountFallback` ตัวเดียวกับ POS: เงินสด 11111 · บัตร 11340 ·
+  โอน/พร้อมเพย์ = บัญชีธนาคารที่ผูกผังบัญชีเดียว · ห้าม prefix 112) · ลูกหนี้ `ResolveReceivableAccountAsync` → `TradeReceivableAccount` (ผังที่ปักบนลูกค้า → 11310
+  — ตัวเดียวกับ JE ใบแจ้งหนี้/ใบลด-เพิ่มหนี้ของ integration) · หาไม่เจอ = `BusinessRuleException` (sync log Failed · ยังไม่มีอะไรถูกบันทึก) · JE เก่าที่ลง 112xx:
+  นับด้วย `erp-review/2026-09-25/settlement/I1-legacy-query.sql` (อ่านอย่างเดียว · migration ซ่อมรอเจ้าของ)
 - **Controller**: `IntegrationController.cs` — manage config + API key issuance
 - **เข้าทาง** `/api/companies/{id}/documents` (ทาง standard) พร้อม
   `X-Acting-User` header
@@ -1089,7 +1094,28 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (`Notes: null` + ต่อท้าย `InternalNotes` ของเอกสาร `[จาก lead LD-…]` — เดิม `Notes: lead.InternalNotes` หลุดถึงลูกค้า)
 - **Gap (ยัง TODO)**:
   - Payment reconciliation (match `SiteOrderPayment.Reference` กับ bank statement)
-  - Webhook gateway (Stripe/PromptPay) → ตอนนี้ admin กดยืนยันสลิปเอง
+  - ~~Webhook gateway → admin กดยืนยันสลิปเอง~~ (แก้ doc รอบ 198 G-9: มีแล้ว — `PaymentWebhookController` + `PaymentIntentService.ApplyChargeAsync`
+    ส่งต่อ `SiteOrderPaymentHandler` · ดู §2.6b)
+
+### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
+- **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
+  Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
+- **คืนเงิน** (`POST pay/intents/{id}/refund` → `GatewayRefundService.RefundAsync`): ตรวจ `GatewayRefundMath.Check` (สถานะรับเงินแล้ว · **ยอดคืนสะสม**
+  ห้ามเกินยอดรับ · คืนบางส่วนก่อนระบบบันทึกยอดคืน = ไม่รู้ยอด ⇒ ปฏิเสธ) + ผังลูกหนี้ (`TradeReceivableAccount.ResolveAsync`: ผังที่ปักบนลูกค้า → 11310) +
+  บัญชีพัก + งวดปิด (`JournalEntryBuilder.ClosedPeriodReasonAsync`) **ก่อน**เรียกผู้ให้บริการ → JE **PV: Dr ลูกหนี้การค้า / Cr บัญชีพัก** (ยอด "รอใบลดหนี้")
+  + `RefundedAmount/LastRefundedAt/LastRefundJournalEntryId` ในธุรกรรมเดียว (ล็อก `refund:{id}`) → สถานะผ่าน `ApplyChargeAsync` · เงินออกแล้วแต่ลงบัญชีไม่ได้ =
+  ประวัติ ⚠️ + สถานะจริง + ข้อความ "ห้ามกดคืนซ้ำ · ลงบัญชีมือ" (ไม่กลืน) · **ไม่ออกใบลดหนี้เอง** (§86/10) — `GET pay/intents` คืน `creditNoteState`/`needsCreditNote`
+  (ต้นทาง Document: ใบลดหนี้ที่ออกแล้วอ้างใบนั้นรวม ≥ ยอดคืน · ต้นทางอื่น = `CannotTrace`) + ป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" · สถานะคืนแล้วแต่ยอดคืน = 0 = `refundUntracked` (ตรวจมือ)
+- **รอบโอน** (`GatewaySettlementService` · พรีวิว `settlements/preview` · บันทึก `settlements`): ผู้เลือกรายการตัวเดียว `SelectCandidatesAsync` (หน้า
+  `settlements/pending` ใช้ตัวเดียวกัน) = ยังไม่บันทึกรอบโอน (สำเร็จ · หรือคืนบางส่วน/เต็มที่รู้ยอดคืน) + บันทึกรอบโอนแล้วแต่คืนหลังจากนั้น
+  (`RefundedAmount > RefundSettledAmount`) · สูตร `GatewaySettlementMath.Contribution/Plan`: ยอดล้างบัญชีพัก = `Amount − RefundedAmount` (คืนหลังรอบก่อน = ติดลบ) ·
+  ค่าธรรมเนียมตาม `GatewayFeeVatMode` (None = ทั้งก้อนค่าใช้จ่าย · IncludedInFee = แยก 7/107 · AddedOnTop = +7%) ⇒ **Dr 11630 ภาษีซื้อรอเครดิต** เฉพาะบริษัทจด VAT
+  (`CompanyVatStatus`) · WHT ค่าธรรมเนียมฐาน**ก่อน VAT** × 3/97 แต่ `WhtCertificateRequired` = **บล็อก** (ห้ามลง 21917 ที่ไม่มี 50 ทวิ) · ด่านงวดปิดในพรีวิว +
+  JE ผ่าน `JournalEntryBuilder` (RV · Dr=Cr · งวดปิด) · ยอดโอนจริงไม่ตรง = บล็อกพร้อมชี้ปุ่ม "แก้ค่าธรรมเนียม" (`PUT pay/intents/{id}/fee` · เฉพาะรายการยังไม่บันทึกรอบโอน ·
+  บังคับเหตุผล · `AddChainedAuditLog`) · มาร์ก `SettledAmount/SettlementJournalEntryId/RefundSettledAmount`
+- **สิทธิ์ (G-8)**: `Helpers/PaymentGatewayPermissionScope` — คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` · บันทึกรอบโอน/แก้ค่าธรรมเนียม
+  `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง · คืนเงิน/ยืนยันมือ/บันทึกรอบโอน/แก้ค่าธรรมเนียม `[RejectApiKey]`
+- **ยังไม่มี**: 11630 → 11610 เมื่อได้ใบกำกับรายเดือน (มือ) · ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA
 
 ### 2.6 POS (Point of Sale)
 - **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:1286`) ·
@@ -1104,7 +1130,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `Helpers/PosOrderStatusTransition.Check` — เข้า/ออก Completed/Voided/Refunded ⇒ `POS-STATUS-TRANSITION` (ใช้ปุ่มปิดบิล/ยกเลิก/คืนเงิน)
   _เดิมเขียน `order.Status` ตรง ⇒ ปิดบิลโดยไม่ตัดสต็อก/JE หรือดึงบิลปิดแล้วกลับมาปิดซ้ำ_
 - **Auto JE ทันที** ตอน complete order (ไม่ผ่าน Draft):
-  - Dr Cash 1011 / Bank 1012 / Credit Card 1131 (ตาม PaymentMethod)
+  - Dr ขาเงินตาม PaymentMethod: บัญชีที่ปักบนเครื่อง → ผังสำรองรหัสเต็ม `Helpers/MoneyAccountFallback` (เงินสด **11111** · e-Wallet 11113 ·
+    เช็ค 11131 · บัตร **11340** ลูกหนี้ผู้ให้บริการรับชำระเงิน · โอน/พร้อมเพย์/หักบัญชี = บัญชีธนาคารที่ผูกผังไว้บัญชีเดียว ไม่มี/หลายบัญชี =
+    `POS-NO-BANK-ACCOUNT` ให้ปักที่เครื่อง) — รอบ 198 P-1: เดิม 1011/1012/1131 ที่ไม่มีในผัง ⇒ prefix 112 = เงินลงทุนชั่วคราว · หาไม่เจอเดิม `continue` เงียบ ⇒ ตอนนี้ล้มดัง
   - Cr Sales Revenue 41000 (net of VAT)
   - Cr Output VAT 21911 (7%)
   - Cr Tip Liability 21814/21819 (ถ้ามี) — **ไม่พบบัญชีทิป = `throw`
@@ -1616,7 +1644,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ⇒ ใบสกุลต่างประเทศทุกใบที่สร้างจากหน้าจอลงบัญชีเป็นบาทที่ยอดเดิม)_
 - **ค่าธรรมเนียมหักจากยอดโอน** (marketplace Shopee/Lazada, gateway, ธนาคาร):
   `Payment.FeeAmount(+FeeAccountId)` — Amount คือเงินสุทธิที่เข้า, เอกสาร
-  ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (53200/ค้นชื่อ) /
+  ถูกล้างที่ Amount+Fee: JE Dr เงินสด + Dr ค่าธรรมเนียม (ผังที่เลือกในช่อง `rpFeeAccount` → ว่าง = **54710 ค่าธรรมเนียมธนาคาร** รหัสเต็ม ·
+  ไม่มี = `PAY-NO-FEE-ACCOUNT` ล้มดัง — รอบ 198 F-1: เดิม 53200 ที่ไม่มีในผัง แล้วตกไปผังแรกที่ชื่อมี "ค่าธรรมเนียม") /
   Cr AR ยอดเต็ม; void คืน PaidAmount รวม fee; เฉพาะฝั่งขาย
 - **ยอดชำระจริง ≠ ยอดใบกำกับ — ปรับที่ขั้นชำระ (รอบ 193 · คำตัดสิน #1/#3/#4)**: ใบกำกับ = เอกสารตั้งหนี้**ยอดเต็มตามใบ** (Shopee 536 · VAT 35.07
   เคลมเต็ม — #2 คงเดิม) · ส่วนต่างลงที่การชำระ: `Payment.SettlementAdjustmentAmount` + `SettlementAdjustmentsJson` (บรรทัดปรับ: ค่าส่ง +37 → **51120** ·
@@ -3284,7 +3313,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 195 ทีม I2: ฝ่ายค้าน C1 — ชั้นพิสูจน์ทั้งใบ/คำแนะนำใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษ (`OcrHeaderVatEvidence`) · `[VAT-DERIVED]` หยุดอนุมัติเอง · การแยก VAT จากยอดรวมผ่าน `VatBackCalcGuard` ทุกชุด · C2 "ยกเลิก…แทน" · P2 คำนมแคบลง · คำเตือนรวมข้อตรวจรากเดียว · ดึงรายการซ้ำล้าง [Σ-GAP] เก่า (§1 OCR) — commit c69a0b62)_
+_Last verified against codebase: 2026-09-25 (รอบ 198 ทีม E settlement เฟส 0: §2.6b gateway — JE คืนเงิน + ยอดคืนสะสม · รอบโอนนับคืนบางส่วน/คืนหลังรอบโอน ·
+VAT ค่าธรรมเนียม 11630 · WHT ค่าธรรมเนียมฐานก่อน VAT + บล็อก · ด่านงวด · แก้ค่าธรรมเนียม · ด่านสิทธิ์ · Integration รับชำระ: ขาเงินผ่าน `MoneyAccountFallback`
+(ห้าม prefix 112) + ผังลูกหนี้ `TradeReceivableAccount` + หาผังก่อนบันทึกการชำระ · POS ผังสำรองรหัสเต็ม · ค่าธรรมเนียมหักจากยอดโอน 54710 (§3.x) · กระทบบัญชีย่อยไม่นับ 11340 — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I2: ฝ่ายค้าน C1 — ชั้นพิสูจน์ทั้งใบ/คำแนะนำใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษ (`OcrHeaderVatEvidence`) · `[VAT-DERIVED]` หยุดอนุมัติเอง · การแยก VAT จากยอดรวมผ่าน `VatBackCalcGuard` ทุกชุด · C2 "ยกเลิก…แทน" · P2 คำนมแคบลง · คำเตือนรวมข้อตรวจรากเดียว · ดึงรายการซ้ำล้าง [Σ-GAP] เก่า (§1 OCR) — commit c69a0b62)_
 
 _ก่อนหน้า: 2026-09-25 (รอบ 196 ทีม Q: หน้ารวมบอกได้ว่าใบต้นทางออกเอกสารต่อแล้วหรือยัง — ตัวตัดสินเดียว `Helpers/DocumentConversionProgress` ·
 batch `LoadConversionSummariesAsync` ใช้ร่วม list/detail/ตัวกรอง `?conversion=` · ป้ายบอกชนิดใบลูก · "ค้างชำระ" เฉพาะลูกหนี้/เจ้าหนี้ (§2.4a) — commit <pending>)_
