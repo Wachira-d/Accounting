@@ -882,6 +882,33 @@ RULES += [
 ]
 
 
+# ── รอบ 196 (ทีม Q · "ใบไหนออกใบแจ้งหนี้แล้ว ดูจากหน้ารวมไม่ได้"): list · detail · ตัวกรอง ต้องเรียกตัวคำนวณการออกเอกสารต่อ
+#    ตัวเดียว — เดิม list ไม่เรียกเลย (ป้าย "⏳ รอดำเนินการต่อ" ทุกใบ) และ detail มีสูตรของตัวเอง (ComputeConversionStatusAsync
+#    · ไม่กรอง CompanyId) · ถอดการเรียกออกจาก list แล้วเทสต์ของ helper ยังเขียว ⇒ ล็อกจุดเรียกที่นี่
+RULES += [
+    dict(file=DOCSVC, method="GetDocumentsAsync",
+         must=["LoadConversionSummariesAsync(", "ResolveConversionStateIdsAsync("],
+         must_re=[r"conversion\s*:\s*conversionByDoc\s*\.\s*GetValueOrDefault\s*\("],
+         before=[("ResolveConversionStateIdsAsync(", "CountAsync(")],
+         forbid=["ComputeConversionStatusAsync("],
+         why="รอบ 196: หน้ารวมต้องส่งผลการออกเอกสารต่อเข้า MapDocumentToResponse (ป้ายโกหกเดิม) · ตัวกรองตัดสินก่อนนับ/แบ่งหน้า"),
+    dict(file=DOCSVC, method="GetDocumentAsync",
+         must=["LoadConversionSummariesAsync("],
+         forbid=["ComputeConversionStatusAsync("],
+         why="รอบ 196: หน้ารายละเอียดใช้ตัวคำนวณเดียวกับหน้ารวม (ห้ามสองสูตร)"),
+    dict(file=DOCSVC, method="ResolveConversionStateIdsAsync",
+         must=["LoadConversionSummariesAsync("],
+         why="รอบ 196: ตัวกรองบนหน้ารวมตัดสินด้วยตัวเดียวกับป้ายบนแถว"),
+    dict(file=DOCSVC, method="LoadConversionSummariesAsync",
+         must=["DocumentConversionProgress.Evaluate(", "DocumentConversionProgress.InactiveChildStatuses"],
+         must_re=[r"sd\s*\.\s*CompanyId\s*==\s*companyId", r"cd\s*\.\s*CompanyId\s*==\s*companyId",
+                  r"c\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="รอบ 196: สูตรเดียว (DocumentConversionProgress) · ใบลูกยกเลิก/ปฏิเสธไม่นับ · ทุก query กรองบริษัท (กฎ M)"),
+    dict(file=DOCSVC, method="ComputeLifecycle",
+         must=["DocumentConversionProgress.Lifecycle("],
+         why="รอบ 196: ข้อความป้ายของชนิดต้นทางมาจาก helper ตัวเดียว (บอกชนิดใบลูก) — ห้ามกลับไปพิมพ์ป้ายเอง"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

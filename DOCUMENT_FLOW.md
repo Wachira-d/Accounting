@@ -931,6 +931,40 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Lineage**: ลูก carry `RelatedDocumentId = source.Id`, `SourceLineId` ต่อ
   บรรทัด (จำเป็นสำหรับ partial fulfillment + 3-way match)
 
+#### 2.4a หน้ารวม: "ใบไหนออกเอกสารต่อแล้ว" — ป้าย lifecycle + ตัวกรอง ✅ รอบ 196 (ทีม Q)
+
+**โจทย์ผู้ใช้**: "จากหน้ารวมใบเสนอราคา จะรู้ได้ยังไงว่าใบไหนออกใบแจ้งหนี้แล้ว โดยไม่ต้องไล่เปิดทีละใบ" — เดิม
+`GetDocumentsAsync` ไม่ส่ง % การแปลงเข้า `MapDocumentToResponse` ⇒ ใบต้นทาง Approved **ทุกใบ** ขึ้น "⏳ รอดำเนินการต่อ"
+(ป้ายโกหก) + ชิป "⏳ 30+d" + คอลัมน์ "ค้างชำระ" เป็นยอดเต็มตัวแดง (ใบเสนอราคาไม่ใช่หนี้)
+
+- **ตัวตัดสินเดียว** `Helpers/DocumentConversionProgress` — ชนิดต้นทาง `SourceTypes` = Quotation / PurchaseRequisition /
+  PurchaseOrder / GoodsReceiptNote / DeliveryNote · `Evaluate(Σ จำนวนต้นทาง, แถว (ชนิดใบลูก, จำนวนที่ยก), มีใบลูกผูก RelatedDocumentId)`
+  = **แยกแกน** (`AxisOf` — ตารางเดียวกับด่านกันแปลงเกิน `GetFulfillmentAxis` ซึ่งตอนนี้เรียกตัวนี้) แล้วเอาแกนที่ไปไกลสุด
+  (สูตรเดิมรวมทุกแกน ⇒ ส่งของ 50% + แจ้งหนี้ 50% ของก้อนเดียวกัน = "ครบ" ผิด) · ครบ = ≥ Σ − 0.0001 · บางส่วน % ปัด 1 ตำแหน่ง
+  AwayFromZero เพดาน 99.9 · ไม่มีการยกบรรทัดแต่มีใบลูกผูก `RelatedDocumentId` (เช่น ใบแจ้งหนี้มัดจำ) = **บางส่วน · ไม่ทราบสัดส่วน**
+  (ห้ามบอกว่ายังไม่ออก) · ใบลูก `Voided`/`Rejected`/ลบ **ไม่นับ** (`InactiveChildStatuses`) ⇒ ยกเลิกใบแจ้งหนี้แล้วใบเสนอราคากลับเป็น "ยังไม่ออก"
+- **ตัวโหลด batch** `DocumentService.LoadConversionSummariesAsync(companyId, {id → Σ จำนวน})` — query คงที่ 2 ครั้งไม่ว่ากี่ใบ
+  (จำนวนที่ยกผ่าน `SourceLineId` · ใบลูกที่ยังมีผลจาก `RelatedDocumentId` ∪ เจ้าของบรรทัดที่ยก) · **ทุก query กรอง `CompanyId`**
+  (เดิม `ComputeConversionStatusAsync` ค้น `DocumentLines` ด้วย SourceLineId อย่างเดียว — ลบทิ้งแล้ว) · ผู้เรียก 3 ทาง:
+  `GetDocumentsAsync` (หน้ารวม — เฉพาะชนิดต้นทางบนหน้า) · `GetDocumentAsync` (หน้ารายละเอียด — ทุกชนิดเหมือนเดิม) ·
+  `ResolveConversionStateIdsAsync` (ตัวกรอง) — ล็อกด้วย `tools/required_call_site_check.py`
+- **ป้าย** `DocumentConversionProgress.Lifecycle` (เรียกจาก `ComputeLifecycle`): ครบ "✓ ออกใบแจ้งหนี้ INV-… แล้ว" · บางส่วน
+  "◐ ออกใบแจ้งหนี้ INV-… แล้ว 60%" (ปัดลงเสมอ — ไม่เคยขึ้น 100% ถ้ายังไม่ครบ) · ใบลูกหลายใบ ต่อท้าย "+N" · ใบลูกยังร่าง/รออนุมัติ
+  ⇒ "ร่างใบแจ้งหนี้ไว้แล้ว (ยังไม่อนุมัติ)" (ไม่โชว์เลข DRAFT-) · ไม่มีใบลูก "⏳ ยังไม่ออกเอกสารต่อ" · **ยังไม่ได้คำนวณ (null) ⇒ ไม่ขึ้นป้าย**
+  (ห้ามเดา) · ชื่อชนิดจาก `Helpers/DocumentTypeNames` (ตารางเดียวกับหัวกระดาษ — ย้ายจาก `PdfGenerationService.GetDocumentTitle`)
+  · ใบต้นทางเองเป็นร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ ⇒ กติกาเดิม (ไม่ขึ้นป้าย / Cancelled)
+- **DTO** `DocumentResponse.ConvertedToLatest` (ใบลูกล่าสุดที่ยังมีผล — ชิปกดเปิดได้) · `ConvertedToActiveCount` ·
+  `ConversionCompletionPercent`/`ConversionStatus` ("None"/"Partial"/"Full") ตอนนี้มีในหน้ารวมด้วย · `BalanceDueApplies`
+  (= `ArApScope.CarriesBalance` — ลูกหนี้/เจ้าหนี้เท่านั้น) ⇒ หน้าเว็บแสดง "—" ในคอลัมน์ค้างชำระ + ไม่ขึ้นชิปอายุหนี้/แถว
+  "ค้างชำระ" ในหน้ารายละเอียดสำหรับชนิดอื่น (null = ไม่ได้คำนวณ → แสดงแบบเดิม) · `purchases.html` ใช้ธงเดียวกัน (คอลัมน์ +
+  การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของใบสั่งซื้อ/ใบรับสินค้า · การ์ด "รอรับสินค้า" ไม่นับ PO ที่ `conversionStatus = Full`)
+- **คงค้างนาน**: ใบต้นทางที่ออกครบแล้ว `StaleDays = null` และตัวกรอง `staleOnly` ตัดออก (ตัวตัดสินเดียวกับป้าย)
+- **ตัวกรอง** `GET /document?conversion=None|Partial|Full` (ชื่อ enum `ConversionProgressState` — ตัวเลข/ค่าอื่น ⇒ 400 ไทย) —
+  จำกัดชนิดต้นทางที่ออกแล้วและยังมีผล (`!DocumentStatusRules.NotIssued` + ไม่ Voided) แล้วตัดสินด้วย `ResolveConversionStateIdsAsync`
+  **ก่อน** นับ/แบ่งหน้า · ตัวเลือก+ป้าย+ชนิดที่ใช้ได้จาก `GET /document/conversion-filter-options` (หน้าเว็บไม่มีสำเนา) ·
+  `documents.html #conversionFilter` แสดงในแท็บ "ทั้งหมด" หรือแท็บชนิดต้นทาง (ซ่อน ⇒ ล้างค่า)
+- **เทสต์**: `Accounting.Tests/DocumentConversionProgressTests.cs` (สองครึ่ง)
+
 #### 2.4b ใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ✅ รอบ 130
 
 **เคสจริง (ผู้ใช้ถาม 2026-09-03)**: ลูกค้ารับ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ"
@@ -3241,7 +3275,10 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 194 ทีม M2 หลังฝ่ายค้านรอบสอง: R2-1 tax point ตามกำหนดยื่น · R2-2 ใบเดิมกำกวม · R2-3 เงินประกันส่งมอบแล้ว · R2-4/R2-5 void/purge หลายใบ · R2-6 · P-a ล็อกตัวเดียว — commit <pending>)_
+_Last verified against codebase: 2026-09-25 (รอบ 196 ทีม Q: หน้ารวมบอกได้ว่าใบต้นทางออกเอกสารต่อแล้วหรือยัง — ตัวตัดสินเดียว `Helpers/DocumentConversionProgress` ·
+batch `LoadConversionSummariesAsync` ใช้ร่วม list/detail/ตัวกรอง `?conversion=` · ป้ายบอกชนิดใบลูก · "ค้างชำระ" เฉพาะลูกหนี้/เจ้าหนี้ (§2.4a) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 194 ทีม M2 หลังฝ่ายค้านรอบสอง: R2-1 tax point ตามกำหนดยื่น · R2-2 ใบเดิมกำกวม · R2-3 เงินประกันส่งมอบแล้ว · R2-4/R2-5 void/purge หลายใบ · R2-6 · P-a ล็อกตัวเดียว — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I: ใบ Scommerce — ลำดับตั้งอัตรา VAT บรรทัดจากสแกนมีชั้น "ตัวเลขหัวใบพิสูจน์ทั้งใบ" (`OcrLineVatPlanner`) เหนือตัวเดาจากชื่อ · คำเตือนตอนอนุมัติรวมข้อรากเดียว + คำแนะนำเป็นตัวเลข (§1 OCR ส่วนลดท้ายบิล/VAT ผสม) — commit <pending>)_
 

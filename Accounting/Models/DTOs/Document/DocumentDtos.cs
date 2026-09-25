@@ -710,6 +710,16 @@ public record DocumentResponse(
     // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
     // Picked up directly by the badge tooltip + list column.
     string? LifecycleReason = null,
+    // ===== ออกเอกสารต่อแล้วหรือยัง (รอบ 196 · ทีม Q) =====
+    // ใบลูกล่าสุดที่ยังมีผล (ไม่ Voided/Rejected/ลบ) ของเอกสารต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ) — ส่งทั้ง
+    // หน้ารวมและหน้ารายละเอียด (batch ต่อหน้า · Helpers/DocumentConversionProgress) ให้ชิป lifecycle กดไปใบลูกได้ ·
+    // null = ไม่ใช่ชนิดต้นทาง หรือยังไม่มีใบลูก
+    DocumentBrief? ConvertedToLatest = null,
+    // จำนวนใบลูกที่ยังมีผลทั้งหมด (รวมใบล่าสุด) — ป้ายต่อท้าย "+N" · null = ไม่ใช่ชนิดต้นทาง
+    int? ConvertedToActiveCount = null,
+    // ยอด BalanceDue ของชนิดนี้เป็นหนี้จริงไหม (Helpers/ArApScope.CarriesBalance) — false ⇒ หน้าเว็บแสดง "—"
+    // ในคอลัมน์ "ค้างชำระ" และไม่ขึ้นชิปอายุหนี้ · null = เส้นทางที่ยังไม่ได้คำนวณ (แสดงแบบเดิม)
+    bool? BalanceDueApplies = null,
     // ===== Undue Input VAT (§82/3) =====
     // True เมื่อตอน approve ใบกำกับยังไม่ครบ §86/4 → VAT ลง 11640 "ภาษีซื้อ
     // ยังไม่ถึงกำหนด" แทน 11610. UI โชว์ป้าย "⏳ ภาษีซื้อรอใบกำกับครบ" + ปุ่ม

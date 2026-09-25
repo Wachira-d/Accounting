@@ -1699,7 +1699,11 @@ public partial class DocumentService : IDocumentService
                 c.Status, c.DocumentDate, c.TotalAmount))
             .ToListAsync();
 
-        var (pct, status) = await ComputeConversionStatusAsync(companyId, doc);
+        // % ออกเอกสารต่อ + ใบลูกล่าสุดที่ยังมีผล — ตัวเดียวกับหน้ารวม (LoadConversionSummariesAsync · รอบ 196)
+        // หน้ารายละเอียดคำนวณให้ทุกชนิด (เดิมก็เช่นนั้น — ใบแจ้งหนี้→ใบกำกับก็โชว์ "สถานะการแปลง")
+        var conv = (await LoadConversionSummariesAsync(companyId,
+                new Dictionary<Guid, decimal> { [documentId] = doc.Lines.Sum(l => l.Quantity) }))
+            .GetValueOrDefault(documentId);
 
         // Project-cost booking summary — pull every PCE auto-spawned from
         // this doc (DocumentId or per-line DocumentLineId) and aggregate
@@ -1750,7 +1754,7 @@ public partial class DocumentService : IDocumentService
             && x.Status != DocumentStatus.Voided && x.Status != DocumentStatus.Draft
             && x.Status != DocumentStatus.Rejected);
         var resp = MapDocumentToResponse(doc, etax.GetValueOrDefault(documentId),
-            upstream, downstream, pct, status,
+            upstream, downstream, conv,
             pceRows.Count > 0, pceRows.Count, pceRows.Sum(r => r.Amount), bookedByProject,
             pceByLine,
             servedAsReceipt: ComputeServedAsReceipt(doc, hasSeparateReceiptDoc,
@@ -1931,26 +1935,104 @@ public partial class DocumentService : IDocumentService
         doc.InputVatBecameClaimableAt = post.Period;
     }
 
-    private async Task<(decimal? Pct, string? Status)> ComputeConversionStatusAsync(Guid companyId, Document source)
+    /// <summary>ผลการออกเอกสารต่อของใบต้นทาง 1 ใบ — ความคืบหน้า (สูตรเดียว <see cref="DocumentConversionProgress.Evaluate"/>) ·
+    /// ใบลูกล่าสุดที่ยังมีผล · จำนวนใบลูกที่ยังมีผลทั้งหมด</summary>
+    internal sealed record ConversionSummary(
+        DocumentConversionProgress.Progress Progress, DocumentBrief? Latest, int ActiveChildCount);
+
+    /// <summary>
+    /// ความคืบหน้าการออกเอกสารต่อของ<b>หลายใบในครั้งเดียว</b> — ตัวเดียวที่หน้ารวม (<c>GetDocumentsAsync</c>) ·
+    /// หน้ารายละเอียด (<c>GetDocumentAsync</c>) · ตัวกรอง (<c>ResolveConversionStateIdsAsync</c>) เรียก (รอบ 196 · ทีม Q)
+    ///
+    /// <para>query คงที่ 2 ครั้งไม่ว่ากี่ใบ (ไม่ใช่ N+1) · ทุก query กรอง <c>CompanyId == companyId</c> (เดิม
+    /// <c>ComputeConversionStatusAsync</c> ค้น <c>DocumentLines</c> ด้วย SourceLineId อย่างเดียว ไม่ดูบริษัท — กฎ M) ·
+    /// ใบลูกที่ Voided/Rejected/ลบ ไม่นับทั้งจำนวนและการเอ่ยชื่อ (ยกเลิกใบแจ้งหนี้ ⇒ ใบเสนอราคากลับเป็น "ยังไม่ออก")</para>
+    /// </summary>
+    /// <param name="sourceTotals">Id ใบต้นทาง → Σ จำนวนบรรทัดของใบนั้น</param>
+    private async Task<Dictionary<Guid, ConversionSummary>> LoadConversionSummariesAsync(
+        Guid companyId, IReadOnlyDictionary<Guid, decimal> sourceTotals)
     {
-        if (source.Lines == null || source.Lines.Count == 0) return (null, null);
-        var sourceLineIds = source.Lines.Select(l => l.Id).ToList();
-        var totalSourceQty = source.Lines.Sum(l => l.Quantity);
-        if (totalSourceQty <= 0) return (null, null);
-        var consumed = await _db.DocumentLines
-            .Where(l => l.SourceLineId.HasValue && sourceLineIds.Contains(l.SourceLineId.Value))
-            .Where(l => !l.Document.IsDeleted
-                && l.Document.Status != DocumentStatus.Voided
-                && l.Document.Status != DocumentStatus.Rejected)
-            .SumAsync(l => (decimal?)l.Quantity) ?? 0;
-        var pct = Math.Min(100, Math.Round((consumed / totalSourceQty) * 100, 1, MidpointRounding.AwayFromZero));
-        var status = pct switch
+        var result = new Dictionary<Guid, ConversionSummary>();
+        if (sourceTotals.Count == 0) return result;
+        var srcIds = sourceTotals.Keys.ToList();
+        var inactive = DocumentConversionProgress.InactiveChildStatuses;
+
+        // (1) จำนวนที่ใบลูกยกบรรทัดไปแล้ว (DocumentLine.SourceLineId → บรรทัดของใบต้นทาง) — ทั้งชุดใน query เดียว
+        var consumed = await (
+            from cl in _db.DocumentLines.AsNoTracking()
+            join sl in _db.DocumentLines.AsNoTracking() on cl.SourceLineId equals (Guid?)sl.Id
+            join sd in _db.Documents.AsNoTracking() on sl.DocumentId equals sd.Id
+            join cd in _db.Documents.AsNoTracking() on cl.DocumentId equals cd.Id
+            where srcIds.Contains(sl.DocumentId)
+                  && sd.CompanyId == companyId
+                  && cd.CompanyId == companyId && !cd.IsDeleted
+                  && !inactive.Contains(cd.Status)
+            select new { SourceDocId = sl.DocumentId, ChildId = cd.Id, cd.DocumentType, cl.Quantity })
+            .ToListAsync();
+
+        // (2) ใบลูกที่ยังมีผล — ผูกด้วย RelatedDocumentId (รวมใบที่ไม่ได้ยกรายการ เช่น ใบแจ้งหนี้มัดจำ)
+        //     หรือเป็นเจ้าของบรรทัดที่ยกมาจาก (1)
+        var lineChildIds = consumed.Select(c => c.ChildId).Distinct().ToList();
+        var children = await _db.Documents.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted
+                && !inactive.Contains(c.Status)
+                && ((c.RelatedDocumentId != null && srcIds.Contains(c.RelatedDocumentId.Value))
+                    || lineChildIds.Contains(c.Id)))
+            .Select(c => new
+            {
+                c.Id, c.RelatedDocumentId, c.DocumentNumber, c.DocumentType, c.Status,
+                c.DocumentDate, c.TotalAmount, c.CreatedAt,
+            })
+            .ToListAsync();
+
+        var childById = children.ToDictionary(c => c.Id);
+        var consumedBySource = consumed.ToLookup(c => c.SourceDocId);
+        var linkedBySource = children.Where(c => c.RelatedDocumentId.HasValue)
+            .ToLookup(c => c.RelatedDocumentId!.Value);
+
+        foreach (var (srcId, totalQty) in sourceTotals)
         {
-            >= 100 => "Full",
-            > 0 => "Partial",
-            _ => "None",
-        };
-        return (pct, status);
+            var rows = consumedBySource[srcId].ToList();
+            var linkedIds = linkedBySource[srcId].Select(c => c.Id).ToList();
+            var progress = DocumentConversionProgress.Evaluate(totalQty,
+                rows.Select(r => (r.DocumentType, r.Quantity)), linkedIds.Count > 0);
+            var mine = linkedIds.Concat(rows.Select(r => r.ChildId)).Distinct()
+                .Where(id => childById.ContainsKey(id))
+                .Select(id => childById[id])
+                .OrderByDescending(c => c.DocumentDate).ThenByDescending(c => c.CreatedAt)
+                .ToList();
+            DocumentBrief? latest = null;
+            if (mine.Count > 0)
+            {
+                var c0 = mine[0];
+                latest = new DocumentBrief(c0.Id, c0.DocumentNumber, c0.DocumentType, c0.Status,
+                    c0.DocumentDate, c0.TotalAmount);
+            }
+            result[srcId] = new ConversionSummary(progress, latest, mine.Count);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Id ของใบใน <paramref name="candidates"/> ที่สถานะการออกเอกสารต่อ = <paramref name="wanted"/> — ตัดสินด้วย
+    /// <see cref="LoadConversionSummariesAsync"/> ตัวเดียวกับป้ายบนแถว (ตัวกรองกับป้ายจึงไม่มีวันขัดกัน)
+    ///
+    /// <para>ต้นทุน: ดึง Id ของใบที่ผ่านตัวกรองอื่นแล้ว (ชนิดต้นทางเท่านั้น) + 3 query รวม ไม่ขึ้นกับจำนวนหน้า ·
+    /// ใช้เฉพาะเมื่อผู้ใช้เลือกตัวกรองนี้/ตัวกรอง "คงค้างนาน"</para>
+    /// </summary>
+    private async Task<List<Guid>> ResolveConversionStateIdsAsync(
+        Guid companyId, IQueryable<Document> candidates, ConversionProgressState wanted)
+    {
+        var candIds = await candidates.Where(d => d.CompanyId == companyId).Select(d => d.Id).ToListAsync();
+        if (candIds.Count == 0) return candIds;
+        var totals = await _db.DocumentLines.AsNoTracking()
+            .Where(l => candIds.Contains(l.DocumentId) && l.Document.CompanyId == companyId)
+            .GroupBy(l => l.DocumentId)
+            .Select(g => new { DocId = g.Key, Qty = g.Sum(l => l.Quantity) })
+            .ToDictionaryAsync(g => g.DocId, g => g.Qty);
+        var sourceTotals = candIds.ToDictionary(id => id, id => totals.GetValueOrDefault(id));
+        var summaries = await LoadConversionSummariesAsync(companyId, sourceTotals);
+        return summaries.Where(kv => kv.Value.Progress.State == wanted).Select(kv => kv.Key).ToList();
     }
 
     public async Task<DocumentResponse> GetDocumentForUserAsync(Guid companyId, Guid documentId, Guid userId)
@@ -1991,9 +2073,9 @@ public partial class DocumentService : IDocumentService
             .ToList();
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null)
     {
-        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types);
+        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types, conversion);
         if (_sensitivity == null) return page;
         var visible = await _sensitivity.GetVisibleKindsAsync(companyId, userId);
 
@@ -2020,7 +2102,7 @@ public partial class DocumentService : IDocumentService
     // ข้อความชุดเดียวกับทางอ่านอื่นของเอกสารลับ (อีเมล — ฝ่ายค้านรอบ 193 รอบสอง W2-P6) · ตัวตั้งอยู่ที่ Helpers/SensitivityAccess
     private static string SensitivityRedactReason(SensitivityKind kind) => Accounting.Helpers.SensitivityAccess.RedactReason(kind);
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null)
     {
         var query = _db.Documents
             .Include(d => d.Lines)
@@ -2076,6 +2158,30 @@ public partial class DocumentService : IDocumentService
             var search = $"%{request.Search}%";
             query = query.Where(d => EF.Functions.ILike(d.DocumentNumber, search)
                 || (d.Contact != null && EF.Functions.ILike(d.Contact.Name, search)));
+        }
+
+        // ตัวกรอง "ออกเอกสารต่อแล้วหรือยัง" (รอบ 196 · ทีม Q) — มีความหมายเฉพาะชนิดต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ)
+        // ที่ออกแล้วและยังมีผล (ร่าง/รออนุมัติ/ถูกปฏิเสธ/ยกเลิก ไม่อยู่ในสามกลุ่ม — ป้ายบนแถวของใบพวกนั้นก็ไม่ขึ้น) ·
+        // ตัดสินด้วยตัวเดียวกับป้ายบนแถว (ResolveConversionStateIdsAsync → LoadConversionSummariesAsync) หลังตัวกรองอื่นครบแล้ว
+        if (conversion.HasValue)
+        {
+            var bearing = DocumentConversionProgress.SourceTypes;
+            var notIssued = DocumentStatusRules.NotIssued;
+            query = query.Where(d => bearing.Contains(d.DocumentType)
+                && !notIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided);
+            var matchIds = await ResolveConversionStateIdsAsync(companyId, query, conversion.Value);
+            query = query.Where(d => matchIds.Contains(d.Id));
+        }
+
+        // "คงค้างนาน" ต้องไม่รวมใบต้นทางที่ออกเอกสารต่อครบแล้ว (ป้ายบนแถวบอก ✓ จบขั้นตอน และ StaleDays = null) —
+        // ตัวตัดสินเดียวกับป้าย (เดิมใบเสนอราคาที่ออกใบแจ้งหนี้ครบแล้วติดทั้งตัวกรองนี้และชิป 🕒 คงค้าง)
+        if (staleOnly)
+        {
+            var bearing = DocumentConversionProgress.SourceTypes;
+            var fullIds = await ResolveConversionStateIdsAsync(companyId,
+                query.Where(d => bearing.Contains(d.DocumentType)), ConversionProgressState.Full);
+            if (fullIds.Count > 0)
+                query = query.Where(d => !fullIds.Contains(d.Id));
         }
 
         var total = await query.CountAsync();
@@ -2150,10 +2256,18 @@ public partial class DocumentService : IDocumentService
                 settledOnPage.TryGetValue(d.Id, out var paidOn) ? paidOn : null);
         var titles = await PdfGenerationService.ResolveDocumentTitlesAsync(_db, companyId, items);
 
+        // ออกเอกสารต่อแล้วหรือยัง — batch ต่อหน้า (query คงที่ 2 ครั้ง) ด้วยตัวเดียวกับหน้ารายละเอียด (รอบ 196)
+        // เดิมไม่ส่ง ⇒ ใบเสนอราคาที่ออกใบแจ้งหนี้แล้วก็ขึ้น "⏳ รอดำเนินการต่อ" ทุกใบ (ป้ายโกหก)
+        var conversionTotals = items
+            .Where(d => DocumentConversionProgress.IsConversionBearing(d.DocumentType))
+            .ToDictionary(d => d.Id, d => d.Lines.Sum(l => l.Quantity));
+        var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
+
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
+                    conversion: conversionByDoc.GetValueOrDefault(d.Id),
                     hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
                     servedAsReceipt: d.ServedAsReceipt) with
                 {
@@ -3183,15 +3297,9 @@ public partial class DocumentService : IDocumentService
         DocumentType.DeliveryNote,         // ใบส่งของ — แก้รายการ/จำนวนก่อนส่งจริง
     };
 
-    private static string DocTypeLabel(DocumentType t) => t switch
-    {
-        DocumentType.Quotation => "ใบเสนอราคา",
-        DocumentType.PurchaseOrder => "ใบสั่งซื้อ",
-        DocumentType.PurchaseRequisition => "ใบขอซื้อ",
-        DocumentType.BillingNote => "ใบวางบิล",
-        DocumentType.DeliveryNote => "ใบส่งของ",
-        _ => "เอกสาร",
-    };
+    // ชื่อชนิดจากตารางเดียว (Helpers/DocumentTypeNames · รอบ 196) — เดิมเป็นสำเนา 5 ชนิดของตัวเอง
+    // (ผู้เรียกทุกจุดส่งเฉพาะ RevisableTypes ⇒ ข้อความเหมือนเดิมทุกตัว)
+    private static string DocTypeLabel(DocumentType t) => Accounting.Helpers.DocumentTypeNames.Title(t, "th");
 
     /// <summary>snapshot สภาพเอกสารทั้งใบเป็น JSON โครงคงที่ — เก็บลง
     /// DocumentRevisions ก่อน apply การแก้ทุกครั้ง. รวมหลักฐานที่ผูกพันกับฉบับ
@@ -10205,20 +10313,16 @@ public partial class DocumentService : IDocumentService
 
     private enum FulfillmentAxis { None, Delivery, Billing }
 
-    private static FulfillmentAxis GetFulfillmentAxis(DocumentType type) => type switch
-    {
-        // Delivery-axis children — track "how much was physically moved":
-        //   • DeliveryNote on the sales side.
-        //   • GoodsReceiptNote on the purchase side (received qty from
-        //     the PO; multiple partial GRNs are normal).
-        DocumentType.DeliveryNote or DocumentType.GoodsReceiptNote
-            => FulfillmentAxis.Delivery,
-        // Billing-axis children — track "how much was invoiced":
-        DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
-            or DocumentType.PurchaseInvoice or DocumentType.Expense
-            or DocumentType.PurchaseOrder => FulfillmentAxis.Billing,
-        _ => FulfillmentAxis.None
-    };
+    // ตารางแกนอยู่ที่ Helpers/DocumentConversionProgress.AxisOf ตัวเดียว (รอบ 196) — ด่านกันแปลงเกินกับป้าย/ตัวกรอง
+    // "ออกเอกสารต่อแล้วกี่ %" บนหน้ารวมต้องนับแกนเดียวกัน: Delivery = ใบส่งของ/ใบรับสินค้า ·
+    // Billing = ใบแจ้งหนี้/ใบกำกับ/ใบวางบิล/ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย/ใบสั่งซื้อ · อื่น = None
+    private static FulfillmentAxis GetFulfillmentAxis(DocumentType type) =>
+        DocumentConversionProgress.AxisOf(type) switch
+        {
+            DocumentConversionProgress.Axis.Delivery => FulfillmentAxis.Delivery,
+            DocumentConversionProgress.Axis.Billing => FulfillmentAxis.Billing,
+            _ => FulfillmentAxis.None
+        };
 
     private static string AxisLabel(FulfillmentAxis axis) => axis switch
     {
@@ -17021,13 +17125,13 @@ public partial class DocumentService : IDocumentService
 
     private static DocumentResponse MapDocumentToResponse(Document d, (Guid EtaxId, EtaxStatus Status)? etax = null,
         DocumentBrief? upstream = null, List<DocumentBrief>? downstream = null,
-        decimal? conversionPercent = null, string? conversionStatus = null,
+        ConversionSummary? conversion = null,
         bool hasPce = false, int pceCount = 0, decimal pceAmount = 0,
         List<ProjectCostBrief>? bookedProjects = null,
         Dictionary<Guid, Guid>? pceByLine = null,
         bool servedAsReceipt = false)
     {
-        var (lifecycle, reason) = ComputeLifecycle(d, conversionPercent, downstream);
+        var (lifecycle, reason) = ComputeLifecycle(d, conversion);
         // เหตุผลจริงที่ภาษีซื้อยังค้าง 11640 — คำนวณจาก checker + guard เดียวกับ
         // ReclassifyUndueInputVatAsync เพื่อให้ UI บอกผู้ใช้ตรง ๆ ว่าขาดอะไร
         // (ก่อนหน้านี้ UI เดาว่า "เลขภาษีผู้ขายไม่ถูก" เสมอ → ผู้ใช้งง)
@@ -17148,7 +17252,9 @@ public partial class DocumentService : IDocumentService
         RdComplianceIssuesJson: d.RdComplianceIssuesJson,
         OcrTenantMismatchFlag: d.OcrTenantMismatchFlag,
         AgingDays: d.AgingDays,
-        StaleDays: ComputeStaleDays(d),
+        // ใบต้นทางที่ออกเอกสารต่อครบแล้ว = จบขั้นตอน ⇒ ไม่มีชิป "🕒 คงค้าง" (ตัดสินชุดเดียวกับตัวกรอง staleOnly · รอบ 196)
+        StaleDays: conversion?.Progress.State == ConversionProgressState.Full
+            && DocumentConversionProgress.IsConversionBearing(d.DocumentType) ? null : ComputeStaleDays(d),
         Currency: d.Currency,
         ExchangeRate: d.ExchangeRate,
         Sensitivity: d.Sensitivity,
@@ -17172,14 +17278,17 @@ public partial class DocumentService : IDocumentService
         RelatedDocument: upstream,
         CnDnPurchaseSideOverride: d.CnDnPurchaseSideOverride,
         ConvertedToDocuments: downstream,
-        ConversionCompletionPercent: conversionPercent,
-        ConversionStatus: conversionStatus,
+        ConversionCompletionPercent: conversion?.Progress.Percent,
+        ConversionStatus: conversion?.Progress.State.ToString(),
         HasProjectCostEntries: hasPce,
         ProjectCostEntryCount: pceCount,
         ProjectCostBookedAmount: pceAmount,
         BookedProjects: bookedProjects,
         LifecycleStatus: lifecycle,
         LifecycleReason: reason,
+        ConvertedToLatest: conversion?.Latest,
+        ConvertedToActiveCount: conversion?.ActiveChildCount,
+        BalanceDueApplies: ArApScope.CarriesBalance(d.DocumentType),
         InputVatPostedAsUndue: d.InputVatPostedAsUndue,
         InputVatBecameClaimableAt: d.InputVatBecameClaimableAt,
         InputVatAccountCodeOverride: d.InputVatAccountCodeOverride,
@@ -17290,8 +17399,8 @@ public partial class DocumentService : IDocumentService
     /// surfaces "Done" even when ConversionStatus is null. Pure
     /// function — no DB access — so it can be reused server- and
     /// client-side.</summary>
-    private static (string Status, string Reason) ComputeLifecycle(
-        Document d, decimal? conversionPercent, List<DocumentBrief>? downstream)
+    internal static (string Status, string Reason) ComputeLifecycle(
+        Document d, ConversionSummary? conversion)
     {
         // Voided / Rejected always win — purpose terminated. The status
         // badge already says "ยกเลิก" / "ถูกปฏิเสธ"; a separate lifecycle
@@ -17310,6 +17419,20 @@ public partial class DocumentService : IDocumentService
         if (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval)
             return ("Open", "");
 
+        // Conversion-bearing — purpose fulfilled when downstream consumes it.
+        // ชุดชนิด + ข้อความอยู่ที่ Helpers/DocumentConversionProgress ตัวเดียว (รอบ 196): บอกว่า "ไปเป็นอะไร"
+        // ("✓ ออกใบแจ้งหนี้ INV-… แล้ว" / "◐ ออกใบแจ้งหนี้ … แล้ว 60%") · ใบลูกที่ถูกยกเลิกไม่นับ ·
+        // ยังไม่ได้คำนวณ (conversion == null) ⇒ ไม่ขึ้นป้าย — ห้ามเดาว่า "ยังไม่ออก" (บั๊กเดิมของหน้ารวม)
+        if (DocumentConversionProgress.IsConversionBearing(d.DocumentType))
+        {
+            if (conversion == null) return ("Open", "");
+            DocumentConversionProgress.ChildRef? latest = conversion.Latest == null
+                ? (DocumentConversionProgress.ChildRef?)null
+                : new DocumentConversionProgress.ChildRef(conversion.Latest.DocumentNumber,
+                    conversion.Latest.DocumentType, conversion.Latest.Status);
+            return DocumentConversionProgress.Lifecycle(conversion.Progress, latest, conversion.ActiveChildCount);
+        }
+
         // Per-type rules.
         switch (d.DocumentType)
         {
@@ -17326,21 +17449,6 @@ public partial class DocumentService : IDocumentService
                 if (d.Status == DocumentStatus.Overdue)
                     return ("Open", $"⚠ เกินกำหนด · ค้าง {d.BalanceDue:N2}");
                 return ("Open", $"⏳ รอจ่าย/รับชำระ · {d.BalanceDue:N2}");
-            }
-
-            // Conversion-bearing — purpose fulfilled when downstream consumes it.
-            case DocumentType.Quotation:
-            case DocumentType.PurchaseRequisition:
-            case DocumentType.PurchaseOrder:
-            case DocumentType.GoodsReceiptNote:
-            case DocumentType.DeliveryNote:
-            {
-                var nextLabel = downstream?.FirstOrDefault()?.DocumentNumber;
-                if (conversionPercent.HasValue && conversionPercent.Value >= 100m)
-                    return ("Done", nextLabel != null ? $"✓ แปลงเป็น {nextLabel}" : "✓ ดำเนินการครบแล้ว");
-                if (conversionPercent.HasValue && conversionPercent.Value > 0m)
-                    return ("PartiallyDone", $"◐ แปลงไป {conversionPercent.Value:F0}%");
-                return ("Open", "⏳ รอดำเนินการต่อ");
             }
 
             // One-shot terminal docs (PV/Receipt/RV/CIL/CN/DN). Once

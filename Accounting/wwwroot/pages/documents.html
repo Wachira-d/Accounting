@@ -221,6 +221,12 @@
         <option value="Voided" data-i18n="common.cancel">ยกเลิก</option>
         <option value="stale">⚠️ คงค้างนาน (60+ วัน)</option>
       </select>
+      <!-- รอบ 196: "ใบไหนออกใบแจ้งหนี้แล้ว ดูจากหน้ารวมได้เลย" — กรองที่เซิร์ฟเวอร์ (ก่อนแบ่งหน้า) ·
+           ตัวเลือก/ป้าย/ชนิดที่ใช้ได้มาจาก GET document/conversion-filter-options (Helpers/DocumentConversionProgress) -->
+      <select class="filter-select" id="conversionFilter" onchange="Page.page = 1; Page.load()" style="display:none"
+              title="ใบเสนอราคา/ใบขอซื้อ/ใบสั่งซื้อ/ใบรับสินค้า/ใบส่งของ — ออกเอกสารต่อ (เช่น ใบแจ้งหนี้) ไปแล้วหรือยัง">
+        <option value="">ออกเอกสารต่อ: ทั้งหมด</option>
+      </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
       </select>
@@ -1722,6 +1728,9 @@
           const si = document.getElementById('searchInput');
           if (si) si.value = searchParam;
         }
+
+        // ตัวเลือกตัวกรอง "ออกเอกสารต่อ" — โหลดก่อนลิสต์รอบแรก (ล้มเงียบได้: ช่องนี้แค่ซ่อน ลิสต์ยังทำงานครบ)
+        await this.loadConversionFilterOptions();
 
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
@@ -7149,6 +7158,33 @@
           Layout.toast('สร้างผู้ติดต่อไม่สำเร็จ: ' + e.message, 'error');
         }
       },
+      // ── ตัวกรอง "ออกเอกสารต่อแล้วหรือยัง" (รอบ 196) ──────────────────────────────
+      // เซิร์ฟเวอร์ส่ง: ชนิดที่ใช้ได้ (ชื่อ enum) + ตัวเลือก {value: ชื่อ enum, label: ป้ายไทย} — หน้าเว็บไม่มีสำเนารายการ
+      async loadConversionFilterOptions() {
+        const sel = document.getElementById('conversionFilter');
+        if (!sel) return;
+        try {
+          const res = await Layout.api().getDocumentConversionFilterOptions();
+          const data = res?.data || {};
+          this._conversionFilterTypes = Array.isArray(data.documentTypes) ? data.documentTypes : [];
+          const opts = Array.isArray(data.options) ? data.options : [];
+          sel.innerHTML = '<option value="">ออกเอกสารต่อ: ทั้งหมด</option>'
+            + opts.map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        } catch (e) {
+          // โหลดไม่ได้ = ไม่มีตัวกรองนี้ (ซ่อน) — ห้ามเดาตัวเลือกเอง
+          this._conversionFilterTypes = [];
+        }
+        this._syncConversionFilter();
+      },
+      // แสดงเมื่อแท็บ "ทั้งหมด" หรือแท็บของชนิดที่เซิร์ฟเวอร์บอกว่าใช้ได้ · ซ่อนแล้วล้างค่า (ห้ามกรองค้างแบบมองไม่เห็น)
+      _syncConversionFilter() {
+        const sel = document.getElementById('conversionFilter');
+        if (!sel) return;
+        const types = this._conversionFilterTypes || [];
+        const show = types.length > 0 && (!this.docType || types.includes(this.docType));
+        sel.style.display = show ? '' : 'none';
+        if (!show) sel.value = '';
+      },
       populateProjects() {
         const projects = this.projects || [];
         const optionsHtml = projects.map(p =>
@@ -7195,6 +7231,7 @@
         this.side = side;
         this.docType = '';
         this.page = 1;
+        this._syncConversionFilter();
         // Update side buttons
         ['sideAll','sideRevenue','sideExpense'].forEach(id => {
           const btn = document.getElementById(id);
@@ -7225,6 +7262,7 @@
         el.classList.add('active');
         this.docType = el.dataset.type;
         this.page = 1;
+        this._syncConversionFilter();
         this.loadPeriods();
         this.load();
       },
@@ -7265,6 +7303,9 @@
         }
         if (status === 'stale') q += '&staleOnly=true';
         else if (status) q += `&status=${status}`;
+        const convSel = document.getElementById('conversionFilter');
+        if (convSel && convSel.style.display !== 'none' && convSel.value)
+          q += `&conversion=${encodeURIComponent(convSel.value)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
@@ -7316,8 +7357,16 @@
             const settlementBadge = d.isSettlementReceipt
               ? `<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:4px;padding:1px 6px;font-size:10px;margin-left:6px;white-space:nowrap" title="ใบเสร็จหลักฐานรับเงินของ ${Layout.esc(d.reference || 'ใบกำกับ/ใบแจ้งหนี้')} — ไม่ลงบัญชี/VAT ซ้ำ (ยอดขายอยู่ที่ใบกำกับต้นทาง)">🧾 หลักฐานรับเงิน${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>`
               : '';
+            // รอบ 196: ใบต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ) — ป้ายบอกว่าออกเป็นอะไรแล้ว ("✓ ออกใบแจ้งหนี้ INV-… แล้ว")
+            // ข้อความ/ชนิด/เงื่อนไขทั้งหมดมาจากเซิร์ฟเวอร์ (Helpers/DocumentConversionProgress) · หน้าเว็บแค่ทำให้กดไปใบลูกได้
+            const _lcNext = d.convertedToLatest && d.convertedToLatest.id ? d.convertedToLatest : null;
+            const _lcTitle = (d.lifecycleReason || '') + (_lcNext ? ' — กดเพื่อเปิดใบล่าสุด' : '')
+              + ((d.convertedToActiveCount || 0) > 1 ? ` (ทั้งหมด ${d.convertedToActiveCount} ใบ ดูครบในหน้ารายละเอียด)` : '');
+            const _lcStyle = `margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700`;
             const lifecycleBadge = (d.lifecycleStatus && (d.lifecycleReason || '').trim())
-              ? `<span title="${this.escapeHtml(d.lifecycleReason || '')}" style="margin-left:6px;padding:1px 7px;background:${lifecycleColor[0]};color:${lifecycleColor[1]};border-radius:6px;font-size:10px;font-weight:700">${this.escapeHtml(d.lifecycleReason)}</span>`
+              ? (_lcNext
+                  ? `<a href="#" onclick="event.stopPropagation();Page.detail('${Layout.jsArg(_lcNext.id)}');return false" title="${this.escapeHtml(_lcTitle)}" style="${_lcStyle};text-decoration:none;cursor:pointer">${this.escapeHtml(d.lifecycleReason)}</a>`
+                  : `<span title="${this.escapeHtml(_lcTitle)}" style="${_lcStyle}">${this.escapeHtml(d.lifecycleReason)}</span>`)
               : '';
             // Aging badge — surfaced inline next to the document number.
             // Tiers: 30+ amber, 60+ orange, 90+ red. Click navigates to
@@ -7328,9 +7377,12 @@
             // is what triggered this fix: aging tracks the days since
             // issuance, but the operator wants the badge to mean "still
             // owed money".
+            // + รอบ 196: ชนิดที่ "ค้างชำระ" ไม่ใช่หนี้ (ใบเสนอราคา/PO/ใบวางบิล ฯลฯ — ธง balanceDueApplies จาก
+            //   Helpers/ArApScope ฝั่งเซิร์ฟเวอร์) ไม่ขึ้นชิปอายุหนี้ — เดิมใบเสนอราคาทุกใบติด "⏳ 30+d"
             const suppressAging =
               d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
-              || Number(d.balanceDue ?? 0) <= 0.01;
+              || Number(d.balanceDue ?? 0) <= 0.01
+              || d.balanceDueApplies === false;
             let agingBadge = '';
             if (!suppressAging && d.agingDays && d.agingDays >= 30) {
               const tier = d.agingDays >= 90 ? '90+' : (d.agingDays >= 60 ? '60+' : '30+');
@@ -7391,7 +7443,9 @@
             <td class="text-right">${Layout.money(d.totalAmount)}${(Number(d.depositAppliedAmount) > 0)
                 ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400" title="ยอดรวมคือยอดขายเต็ม; หักมัดจำที่รับไว้ก่อนแล้ว → เงินรับเพิ่มครั้งนี้">หักมัดจำ ${Layout.money(d.depositAppliedAmount)} · รับสุทธิ ${Layout.money((Number(d.totalAmount)||0) - (Number(d.depositAppliedAmount)||0))}</div>`
                 : ''}</td>
-            <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
+            ${d.balanceDueApplies === false
+              ? `<td class="text-right text-gray-400" title="เอกสารชนิดนี้ไม่ใช่การตั้งหนี้ — ไม่มียอดค้างชำระ (หนี้อยู่ที่ใบแจ้งหนี้/ใบกำกับ/ใบแจ้งหนี้ซื้อ)">—</td>`
+              : `<td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>`}
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.detail('${d.id}')" data-i18n="common.view">ดู</button>
@@ -9497,7 +9551,8 @@
           // with "ค้างชำระ" on a document that's been paid, voided, or
           // is still a draft with no obligation yet.
           const _agingSuppress = d.status === 'Paid' || d.status === 'Voided' || d.status === 'Draft'
-              || Number(d.balanceDue ?? 0) <= 0.01;
+              || Number(d.balanceDue ?? 0) <= 0.01
+              || d.balanceDueApplies === false;   // รอบ 196: ไม่ใช่หนี้ (ธงจากเซิร์ฟเวอร์ · ArApScope)
           if (!_agingSuppress && d.agingDays && d.agingDays >= 30) {
             const bg = d.agingDays >= 90 ? '#fee2e2' : (d.agingDays >= 60 ? '#fed7aa' : '#fef3c7');
             const color = d.agingDays >= 90 ? '#991b1b' : (d.agingDays >= 60 ? '#9a3412' : '#92400e');
@@ -9796,7 +9851,7 @@
               <div style="margin-bottom:12px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">
                 <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:6px">📄 เอกสารต่อเนื่อง (ออกต่อจากใบนี้)</div>
                 <div style="display:flex;flex-wrap:wrap;gap:8px">
-                  ${d.convertedToDocuments.map(c => `<a href="#" onclick="Page.detail('${c.id}');return false" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;text-decoration:none;color:#1e40af" title="${Layout.money(c.totalAmount)}">${Layout.docTypeLabel(c.documentType)} <b>${c.documentNumber}</b></a>`).join('')}
+                  ${d.convertedToDocuments.map(c => `<a href="#" onclick="Page.detail('${Layout.jsArg(c.id)}');return false" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:white;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;text-decoration:none;color:#1e40af" title="${Layout.money(c.totalAmount)}">${Layout.docTypeLabel(c.documentType)} <b>${Layout.esc(c.documentNumber)}</b> ${Layout.statusBadge(c.status)}</a>`).join('')}
                 </div>
               </div>` : ''}
             ${d.hasProjectCostEntries ? `
@@ -9859,7 +9914,7 @@
               ${Number(d.depositAppliedAmount || 0) > 0 ? `
               <div class="text-sm" style="color:#0369a1">หักเงินมัดจำที่รับไว้: <strong>-${Layout.money(d.depositAppliedAmount)}</strong></div>
               <div class="text-sm font-semibold" style="color:#0369a1">รับชำระสุทธิ: ${Layout.money(Number(d.totalAmount) - Number(d.depositAppliedAmount))}</div>` : ''}
-              ${d.balanceDue > 0 ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
+              ${d.balanceDue > 0 && d.balanceDueApplies !== false ? `<div class="text-danger font-semibold" style="margin-top:4px">ค้างชำระ: ${Layout.money(d.balanceDue)}</div>` : ''}
             </div>
             ${d.taxInvoiceTitleNotice ? `<div style="margin-top:12px;padding:12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px">
               <div class="text-xs" style="color:#991B1B;font-weight:600">⚠️ หัวเอกสารพิมพ์เป็น "ใบเสร็จรับเงิน" (ไม่ใช่ใบกำกับภาษีอย่างย่อ)</div>
