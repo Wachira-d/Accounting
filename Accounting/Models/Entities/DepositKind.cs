@@ -43,7 +43,8 @@ public class DepositKind : TenantEntity
     /// <summary>คำอธิบายเพิ่มเติม (แสดงในหน้าตั้งค่า)</summary>
     public string? Description { get; set; }
 
-    /// <summary>ประเภทเริ่มต้นของบริษัท (ชั้นที่ 4 ของลำดับ) — มีได้ตัวเดียวต่อบริษัท (หน้าตั้งค่าเป็นผู้คุม)</summary>
+    /// <summary>ประเภทเริ่มต้นของบริษัท (ชั้นที่ 4 ของลำดับ) — มีได้ตัวเดียวต่อบริษัท (unique index <c>UX_DepositKinds_Company_Default</c> ·
+    /// <c>DepositKindService.SetDefaultAsync</c> ล้างตัวเดิมก่อนตั้งตัวใหม่ในธุรกรรมเดียว)</summary>
     public bool IsDefault { get; set; }
 
     /// <summary>ปิดใช้ = ไม่ถูกเลือกโดยตัวตัดสิน (ตกไปชั้นถัดไป) · ใบเดิมที่อ้างถึงยังอยู่ครบ</summary>

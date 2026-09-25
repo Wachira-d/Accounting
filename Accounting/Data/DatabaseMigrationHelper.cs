@@ -117,6 +117,8 @@ public static class DatabaseMigrationHelper
             """CREATE TABLE IF NOT EXISTS "DepositKinds" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Code" varchar(32) NOT NULL, "Name" varchar(256) NOT NULL, "Nature" integer NOT NULL DEFAULT 1, "VatTreatment" integer NULL, "LiabilityAccountCode" varchar(20) NULL, "ForfeitAccountCode" varchar(20) NULL, "PolicyReason" text NULL, "Description" text NULL, "IsDefault" boolean NOT NULL DEFAULT false, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "SeedKey" varchar(64) NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_SeedKey" ON "DepositKinds" ("CompanyId", "SeedKey") WHERE "SeedKey" IS NOT NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_Code" ON "DepositKinds" ("CompanyId", "Code") WHERE "IsDeleted" = false;""",
+            // รอบ 194 ทีม C — ประเภทเริ่มต้นตัวเดียวต่อบริษัท (seed ให้ ADVANCE ตัวเดียว · lp:{id} ไม่ใช่เริ่มต้น ⇒ ข้อมูลเดิมไม่ชน)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_Default" ON "DepositKinds" ("CompanyId", "IsDefault") WHERE "IsDefault" = true AND "IsDeleted" = false;""",
             // ใบมัดจำตรึงประเภท/ลักษณะ/ชื่อ/หมายเหตุนโยบายตอนสร้าง — ใบเดิม NULL (ไม่ทราบ)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositKindId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositNature" integer NULL;""",

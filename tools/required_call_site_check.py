@@ -613,6 +613,39 @@ RULES += [
          why="รอบ 194 โคลนใบมัดจำต้องเป็นใบมัดจำ (เดิมหาย ⇒ รายได้แทนหนี้สินมัดจำ) พร้อมประเภท — ใบใหม่ถูกตัดสินใหม่ผ่าน CreateDocumentAsync"),
 ]
 
+# ── รอบ 194 ทีม C (ตั้งค่า + ช่องทาง · spec S2/S5/S6 C-1): ด่านบันทึกประเภท · ยกเลิกการจองห้าม void ใบมัดจำ ·
+#    integration คำนวณ mismatch ผ่าน ResolveKind (ตัวตัดสินเดียว) + ปฏิเสธรหัสที่ไม่รู้จัก/หักเงินประกันแบบขับ JE ──
+DKSVC = "Services/Implementations/DepositKindService.cs"
+CMS_BOOK = "Services/Implementations/CmsBookingService.cs"
+_DK_SAVE_WHY = "รอบ 194 S2 บันทึกประเภทเงินมัดจำต้องผ่าน KindProblem (ราคา+เลื่อน VAT ต้องมีเหตุผล · ค่าขยะ enum) — ขาด = ประเภทผิดกฎหมายถูกบันทึกเงียบ"
+_CMS_C1_WHY = ("รอบ 194 S6 C-1 ยกเลิกการจองห้าม void ใบมัดจำที่ออกแล้ว (ลบภาษีขายเดือนที่รับเงินย้อนหลัง · §86/4) — "
+               "ต้องตัดสินด้วย CmsBookingCancelPolicy ก่อนแตะ VoidDocumentAsync")
+RULES += [
+    dict(file=DKSVC, method="ApplyAsync", must=["DepositPolicyResolver.KindProblem("], why=_DK_SAVE_WHY),
+    dict(file=DKSVC, method="CreateAsync", must=["ApplyAsync(", "DepositKindCatalog.CodeProblem("], why=_DK_SAVE_WHY),
+    dict(file=DKSVC, method="UpdateAsync", must=["ApplyAsync("], why=_DK_SAVE_WHY),
+    # ยกเลิก: ตัดสินก่อน void · ตัวเมธอดสถานะห้ามเรียก void/realize ตรง (ต้องผ่านเมธอดที่ตัดสินแล้ว)
+    dict(file=CMS_BOOK, method="SettleErpDocumentOnCancelAsync", must=["CmsBookingCancelPolicy.DecideOnCancel("],
+         before=[("CmsBookingCancelPolicy.DecideOnCancel(", "VoidDocumentAsync(")], why=_CMS_C1_WHY),
+    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "RealizeDepositOnCompleteAsync("],
+         forbid=["VoidDocumentAsync(", "RealizeDepositAsync("], why=_CMS_C1_WHY),
+    dict(file=CMS_BOOK, method="RealizeDepositOnCompleteAsync", must=["CmsBookingCancelPolicy.DecideOnComplete("],
+         before=[("CmsBookingCancelPolicy.DecideOnComplete(", "RealizeDepositAsync(")],
+         why="รอบ 194 มัดจำเต็มยอดของบริษัทที่จด VAT ห้ามรับรู้ตรงเข้ารายได้ (= รายได้ไม่มี VAT ไม่มีใบกำกับ) — ตัดสินก่อนรับรู้"),
+    # CMS ส่งประเภทเฉพาะบริษัทที่ตั้งค่าแล้ว (ไม่งั้นพฤติกรรมเดิมทุกตัวอักษร)
+    dict(file=CMS_BOOK, method="SyncBookingToErpAsync", must=["DepositKindCatalog.LoadContextAsync(", "CompanyConfigured"],
+         why="รอบ 194 S4 CMS ส่ง DepositKindId เฉพาะบริษัทที่ตั้งค่ามัดจำเองแล้ว — ส่งเสมอ = บริษัทที่ไม่เคยตั้งได้ใบรูปใหม่เงียบ ๆ"),
+    # integration: mismatch ผ่านตัวตัดสินประเภทตัวเดียว (ห้ามกลับไปใช้ Resolve เดิมที่ไม่รู้จักประเภท)
+    dict(file=INTEGRATION, method="DepositTreatmentMismatchNoteAsync", must=["DepositKindCatalog.Decide("],
+         forbid=["DepositPolicyResolver.Resolve("], why="รอบ 194 S5 หมายเหตุ mismatch คำนวณผ่าน ResolveKind (ประเภทที่คู่ค้าระบุ/ประเภทเริ่มต้น)"),
+    dict(file=INTEGRATION, method="DepositKindPayloadRejectionAsync",
+         must=["DepositKindCatalog.UnusableCodeMessage(", "DepositPolicyResolver.SecurityDeductionProblem("],
+         why="รอบ 194 S5/S2 depositKindCode ที่ไม่รู้จัก ⇒ 400 (ไม่ตกเงียบ) · หักเงินประกันแบบขับ JE ⇒ DEP-SEC-DEDUCT"),
+    dict(file=INTEGRATION, method="ProcessInvoiceAsync", must=["DepositKindPayloadRejectionAsync("],
+         before=[("DepositKindPayloadRejectionAsync(", "TaxedDrivesRejectionAsync(")],
+         why="รอบ 194 S5 ตรวจรหัสประเภทก่อนทุกเส้น (idempotent/resync/สร้างใหม่) — ไม่มีการออกเลข"),
+]
+
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)

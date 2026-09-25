@@ -1429,6 +1429,13 @@ const API = {
       // ฝั่ง client ผูกไว้ ⇒ แท็บ "ลำดับเลขที่" เป็นตารางว่างที่แก้อะไรไม่ได้
       createNumberSeries: (d) => API.post(`${base}/settings/number-series`, d),
       updateNumberSeries: (id, d) => API.put(`${base}/settings/number-series/${id}`, d),
+      // ประเภทเงินมัดจำ (รอบ 194) — รายการ + ตัวเลือก + ตาราง ลักษณะ×โหมด จากเซิร์ฟเวอร์ (DepositKindsController)
+      // ใช้ทั้งหน้าตั้งค่า (settings.html) และฟอร์มเอกสาร (เลือกประเภทบนใบมัดจำ)
+      getDepositKinds: () => API.get(`${base}/deposit-kinds`),
+      createDepositKind: (d) => API.post(`${base}/deposit-kinds`, d),
+      updateDepositKind: (id, d) => API.put(`${base}/deposit-kinds/${id}`, d),
+      deleteDepositKind: (id) => API.del(`${base}/deposit-kinds/${id}`),
+      setDefaultDepositKind: (id) => API.post(`${base}/deposit-kinds/${id}/default`, {}),
       // Email config
       getEmailConfig: () => API.get(`${base}/email-config`),
       updateEmailConfig: (d) => API.put(`${base}/email-config`, d),

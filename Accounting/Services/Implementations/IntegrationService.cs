@@ -713,6 +713,11 @@ public class IntegrationService : IIntegrationService
 
         try
         {
+            // รอบ 194 (spec S5): depositKindCode ที่ไม่รู้จัก/ปิดใช้ ⇒ 400 ข้อความไทย (ไม่ตกเงียบไปค่าตั้งบริษัท) ·
+            // หักเงินประกันแบบขับ JE ⇒ ปฏิเสธ (DEP-SEC-DEDUCT) — ตรวจก่อนทุกเส้น (idempotent/resync/สร้างใหม่) ไม่มีการออกเลข
+            if (await DepositKindPayloadRejectionAsync(companyId, request) is string kindReject)
+                return await RejectTaxedDrivesAsync(log, integrationId, sw, kindReject, null, null);
+
             // Idempotency: if a document with the same ExternalRef already exists,
             // return it instead of creating a duplicate. This makes re-syncs safe.
             if (!string.IsNullOrEmpty(request.ExternalRef))
@@ -1063,7 +1068,8 @@ public class IntegrationService : IIntegrationService
             };
             // รอบ 193 #34 — จังหวะ VAT ของมัดจำที่คู่ค้าแจ้งขัดกับการตั้งค่าบริษัท ⇒ ธงให้นักบัญชีเห็น (ไม่แก้ยอดของคู่ค้า)
             document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(document.InternalNotes,
-                await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
+                await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount,
+                request.DepositKindCode));
 
             _db.Documents.Add(document);
             await _db.SaveChangesAsync();
@@ -2030,20 +2036,51 @@ public class IntegrationService : IIntegrationService
 
     /// <summary>ธงรอบ 193 #34: ใบที่ระบบต้นทาง (เช่น TakeTime) ส่งมาพร้อม "หักมัดจำ" และบอกจังหวะ VAT ของมัดจำ
     /// (<c>DepositOutputVatDeferred</c>) ขัดกับวิธีบันทึกมัดจำของบริษัท — คืนข้อความสำหรับหมายเหตุภายใน · null = ไม่มีมัดจำ
-    /// หรือสอดคล้องกัน · <b>ไม่แก้ยอด/บัญชีที่คู่ค้าคำนวณ</b> (เราไม่รู้ว่าเขายื่นภาษีงวดมัดจำไปแล้วอย่างไร)</summary>
-    private async Task<string?> DepositTreatmentMismatchNoteAsync(Guid companyId, bool payloadDeferred, decimal depositApplied)
+    /// หรือสอดคล้องกัน · <b>ไม่แก้ยอด/บัญชีที่คู่ค้าคำนวณ</b> (เราไม่รู้ว่าเขายื่นภาษีงวดมัดจำไปแล้วอย่างไร)
+    /// <para>รอบ 194 (spec S5): คำนวณผ่านตัวตัดสินประเภทตัวเดียว (<c>DepositKindCatalog.Decide</c> → <c>ResolveKind</c>) —
+    /// ประเภทที่คู่ค้าระบุ (<c>depositKindCode</c>) → ประเภทเริ่มต้นบริษัท → ค่าตั้งบริษัท → ประเภทธุรกิจ · payload เดิม (ไม่ส่งรหัส)
+    /// ได้ผลเหมือนเดิมเมื่อประเภทเริ่มต้นไม่ได้ตั้งโหมด (seed ADVANCE)</para></summary>
+    private async Task<string?> DepositTreatmentMismatchNoteAsync(Guid companyId, bool payloadDeferred, decimal depositApplied,
+        string? depositKindCode)
     {
         if (depositApplied <= 0m) return null;
-        var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
-            .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
-        var setting = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
-            .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
-        var decision = Accounting.Helpers.DepositPolicyResolver.Resolve(
-            Accounting.Helpers.DepositPolicyResolver.NatureOf(industry), setting);
+        var ctx = await Accounting.Helpers.DepositKindCatalog.LoadContextAsync(_db, companyId);
+        var payloadKind = await Accounting.Helpers.DepositKindCatalog.FindByCodeAsync(_db, companyId, depositKindCode);
+        var decision = Accounting.Helpers.DepositKindCatalog.Decide(ctx, payloadKind);
         var note = Accounting.Helpers.DepositPolicyResolver.IntegrationMismatchNote(payloadDeferred, decision);
         if (note != null)
             _logger.LogWarning("Integration deposit VAT timing mismatch company {Company}: {Note}", companyId, note);
         return note;
+    }
+
+    /// <summary>ด่าน payload มัดจำของใบกำกับจากคู่ค้า (รอบ 194 · spec S2/S5) — null = ผ่าน · ข้อความ = ตอบ 400:
+    /// ① <c>depositKindCode</c> ที่ไม่รู้จัก/ปิดใช้ (<c>DepositKindCatalog.UnusableCodeMessage</c> ตัวเดียวกับทุกทางเข้า) ·
+    /// ② หักมัดจำแบบขับ JE (<c>depositAppliedDrivesJournal</c>) กับ<b>เงินประกันที่ต้องคืน</b> — จากประเภทที่ระบุ หรือจากลักษณะที่ตรึงบน
+    /// ใบมัดจำที่อ้าง (<c>DepositPolicyResolver.SecurityDeductionProblem</c>) · ใบมัดจำเดิม (ลักษณะ NULL) ไม่ถูกบล็อก = พฤติกรรมเดิม</summary>
+    private async Task<string?> DepositKindPayloadRejectionAsync(Guid companyId, InboundInvoiceRequest request)
+    {
+        DepositKind? payloadKind = null;
+        if (!string.IsNullOrWhiteSpace(request.DepositKindCode))
+        {
+            payloadKind = await Accounting.Helpers.DepositKindCatalog.FindByCodeAsync(_db, companyId, request.DepositKindCode);
+            if (Accounting.Helpers.DepositKindCatalog.UnusableCodeMessage(request.DepositKindCode, payloadKind) is string bad)
+                return bad + " · ไม่มีการสร้างเอกสาร/ออกเลข";
+        }
+        if (!request.DepositAppliedDrivesJournal || request.DepositAppliedAmount <= 0m) return null;
+
+        var natures = new List<DepositNature?> { payloadKind?.Nature };
+        var refs = DepositReversalMath.ParseDepositRefs(request.DepositAppliedRef);
+        if (refs.Length > 0)
+            natures.AddRange(await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                    && (refs.Contains(d.DocumentNumber) || (d.Reference != null && refs.Contains(d.Reference))))
+                .Select(d => d.DepositNature)
+                .ToListAsync());
+        foreach (var n in natures)
+            if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(n) is string sec)
+                return sec + " · คู่ค้า: ส่งใบกำกับเต็มจำนวนโดยไม่ตั้ง depositAppliedDrivesJournal แล้วตัดชำระ/คืนเงินประกันในระบบ · "
+                    + "ไม่มีการสร้างเอกสาร/ออกเลข";
+        return null;
     }
 
     /// <summary>
@@ -2958,7 +2995,8 @@ public class IntegrationService : IIntegrationService
         existing.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal;
         existing.DepositOutputVatDeferred = request.DepositOutputVatDeferred;
         existing.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(existing.InternalNotes,
-            await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount));
+            await DepositTreatmentMismatchNoteAsync(companyId, request.DepositOutputVatDeferred, request.DepositAppliedAmount,
+                request.DepositKindCode));
         existing.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef)
             ? null : request.DepositAppliedRef.Trim();
         existing.DepositAppliedAmount = request.DepositAppliedAmount > 0m ? request.DepositAppliedAmount : 0m;

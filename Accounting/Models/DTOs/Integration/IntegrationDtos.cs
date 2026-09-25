@@ -154,7 +154,12 @@ public record InboundInvoiceRequest(
     /// <summary>true = ให้ DepositAppliedAmount ขับ JE self-contained (Dr เงินสด
     /// สุทธิ + กลับ 217xx/21913 ของใบมัดจำ) ในใบเดียว ไม่ต้องมี JV แยก →
     /// Document.DepositAppliedDrivesJournal (โหมด drives ที่ verified แล้ว).</summary>
-    bool DepositAppliedDrivesJournal = false);
+    bool DepositAppliedDrivesJournal = false,
+    /// <summary>รอบ 194 (ไม่บังคับ · JSON <c>depositKindCode</c>) — รหัสประเภทเงินมัดจำของบริษัท (เช่น <c>ADVANCE</c> · <c>SECURITY</c>)
+    /// ของมัดจำที่หักบนใบนี้ · ใช้เทียบจังหวะ VAT กับ <c>DepositOutputVatDeferred</c> (หมายเหตุภายในเมื่อขัดกัน — ไม่แก้ยอดของคู่ค้า) ·
+    /// รหัสที่ไม่รู้จัก/ปิดใช้ ⇒ 400 · เงินประกัน (SECURITY) + <c>DepositAppliedDrivesJournal</c> ⇒ 400 (<c>DEP-SEC-DEDUCT</c>) ·
+    /// ไม่ส่ง = พฤติกรรมเดิมทุกตัวอักษร</summary>
+    string? DepositKindCode = null);
 
 /// <summary>
 /// Base64-encoded file attachment for external integrations. Server enforces:

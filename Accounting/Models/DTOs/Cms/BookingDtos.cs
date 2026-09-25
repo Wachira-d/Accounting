@@ -154,6 +154,9 @@ public class BookingResponse
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
+    /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
+    public List<string> ErpNotices { get; set; } = new();
 }
 
 public class BookingListResponse

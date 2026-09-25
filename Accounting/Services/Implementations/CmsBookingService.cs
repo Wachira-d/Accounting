@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -317,47 +318,113 @@ public class CmsBookingService : ICmsBookingService
             case BookingStatus.Cancelled: booking.CancelledAt = DateTime.UtcNow; break;
         }
 
-        // ให้บริการเสร็จ (Completed) + เอกสาร ERP เป็นมัดจำ → รับรู้รายได้จากมัดจำ
-        // (ตัด 217xx ขายรอรับรู้ → รายได้). เดิมแค่ stamp CompletedAt → รายได้รอ
-        // รับรู้ค้าง 217xx ตลอด (under-recognition). RealizeDeposit cap ที่คงค้าง →
-        // เรียกซ้ำปลอดภัย.
-        if (request.Status == BookingStatus.Completed && booking.ErpDocumentId.HasValue && _docService != null)
-        {
-            try
-            {
-                var erpDoc = await _db.Documents.AsNoTracking()
-                    .FirstOrDefaultAsync(d => d.Id == booking.ErpDocumentId.Value && d.CompanyId == companyId);
-                if (erpDoc != null && erpDoc.IsDeposit)
-                {
-                    var remaining = erpDoc.SubTotal - erpDoc.DepositRealizedAmount;
-                    if (remaining > 0.005m)
-                        await _docService.RealizeDepositAsync(companyId, erpDoc.Id,
-                            new Models.DTOs.Document.RealizeDepositRequest(remaining, DateTime.UtcNow, null), userId);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "รับรู้รายได้มัดจำการจอง {Booking} ไม่สำเร็จ — ต้องรับรู้เอง", booking.BookingNumber);
-            }
-        }
-
-        // ยกเลิกการจอง → กลับรายการเอกสาร ERP (มัดจำ/ใบกำกับ) ที่ลงบัญชีไว้
-        // (reverse JE + คืนสต๊อก). เดิมแค่ตั้ง Cancelled → รายได้/VAT ค้าง.
-        if (request.Status == BookingStatus.Cancelled && booking.ErpDocumentId.HasValue && _docService != null)
-        {
-            try { await _docService.VoidDocumentAsync(companyId, booking.ErpDocumentId.Value); }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ยกเลิกการจอง {Booking} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการเอง",
-                    booking.BookingNumber, booking.ErpDocumentId);
-            }
-        }
-
+        // รอบ 194 (C-1): บันทึกสถานะการจองก่อน — ขั้น ERP ด้านล่างล้มได้ (งวดยื่นแล้ว · ผังไม่ครบ) และต้องไม่ลากสถานะที่ผู้ใช้กดไปด้วย ·
+        // ขั้นที่ล้ม ⇒ ล้าง change tracker (กันสภาพครึ่งทางของ void/realize ถูกบันทึกตาม) แล้วประทับหมายเหตุบนการจอง + ตอบผู้เรียก
         booking.UpdatedBy = userId;
         await _db.SaveChangesAsync();
 
-        return await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
+        var notices = new List<string>();       // ตอบผู้กด (BookingResponse.ErpNotices)
+        var bookingNotes = new List<string>();  // ประทับบนการจอง (InternalNotes) — ผู้เปิดดูทีหลังเห็น
+        if (_docService != null && booking.ErpDocumentId is Guid erpDocId)
+        {
+            if (request.Status == BookingStatus.Completed)
+                await RealizeDepositOnCompleteAsync(companyId, erpDocId, userId, notices, bookingNotes);
+            else if (request.Status == BookingStatus.Cancelled)
+                await SettleErpDocumentOnCancelAsync(companyId, erpDocId, booking.CancelledAt ?? DateTime.UtcNow, notices, bookingNotes);
+        }
+
+        if (bookingNotes.Count > 0)
+        {
+            var noted = await _db.SiteBookings.FirstAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
+            foreach (var n in bookingNotes) noted.InternalNotes = DepositPolicyResolver.AppendNoteOnce(noted.InternalNotes, n);
+            noted.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+        }
+
+        var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
+        result.ErpNotices = notices;
+        return result;
     }
+
+    /// <summary>ให้บริการเสร็จ + เอกสาร ERP เป็นมัดจำ → รับรู้รายได้จากมัดจำ (ตัด 217xx ขายรอรับรู้ → รายได้) ตามนโยบาย
+    /// <see cref="CmsBookingCancelPolicy.DecideOnComplete"/> — นี่คือ "ใช้บริการแล้ว" (ไม่ใช่ริบ ⇒ ไม่ส่ง ForfeitAs) ·
+    /// มัดจำเต็มยอดของบริษัทที่จด VAT / เงินประกัน ⇒ ไม่รับรู้อัตโนมัติ บอกผู้ใช้ว่าต้องทำอะไร · RealizeDeposit cap ที่คงค้าง ⇒ เรียกซ้ำปลอดภัย</summary>
+    private async Task RealizeDepositOnCompleteAsync(Guid companyId, Guid erpDocId, string userId,
+        List<string> notices, List<string> bookingNotes)
+    {
+        var erpDoc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
+        if (erpDoc == null || !erpDoc.IsDeposit) return;
+
+        var (vatRegistered, _) = await CompanyVatStatus.ProfileAsync(_db, companyId);
+        var action = CmsBookingCancelPolicy.DecideOnComplete(
+            erpDoc.IsDeposit, erpDoc.Status, erpDoc.VatAmount, erpDoc.DepositNature, vatRegistered);
+        if (action != CmsBookingCompleteAction.AutoRealize)
+        {
+            if (CmsBookingCancelPolicy.CompleteNotice(action, erpDoc.DocumentNumber) is string info)
+            { notices.Add(info); bookingNotes.Add(info); }
+            return;
+        }
+
+        var remaining = erpDoc.SubTotal - erpDoc.DepositRealizedAmount;
+        if (remaining <= 0.005m) return;
+        try
+        {
+            await _docService!.RealizeDepositAsync(companyId, erpDoc.Id,
+                new Models.DTOs.Document.RealizeDepositRequest(remaining, DateTime.UtcNow, null), userId);
+        }
+        catch (Exception ex)
+        {
+            _db.ChangeTracker.Clear();
+            _logger.LogWarning(ex, "รับรู้รายได้มัดจำ {Doc} ของการจองไม่สำเร็จ — ต้องรับรู้เอง", erpDoc.DocumentNumber);
+            var fail = CmsBookingCancelPolicy.FailureNote("การรับรู้รายได้จากมัดจำ", erpDoc.DocumentNumber, ReasonOf(ex));
+            notices.Add(fail); bookingNotes.Add(fail);
+        }
+    }
+
+    /// <summary>ยกเลิกการจอง → ตัดสินเอกสาร ERP ด้วย <see cref="CmsBookingCancelPolicy.DecideOnCancel"/> (spec S6 C-1):
+    /// ใบมัดจำที่ออกแล้ว <b>ไม่ยกเลิก</b> (คงเป็นหนี้สิน · ประทับหมายเหตุบนใบ+การจอง · ผู้ใช้ตัดสินคืน/ริบที่ศูนย์มัดจำ) ·
+    /// ใบอื่นยกเลิกเหมือนเดิม (กลับ JE + คืนสต๊อก) · ล้ม ⇒ ประทับบนการจอง + ตอบผู้เรียก (ไม่ใช่แค่ log)</summary>
+    private async Task SettleErpDocumentOnCancelAsync(Guid companyId, Guid erpDocId, DateTime cancelledAtUtc,
+        List<string> notices, List<string> bookingNotes)
+    {
+        var erpDoc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
+        if (erpDoc == null)
+        {
+            var missing = CmsBookingCancelPolicy.FailureNote("การยกเลิกเอกสารที่ผูกกับการจอง", null, "ไม่พบเอกสาร ERP ที่ผูกไว้");
+            notices.Add(missing); bookingNotes.Add(missing);
+            return;
+        }
+
+        switch (CmsBookingCancelPolicy.DecideOnCancel(erpDoc.IsDeposit, erpDoc.Status))
+        {
+            case CmsBookingCancelAction.KeepDepositAsLiability:
+                var note = CmsBookingCancelPolicy.CancelNote(cancelledAtUtc);
+                erpDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(erpDoc.InternalNotes, note);
+                await _db.SaveChangesAsync();
+                notices.Add(CmsBookingCancelPolicy.KeepDepositNotice(erpDoc.DocumentNumber));
+                bookingNotes.Add(note);
+                break;
+            case CmsBookingCancelAction.VoidDocument:
+                try { await _docService!.VoidDocumentAsync(companyId, erpDoc.Id); }
+                catch (Exception ex)
+                {
+                    _db.ChangeTracker.Clear();
+                    _logger.LogWarning(ex, "ยกเลิกการจองแต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการเอง", erpDoc.DocumentNumber);
+                    var fail = CmsBookingCancelPolicy.FailureNote("การยกเลิกเอกสาร", erpDoc.DocumentNumber, ReasonOf(ex));
+                    notices.Add(fail); bookingNotes.Add(fail);
+                }
+                break;
+        }
+    }
+
+    /// <summary>เหตุที่แสดงผู้ใช้ได้ — ข้อความของกฎธุรกิจ (ไทย) ผ่าน · ข้อผิดพลาดภายใน (EF/ระบบ) ไม่ echo รายละเอียด</summary>
+    private static string ReasonOf(Exception ex) => ex switch
+    {
+        BusinessRuleException or InvalidOperationException or KeyNotFoundException => ex.Message,
+        _ => "เกิดข้อผิดพลาดภายในระบบ (ดูบันทึกระบบ)",
+    };
 
     public async Task<BookingResponse?> GetBookingAsync(Guid companyId, Guid siteId, Guid bookingId)
     {
@@ -479,6 +546,16 @@ public class CmsBookingService : ICmsBookingService
 
         var lineDesc = $"{svc.Name} ({booking.BookingDate:yyyy-MM-dd} {booking.StartTime:HH:mm}-{booking.EndTime:HH:mm})";
 
+        // รอบ 194 (spec S4 · plan §8 ความเสี่ยง "CMS ต่อสายแล้วพฤติกรรมเปลี่ยน"): ส่งประเภทเงินมัดจำเริ่มต้นของบริษัท
+        // เข้าเส้นเอกสาร **เฉพาะเมื่อบริษัทตั้งค่ามัดจำเองแล้ว** (ประเภทเริ่มต้นมีโหมด หรือ ตั้งค่า → ภาษี ถูกตั้ง) ⇒ บริษัทที่ไม่เคยแตะ
+        // ได้ใบแบบเดิมทุกตัวอักษร (VAT ทันที §78/1) · ตั้งแล้ว ⇒ DocumentService จัดรูปใบผ่าน DepositDocumentShaping ตัวเดียว
+        Guid? bookingDepositKindId = null;
+        if (svc.BookingType == BookingType.PrePayment)
+        {
+            var kindCtx = await DepositKindCatalog.LoadContextAsync(_db, companyId);
+            if (kindCtx.CompanyConfigured && kindCtx.DefaultKind is { } defaultKind) bookingDepositKindId = defaultKind.Id;
+        }
+
         // PrePayment booking = ลูกค้าจ่ายมัดจำ → IsDeposit=true → Cr 217xx
         // (ขายรอรับรู้). tax point §78/1 รับชำระแล้ว = เกิดทันที (default
         // DepositOutputVatDeferred=false) → ภาษีขายเข้า ภพ.30 เดือนนี้.
@@ -520,7 +597,8 @@ public class CmsBookingService : ICmsBookingService
             Currency: svc.Currency,
             PricesIncludeVat: true,           // ราคา CMS เป็น gross
             BookingNumber: booking.BookingNumber,
-            IsDeposit: isDeposit
+            IsDeposit: isDeposit,
+            DepositKindId: bookingDepositKindId
         );
 
         var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-booking");

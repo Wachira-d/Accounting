@@ -96,6 +96,9 @@ WATCHED = [
     "Accounting/Controllers/EmailConfigController.cs",
     "Accounting/Controllers/LineConfigController.cs",
     "Accounting/Controllers/PdpaController.cs",
+    # เพิ่มรอบ 194 ทีม C — ประเภทเงินมัดจำ = นโยบาย VAT ของมัดจำ (ลักษณะเงิน/โหมด/บัญชี) · ใส่ตอนเขียว (ratchet) ·
+    # ด่าน = CompanySettings.Edit ชุดเดียวกับ SettingsController
+    "Accounting/Controllers/DepositKindsController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

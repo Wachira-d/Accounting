@@ -313,6 +313,31 @@ public static class DepositPolicyResolver
             + (company.Nature == DepositSupplyNature.Service && payloadDeferred ? " (บริการ: tax point = วันรับเงิน §78/1)" : "");
     }
 
+    /// <summary>รอบ 194 (spec S5 · ทีม C): ธงเดียวกับ <see cref="IntegrationMismatchNote(bool, DepositVatTreatmentDecision)"/> แต่คำนวณจาก
+    /// ผลตัดสินประเภท (<see cref="ResolveKind"/>) — "VAT ของมัดจำยังพักรอ" ตามประเภท = โหมดไม่ใช่ VAT ทันที หรือ นอกระบบ VAT
+    /// (รูปใบเดียวกับมัดจำเต็มยอด) · รหัสกฎ: คู่ค้าบอกว่าพักรอแต่ประเภทเป็น "ส่วนหนึ่งของราคา" + VAT ทันที ⇒ รหัส §78/1 / §78 เดิม ·
+    /// อย่างอื่นที่ขัดกัน ⇒ <c>DEPOSIT-VAT-TREATMENT</c> · ไม่มีประเภท/ประเภทไม่ได้ตั้งโหมด ⇒ ข้อความเดิมทุกตัวอักษร ("การตั้งค่าบริษัทคือ")</summary>
+    public static string? IntegrationMismatchNote(bool payloadDeferred, DepositKindDecision kind)
+    {
+        var kindDeferred = kind.Nature == DepositNature.NonVatSupply || kind.Treatment != DepositVatTreatment.VatImmediate;
+        if (payloadDeferred == kindDeferred) return null;
+        var code = payloadDeferred && kind.Nature == DepositNature.PartOfPrice
+            ? (kind.Supply == DepositSupplyNature.Service ? ServiceNonImmediateRuleCode : GoodsNonImmediateRuleCode)
+            : "DEPOSIT-VAT-TREATMENT";
+        var payloadText = payloadDeferred ? "VAT ของมัดจำยังพักรอ (ยังไม่เข้า ภ.พ.30)" : "VAT ของมัดจำรับรู้แล้วตอนรับเงิน (21911)";
+        var modeText = kind.Nature == DepositNature.NonVatSupply ? "นอกระบบ VAT (VAT 0)" : LabelOf(kind.Treatment);
+        var settingText = kind.Source switch
+        {
+            DepositVatTreatmentSource.DocumentKind => $"ประเภทเงินมัดจำ “{kind.Name}” ที่ระบบต้นทางระบุ บันทึกแบบ \"{modeText}\"",
+            DepositVatTreatmentSource.CompanyDefaultKind => $"ประเภทเงินมัดจำเริ่มต้นของบริษัท “{kind.Name}” บันทึกแบบ \"{modeText}\"",
+            _ => $"การตั้งค่าบริษัทคือ \"{modeText}\"",
+        };
+        return $"[{code}] ระบบต้นทางแจ้งว่า{payloadText} แต่{settingText} "
+            + "— ระบบบันทึกตามข้อมูลต้นทาง ไม่แก้ยอดที่คู่ค้าคำนวณ · ให้นักบัญชีตรวจว่า ภ.พ.30 เดือนที่รับมัดจำถูกต้องหรือต้องยื่นเพิ่มเติม"
+            + (kind.Supply == DepositSupplyNature.Service && payloadDeferred && kind.Nature == DepositNature.PartOfPrice
+                ? " (บริการ: tax point = วันรับเงิน §78/1)" : "");
+    }
+
     /// <summary>ต่อข้อความธงเข้าหมายเหตุภายในแบบไม่ซ้ำ (resync ส่งใบเดิมมาหลายรอบได้)</summary>
     public static string? AppendNoteOnce(string? existing, string? note)
     {

@@ -495,6 +495,69 @@
         <div id="sDepositVatOptions" class="text-xs text-gray-500">กำลังโหลด…</div>
         <div id="sDepositVatInfo" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
       </div>
+      <!-- ประเภทเงินมัดจำ (รอบ 194) — ลักษณะเงิน (ราคา/เงินประกัน/นอกระบบ VAT) เป็นตัวกำหนด VAT · โหมดเป็นแค่วิธีบันทึก ·
+           ตัวเลือก/คำเตือน/ช่องเหตุผลมาจากเซิร์ฟเวอร์ทั้งหมด (GET /deposit-kinds · DepositPolicyResolver) — หน้านี้ไม่มีสำเนากติกา -->
+      <div class="form-group" style="max-width:900px;margin-top:14px" id="sDepositKindBox">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🏷️ ประเภทเงินมัดจำ</div>
+        <div class="text-xs text-gray-500" style="line-height:1.6">
+          “ลักษณะเงิน” ของแต่ละประเภทบอกว่าต้องคิด VAT หรือไม่ (ส่วนหนึ่งของราคา = ภาษีถึงกำหนดตอนรับเงิน · เงินประกันที่ต้องคืน = ยังไม่เกิดภาษี ·
+          นอกระบบ VAT = VAT 0 เสมอ) · “วิธีบันทึก” ของประเภทที่เลือก “ตามค่าตั้งบริษัท” = ค่าในหัวข้อ <b>วิธีบันทึกเงินมัดจำ</b> ด้านบน ·
+          ประเภทเริ่มต้นถูกเลือกให้อัตโนมัติบนใบมัดจำใหม่ · แก้ประเภททีหลัง<b>ไม่</b>เปลี่ยนใบที่ออกไปแล้ว (มาตรา 86/4)
+        </div>
+        <div id="sDepositKindCompanyNote" class="text-xs" style="margin-top:6px;line-height:1.6"></div>
+        <div id="sDepositKindTable" class="text-xs text-gray-500" style="margin-top:8px;overflow-x:auto">กำลังโหลด…</div>
+        <div id="sDepositKindDenied" class="text-xs" style="display:none;margin-top:6px;color:#92400E"></div>
+        <button type="button" class="btn btn-sm btn-secondary" id="btnAddDepositKind" style="margin-top:8px" onclick="Page.openDepositKindForm(null)">+ เพิ่มประเภทเงินมัดจำ</button>
+        <div id="sDepositKindForm" style="display:none;margin-top:10px;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px" id="sDkFormTitle">เพิ่มประเภทเงินมัดจำ</div>
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">
+            <div>
+              <label class="form-label" for="sDkCode" style="font-size:12px">รหัส (คู่ค้าส่งมาเป็น depositKindCode)</label>
+              <input type="text" class="form-input" id="sDkCode" maxlength="32" placeholder="เช่น ADVANCE">
+              <div id="sDkCodeHint" class="text-xs text-gray-500"></div>
+            </div>
+            <div>
+              <label class="form-label" for="sDkName" style="font-size:12px">ชื่อ (พิมพ์ลงใบมัดจำ)</label>
+              <input type="text" class="form-input" id="sDkName" maxlength="256" placeholder="เช่น มัดจำค่าห้องพัก">
+            </div>
+            <div>
+              <label class="form-label" for="sDkNature" style="font-size:12px">ลักษณะเงิน (ตัวกำหนด VAT)</label>
+              <select class="form-input" id="sDkNature" onchange="Page.renderDepositKindFormHints()"></select>
+            </div>
+            <div>
+              <label class="form-label" for="sDkTreatment" style="font-size:12px">วิธีบันทึก</label>
+              <select class="form-input" id="sDkTreatment" onchange="Page.renderDepositKindFormHints()"></select>
+            </div>
+          </div>
+          <div id="sDkNatureInfo" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
+          <div id="sDkWarn" style="display:none;margin-top:6px;padding:6px 8px;border-radius:6px;background:#FEF3C7;border:1px solid #F59E0B;color:#92400E;font-size:12px;line-height:1.6"></div>
+          <div id="sDkReasonBox" style="display:none;margin-top:8px">
+            <label class="form-label" for="sDkReason" style="font-size:12px">เหตุผลที่เลือกวิธีนี้ (บังคับ — พิมพ์เป็นหมายเหตุบนใบมัดจำ เช่น เลขสัญญา/ข้อหารือ)</label>
+            <textarea class="form-input" id="sDkReason" rows="2"></textarea>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+            <div>
+              <label class="form-label" for="sDkLiability" style="font-size:12px">บัญชีหนี้สินพักเงิน (เว้นว่าง = ค่าตามระบบ)</label>
+              <input type="text" class="form-input" id="sDkLiability" maxlength="20" placeholder="เช่น 21610">
+            </div>
+            <div>
+              <label class="form-label" for="sDkForfeit" style="font-size:12px">บัญชีรายได้เมื่อริบเป็นค่าเสียหาย (เว้นว่าง = ค่าตามระบบ)</label>
+              <input type="text" class="form-input" id="sDkForfeit" maxlength="20">
+            </div>
+          </div>
+          <div style="margin-top:8px">
+            <label class="form-label" for="sDkDescription" style="font-size:12px">คำอธิบาย</label>
+            <input type="text" class="form-input" id="sDkDescription">
+          </div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="sDkActive" checked> เปิดใช้
+          </label>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button type="button" class="btn btn-sm btn-primary" id="btnSaveDepositKind" onclick="Page.saveDepositKind()">บันทึกประเภท</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.closeDepositKindForm()">ยกเลิก</button>
+          </div>
+        </div>
+      </div>
 
       <!-- หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง) -->
       <h3 class="card-title" style="margin:24px 0 6px;border-top:1px solid #e2e8f0;padding-top:20px">🏷️ หัวเรื่องเอกสาร (ตั้งชื่อหัวกระดาษเอง)</h3>
@@ -1316,6 +1379,144 @@
         el.innerHTML = `${esc(info.explanation || '')}`
           + (info.needsOwnerChoice && !v ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#EFF6FF;border:1px solid #93C5FD;color:#1E40AF">ประเภทธุรกิจของบริษัทยังระบุไม่ได้ว่าเป็นบริการหรือขายสินค้า — ระบบใช้ “ออกใบกำกับทันที” (พฤติกรรมเดิม) · กรุณาเลือกให้ตรงกับธุรกิจจริง</div>` : '')
           + (warn ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#FEF3C7;border:1px solid #F59E0B;color:#92400E">${esc(warn)}</div>` : '');
+      },
+
+      // ===== ประเภทเงินมัดจำ (รอบ 194) — เซิร์ฟเวอร์ส่งรายการ + ตัวเลือก + ตาราง (ลักษณะ × โหมด) ที่ตัดสินแล้ว =====
+      // หน้านี้แค่วาด/เลือกแถวของตารางตามที่ผู้ใช้กำลังเลือก (ไม่มีสำเนากติกา VAT — F2 ข้อ 5) · enum เทียบด้วยชื่อ
+      async loadDepositKinds(canEdit) {
+        if (canEdit !== undefined) this._dkCanEdit = canEdit !== false;
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('sDepositKindTable'); if (!box) return;
+        try {
+          const res = await api.getDepositKinds();
+          this._dk = res.data || null;
+          this.renderDepositKinds();
+        } catch (e) {
+          box.textContent = 'โหลดประเภทเงินมัดจำไม่สำเร็จ: ' + (e.message || '');
+        }
+      },
+      renderDepositKinds() {
+        const box = document.getElementById('sDepositKindTable'); const dk = this._dk;
+        if (!box || !dk) return;
+        const esc = Layout.esc; const canEdit = this._dkCanEdit !== false;
+        const ct = dk.companyTreatment || {};
+        const note = document.getElementById('sDepositKindCompanyNote');
+        if (note) note.innerHTML = `ประเภทที่ตั้งวิธีบันทึกเป็น “ตามค่าตั้งบริษัท” ตอนนี้ใช้: <b>${esc(ct.label || '-')}</b>`
+          + (ct.setting ? '' : ' <span class="text-gray-500">(ยังไม่ได้ตั้ง — ใช้ค่าตามประเภทธุรกิจ)</span>');
+        const denied = document.getElementById('sDepositKindDenied');
+        if (denied) { denied.style.display = canEdit ? 'none' : ''; denied.textContent = canEdit ? '' : '🔒 ไม่มีสิทธิ์แก้ประเภทเงินมัดจำ (ต้องมีสิทธิ์ตั้งค่าบริษัท)'; }
+        const addBtn = document.getElementById('btnAddDepositKind'); if (addBtn) addBtn.disabled = !canEdit;
+        const items = dk.items || [];
+        if (!items.length) { box.textContent = 'ยังไม่มีประเภทเงินมัดจำ'; return; }
+        const dis = canEdit ? '' : 'disabled';
+        box.innerHTML = `<table class="table" style="width:100%;font-size:12.5px"><thead><tr>
+            <th>ประเภท</th><th>ลักษณะเงิน</th><th>วิธีบันทึกที่ใช้จริง</th><th>สถานะ</th><th></th></tr></thead><tbody>`
+          + items.map(k => `<tr style="${k.isActive ? '' : 'opacity:.55'}">
+              <td><b>${esc(k.name)}</b><br><span class="text-gray-500">${esc(k.code)}</span>${k.isDefault ? ' <span style="font-size:11px;padding:1px 6px;border-radius:9px;background:#DCFCE7;color:#166534">เริ่มต้น</span>' : ''}</td>
+              <td>${esc(k.natureLabel || k.nature)}</td>
+              <td>${esc(k.label || '')}${k.vatTreatment ? '' : ' <span class="text-gray-500">(ตามค่าตั้งบริษัท)</span>'}
+                ${k.warning ? `<div style="margin-top:4px;color:#92400E">${esc(k.warning)}${k.ruleCode ? ` <i>(${esc(k.ruleCode)})</i>` : ''}</div>` : ''}
+                ${k.policyReason ? `<div class="text-gray-500" style="margin-top:2px">เหตุผล: ${esc(k.policyReason)}</div>` : ''}</td>
+              <td>${k.isActive ? 'เปิดใช้' : 'ปิดใช้'}</td>
+              <td style="white-space:nowrap">
+                <button type="button" class="btn btn-sm btn-secondary" data-id="${esc(k.id)}" ${dis} onclick="Page.openDepositKindForm(this.dataset.id)">แก้ไข</button>
+                ${k.isActive && !k.isDefault ? `<button type="button" class="btn btn-sm btn-secondary" data-id="${esc(k.id)}" ${dis} onclick="Page.setDefaultDepositKind(this.dataset.id)">ตั้งเป็นเริ่มต้น</button>` : ''}
+                <button type="button" class="btn btn-sm btn-danger" data-id="${esc(k.id)}" ${dis} onclick="Page.removeDepositKind(this.dataset.id)">ลบ</button>
+              </td></tr>`).join('')
+          + '</tbody></table>';
+      },
+      openDepositKindForm(id) {
+        const dk = this._dk; if (!dk) return;
+        const k = id ? (dk.items || []).find(x => x.id === id) : null;
+        this._dkEditingId = k ? k.id : null;
+        const esc = Layout.esc;
+        document.getElementById('sDkFormTitle').textContent = k ? 'แก้ไขประเภทเงินมัดจำ' : 'เพิ่มประเภทเงินมัดจำ';
+        document.getElementById('sDkNature').innerHTML = (dk.natures || [])
+          .map(n => `<option value="${esc(n.value)}">${esc(n.label)}</option>`).join('');
+        document.getElementById('sDkTreatment').innerHTML = `<option value="">ตามค่าตั้งบริษัท (${esc((dk.companyTreatment || {}).label || '')})</option>`
+          + (dk.treatments || []).map(t => `<option value="${esc(t.value)}">${esc(t.label)}</option>`).join('');
+        const code = document.getElementById('sDkCode');
+        code.value = k ? k.code : '';
+        code.disabled = !!(k && k.isSystem);   // ประเภทที่ระบบสร้าง — คู่ค้าอ้างรหัสนี้ เซิร์ฟเวอร์ไม่รับการเปลี่ยนรหัส
+        document.getElementById('sDkCodeHint').textContent = (k && k.isSystem)
+          ? 'ประเภทที่ระบบสร้าง — เปลี่ยนรหัสไม่ได้ (ระบบภายนอกอ้างรหัสนี้) แก้ชื่อ/ลักษณะ/วิธีบันทึกได้' : '';
+        document.getElementById('sDkName').value = k ? k.name : '';
+        document.getElementById('sDkNature').value = k ? k.nature : 'PartOfPrice';
+        document.getElementById('sDkTreatment').value = k && k.vatTreatment ? k.vatTreatment : '';
+        document.getElementById('sDkReason').value = k && k.policyReason ? k.policyReason : '';
+        document.getElementById('sDkLiability').value = k && k.liabilityAccountCode ? k.liabilityAccountCode : '';
+        document.getElementById('sDkForfeit').value = k && k.forfeitAccountCode ? k.forfeitAccountCode : '';
+        document.getElementById('sDkDescription').value = k && k.description ? k.description : '';
+        document.getElementById('sDkActive').checked = k ? !!k.isActive : true;
+        document.getElementById('sDkLiability').placeholder = k && k.effectiveLiabilityAccountCode
+          ? `ตอนนี้ใช้ ${k.effectiveLiabilityAccountCode}` : 'เว้นว่าง = ค่าตามระบบ';
+        document.getElementById('sDepositKindForm').style.display = '';
+        this.renderDepositKindFormHints();
+      },
+      closeDepositKindForm() {
+        this._dkEditingId = null;
+        document.getElementById('sDepositKindForm').style.display = 'none';
+      },
+      /** คำอธิบายลักษณะ + คำเตือน/ช่องเหตุผลของคู่ที่กำลังเลือก — อ่านจากตาราง matrix ที่เซิร์ฟเวอร์ตัดสินแล้ว */
+      renderDepositKindFormHints() {
+        const dk = this._dk; if (!dk) return;
+        const esc = Layout.esc;
+        const nature = document.getElementById('sDkNature').value;
+        const treatment = document.getElementById('sDkTreatment').value || null;
+        const n = (dk.natures || []).find(x => x.value === nature);
+        document.getElementById('sDkNatureInfo').innerHTML = n ? `${esc(n.description)} <i>(${esc(n.legalReference)})</i>` : '';
+        const cell = (dk.matrix || []).find(c => c.nature === nature && (c.treatment || null) === treatment);
+        const warn = document.getElementById('sDkWarn');
+        const effective = cell ? `วิธีบันทึกที่ใช้จริง: ${cell.effectiveLabel}` : '';
+        if (cell && cell.warning) {
+          warn.style.display = '';
+          warn.innerHTML = `${esc(cell.warning)}${cell.ruleCode ? ` <i>(${esc(cell.ruleCode)})</i>` : ''}<div style="margin-top:4px">${esc(effective)}</div>`;
+        } else { warn.style.display = 'none'; warn.innerHTML = ''; }
+        document.getElementById('sDkReasonBox').style.display = cell && cell.reasonRequired ? '' : 'none';
+      },
+      async saveDepositKind() {
+        const api = Layout.api(); if (!api) return;
+        const val = (id) => (document.getElementById(id).value || '').trim();
+        const treatment = document.getElementById('sDkTreatment').value;
+        const body = {
+          name: val('sDkName'),
+          nature: document.getElementById('sDkNature').value,
+          vatTreatment: treatment || null,          // "" = ตามค่าตั้งบริษัท
+          policyReason: val('sDkReason') || null,
+          liabilityAccountCode: val('sDkLiability') || null,
+          forfeitAccountCode: val('sDkForfeit') || null,
+          description: val('sDkDescription') || null,
+          isActive: document.getElementById('sDkActive').checked,
+        };
+        const codeEl = document.getElementById('sDkCode');
+        if (!codeEl.disabled) body.code = val('sDkCode');
+        try {
+          const res = this._dkEditingId
+            ? await api.updateDepositKind(this._dkEditingId, body)
+            : await api.createDepositKind(body);
+          const w = res && res.data ? res.data.warning : null;
+          if (w) Layout.toast(w, 'warning', 12000); else Layout.toast(res.message || 'บันทึกประเภทเงินมัดจำแล้ว');
+          this.closeDepositKindForm();
+          await this.loadDepositKinds();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+      async setDefaultDepositKind(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.setDefaultDepositKind(id);
+          Layout.toast(res.message || 'ตั้งเป็นประเภทเริ่มต้นแล้ว');
+          await this.loadDepositKinds();
+        } catch (e) { Layout.toast(e.message || 'ตั้งค่าไม่สำเร็จ', 'error'); }
+      },
+      async removeDepositKind(id) {
+        const k = ((this._dk || {}).items || []).find(x => x.id === id);
+        if (!k || !confirm(`ลบประเภท “${k.name}”? (ถ้ามีใบ/ที่พักใช้อยู่ ระบบจะปิดใช้แทน)`)) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.deleteDepositKind(id);
+          Layout.toast(res.message || 'ลบแล้ว', res.data && res.data.deactivated ? 'warning' : 'success', 10000);
+          await this.loadDepositKinds();
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       collectTitleOverrides() {
         const ov = {};
@@ -2284,6 +2485,7 @@
           if (_uniCb) _uniCb.checked = (s.unifyTaxInvoiceNumberSeries ?? true) !== false;
           this._depositVat = { info: s.depositVatTreatmentInfo, options: s.depositVatTreatmentOptions || [] };
           this.renderDepositVat(s.depositVatTreatment || '');
+          this.loadDepositKinds(s.canEdit);   // รอบ 194 — ประเภทเงินมัดจำ (สิทธิ์แก้ = สิทธิ์ตั้งค่าบริษัท)
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
           document.getElementById('sUseCustomSignatory').checked = !!s.useCustomAuthorizedSignatory;
@@ -2582,6 +2784,7 @@
             await this.saveEtaxConfig();
           }
           if (this._vatLoaded && this._vatTouched) this._vatConfirmedSaved();
+          this.loadDepositKinds();   // โหมดของประเภท "ตามค่าตั้งบริษัท" เปลี่ยนตามค่าที่เพิ่งบันทึก
           Layout.toast('บันทึกการตั้งค่าสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
