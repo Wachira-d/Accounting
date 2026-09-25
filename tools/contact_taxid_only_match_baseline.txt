@@ -2,8 +2,7 @@
 # ประวัติ: ก่อน C3 = 19 จุด/13 ไฟล์ · หลัง C3 (4fcd06b) = 7 · หลังฝ่ายค้าน (C3 รอบ 2) = กติกา 1: 4 จุด/2 ไฟล์ + กติกา 2: 1 จุด
 # (รายละเอียด erp-review/2026-09-24/r193-C3.md หมวด "หลังฝ่ายค้าน") — ทุกแถวที่เหลือเป็นไฟล์ของทีมอื่นที่ห้ามแตะรอบนี้
 # ห้ามเพิ่มแถว/ตัวเลขเพื่อให้ checker เขียว — ratchet เดินทางเดียว: ย้ายไป Helpers/ContactTaxBranchKey แล้วลดตัวเลขลง
-# ↓ ทีม O1 ถือไฟล์ — สร้างผู้ติดต่อจากสแกน + ResolveContactIdByTaxIdAsync → ContactTaxBranchKey.FindAsync (+ สาขาจากสแกน)
-Services/Implementations/OcrService.cs = 2
+# (รอบ 197 ทีม K: OcrService.cs 2 → 0 — เส้นสร้างเอกสารฝั่งผู้ขาย/ผู้ซื้อ + ResolveContactIdByTaxIdAsync ย้ายไป ContactTaxBranchKey/OcrVendorBranchContact)
 # ↓ ทีม M2 ถือไฟล์ — ผู้รับเงินเป็นบุคคลธรรมดา (ไม่มีโครงสาขา) แต่ควรผ่านตัวจับคู่กลางตัวเดียว: FindAsync(branchCode: null)
 Services/Implementations/PayrollService.cs = 2
 # ↓ ทีม M2 ถือไฟล์ — POS จับด้วยชื่อหลัง FindAsync (มีด่านเองว่า "แถวไม่มีเลข" แต่ไม่รู้จัก "-" และไม่ผ่าน SoftScope)

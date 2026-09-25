@@ -5,17 +5,21 @@ public enum OcrVendorBranchOutcome
 {
     /// <summary>ไม่มีผู้ติดต่อที่เลขผู้เสียภาษีตรงเลย — ไปเส้นสร้างใหม่ตามเดิม</summary>
     NoTaxIdMatch,
-    /// <summary>อ่านสาขาจากกระดาษไม่ได้ — ใช้กติกาเดิม (แถวเดียว = แถวนั้น · หลายแถว = สำนักงานใหญ่ก่อน)</summary>
+    /// <summary>อ่านสาขาจากกระดาษไม่ได้ — ใช้กติกาเดิม (สำนักงานใหญ่/แถวที่ไม่เคยระบุสาขา → แถวเดียวที่มี → รหัสต่ำสุด)</summary>
     BranchNotRead,
-    /// <summary>มีแถวที่สาขาตรงกับกระดาษ</summary>
+    /// <summary>มีแถวที่สาขาตรงกับกระดาษ (แถวที่ไม่เคยระบุสาขา ≡ สำนักงานใหญ่ — อ้างได้เฉพาะใบสำนักงานใหญ่)</summary>
     ExactBranch,
-    /// <summary>ไม่มีแถวสาขาตรง แต่มีแถวที่ <b>ไม่เคยระบุสาขา</b> (ข้อมูลเก่า) — ใช้แถวนั้นตามเดิม
-    /// (ตัวเติม <c>[Enrich]</c> จะเติมสาขาจากกระดาษลงช่องที่ว่างให้เอง)</summary>
-    AdoptBlankBranchRow,
-    /// <summary>ทุกแถวระบุสาขา<b>อื่น</b>ไว้ชัด — ผูกกับแถวสำนักงานใหญ่/แถวแรกตามพฤติกรรมเดิม (สาขาของใบ
-    /// ยังถูกบันทึกที่เอกสาร <c>SupplierBranchCode</c> ตามเดิม) แต่ <b>ห้ามเอาข้อมูลจากกระดาษไปเติม/ทับแถวนั้น</b>
-    /// (คนละสาขา = คนละที่อยู่). <b>ไม่สร้างแถวสาขาใหม่อัตโนมัติ</b> — รอเจ้าของตัดสิน (รายงานทีม C คำถามที่ 1:
-    /// ร้านค้าปลีกหลายร้อยสาขาจะกลายเป็นผู้ติดต่อหลายร้อยแถว)</summary>
+    /// <summary>
+    /// <b>สาขาบนกระดาษมีหลักฐาน แต่ไม่ตรงสาขาใดของผู้ติดต่อที่มี ⇒ สร้างผู้ติดต่อแถวใหม่ของสาขานั้น</b> (รอบ 197 ทีม K ·
+    /// คำตัดสินเจ้าของ: "ระบบควรสร้างผู้ติดต่อคนละอันกับที่มีเพราะสาขาคนละสาขา ที่อยู่คนละที่กัน") —
+    /// <see cref="OcrVendorBranchPick.ContactId"/> = null · <see cref="OcrVendorBranchPick.TemplateContactId"/> = แถวของ
+    /// นิติบุคคลเดียวกัน (สำนักงานใหญ่ก่อน) ที่ใช้เป็นแม่แบบชื่อนิติบุคคล/ชนิดผู้ติดต่อ · <b>ห้ามถอยไปจับด้วยชื่อ/AI</b>
+    /// (จะได้แถวสำนักงานใหญ่กลับมา — ช่องเดียวกับ <see cref="ContactTaxBranchKey.SoftMatchScope"/>)
+    /// </summary>
+    NewBranchRow,
+    /// <summary>ไม่มีแถวสาขาตรง แต่สาขาที่อ่านได้<b>หลักฐานอ่อน</b> (คะแนน &lt; เกณฑ์ เช่น ขัดกับประโยคบนกระดาษ) —
+    /// ไม่สร้างแถวจากค่าที่ไม่แน่ใจ ("ไม่เดาสาขาใหม่") · ผูกแถวของนิติบุคคลเดียวกันตามกติกา "ไม่รู้สาขา" (พฤติกรรมเดิม)
+    /// แต่ <b>ห้ามเอาข้อมูลจากกระดาษไปเติม/ทับแถวนั้น</b> และบอกผู้ใช้ตรง ๆ ใน trace</summary>
     OtherBranchRow,
 }
 
@@ -24,92 +28,111 @@ public sealed record OcrVendorBranchPick(
     OcrVendorBranchOutcome Outcome,
     Guid? ContactId,
     string? ScannedBranch,
-    string Trace)
+    string Trace,
+    Guid? TemplateContactId = null)
 {
     /// <summary>ข้อมูลจากกระดาษ (ที่อยู่ · สาขา · เบอร์) เติมลงแถวที่ผูกได้ไหม — ได้เฉพาะเมื่อแถวนั้น
     /// เป็นสาขาเดียวกับกระดาษ (หรือไม่รู้สาขาทั้งสองฝั่ง). แถว "คนละสาขา" ห้ามแตะ มิฉะนั้นที่อยู่สาขาที่ 8
     /// ไปทับที่อยู่สำนักงานใหญ่ถาวร · <see cref="OcrVendorBranchOutcome.NoTaxIdMatch"/> = ตัวนี้ไม่ได้ผูก
     /// (แถวถูกจับด้วยชื่อทีหลัง) ⇒ คงพฤติกรรมเดิม</summary>
     public bool MayEnrichMatchedRow => Outcome is OcrVendorBranchOutcome.ExactBranch
-        or OcrVendorBranchOutcome.AdoptBlankBranchRow
         or OcrVendorBranchOutcome.BranchNotRead
         or OcrVendorBranchOutcome.NoTaxIdMatch;
+
+    /// <summary>ต้องสร้างผู้ติดต่อแถวใหม่ของสาขาบนกระดาษ (และห้ามจับคู่ด้วยชื่อ/อีเมล/AI แทน)</summary>
+    public bool MustCreateBranchRow => Outcome == OcrVendorBranchOutcome.NewBranchRow;
 }
 
 /// <summary>
-/// "เลขผู้เสียภาษีเดียว หลายสาขา" — เลือกแถวผู้ติดต่อให้ตรงสาขาที่อ่านได้จากใบกำกับ (รอบ 190 ทีม C ข้อ 5)
+/// "เลขผู้เสียภาษีเดียว หลายสาขา" — เลือกแถวผู้ติดต่อให้ตรงสาขาที่อ่านได้จากใบกำกับ (รอบ 190 ทีม C ข้อ 5 · รอบ 197 ทีม K)
 ///
 /// <para><b>โครงสร้างที่ระบบถืออยู่แล้ว</b>: ผู้ติดต่อ 1 แถว = 1 (เลขผู้เสียภาษี, สาขา) —
-/// <c>DocumentService.FindDuplicateContactAsync</c> ถือว่าเลขเดียวกันคนละสาขา = คนละแถว (ถูกต้องตาม
-/// ประกาศอธิบดีฯ ฉบับที่ 199: ใบกำกับต้องระบุสาขาที่ออกใบ). ตัวนี้ไม่ได้เปลี่ยนโครงสร้าง แค่ <b>เพิ่มขั้นคิด</b>
-/// ให้เส้น OCR เดินตามโครงสร้างนั้น</para>
+/// <c>DocumentService.FindDuplicateContactAsync</c> และ <see cref="ContactTaxBranchKey"/> ถือว่าเลขเดียวกันคนละสาขา =
+/// คนละแถว (ประกาศอธิบดีฯ ฉบับที่ 199: ใบกำกับต้องระบุสาขาที่ออกใบ · §86/4)</para>
 ///
-/// <para><b>ที่พลาดก่อนหน้า</b> (ใบ B Radisson — "สาขาที่ออกใบกำกับภาษีคือ สาขาที่ 8"): เดิมถ้าเลขภาษีตรง
-/// <b>แถวเดียว</b> ระบบหยิบแถวนั้นทันทีโดยไม่ดูสาขา ⇒ ใบของสาขาที่ 8 ผูกกับแถวสำนักงานใหญ่ และตัวเติม
-/// <c>[Enrich]</c> อาจเอาที่อยู่จากใบสาขาไปทับที่อยู่แถวสำนักงานใหญ่ (ถ้าแถวนั้นสร้างโดย OCR) —
-/// และไม่มีทางได้แถวของสาขาที่ 8 เลย</para>
+/// <para><b>รอบ 197 (ใบ Makro สาขาชลบุรี 00005)</b>: ผู้ใช้ "ได้เลขผู้ขายและสาขาถูก แต่สร้างเอกสารใช้ผู้ติดต่อผิด
+/// (สำนักงานใหญ่ 00000) · ต้องสร้างผู้ติดต่อใหม่เพราะคนละสาขา คนละที่อยู่". เดิมตัวนี้มีกติกาของตัวเอง (สำเนาที่สองของ
+/// ตัวจับคู่คีย์): ไม่มีแถวสาขาตรง ⇒ <b>ผูกสำนักงานใหญ่</b> (รอเจ้าของตัดสินเรื่องสร้างแถว) · แถวที่ไม่เคยระบุสาขา ⇒ อ้างได้โดย
+/// ใบของสาขาใดก็ได้ แล้วตัวเติม <c>[Enrich]</c> ประทับรหัสสาขาทับ. ตอนนี้ <b>ใช้ <see cref="ContactTaxBranchKey.PickBranch"/>
+/// ตัวเดียวกับทุกทางเข้า</b> แล้วเพิ่มแค่ "จะทำอะไรเมื่อไม่พบ": สาขามีหลักฐาน ⇒ <see cref="OcrVendorBranchOutcome.NewBranchRow"/> ·
+/// หลักฐานอ่อน ⇒ <see cref="OcrVendorBranchOutcome.OtherBranchRow"/> (ผูกแบบเดิมแต่ห้ามเติมข้ามสาขา)</para>
 ///
-/// <para><b>ขั้นคิดที่เพิ่ม</b> (ไม่รื้อ): แถวที่ผูกยังเป็นแถวเดิมทุกกรณี (ไม่มีแถวสาขาตรง → สำนักงานใหญ่/แถวแรก)
-/// แต่ตอนนี้ (ก) เลือกแถวที่สาขาตรงก่อนเสมอ แม้มีแถวเดียว (ข) รู้ว่าแถวที่ผูก "คนละสาขา" กับกระดาษ ⇒ ห้ามเติม
-/// ข้อมูลข้ามสาขา (ดู <see cref="OcrVendorBranchPick.MayEnrichMatchedRow"/>) (ค) บอกผู้ใช้ตรง ๆ ใน trace.
-/// การ<b>สร้างแถวสาขาใหม่อัตโนมัติ</b>เป็นคำถามเจ้าของ — ไม่ทำเอง</para>
+/// <para>ทิศตรงข้าม (ล็อกด้วยเทสต์): สาขาบนกระดาษตรงแถวเดิม ⇒ ผูกแถวเดิม · อ่านสาขาไม่ได้ ⇒ กติกาเดิม ไม่สร้างแถว ·
+/// ใบสำนักงานใหญ่ + แถวที่ไม่เคยระบุสาขา ⇒ แถวนั้น</para>
 /// </summary>
 public static class OcrVendorBranchContact
 {
+    /// <summary>คะแนนขั้นต่ำของรหัสสาขาผู้ขายที่ถือว่า "มีหลักฐานบนกระดาษ" พอจะสร้างผู้ติดต่อแถวใหม่ —
+    /// ตัวอ่านป้าย <c>BranchCodeExtractor</c> ให้ 0.85 · ประโยคประกาศสาขาผู้ออกใบ 0.90 · ขัดกันเอง 0.50 · อ่านไม่ได้ 0.30</summary>
+    public const double ReliableBranchConfidence = 0.85;
+
     /// <summary>ผู้ติดต่อที่เลขผู้เสียภาษีตรงกับกระดาษ (กรองบริษัทตัวเองออกแล้ว)</summary>
     public sealed record Candidate(Guid Id, string? Name, string? BranchCode);
 
+    /// <summary>รหัสสาขาผู้ขายมีหลักฐานพอไหม — <paramref name="confidence"/> null = ไม่มีคะแนนแยกช่อง (ค่ามาจาก engine/e-Tax
+    /// ที่อ่านจากกระดาษตรง ๆ) ถือว่ามี · ผู้ใช้แก้รหัสสาขาเอง = มีเสมอ</summary>
+    public static bool IsReliableBranch(double? confidence, bool userCorrected = false)
+        => userCorrected || confidence is null || confidence.Value >= ReliableBranchConfidence;
+
     /// <param name="candidates">แถวที่เลขผู้เสียภาษีตรง (normalize แล้ว) — ลำดับไม่มีผล</param>
     /// <param name="scannedBranch">สาขาผู้ขายที่อ่านได้ (ว่าง/ผิดรูป = อ่านไม่ได้)</param>
-    public static OcrVendorBranchPick Decide(IReadOnlyList<Candidate> candidates, string? scannedBranch)
+    /// <param name="branchReliable">รหัสสาขามีหลักฐานพอจะสร้างแถวใหม่ (<see cref="IsReliableBranch"/>)</param>
+    public static OcrVendorBranchPick Decide(IReadOnlyList<Candidate> candidates, string? scannedBranch,
+        bool branchReliable = true)
     {
         if (candidates == null || candidates.Count == 0)
             return new(OcrVendorBranchOutcome.NoTaxIdMatch, null, null, "");
 
-        // ลำดับกำหนดได้เสมอ: สำนักงานใหญ่ก่อน → รหัสสาขาน้อย → Id (เดิมใช้กติกานี้กับเคสหลายแถวอยู่แล้ว)
-        var ordered = candidates
-            .OrderBy(c => TaxBranchCode.Normalize(c.BranchCode), StringComparer.Ordinal)
-            .ThenBy(c => c.Id)
-            .ToList();
-        var headOrFirst = ordered[0];
+        var keys = candidates.Select(c => new ContactKeyCandidate(c.Id, null, c.BranchCode)).ToList();
+        string NameOf(Guid? id) => candidates.FirstOrDefault(c => c.Id == id)?.Name ?? "";
+        string BranchOf(Guid? id) => TaxBranchCode.Label(candidates.FirstOrDefault(c => c.Id == id)?.BranchCode);
+
+        // กติกา "ไม่รู้สาขา" ของตัวจับคู่กลาง = แม่แบบ/แถวที่ผูกเมื่ออ่านสาขาไม่ได้
+        var fallback = ContactTaxBranchKey.PickBranch(keys, null).ContactId;
 
         var scanned = ScannedCode(scannedBranch);
         if (scanned == null)
-        {
-            var pick = candidates.Count == 1 ? candidates[0] : headOrFirst;
-            return new(OcrVendorBranchOutcome.BranchNotRead, pick.Id, null,
+            return new(OcrVendorBranchOutcome.BranchNotRead, fallback, null,
                 candidates.Count > 1
-                    ? $"[Branch] TaxID ตรง {candidates.Count} รายชื่อ แต่อ่านสาขาบนกระดาษไม่ได้ — ใช้ '{pick.Name}' "
-                      + $"({TaxBranchCode.Label(pick.BranchCode)}) โปรดตรวจสอบ"
-                    : "");
-        }
-
-        // (1) แถวที่ระบุสาขาตรงกับกระดาษไว้ชัด
-        var exact = ordered.FirstOrDefault(c => HasExplicitBranch(c.BranchCode)
-            && TaxBranchCode.Normalize(c.BranchCode) == scanned);
-        // (1b) กระดาษบอกสำนักงานใหญ่ + แถวที่ไม่เคยระบุสาขา = สำนักงานใหญ่ตามค่าเริ่มต้นสากลของระบบ
-        exact ??= scanned == TaxBranchCode.HeadOffice
-            ? ordered.FirstOrDefault(c => !HasExplicitBranch(c.BranchCode))
-            : null;
-        if (exact != null)
-            return new(OcrVendorBranchOutcome.ExactBranch, exact.Id, scanned,
-                candidates.Count > 1
-                    ? $"[Branch] TaxID ตรง {candidates.Count} รายชื่อ — เลือกตามสาขา {TaxBranchCode.Label(scanned)} ({scanned}): '{exact.Name}'"
+                    ? $"[Branch] TaxID ตรง {candidates.Count} รายชื่อ แต่อ่านสาขาบนกระดาษไม่ได้ — ใช้ '{NameOf(fallback)}' "
+                      + $"({BranchOf(fallback)}) โปรดตรวจสอบ"
                     : "");
 
-        // (2) ไม่มีแถวสาขาตรง แต่มีแถวที่ไม่เคยระบุสาขา → ใช้แถวนั้น (พฤติกรรมเดิม — ตัวเติมจะเติมสาขาให้)
-        var blank = ordered.FirstOrDefault(c => !HasExplicitBranch(c.BranchCode));
-        if (blank != null)
-            return new(OcrVendorBranchOutcome.AdoptBlankBranchRow, blank.Id, scanned,
-                $"[Branch] ผู้ติดต่อ '{blank.Name}' ยังไม่เคยระบุสาขา — ผูกใบ{TaxBranchCode.Label(scanned)} ({scanned}) กับรายนี้");
+        var exact = ContactTaxBranchKey.PickBranch(keys, scanned);
+        if (exact.ContactId is Guid hit)
+            return new(OcrVendorBranchOutcome.ExactBranch, hit, scanned,
+                candidates.Count > 1
+                    ? $"[Branch] TaxID ตรง {candidates.Count} รายชื่อ — เลือกตามสาขา {TaxBranchCode.Label(scanned)} ({scanned}): '{NameOf(hit)}'"
+                    : "");
 
-        // (3) ทุกแถวเป็นสาขาอื่นที่ระบุไว้ชัด — ผูกแถวเดิม (พฤติกรรมเดิม) แต่ห้ามเติมข้ามสาขา + บอกตรง ๆ
-        return new(OcrVendorBranchOutcome.OtherBranchRow, headOrFirst.Id, scanned,
-            $"[Branch] ⚠ กระดาษออกโดย {TaxBranchCode.Label(scanned)} ({scanned}) แต่ในระบบมีผู้ติดต่อเลขนี้เฉพาะ "
-            + string.Join(" · ", ordered.Select(c => TaxBranchCode.Label(c.BranchCode)).Distinct())
-            + $" — ผูกกับ '{headOrFirst.Name}' ({TaxBranchCode.Label(headOrFirst.BranchCode)}) · สาขาของใบบันทึกที่เอกสาร "
-            + "และไม่นำที่อยู่/สาขาจากกระดาษไปแก้ผู้ติดต่อรายนั้น · ถ้าต้องการแยกผู้ติดต่อของสาขานี้ ให้สร้างที่หน้าผู้ติดต่อ "
-            + "(กรอกเลขผู้เสียภาษี + รหัสสาขา แล้วกด \"ดึงข้อมูล DBD\" จะได้ที่อยู่ของสาขานั้น)");
+        var existing = string.Join(" · ", candidates
+            .Select(c => TaxBranchCode.Label(c.BranchCode)).Distinct(StringComparer.Ordinal));
+        if (branchReliable)
+            return new(OcrVendorBranchOutcome.NewBranchRow, null, scanned,
+                $"[Branch] กระดาษออกโดย {TaxBranchCode.Label(scanned)} ({scanned}) แต่ในระบบมีผู้ติดต่อเลขนี้เฉพาะ {existing} "
+                + $"— คนละสถานประกอบการ (ประกาศอธิบดีฯ 199 · §86/4) ⇒ สร้างผู้ติดต่อของสาขานี้แยก "
+                + $"(ชื่อนิติบุคคลตาม '{NameOf(fallback)}') ไม่ผูกกับ{BranchOf(fallback)}",
+                fallback);
+
+        return new(OcrVendorBranchOutcome.OtherBranchRow, fallback, scanned,
+            $"[Branch] ⚠ กระดาษน่าจะออกโดย {TaxBranchCode.Label(scanned)} ({scanned}) แต่รหัสสาขานี้ยังไม่แน่ใจ และในระบบมีผู้ติดต่อเลขนี้เฉพาะ "
+            + existing
+            + $" — ผูกกับ '{NameOf(fallback)}' ({BranchOf(fallback)}) ชั่วคราว · ไม่นำที่อยู่/สาขาจากกระดาษไปแก้ผู้ติดต่อรายนั้น · "
+            + "ตรวจรหัสสาขาบนกระดาษ ถ้าถูกต้อง แก้รหัสสาขาในหน้านี้แล้วกดสร้างเอกสาร ระบบจะสร้างผู้ติดต่อของสาขานั้นให้",
+            fallback);
+    }
+
+    /// <summary>
+    /// ชื่อของผู้ติดต่อแถวใหม่ของสาขา — <b>ชื่อนิติบุคคล</b> (ทุกสาขาของเลขเดียวกันคือนิติบุคคลเดียว): ทะเบียนก่อน →
+    /// ชื่อของแถวแม่แบบ (ตัดป้ายสาขาท้ายชื่อออก — "(สำนักงานใหญ่)" ไม่ใช่ชื่อของสาขาอื่น) → ชื่อที่อ่านจากกระดาษ ·
+    /// ชื่อสาขาเก็บที่ <c>Contact.BranchName</c> ไม่ต่อท้ายชื่อ
+    /// </summary>
+    public static string? NewRowName(string? registryName, string? templateName, string? paperName)
+    {
+        if (!string.IsNullOrWhiteSpace(registryName)) return registryName.Trim();
+        var (tpl, _) = OcrPartyName.StripBranchSuffix(templateName);
+        if (!string.IsNullOrWhiteSpace(tpl)) return tpl.Trim();
+        return string.IsNullOrWhiteSpace(paperName) ? null : paperName.Trim();
     }
 
     /// <summary>สาขาที่อ่านได้ → รหัส 5 หลัก · อ่านไม่ได้/ผิดรูป → null ("ไม่รู้" ห้ามกลายเป็น 00000)</summary>
@@ -118,8 +141,4 @@ public static class OcrVendorBranchContact
         if (string.IsNullOrWhiteSpace(raw)) return null;
         return TaxBranchCode.TryNormalize(raw, out var code, out _) ? code : null;
     }
-
-    /// <summary>แถวนี้ระบุสาขาไว้ชัด (มีตัวเลข) — ว่าง = "ไม่เคยระบุ" (ข้อมูลเก่า)</summary>
-    private static bool HasExplicitBranch(string? code)
-        => !string.IsNullOrWhiteSpace(code) && code.Any(ch => ch >= '0' && ch <= '9');
 }

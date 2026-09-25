@@ -46,6 +46,10 @@ public static class OcrPartyLabels
         // (ทีมตรวจ 2026-09-11: ใบที่เราออกเองถูกกลับทิศเพราะคำนี้อยู่ใต้หัวเรา)
         "รหัสลูกค้า", "เลขที่ลูกค้า", "customer code", "customer no", "customer id", "cust. code",
         "ศูนย์บริการลูกค้า", "บริการลูกค้า",
+        // ป้ายฉบับของกระดาษ "ต้นฉบับลูกค้า / For Customer" (กล่องมุมขวาบนใบ Makro · รอบ 197) — ญาติของ "customer copy"/
+        // "สำเนาลูกค้า" ข้างบน: บอกว่ากระดาษแผ่นนี้เป็นฉบับของใคร ไม่ใช่ตำแหน่งบล็อกผู้ซื้อ · เดิมมันอยู่เหนือเลขผู้ขายบนหัวใบ
+        // ⇒ เลขผู้ขาย "อยู่ในบล็อกผู้ซื้อ" ⇒ กุญแจทะเบียนพิสูจน์ไม่ได้ และเบอร์โทรหัวใบกลายเป็นของผู้ซื้อ
+        "ต้นฉบับลูกค้า", "ต้นฉบับ ลูกค้า", "ต้นฉบับ(ลูกค้า)", "for customer",
     };
 
     private static readonly (string Label, LabelMatch Mode)[] BuyerLabels =
@@ -93,6 +97,31 @@ public static class OcrPartyLabels
         // ถูกใช้เป็น “จุดยึด” หาชื่อ/เลขภาษีที่ใกล้ที่สุด ⇒ ใส่เข้าไปจะลาก
         // จุดยึดฝั่งผู้ขายไปไว้ท้ายหน้า แล้วชื่อผู้ขายจะถูกหยิบจากบรรทัดล่างสุด
     };
+
+    /// <summary>
+    /// ป้าย<b>บล็อกผู้รับ/ที่อยู่จัดส่ง</b> (ฝั่งผู้ซื้อ) — รอบ 197 ทีม K · ใบ Makro "สถานที่ส่งสินค้า/ Shipping address ·
+    /// ชื่อผู้รับสินค้า/ Receiver · อีเมล์/ E-mail taketime…" ⇒ อีเมลผู้ซื้อไหลเข้าผู้ติดต่อ<b>ผู้ขาย</b>.
+    /// <para>แยกจาก <see cref="BuyerLabels"/> <b>โดยตั้งใจ</b>: รายการนั้นเป็นตัวตัดสิน "เราเป็นผู้ซื้อหรือผู้ขาย" + ตำแหน่งชื่อ/เลขภาษี
+    /// (<c>OcrDocumentRoleInferrer</c> · <c>SmartFieldExtractor</c>) — เพิ่มคำตรงนั้นเปลี่ยนคำตัดสินบทบาทของกระดาษทุกใบ ·
+    /// ชุดนี้ใช้เฉพาะคำถาม "ช่องติดต่อ (อีเมล/โทร) นี้อยู่ฝั่งผู้ซื้อไหม" (<see cref="OcrSellerContactChannel"/>)</para>
+    /// </summary>
+    private static readonly (string Label, LabelMatch Mode)[] RecipientLabels =
+    {
+        ("สถานที่ส่งสินค้า", LabelMatch.Anywhere),
+        ("สถานที่จัดส่ง", LabelMatch.Anywhere),
+        ("ที่อยู่จัดส่ง", LabelMatch.Anywhere),
+        ("ที่อยู่ในการจัดส่ง", LabelMatch.Anywhere),
+        ("ผู้รับสินค้า", LabelMatch.Anywhere),
+        ("Shipping Address", LabelMatch.Anywhere),
+        ("Delivery Address", LabelMatch.Anywhere),
+        ("Deliver To", LabelMatch.Anywhere),
+        ("Receiver", LabelMatch.Anywhere),
+        ("Consignee", LabelMatch.Anywhere),
+    };
+
+    /// <summary>ตำแหน่งป้ายบล็อกผู้รับ/ที่อยู่จัดส่งทุกตัว (ดู <see cref="RecipientLabels"/>)</summary>
+    public static IReadOnlyList<int> FindRecipientAll(string? text)
+        => string.IsNullOrEmpty(text) ? Array.Empty<int>() : FindEvery(MaskNoise(text), RecipientLabels);
 
     /// <summary>ตำแหน่งป้ายฝั่งผู้ซื้อ/ผู้ขายที่พบเป็นตัวแรก (-1 = ไม่มีบนกระดาษ)</summary>
     public static (int BuyerPos, int SellerPos) Find(string? text)

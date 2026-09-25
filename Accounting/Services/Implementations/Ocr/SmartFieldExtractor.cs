@@ -216,12 +216,22 @@ internal static class SmartFieldExtractor
         if (string.IsNullOrEmpty(text)) return new List<TaxIdCandidate>();
         // pattern มาจากตัวกลางตัวเดียวของระบบ — ห้ามคัดลอกมาวางที่นี่
         // (เหตุผลเรื่องตัวคั่นห้ามครอบ \n อยู่ใน doc ของ ThaiTaxId.Pattern)
-        return Regex.Matches(text, Accounting.Helpers.ThaiTaxId.Pattern)
+        var strict = Regex.Matches(text, Accounting.Helpers.ThaiTaxId.Pattern)
             .Cast<Match>()
             .Select(m => new TaxIdCandidate(
                 Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
                 m.Index,
-                HasTaxIdLabelNear(text, m.Index, m.Length)))
+                HasTaxIdLabelNear(text, m.Index, m.Length)));
+        // กลุ่มตัวเลขแบบอื่น ("0 10 7 567 00041 4" หัวใบ Makro · รอบ 197) — รับ<b>เฉพาะตัวที่มีป้ายกำกับ</b>
+        // (pattern หลวม ⇒ ป้าย + checksum + ไม่ใช่บาร์โค้ด คือด่านทั้งหมด) · เลขเดียวกับที่ strict เจอแล้วยุบใน GroupBy ข้างล่าง
+        var loose = Regex.Matches(text, Accounting.Helpers.ThaiTaxId.LooseGroupingPattern)
+            .Cast<Match>()
+            .Where(m => HasTaxIdLabelNear(text, m.Index, m.Length))
+            .Select(m => new TaxIdCandidate(
+                Regex.Replace(m.Groups[1].Value, @"[-\s]", ""),
+                m.Index,
+                true));
+        return strict.Concat(loose)
             .Where(c => c.Id.Length == 13 && IsValidThaiTaxId(c.Id))
             // ด่านบาร์โค้ด **ไม่มีข้อยกเว้น** — ป้ายกำกับช่วยไม่ได้ตรงนี้
             //
@@ -234,7 +244,12 @@ internal static class SmartFieldExtractor
             .Where(c => !Accounting.Helpers.ThaiTaxId.LooksLikeProductBarcode(c.Id))
             .GroupBy(c => c.Id)
             // ตัวที่มีป้ายชนะตัวที่ไม่มีป้ายเสมอ (เลขเดียวกันอาจโผล่หลายที่)
-            .Select(g => g.OrderByDescending(c => c.Labelled).ThenBy(c => c.Position).First())
+            // ลำดับในรายการ = ตำแหน่งที่เลขโผล่ครั้งแรก (เท่ากับลำดับเดิมเมื่อมีแต่ strict — ตัวจาก loose ต้องไม่ไปต่อท้ายรายการ
+            // ทั้งที่อยู่หัวกระดาษ)
+            .Select(g => (First: g.Min(c => c.Position),
+                Pick: g.OrderByDescending(c => c.Labelled).ThenBy(c => c.Position).First()))
+            .OrderBy(x => x.First)
+            .Select(x => x.Pick)
             .ToList();
     }
 
