@@ -415,7 +415,9 @@ public partial class LodgingService
             PaymentType: null,
             // สัญญาทีม B รอบ 194: ส่ง id ประเภท ⇒ CreateDocumentAsync ตรึงประเภท/ลักษณะ/ชื่อลงใบ + จัดรูปด้วยตัวเดียวกัน
             DepositKindId: kind.KindId);
-        var created = await _docService.CreateDocumentAsync(companyId, request, userId, LodgingOrigin);
+        // P1 (รอบ 194 regsec): ส่งอัตรา VAT ของที่พักเข้าตัวจัดรูป — ที่พักที่ไม่คิด VAT (ChargeVat=false) คงรูปใบ VAT 0 ไม่เลื่อน
+        // (เดิมเซิร์ฟเวอร์จัดซ้ำด้วยอัตราบริษัท ⇒ กลายเป็น "มัดจำเต็มยอด" แล้วตอนริบได้ใบกำกับ 7%) · พารามิเตอร์เมธอด ไม่ใช่ช่องใน request
+        var created = await _docService.CreateDocumentAsync(companyId, request, userId, LodgingOrigin, depositChannelVatRate: vatRate);
         // ตรึง "ประเภทไหน · ใช้วิธีไหน · ใครตั้ง" ลงหมายเหตุภายในของใบมัดจำ (โหมดจริงอ่านย้อนจากช่องที่ตรึงบนใบ —
         // DepositPolicyResolver.OfDocument) + คำเตือนตามลักษณะเงิน (ราคา × เลื่อน VAT = ขัด §78/1)
         var depDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
@@ -1003,26 +1005,31 @@ public partial class LodgingService
         // ย้ายเข้า 21911 + ธง [DEPOSIT-LATE-VAT] · มัดจำเต็มยอด = DocumentService ออกใบกำกับของยอดที่ริบแล้วตัดชำระด้วยมัดจำ
         // (ห้ามลงรายได้ไม่มี VAT เงียบ ๆ อย่างเดิม) — ตัดสินที่ DepositPolicyResolver.ForfeitVatDecision ตัวเดียว
         var realized = new List<string>();
+        // P1 (regsec): อัตรา VAT ของที่พัก ณ ตอนริบ — ที่พักไม่คิด VAT ⇒ ใบ VAT 0 ของที่พักเป็น "VAT 0 โดยชอบ" ไม่ออกใบกำกับ 7%
+        var channelVatRate = await EffectiveVatRateAsync(companyId, r.Property);
         try
         {
             foreach (var line in plan.Lines.Where(l => l.ForfeitBase > 0.005m))
             {
                 await _docService.RealizeDepositAsync(companyId, line.Id,
                     new RealizeDepositRequest(line.ForfeitBase, DateTime.UtcNow, r.Property.CancellationFeeAccountCode ?? r.Property.RoomRevenueAccountCode,
-                        ForfeitAs: DepositForfeitAs.PriceOrFee), actor);
+                        ForfeitAs: DepositForfeitAs.PriceOrFee), actor, channelVatRate: channelVatRate);
                 realized.Add(line.Number);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // ล้มดัง 3 ที่: หมายเหตุบนการจอง · audit · คำตอบผู้เรียก — สถานะยกเลิกคงไว้ (ห้ามลงซ้ำตอนกดใหม่)
-            var pendingForfeit = string.Join(", ", plan.Lines.Where(l => l.ForfeitBase > 0.005m && !realized.Contains(l.Number))
-                .Select(l => $"{l.Number} ฐาน {l.ForfeitBase:N2}"));
-            AppendInternal(r, $"⚠️ ยกเลิกแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — ต้องรับรู้ที่หน้า “เงินมัดจำ”: {pendingForfeit}");
+            // M1(ก): DocumentService ไม่ล้าง change tracker ทั้งก้อนอีกแล้ว ⇒ `r` ยังถูกติดตาม หมายเหตุด้านล่างถูกบันทึกจริง
+            // M1(ค): ทางไปต่อข้อความเดียวกับ DocumentService (DepositKindDocumentRules.ForfeitRetryHint) — กดริบซ้ำปลอดภัย ระบบทำต่อจากใบกำกับที่ค้าง
+            var pendingLines = plan.Lines.Where(l => l.ForfeitBase > 0.005m && !realized.Contains(l.Number)).ToList();
+            var pendingForfeit = string.Join(", ", pendingLines.Select(l => $"{l.Number} ฐาน {l.ForfeitBase:N2}"));
+            var retry = string.Join(" · ", pendingLines.Select(l => DepositKindDocumentRules.ForfeitRetryHint(l.Number, l.ForfeitBase)));
+            AppendInternal(r, $"⚠️ ยกเลิกแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — {retry}");
             _db.AuditLogs.Add(Audit(companyId, AuditAction.Update, r, new { action = "CancelForfeitFailed", error = ex.Message, pending = pendingForfeit, by = actor }));
             await _db.SaveChangesAsync();
             throw new BusinessRuleException(
-                $"ยกเลิกการจองแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — ให้เจ้าหน้าที่รับรู้มัดจำ {pendingForfeit} ที่หน้า “เงินมัดจำ”",
+                $"ยกเลิกการจองแล้ว แต่ลงรายได้ส่วนที่ริบไม่สำเร็จ ({ex.Message}) — {retry}",
                 "LODGING-CANCEL-FORFEIT");
         }
         _logger.LogInformation("Lodging reservation {No} {Action}: fee {Fee} refund-due {Refund} forfeit {Forfeit}", r.ReservationNumber, noShow ? "no-show" : "cancelled", fee, plan.Refund, plan.Forfeit);
@@ -1401,17 +1408,21 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
     }
 
-    /// <summary>บัญชีรายได้ของ "ริบเงินประกันเป็นค่าเสียหาย" — บัญชีริบของประเภทที่ตรึงบนใบ (<c>DepositKind.ForfeitAccountCode</c>) →
-    /// บัญชีของเส้นริบเดิมของที่พัก (ค่าปรับยกเลิก → รายได้ค่าห้อง — ตามสัญญาบน <c>DepositKind.ForfeitAccountCode</c> · spec S7 ไม่เพิ่มเลขใหม่)</summary>
+    /// <summary>บัญชีรายได้ของ "ริบเงินประกันเป็นค่าเสียหาย" — บัญชีริบของประเภทที่ตรึงบนใบ (<c>DepositKind.ForfeitAccountCode</c>) เท่านั้น ·
+    /// ไม่ตั้ง ⇒ null ให้ DocumentService เลือกบัญชีรายได้อื่น (43080 ค่าปรับ/ค่าเสียหายที่ได้รับ → 43070 → ล้มดังพร้อมทางไปต่อ ·
+    /// <c>DepositPolicyResolver.RevenueAccountPlan</c> ตัวเดียว) · รอบ 194 P-c: เดิมตกไปค่าปรับยกเลิก/รายได้ค่าห้อง = รายได้ขายที่ไม่มีใน ภ.พ.30
+    /// ⇒ กระทบยอดรายได้ GL↔ภ.พ.30 ไม่ลง (ค่าธรรมเนียมยกเลิกของมัดจำค่าห้องยังใช้ CancellationFeeAccountCode เดิม — คนละเส้น)</summary>
+    /// <param name="prop">คงไว้ให้จุดเรียกเดิม (ส่วนรับ/ปิดเงินประกันเป็นของอีกทีมในรอบนี้) — ไม่ใช้ตัดสินบัญชีแล้ว (ห้ามตกไปบัญชีรายได้ของที่พัก)</param>
     private async Task<string?> SecurityForfeitAccountAsync(Guid companyId, Guid securityDocumentId, LodgingProperty prop)
     {
+        _ = prop;
         var kindId = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == securityDocumentId && d.CompanyId == companyId).Select(d => d.DepositKindId).FirstOrDefaultAsync();
         string? kindAccount = null;
         if (kindId is Guid k)
             kindAccount = await _db.DepositKinds.AsNoTracking()
                 .Where(x => x.Id == k && x.CompanyId == companyId).Select(x => x.ForfeitAccountCode).FirstOrDefaultAsync();
-        return !string.IsNullOrWhiteSpace(kindAccount) ? kindAccount.Trim() : prop.CancellationFeeAccountCode ?? prop.RoomRevenueAccountCode;
+        return !string.IsNullOrWhiteSpace(kindAccount) ? kindAccount.Trim() : null;
     }
 
     private static (IReadOnlyList<LodgingCancellationRule> Rules, bool NonRefundable) SnapshotRules(LodgingReservation r)

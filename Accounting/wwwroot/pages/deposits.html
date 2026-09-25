@@ -49,6 +49,20 @@
       <div class="modal-body">
         <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
         <!-- รอบ 194 — ผลต่อ VAT + ตัวเลือก "เงินที่ริบคืออะไร" (ข้อความ/ตัวเลือกมาจากเซิร์ฟเวอร์: DepositSummary.realizeVatNote/forfeitOptions) -->
+        <!-- รอบ 194 M5 — "ริบ" กับ "รับรู้ตามปกติ" ต่างกันที่ VAT/บัญชี: ริบ = ส่ง forfeitAs (เซิร์ฟเวอร์ตัดสิน VAT ของการริบ · ออกใบกำกับของยอดที่ริบถ้าจำเป็น)
+             · ตามปกติ = ไม่ส่ง (บัญชีที่ระบุ · มัดจำเต็มยอดที่ยังไม่เคยเสีย VAT เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ — ข้อความจาก plainRealizeBlockedReason) -->
+        <div class="form-group">
+          <label class="form-label">รับรู้แบบไหน</label>
+          <label style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="realizeMode" value="normal" checked onchange="Page._syncRealizeMode()">
+            <b>ส่งมอบสินค้า/ให้บริการแล้ว</b> (รับรู้รายได้ตามปกติ)
+          </label>
+          <label style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="realizeMode" value="forfeit" onchange="Page._syncRealizeMode()">
+            <b>ริบมัดจำ</b> (ลูกค้ายกเลิก/ผิดสัญญา)
+          </label>
+        </div>
+        <div id="realizePlainNote" style="display:none;font-size:12.5px;line-height:1.6;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 11px;margin-bottom:12px"></div>
         <div id="realizeVatNote" style="display:none;font-size:12.5px;line-height:1.6;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;margin-bottom:12px"></div>
         <div class="form-group" id="realizeForfeitRow" style="display:none">
           <label class="form-label">เงินที่รับรู้/ริบก้อนนี้คืออะไร (กำหนด VAT)</label>
@@ -253,10 +267,34 @@
             <input type="radio" name="realizeForfeitAs" value="${Layout.esc(o.value)}" ${o.isDefault ? 'checked' : ''}>
             <b>${Layout.esc(o.label)}</b><br><span style="font-size:12px;color:#64748b">${Layout.esc(o.description || '')}</span>
           </label>`).join('');
-        if (row) row.style.display = opts.length ? '' : 'none';
+        this._realizeRow = r;
+        // เปิดหน้าต่างใหม่ทุกครั้ง = เริ่มที่ "ตามปกติ" (ห้ามค้างค่าจากใบก่อน)
+        const normal = document.querySelector('input[name="realizeMode"][value="normal"]');
+        if (normal) normal.checked = true;
+        this._syncRealizeMode();
       },
+      _realizeMode() {
+        return document.querySelector('input[name="realizeMode"]:checked')?.value || 'normal';
+      },
+      /** รอบ 194 M5 — แสดงเฉพาะสิ่งที่เกี่ยวกับแบบที่เลือก (ข้อความ/ตัวเลือกทั้งหมดมาจากเซิร์ฟเวอร์ ห้ามคิดเงื่อนไขเองในหน้า) */
+      _syncRealizeMode() {
+        const r = this._realizeRow || {};
+        const forfeit = this._realizeMode() === 'forfeit';
+        const plain = document.getElementById('realizePlainNote');
+        if (plain) {
+          plain.textContent = (!forfeit && r.plainRealizeBlockedReason) ? r.plainRealizeBlockedReason : '';
+          plain.style.display = plain.textContent ? '' : 'none';
+        }
+        const note = document.getElementById('realizeVatNote');
+        if (note) note.style.display = (forfeit && note.textContent) ? '' : 'none';
+        const row = document.getElementById('realizeForfeitRow');
+        const opts = Array.isArray(r.forfeitOptions) ? r.forfeitOptions : [];
+        if (row) row.style.display = (forfeit && opts.length) ? '' : 'none';
+      },
+      /** ริบ = ส่งค่าที่เลือก (ไม่มีตัวเลือก = ราคา/ค่าธรรมเนียม — ค่าเริ่มต้นทิศปลอดภัยของตัวตัดสิน) · ตามปกติ = null */
       _realizeForfeitAs() {
-        return document.querySelector('input[name="realizeForfeitAs"]:checked')?.value || null;
+        if (this._realizeMode() !== 'forfeit') return null;
+        return document.querySelector('input[name="realizeForfeitAs"]:checked')?.value || 'PriceOrFee';
       },
       openRealize(id) {
         const r = this._rows.find(x => x.id === id);
@@ -315,7 +353,7 @@
           amount,
           realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
           revenueAccountCode: code || null,
-          // รอบ 194 — ส่งเฉพาะเมื่อเซิร์ฟเวอร์ให้ถาม (ไม่ส่ง = ราคา/มี VAT ตามค่าเริ่มต้นของตัวตัดสิน)
+          // รอบ 194 M5 — มีค่า = "ริบ" (ตัวตัดสิน VAT ของการริบ) · null = รับรู้ตามปกติ (ส่งมอบ/ให้บริการแล้ว)
           forfeitAs: this._realizeForfeitAs()
         };
         try {

@@ -2068,19 +2068,23 @@ public class IntegrationService : IIntegrationService
         }
         if (!request.DepositAppliedDrivesJournal || request.DepositAppliedAmount <= 0m) return null;
 
-        var natures = new List<DepositNature?> { payloadKind?.Nature };
+        const string secTail = " · คู่ค้า: ส่งใบกำกับเต็มจำนวนโดยไม่ตั้ง depositAppliedDrivesJournal แล้วตัดชำระ/คืนเงินประกันในระบบ · "
+            + "ไม่มีการสร้างเอกสาร/ออกเลข";
+        if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(payloadKind?.Nature) is string payloadSec)
+            return payloadSec + secTail;
         var refs = DepositReversalMath.ParseDepositRefs(request.DepositAppliedRef);
-        if (refs.Length > 0)
-            natures.AddRange(await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                    && (refs.Contains(d.DocumentNumber) || (d.Reference != null && refs.Contains(d.Reference))))
-                .Select(d => d.DepositNature)
-                .ToListAsync());
-        foreach (var n in natures)
-            if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(n) is string sec)
-                return sec + " · คู่ค้า: ส่งใบกำกับเต็มจำนวนโดยไม่ตั้ง depositAppliedDrivesJournal แล้วตัดชำระ/คืนเงินประกันในระบบ · "
-                    + "ไม่มีการสร้างเอกสาร/ออกเลข";
-        return null;
+        if (refs.Length == 0) return null;
+        // P-e (รอบ 194 ฝ่ายค้าน): เฉพาะใบที่ออกแล้วไม่ยกเลิก · ตัดสินจาก "ใบที่ถูกหักจริง" ด้วยตัวเดียวกับ DocumentService
+        // (เลขอ้างอิงร่วมที่ชี้ทั้งมัดจำค่าห้องและเงินประกัน ⇒ ใบที่ถูกหักคือมัดจำค่าห้อง — ไม่ปฏิเสธผิด)
+        var candidates = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
+                && (refs.Contains(d.DocumentNumber) || (d.Reference != null && refs.Contains(d.Reference))))
+            .Select(d => new Accounting.Helpers.DepositRefCandidate(d.Id, d.DocumentNumber, d.Reference, d.DepositNature))
+            .ToListAsync();
+        return Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblemForRefs(refs, candidates) is string sec
+            ? sec + secTail
+            : null;
     }
 
     /// <summary>

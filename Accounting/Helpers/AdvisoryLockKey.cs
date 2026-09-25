@@ -116,6 +116,9 @@ public static class AdvisoryLockKey
     /// <summary>บันทึก "คืนเงินแขกแล้ว" ของการจองที่พัก — part = id การจอง (รอบ 193 ฝ่ายค้าน: สองคำขอพร้อมกันผ่านด่านทั้งคู่
     /// แล้ว RefundPaidAmount ถูกเขียนทับ)</summary>
     public const string LodgingRefundPaid = "lodging-refund";
+    /// <summary>รับรู้/ริบใบมัดจำ — part = id ใบมัดจำ (รอบ 194 ฝ่ายค้าน P-a: สองคำขอพร้อมกันผ่านด่านยอดคงค้างทั้งคู่
+    /// ⇒ ใบกำกับของยอดที่ริบสองใบ · ต้องเป็น session lock เพราะเส้นออกใบกำกับเปิดธุรกรรมของตัวเองหลายขั้น)</summary>
+    public const string DepositRealize = "deposit-realize";
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>

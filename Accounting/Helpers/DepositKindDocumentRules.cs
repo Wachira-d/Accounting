@@ -47,13 +47,18 @@ public static class DepositKindDocumentRules
     /// ใบลักษณะ "ราคา" (ตอบเหมือนกันเสมอ) · นอกระบบ VAT · VAT เสียไปแล้ว = null (ไม่ถาม) ·
     /// ใบเดิมที่ไม่ทราบลักษณะ / เงินประกัน = ถาม โดยค่าเริ่มต้น = มี VAT (spec S3 ทิศปลอดภัย)
     /// </summary>
+    /// <param name="depositOutputVatDeferred">ธง deferred ของใบ (ส่งต่อให้ตัวตัดสิน — แยก VAT 0 โดยชอบ ออกจากมัดจำเต็มยอด · null = ถือว่าเลื่อน)</param>
     public static IReadOnlyList<DepositForfeitOption>? ForfeitOptions(
-        DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate)
+        DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate,
+        bool? depositOutputVatDeferred = null)
     {
-        var price = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.PriceOrFee, depositVatAmount, vatPendingUnrecognized, companyVatRate);
-        var comp = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.Compensation, depositVatAmount, vatPendingUnrecognized, companyVatRate);
-        // บริษัทไม่จด VAT = ไม่มี VAT ทั้งสองทาง — ถาม "มี VAT ไหม" = ข้อความเท็จ (ป้ายบอกว่ามี VAT) ⇒ ไม่ถาม
-        if (price.Action == comp.Action || price.Action == DepositForfeitVatAction.CompanyNotVatRegistered) return null;
+        var price = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.PriceOrFee, depositVatAmount, vatPendingUnrecognized,
+            companyVatRate, depositOutputVatDeferred: depositOutputVatDeferred);
+        var comp = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.Compensation, depositVatAmount, vatPendingUnrecognized,
+            companyVatRate, depositOutputVatDeferred: depositOutputVatDeferred);
+        // บริษัทไม่จด VAT / ใบ VAT 0 โดยชอบ = ไม่มี VAT ทั้งสองทาง — ถาม "มี VAT ไหม" = ข้อความเท็จ (ป้ายบอกว่ามี VAT) ⇒ ไม่ถาม
+        if (price.Action == comp.Action
+            || price.Action is DepositForfeitVatAction.CompanyNotVatRegistered or DepositForfeitVatAction.ZeroVatAtIssue) return null;
         return new[]
         {
             new DepositForfeitOption(nameof(DepositForfeitAs.PriceOrFee),
@@ -66,8 +71,10 @@ public static class DepositKindDocumentRules
     /// <summary>ข้อความอธิบายผลต่อ VAT เมื่อรับรู้/ริบ "ตามค่าเริ่มต้น" (ไม่ระบุ ForfeitAs) — หน้าศูนย์มัดจำแสดงในหน้าต่างรับรู้
     /// ให้ผู้ใช้รู้ก่อนกดว่าระบบจะออกใบกำกับภาษีให้หรือไม่</summary>
     public static string DefaultForfeitExplanation(
-        DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate)
-        => DepositPolicyResolver.ForfeitVatDecision(nature, null, depositVatAmount, vatPendingUnrecognized, companyVatRate).Explanation;
+        DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate,
+        bool? depositOutputVatDeferred = null)
+        => DepositPolicyResolver.ForfeitVatDecision(nature, null, depositVatAmount, vatPendingUnrecognized, companyVatRate,
+            depositOutputVatDeferred: depositOutputVatDeferred).Explanation;
 
     /// <summary>
     /// ภาษีขายที่พักไว้ (21913) ส่วนที่ต้อง "กลับเข้ารายได้" เมื่อริบเป็นค่าเสียหาย (<see cref="DepositForfeitVatDecision.ReverseUndueVat"/>)
@@ -102,4 +109,75 @@ public static class DepositKindDocumentRules
         return $"[{code}] {warning}"
             + (string.IsNullOrWhiteSpace(policyNote) ? "" : $" · บันทึกนโยบายบนใบ (ภายใน): {policyNote.Trim()}");
     }
+
+    // ═══════════════ รอบ 194 ทีม M — ใบกำกับของยอดที่ริบ (M1 · C2 regsec) ═══════════════
+
+    /// <summary>ป้ายบน <c>Document.DepositPolicyNote</c> ของใบกำกับที่ระบบออกให้การริบ — กุญแจค้นหา "ใบกำกับของมัดจำใบนี้" (idempotent)
+    /// · ช่องนี้ระบบเขียนเท่านั้น (เส้นแก้ใบเขียนเฉพาะใบที่มีประเภทมัดจำ — ใบกำกับไม่มี) ⇒ ผู้ใช้แก้ใบร่างแล้วกุญแจไม่หาย</summary>
+    public static string ForfeitInvoiceMarker(Guid depositId) => $"[DEPOSIT-FORFEIT-OF:{depositId:N}]";
+
+    /// <summary>ใบนี้คือใบกำกับที่ระบบออกให้การริบของมัดจำ <paramref name="depositId"/> ไหม (อ่านป้ายจาก <c>DepositPolicyNote</c>)</summary>
+    public static bool IsForfeitInvoiceOf(string? depositPolicyNote, Guid depositId)
+        => depositPolicyNote != null && depositPolicyNote.Contains(ForfeitInvoiceMarker(depositId), StringComparison.Ordinal);
+
+    /// <summary>หมายเหตุ (พิมพ์) ของใบกำกับของยอดที่ริบ — ข้อความคงที่ต่อเลขใบมัดจำ ⇒ ใช้เป็นกุญแจสำรองหาใบร่างที่สร้างแล้วแต่ยังไม่ทันติดป้าย</summary>
+    public static string ForfeitInvoiceNotes(string depositNumber)
+        => $"ใบกำกับภาษีของเงินมัดจำ {depositNumber} ที่ริบ — ชำระแล้วด้วยเงินมัดจำ";
+
+    /// <summary>ทางไปต่อเมื่อริบแล้วออกใบกำกับ/ตัดชำระไม่ครบ — <b>ข้อความเดียว</b>ของ DocumentService และที่พัก (M1 ค: เดิมสองฝั่งสั่งกันคนละทาง
+    /// "ห้ามกดรับรู้ซ้ำ" กับ "ต้องรับรู้ที่หน้าเงินมัดจำ") · ตอนนี้กดซ้ำปลอดภัย: ระบบหาใบกำกับที่ค้างของมัดจำใบนี้แล้วทำต่อ ไม่ออกใบใหม่</summary>
+    public static string ForfeitRetryHint(string depositNumber, decimal amount)
+        => $"ทำต่อที่หน้า “เงินมัดจำ” → “รับรู้” ใบ {depositNumber} → เลือก “ริบมัดจำ” ยอด {amount:N2} — "
+           + "ระบบทำต่อจากใบกำกับที่ค้างอยู่ (ไม่ออกใบซ้ำ)";
+
+    /// <summary>
+    /// ตัดสินว่าการริบครั้งนี้ต้อง "สร้างใบกำกับใหม่" หรือ "ทำต่อจากใบที่ค้าง" (M1 ข · idempotent) — pure
+    /// <para><paramref name="forfeitInvoices"/> = ใบกำกับของการริบของมัดจำใบนี้ที่ยังไม่ยกเลิก/ไม่ลบ · ใบที่ออกแล้วและไม่มียอดค้าง = ทำจบแล้ว (ไม่นับ) ·
+    /// ค้าง 1 ใบยอดตรง ⇒ ร่าง = อนุมัติแล้วตัดชำระ · ออกแล้ว = ตัดชำระต่อ · ยอดไม่ตรง/ค้างหลายใบ ⇒ ขัดกัน (บอกทางไปต่อ ห้ามเดา)</para>
+    /// </summary>
+    public static ForfeitInvoiceResume ResumeForfeitInvoice(
+        IReadOnlyList<ForfeitInvoiceCandidate> forfeitInvoices, decimal requestGross, string depositNumber)
+    {
+        var open = forfeitInvoices
+            .Where(c => c.Status != DocumentStatus.Voided)
+            .Where(c => !DocumentStatusRules.IsIssued(c.Status) || c.BalanceDue > 0.005m)
+            .ToList();
+        if (open.Count == 0) return new ForfeitInvoiceResume(ForfeitInvoiceStep.CreateNew, null, null, null);
+        if (open.Count > 1)
+            return new ForfeitInvoiceResume(ForfeitInvoiceStep.Conflict, null, null,
+                $"มัดจำ {depositNumber} มีใบกำกับของการริบค้างอยู่หลายใบ ({string.Join(", ", open.Select(o => o.DocumentNumber))}) — "
+                + "เปิดตรวจแล้วยกเลิกใบที่ไม่ใช้ก่อน แล้วทำรายการนี้ใหม่");
+        var c1 = open[0];
+        var issued = DocumentStatusRules.IsIssued(c1.Status);
+        var due = issued ? c1.BalanceDue : c1.TotalAmount;
+        if (Math.Abs(due - requestGross) > 0.005m)
+            return new ForfeitInvoiceResume(ForfeitInvoiceStep.Conflict, c1.Id, c1.DocumentNumber,
+                $"มัดจำ {depositNumber} มีใบกำกับของการริบครั้งก่อนค้างอยู่ ({c1.DocumentNumber} ยอด {due:N2}) ไม่ตรงยอดที่ขอ ({requestGross:N2}) — "
+                + $"ทำต่อด้วยยอด {due:N2} หรือยกเลิกใบ {c1.DocumentNumber} ก่อน (ห้ามออกใบกำกับสองใบต่อเงินก้อนเดียว)");
+        return new ForfeitInvoiceResume(issued ? ForfeitInvoiceStep.ApplyOnly : ForfeitInvoiceStep.ApproveThenApply,
+            c1.Id, c1.DocumentNumber, null);
+    }
+
+    /// <summary>
+    /// ด่าน "มัดจำ 1 ใบ → ใบปลายทาง 1 ใบ" ของการตัดชำระ (C2 regsec) — ผ่อนเฉพาะเมื่อฝั่งใดฝั่งหนึ่งเป็นใบกำกับของการริบของมัดจำใบนี้เอง
+    /// (ริบหลายครั้งบางส่วน · ตัดชำระใบสุดท้ายบางส่วนแล้วริบส่วนที่เหลือ) · การคืนยอดเมื่อยกเลิกใบปลายทางหาใบมัดจำจาก JE ตัดชำระ
+    /// ไม่ใช่จากตัวชี้ช่องเดียว ⇒ ใบก่อนหน้ายกเลิกทีหลังก็คืนถูก
+    /// </summary>
+    public static bool ApplyToAnotherTargetAllowed(bool priorIsForfeitInvoiceOfDeposit, bool targetIsForfeitInvoiceOfDeposit)
+        => priorIsForfeitInvoiceOfDeposit || targetIsForfeitInvoiceOfDeposit;
 }
+
+/// <summary>ขั้นที่ต้องทำกับใบกำกับของยอดที่ริบ (M1 ข)</summary>
+public enum ForfeitInvoiceStep
+{
+    CreateNew = 1,
+    ApproveThenApply = 2,
+    ApplyOnly = 3,
+    Conflict = 4,
+}
+
+/// <summary>ใบกำกับของการริบที่พบ (ยังไม่ยกเลิก/ไม่ลบ)</summary>
+public sealed record ForfeitInvoiceCandidate(Guid Id, string DocumentNumber, DocumentStatus Status, decimal TotalAmount, decimal BalanceDue);
+
+/// <summary>ผลตัดสิน <see cref="DepositKindDocumentRules.ResumeForfeitInvoice"/></summary>
+public sealed record ForfeitInvoiceResume(ForfeitInvoiceStep Step, Guid? InvoiceId, string? InvoiceNumber, string? Problem);

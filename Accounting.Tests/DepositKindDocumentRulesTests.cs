@@ -102,7 +102,7 @@ public class DepositKindDocumentRulesTests
     [Fact]
     public void ใบเดิมมัดจำเต็มยอด_ถามเงินที่ริบ_ค่าเริ่มต้นมีVAT_และออกใบกำกับ()
     {
-        var opts = DepositKindDocumentRules.ForfeitOptions(null, 0m, false, 7m);
+        var opts = DepositKindDocumentRules.ForfeitOptions(null, 0m, true, 7m, depositOutputVatDeferred: true);
         Assert.NotNull(opts);
         Assert.Equal(2, opts!.Count);
         var def = Assert.Single(opts, o => o.IsDefault);
@@ -112,13 +112,13 @@ public class DepositKindDocumentRulesTests
         Assert.Equal(nameof(DepositForfeitAs.Compensation), comp.Value);
         Assert.Contains("ไม่มี VAT", comp.Description);
         // ข้อความในหน้าต่างก่อนกด = ผลของค่าเริ่มต้น
-        Assert.Contains("ออกใบกำกับภาษี", DepositKindDocumentRules.DefaultForfeitExplanation(null, 0m, false, 7m));
+        Assert.Contains("ออกใบกำกับภาษี", DepositKindDocumentRules.DefaultForfeitExplanation(null, 0m, true, 7m, depositOutputVatDeferred: true));
     }
 
     [Fact]
     public void เงินประกัน_และใบเดิมVATพัก_ถามเงินที่ริบ()
     {
-        Assert.NotNull(DepositKindDocumentRules.ForfeitOptions(DepositNature.RefundableSecurity, 0m, false, 7m));
+        Assert.NotNull(DepositKindDocumentRules.ForfeitOptions(DepositNature.RefundableSecurity, 0m, true, 7m, depositOutputVatDeferred: true));
         // VAT พัก 21913: ราคา = ย้ายเข้า 21911 · ค่าเสียหาย = กลับเข้ารายได้ ⇒ ผลต่างกัน ต้องถาม
         Assert.NotNull(DepositKindDocumentRules.ForfeitOptions(null, 65.42m, true, 7m));
     }

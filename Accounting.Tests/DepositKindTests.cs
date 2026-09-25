@@ -136,10 +136,9 @@ public class DepositKindTests
     {
         foreach (var n in new DepositNature?[] { null, DepositNature.PartOfPrice, DepositNature.RefundableSecurity })
         {
-            var f = DepositPolicyResolver.ForfeitVatDecision(n, null, 65.42m, vatPendingUnrecognized: false);
+            var f = DepositPolicyResolver.ForfeitVatDecision(n, null, 65.42m, vatPendingUnrecognized: false, depositOutputVatDeferred: false);
             Assert.Equal(DepositForfeitVatAction.KeepExistingVat, f.Action);
             Assert.False(f.LateVat);
-            Assert.Null(f.LateVatNote);
         }
     }
 
@@ -338,22 +337,27 @@ public class DepositKindTests
     public void ริบ_ราคาที่VATพัก21913_ย้ายเข้า21911พร้อมธง()
     {
         var f = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 65.42m, vatPendingUnrecognized: true,
-            depositReceivedDate: new DateTime(2026, 7, 3));
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.ReclassifyUndueToDue, f.Action);
         Assert.True(f.LateVat);
-        Assert.Equal("[DEPOSIT-LATE-VAT] ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน (03/07/2026) — ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น", f.LateVatNote);
+        // รอบ 194 M4: ข้อความธงขึ้นกับสถานะงวดเดือนรับเงิน — ยื่นแล้ว ⇒ ธงบอกว่านำส่งงวดไหนแล้ว (ไม่สั่งยื่นเพิ่มเติมซ้ำ)
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(f.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), depositPeriodFiled: true);
+        Assert.True(tp.LateFlag);
+        Assert.StartsWith(DepositPolicyResolver.LateVatMarker, tp.Note);
+        Assert.Contains("(03/07/2026)", tp.Note);
     }
 
     [Fact]
     public void ริบ_มัดจำเต็มยอดที่เป็นราคา_ต้องออกใบกำกับของยอดที่ริบ_ห้ามรายได้ไม่มีVATเงียบ()
     {
-        var f = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, vatPendingUnrecognized: true);
+        var f = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, vatPendingUnrecognized: true,
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, f.Action);
         Assert.Equal(7m, f.ForfeitInvoiceVatRate);
         Assert.True(f.LateVat);
-        Assert.StartsWith(DepositPolicyResolver.LateVatMarker, f.LateVatNote);
         // ขอ "ค่าเสียหาย" กับเงินที่เป็นราคา = ไม่มีผล และต้องบอก (ห้าม silent no-op)
-        var asked = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, DepositForfeitAs.Compensation, 0m, false);
+        var asked = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, DepositForfeitAs.Compensation, 0m, true,
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, asked.Action);
         Assert.Equal(DepositForfeitAs.PriceOrFee, asked.EffectiveAs);
         Assert.True(asked.RequestIgnored);
@@ -363,46 +367,53 @@ public class DepositKindTests
     [Fact]
     public void ริบใบเดิมไม่ทราบลักษณะ_ไม่ระบุ_คิดVAT_ทิศปลอดภัย_ระบุค่าเสียหาย_ไม่มีVAT()
     {
-        var none = DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, false);
+        // มัดจำเต็มยอด (VAT 0 + deferred) — ใบเดิมไม่ทราบลักษณะ ไม่ระบุ ⇒ ราคา (ทิศปลอดภัย) ออกใบกำกับ
+        var none = DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, true, depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitAs.PriceOrFee, none.EffectiveAs);
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, none.Action);
-        var comp = DepositPolicyResolver.ForfeitVatDecision(null, DepositForfeitAs.Compensation, 0m, false);
+        var comp = DepositPolicyResolver.ForfeitVatDecision(null, DepositForfeitAs.Compensation, 0m, true, depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.CompensationNoVat, comp.Action);
         Assert.False(comp.LateVat);
-        Assert.Null(comp.LateVatNote);
         // ค่าขยะจาก client = ไม่ระบุ
-        Assert.Equal(DepositForfeitAs.PriceOrFee, DepositPolicyResolver.ForfeitVatDecision(null, (DepositForfeitAs)7, 0m, false).EffectiveAs);
+        Assert.Equal(DepositForfeitAs.PriceOrFee,
+            DepositPolicyResolver.ForfeitVatDecision(null, (DepositForfeitAs)7, 0m, true, depositOutputVatDeferred: true).EffectiveAs);
     }
 
     [Fact]
     public void ริบเงินประกัน_ค่าเสียหายไม่มีVAT_ค่าของ_ค่าธรรมเนียมมีVAT_VATพักต้องกลับ()
     {
-        var comp = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 0m, false);
+        var comp = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 0m, true,
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.CompensationNoVat, comp.Action);
         Assert.False(comp.ReverseUndueVat);
         Assert.Contains("ให้เลือกแบบมี VAT", comp.Explanation);
-        var fee = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 0m, false,
-            depositReceivedDate: new DateTime(2026, 7, 3));
+        var fee = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 0m, true,
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, fee.Action);
         // เงินประกันที่หักเป็นค่าของ/ค่าธรรมเนียม: จุดความรับผิด = วันที่หัก ไม่ใช่ภาษีค้างของเดือนที่รับเงิน ⇒ ไม่มีธงย้อนหลัง
         Assert.False(fee.LateVat);
-        Assert.Null(fee.LateVatNote);
-        var feePending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 65.42m, true);
+        var feeTp = DepositPolicyResolver.ForfeitTaxPointDecision(fee.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), true);
+        Assert.Equal(new DateTime(2026, 9, 10), feeTp.TaxPointDate);
+        Assert.Null(feeTp.Note);
+        var feePending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 65.42m, true,
+            depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.ReclassifyUndueToDue, feePending.Action);
         Assert.False(feePending.LateVat);
         // ทิศตรงข้าม: ใบเดิมไม่ทราบลักษณะ ยังติดธง (ทิศปลอดภัย)
-        Assert.True(DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, false).LateVat);
-        var pending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 65.42m, true);
+        Assert.True(DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, true, depositOutputVatDeferred: true).LateVat);
+        var pending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 65.42m, true,
+            depositOutputVatDeferred: true);
         Assert.True(pending.ReverseUndueVat);
     }
 
     [Fact]
     public void ริบนอกระบบVAT_และบริษัทไม่จดVAT_ไม่มีVATไม่มีธง()
     {
-        var nv = DepositPolicyResolver.ForfeitVatDecision(DepositNature.NonVatSupply, null, 0m, false);
+        var nv = DepositPolicyResolver.ForfeitVatDecision(DepositNature.NonVatSupply, null, 0m, true, depositOutputVatDeferred: true);
         Assert.Equal(DepositForfeitVatAction.NonVatNoVat, nv.Action);
         Assert.False(nv.LateVat);
-        var nr = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, false, companyVatRate: 0m);
+        var nr = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, false, companyVatRate: 0m,
+            depositOutputVatDeferred: false);
         Assert.Equal(DepositForfeitVatAction.CompanyNotVatRegistered, nr.Action);
         Assert.False(nr.LateVat);
         Assert.Equal(0m, nr.ForfeitInvoiceVatRate);
@@ -415,8 +426,10 @@ public class DepositKindTests
         try
         {
             CultureInfo.CurrentCulture = new CultureInfo("th-TH");
-            var f = DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, false, depositReceivedDate: new DateTime(2026, 1, 31));
-            Assert.Contains("(31/01/2026)", f.LateVatNote);
+            var f = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 1, 31), new DateTime(2026, 3, 5), depositPeriodFiled: true);
+            Assert.Contains("(31/01/2026)", f.Note);
+            Assert.Contains("01/2026", f.Note);
+            Assert.Contains("03/2026", f.Note);
         }
         finally { CultureInfo.CurrentCulture = old; }
     }
