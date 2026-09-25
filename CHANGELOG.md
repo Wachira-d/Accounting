@@ -3325,3 +3325,22 @@ _Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม R แ�
 - **P4** `documents.html` hydrate ประเภทรอรายการ (promise เดียว + ลำดับ) · **P6** schema รอบ 194 ย้ายเข้า `GetAlterStatements` + ชุดหลัง log แทน `catch {}`
 - เทสต์ `DepositKindNatureGuardTests` · checker `required_call_site_check` +6 กติกา · ค้าง: P5 (seed ตามประเภทธุรกิจตอนเปลี่ยนภายหลัง) · C2/C5/P1–P3 (ทีม M)
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม M2 แก้ผลฝ่ายค้านรอบสอง `erp-review/2026-09-25/review194-r2.md` (ยืนยันเองทุกข้อก่อนแก้):
+- **R2-1** tax point ของการริบใช้ "ไม่มีแถวยื่นในระบบ" เป็นหลักฐานว่ายังไม่ยื่น ⇒ `ForfeitTaxPointDecision(..., depositPeriodLocked, today)`: วันรับเงินเฉพาะเมื่อ
+  เดือนเดียวกัน หรือวันนี้ยังไม่เลยกำหนดยื่น (`TaxFilingDeadline` แบบกระดาษ) และไม่มีแถวยื่น/ล็อก/ปิดงวดบัญชี (`DepositReceiptPeriodLockedAsync`) และไม่ข้ามปีภาษี ·
+  นอกนั้นงวดปัจจุบัน + ธง LATE-VAT ข้อความตรงความจริง · เส้นย้าย VAT พักแยก JE ลงวัน tax point ⇒ `DepositOutputVatRecognizedAt` ตรงเดือนที่ Cr 21911 จริง
+- **R2-2** ใบเดิม (NULL · VAT 0 · ธง false) = กำกวม (`ForfeitZeroVatDeferred` สามสถานะ) ⇒ ทิศปลอดภัยคิด VAT · ตัวเลือกใหม่ `DepositForfeitAs.OriginallyNoVat`
+  (=3) จากเซิร์ฟเวอร์ · อัตราช่องทางหาจากใบ (`DepositChannelVatRatesAsync` — ที่พัก `ChargeVat`) · เทสต์ M2 เดิมที่ล็อกใบ NULL เป็น "VAT 0 โดยชอบ" ถูกแก้
+- **R2-3** เงินประกัน "ส่งมอบแล้ว" ⇒ ปฏิเสธ `DEP-SEC-PLAIN-REALIZE` + ทางไปต่อ 3 ทาง · `DepositSummary.PlainRealizeOffered` ⇒ หน้าต่างรับรู้ซ่อนตัวเลือก
+- **R2-4** ยกเลิกใบมัดจำที่ตัดชำระหลายใบ ⇒ คืนยอดจ่ายรายใบจาก JV ที่จับภาพก่อนกลับรายการ (`DepositApplyJournals.GrossByTarget`/`AfterRestore`) · ขั้น 2
+  ไม่กลับ JE ที่ถูกกลับแล้ว (เดิมโยนแล้วยกเลิกไม่ได้)
+- **R2-5** `DepositsAppliedToAsync`/void 2b/purge 0c ตัวกรองเดียวที่ไม่นับคู่ที่ถูกกลับ ⇒ purge ใบที่เคย void ไม่ลบ JV ต้นฉบับ/ไม่หักรับรู้ซ้ำ
+- **R2-6** เส้นหักมัดจำหลายใบ/แบบขับ JE ผ่อน one-shot แบบเดียวกับตัดชำระ + ข้อความ `AppliedElsewhereMessage` มีทางไปต่อ (ทุกเส้น)
+- **P-a** คีย์ล็อกยอดใบมัดจำตัวเดียว `AdvisoryLockKey.DepositRealizeKey` — ปุ่ม/ที่พัก/CMS (session) · อนุมัติ/ตัดชำระ/คืน (`JobLock.TryXactLockAsync` ก่อนล็อกแถว) ·
+  `JobLock` ปลดล็อกล้มหลังงานล้มไม่ทับ error เดิม
+- **P1 ค้าง** ที่พักรับเงินประกันส่ง `depositChannelVatRate` · `UpdateDocumentAsync` จัดรูปซ้ำด้วยอัตราช่องทางของใบ
+- **RevertTrackedChangesSinceAsync** → `Helpers/TrackedChangeRevert` (DetectChanges ก่อน · ตัด reference ฝั่ง principal · ตรวจซ้ำ) + เทสต์ด้วย DbContext ออฟไลน์
+- เทสต์ `DepositRound194R2Tests` · แก้ `DepositForfeitRound194MTests`/`DepositKindTests` ตามสัญญาใหม่ · checker `required_call_site_check` +14 กติกา (ถอดกฎที่ล็อก
+  `ForfeitZeroVatDeferred(ธงบนใบ…)`/`VatPeriodDeclaredOrFiledAsync` ในเส้นริบ — ล็อกพฤติกรรมผิดของ R2-1/R2-2)
+— commit <pending>)_

@@ -69,19 +69,50 @@ public static class JobLock
             return false;
         }
 
+        Exception? workError = null;
         try
         {
             await work();
             return true;
         }
+        catch (Exception ex)
+        {
+            workError = ex;
+            throw;
+        }
         finally
         {
             // ปลดล็อกเสมอแม้ตัวงานจะโยน — ไม่งั้นล็อกค้างจนกว่า connection จะถูกคืน
             // pool (ซึ่งอาจเป็นชั่วโมง) แล้วทั้งคลัสเตอร์ข้ามงานนี้ไปเรื่อย ๆ
-            await using var unlock = conn.CreateCommand();
-            unlock.CommandText = $"SELECT pg_advisory_unlock({lockKey})";
-            await unlock.ExecuteScalarAsync(CancellationToken.None);
-            if (openedHere) await conn.CloseAsync();
+            // รอบ 194 R2: connection พังระหว่างงาน ⇒ คำสั่งปลดล็อกก็ล้ม — เดิม exception ของการปลดล็อก "ทับ" error เดิมของงาน
+            // (ผู้ใช้เห็น "connection closed" แทนเหตุจริง) ⇒ งานล้มอยู่แล้ว: log แล้วปล่อย error เดิมไหลต่อ (session ที่พัง = ล็อกหลุดเองฝั่ง DB) ·
+            // งานสำเร็จแต่ปลดล็อกล้ม = โยนตามเดิม (ล็อกอาจค้างบน connection ใน pool — ต้องดัง)
+            try
+            {
+                await using var unlock = conn.CreateCommand();
+                unlock.CommandText = $"SELECT pg_advisory_unlock({lockKey})";
+                await unlock.ExecuteScalarAsync(CancellationToken.None);
+                if (openedHere) await conn.CloseAsync();
+            }
+            catch (Exception unlockError) when (workError != null)
+            {
+                logger?.LogError(unlockError,
+                    "ปลดล็อก {Scope}/{Part} (lock {Key}) ไม่สำเร็จหลังงานล้ม — คง error เดิมของงานไว้: {WorkError}",
+                    scope, part, lockKey, workError.Message);
+            }
         }
+    }
+
+    /// <summary>
+    /// ล็อกระดับ<b>ธุรกรรม</b>แบบไม่รอ (<c>pg_try_advisory_xact_lock</c>) — ปลดเองตอน commit/rollback · คืน <c>false</c> เมื่อ session อื่นถือคีย์นี้อยู่
+    /// (ทั้ง session lock จาก <see cref="RunExclusiveAsync"/> และ xact lock) · session เดียวกันที่ถือ session lock คีย์นี้อยู่แล้วได้ทันที
+    /// <para>ไม่รอ (try) เพราะผู้เรียกอยู่กลางธุรกรรมที่ถือล็อกอื่นแล้ว (เลขเอกสาร/เลข JE/แถว) — การรอคีย์ที่อีก session ถือขณะมันรอล็อกของเรา = deadlock ·
+    /// ล้มเร็วพร้อมข้อความ "รอสักครู่แล้วทำใหม่" ปลอดภัยกว่า (รอบ 194 R2 · P-a)</para>
+    /// </summary>
+    public static async Task<bool> TryXactLockAsync(AccountingDbContext db, long lockKey, CancellationToken ct = default)
+    {
+        if (db.Database.CurrentTransaction == null)
+            throw new InvalidOperationException("TryXactLockAsync ต้องเรียกภายในธุรกรรม — นอกธุรกรรมล็อกถูกปลดทันทีหลังคำสั่ง (ไม่กันอะไร)");
+        return await db.Database.SqlQueryRaw<bool>("SELECT pg_try_advisory_xact_lock({0}) AS \"Value\"", lockKey).SingleAsync(ct);
     }
 }

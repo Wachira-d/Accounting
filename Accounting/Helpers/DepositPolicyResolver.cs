@@ -110,14 +110,17 @@ public enum DepositForfeitVatAction
     NonVatNoVat = 5,
     /// <summary>บริษัทไม่จด VAT ⇒ รายได้ไม่มี VAT (ไม่มีใบกำกับ)</summary>
     CompanyNotVatRegistered = 6,
-    /// <summary>รอบ 194 M2 — ใบมัดจำออกด้วย VAT 0 <b>โดยชอบ</b> (ไม่ใช่การเลื่อน VAT: ยกเว้น §81 · อัตรา 0% §80/1 · ออกตอนยังไม่จด VAT —
-    /// ธง <c>DepositOutputVatDeferred = false</c>) ⇒ ริบแล้วคงอัตราเดิม (ไม่มี VAT · ไม่ออกใบกำกับ 7% · ไม่ติดธงภาษีย้อนหลัง)</summary>
+    /// <summary>รอบ 194 M2 — ใบมัดจำออกด้วย VAT 0 <b>โดยชอบ</b> (ไม่ใช่การเลื่อน VAT: ยกเว้น §81 · อัตรา 0% §80/1 · ออกตอนยังไม่จด VAT)
+    /// ⇒ ริบแล้วคงอัตราเดิม (ไม่มี VAT · ไม่ออกใบกำกับ 7% · ไม่ติดธงภาษีย้อนหลัง) · รอบ 194 R2-2: รู้ได้เฉพาะเมื่อ ① ใบมีลักษณะเงิน
+    /// (ใบรอบ 194+ ที่ธงเลื่อนเชื่อถือได้) และธงเลื่อน = false · ② ช่องทางบอกอัตรา 0 (ที่พัก <c>ChargeVat=false</c>) ·
+    /// ③ ผู้ใช้ยืนยัน <see cref="DepositForfeitAs.OriginallyNoVat"/> กับใบเดิมที่กำกวม — ดู <see cref="DepositPolicyResolver.ForfeitZeroVatDeferred"/></summary>
     ZeroVatAtIssue = 7,
 }
 
 /// <summary>รอบ 194 M4 — จุดความรับผิดของ VAT ที่เกิดจากการริบ (ใบกำกับของยอดที่ริบ / ย้าย 21913 → 21911)</summary>
 /// <param name="TaxPointDate">วันที่ที่ใช้เป็น tax point (งวด ภ.พ.30) — ใบกำกับส่งเป็น <c>PaymentDate</c> · ใบ VAT พักประทับ <c>DepositOutputVatRecognizedAt</c></param>
-/// <param name="LateFlag">ต้องติดธง <c>[DEPOSIT-LATE-VAT]</c> (งวดเดือนรับเงินยื่นไปแล้ว — VAT เข้างวดปัจจุบันแบบล่าช้า)</param>
+/// <param name="LateFlag">ต้องติดธง <c>[DEPOSIT-LATE-VAT]</c> (งวดเดือนรับเงินอาจยื่นไปแล้ว — ยื่น/ล็อกในระบบ · เลยกำหนดยื่น · ข้ามปีภาษี
+/// ⇒ VAT เข้างวดปัจจุบันแบบล่าช้า)</param>
 /// <param name="Note">ข้อความที่ประทับบนใบ (มีธงเมื่อ <paramref name="LateFlag"/>) — null = ไม่มีอะไรต้องบอก</param>
 public sealed record DepositForfeitTaxPoint(DateTime TaxPointDate, bool LateFlag, string? Note);
 
@@ -691,12 +694,13 @@ public static class DepositPolicyResolver
     /// <param name="depositVatAmount">VAT บนใบมัดจำ (0 = มัดจำเต็มยอด/VAT 0 โดยชอบ/บริษัทไม่จด VAT)</param>
     /// <param name="vatPendingUnrecognized">VAT ยังพักอยู่ 21913 (<c>DepositOutputVatDeferred</c> และยังไม่รับรู้)</param>
     /// <param name="companyVatRate">อัตรา VAT ของบริษัท ณ วันริบ (0 = ไม่จด VAT)</param>
-    /// <param name="depositOutputVatDeferred">ธง <c>DepositOutputVatDeferred</c> ของใบมัดจำ — แยก "VAT 0 เพราะเลื่อน (มัดจำเต็มยอด)" ออกจาก
-    /// "VAT 0 โดยชอบ" (ยกเว้น §81 · 0% §80/1 · ออกตอนยังไม่จด VAT) · <b>null = ไม่ทราบ ⇒ ถือว่าเลื่อน</b> (พฤติกรรมเดิมของผู้เรียกที่ไม่ส่ง —
-    /// ทิศปลอดภัย: ออกใบกำกับ = จ่ายเกินมองเห็นและแก้ได้)</param>
+    /// <param name="depositOutputVatDeferred">ธง <c>DepositOutputVatDeferred</c> <b>ตามที่อยู่บนใบ</b> — ตัวนี้แปลงเป็นสามสถานะเองผ่าน
+    /// <see cref="ForfeitZeroVatDeferred"/> (รอบ 194 R2-2: ธง false ของใบเดิมที่ไม่มีลักษณะเงิน = กำกวม ไม่ใช่ "VAT 0 โดยชอบ") ·
+    /// <b>null = ผู้เรียกไม่ทราบ ⇒ ถือว่าเลื่อน</b> (ทิศปลอดภัย: ออกใบกำกับ = จ่ายเกินมองเห็นและแก้ได้)</param>
+    /// <param name="channelVatRate">อัตรา VAT ของช่องทางที่ออกใบ (ที่พัก <c>ChargeVat=false</c> = 0) — เซิร์ฟเวอร์หาเองจากใบ ห้ามรับจาก client · null = ไม่มีช่องทาง</param>
     public static DepositForfeitVatDecision ForfeitVatDecision(
         DepositNature? nature, DepositForfeitAs? requested, decimal depositVatAmount, bool vatPendingUnrecognized,
-        decimal companyVatRate = 7m, bool? depositOutputVatDeferred = null)
+        decimal companyVatRate = 7m, bool? depositOutputVatDeferred = null, decimal? channelVatRate = null)
     {
         DepositForfeitAs? req = requested is { } r && Enum.IsDefined(r) ? r : null;
         var hasVat = depositVatAmount > 0.005m;
@@ -707,16 +711,28 @@ public static class DepositPolicyResolver
             return new DepositForfeitVatDecision(DepositForfeitVatAction.KeepExistingVat, req ?? DepositForfeitAs.PriceOrFee,
                 false, false, false, 0m, "ภาษีขายของมัดจำนี้เสียไปแล้วในเดือนที่รับเงิน — ริบแล้ว VAT คงเดิม ไม่ออกใบลดหนี้", null);
 
-        var ignored = nature == DepositNature.PartOfPrice && req == DepositForfeitAs.Compensation;
-        var effective = nature == DepositNature.PartOfPrice ? DepositForfeitAs.PriceOrFee : req ?? DepositForfeitAs.PriceOrFee;
+        // R2-2 — "VAT 0 มาแต่แรก" รู้ได้จาก ① ใบรอบ 194+ (มีลักษณะเงิน · ธงเลื่อน false) ② ช่องทางอัตรา 0 ③ ผู้ใช้ยืนยันกับใบที่กำกวม
+        // (ใบเดิม NULL · VAT 0 · ธง false = ก่อน 24/09 มัดจำเต็มยอดทุกใบก็หน้าตาแบบนี้) · ใบที่รู้ว่าเลื่อน ⇒ คำยืนยันไม่มีผล (บอกผู้ใช้)
+        var zeroState = ForfeitZeroVatDeferred(nature, depositOutputVatDeferred, channelVatRate);
+        var saysNoVat = req == DepositForfeitAs.OriginallyNoVat;
+        var zeroAtIssue = !hasVat && (zeroState == false || (zeroState == null && saysNoVat));
+        var noVatIgnored = saysNoVat && !zeroAtIssue;
+        DepositForfeitAs? priceReq = saysNoVat ? DepositForfeitAs.PriceOrFee : req;
+
+        var ignored = nature == DepositNature.PartOfPrice && priceReq == DepositForfeitAs.Compensation;
+        var effective = nature == DepositNature.PartOfPrice ? DepositForfeitAs.PriceOrFee : priceReq ?? DepositForfeitAs.PriceOrFee;
         if (effective == DepositForfeitAs.Compensation)
             return new DepositForfeitVatDecision(DepositForfeitVatAction.CompensationNoVat, effective,
                 false, hasVat, false, 0m,
                 "ริบเป็นค่าเสียหาย (ไม่ใช่ค่าตอบแทนของการขาย) — รายได้อื่นไม่มี VAT · ถ้าที่จริงเป็นค่าของที่ใช้ไป/ค่าบริการ/"
                 + "ค่าธรรมเนียมยกเลิก ให้เลือกแบบมี VAT", null);
 
-        var note = ignored ? " · ประเภทนี้เป็นส่วนหนึ่งของราคา — ตัวเลือก “ค่าเสียหาย” ไม่มีผล" : "";
-        string? code = ignored ? KindPriceServiceRuleCode : null;
+        var note = ignored ? " · ประเภทนี้เป็นส่วนหนึ่งของราคา — ตัวเลือก “ค่าเสียหาย” ไม่มีผล"
+            : noVatIgnored ? " · ใบนี้" + (hasVat ? "มี VAT พักไว้" : "บันทึกว่าเลื่อน VAT (มัดจำเต็มยอด)")
+                + " — ตัวเลือก “ไม่มี VAT มาแต่แรก” ไม่มีผล"
+            : "";
+        ignored |= noVatIgnored;
+        string? code = note.Length == 0 ? null : KindPriceServiceRuleCode;
         // "ภาษีย้อนหลัง" จริงเฉพาะเงินที่เป็นราคาตั้งแต่วันรับ (หรือใบเดิมที่ไม่รู้ลักษณะ — ทิศปลอดภัย: ให้คนตรวจเห็น) ·
         // เงินประกันที่ริบเป็นค่าของ/ค่าธรรมเนียม จุดความรับผิดคือ "วันที่หัก" (legal-L1 ข้อ 2b/4) ⇒ ไม่ใช่ภาษีค้างของเดือนที่รับเงิน
         var lateVat = nature != DepositNature.RefundableSecurity;
@@ -731,11 +747,15 @@ public static class DepositPolicyResolver
         // M2 (ทิศตรงข้าม) — VAT 0 ที่ไม่ได้เลื่อน = อัตราของสิ่งที่ขายเป็น 0/ยกเว้นจริง (หรือออกตอนยังไม่จด VAT · ช่องทางไม่คิด VAT)
         // ⇒ ริบแล้วยังเป็นราคาที่ VAT 0 — ห้ามออกใบกำกับอัตราบริษัท
         // (เดิม: มัดจำบริการส่งออก 0% 100,000 ริบแล้วได้ใบกำกับ VAT 6,542.06 + ธงสั่งยื่นเพิ่มเติม)
-        if (depositOutputVatDeferred == false)
-            return new DepositForfeitVatDecision(DepositForfeitVatAction.ZeroVatAtIssue, effective,
+        if (zeroAtIssue)
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.ZeroVatAtIssue,
+                zeroState == null ? DepositForfeitAs.OriginallyNoVat : effective,
                 false, false, ignored, 0m,
-                "ใบมัดจำนี้ออกด้วย VAT 0 โดยชอบ (ยกเว้น §81 · อัตรา 0% §80/1 · ออกตอนยังไม่จด VAT · หรือช่องทางไม่คิด VAT) "
-                + "ไม่ใช่การเลื่อน VAT — ริบแล้วคงอัตราเดิม ไม่ออกใบกำกับภาษี" + note, code);
+                (zeroState == null
+                    ? "ผู้ใช้ยืนยันว่าใบมัดจำนี้ไม่มี VAT มาแต่แรก (ส่งออก 0% §80/1 · ยกเว้น §81 · ออกตอนยังไม่จด VAT) — ริบแล้วไม่ออกใบกำกับภาษี "
+                      + "· ถ้าที่จริงเป็นมัดจำเต็มยอดที่ยังไม่เคยเสีย VAT ให้เลือกแบบ “มี VAT” (ภาษีขายจะหาย)"
+                    : "ใบมัดจำนี้ออกด้วย VAT 0 โดยชอบ (ยกเว้น §81 · อัตรา 0% §80/1 · ออกตอนยังไม่จด VAT · หรือช่องทางไม่คิด VAT) "
+                      + "ไม่ใช่การเลื่อน VAT — ริบแล้วคงอัตราเดิม ไม่ออกใบกำกับภาษี") + note, code);
         return new DepositForfeitVatDecision(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, effective,
             lateVat, false, ignored, companyVatRate,
             "มัดจำเต็มยอดที่เป็นค่าตอบแทนยังไม่เคยเสีย VAT — ต้องออกใบกำกับภาษีของยอดที่ริบ (ราคารวม VAT) แล้วตัดชำระด้วยมัดจำ "
@@ -743,59 +763,95 @@ public static class DepositPolicyResolver
     }
 
     /// <summary>
-    /// รอบ 194 M4 — tax point + ธงของ VAT ที่เกิดจากการริบ (ใบกำกับของยอดที่ริบ · ย้าย 21913 → 21911) <b>ตัวตัดสินตัวเดียว</b>
-    /// <para>เดิมใบกำกับลงวันที่ริบ (รายงานภาษีขายนับเดือนที่ริบ) แต่ธงสั่ง "ยื่น ภ.พ.30 เพิ่มเติมของเดือนรับเงิน" ⇒ ทำตามทั้งสองทาง = VAT ซ้ำ</para>
+    /// รอบ 194 M4 + R2-1 — tax point + ธงของ VAT ที่เกิดจากการริบ (ใบกำกับของยอดที่ริบ · ย้าย 21913 → 21911) <b>ตัวตัดสินตัวเดียว</b>
+    /// <para>ระบบ<b>ไม่รู้</b>ว่าผู้ใช้ยื่น ภ.พ.30 นอกระบบหรือไม่ ⇒ "ไม่มีแถวยื่นในระบบ" ≠ "ยังไม่ยื่น" (DOCTRINE §1: เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล
+    /// ห้ามตกเป็น "ผ่าน") · R2-1: เดิมใช้แค่แถวยื่นในระบบ ⇒ บริษัทที่ยื่นทางเว็บ RD โดยไม่บันทึกในระบบ ได้ tax point = เดือนรับเงินที่ยื่นไปแล้ว
+    /// ⇒ VAT ของการริบไม่อยู่ในแบบใดเลย และหมายเหตุบอก "ไม่ต้องยื่นเพิ่มเติม"</para>
     /// <list type="bullet">
     /// <item>ไม่ใช่ภาษีย้อนหลัง (<paramref name="lateVat"/> false — เงินประกันที่หักเป็นค่าของ/ค่าธรรมเนียม) ⇒ tax point = วันที่ริบ · ไม่มีธง</item>
-    /// <item>เดือนเดียวกับวันรับเงิน ⇒ tax point = วันรับเงิน · ไม่มีธง (เข้างวดที่ถูกอยู่แล้ว)</item>
-    /// <item>งวดเดือนรับเงิน <b>ยังไม่ยื่น/ไม่ล็อก</b> ⇒ tax point = วันรับเงิน (VAT เข้างวดที่ถูก ไม่ต้องยื่นเพิ่มเติม) · ไม่มีธง · หมายเหตุบอกงวด</item>
-    /// <item>งวดเดือนรับเงิน <b>ยื่นแล้ว</b> ⇒ VAT เข้างวดปัจจุบัน (วันที่ริบ) + ธง <see cref="LateVatMarker"/> บอกตรง ๆ ว่านำส่งงวดไหนแล้ว
-    /// และ<b>ห้ามนำส่งซ้ำ</b>ในการยื่นเพิ่มเติม</item>
+    /// <item>ใช้<b>วันรับเงิน</b>ได้เฉพาะเมื่อ (เดือนรับเงิน = เดือนที่ริบ <b>หรือ</b> วันนี้ยังไม่เลยกำหนดยื่นของงวดเดือนรับเงิน — ตาราง
+    /// <see cref="TaxFilingDeadline"/> ตัวเดียว · ใช้กำหนด<b>กระดาษ</b> (เร็วกว่า = ทิศปลอดภัย)) <b>และ</b> ไม่มีแถวยื่น/ล็อก/ปิดงวดในระบบ
+    /// <b>และ</b> ไม่ข้ามปีภาษี</item>
+    /// <item>นอกนั้น ⇒ VAT เข้างวดปัจจุบัน (วันที่ริบ) + ธง <see cref="LateVatMarker"/> ข้อความตรงความจริง: ถึงกำหนดงวดไหน · นำส่งงวดไหน ·
+    /// อาจมีเงินเพิ่ม §89/1 · ห้ามนำส่งซ้ำ</item>
     /// </list>
     /// </summary>
     /// <param name="lateVat"><see cref="DepositForfeitVatDecision.LateVat"/> — ภาษีถึงกำหนดตั้งแต่วันรับเงินจริงไหม</param>
     /// <param name="depositReceivedDate">วันรับเงินมัดจำ (วันที่ของใบมัดจำ)</param>
-    /// <param name="forfeitDate">วันที่ริบ/รับรู้</param>
-    /// <param name="depositPeriodFiled">งวด ภ.พ.30 ของเดือนรับเงินถูกประกาศว่ายื่น/ล็อกแล้ว (<c>TaxFilingLockPolicy.DeclaredOrFiledStatuses</c> หรือ <c>FilingLockedAt</c>)</param>
+    /// <param name="forfeitDate">วันที่ริบ/รับรู้ (วันที่ของใบกำกับ/JE ของการริบ)</param>
+    /// <param name="depositPeriodLocked">งวดเดือนรับเงิน "ปิดในระบบแล้ว" — แถว ภ.พ.30 ยื่น/ประกาศว่ายื่น (<c>TaxFilingLockPolicy.DeclaredOrFiledStatuses</c>) ·
+    /// <c>FilingLockedAt</c> · หรืองวดบัญชีของวันรับเงินปิดแล้ว</param>
+    /// <param name="today">วันนี้ตามปฏิทินไทย (<c>ThaiDate.CalendarDateUtc(DateTime.UtcNow)</c>) — ใช้เทียบกำหนดยื่น (การยื่นเกิดตามเวลาจริง ไม่ใช่วันที่ในใบ)</param>
     public static DepositForfeitTaxPoint ForfeitTaxPointDecision(
-        bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodFiled)
+        bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodLocked, DateTime today)
     {
         if (!lateVat) return new DepositForfeitTaxPoint(forfeitDate, false, null);
-        var earliest = depositReceivedDate <= forfeitDate ? depositReceivedDate : forfeitDate;
-        var sameMonth = depositReceivedDate.Year == forfeitDate.Year && depositReceivedDate.Month == forfeitDate.Month;
-        if (sameMonth || forfeitDate < depositReceivedDate) return new DepositForfeitTaxPoint(earliest, false, null);
+        if (forfeitDate < depositReceivedDate) return new DepositForfeitTaxPoint(forfeitDate, false, null);
+        var sameMonth = SameVatPeriod(depositReceivedDate, forfeitDate);
+        var crossYear = depositReceivedDate.Year != forfeitDate.Year;
+        var deadline = TaxFilingDeadline.For(TaxFilingDeadline.KeyOf(TaxType.VAT)!, depositReceivedDate.Year, depositReceivedDate.Month).Paper;
+        var beforeDeadline = today.Date <= deadline.Date;
         var receivedMonth = depositReceivedDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
-        if (!depositPeriodFiled)
-            return new DepositForfeitTaxPoint(depositReceivedDate, false,
-                $"ภาษีขายของยอดที่ริบเข้างวด ภ.พ.30 เดือน {receivedMonth} (เดือนที่รับเงิน "
-                + $"{depositReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} — งวดนั้นยังไม่ยื่น) · ไม่ต้องยื่นเพิ่มเติม");
+        var receivedDay = depositReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        if (!depositPeriodLocked && !crossYear && (sameMonth || beforeDeadline))
+            return new DepositForfeitTaxPoint(depositReceivedDate, false, sameMonth ? null
+                : $"ภาษีขายของยอดที่ริบเข้างวด ภ.พ.30 เดือน {receivedMonth} (เดือนที่รับเงิน {receivedDay}) — วันนี้ยังไม่เลยกำหนดยื่นงวดนั้น "
+                  + $"({deadline.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}) · ถ้ายื่นงวดนั้นไปแล้วนอกระบบ ให้ยกเลิกรายการนี้แล้วบันทึกการยื่นก่อนทำใหม่");
         var nowMonth = forfeitDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+        var why = depositPeriodLocked ? $"งวด {receivedMonth} ยื่น/ปิดในระบบแล้ว"
+            : crossYear ? "ข้ามปีภาษีแล้ว"
+            : $"เลยกำหนดยื่นงวด {receivedMonth} ({deadline.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}) แล้ว — ระบบไม่รู้ว่ายื่นนอกระบบไปแล้วหรือไม่";
         return new DepositForfeitTaxPoint(forfeitDate, true,
-            $"{LateVatMarker} ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน ({depositReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}) "
-            + $"แต่งวด {receivedMonth} ยื่นไปแล้ว — VAT ก้อนนี้นำส่งในงวด {nowMonth} แล้ว (ล่าช้า — อาจมีเงินเพิ่ม §89/1 ของงวด {receivedMonth}) · "
-            + "ห้ามนำส่งซ้ำในการยื่นเพิ่มเติม — ปรึกษานักบัญชี");
+            $"{LateVatMarker} ภาษีถึงกำหนดงวด {receivedMonth} (รับเงิน {receivedDay}) · นำส่งในงวด {nowMonth} ({why}) · "
+            + $"อาจมีเงินเพิ่ม §89/1 ของงวด {receivedMonth} · ห้ามนำส่งซ้ำ — ปรึกษานักบัญชี");
     }
+
+    /// <summary>สองวันที่อยู่งวดภาษีรายเดือนเดียวกันไหม (ปี + เดือน) — ใช้ทั้งตัวตัดสิน tax point และการประทับ <c>DepositOutputVatRecognizedAt</c>
+    /// ให้ตรงเดือนของ JE ที่ Cr 21911 จริง (R2-1)</summary>
+    public static bool SameVatPeriod(DateTime a, DateTime b) => a.Year == b.Year && a.Month == b.Month;
 
     // ═══════════════════════════ รอบ 194 ทีม M — หลังฝ่ายค้านเงิน/ภาษี ═══════════════════════════
 
     /// <summary>รหัสกฎของ "รับรู้ตามปกติ (ไม่ใช่ริบ) โดยไม่มีใบสุดท้าย กับมัดจำเต็มยอดที่ยังไม่เคยเสีย VAT"</summary>
     public const string PlainRealizeRuleCode = "DEPOSIT-PLAIN-REALIZE";
 
+    /// <summary>รหัสกฎของ "รับรู้ตามปกติ (ส่งมอบแล้ว) กับเงินประกันที่ต้องคืน" (R2-3)</summary>
+    public const string SecurityPlainRealizeRuleCode = "DEP-SEC-PLAIN-REALIZE";
+
     /// <summary>
-    /// รอบ 194 M5 — "รับรู้ตามปกติ" (ส่งมอบ/ให้บริการแล้ว · <c>ForfeitAs</c> ว่าง · ไม่มีใบสุดท้าย) ทำได้ไหม — null = ได้ (เส้นเดิม: บัญชีที่ผู้เรียกระบุ)
-    /// <para>ไม่ได้เฉพาะมัดจำเต็มยอดที่เป็นราคา (หรือใบเดิมไม่ทราบลักษณะ) ที่ยังไม่เคยเสีย VAT ของบริษัทที่จด VAT — ลงรายได้ตรงจากมัดจำ =
-    /// ภาษีขายหายเงียบ (spec S3) · ทางไปต่อ: ออกใบกำกับ/ใบแจ้งหนี้แล้ว “หักมัดจำ” หรือเลือก “ริบมัดจำ” (ระบบออกใบกำกับของยอดที่ริบให้)</para>
-    /// <para>ไม่บล็อก: ใบที่เสีย VAT แล้ว/VAT พัก (เส้นเดิมย้าย 21913→21911) · นอกระบบ VAT · เงินประกัน · ใบ VAT 0 โดยชอบ (ไม่ deferred) · บริษัทไม่จด VAT</para>
+    /// รอบ 194 M5 + R2-2/R2-3 — "รับรู้ตามปกติ" (ส่งมอบ/ให้บริการแล้ว · <c>ForfeitAs</c> ว่าง · ไม่มีใบสุดท้าย) ทำได้ไหม — null = ได้ (เส้นเดิม: บัญชีที่ผู้เรียกระบุ)
+    /// <list type="bullet">
+    /// <item><b>เงินประกันที่ต้องคืน</b> ⇒ ไม่ได้เสมอ (R2-3: "ส่งมอบแล้ว" = รายได้ขาย 41000 ไม่มี VAT ทั้งที่เงินประกันไม่ใช่ราคา) · ทางไปต่อ 3 ทาง
+    /// (คืน · ตัดชำระใบแจ้งหนี้ค่าของที่เสีย/ใช้ไป · ริบเป็นค่าเสียหาย)</item>
+    /// <item>มัดจำเต็มยอดที่เป็นราคา (หรือใบเดิมไม่ทราบลักษณะ) ที่ยังไม่เคยเสีย VAT ของบริษัทที่จด VAT ⇒ ไม่ได้ (ภาษีขายหายเงียบ · spec S3) ·
+    /// R2-2: ใบเดิม VAT 0 ที่ธงเลื่อน false = <b>กำกวม</b> ⇒ ทิศปลอดภัย = ถือว่ายังไม่เสีย VAT</item>
+    /// </list>
+    /// <para>ไม่บล็อก: ใบที่เสีย VAT แล้ว/VAT พัก (เส้นเดิมย้าย 21913→21911) · นอกระบบ VAT · ใบ VAT 0 ที่รู้แน่ (ใบรอบ 194+ ไม่เลื่อน · ช่องทางอัตรา 0) ·
+    /// บริษัทไม่จด VAT</para>
     /// </summary>
+    /// <param name="depositOutputVatDeferred">ธงเลื่อนตามที่อยู่บนใบ (ตัวนี้แปลงสามสถานะเองผ่าน <see cref="ForfeitZeroVatDeferred"/>)</param>
+    /// <param name="channelVatRate">อัตราช่องทางที่เซิร์ฟเวอร์หาจากใบ (null = ไม่มีช่องทาง)</param>
     public static string? PlainRealizeProblem(
-        DepositNature? nature, decimal depositVatAmount, bool depositOutputVatDeferred, decimal companyVatRate)
+        DepositNature? nature, decimal depositVatAmount, bool depositOutputVatDeferred, decimal companyVatRate,
+        decimal? channelVatRate = null)
     {
-        if (depositVatAmount > 0.005m || !depositOutputVatDeferred || companyVatRate <= 0m) return null;
-        if (nature is DepositNature.NonVatSupply or DepositNature.RefundableSecurity) return null;
+        if (nature == DepositNature.RefundableSecurity)
+            return $"⛔ [{SecurityPlainRealizeRuleCode}] เงินประกันที่ต้องคืนไม่ใช่ค่าสินค้า/บริการ — “ส่งมอบแล้ว (รับรู้ตามปกติ)” ใช้ไม่ได้ "
+                   + "(จะกลายเป็นรายได้ขายที่ไม่มี VAT) · ทางไปต่อ: ① คืนเงินประกันที่หน้า “เงินมัดจำ” · "
+                   + "② ออกใบแจ้งหนี้/ใบกำกับค่าของที่เสีย/ใช้ไป แล้วกด “ตัดชำระด้วยเงินประกัน” (ใบนั้นคิด VAT ตามปกติ) · "
+                   + "③ เลือก “ริบมัดจำ” → “ค่าเสียหายแท้” (รายได้อื่นไม่มี VAT)";
+        if (depositVatAmount > 0.005m || companyVatRate <= 0m || nature == DepositNature.NonVatSupply) return null;
+        if (ForfeitZeroVatDeferred(nature, depositOutputVatDeferred, channelVatRate) == false) return null;
         return $"⛔ [{PlainRealizeRuleCode}] มัดจำนี้รับเป็น “มัดจำเต็มยอด ไม่แยก VAT” และยังไม่เคยเสียภาษีขาย — รับรู้เป็นรายได้ตรง ๆ โดยไม่มีใบกำกับไม่ได้ "
                + "(ภาษีขายจะหาย) · ทางไปต่อ: ส่งมอบ/ให้บริการแล้ว ⇒ ออกใบกำกับภาษี/ใบแจ้งหนี้ แล้วกด “หักมัดจำ” · "
-               + "ลูกค้ายกเลิก/ผิดสัญญา ⇒ เลือก “ริบมัดจำ” ในหน้าต่างรับรู้ (ระบบออกใบกำกับของยอดที่ริบแล้วตัดชำระด้วยมัดจำให้)";
+               + "ลูกค้ายกเลิก/ผิดสัญญา ⇒ เลือก “ริบมัดจำ” ในหน้าต่างรับรู้ (ระบบออกใบกำกับของยอดที่ริบแล้วตัดชำระด้วยมัดจำให้)"
+               + (nature == null && !depositOutputVatDeferred
+                   ? " · ใบเดิมนี้ถ้าไม่มี VAT มาแต่แรก (ส่งออก 0% / ยกเว้น §81 / ออกตอนยังไม่จด VAT) ให้ออกใบกำกับ/ใบแจ้งหนี้อัตราเดิม (0%/ยกเว้น) แล้ว “หักมัดจำ”"
+                   : "");
     }
+
+    /// <summary>หน้าศูนย์มัดจำเสนอตัวเลือก "ส่งมอบแล้ว (รับรู้ตามปกติ)" ไหม (R2-3) — เงินประกันที่ต้องคืน = ไม่เสนอ (หน้าเว็บซ่อน · ข้อมูลจากเซิร์ฟเวอร์)</summary>
+    public static bool PlainRealizeOffered(DepositNature? nature) => nature != DepositNature.RefundableSecurity;
 
     /// <summary>รอบ 194 M3 — VAT พัก (21913) ที่ต้องย้ายเข้า 21911 ตอนรับรู้ = <b>ยอดที่ยังพักอยู่จริงใน GL</b> ไม่ใช่ VAT เต็มใบ
     /// (ริบเป็นค่าเสียหายบางส่วนกลับ 21913 เข้ารายได้ไปแล้ว · คืนบางส่วนตัด 21913 ไปแล้ว) · ไม่เกิน VAT ของใบ ไม่ติดลบ</summary>
@@ -820,11 +876,23 @@ public static class DepositPolicyResolver
     public static decimal ShapingVatRate(decimal companyVatRate, decimal? channelVatRate)
         => channelVatRate is decimal ch ? Math.Max(0m, Math.Min(companyVatRate, ch)) : companyVatRate;
 
-    /// <summary>รอบ 194 P1/M2 — ธง "VAT 0 เพราะเลื่อน" ที่ส่งเข้า <see cref="ForfeitVatDecision"/> ตอนริบ: ช่องทางบอกว่าไม่คิด VAT (อัตรา ≤ 0)
-    /// ⇒ ใบ VAT 0 ของช่องทางนั้นเป็น "VAT 0 โดยชอบ" (ใบเก่าที่ถูกจัดรูปเป็นเต็มยอด+deferred ด้วยอัตราบริษัทก่อนแก้ ได้ผลถูกด้วย) ·
-    /// ไม่ระบุช่องทาง = ธงบนใบตามจริง</summary>
-    public static bool ForfeitZeroVatDeferred(bool documentDeferred, decimal? channelVatRate)
-        => channelVatRate is not decimal ch || ch > 0m ? documentDeferred : false;
+    /// <summary>
+    /// รอบ 194 P1/M2 + R2-2 — ใบมัดจำ VAT 0 นี้ "เลื่อน VAT (มัดจำเต็มยอด)" หรือ "ไม่มี VAT มาแต่แรก" — <b>สามสถานะ</b>
+    /// <list type="bullet">
+    /// <item><c>false</c> = รู้แน่ว่า VAT 0 มาแต่แรก: ช่องทางบอกอัตรา ≤ 0 (ที่พัก <c>ChargeVat=false</c> — ใบเก่าที่ถูกจัดรูปเป็นเต็มยอดด้วยอัตราบริษัทได้ผลถูกด้วย)
+    /// หรือใบมีลักษณะเงิน (ใบรอบ 194+ — ธงเลื่อนถูกตั้งโดยตัวจัดรูปตัวเดียว เชื่อถือได้) และธง = false</item>
+    /// <item><c>true</c> = เลื่อน VAT: ธงบนใบ = true · หรือผู้เรียกไม่ส่งธง (null — ทิศปลอดภัย)</item>
+    /// <item><c>null</c> = <b>กำกวม</b>: ใบเดิม (ลักษณะ NULL) ธง = false — ก่อน 24/09 มัดจำเต็มยอดทุกใบก็เป็น VAT 0 + ธง false ⇒ ตัวตัดสินถือว่าเลื่อน
+    /// (ทิศปลอดภัย spec S3) แต่หน้าศูนย์มัดจำเสนอตัวเลือก <see cref="DepositForfeitAs.OriginallyNoVat"/> ให้ผู้ใช้ยืนยัน</item>
+    /// </list>
+    /// </summary>
+    public static bool? ForfeitZeroVatDeferred(DepositNature? nature, bool? documentDeferred, decimal? channelVatRate)
+    {
+        if (channelVatRate is decimal ch && ch <= 0m) return false;
+        if (documentDeferred is not bool deferred) return true;
+        if (deferred) return true;
+        return nature != null ? (bool?)false : null;
+    }
 
     /// <summary>รหัสบัญชีรายได้อื่น (ค่าปรับ/ค่าเสียหายที่ได้รับ → รายได้อื่นๆ) ของผังมาตรฐาน — ปลายทางของ "ริบเงินประกันเป็นค่าเสียหาย"
     /// เมื่อประเภทไม่ได้ตั้งบัญชีริบ (P-c: ห้ามตกไปรายได้ค่าห้อง/รายได้ขายซึ่งไม่มีใน ภ.พ.30 ⇒ กระทบยอด GL↔ภ.พ.30 ไม่ลง)</summary>

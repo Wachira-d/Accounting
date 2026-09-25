@@ -486,7 +486,9 @@ public record DepositSummary(
     // หมายเหตุนโยบายที่ตรึงบนใบมัดจำ (เหตุผลเลื่อน VAT · [DEPOSIT-LATE-VAT] · ผลการริบ)
     string? DepositPolicyNote = null,
     // รอบ 194 M5 — เหตุที่ "รับรู้ตามปกติ" (ไม่ใช่ริบ) ทำไม่ได้ + ทางไปต่อ (มัดจำเต็มยอดที่ยังไม่เคยเสีย VAT) · null = ทำได้
-    string? PlainRealizeBlockedReason = null);
+    string? PlainRealizeBlockedReason = null,
+    // รอบ 194 R2-3 — หน้าต่างรับรู้เสนอ "ส่งมอบแล้ว (รับรู้ตามปกติ)" ไหม (เงินประกันที่ต้องคืน = false ⇒ หน้าเว็บซ่อน เหลือ "ริบ" + คืน/ตัดชำระที่หน้าเดียวกัน)
+    bool PlainRealizeOffered = true);
 
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
