@@ -357,14 +357,9 @@ public partial class LodgingService : ILodgingService
             ForSecurity: k.Nature == DepositNature.RefundableSecurity)).ToList();
     }
 
-    /// <summary>ป้ายไทยของลักษณะเงิน (แสดงผลอย่างเดียว — ตัวตัดสิน VAT อยู่ที่ DepositPolicyResolver)</summary>
-    private static string NatureLabelTh(DepositNature n) => n switch
-    {
-        DepositNature.PartOfPrice => "ส่วนหนึ่งของราคา",
-        DepositNature.RefundableSecurity => "เงินประกัน (ต้องคืน)",
-        DepositNature.NonVatSupply => "นอกระบบ VAT",
-        _ => "ไม่ทราบ",
-    };
+    /// <summary>ป้ายไทยของลักษณะเงิน — ตารางป้ายตัวเดียวของทีม C (<c>Helpers/DepositKindCatalog.NatureLabelOf</c> · F2 ข้อ 4 ห้ามสำเนาที่สอง)
+    /// · แสดงผลอย่างเดียว ตัวตัดสิน VAT อยู่ที่ DepositPolicyResolver</summary>
+    private static string NatureLabelTh(DepositNature n) => DepositKindCatalog.NatureLabelOf(n);
 
     private static string KindSourceTh(DepositVatTreatmentSource s) => s switch
     {
