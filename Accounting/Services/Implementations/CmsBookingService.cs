@@ -611,13 +611,27 @@ public class CmsBookingService : ICmsBookingService
         // commit ทันที (slot จองแล้ว, prepayment มีเงินจริง)
         if (svc.BookingType != BookingType.Lead)
         {
+            // รอบ 194 R3 (P-1) — อนุมัติล้ม (เช่น "รอสักครู่" ของล็อกยอดมัดจำ · ด่านอนุมัติ) ⇒ ธุรกรรมอนุมัติ rollback ฝั่ง DB แล้ว
+            // แต่ entity ใน context ยังถูกแก้ค้าง (Status=Approved · เลขเอกสาร · JE ที่ Added) ⇒ SaveChanges ด้านล่างเคยบันทึก "ใบ Approved ไม่มี JE"
+            // ⇒ จุดตั้งต้นที่ถอยกลับได้: บันทึกของเราก่อน (ErpDocumentId) → ล้มแล้วถอยเฉพาะของที่ขั้นอนุมัติทิ้งไว้ (TrackedChangeRevert ตัวเดียวกับเส้นริบ)
+            await _db.SaveChangesAsync();
+            var baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
             try
             {
                 await _docService.ApproveDocumentAsync(companyId, created.Id,
                     "storefront-booking", acknowledgeWarnings: true);
             }
-            catch (Exception ex)
-            { _logger.LogWarning(ex, "Booking auto-approve failed for {BookingNumber}", booking.BookingNumber); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                foreach (var entry in TrackedChangeRevert.DetachSince(_db, baseline))
+                    await entry.ReloadAsync();
+                TrackedChangeRevert.DetachStrays(_db, baseline);
+                // ล้มดังบนการจอง (ผู้เปิดดูเห็น) + log — ใบยังเป็นร่าง ไม่มีรายการบัญชี ผู้ใช้อนุมัติเองได้
+                booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
+                    $"⚠️ อนุมัติเอกสาร ERP {created.DocumentNumber} อัตโนมัติไม่สำเร็จ ({ex.Message}) — เอกสารยังเป็นร่าง ยังไม่ลงบัญชี · "
+                    + "เปิดเอกสารแล้วกด “อนุมัติ”");
+                _logger.LogWarning(ex, "Booking auto-approve failed for {BookingNumber}", booking.BookingNumber);
+            }
         }
 
         await _db.SaveChangesAsync();

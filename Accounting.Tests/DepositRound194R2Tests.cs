@@ -25,7 +25,7 @@ public class DepositRound194R2Tests
     {
         // รายงาน: บริษัทยื่น ภ.พ.30 ทาง RD นอกระบบ · มัดจำเต็มยอด 10,700 รับ 10/01/2026 · ริบ 20/08/2026
         // เดิม: ไม่มีแถวยื่น ⇒ tax point 10/01 ⇒ รายงาน ส.ค. คัดออก · ม.ค. ยื่นไปแล้ว ⇒ VAT 700 ไม่อยู่ในแบบใดเลย + "ไม่ต้องยื่นเพิ่มเติม"
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 1, 10), new DateTime(2026, 8, 20),
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 1, 10), new DateTime(2026, 8, 20),
             depositPeriodLocked: false, today: new DateTime(2026, 8, 20));
         Assert.Equal(new DateTime(2026, 8, 20), tp.TaxPointDate);
         Assert.True(tp.LateFlag);
@@ -45,31 +45,31 @@ public class DepositRound194R2Tests
         var deadline = TaxFilingDeadline.For("VatPp30", 2026, 8).Paper;
         Assert.Equal(new DateTime(2026, 9, 15), deadline);   // อังคาร — ไม่ต้องเลื่อน
         // วันกำหนดเอง = ยังไม่เลย ⇒ เข้างวดเดือนรับเงิน
-        var onDay = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 10), new DateTime(2026, 9, 12),
+        var onDay = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 8, 10), new DateTime(2026, 9, 12),
             depositPeriodLocked: false, today: deadline);
         Assert.Equal(new DateTime(2026, 8, 10), onDay.TaxPointDate);
         Assert.False(onDay.LateFlag);
         // วันถัดไป = เลยแล้ว (อาจยื่นนอกระบบแล้ว) ⇒ งวดปัจจุบัน + ธง แม้วันที่ในใบ (ริบ) จะอยู่ก่อนกำหนด
-        var dayAfter = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 10), new DateTime(2026, 9, 12),
+        var dayAfter = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 8, 10), new DateTime(2026, 9, 12),
             depositPeriodLocked: false, today: deadline.AddDays(1));
         Assert.Equal(new DateTime(2026, 9, 12), dayAfter.TaxPointDate);
         Assert.True(dayAfter.LateFlag);
         // เลื่อนวันหยุดตามตารางกลาง: งวด ม.ค. 2026 ครบ 15/02 (อาทิตย์) ⇒ 16/02
         Assert.Equal(new DateTime(2026, 2, 16), TaxFilingDeadline.For("VatPp30", 2026, 1).Paper);
-        Assert.False(DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 1, 10), new DateTime(2026, 2, 3),
+        Assert.False(DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 1, 10), new DateTime(2026, 2, 3),
             false, new DateTime(2026, 2, 16)).LateFlag);
     }
 
     [Fact]
     public void R21_ยื่นหรือล็อกหรือปิดงวดในระบบแล้ว_และข้ามปีภาษี_งวดปัจจุบันเสมอ()
     {
-        var locked = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3),
+        var locked = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3),
             depositPeriodLocked: true, today: new DateTime(2026, 9, 3));
         Assert.Equal(new DateTime(2026, 9, 3), locked.TaxPointDate);
         Assert.True(locked.LateFlag);
         Assert.Contains("ยื่น/ปิดในระบบแล้ว", locked.Note);
         // ข้ามปีภาษี — แม้ยังไม่เลยกำหนดยื่นงวด ธ.ค. (15/01) = งวดปัจจุบันเสมอ
-        var crossYear = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2025, 12, 20), new DateTime(2026, 1, 5),
+        var crossYear = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2025, 12, 20), new DateTime(2026, 1, 5),
             depositPeriodLocked: false, today: new DateTime(2026, 1, 5));
         Assert.Equal(new DateTime(2026, 1, 5), crossYear.TaxPointDate);
         Assert.True(crossYear.LateFlag);
@@ -80,12 +80,12 @@ public class DepositRound194R2Tests
     public void R21_ทิศตรงข้าม_เดือนเดียวกัน_และเงินประกันที่หักเป็นค่าธรรมเนียม_ไม่ติดธง()
     {
         // เดือนเดียวกันและไม่มีแถวยื่น — วันนี้เลยกำหนดไปแล้วก็ไม่เกี่ยว (ใบกำกับของการริบลงวันที่ในเดือนนั้นอยู่แล้ว)
-        var same = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 2), new DateTime(2026, 8, 25),
+        var same = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 8, 2), new DateTime(2026, 8, 25),
             depositPeriodLocked: false, today: new DateTime(2026, 9, 25));
         Assert.Equal(new DateTime(2026, 8, 2), same.TaxPointDate);
         Assert.False(same.LateFlag);
         Assert.Null(same.Note);
-        var notLate = DepositPolicyResolver.ForfeitTaxPointDecision(false, new DateTime(2026, 1, 10), new DateTime(2026, 8, 20),
+        var notLate = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, false, new DateTime(2026, 1, 10), new DateTime(2026, 8, 20),
             depositPeriodLocked: false, today: new DateTime(2026, 8, 20));
         Assert.Equal(new DateTime(2026, 8, 20), notLate.TaxPointDate);
         Assert.False(notLate.LateFlag);
