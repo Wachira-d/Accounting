@@ -3335,6 +3335,37 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I แ�
 - report-Y: บรรทัดยอดก่อนลด 0 ไม่ได้ % ส่วนลด (`OcrLineReconciler.LineDiscountPercent`) · "ยกเลิก…ใบกำกับภาษีอย่างย่อ…แทน" = คำปฏิเสธ (`OcrDocumentRoleInferrer.ContainsAnyNotNegated`)
 - เทสต์ `OcrLineVatPlannerTests` (สองครึ่ง) + เพิ่มใน ThaiVatExemptKeyword/OcrAmountIntegrity/OcrApprovalGapWarning/OcrDocumentRoleInferrer/OcrLineReconciler/OcrReplayGolden (ช่อง `LineVatPlan`) ·
   checker `required_call_site_check` +2 กติกา · DOCUMENT_FLOW §1 OCR · lessons/ocr-pipeline +2 · CLAUDE.md กฎเหล็ก #3 ข้อ 2
+
+_Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม M2 แก้ผลฝ่ายค้านรอบสอง `erp-review/2026-09-25/review194-r2.md` (ยืนยันเองทุกข้อก่อนแก้):
+- **R2-1** tax point ของการริบใช้ "ไม่มีแถวยื่นในระบบ" เป็นหลักฐานว่ายังไม่ยื่น ⇒ `ForfeitTaxPointDecision(..., depositPeriodLocked, today)`: วันรับเงินเฉพาะเมื่อ
+  เดือนเดียวกัน หรือวันนี้ยังไม่เลยกำหนดยื่น (`TaxFilingDeadline` แบบกระดาษ) และไม่มีแถวยื่น/ล็อก/ปิดงวดบัญชี (`DepositReceiptPeriodLockedAsync`) และไม่ข้ามปีภาษี ·
+  นอกนั้นงวดปัจจุบัน + ธง LATE-VAT ข้อความตรงความจริง · เส้นย้าย VAT พักแยก JE ลงวัน tax point ⇒ `DepositOutputVatRecognizedAt` ตรงเดือนที่ Cr 21911 จริง
+- **R2-2** ใบเดิม (NULL · VAT 0 · ธง false) = กำกวม (`ForfeitZeroVatDeferred` สามสถานะ) ⇒ ทิศปลอดภัยคิด VAT · ตัวเลือกใหม่ `DepositForfeitAs.OriginallyNoVat`
+  (=3) จากเซิร์ฟเวอร์ · อัตราช่องทางหาจากใบ (`DepositChannelVatRatesAsync` — ที่พัก `ChargeVat`) · เทสต์ M2 เดิมที่ล็อกใบ NULL เป็น "VAT 0 โดยชอบ" ถูกแก้
+- **R2-3** เงินประกัน "ส่งมอบแล้ว" ⇒ ปฏิเสธ `DEP-SEC-PLAIN-REALIZE` + ทางไปต่อ 3 ทาง · `DepositSummary.PlainRealizeOffered` ⇒ หน้าต่างรับรู้ซ่อนตัวเลือก
+- **R2-4** ยกเลิกใบมัดจำที่ตัดชำระหลายใบ ⇒ คืนยอดจ่ายรายใบจาก JV ที่จับภาพก่อนกลับรายการ (`DepositApplyJournals.GrossByTarget`/`AfterRestore`) · ขั้น 2
+  ไม่กลับ JE ที่ถูกกลับแล้ว (เดิมโยนแล้วยกเลิกไม่ได้)
+- **R2-5** `DepositsAppliedToAsync`/void 2b/purge 0c ตัวกรองเดียวที่ไม่นับคู่ที่ถูกกลับ ⇒ purge ใบที่เคย void ไม่ลบ JV ต้นฉบับ/ไม่หักรับรู้ซ้ำ
+- **R2-6** เส้นหักมัดจำหลายใบ/แบบขับ JE ผ่อน one-shot แบบเดียวกับตัดชำระ + ข้อความ `AppliedElsewhereMessage` มีทางไปต่อ (ทุกเส้น)
+- **P-a** คีย์ล็อกยอดใบมัดจำตัวเดียว `AdvisoryLockKey.DepositRealizeKey` — ปุ่ม/ที่พัก/CMS (session) · อนุมัติ/ตัดชำระ/คืน (`JobLock.TryXactLockAsync` ก่อนล็อกแถว) ·
+  `JobLock` ปลดล็อกล้มหลังงานล้มไม่ทับ error เดิม
+- **P1 ค้าง** ที่พักรับเงินประกันส่ง `depositChannelVatRate` · `UpdateDocumentAsync` จัดรูปซ้ำด้วยอัตราช่องทางของใบ
+- **RevertTrackedChangesSinceAsync** → `Helpers/TrackedChangeRevert` (DetectChanges ก่อน · ตัด reference ฝั่ง principal · ตรวจซ้ำ) + เทสต์ด้วย DbContext ออฟไลน์
+- เทสต์ `DepositRound194R2Tests` · แก้ `DepositForfeitRound194MTests`/`DepositKindTests` ตามสัญญาใหม่ · checker `required_call_site_check` +14 กติกา (ถอดกฎที่ล็อก
+  `ForfeitZeroVatDeferred(ธงบนใบ…)`/`VatPeriodDeclaredOrFiledAsync` ในเส้นริบ — ล็อกพฤติกรรมผิดของ R2-1/R2-2)
+— commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จากหน้ารวมใบเสนอราคา ใบไหนออกใบแจ้งหนี้แล้ว โดยไม่ต้องไล่เปิดทีละใบ":
+- **บั๊กที่ยืนยัน**: `GetDocumentsAsync` ไม่ส่ง % การแปลงเข้า `MapDocumentToResponse` ⇒ ใบต้นทาง Approved ทุกใบขึ้น "⏳ รอดำเนินการต่อ" · สูตร detail
+  (`ComputeConversionStatusAsync`) รวมทุกแกน + ค้น `DocumentLines` ไม่กรอง `CompanyId` · ป้ายเอ่ยเลขใบลูกตัวแรกแม้ถูก void · คอลัมน์ "ค้างชำระ" โชว์ยอดเต็มของใบเสนอราคาเป็นตัวแดง + ชิป "⏳ 30+d"
+- `Helpers/DocumentConversionProgress` (ตัวตัดสินเดียว: ชนิดต้นทาง · แกน · Evaluate · ป้าย · ตัวเลือกตัวกรอง) + `Helpers/DocumentTypeNames` (ย้ายตารางชื่อชนิดจาก
+  `PdfGenerationService.GetDocumentTitle` · `DocTypeLabel` เรียกตัวนี้) + `ArApScope.CarriesBalance`
+- `DocumentService.LoadConversionSummariesAsync` batch (2 query/หน้า · CompanyId ทุก query) ใช้ร่วม `GetDocumentsAsync` · `GetDocumentAsync` · `ResolveConversionStateIdsAsync`
+  (ตัวกรอง `?conversion=None|Partial|Full` + `staleOnly` ตัดใบที่ออกครบ) · `GetFulfillmentAxis` เรียก `AxisOf` · ลบ `ComputeConversionStatusAsync`
+- DTO `ConvertedToLatest` · `ConvertedToActiveCount` · `BalanceDueApplies` · endpoint `GET document/conversion-filter-options` · `documents.html`: ชิปกดไปใบลูก · ตัวกรอง
+  `#conversionFilter` · "—" ในคอลัมน์ค้างชำระ/ไม่ขึ้นชิปอายุหนี้สำหรับชนิดที่ไม่ใช่หนี้ · ชิปใบต่อเนื่องในหน้ารายละเอียดมีสถานะ (ใบที่ยกเลิกเห็นว่ายกเลิก) ·
+  `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
+- เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
 — commit <pending>)_
 
 _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แก้ผลฝ่ายค้าน `erp-review/2026-09-25/ocr-scommerce/review195.md`:
@@ -3350,4 +3381,4 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แ�
   นม UHT/ปุ๋ย formula ใบผสม (7 → −1 ตามพฤติกรรมก่อนรอบ 195)
 - เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
   checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
-— commit <pending>)_
+— commit c69a0b62)_

@@ -34,4 +34,9 @@ public static class ArApScope
 
     public static bool IsReceivable(DocumentType type) => ReceivableTypes.Contains(type);
     public static bool IsPayable(DocumentType type) => PayableTypes.Contains(type);
+
+    /// <summary>ยอด "ค้างชำระ" (BalanceDue) ของชนิดนี้มีความหมายเป็นหนี้จริงไหม — ลูกหนี้หรือเจ้าหนี้ตามชุดข้างบน
+    /// (รอบ 196: หน้ารวมเคยโชว์ยอดเต็มของใบเสนอราคาเป็นตัวแดงในคอลัมน์ "ค้างชำระ" ทั้งที่ยังไม่มีหนี้ ·
+    /// ใบวางบิล/ใบเสร็จ/ใบสำคัญจ่ายก็ไม่ใช่การตั้งหนี้ — หนี้อยู่ที่ใบที่มันอ้าง) ⇒ ส่งเป็นธงให้หน้าเว็บ แสดง "—" แทน</summary>
+    public static bool CarriesBalance(DocumentType type) => IsReceivable(type) || IsPayable(type);
 }

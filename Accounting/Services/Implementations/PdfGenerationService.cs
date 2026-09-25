@@ -3660,45 +3660,10 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         t.SignatureLabel2En = en2;
     }
 
-    private static string GetDocumentTitle(DocumentType type, string lang) => lang == "en" ? type switch
-    {
-        DocumentType.Quotation => "Quotation",
-        DocumentType.Invoice => "Invoice",
-        DocumentType.Receipt => "Receipt",
-        DocumentType.TaxInvoice => "Tax Invoice",
-        DocumentType.DebitNote => "Debit Note",
-        DocumentType.CreditNote => "Credit Note",
-        DocumentType.DeliveryNote => "Delivery Note",
-        DocumentType.BillingNote => "Billing Note",
-        DocumentType.ReceiptVoucher => "Receipt Voucher",
-        DocumentType.PurchaseRequisition => "Purchase Requisition",
-        DocumentType.PurchaseOrder => "Purchase Order",
-        DocumentType.GoodsReceiptNote => "Goods Receipt Note",
-        DocumentType.PurchaseInvoice => "Purchase Invoice",
-        DocumentType.Expense => "Expense Record",
-        DocumentType.PaymentVoucher => "Payment Voucher",
-        DocumentType.CertificateInLieu => "Certificate in Lieu of Receipt",
-        _ => "Document"
-    } : type switch
-    {
-        DocumentType.Quotation => "ใบเสนอราคา",
-        DocumentType.Invoice => "ใบแจ้งหนี้",
-        DocumentType.Receipt => "ใบเสร็จรับเงิน",
-        DocumentType.TaxInvoice => "ใบกำกับภาษี",
-        DocumentType.DebitNote => "ใบเพิ่มหนี้",
-        DocumentType.CreditNote => "ใบลดหนี้",
-        DocumentType.DeliveryNote => "ใบส่งของ",
-        DocumentType.BillingNote => "ใบวางบิล",
-        DocumentType.ReceiptVoucher => "ใบสำคัญรับ",
-        DocumentType.PurchaseRequisition => "ใบขอซื้อ",
-        DocumentType.PurchaseOrder => "ใบสั่งซื้อ",
-        DocumentType.GoodsReceiptNote => "ใบรับสินค้า",
-        DocumentType.PurchaseInvoice => "ใบแจ้งหนี้ซื้อ",
-        DocumentType.Expense => "ใบบันทึกค่าใช้จ่าย",
-        DocumentType.PaymentVoucher => "ใบสำคัญจ่าย",
-        DocumentType.CertificateInLieu => "ใบรับรองแทนใบเสร็จรับเงิน",
-        _ => "เอกสาร"
-    };
+    /// <summary>ชื่อชนิดเอกสารตามหัวกระดาษมาตรฐาน — ตารางอยู่ที่ <see cref="Accounting.Helpers.DocumentTypeNames"/> ตัวเดียว
+    /// (รอบ 196: ย้ายออกให้ป้าย "ออกใบแจ้งหนี้ … แล้ว" บนหน้ารวมใช้ตารางเดียวกับกระดาษ)</summary>
+    private static string GetDocumentTitle(DocumentType type, string lang) =>
+        Accounting.Helpers.DocumentTypeNames.Title(type, lang);
 
     private static string GetTaxFormName(TaxType type) => type switch
     {

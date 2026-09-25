@@ -341,10 +341,11 @@ public class DepositKindTests
         Assert.Equal(DepositForfeitVatAction.ReclassifyUndueToDue, f.Action);
         Assert.True(f.LateVat);
         // รอบ 194 M4: ข้อความธงขึ้นกับสถานะงวดเดือนรับเงิน — ยื่นแล้ว ⇒ ธงบอกว่านำส่งงวดไหนแล้ว (ไม่สั่งยื่นเพิ่มเติมซ้ำ)
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(f.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), depositPeriodFiled: true);
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(f.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
+            depositPeriodLocked: true, today: new DateTime(2026, 9, 10));
         Assert.True(tp.LateFlag);
         Assert.StartsWith(DepositPolicyResolver.LateVatMarker, tp.Note);
-        Assert.Contains("(03/07/2026)", tp.Note);
+        Assert.Contains("รับเงิน 03/07/2026", tp.Note);
     }
 
     [Fact]
@@ -392,7 +393,8 @@ public class DepositKindTests
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, fee.Action);
         // เงินประกันที่หักเป็นค่าของ/ค่าธรรมเนียม: จุดความรับผิด = วันที่หัก ไม่ใช่ภาษีค้างของเดือนที่รับเงิน ⇒ ไม่มีธงย้อนหลัง
         Assert.False(fee.LateVat);
-        var feeTp = DepositPolicyResolver.ForfeitTaxPointDecision(fee.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), true);
+        var feeTp = DepositPolicyResolver.ForfeitTaxPointDecision(fee.LateVat, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), true,
+            new DateTime(2026, 9, 10));
         Assert.Equal(new DateTime(2026, 9, 10), feeTp.TaxPointDate);
         Assert.Null(feeTp.Note);
         var feePending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 65.42m, true,
@@ -426,8 +428,9 @@ public class DepositKindTests
         try
         {
             CultureInfo.CurrentCulture = new CultureInfo("th-TH");
-            var f = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 1, 31), new DateTime(2026, 3, 5), depositPeriodFiled: true);
-            Assert.Contains("(31/01/2026)", f.Note);
+            var f = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 1, 31), new DateTime(2026, 3, 5),
+                depositPeriodLocked: true, today: new DateTime(2026, 3, 5));
+            Assert.Contains("รับเงิน 31/01/2026", f.Note);
             Assert.Contains("01/2026", f.Note);
             Assert.Contains("03/2026", f.Note);
         }

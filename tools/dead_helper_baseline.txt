@@ -45,7 +45,6 @@ SsoIdentityPolicy.cs ProvidesEmailVerification
 SsoRateSchedule.cs GetMaxContribution
 SsoRateSchedule.cs RangesOverlap
 StockMovementSign.cs OutboundMagnitude
-TaxFilingDeadline.cs KeyOf
 ThaiPitCalculator.cs EstimateAnnualIncome
 ThaiPitCalculator.cs ExpenseDeduction
 ThaiPitCalculator.cs WithholdingForPeriod

@@ -486,7 +486,9 @@ public record DepositSummary(
     // หมายเหตุนโยบายที่ตรึงบนใบมัดจำ (เหตุผลเลื่อน VAT · [DEPOSIT-LATE-VAT] · ผลการริบ)
     string? DepositPolicyNote = null,
     // รอบ 194 M5 — เหตุที่ "รับรู้ตามปกติ" (ไม่ใช่ริบ) ทำไม่ได้ + ทางไปต่อ (มัดจำเต็มยอดที่ยังไม่เคยเสีย VAT) · null = ทำได้
-    string? PlainRealizeBlockedReason = null);
+    string? PlainRealizeBlockedReason = null,
+    // รอบ 194 R2-3 — หน้าต่างรับรู้เสนอ "ส่งมอบแล้ว (รับรู้ตามปกติ)" ไหม (เงินประกันที่ต้องคืน = false ⇒ หน้าเว็บซ่อน เหลือ "ริบ" + คืน/ตัดชำระที่หน้าเดียวกัน)
+    bool PlainRealizeOffered = true);
 
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
@@ -708,6 +710,16 @@ public record DocumentResponse(
     // "✓ จ่ายแล้ว", "✓ แปลงเป็น PI-001", "◐ แปลงไป 60%", "× ยกเลิก".
     // Picked up directly by the badge tooltip + list column.
     string? LifecycleReason = null,
+    // ===== ออกเอกสารต่อแล้วหรือยัง (รอบ 196 · ทีม Q) =====
+    // ใบลูกล่าสุดที่ยังมีผล (ไม่ Voided/Rejected/ลบ) ของเอกสารต้นทาง (ใบเสนอราคา/PR/PO/GRN/ใบส่งของ) — ส่งทั้ง
+    // หน้ารวมและหน้ารายละเอียด (batch ต่อหน้า · Helpers/DocumentConversionProgress) ให้ชิป lifecycle กดไปใบลูกได้ ·
+    // null = ไม่ใช่ชนิดต้นทาง หรือยังไม่มีใบลูก
+    DocumentBrief? ConvertedToLatest = null,
+    // จำนวนใบลูกที่ยังมีผลทั้งหมด (รวมใบล่าสุด) — ป้ายต่อท้าย "+N" · null = ไม่ใช่ชนิดต้นทาง
+    int? ConvertedToActiveCount = null,
+    // ยอด BalanceDue ของชนิดนี้เป็นหนี้จริงไหม (Helpers/ArApScope.CarriesBalance) — false ⇒ หน้าเว็บแสดง "—"
+    // ในคอลัมน์ "ค้างชำระ" และไม่ขึ้นชิปอายุหนี้ · null = เส้นทางที่ยังไม่ได้คำนวณ (แสดงแบบเดิม)
+    bool? BalanceDueApplies = null,
     // ===== Undue Input VAT (§82/3) =====
     // True เมื่อตอน approve ใบกำกับยังไม่ครบ §86/4 → VAT ลง 11640 "ภาษีซื้อ
     // ยังไม่ถึงกำหนด" แทน 11610. UI โชว์ป้าย "⏳ ภาษีซื้อรอใบกำกับครบ" + ปุ่ม

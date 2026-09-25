@@ -14,6 +14,13 @@ public static class DepositKindDocumentRules
     public const string KindChangeRuleCode = "DEPOSIT-KIND-CHANGE";
     public const string ForfeitInvoiceRuleCode = "DEPOSIT-FORFEIT-TIV";
 
+    /// <summary>รหัส/ข้อความเมื่อคีย์ล็อกยอดใบมัดจำ (<c>AdvisoryLockKey.DepositRealizeKey</c>) ถูกผู้อื่นถืออยู่ — ข้อความเดียวของทุกทางเข้า
+    /// (ปุ่มรับรู้/ริบ · อนุมัติใบที่หักฐานมัดจำ · ตัดชำระด้วยมัดจำ · รอบ 194 R2 P-a)</summary>
+    public const string DepositBusyRuleCode = "DEPOSIT-REALIZE-BUSY";
+    public const string DepositBusyMessage =
+        "มีผู้ใช้อื่นกำลังรับรู้/ริบ/ตัดชำระมัดจำใบนี้อยู่ — รอสักครู่แล้วเปิดหน้า “เงินมัดจำ” ดูยอดล่าสุดก่อนทำรายการอีกครั้ง "
+        + "(ยอดคงค้างต้องอ่านหลังรายการนั้นเสร็จ กันรับรู้/ตัดชำระซ้ำ)";
+
     public const string KindNotFoundMessage =
         "ไม่พบประเภทเงินมัดจำที่เลือกในบริษัทนี้ (อาจถูกปิดใช้/ลบ หรือพิมพ์รหัสผิด) — เลือกประเภทใหม่ในฟอร์ม "
         + "หรือเปิดใช้ประเภทนั้นที่ ตั้งค่า → ประเภทเงินมัดจำ";
@@ -43,38 +50,51 @@ public static class DepositKindDocumentRules
 
     /// <summary>
     /// ตัวเลือก "เงินที่ริบคืออะไร" ที่หน้าศูนย์มัดจำต้องถาม — ถามเฉพาะเมื่อคำตอบทำให้ผลต่อ VAT ต่างกันจริง
-    /// (ถามตัวตัดสิน <see cref="DepositPolicyResolver.ForfeitVatDecision"/> ทั้งสองทางแล้วเทียบ Action) ⇒
+    /// (ถามตัวตัดสิน <see cref="DepositPolicyResolver.ForfeitVatDecision"/> ทุกทางแล้วเทียบ Action) ⇒
     /// ใบลักษณะ "ราคา" (ตอบเหมือนกันเสมอ) · นอกระบบ VAT · VAT เสียไปแล้ว = null (ไม่ถาม) ·
     /// ใบเดิมที่ไม่ทราบลักษณะ / เงินประกัน = ถาม โดยค่าเริ่มต้น = มี VAT (spec S3 ทิศปลอดภัย)
+    /// <para>รอบ 194 R2-2: ใบเดิมที่<b>กำกวม</b> (ลักษณะ NULL · VAT 0 · ธงเลื่อน false — <see cref="DepositPolicyResolver.ForfeitZeroVatDeferred"/> = null)
+    /// ⇒ เพิ่มข้อ "ไม่มี VAT มาแต่แรก" (<see cref="DepositForfeitAs.OriginallyNoVat"/>) · ไม่เลือก = มี VAT (ทิศปลอดภัย)</para>
     /// </summary>
-    /// <param name="depositOutputVatDeferred">ธง deferred ของใบ (ส่งต่อให้ตัวตัดสิน — แยก VAT 0 โดยชอบ ออกจากมัดจำเต็มยอด · null = ถือว่าเลื่อน)</param>
+    /// <param name="depositOutputVatDeferred">ธงเลื่อนตามที่อยู่บนใบ (ตัวตัดสินแปลงสามสถานะเอง · null = ผู้เรียกไม่ทราบ ⇒ ถือว่าเลื่อน)</param>
+    /// <param name="channelVatRate">อัตราช่องทางที่เซิร์ฟเวอร์หาจากใบ (ที่พัก <c>ChargeVat=false</c> = 0) · null = ไม่มีช่องทาง</param>
     public static IReadOnlyList<DepositForfeitOption>? ForfeitOptions(
         DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate,
-        bool? depositOutputVatDeferred = null)
+        bool? depositOutputVatDeferred = null, decimal? channelVatRate = null)
     {
-        var price = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.PriceOrFee, depositVatAmount, vatPendingUnrecognized,
-            companyVatRate, depositOutputVatDeferred: depositOutputVatDeferred);
-        var comp = DepositPolicyResolver.ForfeitVatDecision(nature, DepositForfeitAs.Compensation, depositVatAmount, vatPendingUnrecognized,
-            companyVatRate, depositOutputVatDeferred: depositOutputVatDeferred);
-        // บริษัทไม่จด VAT / ใบ VAT 0 โดยชอบ = ไม่มี VAT ทั้งสองทาง — ถาม "มี VAT ไหม" = ข้อความเท็จ (ป้ายบอกว่ามี VAT) ⇒ ไม่ถาม
-        if (price.Action == comp.Action
+        DepositForfeitVatDecision Ask(DepositForfeitAs a) => DepositPolicyResolver.ForfeitVatDecision(nature, a, depositVatAmount,
+            vatPendingUnrecognized, companyVatRate, depositOutputVatDeferred: depositOutputVatDeferred, channelVatRate: channelVatRate);
+        var price = Ask(DepositForfeitAs.PriceOrFee);
+        var comp = Ask(DepositForfeitAs.Compensation);
+        // ข้อ "ไม่มี VAT มาแต่แรก" เฉพาะใบ VAT 0 ที่กำกวม (สามสถานะ = null) และคำตอบนั้นเปลี่ยนผลจริง
+        var ambiguous = depositVatAmount <= 0.005m
+            && DepositPolicyResolver.ForfeitZeroVatDeferred(nature, depositOutputVatDeferred, channelVatRate) == null;
+        var noVat = ambiguous ? Ask(DepositForfeitAs.OriginallyNoVat) : null;
+        // บริษัทไม่จด VAT / ใบ VAT 0 ที่รู้แน่ = ไม่มี VAT ทุกทาง — ถาม "มี VAT ไหม" = ข้อความเท็จ (ป้ายบอกว่ามี VAT) ⇒ ไม่ถาม
+        var offerNoVat = noVat is { RequestIgnored: false } && noVat.Action != price.Action;
+        if ((price.Action == comp.Action && !offerNoVat)
             || price.Action is DepositForfeitVatAction.CompanyNotVatRegistered or DepositForfeitVatAction.ZeroVatAtIssue) return null;
-        return new[]
+        var list = new List<DepositForfeitOption>
         {
-            new DepositForfeitOption(nameof(DepositForfeitAs.PriceOrFee),
+            new(nameof(DepositForfeitAs.PriceOrFee),
                 "ราคา/ค่าบริการ/ค่าธรรมเนียมยกเลิก/ค่าของที่ใช้ไป (มี VAT)", price.Explanation, true),
-            new DepositForfeitOption(nameof(DepositForfeitAs.Compensation),
-                "ค่าเสียหายแท้ ไม่ใช่ค่าตอบแทนการขาย (ไม่มี VAT)", comp.Explanation, false),
         };
+        if (comp.Action != price.Action)
+            list.Add(new(nameof(DepositForfeitAs.Compensation),
+                "ค่าเสียหายแท้ ไม่ใช่ค่าตอบแทนการขาย (ไม่มี VAT)", comp.Explanation, false));
+        if (offerNoVat && noVat != null)
+            list.Add(new(nameof(DepositForfeitAs.OriginallyNoVat),
+                "ใบนี้ไม่มี VAT มาแต่แรก (ส่งออก 0% / ยกเว้น §81 / ออกตอนยังไม่จด VAT)", noVat.Explanation, false));
+        return list;
     }
 
     /// <summary>ข้อความอธิบายผลต่อ VAT เมื่อรับรู้/ริบ "ตามค่าเริ่มต้น" (ไม่ระบุ ForfeitAs) — หน้าศูนย์มัดจำแสดงในหน้าต่างรับรู้
     /// ให้ผู้ใช้รู้ก่อนกดว่าระบบจะออกใบกำกับภาษีให้หรือไม่</summary>
     public static string DefaultForfeitExplanation(
         DepositNature? nature, decimal depositVatAmount, bool vatPendingUnrecognized, decimal companyVatRate,
-        bool? depositOutputVatDeferred = null)
+        bool? depositOutputVatDeferred = null, decimal? channelVatRate = null)
         => DepositPolicyResolver.ForfeitVatDecision(nature, null, depositVatAmount, vatPendingUnrecognized, companyVatRate,
-            depositOutputVatDeferred: depositOutputVatDeferred).Explanation;
+            depositOutputVatDeferred: depositOutputVatDeferred, channelVatRate: channelVatRate).Explanation;
 
     /// <summary>
     /// ภาษีขายที่พักไว้ (21913) ส่วนที่ต้อง "กลับเข้ารายได้" เมื่อริบเป็นค่าเสียหาย (<see cref="DepositForfeitVatDecision.ReverseUndueVat"/>)
@@ -165,6 +185,16 @@ public static class DepositKindDocumentRules
     /// </summary>
     public static bool ApplyToAnotherTargetAllowed(bool priorIsForfeitInvoiceOfDeposit, bool targetIsForfeitInvoiceOfDeposit)
         => priorIsForfeitInvoiceOfDeposit || targetIsForfeitInvoiceOfDeposit;
+
+    /// <summary>ข้อความเมื่อด่าน "มัดจำ 1 ใบ → ใบปลายทาง 1 ใบ" ปฏิเสธ — <b>ข้อความเดียว</b>ของทุกเส้น (ตัดชำระ · หักมัดจำหลายใบ · หักแบบขับ JE)
+    /// พร้อมทางไปต่อที่ไม่ใช่ทางตัน (R2-6: เดิมเส้นหักแบบขับ JE บอกแค่ "ถูกนำไปหักกับ … แล้ว")</summary>
+    /// <param name="context">ชื่อเส้น (เช่น "หักมัดจำแบบขับ JE") — ว่าง = ตัดชำระ</param>
+    public static string AppliedElsewhereMessage(string depositNumber, string priorNumber, string? context = null)
+        => (string.IsNullOrWhiteSpace(context) ? "" : context.Trim() + ": ")
+           + $"มัดจำ {depositNumber} ถูกนำไปหัก/ตัดชำระกับ {priorNumber} แล้ว (มัดจำ 1 ใบใช้กับใบปลายทางได้ 1 ใบ) — ทางไปต่อ: "
+           + $"① ถ้า {priorNumber} ผิด ให้ยกเลิกใบนั้นก่อน (ระบบคืนยอดมัดจำและปลดการผูกให้อัตโนมัติ) แล้วทำรายการนี้ใหม่ · "
+           + $"② ถ้ามัดจำเหลือจากการหักใบนั้น ให้คืนส่วนที่เหลือที่หน้า “เงินมัดจำ” (ใบลดหนี้ §86/10 ถ้าเสีย VAT แล้ว) หรือ “ริบมัดจำ” "
+           + "(ระบบออกใบกำกับของยอดที่ริบแล้วตัดชำระให้ — ใบกำกับของการริบใช้ร่วมกับใบอื่นได้)";
 }
 
 /// <summary>ขั้นที่ต้องทำกับใบกำกับของยอดที่ริบ (M1 ข)</summary>

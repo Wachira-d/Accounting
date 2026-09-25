@@ -595,6 +595,8 @@ const API = {
       // Documents
       getDocuments: (q = '') => API.get(`${base}/document${q}`),
       getDocumentPeriods: (q = '') => API.get(`${base}/document/periods${q}`),
+      // รอบ 196: ตัวเลือกตัวกรอง "ออกเอกสารต่อแล้วหรือยัง" (ชนิดที่ใช้ได้ + ค่า/ป้าย) — จากเซิร์ฟเวอร์ ห้ามพิมพ์ในหน้า
+      getDocumentConversionFilterOptions: () => API.get(`${base}/document/conversion-filter-options`),
       getDocument: (id) => API.get(`${base}/document/${id}`),
       getDocumentLinkedScan: (id) => API.get(`${base}/document/${id}/linked-scan`),
       createDocument: (d) => API.post(`${base}/document`, d),

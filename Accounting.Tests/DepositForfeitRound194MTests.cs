@@ -23,17 +23,17 @@ public class DepositForfeitRound194MTests
     public void M2_มัดจำส่งออก0เปอร์เซ็นต์ไม่เลื่อนVAT_ริบแล้วไม่มีVAT_ไม่มีธงย้อนหลัง()
     {
         // รายงาน: มัดจำบริการส่งออก 100,000 บรรทัด 0% ไม่ deferred → เดิมได้ใบกำกับ VAT 6,542.06 + ธงยื่นเพิ่มเติม
-        foreach (var n in new DepositNature?[] { null, DepositNature.PartOfPrice })
-        {
-            var f = DepositPolicyResolver.ForfeitVatDecision(n, null, 0m, vatPendingUnrecognized: false,
-                companyVatRate: 7m, depositOutputVatDeferred: false);
-            Assert.Equal(DepositForfeitVatAction.ZeroVatAtIssue, f.Action);
-            Assert.Equal(0m, f.ForfeitInvoiceVatRate);
-            Assert.False(f.LateVat);
-            Assert.Contains("VAT 0 โดยชอบ", f.Explanation);
-        }
+        // รอบ 194 R2-2: "รู้แน่ว่า VAT 0 มาแต่แรก" ได้เฉพาะใบที่มีลักษณะเงิน (ใบรอบ 194+ — ธงเลื่อนตั้งโดยตัวจัดรูปตัวเดียว) · ใบเดิม (NULL)
+        // หน้าตาเดียวกัน = กำกวม ⇒ ย้ายไปล็อกที่ DepositRound194R2Tests (ทิศปลอดภัย = คิด VAT / ผู้ใช้ยืนยัน "ไม่มี VAT มาแต่แรก" ได้)
+        // เดิมเทสต์นี้วน { null, PartOfPrice } — ครึ่ง null ล็อกพฤติกรรมผิด (ใบมัดจำเต็มยอดก่อน 24/09 ถูกตีเป็น "VAT 0 โดยชอบ" ⇒ ภาษีขายหาย)
+        var f = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, vatPendingUnrecognized: false,
+            companyVatRate: 7m, depositOutputVatDeferred: false);
+        Assert.Equal(DepositForfeitVatAction.ZeroVatAtIssue, f.Action);
+        Assert.Equal(0m, f.ForfeitInvoiceVatRate);
+        Assert.False(f.LateVat);
+        Assert.Contains("VAT 0 โดยชอบ", f.Explanation);
         // ไม่ถามว่า "มี VAT ไหม" — ป้ายจะเป็นข้อความเท็จ
-        Assert.Null(DepositKindDocumentRules.ForfeitOptions(null, 0m, false, 7m, depositOutputVatDeferred: false));
+        Assert.Null(DepositKindDocumentRules.ForfeitOptions(DepositNature.PartOfPrice, 0m, false, 7m, depositOutputVatDeferred: false));
     }
 
     [Fact]
@@ -46,9 +46,11 @@ public class DepositForfeitRound194MTests
         // ผู้เรียกที่ไม่ส่งธง (null) = ไม่ทราบ ⇒ ถือว่าเลื่อน (ทิศปลอดภัย: ใบกำกับมองเห็นและแก้ได้)
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit,
             DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, null, 0m, false).Action);
-        // ค่าเสียหายของใบ VAT 0 โดยชอบ ยังเป็นค่าเสียหาย (บัญชีริบ) ไม่ถูกกลืนเป็น "VAT 0 โดยชอบ"
+        // ค่าเสียหายของเงินประกัน VAT 0 ที่ไม่เลื่อน ยังเป็นค่าเสียหาย (บัญชีริบ) ไม่ถูกกลืนเป็น "VAT 0 โดยชอบ"
+        // (R2-2: เดิมใช้ใบ NULL ในบรรทัดนี้แล้วเรียกมันว่า "ใบ VAT 0 โดยชอบ" — ใบ NULL คือใบที่กำกวม ไม่ใช่ใบที่รู้ว่า VAT 0)
         Assert.Equal(DepositForfeitVatAction.CompensationNoVat,
-            DepositPolicyResolver.ForfeitVatDecision(null, DepositForfeitAs.Compensation, 0m, false, depositOutputVatDeferred: false).Action);
+            DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 0m, false,
+                depositOutputVatDeferred: false).Action);
         // บริษัทไม่จด VAT ยังได้ข้อความของตัวเอง (ไม่ใช่ "VAT 0 โดยชอบ")
         Assert.Equal(DepositForfeitVatAction.CompanyNotVatRegistered,
             DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, false, companyVatRate: 0m, depositOutputVatDeferred: false).Action);
@@ -58,12 +60,14 @@ public class DepositForfeitRound194MTests
     public void P1_ที่พักไม่คิดVAT_ริบแล้วใบVAT0เป็นVAT0โดยชอบ_ที่พักคิดVATหรือไม่ระบุตามธงบนใบ()
     {
         // ใบเก่าที่ถูกจัดรูปเป็นเต็มยอด (0 + deferred) ด้วยอัตราบริษัทก่อนแก้ ⇒ ช่องทางบอก 0 ⇒ ไม่ออกใบกำกับ 7%
-        Assert.False(DepositPolicyResolver.ForfeitZeroVatDeferred(documentDeferred: true, channelVatRate: 0m));
-        Assert.True(DepositPolicyResolver.ForfeitZeroVatDeferred(documentDeferred: true, channelVatRate: 7m));
-        Assert.True(DepositPolicyResolver.ForfeitZeroVatDeferred(documentDeferred: true, channelVatRate: null));
-        Assert.False(DepositPolicyResolver.ForfeitZeroVatDeferred(documentDeferred: false, channelVatRate: null));
+        // R2-2: ตัวนี้คืนสามสถานะ (false = รู้แน่ว่า VAT 0 · true = เลื่อน · null = กำกวม) และรับลักษณะเงินด้วย
+        Assert.False(DepositPolicyResolver.ForfeitZeroVatDeferred(DepositNature.PartOfPrice, documentDeferred: true, channelVatRate: 0m));
+        Assert.False(DepositPolicyResolver.ForfeitZeroVatDeferred(null, documentDeferred: true, channelVatRate: 0m));
+        Assert.True(DepositPolicyResolver.ForfeitZeroVatDeferred(DepositNature.PartOfPrice, documentDeferred: true, channelVatRate: 7m));
+        Assert.True(DepositPolicyResolver.ForfeitZeroVatDeferred(null, documentDeferred: true, channelVatRate: null));
+        Assert.False(DepositPolicyResolver.ForfeitZeroVatDeferred(DepositNature.PartOfPrice, documentDeferred: false, channelVatRate: null));
         var f = DepositPolicyResolver.ForfeitVatDecision(DepositNature.PartOfPrice, DepositForfeitAs.PriceOrFee, 0m, true, 7m,
-            depositOutputVatDeferred: DepositPolicyResolver.ForfeitZeroVatDeferred(true, 0m));
+            depositOutputVatDeferred: true, channelVatRate: 0m);
         Assert.Equal(DepositForfeitVatAction.ZeroVatAtIssue, f.Action);
     }
 
@@ -131,25 +135,29 @@ public class DepositForfeitRound194MTests
     // ═════════════════ M4 — tax point ของ VAT ที่เกิดจากการริบ ตามสถานะงวดเดือนรับเงิน ═════════════════
 
     [Fact]
-    public void M4_งวดเดือนรับเงินยังไม่ยื่น_taxPointเท่ากับวันรับเงิน_ไม่มีธง_ไม่ต้องยื่นเพิ่มเติม()
+    public void M4_งวดเดือนรับเงินยังไม่ยื่นและยังไม่เลยกำหนด_taxPointเท่ากับวันรับเงิน_ไม่มีธง()
     {
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3), depositPeriodFiled: false);
+        // R2-1: "ยังไม่ยื่น" ต้องมีหลักฐานว่ายังไม่เลยกำหนดยื่น (วันนี้ 03/09 ≤ 15/09) — ไม่ใช่แค่ไม่มีแถวยื่นในระบบ
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3),
+            depositPeriodLocked: false, today: new DateTime(2026, 9, 3));
         Assert.Equal(new DateTime(2026, 8, 28), tp.TaxPointDate);
         Assert.False(tp.LateFlag);
         Assert.NotNull(tp.Note);
         Assert.DoesNotContain(DepositPolicyResolver.LateVatMarker, tp.Note);
         Assert.Contains("08/2026", tp.Note);
-        Assert.Contains("ไม่ต้องยื่นเพิ่มเติม", tp.Note);
+        Assert.Contains("ยังไม่เลยกำหนดยื่น", tp.Note);
     }
 
     [Fact]
-    public void M4_งวดเดือนรับเงินยื่นแล้ว_VATเข้างวดปัจจุบัน_ธงบอกว่านำส่งแล้วห้ามนำส่งซ้ำ()
+    public void M4_งวดเดือนรับเงินยื่นแล้ว_VATเข้างวดปัจจุบัน_ธงบอกว่านำส่งงวดไหนห้ามนำส่งซ้ำ()
     {
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), depositPeriodFiled: true);
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
+            depositPeriodLocked: true, today: new DateTime(2026, 9, 10));
         Assert.Equal(new DateTime(2026, 9, 10), tp.TaxPointDate);
         Assert.True(tp.LateFlag);
         Assert.StartsWith(DepositPolicyResolver.LateVatMarker, tp.Note);
-        Assert.Contains("นำส่งในงวด 09/2026 แล้ว", tp.Note);
+        Assert.Contains("นำส่งในงวด 09/2026", tp.Note);
+        Assert.Contains("ถึงกำหนดงวด 07/2026", tp.Note);
         Assert.Contains("§89/1", tp.Note);
         Assert.Contains("ห้ามนำส่งซ้ำ", tp.Note);
         Assert.DoesNotContain("ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น", tp.Note);   // ข้อความเดิมที่ทำให้ VAT ซ้ำ
@@ -158,11 +166,13 @@ public class DepositForfeitRound194MTests
     [Fact]
     public void M4_เดือนเดียวกัน_และเงินประกันที่หักเป็นค่าธรรมเนียม_ไม่ใช่ภาษีย้อนหลัง_ไม่แตะ()
     {
-        var same = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 9, 2), new DateTime(2026, 9, 20), depositPeriodFiled: true);
+        var same = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 9, 2), new DateTime(2026, 9, 20),
+            depositPeriodLocked: false, today: new DateTime(2026, 9, 20));
         Assert.Equal(new DateTime(2026, 9, 2), same.TaxPointDate);
         Assert.False(same.LateFlag);
         Assert.Null(same.Note);
-        var sec = DepositPolicyResolver.ForfeitTaxPointDecision(false, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10), depositPeriodFiled: true);
+        var sec = DepositPolicyResolver.ForfeitTaxPointDecision(false, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
+            depositPeriodLocked: true, today: new DateTime(2026, 9, 10));
         Assert.Equal(new DateTime(2026, 9, 10), sec.TaxPointDate);
         Assert.False(sec.LateFlag);
         Assert.Null(sec.Note);
@@ -223,9 +233,10 @@ public class DepositForfeitRound194MTests
         Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.PartOfPrice, 65.42m, false, 7m));   // VAT ทันที
         Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.PartOfPrice, 65.42m, true, 7m));    // VAT พัก (ย้ายเข้า 21911)
         Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.NonVatSupply, 0m, true, 7m));      // ค่าเช่าล่วงหน้าตามงวด
-        Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.RefundableSecurity, 0m, true, 7m));
-        Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.PartOfPrice, 0m, false, 7m));      // VAT 0 โดยชอบ
+        // R2-3: เงินประกันที่ต้องคืน "ส่งมอบแล้ว" ถูกปฏิเสธแล้ว (เดิมบรรทัดนี้ล็อกว่าผ่าน = รายได้ขาย 41000 ไม่มี VAT) — ดู DepositRound194R2Tests
+        Assert.Null(DepositPolicyResolver.PlainRealizeProblem(DepositNature.PartOfPrice, 0m, false, 7m));      // VAT 0 โดยชอบ (ใบรอบ 194+)
         Assert.Null(DepositPolicyResolver.PlainRealizeProblem(null, 0m, true, 0m));                            // บริษัทไม่จด VAT
+        Assert.Null(DepositPolicyResolver.PlainRealizeProblem(null, 0m, false, 7m, channelVatRate: 0m));       // ช่องทางไม่คิด VAT
     }
 
     // ═════════════════ M6 — คำเตือน 21913 ค้างเกิน 90 วัน ไม่ฟ้องใบที่ปิดแล้ว ═════════════════

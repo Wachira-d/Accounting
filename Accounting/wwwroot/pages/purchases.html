@@ -150,7 +150,9 @@
             <td>${Layout.date(d.documentDate)}</td>
             <td>${d.contact?.name || '-'}</td>
             <td class="text-right">${Layout.money(d.totalAmount)}</td>
-            <td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>
+            ${d.balanceDueApplies === false
+              ? `<td class="text-right text-gray-400" title="เอกสารชนิดนี้ไม่ใช่การตั้งหนี้ — ไม่มียอดค้างจ่าย (หนี้อยู่ที่ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย)">—</td>`
+              : `<td class="text-right ${d.balanceDue > 0 ? 'text-danger' : ''}">${Layout.money(d.balanceDue)}</td>`}
             <td>${Layout.statusBadge(d.status)}</td>
             <td>
               <a class="btn btn-sm btn-ghost" href="/pages/documents.html?editDoc=${d.id}">ดู / แก้ไข</a>
@@ -169,9 +171,13 @@
           const now = new Date();
           const thisMonth = items.filter(d => { const dt = new Date(d.documentDate); return dt.getMonth() === now.getMonth() && dt.getFullYear() === now.getFullYear(); });
           const po = thisMonth.filter(d => d.documentType === 'PurchaseOrder');
-          const pending = items.filter(d => d.documentType === 'PurchaseOrder' && (d.status === 'Approved' || d.status === 'Sent'));
+          // รอบ 196: ใบสั่งซื้อที่ออกเอกสารต่อครบแล้ว (conversionStatus จากเซิร์ฟเวอร์ — Helpers/DocumentConversionProgress) ไม่นับว่ารอ
+          const pending = items.filter(d => d.documentType === 'PurchaseOrder' && (d.status === 'Approved' || d.status === 'Sent')
+            && d.conversionStatus !== 'Full');
           const purchased = thisMonth.filter(d => d.documentType === 'PurchaseInvoice');
-          const unpaid = items.filter(d => d.balanceDue > 0 && d.status !== 'Draft' && d.status !== 'Voided');
+          // รอบ 196: รวมเฉพาะชนิดที่เป็นหนี้จริง (ธง balanceDueApplies · ArApScope) — เดิมยอดเต็มของใบสั่งซื้อ/ใบรับสินค้าถูกรวมเป็น "ค้างจ่าย"
+          const unpaid = items.filter(d => d.balanceDue > 0 && d.status !== 'Draft' && d.status !== 'Voided'
+            && d.balanceDueApplies !== false);
           document.getElementById('statPO').textContent = po.length;
           document.getElementById('statPending').textContent = pending.length;
           document.getElementById('statPurchase').textContent = '฿' + Layout.money(purchased.reduce((s,d) => s + d.totalAmount, 0));
