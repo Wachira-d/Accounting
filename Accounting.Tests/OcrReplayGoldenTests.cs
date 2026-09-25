@@ -151,6 +151,27 @@ public class OcrReplayGoldenTests
         Assert.Equal("4695.33", Val("scommerce-lazada-prevat-discount", "AnchoredNetSubTotal"));
     }
 
+    // ── รอบ 195: ชั้น "ตัวเลขหัวใบพิสูจน์อัตราทั้งใบ" — ใบ S ต้องได้ 7 ทุกบรรทัด · ใบผสมต้องไม่ถูกแตะ ─────────────
+
+    [Fact]
+    public void ใบS_Scommerce_ตัวเลขหัวใบพิสูจน์ทุกบรรทัด7เปอร์เซ็นต์()
+    {
+        Assert.Equal("AllStandard7:7,7", Val("scommerce-lazada-prevat-discount", "LineVatPlan"));
+        Assert.Equal("(ไม่ใช้)", Val("scommerce-lazada-prevat-discount", "LineVatRates"));   // ไม่มีสัญลักษณ์ท้ายบรรทัด
+    }
+
+    [Fact]
+    public void ใบค้าส่งผสม_สัญลักษณ์บนกระดาษตัดสินแล้ว_ชั้นพิสูจน์ทั้งใบไม่แตะ()
+        => Assert.Equal("Unknown", Val("wholesale-mixed-vat", "LineVatPlan"));
+
+    [Fact]
+    public void ใบที่ถูกอยู่แล้ว_ชั้นพิสูจน์ให้คำตอบเดียวกับตัวเดาเดิม_ทุกบรรทัด7()
+    {
+        // Wine Pro (ไวน์) และ Shopee (น้ำยาซักผ้า) — ตัวเดาจากชื่อให้ 7% อยู่แล้ว ⇒ คำตอบสุดท้ายไม่เปลี่ยน
+        Assert.Equal("AllStandard7:7,7,7", Val("winepro-vat-included", "LineVatPlan"));
+        Assert.Equal("AllStandard7:7", Val("uptoyou-shopee-pay-not-total", "LineVatPlan"));
+    }
+
     [Fact]
     public void ใบเดิมทุกใบในชุด_ยอดรวมและฐานหลังขั้นยึดยอด_เท่าเดิมทุกใบ()
     {

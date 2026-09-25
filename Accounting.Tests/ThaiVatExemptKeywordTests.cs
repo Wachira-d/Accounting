@@ -50,4 +50,23 @@ public class ThaiVatExemptKeywordTests
         Assert.True(ThaiVatTypeRule.ContainsAtWordStart("อาหาร/ผักสด", "ผัก"));
         Assert.False(ThaiVatTypeRule.ContainsAtWordStart("ขนมปัง", "นม"));
     }
+
+    // ── รอบ 195 (P2): นมแปรรูปเสีย VAT — ขอบเขตนมสดยกเว้น §81 ยังคงเดิม (รอเจ้าของ/นักบัญชีตัดสิน) ──────────
+    [Theory]
+    [InlineData("นมผงเอนฟาโกร เอนฟินิทัส สูตร3 นมผง เด็ก นมเอนฟาโกร enfa Enfinitas ชนิดจืด 1425 กรัม:สูตร3")]   // กระดาษจริง Scommerce
+    [InlineData("Enfagrow A+ milk powder 1650g")]
+    [InlineData("Similac infant formula 850g")]
+    [InlineData("นมถั่วเหลือง แลคตาซอย 300 มล.")]
+    [InlineData("นม UHT รสจืด 200 มล. x 36")]
+    [InlineData("นมยูเอชที ไทย-เดนมาร์ค")]
+    public void นมแปรรูป_ต้องไม่ถูกตีเป็นยกเว้น(string desc)
+        => Assert.False(ThaiVatTypeRule.LooksExempt(desc));
+
+    [Theory]
+    [InlineData("นมสด 2 ลิตร")]
+    [InlineData("ค่านม")]
+    [InlineData("ค่านมโรงเรียน")]
+    [InlineData("fresh milk 1L")]
+    public void ทิศตรงข้าม_นมสดยังเดาเป็นยกเว้นตามเดิม(string desc)
+        => Assert.True(ThaiVatTypeRule.LooksExempt(desc));
 }

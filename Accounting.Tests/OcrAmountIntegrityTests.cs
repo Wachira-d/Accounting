@@ -162,4 +162,39 @@ public class OcrAmountIntegrityTests
         Assert.False(r.TotalComparable);
         Assert.DoesNotContain(r.Problems, p => p.Kind == OcrAmountIntegrityKind.TotalMismatch);
     }
+
+    // ── รอบ 195 (ใบ Scommerce): ข้อความต้องชี้สาเหตุจริง · บรรทัดยอด 0 ไม่ใช่หลักฐานว่ามีบรรทัด 7% ─────────────
+
+    [Fact]
+    public void ใบScommerceก่อนแก้_บรรทัดค่าส่ง0บาทติด7_ต้องบอกว่าทุกบรรทัดที่มียอดไม่มีVAT_และยอดรวมชี้ที่VAT()
+    {
+        // บรรทัดนมผงถูกเดาเป็นยกเว้น · ค่าจัดส่ง 0.00 ติด 7% ⇒ VAT ทุกบรรทัด 0
+        var lines = new[] { new OcrPlannedLine(4695.33m, ThaiVatTypeRule.ExemptRate, 0m), new OcrPlannedLine(0m, 7m, 0m) };
+        var r = OcrAmountIntegrity.Check(lines, 328.67m, 5024.00m);
+        var total = Assert.Single(r.Problems, p => p.Kind == OcrAmountIntegrityKind.TotalMismatch);
+        Assert.Contains("ส่วนต่างทั้งหมดมาจาก VAT", total.Message);
+        Assert.DoesNotContain("อ่านไม่ได้ —", total.Message);       // เดิม: "อาจมีรายการ/ค่าบริการ/ค่าขนส่งที่ระบบอ่านไม่ได้"
+        var vat = Assert.Single(r.Problems, p => p.Kind == OcrAmountIntegrityKind.VatMismatch);
+        Assert.Contains("ทุกบรรทัดที่มียอดถูกตั้งเป็นไม่มี VAT", vat.Message);
+        Assert.DoesNotContain(r.Problems, p => p.Kind == OcrAmountIntegrityKind.VatRateMismatch);   // เดิม "บรรทัดที่ติด 7% รวม 0.00"
+        Assert.All(r.Problems, p => Assert.Equal(p.Kind, OcrAmountIntegrity.KindOf(p.Message)));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ยอดรวมต่างเพราะรายการขาด_ยังบอกว่ารายการอ่านไม่ได้()
+    {
+        // VAT ตรงกระดาษ แต่รายการขาด 100 ⇒ สาเหตุคือรายการ ไม่ใช่อัตรา VAT
+        var lines = ExclVat(new[] { 900m }, new[] { 7m }, 70m);
+        var r = OcrAmountIntegrity.Check(lines, 70m, 1070m);
+        var total = Assert.Single(r.Problems, p => p.Kind == OcrAmountIntegrityKind.TotalMismatch);
+        Assert.Contains("อ่านไม่ได้", total.Message);
+        Assert.DoesNotContain("ส่วนต่างทั้งหมดมาจาก VAT", total.Message);
+    }
+
+    [Fact]
+    public void KindOf_ข้อความที่ไม่ใช่ของด่านนี้_ไม่รู้()
+    {
+        Assert.Null(OcrAmountIntegrity.KindOf("Σ บรรทัด 900.00 น้อยกว่ายอดก่อน VAT 1,000.00 — OCR อาจอ่านบรรทัดขาด 100.00"));
+        Assert.Null(OcrAmountIntegrity.KindOf(null));
+    }
 }

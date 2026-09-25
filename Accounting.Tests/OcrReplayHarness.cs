@@ -117,7 +117,9 @@ public static class OcrReplayHarness
 
         // Lazada — ส่วนลด 216.82 ก่อน VAT · แถว (0.00) ของกลุ่มยกเว้น
         new ReplayPaper("scommerce-lazada-prevat-discount", OcrPaperSamples.ScommerceLazada,
-            EngineSubTotal: 4912.15m, EngineVat: 328.67m, EngineTotal: 5024.00m),
+            EngineSubTotal: 4912.15m, EngineVat: 328.67m, EngineTotal: 5024.00m,
+            // รอบ 195: ยอดบรรทัดตามที่พิมพ์ (นมผง 4,912.15 · ค่าจัดส่ง 0.00) — ให้ขั้น 7 (ชั้นพิสูจน์ทั้งใบ) ตรวจใบนี้ได้
+            LineAmounts: new[] { 4912.15m, 0.00m }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -175,6 +177,29 @@ public static class OcrReplayHarness
                 result.Add(new(p.Name, "LineVatRates", pick.Applied
                     ? string.Join(",", pick.Rates.Select(r => r?.ToString("0.##") ?? "-"))
                     : "(ไม่ใช้)"));
+
+                // 7. รอบ 195 — ชั้น "ตัวเลขหัวใบพิสูจน์อัตราทั้งใบ" (OcrLineVatPlanner) บนยอดหลังกระจายส่วนลด
+                //    ลำดับเดียวกับ BuildScanLinesAsync: สัญลักษณ์บนกระดาษ → กระทบยอด/กระจายส่วนลด → ชั้นนี้ (บรรทัดที่ยังว่าง)
+                var netBase = OcrHeaderAmounts.NetSubTotal(n.SubTotal, n.Vat, anchoredTotal, shape.DiscountToSpread);
+                var recon = OcrLineReconciler.Classify(amounts.Sum(), netBase, n.Vat ?? 0m, anchoredTotal ?? 0m, shape.DiscountToSpread);
+                var nets = amounts.ToArray();
+                if (recon.DiscountPercent > 0m && recon.TargetLineSum is decimal target && amounts.Sum() > 0m)
+                {
+                    decimal assigned = 0m;
+                    for (var i = 0; i < nets.Length; i++)
+                    {
+                        nets[i] = i == nets.Length - 1 ? target - assigned
+                            : Math.Round(target * amounts[i] / amounts.Sum(), 2, MidpointRounding.AwayFromZero);
+                        assigned += nets[i];
+                    }
+                }
+                var plan = OcrLineVatPlanner.PlanWholeInvoice(nets,
+                    pick.Applied ? pick.Rates : new decimal?[nets.Length],
+                    n.Vat ?? 0m, netBase, anchoredTotal ?? 0m, recon.PricesIncludeVat,
+                    OcrLineVatPlanner.PaperExemptAmount(OcrLineVatMarks.Read(p.RawText), OcrLineVatMarks.ReadGroups(p.RawText)));
+                result.Add(new(p.Name, "LineVatPlan", plan.Decided
+                    ? plan.Verdict + ":" + string.Join(",", plan.Rates.Select(r => r?.ToString("0.##") ?? "-"))
+                    : plan.Verdict.ToString()));
             }
         }
         return result;

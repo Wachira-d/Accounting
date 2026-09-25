@@ -797,6 +797,24 @@ RULES += [
          why="รอบ 194 C3: หน้าจอการจองตัดสินปุ่มรับ/สถานะเงินประกันจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับด่านรับ)"),
 ]
 
+# ── รอบ 195 (ใบ Scommerce — ถดถอยจาก 5e3a323b): ตัวเดาจากชื่อสินค้าต้องอยู่ "ใต้" หลักฐานตัวเลขทั้งใบ ─────────────────
+#    BuildScanLinesAsync = ตัวสร้างบรรทัดตัวเดียวของทุกทางเข้า (สร้าง · line-preview · ดึงรายการซ้ำ) · ถอดการเรียก planner หรือ
+#    ย้ายไปหลัง ThaiVatTypeRule.Suggest = นมผงกลับเป็นยกเว้นเงียบ ๆ (เทสต์ของ helper ยังเขียว) · ผลต้องถูกใช้ (Decided)
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(",
+               "OcrLineReconciler.LineDiscountPercent("],
+         must_re=[r"if\s*\(\s*vatPlan\s*\.\s*Decided\s*\)", r"vatPlan\s*\.\s*Rates\s*\[\s*vpi\s*\]"],
+         before=[("OcrLineVatPlanner.PlanWholeInvoice(", "ThaiVatTypeRule.Suggest(")],
+         forbid=["DiscountPercent = docDiscountPercent,"],
+         why="รอบ 195: อัตรา VAT บรรทัด = engine/ผู้ใช้ > สัญลักษณ์บนกระดาษ > ตัวเลขหัวใบพิสูจน์ทั้งใบ > เดาจากชื่อ · บรรทัดยอด 0 ไม่ได้ % ส่วนลด"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["OcrLineVatPlanner.RateAdvice(", "OcrApprovalGapWarning.Build("],
+         before=[("OcrLineVatPlanner.RateAdvice(", "OcrApprovalGapWarning.Build(")],
+         call_args=[("OcrApprovalGapWarning.Build(", "vatRateAdvice")],
+         why="รอบ 195 P4: คำเตือนตอนอนุมัติบอกทางแก้เป็นตัวเลขเมื่อ VAT บนกระดาษ = 7% ของฐานทั้งใบ (ตัวตัดสินเดียวกับตอนสร้างบรรทัด)"),
+]
+
 
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
