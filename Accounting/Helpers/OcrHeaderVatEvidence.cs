@@ -49,24 +49,54 @@ public static class OcrHeaderVatEvidence
     /// <param name="normalizedText">ข้อความหลัง <c>ThaiTextNormalizer.Normalize</c> (Tesseract เว้นวรรคระหว่างตัวอักษร) · null = ใช้ rawText อย่างเดียว</param>
     /// <param name="headerVat">VAT หัวใบที่จะใช้สร้างเอกสาร</param>
     /// <param name="ocrEngine"><c>OcrScanResult.OcrEngine</c> — <see cref="SignedXmlEngine"/> = ตัวเลขจาก XML ที่ลงนาม</param>
-    public static OcrHeaderVatSource Classify(string? rawText, string? normalizedText, decimal headerVat, string? ocrEngine)
+    /// <param name="processingNotes"><c>OcrScanResult.ProcessingNotes</c> — มีร่องรอย <see cref="VatBackCalcGuard.BackCalcTag"/> (ระบบถอด 7/107 เอง)
+    /// ⇒ ไม่ใช่ <see cref="OcrHeaderVatSource.Labelled"/> = <see cref="OcrHeaderVatSource.NotOnPaper"/> เสมอ (รอบ 195 ฝ่ายค้านรอบสอง R2-4) · null = ไม่รู้ (พฤติกรรมเดิม)</param>
+    /// <param name="paperTotal">ยอดรวมทั้งสิ้นของสแกน — ใช้ยืนยันว่า VAT ที่ถืออยู่ยังเป็นค่าที่ถอดจากยอดนี้ (ผู้ใช้แก้ VAT แล้ว ⇒ ไม่ถือร่องรอยเก่า) ·
+    /// null = ถือร่องรอยอย่างเดียว</param>
+    public static OcrHeaderVatSource Classify(string? rawText, string? normalizedText, decimal headerVat, string? ocrEngine,
+        string? processingNotes = null, decimal? paperTotal = null)
     {
         if (headerVat <= 0m) return OcrHeaderVatSource.NoVat;
         if (string.Equals(ocrEngine, SignedXmlEngine, StringComparison.Ordinal)) return OcrHeaderVatSource.Labelled;
         if (OcrPaperAmounts.IsVatLabelled(rawText, headerVat)
             || (normalizedText != null && OcrPaperAmounts.IsVatLabelled(normalizedText, headerVat)))
             return OcrHeaderVatSource.Labelled;
+        // ★ รอบ 195 ฝ่ายค้านรอบสอง R2-4: VAT ที่ระบบถอด 7/107 เองแล้ว "บังเอิญ" ตรงกับเลขอื่นบนใบ (ค่าส่ง 70 · เงินทอน · ยอดบรรทัด) เดิมได้
+        // PrintedUnlabelled ⇒ ไม่ติด [VAT-DERIVED] ⇒ อนุมัติเองได้ · ร่องรอยการถอดคือหลักฐานตรงว่าตัวเลขนี้มาจากสูตร ไม่ใช่จากกระดาษ
+        if (WasBackCalculated(processingNotes, headerVat, paperTotal))
+            return OcrHeaderVatSource.NotOnPaper;
         if (OcrPaperAmounts.IsPrinted(OcrPaperAmounts.AllPrinted(rawText), headerVat)
             || (normalizedText != null && OcrPaperAmounts.IsPrinted(OcrPaperAmounts.AllPrinted(normalizedText), headerVat)))
             return OcrHeaderVatSource.PrintedUnlabelled;
         return OcrHeaderVatSource.NotOnPaper;
     }
 
-    /// <summary>ข้อความ (ไม่รวมแท็ก) เมื่อ VAT หัวใบไม่มีบนกระดาษ · null = ไม่ต้องเตือน</summary>
+    /// <summary>ร่องรอย "ระบบถอด VAT จากยอดรวม" อยู่ในหมายเหตุ และ VAT ที่ถืออยู่ยังเท่ากับค่าที่ถอดจากยอดรวมนั้น
+    /// (ยอดรวมไม่รู้ ⇒ ถือร่องรอยอย่างเดียว) — ร่องรอยอยู่ในส่วน <c>[Reasoning]</c> จึงค้นแบบ "มีอยู่" ไม่ใช่ "ขึ้นต้นบรรทัด"</summary>
+    private static bool WasBackCalculated(string? processingNotes, decimal headerVat, decimal? paperTotal)
+    {
+        if (string.IsNullOrEmpty(processingNotes)
+            || !processingNotes.Contains(VatBackCalcGuard.BackCalcTag, StringComparison.Ordinal)) return false;
+        if (paperTotal is not decimal t || t <= 0m) return true;
+        return Math.Abs(OcrVatBackCalc.SplitInclusive(t).VatAmount - headerVat) <= OcrPaperAmounts.ExactTol;
+    }
+
+    /// <summary>
+    /// ข้อความ (ไม่รวมแท็ก) เมื่อ VAT หัวใบไม่มีบนกระดาษ · null = ไม่ต้องเตือน — ตัวตั้งตัวเดียวของทั้งแท็ก <see cref="DerivedTag"/> (ตอนสร้างบรรทัด)
+    /// และคำเตือนตอนอนุมัติ (<see cref="OcrApprovalGapWarning.Build"/>)
+    ///
+    /// <para>รอบ 195 ฝ่ายค้านรอบสอง (PLAUSIBLE ก): ใบเต็มรูปที่พิมพ์แค่ "ราคารวมภาษีมูลค่าเพิ่มแล้ว" (ไม่แยกจำนวน VAT) — ด่านยอมให้ถอด
+    /// ⇒ อนุมัติด้วยมือแล้วเคลม 7/107 ได้ · ข้อความเดิมให้ทางไปต่อทางเดียว ("ยกเว้น ม.81 ตั้ง 0") ไม่ได้บอกว่าใบกำกับที่ไม่แสดงจำนวนภาษี
+    /// แยก<b>ไม่ครบ ม.86/4(6)</b> ⇒ <b>ภาษีซื้อต้องห้าม ม.82/5(1)</b> · ระบบ<b>ไม่บล็อกและไม่เปลี่ยนค่าเอง</b> (รอเจ้าของตัดสินว่าจะบังคับไหม) —
+    /// บอกความจริงและทางเลือกให้ครบ แล้วให้คนตัดสินตอนกดรับทราบ</para>
+    /// </summary>
     public static string? DerivedNote(OcrHeaderVatSource source, decimal headerVat)
         => source == OcrHeaderVatSource.NotOnPaper
-            ? $"VAT {headerVat:N2} ไม่ได้พิมพ์อยู่บนกระดาษ (ระบบคำนวณจากยอดรวม หรืออ่านตัวเลขไม่ตรงกระดาษ) — "
-              + "ภาษีซื้อ/ภาษีขายต้องมาจากตัวเลขบนใบกำกับจริง (ม.86/4 · ม.82/5) ตรวจยอด VAT กับกระดาษก่อนอนุมัติ "
-              + "(ใบที่ไม่มี VAT เช่นสินค้ายกเว้น ม.81 ให้ตั้ง VAT เป็น 0)"
+            ? $"VAT {headerVat:N2} ไม่ได้พิมพ์อยู่บนกระดาษ (ระบบคำนวณจากยอดรวม หรืออ่านตัวเลขไม่ตรงกระดาษ) — ตรวจกับกระดาษก่อนอนุมัติ: "
+              + "(1) กระดาษพิมพ์ยอด VAT แยกไว้แต่ระบบอ่านผิด ⇒ แก้ยอดตามกระดาษ · "
+              + "(2) ใบกำกับภาษีที่ไม่แสดงจำนวนภาษีแยก (เช่นพิมพ์แค่ “ราคารวมภาษีมูลค่าเพิ่มแล้ว”) = ไม่ครบรายการ ม.86/4(6) "
+              + "⇒ ถ้าเป็นเอกสารซื้อ ภาษีซื้อต้องห้าม ม.82/5(1) — ทางเลือก: ตั้ง VAT เป็น 0 แล้วลงค่าใช้จ่ายเต็มจำนวน "
+              + "หรือขอใบกำกับฉบับที่แสดงภาษีแยกจากผู้ขาย · "
+              + "(3) สินค้า/บริการยกเว้น ม.81 ⇒ ตั้ง VAT เป็น 0"
             : null;
 }

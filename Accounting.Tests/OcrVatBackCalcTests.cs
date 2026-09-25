@@ -139,4 +139,56 @@ public class OcrVatBackCalcTests
         Assert.Equal(92.77m, vat);
         Assert.Equal(1418.02m, total);
     }
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง R2-2: สูตรถอดตัวเดียว · ZoneFallback ไม่ถอดเองอีก ───────────────────────────────────────────
+
+    [Theory]
+    [InlineData("1070.00", "1000.00", "70.00")]
+    [InlineData("536.00", "500.93", "35.07")]         // Shopee อัพทูยู
+    [InlineData("3593.00", "3357.94", "235.06")]      // Wine Pro
+    [InlineData("0.01", "0.01", "0.00")]
+    public void SplitInclusive_ฐานบวกVATเท่ายอดรวมพอดี(string total, string sub, string vat)
+    {
+        var (s, v) = OcrVatBackCalc.SplitInclusive(decimal.Parse(total, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(decimal.Parse(sub, System.Globalization.CultureInfo.InvariantCulture), s);
+        Assert.Equal(decimal.Parse(vat, System.Globalization.CultureInfo.InvariantCulture), v);
+        Assert.Equal(decimal.Parse(total, System.Globalization.CultureInfo.InvariantCulture), s + v);
+    }
+
+    [Fact]
+    public void Plan_ใช้สูตรเดียวกับSplitInclusive()
+    {
+        var p = OcrVatBackCalc.Plan("ใบกำกับภาษี\nค่าบริการ 3,593.00\nรวม 3,593.00\nราคารวมภาษีมูลค่าเพิ่มแล้ว", 3593m, Seller,
+            new[] { "ค่าบริการ" }, null);
+        Assert.Equal(OcrVatBackCalcAction.Apply, p.Action);
+        Assert.Equal(OcrVatBackCalc.SplitInclusive(3593m), (p.SubTotal!.Value, p.VatAmount!.Value));
+    }
+
+    [Fact]
+    public void CrossValidator_มีแต่ยอดรวม_ไม่ถอดVATเอง()
+    {
+        var (sub, vat, total) = Accounting.Services.Implementations.Ocr.CrossValidator.FillMissingAmounts(null, null, 1070m);
+        Assert.Null(sub);
+        Assert.Null(vat);
+        Assert.Equal(1070m, total);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_CrossValidator_ตัวเลขที่พิมพ์สองตัว_ยังเติมตัวที่สามได้()
+    {
+        Assert.Equal(70m, Accounting.Services.Implementations.Ocr.CrossValidator.FillMissingAmounts(1000m, null, 1070m).vat);
+        Assert.Equal(1000m, Accounting.Services.Implementations.Ocr.CrossValidator.FillMissingAmounts(null, 70m, 1070m).sub);
+        Assert.Equal(1070m, Accounting.Services.Implementations.Ocr.CrossValidator.FillMissingAmounts(1000m, 70m, null).total);
+    }
+
+    [Fact]
+    public void เส้นโซน_ใบผักยกเว้นทั้งใบ_ยังไม่รู้รายการ_ด่านปฏิเสธ_ไม่มีVATแต่ง()
+    {
+        // เดิม ZoneFallback ได้ Sub 1,000 / VAT 70 จาก CrossValidator โดยไม่ถามด่าน · ตอนนี้ผู้เรียกถาม Plan (บรรทัดว่าง)
+        var p = OcrVatBackCalc.Plan("ร้านผักสดป้าแดง\nใบเสร็จรับเงิน/ใบกำกับภาษี\nรวมทั้งสิ้น 1,070.00\nสินค้าทุกรายการได้รับการยกเว้นภาษีมูลค่าเพิ่ม",
+            1070m, Seller, System.Array.Empty<string?>(), null);
+        Assert.Equal(OcrVatBackCalcAction.Skip, p.Action);
+        Assert.Null(p.VatAmount);
+        Assert.StartsWith(VatBackCalcGuard.SkipTag, p.Trace);
+    }
 }

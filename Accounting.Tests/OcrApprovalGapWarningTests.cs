@@ -135,4 +135,60 @@ public class OcrApprovalGapWarningTests
         Assert.Equal(3, w.Count);                                   // คำแนะนำ (VAT) · ยอดรวมแยก · บรรทัดติดลบ
         Assert.Single(w, x => x.Contains("ยอดรวมจากรายการ"));
     }
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง R2-3: VAT ที่ไม่ได้พิมพ์บนกระดาษ = คำเตือนตอนอนุมัติทุกทางเข้า ─────────────────────────────
+
+    [Fact]
+    public void VATไม่อยู่บนกระดาษ_ไม่มีSigmaGap_ยังเตือนหนึ่งข้อ_เป็นชุดที่ต้องรับทราบ()
+    {
+        var w = Assert.Single(OcrApprovalGapWarning.Build("[Tier] Tesseract", 1070.00m, 1070.00m,
+            linesVat: 70.00m, paperVat: 70.00m, headerVatSource: OcrHeaderVatSource.NotOnPaper));
+        Assert.StartsWith(OcrApprovalGapWarning.VatDerivedPrefix, w);
+        Assert.Contains("ม.86/4(6)", w);
+        Assert.Contains("ม.82/5(1)", w);
+        Assert.Contains("ตอนนี้ VAT ในเอกสาร 70.00", w);
+        Assert.True(OcrApprovalGapWarning.IsGapWarning(w));          // workflow ส่งผ่านเองไม่ได้ · API ไม่ขัดจังหวะ
+        Assert.True(OcrApprovalGapWarning.IsVatDerivedWarning(w));
+        // สแกนเก่าที่ไม่มีหมายเหตุเลยก็ยังเตือน (ตัดสินสดจากกระดาษ ไม่พึ่งแท็ก)
+        Assert.Single(OcrApprovalGapWarning.Build(null, 1070.00m, 1070.00m,
+            linesVat: 70.00m, paperVat: 70.00m, headerVatSource: OcrHeaderVatSource.NotOnPaper));
+    }
+
+    [Fact]
+    public void VATไม่อยู่บนกระดาษ_พร้อมSigmaGap_ได้ทั้งสองข้อ_ข้อVATอยู่ท้าย()
+    {
+        var ws = OcrApprovalGapWarning.Build(GapNotes, 23812.25m, 24110.00m,
+            linesVat: 1577.29m, paperVat: 1577.29m, headerVatSource: OcrHeaderVatSource.NotOnPaper);
+        Assert.Equal(2, ws.Count);
+        Assert.StartsWith(OcrApprovalGapWarning.Prefix, ws[0]);
+        Assert.False(OcrApprovalGapWarning.IsVatDerivedWarning(ws[0]));
+        Assert.StartsWith(OcrApprovalGapWarning.VatDerivedPrefix, ws[1]);
+    }
+
+    [Theory]
+    [InlineData(OcrHeaderVatSource.Labelled)]
+    [InlineData(OcrHeaderVatSource.PrintedUnlabelled)]
+    [InlineData(OcrHeaderVatSource.NoVat)]
+    public void ทิศตรงข้าม_VATพิมพ์บนกระดาษหรือไม่มีVAT_ไม่เตือน(OcrHeaderVatSource src)
+        => Assert.Empty(OcrApprovalGapWarning.Build("[Tier] Azure DI", 5024.00m, 5024.00m,
+            linesVat: 328.67m, paperVat: 328.67m, headerVatSource: src));
+
+    [Fact]
+    public void ทิศตรงข้าม_ผู้ใช้ตั้งVATเป็น0ตามทางเลือกแล้ว_ไม่เตือน()
+    {
+        Assert.Empty(OcrApprovalGapWarning.Build(null, 1070.00m, 1070.00m,
+            linesVat: 0m, paperVat: 70.00m, headerVatSource: OcrHeaderVatSource.NotOnPaper));
+        // ไม่รู้ VAT ของบรรทัด = เตือน (ไม่รู้ ≠ ปลอดภัย)
+        Assert.Single(OcrApprovalGapWarning.Build(null, 1070.00m, 1070.00m,
+            linesVat: null, paperVat: 70.00m, headerVatSource: OcrHeaderVatSource.NotOnPaper));
+    }
+
+    [Fact]
+    public void คำเตือนVATไม่อยู่บนกระดาษ_workflowต้องหยุด_APIผ่านแต่คืนในคำตอบ()
+    {
+        var w = OcrApprovalGapWarning.VatDerivedWarning(OcrHeaderVatSource.NotOnPaper, 70.00m, 70.00m)!;
+        Assert.Equal(new[] { w }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.SystemWorkflow, new[] { w }));
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, new[] { w }));
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.User, new[] { w }));
+    }
 }

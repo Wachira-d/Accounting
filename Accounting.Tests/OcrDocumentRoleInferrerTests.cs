@@ -285,4 +285,36 @@ public class OcrDocumentRoleInferrerTests
         Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated(
             "ยกเลิกใบกำกับภาษีอย่างย่อได้ภายใน 7 วัน\nตัวแทนจำหน่าย", "ใบกำกับภาษีอย่างย่อ"));
     }
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง (ง): หมายเหตุ Scommerce (~130 ตัวอักษร) ที่ engine ตัดขึ้นบรรทัดใหม่กลางประโยค ────────────────
+    [Theory]
+    [InlineData("หมายเหตุ :เป็นการยกเลิกใบกำกับภาษีอย่างย่อเลขที่ d20260918000097 วันที่ 18/09/2026 และออกใบกำกับภาษี\nอิเล็กทรอนิกส์ฉบับใหม่แทน")]
+    [InlineData("หมายเหตุ :เป็นการยกเลิกใบกำกับภาษีอย่างย่อเลขที่ d20260918000097 วันที่ 18/09/2026\nและออกใบกำกับภาษีอิเล็กทรอนิกส์ฉบับใหม่แทน")]
+    public void หมายเหตุScommerceตัดบรรทัด_ยังนับเป็นคำปฏิเสธ(string note)
+        => Assert.False(OcrDocumentRoleInferrer.ContainsAnyNotNegated(note, "ใบกำกับภาษีอย่างย่อ"));
+
+    [Fact]
+    public void หมายเหตุอังกฤษตัดบรรทัด_ยังนับเป็นคำปฏิเสธ()
+        => Assert.False(OcrDocumentRoleInferrer.ContainsAnyNotNegated(
+            "remark: cancellation of abbreviated tax invoice no. d2026 and\nreplaced by e-tax invoice", "abbreviated tax invoice"));
+
+    [Fact]
+    public void ใบScommerceตัดบรรทัด_ไม่มีเลขผู้ซื้อ_ยังเคลมภาษีซื้อได้()
+    {
+        var split = OcrPaperSamples.ScommerceLazada.Replace("และออกใบกำกับภาษีอิเล็กทรอนิกส์", "และออกใบกำกับภาษี\nอิเล็กทรอนิกส์");
+        Assert.NotEqual(OcrPaperSamples.ScommerceLazada, split);
+        var r = OcrDocumentRoleInferrer.Infer(split, "0105560113122", buyerTaxId: null,
+            vendorName: "Scommerce (Thailand) Co., Ltd.", buyerName: "หจก.แอม แฮปปี้เนส",
+            companyTaxId: "0203562005871", companyName: "หจก.แอม แฮปปี้เนส", roleOverride: "Buyer");
+        Assert.True(r.InputVatClaimable);
+        Assert.Null(r.InputVatClaimWarning);
+    }
+
+    [Theory]
+    [InlineData("ยกเลิกใบกำกับภาษีอย่างย่อได้ภายใน 7 วัน และ\nตัวแทนจำหน่ายทั่วประเทศ")]     // คำเชื่อม + "ตัวแทน" = ตัวแทนจำหน่าย
+    [InlineData("ยกเลิกใบกำกับภาษีอย่างย่อได้ที่เคาน์เตอร์\nรับสินค้าแทนได้")]                   // ประโยคจบแล้ว — ไม่ข้ามบรรทัด
+    [InlineData("สินค้าซื้อแล้วไม่รับคืน/ยกเลิกไม่ได้\nใบกำกับภาษีอย่างย่อ\nและออกใหม่แทน")]      // "ยกเลิก" ไม่ติดคำเป้าหมาย
+    [InlineData("ยกเลิกใบกำกับภาษีอย่างย่อได้ภายใน 7 วัน\n\nและออกใบใหม่แทน")]                  // ข้ามได้บรรทัดเดียว (บรรทัดว่างคั่น)
+    public void ทิศตรงข้าม_ข้ามบรรทัดเฉพาะประโยคที่ยังไม่จบ_ใบอย่างย่อจริงยังถูกจับ(string text)
+        => Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated(text, "ใบกำกับภาษีอย่างย่อ"));
 }

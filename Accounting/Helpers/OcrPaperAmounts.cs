@@ -128,6 +128,20 @@ public static class OcrPaperAmounts
     private static readonly Regex PureMoneyLine = new(
         @"^[ \t]*\(?(?:\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+\.\d{2})\)?[ \t]*(?:บาท|฿|thb)?[ \t]*$", Opt);
 
+    /// <summary>ป้าย VAT ของตัวตัดสิน "พิมพ์ในฐานะ VAT ไหม" (<see cref="IsVatLabelled"/>) — กว้างกว่า <see cref="VatLabel"/>: รับ
+    /// "Value Added Tax" และรูปที่ Tesseract ทำสระ/วรรณยุกต์หล่นซึ่งตัว normalize ยังไม่ซ่อม
+    /// <para>แยกจาก <see cref="VatLabel"/> โดยตั้งใจ — <see cref="VatAmounts"/> เป็นตัวตั้งของด่านอื่น (ยึดยอดรวม · ห้ามแต่ง VAT ที่ขัดกระดาษ)
+    /// การขยายป้ายตรงนั้นเปลี่ยนคำตอบของใบที่ผ่านมาแล้ว · ที่นี่ขยายได้เพราะผลมีทางเดียว: "ใช่ป้าย VAT" ⇒ ตัวพิสูจน์ทั้งใบกลับมาทำงาน /
+    /// ไม่ติด [VAT-DERIVED] (รอบ 195 ฝ่ายค้านรอบสอง PLAUSIBLE ค)</para></summary>
+    private static readonly Regex VatLabelWide = new(
+        @"ภาษีมูลค่าเพ[ิื]่?ม|(?<![A-Za-z])vat(?![A-Za-z])|(?<![A-Za-z])value[ \t]*[- ]?[ \t]*added[ \t]*tax(?![A-Za-z])", Opt);
+
+    /// <summary>คู่ของ <see cref="VatLabelNotAmount"/> สำหรับป้ายรูปอังกฤษเต็มคำ/รูป Tesseract ("Value Added Tax Included 1,070.00" = ยอดรวม VAT ·
+    /// "ราคารวมภาษีมูลค่าเพิม" · "ยกเว้นภาษีมูลค่าเพิม") — ตัวเลขบนแถวเป็นยอดสินค้า ไม่ใช่ยอดภาษี</summary>
+    private static readonly Regex VatLabelWideNotAmount = new(
+        @"value[ \t]*[- ]?[ \t]*added[ \t]*tax[ \t]*(?:incl|excl)|(?:incl|excl)\w*\.?[ \t]*(?:of[ \t]+)?value[ \t]*[- ]?[ \t]*added|"
+        + @"before[ \t]*value[ \t]*[- ]?[ \t]*added|(?:รวม|ก่อน|ยกเว้น)[ \t]*ภาษีมูลค่าเพ[ิื]่?ม", Opt);
+
     /// <summary>บรรทัดที่เป็นเปอร์เซ็นต์ล้วน ("7%" · "7.00 %") — ข้ามได้ระหว่างป้าย VAT กับตัวเลข</summary>
     private static readonly Regex PurePercentLine = new(@"^[ \t]*\d+(?:[.,]\d+)?[ \t]*%[ \t]*$", Opt);
 
@@ -149,8 +163,17 @@ public static class OcrPaperAmounts
         for (var i = 0; i < lines.Count; i++)
         {
             var line = lines[i];
-            if (!VatLabel.IsMatch(line) || VatLabelNotAmount.IsMatch(line) || RateWord.IsMatch(line)) continue;
-            if (MoneyOn(line).Count > 0) continue;   // ป้ายที่มีตัวเลขบนแถวเดียวกัน = VatAmounts ตัดสินไปแล้ว
+            var label = VatLabelWide.Match(line);
+            if (!label.Success || VatLabelNotAmount.IsMatch(line) || VatLabelWideNotAmount.IsMatch(line) || RateWord.IsMatch(line)) continue;
+            // รอบ 195 ฝ่ายค้านรอบสอง (ค): ป้ายกับตัวเลขอยู่แถวเดียวกันแต่คนละคอลัมน์ ("VAT | 70.00 | Total | 1,070.00") —
+            // VatAmounts เอาตัวเลขตัวสุดท้ายของแถว (1,070.00) · ที่นี่ใช้ "ตัวเลขตัวแรกหลังป้าย VAT" (ก่อนป้ายอื่น)
+            var afterLabel = MoneyOn(line[(label.Index + label.Length)..]);
+            if (afterLabel.Count > 0)
+            {
+                if (Math.Abs(afterLabel[0] - vat) <= ExactTol) return true;
+                continue;
+            }
+            if (MoneyOn(line).Count > 0) continue;   // ตัวเลขอยู่ก่อนป้าย — ไม่ใช่รูปป้าย→ตัวเลข
             for (int j = i + 1, skipped = 0; j < lines.Count && skipped <= 2; j++)
             {
                 var next = lines[j];
@@ -162,8 +185,49 @@ public static class OcrPaperAmounts
                 }
                 break;
             }
+            if (ColumnBlockMatches(lines, i, vat)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// ป้ายหลายแถวเรียงเป็น<b>คอลัมน์</b> แล้วตัวเลขเรียงเป็นอีกคอลัมน์ (engine อ่านทีละคอลัมน์):
+    /// <code>รวมเงิน / ภาษีมูลค่าเพิ่ม 7% / รวมทั้งสิ้น / 1,000.00 / 70.00 / 1,070.00</code>
+    /// ป้าย VAT เป็นแถวที่ k ของกลุ่มป้าย ⇒ ตัวเลขแถวที่ k ของกลุ่มตัวเลขที่ตามมาทันที · ต้อง<b>จำนวนเท่ากัน</b>ทั้งสองกลุ่ม
+    /// (ไม่เท่า = จับคู่ไม่ได้แน่ ⇒ ไม่นับ — ทิศนี้ไม่เดา) · แถวว่าง/เปอร์เซ็นต์ล้วนข้ามได้ (รอบ 195 ฝ่ายค้านรอบสอง ค)
+    /// </summary>
+    private static bool ColumnBlockMatches(IReadOnlyList<string> lines, int vatLine, decimal vat)
+    {
+        bool IsLabelOnly(string l) => !string.IsNullOrWhiteSpace(l) && !PurePercentLine.IsMatch(l) && MoneyOn(l).Count == 0;
+        bool IsSkippable(string l) => string.IsNullOrWhiteSpace(l) || PurePercentLine.IsMatch(l);
+
+        var labels = new List<int>();
+        for (var j = vatLine; j >= 0; j--)
+        {
+            if (IsSkippable(lines[j])) continue;
+            if (!IsLabelOnly(lines[j])) break;
+            labels.Insert(0, j);
+        }
+        var k = labels.IndexOf(vatLine);
+        var n = lines.Count;
+        var j2 = vatLine + 1;
+        for (; j2 < n; j2++)
+        {
+            if (IsSkippable(lines[j2])) continue;
+            if (!IsLabelOnly(lines[j2])) break;
+            labels.Add(j2);
+        }
+        if (labels.Count < 2 || k < 0) return false;
+        var numbers = new List<decimal>();
+        for (; j2 < n; j2++)
+        {
+            if (IsSkippable(lines[j2])) continue;
+            if (!PureMoneyLine.IsMatch(lines[j2])) break;
+            var m = MoneyOn(lines[j2]);
+            if (m.Count == 0) break;
+            numbers.Add(m[m.Count - 1]);
+        }
+        return numbers.Count == labels.Count && Math.Abs(numbers[k] - vat) <= ExactTol;
     }
 
     /// <summary>

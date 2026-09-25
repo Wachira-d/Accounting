@@ -3382,3 +3382,20 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แ�
 - เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
   checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
 — commit c69a0b62)_
+
+_รอบ 195 ทีม I3 — ฝ่ายค้านรอบสอง (`review195-r2.md`) R2-2..R2-5 + PLAUSIBLE ก–ง:
+- **R2-2** สูตรถอด VAT 7/107 ชุดที่สาม `CrossValidator.FillMissingAmounts` (ZoneFallback) ถูกถอด — ZoneFallback ถาม `OcrVatBackCalc.Plan`
+  (ด่านเดียวกับเส้นหลัก + `[VAT back-calc]`) · สูตรเดียว `OcrVatBackCalc.SplitInclusive` (AwayFromZero) ใช้ทั้ง `ParseThaiDocument`/`Plan` ·
+  `required_call_site_check` +3 กติกา + `FOLDER_FORBID` กวาดทั้งโฟลเดอร์ OCR ห้าม ÷1.07/÷107/÷(1+อัตรา) (negative test ในตัว)
+- **R2-3** `[VAT-DERIVED]` เป็นคำเตือนตอนอนุมัติทุกทางเข้า: `CollectApprovalWarningsAsync` ตัดสินสด (`OcrHeaderVatEvidence.Classify`) →
+  `OcrApprovalGapWarning.Build(headerVatSource:)` คำเตือน `VatDerivedPrefix` ชุดเดียวกับ `[Σ-GAP]` (`IsGapWarning`) ⇒ เว็บ/มือถือต้องกดรับทราบ ·
+  workflow ส่งผ่านเองไม่ได้ · API คืน `scanVatNotOnPaper` · ไม่เตือนเมื่อ VAT บรรทัดตอนนี้ = 0
+- **R2-4** `Classify(..., processingNotes, paperTotal)`: ร่องรอย `[VAT back-calc]` + VAT ยังเท่าค่าที่ถอด ⇒ `NotOnPaper` แม้เลขบังเอิญตรง (ค่าส่ง 70) ·
+  ร่องรอยติดไปกับสำเนาอัปซ้ำ (`DecisionNoteTags`) · เทสต์เดิม "เลขเท่าVATบังเอิญ…ไม่ใช่ค่าแต่ง" ล็อกผลโดยไม่รู้ที่มา → แยกเป็นสองทิศ
+- **R2-5** `StripRecomputed` ย้ายไปต้น `BuildScanLinesAsync` (ครอบสร้างใหม่หลังลบ · สำเนาอัปซ้ำ · ดึงรายการซ้ำ · พรีวิว)
+- **ก** ข้อความ `DerivedNote` บอก ม.86/4(6) ⇒ ม.82/5(1) + ทางเลือก (ตั้ง VAT 0 ลงค่าใช้จ่ายเต็ม / ขอใบใหม่ / แก้ตามกระดาษ) — ไม่บล็อก ไม่เปลี่ยนค่า (รอเจ้าของ)
+- **ข** `VatBackCalcGuard.Decide`: ยังไม่รู้รายการ + กระดาษพิมพ์ว่าไม่มี VAT (`PaperDeclaresNoVat` · แถวฟอร์มยอด 0 ไม่นับ) ⇒ ไม่ถอด
+- **ค** `IsVatLabelled`: "Value Added Tax" · "ภาษีมูลค่าเพิม" (+ `ThaiTextNormalizer`) · ตัวเลขแรกหลังป้ายบนแถวเดียวกัน · คอลัมน์ป้าย→คอลัมน์ตัวเลข (จำนวนเท่ากัน)
+- **ง** C2 "ยกเลิก…แทน" ข้ามบรรทัดถัดไปได้ 1 บรรทัดเมื่อประโยคยังไม่จบ (คำเชื่อม) · "ตัวแทน" ไม่นับ
+- ชุดกระดาษจริงก่อน/หลัง: 7 ใบใน OcrPaperSamples + Scommerce Azure = Labelled ไม่เปลี่ยน · เปลี่ยนเฉพาะเคสที่ตั้งใจ (ตารางในคอมมิต)
+— commit <pending>)_

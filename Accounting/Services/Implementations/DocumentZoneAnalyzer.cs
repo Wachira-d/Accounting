@@ -324,7 +324,7 @@ public static class DocumentZoneAnalyzer
         // Amounts: use context-keyword scanning to distinguish subtotal/vat/total
         ExtractAmountsByContext(text, zones, result);
 
-        // Cross-validate and fill missing amounts
+        // Cross-validate and fill missing amounts — มีแต่ยอดรวม ⇒ ไม่ถอด VAT ที่นี่ (รอบ 195 R2-2: ผู้เรียกถาม OcrVatBackCalc.Plan)
         var (sub, vat, total) = CrossValidator.FillMissingAmounts(result.SubTotal, result.VatAmount, result.TotalAmount);
         result.SubTotal = sub;
         result.VatAmount = vat;

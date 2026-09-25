@@ -44,6 +44,14 @@ public static class VatBackCalcGuard
     /// <see cref="OcrVatBackCalc.WasBackCalculated"/> (ห้ามดันความมั่นใจของค่าที่คำนวณเองขึ้นด้วยสูตรเดียวกัน)</summary>
     public const string BackCalcTag = "[VAT back-calc]";
 
+    /// <summary>วลีที่บอกว่า<b>ไม่มี</b> VAT ("ยกเว้นภาษีมูลค่าเพิ่ม" · "ไม่มี/ไม่เสีย/ไม่ได้จดภาษีมูลค่าเพิ่ม" · "NON VAT" · "VAT exempt")
+    /// — ตัวตั้งตัวเดียวของทั้งด่านนี้ (<see cref="PaperDeclaresNoVat"/>) และ <see cref="OcrVatBackCalc.MentionsVat"/> ·
+    /// "ไม่รวมภาษีมูลค่าเพิ่ม" = ราคาก่อน VAT ⇒ มี VAT จึงไม่อยู่ในนี้</summary>
+    internal static readonly Regex NoVatPhrases = new(
+        @"(?:ได้รับ)?(?:การ)?ยกเว้น[ \t]*ภาษีมูลค่าเพิ่ม|ไม่(?:ต้อง)?(?:มี|เสีย|ได้จด(?:ทะเบียน)?|จด(?:ทะเบียน)?)[ \t]*ภาษีมูลค่าเพิ่ม|"
+        + @"(?<![A-Za-z])non[- \t]?vat(?![A-Za-z])|(?<![A-Za-z])vat[- \t]?exempt\w*|(?<![A-Za-z])exempt\w*[ \t]+(?:from[ \t]+)?vat(?![A-Za-z])|"
+        + @"(?<![A-Za-z])no[ \t]+vat(?![A-Za-z])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     /// <summary>กระดาษบอกเองว่าราคารวมภาษีแล้ว — หลักฐานที่แข็งที่สุด</summary>
     private static readonly Regex InclusiveWords = new(
         @"ราคา(?:นี้)?รวม(?:ภาษี|vat)|รวมภาษีมูลค่าเพิ่ม|รวม[ \t]*vat|vat[ \t]*included|include[sd]?[ \t]*vat|inclusive[ \t]*of[ \t]*vat",
@@ -76,6 +84,15 @@ public static class VatBackCalcGuard
         if (lines.Count > 0 && lines.All(d => string.IsNullOrWhiteSpace(d) || ThaiVatTypeRule.LooksExempt(d)))
             return new(false, 0d,
                 "ทุกรายการบนใบเข้าข่ายสินค้ายกเว้น VAT (§81) — ยอดรวมไม่น่ามี VAT อยู่ข้างใน จึงไม่แยกให้");
+
+        // รอบ 195 ฝ่ายค้านรอบสอง (PLAUSIBLE ข): ยังไม่รู้รายการ (ตอน ParseThaiDocument/Enrich บรรทัดมักยังว่าง) แต่กระดาษ<b>บอกเอง</b>ว่า
+        // ไม่มี VAT ("สินค้าทุกรายการได้รับการยกเว้นภาษีมูลค่าเพิ่ม" · "ไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม" · NON VAT) ⇒ ด่าน ม.81 ข้างบนไม่มี
+        // อะไรให้ตรวจ แต่กระดาษตอบให้แล้ว — การแยก 7/107 คือการแต่งภาษีซื้อ (ใบ "ใบกำกับภาษี + ยกเว้นภาษีมูลค่าเพิ่ม" เคยถูกถอดแล้ว
+        // เหลือแต่ตาข่าย [VAT-DERIVED]) · แถวฟอร์มยอด 0 ("ยกเว้นภาษีมูลค่าเพิ่ม 0.00") ไม่ใช่หลักฐาน (RG-02)
+        if (lines.All(string.IsNullOrWhiteSpace) && PaperDeclaresNoVat(text) is string noVatLine)
+            return new(false, 0d,
+                $"กระดาษพิมพ์ว่าไม่มีภาษีมูลค่าเพิ่ม (“{Clip(noVatLine)}”) และยังไม่รู้รายการสินค้า "
+                + "— ยอดรวมไม่น่ามี VAT อยู่ข้างใน จึงไม่แยก VAT ให้ (ม.81 · ผู้ไม่จด VAT ออกใบกำกับไม่ได้ ม.86)");
 
         // คำว่า "ใบกำกับภาษี" ที่พบเป็น**คำเชิญชวน**ล้วน ๆ (ไม่มีที่อื่นบนหน้า)
         if (OfferWords.IsMatch(text) && CountTaxInvoiceMentions(text) <= CountOffers(text))
@@ -116,6 +133,23 @@ public static class VatBackCalcGuard
         return $"กระดาษพิมพ์ VAT {shown} ไว้แล้ว แต่ 7/107 ของยอดรวม {totalAmount:N2} = {guessed:N2} "
             + "— ไม่แต่ง VAT ที่ขัดกับกระดาษ (ใบอาจผสมสินค้ายกเว้น หรือยอดรวมที่อ่านได้เป็นยอดก่อนหักส่วนลด)";
     }
+
+    /// <summary>บรรทัดแรกที่กระดาษบอกว่า<b>ไม่มี</b> VAT (<see cref="NoVatPhrases"/>) · null = ไม่มี
+    /// <para>แถวที่มีตัวเลขแต่ทุกตัวเป็น 0 ("ยกเว้นภาษีมูลค่าเพิ่ม 0.00" — แถวฟอร์มของใบ Scommerce) ไม่นับ (RG-02 แถวยอด 0 ไม่ใช่หลักฐาน) ·
+    /// ประโยคไม่มีตัวเลข / แถวที่มียอดยกเว้นจริง นับ</para></summary>
+    internal static string? PaperDeclaresNoVat(string? rawText)
+    {
+        foreach (var line in OcrPaperAmounts.Lines(rawText))
+        {
+            if (!NoVatPhrases.IsMatch(line)) continue;
+            var money = OcrPaperAmounts.MoneyOn(line);
+            if (money.Count > 0 && money.All(m => m == 0m)) continue;
+            return line.Trim();
+        }
+        return null;
+    }
+
+    private static string Clip(string s) => s.Length > 80 ? s[..80] + "…" : s;
 
     private static int CountTaxInvoiceMentions(string text)
         => Regex.Matches(text, "ใบกำกับภาษี", RegexOptions.IgnoreCase).Count;

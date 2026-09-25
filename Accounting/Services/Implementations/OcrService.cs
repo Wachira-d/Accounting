@@ -5561,8 +5561,10 @@ public class OcrService : IOcrService
                 text, data.VendorTaxId, data.Items.Select(i => i.Description), totalAmount: data.TotalAmount);
             if (backCalc.Allowed)
             {
-                data.SubTotal = Math.Round(data.TotalAmount.Value / 1.07m, 2, MidpointRounding.AwayFromZero);
-                data.VatAmount = data.TotalAmount.Value - data.SubTotal.Value;
+                // รอบ 195 ฝ่ายค้านรอบสอง R2-2: สูตรถอด 7/107 ตัวเดียวของโฟลเดอร์ OCR (Helpers/OcrVatBackCalc.SplitInclusive)
+                var (backSub, backVat) = Accounting.Helpers.OcrVatBackCalc.SplitInclusive(data.TotalAmount.Value);
+                data.SubTotal = backSub;
+                data.VatAmount = backVat;
                 // ★ ค่าที่ **คำนวณ** ต้องติดป้ายความมั่นใจเสมอ ไม่ใช่กลืนไปกับค่าที่
                 //   อ่านมาจากกระดาษ — เดิมไม่มี key ทั้งสองช่อง ⇒ ป้ายเหลืองไม่เคยขึ้น
                 data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = backCalc.Confidence;
@@ -6643,13 +6645,18 @@ public class OcrService : IOcrService
     {
         // สิ่งที่กระดาษบอกเรื่อง VAT รายบรรทัด (สัญลักษณ์ท้ายบรรทัด · ยอดต้องเสีย/ไม่ต้องเสียภาษี)
         // — อ่านจากข้อความดิบตอนสร้าง (ไม่ใช่ตอนสแกน) เพื่อให้สแกนเก่าได้ประโยชน์ด้วยโดยไม่ต้อง migrate
+        // รอบ 195 ฝ่ายค้านรอบสอง R2-5: [Σ-GAP]/[VAT-DERIVED] เป็นผลของ "บรรทัดชุดนี้" — ล้างของรอบก่อนที่ต้นตัวสร้าง (ครอบทุกเส้น:
+        // สร้างใหม่หลังลบเอกสาร · สำเนาจากอัปไฟล์ซ้ำที่คัดแท็กมา · ดึงรายการซ้ำ · line-preview) แล้วตัวสร้างเขียนกลับเองถ้ายังไม่ตรง ·
+        // ธงอื่นคงเดิมทุกตัวอักษร (Helpers/OcrLineBuildNotes)
+        result.ProcessingNotes = Accounting.Helpers.OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes);
         var paperVatSplit = Accounting.Helpers.OcrLineVatMarks.Read(result.RawTextContent);
         var normalizedRawText = Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent);
         // ★ รอบ 195 ฝ่ายค้าน C1: VAT หัวใบตัวนี้พิมพ์บนกระดาษไหม หรือระบบคำนวณเอง (7/107 ของยอดรวม) — ตัวตัดสินตัวเดียว
         // Helpers/OcrHeaderVatEvidence · ตัวพิสูจน์ทั้งใบ (OcrLineVatPlanner) ใช้ได้เฉพาะ VAT ที่อยู่บนกระดาษในฐานะ VAT ·
         // VAT ที่ไม่มีบนกระดาษเลย ⇒ [VAT-DERIVED] (OcrPostingReadiness ห้ามอนุมัติเอง — ภาษีซื้อต้องมาจากตัวเลขบนใบกำกับ)
         var headerVatSource = Accounting.Helpers.OcrHeaderVatEvidence.Classify(
-            result.RawTextContent, normalizedRawText, result.ExtractedVatAmount ?? 0m, result.OcrEngine);
+            result.RawTextContent, normalizedRawText, result.ExtractedVatAmount ?? 0m, result.OcrEngine,
+            result.ProcessingNotes, result.ExtractedTotalAmount);
         if (Accounting.Helpers.OcrHeaderVatEvidence.DerivedNote(headerVatSource, result.ExtractedVatAmount ?? 0m) is string derivedVatNote)
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag + " " + derivedVatNote;
         // ผลต่างปัดเศษเป็นของ "บรรทัดชุดนี้" — เริ่มจาก 0 ทุกครั้ง (สาขามีรายการตั้งค่าเองด้านล่าง · สาขาบรรทัดสรุป = 0)
@@ -7566,9 +7573,7 @@ public class OcrService : IOcrService
         // (UnitPrice = item.UnitPrice, VAT 7% ทั้งใบ, ไม่รู้จัก PricesIncludeVat/ส่วนลด/VAT
         // รายบรรทัด/WHT) = สำเนาที่สองที่ให้คำตอบคนละแบบบนกระดาษใบเดียวกัน
         NormalizeSwappedHeaderAmounts(result);
-        // รอบ 195 ฝ่ายค้าน P3: [Σ-GAP]/[VAT-DERIVED] ของรอบก่อนเป็นผลของบรรทัดชุดเก่า — ล้างก่อนสร้างใหม่ แล้วให้
-        // BuildScanLinesAsync เขียนกลับจากบรรทัดชุดนี้ (ยังไม่ตรง = ขึ้นใหม่เอง) · ธงอื่นคงเดิมทุกตัว (Helpers/OcrLineBuildNotes)
-        result.ProcessingNotes = Accounting.Helpers.OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes);
+        // รอบ 195 ฝ่ายค้าน P3 → รอบสอง R2-5: การล้าง [Σ-GAP]/[VAT-DERIVED] ของรอบก่อนย้ายไปอยู่ต้น BuildScanLinesAsync (ครอบทุกเส้น)
         var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(document.DocumentType, result.OurRole);
@@ -9441,6 +9446,26 @@ public class OcrService : IOcrService
 
             if (data.VatAmount is not > 0 && zoned.VatAmount is > 0)
             { data.VatAmount = zoned.VatAmount; filled.Add("ภาษีมูลค่าเพิ่ม"); }
+
+            // รอบ 195 ฝ่ายค้านรอบสอง R2-2: โซนอ่านได้แต่ยอดรวม ⇒ เดิม CrossValidator.FillMissingAmounts ถอด 7/107 ให้ทุกครั้ง (ไม่ถามด่าน ·
+            // ไม่ติดแท็ก · banker's) แล้วบรรทัดข้างบนเติมเป็น VAT ของใบ ⇒ ตอนนี้ถอดผ่านด่านตัวเดียวกับเส้นหลัก (Helpers/OcrVatBackCalc →
+            // VatBackCalcGuard.Decide) · ด่านปฏิเสธ ⇒ เว้นว่างให้คนตรวจ · ยอมให้ถอด ⇒ ติด [VAT back-calc] (ความมั่นใจต่ำ + OcrHeaderVatEvidence
+            // ถือเป็น "ไม่มีบนกระดาษ" ⇒ [VAT-DERIVED] หยุดการอนุมัติเอง)
+            if (data.TotalAmount is decimal zoneTotal && zoneTotal > 0m && data.SubTotal is not > 0 && data.VatAmount is not > 0)
+            {
+                var zonePlan = Accounting.Helpers.OcrVatBackCalc.Plan(
+                    Ocr.ThaiTextNormalizer.Normalize(rawText), zoneTotal, data.VendorTaxId,
+                    data.Items.Select(i => i.Description), data.ReasoningTrace);
+                if (zonePlan.Action == Accounting.Helpers.OcrVatBackCalcAction.Apply)
+                {
+                    data.SubTotal = zonePlan.SubTotal;
+                    data.VatAmount = zonePlan.VatAmount;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = zonePlan.Confidence;
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = zonePlan.Confidence;
+                    filled.Add("ยอดก่อนภาษี/ภาษีมูลค่าเพิ่ม (คำนวณจากยอดรวม)");
+                }
+                if (zonePlan.Trace != null) data.ReasoningTrace.Add(zonePlan.Trace);
+            }
 
             if (data.PaymentTermsDays == null && zoned.PaymentTermsDays is > 0)
             { data.PaymentTermsDays = zoned.PaymentTermsDays; filled.Add("เครดิตเทอม"); }

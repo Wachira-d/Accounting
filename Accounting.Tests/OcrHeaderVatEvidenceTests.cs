@@ -76,13 +76,88 @@ public class OcrHeaderVatEvidenceTests
         Assert.Contains(OcrHeaderVatEvidence.DerivedTag, OcrScanSnapshot.DecisionNotes(notes));
     }
 
+    // ── รอบ 195 ฝ่ายค้านรอบสอง R2-4: เลขที่บังเอิญตรง ≠ พิมพ์บนกระดาษ เมื่อมีร่องรอยว่าระบบถอดเอง ─────────────────────
+    // เทสต์รุ่นก่อน ("เลขเท่าVATบังเอิญพิมพ์เป็นยอดบรรทัด_…_ไม่ใช่ค่าแต่ง") ล็อก PrintedUnlabelled ไว้โดยไม่รู้ที่มาของ VAT — แต่เส้นจริง
+    // ของใบนี้ (มีเลขผู้ขาย + คำว่าใบกำกับภาษี · ไม่พิมพ์ VAT) VAT 70 คือค่าที่ระบบถอด 7/107 เอง ⇒ ต้องเป็น NotOnPaper + ติด [VAT-DERIVED]
+    // เหลือ PrintedUnlabelled เฉพาะเมื่อไม่มีร่องรอยการถอด (VAT มาจาก engine อ่านตัวเลขผิดที่) หรือผู้ใช้แก้ VAT จนไม่ใช่ค่าที่ถอดแล้ว
+
+    private const string ShipFee =
+        "ร้าน ก\nเลขประจำตัวผู้เสียภาษี 0105556012341\nใบกำกับภาษี\nสินค้า 1,000.00\nค่าส่ง 70.00\nรวม 1,070.00";
+
+    private const string BackCalcNotes =
+        "[Tier] Tesseract\n[Reasoning]\n  • [VAT back-calc] กระดาษไม่ได้พิมพ์ยอด VAT ไว้ — ระบบคำนวณจากยอดรวม (7/107)";
+
     [Fact]
-    public void เลขเท่าVATบังเอิญพิมพ์เป็นยอดบรรทัด_ไม่ใช่หลักฐานพิสูจน์_แต่ก็ไม่ใช่ค่าแต่ง()
+    public void ค่าส่ง70บังเอิญตรงVATที่ถอดเอง_มีร่องรอยถอด_NotOnPaper_และติดVATDERIVED()
     {
-        // "ค่าส่ง 70.00" บนใบ 1,000 + 70 = 1,070 ไม่มี VAT — ตัวพิสูจน์ต้องไม่เชื่อ · ตัวหยุดไม่เตือน (ไม่แต่ง)
-        const string raw = "ร้าน ก\nสินค้า 1,000.00\nค่าส่ง 70.00\nรวม 1,070.00";
-        Assert.Equal(OcrHeaderVatSource.PrintedUnlabelled, OcrHeaderVatEvidence.Classify(raw, null, 70.00m, null));
+        Assert.Equal(OcrHeaderVatSource.NotOnPaper, OcrHeaderVatEvidence.Classify(ShipFee, null, 70.00m, null, BackCalcNotes));
+        var src = OcrHeaderVatEvidence.Classify(ShipFee, null, 70.00m, null, BackCalcNotes, paperTotal: 1070.00m);
+        Assert.Equal(OcrHeaderVatSource.NotOnPaper, src);
+        Assert.NotNull(OcrHeaderVatEvidence.DerivedNote(src, 70.00m));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ไม่มีร่องรอยถอด_เลขบังเอิญตรง_ยังเป็นPrintedUnlabelled()
+    {
+        Assert.Equal(OcrHeaderVatSource.PrintedUnlabelled, OcrHeaderVatEvidence.Classify(ShipFee, null, 70.00m, null));
+        Assert.Equal(OcrHeaderVatSource.PrintedUnlabelled,
+            OcrHeaderVatEvidence.Classify(ShipFee, null, 70.00m, null, "[Tier] Azure DI\n[VAT skip] ไม่แยก"));
         Assert.Null(OcrHeaderVatEvidence.DerivedNote(OcrHeaderVatSource.PrintedUnlabelled, 70.00m));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ร่องรอยถอดแต่VATไม่ใช่ค่าที่ถอดจากยอดนี้แล้ว_ไม่ถือร่องรอยเก่า()
+        // ยอดรวม 2,000 ⇒ ค่าที่ถอดคือ 130.84 · VAT 70 ที่ถืออยู่ = ผู้ใช้/ขั้นอื่นแก้แล้ว ⇒ ตัดสินจากกระดาษตามเดิม
+        => Assert.Equal(OcrHeaderVatSource.PrintedUnlabelled,
+            OcrHeaderVatEvidence.Classify(ShipFee, null, 70.00m, null, BackCalcNotes, paperTotal: 2000.00m));
+
+    [Fact]
+    public void ทิศตรงข้าม_ร่องรอยถอดแต่VATพิมพ์คู่ป้ายบนกระดาษ_ยังLabelled()
+        => Assert.Equal(OcrHeaderVatSource.Labelled,
+            OcrHeaderVatEvidence.Classify(OcrPaperSamples.ScommerceLazada, null, 328.67m, null, BackCalcNotes, 5024.00m));
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง (ค): ป้าย VAT รูปอื่นที่เคยไม่ถูกจำ ⇒ ตัวพิสูจน์ทั้งใบหยุดทำงานบนใบถูก ─────────────────
+
+    [Theory]
+    [InlineData("Subtotal 1,000.00\nValue Added Tax 7% 70.00\nGrand Total 1,070.00")]          // อังกฤษเต็มคำ แถวเดียว
+    [InlineData("Value Added Tax 7%\n70.00\nGrand Total\n1,070.00")]                              // อังกฤษเต็มคำ คนละบรรทัด
+    [InlineData("VALUE-ADDED TAX 70.00")]
+    [InlineData("VAT | 70.00 | Total | 1,070.00")]                                                   // ป้าย/เลขคนละคอลัมน์ แถวเดียว
+    [InlineData("รวมเงิน\nภาษีมูลค่าเพิ่ม 7%\nรวมทั้งสิ้น\n1,000.00\n70.00\n1,070.00")]           // คอลัมน์ป้าย → คอลัมน์ตัวเลข
+    [InlineData("ภาษีมูลค่าเพิม 7% 70.00")]                                                          // Tesseract ไม้เอกหล่น (ข้อความดิบ)
+    public void ป้ายVATรูปอื่น_นับเป็นLabelled(string raw)
+        => Assert.Equal(OcrHeaderVatSource.Labelled, OcrHeaderVatEvidence.Classify(raw, null, 70.00m, null));
+
+    [Theory]
+    [InlineData("รวมเงิน\nภาษีมูลค่าเพิ่ม 7%\nส่วนลด\nรวมทั้งสิ้น\n1,000.00\n70.00\n1,070.00")]  // 4 ป้าย 3 ตัวเลข — จับคู่ไม่ได้แน่ ไม่เดา
+    [InlineData("VAT | 1,000.00 | Total")]                                                         // ตัวเลขแรกหลังป้ายไม่ใช่ 70 (70 ไม่อยู่บนใบ)
+    [InlineData("ค่าส่ง 70.00 | VAT | 1,000.00")]                                                   // 70 อยู่ก่อนป้าย ไม่ใช่รูปป้าย→ตัวเลข
+    [InlineData("Value Added Tax Included 70.00")]                                                   // ยอดรวม VAT ไม่ใช่ยอดภาษี
+    [InlineData("VAT Registration No. 70.00")]
+    [InlineData("รวมเงิน\nรวมทั้งสิ้น\n1,000.00\n70.00")]                                           // ไม่มีป้าย VAT ในคอลัมน์เลย
+    public void ทิศตรงข้าม_รูปที่ไม่ใช่ยอดVAT_ไม่นับเป็นLabelled(string raw)
+        => Assert.NotEqual(OcrHeaderVatSource.Labelled, OcrHeaderVatEvidence.Classify(raw, null, 70.00m, null));
+
+    [Fact]
+    public void ตัวnormalizeซ่อมภาษีมูลค่าเพิม_และidempotent()
+    {
+        var once = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize("ภาษีมูลค่าเพิม 7% 92.77");
+        Assert.Equal("ภาษีมูลค่าเพิ่ม 7% 92.77", once);
+        Assert.Equal(once, Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(once));
+        Assert.Equal("ภาษีมูลค่าเพิ่ม", Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize("ภาษีมูลค่าเพิ่ม"));
+    }
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง (PLAUSIBLE ก): ข้อความต้องบอก ม.86/4(6) ⇒ ม.82/5(1) + ทางเลือก ─────────────────────────────
+
+    [Fact]
+    public void ข้อความVATไม่อยู่บนกระดาษ_อ้างม86_4_6และม82_5_1_พร้อมทางเลือก()
+    {
+        var note = OcrHeaderVatEvidence.DerivedNote(OcrHeaderVatSource.NotOnPaper, 70.00m)!;
+        Assert.Contains("ม.86/4(6)", note);
+        Assert.Contains("ม.82/5(1)", note);
+        Assert.Contains("ตั้ง VAT เป็น 0 แล้วลงค่าใช้จ่ายเต็มจำนวน", note);
+        Assert.Contains("ราคารวมภาษีมูลค่าเพิ่มแล้ว", note);
+        Assert.Contains("แก้ยอดตามกระดาษ", note);   // ทางไปต่อเมื่อระบบอ่านผิด (ไม่ใช่ใบไม่ครบ)
     }
 
     [Fact]
