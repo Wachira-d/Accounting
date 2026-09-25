@@ -138,7 +138,7 @@ public class DepositForfeitRound194MTests
     public void M4_งวดเดือนรับเงินยังไม่ยื่นและยังไม่เลยกำหนด_taxPointเท่ากับวันรับเงิน_ไม่มีธง()
     {
         // R2-1: "ยังไม่ยื่น" ต้องมีหลักฐานว่ายังไม่เลยกำหนดยื่น (วันนี้ 03/09 ≤ 15/09) — ไม่ใช่แค่ไม่มีแถวยื่นในระบบ
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3),
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 8, 28), new DateTime(2026, 9, 3),
             depositPeriodLocked: false, today: new DateTime(2026, 9, 3));
         Assert.Equal(new DateTime(2026, 8, 28), tp.TaxPointDate);
         Assert.False(tp.LateFlag);
@@ -151,7 +151,7 @@ public class DepositForfeitRound194MTests
     [Fact]
     public void M4_งวดเดือนรับเงินยื่นแล้ว_VATเข้างวดปัจจุบัน_ธงบอกว่านำส่งงวดไหนห้ามนำส่งซ้ำ()
     {
-        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
+        var tp = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
             depositPeriodLocked: true, today: new DateTime(2026, 9, 10));
         Assert.Equal(new DateTime(2026, 9, 10), tp.TaxPointDate);
         Assert.True(tp.LateFlag);
@@ -166,12 +166,12 @@ public class DepositForfeitRound194MTests
     [Fact]
     public void M4_เดือนเดียวกัน_และเงินประกันที่หักเป็นค่าธรรมเนียม_ไม่ใช่ภาษีย้อนหลัง_ไม่แตะ()
     {
-        var same = DepositPolicyResolver.ForfeitTaxPointDecision(true, new DateTime(2026, 9, 2), new DateTime(2026, 9, 20),
+        var same = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2026, 9, 2), new DateTime(2026, 9, 20),
             depositPeriodLocked: false, today: new DateTime(2026, 9, 20));
         Assert.Equal(new DateTime(2026, 9, 2), same.TaxPointDate);
         Assert.False(same.LateFlag);
         Assert.Null(same.Note);
-        var sec = DepositPolicyResolver.ForfeitTaxPointDecision(false, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
+        var sec = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, false, new DateTime(2026, 7, 3), new DateTime(2026, 9, 10),
             depositPeriodLocked: true, today: new DateTime(2026, 9, 10));
         Assert.Equal(new DateTime(2026, 9, 10), sec.TaxPointDate);
         Assert.False(sec.LateFlag);

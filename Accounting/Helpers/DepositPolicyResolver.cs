@@ -117,8 +117,21 @@ public enum DepositForfeitVatAction
     ZeroVatAtIssue = 7,
 }
 
+/// <summary>รอบ 194 R3-1 — เส้นของ VAT ที่เกิดจากการริบ · ตัวตัดสิน tax point <see cref="DepositPolicyResolver.ForfeitTaxPointDecision"/> แยกสองเส้นชัด
+/// เพราะ "ลง GL วันไหนได้" ต่างกัน: เส้นย้าย VAT พักแยก JE ขาภาษีลงวัน tax point ได้ · ใบกำกับของยอดที่ริบลงบัญชีวันที่ของใบเสมอ</summary>
+public enum DepositForfeitVatRoute
+{
+    /// <summary>ย้าย VAT พัก 21913 → 21911 (<see cref="DepositForfeitVatAction.ReclassifyUndueToDue"/>) — JE ขาภาษีแยกลงวัน tax point ได้ (R2-1)
+    /// ⇒ ย้อนเข้างวดเดือนรับเงินได้เมื่อยังไม่เลยกำหนดยื่น/ไม่ล็อก/ไม่ปิดงวด/ไม่ข้ามปี</summary>
+    UndueReclassification = 1,
+    /// <summary>ออกใบกำกับภาษีของยอดที่ริบ (<see cref="DepositForfeitVatAction.IssueTaxInvoiceForForfeit"/>) — ใบลงวันที่ริบ · JE ของใบลงวันที่ใบ ·
+    /// ภ.พ.30 เลือกตาม TaxPointDate · รายงานภาษีขาย §87 เรียงตามวันที่ใบ ⇒ tax point = <b>วันออกใบเสมอ</b> (ย้อนไปวันรับเงิน = GL/ภ.พ.30/ลำดับ §87 คนละเดือน)</summary>
+    ForfeitTaxInvoice = 2,
+}
+
 /// <summary>รอบ 194 M4 — จุดความรับผิดของ VAT ที่เกิดจากการริบ (ใบกำกับของยอดที่ริบ / ย้าย 21913 → 21911)</summary>
-/// <param name="TaxPointDate">วันที่ที่ใช้เป็น tax point (งวด ภ.พ.30) — ใบกำกับส่งเป็น <c>PaymentDate</c> · ใบ VAT พักประทับ <c>DepositOutputVatRecognizedAt</c></param>
+/// <param name="TaxPointDate">วันที่ที่ใช้เป็น tax point (งวด ภ.พ.30) — เส้นใบกำกับ = วันที่ของใบเสมอ (R3-1 · ไม่ส่ง <c>PaymentDate</c> ย้อน) ·
+/// เส้น VAT พักประทับ <c>DepositOutputVatRecognizedAt</c> + วันที่ของ JE ขาภาษี</param>
 /// <param name="LateFlag">ต้องติดธง <c>[DEPOSIT-LATE-VAT]</c> (งวดเดือนรับเงินอาจยื่นไปแล้ว — ยื่น/ล็อกในระบบ · เลยกำหนดยื่น · ข้ามปีภาษี
 /// ⇒ VAT เข้างวดปัจจุบันแบบล่าช้า)</param>
 /// <param name="Note">ข้อความที่ประทับบนใบ (มีธงเมื่อ <paramref name="LateFlag"/>) — null = ไม่มีอะไรต้องบอก</param>
@@ -776,6 +789,11 @@ public static class DepositPolicyResolver
     /// อาจมีเงินเพิ่ม §89/1 · ห้ามนำส่งซ้ำ</item>
     /// </list>
     /// </summary>
+    /// <para><b>R3-1 — สองเส้นแยกกัน</b> (<paramref name="route"/>): กติกาข้างบน (ย้อนเข้างวดเดือนรับเงินได้) ใช้ได้<b>เฉพาะ</b>เส้นย้าย VAT พัก
+    /// (<see cref="DepositForfeitVatRoute.UndueReclassification"/> — JE ขาภาษีแยกลงวัน tax point แล้ว) · เส้นใบกำกับของยอดที่ริบ
+    /// (<see cref="DepositForfeitVatRoute.ForfeitTaxInvoice"/>) ⇒ tax point = วันที่ริบ (วันที่ของใบ) <b>เสมอ</b> · เดือนรับเงินก่อนเดือนริบ ⇒ ธง LATE-VAT
+    /// (เดิมส่ง <c>PaymentDate</c> = วันรับเงิน ⇒ รับ 20/01 ริบ 05/02: JE Cr 21911 700 ลง ก.พ. แต่ ภ.พ.30 ม.ค. +700 · ใบลงวันที่ ก.พ. อยู่ในรายงาน ม.ค.)</para>
+    /// <param name="route">เส้นของ VAT ที่เกิดจากการริบ — ผู้เรียกต้องระบุเสมอ (ห้ามมีค่าเริ่มต้น)</param>
     /// <param name="lateVat"><see cref="DepositForfeitVatDecision.LateVat"/> — ภาษีถึงกำหนดตั้งแต่วันรับเงินจริงไหม</param>
     /// <param name="depositReceivedDate">วันรับเงินมัดจำ (วันที่ของใบมัดจำ)</param>
     /// <param name="forfeitDate">วันที่ริบ/รับรู้ (วันที่ของใบกำกับ/JE ของการริบ)</param>
@@ -783,21 +801,31 @@ public static class DepositPolicyResolver
     /// <c>FilingLockedAt</c> · หรืองวดบัญชีของวันรับเงินปิดแล้ว</param>
     /// <param name="today">วันนี้ตามปฏิทินไทย (<c>ThaiDate.CalendarDateUtc(DateTime.UtcNow)</c>) — ใช้เทียบกำหนดยื่น (การยื่นเกิดตามเวลาจริง ไม่ใช่วันที่ในใบ)</param>
     public static DepositForfeitTaxPoint ForfeitTaxPointDecision(
-        bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodLocked, DateTime today)
+        DepositForfeitVatRoute route, bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodLocked, DateTime today)
     {
         if (!lateVat) return new DepositForfeitTaxPoint(forfeitDate, false, null);
         if (forfeitDate < depositReceivedDate) return new DepositForfeitTaxPoint(forfeitDate, false, null);
         var sameMonth = SameVatPeriod(depositReceivedDate, forfeitDate);
+        var receivedMonth = depositReceivedDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+        var receivedDay = depositReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        var nowMonth = forfeitDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+        if (route == DepositForfeitVatRoute.ForfeitTaxInvoice)
+        {
+            // R3-1 — ใบกำกับที่ระบบออกให้ยอดที่ริบ: tax point = วันที่ของใบ (วันริบ) เสมอ · ไม่ดูกำหนดยื่น/ล็อก (ย้อนไม่ได้ทุกกรณี)
+            if (sameMonth) return new DepositForfeitTaxPoint(forfeitDate, false, null);
+            var forfeitDay = forfeitDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+            return new DepositForfeitTaxPoint(forfeitDate, true,
+                $"{LateVatMarker} ภาษีถึงกำหนดงวด {receivedMonth} (รับเงิน {receivedDay}) · นำส่งในงวด {nowMonth} "
+                + $"(ใบกำกับภาษีของยอดที่ริบลงวันที่ {forfeitDay} — ภาษีของใบเข้างวดตามวันที่ออกใบ ย้อนไปเดือนรับเงินไม่ได้) · "
+                + $"อาจมีเงินเพิ่ม §89/1 ของงวด {receivedMonth} · ห้ามนำส่งซ้ำ — ปรึกษานักบัญชี");
+        }
         var crossYear = depositReceivedDate.Year != forfeitDate.Year;
         var deadline = TaxFilingDeadline.For(TaxFilingDeadline.KeyOf(TaxType.VAT)!, depositReceivedDate.Year, depositReceivedDate.Month).Paper;
         var beforeDeadline = today.Date <= deadline.Date;
-        var receivedMonth = depositReceivedDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
-        var receivedDay = depositReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         if (!depositPeriodLocked && !crossYear && (sameMonth || beforeDeadline))
             return new DepositForfeitTaxPoint(depositReceivedDate, false, sameMonth ? null
                 : $"ภาษีขายของยอดที่ริบเข้างวด ภ.พ.30 เดือน {receivedMonth} (เดือนที่รับเงิน {receivedDay}) — วันนี้ยังไม่เลยกำหนดยื่นงวดนั้น "
                   + $"({deadline.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}) · ถ้ายื่นงวดนั้นไปแล้วนอกระบบ ให้ยกเลิกรายการนี้แล้วบันทึกการยื่นก่อนทำใหม่");
-        var nowMonth = forfeitDate.ToString("MM/yyyy", CultureInfo.InvariantCulture);
         var why = depositPeriodLocked ? $"งวด {receivedMonth} ยื่น/ปิดในระบบแล้ว"
             : crossYear ? "ข้ามปีภาษีแล้ว"
             : $"เลยกำหนดยื่นงวด {receivedMonth} ({deadline.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}) แล้ว — ระบบไม่รู้ว่ายื่นนอกระบบไปแล้วหรือไม่";

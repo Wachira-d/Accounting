@@ -733,8 +733,35 @@ public partial class LodgingService
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber,
             ServiceUsedDate: r.CheckOutDate);
-        var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
-        var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
+        // รอบ 194 R3 (P-1) — กดซ้ำหลังอนุมัติล้ม (ยังไม่ประทับ FinalDocumentId) ⇒ ใช้ใบร่างเดิม (idempotent) โดยเขียนเนื้อหาของรอบนี้ทับ
+        // (ยอด/แผนมัดจำของรอบนี้คือความจริงล่าสุด) · เดิมสร้างใบร่างใหม่ทุกครั้ง ใบเก่าค้างเป็นขยะที่อนุมัติผิดใบได้
+        var leftovers = await _db.Documents.AsNoTracking()
+            .Where(LodgingCheckoutDraft.LeftoverOf(companyId, r.ReservationNumber, LodgingOrigin))
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => new { d.Id, d.DocumentType })
+            .ToListAsync();
+        var draftPlan = LodgingCheckoutDraft.Plan(leftovers.Select(d => (d.Id, d.DocumentType)).ToList(), docType);
+        foreach (var staleId in draftPlan.Discard)
+            await _docService.DeleteDocumentAsync(companyId, staleId);
+        Guid finalDraftId;
+        if (draftPlan.Reuse is Guid reuseId)
+        {
+            await _docService.UpdateDocumentAsync(companyId, reuseId, new UpdateDocumentRequest(
+                DocumentDate: create.DocumentDate, DueDate: create.DueDate, ContactId: create.ContactId,
+                Reference: create.Reference, Notes: create.Notes, Lines: create.Lines,
+                BankAccountId: create.BankAccountId, PricesIncludeVat: create.PricesIncludeVat, BranchId: create.BranchId,
+                ServiceUsedDate: create.ServiceUsedDate, BookingNumber: create.BookingNumber,
+                // ""/0 = ล้างค่าของรอบก่อน (แผนมัดจำรอบนี้อาจไม่หักแล้ว) — ห้าม null ซึ่งแปลว่า "คงค่าเดิม"
+                DepositAppliedRef: create.DepositAppliedRef ?? "",
+                DepositBaseDeducted: create.DepositBaseDeducted ?? 0m));
+            finalDraftId = reuseId;
+        }
+        else
+        {
+            var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
+            finalDraftId = created.Id;
+        }
+        var approved = await _docService.ApproveDocumentAsync(companyId, finalDraftId, userId, acknowledgeWarnings: true);
 
         // ออกใบสำเร็จแล้วจึงผูกรายการใหม่เข้าการจอง + ประทับเลขใบทันที — ถ้าขั้นใช้มัดจำด้านล่างล้ม
         // การกดเช็คเอาต์ซ้ำ = ทำขั้นที่ค้างต่อ (ResumeCheckOutAsync) ไม่ออกใบกำกับใบที่สอง และไม่เพิ่มค่าเสียหายซ้ำ

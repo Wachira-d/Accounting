@@ -3467,6 +3467,11 @@ public partial class DocumentService : IDocumentService
             await using var tx = await _db.Database.BeginTransactionAsync();
             try
             {
+                // รอบ 194 R3-2 (ก) — คีย์ล็อกยอดใบมัดจำตัวเดียวกับปุ่มรับรู้/ริบ ก่อนอ่าน RecognizedAt + VAT พักค้าง: เดิมมี tx แต่ไม่มีคีย์/ล็อกแถว
+                // ⇒ ชนกับริบแบบย้าย VAT พัก: ทั้งคู่อ่าน RecognizedAt=null + พักค้าง 700 ⇒ Dr 21913 700 สองครั้ง (21913 −700 · 21911 1,400)
+                if (!await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == depositId && d.CompanyId == companyId && !d.IsDeleted))
+                    throw new KeyNotFoundException("ไม่พบเอกสารมัดจำ");
+                await LockDepositBalancesAsync(companyId, new[] { depositId });
                 var doc = await _db.Documents.FirstOrDefaultAsync(
                     d => d.Id == depositId && d.CompanyId == companyId && !d.IsDeleted)
                     ?? throw new KeyNotFoundException("ไม่พบเอกสารมัดจำ");
@@ -3784,13 +3789,18 @@ public partial class DocumentService : IDocumentService
                 // ขอ "ค่าเสียหาย"/"ไม่มี VAT มาแต่แรก" แล้วไม่มีผล ⇒ ต้องบอก (หมายเหตุบนใบมัดจำ echo กลับในคำตอบ — ห้าม silent no-op)
                 if (forfeit.RequestIgnored)
                     doc.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(doc.DepositPolicyNote, forfeit.Explanation);
-                // M4 + R2-1 — ภาษีถึงกำหนดตั้งแต่เดือนรับเงิน ⇒ tax point = วันรับเงินเฉพาะเมื่อเดือนเดียวกัน หรือยังไม่เลยกำหนดยื่นงวดนั้น
-                // และไม่มีแถวยื่น/ล็อก/ปิดงวดในระบบ (ระบบไม่รู้ว่ายื่นนอกระบบไหม ⇒ "ไม่มีแถว" ≠ "ยังไม่ยื่น") · นอกนั้นงวดปัจจุบัน + ธง LATE-VAT
-                // — ตัวตัดสินตัวเดียว ForfeitTaxPointDecision (ใช้ทั้งเส้นใบกำกับของการริบและเส้นย้าย VAT พัก)
-                if (forfeit.LateVat && forfeit.Action is Accounting.Helpers.DepositForfeitVatAction.IssueTaxInvoiceForForfeit
-                        or Accounting.Helpers.DepositForfeitVatAction.ReclassifyUndueToDue)
+                // M4 + R2-1 + R3-1 — ตัวตัดสินตัวเดียว ForfeitTaxPointDecision แยกสองเส้นชัด:
+                // • ออกใบกำกับของยอดที่ริบ ⇒ tax point = วันที่ของใบ (วันริบ) เสมอ — JE ของใบลงวันที่ใบ · ภ.พ.30 เลือกตาม TaxPointDate · §87 เรียงตามวันที่ใบ
+                //   (เดิมส่ง PaymentDate = วันรับเงิน ⇒ GL 21911 กับ ภ.พ.30 คนละเดือน) · เดือนรับเงินก่อนเดือนริบ ⇒ ธง LATE-VAT
+                // • ย้าย VAT พัก 21913→21911 ⇒ ย้อนเข้างวดเดือนรับเงินได้เฉพาะเมื่อยังไม่เลยกำหนดยื่นและไม่มีแถวยื่น/ล็อก/ปิดงวด (JE ขาภาษีแยกลงวันนั้น)
+                if (forfeit.LateVat && forfeit.Action == Accounting.Helpers.DepositForfeitVatAction.IssueTaxInvoiceForForfeit)
                     forfeitTaxPoint = Accounting.Helpers.DepositPolicyResolver.ForfeitTaxPointDecision(
-                        true, doc.DocumentDate, when, await DepositReceiptPeriodLockedAsync(companyId, doc.DocumentDate),
+                        Accounting.Helpers.DepositForfeitVatRoute.ForfeitTaxInvoice, true, doc.DocumentDate, when,
+                        depositPeriodLocked: false, today: Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow));
+                else if (forfeit.LateVat && forfeit.Action == Accounting.Helpers.DepositForfeitVatAction.ReclassifyUndueToDue)
+                    forfeitTaxPoint = Accounting.Helpers.DepositPolicyResolver.ForfeitTaxPointDecision(
+                        Accounting.Helpers.DepositForfeitVatRoute.UndueReclassification, true, doc.DocumentDate, when,
+                        await DepositReceiptPeriodLockedAsync(companyId, doc.DocumentDate),
                         Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow));
                 if (forfeit.Action == Accounting.Helpers.DepositForfeitVatAction.IssueTaxInvoiceForForfeit)
                 {
@@ -3990,6 +4000,10 @@ public partial class DocumentService : IDocumentService
     /// <b>หรือ</b>จาก JE ตัดชำระที่ใบมัดจำเป็นต้นทางและอ้างเลขใบนี้ (ผู้เรียกกรองขา Cr ลูกหนี้ 113 ต่ออีกชั้น) — ริบบางส่วนหลายครั้งทำให้
     /// ตัวชี้ชี้ได้แค่ใบล่าสุด ถ้าหาจากตัวชี้อย่างเดียว ยกเลิกใบก่อนหน้าแล้ว JV ตัดชำระไม่ถูกกลับ (217xx ถูกตัดถาวร · ลูกหนี้ติดลบ) · tenant-safe</summary>
     private Task<List<Document>> DepositsAppliedToAsync(Guid companyId, Guid documentId, string documentNumber)
+        => DepositsAppliedToQuery(companyId, documentId, documentNumber).ToListAsync();
+
+    /// <summary>query ของ <see cref="DepositsAppliedToAsync"/> — ตัวกรองตัวเดียวของ void/purge และตัวรวบรวมใบที่ต้องล็อก (R3-2 · <c>DepositIdsTouchedByAsync</c>)</summary>
+    private IQueryable<Document> DepositsAppliedToQuery(Guid companyId, Guid documentId, string documentNumber)
     {
         // R2-5: เฉพาะ JV ที่ยังมีผล (ตัวกรองตัวเดียว DepositApplyJournals.AppliedTo) — เดิมไม่กรองคู่ที่ถูกกลับ ⇒ ใบที่เคย void แล้วถูก purge
         // เจอ JV เดิม ⇒ ลบต้นฉบับทิ้ง (ตัวกลับลอย) + หักยอดรับรู้ของมัดจำซ้ำ
@@ -3998,8 +4012,7 @@ public partial class DocumentService : IDocumentService
             .Select(j => j.SourceDocumentId!.Value);
         return _db.Documents
             .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                && (d.DepositAppliedToDocumentId == documentId || viaApplyJe.Contains(d.Id)))
-            .ToListAsync();
+                && (d.DepositAppliedToDocumentId == documentId || viaApplyJe.Contains(d.Id)));
     }
 
     /// <summary>รอบ 194 M3 — ยอด Cr สุทธิของภาษีขายรอเรียกเก็บ (21913) ที่ใบมัดจำนี้ยังค้างใน GL (JE ที่ใบนี้เป็นต้นทาง · ไม่นับคู่กลับรายการ) ·
@@ -4153,8 +4166,10 @@ public partial class DocumentService : IDocumentService
                                 VatRate: decision.ForfeitInvoiceVatRate, WithholdingTaxRate: 0m, AccountId: null,
                                 AccountCode: string.IsNullOrWhiteSpace(request.RevenueAccountCode) ? null : request.RevenueAccountCode.Trim()),
                         },
-                        // M4 — จุดความรับผิด = วันรับเงิน (งวดเดือนรับเงินยังไม่ยื่น) ⇒ TaxPointResolver ได้ MIN(วันรับเงิน, วันออกใบ)
-                        PaymentDate: taxPoint is { } tp && tp.TaxPointDate < when ? (DateTime?)tp.TaxPointDate : null,
+                        // R3-1 — ห้ามส่งวันรับเงินย้อน: tax point ของใบนี้ = วันที่ของใบ (วันริบ) เสมอ ⇒ GL · ภ.พ.30 · ลำดับรายงาน §87 เดือนเดียวกัน
+                        // (เดิม PaymentDate = วันรับเงิน ⇒ TaxPointResolver ได้ MIN(วันรับเงิน, วันออกใบ) = ภ.พ.30 เดือนรับเงิน แต่ JE Cr 21911 ลงเดือนริบ) ·
+                        // ภาษีที่ถึงกำหนดตั้งแต่เดือนรับเงิน = ธง LATE-VAT จาก taxPoint (ตัวตัดสินเส้น ForfeitTaxInvoice)
+                        PaymentDate: null,
                         ProjectId: deposit.ProjectId,
                         PricesIncludeVat: true,
                         // เอกสารลูกสืบทอดหน้าตา/ภาษา/สาขา/สกุลเงินจากใบมัดจำ (กฎ #4 A) — สกุล/อัตราต้องตรงไม่งั้นตัดชำระไม่ได้ (IAS 21)
@@ -8098,6 +8113,11 @@ public partial class DocumentService : IDocumentService
                     return;
                 }
 
+                // รอบ 194 R3-2 (ค) — ทุกใบมัดจำที่การยกเลิกนี้จะคืนยอด (ใบนี้เอง · ตัดชำระ JV เข้าใบนี้ ขั้น 2b · รับรู้เพื่อใบนี้ 2b-R · หักแบบขับ JE 7c)
+                // ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + อ่านค่าล่าสุด ก่อนขั้นใดอ่าน/เขียน DepositRealizedAmount · เดิม 2b เขียนโดยไม่ล็อกใบมัดจำ
+                // ⇒ ชนกับปุ่มริบ/ตัดชำระ = lost update · ถูกถือ ⇒ "รอสักครู่" (ธุรกรรม rollback ทั้งก้อน — กดยกเลิกใหม่ได้)
+                await LockDepositBalancesAsync(companyId, await DepositIdsTouchedByAsync(companyId, doc));
+
                 // 1) Void linked Payments first — each reverses its own JE + restores doc balance
                 //    (We void *all* payments inside this transaction; the document gets voided
                 //    after, so payment-balance recalculation here is intermediate only.)
@@ -8785,19 +8805,29 @@ public partial class DocumentService : IDocumentService
     ///   depBase จริง = Σ Dr บนบัญชีมัดจำ (215xx/217xx) ใน JE ต้นฉบับของใบนี้
     ///   ใบนี้เป็นผู้ stamp RecognizedAt จริง ⟺ JE มี Dr 21913
     /// ข้อบังคับ: purge ต้องเรียก "ก่อนลบ JE"; void เรียกได้ปกติ (JE แค่ถูก reverse
-    /// — ใช้เฉพาะ JE ต้นฉบับ OriginalEntryId == null). ไม่ SaveChanges เอง.</summary>
-    private async Task UnrealizeDrivesDepositAsync(Guid companyId, Document doc)
+    /// — ใช้เฉพาะ JE ต้นฉบับ OriginalEntryId == null). ไม่ SaveChanges เอง.
+    /// <para>รอบ 194 R3 (P-4): เลขอ้างอิงแยกด้วยตัวเดียวกับเส้นหัก (<see cref="ResolveDrivesDepositIdsAsync"/>) — เดิมเทียบ
+    /// <c>DocumentNumber == DepositAppliedRef</c> ตรงตัว ⇒ ใบที่หักมัดจำหลายใบ ("REC-9, REC-10") void แล้วยอดมัดจำไม่คืนเลย ·
+    /// แยกฐานรายใบด้วย <see cref="DepositReversalMath.SplitDrivesUnrealize"/> (ใบเดียว = สูตรเดิมทุกตัวอักษร)</para></summary>
+    /// <param name="skipAlreadyReleased">true = ใบนี้ถูกยกเลิกไปแล้ว (เรียกจาก purge) — คืนเฉพาะมัดจำที่ตัวชี้ยังชี้ใบนี้ (void เก่าที่ไม่เคยคืน) ·
+    /// มัดจำที่ void คืนไปแล้ว (ตัวชี้ถูกล้าง/ชี้ใบอื่น) ห้ามคืนซ้ำ</param>
+    private async Task UnrealizeDrivesDepositAsync(Guid companyId, Document doc, bool skipAlreadyReleased = false)
     {
         // ref อาจเป็นเลข NextAcc (DocumentNumber) หรือเลขระบบต้นทาง (Reference =
-        // externalRef เช่น REC260713008 ของ TakeTime) — จับคู่เลขเราก่อน แล้วค่อย ref
-        var deposit = await _db.Documents.FirstOrDefaultAsync(d =>
-                d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                && d.DocumentNumber == doc.DepositAppliedRef)
-            ?? await _db.Documents.FirstOrDefaultAsync(d =>
-                d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                && d.Reference == doc.DepositAppliedRef);
-        if (deposit != null)
+        // externalRef เช่น REC260713008 ของ TakeTime) — จับคู่เลขเราก่อน แล้วค่อย ref (ตัวเดียวกับเส้นหัก)
+        var resolved = await ResolveDrivesDepositIdsAsync(companyId, doc.DepositAppliedRef);
+        if (resolved.Count > 0)
         {
+            var depIds = resolved.Select(x => x.Id).ToList();
+            var tracked = await _db.Documents
+                .Where(d => d.CompanyId == companyId && depIds.Contains(d.Id))
+                .ToListAsync();
+            // เรียงตามลำดับในเลขอ้างอิง · ผลแยกคิดจากชุดใบที่ resolve ได้ทั้งหมด (ขาของใบที่คืนไปแล้วต้องไม่ไหลไปเข้าใบอื่น)
+            var ordered = depIds.Select(id => tracked.FirstOrDefault(d => d.Id == id)).OfType<Document>().ToList();
+            var numbers = ordered.Select(d => d.DocumentNumber).ToList();
+            var deposits = skipAlreadyReleased ? ordered.Where(d => d.DepositAppliedToDocumentId == doc.Id).ToList() : ordered;
+            if (deposits.Count == 0) return;
+
             // อ่านขา Dr จริงจาก JE ต้นฉบับของใบเช็คเอาท์ (ไม่รวม reversal)
             var coLines = await _db.JournalEntryLines.AsNoTracking()
                 .Where(l => !l.IsDeleted
@@ -8806,7 +8836,7 @@ public partial class DocumentService : IDocumentService
                     && l.JournalEntry.OriginalEntryId == null
                     && !l.JournalEntry.IsDeleted
                     && l.DebitAmount > 0)
-                .Select(l => new { l.AccountId, l.DebitAmount })
+                .Select(l => new { l.AccountId, l.DebitAmount, l.Description })
                 .ToListAsync();
             var acctIds = coLines.Select(l => l.AccountId).Distinct().ToList();
             var acctCodes = await _db.ChartOfAccounts.AsNoTracking()
@@ -8814,34 +8844,48 @@ public partial class DocumentService : IDocumentService
                 .Select(a => new { a.Id, a.AccountCode })
                 .ToListAsync();
             string CodeOf(Guid id) => acctCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+            var split = DepositReversalMath.SplitDrivesUnrealize(numbers,
+                coLines.Select(l => (CodeOf(l.AccountId), l.DebitAmount, l.Description)).ToList());
 
-            var depBase = coLines
-                .Where(l => CodeOf(l.AccountId).StartsWith("217") || CodeOf(l.AccountId).StartsWith("215"))
-                .Sum(l => l.DebitAmount);
-            var stamped21913 = coLines.Any(l => CodeOf(l.AccountId) == "21913");
-            if (coLines.Count == 0)
+            foreach (var deposit in deposits)
             {
-                // ไม่พบ JE (เคสประวัติศาสตร์/ถูกลบไปก่อน) → fallback field ratio เดิม
-                var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
-                depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
-                stamped21913 = deposit.DepositOutputVatDeferred;
-            }
+                var share = split.Shares.First(s => s.DepositNumber == deposit.DocumentNumber);
+                var depBase = share.Base;
+                var stamped21913 = share.Stamped21913;
+                if (coLines.Count == 0 && numbers.Count == 1)
+                {
+                    // ไม่พบ JE (เคสประวัติศาสตร์/ถูกลบไปก่อน) → fallback field ratio เดิม (ใบเดียวเท่านั้น — หลายใบแยกยอดไม่ได้ ⇒ บอกให้เห็นด้านล่าง)
+                    var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
+                    depBase = Math.Round(doc.DepositAppliedAmount * (1 - depVatRatio), 2, MidpointRounding.AwayFromZero);
+                    stamped21913 = deposit.DepositOutputVatDeferred;
+                }
 
-            deposit.DepositRealizedAmount = Math.Max(0m, deposit.DepositRealizedAmount - depBase);
-            // ยังไม่ realized ครบ → เคลียร์วันปิด (กลับเป็น "มัดจำคงค้าง")
-            if (deposit.SubTotal - deposit.DepositRealizedAmount > 0.005m)
-                deposit.DepositRealizedAt = null;
-            if (deposit.DepositAppliedToDocumentId == doc.Id)
-            {
-                // เคลียร์ RecognizedAt เฉพาะเมื่อ "ใบนี้เป็นผู้ stamp จริง" (มี Dr
-                // 21913) — เคส net+21911 mark ก็ถูกตั้ง แต่ RecognizedAt เป็นของ
-                // RealizeDeposit ครั้งก่อน ห้ามล้าง (audit F3: ล้างผิด → realize
-                // ถัดไป Dr 21913 ซ้ำ)
-                if (stamped21913)
-                    deposit.DepositOutputVatRecognizedAt = null;
-                deposit.DepositAppliedToDocumentId = null;
+                deposit.DepositRealizedAmount = Math.Max(0m, deposit.DepositRealizedAmount - depBase);
+                // ยังไม่ realized ครบ → เคลียร์วันปิด (กลับเป็น "มัดจำคงค้าง")
+                if (deposit.SubTotal - deposit.DepositRealizedAmount > 0.005m)
+                    deposit.DepositRealizedAt = null;
+                if (deposit.DepositAppliedToDocumentId == doc.Id)
+                {
+                    // เคลียร์ RecognizedAt เฉพาะเมื่อ "ใบนี้เป็นผู้ stamp จริง" (มี Dr
+                    // 21913) — เคส net+21911 mark ก็ถูกตั้ง แต่ RecognizedAt เป็นของ
+                    // RealizeDeposit ครั้งก่อน ห้ามล้าง (audit F3: ล้างผิด → realize
+                    // ถัดไป Dr 21913 ซ้ำ)
+                    if (stamped21913)
+                        deposit.DepositOutputVatRecognizedAt = null;
+                    deposit.DepositAppliedToDocumentId = null;
+                }
+                // ล้มดังบนใบมัดจำ (ผู้ใช้เปิดดูเห็น) — ฐานที่ผูกกับใบมัดจำใดไม่ได้ / หลายใบแต่ไม่มี JE ⇒ ยอดรับรู้ของมัดจำไม่ถูกคืนส่วนนั้น (ห้ามเดาใบ)
+                if (split.Unattributed > 0.005m || (coLines.Count == 0 && numbers.Count > 1))
+                {
+                    var unknown = coLines.Count == 0 ? doc.DepositAppliedAmount : split.Unattributed;
+                    deposit.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(deposit.DepositPolicyNote,
+                        $"⚠️ ยกเลิก/ลบใบ {doc.DocumentNumber} ที่หักมัดจำหลายใบ ({doc.DepositAppliedRef}) — ยอด {unknown:N2} ระบุไม่ได้ว่าเป็นของมัดจำใบใด "
+                        + "จึงไม่ถูกคืนเข้ายอดคงค้าง · ตรวจยอดมัดจำกับบัญชี 217xx/215xx ที่หน้า “เงินมัดจำ” แล้วปรับด้วยมือ");
+                    _logger.LogWarning("UnrealizeDrives {Doc}: ฐาน {Amount:N2} ผูกใบมัดจำไม่ได้ (refs {Refs})",
+                        doc.DocumentNumber, unknown, doc.DepositAppliedRef);
+                }
+                deposit.UpdatedAt = DateTime.UtcNow;
             }
-            deposit.UpdatedAt = DateTime.UtcNow;
         }
         else
         {
@@ -9035,6 +9079,9 @@ public partial class DocumentService : IDocumentService
         await using var transaction = await _db.Database.BeginTransactionAsync();
         try
         {
+            // รอบ 194 R3-2 — ใบมัดจำที่การลบนี้จะคืนยอด (ตัวรวบรวมเดียวกับ void) ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + ค่าล่าสุด
+            await LockDepositBalancesAsync(companyId, await DepositIdsTouchedByAsync(companyId, doc));
+
             // 0. un-mark มัดจำภายนอก (JV) ที่เอกสารนี้เคยหักไว้ (drives) — กันมัดจำ
             //    stuck ชี้ ghost หลัง purge → เช็คเอาท์ใหม่หักมัดจำเดิมได้ (ไม่ throw
             //    "ถูกนำไปหักกับเอกสารอื่น"). self-heal guard ก็ครอบให้ แต่ล้างเชิงรุก
@@ -9049,10 +9096,12 @@ public partial class DocumentService : IDocumentService
             //     GL (ลบ JE) แต่ subledger มัดจำค้าง (Realized/AppliedTo ghost) →
             //     หน้ามัดจำโชว์ "รับรู้ครบ" ทั้งที่ GL มีหนี้สินคงค้าง + ภ.พ.30
             //     ข้ามใบมัดจำตลอดไป (AppliedTo ชี้ doc ที่หายไปแล้ว)
+            //     R3 (P-4 คลาสเดียวกับ R2-5): ใบที่ถูกยกเลิกไปแล้ว — 7c ของ void คืนยอดให้แล้ว (JE ต้นฉบับยังอยู่ในฐานเพราะแค่ถูกกลับ)
+            //     ⇒ คืนเฉพาะมัดจำที่ตัวชี้ยังชี้ใบนี้ (void รุ่นเก่าที่ไม่เคยคืน) · เดิม DepositRealizedAmount ถูกหัก depBase สองรอบ
             if (!doc.IsDeposit && doc.DepositAppliedDrivesJournal
                 && doc.DepositAppliedAmount > 0 && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef))
             {
-                await UnrealizeDrivesDepositAsync(companyId, doc);
+                await UnrealizeDrivesDepositAsync(companyId, doc, skipAlreadyReleased: doc.Status == DocumentStatus.Voided);
                 await _db.SaveChangesAsync();   // persist subledger ก่อนขั้น raw-SQL ลบ JE
             }
 
@@ -15634,23 +15683,15 @@ public partial class DocumentService : IDocumentService
                         var _seenDeps = new HashSet<Guid>();
                         foreach (var depRef in _depRefs)
                         {
-                            // ref = เลข NextAcc หรือเลขระบบต้นทาง (Reference/externalRef)
-                            var mDepId = await _db.Documents.AsNoTracking()
-                                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                                    && d.DocumentNumber == depRef)
-                                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync()
-                                ?? await _db.Documents.AsNoTracking()
-                                    .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                                        && d.Reference == depRef)
-                                    .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                            // ref = เลข NextAcc หรือเลขระบบต้นทาง (Reference/externalRef) — ตัวแยก/ต่อเลขตัวเดียวกับเส้นคืน (UnrealizeDrivesDepositAsync · R3 P-4)
+                            var mDepId = await ResolveDrivesDepositIdAsync(companyId, depRef);
                             if (!mDepId.HasValue)
                                 throw new InvalidOperationException(
                                     $"หักมัดจำหลายใบ: ไม่พบใบมัดจำ {depRef} (IsDeposit — เทียบทั้งเลขเอกสารและ external ref) — ตรวจ depositAppliedRef");
                             if (!_seenDeps.Add(mDepId.Value)) continue;   // ใบนี้หักไปแล้วในรอบนี้ → ข้าม
-                            // row-lock กัน race เหมือนใบเดียว
-                            await _db.Database.ExecuteSqlRawAsync(
-                                @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE",
-                                mDepId.Value, companyId);
+                            // R3-2 (ข) — คีย์ล็อกยอดใบมัดจำ + ล็อกแถว + ค่าล่าสุด (ตัวเดียวกับทุกเส้น) · เดิม FOR UPDATE อย่างเดียว ⇒ ไม่กันปุ่มรับรู้/ริบ
+                            // (R2-6 เพิ่งเปิดให้เส้นนี้ทำงานกับใบที่ริบไปบางส่วนแล้ว ⇒ lost update กับปุ่มริบ)
+                            await LockDepositBalancesAsync(companyId, new[] { mDepId.Value });
                             var mDeposit = await _db.Documents.FirstOrDefaultAsync(
                                 d => d.Id == mDepId.Value && d.CompanyId == companyId);
                             if (mDeposit == null) continue;
@@ -15723,20 +15764,12 @@ public partial class DocumentService : IDocumentService
                     // ref = เลข NextAcc (DocumentNumber) หรือเลขระบบต้นทาง (Reference =
                     // externalRef เช่น REC260713008 ของ TakeTime) — เดิมจับคู่แค่เลขเรา
                     // → TakeTime ส่งเลขเขา → หาไม่เจอ → degrade เป็นตั้งหนี้เสมอ
-                    var depIdForLock = await _db.Documents.AsNoTracking()
-                        .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                            && d.DocumentNumber == doc.DepositAppliedRef)
-                        .Select(d => (Guid?)d.Id).FirstOrDefaultAsync()
-                        ?? await _db.Documents.AsNoTracking()
-                            .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
-                                && d.Reference == doc.DepositAppliedRef)
-                            .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
+                    var depIdForLock = await ResolveDrivesDepositIdAsync(companyId, doc.DepositAppliedRef);
+                    // R3-2 (ข) — คีย์ล็อกยอดใบมัดจำตัวเดียวกับปุ่มรับรู้/ริบ ก่อนล็อกแถว + อ่านค่าล่าสุด (LockDepositBalancesAsync ตัวเดียว)
                     if (depIdForLock.HasValue)
-                        await _db.Database.ExecuteSqlRawAsync(
-                            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1} FOR UPDATE",
-                            depIdForLock.Value, companyId);
+                        await LockDepositBalancesAsync(companyId, new[] { depIdForLock.Value });
                     var deposit = depIdForLock.HasValue
-                        ? await _db.Documents.FirstOrDefaultAsync(d => d.Id == depIdForLock.Value)
+                        ? await _db.Documents.FirstOrDefaultAsync(d => d.Id == depIdForLock.Value && d.CompanyId == companyId)
                         : null;
                     if (deposit != null)
                     {
@@ -16520,39 +16553,96 @@ public partial class DocumentService : IDocumentService
             .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && (list.Contains(d.DocumentNumber) || (d.Reference != null && list.Contains(d.Reference))));
-        if (lockRows)
-        {
-            var ids = await query.AsNoTracking().Select(d => d.Id).OrderBy(id => id).ToListAsync();
-            // P-a (รอบ 194 R2) — ล็อกคีย์เดียวกับปุ่มรับรู้/ริบ (session lock ของ RealizeDepositAsync) ก่อนล็อกแถว: เดิมเส้นอนุมัติถือแค่ FOR UPDATE
-            // ซึ่งไม่กันเส้นปุ่ม (ไม่ล็อกแถว) ⇒ อ่านยอดเก่าแล้วเขียนทับ (lost update) · ไม่รอ (อยู่กลางธุรกรรมอนุมัติที่ถือล็อกเลขเอกสารแล้ว — รอ = deadlock)
-            // (นอกธุรกรรม — เช่น PostCashSaleJournalAsync — xact lock ไม่มีผลอยู่แล้ว เหมือน FOR UPDATE ด้านล่าง ⇒ ข้าม ไม่ล้ม)
-            if (_db.Database.CurrentTransaction != null)
-                foreach (var lockDepId in ids)
-                    if (!await Accounting.Helpers.JobLock.TryXactLockAsync(_db,
-                            Accounting.Helpers.AdvisoryLockKey.DepositRealizeKey(companyId, lockDepId)))
-                        throw new Accounting.Helpers.BusinessRuleException(
-                            Accounting.Helpers.DepositKindDocumentRules.DepositBusyMessage, Accounting.Helpers.DepositKindDocumentRules.DepositBusyRuleCode);
-            if (ids.Count > 0)
-                await _db.Database.ExecuteSqlRawAsync(
-                    @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
-                    ids.ToArray(), companyId);
-        }
-        var rows = await query.OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt).ToListAsync();
-        if (lockRows)
-            foreach (var r in rows)
-                if (_db.Entry(r).State == EntityState.Unchanged) await _db.Entry(r).ReloadAsync();
         // รอบ 194 (spec S2 · DEP-SEC-DEDUCT): ทุกผู้เรียกของตัวนี้คือเส้น "หักมัดจำเป็นฐาน/ราคา" (แปลงขับ JE ตอนบันทึก · รับรู้ฐานตอนอนุมัติ)
         // ⇒ เงินประกันที่ต้องคืนในเลขอ้างอิง = ล้มดังทันที (ตรวจทุกใบที่อ้าง ไม่ใช่เฉพาะใบออกใบกำกับแล้ว — เงินประกันเต็มยอดก็หักราคาไม่ได้)
         // P-e: ตัดสินจาก "ใบที่ถูกหักจริง" (ตัวเดียวกับ GuardSecurityDepositDeductionAsync/integration) — เลขอ้างอิงร่วมที่ชี้ทั้งมัดจำค่าห้อง
         // และเงินประกัน ⇒ ใบที่ถูกหักคือมัดจำค่าห้อง (เงินประกันไม่ถูกบล็อกผิด และไม่ถูกนำไปรับรู้เป็นราคา)
-        var refCandidates = rows.Select(r => new Accounting.Helpers.DepositRefCandidate(r.Id, r.DocumentNumber, r.Reference, r.DepositNature)).ToList();
+        // รอบ 194 R3 (P-2) — ตัดสิน "ใบที่ถูกหักจริง" ก่อนล็อก (เลขใบ/เลขอ้างอิง/ลักษณะเงินไม่ถูกเขียนโดยเส้นยอดมัดจำ ⇒ อ่านนอกล็อกได้)
+        // แล้วล็อกเฉพาะใบนั้น · เดิมล็อกทุกใบที่เลขอ้างอิงตรง ⇒ มัดจำค่าห้องกับเงินประกันใช้เลขจองเดียวกัน กำลังคืนเงินประกันอยู่ = เช็คเอาต์ล้ม "รอสักครู่"
+        var refCandidates = await query.AsNoTracking()
+            .Select(d => new Accounting.Helpers.DepositRefCandidate(d.Id, d.DocumentNumber, d.Reference, d.DepositNature))
+            .ToListAsync();
         if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblemForRefs(list, refCandidates) is { } secProblem)
             throw new Accounting.Helpers.BusinessRuleException(secProblem, Accounting.Helpers.DepositPolicyResolver.SecurityDeductRuleCode);
-        var deducted = Accounting.Helpers.DepositPolicyResolver.ResolveDeductedDeposits(list, refCandidates).Select(c => c.Id).ToHashSet();
-        rows = rows.Where(r => deducted.Contains(r.Id)).ToList();
+        var deducted = Accounting.Helpers.DepositPolicyResolver.ResolveDeductedDeposits(list, refCandidates).Select(c => c.Id).ToList();
+        if (deducted.Count == 0) return new();
+        // P-a (รอบ 194 R2/R3-2) — คีย์ล็อกยอดใบมัดจำตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + อ่านค่าล่าสุด (LockDepositBalancesAsync ตัวเดียว) ·
+        // ไม่รอ (อยู่กลางธุรกรรมอนุมัติที่ถือล็อกเลขเอกสารแล้ว — รอ = deadlock) · ผู้เรียกแบบ lockRows ทุกตัวอยู่ในธุรกรรม
+        // (R3-2 ง: PostCashSaleJournalAsync เปิดธุรกรรมเองแล้ว — เดิมอยู่นอกธุรกรรมจึง "ข้ามล็อก")
+        if (lockRows)
+            await LockDepositBalancesAsync(companyId, deducted);
+        var rows = await query.Where(d => deducted.Contains(d.Id))
+            .OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt).ToListAsync();
         return rows.Where(d => Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(
                 d.VatAmount, d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null))
             .GroupBy(d => d.Id).Select(g => g.First()).ToList();
+    }
+
+    /// <summary>
+    /// รอบ 194 R3-2 — ล็อกยอดใบมัดจำ<b>ตัวเดียว</b>ของทุกเส้นในธุรกรรมที่อ่าน-แล้ว-เขียน <c>DepositRealizedAmount</c>/<c>DepositRefundedAmount</c>/
+    /// <c>DepositOutputVatRecognizedAt</c>/<c>DepositAppliedToDocumentId</c>: คีย์ <c>AdvisoryLockKey.DepositRealizeKey</c> (ตัวเดียวกับ session lock
+    /// ของปุ่มรับรู้/ริบ) แบบไม่รอ → ล็อกแถว (FOR UPDATE เรียงตาม Id) → อ่านค่าล่าสุดของแถวที่ context ถืออยู่ (Unchanged)
+    /// <para>ลำดับเดียวกับคืนมัดจำ/ตัดชำระ (คีย์ก่อนแถว) · ถูกถือโดยผู้อื่น ⇒ ข้อความ "รอสักครู่" ตัวเดียวของทุกทางเข้า (ไม่รอ — กัน deadlock กับล็อกเลขเอกสาร) ·
+    /// ต้องอยู่ในธุรกรรม (<c>TryXactLockAsync</c> โยนเมื่อไม่มี — ล้มดัง ไม่ข้ามเงียบ)</para>
+    /// </summary>
+    private async Task LockDepositBalancesAsync(Guid companyId, IEnumerable<Guid> depositIds)
+    {
+        var ids = depositIds.Distinct().OrderBy(x => x).ToArray();
+        if (ids.Length == 0) return;
+        foreach (var id in ids)
+            if (!await Accounting.Helpers.JobLock.TryXactLockAsync(_db, Accounting.Helpers.AdvisoryLockKey.DepositRealizeKey(companyId, id)))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositKindDocumentRules.DepositBusyMessage, Accounting.Helpers.DepositKindDocumentRules.DepositBusyRuleCode);
+        await _db.Database.ExecuteSqlRawAsync(
+            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
+            ids, companyId);
+        // ค่าล่าสุดใต้ล็อก — context อาจถือแถวนี้ไว้ก่อนล็อก (identity resolution ไม่อ่านค่าใหม่ให้เอง) · แถวที่เส้นนี้กำลังแก้ (Modified) ไม่แตะ
+        foreach (var e in _db.ChangeTracker.Entries<Document>()
+                     .Where(e => e.State == EntityState.Unchanged && ids.Contains(e.Entity.Id)).ToList())
+            await e.ReloadAsync();
+    }
+
+    /// <summary>รอบ 194 R3-2 — ใบมัดจำทุกใบที่การยกเลิก/ลบเอกสารนี้จะ "คืนยอด" (ตัวเดียวของ void + purge · อ่านอย่างเดียว):
+    /// ใบนี้เอง (ถ้าเป็นมัดจำ) · มัดจำที่ตัดชำระด้วย JV เข้าใบนี้ · มัดจำที่รับรู้เพื่อใบนี้ (<c>DepositRealizedForDocumentId</c>) ·
+    /// มัดจำที่ใบนี้หักแบบขับ JE (<see cref="ResolveDrivesDepositIdsAsync"/> ตัวแยกเลขอ้างอิงเดียวกับเส้นหัก) · tenant-safe</summary>
+    private async Task<List<Guid>> DepositIdsTouchedByAsync(Guid companyId, Document doc)
+    {
+        var ids = new List<Guid>();
+        if (doc.IsDeposit) ids.Add(doc.Id);
+        ids.AddRange(await DepositsAppliedToQuery(companyId, doc.Id, doc.DocumentNumber).AsNoTracking().Select(d => d.Id).ToListAsync());
+        ids.AddRange(await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.DepositRealizedForDocumentId == doc.Id && j.SourceDocumentId != null && !j.IsDeleted)
+            .Select(j => j.SourceDocumentId!.Value).ToListAsync());
+        if (!doc.IsDeposit && doc.DepositAppliedDrivesJournal && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef))
+            ids.AddRange((await ResolveDrivesDepositIdsAsync(companyId, doc.DepositAppliedRef)).Select(x => x.Id));
+        return ids.Distinct().ToList();
+    }
+
+    /// <summary>รอบ 194 R3 (P-4) — เลขมัดจำของเส้น "หักมัดจำแบบขับ JE" → ใบมัดจำ: ตัวแยกเลขอ้างอิงเดียวกับเส้นหัก
+    /// (<see cref="DepositReversalMath.ParseDepositRefs"/>) + ต่อเลข <see cref="ResolveDrivesDepositIdAsync"/> · ตัดเลขซ้ำตาม Id ·
+    /// เลขที่ไม่พบไม่อยู่ในผล (ผู้เรียกตัดสินเอง: เส้นหัก = ล้มดัง · เส้นคืน = เคส B สมุดรายวันภายนอก) · tenant-safe</summary>
+    private async Task<List<(string Ref, Guid Id)>> ResolveDrivesDepositIdsAsync(Guid companyId, string? refs)
+    {
+        var result = new List<(string Ref, Guid Id)>();
+        foreach (var rf in DepositReversalMath.ParseDepositRefs(refs))
+        {
+            var id = await ResolveDrivesDepositIdAsync(companyId, rf);
+            if (id is Guid g && result.All(x => x.Id != g)) result.Add((rf, g));
+        }
+        return result;
+    }
+
+    /// <summary>เลขมัดจำหนึ่งเลขของเส้นขับ JE → Id ใบมัดจำ (เลขเราก่อน แล้ว Reference = เลขระบบต้นทาง เช่น REC260713008 ของ TakeTime) — ตัวเดียวของ
+    /// เส้นหัก (AutoPost ใบเดียว/หลายใบ) และเส้นคืน (<see cref="UnrealizeDrivesDepositAsync"/>) · tenant-safe</summary>
+    private async Task<Guid?> ResolveDrivesDepositIdAsync(Guid companyId, string? depRef)
+    {
+        if (string.IsNullOrWhiteSpace(depRef)) return null;
+        return await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted && d.DocumentNumber == depRef)
+                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync()
+            ?? await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted && d.Reference == depRef)
+                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync();
     }
 
     private static decimal DepositRemainingBase(Document d)
@@ -16679,13 +16769,27 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await _db.HydrateContactAsync(companyId, doc);   // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
+        // รอบ 194 R3-2 (ง) — เดิมอยู่นอกธุรกรรม ⇒ เส้นหักมัดจำใน AutoPost ข้ามคีย์ล็อกยอดใบมัดจำ (xact lock ไม่มีผลนอกธุรกรรม) และ FOR UPDATE ไม่มีผล
+        // ⇒ อ่าน-แล้ว-เขียน DepositRealizedAmount ชนปุ่มรับรู้/ริบได้ + เลข JV ออกโดยไม่มีล็อก · เปิดธุรกรรมของตัวเอง (ผู้เรียกถือธุรกรรมอยู่แล้ว = ใช้ของผู้เรียก)
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
             await AutoPostToJournalAsync(companyId, doc, "integration-cashsale");
             await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
         }
         catch
         {
+            // ธุรกรรมของตัวเองถอยก่อน (ปลดล็อก + ค่าใน DB กลับเป็นก่อนเริ่ม) แล้วค่อยอ่านค่าจริงคืนให้ entity ที่ถูกแก้ค้าง
+            if (ownTx != null)
+            {
+                try { await ownTx.RollbackAsync(); }
+                catch (Exception rbEx)
+                {
+                    // ถอยไม่สำเร็จ (connection หลุด) = ธุรกรรมถูกทิ้งฝั่ง DB อยู่แล้ว · ห้ามทับ error เดิมของงาน — log แล้ว rethrow ตัวเดิมด้านล่าง
+                    _logger.LogWarning(rbEx, "PostCashSale {Doc}: rollback ไม่สำเร็จ", doc.DocumentNumber);
+                }
+            }
             // ล้าง in-memory changes ทั้งหมดที่ AutoPost ทำค้างไว้ (save ไม่สำเร็จ) เพื่อ
             // ไม่ให้ SaveChanges รอบถัดไปของผู้เรียก (degrade path) flush ค้าง/ซ้ำ:
             //  • JE/line ที่ Added → detach
@@ -16701,10 +16805,20 @@ public partial class DocumentService : IDocumentService
                     && (e.Entity is Document || e.Entity is JournalEntry))
                 {
                     try { await e.ReloadAsync(); }
-                    catch { e.State = EntityState.Unchanged; }
+                    catch (Exception reloadEx)
+                    {
+                        // ไม่กลืนเงียบ: ค่าที่ค้างใน entity นี้ไม่ถูกคืน — ปลดสถานะแก้ไขทิ้ง (ไม่ให้ SaveChanges ถัดไปบันทึกตาม) แล้วบอกใน log
+                        _logger.LogWarning(reloadEx, "PostCashSale {Doc}: อ่านค่าจริงคืนให้ {Entity} ไม่สำเร็จ — ปลดสถานะแก้ไขทิ้ง",
+                            doc.DocumentNumber, e.Entity.GetType().Name);
+                        e.State = EntityState.Unchanged;
+                    }
                 }
             }
             throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
         }
         return await _db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId

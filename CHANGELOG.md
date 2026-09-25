@@ -3367,3 +3367,17 @@ _Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จ
   `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
 - เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 194 ทีม M3 — หลังฝ่ายค้านรอบสาม `erp-review/2026-09-25/review194-r3.md`:
+- **R3-1** `DepositPolicyResolver.ForfeitTaxPointDecision` รับ `DepositForfeitVatRoute` (ต้องระบุ): เส้นใบกำกับของยอดที่ริบ = tax point วันที่ของใบเสมอ + ธง LATE-VAT
+  เมื่อเดือนรับเงินก่อนเดือนริบ · `IssueForfeitTaxInvoiceAsync` ส่ง `PaymentDate: null` (เดิมวันรับเงิน ⇒ GL 21911 กับ ภ.พ.30 คนละเดือน · §87 ผิดลำดับ) ·
+  เส้นย้าย VAT พัก = กติกา R2-1 เดิม
+- **R3-2** ตัวล็อกยอดใบมัดจำตัวเดียว `LockDepositBalancesAsync` (คีย์ `DepositRealizeKey` ไม่รอ → FOR UPDATE → reload) ที่ ปุ่ม 🧾 VAT · เส้นขับ JE หลายใบ/ใบเดียว ·
+  void/purge (ทุกใบมัดจำที่จะคืนยอด `DepositIdsTouchedByAsync`) · `LoadTaxedDepositsByRefAsync` · `PostCashSaleJournalAsync` เปิดธุรกรรมเอง
+- **P-1** CMS อนุมัติอัตโนมัติล้ม ⇒ `TrackedChangeRevert` + หมายเหตุบนการจอง · ที่พักเช็คเอาต์ใช้ใบร่างเดิม (`Helpers/LodgingCheckoutDraft`)
+- **P-2** ล็อกเฉพาะใบมัดจำที่ถูกหักจริง · **P-4** `UnrealizeDrivesDepositAsync` แยกเลขด้วยตัวเดียวกับเส้นหัก + `DepositReversalMath.SplitDrivesUnrealize` ·
+  purge ใบที่ void แล้วไม่คืนซ้ำ
+- เทสต์ `DepositRound194R3Tests` (สองครึ่ง) · ผู้เรียก `ForfeitTaxPointDecision` ในเทสต์เดิมระบุเส้น · `required_call_site_check` +11 กติกา / แก้ 3 ·
+  backlog (ไม่แก้รอบนี้): หมายเหตุ §86 ใบออกช้ากว่าจุดความรับผิด · ธ.ค.→ม.ค. ก่อนวันที่ 15 เข้างวดปัจจุบันพร้อมธง (ปลอดภัยแต่เกิน) ·
+  ข้อมูลมัดจำหลายใบที่ void ก่อนแก้ยังค้าง "รับรู้ครบ" (ไม่ migrate — รอเจ้าของ)
+— commit <pending>)_
