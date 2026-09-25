@@ -196,7 +196,9 @@ public static class OcrReplayHarness
                 var plan = OcrLineVatPlanner.PlanWholeInvoice(nets,
                     pick.Applied ? pick.Rates : new decimal?[nets.Length],
                     n.Vat ?? 0m, netBase, anchoredTotal ?? 0m, recon.PricesIncludeVat,
-                    OcrLineVatPlanner.PaperExemptAmount(OcrLineVatMarks.Read(p.RawText), OcrLineVatMarks.ReadGroups(p.RawText)));
+                    OcrLineVatPlanner.PaperExemptAmount(OcrLineVatMarks.Read(p.RawText), OcrLineVatMarks.ReadGroups(p.RawText)),
+                    // รอบ 195 ฝ่ายค้าน R2-1: ส่งหลักฐานจริงจากข้อความกระดาษ (ห้าม hard-code true — replay ชุดกระดาษจริงต้องเห็นผลของด่าน)
+                    vatPrintedOnPaper: OcrHeaderVatEvidence.Classify(p.RawText, null, n.Vat ?? 0m, null) == OcrHeaderVatSource.Labelled);
                 result.Add(new(p.Name, "LineVatPlan", plan.Decided
                     ? plan.Verdict + ":" + string.Join(",", plan.Rates.Select(r => r?.ToString("0.##") ?? "-"))
                     : plan.Verdict.ToString()));
