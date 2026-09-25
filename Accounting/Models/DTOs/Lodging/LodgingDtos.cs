@@ -566,6 +566,11 @@ public class LodgingReservationResponse
     public decimal SecurityDepositHeld { get; set; }
     /// <summary>วันที่ปิดเงินประกันครบ — null = ยังค้าง</summary>
     public DateTime? SecurityDepositSettledAt { get; set; }
+    /// <summary>มีเงินประกันค้างอยู่จริง (รับแล้ว ใบยังมีผล ยังไม่ปิด) — ตัวตัดสิน <c>LodgingDepositSettlement.SecurityLinkState</c> ·
+    /// หน้าเว็บใช้ตัดสินปุ่ม "รับเงินประกัน" (ห้ามคิดจากลิงก์+วันปิดเอง — ใบที่ถูกยกเลิกทำให้ค้างตลอดไป · C3 รอบ 194)</summary>
+    public bool SecurityDepositOpen { get; set; }
+    /// <summary>ใบรับเงินประกันที่ผูกไว้ถูกยกเลิก/ลบ — ข้อความบอกผู้ใช้ (null = ไม่มีเหตุการณ์นี้)</summary>
+    public string? SecurityDepositNote { get; set; }
     /// <summary>ป้ายสถานะภาษาไทยจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — หน้าเว็บห้ามมีตารางป้ายของตัวเอง</summary>
     public string? StatusLabel { get; set; }
     /// <summary>ใบเช็คเอาต์ถูกยกเลิก — ข้อความบอกทางออกใบใหม่ (เฉพาะหน้าพนักงาน) · null = ไม่มีปัญหา</summary>

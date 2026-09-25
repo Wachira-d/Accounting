@@ -2000,7 +2000,7 @@ try
     DatabaseMigrationHelper.ApplyMissingColumns(db, app.Services.GetRequiredService<ILogger<Program>>());
 
     // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches
-    DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db);
+    DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db, app.Services.GetRequiredService<ILogger<Program>>());
 
     // Seed default plan templates & admin user
     await SeedPlanTemplates.SeedAsync(db);

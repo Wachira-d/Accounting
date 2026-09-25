@@ -33,6 +33,7 @@ public record SaveDepositKindRequest(
 /// <param name="EffectiveLiabilityAccountCode">บัญชีหนี้สินที่ใช้จริง (null = ค่าเดิมของ AutoPost 21712)</param>
 /// <param name="RequiresReason">คู่ลักษณะ×โหมดนี้ต้องมีเหตุผล (ผลของตัวตัดสิน — รวมกรณีโหมดตกจากค่าตั้งบริษัท)</param>
 /// <param name="IsSystem">แถวที่ระบบสร้าง (seed) — เปลี่ยนรหัสไม่ได้</param>
+/// <param name="CanBeDefault">ตั้งเป็นประเภทเริ่มต้นได้ (เงินประกันที่ต้องคืน = ไม่ได้ · <c>DepositKindCatalog.DefaultKindProblem</c>) — หน้าเว็บซ่อนปุ่ม</param>
 public record DepositKindResponse(
     Guid Id,
     string Code,
@@ -54,7 +55,8 @@ public record DepositKindResponse(
     string? PolicyReason,
     string? Description,
     int SortOrder,
-    bool IsSystem);
+    bool IsSystem,
+    bool CanBeDefault = true);
 
 /// <summary>ค่าตั้งต้นบริษัทที่ประเภท "ไม่ได้ตั้งโหมด" ใช้ (ตั้งค่า → ภาษี → วิธีบันทึกเงินมัดจำ)</summary>
 public record DepositCompanyTreatmentInfo(

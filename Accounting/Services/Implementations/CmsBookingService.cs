@@ -553,7 +553,8 @@ public class CmsBookingService : ICmsBookingService
         if (svc.BookingType == BookingType.PrePayment)
         {
             var kindCtx = await DepositKindCatalog.LoadContextAsync(_db, companyId);
-            if (kindCtx.CompanyConfigured && kindCtx.DefaultKind is { } defaultKind) bookingDepositKindId = defaultKind.Id;
+            // ฝ่ายค้าน C1: ค่าเริ่มต้นที่เป็นเงินประกันถูกข้าม (ใบจองเป็นราคาเสมอ — ไม่งั้นตอนใช้บริการไม่รับรู้รายได้)
+            bookingDepositKindId = DepositKindCatalog.PrePaymentKindId(kindCtx);
         }
 
         // PrePayment booking = ลูกค้าจ่ายมัดจำ → IsDeposit=true → Cr 217xx

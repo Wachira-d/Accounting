@@ -3315,3 +3315,13 @@ S2 C3 M2) · ฝ่ายค้าน 3 รอบ (`review193-*.md` · `review19
   ACCOUNT_STRUCTURE §3.1 · **§3.1c ใหม่** · §4 · §5 · TEST_PLAN (ตารางรอบ 193 · BOM-04/12/13 · ADM-U08) · lessons +12 · ติ๊ก DECISIONS/audit-settings/audit-deposit/
   report-A/B/D/E/F/G (2026-09-21) · SYSTEM_REVIEW W1 · OCR_PIPELINE T4-14 · review193-r3/r4 (ติ๊ก)
 — commit 7a16f097)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม R แก้ผลฝ่ายค้านถดถอย/ความปลอดภัย `erp-review/2026-09-25/review194-regsec.md`:
+- **C1** เงินประกันที่ต้องคืนกลายเป็นมัดจำค่าห้อง/ค่าเริ่มต้นบริษัทได้ ⇒ `ResolveKind(..., priceChannel:)` + ชั้น ④ กรองลักษณะเสมอ (`AcceptableAsPriceDeposit` ·
+  ข้ามแล้วเตือน `DEP-KIND-NATURE`) · `SetDefaultAsync` ปฏิเสธเงินประกัน (`DefaultKindProblem`) · `UpdateAsync` ด่านเปลี่ยนลักษณะ (`NatureChangeProblem`:
+  มีใบอ้าง/ผูกที่พักขัดช่อง/เป็นค่าเริ่มต้น) · `SecurityDeposit` ไม่ fallback ใบอื่น · CMS `PrePaymentKindId` · migration `DepositKindSecurityDefaultFixSql`
+- **C3** ใบรับเงินประกันถูกยกเลิก ⇒ `SecurityLinkState` (DocumentGone = ไม่ค้าง รับใหม่ได้) + DTO `SecurityDepositOpen`/`SecurityDepositNote`
+- **C4** ข้อความ "พิมพ์เหตุผลเป็นหมายเหตุบนใบ" ไม่จริง ⇒ แก้ข้อความ (บันทึกภายใน + คำเตือนตอนอนุมัติ)
+- **P4** `documents.html` hydrate ประเภทรอรายการ (promise เดียว + ลำดับ) · **P6** schema รอบ 194 ย้ายเข้า `GetAlterStatements` + ชุดหลัง log แทน `catch {}`
+- เทสต์ `DepositKindNatureGuardTests` · checker `required_call_site_check` +6 กติกา · ค้าง: P5 (seed ตามประเภทธุรกิจตอนเปลี่ยนภายหลัง) · C2/C5/P1–P3 (ทีม M)
+— commit <pending>)_

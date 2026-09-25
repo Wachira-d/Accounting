@@ -88,6 +88,7 @@ public class DepositKindService : IDepositKindService
         }
         if (request.Nature is null)
             throw new BusinessRuleException("กรุณาเลือกลักษณะเงิน — ส่วนหนึ่งของราคา · เงินประกันที่ต้องคืน · หรือ นอกระบบ VAT");
+        await GuardNatureChangeAsync(companyId, kind, request.Nature.Value, ct);
         await ApplyAsync(companyId, kind, request, ct);
         if (request.IsActive is bool active)
         {
@@ -137,6 +138,9 @@ public class DepositKindService : IDepositKindService
         var kind = await FindAsync(companyId, id, ct);
         if (!kind.IsActive)
             throw new BusinessRuleException($"ประเภท “{kind.Name}” ปิดใช้อยู่ — เปิดใช้ก่อนแล้วจึงตั้งเป็นประเภทเริ่มต้น");
+        // ฝ่ายค้าน C1 รอบ 194: ค่าเริ่มต้น = มัดจำทั่วไปของทุกทางเข้า (ฟอร์มใบใหม่ · CMS · ที่พัก "ตามบริษัท") ⇒ เงินประกันเป็นค่าเริ่มต้นไม่ได้
+        if (DepositKindCatalog.DefaultKindProblem(kind.Name, kind.Nature) is string defaultProblem)
+            throw new BusinessRuleException(defaultProblem, DepositPolicyResolver.KindNatureMismatchRuleCode);
         if (!kind.IsDefault)
         {
             // unique index "ประเภทเริ่มต้นตัวเดียวต่อบริษัท" ตรวจทีละคำสั่ง ⇒ ล้างตัวเดิมก่อน แล้วค่อยตั้งตัวใหม่ ในธุรกรรมเดียว
@@ -156,6 +160,24 @@ public class DepositKindService : IDepositKindService
     }
 
     // ───────────────────────────── ภายใน ─────────────────────────────
+
+    /// <summary>ด่านเปลี่ยนลักษณะเงิน (ฝ่ายค้าน C1 รอบ 194 · ตัวตัดสิน <see cref="DepositKindCatalog.NatureChangeProblem"/>) — เดิมเปลี่ยน
+    /// ประเภทที่ที่พักผูกเป็นมัดจำค่าห้องให้เป็นเงินประกันได้ ⇒ ใบค่าห้องใบใหม่ไม่เกิดภาษีตอนรับเงิน (§78/1) และเช็คเอาต์ไม่หักมัดจำ ·
+    /// นับใบที่ลบแบบ soft ด้วย (ต้องเก็บ 5 ปี · ยังอ้างประเภท) · tenant ทุก query</summary>
+    private async Task GuardNatureChangeAsync(Guid companyId, DepositKind kind, DepositNature requested, CancellationToken ct)
+    {
+        if (kind.Nature == requested) return;
+        var id = kind.Id;
+        var docUses = await _db.Documents.IgnoreQueryFilters()
+            .CountAsync(d => d.CompanyId == companyId && d.DepositKindId == id, ct);
+        var roomBindings = await _db.LodgingProperties
+            .CountAsync(p => p.CompanyId == companyId && p.RoomDepositKindId == id, ct);
+        var securityBindings = await _db.LodgingProperties
+            .CountAsync(p => p.CompanyId == companyId && p.SecurityDepositKindId == id, ct);
+        if (DepositKindCatalog.NatureChangeProblem(kind.Name, kind.Nature, requested, kind.IsDefault,
+                roomBindings, securityBindings, docUses) is string problem)
+            throw new BusinessRuleException(problem, DepositPolicyResolver.KindNatureMismatchRuleCode);
+    }
 
     private async Task<DepositKind> FindAsync(Guid companyId, Guid id, CancellationToken ct)
         => await _db.DepositKinds.FirstOrDefaultAsync(k => k.Id == id && k.CompanyId == companyId, ct)
@@ -232,7 +254,8 @@ public class DepositKindService : IDepositKindService
             k.Id, k.Code, k.Name, k.Nature, DepositKindCatalog.NatureLabelOf(k.Nature), k.VatTreatment,
             d.Treatment, d.Source, DepositPolicyResolver.LabelOf(d.Treatment), d.Warning, d.RuleCode, d.RequiresReason,
             k.IsDefault, k.IsActive, k.LiabilityAccountCode, d.LiabilityAccountCode, k.ForfeitAccountCode, k.PolicyReason,
-            k.Description, k.SortOrder, IsSystem: k.SeedKey != null);
+            k.Description, k.SortOrder, IsSystem: k.SeedKey != null,
+            CanBeDefault: DepositKindCatalog.DefaultKindProblem(k.Name, k.Nature) is null);
     }
 
     /// <summary>บริษัทที่เกิดก่อน migration รอบ 194 (หรือ migration ยังไม่รัน) ยังไม่มีแถวเลย ⇒ seed ตามประเภทธุรกิจก่อน

@@ -107,12 +107,14 @@ public static class DatabaseMigrationHelper
     /// <para>⚠️ <b>ห้าม UPDATE "Documents"</b> — ใบเดิมคง DepositKindId/DepositNature = NULL (= ไม่ทราบ · spec S1 ห้าม backfill) ·
     /// INSERT ใช้ ON CONFLICT DO NOTHING (กุญแจ SeedKey ต่อบริษัท) ⇒ แถวที่ผู้ใช้ลบแล้วไม่ถูก seed คืน</para></summary>
     internal static IReadOnlyList<string> DepositKindMigrationStatements()
-    {
-        const int price = (int)Accounting.Models.Enums.DepositNature.PartOfPrice;
-        const int full = (int)Accounting.Models.Enums.DepositVatTreatment.FullDeposit;
-        const int undue = (int)Accounting.Models.Enums.DepositVatTreatment.VatPendingUndue;
-        var lp = Accounting.Helpers.DepositKindSeed.LodgingPropertySeedPrefix;
-        return new[]
+        => DepositKindSchemaStatements().Concat(DepositKindSeedStatements()).ToList();
+
+    /// <summary>รอบ 194 ส่วน <b>schema</b> (ตาราง + unique index + ADD COLUMN) — P6 ฝ่ายค้าน: เดิมอยู่ในชุด <see cref="ApplyFullTextSearchIndexes"/>
+    /// ซึ่ง <c>catch {}</c> กลืน error ⇒ ถ้า ADD COLUMN บน "Documents" ล้ม ทุก query ของเอกสารพังโดยไม่มี log · ตอนนี้ต่อท้าย
+    /// <see cref="GetAlterStatements"/> (เส้นหลักที่ log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") <b>และ</b>ซ้ำในชุดหลัง (idempotent) ก่อน seed —
+    /// ฐานที่ตารางที่พักยังไม่มีตอนเส้นหลักรัน (ตารางที่พักถูกสร้างในชุดหลัง) ได้คอลัมน์ในบูตเดียวกัน · ลำดับ: ตาราง → index → คอลัมน์</summary>
+    internal static IReadOnlyList<string> DepositKindSchemaStatements()
+        => new[]
         {
             """CREATE TABLE IF NOT EXISTS "DepositKinds" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Code" varchar(32) NOT NULL, "Name" varchar(256) NOT NULL, "Nature" integer NOT NULL DEFAULT 1, "VatTreatment" integer NULL, "LiabilityAccountCode" varchar(20) NULL, "ForfeitAccountCode" varchar(20) NULL, "PolicyReason" text NULL, "Description" text NULL, "IsDefault" boolean NOT NULL DEFAULT false, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "SeedKey" varchar(64) NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_SeedKey" ON "DepositKinds" ("CompanyId", "SeedKey") WHERE "SeedKey" IS NOT NULL;""",
@@ -130,13 +132,56 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "SecurityDepositAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SecurityDepositDocumentId" uuid NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SecurityDepositSettledAt" timestamptz NULL;""",
+        };
+
+    /// <summary>รอบ 194 ส่วน <b>seed/ย้ายค่า</b> (ยอมล้มได้ — มี lazy seed ตอน GET และจุดสร้างบริษัท) · รันหลัง schema ในชุดหลังเท่านั้น
+    /// (อ่านคอลัมน์ที่พักที่ชุดหลังสร้าง เช่น <c>LodgingProperties.DepositVatTreatment</c>) · ห้าม UPDATE "Documents"</summary>
+    internal static IReadOnlyList<string> DepositKindSeedStatements()
+    {
+        const int price = (int)Accounting.Models.Enums.DepositNature.PartOfPrice;
+        const int full = (int)Accounting.Models.Enums.DepositVatTreatment.FullDeposit;
+        const int undue = (int)Accounting.Models.Enums.DepositVatTreatment.VatPendingUndue;
+        var lp = Accounting.Helpers.DepositKindSeed.LodgingPropertySeedPrefix;
+        return new[]
+        {
             Accounting.Helpers.DepositKindSeed.MigrationSeedSql(),
+            DepositKindSecurityDefaultFixSql(),
             $$"""INSERT INTO "DepositKinds" ("Id","CompanyId","Code","Name","Nature","VatTreatment","PolicyReason","Description","IsDefault","IsActive","SortOrder","SeedKey","CreatedAt","IsDeleted") SELECT gen_random_uuid(), p."CompanyId", 'LP-' || upper(left(replace(p."Id"::text, '-', ''), 8)), left('มัดจำค่าห้องพัก — ' || p."Name", 256), {{price}}, p."DepositVatTreatment", CASE WHEN p."DepositVatTreatment" IN ({{full}}, {{undue}}) THEN 'ย้ายจากค่าตั้งเดิมของที่พัก (ก่อนรอบ 194) — ผู้ใช้เลือกวิธีบันทึกนี้ไว้ก่อนมีประเภทเงินมัดจำ · ตรวจลักษณะเงินอีกครั้ง: มัดจำค่าห้องเป็นส่วนหนึ่งของราคา ภาษีถึงกำหนดตอนรับเงิน (มาตรา 78/1)' END, 'สร้างจากค่าตั้งเดิมของที่พัก ' || p."Name", false, true, 40, '{{lp}}' || p."Id"::text, now(), false FROM "LodgingProperties" p WHERE p."DepositVatTreatment" IS NOT NULL AND p."IsDeleted" = false ON CONFLICT DO NOTHING;""",
             $$"""UPDATE "LodgingProperties" p SET "RoomDepositKindId" = k."Id" FROM "DepositKinds" k WHERE k."CompanyId" = p."CompanyId" AND k."SeedKey" = '{{lp}}' || p."Id"::text AND k."IsDeleted" = false AND p."RoomDepositKindId" IS NULL AND p."DepositVatTreatment" IS NOT NULL;""",
         };
     }
 
+    /// <summary>ฝ่ายค้าน C1 รอบ 194 — บริษัทที่ตั้ง "เงินประกันที่ต้องคืน" เป็นประเภทเริ่มต้นไว้ก่อนมีด่าน <c>SetDefaultAsync</c> ⇒ ถอดธงเริ่มต้นของ
+    /// ประเภทลักษณะเงินประกัน แล้วคืนให้ ADVANCE ที่ระบบ seed (เปิดใช้ · ไม่ลบ · ลักษณะราคา/นอกระบบ VAT) <b>เฉพาะบริษัทที่ถูกถอด</b> และเมื่อไม่มี
+    /// ค่าเริ่มต้นอื่น · idempotent (รอบสองไม่มีแถวเข้าเงื่อนไข) · แตะแค่ "DepositKinds" (ห้าม UPDATE "Documents" — ใบเดิมตรึงลักษณะไว้แล้ว)
+    /// <para>ตัวตัดสินข้ามค่าเริ่มต้นที่เป็นเงินประกันอยู่แล้ว (<c>ResolveKind</c>) — migration นี้ทำให้หน้าตั้งค่าไม่แสดงค่าที่ไม่มีผล</para></summary>
+    internal static string DepositKindSecurityDefaultFixSql()
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var sec = ((int)Accounting.Models.Enums.DepositNature.RefundableSecurity).ToString(inv);
+        var price = ((int)Accounting.Models.Enums.DepositNature.PartOfPrice).ToString(inv);
+        var nonVat = ((int)Accounting.Models.Enums.DepositNature.NonVatSupply).ToString(inv);
+        var advance = Accounting.Helpers.DepositKindSeed.AdvanceSeedKey.Replace("'", "''", StringComparison.Ordinal);
+        return "DO $dkdef$ DECLARE c uuid; BEGIN "
+             + "FOR c IN SELECT DISTINCT \"CompanyId\" FROM \"DepositKinds\" WHERE \"IsDefault\" = true AND \"Nature\" = " + sec + " LOOP "
+             + "UPDATE \"DepositKinds\" SET \"IsDefault\" = false, \"UpdatedAt\" = now(), \"UpdatedBy\" = 'migration:r194-C1' "
+             + "WHERE \"CompanyId\" = c AND \"IsDefault\" = true AND \"Nature\" = " + sec + "; "
+             + "UPDATE \"DepositKinds\" k SET \"IsDefault\" = true, \"UpdatedAt\" = now(), \"UpdatedBy\" = 'migration:r194-C1' "
+             + "WHERE k.\"CompanyId\" = c AND k.\"SeedKey\" = '" + advance + "' AND k.\"IsActive\" = true AND k.\"IsDeleted\" = false "
+             + "AND k.\"Nature\" IN (" + price + ", " + nonVat + ") "
+             + "AND NOT EXISTS (SELECT 1 FROM \"DepositKinds\" d WHERE d.\"CompanyId\" = c AND d.\"IsDefault\" = true AND d.\"IsDeleted\" = false); "
+             + "END LOOP; END $dkdef$;";
+    }
+
+    /// <summary>คำสั่งเส้นหลัก (<see cref="ApplyMissingColumns"/> — log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") · schema รอบ 194 ต่อท้าย (P6)</summary>
     internal static List<string> GetAlterStatements()
+    {
+        var list = CoreAlterStatements();
+        list.AddRange(DepositKindSchemaStatements());
+        return list;
+    }
+
+    private static List<string> CoreAlterStatements()
     {
         return
         [
@@ -3272,7 +3317,7 @@ public static class DatabaseMigrationHelper
     /// Creates PostgreSQL extensions and GIN indexes for full-text search and trigram matching.
     /// This dramatically improves LIKE '%term%' and text search performance on hot search paths.
     /// </summary>
-    public static void ApplyFullTextSearchIndexes(AccountingDbContext db)
+    public static void ApplyFullTextSearchIndexes(AccountingDbContext db, ILogger? logger = null)
     {
         var statements = GetFullTextSearchStatements();
         foreach (var sql in statements)
@@ -3281,9 +3326,16 @@ public static class DatabaseMigrationHelper
             {
                 db.Database.ExecuteSqlRaw(sql);
             }
-            catch
+            catch (Exception ex)
             {
-                // Index may already exist or table may not exist — safe to skip
+                // Index may already exist or table may not exist — safe to skip · P6 รอบ 194: ชุดนี้มีตาราง/คอลัมน์/seed ต่อท้ายด้วย
+                // (ไม่ใช่แค่ index) ⇒ ล้มแบบอื่นต้องเห็นใน log ตอนบูต (เกณฑ์ "benign" เดียวกับ ApplyMissingColumns)
+                var msg = ex.Message ?? "";
+                var benign = msg.Contains("already exists", StringComparison.OrdinalIgnoreCase)
+                          || msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+                if (!benign)
+                    logger?.LogWarning(ex, "[DbMigration] Statement failed (continuing): {Sql}",
+                        sql.Length > 200 ? sql[..200] + "…" : sql);
             }
         }
     }

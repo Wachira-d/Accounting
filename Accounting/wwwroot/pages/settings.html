@@ -532,7 +532,7 @@
           <div id="sDkNatureInfo" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6"></div>
           <div id="sDkWarn" style="display:none;margin-top:6px;padding:6px 8px;border-radius:6px;background:#FEF3C7;border:1px solid #F59E0B;color:#92400E;font-size:12px;line-height:1.6"></div>
           <div id="sDkReasonBox" style="display:none;margin-top:8px">
-            <label class="form-label" for="sDkReason" style="font-size:12px">เหตุผลที่เลือกวิธีนี้ (บังคับ — พิมพ์เป็นหมายเหตุบนใบมัดจำ เช่น เลขสัญญา/ข้อหารือ)</label>
+            <label class="form-label" for="sDkReason" style="font-size:12px">เหตุผลที่เลือกวิธีนี้ (บังคับ — เก็บไว้บนใบมัดจำเป็นบันทึกภายในและแสดงในคำเตือนตอนอนุมัติ · ไม่พิมพ์บนเอกสารที่ส่งลูกค้า · เช่น เลขสัญญา/ข้อหารือ)</label>
             <textarea class="form-input" id="sDkReason" rows="2"></textarea>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
@@ -1420,7 +1420,7 @@
               <td>${k.isActive ? 'เปิดใช้' : 'ปิดใช้'}</td>
               <td style="white-space:nowrap">
                 <button type="button" class="btn btn-sm btn-secondary" data-id="${esc(k.id)}" ${dis} onclick="Page.openDepositKindForm(this.dataset.id)">แก้ไข</button>
-                ${k.isActive && !k.isDefault ? `<button type="button" class="btn btn-sm btn-secondary" data-id="${esc(k.id)}" ${dis} onclick="Page.setDefaultDepositKind(this.dataset.id)">ตั้งเป็นเริ่มต้น</button>` : ''}
+                ${k.isActive && !k.isDefault && k.canBeDefault !== false ? `<button type="button" class="btn btn-sm btn-secondary" data-id="${esc(k.id)}" ${dis} onclick="Page.setDefaultDepositKind(this.dataset.id)">ตั้งเป็นเริ่มต้น</button>` : ''}
                 <button type="button" class="btn btn-sm btn-danger" data-id="${esc(k.id)}" ${dis} onclick="Page.removeDepositKind(this.dataset.id)">ลบ</button>
               </td></tr>`).join('')
           + '</tbody></table>';

@@ -86,9 +86,49 @@ public static partial class DepositKindCatalog
     /// <summary>บริษัท "ตั้งค่ามัดจำเองแล้ว" — ประเภทเริ่มต้นมีโหมดของตัวเอง หรือ ค่าตั้งต้นบริษัท (ตั้งค่า → ภาษี) ถูกตั้งไว้ ·
     /// ทางเข้าที่เดิม "ไม่อ่านค่าตั้งบริษัท" (CMS booking) ใช้ธงนี้ตัดสินว่าจะส่งประเภทเข้าเส้นเอกสารไหม — ไม่ได้ตั้ง = คงพฤติกรรมเดิม
     /// (seed ADVANCE มีโหมด null ⇒ บริษัทที่ไม่เคยแตะอะไรเลยได้ false)</summary>
-    public static bool CompanyConfigured(DepositVatTreatment? companySetting, DepositKind? defaultKind)
+    internal static bool CompanyConfigured(DepositVatTreatment? companySetting, DepositKind? defaultKind)
         => DepositPolicyResolver.IsDefined(companySetting)
            || (defaultKind is { IsActive: true, IsDeleted: false } && DepositPolicyResolver.IsDefined(defaultKind.VatTreatment));
+
+    /// <summary>ประเภทที่ทางเข้า "ชำระล่วงหน้าหน้าจอง" (CMS booking PrePayment) ส่งเข้าเส้นเอกสาร — null = ไม่ส่ง (ใบรูปเดิมตามค่าตั้งบริษัท)
+    /// <para>ส่งเฉพาะเมื่อ ① บริษัทตั้งค่ามัดจำเองแล้ว (<see cref="CompanyConfigured"/> — ไม่งั้นพฤติกรรมเดิมทุกตัวอักษร) และ ② ประเภทเริ่มต้น
+    /// เป็นมัดจำที่เป็นราคา (<see cref="DepositPolicyResolver.AcceptableAsPriceDeposit"/>) — รอบ 194 ฝ่ายค้าน C1: ค่าเริ่มต้นที่เป็นเงินประกัน
+    /// (ตั้งไว้ก่อนมีด่าน SetDefault) ทำให้ใบจองได้ลักษณะเงินประกัน ⇒ ตอนใช้บริการ <c>CmsBookingCancelPolicy.DecideOnComplete</c> ได้
+    /// <c>SecurityNotRevenue</c> ⇒ ไม่รับรู้รายได้เลย</para></summary>
+    public static Guid? PrePaymentKindId(DepositKindCompanyContext ctx)
+        => ctx.CompanyConfigured && ctx.DefaultKind is { } k && DepositPolicyResolver.AcceptableAsPriceDeposit(k.Nature) ? k.Id : null;
+
+    /// <summary>ด่านตั้ง "ประเภทเริ่มต้นของบริษัท" (รอบ 194 ฝ่ายค้าน C1) — ค่าเริ่มต้น = มัดจำทั่วไปของทุกทางเข้าที่ไม่ระบุประเภท (ฟอร์มใบใหม่ ·
+    /// CMS · ที่พักที่เลือก "ตามบริษัท") ⇒ ต้องเป็นมัดจำที่เป็นราคา · null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ</summary>
+    public static string? DefaultKindProblem(string kindName, DepositNature nature)
+        => DepositPolicyResolver.AcceptableAsPriceDeposit(nature) ? null
+         : $"ประเภท “{kindName}” เป็นเงินประกันที่ต้องคืน — ตั้งเป็นประเภทเริ่มต้นไม่ได้ (ประเภทเริ่มต้นคือมัดจำทั่วไปของใบใหม่/การจอง/ที่พักที่เลือก "
+           + "“ตามบริษัท” ซึ่งเป็นส่วนหนึ่งของราคา ภาษีถึงกำหนดตอนรับเงิน มาตรา 78/1) · ทางไปต่อ: ตั้งประเภทลักษณะ “ส่วนหนึ่งของราคา” หรือ "
+           + "“นอกระบบ VAT” เป็นเริ่มต้น แล้วเลือกเงินประกันบนใบเฉพาะครั้ง/ในช่อง “เงินประกันความเสียหาย” ของที่พัก";
+
+    /// <summary>ด่านเปลี่ยน "ลักษณะเงิน" ของประเภทที่มีอยู่ (รอบ 194 ฝ่ายค้าน C1) — null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ
+    /// <para>ห้ามเมื่อ ① มีใบมัดจำอ้างประเภทนี้แล้ว (ใบตรึงลักษณะเดิม — ประเภทเดียวกันสองลักษณะทำให้รายงาน/การอ่านย้อนสับสน) ·
+    /// ② ผูกเป็นมัดจำค่าห้องของที่พักแล้วจะเปลี่ยนเป็นเงินประกัน · ③ ผูกเป็นเงินประกันของที่พักแล้วจะเปลี่ยนเป็นอย่างอื่น ·
+    /// ④ เป็นประเภทเริ่มต้นแล้วจะเปลี่ยนเป็นเงินประกัน — ทางไปต่อ: สร้างประเภทใหม่ด้วยลักษณะที่ต้องการ</para></summary>
+    public static string? NatureChangeProblem(string kindName, DepositNature current, DepositNature requested, bool isDefault,
+        int roomBindings, int securityBindings, int documentUses)
+    {
+        if (current == requested) return null;
+        const string next = " · ทางไปต่อ: สร้างประเภทใหม่ด้วยลักษณะที่ต้องการ (แล้วปิดใช้ประเภทนี้ถ้าไม่ใช้แล้ว)";
+        if (documentUses > 0)
+            return $"ประเภท “{kindName}” ถูกใช้บนใบมัดจำแล้ว {documentUses:N0} ใบ — เปลี่ยนลักษณะเงินไม่ได้ (ใบที่ออกแล้วตรึงลักษณะเดิมไว้ · "
+                   + "ประเภทเดียวกันที่มีสองลักษณะทำให้ตรวจย้อนไม่ได้ว่าใบไหนเสียภาษีตอนรับเงิน)" + next;
+        if (roomBindings > 0 && !DepositPolicyResolver.AcceptableAsPriceDeposit(requested))
+            return $"ประเภท “{kindName}” ถูกผูกเป็นมัดจำค่าห้องของที่พัก {roomBindings:N0} แห่ง — เปลี่ยนเป็นเงินประกันไม่ได้ (มัดจำค่าห้องเป็นส่วนหนึ่งของราคา "
+                   + "ภาษีถึงกำหนดตอนรับเงิน มาตรา 78/1)" + next + " หรือเปลี่ยนประเภทมัดจำค่าห้องที่หน้าตั้งค่าที่พักก่อน";
+        if (securityBindings > 0 && requested != DepositNature.RefundableSecurity)
+            return $"ประเภท “{kindName}” ถูกผูกเป็นเงินประกันความเสียหายของที่พัก {securityBindings:N0} แห่ง — เปลี่ยนเป็นลักษณะอื่นไม่ได้ "
+                   + "(เงินประกันต้องคืน ยังไม่ใช่ค่าตอบแทน)" + next + " หรือเปลี่ยนประเภทเงินประกันที่หน้าตั้งค่าที่พักก่อน";
+        if (isDefault && !DepositPolicyResolver.AcceptableAsPriceDeposit(requested))
+            return $"ประเภท “{kindName}” เป็นประเภทเริ่มต้นของบริษัท — เปลี่ยนเป็นเงินประกันไม่ได้ (ค่าเริ่มต้นคือมัดจำทั่วไปที่เป็นส่วนหนึ่งของราคา)"
+                   + next + " หรือตั้งประเภทอื่นเป็นเริ่มต้นก่อน";
+        return null;
+    }
 
     /// <summary>ตัดสินประเภทของใบใหม่ในบริษัทนี้ (① ประเภทที่ระบุ → ④ ประเภทเริ่มต้น → ⑤ ค่าตั้งบริษัท → ⑥ ประเภทธุรกิจ) —
     /// ทางเข้าที่ไม่มีช่องทางของตัวเอง (integration · CMS) ใช้ตัวนี้ · ที่พักใช้ <c>ResolveKind</c> ตรงพร้อมชั้น ② ③</summary>

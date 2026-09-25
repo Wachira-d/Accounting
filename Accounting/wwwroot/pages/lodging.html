@@ -240,7 +240,7 @@
         // F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ลงบัญชีคืนเงิน + ใบลดหนี้เมื่อพนักงานยืนยันว่าโอนจริงเท่านั้น
         if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
         // รอบ 194 — เงินประกันความเสียหาย (แยกจากมัดจำค่าห้อง): รับได้เมื่อที่พักตั้งประเภทเงินประกันไว้ · ปิดหลังเช็คเอาต์/ยกเลิก
-        const secOpen = !!r.securityDepositDocumentId && !r.securityDepositSettledAt;
+        const secOpen = !!r.securityDepositOpen;   // เซิร์ฟเวอร์ตัดสิน (SecurityLinkState) — ใบที่ผูกถูกยกเลิก = ไม่ค้าง รับใหม่ได้ (C3 รอบ 194)
         if ((r.status === 'Confirmed' || r.status === 'CheckedIn') && this.property?.securityDepositKindId && !secOpen) actions += A('🔒 รับเงินประกัน', 'securityReceiveForm()');
         if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.securityDepositHeld > 0) actions += A('🔓 ปิดเงินประกัน (คืน/หัก/ริบ)', 'securitySettleForm()', 'btn-primary');
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
@@ -267,7 +267,7 @@
               ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
               ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
               ${r.securityDepositDocumentId ? `<div class="kv"><span>🔒 เงินประกันความเสียหาย (รับ / คงเหลือ)</span><span>${money(r.securityDepositReceived)} / <b>${money(r.securityDepositHeld)}</b></span></div>
-                <div class="hint">ใบรับเงินประกัน <a href="/pages/documents.html?id=${esc(r.securityDepositDocumentId)}">${esc(r.securityDepositDocumentNumber || '')}</a> · ${r.securityDepositSettledAt ? 'ปิดแล้ว ' + Layout.date(r.securityDepositSettledAt) : 'ยังเป็นหนี้สิน (ไม่นับเป็นค่าห้อง)'}</div>`
+                <div class="hint">${r.securityDepositNote ? `<span style="color:#92400E">⚠️ ${esc(r.securityDepositNote)}</span>` : `ใบรับเงินประกัน <a href="/pages/documents.html?id=${esc(r.securityDepositDocumentId)}">${esc(r.securityDepositDocumentNumber || '')}</a> · ${r.securityDepositSettledAt ? 'ปิดแล้ว ' + Layout.date(r.securityDepositSettledAt) : 'ยังเป็นหนี้สิน (ไม่นับเป็นค่าห้อง)'}`}</div>`
                 : (r.securityDepositRequired > 0 ? `<div class="hint">เงินประกันที่ต้องเก็บ ${money(r.securityDepositRequired)} — ยังไม่ได้รับ</div>` : '')}
             </div>
           </div>
