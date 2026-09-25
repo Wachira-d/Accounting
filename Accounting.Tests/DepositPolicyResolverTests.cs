@@ -82,7 +82,7 @@ public class DepositPolicyResolverTests
         Assert.Equal(DepositVatTreatment.VatImmediate, d.Treatment);
         Assert.Equal(DepositVatTreatmentSource.BusinessTypeDefault, d.Source);
         Assert.False(DepositPolicyResolver.IsDefined((DepositVatTreatment)0));
-        Assert.False(DepositPolicyResolver.IsDefined(null));
+        Assert.False(DepositPolicyResolver.IsDefined((DepositVatTreatment?)null));
     }
 
     [Theory]
