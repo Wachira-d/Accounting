@@ -617,8 +617,6 @@ const API = {
       searchJournalDeposits: (q) => API.get(`${base}/document/journal-deposits${q ? ('?q=' + encodeURIComponent(q)) : ''}`),
       applyJournalDeposit: (invoiceId, journalEntryNumber, applyDate) => API.post(`${base}/document/${invoiceId}/apply-journal-deposit`, { journalEntryNumber, applyDate: applyDate || null }),
       getContactDepositSummary: (contactId) => API.get(`${base}/document/contacts/${contactId}/deposit-summary`),
-      // รอบ 194 — ประเภทเงินมัดจำ (ทีม C: GET deposit-kinds → { items:[{ id, code, name, nature, effectiveTreatment, label, warning, ruleCode, isDefault, isActive }], defaultKindId })
-      getDepositKinds: () => API.get(`${base}/deposit-kinds`),
       getDocumentsByBooking: (bookingNumber) => API.get(`${base}/document/by-booking/${encodeURIComponent(bookingNumber)}`),
       getUndueInputVat: () => API.get(`${base}/document/undue-input-vat`),
       // รายงานผู้ติดต่อข้อมูลเสีย (อ่านอย่างเดียว · รอบ 193 ข้อ 19) — ที่อยู่ขึ้นต้น "/เลข" · สนญ. ที่อาจถูกที่อยู่สาขาทับ

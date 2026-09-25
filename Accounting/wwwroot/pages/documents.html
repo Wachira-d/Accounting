@@ -4726,6 +4726,8 @@
       async _loadDepositKinds() {
         const api = Layout.api(); if (!api) return;
         try {
+          // GET /api/companies/{id}/deposit-kinds (DepositKindsController ของทีม C · api.getDepositKinds อยู่ใน api.js ของทีม C) —
+          // item: id · code · name · nature · effectiveTreatment · label · warning · isDefault · isActive (enum เป็นชื่อ)
           const r = await api.getDepositKinds();
           this._depositKinds = (r?.data?.items || []).filter(k => k && k.id);
           this._defaultDepositKindId = r?.data?.defaultKindId || null;
