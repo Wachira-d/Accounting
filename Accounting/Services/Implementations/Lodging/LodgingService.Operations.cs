@@ -45,6 +45,10 @@ public partial class LodgingService
             if (dep != null) depTreatment = DepositPolicyResolver.OfDocument(dep.IsDeposit, dep.VatAmount, dep.DepositOutputVatDeferred);
         }
 
+        // รอบ 194 — เงินประกันความเสียหาย: ยอดคงเหลืออ่านจากใบจริง (สูตรปัดตัวเดียวกับการคืน) ไม่ใช่ตัวนับบนการจอง
+        LodgingDepositSnapshot? security = r.SecurityDepositDocumentId == null ? null
+            : LodgingDepositSettlement.SecurityDeposit(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId);
+
         // C4 (ฝ่ายค้านรอบสอง) — ใบเช็คเอาต์ถูกยกเลิก: มัดจำกลับเป็นคงค้างแล้ว (void กลับการรับรู้/ตัดชำระ) · บอกทางออกใบใหม่
         string? finalNote = null;
         if (r.FinalDocumentId is Guid finalDocId)
@@ -87,6 +91,12 @@ public partial class LodgingService
             RefundState = LodgingDepositSettlement.RefundStateOf(r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy),
             DepositVatTreatment = depTreatment,
             DepositVatTreatmentLabel = depTreatment is DepositVatTreatment dvt ? DepositPolicyResolver.LabelOf(dvt) : null,
+            SecurityDepositRequired = prop.SecurityDepositKindId != null ? prop.SecurityDepositAmount : 0m,
+            SecurityDepositDocumentId = r.SecurityDepositDocumentId,
+            SecurityDepositDocumentNumber = security?.Number,
+            SecurityDepositReceived = security?.TotalAmount ?? 0m,
+            SecurityDepositHeld = security is null ? 0m : LodgingDepositSettlement.HeldGross(security),
+            SecurityDepositSettledAt = r.SecurityDepositSettledAt,
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
             FinalDocumentNote = includeInternal ? finalNote : null,
             OnlinePayableAmount = LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),

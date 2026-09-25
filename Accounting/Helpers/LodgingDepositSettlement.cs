@@ -8,11 +8,14 @@ namespace Accounting.Helpers;
 /// <param name="RealizedBase">ฐานที่รับรู้/ตัดชำระไปแล้ว (<c>DepositRealizedAmount</c>)</param>
 /// <param name="RefundedGross">ยอดที่คืนเงินไปแล้วรวม VAT (<c>DepositRefundedAmount</c>)</param>
 /// <param name="AppliedToDocumentId">ใบที่มัดจำนี้ถูกนำไปตัดชำระ (<c>DepositAppliedToDocumentId</c>) — ใช้ตอนทำเช็คเอาต์ที่ค้างต่อ</param>
+/// <param name="Nature">ลักษณะเงินที่ตรึงบนใบ (<c>Document.DepositNature</c> · รอบ 194) — null = ใบก่อนรอบ 194 (ไม่ทราบ) ·
+/// <see cref="DepositNature.RefundableSecurity"/> = เงินประกันความเสียหาย ⇒ ห้ามเข้าแผนมัดจำค่าห้อง (<see cref="LodgingDepositSettlement.RoomDeposits"/>)</param>
 public sealed record LodgingDepositSnapshot(
     Guid Id, string Number, Guid ContactId,
     decimal SubTotal, decimal VatAmount, decimal TotalAmount,
     bool VatPending, decimal RealizedBase, decimal RefundedGross,
-    Guid? AppliedToDocumentId = null);
+    Guid? AppliedToDocumentId = null,
+    DepositNature? Nature = null);
 
 /// <summary>ยอดคงเหลือของใบมัดจำ 1 ใบ</summary>
 public readonly record struct DepositRemaining(decimal Base, decimal Vat, decimal Gross);
@@ -46,6 +49,15 @@ public sealed record LodgingCheckoutDepositPlan(
 /// <summary>ยกเลิก/no-show: มัดจำแต่ละใบถูกริบ (รับรู้รายได้ทันที) เท่าไร และต้องคืนเท่าไร</summary>
 public sealed record LodgingCancelDepositLine(
     Guid Id, string Number, decimal ForfeitBase, decimal RefundGross, decimal RefundBase, decimal RefundVat);
+
+/// <summary>แผนปิดเงินประกันความเสียหาย 1 ใบ (รอบ 194 · spec S3 เงินประกัน 3 ทาง) — ลำดับทำจริง: ตัดชำระใบเช็คเอาต์ → ริบเป็นค่าเสียหาย → คืนส่วนที่เหลือ</summary>
+/// <param name="HeldGross">เงินประกันคงเหลือก่อนปิด (ยอดที่คืนได้ทั้งหมด)</param>
+/// <param name="ApplyGross">ตัดชำระยอดค้างของใบเช็คเอาต์ (ใบนั้นคิด VAT ตามปกติ — การตัดชำระ = รับชำระหนี้ ไม่ลดฐานภาษี)</param>
+/// <param name="ForfeitGross">ริบเป็นค่าเสียหาย (รายได้อื่นไม่มี VAT — <c>DepositForfeitAs.Compensation</c>)</param>
+/// <param name="ForfeitBase">ฐานที่ส่งเข้า <c>RealizeDepositRequest.Amount</c> (สูตรเดียวกับแผนยกเลิก ⇒ ส่วนที่คืนภายหลังผ่านด่าน "คืนเกินคงเหลือ" พอดี)</param>
+/// <param name="RemainderGross">ส่วนที่เหลือหลังตัดชำระ + ริบ (คืนแขก หรือคงค้างเป็นหนี้สินถ้าผู้ใช้เลือกไม่คืนตอนนี้)</param>
+public sealed record LodgingSecuritySettlementPlan(
+    decimal HeldGross, decimal ApplyGross, decimal ForfeitGross, decimal ForfeitBase, decimal RemainderGross);
 
 public sealed record LodgingCancelPlan(
     decimal Fee, decimal Forfeit, decimal Refund, IReadOnlyList<LodgingCancelDepositLine> Lines)
@@ -307,6 +319,74 @@ public static class LodgingDepositSettlement
         if (amount <= 0m) return "ยอดที่คืนต้องมากกว่า 0";
         if (amount > pending + 0.005m) return $"ยอดที่คืน ({amount:N2}) เกินยอดค้างคืน ({pending:N2})";
         return null;
+    }
+
+    // ═══════════════════════════ รอบ 194 — เงินประกันความเสียหาย ≠ มัดจำค่าห้อง ═══════════════════════════
+
+    /// <summary>ใบนี้เป็น<b>เงินประกันความเสียหาย</b> (ไม่ใช่มัดจำค่าห้อง) — ลักษณะที่ตรึงบนใบ หรือเป็นใบที่การจองผูกไว้เป็นเงินประกัน
+    /// (<c>LodgingReservation.SecurityDepositDocumentId</c> — กันกรณีใบที่ลักษณะยังว่าง)</summary>
+    private static bool IsSecurityDeposit(LodgingDepositSnapshot d, Guid? securityDepositDocumentId)
+        => d.Nature == DepositNature.RefundableSecurity || (securityDepositDocumentId is Guid s && d.Id == s);
+
+    /// <summary><b>มัดจำค่าห้องเท่านั้น</b> — ตัดเงินประกันออกก่อนเข้าแผนเช็คเอาต์/ยกเลิก/คืนเงิน (รอบ 194)
+    /// <para>เดิมตัวโหลดใบมัดจำหยิบทุกใบ <c>IsDeposit</c> ที่มีเลขจองนี้ ⇒ เงินประกันจะถูก "หักเป็นราคา" ในใบเช็คเอาต์ (ผิด spec S2
+    /// <c>DEP-SEC-DEDUCT</c> — เงินประกันไม่ใช่ส่วนหนึ่งของราคา) หรือถูก "ริบเป็นค่าปรับยกเลิก" ปนกับมัดจำค่าห้อง · ลำดับเดิมคงไว้</para></summary>
+    public static List<LodgingDepositSnapshot> RoomDeposits(IEnumerable<LodgingDepositSnapshot> deposits, Guid? securityDepositDocumentId)
+        => deposits.Where(d => !IsSecurityDeposit(d, securityDepositDocumentId)).ToList();
+
+    /// <summary>ใบเงินประกันของการจองนี้ (คู่ของ <see cref="RoomDeposits"/>) — ใบที่ผูกบนการจองก่อน · null = ไม่มี</summary>
+    public static LodgingDepositSnapshot? SecurityDeposit(IEnumerable<LodgingDepositSnapshot> deposits, Guid? securityDepositDocumentId)
+    {
+        var list = deposits.Where(d => IsSecurityDeposit(d, securityDepositDocumentId)).ToList();
+        return list.FirstOrDefault(d => d.Id == securityDepositDocumentId) ?? list.FirstOrDefault();
+    }
+
+    /// <summary>เงินประกันคงเหลือ (ยอดที่คืนได้ — สูตรปัดตัวเดียวกับการคืนมัดจำ <see cref="RefundableGross"/>)</summary>
+    public static decimal HeldGross(LodgingDepositSnapshot d) => RefundableGross(d);
+
+    /// <summary>
+    /// แผนปิดเงินประกัน (spec S3): ① ตัดชำระใบเช็คเอาต์ที่คิด VAT (ค่าของเสีย/ของที่ใช้ไปอยู่ในใบนั้นแล้ว — ไม่ลดฐานภาษี) ·
+    /// ② ริบเป็นค่าเสียหาย (ไม่มี VAT) · ③ ส่วนที่เหลือ = คืน — ด่านทั้งหมดก่อนแตะบัญชี (null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ)
+    /// </summary>
+    /// <param name="finalBalanceDue">ยอดค้างของใบเช็คเอาต์ (null = ยังไม่มีใบ/ใบถูกยกเลิก — ตัดชำระไม่ได้)</param>
+    /// <param name="sameContact">ใบเช็คเอาต์ออกในนามเดียวกับใบเงินประกัน (การตัดชำระต้องเป็นลูกค้ารายเดียวกัน)</param>
+    public static (LodgingSecuritySettlementPlan? Plan, string? Problem) PlanSecuritySettlement(
+        LodgingDepositSnapshot security, decimal applyGross, decimal forfeitGross, decimal? finalBalanceDue, bool sameContact)
+    {
+        applyGross = R2(applyGross);
+        forfeitGross = R2(forfeitGross);
+        if (applyGross < 0m || forfeitGross < 0m) return (null, "ยอดตัดชำระ/ริบต้องไม่ติดลบ");
+        var held = RefundableGross(security);
+        if (held <= 0.005m) return (null, $"เงินประกัน {security.Number} ปิดไปแล้ว (คืน/ตัดชำระ/ริบครบ) — ไม่มียอดคงเหลือ");
+        if (applyGross > 0.005m)
+        {
+            if (finalBalanceDue is null)
+                return (null, "ยังไม่มีใบเช็คเอาต์ที่อนุมัติแล้วให้ตัดชำระ — เช็คเอาต์ก่อน (ค่าเสียหายเป็นรายการในใบเช็คเอาต์ที่คิด VAT) "
+                              + "หรือเลือกคืน/ริบเป็นค่าเสียหายแทน");
+            if (!sameContact)
+                return (null, "ใบเช็คเอาต์ออกในนามอื่น (เช่นบริษัทของแขก) แต่เงินประกันรับในนามผู้เข้าพัก — ตัดชำระข้ามลูกค้าไม่ได้ · "
+                              + "คืนเงินประกันเต็มจำนวนแล้วรับชำระยอดค้างของใบเช็คเอาต์ตามปกติ");
+            if (TaxedAtReceipt(security))
+                return (null, $"เงินประกัน {security.Number} ออกใบกำกับภาษีไปแล้ว — นำไปตัดชำระใบกำกับอีกใบไม่ได้ (VAT ซ้ำ) · "
+                              + "คืนเงินประกัน (ระบบออกใบลดหนี้ให้) แล้วรับชำระใบเช็คเอาต์ตามปกติ");
+            if (applyGross > finalBalanceDue.Value + 0.005m)
+                return (null, $"ยอดตัดชำระ ({applyGross:N2}) เกินยอดค้างของใบเช็คเอาต์ ({finalBalanceDue.Value:N2})");
+        }
+        if (applyGross + forfeitGross > held + 0.005m)
+            return (null, $"ตัดชำระ + ริบ ({applyGross + forfeitGross:N2}) เกินเงินประกันคงเหลือ ({held:N2})");
+
+        var afterApply = applyGross > 0.005m
+            ? security with { RealizedBase = security.RealizedBase + ApplyBase(applyGross, security.TotalAmount, security.VatAmount) }
+            : security;
+        var remainder = Math.Max(0m, R2(RefundableGross(afterApply) - forfeitGross));
+        var forfeitBase = 0m;
+        if (forfeitGross > 0.005m)
+        {
+            // ฐานที่ริบ = ฐานคงเหลือ − ฐานของส่วนที่จะคืน (สูตรเดียวกับ PlanCancellation) ⇒ คืนภายหลังไม่ติดด่าน "คืนเกินคงเหลือ"
+            var (remainderBase, _, _) = remainder > 0m ? SplitRefund(afterApply, remainder) : (0m, 0m, true);
+            forfeitBase = Math.Max(0m, Remaining(afterApply).Base - remainderBase);
+        }
+        return (new LodgingSecuritySettlementPlan(held, applyGross, forfeitGross, forfeitBase, remainder), null);
     }
 
     /// <summary>แบ่งยอดที่คืนจริงลงใบมัดจำ — ใบล่าสุดก่อน (ตรงข้ามกับการริบที่เริ่มจากใบเก่าสุด)

@@ -318,6 +318,26 @@ public class LodgingController : ControllerBase
         return Wrap(r, $"บันทึกคืนเงินแล้ว {r.RefundPaidAmount:N2}" + (r.RefundPending > 0 ? $" · ยังค้างคืน {r.RefundPending:N2}" : " · คืนครบ"));
     }
 
+    /// <summary>รับเงินประกันความเสียหาย (รอบ 194) — แยกจากมัดจำค่าห้อง (เงินที่ต้องคืน · ยังไม่ใช่ค่าบริการ)</summary>
+    [HttpPost("reservations/{id:guid}/security-deposit")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> ReceiveSecurityDeposit(Guid companyId, Guid id, [FromBody] LodgingSecurityDepositReceiveRequest? req)
+    {
+        var r = await _svc.ReceiveSecurityDepositAsync(companyId, id, req ?? new LodgingSecurityDepositReceiveRequest(), Uid);
+        return Wrap(r, $"รับเงินประกัน {r.SecurityDepositReceived:N2} แล้ว · {r.SecurityDepositDocumentNumber}");
+    }
+
+    /// <summary>ปิดเงินประกัน (รอบ 194 · spec S3) — ตัดชำระใบเช็คเอาต์ / ริบเป็นค่าเสียหาย / คืนส่วนที่เหลือ</summary>
+    [HttpPost("reservations/{id:guid}/security-deposit/settle")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> SettleSecurityDeposit(Guid companyId, Guid id, [FromBody] LodgingSecurityDepositSettleRequest? req)
+    {
+        var r = await _svc.SettleSecurityDepositAsync(companyId, id, req ?? new LodgingSecurityDepositSettleRequest(), Uid);
+        return Wrap(r, r.SecurityDepositHeld > 0.005m
+            ? $"บันทึกเงินประกันแล้ว · คงเหลือ {r.SecurityDepositHeld:N2}"
+            : "ปิดเงินประกันครบแล้ว");
+    }
+
     [HttpPost("reservations/{id:guid}/no-show")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> NoShow(Guid companyId, Guid id, [FromBody] LodgingCancelRequest? req)

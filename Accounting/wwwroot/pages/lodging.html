@@ -239,6 +239,10 @@
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
         // F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ลงบัญชีคืนเงิน + ใบลดหนี้เมื่อพนักงานยืนยันว่าโอนจริงเท่านั้น
         if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
+        // รอบ 194 — เงินประกันความเสียหาย (แยกจากมัดจำค่าห้อง): รับได้เมื่อที่พักตั้งประเภทเงินประกันไว้ · ปิดหลังเช็คเอาต์/ยกเลิก
+        const secOpen = !!r.securityDepositDocumentId && !r.securityDepositSettledAt;
+        if ((r.status === 'Confirmed' || r.status === 'CheckedIn') && this.property?.securityDepositKindId && !secOpen) actions += A('🔒 รับเงินประกัน', 'securityReceiveForm()');
+        if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.securityDepositHeld > 0) actions += A('🔓 ปิดเงินประกัน (คืน/หัก/ริบ)', 'securitySettleForm()', 'btn-primary');
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
         document.getElementById('resBody').innerHTML = `
           ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
@@ -262,6 +266,9 @@
               ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.finalDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
               ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
               ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
+              ${r.securityDepositDocumentId ? `<div class="kv"><span>🔒 เงินประกันความเสียหาย (รับ / คงเหลือ)</span><span>${money(r.securityDepositReceived)} / <b>${money(r.securityDepositHeld)}</b></span></div>
+                <div class="hint">ใบรับเงินประกัน <a href="/pages/documents.html?id=${esc(r.securityDepositDocumentId)}">${esc(r.securityDepositDocumentNumber || '')}</a> · ${r.securityDepositSettledAt ? 'ปิดแล้ว ' + Layout.date(r.securityDepositSettledAt) : 'ยังเป็นหนี้สิน (ไม่นับเป็นค่าห้อง)'}</div>`
+                : (r.securityDepositRequired > 0 ? `<div class="hint">เงินประกันที่ต้องเก็บ ${money(r.securityDepositRequired)} — ยังไม่ได้รับ</div>` : '')}
             </div>
           </div>
           <div class="card"><h4>🛏️ ห้อง</h4>${rooms}${r.extras.map(e => `<div class="kv"><span>➕ ${esc(e.name)} ×${e.quantity}</span><span>${money(e.total)}</span></div>`).join('')}</div>
@@ -354,6 +361,7 @@
         const r = this.current;
         this.sub('เช็คเอาต์ + ออกเอกสาร', `<form id="cof" class="grid2">
           <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ทั้งการเข้าพัก (ค่าห้อง + บริการเสริม + folio + service charge) หักมัดจำ ${money(r.depositPaid)} ตามวิธีบันทึกของใบมัดจำ${r.depositVatTreatmentLabel ? ' (' + esc(r.depositVatTreatmentLabel) + ')' : ''} แล้วรับชำระส่วนที่เหลือ ${money(r.balanceDue)}</div>
+          ${r.securityDepositHeld > 0 ? `<div class="warn" style="grid-column:1/-1">🔒 มีเงินประกัน ${money(r.securityDepositHeld)} — <b>ไม่ถูกหักในใบนี้</b> (เงินประกันไม่ใช่ค่าห้อง) · ถ้าจะใช้เงินประกันจ่ายค่าเสียหาย ให้เลือก “ออกใบแจ้งหนี้” ด้านล่าง แล้วกด “ปิดเงินประกัน” หลังเช็คเอาต์เพื่อตัดชำระใบนี้ + คืนส่วนที่เหลือ</div>` : ''}
           <div class="fld"><label>ค่าเสียหาย/ของหาย (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="dmg" value="0"></div>
           <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
           <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
@@ -382,6 +390,45 @@
           const f = document.getElementById('rpf');
           await this.call(() => Layout.api().lodgingRefundPaid(r.id, { amount: f.amount.value === '' ? null : +f.amount.value, paidAt: f.date.value ? f.date.value + 'T00:00:00' : null, bankAccountId: f.bank.value || null, reference: f.ref.value || null, note: f.note.value || null }));
         }, 'ยืนยันคืนเงิน');
+      },
+      // ═══ เงินประกันความเสียหาย (รอบ 194) — เงินที่ต้องคืน ไม่ใช่ค่าห้อง · ลักษณะ/VAT ตัดสินที่เซิร์ฟเวอร์ ═══
+      async securityReceiveForm() {
+        const r = this.current;
+        let banks = [];
+        try { const b = await Layout.api().getBankAccounts(); banks = b.data?.items || b.data || []; } catch { banks = []; }
+        this.sub('รับเงินประกันความเสียหาย', `<form id="srf" class="grid2">
+          <div class="fld"><label>ยอดเงินประกัน (บาท)</label><input class="form-input" type="number" step="0.01" min="0.01" name="amount" value="${r.securityDepositRequired > 0 ? r.securityDepositRequired : ''}"></div>
+          <div class="fld"><label>วันที่รับ</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
+          <div class="fld"><label>รับเข้าบัญชี</label><select class="form-input" name="bank"><option value="">เงินสด/ตามค่าตั้ง</option>${banks.map(b => `<option value="${esc(b.id)}">${esc(b.accountName || b.bankName || '')} ${esc(b.accountNumber || '')}</option>`).join('')}</select></div>
+          <div class="fld"><label>อ้างอิง</label><input class="form-input" name="ref"></div>
+          <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div>
+          <div class="hint" style="grid-column:1/-1">ระบบออก <b>ใบรับเงินประกัน</b> (บันทึกเป็นหนี้สิน · ไม่ใช่ค่าห้อง จึงไม่นับในยอดชำระของการเข้าพัก) — ตอนเช็คเอาต์ค่อยเลือกคืน / หักค่าเสียหาย / ริบ</div></form>`, async () => {
+          const f = document.getElementById('srf');
+          await this.call(() => Layout.api().lodgingReceiveSecurityDeposit(r.id, { amount: f.amount.value === '' ? null : +f.amount.value, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, bankAccountId: f.bank.value || null, paymentReference: f.ref.value || null, note: f.note.value || null }));
+        }, 'รับเงินประกัน');
+      },
+      async securitySettleForm() {
+        const r = this.current;
+        let banks = [];
+        try { const b = await Layout.api().getBankAccounts(); banks = b.data?.items || b.data || []; } catch { banks = []; }
+        const canApply = r.status === 'CheckedOut' && !!r.finalDocumentId && r.balanceDue > 0;
+        const applyDefault = canApply ? Math.min(r.securityDepositHeld, r.balanceDue) : 0;
+        this.sub('ปิดเงินประกันความเสียหาย', `<form id="ssf" class="grid2">
+          <div class="hint" style="grid-column:1/-1">เงินประกันคงเหลือ <b>${money(r.securityDepositHeld)}</b> (${esc(r.securityDepositDocumentNumber || '')}) — ระบบทำตามลำดับ ① ตัดชำระ → ② ริบ → ③ คืนส่วนที่เหลือ</div>
+          <div class="fld"><label>① หักค่าเสียหาย/ยอดค้างเข้าใบเช็คเอาต์ (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="apply" data-blank="0" value="${applyDefault}" ${canApply ? '' : 'disabled'}>
+            <div class="hint">${canApply ? `ยอดค้างของ ${esc(r.finalDocumentNumber || '')} = ${money(r.balanceDue)} · ใบนั้นคิด VAT ตามปกติ (ค่าเสียหาย/ค่าของที่ใช้ไปอยู่ในใบแล้ว) — การหักนี้เป็นการรับชำระ ไม่ลดฐานภาษี` : 'ใช้ไม่ได้: ต้องเช็คเอาต์แบบ “ออกใบแจ้งหนี้” ที่ยังมียอดค้าง'}</div></div>
+          <div class="fld"><label>② ริบเป็นค่าเสียหาย ไม่มี VAT (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="forfeit" data-blank="0" value="0">
+            <div class="hint">ใช้เฉพาะ <b>ค่าสินไหมทดแทน</b>แท้ (เช่นของเสียหายที่ไม่ได้ขาย) · ถ้าเป็นค่าของที่ใช้ไป/ค่าบริการ/ค่าธรรมเนียม ให้ใส่เป็นรายการในใบเช็คเอาต์แล้วใช้ช่อง ① (มี VAT)</div></div>
+          <div class="fld" style="grid-column:1/-1"><label>รายการความเสียหาย (บังคับเมื่อริบ)</label><input class="form-input" name="reason" maxlength="500"></div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="refund" checked> ③ คืนส่วนที่เหลือให้แขกตอนนี้ (กดเมื่อเงินออกจริง — ลงบัญชีคืนเงิน)</label></div>
+          <div class="fld"><label>วันที่</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
+          <div class="fld"><label>คืนจากบัญชี</label><select class="form-input" name="bank"><option value="">บัญชีเดียวกับที่รับเงินประกันเข้ามา</option>${banks.map(b => `<option value="${esc(b.id)}">${esc(b.accountName || b.bankName || '')} ${esc(b.accountNumber || '')}</option>`).join('')}</select></div>
+          <div class="fld"><label>เลขอ้างอิงการโอน</label><input class="form-input" name="ref"></div>
+          <div class="fld"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
+          const f = document.getElementById('ssf');
+          const num = (el) => el.value === '' ? 0 : +el.value;
+          await this.call(() => Layout.api().lodgingSettleSecurityDeposit(r.id, { applyToFinalInvoice: f.apply.disabled ? 0 : num(f.apply), forfeitAsCompensation: num(f.forfeit), forfeitReason: f.reason.value || null, refundRemainder: f.refund.checked, paidAt: f.date.value ? f.date.value + 'T00:00:00' : null, bankAccountId: f.bank.value || null, reference: f.ref.value || null, note: f.note.value || null }));
+        }, 'บันทึก');
       },
       async cancel(noShow) {
         const r = this.current;

@@ -335,9 +335,9 @@ TUPLE_RULES = [
      ["JobLock.RunExclusiveAsync(", "RecordRefundPaidCoreAsync("], [], [],
      "คืนเงินต้องล็อกระดับการจอง (สองคำขอพร้อมกัน = lost update)"),
     (LODGING_LIFE, "RecordRefundPaidCoreAsync",
-     ["LodgingDepositSettlement.IsLegacyRefund(", "TaxFilingLockPolicy.DeclaredOrFiledStatuses",
+     ["LodgingDepositSettlement.IsLegacyRefund(", "VatPeriodFiledAsync(",
       "LodgingDepositSettlement.AllocateRefund(", "SyncRefundPaidFromDeposits("],
-     [("TaxFilingLockPolicy.DeclaredOrFiledStatuses", "RefundDepositAsync("),
+     [("VatPeriodFiledAsync(", "RefundDepositAsync("),
       ("SyncRefundPaidFromDeposits(", "LodgingDepositSettlement.ValidateRefundPayment("),
       ("_db.SaveChangesAsync(", "LodgingDepositSettlement.ValidateRefundPayment(")], [],
      "C10 แถว legacy ห้ามลงคืนซ้ำ · ห้ามลงวันที่ย้อนเข้างวด ภ.พ.30 ที่ยื่นแล้ว · ยอดคืนแล้วตามใบมัดจำ"),
@@ -577,6 +577,59 @@ RULES += [
     for f, m in (("Services/Implementations/CompanyService.cs", "CreateAsync"),
                  ("Services/Implementations/AuthService.cs", "RegisterAsync"),
                  ("Services/Implementations/AuthService.cs", "SsoLoginAsync"))
+]
+
+# ── รอบ 194 ทีม D (ที่พัก · spec S2/S3/S4): เงินประกันความเสียหาย ≠ มัดจำค่าห้อง · ประเภทเงินมัดจำของที่พัก ──
+#    ตัวโหลดใบมัดจำคืน "ทุกใบของเลขจอง" (รวมเงินประกัน) ⇒ ทุกเส้นมัดจำค่าห้องต้องกรองด้วย RoomDeposits เอง — ถอดจุดไหน
+#    เงินประกันกลายเป็น "ราคา" ในใบเช็คเอาต์ (DEP-SEC-DEDUCT) หรือถูกริบเป็นค่าปรับยกเลิก
+_LODGING_ROOM_ONLY_WHY = ("รอบ 194 เงินประกันความเสียหายไม่ใช่ส่วนหนึ่งของราคา — ห้ามเข้าแผนหัก/ตัดชำระ/ริบ/คืนของมัดจำค่าห้อง "
+                          "(LodgingDepositSettlement.RoomDeposits · ปิดแยกที่ SettleSecurityDepositAsync)")
+RULES += [
+    dict(file=LODGING_LIFE, method=m, must=["LodgingDepositSettlement.RoomDeposits("], why=_LODGING_ROOM_ONLY_WHY)
+    for m in ("CheckOutAsync", "ResumeCheckOutAsync", "SettleCheckOutAsync", "RecordRefundPaidCoreAsync")
+]
+RULES += [
+    dict(file=LODGING_LIFE, method="CancelCoreAsync",
+         must=["LodgingDepositSettlement.RoomDeposits(", "ForfeitAs: DepositForfeitAs.PriceOrFee"],
+         before=[("LodgingDepositSettlement.RoomDeposits(", "LodgingDepositSettlement.PlanCancellation(")],
+         forbid=["DepositForfeitAs.Compensation"],
+         why="รอบ 194 S3: มัดจำค่าห้อง = ส่วนหนึ่งของราคา ⇒ ริบเป็นราคา/ค่าธรรมเนียมยกเลิก (มัดจำเต็มยอดต้องออกใบกำกับของยอดที่ริบ · "
+             "ห้ามรายได้ไม่มี VAT เงียบ ๆ) · เงินประกันถูกกรองก่อนวางแผนยกเลิก"),
+    dict(file=LODGING_LIFE, method="SettleCheckOutAsync", forbid=["ForfeitAs:"],
+         why="รอบ 194: รับรู้มัดจำตอนเช็คเอาต์ = รายได้ตามปกติ (ใบสุดท้ายออกใบกำกับแล้ว) ไม่ใช่การริบ — ห้ามส่ง ForfeitAs"),
+    dict(file=LODGING_LIFE, method="LoadDepositSnapshotsAsync", must=["d.DepositNature", "d.CompanyId == companyId"],
+         why="รอบ 194: ตัวกรอง RoomDeposits/SecurityDeposit ต้องได้ลักษณะเงินที่ตรึงบนใบ (ไม่มี = กรองได้แค่ด้วย id บนการจอง)"),
+    dict(file=LODGING_LIFE, method="CreateDepositReceiptAsync",
+         must=["DepositKindForAsync(", "DepositDocumentShaping.Apply(", "DepositKindId: kind.KindId"],
+         why="รอบ 194 S4: ใบมัดจำค่าห้องตรึงประเภทของที่พัก (ตัวตัดสินตัวเดียว) และจัดรูปด้วยตัวจัดรูปตัวเดียว"),
+    dict(file=LODGING, method="DepositKindForAsync",
+         must=["DepositPolicyResolver.ResolveKind(", "prop.RoomDepositKindId", "k.CompanyId == companyId"],
+         forbid=["DepositPolicyResolver.Resolve("],
+         why="รอบ 194 S4: ลำดับประเภทของที่พัก → ค่าเดิมของที่พัก → ประเภทเริ่มต้นบริษัท → ค่าบริษัท ผ่าน ResolveKind ตัวเดียว (tenant)"),
+    dict(file=LODGING, method="ApplyDepositKindsAsync",
+         must=["p.DepositVatTreatment = null", "p.DepositOutputVatDeferred = false", "x.CompanyId == companyId",
+               "DepositNature.RefundableSecurity", "DepositNature.PartOfPrice"],
+         before=[("x.CompanyId == companyId", "p.RoomDepositKindId = d.RoomDepositKindId")],
+         why="รอบ 194: บันทึกตั้งค่าที่พักต้องล้างค่าเดิม (migration ผูก lp:{id} กลับทุกบูต) · ประเภทต้องเป็นของบริษัทนี้และลักษณะถูกช่อง"),
+    dict(file=LODGING_LIFE, method="ReceiveSecurityDepositAsync",
+         must=["DepositPolicyResolver.ResolveKind(", "DepositDocumentShaping.Apply(", "DepositKindId: kindEntity.Id",
+               "DepositNature.RefundableSecurity", "k.CompanyId == companyId"],
+         before=[("_docService.ApproveDocumentAsync(", "r.SecurityDepositDocumentId = created.Id")],
+         why="รอบ 194: ใบรับเงินประกันตรึงประเภทเงินประกัน (ด่าน DEP-SEC-DEDUCT/ริบตามลักษณะอ่านจากใบ) · ผูกการจองหลังอนุมัติสำเร็จ"),
+    dict(file=LODGING_LIFE, method="SettleSecurityDepositAsync", must=["JobLock.RunExclusiveAsync(", "SettleSecurityDepositCoreAsync("],
+         why="รอบ 194: ปิดเงินประกันล็อกระดับการจองเดียวกับคืนเงินค่าห้อง (ทั้งสองเส้นแตะ PaidAmount)"),
+    dict(file=LODGING_LIFE, method="SettleSecurityDepositCoreAsync",
+         must=["LodgingDepositSettlement.SecurityDeposit(", "LodgingDepositSettlement.PlanSecuritySettlement(",
+               "ForfeitAs: DepositForfeitAs.Compensation", "VatPeriodFiledAsync(", "LodgingDepositSettlement.HeldGross("],
+         before=[("LodgingDepositSettlement.PlanSecuritySettlement(", "ApplyDepositToInvoiceAsync("),
+                 ("LodgingDepositSettlement.PlanSecuritySettlement(", "RealizeDepositAsync("),
+                 ("ApplyDepositToInvoiceAsync(", "RefundDepositAsync(")],
+         forbid=["DepositBaseDeducted", "DepositForfeitAs.PriceOrFee"],
+         why="รอบ 194 S3: เงินประกันปิด 3 ทาง — ตัดชำระใบที่คิด VAT (ห้ามหักฐาน DEP-SEC-DEDUCT) · ริบเป็นค่าเสียหายไม่มี VAT · "
+             "คืนจากยอดจริงหลังขั้นก่อน · ด่านทั้งหมดก่อนแตะบัญชี"),
+    dict(file=LODGING_LIFE, method="VatPeriodFiledAsync",
+         must=["TaxFilingLockPolicy.DeclaredOrFiledStatuses", "t.CompanyId == companyId"],
+         why="ด่านวันที่คืนเงิน (มัดจำค่าห้อง + เงินประกัน) ห้ามย้อนเข้างวด ภ.พ.30 ที่ยื่นแล้ว — ตัวเดียว"),
 ]
 
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
