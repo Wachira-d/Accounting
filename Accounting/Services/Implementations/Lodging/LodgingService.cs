@@ -75,16 +75,33 @@ public partial class LodgingService : ILodgingService
         return LodgingPricingEngine.PropertyVatRate(prop.ChargeVat, registered, rate);
     }
 
-    /// <summary>วิธีบันทึกมัดจำที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositPolicyResolver.Resolve"/>
-    /// · ค่าห้องพักเป็น "บริการ" โดยสภาพ (§78/1) ไม่ว่าบริษัทจะตั้งประเภทธุรกิจเป็นอะไร</summary>
-    private async Task<DepositVatTreatmentDecision> DepositTreatmentForAsync(Guid companyId, LodgingProperty prop, bool ignoreOverride = false)
+    /// <summary>ประเภท + วิธีบันทึกมัดจำค่าห้องที่ใช้จริงของที่พักนี้ — ตัวตัดสินตัวเดียว <see cref="DepositPolicyResolver.ResolveKind"/>
+    /// (รอบ 194 · spec S4): ① ประเภทบนใบ (ไม่มี — ที่พักออกใบเอง) → ② ประเภทของที่พัก (<c>RoomDepositKindId</c>) →
+    /// ③ ค่าเดิมของที่พัก (<c>DepositVatTreatment</c>) → ④ ประเภทเริ่มต้นบริษัท → ⑤ ค่าตั้งต้นบริษัท → ⑥ ประเภทธุรกิจ
+    /// · ค่าห้องพักเป็น "บริการ" โดยสภาพ (§78/1) ไม่ว่าบริษัทจะตั้งประเภทธุรกิจเป็นอะไร
+    /// <para><paramref name="ignoreOverride"/> = ผลของตัวเลือก "ตามบริษัท" (ข้ามชั้น ②③) — หน้าตั้งค่าบอกได้ว่าตัวเลือกว่างหมายถึงอะไร</para></summary>
+    private async Task<DepositKindDecision> DepositKindForAsync(Guid companyId, LodgingProperty prop, bool ignoreOverride = false)
     {
         var companySetting = await _db.CompanySettings.AsNoTracking()
             .Where(s => s.CompanyId == companyId)
             .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
-        return DepositPolicyResolver.Resolve(DepositSupplyNature.Service, companySetting,
-            ignoreOverride ? null : prop.DepositVatTreatment);
+        DepositKind? channelKind = null;
+        if (!ignoreOverride && prop.RoomDepositKindId is Guid kid)
+            channelKind = await _db.DepositKinds.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Id == kid && k.CompanyId == companyId && !k.IsDeleted);
+        var companyDefault = await _db.DepositKinds.AsNoTracking()
+            .Where(k => k.CompanyId == companyId && !k.IsDeleted && k.IsActive && k.IsDefault)
+            .OrderBy(k => k.SortOrder).ThenBy(k => k.Code).FirstOrDefaultAsync();
+        return DepositPolicyResolver.ResolveKind(companyId, DepositSupplyNature.Service,
+            documentKind: null, channelKind: channelKind,
+            channelTreatment: ignoreOverride ? null : prop.DepositVatTreatment,
+            companyDefaultKind: companyDefault, companySetting: companySetting,
+            chartHas21530: await ChartHas21530Async(companyId));
     }
+
+    /// <summary>ผังของบริษัทมี 21530 เงินประกันความเสียหาย (ผังโรงแรม) ไหม — ตัวเลือกบัญชีเงินประกันของ <c>ResolveKind</c> (spec S7)</summary>
+    private Task<bool> ChartHas21530Async(Guid companyId)
+        => _db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.AccountCode == "21530" && a.IsActive);
 
     private async Task<LodgingProperty> RequirePropertyAsync(Guid companyId, Guid propertyId, bool tracking = false)
     {
@@ -133,6 +150,7 @@ public partial class LodgingService : ILodgingService
 
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
         Apply(p, dto);
+        await ApplyDepositKindsAsync(companyId, p, dto, previousRoomKindId: null, previousSecurityKindId: null);
         await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, LodgingAccountingMode.Full, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
@@ -147,10 +165,14 @@ public partial class LodgingService : ILodgingService
         var p = await RequirePropertyAsync(companyId, propertyId, tracking: true);
         var prevMode = p.AccountingMode;
         var prevTreatment = p.DepositVatTreatment;
+        var prevRoomKind = p.RoomDepositKindId;
+        var prevSecurityKind = p.SecurityDepositKindId;
         Apply(p, dto);
-        if (prevTreatment != p.DepositVatTreatment)
-            _logger.LogInformation("ที่พัก {Prop} เปลี่ยนวิธีบันทึกมัดจำ {From} → {To} โดย {User} (มีผลกับมัดจำใบใหม่เท่านั้น)",
-                p.Id, prevTreatment?.ToString() ?? "ตามบริษัท", p.DepositVatTreatment?.ToString() ?? "ตามบริษัท", userId);
+        await ApplyDepositKindsAsync(companyId, p, dto, prevRoomKind, prevSecurityKind);
+        if (prevTreatment != p.DepositVatTreatment || prevRoomKind != p.RoomDepositKindId)
+            _logger.LogInformation("ที่พัก {Prop} เปลี่ยนประเภท/วิธีบันทึกมัดจำ {FromKind}/{From} → {ToKind}/{To} โดย {User} (มีผลกับมัดจำใบใหม่เท่านั้น)",
+                p.Id, prevRoomKind?.ToString() ?? "ตามบริษัท", prevTreatment?.ToString() ?? "-",
+                p.RoomDepositKindId?.ToString() ?? "ตามบริษัท", p.DepositVatTreatment?.ToString() ?? "-", userId);
         await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, prevMode, dto, userId);
         if (string.IsNullOrWhiteSpace(p.Code)) p.Code = DeriveCode(p.Name);
@@ -247,18 +269,8 @@ public partial class LodgingService : ILodgingService
         p.DepositPercent = Math.Clamp(d.DepositPercent, 0, 100); p.DepositFixedAmount = d.DepositFixedAmount;
         p.DepositMinAmount = Math.Max(0, d.DepositMinAmount); p.DepositMaxAmount = d.DepositMaxAmount;
         p.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(d.DepositDeferredAccountCode) ? null : d.DepositDeferredAccountCode.Trim();
-        // วิธีบันทึกมัดจำ (รอบ 193 #34) — null = ตามบริษัท · ค่าที่ไม่มีในระบบ = ปฏิเสธ (ไม่ตกไปค่าไหนเงียบ ๆ)
-        if (d.DepositVatTreatment is DepositVatTreatment dt)
-        {
-            if (!DepositPolicyResolver.IsDefined(dt))
-                throw new BusinessRuleException("วิธีบันทึกเงินมัดจำไม่ถูกต้อง — กรุณาเลือกใหม่ในหน้าตั้งค่าที่พัก", "DEPOSIT-VAT-TREATMENT");
-            p.DepositVatTreatment = dt;
-        }
-        else
-            // client เก่าที่ยังส่งแต่ธงเดิม: true = พัก 21913 (ความหมายเดิมตรงตัว) · false/ไม่ส่ง = ตามบริษัท
-            p.DepositVatTreatment = d.DepositOutputVatDeferred ? DepositVatTreatment.VatPendingUndue : null;
-        // ช่องเดิมเป็นสำเนาเท่านั้น — เขียนตามโหมดทุกครั้ง ⇒ migration ย้ายค่าเดิมรันซ้ำได้โดยไม่ทับสิ่งที่ผู้ใช้เลือก
-        p.DepositOutputVatDeferred = p.DepositVatTreatment == DepositVatTreatment.VatPendingUndue;
+        // วิธีบันทึกมัดจำ — รอบ 194: ตั้งผ่าน "ประเภทเงินมัดจำค่าห้อง" (RoomDepositKindId) เท่านั้น · ค่าเดิมของที่พัก
+        // (DepositVatTreatment + ธง DepositOutputVatDeferred) ถูกล้างที่ ApplyDepositKindsAsync ทุกครั้งที่บันทึก — เหตุผลอยู่ที่นั่น
         p.AccountingMode = d.AccountingMode;
         p.PricesIncludeVat = d.PricesIncludeVat; p.ChargeVat = d.ChargeVat;
         p.ServiceChargePercent = Math.Clamp(d.ServiceChargePercent, 0, 100);
@@ -275,6 +287,95 @@ public partial class LodgingService : ILodgingService
         p.AutoCreateHousekeepingTaskOnCheckout = d.AutoCreateHousekeepingTaskOnCheckout;
         p.IsActive = d.IsActive; p.SortOrder = d.SortOrder;
     }
+
+    /// <summary>
+    /// ประเภทเงินมัดจำของที่พัก (รอบ 194 · spec S4) — มัดจำค่าห้อง · เงินประกันความเสียหาย · ยอดเงินประกันต่อการจอง
+    /// <para>ด่าน: ประเภทต้องเป็นของบริษัทนี้ (tenant) · ห้อง = "ส่วนหนึ่งของราคา"/"นอกระบบ VAT" · เงินประกัน = "เงินประกันที่ต้องคืน" ·
+    /// ประเภทที่ปิดใช้เลือกใหม่ไม่ได้ (ตัวตัดสินข้ามประเภทที่ปิด ⇒ เลือกแล้วไม่มีผล = silent no-op)</para>
+    /// <para><b>ล้างค่าเดิมของที่พักเสมอ</b> (<c>DepositVatTreatment</c> + <c>DepositOutputVatDeferred</c>): migration ตอนบูตผูก
+    /// <c>RoomDepositKindId</c> กับประเภท <c>lp:{id}</c> ทุกครั้งที่ id ว่างแต่ค่าเดิมไม่ว่าง ⇒ ไม่ล้าง = ผู้ใช้เลือก "ตามบริษัท" แล้ว
+    /// บูตถัดไปถูกผูกกลับ · ประเภท <c>lp:{id}</c> ที่มีแล้วไม่ถูกแก้ (ON CONFLICT DO NOTHING) ⇒ รับค่าเดิมที่<b>เปลี่ยน</b>จาก client รุ่นเก่า =
+    /// ถูกผูกกลับเป็นโหมดเก่าเงียบ ๆ จึงปฏิเสธพร้อมทางไปต่อ (ค่าเดิมที่ส่งกลับมาเหมือนเดิม = echo ⇒ ล้างได้ ไม่ใช่การเลือก)</para>
+    /// </summary>
+    private async Task ApplyDepositKindsAsync(Guid companyId, LodgingProperty p, LodgingPropertyDto d,
+        Guid? previousRoomKindId, Guid? previousSecurityKindId)
+    {
+        DepositVatTreatment? legacyRequested = d.DepositVatTreatment
+            ?? (d.DepositOutputVatDeferred ? (DepositVatTreatment?)DepositVatTreatment.VatPendingUndue : null);
+        if (legacyRequested is not null && legacyRequested != p.DepositVatTreatment)
+            throw new BusinessRuleException(
+                "วิธีบันทึกเงินมัดจำของที่พักตั้งผ่าน “ประเภทเงินมัดจำค่าห้อง” แล้ว (รอบ 194) — หน้านี้เป็นรุ่นเก่า กรุณารีเฟรชหน้า "
+                + "แล้วเลือกประเภทเงินมัดจำ (หรือ “ตามค่าตั้งต้นบริษัท”)", "DEPOSIT-VAT-TREATMENT");
+
+        if (d.RoomDepositKindId is Guid roomId)
+        {
+            var k = await _db.DepositKinds.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == roomId && x.CompanyId == companyId && !x.IsDeleted)
+                ?? throw new BusinessRuleException("ไม่พบประเภทเงินมัดจำที่เลือก — รีเฟรชหน้าแล้วเลือกใหม่", "DEPOSIT-KIND");
+            if (!k.IsActive && roomId != previousRoomKindId)
+                throw new BusinessRuleException($"ประเภท “{k.Name}” ปิดใช้อยู่ — เปิดใช้ที่หน้าประเภทเงินมัดจำก่อน หรือเลือกประเภทอื่น", "DEPOSIT-KIND");
+            if (k.Nature is not (DepositNature.PartOfPrice or DepositNature.NonVatSupply))
+                throw new BusinessRuleException(
+                    $"ประเภท “{k.Name}” เป็นเงินประกันที่ต้องคืน — ใช้เป็นมัดจำค่าห้องไม่ได้ (มัดจำค่าห้องเป็นส่วนหนึ่งของราคา ภาษีถึงกำหนดตอนรับเงิน "
+                    + "มาตรา 78/1) · เลือกประเภทนี้ในช่อง “เงินประกันความเสียหาย” แทน", "DEPOSIT-KIND");
+        }
+        p.RoomDepositKindId = d.RoomDepositKindId;
+        p.DepositVatTreatment = null;
+        p.DepositOutputVatDeferred = false;
+
+        if (d.SecurityDepositKindId is Guid secId)
+        {
+            var k = await _db.DepositKinds.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == secId && x.CompanyId == companyId && !x.IsDeleted)
+                ?? throw new BusinessRuleException("ไม่พบประเภทเงินประกันที่เลือก — รีเฟรชหน้าแล้วเลือกใหม่", "DEPOSIT-KIND");
+            if (!k.IsActive && secId != previousSecurityKindId)
+                throw new BusinessRuleException($"ประเภท “{k.Name}” ปิดใช้อยู่ — เปิดใช้ที่หน้าประเภทเงินมัดจำก่อน หรือเลือกประเภทอื่น", "DEPOSIT-KIND");
+            if (k.Nature != DepositNature.RefundableSecurity)
+                throw new BusinessRuleException(
+                    $"ประเภท “{k.Name}” ไม่ใช่เงินประกันที่ต้องคืน — เงินประกันความเสียหายต้องใช้ประเภทลักษณะ “เงินประกัน (ต้องคืน)” "
+                    + "(ยังไม่ใช่ค่าตอบแทน จึงยังไม่เกิดภาษีขาย · ป.73/2541)", "DEPOSIT-KIND");
+        }
+        var secAmount = Math.Round(d.SecurityDepositAmount, 2, MidpointRounding.AwayFromZero);
+        if (secAmount < 0m) throw new BusinessRuleException("ยอดเงินประกันต้องไม่ติดลบ", "DEPOSIT-KIND");
+        if (secAmount > 0m && d.SecurityDepositKindId is null)
+            throw new BusinessRuleException("ตั้งยอดเงินประกันแล้วต้องเลือกประเภทเงินประกันด้วย (ระบบใช้ลักษณะ/บัญชีของประเภทออกใบรับเงินประกัน)", "DEPOSIT-KIND");
+        p.SecurityDepositKindId = d.SecurityDepositKindId;
+        p.SecurityDepositAmount = secAmount;
+    }
+
+    /// <summary>ตัวเลือกประเภทเงินมัดจำของบริษัท — หน้าตั้งค่าที่พักสร้าง dropdown จากลิสต์นี้ (ป้าย/ลักษณะ/ช่องที่ใช้ได้มาจากเซิร์ฟเวอร์ · F2 ข้อ 5)</summary>
+    private async Task<List<LodgingDepositKindOption>> DepositKindOptionsAsync(Guid companyId)
+    {
+        var kinds = await _db.DepositKinds.AsNoTracking()
+            .Where(k => k.CompanyId == companyId && !k.IsDeleted)
+            .OrderBy(k => k.SortOrder).ThenBy(k => k.Code).ToListAsync();
+        return kinds.Select(k => new LodgingDepositKindOption(
+            Id: k.Id, Code: k.Code, Name: k.Name, Nature: k.Nature, NatureLabel: NatureLabelTh(k.Nature),
+            TreatmentLabel: k.VatTreatment is DepositVatTreatment t ? DepositPolicyResolver.LabelOf(t) : "ตามค่าตั้งต้นบริษัท",
+            IsActive: k.IsActive, IsDefault: k.IsDefault,
+            ForRoom: k.Nature is DepositNature.PartOfPrice or DepositNature.NonVatSupply,
+            ForSecurity: k.Nature == DepositNature.RefundableSecurity)).ToList();
+    }
+
+    /// <summary>ป้ายไทยของลักษณะเงิน — ตารางป้ายตัวเดียวของทีม C (<c>Helpers/DepositKindCatalog.NatureLabelOf</c> · F2 ข้อ 4 ห้ามสำเนาที่สอง)
+    /// · แสดงผลอย่างเดียว ตัวตัดสิน VAT อยู่ที่ DepositPolicyResolver</summary>
+    private static string NatureLabelTh(DepositNature n) => DepositKindCatalog.NatureLabelOf(n);
+
+    private static string KindSourceTh(DepositVatTreatmentSource s) => s switch
+    {
+        DepositVatTreatmentSource.DocumentKind => "ประเภทที่เลือกบนใบ",
+        DepositVatTreatmentSource.ChannelKind => "ประเภทที่ตั้งให้ที่พักนี้",
+        DepositVatTreatmentSource.ChannelOverride => "ค่าเดิมของที่พัก (ก่อนมีประเภทเงินมัดจำ)",
+        DepositVatTreatmentSource.CompanyDefaultKind => "ประเภทเริ่มต้นของบริษัท",
+        DepositVatTreatmentSource.CompanySetting => "ค่าตั้งต้นของบริษัท",
+        _ => "ค่าตามประเภทธุรกิจ (ยังไม่มีใครตั้ง)",
+    };
+
+    /// <summary>ผลตัดสินประเภทที่หน้าเว็บแสดงได้ทันที (ป้ายทั้งหมดจากเซิร์ฟเวอร์)</summary>
+    private static LodgingDepositKindView KindView(DepositKindDecision k) => new(
+        KindId: k.KindId, Name: k.Name, Nature: k.Nature, NatureLabel: NatureLabelTh(k.Nature),
+        Treatment: k.Treatment, TreatmentLabel: DepositPolicyResolver.LabelOf(k.Treatment),
+        Source: k.Source, SourceLabel: KindSourceTh(k.Source), Warning: k.Warning, RuleCode: k.RuleCode, PolicyReason: k.PolicyReason);
 
     private async Task<LodgingPropertyDto> ToDtoAsync(Guid companyId, LodgingProperty p)
     {
@@ -300,9 +401,13 @@ public partial class LodgingService : ILodgingService
             DepositMaxAmount = p.DepositMaxAmount, DepositDeferredAccountCode = p.DepositDeferredAccountCode,
             DepositVatTreatment = p.DepositVatTreatment,
             DepositOutputVatDeferred = p.DepositVatTreatment == DepositVatTreatment.VatPendingUndue,
-            DepositVatTreatmentInfo = await DepositTreatmentForAsync(companyId, p),
-            DepositVatTreatmentInherited = await DepositTreatmentForAsync(companyId, p, ignoreOverride: true),
-            DepositVatTreatmentOptions = DepositPolicyResolver.Options,
+            RoomDepositKindId = p.RoomDepositKindId,
+            SecurityDepositKindId = p.SecurityDepositKindId,
+            SecurityDepositAmount = p.SecurityDepositAmount,
+            RoomDepositKindInfo = KindView(await DepositKindForAsync(companyId, p)),
+            RoomDepositKindInherited = KindView(await DepositKindForAsync(companyId, p, ignoreOverride: true)),
+            DepositKindOptions = await DepositKindOptionsAsync(companyId),
+            DepositVatExplanation = DepositPolicyResolver.Explanation,
             AccountingMode = p.AccountingMode,
             AccountingModeAcknowledged = p.AccountingModeAckAt != null,
             PricesIncludeVat = p.PricesIncludeVat, ChargeVat = p.ChargeVat, ServiceChargePercent = p.ServiceChargePercent,

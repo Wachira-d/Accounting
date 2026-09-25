@@ -64,11 +64,19 @@ public class LodgingPropertyDto
     public decimal DepositMinAmount { get; set; }
     public decimal? DepositMaxAmount { get; set; }
     public string? DepositDeferredAccountCode { get; set; }
-    /// <summary>วิธีบันทึกมัดจำของที่พักนี้ (ตั้งทับค่าบริษัท) — null = ตามค่าตั้งต้นบริษัท/ประเภทธุรกิจ (รอบ 193 #34)</summary>
+    /// <summary>⚠️ ค่าเดิมของที่พัก (รอบ 193 #34) — รอบ 194 ตั้งผ่าน <see cref="RoomDepositKindId"/> แทน · echo อย่างเดียว
+    /// (ที่พักที่ย้ายมาแล้วมีค่าจนกว่าจะบันทึกหน้าตั้งค่าครั้งถัดไป — ตอนบันทึกระบบล้างเสมอ) · client ที่ส่งค่า<b>ต่างจากเดิม</b>มา =
+    /// หน้ารุ่นเก่า ⇒ ปฏิเสธพร้อมทางไปต่อ (<c>LodgingService.ApplyDepositKindsAsync</c>)</summary>
     public DepositVatTreatment? DepositVatTreatment { get; set; }
-    /// <summary>⚠️ ช่องเดิม — echo = สำเนาของ <see cref="DepositVatTreatment"/> (= VatPendingUndue) ·
-    /// รับเข้าเฉพาะ client เก่าที่ไม่ส่ง <see cref="DepositVatTreatment"/> (true ⇒ VatPendingUndue) ห้ามมีทางอื่น</summary>
+    /// <summary>⚠️ ช่องเดิม — echo = สำเนาของ <see cref="DepositVatTreatment"/> (= VatPendingUndue) · กติการับเข้าเหมือน <see cref="DepositVatTreatment"/></summary>
     public bool DepositOutputVatDeferred { get; set; }
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำค่าห้อง (ลักษณะ "ส่วนหนึ่งของราคา"/"นอกระบบ VAT") · null = ตามค่าตั้งต้นบริษัท
+    /// (ประเภทเริ่มต้น → ค่าตั้งบริษัท) · ตัดสินที่ <c>DepositPolicyResolver.ResolveKind</c></summary>
+    public Guid? RoomDepositKindId { get; set; }
+    /// <summary>รอบ 194 — ประเภทเงินประกันความเสียหาย (ลักษณะ "เงินประกันที่ต้องคืน") · null = ไม่เก็บเงินประกัน</summary>
+    public Guid? SecurityDepositKindId { get; set; }
+    /// <summary>รอบ 194 — ยอดเงินประกันต่อการจอง (ค่าเริ่มต้นของปุ่ม "รับเงินประกัน" · 0 = ให้พนักงานกรอกเอง)</summary>
+    public decimal SecurityDepositAmount { get; set; }
     public LodgingAccountingMode AccountingMode { get; set; } = LodgingAccountingMode.Full;
     /// <summary>ผู้ใช้ติ๊กยืนยันว่าออกใบกำกับจากระบบอื่น (จำเป็นเมื่อเลือก Off + จด VAT)</summary>
     public bool AccountingModeAcknowledged { get; set; }
@@ -104,13 +112,29 @@ public class LodgingPropertyDto
     public string? SiteName { get; set; }
     /// <summary>อัตรา VAT ที่ใช้จริง (คำนวณจาก ChargeVat ?? Company.IsVatRegistered) — หน้าเว็บแสดงอย่างเดียว</summary>
     public decimal EffectiveVatRate { get; set; }
-    /// <summary>วิธีบันทึกมัดจำที่ใช้จริง + ที่มา + คำอธิบาย/คำเตือน — เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว</summary>
-    public DepositVatTreatmentDecision? DepositVatTreatmentInfo { get; set; }
-    /// <summary>ค่าที่จะได้ถ้าเลือก "ตามค่าตั้งต้นบริษัท" (ไม่ตั้งทับ) — ให้หน้าเว็บบอกได้ว่าตัวเลือกว่างหมายถึงอะไร</summary>
-    public DepositVatTreatmentDecision? DepositVatTreatmentInherited { get; set; }
-    /// <summary>ตัวเลือกทั้งหมด (ชื่อ enum + ป้าย + คำอธิบาย + มาตรา) — หน้าเว็บสร้างตัวเลือกจากลิสต์นี้</summary>
-    public IReadOnlyList<DepositVatTreatmentOption>? DepositVatTreatmentOptions { get; set; }
+    /// <summary>รอบ 194 — ประเภท/วิธีบันทึกมัดจำค่าห้องที่ใช้จริง + ที่มา + คำเตือน (<c>ResolveKind</c>) — หน้าเว็บแสดงอย่างเดียว</summary>
+    public LodgingDepositKindView? RoomDepositKindInfo { get; set; }
+    /// <summary>ผลของตัวเลือก "ตามค่าตั้งต้นบริษัท" (ไม่ตั้งประเภทให้ที่พัก) — ให้หน้าเว็บบอกได้ว่าตัวเลือกว่างหมายถึงอะไร</summary>
+    public LodgingDepositKindView? RoomDepositKindInherited { get; set; }
+    /// <summary>ประเภทเงินมัดจำทั้งหมดของบริษัท + ช่องที่ใช้ได้ (ห้อง/เงินประกัน) — หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
+    public List<LodgingDepositKindOption>? DepositKindOptions { get; set; }
+    /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
+    public string? DepositVatExplanation { get; set; }
 }
+
+/// <summary>ตัวเลือกประเภทเงินมัดจำ 1 แถวสำหรับหน้าตั้งค่าที่พัก (รอบ 194) — enum ออกเป็นชื่อ · ป้ายไทยจากเซิร์ฟเวอร์</summary>
+/// <param name="ForRoom">ใช้เป็นมัดจำค่าห้องได้ (ส่วนหนึ่งของราคา/นอกระบบ VAT)</param>
+/// <param name="ForSecurity">ใช้เป็นเงินประกันความเสียหายได้ (เงินประกันที่ต้องคืน)</param>
+public sealed record LodgingDepositKindOption(
+    Guid Id, string Code, string Name, DepositNature Nature, string NatureLabel, string TreatmentLabel,
+    bool IsActive, bool IsDefault, bool ForRoom, bool ForSecurity);
+
+/// <summary>ผลตัดสินประเภทเงินมัดจำที่หน้าเว็บแสดง (ย่อจาก <c>DepositKindDecision</c> + ป้ายไทย)</summary>
+public sealed record LodgingDepositKindView(
+    Guid? KindId, string Name, DepositNature Nature, string NatureLabel,
+    DepositVatTreatment Treatment, string TreatmentLabel,
+    DepositVatTreatmentSource Source, string SourceLabel,
+    string? Warning, string? RuleCode, string? PolicyReason);
 
 public class LodgingRoomTypeDto
 {
@@ -530,6 +554,18 @@ public class LodgingReservationResponse
     /// <summary>วิธีบันทึกมัดจำของใบมัดจำใบแรก (อ่านย้อนจากช่องที่ตรึงบนเอกสาร) — null = ไม่มีใบมัดจำ</summary>
     public DepositVatTreatment? DepositVatTreatment { get; set; }
     public string? DepositVatTreatmentLabel { get; set; }
+    // ── รอบ 194 — เงินประกันความเสียหาย (แยกจากมัดจำค่าห้อง · ไม่นับใน PaidAmount/BalanceDue) ──
+    /// <summary>ยอดเงินประกันที่ที่พักตั้งไว้ต่อการจอง (0 = ไม่ได้ตั้ง/ไม่ได้เลือกประเภทเงินประกัน)</summary>
+    public decimal SecurityDepositRequired { get; set; }
+    /// <summary>ใบรับเงินประกัน (Document IsDeposit · ลักษณะเงินประกัน) — null = ยังไม่รับ</summary>
+    public Guid? SecurityDepositDocumentId { get; set; }
+    public string? SecurityDepositDocumentNumber { get; set; }
+    /// <summary>ยอดเงินประกันที่รับไว้ (ยอดรวมของใบ)</summary>
+    public decimal SecurityDepositReceived { get; set; }
+    /// <summary>เงินประกันคงเหลือที่ยังเป็นหนี้สิน (ยังไม่คืน/ตัดชำระ/ริบ)</summary>
+    public decimal SecurityDepositHeld { get; set; }
+    /// <summary>วันที่ปิดเงินประกันครบ — null = ยังค้าง</summary>
+    public DateTime? SecurityDepositSettledAt { get; set; }
     /// <summary>ป้ายสถานะภาษาไทยจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — หน้าเว็บห้ามมีตารางป้ายของตัวเอง</summary>
     public string? StatusLabel { get; set; }
     /// <summary>ใบเช็คเอาต์ถูกยกเลิก — ข้อความบอกทางออกใบใหม่ (เฉพาะหน้าพนักงาน) · null = ไม่มีปัญหา</summary>
@@ -631,6 +667,31 @@ public record LodgingCancelRequest(string? Reason = null);
 /// หาไม่ได้ = ปฏิเสธให้เลือก ไม่เดา 111)</para></summary>
 public record LodgingRefundPaidRequest(
     decimal? Amount = null,
+    DateTime? PaidAt = null,
+    Guid? BankAccountId = null,
+    string? Reference = null,
+    string? Note = null);
+
+/// <summary>รับเงินประกันความเสียหาย (รอบ 194) — ออกใบรับเงินมัดจำด้วยประเภทเงินประกันของที่พัก
+/// (ลักษณะ "เงินประกันที่ต้องคืน" ⇒ ยังไม่ใช่ tax point · บัญชี 21530/21620)</summary>
+public record LodgingSecurityDepositReceiveRequest(
+    /// <summary>ยอดที่รับ (null = ตามค่าตั้งของที่พัก <c>SecurityDepositAmount</c>)</summary>
+    decimal? Amount = null,
+    DateTime? PaymentDate = null,
+    Guid? BankAccountId = null,
+    string? PaymentReference = null,
+    string? Note = null);
+
+/// <summary>ปิดเงินประกันความเสียหาย (รอบ 194 · spec S3) — ลำดับทำจริง: ① ตัดชำระยอดค้างของใบเช็คเอาต์ (ใบที่คิด VAT) →
+/// ② ริบเป็นค่าเสียหาย (ไม่มี VAT) → ③ คืนส่วนที่เหลือ (ถ้า <c>RefundRemainder</c>) · ยอด 0 = ไม่ทำขั้นนั้น</summary>
+public record LodgingSecurityDepositSettleRequest(
+    /// <summary>ตัดชำระยอดค้างของใบเช็คเอาต์ (ค่าเสียหาย/ค่าของที่ใช้ไปที่อยู่ในใบนั้นแล้ว — ไม่ลดฐานภาษี)</summary>
+    decimal ApplyToFinalInvoice = 0,
+    /// <summary>ริบเป็นค่าเสียหายแท้ (ไม่ใช่ค่าตอบแทน) — รายได้อื่นไม่มี VAT · ต้องระบุเหตุผล</summary>
+    decimal ForfeitAsCompensation = 0,
+    string? ForfeitReason = null,
+    /// <summary>true = คืนส่วนที่เหลือทันที (ลงบัญชีคืนเงิน — กดเมื่อเงินออกจริง) · false = คงค้างไว้</summary>
+    bool RefundRemainder = true,
     DateTime? PaidAt = null,
     Guid? BankAccountId = null,
     string? Reference = null,

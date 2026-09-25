@@ -87,6 +87,10 @@ public interface ILodgingService
     /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น
     /// (ยกเลิกแค่ตั้ง "ยอดค้างคืน" ไม่แตะเงินสด)</summary>
     Task<LodgingReservationResponse> RecordRefundPaidAsync(Guid companyId, Guid reservationId, LodgingRefundPaidRequest request, string userId);
+    /// <summary>รับเงินประกันความเสียหาย (รอบ 194) — ใบรับเงินมัดจำด้วยประเภทเงินประกันของที่พัก · ไม่นับเป็นค่าห้อง</summary>
+    Task<LodgingReservationResponse> ReceiveSecurityDepositAsync(Guid companyId, Guid reservationId, LodgingSecurityDepositReceiveRequest request, string userId);
+    /// <summary>ปิดเงินประกัน (รอบ 194 · spec S3): ตัดชำระใบเช็คเอาต์ที่คิด VAT → ริบเป็นค่าเสียหาย (ไม่มี VAT) → คืนส่วนที่เหลือ</summary>
+    Task<LodgingReservationResponse> SettleSecurityDepositAsync(Guid companyId, Guid reservationId, LodgingSecurityDepositSettleRequest request, string userId);
     Task<LodgingReservationResponse> RescheduleAsync(Guid companyId, Guid reservationId, LodgingRescheduleRequest request, string userId);
 
     // ── หลังบ้าน: แม่บ้าน / คำขอแขก ──

@@ -126,8 +126,13 @@
             <div class="fld"><label>ผังบัญชี service charge</label><input class="form-input" name="serviceChargeAccountCode"></div>
             <div class="fld"><label>ผังบัญชีรายได้ริบมัดจำ/ค่าปรับยกเลิก</label><input class="form-input" name="cancellationFeeAccountCode" placeholder="ว่าง = รายได้ค่าห้อง"></div>
             <div class="fld"><label>ผังบัญชีพักมัดจำ</label><input class="form-input" name="depositDeferredAccountCode" placeholder="ว่าง = 21712"></div>
-            <div class="fld" style="grid-column:1/-1"><label>วิธีบันทึกเงินมัดจำ (VAT)</label><select class="form-input" name="depositVatTreatment" id="depVatSel" onchange="Page.renderDepositVatInfo()"></select>
-              <div class="hint" id="depVatInfo"></div></div>
+            <div class="fld" style="grid-column:1/-1"><label>ประเภทเงินมัดจำค่าห้อง</label><select class="form-input" name="roomDepositKindId" id="roomKindSel" onchange="Page.renderDepositKindInfo()"></select>
+              <div class="hint" id="roomKindInfo"></div></div>
+            <div class="fld"><label>ประเภทเงินประกันความเสียหาย</label><select class="form-input" name="securityDepositKindId" id="secKindSel" onchange="Page.renderDepositKindInfo()"></select>
+              <div class="hint">เงินที่ต้องคืน — ยังไม่ใช่ค่าบริการ จึงไม่คิด VAT ตอนรับ · ไม่นับเป็นค่าห้อง</div></div>
+            <div class="fld"><label>ยอดเงินประกันต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="securityDepositAmount" data-blank="0">
+              <div class="hint">ค่าเริ่มต้นของปุ่ม “รับเงินประกัน” หน้าการจอง · 0 = ให้พนักงานกรอกเอง</div></div>
+            <div class="fld" style="grid-column:1/-1"><div class="hint" id="secKindInfo"></div></div>
           </div>
         </div>
         <div class="card"><h4>ข้อความ & การแจ้งเตือน & แม่บ้าน</h4>
@@ -353,10 +358,10 @@
 
       fillProp(p) {
         const f = document.getElementById('propForm');
-        this.renderDepositVatSelect(p);
+        this.renderDepositKindSelects(p);
         for (const el of f.elements) {
           if (!el.name) continue;
-          if (el.name === 'depositVatTreatment') continue;   // ตั้งใน renderDepositVatSelect แล้ว
+          if (el.name === 'roomDepositKindId' || el.name === 'securityDepositKindId') continue;   // ตั้งใน renderDepositKindSelects แล้ว
           const v = p[el.name];
           if (el.type === 'checkbox') el.checked = !!v;
           else if (el.name === 'amenities') el.value = (p.amenities || []).join(', ');
@@ -369,30 +374,48 @@
         document.getElementById('policySelect').innerHTML = '<option value="">— ไม่มี —</option>' + (this.policies || []).map(x => `<option value="${x.id}" ${x.id === p.defaultCancellationPolicyId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
         document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
       },
-      // ═══ วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ตัวเลือก/ป้าย/คำอธิบาย/คำเตือน มาจากเซิร์ฟเวอร์ทั้งหมด ═══
-      // (DepositPolicyResolver · F2 ข้อ 5) หน้านี้แค่เลือกว่าจะโชว์ข้อความไหน · ค่าว่าง = ตามค่าตั้งต้นบริษัท
-      renderDepositVatSelect(p) {
-        const sel = document.getElementById('depVatSel'); if (!sel) return;
-        if (p && p.depositVatTreatmentOptions) this._depVatOptions = p.depositVatTreatmentOptions;
-        if (p && p.depositVatTreatmentInherited) this._depVatInherited = p.depositVatTreatmentInherited;
-        const opts = this._depVatOptions || [];
-        const inh = this._depVatInherited;
-        const cur = p?.depositVatTreatment || '';
-        sel.innerHTML = `<option value="">ตามค่าตั้งต้นบริษัท${inh ? ' — ' + esc(inh.label) : ''}</option>`
-          + opts.map(o => `<option value="${esc(o.value)}" ${o.value === cur ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-        if (cur && !opts.some(o => o.value === cur))   // ค่าที่ไม่รู้จัก — ห้ามให้ตัวแรกชนะเงียบ ๆ (F-04 class)
-          sel.insertAdjacentHTML('afterbegin', `<option value="${esc(cur)}" selected>— ค่าเดิม “${esc(cur)}” ไม่มีในระบบ · เลือกใหม่ —</option>`);
-        this.renderDepositVatInfo();
+      // ═══ ประเภทเงินมัดจำของที่พัก (รอบ 194) — ตัวเลือก/ป้าย/ลักษณะ/คำเตือน มาจากเซิร์ฟเวอร์ทั้งหมด ═══
+      // (DepositPolicyResolver.ResolveKind · F2 ข้อ 5) หน้านี้แค่เลือกว่าจะโชว์ข้อความไหน · ค่าว่าง = ตามค่าตั้งต้นบริษัท
+      // ช่องห้องแสดงเฉพาะประเภท forRoom · ช่องเงินประกันเฉพาะ forSecurity (เซิร์ฟเวอร์ตัดสิน ไม่ใช่หน้านี้)
+      renderDepositKindSelects(p) {
+        if (p && p.depositKindOptions) this._kindOptions = p.depositKindOptions;
+        if (p && p.roomDepositKindInherited) this._kindInherited = p.roomDepositKindInherited;
+        this._kindInfo = p?.roomDepositKindInfo || null;
+        this._kindSavedRoom = p?.roomDepositKindId || '';
+        this._depVatExplanation = p?.depositVatExplanation || this._depVatExplanation || '';
+        const opts = this._kindOptions || [];
+        const inh = this._kindInherited;
+        const fill = (sel, cur, allowed, emptyLabel) => {
+          if (!sel) return;
+          const list = opts.filter(o => allowed(o) && (o.isActive || o.id === cur));
+          sel.innerHTML = `<option value="">${esc(emptyLabel)}</option>`
+            + list.map(o => `<option value="${esc(o.id)}" ${o.id === cur ? 'selected' : ''}>${esc(o.name)} — ${esc(o.natureLabel)} · ${esc(o.treatmentLabel)}${o.isActive ? '' : ' (ปิดใช้)'}</option>`).join('');
+          if (cur && !list.some(o => o.id === cur))   // ประเภทที่ไม่อยู่ในลิสต์ — ห้ามให้ตัวว่างชนะเงียบ ๆ (F-04 class)
+            sel.insertAdjacentHTML('afterbegin', `<option value="${esc(cur)}" selected>— ประเภทเดิมไม่มีในระบบ/ใช้ช่องนี้ไม่ได้ · เลือกใหม่ —</option>`);
+        };
+        fill(document.getElementById('roomKindSel'), p?.roomDepositKindId || '', o => o.forRoom,
+          `ตามค่าตั้งต้นบริษัท${inh ? ' — ' + inh.name + ' · ' + inh.treatmentLabel : ''}`);
+        fill(document.getElementById('secKindSel'), p?.securityDepositKindId || '', o => o.forSecurity, 'ไม่เก็บเงินประกัน');
+        this.renderDepositKindInfo();
       },
-      renderDepositVatInfo() {
-        const sel = document.getElementById('depVatSel'); const box = document.getElementById('depVatInfo'); if (!sel || !box) return;
-        const opt = (this._depVatOptions || []).find(o => o.value === sel.value);
-        const shown = opt || null; const inh = this._depVatInherited;
-        // ที่พัก = บริการเสมอ ⇒ ใช้คำเตือนชุด "บริการ" ที่เซิร์ฟเวอร์ส่งมากับตัวเลือก
-        const warn = shown ? shown.serviceWarning : inh?.warning;
-        box.innerHTML = `${shown ? esc(shown.description) + ` <span class="hint">(${esc(shown.legalReference)})</span>` : (inh ? `ใช้ค่าของบริษัท: <b>${esc(inh.label)}</b>` : '')}`
-          + (inh?.explanation ? `<div style="margin-top:4px">${esc(inh.explanation)}</div>` : '')
-          + (warn ? `<div class="warn" style="margin-top:6px;background:#FEF3C7;border:1px solid #F59E0B;padding:6px 8px;border-radius:6px">${esc(warn)}</div>` : '');
+      renderDepositKindInfo() {
+        const box = document.getElementById('roomKindInfo'); const sel = document.getElementById('roomKindSel'); if (!box || !sel) return;
+        // ผลตัดสินจากเซิร์ฟเวอร์ใช้ได้เมื่อค่าบนจอยังเท่าที่บันทึกไว้ · เลือกใหม่ = แสดงลักษณะของตัวเลือก + บอกให้บันทึกเพื่อดูผลจริง
+        const saved = sel.value === (this._kindSavedRoom || '');
+        const view = saved ? (this._kindInfo || this._kindInherited) : (sel.value === '' ? this._kindInherited : null);
+        const opt = (this._kindOptions || []).find(o => o.id === sel.value);
+        let html = view
+          ? `ใช้จริง: <b>${esc(view.name)}</b> (${esc(view.natureLabel)}) · ${esc(view.treatmentLabel)} <span class="hint">— ที่มา: ${esc(view.sourceLabel)}</span>`
+            + (view.policyReason ? `<div class="hint">เหตุผลที่บันทึกไว้: ${esc(view.policyReason)}</div>` : '')
+            + (view.warning ? `<div class="warn" style="margin-top:6px;background:#FEF3C7;border:1px solid #F59E0B;padding:6px 8px;border-radius:6px">${esc(view.warning)}</div>` : '')
+          : (opt ? `เลือก: <b>${esc(opt.name)}</b> (${esc(opt.natureLabel)}) · ${esc(opt.treatmentLabel)} <span class="hint">— บันทึกแล้วระบบแสดงผลตัดสินจริง + คำเตือน</span>` : '');
+        if (this._depVatExplanation) html += `<div style="margin-top:4px">${esc(this._depVatExplanation)}</div>`;
+        box.innerHTML = html;
+        const secBox = document.getElementById('secKindInfo'); const secSel = document.getElementById('secKindSel');
+        if (secBox && secSel) {
+          const so = (this._kindOptions || []).find(o => o.id === secSel.value);
+          secBox.innerHTML = so ? `เงินประกัน: <b>${esc(so.name)}</b> (${esc(so.natureLabel)}) · ${esc(so.treatmentLabel)} — ตอนเช็คเอาต์ คืน / หักเข้าใบเช็คเอาต์ที่คิด VAT / ริบเป็นค่าเสียหาย ได้ที่หน้าการจอง` : '';
+        }
       },
       // ═══ ช่องตัวเลขที่เว้นว่าง: **ตัดคีย์ทิ้ง ห้ามส่ง null** ═══
       // บั๊กจริง (ผู้ใช้รายงาน 2026-09-21 ตอนสร้างประเภทห้อง "Nordic Tent"):
@@ -425,9 +448,9 @@
           else d[el.name] = el.value === '' ? null : el.value;
         }
         let mask = 0; document.querySelectorAll('#weekendDays input:checked').forEach(cb => mask |= +cb.dataset.mask); d.weekendDaysMask = mask;
-        // ช่อง response-only + ธงเดิมที่เป็นสำเนา — ห้ามส่งกลับ (ธงเดิม true จะทำให้เลือก "ตามบริษัท" ไม่ติด)
-        delete d.depositVatTreatmentInfo; delete d.depositVatTreatmentInherited; delete d.depositVatTreatmentOptions;
-        delete d.depositOutputVatDeferred;
+        // ช่อง response-only + ค่าเดิมของที่พัก (รอบ 194: ตั้งผ่านประเภทเงินมัดจำแล้ว — ส่งกลับ = เซิร์ฟเวอร์ถือว่าเป็นหน้ารุ่นเก่า)
+        delete d.roomDepositKindInfo; delete d.roomDepositKindInherited; delete d.depositKindOptions; delete d.depositVatExplanation;
+        delete d.depositVatTreatment; delete d.depositOutputVatDeferred;
         return d;
       },
       async saveProperty(ev) {

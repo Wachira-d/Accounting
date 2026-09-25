@@ -886,6 +886,8 @@ const API = {
       lodgingCancel: (id, d) => API.post(`${base}/lodging/reservations/${id}/cancel`, d),
       lodgingNoShow: (id, d) => API.post(`${base}/lodging/reservations/${id}/no-show`, d),
       lodgingRefundPaid: (id, d) => API.post(`${base}/lodging/reservations/${id}/refund-paid`, d),
+      lodgingReceiveSecurityDeposit: (id, d) => API.post(`${base}/lodging/reservations/${id}/security-deposit`, d),
+      lodgingSettleSecurityDeposit: (id, d) => API.post(`${base}/lodging/reservations/${id}/security-deposit/settle`, d),
       lodgingReschedule: (id, d) => API.post(`${base}/lodging/reservations/${id}/reschedule`, d),
       lodgingTasks: (pid, q = '') => API.get(`${base}/lodging/properties/${pid}/housekeeping${q}`),
       lodgingCreateTask: (d) => API.post(`${base}/lodging/housekeeping`, d),
