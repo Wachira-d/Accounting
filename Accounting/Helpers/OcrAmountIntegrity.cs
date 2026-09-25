@@ -65,6 +65,28 @@ public static class OcrAmountIntegrity
 {
     private const MidpointRounding R = MidpointRounding.AwayFromZero;
 
+    // คำขึ้นต้นของข้อความแต่ละชนิด — ตัวเดียวทั้งฝั่งเขียน (Check) และฝั่งอ่าน (KindOf · คำเตือนตอนอนุมัติ
+    // OcrApprovalGapWarning รวมข้อที่พูดเรื่องเดียวกัน) · ห้ามแก้ข้อความโดยไม่ผ่านค่าคงที่เหล่านี้
+    internal const string TotalMismatchLead = "ยอดรวมจากรายการ ";
+    internal const string VatAllZeroLead = "กระดาษมี VAT ";
+    internal const string VatMismatchLead = "VAT รวมของรายการ ";
+    internal const string VatRateMismatchLead = "อัตรา VAT รายบรรทัดไม่เข้ากับ VAT บนกระดาษ";
+
+    /// <summary>ข้อความ <c>[Σ-GAP]</c> (ไม่รวมแท็ก) มาจากข้อไหนของด่านนี้ · null = ไม่ใช่ข้อความของด่านนี้
+    /// (ข้อความของตัวกระทบยอด/ด่านอื่น · ข้อความรุ่นเก่า — ผู้เรียกต้องถือว่า "ไม่รู้" แล้วแสดงแยก ไม่รวมทิ้ง)</summary>
+    public static OcrAmountIntegrityKind? KindOf(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return null;
+        var m = message.TrimStart();
+        if (m.StartsWith(TotalMismatchLead, StringComparison.Ordinal)) return OcrAmountIntegrityKind.TotalMismatch;
+        if (m.StartsWith(VatAllZeroLead, StringComparison.Ordinal)
+            || m.StartsWith(VatMismatchLead, StringComparison.Ordinal)) return OcrAmountIntegrityKind.VatMismatch;
+        if (m.StartsWith(VatRateMismatchLead, StringComparison.Ordinal)) return OcrAmountIntegrityKind.VatRateMismatch;
+        if (m.StartsWith("บรรทัดที่ ", StringComparison.Ordinal) && m.Contains("ยอดติดลบ", StringComparison.Ordinal))
+            return OcrAmountIntegrityKind.NegativeLine;
+        return null;
+    }
+
     /// <param name="lines">บรรทัดที่จะเขียนจริง</param>
     /// <param name="paperVat">VAT บนกระดาษ (0 = ไม่มี)</param>
     /// <param name="paperTotal">ยอดรวมบนกระดาษ (0 = ไม่รู้)</param>
@@ -90,28 +112,37 @@ public static class OcrAmountIntegrity
                     + "ไม่ใช่บรรทัดติดลบ (ม.86/4(5)) · ลบบรรทัดนี้แล้วใส่เป็นส่วนลดของบรรทัดสินค้า"));
         }
 
+        // บรรทัดที่ "มี VAT" = อัตรา > 0 **และมียอด** — บรรทัดยอด 0 (ค่าส่งฟรี) ที่ติด 7% ไม่ใช่หลักฐานว่ามีบรรทัดเสีย VAT
+        // (รอบ 195 ใบ Scommerce: ค่าจัดส่ง 0.00 ติด 7% ทำให้ข้อ (2) ไม่พูดว่า "ทุกบรรทัดไม่มี VAT" และข้อ (3) ฟ้องว่า
+        // "บรรทัดที่ติด 7% รวม 0.00" ซึ่งไม่ช่วยให้ใครแก้ถูก)
+        var taxable = lines.Where(l => l.VatRate > 0m && l.NetAmount != 0m).ToList();
+        var vatSlack = Math.Max(0.02m, 0.01m * taxable.Count);
+        var vatGap = vat - paperVat;
+
         // (1) ยอดรวม
         var comparable = paperTotal > 0m;
         if (comparable && Math.Abs(total - paperTotal) > OcrLineReconciler.Tolerance)
         {
             var diff = total - paperTotal;
-            var hint = diff > 0m
-                ? "เอกสารมากกว่ากระดาษ — กระดาษอาจมีส่วนลดที่ระบบอ่านไม่ได้ หรืออ่านตัวเลขรายการเกิน"
-                : "เอกสารน้อยกว่ากระดาษ — อาจมีรายการ/ค่าบริการ/ค่าขนส่งที่ระบบอ่านไม่ได้";
+            // ส่วนต่างทั้งก้อนมาจาก VAT (ยอดก่อน VAT ตรงกระดาษ) ⇒ สาเหตุคืออัตรา VAT รายบรรทัด ไม่ใช่รายการที่อ่านไม่ได้
+            // (ข้อความที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง — F2 ข้อ 7)
+            var hint = Math.Abs(vatGap) > vatSlack && Math.Abs(diff - vatGap) <= OcrLineReconciler.Tolerance
+                ? "ยอดก่อน VAT ตรงกระดาษ ส่วนต่างทั้งหมดมาจาก VAT — ตรวจอัตรา VAT รายบรรทัด (ไม่ใช่รายการที่อ่านไม่ได้)"
+                : diff > 0m
+                    ? "เอกสารมากกว่ากระดาษ — กระดาษอาจมีส่วนลดที่ระบบอ่านไม่ได้ หรืออ่านตัวเลขรายการเกิน"
+                    : "เอกสารน้อยกว่ากระดาษ — อาจมีรายการ/ค่าบริการ/ค่าขนส่งที่ระบบอ่านไม่ได้";
             problems.Add(new(OcrAmountIntegrityKind.TotalMismatch,
-                $"ยอดรวมจากรายการ {net:N2} + VAT {vat:N2} = {total:N2} ≠ ยอดรวมบนกระดาษ {paperTotal:N2} "
+                $"{TotalMismatchLead}{net:N2} + VAT {vat:N2} = {total:N2} ≠ ยอดรวมบนกระดาษ {paperTotal:N2} "
                 + $"(ต่าง {diff:+#,##0.00;-#,##0.00}) — {hint}"));
         }
 
         // (2) Σ VAT ของบรรทัด ≠ VAT บนกระดาษ (เช่นทุกบรรทัดถูกเดาว่าไม่มี VAT ทั้งที่กระดาษมี)
-        var taxable = lines.Where(l => l.VatRate > 0m).ToList();
-        var vatSlack = Math.Max(0.02m, 0.01m * taxable.Count);
-        if (Math.Abs(vat - paperVat) > vatSlack)
+        if (Math.Abs(vatGap) > vatSlack)
         {
             problems.Add(new(OcrAmountIntegrityKind.VatMismatch,
                 taxable.Count == 0 && paperVat > 0m
-                    ? $"กระดาษมี VAT {paperVat:N2} แต่ทุกบรรทัดถูกตั้งเป็นไม่มี VAT (ยกเว้น/0%) — ตรวจอัตรา VAT รายบรรทัด"
-                    : $"VAT รวมของรายการ {vat:N2} ≠ VAT บนกระดาษ {paperVat:N2} (ต่าง {vat - paperVat:+#,##0.00;-#,##0.00})"));
+                    ? $"{VatAllZeroLead}{paperVat:N2} แต่ทุกบรรทัดที่มียอดถูกตั้งเป็นไม่มี VAT (ยกเว้น/0%) — ตรวจอัตรา VAT รายบรรทัด"
+                    : $"{VatMismatchLead}{vat:N2} ≠ VAT บนกระดาษ {paperVat:N2} (ต่าง {vatGap:+#,##0.00;-#,##0.00})"));
         }
 
         // (3) อัตรา × ยอด ของแต่ละกลุ่มอัตรา ต้องให้ VAT เท่ากระดาษ — ด่านเดียวที่จับ
@@ -128,7 +159,7 @@ public static class OcrAmountIntegrity
             {
                 var taxableBase = taxable.Sum(l => l.NetAmount);
                 var rateText = string.Join("/", taxable.Select(l => l.VatRate).Distinct().Select(r => $"{r:0.##}%"));
-                var msg = $"อัตรา VAT รายบรรทัดไม่เข้ากับ VAT บนกระดาษ: บรรทัดที่ติด {rateText} รวม {taxableBase:N2} "
+                var msg = $"{VatRateMismatchLead}: บรรทัดที่ติด {rateText} รวม {taxableBase:N2} "
                         + $"→ VAT ควรเป็น {expected:N2} แต่กระดาษพิมพ์ {paperVat:N2} (ต่าง {gap:+#,##0.00;-#,##0.00})";
                 if (paperVat > 0m && gap > 0m)
                 {

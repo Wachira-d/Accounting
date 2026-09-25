@@ -407,7 +407,8 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
       (`OcrDateReader.CrossCheck`) ทุก engine ก่อนด่านคณิต · ชื่อฝั่งเราที่เป็นรหัส/ว่าง →
       ชื่อบริษัทจากทะเบียน (`OcrPartyResolver.FillOurName`) · รอบ 192 **ยึดยอดรวมทั้งสิ้นก่อน**
       (`OcrTotalAnchor` — นับชั้นหลักฐานอิสระ ไม่เชื่อป้าย "TOTAL" ตามตัว) แล้ว**แยกองค์ประกอบให้รวมได้ยอดนั้น**
-      (`OcrTotalDecomposer` · ตารางรหัส ภ.พ. `OcrLineVatMarks.ReadGroups`)
+      (`OcrTotalDecomposer` · ตารางรหัส ภ.พ. `OcrLineVatMarks.ReadGroups`) · รอบ 195 **อัตรา VAT รายบรรทัด** (ตอนสร้างบรรทัด):
+      engine/ผู้ใช้ → สัญลักษณ์บนกระดาษ `OcrLineVatMarks` → **ตัวเลขหัวใบพิสูจน์ทั้งใบ** `OcrLineVatPlanner` → เดาจากชื่อ `ThaiVatTypeRule`
    3. **แพตเทิร์นที่เรียนไว้** — `DocumentZoneAnalyzer.ApplyLearnedPatternsTo`
       อ่าน `OcrLearnedPatterns` ของผู้ขายรายนั้น (เติมเฉพาะช่องที่ยังว่าง)
    4. **วิเคราะห์โซน** — `DocumentZoneAnalyzer.Analyze` ทำงานเมื่อ pipeline

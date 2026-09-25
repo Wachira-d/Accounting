@@ -226,4 +226,35 @@ public class OcrDocumentRoleInferrerTests
         Assert.True(DocumentSide.MatchesRole(DocumentType.CreditNote, "Buyer"));
         Assert.True(DocumentSide.MatchesRole(DocumentType.TaxInvoice, null));
     }
+
+    // ── รอบ 195 (ใบ Scommerce): หมายเหตุ "ยกเลิกใบกำกับภาษีอย่างย่อ … ออกใบใหม่แทน" ไม่ใช่หลักฐานว่าเป็นใบอย่างย่อ ──
+    private const string ScommerceCancelNote =
+        "หมายเหตุ :เป็นการยกเลิกใบกำกับภาษีอย่างย่อเลขที่ D20260918000097 วันที่ 18/09/2026 และออกใบกำกับภาษีอิเล็กทรอนิกส์ฉบับใหม่แทน";
+
+    [Fact]
+    public void หมายเหตุยกเลิกใบอย่างย่อแล้วออกใบใหม่แทน_นับเป็นคำปฏิเสธ()
+        => Assert.False(OcrDocumentRoleInferrer.ContainsAnyNotNegated(ScommerceCancelNote.ToLowerInvariant(), "ใบกำกับภาษีอย่างย่อ"));
+
+    [Fact]
+    public void ใบScommerce_ไม่มีเลขผู้ซื้อ_หมายเหตุยกเลิกใบอย่างย่อ_ยังเคลมภาษีซื้อได้()
+    {
+        // ไม่ส่งเลขผู้ซื้อ ⇒ ทางรอดเดิม (mod-11 ของเลขผู้ซื้อ) ปิด — เหลือแค่ตัวตรวจคำปฏิเสธ
+        var r = OcrDocumentRoleInferrer.Infer(OcrPaperSamples.ScommerceLazada, "0105560113122", buyerTaxId: null,
+            vendorName: "Scommerce (Thailand) Co., Ltd.", buyerName: "หจก.แอม แฮปปี้เนส",
+            companyTaxId: "0203562005871", companyName: "หจก.แอม แฮปปี้เนส", roleOverride: "Buyer");
+        Assert.Equal("Buyer", r.OurRole);
+        Assert.True(r.InputVatClaimable);
+        Assert.Null(r.InputVatClaimWarning);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบอย่างย่อจริงยังถูกจับ()
+    {
+        Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated("ใบกำกับภาษีอย่างย่อ/ใบเสร็จรับเงิน\ntax# 0105556012341", "ใบกำกับภาษีอย่างย่อ"));
+        Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated("abbreviated tax invoice\npos# 0012", "abbreviated tax invoice"));
+        var r = OcrDocumentRoleInferrer.Infer("ใบกำกับภาษีอย่างย่อ/ใบเสร็จรับเงิน\nร้าน ก\nรวม 107.00", Vendor, buyerTaxId: null,
+            vendorName: VendorName, buyerName: null, companyTaxId: Us, companyName: UsName, roleOverride: "Buyer");
+        Assert.False(r.InputVatClaimable);
+        Assert.Contains("อย่างย่อ", r.InputVatClaimWarning);
+    }
 }

@@ -70,4 +70,37 @@ public class OcrApprovalGapWarningTests
         Assert.False(OcrApprovalGapWarning.IsGapWarning("ใบกำกับภาษีซื้อเกิน 6 เดือน (§82/3) — ต้องระบุเหตุผล"));
         Assert.False(OcrApprovalGapWarning.IsGapWarning(null));
     }
+
+    // ── รอบ 195 (ใบ Scommerce): ท่อน "ตอนนี้…" ข้อเดียว · คำแนะนำเป็นตัวเลขรวมข้อที่พูดเรื่องเดียวกัน ─────────────
+
+    private static string ScommerceGapNotes()
+    {
+        var r = OcrAmountIntegrity.Check(
+            new[] { new OcrPlannedLine(4695.33m, ThaiVatTypeRule.ExemptRate, 0m), new OcrPlannedLine(0m, 7m, 0m) }, 328.67m, 5024.00m);
+        return "[Tier] Azure DI สำเร็จ\n" + string.Join("\n", r.Problems.Select(p => "[Σ-GAP] " + p.Message))
+            + "\n[Σ-GAP] บรรทัดที่ 3 ยอดติดลบ (-5.00) — ส่วนลด/คืนของต้องลงช่องส่วนลด";
+    }
+
+    [Fact]
+    public void ใบScommerce_มีคำแนะนำ_รวมข้อเรื่องVATเป็นข้อเดียว_ข้อคนละเรื่องยังแยก()
+    {
+        var w = OcrApprovalGapWarning.Build(ScommerceGapNotes(), 5024.00m, 4695.33m,
+            "ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)");
+        Assert.Equal(2, w.Count);                                                      // VAT (รวม) + บรรทัดติดลบ
+        Assert.Contains("ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)", w[0]);
+        Assert.Contains("รวม 2 ข้อ", w[0]);
+        Assert.Contains("ยอดติดลบ", w[1]);
+        Assert.All(w, x => Assert.True(OcrApprovalGapWarning.IsGapWarning(x)));        // ยังต้องกดรับทราบ (ไม่ถอดด่าน)
+        Assert.Single(w, x => x.Contains("ตอนนี้รายการในเอกสารรวม"));                  // ท่อน "ตอนนี้…" ข้อเดียว
+    }
+
+    [Fact]
+    public void ไม่มีคำแนะนำ_ทุกข้อแยกเหมือนเดิม_แต่ท่อนตอนนี้อยู่ข้อแรกข้อเดียว()
+    {
+        var w = OcrApprovalGapWarning.Build(ScommerceGapNotes(), 5024.00m, 4695.33m);
+        Assert.Equal(3, w.Count);
+        Assert.Contains("ตอนนี้รายการในเอกสารรวม", w[0]);
+        Assert.DoesNotContain("ตอนนี้รายการในเอกสารรวม", w[1]);
+        Assert.DoesNotContain("ตอนนี้รายการในเอกสารรวม", w[2]);
+    }
 }

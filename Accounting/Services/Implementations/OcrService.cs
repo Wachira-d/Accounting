@@ -6756,6 +6756,26 @@ public class OcrService : IOcrService
             // ⇒ รายงานภาษีซื้อ §87 ที่แยกคอลัมน์ผิดทุกใบ **โดยยอดรวมยังตรง**
             // จึงเงียบสนิท · กติกาเดียวกับ endpoint /ai/vat/infer-type ที่หน้า
             // กรอกมือเรียกอยู่แล้ว — ย้ายมาไว้ที่ Helpers/ThaiVatTypeRule ตัวเดียว
+            //
+            // ★ รอบ 195 (ใบ Scommerce — ถดถอยจาก 5e3a323b): ก่อนเดาจากชื่อ ให้ "ตัวเลขหัวใบ" พิสูจน์อัตราทั้งใบก่อน —
+            // VAT หัวใบ = 7% ของฐานทั้งใบ + ยอดยกเว้นบนกระดาษเป็น 0/ไม่มี ⇒ ทุกบรรทัด 7% (เติมเฉพาะบรรทัดที่ยังว่าง ·
+            // ค่าจาก engine/ผู้ใช้/สัญลักษณ์บนกระดาษข้างบนชนะเสมอ) · พิสูจน์ไม่ได้ = Unknown ⇒ ตกไปตัวเดาเดิมข้างล่าง
+            // ตัวตัดสินอยู่ที่ Helpers/OcrLineVatPlanner ตัวเดียว (pure + เทสต์ด้วยกระดาษจริง) · ทุกทางเข้า (สร้าง ·
+            // line-preview · ดึงรายการซ้ำ) มาทางเมธอดนี้ ⇒ ได้คำตอบเดียวกัน
+            var vatPlan = Accounting.Helpers.OcrLineVatPlanner.PlanWholeInvoice(
+                items.Select(x => x.Amount ?? 0m).ToList(),
+                items.Select(x => x.VatRate).ToList(),
+                headerVat, netSubForRecon, hdrTotal, document.PricesIncludeVat,
+                Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
+                    paperVatSplit,
+                    Accounting.Helpers.OcrLineVatMarks.ReadGroups(Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent))));
+            if (vatPlan.Decided)
+            {
+                for (var vpi = 0; vpi < items.Count; vpi++)
+                    if (!items[vpi].VatRate.HasValue && vatPlan.Rates[vpi] is decimal planRate)
+                        items[vpi].VatRate = planRate;
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + vatPlan.Reason;
+            }
             var standardVatRate = headerVat > 0m ? 7m : 0m;
             foreach (var it in items)
             {
@@ -6883,7 +6903,8 @@ public class OcrService : IOcrService
                     Unit = UnitInferrer.Resolve(item.Unit, item.Description),
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
-                    DiscountPercent = docDiscountPercent,
+                    // · บรรทัดยอดก่อนลด 0 (ค่าส่งฟรี) ไม่ได้ % — ไม่มีส่วนลดบนกระดาษ (รอบ 195 · OcrLineReconciler.LineDiscountPercent)
+                    DiscountPercent = Accounting.Helpers.OcrLineReconciler.LineDiscountPercent(docDiscountPercent, lineGross[i]),
                     // รอบ 192: บรรทัดที่มีราคาต่อหน่วยใช้ยอดก่อนลดตัวเดียวกับที่ใช้กระจาย (lineGross — ยอดที่พิมพ์ชนะ
                     // เศษปัดของราคาต่อหน่วย) ⇒ Σ ส่วนลดบรรทัด = ส่วนลดบนกระดาษพอดี · ไม่มีราคาต่อหน่วย = สูตรเดิม
                     DiscountAmount = docDiscountPercent > 0m

@@ -137,4 +137,16 @@ public class OcrLineReconcilerTests
         Assert.False(r.PricesIncludeVat);
         Assert.Equal(1325.25m, r.TargetLineSum);
     }
+
+    // ── รอบ 195 (ใบ Scommerce): บรรทัดยอด 0 ไม่ได้ % ส่วนลดที่ไม่มีบนกระดาษ ──────────────────────────
+    [Fact]
+    public void ส่วนลดท้ายบิล_บรรทัดค่าส่ง0บาทไม่ได้เปอร์เซ็นต์_บรรทัดที่มียอดได้เท่าเดิม()
+    {
+        var r = OcrLineReconciler.Classify(4912.15m, 4695.33m, 328.67m, 5024.00m, headerDiscount: 216.82m);
+        Assert.Equal(OcrLineReconcileCase.DiscountOnSubTotal, r.Case);
+        Assert.Equal(4.41m, r.DiscountPercent);
+        Assert.Equal(0m, OcrLineReconciler.LineDiscountPercent(r.DiscountPercent, 0m));       // ค่าจัดส่ง 0.00
+        Assert.Equal(4.41m, OcrLineReconciler.LineDiscountPercent(r.DiscountPercent, 4912.15m)); // ทิศตรงข้าม: สินค้าได้เท่าเดิม
+        Assert.Equal(0m, OcrLineReconciler.LineDiscountPercent(0m, 4912.15m));                  // ไม่มีส่วนลด = 0 ทุกบรรทัด
+    }
 }

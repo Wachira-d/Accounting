@@ -678,8 +678,12 @@ public static class OcrDocumentRoleInferrer
     /// <summary>เหมือน ContainsAny แต่ข้าม occurrence ที่ถูก "ปฏิเสธ" — มีคำ
     /// ไม่ใช่/ไม่เป็น/มิใช่/ไม่ออก/not/no นำหน้าภายใน ~14 ตัวอักษร. กันเคส
     /// vision model บรรยายว่า "เอกสารนี้ไม่ใช่ใบกำกับภาษีอย่างย่อ" แล้ว
-    /// substring ดิบตีความกลับด้าน (ใบเต็มรูปโดนปัดตกจากการเคลมภาษีซื้อ).</summary>
-    private static bool ContainsAnyNotNegated(string text, params string[] needles)
+    /// substring ดิบตีความกลับด้าน (ใบเต็มรูปโดนปัดตกจากการเคลมภาษีซื้อ).
+    ///
+    /// <para>รอบ 195 (ใบ Scommerce TXE05202609T004679): หมายเหตุ "เป็นการ<b>ยกเลิก</b>ใบกำกับภาษีอย่างย่อเลขที่ …
+    /// และออกใบกำกับภาษีอิเล็กทรอนิกส์ฉบับใหม่แทน" คือประโยคที่บอกว่าใบนี้<b>ไม่ใช่</b>ใบอย่างย่อ (มาแทนใบอย่างย่อ) —
+    /// เดิมนับเป็นหลักฐานว่าเป็นใบอย่างย่อ รอดได้เพราะเลขผู้ซื้อผ่าน mod-11 เท่านั้น ⇒ "ยกเลิก"/"cancel" นำหน้า = ปฏิเสธ</para></summary>
+    internal static bool ContainsAnyNotNegated(string text, params string[] needles)
     {
         foreach (var raw in needles)
         {
@@ -693,6 +697,7 @@ public static class OcrDocumentRoleInferrer
                 var negated = prefix.Contains("ไม่ใช่") || prefix.Contains("ไม่เป็น")
                     || prefix.Contains("มิใช่") || prefix.Contains("ไม่ออก")
                     || prefix.Contains("ห้าม")
+                    || prefix.Contains("ยกเลิก") || prefix.Contains("cancel")
                     || prefix.Contains("not ") || prefix.Contains("no ");
                 // ปฏิเสธตามหลัง: "ออกใบกำกับภาษีอย่างย่อไม่ได้/ไม่ให้..."
                 if (!negated)

@@ -18500,14 +18500,26 @@ public partial class DocumentService : IDocumentService
         var gapScan = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount })
+            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount, r.ExtractedVatAmount, r.RawTextContent })
             .FirstOrDefaultAsync();
         if (gapScan != null)
         {
             var liveLines = doc.Lines.Where(l => !l.IsDeleted).ToList();
+            // รอบ 195 (P4): บรรทัด "ตอนนี้" ไม่เป็น 7% ทั้งหมด แต่ VAT บนกระดาษ = 7% ของฐานทั้งใบพอดี ⇒ บอกทางแก้เป็นตัวเลข
+            // แทน "ยังไม่มีคำแนะนำ" (ตัวตัดสิน Helpers/OcrLineVatPlanner ตัวเดียวกับตอนสร้างบรรทัด) · ยอดยกเว้นบนกระดาษ > 0 ⇒ ไม่แนะนำ
+            string? vatRateAdvice = null;
+            if (!string.IsNullOrWhiteSpace(gapScan.ProcessingNotes) && (gapScan.ExtractedVatAmount ?? 0m) > 0m)
+                vatRateAdvice = Accounting.Helpers.OcrLineVatPlanner.RateAdvice(
+                    liveLines.Select(l => (Net: l.Amount, VatRate: l.VatRate)).ToList(),
+                    liveLines.Sum(l => l.Amount) + doc.RoundingAdjustment,
+                    gapScan.ExtractedVatAmount ?? 0m,
+                    Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
+                        Accounting.Helpers.OcrLineVatMarks.Read(gapScan.RawTextContent),
+                        Accounting.Helpers.OcrLineVatMarks.ReadGroups(
+                            Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(gapScan.RawTextContent))));
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
-                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment));
+                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment, vatRateAdvice));
         }
 
         return warnings;

@@ -61,6 +61,14 @@ public static class OcrLineReconciler
     /// <summary>ค่าเผื่อปัดเศษ (บาท) — OCR อ่านสตางค์เพี้ยนได้ แต่ไม่ควรเกิน 1 บาท</summary>
     public const decimal Tolerance = 1m;
 
+    /// <summary>ส่วนลด % ที่ใส่<b>บรรทัดหนึ่ง</b>เมื่อกระจายส่วนลดท้ายบิล (เคส C/E) — บรรทัดยอดก่อนลด 0 (ค่าส่งฟรี ·
+    /// ของแถม) ไม่ได้ส่วนลดใด ๆ บนกระดาษ ⇒ 0% (รอบ 195 ใบ Scommerce: ค่าจัดส่ง 0.00 ติด "ส่วนลด 4.41%" ที่ไม่มีบนกระดาษ)
+    /// · บรรทัดที่มียอดได้ % เดิมทุกบรรทัด (ยอดหลังลดมาจากตัวกระจายตามสัดส่วน ไม่ใช่จาก % นี้)</summary>
+    /// <param name="docDiscountPercent"><see cref="OcrLineReconcileResult.DiscountPercent"/></param>
+    /// <param name="lineGross">ยอดก่อนลดของบรรทัดนั้น</param>
+    public static decimal LineDiscountPercent(decimal docDiscountPercent, decimal lineGross)
+        => lineGross == 0m ? 0m : docDiscountPercent;
+
     /// <param name="grossSum">Σ (qty × unitPrice) หรือ amount ของบรรทัดที่ OCR อ่านได้ (ก่อนส่วนลด/VAT)</param>
     /// <param name="headerSubTotal">ยอดก่อน VAT บนหัวใบ (0 = ไม่มี/อ่านไม่ได้)</param>
     /// <param name="headerVat">VAT บนหัวใบ (0 = ไม่มี)</param>

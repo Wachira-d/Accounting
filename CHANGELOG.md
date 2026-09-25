@@ -3325,3 +3325,14 @@ _Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม R แ�
 - **P4** `documents.html` hydrate ประเภทรอรายการ (promise เดียว + ลำดับ) · **P6** schema รอบ 194 ย้ายเข้า `GetAlterStatements` + ชุดหลัง log แทน `catch {}`
 - เทสต์ `DepositKindNatureGuardTests` · checker `required_call_site_check` +6 กติกา · ค้าง: P5 (seed ตามประเภทธุรกิจตอนเปลี่ยนภายหลัง) · C2/C5/P1–P3 (ทีม M)
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I แก้ใบ Scommerce TXE05202609T004679 ตาม `erp-review/2026-09-25/ocr-scommerce/report-X.md` P1/P2/P4 + report-Y:
+- **P1** `Helpers/OcrLineVatPlanner.PlanWholeInvoice` — ชั้น "ตัวเลขหัวใบพิสูจน์อัตราทั้งใบ" ใน `BuildScanLinesAsync` **ก่อน** `ThaiVatTypeRule.Suggest` (เติมเฉพาะบรรทัดว่าง ·
+  VAT หัวใบ = 7% ฐาน / 7/107 ยอดรวม · Σ บรรทัด = ฐาน · ยอดยกเว้นบนกระดาษ 0/ไม่มี · ชั้นบนขัด = Unknown) ⇒ ใบ Scommerce [7,7] · VAT 328.67 · 4,695.34 · ผลต่างปัด −0.01 · 5,024.00 · ไม่มี [Σ-GAP]
+- **P2** `ThaiVatTypeRule.NotExemptDespiteKeyword` + นมผง/milk powder/formula/นมถั่วเหลือง/นม UHT/นมยูเอชที (คำ "นม" ยังอยู่ — ขอบเขตนมสด §81 รอเจ้าของ)
+- **P4** `OcrLineVatPlanner.RateAdvice` → `OcrApprovalGapWarning.Build(..., rateAdvice)` รวมข้อยอดรวม/VAT/อัตราเป็นข้อเดียวพร้อมทางแก้เป็นตัวเลข · ท่อน "ตอนนี้…" ข้อแรกข้อเดียว ·
+  `OcrAmountIntegrity`: บรรทัดยอด 0 ไม่นับเป็นบรรทัดมี VAT · ส่วนต่างยอดรวมที่มาจาก VAT ทั้งก้อนบอกสาเหตุ "อัตรา VAT" · `KindOf` (ค่าคงที่คำขึ้นต้นตัวเดียว)
+- report-Y: บรรทัดยอดก่อนลด 0 ไม่ได้ % ส่วนลด (`OcrLineReconciler.LineDiscountPercent`) · "ยกเลิก…ใบกำกับภาษีอย่างย่อ…แทน" = คำปฏิเสธ (`OcrDocumentRoleInferrer.ContainsAnyNotNegated`)
+- เทสต์ `OcrLineVatPlannerTests` (สองครึ่ง) + เพิ่มใน ThaiVatExemptKeyword/OcrAmountIntegrity/OcrApprovalGapWarning/OcrDocumentRoleInferrer/OcrLineReconciler/OcrReplayGolden (ช่อง `LineVatPlan`) ·
+  checker `required_call_site_check` +2 กติกา · DOCUMENT_FLOW §1 OCR · lessons/ocr-pipeline +2 · CLAUDE.md กฎเหล็ก #3 ข้อ 2
+— commit <pending>)_
