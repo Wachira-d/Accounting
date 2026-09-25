@@ -618,6 +618,8 @@ foreach (var genericFeatureKey in new[]
     Accounting.Models.Enums.AiFeatureKey.PaymentVoucherAccountingSuggestion,
     Accounting.Models.Enums.AiFeatureKey.DocumentConversionSuggestion,
     Accounting.Models.Enums.AiFeatureKey.OcrProjectMatch,
+    // รอบ 198 — ประเภทบรรทัด settlement (คำตอบเดียว = ชื่อ SettlementLineType) · ด่าน SettlementLineTypeRules.ParseClassifierAnswer
+    Accounting.Models.Enums.AiFeatureKey.SettlementLineClassify,
 })
 {
     var fk = genericFeatureKey;   // per-iteration capture for the factory closure

@@ -166,6 +166,16 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 **อัตรา VAT รายบรรทัดของ integration** (สัญญา — `INTEGRATION_RESYNC.md` §11): `null` = ตามบริษัท · `7` · **`0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 · ห้ามส่ง 0 แทนยกเว้น)** ·
 **`-1` = ยกเว้น §81 (ไม่ใช่ใบกำกับ)** · อัตรา ≤ 0 ⇒ VAT 0 (`DocumentLineVatConvention.SplitLine`) · ใบ 0% เดิมที่ธงบอกไม่ใช่ใบกำกับ → รายงาน `zero-rated-tax-invoices`
 
+### 3.1d ช่องทางรับเงินผ่าน wallet (Settlement) 🔨 รอบ 198 — ชั้น Company → SettlementChannel → SettlementBatch → SettlementLine
+
+| Entity / ผัง | ไฟล์ | สถานะ |
+| --- | --- | --- |
+| `SettlementChannel` (ต่อบริษัท · 1 แถว/แพลตฟอร์ม/บัญชีร้าน) | `Models/Entities/Settlement.cs` | ✅ ตาราง+migration · ผังพัก `ClearingAccountId` · reserve/dispute · `FeeAccountMapJson` (คีย์ = `SettlementAccountRoles.Mappable` · อ่านด้วย `SettlementLineTypeRules.ParseFeeAccountMap`) · โหมด VAT/WHT/รายได้ ต่อช่องทาง · 🔨 หน้าตั้งค่า (ทีม D) |
+| `SettlementBatch` / `SettlementLine` | `Models/Entities/Settlement.cs` | ✅ ตาราง · unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง (WHERE IsDeleted = false — ยกเลิกแล้วนำเข้าใหม่ต้องลบแถวเดิม) · 🔨 นำเข้า (ทีม B) · ลงบัญชี (ทีม C) |
+| `PaymentIntent.SettlementBatchId` | `Models/Entities/Payments.cs` | ✅ คอลัมน์ · 🔨 ผู้เขียน (เฟส 2) |
+| ผังพักย่อยต่อช่องทาง **11341–11349** "ลูกหนี้แพลตฟอร์ม {ชื่อ}" | `Helpers/SettlementChannelAccounts.cs` | ✅ helper (DECISIONS ข้อ 4) · ไม่ seed · สร้างตอนผูกช่องทาง · gateway ในระบบใช้ 11340 ของ `PaymentProviderConfig` · ครบ 9 ⇒ ล้มดัง |
+| ผังมาตรฐานใหม่ 11350 · 53170 · 57140 | `Services/ChartOfAccountTemplates.cs` · `Helpers/SettlementChartSeed.cs` | ✅ บริษัทใหม่ได้จาก seed · บริษัทเดิมได้จาก migration (มีกลุ่มแม่ 113/531/571 เท่านั้น · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) |
+
 ### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
 
 - `LodgingProperty` (`Models/Entities/Lodging.cs`) = "ที่พัก 1 แห่ง" ถือการตั้งค่าทั้งหมด (เวลาเข้า-ออก · กติกาจอง ·
@@ -788,6 +798,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-09-25 (rev 30 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
 
 _Last verified against codebase: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
 _สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_

@@ -212,6 +212,10 @@ public class AccountingDbContext : DbContext
     public DbSet<PaymentProviderConfig> PaymentProviderConfigs => Set<PaymentProviderConfig>();
     public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();
     public DbSet<PaymentIntentEvent> PaymentIntentEvents => Set<PaymentIntentEvent>();
+    // รอบ 198 — Settlement (wallet → ธนาคาร): ช่องทาง · รอบโอน · บรรทัด (Models/Entities/Settlement.cs)
+    public DbSet<SettlementChannel> SettlementChannels => Set<SettlementChannel>();
+    public DbSet<SettlementBatch> SettlementBatches => Set<SettlementBatch>();
+    public DbSet<SettlementLine> SettlementLines => Set<SettlementLine>();
     public DbSet<WarehouseStock> WarehouseStocks => Set<WarehouseStock>();
     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
     public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();
@@ -3285,6 +3289,49 @@ public class AccountingDbContext : DbContext
             // รอบ 194 ทีม C — ประเภทเริ่มต้นมีได้ตัวเดียวต่อบริษัท (DepositKindService.SetDefaultAsync ล้างตัวเดิมก่อนตั้งตัวใหม่ในธุรกรรมเดียว)
             e.HasIndex(k => new { k.CompanyId, k.IsDefault }).IsUnique().HasFilter("\"IsDefault\" = true AND \"IsDeleted\" = false").HasDatabaseName("UX_DepositKinds_Company_Default");
             e.HasQueryFilter(k => !k.IsDeleted);
+        });
+
+        // ===== Settlement (รอบ 198) — index ต้องตรงกับ DatabaseMigrationHelper.SettlementSchemaStatements
+        //      (ฐานใหม่ได้จาก EnsureCreated · ฐานเดิมได้จาก CREATE TABLE/INDEX IF NOT EXISTS) · tenant กรองที่ผู้เรียกเสมอ =====
+        modelBuilder.Entity<SettlementChannel>(e =>
+        {
+            e.Property(c => c.DisplayName).HasMaxLength(200);
+            e.Property(c => c.AdapterCode).HasMaxLength(64);
+            e.Property(c => c.Currency).HasMaxLength(3);
+            e.HasIndex(c => new { c.CompanyId, c.IsActive }).HasDatabaseName("IX_SettlementChannels_Company_Active");
+            e.HasQueryFilter(c => !c.IsDeleted);
+        });
+        modelBuilder.Entity<SettlementBatch>(e =>
+        {
+            e.Property(b => b.PayoutRef).HasMaxLength(200);
+            e.Property(b => b.Currency).HasMaxLength(3);
+            e.Property(b => b.FxRate).HasPrecision(18, 6);
+            e.Property(b => b.OpeningWalletBalance).HasPrecision(18, 2);
+            e.Property(b => b.ClosingWalletBalance).HasPrecision(18, 2);
+            e.Property(b => b.NetPayout).HasPrecision(18, 2);
+            e.Property(b => b.PostedBy).HasMaxLength(200);
+            e.HasOne(b => b.Channel).WithMany().HasForeignKey(b => b.ChannelId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(b => new { b.CompanyId, b.ChannelId, b.PayoutRef }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_SettlementBatches_Channel_PayoutRef");
+            e.HasIndex(b => new { b.CompanyId, b.Status, b.PayoutDate }).HasDatabaseName("IX_SettlementBatches_Company_Status_Date");
+            e.HasQueryFilter(b => !b.IsDeleted);
+        });
+        modelBuilder.Entity<SettlementLine>(e =>
+        {
+            e.Property(l => l.Description).HasMaxLength(500);
+            e.Property(l => l.RawTypeLabel).HasMaxLength(200);
+            e.Property(l => l.ExternalOrderId).HasMaxLength(200);
+            e.Property(l => l.ExternalTxnId).HasMaxLength(200);
+            e.Property(l => l.Amount).HasPrecision(18, 2);
+            e.Property(l => l.VatAmount).HasPrecision(18, 2);
+            e.Property(l => l.WhtAmount).HasPrecision(18, 2);
+            e.Property(l => l.AdjustmentReason).HasMaxLength(500);
+            e.HasOne(l => l.Batch).WithMany(b => b.Lines).HasForeignKey(l => l.BatchId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(l => new { l.BatchId, l.Seq }).HasDatabaseName("IX_SettlementLines_Batch_Seq");
+            e.HasIndex(l => new { l.CompanyId, l.ChannelId, l.ExternalTxnId }).IsUnique()
+                .HasFilter("\"ExternalTxnId\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_SettlementLines_Channel_ExternalTxnId");
+            e.HasIndex(l => new { l.CompanyId, l.ExternalOrderId }).HasDatabaseName("IX_SettlementLines_Company_Order");
+            e.HasQueryFilter(l => !l.IsDeleted);
         });
 
         // ===== Lodging (ธุรกิจที่พัก) =====

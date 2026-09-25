@@ -3382,3 +3382,17 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แ�
 - เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
   checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
 — commit c69a0b62)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet → ธนาคาร)** ตาม `erp-review/2026-09-25/settlement/`
+(DECISIONS 4 ข้อ · report-S1 JE · report-S2 §3/§4):
+- enum `Models/Enums/SettlementEnums.cs` (persist ตัวเลข · API ชื่อ) · entity `Models/Entities/Settlement.cs` (`SettlementChannel/Batch/Line`) · `PaymentIntent.SettlementBatchId` ·
+  DbSet + query filter + index (unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง) · migration บล็อกเดียว `DatabaseMigrationHelper.SettlementSchemaStatements` ในเส้นหลัก
+- ผังมาตรฐาน 11350/53170/57140 (+ migration บริษัทเดิม `Helpers/SettlementChartSeed` · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) · ผังพักย่อย 11341–11349 สร้างตอนผูกช่องทาง
+  (`Helpers/SettlementChannelAccounts.EnsureClearingAccountAsync` · advisory lock ต่อบริษัท · ครบ 9 ล้มดัง)
+- `Helpers/SettlementLineTypeRules` (ตารางเดียว 19 ประเภท + `ParseClassifierAnswer` + `ParseFeeAccountMap`) · `Helpers/SettlementFeeTax` (ฐาน WHT ก่อน VAT · 3/97 ·
+  ไม่จด VAT ไม่มีขาภาษีซื้อ) · `Helpers/SettlementBatchMath.Plan` (สมการ batch ±0.01 · ปัญหาพร้อมทางไปต่อ · รับชำระ/ใบขายสรุปรายวัน/คืนเงิน/ใบค่าธรรมเนียมต่อกลุ่มภาษี/JE รอบโอน)
+- `AiFeatureKey.SettlementLineClassify = 57` + `GenericFeedbackDistillationModel` · checker `tools/settlement_line_type_rules_check.py` (+ self-test)
+- เทสต์ `SettlementBatchMathTests` · `SettlementRulesAndSchemaTests` (golden gateway 1,070/41.79/1,028.21 · marketplace 963/67.41+4.72 · reserve · ยอดติดลบ · คืนเงินหลังโอน ·
+  chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
+- ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
+— commit <pending>)_

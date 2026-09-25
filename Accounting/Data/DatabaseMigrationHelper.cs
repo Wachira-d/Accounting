@@ -173,11 +173,43 @@ public static class DatabaseMigrationHelper
              + "END LOOP; END $dkdef$;";
     }
 
-    /// <summary>คำสั่งเส้นหลัก (<see cref="ApplyMissingColumns"/> — log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") · schema รอบ 194 ต่อท้าย (P6)</summary>
+    /// <summary>คำสั่งเส้นหลัก (<see cref="ApplyMissingColumns"/> — log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") · schema รอบ 194 ต่อท้าย (P6) ·
+    /// Settlement รอบ 198 ต่อท้าย (บล็อกเดียว <see cref="SettlementSchemaStatements"/>)</summary>
     internal static List<string> GetAlterStatements()
     {
         var list = CoreAlterStatements();
         list.AddRange(DepositKindSchemaStatements());
+        list.AddRange(SettlementSchemaStatements());
+        return list;
+    }
+
+    /// <summary>รอบ 198 เฟส 1 ทีม A — Settlement (wallet → ธนาคาร) <b>บล็อกเดียว · รันทุกบูตได้</b> (อยู่เส้นหลักที่ log ความล้มเหลว
+    /// ไม่ใช่ชุด catch{}) · ลำดับ: ตาราง → index → คอลัมน์ → ผัง
+    /// <para>① ตาราง <c>SettlementChannels</c>/<c>SettlementBatches</c>/<c>SettlementLines</c> + index (ชื่อ/เงื่อนไขต้องตรงกับ
+    /// <c>AccountingDbContext</c> — ฐานใหม่ได้จาก EnsureCreated) · unique partial: <c>PayoutRef</c> ต่อช่องทาง · <c>ExternalTxnId</c> ต่อช่องทาง
+    /// (WHERE IsDeleted = false) · ② <c>PaymentIntents.SettlementBatchId</c> (NULL = ยังไม่เข้ารอบโอน · <b>ไม่แตะ RefundedAmount</b> — ทีม E) ·
+    /// ③ ผังมาตรฐานที่ต้องมี 11350/53170/57140 ให้บริษัทเดิม (แหล่งเดียวกับ <see cref="Accounting.Services.ChartOfAccountTemplates"/> ผ่าน
+    /// <c>SettlementChartSeed</c>) — ใส่เฉพาะบริษัทที่มีกลุ่มแม่ (113/531/571 = ผังมาตรฐาน) · <c>ON CONFLICT DO NOTHING</c> ⇒ ไม่ทับรหัสที่
+    /// ลูกค้าตั้งเอง · <b>ไม่ย้ายยอดใด ๆ</b> (DECISIONS: 53170 ไม่ย้ายย้อนหลัง) · 11341–11349 <b>ไม่ seed</b> (สร้างตอนผูกช่องทาง)</para></summary>
+    internal static IReadOnlyList<string> SettlementSchemaStatements()
+    {
+        var list = new List<string>
+        {
+            """CREATE TABLE IF NOT EXISTS "SettlementChannels" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Kind" integer NOT NULL DEFAULT 2, "DisplayName" varchar(200) NOT NULL, "AdapterCode" varchar(64) NULL, "ColumnMapJson" text NULL, "CounterpartyContactId" uuid NULL, "PaymentProviderConfigId" uuid NULL, "ClearingAccountId" uuid NULL, "ReserveAccountId" uuid NULL, "DisputeAccountId" uuid NULL, "FeeAccountMapJson" text NULL, "FeeVatMode" integer NOT NULL DEFAULT 1, "FeeWhtMode" integer NOT NULL DEFAULT 0, "RevenueModel" integer NOT NULL DEFAULT 1, "Currency" varchar(3) NOT NULL DEFAULT 'THB', "IsActive" boolean NOT NULL DEFAULT true, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementChannels_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+            """CREATE INDEX IF NOT EXISTS "IX_SettlementChannels_Company_Active" ON "SettlementChannels" ("CompanyId", "IsActive");""",
+            """CREATE TABLE IF NOT EXISTS "SettlementBatches" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "ChannelId" uuid NOT NULL, "PayoutRef" varchar(200) NOT NULL, "PeriodFrom" timestamptz NULL, "PeriodTo" timestamptz NULL, "PayoutDate" timestamptz NOT NULL, "Currency" varchar(3) NOT NULL DEFAULT 'THB', "FxRate" numeric(18,6) NULL, "OpeningWalletBalance" numeric(18,2) NOT NULL DEFAULT 0, "ClosingWalletBalance" numeric(18,2) NOT NULL DEFAULT 0, "NetPayout" numeric(18,2) NOT NULL DEFAULT 0, "Status" integer NOT NULL DEFAULT 0, "SourceKind" integer NOT NULL DEFAULT 1, "SourceFileAttachmentId" uuid NULL, "BankAccountId" uuid NULL, "BankTransactionId" uuid NULL, "PayoutJournalEntryId" uuid NULL, "FeeDocumentIdsJson" text NULL, "PostedAt" timestamptz NULL, "PostedBy" varchar(200) NULL, "Note" text NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementBatches_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE, CONSTRAINT "FK_SettlementBatches_SettlementChannels_ChannelId" FOREIGN KEY ("ChannelId") REFERENCES "SettlementChannels"("Id") ON DELETE RESTRICT);""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SettlementBatches_Channel_PayoutRef" ON "SettlementBatches" ("CompanyId", "ChannelId", "PayoutRef") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_SettlementBatches_Company_Status_Date" ON "SettlementBatches" ("CompanyId", "Status", "PayoutDate");""",
+            // index ของ FK ChannelId ที่ EF สร้างตามแบบแผน (ไม่มี index อื่นที่ขึ้นต้นด้วย ChannelId) — ฐานเดิมต้องได้ชื่อเดียวกัน
+            """CREATE INDEX IF NOT EXISTS "IX_SettlementBatches_ChannelId" ON "SettlementBatches" ("ChannelId");""",
+            """CREATE TABLE IF NOT EXISTS "SettlementLines" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "BatchId" uuid NOT NULL, "ChannelId" uuid NOT NULL, "Seq" integer NOT NULL DEFAULT 0, "LineType" integer NOT NULL DEFAULT 0, "Description" varchar(500) NULL, "RawTypeLabel" varchar(200) NULL, "TxnDate" timestamptz NULL, "ExternalOrderId" varchar(200) NULL, "ExternalTxnId" varchar(200) NULL, "Amount" numeric(18,2) NOT NULL DEFAULT 0, "VatAmount" numeric(18,2) NULL, "WhtAmount" numeric(18,2) NULL, "MatchedDocumentId" uuid NULL, "PaymentIntentId" uuid NULL, "PaymentId" uuid NULL, "ReservationId" uuid NULL, "MatchStatus" integer NOT NULL DEFAULT 0, "ClassifiedBy" integer NOT NULL DEFAULT 0, "ClassifyAiFeedbackId" uuid NULL, "ClassifyUsedAi" boolean NOT NULL DEFAULT false, "OverrideAccountId" uuid NULL, "AdjustmentReason" varchar(500) NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementLines_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE, CONSTRAINT "FK_SettlementLines_SettlementBatches_BatchId" FOREIGN KEY ("BatchId") REFERENCES "SettlementBatches"("Id") ON DELETE CASCADE);""",
+            """CREATE INDEX IF NOT EXISTS "IX_SettlementLines_Batch_Seq" ON "SettlementLines" ("BatchId", "Seq");""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SettlementLines_Channel_ExternalTxnId" ON "SettlementLines" ("CompanyId", "ChannelId", "ExternalTxnId") WHERE "ExternalTxnId" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_SettlementLines_Company_Order" ON "SettlementLines" ("CompanyId", "ExternalOrderId");""",
+            // intent ที่ถูกรวมเข้ารอบโอน — NULL = ยังไม่เข้ารอบโอน (พฤติกรรมเดิมทุกแถว)
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SettlementBatchId" uuid NULL;""",
+        };
+        list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;
     }
 

@@ -2040,6 +2040,18 @@ public enum AiFeatureKey
     /// BulkBankStatementMatch)</para></summary>
     OcrLineItemSplit = 56,
 
+    /// <summary>จัดประเภทบรรทัดใน settlement report ของ gateway/marketplace (รอบ 198 · report-S2 §3)
+    ///
+    /// <para>คำตอบ = ชื่อ <c>SettlementLineType</c> ตัวเดียว (single answer) ⇒ student =
+    /// <c>GenericFeedbackDistillationModel</c> (register ใน Program.cs) · อินพุตที่ใช้ทำ fingerprint =
+    /// ป้ายประเภทดิบจากไฟล์ + ชนิดช่องทาง + เครื่องหมายยอด (ห้ามใส่ยอด/เลขออเดอร์/ชื่อผู้ซื้อ) ·
+    /// ด่านรับคำตอบ = <c>SettlementLineTypeRules.ParseClassifierAnswer</c> (ชุดที่ลงบัญชีได้เท่านั้น) + confidence ≥ 0.70 ·
+    /// คำตอบ majority (≤ 0.45) ห้าม apply · ห้าม AI สร้างยอด/จับคู่ยอด</para>
+    /// <para>local path (kill-switch): กติกา adapter → คลังที่เรียน → ไม่รู้ = <c>Unclassified</c> (ห้ามลงบัญชี ผู้ใช้เลือกเอง)
+    /// ⇒ ปิด AI แล้วลงบัญชีได้ครบ เพียงแต่ผู้ใช้เลือกประเภทบรรทัดที่ไม่รู้จักเอง · ปิดลูปด้วย <c>SettlementLine.ClassifyAiFeedbackId</c>
+    /// ตอนผู้ใช้ยืนยัน/แก้ประเภท (ทีม B/D)</para></summary>
+    SettlementLineClassify = 57,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
