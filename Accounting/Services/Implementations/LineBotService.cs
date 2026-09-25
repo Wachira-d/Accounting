@@ -732,7 +732,9 @@ public class LineBotService : ILineBotService
             Accounting.Helpers.OcrTotalAnchor.UnsureTag, Accounting.Helpers.OcrPageSet.PartialTag,
             // รอบ 193 — ชุดเดียวกับ parseScanNotes ของหน้าเว็บ (ไม่มีรายการสินค้า · บันทึกบรรทัดปรับส่วนต่างยอดชำระแล้ว)
             Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, Accounting.Helpers.OcrSettlementProposal.PlanTag,
-            Accounting.Helpers.OcrSettlementProposal.SettledTag };
+            Accounting.Helpers.OcrSettlementProposal.SettledTag,
+            // รอบ 195 ฝ่ายค้าน C1 — VAT ไม่มีบนกระดาษ (blocking tag ต้องมีคำอธิบายบนการ์ดด้วย)
+            Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();

@@ -23,8 +23,8 @@ namespace Accounting.Services.Implementations.Ocr;
 ///      • proximity of each value to its expected label keywords
 ///      • freshness in the document (later occurrences usually win
 ///        because totals appear at the bottom of invoices)
-///   4. Return the highest-scoring triple, or the best partial fit
-///      when no perfect triple exists (e.g. only Total visible).
+///   4. Return the highest-scoring triple, or the Total alone when no
+///      triple exists (รอบ 195: ไม่แต่ง VAT 7/107 ที่นี่อีก — ดูข้อ 4 ในโค้ด).
 /// </summary>
 internal static class AmountTripleExtractor
 {
@@ -102,17 +102,15 @@ internal static class AmountTripleExtractor
         }
         if (best.Total.HasValue) return best;
 
-        // 4. Fallback: no triple found. Pick the largest plausible amount
-        // as Total and derive Sub/VAT via the 7% rule when the document
-        // contains a tax-invoice marker.
+        // 4. Fallback: no triple found — คืน<b>ยอดรวมอย่างเดียว</b>
+        //
+        // ★ รอบ 195 ฝ่ายค้าน C1: เดิมตรงนี้แต่ง Sub/VAT ด้วย 7/107 เองเมื่อข้อความมีคำ "ใบกำกับภาษี/ภาษีมูลค่าเพิ่ม/VAT" ที่ไหนก็ได้
+        // (รวม "ยกเว้นภาษีมูลค่าเพิ่ม") แล้ว SmartFieldExtractor.TryExtractAmountsFromRawText รับสามค่านั้นเป็น "สามค่าที่ลงตัว"
+        // ความมั่นใจ 0.95 ที่มา PaperLabel — ค่าที่ระบบคำนวณเองถูกติดป้ายว่าอ่านจากกระดาษ และ<b>ไม่ผ่านด่าน VatBackCalcGuard เลย</b>
+        // (ใบผัก 1,070 ⇒ VAT แต่ง 70.00) · การถอด VAT จากยอดรวมมีที่เดียวคือ SmartFieldExtractor.ApplyAmountMath
+        // → Helpers/OcrVatBackCalc → VatBackCalcGuard.Decide (เลขผู้ขาย · สินค้ายกเว้น ม.81 · คำเชิญชวน · VAT ที่พิมพ์ขัด) + แท็ก [VAT back-calc]
         var likelyTotal = distinct.OrderByDescending(c => c.Value).FirstOrDefault();
         if (likelyTotal == null) return (null, null, null);
-        var derivedSub = Math.Round(likelyTotal.Value / (1m + ThaiVat), 2);
-        var derivedVat = likelyTotal.Value - derivedSub;
-        // Only return derived values when there's a tax-invoice marker —
-        // otherwise we'd fabricate VAT for documents that don't have it.
-        if (LooksLikeVatDoc(normalizedText))
-            return (derivedSub, derivedVat, likelyTotal.Value);
         return (null, null, likelyTotal.Value);
     }
 
@@ -147,11 +145,6 @@ internal static class AmountTripleExtractor
         var clean = $"{intPart}.{fracPart}";
         return decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : 0m;
     }
-
-    private static bool LooksLikeVatDoc(string text)
-        => text.Contains("ใบกำกับภาษี") || text.Contains("ใบกํากับภาษี")
-        || text.ToUpperInvariant().Contains("TAX INVOICE")
-        || text.Contains("ภาษีมูลค่าเพิ่ม") || text.Contains("VAT");
 
     // ─── Anchor keyword libraries — covers common Thai invoice spellings ─
     // including OCR drop variants ("เพิ่ม"→"เพื่", "ทั้งสิ้น"→"ทั้งสน").

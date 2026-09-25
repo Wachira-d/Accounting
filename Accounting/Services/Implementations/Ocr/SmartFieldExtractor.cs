@@ -516,22 +516,21 @@ internal static class SmartFieldExtractor
             data.VatAmount = total.Value - sub.Value;
             data.FieldConfidence["VatAmount"] = 0.9;
         }
-        else if (total.HasValue && !sub.HasValue && !vat.HasValue && LooksLikeVatDoc(text)
-                 && Accounting.Helpers.VatBackCalcGuard.PrintedVatContradicts(text, total.Value) is string printedVatWhy)
+        else if (total.HasValue && !sub.HasValue && !vat.HasValue)
         {
-            // รอบ 192 (ทีม B #3): back-calc ชุดที่สองนี้ไม่เคยผ่านด่านใดเลย — กระดาษที่พิมพ์ VAT ไว้แล้ว
-            // (ตารางสรุปตามรหัส ภ.พ. ของห้าง) ห้ามแต่ง 7/107 ที่ขัดกับตัวเลขนั้น · เว้นว่างให้ชั้นยึดยอดรวม
-            // (Helpers/OcrTotalAnchor) เติมจากตัวเลขที่พิมพ์
-            data.ReasoningTrace.Add("[VAT skip] " + printedVatWhy);
-        }
-        else if (total.HasValue && !sub.HasValue && !vat.HasValue && LooksLikeVatDoc(text))
-        {
-            // Tax invoice with only the total visible — derive SubTotal/VAT
-            // assuming standard 7% Thai VAT (Total = SubTotal × 1.07).
-            data.SubTotal = Math.Round(total.Value / (1m + ThaiVatRate), 2, MidpointRounding.AwayFromZero);
-            data.VatAmount = total.Value - data.SubTotal.Value;
-            data.FieldConfidence["SubTotal"] = 0.7;     // derived, not extracted
-            data.FieldConfidence["VatAmount"] = 0.7;
+            // ★ รอบ 195 ฝ่ายค้าน C1: back-calc ชุดนี้ต้องถามด่านเดียวกับชุดแรก (Helpers/OcrVatBackCalc → VatBackCalcGuard.Decide)
+            // — เดิมถามแค่ "มีคำ VAT/ภาษีมูลค่าเพิ่มที่ไหนก็ได้" (รวม "ยกเว้นภาษีมูลค่าเพิ่ม") และรันหลังด่านของ ParseThaiDocument
+            // ⇒ ด่านปฏิเสธแล้วชุดนี้เติมทับ ⇒ ใบผัก 1,070 ได้ VAT แต่ง 70.00 · ค่าที่แยกได้ติดแท็ก BackCalcTag เสมอ
+            var plan = Accounting.Helpers.OcrVatBackCalc.Plan(
+                text, total.Value, data.VendorTaxId, data.Items.Select(i => i.Description), data.ReasoningTrace);
+            if (plan.Action == Accounting.Helpers.OcrVatBackCalcAction.Apply)
+            {
+                data.SubTotal = plan.SubTotal;
+                data.VatAmount = plan.VatAmount;
+                data.FieldConfidence["SubTotal"] = plan.Confidence;     // derived, not extracted
+                data.FieldConfidence["VatAmount"] = plan.Confidence;
+            }
+            if (plan.Trace != null) data.ReasoningTrace.Add(plan.Trace);
         }
 
         // Validate: VAT cannot exceed SubTotal in any realistic Thai doc
@@ -546,11 +545,6 @@ internal static class SmartFieldExtractor
         }
     }
 
-    private static bool LooksLikeVatDoc(string text)
-        => text.Contains("ใบกำกับภาษี") || text.Contains("ใบกํากับภาษี")
-        || text.ToUpperInvariant().Contains("TAX INVOICE")
-        || text.Contains("ภาษีมูลค่าเพิ่ม") || text.Contains("VAT");
-
     // ─── 4. VAT 7% cross-check ──────────────────────────────────────────
     private static void ValidateOrInferVatRate(OcrExtractedData data)
     {
@@ -559,6 +553,9 @@ internal static class SmartFieldExtractor
 
         var rate = data.VatAmount.Value / data.SubTotal.Value;
         // Within ±0.5pp of 7% = consistent
+        // ★ รอบ 195 ฝ่ายค้าน C1: VAT/ฐานที่ถอดจากยอดรวม (7/107) = 7% ของฐานเสมอโดยการสร้าง — ห้ามใช้สูตรเดียวกันดันความมั่นใจ
+        // ของค่าที่คำนวณเองขึ้นเป็น 0.95 (ความมั่นใจต่ำของ VatBackCalcGuard คือตัวสั่งให้หน้า review ไฮไลต์เหลือง)
+        if (Accounting.Helpers.OcrVatBackCalc.WasBackCalculated(data.ReasoningTrace)) return;
         if (Math.Abs(rate - ThaiVatRate) <= 0.005m)
             data.FieldConfidence["VatAmount"] = Math.Max(data.FieldConfidence.GetValueOrDefault("VatAmount", 0), 0.95);
         // Not 7% and not 0% → suspicious

@@ -257,4 +257,32 @@ public class OcrDocumentRoleInferrerTests
         Assert.False(r.InputVatClaimable);
         Assert.Contains("อย่างย่อ", r.InputVatClaimWarning);
     }
+
+    // ── รอบ 195 ฝ่ายค้าน C2 (§82/5(2)): "ยกเลิก" เป็นคำปฏิเสธเฉพาะประโยค "ยกเลิกใบนั้น … ออกฉบับใหม่แทน" ──────────
+    [Fact]
+    public void ยกเลิกไม่ได้บรรทัดก่อนหัวใบอย่างย่อ_ยังจับเป็นอย่างย่อ()
+    {
+        // ส่วนนำหน้า 13 ตัวอักษร "ยกเลิกไม่ได้\n" — รุ่นแรกนับเป็นคำปฏิเสธ ⇒ สลิปอย่างย่อจริงหลุดไปเคลมภาษีซื้อ
+        const string slip = "สินค้าซื้อแล้วไม่รับคืน/ยกเลิกไม่ได้\nใบกำกับภาษีอย่างย่อ";
+        Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated(slip, "ใบกำกับภาษีอย่างย่อ"));
+        var r = OcrDocumentRoleInferrer.Infer(slip + "\nร้าน ก\nรวม 107.00", Vendor, buyerTaxId: null,
+            vendorName: VendorName, buyerName: null, companyTaxId: Us, companyName: UsName, roleOverride: "Buyer");
+        Assert.False(r.InputVatClaimable);
+    }
+
+    [Fact]
+    public void ยกเลิกติดคำแต่ไม่มีคำว่าแทนหรือฉบับใหม่_ยังจับเป็นอย่างย่อ()
+        => Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated(
+            "ยกเลิกใบกำกับภาษีอย่างย่อได้ที่เคาน์เตอร์ภายใน 7 วัน", "ใบกำกับภาษีอย่างย่อ"));
+
+    [Fact]
+    public void ประโยคScommerceจริง_ยังนับเป็นคำปฏิเสธ_ทั้งไทยและอังกฤษ()
+    {
+        Assert.False(OcrDocumentRoleInferrer.ContainsAnyNotNegated(ScommerceCancelNote.ToLowerInvariant(), "ใบกำกับภาษีอย่างย่อ"));
+        Assert.False(OcrDocumentRoleInferrer.ContainsAnyNotNegated(
+            "remark: cancellation of abbreviated tax invoice no. d2026 and replaced by e-tax invoice", "abbreviated tax invoice"));
+        // ยกเลิก…แทน ต้องอยู่บรรทัดเดียวกัน — "แทน" บรรทัดอื่นไม่นับ
+        Assert.True(OcrDocumentRoleInferrer.ContainsAnyNotNegated(
+            "ยกเลิกใบกำกับภาษีอย่างย่อได้ภายใน 7 วัน\nตัวแทนจำหน่าย", "ใบกำกับภาษีอย่างย่อ"));
+    }
 }

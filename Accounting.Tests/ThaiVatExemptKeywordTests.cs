@@ -57,10 +57,26 @@ public class ThaiVatExemptKeywordTests
     [InlineData("Enfagrow A+ milk powder 1650g")]
     [InlineData("Similac infant formula 850g")]
     [InlineData("นมถั่วเหลือง แลคตาซอย 300 มล.")]
-    [InlineData("นม UHT รสจืด 200 มล. x 36")]
-    [InlineData("นมยูเอชที ไทย-เดนมาร์ค")]
     public void นมแปรรูป_ต้องไม่ถูกตีเป็นยกเว้น(string desc)
         => Assert.False(ThaiVatTypeRule.LooksExempt(desc));
+
+    // ── รอบ 195 ฝ่ายค้าน P2: คำที่กว้างเกินถูกถอด — นม UHT กลับเป็นพฤติกรรมเดิม (ขอบเขตนมโคล้วน UHT รอเจ้าของ/นักบัญชี) ·
+    //    formula เดี่ยวชนปุ๋ย ⇒ แคบเป็น infant formula ────────────────────────────────────────────────────────────
+    [Theory]
+    [InlineData("นม UHT รสจืด 200 มล. x 36")]
+    [InlineData("นมยูเอชที ไทย-เดนมาร์ค")]
+    [InlineData("ปุ๋ย formula 15-15-15 50 กก.")]
+    [InlineData("ปุ๋ยเคมี สูตร 15-15-15")]
+    public void คำกว้างเกินถูกถอด_กลับเป็นพฤติกรรมเดิม_ยังเดาเป็นยกเว้น(string desc)
+        => Assert.True(ThaiVatTypeRule.LooksExempt(desc));
+
+    [Fact]
+    public void infant_formulaยังไม่ยกเว้น_คำนี้ไม่อยู่ในรายการกว้าง()
+    {
+        Assert.DoesNotContain("formula", ThaiVatTypeRule.NotExemptDespiteKeyword);
+        Assert.DoesNotContain("นม uht", ThaiVatTypeRule.NotExemptDespiteKeyword);
+        Assert.False(ThaiVatTypeRule.LooksExempt("Similac infant formula 850g"));
+    }
 
     [Theory]
     [InlineData("นมสด 2 ลิตร")]

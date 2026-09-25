@@ -5567,14 +5567,14 @@ public class OcrService : IOcrService
                 //   อ่านมาจากกระดาษ — เดิมไม่มี key ทั้งสองช่อง ⇒ ป้ายเหลืองไม่เคยขึ้น
                 data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.VatAmount] = backCalc.Confidence;
                 data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SubTotal] = backCalc.Confidence;
-                data.ReasoningTrace.Add("[VAT back-calc] " + backCalc.Reason);
+                data.ReasoningTrace.Add(Accounting.Helpers.VatBackCalcGuard.BackCalcTag + " " + backCalc.Reason);
             }
             else
             {
                 // เหตุผลมาจากด่านตัวเดียวกัน — ห้ามเขียนข้อความชุดที่สองที่นี่
                 // (เดิมมีข้อความเขียนมือครอบเฉพาะเคส "ไม่มีเลข 13 หลัก" เท่านั้น
                 //  อีกสองเคสที่เพิ่มเข้ามาจะเงียบถ้าไม่รวมมาที่เดียว)
-                data.ReasoningTrace.Add("[VAT skip] " + backCalc.Reason
+                data.ReasoningTrace.Add(Accounting.Helpers.VatBackCalcGuard.SkipTag + " " + backCalc.Reason
                     + " — ใส่ยอดรวมตามที่อ่านมา ส่วน SubTotal/VatAmount เว้นว่างให้ผู้ใช้ตรวจ");
             }
         }
@@ -6644,6 +6644,14 @@ public class OcrService : IOcrService
         // สิ่งที่กระดาษบอกเรื่อง VAT รายบรรทัด (สัญลักษณ์ท้ายบรรทัด · ยอดต้องเสีย/ไม่ต้องเสียภาษี)
         // — อ่านจากข้อความดิบตอนสร้าง (ไม่ใช่ตอนสแกน) เพื่อให้สแกนเก่าได้ประโยชน์ด้วยโดยไม่ต้อง migrate
         var paperVatSplit = Accounting.Helpers.OcrLineVatMarks.Read(result.RawTextContent);
+        var normalizedRawText = Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent);
+        // ★ รอบ 195 ฝ่ายค้าน C1: VAT หัวใบตัวนี้พิมพ์บนกระดาษไหม หรือระบบคำนวณเอง (7/107 ของยอดรวม) — ตัวตัดสินตัวเดียว
+        // Helpers/OcrHeaderVatEvidence · ตัวพิสูจน์ทั้งใบ (OcrLineVatPlanner) ใช้ได้เฉพาะ VAT ที่อยู่บนกระดาษในฐานะ VAT ·
+        // VAT ที่ไม่มีบนกระดาษเลย ⇒ [VAT-DERIVED] (OcrPostingReadiness ห้ามอนุมัติเอง — ภาษีซื้อต้องมาจากตัวเลขบนใบกำกับ)
+        var headerVatSource = Accounting.Helpers.OcrHeaderVatEvidence.Classify(
+            result.RawTextContent, normalizedRawText, result.ExtractedVatAmount ?? 0m, result.OcrEngine);
+        if (Accounting.Helpers.OcrHeaderVatEvidence.DerivedNote(headerVatSource, result.ExtractedVatAmount ?? 0m) is string derivedVatNote)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag + " " + derivedVatNote;
         // ผลต่างปัดเศษเป็นของ "บรรทัดชุดนี้" — เริ่มจาก 0 ทุกครั้ง (สาขามีรายการตั้งค่าเองด้านล่าง · สาขาบรรทัดสรุป = 0)
         document.RoundingAdjustment = 0m;
         if (items.Count > 0)
@@ -6768,7 +6776,8 @@ public class OcrService : IOcrService
                 headerVat, netSubForRecon, hdrTotal, document.PricesIncludeVat,
                 Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
                     paperVatSplit,
-                    Accounting.Helpers.OcrLineVatMarks.ReadGroups(Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent))));
+                    Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText)),
+                vatPrintedOnPaper: headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled);
             if (vatPlan.Decided)
             {
                 for (var vpi = 0; vpi < items.Count; vpi++)
@@ -7557,6 +7566,9 @@ public class OcrService : IOcrService
         // (UnitPrice = item.UnitPrice, VAT 7% ทั้งใบ, ไม่รู้จัก PricesIncludeVat/ส่วนลด/VAT
         // รายบรรทัด/WHT) = สำเนาที่สองที่ให้คำตอบคนละแบบบนกระดาษใบเดียวกัน
         NormalizeSwappedHeaderAmounts(result);
+        // รอบ 195 ฝ่ายค้าน P3: [Σ-GAP]/[VAT-DERIVED] ของรอบก่อนเป็นผลของบรรทัดชุดเก่า — ล้างก่อนสร้างใหม่ แล้วให้
+        // BuildScanLinesAsync เขียนกลับจากบรรทัดชุดนี้ (ยังไม่ตรง = ขึ้นใหม่เอง) · ธงอื่นคงเดิมทุกตัว (Helpers/OcrLineBuildNotes)
+        result.ProcessingNotes = Accounting.Helpers.OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes);
         var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(document.DocumentType, result.OurRole);

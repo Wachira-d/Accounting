@@ -124,6 +124,48 @@ public static class OcrPaperAmounts
         return list;
     }
 
+    /// <summary>บรรทัดที่เป็นยอดเงินล้วน (engine แยก cell: ป้ายอยู่บรรทัดหนึ่ง ตัวเลขอยู่บรรทัดถัดไป)</summary>
+    private static readonly Regex PureMoneyLine = new(
+        @"^[ \t]*\(?(?:\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+\.\d{2})\)?[ \t]*(?:บาท|฿|thb)?[ \t]*$", Opt);
+
+    /// <summary>บรรทัดที่เป็นเปอร์เซ็นต์ล้วน ("7%" · "7.00 %") — ข้ามได้ระหว่างป้าย VAT กับตัวเลข</summary>
+    private static readonly Regex PurePercentLine = new(@"^[ \t]*\d+(?:[.,]\d+)?[ \t]*%[ \t]*$", Opt);
+
+    /// <summary>
+    /// **ยอด <paramref name="vat"/> พิมพ์บนกระดาษ<b>ในฐานะ VAT</b> ไหม** — แถวที่มีป้าย VAT (<see cref="VatAmounts"/>) · ตาราง
+    /// สรุปตามกลุ่มภาษี · หรือป้าย VAT ที่ไม่มีตัวเลขแล้วบรรทัดถัดไป (ข้ามบรรทัดว่าง/เปอร์เซ็นต์ล้วนได้ ≤ 2 บรรทัด) เป็นยอดเงินล้วน
+    /// (±<see cref="ExactTol"/>)
+    ///
+    /// <para>ที่มา (รอบ 195 ฝ่ายค้าน C1): ตัวพิสูจน์ "ทั้งใบ 7%" (<see cref="OcrLineVatPlanner"/>) ตรวจ VAT หัวใบด้วยสูตร
+    /// 7% × ฐาน / 7/107 × ยอดรวม — ถ้า VAT ตัวนั้นระบบ<b>คำนวณเอง</b>ด้วยสูตรเดียวกัน (ใบที่พิมพ์แค่ยอดรวม) ด่านผ่านทุกครั้ง
+    /// (CLAUDE.md F2 ข้อ 6) ⇒ ต้องถามก่อนว่า "ตัวเลขนี้อยู่บนกระดาษในฐานะ VAT ไหม" · ใบ Scommerce จาก Azure DI พิมพ์ป้าย
+    /// "ภาษีมูลค่าเพิ่ม 7% / VAT 7%" แล้ว "328.67" คนละบรรทัด ⇒ ต้องรับรูปคนละบรรทัดด้วย (ไม่แตะ <see cref="VatAmounts"/>
+    /// ที่ด่านอื่นใช้อยู่ — ไม่เปลี่ยนคำตอบของใบที่ผ่านมาแล้ว)</para></summary>
+    public static bool IsVatLabelled(string? rawText, decimal vat)
+    {
+        if (vat <= 0m || string.IsNullOrWhiteSpace(rawText)) return false;
+        if (VatAmounts(rawText).Any(v => Math.Abs(v.Amount - vat) <= ExactTol)) return true;
+        var lines = Lines(rawText);
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (!VatLabel.IsMatch(line) || VatLabelNotAmount.IsMatch(line) || RateWord.IsMatch(line)) continue;
+            if (MoneyOn(line).Count > 0) continue;   // ป้ายที่มีตัวเลขบนแถวเดียวกัน = VatAmounts ตัดสินไปแล้ว
+            for (int j = i + 1, skipped = 0; j < lines.Count && skipped <= 2; j++)
+            {
+                var next = lines[j];
+                if (string.IsNullOrWhiteSpace(next) || PurePercentLine.IsMatch(next)) { skipped++; continue; }
+                if (PureMoneyLine.IsMatch(next))
+                {
+                    var money = MoneyOn(next);
+                    if (money.Count > 0 && Math.Abs(money[money.Count - 1] - vat) <= ExactTol) return true;
+                }
+                break;
+            }
+        }
+        return false;
+    }
+
     /// <summary>
     /// กระดาษมีตัวเลข<b>มากกว่าหนึ่งสกุลเงิน</b> — ขั้นยึดยอด/แตกยอดถอยเป็น "ไม่รู้" (ห้ามตัดสินข้ามสกุล · ฝ่ายค้าน C2)
     /// <para>สัญญาณ: รหัส/สัญลักษณ์สกุลต่างประเทศ (USD/EUR/…/$/€) · คำว่าอัตราแลกเปลี่ยน · หรือบางแถวยอดเงินติดป้าย THB

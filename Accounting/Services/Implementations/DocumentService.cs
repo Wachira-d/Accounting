@@ -18500,26 +18500,33 @@ public partial class DocumentService : IDocumentService
         var gapScan = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount, r.ExtractedVatAmount, r.RawTextContent })
+            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount, r.ExtractedVatAmount, r.RawTextContent, r.OcrEngine })
             .FirstOrDefaultAsync();
         if (gapScan != null)
         {
             var liveLines = doc.Lines.Where(l => !l.IsDeleted).ToList();
             // รอบ 195 (P4): บรรทัด "ตอนนี้" ไม่เป็น 7% ทั้งหมด แต่ VAT บนกระดาษ = 7% ของฐานทั้งใบพอดี ⇒ บอกทางแก้เป็นตัวเลข
             // แทน "ยังไม่มีคำแนะนำ" (ตัวตัดสิน Helpers/OcrLineVatPlanner ตัวเดียวกับตอนสร้างบรรทัด) · ยอดยกเว้นบนกระดาษ > 0 ⇒ ไม่แนะนำ
+            // · ฝ่ายค้าน C1: VAT ที่ระบบแยก 7/107 เอง (ไม่อยู่บนกระดาษในฐานะ VAT) ⇒ ไม่แนะนำ (Helpers/OcrHeaderVatEvidence ตัวเดียวกับตอนสร้าง)
             string? vatRateAdvice = null;
             if (!string.IsNullOrWhiteSpace(gapScan.ProcessingNotes) && (gapScan.ExtractedVatAmount ?? 0m) > 0m)
+            {
+                var gapScanNormalized = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(gapScan.RawTextContent);
                 vatRateAdvice = Accounting.Helpers.OcrLineVatPlanner.RateAdvice(
                     liveLines.Select(l => (Net: l.Amount, VatRate: l.VatRate)).ToList(),
                     liveLines.Sum(l => l.Amount) + doc.RoundingAdjustment,
                     gapScan.ExtractedVatAmount ?? 0m,
                     Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
                         Accounting.Helpers.OcrLineVatMarks.Read(gapScan.RawTextContent),
-                        Accounting.Helpers.OcrLineVatMarks.ReadGroups(
-                            Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(gapScan.RawTextContent))));
+                        Accounting.Helpers.OcrLineVatMarks.ReadGroups(gapScanNormalized)),
+                    vatPrintedOnPaper: Accounting.Helpers.OcrHeaderVatEvidence.Classify(
+                        gapScan.RawTextContent, gapScanNormalized, gapScan.ExtractedVatAmount ?? 0m, gapScan.OcrEngine)
+                        == Accounting.Helpers.OcrHeaderVatSource.Labelled);
+            }
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
-                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment, vatRateAdvice));
+                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment, vatRateAdvice,
+                linesVat: liveLines.Sum(l => l.VatAmount), paperVat: gapScan.ExtractedVatAmount));
         }
 
         return warnings;
