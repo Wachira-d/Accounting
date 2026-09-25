@@ -1536,6 +1536,8 @@
             ...pick('NO-ITEMS'),
             ...pick('PAY-PLAN'),
             ...pick('PAY-SETTLED'),
+            // รอบ 195 ฝ่ายค้าน C1 — VAT ไม่มีบนกระดาษ (ระบบคำนวณเอง · ข้อความจากเซิร์ฟเวอร์ Helpers/OcrHeaderVatEvidence)
+            ...pick('VAT-DERIVED'),
             ...skip,
           ],
         };

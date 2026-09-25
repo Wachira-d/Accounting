@@ -36,6 +36,14 @@ public sealed record VatBackCalcDecision(bool Allowed, double Confidence, string
 /// </summary>
 public static class VatBackCalcGuard
 {
+    /// <summary>แท็กใน <c>ReasoningTrace</c> เมื่อด่าน<b>ปฏิเสธ</b>การแยก VAT — ผู้อ่านคือ <see cref="OcrVatBackCalc"/> (ตัวแยกชุดที่สอง
+    /// ใน <c>SmartFieldExtractor</c> ต้องเคารพคำตัดสินนี้ · รอบ 195 ฝ่ายค้าน C1)</summary>
+    public const string SkipTag = "[VAT skip]";
+
+    /// <summary>แท็กใน <c>ReasoningTrace</c> เมื่อ VAT/ฐาน<b>ถูกคำนวณจากยอดรวม</b> (ไม่ได้อ่านจากกระดาษ) — ผู้อ่านคือ
+    /// <see cref="OcrVatBackCalc.WasBackCalculated"/> (ห้ามดันความมั่นใจของค่าที่คำนวณเองขึ้นด้วยสูตรเดียวกัน)</summary>
+    public const string BackCalcTag = "[VAT back-calc]";
+
     /// <summary>กระดาษบอกเองว่าราคารวมภาษีแล้ว — หลักฐานที่แข็งที่สุด</summary>
     private static readonly Regex InclusiveWords = new(
         @"ราคา(?:นี้)?รวม(?:ภาษี|vat)|รวมภาษีมูลค่าเพิ่ม|รวม[ \t]*vat|vat[ \t]*included|include[sd]?[ \t]*vat|inclusive[ \t]*of[ \t]*vat",
@@ -97,7 +105,7 @@ public static class VatBackCalcGuard
     /// <para>หลักฐาน "VAT ที่พิมพ์" = แถวที่มีป้าย VAT + VAT รวมของตารางสรุปตามกลุ่มภาษี (<see cref="OcrPaperAmounts.VatAmounts"/>)
     /// · มีตัวใดตัวหนึ่งเท่ากับ 7/107 (±0.02) = ไม่ขัด (ใบ Wine Pro ที่ VAT 235.06 = 7/107 ของ 3,593 ยังแยกได้ตามเดิม)</para>
     /// </summary>
-    public static string? PrintedVatContradicts(string? rawText, decimal totalAmount)
+    internal static string? PrintedVatContradicts(string? rawText, decimal totalAmount)
     {
         if (totalAmount <= 0m || string.IsNullOrWhiteSpace(rawText)) return null;
         var printed = OcrPaperAmounts.VatAmounts(rawText);

@@ -85,8 +85,8 @@ public class OcrApprovalGapWarningTests
     public void ใบScommerce_มีคำแนะนำ_รวมข้อเรื่องVATเป็นข้อเดียว_ข้อคนละเรื่องยังแยก()
     {
         var w = OcrApprovalGapWarning.Build(ScommerceGapNotes(), 5024.00m, 4695.33m,
-            "ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)");
-        Assert.Equal(2, w.Count);                                                      // VAT (รวม) + บรรทัดติดลบ
+            "ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)", linesVat: 0m, paperVat: 328.67m);
+        Assert.Equal(2, w.Count);                                                      // VAT+ยอดรวม (รวม) + บรรทัดติดลบ
         Assert.Contains("ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)", w[0]);
         Assert.Contains("รวม 2 ข้อ", w[0]);
         Assert.Contains("ยอดติดลบ", w[1]);
@@ -102,5 +102,37 @@ public class OcrApprovalGapWarningTests
         Assert.Contains("ตอนนี้รายการในเอกสารรวม", w[0]);
         Assert.DoesNotContain("ตอนนี้รายการในเอกสารรวม", w[1]);
         Assert.DoesNotContain("ตอนนี้รายการในเอกสารรวม", w[2]);
+    }
+
+    // ── รอบ 195 ฝ่ายค้าน P1 (ข้อ 4): รวมข้อยอดรวมเข้าคำแนะนำเฉพาะเมื่อ "ตั้ง 7% แล้วยอดรวมตรงกระดาษ" ─────────────────────
+
+    private const string Advice1000 = "ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 70.00 = 7% × 1,000.00)";
+
+    private static string FeeGapNotes()
+    {
+        // ฐาน 1,000 (บรรทัดถูกตั้งเป็นยกเว้น) · VAT 70 · ยอดรวมบนกระดาษ 1,120 (ค่าธรรมเนียมหลัง VAT 50 ที่อ่านไม่ได้)
+        var r = OcrAmountIntegrity.Check(new[] { new OcrPlannedLine(1000m, ThaiVatTypeRule.ExemptRate, 0m) }, 70m, 1120m);
+        return string.Join("\n", r.Problems.Select(p => "[Σ-GAP] " + p.Message));
+    }
+
+    [Fact]
+    public void ค่าธรรมเนียม50ที่อ่านไม่ได้_ข้อยอดรวมไม่ถูกรวม_บอกส่วนต่างที่เหลือ()
+    {
+        var w = OcrApprovalGapWarning.Build(FeeGapNotes(), 1120m, 1000m, Advice1000, linesVat: 0m, paperVat: 70m);
+        Assert.Equal(2, w.Count);                                   // คำแนะนำอัตรา (ข้อ VAT) + ข้อยอดรวมแยก
+        Assert.Contains(Advice1000, w[0]);
+        Assert.DoesNotContain("รวม 2 ข้อ", w[0]);                  // ข้อยอดรวมไม่ใช่ "เรื่องเดียวกัน"
+        Assert.Contains("ยอดรวมจากรายการ", w[1]);
+        Assert.Contains("−50.00", w[1]);                             // 1,000 + 70 − 1,120 = ส่วนที่ไม่ใช่เรื่องอัตรา VAT
+        Assert.All(w, x => Assert.True(OcrApprovalGapWarning.IsGapWarning(x)));
+    }
+
+    [Fact]
+    public void ไม่รู้VATของบรรทัด_ไม่รวมข้อยอดรวม_ทิศปลอดภัย()
+    {
+        var w = OcrApprovalGapWarning.Build(ScommerceGapNotes(), 5024.00m, 4695.33m,
+            "ตั้งอัตรา VAT บรรทัดเป็น 7% (VAT หัวใบ 328.67 = 7% × 4,695.33)");
+        Assert.Equal(3, w.Count);                                   // คำแนะนำ (VAT) · ยอดรวมแยก · บรรทัดติดลบ
+        Assert.Single(w, x => x.Contains("ยอดรวมจากรายการ"));
     }
 }

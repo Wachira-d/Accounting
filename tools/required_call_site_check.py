@@ -881,6 +881,39 @@ RULES += [
          why="รอบ 195 P4: คำเตือนตอนอนุมัติบอกทางแก้เป็นตัวเลขเมื่อ VAT บนกระดาษ = 7% ของฐานทั้งใบ (ตัวตัดสินเดียวกับตอนสร้างบรรทัด)"),
 ]
 
+# ── รอบ 195 ฝ่ายค้าน C1/P1/P3: ด่านที่ตรวจด้วยสูตรเดียวกับที่ผลิตค่า = ผ่านตลอดกาล ────────────────────────────────────────
+#    ตัวพิสูจน์ทั้งใบ/คำแนะนำต้องรู้ "ที่มาของ VAT หัวใบ" (Helpers/OcrHeaderVatEvidence) · ตัวแยก VAT ชุดที่สองต้องถามด่านเดียวกับชุดแรก ·
+#    AmountTriple ห้ามแต่ง 7/107 เอง · ดึงรายการซ้ำต้องล้าง [Σ-GAP] เก่าก่อนสร้างใหม่ · คำเตือนรวมข้อต้องรู้ VAT ของบรรทัด
+SMART = "Services/Implementations/Ocr/SmartFieldExtractor.cs"
+TRIPLE = "Services/Implementations/Ocr/AmountTripleExtractor.cs"
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrHeaderVatEvidence.Classify(", "OcrHeaderVatEvidence.DerivedNote(", "OcrHeaderVatEvidence.DerivedTag"],
+         call_args=[("OcrLineVatPlanner.PlanWholeInvoice(", "headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled")],
+         before=[("OcrHeaderVatEvidence.Classify(", "OcrLineVatPlanner.PlanWholeInvoice(")],
+         why="รอบ 195 C1: ชั้นพิสูจน์ทั้งใบใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษในฐานะ VAT · VAT ที่ไม่มีบนกระดาษ ⇒ [VAT-DERIVED] หยุดอนุมัติเอง"),
+    dict(file=OCR, method="RepopulateDocumentLinesFromScanAsync",
+         must=["OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes)"],
+         before=[("OcrLineBuildNotes.StripRecomputed(", "BuildScanLinesAsync(")],
+         why="รอบ 195 P3: [Σ-GAP] ของบรรทัดชุดเก่าต้องถูกล้างก่อนตัวสร้างเขียนผลของบรรทัดชุดใหม่"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         call_args=[("OcrLineVatPlanner.RateAdvice(", "OcrHeaderVatEvidence.Classify"),
+                    ("OcrApprovalGapWarning.Build(", "linesVat")],
+         why="รอบ 195 C1/P1: ไม่แนะนำ 'ตั้ง 7%' จาก VAT ที่ระบบคำนวณเอง · รวมข้อยอดรวมเฉพาะเมื่อรากเดียวกันจริง (ต้องรู้ VAT ของบรรทัด)"),
+    dict(file=SMART, method="ApplyAmountMath",
+         must=["OcrVatBackCalc.Plan("],
+         call_args=[("OcrVatBackCalc.Plan(", "data.ReasoningTrace")],
+         forbid=["LooksLikeVatDoc(", "/ (1m + ThaiVatRate)"],
+         why="รอบ 195 C1: ตัวแยก VAT ชุดที่สองต้องถาม VatBackCalcGuard และเคารพคำปฏิเสธเดิม (ไม่เติมทับ)"),
+    dict(file=SMART, method="ValidateOrInferVatRate",
+         must=["OcrVatBackCalc.WasBackCalculated("],
+         before=[("OcrVatBackCalc.WasBackCalculated(", "0.95")],
+         why="รอบ 195 C1: ห้ามดันความมั่นใจของ VAT ที่ถอดจากยอดรวมด้วยสูตร 7% เดียวกัน"),
+    dict(file=TRIPLE, method="Extract",
+         forbid=["LooksLikeVatDoc(", "(1m + ThaiVat)"],
+         why="รอบ 195 C1: AmountTriple ห้ามแต่ง VAT 7/107 ใน fallback (เคยถูกรับเป็นสามค่าที่ลงตัว ความมั่นใจ 0.95 ไม่ผ่านด่าน)"),
+]
+
 
 # ── รอบ 196 (ทีม Q · "ใบไหนออกใบแจ้งหนี้แล้ว ดูจากหน้ารวมไม่ได้"): list · detail · ตัวกรอง ต้องเรียกตัวคำนวณการออกเอกสารต่อ
 #    ตัวเดียว — เดิม list ไม่เรียกเลย (ป้าย "⏳ รอดำเนินการต่อ" ทุกใบ) และ detail มีสูตรของตัวเอง (ComputeConversionStatusAsync

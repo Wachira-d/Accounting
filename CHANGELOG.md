@@ -3367,3 +3367,18 @@ _Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จ
   `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
 - เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แก้ผลฝ่ายค้าน `erp-review/2026-09-25/ocr-scommerce/review195.md`:
+- **C1 (P1 ภาษีซื้อ)** ด่านที่ตรวจด้วยสูตรเดียวกับที่ผลิตค่า: `OcrLineVatPlanner.PlanWholeInvoice/RateAdvice(..., vatPrintedOnPaper)` ← `Helpers/OcrHeaderVatEvidence.Classify`
+  (Labelled/PrintedUnlabelled/NotOnPaper · `OcrPaperAmounts.IsVatLabelled` รับป้ายกับตัวเลขคนละบรรทัดของ Azure) · `[VAT-DERIVED]` = blocking tag
+  (`OcrPostingReadiness` · LINE · หน้าสแกน) · ต้นเหตุร่วม: back-calc สามชุด → ชุดเดียวผ่านด่าน (`Helpers/OcrVatBackCalc` ใน `ApplyAmountMath` เคารพ `[VAT skip]`
+  · คำ "ยกเว้นภาษีมูลค่าเพิ่ม"/NON VAT ไม่ใช่หลักฐานว่ามี VAT · `AmountTripleExtractor` fallback เลิกแต่ง 7/107 · `ValidateOrInferVatRate` ไม่ดันค่าที่ถอดเองเป็น 0.95)
+- **C2 (§82/5(2))** `ContainsAnyNotNegated`: "ยกเลิก" เป็นคำปฏิเสธเฉพาะเมื่อติดคำเป้าหมาย + "แทน/ฉบับใหม่/replace" ตามหลังในบรรทัดเดียวกัน
+- **P2** `ThaiVatTypeRule.NotExemptDespiteKeyword` ถอด นม uht/นมยูเอชที · formula → infant formula
+- **P1 ข้อ 4** `OcrApprovalGapWarning.Build(..., linesVat, paperVat)` รวมข้อยอดรวมเฉพาะเมื่อตั้ง 7% แล้วตรงกระดาษ ±0.05 · ไม่งั้นบอกส่วนต่างที่เหลือ
+- **P3** ดึงรายการซ้ำล้าง `[Σ-GAP]`/`[VAT-DERIVED]` เก่า (`Helpers/OcrLineBuildNotes.StripRecomputed`)
+- ชุดกระดาษจริงก่อน/หลัง: ทุกใบใน OcrPaperSamples + ใบ Scommerce จาก Azure ไม่เปลี่ยน · เปลี่ยนเฉพาะ ใบผัก (7,7 → −1,−1 + [VAT-DERIVED]) · ร้านแอร์ (+[VAT-DERIVED]) ·
+  นม UHT/ปุ๋ย formula ใบผสม (7 → −1 ตามพฤติกรรมก่อนรอบ 195)
+- เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
+  checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
+— commit c69a0b62)_

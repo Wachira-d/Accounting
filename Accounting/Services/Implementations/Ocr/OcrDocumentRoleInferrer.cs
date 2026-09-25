@@ -682,7 +682,9 @@ public static class OcrDocumentRoleInferrer
     ///
     /// <para>รอบ 195 (ใบ Scommerce TXE05202609T004679): หมายเหตุ "เป็นการ<b>ยกเลิก</b>ใบกำกับภาษีอย่างย่อเลขที่ …
     /// และออกใบกำกับภาษีอิเล็กทรอนิกส์ฉบับใหม่แทน" คือประโยคที่บอกว่าใบนี้<b>ไม่ใช่</b>ใบอย่างย่อ (มาแทนใบอย่างย่อ) —
-    /// เดิมนับเป็นหลักฐานว่าเป็นใบอย่างย่อ รอดได้เพราะเลขผู้ซื้อผ่าน mod-11 เท่านั้น ⇒ "ยกเลิก"/"cancel" นำหน้า = ปฏิเสธ</para></summary>
+    /// เดิมนับเป็นหลักฐานว่าเป็นใบอย่างย่อ รอดได้เพราะเลขผู้ซื้อผ่าน mod-11 เท่านั้น ⇒ "ยกเลิก"/"cancel" <b>ติด</b>คำเป้าหมาย +
+    /// "แทน/ฉบับใหม่" ตามหลังในบรรทัดเดียวกัน = ปฏิเสธ (<see cref="IsReplacementCancel"/> — ฝ่ายค้าน C2: "ยกเลิกไม่ได้" บรรทัดก่อนหัวใบ
+    /// อย่างย่อ ไม่ใช่คำปฏิเสธ)</para></summary>
     internal static bool ContainsAnyNotNegated(string text, params string[] needles)
     {
         foreach (var raw in needles)
@@ -697,7 +699,7 @@ public static class OcrDocumentRoleInferrer
                 var negated = prefix.Contains("ไม่ใช่") || prefix.Contains("ไม่เป็น")
                     || prefix.Contains("มิใช่") || prefix.Contains("ไม่ออก")
                     || prefix.Contains("ห้าม")
-                    || prefix.Contains("ยกเลิก") || prefix.Contains("cancel")
+                    || IsReplacementCancel(text, idx, n.Length)
                     || prefix.Contains("not ") || prefix.Contains("no ");
                 // ปฏิเสธตามหลัง: "ออกใบกำกับภาษีอย่างย่อไม่ได้/ไม่ให้..."
                 if (!negated)
@@ -712,6 +714,29 @@ public static class OcrDocumentRoleInferrer
             }
         }
         return false;
+    }
+
+    /// <summary>คำเป้าหมายที่ตำแหน่ง <paramref name="idx"/> อยู่ในประโยค "<b>ยกเลิก</b>ใบนั้น … ออกฉบับใหม่<b>แทน</b>" ไหม
+    ///
+    /// <para>รอบ 195 ฝ่ายค้าน C2 (§82/5(2)): รุ่นแรกนับ "ยกเลิก" ที่ไหนก็ได้ใน 14 ตัวอักษรนำหน้าเป็นคำปฏิเสธ ⇒ สลิปอย่างย่อจริงที่พิมพ์
+    /// "สินค้าซื้อแล้วไม่รับคืน/ยกเลิกไม่ได้" บรรทัดก่อนหัวใบ "ใบกำกับภาษีอย่างย่อ" (ส่วนนำหน้า <c>ยกเลิกไม่ได้\n</c> 13 ตัวอักษร) ถูกนับ
+    /// ว่า "ไม่ใช่อย่างย่อ" ⇒ เคลมภาษีซื้อต้องห้ามได้ · กติกาใหม่ต้องครบสองข้อ: (1) ข้อความนำหน้า<b>ลงท้าย</b>ด้วย "ยกเลิก"/"cancel…"
+    /// (ติดคำเป้าหมาย — "ยกเลิกไม่ได้" ไม่ลงท้ายด้วย "ยกเลิก") และ (2) มี "แทน"/"ฉบับใหม่"/"replace…" ตามหลังใน<b>บรรทัดเดียวกัน</b>
+    /// (ประโยคประกาศว่าใบนี้มาแทนใบอย่างย่อ — ใบ Scommerce)</para></summary>
+    private static bool IsReplacementCancel(string text, int idx, int needleLength)
+    {
+        var lineStart = idx == 0 ? 0 : text.LastIndexOf('\n', idx - 1) + 1;
+        var before = text.Substring(lineStart, idx - lineStart).TrimEnd();
+        var cancelAdjacent = before.EndsWith("ยกเลิก", StringComparison.Ordinal)
+            || System.Text.RegularExpressions.Regex.IsMatch(before,
+                @"(?<![a-z])cancel(?:s|led|ed|lation[ \t]+of|ling)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!cancelAdjacent) return false;
+        var afterStart = idx + needleLength;
+        var lineEnd = text.IndexOf('\n', afterStart);
+        var after = text.Substring(afterStart, (lineEnd < 0 ? text.Length : lineEnd) - afterStart);
+        return after.Contains("แทน", StringComparison.Ordinal) || after.Contains("ฉบับใหม่", StringComparison.Ordinal)
+            || System.Text.RegularExpressions.Regex.IsMatch(after, @"(?<![a-z])replac(?:e|ed|es|ing|ement)(?![a-z])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private static bool ContainsAll(string text, params string[] needles)
