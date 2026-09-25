@@ -94,6 +94,8 @@ public class CompanyService : ICompanyService
         // แถวค่าตั้งเกิดพร้อมบริษัท + seed สถานะ/อัตรา VAT จากที่วิซาร์ดเลือก (S-01) — เดิมไม่สร้าง แล้วปล่อยให้
         // หน้าตั้งค่าสร้างแบบ lazy ด้วย "จด VAT" ของ entity ⇒ กดบันทึกหน้าตั้งค่าครั้งแรกพลิก Company.IsVatRegistered เป็น true
         _db.CompanySettings.Add(Accounting.Helpers.CompanySettingsFactory.NewFor(company, vatStatusConfirmed: true));
+        // รอบ 194 — ประเภทเงินมัดจำเริ่มต้นตามประเภทธุรกิจ (tenant ใหม่ห้ามว่าง · spec S8) — ตารางเดียวกับ migration
+        await Accounting.Helpers.DepositKindSeed.EnsureSeededAsync(_db, company.Id);
 
         // Add creator as Owner
         _db.CompanyUsers.Add(new CompanyUser

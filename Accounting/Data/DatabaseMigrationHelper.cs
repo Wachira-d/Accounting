@@ -97,6 +97,43 @@ public static class DatabaseMigrationHelper
     internal static string DepositBaseSplitLockKey =>
         Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Documents.DepositBaseDeducted").ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำ (spec S1/S8 · plan §4) · <b>รันทุกบูตได้</b>:
+    /// ① ตาราง <c>DepositKinds</c> + unique index (ต้องตรงกับ <c>AccountingDbContext</c> — ฐานใหม่ได้จาก EnsureCreated) ·
+    /// ② คอลัมน์ใหม่บน Documents / LodgingProperties / LodgingReservations (ADD COLUMN IF NOT EXISTS · ค่าเดิม = NULL/0) ·
+    /// ③ seed ประเภทเริ่มต้นทุกบริษัทจากตารางเดียว (<see cref="Accounting.Helpers.DepositKindSeed.MigrationSeedSql"/>) ·
+    /// ④ ที่พักที่เคยตั้งโหมดเอง ⇒ ประเภท <c>lp:{id}</c> (ลักษณะ "ราคา" + โหมดเดิม + เหตุผลว่าย้ายมาจากค่าเดิม) ·
+    /// ⑤ ผูกที่พักเข้ากับประเภทนั้นเฉพาะเมื่อ <c>RoomDepositKindId</c> ยังว่าง (หน้าตั้งค่าที่เลือก "ตามบริษัท" ต้องล้างค่าเดิมของที่พักด้วย
+    /// ไม่งั้นบูตถัดไปผูกกลับ)
+    /// <para>⚠️ <b>ห้าม UPDATE "Documents"</b> — ใบเดิมคง DepositKindId/DepositNature = NULL (= ไม่ทราบ · spec S1 ห้าม backfill) ·
+    /// INSERT ใช้ ON CONFLICT DO NOTHING (กุญแจ SeedKey ต่อบริษัท) ⇒ แถวที่ผู้ใช้ลบแล้วไม่ถูก seed คืน</para></summary>
+    internal static IReadOnlyList<string> DepositKindMigrationStatements()
+    {
+        const int price = (int)Accounting.Models.Enums.DepositNature.PartOfPrice;
+        const int full = (int)Accounting.Models.Enums.DepositVatTreatment.FullDeposit;
+        const int undue = (int)Accounting.Models.Enums.DepositVatTreatment.VatPendingUndue;
+        var lp = Accounting.Helpers.DepositKindSeed.LodgingPropertySeedPrefix;
+        return new[]
+        {
+            """CREATE TABLE IF NOT EXISTS "DepositKinds" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Code" varchar(32) NOT NULL, "Name" varchar(256) NOT NULL, "Nature" integer NOT NULL DEFAULT 1, "VatTreatment" integer NULL, "LiabilityAccountCode" varchar(20) NULL, "ForfeitAccountCode" varchar(20) NULL, "PolicyReason" text NULL, "Description" text NULL, "IsDefault" boolean NOT NULL DEFAULT false, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "SeedKey" varchar(64) NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_SeedKey" ON "DepositKinds" ("CompanyId", "SeedKey") WHERE "SeedKey" IS NOT NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DepositKinds_Company_Code" ON "DepositKinds" ("CompanyId", "Code") WHERE "IsDeleted" = false;""",
+            // ใบมัดจำตรึงประเภท/ลักษณะ/ชื่อ/หมายเหตุนโยบายตอนสร้าง — ใบเดิม NULL (ไม่ทราบ)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositKindId" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositNature" integer NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositKindName" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositPolicyNote" text NULL;""",
+            // ที่พัก: ประเภทมัดจำค่าห้อง · ประเภท/ยอดเงินประกันความเสียหาย · ใบรับเงินประกันของการจอง
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "RoomDepositKindId" uuid NULL;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "SecurityDepositKindId" uuid NULL;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "SecurityDepositAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SecurityDepositDocumentId" uuid NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SecurityDepositSettledAt" timestamptz NULL;""",
+            Accounting.Helpers.DepositKindSeed.MigrationSeedSql(),
+            $$"""INSERT INTO "DepositKinds" ("Id","CompanyId","Code","Name","Nature","VatTreatment","PolicyReason","Description","IsDefault","IsActive","SortOrder","SeedKey","CreatedAt","IsDeleted") SELECT gen_random_uuid(), p."CompanyId", 'LP-' || upper(left(replace(p."Id"::text, '-', ''), 8)), left('มัดจำค่าห้องพัก — ' || p."Name", 256), {{price}}, p."DepositVatTreatment", CASE WHEN p."DepositVatTreatment" IN ({{full}}, {{undue}}) THEN 'ย้ายจากค่าตั้งเดิมของที่พัก (ก่อนรอบ 194) — ผู้ใช้เลือกวิธีบันทึกนี้ไว้ก่อนมีประเภทเงินมัดจำ · ตรวจลักษณะเงินอีกครั้ง: มัดจำค่าห้องเป็นส่วนหนึ่งของราคา ภาษีถึงกำหนดตอนรับเงิน (มาตรา 78/1)' END, 'สร้างจากค่าตั้งเดิมของที่พัก ' || p."Name", false, true, 40, '{{lp}}' || p."Id"::text, now(), false FROM "LodgingProperties" p WHERE p."DepositVatTreatment" IS NOT NULL AND p."IsDeleted" = false ON CONFLICT DO NOTHING;""",
+            $$"""UPDATE "LodgingProperties" p SET "RoomDepositKindId" = k."Id" FROM "DepositKinds" k WHERE k."CompanyId" = p."CompanyId" AND k."SeedKey" = '{{lp}}' || p."Id"::text AND k."IsDeleted" = false AND p."RoomDepositKindId" IS NULL AND p."DepositVatTreatment" IS NOT NULL;""",
+        };
+    }
+
     internal static List<string> GetAlterStatements()
     {
         return
@@ -6741,6 +6778,9 @@ public static class DatabaseMigrationHelper
             // · รันซ้ำได้ (RefundPaidBy IS NULL) · ป้ายต้องตรง LodgingDepositSettlement.LegacyRefundMarker
             """UPDATE "LodgingReservations" SET "RefundPaidAmount" = 0, "RefundPaidAt" = NULL WHERE "RefundPaidBy" LIKE 'legacy:posted-at-cancel%' AND "RefundPaidAmount" <> 0;""",
             """UPDATE "LodgingReservations" SET "RefundPaidBy" = 'legacy:posted-at-cancel (ก่อนรอบ 193 — ไม่มีข้อมูลการโอนคืน ระบบเดิมลงบัญชีคืนเงินตอนยกเลิก)' WHERE "Status" IN (4, 5) AND "RefundAmount" > 0 AND "RefundPaidAmount" = 0 AND "RefundPaidBy" IS NULL AND "PaidAmount" <= "DepositPaid" - "RefundAmount" + 0.005;""",
+
+            // รอบ 194 — ประเภทเงินมัดจำ (ตาราง + คอลัมน์ใหม่ + seed idempotent) · ดู DepositKindMigrationStatements
+            .. DepositKindMigrationStatements(),
 
             // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
             // ให้เป็น "วันสิ้นรอบบัญชี + 5 ปี" (§87/3 นับจากวันยื่นแบบ · ม.10 นับจาก

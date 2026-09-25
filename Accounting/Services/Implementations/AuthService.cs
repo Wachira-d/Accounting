@@ -213,6 +213,8 @@ public class AuthService : IAuthService
             _db.Companies.Add(company);
             // แถวค่าตั้งเกิดพร้อมบริษัท + seed VAT จากบริษัท (ยังไม่จด = ค่าเริ่มต้นของ Company) — S-01
             _db.CompanySettings.Add(CompanySettingsFactory.NewFor(company, vatStatusConfirmed: false));
+            // รอบ 194 — ประเภทเงินมัดจำเริ่มต้น (spec S8 · ตารางเดียวกับ migration/วิซาร์ด)
+            await DepositKindSeed.EnsureSeededAsync(_db, company.Id);
 
             _db.CompanyUsers.Add(new CompanyUser
             {
@@ -691,6 +693,8 @@ public class AuthService : IAuthService
                     _db.Companies.Add(company);
                     // เส้น SSO ใช้ตัวสร้างค่าตั้งตัวเดียวกับเส้นสมัครปกติ (S-01)
                     _db.CompanySettings.Add(CompanySettingsFactory.NewFor(company, vatStatusConfirmed: false));
+                    // รอบ 194 — ประเภทเงินมัดจำเริ่มต้น (spec S8 · ตารางเดียวกับ migration/วิซาร์ด)
+                    await DepositKindSeed.EnsureSeededAsync(_db, company.Id);
                     _db.CompanyUsers.Add(new CompanyUser
                     {
                         CompanyId = company.Id,

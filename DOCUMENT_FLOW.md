@@ -708,6 +708,18 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     สินค้า/ไม่ทราบ = พฤติกรรมเดิมทุกทางเข้า ⇒ ไม่เปลี่ยนใครเงียบ) · ไม่ทราบประเภท = `NeedsOwnerChoice` (หน้าตั้งค่าแสดงเด่น) ·
     บริการเลือกโหมดที่ไม่ใช่ VAT ทันที ⇒ คำเตือน `RD-78/1-DEPOSIT-VAT` (หน้าตั้งค่าบริษัท/ที่พัก · หมายเหตุภายในใบมัดจำ/การจอง · audit) ·
     สินค้า ⇒ แจ้ง `RD-78-DEPOSIT-VAT` · **วิธีหักที่ใบสุดท้ายไม่ใช่ค่าตั้งแยก** — อ่านย้อนจากช่องที่ตรึงบนใบมัดจำ (`OfDocument`) ⇒ ไม่มีคู่ที่ผิดกฎหมายให้เลือก
+
+    **รอบ 194 ทีม A (แกนกลาง — สัญญาพร้อม · ทีม B/C/D ต่อสายเข้าเส้นเอกสาร/ตั้งค่า/ที่พัก · spec `erp-review/2026-09-25/spec-194.md`)**:
+    **ลักษณะเงิน** (`enum DepositNature` PartOfPrice=1 · RefundableSecurity=2 · NonVatSupply=3) = ตัวกำหนด VAT · โหมด = วิธีบันทึก ·
+    ตาราง `DepositKinds` ต่อบริษัท (`Models/Entities/DepositKind.cs` · seed `Helpers/DepositKindSeed` ตารางเดียว: ADVANCE (ราคา · โหมด NULL = ตามค่าตั้งบริษัท ·
+    เริ่มต้น) + SECURITY (เงินประกัน · เต็มยอด) · โรงแรมชื่อเฉพาะ · อสังหาฯ + RENT-ADV นอกระบบ VAT · migration ตอนบูต + จุดสร้างบริษัท 3 จุด
+    `EnsureSeededAsync`) · ตัวตัดสิน 6 ชั้น `DepositPolicyResolver.ResolveKind` (บนใบ → ช่องทาง → ค่าเดิมช่องทาง → เริ่มต้นบริษัท → ค่าตั้งบริษัท →
+    ประเภทธุรกิจ) · รูปใบ `Helpers/DepositDocumentShaping.Apply` (decision null = ไม่แตะอะไร · เต็มยอด/นอกระบบ VAT = VAT 0 + deferred + หมายเหตุเมื่อตั้งทับ ·
+    ไม่บังคับ 7% ให้บรรทัด 0) · ด่าน `KindProblem` (ราคา + เลื่อน VAT ต้องมีเหตุผล) · `KindWarning` (สินค้าเตือนแรงเท่าบริการ `RD-78(1)(b)`/`RD-78/1` ·
+    `RD-PO73-SEC` · `RD-81`) · `SecurityDeductionProblem` (`DEP-SEC-DEDUCT`) · ริบ `ForfeitVatDecision` (ตามลักษณะ ไม่ใช่โหมด · NULL + ไม่ระบุ = มี VAT ·
+    ธง `[DEPOSIT-LATE-VAT]`) · ใบตรึง `Document.DepositKindId/DepositNature/DepositKindName/DepositPolicyNote` (ใบเดิม NULL = ไม่ทราบ · **migration ไม่ UPDATE
+    "Documents"**) · `NatureOf(RealEstate)` = ไม่ทราบ (เดิมบริการ) · คำเตือนสินค้าของ `Resolve` เดิมแรงขึ้น (รหัสเดิม) ·
+    **ยังไม่มีทางเข้าใดเรียก ResolveKind/Apply** จนกว่าทีม B/C/D ต่อสาย ⇒ พฤติกรรมใบมัดจำวันนี้ = รอบ 193 ทุกตัวอักษร
     | โหมด | ใบมัดจำ (1,000 รวม VAT) | JE | เข้า ภ.พ.30 | ใบสุดท้าย |
     | --- | --- | --- | --- | --- |
     | `FullDeposit` = 1 รับเต็มยอด ไม่แยก VAT (เงินประกัน/ต้องคืน) | ใบเสร็จ VAT บรรทัด 0 + ธงพัก | Cr 217xx 1,000 | ไม่เข้า | เต็มราคา + ตัดชำระ (`ApplyDepositToInvoiceAsync`) |

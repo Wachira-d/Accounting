@@ -290,6 +290,18 @@ public class Document : TenantEntity
     /// (ซึ่งเข้า ภ.พ.30 ตั้งแต่ DocumentDate อยู่แล้ว).</summary>
     public DateTime? DepositOutputVatRecognizedAt { get; set; }
 
+    // ── รอบ 194 — ประเภทเงินมัดจำ (spec S1/S4) · ตรึงตอนสร้าง · ใบเดิม = NULL ทั้งชุด (ห้าม backfill) ──
+    /// <summary>ประเภทเงินมัดจำที่ใช้ตอนออกใบ (<see cref="DepositKind"/>) — null = ใบเดิม/ไม่ได้ระบุประเภท (payload เก่า · OCR · คู่ค้า)</summary>
+    public Guid? DepositKindId { get; set; }
+    /// <summary>ลักษณะเงิน ณ ตอนออกใบ — <b>null = ไม่ทราบ</b> (ใบก่อนรอบ 194) ⇒ เส้นริบต้องให้ผู้ใช้ระบุ <see cref="DepositForfeitAs"/>
+    /// (ค่าเริ่มต้นทิศปลอดภัย = มี VAT) · ห้ามใส่ใน <c>DocumentSignedContent</c></summary>
+    public Accounting.Models.Enums.DepositNature? DepositNature { get; set; }
+    /// <summary>ชื่อประเภท ณ ตอนออกใบ (สำเนา — แก้ชื่อประเภททีหลังไม่เปลี่ยนใบเดิม)</summary>
+    public string? DepositKindName { get; set; }
+    /// <summary>หมายเหตุนโยบายที่ระบบประทับ (เหตุผลที่เลือกโหมดเลื่อน VAT · เซิร์ฟเวอร์ตั้ง VAT 0 ทับค่าที่ส่งมา · <c>[DEPOSIT-LATE-VAT]</c>)
+    /// — ช่องของตัวเอง ไม่ปนกับ <c>InternalNotes</c></summary>
+    public string? DepositPolicyNote { get; set; }
+
     /// <summary>Credit term in days from the document date — used to
     /// auto-fill DueDate when not explicit, and to roll DSO / DPO
     /// reports. Defaulted from Contact.PaymentTermDays on create when
