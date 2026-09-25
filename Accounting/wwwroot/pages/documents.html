@@ -933,16 +933,13 @@
               <div style="font-size:12px;color:#6b21a8;margin-bottom:10px">
                 เงินที่รับจะลงเป็น "ขายรอรับรู้" (หนี้สิน) — รับรู้รายได้เมื่อส่งมอบจริงในหน้า "เงินมัดจำ"
               </div>
+              <!-- รอบ 194 — ประเภทเงินมัดจำ (ลักษณะเงินกำหนด VAT) · รายการ/ป้าย/คำเตือนมาจากเซิร์ฟเวอร์ (GET deposit-kinds) ·
+                   เซิร์ฟเวอร์จัดรูปใบตามประเภทตอนบันทึก (DepositDocumentShaping) — หน้านี้แค่พรีวิว -->
               <div style="margin-bottom:10px">
-                <div class="text-sm font-medium" style="margin-bottom:4px">จังหวะภาษีขาย (tax point §78/§78/1)</div>
-                <label style="display:block;font-size:13px;margin-bottom:4px;cursor:pointer">
-                  <input type="radio" name="fDepositVat" value="immediate" checked>
-                  ภาษีขายถึงกำหนดแล้ว — รับชำระราคา → ออกภาษีขายเข้า ภ.พ.30 ทันที (บัญชี 21911)
-                </label>
-                <label style="display:block;font-size:13px;cursor:pointer">
-                  <input type="radio" name="fDepositVat" value="deferred">
-                  ยังไม่ถึงกำหนด — เงินประกัน/ยังไม่ให้บริการ → พักที่ "ภาษีขายรอเรียกเก็บ" (21913) ยังไม่เข้า ภ.พ.30 จนกว่าจะรับรู้
-                </label>
+                <label class="text-sm font-medium" for="fDepositKind" style="display:block;margin-bottom:4px">ประเภทเงินมัดจำ (กำหนดจังหวะภาษีขาย §78/§78/1)</label>
+                <select id="fDepositKind" class="form-input" onchange="Page.onDepositKindChange()"></select>
+                <div id="fDepositKindInfo" class="text-xs" style="margin-top:6px;color:#6b21a8;line-height:1.6"></div>
+                <div id="fDepositKindLock" class="text-xs" style="display:none;margin-top:6px;color:#92400e"></div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div>
@@ -1569,6 +1566,7 @@
         this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
         this._loadBranches(); // เช่นกัน — ล้มก็แค่ไม่โชว์ช่องสาขา
         this._loadTemplates();
+        this._loadDepositKinds();   // รอบ 194 — ประเภทเงินมัดจำ (ล้ม = ตัวเลือก "ตามค่าตั้งต้นบริษัท" · ฟอร์มยังใช้ได้)
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
         // here so the user doesn't have to retype/search after creating.
@@ -3189,7 +3187,7 @@
                       return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
                         <label style="font-size:13px;color:#065f46;display:flex;gap:6px;align-items:center;cursor:pointer;flex:1;min-width:220px">
                           <input type="checkbox" class="fDepChk" value="${d.id}" data-out="${out}" data-booking="${Layout.esc(d.bookingNumber || '')}" data-ref="${Layout.esc(d.reference || '')}" ${matchedIds.has(d.id) ? 'checked' : ''} onchange="Page.onApplyDepChange()">
-                          <span>${Layout.esc(d.documentNumber)} · คงเหลือ <b>${Layout.money(out)}</b> (รวม VAT)${d.reference ? ' · ' + Layout.esc(d.reference) : ''}</span>
+                          <span>${Layout.esc(d.documentNumber)} · คงเหลือ <b>${Layout.money(out)}</b> (รวม VAT)${d.reference ? ' · ' + Layout.esc(d.reference) : ''}${d.depositKindName ? ' · ' + Layout.esc(d.depositKindName) : ''}${d.deductAsBaseBlockedReason ? ` <span style="color:#92400e" title="${Layout.esc(d.deductAsBaseBlockedReason)}">🔒 เงินประกัน — ตัดชำระหลังอนุมัติได้ · หักในใบขายเงินสดใบเดียวไม่ได้</span>` : ''}</span>
                         </label>
                         <input type="number" step="0.01" min="0" class="fDepAmt" data-id="${d.id}" style="max-width:130px;font-size:13px" value="${out.toFixed(2)}" onchange="Page.onApplyDepChange()" placeholder="ยอดหัก" title="ยอดที่หัก (รวม VAT) — ไม่เกินคงเหลือ">
                       </div>`;
@@ -4714,27 +4712,160 @@
         if (lEl) lEl.textContent = label;
       },
 
-      /** ใบใหม่: ตั้ง "จังหวะภาษีขายของมัดจำ" ตามวิธีบันทึกของบริษัท (ห้ามค้างค่าของใบก่อน — กฎ B "reset ตอนฟอร์มใหม่")
-       *  ฟอร์มนี้มีสองทาง (ทันที/รอเรียกเก็บ) · โหมด "มัดจำเต็มยอด ไม่แยก VAT" ฟอร์มนี้ยังตั้ง VAT บรรทัดให้ไม่ได้ → บอกตรง ๆ */
-      _resetDepositVatDefault() {
-        const t = this._depositVatInfo?.treatment || 'VatImmediate';
-        const val = t === 'VatImmediate' ? 'immediate' : 'deferred';
-        const radio = document.querySelector(`input[name="fDepositVat"][value="${val}"]`);
-        if (radio) radio.checked = true;
-        const fdAcc = document.getElementById('fDepositDeferredAcc'); if (fdAcc) fdAcc.value = '';
-        let note = document.getElementById('fDepositVatDefaultNote');
-        const panel = document.getElementById('depositOptions');
-        if (!note && panel) { panel.insertAdjacentHTML('beforeend', '<div id="fDepositVatDefaultNote" class="text-xs" style="margin-top:8px;color:#6b21a8"></div>'); note = document.getElementById('fDepositVatDefaultNote'); }
-        if (note) note.textContent = this._depositVatInfo
-          ? `ค่าตั้งต้นบริษัท: ${this._depositVatInfo.label}` + (t === 'FullDeposit'
-              ? ' — ฟอร์มนี้ยังตั้ง VAT บรรทัดเป็น 0 ให้อัตโนมัติไม่ได้ (ยังไม่รองรับ): ตั้ง VAT ของบรรทัดมัดจำเป็น 0 เอง แล้วเลือก "ยังไม่ถึงกำหนด"'
-              : '') + (this._depositVatInfo.warning ? ` · ${this._depositVatInfo.warning}` : '')
-          : '';
+      // ── รอบ 194 — ประเภทเงินมัดจำ ─────────────────────────────────────────────
+      // รายการ/ป้าย/คำเตือน = เซิร์ฟเวอร์ (GET deposit-kinds · enum เป็นชื่อ) · เซิร์ฟเวอร์จัดรูปใบตามประเภทตอนบันทึก
+      // (DepositDocumentShaping) — หน้านี้ทำแค่ "เลือก + แสดง + พรีวิว VAT บรรทัดผ่าน Layout.setLineVat"
+      _depositKinds: [],
+      _depositKindsLoaded: false,
+      _depositKindsTried: false,
+      _defaultDepositKindId: null,
+      /** ค่าตัวเลือกพิเศษ: ใบเดิมที่ไม่มีประเภท — ส่งแบบเดิม (depositOutputVatDeferred ตามใบ) ไม่ส่ง depositKindId */
+      DEPOSIT_KIND_LEGACY: '__legacy__',
+      _legacyDepositDeferred: false,
+
+      async _loadDepositKinds() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          // GET /api/companies/{id}/deposit-kinds (DepositKindsController ของทีม C · api.getDepositKinds อยู่ใน api.js ของทีม C) —
+          // item: id · code · name · nature · effectiveTreatment · label · warning · isDefault · isActive (enum เป็นชื่อ)
+          const r = await api.getDepositKinds();
+          this._depositKinds = (r?.data?.items || []).filter(k => k && k.id);
+          this._defaultDepositKindId = r?.data?.defaultKindId || null;
+          this._depositKindsLoaded = true;
+        } catch (e) { this._depositKinds = []; this._depositKindsLoaded = false; }
+        this._depositKindsTried = true;
+        // ฟอร์มที่เปิดค้างอยู่ก่อนรายการมาถึง (ยังมีแค่ตัวเลือกชั่วคราว "ว่าง") — เติมตัวเลือกโดยไม่ทับค่าที่ hydrate ไว้แล้ว
+        const sel = document.getElementById('fDepositKind');
+        if (sel && (!sel.options.length || sel.value === '')) this._renderDepositKindOptions(this._defaultDepositKindId);
       },
+
+      /** วาดตัวเลือกประเภท — `selectedId` = ค่าที่ต้องเลือก · `extra` = ตัวเลือกที่ต้องค้ำไว้ (ใบเดิม/ประเภทที่ถูกปิดใช้แล้ว) */
+      _renderDepositKindOptions(selectedId, extra = null) {
+        const sel = document.getElementById('fDepositKind');
+        if (!sel) return;
+        const opts = [];
+        if (extra) opts.push(`<option value="${Layout.esc(extra.value)}">${Layout.esc(extra.label)}</option>`);
+        for (const k of this._depositKinds.filter(k => k.isActive !== false)) {
+          opts.push(`<option value="${Layout.esc(k.id)}">${Layout.esc(k.name || k.code || '')}${k.label ? ' — ' + Layout.esc(k.label) : ''}</option>`);
+        }
+        if (!opts.length) {
+          // โหลดรายการไม่ได้ ⇒ ไม่ระบุประเภท = เซิร์ฟเวอร์ใช้ธงตามค่าตั้งบริษัท (พฤติกรรมเดิม) — บอกตรง ๆ ไม่เงียบ
+          opts.push(this._depositKindsTried
+            ? `<option value="">ตามค่าตั้งต้นบริษัท (โหลดรายการประเภทไม่สำเร็จ)</option>`
+            : `<option value="">กำลังโหลดประเภทเงินมัดจำ…</option>`);
+        }
+        sel.innerHTML = opts.join('');
+        if (selectedId != null) sel.value = selectedId;
+        if (!sel.value && sel.options.length) sel.selectedIndex = 0;
+        this.onDepositKindChange();
+      },
+
+      _selectedDepositKind() {
+        const v = document.getElementById('fDepositKind')?.value || '';
+        return this._depositKinds.find(k => k.id === v) || null;
+      },
+
+      /** ใบใหม่: เลือกประเภทเริ่มต้นของบริษัท (ห้ามค้างค่าของใบก่อน — กฎ B "reset ตอนฟอร์มใหม่") */
+      _resetDepositVatDefault() {
+        const fdAcc = document.getElementById('fDepositDeferredAcc'); if (fdAcc) fdAcc.value = '';
+        this._legacyDepositDeferred = false;
+        const sel = document.getElementById('fDepositKind');
+        if (sel) { sel.disabled = false; sel.title = ''; }
+        const lock = document.getElementById('fDepositKindLock');
+        if (lock) { lock.style.display = 'none'; lock.textContent = ''; }
+        this._renderDepositKindOptions(this._defaultDepositKindId);
+      },
+
+      /** แสดงป้าย/คำเตือนของประเภทที่เลือก (ข้อความจากเซิร์ฟเวอร์) + พรีวิว VAT บรรทัด */
+      onDepositKindChange() {
+        const info = document.getElementById('fDepositKindInfo');
+        const v = document.getElementById('fDepositKind')?.value || '';
+        const k = this._selectedDepositKind();
+        if (info) {
+          if (k) {
+            info.innerHTML = [
+              k.label ? `วิธีบันทึก: <b>${Layout.esc(k.label)}</b>` : '',
+              k.warning ? `<span style="color:#b45309">${Layout.esc(k.warning)}</span>` : '',
+            ].filter(Boolean).join('<br>');
+          } else if (v === this.DEPOSIT_KIND_LEGACY) {
+            info.textContent = 'ใบนี้บันทึกก่อนมีประเภทเงินมัดจำ — ระบบบันทึกตามข้อมูลบนใบเดิม (VAT บรรทัด/จังหวะภาษีตามที่ออกไว้)';
+          } else {
+            info.textContent = this._depositVatInfo ? `ค่าตั้งต้นบริษัท: ${this._depositVatInfo.label}` : '';
+          }
+        }
+        this._previewDepositLineVat();
+      },
+
+      /** พรีวิว VAT บรรทัดของใบมัดจำตามประเภท — ประเภทที่บันทึกแบบ "เต็มยอด ไม่แยก VAT" หรือ "นอกระบบ VAT" = VAT 0
+       *  (เซิร์ฟเวอร์ตั้งให้อยู่แล้วตอนบันทึก พร้อมหมายเหตุ) · เขียนผ่าน Layout.setLineVat เท่านั้น (ค่าที่ผู้ใช้เลือกเองชนะ) ·
+       *  เลิกเลือก/เลิกติ๊กมัดจำ ⇒ คืนค่าเดิมเฉพาะบรรทัดที่ตัวนี้เป็นคนตั้ง */
+      _previewDepositLineVat() {
+        const on = document.getElementById('fIsDeposit')?.checked || false;
+        const k = on ? this._selectedDepositKind() : null;
+        const zero = !!k && (k.effectiveTreatment === 'FullDeposit' || k.nature === 'NonVatSupply');
+        document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(vatSel => {
+          if (zero) {
+            if (vatSel.dataset.depKindZero === '1') return;
+            const prev = vatSel.value;
+            if (prev !== '0' && Layout.setLineVat(vatSel, 0, 'doctype')) {
+              vatSel.dataset.depKindZero = '1';
+              vatSel.dataset.depKindPrev = prev;
+            }
+          } else if (vatSel.dataset.depKindZero === '1') {
+            const prev = vatSel.dataset.depKindPrev;
+            delete vatSel.dataset.depKindZero; delete vatSel.dataset.depKindPrev;
+            if (prev != null && vatSel.value === '0') Layout.setLineVat(vatSel, prev, 'doctype');
+          }
+        });
+        try { this.calcSum?.(); } catch {}
+      },
+
+      /** ธง "VAT ของมัดจำยังพักรอ" ที่ส่งไปกับใบ — ใบเดิม = ค่าบนใบ · ไม่มีประเภท (โหลดไม่ได้) = ตามค่าตั้งต้นบริษัท ·
+       *  มีประเภท = เซิร์ฟเวอร์ตั้งทับตามประเภท (ค่านี้ไม่มีผล) */
+      _depositDeferredForPayload() {
+        const v = document.getElementById('fDepositKind')?.value || '';
+        if (v === this.DEPOSIT_KIND_LEGACY) return !!this._legacyDepositDeferred;
+        const t = this._selectedDepositKind()?.effectiveTreatment || this._depositVatInfo?.treatment || 'VatImmediate';
+        return t !== 'VatImmediate';
+      },
+
       onDepositToggle() {
         const on = document.getElementById('fIsDeposit')?.checked || false;
         const panel = document.getElementById('depositOptions');
         if (panel) panel.style.display = on ? 'block' : 'none';
+        this._previewDepositLineVat();
+      },
+
+      /** เปิดแก้ใบมัดจำเดิม — เลือกประเภทที่ตรึงบนใบ · ใบเดิมไม่มีประเภท = ตัวเลือก "ตามข้อมูลบนใบ (ใบเดิม)" ·
+       *  ใบที่ไม่ใช่ร่าง/ถูกตีกลับ = ล็อกช่อง + บอกเหตุผล (เซิร์ฟเวอร์ไม่รับการเปลี่ยนประเภท — ห้าม silent no-op) */
+      _hydrateDepositKind(d) {
+        // ใบที่ไม่ใช่มัดจำ = เหมือนฟอร์มใหม่ (ติ๊กมัดจำทีหลังได้ประเภทเริ่มต้น ไม่ใช่ตัวเลือก "ใบเดิม")
+        if (!d.isDeposit) { this._resetDepositVatDefault(); return; }
+        this._legacyDepositDeferred = !!d.depositOutputVatDeferred;
+        let extra = null;
+        let selected = d.depositKindId || null;
+        if (!d.depositKindId) {
+          extra = { value: this.DEPOSIT_KIND_LEGACY, label: 'ตามข้อมูลบนใบ (ใบเดิม — ไม่มีประเภท)' };
+          selected = this.DEPOSIT_KIND_LEGACY;
+        } else if (!this._depositKinds.some(k => k.id === d.depositKindId && k.isActive !== false)) {
+          extra = { value: d.depositKindId, label: `${d.depositKindName || 'ประเภทเดิม'} (ปิดใช้แล้ว — ใบนี้ยังใช้ประเภทเดิม)` };
+        }
+        this._renderDepositKindOptions(selected, extra);
+        const editable = ['Draft', 'Rejected'].includes(d.status || this._editingStatus);
+        const sel = document.getElementById('fDepositKind');
+        const lock = document.getElementById('fDepositKindLock');
+        if (sel) {
+          sel.disabled = !editable;
+          sel.title = editable ? '' : 'ใบที่อนุมัติแล้วเปลี่ยนประเภทเงินมัดจำไม่ได้';
+        }
+        if (lock) {
+          const lines = [];
+          if (!editable) lines.push('🔒 ใบนี้อนุมัติแล้ว — เปลี่ยนประเภทเงินมัดจำไม่ได้ (§86/4 ห้ามแก้ย้อนหลัง) · ถ้าประเภทผิด ให้ยกเลิกใบ/คืนมัดจำ แล้วออกใบใหม่');
+          if (d.depositPolicyNote) lines.push('หมายเหตุบนใบ: ' + d.depositPolicyNote);
+          lock.textContent = lines.join('\n');
+          lock.style.whiteSpace = 'pre-line';
+          lock.style.display = lines.length ? '' : 'none';
+        }
       },
       /** แถบเตือนเมื่อเอกสารที่เปิดมามีบรรทัดที่ผังอยู่คนละฝั่ง — อ่านจากแถวที่
        *  hydrate แล้ว จึงใช้กติกาเดียวกับชิปรายบรรทัดและด่านฝั่งเซิร์ฟเวอร์
@@ -8436,9 +8567,8 @@
           const fDep = document.getElementById('fIsDeposit');
           if (fDep) {
             fDep.checked = !!d.isDeposit;
-            const vatVal = d.depositOutputVatDeferred ? 'deferred' : 'immediate';
-            const vatRadio = document.querySelector(`input[name="fDepositVat"][value="${vatVal}"]`);
-            if (vatRadio) vatRadio.checked = true;
+            // รอบ 194 — ประเภทที่ตรึงบนใบ / ใบเดิม = "ตามข้อมูลบนใบ" · ใบที่อนุมัติแล้ว = ล็อก + เหตุผล
+            this._hydrateDepositKind(d);
             const fdAcc = document.getElementById('fDepositDeferredAcc');
             if (fdAcc) fdAcc.value = d.depositDeferredAccountCode || '';
             const fdRef = document.getElementById('fDepositRef');
@@ -8922,11 +9052,18 @@
                      || ((document.getElementById('fDocType').value === 'Receipt'
                           || document.getElementById('fDocType').value === 'ReceiptVoucher')
                          && (document.getElementById('fIsDeposit')?.checked || false)),
-          depositOutputVatDeferred:
-            (document.querySelector('input[name="fDepositVat"]:checked')?.value === 'deferred') || false,
+          // รอบ 194 — ประเภทเงินมัดจำ: เลือกประเภท ⇒ ส่ง depositKindId (เซิร์ฟเวอร์ตัดสิน VAT/ธง/บัญชีเอง) ·
+          // ใบเดิมไม่มีประเภท ⇒ ส่งธงเดิมของใบ · โหลดรายการไม่ได้ ⇒ ธงตามค่าตั้งต้นบริษัท (พฤติกรรมเดิม)
+          depositOutputVatDeferred: this._depositDeferredForPayload(),
           depositDeferredAccountCode:
             document.getElementById('fDepositDeferredAcc')?.value.trim() || null,
         };
+        if (payload.isDeposit) {
+          const kindVal = document.getElementById('fDepositKind')?.value || '';
+          const kindSel = document.getElementById('fDepositKind');
+          // ช่องที่ล็อก (ใบอนุมัติแล้ว) ไม่ส่ง = คงของเดิม · ตัวเลือกใบเดิม/ว่าง = ไม่ระบุประเภท
+          if (kindVal && kindVal !== this.DEPOSIT_KIND_LEGACY && !kindSel?.disabled) payload.depositKindId = kindVal;
+        }
         // ── ขายเงินสด "ใบเดียว" (ใบกำกับภาษี/ใบเสร็จรับเงิน) ──
         // IssuedAsCashReceipt → AutoPost ลง Dr เงินสด/Cr รายได้ (ไม่ตั้งลูกหนี้),
         // e-Tax T03, Paid ทันที, ไม่ออกใบเสร็จแยก. มัดจำที่เลือก → ส่งเป็น drives
@@ -8937,6 +9074,16 @@
         // chain ฝั่ง client (ปิดฟอร์ม/อนุมัติล้มแล้วเจตนาหาย + หัวใบร่างไม่รวม)
         payload.paidOnIssue = _paidOnIssueNow;
         if (_issuedAsCashReceipt && (this._pendingDepositApplies || []).length) {
+          // รอบ 194 DEP-SEC-DEDUCT — ขายเงินสดใบเดียว = หักมัดจำเป็นราคาในใบ ⇒ เงินประกันใช้ไม่ได้ (เซิร์ฟเวอร์ปฏิเสธอยู่แล้ว —
+          // บอกก่อนส่ง พร้อมเหตุผลจากเซิร์ฟเวอร์ · ทางไปต่อ: เลิกติ๊ก "ขายเงินสดใบเดียว" แล้วหักมัดจำหลังอนุมัติ = ตัดชำระหนี้)
+          const secBlocked = this._pendingDepositApplies
+            .filter(ap => ap.kind !== 'journal')
+            .map(ap => (this._contactDepositSummary?.deposits || []).find(x => x.id === ap.depositDocumentId))
+            .filter(d => d && d.deductAsBaseBlockedReason);
+          if (secBlocked.length) {
+            Layout.toast(`ใบมัดจำ ${secBlocked.map(d => d.documentNumber).join(', ')}: ${secBlocked[0].deductAsBaseBlockedReason}`, 'error');
+            return;
+          }
           const refs = []; let depSum = 0;
           for (const ap of this._pendingDepositApplies) {
             depSum += Number(ap.amount) || 0;

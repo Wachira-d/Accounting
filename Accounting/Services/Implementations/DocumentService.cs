@@ -1089,6 +1089,37 @@ public partial class DocumentService : IDocumentService
                     request.BillDiscountPercent ?? 0m) is { } depDeductProblem)
                 throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
                     Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+            // รอบ 194 (spec S2 · DEP-SEC-DEDUCT): เงินประกันที่ต้องคืนหักเป็นฐานภาษีไม่ได้ — API ที่ตั้ง DepositBaseDeducted ตรง ๆ
+            // ต้องถูกกันตั้งแต่บันทึก (ไม่ใช่ไปล้มตอนอนุมัติ) · เส้นแปลงจากฟอร์มถูกกันแล้วใน LoadTaxedDepositsByRefAsync
+            if ((request.DepositBaseDeducted ?? 0m) > 0m)
+                await GuardSecurityDepositDeductionAsync(companyId, request.DepositAppliedRef);
+
+            // ── รอบ 194 — ประเภทเงินมัดจำ (spec S4) · ระบุประเภท ⇒ ตัวตัดสินตัวเดียวจัดรูปใบ (VAT บรรทัด · ธง deferred · บัญชีหนี้สิน)
+            //    ก่อนเฉลี่ยส่วนหักท้ายบิล/คิดยอด · ไม่ระบุ ⇒ ไม่แตะอะไร (payload เดิม/OCR/คู่ค้า เหมือนเดิมทุกตัวอักษร)
+            Accounting.Helpers.DepositKindDecision? depositKind = null;
+            Accounting.Helpers.DepositShapingResult? depositShape = null;
+            var kindRequested = (request.DepositKindId is Guid reqKindId && reqKindId != Guid.Empty)
+                || !string.IsNullOrWhiteSpace(request.DepositKindCode);
+            if (kindRequested)
+            {
+                var willBeDeposit = request.IsDeposit
+                    && request.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
+                if (!willBeDeposit)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        Accounting.Helpers.DepositKindDocumentRules.KindOnNonDepositMessage,
+                        Accounting.Helpers.DepositKindDocumentRules.KindNotFoundRuleCode);
+                depositKind = await ResolveDocumentDepositKindAsync(companyId, request.DepositKindId, request.DepositKindCode);
+                var (kindVatReg, kindVatDefault) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+                depositShape = Accounting.Helpers.DepositDocumentShaping.Apply(request.Lines ?? new List<DocumentLineRequest>(), depositKind,
+                    Accounting.Helpers.OutputVatRate.ForCompany(kindVatReg, kindVatDefault),
+                    request.DepositOutputVatDeferred, request.DepositDeferredAccountCode);
+                request = request with
+                {
+                    Lines = depositShape.Lines.ToList(),
+                    DepositOutputVatDeferred = depositShape.DepositOutputVatDeferred,
+                    DepositDeferredAccountCode = depositShape.DepositDeferredAccountCode,
+                };
+            }
 
             // P0-1 รอบ 193: ธง "หักมัดจำแบบขับ JE" บนชนิดที่ AutoPost ไม่อ่าน = silent no-op (ลูกหนี้เต็ม · มัดจำค้าง)
             if ((request.DepositAppliedDrivesJournal ?? false)
@@ -1160,6 +1191,11 @@ public partial class DocumentService : IDocumentService
                         || request.DocumentType == DocumentType.ReceiptVoucher),
                 DepositDeferredAccountCode = request.DepositDeferredAccountCode,
                 DepositOutputVatDeferred = request.DepositOutputVatDeferred,
+                // รอบ 194 — ตรึงประเภท/ลักษณะเงินลงใบ (null ทั้งชุด = ไม่ได้ระบุประเภท · ห้ามเดา)
+                DepositKindId = depositKind?.KindId,
+                DepositNature = depositKind?.Nature,
+                DepositKindName = depositKind?.Name,
+                DepositPolicyNote = depositShape?.Note,
                 // Tax Point §78 inputs (optional)
                 DeliveryDate = request.DeliveryDate,
                 OwnershipTransferDate = request.OwnershipTransferDate,
@@ -2191,6 +2227,48 @@ public partial class DocumentService : IDocumentService
                     ? $"{DocTypeLabel(doc.DocumentType)}สถานะนี้แก้ไขไม่ได้ (แก้ได้เฉพาะ ร่าง/ถูกตีกลับ หรือออก Rev ใหม่จาก Approved/Sent)"
                     : "แก้ไขได้เฉพาะเอกสารร่างหรือใบที่ถูกตีกลับเท่านั้น");
 
+        // ── รอบ 194 — ประเภทเงินมัดจำ (ด่านเดียวกับตอนสร้าง) ──
+        // null = คงประเภทเดิม (ใบที่มีประเภท ⇒ บรรทัดที่ส่งมาถูกจัดรูปตามประเภทเดิมอีกครั้ง — ฟอร์ม/API ส่ง VAT 7 มากับประเภท
+        // นอกระบบ VAT ไม่หลุด) · Guid.Empty = ล้าง (กลับไปตามบรรทัด/ธงที่ส่งมา) · ค่าอื่น = เปลี่ยน (เฉพาะใบร่าง/ถูกตีกลับ)
+        Accounting.Helpers.DepositKindDecision? updDepositKind = null;
+        Accounting.Helpers.DepositShapingResult? updDepositShape = null;
+        var (updKindId, updKindChanged) = Accounting.Helpers.DepositKindDocumentRules.UpdateTarget(request.DepositKindId, doc.DepositKindId);
+        if (updKindChanged && Accounting.Helpers.DepositKindDocumentRules.KindChangeBlockedReason(doc.Status) is { } kindBlocked)
+            throw new Accounting.Helpers.BusinessRuleException(kindBlocked, Accounting.Helpers.DepositKindDocumentRules.KindChangeRuleCode);
+        var updIsDeposit = (request.IsDeposit ?? doc.IsDeposit)
+            && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
+        if (updKindId.HasValue && !updIsDeposit)
+        {
+            // ขอประเภทมาเอง (ส่ง id) กับใบที่ไม่ใช่มัดจำ = ล้มดัง · ประเภทที่ติดมากับใบแล้วผู้ใช้เลิกติ๊กมัดจำ = ล้างตาม (ไม่เหลือค่าค้าง)
+            if (request.DepositKindId is Guid askedKind && askedKind != Guid.Empty)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositKindDocumentRules.KindOnNonDepositMessage,
+                    Accounting.Helpers.DepositKindDocumentRules.KindNotFoundRuleCode);
+            updKindId = null;
+            updKindChanged = doc.DepositKindId.HasValue;
+        }
+        if (updKindId.HasValue)
+        {
+            if (updKindChanged && request.Lines == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.DepositKindDocumentRules.KindChangeNeedsLinesMessage,
+                    Accounting.Helpers.DepositKindDocumentRules.KindChangeRuleCode);
+            updDepositKind = await ResolveDocumentDepositKindAsync(companyId, updKindId, null);
+            var (updVatReg, updVatDefault) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+            updDepositShape = Accounting.Helpers.DepositDocumentShaping.Apply(
+                (IReadOnlyList<DocumentLineRequest>?)request.Lines ?? Array.Empty<DocumentLineRequest>(), updDepositKind,
+                Accounting.Helpers.OutputVatRate.ForCompany(updVatReg, updVatDefault),
+                request.DepositOutputVatDeferred ?? doc.DepositOutputVatDeferred,
+                request.DepositDeferredAccountCode ?? doc.DepositDeferredAccountCode);
+            request = request with
+            {
+                Lines = request.Lines == null ? null : updDepositShape.Lines.ToList(),
+                DepositOutputVatDeferred = updDepositShape.DepositOutputVatDeferred,
+                // "" = ล้างกลับค่าตั้งต้นของ AutoPost (สัญญาเดิมของช่องนี้) · ค่า = บัญชีตามประเภท
+                DepositDeferredAccountCode = updDepositShape.DepositDeferredAccountCode ?? "",
+            };
+        }
+
         // รอบ 193 ฝ่ายค้านรอบสอง N1 — ด่านเดียวกับตอนสร้าง: หักมัดจำที่ออกใบกำกับแล้วแบบขับ JE ⇒ แปลงเป็นหักฐาน
         // (ฝ่ายค้านรอบสาม B4: อยู่หลังด่านสถานะ — ใบที่แก้ไม่ได้ต้องได้ข้อความสถานะ ไม่ใช่ข้อความของตัวแปลง ·
         //  R3-1: ฐานมัดจำลงช่อง DepositBaseDeducted แทนที่ค่าเดิมตามเลขอ้างอิงชุดใหม่ ส่วนลดการค้าคงเดิม)
@@ -2224,6 +2302,9 @@ public partial class DocumentService : IDocumentService
                     request.DepositAppliedDrivesJournal ?? doc.DepositAppliedDrivesJournal, effPct) is { } depDeductProblem)
                 throw new Accounting.Helpers.BusinessRuleException(depDeductProblem,
                     Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode);
+            // รอบ 194 DEP-SEC-DEDUCT — ด่านเดียวกับตอนสร้าง (ทางแก้ต้องเลี่ยงไม่ได้)
+            if ((request.DepositBaseDeducted ?? doc.DepositBaseDeducted) > 0m)
+                await GuardSecurityDepositDeductionAsync(companyId, effRef);
         }
 
         if (isDocRevision)
@@ -2398,6 +2479,22 @@ public partial class DocumentService : IDocumentService
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
+        // รอบ 194 — ประเภทเงินมัดจำที่ตรึงบนใบ (ใบร่าง: ชื่อ/ลักษณะตามประเภทปัจจุบัน) · ล้างประเภท = ล้างทั้งชุด (ไม่เหลือค่าค้าง)
+        if (updDepositKind != null)
+        {
+            doc.DepositKindId = updDepositKind.KindId;
+            doc.DepositNature = updDepositKind.Nature;
+            doc.DepositKindName = updDepositKind.Name;
+            // หมายเหตุคิดจากบรรทัด — ไม่ส่งบรรทัดมา (แก้หัวใบอย่างเดียว) ⇒ คงหมายเหตุเดิม
+            if (request.Lines != null || updKindChanged) doc.DepositPolicyNote = updDepositShape?.Note;
+        }
+        else if (updKindChanged && doc.DepositKindId.HasValue)
+        {
+            doc.DepositKindId = null;
+            doc.DepositNature = null;
+            doc.DepositKindName = null;
+            doc.DepositPolicyNote = null;
+        }
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
         if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
         if (request.DepositAppliedDrivesJournal.HasValue)
@@ -3423,6 +3520,58 @@ public partial class DocumentService : IDocumentService
             : await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == best.AccountId && a.CompanyId == companyId);
     }
 
+    /// <summary>รอบ 194 — โหลดประเภทเงินมัดจำที่ใบ/คู่ค้าระบุ (id หรือรหัส) แล้วตัดสินด้วย <c>DepositPolicyResolver.ResolveKind</c> ตัวเดียว ·
+    /// ต้องเป็นของบริษัทนี้ · เปิดใช้ · ไม่ถูกลบ — ไม่พบ ⇒ ล้มดังข้อความไทย (ห้ามตกไปชั้นถัดไปเงียบ ๆ: ผู้ใช้เลือกประเภทมาเอง)
+    /// · ไม่ระบุทั้งคู่ ⇒ null (ผู้เรียกไม่แตะรูปใบ)</summary>
+    private async Task<Accounting.Helpers.DepositKindDecision?> ResolveDocumentDepositKindAsync(
+        Guid companyId, Guid? kindId, string? kindCode)
+    {
+        DepositKind? kind;
+        if (kindId is Guid kid && kid != Guid.Empty)
+            kind = await _db.DepositKinds.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Id == kid && k.CompanyId == companyId && !k.IsDeleted && k.IsActive);
+        else if (!string.IsNullOrWhiteSpace(kindCode))
+        {
+            var code = kindCode.Trim().ToUpperInvariant();
+            kind = await _db.DepositKinds.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.CompanyId == companyId && !k.IsDeleted && k.IsActive && k.Code.ToUpper() == code);
+        }
+        else return null;
+        if (kind == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DepositKindDocumentRules.KindNotFoundMessage
+                + (string.IsNullOrWhiteSpace(kindCode) ? "" : $" (รหัสที่ส่งมา: {kindCode.Trim()})"),
+                Accounting.Helpers.DepositKindDocumentRules.KindNotFoundRuleCode);
+        var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
+        var companySetting = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => s.DepositVatTreatment).FirstOrDefaultAsync();
+        var chartHas21530 = await _db.ChartOfAccounts.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == "21530");
+        return Accounting.Helpers.DepositPolicyResolver.ResolveKind(
+            companyId, Accounting.Helpers.DepositPolicyResolver.NatureOf(industry),
+            documentKind: kind, channelKind: null, channelTreatment: null, companyDefaultKind: null,
+            companySetting: companySetting, chartHas21530: chartHas21530);
+    }
+
+    /// <summary>รอบ 194 (spec S2 · <c>DEP-SEC-DEDUCT</c>) — ใบมัดจำที่อ้างด้วยเลขใน <paramref name="refs"/> เป็น "เงินประกันที่ต้องคืน" ⇒
+    /// หักเป็นฐานภาษี/ราคาไม่ได้ (ตัวตัดสิน <c>DepositPolicyResolver.SecurityDeductionProblem</c> ตัวเดียว) · ทางไปต่อ = ตัดชำระหนี้
+    /// หลังอนุมัติ (<see cref="ApplyDepositToInvoiceAsync"/> ยังใช้ได้กับเงินประกัน) · tenant-safe</summary>
+    private async Task GuardSecurityDepositDeductionAsync(Guid companyId, string? refs)
+    {
+        var list = DepositReversalMath.ParseDepositRefs(refs);
+        if (list.Length == 0) return;
+        var deps = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.IsDeposit && !d.IsDeleted
+                && (list.Contains(d.DocumentNumber) || (d.Reference != null && list.Contains(d.Reference))))
+            .Select(d => new { d.DocumentNumber, d.DepositNature })
+            .ToListAsync();
+        foreach (var d in deps)
+            if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(d.DepositNature) is { } secProblem)
+                throw new Accounting.Helpers.BusinessRuleException($"ใบมัดจำ {d.DocumentNumber}: {secProblem}",
+                    Accounting.Helpers.DepositPolicyResolver.SecurityDeductRuleCode);
+    }
+
     public async Task<DocumentResponse> RealizeDepositAsync(
         Guid companyId, Guid documentId, RealizeDepositRequest request, string actor)
     {
@@ -3464,12 +3613,47 @@ public partial class DocumentService : IDocumentService
                 $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {Math.Max(0, outstanding):N2}, ขอรับรู้ {request.Amount:N2}) — "
                 + $"รับรู้แล้ว {doc.DepositRealizedAmount:N2}, คืนแล้ว {realizeRefundedBase:N2}");
 
+        // ── รอบ 194 (spec S3) — VAT ของ "รับรู้/ริบโดยไม่มีใบสุดท้าย" ตามลักษณะเงิน ไม่ใช่ตามโหมด ──
+        // มีใบสุดท้าย (FinalInvoiceId — รับรู้เพื่อใบกำกับที่หักฐานมัดจำ/เช็คเอาต์ที่พัก) = VAT อยู่ที่ใบสุดท้ายแล้ว ⇒ ไม่ถาม ·
+        // ไม่มีใบสุดท้าย = เงินมัดจำกลายเป็นรายได้ด้วยตัวเอง (ริบ/ส่งมอบโดยไม่ออกใบ) ⇒ ตัวตัดสินตัวเดียว ForfeitVatDecision:
+        // KeepExistingVat/ReclassifyUndueToDue = เส้นเดิมด้านล่าง · IssueTaxInvoiceForForfeit = ออกใบกำกับของยอดที่ริบแล้วตัดชำระด้วยมัดจำ
+        // (ห้ามลงรายได้ไม่มี VAT เงียบ ๆ) · ค่าเสียหาย/นอกระบบ VAT/บริษัทไม่จด = รายได้ไม่มี VAT (บัญชีริบของประเภท)
+        Accounting.Helpers.DepositForfeitVatDecision? forfeit = null;
+        if (request.FinalInvoiceId == null)
+        {
+            var (fVatReg, fVatDefault) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+            forfeit = Accounting.Helpers.DepositPolicyResolver.ForfeitVatDecision(
+                doc.DepositNature, request.ForfeitAs, doc.VatAmount,
+                doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null,
+                Accounting.Helpers.OutputVatRate.ForCompany(fVatReg, fVatDefault), doc.DocumentDate);
+            // ขอ "ค่าเสียหาย" กับเงินที่เป็นราคา = ไม่มีผล ⇒ ต้องบอก (หมายเหตุบนใบมัดจำ echo กลับในคำตอบ — ห้าม silent no-op)
+            if (forfeit.RequestIgnored)
+                doc.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(doc.DepositPolicyNote, forfeit.Explanation);
+            // ภาษีถึงกำหนดย้อนหลัง ⇒ ธง [DEPOSIT-LATE-VAT] บนใบมัดจำ (มองเห็น ไม่เงียบ)
+            if (forfeit.LateVatNote != null)
+                doc.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(doc.DepositPolicyNote, forfeit.LateVatNote);
+            if (forfeit.Action == Accounting.Helpers.DepositForfeitVatAction.IssueTaxInvoiceForForfeit)
+            {
+                await IssueForfeitTaxInvoiceAsync(companyId, doc, request, forfeit, actor);
+                return;   // ใบกำกับ + ตัดชำระด้วยมัดจำ ลงบัญชีครบแล้ว (ApplyDeposit นับยอดรับรู้ของมัดจำให้) — ห้ามลง JE รับรู้ซ้ำ
+            }
+        }
+        var forfeitNoVatIncome = forfeit?.Action is Accounting.Helpers.DepositForfeitVatAction.CompensationNoVat
+            or Accounting.Helpers.DepositForfeitVatAction.NonVatNoVat;
+
         // GL-driven: Dr ผังหนี้สินมัดจำจริงที่ใบนี้ Cr ไว้ (เช่น 21510) — ไม่เดา 21712
         var deferredAcc = await ResolveDepositBaseAccountAsync(companyId, doc.Id)
             ?? await FindAccountAsync(companyId, doc.DepositDeferredAccountCode ?? "21712")
             ?? await FindAccountAsync(companyId, "217")
             ?? throw new InvalidOperationException("ไม่พบบัญชีขายรอรับรู้ (217xx) ในผังบัญชี");
-        var revenueAcc = await FindAccountAsync(companyId, request.RevenueAccountCode ?? "41000")
+        // ริบเป็นค่าเสียหาย/นอกระบบ VAT ⇒ บัญชีริบของประเภท (spec S7) · ว่าง = บัญชีของเส้นเดิม (ผู้เรียกระบุ → 41000)
+        string? kindForfeitAccount = null;
+        if (forfeitNoVatIncome && doc.DepositKindId is Guid fKindId)
+            kindForfeitAccount = await _db.DepositKinds.AsNoTracking()
+                .Where(k => k.Id == fKindId && k.CompanyId == companyId)
+                .Select(k => k.ForfeitAccountCode).FirstOrDefaultAsync();
+        var revenueCodeWanted = !string.IsNullOrWhiteSpace(kindForfeitAccount) ? kindForfeitAccount.Trim() : request.RevenueAccountCode;
+        var revenueAcc = await FindAccountAsync(companyId, revenueCodeWanted ?? "41000")
             ?? await FindAccountAsync(companyId, "42000")
             ?? await _db.ChartOfAccounts
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
@@ -3480,9 +3664,30 @@ public partial class DocumentService : IDocumentService
         // เคส Deferred output VAT: การรับรู้รายได้ (ส่งมอบ/ให้บริการ) = tax point
         // เกิดจริง → ย้ายภาษีขายรอเรียกเก็บ 21913 → ภาษีขาย ภ.พ.30 21911 เต็มจำนวน
         // ครั้งแรกที่ realize (จุดรับผิดเกิดทันทีที่เริ่มส่งมอบ — บันทึกเชิงระวัง).
-        var recognizeDeferredVat = doc.DepositOutputVatDeferred
+        // รอบ 194: ริบเป็นค่าเสียหาย (ไม่ใช่ค่าตอบแทน) ขณะ VAT ยังพัก 21913 ⇒ VAT นั้นไม่เคยเป็นภาษี — กลับ 21913 เข้ารายได้ตามสัดส่วน
+        // (ไม่ย้ายเข้า 21911 · ไม่ประทับ DepositOutputVatRecognizedAt เพราะไม่มีภาษีเข้า ภ.พ.30)
+        var reverseUndueAsIncome = forfeit is { Action: Accounting.Helpers.DepositForfeitVatAction.CompensationNoVat, ReverseUndueVat: true };
+        var recognizeDeferredVat = !reverseUndueAsIncome
+            && doc.DepositOutputVatDeferred
             && doc.DepositOutputVatRecognizedAt == null
             && doc.VatAmount > 0;
+        decimal undueVatToIncome = 0m;
+        ChartOfAccount? undueVatAcc = null;
+        if (reverseUndueAsIncome)
+        {
+            undueVatAcc = await FindAccountAsync(companyId, "21913");
+            if (undueVatAcc != null)
+            {
+                var pendingUndue = await (from l in _db.JournalEntryLines.AsNoTracking()
+                                          join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                          where j.CompanyId == companyId && j.SourceDocumentId == doc.Id
+                                                && l.AccountId == undueVatAcc.Id && !j.IsDeleted && !l.IsDeleted
+                                                && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                                                && j.Status == JournalEntryStatus.Posted
+                                          select (decimal?)(l.CreditAmount - l.DebitAmount)).SumAsync() ?? 0m;
+                undueVatToIncome = Accounting.Helpers.DepositKindDocumentRules.CompensationVatReversal(pendingUndue, request.Amount, outstanding);
+            }
+        }
         ChartOfAccount? deferredVatAcc = null, outputVatAcc = null;
         if (recognizeDeferredVat)
         {
@@ -3518,11 +3723,13 @@ public partial class DocumentService : IDocumentService
             EntryDate = when,
             JournalType = JournalType.General,
             DepositRealizedForDocumentId = realizedFor,
-            Description = $"รับรู้รายได้จากมัดจำ - {doc.DocumentNumber}",
+            Description = forfeitNoVatIncome
+                ? $"ริบมัดจำเป็นรายได้ (ไม่มี VAT) - {doc.DocumentNumber}"
+                : $"รับรู้รายได้จากมัดจำ - {doc.DocumentNumber}",
             Reference = doc.DocumentNumber,
             Status = JournalEntryStatus.Posted,
-            TotalDebit = request.Amount + vatMove,
-            TotalCredit = request.Amount + vatMove,
+            TotalDebit = request.Amount + vatMove + undueVatToIncome,
+            TotalCredit = request.Amount + vatMove + undueVatToIncome,
             CreatedBy = actor,
             IsAutoGenerated = true,
             SourceDocumentId = doc.Id,
@@ -3537,11 +3744,18 @@ public partial class DocumentService : IDocumentService
             DebitAmount = request.Amount, CreditAmount = 0,
             Description = "ตัดขายรอรับรู้ (มัดจำ)", LineOrder = lineNo++,
         });
+        if (undueVatToIncome > 0m && undueVatAcc != null)
+            _db.JournalEntryLines.Add(new JournalEntryLine
+            {
+                JournalEntryId = je.Id, AccountId = undueVatAcc.Id,
+                DebitAmount = undueVatToIncome, CreditAmount = 0,
+                Description = "ตัดภาษีขายรอเรียกเก็บ — ริบเป็นค่าเสียหาย ไม่ใช่ค่าตอบแทน (ไม่มี VAT)", LineOrder = lineNo++,
+            });
         _db.JournalEntryLines.Add(new JournalEntryLine
         {
             JournalEntryId = je.Id, AccountId = revenueAcc.Id,
-            DebitAmount = 0, CreditAmount = request.Amount,
-            Description = "รับรู้รายได้", LineOrder = lineNo++,
+            DebitAmount = 0, CreditAmount = request.Amount + undueVatToIncome,
+            Description = forfeitNoVatIncome ? "รายได้จากการริบมัดจำ (ไม่มี VAT)" : "รับรู้รายได้", LineOrder = lineNo++,
         });
         if (recognizeDeferredVat)
         {
@@ -3563,6 +3777,117 @@ public partial class DocumentService : IDocumentService
         doc.DepositRealizedAmount += request.Amount;
         if (doc.SubTotal - doc.DepositRealizedAmount <= 0.005m)
             doc.DepositRealizedAt = when;   // ปิดมัดจำ (รับรู้ครบ)
+    }
+
+    /// <summary>
+    /// รอบ 194 (spec S3 · <c>IssueTaxInvoiceForForfeit</c>) — มัดจำเต็มยอดที่เป็นค่าตอบแทนยังไม่เคยเสีย VAT แล้วถูกริบ/รับรู้โดยไม่มีใบสุดท้าย
+    /// ⇒ <b>ออกใบกำกับภาษีของยอดที่ริบ</b> (ราคารวม VAT · แยก VAT ตามอัตราบริษัท) ผ่านเส้นสร้าง/อนุมัติเดิม แล้ว<b>ตัดชำระด้วยมัดจำ</b>
+    /// ผ่าน <see cref="ApplyDepositToInvoiceAsync"/> (→ <c>ApplyDepositToInvoiceCoreAsync</c> · ล็อกแถว + ธุรกรรมของตัวเอง) — ห้ามลงรายได้ไม่มี VAT เงียบ ๆ
+    /// <para>ผลบัญชีรวม: Dr มัดจำรับ (ยอดที่ริบ) / Cr รายได้ (ฐาน) + Cr ภาษีขาย 21911 (VAT) · ใบกำกับติดธง <c>[DEPOSIT-LATE-VAT]</c>
+    /// (ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน — ยื่น ภ.พ.30 เพิ่มเติม) · ใบมัดจำติดธงเดียวกัน (ผู้เรียกประทับแล้ว)</para>
+    /// <para>สามขั้นแยกธุรกรรม (สร้าง · อนุมัติ · ตัดชำระ — แต่ละเส้นเปิดธุรกรรมเอง) ⇒ ล้มกลางทาง = <b>ล้มดัง</b> พร้อมเลขใบและทางไปต่อ
+    /// ทั้งบนใบมัดจำ (หมายเหตุนโยบาย) และในคำตอบ · ตรวจก่อนสร้างอะไรทั้งนั้นว่าตัดชำระได้จริง (มัดจำ 1 ใบ → ใบปลายทาง 1 ใบ)</para>
+    /// </summary>
+    private async Task IssueForfeitTaxInvoiceAsync(
+        Guid companyId, Document deposit, RealizeDepositRequest request,
+        Accounting.Helpers.DepositForfeitVatDecision decision, string actor)
+    {
+        const string rule = Accounting.Helpers.DepositKindDocumentRules.ForfeitInvoiceRuleCode;
+        // เส้นสร้าง/อนุมัติ/ตัดชำระเปิดธุรกรรมของตัวเอง — เรียกจากในธุรกรรมอื่นไม่ได้ (ทำให้ล้มกลางทางแบบครึ่ง ๆ)
+        if (_db.Database.CurrentTransaction != null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ริบมัดจำ {deposit.DocumentNumber} ต้องออกใบกำกับภาษีของยอดที่ริบ — ทำภายในรายการอื่นไม่ได้ · ทำที่หน้า “เงินมัดจำ” → รับรู้/ริบ", rule);
+        // ตัดชำระได้ครั้งเดียวต่อใบมัดจำ (กติกา ApplyDeposit) — ถ้าเคยตัดกับใบอื่นที่ยังไม่ยกเลิก จะออกใบกำกับแล้วตัดไม่ได้ ⇒ บอกก่อนสร้าง
+        if (deposit.DepositAppliedToDocumentId is Guid priorId)
+        {
+            var prior = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == priorId && d.CompanyId == companyId && d.Status != DocumentStatus.Voided && !d.IsDeleted)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            if (prior != null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"มัดจำ {deposit.DocumentNumber} ถูกนำไปตัดชำระกับ {prior} แล้ว — ระบบออกใบกำกับของยอดที่ริบแล้วตัดชำระซ้ำอีกใบไม่ได้ · "
+                    + $"ทางไปต่อ: ออกใบกำกับภาษี {request.Amount:N2} บาท (ราคารวม VAT) ให้ลูกค้ารายนี้เอง แล้วบันทึกรับชำระด้วยการคืน/โอนยอดมัดจำ "
+                    + "หรือยกเลิกใบ " + prior + " ก่อนแล้วทำรายการนี้ใหม่", rule);
+        }
+        var gross = request.Amount;   // มัดจำเต็มยอดไม่มี VAT ⇒ ฐานที่ริบ = ยอดรวมที่ริบ
+        var when = request.RealizeDate ?? DateTime.UtcNow;
+        await _db.SaveChangesAsync();   // หมายเหตุบนใบมัดจำ (ธง LATE-VAT) ต้องอยู่ก่อน — ApplyDeposit โหลดใบมัดจำใหม่ใต้ล็อก
+
+        var invoice = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
+                DocumentType: DocumentType.TaxInvoice,
+                DocumentDate: when,
+                DueDate: when,
+                ContactId: deposit.ContactId,
+                Reference: deposit.DocumentNumber,
+                Notes: $"ใบกำกับภาษีของเงินมัดจำ {deposit.DocumentNumber} ที่ริบ/รับรู้เป็นรายได้ — ชำระแล้วด้วยเงินมัดจำ",
+                Lines: new List<DocumentLineRequest>
+                {
+                    new(Description: $"ค่าตอบแทนตามเงินมัดจำ {deposit.DocumentNumber} (ริบ/รับรู้เป็นรายได้)",
+                        Quantity: 1m, Unit: "รายการ", UnitPrice: gross, DiscountPercent: 0m,
+                        VatRate: decision.ForfeitInvoiceVatRate, WithholdingTaxRate: 0m, AccountId: null,
+                        AccountCode: string.IsNullOrWhiteSpace(request.RevenueAccountCode) ? null : request.RevenueAccountCode.Trim()),
+                },
+                ProjectId: deposit.ProjectId,
+                PricesIncludeVat: true,
+                // เอกสารลูกสืบทอดหน้าตา/ภาษา/สาขา/สกุลเงินจากใบมัดจำ (กฎ #4 A) — สกุล/อัตราต้องตรงไม่งั้นตัดชำระไม่ได้ (IAS 21)
+                BrandId: deposit.BrandId,
+                BranchId: deposit.BranchId,
+                DocumentTemplateId: null,
+                Currency: deposit.Currency,
+                ExchangeRate: deposit.ExchangeRate,
+                DocumentLanguage: deposit.DocumentLanguage,
+                BookingNumber: deposit.BookingNumber),
+            actor, originModule: deposit.OriginModule);
+        var invoiceNo = invoice.DocumentNumber;   // เลขร่างจนกว่าจะอนุมัติ — ข้อความล้มกลางทางต้องชี้ใบที่ผู้ใช้หาเจอ
+
+        string Fail(string step, Exception ex) =>
+            $"ริบมัดจำ {deposit.DocumentNumber}: ออกใบกำกับภาษี {invoiceNo} แล้ว แต่{step}ไม่สำเร็จ ({ex.Message}) — "
+            + $"ทางไปต่อ: เปิดใบ {invoiceNo} " + (step.Contains("อนุมัติ") ? "แล้วกด “อนุมัติ” จากนั้น" : "")
+            + $"กด “หักมัดจำ” เลือกใบมัดจำ {deposit.DocumentNumber} ยอด {gross:N2} · ห้ามกดรับรู้/ริบซ้ำที่หน้า “เงินมัดจำ” (จะได้ใบกำกับสองใบ)";
+        async Task FailLoudAsync(string msg)
+        {
+            // ล้มดัง 3 ที่: หมายเหตุบนใบมัดจำ (ผู้ใช้เปิดดูเห็น) · คำตอบผู้เรียก · log
+            // ขั้นที่ล้มอาจทิ้งการแก้ครึ่งทางไว้ใน change tracker (ธุรกรรมของมัน rollback แล้ว) — ล้างก่อน ห้ามบันทึกของครึ่ง ๆ ตามไปด้วย
+            // (ทุกอย่างก่อนหน้านี้ถูก SaveChanges แล้ว จึงไม่มีอะไรที่ควรเก็บหาย)
+            _db.ChangeTracker.Clear();
+            var dep = await _db.Documents.FirstAsync(d => d.Id == deposit.Id && d.CompanyId == companyId);
+            dep.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(dep.DepositPolicyNote, "⚠️ " + msg);
+            await _db.SaveChangesAsync();
+            _logger.LogWarning("Forfeit tax invoice incomplete for deposit {Deposit}: {Msg}", deposit.DocumentNumber, msg);
+        }
+
+        try
+        {
+            // ระบบออกใบนี้ตามคำสั่งผู้ใช้ (ริบ/รับรู้) — ไม่มีคนเห็นคำเตือนระหว่างทาง ⇒ SystemWorkflow (ห้ามประทับว่าผู้ใช้รับทราบ)
+            var approvedInvoice = await ApproveDocumentAsync(companyId, invoice.Id, actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
+            invoiceNo = approvedInvoice.DocumentNumber;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var msg = Fail("อนุมัติใบกำกับ", ex);
+            await FailLoudAsync(msg);
+            throw new Accounting.Helpers.BusinessRuleException(msg, rule);
+        }
+        try
+        {
+            await ApplyDepositToInvoiceAsync(companyId, invoice.Id, new ApplyDepositRequest(deposit.Id, gross, when), actor);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var msg = Fail("ตัดชำระด้วยมัดจำ", ex);
+            await FailLoudAsync(msg);
+            throw new Accounting.Helpers.BusinessRuleException(msg, rule);
+        }
+
+        // ธงภาษีถึงกำหนดย้อนหลังบนใบกำกับที่ออก (หมายเหตุภายใน — ไม่พิมพ์ลงกระดาษลูกค้า แต่นักบัญชีเห็นในหน้ารายละเอียด)
+        var inv = await _db.Documents.FirstAsync(d => d.Id == invoice.Id && d.CompanyId == companyId);
+        AppendInternalNote(inv, $"ออกอัตโนมัติจากการริบ/รับรู้มัดจำ {deposit.DocumentNumber} — {decision.Explanation}"
+            + (decision.LateVatNote is { } late ? "\n" + late : ""));
+        var depNow = await _db.Documents.FirstAsync(d => d.Id == deposit.Id && d.CompanyId == companyId);
+        depNow.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(depNow.DepositPolicyNote,
+            $"ริบ/รับรู้ {gross:N2} → ออกใบกำกับภาษี {invoiceNo} แล้วตัดชำระด้วยมัดจำ");
+        await _db.SaveChangesAsync();
     }
 
     public async Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null)
@@ -3693,6 +4018,9 @@ public partial class DocumentService : IDocumentService
         }
 
         var now = DateTime.UtcNow;
+        // รอบ 194 — อัตรา VAT ของบริษัทครั้งเดียว (ตัวเลือก/คำอธิบายการริบคิดจากตัวตัดสินตัวเดียว ForfeitVatDecision)
+        var (depListVatReg, depListVatDefault) = await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId);
+        var depListVatRate = Accounting.Helpers.OutputVatRate.ForCompany(depListVatReg, depListVatDefault);
         var list = rows.Select(d =>
         {
             // doc ที่ตรวจจับจาก GL (ไม่ใช่ native): ใช้ยอด Cr สุทธิใน GL เป็นฐาน
@@ -3743,7 +4071,19 @@ public partial class DocumentService : IDocumentService
                 (int)(now.Date - d.DocumentDate.Date).TotalDays,
                 st, d.DepositDeferredAccountCode,
                 d.Reference, d.DepositOutputVatDeferred, d.DepositOutputVatRecognizedAt,
-                d.BookingNumber, d.DepositRefundedAmount);
+                d.BookingNumber, d.DepositRefundedAmount,
+                DepositNature: d.DepositNature?.ToString(),
+                DepositKindName: d.DepositKindName,
+                DeductAsBaseBlockedReason: Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(d.DepositNature),
+                ForfeitOptions: d.IsDeposit
+                    ? Accounting.Helpers.DepositKindDocumentRules.ForfeitOptions(d.DepositNature, d.VatAmount,
+                        d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null, depListVatRate)
+                    : null,
+                RealizeVatNote: d.IsDeposit
+                    ? Accounting.Helpers.DepositKindDocumentRules.DefaultForfeitExplanation(d.DepositNature, d.VatAmount,
+                        d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null, depListVatRate)
+                    : null,
+                DepositPolicyNote: d.DepositPolicyNote);
         }).ToList();
 
         // แถวสรุปมัดจำที่เป็น JE ล้วน (ไม่มีเอกสารผูก) — งบดุลมีหนี้สินมัดจำ
@@ -15767,6 +16107,11 @@ public partial class DocumentService : IDocumentService
     /// integration ถูกปฏิเสธก่อนสร้างใบ ⇒ เหลือเฉพาะใบเก่า/ทางอื่นที่ต้องล้มดัง</summary>
     private Task GuardDrivesGrossApplyAsync(Guid companyId, Document doc, Document deposit, decimal depositVat, bool depositVatPending)
     {
+        // รอบ 194 (spec S2 · DEP-SEC-DEDUCT): เงินประกันที่ต้องคืนนำมาหักเป็นราคาในเส้นขับ JE ไม่ได้ — ทุกโหมด VAT
+        // (ทางไปต่อ = ออกใบเต็มจำนวนแล้ว "หักมัดจำ" หลังอนุมัติ = ตัดชำระหนี้ ไม่ลดฐานภาษี)
+        if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(deposit.DepositNature) is { } secProblem)
+            throw new Accounting.Helpers.BusinessRuleException($"ใบ {doc.DocumentNumber} · ใบมัดจำ {deposit.DocumentNumber}: {secProblem}",
+                Accounting.Helpers.DepositPolicyResolver.SecurityDeductRuleCode);
         if (Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(depositVat, depositVatPending))
             throw new Accounting.Helpers.BusinessRuleException(
                 // ฝ่ายค้านรอบสาม R3-5: ข้อความทางเดียวของใบนี้ — ห้ามต่อท้าย GrossApplyBlockedMessage (สั่งรับรู้ที่หน้าเงินมัดจำ ⇒ รับรู้ซ้ำ)
@@ -15798,6 +16143,12 @@ public partial class DocumentService : IDocumentService
         if (lockRows)
             foreach (var r in rows)
                 if (_db.Entry(r).State == EntityState.Unchanged) await _db.Entry(r).ReloadAsync();
+        // รอบ 194 (spec S2 · DEP-SEC-DEDUCT): ทุกผู้เรียกของตัวนี้คือเส้น "หักมัดจำเป็นฐาน/ราคา" (แปลงขับ JE ตอนบันทึก · รับรู้ฐานตอนอนุมัติ)
+        // ⇒ เงินประกันที่ต้องคืนในเลขอ้างอิง = ล้มดังทันที (ตรวจทุกใบที่อ้าง ไม่ใช่เฉพาะใบออกใบกำกับแล้ว — เงินประกันเต็มยอดก็หักราคาไม่ได้)
+        foreach (var r in rows)
+            if (Accounting.Helpers.DepositPolicyResolver.SecurityDeductionProblem(r.DepositNature) is { } secProblem)
+                throw new Accounting.Helpers.BusinessRuleException($"ใบมัดจำ {r.DocumentNumber}: {secProblem}",
+                    Accounting.Helpers.DepositPolicyResolver.SecurityDeductRuleCode);
         return rows.Where(d => Accounting.Helpers.DepositPolicyResolver.GrossApplyBlocked(
                 d.VatAmount, d.DepositOutputVatDeferred && d.DepositOutputVatRecognizedAt == null))
             .GroupBy(d => d.Id).Select(g => g.First()).ToList();
@@ -16595,7 +16946,12 @@ public partial class DocumentService : IDocumentService
         ActualPaidAmount: d.ActualPaidAmount,
         RoundingAdjustment: d.RoundingAdjustment,
         // รอบ 193 ฝ่ายค้านรอบสาม R3-1 — echo ให้หน้ารายละเอียดแสดงแถวหักมูลค่ามัดจำแยกจากส่วนลด (กฎ #4 A "เก็บแล้วต้อง echo กลับ")
-        DepositBaseDeducted: d.DepositBaseDeducted);
+        DepositBaseDeducted: d.DepositBaseDeducted,
+        // รอบ 194 — ประเภทเงินมัดจำที่ตรึงบนใบ (ชื่อ enum · null = ใบเดิม ไม่ทราบ) — เก็บแล้วต้อง echo กลับ (กฎ #4 A)
+        DepositKindId: d.DepositKindId,
+        DepositKindName: d.DepositKindName,
+        DepositNature: d.DepositNature?.ToString(),
+        DepositPolicyNote: d.DepositPolicyNote);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -17281,6 +17637,19 @@ public partial class DocumentService : IDocumentService
                 + "ทางแก้: สร้างใหม่โดยเลือกประเภทเอกสาร \"ใบแจ้งหนี้/ใบกำกับภาษี — "
                 + "ขายสินค้า/ต้องออกใบกำกับตอนนี้\" (ใบเดียวทำหน้าที่ครบ ได้เลขชุดใบกำกับ TIV) "
                 + "— ใบแจ้งหนี้เปล่าเหมาะกับงานบริการที่ใบกำกับจะออกตอนรับเงิน (§78/1) เท่านั้น");
+        }
+
+        // ── รอบ 194 (spec S2) — ใบมัดจำตามลักษณะเงิน: ราคา × เลื่อน VAT (พร้อมเหตุผลที่ตรึงบนใบ) · เงินประกัน × แยก VAT ──
+        // ใบเดิมที่ไม่ทราบลักษณะ (NULL) ไม่เตือน = พฤติกรรมเดิม · ตัวตัดสินข้อความ = DepositPolicyResolver.KindWarning ตัวเดียว
+        if (doc.IsDeposit && doc.DepositNature != null)
+        {
+            var depCompanyVatReg = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
+            var depIndustry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
+            if (Accounting.Helpers.DepositKindDocumentRules.ApprovalWarning(
+                    doc.IsDeposit, doc.DepositNature, doc.VatAmount, doc.DepositOutputVatDeferred, depCompanyVatReg,
+                    Accounting.Helpers.DepositPolicyResolver.NatureOf(depIndustry), doc.DepositPolicyNote) is { } depKindWarning)
+                warnings.Add(depKindWarning);
         }
 
         // ── ใบนี้คือ "การจ่าย/ภาระจ่ายให้คู่ค้า" ไหม — ตัวตัดสินตัวเดียวของด่านล่าง ──

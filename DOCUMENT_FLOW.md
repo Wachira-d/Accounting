@@ -719,7 +719,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `RD-PO73-SEC` · `RD-81`) · `SecurityDeductionProblem` (`DEP-SEC-DEDUCT`) · ริบ `ForfeitVatDecision` (ตามลักษณะ ไม่ใช่โหมด · NULL + ไม่ระบุ = มี VAT ·
     ธง `[DEPOSIT-LATE-VAT]`) · ใบตรึง `Document.DepositKindId/DepositNature/DepositKindName/DepositPolicyNote` (ใบเดิม NULL = ไม่ทราบ · **migration ไม่ UPDATE
     "Documents"**) · `NatureOf(RealEstate)` = ไม่ทราบ (เดิมบริการ) · คำเตือนสินค้าของ `Resolve` เดิมแรงขึ้น (รหัสเดิม) ·
-    **ยังไม่มีทางเข้าใดเรียก ResolveKind/Apply** จนกว่าทีม B/C/D ต่อสาย ⇒ พฤติกรรมใบมัดจำวันนี้ = รอบ 193 ทุกตัวอักษร
+    **ทีม B ต่อสายเส้นเอกสารแล้ว** (สร้าง/แก้/โคลน/ริบ/ด่านหัก/คำเตือนอนุมัติ — §3.7) · ทางเข้าที่พัก/CMS/integration ยังเดินเส้นเดิมจนกว่าทีม C/D ต่อสาย ·
+    payload ที่ไม่ระบุประเภท = พฤติกรรมรอบ 193 ทุกตัวอักษร
     | โหมด | ใบมัดจำ (1,000 รวม VAT) | JE | เข้า ภ.พ.30 | ใบสุดท้าย |
     | --- | --- | --- | --- | --- |
     | `FullDeposit` = 1 รับเต็มยอด ไม่แยก VAT (เงินประกัน/ต้องคืน) | ใบเสร็จ VAT บรรทัด 0 + ธงพัก | Cr 217xx 1,000 | ไม่เข้า | เต็มราคา + ตัดชำระ (`ApplyDepositToInvoiceAsync`) |
@@ -1686,8 +1687,34 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 รายงาน, จัดลำดับ §87 ทำท้ายสุดแบบ best-effort (อัปเดตเฉพาะแถวที่ลำดับเปลี่ยน)
 
 ### 3.7 มัดจำ (Deposit lifecycle)
+- **รอบ 194 ทีม B — เส้นเอกสารต่อสายประเภทเงินมัดจำแล้ว** (spec `erp-review/2026-09-25/spec-194.md` S2–S4 · กติกาเส้นเอกสาร
+  `Helpers/DepositKindDocumentRules` · เทสต์ `DepositKindDocumentRulesTests` สองครึ่ง · ล็อกจุดเรียก `tools/required_call_site_check.py` บล็อก "รอบ 194 ทีม B"):
+  - **สร้าง/แก้ใบ** — `CreateDocumentRequest.DepositKindId`/`DepositKindCode` (คู่ค้า) · `UpdateDocumentRequest.DepositKindId` (null = คง · `Guid.Empty` = ล้าง ·
+    ค่าอื่น = เปลี่ยน — เฉพาะร่าง/ถูกตีกลับ + ต้องส่งบรรทัด) ⇒ `ResolveDocumentDepositKindAsync` (บริษัทนี้ · เปิดใช้ · ไม่ลบ — ไม่พบ = 400
+    `DEPOSIT-KIND-NOT-FOUND` · ประเภทกับใบที่ไม่ใช่มัดจำ = 400) → `DepositPolicyResolver.ResolveKind` → `DepositDocumentShaping.Apply` **ก่อน**
+    `AllocateBillDeductions` ⇒ VAT บรรทัด · `DepositOutputVatDeferred` · `DepositDeferredAccountCode` (เงินประกัน 21530/21620 ไหลเข้า JE ตอนอนุมัติผ่าน
+    ช่องเดิม `doc.DepositDeferredAccountCode ?? "21712"` ของ AutoPost — ไม่มีเส้นใหม่) + ตรึง `DepositKindId/DepositNature/DepositKindName/DepositPolicyNote` ·
+    **payload ที่ไม่ระบุประเภท ⇒ ไม่แตะอะไร** (คู่ค้า/OCR/ที่พัก/CMS/ฟอร์มเก่า = พฤติกรรมรอบ 193 ทุกตัวอักษร) · `DocumentResponse` echo 4 ช่อง (ลักษณะเป็นชื่อ enum)
+  - **ด่านเงินประกัน `DEP-SEC-DEDUCT`** (ตัวตัดสิน `SecurityDeductionProblem` ตัวเดียว) ทุกเส้นที่หักเป็นฐาน/ราคา: สร้าง/แก้ใบที่ตั้ง `DepositBaseDeducted`
+    (`GuardSecurityDepositDeductionAsync`) · `LoadTaxedDepositsByRefAsync` (ผู้เรียก = แปลงขับ JE ตอนบันทึก `ConvertTaxedDrivesAsync` + รับรู้ฐานตอนอนุมัติ
+    `RealizeTaxedDepositDeductionsAsync`) · เส้นขับ JE ทั้งใบเดียว/หลายใบ (`GuardDrivesGrossApplyAsync`) = **5 เส้น** · **ตัดชำระหนี้ (`ApplyDepositToInvoiceAsync`)
+    ยังใช้กับเงินประกันได้** · ศูนย์มัดจำ/ตัวเลือกหักมัดจำได้ `DepositSummary.DeductAsBaseBlockedReason` (ฟอร์ม "ขายเงินสดใบเดียว" บอกก่อนส่ง)
+  - **รับรู้/ริบโดยไม่มีใบสุดท้าย** (`RealizeDepositCoreAsync` · `FinalInvoiceId == null`) ⇒ `ForfeitVatDecision(doc.DepositNature, request.ForfeitAs, …)`:
+    `KeepExistingVat`/`ReclassifyUndueToDue` = เส้นเดิม (+ ธง `[DEPOSIT-LATE-VAT]` บน `DepositPolicyNote` ของใบมัดจำเมื่อภาษีถึงกำหนดย้อนหลัง) ·
+    **`IssueTaxInvoiceForForfeit`** (มัดจำเต็มยอดที่เป็นราคา/ใบเดิมไม่ระบุ) = `IssueForfeitTaxInvoiceAsync`: `CreateDocumentAsync` ใบกำกับ (ราคารวม VAT ·
+    อัตราบริษัท · สืบทอดแบรนด์/สาขา/ภาษา/สกุลเงิน/เลขจอง) → `ApproveDocumentAsync(SystemWorkflow)` → `ApplyDepositToInvoiceAsync` (ตัดชำระด้วยมัดจำ ·
+    ไม่ลง JE รับรู้ซ้ำ) · ใบกำกับติดธงในหมายเหตุภายใน · ล้มกลางทาง = ล้มดังพร้อมเลขใบ + ทางไปต่อ (หมายเหตุใบมัดจำ + คำตอบ) · เคยตัดชำระกับใบอื่นแล้ว =
+    ปฏิเสธก่อนสร้างอะไร · **`CompensationNoVat`/`NonVatNoVat`** = รายได้ไม่มี VAT ลงบัญชี `DepositKind.ForfeitAccountCode` (ว่าง = บัญชีของเส้นเดิม) ·
+    VAT พัก 21913 + ค่าเสียหาย = กลับ 21913 เข้ารายได้ตามสัดส่วน (`CompensationVatReversal` · ไม่ประทับ `DepositOutputVatRecognizedAt`) ·
+    ขอ "ค่าเสียหาย" กับเงินที่เป็นราคา = ไม่มีผล + หมายเหตุบนใบ (ไม่เงียบ) · ศูนย์มัดจำถามผู้ใช้เฉพาะเมื่อคำตอบเปลี่ยนผล VAT
+    (`DepositSummary.ForfeitOptions` · ค่าเริ่มต้น = มี VAT) + แสดง `RealizeVatNote` ก่อนกด
+  - **คำเตือนตอนอนุมัติ** (`CollectApprovalWarningsAsync` → `DepositKindDocumentRules.ApprovalWarning` → `KindWarning`): ราคา × เลื่อน VAT
+    (`RD-78(1)(b)`/`RD-78/1` + เหตุผลจาก `DepositPolicyNote`) · เงินประกัน × แยก VAT (`RD-PO73-SEC`) · ใบเดิม NULL/นอกระบบ VAT/บริษัทไม่จด = ไม่เตือน
+  - **ฟอร์ม** (`documents.html`): `<select id="fDepositKind">` จาก `GET deposit-kinds` (`api.getDepositKinds`) · ใบใหม่ = `defaultKindId` · ใบเดิมไม่มีประเภท =
+    "ตามข้อมูลบนใบ (ใบเดิม)" ส่งธงเดิม · ใบที่อนุมัติแล้ว = ล็อก + เหตุผล · พรีวิว VAT บรรทัด (เต็มยอด/นอกระบบ VAT = 0) ผ่าน `Layout.setLineVat` ·
+    ลบข้อความ "ตั้ง VAT 0 เอง" · **โคลนใบมัดจำพา `IsDeposit` + ประเภท** (เดิมหาย ⇒ รายได้แทนหนี้สิน · ประเภทปิดใช้แล้ว = โคลนแบบไม่มีประเภท + ธงเดิม)
 - เปิด Receipt/ReceiptVoucher ที่ `IsDeposit = true` — **โหมดมาจาก `DepositPolicyResolver`** (§2.3 ตาราง 3 โหมด ·
-  ฟอร์มเอกสารตั้งค่าเริ่มต้นของใบใหม่ตามค่าบริษัท · โหมด "เต็มยอด" ฟอร์มยังตั้ง VAT บรรทัดเป็น 0 ให้ไม่ได้ ⇒ บอกตรง ๆ ให้ตั้งเอง):
+  ใบที่ระบุประเภทเงินมัดจำ = `ResolveKind` + `DepositDocumentShaping.Apply` ตามย่อหน้าข้างบน · ใบที่ไม่ระบุ = ธง/บรรทัดตาม payload):
   - **`VatImmediate`** (`DepositOutputVatDeferred = false`): Cr Output VAT 21911
     เข้า ภ.พ.30 ทันที (§78/1 รับชำระราคา = tax point) + Cr 217xx ขายรอรับรู้
   - **`VatPendingUndue`** (`DepositOutputVatDeferred = true`): Cr 21913 "ภาษีขายรอเรียกเก็บ"

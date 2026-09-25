@@ -579,6 +579,40 @@ RULES += [
                  ("Services/Implementations/AuthService.cs", "SsoLoginAsync"))
 ]
 
+# ── รอบ 194 ทีม B (เส้นเอกสาร · spec S2/S3/S4): ใบมัดจำที่ระบุประเภท ⇒ ตัวตัดสินตัวเดียวจัดรูปใบก่อนเฉลี่ยส่วนหักท้ายบิล ·
+#    เงินประกันห้ามหักเป็นฐาน/ราคาทุกเส้น (DEP-SEC-DEDUCT) · ริบโดยไม่มีใบสุดท้ายผ่าน ForfeitVatDecision ·
+#    มัดจำเต็มยอดที่เป็นราคา ⇒ ออกใบกำกับของยอดที่ริบแล้วตัดชำระด้วยมัดจำ (ห้ามลงรายได้ไม่มี VAT เงียบ ๆ) ──
+_DEP_KIND_WHY = "รอบ 194 S4 ใบมัดจำที่ระบุประเภทต้องผ่าน ResolveKind + DepositDocumentShaping.Apply ก่อนคิดยอด — ไม่งั้น VAT/ธง/บัญชีตาม payload"
+_DEP_SEC_WHY = "รอบ 194 S2 DEP-SEC-DEDUCT เงินประกันที่ต้องคืนไม่ใช่ราคา — หักเป็นฐานภาษี/ราคาไม่ได้ทุกเส้น (ตัดชำระหนี้หลังอนุมัติยังได้)"
+RULES += [
+    dict(file=DOC, method=m,
+         must=["ResolveDocumentDepositKindAsync(", "DepositDocumentShaping.Apply(", "GuardSecurityDepositDeductionAsync("],
+         before=[("DepositDocumentShaping.Apply(", "AllocateBillDeductions(")], why=_DEP_KIND_WHY)
+    for m in ("CreateDocumentAsync", "UpdateDocumentAsync")
+] + [
+    dict(file=DOC, method="ResolveDocumentDepositKindAsync",
+         must=["DepositPolicyResolver.ResolveKind("],
+         must_re=[r"k\.CompanyId\s*==\s*companyId", r"k\.IsActive"],
+         why="รอบ 194 S4 ประเภทต้องเป็นของบริษัทนี้และเปิดใช้ — ตัดสินด้วย ResolveKind ตัวเดียว"),
+    dict(file=DOC, method="GuardSecurityDepositDeductionAsync",
+         must=["DepositPolicyResolver.SecurityDeductionProblem("], why=_DEP_SEC_WHY),
+    dict(file=DOC, method="LoadTaxedDepositsByRefAsync",
+         must=["DepositPolicyResolver.SecurityDeductionProblem("], why=_DEP_SEC_WHY),
+    dict(file=DOC, method="GuardDrivesGrossApplyAsync",
+         must=["DepositPolicyResolver.SecurityDeductionProblem("], why=_DEP_SEC_WHY),
+    dict(file=DOC, method="RealizeDepositCoreAsync",
+         must=["DepositPolicyResolver.ForfeitVatDecision(", "IssueForfeitTaxInvoiceAsync("],
+         before=[("DepositPolicyResolver.ForfeitVatDecision(", "_db.JournalEntries.Add(je)")],
+         why="รอบ 194 S3 VAT ของการริบตามลักษณะเงิน (ตัวตัดสินตัวเดียว) ก่อนลง JE รับรู้ — มัดจำเต็มยอดที่เป็นราคาต้องออกใบกำกับ"),
+    dict(file=DOC, method="IssueForfeitTaxInvoiceAsync",
+         must=["CreateDocumentAsync(", "ApproveDocumentAsync(", "ApplyDepositToInvoiceAsync("],
+         before=[("CreateDocumentAsync(", "ApproveDocumentAsync("), ("ApproveDocumentAsync(", "ApplyDepositToInvoiceAsync(")],
+         why="รอบ 194 S3 ยอดที่ริบต้องมีใบกำกับจริง (เส้นสร้าง/อนุมัติเดิม) แล้วตัดชำระด้วยมัดจำผ่านเส้นเดิม — ไม่ลง JE เองแยก"),
+    dict(file=CLONE, method="Clone",
+         must=["IsDeposit = true", "DepositKindId ="],
+         why="รอบ 194 โคลนใบมัดจำต้องเป็นใบมัดจำ (เดิมหาย ⇒ รายได้แทนหนี้สินมัดจำ) พร้อมประเภท — ใบใหม่ถูกตัดสินใหม่ผ่าน CreateDocumentAsync"),
+]
+
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
