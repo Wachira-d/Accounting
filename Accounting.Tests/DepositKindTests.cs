@@ -378,8 +378,17 @@ public class DepositKindTests
         Assert.Equal(DepositForfeitVatAction.CompensationNoVat, comp.Action);
         Assert.False(comp.ReverseUndueVat);
         Assert.Contains("ให้เลือกแบบมี VAT", comp.Explanation);
-        var fee = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 0m, false);
+        var fee = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 0m, false,
+            depositReceivedDate: new DateTime(2026, 7, 3));
         Assert.Equal(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, fee.Action);
+        // เงินประกันที่หักเป็นค่าของ/ค่าธรรมเนียม: จุดความรับผิด = วันที่หัก ไม่ใช่ภาษีค้างของเดือนที่รับเงิน ⇒ ไม่มีธงย้อนหลัง
+        Assert.False(fee.LateVat);
+        Assert.Null(fee.LateVatNote);
+        var feePending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.PriceOrFee, 65.42m, true);
+        Assert.Equal(DepositForfeitVatAction.ReclassifyUndueToDue, feePending.Action);
+        Assert.False(feePending.LateVat);
+        // ทิศตรงข้าม: ใบเดิมไม่ทราบลักษณะ ยังติดธง (ทิศปลอดภัย)
+        Assert.True(DepositPolicyResolver.ForfeitVatDecision(null, null, 0m, false).LateVat);
         var pending = DepositPolicyResolver.ForfeitVatDecision(DepositNature.RefundableSecurity, DepositForfeitAs.Compensation, 65.42m, true);
         Assert.True(pending.ReverseUndueVat);
     }

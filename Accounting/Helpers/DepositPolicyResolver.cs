@@ -629,17 +629,22 @@ public static class DepositPolicyResolver
 
         var note = ignored ? " · ประเภทนี้เป็นส่วนหนึ่งของราคา — ตัวเลือก “ค่าเสียหาย” ไม่มีผล" : "";
         string? code = ignored ? KindPriceServiceRuleCode : null;
+        // "ภาษีย้อนหลัง" จริงเฉพาะเงินที่เป็นราคาตั้งแต่วันรับ (หรือใบเดิมที่ไม่รู้ลักษณะ — ทิศปลอดภัย: ให้คนตรวจเห็น) ·
+        // เงินประกันที่ริบเป็นค่าของ/ค่าธรรมเนียม จุดความรับผิดคือ "วันที่หัก" (legal-L1 ข้อ 2b/4) ⇒ ไม่ใช่ภาษีค้างของเดือนที่รับเงิน
+        var lateVat = nature != DepositNature.RefundableSecurity;
+        var lateNote = lateVat ? late : null;
         if (hasVat)   // ถึงตรงนี้ = VAT ยังพัก 21913
             return new DepositForfeitVatDecision(DepositForfeitVatAction.ReclassifyUndueToDue, effective,
-                true, false, ignored, 0m,
-                "ภาษีขายที่พักไว้ (21913) ย้ายเข้าภาษีขาย (21911) — ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน" + note, code, late);
+                lateVat, false, ignored, 0m,
+                "ภาษีขายที่พักไว้ (21913) ย้ายเข้าภาษีขาย (21911)"
+                + (lateVat ? " — ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน" : " — ภาษีถึงกำหนดในเดือนที่หัก/ริบ") + note, code, lateNote);
         if (companyVatRate <= 0m)
             return new DepositForfeitVatDecision(DepositForfeitVatAction.CompanyNotVatRegistered, effective,
                 false, false, ignored, 0m, "บริษัทไม่ได้จดทะเบียน VAT — เงินที่ริบเป็นรายได้ไม่มี VAT" + note, code, null);
         return new DepositForfeitVatDecision(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, effective,
-            true, false, ignored, companyVatRate,
+            lateVat, false, ignored, companyVatRate,
             "มัดจำเต็มยอดที่เป็นค่าตอบแทนยังไม่เคยเสีย VAT — ต้องออกใบกำกับภาษีของยอดที่ริบ (ราคารวม VAT) แล้วตัดชำระด้วยมัดจำ "
-            + "ห้ามลงรายได้ไม่มี VAT" + note, code, late);
+            + "ห้ามลงรายได้ไม่มี VAT" + note, code, lateNote);
     }
 
     /// <summary>ข้อความธง <see cref="LateVatMarker"/> บนใบ (spec S3) — วันที่ ค.ศ. รูป dd/MM/yyyy (InvariantCulture ·
