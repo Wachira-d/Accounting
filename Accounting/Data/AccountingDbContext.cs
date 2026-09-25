@@ -453,6 +453,9 @@ public class AccountingDbContext : DbContext
     public DbSet<LodgingHousekeepingTask> LodgingHousekeepingTasks => Set<LodgingHousekeepingTask>();
     public DbSet<LodgingGuestRequest> LodgingGuestRequests => Set<LodgingGuestRequest>();
 
+    // รอบ 194 — ประเภทเงินมัดจำต่อบริษัท (ลักษณะเงิน = ตัวกำหนด VAT · โหมด = วิธีบันทึก) — Helpers/DepositPolicyResolver.ResolveKind
+    public DbSet<DepositKind> DepositKinds => Set<DepositKind>();
+
     // Customer & CRM
     public DbSet<SiteCustomer> SiteCustomers => Set<SiteCustomer>();
     public DbSet<SiteCustomerAddress> SiteCustomerAddresses => Set<SiteCustomerAddress>();
@@ -3270,6 +3273,18 @@ public class AccountingDbContext : DbContext
             e.HasOne(p => p.Booking).WithMany(b => b.Payments).HasForeignKey(p => p.BookingId).OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ===== ประเภทเงินมัดจำ (รอบ 194) — index ต้องตรงกับ DatabaseMigrationHelper.DepositKindMigrationStatements
+        //      (ฐานใหม่ได้จาก EnsureCreated · ฐานเดิมได้จาก CREATE TABLE/INDEX IF NOT EXISTS) =====
+        modelBuilder.Entity<DepositKind>(e =>
+        {
+            e.Property(k => k.Code).HasMaxLength(32); e.Property(k => k.Name).HasMaxLength(256);
+            e.Property(k => k.LiabilityAccountCode).HasMaxLength(20); e.Property(k => k.ForfeitAccountCode).HasMaxLength(20);
+            e.Property(k => k.SeedKey).HasMaxLength(64);
+            e.HasIndex(k => new { k.CompanyId, k.SeedKey }).IsUnique().HasFilter("\"SeedKey\" IS NOT NULL").HasDatabaseName("UX_DepositKinds_Company_SeedKey");
+            e.HasIndex(k => new { k.CompanyId, k.Code }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_DepositKinds_Company_Code");
+            e.HasQueryFilter(k => !k.IsDeleted);
+        });
+
         // ===== Lodging (ธุรกิจที่พัก) =====
         modelBuilder.Entity<LodgingProperty>(e =>
         {
@@ -3280,6 +3295,7 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.DepositMinAmount).HasPrecision(18, 2); e.Property(p => p.DepositMaxAmount).HasPrecision(18, 2);
             e.Property(p => p.ServiceChargePercent).HasPrecision(5, 2); e.Property(p => p.WeekendMultiplier).HasPrecision(6, 3);
             e.Property(p => p.ExtraGuestPrice).HasPrecision(18, 2); e.Property(p => p.NoShowChargePercent).HasPrecision(5, 2);
+            e.Property(p => p.SecurityDepositAmount).HasPrecision(18, 2);   // รอบ 194 — เงินประกันความเสียหายต่อการจอง
             e.HasOne(p => p.Site).WithMany().HasForeignKey(p => p.SiteId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(p => p.Branch).WithMany().HasForeignKey(p => p.BranchId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(p => p.DefaultCancellationPolicy).WithMany().HasForeignKey(p => p.DefaultCancellationPolicyId).OnDelete(DeleteBehavior.SetNull);

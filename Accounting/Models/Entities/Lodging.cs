@@ -91,6 +91,14 @@ public class LodgingProperty : TenantEntity
     /// (= VatPendingUndue) เท่านั้น ห้ามอ่านไปตัดสินอะไรอีก · คงไว้ให้ migration ย้ายค่าเดิมแบบรันซ้ำได้
     /// (true + โหมดยังว่าง ⇒ VatPendingUndue) โดยไม่ทับสิ่งที่ผู้ใช้เลือกทีหลัง</summary>
     public bool DepositOutputVatDeferred { get; set; } = false;
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำค่าห้อง (ชั้น "ประเภทของช่องทาง" ของ <c>DepositPolicyResolver.ResolveKind</c>) ·
+    /// null = ตามค่าเดิมของที่พัก (<see cref="DepositVatTreatment"/>) → ประเภทเริ่มต้นบริษัท · migration ผูกที่พักที่เคยตั้งโหมดไว้
+    /// เข้ากับประเภท <c>lp:{Id}</c> ให้ครั้งเดียวเมื่อช่องนี้ยังว่าง ⇒ หน้าตั้งค่าที่เลือก "ตามบริษัท" ต้องล้าง <see cref="DepositVatTreatment"/> ด้วย</summary>
+    public Guid? RoomDepositKindId { get; set; }
+    /// <summary>รอบ 194 — ประเภทเงินประกันความเสียหาย (ลักษณะ RefundableSecurity) · null = ไม่เก็บเงินประกัน</summary>
+    public Guid? SecurityDepositKindId { get; set; }
+    /// <summary>รอบ 194 — ยอดเงินประกันต่อการจอง (0 = ไม่เก็บ)</summary>
+    public decimal SecurityDepositAmount { get; set; }
 
     // ── ภาษี/ค่าบริการ ──
     /// <summary>ราคาห้องที่ตั้งเป็นราคารวม VAT แล้ว (แสดงลูกค้าแบบ "รวมภาษี")</summary>
@@ -384,6 +392,11 @@ public class LodgingReservation : TenantEntity
     /// <summary>ใบเสร็จมัดจำ (Document IsDeposit=true)</summary>
     public Guid? DepositDocumentId { get; set; }
     public Document? DepositDocument { get; set; }
+    /// <summary>รอบ 194 — ใบรับเงินประกันความเสียหาย (Document IsDeposit=true · DepositNature=RefundableSecurity) แยกจากมัดจำค่าห้อง
+    /// ⇒ ไม่เข้าแผนหัก/ริบของมัดจำค่าห้อง (<c>LoadDepositSnapshotsAsync</c> ต้องกรองออก)</summary>
+    public Guid? SecurityDepositDocumentId { get; set; }
+    /// <summary>รอบ 194 — วันที่เงินประกันถูกปิด (คืน/ตัดชำระ/ริบ) · null = ยังค้างเป็นหนี้สิน</summary>
+    public DateTime? SecurityDepositSettledAt { get; set; }
     /// <summary>ใบกำกับภาษี/ใบเสร็จ ตอนเช็คเอาต์ (ตัดมัดจำแล้ว)</summary>
     public Guid? FinalDocumentId { get; set; }
     public Document? FinalDocument { get; set; }

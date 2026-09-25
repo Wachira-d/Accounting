@@ -567,6 +567,18 @@ RULES += [
          why="W2-C3 ร่องรอยการเปิดรับเงินจริงต้องอยู่ใน hash chain"),
 ]
 
+# ── รอบ 194 ทีม A (แกนกลาง · spec S8): ประเภทเงินมัดจำเริ่มต้น — tenant ใหม่ห้ามว่าง · จุดสร้างบริษัททุกจุดต้อง seed หลัง
+#    `_db.Companies.Add(company)` (FindAsync หาบริษัทที่ยังไม่บันทึกจาก change tracker) · ทีม B/C/D เติมกติกาของตัวเองต่อท้ายบล็อกนี้
+#    (DocumentService ต้องเรียก DepositDocumentShaping.Apply/ResolveKind · ด่าน SecurityDeductionProblem · ริบผ่าน ForfeitVatDecision) ──
+_DEPOSIT_SEED_WHY = "รอบ 194 S8 บริษัทใหม่ต้องได้ประเภทเงินมัดจำเริ่มต้นจากตารางเดียว (DepositKindSeed) — ขาด = ฟอร์มมัดจำไม่มีประเภทให้เลือก"
+RULES += [
+    dict(file=f, method=m, must=["DepositKindSeed.EnsureSeededAsync("],
+         before=[("_db.Companies.Add(company)", "DepositKindSeed.EnsureSeededAsync(")], why=_DEPOSIT_SEED_WHY)
+    for f, m in (("Services/Implementations/CompanyService.cs", "CreateAsync"),
+                 ("Services/Implementations/AuthService.cs", "RegisterAsync"),
+                 ("Services/Implementations/AuthService.cs", "SsoLoginAsync"))
+]
+
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)

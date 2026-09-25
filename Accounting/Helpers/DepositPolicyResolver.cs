@@ -1,3 +1,5 @@
+using System.Globalization;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -23,6 +25,12 @@ public enum DepositVatTreatmentSource
     CompanySetting,
     /// <summary>ยังไม่มีใครตั้ง → ใช้ค่าตามประเภทธุรกิจ</summary>
     BusinessTypeDefault,
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำที่เลือกบนใบ</summary>
+    DocumentKind,
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำของช่องทาง (ที่พัก/หน้าจอง)</summary>
+    ChannelKind,
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำเริ่มต้นของบริษัท</summary>
+    CompanyDefaultKind,
 }
 
 /// <summary>รูปของใบมัดจำที่ต้องส่งเข้า <c>CreateDocumentRequest</c> ให้ได้ JE ตามโหมด
@@ -52,6 +60,74 @@ public sealed record DepositVatTreatmentDecision(
 /// — หน้าเว็บเลือกแสดง <c>ServiceWarning</c> หรือ <c>OtherWarning</c> ตาม <c>Nature</c> ที่เซิร์ฟเวอร์ส่งมา (ไม่คิดเอง)</summary>
 public sealed record DepositVatTreatmentOption(
     string Value, string Label, string Description, string LegalReference, string? ServiceWarning, string? OtherWarning);
+
+/// <summary>ผลตัดสินประเภทเงินมัดจำ (รอบ 194 · spec S4) — ทุกทางเข้าที่ออกใบมัดจำใช้ record นี้ตัวเดียว
+/// (<see cref="DepositDocumentShaping.Apply"/> · หมายเหตุบนใบ · ด่านหัก/ริบ)</summary>
+/// <param name="KindId">ประเภทที่ถูกเลือก (null = ไม่มีประเภท — ตัดสินจากค่าเดิมของช่องทาง/บริษัท/ประเภทธุรกิจ)</param>
+/// <param name="Code">รหัสประเภท (null เมื่อไม่มีประเภท)</param>
+/// <param name="Name">ชื่อที่ตรึงลงใบ (<c>Document.DepositKindName</c>)</param>
+/// <param name="Treatment">วิธีบันทึกที่ใช้จริง</param>
+/// <param name="Nature">ลักษณะเงิน (ไม่มีประเภท = <see cref="DepositNature.PartOfPrice"/> ตามพฤติกรรมเดิม)</param>
+/// <param name="LiabilityAccountCode">บัญชีหนี้สิน — ประเภทระบุเองชนะ · เงินประกันที่ไม่ระบุ = 21530/21620 · null = ค่าเดิมของทางเข้า (217xx)</param>
+/// <param name="Source">ชั้นที่ตัดสิน<b>โหมด</b> (ประเภทที่ไม่ตั้งโหมด = ตกไปชั้นค่าเดิมของช่องทาง/ค่าตั้งบริษัท/ประเภทธุรกิจ)</param>
+/// <param name="Warning">คำเตือนที่หน้าเว็บ/ใบ/ตอนอนุมัติแสดงได้เลย</param>
+/// <param name="RuleCode">รหัสกฎของคำเตือน (RD-78/1 · RD-78(1)(b) · RD-PO73-SEC · RD-81)</param>
+/// <param name="RequiresReason">ลักษณะ "ราคา" + โหมดเลื่อน VAT ⇒ ประเภทต้องมี <c>PolicyReason</c> (ด่านตอนบันทึกประเภท)</param>
+/// <param name="NeedsOwnerChoice">ยังไม่มีใครตั้ง + ประเภทธุรกิจบอกลักษณะสิ่งที่ขายไม่ได้ ⇒ หน้าตั้งค่าแสดงเด่น</param>
+/// <param name="Supply">ลักษณะสิ่งที่ขาย (สินค้า/บริการ/ไม่ทราบ) ที่ใช้เลือกรหัสกฎ</param>
+/// <param name="ForfeitAccountCode">บัญชีรายได้ตอนริบเป็นค่าเสียหาย (null = บัญชีของเส้นริบเดิม)</param>
+/// <param name="PolicyReason">เหตุผลที่บันทึกไว้บนประเภท (พิมพ์เป็นหมายเหตุบนใบ)</param>
+public sealed record DepositKindDecision(
+    Guid? KindId,
+    string? Code,
+    string Name,
+    DepositVatTreatment Treatment,
+    DepositNature Nature,
+    string? LiabilityAccountCode,
+    DepositVatTreatmentSource Source,
+    string? Warning,
+    string? RuleCode,
+    bool RequiresReason,
+    bool NeedsOwnerChoice,
+    DepositSupplyNature Supply,
+    string? ForfeitAccountCode,
+    string? PolicyReason);
+
+/// <summary>ผลของการริบมัดจำต่อ VAT (รอบ 194 · spec S3)</summary>
+public enum DepositForfeitVatAction
+{
+    /// <summary>VAT เสียไปแล้วเดือนที่รับเงิน (ใบกำกับ/ย้ายเข้า 21911 แล้ว) ⇒ คงเดิม ไม่ออกใบลดหนี้ — พฤติกรรมเดิม</summary>
+    KeepExistingVat = 1,
+    /// <summary>VAT พักอยู่ 21913 ⇒ ย้ายเข้า 21911 (เส้นเดิม) + ธง <c>[DEPOSIT-LATE-VAT]</c></summary>
+    ReclassifyUndueToDue = 2,
+    /// <summary>ยังไม่เคยเสีย VAT (มัดจำเต็มยอด) ⇒ ออกใบกำกับภาษีของยอดที่ริบ (ราคารวม VAT) แล้วตัดชำระด้วยมัดจำ
+    /// (<c>ApplyDepositToInvoiceCoreAsync</c>) + ธง <c>[DEPOSIT-LATE-VAT]</c> — ห้ามลงรายได้ไม่มี VAT เงียบ ๆ</summary>
+    IssueTaxInvoiceForForfeit = 3,
+    /// <summary>ค่าเสียหายแท้ ⇒ รายได้อื่นไม่มี VAT (บัญชี <c>ForfeitAccountCode</c>)</summary>
+    CompensationNoVat = 4,
+    /// <summary>สิ่งที่ขายอยู่นอกระบบ VAT ⇒ รายได้ไม่มี VAT</summary>
+    NonVatNoVat = 5,
+    /// <summary>บริษัทไม่จด VAT ⇒ รายได้ไม่มี VAT (ไม่มีใบกำกับ)</summary>
+    CompanyNotVatRegistered = 6,
+}
+
+/// <summary>ผลตัดสิน VAT ของการริบ</summary>
+/// <param name="EffectiveAs">ถือว่าเป็นอะไรจริง (หลังใช้ลักษณะเงินที่รู้แล้ว/ค่าเริ่มต้นทิศปลอดภัย)</param>
+/// <param name="LateVat">ต้องติดธง <c>[DEPOSIT-LATE-VAT]</c> (ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน — ยื่น ภ.พ.30 เพิ่มเติม)</param>
+/// <param name="ReverseUndueVat">VAT พัก 21913 แล้วริบเป็นค่าเสียหาย ⇒ ต้องกลับ 21913 เข้ารายได้ (ไม่ใช่ย้ายเข้า 21911)</param>
+/// <param name="RequestIgnored">ขอ "ค่าเสียหาย" กับเงินที่ลักษณะเป็นราคา ⇒ ไม่มีผล (หน้าจอต้องบอก — ห้าม silent no-op)</param>
+/// <param name="ForfeitInvoiceVatRate">อัตรา VAT ของใบกำกับยอดที่ริบ (มีค่าเฉพาะ <see cref="DepositForfeitVatAction.IssueTaxInvoiceForForfeit"/>)</param>
+/// <param name="LateVatNote">ข้อความธง <c>[DEPOSIT-LATE-VAT]</c> ที่ต้องประทับบนใบ (ใบกำกับยอดที่ริบ/ใบมัดจำ) — null เมื่อไม่ต้องติดธง</param>
+public sealed record DepositForfeitVatDecision(
+    DepositForfeitVatAction Action,
+    DepositForfeitAs EffectiveAs,
+    bool LateVat,
+    bool ReverseUndueVat,
+    bool RequestIgnored,
+    decimal ForfeitInvoiceVatRate,
+    string Explanation,
+    string? RuleCode,
+    string? LateVatNote);
 
 /// <summary>
 /// **ตัวตัดสินตัวเดียว** ของ "เงินมัดจำฝั่งขายบันทึกแบบไหน" (รอบ 193 · คำตัดสินเจ้าของ #34 + คำชี้แจงสองรอบ:
@@ -93,7 +169,8 @@ public static class DepositPolicyResolver
     {
         DepositVatTreatment.FullDeposit =>
             "ใบมัดจำเป็น \"ใบเสร็จรับเงิน\" ไม่มี VAT — ลงเงินมัดจำรับ (หนี้สิน) เต็มยอด · ภาษีขายเกิดครั้งเดียวที่ใบกำกับใบสุดท้าย"
-            + "เต็มราคา · ริบมัดจำ = รายได้ไม่มี VAT · เหมาะกับเงินประกัน/มัดจำที่ต้องคืน (ยังไม่เกิดจุดความรับผิด)",
+            + "เต็มราคา · เหมาะกับเงินประกันที่ต้องคืน (ยังไม่เกิดจุดความรับผิด) · ริบมัดจำ: ถ้าเป็นส่วนหนึ่งของราคา/ค่าธรรมเนียมยกเลิก "
+            + "ต้องออกใบกำกับภาษีของยอดที่ริบ (ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน) · ไม่มี VAT เฉพาะเมื่อเป็นค่าเสียหายของเงินประกันแท้",
         DepositVatTreatment.VatPendingUndue =>
             "ใบมัดจำเป็น \"ใบเสร็จรับเงิน\" แยกฐาน + ภาษีขายรอเรียกเก็บ (21913 · ยังไม่เข้า ภ.พ.30) — ย้ายเป็นภาษีขาย (21911) "
             + "เมื่อออกใบสุดท้าย/ริบมัดจำ · ระบบเตือนใบที่ค้างเกิน 90 วันตอนเปิดรายงาน ภ.พ.30",
@@ -104,8 +181,10 @@ public static class DepositPolicyResolver
 
     private static string LegalReferenceOf(DepositVatTreatment t) => t switch
     {
-        DepositVatTreatment.VatImmediate => "ป.รัษฎากร มาตรา 78/1 (บริการ: ได้รับชำระ) · มาตรา 78 (สินค้า: รับชำระก่อนส่งมอบ) · มาตรา 86/4",
-        _ => "ป.รัษฎากร มาตรา 78 / 78/1 — ใช้ได้เมื่อยังไม่เกิดจุดความรับผิด (เงินประกัน/มัดจำที่ไม่ใช่ส่วนหนึ่งของราคา)",
+        DepositVatTreatment.VatImmediate => "ป.รัษฎากร มาตรา 78/1(1) (บริการ: ได้รับชำระ) · มาตรา 78(1)(ข) (สินค้า: ได้รับชำระราคาก่อนส่งมอบ) · "
+            + "คำสั่งกรมสรรพากรที่ ป.73/2541 (เงินมัดจำ/เงินจอง/ชำระล่วงหน้าที่เป็นส่วนหนึ่งของราคา) · มาตรา 86/4",
+        _ => "ป.รัษฎากร มาตรา 78(1)(ข) / 78/1(1) + คำสั่งกรมสรรพากรที่ ป.73/2541 — ใช้ได้เมื่อยังไม่เกิดจุดความรับผิด "
+            + "(เงินประกันที่ต้องคืนซึ่งยังไม่ใช่ค่าตอบแทน) · มัดจำที่เป็นส่วนหนึ่งของราคาภาษีถึงกำหนดตอนรับเงิน",
     };
 
     /// <summary>ตัวเลือกทั้งหมดเรียงตามที่เจ้าของระบุ (หน้าเว็บสร้าง radio จากลิสต์นี้ — ห้ามพิมพ์ซ้ำใน JS)</summary>
@@ -127,7 +206,9 @@ public static class DepositPolicyResolver
     /// (DECISION_DOCTRINE §1 — "ไม่รู้" ต้องเป็นค่าใน enum ห้ามเดาแทน)</summary>
     public static DepositSupplyNature NatureOf(IndustryType industry) => industry switch
     {
-        IndustryType.Service or IndustryType.Hotel or IndustryType.Construction or IndustryType.RealEstate
+        // RealEstate ไม่อยู่ที่นี่ (รอบ 194 · spec S4 · L2 §7.2): อาจเป็นให้เช่า (ยกเว้น §81(1)(ต)) · ขาย (SBT §81(1)(น)) ·
+        // นายหน้า/ส่วนกลาง (บริการ มี VAT) — เดิมเดาเป็นบริการ ⇒ ค่าแนะนำคิด VAT 7% กับค่าเช่าที่ยกเว้น ⇒ ให้เจ้าของเลือก
+        IndustryType.Service or IndustryType.Hotel or IndustryType.Construction
             or IndustryType.Technology or IndustryType.Healthcare or IndustryType.Education
             or IndustryType.Beauty or IndustryType.Transportation or IndustryType.Freelance
             => DepositSupplyNature.Service,
@@ -168,8 +249,10 @@ public static class DepositPolicyResolver
                + "ภาษีขายถึงกำหนดทันทีในเดือนที่รับเงิน · เลื่อนไปเดือนที่ออกใบสุดท้าย = นำส่งภาษีช้า เสี่ยงเงินเพิ่ม 1.5%/เดือน "
                + "(มาตรา 89/1) และเบี้ยปรับ · ใช้ได้ถูกต้องเฉพาะเงินประกันความเสียหาย/มัดจำที่ต้องคืนซึ่งไม่ใช่ค่าตอบแทน",
                ServiceNonImmediateRuleCode)
-            : ($"ℹ️ {what} ถูกต้องเฉพาะเงินประกัน/มัดจำที่ยังไม่ใช่ส่วนหนึ่งของราคา — มัดจำค่าสินค้าที่รับก่อนส่งมอบ "
-               + "ภาษีขายถึงกำหนดตอนได้รับชำระ (ป.รัษฎากร มาตรา 78)",
+            // รอบ 194 (spec S2 · L2 §8): สินค้าเตือนแรงเท่าบริการ — เดิมเป็น ℹ️ ทั้งที่ §78(1)(ข) ให้ภาษีถึงกำหนดตอนรับเงินเช่นกัน
+            : ($"⚠️ เลือก {what} — มัดจำ/เงินดาวน์ค่าสินค้าที่รับก่อนส่งมอบ ภาษีขายถึงกำหนดตอนได้รับชำระ (ป.รัษฎากร มาตรา 78(1)(ข) · "
+               + "ป.73/2541) · เลื่อนไปเดือนที่ออกใบสุดท้าย = นำส่งภาษีช้า เสี่ยงเงินเพิ่ม 1.5%/เดือน (มาตรา 89/1) และเบี้ยปรับ · "
+               + "ใช้ได้ถูกต้องเฉพาะเงินประกัน/มัดจำที่ต้องคืนซึ่งยังไม่ใช่ส่วนหนึ่งของราคา",
                GoodsNonImmediateRuleCode);
     }
 
@@ -362,4 +445,207 @@ public static class DepositPolicyResolver
     public const string DrivesUnsupportedMessage =
         "“หักมัดจำแบบลงบัญชีในใบเดียว” ใช้ได้กับใบเสร็จรับเงิน/ใบสำคัญรับ หรือใบกำกับภาษีแบบขายเงินสดใบเดียวเท่านั้น — "
         + "ใบแจ้งหนี้/ใบกำกับแบบเครดิตให้บันทึกใบก่อน แล้วกด “หักมัดจำ” หลังอนุมัติ (ระบบตัดลูกหนี้ด้วยมัดจำให้)";
+
+    // ═══════════════════════════ รอบ 194 — ประเภทเงินมัดจำ (spec S1–S4 · S7) ═══════════════════════════
+
+    public const string KindPriceServiceRuleCode = "RD-78/1";
+    public const string KindPriceGoodsRuleCode = "RD-78(1)(b)";
+    public const string KindSecurityEarlyVatRuleCode = "RD-PO73-SEC";
+    public const string KindNonVatRuleCode = "RD-81";
+    public const string SecurityDeductRuleCode = "DEP-SEC-DEDUCT";
+    /// <summary>ธงบนใบเมื่อภาษีของเงินที่ริบถึงกำหนดย้อนหลัง (spec S3) — ข้อความเต็มจาก <see cref="LateVatNote"/></summary>
+    public const string LateVatMarker = "[DEPOSIT-LATE-VAT]";
+    /// <summary>ชื่อเมื่อไม่มีประเภท (ใบที่ตัดสินจากค่าเดิมของช่องทาง/บริษัท)</summary>
+    public const string DefaultKindName = "มัดจำ/เงินรับล่วงหน้า";
+
+    /// <summary>บัญชีเงินประกันรับ (spec S7 — ไม่เพิ่มเลขใหม่): ผังที่มี 21530 เงินประกันความเสียหาย (ผังโรงแรม) ใช้ 21530 ·
+    /// ไม่งั้น 21620 เงินค้ำประกัน (ผังมาตรฐาน)</summary>
+    private static string SecurityLiabilityAccountCode(bool chartHas21530) => chartHas21530 ? "21530" : "21620";
+
+    /// <summary>ค่าที่รับจาก client/DB เป็นลักษณะที่นิยามไว้จริงไหม</summary>
+    public static bool IsDefined(DepositNature? n) => n is DepositNature v && Enum.IsDefined(v);
+
+    /// <summary>ประเภทนี้ใช้ในการตัดสินได้ไหม (มี · ไม่ลบ · เปิดใช้ · ลักษณะนิยามไว้ · เป็นของบริษัทนี้) — ไม่ได้ = ตกชั้นถัดไป</summary>
+    private static bool Usable(DepositKind? k, Guid companyId)
+        => k is not null && !k.IsDeleted && k.IsActive && k.CompanyId == companyId && IsDefined(k.Nature);
+
+    /// <summary>
+    /// <b>ตัวตัดสินประเภทเงินมัดจำตัวเดียว</b> (รอบ 194 · spec S4) — ลำดับ 6 ชั้น:
+    /// ① ประเภทที่เลือกบนใบ → ② ประเภทของช่องทาง (ที่พัก/หน้าจอง) → ③ ค่าเดิมของช่องทาง (<c>LodgingProperty.DepositVatTreatment</c>) →
+    /// ④ ประเภทเริ่มต้นบริษัท → ⑤ <c>CompanySettings.DepositVatTreatment</c> → ⑥ ประเภทธุรกิจ (VAT ทันที = พฤติกรรมเดิม)
+    ///
+    /// <para>ประเภทที่ไม่ตั้งโหมด (<c>VatTreatment</c> null · เช่น ADVANCE ที่ seed) ใช้ลักษณะ/ชื่อ/บัญชีของประเภท แต่โหมดตกไปชั้น
+    /// ③→⑤→⑥ ⇒ ปุ่มตั้งค่าเดิมยังมีผล · ไม่มีประเภทเลย = ลักษณะ <see cref="DepositNature.PartOfPrice"/> (พฤติกรรมเดิม) ·
+    /// ประเภทที่ปิด/ลบ/ของบริษัทอื่น = เหมือนไม่มี (ตกชั้นถัดไป — ผู้เรียกที่รับ id จาก client ต้องตรวจเองก่อนว่ามีจริง แล้วตอบ 400)</para>
+    ///
+    /// <para>⚠️ ผลนี้ใช้กับใบใหม่เท่านั้น · payload ที่ไม่ระบุประเภท (คู่ค้า/OCR/ฟอร์มเก่า) ⇒ ผู้เรียกส่ง decision = null เข้า
+    /// <see cref="DepositDocumentShaping.Apply"/> ⇒ รูปใบเหมือนเดิมทุกตัวอักษร</para>
+    /// </summary>
+    /// <param name="companyId">บริษัทของใบ — ประเภทของบริษัทอื่นถูกทิ้ง (tenant isolation)</param>
+    /// <param name="supply">ลักษณะสิ่งที่ขาย (<see cref="NatureOf"/> ของบริษัท · ที่พักส่ง Service)</param>
+    /// <param name="documentKind">① ประเภทที่เลือกบนใบ</param>
+    /// <param name="channelKind">② ประเภทของช่องทาง (เช่น <c>LodgingProperty.RoomDepositKindId</c>)</param>
+    /// <param name="channelTreatment">③ ค่าเดิมของช่องทาง (<c>LodgingProperty.DepositVatTreatment</c>)</param>
+    /// <param name="companyDefaultKind">④ ประเภทที่ <c>IsDefault</c> ของบริษัท</param>
+    /// <param name="companySetting">⑤ <c>CompanySettings.DepositVatTreatment</c></param>
+    /// <param name="chartHas21530">ผังของบริษัทมี 21530 ไหม (เลือกบัญชีเงินประกัน)</param>
+    public static DepositKindDecision ResolveKind(
+        Guid companyId,
+        DepositSupplyNature supply,
+        DepositKind? documentKind,
+        DepositKind? channelKind,
+        DepositVatTreatment? channelTreatment,
+        DepositKind? companyDefaultKind,
+        DepositVatTreatment? companySetting,
+        bool chartHas21530 = false)
+    {
+        DepositKind? kind = null;
+        var kindSource = DepositVatTreatmentSource.BusinessTypeDefault;
+        if (Usable(documentKind, companyId)) { kind = documentKind; kindSource = DepositVatTreatmentSource.DocumentKind; }
+        else if (Usable(channelKind, companyId)) { kind = channelKind; kindSource = DepositVatTreatmentSource.ChannelKind; }
+        else if (!IsDefined(channelTreatment) && Usable(companyDefaultKind, companyId))
+        { kind = companyDefaultKind; kindSource = DepositVatTreatmentSource.CompanyDefaultKind; }
+
+        DepositVatTreatment t;
+        DepositVatTreatmentSource source;
+        if (kind is not null && IsDefined(kind.VatTreatment)) { t = kind.VatTreatment!.Value; source = kindSource; }
+        else if (IsDefined(channelTreatment)) { t = channelTreatment!.Value; source = DepositVatTreatmentSource.ChannelOverride; }
+        else if (IsDefined(companySetting)) { t = companySetting!.Value; source = DepositVatTreatmentSource.CompanySetting; }
+        else { t = DepositVatTreatment.VatImmediate; source = DepositVatTreatmentSource.BusinessTypeDefault; }
+
+        var nature = kind?.Nature ?? DepositNature.PartOfPrice;
+        var (warning, code) = KindWarning(nature, t, supply);
+        string? account = null;
+        if (!string.IsNullOrWhiteSpace(kind?.LiabilityAccountCode)) account = kind.LiabilityAccountCode.Trim();
+        else if (nature == DepositNature.RefundableSecurity) account = SecurityLiabilityAccountCode(chartHas21530);
+        return new DepositKindDecision(
+            KindId: kind?.Id,
+            Code: kind?.Code,
+            Name: string.IsNullOrWhiteSpace(kind?.Name) ? DefaultKindName : kind.Name.Trim(),
+            Treatment: t,
+            Nature: nature,
+            LiabilityAccountCode: account,
+            Source: source,
+            Warning: warning,
+            RuleCode: code,
+            RequiresReason: ReasonRequired(nature, t),
+            NeedsOwnerChoice: source == DepositVatTreatmentSource.BusinessTypeDefault && supply == DepositSupplyNature.Unknown,
+            Supply: supply,
+            ForfeitAccountCode: string.IsNullOrWhiteSpace(kind?.ForfeitAccountCode) ? null : kind.ForfeitAccountCode.Trim(),
+            PolicyReason: string.IsNullOrWhiteSpace(kind?.PolicyReason) ? null : kind.PolicyReason.Trim());
+    }
+
+    /// <summary>ลักษณะ "ราคา" + โหมดที่เลื่อน VAT (เต็มยอด/รอเรียกเก็บ) ⇒ ต้องมีเหตุผล (spec S2 — ไม่ปิดตัวเลือกตามคำตัดสิน #34)</summary>
+    private static bool ReasonRequired(DepositNature nature, DepositVatTreatment treatment)
+        => nature == DepositNature.PartOfPrice && treatment != DepositVatTreatment.VatImmediate;
+
+    /// <summary>ด่านตอนบันทึกประเภท (หน้าตั้งค่า/API) — null = ผ่าน · ข้อความ = เหตุ + ทางไปต่อ (ผู้เรียกโยน BusinessRuleException)
+    /// <para><paramref name="treatment"/> = โหมดที่ตั้งบนประเภท (null = ตามค่าตั้งบริษัท ⇒ ไม่บังคับเหตุผลที่ประเภท —
+    /// คำเตือนระดับบริษัทอยู่ที่ <see cref="Resolve"/>)</para></summary>
+    public static string? KindProblem(DepositNature nature, DepositVatTreatment? treatment, string? policyReason)
+    {
+        if (!IsDefined(nature)) return "ลักษณะเงินไม่ถูกต้อง — เลือก ส่วนหนึ่งของราคา · เงินประกันที่ต้องคืน · หรือ นอกระบบ VAT";
+        if (treatment is { } tv && !IsDefined(tv))
+            return "วิธีบันทึกไม่ถูกต้อง — เลือก เต็มยอด · ภาษีรอเรียกเก็บ · หรือ VAT ทันที (หรือเว้นว่าง = ตามค่าตั้งบริษัท)";
+        if (treatment is not { } t || !ReasonRequired(nature, t) || !string.IsNullOrWhiteSpace(policyReason)) return null;
+        return $"⛔ มัดจำที่เป็นส่วนหนึ่งของราคาเลือก “{LabelOf(t)}” ได้เมื่อระบุเหตุผลเท่านั้น — ภาษีขายของเงินที่เป็นราคาถึงกำหนดตอนรับเงิน "
+            + "(สินค้า มาตรา 78(1)(ข) · บริการ มาตรา 78/1 · ป.73/2541) · ทางไปต่อ: ① เปลี่ยนเป็น “ออกใบกำกับภาษี รับรู้ VAT ทันที” · "
+            + "② ถ้าเงินก้อนนี้เป็นเงินประกันที่ต้องคืนจริง ให้เปลี่ยนลักษณะเป็น “เงินประกัน (ต้องคืน)” · ③ ยืนยันโหมดนี้พร้อมพิมพ์เหตุผล/เลขสัญญา "
+            + "(ระบบพิมพ์เหตุผลเป็นหมายเหตุบนใบและเตือนตอนอนุมัติ)";
+    }
+
+    /// <summary>คำเตือนตามตาราง spec S2 (ลักษณะ × โหมด) — หน้าตั้งค่า · หมายเหตุบนใบ · คำเตือนตอนอนุมัติ ใช้ตัวนี้ตัวเดียว
+    /// <para>ราคา × เลื่อน VAT: <b>สินค้าเตือนแรงเท่าบริการ</b> (รหัส <see cref="KindPriceGoodsRuleCode"/> / <see cref="KindPriceServiceRuleCode"/> ·
+    /// ไม่ทราบ = อ้างทั้งสองมาตรา ใช้รหัสบริการ) · เงินประกัน × แยก VAT: เตือน (ภาษีก่อนเวลา) · นอกระบบ VAT: แจ้งว่า VAT 0 เสมอ</para></summary>
+    public static (string? Warning, string? RuleCode) KindWarning(
+        DepositNature nature, DepositVatTreatment treatment, DepositSupplyNature supply = DepositSupplyNature.Unknown)
+    {
+        if (nature == DepositNature.PartOfPrice && treatment != DepositVatTreatment.VatImmediate)
+        {
+            var what = treatment == DepositVatTreatment.FullDeposit ? "“มัดจำเต็มยอด ไม่แยก VAT”" : "“ภาษีรอเรียกเก็บ”";
+            string law;
+            string code;
+            if (supply == DepositSupplyNature.Goods) { law = "ป.รัษฎากร มาตรา 78(1)(ข) — สินค้า: ได้รับชำระราคาก่อนส่งมอบ"; code = KindPriceGoodsRuleCode; }
+            else if (supply == DepositSupplyNature.Service) { law = "ป.รัษฎากร มาตรา 78/1(1) — บริการ: ได้รับชำระ"; code = KindPriceServiceRuleCode; }
+            else { law = "ป.รัษฎากร มาตรา 78(1)(ข) สินค้า / มาตรา 78/1(1) บริการ"; code = KindPriceServiceRuleCode; }
+            return ($"⚠️ มัดจำที่เป็นส่วนหนึ่งของราคาบันทึกแบบ {what} — ภาษีขายถึงกำหนดทันทีในเดือนที่รับเงิน ({law} · ป.73/2541) · "
+                    + "เลื่อนไปเดือนที่ออกใบสุดท้าย = นำส่งภาษีช้า เสี่ยงเงินเพิ่ม 1.5%/เดือน (มาตรา 89/1) และเบี้ยปรับ · "
+                    + "ถ้าเป็นเงินประกันที่ต้องคืนจริง ให้เปลี่ยนลักษณะเงินของประเภทเป็น “เงินประกัน (ต้องคืน)”", code);
+        }
+        if (nature == DepositNature.RefundableSecurity && treatment != DepositVatTreatment.FullDeposit)
+            return ("⚠️ เงินประกันที่ต้องคืนยังไม่ใช่ค่าตอบแทน (ป.73/2541) — บันทึกแบบแยก VAT = รับรู้ภาษีก่อนเกิดจุดความรับผิด "
+                    + (treatment == DepositVatTreatment.VatImmediate
+                        ? "(ออกใบกำกับภาษีได้ แต่ต้องออกใบลดหนี้ §86/10 ตอนคืน) "
+                        : "(ภาษีรอเรียกเก็บไม่ต่างจากมัดจำเต็มยอดทางกฎหมาย) ")
+                    + "· ค่าแนะนำ: “รับเป็นเงินมัดจำเต็มยอด ไม่แยก VAT”", KindSecurityEarlyVatRuleCode);
+        if (nature == DepositNature.NonVatSupply)
+            return ("ℹ️ สิ่งที่ขายอยู่นอกระบบภาษีมูลค่าเพิ่ม (ค่าเช่าอสังหาฯ §81(1)(ต) · ขายอสังหาฯ ที่เสียภาษีธุรกิจเฉพาะ §81(1)(น) · "
+                    + "ยกเว้นอื่นตาม §81) — ระบบบันทึกใบมัดจำด้วย VAT 0 เสมอไม่ว่าเลือกวิธีบันทึกแบบใด", KindNonVatRuleCode);
+        return (null, null);
+    }
+
+    /// <summary>ด่าน spec S2 แถวสุดท้าย: เงินประกันถูก "หักเป็นฐานภาษี/ราคา" (<c>DepositBaseDeducted</c> · หักแบบขับ JE) — null = ผ่าน
+    /// (<paramref name="nature"/> null = ใบก่อนรอบ 194 ⇒ ไม่บล็อก — พฤติกรรมเดิม) · ข้อความ = เหตุ + ทางไปต่อ · รหัส <see cref="SecurityDeductRuleCode"/></summary>
+    public static string? SecurityDeductionProblem(DepositNature? nature)
+        => nature != DepositNature.RefundableSecurity ? null
+         : $"⛔ [{SecurityDeductRuleCode}] เงินประกันที่ต้องคืนไม่ใช่ส่วนหนึ่งของราคา — นำไปหักออกจากฐานภาษี/ราคาของใบสุดท้ายไม่ได้ "
+           + "(ฐานภาษีต้องเป็นมูลค่าเต็มของสินค้า/บริการ มาตรา 79) · ทางไปต่อ: ออกใบกำกับ/ใบแจ้งหนี้เต็มจำนวนก่อน แล้วกด "
+           + "“ตัดชำระด้วยเงินประกัน” (หักมัดจำหลังอนุมัติ = รับชำระหนี้ ไม่ลดฐานภาษี) · หรือคืนเงินประกันที่หน้า “เงินมัดจำ”";
+
+    /// <summary>
+    /// VAT ของการริบมัดจำ — ตามลักษณะเงิน ไม่ใช่ตามโหมด (spec S3 · แก้ C-2/C-3 ของ L1)
+    /// <para>ลำดับ: ① นอกระบบ VAT ⇒ ไม่มี VAT · ② VAT เสียไปแล้ว (ใบกำกับ/ย้ายเข้า 21911 แล้ว) ⇒ คงเดิม ไม่ออกใบลดหนี้ ·
+    /// ③ ถือเป็นอะไร: ลักษณะ "ราคา" = ราคาเสมอ (ขอ "ค่าเสียหาย" = ไม่มีผล · <c>RequestIgnored</c>) · ลักษณะอื่น/ไม่ทราบ = ตามที่ขอ,
+    /// ไม่ระบุ = <see cref="DepositForfeitAs.PriceOrFee"/> (ทิศปลอดภัย) · ④ ค่าเสียหาย ⇒ รายได้อื่นไม่มี VAT ·
+    /// ⑤ ราคา + VAT พัก 21913 ⇒ ย้ายเข้า 21911 + ธง · ⑥ ราคา + ยังไม่เคยแยก VAT ⇒ ออกใบกำกับยอดที่ริบ + ธง (บริษัทไม่จด VAT = ไม่มี VAT)</para>
+    /// </summary>
+    /// <param name="nature">ลักษณะเงินที่ตรึงบนใบมัดจำ (null = ใบเดิม ไม่ทราบ)</param>
+    /// <param name="requested">ผู้ใช้ระบุว่าเงินที่ริบคืออะไร (null = ไม่ระบุ)</param>
+    /// <param name="depositVatAmount">VAT บนใบมัดจำ (0 = มัดจำเต็มยอด/บริษัทไม่จด VAT)</param>
+    /// <param name="vatPendingUnrecognized">VAT ยังพักอยู่ 21913 (<c>DepositOutputVatDeferred</c> และยังไม่รับรู้)</param>
+    /// <param name="companyVatRate">อัตรา VAT ของบริษัท ณ วันริบ (0 = ไม่จด VAT)</param>
+    /// <param name="depositReceivedDate">วันที่รับเงินมัดจำ (วันที่ของใบมัดจำ) — ใส่ในข้อความธง (null = ข้อความไม่มีวันที่)</param>
+    public static DepositForfeitVatDecision ForfeitVatDecision(
+        DepositNature? nature, DepositForfeitAs? requested, decimal depositVatAmount, bool vatPendingUnrecognized,
+        decimal companyVatRate = 7m, DateTime? depositReceivedDate = null)
+    {
+        var late = LateVatNote(depositReceivedDate);
+        DepositForfeitAs? req = requested is { } r && Enum.IsDefined(r) ? r : null;
+        var hasVat = depositVatAmount > 0.005m;
+        if (nature == DepositNature.NonVatSupply)
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.NonVatNoVat, req ?? DepositForfeitAs.PriceOrFee,
+                false, false, false, 0m, "สิ่งที่ขายอยู่นอกระบบ VAT (§81) — เงินที่ริบเป็นรายได้ไม่มี VAT", KindNonVatRuleCode, null);
+        if (hasVat && !vatPendingUnrecognized)
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.KeepExistingVat, req ?? DepositForfeitAs.PriceOrFee,
+                false, false, false, 0m, "ภาษีขายของมัดจำนี้เสียไปแล้วในเดือนที่รับเงิน — ริบแล้ว VAT คงเดิม ไม่ออกใบลดหนี้", null, null);
+
+        var ignored = nature == DepositNature.PartOfPrice && req == DepositForfeitAs.Compensation;
+        var effective = nature == DepositNature.PartOfPrice ? DepositForfeitAs.PriceOrFee : req ?? DepositForfeitAs.PriceOrFee;
+        if (effective == DepositForfeitAs.Compensation)
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.CompensationNoVat, effective,
+                false, hasVat, false, 0m,
+                "ริบเป็นค่าเสียหาย (ไม่ใช่ค่าตอบแทนของการขาย) — รายได้อื่นไม่มี VAT · ถ้าที่จริงเป็นค่าของที่ใช้ไป/ค่าบริการ/"
+                + "ค่าธรรมเนียมยกเลิก ให้เลือกแบบมี VAT", null, null);
+
+        var note = ignored ? " · ประเภทนี้เป็นส่วนหนึ่งของราคา — ตัวเลือก “ค่าเสียหาย” ไม่มีผล" : "";
+        string? code = ignored ? KindPriceServiceRuleCode : null;
+        if (hasVat)   // ถึงตรงนี้ = VAT ยังพัก 21913
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.ReclassifyUndueToDue, effective,
+                true, false, ignored, 0m,
+                "ภาษีขายที่พักไว้ (21913) ย้ายเข้าภาษีขาย (21911) — ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน" + note, code, late);
+        if (companyVatRate <= 0m)
+            return new DepositForfeitVatDecision(DepositForfeitVatAction.CompanyNotVatRegistered, effective,
+                false, false, ignored, 0m, "บริษัทไม่ได้จดทะเบียน VAT — เงินที่ริบเป็นรายได้ไม่มี VAT" + note, code, null);
+        return new DepositForfeitVatDecision(DepositForfeitVatAction.IssueTaxInvoiceForForfeit, effective,
+            true, false, ignored, companyVatRate,
+            "มัดจำเต็มยอดที่เป็นค่าตอบแทนยังไม่เคยเสีย VAT — ต้องออกใบกำกับภาษีของยอดที่ริบ (ราคารวม VAT) แล้วตัดชำระด้วยมัดจำ "
+            + "ห้ามลงรายได้ไม่มี VAT" + note, code, late);
+    }
+
+    /// <summary>ข้อความธง <see cref="LateVatMarker"/> บนใบ (spec S3) — วันที่ ค.ศ. รูป dd/MM/yyyy (InvariantCulture ·
+    /// กัน th-TH แปลงเป็น พ.ศ. เงียบ ๆ)</summary>
+    private static string LateVatNote(DateTime? depositReceivedDate)
+        => $"{LateVatMarker} ภาษีถึงกำหนดตั้งแต่เดือนที่รับเงิน"
+           + (depositReceivedDate is { } d ? $" ({d.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)})" : "")
+           + " — ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น";
 }
