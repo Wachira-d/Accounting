@@ -130,6 +130,12 @@
       </div>
       <div class="modal-body">
         <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <!-- รอบ 194 — ผลต่อ VAT + ตัวเลือก "เงินที่ริบคืออะไร" (ข้อความ/ตัวเลือกมาจากเซิร์ฟเวอร์: DepositSummary.realizeVatNote/forfeitOptions) -->
+        <div id="realizeVatNote" style="display:none;font-size:12.5px;line-height:1.6;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;margin-bottom:12px"></div>
+        <div class="form-group" id="realizeForfeitRow" style="display:none">
+          <label class="form-label">เงินที่รับรู้/ริบก้อนนี้คืออะไร (กำหนด VAT)</label>
+          <div id="realizeForfeitOptions"></div>
+        </div>
         <div class="form-group">
           <label class="form-label">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
@@ -378,7 +384,7 @@
           const refBase = r.baseAmount > 0 && r.refundedAmount > 0 ? Math.min(100 - pctReal, (r.refundedAmount / r.totalAmount) * 100) : 0;
           return `<div class="dc-card">
             <div class="top"><div>
-              <div class="no">${Layout.esc(r.documentNumber)} ${r.bookingNumber ? `<span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}</div>
+              <div class="no">${Layout.esc(r.documentNumber)}${r.depositKindName ? ` <span style="font-size:11px;padding:1px 6px;border-radius:6px;background:${r.deductAsBaseBlockedReason ? '#fef3c7;color:#92400e' : '#ede9fe;color:#6d28d9'}" title="${Layout.esc(r.deductAsBaseBlockedReason || r.depositPolicyNote || '')}">${r.deductAsBaseBlockedReason ? '🔒 ' : ''}${Layout.esc(r.depositKindName)}</span>` : ''} ${r.bookingNumber ? `<span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}</div>
               <div class="who">${Layout.esc(r.contactName || '-')}</div>
               <div class="meta">${new Date(r.documentDate).toLocaleDateString('th-TH')} · ค้างมา ${r.ageDays} วัน ${isDocless ? '· จาก GL' : ''}</div>
             </div><div style="text-align:right">${this.statusChip(r.status)}<div style="margin-top:4px">${this.vatChip(r)}</div></div></div>
@@ -403,7 +409,7 @@
         tbody.innerHTML = rows.map(r => {
           const isDocless = !r.id || r.id === '00000000-0000-0000-0000-000000000000';
           return `<tr>
-            <td><b>${Layout.esc(r.documentNumber)}</b>${r.bookingNumber ? ` <span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}<br>
+            <td><b>${Layout.esc(r.documentNumber)}</b>${r.depositKindName ? ` <span style="font-size:11px;padding:1px 6px;border-radius:6px;background:${r.deductAsBaseBlockedReason ? '#fef3c7;color:#92400e' : '#ede9fe;color:#6d28d9'}" title="${Layout.esc(r.deductAsBaseBlockedReason || r.depositPolicyNote || '')}">${r.deductAsBaseBlockedReason ? '🔒 ' : ''}${Layout.esc(r.depositKindName)}</span>` : ''}${r.bookingNumber ? ` <span class="dc-badge bk" onclick="Page.showBooking('${Layout.jsArg(r.bookingNumber)}')">🔗 ${Layout.esc(r.bookingNumber)}</span>` : ''}<br>
                 <span style="color:var(--gray-500);font-size:12px">${Layout.esc(r.contactName || '-')}</span></td>
             <td>${new Date(r.documentDate).toLocaleDateString('th-TH')}<br><span style="color:var(--gray-400);font-size:11px">${r.ageDays} วัน</span></td>
             <td>${this.vatChip(r)}</td>
@@ -428,6 +434,26 @@
         location.href = '/pages/documents.html?search=' + encodeURIComponent(bk);
       },
       row(id) { return (this.data?.rows || []).find(r => r.id === id); },
+      /** รอบ 194 — วาดผลต่อ VAT + ตัวเลือก "เงินที่ริบคืออะไร" จากแถวของเซิร์ฟเวอร์ (ห้ามคิดเงื่อนไขเองในหน้า) ·
+       *  ค่าเริ่มต้น = ตัวเลือกที่เซิร์ฟเวอร์ติด isDefault (มี VAT — ทิศปลอดภัย) */
+      _renderRealizeForfeit(r) {
+        const note = document.getElementById('realizeVatNote');
+        if (note) {
+          const txt = [r.realizeVatNote, r.depositKindName ? 'ประเภท: ' + r.depositKindName : ''].filter(Boolean).join(' · ');
+          note.textContent = txt; note.style.display = txt ? '' : 'none';
+        }
+        const row = document.getElementById('realizeForfeitRow');
+        const box = document.getElementById('realizeForfeitOptions');
+        const opts = Array.isArray(r.forfeitOptions) ? r.forfeitOptions : [];
+        if (box) box.innerHTML = opts.map(o => `<label style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="realizeForfeitAs" value="${Layout.esc(o.value)}" ${o.isDefault ? 'checked' : ''}>
+            <b>${Layout.esc(o.label)}</b><br><span style="font-size:12px;color:#64748b">${Layout.esc(o.description || '')}</span>
+          </label>`).join('');
+        if (row) row.style.display = opts.length ? '' : 'none';
+      },
+      _realizeForfeitAs() {
+        return document.querySelector('input[name="realizeForfeitAs"]:checked')?.value || null;
+      },
       openRealize(id) {
         const r = this.row(id); if (!r) return;
         this._realizeId = id;
@@ -435,6 +461,7 @@
           `${Layout.esc(r.documentNumber)} · ${Layout.esc(r.contactName || '')}<br>คงค้าง (ฐาน): <b>${Layout.money(r.outstandingAmount)}</b>`;
         document.getElementById('realizeAmount').value = r.outstandingAmount;
         document.getElementById('realizeDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
+        this._renderRealizeForfeit(r);
         Layout.openModal('realizeModal');
       },
       async submitRealize() {
@@ -443,13 +470,16 @@
           const amount = parseFloat(document.getElementById('realizeAmount').value);
           if (!amount || amount <= 0) { Layout.toast('กรุณาระบุจำนวนเงินที่รับรู้', 'error'); return; }
           const dateRaw = document.getElementById('realizeDate').value;
-          await api.realizeDeposit(this._realizeId, {
+          const res = await api.realizeDeposit(this._realizeId, {
             amount,
             realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
             revenueAccountCode: document.getElementById('realizeRevenueCode').value.trim() || null,
+            // รอบ 194 — ส่งเฉพาะเมื่อเซิร์ฟเวอร์ให้ถาม (ไม่ส่ง = ราคา/มี VAT ตามค่าเริ่มต้นของตัวตัดสิน)
+            forfeitAs: this._realizeForfeitAs(),
           });
           Layout.closeModal('realizeModal');
           Layout.toast('รับรู้รายได้เรียบร้อย ✓');
+          if (res?.data?.depositPolicyNote) Layout.toast(res.data.depositPolicyNote, 'info');
           this.load();
         } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
       },

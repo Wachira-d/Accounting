@@ -152,7 +152,12 @@ public record CreateDocumentRequest(
     decimal? RoundingAdjustment = null,
     // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐาน (ก่อน VAT) ของมัดจำ "ออกใบกำกับแล้ว" ที่หักจากใบนี้ — แยกจากส่วนลดการค้า
     // (BillDiscountAmount) · ต้องมี DepositAppliedRef · อนุมัติแล้วรับรู้มัดจำเท่าค่านี้ · null/0 = ไม่มี
-    decimal? DepositBaseDeducted = null);
+    decimal? DepositBaseDeducted = null,
+    // รอบ 194 — ประเภทเงินมัดจำ (ใบมัดจำเท่านั้น) · ระบุ id หรือรหัส (คู่ค้า) อย่างใดอย่างหนึ่ง · ไม่พบ/ปิดใช้ = 400 ข้อความไทย ·
+    // ไม่ระบุทั้งคู่ = พฤติกรรมเดิมทุกตัวอักษร (บรรทัด/ธง/บัญชีตามที่ส่งมา) · ระบุ ⇒ DepositPolicyResolver.ResolveKind +
+    // DepositDocumentShaping.Apply ตัดสินรูปใบ (VAT บรรทัด · DepositOutputVatDeferred · บัญชีหนี้สิน) ทับค่าที่ส่งมา
+    Guid? DepositKindId = null,
+    string? DepositKindCode = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -314,7 +319,10 @@ public record UpdateDocumentRequest(
     // รอบ 193: ผลต่างจากการปัดเศษ — null = ไม่แตะ (ค่าเดิมยังอยู่ · SubTotal คิดใหม่ = Σ บรรทัด + ค่านี้) · 0 = ล้าง
     decimal? RoundingAdjustment = null,
     // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำออกใบกำกับแล้วที่หัก — null = คงค่าเดิม · 0 = ล้าง (ต้องส่งบรรทัดมาด้วย)
-    decimal? DepositBaseDeducted = null);
+    decimal? DepositBaseDeducted = null,
+    // รอบ 194 — ประเภทเงินมัดจำ: null = คงค่าเดิม (ใบที่มีประเภท ⇒ บรรทัดที่ส่งมาถูกจัดรูปตามประเภทเดิมอีกครั้ง) ·
+    // Guid.Empty = ล้างประเภท (กลับไปตามบรรทัด/ธงที่ส่งมา) · ค่าอื่น = เปลี่ยนประเภท (เฉพาะใบร่าง/ถูกตีกลับ · ต้องส่งบรรทัดมาด้วย)
+    Guid? DepositKindId = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -345,7 +353,10 @@ public record RealizeDepositRequest(
     decimal Amount,
     DateTime? RealizeDate = null,
     string? RevenueAccountCode = null,
-    Guid? FinalInvoiceId = null);
+    Guid? FinalInvoiceId = null,
+    // รอบ 194 (spec S3) — ใช้เฉพาะ "ริบ" (ไม่มีใบสุดท้าย): เงินที่ริบคืออะไร · สำคัญกับใบเดิมที่ไม่ทราบลักษณะเงิน (DepositNature NULL)
+    // และเงินประกัน · null = ราคา/ค่าธรรมเนียม (มี VAT — ทิศปลอดภัย) · ใบที่ลักษณะเป็น "ส่วนหนึ่งของราคา" = ราคาเสมอ
+    DepositForfeitAs? ForfeitAs = null);
 
 /// <summary>คืนเงินมัดจำ (ยกเลิกการจอง) — gen reversal JE: Dr ขายรอรับรู้ +
 /// Dr ภาษีขาย (ใบลดหนี้) / Cr เงินสด. Amount = ยอดรวม VAT ที่จะคืน.</summary>
@@ -426,6 +437,14 @@ public record SuggestPvAccountingLineResult(
     bool UsedAi,
     Guid? FeedbackId);
 
+/// <summary>รอบ 194 — ตัวเลือก "เงินที่ริบคืออะไร" 1 ข้อ สำหรับหน้าเว็บ (ชื่อ enum + ป้าย + คำอธิบายจากตัวตัดสิน) —
+/// หน้าเว็บวาด radio ตามรายการนี้ ห้ามพิมพ์ป้าย/เงื่อนไขซ้ำใน JS (CLAUDE.md F2 ข้อ 5) · ผู้สร้าง = <c>Helpers/DepositKindDocumentRules.ForfeitOptions</c></summary>
+/// <param name="Value">ชื่อ enum <see cref="DepositForfeitAs"/> ที่ส่งกลับมาใน <c>RealizeDepositRequest.ForfeitAs</c></param>
+/// <param name="Label">ป้ายที่ผู้ใช้เห็น</param>
+/// <param name="Description">ผลที่จะเกิด (มาจาก <c>DepositPolicyResolver.ForfeitVatDecision</c> ตัวเดียว)</param>
+/// <param name="IsDefault">ค่าเริ่มต้น = ทิศปลอดภัย (มี VAT)</param>
+public sealed record DepositForfeitOption(string Value, string Label, string Description, bool IsDefault);
+
 public record DepositSummary(
     Guid Id,
     string DocumentNumber,
@@ -451,7 +470,19 @@ public record DepositSummary(
     // UI ใช้ highlight + auto-suggest มัดจำเมื่อ user กรอก booking ตรงกัน
     string? BookingNumber = null,
     // ยอดที่คืนเงินแล้ว (gross รวม VAT) — Outstanding หักส่วนนี้แล้ว (audit #7)
-    decimal RefundedAmount = 0m);
+    decimal RefundedAmount = 0m,
+    // ===== รอบ 194 — ประเภทเงินมัดจำ (server computes · page displays) =====
+    // ลักษณะเงินเป็นชื่อ enum (PartOfPrice · RefundableSecurity · NonVatSupply) · null = ใบเดิม ไม่ทราบ
+    string? DepositNature = null,
+    string? DepositKindName = null,
+    // เหตุที่ "หักเป็นฐาน/ราคา" ไม่ได้ (เงินประกัน · DEP-SEC-DEDUCT) — null = หักได้ · ตัดชำระหนี้ (หักมัดจำหลังอนุมัติ) ยังได้เสมอ
+    string? DeductAsBaseBlockedReason = null,
+    // ตัวเลือก "เงินที่ริบคืออะไร" ที่หน้าต่างรับรู้/ริบต้องถาม (null = ไม่ต้องถาม — คำตอบไม่เปลี่ยนผล VAT)
+    IReadOnlyList<DepositForfeitOption>? ForfeitOptions = null,
+    // ผลต่อ VAT เมื่อรับรู้/ริบโดยไม่มีใบสุดท้ายตามค่าเริ่มต้น (เช่น "ต้องออกใบกำกับภาษีของยอดที่ริบ") — ให้ผู้ใช้เห็นก่อนกด
+    string? RealizeVatNote = null,
+    // หมายเหตุนโยบายที่ตรึงบนใบมัดจำ (เหตุผลเลื่อน VAT · [DEPOSIT-LATE-VAT] · ผลการริบ)
+    string? DepositPolicyNote = null);
 
 /// <summary>ตัววินิจฉัยหน้าเงินมัดจำ — บอกว่าระบบ "เห็น" อะไรบ้าง เพื่อหา
 /// สาเหตุเมื่อ dashboard โชว์ 0 (ไม่มีบัญชีมัดจำในผัง / ไม่มี JE เครดิต /
@@ -858,7 +889,15 @@ public record DocumentResponse(
     /// <summary>ผลต่างจากการปัดเศษ (SubTotal = Σ บรรทัด + ค่านี้) — echo ให้ฟอร์ม/หน้ารายละเอียดแสดง · 0 = ไม่มี</summary>
     decimal RoundingAdjustment = 0m,
     // รอบ 193 ฝ่ายค้านรอบสาม R3-1: ฐานมัดจำออกใบกำกับแล้วที่หัก (แยกจากส่วนลดท้ายบิล BillDiscountAmount)
-    decimal DepositBaseDeducted = 0m);
+    decimal DepositBaseDeducted = 0m,
+    /// <summary>รอบ 194 — ประเภทเงินมัดจำที่ตรึงบนใบ (null = ใบเดิม/ไม่ได้ระบุประเภท)</summary>
+    Guid? DepositKindId = null,
+    /// <summary>ชื่อประเภท ณ ตอนออกใบ (สำเนา)</summary>
+    string? DepositKindName = null,
+    /// <summary>ลักษณะเงินเป็น<b>ชื่อ enum</b> (PartOfPrice · RefundableSecurity · NonVatSupply) · null = ไม่ทราบ (ใบก่อนรอบ 194)</summary>
+    string? DepositNature = null,
+    /// <summary>หมายเหตุนโยบายที่ระบบประทับ (เหตุผลเลื่อน VAT · ตั้ง VAT 0 ทับ · [DEPOSIT-LATE-VAT])</summary>
+    string? DepositPolicyNote = null);
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

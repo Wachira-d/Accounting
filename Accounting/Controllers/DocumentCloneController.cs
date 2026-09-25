@@ -74,6 +74,11 @@ public class DocumentCloneController : ControllerBase
             combinedInvoiceTaxInvoice = src.CombinedInvoiceTaxInvoice,
             buyerDeclinedTaxInvoice = src.BuyerDeclinedTaxInvoice,
             issuedAsCashReceipt = src.IssuedAsCashReceipt,
+            // รอบ 194 — ใบมัดจำโคลนเป็นใบมัดจำ (เดิมหาย ⇒ รายได้แทนหนี้สิน) พร้อมประเภท/ธงเดิม — ให้ตรงกับที่ POST สร้างจริง
+            isDeposit = src.IsDeposit,
+            depositKindId = src.IsDeposit ? src.DepositKindId : null,
+            depositOutputVatDeferred = src.IsDeposit && src.DepositOutputVatDeferred,
+            depositDeferredAccountCode = src.IsDeposit ? src.DepositDeferredAccountCode : null,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
             lines = src.Lines.OrderBy(l => l.LineOrder).Select(l => new
@@ -173,6 +178,23 @@ public class DocumentCloneController : ControllerBase
             BillDiscountPercent: src.BillDiscountPercent > 0 ? src.BillDiscountPercent : null,
             BillDiscountAmount: src.BillDiscountPercent <= 0 && src.BillDiscountAmount > 0 ? src.BillDiscountAmount : null
         );
+
+        // ── รอบ 194 — โคลนใบมัดจำ (ช่องโหว่เดิม: ไม่พา IsDeposit ⇒ ใบโคลนลงรายได้แทนหนี้สินมัดจำ) ──
+        // พา IsDeposit + ประเภทไปด้วยเฉพาะเมื่อโคลนเป็นชนิดเดิม (ใบเสร็จ/ใบสำคัญรับ) · ใบใหม่เป็นร่างผ่าน CreateDocumentAsync ⇒ ประเภท
+        // ถูกตัดสินใหม่ด้วยตัวตัดสินตัวเดียว (ค่าตั้งปัจจุบัน ไม่ใช่สำเนาของใบเดิม) · ประเภทที่ถูกปิด/ลบไปแล้ว ⇒ โคลนแบบไม่มีประเภท
+        // (ธง/บัญชีตามใบต้นแบบ = พฤติกรรมของใบเดิมที่ไม่มีประเภท) แทนการล้มทั้งคำขอ · ใบเดิมที่ไม่มีประเภท ⇒ ไม่มีประเภท (null สืบทอดเป็น null)
+        if (cloneSameType && src.IsDeposit)
+        {
+            var kindUsable = src.DepositKindId is Guid srcKind
+                && await _db.DepositKinds.AsNoTracking().AnyAsync(k => k.Id == srcKind && k.CompanyId == companyId && !k.IsDeleted && k.IsActive);
+            req = req with
+            {
+                IsDeposit = true,
+                DepositKindId = kindUsable ? src.DepositKindId : null,
+                DepositOutputVatDeferred = src.DepositOutputVatDeferred,
+                DepositDeferredAccountCode = src.DepositDeferredAccountCode,
+            };
+        }
 
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —
         // Identity.Name เป็นชื่อ/อีเมล ทำให้เอกสารโคลนไม่มีลายเซ็นผู้จัดทำ

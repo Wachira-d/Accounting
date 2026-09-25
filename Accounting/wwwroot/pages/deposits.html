@@ -48,6 +48,12 @@
       </div>
       <div class="modal-body">
         <div id="realizeInfo" style="font-size:13px;color:#475569;margin-bottom:12px"></div>
+        <!-- รอบ 194 — ผลต่อ VAT + ตัวเลือก "เงินที่ริบคืออะไร" (ข้อความ/ตัวเลือกมาจากเซิร์ฟเวอร์: DepositSummary.realizeVatNote/forfeitOptions) -->
+        <div id="realizeVatNote" style="display:none;font-size:12.5px;line-height:1.6;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;margin-bottom:12px"></div>
+        <div class="form-group" id="realizeForfeitRow" style="display:none">
+          <label class="form-label">เงินที่รับรู้/ริบก้อนนี้คืออะไร (กำหนด VAT)</label>
+          <div id="realizeForfeitOptions"></div>
+        </div>
         <div class="form-group">
           <label class="form-label" data-help="ยอดที่ส่งของ/บริการแล้ว — Dr ขายรอรับรู้ (24650) / Cr รายได้ (41000/42000) • ใส่ 'ฐานก่อน VAT' — ถ้ามัดจำมี VAT, ระบบจะคำนวณ VAT ที่จะถอนจาก 24655 อัตโนมัติ">จำนวนเงินที่รับรู้ (ฐานไม่รวม VAT)</label>
           <input type="number" step="0.01" min="0" class="form-input" id="realizeAmount">
@@ -178,7 +184,7 @@
                       : '<span style="color:#b45309;font-size:11px" title="พักที่ 21913 ยังไม่เข้า ภ.พ.30">⏳ รอเรียกเก็บ</span>');
                 return `
                 <tr>
-                  <td class="font-medium">${Layout.esc(r.documentNumber)}</td>
+                  <td class="font-medium">${Layout.esc(r.documentNumber)}${r.depositKindName ? ` <span style="font-size:11px;padding:1px 6px;border-radius:6px;background:${r.deductAsBaseBlockedReason ? '#fef3c7;color:#92400e' : '#ede9fe;color:#6d28d9'}" title="${Layout.esc(r.deductAsBaseBlockedReason || r.depositPolicyNote || '')}">${r.deductAsBaseBlockedReason ? '🔒 ' : ''}${Layout.esc(r.depositKindName)}</span>` : ''}</td>
                   <td>${Layout.date(r.documentDate)}</td>
                   <td>${Layout.esc(r.contactName || '-')}</td>
                   <td style="font-size:12px;color:#475569">${Layout.esc(r.reference || '-')}</td>
@@ -232,6 +238,26 @@
             </div>`;
         } catch (e) { /* วินิจฉัยล้ม → คงข้อความ "ไม่มีรายการ" ไว้เฉย ๆ */ }
       },
+      /** รอบ 194 — วาดผลต่อ VAT + ตัวเลือก "เงินที่ริบคืออะไร" จากแถวของเซิร์ฟเวอร์ (ห้ามคิดเงื่อนไขเองในหน้า) ·
+       *  ค่าเริ่มต้น = ตัวเลือกที่เซิร์ฟเวอร์ติด isDefault (มี VAT — ทิศปลอดภัย) */
+      _renderRealizeForfeit(r) {
+        const note = document.getElementById('realizeVatNote');
+        if (note) {
+          const txt = [r.realizeVatNote, r.depositKindName ? 'ประเภท: ' + r.depositKindName : ''].filter(Boolean).join(' · ');
+          note.textContent = txt; note.style.display = txt ? '' : 'none';
+        }
+        const row = document.getElementById('realizeForfeitRow');
+        const box = document.getElementById('realizeForfeitOptions');
+        const opts = Array.isArray(r.forfeitOptions) ? r.forfeitOptions : [];
+        if (box) box.innerHTML = opts.map(o => `<label style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="realizeForfeitAs" value="${Layout.esc(o.value)}" ${o.isDefault ? 'checked' : ''}>
+            <b>${Layout.esc(o.label)}</b><br><span style="font-size:12px;color:#64748b">${Layout.esc(o.description || '')}</span>
+          </label>`).join('');
+        if (row) row.style.display = opts.length ? '' : 'none';
+      },
+      _realizeForfeitAs() {
+        return document.querySelector('input[name="realizeForfeitAs"]:checked')?.value || null;
+      },
       openRealize(id) {
         const r = this._rows.find(x => x.id === id);
         if (!r) return;
@@ -242,6 +268,7 @@
         document.getElementById('realizeAmount').max = r.outstandingAmount;
         document.getElementById('realizeDate').value = Layout.toDateInput(new Date());
         document.getElementById('realizeRevenueCode').value = '';
+        this._renderRealizeForfeit(r);
         Layout.openModal('realizeModal');
       },
       closeRealize() {
@@ -287,12 +314,16 @@
         const body = {
           amount,
           realizeDate: dateRaw ? new Date(dateRaw).toISOString() : null,
-          revenueAccountCode: code || null
+          revenueAccountCode: code || null,
+          // รอบ 194 — ส่งเฉพาะเมื่อเซิร์ฟเวอร์ให้ถาม (ไม่ส่ง = ราคา/มี VAT ตามค่าเริ่มต้นของตัวตัดสิน)
+          forfeitAs: this._realizeForfeitAs()
         };
         try {
-          await api.realizeDeposit(this._realizeId, body);
+          const res = await api.realizeDeposit(this._realizeId, body);
           this.closeRealize();
           Layout.toast('รับรู้รายได้จากมัดจำสำเร็จ');
+          // ผลต่อ VAT ที่ระบบประทับบนใบมัดจำ (ออกใบกำกับของยอดที่ริบ · ธงภาษีย้อนหลัง · ตัวเลือกที่ไม่มีผล) — ต้องเห็น ไม่เงียบ
+          if (res?.data?.depositPolicyNote) Layout.toast(res.data.depositPolicyNote, 'info');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
       },
