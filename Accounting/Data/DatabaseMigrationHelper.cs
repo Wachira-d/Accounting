@@ -3292,7 +3292,7 @@ public static class DatabaseMigrationHelper
     /// (รอบ 193 ฝ่ายค้านรอบสี่ R4-3: ล็อกว่าการย้ายค่าไป DepositBaseDeducted มีคำสั่งเดียว)</summary>
     internal static string[] GetFullTextSearchStatements()
     {
-        return new[]
+        var statements = new[]
         {
             // Enable pg_trgm for trigram-based LIKE/ILIKE optimization
             """CREATE EXTENSION IF NOT EXISTS pg_trgm;""",
@@ -6781,8 +6781,7 @@ public static class DatabaseMigrationHelper
             """UPDATE "LodgingReservations" SET "RefundPaidAmount" = 0, "RefundPaidAt" = NULL WHERE "RefundPaidBy" LIKE 'legacy:posted-at-cancel%' AND "RefundPaidAmount" <> 0;""",
             """UPDATE "LodgingReservations" SET "RefundPaidBy" = 'legacy:posted-at-cancel (ก่อนรอบ 193 — ไม่มีข้อมูลการโอนคืน ระบบเดิมลงบัญชีคืนเงินตอนยกเลิก)' WHERE "Status" IN (4, 5) AND "RefundAmount" > 0 AND "RefundPaidAmount" = 0 AND "RefundPaidBy" IS NULL AND "PaidAmount" <= "DepositPaid" - "RefundAmount" + 0.005;""",
 
-            // รอบ 194 — ประเภทเงินมัดจำ (ตาราง + คอลัมน์ใหม่ + seed idempotent) · ดู DepositKindMigrationStatements
-            .. DepositKindMigrationStatements(),
+            // รอบ 194 — ประเภทเงินมัดจำ (ตาราง + คอลัมน์ใหม่ + seed idempotent) · ต่อท้ายหลังอาร์เรย์นี้ (DepositKindMigrationStatements)
 
             // C-T11 — ขยาย RetentionUntil ของแถวเดิมที่คำนวณจาก "วันที่เอกสาร + 5 ปี"
             // ให้เป็น "วันสิ้นรอบบัญชี + 5 ปี" (§87/3 นับจากวันยื่นแบบ · ม.10 นับจาก
@@ -6906,5 +6905,7 @@ public static class DatabaseMigrationHelper
                 OR s."CurrentMonthLocalOcrPages" > c.n);
             """,
         };
+        // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
+        return statements.Concat(DepositKindMigrationStatements()).ToArray();
     }
 }
