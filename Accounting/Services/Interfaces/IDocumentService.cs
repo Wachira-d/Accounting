@@ -14,8 +14,11 @@ public interface IDocumentService
     /// <param name="isFullTaxInvoiceReplacement">ใบกำกับเต็มรูปที่ออก "แทน" ใบเสร็จ
     /// (§86/6 → §86/4) — ไม่นับโควตาซ้ำ (การขายเดิม). <b>พารามิเตอร์ของเมธอด
     /// ไม่ใช่ช่องใน request</b> ด้วยเหตุผลเดียวกับ originModule</param>
+    /// <param name="depositChannelVatRate">รอบ 194 P1 — อัตรา VAT ของช่องทางที่ออกใบมัดจำ (ที่พัก <c>ChargeVat=false</c> = 0) · ตัวจัดรูปตามประเภท
+    /// ใช้อัตรานี้เมื่อต่ำกว่าอัตราบริษัท (<c>DepositPolicyResolver.ShapingVatRate</c>) · <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b>
+    /// (ค่าที่ client คุมได้ห้ามตัดสินเรื่องเงิน — ส่ง 0 มาเองเพื่อหลบ VAT ตอนริบไม่ได้) · null = อัตราบริษัท</param>
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
-        string? originModule = null, bool isFullTaxInvoiceReplacement = false);
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>
@@ -41,7 +44,10 @@ public interface IDocumentService
         Guid companyId, Guid documentId, string? period, string actor);
     /// <summary>รับรู้รายได้จากเงินมัดจำ (ตัด "ขายรอรับรู้" 217xx → รายได้) เมื่อ
     /// ส่งมอบจริง. รองรับรับรู้บางส่วน. สร้าง JE Dr 217xx / Cr รายได้.</summary>
-    Task<DocumentResponse> RealizeDepositAsync(Guid companyId, Guid documentId, RealizeDepositRequest request, string actor);
+    /// <param name="channelVatRate">รอบ 194 P1 — อัตรา VAT ของช่องทางตอนริบ (ที่พัก <c>ChargeVat=false</c> = 0 ⇒ ใบ VAT 0 ของช่องทางนั้น
+    /// เป็น "VAT 0 โดยชอบ" ไม่ออกใบกำกับ 7%) · พารามิเตอร์ของเมธอด (API เอื้อมไม่ถึง) · null = ตามธงบนใบ</param>
+    Task<DocumentResponse> RealizeDepositAsync(Guid companyId, Guid documentId, RealizeDepositRequest request, string actor,
+        decimal? channelVatRate = null);
     /// <summary>รายการเงินมัดจำคงค้าง/ที่รับรู้แล้ว สำหรับหน้าจัดการมัดจำ.
     /// status: "Outstanding" | "Partial" | "Realized" (null = ทั้งหมด).</summary>
     Task<List<DepositSummary>> GetDepositsAsync(Guid companyId, string? status = null);

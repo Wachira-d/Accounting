@@ -135,11 +135,22 @@ public static partial class DepositKindCatalog
         var defaultKind = await db.DepositKinds.AsNoTracking()
             .Where(k => k.CompanyId == companyId && k.IsDefault && k.IsActive)
             .OrderBy(k => k.SortOrder).FirstOrDefaultAsync(ct);
-        // 21530 = เงินประกันความเสียหาย (ผังโรงแรม) — ตัวเลือกบัญชีจริงอยู่ที่ DepositPolicyResolver (spec S7 · ไม่เพิ่มเลขใหม่)
-        var has21530 = await db.ChartOfAccounts.AsNoTracking()
-            .AnyAsync(a => a.CompanyId == companyId && a.AccountCode == "21530" && a.IsActive, ct);
+        var has21530 = await ChartHasSecurityAccountAsync(db, companyId, ct);
         return new DepositKindCompanyContext(companyId, DepositPolicyResolver.NatureOf(industry), setting, defaultKind, has21530);
     }
+
+    /// <summary>บัญชีเงินประกันความเสียหาย 21530 (ผังโรงแรม) ที่ใช้ได้จริง — ตัวกรองของบัญชี (ดู <see cref="UsableSecurityAccount"/>)</summary>
+    public const string SecurityAccountCode = "21530";
+
+    /// <summary>รอบ 194 P-f — บัญชี 21530 "ใช้ได้" = ของบริษัทนี้ · เปิดใช้ · ไม่ถูกลบ (เดิมสองเส้นตรวจคนละแบบ: ที่นี่ <c>IsActive</c> ·
+    /// DocumentService <c>!IsDeleted</c> ⇒ บัญชีที่ปิดใช้ถูกเลือกเป็นบัญชีเงินประกันในเส้นหนึ่ง) · รูป expression ให้ EF แปลได้ · เทสต์ compile แล้วรัน</summary>
+    internal static System.Linq.Expressions.Expression<Func<ChartOfAccount, bool>> UsableSecurityAccount(Guid companyId)
+        => a => a.CompanyId == companyId && a.AccountCode == SecurityAccountCode && a.IsActive && !a.IsDeleted;
+
+    /// <summary>ผังของบริษัทมีบัญชีเงินประกัน 21530 ที่ใช้ได้ไหม — <b>ตัวเดียว</b>ของทุกเส้นที่ตัดสินประเภทเงินมัดจำ
+    /// (ตัวเลือกบัญชีจริงอยู่ที่ DepositPolicyResolver · spec S7 ไม่เพิ่มเลขใหม่)</summary>
+    public static Task<bool> ChartHasSecurityAccountAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+        => db.ChartOfAccounts.AsNoTracking().AnyAsync(UsableSecurityAccount(companyId), ct);
 
     /// <summary>หาประเภทจากรหัส (ไม่สนตัวพิมพ์เล็ก/ใหญ่ · แถวที่ลบแล้วไม่นับ) ของบริษัทนี้ — null = ไม่รู้จัก ·
     /// ผู้เรียกตัดสินเองว่าประเภทที่ปิดใช้รับได้ไหม (integration: ไม่รับ — ตอบ 400)</summary>

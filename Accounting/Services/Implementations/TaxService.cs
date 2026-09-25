@@ -253,6 +253,23 @@ public partial class TaxService : ITaxService
                 .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
                 .ToListAsync())
                 .ToDictionary(x => x.DocId, x => x.Net);
+        // รอบ 194 M3 — ภาษีขายที่มัดจำ VAT พักย้ายเข้า 21911 จริง (Cr 21911 ของ JE ที่ใบมัดจำเป็นต้นทาง · ไม่นับคู่กลับรายการ) ·
+        // ริบเป็นค่าเสียหายบางส่วนกลับ 21913 เข้ารายได้ / คืนบางส่วนตัด 21913 ไปแล้ว ⇒ ภาษีที่รับรู้ < VAT เต็มใบ — แถวมัดจำต้องรายงานเท่าที่ย้ายจริง
+        var glReclassifiedVatByDoc = depositDocIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.JournalEntryLines
+                .Where(l => !l.IsDeleted
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.SourceDocumentId != null
+                    && depositDocIds.Contains(l.JournalEntry.SourceDocumentId.Value)
+                    && !l.JournalEntry.IsDeleted
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.OriginalEntryId == null && l.JournalEntry.ReversedByEntryId == null
+                    && l.Account.AccountCode == "21911" && l.CreditAmount > 0)
+                .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
+                .Select(g => new { DocId = g.Key, Moved = g.Sum(x => x.CreditAmount) })
+                .ToListAsync())
+                .ToDictionary(x => x.DocId, x => x.Moved);
 
         // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
         // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
@@ -619,7 +636,15 @@ public partial class TaxService : ITaxService
                 var taxPoint = effectivelyDeferred
                     ? doc.DepositOutputVatRecognizedAt!.Value
                     : (doc.TaxPointDate ?? doc.DocumentDate);
-                outputVat += doc.VatAmount;
+                // M3 — มัดจำ VAT พักที่รับรู้แล้ว: รายงานเท่าที่ย้ายเข้า 21911 จริง (ไม่มีร่องรอยใน GL = VAT เต็มใบตามเดิม)
+                var rowVat = effectivelyDeferred
+                    ? Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositVat(
+                        doc.VatAmount, glReclassifiedVatByDoc.TryGetValue(doc.Id, out var movedVat) ? (decimal?)movedVat : null)
+                    : doc.VatAmount;
+                var rowBase = effectivelyDeferred
+                    ? Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositBase(VatableBase(doc), doc.VatAmount, rowVat)
+                    : VatableBase(doc);
+                outputVat += rowVat;
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -633,9 +658,9 @@ public partial class TaxService : ITaxService
                     // ที่เดียวว่ามีกี่ใบต้องตามแก้ แทนที่จะรู้ตอนลูกค้าโทรมาทวง
                     Description = (doc.IsDeposit ? $"[มัดจำ] {doc.DocumentNumber}" : doc.DocumentNumber)
                         + (NotFullTaxInvoice(doc) ? " [ไม่ใช่ใบกำกับเต็มรูป — ลูกค้าเคลมภาษีซื้อไม่ได้]" : ""),
-                    IncomeAmount = VatableBase(doc),
+                    IncomeAmount = rowBase,
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = doc.VatAmount,
+                    TaxAmount = rowVat,
                     DocumentId = doc.Id
                 });
             }
@@ -1427,6 +1452,8 @@ public partial class TaxService : ITaxService
                     && d.VatAmount > 0.005m
                     && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                     && (d.TaxPointDate ?? d.DocumentDate) <= agingCutoff)
+                // รอบ 194 M6 — ใบที่รับรู้/ริบ/คืนครบแล้วไม่มี VAT พักค้าง (ริบเป็นค่าเสียหายครบไม่ประทับ RecognizedAt โดยตั้งใจ) ⇒ ห้ามฟ้อง
+                .Where(Accounting.Helpers.DepositPolicyResolver.UndueVatStillOpen)
                 .Select(d => new { d.DocumentNumber, d.VatAmount, Dt = d.TaxPointDate ?? d.DocumentDate })
                 .OrderBy(d => d.Dt).Take(20)
                 .ToListAsync();
