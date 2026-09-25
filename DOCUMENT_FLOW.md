@@ -1780,7 +1780,43 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       "ใบที่ถูกหักจริง" `ResolveDeductedDeposits` (ใบออกแล้วไม่ยกเลิก · เลขเอกสารก่อน · เลขจองร่วมที่ชี้มัดจำค่าห้อง+เงินประกัน = มัดจำค่าห้อง) · **P-f** บัญชี 21530
       ตัวกรองเดียว `DepositKindCatalog.ChartHasSecurityAccountAsync` (เปิดใช้ + ไม่ลบ)
     - backlog (ไม่แก้รอบนี้): ยอดขายยกเว้นใน ภ.พ.30 ของมัดจำ NonVatSupply (P-g) · ใบใหม่ PartOfPrice×เต็มยอดของสิ่งที่ขายอัตรา 0% เสียข้อมูลอัตราเดิม
-      (ริบแล้วใช้อัตราบริษัท) · ใบรับเงินประกันของที่พักยังจัดรูปด้วยอัตราบริษัท (ส่วนของอีกทีม)
+      (ริบแล้วใช้อัตราบริษัท) · ~~ใบรับเงินประกันของที่พักยังจัดรูปด้วยอัตราบริษัท~~ (ปิดแล้วรอบ 194 ทีม M2 ข้างล่าง)
+  - **รอบ 194 ทีม M2 (หลังฝ่ายค้านรอบสอง `erp-review/2026-09-25/review194-r2.md` R2-1…R2-6 + P-a/P1 · เทสต์ `DepositRound194R2Tests` สองครึ่ง ·
+    ล็อกจุดเรียกบล็อก "รอบ 194 ทีม M" ที่แก้แล้ว)** — แทนที่ข้อ M2/M4/P1 ในย่อหน้าก่อนหน้าตามนี้:
+    - **R2-1 tax point ของการริบ** — `ForfeitTaxPointDecision(lateVat, วันรับเงิน, วันที่ริบ, งวดเดือนรับเงินปิดในระบบแล้ว, วันนี้)`: ระบบไม่รู้ว่าผู้ใช้ยื่น ภ.พ.30
+      นอกระบบไหม ⇒ **"ไม่มีแถวยื่น" ≠ "ยังไม่ยื่น"** · ใช้วันรับเงินเฉพาะเมื่อ (เดือนเดียวกับวันที่ริบ **หรือ** วันนี้ยังไม่เลยกำหนดยื่นงวดนั้น — `TaxFilingDeadline.For("VatPp30")`
+      แบบ**กระดาษ** (เร็วกว่า = ทิศปลอดภัย)) **และ** ไม่มีแถวยื่น/ล็อก **และ**งวดบัญชีของวันรับเงินยังเปิด (`DepositReceiptPeriodLockedAsync`) **และ**ไม่ข้ามปีภาษี ·
+      นอกนั้น ⇒ งวดปัจจุบัน (วันที่ริบ) + ธง `[DEPOSIT-LATE-VAT]` "ภาษีถึงกำหนดงวด {เดือนรับเงิน} (รับเงิน dd/MM/yyyy) · นำส่งในงวด {เดือนนี้} ({เหตุ}) · อาจมีเงินเพิ่ม
+      §89/1 · ห้ามนำส่งซ้ำ — ปรึกษานักบัญชี" · "วันนี้" = `ThaiDate.CalendarDateUtc(UtcNow)` · **เส้นย้าย VAT พัก 21913→21911 ใช้การตัดสินเดียวกัน และประทับ
+      `DepositOutputVatRecognizedAt` = วันของ JE ที่ Cr 21911 จริง**: tax point ต่างเดือนกับวันที่ริบ ⇒ ขาย้าย VAT แยกเป็น JE ของวัน tax point (`SameVatPeriod` ·
+      รายได้ยังลงวันที่ริบ) — GL กับ ภ.พ.30 เดือนเดียวกัน (เดิมประทับเดือนรับเงินแต่ JE ลงเดือนริบ)
+    - **R2-2 ใบเดิมกำกวม** — `ForfeitZeroVatDeferred(ลักษณะเงิน, ธงบนใบ, อัตราช่องทาง)` สามสถานะ: `false` = รู้แน่ว่า VAT 0 มาแต่แรก (ช่องทางอัตรา ≤ 0 ·
+      หรือใบมีลักษณะเงิน (รอบ 194+) และธง false) · `true` = เลื่อน VAT · `null` = **กำกวม** (ใบเดิม NULL · VAT 0 · ธง false — ก่อน 24/09 มัดจำเต็มยอดทุกใบหน้าตาแบบนี้)
+      ⇒ ตัวตัดสินถือว่าเลื่อน (ออกใบกำกับ · spec S3 ทิศปลอดภัย) · `ForfeitVatDecision`/`PlainRealizeProblem`/`ForfeitOptions` รับ**ธงดิบ + อัตราช่องทาง**แล้วแปลงเอง
+      (ตัวเดียว) · ตัวเลือกใหม่ `DepositForfeitAs.OriginallyNoVat` (=3 · ส่งเป็นชื่อ) "ใบนี้ไม่มี VAT มาแต่แรก (ส่งออก 0% / ยกเว้น §81 / ออกตอนยังไม่จด VAT)"
+      เสนอเฉพาะใบกำกวม (มาจาก `ForfeitOptions` ของเซิร์ฟเวอร์ · ไม่ใช่ค่าเริ่มต้น) ⇒ `ZeroVatAtIssue` · ใบที่รู้ว่าเลื่อน/มี VAT พัก ⇒ ไม่มีผล + หมายเหตุ (ไม่เงียบ) ·
+      "ส่งมอบแล้ว" กับใบกำกวม ⇒ ปฏิเสธ `DEPOSIT-PLAIN-REALIZE` + ทางไปต่อของใบที่ไม่มี VAT จริง (ออกใบอัตราเดิมแล้ว "หักมัดจำ")
+    - **อัตราช่องทางหาจากใบเอง** (`DepositChannelVatRatesAsync`: ใบ `OriginModule`="Lodging" + `BookingNumber` → การจอง → ที่พัก `ChargeVat` →
+      `LodgingPricingEngine.PropertyVatRate` · tenant ทั้งสองตาราง) — ใช้ที่ `RealizeDepositCoreAsync` (ผู้เรียกไม่ส่ง = หาเอง · หน้าศูนย์มัดจำไม่ส่ง) ·
+      `GetDepositsAsync` (ตัวเลือก/คำเตือนตรงกับที่ตัดสินตอนกด) · `UpdateDocumentAsync` จัดรูปซ้ำด้วย `ShapingVatRate(บริษัท, ช่องทางของใบ)` (P1 ค้าง — เดิมอัตราบริษัท) ·
+      ที่พักรับเงินประกัน `ReceiveSecurityDepositAsync` ส่ง `depositChannelVatRate` แล้ว (P1 ค้าง)
+    - **R2-3 เงินประกัน "ส่งมอบแล้ว"** — `PlainRealizeProblem` ปฏิเสธเงินประกันที่ต้องคืน**ทุกโหมด** `DEP-SEC-PLAIN-REALIZE` พร้อมทางไปต่อ 3 ทาง (คืน · ออกใบค่าของที่เสีย
+      แล้ว "ตัดชำระด้วยเงินประกัน" · ริบ → "ค่าเสียหายแท้") · `DepositSummary.PlainRealizeOffered` (`PlainRealizeOffered(nature)`) = false ⇒ หน้าต่างรับรู้ซ่อน
+      "ส่งมอบแล้ว" และเริ่มที่ "ริบ" (เดิม: Dr 21530 / Cr 41000 รายได้ขายไม่มี VAT)
+    - **R2-4 ยกเลิกใบมัดจำที่ตัดชำระหลายใบ** — ก่อนขั้น 2 จับภาพ JV ตัดชำระที่ยังมีผล (`DepositApplyJournals.LiveOfSource` · Cr 113 ต่อเลขใบปลายทาง
+      `GrossByTarget`) · ขั้น 7b คืนยอดจ่าย**รายใบ** (`AfterRestore`) — เดิมรวมทุก JV (รวมที่ถูกกลับแล้ว) ลบออกจากใบที่ตัวชี้ชี้ใบเดียว (มัดจำ 10,000: F 3,000 + X 7,000
+      ⇒ X ถูกหัก 10,000 ปัดเป็น 0 · F ค้าง Paid 3,000) · ขั้น 2 ไม่กลับ JE ที่ถูกกลับแล้ว (เดิม `ReverseJournalEntryAsync` โยน "ถูกกลับรายการไปแล้ว" ⇒ ยกเลิกใบมัดจำ
+      ที่ใบปลายทางเคยถูกยกเลิกไม่ได้เลย)
+    - **R2-5** `DepositsAppliedToAsync` + void 2b + purge 0c ใช้ตัวกรองเดียว `DepositApplyJournals.AppliedTo`/`AppliedFromDepositTo` (ไม่นับคู่ที่ถูกกลับ) ⇒ purge
+      ใบที่เคย void ไม่ลบ JV ต้นฉบับ (ตัวกลับกำพร้า) และไม่หัก `DepositRealizedAmount` ซ้ำ
+    - **R2-6** เส้นหักมัดจำหลายใบ/แบบขับ JE (`AutoPostToJournalAsync`) ผ่อน one-shot ด้วย `ApplyToAnotherTargetAllowed` ตัวเดียวกับตัดชำระ · ข้อความปฏิเสธทุกเส้น
+      = `DepositKindDocumentRules.AppliedElsewhereMessage` (`DEPOSIT-APPLIED-ELSEWHERE` · ทางไปต่อ: ยกเลิกใบนั้น / คืนหรือริบส่วนที่เหลือ)
+    - **P-a ล็อกตัวเดียว** — คีย์ `AdvisoryLockKey.DepositRealizeKey(companyId, id ใบมัดจำ)`: ปุ่ม/ที่พัก/CMS (`RealizeDepositAsync` · session lock `JobLock.RunExclusiveAsync`) ·
+      อนุมัติใบที่หักฐานมัดจำ (`LoadTaxedDepositsByRefAsync(lockRows)`) · ตัดชำระ (`ApplyDepositToInvoiceAsync`) · คืน (`RefundDepositAsync`) = `JobLock.TryXactLockAsync` (ไม่รอ — อยู่กลางธุรกรรม
+      ที่ถือล็อกเลขเอกสาร/JE แล้ว · รอ = deadlock) **ก่อน**ล็อกแถว · ถือไม่ได้ ⇒ `DEPOSIT-REALIZE-BUSY` ข้อความเดียว · session เดียวกัน (เส้นริบเรียกตัดชำระ) ได้ทันที ·
+      `JobLock` ปลดล็อกล้มหลังงานล้ม ⇒ log แล้วปล่อย error เดิม (ไม่ทับ)
+    - **RevertTrackedChangesSinceAsync** → `Helpers/TrackedChangeRevert`: DetectChanges ก่อนปลด · ปิด auto-detect ระหว่างถอย · ตัด collection + reference ฝั่ง principal
+      ที่ชี้ของที่ปลด · reload · ตรวจซ้ำ `DetachStrays` (log เมื่อไม่ใช่ 0)
   - **คำเตือนตอนอนุมัติ** (`CollectApprovalWarningsAsync` → `DepositKindDocumentRules.ApprovalWarning` → `KindWarning`): ราคา × เลื่อน VAT
     (`RD-78(1)(b)`/`RD-78/1` + เหตุผลจาก `DepositPolicyNote`) · เงินประกัน × แยก VAT (`RD-PO73-SEC`) · ใบเดิม NULL/นอกระบบ VAT/บริษัทไม่จด = ไม่เตือน
   - **ฟอร์ม** (`documents.html`): `<select id="fDepositKind">` จาก `GET deposit-kinds` (`api.getDepositKinds`) · ใบใหม่ = `defaultKindId` · ใบเดิมไม่มีประเภท =
@@ -3205,7 +3241,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 195 ทีม I: ใบ Scommerce — ลำดับตั้งอัตรา VAT บรรทัดจากสแกนมีชั้น "ตัวเลขหัวใบพิสูจน์ทั้งใบ" (`OcrLineVatPlanner`) เหนือตัวเดาจากชื่อ · คำเตือนตอนอนุมัติรวมข้อรากเดียว + คำแนะนำเป็นตัวเลข (§1 OCR ส่วนลดท้ายบิล/VAT ผสม) — commit <pending>)_
+_Last verified against codebase: 2026-09-25 (รอบ 194 ทีม M2 หลังฝ่ายค้านรอบสอง: R2-1 tax point ตามกำหนดยื่น · R2-2 ใบเดิมกำกวม · R2-3 เงินประกันส่งมอบแล้ว · R2-4/R2-5 void/purge หลายใบ · R2-6 · P-a ล็อกตัวเดียว — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I: ใบ Scommerce — ลำดับตั้งอัตรา VAT บรรทัดจากสแกนมีชั้น "ตัวเลขหัวใบพิสูจน์ทั้งใบ" (`OcrLineVatPlanner`) เหนือตัวเดาจากชื่อ · คำเตือนตอนอนุมัติรวมข้อรากเดียว + คำแนะนำเป็นตัวเลข (§1 OCR ส่วนลดท้ายบิล/VAT ผสม) — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-25 (รอบ 194 ฝ่ายค้านถดถอย/ความปลอดภัย: C1 ลักษณะเงินของช่องมัดจำราคา/ค่าเริ่มต้น · C3 ใบเงินประกันถูกยกเลิก · C4 ข้อความ · P4 · P6 — commit <pending>)_
 

@@ -119,6 +119,13 @@ public static class AdvisoryLockKey
     /// <summary>รับรู้/ริบใบมัดจำ — part = id ใบมัดจำ (รอบ 194 ฝ่ายค้าน P-a: สองคำขอพร้อมกันผ่านด่านยอดคงค้างทั้งคู่
     /// ⇒ ใบกำกับของยอดที่ริบสองใบ · ต้องเป็น session lock เพราะเส้นออกใบกำกับเปิดธุรกรรมของตัวเองหลายขั้น)</summary>
     public const string DepositRealize = "deposit-realize";
+
+    /// <summary>คีย์ล็อก "ยอดคงค้างของใบมัดจำ" ตัวเดียวของทุกทางเข้าที่อ่าน-แล้ว-เขียนยอดรับรู้/ตัดชำระ (รอบ 194 R2 · P-a):
+    /// ปุ่มรับรู้/ริบ · ที่พัก · CMS (<c>RealizeDepositAsync</c> — session lock ผ่าน <c>JobLock</c> เพราะเส้นริบเปิดธุรกรรมของตัวเองหลายขั้น) ·
+    /// อนุมัติใบที่หักฐานมัดจำ (<c>LoadTaxedDepositsByRefAsync(lockRows)</c>) · ตัดชำระด้วยมัดจำ (<c>ApplyDepositToInvoiceAsync</c>) —
+    /// สองตัวหลังอยู่ในธุรกรรม ⇒ <c>pg_advisory_xact_lock</c> คีย์เดียวกัน (session กับ xact lock ของคีย์เดียวกันรอกันเองตามปกติ ·
+    /// session เดียวกันถือซ้ำได้ ⇒ เส้นริบที่ถือ session lock แล้วเรียกตัดชำระไม่ติดตัวเอง) · ต้องได้ล็อกนี้<b>ก่อน</b>ล็อกแถว (กัน deadlock)</summary>
+    public static long DepositRealizeKey(Guid companyId, Guid depositId) => For(companyId, DepositRealize, depositId.ToString());
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>

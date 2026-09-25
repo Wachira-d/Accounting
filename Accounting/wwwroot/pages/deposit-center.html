@@ -135,7 +135,7 @@
              · ตามปกติ = ไม่ส่ง (บัญชีที่ระบุ · มัดจำเต็มยอดที่ยังไม่เคยเสีย VAT เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ — ข้อความจาก plainRealizeBlockedReason) -->
         <div class="form-group">
           <label class="form-label">รับรู้แบบไหน</label>
-          <label style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
+          <label id="realizeModeNormalRow" style="display:block;font-size:13px;margin-bottom:6px;cursor:pointer">
             <input type="radio" name="realizeMode" value="normal" checked onchange="Page._syncRealizeMode()">
             <b>ส่งมอบสินค้า/ให้บริการแล้ว</b> (รับรู้รายได้ตามปกติ)
           </label>
@@ -464,9 +464,13 @@
             <b>${Layout.esc(o.label)}</b><br><span style="font-size:12px;color:#64748b">${Layout.esc(o.description || '')}</span>
           </label>`).join('');
         this._realizeRow = r;
-        // เปิดหน้าต่างใหม่ทุกครั้ง = เริ่มที่ "ตามปกติ" (ห้ามค้างค่าจากใบก่อน)
-        const normal = document.querySelector('input[name="realizeMode"][value="normal"]');
-        if (normal) normal.checked = true;
+        // รอบ 194 R2-3 — เงินประกันที่ต้องคืนไม่มี "ส่งมอบแล้ว" (เซิร์ฟเวอร์ส่ง plainRealizeOffered=false) ⇒ ซ่อนแล้วเริ่มที่ "ริบ" ·
+        // เปิดหน้าต่างใหม่ทุกครั้ง = เริ่มที่ค่าตั้งต้นของใบนี้ (ห้ามค้างค่าจากใบก่อน)
+        const offered = r.plainRealizeOffered !== false;
+        const normalRow = document.getElementById('realizeModeNormalRow');
+        if (normalRow) normalRow.style.display = offered ? '' : 'none';
+        const start = document.querySelector('input[name="realizeMode"][value="' + (offered ? 'normal' : 'forfeit') + '"]');
+        if (start) start.checked = true;
         this._syncRealizeMode();
       },
       _realizeMode() {

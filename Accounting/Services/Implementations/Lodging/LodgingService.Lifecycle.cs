@@ -1257,7 +1257,10 @@ public partial class LodgingService
             BookingNumber: r.ReservationNumber,
             PaymentType: null,
             // สัญญาทีม B รอบ 194: ตรึงประเภท/ลักษณะ "เงินประกัน" ลงใบ ⇒ ด่าน DEP-SEC-DEDUCT + ริบตามลักษณะ อ่านจากใบนี้
-            DepositKindId: kindEntity.Id), userId, LodgingOrigin);
+            DepositKindId: kindEntity.Id), userId, LodgingOrigin,
+            // รอบ 194 R2 (P1 ค้าง): อัตราของที่พักเข้าตัวจัดรูปฝั่งเซิร์ฟเวอร์ด้วย — เดิมไม่ส่ง ⇒ DocumentService จัดรูปซ้ำด้วยอัตราบริษัท
+            // (ที่พัก ChargeVat=false ได้รูปใบคนละแบบกับที่จัดไว้ข้างบน) · เส้นเดียวกับมัดจำค่าห้อง (CreateDepositReceiptAsync)
+            depositChannelVatRate: vatRate);
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
         if (doc != null)
             doc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(doc.InternalNotes,
