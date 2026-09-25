@@ -3367,3 +3367,24 @@ _Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จ
   `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
 - เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 197 — ทีม K: ใบ Makro (บมจ.ซีพี แอ็กซ์ตร้า) หน้า 3/3 สาขาชลบุรี 00005 — "ได้เลขผู้ขายและสาขาถูก แต่ชื่อผิด ('ma ro') ·
+สร้างเอกสารใช้ผู้ติดต่อสำนักงานใหญ่ 00000 · ต้องสร้างผู้ติดต่อใหม่เพราะคนละสาขา คนละที่อยู่" (`erp-review/2026-09-25/makro-branch/BRIEF.md`):
+- **ต้นเหตุ 1 (ผู้ติดต่อ)**: `OcrVendorBranchContact.Decide` มีกติกาของตัวเอง (สำเนาที่สองของคีย์ผู้ติดต่อ) — ไม่มีแถวสาขาตรง ⇒ `OtherBranchRow` ผูก สนญ.
+  (รอบ 190 รอเจ้าของตัดสิน) · แถวไม่เคยระบุสาขาอ้างได้โดยใบสาขาใดก็ได้ · เส้นสร้างเอกสาร `CreateDocumentFromScanCoreAsync` เชื่อ `MatchedContactId` และ
+  fallback หา "แถวไหนก็ได้ของเลขนั้น" · `ResolveContactIdByTaxIdAsync` (ฝั่งผู้ซื้อ) ไม่ดูสาขา + ถอยจับชื่อ substring ทั้งฐาน
+  ⇒ แก้: `ContactTaxBranchKey.PickBranch` (แยกขั้นที่สองของ `Pick` · พฤติกรรมเดิมทุกประการ) = ตัวตัดสินของเส้น OCR · outcome ใหม่ `NewBranchRow` (สาขามีหลักฐาน
+  ≥ 0.85 · `IsReliableBranch`) ⇒ `NewVendorBranchContactAsync` สร้างแถวสาขา (ชื่อนิติบุคคล · สาขา · ที่อยู่สาขา) + ห้ามถอยไปจับชื่อ/AI · หลักฐานอ่อน = `OtherBranchRow`
+  (เดิม) · ตัด `AdoptBlankBranchRow` (แถวว่าง ≡ สนญ. ตาม §6.2i) · เส้นสร้างเอกสารตัดสินซ้ำด้วยตัวเดียวกัน (ผู้ใช้เลือกเอง = `MatchedContactId` ใน
+  `UserCorrectedFields` ชนะ) · ฝั่งผู้ซื้อ `FindAsync` + `SoftScope` + `AdoptTaxId` · baseline `contact_taxid_only_match` OcrService 2 → 0
+- **ต้นเหตุ 2 (ชื่อ "ma ro")**: เลขผู้ขายพิมพ์ "0 10 7 567 00041 4" (กลุ่ม 1-2-1-3-5-1) ไม่ตรง `ThaiTaxId.Pattern` ⇒ ไม่มีผู้สมัครที่มีป้าย ⇒ `OcrVendorKeyEvidence` = Unproven
+  ⇒ `DbdIdentityGuard` = KeyLooksWrong (ชื่อ 50% · เลข 30% บนจอ) ⇒ ชื่อโลโก้ค้าง · กล่อง "ต้นฉบับลูกค้า / For Customer" ถูกนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย (ถ้า engine
+  เรียงไว้ก่อน) · ไม่มีชั้นใดใช้บรรทัด "บริษัท … จำกัด (มหาชน)" ที่พิมพ์เหนือเลข ⇒ แก้: `ThaiTaxId.LooseGroupingPattern` (รับเฉพาะตัวมีป้าย · ลำดับรายการตาม
+  ตำแหน่งแรก) · Noise "ต้นฉบับลูกค้า/for customer" · `Helpers/OcrVendorLegalName` (`FindAboveTaxId` ก่อน sync ชื่อ/ตัวเรียนรู้/ทะเบียน · `PickKnownLegalName` หลังทะเบียนไม่ยืนยัน)
+- **ต้นเหตุ 3 (อีเมลผู้ซื้อในผู้ติดต่อผู้ขาย)**: `VendorEmailRegex.Match` หยิบอีเมลตัวแรกของหน้า (บล็อก "ชื่อผู้รับสินค้า / อีเมล์") ⇒ `[Enrich]`/สร้างผู้ติดต่อ + known-good
+  ⇒ แก้: `Helpers/OcrSellerContactChannel` (ป้ายผู้ซื้อ + `OcrPartyLabels.FindRecipientAll` ≤ 10 บรรทัด) ทั้งเส้น Tesseract และ `EnrichFromRawText` (เบอร์ด้วย) ·
+  ข้อมูลเก่า: ไม่ migrate (แยกไม่ได้ว่าผู้ใช้กรอกเอง) · เตือน `[Contact] ⚠` เมื่ออีเมลผู้ติดต่อที่ผูก = อีเมลฝั่งผู้ซื้อของใบนี้
+- **ข้อ 4 (ฐาน 24,110 / รหัส 1 = 7%) ไม่แก้รอบนี้** — ชนไฟล์ทีม I2 (`OcrLineVatPlanner`/`VatBackCalcGuard`/`SmartFieldExtractor` ส่วน VAT) · วิเคราะห์ + แผนในรายงานทีม
+- เทสต์ `OcrMakroBranchVendorTests` (ข้อความถอดจากภาพ) · `OcrVendorBranchContactTests` (+Makro · สองครึ่ง · เทียบ `ContactTaxBranchKey.Pick`) · `required_call_site_check` +5 กติกา ·
+  DOCUMENT_FLOW §1 OCR + §6.2i · `docs/lessons/ocr-pipeline.md`
+— commit <pending>)_

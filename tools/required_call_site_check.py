@@ -909,6 +909,41 @@ RULES += [
          why="รอบ 196: ข้อความป้ายของชนิดต้นทางมาจาก helper ตัวเดียว (บอกชนิดใบลูก) — ห้ามกลับไปพิมพ์ป้ายเอง"),
 ]
 
+# ── รอบ 197 (ทีม K · ใบ Makro สาขาชลบุรี 00005): ผู้ติดต่อจากสแกน = คีย์เลขภาษี + สาขา ทั้งเส้นสแกนและเส้นสร้างเอกสาร ──
+#    เทสต์ของ OcrVendorBranchContact/ContactTaxBranchKey เป็นแค่ helper — ถอดการส่ง branchReliable · ถอดด่าน "ห้ามจับชื่อเมื่อ
+#    ต้องสร้างแถวสาขา" · หรือให้เส้นสร้างเอกสารกลับไปหาแถวไหนก็ได้ของเลขนั้น แล้วเทสต์ยังเขียวทั้งหมด ⇒ ล็อกจุดเรียกที่นี่
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrVendorBranchContact.Decide(", "NewVendorBranchContactAsync(", "ApplyPrintedVendorLegalName(",
+               "OcrVendorLegalName.PickKnownLegalName(", "OcrSellerContactChannel.BuyerSideEmails("],
+         call_args=[("OcrVendorBranchContact.Decide(", "branchReliable")],
+         must_re=[r"!\s*scanResult\s*\.\s*MatchedContactId\s*\.\s*HasValue\s*&&\s*!\s*mustCreateVendorBranchRow\s*&&\s*ocrVendorNameKey",
+                  r"!\s*scanResult\s*\.\s*MatchedContactId\s*\.\s*HasValue\s*&&\s*!\s*mustCreateVendorBranchRow\s*&&\s*_aiAugmenter"],
+         before=[("OcrVendorBranchContact.Decide(", "NewVendorBranchContactAsync("),
+                 ("ApplyPrintedVendorLegalName(", "EnrichFromDbdAsync(")],
+         why="รอบ 197: สาขาบนกระดาษ (มีหลักฐาน) ไม่ตรงผู้ติดต่อเดิม ⇒ สร้างแถวสาขา ห้ามถอยไปจับชื่อ/AI (ได้สำนักงานใหญ่คืน) · "
+             "ชื่อโลโก้ → ชื่อนิติบุคคลที่พิมพ์ก่อนทะเบียน/ตัวเรียนรู้ · เตือนอีเมลผู้ซื้อที่ปนในผู้ติดต่อผู้ขาย"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
+         must=["ContactTaxBranchKey.AllBranchIdsAsync(", "OcrVendorBranchContact.Decide(", "NewVendorBranchContactAsync(",
+               "ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("],
+         call_args=[("OcrVendorBranchContact.Decide(", "branchReliable")],
+         must_re=[r"userPickedContact\s*=\s*correctedFields\s*\.\s*Contains\s*\(\s*MatchedContactCorrectionField"],
+         forbid=["NormalizeTaxDigits(c.TaxId) == vTaxDigits"],
+         why="รอบ 197: เส้นสร้างเอกสารตัดสินผู้ติดต่อด้วยตัวเดียวกับเส้นสแกน (รวม MatchedContactId เก่าที่ผูกสำนักงานใหญ่) · "
+             "ผู้ใช้เลือกเองชนะ · ฝั่งผู้ซื้อใช้คีย์กลาง + SoftScope"),
+    dict(file=OCR, method="MatchContactAsync",
+         must=["MatchedContactCorrectionField"],
+         why="รอบ 197: ผู้ใช้เลือกผู้ติดต่อเอง ต้องถูกจดไว้ ไม่งั้นเส้นสร้างเอกสารตัดสินสาขาทับคำตอบของคน"),
+    dict(file=OCR, method="EnrichFromRawText",
+         must=["OcrSellerContactChannel.SellerEmail(", "OcrSellerContactChannel.IsBuyerSide("],
+         forbid=["VendorEmailRegex"],
+         why="รอบ 197: อีเมล/เบอร์ในบล็อกผู้ซื้อ/ที่อยู่จัดส่งห้ามเป็นของผู้ขาย (อีเมลผู้รับสินค้าบนใบ Makro ปนเข้าผู้ติดต่อผู้ขาย)"),
+    dict(file=OCR, method="ParseThaiDocument",
+         must=["OcrSellerContactChannel.SellerEmail(", "OcrSellerContactChannel.IsBuyerSide("],
+         forbid=["VendorEmailRegex"],
+         why="รอบ 197: เส้น Tesseract ใช้ตัวตัดสินอีเมล/เบอร์ตัวเดียวกัน"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

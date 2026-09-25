@@ -120,7 +120,21 @@ public static class ContactTaxBranchKey
             return legacy == null ? default : new ContactKeyMatch(legacy.Id, ContactKeyBasis.RawTaxIdEquality, true);
         }
 
-        var same = candidates.Where(c => Digits(c.TaxId) == tax)
+        return PickBranch(candidates.Where(c => Digits(c.TaxId) == tax), branchCode);
+    }
+
+    /// <summary>
+    /// **ขั้นที่สองของ <see cref="Pick"/>: ทุกแถวถือเลขผู้เสียภาษีเดียวกันแล้ว (13 หลัก) — ตัดสินด้วยสาขาอย่างเดียว**
+    /// (รอบ 197 ทีม K · แยกออกมาให้ตัวตัดสินฝั่ง OCR <c>OcrVendorBranchContact</c> ใช้กติกา<b>ตัวเดียวกัน</b> แทนการเขียนสำเนาที่สอง —
+    /// เดิมฝั่ง OCR ถือว่า "แถวที่ไม่เคยระบุสาขา" อ้างได้โดยใบของสาขาใดก็ได้ และ "ไม่มีแถวสาขาตรง" = ผูกสำนักงานใหญ่ ซึ่งขัดกับข้อ 1 ด้านล่าง
+    /// ⇒ ใบ Makro สาขา 00005 ผูกผู้ติดต่อสำนักงานใหญ่ 00000). พฤติกรรมของ <see cref="Pick"/> ไม่เปลี่ยน (ย้ายโค้ดมาทั้งก้อน)
+    /// <para>ผู้เรียกต้องกรองเลขภาษีมาก่อนเอง — ตัวนี้<b>ไม่ดู</b> <see cref="ContactKeyCandidate.TaxId"/> เลย · ว่าง = ไม่พบ ·
+    /// ลำดับที่ส่งมาไม่มีผล (เรียงในตัว)</para>
+    /// </summary>
+    public static ContactKeyMatch PickBranch(IEnumerable<ContactKeyCandidate> sameTaxIdRows, string? branchCode)
+    {
+        if (sameTaxIdRows == null) return default;
+        var same = sameTaxIdRows
             .OrderBy(c => IsSpecified(c.BranchCode) ? TaxBranchCode.Normalize(c.BranchCode) : TaxBranchCode.HeadOffice, StringComparer.Ordinal)
             .ThenBy(c => IsSpecified(c.BranchCode) ? 1 : 0)      // ระบุ 00000 ชัดเจน ชนะแถวที่ไม่เคยระบุ
             .ThenBy(c => c.Id)

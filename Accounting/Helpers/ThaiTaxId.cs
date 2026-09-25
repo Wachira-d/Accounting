@@ -40,6 +40,17 @@ public static class ThaiTaxId
     /// </summary>
     public const string Pattern = @"(?<!\d)(\d{1}[- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d{1})(?!\d)";
 
+    /// <summary>
+    /// **เลข 13 หลักที่พิมพ์แบ่งกลุ่มแบบอื่น** (รอบ 197 ทีม K · ใบ Makro "0 10 7 567 00041 4" = กลุ่ม 1-2-1-3-5-1) —
+    /// <see cref="Pattern"/> รู้จักเฉพาะกลุ่มมาตรฐาน 1-4-5-2-1 ⇒ เลขผู้ขายบนหัวใบ Makro "ไม่มีตัวตนบนกระดาษ" ในสายตาตัวหาป้าย
+    /// ⇒ <c>OcrVendorKeyEvidence</c> พิสูจน์กุญแจไม่ได้ ⇒ ทะเบียนถูกปัดตก ⇒ ชื่อโลโก้ "ma ro" ค้างเป็นชื่อผู้ขาย
+    /// <para>ตัวเลข 13 ตัว คั่นด้วย<b>ช่องว่าง/แท็บ/ขีดได้ครั้งละหนึ่งตัว</b> (ไม่ครอบ <c>\n</c> — เหตุผลเดียวกับ <see cref="Pattern"/>) ·
+    /// ขอบซ้าย/ขวาต้อง<b>ไม่ใช่ตัวเลขที่ต่อด้วยตัวคั่นเดียว</b> (กันเฉือน 13 ตัวออกจากแถวตัวเลขในตาราง "17 1 6,260.00" ·
+    /// "0203562005871 00000") · <b>หลวมกว่า <see cref="Pattern"/> มาก ⇒ ผู้เรียกต้องรับเฉพาะตัวที่มีป้าย "เลขประจำตัวผู้เสียภาษี"
+    /// กำกับเท่านั้น</b> (ตัวเดียวที่ใช้: <c>SmartFieldExtractor.ExtractTaxIdCandidates</c>) + checksum + ไม่ใช่บาร์โค้ด</para>
+    /// </summary>
+    public const string LooseGroupingPattern = @"(?<!\d[- \t]?)(\d(?:[- \t]?\d){12})(?![- \t]?\d)";
+
     /// <summary>เหลือเฉพาะตัวเลข — กระดาษพิมพ์เป็น "0-2055-65017-74-1" หรือเว้นวรรค</summary>
     public static string Normalize(string? s)
         => string.IsNullOrEmpty(s) ? "" : new string(s.Where(char.IsDigit).ToArray());

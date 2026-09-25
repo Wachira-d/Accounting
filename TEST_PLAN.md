@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **343 ไฟล์ · 3,069 `[Fact]` + 478 `[Theory]` (2,105 `InlineData`)** ณ 2026-09-25 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **344 ไฟล์ · 3,094 `[Fact]` + 482 `[Theory]` (2,127 `InlineData`)** ณ 2026-09-25 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1001,7 +1001,10 @@
 | OCR-U-01 | U | ✅ มีแล้ว: line reconcile (qty/amount สลับ) | ตาม `OcrLineReconcileTests` |
 | OCR-U-02 | U | ✅ มีแล้ว: expense category resolver | ตาม `ExpenseCategoryResolverTests` |
 | OCR-U-03 | U | contact match: ชื่อสั้น <6 ตัวอักษร | ไม่ match ด้วยชื่อ (กันจับมั่ว) |
-| OCR-U-04 | U | contact match: TaxId ตรงหลายราย ต่างสาขา | เลือกตามสาขา; ไม่มีสาขาตรง → 00000 ก่อน, deterministic |
+| OCR-U-04 | U | contact match: TaxId ตรงหลายราย ต่างสาขา | เลือกตามสาขา (`ContactTaxBranchKey.PickBranch`) · อ่านสาขาไม่ได้ → 00000 ก่อน, deterministic · **สาขามีหลักฐานแต่ไม่มีแถว → สร้างแถวสาขา (รอบ 197)** — ✅ `OcrVendorBranchContactTests` |
+| OCR-U-06 | U | ใบ Makro 00005: ชื่อโลโก้ "ma ro" + เลขแบ่งกลุ่ม "0 10 7 567 00041 4" | กุญแจพิสูจน์ได้ (pattern หลวม + ป้าย) · ชื่อ = บรรทัดนิติบุคคลที่พิมพ์เหนือเลข · เลขผู้ซื้อ/บุคคลธรรมดา/ชื่อเรา ไม่ถูกแตะ — ✅ `OcrMakroBranchVendorTests` |
+| OCR-U-07 | U | อีเมล/เบอร์ในบล็อกผู้ซื้อ/ที่อยู่จัดส่ง | ไม่เป็นของผู้ขาย · อีเมลผู้ขายหัวใบ/ท้ายใบยังได้ · กระดาษไม่มีป้าย = ตัวแรกตามเดิม — ✅ `OcrMakroBranchVendorTests` |
+| OCR-I-04 | I | สร้างเอกสารจากสแกนเก่าที่ `MatchedContactId` = สนญ. แต่กระดาษสาขา 00005 | สร้าง/ผูกผู้ติดต่อสาขา 00005 · ผู้ใช้เลือกผู้ติดต่อเองแล้ว = ไม่ตัดสินทับ (ล็อกจุดเรียก: `required_call_site_check`) |
 | OCR-U-05 | U | enrich TaxId ลง contact: name-sim < 0.90 | ไม่เขียน + มี ProcessingNote เตือน |
 | OCR-I-01 | I | สแกนใบเดิมซ้ำ 2 ครั้ง | ไม่สร้าง contact ซ้ำ, ไม่สร้างเอกสารซ้ำ (duplicate detection) |
 | OCR-I-02 | I | DTO ที่ส่งไป review modal | ทุก field §86/4 ไม่ null/empty (fallback chain เติมครบ) |
