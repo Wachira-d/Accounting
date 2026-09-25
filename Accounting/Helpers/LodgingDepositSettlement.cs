@@ -17,6 +17,19 @@ public sealed record LodgingDepositSnapshot(
     Guid? AppliedToDocumentId = null,
     DepositNature? Nature = null);
 
+/// <summary>สถานะลิงก์เงินประกันของการจอง (<see cref="LodgingDepositSettlement.SecurityLinkState"/>)</summary>
+public enum LodgingSecurityLinkState
+{
+    /// <summary>ยังไม่เคยรับเงินประกัน</summary>
+    None = 0,
+    /// <summary>รับไว้แล้ว ใบยังมีผล ยังไม่ปิด — เงินประกันค้าง (รับซ้ำไม่ได้)</summary>
+    Open = 1,
+    /// <summary>ปิดครบแล้ว (คืน/ตัดชำระ/ริบ)</summary>
+    Settled = 2,
+    /// <summary>ใบที่ผูกถูกยกเลิก/ลบ — ไม่มีเงินค้าง รับใหม่ได้</summary>
+    DocumentGone = 3,
+}
+
 /// <summary>ยอดคงเหลือของใบมัดจำ 1 ใบ</summary>
 public readonly record struct DepositRemaining(decimal Base, decimal Vat, decimal Gross);
 
@@ -334,12 +347,32 @@ public static class LodgingDepositSettlement
     public static List<LodgingDepositSnapshot> RoomDeposits(IEnumerable<LodgingDepositSnapshot> deposits, Guid? securityDepositDocumentId)
         => deposits.Where(d => !IsSecurityDeposit(d, securityDepositDocumentId)).ToList();
 
-    /// <summary>ใบเงินประกันของการจองนี้ (คู่ของ <see cref="RoomDeposits"/>) — ใบที่ผูกบนการจองก่อน · null = ไม่มี</summary>
+    /// <summary>ใบเงินประกันของการจองนี้ (คู่ของ <see cref="RoomDeposits"/>) — <b>เฉพาะใบที่การจองผูกไว้</b> (<c>SecurityDepositDocumentId</c>)
+    /// และลักษณะที่ตรึงบนใบไม่ขัด (เงินประกัน หรือ ใบที่ลักษณะว่าง) · ไม่ผูก/ใบที่ผูกถูกยกเลิก/ลบ (ตัวโหลดตัดทิ้ง) = null
+    /// <para>ฝ่ายค้าน C1 รอบ 194: เดิม fallback <c>FirstOrDefault()</c> ของใบลักษณะเงินประกันใบไหนก็ได้ของเลขจองเดียวกัน ⇒ ใบมัดจำค่าห้องที่ถูก
+    /// ตรึงลักษณะเงินประกันผิด (ประเภทของที่พักถูกแก้ลักษณะทีหลัง) หรือใบเงินประกันเก่าที่ปิดไปแล้ว ถูกหยิบมา "ปิดเงินประกัน" แทนใบจริง</para></summary>
     public static LodgingDepositSnapshot? SecurityDeposit(IEnumerable<LodgingDepositSnapshot> deposits, Guid? securityDepositDocumentId)
+        => securityDepositDocumentId is Guid id
+            ? deposits.FirstOrDefault(d => d.Id == id && d.Nature is (null or DepositNature.RefundableSecurity))
+            : null;
+
+    /// <summary>สถานะของลิงก์ "เงินประกันของการจอง" (C3 ฝ่ายค้านรอบ 194) — ตัวตัดสินตัวเดียวของ "มีเงินประกันค้างไหม" (รับใหม่ได้ไหม ·
+    /// หน้าจอแสดงปุ่มไหน)
+    /// <para>ใบรับเงินประกันถูกยกเลิก/ลบที่หน้าเอกสาร ⇒ ตัวโหลดตัดใบนั้นทิ้ง ⇒ เดิมการจองค้าง "รับไว้แล้วยังไม่ปิด" ตลอดไป: รับใหม่ถูกปฏิเสธ
+    /// และปิดก็ไม่ได้เพราะหาใบไม่เจอ · ตอนนี้ใบที่ผูกแต่ไม่อยู่ในใบที่มีผล = <see cref="LodgingSecurityLinkState.DocumentGone"/> =
+    /// ไม่มีเงินค้าง (การยกเลิกใบกลับ JE ของเงินก้อนนั้นแล้ว) ⇒ รับใหม่ได้ (ลิงก์ถูกแทนที่ + ประทับหมายเหตุ)</para></summary>
+    /// <param name="liveDeposits">ใบมัดจำที่มีผลของการจอง (ตัวโหลดตัดร่าง/ยกเลิก/ถูกตีกลับ/ลบแล้ว)</param>
+    public static LodgingSecurityLinkState SecurityLinkState(Guid? securityDepositDocumentId, DateTime? settledAt,
+        IEnumerable<LodgingDepositSnapshot> liveDeposits)
     {
-        var list = deposits.Where(d => IsSecurityDeposit(d, securityDepositDocumentId)).ToList();
-        return list.FirstOrDefault(d => d.Id == securityDepositDocumentId) ?? list.FirstOrDefault();
+        if (securityDepositDocumentId is not Guid id) return LodgingSecurityLinkState.None;
+        if (settledAt != null) return LodgingSecurityLinkState.Settled;
+        return liveDeposits.Any(d => d.Id == id) ? LodgingSecurityLinkState.Open : LodgingSecurityLinkState.DocumentGone;
     }
+
+    /// <summary>ข้อความเมื่อใบรับเงินประกันที่การจองผูกไว้ถูกยกเลิก/ลบ (หน้าจอการจอง + หมายเหตุภายในตอนรับใหม่)</summary>
+    public const string SecurityDocumentGoneNote =
+        "ใบรับเงินประกันที่ผูกกับการจองนี้ถูกยกเลิก/ลบแล้ว — ไม่มีเงินประกันค้าง (การยกเลิกใบกลับรายการบัญชีของเงินก้อนนั้นแล้ว) · รับเงินประกันใหม่ได้";
 
     /// <summary>เงินประกันคงเหลือ (ยอดที่คืนได้ — สูตรปัดตัวเดียวกับการคืนมัดจำ <see cref="RefundableGross"/>)</summary>
     public static decimal HeldGross(LodgingDepositSnapshot d) => RefundableGross(d);

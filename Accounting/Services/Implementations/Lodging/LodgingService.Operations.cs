@@ -46,8 +46,11 @@ public partial class LodgingService
         }
 
         // รอบ 194 — เงินประกันความเสียหาย: ยอดคงเหลืออ่านจากใบจริง (สูตรปัดตัวเดียวกับการคืน) ไม่ใช่ตัวนับบนการจอง
-        LodgingDepositSnapshot? security = r.SecurityDepositDocumentId == null ? null
-            : LodgingDepositSettlement.SecurityDeposit(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId);
+        // C3 ฝ่ายค้านรอบ 194: สถานะลิงก์จากตัวตัดสินตัวเดียว — ใบที่ผูกถูกยกเลิก/ลบ = ไม่ค้าง (หน้าจอเปิดปุ่มรับใหม่ + บอกเหตุ)
+        var securitySnapshots = r.SecurityDepositDocumentId == null ? new List<LodgingDepositSnapshot>()
+            : await LoadDepositSnapshotsAsync(companyId, r);
+        LodgingDepositSnapshot? security = LodgingDepositSettlement.SecurityDeposit(securitySnapshots, r.SecurityDepositDocumentId);
+        var securityLink = LodgingDepositSettlement.SecurityLinkState(r.SecurityDepositDocumentId, r.SecurityDepositSettledAt, securitySnapshots);
 
         // C4 (ฝ่ายค้านรอบสอง) — ใบเช็คเอาต์ถูกยกเลิก: มัดจำกลับเป็นคงค้างแล้ว (void กลับการรับรู้/ตัดชำระ) · บอกทางออกใบใหม่
         string? finalNote = null;
@@ -97,6 +100,8 @@ public partial class LodgingService
             SecurityDepositReceived = security?.TotalAmount ?? 0m,
             SecurityDepositHeld = security is null ? 0m : LodgingDepositSettlement.HeldGross(security),
             SecurityDepositSettledAt = r.SecurityDepositSettledAt,
+            SecurityDepositOpen = securityLink == LodgingSecurityLinkState.Open,
+            SecurityDepositNote = securityLink == LodgingSecurityLinkState.DocumentGone ? LodgingDepositSettlement.SecurityDocumentGoneNote : null,
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
             FinalDocumentNote = includeInternal ? finalNote : null,
             OnlinePayableAmount = LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),

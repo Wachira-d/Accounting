@@ -1566,7 +1566,8 @@
         this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
         this._loadBranches(); // เช่นกัน — ล้มก็แค่ไม่โชว์ช่องสาขา
         this._loadTemplates();
-        this._loadDepositKinds();   // รอบ 194 — ประเภทเงินมัดจำ (ล้ม = ตัวเลือก "ตามค่าตั้งต้นบริษัท" · ฟอร์มยังใช้ได้)
+        // รอบ 194 — ประเภทเงินมัดจำ (ล้ม = ตัวเลือก "ตามค่าตั้งต้นบริษัท" · ฟอร์มยังใช้ได้) · เก็บ promise ไว้ให้ hydrate รอ (P4 ฝ่ายค้าน)
+        this._depositKindsReady = this._loadDepositKinds();
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
         // here so the user doesn't have to retype/search after creating.
@@ -4718,6 +4719,11 @@
       _depositKinds: [],
       _depositKindsLoaded: false,
       _depositKindsTried: false,
+      /** promise เดียวของการโหลดรายการประเภท — `_hydrateDepositKind` รอตัวนี้ก่อนตัดสินว่าประเภทบนใบ "ปิดใช้แล้ว" (P4 ฝ่ายค้านรอบ 194:
+       *  เดิม hydrate ก่อนรายการมาถึง ⇒ ทุกประเภทดูเหมือนไม่มี ⇒ ป้าย "(ปิดใช้แล้ว)" ผิด + ไม่มีตัวเลือกอื่น) */
+      _depositKindsReady: null,
+      /** ลำดับการ hydrate — ผลของใบก่อนที่มาถึงช้าห้ามทับฟอร์มของใบถัดไป/ฟอร์มใหม่ */
+      _depositHydrateSeq: 0,
       _defaultDepositKindId: null,
       /** ค่าตัวเลือกพิเศษ: ใบเดิมที่ไม่มีประเภท — ส่งแบบเดิม (depositOutputVatDeferred ตามใบ) ไม่ส่ง depositKindId */
       DEPOSIT_KIND_LEGACY: '__legacy__',
@@ -4767,6 +4773,7 @@
 
       /** ใบใหม่: เลือกประเภทเริ่มต้นของบริษัท (ห้ามค้างค่าของใบก่อน — กฎ B "reset ตอนฟอร์มใหม่") */
       _resetDepositVatDefault() {
+        this._depositHydrateSeq++;   // hydrate ของใบก่อนที่ยังรอรายการอยู่ต้องไม่ทับฟอร์มใหม่
         const fdAcc = document.getElementById('fDepositDeferredAcc'); if (fdAcc) fdAcc.value = '';
         this._legacyDepositDeferred = false;
         const sel = document.getElementById('fDepositKind');
@@ -4838,17 +4845,29 @@
 
       /** เปิดแก้ใบมัดจำเดิม — เลือกประเภทที่ตรึงบนใบ · ใบเดิมไม่มีประเภท = ตัวเลือก "ตามข้อมูลบนใบ (ใบเดิม)" ·
        *  ใบที่ไม่ใช่ร่าง/ถูกตีกลับ = ล็อกช่อง + บอกเหตุผล (เซิร์ฟเวอร์ไม่รับการเปลี่ยนประเภท — ห้าม silent no-op) */
-      _hydrateDepositKind(d) {
+      async _hydrateDepositKind(d) {
         // ใบที่ไม่ใช่มัดจำ = เหมือนฟอร์มใหม่ (ติ๊กมัดจำทีหลังได้ประเภทเริ่มต้น ไม่ใช่ตัวเลือก "ใบเดิม")
         if (!d.isDeposit) { this._resetDepositVatDefault(); return; }
+        const seq = ++this._depositHydrateSeq;
         this._legacyDepositDeferred = !!d.depositOutputVatDeferred;
+        // P4: รอรายการประเภทก่อน (promise เดียวจาก init · ยังไม่เริ่ม = เริ่มเอง) — ล้มก็ไปต่อ (ตัวเลือก "ประเภทที่ตรึงบนใบ" ค้ำไว้)
+        if (!this._depositKindsTried) {
+          if (!this._depositKindsReady) this._depositKindsReady = this._loadDepositKinds();
+          try { await this._depositKindsReady; } catch (e) { /* _loadDepositKinds จับเองแล้ว — ตรงนี้กันไว้เท่านั้น */ }
+        }
+        if (seq !== this._depositHydrateSeq) return;   // ผู้ใช้เปิดใบอื่น/ฟอร์มใหม่ระหว่างรอ
         let extra = null;
         let selected = d.depositKindId || null;
         if (!d.depositKindId) {
           extra = { value: this.DEPOSIT_KIND_LEGACY, label: 'ตามข้อมูลบนใบ (ใบเดิม — ไม่มีประเภท)' };
           selected = this.DEPOSIT_KIND_LEGACY;
-        } else if (!this._depositKinds.some(k => k.id === d.depositKindId && k.isActive !== false)) {
-          extra = { value: d.depositKindId, label: `${d.depositKindName || 'ประเภทเดิม'} (ปิดใช้แล้ว — ใบนี้ยังใช้ประเภทเดิม)` };
+        } else if (!this._depositKindsLoaded) {
+          // โหลดรายการไม่สำเร็จ — ไม่รู้ว่าปิดใช้หรือไม่ ⇒ ห้ามติดป้าย "ปิดใช้แล้ว" · ค้ำค่าบนใบไว้ให้บันทึกกลับได้ไม่หาย
+          extra = { value: d.depositKindId, label: `${d.depositKindName || 'ประเภทที่ตรึงบนใบ'} (ประเภทที่ตรึงบนใบ — โหลดรายการประเภทไม่สำเร็จ)` };
+        } else {
+          const found = this._depositKinds.find(k => k.id === d.depositKindId);
+          if (!found) extra = { value: d.depositKindId, label: `${d.depositKindName || 'ประเภทเดิม'} (ถูกลบแล้ว — ใบนี้ยังใช้ประเภทเดิม)` };
+          else if (found.isActive === false) extra = { value: d.depositKindId, label: `${d.depositKindName || found.name || 'ประเภทเดิม'} (ปิดใช้แล้ว — ใบนี้ยังใช้ประเภทเดิม)` };
         }
         this._renderDepositKindOptions(selected, extra);
         const editable = ['Draft', 'Rejected'].includes(d.status || this._editingStatus);
@@ -4861,7 +4880,7 @@
         if (lock) {
           const lines = [];
           if (!editable) lines.push('🔒 ใบนี้อนุมัติแล้ว — เปลี่ยนประเภทเงินมัดจำไม่ได้ (§86/4 ห้ามแก้ย้อนหลัง) · ถ้าประเภทผิด ให้ยกเลิกใบ/คืนมัดจำ แล้วออกใบใหม่');
-          if (d.depositPolicyNote) lines.push('หมายเหตุบนใบ: ' + d.depositPolicyNote);
+          if (d.depositPolicyNote) lines.push('บันทึกนโยบายมัดจำ (ภายใน — ไม่พิมพ์บนเอกสาร): ' + d.depositPolicyNote);
           lock.textContent = lines.join('\n');
           lock.style.whiteSpace = 'pre-line';
           lock.style.display = lines.length ? '' : 'none';

@@ -76,7 +76,7 @@ public sealed record DepositVatTreatmentOption(
 /// <param name="NeedsOwnerChoice">ยังไม่มีใครตั้ง + ประเภทธุรกิจบอกลักษณะสิ่งที่ขายไม่ได้ ⇒ หน้าตั้งค่าแสดงเด่น</param>
 /// <param name="Supply">ลักษณะสิ่งที่ขาย (สินค้า/บริการ/ไม่ทราบ) ที่ใช้เลือกรหัสกฎ</param>
 /// <param name="ForfeitAccountCode">บัญชีรายได้ตอนริบเป็นค่าเสียหาย (null = บัญชีของเส้นริบเดิม)</param>
-/// <param name="PolicyReason">เหตุผลที่บันทึกไว้บนประเภท (พิมพ์เป็นหมายเหตุบนใบ)</param>
+/// <param name="PolicyReason">เหตุผลที่บันทึกไว้บนประเภท (เก็บบนใบเป็นบันทึกภายใน <c>DepositPolicyNote</c> + คำเตือนตอนอนุมัติ — ไม่พิมพ์บนเอกสาร)</param>
 public sealed record DepositKindDecision(
     Guid? KindId,
     string? Code,
@@ -482,6 +482,21 @@ public static class DepositPolicyResolver
     public const string LateVatMarker = "[DEPOSIT-LATE-VAT]";
     /// <summary>ชื่อเมื่อไม่มีประเภท (ใบที่ตัดสินจากค่าเดิมของช่องทาง/บริษัท)</summary>
     public const string DefaultKindName = "มัดจำ/เงินรับล่วงหน้า";
+    /// <summary>รอบ 194 ฝ่ายค้าน C1 — ประเภทที่ลักษณะไม่ตรงช่อง (เงินประกันที่ต้องคืนถูกตั้งเป็นมัดจำค่าห้อง/ประเภทเริ่มต้นบริษัท)
+    /// ถูกข้ามไปชั้นถัดไป · ประเภทเริ่มต้น/ลักษณะของประเภทที่ถูกผูกเปลี่ยนให้ขัดช่องไม่ได้</summary>
+    public const string KindNatureMismatchRuleCode = "DEP-KIND-NATURE";
+
+    /// <summary>ลักษณะเงินนี้ใช้เป็น "มัดจำที่เป็นราคา" ได้ไหม — มัดจำค่าห้อง · ชำระล่วงหน้าหน้าจอง · <b>ประเภทเริ่มต้นบริษัท</b>
+    /// (= มัดจำทั่วไปของทุกทางเข้าที่ไม่ระบุประเภท) ต้องเป็น <see cref="DepositNature.PartOfPrice"/> หรือ <see cref="DepositNature.NonVatSupply"/> ·
+    /// เงินประกันที่ต้องคืนใช้ได้เฉพาะเมื่อผู้ใช้เลือกบนใบเอง/ช่องเงินประกันของที่พัก (รอบ 194 ฝ่ายค้าน C1: เดิมไม่มีใครตรวจ ⇒
+    /// ใบมัดจำค่าห้องตรึงลักษณะเงินประกัน = ไม่เกิดภาษีตอนรับเงิน ขัด §78/1 · เช็คเอาต์ไม่หักมัดจำ · CMS ไม่รับรู้รายได้)</summary>
+    public static bool AcceptableAsPriceDeposit(DepositNature? nature)
+        => nature is DepositNature.PartOfPrice or DepositNature.NonVatSupply;
+
+    /// <summary>ข้อความเมื่อประเภทที่ตั้งไว้ในช่องมัดจำราคาถูกข้ามเพราะลักษณะไม่ตรง (ผู้ใช้ต้องเห็น — ห้ามข้ามเงียบ)</summary>
+    private static string KindNatureSkippedNote(string kindName, string where)
+        => $"⚠️ [{KindNatureMismatchRuleCode}] ประเภท “{kindName}” ที่ตั้งเป็น{where}เป็นเงินประกันที่ต้องคืน — ใช้เป็นมัดจำที่เป็นส่วนหนึ่งของราคาไม่ได้ "
+           + "(ภาษีขายถึงกำหนดตอนรับเงิน มาตรา 78/1) ระบบจึงข้ามไปใช้ชั้นถัดไป · แก้: เลือกประเภทลักษณะ “ส่วนหนึ่งของราคา” ในช่องนั้น";
 
     /// <summary>บัญชีเงินประกันรับ (spec S7 — ไม่เพิ่มเลขใหม่): ผังที่มี 21530 เงินประกันความเสียหาย (ผังโรงแรม) ใช้ 21530 ·
     /// ไม่งั้น 21620 เงินค้ำประกัน (ผังมาตรฐาน)</summary>
@@ -514,6 +529,9 @@ public static class DepositPolicyResolver
     /// <param name="companyDefaultKind">④ ประเภทที่ <c>IsDefault</c> ของบริษัท</param>
     /// <param name="companySetting">⑤ <c>CompanySettings.DepositVatTreatment</c></param>
     /// <param name="chartHas21530">ผังของบริษัทมี 21530 ไหม (เลือกบัญชีเงินประกัน)</param>
+    /// <param name="priceChannel">ช่องทางนี้รับ "มัดจำที่เป็นราคา" (มัดจำค่าห้อง · ชำระล่วงหน้าหน้าจอง) ⇒ ประเภทของช่องทาง (②) ที่ลักษณะไม่ผ่าน
+    /// <see cref="AcceptableAsPriceDeposit"/> ถูกข้าม (ตกชั้นถัดไป + คำเตือน) · ชั้น ④ ประเภทเริ่มต้นบริษัทถูกกรองแบบนี้<b>เสมอ</b>
+    /// (ค่าเริ่มต้น = มัดจำทั่วไปของทุกทางเข้า — เงินประกันเป็นค่าเริ่มต้นไม่ได้) · ชั้น ① ประเภทที่ผู้ใช้เลือกบนใบเองไม่ถูกกรอง</param>
     public static DepositKindDecision ResolveKind(
         Guid companyId,
         DepositSupplyNature supply,
@@ -522,13 +540,29 @@ public static class DepositPolicyResolver
         DepositVatTreatment? channelTreatment,
         DepositKind? companyDefaultKind,
         DepositVatTreatment? companySetting,
-        bool chartHas21530 = false)
+        bool chartHas21530 = false,
+        bool priceChannel = false)
     {
         DepositKind? kind = null;
         var kindSource = DepositVatTreatmentSource.BusinessTypeDefault;
-        if (Usable(documentKind, companyId)) { kind = documentKind; kindSource = DepositVatTreatmentSource.DocumentKind; }
-        else if (Usable(channelKind, companyId)) { kind = channelKind; kindSource = DepositVatTreatmentSource.ChannelKind; }
-        else if (!IsDefined(channelTreatment) && Usable(companyDefaultKind, companyId))
+        string? skippedNote = null;
+        var channelUsable = Usable(channelKind, companyId);
+        if (channelUsable && priceChannel && !AcceptableAsPriceDeposit(channelKind!.Nature))
+        {
+            skippedNote = KindNatureSkippedNote(channelKind!.Name, "มัดจำของช่องทางนี้");
+            channelUsable = false;
+        }
+        var defaultUsable = Usable(companyDefaultKind, companyId);
+        if (defaultUsable && !AcceptableAsPriceDeposit(companyDefaultKind!.Nature))
+        {
+            // ข้อมูลที่ตั้งไว้ก่อนมีด่าน SetDefault — migration ถอดธงแล้ว แต่ตัวตัดสินต้องไม่เชื่อธงเอง (ทิศปลอดภัย = มองเห็น)
+            if (!Usable(documentKind, companyId) && !channelUsable && !IsDefined(channelTreatment))
+                skippedNote ??= KindNatureSkippedNote(companyDefaultKind!.Name, "ประเภทเริ่มต้นของบริษัท");
+            defaultUsable = false;
+        }
+        if (Usable(documentKind, companyId)) { kind = documentKind; kindSource = DepositVatTreatmentSource.DocumentKind; skippedNote = null; }
+        else if (channelUsable) { kind = channelKind; kindSource = DepositVatTreatmentSource.ChannelKind; }
+        else if (!IsDefined(channelTreatment) && defaultUsable)
         { kind = companyDefaultKind; kindSource = DepositVatTreatmentSource.CompanyDefaultKind; }
 
         DepositVatTreatment t;
@@ -540,6 +574,12 @@ public static class DepositPolicyResolver
 
         var nature = kind?.Nature ?? DepositNature.PartOfPrice;
         var (warning, code) = KindWarning(nature, t, supply);
+        if (skippedNote != null)
+        {
+            // ข้ามแล้วต้องบอก (หน้าตั้งค่าที่พัก · หมายเหตุการจอง · audit อ่าน Warning ตัวเดียวกัน) — รหัสกฎของคำเตือนเดิมชนะถ้ามี
+            warning = warning is null ? skippedNote : skippedNote + " · " + warning;
+            code ??= KindNatureMismatchRuleCode;
+        }
         string? account = null;
         if (!string.IsNullOrWhiteSpace(kind?.LiabilityAccountCode)) account = kind.LiabilityAccountCode.Trim();
         else if (nature == DepositNature.RefundableSecurity) account = SecurityLiabilityAccountCode(chartHas21530);
@@ -576,7 +616,7 @@ public static class DepositPolicyResolver
         return $"⛔ มัดจำที่เป็นส่วนหนึ่งของราคาเลือก “{LabelOf(t)}” ได้เมื่อระบุเหตุผลเท่านั้น — ภาษีขายของเงินที่เป็นราคาถึงกำหนดตอนรับเงิน "
             + "(สินค้า มาตรา 78(1)(ข) · บริการ มาตรา 78/1 · ป.73/2541) · ทางไปต่อ: ① เปลี่ยนเป็น “ออกใบกำกับภาษี รับรู้ VAT ทันที” · "
             + "② ถ้าเงินก้อนนี้เป็นเงินประกันที่ต้องคืนจริง ให้เปลี่ยนลักษณะเป็น “เงินประกัน (ต้องคืน)” · ③ ยืนยันโหมดนี้พร้อมพิมพ์เหตุผล/เลขสัญญา "
-            + "(ระบบพิมพ์เหตุผลเป็นหมายเหตุบนใบและเตือนตอนอนุมัติ)";
+            + "(ระบบเก็บเหตุผลไว้บนใบมัดจำเป็นบันทึกภายใน — เห็นในหน้าเอกสาร ไม่พิมพ์บนเอกสารที่ส่งลูกค้า — และแสดงในคำเตือนตอนอนุมัติ)";
     }
 
     /// <summary>คำเตือนตามตาราง spec S2 (ลักษณะ × โหมด) — หน้าตั้งค่า · หมายเหตุบนใบ · คำเตือนตอนอนุมัติ ใช้ตัวนี้ตัวเดียว

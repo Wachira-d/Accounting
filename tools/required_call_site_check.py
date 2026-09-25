@@ -633,8 +633,10 @@ RULES += [
          before=[("CmsBookingCancelPolicy.DecideOnComplete(", "RealizeDepositAsync(")],
          why="รอบ 194 มัดจำเต็มยอดของบริษัทที่จด VAT ห้ามรับรู้ตรงเข้ารายได้ (= รายได้ไม่มี VAT ไม่มีใบกำกับ) — ตัดสินก่อนรับรู้"),
     # CMS ส่งประเภทเฉพาะบริษัทที่ตั้งค่าแล้ว (ไม่งั้นพฤติกรรมเดิมทุกตัวอักษร)
-    dict(file=CMS_BOOK, method="SyncBookingToErpAsync", must=["DepositKindCatalog.LoadContextAsync(", "CompanyConfigured"],
-         why="รอบ 194 S4 CMS ส่ง DepositKindId เฉพาะบริษัทที่ตั้งค่ามัดจำเองแล้ว — ส่งเสมอ = บริษัทที่ไม่เคยตั้งได้ใบรูปใหม่เงียบ ๆ"),
+    dict(file=CMS_BOOK, method="SyncBookingToErpAsync", must=["DepositKindCatalog.LoadContextAsync(", "DepositKindCatalog.PrePaymentKindId("],
+         forbid=["kindCtx.DefaultKind"],
+         why="รอบ 194 S4 CMS ส่ง DepositKindId เฉพาะบริษัทที่ตั้งค่ามัดจำเองแล้ว (ส่งเสมอ = บริษัทที่ไม่เคยตั้งได้ใบรูปใหม่เงียบ ๆ) · "
+             "ฝ่ายค้าน C1: ค่าเริ่มต้นที่เป็นเงินประกันห้ามส่ง (ใบจองได้ลักษณะเงินประกัน ⇒ ใช้บริการแล้วไม่รับรู้รายได้) — ตัดสินที่ PrePaymentKindId ตัวเดียว"),
     # integration: mismatch ผ่านตัวตัดสินประเภทตัวเดียว (ห้ามกลับไปใช้ Resolve เดิมที่ไม่รู้จักประเภท)
     dict(file=INTEGRATION, method="DepositTreatmentMismatchNoteAsync", must=["DepositKindCatalog.Decide("],
          forbid=["DepositPolicyResolver.Resolve("], why="รอบ 194 S5 หมายเหตุ mismatch คำนวณผ่าน ResolveKind (ประเภทที่คู่ค้าระบุ/ประเภทเริ่มต้น)"),
@@ -700,6 +702,29 @@ RULES += [
 ]
 
 # ── ตัดคอมเมนต์/สตริงโดยคงตำแหน่ง ───────────────────────────────────────────────────────
+# ── รอบ 194 ฝ่ายค้านถดถอย/ความปลอดภัย (review194-regsec.md) — C1 เงินประกันกลายเป็นมัดจำค่าห้อง/ค่าเริ่มต้นบริษัท · C3 ใบเงินประกัน
+#    ถูกยกเลิกแล้วการจองค้างตลอดไป — ล็อกว่าตัวตัดสินกลาง "ถูกเรียกจริง" ที่ทุกจุด (เทสต์ของ helper เขียวแม้ถอดการเรียกใน service) ──
+LODGING_OPS = "Services/Implementations/Lodging/LodgingService.Operations.cs"
+_C1_WHY = ("รอบ 194 C1: มัดจำค่าห้อง/ค่าเริ่มต้นบริษัทต้องเป็นมัดจำที่เป็นราคา — เงินประกันที่หลุดเข้ามา = ใบค่าห้องไม่เกิดภาษีตอนรับเงิน (§78/1) "
+           "· เช็คเอาต์ไม่หักมัดจำ · CMS ไม่รับรู้รายได้")
+RULES += [
+    dict(file=LODGING, method="DepositKindForAsync", must=["priceChannel: true"], why=_C1_WHY),
+    dict(file=DKSVC, method="SetDefaultAsync", must=["DepositKindCatalog.DefaultKindProblem("],
+         before=[("DepositKindCatalog.DefaultKindProblem(", "kind.IsDefault = true")], why=_C1_WHY),
+    dict(file=DKSVC, method="UpdateAsync", must=["GuardNatureChangeAsync("],
+         before=[("GuardNatureChangeAsync(", "ApplyAsync(")], why=_C1_WHY + " · เปลี่ยนลักษณะต้องตรวจก่อนเขียนทับ"),
+    dict(file=DKSVC, method="GuardNatureChangeAsync",
+         must=["DepositKindCatalog.NatureChangeProblem(", "d.CompanyId == companyId", "p.CompanyId == companyId"],
+         must_re=[r"is\s+string\s+problem\s*\)\s*throw\b"], why=_C1_WHY + " (tenant ทุก query · ผลต้องถูกใช้)"),
+    dict(file=LODGING_LIFE, method="ReceiveSecurityDepositAsync", must=["LodgingDepositSettlement.SecurityLinkState("],
+         must_re=[r"LodgingSecurityLinkState\.Open\s*\)\s*throw\b"],
+         forbid=["r.SecurityDepositDocumentId != null && r.SecurityDepositSettledAt == null"],
+         why="รอบ 194 C3: มีเงินประกันค้างไหมตัดสินที่ SecurityLinkState ตัวเดียว (ใบที่ผูกถูกยกเลิก = ไม่ค้าง) — ตรวจลิงก์+วันปิดเอง = ค้างตลอดไป"),
+    dict(file=LODGING_OPS, method="MapAsync", must=["LodgingDepositSettlement.SecurityLinkState(", "SecurityDepositOpen ="],
+         why="รอบ 194 C3: หน้าจอการจองตัดสินปุ่มรับ/สถานะเงินประกันจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับด่านรับ)"),
+]
+
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

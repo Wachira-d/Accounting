@@ -100,6 +100,6 @@ public static class DepositKindDocumentRules
         var (warning, code) = DepositPolicyResolver.KindWarning(nature.Value, t, supply);
         if (warning is null) return null;
         return $"[{code}] {warning}"
-            + (string.IsNullOrWhiteSpace(policyNote) ? "" : $" · หมายเหตุบนใบ: {policyNote.Trim()}");
+            + (string.IsNullOrWhiteSpace(policyNote) ? "" : $" · บันทึกนโยบายบนใบ (ภายใน): {policyNote.Trim()}");
     }
 }

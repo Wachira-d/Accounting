@@ -104,8 +104,11 @@ public class DepositKindTests
         Assert.NotEmpty(stmts);
         Assert.All(stmts, s => Assert.DoesNotContain("UPDATE \"Documents\"", s));
         Assert.All(stmts, s => Assert.DoesNotContain("UPDATE Documents", s));
+        // P6 ฝ่ายค้านรอบ 194: schema อยู่เส้นหลัก (log ความล้มเหลว) · ทุกคำสั่งยังอยู่ในชุดหลัง (schema ซ้ำก่อน seed — idempotent)
         var all = DatabaseMigrationHelper.GetAlterStatements();
-        Assert.All(stmts, s => Assert.Contains(s, all));
+        Assert.All(DatabaseMigrationHelper.DepositKindSchemaStatements(), s => Assert.Contains(s, all));
+        var late = DatabaseMigrationHelper.GetFullTextSearchStatements();
+        Assert.All(stmts, s => Assert.Contains(s, late));
         // คอลัมน์ใหม่ของใบ = ADD COLUMN IF NOT EXISTS ค่าเริ่มต้น NULL (ไม่มี DEFAULT ที่แต่งลักษณะให้ใบเดิม)
         var natureCol = Assert.Single(stmts, s => s.Contains("\"DepositNature\"", StringComparison.Ordinal));
         Assert.Contains("ADD COLUMN IF NOT EXISTS \"DepositNature\" integer NULL;", natureCol);

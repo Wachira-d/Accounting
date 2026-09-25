@@ -37,7 +37,7 @@ public class DepositKind : TenantEntity
     public string? ForfeitAccountCode { get; set; }
 
     /// <summary>เหตุผลที่เลือกโหมดเลื่อน VAT กับเงินที่เป็นส่วนหนึ่งของราคา (spec S2) — ว่าง = ปฏิเสธการบันทึก
-    /// (<c>DepositPolicyResolver.KindProblem</c>) · พิมพ์เป็นหมายเหตุบนใบ (<c>Document.DepositPolicyNote</c>)</summary>
+    /// (<c>DepositPolicyResolver.KindProblem</c>) · เก็บบนใบเป็นบันทึกภายใน (<c>Document.DepositPolicyNote</c> — ไม่พิมพ์บนเอกสาร · รอบ 194 C4) + คำเตือนตอนอนุมัติ</summary>
     public string? PolicyReason { get; set; }
 
     /// <summary>คำอธิบายเพิ่มเติม (แสดงในหน้าตั้งค่า)</summary>

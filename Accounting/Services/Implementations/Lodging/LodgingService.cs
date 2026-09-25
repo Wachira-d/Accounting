@@ -96,7 +96,10 @@ public partial class LodgingService : ILodgingService
             documentKind: null, channelKind: channelKind,
             channelTreatment: ignoreOverride ? null : prop.DepositVatTreatment,
             companyDefaultKind: companyDefault, companySetting: companySetting,
-            chartHas21530: await ChartHas21530Async(companyId));
+            chartHas21530: await ChartHas21530Async(companyId),
+            // ฝ่ายค้าน C1 รอบ 194: มัดจำค่าห้อง = ส่วนหนึ่งของราคา — ประเภทของที่พัก/ค่าเริ่มต้นบริษัทที่เป็นเงินประกัน (ลักษณะถูกแก้ทีหลัง
+            // หรือถูกตั้งเป็นค่าเริ่มต้นก่อนมีด่าน) ต้องถูกข้ามพร้อมคำเตือน — ไม่งั้นใบค่าห้องตรึงลักษณะเงินประกัน (ไม่เกิดภาษีตอนรับเงิน §78/1)
+            priceChannel: true);
     }
 
     /// <summary>ผังของบริษัทมี 21530 เงินประกันความเสียหาย (ผังโรงแรม) ไหม — ตัวเลือกบัญชีเงินประกันของ <c>ResolveKind</c> (spec S7)</summary>
@@ -353,7 +356,7 @@ public partial class LodgingService : ILodgingService
             Id: k.Id, Code: k.Code, Name: k.Name, Nature: k.Nature, NatureLabel: NatureLabelTh(k.Nature),
             TreatmentLabel: k.VatTreatment is DepositVatTreatment t ? DepositPolicyResolver.LabelOf(t) : "ตามค่าตั้งต้นบริษัท",
             IsActive: k.IsActive, IsDefault: k.IsDefault,
-            ForRoom: k.Nature is DepositNature.PartOfPrice or DepositNature.NonVatSupply,
+            ForRoom: DepositPolicyResolver.AcceptableAsPriceDeposit(k.Nature),
             ForSecurity: k.Nature == DepositNature.RefundableSecurity)).ToList();
     }
 

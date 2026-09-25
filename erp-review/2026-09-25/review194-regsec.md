@@ -7,7 +7,7 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
 
 ## CONFIRMED
 
-**C1 (สูง) ประเภท "เงินประกัน" หลุดเข้าเป็นมัดจำค่าห้องได้ 2 ทาง — ด่านมีแค่ที่หน้าบันทึกที่พัก**
+✅ ทีม R <pending> **C1 (สูง) ประเภท "เงินประกัน" หลุดเข้าเป็นมัดจำค่าห้องได้ 2 ทาง — ด่านมีแค่ที่หน้าบันทึกที่พัก**
 - `LodgingService.cs:83-100` `DepositKindForAsync` ใช้ `channelKind` (RoomDepositKindId) และ `companyDefault` โดย**ไม่ตรวจ Nature**
   (ด่าน PartOfPrice/NonVat มีเฉพาะ `ApplyDepositKindsAsync` ตอนบันทึกที่พัก)
 - `DepositKindService.cs:73` `UpdateAsync` เปลี่ยน `Nature` ของประเภทที่ที่พักผูกเป็นห้องอยู่ได้ (บรรทัด 184) · `:135` `SetDefaultAsync`
@@ -22,11 +22,11 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
   ของใบเดียวกัน (ส่งมอบเป็นงวด) ล้ม · มัดจำที่เคยตัดชำระบางส่วนแล้วจะริบส่วนที่เหลือ ล้ม — "ทางไปต่อ" ให้ "คืน/โอนยอดมัดจำ" ซึ่งไม่ใช่เหตุการณ์จริง (F2 ข้อ 8)
 - ใบเดิม `DepositNature=NULL` + เต็มยอด ⇒ ค่าเริ่มต้น PriceOrFee ⇒ ปุ่ม "รับรู้" ทุกครั้งออกใบกำกับอัตโนมัติ (ตาม spec แต่เป็นพฤติกรรมใหม่ของใบเก่า — ต้องอยู่ใน DOCUMENT_FLOW/CHANGELOG ชัด)
 
-**C3 (กลาง-ต่ำ) เงินประกันค้างตายเมื่อใบรับถูกยกเลิก**
+✅ ทีม R <pending> **C3 (กลาง-ต่ำ) เงินประกันค้างตายเมื่อใบรับถูกยกเลิก**
 - `LodgingService.Lifecycle.cs:1200` ห้ามรับใหม่ถ้า `SecurityDepositDocumentId != null && SettledAt == null` · ถ้าใบถูก void ที่หน้าเอกสาร ตัวโหลด (`:455` ตัด Voided)
   ⇒ `SecurityDeposit()` = null ⇒ ปิดไม่ได้ (`:1299`) และรับใหม่ไม่ได้ · ไม่มีใครล้างลิงก์
 
-**C4 (ต่ำ-กลาง) "พิมพ์เหตุผลเป็นหมายเหตุบนใบ" ไม่จริง**
+✅ ทีม R <pending> **C4 (ต่ำ-กลาง) "พิมพ์เหตุผลเป็นหมายเหตุบนใบ" ไม่จริง**
 - `DepositPolicyNote`/`DepositKindName` ไม่มีผู้อ่านใน `PdfGenerationService`/`DocumentRenderer` (grep 0) แต่ `settings.html` ป้ายช่องเหตุผล และ
   `DepositPolicyResolver.KindProblem` บอกว่า "ระบบพิมพ์เหตุผลเป็นหมายเหตุบนใบ" (F2 ข้อ 2 · ข้อความเท็จถึงผู้ใช้)
 
@@ -39,9 +39,9 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
   และ CreateDocument จัดรูปซ้ำด้วยอัตราบริษัท ⇒ `ShapeFor(Undue,7)` ติด deferred=true บนใบ VAT 0 ที่ที่พักคิดเป็น (0,false)
 - P2 `DocumentService.cs:3814` SaveChanges ธง `[DEPOSIT-LATE-VAT]` ก่อน `CreateDocumentAsync` — สร้างล้ม (ไม่มีผู้ติดต่อ/โควตา) ⇒ ธงค้างบนใบทั้งที่ไม่มีใบกำกับ
 - P3 ยกเลิกที่พักล้มกลางทาง: ข้อความ lodging (`Lifecycle.cs:~1020`) สั่ง "รับรู้ที่หน้าเงินมัดจำ" ขัดกับข้อความ IssueForfeit "ห้ามกดซ้ำ" · ใบกำกับร่างค้าง
-- P4 `documents.html` `_hydrateDepositKind` ก่อนรายการประเภทโหลดเสร็จ ⇒ ป้าย "(ปิดใช้แล้ว)" ผิด + ไม่มีตัวเลือกอื่น (re-render เฉพาะ `sel.value===''`)
-- P5 สมัครผ่าน AuthService seed ชุด General · เปลี่ยน IndustryType ทีหลังไม่เปลี่ยนชื่อ (โรงแรม) · RENT-ADV มาตอนบูตถัดไป (cosmetic)
-- P6 DDL คอลัมน์ Documents ใหม่อยู่ในชุด `ApplyFullTextSearchIndexes` ซึ่ง `catch {}` เงียบ (ต่างจาก `ApplyMissingColumns` ที่ log) — ถ้าล้ม ทุก query Documents พังโดยไม่มี log
+- ✅ ทีม R <pending> P4 `documents.html` `_hydrateDepositKind` ก่อนรายการประเภทโหลดเสร็จ ⇒ ป้าย "(ปิดใช้แล้ว)" ผิด + ไม่มีตัวเลือกอื่น (re-render เฉพาะ `sel.value===''`)
+- (backlog — ทีม R ไม่ทำรอบนี้) P5 สมัครผ่าน AuthService seed ชุด General · เปลี่ยน IndustryType ทีหลังไม่เปลี่ยนชื่อ (โรงแรม) · RENT-ADV มาตอนบูตถัดไป (cosmetic)
+- ✅ ทีม R <pending> P6 DDL คอลัมน์ Documents ใหม่อยู่ในชุด `ApplyFullTextSearchIndexes` ซึ่ง `catch {}` เงียบ (ต่างจาก `ApplyMissingColumns` ที่ log) — ถ้าล้ม ทุก query Documents พังโดยไม่มี log
 
 ## NOT-A-BUG (ตรวจแล้ว)
 - migration: idempotent · ไม่มี UPDATE "Documents" · index สร้างก่อน seed · `ON CONFLICT DO NOTHING` ไม่ระบุเป้า ครอบทุก unique index (รวม partial) ·

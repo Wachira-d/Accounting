@@ -1197,8 +1197,13 @@ public partial class LodgingService
         var prop = r.Property;
         if (r.Status is not (LodgingReservationStatus.Confirmed or LodgingReservationStatus.CheckedIn))
             throw new BusinessRuleException($"รับเงินประกันได้เมื่อการจองยืนยันแล้วหรือเช็คอินอยู่ (สถานะปัจจุบัน {StatusTh(r.Status)})", "LODGING-SECURITY");
-        if (r.SecurityDepositDocumentId != null && r.SecurityDepositSettledAt == null)
+        // C3 ฝ่ายค้านรอบ 194: ตัวตัดสินตัวเดียว "มีเงินประกันค้างไหม" — ใบที่ผูกถูกยกเลิก/ลบที่หน้าเอกสาร = ไม่มีเงินค้าง ⇒ รับใหม่ได้
+        // (เดิมตรวจแค่ลิงก์+วันปิด ⇒ รับใหม่ไม่ได้และปิดก็ไม่ได้ตลอดไป เพราะตัวโหลดตัดใบที่ถูกยกเลิกทิ้ง)
+        var secLink = LodgingDepositSettlement.SecurityLinkState(r.SecurityDepositDocumentId, r.SecurityDepositSettledAt,
+            await LoadDepositSnapshotsAsync(companyId, r));
+        if (secLink == LodgingSecurityLinkState.Open)
             throw new BusinessRuleException("รับเงินประกันของการจองนี้ไว้แล้วและยังไม่ได้ปิด — ถ้ายอดผิด ให้ปิด (คืน) ใบเดิมก่อนแล้วรับใหม่", "LODGING-SECURITY");
+        var replacedGoneSecurityDocId = secLink == LodgingSecurityLinkState.DocumentGone ? r.SecurityDepositDocumentId : null;
         if (prop.AccountingMode == LodgingAccountingMode.Off)
             throw new BusinessRuleException("ที่พักตั้ง “ไม่ออกเอกสาร” — บันทึกเงินประกันในระบบบัญชีที่ใช้ออกเอกสารของที่พัก", "LODGING-SECURITY");
         var kindId = prop.SecurityDepositKindId ?? throw new BusinessRuleException(
@@ -1255,6 +1260,8 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
         var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
 
+        if (replacedGoneSecurityDocId != null)
+            AppendInternal(r, LodgingDepositSettlement.SecurityDocumentGoneNote + $" — ลิงก์เดิม ({replacedGoneSecurityDocId}) ถูกแทนที่ด้วยใบใหม่");
         r.SecurityDepositDocumentId = created.Id;
         r.SecurityDepositSettledAt = null;
         AppendInternal(r, $"รับเงินประกันความเสียหาย {amount:N2} — {approved.DocumentNumber} (หนี้สิน · ไม่นับเป็นค่าห้อง)"
@@ -1266,7 +1273,7 @@ public partial class LodgingService
         {
             action = "SecurityDepositReceived", document = approved.DocumentNumber, amount, kind = kind.Code,
             nature = kind.Nature.ToString(), treatment = kind.Treatment.ToString(), account = shaped.DepositDeferredAccountCode,
-            ruleCode = kind.RuleCode, by = userId,
+            ruleCode = kind.RuleCode, replacedVoidedSecurityDocumentId = replacedGoneSecurityDocId, by = userId,
         }));
         await _db.SaveChangesAsync();
         return await MapAsync(companyId, r, true, true);
