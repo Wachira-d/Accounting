@@ -237,6 +237,17 @@ public class DocumentController : ControllerBase
 
     // ===== Documents =====
 
+    /// <summary>ตัวเลือกตัวกรอง "ออกเอกสารต่อแล้วหรือยัง" บนหน้ารวม (รอบ 196) — ชนิดที่ใช้ได้ + ค่า (ชื่อ enum) + ป้ายไทย
+    /// จาก <see cref="DocumentConversionProgress"/> ตัวเดียว ⇒ หน้าเว็บไม่มีสำเนารายการชนิด/ป้ายของตัวเอง</summary>
+    [HttpGet("conversion-filter-options")]
+    public ActionResult<ApiResponse<object>> GetConversionFilterOptions(Guid companyId)
+        => Ok(new ApiResponse<object>(true, new
+        {
+            DocumentTypes = DocumentConversionProgress.SourceTypes.Select(t => t.ToString()).ToList(),
+            Options = DocumentConversionProgress.FilterOptions
+                .Select(o => new { Value = o.Value.ToString(), o.Label }).ToList(),
+        }));
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<DocumentResponse>>>> GetDocuments(
         Guid companyId, [FromQuery] DocumentType? type = null,
@@ -253,9 +264,16 @@ public class DocumentController : ControllerBase
         // separately.
         [FromQuery] string? lifecycle = null,
         // เรียงลำดับ (กดหัวคอลัมน์): number | date | amount | status | duedate
-        [FromQuery] string? sortBy = null, [FromQuery] bool sortDesc = false)
+        [FromQuery] string? sortBy = null, [FromQuery] bool sortDesc = false,
+        // ออกเอกสารต่อแล้วหรือยัง (รอบ 196): "None" | "Partial" | "Full" — ชื่อ enum ConversionProgressState ·
+        // กรองที่เซิร์ฟเวอร์ (ก่อนแบ่งหน้า) เฉพาะชนิดต้นทาง · ตัวเลือก+ป้ายจาก GET document/conversion-filter-options
+        [FromQuery] string? conversion = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
+
+        if (!DocumentConversionProgress.TryParseFilter(conversion, out var conversionState))
+            return BadRequest(new ApiResponse<PagedResponse<DocumentResponse>>(false, default,
+                "ตัวกรอง \"ออกเอกสารต่อ\" ไม่ถูกต้อง — ใช้ได้เฉพาะ None / Partial / Full"));
 
         // Direction gate — Sales role with only Revenue.View can't list PVs.
         // Explicit type query rejected with 403 so the UI surfaces the
@@ -271,7 +289,8 @@ public class DocumentController : ControllerBase
             effTypes = types.Where(t => visibility.Allows(t)).ToList();
 
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search, sortBy, sortDesc),
-            projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes);
+            projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes,
+            conversionState);
 
         // Visibility redaction — จำเป็นเฉพาะ list ที่ "ไม่ได้ระบุ type/types"
         // (service คืนทุกประเภท). เมื่อมี type/types เราจำกัดด้วยสิทธิ์ server-side

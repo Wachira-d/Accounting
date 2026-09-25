@@ -3336,3 +3336,16 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I แ�
 - เทสต์ `OcrLineVatPlannerTests` (สองครึ่ง) + เพิ่มใน ThaiVatExemptKeyword/OcrAmountIntegrity/OcrApprovalGapWarning/OcrDocumentRoleInferrer/OcrLineReconciler/OcrReplayGolden (ช่อง `LineVatPlan`) ·
   checker `required_call_site_check` +2 กติกา · DOCUMENT_FLOW §1 OCR · lessons/ocr-pipeline +2 · CLAUDE.md กฎเหล็ก #3 ข้อ 2
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จากหน้ารวมใบเสนอราคา ใบไหนออกใบแจ้งหนี้แล้ว โดยไม่ต้องไล่เปิดทีละใบ":
+- **บั๊กที่ยืนยัน**: `GetDocumentsAsync` ไม่ส่ง % การแปลงเข้า `MapDocumentToResponse` ⇒ ใบต้นทาง Approved ทุกใบขึ้น "⏳ รอดำเนินการต่อ" · สูตร detail
+  (`ComputeConversionStatusAsync`) รวมทุกแกน + ค้น `DocumentLines` ไม่กรอง `CompanyId` · ป้ายเอ่ยเลขใบลูกตัวแรกแม้ถูก void · คอลัมน์ "ค้างชำระ" โชว์ยอดเต็มของใบเสนอราคาเป็นตัวแดง + ชิป "⏳ 30+d"
+- `Helpers/DocumentConversionProgress` (ตัวตัดสินเดียว: ชนิดต้นทาง · แกน · Evaluate · ป้าย · ตัวเลือกตัวกรอง) + `Helpers/DocumentTypeNames` (ย้ายตารางชื่อชนิดจาก
+  `PdfGenerationService.GetDocumentTitle` · `DocTypeLabel` เรียกตัวนี้) + `ArApScope.CarriesBalance`
+- `DocumentService.LoadConversionSummariesAsync` batch (2 query/หน้า · CompanyId ทุก query) ใช้ร่วม `GetDocumentsAsync` · `GetDocumentAsync` · `ResolveConversionStateIdsAsync`
+  (ตัวกรอง `?conversion=None|Partial|Full` + `staleOnly` ตัดใบที่ออกครบ) · `GetFulfillmentAxis` เรียก `AxisOf` · ลบ `ComputeConversionStatusAsync`
+- DTO `ConvertedToLatest` · `ConvertedToActiveCount` · `BalanceDueApplies` · endpoint `GET document/conversion-filter-options` · `documents.html`: ชิปกดไปใบลูก · ตัวกรอง
+  `#conversionFilter` · "—" ในคอลัมน์ค้างชำระ/ไม่ขึ้นชิปอายุหนี้สำหรับชนิดที่ไม่ใช่หนี้ · ชิปใบต่อเนื่องในหน้ารายละเอียดมีสถานะ (ใบที่ยกเลิกเห็นว่ายกเลิก) ·
+  `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
+- เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
+— commit <pending>)_
