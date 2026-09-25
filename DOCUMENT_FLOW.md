@@ -169,11 +169,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ⇒ ทุกบรรทัด 7% + `[Σ]` เหตุผล · พิสูจน์ไม่ได้ = `Unknown` → (4) ตัวเดาจากชื่อ `ThaiVatTypeRule` (นมผง/infant formula/นมถั่วเหลือง
     ไม่ใช่ยกเว้นแล้ว · นม UHT/ขอบเขตนมสด §81 รอเจ้าของ · formula เดี่ยวถูกถอด (ชนปุ๋ย)) · บรรทัดยอดก่อนลด 0 ไม่ได้ % ส่วนลดท้ายบิล (`OcrLineReconciler.LineDiscountPercent`)
     · **VAT หัวใบไม่มีบนกระดาษเลย** (`OcrHeaderVatSource.NotOnPaper` — ระบบคำนวณ/อ่านเพี้ยน) ⇒ `[VAT-DERIVED]` (blocking tag ของ
-    `OcrPostingReadiness` · แสดงบนหน้าสแกน/การ์ด LINE · ติดไปกับสำเนาอัปซ้ำ) — ตัวเลขบังเอิญตรงยอดบรรทัด (`PrintedUnlabelled`) ไม่เตือน ·
-    **การแยก VAT จากยอดรวมมีที่เดียว**: `ParseThaiDocument` + `SmartFieldExtractor.ApplyAmountMath` → `Helpers/OcrVatBackCalc.Plan` →
-    `VatBackCalcGuard.Decide` (เคารพ `[VAT skip]` เดิม · "ยกเว้น/ไม่มี/ไม่จดภาษีมูลค่าเพิ่ม" · "NON VAT" ไม่นับว่าพูดถึง VAT · แท็ก `[VAT back-calc]`
-    และความมั่นใจตามด่าน ไม่ถูกดันเป็น 0.95) · `AmountTripleExtractor` fallback ไม่แต่ง 7/107 อีก (เดิมถูกรับเป็น "สามค่าที่ลงตัว" 0.95)
-    · **ดึงรายการซ้ำ** ล้าง `[Σ-GAP]`/`[VAT-DERIVED]` ของบรรทัดชุดเก่าก่อนสร้างใหม่ (`OcrLineBuildNotes.StripRecomputed` · ธงอื่นคงเดิม)
+    `OcrPostingReadiness` · แสดงบนหน้าสแกน/การ์ด LINE · ติดไปกับสำเนาอัปซ้ำ) — ตัวเลขบังเอิญตรงยอดบรรทัด (`PrintedUnlabelled`) ไม่เตือน
+    **ยกเว้นมีร่องรอย `[VAT back-calc]` ในหมายเหตุและ VAT ยังเท่าค่าที่ถอดจากยอดรวม ⇒ `NotOnPaper` เสมอ** (รอบ 195 รอบสอง R2-4 · ร่องรอยติดไปกับสำเนาอัปซ้ำ) ·
+    ป้าย VAT ที่ `IsVatLabelled` รับ: แถวป้าย · ป้ายแล้วตัวเลขบรรทัดถัดไป · **ตัวเลขแรกหลังป้ายบนแถวเดียวกัน** · **คอลัมน์ป้าย→คอลัมน์ตัวเลข (จำนวนเท่ากันเท่านั้น)** ·
+    "Value Added Tax" · Tesseract "ภาษีมูลค่าเพิม" (normalizer ซ่อมด้วย) ·
+    **คำเตือนตอนอนุมัติ** (`CollectApprovalWarningsAsync` → `OcrApprovalGapWarning.Build(headerVatSource:)` ตัดสินสดด้วย `Classify` ตัวเดียวกัน · ครอบสแกนเก่าที่ไม่มีแท็ก):
+    VAT ไม่อยู่บนกระดาษ + VAT ของบรรทัดตอนนี้ ≠ 0 ⇒ `VAT จากสแกนไม่ได้พิมพ์บนกระดาษ: …` (อ้าง ม.86/4(6) ⇒ ม.82/5(1) + ทางเลือก "ตั้ง VAT 0 ลงค่าใช้จ่ายเต็มจำนวน" ·
+    **ไม่บล็อก ไม่เปลี่ยนค่า** — รอเจ้าของตัดสินว่าจะบังคับไหม) · อยู่ชุดเดียวกับ `[Σ-GAP]` (`IsGapWarning`): เว็บ/มือถือต้องกดรับทราบ · workflow/ลายเซ็นส่งผ่านเองไม่ได้ ·
+    `/api/v1` ไม่ขัดจังหวะ คืน `scanVatNotOnPaper:true` + `warnings[]` (รอบ 195 รอบสอง R2-3)
+    · **การแยก VAT จากยอดรวมมีสูตรเดียว** `Helpers/OcrVatBackCalc.SplitInclusive` (AwayFromZero) หลังด่าน `VatBackCalcGuard.Decide` เสมอ:
+    `ParseThaiDocument` (Decide → SplitInclusive) · `SmartFieldExtractor.ApplyAmountMath` และ **ZoneFallback** (`ApplyZoneAnalysisFallbackAsync`) → `OcrVatBackCalc.Plan`
+    (เคารพ `[VAT skip]` เดิม · "ยกเว้น/ไม่มี/ไม่จดภาษีมูลค่าเพิ่ม" · "NON VAT" ไม่นับว่าพูดถึง VAT · แท็ก `[VAT back-calc]` และความมั่นใจตามด่าน ไม่ถูกดันเป็น 0.95)
+    · `CrossValidator.FillMissingAmounts` **ไม่ถอด VAT จากยอดรวมอีก** (เดิมถอดทุกครั้ง ไม่ถามด่าน · ไม่ติดแท็ก · banker's — รอบสอง R2-2) ·
+    `AmountTripleExtractor` fallback ไม่แต่ง 7/107 อีก · `required_call_site_check` ห้ามสูตร ÷1.07/÷107/÷(1+อัตรา) ทั้งโฟลเดอร์ OCR ·
+    ด่านปฏิเสธเพิ่ม: **ยังไม่รู้รายการ + กระดาษพิมพ์ว่าไม่มี VAT** ("ยกเว้นภาษีมูลค่าเพิ่ม" · "ไม่ได้จดทะเบียน…" · NON VAT — แถวฟอร์มยอด 0 ไม่นับ)
+    · **ทุกเส้นสร้างบรรทัด** ล้าง `[Σ-GAP]`/`[VAT-DERIVED]` ของรอบก่อนที่ต้น `BuildScanLinesAsync` (สร้างใหม่หลังลบเอกสาร · สำเนาอัปซ้ำ · ดึงรายการซ้ำ · พรีวิว —
+    `OcrLineBuildNotes.StripRecomputed` · ธงอื่นคงเดิม · รอบสอง R2-5) · หมายเหตุ "ยกเลิกใบอย่างย่อ…ฉบับใหม่แทน" ที่ engine ตัดบรรทัด: ดูบรรทัดถัดไปได้ 1 บรรทัดเมื่อประโยคยังไม่จบ (คำเชื่อม) · "ตัวแทน" ไม่นับ
     · ด่าน `Helpers/OcrAmountIntegrity` ตรวจบรรทัดที่จะเขียนจริง (ติดลบ · Σ ยอด · Σ VAT · อัตรา×ยอด
     คำนวณอิสระ · บรรทัดยอด 0 ไม่นับเป็น "บรรทัดมี VAT" · ส่วนต่างยอดรวมที่มาจาก VAT ทั้งก้อนบอกสาเหตุ "อัตรา VAT" ไม่ใช่ "รายการอ่านไม่ได้")
     ⇒ `[Σ-GAP]` พร้อมตัวเลข · ไม่แก้ตัวเลขใด ๆ · ปุ่ม LINE postback ตรวจ readiness ซ้ำตอนกด · หน้ารีวิวแบนเนอร์แดง
@@ -3332,7 +3343,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 197 ทีม K: ใบ Makro สาขา 00005 — ผู้ติดต่อจากสแกนใช้คีย์เลขภาษี+สาขาตัวเดียวกับทุกทางเข้า
+_Last verified against codebase: 2026-09-25 (รอบ 195 ทีม I3: ฝ่ายค้านรอบสอง R2-2..R2-5 — สูตรถอด VAT เดียว `OcrVatBackCalc.SplitInclusive` (ZoneFallback ผ่านด่าน · CrossValidator ไม่ถอดเอง) · `[VAT-DERIVED]` เป็นคำเตือนตอนอนุมัติทุกทางเข้า (อ้าง ม.86/4(6)/ม.82/5(1)) · ร่องรอย `[VAT back-calc]` ⇒ NotOnPaper · ล้างแท็กที่ต้นตัวสร้างบรรทัด · ป้าย VAT รูปอื่น · ด่านปฏิเสธเมื่อกระดาษบอกไม่มี VAT · C2 ข้ามบรรทัด (§1 OCR) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 197 ทีม K: ใบ Makro สาขา 00005 — ผู้ติดต่อจากสแกนใช้คีย์เลขภาษี+สาขาตัวเดียวกับทุกทางเข้า
 (`ContactTaxBranchKey.PickBranch`) · สาขามีหลักฐานแต่ไม่มีแถว ⇒ สร้างผู้ติดต่อของสาขา (เส้นสแกน + เส้นสร้างเอกสาร) · ชื่อโลโก้ → ชื่อนิติบุคคลที่พิมพ์/ทะเบียน ·
 อีเมลผู้ซื้อไม่ลงผู้ติดต่อผู้ขาย (§1 OCR · §6.2i) — commit <pending>)_
 

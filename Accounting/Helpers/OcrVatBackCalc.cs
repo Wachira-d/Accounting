@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 
 namespace Accounting.Helpers;
 
@@ -37,19 +36,11 @@ public sealed record OcrVatBackCalcPlan(
 /// </summary>
 public static class OcrVatBackCalc
 {
-    private const RegexOptions Opt = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
-
-    /// <summary>วลีที่บอกว่า<b>ไม่มี</b> VAT — ตัดทิ้งก่อนถามว่า "ข้อความพูดถึง VAT ไหม" ("ไม่รวมภาษีมูลค่าเพิ่ม" = ราคาก่อน VAT ⇒ มี VAT จึงไม่อยู่ในนี้)</summary>
-    private static readonly Regex NoVatPhrases = new(
-        @"(?:ได้รับ)?(?:การ)?ยกเว้น[ \t]*ภาษีมูลค่าเพิ่ม|ไม่(?:ต้อง)?(?:มี|เสีย|ได้จด(?:ทะเบียน)?|จด(?:ทะเบียน)?)[ \t]*ภาษีมูลค่าเพิ่ม|"
-        + @"(?<![A-Za-z])non[- \t]?vat(?![A-Za-z])|(?<![A-Za-z])vat[- \t]?exempt\w*|(?<![A-Za-z])exempt\w*[ \t]+(?:from[ \t]+)?vat(?![A-Za-z])|"
-        + @"(?<![A-Za-z])no[ \t]+vat(?![A-Za-z])", Opt);
-
     /// <summary>ข้อความพูดถึงใบกำกับภาษี/VAT <b>ในความหมายว่ามี</b> ไหม (แทน <c>LooksLikeVatDoc</c> เดิม — คำเดิมทุกคำ ลบเฉพาะวลีปฏิเสธ)</summary>
     internal static bool MentionsVat(string? text)
     {
         if (string.IsNullOrEmpty(text)) return false;
-        var t = NoVatPhrases.Replace(text, " ");
+        var t = VatBackCalcGuard.NoVatPhrases.Replace(text, " ");
         return t.Contains("ใบกำกับภาษี", StringComparison.Ordinal) || t.Contains("ใบกํากับภาษี", StringComparison.Ordinal)
             || t.ToUpperInvariant().Contains("TAX INVOICE", StringComparison.Ordinal)
             || t.Contains("ภาษีมูลค่าเพิ่ม", StringComparison.Ordinal) || t.Contains("VAT", StringComparison.Ordinal);
@@ -80,8 +71,23 @@ public static class OcrVatBackCalc
         var decision = VatBackCalcGuard.Decide(rawText, vendorTaxId, lineDescriptions, totalAmount: total);
         if (!decision.Allowed)
             return new(OcrVatBackCalcAction.Skip, null, null, 0d, VatBackCalcGuard.SkipTag + " " + decision.Reason);
-        var sub = Math.Round(total / 1.07m, 2, MidpointRounding.AwayFromZero);
-        return new(OcrVatBackCalcAction.Apply, sub, total - sub, decision.Confidence,
+        var (sub, vat) = SplitInclusive(total);
+        return new(OcrVatBackCalcAction.Apply, sub, vat, decision.Confidence,
             VatBackCalcGuard.BackCalcTag + " " + decision.Reason);
+    }
+
+    /// <summary>
+    /// **สูตรถอด VAT 7% ออกจากยอดรวมตัวเดียวของโฟลเดอร์ OCR** — ฐาน = ปัด(ยอดรวม ÷ 1.07) แบบ <c>AwayFromZero</c> · VAT = ยอดรวม − ฐาน
+    /// (VAT + ฐาน = ยอดรวมพอดีเสมอ)
+    ///
+    /// <para>รอบ 195 ฝ่ายค้านรอบสอง R2-2: สูตรนี้เคยมีสามสำเนา — <c>ParseThaiDocument</c> · <c>ApplyAmountMath</c> (ผ่าน <see cref="Plan"/>) ·
+    /// และ <c>CrossValidator.FillMissingAmounts</c> ที่ถอด<b>ทุกครั้ง</b>ที่มีแต่ยอดรวม โดยไม่ถามด่าน ไม่ติดแท็ก และปัดแบบ banker's
+    /// (เส้น ZoneFallback) · ผู้เรียกต้องผ่าน <see cref="VatBackCalcGuard.Decide"/> มาก่อนแล้วติด <see cref="VatBackCalcGuard.BackCalcTag"/>
+    /// เสมอ (<c>tools/required_call_site_check.py</c> ห้ามสูตร 7/107 · ÷1.07 นอกไฟล์นี้ในโฟลเดอร์ OCR)</para>
+    /// </summary>
+    public static (decimal SubTotal, decimal VatAmount) SplitInclusive(decimal total)
+    {
+        var sub = Math.Round(total / 1.07m, 2, MidpointRounding.AwayFromZero);
+        return (sub, total - sub);
     }
 }

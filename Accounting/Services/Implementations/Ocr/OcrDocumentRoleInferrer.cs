@@ -734,10 +734,31 @@ public static class OcrDocumentRoleInferrer
         var afterStart = idx + needleLength;
         var lineEnd = text.IndexOf('\n', afterStart);
         var after = text.Substring(afterStart, (lineEnd < 0 ? text.Length : lineEnd) - afterStart);
-        return after.Contains("แทน", StringComparison.Ordinal) || after.Contains("ฉบับใหม่", StringComparison.Ordinal)
-            || System.Text.RegularExpressions.Regex.IsMatch(after, @"(?<![a-z])replac(?:e|ed|es|ing|ement)(?![a-z])",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (AnnouncesReplacement(after)) return true;
+        // รอบ 195 ฝ่ายค้านรอบสอง (ง): หมายเหตุ Scommerce ยาว ~130 ตัวอักษร — engine ตัดขึ้นบรรทัดใหม่กลางประโยคได้
+        // ("…และออกใบกำกับภาษี\nอิเล็กทรอนิกส์ฉบับใหม่แทน") ⇒ ยอมดูบรรทัดถัดไป<b>บรรทัดเดียว</b> เฉพาะเมื่อประโยคยังไม่จบ
+        // (ท้ายบรรทัดนี้มีคำเชื่อม "และ/พร้อม/and/&" หรือบรรทัดถัดไปขึ้นต้นด้วยคำเชื่อม) · "แทน" ในบรรทัดถัดไปต้องไม่ใช่ "ตัวแทน"
+        // (ตัวแทนจำหน่าย = คนละความหมาย — เทสต์ "ยกเลิกใบกำกับภาษีอย่างย่อได้ภายใน 7 วัน\nตัวแทนจำหน่าย" ยังต้องจับเป็นอย่างย่อ)
+        if (lineEnd < 0) return false;
+        var nextEnd = text.IndexOf('\n', lineEnd + 1);
+        var next = text.Substring(lineEnd + 1, (nextEnd < 0 ? text.Length : nextEnd) - (lineEnd + 1));
+        var continues = SentenceContinues.IsMatch(after) || SentenceContinuesNext.IsMatch(next);
+        return continues && AnnouncesReplacement(next.Replace("ตัวแทน", "", StringComparison.Ordinal));
     }
+
+    /// <summary>"แทน" · "ฉบับใหม่" · "replace…" — ประโยคประกาศว่าใบนี้มาแทนใบที่ถูกยกเลิก</summary>
+    private static bool AnnouncesReplacement(string s)
+        => s.Contains("แทน", StringComparison.Ordinal) || s.Contains("ฉบับใหม่", StringComparison.Ordinal)
+            || System.Text.RegularExpressions.Regex.IsMatch(s, @"(?<![a-z])replac(?:e|ed|es|ing|ement)(?![a-z])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>ท้ายบรรทัดยังมีคำเชื่อมที่รอประโยคถัดไป ("และออกใบกำกับภาษี" · "and replaced") — ประโยคยังไม่จบ</summary>
+    private static readonly System.Text.RegularExpressions.Regex SentenceContinues = new(
+        @"และ|พร้อม|(?<![a-z])and(?![a-z])|&|,[ \t]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>บรรทัดถัดไปขึ้นต้นด้วยคำเชื่อม — ต่อประโยคเดิม</summary>
+    private static readonly System.Text.RegularExpressions.Regex SentenceContinuesNext = new(
+        @"^[ \t]*(?:และ|พร้อม|(?:and|&)(?![a-z]))", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     private static bool ContainsAll(string text, params string[] needles)
         => needles.All(n => text.Contains(n.ToLowerInvariant()));

@@ -85,6 +85,9 @@ public static class OcrScanSnapshot
             // รอบ 193: ข้อเสนอบรรทัดปรับเป็นคำตัดสินเรื่องตัวกระดาษ (ติดไปกับสำเนา) · [PAY-SETTLED] ห้ามติดไป —
             // มันบอกว่า "เอกสารของสแกนต้นฉบับ" ลงบรรทัดปรับแล้ว ถ้าสำเนาได้ไปด้วย [PAY≠TOTAL] ของสำเนาจะเลิกหยุดทั้งที่ยังไม่ได้บันทึก
             .Concat(new[] { OcrSettlementProposal.PlanTag })
+            // รอบ 195 ฝ่ายค้านรอบสอง R2-4: ร่องรอย "ระบบถอด VAT จากยอดรวม" ติดไปกับสำเนา — VAT ที่คัดลอกมาคือค่าที่ถอดเองตัวเดิม
+            // (OcrHeaderVatEvidence.Classify อ่านร่องรอยนี้ ⇒ สำเนาไม่หลุดเป็น "พิมพ์บนกระดาษ" เพราะเลขบังเอิญตรงเลขอื่นบนใบ)
+            .Concat(new[] { VatBackCalcGuard.BackCalcTag })
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 

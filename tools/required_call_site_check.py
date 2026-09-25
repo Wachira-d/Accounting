@@ -944,14 +944,20 @@ RULES += [
          call_args=[("OcrLineVatPlanner.PlanWholeInvoice(", "headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled")],
          before=[("OcrHeaderVatEvidence.Classify(", "OcrLineVatPlanner.PlanWholeInvoice(")],
          why="รอบ 195 C1: ชั้นพิสูจน์ทั้งใบใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษในฐานะ VAT · VAT ที่ไม่มีบนกระดาษ ⇒ [VAT-DERIVED] หยุดอนุมัติเอง"),
-    dict(file=OCR, method="RepopulateDocumentLinesFromScanAsync",
+    dict(file=OCR, method="BuildScanLinesAsync",
          must=["OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes)"],
-         before=[("OcrLineBuildNotes.StripRecomputed(", "BuildScanLinesAsync(")],
-         why="รอบ 195 P3: [Σ-GAP] ของบรรทัดชุดเก่าต้องถูกล้างก่อนตัวสร้างเขียนผลของบรรทัดชุดใหม่"),
+         before=[("OcrLineBuildNotes.StripRecomputed(", "OcrHeaderVatEvidence.Classify(")],
+         call_args=[("OcrHeaderVatEvidence.Classify(", "result.ProcessingNotes")],
+         why="รอบ 195 P3 → รอบสอง R2-5/R2-4: [Σ-GAP]/[VAT-DERIVED] ของรอบก่อนถูกล้างที่ต้นตัวสร้าง (ครอบทุกเส้น: สร้างใหม่หลังลบ · "
+             "สำเนาอัปซ้ำ · ดึงรายการซ้ำ · พรีวิว) · ตัวตัดสินที่มา VAT ต้องเห็นร่องรอย [VAT back-calc]"),
     dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
-         call_args=[("OcrLineVatPlanner.RateAdvice(", "OcrHeaderVatEvidence.Classify"),
-                    ("OcrApprovalGapWarning.Build(", "linesVat")],
-         why="รอบ 195 C1/P1: ไม่แนะนำ 'ตั้ง 7%' จาก VAT ที่ระบบคำนวณเอง · รวมข้อยอดรวมเฉพาะเมื่อรากเดียวกันจริง (ต้องรู้ VAT ของบรรทัด)"),
+         call_args=[("OcrLineVatPlanner.RateAdvice(", "headerVatSource"),
+                    ("OcrApprovalGapWarning.Build(", "linesVat"),
+                    ("OcrApprovalGapWarning.Build(", "headerVatSource"),
+                    ("OcrHeaderVatEvidence.Classify(", "gapScan.ProcessingNotes")],
+         before=[("OcrHeaderVatEvidence.Classify(", "OcrApprovalGapWarning.Build(")],
+         why="รอบ 195 C1/P1 → รอบสอง R2-3/R2-4: ไม่แนะนำ 'ตั้ง 7%' จาก VAT ที่ระบบคำนวณเอง · รวมข้อยอดรวมเฉพาะเมื่อรากเดียวกันจริง · "
+             "VAT ที่ไม่ได้พิมพ์บนกระดาษต้องเป็นคำเตือนตอนอนุมัติทุกทางเข้า (ตัวตัดสินเดียวกับตอนสร้าง + ร่องรอย [VAT back-calc])"),
     dict(file=SMART, method="ApplyAmountMath",
          must=["OcrVatBackCalc.Plan("],
          call_args=[("OcrVatBackCalc.Plan(", "data.ReasoningTrace")],
@@ -965,6 +971,72 @@ RULES += [
          forbid=["LooksLikeVatDoc(", "(1m + ThaiVat)"],
          why="รอบ 195 C1: AmountTriple ห้ามแต่ง VAT 7/107 ใน fallback (เคยถูกรับเป็นสามค่าที่ลงตัว ความมั่นใจ 0.95 ไม่ผ่านด่าน)"),
 ]
+
+# ── รอบ 195 ฝ่ายค้านรอบสอง R2-2: ตัวถอด 7/107 ชุดที่สาม (CrossValidator.FillMissingAmounts → ZoneFallback) ไม่ถามด่าน · ไม่ติดแท็ก · banker's
+#    ⇒ ถอดได้ที่ Helpers/OcrVatBackCalc ที่เดียว (SplitInclusive · Plan → VatBackCalcGuard.Decide) · ผู้เรียกทุกตัวล็อกไว้ที่นี่
+#    + FOLDER_FORBID ข้างล่างกวาดทั้งโฟลเดอร์ OCR ห้ามสูตร ÷1.07 · ÷107 · ÷(1 + อัตรา) เขียนเอง
+CROSSV = "Services/Implementations/Ocr/CrossValidator.cs"
+RULES += [
+    dict(file=CROSSV, method="FillMissingAmounts",
+         forbid=["/ (1 + vatRate)", "/ 1.07m", "OcrVatBackCalc.SplitInclusive("],
+         why="รอบ 195 R2-2: ตัวเติมยอดของ ZoneFallback ห้ามถอด VAT จากยอดรวมเอง (ถามด่านที่ผู้เรียกผ่าน OcrVatBackCalc.Plan)"),
+    dict(file=OCR, method="ApplyZoneAnalysisFallbackAsync",
+         must=["OcrVatBackCalc.Plan("],
+         call_args=[("OcrVatBackCalc.Plan(", "data.ReasoningTrace")],
+         forbid=["OcrVatBackCalc.SplitInclusive("],
+         why="รอบ 195 R2-2: โซนอ่านได้แต่ยอดรวม ⇒ ถอด VAT ผ่านด่านตัวเดียวกับเส้นหลัก (เคารพ [VAT skip] + ติด [VAT back-calc])"),
+    dict(file=OCR, method="ParseThaiDocument",
+         must=["VatBackCalcGuard.Decide(", "OcrVatBackCalc.SplitInclusive("],
+         before=[("VatBackCalcGuard.Decide(", "OcrVatBackCalc.SplitInclusive(")],
+         why="รอบ 195 R2-2: เส้น Tesseract ถอด VAT ด้วยสูตรตัวเดียว หลังด่านยอมเท่านั้น"),
+]
+
+# โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive
+# (ค้นบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว · ตัวตรวจ "VAT บนกระดาษ = 7/107 ของยอด" อยู่ใน Helpers/ ซึ่งไม่ถูกกวาด — เป็นการตรวจ ไม่ใช่การผลิตค่า)
+FOLDER_FORBID = dict(
+    globs=["Services/Implementations/Ocr/*.cs", "Services/Implementations/*Ocr*.cs",
+           "Services/Implementations/DocumentZoneAnalyzer.cs"],
+    patterns=[r"/\s*1\.07m?\b", r"/\s*107m?\b",
+              r"/\s*\(\s*1(?:\.0+)?m?\s*\+\s*(?:0?\.07m?|[A-Za-z_]*[Vv][Aa][Tt][A-Za-z_]*)\s*\)"],
+    why="รอบ 195 R2-2: สูตรถอด VAT 7/107 อยู่ที่ Helpers/OcrVatBackCalc.SplitInclusive ที่เดียว (ผ่าน VatBackCalcGuard + แท็ก [VAT back-calc])")
+
+
+def folder_forbid_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        code = mask(text)
+        for rx in FOLDER_FORBID["patterns"]:
+            for m in re.finditer(rx, code):
+                line = code.count("\n", 0, m.start()) + 1
+                errs.append(f"{rel}:{line} มีสูตรถอด VAT `{text[m.start():m.end()]}` นอก OcrVatBackCalc — {FOLDER_FORBID['why']}")
+    return errs
+
+
+def folder_forbid_files():
+    seen, out = set(), []
+    for g in FOLDER_FORBID["globs"]:
+        for path in sorted(SRC.glob(g)):
+            rel = str(path.relative_to(SRC))
+            if rel in seen:
+                continue
+            seen.add(rel)
+            out.append((rel, path.read_text(encoding="utf-8")))
+    return out
+
+
+def folder_forbid_self_test(files) -> list:
+    fails = []
+    if not files:
+        return ["self-test FOLDER_FORBID: ไม่พบไฟล์ในโฟลเดอร์ OCR (glob ผิด?)"]
+    rel, text = files[0]
+    for sample in ["var s = t / 1.07m;", "var v = t * 7m / 107m;", "var s = Math.Round(t / (1 + vatRate), 2);",
+                   "var s = t / (1m + ThaiVatRate);", "var s = t / ( 1 + 0.07m );"]:
+        if not folder_forbid_errors([(rel, text + "\nclass __X { void F() { " + sample + " } }\n")]):
+            fails.append(f"self-test FOLDER_FORBID: ใส่ `{sample}` แล้วไม่ฟ้อง")
+    for ok in ["// เดิม t / 1.07m", "var s = \"÷ 1.07\";", "var x = 1m - (1m / (1m + 0.5m * n));", "var r = v / s - 0.07m;"]:
+        if folder_forbid_errors([(rel, "class __Y { void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test FOLDER_FORBID: `{ok}` ถูกฟ้องผิด")
+    return fails
 
 
 # ── รอบ 196 (ทีม Q · "ใบไหนออกใบแจ้งหนี้แล้ว ดูจากหน้ารวมไม่ได้"): list · detail · ตัวกรอง ต้องเรียกตัวคำนวณการออกเอกสารต่อ
@@ -1338,7 +1410,9 @@ def main() -> int:
             errs.append(f"{rule['file']}: ไม่พบไฟล์")
             continue
         errs += check_rule(path.read_text(encoding="utf-8"), rule)
-    st = self_test()
+    ocr_files = folder_forbid_files()
+    errs += folder_forbid_errors(ocr_files)
+    st = self_test() + folder_forbid_self_test(ocr_files)
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

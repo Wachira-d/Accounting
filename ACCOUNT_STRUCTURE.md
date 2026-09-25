@@ -93,7 +93,7 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | **Portal `/connect`** | `wwwroot/connect/index.html` | ✅ ภาพรวม+ขั้นตอนเริ่มต้น · เลือกฟีเจอร์ (ยืนยันพร้อมราคา) · usage รายเดือน · ยอดรวมกลุ่ม — **ยิงเฉพาะ API สาธารณะ** |
 | **Workbench** | `wwwroot/connect/workbench.html` | ✅ โต๊ะทำงานจริง: โยนเอกสาร→OCR→ตรวจ→สร้างใบสำคัญจ่าย · วาง statement (รับ พ.ศ.)→จับคู่→ยืนยัน · ผูกรหัสผู้ติดต่อ |
 | **`/api/v1/contacts`** | `Controllers/V1/ContactsV1Controller.cs` | ✅ `sync` (upsert ด้วย ExternalId · ด่าน `CONTACT-TAXID-OWNED` เทียบ **เลข + สาขา** ผ่าน `ContactTaxBranchKey.Pick` — สาขา 8 ของนิติบุคคลเดียวกับ สนญ. ไม่ถูกบล็อก) · `unmapped` · `map` · `resolve` (รับ `branchCode` optional · รหัสผิดรูป = 400 · ตอบ `branchCode` + `taxIdExists` · เลขมีแต่สาขาไม่ตรง = `matched:false` + เหตุผล ไม่ถอยไปเทียบชื่อ · ผู้สมัครเทียบชื่อข้ามภาษามาจากชุด `SoftScope` เท่านั้น — เลขใหม่ + ชื่อคล้ายไม่ตอบ matched กับนิติบุคคลที่ถือเลขอื่น) — รอบ 193 |
-| **`/api/v1/documents`** | `Controllers/V1/DocumentsV1Controller.cs` | ✅ สร้างเอกสาร (resolve ผู้ติดต่อ 4 ชั้น) + `approve` (ออกเลข gap-free) + คืน `contact.needsMapping` · **รอบ 193**: รับ `contactBranchCode` (ผิดรูป = 400) · เลขมีแล้วคนละสาขา ⇒ สร้างผู้ติดต่อสาขาใหม่ (ไม่เทียบชื่อ · บทบาทตามฝั่งเอกสาร) · เลขจริง + ชื่อคล้าย ⇒ ผู้ติดต่อใหม่ · ใบฝั่งขายตอบ `contact.missingBuyerFields` + `branchCode` (ตัวตรวจเดียวกับด่านอนุมัติ) · `contact.taxIdWarning` เมื่อเลข checksum ผิด (แถวใหม่ติด `[TAXID-CHECKSUM]` · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคลเดียวกัน — ฝ่ายค้านรอบสี่ cb552889) · `approve` = พรีวิวคำเตือนไม่เรียก AI (`PreviewApprovalWarningsAsync`) → คำเตือนเป็น `[Σ-GAP]` ทั้งหมด = อนุมัติต่อแล้วคืน `scanAmountGap:true` + `warnings[]` (API ไม่ขัดจังหวะ · คำตัดสิน #12) · ไม่ override ด่านงบ/วงเงิน/วางบิลเกิน |
+| **`/api/v1/documents`** | `Controllers/V1/DocumentsV1Controller.cs` | ✅ สร้างเอกสาร (resolve ผู้ติดต่อ 4 ชั้น) + `approve` (ออกเลข gap-free) + คืน `contact.needsMapping` · **รอบ 193**: รับ `contactBranchCode` (ผิดรูป = 400) · เลขมีแล้วคนละสาขา ⇒ สร้างผู้ติดต่อสาขาใหม่ (ไม่เทียบชื่อ · บทบาทตามฝั่งเอกสาร) · เลขจริง + ชื่อคล้าย ⇒ ผู้ติดต่อใหม่ · ใบฝั่งขายตอบ `contact.missingBuyerFields` + `branchCode` (ตัวตรวจเดียวกับด่านอนุมัติ) · `contact.taxIdWarning` เมื่อเลข checksum ผิด (แถวใหม่ติด `[TAXID-CHECKSUM]` · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคลเดียวกัน — ฝ่ายค้านรอบสี่ cb552889) · `approve` = พรีวิวคำเตือนไม่เรียก AI (`PreviewApprovalWarningsAsync`) → คำเตือนเป็น `[Σ-GAP]` ทั้งหมด = อนุมัติต่อแล้วคืน `scanAmountGap:true` + `warnings[]` (API ไม่ขัดจังหวะ · คำตัดสิน #12) · **รอบ 195**: VAT จากสแกนที่ไม่ได้พิมพ์บนกระดาษ ⇒ คำเตือนชุดเดียวกัน + ธงแยก `scanVatNotOnPaper:true` (`scanAmountGap` นับเฉพาะคำเตือนยอด) · ไม่ override ด่านงบ/วงเงิน/วางบิลเกิน |
 | **`/api/v1/ocr/confirm`** กรองบริษัท | `Controllers/V1/OcrV1Controller.cs` | ✅ รอบ 193: กรอง `feedbackId` ให้เป็นของบริษัทผู้เรียกก่อนบันทึก (208f44d) |
 
 **Migration + backfill** (`DatabaseMigrationHelper.cs` บล็อก "BillingAccount"): additive
@@ -789,7 +789,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
+_Last verified against codebase: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
 _สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_
 _หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit <pending>)_
 

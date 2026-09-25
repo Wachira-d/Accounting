@@ -262,7 +262,10 @@ public class DocumentsV1Controller : PublicApiControllerBase
                 status = doc.Status.ToString(),
                 doc.TotalAmount,
                 // รอบ 193: ธงให้ระบบปลายทางรู้ว่าใบนี้มาจากสแกนที่ยอดไม่ตรงกระดาษ (อนุมัติแล้ว ไม่ได้หยุด)
-                scanAmountGap = scanGapWarnings.Count > 0,
+                scanAmountGap = scanGapWarnings.Any(w => !Helpers.OcrApprovalGapWarning.IsVatDerivedWarning(w)),
+                // รอบ 195 ฝ่ายค้านรอบสอง R2-3: VAT ที่ลงบัญชีไม่ได้พิมพ์บนกระดาษ (ระบบถอดจากยอดรวม) — ใบซื้อที่ไม่แสดงภาษีแยก = ไม่ครบ
+                // ม.86/4(6) ⇒ ภาษีซื้อต้องห้าม ม.82/5(1) · API ไม่ขัดจังหวะ (คำตัดสินข้อ 12) แต่ต้องบอกระบบปลายทางแยกจากธงยอด
+                scanVatNotOnPaper = scanGapWarnings.Any(Helpers.OcrApprovalGapWarning.IsVatDerivedWarning),
                 warnings = scanGapWarnings,
             }, scanGapWarnings.Count > 0
                 ? $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber} · หมายเหตุ: {string.Join(" · ", scanGapWarnings)}"

@@ -81,4 +81,43 @@ public class VatBackCalcGuardTests
             GoodTaxId, null);
         Assert.True(d.Allowed);
     }
+
+    // ── รอบ 195 ฝ่ายค้านรอบสอง (PLAUSIBLE ข): กระดาษบอกเองว่าไม่มี VAT + ยังไม่รู้รายการ ⇒ ไม่ถอด ────────────────────────────
+    // เลขที่ checksum ผ่านจริง (mod-11) — ให้ด่านไปถึงกิ่งที่ทดสอบ ไม่ใช่ตกที่ "ผู้ขายไม่มีเลข 13 หลักที่ถูกต้อง"
+    private const string ValidSeller = "0105556012341";
+
+
+    [Theory]
+    [InlineData("ใบเสร็จรับเงิน/ใบกำกับภาษี\nรวมทั้งสิ้น 1,070.00\nสินค้าทุกรายการได้รับการยกเว้นภาษีมูลค่าเพิ่ม")]
+    [InlineData("ใบกำกับภาษี\nรวม 1,070.00\nร้านนี้ไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม")]
+    [InlineData("TAX INVOICE\nNON VAT\nTotal 1,070.00")]
+    [InlineData("ใบกำกับภาษี\nมูลค่าสินค้าที่ยกเว้นภาษีมูลค่าเพิ่ม 1,070.00\nรวม 1,070.00")]
+    public void กระดาษบอกไม่มีVAT_ยังไม่รู้รายการ_ไม่ถอด(string raw)
+    {
+        foreach (var lines in new[] { null, System.Array.Empty<string?>(), new string?[] { "", "  " } })
+        {
+            var d = VatBackCalcGuard.Decide(raw, ValidSeller, lines, totalAmount: 1070m);
+            Assert.False(d.Allowed);
+            Assert.Contains("ไม่มีภาษีมูลค่าเพิ่ม", d.Reason);
+        }
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_แถวฟอร์มยกเว้น0_ไม่ใช่หลักฐาน_ยังถอดได้()
+    {
+        // ใบ Scommerce พิมพ์แถว "มูลค่าสินค้าที่ยกเว้นภาษีมูลค่าเพิ่ม 0.00" ทุกใบ — แถวยอด 0 ไม่ใช่หลักฐาน (RG-02)
+        var d = VatBackCalcGuard.Decide(
+            "ใบกำกับภาษี\nมูลค่าสินค้าที่ยกเว้นภาษีมูลค่าเพิ่ม 0.00\nรวม 1,070.00\nราคารวมภาษีมูลค่าเพิ่มแล้ว", ValidSeller, null, 1070m);
+        Assert.True(d.Allowed);
+        Assert.Null(VatBackCalcGuard.PaperDeclaresNoVat("มูลค่าสินค้าที่ยกเว้นภาษีมูลค่าเพิ่ม 0.00\nNON VAT 0.00"));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_รู้รายการแล้ว_กิ่งใหม่ไม่ทำงาน_ด่านเดิมตัดสิน()
+    {
+        // รายการไม่ยกเว้น + คำยกเว้นท้ายบิล — ขอบเขตรอบนี้แค่ "บรรทัดว่าง" (ใบผสมพิมพ์ VAT แยกไว้ ⇒ ด่าน VAT ที่พิมพ์ขัดจับอยู่แล้ว)
+        var d = VatBackCalcGuard.Decide("ใบกำกับภาษี\nรวม 1,070.00\nราคารวมภาษีมูลค่าเพิ่มแล้ว\nสินค้าบางรายการยกเว้นภาษีมูลค่าเพิ่ม",
+            ValidSeller, new[] { "ค่าบริการล้างแอร์" }, 1070m);
+        Assert.True(d.Allowed);
+    }
 }

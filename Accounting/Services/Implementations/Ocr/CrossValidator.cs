@@ -76,9 +76,15 @@ public static class CrossValidator
 
     /// <summary>
     /// Compute missing amounts from known ones: SubTotal + Vat = Total, etc.
+    ///
+    /// <para>⚠️ รอบ 195 ฝ่ายค้านรอบสอง R2-2: <b>ไม่ถอด VAT ออกจากยอดรวมเมื่อรู้แค่ยอดรวม</b> — เดิมกิ่งสุดท้ายถอด 7/107 ทุกครั้ง
+    /// (ไม่ถามคำ VAT · เลขผู้ขาย · สินค้ายกเว้น ม.81 · ไม่ติดแท็ก · ปัดแบบ banker's) แล้วเส้น ZoneFallback
+    /// (<c>OcrService.ApplyZoneAnalysisFallbackAsync</c>) เติมเป็น VAT ของใบ ⇒ ภาษีซื้อที่ไม่มีบนกระดาษเข้า ภ.พ.30 ·
+    /// การถอดต้องผ่าน <c>Helpers/OcrVatBackCalc.Plan</c> (→ <c>VatBackCalcGuard.Decide</c> + แท็ก <c>[VAT back-calc]</c>) ที่ผู้เรียก ·
+    /// ที่นี่เหลือแต่ "ยอดที่พิมพ์สองตัว ⇒ ตัวที่สาม" (ยังเป็นเลขคณิตของตัวเลขบนกระดาษ ไม่ใช่การเดาอัตรา)</para>
     /// </summary>
     public static (decimal? sub, decimal? vat, decimal? total) FillMissingAmounts(
-        decimal? sub, decimal? vat, decimal? total, decimal vatRate = 0.07m)
+        decimal? sub, decimal? vat, decimal? total)
     {
         if (sub.HasValue && vat.HasValue && !total.HasValue)
             total = sub.Value + vat.Value;
@@ -86,12 +92,6 @@ public static class CrossValidator
             sub = total.Value - vat.Value;
         else if (total.HasValue && sub.HasValue && !vat.HasValue)
             vat = total.Value - sub.Value;
-        else if (total.HasValue && !sub.HasValue && !vat.HasValue)
-        {
-            // Assume VAT-inclusive
-            sub = Math.Round(total.Value / (1 + vatRate), 2);
-            vat = total.Value - sub.Value;
-        }
         return (sub, vat, total);
     }
 }
