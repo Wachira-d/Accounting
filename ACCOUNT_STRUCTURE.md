@@ -291,7 +291,8 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 | วิธี login ที่อนุญาต (`AllowedAuthMethods`) | ✔ (เช่นบังคับ O365 อย่างเดียว) | — | — | — | ทุกวิธี |
 | เปิด API Access (`EnableApiAccess` — คุมคีย์ `acc_` ที่ออกแล้วด้วย) ✅ | — | ✔ (เจ้าของ · ปฏิเสธ API key) | — | — | ไม่มีแถว = ปิด |
 | สิทธิ์คีย์ integration (`CanRead/CanWrite/CanDelete`) ✅ | — | ✔ Owner เท่านั้น | — | — | อ่านอย่างเดียว (legacy = เต็มจนถึงวันเลิกใช้) |
-| วิธีบันทึกเงินมัดจำ (`DepositVatTreatment`) ✅ รอบ 193 | — | ✔ (`CompanySettings` · NULL = ตามประเภทธุรกิจ) | ที่พักตั้งทับได้ (`LodgingProperty`) | — | VAT ทันที (ทุกประเภท — ไม่เปลี่ยนพฤติกรรมเดิม) |
+| วิธีบันทึกเงินมัดจำ (`DepositVatTreatment`) ✅ รอบ 193 | — | ✔ (`CompanySettings` · NULL = ตามประเภทธุรกิจ) | ที่พักตั้งทับได้ (`LodgingProperty`) | — | VAT ทันที (ทุกประเภท — ไม่เปลี่ยนพฤติกรรมเดิม) · รอบ 194: = โหมดของประเภทเงินมัดจำที่ "ไม่ได้ตั้งโหมด" |
+| ประเภทเงินมัดจำ (`DepositKind` — ลักษณะเงิน + วิธีบันทึก + บัญชี) ✅ รอบ 194 | — | ✔ ตาราง (ตั้งค่า → ภาษี · `GET/POST/PUT/DELETE /api/companies/{id}/deposit-kinds` + `POST …/{kindId}/default` · เขียน = สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · ลบประเภทที่ใบ/ที่พักใช้อยู่ = ปิดใช้แทน · ประเภทเริ่มต้นตัวเดียว (unique index) · ลักษณะ "ราคา" + เลื่อน VAT ต้องมีเหตุผล `KindProblem`) | ที่พักเลือกประเภทต่อที่พัก (`RoomDepositKindId`/`SecurityDepositKindId` — ทีม D) | คู่ค้าอ้างด้วยรหัส `depositKindCode` (integration ใบกำกับ · ไม่รู้จัก/ปิดใช้ = 400) | seed ต่อประเภทธุรกิจ (`DepositKindSeed`: ADVANCE เริ่มต้น + SECURITY · อสังหาฯ + RENT-ADV) · บริษัทเก่าที่ยังไม่มีแถว = seed ตอนเปิดรายการ |
 | สถานะจด VAT (`VatRegistered` — stopgap สองธง) ✅ | — | ✔ (`Company` + `CompanySettings` · `CompanyVatStatus`) | — | — | ตามที่เลือกในวิซาร์ด (แถวค่าตั้งเกิดพร้อมบริษัท) |
 
 ---
@@ -787,6 +788,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
+_สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_
+_หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit <pending>)_
 
 _Last verified against codebase: 2026-09-24 (rev 28 · รอบ 193 — **§3.1c การเข้าถึงด้วย API key**: คีย์ `int_` สิทธิ์แยก อ่าน/เขียน/ลบ + legacy 90 วัน ·_
 _ออก/ผูกผู้ใช้เฉพาะเจ้าของ · `EnableApiAccess` คุมคีย์ `acc_` ที่ออกแล้ว · งานเจ้าของ/ทำลายหลักฐาน/ตั้งนโยบายปฏิเสธ API key (`OwnerActionGuard` ·_

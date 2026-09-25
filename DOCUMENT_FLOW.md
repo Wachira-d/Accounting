@@ -521,7 +521,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     "มีอยู่แล้ว" เงียบ) — ป้าย `IntegrationService.TaxedDrivesVoidFailedMarker` ตัวเดียวทั้งฝั่งเขียน/อ่าน · **idempotency ข้ามใบ Voided (R3-6 · 04ce362)**:
     คิวรีหา `Reference == ExternalRef` กรอง `Status != Voided` **ในคิวรี** + เรียงใหม่สุดก่อน ครบ **6 เมธอด** (ใบกำกับ · ใบลดหนี้ · ใบเพิ่มหนี้ · ค่าใช้จ่าย ·
     ใบสำคัญจ่าย · ใบแทนหนังสือรับรอง — รูปเดิมเหลือ 0 จุด) ⇒ ใบที่ตาข่ายยกเลิกแล้ว + คู่ค้าส่งใหม่ = เจอใบใหม่ ไม่สร้างซ้ำ · มีแต่ใบ Voided = สร้างใหม่ได้ตามเดิม · มัดจำ VAT พัก (`depositOutputVatDeferred`) ผ่านตามเดิม · payload ที่ขัดกับค่าตั้งมัดจำของบริษัท ⇒
-    หมายเหตุภายใน (`DepositPolicyResolver.IntegrationMismatchNote`) ทั้งตอนสร้างและ resync · ⚠️ drives บนใบ**เครดิต** ของ integration
+    หมายเหตุภายใน (`DepositPolicyResolver.IntegrationMismatchNote`) ทั้งตอนสร้างและ resync — **รอบ 194 (ทีม C · spec S5)** คำนวณผ่าน
+    `DepositKindCatalog.Decide` → `ResolveKind` (ประเภทที่คู่ค้าระบุ `depositKindCode` → ประเภทเริ่มต้น → ค่าตั้งบริษัท · ไม่ส่งรหัส = ข้อความเดิมทุกตัวอักษร) ·
+    `DepositKindPayloadRejectionAsync` ตรวจก่อนทุกเส้นของ `ProcessInvoiceAsync`: รหัสที่ไม่รู้จัก/ปิดใช้ ⇒ 400 · เงินประกันที่ต้องคืน
+    (ประเภทที่ระบุ หรือ `DepositNature` ที่ตรึงบนใบมัดจำที่อ้าง) + `depositAppliedDrivesJournal` ⇒ 400 `DEP-SEC-DEDUCT` (ไม่ออกเลข) · ⚠️ drives บนใบ**เครดิต** ของ integration
     ยังลง mapping JE เต็มโดย drives ไม่มีผล (audit-deposit P1-8 — ด่าน `DEPOSIT-DRIVES-UNSUPPORTED` อยู่เฉพาะเส้น Create/Update ของ DocumentService)
   - **ผังบัญชีรายบรรทัดที่ partner ส่งมา (`AccountCode`)**:
     `BuildDocumentLinesAsync` resolve → `DocumentLine.AccountId` และ
@@ -1001,8 +1004,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
       + Cr 21911 VAT (§78/1 รับชำระแล้ว → เข้า ภพ.30 ทันที)
       ต่อมา realize ด้วย `RealizeDepositAsync` ตัด 217xx → 41000
-    - ⚠️ PrePayment ยังฮาร์ดโค้ด VAT ทันที **โดยตั้งใจ** (ไม่อ่าน `DepositPolicyResolver` — เส้นนี้ปิดด้วย Realize ไม่มีใบสุดท้าย ⇒ "เต็มยอด" จะไม่มี VAT เลย) ·
-      ส่วนที่เหลือของบริการไม่ถูกออกเอกสาร (audit-deposit P1-3)
+    - **ประเภทเงินมัดจำ (รอบ 194 ทีม C · spec S4)**: ส่ง `DepositKindId:` = ประเภทเริ่มต้นบริษัท **เฉพาะเมื่อบริษัทตั้งค่ามัดจำเองแล้ว**
+      (`DepositKindCatalog.CompanyConfigured` — ประเภทเริ่มต้นมีโหมดของตัวเอง หรือ `CompanySettings.DepositVatTreatment` ถูกตั้ง) ⇒ บริษัทที่ไม่เคยแตะ
+      ได้ใบเดิมทุกตัวอักษร (VAT ทันที §78/1) · ตั้งแล้ว ⇒ DocumentService จัดรูปใบผ่าน `DepositDocumentShaping` ตัวเดียว
+    - ⚠️ เส้นนี้ปิดด้วย Realize ไม่มีใบสุดท้าย ⇒ **ให้บริการเสร็จ** ตัดสินด้วย `Helpers/CmsBookingCancelPolicy.DecideOnComplete` ก่อนรับรู้:
+      มัดจำ VAT ทันที/VAT รอเรียกเก็บ/บริษัทไม่จด VAT/นอกระบบ VAT ⇒ `RealizeDepositAsync` อัตโนมัติ (ไม่ส่ง `ForfeitAs` — นี่คือ "ใช้บริการแล้ว"
+      ไม่ใช่ริบ) · **มัดจำเต็มยอด (VAT 0) ของบริษัทที่จด VAT ⇒ ไม่รับรู้อัตโนมัติ** (= รายได้ไม่มี VAT ไม่มีใบกำกับเลย) บอกผู้ใช้ให้ออกใบกำกับเต็ม
+      แล้วหักมัดจำ · เงินประกันที่ต้องคืน ⇒ ไม่ใช่รายได้ · ส่วนที่เหลือของบริการไม่ถูกออกเอกสาร (audit-deposit P1-3)
+  - **ยกเลิกการจอง (รอบ 194 · spec S6 C-1)** — `UpdateBookingStatusAsync` บันทึกสถานะการจองก่อน แล้ว `SettleErpDocumentOnCancelAsync` ตัดสินด้วย
+    `CmsBookingCancelPolicy.DecideOnCancel`: **ใบมัดจำที่ออกแล้ว (`DocumentStatusRules.IsIssued`) ไม่ถูกยกเลิก** — คงเป็นหนี้สิน · ประทับ
+    "ยกเลิกการจอง dd/MM/yyyy — รอตัดสินคืน (ใบลดหนี้) หรือริบ ที่ศูนย์มัดจำ" ลง `InternalNotes` ของใบและของการจอง · ผู้ใช้ตัดสินคืน (CN §86/10 ของเดือนที่คืน)
+    หรือริบที่หน้า "เงินมัดจำ" _(เดิม `VoidDocumentAsync` ทั้งใบ = ลบภาษีขายเดือนที่รับเงินย้อนหลังทั้งที่ยังไม่ได้คืนเงิน · ขัด §86/4)_ ·
+    ใบที่ไม่ใช่มัดจำ (ใบกำกับ Guaranteed / ใบเสนอราคา) และใบมัดจำที่ยังไม่ออก ⇒ `VoidDocumentAsync` เหมือนเดิม · **ล้มดัง**: ขั้น ERP ที่ล้ม
+    (void/realize) ⇒ `ChangeTracker.Clear()` กันสภาพครึ่งทางถูกบันทึก · ข้อความ (`CmsBookingCancelPolicy.FailureNote`) ประทับบนการจอง +
+    ตอบผู้กดใน `BookingResponse.ErpNotices` (หน้า `cms-edit.html` แสดงเป็นคำเตือน) — เดิมเป็นแค่ `LogWarning` · `required_call_site_check`
+    ล็อก "ตัดสินก่อน void/realize" และห้ามเมธอดสถานะเรียก void/realize ตรง · ใบมัดจำที่ CMS void ไปแล้วก่อนรอบนี้ (ภาษีขายขาด) ยังไม่มี query
+    ตามเก็บ — รอเจ้าของตัดสิน (L1 §7)
   - **อัตรา VAT ของ booking/lead/commerce** อ่านสถานะจด VAT ผ่าน `CompanyVatStatus` ตัวเดียวกับ §90/2 → `OutputVatRate.ForCompany` (รอบ 193 S-10 —
     เดิม `IsVatRegistered ? 7 : 0` / lead `VatRate: 7m` ⇒ บริษัทไม่จด VAT ได้ใบเสนอราคา VAT 7%) · lead: **บันทึกภายในไม่พิมพ์บนใบเสนอราคาอีก**
     (`Notes: null` + ต่อท้าย `InternalNotes` ของเอกสาร `[จาก lead LD-…]` — เดิม `Notes: lead.InternalNotes` หลุดถึงลูกค้า)

@@ -2324,8 +2324,11 @@
       async updateBookingStatus(id, status) {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.cmsUpdateBookingStatus(this.siteId, id, { status });
-          Layout.toast('อัพเดทสำเร็จ', 'success');
+          const res = await api.cmsUpdateBookingStatus(this.siteId, id, { status });
+          // รอบ 194 (C-1): ขั้น ERP ที่ผู้กดต้องรู้ (ใบมัดจำไม่ถูกยกเลิก · ต้องออกใบกำกับเอง · ขั้นที่ล้ม) — เซิร์ฟเวอร์ส่งข้อความมาเอง
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          else Layout.toast('อัพเดทสำเร็จ', 'success');
           await this.loadBookings();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

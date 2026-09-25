@@ -419,6 +419,8 @@ builder.Services.AddHttpContextAccessor();   // for current-user resolution in s
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+// รอบ 194 ทีม C — ประเภทเงินมัดจำต่อบริษัท (ตั้งค่า → ภาษี · /api/companies/{id}/deposit-kinds)
+builder.Services.AddScoped<IDepositKindService, DepositKindService>();
 
 // Additional modules
 builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();

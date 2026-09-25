@@ -3282,6 +3282,8 @@ public class AccountingDbContext : DbContext
             e.Property(k => k.SeedKey).HasMaxLength(64);
             e.HasIndex(k => new { k.CompanyId, k.SeedKey }).IsUnique().HasFilter("\"SeedKey\" IS NOT NULL").HasDatabaseName("UX_DepositKinds_Company_SeedKey");
             e.HasIndex(k => new { k.CompanyId, k.Code }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_DepositKinds_Company_Code");
+            // รอบ 194 ทีม C — ประเภทเริ่มต้นมีได้ตัวเดียวต่อบริษัท (DepositKindService.SetDefaultAsync ล้างตัวเดิมก่อนตั้งตัวใหม่ในธุรกรรมเดียว)
+            e.HasIndex(k => new { k.CompanyId, k.IsDefault }).IsUnique().HasFilter("\"IsDefault\" = true AND \"IsDeleted\" = false").HasDatabaseName("UX_DepositKinds_Company_Default");
             e.HasQueryFilter(k => !k.IsDeleted);
         });
 
