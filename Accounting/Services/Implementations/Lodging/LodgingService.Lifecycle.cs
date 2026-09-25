@@ -747,13 +747,18 @@ public partial class LodgingService
         if (draftPlan.Reuse is Guid reuseId)
         {
             await _docService.UpdateDocumentAsync(companyId, reuseId, new UpdateDocumentRequest(
-                DocumentDate: create.DocumentDate, DueDate: create.DueDate, ContactId: create.ContactId,
+                DocumentDate: create.DocumentDate,
+                // ฝ่ายค้านรอบสี่ R4-1: null = "คงค่าเดิม" ⇒ เก็บเงินเลยรอบนี้ต้องล้างวันครบกำหนดของรอบก่อน (sentinel MinValue = ล้าง)
+                DueDate: create.DueDate ?? DateTime.MinValue, ContactId: create.ContactId,
                 Reference: create.Reference, Notes: create.Notes, Lines: create.Lines,
                 BankAccountId: create.BankAccountId, PricesIncludeVat: create.PricesIncludeVat, BranchId: create.BranchId,
                 ServiceUsedDate: create.ServiceUsedDate, BookingNumber: create.BookingNumber,
                 // ""/0 = ล้างค่าของรอบก่อน (แผนมัดจำรอบนี้อาจไม่หักแล้ว) — ห้าม null ซึ่งแปลว่า "คงค่าเดิม"
                 DepositAppliedRef: create.DepositAppliedRef ?? "",
-                DepositBaseDeducted: create.DepositBaseDeducted ?? 0m));
+                DepositBaseDeducted: create.DepositBaseDeducted ?? 0m,
+                // R4-1: ใบร่างก่อนรอบ 193 R3-1 เคยเก็บฐานมัดจำไว้ในส่วนลดท้ายบิล — ล้าง ไม่งั้นหักซ้ำกับ DepositBaseDeducted
+                BillDiscountPercent: create.BillDiscountPercent ?? 0m,
+                BillDiscountAmount: create.BillDiscountAmount ?? 0m));
             finalDraftId = reuseId;
         }
         else

@@ -1097,7 +1097,10 @@ public class IntegrationService : IIntegrationService
                     cashSaleNote = " (ใบเดียว: ใบเสร็จรับเงิน/ใบกำกับภาษี · e-Tax T03 · GL ขายเงินสด ไม่มีลูกหนี้)";
                 }
                 catch (Accounting.Helpers.BusinessRuleException exTiv)
-                    when (exTiv.RuleCode == Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode)
+                    when (exTiv.RuleCode == Accounting.Helpers.DepositPolicyResolver.ImmediateVatGrossApplyRuleCode
+                        // ฝ่ายค้านรอบสี่ R4-2: ใบมัดจำถูกล็อกชั่วคราว (มีคนรับรู้/ตัดชำระอยู่) — ห้ามถอยไปตั้งหนี้ถาวร
+                        // (ลูกหนี้เท่ามัดจำ + 217xx ค้าง + ตอบ success) ⇒ ยกเลิกใบ + ตอบล้มให้คู่ค้าส่งใหม่ เส้นเดียวกับด่านมัดจำ
+                        || exTiv.RuleCode == Accounting.Helpers.DepositKindDocumentRules.DepositBusyRuleCode)
                 {
                     // ตาข่าย (ด่านก่อนออกเลขอ่านจากช่องของใบมัดจำ · AutoPost อ่านจาก GL — ถ้าสองชั้นเห็นต่าง): **ห้ามถอยไปตั้งหนี้**
                     // และห้ามปล่อยใบ Approved ที่ไม่มี JE (ภ.พ.30 นับ VAT ทั้งที่ GL ไม่มี · รับชำระได้ · ยิงซ้ำตอบ "Already synced")
