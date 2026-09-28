@@ -1162,16 +1162,35 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + `RefundedAmount/LastRefundedAt/LastRefundJournalEntryId` ในธุรกรรมเดียว (ล็อก `refund:{id}`) → สถานะผ่าน `ApplyChargeAsync` · เงินออกแล้วแต่ลงบัญชีไม่ได้ =
   ประวัติ ⚠️ + สถานะจริง + ข้อความ "ห้ามกดคืนซ้ำ · ลงบัญชีมือ" (ไม่กลืน) · **ไม่ออกใบลดหนี้เอง** (§86/10) — `GET pay/intents` คืน `creditNoteState`/`needsCreditNote`
   (ต้นทาง Document: ใบลดหนี้ที่ออกแล้วอ้างใบนั้นรวม ≥ ยอดคืน · ต้นทางอื่น = `CannotTrace`) + ป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" · สถานะคืนแล้วแต่ยอดคืน = 0 = `refundUntracked` (ตรวจมือ)
+  · ตัวลงบัญชีคืนเงินตัวเดียว `BookRefundAsync` เขียน **ยอดรายครั้ง** `PaymentIntentEvent.RefundAmount` + เวลาเงินออก (ใช้แยกยอดคืนก่อน/หลังวันเงินเข้า)
+  · **ผลไม่แน่ชัด (ฝ่ายค้าน E-2)**: ผู้ให้บริการโยน (หมดเวลา/เครือข่าย/ยกเลิก) ⇒ ประทับ `RefundOutcomeUnknownSince` + เหตุการณ์ ⚠️ (ธุรกรรมเดิมที่ถือล็อก) ⇒
+  `GatewayRefundMath.Check` ปฏิเสธการคืนเพิ่ม · `POST pay/intents/{id}/refund/verify` → `VerifyUnknownRefundAsync`: ยอดคืนสะสมจากผู้ให้บริการ
+  (`ProviderCharge.RefundedTotal`) ผ่าน `GatewayRefundMath.Verify` — เท่าที่บันทึก = ปลดล็อก · มากกว่า = ลงบัญชีส่วนต่าง (เวลาเงินออก = เวลาที่พยายามคืน) + ปลดล็อก ·
+  ไม่ส่ง/ขัดกัน = ล็อกต่อ · รอบโอนที่มีรายการนี้บล็อก `RefundOutcomeUnknown` (ยอดคืนจริงยังไม่รู้) · `GET pay/intents` คืน `refundOutcomeUnknown` (+ข้อความ) ·
+  ป้ายช่องค่าธรรมเนียม `feeInputLabel`
 - **รอบโอน** (`GatewaySettlementService` · พรีวิว `settlements/preview` · บันทึก `settlements`): ผู้เลือกรายการตัวเดียว `SelectCandidatesAsync` (หน้า
   `settlements/pending` ใช้ตัวเดียวกัน) = ยังไม่บันทึกรอบโอน (สำเร็จ · หรือคืนบางส่วน/เต็มที่รู้ยอดคืน) + บันทึกรอบโอนแล้วแต่คืนหลังจากนั้น
-  (`RefundedAmount > RefundSettledAmount`) · สูตร `GatewaySettlementMath.Contribution/Plan`: ยอดล้างบัญชีพัก = `Amount − RefundedAmount` (คืนหลังรอบก่อน = ติดลบ) ·
+  (`RefundedAmount > RefundSettledAmount`) · สูตร `GatewaySettlementMath.Contribution/Plan`: ยอดล้างบัญชีพัก = `Amount − ยอดคืน ณ วันเงินเข้า` (คืนหลังรอบก่อน = ติดลบ) ·
+  **ฝ่ายค้าน R-E2**: ยอดคืน ณ วันเงินเข้า = `GatewaySettlementMath.RefundedAsOf` (จุดตัด `RefundCutoffUtc(SettledAt)` = 00:00 เวลาไทยของวันเงินเข้า · คืนตั้งแต่วันนั้น
+  = รอบถัดไป · ต้องมียอดรายครั้งครบ ไม่งั้นบล็อก `RefundTimingUnknown`) — ใช้ทั้งรายการยังไม่บันทึกรอบและรายการคืนหลังรอบก่อน (เดิมใช้ปลายช่วง ToDate) ·
+  ยอดไม่ตรงในรอบที่มีคืนเงินบอกให้ตรวจ "วันที่เงินเข้าบัญชี" ·
   ค่าธรรมเนียมตาม `GatewayFeeVatMode` (None = ทั้งก้อนค่าใช้จ่าย · IncludedInFee = แยก 7/107 · AddedOnTop = +7%) ⇒ **Dr 11630 ภาษีซื้อรอเครดิต** เฉพาะบริษัทจด VAT
   (`CompanyVatStatus`) · WHT ค่าธรรมเนียมฐาน**ก่อน VAT** × 3/97 แต่ `WhtCertificateRequired` = **บล็อก** (ห้ามลง 21917 ที่ไม่มี 50 ทวิ) · ด่านงวดปิดในพรีวิว +
   JE ผ่าน `JournalEntryBuilder` (RV · Dr=Cr · งวดปิด) · ยอดโอนจริงไม่ตรง = บล็อกพร้อมชี้ปุ่ม "แก้ค่าธรรมเนียม" (`PUT pay/intents/{id}/fee` · เฉพาะรายการยังไม่บันทึกรอบโอน ·
-  บังคับเหตุผล · `AddChainedAuditLog`) · มาร์ก `SettledAmount/SettlementJournalEntryId/RefundSettledAmount`
+  บังคับเหตุผล · `AddChainedAuditLog`) · มาร์ก `SettledAmount/SettlementJournalEntryId` + `RefundSettledAmount = ยอดคืน ณ วันเงินเข้า` (รอบคืนหลังรอบโอน
+  สะสม `RefundDeductedAfterSettlement`) · ปุ่มแก้ค่าธรรมเนียมเติม `FeeInput` + ป้าย `FeeInputLabel` จากเซิร์ฟเวอร์ (R-E4 — ค่าที่ `FeeActual` เก็บตามโหมด ·
+  AddedOnTop = ก่อน VAT) · คำเตือน `FeeVatModeWarning` (R-E6 — บริษัทจด VAT + "ไม่แยก VAT") บนหน้าตั้งค่า/ค้างโอน/พรีวิว (`plan.warning` · ไม่บล็อก)
+- **รับใบกำกับค่าธรรมเนียม (ฝ่ายค้าน R-E3)**: `GET pay/settlements/fee-vat` (ยอด VAT ค่าธรรมเนียมใน 11630 ของผู้ให้บริการ = บรรทัด 11630 ในใบสำคัญรอบโอน −
+  ที่เคลมแล้ว tag `gateway-fee-vat:{provider}` · อายุ FIFO ต่อเดือน `GatewayFeeVatClaim.Aging` · ≥ 5 เดือนเตือน · > 6 เดือน "อาจเลยกำหนด §82/3" — ไม่โอนเป็นค่าใช้จ่ายเอง)
+  · `POST pay/settlements/fee-vat/claim` → `ClaimFeeVatAsync` (ล็อกเดียวกับรอบโอน): `GatewayFeeVatClaim.Check` (VAT > 0 และ ≤ ยอดค้าง · เลขที่ใบ · ชื่อ · เลขผู้เสียภาษี
+  13 หลัก+checksum · สาขา 5 หลัก · วันที่ใบ ≤ วันที่เคลม · §82/3 > 6 เดือนบล็อก · 1–6 เดือนต้องมีเหตุผล) + งวดปิด → **JV Dr 11610 / Cr 11630** (ไม่ลงค่าใช้จ่ายซ้ำ ·
+  Reference = เลขที่ใบกำกับ · คำอธิบาย "ภาษีซื้อ-{ชื่อ} {เลขผู้เสียภาษี} สาขา {รหัส}" ⇒ รายงานภาษีซื้อเส้นใบสำคัญ JE_INPUT นับเป็นเคลมได้) + `AddChainedAuditLog`
+- **กระทบยอด (`GET pay/reconciliation` · ฝ่ายค้าน R-E5)**: `GatewayReconciliation.Compute` ใช้ `Contribution` ตัวเดียวกับรอบโอน (โหมด VAT ของผู้ให้บริการ ·
+  คืนเต็มยังไม่ถึงรอบ = ค้างติดลบเท่าค่าธรรมเนียม · บันทึกรอบแล้ว = `SettledAmount − RefundDeductedAfterSettlement` + ยอดคืนหลังรอบที่ยังไม่ถูกหัก)
 - **สิทธิ์ (G-8)**: `Helpers/PaymentGatewayPermissionScope` — คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` · บันทึกรอบโอน/แก้ค่าธรรมเนียม
   `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง · คืนเงิน/ยืนยันมือ/บันทึกรอบโอน/แก้ค่าธรรมเนียม `[RejectApiKey]`
-- **ยังไม่มี**: 11630 → 11610 เมื่อได้ใบกำกับรายเดือน (มือ) · ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA
+- **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
+  (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
 ### 2.6 POS (Point of Sale)
 - **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:1286`) ·
@@ -3502,7 +3521,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม K3 หลังฝ่ายค้าน `review-r199-ocr.md`: เลขภาษีตัดสินก่อนชื่อ + เส้นสร้างเอกสารไม่สร้างผู้ติดต่อที่เป็นเรา/
+_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม E2 ฝ่ายค้าน settlement: ยอดคืน ณ วันเงินเข้า (R-E2) · รับใบกำกับค่าธรรมเนียม 11630 → 11610 +
+อายุ §82/3 (R-E3) · ค่าตั้งต้นปุ่มแก้ค่าธรรมเนียมจากเซิร์ฟเวอร์ (R-E4) · กระทบยอดสูตรเดียว (R-E5) · เตือนโหมด VAT (R-E6) · คืนเงินผลไม่แน่ชัด (E-2)
+(§2.6b) — commit cbd50b37)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 199 ทีม K3 หลังฝ่ายค้าน `review-r199-ocr.md`: เลขภาษีตัดสินก่อนชื่อ + เส้นสร้างเอกสารไม่สร้างผู้ติดต่อที่เป็นเรา/
 แถวซ้ำ (A-1) · เลข placeholder ไม่ขยายนิติบุคคล (A-2) · คะแนนรายช่องย้ายตามค่าที่สลับฝั่ง (A-3) · หัวพิมพ์ซ้ำตามบทบาทที่ตรึง (C-2 · §ใบกำกับอย่างย่อ) ·
 คำเตือน VAT ตาม VAT ที่จะลงบัญชี + ไม่มีข้อความ = ตรวจไม่ได้ (B-2/B-3) (§1 OCR) — commit <pending>)_
 

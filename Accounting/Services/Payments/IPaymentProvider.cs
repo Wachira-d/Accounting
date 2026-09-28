@@ -53,7 +53,9 @@ public sealed record ProviderCharge(
     DateTime? QrExpiresAt = null,
     string? AuthorizeUrl = null,
     string? FailureCode = null,
-    string? FailureMessage = null);
+    string? FailureMessage = null,
+    // ฝ่ายค้าน E-2: ยอดคืนสะสมตามผู้ให้บริการ — ตัวตัดสินว่า "คืนเงินที่ผลไม่แน่ชัด" เงินออกจริงไหม · null = ผู้ให้บริการไม่ส่ง (ห้ามเดา)
+    decimal? RefundedTotal = null);
 
 public sealed record ProviderRefund(
     string ProviderRefundRef,

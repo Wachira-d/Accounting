@@ -26,19 +26,38 @@ public sealed record SettlementOutcome(
     Guid? JournalEntryId,
     string? JournalEntryNumber);
 
-/// <summary>รายการค้างโอน 1 แถว — ตัวเลขทุกช่องมาจาก <see cref="GatewaySettlementMath.Contribution"/> ตัวเดียวกับแผน JE</summary>
+/// <summary>รายการค้างโอน 1 แถว — ตัวเลขทุกช่องมาจาก <see cref="GatewaySettlementMath.Contribution"/> ตัวเดียวกับแผน JE
+///
+/// <para>ฝ่ายค้าน R-E4: <c>Fee</c> = ยอดที่ผู้ให้บริการหักจริง (โหมด AddedOnTop รวม VAT — ใช้แสดง/รวมยอด) · <c>FeeInput</c> +
+/// <c>FeeInputLabel</c> = ค่าที่ปุ่ม "แก้ค่าธรรมเนียม" เติมและบันทึก<b>ตามความหมายของโหมด</b> (เดิมเติมด้วย <c>Fee</c> แล้วบันทึกเป็นยอดก่อน VAT
+/// ⇒ กดตกลงโดยไม่แก้ = VAT ถูกบวกซ้ำ รอบที่ถูกกลายเป็นยอดไม่ตรง)</para></summary>
 public sealed record PendingSettlementItem(
     Guid Id, string ProviderCode, DateTime? ConfirmedAt, decimal Amount, decimal RefundedAmount,
     decimal Clearing, decimal Fee, decimal FeeVat, bool FeeIsEstimated, decimal Net,
-    bool IsRefundAfterSettlement, string? ProviderRef, string SourceKind, string Status);
+    bool IsRefundAfterSettlement, string? ProviderRef, string SourceKind, string Status,
+    decimal FeeInput, string FeeInputLabel);
 
-/// <summary>ภาพรวมรายการค้างโอนของผู้ให้บริการหนึ่งราย</summary>
+/// <summary>ภาพรวมรายการค้างโอนของผู้ให้บริการหนึ่งราย (<c>FeeVatWarning</c> = ฝ่ายค้าน R-E6 · ข้อความจาก
+/// <see cref="GatewaySettlementMath.FeeVatModeWarning"/> ตัวเดียวกับหน้าตั้งค่าและพรีวิว)</summary>
 public sealed record PendingSettlementView(
     int Count, decimal Gross, decimal Fee, decimal ExpectedNet, bool AnyFeeEstimated,
-    string FeeVatMode, int LegacyRefundedCount, IReadOnlyList<PendingSettlementItem> Items);
+    string FeeVatMode, int LegacyRefundedCount, IReadOnlyList<PendingSettlementItem> Items,
+    string? FeeVatWarning = null);
 
 /// <summary>ผลการแก้ค่าธรรมเนียมจริงรายรายการ (รอบ 198 G-6)</summary>
 public sealed record FeeCorrectionOutcome(bool Ok, string Message, decimal? OldFee, decimal? NewFee);
+
+/// <summary>VAT ค่าธรรมเนียมที่รอใบกำกับของผู้ให้บริการรายหนึ่ง (ฝ่ายค้าน R-E3)</summary>
+public sealed record GatewayFeeVatStatusView(string ProviderCode, bool CompanyVatRegistered, GatewayFeeVatAging Aging);
+
+/// <summary>คำขอ "รับใบกำกับค่าธรรมเนียม" — ย้าย VAT จาก 11630 → 11610 (ไม่ลงค่าใช้จ่ายซ้ำ · ฝ่ายค้าน R-E3)</summary>
+public sealed record GatewayFeeVatClaimRequest(
+    string ProviderCode, string? TaxInvoiceNo, DateTime TaxInvoiceDate, DateTime ClaimDate, decimal VatAmount,
+    string? SupplierName, string? SupplierTaxId, string? SupplierBranchCode, string? LateReason);
+
+/// <summary>ผลการรับใบกำกับค่าธรรมเนียม — <c>OutstandingAfter</c> = VAT ที่ยังค้าง 11630 หลังรายการนี้ (ส่วนต่างที่ต้องตามต่อ)</summary>
+public sealed record GatewayFeeVatClaimOutcome(bool Ok, string Message, Guid? JournalEntryId, string? JournalEntryNumber,
+    decimal OutstandingAfter);
 
 public interface IGatewaySettlementService
 {
@@ -57,6 +76,13 @@ public interface IGatewaySettlementService
     /// <summary>แก้ค่าธรรมเนียมจริงของรายการที่ยังไม่บันทึกรอบโอน — บังคับเหตุผล + audit (hash chain)</summary>
     Task<FeeCorrectionOutcome> CorrectFeeAsync(Guid companyId, Guid intentId, decimal feeActual, string reason,
         string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
+
+    /// <summary>VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ + อายุ (§82/3) — อ่านอย่างเดียว (ฝ่ายค้าน R-E3)</summary>
+    Task<GatewayFeeVatStatusView> FeeVatStatusAsync(Guid companyId, string providerCode, CancellationToken ct = default);
+
+    /// <summary>รับใบกำกับค่าธรรมเนียมของผู้ให้บริการ: JV Dr 11610 / Cr 11630 (ไม่ลงค่าใช้จ่ายซ้ำ) + audit (ฝ่ายค้าน R-E3)</summary>
+    Task<GatewayFeeVatClaimOutcome> ClaimFeeVatAsync(Guid companyId, GatewayFeeVatClaimRequest req, string actor,
+        string? actorEmail, string? ipAddress, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -90,6 +116,8 @@ public class GatewaySettlementService : IGatewaySettlementService
 {
     /// <summary>11630 ภาษีซื้อรอเครดิต — VAT ค่าธรรมเนียมที่ยังไม่มีใบกำกับของผู้ให้บริการ</summary>
     public const string FeeInputVatDeferredCode = "11630";
+    /// <summary>11610 ภาษีซื้อ — ปลายทางเมื่อได้ใบกำกับของผู้ให้บริการ (ฝ่ายค้าน R-E3)</summary>
+    public const string InputVatCode = "11610";
 
     private readonly AccountingDbContext _db;
     private readonly IGatewayAccountResolver _accounts;
@@ -108,17 +136,21 @@ public class GatewaySettlementService : IGatewaySettlementService
             .ToListAsync(ct);
         GatewayFeeVatMode ModeOf(string code)
             => configs.FirstOrDefault(c => c.ProviderCode == code)?.FeeVatMode ?? GatewayFeeVatMode.None;
+        var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
 
-        var (unsettled, refundedAfter) = await SelectCandidatesAsync(companyId, providerCode, null, null, ct);
+        // ไม่มีจุดตัดวันเงินเข้า (ยังไม่รู้ว่าจะบันทึกรอบไหน) ⇒ ยอดคืนสะสมทั้งหมด
+        var candidates = await SelectCandidatesAsync(companyId, providerCode, null, null, null, ct);
         var items = new List<PendingSettlementItem>();
-        foreach (var (intent, input) in unsettled.Select(i => (i, ToInput(i, false)))
-                     .Concat(refundedAfter.Select(i => (i, ToInput(i, true)))))
+        foreach (var cand in candidates)
         {
-            var c = GatewaySettlementMath.Contribution(input, ModeOf(intent.ProviderCode));
+            var intent = cand.Intent;
+            var mode = ModeOf(intent.ProviderCode);
+            var c = GatewaySettlementMath.Contribution(cand.Input, mode);
             items.Add(new PendingSettlementItem(intent.Id, intent.ProviderCode, intent.ConfirmedAt, intent.Amount,
                 intent.RefundedAmount, c.Clearing, c.FeeDeducted, c.FeeVat,
-                !input.AlreadySettled && intent.FeeActual == null,
-                c.Net, input.AlreadySettled, intent.ProviderRef, intent.SourceKind.ToString(), intent.Status.ToString()));
+                !cand.Input.AlreadySettled && intent.FeeActual == null,
+                c.Net, cand.Input.AlreadySettled, intent.ProviderRef, intent.SourceKind.ToString(), intent.Status.ToString(),
+                GatewaySettlementMath.FeeInput(cand.Input), GatewaySettlementMath.FeeInputLabel(mode)));
         }
 
         // คืนเงินก่อนระบบเริ่มบันทึกยอดคืน (สถานะคืนแล้วแต่ยอดคืน = 0) — ไม่รู้ว่าคืนไปเท่าไร ⇒ ไม่นับในรอบโอน
@@ -139,13 +171,14 @@ public class GatewaySettlementService : IGatewaySettlementService
             ordered.Any(i => i.FeeIsEstimated),
             providerCode == null ? "" : ModeOf(providerCode).ToString(),
             legacy,
-            ordered);
+            ordered,
+            providerCode == null ? null : GatewaySettlementMath.FeeVatModeWarning(ModeOf(providerCode), vatRegistered));
     }
 
     public async Task<SettlementOutcome> PreviewAsync(Guid companyId, RecordSettlementRequest req,
         CancellationToken ct = default)
     {
-        var (plan, _, _) = await BuildPlanAsync(companyId, req, ct);
+        var (plan, _) = await BuildPlanAsync(companyId, req, ct);
         return new SettlementOutcome(plan.Ok, plan.Message, plan, null, null);
     }
 
@@ -162,7 +195,7 @@ public class GatewaySettlementService : IGatewaySettlementService
                 new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement,
                     req.ProviderCode) }, ct);
 
-            var (plan, unsettled, refundedAfter) = await BuildPlanAsync(companyId, req, ct);
+            var (plan, candidates) = await BuildPlanAsync(companyId, req, ct);
             if (!plan.Ok)
             {
                 await tx.RollbackAsync(ct);
@@ -208,28 +241,36 @@ public class GatewaySettlementService : IGatewaySettlementService
             }
 
             var feeVatMode = config?.FeeVatMode ?? GatewayFeeVatMode.None;
-            foreach (var intent in unsettled)
+            foreach (var cand in candidates.Where(c => !c.Input.AlreadySettled))
             {
-                // ยอดที่ "โอนเข้าจริง" ของแต่ละรายการ = ยอดหลังคืน หักค่าธรรมเนียม (+VAT ถ้าหักแยก) ของตัวเอง
+                var intent = cand.Intent;
+                // ยอดที่ "โอนเข้าจริง" ของแต่ละรายการ = ยอดหลังคืน (ณ วันเงินเข้า) หักค่าธรรมเนียม (+VAT ถ้าหักแยก) ของตัวเอง
                 // (เก็บรายรายการเพื่อให้รายงานกระทบยอดตรวจย้อนได้ว่ารายการไหนโอนแล้ว)
-                var c = GatewaySettlementMath.Contribution(ToInput(intent, false), feeVatMode);
+                var c = GatewaySettlementMath.Contribution(cand.Input, feeVatMode);
                 var fee = intent.FeeActual ?? intent.FeeEstimated;
                 intent.SettledAmount = c.Net;
                 intent.SettledAt = req.SettledAt;
                 intent.SettlementRef = req.SettlementRef;
                 intent.SettlementJournalEntryId = je.Id;
-                intent.RefundSettledAmount = intent.RefundedAmount;
+                // R-E2: ยอดคืนที่ผู้ให้บริการหักในรอบนี้ = ยอดคืน ณ วันเงินเข้า (ไม่ใช่ยอดสะสมวันนี้) — ส่วนที่คืนตั้งแต่วันเงินเข้า
+                // ยังค้าง (RefundedAmount > RefundSettledAmount) ⇒ รอบถัดไปนับเป็นยอดติดลบ
+                intent.RefundSettledAmount = cand.Input.RefundedAmount;
                 // ค่าธรรมเนียมที่ยังเป็นตัวประมาณ ถูกยืนยันด้วยยอดโอนจริงแล้ว
                 intent.FeeActual ??= fee;
                 intent.UpdatedAt = DateTime.UtcNow;
+                var carried = intent.RefundedAmount - cand.Input.RefundedAmount;
                 AddEvent(companyId, intent,
                     $"บันทึกเงินโอนเข้าธนาคาร {req.SettlementRef} สุทธิ {c.Net:N2} "
-                    + $"(ยอดหลังคืน {c.Clearing:N2} · ค่าธรรมเนียม {c.FeeDeducted:N2}) · JE {je.EntryNumber} โดย {actor}");
+                    + $"(ยอดหลังคืน {c.Clearing:N2} · ค่าธรรมเนียม {c.FeeDeducted:N2}) · JE {je.EntryNumber} โดย {actor}"
+                    + (carried > 0m ? $" · ยอดคืน {carried:N2} ที่ทำตั้งแต่วันเงินเข้า จะถูกหักในรอบโอนถัดไป" : ""));
             }
-            foreach (var intent in refundedAfter)
+            foreach (var cand in candidates.Where(c => c.Input.AlreadySettled))
             {
-                var deducted = intent.RefundedAmount - intent.RefundSettledAmount;
-                intent.RefundSettledAmount = intent.RefundedAmount;
+                var intent = cand.Intent;
+                var deducted = cand.Input.RefundedAmount - intent.RefundSettledAmount;
+                intent.RefundSettledAmount = cand.Input.RefundedAmount;
+                // R-E5: ยอดคืนที่ถูกหักในรอบโอนหลังรอบของรายการ — รายงานกระทบยอดหักจาก SettledAmount
+                intent.RefundDeductedAfterSettlement += deducted;
                 intent.UpdatedAt = DateTime.UtcNow;
                 AddEvent(companyId, intent,
                     $"ยอดคืนเงินหลังรอบโอนก่อน {deducted:N2} ถูกหักในรอบโอน {req.SettlementRef} · JE {je.EntryNumber} โดย {actor}");
@@ -309,10 +350,16 @@ public class GatewaySettlementService : IGatewaySettlementService
             old, fee);
     }
 
+    /// <summary>รายการที่เข้ารอบโอน + input ที่ส่งเข้าสูตร (ยอดคืน ณ จุดตัดแล้ว) — ตัวเดียวของหน้าค้างโอน แผน JE และการมาร์ก</summary>
+    private sealed record SettlementCandidate(PaymentIntent Intent, SettlementIntentInput Input);
+
     /// <summary>เลือกรายการที่เข้าเงื่อนไข — ตัวเดียวของหน้ารายการค้างโอนและแผน JE
-    /// (<paramref name="from"/>/<paramref name="to"/> = null ⇒ ทั้งหมด)</summary>
-    private async Task<(List<PaymentIntent> Unsettled, List<PaymentIntent> RefundedAfter)> SelectCandidatesAsync(
-        Guid companyId, string? providerCode, DateTime? from, DateTime? to, CancellationToken ct)
+    /// (<paramref name="from"/>/<paramref name="to"/> = null ⇒ ทั้งหมด · <paramref name="refundCutoffUtc"/> = null ⇒ ยอดคืนสะสมทั้งหมด)
+    ///
+    /// <para>ฝ่ายค้าน R-E2: ยอดคืนที่ส่งเข้าสูตร = ยอดคืน<b>ณ จุดตัดวันเงินเข้า</b> (<see cref="GatewaySettlementMath.RefundedAsOf"/>) ·
+    /// รายการที่บันทึกรอบโอนแล้วเข้ารอบนี้เฉพาะเมื่อมียอดคืน<b>ก่อน</b>วันเงินเข้าที่ยังไม่ถูกหัก (เดิมใช้ปลายช่วงวันที่รับเงิน ToDate)</para></summary>
+    private async Task<List<SettlementCandidate>> SelectCandidatesAsync(
+        Guid companyId, string? providerCode, DateTime? from, DateTime? to, DateTime? refundCutoffUtc, CancellationToken ct)
     {
         // ยังไม่เคยบันทึกรอบโอน: สำเร็จ · หรือคืนแล้ว (บางส่วน/เต็ม) ที่ระบบรู้ยอดคืน (RefundedAmount > 0)
         // — คืนเต็มนับ 0 แต่ค่าธรรมเนียมยังถูกหักในรอบโอน (G-2 · เดิมกรองแค่ Succeeded ⇒ คืนบางส่วน = บล็อกถาวร)
@@ -330,38 +377,67 @@ public class GatewaySettlementService : IGatewaySettlementService
         if (to is DateTime t) unsettledQ = unsettledQ.Where(i => i.ConfirmedAt < t);
         var unsettled = await unsettledQ.OrderBy(i => i.ConfirmedAt).ToListAsync(ct);
 
-        // บันทึกรอบโอนไปแล้ว แต่คืนเงินภายหลัง — ผู้ให้บริการหักยอดคืนจากรอบโอนถัดไป
-        var afterQ = _db.PaymentIntents
+        // บันทึกรอบโอนไปแล้ว แต่คืนเงินภายหลัง — ผู้ให้บริการหักยอดคืนจากรอบโอนถัดไป (กรองตามจุดตัดข้างล่าง)
+        var refundedAfter = await _db.PaymentIntents
             .Where(i => i.CompanyId == companyId
                 && (providerCode == null || i.ProviderCode == providerCode)
                 && i.SettlementJournalEntryId != null
-                && i.RefundedAmount > i.RefundSettledAmount);
-        if (to is DateTime t2) afterQ = afterQ.Where(i => i.LastRefundedAt == null || i.LastRefundedAt < t2);
-        var refundedAfter = await afterQ.OrderBy(i => i.LastRefundedAt).ToListAsync(ct);
+                // E-2: คืนเงินผลไม่แน่ชัดหลังรอบโอน — ยอดคืนจริงยังไม่รู้ ⇒ ต้องเข้ามาให้แผนบล็อกพร้อมสาเหตุ (ไม่ใช่ "ยอดไม่ตรง")
+                && (i.RefundedAmount > i.RefundSettledAmount || i.RefundOutcomeUnknownSince != null))
+            .OrderBy(i => i.LastRefundedAt)
+            .ToListAsync(ct);
 
-        return (unsettled, refundedAfter);
+        // ยอดคืนรายครั้ง — ต้องใช้เฉพาะรายการที่คืนครั้งล่าสุดตั้งแต่จุดตัด (ก่อนจุดตัดทั้งหมด = ยอดสะสม ไม่ต้องแยก)
+        var needTimeline = refundCutoffUtc is DateTime cut
+            ? unsettled.Concat(refundedAfter)
+                .Where(i => i.RefundedAmount > 0m && (i.LastRefundedAt == null || i.LastRefundedAt >= cut))
+                .Select(i => i.Id).Distinct().ToList()
+            : new List<Guid>();
+        var timeline = new Dictionary<Guid, List<GatewayRefundEntry>>();
+        if (needTimeline.Count > 0)
+        {
+            var events = await _db.PaymentIntentEvents.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && needTimeline.Contains(e.IntentId) && e.RefundAmount != null)
+                .Select(e => new { e.IntentId, e.At, Amount = e.RefundAmount!.Value })
+                .ToListAsync(ct);
+            timeline = events.GroupBy(e => e.IntentId)
+                .ToDictionary(g => g.Key, g => g.Select(e => new GatewayRefundEntry(e.At, e.Amount)).ToList());
+        }
+
+        SettlementCandidate Make(PaymentIntent i, bool alreadySettled)
+        {
+            var asOf = GatewaySettlementMath.RefundedAsOf(i.RefundedAmount, i.LastRefundedAt,
+                timeline.TryGetValue(i.Id, out var list) ? list : new List<GatewayRefundEntry>(), refundCutoffUtc);
+            return new SettlementCandidate(i, new SettlementIntentInput(i.Id, i.Amount, i.FeeActual, i.FeeEstimated,
+                asOf.Amount, alreadySettled, i.RefundSettledAmount, RefundTimingUnknown: !asOf.Known,
+                RefundOutcomeUnknown: i.RefundOutcomeUnknownSince != null));
+        }
+
+        var result = unsettled.Select(i => Make(i, false)).ToList();
+        // บันทึกแล้ว: เข้ารอบนี้เฉพาะยอดคืนก่อนวันเงินเข้าที่ยังไม่ถูกหัก · แยกไม่ได้ = เข้าไปให้แผนบล็อก (ไม่ทิ้งเงียบ)
+        result.AddRange(refundedAfter.Select(i => Make(i, true))
+            .Where(c => c.Input.RefundTimingUnknown || c.Input.RefundOutcomeUnknown
+                || c.Input.RefundedAmount > c.Intent.RefundSettledAmount));
+        return result;
     }
 
-    private static SettlementIntentInput ToInput(PaymentIntent i, bool alreadySettled)
-        => new(i.Id, i.Amount, i.FeeActual, i.FeeEstimated, i.RefundedAmount, alreadySettled, i.RefundSettledAmount);
-
     /// <summary>เลือกรายการที่เข้าเงื่อนไข แล้วให้ <see cref="GatewaySettlementMath"/> ตัดสิน + ด่านงวดปิด (G-5)</summary>
-    private async Task<(SettlementPlan Plan, List<PaymentIntent> Unsettled, List<PaymentIntent> RefundedAfter)> BuildPlanAsync(
+    private async Task<(SettlementPlan Plan, List<SettlementCandidate> Candidates)> BuildPlanAsync(
         Guid companyId, RecordSettlementRequest req, CancellationToken ct)
     {
         var from = ThaiDate.CalendarDateUtc(req.FromDate);
         var to = ThaiDate.CalendarDateUtc(req.ToDate).AddDays(1);   // ปลายช่วงแบบ exclusive
 
-        var (unsettled, refundedAfter) = await SelectCandidatesAsync(companyId, req.ProviderCode, from, to, ct);
+        // R-E2: ยอดคืนนับ ณ วันเงินเข้า (คืนตั้งแต่วันนั้น = รอบถัดไป) — ไม่ใช่ยอดสะสมวันที่กดบันทึก
+        var candidates = await SelectCandidatesAsync(companyId, req.ProviderCode, from, to,
+            GatewaySettlementMath.RefundCutoffUtc(req.SettledAt), ct);
 
         var config = await _db.PaymentProviderConfigs.AsNoTracking()
             .FirstOrDefaultAsync(c => c.CompanyId == companyId
                 && c.ProviderCode == req.ProviderCode && !c.IsDeleted, ct);
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
 
-        var inputs = unsettled.Select(i => ToInput(i, false))
-            .Concat(refundedAfter.Select(i => ToInput(i, true)))
-            .ToList();
+        var inputs = candidates.Select(c => c.Input).ToList();
         var plan = GatewaySettlementMath.Plan(
             inputs,
             req.ActualNetReceived,
@@ -379,7 +455,7 @@ public class GatewaySettlementService : IGatewaySettlementService
                 plan = GatewaySettlementMath.Block(plan, SettlementBlockReason.PeriodClosed, closed);
         }
 
-        return (plan, unsettled, refundedAfter);
+        return (plan, candidates);
     }
 
     private sealed record AccountResolution(
@@ -444,6 +520,154 @@ public class GatewaySettlementService : IGatewaySettlementService
         }
 
         return new AccountResolution(map, null);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักไว้ใน 11630 → 11610 เมื่อได้ใบกำกับของผู้ให้บริการ + อายุ §82/3
+    //  (กติกา/ข้อความอยู่ใน Helpers/GatewayFeeVatClaim ตัวเดียว — ที่นี่หาข้อมูลให้แล้วลงมือตามผล)
+    // ══════════════════════════════════════════════════════════════════
+
+    public async Task<GatewayFeeVatStatusView> FeeVatStatusAsync(Guid companyId, string providerCode,
+        CancellationToken ct = default)
+        => new(providerCode, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct),
+            await LoadFeeVatAgingAsync(companyId, providerCode, ct));
+
+    /// <summary>ยอด VAT ค่าธรรมเนียมใน 11630 ของผู้ให้บริการ: เดบิตสุทธิของบรรทัด 11630 ใน<b>ใบสำคัญรอบโอน</b>ของผู้ให้บริการนี้
+    /// (ไม่ใช่ยอดคงเหลือ 11630 ทั้งบัญชี — ผังเดียวกันถูกใช้พัก VAT เรื่องอื่นด้วย) ลบเครดิต 11630 ในใบสำคัญ "รับใบกำกับค่าธรรมเนียม"
+    /// (tag <see cref="GatewayFeeVatClaim.ClaimTag"/>) · ใบสำคัญที่ถูกกลับรายการไม่นับ</summary>
+    private async Task<GatewayFeeVatAging> LoadFeeVatAgingAsync(Guid companyId, string providerCode, CancellationToken ct)
+    {
+        var vatAcc = await FindByCodeAsync(companyId, FeeInputVatDeferredCode, ct);
+        if (vatAcc == null)
+            return GatewayFeeVatClaim.Aging(Array.Empty<GatewayFeeVatMonth>(), 0m, DateTime.UtcNow);
+
+        var settlementJeIds = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode && i.SettlementJournalEntryId != null)
+            .Select(i => i.SettlementJournalEntryId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var deferredLines = settlementJeIds.Count == 0
+            ? new List<GatewayFeeVatMonth>()
+            : (await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.AccountId == vatAcc.Id && settlementJeIds.Contains(l.JournalEntryId)
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null)
+                .Select(l => new { l.JournalEntry.EntryDate, Net = l.DebitAmount - l.CreditAmount })
+                .ToListAsync(ct))
+                .Select(x => new GatewayFeeVatMonth(new DateTime(x.EntryDate.Year, x.EntryDate.Month, 1, 0, 0, 0, DateTimeKind.Utc), x.Net))
+                .ToList();
+
+        var tag = GatewayFeeVatClaim.ClaimTag(providerCode);
+        var claimed = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.AccountId == vatAcc.Id
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.ReversedByEntryId == null
+                && l.JournalEntry.Tags == tag)
+            .SumAsync(l => l.CreditAmount - l.DebitAmount, ct);
+
+        return GatewayFeeVatClaim.Aging(deferredLines, claimed, DateTime.UtcNow);
+    }
+
+    public async Task<GatewayFeeVatClaimOutcome> ClaimFeeVatAsync(Guid companyId, GatewayFeeVatClaimRequest req,
+        string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(req.ProviderCode))
+            return new GatewayFeeVatClaimOutcome(false, "กรุณาเลือกผู้ให้บริการ", null, null, 0m);
+        if (!await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct))
+            return new GatewayFeeVatClaimOutcome(false,
+                "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (VAT ของค่าธรรมเนียมเป็นต้นทุนรวมในค่าธรรมเนียมอยู่แล้ว)", null, null, 0m);
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // ล็อกเดียวกับบันทึกรอบโอนของผู้ให้บริการนี้ — กันเคลมซ้อนกันสองคนจนยอดที่เคลมเกินยอดพัก
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, req.ProviderCode) }, ct);
+
+            var aging = await LoadFeeVatAgingAsync(companyId, req.ProviderCode, ct);
+            var check = GatewayFeeVatClaim.Check(req.VatAmount, aging.Outstanding, req.TaxInvoiceNo, req.TaxInvoiceDate,
+                req.ClaimDate, req.SupplierName, req.SupplierTaxId, req.SupplierBranchCode, req.LateReason);
+            if (!check.Ok)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatClaimOutcome(false, check.Message ?? "บันทึกไม่ได้", null, null, aging.Outstanding);
+            }
+
+            var entryDate = ThaiDate.CalendarDateUtc(req.ClaimDate);
+            var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct);
+            if (closed != null)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatClaimOutcome(false, closed, null, null, aging.Outstanding);
+            }
+
+            var inputVat = await FindByCodeAsync(companyId, InputVatCode, ct);
+            var deferred = await FindByCodeAsync(companyId, FeeInputVatDeferredCode, ct);
+            if (inputVat == null || deferred == null)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatClaimOutcome(false,
+                    $"ไม่พบผังบัญชี {(inputVat == null ? "11610 ภาษีซื้อ" : "11630 ภาษีซื้อรอเครดิต")} — เพิ่มในผังบัญชีก่อน",
+                    null, null, aging.Outstanding);
+            }
+
+            var taxId = ThaiTaxId.Normalize(req.SupplierTaxId);
+            var invoiceNo = req.TaxInvoiceNo!.Trim();
+            var invoiceDate = ThaiDate.CalendarDateUtc(req.TaxInvoiceDate);
+            // คำอธิบายรูปนี้ตั้งใจ: รายงานภาษีซื้อเส้นใบสำคัญ (TaxService · JE_INPUT) อ่านชื่อผู้ขายจากคำอธิบาย (ตัดคำนำ "ภาษีซื้อ-")
+            // และเลขผู้เสียภาษี 13 หลักตัวแรกที่พบ — ไม่มีเลข = เคลมไม่ได้ (§82/5(1)) · เลขที่ใบกำกับอยู่ที่ Reference
+            var je = await JournalEntryBuilder.For(_db, companyId, entryDate)
+                .Type(JournalType.General)
+                .Description($"ภาษีซื้อ-{req.SupplierName!.Trim()} {taxId} สาขา {check.BranchCode}")
+                .Reference(invoiceNo)
+                .CreatedBy(actor)
+                .Debit(inputVat.Id, check.Vat,
+                    $"ภาษีซื้อตามใบกำกับค่าธรรมเนียมรับชำระเงิน ({req.ProviderCode}) เลขที่ {invoiceNo} ลว. {invoiceDate:dd/MM/yyyy}")
+                .Credit(deferred.Id, check.Vat,
+                    $"ล้างภาษีซื้อรอเครดิต — VAT ค่าธรรมเนียมที่พักไว้ตอนบันทึกรอบโอน ({req.ProviderCode})")
+                .PostAsync(actor, ct);
+            je.Tags = GatewayFeeVatClaim.ClaimTag(req.ProviderCode);
+            je.Note = check.IsLate
+                ? $"เคลมช้ากว่าเดือนของใบกำกับ (§82/3 ยังอยู่ในกำหนด) — เหตุผล: {req.LateReason!.Trim()}"
+                : null;
+
+            // ภาษีซื้อเข้า ภ.พ.30 ⇒ ต้องอยู่ใน hash chain (ใคร · ใบไหน · เท่าไร)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                EntityType = nameof(JournalEntry),
+                EntityId = je.Id.ToString(),
+                Action = AuditAction.Create,
+                UserEmail = actorEmail,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "gateway-fee-vat-claim",
+                    provider = req.ProviderCode,
+                    taxInvoiceNo = invoiceNo,
+                    taxInvoiceDate = invoiceDate,
+                    supplierTaxId = taxId,
+                    branch = check.BranchCode,
+                    vat = check.Vat,
+                    outstandingBefore = aging.Outstanding,
+                    lateReason = req.LateReason,
+                    actor,
+                }),
+                IpAddress = ipAddress,
+                Timestamp = DateTime.UtcNow,
+            });
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return new GatewayFeeVatClaimOutcome(true,
+                $"ย้าย VAT ค่าธรรมเนียม {check.Vat:N2} จาก 11630 เข้า 11610 แล้ว — ใบสำคัญ {je.EntryNumber} "
+                + $"(เข้า ภ.พ.30 เดือน {entryDate:MM/yyyy}) · VAT ที่ยังค้าง 11630 {check.OutstandingAfter:N2}"
+                + (check.OutstandingAfter > 0m ? " (ส่วนต่างรอใบกำกับฉบับถัดไป)" : ""),
+                je.Id, je.EntryNumber, check.OutstandingAfter);
+        });
     }
 
     private void AddEvent(Guid companyId, PaymentIntent intent, string note)

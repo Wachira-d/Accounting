@@ -33,6 +33,11 @@ public interface IGatewayRefundService
     /// <summary>สถานะใบลดหนี้ของรายการที่คืนเงินแล้ว — ตัวเดียวที่หน้ารายการใช้ติดป้าย</summary>
     Task<IReadOnlyDictionary<Guid, GatewayRefundCreditNoteView>> CreditNoteStatesAsync(Guid companyId,
         IReadOnlyCollection<Guid> intentIds, CancellationToken ct = default);
+
+    /// <summary>ตรวจผลการคืนเงินที่ "ผลไม่แน่ชัด" กับยอดคืนสะสมของผู้ให้บริการ (ฝ่ายค้าน E-2) — ไม่ได้เกิด ⇒ ปลดล็อก ·
+    /// เกิดแล้ว ⇒ ลงบัญชีส่วนต่าง (เส้นเดียวกับคืนเงินปกติ) + ปลดล็อก · ไม่รู้/ขัดกัน ⇒ ล็อกต่อ</summary>
+    Task<GatewayRefundOutcome> VerifyUnknownRefundAsync(Guid companyId, Guid intentId, string actor,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -46,6 +51,11 @@ public interface IGatewayRefundService
 /// เพราะเงินที่คืนไปแล้วเรียกกลับไม่ได้ · ล็อกต่อรายการตลอดเส้น (กันสองคนกดคืนพร้อมกันแล้วรวมเกินยอด) ·
 /// ถ้าผู้ให้บริการคืนสำเร็จแต่ลงบัญชีไม่สำเร็จ = <b>ล้มดัง</b> (ประวัติรายการ + สถานะจริง + ข้อความถึงผู้ใช้)
 /// ห้ามกลืน — เงินออกไปแล้วจริง</para>
+///
+/// <para>═══ ผลไม่แน่ชัด (ฝ่ายค้าน E-2) ═══ ผู้ให้บริการ<b>โยน</b> (หมดเวลา/เครือข่ายหลุด/ผู้ใช้ยกเลิกคำขอ) = ไม่รู้ว่าเงินออกหรือยัง ·
+/// เดิม tx rollback เงียบแล้วกดใหม่ได้ ⇒ คืนซ้ำ · ตอนนี้: บันทึกเหตุการณ์ "⚠️ ผลไม่แน่ชัด" + ประทับ
+/// <c>PaymentIntent.RefundOutcomeUnknownSince</c> ⇒ <see cref="GatewayRefundMath.Check"/> ปฏิเสธการคืนเพิ่มจนกว่าจะ
+/// <see cref="VerifyUnknownRefundAsync"/> (อ่านยอดคืนสะสมจากผู้ให้บริการ — <b>ไม่ประทับผลเอง</b>)</para>
 /// </summary>
 public class GatewayRefundService : IGatewayRefundService
 {
@@ -114,7 +124,8 @@ public class GatewayRefundService : IGatewayRefundService
         if (intent == null) return new RefundStep(Fail("ไม่พบรายการชำระเงิน"), null, null);
 
         var refundedBefore = intent.RefundedAmount;
-        var check = GatewayRefundMath.Check(intent.Status, intent.Amount, refundedBefore, amount);
+        var check = GatewayRefundMath.Check(intent.Status, intent.Amount, refundedBefore, amount,
+            intent.RefundOutcomeUnknownSince != null);
         if (!check.Ok) return new RefundStep(Fail(check.Message ?? "คืนเงินไม่ได้"), null, null);
 
         var provider = _providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
@@ -145,8 +156,27 @@ public class GatewayRefundService : IGatewayRefundService
             : null;
 
         // ── เงินออกจริง ──
-        var result = await provider.RefundAsync(intent, check.Amount, reason.Trim(),
-            config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+        ProviderRefund result;
+        var attemptAt = DateTime.UtcNow;
+        try
+        {
+            result = await provider.RefundAsync(intent, check.Amount, reason.Trim(),
+                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+        }
+        catch (Exception ex)
+        {
+            // E-2: ผู้ให้บริการไม่ตอบ/หมดเวลา/คำขอถูกยกเลิก = ไม่รู้ว่าเงินออกหรือยัง — ห้าม rollback เงียบ (กดใหม่ = คืนซ้ำได้) ·
+            // ประทับ "ผลไม่แน่ชัด" + เหตุการณ์ใน**ธุรกรรมเดิมที่ยังถือล็อก** (ก่อนหน้านี้ยังไม่มีอะไรถูกเขียน) แล้ว commit ⇒
+            // คำขอคืนครั้งถัดไปที่รอล็อกอยู่เห็นธงทันที · งานเขียนใช้ CancellationToken.None (ผู้ใช้ปิดหน้าไม่ทำให้ธงหาย)
+            _logger.LogError(ex, "คืนเงินผ่านผู้ให้บริการผลไม่แน่ชัด — intent {Intent} ยอด {Amount:N2}", intentId, check.Amount);
+            MarkOutcomeUnknown(companyId, intent, attemptAt, check.Amount, actor, reason.Trim(), ex.Message);
+            await _db.SaveChangesAsync(CancellationToken.None);
+            await tx.CommitAsync(CancellationToken.None);
+            return new RefundStep(Fail(
+                $"ผู้ให้บริการไม่ตอบผลการคืนเงิน {check.Amount:N2} บาท ({ex.Message}) — ผลไม่แน่ชัด: เงินอาจออกไปแล้ว · "
+                + "ห้ามกดคืนซ้ำ · ระบบล็อกการคืนเงินของรายการนี้ไว้ — กด \"ตรวจผลการคืนเงิน\" ที่หน้ารายการรับชำระออนไลน์ "
+                + "(ระบบจะถามยอดคืนสะสมจากผู้ให้บริการ แล้วลงบัญชี/ปลดล็อกให้ตามผลจริง)"), null, null);
+        }
         if (!result.Succeeded)
             return new RefundStep(Fail(result.FailureMessage ?? "ผู้ให้บริการปฏิเสธการคืนเงิน"), null, null);
 
@@ -154,31 +184,8 @@ public class GatewayRefundService : IGatewayRefundService
         var fromStatus = intent.Status;
         try
         {
-            var je = await JournalEntryBuilder.For(_db, companyId, entryDate)
-                .Type(JournalType.CashPayments)
-                .NumberPrefix("PV")
-                .Description($"คืนเงินลูกค้าผ่านผู้ให้บริการรับชำระเงิน ({intent.ProviderCode}) {result.ProviderRefundRef}")
-                .Reference(result.ProviderRefundRef)
-                .CreatedBy(actor)
-                .Debit(ar.Id, check.Amount, $"ตั้งลูกหนี้รอใบลดหนี้ — คืนเงิน {intent.SourceKind} ({reason.Trim()})")
-                .Credit(clearing, check.Amount, $"คืนเงินจากยอดที่ผู้ให้บริการถือไว้ {result.ProviderRefundRef}")
-                .PostAsync(actor, ct);
-
-            intent.RefundedAmount = check.NewRefundedTotal;
-            intent.LastRefundedAt = DateTime.UtcNow;
-            intent.LastRefundJournalEntryId = je.Id;
-            intent.UpdatedAt = DateTime.UtcNow;
-            _db.PaymentIntentEvents.Add(new PaymentIntentEvent
-            {
-                CompanyId = companyId,
-                IntentId = intent.Id,
-                At = DateTime.UtcNow,
-                Source = PaymentEventSource.Manual,
-                FromStatus = fromStatus,
-                ToStatus = newStatus,
-                Note = $"คืนเงิน {check.Amount:N2} (สะสม {check.NewRefundedTotal:N2}) · อ้างอิง {result.ProviderRefundRef} · "
-                     + $"JE {je.EntryNumber} โดย {actor} · {reason.Trim()}",
-            });
+            var je = await BookRefundAsync(companyId, intent, ar.Id, clearing, entryDate, check.Amount, check.NewRefundedTotal,
+                result.ProviderRefundRef, reason.Trim(), actor, fromStatus, newStatus, DateTime.UtcNow, ct);
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
 
@@ -218,6 +225,158 @@ public class GatewayRefundService : IGatewayRefundService
                     null, null, "", NextStepText),
                 newStatus, result.ProviderRefundRef);
         }
+    }
+
+    /// <summary>ลงบัญชีคืนเงิน 1 ก้อน + ยอดคืนสะสม + เหตุการณ์ที่มียอดรายครั้ง — <b>ตัวเดียว</b>ของคืนเงินปกติและการตรวจผลที่ไม่แน่ชัด
+    /// (ไม่ SaveChanges — ผู้เรียกบันทึกในธุรกรรมของตัวเอง)
+    ///
+    /// <para><paramref name="refundAtUtc"/> = เวลาที่เงินออกจริง (ตรวจผลทีหลัง = เวลาที่พยายามคืน ไม่ใช่เวลาที่กดตรวจ) —
+    /// แผนรอบโอนใช้เวลานี้แยกยอดคืนก่อน/หลังวันเงินเข้า (R-E2)</para></summary>
+    private async Task<JournalEntry> BookRefundAsync(Guid companyId, PaymentIntent intent, Guid arAccountId, Guid clearingAccountId,
+        DateTime entryDate, decimal amount, decimal newRefundedTotal, string refundRef, string reason, string actor,
+        PaymentIntentStatus fromStatus, PaymentIntentStatus newStatus, DateTime refundAtUtc, CancellationToken ct)
+    {
+        var je = await JournalEntryBuilder.For(_db, companyId, entryDate)
+            .Type(JournalType.CashPayments)
+            .NumberPrefix("PV")
+            .Description($"คืนเงินลูกค้าผ่านผู้ให้บริการรับชำระเงิน ({intent.ProviderCode}) {refundRef}")
+            .Reference(refundRef)
+            .CreatedBy(actor)
+            .Debit(arAccountId, amount, $"ตั้งลูกหนี้รอใบลดหนี้ — คืนเงิน {intent.SourceKind} ({reason})")
+            .Credit(clearingAccountId, amount, $"คืนเงินจากยอดที่ผู้ให้บริการถือไว้ {refundRef}")
+            .PostAsync(actor, ct);
+
+        intent.RefundedAmount = newRefundedTotal;
+        intent.LastRefundedAt = refundAtUtc;
+        intent.LastRefundJournalEntryId = je.Id;
+        intent.UpdatedAt = DateTime.UtcNow;
+        _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+        {
+            CompanyId = companyId,
+            IntentId = intent.Id,
+            At = refundAtUtc,
+            Source = PaymentEventSource.Manual,
+            FromStatus = fromStatus,
+            ToStatus = newStatus,
+            // ยอดรายครั้ง — ผลรวมต่อรายการต้องเท่ายอดคืนสะสม (GatewaySettlementMath.RefundedAsOf ใช้แยกก่อน/หลังวันเงินเข้า)
+            RefundAmount = amount,
+            Note = $"คืนเงิน {amount:N2} (สะสม {newRefundedTotal:N2}) · อ้างอิง {refundRef} · "
+                 + $"JE {je.EntryNumber} โดย {actor} · {reason}",
+        });
+        return je;
+    }
+
+    /// <summary>E-2: ประทับ "ผลไม่แน่ชัด" + เหตุการณ์ ⚠️ บนแถวที่ถือล็อกอยู่ (ไม่ SaveChanges — ผู้เรียกบันทึก)</summary>
+    private void MarkOutcomeUnknown(Guid companyId, PaymentIntent intent, DateTime attemptAtUtc, decimal amount,
+        string actor, string reason, string error)
+    {
+        intent.RefundOutcomeUnknownSince ??= attemptAtUtc;
+        intent.UpdatedAt = DateTime.UtcNow;
+        _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+        {
+            CompanyId = companyId,
+            IntentId = intent.Id,
+            At = DateTime.UtcNow,
+            Source = PaymentEventSource.System,
+            FromStatus = intent.Status,
+            ToStatus = intent.Status,
+            Note = $"⚠️ คืนเงิน {amount:N2} ผลไม่แน่ชัด — ผู้ให้บริการไม่ตอบ ({error}) · เงินอาจออกไปแล้ว · ล็อกการคืนเงินผ่านระบบ "
+                 + $"จนกว่าจะตรวจผลกับผู้ให้บริการ · สั่งโดย {actor} · {reason}",
+        });
+    }
+
+    public async Task<GatewayRefundOutcome> VerifyUnknownRefundAsync(Guid companyId, Guid intentId, string actor,
+        CancellationToken ct = default)
+    {
+        var (outcome, statusToApply) = await VerifyCoreAsync(companyId, intentId, actor, ct);
+        // สถานะเดินผ่านเครื่องสถานะตัวเดียว (หลัง commit) — เฉพาะเมื่อผู้ให้บริการยืนยันว่าเงินออกจริง
+        if (statusToApply is PaymentIntentStatus st)
+        {
+            var intentNow = await _intents.FindAsync(companyId, intentId, CancellationToken.None);
+            if (intentNow != null)
+                await _intents.ApplyChargeAsync(intentId,
+                    new ProviderCharge(intentNow.ProviderRef ?? string.Empty, st, "refunded", intentNow.Amount),
+                    PaymentEventSource.Poll, $"verify:{actor} · ตรวจผลการคืนเงินที่ไม่แน่ชัด", CancellationToken.None);
+        }
+        return outcome;
+    }
+
+    /// <summary>เส้นธุรกรรมของการตรวจผล — ล็อกเดียวกับการคืนเงิน · ถามยอดคืนสะสมจากผู้ให้บริการ · ตัดสินด้วย
+    /// <see cref="GatewayRefundMath.Verify"/> ตัวเดียว · ปลดล็อกเฉพาะเมื่อรู้แน่ (ไม่ประทับผลเอง)</summary>
+    private async Task<(GatewayRefundOutcome Outcome, PaymentIntentStatus? StatusToApply)> VerifyCoreAsync(
+        Guid companyId, Guid intentId, string actor, CancellationToken ct)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.PaymentIntent,
+                $"refund:{intentId:N}") }, ct);
+
+        var intent = await _db.PaymentIntents
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (intent == null) return (Fail("ไม่พบรายการชำระเงิน"), null);
+        if (intent.RefundOutcomeUnknownSince is not DateTime attemptAt)
+            return (Fail("รายการนี้ไม่มีการคืนเงินที่ผลไม่แน่ชัด — ไม่ต้องตรวจ"), null);
+
+        var provider = _providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
+        if (provider == null) return (Fail($"ไม่รู้จักช่องทางชำระเงิน \"{intent.ProviderCode}\""), null);
+        var config = intent.ProviderConfigId is Guid cid
+            ? await _db.PaymentProviderConfigs.FirstOrDefaultAsync(c => c.Id == cid && c.CompanyId == companyId, ct)
+            : null;
+
+        ProviderCharge charge;
+        try
+        {
+            charge = await provider.GetChargeAsync(intent,
+                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+        }
+        catch (Exception ex)
+        {
+            // ถามไม่สำเร็จ = ยังไม่รู้ ⇒ ไม่แตะอะไร (ล็อกคงอยู่) · บอกผู้ใช้ตรง ๆ
+            _logger.LogWarning(ex, "ตรวจผลการคืนเงินไม่สำเร็จ — intent {Intent}", intentId);
+            return (Fail($"ถามผู้ให้บริการไม่สำเร็จ ({ex.Message}) — ยังล็อกการคืนเงินไว้ ลองตรวจอีกครั้งภายหลัง"), null);
+        }
+
+        var v = GatewayRefundMath.Verify(intent.RefundedAmount, charge.RefundedTotal, intent.Amount);
+        if (v.Outcome != GatewayRefundVerificationOutcome.MoneyWentOut)
+        {
+            if (v.Resolves) intent.RefundOutcomeUnknownSince = null;   // NoMoneyOut — ผู้ให้บริการยืนยันว่าไม่มีเงินออก
+            intent.UpdatedAt = DateTime.UtcNow;
+            _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+            {
+                CompanyId = companyId, IntentId = intent.Id, At = DateTime.UtcNow, Source = PaymentEventSource.Poll,
+                FromStatus = intent.Status, ToStatus = intent.Status,
+                Note = $"ตรวจผลการคืนเงินที่ไม่แน่ชัด โดย {actor}: {v.Message}",
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return (v.Resolves
+                ? new GatewayRefundOutcome(true, v.Message, null, 0m, false, intent.RefundedAmount, null, null, "", null)
+                : Fail(v.Message), null);
+        }
+
+        // เงินออกไปแล้วจริง — ลงบัญชีส่วนต่างด้วยเส้นเดียวกับคืนเงินปกติ (ผัง/งวดต้องพร้อม ไม่งั้นล็อกคงอยู่ + บอกทางไปต่อ)
+        var clearingId = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        var ar = await TradeReceivableAccount.ResolveAsync(_db, companyId, await ContactArPinAsync(companyId, intent, ct), ct);
+        var entryDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct);
+        if (clearingId is not Guid clearing || ar == null || closed != null)
+            return (Fail($"ผู้ให้บริการคืนเงินไปแล้วจริง {v.AmountToBook:N2} บาท แต่ยังลงบัญชีไม่ได้: "
+                + (closed ?? (clearingId == null
+                    ? "ไม่พบบัญชีพักของผู้ให้บริการ (แนะนำ 11340)"
+                    : $"ไม่พบผังลูกหนี้ {TradeReceivableAccount.StandardCode}"))
+                + " — แก้แล้วกดตรวจอีกครั้ง (ยังล็อกการคืนเงินไว้)"), null);
+
+        var newTotal = intent.RefundedAmount + v.AmountToBook;
+        var isFull = newTotal >= intent.Amount - GatewayRefundMath.Tolerance;
+        var newStatus = isFull ? PaymentIntentStatus.Refunded : PaymentIntentStatus.PartiallyRefunded;
+        var refundRef = $"VERIFY-{intentId:N}"[..15];
+        var je = await BookRefundAsync(companyId, intent, ar.Id, clearing, entryDate, v.AmountToBook, newTotal, refundRef,
+            "ตรวจผลการคืนเงินที่ไม่แน่ชัด — ผู้ให้บริการยืนยันว่าคืนแล้ว", actor, intent.Status, newStatus, attemptAt, ct);
+        intent.RefundOutcomeUnknownSince = null;
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return (new GatewayRefundOutcome(true, $"{v.Message} — ใบสำคัญ {je.EntryNumber}", refundRef, v.AmountToBook, isFull,
+            newTotal, je.Id, je.EntryNumber, "", NextStepText), newStatus);
     }
 
     public async Task<IReadOnlyDictionary<Guid, GatewayRefundCreditNoteView>> CreditNoteStatesAsync(Guid companyId,

@@ -1115,6 +1115,12 @@ const API = {
       // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
       updatePaymentIntentFee: (id, feeActual, reason) =>
         API.put(`${base}/pay/intents/${id}/fee`, { feeActual, reason }),
+      // ฝ่ายค้าน E-2: ตรวจผลการคืนเงินที่ผลไม่แน่ชัดกับผู้ให้บริการ
+      verifyPaymentIntentRefund: (id) => API.post(`${base}/pay/intents/${id}/refund/verify`, {}),
+      // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ + รับใบกำกับ (11630 → 11610)
+      getGatewayFeeVat: (code) =>
+        API.get(`${base}/pay/settlements/fee-vat?providerCode=${encodeURIComponent(code)}`),
+      claimGatewayFeeVat: (d) => API.post(`${base}/pay/settlements/fee-vat/claim`, d),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),

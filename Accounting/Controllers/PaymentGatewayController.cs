@@ -121,12 +121,18 @@ public class PaymentGatewayController : ControllerBase
                 i.FeeActual, i.SettledAt, i.CreatedAt,
                 i.RefundedAmount, i.LastRefundedAt, i.LastRefundJournalEntryId,
                 isSettled = i.SettlementJournalEntryId != null,
+                i.RefundOutcomeUnknownSince,
             })
             .ToListAsync(ct);
 
         // "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" (§86/10 · รอบ 198 G-1) — ตัดสินที่เซิร์ฟเวอร์ตัวเดียว หน้าเว็บแค่ติดป้าย
         var cn = await refunds.CreditNoteStatesAsync(companyId,
             rows.Where(r => r.RefundedAmount > 0m).Select(r => r.Id).ToList(), ct);
+        // R-E4: ป้ายช่อง "ค่าธรรมเนียม" ตามโหมด VAT ของผู้ให้บริการ — เซิร์ฟเวอร์ตัดสิน (AddedOnTop = ยอดก่อน VAT)
+        var feeModes = await _db.PaymentProviderConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.ProviderCode, c.FeeVatMode })
+            .ToListAsync(ct);
         var shaped = rows.Select(r =>
         {
             cn.TryGetValue(r.Id, out var v);
@@ -139,9 +145,15 @@ public class PaymentGatewayController : ControllerBase
                 r.ProviderRef, r.FailureMessage, r.ConfirmedAt, r.ConfirmedBy, r.FeeActual, r.SettledAt,
                 r.CreatedAt, r.RefundedAmount, r.LastRefundedAt, r.LastRefundJournalEntryId, r.isSettled,
                 refundableRemaining = GatewayRefundMath.Remaining(r.Amount, r.RefundedAmount),
+                feeInputLabel = GatewaySettlementMath.FeeInputLabel(
+                    feeModes.FirstOrDefault(m => m.ProviderCode == r.ProviderCode)?.FeeVatMode ?? GatewayFeeVatMode.None),
                 creditNoteState = v?.State,
                 needsCreditNote = v?.NeedsCreditNote ?? false,
                 refundUntracked = legacyRefund,
+                // E-2: คืนเงินผลไม่แน่ชัด — ล็อกคืนเพิ่ม · หน้าเว็บโชว์ปุ่ม "ตรวจผลการคืนเงิน" + ข้อความจากเซิร์ฟเวอร์
+                refundOutcomeUnknown = r.RefundOutcomeUnknownSince != null,
+                r.RefundOutcomeUnknownSince,
+                refundOutcomeUnknownMessage = r.RefundOutcomeUnknownSince != null ? GatewayRefundMath.OutcomeUnknownMessage : null,
             };
         }).ToList();
         return Ok(new ApiResponse<object>(true, new
@@ -149,6 +161,7 @@ public class PaymentGatewayController : ControllerBase
             items = shaped,
             refundedAwaitingCreditNote = shaped.Count(x => x.needsCreditNote),
             refundUntracked = shaped.Count(x => x.refundUntracked),
+            refundOutcomeUnknown = shaped.Count(x => x.refundOutcomeUnknown),
         }));
     }
 
@@ -165,18 +178,30 @@ public class PaymentGatewayController : ControllerBase
         var toDate = (to ?? DateTime.UtcNow).Date.AddDays(1);
         var fromDate = (from ?? DateTime.UtcNow.AddDays(-30)).Date;
 
-        var rows = await _db.PaymentIntents.AsNoTracking()
+        var raw = await _db.PaymentIntents.AsNoTracking()
             .Where(i => i.CompanyId == companyId
                      && i.ConfirmedAt != null && i.ConfirmedAt >= fromDate && i.ConfirmedAt < toDate
                      && (i.Status == PaymentIntentStatus.Succeeded
                          || i.Status == PaymentIntentStatus.Refunded
                          || i.Status == PaymentIntentStatus.PartiallyRefunded))
-            .Select(i => new GatewayIntentAmounts(
-                i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
-                i.Status == PaymentIntentStatus.Refunded,
-                i.SettledAt != null,
-                i.RefundedAmount))
+            .Select(i => new
+            {
+                i.ProviderCode, i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
+                IsRefundedFully = i.Status == PaymentIntentStatus.Refunded,
+                IsSettled = i.SettlementJournalEntryId != null,
+                i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement,
+            })
             .ToListAsync(ct);
+        // R-E5: โหมด VAT ค่าธรรมเนียมของผู้ให้บริการแต่ละราย — สูตรเดียวกับแผนรอบโอน (AddedOnTop = ถูกหักรวม VAT)
+        var modes = await _db.PaymentProviderConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.ProviderCode, c.FeeVatMode })
+            .ToListAsync(ct);
+        GatewayFeeVatMode ModeOf(string code)
+            => modes.FirstOrDefault(m => m.ProviderCode == code)?.FeeVatMode ?? GatewayFeeVatMode.None;
+        var rows = raw.Select(i => new GatewayIntentAmounts(
+            i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount, i.IsRefundedFully, i.IsSettled,
+            i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement, ModeOf(i.ProviderCode))).ToList();
 
         var result = GatewayReconciliation.Compute(rows);
         return Ok(new ApiResponse<object>(true, new
@@ -263,6 +288,29 @@ public class PaymentGatewayController : ControllerBase
             : BadRequest(new ApiResponse<object>(false, data, r.Message));
     }
 
+    /// <summary>ตรวจผลการคืนเงินที่ "ผลไม่แน่ชัด" กับผู้ให้บริการ (ฝ่ายค้าน E-2) — ไม่ได้เกิด ⇒ ปลดล็อก · เกิดแล้ว ⇒ ลงบัญชีคืนเงิน
+    /// ส่วนต่าง (เส้นเดียวกับคืนเงิน) + ปลดล็อก · ถามไม่ได้/ขัดกัน ⇒ ล็อกต่อ · สิทธิ์เดียวกับคืนเงิน (อาจลง JE เงินออก)</summary>
+    [HttpPost("intents/{intentId:guid}/refund/verify")]
+    [Accounting.Filters.RejectApiKey("ตรวจผลการคืนเงินลูกค้า")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.Refund)]
+    public async Task<ActionResult<ApiResponse<object>>> VerifyRefund(
+        Guid companyId, Guid intentId, [FromServices] IGatewayRefundService refunds, CancellationToken ct)
+    {
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await refunds.VerifyUnknownRefundAsync(companyId, intentId, actor, ct);
+        var data = new
+        {
+            amount = r.Amount,
+            refundedTotal = r.RefundedTotal,
+            journalEntryId = r.JournalEntryId,
+            journalEntryNumber = r.JournalEntryNumber,
+            nextStep = r.NextStep,
+        };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
+
     public sealed record FeeCorrectionRequest(decimal FeeActual, string? Reason);
 
     /// <summary>แก้ค่าธรรมเนียมจริงรายรายการ (รอบ 198 G-6) — ข้อความบล็อกรอบโอน "ยอดไม่ตรง" ชี้มาที่ปุ่มนี้ ·
@@ -311,6 +359,8 @@ public class PaymentGatewayController : ControllerBase
         whtOnFee = outcome.Plan.WhtOnFee,
         feeVat = outcome.Plan.FeeVat,
         refundDeducted = outcome.Plan.RefundDeducted,
+        // R-E6: คำเตือนที่ไม่บล็อก (โหมด VAT ค่าธรรมเนียม) — ข้อความจาก GatewaySettlementMath ตัวเดียว
+        warning = outcome.Plan.Warning,
         outcome.Plan.ExpectedNet,
         outcome.Plan.ActualNet,
         outcome.Plan.Difference,
@@ -340,12 +390,15 @@ public class PaymentGatewayController : ControllerBase
             // จะถูกอ่านเป็นตัวจริงแล้วนำไปตัดสินใจผิด
             anyFeeEstimated = v.AnyFeeEstimated,
             feeVatMode = v.FeeVatMode,
+            feeVatWarning = v.FeeVatWarning,
             legacyRefundedCount = v.LegacyRefundedCount,
             items = v.Items.Select(i => new
             {
                 i.Id, i.ProviderCode, i.ConfirmedAt, i.Amount, i.RefundedAmount, i.Clearing,
                 fee = i.Fee, i.FeeVat, i.FeeIsEstimated, i.Net, i.IsRefundAfterSettlement,
                 i.ProviderRef, i.SourceKind, i.Status,
+                // R-E4: ค่าที่ปุ่ม "แก้ค่าธรรมเนียม" เติม/บันทึก (ความหมายตามโหมด) + ป้าย — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง
+                i.FeeInput, i.FeeInputLabel,
             }),
         }));
     }
@@ -385,6 +438,54 @@ public class PaymentGatewayController : ControllerBase
     private static RecordSettlementRequest ToServiceRequest(SettlementRequestDto d)
         => new(d.ProviderCode, d.FromDate, d.ToDate, d.ActualNetReceived,
             d.SettledAt, d.SettlementRef.Trim(), d.BankAccountId);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  VAT ค่าธรรมเนียมที่พักไว้ใน 11630 → 11610 เมื่อได้ใบกำกับของผู้ให้บริการ (ฝ่ายค้าน R-E3)
+    // ══════════════════════════════════════════════════════════════════
+
+    public sealed record FeeVatClaimRequestDto(
+        string? ProviderCode, string? TaxInvoiceNo, DateTime TaxInvoiceDate, DateTime ClaimDate, decimal VatAmount,
+        string? SupplierName, string? SupplierTaxId, string? SupplierBranchCode, string? LateReason);
+
+    /// <summary>VAT ค่าธรรมเนียมที่รอใบกำกับ (ยอดค้างต่อเดือน + คำเตือนอายุ §82/3) — อ่านอย่างเดียว · สิทธิ์เดียวกับพรีวิวรอบโอน</summary>
+    [HttpGet("settlements/fee-vat")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PreviewSettlement)]
+    public async Task<ActionResult<ApiResponse<object>>> FeeVatStatus(
+        Guid companyId, [FromQuery] string? providerCode,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        var v = await settlements.FeeVatStatusAsync(companyId, providerCode ?? string.Empty, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            v.ProviderCode, v.CompanyVatRegistered,
+            deferredTotal = v.Aging.DeferredTotal, claimedTotal = v.Aging.ClaimedTotal, outstanding = v.Aging.Outstanding,
+            worstLevel = v.Aging.WorstLevel.ToString(), warning = v.Aging.Warning,
+            buckets = v.Aging.Buckets.Select(b => new
+            {
+                b.MonthStartUtc, b.Deferred, b.Outstanding, b.MonthsOld, level = b.Level.ToString(), b.Warning,
+            }),
+        }));
+    }
+
+    /// <summary>"รับใบกำกับค่าธรรมเนียม" — JV Dr 11610 / Cr 11630 เท่ายอด VAT บนใบกำกับ (<b>ไม่ลงค่าใช้จ่ายซ้ำ</b>) ·
+    /// สิทธิ์ลง JE · ห้ามคีย์ API (ภาษีซื้อเข้า ภ.พ.30)</summary>
+    [HttpPost("settlements/fee-vat/claim")]
+    [Accounting.Filters.RejectApiKey("บันทึกรับใบกำกับค่าธรรมเนียมรับชำระเงิน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PostSettlement)]
+    public async Task<ActionResult<ApiResponse<object>>> ClaimFeeVat(
+        Guid companyId, [FromBody] FeeVatClaimRequestDto req,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await settlements.ClaimFeeVatAsync(companyId, new GatewayFeeVatClaimRequest(
+                req.ProviderCode ?? string.Empty, req.TaxInvoiceNo, req.TaxInvoiceDate, req.ClaimDate, req.VatAmount,
+                req.SupplierName, req.SupplierTaxId, req.SupplierBranchCode, req.LateReason),
+            actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        var data = new { r.JournalEntryId, r.JournalEntryNumber, r.OutstandingAfter };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
 
     /// <summary>ประวัติของรายการเดียว — "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ตอบจากตรงนี้</summary>
     [HttpGet("intents/{intentId:guid}/events")]

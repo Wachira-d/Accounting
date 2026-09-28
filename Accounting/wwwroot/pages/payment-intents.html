@@ -90,6 +90,7 @@
           this.summary = {
             refundedAwaitingCreditNote: d.refundedAwaitingCreditNote || 0,
             refundUntracked: d.refundUntracked || 0,
+            refundOutcomeUnknown: d.refundOutcomeUnknown || 0,
           };
           this.render();
         } catch (e) {
@@ -120,6 +121,10 @@
           ${this.summary.refundedAwaitingCreditNote ? `<div class="banner warn">
             🧾 มี <b>${this.summary.refundedAwaitingCreditNote}</b> รายการที่<b>คืนเงินแล้ว แต่ยังไม่พบใบลดหนี้</b> (§86/10) —
             ระบบลงบัญชีคืนเงินแล้ว (ยอดรอใบลดหนี้อยู่ที่ลูกหนี้การค้า) · เปิดเอกสารต้นทางแล้วออกใบลดหนี้เพื่อลดภาษีขาย
+          </div>` : ''}
+          ${this.summary.refundOutcomeUnknown ? `<div class="banner warn">
+            ⛔ มี <b>${this.summary.refundOutcomeUnknown}</b> รายการที่<b>คืนเงินผลไม่แน่ชัด</b> (ผู้ให้บริการไม่ตอบ — เงินอาจออกไปแล้ว)
+            · ระบบล็อกการคืนเงินของรายการนั้นไว้ — กดปุ่ม <b>"ตรวจผลการคืนเงิน"</b> ในแถวนั้น (ห้ามคืนซ้ำที่แดชบอร์ดผู้ให้บริการก่อนตรวจ)
           </div>` : ''}
           ${this.summary.refundUntracked ? `<div class="banner warn">
             ⚠️ มี <b>${this.summary.refundUntracked}</b> รายการที่สถานะ "คืนเงินแล้ว" แต่<b>ไม่มีรายการบัญชีคืนเงิน</b>
@@ -184,16 +189,19 @@
             ${Number(r.refundedAmount) > 0 ? `<div style="font-size:11px;margin-top:2px">คืนแล้ว ${Layout.money(r.refundedAmount)}</div>` : ''}
             ${r.needsCreditNote ? '<div style="margin-top:2px"><span class="pill cn-miss">ยังไม่ออกใบลดหนี้</span></div>' : ''}
             ${r.creditNoteState === 'CreditNoteCovered' ? '<div style="margin-top:2px"><span class="pill cn-ok">ออกใบลดหนี้แล้ว</span></div>' : ''}
-            ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มีรายการบัญชีคืนเงิน — ตรวจมือ</div>' : ''}</td>
+            ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มีรายการบัญชีคืนเงิน — ตรวจมือ</div>' : ''}
+            ${r.refundOutcomeUnknown ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.refundOutcomeUnknownMessage || 'คืนเงินผลไม่แน่ชัด')}</div>` : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
                       <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
-            ${(r.status === 'Succeeded' || (r.status === 'PartiallyRefunded' && Number(r.refundedAmount) > 0)) && Number(r.refundableRemaining) > 0
-              ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.refundableRemaining) || 0})">คืนเงิน</button>` : ''}
+            ${r.refundOutcomeUnknown
+              ? `<button class="btn btn-sm btn-warning" onclick="Page.verifyRefund('${r.id}')">ตรวจผลการคืนเงิน</button>`
+              : ((r.status === 'Succeeded' || (r.status === 'PartiallyRefunded' && Number(r.refundedAmount) > 0)) && Number(r.refundableRemaining) > 0
+                ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.refundableRemaining) || 0})">คืนเงิน</button>` : '')}
             ${!r.isSettled && ['Succeeded', 'PartiallyRefunded', 'Refunded'].includes(r.status)
-              ? `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${r.id}', ${r.feeActual == null ? 'null' : Number(r.feeActual)})">ค่าธรรมเนียม</button>` : ''}
+              ? `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${r.id}')">ค่าธรรมเนียม</button>` : ''}
           </td>
         </tr>`;
       },
@@ -247,11 +255,25 @@
         }
       },
 
-      // แก้ค่าธรรมเนียมจริงรายรายการ (ก่อนบันทึกรอบโอน) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
-      async editFee(id, current) {
+      // E-2: ตรวจผลการคืนเงินที่ผลไม่แน่ชัด — เซิร์ฟเวอร์ถามยอดคืนสะสมจากผู้ให้บริการแล้วตัดสิน (หน้าเว็บแสดงผลอย่างเดียว)
+      async verifyRefund(id) {
         const api = Layout.api(); if (!api) return;
-        const raw = prompt('ค่าธรรมเนียมจริงของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):',
-          current == null ? '' : Number(current).toFixed(2));
+        try {
+          const res = await api.verifyPaymentIntentRefund(id);
+          alert(res?.message || 'ตรวจแล้ว');
+        } catch (e) {
+          alert(e.message || 'ตรวจผลไม่สำเร็จ');
+        }
+        await this.load();
+      },
+
+      // แก้ค่าธรรมเนียมจริงรายรายการ (ก่อนบันทึกรอบโอน) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
+      // R-E4: ค่าตั้งต้น = feeActual ดิบ · ป้ายบอกความหมายตามโหมด VAT มาจากเซิร์ฟเวอร์ (feeInputLabel)
+      async editFee(id) {
+        const api = Layout.api(); if (!api) return;
+        const r = this.rows.find(x => x.id === id) || {};
+        const raw = prompt(`${r.feeInputLabel || 'ค่าธรรมเนียม'} ของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):`,
+          r.feeActual == null ? '' : Number(r.feeActual).toFixed(2));
         if (raw === null || raw.trim() === '') return;
         const fee = Number(raw);
         if (!(fee >= 0)) { Layout.toast('ค่าธรรมเนียมไม่ถูกต้อง', 'error'); return; }

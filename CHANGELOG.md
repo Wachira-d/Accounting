@@ -3559,3 +3559,19 @@ _รอบ 199 ทีม K3 — แก้ผลฝ่ายค้าน (`erp-re
 - เทสต์ `OcrReview199Tests` (สองทิศทุกข้อ) · `required_call_site_check` +7 กติกา (renderer ×2 · หัว ×2 · การ์ด · สลับฝั่ง · คำเตือน VAT) + ขยายกติกาเส้นสร้างเอกสาร ·
   DOCUMENT_FLOW §1 OCR + §ใบกำกับอย่างย่อ · TEST_PLAN ABB-14 · OCR-U-12..14 · ค้าง (backlog ในไฟล์ฝ่ายค้าน): A-4 · A-5 · A-6 · B-1 · C-3
 — commit <pending>)_
+— commit <pending>)_
+
+_รอบ 198 ฝ่ายค้าน settlement ทีม E2 (`erp-review/2026-09-25/settlement/review198-A.md` §E · `review198-E.md` E-2):
+- **R-E2**: ยอดคืนในรอบโอนนับ **ณ วันเงินเข้า** (`GatewaySettlementMath.RefundedAsOf` · `RefundCutoffUtc` = 00:00 เวลาไทยของ `SettledAt`) — คืนหลังวันเงินเข้า
+  แต่บันทึกรอบทีหลังเคยยอดไม่ตรงถาวร (1,000 · โอน 961 · คืน 300 ⇒ คาด 661) · ยอดคืนรายครั้ง `PaymentIntentEvent.RefundAmount` (+ เติมย้อนหลังเฉพาะรายการคืนครั้งเดียว) ·
+  ข้อมูลรายครั้งไม่ครบ ⇒ บล็อก `RefundTimingUnknown` (ไม่เดา) · ข้อความยอดไม่ตรงชี้ "วันที่เงินเข้าบัญชี" เมื่อรอบมีคืนเงิน
+- **R-E3**: "รับใบกำกับค่าธรรมเนียม" JV Dr 11610 / Cr 11630 (ไม่ลงค่าใช้จ่ายซ้ำ · `Helpers/GatewayFeeVatClaim` · §82/3) + การ์ดอายุ VAT ค้าง (≥ 5 เดือนเตือน) —
+  โอนเป็นค่าใช้จ่ายเมื่อเลยกำหนด/บล็อกเอกสารซื้อจากผู้ให้บริการ = รอเจ้าของตัดสิน
+- **R-E4**: ปุ่ม "แก้ค่าธรรมเนียม" เติม `FeeInput` + ป้าย `FeeInputLabel` จากเซิร์ฟเวอร์ (AddedOnTop เคยเติมยอดรวม VAT แล้วบันทึกเป็นก่อน VAT)
+- **R-E5**: `GatewayReconciliation.Compute` ใช้ `Contribution` ตัวเดียวกับรอบโอน + `PaymentIntent.RefundDeductedAfterSettlement` (สามกรณีที่ค้างไม่สมดุลหายไป ·
+  เทสต์เดิมที่ล็อก "คืนเต็มไม่ใช่ยังไม่ถึงรอบโอน" คือบั๊ก — แก้ค่าที่คาด)
+- **R-E6**: `GatewaySettlementMath.FeeVatModeWarning` — เตือนบริษัทจด VAT ที่ตั้ง "ไม่แยก VAT" (หน้าตั้งค่า · ค้างโอน · พรีวิว) · ไม่เปลี่ยนค่าเริ่มต้นที่เก็บไว้ (รอเจ้าของ)
+- **E-2**: ผู้ให้บริการไม่ตอบผลคืนเงิน ⇒ `RefundOutcomeUnknownSince` + เหตุการณ์ ⚠️ ⇒ ล็อกคืนซ้ำ · `POST pay/intents/{id}/refund/verify` ตัดสินจากยอดคืนสะสมของผู้ให้บริการ
+  (`GatewayRefundMath.Verify` · Omise `refunded_amount`)
+- เทสต์ `GatewaySettlementReview198Tests` (22) · `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §2.6b · PAYMENT_GATEWAY_DESIGN §0/§4.5/บทเรียน 18 · TEST_PLAN
+— commit cbd50b37)_

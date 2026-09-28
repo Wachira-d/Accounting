@@ -1,6 +1,12 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Helpers;
 
-/// <summary>ยอดของ intent 1 รายการที่เข้าการกระทบยอด (ตัดเฉพาะสิ่งที่ต้องใช้คิด)</summary>
+/// <summary>ยอดของ intent 1 รายการที่เข้าการกระทบยอด (ตัดเฉพาะสิ่งที่ต้องใช้คิด)
+///
+/// <para>ฝ่ายค้าน R-E5: เพิ่ม <c>RefundSettledAmount</c> (ยอดคืนที่ถูกหักในรอบโอนแล้ว) · <c>RefundDeductedAfterSettlement</c>
+/// (ส่วนที่ถูกหักใน<b>รอบโอนหลัง</b>รอบของรายการนี้ — ลดยอดที่โอนเข้าจริงของรายการ) · <c>FeeVatMode</c> ของผู้ให้บริการ
+/// (ค่าธรรมเนียมที่ถูกหักจริงในโหมด AddedOnTop รวม VAT)</para></summary>
 public readonly record struct GatewayIntentAmounts(
     decimal Amount,
     decimal? FeeActual,
@@ -9,7 +15,10 @@ public readonly record struct GatewayIntentAmounts(
     bool IsRefundedFully,
     bool IsSettled,
     // รอบ 198 G-2: ยอดคืนสะสมที่ระบบบันทึก (คืนบางส่วน) — 0 = ไม่มีข้อมูล/ไม่เคยคืน
-    decimal RefundedAmount = 0m);
+    decimal RefundedAmount = 0m,
+    decimal RefundSettledAmount = 0m,
+    decimal RefundDeductedAfterSettlement = 0m,
+    GatewayFeeVatMode FeeVatMode = GatewayFeeVatMode.None);
 
 /// <summary>ผลการกระทบยอดของงวดหนึ่ง</summary>
 public sealed record GatewayReconciliationResult(
@@ -47,7 +56,18 @@ public sealed record GatewayReconciliationResult(
 /// ในระบบจะไม่ตรงกับยอดจริง<b>ตลอดเวลา</b> และผู้ทำบัญชีจะกระทบยอดไม่ได้เลย
 ///
 /// สมการที่ต้องเป็นจริง:
-/// <code>Σ charge สำเร็จ − Σ คืนเงิน − Σ ค่าธรรมเนียม = Σ ยอดที่โอนเข้าจริง + ที่ยังไม่ถึงรอบโอน</code>
+/// <code>Σ charge − Σ คืนเงิน − Σ ค่าธรรมเนียม = Σ ยอดที่โอนเข้าจริง + ที่ยังไม่ถึงรอบโอน</code>
+///
+/// ═══ สูตรเดียวกับรอบโอน (ฝ่ายค้าน R-E5) ═══
+/// ทุกยอดต่อรายการมาจาก <see cref="GatewaySettlementMath.Contribution"/> ตัวเดียวกับแผน JE รอบโอน — เดิมเป็นสูตรที่สอง
+/// ที่ค้างไม่สมดุลถาวร 3 กรณี: โหมด AddedOnTop (ค่าธรรมเนียมไม่รวม VAT ที่ถูกหักจริง) · คืนเงินหลังรอบโอน (ยอดโอนเข้าคงยอดเดิม
+/// แต่ยอดที่ควรได้หักยอดคืน) · คืนเต็มที่ยังไม่ถึงรอบโอน (ถูกตัดออกจาก "ยังไม่ถึงรอบโอน" ทั้งที่ค่าธรรมเนียมยังถูกหัก)
+/// <list type="bullet">
+/// <item>ยอดที่ควรได้ตลอดอายุ = <c>Contribution(ยอดคืนสะสมทั้งหมด).Net</c></item>
+/// <item>โอนเข้าแล้ว = <c>SettledAmount</c> (สุทธิ ณ รอบของรายการ) − ยอดคืนที่ถูกหักในรอบหลัง ๆ</item>
+/// <item>ยังไม่ถึงรอบโอน = ยังไม่บันทึกรอบโอน: <c>Contribution.Net</c> (คืนเต็มได้ติดลบ = ค่าธรรมเนียมที่จะถูกหัก) ·
+///   บันทึกแล้ว: ยอดคืนที่ยังไม่ถูกหัก (ติดลบ) — <c>Contribution(AlreadySettled)</c></item>
+/// </list>
 ///
 /// ═══ จุดที่ตั้งใจ ═══
 /// <list type="bullet">
@@ -63,21 +83,38 @@ public static class GatewayReconciliation
     {
         var rows = succeeded.ToList();
 
-        var gross = rows.Sum(r => r.Amount);
-        // คืนเต็ม = ยอดเต็ม (รวมแถวเก่าที่ไม่มียอดคืนบันทึก) · คืนบางส่วน = ยอดคืนสะสมที่บันทึกไว้ (G-2)
-        var refunded = rows.Sum(RefundedOf);
+        decimal gross = 0m, refunded = 0m, fee = 0m, expectedNet = 0m, settled = 0m, outstanding = 0m;
+        var outstandingCount = 0;
+        foreach (var r in rows)
+        {
+            var refundedTotal = RefundedOf(r);
+            gross += r.Amount;
+            refunded += refundedTotal;
 
-        // ค่าธรรมเนียม: ใช้ตัวจริงเมื่อมี · ตัวประมาณเมื่อยังไม่ settlement
-        var fee = rows.Sum(r => r.FeeActual ?? r.FeeEstimated);
+            // ตลอดอายุรายการ — สูตรเดียวกับแผน JE (ค่าธรรมเนียมตัวจริงก่อนตัวประมาณ · AddedOnTop รวม VAT · คืนเต็มนับ 0 แต่ค่าธรรมเนียมยังถูกหัก)
+            var lifetime = GatewaySettlementMath.Contribution(
+                new SettlementIntentInput(Guid.Empty, r.Amount, r.FeeActual, r.FeeEstimated, refundedTotal), r.FeeVatMode);
+            fee += lifetime.FeeDeducted;
+            expectedNet += lifetime.Net;
+
+            decimal pending;
+            if (r.IsSettled)
+            {
+                settled += (r.SettledAmount ?? 0m) - r.RefundDeductedAfterSettlement;
+                // ยอดคืนหลังรอบโอนที่ผู้ให้บริการยังไม่หัก = ติดลบที่จะมาในรอบถัดไป
+                pending = GatewaySettlementMath.Contribution(
+                    new SettlementIntentInput(Guid.Empty, r.Amount, r.FeeActual, r.FeeEstimated, refundedTotal,
+                        AlreadySettled: true, RefundSettledAmount: r.RefundSettledAmount), r.FeeVatMode).Net;
+            }
+            else
+            {
+                pending = lifetime.Net;
+            }
+            if (pending != 0m || !r.IsSettled) outstandingCount++;
+            outstanding += pending;
+        }
+
         var anyEstimated = rows.Any(r => r.FeeActual == null && r.FeeEstimated > 0m);
-
-        var settled = rows.Where(r => r.IsSettled).Sum(r => r.SettledAmount ?? 0m);
-
-        var unsettledRows = rows.Where(r => !r.IsSettled && !r.IsRefundedFully).ToList();
-        // ยอดที่ "ควรจะได้" จากรายการที่ยังไม่ถึงรอบโอน = ยอดเต็มหักค่าธรรมเนียมของมันเอง
-        var unsettledNet = unsettledRows.Sum(r => r.Amount - RefundedOf(r) - (r.FeeActual ?? r.FeeEstimated));
-
-        var expectedNet = gross - refunded - fee;
 
         return new GatewayReconciliationResult(
             SucceededCount: rows.Count,
@@ -87,11 +124,12 @@ public static class GatewayReconciliation
             FeeIsEstimated: anyEstimated,
             ExpectedNet: Round(expectedNet),
             SettledTotal: Round(settled),
-            UnsettledCount: unsettledRows.Count,
-            UnsettledAmount: Round(unsettledNet));
+            UnsettledCount: outstandingCount,
+            UnsettledAmount: Round(outstanding));
     }
 
     private static decimal RefundedOf(GatewayIntentAmounts r)
+        // สถานะคืนเต็ม = เงินออกเต็มยอดจริง (รวมแถวเก่าที่ไม่มียอดคืนบันทึก และคืนที่ลงบัญชีไม่สำเร็จ E-1) · คืนบางส่วน = ยอดสะสมที่บันทึก
         => r.IsRefundedFully ? r.Amount : Math.Max(0m, Math.Min(r.Amount, r.RefundedAmount));
 
     // เงินเป็น decimal และปัดแบบ AwayFromZero เสมอ (banker's rounding เป็นค่า default
