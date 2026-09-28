@@ -181,6 +181,10 @@ public sealed record SettlementPostingPlan(
         PayoutJournal.Where(l => l.AccountRole == SettlementAccountRoles.Clearing).Sum(l => l.Debit - l.Credit)
         + Receipts.Sum(r => r.Amount) + SummarySales.Sum(s => s.Gross)
         - Refunds.Sum(r => r.Amount) - FeeDocuments.Sum(f => f.Deducted);
+
+    /// <summary>สมการรอบโอนลงตัว (ผลต่างอยู่ในเกณฑ์ <see cref="SettlementBatchMath.ToleranceBaht"/>) — หน้าเว็บแสดงสีของผลต่างตามธงนี้
+    /// (เดิม JS เทียบ 0.01 เอง = สำเนาเกณฑ์ชุดที่สอง · review198-D D-10) · ตัวเดียวกับเงื่อนไขของปัญหา <c>Unbalanced</c></summary>
+    public bool Balanced => SettlementBatchMath.IsBalanced(Difference);
 }
 
 /// <summary>
@@ -199,6 +203,9 @@ public static class SettlementBatchMath
     /// <summary>ผลต่างที่ยอมรับ (เศษปัดของผู้ให้บริการ)</summary>
     public const decimal ToleranceBaht = 0.01m;
 
+    /// <summary>สมการรอบโอนลงตัวไหม — ตัวตัดสินเดียวของปัญหา <c>Unbalanced</c> และธง <c>SettlementPostingPlan.Balanced</c> ที่หน้าเว็บแสดง</summary>
+    public static bool IsBalanced(decimal difference) => Math.Abs(difference) <= ToleranceBaht;
+
     public static SettlementPostingPlan Plan(
         SettlementBatch batch,
         IReadOnlyList<SettlementLine> lines,
@@ -213,7 +220,7 @@ public static class SettlementBatchMath
         var linesTotal = lines.Sum(l => l.Amount);
         var expected = batch.NetPayout + (batch.ClosingWalletBalance - batch.OpeningWalletBalance);
         var diff = linesTotal - expected;
-        if (Math.Abs(diff) > ToleranceBaht)
+        if (!IsBalanced(diff))
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.Unbalanced, true,
                 $"ยอดรวมบรรทัด ({linesTotal:N2}) ไม่เท่ากับยอดโอนเข้า ({batch.NetPayout:N2}) + ยอด wallet ที่เปลี่ยน "
                 + $"({batch.ClosingWalletBalance - batch.OpeningWalletBalance:N2}) — ต่างกัน {diff:N2} บาท",

@@ -330,6 +330,10 @@ public sealed partial class SettlementImportService : ISettlementImportService
 
             if (batch == null)
             {
+                // D-03: บัญชีธนาคาร = ขาเดบิตของ JE รอบโอน + บัญชีที่ใช้หาเงินเข้า — ระบบไม่เลือกให้ (เดิมหน้าเว็บเลือกบัญชีแรกเงียบ ๆ) ·
+                // รอบที่ไม่มีเงินโอน (0) ไม่ต้องมี · ผิดแล้วเปลี่ยนได้ที่หน้ารอบโอนตราบที่ยังไม่ลงบัญชี (SetBankAccountAsync)
+                if (SettlementBankAccountRule.MissingForImport(netRaw, h.BankAccountId) is string bankMissing)
+                    throw new BusinessRuleException(bankMissing, "SETTLEMENT-BANK-REQUIRED");
                 batch = new SettlementBatch
                 {
                     CompanyId = companyId,
@@ -352,7 +356,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
             }
             else if (R(netRaw) != batch.NetPayout || ThaiDate.CalendarDateUtc(payoutDateRaw) != batch.PayoutDate)
                 warnings.Add($"รอบโอน \"{payoutRef}\" มีอยู่แล้ว — ใช้ยอดโอน/วันที่เดิม ({batch.NetPayout:N2} · {batch.PayoutDate:yyyy-MM-dd}) "
-                    + "ไม่ใช่ค่าที่ส่งมาครั้งนี้ · แก้หัวรอบโอนได้จากหน้ารอบโอน");
+                    + "ไม่ใช่ค่าที่ส่งมาครั้งนี้ · ถ้ายอดโอน/วันที่เดิมผิด ให้ยกเลิกรอบโอนนั้นแล้วนำเข้าใหม่ (หัวรอบโอนแก้ได้เฉพาะบัญชีธนาคาร)");
 
             var batchLines = created
                 ? new List<SettlementLine>()

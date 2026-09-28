@@ -124,12 +124,16 @@
     //  • จัดประเภทเอง = ผู้ใช้เลือกในโมดัลแล้วกดยืนยัน — endpoint reclassify บันทึกคำตอบลงคลังเป็น Explicit เสมอที่เซิร์ฟเวอร์
     //    (ล็อกด้วย required_call_site_check) จึงไม่มีช่อง source ให้ส่ง (ส่งช่องที่เซิร์ฟเวอร์ไม่อ่าน = silent no-op)
     //  • ปุ่ม "ลงบัญชี" เปิดเมื่อพรีวิวล่าสุดบอก canPost เท่านั้น · ช่องตัวเลขที่เว้นว่างถูกตัดคีย์ทิ้ง (ไม่ส่ง null)
+    //  • ปุ่มทุกปุ่มมาจาก actions ที่เซิร์ฟเวอร์ตัดสินจากสถานะ + สิทธิ์ของผู้ใช้ (ซ่อนแล้วต้องมี permissionNote บอกเหตุผล) ·
+    //    ผู้สมัครจับคู่ "เลือกได้" ตามธง selectable ของเซิร์ฟเวอร์ · ผังในพรีวิว = ผังที่จะลงจริง (accounts) · สีผลต่าง = plan.balanced
+    //  • บัญชีธนาคารที่รับเงิน: ระบบไม่เลือกให้ (ค่าเริ่มต้นเฉพาะเมื่อเซิร์ฟเวอร์บอก defaultBankAccountId = มีบัญชีเดียว)
     //  • ทุกข้อความจากไฟล์/แพลตฟอร์ม/ผู้ใช้ผ่าน Layout.esc · onclick ส่งแค่ดัชนี ไม่ส่งข้อความอิสระ
     const Page = {
       ref: null,
       channels: [],
       accounts: [],
       batches: [],
+      batchPage: null,
       detail: null,
       preview: null,
       deposits: [],
@@ -197,24 +201,30 @@
           <div class="card" style="padding:12px 18px">
             <div class="fgrid">
               <div><label>ช่องทาง</label><select class="form-select" id="fltChannel" onchange="Page.loadBatches()">${this.options(chOpts, channelId, 'ทุกช่องทาง')}</select></div>
-              <div><label>สถานะ</label><select class="form-select" id="fltStatus" onchange="Page.loadBatches()">${this.options(this.cat().batchStatuses, '', 'ทุกสถานะ')}</select></div>
+              <div><label>สถานะ</label><select class="form-select" id="fltStatus" onchange="Page.loadBatches()">${this.options(this.cat().batchFilterStatuses, '', 'ทุกสถานะ')}</select></div>
             </div>
             ${this.channels.length ? '' : `<div class="banner info" style="margin-top:10px">ยังไม่มีช่องทาง —
               <a href="/pages/settlement-channels.html">ตั้งค่าช่องทาง</a> ก่อน (ผังพัก · ผู้ติดต่อแพลตฟอร์ม · โหมดภาษีของค่าธรรมเนียม)</div>`}
           </div>`;
       },
 
-      async loadBatches() {
+      /** รายการรอบโอนทีละหน้า — more = ต่อท้ายหน้าถัดไป (เซิร์ฟเวอร์บอก hasMore) · ไม่ใช่ more = เริ่มหน้าแรกใหม่ */
+      async loadBatches(more) {
         const api = Layout.api(); if (!api) return;
         const q = new URLSearchParams();
         const ch = document.getElementById('fltChannel')?.value;
         const st = document.getElementById('fltStatus')?.value;
         if (ch) q.set('channelId', ch);
         if (st) q.set('status', st);
+        const page = this.batchPage;
+        if (more && page) q.set('skip', String(Number(page.skip) + Number(page.take)));
         const qs = q.toString();
         try {
           const res = await api.listSettlementBatches(qs ? '?' + qs : '');
-          this.batches = res?.data || [];
+          const data = res?.data || {};
+          const items = data.items || [];
+          this.batches = more ? this.batches.concat(items) : items;
+          this.batchPage = { skip: Number(data.skip) || 0, take: Number(data.take) || items.length, hasMore: data.hasMore === true };
           this.renderList();
         } catch (e) {
           document.getElementById('listBox').innerHTML = `<div class="card banner bad">${Layout.esc(e.message || 'โหลดรอบโอนไม่สำเร็จ')}</div>`;
@@ -240,7 +250,9 @@
             <td class="num">${Number(b.needsMatchDecisionCount) ? `<b style="color:#b45309">${Number(b.needsMatchDecisionCount)}</b>` : '0'}</td>
             <td>${this.chip(b.status)}</td>
           </tr>`).join('')}
-          </tbody></table></div></div>`;
+          </tbody></table></div>
+          ${this.batchPage?.hasMore ? `<div class="actions"><button class="btn btn-secondary" onclick="Page.loadBatches(true)">โหลดรอบที่เก่ากว่า</button>
+            <span class="hint">แสดง ${this.batches.length} รอบ</span></div>` : ''}</div>`;
       },
 
       openBatchAt(i) { const b = this.batches[i]; if (b) this.openBatch(b.id); },
@@ -291,6 +303,9 @@
         const api = Layout.api(); if (!api) return;
         const f = document.getElementById('impFile')?.files?.[0];
         if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        // เพดานขนาดมาจากเซิร์ฟเวอร์ (reference.maxUploadBytes) — ไฟล์เกินเพดานของเว็บเซิร์ฟเวอร์ถูกตัดเป็น 413 ที่ไม่มีข้อความไทย
+        const maxBytes = Number(this.ref?.maxUploadBytes) || 0;
+        if (maxBytes > 0 && f.size > maxBytes) { Layout.toast(this.ref?.maxUploadMessage || 'ไฟล์ใหญ่เกินไป', 'error'); return; }
         const fd = new FormData();
         fd.append('channelId', this.imp.channelId);
         fd.append('file', f);
@@ -325,12 +340,16 @@
 
       headerForm() {
         const banks = (this.ref?.bankAccounts || []).map(b => ({ value: b.id, label: b.label }));
+        const defBank = this.ref?.defaultBankAccountId || '';
         const today = Layout.toDateInput(new Date());
         return `<div class="fgrid">
             <div><label>เลขอ้างอิงรอบโอน (payout ID)</label><input class="form-input" id="hPayoutRef" maxlength="200" placeholder="ว่างได้ถ้าไฟล์มีคอลัมน์เลขรอบโอน"></div>
             <div><label>วันที่เงินเข้าธนาคาร *</label><input type="date" class="form-input" id="hPayoutDate" value="${Layout.esc(today)}"></div>
             <div><label>ยอดที่โอนเข้าธนาคารจริง *</label><input type="number" step="0.01" class="form-input" id="hNetPayout" placeholder="ตามสเตทเมนต์ธนาคาร"></div>
-            <div><label>บัญชีธนาคารที่รับเงิน</label><select class="form-select" id="hBank">${this.options(banks, banks[0]?.value || '', '(ไม่ระบุ)')}</select></div>
+            <div><label>บัญชีธนาคารที่รับเงิน *</label><select class="form-select" id="hBank">${this.options(banks, defBank, '— เลือกบัญชีที่เงินเข้าจริง —')}</select>
+              <div class="hint">${defBank ? 'บริษัทมีบัญชีธนาคารบัญชีเดียว — เลือกให้แล้ว (ตรวจว่าตรงสเตทเมนต์)'
+                : banks.length ? 'ระบบไม่เลือกให้ — ใบสำคัญรอบโอนเดบิตบัญชีนี้ และใช้หาเงินเข้าตอนจับคู่'
+                : 'ยังไม่มีบัญชีธนาคาร — เพิ่มที่ ตั้งค่า → บัญชีธนาคาร (รอบที่ไม่มีเงินโอนนำเข้าได้โดยไม่เลือก)'}</div></div>
             <div><label>ยอด wallet ต้นรอบ</label><input type="number" step="0.01" class="form-input" id="hOpening" placeholder="0.00"></div>
             <div><label>ยอด wallet ปลายรอบ</label><input type="number" step="0.01" class="form-input" id="hClosing" placeholder="0.00"></div>
             <div><label>ช่วงรายการ ตั้งแต่</label><input type="date" class="form-input" id="hFrom"></div>
@@ -410,7 +429,9 @@
             </tbody></table></div>
             <h3 style="margin-top:14px">หัวรอบโอน</h3>
             ${this.headerForm()}
-            <label style="display:block;margin-top:8px;font-size:12.5px"><input type="checkbox" id="mRemember" checked> จำการจับคู่คอลัมน์นี้ไว้กับช่องทาง</label>
+            ${this.ref?.columnMapMemory?.allowed === false
+              ? `<div class="hint" style="margin-top:8px">🔒 ${Layout.esc(this.ref.columnMapMemory.reason || 'จำการจับคู่คอลัมน์ไว้กับช่องทางไม่ได้')}</div>`
+              : '<label style="display:block;margin-top:8px;font-size:12.5px"><input type="checkbox" id="mRemember" checked> จำการจับคู่คอลัมน์นี้ไว้กับช่องทาง</label>'}
             <div class="actions">
               <button class="btn btn-primary" onclick="Page.doImport()">📥 นำเข้ารอบโอน</button>
               <button class="btn btn-secondary" onclick="Page.renderImportStart()">ย้อนกลับ</button>
@@ -529,6 +550,8 @@
             ${importResult ? this.renderImportResult(importResult) : ''}
             ${a.lockedReason ? `<div class="banner info">🔒 ${Layout.esc(a.lockedReason)}</div>` : ''}
             ${a.unpostBlockedReason ? `<div class="banner warn">↩️ ${Layout.esc(a.unpostBlockedReason)}</div>` : ''}
+            ${a.permissionNote ? `<div class="banner info">👤 ${Layout.esc(a.permissionNote)}</div>` : ''}
+            ${this.renderBankAccount(d, a)}
             <div class="stat-row">
               <div class="stat"><div class="k">ยอดโอนเข้าธนาคาร</div><div class="v">${Layout.money(b.netPayout)}</div></div>
               <div class="stat"><div class="k">ผลรวมบรรทัด</div><div class="v">${Layout.money(b.linesTotal)}</div></div>
@@ -540,9 +563,9 @@
             ${p.payoutJournalEntryId ? `<div class="banner ok">ลงบัญชีแล้ว · ใบสำคัญรอบโอน ${this.jeLink(p.payoutJournalEntryId, p.payoutJournalEntryNumber || 'เปิดใบสำคัญ')}
               ${p.bankTransactionId ? ' · จับคู่รายการเดินบัญชีแล้ว' : ''}</div>` : ''}
             <div class="actions">
-              ${a.canPost ? '<button class="btn btn-primary" onclick="Page.loadPreview()">🔍 ดูตัวอย่างการลงบัญชี</button>' : ''}
+              ${a.canPost ? '<button class="btn btn-primary" onclick="Page.loadPreview()">🔍 ดูตัวอย่างการลงบัญชี</button>'
+                : (a.canPreview ? '<button class="btn btn-secondary" onclick="Page.loadPreview()">📄 ดูตัวอย่างการลงบัญชี/เอกสารที่ลงไว้</button>' : '')}
               ${a.canEditLines ? '<button class="btn btn-secondary" onclick="Page.rematch()">🔁 จับคู่ใบขายใหม่ทั้งรอบ</button>' : ''}
-              ${a.canUnpost || a.unpostBlockedReason ? '<button class="btn btn-secondary" onclick="Page.loadPreview()">📄 ดูเอกสารที่ลงไว้</button>' : ''}
               ${a.canBankMatch ? '<button class="btn btn-secondary" onclick="Page.loadDeposits()">🏦 จับคู่เงินเข้าธนาคาร</button>' : ''}
               ${a.canUnpost ? '<button class="btn btn-secondary" onclick="Page.askUnpost()">↩️ ยกเลิกการลงบัญชี</button>' : ''}
               ${a.canVoid ? '<button class="btn btn-danger" onclick="Page.askVoid()">🗑️ ยกเลิกรอบโอน</button>' : ''}
@@ -558,6 +581,28 @@
           </div>`;
       },
 
+      /** บัญชีธนาคารที่รับเงินของรอบนี้ — แสดงเสมอ · ผู้มีสิทธิ์แก้ของรอบที่ยังแก้ได้เปลี่ยนได้ (เซิร์ฟเวอร์ตัดสินด้วย canEditLines) */
+      renderBankAccount(d, a) {
+        const ba = d.bankAccount || {};
+        const banks = (this.ref?.bankAccounts || []).map(b => ({ value: b.id, label: b.label }));
+        const shown = ba.label ? `🏦 บัญชีธนาคารที่รับเงิน: <b>${Layout.esc(ba.label)}</b>`
+          : `🏦 บัญชีธนาคารที่รับเงิน: <b>ยังไม่ได้เลือก</b>${ba.missingReason ? ` — ${Layout.esc(ba.missingReason)}` : ''}`;
+        return `<div class="banner ${ba.label || !ba.missingReason ? 'info' : 'warn'}">${shown}
+          ${a.canEditLines ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;align-items:center">
+            <select class="form-select" id="dBank" style="max-width:420px">${this.options(banks, ba.id || '', '— เลือกบัญชีที่เงินเข้าจริง —')}</select>
+            <button class="btn btn-sm btn-secondary" onclick="Page.saveBankAccount()">เปลี่ยนบัญชี</button></div>` : ''}</div>`;
+      },
+
+      async saveBankAccount() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('dBank')?.value || '';
+        try {
+          const res = await api.setSettlementBatchBankAccount(this.detail.batch.id, id);
+          Layout.toast(res?.message || 'บันทึกบัญชีธนาคารแล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
       renderImportResult(r) {
         return `<div class="banner ${r.importedLines > 0 ? 'ok' : 'info'}">
             ${r.createdNew ? 'สร้างรอบโอนใหม่' : 'เติมเข้ารอบโอนเดิม'} · นำเข้า ${Number(r.importedLines) || 0} บรรทัด
@@ -568,6 +613,7 @@
 
       renderLine(l, i, a, cbIds) {
         const c = this.cat();
+        const closedCb = (a.closedChargebacks || []).find(x => x.lineId === l.id);
         const t = this.lineType(l.lineType);
         const unclassified = t && !t.postable;
         return `<tr>
@@ -583,7 +629,8 @@
           <td>${Layout.esc(this.label(c.matchStatuses, l.matchStatus))}
             ${l.matchNote ? `<div class="hint">${Layout.esc(l.matchNote)}</div>` : ''}
             ${l.matchedDocumentId ? `<div>${this.docLink(l.matchedDocumentId, 'เปิดเอกสาร')}</div>` : ''}
-            ${a.canEditLines && t?.requiresSaleMatch ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openMatch(${i})">ตัดสินการจับคู่</button>` : ''}
+            ${a.canEditLines && l.canAssignMatch ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openMatch(${i})">ตัดสินการจับคู่</button>` : ''}
+            ${closedCb ? `<div class="hint">ปิดรายการแล้ว: ${Layout.esc(closedCb.description || '')} · ${this.jeLink(closedCb.journalEntryId, closedCb.entryNumber || 'เปิดใบสำคัญ')}</div>` : ''}
             ${cbIds.has(l.id) ? `<div class="actions" style="margin:4px 0 0">
               <button class="btn btn-sm btn-secondary" onclick="Page.resolveChargeback(${i}, false)">แพ้ (ตัดเป็นขาดทุน)</button>
               <button class="btn btn-sm btn-secondary" onclick="Page.resolveChargeback(${i}, true)">ชนะ (ได้เงินคืน)</button></div>` : ''}</td>
@@ -653,11 +700,11 @@
             <span class="mono">${Layout.esc(l.externalOrderId || '-')}</span> · ยอด ${Layout.money(l.amount)}</div>
           ${l.matchNote ? `<div class="banner info">${Layout.esc(l.matchNote)}</div>` : ''}
           ${cands.length ? cands.map((m, idx) => {
-              const usable = isRefund ? m.isRefundTarget : m.canReceive;
+              const usable = m.selectable === true;
               return `<label style="display:block;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;${usable ? '' : 'opacity:.55'}">
                 <input type="radio" name="mPick" value="${idx}" ${usable ? '' : 'disabled'}> ${Layout.esc(m.label)}
-                ${m.openAmount != null ? ` · ค้าง ${Layout.money(m.openAmount)}` : ''}
-                ${usable ? '' : `<div class="hint">${isRefund ? 'ใช้เป็นใบเดิมของใบลดหนี้ไม่ได้' : 'รับชำระจากผังพักไม่ได้'}</div>`}</label>`;
+                ${m.openAmount != null ? ` · ยอด ${Layout.money(m.openAmount)}` : ''}
+                ${usable ? '' : `<div class="hint">${Layout.esc(m.selectReason || 'เลือกไม่ได้')}</div>`}</label>`;
             }).join('') : '<div class="hint">ไม่มีเอกสารผู้สมัคร — สร้างเอกสารขายของออเดอร์นี้แล้วกด "จับคู่ใบขายใหม่ทั้งรอบ"</div>'}
           ${isRefund ? '<div class="hint">คืนเงินต้องอ้างใบขายเดิม (§86/10) — เข้าใบขายสรุปรายวันไม่ได้</div>'
             : `<label style="display:block;padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;margin-top:8px">
@@ -665,14 +712,24 @@
         Layout.openModal('matchModal');
       },
 
+      /** คำขอของ "ตัดสินการจับคู่" — ผู้สมัครที่เซิร์ฟเวอร์บอกว่าเลือกไม่ได้ ⇒ null (ไม่ส่ง) · รายการรับชำระออนไลน์ส่งเป็น paymentIntentId
+       *  (เซิร์ฟเวอร์ตรวจด้วยด่านเดียวกับการจับคู่อัตโนมัติ) · ที่เหลือ = documentId · ล็อกด้วย tools/settlement_import_form_sim.js */
+      matchBody(l, pick) {
+        if (pick === 'summary') return { useDailySummary: true };
+        const m = (l?.matchCandidates || [])[Number(pick)];
+        if (!m || m.selectable !== true) return null;
+        return m.kind === 'PaymentIntent'
+          ? { paymentIntentId: m.id, useDailySummary: false }
+          : { documentId: m.id, useDailySummary: false };
+      },
+
       async saveMatch() {
         const api = Layout.api(); if (!api) return;
         const l = this.lineAt(this.matchIdx); if (!l) return;
         const pick = document.querySelector('input[name="mPick"]:checked')?.value;
         if (pick == null) { Layout.toast('เลือกเอกสาร หรือยืนยันเข้าใบขายสรุปรายวัน', 'error'); return; }
-        const body = pick === 'summary'
-          ? { useDailySummary: true }
-          : { documentId: (l.matchCandidates || [])[Number(pick)]?.id || null, useDailySummary: false };
+        const body = this.matchBody(l, pick);
+        if (!body) { Layout.toast('รายการนี้เลือกไม่ได้ — ดูเหตุผลใต้รายการ', 'error'); return; }
         try {
           const res = await api.assignSettlementLineMatch(l.id, body);
           Layout.closeModal('matchModal');
@@ -724,8 +781,17 @@
           </tbody></table></div>`;
       },
 
-      renderPlan(plan) {
+      /** ผังที่จะลงจริงของขาหนึ่ง (จาก accounts ของพรีวิว) — ไม่มีข้อมูล = บอกว่าไม่มี (ไม่เดาจากบทบาท) */
+      acct(ref) {
+        if (!ref) return '<span class="hint">ไม่มีข้อมูลผัง — กด "ดูตัวอย่างการลงบัญชี" ใหม่</span>';
+        if (!ref.code) return `<span style="color:#b91c1c">${Layout.esc(ref.roleLabel || '')}: ${Layout.esc(ref.problem || 'หาผังไม่ได้')}</span>`;
+        return `<span class="mono">${Layout.esc(ref.code)}</span> ${Layout.esc(ref.name || '')}<div class="hint">${Layout.esc(ref.roleLabel || '')}</div>`;
+      },
+
+      renderPlan(plan, accounts, bankLabel) {
         if (!plan) return '';
+        const ja = accounts?.payoutJournal || [];
+        const fa = accounts?.feeLines || [];
         const jl = plan.payoutJournal || [];
         const fees = plan.feeDocuments || [];
         const sums = plan.summarySales || [];
@@ -735,16 +801,18 @@
           <div class="stat-row">
             <div class="stat"><div class="k">ผลรวมบรรทัด</div><div class="v">${Layout.money(plan.linesTotal)}</div></div>
             <div class="stat"><div class="k">ที่ควรเป็น (ยอดโอน + ส่วนต่าง wallet)</div><div class="v">${Layout.money(plan.expectedTotal)}</div></div>
-            <div class="stat ${Math.abs(Number(plan.difference) || 0) > 0.01 ? 'bad' : 'ok'}"><div class="k">ผลต่าง</div><div class="v">${Layout.money(plan.difference)}</div></div>
+            <div class="stat ${plan.balanced === true ? 'ok' : 'bad'}"><div class="k">ผลต่าง</div><div class="v">${Layout.money(plan.difference)}</div></div>
             <div class="stat"><div class="k">อยู่ในผังพักแล้ว (ไม่ลงซ้ำ)</div><div class="v">${Layout.money(plan.alreadyInClearing)}</div></div>
           </div>
-          ${jl.length ? `<h3>ใบสำคัญรอบโอน</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>รายการ</th><th>บทบาทผัง</th><th class="num">เดบิต</th><th class="num">เครดิต</th></tr></thead><tbody>
-            ${jl.map(x => `<tr><td>${Layout.esc(x.description)}</td><td class="mono">${Layout.esc(x.accountRole)}${x.defaultAccountCode ? ' · ' + Layout.esc(x.defaultAccountCode) : ''}</td>
+          <div class="hint">บัญชีธนาคารที่รับเงิน: ${bankLabel ? `<b>${Layout.esc(bankLabel)}</b>` : '<b style="color:#b91c1c">ยังไม่ได้เลือก</b>'}
+            ${accounts?.clearing ? ` · ผังพักของช่องทาง: ${this.acct(accounts.clearing)}` : ''}</div>
+          ${jl.length ? `<h3>ใบสำคัญรอบโอน</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>รายการ</th><th>ผังบัญชีที่จะลง</th><th class="num">เดบิต</th><th class="num">เครดิต</th></tr></thead><tbody>
+            ${jl.map((x, k) => `<tr><td>${Layout.esc(x.description)}</td><td>${this.acct(ja[k])}</td>
               <td class="num">${Number(x.debit) ? Layout.money(x.debit) : ''}</td><td class="num">${Number(x.credit) ? Layout.money(x.credit) : ''}</td></tr>`).join('')}
             </tbody></table></div>` : ''}
           ${fees.length ? `<h3 style="margin-top:10px">ใบค่าธรรมเนียม (เอกสารซื้อ จ่ายจากผังพัก)</h3><div class="scroll-x"><table class="tbl"><thead><tr>
-              <th>กลุ่มภาษี</th><th>รายการ</th><th class="num">ถูกหัก</th><th class="num">ค่าใช้จ่าย</th><th class="num">ภาษีซื้อ</th><th class="num">หัก ณ ที่จ่าย</th></tr></thead><tbody>
-            ${fees.map(f => `<tr><td class="mono">${Layout.esc(f.vatTreatment)}</td><td>${(f.lines || []).map(x => Layout.esc(x.labelTh)).join(' · ')}</td>
+              <th>กลุ่มภาษี</th><th>รายการ · ผังค่าใช้จ่าย</th><th class="num">ถูกหัก</th><th class="num">ค่าใช้จ่าย</th><th class="num">ภาษีซื้อ</th><th class="num">หัก ณ ที่จ่าย</th></tr></thead><tbody>
+            ${fees.map((f, fi) => `<tr><td class="mono">${Layout.esc(f.vatTreatment)}</td><td>${(f.lines || []).map((x, li) => `<div>${Layout.esc(x.labelTh)} → ${this.acct((fa[fi] || [])[li])}</div>`).join('')}</td>
               <td class="num">${Layout.money(f.deducted)}</td><td class="num">${Layout.money(f.expense)}</td>
               <td class="num">${Layout.money(f.inputVat)}</td><td class="num">${Layout.money(f.whtAmount)}</td></tr>`).join('')}
             </tbody></table></div>` : ''}
@@ -771,7 +839,7 @@
             ${bannerMsg ? `<div class="banner bad">${Layout.esc(bannerMsg)}</div>` : ''}
             ${canPost ? '<div class="banner ok">✅ ลงบัญชีได้ — ตรวจรายการด้านล่างแล้วกด "ลงบัญชี"</div>' : ''}
             ${this.renderIssues(pv.plan)}
-            ${this.renderPlan(pv.plan)}
+            ${this.renderPlan(pv.plan, pv.accounts, pv.bankAccountLabel)}
             ${this.renderItems(pv.existingItems)}
             ${this.detail?.actions?.canPost ? `<div class="actions">
               <button class="btn btn-primary" id="btnPost" onclick="Page.post()" ${canPost ? '' : 'disabled'}

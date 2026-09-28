@@ -184,6 +184,66 @@ public static class SettlementSaleMatch
     }
 
     /// <summary>
+    /// **ยอดขายของแต่ละออเดอร์ในรอบโอน** — Σ ยอดของบรรทัดองค์ประกอบยอดขาย (ขาย+ส่วนลด) ต่อเลขออเดอร์ (ตัดช่องว่าง · ตรงตัว) ·
+    /// ตัวตั้งตัวเดียวของตัวจับคู่อัตโนมัติ (<c>MatchLinesAsync</c>) หน้าจอ (ผู้สมัครที่เลือกได้) และการตัดสินของคน (<c>AssignLineMatchAsync</c>)
+    /// — สามทางต้องเทียบยอดชุดเดียวกัน ไม่งั้นหน้าจอให้เลือกแต่เซิร์ฟเวอร์ตีกลับ (review198-D D-01)
+    /// </summary>
+    public static Dictionary<string, decimal> OrderGroupAmounts(IEnumerable<(SettlementLineType Type, string? OrderId, decimal Amount)> lines)
+        => lines
+            .Where(l => SettlementLineTypeRules.For(l.Type).Posting == SettlementPostingKind.SaleComponent && !string.IsNullOrWhiteSpace(l.OrderId))
+            .GroupBy(l => l.OrderId!.Trim(), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount), StringComparer.Ordinal);
+
+    /// <summary>
+    /// **ผู้สมัครรายการนี้ "คนเลือกได้" ไหม — ตัวตัดสินตัวเดียวของหน้าจอและของ <c>AssignLineMatchAsync</c>** (review198-D D-01) ·
+    /// null = เลือกได้ · ไม่ null = เหตุผลภาษาไทยที่เลือกไม่ได้ (หน้าจอแสดงข้อความนี้ · เซิร์ฟเวอร์ตีกลับด้วยข้อความเดียวกัน)
+    /// <list type="bullet">
+    /// <item>เอกสาร: ขาย = รับชำระจากผังพักได้ (<c>CanReceive</c>) · คืนเงิน = ใบเดิมของใบลดหนี้ได้ (<c>IsRefundTarget</c>) — ยอดไม่ตรงคนเลือกได้
+    /// (ตัวคิดแผนรับชำระเท่ายอดของบรรทัด · พฤติกรรมเดิมของการเลือกเอกสาร)</item>
+    /// <item>รายการรับชำระ (PaymentIntent): <b>ด่านเดียวกับการจับคู่อัตโนมัติ</b> — ขาย = <c>CanReceive</c> (รวม "อยู่รอบอื่นแล้ว" · ผลคืนเงินไม่แน่ชัด ·
+    /// ช่องทางใช้ไม่ได้) <b>และยอดขายของออเดอร์ = ยอดที่รับชำระ</b> ±0.01 (ต่าง = ส่วนต่างค้างผังพักตลอดไป R-B12) · คืนเงิน = <c>IsRefundTarget</c>
+    /// และยอดคืนของบรรทัด ≤ ยอดคืนผ่านระบบที่ยังไม่ถูกนับ (<see cref="ApplyIntentRefundCapacity"/> R-B2)</item>
+    /// <item>การจองที่พัก: เลือกเป็นคู่ของบรรทัดไม่ได้ (การลงบัญชี OTA เฟส 4) — เลือกใบขายของการจองนั้นแทน</item>
+    /// </list>
+    /// </summary>
+    /// <param name="orderGroupAmount">ยอดของออเดอร์จาก <see cref="OrderGroupAmounts"/> (บรรทัดที่ไม่มีเลขออเดอร์ = ยอดของบรรทัดเอง)</param>
+    /// <param name="lineAmount">ยอดของบรรทัดที่กำลังตัดสิน (คืนเงิน = ติดลบ)</param>
+    public static string? AssignRefusal(SettlementMatchCandidate c, SettlementLineType type, decimal orderGroupAmount, decimal lineAmount)
+    {
+        var rule = SettlementLineTypeRules.For(type);
+        if (!rule.RequiresSaleMatch) return $"บรรทัดประเภท \"{rule.LabelTh}\" ไม่ต้องจับคู่ใบขาย";
+        var isRefund = rule.Posting == SettlementPostingKind.Refund;
+        switch (c.Kind)
+        {
+            case SettlementMatchCandidateKind.Document:
+                if (isRefund)
+                    return c.IsRefundTarget ? null
+                        : c.RefundReason ?? c.Reason ?? "เอกสารนี้ใช้เป็นใบเดิมของใบลดหนี้ไม่ได้ (ต้องออกแล้วและไม่ถูกยกเลิก)";
+                return c.CanReceive ? null
+                    : c.Reason ?? "เอกสารนี้รับชำระจากผังพักไม่ได้ (ต้องเป็นใบแจ้งหนี้/ใบกำกับที่ออกแล้วและยังมียอดค้าง) — "
+                        + "ถ้ารายได้ของออเดอร์นี้บันทึกด้วยใบเสร็จแล้ว ให้บันทึกบรรทัดนี้เป็นรายการปรับปรุงแทน (กันรายได้ซ้ำ)";
+            case SettlementMatchCandidateKind.PaymentIntent:
+                if (isRefund)
+                {
+                    if (!c.IsRefundTarget)
+                        return c.RefundReason ?? c.Reason ?? "รายการชำระนี้ยังไม่เคยคืนเงินผ่านระบบ — คืนเงินนอกระบบต้องเลือกใบขายเดิมเพื่อออกใบลดหนี้";
+                    var need = Math.Abs(lineAmount);
+                    var left = c.RefundRemaining ?? 0m;
+                    return need <= left + AmountTolerance ? null
+                        : $"ยอดคืนของบรรทัดนี้ ({need:N2}) เกินยอดคืนเงินผ่านระบบที่ยังไม่ถูกนับ ({left:N2}) — ส่วนที่เกินเป็นการคืนนอกระบบ "
+                          + "เลือกใบขายเดิมเพื่อออกใบลดหนี้";
+                }
+                if (!c.CanReceive) return c.Reason ?? $"{c.Label} ใช้รับชำระจากผังพักไม่ได้";
+                if (c.OpenAmount is decimal paid && Math.Abs(paid - orderGroupAmount) > AmountTolerance)
+                    return $"ยอดขายของออเดอร์ในรอบโอน ({orderGroupAmount:N2}) ไม่เท่ายอดที่รับชำระผ่านระบบ {c.Label} — ส่วนต่างจะค้างผังพักตลอดไป · "
+                           + "จัดประเภทบรรทัดค่าธรรมเนียม/ส่วนลดที่ไฟล์แยกไว้ให้ถูกก่อน หรือบันทึกส่วนต่างเป็นรายการปรับปรุง";
+                return null;
+            default:
+                return "การจองที่พักเลือกเป็นคู่ของบรรทัดโดยตรงไม่ได้ (การลงบัญชี OTA ยังไม่รองรับ — เฟส 4) — เลือกใบขายของการจองนี้แทน";
+        }
+    }
+
+    /// <summary>
     /// **การจับคู่ที่คนตัดสินเอง ห้ามถูกจับคู่อัตโนมัติทับ** (review198-B R-B1) — เปลี่ยนประเภทบรรทัดแล้วยังต้องจับคู่ในกลุ่มเดิม
     /// (องค์ประกอบยอดขาย ↔ องค์ประกอบยอดขาย · คืนเงิน ↔ คืนเงิน) ⇒ คงคำตัดสินของคน · เปลี่ยนข้ามกลุ่ม/ไม่ต้องจับคู่แล้ว ⇒ คำตัดสินเดิมหมดความหมาย
     /// </summary>

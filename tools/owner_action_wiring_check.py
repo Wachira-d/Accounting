@@ -124,6 +124,9 @@ RULES = [
     (C + 'SettlementController.cs', 'CreateChannel', 'attr', PERM),
     (C + 'SettlementController.cs', 'UpdateChannel', 'attr', REJECT),
     (C + 'SettlementController.cs', 'UpdateChannel', 'attr', PERM),
+    # ---- review198-D D-P1: จัดประเภทบรรทัด = บันทึกคำตอบลงคลังเรียนรู้เป็น "ผู้ใช้เลือก (Explicit)" ⇒ คีย์ API ห้าม (กันคลังเอียง DOCTRINE §3) ----
+    (C + 'SettlementController.cs', 'Reclassify', 'attr', REJECT),
+    (C + 'SettlementController.cs', 'Reclassify', 'attr', PERM),
     # ---- review198-E2 E2-3: บันทึกผลการคืนเงินที่ผลไม่แน่ชัดด้วยมือ = ตัดสินแทนผู้ให้บริการ (ปลดล็อกคืนเงิน/รอบโอน · อาจลง JE เงินออก) ----
     (C + 'PaymentGatewayController.cs', 'ResolveRefundManually', 'attr', REJECT),
     (C + 'PaymentGatewayController.cs', 'ResolveRefundManually', 'attr', OWNER),

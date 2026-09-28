@@ -5,7 +5,9 @@
 //                ยอดโอน (netPayout) ที่กรอกต้องไปถึง payload
 //   readMap    — แบบกว้าง: คอลัมน์ที่ติ๊กเป็นยอดเงินอยู่ใน amountColumns · คอลัมน์ที่ใช้เป็นช่องอื่นไม่ถูกนับว่า "ไม่ใช้" ·
 //                คอลัมน์ที่ไม่ได้ใช้เลย = ignore (ผู้ใช้เห็นแล้วเลือกไม่ใช้) · แบบยาว: ไม่มี amountColumns ค้าง
-//   negative test ในตัว — ใส่บั๊กกลับ (ส่ง null · ลืม ignore) ในหน่วยความจำ แล้ว sim ต้องจับได้
+//   matchBody  — (review198-D D-01) ผู้สมัครที่เซิร์ฟเวอร์ติดธง selectable=false ไม่ถูกส่ง · รายการรับชำระส่งเป็น paymentIntentId
+//                (เดิมส่งเป็น documentId ⇒ 404 "ไม่พบเอกสารขาย" ทุกครั้ง) · เอกสารส่งเป็น documentId
+//   negative test ในตัว — ใส่บั๊กกลับ (ส่ง null · ลืม ignore · intent เป็น documentId · ไม่ดู selectable) ในหน่วยความจำ แล้ว sim ต้องจับได้
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -131,5 +133,44 @@ for (const [name, h, m] of mutants) {
   if (runScenarios(buildPage(h, m)).length === 0) { console.log(`❌ negative test "${name}": sim ไม่จับ`); fail = 1; }
 }
 
-if (!fail) console.log(`✅ settlement_import_form_sim: ตัวอ่านฟอร์มนำเข้ารอบโอนถูกทั้งสองทิศ · negative test ${mutants.length} ตัวจับได้ครบ`);
+// ── matchBody (review198-D D-01): ผู้สมัครที่เซิร์ฟเวอร์บอกว่าเลือกไม่ได้ต้องไม่ถูกส่ง · รายการรับชำระ = paymentIntentId · เอกสาร = documentId ──
+const matchBodySrc = (pageSrc.match(/\n      matchBody\(l, pick\) \{[\s\S]*?\n      \},/) || [])[0];
+function runMatchScenarios(src) {
+  const failures = [];
+  const check = (name, cond, got) => { if (!cond) failures.push(`${name} — ได้ ${JSON.stringify(got)}`); };
+  // eslint-disable-next-line no-new-func
+  const page = new Function('return ({' + src + '});')();
+  const line = { matchCandidates: [
+    { kind: 'Document', id: 'doc-1', selectable: true },
+    { kind: 'PaymentIntent', id: 'pi-1', selectable: true },
+    { kind: 'PaymentIntent', id: 'pi-2', selectable: false, selectReason: 'ยอดไม่ตรง' },
+    { kind: 'Reservation', id: 'rs-1', selectable: false },
+  ] };
+  const d = page.matchBody(line, '0');
+  check('เอกสาร = documentId', d && d.documentId === 'doc-1' && !('paymentIntentId' in d), d);
+  const i = page.matchBody(line, '1');
+  check('รายการรับชำระ = paymentIntentId (ไม่ส่งเป็น documentId ⇒ เดิม 404 เสมอ)', i && i.paymentIntentId === 'pi-1' && !('documentId' in i), i);
+  check('ผู้สมัครที่เลือกไม่ได้ ⇒ ไม่ส่ง', page.matchBody(line, '2') === null, page.matchBody(line, '2'));
+  check('การจองที่พัก ⇒ ไม่ส่ง', page.matchBody(line, '3') === null, page.matchBody(line, '3'));
+  check('ใบขายสรุปรายวัน', JSON.stringify(page.matchBody(line, 'summary')) === JSON.stringify({ useDailySummary: true }), page.matchBody(line, 'summary'));
+  check('ดัชนีเกิน ⇒ ไม่ส่ง', page.matchBody(line, '9') === null, page.matchBody(line, '9'));
+  return failures;
+}
+let matchMutants = 0;
+if (!matchBodySrc) { console.log('❌ หา matchBody ใน settlements.html ไม่เจอ — ถูกลบ/เปลี่ยนชื่อ?'); fail = 1; }
+else {
+  const mr = runMatchScenarios(matchBodySrc);
+  if (mr.length) { console.log('❌ settlement_import_form_sim: matchBody ผิด'); mr.forEach(f => console.log('  ✗ ' + f)); fail = 1; }
+  const mm = [
+    ['ส่ง id ของรายการรับชำระเป็น documentId (บั๊ก D-01 เดิม)', matchBodySrc.replace("m.kind === 'PaymentIntent'", 'false')],
+    ['ไม่ดูธง selectable ของเซิร์ฟเวอร์', matchBodySrc.replace('|| m.selectable !== true', '')],
+  ];
+  for (const [name, src] of mm) {
+    matchMutants++;
+    if (src === matchBodySrc) { console.log(`❌ negative test "${name}": ใส่บั๊กไม่ติด (โค้ดหน้าเปลี่ยน — แก้ sim)`); fail = 1; continue; }
+    if (runMatchScenarios(src).length === 0) { console.log(`❌ negative test "${name}": sim ไม่จับ`); fail = 1; }
+  }
+}
+
+if (!fail) console.log(`✅ settlement_import_form_sim: ตัวอ่านฟอร์มนำเข้ารอบโอน + คำขอตัดสินการจับคู่ถูกทั้งสองทิศ · negative test ${mutants.length + matchMutants} ตัวจับได้ครบ`);
 process.exit(fail);
