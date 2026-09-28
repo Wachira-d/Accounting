@@ -52,6 +52,15 @@ public sealed record PredecessorDecision(RankedPredecessor? AutoLink, IReadOnlyL
 /// </summary>
 public static class OcrPredecessorMatcher
 {
+    /// <summary>
+    /// ใบต้นทางที่ออกให้<b>สาขาอื่นของนิติบุคคลเดียวกัน</b> (เลขภาษีเดียวกัน · <see cref="ContactTaxBranchKey.SameEntityIdsAsync"/>)
+    /// เป็นต้นทางของเอกสารชนิดนี้ได้ไหม (รอบ 197 ฝ่ายค้าน K-3 — สั่งซื้อที่ สนญ. แต่สาขาออกใบกำกับ = กรณีปกติ) ·
+    /// <b>ใบลดหนี้/ใบเพิ่มหนี้ไม่ได้</b>: §86/9-10 ต้องออกให้คู่ค้ารายเดียวกับใบเดิม และ <c>DocumentService</c> โยนเมื่อ
+    /// <c>ContactId</c> ต่างกัน ⇒ เสนอใบของแถวอื่นให้ = ผู้ใช้กดผูกแล้วไปล้มตอนสร้าง
+    /// </summary>
+    public static bool AcceptsSiblingBranchSource(DocumentType target)
+        => target is not (DocumentType.CreditNote or DocumentType.DebitNote);
+
     /// <summary>ยอดต่างได้ไม่เกินนี้ถือว่า "ตรง" — กันเศษปัด/OCR อ่านสตางค์เพี้ยน แต่ไม่กว้างจนใบคนละยอดผ่าน</summary>
     public const decimal AmountTolerance = 1.00m;
 

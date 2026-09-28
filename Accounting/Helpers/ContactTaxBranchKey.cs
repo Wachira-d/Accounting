@@ -239,17 +239,57 @@ public static class ContactTaxBranchKey
     {
         if (!HasTaxId(taxId)) return new List<Guid>();
         var raw = taxId!.Trim();
+        var rows = await LoadSameTaxRowsAsync(scope, companyId, raw, ct);
+        return SameTaxIdRowIds(rows, raw);
+    }
+
+    /// <summary>
+    /// **ผู้ติดต่อทุกแถวของนิติบุคคลเดียวกับ <paramref name="contactId"/>** (เลขภาษีเดียวกัน ทุกสาขา · รวมตัวเองเสมอ · ตัวเองมาก่อน)
+    /// — รอบ 197 ฝ่ายค้าน K-3: หลังสแกนผูกผู้ติดต่อ<b>ของสาขา</b>ได้ ใบสั่งซื้อ/ใบต้นทางที่ออกให้แถวสำนักงานใหญ่ (สั่ง สนญ. แต่สาขาออกใบกำกับ
+    /// — กรณีปกติ) หายจากตัวเสนอ PO · ตัวหาใบต้นทาง และถูกด่าน "ไม่ใช่ของผู้ขายที่จับคู่ไว้" โยนทิ้ง. ตัวนี้คือขอบเขต
+    /// "นิติบุคคลเดียวกัน" ตัวเดียวของงานนั้น (ห้ามเขียน <c>c.TaxId == x</c> เอง) · <b>ไม่ใช่</b>คีย์ผู้ติดต่อ (คีย์ = เลขภาษี+สาขา
+    /// <see cref="Pick"/>) — ใช้กับ "เอกสารของคู่ค้ารายนี้" เท่านั้น ห้ามใช้เลือกแถวที่จะผูก/เขียนทับ ·
+    /// ไม่มีเลขภาษี ("-"/ว่าง) = เฉพาะตัวเอง (ไม่รู้ว่าใครเป็นนิติบุคคลเดียวกัน) · กรอง <c>CompanyId</c> เสมอ (กฎ M)
+    /// </summary>
+    public static async Task<List<Guid>> SameEntityIdsAsync(IQueryable<Contact> scope, Guid companyId,
+        Guid contactId, CancellationToken ct = default)
+    {
+        var anchorTaxId = await scope
+            .Where(c => c.CompanyId == companyId && c.Id == contactId)
+            .Select(c => c.TaxId)
+            .FirstOrDefaultAsync(ct);
+        if (!HasTaxId(anchorTaxId)) return SameEntityIds(contactId, anchorTaxId, Array.Empty<ContactKeyCandidate>());
+        var rows = await LoadSameTaxRowsAsync(scope, companyId, anchorTaxId!.Trim(), ct);
+        return SameEntityIds(contactId, anchorTaxId, rows);
+    }
+
+    /// <summary>ตัวตัดสินของ <see cref="SameEntityIdsAsync"/> บนแถวที่โหลดแล้ว (pure — เทสต์ได้) · ลำดับ: ตัวเอง → สาขาอื่นเรียงรหัส</summary>
+    internal static List<Guid> SameEntityIds(Guid contactId, string? anchorTaxId, IEnumerable<ContactKeyCandidate> rows)
+    {
+        var ids = new List<Guid> { contactId };
+        if (!HasTaxId(anchorTaxId) || rows == null) return ids;
+        foreach (var id in SameTaxIdRowIds(rows, anchorTaxId!.Trim()))
+            if (id != contactId) ids.Add(id);
+        return ids;
+    }
+
+    /// <summary>แถวที่อาจถือเลขเดียวกัน (เทียบในหน่วยความจำต่อด้วย <see cref="SameTaxId"/>) — กรอง CompanyId</summary>
+    private static Task<List<ContactKeyCandidate>> LoadSameTaxRowsAsync(IQueryable<Contact> scope, Guid companyId,
+        string raw, CancellationToken ct)
+    {
         var digits = Digits(raw);
-        var rows = await scope
+        return scope
             .Where(c => c.CompanyId == companyId && c.TaxId != null
                 && (c.TaxId == raw || c.TaxId == digits || c.TaxId.Contains("-") || c.TaxId.Contains(" ")))
             .Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode))
             .ToListAsync(ct);
-        return rows.Where(r => SameTaxId(r.TaxId, raw))
+    }
+
+    private static List<Guid> SameTaxIdRowIds(IEnumerable<ContactKeyCandidate> rows, string raw)
+        => rows.Where(r => SameTaxId(r.TaxId, raw))
             .OrderBy(r => IsSpecified(r.BranchCode) ? TaxBranchCode.Normalize(r.BranchCode) : TaxBranchCode.HeadOffice, StringComparer.Ordinal)
             .ThenBy(r => r.Id)
             .Select(r => r.Id).ToList();
-    }
 
     /// <summary>เลขเดียวกันไหม (ไม่ดูสาขา) — 13 หลักเทียบตัวเลขล้วน · อื่น ๆ ตรงตัวหรือตัวเลขล้วน ≥ 10 หลัก (กติกาเดียวกับ <see cref="Pick"/>)</summary>
     private static bool SameTaxId(string? candidate, string raw)
