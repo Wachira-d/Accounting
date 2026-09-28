@@ -91,6 +91,7 @@ public sealed record SettlementBatchView(
 /// <param name="ClassifyUsedAi">ครู (AI ภายนอก) ถูกเรียกจริงตอนจัดประเภทบรรทัดนี้ — ป้าย "🤖 AI แนะนำ" เฉพาะเมื่อ true ·
 /// ไม่งั้น "⚙️ ระบบแนะนำ" (กฎเหล็ก #1)</param>
 /// <param name="MatchNote">เหตุผลของสถานะจับคู่/สิ่งที่ผู้ใช้ต้องตัดสิน</param>
+/// <param name="MatchDecidedByUser">คนตัดสินการจับคู่เอง — การจับคู่อัตโนมัติไม่ทับ (หน้าเว็บติดป้าย "👤 ผู้ใช้เลือก" · R-B1)</param>
 public sealed record SettlementLineView(
     Guid Id,
     int Seq,
@@ -114,7 +115,8 @@ public sealed record SettlementLineView(
     string? MatchNote,
     IReadOnlyList<SettlementMatchCandidateView> MatchCandidates,
     Guid? OverrideAccountId,
-    string? AdjustmentReason);
+    string? AdjustmentReason,
+    bool MatchDecidedByUser = false);
 
 public sealed record SettlementMatchCandidateView(string Kind, Guid Id, string Label, decimal? OpenAmount, bool CanReceive, bool IsRefundTarget);
 

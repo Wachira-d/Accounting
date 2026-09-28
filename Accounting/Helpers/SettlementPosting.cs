@@ -200,13 +200,18 @@ public sealed record SettlementReceiptTarget(
 /// <summary>บรรทัดที่แผนนับว่า "อยู่ในผังพักแล้ว" (อ้าง PaymentIntent/การรับชำระ) — ข้อเท็จจริงว่าเงินก้อนนั้นลงไว้ที่ผังไหนจริง (review198-A R-A1)</summary>
 /// <param name="PostedClearingAccountId">ผังที่ขาเงินเข้าของรายการนั้นลงไว้จริง (null = ลงธนาคาร/เงินสด หรือหาไม่เจอ)</param>
 /// <param name="SettledElsewhere">ถูกล้างออกจากผังพักไปแล้วด้วยเส้นอื่น (รอบโอน gateway เดิม · อีก batch)</param>
+/// <param name="RefundOutcomeUnknown">รายการรับชำระที่การคืนเงินค้าง "ผลไม่แน่ชัด" (<c>PaymentIntent.RefundOutcomeUnknownSince</c> · review198-E2 E2-10)</param>
 public sealed record SettlementClearingSource(
-    IReadOnlyList<Guid> LineIds, string What, bool Found, Guid? PostedClearingAccountId, bool SettledElsewhere);
+    IReadOnlyList<Guid> LineIds, string What, bool Found, Guid? PostedClearingAccountId, bool SettledElsewhere,
+    bool RefundOutcomeUnknown = false);
 
 /// <summary>หลักฐานว่ายอดขายที่จะออกใบสรุป "มีเอกสารขายอยู่แล้ว" (review198-A R-A7)</summary>
 public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string Evidence);
 
 /// <summary>ข้อเท็จจริงจากฐานที่ด่านของผู้ลงบัญชีต้องใช้ (ผู้เรียกหาให้ทั้งหมด — ตัวด่านไม่แตะฐาน)</summary>
+/// <param name="SummaryAbbreviatedBlock">ผลของ <c>AbbreviatedTaxInvoiceRule.Judge</c> ช่องทางเอกสาร ณ วันที่ใบขายสรุป (ฝ่ายค้าน C-6)</param>
+/// <param name="StaleReceipts">การรับชำระที่มีป้ายของรอบโอนแต่ไม่ตรงแผนปัจจุบัน (<see cref="SettlementReceiptReconcile.Stale"/> · C-4)</param>
+/// <param name="OrphanArtifacts">เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้วของช่องทางเดียวกัน (C-1(d))</param>
 public sealed record SettlementPostingFacts(
     SettlementBatchStatus Status,
     DateTime PayoutDay,
@@ -224,7 +229,10 @@ public sealed record SettlementPostingFacts(
     IReadOnlyList<SettlementDuplicateSale> DuplicateSales,
     bool CanApproveFeeDocuments,
     bool CanApproveSaleDocuments,
-    int PartialItems);
+    int PartialItems,
+    AbbreviatedInvoiceBlockReason SummaryAbbreviatedBlock = AbbreviatedInvoiceBlockReason.None,
+    IReadOnlyList<string>? StaleReceipts = null,
+    IReadOnlyList<string>? OrphanArtifacts = null);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -331,6 +339,12 @@ public static class SettlementPostingGate
         // ── บรรทัดที่นับว่าอยู่ในผังพักแล้ว (R-A1) ──
         foreach (var c in f.ClearingSources)
         {
+            // review198-E2 E2-10: การคืนเงินผ่านระบบที่ผลยังไม่แน่ชัด — ไม่รู้ว่าเงินออกจาก wallet แล้วหรือยัง ⇒ ลงรอบโอนทับไม่ได้
+            if (c.RefundOutcomeUnknown)
+                Add(SettlementPlanIssueCode.RefundOutcomeUnknown, true,
+                    $"{c.What} มีการคืนเงินที่ผลยังไม่แน่ชัด (ส่งคำขอคืนเงินแล้วไม่ได้คำตอบจากผู้ให้บริการ) — ยังไม่รู้ว่าเงินคืนออกจาก wallet แล้วหรือไม่",
+                    "ตรวจผลการคืนเงินก่อน: เปิดรายการรับชำระออนไลน์นั้น → ยืนยันผลการคืนเงินกับผู้ให้บริการ แล้วดูตัวอย่างรอบโอนใหม่",
+                    c.LineIds, null);
             string? why = null;
             if (!c.Found) why = $"ไม่พบ{c.What}ที่บรรทัดอ้างถึงในบริษัทนี้";
             else if (c.SettledElsewhere) why = $"{c.What}นี้ถูกล้างออกจากผังพักไปแล้วด้วยรอบโอนอื่น — นับซ้ำจะทำให้ผังพักติดลบ";
@@ -342,6 +356,26 @@ public static class SettlementPostingGate
                     + "หรือถอดการผูกบรรทัดกับรายการนั้นแล้วจับคู่ใหม่",
                     c.LineIds, null);
         }
+
+        // ── หัวใบขายสรุป (ฝ่ายค้าน C-6): มี VAT แต่บริษัทไม่มีสิทธิ์ §86/6 ⇒ ใบที่ออกให้ลูกค้าเงินสดถูกลดหัวเป็นใบเสร็จ (REC) เงียบ ๆ ──
+        if (plan.SummarySales.Any(s => s.Vat > 0m)
+            && f.SummaryAbbreviatedBlock is not (AbbreviatedInvoiceBlockReason.None or AbbreviatedInvoiceBlockReason.NotVatRegistered))
+            Add(SettlementPlanIssueCode.SummaryTaxInvoiceNotAllowed, true,
+                "ใบขายสรุปรายวันออกให้ \"ลูกค้าเงินสด\" (ไม่มีชื่อ/ที่อยู่ผู้ซื้อ) จึงเป็นใบกำกับภาษีเต็มรูป (§86/4) ไม่ได้ และบริษัทยังออกใบกำกับภาษีอย่างย่อ "
+                + "(§86/6) ไม่ได้ — ถ้าออกไป หัวจะถูกลดเป็น \"ใบเสร็จรับเงิน\" (เลขชุด REC) ทั้งที่ภาษีขายเข้า ภ.พ.30 · "
+                + AbbreviatedTaxInvoiceRule.Message(f.SummaryAbbreviatedBlock),
+                "ถ้ากิจการขายปลีก/ให้บริการลักษณะขายปลีกผ่านแพลตฟอร์ม ให้ติ๊ก \"ประกอบกิจการขายปลีก\" ในหน้าข้อมูลบริษัทแล้วดูตัวอย่างใหม่ · "
+                + "ไม่ใช่ ⇒ ออกใบกำกับภาษีเต็มรูปรายออเดอร์ (ชื่อ/ที่อยู่ผู้ซื้อ) แล้วจับคู่บรรทัดขายกับใบนั้น (ระบบรับชำระเข้าผังพักแทนการออกใบสรุป)",
+                plan.SummarySales.SelectMany(s => s.LineIds).ToList(), plan.SummarySales.Sum(s => s.Gross));
+
+        // ── การรับชำระที่ค้างจากครั้งก่อนไม่ตรงแผน (C-4) · ของกำพร้าจากรอบโอนที่ยกเลิกแล้ว (C-1(d)) ──
+        foreach (var why in f.StaleReceipts ?? Array.Empty<string>())
+            Add(SettlementPlanIssueCode.StaleDocument, true, why,
+                "ยกเลิกการรับชำระนั้นที่หน้าเอกสาร (รอบโอนยังไม่ลงบัญชีครบ จึงยกเลิกทีละรายการได้) แล้วดูตัวอย่างใหม่ — ระบบจะรับชำระตามแผนปัจจุบันให้");
+        foreach (var why in f.OrphanArtifacts ?? Array.Empty<string>())
+            Add(SettlementPlanIssueCode.OrphanPostingArtifacts, true, why,
+                "ยกเลิกเอกสาร/การรับชำระเหล่านั้นที่หน้าเอกสารก่อน (รอบโอนเจ้าของถูกยกเลิกแล้ว จึงยกเลิกทีละรายการได้) — ถ้ายังอยู่ ลงบัญชีรอบนี้ทับ "
+                + "= ค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ");
 
         // ── รายได้ซ้ำ (R-A7) ──
         foreach (var d in f.DuplicateSales)

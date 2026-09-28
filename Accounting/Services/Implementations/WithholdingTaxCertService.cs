@@ -320,6 +320,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var cert = await _db.WithholdingTaxCerts.FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
+        // รอบ 198 ฝ่ายค้าน C-2: ใบที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว (ผู้ถูกหักถือฉบับจริง · ยอดนำส่งแล้ว) ห้ามหายเงียบ — ตัวตัดสินตัวเดียว
+        if (await WhtCertVoidGuard.CheckAsync(_db, companyId, new[] { certId }) is string filed)
+            throw new BusinessRuleException(filed, "RD-50TWI-FILED", 409);
+
         cert.Status = WithholdingTaxCertStatus.Voided;
         await _db.SaveChangesAsync();
     }

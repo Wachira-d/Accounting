@@ -8028,6 +8028,16 @@ public partial class DocumentService : IDocumentService
                 "ใบเสร็จนี้ออกอัตโนมัติจากการบันทึกชำระเงิน — กรุณา 'ยกเลิกการชำระเงิน' แทน " +
                 "(ระบบจะยกเลิกใบเสร็จนี้และคืนยอดให้ครบอัตโนมัติ)");
 
+        // รอบ 198 ฝ่ายค้าน C-5: ใบที่การลงบัญชีรอบโอน settlement สร้าง ยกเลิกทีละใบไม่ได้ขณะรอบโอนยังลงบัญชีแล้ว (ต้องผ่าน "ยกเลิกการลงบัญชี")
+        if (await SettlementArtifactGuard.CheckAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromCreator(doc.CreatedBy))
+                is string settlementBlock)
+            throw new BusinessRuleException(settlementBlock, "SETTLEMENT-ARTIFACT-VOID", 409);
+        if (await SettlementArtifactGuard.CheckDocumentPaymentsAsync(_db, companyId, documentId) is string settlementPaid)
+            throw new BusinessRuleException(settlementPaid, "SETTLEMENT-ARTIFACT-VOID", 409);
+        // รอบ 198 ฝ่ายค้าน C-2: 50 ทวิ ของใบนี้ที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว — ห้ามให้เอกสารหายแต่ใบรับรองค้าง (cascade ด้านล่างกลืน error)
+        if (await WhtCertVoidGuard.CheckDocumentAsync(_db, companyId, documentId) is string whtFiled)
+            throw new BusinessRuleException(whtFiled, "RD-50TWI-FILED", 409);
+
         // Filing lock guard: an Approved document that's part of a TaxReport
         // already marked Filed (FilingLockedAt set) is sealed for audit —
         // the operator must Unlock the report first (admin) or use
@@ -9436,6 +9446,11 @@ public partial class DocumentService : IDocumentService
         var payment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId
             && p.CompanyId == companyId && !p.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+
+        // รอบ 198 ฝ่ายค้าน C-5: การรับชำระที่การลงบัญชีรอบโอน settlement บันทึก — ยกเลิกทีละรายการไม่ได้ขณะรอบโอนยังลงบัญชีแล้ว
+        if (await SettlementArtifactGuard.CheckAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromPaymentNotes(payment.Notes))
+                is string settlementBlock)
+            throw new BusinessRuleException(settlementBlock, "SETTLEMENT-ARTIFACT-VOID", 409);
 
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == payment.DocumentId
             && d.CompanyId == companyId)

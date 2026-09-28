@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Bank;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
@@ -100,9 +101,12 @@ public class SettlementPostingService : ISettlementPostingService
     private sealed record ExistingDoc(Guid Id, string Component, string Number, DocumentType Type, DocumentStatus Status,
         decimal Total);
 
+    /// <param name="ExpectedTotals">ยอดของเอกสารแต่ละชิ้นที่ตรวจกับแผนแล้วในการลงบัญชีครั้งนี้ (<c>CreateOrAdoptAsync</c>) —
+    /// ขั้นสุดท้ายใช้ตรวจความครบ (<see cref="SettlementPostingCompleteness"/> · ฝ่ายค้าน C-5)</param>
     private sealed record Gate(
         Loaded Loaded, SettlementPostingPlan Plan, SettlementAccountResolution Accounts, bool VatRegistered,
-        Guid? CounterpartyId, DateTime PayoutDay, List<ExistingDoc> ExistingDocs, List<Payment> SettlementPayments);
+        Guid? CounterpartyId, DateTime PayoutDay, List<ExistingDoc> ExistingDocs, List<Payment> SettlementPayments,
+        Dictionary<string, decimal> ExpectedTotals);
 
     // ═════════════════════════════ พรีวิว ═════════════════════════════
 
@@ -119,7 +123,7 @@ public class SettlementPostingService : ISettlementPostingService
     {
         var head = await HeadAsync(companyId, batchId, ct);
         SettlementPostingResult? result = null;
-        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementPostingKeys.LockScope, head.ChannelId.ToString("N"),
+        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementChannelLock.Scope, SettlementChannelLock.Part(head.ChannelId),
             async () => { result = await PostCoreAsync(companyId, batchId, userId, ct); }, _logger, companyId, ct);
         if (!acquired || result is null)
             return new SettlementPostingResult(false, false, BusyMessage, head.Status, null, null, null, Array.Empty<SettlementPostedItem>());
@@ -175,12 +179,27 @@ public class SettlementPostingService : ISettlementPostingService
         await ApproveIfDraftAsync(companyId, docId, userId);
 
         var cert = SettlementDocumentBuilder.WhtCertificate(fee, gate.CounterpartyId!.Value, docId, gate.PayoutDay, batch.PayoutRef);
-        if (cert != null && !await _db.WithholdingTaxCerts.AnyAsync(w => w.CompanyId == companyId && w.DocumentId == docId
-                && !w.IsDeleted && w.Status != WithholdingTaxCertStatus.Voided, ct))
+        if (cert == null) return;
+        // ฝ่ายค้าน C-3: ร่างที่ค้างจากการล้มระหว่างสร้างกับออก ต้องถูกออกตอนทำต่อ (ร่างไม่นับเข้า ภ.ง.ด.53/ยอดนำส่ง) · ยอดไม่ตรงแผน = ล้มดัง
+        var existing = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.DocumentId == docId && !w.IsDeleted && w.Status != WithholdingTaxCertStatus.Voided)
+            .OrderBy(w => w.CreatedAt)
+            .Select(w => new { w.Id, w.Status, w.TotalTaxAmount, w.CertificateNumber }).FirstOrDefaultAsync(ct);
+        var expected = cert.Lines.Sum(l => l.TaxAmount);
+        switch (SettlementWhtCertResume.Decide(existing?.Status, existing?.TotalTaxAmount, expected))
         {
-            // ท.ป.4/2528: ออกหนังสือรับรองในวันจ่าย · คำตัดสินเจ้าของรอบ 170 (ค): 50 ทวิ ออกเป็น Issued ทุกทางเข้า
-            var created = await _whtCerts.CreateAsync(companyId, cert, userId.ToString());
-            await _whtCerts.IssueAsync(companyId, created.Id);
+            case SettlementWhtCertStep.Create:
+                // ท.ป.4/2528: ออกหนังสือรับรองในวันจ่าย · คำตัดสินเจ้าของรอบ 170 (ค): 50 ทวิ ออกเป็น Issued ทุกทางเข้า
+                var created = await _whtCerts.CreateAsync(companyId, cert, userId.ToString());
+                await _whtCerts.IssueAsync(companyId, created.Id);
+                break;
+            case SettlementWhtCertStep.IssueDraft:
+                await _whtCerts.IssueAsync(companyId, existing!.Id);
+                break;
+            case SettlementWhtCertStep.Stale:
+                throw new BusinessRuleException(
+                    $"หนังสือรับรองหัก ณ ที่จ่าย {existing!.CertificateNumber} จากการลงบัญชีครั้งก่อนยอด {existing.TotalTaxAmount:N2} ไม่ตรงแผนปัจจุบัน "
+                    + $"{expected:N2} — ยกเลิกหนังสือรับรองนั้นก่อน แล้วกดลงบัญชีอีกครั้ง", "SETTLEMENT-POST-STALE", 409);
         }
     }
 
@@ -231,16 +250,19 @@ public class SettlementPostingService : ISettlementPostingService
                 throw new BusinessRuleException(
                     $"เอกสาร {existing.Number} ที่สร้างจากการลงบัญชีครั้งก่อนมียอด {existing.Total:N2} ไม่ตรงแผนปัจจุบัน {expected:N2} "
                     + "(บรรทัดของรอบโอนถูกแก้ระหว่างนั้น) — ยกเลิกเอกสารนั้นก่อน แล้วลงบัญชีใหม่", "SETTLEMENT-POST-STALE", 409);
+            gate.ExpectedTotals[component] = expected;
             return existing.Id;
         }
         var created = await _documents.CreateDocumentAsync(companyId, request,
             SettlementPostingKeys.Creator(gate.Loaded.Batch.Id, component));
         if (Math.Abs(created.TotalAmount - expected) > 0.005m)
             throw new BusinessRuleException(
-                $"เอกสาร {created.DocumentNumber} ที่ระบบสร้างมียอด {created.TotalAmount:N2} ไม่เท่าแผน {expected:N2} — ยกเลิก/ลบเอกสารร่างนั้น "
-                + "แล้วแจ้งผู้ดูแลระบบ (ยอดตามแผนคือยอดที่แพลตฟอร์มหัก/โอนจริง)", "SETTLEMENT-POST-AMOUNT", 409);
+                $"เอกสาร {created.DocumentNumber} ที่ระบบสร้างมียอด {created.TotalAmount:N2} ไม่เท่าแผน {expected:N2} — ยกเลิกเอกสารนั้น "
+                + "(ใบสำคัญจ่ายค่าธรรมเนียมถูกอนุมัติตอนสร้างแล้ว · ใบร่างให้ลบ) แล้วแจ้งผู้ดูแลระบบ (ยอดตามแผนคือยอดที่แพลตฟอร์มหัก/โอนจริง)",
+                "SETTLEMENT-POST-AMOUNT", 409);
         gate.ExistingDocs.Add(new ExistingDoc(created.Id, component, created.DocumentNumber, created.DocumentType, created.Status,
             created.TotalAmount));
+        gate.ExpectedTotals[component] = expected;
         return created.Id;
     }
 
@@ -275,6 +297,38 @@ public class SettlementPostingService : ISettlementPostingService
                 return await AlreadyPostedAsync(companyId, batch, ct);
             }
 
+            // ฝ่ายค้าน C-1(c): คิดแผนใหม่ใต้ล็อกแถว — บรรทัด/หัวรอบโอนถูกแก้ระหว่างลงบัญชี ⇒ ห้ามประทับ Posted ด้วยแผนที่ไม่ตรงบรรทัดแล้ว
+            // (ล็อกต่อช่องทางตัวเดียวกันกันไว้แล้ว — ที่นี่คือตาข่ายชั้นที่สอง)
+            var channelNow = await _db.SettlementChannels.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == batch.ChannelId && c.CompanyId == companyId, ct)
+                ?? throw new KeyNotFoundException("ไม่พบช่องทางของรอบโอนนี้");
+            var linesNow = await _db.SettlementLines.AsNoTracking()
+                .Where(l => l.BatchId == batchId && l.CompanyId == companyId && !l.IsDeleted).OrderBy(l => l.Seq).ToListAsync(ct);
+            var replanned = SettlementBatchMath.Plan(batch, linesNow, channelNow, gate.VatRegistered);
+            if (SettlementPlanFingerprint.Of(replanned) != SettlementPlanFingerprint.Of(gate.Plan))
+            {
+                await tx.RollbackAsync(ct);
+                return new SettlementPostingResult(false, false,
+                    "บรรทัดหรือหัวของรอบโอนถูกแก้ระหว่างที่ระบบลงบัญชี — ยังไม่ประทับ \"ลงบัญชีแล้ว\" · ดูตัวอย่างใหม่แล้วกด \"ลงบัญชี\" อีกครั้ง "
+                    + "(เอกสารที่สร้างไว้แล้วถูกตรวจกับแผนใหม่ ถ้าไม่ตรงระบบจะบอกให้ยกเลิกใบนั้นก่อน)",
+                    batch.Status, gate.Plan, null, null, Items(gate));
+            }
+
+            // ฝ่ายค้าน C-5: ทุกชิ้นของแผนต้องมีอยู่จริง ออกแล้ว ยอดตรง — ห้ามประทับ Posted จากแค่ "ของที่เหลืออยู่"
+            var docs = await ExistingDocsAsync(companyId, batchId, ct);
+            var pays = await SettlementPaymentsAsync(companyId, batchId, ct);
+            var missing = SettlementPostingCompleteness.Missing(gate.Plan, gate.ExpectedTotals,
+                docs.Select(d => new SettlementPostedDocumentFact(d.Component, d.Number, d.Status, d.Total)).ToList(),
+                pays.Select(MarkerOf).ToList());
+            if (missing.Count > 0)
+            {
+                await tx.RollbackAsync(ct);
+                return new SettlementPostingResult(false, false,
+                    "ยังไม่ประทับ \"ลงบัญชีแล้ว\" — ชิ้นของแผนไม่ครบ: " + string.Join(" · ", missing)
+                    + " · กด \"ลงบัญชี\" อีกครั้ง (ระบบสร้างชิ้นที่ขาดให้) หรือยกเลิกชิ้นที่ไม่ตรงก่อน",
+                    batch.Status, gate.Plan, null, null, Items(gate));
+            }
+
             var net = batch.NetPayout;
             JournalEntry? je = null;
             if (gate.Accounts.Journal.Count > 0)
@@ -303,8 +357,6 @@ public class SettlementPostingService : ISettlementPostingService
                 }
             }
 
-            var docs = await ExistingDocsAsync(companyId, batchId, ct);
-            var pays = await SettlementPaymentsAsync(companyId, batchId, ct);
             var docIds = docs.Select(d => d.Id).ToList();
             batch.Status = SettlementBatchStatus.Posted;
             batch.PayoutJournalEntryId = je?.Id;
@@ -327,7 +379,8 @@ public class SettlementPostingService : ISettlementPostingService
             if (intentIds.Count > 0)
                 foreach (var intent in await _db.PaymentIntents
                              .Where(i => i.CompanyId == companyId && intentIds.Contains(i.Id)).ToListAsync(ct))
-                    intent.SettlementBatchId = batch.Id;
+                    // รอบแรกเป็นเจ้าของยอดขาย (กติกาเดียวกับ SyncIntentStampsAsync ของผู้นำเข้า) — บรรทัดคืนเงินภายหลังห้ามย้ายเจ้าของ
+                    intent.SettlementBatchId ??= batch.Id;
 
             var paymentIds = pays.Select(p => p.Id).ToList();
             _db.AddChainedAuditLog(new AuditLog
@@ -436,6 +489,22 @@ public class SettlementPostingService : ISettlementPostingService
 
         var clearingSources = await ClearingSourcesAsync(companyId, batch, lines, ct);
         var duplicates = await DuplicateSalesAsync(companyId, batch, channel, plan, ct);
+        var orphans = await OrphanArtifactsAsync(companyId, batch, channel, ct);
+        // ฝ่ายค้าน C-4: การรับชำระที่ค้างจากครั้งก่อนต้องตรงแผนปัจจุบัน (ใบเดียวกัน · ยอดเท่ากัน)
+        var staleReceipts = SettlementReceiptReconcile.Stale(plan.Receipts, payments.Select(MarkerOf).ToList());
+
+        // ฝ่ายค้าน C-6: หัวของใบขายสรุป (ลูกค้าเงินสด) — ตัวตัดสินสิทธิ์ §86/6 ตัวเดียว ช่องทางเอกสาร (ไม่พบแถว SiteSettings = บังคับ)
+        var summaryBlock = AbbreviatedInvoiceBlockReason.None;
+        if (vatRegistered && plan.SummarySales.Count > 0)
+        {
+            var issuer = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => new { c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate }).FirstOrDefaultAsync(ct);
+            var requirePhoR06 = await _db.SiteSettings.AsNoTracking()
+                .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice).FirstOrDefaultAsync(ct) ?? true;
+            if (issuer != null)
+                summaryBlock = AbbreviatedTaxInvoiceRule.Judge(issuer.IsVatRegistered, issuer.IsRetailApproved, issuer.PhoR06ApprovedDate,
+                    plan.SummarySales.Min(s => s.Date), requirePhoR06, AbbreviatedInvoiceChannel.Document);
+        }
 
         var saleType = vatRegistered ? DocumentType.TaxInvoice : DocumentType.Receipt;
         var facts = new SettlementPostingFacts(
@@ -444,7 +513,8 @@ public class SettlementPostingService : ISettlementPostingService
             receiptDocs, clearingSources, duplicates,
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PaymentVoucher),
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, saleType),
-            existingDocs.Count + payments.Count);
+            existingDocs.Count + payments.Count,
+            summaryBlock, staleReceipts, orphans);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
@@ -461,7 +531,8 @@ public class SettlementPostingService : ISettlementPostingService
                     Array.Empty<Guid>(), null)).ToList(),
             };
 
-        return new Gate(loaded, gated, accounts, vatRegistered, counterparty?.Id, payoutDay, existingDocs, payments);
+        return new Gate(loaded, gated, accounts, vatRegistered, counterparty?.Id, payoutDay, existingDocs, payments,
+            new Dictionary<string, decimal>(StringComparer.Ordinal));
     }
 
     /// <summary>บรรทัดที่แผนนับว่าอยู่ในผังพักแล้ว — เงินก้อนนั้นลงไว้ที่ผังไหนจริง (review198-A R-A1: gateway ลง 11340 ผ่าน
@@ -481,18 +552,26 @@ public class SettlementPostingService : ISettlementPostingService
                 .Where(i => i.CompanyId == companyId && intentIds.Contains(i.Id)).ToListAsync(ct);
         foreach (var id in intentIds)
         {
-            var ids = counted.Where(l => l.PaymentIntentId == id).Select(l => l.Id).ToList();
             var intent = intents.FirstOrDefault(i => i.Id == id);
-            if (intent == null)
+            var posted = intent == null ? null : await _gateway.ResolveMoneyInAccountAsync(intent, ct);
+            // ฝั่งขายกับฝั่งคืนเงินตัดสิน "ถูกล้างไปแล้วด้วยเส้นอื่น" ต่างกัน (R-B2): คืนเงินภายหลังของรายการที่รอบก่อนเป็นเจ้าของยอดขาย ไม่ใช่การนับซ้ำ
+            foreach (var refundSide in new[] { false, true })
             {
-                result.Add(new SettlementClearingSource(ids, "รายการรับชำระออนไลน์ (PaymentIntent)", false, null, false));
-                continue;
+                var ids = counted.Where(l => l.PaymentIntentId == id
+                        && (SettlementLineTypeRules.For(l.LineType).Posting == SettlementPostingKind.Refund) == refundSide)
+                    .Select(l => l.Id).ToList();
+                if (ids.Count == 0) continue;
+                if (intent == null)
+                {
+                    result.Add(new SettlementClearingSource(ids, "รายการรับชำระออนไลน์ (PaymentIntent)", false, null, false));
+                    continue;
+                }
+                var elsewhere = SettlementSaleMatch.IntentSettledElsewhere(refundSide, intent.SettlementJournalEntryId,
+                    intent.SettlementBatchId, batch.Id);
+                // review198-E2 E2-10: ผลการคืนเงินยังไม่แน่ชัด (E-2) ⇒ ยอดคืนในผังพักยังไม่รู้ ห้ามลงบัญชีรอบโอนทับ
+                result.Add(new SettlementClearingSource(ids, $"รายการรับชำระออนไลน์ {intent.ProviderRef ?? intent.Id.ToString()}",
+                    true, posted, elsewhere, intent.RefundOutcomeUnknownSince != null));
             }
-            var posted = await _gateway.ResolveMoneyInAccountAsync(intent, ct);
-            var elsewhere = intent.SettlementJournalEntryId is not null
-                || (intent.SettlementBatchId is Guid b && b != batch.Id);
-            result.Add(new SettlementClearingSource(ids, $"รายการรับชำระออนไลน์ {intent.ProviderRef ?? intent.Id.ToString()}",
-                true, posted, elsewhere));
         }
 
         var paymentIds = counted.Where(l => l.PaymentIntentId is null && l.PaymentId is not null)
@@ -529,11 +608,12 @@ public class SettlementPostingService : ISettlementPostingService
         var result = new List<SettlementDuplicateSale>();
         if (plan.SummarySales.Count == 0) return result;
 
-        var channelBatches = (await _db.SettlementBatches.AsNoTracking()
-                .Where(b => b.CompanyId == companyId && b.ChannelId == channel.Id && !b.IsDeleted && b.Id != batch.Id
-                    && b.Status != SettlementBatchStatus.Voided)
-                .Select(b => new { b.Id, b.PayoutRef }).ToListAsync(ct))
-            .ToDictionary(b => b.Id.ToString("N"), b => b.PayoutRef);
+        // ฝ่ายค้าน C-1(d): รวมรอบโอนที่ถูกยกเลิก/ลบแล้วของช่องทางนี้ด้วย — ใบสรุปที่ยังไม่ถูกยกเลิกของรอบนั้นคือรายได้ที่ลงไว้แล้วจริง
+        var channelBatches = (await _db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
+                .Where(b => b.CompanyId == companyId && b.ChannelId == channel.Id && b.Id != batch.Id)
+                .Select(b => new { b.Id, b.PayoutRef, b.IsDeleted, b.Status }).ToListAsync(ct))
+            .ToDictionary(b => b.Id.ToString("N"),
+                b => b.IsDeleted || b.Status == SettlementBatchStatus.Voided ? b.PayoutRef + " (ยกเลิกแล้ว)" : b.PayoutRef);
         foreach (var s in plan.SummarySales)
         {
             var suffix = ":" + SettlementPostingKeys.SummaryComponent(s.Date);
@@ -584,6 +664,39 @@ public class SettlementPostingService : ISettlementPostingService
         return result;
     }
 
+    /// <summary>ของกำพร้า (ฝ่ายค้าน C-1(d)): เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกของรอบโอนที่ถูกยกเลิก/ลบแล้วในช่องทางเดียวกัน — เกิดจาก
+    /// "ลงบัญชีค้างครึ่งทาง → ยกเลิกรอบโอน" ก่อนรอบนี้ (ตอนนี้ยกเลิกรอบโอนที่มีของแบบนี้ไม่ได้แล้ว) · ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่นเลย</summary>
+    private async Task<List<string>> OrphanArtifactsAsync(Guid companyId, SettlementBatch batch, SettlementChannel channel,
+        CancellationToken ct)
+    {
+        var dead = await _db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ChannelId == channel.Id && b.Id != batch.Id
+                && (b.IsDeleted || b.Status == SettlementBatchStatus.Voided))
+            .OrderByDescending(b => b.UpdatedAt ?? b.CreatedAt).Take(200)
+            .Select(b => new { b.Id, b.PayoutRef }).ToListAsync(ct);
+        var result = new List<string>();
+        if (dead.Count == 0) return result;
+        var parts = dead.Select(b => b.Id.ToString("N")).ToList();
+        var refOf = dead.ToDictionary(b => b.Id.ToString("N"), b => b.PayoutRef);
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                && d.CreatedBy != null && d.CreatedBy.StartsWith("system:settlement:")
+                && parts.Contains(d.CreatedBy.Substring(18, 32)))
+            .Select(d => new { d.DocumentNumber, d.CreatedBy }).ToListAsync(ct);
+        foreach (var g in docs.GroupBy(d => d.CreatedBy!.Substring(18, 32)))
+            result.Add($"เอกสาร {string.Join(", ", g.Select(d => d.DocumentNumber))} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+        foreach (var b in dead)
+        {
+            var marker = SettlementPostingKeys.PaymentMarker(b.Id);
+            var pays = await _db.Payments.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+                .Select(p => p.PaymentNumber).ToListAsync(ct);
+            if (pays.Count > 0)
+                result.Add($"การรับชำระ {string.Join(", ", pays)} ที่ลงบัญชีให้รอบโอน {b.PayoutRef} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+        }
+        return result;
+    }
+
     // ═════════════════════════════ ยกเลิกการลงบัญชี ═════════════════════════════
 
     public async Task<SettlementUnpostResult> UnpostAsync(Guid companyId, Guid batchId, Guid userId, string reason,
@@ -594,7 +707,7 @@ public class SettlementPostingService : ISettlementPostingService
                 (await HeadAsync(companyId, batchId, ct)).Status, null, Array.Empty<Guid>(), Array.Empty<Guid>());
         var head = await HeadAsync(companyId, batchId, ct);
         SettlementUnpostResult? result = null;
-        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementPostingKeys.LockScope, head.ChannelId.ToString("N"),
+        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementChannelLock.Scope, SettlementChannelLock.Part(head.ChannelId),
             async () => { result = await UnpostCoreAsync(companyId, batchId, userId, reason.Trim(), ct); }, _logger, companyId, ct);
         return acquired && result is not null ? result
             : new SettlementUnpostResult(false, BusyMessage, head.Status, null, Array.Empty<Guid>(), Array.Empty<Guid>());
@@ -611,9 +724,19 @@ public class SettlementPostingService : ISettlementPostingService
 
         var docs = await ExistingDocsAsync(companyId, batchId, ct);
         var payments = await SettlementPaymentsAsync(companyId, batchId, ct);
-        foreach (var t in docs.Select(d => d.Type).Distinct())
+
+        // ── สิทธิ์ (ฝ่ายค้าน C-8 — ตรวจใน service ไม่ใช่แค่ controller): ยกเลิกเอกสาร/การรับชำระ = ระดับ Void ของชนิดเอกสาร (ตัวเดียวกับหน้าเอกสาร) ·
+        //    ถอนการจับคู่ธนาคาร = สิทธิ์กระทบยอดธนาคาร ──
+        var paymentDocIds = payments.Select(p => p.DocumentId).Distinct().ToList();
+        var paymentDocTypes = paymentDocIds.Count == 0 ? new List<DocumentType>()
+            : await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && paymentDocIds.Contains(d.Id))
+                .Select(d => d.DocumentType).Distinct().ToListAsync(ct);
+        foreach (var t in docs.Select(d => d.Type).Concat(paymentDocTypes).Distinct())
             if (!await DocumentPermissionHelper.CanVoidAsync(_perms, companyId, userId, t))
-                return Fail($"ผู้ใช้นี้ไม่มีสิทธิ์ยกเลิกเอกสารชนิด {t} ที่รอบโอนนี้สร้าง — ให้ผู้มีสิทธิ์ยกเลิกเอกสารเป็นผู้กด");
+                return Fail($"ผู้ใช้นี้ไม่มีสิทธิ์ยกเลิกเอกสาร/การรับชำระชนิด {t} ที่รอบโอนนี้สร้าง — ให้ผู้มีสิทธิ์ยกเลิกเอกสารเป็นผู้กด");
+        if (batch.BankTransactionId is not null
+            && !await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.BankReconcile))
+            return Fail("รอบโอนนี้จับคู่กับรายการเดินบัญชีแล้ว — ผู้ใช้นี้ไม่มีสิทธิ์กระทบยอดธนาคาร (ถอนการจับคู่) · ให้ผู้มีสิทธิ์เป็นผู้กด");
 
         // chargeback ที่ปิดไปแล้วหลังลงบัญชี — ต้องกลับรายการก่อน (ไม่งั้นผังพัก/57140 ค้าง)
         var cbRefs = loaded.Lines.Where(l => l.LineType == SettlementLineType.Chargeback)
@@ -632,18 +755,64 @@ public class SettlementPostingService : ISettlementPostingService
         JournalEntry? payoutJe = batch.PayoutJournalEntryId is Guid jeId
             ? await _db.JournalEntries.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jeId && j.CompanyId == companyId, ct)
             : null;
-        var dates = docs.Select(d => d.Id).ToList();
-        var docDates = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && dates.Contains(d.Id)).Select(d => d.DocumentDate).ToListAsync(ct);
-        foreach (var d in docDates.Append(payoutJe?.EntryDate ?? ThaiDate.CalendarDateUtc(batch.PayoutDate)).Distinct())
+        var docIds = docs.Select(d => d.Id).ToList();
+        var docFacts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentDate, d.VatAmount, d.IsForeignService }).ToListAsync(ct);
+        foreach (var d in docFacts.Select(x => x.DocumentDate)
+                     .Append(payoutJe?.EntryDate ?? ThaiDate.CalendarDateUtc(batch.PayoutDate)).Distinct())
             if (await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, d, ct) is string closed)
                 return Fail(closed + " — ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้จนกว่าจะเปิดงวด (หรือบันทึกรายการปรับปรุงในงวดปัจจุบันแทน)");
+
+        // ── ฝ่ายค้าน C-2: ด่านภาษี/e-Tax/50 ทวิ ของ "ทุกชิ้น" ก่อนแตะชิ้นแรก — ถูกปฏิเสธกลางทาง = สมุดครึ่งกลับครึ่งค้าง ──
+        var accepted = (await _db.EtaxInvoices.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && docIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
+                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
+        var locked = (await _db.TaxReports.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.FilingLockedAt != null)
+                .SelectMany(r => r.Lines)
+                .Where(l => l.DocumentId != null && docIds.Contains(l.DocumentId.Value))
+                .Select(l => l.DocumentId!.Value).ToListAsync(ct)).ToHashSet();
+        var certs = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.DocumentId != null && docIds.Contains(w.DocumentId.Value) && !w.IsDeleted
+                && w.Status != WithholdingTaxCertStatus.Voided)
+            .Select(w => new SettlementUnpostCertificate(w.Id, w.DocumentId!.Value, w.CertificateNumber, w.TaxFormType, w.TaxYear,
+                w.TaxMonth, w.Status)).ToListAsync(ct);
+        var filed = (await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
+                .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct))
+            .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
+        var unpostDocs = docs.Select(d =>
+        {
+            var f = docFacts.FirstOrDefault(x => x.Id == d.Id);
+            return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? batch.PayoutDate,
+                f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id));
+        }).ToList();
+        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed);
+        if (refusals.Count > 0)
+            return Fail("ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้ (ยังไม่ได้แตะอะไร): "
+                + string.Join(" · ", refusals.Select(r => $"{r.Subject}: {r.Reason}")) + " — " + refusals[0].NextStep);
 
         var voidedPayments = new List<Guid>();
         var voidedDocs = new List<Guid>();
         try
         {
-            // 1) ถอนการจับคู่ธนาคาร (เจ้าของการจับคู่ = IBankService)
+            // ขอบเขต "กำลังยกเลิกการลงบัญชีรอบโอนนี้" — ด่าน C-5 ในเส้นยกเลิกเอกสาร/การรับชำระปล่อยผ่านเฉพาะเส้นนี้
+            using var unposting = SettlementUnpostScope.Enter(batchId);
+            // 1) เอกสาร (ลำดับคงที่ — ฝั่งขายที่เสี่ยงถูกปฏิเสธที่สุดก่อน) + 50 ทวิ ของใบนั้นก่อนตัวใบ · เส้นปกติ: reversal JE ลงวันที่ของเอกสาร
+            foreach (var d in SettlementUnpostGate.VoidOrder(unpostDocs))
+            {
+                foreach (var cert in certs.Where(c => c.DocumentId == d.Id)) await _whtCerts.VoidAsync(companyId, cert.Id);
+                await _documents.VoidDocumentAsync(companyId, d.Id);
+                voidedDocs.Add(d.Id);
+            }
+            // 2) การรับชำระ (เส้นปกติ: กลับ JE + คืนยอดใบ) — หลังเอกสาร
+            foreach (var p in payments)
+            {
+                await _documents.VoidPaymentAsync(companyId, p.Id);
+                voidedPayments.Add(p.Id);
+            }
+            // 3) ถอนการจับคู่ธนาคาร (เจ้าของการจับคู่ = IBankService) — ก่อนกลับ JE รอบโอน
             if (batch.BankTransactionId is Guid txnId)
             {
                 var txn = await _db.Set<BankTransaction>().AsNoTracking()
@@ -651,30 +820,13 @@ public class SettlementPostingService : ISettlementPostingService
                 if (txn is { ReconciliationStatus: ReconciliationStatus.Matched } && txn.MatchedJournalEntryId == batch.PayoutJournalEntryId)
                     await _bank.UnmatchTransactionAsync(companyId, new UnmatchRequest(txnId));
             }
-            // 2) ยกเลิกการรับชำระ (เส้นปกติ: กลับ JE + คืนยอดใบ)
-            foreach (var p in payments)
-            {
-                await _documents.VoidPaymentAsync(companyId, p.Id);
-                voidedPayments.Add(p.Id);
-            }
-            // 3) ยกเลิก 50 ทวิ + เอกสาร (เส้นปกติ: reversal JE ลงวันที่ของเอกสาร · ด่านรายงานภาษีที่ยื่นแล้วอยู่ในเส้นนั้น)
-            foreach (var d in docs)
-            {
-                var certIds = await _db.WithholdingTaxCerts.AsNoTracking()
-                    .Where(w => w.CompanyId == companyId && w.DocumentId == d.Id && !w.IsDeleted
-                        && w.Status != WithholdingTaxCertStatus.Voided)
-                    .Select(w => w.Id).ToListAsync(ct);
-                foreach (var certId in certIds) await _whtCerts.VoidAsync(companyId, certId);
-                await _documents.VoidDocumentAsync(companyId, d.Id);
-                voidedDocs.Add(d.Id);
-            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ยกเลิกการลงบัญชีรอบโอน {Batch} ล้มกลางทาง", batchId);
             throw new BusinessRuleException(
-                $"ยกเลิกการลงบัญชีรอบโอน {batch.PayoutRef} ไม่สำเร็จ: {ex.Message} — ยกเลิกไปแล้ว {voidedPayments.Count} การรับชำระ · "
-                + $"{voidedDocs.Count} เอกสาร (สถานะรอบโอนยังเป็นลงบัญชีแล้ว) · แก้สาเหตุแล้วกดยกเลิกอีกครั้ง ระบบทำต่อจากที่ค้าง",
+                $"ยกเลิกการลงบัญชีรอบโอน {batch.PayoutRef} ไม่สำเร็จ: {ex.Message} — ยกเลิกไปแล้ว {voidedDocs.Count} เอกสาร · "
+                + $"{voidedPayments.Count} การรับชำระ (สถานะรอบโอนยังเป็นลงบัญชีแล้ว) · แก้สาเหตุแล้วกดยกเลิกอีกครั้ง ระบบทำต่อจากที่ค้าง",
                 ex, "SETTLEMENT-UNPOST-PARTIAL", 409);
         }
 
@@ -741,7 +893,7 @@ public class SettlementPostingService : ISettlementPostingService
     {
         var head = await HeadAsync(companyId, batchId, ct);
         SettlementBankMatchResult? result = null;
-        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementPostingKeys.LockScope, head.ChannelId.ToString("N"),
+        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementChannelLock.Scope, SettlementChannelLock.Part(head.ChannelId),
             async () => { result = await MatchCoreAsync(companyId, batchId, bankTransactionId, userId, ct); }, _logger, companyId, ct);
         return acquired && result is not null ? result
             : new SettlementBankMatchResult(false, BusyMessage, head.Status, null);
@@ -750,6 +902,11 @@ public class SettlementPostingService : ISettlementPostingService
     private async Task<SettlementBankMatchResult> MatchCoreAsync(Guid companyId, Guid batchId, Guid bankTransactionId,
         Guid userId, CancellationToken ct)
     {
+        // ฝ่ายค้าน C-8: สิทธิ์ตรวจใน service (ทุกทางเข้า — controller/LINE/มือถือ/job) — จับคู่ธนาคาร = สิทธิ์กระทบยอดธนาคาร
+        if (!await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.BankReconcile))
+            return new SettlementBankMatchResult(false,
+                "ผู้ใช้นี้ไม่มีสิทธิ์กระทบยอดธนาคาร — ให้ผู้มีสิทธิ์เป็นผู้จับคู่รอบโอนกับรายการเดินบัญชี",
+                (await HeadAsync(companyId, batchId, ct)).Status, null);
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
@@ -812,6 +969,24 @@ public class SettlementPostingService : ISettlementPostingService
 
     public async Task<SettlementChargebackResult> ResolveChargebackAsync(Guid companyId, Guid lineId, bool won, Guid userId,
         CancellationToken ct = default)
+    {
+        // ฝ่ายค้าน C-8: ปิด chargeback = ลง JE เอง ⇒ สิทธิ์จัดการสมุดรายวัน (ตัวเดียวกับหน้าสมุดรายวัน) ตรวจใน service
+        if (!await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.JournalManage))
+            return new SettlementChargebackResult(false,
+                "ผู้ใช้นี้ไม่มีสิทธิ์บันทึกรายการสมุดรายวัน — ให้ผู้มีสิทธิ์เป็นผู้ปิดรายการ chargeback", null, null);
+        var channelId = await _db.SettlementLines.AsNoTracking()
+            .Where(l => l.Id == lineId && l.CompanyId == companyId && !l.IsDeleted)
+            .Select(l => (Guid?)l.ChannelId).FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบบรรทัดของรอบโอน");
+        // ฝ่ายค้าน C-14: ล็อกต่อช่องทางตัวเดียวกับลงบัญชี/ยกเลิกการลงบัญชี — ปิด chargeback แทรกระหว่างยกเลิกการลงบัญชีไม่ได้
+        SettlementChargebackResult? result = null;
+        var acquired = await JobLock.RunExclusiveAsync(_db, SettlementChannelLock.Scope, SettlementChannelLock.Part(channelId),
+            async () => { result = await ResolveChargebackCoreAsync(companyId, lineId, won, userId, ct); }, _logger, companyId, ct);
+        return acquired && result is not null ? result : new SettlementChargebackResult(false, BusyMessage, null, null);
+    }
+
+    private async Task<SettlementChargebackResult> ResolveChargebackCoreAsync(Guid companyId, Guid lineId, bool won, Guid userId,
+        CancellationToken ct)
     {
         var line = await _db.SettlementLines.AsNoTracking()
             .FirstOrDefaultAsync(l => l.Id == lineId && l.CompanyId == companyId && !l.IsDeleted, ct)
@@ -956,6 +1131,8 @@ public class SettlementPostingService : ISettlementPostingService
 
     private static SettlementPostedItem ItemOf(Payment p)
         => new(p.Id, "payment", p.PaymentNumber, "receipt", "Recorded", p.Amount);
+
+    private static SettlementMarkerPayment MarkerOf(Payment p) => new(p.Id, p.DocumentId, p.Amount, p.PaymentNumber);
 
     private static string FirstBlocking(SettlementPostingPlan plan)
     {

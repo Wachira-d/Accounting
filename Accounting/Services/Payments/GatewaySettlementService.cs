@@ -309,6 +309,9 @@ public class GatewaySettlementService : IGatewaySettlementService
             return new FeeCorrectionOutcome(false,
                 "รายการนี้บันทึกรอบโอนไปแล้ว — ค่าธรรมเนียมอยู่ในใบสำคัญแล้ว แก้ที่นี่ไม่ได้ "
                 + "(ต้องกลับรายการใบสำคัญรอบโอนก่อน)", intent.FeeActual, null);
+        // review198-B R-B16: อยู่ในรอบโอน settlement แล้ว — บรรทัดค่าธรรมเนียมถูกบันทึกไปแล้ว แก้ที่นี่ไม่มีผล (ห้ามเงียบ)
+        if (SettlementSaleMatch.FeeEditBlockedByBatch(intent.SettlementBatchId) is string inBatch)
+            return new FeeCorrectionOutcome(false, inBatch, intent.FeeActual, null);
         if (!PaymentIntentPolicy.IsSettledPositive(intent.Status))
             return new FeeCorrectionOutcome(false,
                 "แก้ค่าธรรมเนียมได้เฉพาะรายการที่รับเงินสำเร็จแล้ว", intent.FeeActual, null);

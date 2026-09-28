@@ -188,6 +188,8 @@ public static class SettlementLineTypeRules
         if (string.IsNullOrWhiteSpace(answer)) return null;
         var a = answer.Trim();
         if (a.Length == 0 || char.IsDigit(a[0]) || a[0] == '-') return null;    // ห้ามรับตัวเลข — Enum.TryParse รับ "99" เป็นค่าไม่มีชื่อ
+        // R-B14: ต้องเป็นชื่อเดียวตรงตัว — Enum.TryParse รับ "Sale, Refund" แล้ว OR ค่าเป็นประเภทที่สาม (= Chargeback) ทั้งที่ enum ไม่ใช่ [Flags]
+        if (!Enum.GetNames<SettlementLineType>().Contains(a, StringComparer.OrdinalIgnoreCase)) return null;
         if (!Enum.TryParse<SettlementLineType>(a, ignoreCase: true, out var t)) return null;
         if (!ByType.ContainsKey(t) || !For(t).Postable) return null;
         return t;

@@ -3580,3 +3580,22 @@ _รอบ 199 main — CI แดง `2599df78` (CS1519/CS1010): doc-comment ใ
 ที่มีขึ้นบรรทัดจริง ⇒ ครึ่งหลังหลุดเป็นโค้ด · แก้เป็น "⏎" · checker ใหม่ `tools/comment_line_break_check.py` (บรรทัดขึ้นต้นอักษรไทยต่อจาก
 บรรทัดคอมเมนต์ · `--self-test` + negative test กับไฟล์ที่พังจริงจับได้บรรทัด 766) — ไม่มี checker เดิมตัวไหนมองบรรทัดนี้
 — commit <pending>)_
+
+_รอบ 198 ทีม S3 — แก้ผลฝ่ายค้าน settlement review198-B (นำเข้า/จับคู่) + review198-C (ลงบัญชี) + review198-E2 E2-10:
+- **C-1 ล็อกเดียว**: `Helpers/SettlementChannelLock` — ผู้นำเข้า `pg_advisory_xact_lock(Key)` · ผู้ลงบัญชี `JobLock(Scope, Part)` คีย์เดียวกัน (เดิม `settlement-import` กับ `settle-post`
+  ไม่กันกัน) · **R-B3** ทุกเส้นแก้ข้อมูลล็อกก่อนโหลด/ตรวจ · รอบที่ลงบัญชีค้างครึ่งทางแก้/เติม/ยกเลิกไม่ได้ (`IsEditable(status, artifacts)`) · `CommitPostedAsync`
+  คิดแผนใหม่ใต้ `FOR UPDATE` (`SettlementPlanFingerprint`) · ใบสรุปวันเดียวกันนับรอบที่ยกเลิกแล้ว · ของกำพร้า ⇒ `OrphanPostingArtifacts`
+- **C-2 ยกเลิกการลงบัญชี**: `SettlementUnpostGate` ตรวจทุกชิ้นก่อนแตะชิ้นแรก (e-Tax Accepted · รายงานล็อก · ภ.พ.30 ประกาศ/ยื่นแล้ว · ภ.พ.36 · 50 ทวิ ยื่นแล้ว) · ลำดับคงที่
+  เอกสาร (ฝั่งขายก่อน) → รับชำระ → ถอนจับคู่ธนาคาร → กลับ JE · `WhtCertVoidGuard` ใน `WithholdingTaxCertService.VoidAsync` + `DocumentService.VoidDocumentAsync`
+- **C-3** 50 ทวิ ร่างค้างถูกออกตอนทำต่อ · **C-4** การรับชำระค้างต้องตรงแผน · **C-5** ความครบก่อนประทับ Posted + `SettlementArtifactGuard` ใน `VoidDocumentAsync/VoidPaymentAsync`
+  (ผ่านเฉพาะ `SettlementUnpostScope`) · **C-6** ใบขายสรุปมี VAT แต่ไม่มีสิทธิ์ §86/6 ⇒ บล็อก `SummaryTaxInvoiceNotAllowed` (รอเจ้าของ O-3) · **C-8** สิทธิ์ใน service
+  (`Bank.Reconcile` · `Journal.Manage` · Void ของใบที่รับชำระ) · **C-10** ข้อความ · **C-14** chargeback ถือล็อกช่องทาง
+- **R-B1** `SettlementLines.MatchDecidedByUser` (migration · echo) — ตัวจับคู่อัตโนมัติไม่ทับคำตัดสินของคน · **R-B2** ต้นทางคืนเงินผ่าน intent = ยอดคืนที่ยังไม่ถูกนับ
+  ไม่ว่ารอบไหนเป็นเจ้าของ (จัดสรรทีละบรรทัด · เหตุผลแยกสาเหตุ) + ผู้ลงบัญชีไม่บล็อกบรรทัดคืนเงินภายหลังว่า "นับซ้ำ" (`IntentSettledElsewhere` — เดิมบล็อกทั้งเส้น
+  PaymentIntent ด้วย) + `CommitPostedAsync` ไม่ย้ายเจ้าของ intent · **R-B4** intent ค้นทั้งบริษัท พบแต่ใช้ไม่ได้ ⇒ Unmatched ไม่ใช่ใบสรุป · **R-B5/R-B6** คีย์ v2
+  (ยอด+วันที่ · ไม่มี id ใส่รอบโอน · ป้ายแฮชด้วยตัว normalize ของคีย์เอง) + เตือนแถวที่ข้ามรายแถว · **R-B12** intent ยอดไม่ตรง ⇒ AmountMismatch · **R-B14** คำตอบ
+  ตัวจัดประเภทต้องเป็นชื่อเดียว · **R-B16** แก้ค่าธรรมเนียมของ intent ในรอบโอนแล้ว ⇒ ปฏิเสธ · **R-B17** (บางส่วน) คืนเงินภายหลังนับบรรทัดทุกช่องทาง
+- **E2-10** intent ที่คืนเงินผลไม่แน่ชัด: CSV ⇒ Unmatched · ประกอบ ⇒ เตือน · ลงบัญชี ⇒ บล็อก `RefundOutcomeUnknown`
+- เจ้าของตัดสิน: C-7 (ผู้อนุมัติ = ระบบ) · C-9 (1 ใบสรุป/วัน vs หลาย payout) · C-6 ถาวร — เขียนไว้ใน review198-C.md O-1..O-3
+- เทสต์ `SettlementReview198FixTests` · `required_call_site_check` +17 กติกา · DOCUMENT_FLOW §2.10 · ACCOUNT_STRUCTURE §3.1d · TEST_PLAN SPS-01..23
+— commit <pending>)_

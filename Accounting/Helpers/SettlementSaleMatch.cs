@@ -14,14 +14,31 @@ public enum SettlementMatchCandidateKind
 /// <param name="CanReceive">รับชำระจากผังพักได้จริง — เอกสาร: ลูกหนี้ (<c>ArApScope</c>) ที่ออกแล้วและยังมียอดค้าง ·
 /// intent: รับเงินสำเร็จแล้ว (ลงผังพักไว้แล้ว)</param>
 /// <param name="IsRefundTarget">เป็นต้นทางของใบลดหนี้ได้ — เอกสารขายที่ออกแล้ว · intent: คืนเงินผ่านระบบแล้ว (มี JE คืนเงินลงผังพัก)</param>
-/// <param name="OpenAmount">ยอดค้างของเอกสาร (เทียบกับยอดขายของออเดอร์ในรอบโอน)</param>
+/// <param name="OpenAmount">ยอดค้างของเอกสาร (เทียบกับยอดขายของออเดอร์ในรอบโอน) · intent = ยอดที่รับชำระ (ก่อนคืน)</param>
+/// <param name="Reason">เหตุผลที่ใช้เป็นผู้สมัครรับชำระ/ต้นทางคืนเงินไม่ได้ — แสดงเป็นหมายเหตุการจับคู่แทนข้อความทั่วไป (null = ใช้ข้อความทั่วไป)</param>
+/// <param name="RefundRemaining">intent: ยอดคืนเงินผ่านระบบที่ยังไม่ถูกนับในบรรทัดคืนเงินของรอบโอนใด (R-B2) · เอกสาร = null</param>
+/// <param name="RefundReason">เหตุผลที่ใช้เป็นต้นทางคืนเงินไม่ได้ (แยกจาก <paramref name="Reason"/> ของฝั่งรับชำระ — สาเหตุต่างกัน · R-B2)</param>
 public sealed record SettlementMatchCandidate(
     SettlementMatchCandidateKind Kind,
     Guid Id,
     string Label,
     decimal? OpenAmount,
     bool CanReceive,
-    bool IsRefundTarget);
+    bool IsRefundTarget,
+    string? Reason = null,
+    decimal? RefundRemaining = null,
+    string? RefundReason = null);
+
+/// <summary>ข้อเท็จจริงของ PaymentIntent 1 รายการที่เลขอ้างอิงตรงกับเลขออเดอร์ในไฟล์ (ค้นทั้งบริษัท — R-B4) — ผู้เรียกหาจากฐาน (tenant แล้ว)</summary>
+/// <param name="UsableOnChannel">ช่องทางนี้ผูกกับ gateway ของรายการนี้ และผังพักของช่องทาง = ผังที่ขาเงินเข้าลงไว้ (R-A1) — false = พบแต่ใช้ไม่ได้</param>
+/// <param name="Received">รับเงินสำเร็จแล้ว (ลงผังพักแล้ว)</param>
+/// <param name="SettledByLegacyRound">ถูกบันทึกรอบโอนด้วยเส้นเดิม (<c>SettlementJournalEntryId</c>)</param>
+/// <param name="OwnerBatchId">รอบโอน settlement ที่เป็นเจ้าของยอดขายของรายการนี้ (<c>PaymentIntent.SettlementBatchId</c>)</param>
+/// <param name="RefundInOtherLines">Σ ยอดคืน (บวก) ของบรรทัดคืนเงินที่อ้างรายการนี้อยู่แล้วในรอบโอนใดก็ได้ของบริษัท (ไม่รวมบรรทัดที่กำลังตัดสิน)</param>
+/// <param name="RefundOutcomeUnknown">มีการคืนเงินที่ผลยังไม่แน่ชัด (<c>RefundOutcomeUnknownSince</c> · review198-E2 E2-10)</param>
+public sealed record SettlementIntentFact(
+    Guid Id, string? ProviderRef, decimal Amount, decimal RefundedAmount, bool UsableOnChannel, bool Received,
+    bool SettledByLegacyRound, Guid? OwnerBatchId, decimal RefundInOtherLines, bool RefundOutcomeUnknown);
 
 /// <summary>ผลการจับคู่ของบรรทัดหนึ่ง</summary>
 public sealed record SettlementMatchDecision(
@@ -80,9 +97,9 @@ public static class SettlementSaleMatch
         {
             if (!c.IsRefundTarget)
                 return new(SettlementMatchStatus.Unmatched, null, null, c.Kind == SettlementMatchCandidateKind.Reservation ? c.Id : null,
-                    candidates, c.Kind == SettlementMatchCandidateKind.PaymentIntent
+                    candidates, c.RefundReason ?? c.Reason ?? (c.Kind == SettlementMatchCandidateKind.PaymentIntent
                         ? "รายการชำระนี้ยังไม่เคยคืนเงินผ่านระบบ — คืนเงินนอกระบบต้องเลือกใบขายเดิมเพื่อออกใบลดหนี้"
-                        : "พบรายการที่เลขตรงกันแต่ใช้เป็นใบเดิมของใบลดหนี้ไม่ได้ — ตรวจและเลือกเอง");
+                        : "พบรายการที่เลขตรงกันแต่ใช้เป็นใบเดิมของใบลดหนี้ไม่ได้ — ตรวจและเลือกเอง"));
             return c.Kind == SettlementMatchCandidateKind.PaymentIntent
                 ? new(SettlementMatchStatus.Matched, null, c.Id, null, candidates, null)
                 : new(SettlementMatchStatus.Matched, c.Id, null, null, candidates, null);
@@ -91,6 +108,11 @@ public static class SettlementSaleMatch
         switch (c.Kind)
         {
             case SettlementMatchCandidateKind.PaymentIntent when c.CanReceive:
+                // R-B12: ยอดขายของออเดอร์ในไฟล์ต้องเท่ายอดที่รับชำระผ่านระบบ — ต่าง = ส่วนต่างค้างผังพักตลอดไป (สมการรอบโอนจับไม่ได้)
+                if (c.OpenAmount is decimal paid && Math.Abs(paid - orderGroupAmount) > AmountTolerance)
+                    return new(SettlementMatchStatus.AmountMismatch, null, c.Id, null, candidates,
+                        $"ยอดขายของออเดอร์ในรอบโอน ({orderGroupAmount:N2}) ไม่เท่ายอดที่รับชำระผ่านระบบ {c.Label} — ตรวจก่อนลงบัญชี "
+                        + "(ถ้าส่วนต่างเป็นค่าธรรมเนียม/ส่วนลดที่ไฟล์แยกไว้ ให้จัดประเภทบรรทัดนั้นให้ถูก)");
                 return new(SettlementMatchStatus.Matched, null, c.Id, null, candidates, null);
             case SettlementMatchCandidateKind.Document when c.CanReceive:
                 var diff = c.OpenAmount is decimal open ? Math.Abs(open - orderGroupAmount) : decimal.MaxValue;
@@ -103,9 +125,89 @@ public static class SettlementSaleMatch
                     "เลขตรงกับการจองที่พัก — การลงบัญชี OTA ยังไม่รองรับ (เฟส 4) · เลือกใบขายของการจองนี้เอง");
             default:
                 return new(SettlementMatchStatus.Unmatched, null, null, null, candidates,
-                    $"เลขออเดอร์ตรงกับ {c.Label} ซึ่งรับชำระจากผังพักไม่ได้ (ร่าง · ใบเสร็จ · ชำระครบแล้ว) — ตรวจว่ารายได้ถูกบันทึกแล้วหรือไม่ แล้วเลือกเอง");
+                    c.Reason ?? $"เลขออเดอร์ตรงกับ {c.Label} ซึ่งรับชำระจากผังพักไม่ได้ (ร่าง · ใบเสร็จ · ชำระครบแล้ว) — ตรวจว่ารายได้ถูกบันทึกแล้วหรือไม่ แล้วเลือกเอง");
         }
     }
+
+    /// <summary>
+    /// **ผู้สมัครจาก PaymentIntent** (review198-B R-B2 · R-B4 · review198-E2 E2-10) — ตัวตัดสินตัวเดียวของ "รายการรับชำระนี้ใช้รับชำระ/เป็นต้นทางคืนเงินได้ไหม"
+    /// <list type="bullet">
+    /// <item><b>R-B4</b>: พบ intent แต่ช่องทางนี้ใช้ไม่ได้ (ไม่ผูก gateway นั้น / ผังพักไม่ตรง) ⇒ ผู้สมัครที่ใช้ไม่ได้ + เหตุผล ⇒ ตัวตัดสินให้ <c>Unmatched</c>
+    /// <b>ไม่ตก AutoSummary</b> (รายได้ของรายการนี้บันทึกไว้แล้วตอนรับชำระ — DOCTRINE §1 "เท็จเพราะไม่มีข้อมูล ห้ามผ่าน")</item>
+    /// <item><b>R-B2</b>: ต้นทางคืนเงิน = ยอดคืนผ่านระบบ (<c>RefundedAmount</c>) ที่ยังไม่ถูกนับในบรรทัดคืนเงินรอบใด <b>ไม่ว่ารอบไหนเป็นเจ้าของยอดขาย</b> ·
+    /// เหตุผลแยกตามสาเหตุ: ไม่เคยคืนผ่านระบบ · นับครบแล้วในรอบอื่น · บันทึกรอบโอนด้วยเส้นเดิม</item>
+    /// <item><b>E2-10</b>: การคืนเงินผลไม่แน่ชัด ⇒ ใช้ไม่ได้ทั้งรับชำระและคืนเงินจนกว่าจะตรวจผล</item>
+    /// </list>
+    /// </summary>
+    public static SettlementMatchCandidate IntentCandidate(SettlementIntentFact i, Guid currentBatchId)
+    {
+        var label = $"รายการรับชำระ {i.ProviderRef} ({i.Amount:N2})";
+        SettlementMatchCandidate No(string reason)
+            => new(SettlementMatchCandidateKind.PaymentIntent, i.Id, label, i.Amount, false, false, reason, 0m, reason);
+        if (!i.UsableOnChannel)
+            return No($"เลขนี้ตรงกับ{label}ในระบบ แต่ช่องทางนี้ไม่ได้ผูกกับ gateway ของรายการนั้น (หรือผังพักไม่ตรงกับผังที่รับเงินไว้) — "
+                + "รายได้ของรายการนี้บันทึกไว้แล้วตอนรับชำระ ห้ามออกใบขายสรุปซ้ำ · ผูกช่องทางกับการตั้งค่า gateway ให้ผังพักตรงกัน "
+                + "หรือบันทึกบรรทัดนี้เป็นรายการปรับปรุง");
+        if (i.RefundOutcomeUnknown)
+            return No($"{label} มีการคืนเงินที่ผลยังไม่แน่ชัด — ตรวจผลการคืนเงินกับผู้ให้บริการก่อน แล้วกดจับคู่ใหม่");
+        if (i.SettledByLegacyRound)
+            return No($"{label} ถูกบันทึกรอบโอนด้วยหน้ารอบโอน gateway เดิมแล้ว — ยอดขาย/คืนเงินภายหลังของรายการนี้ลงผ่านหน้านั้น ห้ามนับซ้ำในรอบโอนนี้");
+        var ownedElsewhere = i.OwnerBatchId is Guid owner && owner != currentBatchId;
+        var canReceive = i.Received && !ownedElsewhere;
+        var saleReason = canReceive ? null
+            : ownedElsewhere ? $"{label} อยู่ในรอบโอนอื่นแล้ว (รอบแรกเป็นเจ้าของยอดขาย) — ยอดขายนับซ้ำไม่ได้"
+            : $"{label} ยังไม่รับเงินสำเร็จ";
+        var remaining = Math.Max(0m, i.RefundedAmount - i.RefundInOtherLines);
+        var isRefundTarget = remaining > AmountTolerance;
+        var refundReason = isRefundTarget ? null
+            : i.RefundedAmount <= 0m
+                ? "รายการชำระนี้ยังไม่เคยคืนเงินผ่านระบบ — คืนเงินนอกระบบต้องเลือกใบขายเดิมเพื่อออกใบลดหนี้"
+                : $"ยอดคืนเงินผ่านระบบของ{label} ({i.RefundedAmount:N2}) ถูกนับในบรรทัดคืนเงินของรอบโอนแล้วครบ — บรรทัดนี้อาจเป็นการคืนซ้ำในไฟล์ "
+                    + "หรือคืนนอกระบบ (เลือกใบขายเดิมเพื่อออกใบลดหนี้)";
+        return new(SettlementMatchCandidateKind.PaymentIntent, i.Id, label, i.Amount, canReceive, isRefundTarget, saleReason, remaining,
+            refundReason);
+    }
+
+    /// <summary>
+    /// **จัดสรรยอดคืนของ intent ให้บรรทัดคืนเงินทีละบรรทัด** (R-B2) — สองบรรทัดคืน 50 ของรายการที่คืนผ่านระบบแค่ 50 ห้ามจับคู่ได้ทั้งคู่ ·
+    /// บรรทัดที่ยอดเกินที่เหลือ ⇒ <c>Unmatched</c> พร้อมเหตุผล · คืนยอดที่เหลือหลังหักบรรทัดนี้
+    /// </summary>
+    public static (SettlementMatchDecision Decision, decimal Remaining) ApplyIntentRefundCapacity(SettlementMatchDecision d,
+        decimal lineRefundAmount, decimal remaining)
+    {
+        if (d.Status != SettlementMatchStatus.Matched || d.PaymentIntentId is null) return (d, remaining);
+        var need = Math.Abs(lineRefundAmount);
+        if (need <= remaining + AmountTolerance) return (d, Math.Max(0m, remaining - need));
+        return (new SettlementMatchDecision(SettlementMatchStatus.Unmatched, null, null, null, d.Candidates,
+            $"ยอดคืนของบรรทัดนี้ ({need:N2}) เกินยอดคืนเงินผ่านระบบที่ยังไม่ถูกนับ ({remaining:N2}) — ส่วนที่เกินเป็นการคืนนอกระบบ "
+            + "เลือกใบขายเดิมเพื่อออกใบลดหนี้"), remaining);
+    }
+
+    /// <summary>
+    /// **การจับคู่ที่คนตัดสินเอง ห้ามถูกจับคู่อัตโนมัติทับ** (review198-B R-B1) — เปลี่ยนประเภทบรรทัดแล้วยังต้องจับคู่ในกลุ่มเดิม
+    /// (องค์ประกอบยอดขาย ↔ องค์ประกอบยอดขาย · คืนเงิน ↔ คืนเงิน) ⇒ คงคำตัดสินของคน · เปลี่ยนข้ามกลุ่ม/ไม่ต้องจับคู่แล้ว ⇒ คำตัดสินเดิมหมดความหมาย
+    /// </summary>
+    public static bool KeepUserMatch(bool matchDecidedByUser, SettlementLineType oldType, SettlementLineType newType)
+    {
+        if (!matchDecidedByUser) return false;
+        var n = SettlementLineTypeRules.For(newType);
+        return n.RequiresSaleMatch && SettlementLineTypeRules.For(oldType).Posting == n.Posting;
+    }
+
+    /// <summary>
+    /// **บรรทัดที่อ้าง PaymentIntent ถูกล้างออกจากผังพักไปแล้วด้วยเส้นอื่นไหม** (ด่านผู้ลงบัญชี R-A1 · แก้คู่กับ R-B2) — ฝั่งขาย: เส้นเดิมบันทึกรอบโอนแล้ว
+    /// หรือรอบโอนอื่นเป็นเจ้าของยอดขาย · ฝั่งคืนเงิน: เฉพาะเส้นเดิม — คืนเงินภายหลังของรายการที่รอบก่อนเป็นเจ้าของยอดขาย คือบรรทัดที่ควรอยู่รอบนี้
+    /// (เดิมตัดสินแบบเดียวกันทั้งสองฝั่ง ⇒ บรรทัดคืนเงินภายหลังทุกบรรทัดถูกบล็อกว่า "นับซ้ำ")
+    /// </summary>
+    public static bool IntentSettledElsewhere(bool refundLine, Guid? legacySettlementJournalEntryId, Guid? ownerBatchId, Guid batchId)
+        => legacySettlementJournalEntryId is not null
+           || (!refundLine && ownerBatchId is Guid owner && owner != batchId);
+
+    /// <summary>R-B16: แก้ค่าธรรมเนียมของ PaymentIntent ที่อยู่ในรอบโอน settlement แล้วไม่มีผล (บรรทัดค่าธรรมเนียมถูกบันทึกไปแล้ว) — ต้องบอก ไม่เงียบ</summary>
+    public static string? FeeEditBlockedByBatch(Guid? settlementBatchId)
+        => settlementBatchId is null ? null
+            : "รายการนี้อยู่ในรอบโอน settlement แล้ว — ค่าธรรมเนียมถูกบันทึกเป็นบรรทัดของรอบโอนนั้นไปแล้ว แก้ที่นี่จะไม่มีผล · "
+              + "ถ้ารอบโอนยังไม่ลงบัญชี ให้ยกเลิกรอบโอนแล้วแก้ค่าธรรมเนียมก่อนประกอบรอบโอนใหม่ · ถ้าลงบัญชีแล้ว ให้เพิ่มบรรทัดปรับปรุงในรอบโอนถัดไป";
 
     /// <summary>บรรทัดที่ยังต้องให้คนตัดสินก่อนลงบัญชี</summary>
     public static bool NeedsDecision(SettlementMatchStatus s)
@@ -124,4 +226,12 @@ public static class SettlementSaleMatch
     /// <summary>รอบโอนยังแก้ได้ (จัดประเภท · จับคู่ · นำเข้าเพิ่ม · ยกเลิก) — ลงบัญชีแล้ว/ยกเลิกแล้ว ห้าม</summary>
     public static bool IsEditable(SettlementBatchStatus s)
         => s is SettlementBatchStatus.Imported or SettlementBatchStatus.Classified or SettlementBatchStatus.Matched;
+
+    /// <summary>
+    /// **รอบโอนที่ลงบัญชีค้างครึ่งทางแก้/ยกเลิกไม่ได้** (review198-C C-1(b)) — สถานะยังเป็น Matched แต่มีเอกสาร/การรับชำระที่การลงบัญชีสร้างแล้ว ⇒
+    /// แก้บรรทัดทำให้ของที่ออกแล้วไม่ตรงแผน · ยกเลิกรอบโอนทำให้ของที่ออกแล้วเป็นกำพร้า (นำเข้าใหม่แล้วลงซ้ำ = ค่าใช้จ่าย/ภาษีซื้อ/รายได้ซ้ำ)
+    /// </summary>
+    /// <param name="postingArtifacts">จำนวนเอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งมีป้ายของรอบโอนนี้</param>
+    public static bool IsEditable(SettlementBatchStatus s, int postingArtifacts)
+        => IsEditable(s) && postingArtifacts == 0;
 }

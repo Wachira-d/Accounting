@@ -121,6 +121,9 @@ public class SettlementLine : TenantEntity
     public Guid? PaymentId { get; set; }
     public Guid? ReservationId { get; set; }
     public SettlementMatchStatus MatchStatus { get; set; } = SettlementMatchStatus.Unmatched;
+    /// <summary>คนตัดสินการจับคู่ของบรรทัดนี้เอง (เลือกเอกสาร / ยืนยันเข้าใบขายสรุป) — การจับคู่อัตโนมัติ (จัดประเภทใหม่ · จับคู่ใหม่ทั้งรอบ)
+    /// <b>ห้ามทับ</b> (review198-B R-B1) · ล้างเมื่อประเภทเปลี่ยนข้ามกลุ่มการจับคู่ (<c>SettlementSaleMatch.KeepUserMatch</c>)</summary>
+    public bool MatchDecidedByUser { get; set; }
 
     public SettlementClassifiedBy ClassifiedBy { get; set; } = SettlementClassifiedBy.None;
     /// <summary>แถว AiFeedback ของการจัดประเภท (กฎเหล็ก #1) — ปิดลูปด้วย RecordUserChoiceAsync ตอนผู้ใช้ยืนยัน/แก้</summary>
