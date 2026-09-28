@@ -162,7 +162,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   3. The Omise adapter should cross-check `metadata.companyId`.
   4. Add a two-tenant test.
 
-### ✅ <pending> R-E2 · CONFIRMED · P2: a refund after the payout date but before the user records the settlement gives a NetMismatch that cannot be fixed
+### ✅ cbd50b37 R-E2 · CONFIRMED · P2: a refund after the payout date but before the user records the settlement gives a NetMismatch that cannot be fixed
 > **Fixed (team E2)**: `GatewaySettlementMath.RefundedAsOf` + `RefundCutoffUtc` — refunds count **as of the payout date** (cutoff = 00:00 Bangkok
 > on `SettledAt`; a refund on/after the payout day belongs to the next round). Per-refund amounts are now stored on the refund event
 > (`PaymentIntentEvent.RefundAmount`, backfilled for single-refund intents). Settlement marks `RefundSettledAmount` = refunded-as-of, so the
@@ -179,7 +179,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: `Contribution` should take `refundedAsOf(SettledAt)`. This needs refund timestamps per refund (they are in `PaymentIntentEvents`/refund history),
   or a "refund after this payout" flag. At minimum, detect the case and write a message that states the real cause (F2 #7).
 
-### ✅ <pending> R-E3 · CONFIRMED · P2: gateway fee VAT is parked in 11630 with no path to 11610 (the "มี ≠ ถูกเรียก" class)
+### ✅ cbd50b37 R-E3 · CONFIRMED · P2: gateway fee VAT is parked in 11630 with no path to 11610 (the "มี ≠ ถูกเรียก" class)
 > **Fixed (team E2, minimal flow)**: "รับใบกำกับค่าธรรมเนียม" on the settlements page → `POST pay/settlements/fee-vat/claim` →
 > `GatewaySettlementService.ClaimFeeVatAsync`: JV **Dr 11610 / Cr 11630** for the VAT on the provider's tax invoice (no expense line), with
 > invoice no (Reference) · supplier name/tax ID (checksum)/branch in the description so the purchase-VAT report (JE_INPUT path) counts it as
@@ -198,7 +198,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: add an "attach monthly fee invoice" flow (Dr 11610 / Cr 11630, difference shown), or warn and block once a PI is created from the same provider with a 11630 balance.
   Add an aging alert for 11630 older than 6 months.
 
-### ✅ <pending> R-E4 · CONFIRMED · P2: the "แก้ค่าธรรมเนียม" button on the settlements page shows fee+VAT but saves it as the pre-VAT fee (AddedOnTop mode)
+### ✅ cbd50b37 R-E4 · CONFIRMED · P2: the "แก้ค่าธรรมเนียม" button on the settlements page shows fee+VAT but saves it as the pre-VAT fee (AddedOnTop mode)
 > **Fixed (team E2)**: `PendingSettlementItem.FeeInput` (= stored `FeeActual ?? FeeEstimated`, the value `PUT /fee` saves) +
 > `FeeInputLabel` (per mode, from `GatewaySettlementMath.FeeInputLabel`) — the page pre-fills and labels from these; `payment-intents.html`
 > gets the same label. Test `RE4_กดตกลงโดยไม่แก้_ต้องไม่เปลี่ยนยอดที่ถูกหัก` (39.06 → still 41.79 deducted; the old path gave 44.72).
@@ -209,7 +209,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: send `feeActual` (the raw field) in `PendingSettlementItem` and use it as the default, with a label saying "ก่อน VAT/รวม VAT" per mode.
   `payment-intents.html` uses `r.feeActual` and is correct.
 
-### ✅ <pending> R-E5 · CONFIRMED · P2: the gateway reconciliation report (`GatewayReconciliation.Compute`) stays unbalanced after G-2/G-3
+### ✅ cbd50b37 R-E5 · CONFIRMED · P2: the gateway reconciliation report (`GatewayReconciliation.Compute`) stays unbalanced after G-2/G-3
 > **Fixed (team E2)**: `Compute` now takes every per-intent figure from `GatewaySettlementMath.Contribution` with the provider's
 > `FeeVatMode` (lifetime expected · outstanding = unsettled net, or pending refund-after for settled rows · settled = `SettledAmount` −
 > new `PaymentIntent.RefundDeductedAfterSettlement`). Tests for the three cases (AddedOnTop 10 × 36.50 → 0, was +25.60 · refund-after
@@ -223,7 +223,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   - Full refund not yet settled: excluded from `unsettledRows` although the fee is still deducted, giving a difference of −fee.
 - Fix: have Reconciliation call `Contribution` (the same feeVatMode) and include the refund-after amount.
 
-### ✅ <pending> R-E6 · PLAUSIBLE · P2: default `GatewayFeeVatMode.None` passes an unknown VAT treatment silently
+### ✅ cbd50b37 R-E6 · PLAUSIBLE · P2: default `GatewayFeeVatMode.None` passes an unknown VAT treatment silently
 > **Partly fixed (team E2 — safe visible warning)**: `GatewaySettlementMath.FeeVatModeWarning(mode, companyVatRegistered)` — one message
 > used by the settings page (`ConfigResponse.FeeVatWarning`), the pending list and the settlement preview (`SettlementPlan.Warning`, non-blocking).
 > The stored default was **not** changed: flipping `None` → `IncludedInFee`/`Unknown` changes the posting of every existing config and

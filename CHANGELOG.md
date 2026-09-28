@@ -3511,4 +3511,4 @@ _รอบ 198 ฝ่ายค้าน settlement ทีม E2 (`erp-review/202
 - **E-2**: ผู้ให้บริการไม่ตอบผลคืนเงิน ⇒ `RefundOutcomeUnknownSince` + เหตุการณ์ ⚠️ ⇒ ล็อกคืนซ้ำ · `POST pay/intents/{id}/refund/verify` ตัดสินจากยอดคืนสะสมของผู้ให้บริการ
   (`GatewayRefundMath.Verify` · Omise `refunded_amount`)
 - เทสต์ `GatewaySettlementReview198Tests` (22) · `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §2.6b · PAYMENT_GATEWAY_DESIGN §0/§4.5/บทเรียน 18 · TEST_PLAN
-— commit <pending>)_
+— commit cbd50b37)_

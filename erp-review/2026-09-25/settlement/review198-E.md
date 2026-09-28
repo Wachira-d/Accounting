@@ -15,7 +15,7 @@
 
 ## PLAUSIBLE — backlog (ยังไม่แก้)
 
-- ✅ <pending> **E-2 (P2) `provider.RefundAsync` โยน exception (timeout) ⇒ ไม่รู้ว่าเงินออกหรือยัง แต่ระบบไม่บันทึกอะไรเลย** — แก้แล้ว (ทีม E2):
+- ✅ cbd50b37 **E-2 (P2) `provider.RefundAsync` โยน exception (timeout) ⇒ ไม่รู้ว่าเงินออกหรือยัง แต่ระบบไม่บันทึกอะไรเลย** — แก้แล้ว (ทีม E2):
   จับ exception ของการเรียกผู้ให้บริการ → ประทับ `PaymentIntent.RefundOutcomeUnknownSince` + เหตุการณ์ "⚠️ ผลไม่แน่ชัด" ในธุรกรรมเดิมที่ยังถือล็อก
   แล้ว commit ⇒ `GatewayRefundMath.Check(..., refundOutcomeUnknown)` ปฏิเสธการคืนเพิ่ม · ปุ่ม "ตรวจผลการคืนเงิน" (`POST pay/intents/{id}/refund/verify`)
   อ่านยอดคืนสะสมจากผู้ให้บริการ (`ProviderCharge.RefundedTotal` ← Omise `refunded_amount` — ใช้ `GetChargeAsync` เดิม ไม่ต้องรอ `GetRefundStatus`)
