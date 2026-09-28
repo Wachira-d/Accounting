@@ -289,7 +289,9 @@ public sealed partial class SettlementImportService
             await LockChannelAsync(companyId, await LineChannelAsync(companyId, lineId, ct), ct);
             var line = await _db.SettlementLines.FirstOrDefaultAsync(l => l.Id == lineId && l.CompanyId == companyId, ct)
                        ?? throw new BusinessRuleException("ไม่พบบรรทัดนี้ในบริษัท", "SETTLEMENT-LINE", 404);
-            var batch = await LoadEditableBatchAsync(companyId, line.BatchId, ct);
+            // โหลดบรรทัดทั้งรอบก่อนแก้ (แผนก่อนแก้ของรอบค้างครึ่งทาง · S3-1) — ตัวแปร line อยู่ในชุดนี้ (instance เดียวกันจาก change tracker)
+            var batchLines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == line.BatchId).ToListAsync(ct);
+            var (batch, halfPosted) = await LoadRedecidableBatchAsync(companyId, line.BatchId, batchLines, ct);
 
             // ด่านเครื่องหมาย — ตัวเดียวกับตัวคิดแผน (SettlementLineTypeRules.SignAllowed ผ่าน Fits)
             if (!SettlementLineClassification.Fits(type, line.Amount))
@@ -324,7 +326,6 @@ public sealed partial class SettlementImportService
             var changed = new List<SettlementLine> { line };
 
             // ป้ายเดียวกัน+เครื่องหมายเดียวกันในรอบนี้ที่ผู้ใช้ยังไม่ได้เลือกเอง ⇒ ใช้คำตอบเดียวกัน (Learned — ไม่นับเป็นเสียงของผู้ใช้ซ้ำ)
-            var batchLines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
             var norm = SettlementLineClassification.NormalizeLabel(line.RawTypeLabel);
             // R-B1: เฉพาะบรรทัดที่ประเภท "เปลี่ยนจริง" — บรรทัดที่ประเภทเท่าเดิมไม่ต้องแตะ (เดิมถูกส่งไปจับคู่ใหม่ ⇒ การจับคู่ของคนถูกทับ)
             if (request.ApplyToSameLabel && norm.Length > 0 && !rule.RequiresReason)
@@ -341,6 +342,8 @@ public sealed partial class SettlementImportService
 
             var channel = await LoadChannelAsync(companyId, line.ChannelId, tracked: false, ct);
             await RematchChangedAsync(companyId, channel, batchLines, changed, oldTypes, ct);
+            // S3-1: รอบค้างครึ่งทาง — การจัดประเภทใหม่ (รวม "ใช้กับป้ายเดียวกัน" และการจับคู่ใหม่ที่ตามมา) ต้องไม่เปลี่ยนชิ้นที่ออกแล้ว
+            halfPosted?.Check(batchLines);
             await SyncIntentStampsAsync(companyId, batch.Id, batchLines, ct);
             batch.Status = SettlementSaleMatch.DeriveImportStatus(batchLines.Select(l => (l.LineType, l.MatchStatus)));
             batch.UpdatedAt = DateTime.UtcNow;
@@ -415,7 +418,9 @@ public sealed partial class SettlementImportService
             await LockChannelAsync(companyId, await LineChannelAsync(companyId, lineId, ct), ct);
             var line = await _db.SettlementLines.FirstOrDefaultAsync(l => l.Id == lineId && l.CompanyId == companyId, ct)
                        ?? throw new BusinessRuleException("ไม่พบบรรทัดนี้ในบริษัท", "SETTLEMENT-LINE", 404);
-            var batch = await LoadEditableBatchAsync(companyId, line.BatchId, ct);
+            var batchLines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == line.BatchId).ToListAsync(ct);
+            // S3-1: รอบที่ลงค้างครึ่งทางตัดสินการจับคู่ได้ เฉพาะเมื่อไม่เปลี่ยนชิ้นที่ออกแล้ว (halfPosted = แผนก่อนแก้ + ชิ้นที่ออกแล้ว · ตรวจก่อนบันทึก)
+            var (batch, halfPosted) = await LoadRedecidableBatchAsync(companyId, line.BatchId, batchLines, ct);
             var rule = SettlementLineTypeRules.For(line.LineType);
             if (!rule.RequiresSaleMatch)
                 throw new BusinessRuleException($"บรรทัดประเภท \"{rule.LabelTh}\" ไม่ต้องจับคู่ใบขาย", "SETTLEMENT-MATCH-NOT-REQUIRED");
@@ -423,7 +428,6 @@ public sealed partial class SettlementImportService
                 throw new BusinessRuleException("บรรทัดนี้มาจากรายการรับชำระในระบบ (อยู่ในผังพักแล้ว) — ไม่ต้องจับคู่ใบขายซ้ำ",
                     "SETTLEMENT-MATCH-INTENT");
             var isRefund = rule.Posting == SettlementPostingKind.Refund;
-            var batchLines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
             // บรรทัดขายของออเดอร์เดียวกันต้องไปใบเดียวกัน (ตัวคิดแผนรวมรับชำระต่อใบ) · คืนเงินตัดสินทีละบรรทัด
             var group = isRefund || string.IsNullOrWhiteSpace(line.ExternalOrderId)
                 ? new List<SettlementLine> { line }
@@ -475,6 +479,8 @@ public sealed partial class SettlementImportService
                         "SETTLEMENT-MATCH-DOC");
                 foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, docId);
             }
+            // S3-1: การแก้ของรอบค้างครึ่งทางต้องไม่เปลี่ยนชิ้นที่ออกแล้ว (ใบค่าธรรมเนียม · ใบสรุป · การรับชำระที่บันทึกแล้ว) — ไม่ผ่าน = 409 ทั้งธุรกรรม
+            halfPosted?.Check(batchLines);
             await SyncIntentStampsAsync(companyId, batch.Id, batchLines, ct);
             batch.Status = SettlementSaleMatch.DeriveImportStatus(batchLines.Select(l => (l.LineType, l.MatchStatus)));
             batch.UpdatedAt = DateTime.UtcNow;
@@ -646,6 +652,56 @@ public sealed partial class SettlementImportService
         return batch;
     }
 
+    /// <summary>
+    /// โหลดรอบโอนสำหรับ<b>ตัดสินการจับคู่/จัดประเภทบรรทัด</b> — ต้องเรียกหลัง <see cref="LockChannelAsync"/> (R-B3) · ลงบัญชีแล้ว/ยกเลิกแล้ว ⇒ ล้มดัง ·
+    /// <b>ลงค้างครึ่งทาง ⇒ ได้ พร้อมด่าน</b> (review198-S3 S3-1): คืน <see cref="PartialEditGuard"/> ที่จำแผนก่อนแก้ + ชิ้นที่ออกไปแล้ว ⇒ ผู้เรียกต้อง
+    /// <c>Check</c> หลังแก้ก่อนบันทึก (การแก้ที่เปลี่ยนชิ้นที่ออกแล้ว = 409 ทั้งธุรกรรม) · รอบที่ยังไม่มีของ ⇒ guard = null (แก้ได้ตามเดิม)
+    /// </summary>
+    private async Task<(SettlementBatch Batch, PartialEditGuard? Guard)> LoadRedecidableBatchAsync(Guid companyId, Guid batchId,
+        IReadOnlyList<SettlementLine> batchLines, CancellationToken ct)
+    {
+        var batch = await _db.SettlementBatches.FirstOrDefaultAsync(b => b.Id == batchId && b.CompanyId == companyId, ct)
+                    ?? throw new BusinessRuleException("ไม่พบรอบโอนนี้ในบริษัท", "SETTLEMENT-BATCH", 404);
+        if (!SettlementSaleMatch.IsEditable(batch.Status))
+            throw new BusinessRuleException(
+                $"รอบโอน \"{batch.PayoutRef}\" ลงบัญชีแล้ว (สถานะ {batch.Status}) — แก้ไข/ยกเลิกไม่ได้ · กลับรายการลงบัญชีของรอบนี้ก่อน",
+                "SETTLEMENT-BATCH-LOCKED");
+        var frozen = await FrozenPartsAsync(companyId, batch.Id, ct);
+        if (frozen.DocumentComponents.Count == 0 && frozen.ReceivedDocumentIds.Count == 0) return (batch, null);
+        var channel = await LoadChannelAsync(companyId, batch.ChannelId, tracked: false, ct);
+        var vat = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+        return (batch, new PartialEditGuard(batch, channel, vat, SettlementBatchMath.Plan(batch, batchLines, channel, vat), frozen));
+    }
+
+    /// <summary>แผนก่อนแก้ + ชิ้นที่ออกไปแล้วของรอบที่ลงค้างครึ่งทาง — <see cref="Check"/> ด้วยบรรทัดหลังแก้ (ตัวตัดสิน <see cref="SettlementPartialEdit"/>)</summary>
+    private sealed record PartialEditGuard(SettlementBatch Batch, SettlementChannel Channel, bool VatRegistered, SettlementPostingPlan Before,
+        SettlementFrozenParts Frozen)
+    {
+        public void Check(IReadOnlyList<SettlementLine> linesAfter)
+        {
+            var after = SettlementBatchMath.Plan(Batch, linesAfter, Channel, VatRegistered);
+            if (SettlementPartialEdit.Refusal(Before, after, Frozen) is string why)
+                throw new BusinessRuleException(why, "SETTLEMENT-BATCH-PARTIAL-FROZEN", 409);
+        }
+    }
+
+    /// <summary>ชิ้นของรอบที่ออกไปแล้ว (เอกสารที่ยังไม่ถูกยกเลิก → ชิ้นจาก <c>CreatedBy</c> · ใบขายที่มีการรับชำระที่มีป้าย) — ป้ายชุดเดียวกับ
+    /// <see cref="PostingArtifactsAsync"/> และผู้ลงบัญชี</summary>
+    private async Task<SettlementFrozenParts> FrozenPartsAsync(Guid companyId, Guid batchId, CancellationToken ct)
+    {
+        var prefix = SettlementPostingKeys.CreatorPrefix(batchId);
+        var marker = SettlementPostingKeys.PaymentMarker(batchId);
+        var components = (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                    && d.CreatedBy != null && d.CreatedBy.StartsWith(prefix))
+                .Select(d => d.CreatedBy!).ToListAsync(ct))
+            .Select(c => c.Substring(prefix.Length)).Distinct(StringComparer.Ordinal).ToList();
+        var received = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+            .Select(p => p.DocumentId).Distinct().ToListAsync(ct);
+        return new SettlementFrozenParts(components, received);
+    }
+
     /// <summary>เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งการลงบัญชีสร้างให้รอบโอนนี้ (ป้ายตัวเดียวกับผู้ลงบัญชี — <see cref="SettlementPostingKeys"/>)</summary>
     private async Task<List<string>> PostingArtifactsAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
@@ -661,11 +717,13 @@ public sealed partial class SettlementImportService
         return docs.Concat(pays).ToList();
     }
 
-    /// <summary>ล็อกต่อช่องทาง <b>ตัวเดียวกับผู้ลงบัญชี</b> (<see cref="SettlementChannelLock"/> · C-1) — ธุรกรรมต้องเปิดแล้ว · เรียกก่อนโหลด/ตรวจทุกครั้ง (R-B3)</summary>
+    /// <summary>ล็อกต่อช่องทาง <b>ตัวเดียวกับผู้ลงบัญชี</b> (<see cref="SettlementChannelLock"/> · C-1) — ธุรกรรมต้องเปิดแล้ว · เรียกก่อนโหลด/ตรวจทุกครั้ง (R-B3) ·
+    /// review198-S3 S3-9: <b>ลองล็อก ไม่รอ</b> — เดิม <c>pg_advisory_xact_lock</c> รอไม่จำกัดขณะผู้ลงบัญชีถือ session lock ตลอดการสร้าง/อนุมัติเอกสาร
+    /// (หลายสิบวินาที) ⇒ คำขอเว็บค้างจน command timeout (500) · ถูกถือ ⇒ 409 ข้อความ "กำลังทำอยู่" ตัวเดียวกับฝั่งลงบัญชี (ธุรกรรม rollback · กดใหม่ได้)</summary>
     private async Task LockChannelAsync(Guid companyId, Guid channelId, CancellationToken ct)
     {
-        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-            new object[] { SettlementChannelLock.Key(companyId, channelId) }, ct);
+        if (!await JobLock.TryXactLockAsync(_db, SettlementChannelLock.Key(companyId, channelId), ct))
+            throw new BusinessRuleException(SettlementChannelLock.BusyMessage, "SETTLEMENT-BUSY", 409);
     }
 
     /// <summary>ช่องทางของบรรทัด (ไม่เปลี่ยนตลอดอายุบรรทัด — อ่านก่อนล็อกได้เพื่อรู้ว่าจะล็อกคีย์ไหน)</summary>

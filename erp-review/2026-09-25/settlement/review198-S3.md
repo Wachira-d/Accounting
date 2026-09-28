@@ -11,17 +11,17 @@
 
 | ID | ระดับ | P | เรื่อง |
 |---|---|---|---|
-| S3-1 | PLAUSIBLE (ตรรกะยืนยันแล้ว) | **P1** | รอบโอนที่ลงค้างครึ่งทางซึ่งมีของที่ยกเลิกไม่ได้ (e-Tax Accepted / อยู่ในรายงานที่ล็อก / 50 ทวิ อยู่ในแบบที่ยื่น) = **ไปต่อไม่ได้เลย**: แก้บรรทัดไม่ได้ ยกเลิกรอบไม่ได้ ลงต่อไม่ได้ถ้าด่านต้องให้แก้บรรทัด |
-| S3-2 | CONFIRMED | P2 | ด่านยกเลิกการลงบัญชี (C-2) ไม่ตรวจภาษีซื้อของใบค่าธรรมเนียมในเดือน ภ.พ.30 ที่ประกาศว่ายื่นแล้ว — อสมมาตรกับฝั่งขาย |
-| S3-3 | CONFIRMED | P2 | ด่าน C-2 ไม่ครอบเหตุที่ `VoidDocumentAsync` ปฏิเสธเอง (เอกสารลูก active / ใบลดหนี้อ้างเลขที่) ⇒ ยกเลิกครึ่งทางแบบ C-2 เดิมยังเกิดได้ |
-| S3-4 | PLAUSIBLE | P2 | คีย์กันซ้ำ v2 ใส่ `payoutRef` ในแถวไม่มี id — เลขรอบโอนที่ผู้ใช้พิมพ์ต่างกันครั้งที่สอง ⇒ แถวเดิมเข้าอีกรอบ (R-A9 ถอย) · และไม่มีการเทียบคีย์ v1 ที่เก็บไว้แล้ว |
-| S3-5 | CONFIRMED (ผลข้างเคียง) | P2 | `CheckDocumentPaymentsAsync` ใน `VoidDocumentAsync` ทำให้ใบขายของผู้ใช้ที่รอบโอนรับชำระ **ยกเลิก-ออกใหม่ไม่ได้ถาวร** เมื่อรอบโอนนั้น unpost ไม่ได้ (ภ.พ.30 ของใบสรุปถูกประกาศแล้ว) |
-| S3-6 | PLAUSIBLE | P2 | ของกำพร้า (C-1(d)) ที่ยกเลิกไม่ได้ ⇒ `OrphanPostingArtifacts` บล็อก **ทุกรอบโอนของช่องทางนั้นตลอดไป** |
-| S3-7 | PLAUSIBLE | P2 | ด่าน C-2 ไม่ดูการรับชำระ (tax point บริการ §78/1 / undue VAT) ในเดือนที่ประกาศว่ายื่นแล้ว |
-| S3-8 | PLAUSIBLE | P3 | race ช่วงสั้น: ยกเลิกเอกสารผ่านหน้าปกติระหว่าง completeness check กับ commit ของ `CommitPostedAsync` |
-| S3-9 | PLAUSIBLE | P3 | ล็อกฝั่งนำเข้า `pg_advisory_xact_lock` แบบ**รอ** ขณะลงบัญชีถือ session lock นาน ⇒ คำขอเว็บค้างจน command timeout (500) |
-| S3-10 | CONFIRMED | P3 | `WhtCertVoidGuard` ไม่ใช่ "ตัวตัดสินตัวเดียว" จริง — `PayrollService.cs:3328` ประทับ Voided ตรง |
-| S3-11 | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
+| ✅ <pending> S3-1 | PLAUSIBLE (ตรรกะยืนยันแล้ว) | **P1** | รอบโอนที่ลงค้างครึ่งทางซึ่งมีของที่ยกเลิกไม่ได้ (e-Tax Accepted / อยู่ในรายงานที่ล็อก / 50 ทวิ อยู่ในแบบที่ยื่น) = **ไปต่อไม่ได้เลย**: แก้บรรทัดไม่ได้ ยกเลิกรอบไม่ได้ ลงต่อไม่ได้ถ้าด่านต้องให้แก้บรรทัด |
+| ✅ <pending> S3-2 | CONFIRMED | P2 | ด่านยกเลิกการลงบัญชี (C-2) ไม่ตรวจภาษีซื้อของใบค่าธรรมเนียมในเดือน ภ.พ.30 ที่ประกาศว่ายื่นแล้ว — อสมมาตรกับฝั่งขาย |
+| ✅ <pending> S3-3 | CONFIRMED | P2 | ด่าน C-2 ไม่ครอบเหตุที่ `VoidDocumentAsync` ปฏิเสธเอง (เอกสารลูก active / ใบลดหนี้อ้างเลขที่) ⇒ ยกเลิกครึ่งทางแบบ C-2 เดิมยังเกิดได้ |
+| ✅ <pending> S3-4 | PLAUSIBLE | P2 | คีย์กันซ้ำ v2 ใส่ `payoutRef` ในแถวไม่มี id — เลขรอบโอนที่ผู้ใช้พิมพ์ต่างกันครั้งที่สอง ⇒ แถวเดิมเข้าอีกรอบ (R-A9 ถอย) · และไม่มีการเทียบคีย์ v1 ที่เก็บไว้แล้ว |
+| ⏸ S3-5 (รอเจ้าของ) | CONFIRMED (ผลข้างเคียง) | P2 | `CheckDocumentPaymentsAsync` ใน `VoidDocumentAsync` ทำให้ใบขายของผู้ใช้ที่รอบโอนรับชำระ **ยกเลิก-ออกใหม่ไม่ได้ถาวร** เมื่อรอบโอนนั้น unpost ไม่ได้ (ภ.พ.30 ของใบสรุปถูกประกาศแล้ว) |
+| ✅ <pending> S3-6 | PLAUSIBLE | P2 | ของกำพร้า (C-1(d)) ที่ยกเลิกไม่ได้ ⇒ `OrphanPostingArtifacts` บล็อก **ทุกรอบโอนของช่องทางนั้นตลอดไป** |
+| ✅ <pending> S3-7 | PLAUSIBLE | P2 | ด่าน C-2 ไม่ดูการรับชำระ (tax point บริการ §78/1 / undue VAT) ในเดือนที่ประกาศว่ายื่นแล้ว |
+| ✅ <pending> S3-8 | PLAUSIBLE | P3 | race ช่วงสั้น: ยกเลิกเอกสารผ่านหน้าปกติระหว่าง completeness check กับ commit ของ `CommitPostedAsync` |
+| ✅ <pending> S3-9 | PLAUSIBLE | P3 | ล็อกฝั่งนำเข้า `pg_advisory_xact_lock` แบบ**รอ** ขณะลงบัญชีถือ session lock นาน ⇒ คำขอเว็บค้างจน command timeout (500) |
+| ✅ <pending> S3-10 | CONFIRMED | P3 | `WhtCertVoidGuard` ไม่ใช่ "ตัวตัดสินตัวเดียว" จริง — `PayrollService.cs:3328` ประทับ Voided ตรง |
+| 📋 S3-11 (backlog) | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
 | — | NOT-A-BUG | — | ล็อกร่วม (คีย์/รูปแบบเดียวกัน) · deadlock · AsyncLocal · `autoApproveBy` · EF translation · fingerprint false positive · tenant · R1 |
 
 **ไม่พบ P0 ที่ยืนยันได้** · P1 ที่ต้องแก้ก่อน merge เข้า main: S3-1
@@ -133,3 +133,21 @@ e-Tax Accepted / อยู่ในรายงานล็อก / ใบค่
    tuple สร้างหลัง `ToListAsync` · `WhtCertFilingScope.Filed` เป็น array (ใช้ใน query ที่อื่นอยู่แล้ว)
 9. **Tenant** — query ใหม่ทุกตัวมี `CompanyId` (Documents/Payments/Certs/EtaxInvoices/TaxReports/Batches `IgnoreQueryFilters` + CompanyId) · `SiteSettings` เป็นตารางระดับแพลตฟอร์ม · `refundInLines` ข้ามช่องทางโดยตั้งใจ (R-B17)
 10. **R1** — `Posted` ประทับหลัง fingerprint + completeness ในธุรกรรมเดียว · `intent.SettlementBatchId ??=` ไม่ย้ายเจ้าของ · E2-10 บล็อกทั้งผู้สมัครจับคู่และ clearing source
+
+---
+
+## ผลการแก้ — ทีม S4 (รอบ 198 · คอมมิต <pending>)
+
+| ID | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|
+| S3-1 | ✅ | เลือกทาง "แก้บรรทัดที่ยังไม่มีชิ้นที่ออกแล้วได้" (ขั้นต่ำที่ถูก — ไม่ต้องมีเส้น "ลงบัญชีโดยข้ามใบนี้"): `LoadRedecidableBatchAsync` + `SettlementPartialEdit.Refusal` เทียบลายนิ้วมือเฉพาะชิ้นที่ออกแล้ว (`SettlementPlanFingerprint.Piece/ReceiptPiece`) ใน `AssignLineMatchAsync`/`ReclassifyLineAsync` · เปลี่ยนชิ้นที่ออกแล้ว = 409 `SETTLEMENT-BATCH-PARTIAL-FROZEN` ทั้งธุรกรรม · ปุ่ม `CanRedecideLines` · ยกเลิกรอบ/จับคู่ใหม่ทั้งรอบ/บัญชีธนาคารยังล็อก (C-1(b) คงเดิม) · เทสต์ฉากผู้ตรวจตรงตัวสองทิศ `SettlementReview198S4Tests.S31_*` |
+| S3-2 | ✅ | `SettlementUnpostGate.Evaluate` ตรวจภาษีซื้อฝั่งซื้อ: ไม่พัก = เดือนเอกสาร · พัก = เดือน `InputVatBecameClaimableAt` · ยังพัก = ไม่อยู่ในแบบใด (ไม่ปฏิเสธเกิน) |
+| S3-3 | ✅ | `Helpers/DocumentVoidPreconditions` ตัวตัดสินเดียว (ย้ายจาก `VoidDocumentAsync` ข้อความเดิมทุกตัวอักษร) · `LoadUnpostFactsAsync` เรียกตัวเดียวกัน → `SettlementUnpostDocument.VoidBlock` |
+| S3-4 | ✅ | คีย์ใช้เลขรอบโอนจากคอลัมน์ในไฟล์เท่านั้น · ไม่มีคอลัมน์ = ลายนิ้วมือเนื้อหาไฟล์ (`v2:rowc:`) · เทียบคีย์รุ่นก่อน (v1 + v2 เลขพิมพ์) · ไฟล์ฉบับแก้ของรอบเดิมเทียบเนื้อหาแบบนับจำนวน · เนื้อหาตรงรอบอื่น = เตือน · ข้อจำกัด: v1 ใช้ตัว normalize ของวันนี้ (ไม่มี migration rekey — ไม่มีฐาน production ที่รันเฟส 1) |
+| S3-5 | ⏸ | ต้องให้เจ้าของเลือกทาง (ย้ายการรับชำระไปใบใหม่ vs ยกเลิก+ปรับปรุงรอบถัดไป) — จดใน DOCUMENT_FLOW §2.10 |
+| S3-6 | ✅ | เลือกทาง "ของกำพร้าที่ยกเลิกไม่ได้ = เตือนไม่บล็อก" (ด่าน Unpost ตัวเดียวผ่าน `ArtifactId`) · ยกเลิกได้ = บล็อกเหมือนเดิม · ไม่เพิ่ม schema (owner-ack ไม่จำเป็นเมื่อระบบรู้เองว่ายกเลิกไม่ได้) |
+| S3-7 | ✅ | `SettlementUnpostPayment` (OutputVatDueAt + ยอดรับสะสม) → ปฏิเสธเมื่อยกเลิกแล้วภาษีขายของเดือนที่ยื่นแล้วถูกกลับ |
+| S3-8 | ✅ | `SettlementArtifactGuard.CheckLockedAsync` (แถวรอบโอน `FOR SHARE`) ใต้ธุรกรรมของ `VoidDocumentAsync`/`VoidPaymentAsync` |
+| S3-9 | ✅ | `LockChannelAsync` = `JobLock.TryXactLockAsync` + `SettlementChannelLock.BusyMessage` (ข้อความเดียวกับฝั่งลงบัญชี) |
+| S3-10 | ✅ | `PayrollService.IssueMonthlyPnd1CertsAsync` เรียก `WhtCertVoidGuard.CheckAsync` ก่อนประทับ Voided (ปฏิเสธ = ล้มดังผ่าน catch เดิม: LogError + แจ้งเตือน) |
+| S3-11 | 📋 | ของเล็ก 5 ข้อ — backlog (ไม่มีข้อใดทำให้ข้อมูลผิดเงียบ · `Take(200)` / GET โหลดซ้ำ / SoD ผู้ทำจริง / JournalManage ใน Post / ป้ายใน Notes) |

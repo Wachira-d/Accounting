@@ -254,6 +254,7 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// <param name="StaleReceipts">การรับชำระที่มีป้ายของรอบโอนแต่ไม่ตรงแผนปัจจุบัน (<see cref="SettlementReceiptReconcile.Stale"/> · C-4)</param>
 /// <param name="OrphanArtifacts">เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้วของช่องทางเดียวกัน (C-1(d))</param>
 /// <param name="SodSelfApprovalBlocked">ผลของ <see cref="SettlementPostingGate.SodSelfApproval"/> (คำตัดสินเจ้าของข้อ 7)</param>
+/// <param name="UnvoidableOrphans">ของกำพร้าที่ระบบยกเลิกไม่ได้แล้ว (ด่านตัวเดียวกับยกเลิกการลงบัญชี · review198-S3 S3-6) — เตือน ไม่บล็อก</param>
 public sealed record SettlementPostingFacts(
     SettlementBatchStatus Status,
     DateTime PayoutDay,
@@ -275,7 +276,8 @@ public sealed record SettlementPostingFacts(
     AbbreviatedInvoiceBlockReason SummaryAbbreviatedBlock = AbbreviatedInvoiceBlockReason.None,
     IReadOnlyList<string>? StaleReceipts = null,
     IReadOnlyList<string>? OrphanArtifacts = null,
-    bool SodSelfApprovalBlocked = false);
+    bool SodSelfApprovalBlocked = false,
+    IReadOnlyList<string>? UnvoidableOrphans = null);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -419,6 +421,12 @@ public static class SettlementPostingGate
             Add(SettlementPlanIssueCode.OrphanPostingArtifacts, true, why,
                 "ยกเลิกเอกสาร/การรับชำระเหล่านั้นที่หน้าเอกสารก่อน (รอบโอนเจ้าของถูกยกเลิกแล้ว จึงยกเลิกทีละรายการได้) — ถ้ายังอยู่ ลงบัญชีรอบนี้ทับ "
                 + "= ค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ");
+        // S3-6: ของกำพร้าที่ระบบยกเลิกไม่ได้แล้ว — บล็อกไว้ = ทุกรอบโอนของช่องทางนี้ลงบัญชีไม่ได้ตลอดไป (ไม่มีทางไปต่อ) ⇒ เตือนให้คนตรวจรายการซ้ำเอง
+        foreach (var why in f.UnvoidableOrphans ?? Array.Empty<string>())
+            Add(SettlementPlanIssueCode.OrphanPostingArtifacts, false, why,
+                "ระบบไม่บล็อกเพราะเอกสาร/การรับชำระนี้ยกเลิกไม่ได้แล้ว (บล็อก = ช่องทางนี้ลงบัญชีไม่ได้อีกเลย) — ก่อนกดลงบัญชีตรวจว่ารอบนี้ไม่มีรายการเดียวกับรอบที่ยกเลิก: "
+                + "ถ้ามี ให้จัดประเภทบรรทัดที่ซ้ำเป็นรายการปรับปรุง (เหตุผล + ผังที่ผู้ทำบัญชีเลือก) หรือออกใบลดหนี้/ใบเพิ่มหนี้อ้างเอกสารนั้น "
+                + "(ไม่งั้นค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ)");
 
         // ── รายได้ซ้ำ (R-A7) ──
         foreach (var d in f.DuplicateSales)

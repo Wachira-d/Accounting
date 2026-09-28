@@ -16,6 +16,8 @@ namespace Accounting.Helpers;
 /// <param name="CanPreview">ดูตัวอย่างการลงบัญชี/เอกสารที่ลงไว้ได้ (อ่านอย่างเดียว · สิทธิ์ดู) — แยกจาก <paramref name="CanPost"/> ที่ต้องมีสิทธิ์ลงบัญชี</param>
 /// <param name="ClosedChargebacks">chargeback ที่ปิดผลแล้ว (เลข JE + คำอธิบายที่ service เขียนตอนปิด) — แสดงแทนปุ่มแพ้/ชนะ (review198-D D-04)</param>
 /// <param name="PermissionNote">ปุ่มที่สถานะเปิดให้แต่ถูกซ่อนเพราะผู้ใช้ไม่มีสิทธิ์ + สิทธิ์ที่ต้องขอ (review198-D D-06 · ห้ามซ่อนเงียบ)</param>
+/// <param name="CanRedecideLines">รอบที่ลงค้างครึ่งทาง: ตัดสินการจับคู่/จัดประเภทบรรทัด<b>ที่ยังไม่มีเอกสาร/การรับชำระ</b>ได้ (review198-S3 S3-1 ·
+/// เซิร์ฟเวอร์ปฏิเสธการแก้ที่เปลี่ยนชิ้นที่ออกแล้ว — <see cref="SettlementPartialEdit"/>) · จับคู่ใหม่ทั้งรอบ/เปลี่ยนบัญชีธนาคาร/ยกเลิกรอบยังไม่ได้</param>
 public sealed record SettlementBatchActionSet(
     bool CanEditLines,
     bool CanVoid,
@@ -27,7 +29,8 @@ public sealed record SettlementBatchActionSet(
     string? UnpostBlockedReason = null,
     bool CanPreview = false,
     IReadOnlyList<SettlementClosedChargeback>? ClosedChargebacks = null,
-    string? PermissionNote = null);
+    string? PermissionNote = null,
+    bool CanRedecideLines = false);
 
 /// <summary>chargeback 1 บรรทัดที่ปิดผลแล้ว — จาก JE ปิดรายการที่ยังมีผล (<c>ISettlementPostingService.ClosedChargebacksAsync</c>)</summary>
 /// <param name="Description">คำอธิบายของ JE ที่ service เขียนตอนปิด ("ชนะ chargeback …" / "แพ้ chargeback …") — บอกว่าปิดด้วยผลไหน</param>
@@ -80,11 +83,15 @@ public static class SettlementBatchActions
         var stUnpost = posted && !unpostBlocked;
         var stBank = status == SettlementBatchStatus.Posted;
         var stChargeback = openChargebacks.Count > 0;
+        // S3-1: ค้างครึ่งทาง ⇒ แก้ได้เฉพาะบรรทัดที่ยังไม่มีชิ้นที่ออกแล้ว (ตัวตัดสินจริง = SettlementPartialEdit ในธุรกรรมของ service)
+        var stRedecide = halfPosted;
 
         // ── ตัดด้วยสิทธิ์ (D-06) — null = ไม่ได้ตรวจ ⇒ ไม่ตัด ──
         var p = permissions ?? new SettlementActionPermissions(true, true, true);
         var canChargeback = p.Post && p.JournalManage;
         var hidden = new List<string>();
+        if (stRedecide && !p.Import)
+            hidden.Add($"ตัดสินการจับคู่/จัดประเภทบรรทัดที่ยังไม่รับชำระ — ต้องมีสิทธิ์ “{PermissionKeys.LabelOf(SettlementPermissionScope.Import)}”");
         if (stEdit && !p.Import)
             hidden.Add($"แก้บรรทัด/จับคู่/เปลี่ยนบัญชีธนาคาร/ยกเลิกรอบ — ต้องมีสิทธิ์ “{PermissionKeys.LabelOf(SettlementPermissionScope.Import)}”");
         if ((stPost || stUnpost || stBank) && !p.Post)
@@ -99,8 +106,10 @@ public static class SettlementBatchActions
             SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched =>
                 "รอบโอนนี้ลงบัญชีแล้ว — แก้บรรทัด/ยกเลิกรอบไม่ได้ · กด \"ยกเลิกการลงบัญชี\" ก่อน แล้วแก้แล้วลงใหม่",
             _ when halfPosted =>
-                $"รอบโอนนี้ลงบัญชีค้างครึ่งทาง (มีเอกสาร/การรับชำระที่การลงบัญชีสร้างแล้ว {postingArtifacts} รายการ) — แก้บรรทัด/ยกเลิกรอบไม่ได้ · "
-                + "กด \"ดูตัวอย่างการลงบัญชี\" แล้วลงบัญชีต่อให้ครบ หรือยกเลิกเอกสาร/การรับชำระเหล่านั้นที่หน้าเอกสารก่อน",
+                $"รอบโอนนี้ลงบัญชีค้างครึ่งทาง (มีเอกสาร/การรับชำระที่การลงบัญชีสร้างแล้ว {postingArtifacts} รายการ) — ยกเลิกรอบ/จับคู่ใหม่ทั้งรอบ/"
+                + "เปลี่ยนบัญชีธนาคารไม่ได้ · กด \"ดูตัวอย่างการลงบัญชี\" แล้วลงบัญชีต่อให้ครบ · ถ้าด่านบอกให้เลือกใบขายใหม่ (ใบที่จับคู่ไว้ถูกรับชำระ/ยกเลิกไประหว่างนั้น) "
+                + "ตัดสินการจับคู่หรือจัดประเภทใหม่ได้เฉพาะบรรทัดที่ยังไม่มีเอกสาร/การรับชำระ (ระบบปฏิเสธถ้าการแก้เปลี่ยนชิ้นที่ออกแล้ว) · "
+                + "หรือยกเลิกเอกสาร/การรับชำระเหล่านั้นที่หน้าเอกสารก่อน",
             _ => null,
         };
         return new SettlementBatchActionSet(
@@ -118,6 +127,7 @@ public static class SettlementBatchActions
             CanPreview: status != SettlementBatchStatus.Voided,
             ClosedChargebacks: (closedChargebacks ?? Array.Empty<SettlementClosedChargeback>())
                 .Where(c => posted && lines.Any(l => l.LineId == c.LineId)).ToList(),
+            CanRedecideLines: stRedecide && p.Import,
             PermissionNote: hidden.Count == 0 ? null
                 : "ปุ่มบางปุ่มถูกซ่อนเพราะบัญชีของคุณยังไม่มีสิทธิ์: " + string.Join(" · ", hidden)
                   + " — ขอให้เจ้าของบริษัทเปิดสิทธิ์ที่หน้า “บทบาทและสิทธิ์” (/pages/roles.html)");

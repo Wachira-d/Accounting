@@ -8,7 +8,8 @@ namespace Accounting.Helpers;
 /// <summary>
 /// **หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว ยกเลิกไม่ได้** — ตัวตัดสินตัวเดียวของหน้ายกเลิก 50 ทวิ
 /// (<c>WithholdingTaxCertService.VoidAsync</c>) · การยกเลิกเอกสารต้นทาง (<c>DocumentService.VoidDocumentAsync</c>) · ด่านยกเลิกการลงบัญชี
-/// รอบโอน (<see cref="SettlementUnpostGate"/>) — ฝ่ายค้าน review198-C C-2
+/// รอบโอน (<see cref="SettlementUnpostGate"/>) · การออกใบ ภ.ง.ด.1 ใหม่ของรอบเงินเดือนที่ re-post (<c>PayrollService.IssueMonthlyPnd1CertsAsync</c> —
+/// เดิมประทับ Voided ตรง · review198-S3 S3-10 ทีม S4) — ฝ่ายค้าน review198-C C-2
 ///
 /// <para>ที่มา: <c>VoidAsync</c> เดิมเปลี่ยนสถานะเป็น Voided ได้ทุกกรณี ⇒ 50 ทวิ ที่ยื่น ภ.ง.ด.53 และนำส่งแล้ว (ผู้ถูกหักถือฉบับจริงไปแล้ว)
 /// หายจากยอดนำส่ง/ไฟล์ยื่นเงียบ ๆ และ JE กลับรายการพลิก 21917 เป็นยอดเดบิต</para>

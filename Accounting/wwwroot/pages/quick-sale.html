@@ -390,14 +390,18 @@
           const docId = doc?.data?.id || doc?.id;
           if (!docId) throw new Error('สร้างเอกสารไม่สำเร็จ');
 
-          // Auto-approve so the GL gets posted right away — that's the
-          // "ขายเร็ว" expectation. Power users who want Draft can use
-          // /pages/documents.html instead.
-          try { await API.c(co.id).approveDocument(docId); } catch (_) { /* warn but show success */ }
-
-          ok.innerHTML = `✅ บันทึกสำเร็จ — <a href="/pages/documents.html?id=${docId}" style="color:#166534;font-weight:700;text-decoration:underline;">เปิดดูเอกสาร</a> หรือ <a href="/pages/quick-sale.html" style="color:#166534;font-weight:700;text-decoration:underline;">ขายต่อ</a>`;
-          ok.style.display = '';
-          // Reset form for next sale
+          // อนุมัติทันที (ความคาดหวังของ "ขายเร็ว") — แต่ห้ามกลืนผล (รอบ 198 ทีม S4 · ค้างจากทีม W รอบ 199): เดิม
+          // `catch (_) {}` แล้วขึ้น "บันทึกสำเร็จ" ทั้งที่ใบยังเป็นร่าง (มีคำเตือน/ไม่มีสิทธิ์/ด่านบังคับ) ⇒ ผู้ใช้เข้าใจว่าออกเลข+ลงบัญชีแล้ว
+          const approval = await this._approve(co.id, docId);
+          const link = '/pages/documents.html?id=' + encodeURIComponent(docId);
+          if (approval.approved) {
+            ok.innerHTML = `✅ บันทึกและอนุมัติแล้ว — <a href="${link}" style="color:#166534;font-weight:700;text-decoration:underline;">เปิดดูเอกสาร</a> หรือ <a href="/pages/quick-sale.html" style="color:#166534;font-weight:700;text-decoration:underline;">ขายต่อ</a>`;
+            ok.style.display = '';
+          } else {
+            err.innerHTML = this._draftNotice(approval, link);
+            err.style.display = '';
+          }
+          // Reset form for next sale — ใบถูกบันทึกแล้วทั้งสองกรณี (อนุมัติแล้ว/เป็นร่าง) · กดซ้ำ = สร้างใบซ้ำ
           this.lines = [{ desc: '', qty: 1, price: 0 }];
           this.customer = null; this.customerName = '';
           document.getElementById('customerInput').value = '';
@@ -408,6 +412,41 @@
         } finally {
           btn.disabled = false; btn.textContent = '💾 บันทึกและอนุมัติเลย';
         }
+      },
+
+      /**
+       * อนุมัติแบบ "คนเห็นคำเตือนก่อนรับทราบ" — ครั้งแรกส่ง acknowledgeWarnings:false (ทางเดียวกับปุ่มอนุมัติของ documents.html
+       * `_approveConfirmingWarnings`) · หน้านี้ไม่มีหน้าต่างคำเตือน จึงไม่รับทราบแทนคน: มีคำเตือน ⇒ ใบคงเป็นร่าง แล้วพาไปหน้าเอกสาร
+       * ที่แสดงคำเตือนให้รับทราบ (ไม่มีสำเนากติกา/คำเตือนที่นี่ — เซิร์ฟเวอร์เป็นผู้ตัดสิน · F2 ข้อ 5)
+       * คืน { approved: true } | { approved: false, warnings: [...] } | { approved: false, error: 'ข้อความจากเซิร์ฟเวอร์' }
+       */
+      async _approve(companyId, docId) {
+        try {
+          await API.c(companyId).approveDocument(docId, { acknowledgeWarnings: false });
+          return { approved: true };
+        } catch (e) {
+          return this._approvalOutcome(e);
+        }
+      },
+
+      /** error ของการอนุมัติ → สิ่งที่ต้องบอกผู้ใช้ (422 + warnings = รอคนรับทราบ · อื่น ๆ = ข้อความของเซิร์ฟเวอร์) */
+      _approvalOutcome(e) {
+        const data = e && e.status === 422 && e.body && e.body.data;
+        if (data && Array.isArray(data.warnings) && data.warnings.length)
+          return { approved: false, warnings: data.warnings.map(w => String(w)) };
+        return { approved: false, error: (e && e.message) || 'อนุมัติไม่สำเร็จ' };
+      },
+
+      /** แบนเนอร์ "บันทึกเป็นร่างแล้ว ยังไม่อนุมัติ" — บอกเหตุผลจริง + ทางไปต่อ (ห้ามขึ้น "สำเร็จ" ทั้งที่ยังเป็นร่าง) */
+      _draftNotice(r, link) {
+        const head = r.warnings
+          ? `⚠️ บันทึกเป็น<b>ร่าง</b>แล้ว — <b>ยังไม่อนุมัติ</b> (ยังไม่ออกเลข · ยังไม่ลงบัญชี) เพราะมีคำเตือน ${r.warnings.length} ข้อที่ต้องให้คนตรวจและรับทราบก่อน:`
+          : `⚠️ บันทึกเป็น<b>ร่าง</b>แล้ว — <b>อนุมัติไม่สำเร็จ</b> (ยังไม่ออกเลข · ยังไม่ลงบัญชี): ${this._esc(r.error)}`;
+        const list = r.warnings
+          ? `<ul style="margin:6px 0 6px 18px">${r.warnings.map(w => `<li>${this._esc(w)}</li>`).join('')}</ul>`
+          : '';
+        return `${head}${list}<div style="margin-top:6px"><a href="${link}" style="font-weight:700;text-decoration:underline;">`
+          + `เปิดเอกสาร${r.warnings ? 'เพื่อตรวจคำเตือนแล้วกด “อนุมัติ”' : 'แล้วแก้ไข/อนุมัติ'}</a></div>`;
       },
 
       _esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }

@@ -211,6 +211,10 @@ public sealed partial class SettlementImportService : ISettlementImportService
     {
         public required SettlementParsedRow Row { get; init; }
         public required string Key { get; init; }
+        /// <summary>คีย์ของแถวเดียวกันตามกติการุ่นก่อน (<see cref="SettlementTxnKey.LegacyKeys"/>) — ใช้เทียบกับของที่เก็บแล้วเท่านั้น (S3-4)</summary>
+        public required IReadOnlyList<string> LegacyKeys { get; init; }
+        /// <summary>คีย์ทุกตัวที่ถือว่าเป็นแถวนี้ (รุ่นปัจจุบัน + รุ่นก่อน)</summary>
+        public IEnumerable<string> AllKeys => LegacyKeys.Prepend(Key);
         public string? Label { get; init; }
         public string? Description { get; init; }
         public SettlementLineType Type { get; set; } = SettlementLineType.Unclassified;
@@ -239,19 +243,23 @@ public sealed partial class SettlementImportService : ISettlementImportService
             throw new BusinessRuleException("ไม่พบบัญชีธนาคารที่เลือกในบริษัทนี้", "SETTLEMENT-BANK", 404);
 
         // ── 2. คีย์กันซ้ำ + ตัดแถวที่มีแล้ว (อ่านอย่างเดียว — ตรวจซ้ำใต้ล็อก) ──
-        // คีย์รุ่น v2 (R-B5/R-B6): ป้ายถูกแฮชในคีย์ (ไม่มี PII · ไม่ขึ้นกับตัวตัด PII) · ใส่ยอด+วันที่ · แถวไม่มี id ใส่รอบโอนของแถว
-        var keys = SettlementTxnKey.Assign(rows
-            .Select(r => new SettlementTxnKeyInput(r.RawTxnId, r.RawTypeLabel, r.ExternalOrderId, r.Amount, r.TxnDate, payoutRef)).ToList());
-        var existing = await ExistingKeysAsync(companyId, channelId, keys, ct);
-        var prepared = rows.Select((r, i) => new PreparedLine
+        // คีย์รุ่น v2 (R-B5/R-B6): ป้ายถูกแฮชในคีย์ (ไม่มี PII · ไม่ขึ้นกับตัวตัด PII) · ใส่ยอด+วันที่ · แถวไม่มี id ใส่รอบโอน**จากคอลัมน์ในไฟล์**
+        // (S3-4: ห้ามใช้เลขที่ผู้ใช้พิมพ์ — ไฟล์ไม่มีคอลัมน์ ⇒ ลายนิ้วมือเนื้อหาไฟล์) · คีย์รุ่นก่อน (v1 · v2 ที่ใช้เลขพิมพ์) ใช้เทียบเท่านั้น
+        var keyInputs = rows
+            .Select(r => new SettlementTxnKeyInput(r.RawTxnId, r.RawTypeLabel, r.ExternalOrderId, r.Amount, r.TxnDate, r.PayoutRef)).ToList();
+        var keys = SettlementTxnKey.Assign(keyInputs);
+        var legacyKeys = SettlementTxnKey.LegacyKeys(keyInputs, payoutRef);
+        var all = rows.Select((r, i) => new PreparedLine
             {
                 Row = r,
                 Key = keys[i],
+                LegacyKeys = legacyKeys[i],
                 // ป้ายเป็นอินพุตของ AI ด้วย — ตัด PII ก่อนทั้งเก็บและถาม
                 Label = Fit(SettlementPiiScrubber.Scrub(r.RawTypeLabel), 200),
                 Description = SettlementPiiScrubber.Scrub(r.Description),
-            })
-            .Where(p => !existing.Contains(p.Key)).ToList();
+            }).ToList();
+        var existing = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
+        var prepared = all.Where(p => !p.AllKeys.Any(existing.Contains)).ToList();
 
         // ── 3. จัดประเภท (นอกธุรกรรม — ครูอาจใช้เวลาหลายวินาที ห้ามถือล็อกไว้) ──
         var channelForClassify = await LoadChannelAsync(companyId, channelId, tracked: false, ct);
@@ -282,13 +290,28 @@ public sealed partial class SettlementImportService : ISettlementImportService
                         $"รายการรับชำระ {taken} รายการถูกบันทึกรอบโอนไปแล้วระหว่างที่ระบบเตรียมรอบนี้ — กดประกอบรอบโอนใหม่อีกครั้ง",
                         "SETTLEMENT-INTENT-TAKEN");
             }
-            var underLock = await ExistingKeysAsync(companyId, channelId, prepared.Select(p => p.Key).ToList(), ct);
-            var toAdd = prepared.Where(p => !underLock.Contains(p.Key)).ToList();
-            var skippedDup = rows.Count - toAdd.Count;
+            // ตรวจซ้ำใต้ล็อกด้วยคีย์ทุกรุ่นของ "ทุกแถว" — ชุดที่ได้ = บรรทัดที่แถวในไฟล์นี้อ้างด้วยคีย์แล้ว (ห้ามถูกนับซ้ำด้วยเนื้อหาด้านล่าง)
+            var underLock = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
+            var toAdd = prepared.Where(p => !p.AllKeys.Any(underLock.Contains)).ToList();
 
             var batch = await _db.SettlementBatches
                 .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ChannelId == channelId && b.PayoutRef == payoutRef, ct);
             var created = batch == null;
+            // S3-4: ไฟล์ฉบับแก้ของรอบโอนเดิม (มีแถวเพิ่ม ⇒ ลายนิ้วมือเนื้อหาใหม่ ⇒ คีย์แถวไม่มี id เปลี่ยน) — แถวไม่มี id ที่เนื้อหาตรงกับบรรทัดของ
+            // รอบโอนนี้ซึ่งยังไม่ถูกแถวใดอ้างด้วยคีย์ = มีอยู่แล้ว (นับจำนวน · แถวเหมือนกัน 3 กับบรรทัดเดิม 2 ⇒ เพิ่ม 1)
+            var contentMatched = 0;
+            if (batch != null && toAdd.Count > 0)
+            {
+                var hit = SettlementTxnKey.MatchByContent(toAdd.Select(ContentKeyOf).ToList(),
+                    await StoredRowContentAsync(companyId, channelId, batch.Id, underLock, ct));
+                contentMatched = hit.Count;
+                if (hit.Count > 0) toAdd = toAdd.Where((_, i) => !hit.Contains(i)).ToList();
+            }
+            var skippedDup = rows.Count - toAdd.Count;
+            // S3-4: แถวไม่มี id ที่เนื้อหาตรงกับบรรทัดของรอบโอน "อื่น" — อาจเป็นไฟล์ช่วงวันทับกันที่นำเข้าด้วยเลขรอบโอนต่าง (หรือรายการจริงคนละรายการ
+            // ที่หน้าตาเหมือนกัน · R-B5) ⇒ ระบบตัดสินแทนไม่ได้ ⇒ เตือนเป็นรายแถวพร้อมรอบโอนที่ตรง (ไม่เงียบ · ไม่บล็อก)
+            if (await ContentOverlapElsewhereAsync(companyId, channelId, batch?.Id, toAdd, underLock, ct) is string overlap)
+                warnings.Add(overlap);
             // C-1(b): รอบที่ลงบัญชีค้างครึ่งทาง (มีเอกสาร/การรับชำระของการลงบัญชีแล้ว) เติมบรรทัดไม่ได้เหมือนรอบที่ลงบัญชีแล้ว
             var artifacts = batch == null ? new List<string>() : await PostingArtifactsAsync(companyId, batch.Id, ct);
             if (batch != null && !SettlementSaleMatch.IsEditable(batch.Status, artifacts.Count))
@@ -304,14 +327,15 @@ public sealed partial class SettlementImportService : ISettlementImportService
             if (skippedDup > 0 && toAdd.Count > 0)
             {
                 var addKeys = toAdd.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
-                var skipped = rows.Select((r, i) => (r.SourceRow, Key: keys[i])).Where(x => !addKeys.Contains(x.Key)).ToList();
-                var refs = await BatchRefsOfKeysAsync(companyId, channelId, skipped.Select(x => x.Key).ToList(), ct);
+                var skipped = all.Where(p => !addKeys.Contains(p.Key)).Select(p => (p.Row.SourceRow, Keys: p.AllKeys.ToList())).ToList();
+                var refs = await BatchRefsOfKeysAsync(companyId, channelId, skipped.SelectMany(x => x.Keys).ToList(), ct);
+                if (contentMatched > 0 && batch != null && !refs.Contains(batch.PayoutRef)) refs.Add(batch.PayoutRef);
                 warnings.Add($"ข้าม {skippedDup} แถวที่นำเข้าแล้ว (แถวที่ {string.Join(", ", skipped.Take(20).Select(x => x.SourceRow))}"
                     + $"{(skipped.Count > 20 ? " …" : "")} · อยู่ในรอบโอน {string.Join(", ", refs)}) — ถ้าเป็นรายการใหม่จริง ตรวจว่าไฟล์ใส่เลขรายการซ้ำกับรอบก่อนหรือไม่");
             }
             if (batch == null && toAdd.Count == 0)
             {
-                var refs = await BatchRefsOfKeysAsync(companyId, channelId, keys, ct);
+                var refs = await BatchRefsOfKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
                 throw new BusinessRuleException(
                     $"ทุกรายการในไฟล์ถูกนำเข้าแล้ว (รอบโอน {string.Join(", ", refs)}) — ไม่มีอะไรใหม่ให้สร้างรอบโอน \"{payoutRef}\" · "
                     + "ถ้าต้องการนำเข้าใหม่ ให้ยกเลิกรอบโอนเดิมก่อน", "SETTLEMENT-ALL-DUPLICATE");
@@ -578,6 +602,52 @@ public sealed partial class SettlementImportService : ISettlementImportService
             found.UnionWith(hit);
         }
         return found;
+    }
+
+    /// <summary>คีย์เนื้อหาของแถวที่ไม่มี id (S3-4) — ค่าที่ผ่านการตัด PII/ตัดความยาว/ปัดเศษแบบเดียวกับที่เก็บลงบรรทัด · แถวที่มี id/มาจาก intent = null (ไม่เทียบ)</summary>
+    private static string? ContentKeyOf(PreparedLine p)
+        => !string.IsNullOrWhiteSpace(p.Row.RawTxnId) || p.Row.PaymentIntentId != null
+            ? null
+            : SettlementTxnKey.ContentKey(Fit(p.Row.ExternalOrderId?.Trim(), 200), p.Label, R(p.Row.Amount), p.Row.TxnDate);
+
+    /// <summary>คีย์เนื้อหาของบรรทัดแบบไม่มี id ในรอบโอนนี้ที่<b>ยังไม่ถูกแถวในไฟล์อ้างด้วยคีย์</b> (<paramref name="claimed"/>) — คลังให้ <see cref="SettlementTxnKey.MatchByContent"/></summary>
+    private async Task<List<string>> StoredRowContentAsync(Guid companyId, Guid channelId, Guid batchId, IReadOnlySet<string> claimed,
+        CancellationToken ct)
+    {
+        var stored = await _db.SettlementLines.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && l.BatchId == batchId && l.ExternalTxnId != null)
+            .Select(l => new { l.ExternalTxnId, l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate })
+            .ToListAsync(ct);
+        return stored.Where(l => SettlementTxnKey.IsRowKey(l.ExternalTxnId) && !claimed.Contains(l.ExternalTxnId!))
+            .Select(l => SettlementTxnKey.ContentKey(l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate)).ToList();
+    }
+
+    /// <summary>
+    /// แถวไม่มี id ที่จะเพิ่มซึ่งเนื้อหาตรงกับบรรทัดแบบไม่มี id ของ<b>รอบโอนอื่น</b>ในช่องทางนี้ (S3-4) — คืนข้อความเตือนรายแถว หรือ null ·
+    /// ไม่บล็อก: แถวไม่มี id ที่เหมือนกันทุกช่องอาจเป็นรายการจริงคนละรายการ (R-B5) — ระบบตัดสินแทนไม่ได้ จึงบอกให้คนตรวจก่อนลงบัญชี
+    /// </summary>
+    private async Task<string?> ContentOverlapElsewhereAsync(Guid companyId, Guid channelId, Guid? batchId, IReadOnlyList<PreparedLine> toAdd,
+        IReadOnlySet<string> claimed, CancellationToken ct)
+    {
+        var candidates = toAdd.Select(p => (p.Row.SourceRow, p.Row.TxnDate, Key: ContentKeyOf(p)))
+            .Where(x => x.Key != null && x.TxnDate != null).ToList();
+        if (candidates.Count == 0) return null;
+        var dates = candidates.Select(x => x.TxnDate!.Value).Distinct().Take(500).ToList();
+        var stored = await _db.SettlementLines.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && l.ExternalTxnId != null && l.TxnDate != null
+                && dates.Contains(l.TxnDate.Value) && (batchId == null || l.BatchId != batchId))
+            .Select(l => new { l.ExternalTxnId, l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate, l.Batch.PayoutRef })
+            .ToListAsync(ct);
+        var refsByContent = stored.Where(l => SettlementTxnKey.IsRowKey(l.ExternalTxnId) && !claimed.Contains(l.ExternalTxnId!))
+            .GroupBy(l => SettlementTxnKey.ContentKey(l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate))
+            .ToDictionary(g => g.Key, g => g.Select(x => x.PayoutRef).Distinct().ToList());
+        var hits = candidates.Where(x => refsByContent.ContainsKey(x.Key!)).ToList();
+        if (hits.Count == 0) return null;
+        var refs = hits.SelectMany(x => refsByContent[x.Key!]).Distinct().Take(5).ToList();
+        return $"แถวที่ {string.Join(", ", hits.Take(20).Select(x => x.SourceRow))}{(hits.Count > 20 ? " …" : "")} ไม่มีเลขรายการ และเนื้อหาตรงทุกช่อง "
+            + $"(ออเดอร์ · ป้าย · ยอด · วันที่) กับบรรทัดในรอบโอน {string.Join(", ", refs)} ที่นำเข้าไว้แล้ว — ถ้าเป็นรายการเดียวกัน (ไฟล์ช่วงวันทับกัน "
+            + "หรือนำเข้าไฟล์เดิมด้วยเลขรอบโอนที่พิมพ์ต่าง) ห้ามลงบัญชีรอบนี้ทั้งอย่างนั้น: ยกเลิกรอบโอนนี้แล้วนำเข้าใหม่ด้วยเลขรอบโอนเดิม "
+            + "· ถ้าเป็นคนละรายการจริง (หน้าตาเหมือนกัน) ไม่ต้องทำอะไร";
     }
 
     private async Task<List<string>> BatchRefsOfKeysAsync(Guid companyId, Guid channelId, IReadOnlyList<string> keys,
