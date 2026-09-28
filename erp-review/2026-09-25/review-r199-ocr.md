@@ -13,7 +13,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 
 ## C) รอบ 199 — ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน (`61dd6408`)
 
-### C-1 · CONFIRMED · **P1** — ด่านฝั่งเซิร์ฟเวอร์ยังบังคับวันที่ ภ.พ.06 เมื่อติ๊ก "กิจการขายปลีก" ⇒ คำตัดสินเจ้าของใช้ไม่ได้กับบริษัทใหม่
+### ✅ 347f2517 C-1 · CONFIRMED · **P1** — ด่านฝั่งเซิร์ฟเวอร์ยังบังคับวันที่ ภ.พ.06 เมื่อติ๊ก "กิจการขายปลีก" ⇒ คำตัดสินเจ้าของใช้ไม่ได้กับบริษัทใหม่
 - `Accounting/Services/Implementations/CompanyService.cs:269-275`
   ```csharp
   if (request.IsRetailApproved == true
@@ -32,7 +32,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
   · ใช้ `BusinessRuleException` แทน `InvalidOperationException` (กฎ #4 E) · เพิ่มเทสต์ service-level ทิศ "ติ๊กขายปลีก ไม่มีวันที่ = บันทึกได้"
   · ล็อกด้วย `required_call_site_check` แบบ `forbid` สูตรเดิม
 
-### C-2 · CONFIRMED · P2 — หัวเอกสารคำนวณสดจากธงบริษัทปัจจุบัน ไม่ใช่ `IsTaxInvoiceByLaw` ที่ตรึงตอนออกเลข ⇒ พิมพ์ซ้ำใบเก่าได้หัวคนละแบบกับเลข
+### ✅ <pending> C-2 · CONFIRMED · P2 — หัวเอกสารคำนวณสดจากธงบริษัทปัจจุบัน ไม่ใช่ `IsTaxInvoiceByLaw` ที่ตรึงตอนออกเลข ⇒ พิมพ์ซ้ำใบเก่าได้หัวคนละแบบกับเลข
 - `PdfGenerationService.cs:1546-1548, 1624-1626, 1845-1847` · `DocumentRenderer.cs:65-67` คำนวณ `companyMayIssueAbbreviated` จาก
   `Company` ณ วันพิมพ์ · ไม่มีบรรทัดใดใน `PdfGenerationService*.cs` อ่าน `Document.IsTaxInvoiceByLaw`
 - ใบที่อนุมัติก่อนรอบ 199 โดยบริษัทขายปลีกที่ลงวันที่ **ก่อน** `PhoR06ApprovedDate` เคยได้หัว "ใบเสร็จรับเงิน" + เลข REC + `IsTaxInvoiceByLaw=false`
@@ -43,13 +43,13 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 - **แก้:** ใบที่ออกเลขแล้ว (`IsTaxInvoiceByLaw != null`) ให้ใช้ค่าที่ตรึงไว้เป็นตัวตัดสิน `mayAbbrev` ในทั้งสอง renderer (HTML + QuestPDF
   ผ่าน resolver ตัวเดียว) · ธงบริษัทสดใช้เฉพาะ Draft · เทสต์: ใบ REC ที่ตรึง false แล้วบริษัทได้สิทธิ์ภายหลัง พิมพ์ซ้ำต้องยังเป็น "ใบเสร็จรับเงิน"
 
-### C-3 · CONFIRMED · P3 — สวิตช์แพลตฟอร์มชื่อ "RequirePhoR06" ยังปิดด่าน §86/6 ขายปลีกด้วย
+### 📋 backlog (ต้องให้เจ้าของเลือก) C-3 · CONFIRMED · P3 — สวิตช์แพลตฟอร์มชื่อ "RequirePhoR06" ยังปิดด่าน §86/6 ขายปลีกด้วย
 - `AbbreviatedTaxInvoiceRule.cs:98` `if (!requirePhoR06) return None;` อยู่**ก่อน**ด่าน `NotRetailBusiness`
 - หลังรอบ 199 ขายปลีก = ข้อกฎหมาย §86/6 (ทุกช่องทาง) ไม่ใช่ ภ.พ.06 · แอดมินที่ปิดสวิตช์ "บังคับ ภ.พ.06" (ตามป้าย `admin/site-settings.html:349`)
   จะเปิดให้บริษัทขายส่ง/ไม่ใช่ขายปลีกทุกแห่งออกใบกำกับอย่างย่อจากหน้าเอกสารด้วย · คอมมิตตั้งใจคงไว้ ("คงความหมายเดิม") แต่ป้ายบนหน้าแอดมินไม่บอก
 - **แก้:** ย้ายเช็ค `!isRetailApproved` ขึ้นก่อนสวิตช์ (สวิตช์คุมเฉพาะส่วน ภ.พ.06) หรืออย่างน้อยแก้ป้ายแอดมินให้บอกว่าปิดทั้งสองด่าน — ต้องให้เจ้าของเลือก
 
-### C-4 · CONFIRMED · P3 — ข้อความค้างความหมายเดิม (doc drift)
+### ✅ 347f2517 (ข้อความหน้าเอกสาร) · ชื่อเทสต์คงเดิม C-4 · CONFIRMED · P3 — ข้อความค้างความหมายเดิม (doc drift)
 - `wwwroot/pages/documents.html:3950` คำแนะนำ "(§86/6 — ควรได้รับอนุมัติ ภ.พ.06)" สำหรับตัวเลือกใบเสร็จอย่างย่อ**จากหน้าเอกสาร** — ขัดคำตัดสิน
 - `HelpContentSeeder.cs:400` ถูกต้อง (พูดถึงสลิปหน้าร้าน) · เทสต์ `AbbreviatedTaxInvoiceTitleTests.cs:130-160` ชื่อ `ไม่มีสิทธิ์_ภพ06_…` ความหมายเปลี่ยนเป็น "ไม่มีสิทธิ์ขายปลีก" (ชื่ออย่างเดียว)
 
@@ -67,7 +67,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 
 ## A) รอบ 197 ทีม K2 — สาขาผู้ขาย (`b3b4a9f3` + `ac011f6c`)
 
-### A-1 · CONFIRMED · **P1** — K-7 ทำให้เส้นสร้างเอกสาร**สร้างผู้ติดต่อซ้ำ/ผู้ติดต่อที่เป็นตัวเราเอง**แทนที่จะกัน
+### ✅ <pending> A-1 · CONFIRMED · **P1** — K-7 ทำให้เส้นสร้างเอกสาร**สร้างผู้ติดต่อซ้ำ/ผู้ติดต่อที่เป็นตัวเราเอง**แทนที่จะกัน
 - `OcrService.cs:6231-6240` `vendorIsUs = IsOurContact(ExtractedVendorTaxId, ExtractedVendorName, …)` ⇒ ถ้าจริง **ข้ามทั้งบล็อกเลือกสาขา**
   แล้วไหลไป `OcrService.cs:6291-6309`: `if (!contactId.HasValue && ExtractedVendorName)` ⇒ `new Contact { Name = ExtractedVendorName, TaxId = ExtractedVendorTaxId … }`
   โดย**ไม่ตรวจว่ามีแถวของเลขนี้อยู่แล้ว** · `contactId` = `result.MatchedContactId` ซึ่งเส้นสแกนกรองด้วยตัวตัดสินเดียวกันไว้แล้ว (`OcrService.cs:2605/2643/2667`) ⇒ มักเป็น null
@@ -82,7 +82,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
   (2) เส้นสร้างเอกสาร เมื่อ `vendorIsUs` ห้ามตกไป fallback "สร้างผู้ติดต่อใหม่" — โยน `BusinessRuleException` ให้ผู้ใช้เลือกผู้ติดต่อ/เปลี่ยนชนิดเอกสาร
   (3) เทสต์สองทิศ: บริษัทในเครือชื่อซ้อน+เลขต่าง ⇒ ผูกแถวเดิม · เลขเรา ⇒ ไม่สร้างผู้ติดต่อ
 
-### A-2 · CONFIRMED · P2 — `SameEntityIdsAsync` ถือเลขศูนย์ล้วน/placeholder เป็น "นิติบุคคลเดียวกัน"
+### ✅ <pending> A-2 · CONFIRMED · P2 — `SameEntityIdsAsync` ถือเลขศูนย์ล้วน/placeholder เป็น "นิติบุคคลเดียวกัน"
 - `ContactTaxBranchKey.cs:254-273` ใช้ `HasTaxId` (= มีตัวเลขสักตัว, `:308`) ไม่ใช่ `IsUsableTaxId` · ไฟล์เดียวกันบรรทัด `:351, :386-392` ระบุเองว่า
   `"0000000000000"` = ค่ามาตรฐาน "ลูกค้าทั่วไป" ของ POS หลายเจ้า ไม่ใช่เลข
 - ผลของ K-3: ผู้ติดต่อทุกแถวที่เก็บ `0000000000000` (ลูกค้าทั่วไปที่นำเข้าจากระบบอื่น · ผู้ขายต่างประเทศที่กรอกศูนย์) กลายเป็น "ทุกสาขาของนิติบุคคลเดียว":
@@ -91,29 +91,29 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
   (`DocumentService.cs:10055-10106` ไม่ตรวจคู่ค้า) = ตัดลูกหนี้ผิดราย
 - **แก้:** `SameEntityIdsAsync` ต้องใช้เงื่อนไขเดียวกับ `IsUsableTaxId` (ไม่ใช่ศูนย์ล้วน · 13 หลักผ่าน mod-11) · แถวผู้ติดต่อ `IsWalkInCustomer` ไม่ขยาย · เทสต์ศูนย์ล้วน = ตัวเองอย่างเดียว
 
-### A-3 · PLAUSIBLE · P2 — คะแนนสาขาตามที่มา (K-2) ไม่ย้ายตามเมื่อ `OcrPartyResolver` สลับฝั่ง
+### ✅ <pending> A-3 · PLAUSIBLE · P2 — คะแนนสาขาตามที่มา (K-2) ไม่ย้ายตามเมื่อ `OcrPartyResolver` สลับฝั่ง
 - `OcrService.cs:970-973` (และ `:1123-1126`) ย้าย `VendorBranchCode`↔`BuyerBranchCode` ตามผล `Swapped` แต่ `FieldConfidence[SellerBranchCode]`
   ที่ `EnrichFromRawText` ใส่ไว้ก่อน (`:778` → `:9783-9790`) **ไม่ถูกสลับ** ⇒ สาขาที่ตอนนี้อยู่ช่องผู้ขาย (มาจากบล็อกผู้ซื้อของกระดาษ) ถือคะแนน SellerBlock 0.85
   = ผ่านเกณฑ์สร้างผู้ติดต่อสาขาถาวร — คลาสเดียวกับ K-2 ที่ตั้งใจปิด · มีอยู่ก่อน K2 (ตอนนั้น 0.85 ทุกทาง) แต่ K2 อ้างว่า "คะแนนตามที่มา" ซึ่งไม่จริงหลังสลับ
 - **แก้:** ตอน `Decision == Swapped` สลับ `FieldConfidence`/`FieldEvidence` ของคู่ช่องสาขา (และชื่อ/เลข/ที่อยู่) ไปพร้อมค่า หรือลดคะแนนสาขาทั้งสองฝั่งเป็น < 0.85 · เทสต์: ใบที่ engine ใส่เราช่องผู้ขาย
 
-### A-4 · PLAUSIBLE · P3 — ใบเสร็จร้านค้า/สลิป (ไม่มีบล็อกผู้ซื้อ) ไม่สร้างแถวสาขาอีกเลย
+### 📋 backlog (ถามเจ้าของ) A-4 · PLAUSIBLE · P3 — ใบเสร็จร้านค้า/สลิป (ไม่มีบล็อกผู้ซื้อ) ไม่สร้างแถวสาขาอีกเลย
 - `BranchCodeExtractor.cs:131` ไม่มีป้ายผู้ซื้อ ⇒ `WholePageNoBuyerBlock` 0.70 < 0.85 ⇒ ใบร้านสะดวกซื้อ/ปั๊มน้ำมันที่มีแต่ "สาขาที่ 01234" ของผู้ขาย (ไม่มีผู้ซื้อบนกระดาษ ⇒ ไม่มีสาขาอื่นให้สับสน)
   ตก `OtherBranchRow` + ข้อความให้พิมพ์ยืนยันทุกใบ · เป็นใบปริมาณสูงสุดของผู้ใช้ ⇒ UX "1-click approve" (กฎเหล็ก #3) ถอยลง · ตั้งใจตาม K-2 แต่ไม่มีเทสต์ทิศนี้
   ในชุดกระดาษจริง (คอมมิตรันเฉพาะ Makro/Radisson)
 - **แก้/ถามเจ้าของ:** ใบที่ไม่มีบล็อกผู้ซื้อ**และ**มีรหัสสาขาเพียงค่าเดียวทั้งหน้า ⇒ 0.85 ได้ · เพิ่มเทสต์สลิป 7-Eleven/ปั๊ม
 
-### A-5 · PLAUSIBLE · P3 — ขยาย PO เป็นทั้งนิติบุคคลแต่ยัง `Take(5)` ⇒ auto-link ด้วยเลขบนกระดาษพลาดมากขึ้น
+### 📋 backlog A-5 · PLAUSIBLE · P3 — ขยาย PO เป็นทั้งนิติบุคคลแต่ยัง `Take(5)` ⇒ auto-link ด้วยเลขบนกระดาษพลาดมากขึ้น
 - `OcrService.cs:3024-3066` ลิสต์ PO ของทุกสาขาแล้วตัดเหลือ 5 ใบล่าสุดก่อนเทียบเลข PO บนกระดาษ ⇒ ผู้ขายเครือใหญ่ที่มี PO ค้าง > 5 ใบ (ทุกสาขารวม) ใบที่อ้างจริงหลุดจาก 5 ใบ = ไม่ auto-link
   (ก่อน K-3 กรองแถวเดียว โอกาสอยู่ใน 5 ใบสูงกว่า) · ข้อความแบนเนอร์ "ค้าง N ใบ" ก็ถูกเพดาน 5
 - **แก้:** เทียบเลข PO บนกระดาษกับ PO เปิด**ทั้งหมด** (query แยกไม่ Take) แล้วค่อยตัดเฉพาะรายการที่แสดง
 
-### A-6 · PLAUSIBLE · P3 — ใบรับเงิน/จ่ายเงินที่ผูกต้นทางข้ามแถวสาขา ⇒ รายงานรายผู้ติดต่อเพี้ยน
+### 📋 backlog (ต้องตัดสิน) A-6 · PLAUSIBLE · P3 — ใบรับเงิน/จ่ายเงินที่ผูกต้นทางข้ามแถวสาขา ⇒ รายงานรายผู้ติดต่อเพี้ยน
 - K-3 ยอมให้ Receipt/PaymentVoucher (สร้างจากสแกน) ผูก Invoice/PI ของแถว สนญ. · settlement ลด `BalanceDue` ของต้นทางถูก (JE ไม่มี ContactId) แต่ statement/ประวัติ
   รายผู้ติดต่อแสดงเงินเข้า/ออกที่แถวสาขา ขณะที่หนี้อยู่แถว สนญ. · เฉพาะ CN/DN ที่ถูกกันตาม §86/9-10 (`DocumentService.cs:14956`) ✅
 - **แก้:** ตัดสินใจว่า settlement ต้องใช้ `ContactId` ของต้นทาง (สืบทอดเหมือน convert) หรือยอมรับ + บอกใน DOCUMENT_FLOW
 
-### A-7 · CONFIRMED · P3 — doc-comment ของ `IsSelf` ถูกดึงไปติด `IsOurContact`
+### ✅ <pending> A-7 · CONFIRMED · P3 — doc-comment ของ `IsSelf` ถูกดึงไปติด `IsOurContact`
 - `OcrSelfPartyGuard.cs:48-58` บล็อก `<summary>` ของ `IsSelf` อยู่เหนือ `IsOurContact` ⇒ `IsOurContact` มีสอง `<summary>` · `IsSelf` ไม่มีเอกสาร (build ผ่าน — ไม่มี warnings-as-errors)
 
 ### A-8 · NOT-A-BUG / ตรวจแล้ว
@@ -127,7 +127,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 
 ## B) รอบ 195 ทีม I3 — ฝ่ายค้านรอบสาม (merge `54fdae45`)
 
-### B-1 · PLAUSIBLE · **P2 (ต้องให้เจ้าของตัดสิน)** — API v1 อนุมัติใบที่ VAT ไม่ได้พิมพ์บนกระดาษได้โดยไม่มีคนรับทราบ
+### 📋 backlog (เจ้าของตัดสิน) B-1 · PLAUSIBLE · **P2 (ต้องให้เจ้าของตัดสิน)** — API v1 อนุมัติใบที่ VAT ไม่ได้พิมพ์บนกระดาษได้โดยไม่มีคนรับทราบ
 - `ApprovalAcknowledgement.cs:53` `ApiClient => warnings.Where(w => !IsGapWarning(w))` + `OcrApprovalGapWarning.IsGapWarning` ขยายให้รวม `VatDerivedPrefix`
   (`OcrApprovalGapWarning.cs:140-142`) ⇒ `/api/v1/documents/{id}/approve` ผ่านคำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" เงียบ ๆ แล้วคืนแค่ `scanVatNotOnPaper`
   (`DocumentsV1Controller.cs:265-268`)
@@ -135,17 +135,17 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
   ⇒ ภาษีซื้อที่ระบบแต่งเข้า ภ.พ.30 ผ่าน API ได้โดยไม่มีมนุษย์ (R1/R5 · DOCTRINE §2 write-gate) — คลาส "ขยายคำตัดสินเจ้าของเอง"
 - **แก้:** ให้ `ApiClient` หยุดที่ `IsVatDerivedWarning` (ผ่านเฉพาะ `Prefix` เดิม) จนกว่าเจ้าของจะตัดสิน · บันทึกข้อนี้ใน review195-r2 §ต้องตัดสิน
 
-### B-2 · CONFIRMED · P3 — คำเตือน VAT-derived ตัดสินจาก VAT ของ**สแกน** ไม่ใช่ของเอกสารตอนนี้
+### ✅ <pending> B-2 · CONFIRMED · P3 — คำเตือน VAT-derived ตัดสินจาก VAT ของ**สแกน** ไม่ใช่ของเอกสารตอนนี้
 - `DocumentService.cs:18871-18874` `Classify(..., gapScan.ExtractedVatAmount, …)` · สแกนถูก sync จากเอกสาร**หลังอนุมัติ**เท่านั้น (`DocumentService.cs:13470-13525`)
   ⇒ ผู้ใช้ทำตามทางเลือก (1) "แก้ยอด VAT ตามกระดาษ" ในฟอร์มเอกสาร ⇒ คำเตือนยังขึ้นพร้อมตัวเลข VAT เก่า (`VatDerivedWarning` ปิดได้เฉพาะ `linesVat == 0`)
   · ทิศปลอดภัย (ยังต้องกดรับทราบ) แต่ข้อความผิดความจริงหลังผู้ใช้แก้ถูกแล้ว ⇒ ฝึกให้กดรับทราบโดยไม่อ่าน
 - **แก้:** ส่ง VAT บรรทัดปัจจุบันเข้า `Classify` เป็น `headerVat` (หรือ Classify ทั้งสองค่า — ปิดคำเตือนเมื่อ Σ VAT บรรทัด Labelled/PrintedUnlabelled บนกระดาษ) + เทสต์ทิศ "แก้เป็นเลขบนกระดาษ ⇒ ไม่เตือน"
 
-### B-3 · PLAUSIBLE · P3 — `RawTextContent` ว่าง ⇒ `NotOnPaper` ทุกใบที่มี VAT
+### ✅ <pending> B-3 · PLAUSIBLE · P3 — `RawTextContent` ว่าง ⇒ `NotOnPaper` ทุกใบที่มี VAT
 - `OcrHeaderVatEvidence.Classify` ไม่มีข้อความให้ค้น ⇒ `NotOnPaper` ⇒ คำเตือนขึ้นทุกครั้งแม้ engine อ่าน VAT จากช่องโครงสร้าง · ทิศปลอดภัย ("ไม่รู้" ≠ ผ่าน) แต่ข้อความควรบอกว่า
   "ไม่มีข้อความสแกนให้ตรวจ" แทน "ไม่ได้พิมพ์บนกระดาษ" (ข้อความที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง — F2 ข้อ 7)
 
-### B-4 · PLAUSIBLE · P3 — "ยกเลิก…แทน" ข้ามบรรทัด: `SentenceContinues` ไม่ได้ยึดท้ายบรรทัด
+### ✅ <pending> (แก้คนละทางกับที่เสนอ) B-4 · PLAUSIBLE · P3 — "ยกเลิก…แทน" ข้ามบรรทัด: `SentenceContinues` ไม่ได้ยึดท้ายบรรทัด
 - `OcrDocumentRoleInferrer.cs:756` `และ|พร้อม|and|&` ติดที่ไหนก็ได้ในบรรทัด (คอมเมนต์บอก "ท้ายบรรทัด") · บรรทัดถัดไปมี "แทน" (ไม่ใช่ "ตัวแทน" เช่น "ผู้แทน" · "ใช้แทนใบเสร็จ") ⇒ นับเป็นประกาศแทนใบ
   ⇒ การพบ "ใบกำกับภาษีอย่างย่อ" จุดนั้นถูกปฏิเสธ · ผลจริงต้องเป็นสลิปที่คำว่า "อย่างย่อ" มีแค่ในประโยคท้ายใบ (หัวใบปกติยังจับได้) จึงให้ P3
 - **แก้:** ยึด `(?:และ|พร้อม|and|&|,)[ \t]*$` · ตัด "ผู้แทน/ใช้แทน" เหมือน "ตัวแทน" · เทสต์ทิศตรงข้าม
@@ -174,3 +174,28 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 | C-3, C-4, A-4..A-7, B-2..B-4 | — | P3 | ดูรายละเอียดข้างบน |
 
 ไม่พบ compile error (CI build เขียวที่ HEAD) · เทสต์ยังไม่ถูกรันบน branch นี้ (job `dotnet test` skip)
+
+---
+
+## สถานะการแก้ (รอบ 199 ทีม K3 · 2026-09-28)
+
+| ID | สถานะ | แก้ที่ / เหตุผล |
+|---|---|---|
+| C-1 | ✅ 347f2517 | (ทีมก่อนหน้า) ถอดด่านวันที่ ภ.พ.06 |
+| A-1 | ✅ <pending> | `OcrSelfPartyGuard.IsOurContact` เลขภาษีตัดสินก่อนชื่อ (เลขสองฝั่ง valid + ต่าง ⇒ ไม่ใช่เรา) · `DecideVendorContactFallback` + `VendorContactBlockMessage` ⇒ ผู้ขายเป็นเรา/เลขมีแถวแต่ทุกแถวเป็นเรา = `BusinessRuleException` `OCR-VENDOR-IS-US` (ไม่สร้างผู้ติดต่อ) · ผู้ใช้เลือกเอง = ใช้ตามนั้นแต่ไม่เติมเลขเรา · **ไม่ได้ทำ** "ผูกแถวเดิมใน fallback" แยก: หลังแก้ `IsOurContact` บริษัทในเครือเข้าบล็อกเลือกแถวของเลขนั้นอยู่แล้ว (fallback ถึงได้เฉพาะเมื่อเลขยังไม่มีแถว) และเลขที่มีแถวแต่ทุกแถวถูกกรองว่าเป็นเรา ⇒ บล็อก ไม่สร้างซ้ำ |
+| A-2 | ✅ <pending> | `SameEntityIds(Async)` ใช้ `IsUsableTaxId` + แถว walk-in ไม่ขยาย · ⚠️ `AllBranchIdsAsync` (ตัวรวมสาขาของเส้นสร้างเอกสาร/WHT) ยังใช้ `HasTaxId` — เลขศูนย์ล้วนของผู้ขายยังจับแถวศูนย์ล้วนรายอื่นในเส้นสร้างเอกสารได้ (คลาสเดียวกัน · ไม่แก้รอบนี้เพราะเปลี่ยนเป็น checksum จะทำให้แถวที่เก็บเลขพิมพ์ผิดถูกสร้างซ้ำ — ต้องตัดสินกติกา "placeholder" แยกจาก "checksum") |
+| A-3 | ✅ <pending> | `OcrPartyResolver.FollowFieldConfidence` ที่ทั้งสองจุดสลับฝั่งใน `ScanAsync` (ตัดสินจากป้าย + เส้น AI) · ข้อสังเกต: `MoveSelf` ย้ายรหัสสาขาเฉพาะเมื่อช่องปลายทางว่าง — สถานการณ์ตามตัวอักษรของฝ่ายค้านเกิดเฉพาะเส้นนั้น (ล็อกด้วยเทสต์ ApplySide) |
+| A-4 | 📋 backlog | ต้องถามเจ้าของ (ใบร้านค้าไม่มีบล็อกผู้ซื้อ + สาขาเดียวทั้งหน้า ⇒ 0.85?) |
+| A-5 | 📋 backlog | เทียบเลข PO บนกระดาษกับ PO เปิดทั้งหมดก่อนตัด `Take(5)` |
+| A-6 | 📋 backlog | ต้องตัดสินว่า settlement สืบทอด `ContactId` ของต้นทางไหม |
+| A-7 | ✅ <pending> | doc-comment ของ `IsSelf` กลับที่ |
+| B-1 | 📋 backlog | รอเจ้าของ (API v1 ผ่านคำเตือน VAT-derived) — รอบนี้ไม่แตะ `ApprovalAcknowledgement` · คำเตือนใหม่ `VatUncheckedPrefix` อยู่ชุดเดียวกัน (พฤติกรรม API เท่าเดิม) |
+| B-2 | ✅ <pending> | `OcrHeaderVatEvidence.ClassifyPosted` (Σ VAT บรรทัดตอนนี้) ใน `CollectApprovalWarningsAsync` |
+| B-3 | ✅ <pending> | `OcrHeaderVatSource.NoTextToCheck` — ตัดสินแล้วว่า **ยังเตือน/หยุดอนุมัติเอง** (DOCTRINE §1: ไม่รู้ ≠ ผ่าน) แต่ข้อความบอกสาเหตุจริง (`VatUncheckedPrefix`) |
+| B-4 | ✅ <pending> | **ไม่ยึดท้ายบรรทัด** ตามที่เสนอ — หมายเหตุ Scommerce จริง ("…และออกใบกำกับภาษี\nอิเล็กทรอนิกส์ฉบับใหม่แทน") ตัดบรรทัด**หลัง**คำเชื่อม ยึด `$` จะทำให้เทสต์กระดาษจริงล้ม · ปิดความเสี่ยงที่ชี้ด้วยการตัด "ผู้แทน/ใช้แทน" เหมือน "ตัวแทน" + แก้คอมเมนต์ให้ตรงพฤติกรรม |
+| C-2 | ✅ <pending> | `AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated` ใน HTML + QuestPDF + `ResolveDocumentTitlesAsync` + `ResolveDocumentHeadingAsync` + การ์ดหัวถูกลด · ข้อจำกัด: ใบชนิด TaxInvoice มี VAT ที่ออกตอนไม่มีสิทธิ์ (ตรึง true ตามชนิด) พิมพ์ซ้ำได้หัวอย่างย่อ (TEST_PLAN ABB-14) |
+| C-3 | 📋 backlog | ต้องให้เจ้าของเลือก (สวิตช์ RequirePhoR06 ปิดด่านขายปลีกด้วย) |
+| C-4 | ✅ 347f2517 | ข้อความหน้าเอกสารแก้แล้ว · ชื่อเทสต์ `ไม่มีสิทธิ์_ภพ06_…` คงไว้ (ชื่ออย่างเดียว) |
+
+เทสต์: `Accounting.Tests/OcrReview199Tests.cs` · ยังไม่ได้รัน (`dotnet test` ถูก skip บน `claude/**`)
+

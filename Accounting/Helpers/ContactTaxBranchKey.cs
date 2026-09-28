@@ -249,25 +249,32 @@ public static class ContactTaxBranchKey
     /// — กรณีปกติ) หายจากตัวเสนอ PO · ตัวหาใบต้นทาง และถูกด่าน "ไม่ใช่ของผู้ขายที่จับคู่ไว้" โยนทิ้ง. ตัวนี้คือขอบเขต
     /// "นิติบุคคลเดียวกัน" ตัวเดียวของงานนั้น (ห้ามเขียน <c>c.TaxId == x</c> เอง) · <b>ไม่ใช่</b>คีย์ผู้ติดต่อ (คีย์ = เลขภาษี+สาขา
     /// <see cref="Pick"/>) — ใช้กับ "เอกสารของคู่ค้ารายนี้" เท่านั้น ห้ามใช้เลือกแถวที่จะผูก/เขียนทับ ·
-    /// ไม่มีเลขภาษี ("-"/ว่าง) = เฉพาะตัวเอง (ไม่รู้ว่าใครเป็นนิติบุคคลเดียวกัน) · กรอง <c>CompanyId</c> เสมอ (กฎ M)
+    /// ไม่มีเลขภาษี<b>ที่ใช้ได้</b> ("-"/ว่าง · ศูนย์ล้วน "0000000000000" · 13 หลักไม่ผ่าน mod-11) หรือแถว walk-in/ลูกค้าทั่วไป
+    /// = เฉพาะตัวเอง (ไม่รู้ว่าใครเป็นนิติบุคคลเดียวกัน) · กรอง <c>CompanyId</c> เสมอ (กฎ M)
+    /// <para>รอบ 199 ฝ่ายค้าน A-2: เดิมใช้ <see cref="HasTaxId"/> (= มีตัวเลขสักตัว) ⇒ ผู้ติดต่อทุกแถวที่เก็บ "0000000000000" (ลูกค้าทั่วไป
+    /// ที่นำเข้าจากระบบอื่น · ผู้ขายต่างประเทศที่กรอกศูนย์) กลายเป็น "นิติบุคคลเดียวกัน" ⇒ ตัวเสนอ/ด่านผูก PO และใบต้นทางยอมข้ามคู่ค้า
+    /// (ใบเสร็จของลูกค้าทั่วไปราย A ตัดลูกหนี้ของราย B) · ตอนนี้ใช้เกณฑ์เดียวกับ "เลขที่เติมลงผู้ติดต่อได้" (<see cref="IsUsableTaxId"/>)</para>
     /// </summary>
     public static async Task<List<Guid>> SameEntityIdsAsync(IQueryable<Contact> scope, Guid companyId,
         Guid contactId, CancellationToken ct = default)
     {
-        var anchorTaxId = await scope
+        var anchor = await scope
             .Where(c => c.CompanyId == companyId && c.Id == contactId)
-            .Select(c => c.TaxId)
+            .Select(c => new { c.TaxId, c.IsWalkInCustomer })
             .FirstOrDefaultAsync(ct);
-        if (!HasTaxId(anchorTaxId)) return SameEntityIds(contactId, anchorTaxId, Array.Empty<ContactKeyCandidate>());
+        // walk-in / ลูกค้าทั่วไป ไม่ใช่นิติบุคคลที่รู้ตัว ⇒ ห้ามขยายแม้แถวจะถือเลข (ส่งเลขว่างเข้าตัวตัดสิน = เฉพาะตัวเอง)
+        var anchorTaxId = anchor == null || anchor.IsWalkInCustomer ? null : anchor.TaxId;
+        if (!IsUsableTaxId(anchorTaxId)) return SameEntityIds(contactId, anchorTaxId, Array.Empty<ContactKeyCandidate>());
         var rows = await LoadSameTaxRowsAsync(scope, companyId, anchorTaxId!.Trim(), ct);
         return SameEntityIds(contactId, anchorTaxId, rows);
     }
 
-    /// <summary>ตัวตัดสินของ <see cref="SameEntityIdsAsync"/> บนแถวที่โหลดแล้ว (pure — เทสต์ได้) · ลำดับ: ตัวเอง → สาขาอื่นเรียงรหัส</summary>
+    /// <summary>ตัวตัดสินของ <see cref="SameEntityIdsAsync"/> บนแถวที่โหลดแล้ว (pure — เทสต์ได้) · ลำดับ: ตัวเอง → สาขาอื่นเรียงรหัส ·
+    /// เลขที่ใช้ไม่ได้ (<see cref="IsUsableTaxId"/>) = เฉพาะตัวเอง</summary>
     internal static List<Guid> SameEntityIds(Guid contactId, string? anchorTaxId, IEnumerable<ContactKeyCandidate> rows)
     {
         var ids = new List<Guid> { contactId };
-        if (!HasTaxId(anchorTaxId) || rows == null) return ids;
+        if (!IsUsableTaxId(anchorTaxId) || rows == null) return ids;
         foreach (var id in SameTaxIdRowIds(rows, anchorTaxId!.Trim()))
             if (id != contactId) ids.Add(id);
         return ids;

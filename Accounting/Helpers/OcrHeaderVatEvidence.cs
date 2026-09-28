@@ -14,6 +14,9 @@ public enum OcrHeaderVatSource
     PrintedUnlabelled = 2,
     /// <summary>ตัวเลขนี้<b>ไม่มีบนกระดาษเลย</b> — ระบบคำนวณเอง (7/107 ของยอดรวม · ยอดรวม − ฐาน) หรืออ่านเพี้ยน</summary>
     NotOnPaper = 3,
+    /// <summary>ไม่มีข้อความสแกนให้ตรวจ (engine ไม่คืนข้อความ) — <b>ไม่รู้</b> ≠ "ไม่ได้พิมพ์" และ ≠ "ผ่าน" (DECISION_DOCTRINE §1):
+    /// ยังหยุดการอนุมัติเอง + เตือนตอนอนุมัติเหมือน <see cref="NotOnPaper"/> แต่ข้อความบอกสาเหตุจริง (รอบ 199 ฝ่ายค้าน B-3 · F2 ข้อ 7)</summary>
+    NoTextToCheck = 4,
 }
 
 /// <summary>
@@ -58,6 +61,10 @@ public static class OcrHeaderVatEvidence
     {
         if (headerVat <= 0m) return OcrHeaderVatSource.NoVat;
         if (string.Equals(ocrEngine, SignedXmlEngine, StringComparison.Ordinal)) return OcrHeaderVatSource.Labelled;
+        // ไม่มีข้อความให้ค้นเลย ⇒ "ไม่รู้" (ร่องรอยการถอด 7/107 ยังเป็นหลักฐานตรงว่าไม่อยู่บนกระดาษ — ตรวจก่อน)
+        if (string.IsNullOrWhiteSpace(rawText) && string.IsNullOrWhiteSpace(normalizedText))
+            return WasBackCalculated(processingNotes, headerVat, paperTotal)
+                ? OcrHeaderVatSource.NotOnPaper : OcrHeaderVatSource.NoTextToCheck;
         if (OcrPaperAmounts.IsVatLabelled(rawText, headerVat)
             || (normalizedText != null && OcrPaperAmounts.IsVatLabelled(normalizedText, headerVat)))
             return OcrHeaderVatSource.Labelled;
@@ -69,6 +76,21 @@ public static class OcrHeaderVatEvidence
             || (normalizedText != null && OcrPaperAmounts.IsPrinted(OcrPaperAmounts.AllPrinted(normalizedText), headerVat)))
             return OcrHeaderVatSource.PrintedUnlabelled;
         return OcrHeaderVatSource.NotOnPaper;
+    }
+
+    /// <summary>
+    /// **ที่มาของ VAT ที่จะลงบัญชีตอนนี้** (Σ VAT บรรทัดเอกสาร) สำหรับคำเตือนตอนอนุมัติ — รอบ 199 ฝ่ายค้าน B-2
+    /// <para>เดิมคำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" ตัดสินจาก VAT ของ<b>สแกน</b>เสมอ (สแกนถูก sync จากเอกสารหลังอนุมัติเท่านั้น) ⇒ ผู้ใช้ทำตาม
+    /// ทางเลือก (1) "แก้ยอด VAT ตามกระดาษ" แล้ว คำเตือนยังขึ้นพร้อมเลขเก่า = ข้อความผิดความจริง ฝึกให้กดรับทราบโดยไม่อ่าน · ตอนนี้: VAT ของ
+    /// เอกสารเท่ากับของสแกน (หรือไม่รู้/เป็น 0) ⇒ ตัดสินจากสแกนตามเดิม · ต่างกัน ⇒ ตัดสิน<b>ตัวเลขที่จะลงบัญชีจริง</b>ด้วยกติกาเดียวกัน
+    /// (พิมพ์บนกระดาษ ⇒ ไม่เตือน · ยังไม่อยู่บนกระดาษ ⇒ เตือนต่อ)</para>
+    /// </summary>
+    public static OcrHeaderVatSource ClassifyPosted(string? rawText, string? normalizedText, decimal scanVat, decimal? postedVat,
+        string? ocrEngine, string? processingNotes = null, decimal? paperTotal = null)
+    {
+        if (postedVat is decimal pv && pv > 0m && Math.Abs(pv - scanVat) > OcrPaperAmounts.ExactTol)
+            return Classify(rawText, normalizedText, pv, ocrEngine, processingNotes, paperTotal);
+        return Classify(rawText, normalizedText, scanVat, ocrEngine, processingNotes, paperTotal);
     }
 
     /// <summary>ร่องรอย "ระบบถอด VAT จากยอดรวม" อยู่ในหมายเหตุ และ VAT ที่ถืออยู่ยังเท่ากับค่าที่ถอดจากยอดรวมนั้น
@@ -91,12 +113,23 @@ public static class OcrHeaderVatEvidence
     /// บอกความจริงและทางเลือกให้ครบ แล้วให้คนตัดสินตอนกดรับทราบ</para>
     /// </summary>
     public static string? DerivedNote(OcrHeaderVatSource source, decimal headerVat)
-        => source == OcrHeaderVatSource.NotOnPaper
-            ? $"VAT {headerVat:N2} ไม่ได้พิมพ์อยู่บนกระดาษ (ระบบคำนวณจากยอดรวม หรืออ่านตัวเลขไม่ตรงกระดาษ) — ตรวจกับกระดาษก่อนอนุมัติ: "
-              + "(1) กระดาษพิมพ์ยอด VAT แยกไว้แต่ระบบอ่านผิด ⇒ แก้ยอดตามกระดาษ · "
-              + "(2) ใบกำกับภาษีที่ไม่แสดงจำนวนภาษีแยก (เช่นพิมพ์แค่ “ราคารวมภาษีมูลค่าเพิ่มแล้ว”) = ไม่ครบรายการ ม.86/4(6) "
-              + "⇒ ถ้าเป็นเอกสารซื้อ ภาษีซื้อต้องห้าม ม.82/5(1) — ทางเลือก: ตั้ง VAT เป็น 0 แล้วลงค่าใช้จ่ายเต็มจำนวน "
-              + "หรือขอใบกำกับฉบับที่แสดงภาษีแยกจากผู้ขาย · "
-              + "(3) สินค้า/บริการยกเว้น ม.81 ⇒ ตั้ง VAT เป็น 0"
-            : null;
+        => source switch
+        {
+            OcrHeaderVatSource.NotOnPaper =>
+                $"VAT {headerVat:N2} ไม่ได้พิมพ์อยู่บนกระดาษ (ระบบคำนวณจากยอดรวม หรืออ่านตัวเลขไม่ตรงกระดาษ) — ตรวจกับกระดาษก่อนอนุมัติ: "
+                + ChoicesText,
+            // ไม่มีข้อความสแกน = ตรวจไม่ได้ ⇒ บอกสาเหตุจริง (ไม่อ้างว่า "ไม่ได้พิมพ์") แต่ยังหยุด/เตือนเหมือนกัน (ไม่รู้ ≠ ผ่าน)
+            OcrHeaderVatSource.NoTextToCheck =>
+                $"ไม่มีข้อความสแกนให้ตรวจว่า VAT {headerVat:N2} พิมพ์อยู่บนกระดาษหรือไม่ (engine ไม่คืนข้อความ) — ตรวจกับกระดาษก่อนอนุมัติ: "
+                + ChoicesText,
+            _ => null,
+        };
+
+    /// <summary>ทางเลือกของผู้ใช้เมื่อ VAT ไม่มีหลักฐานบนกระดาษ — ชุดเดียวของทั้งสองสาเหตุ</summary>
+    private const string ChoicesText =
+        "(1) กระดาษพิมพ์ยอด VAT แยกไว้แต่ระบบอ่านผิด ⇒ แก้ยอดตามกระดาษ · "
+        + "(2) ใบกำกับภาษีที่ไม่แสดงจำนวนภาษีแยก (เช่นพิมพ์แค่ “ราคารวมภาษีมูลค่าเพิ่มแล้ว”) = ไม่ครบรายการ ม.86/4(6) "
+        + "⇒ ถ้าเป็นเอกสารซื้อ ภาษีซื้อต้องห้าม ม.82/5(1) — ทางเลือก: ตั้ง VAT เป็น 0 แล้วลงค่าใช้จ่ายเต็มจำนวน "
+        + "หรือขอใบกำกับฉบับที่แสดงภาษีแยกจากผู้ขาย · "
+        + "(3) สินค้า/บริการยกเว้น ม.81 ⇒ ตั้ง VAT เป็น 0";
 }

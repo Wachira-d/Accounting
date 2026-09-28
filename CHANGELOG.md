@@ -3497,3 +3497,20 @@ _รอบ 198 ฝ่ายค้าน settlement (`erp-review/2026-09-25/settl
 ด้วย charge 0 บาท · แก้: `Helpers/PaymentWebhookOwnership.RejectReason` (บริษัท · ผู้ให้บริการ · ชุดตั้งค่า · ยอดสำเร็จ) + โหลดรายการ
 เฉพาะในบริษัทของ config · เทสต์ `PaymentWebhookOwnershipTests` (สองทิศ) · `required_call_site` ล็อกลำดับตรวจก่อน ApplyCharge
 — commit <pending>)_
+
+_รอบ 199 ทีม K3 — แก้ผลฝ่ายค้าน (`erp-review/2026-09-25/review-r199-ocr.md`) ฝั่ง OCR/สาขาผู้ขาย/หัวพิมพ์ซ้ำ:
+- **A-1 (P1)**: `OcrSelfPartyGuard.IsOurContact` — **เลขภาษีตัดสินก่อนชื่อ** (เลขเรา ⇒ เรา · เลขสองฝั่ง `ThaiTaxId.IsValid` และต่าง ⇒ ไม่ใช่เรา · ชื่อเฉพาะเมื่อฝั่งใด
+  ไม่มีเลขที่ใช้ได้) ⇒ บริษัทในเครือที่ชื่อสั้นซ้อนในชื่อเราไม่ถูกนับเป็นเรา (เดิมเส้นสร้างเอกสารข้ามการเลือกแถวแล้วสร้างผู้ติดต่อซ้ำทุกใบ) ·
+  เส้นสร้างเอกสารฝั่งซื้อที่ยังไม่มีผู้ติดต่อผูก ⇒ ตัวตัดสินเดียว `OcrSelfPartyGuard.DecideVendorContactFallback`: ผู้ขายเป็นเรา / เลขมีแถวอยู่แล้วแต่ทุกแถวเป็นเรา
+  ⇒ `BusinessRuleException` `OCR-VENDOR-IS-US` พร้อมทางไปต่อ (ไม่สร้างผู้ติดต่อชื่อเรา+เลขเรา · ไม่สร้างแถวซ้ำ) · ผู้ใช้เลือกผู้ติดต่อเองขณะผู้ขายเป็นเรา ⇒ ไม่เติมเลขเราลงแถวนั้น ·
+  doc-comment ของ `IsSelf` กลับที่เดิม (A-7)
+- **A-2**: `ContactTaxBranchKey.SameEntityIds(Async)` ใช้ `IsUsableTaxId` (ศูนย์ล้วน/checksum ผิด = ตัวเองเท่านั้น) + แถว walk-in ไม่ขยาย ⇒ PO/ใบต้นทางไม่ข้ามคู่ค้า
+- **A-3**: `OcrPartyResolver.FollowFieldConfidence` — คะแนนรายช่อง (ชื่อ/เลข/ที่อยู่/สาขา) ย้ายตามค่าเมื่อ `Resolve`/`ApplySide` ย้ายค่าข้ามช่อง
+- **C-2**: `AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated` — ใบที่ออกเลขแล้วพิมพ์หัวตาม `IsTaxInvoiceByLaw` ที่ตรึง (HTML + QuestPDF + หัวบนจอ/อีเมล +
+  การ์ด "หัวถูกลด") · ใบร่าง/ไม่เคยตรึง ⇒ สิทธิ์ปัจจุบัน
+- **B-2/B-3/B-4 (P3)**: คำเตือน VAT ตอนอนุมัติตัดสินจาก VAT ที่จะลงบัญชีตอนนี้ (`OcrHeaderVatEvidence.ClassifyPosted`) · ไม่มีข้อความสแกน = `NoTextToCheck`
+  (ยังเตือน/หยุดอนุมัติเอง แต่ข้อความ "ตรวจกับกระดาษไม่ได้" — `VatUncheckedPrefix`) · "ผู้แทน/ใช้แทน" บรรทัดถัดไปไม่ใช่ประกาศแทนใบ (ไม่ยึดท้ายบรรทัดตามที่ฝ่ายค้านเสนอ
+  เพราะหมายเหตุ Scommerce จริงตัดบรรทัดหลังคำเชื่อม)
+- เทสต์ `OcrReview199Tests` (สองทิศทุกข้อ) · `required_call_site_check` +7 กติกา (renderer ×2 · หัว ×2 · การ์ด · สลับฝั่ง · คำเตือน VAT) + ขยายกติกาเส้นสร้างเอกสาร ·
+  DOCUMENT_FLOW §1 OCR + §ใบกำกับอย่างย่อ · TEST_PLAN ABB-14 · OCR-U-12..14 · ค้าง (backlog ในไฟล์ฝ่ายค้าน): A-4 · A-5 · A-6 · B-1 · C-3
+— commit <pending>)_

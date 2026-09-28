@@ -16,6 +16,19 @@ public enum OcrSelfSide
 /// <param name="NameLinePos">ตำแหน่งบรรทัดที่พบชื่อเรา (-1 = ไม่พบ)</param>
 public sealed record OcrSelfPartyVerdict(OcrSelfSide Side, string Reason, int NameLinePos);
 
+/// <summary>ผลของ <see cref="OcrSelfPartyGuard.DecideVendorContactFallback"/> — เส้นสร้างเอกสารฝั่งซื้อทำอะไรเมื่อยังไม่มีผู้ติดต่อผูก</summary>
+public enum OcrVendorContactFallback
+{
+    /// <summary>ใช้ผู้ติดต่อที่ผูกอยู่ (หรือไม่มีชื่อผู้ขายให้สร้าง — ตกด่าน "ไม่มีผู้ติดต่อ" ตามเดิม)</summary>
+    Keep = 0,
+    /// <summary>สร้างผู้ติดต่อผู้ขายใหม่จากกระดาษ (ไม่ใช่เรา · เลขนี้ยังไม่มีแถว)</summary>
+    CreateNew = 1,
+    /// <summary>ผู้ขายบนกระดาษคือบริษัทเราเอง — ห้ามสร้าง/ผูก ให้ผู้ใช้เลือก</summary>
+    BlockVendorIsUs = 2,
+    /// <summary>เลขนี้มีแถวอยู่แล้วแต่ทุกแถวถูกกรองว่าเป็นเรา — ห้ามสร้างแถวซ้ำ ให้ผู้ใช้เลือก</summary>
+    BlockExistingRows = 3,
+}
+
 /// <summary>
 /// **“ชื่อเราโผล่ในช่องคู่ค้า” ไม่ได้แปลว่าเราเป็นคู่ค้าฝั่งนั้น**
 ///
@@ -45,17 +58,59 @@ public static class OcrSelfPartyGuard
     /// — บล็อกข้อมูลคู่ค้าบนกระดาษไทยกว้างไม่เกินนี้ (ชื่อ+ที่อยู่+เลขภาษี)</summary>
     public const int MaxLabelDistance = 90;
 
-    /// <summary>ชื่อคู่ค้าที่อ่านได้ = บริษัทของเราเองหรือเปล่า (fuzzy — ตัดคำนำหน้า
-    /// นิติบุคคลออกก่อนเทียบ) · ตัวเดียวของระบบ ใช้ทั้ง SmartFieldExtractor และ
-    /// OcrDocumentRoleInferrer</summary>
     /// <summary>
-    /// **ผู้ติดต่อ/คู่ค้าที่อ่านได้คือบริษัทเราเองไหม** — เลขภาษีเดียวกับเรา หรือชื่อเป็นเรา (ไทย/อังกฤษ) · ตัวเดียวของทั้งเส้นสแกน
-    /// (<c>ScanAsync</c> กรองผู้สมัครก่อนตัดสินสาขา/สร้างผู้ติดต่อ) และเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) —
-    /// รอบ 197 ฝ่ายค้าน K-7: เดิมเป็น local function ในเส้นสแกนเท่านั้น ⇒ เส้นสร้างเอกสารสร้าง "ผู้ขาย" สาขาหนึ่งที่เป็นตัวเราเองได้
+    /// **ผู้ติดต่อ/คู่ค้าที่อ่านได้คือบริษัทเราเองไหม** — ตัวเดียวของทั้งเส้นสแกน (<c>ScanAsync</c> กรองผู้สมัครก่อนตัดสินสาขา/สร้าง
+    /// ผู้ติดต่อ) และเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) — รอบ 197 ฝ่ายค้าน K-7: เดิมเป็น local function ในเส้นสแกน
+    /// เท่านั้น ⇒ เส้นสร้างเอกสารสร้าง "ผู้ขาย" สาขาหนึ่งที่เป็นตัวเราเองได้
+    /// <para><b>เลขภาษีตัดสินก่อนชื่อ</b> (รอบ 199 ฝ่ายค้าน A-1): เลขเดียวกับเรา ⇒ เรา · เลขทั้งสองฝั่ง<b>ใช้ได้จริง</b>
+    /// (<see cref="ThaiTaxId.IsValid"/> — 13 หลัก + mod-11) และต่างกัน ⇒ <b>ไม่ใช่เรา</b> ไม่ว่าชื่อจะซ้อนกันแค่ไหน (บริษัทในเครือ
+    /// "สยามพารากอน" ของ tenant "สยามพารากอน ดีเวลลอปเม้นท์" มีเลขของตัวเอง — เดิม <see cref="IsSelf"/> ยอม "ชื่อกระดาษสั้นกว่าชื่อเรา"
+    /// เสมอ ⇒ ผู้ขายในเครือถูกนับเป็นเรา แล้วเส้นสร้างเอกสารข้ามการเลือกแถวไปสร้างผู้ติดต่อซ้ำทุกใบ) · ชื่อใช้ตัดสิน<b>เฉพาะเมื่อฝั่งใด
+    /// ไม่มีเลขที่ใช้ได้</b> (engine ตัดชื่อเรา "แอม แฮปปี้" โดยไม่มีเลข = ยังเป็นเรา) — กติกาเดียวกับ <c>OcrPartyResolver.SelfStrength</c></para>
     /// </summary>
     public static bool IsOurContact(string? taxId, string? name, string? ourTaxId, string? ourName, string? ourNameEn)
-        => ThaiTaxId.Same(taxId, ourTaxId) || IsSelf(name, ourName) || IsSelf(name, ourNameEn);
+    {
+        if (ThaiTaxId.Same(taxId, ourTaxId)) return true;
+        if (ThaiTaxId.IsValid(taxId) && ThaiTaxId.IsValid(ourTaxId)) return false;
+        return IsSelf(name, ourName) || IsSelf(name, ourNameEn);
+    }
 
+    /// <summary>
+    /// **เส้นสร้างเอกสารฝั่งซื้อทำอะไรเมื่อยังไม่มีผู้ติดต่อผูก** — ตัวตัดสินตัวเดียว (pure) ของบล็อก fallback ใน
+    /// <c>OcrService.CreateDocumentFromScanCoreAsync</c> (รอบ 199 ฝ่ายค้าน A-1)
+    /// <para>ที่มา: K-7 (รอบ 197) ข้ามการเลือกแถวเมื่อผู้ขาย "เป็นเรา" แล้วไหลลง fallback ที่ <c>new Contact</c> <b>โดยไม่ดูว่าเลขนี้มีแถวอยู่แล้ว</b>
+    /// ⇒ สแกนสำเนาใบขายของเราเองได้ผู้ติดต่อชื่อเรา+เลขเรา (สิ่งที่ K-7 ประกาศว่ากัน) · ผู้ขายในเครือได้ผู้ติดต่อซ้ำทุกใบ</para>
+    /// </summary>
+    /// <param name="hasContact">ผูกผู้ติดต่อได้แล้ว (ผู้ใช้เลือกเอง/สแกนจับได้/ตัวเลือกสาขา)</param>
+    /// <param name="vendorIsUs">ผลของ <see cref="IsOurContact"/> กับผู้ขายบนกระดาษ</param>
+    /// <param name="sameTaxIdRows">จำนวนผู้ติดต่อที่ถือเลขภาษีเดียวกับผู้ขายอยู่แล้ว (ทุกสาขา)</param>
+    /// <param name="hasVendorName">อ่านชื่อผู้ขายได้</param>
+    public static OcrVendorContactFallback DecideVendorContactFallback(bool hasContact, bool vendorIsUs, int sameTaxIdRows, bool hasVendorName)
+    {
+        if (hasContact) return OcrVendorContactFallback.Keep;
+        // ผู้ขายคือเราเอง ⇒ ห้ามสร้างผู้ติดต่อที่เป็นตัวเรา — ให้ผู้ใช้เลือกผู้ขาย/เปลี่ยนชนิดเอกสาร (ข้อความบอกทางไปต่อ)
+        if (vendorIsUs) return OcrVendorContactFallback.BlockVendorIsUs;
+        // เลขนี้มีแถวอยู่แล้วแต่ไม่มีแถวไหนเป็นผู้สมัคร (ทุกแถวถูกกรองว่าเป็นเรา) ⇒ ห้ามสร้างแถวซ้ำของเลขเดียวกัน
+        if (sameTaxIdRows > 0) return OcrVendorContactFallback.BlockExistingRows;
+        return hasVendorName ? OcrVendorContactFallback.CreateNew : OcrVendorContactFallback.Keep;
+    }
+
+    /// <summary>ข้อความถึงผู้ใช้ของผล Block* — บอกเหตุผล + ทางไปต่อ (F2 ข้อ 8) · null = ไม่ได้บล็อก</summary>
+    public static string? VendorContactBlockMessage(OcrVendorContactFallback outcome) => outcome switch
+    {
+        OcrVendorContactFallback.BlockVendorIsUs =>
+            "ผู้ขายบนกระดาษเป็นบริษัทของเราเอง (เลขผู้เสียภาษี/ชื่อตรงกับข้อมูลบริษัท) — ระบบไม่สร้างผู้ติดต่อที่เป็นตัวเราเอง · "
+            + "ถ้ากระดาษเป็นสำเนาใบที่เราออกให้ลูกค้า ให้เปลี่ยนชนิดเอกสารเป็นฝั่งขาย · ถ้าผู้ขายจริงเป็นบริษัทอื่น ให้เลือกผู้ติดต่อ"
+            + "ในช่องผู้ติดต่อของผลสแกนก่อนกดสร้างเอกสาร",
+        OcrVendorContactFallback.BlockExistingRows =>
+            "เลขผู้เสียภาษีของผู้ขายมีผู้ติดต่ออยู่แล้ว แต่ข้อมูลตรงกับบริษัทของเราเอง จึงไม่ผูกและไม่สร้างผู้ติดต่อซ้ำ — "
+            + "เลือกผู้ติดต่อที่ถูกต้องในช่องผู้ติดต่อของผลสแกน หรือแก้ข้อมูลผู้ติดต่อ/ข้อมูลบริษัท แล้วสร้างเอกสารอีกครั้ง",
+        _ => null,
+    };
+
+    /// <summary>ชื่อคู่ค้าที่อ่านได้ = บริษัทของเราเองหรือเปล่า (fuzzy — ตัดคำนำหน้า
+    /// นิติบุคคลออกก่อนเทียบ) · ตัวเดียวของระบบ ใช้ทั้ง SmartFieldExtractor และ
+    /// OcrDocumentRoleInferrer · <b>ไม่ดูเลขภาษี</b> — ผู้เรียกที่มีเลขต้องใช้ <see cref="IsOurContact"/></summary>
     public static bool IsSelf(string? partyName, string? companyName)
     {
         if (!NameOverlaps(partyName, companyName)) return false;

@@ -1797,6 +1797,11 @@ public partial class DocumentService : IDocumentService
                 var reason = Accounting.Helpers.AbbreviatedTaxInvoiceRule.Judge(
                     issuer.IsVatRegistered, issuer.IsRetailApproved, issuer.PhoR06ApprovedDate,
                     doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+                // ใบที่ออกเลขแล้วและตรึงบทบาทใบกำกับไว้ ⇒ หัวพิมพ์อย่างย่อตามค่าที่ตรึง (ฝ่ายค้าน C-2) — ห้ามบอกว่า "ถูกลดเป็นใบเสร็จ"
+                if (Accounting.Helpers.AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
+                        Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status), doc.IsTaxInvoiceByLaw,
+                        reason == Accounting.Helpers.AbbreviatedInvoiceBlockReason.None))
+                    reason = Accounting.Helpers.AbbreviatedInvoiceBlockReason.None;
                 resp = resp with
                 {
                     TaxInvoiceTitleNotice = PdfGenerationService.AbbreviatedDowngradeNotice(doc, reason),
@@ -18883,11 +18888,18 @@ public partial class DocumentService : IDocumentService
                         Accounting.Helpers.OcrLineVatMarks.ReadGroups(gapScanNormalized)),
                     vatPrintedOnPaper: headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled);
             }
+            // รอบ 199 ฝ่ายค้าน B-2: คำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" ตัดสินจาก VAT ที่จะลงบัญชี<b>ตอนนี้</b> (Σ VAT บรรทัด) — ผู้ใช้แก้ VAT
+            // เป็นเลขบนกระดาษแล้ว ⇒ คำเตือนหาย · ยังไม่อยู่บนกระดาษ ⇒ เตือนต่อ (ตัวตัดสินเดียวกัน OcrHeaderVatEvidence.ClassifyPosted)
+            // · คำแนะนำอัตราข้างบนยังใช้ที่มาของ VAT สแกน (คำถามคนละข้อ: "VAT บนกระดาษพิสูจน์อัตราได้ไหม")
+            var linesVatNow = liveLines.Sum(l => l.VatAmount);
+            var postedVatSource = Accounting.Helpers.OcrHeaderVatEvidence.ClassifyPosted(
+                gapScan.RawTextContent, gapScanNormalized, gapScan.ExtractedVatAmount ?? 0m, linesVatNow, gapScan.OcrEngine,
+                gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount);
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
                 liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment, vatRateAdvice,
-                linesVat: liveLines.Sum(l => l.VatAmount), paperVat: gapScan.ExtractedVatAmount,
-                headerVatSource: headerVatSource));
+                linesVat: linesVatNow, paperVat: gapScan.ExtractedVatAmount,
+                headerVatSource: postedVatSource));
         }
 
         return warnings;

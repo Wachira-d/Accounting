@@ -27,6 +27,10 @@ public static class OcrApprovalGapWarning
     /// แต่คืนในคำตอบ — คำตัดสินเจ้าของข้อ 12) · แยกได้ด้วย <see cref="IsVatDerivedWarning"/></summary>
     public const string VatDerivedPrefix = "VAT จากสแกนไม่ได้พิมพ์บนกระดาษ";
 
+    /// <summary>คำขึ้นต้นเมื่อ<b>ไม่มีข้อความสแกนให้ตรวจ</b> (<see cref="OcrHeaderVatSource.NoTextToCheck"/>) — ชุดเดียวกับ <see cref="VatDerivedPrefix"/>
+    /// ทุกประการ (ต้องรับทราบ · API ธงเดียวกัน) แต่ไม่อ้างว่า "ไม่ได้พิมพ์" ในเมื่อไม่ได้ตรวจ (รอบ 199 ฝ่ายค้าน B-3 · F2 ข้อ 7)</summary>
+    public const string VatUncheckedPrefix = "VAT จากสแกนตรวจกับกระดาษไม่ได้";
+
     private const string GapTag = "[Σ-GAP]";
 
     /// <summary>คำเตือนจากหมายเหตุของสแกนที่สร้างเอกสารนี้ — ว่าง = ไม่มี [Σ-GAP] (ไม่เตือน)
@@ -118,10 +122,12 @@ public static class OcrApprovalGapWarning
     /// </summary>
     internal static string? VatDerivedWarning(OcrHeaderVatSource headerVatSource, decimal? paperVat, decimal? linesVat)
     {
-        if (headerVatSource != OcrHeaderVatSource.NotOnPaper || paperVat is not decimal pv || pv <= 0m) return null;
+        if (headerVatSource is not (OcrHeaderVatSource.NotOnPaper or OcrHeaderVatSource.NoTextToCheck)
+            || paperVat is not decimal pv || pv <= 0m) return null;
         if (linesVat is decimal lv && lv == 0m) return null;
         var now = linesVat is decimal cur ? $" · ตอนนี้ VAT ในเอกสาร {cur:N2}" : "";
-        return $"{VatDerivedPrefix}: {OcrHeaderVatEvidence.DerivedNote(headerVatSource, pv)}{now}";
+        var prefix = headerVatSource == OcrHeaderVatSource.NoTextToCheck ? VatUncheckedPrefix : VatDerivedPrefix;
+        return $"{prefix}: {OcrHeaderVatEvidence.DerivedNote(headerVatSource, pv)}{now}";
     }
 
     /// <summary>ค่าเผื่อแคบของ "ส่วนต่างยอดรวม = ส่วนต่าง VAT" — เศษปัด VAT รายบรรทัดหลังตั้ง 7% ไม่กี่สตางค์ (ไม่ใช่ค่าเผื่อบิลเงินสด 1 บาท)</summary>
@@ -139,11 +145,13 @@ public static class OcrApprovalGapWarning
     /// workflow ใช้ตัดสินว่า "ต้องมีคนรับทราบ" — <see cref="ApprovalAcknowledgement"/>)</summary>
     public static bool IsGapWarning(string? warning)
         => warning is not null && (warning.StartsWith(Prefix, StringComparison.Ordinal)
-            || warning.StartsWith(VatDerivedPrefix, StringComparison.Ordinal));
+            || IsVatDerivedWarning(warning));
 
-    /// <summary>คำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" (<see cref="VatDerivedPrefix"/>) — API คืนเป็นธงแยก</summary>
+    /// <summary>คำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" (<see cref="VatDerivedPrefix"/>) หรือ "ตรวจกับกระดาษไม่ได้" (<see cref="VatUncheckedPrefix"/>)
+    /// — API คืนเป็นธงแยก</summary>
     public static bool IsVatDerivedWarning(string? warning)
-        => warning is not null && warning.StartsWith(VatDerivedPrefix, StringComparison.Ordinal);
+        => warning is not null && (warning.StartsWith(VatDerivedPrefix, StringComparison.Ordinal)
+            || warning.StartsWith(VatUncheckedPrefix, StringComparison.Ordinal));
 
     private static string Trim(string s) => s.Length > 240 ? s[..240] + "…" : s;
 }

@@ -126,6 +126,26 @@ public static class AbbreviatedTaxInvoiceRule
         => Judge(isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06, channel)
            == AbbreviatedInvoiceBlockReason.None;
 
+    /// <summary>
+    /// **หัวกระดาษของเอกสารใบนี้ใช้ "ใบกำกับภาษีอย่างย่อ" ได้ไหม** — ตัวตัดสินตัวเดียวของทั้งสอง renderer (HTML + QuestPDF) และหัวที่
+    /// หน้าเว็บ/อีเมลแสดง (รอบ 199 ฝ่ายค้าน C-2)
+    /// <para>ใบที่<b>ออกเลขแล้ว</b>และตรึงบทบาทไว้ (<c>Document.IsTaxInvoiceByLaw</c> ≠ null — ตรึงพร้อมเลขที่ตอนอนุมัติ) ⇒ ใช้ค่าที่ตรึง
+    /// <b>ไม่ใช่</b>สิทธิ์ของบริษัท ณ วันพิมพ์: เลขที่ออกไปแล้ว (REC/TIV) · รายงานภาษีขาย · e-Tax อ่านค่าที่ตรึง ⇒ หัวที่พิมพ์ซ้ำต้องตรงกับ
+    /// ค่าเดียวกัน (§86/4 ห้ามแก้ย้อนหลัง). เดิมหัวคำนวณสดจากธงบริษัท ⇒ ใบ REC ที่ออกก่อนรอบ 199 (บริษัทยังไม่มีสิทธิ์) พิมพ์ซ้ำหลังรอบ 199
+    /// เป็น "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" ทั้งที่ระบบ/รายงานไม่นับเป็นใบกำกับ · ทิศกลับ: เจ้าของเอาธงขายปลีกออกทีหลัง ⇒ ใบอย่างย่อ
+    /// เดิมพิมพ์ซ้ำเป็น "ใบเสร็จรับเงิน"</para>
+    /// <para>ยังไม่ออก (Draft/รออนุมัติ/ถูกปฏิเสธ) หรือใบเก่าที่ไม่เคยตรึง (null — ห้ามตีความว่า false) ⇒ ใช้สิทธิ์ปัจจุบัน
+    /// (<paramref name="companyMayIssueNow"/> จาก <see cref="CanIssue"/>) ตามเดิม</para>
+    /// <para>⚠️ ค่าที่ตรึง = "หัวมีคำว่าใบกำกับภาษี" (<c>TaxInvoiceSeriesPolicy.CarriesTaxInvoiceRole</c>) · true บนใบรูปอย่างย่อจึงแปลว่า
+    /// ตอนออกเป็นอย่างย่อ — ยกเว้นใบชนิด "ใบกำกับภาษี" มี VAT ที่ตอนออกบริษัทไม่มีสิทธิ์ (หัวถูกลดเป็นใบเสร็จแต่ตรึง true เพราะชนิด+VAT):
+    /// พิมพ์ซ้ำจะได้หัวอย่างย่อให้ตรงกับเลข TIV/รายงานที่นับเป็นใบกำกับแล้ว (ดู TEST_PLAN ABB-14)</para>
+    /// </summary>
+    /// <param name="documentIssued"><c>DocumentStatusRules.IsIssued(doc.Status)</c></param>
+    /// <param name="frozenTaxInvoiceRole"><c>Document.IsTaxInvoiceByLaw</c></param>
+    /// <param name="companyMayIssueNow">ผลของ <see cref="CanIssue"/> ช่องทางเอกสาร ณ ตอนนี้</param>
+    public static bool HeadingMayUseAbbreviated(bool documentIssued, bool? frozenTaxInvoiceRole, bool companyMayIssueNow)
+        => (documentIssued && frozenTaxInvoiceRole is bool frozen) ? frozen : companyMayIssueNow;
+
     /// <summary>ข้อความอธิบายพร้อม<b>ทางไปต่อ</b> — <c>null</c> เมื่อออกได้ปกติ</summary>
     public static string? Message(AbbreviatedInvoiceBlockReason reason) => reason switch
     {

@@ -288,6 +288,42 @@ public static class OcrPartyResolver
             Add(reasons, "ไม่พบตัวตนบริษัทเราบนกระดาษ — ให้ตัวอนุมานบทบาทตัดสินจากหลักฐานอื่น (50 ทวิ/ตำแหน่ง)"));
     }
 
+    /// <summary>
+    /// **คะแนนความมั่นใจรายช่องต้องย้ายตามค่า** เมื่อตัวตัดสินฝั่งย้ายค่าระหว่างช่องผู้ขาย ↔ ผู้ซื้อ (<see cref="Resolve"/> ·
+    /// <see cref="ApplySide"/>) — pure · แก้ <paramref name="confidence"/> ในที่
+    /// <para>ที่มา (รอบ 199 ฝ่ายค้าน A-3): ตัวอ่านสาขาให้คะแนน "ตามที่มา" (K-2 — ป้ายผู้ขาย 0.85 · ถอยอ่านทั้งหน้า &lt; 0.85) ไว้ที่
+    /// <c>SellerBranchCode</c> ก่อนตัดสินฝั่ง · พอสลับบล็อก รหัสสาขาในช่องผู้ขายตอนนี้มาจากบล็อก<b>ผู้ซื้อ</b>ของกระดาษ แต่คะแนน 0.85 ยังค้าง
+    /// ⇒ ผ่านเกณฑ์สร้างผู้ติดต่อสาขาถาวร (<c>OcrVendorBranchContact.IsReliableBranch</c>) = คลาสเดียวกับที่ K-2 ตั้งใจปิด</para>
+    /// <para>กติการายช่อง (ชื่อ · เลขภาษี · ที่อยู่ · รหัสสาขา): ค่าใหม่ของช่องผู้ขาย = ค่าเดิมของช่องผู้ขาย ⇒ คงคะแนน · = ค่าเดิมของช่อง
+    /// ผู้ซื้อ (และต่างจากค่าเดิมของตัวเอง) ⇒ รับคะแนนของช่องผู้ซื้อเดิม (ไม่มีคะแนน = ลบคีย์ = "ไม่รู้" ซึ่งไม่ใช่ "เชื่อได้" — K-6) ·
+    /// อย่างอื่น (ถูกล้าง/เติมจากทะเบียน) ⇒ ไม่แตะ ให้ผู้เรียกตั้งเอง · สมมาตรกับช่องผู้ซื้อ · ค่าเท่ากันทั้งสองฝั่ง ("00000" คู่) ⇒ คงเดิม</para>
+    /// </summary>
+    public static void FollowFieldConfidence(IDictionary<string, double> confidence,
+        OcrPartyBlock vendorBefore, OcrPartyBlock buyerBefore, OcrPartyBlock vendorAfter, OcrPartyBlock buyerAfter)
+    {
+        if (confidence == null) return;
+        var before = new Dictionary<string, double>(confidence);
+        void Follow(string sellerKey, string buyerKey, string? vOld, string? bOld, string? vNew, string? bNew)
+        {
+            Move(sellerKey, vOld, vNew, fromOtherKey: buyerKey, otherOld: bOld);
+            Move(buyerKey, bOld, bNew, fromOtherKey: sellerKey, otherOld: vOld);
+        }
+        void Move(string key, string? oldOwn, string? now, string fromOtherKey, string? otherOld)
+        {
+            if (Same(now, oldOwn) || !Same(now, otherOld) || string.IsNullOrWhiteSpace(now)) return;
+            if (before.TryGetValue(fromOtherKey, out var c)) confidence[key] = c;
+            else confidence.Remove(key);
+        }
+        Follow(OcrFieldKeys.SellerName, OcrFieldKeys.BuyerName, vendorBefore.Name, buyerBefore.Name, vendorAfter.Name, buyerAfter.Name);
+        Follow(OcrFieldKeys.SellerTaxId, OcrFieldKeys.BuyerTaxId, vendorBefore.TaxId, buyerBefore.TaxId, vendorAfter.TaxId, buyerAfter.TaxId);
+        Follow(OcrFieldKeys.SellerAddress, OcrFieldKeys.BuyerAddress, vendorBefore.Address, buyerBefore.Address, vendorAfter.Address, buyerAfter.Address);
+        Follow(OcrFieldKeys.SellerBranchCode, OcrFieldKeys.BuyerBranchCode, vendorBefore.BranchCode, buyerBefore.BranchCode,
+            vendorAfter.BranchCode, buyerAfter.BranchCode);
+    }
+
+    private static bool Same(string? a, string? b)
+        => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.Ordinal);
+
     /// <summary>บังคับผลลัพธ์ตามฝั่งที่ชั้นบน (AI ที่ผ่านด่าน / ผู้ใช้) ตัดสิน — ย้าย/ล้างบล็อกให้
     /// สอดคล้อง: ถ้าเราอยู่ผิดช่อง ย้าย · ถ้าคู่ค้าเป็นเราเอง ล้าง · ไม่งั้นคงเดิม
     ///
