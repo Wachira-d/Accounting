@@ -49,7 +49,9 @@ public class PaymentSettingsController : ControllerBase
         bool CanEnableLive, string WebhookUrl,
         List<string> EnabledMethods, bool IsActive,
         // รอบ 198 — การลงบัญชีค่าธรรมเนียม (เก็บแล้วต้อง echo กลับ · enum เป็นชื่อ)
-        string FeeVatMode, string WhtOnFee, Guid? ClearingAccountId, Guid? FeeExpenseAccountId);
+        string FeeVatMode, string WhtOnFee, Guid? ClearingAccountId, Guid? FeeExpenseAccountId,
+        // ฝ่ายค้าน R-E6: บริษัทจด VAT + "ไม่แยก VAT" = เสียภาษีซื้อเงียบ ๆ — ข้อความจาก GatewaySettlementMath ตัวเดียว (หน้าเว็บแสดงอย่างเดียว)
+        string? FeeVatWarning);
 
     private static string? Hint(ISecretProtector p, string? protectedValue)
     {
@@ -60,7 +62,7 @@ public class PaymentSettingsController : ControllerBase
     private string WebhookUrl(string providerCode)
         => $"{Request.Scheme}://{Request.Host}/api/pay/webhooks/{providerCode}";
 
-    private ConfigResponse Map(PaymentProviderConfig c) => new(
+    private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered) => new(
         c.Id, c.ProviderCode, c.DisplayName, c.Mode.ToString(),
         c.TestPublicKey, c.LivePublicKey,
         Hint(_secrets, c.TestSecretKeyProtected), Hint(_secrets, c.LiveSecretKeyProtected),
@@ -75,7 +77,8 @@ public class PaymentSettingsController : ControllerBase
         FeeVatMode: c.FeeVatMode.ToString(),
         WhtOnFee: c.WhtOnFee.ToString(),
         ClearingAccountId: c.ClearingAccountId,
-        FeeExpenseAccountId: c.FeeExpenseAccountId);
+        FeeExpenseAccountId: c.FeeExpenseAccountId,
+        FeeVatWarning: GatewaySettlementMath.FeeVatModeWarning(c.FeeVatMode, companyVatRegistered));
 
     private static List<string> ParseMethods(string? json)
     {
@@ -108,7 +111,8 @@ public class PaymentSettingsController : ControllerBase
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
             .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
             .ToListAsync(ct);
-        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(Map).ToList()));
+        var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(c => Map(c, vatRegistered)).ToList()));
     }
 
     public sealed record SaveConfigRequest(
@@ -174,7 +178,8 @@ public class PaymentSettingsController : ControllerBase
 
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg), "บันทึกการตั้งค่าแล้ว"));
+        return Ok(new ApiResponse<ConfigResponse>(true,
+            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct)), "บันทึกการตั้งค่าแล้ว"));
     }
 
     [HttpPost("{providerCode}/test")]
@@ -254,7 +259,7 @@ public class PaymentSettingsController : ControllerBase
         cfg.Mode = req.Mode;
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg),
+        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct)),
             req.Mode == PaymentProviderMode.Live
                 ? "เปิดใช้งานรับชำระเงินจริงแล้ว"
                 : "กลับสู่โหมดทดสอบแล้ว — เงินจะไม่เข้าจริง"));

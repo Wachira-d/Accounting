@@ -160,7 +160,10 @@ public class OmisePaymentProvider : IPaymentProvider
             QrExpiresAt: expiresAt,
             AuthorizeUrl: authorize,
             FailureCode: el.TryGetProperty("failure_code", out var fc) ? fc.GetString() : null,
-            FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null);
+            FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null,
+            // ยอดคืนสะสมของ charge (หน่วยสตางค์) — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2) · ไม่มีช่อง = null (ไม่เดาเป็น 0)
+            RefundedTotal: el.TryGetProperty("refunded_amount", out var ra) && ra.ValueKind == JsonValueKind.Number
+                ? FromMinorUnit(ra.GetInt64()) : null);
     }
 
     // ── การทำงานหลัก ────────────────────────────────────────────────────

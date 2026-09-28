@@ -6207,6 +6207,15 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundedAt" timestamptz NULL;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundJournalEntryId" uuid NULL;""",
             """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "FeeVatMode" integer NOT NULL DEFAULT 0;""",
+            // ฝ่ายค้านรอบ 198 (R-E2/R-E5/E-2) — ยอดคืนรายครั้ง (แยกก่อน/หลังวันเงินเข้า) · ยอดคืนที่ถูกหักในรอบโอนหลัง ·
+            // คืนเงินผลไม่แน่ชัด (ล็อกคืนซ้ำ) · แถวเดิม NULL/0 = "ไม่มีข้อมูลรายครั้ง" (แผนรอบโอนบล็อกเมื่อแยกไม่ได้ ไม่เดา)
+            """ALTER TABLE "PaymentIntentEvents" ADD COLUMN IF NOT EXISTS "RefundAmount" numeric(18,2) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundDeductedAfterSettlement" numeric(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundOutcomeUnknownSince" timestamptz NULL;""",
+            // เติมยอดรายครั้งย้อนหลังเฉพาะกรณีที่พิสูจน์ได้: รายการที่มีเหตุการณ์ "คืนเงินสำเร็จ" (ข้อความขึ้นต้น "คืนเงิน ") ครั้งเดียว ⇒
+            // ยอดครั้งนั้น = ยอดคืนสะสม · คืนหลายครั้งก่อนมีคอลัมน์ = ไม่เติม (ไม่รู้ยอดรายครั้ง — แผนรอบโอนบล็อกเฉพาะเมื่อต้องแยก)
+            // idempotent: ข้ามรายการที่มียอดรายครั้งแล้ว
+            """UPDATE "PaymentIntentEvents" e SET "RefundAmount" = i."RefundedAmount" FROM "PaymentIntents" i WHERE e."IntentId" = i."Id" AND e."CompanyId" = i."CompanyId" AND e."RefundAmount" IS NULL AND i."RefundedAmount" > 0 AND e."Note" LIKE 'คืนเงิน %' AND (SELECT count(*) FROM "PaymentIntentEvents" e2 WHERE e2."IntentId" = i."Id" AND e2."Note" LIKE 'คืนเงิน %') = 1 AND NOT EXISTS (SELECT 1 FROM "PaymentIntentEvents" e3 WHERE e3."IntentId" = i."Id" AND e3."RefundAmount" IS NOT NULL);""",
 
             // ศูนย์ช่วยเหลือ (เอกสาร + วิดีโอสอนใช้งาน) — ระดับแพลตฟอร์ม ไม่มี CompanyId
             """CREATE TABLE IF NOT EXISTS "HelpResources" ("Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "Title" varchar(300) NOT NULL DEFAULT '', "Description" text NULL, "Category" integer NOT NULL DEFAULT 1, "ModuleCode" varchar(50) NULL, "Kind" integer NOT NULL DEFAULT 1, "Provider" integer NOT NULL DEFAULT 0, "SourceUrl" text NULL, "StoragePath" text NULL, "FileName" text NULL, "FileSizeBytes" bigint NOT NULL DEFAULT 0, "DurationSeconds" integer NOT NULL DEFAULT 0, "ThumbnailUrl" text NULL, "IsPublished" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "ViewCount" integer NOT NULL DEFAULT 0, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",

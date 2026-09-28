@@ -116,6 +116,12 @@ public class PaymentIntent : TenantEntity
     /// <summary>ส่วนของ <see cref="RefundedAmount"/> ที่ถูกหักในรอบโอนแล้ว — คืนเงิน<b>หลัง</b>รอบโอน
     /// ผู้ให้บริการจะหักจากรอบโอนถัดไป ⇒ รอบถัดไปต้องนับส่วนต่างนี้เป็นยอดติดลบ</summary>
     public decimal RefundSettledAmount { get; set; }
+    /// <summary>ส่วนของยอดคืนที่ถูกหักใน<b>รอบโอนหลัง</b>รอบของรายการนี้ (คืนหลังรอบโอน) — สะสม · รายงานกระทบยอดใช้หักจาก
+    /// <see cref="SettledAmount"/> ให้ได้ "ที่โอนเข้าจริงสำหรับรายการนี้" (ฝ่ายค้าน R-E5 · 0 บนแถวก่อนมีคอลัมน์)</summary>
+    public decimal RefundDeductedAfterSettlement { get; set; }
+    /// <summary>เวลาที่การคืนเงินผ่านผู้ให้บริการ "ผลไม่แน่ชัด" (ผู้ให้บริการไม่ตอบ/หมดเวลา — ฝ่ายค้าน E-2) · มีค่า = ล็อกการคืนเงินผ่านระบบ
+    /// ของรายการนี้จนกว่าจะตรวจผลกับผู้ให้บริการ (<c>GatewayRefundService.VerifyUnknownRefundAsync</c>) · null = ไม่มีเรื่องค้าง</summary>
+    public DateTime? RefundOutcomeUnknownSince { get; set; }
     public DateTime? LastRefundedAt { get; set; }
     /// <summary>JE คืนเงินครั้งล่าสุด (Dr ลูกหนี้ / Cr บัญชีพัก) — ผูกไว้ตามรอยจากหน้ารายการ</summary>
     public Guid? LastRefundJournalEntryId { get; set; }
@@ -158,4 +164,7 @@ public class PaymentIntentEvent : TenantEntity
     /// <summary>payload ที่ **ตัด PII ออกแล้ว** — ห้ามเก็บเลขบัตร/ชื่อ-สกุลเต็ม</summary>
     public string? PayloadJson { get; set; }
     public string? Note { get; set; }
+    /// <summary>ยอดที่คืนในเหตุการณ์นี้ — เฉพาะเหตุการณ์ที่เพิ่ม <c>PaymentIntent.RefundedAmount</c> (ฝ่ายค้าน R-E2: แยกยอดคืนก่อน/หลัง
+    /// วันเงินเข้าของรอบโอน) · null = ไม่ใช่การคืนที่ลงยอดสะสม (หรือคืนก่อนมีคอลัมน์) · ผลรวมต่อรายการต้องเท่ายอดคืนสะสม</summary>
+    public decimal? RefundAmount { get; set; }
 }

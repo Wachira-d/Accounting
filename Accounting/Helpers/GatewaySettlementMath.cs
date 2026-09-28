@@ -6,7 +6,11 @@ namespace Accounting.Helpers;
 ///
 /// <para>รอบ 198 (G-2): <c>RefundedAmount</c> = ยอดคืนสะสม · <c>AlreadySettled</c> = รายการนี้ถูกนับในรอบโอนก่อนแล้ว
 /// (กลับมาอีกครั้งเพราะคืนเงิน<b>หลัง</b>รอบโอน ⇒ ผู้ให้บริการหักยอดคืนจากรอบนี้) · <c>RefundSettledAmount</c> =
-/// ยอดคืนที่ถูกหักในรอบก่อน ๆ แล้ว</para></summary>
+/// ยอดคืนที่ถูกหักในรอบก่อน ๆ แล้ว</para>
+///
+/// <para>ฝ่ายค้าน R-E2: <c>RefundedAmount</c> ที่ส่งเข้าแผนรอบโอน = ยอดคืน<b>ณ วันเงินเข้า</b> (<see cref="GatewaySettlementMath.RefundedAsOf"/>)
+/// ไม่ใช่ยอดสะสมวันนี้ · <c>RefundTimingUnknown</c> = แยกไม่ได้ว่ายอดคืนส่วนไหนเกิดก่อน/หลังวันเงินเข้า ⇒ แผนบล็อก
+/// (<see cref="SettlementBlockReason.RefundTimingUnknown"/>) ห้ามเดา</para></summary>
 public readonly record struct SettlementIntentInput(
     Guid IntentId,
     decimal Amount,
@@ -14,7 +18,16 @@ public readonly record struct SettlementIntentInput(
     decimal FeeEstimated,
     decimal RefundedAmount = 0m,
     bool AlreadySettled = false,
-    decimal RefundSettledAmount = 0m);
+    decimal RefundSettledAmount = 0m,
+    bool RefundTimingUnknown = false,
+    // ฝ่ายค้าน E-2: การคืนเงินของรายการนี้ "ผลไม่แน่ชัด" (ผู้ให้บริการไม่ตอบ) — ยอดคืนจริงยังไม่รู้ ⇒ แผนบล็อกจนกว่าจะตรวจผล
+    bool RefundOutcomeUnknown = false);
+
+/// <summary>การคืนเงิน 1 ครั้งที่ระบบบันทึกยอดรายครั้งไว้ (<c>PaymentIntentEvent.RefundAmount</c>) — ใช้แยกยอดคืนก่อน/หลังวันเงินเข้า</summary>
+public readonly record struct GatewayRefundEntry(DateTime AtUtc, decimal Amount);
+
+/// <summary>ยอดคืน ณ จุดตัด — <c>Known = false</c> = ข้อมูลรายครั้งไม่ครบ แยกไม่ได้ (ห้ามเดา)</summary>
+public readonly record struct GatewayRefundAsOf(decimal Amount, bool Known);
 
 /// <summary>เหตุที่ยังบันทึกการโอนเข้าไม่ได้ — ต้องมีข้อความบอกทางแก้เสมอ</summary>
 public enum SettlementBlockReason
@@ -29,6 +42,11 @@ public enum SettlementBlockReason
     WhtCertificateRequired = 4,
     /// <summary>วันที่เงินเข้าอยู่ในงวดบัญชีที่ปิดแล้ว (รอบ 198 G-5)</summary>
     PeriodClosed = 5,
+    /// <summary>มีรายการที่คืนเงินครั้งล่าสุดตั้งแต่วันเงินเข้า แต่ไม่มียอดคืนรายครั้งครบ (คืนก่อนระบบเริ่มเก็บ) ⇒
+    /// แยกไม่ได้ว่าผู้ให้บริการหักยอดคืนไหนในรอบนี้ (ฝ่ายค้าน R-E2)</summary>
+    RefundTimingUnknown = 6,
+    /// <summary>มีรายการที่การคืนเงินผลไม่แน่ชัด (ฝ่ายค้าน E-2) — ยอดคืนจริงยังไม่รู้ ⇒ ต้องตรวจผลกับผู้ให้บริการก่อน</summary>
+    RefundOutcomeUnknown = 7,
 }
 
 /// <summary>บรรทัด JE 1 บรรทัดของการโอนเข้า (ยังไม่ผูก AccountId — ตัวเรียกแปลงเอง)</summary>
@@ -64,7 +82,9 @@ public sealed record SettlementPlan(
     decimal ActualNet,
     IReadOnlyList<SettlementJournalLine> Lines,
     decimal FeeVat = 0m,
-    decimal RefundDeducted = 0m)
+    decimal RefundDeducted = 0m,
+    // ฝ่ายค้าน R-E6: คำเตือนที่ไม่บล็อก (โหมด VAT ค่าธรรมเนียม "ไม่แยก" บนบริษัทจด VAT) — ตัวเดียวกับหน้าตั้งค่า
+    string? Warning = null)
 {
     public decimal Difference => ActualNet - ExpectedNet;
 }
@@ -105,10 +125,10 @@ public readonly record struct SettlementIntentContribution(
 /// ตาม <see cref="GatewayFeeVatMode"/> ของผู้ให้บริการ: VAT → Dr <b>11630 ภาษีซื้อรอเครดิต</b> (ยังไม่มีใบกำกับ) ·
 /// บริษัทไม่จด VAT ⇒ ไม่มีขา 11630 (VAT เป็นต้นทุนรวมในค่าธรรมเนียม) · ปัดต่อรายการ (ผู้ให้บริการคิด VAT ต่อ charge)
 ///
-/// ═══ คืนเงิน (รอบ 198 G-2) ═══
-/// คืนบางส่วนนับด้วย <c>Amount − RefundedAmount</c> (JE คืนเงินลด 11340 ไปแล้ว) · คืนเต็มก่อนรอบโอนนับ 0
-/// แต่ค่าธรรมเนียมยังถูกหัก (ถ้าผู้ให้บริการคืนค่าธรรมเนียม ให้แก้ค่าธรรมเนียมจริงเป็น 0) · คืนหลังรอบโอน ⇒
-/// รอบถัดไปนับยอดคืนที่ยังไม่ถูกหักเป็น<b>ติดลบ</b>
+/// ═══ คืนเงิน (รอบ 198 G-2 · ฝ่ายค้าน R-E2) ═══
+/// คืนบางส่วนนับด้วย <c>Amount − ยอดคืน ณ วันเงินเข้า</c> (JE คืนเงินลด 11340 ไปแล้ว) · คืนเต็มก่อนรอบโอนนับ 0
+/// แต่ค่าธรรมเนียมยังถูกหัก (ถ้าผู้ให้บริการคืนค่าธรรมเนียม ให้แก้ค่าธรรมเนียมจริงเป็น 0) · คืน<b>ตั้งแต่วันเงินเข้า</b>
+/// (แม้บันทึกรอบโอนทีหลัง) ⇒ รอบนี้นับยอดเต็ม และรอบถัดไปนับยอดคืนที่ยังไม่ถูกหักเป็น<b>ติดลบ</b> (<see cref="RefundedAsOf"/>)
 ///
 /// ═══ กติกาที่ตั้งใจ ═══
 /// <list type="number">
@@ -138,6 +158,57 @@ public static class GatewaySettlementMath
     /// <summary>หัก ณ ที่จ่ายแบบ<b>ออกภาษีแทน</b> (gross-up) จากค่าบริการ<b>ก่อน VAT</b> — ฐานตามกฎหมาย (G-4)</summary>
     public static decimal WhtOnFee(decimal feeBeforeVat)
         => feeBeforeVat <= 0m ? 0m : R(feeBeforeVat * ServiceWhtRate / (1m - ServiceWhtRate));
+
+    /// <summary>จุดตัด "คืนเงินก่อน/หลังรอบโอนนี้" (ฝ่ายค้าน R-E2) = <b>เที่ยงคืนต้นวันเงินเข้า</b> ตามเวลาไทย (เป็นเวลา UTC)
+    ///
+    /// <para>คืนเงิน<b>ก่อน</b>วันเงินเข้า ⇒ ผู้ให้บริการหักจากรอบโอนนี้ · คืน<b>ตั้งแต่</b>วันเงินเข้า ⇒ หักรอบถัดไป
+    /// (ผู้ให้บริการคำนวณยอดโอนก่อนเงินถึงธนาคาร — คืนวันเดียวกับวันเงินเข้าจึงเป็นของรอบถัดไป) · ถ้าผลต่างของรอบเท่ากับยอดคืน
+    /// ข้อความ "ยอดไม่ตรง" บอกให้ตรวจวันเงินเข้า (ทางแก้ที่ผู้ใช้ทำได้จริง)</para>
+    /// <para>ประเทศไทยไม่มีเวลาออมแสง ⇒ +07:00 คงที่</para></summary>
+    public static DateTime RefundCutoffUtc(DateTime settledAt)
+        => DateTime.SpecifyKind(ThaiDate.CalendarDateUtc(settledAt).AddHours(-7), DateTimeKind.Utc);
+
+    /// <summary>ยอดคืนสะสม ณ จุดตัด (ฝ่ายค้าน R-E2 — เดิมใช้ยอดคืนสะสมวันนี้ ⇒ คืนหลังวันเงินเข้าแต่บันทึกรอบโอนทีหลัง = ยอดไม่ตรงถาวร)
+    ///
+    /// <para>ไม่มีจุดตัด (หน้ารายการค้างโอน) = ยอดสะสมทั้งหมด · คืนครั้งล่าสุดก่อนจุดตัด = ยอดสะสมทั้งหมด (ไม่ต้องใช้ข้อมูลรายครั้ง) ·
+    /// ไม่งั้นต้องมียอดรายครั้ง<b>ครบ</b> (ผลรวม = ยอดสะสม) จึงแยกได้ — ข้อมูลไม่ครบ (คืนก่อนระบบเริ่มเก็บรายครั้ง) = <c>Known = false</c>
+    /// (DOCTRINE §1: ไม่รู้ต้องเป็นค่าใน enum ห้ามตกเป็น "ผ่าน")</para></summary>
+    public static GatewayRefundAsOf RefundedAsOf(decimal refundedTotal, DateTime? lastRefundedAtUtc,
+        IReadOnlyCollection<GatewayRefundEntry> refunds, DateTime? cutoffUtc)
+    {
+        if (refundedTotal <= 0m) return new GatewayRefundAsOf(0m, true);
+        if (cutoffUtc is not DateTime cut) return new GatewayRefundAsOf(R(refundedTotal), true);
+        if (lastRefundedAtUtc is DateTime last && last < cut) return new GatewayRefundAsOf(R(refundedTotal), true);
+        if (lastRefundedAtUtc == null && refunds.Count == 0) return new GatewayRefundAsOf(R(refundedTotal), true);
+
+        var recorded = refunds.Sum(r => r.Amount);
+        if (Math.Abs(recorded - refundedTotal) > GatewayRefundMath.Tolerance)
+            return new GatewayRefundAsOf(0m, false);
+        return new GatewayRefundAsOf(R(refunds.Where(r => r.AtUtc < cut).Sum(r => r.Amount)), true);
+    }
+
+    /// <summary>ค่าธรรมเนียมที่ "แก้ค่าธรรมเนียม" รับ/แสดง = ค่าที่เก็บใน <c>FeeActual</c> ตามความหมายของโหมด (ฝ่ายค้าน R-E4 — เดิมหน้าเว็บ
+    /// เติมยอดที่ถูกหัก (รวม VAT ในโหมด AddedOnTop) แล้วบันทึกกลับเป็นยอดก่อน VAT ⇒ กดตกลงโดยไม่แก้ = รอบที่ถูกกลายเป็นไม่ตรง)</summary>
+    public static decimal FeeInput(SettlementIntentInput i) => R(i.FeeActual ?? i.FeeEstimated);
+
+    /// <summary>ป้ายของช่องค่าธรรมเนียมที่แก้ได้ ตามโหมด — หน้าเว็บแสดงตามนี้ ห้ามตัดสินเอง</summary>
+    public static string FeeInputLabel(GatewayFeeVatMode mode) => mode switch
+    {
+        GatewayFeeVatMode.IncludedInFee => "ค่าธรรมเนียมรวม VAT แล้ว (ยอดที่ผู้ให้บริการหัก)",
+        GatewayFeeVatMode.AddedOnTop => "ค่าธรรมเนียมก่อน VAT (ระบบบวก VAT 7% ให้เอง — อย่าใส่ยอดที่รวม VAT)",
+        _ => "ค่าธรรมเนียมทั้งหมดที่ผู้ให้บริการหัก",
+    };
+
+    /// <summary>คำเตือนโหมด VAT ค่าธรรมเนียม (ฝ่ายค้าน R-E6) — บริษัทจด VAT + "ไม่แยก VAT" ⇒ VAT ที่ผู้ให้บริการในประเทศคิดบนค่าธรรมเนียม
+    /// ลงค่าใช้จ่ายทั้งก้อนเงียบ ๆ (เสียสิทธิ์เคลมภาษีซื้อ) · ไม่เปลี่ยนค่าที่เก็บไว้ให้เอง (ผู้ให้บริการต่างประเทศ/ไม่คิด VAT มีจริง ⇒ ต้องให้คนเลือก)
+    /// · null = ไม่มีอะไรต้องเตือน · ใช้ร่วมหน้าตั้งค่า + พรีวิวรอบโอน + หน้ารายการค้างโอน</summary>
+    public static string? FeeVatModeWarning(GatewayFeeVatMode mode, bool companyVatRegistered)
+        => mode == GatewayFeeVatMode.None && companyVatRegistered
+            ? "บริษัทจดทะเบียน VAT แต่ \"VAT ของค่าธรรมเนียม\" ตั้งเป็น \"ไม่แยก VAT\" — ถ้าผู้ให้บริการคิด VAT 7% บนค่าธรรมเนียม "
+              + "(ผู้ให้บริการในประเทศส่วนใหญ่คิด) VAT ก้อนนั้นจะลงค่าใช้จ่ายทั้งก้อนและเคลมภาษีซื้อไม่ได้ · "
+              + "ตรวจใบกำกับ/สเตทเมนต์ของผู้ให้บริการแล้วเลือกโหมดให้ตรงที่หน้า \"ตั้งค่าการรับชำระเงินออนไลน์\" "
+              + "(ถ้าผู้ให้บริการไม่คิด VAT จริง คงค่า \"ไม่แยก VAT\" ไว้ได้)"
+            : null;
 
     /// <summary>ยอดที่รายการหนึ่งส่งผลต่อรอบโอน — ตัวเดียวของทั้งแผน JE และหน้ารายการค้างโอน</summary>
     public static SettlementIntentContribution Contribution(SettlementIntentInput i, GatewayFeeVatMode feeVatMode)
@@ -175,11 +246,39 @@ public static class GatewaySettlementMath
         string settlementRef,
         GatewayFeeVatMode feeVatMode = GatewayFeeVatMode.None,
         bool companyVatRegistered = true)
+        => PlanCore(intents, actualNetReceived, whtMode, settlementRef, feeVatMode, companyVatRegistered)
+            with { Warning = FeeVatModeWarning(feeVatMode, companyVatRegistered) };
+
+    private static SettlementPlan PlanCore(
+        IReadOnlyCollection<SettlementIntentInput> intents,
+        decimal actualNetReceived,
+        GatewayFeeWhtMode whtMode,
+        string settlementRef,
+        GatewayFeeVatMode feeVatMode,
+        bool companyVatRegistered)
     {
         if (intents.Count == 0)
             return Blocked(SettlementBlockReason.NoIntents,
                 "ไม่มีรายการที่รอโอนเข้าในช่วงที่เลือก — ตรวจช่วงวันที่ หรือรายการอาจถูกบันทึกการโอนไปแล้ว",
                 actualNetReceived);
+
+        // E-2: ยอดคืนจริงยังไม่รู้ (ผู้ให้บริการไม่ตอบตอนคืน) — สาเหตุนี้ต้องมาก่อน ไม่งั้นผู้ใช้เห็น "ยอดไม่ตรง" แล้วไปแก้ค่าธรรมเนียมผิดจุด
+        var outcomeUnknown = intents.Count(i => i.RefundOutcomeUnknown);
+        if (outcomeUnknown > 0)
+            return Blocked(SettlementBlockReason.RefundOutcomeUnknown,
+                $"มี {outcomeUnknown} รายการที่การคืนเงินผลไม่แน่ชัด (ผู้ให้บริการไม่ตอบ — เงินอาจออกไปแล้ว) · ยอดที่ผู้ให้บริการหักในรอบนี้จึงยังไม่รู้ — "
+                + "กด \"ตรวจผลการคืนเงิน\" ที่หน้ารายการรับชำระออนไลน์ก่อน แล้วดูตัวอย่างรอบโอนใหม่",
+                actualNetReceived, intents);
+
+        // R-E2: แยกไม่ได้ว่ายอดคืนส่วนไหนเกิดก่อนวันเงินเข้า ⇒ บล็อก (ห้ามเดา — เดาผิด = JE ธนาคารไม่ตรงสเตทเมนต์ถาวร)
+        var unknown = intents.Count(i => i.RefundTimingUnknown);
+        if (unknown > 0)
+            return Blocked(SettlementBlockReason.RefundTimingUnknown,
+                $"มี {unknown} รายการที่คืนเงินครั้งล่าสุดตั้งแต่วันเงินเข้า แต่คืนบางครั้งก่อนระบบเริ่มเก็บยอดคืนรายครั้ง — "
+                + "ระบบแยกไม่ได้ว่าผู้ให้บริการหักยอดคืนส่วนไหนในรอบโอนนี้ · ทางไปต่อ: ถ้าวันเงินเข้าที่กรอกไม่ตรงสเตทเมนต์ให้แก้วันที่ · "
+                + "ถ้าตรงแล้ว ให้ผู้ดูแลระบบบันทึกยอดคืนรายครั้ง (วันที่ + ยอด) ของรายการนั้นตามแดชบอร์ดผู้ให้บริการก่อน แล้วดูตัวอย่างใหม่ "
+                + "(อย่าลงใบสำคัญรอบโอนด้วยมือ — รายการจะยังค้างในระบบและถูกนับซ้ำในรอบถัดไป)",
+                actualNetReceived, intents);
 
         var parts = intents.Select(i => Contribution(i, feeVatMode)).ToList();
         var gross = R(parts.Sum(c => c.Clearing));
@@ -207,8 +306,13 @@ public static class GatewaySettlementMath
             return Blocked(SettlementBlockReason.NetMismatch,
                 $"ยอดที่โอนเข้าจริง ({actualNetReceived:N2}) ไม่ตรงกับยอดที่คำนวณได้ ({expectedNet:N2}) "
                 + $"— ต่างกัน {diff:N2} บาท · แก้ค่าธรรมเนียมจริงรายรายการที่ปุ่ม \"แก้ค่าธรรมเนียม\" "
-                + "ในตารางรายการค้างโอนด้านบน หรือเลือกช่วงวันที่ให้ตรงกับรอบโอนก่อน (ระบบไม่เดาส่วนต่างให้ "
-                + "เพราะ JE ที่ยอดธนาคารไม่ตรงสเตทเมนต์จะกระทบยอดไม่ได้ตลอดไป)",
+                + "ในตารางรายการค้างโอนด้านบน หรือเลือกช่วงวันที่ให้ตรงกับรอบโอนก่อน"
+                // R-E2: ยอดคืนถูกนับตามวันเงินเข้า — วันที่กรอกผิด = ยอดคืนตกผิดรอบ (สาเหตุที่ผู้ใช้แก้ได้จริง ต้องบอก)
+                + (intents.Any(i => i.RefundedAmount > 0m || i.AlreadySettled)
+                    ? " · รอบนี้มีรายการคืนเงิน: ระบบนับยอดคืนที่ทำก่อนวันเงินเข้าเป็นส่วนที่ผู้ให้บริการหักในรอบนี้ "
+                      + "(คืนตั้งแต่วันเงินเข้าไป = หักรอบถัดไป) — ตรวจว่า \"วันที่เงินเข้าบัญชี\" ตรงสเตทเมนต์"
+                    : "")
+                + " (ระบบไม่เดาส่วนต่างให้ เพราะ JE ที่ยอดธนาคารไม่ตรงสเตทเมนต์จะกระทบยอดไม่ได้ตลอดไป)",
                 actualNetReceived, intents, gross, feeDeducted, feeGross, wht, expectedNet, feeVatClaim, refundDeducted);
 
         var lines = new List<SettlementJournalLine>

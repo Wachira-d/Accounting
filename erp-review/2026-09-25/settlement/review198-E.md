@@ -15,7 +15,13 @@
 
 ## PLAUSIBLE — backlog (ยังไม่แก้)
 
-- **E-2 (P2) `provider.RefundAsync` โยน exception (timeout) ⇒ ไม่รู้ว่าเงินออกหรือยัง แต่ระบบไม่บันทึกอะไรเลย** — tx rollback เงียบ ·
+- ✅ <pending> **E-2 (P2) `provider.RefundAsync` โยน exception (timeout) ⇒ ไม่รู้ว่าเงินออกหรือยัง แต่ระบบไม่บันทึกอะไรเลย** — แก้แล้ว (ทีม E2):
+  จับ exception ของการเรียกผู้ให้บริการ → ประทับ `PaymentIntent.RefundOutcomeUnknownSince` + เหตุการณ์ "⚠️ ผลไม่แน่ชัด" ในธุรกรรมเดิมที่ยังถือล็อก
+  แล้ว commit ⇒ `GatewayRefundMath.Check(..., refundOutcomeUnknown)` ปฏิเสธการคืนเพิ่ม · ปุ่ม "ตรวจผลการคืนเงิน" (`POST pay/intents/{id}/refund/verify`)
+  อ่านยอดคืนสะสมจากผู้ให้บริการ (`ProviderCharge.RefundedTotal` ← Omise `refunded_amount` — ใช้ `GetChargeAsync` เดิม ไม่ต้องรอ `GetRefundStatus`)
+  แล้วตัดสินด้วย `GatewayRefundMath.Verify` ตัวเดียว: เท่าที่บันทึก = ไม่ได้เกิด ⇒ ปลดล็อก · มากกว่า = เงินออกแล้ว ⇒ ลงบัญชีส่วนต่างด้วยตัวลงบัญชีคืนเงินตัวเดียว
+  (`BookRefundAsync` · เวลาเงินออก = เวลาที่พยายามคืน) + ปลดล็อก · ไม่ส่งยอด/ขัดกัน ⇒ ล็อกต่อ (ไม่ประทับผลเอง) · รอบโอนที่มีรายการนี้บล็อก `RefundOutcomeUnknown` (ไม่ใช่ "ยอดไม่ตรง" ที่ชี้ไปแก้ค่าธรรมเนียม) · เทสต์ `E2_*` · ⚠️ ต้องยืนยันใน sandbox
+  ว่า Omise charge ส่ง `refunded_amount` จริง (ถ้าไม่ส่ง = ล็อกค้างพร้อมข้อความ — ทิศปลอดภัย) · เดิม: tx rollback เงียบ ·
   ผู้ใช้เห็น error แล้วกดใหม่ได้ · ถ้าผู้ให้บริการประมวลผลไปแล้ว = คืนซ้ำ (ขึ้นกับ idempotency ฝั่งผู้ให้บริการ) ·
   เสนอ: จับ exception ของการเรียกผู้ให้บริการ → บันทึก event "ผลไม่แน่ชัด" + ล็อกการคืนเพิ่มจนกว่าจะ re-fetch สถานะจากผู้ให้บริการ
   (ต้องมี `IPaymentProvider.GetRefundStatus` — งานเฟส 2)

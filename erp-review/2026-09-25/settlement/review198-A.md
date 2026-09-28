@@ -162,7 +162,15 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   3. The Omise adapter should cross-check `metadata.companyId`.
   4. Add a two-tenant test.
 
-### R-E2 · CONFIRMED · P2: a refund after the payout date but before the user records the settlement gives a NetMismatch that cannot be fixed
+### ✅ <pending> R-E2 · CONFIRMED · P2: a refund after the payout date but before the user records the settlement gives a NetMismatch that cannot be fixed
+> **Fixed (team E2)**: `GatewaySettlementMath.RefundedAsOf` + `RefundCutoffUtc` — refunds count **as of the payout date** (cutoff = 00:00 Bangkok
+> on `SettledAt`; a refund on/after the payout day belongs to the next round). Per-refund amounts are now stored on the refund event
+> (`PaymentIntentEvent.RefundAmount`, backfilled for single-refund intents). Settlement marks `RefundSettledAmount` = refunded-as-of, so the
+> later refund is deducted in the next round. The refund-after branch uses the same cutoff (not `ToDate`). When per-refund data is missing
+> (multi-refund before tracking) the plan blocks with `RefundTimingUnknown` instead of guessing. NetMismatch text now names the payout date
+> as the cause when the round has refunds. Tests: `GatewaySettlementReview198Tests.RE2_*` (the 1,000/961/300 numbers both rounds · opposite
+> direction refund-before-payout · straddling refunds · unknown). Residual: no admin UI to key in per-refund dates for the legacy
+> multi-refund case (the message tells the user to ask an admin).
 - `GatewaySettlementMath.Contribution:152` uses `Amount − RefundedAmount` (the running total now), not the refunds made before `req.SettledAt`.
   `SelectCandidatesAsync:319-338` filters unsettled intents by `ConfirmedAt` only. The refund-after branch uses `LastRefundedAt < ToDate+1`, not `SettledAt`.
 - Numbers: charge 1,000 on 18 Sep. Omise payout on 20 Sep of 961.00 (fee 39.00). Refund 300 on 22 Sep. The user records the 20 Sep payout on 25 Sep.
@@ -171,7 +179,18 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: `Contribution` should take `refundedAsOf(SettledAt)`. This needs refund timestamps per refund (they are in `PaymentIntentEvents`/refund history),
   or a "refund after this payout" flag. At minimum, detect the case and write a message that states the real cause (F2 #7).
 
-### R-E3 · CONFIRMED · P2: gateway fee VAT is parked in 11630 with no path to 11610 (the "มี ≠ ถูกเรียก" class)
+### ✅ <pending> R-E3 · CONFIRMED · P2: gateway fee VAT is parked in 11630 with no path to 11610 (the "มี ≠ ถูกเรียก" class)
+> **Fixed (team E2, minimal flow)**: "รับใบกำกับค่าธรรมเนียม" on the settlements page → `POST pay/settlements/fee-vat/claim` →
+> `GatewaySettlementService.ClaimFeeVatAsync`: JV **Dr 11610 / Cr 11630** for the VAT on the provider's tax invoice (no expense line), with
+> invoice no (Reference) · supplier name/tax ID (checksum)/branch in the description so the purchase-VAT report (JE_INPUT path) counts it as
+> claimable · VAT ≤ the provider's outstanding deferred VAT (settlement-JE 11630 lines − earlier claims tagged `gateway-fee-vat:{provider}`) ·
+> §82/3: > 6 months blocks, 1–6 months needs a late reason · closed-period gate · hash-chain audit. Aging card (`GET pay/settlements/fee-vat`,
+> `Helpers/GatewayFeeVatClaim.Aging`): FIFO outstanding per settlement month, warning at ≥ 5 months, "may be past the window" > 6.
+> The page and the settings hint say not to record the provider's invoice as a purchase document.
+> **Owner/accountant questions (not decided here)**: (1) outstanding 11630 past 6 months — CLAUDE.md #2-B says "expired → auto reclassify
+> to expense", but the real invoice date is unknown to the system (settlement month is a proxy) ⇒ we only warn; should the system post the
+> write-off JV automatically, and against which expense account? (2) should a purchase document from the provider's contact be **blocked**
+> while that provider has deferred 11630 VAT? That needs a provider ↔ contact mapping on `PaymentProviderConfig` (not built).
 - `GatewaySettlementService.cs:423-431` posts Dr 11630. `payment-settings.html` promises "ย้ายเข้า 11610 เมื่อได้ใบกำกับรายเดือน". A grep of `"11630"` finds no flow that
   reclassifies the gateway fee VAT (DocumentService uses 11630 only as a fallback for undue VAT) and no 6-month alert (§82/3).
 - Result: the input VAT the user was told is "claimable" never enters ภ.พ.30 unless someone writes a manual JV. A user who records the provider's monthly tax invoice
@@ -179,7 +198,10 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: add an "attach monthly fee invoice" flow (Dr 11610 / Cr 11630, difference shown), or warn and block once a PI is created from the same provider with a 11630 balance.
   Add an aging alert for 11630 older than 6 months.
 
-### R-E4 · CONFIRMED · P2: the "แก้ค่าธรรมเนียม" button on the settlements page shows fee+VAT but saves it as the pre-VAT fee (AddedOnTop mode)
+### ✅ <pending> R-E4 · CONFIRMED · P2: the "แก้ค่าธรรมเนียม" button on the settlements page shows fee+VAT but saves it as the pre-VAT fee (AddedOnTop mode)
+> **Fixed (team E2)**: `PendingSettlementItem.FeeInput` (= stored `FeeActual ?? FeeEstimated`, the value `PUT /fee` saves) +
+> `FeeInputLabel` (per mode, from `GatewaySettlementMath.FeeInputLabel`) — the page pre-fills and labels from these; `payment-intents.html`
+> gets the same label. Test `RE4_กดตกลงโดยไม่แก้_ต้องไม่เปลี่ยนยอดที่ถูกหัก` (39.06 → still 41.79 deducted; the old path gave 44.72).
 - `payment-settlements.html` editFee takes its default from `i.fee` = `c.FeeDeducted` (= fee + VAT in AddedOnTop mode, `GatewaySettlementMath.cs:161-164`).
   `PUT /fee` stores that into `FeeActual`, which means **pre-VAT** in that mode.
 - Numbers: fee 39.06, VAT 2.73. The page shows 41.79. The user clicks OK without changing anything, FeeActual becomes 41.79, VAT becomes 2.93, and FeeDeducted becomes 44.72.
@@ -187,14 +209,26 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: send `feeActual` (the raw field) in `PendingSettlementItem` and use it as the default, with a label saying "ก่อน VAT/รวม VAT" per mode.
   `payment-intents.html` uses `r.feeActual` and is correct.
 
-### R-E5 · CONFIRMED · P2: the gateway reconciliation report (`GatewayReconciliation.Compute`) stays unbalanced after G-2/G-3
+### ✅ <pending> R-E5 · CONFIRMED · P2: the gateway reconciliation report (`GatewayReconciliation.Compute`) stays unbalanced after G-2/G-3
+> **Fixed (team E2)**: `Compute` now takes every per-intent figure from `GatewaySettlementMath.Contribution` with the provider's
+> `FeeVatMode` (lifetime expected · outstanding = unsettled net, or pending refund-after for settled rows · settled = `SettledAmount` −
+> new `PaymentIntent.RefundDeductedAfterSettlement`). Tests for the three cases (AddedOnTop 10 × 36.50 → 0, was +25.60 · refund-after
+> before/after deduction → 0, was −300 · full refund unsettled → outstanding −fee, was −fee unexplained) + opposite direction (a real
+> fee mismatch still shows). The old test that locked "full refund is not unsettled" was the bug and now asserts the corrected value.
+> Legacy settled rows that already had a refund-after round before this column existed show the deducted refund as unexplained
+> (visible, not silent).
 - It is a second formula next to `GatewaySettlementMath.Contribution` (F2 #4):
   - AddedOnTop: `fee` excludes VAT, but the provider deducts fee + VAT. With 10 intents × fee 36.50, `UnexplainedDifference` = +25.60 every month.
   - Refund after settlement: SettledAmount stays at the original c.Net while expectedNet deducts the refund. Refund 300 gives a permanent −300.
   - Full refund not yet settled: excluded from `unsettledRows` although the fee is still deducted, giving a difference of −fee.
 - Fix: have Reconciliation call `Contribution` (the same feeVatMode) and include the refund-after amount.
 
-### R-E6 · PLAUSIBLE · P2: default `GatewayFeeVatMode.None` passes an unknown VAT treatment silently
+### ✅ <pending> R-E6 · PLAUSIBLE · P2: default `GatewayFeeVatMode.None` passes an unknown VAT treatment silently
+> **Partly fixed (team E2 — safe visible warning)**: `GatewaySettlementMath.FeeVatModeWarning(mode, companyVatRegistered)` — one message
+> used by the settings page (`ConfigResponse.FeeVatWarning`), the pending list and the settlement preview (`SettlementPlan.Warning`, non-blocking).
+> The stored default was **not** changed: flipping `None` → `IncludedInFee`/`Unknown` changes the posting of every existing config and
+> needs a migration + owner decision (foreign/non-VAT providers exist). **Owner question**: add `Unknown` and block preview/record for
+> VAT-registered companies until chosen, or keep the warning? Also align with team A's `SettlementFeeVatMode.ThaiVat7` default.
 - `Payments.cs:63` defaults to `None`, meaning "no VAT, the whole amount is expense". For a VAT-registered company using Omise (a Thai provider that charges 7% VAT), input VAT is lost with no warning.
   The same fact in A's contract defaults to `SettlementFeeVatMode.ThaiVat7`, so the two defaults contradict each other.
 - Fix: add a value `Unknown` (or a null setting), and have preview/record block for VAT-registered companies until the user chooses.

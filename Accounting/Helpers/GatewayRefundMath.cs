@@ -13,6 +13,27 @@ public readonly record struct GatewayRefundCheck(
     // ครบยอดที่รับไว้แล้วหรือยัง ⇒ สถานะ Refunded (ไม่ครบ = PartiallyRefunded)
     bool IsFullRefund);
 
+/// <summary>ผลตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2)</summary>
+public enum GatewayRefundVerificationOutcome
+{
+    /// <summary>ผู้ให้บริการไม่ส่งยอดคืนสะสม — ยังไม่รู้ (ล็อกต่อ)</summary>
+    ProviderSilent = 0,
+    /// <summary>ยอดคืนสะสมของผู้ให้บริการ = ที่ระบบบันทึก ⇒ ครั้งที่ไม่แน่ชัดไม่ได้เกิด ⇒ ปลดล็อก</summary>
+    NoMoneyOut = 1,
+    /// <summary>ผู้ให้บริการคืนมากกว่าที่ระบบบันทึก ⇒ เงินออกไปแล้ว ⇒ ลงบัญชีส่วนต่าง + ปลดล็อก</summary>
+    MoneyWentOut = 2,
+    /// <summary>ข้อมูลขัดกัน (น้อยกว่าที่บันทึก/มากกว่ายอดรับ) — ล็อกต่อ ให้คนตรวจ</summary>
+    Inconsistent = 3,
+}
+
+/// <summary>ผลตรวจ + ยอดที่ต้องลงบัญชีเพิ่ม (เฉพาะ <see cref="GatewayRefundVerificationOutcome.MoneyWentOut"/>)</summary>
+public readonly record struct GatewayRefundVerification(
+    GatewayRefundVerificationOutcome Outcome, decimal AmountToBook, string Message)
+{
+    /// <summary>ปลดล็อกได้ไหม — เฉพาะเมื่อรู้แน่แล้วว่าเงินออกหรือไม่ออก</summary>
+    public bool Resolves => Outcome is GatewayRefundVerificationOutcome.NoMoneyOut or GatewayRefundVerificationOutcome.MoneyWentOut;
+}
+
 /// <summary>สถานะ "ออกใบลดหนี้ตามการคืนเงินแล้วหรือยัง" (§86/10) ของรายการชำระเงินหนึ่ง</summary>
 public enum GatewayRefundCreditNoteState
 {
@@ -51,11 +72,22 @@ public static class GatewayRefundMath
     public static decimal Remaining(decimal amount, decimal alreadyRefunded)
         => R(Math.Max(0m, amount - alreadyRefunded));
 
+    /// <summary>ข้อความเมื่อการคืนเงินครั้งก่อน "ผลไม่แน่ชัด" (ฝ่ายค้าน E-2) — ตัวเดียวของด่านและหน้าเว็บ</summary>
+    public const string OutcomeUnknownMessage =
+        "การคืนเงินครั้งก่อนของรายการนี้ผลไม่แน่ชัด (ผู้ให้บริการไม่ตอบ/หมดเวลา — เงินอาจออกไปแล้ว) · "
+        + "ระบบล็อกการคืนเงินผ่านระบบของรายการนี้ไว้จนกว่าจะตรวจผลกับผู้ให้บริการ: กดปุ่ม \"ตรวจผลการคืนเงิน\" "
+        + "ที่หน้ารายการรับชำระออนไลน์ (ห้ามคืนซ้ำที่แดชบอร์ดผู้ให้บริการก่อนตรวจ — อาจเป็นเงินออกสองรอบ)";
+
     /// <summary>ตรวจคำขอคืนเงิน — สถานะต้องเป็น "รับเงินแล้ว" · ยอดรวมที่คืนห้ามเกินยอดที่รับ ·
-    /// คืนบางส่วนก่อนระบบบันทึกยอดคืน (สถานะ PartiallyRefunded แต่ยอดสะสม = 0) = ไม่รู้ว่าคืนไปเท่าไร ⇒ ห้ามคืนเพิ่มผ่านระบบ</summary>
+    /// คืนบางส่วนก่อนระบบบันทึกยอดคืน (สถานะ PartiallyRefunded แต่ยอดสะสม = 0) = ไม่รู้ว่าคืนไปเท่าไร ⇒ ห้ามคืนเพิ่มผ่านระบบ ·
+    /// ฝ่ายค้าน E-2: การคืนครั้งก่อนผลไม่แน่ชัด (<paramref name="refundOutcomeUnknown"/>) ⇒ ห้ามคืนเพิ่มจนกว่าจะตรวจผลกับผู้ให้บริการ</summary>
     public static GatewayRefundCheck Check(PaymentIntentStatus status, decimal amount, decimal alreadyRefunded,
-        decimal? requested)
+        decimal? requested, bool refundOutcomeUnknown = false)
     {
+        // ก่อนทุกด่าน: เงินอาจออกไปแล้วโดยระบบไม่รู้ยอด — ด่านยอดคงเหลือข้างล่างใช้ยอดสะสมที่อาจต่ำกว่าความจริง
+        if (refundOutcomeUnknown)
+            return Fail(OutcomeUnknownMessage);
+
         if (status is not (PaymentIntentStatus.Succeeded or PaymentIntentStatus.PartiallyRefunded))
             return Fail("คืนเงินได้เฉพาะรายการที่รับเงินสำเร็จแล้ว");
 
@@ -86,6 +118,29 @@ public static class GatewayRefundMath
         return approvedCreditNotesTotal + Tolerance >= refunded
             ? GatewayRefundCreditNoteState.CreditNoteCovered
             : GatewayRefundCreditNoteState.CreditNoteMissing;
+    }
+
+    /// <summary>ผลตรวจการคืนเงินที่ "ผลไม่แน่ชัด" กับยอดคืนสะสมที่ผู้ให้บริการรายงาน (ฝ่ายค้าน E-2)</summary>
+    public static GatewayRefundVerification Verify(decimal recordedRefunded, decimal? providerRefundedTotal, decimal amount)
+    {
+        if (providerRefundedTotal is not decimal provider)
+            return new(GatewayRefundVerificationOutcome.ProviderSilent, 0m,
+                "ผู้ให้บริการไม่ส่งยอดคืนสะสมของรายการนี้มา — ตรวจที่แดชบอร์ดของผู้ให้บริการ แล้วติดต่อผู้ดูแลระบบ "
+                + "(ระบบยังล็อกการคืนเงินของรายการนี้ไว้ ห้ามเดาว่าเงินออกหรือไม่)");
+        provider = R(provider);
+        if (provider > amount + Tolerance)
+            return new(GatewayRefundVerificationOutcome.Inconsistent, 0m,
+                $"ผู้ให้บริการรายงานยอดคืนสะสม {provider:N2} มากกว่ายอดที่รับ {amount:N2} — ข้อมูลขัดกัน ตรวจที่แดชบอร์ดผู้ให้บริการ (ยังล็อกไว้)");
+        if (Math.Abs(provider - recordedRefunded) <= Tolerance)
+            return new(GatewayRefundVerificationOutcome.NoMoneyOut, 0m,
+                $"ผู้ให้บริการยืนยันยอดคืนสะสม {provider:N2} เท่ากับที่ระบบบันทึก — การคืนครั้งที่ผลไม่แน่ชัดไม่ได้เกิดขึ้น · ปลดล็อกแล้ว คืนใหม่ได้");
+        if (provider < recordedRefunded)
+            return new(GatewayRefundVerificationOutcome.Inconsistent, 0m,
+                $"ผู้ให้บริการรายงานยอดคืนสะสม {provider:N2} น้อยกว่าที่ระบบบันทึก {recordedRefunded:N2} — ข้อมูลขัดกัน "
+                + "ตรวจที่แดชบอร์ดผู้ให้บริการ (ยังล็อกไว้)");
+        var diff = R(provider - recordedRefunded);
+        return new(GatewayRefundVerificationOutcome.MoneyWentOut, diff,
+            $"ผู้ให้บริการคืนเงินไปแล้วจริง {diff:N2} บาท (ยอดคืนสะสม {provider:N2}) — ระบบลงบัญชีคืนเงินส่วนนี้ให้แล้ว · ปลดล็อก");
     }
 
     /// <summary>ต้องมีคนตามออกใบลดหนี้ไหม (ป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้")</summary>

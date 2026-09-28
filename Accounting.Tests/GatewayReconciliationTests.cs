@@ -66,8 +66,11 @@ public class GatewayReconciliationTests
         var refunded = new GatewayIntentAmounts(300m, 6m, 6m, null, IsRefundedFully: true, IsSettled: false);
         var r = GatewayReconciliation.Compute(new[] { Settled(1000m, 20m), refunded });
         Assert.Equal(300m, r.RefundedAmount);
-        // ยอดที่คืนไปแล้วไม่นับเป็น "ยังไม่ถึงรอบโอน" — มันจะไม่มีวันโอนเข้า
-        Assert.Equal(0, r.UnsettledCount);
+        // ฝ่ายค้าน R-E5: ยอดขายที่คืนเต็มไม่มีวันโอนเข้า แต่<b>ค่าธรรมเนียมยังถูกหัก</b>ในรอบโอนถัดไป ⇒ เป็น "ยังไม่ถึงรอบโอน" ติดลบ
+        // (เดิมเทสต์นี้ล็อก UnsettledCount = 0 ⇒ ค่าธรรมเนียม 6 ค้างเป็นผลต่างที่อธิบายไม่ได้ถาวร)
+        Assert.Equal(1, r.UnsettledCount);
+        Assert.Equal(-6m, r.UnsettledAmount);
+        Assert.True(r.IsBalanced);
     }
 
     [Fact]

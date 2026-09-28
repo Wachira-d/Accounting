@@ -32,6 +32,7 @@
     .banner.bad { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b }
     .banner.ok { background:#dcfce7; border:1px solid #86efac; color:#166534 }
     .banner.info { background:#eff6ff; border:1px solid #93c5fd; color:#1e40af }
+    .banner.warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e }
   </style>
 </head>
 <body>
@@ -70,6 +71,7 @@
       pending: null,
       preview: null,
       banks: [],
+      feeVat: null,
 
       async init() {
         await Layout.init();
@@ -106,6 +108,9 @@
         const api = Layout.api(); if (!api) return;
         const code = this.currentProvider();
         this.pending = code ? (await api.getPendingSettlements(code))?.data : null;
+        // R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ — ตัวเลข/ระดับ/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด
+        try { this.feeVat = code ? (await api.getGatewayFeeVat(code))?.data : null; }
+        catch (e) { this.feeVat = { loadError: e.message || 'โหลดไม่สำเร็จ' }; }
         this.preview = null;
         this.render();
       },
@@ -154,6 +159,7 @@
             </div>
             ${anyEst ? `<div class="hint">⚠️ ค่าธรรมเนียมบางรายการยัง<b>เป็นตัวประมาณ</b> (ผู้ให้บริการยังไม่ส่งตัวจริงมา)
               — ถ้ายอดโอนจริงไม่ตรง ให้กดปุ่ม <b>"แก้ค่าธรรมเนียม"</b> ของรายการนั้นในตารางด้านล่าง</div>` : ''}
+            ${p?.feeVatWarning ? `<div class="banner warn" style="margin-top:8px">⚠️ ${Layout.esc(p.feeVatWarning)}</div>` : ''}
             ${p?.legacyRefundedCount ? `<div class="banner bad" style="margin-top:8px">
               มี <b>${p.legacyRefundedCount}</b> รายการที่คืนเงินแล้วแต่<b>ไม่มียอดคืนที่ระบบบันทึก</b> (คืนก่อนระบบเริ่มบันทึก
               หรือลงบัญชีคืนเงินไม่สำเร็จ) — ไม่ถูกนับในรอบโอน · ตรวจที่
@@ -190,7 +196,87 @@
                 title="กด 'ดูตัวอย่าง' ก่อน — ต้องเห็นรายการบัญชีที่จะลงจริง">💾 บันทึกและลงบัญชี</button>
             </div>
             <div id="previewBox" style="margin-top:14px"></div>
+          </div>
+          ${this.renderFeeVat()}`;
+      },
+
+      // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 → 11610 เมื่อได้ใบกำกับรายเดือนของผู้ให้บริการ
+      // (ยอด · อายุ · คำเตือน §82/3 · ด่านทุกตัว = เซิร์ฟเวอร์ · หน้าเว็บแสดง + ส่งฟอร์ม)
+      renderFeeVat() {
+        const v = this.feeVat;
+        if (!v) return '';
+        if (v.loadError) return `<div class="card banner bad">โหลด VAT ค่าธรรมเนียมไม่สำเร็จ: ${Layout.esc(v.loadError)}</div>`;
+        if (!v.companyVatRegistered && !(Number(v.deferredTotal) > 0)) return '';
+        const buckets = (v.buckets || []).filter(b => Number(b.outstanding) !== 0);
+        return `
+          <div class="card">
+            <h3>VAT ค่าธรรมเนียมรอใบกำกับ (11630 → 11610)</h3>
+            <p class="sub">
+              ตอนบันทึกรอบโอน VAT ของค่าธรรมเนียมถูกพักไว้ที่ <b>11630 ภาษีซื้อรอเครดิต</b> — เมื่อได้<b>ใบกำกับภาษีรายเดือน</b>ของผู้ให้บริการ
+              ให้บันทึกที่นี่เพื่อย้ายเข้า <b>11610 ภาษีซื้อ</b> (เข้า ภ.พ.30 เดือนที่เคลม)
+              <br>⚠️ <b>อย่าบันทึกใบกำกับของผู้ให้บริการเป็นเอกสารซื้อ</b> — ค่าธรรมเนียมลงค่าใช้จ่ายไปแล้วตอนบันทึกรอบโอน
+              (จะเป็นค่าใช้จ่ายซ้ำ + ภาษีซื้อสองที่) · ที่นี่ย้ายเฉพาะ VAT ไม่ลงค่าใช้จ่ายซ้ำ
+            </p>
+            <div class="stat-row">
+              <div class="stat"><div class="k">VAT ที่พักจากรอบโอน</div><div class="v">${Layout.money(v.deferredTotal || 0)}</div></div>
+              <div class="stat"><div class="k">เคลมแล้ว (ย้ายเข้า 11610)</div><div class="v">${Layout.money(v.claimedTotal || 0)}</div></div>
+              <div class="stat ${v.worstLevel === 'PastWindow' ? 'bad' : v.worstLevel === 'NearDeadline' ? 'warn' : 'ok'}">
+                <div class="k">ยังค้าง 11630</div><div class="v">${Layout.money(v.outstanding || 0)}</div></div>
+            </div>
+            ${v.warning ? `<div class="banner ${v.worstLevel === 'PastWindow' ? 'bad' : 'warn'}" style="margin-top:10px">⚠️ ${Layout.esc(v.warning)}</div>` : ''}
+            ${buckets.length ? `<div class="scroll-x" style="margin-top:10px"><table class="tbl">
+              <thead><tr><th>เดือนของรอบโอน</th><th class="num">VAT ที่พัก</th><th class="num">ยังค้าง</th><th class="num">อายุ (เดือน)</th><th></th></tr></thead>
+              <tbody>${buckets.map(b => `<tr>
+                <td>${Layout.date(b.monthStartUtc)}</td>
+                <td class="num">${Layout.money(b.deferred)}</td>
+                <td class="num">${Layout.money(b.outstanding)}</td>
+                <td class="num">${Number(b.monthsOld) || 0}</td>
+                <td>${b.warning ? `<span class="hint" style="color:${b.level === 'PastWindow' ? '#b91c1c' : '#b45309'}">${Layout.esc(b.warning)}</span>` : ''}</td>
+              </tr>`).join('')}</tbody></table></div>` : ''}
+            ${v.companyVatRegistered && Number(v.outstanding) > 0 ? `
+            <div class="fgrid" style="margin-top:12px">
+              <div><label>เลขที่ใบกำกับภาษี</label><input class="form-input" id="vInv" placeholder="ตามที่พิมพ์บนใบ"></div>
+              <div><label>วันที่บนใบกำกับ</label><input type="date" class="form-input" id="vInvDate"></div>
+              <div><label>VAT บนใบกำกับ</label><input type="number" step="0.01" class="form-input" id="vVat" placeholder="0.00"></div>
+              <div><label>ชื่อผู้ออกใบกำกับ</label><input class="form-input" id="vName" placeholder="ตามที่พิมพ์บนใบ"></div>
+              <div><label>เลขประจำตัวผู้เสียภาษีผู้ออกใบ</label><input class="form-input" id="vTax" placeholder="13 หลัก"></div>
+              <div><label>สาขาผู้ออกใบ</label><input class="form-input" id="vBranch" value="00000"></div>
+              <div><label>วันที่เคลม (วันที่ใบสำคัญ = เดือน ภ.พ.30)</label>
+                <input type="date" class="form-input" id="vClaimDate" value="${Layout.toDateInput(new Date())}"></div>
+              <div><label>เหตุผลที่เคลมช้า (ถ้าเคลมต่างเดือนกับใบกำกับ)</label><input class="form-input" id="vLate"></div>
+            </div>
+            <div style="margin-top:10px">
+              <button class="btn btn-primary" onclick="Page.claimFeeVat()">🧾 บันทึกรับใบกำกับ (ย้าย VAT เข้า 11610)</button>
+            </div>` : ''}
           </div>`;
+      },
+
+      async claimFeeVat() {
+        const api = Layout.api(); if (!api) return;
+        const val = id => (document.getElementById(id)?.value || '').trim();
+        const body = {
+          providerCode: this.currentProvider(),
+          taxInvoiceNo: val('vInv'),
+          taxInvoiceDate: val('vInvDate'),
+          claimDate: val('vClaimDate'),
+          vatAmount: Number(val('vVat') || 0),
+          supplierName: val('vName'),
+          supplierTaxId: val('vTax'),
+          supplierBranchCode: val('vBranch'),
+          lateReason: val('vLate'),
+        };
+        if (!body.taxInvoiceDate || !body.claimDate) { Layout.toast('กรุณาเลือกวันที่บนใบกำกับและวันที่เคลม', 'error'); return; }
+        if (!(await Layout.confirmDanger({
+          title: 'บันทึกรับใบกำกับค่าธรรมเนียม',
+          message: 'ระบบจะลงใบสำคัญ <b>Dr 11610 ภาษีซื้อ / Cr 11630 ภาษีซื้อรอเครดิต</b> เท่ายอด VAT บนใบกำกับ '
+            + 'และภาษีซื้อนี้จะเข้า ภ.พ.30 เดือนที่เคลม<br><strong style="color:#dc2626">ตรวจเลขที่/วันที่/เลขผู้เสียภาษีกับใบจริงก่อน</strong>',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.claimGatewayFeeVat(body);
+          alert(res?.message || 'บันทึกแล้ว');
+          await this.loadPending();
+        } catch (e) { alert(e.message || 'บันทึกไม่สำเร็จ'); }
       },
 
       renderItems(items) {
@@ -210,15 +296,20 @@
             <td class="num">${Layout.money(i.fee)}${i.feeIsEstimated ? ' <span class="pill est">ประมาณ</span>' : ''}
               ${Number(i.feeVat) > 0 ? `<div class="hint">รวม VAT ${Layout.money(i.feeVat)}</div>` : ''}</td>
             <td class="num">${Layout.money(i.net)}</td>
-            <td>${i.isRefundAfterSettlement ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${i.id}', ${Number(i.fee) || 0})">แก้ค่าธรรมเนียม</button>`}</td>
+            <td>${i.isRefundAfterSettlement ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${i.id}')">แก้ค่าธรรมเนียม</button>`}</td>
           </tr>`).join('')}
           </tbody></table></div>`;
       },
 
       // แก้ค่าธรรมเนียมจริงรายรายการ (รอบ 198 G-6) — ปลายทางของข้อความ "ยอดไม่ตรง" · บังคับเหตุผล (เซิร์ฟเวอร์ audit)
-      async editFee(id, current) {
+      // ฝ่ายค้าน R-E4: ค่าตั้งต้น = feeInput (ค่าที่เก็บตามความหมายของโหมด — AddedOnTop = ก่อน VAT) ไม่ใช่ fee (ยอดที่ถูกหักรวม VAT)
+      //   เดิมเติม fee แล้วบันทึกกลับเป็นก่อน VAT ⇒ กดตกลงโดยไม่แก้ = VAT ถูกบวกซ้ำ · ป้ายมาจากเซิร์ฟเวอร์ (feeInputLabel)
+      async editFee(id) {
         const api = Layout.api(); if (!api) return;
-        const raw = prompt('ค่าธรรมเนียมจริงของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):', Number(current || 0).toFixed(2));
+        const it = (this.pending?.items || []).find(x => x.id === id);
+        if (!it) return;
+        const raw = prompt(`${it.feeInputLabel || 'ค่าธรรมเนียม'} ของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):`,
+          Number(it.feeInput || 0).toFixed(2));
         if (raw === null || raw.trim() === '') return;
         const fee = Number(raw);
         if (!(fee >= 0)) { Layout.toast('ค่าธรรมเนียมไม่ถูกต้อง', 'error'); return; }
@@ -295,6 +386,7 @@
           <div class="banner ${ok ? 'ok' : 'bad'}">
             ${ok ? '✅ ' : '⛔ '}${Layout.esc(plan.message || (ok ? 'ยอดตรง — กดบันทึกได้' : 'ยังบันทึกไม่ได้'))}
           </div>
+          ${plan.warning ? `<div class="banner warn">⚠️ ${Layout.esc(plan.warning)}</div>` : ''}
           <div class="stat-row" style="margin-bottom:10px">
             <div class="stat"><div class="k">รายการ</div><div class="v">${plan.count || 0}</div></div>
             <div class="stat"><div class="k">ยอดรับชำระ</div><div class="v">${Layout.money(plan.gross || 0)}</div></div>
