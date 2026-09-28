@@ -15,8 +15,11 @@ namespace Accounting.Helpers;
 /// <para>═══ กติกา ═══
 /// <list type="bullet">
 /// <item><b>idempotent</b>: ผูกแล้ว (ผังยังอยู่ · ของบริษัทนี้ · เปิดใช้) ⇒ คืนตัวเดิม · ผังที่สร้างไว้แล้วแต่ยังไม่ได้ผูก (ล้มกลางทาง) ⇒ ผูกตัวเดิม</item>
-/// <item><b>gateway ในระบบ</b> (ผูก <c>PaymentProviderConfigId</c> ที่มีผังพักอยู่แล้ว) ⇒ ใช้ผังของ config (11340) — PaymentIntent ลงไว้ที่นั่นแล้ว
-/// ถ้าแยกผังใหม่ ยอดรับชำระกับยอดโอนจะอยู่คนละผังตลอดไป</item>
+/// <item><b>gateway ในระบบ</b> (ชนิด Gateway + ผูก <c>PaymentProviderConfigId</c>) ⇒ ใช้ผังที่ <c>IGatewayAccountResolver.ResolveClearingAccountAsync</c>
+/// คืน (ผังของ config หรือ <b>11340</b> เมื่อ config ไม่ได้ตั้ง) ซึ่งผู้เรียกส่งมาใน <c>resolvedGatewayClearingAccountId</c> — PaymentIntent ลงไว้ที่นั่นแล้ว
+/// · <b>ไม่สร้าง 1134x ให้ช่องทาง gateway เด็ดขาด</b> · resolver หาไม่เจอ/ผังที่ผูกไว้ไม่ตรง ⇒ ล้มดัง
+/// (ฝ่ายค้าน R-A1: เดิมอ่าน <c>config.ClearingAccountId</c> ตรง ๆ ⇒ config ค่าเริ่มต้น (ว่าง) ได้ 11341 ใหม่ ทั้งที่ intent ลง 11340 ⇒
+/// 11340 ค้าง +X · 11341 ติดลบ −X ตลอดไป) — ตัวตัดสิน <see cref="DecideGatewayClearing"/></item>
 /// <item>ผังที่ผูกไว้ถูกลบ/ปิดใช้ ⇒ <b>ล้มดัง</b> (ห้ามผูกผังใหม่เงียบ ๆ — ยอดพักค้างอยู่ในผังเดิม)</item>
 /// <item>ครบ 9 ช่องทางแล้ว ⇒ ล้มดังพร้อมทางไปต่อ · ไม่มีกลุ่ม 113 ⇒ ล้มดัง</item>
 /// <item>tenant: ทุก query กรอง <c>CompanyId</c> · ล็อก advisory ต่อบริษัท (สองคำขอพร้อมกันได้คนละรหัส ไม่ชน unique)</item>
@@ -32,12 +35,41 @@ public static class SettlementChannelAccounts
     private const string LockScope = "settlement-clearing";
 
     /// <summary>คืน AccountId ของผังพักของช่องทาง — สร้าง/ผูกให้ถ้ายังไม่มี (ดูกติกาที่หัวคลาส)</summary>
-    /// <exception cref="BusinessRuleException">ช่องทางไม่ใช่ของบริษัทนี้ · ผังที่ผูกไว้ใช้ไม่ได้ · ไม่มีกลุ่ม 113 · ครบ 9 ช่องทาง</exception>
+    /// <param name="resolvedGatewayClearingAccountId">ช่องทาง gateway ที่ผูก config: ผังจาก <c>IGatewayAccountResolver.ResolveClearingAccountAsync</c>
+    /// (ตัวตัดสินตัวเดียวของขา "เงินเข้า") · ช่องทางอื่นไม่ใช้</param>
+    /// <exception cref="BusinessRuleException">ช่องทางไม่ใช่ของบริษัทนี้ · ผังที่ผูกไว้ใช้ไม่ได้ · ไม่มีกลุ่ม 113 · ครบ 9 ช่องทาง ·
+    /// gateway หาผังพักไม่เจอ/ไม่ตรงกับที่ผูกไว้</exception>
     public static async Task<Guid> EnsureClearingAccountAsync(
-        AccountingDbContext db, Guid companyId, SettlementChannel channel, CancellationToken ct = default)
+        AccountingDbContext db, Guid companyId, SettlementChannel channel, Guid? resolvedGatewayClearingAccountId,
+        CancellationToken ct = default)
     {
         if (channel.CompanyId != companyId)
             throw new BusinessRuleException("ช่องทางนี้ไม่ใช่ของบริษัทที่เลือก", "SETTLEMENT-TENANT", 403);
+
+        // ── gateway ในระบบ: ผังพักเดียวกับขาเงินเข้าของ PaymentIntent เสมอ · ไม่สร้าง 1134x (R-A1) ──
+        var resolvedUsable = resolvedGatewayClearingAccountId is Guid rg && await IsUsableAsync(db, companyId, rg, ct);
+        switch (DecideGatewayClearing(channel.Kind, channel.PaymentProviderConfigId, resolvedGatewayClearingAccountId, resolvedUsable,
+                    channel.ClearingAccountId))
+        {
+            case GatewayClearingDecision.UseResolved:
+                var g = resolvedGatewayClearingAccountId!.Value;
+                if (channel.ClearingAccountId != g)
+                {
+                    channel.ClearingAccountId = g;
+                    await db.SaveChangesAsync(ct);
+                }
+                return g;
+            case GatewayClearingDecision.FailResolverMissing:
+                throw new BusinessRuleException(
+                    $"หาผังพักของ gateway ที่ช่องทาง \"{channel.DisplayName}\" ผูกไว้ไม่ได้ (ไม่ได้ตั้งผังพักใน config และไม่มีผัง 11340) — "
+                    + "เพิ่มผัง 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน หรือเลือกผังพักในหน้าตั้งค่าการรับชำระเงินออนไลน์ก่อนผูกช่องทาง",
+                    "SETTLEMENT-GATEWAY-CLEARING");
+            case GatewayClearingDecision.FailMismatch:
+                throw new BusinessRuleException(
+                    $"ผังพักของช่องทาง \"{channel.DisplayName}\" ไม่ตรงกับผังที่ gateway ลงรับเงินไว้ — ยอดรับชำระกับยอดโอนจะอยู่คนละผังตลอดไป · "
+                    + "ให้ผังพักของช่องทางเป็นผังเดียวกับที่ตั้งในหน้าตั้งค่าการรับชำระเงินออนไลน์ (หรือเปลี่ยนที่ config แล้วโอนยอดคงค้างด้วยสมุดรายวัน)",
+                    "SETTLEMENT-GATEWAY-CLEARING-MISMATCH");
+        }
 
         if (channel.ClearingAccountId is Guid linked)
         {
@@ -46,20 +78,6 @@ public static class SettlementChannelAccounts
                 $"ผังพักของช่องทาง \"{channel.DisplayName}\" ถูกลบหรือปิดใช้ — ยอดที่พักค้างอยู่ในผังเดิม ระบบจึงไม่ผูกผังใหม่ให้เอง · "
                 + "เปิดใช้ผังเดิมในหน้าผังบัญชี หรือเลือกผังพักใหม่ในหน้าตั้งค่าช่องทาง (แล้วโอนยอดคงค้างด้วยสมุดรายวัน)",
                 "SETTLEMENT-CLEARING-UNUSABLE");
-        }
-
-        if (channel.Kind == SettlementChannelKind.Gateway && channel.PaymentProviderConfigId is Guid cfgId)
-        {
-            var cfgClearing = await db.PaymentProviderConfigs.AsNoTracking()
-                .Where(c => c.Id == cfgId && c.CompanyId == companyId)
-                .Select(c => c.ClearingAccountId)
-                .FirstOrDefaultAsync(ct);
-            if (cfgClearing is Guid g && await IsUsableAsync(db, companyId, g, ct))
-            {
-                channel.ClearingAccountId = g;
-                await db.SaveChangesAsync(ct);
-                return g;
-            }
         }
 
         if (db.Database.CurrentTransaction != null)
@@ -139,6 +157,29 @@ public static class SettlementChannelAccounts
 
     private static Task<bool> IsUsableAsync(AccountingDbContext db, Guid companyId, Guid accountId, CancellationToken ct)
         => db.ChartOfAccounts.AnyAsync(a => a.Id == accountId && a.CompanyId == companyId && a.IsActive, ct);
+
+    /// <summary>ผลของ <see cref="DecideGatewayClearing"/></summary>
+    internal enum GatewayClearingDecision
+    {
+        /// <summary>ไม่ใช่ gateway ที่ผูก config — ใช้กติกาผังพักย่อย 1134x</summary>
+        NotGateway = 0,
+        /// <summary>ใช้ผังที่ resolver คืน (ผูกให้ถ้ายังไม่ผูก)</summary>
+        UseResolved = 1,
+        /// <summary>resolver หาผังไม่เจอ/ผังใช้ไม่ได้ — ล้มดัง (ห้ามสร้าง 1134x แทน)</summary>
+        FailResolverMissing = 2,
+        /// <summary>ช่องทางผูกผังอื่นไว้แล้ว — ล้มดัง (ยอดจะแยกผังตลอดไป)</summary>
+        FailMismatch = 3,
+    }
+
+    /// <summary>ตัดสินผังพักของช่องทาง gateway (pure · R-A1) — Gateway + ผูก config ⇒ ต้องใช้ผังของ resolver เท่านั้น</summary>
+    internal static GatewayClearingDecision DecideGatewayClearing(SettlementChannelKind kind, Guid? paymentProviderConfigId,
+        Guid? resolvedClearingAccountId, bool resolvedUsable, Guid? linkedClearingAccountId)
+    {
+        if (kind != SettlementChannelKind.Gateway || paymentProviderConfigId is null) return GatewayClearingDecision.NotGateway;
+        if (resolvedClearingAccountId is not Guid r || !resolvedUsable) return GatewayClearingDecision.FailResolverMissing;
+        if (linkedClearingAccountId is Guid l && l != r) return GatewayClearingDecision.FailMismatch;
+        return GatewayClearingDecision.UseResolved;
+    }
 
     /// <summary>รหัสถัดไปที่ว่างใน 11341–11349 (ข้ามรหัสที่ถูกใช้ รวมที่ลบแล้ว) · ครบ ⇒ null — เรียงด้วยตัวเลข ไม่ใช่ข้อความ</summary>
     internal static string? NextClearingCode(IEnumerable<string?> usedCodes)

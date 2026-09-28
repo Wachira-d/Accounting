@@ -1157,6 +1157,78 @@ RULES += [
          why="S-1 บัญชีพัก gateway (11340) ไม่ใช่ลูกหนี้การค้าในรายงานกระทบบัญชีย่อย"),
 ]
 
+# ── รอบ 198 เฟส 1 ทีม B: settlement นำเข้า/จัดประเภท/จับคู่/ตั้งค่าช่องทาง (+ ฝ่ายค้าน R-A1/R-A2/R-A9) ──
+SETTLE_IMPORT = "Services/Settlement/SettlementImportService.cs"
+SETTLE_LINES = "Services/Settlement/SettlementImportService.Lines.cs"
+SETTLE_CHANNEL = "Services/Settlement/SettlementChannelService.cs"
+SETTLE_CLEARING = "Helpers/SettlementChannelAccounts.cs"
+TRADE_AR = "Helpers/TradeReceivableAccount.cs"
+RULES += [
+    dict(file=SETTLE_IMPORT, method="PersistAsync",
+         must=["AdvisoryLockKey.SettlementImport", "SettlementTxnKey.Assign(", "ExistingKeysAsync(", "SettlementPiiScrubber.Scrub(",
+               "ClassifyAsync(", "MatchLinesAsync(", "SyncIntentStampsAsync(", "_db.AddChainedAuditLog(",
+               "SettlementSaleMatch.DeriveImportStatus("],
+         before=[("ClassifyAsync(", "AdvisoryLockKey.SettlementImport"),
+                 ("AdvisoryLockKey.SettlementImport", "_db.SettlementLines.Add("),
+                 ("SettlementPiiScrubber.Scrub(", "_db.SettlementLines.Add(")],
+         forbid=["AuditLogs.Add("],
+         why="นำเข้า: ตัด PII ก่อนเก็บ · จัดประเภทนอกล็อก (ห้ามถือล็อกรอ AI) · ตรวจซ้ำใต้ล็อกต่อช่องทางก่อนเพิ่มบรรทัด · audit ใน hash chain"),
+    dict(file=SETTLE_IMPORT, method="ClassifyAsync",
+         must=["SettlementLineClassification.ResolveLocal(", "SettlementLabelSeed.Lookup(", "LearnedLabelsAsync(", "_ai.AskAsync(",
+               "SettlementLineClassification.AcceptModelAnswer(", "p.FeedbackId = resp.FeedbackId", "p.UsedAi = resp.UsedAi"],
+         must_re=[r"if\s*\(\s*t\s+is\s+SettlementLineType\s+ok\s*\)"],
+         before=[("SettlementLineClassification.ResolveLocal(", "_ai.AskAsync("),
+                 ("_ai.AskAsync(", "SettlementLineClassification.AcceptModelAnswer(")],
+         forbid=["Enum.Parse<SettlementLineType>(", "Enum.TryParse<SettlementLineType>(", "p.Type = Enum"],
+         why="กฎเหล็ก #1: local ก่อน (adapter → คลัง → seed) · คำตอบครู/นักเรียนผ่านด่านเดียว (ชุด enum · ≥0.70 · ไม่ใช่ majority · เครื่องหมาย) · เก็บ FeedbackId/UsedAi"),
+    dict(file=SETTLE_IMPORT, method="LearnedLabelsAsync",
+         must=["SettlementClassifiedBy.User", "SettlementLineClassification.LearnedVote("],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId", r"l\s*\.\s*ChannelId\s*==\s*channelId"],
+         why="คลังที่เรียนต่อช่องทาง = เฉพาะที่ผู้ใช้เลือกเอง (ไม่สอนตัวเอง) · tenant + ช่องทาง (IgnoreQueryFilters ต้องกรองเอง)"),
+    dict(file=SETTLE_IMPORT, method="ImportFromPaymentIntentsAsync",
+         must=["GatewayClearingMatchesAsync(", "LoadIntentRowsAsync("],
+         before=[("GatewayClearingMatchesAsync(", "LoadIntentRowsAsync(")],
+         why="R-A1: บรรทัดที่พก PaymentIntentId นับว่าอยู่ในผังพักแล้ว — ต้องยืนยันว่าผังพักช่องทาง = ผังขาเงินเข้าของ intent ก่อน"),
+    dict(file=SETTLE_IMPORT, method="GatewayClearingMatchesAsync", must=["_gatewayAccounts.ResolveClearingAccountAsync("],
+         why="R-A1: ผังพัก gateway มาจากตัวตัดสินตัวเดียว (IGatewayAccountResolver) ไม่อ่าน config เอง"),
+    dict(file=SETTLE_LINES, method="MatchLinesAsync",
+         must=["SettlementSaleMatch.Decide(", "GatewayClearingMatchesAsync("],
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"r\s*\.\s*CompanyId\s*==\s*companyId",
+                  r"i\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="จับคู่ด้วยตัวตัดสินตัวเดียว (ไม่เดา · หลายผู้สมัคร = คนเลือก) · tenant ทุก query · intent เฉพาะผังพักที่ตรง (R-A1)"),
+    dict(file=SETTLE_LINES, method="ReclassifyLineAsync",
+         must=["SettlementLineClassification.Fits(", "AdvisoryLockKey.SettlementImport", "LoadEditableBatchAsync(",
+               "_recorder.RecordUserChoiceAsync(", "UserChoiceSource.Explicit"],
+         before=[("SettlementLineClassification.Fits(", "Apply(line"),
+                 ("_recorder.RecordUserChoiceAsync(", "tx.CommitAsync(")],
+         why="ผู้ใช้เลือกประเภท: ด่านเครื่องหมายเดียวกับตัวคิดแผน · ปิดลูปการเรียนรู้แบบ Explicit ในธุรกรรมเดียวกับการกระทำ (DOCTRINE §3)"),
+    dict(file=SETTLE_LINES, method="VoidBatchAsync",
+         must=["LoadEditableBatchAsync(", "AdvisoryLockKey.SettlementImport", "l.IsDeleted = true", "batch.IsDeleted = true",
+               "SyncIntentStampsAsync(", "_db.AddChainedAuditLog("],
+         forbid=["AuditLogs.Add("],
+         why="R-A9: ยกเลิก = soft-delete รอบ+บรรทัด (unique กรอง IsDeleted ⇒ นำเข้าใหม่ได้) · ปลด intent · เฉพาะรอบที่ยังไม่ลงบัญชี · audit"),
+    dict(file=SETTLE_CHANNEL, method="SaveAsync",
+         must=["SettlementLineTypeRules.ParseFeeAccountMap(", "_gatewayAccounts.ResolveClearingAccountAsync(",
+               "SettlementChannelAccounts.EnsureClearingAccountAsync(", "ResolveCounterpartyAsync(", "_db.AddChainedAuditLog("],
+         must_re=[r"if\s*\(\s*rejected\s*\.\s*Count\s*>\s*0\s*\)\s*throw\b"],
+         call_args=[("SettlementChannelAccounts.EnsureClearingAccountAsync(", "gatewayClearing")],
+         before=[("_gatewayAccounts.ResolveClearingAccountAsync(", "SettlementChannelAccounts.EnsureClearingAccountAsync(")],
+         why="ตั้งค่าช่องทาง: แผนผังค่าธรรมเนียมผ่านตัวอ่านกลาง (ปฏิเสธ = ล้มดัง) · ผังพัก gateway จาก resolver (R-A1) · audit"),
+    dict(file=SETTLE_CHANNEL, method="ResolveCounterpartyAsync", must=["ContactTaxBranchKey.FindAsync("],
+         must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="ผู้ติดต่อของแพลตฟอร์มด้วยคีย์เลขภาษี+สาขา (รอบ 193) · tenant"),
+    dict(file=SETTLE_CLEARING, method="EnsureClearingAccountAsync",
+         must=["DecideGatewayClearing("],
+         before=[("DecideGatewayClearing(", "CreateUnderLockAsync(")],
+         why="R-A1: gateway ที่ผูก config ห้ามสร้าง 1134x — ตัดสินก่อนถึงตัวสร้างผัง"),
+    dict(file=GW_SETTLE, method="SelectCandidatesAsync", must=["i.SettlementBatchId == null"],
+         why="รอบ 198 ทีม B: intent ที่อยู่ในรอบโอน settlement ใหม่แล้ว ห้ามเส้นเดิมหยิบซ้ำ (ธนาคารเกินสองเท่า)"),
+    dict(file=SUBLEDGER, method="ReconcileAsync", must=["_db.SettlementChannels"],
+         why="R-A2: ผังพัก wallet ของช่องทาง settlement ไม่ใช่ลูกหนี้การค้า"),
+    dict(file=TRADE_AR, method="IsTradeReceivableControl", must=["SettlementChannelAccounts.IsClearingCode("],
+         why="R-A2: 11341–11349 ไม่ใช่ลูกหนี้การค้า (ไม่มีเอกสารลูกหนี้รองรับ)"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)
