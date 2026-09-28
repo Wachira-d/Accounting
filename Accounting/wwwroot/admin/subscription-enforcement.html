@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บังคับแพ็กเกจบนหน้าเว็บ - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .mode-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:8px }
+    .mode-opt { border:2px solid #e2e8f0; border-radius:12px; padding:14px; cursor:pointer; background:#fff; display:block }
+    .mode-opt input { margin-right:6px }
+    .mode-opt.selected { border-color:#6366f1; background:#f5f3ff }
+    .mode-opt .desc { font-size:12px; color:#475569; margin-top:6px; line-height:1.55 }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px }
+    .pill-red { background:#fee2e2; color:#b91c1c }
+    .pill-gray { background:#f1f5f9; color:#475569 }
+    .pill-green { background:#dcfce7; color:#15803d }
+    .muted { color:#64748b; font-size:12px }
+    .feat-list { font-size:12px; color:#475569; line-height:1.6 }
+    .summary-row { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0 12px }
+    .summary-row div { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 14px; min-width:150px }
+    .summary-row b { display:block; font-size:20px }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <div class="info-box">
+      <strong>บังคับแพ็กเกจ/ระงับบริษัทบนหน้าเว็บ</strong> — คำตัดสินเจ้าของรอบ 198 ข้อ 5 "รายงานก่อน แล้วค่อยเปิดบังคับ"<br>
+      ก่อนหน้านี้หน้าเว็บไม่เคยถูกตรวจแพ็กเกจเลย (ตรวจเฉพาะ partner ที่ส่ง X-Company-Id มาเอง) ·
+      โหมดเงาจะตัดสินทุกคำขอจากหน้าเว็บแต่ <b>ไม่บล็อก</b> แล้วบันทึกไว้ด้านล่าง — ตรวจให้ครบก่อนเปลี่ยนเป็น "บังคับ"
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🚦 สวิตช์ (ใช้กับคำขอจากหน้าเว็บทุกบริษัท)</span></div>
+      <div id="modeState" class="muted">กำลังโหลด...</div>
+      <div class="mode-grid" id="modeGrid">
+        <label class="mode-opt" data-mode="Off">
+          <input type="radio" name="mode" value="Off"><b>ปิด (Off)</b>
+          <div class="desc">ไม่ตรวจเลย — พฤติกรรมก่อนรอบ 198 · ไม่บันทึกผลโหมดเงา</div>
+        </label>
+        <label class="mode-opt" data-mode="Shadow">
+          <input type="radio" name="mode" value="Shadow"><b>โหมดเงา (Shadow)</b> <span class="pill pill-gray">ค่าตั้งต้น</span>
+          <div class="desc">ตัดสินเหมือนบังคับ แต่ปล่อยผ่าน แล้วบันทึกว่าใครจะถูกบล็อกเพราะอะไร</div>
+        </label>
+        <label class="mode-opt" data-mode="Enforce">
+          <input type="radio" name="mode" value="Enforce"><b>บังคับ (Enforce)</b>
+          <div class="desc">บล็อกจริง: ฟีเจอร์ไม่อยู่ในแพ็กเกจ → 403 และหน้าเว็บพาไปหน้าแพ็กเกจ ·
+            การสมัครสมาชิกถูกยกเลิก/ระงับ → 403 ทุกคำขอ</div>
+        </label>
+      </div>
+      <div style="margin-top:12px">
+        <button class="admin-btn admin-btn-primary" id="saveModeBtn">บันทึกสวิตช์</button>
+      </div>
+      <div class="muted" id="writeGateNote" style="margin-top:10px"></div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">👀 ผลโหมดเงา — บริษัทที่ "จะถูกบล็อก" (จากการใช้งานจริง)</span>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" id="clearHitsBtn">ล้างผล / เริ่มนับใหม่</button>
+      </div>
+      <div id="hitSummary" class="summary-row"></div>
+      <div id="hits">กำลังโหลด...</div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">🔎 ตรวจล่วงหน้าจากข้อมูลปัจจุบัน (ไม่ต้องรอการใช้งาน)</span>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" id="precheckBtn">คำนวณ</button>
+      </div>
+      <div id="precheck" class="muted">กด "คำนวณ" เพื่อดูว่าบริษัทไหนขาดฟีเจอร์ที่ถูก gate หรือจะถูกบล็อกเพราะสถานะ</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      base: '/subscription-enforcement',
+      mode: null,
+      status: null,
+      pre: { skip: 0, take: 200 },
+
+      init() {
+        AdminLayout.init('subscription-enforcement');
+        document.querySelectorAll('input[name="mode"]').forEach(r =>
+          r.addEventListener('change', () => this.highlight(r.value)));
+        document.getElementById('saveModeBtn').addEventListener('click', () => this.saveMode());
+        document.getElementById('clearHitsBtn').addEventListener('click', () => this.clearHits());
+        document.getElementById('precheckBtn').addEventListener('click', () => { this.pre.skip = 0; this.loadPrecheck(); });
+        this.load();
+      },
+
+      fmt(t) { return t ? new Date(t).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : '-'; },
+
+      modeLabel(m) {
+        return { Off: 'ปิด (Off)', Shadow: 'โหมดเงา (Shadow)', Enforce: 'บังคับ (Enforce)' }[m] || m || '-';
+      },
+
+      highlight(m) {
+        document.querySelectorAll('.mode-opt').forEach(el => el.classList.toggle('selected', el.dataset.mode === m));
+      },
+
+      selectedMode() {
+        const r = document.querySelector('input[name="mode"]:checked');
+        return r ? r.value : null;
+      },
+
+      async load() {
+        try {
+          const res = await AdminAPI.get(this.base);
+          this.render(res.data);
+        } catch (e) {
+          document.getElementById('hits').innerHTML =
+            `<div style="color:#dc2626;padding:12px">${AdminLayout.esc(e.message)}</div>`;
+        }
+      },
+
+      render(d) {
+        this.status = d;
+        this.mode = d.mode;
+        document.querySelectorAll('input[name="mode"]').forEach(r => { r.checked = r.value === d.mode; });
+        this.highlight(d.mode);
+        document.getElementById('modeState').innerHTML =
+          `สถานะตอนนี้: <b>${AdminLayout.esc(this.modeLabel(d.mode))}</b> · ${AdminLayout.esc(d.guidance)}`;
+        document.getElementById('writeGateNote').innerHTML =
+          `ด่านเขียนของบริษัทถูกระงับ/หมดอายุ ใช้ค่า config <code>Subscription:Enforcement:Mode</code> = ` +
+          `<b>${AdminLayout.esc(d.writeGateMode)}</b> (แก้ใน appsettings — ไม่ขึ้นกับสวิตช์นี้)`;
+
+        document.getElementById('hitSummary').innerHTML = `
+          <div>บริษัทที่จะถูกบล็อก<b>${d.companiesWouldBlock}</b></div>
+          <div>จำนวนคำขอที่จะถูกบล็อก<b>${Number(d.hitsWouldBlock).toLocaleString('th-TH')}</b></div>`;
+
+        const hits = d.hits || [];
+        if (hits.length === 0) {
+          document.getElementById('hits').innerHTML = d.mode === 'Off'
+            ? '<div class="muted" style="padding:12px">สวิตช์ปิดอยู่ — ไม่มีการบันทึกผล</div>'
+            : '<div class="muted" style="padding:12px">ยังไม่มีคำขอที่จะถูกบล็อก (หรือยังไม่มีการใช้งานตั้งแต่เปิดโหมดเงา)</div>';
+          return;
+        }
+        document.getElementById('hits').innerHTML = `
+          <div class="admin-table-wrap"><table class="admin-table">
+            <thead><tr><th>บริษัท</th><th>ผลเมื่อเปิดบังคับ</th><th>เส้นทาง</th><th class="admin-text-right">ครั้ง</th>
+              <th>พบครั้งแรก</th><th>ล่าสุด</th></tr></thead>
+            <tbody>${hits.map(h => `
+              <tr>
+                <td><strong>${AdminLayout.esc(h.companyName)}</strong><div class="muted">${AdminLayout.esc(h.plan || '-')}</div></td>
+                <td>${h.wouldBlock ? '<span class="pill pill-red">จะถูกบล็อก</span>' : '<span class="pill pill-gray">log อย่างเดียว</span>'}
+                  <div style="font-size:12px;margin-top:4px">${AdminLayout.esc(h.description)}</div></td>
+                <td class="muted">${AdminLayout.esc(h.routeKey || '-')} · ${AdminLayout.esc(h.lastMethod || '')}</td>
+                <td class="admin-text-right">${Number(h.hitCount).toLocaleString('th-TH')}</td>
+                <td class="muted">${this.fmt(h.firstSeenAt)}</td>
+                <td class="muted">${this.fmt(h.lastSeenAt)}</td>
+              </tr>`).join('')}</tbody>
+          </table></div>
+          ${d.hitsTruncated ? '<div class="muted" style="margin-top:6px">แสดง 2,000 แถวล่าสุดเท่านั้น</div>' : ''}`;
+      },
+
+      async saveMode() {
+        const m = this.selectedMode();
+        if (!m) { AdminLayout.toast('เลือกโหมดก่อน', 'error'); return; }
+        if (m === this.mode) { AdminLayout.toast('ไม่มีการเปลี่ยนแปลง'); return; }
+        if (m === 'Enforce') {
+          const n = this.status ? this.status.companiesWouldBlock : 0;
+          if (!confirm(`เปิด "บังคับ" แล้ว ${n} บริษัทในผลโหมดเงาจะถูกบล็อกทันที (และบริษัทอื่นที่ยังไม่เคยเรียกเส้นทางนั้น) — ยืนยัน?`)) return;
+        }
+        const btn = document.getElementById('saveModeBtn');
+        btn.disabled = true;
+        try {
+          const res = await AdminAPI.put(this.base + '/mode', { mode: m });
+          this.render(res.data);
+          AdminLayout.toast('บันทึกสวิตช์แล้ว: ' + this.modeLabel(res.data.mode));
+        } catch (e) {
+          AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+          this.highlight(this.mode);
+        } finally { btn.disabled = false; }
+      },
+
+      async clearHits() {
+        if (!confirm('ล้างผลโหมดเงาทั้งหมดแล้วเริ่มนับใหม่?')) return;
+        try {
+          const res = await AdminAPI.del(this.base + '/hits');
+          this.render(res.data);
+          AdminLayout.toast('ล้างผลแล้ว');
+        } catch (e) { AdminLayout.toast('ล้างผลไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      async loadPrecheck() {
+        const box = document.getElementById('precheck');
+        box.innerHTML = 'กำลังคำนวณ...';
+        try {
+          const res = await AdminAPI.get(`${this.base}/precheck?skip=${this.pre.skip}&take=${this.pre.take}`);
+          this.renderPrecheck(res.data);
+        } catch (e) {
+          box.innerHTML = `<div style="color:#dc2626">${AdminLayout.esc(e.message)}</div>`;
+        }
+      },
+
+      renderPrecheck(p) {
+        const box = document.getElementById('precheck');
+        const from = p.skip + 1, to = p.skip + p.companiesChecked;
+        const gaps = (p.featureGaps || []).map(g => `
+          <tr><td><strong>${AdminLayout.esc(g.feature)}</strong></td>
+            <td class="admin-text-right">${g.companies}</td>
+            <td class="muted">${(g.routeKeys || []).map(k => AdminLayout.esc(k)).join(' · ')}</td></tr>`).join('');
+        const rows = (p.rows || []).map(r => `
+          <tr>
+            <td><strong>${AdminLayout.esc(r.companyName)}</strong>
+              <div class="muted">${AdminLayout.esc(r.companyStatus)}</div></td>
+            <td>${AdminLayout.esc(r.plan || '-')}<div class="muted">${AdminLayout.esc(r.subscriptionStatus || '')}</div></td>
+            <td>${(r.impacts || []).map(i => `<div style="font-size:12px"><span class="pill pill-red">!</span> ${AdminLayout.esc(i)}</div>`).join('')
+                 || '<span class="muted">-</span>'}</td>
+            <td class="feat-list">${r.missingFeatures == null ? '<span class="muted">ยังไม่มีแพ็กเกจ</span>'
+                 : (r.missingFeatures.length ? `<details><summary>${r.missingFeatures.length} ฟีเจอร์</summary>${r.missingFeatures.map(f => AdminLayout.esc(f)).join(', ')}</details>` : '-')}</td>
+          </tr>`).join('');
+        box.innerHTML = `
+          <div class="summary-row">
+            <div>ตรวจแล้ว<b>${from > to ? 0 : from + '–' + to}</b><span class="muted">จาก ${p.totalCompanies} บริษัท</span></div>
+            <div>ถูกบล็อกทุกคำขอ<b>${p.companiesBlockedEntirely}</b></div>
+            <div>ถูกบล็อกการสร้าง/แก้ไข<b>${p.companiesWritesBlocked}</b></div>
+            <div>ยังไม่มีแพ็กเกจ<b>${p.companiesWithoutSubscription}</b></div>
+          </div>
+          <div class="muted" style="margin-bottom:8px">${AdminLayout.esc(p.guidance)} · config ด่านเขียน = ${AdminLayout.esc(p.writeGateMode)}</div>
+          ${gaps ? `<h4 style="margin:8px 0">ฟีเจอร์ที่บริษัทในหน้านี้ขาด</h4>
+            <div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>ฟีเจอร์</th><th class="admin-text-right">บริษัท</th><th>เส้นทางที่จะถูกบล็อก</th></tr></thead>
+              <tbody>${gaps}</tbody></table></div>` : ''}
+          <h4 style="margin:12px 0 8px">รายบริษัท (เฉพาะที่มีผลกระทบ)</h4>
+          ${rows ? `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>บริษัท</th><th>แพ็กเกจ</th><th>ผลเมื่อเปิดบังคับ</th><th>ฟีเจอร์ที่จะถูกปิด</th></tr></thead>
+              <tbody>${rows}</tbody></table></div>` : '<div class="muted">ไม่มีบริษัทในหน้านี้ที่ได้รับผลกระทบ</div>'}
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="admin-btn admin-btn-outline admin-btn-sm" id="prePrev" ${p.skip <= 0 ? 'disabled' : ''}>← ก่อนหน้า</button>
+            <button class="admin-btn admin-btn-outline admin-btn-sm" id="preNext" ${to >= p.totalCompanies ? 'disabled' : ''}>ถัดไป →</button>
+          </div>`;
+        document.getElementById('prePrev').addEventListener('click', () => {
+          this.pre.skip = Math.max(0, this.pre.skip - this.pre.take); this.loadPrecheck();
+        });
+        document.getElementById('preNext').addEventListener('click', () => {
+          this.pre.skip += this.pre.take; this.loadPrecheck();
+        });
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

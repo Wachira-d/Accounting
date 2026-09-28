@@ -35,6 +35,9 @@ F = 'Accounting/Filters/'
 REJECT = r'[\[,]\s*(?:Accounting\.Filters\.)?RejectApiKey\s*(?:\(|\]|,)'
 OWNER = r'[\[,]\s*(?:Accounting\.Filters\.)?RequireOwner\s*(?:\(|\]|,)'
 PERM = r'[\[,]\s*(?:Accounting\.Filters\.)?RequirePermission\s*\('
+# [Authorize(Roles = "SystemAdmin")] — strip_code ตัดเนื้อสตริงเป็นช่องว่างเท่าความยาวเดิม ⇒ "SystemAdmin" = 11 ช่องว่าง
+# (ความยาวเป็นตัวแยกจาก role อื่น · ตัวที่อยู่ระดับคลาสก็นับ — M12)
+SYSADMIN = r'[\[,]\s*Authorize\s*\(\s*Roles\s*=\s*" {11}"\s*\)'
 CALL_ARGS = r'\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)'   # อาร์กิวเมนต์ที่มีวงเล็บซ้อนได้ 2 ชั้น
 
 
@@ -129,6 +132,11 @@ RULES = [
     (C + 'PaymentGatewayController.cs', 'VerifyRefund', 'attr', PERM),
     (C + 'PaymentGatewayController.cs', 'ClaimFeeVat', 'attr', REJECT),
     (C + 'PaymentGatewayController.cs', 'ClaimFeeVat', 'attr', PERM),
+    # ---- รอบ 198 ข้อ 5: สวิตช์บังคับแพ็กเกจบนหน้าเว็บ (กระทบทุกบริษัท) — แอดมินแพลตฟอร์มที่ล็อกอินเท่านั้น ห้ามคีย์ ----
+    (C + 'AdminSubscriptionEnforcementController.cs', 'SetMode', 'attr', REJECT),
+    (C + 'AdminSubscriptionEnforcementController.cs', 'SetMode', 'attr', SYSADMIN),
+    (C + 'AdminSubscriptionEnforcementController.cs', 'ClearHits', 'attr', REJECT),
+    (C + 'AdminSubscriptionEnforcementController.cs', 'ClearHits', 'attr', SYSADMIN),
     (C + 'SensitivityController.cs', 'SetRule', 'attr', REJECT),
     (C + 'SensitivityController.cs', 'SetRule', 'attr', OWNER),
     (C + 'ApprovalController.cs', 'CreateRule', 'attr', REJECT),

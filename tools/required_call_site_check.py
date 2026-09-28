@@ -1513,6 +1513,33 @@ RULES += [
          why="ยกเลิกผ่านเส้นปกติ (กลับรายการ · ไม่ลบแถว) · ตรวจงวด+สิทธิ์ก่อนแตะอะไร · ยกเลิกรับชำระก่อนเอกสาร"),
 ]
 
+# ── รอบ 198 ข้อ 5 (คำตัดสินเจ้าของ): gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ — รายงานก่อน แล้วค่อยเปิดบังคับ ──
+# เทสต์ของ Helpers/SubscriptionGatePolicy + TenantCompanyId ล็อกแค่ตัวตัดสิน · ถอดการเรียกใน middleware แล้วเทสต์ยังเขียว ⇒ ล็อกจุดเรียก
+SUB_MW = "Middleware/SubscriptionMiddleware.cs"
+TENANT_MW = "Middleware/TenantAccessMiddleware.cs"
+RULES += [
+    dict(file=SUB_MW, method="InvokeAsync",
+         must=["TenantCompanyId.FromHttp(context)", "shadowLog.GetWebModeAsync(", "SubscriptionGatePolicy.ActionFor(",
+               "SubscriptionGatePolicy.Decide(", "subscriptionService.GetGateStateAsync(", "SubscriptionGatePolicy.RequiredFeatureFor("],
+         must_re=[r"if\s*\(\s*action\s*==\s*SubscriptionGateAction\s*\.\s*Shadow\s*\)\s*\{\s*await\s+RecordShadowAsync\s*\([^;]*\)\s*;"
+                  r"\s*await\s+_next\s*\(\s*context\s*\)\s*;\s*return\s*;\s*\}",
+                  r"if\s*\(\s*!\s*target\s*\.\s*HeaderCarried\s*\)\s*webMode\s*=\s*await\s+shadowLog\s*\.\s*GetWebModeAsync"],
+         before=[("TenantCompanyId.FromHttp(context)", "SubscriptionGatePolicy.ActionFor("),
+                 ("SubscriptionGatePolicy.Decide(", "RecordShadowAsync("),
+                 ("RecordShadowAsync(", "Write403(")],
+         forbid=["Headers.TryGetValue(", "RouteValues.TryGetValue(", "RouteFeatureMap", "HasFlag("],
+         why="ข้อ 5: บริษัทมาจากตัวหาเดียวกับ TenantAccessMiddleware (route ชนะ header) · คำขอที่ส่ง header บังคับเสมอ (ไม่อ่านสวิตช์เว็บ) · "
+             "โหมดเงาบันทึกแล้วปล่อยผ่านทันที (ห้ามถึงเส้น 403) · ตัดสินด้วย SubscriptionGatePolicy ตัวเดียว (ห้ามประกอบเงื่อนไขเอง)"),
+    dict(file=SUB_MW, method="RecordShadowAsync",
+         must=["shadowLog.RecordAsync("],
+         must_re=[r"WouldBlock\s*:\s*true", r"WouldBlock\s*:\s*false"],
+         why="ข้อ 5: รายงานแอดมินต้องเห็นทั้งเหตุที่จะบล็อกและเหตุที่ config ด่านเขียนตั้งเป็น LogOnly"),
+    dict(file=TENANT_MW, method="ExtractCompanyId",
+         must=["TenantCompanyId.FromHttp(context)"],
+         forbid=["Headers.TryGetValue(", "RouteValues.TryGetValue("],
+         why="ข้อ 5: บริษัทที่ตรวจสมาชิกกับบริษัทที่ตัดสินแพ็กเกจต้องมาจากตัวหาเดียวกัน — สำเนาที่สอง = header ปลอมยืมแพ็กเกจได้"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],

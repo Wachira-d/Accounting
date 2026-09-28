@@ -214,7 +214,7 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | `BranchResponse` echo ครบทุกฟิลด์ | `Models/DTOs/Dimension/DimensionDtos.cs` | เดิมคืนแค่ 10 ช่อง ตกตำบล/อำเภอ/ไปรษณีย์/โทร/อีเมล ⇒ ฟอร์มแก้ไข prefill ไม่ได้ |
 | `UpdateBranchRequest` ครอบทุกช่อง | ไฟล์เดียวกัน | เดิมแก้ที่อยู่แยกส่วน/รหัสภายใน/สถานะสำนักงานใหญ่ **ไม่ได้เลย** (กดบันทึกแล้วเงียบ) |
 | ด่านความถูกต้อง | `Services/Implementations/DimensionalAccountingService.cs` | รหัสสรรพากรไม่ซ้ำ · `00000` สงวนให้สำนักงานใหญ่ · สำนักงานใหญ่มีได้แห่งเดียว (ตั้งใหม่ปลดของเดิมอัตโนมัติ) · ปิดสาขาสุดท้าย/สำนักงานใหญ่ไม่ได้ · ลบได้เฉพาะสาขาที่ยังไม่มี JE อ้างถึง (พ.ร.บ.การบัญชี ม.10) |
-| ปลด gate แพ็กเกจ | `Middleware/SubscriptionMiddleware.cs` (`FeatureExemptRoutes`) | `/dimensions/branches` เป็นข้อบังคับ §86/4 ไม่ใช่ของขายเพิ่ม — ส่วน `/dimensions` (มิติ/ศูนย์ต้นทุน) ยัง gate ด้วย `CostCenter` เหมือนเดิม |
+| ปลด gate แพ็กเกจ | `Helpers/SubscriptionGatePolicy.cs` (`FeatureExemptRoutes` · ย้ายจาก `SubscriptionMiddleware` รอบ 198 — §5.2) | `/dimensions/branches` เป็นข้อบังคับ §86/4 ไม่ใช่ของขายเพิ่ม — ส่วน `/dimensions` (มิติ/ศูนย์ต้นทุน) ยัง gate ด้วย `CostCenter` เหมือนเดิม |
 | หน้าตั้งค่า | `wwwroot/pages/dimensions.html` (แท็บสาขา) | ฟอร์มครบตาม §86/4 · ปุ่มแก้ไขดึงค่าเดิมมาเติมทุกช่อง · เห็นสาขาที่ปิดใช้งานเพื่อเปิดกลับได้ |
 | เมนู | `wwwroot/js/layout.js` | เพิ่ม `branches` ในหมวด "ตั้งค่า & ผู้ใช้" → `/pages/dimensions.html?tab=branches` (**ไฟล์เดิม** — ลิงก์/บุ๊กมาร์กเก่าใช้ได้ทั้งหมด); เมนู `dimensions` เดิมเหลือเฉพาะมิติ |
 | ตัวกรองสาขาในสมุดรายวัน | `Services/Implementations/AccountingService.cs` | เดิมกรองผ่าน `Branch.DimensionId` ที่ **ไม่มีโค้ดตรงไหนเซ็ตเลย** ⇒ ข้ามเงื่อนไขทั้งก้อน คืนทุกแถว (silent no-op ตั้งแต่เขียนมา); เปลี่ยนมากรอง `BranchId` บนหัว JE/บรรทัด ให้ตรงกับ GL/งบทดลอง/งบกำไรขาดทุน |
@@ -345,6 +345,30 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 - ข้อความปฏิเสธต้องบอก **ใช้ไป/เพดาน/จำนวนที่ต้องการ/ทางไปต่อ** เสมอ (ลบของที่ไม่ใช้ หรืออัปเกรด)
 - *ก่อนรอบ 159*: เมธอด `CanAddPageAsync`/`CanAddProductAsync` มีอยู่แต่ **ไม่มีใครเรียก** ⇒
   เพดานทั้งสองเป็นแค่ตัวเลขบนหน้าจอ ลูกค้าสร้างเกินได้ไม่จำกัด
+
+### 5.2 gate แพ็กเกจ / ระงับบริษัท (`SubscriptionCheckMiddleware`) — สวิตช์แพลตฟอร์ม 🔨 *(รอบ 198 ข้อ 5 · ค่าตั้งต้น = โหมดเงา)*
+
+**ความจริงก่อนรอบ 198**: middleware รู้บริษัทจาก header `X-Company-Id` **อย่างเดียว** และข้ามทั้งหมดเมื่อไม่มี ·
+`wwwroot/js/api.js` ไม่เคยส่ง header นี้ (เส้นทางเว็บเป็น `/api/companies/{companyId}/…`) ⇒ **หน้าเว็บไม่เคยถูก gate
+แพ็กเกจ (`RouteFeatureMap`) และไม่เคยถูกบล็อกเมื่อบริษัท/subscription ถูกระงับ** · ถูกบังคับเฉพาะ partner/integration ที่ส่ง header
+มาเอง · และคำขอที่ส่ง header ของบริษัท B มากับ route ของบริษัท A ถูกตัดสินแพ็กเกจด้วย **B** ทั้งที่ผ่านด่านสมาชิกด้วย A.
+
+**คำตัดสินเจ้าของ** (`erp-review/2026-09-25/settlement/DECISIONS.md` ข้อ 5): รายงานก่อน แล้วค่อยเปิดบังคับ
+
+| ชั้น | ตัวเดียวของระบบ | หมายเหตุ |
+| --- | --- | --- |
+| บริษัทของคำขอ | `Helpers/TenantCompanyId.FromHttp` (route `{companyId}` ก่อน แล้วค่อย header) | ใช้ร่วมกับ `TenantAccessMiddleware` ⇒ บริษัทที่ตรวจสมาชิก = บริษัทที่ตัดสินแพ็กเกจเสมอ · header ขัดกับ route = ใช้ route (log Information) |
+| ทำอะไรกับคำขอ | `SubscriptionGatePolicy.ActionFor` | **ส่ง header มาเอง = บังคับเสมอ** (พฤติกรรมเดิม ห้ามหลวม) · รู้บริษัทจาก route อย่างเดียว = ตามสวิตช์ · ค่าสวิตช์ที่ไม่รู้จัก = Shadow |
+| สวิตช์ | `SiteSettings.SubscriptionEnforcementMode` (`Off=0` · `Shadow=1` ค่าตั้งต้น · `Enforce=2`) · migration `DEFAULT 1` | อ่านผ่าน `ISubscriptionGateShadowLog.GetWebModeAsync` (ไม่มีแถว/อ่านไม่ได้ = Shadow) · ตั้งที่หน้าแอดมิน `/admin/subscription-enforcement.html` (`PUT /api/admin/subscription-enforcement/mode` · SystemAdmin + `[RejectApiKey]` · รับเป็นชื่อเท่านั้น) |
+| ตัดสิน | `SubscriptionGatePolicy.Decide` + ตาราง `RouteFeatureMap`/`FeatureExemptRoutes` (ย้ายมาจาก middleware) | ลำดับเดิม: subscription Cancelled/Suspended → 403 ทุกคำขอ · บริษัทถูกระงับ (เขียน) → 403 · หมดอายุเกินผ่อนผัน (เขียน) → 402 · ฟีเจอร์ไม่อยู่ในแพ็กเกจ → 403 · สองด่านเขียนยังขึ้นกับ config `Subscription:Enforcement:Mode` (Off/LogOnly/Enforce — ค่าใน appsettings = LogOnly) เหมือนเดิม |
+| แพ็กเกจ/สถานะ/ฟีเจอร์ | `ISubscriptionService.GetGateStateAsync` (overlay User License + mask ที่เจ้าของปิด — `ResolveGateOverlayAsync` ตัวเดียวกับ `GetSubscriptionAsync`) | ไม่นับการใช้งาน (คำขอเว็บทุกตัวผ่านที่นี่) · ไม่มี subscription → `GetSubscriptionAsync` สร้าง FreeTrial ให้เหมือนเดิม |
+| โหมดเงา | `SubscriptionGateShadowHits` (upsert ต่อ บริษัท×เหตุ×ฟีเจอร์ · นับครั้ง · แรก/ล่าสุด) | ไม่มี PII (ไม่มีผู้ใช้/URL — เก็บคีย์เส้นทางในตาราง + method) · `WouldBlock=false` = เหตุที่ config ด่านเขียนเป็น LogOnly · fail-open |
+| รายงาน | `GET /api/admin/subscription-enforcement` (ผลโหมดเงา) · `GET …/precheck?skip&take` (ตรวจล่วงหน้าจากข้อมูลปัจจุบัน ≤500 บริษัท/หน้า) · `DELETE …/hits` | ตรวจล่วงหน้าเรียกตัวตัดสินตัวเดียวกันด้วยคำขอสมมุติ (ห้ามเขียน HasFlag เอง) |
+
+- **ขั้นตอนของเจ้าของ**: เปิดหน้าแอดมิน → ดู "ผลโหมดเงา" (ใครใช้จริงแล้วจะถูกบล็อก) + กด "คำนวณ" ตรวจล่วงหน้า → แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้า
+  ที่ควรได้ → "ล้างผล" แล้วสังเกตต่อ → เลือก "บังคับ" (มี confirm บอกจำนวนบริษัทที่จะถูกบล็อก)
+- **ยังไม่ครอบ**: คำขอ API key ที่ไม่มี `{companyId}` ใน route และไม่ส่ง header (`/api/v1/*` รู้บริษัทจาก `context.Items["CompanyId"]` ของคีย์) —
+  ยังไม่ถูก gate แพ็กเกจเหมือนเดิม (นอกขอบเขตคำตัดสินข้อ 5)
 
 ---
 
@@ -801,7 +825,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit <pending>)_
+_Last verified against codebase: 2026-09-28 (rev 35 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-28 (rev 33 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit <pending>)_
 

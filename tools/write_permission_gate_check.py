@@ -107,6 +107,9 @@ WATCHED = [
     # จับคู่ธนาคาร · chargeback · ตั้งผังพัก/โหมดภาษีของช่องทาง) — service ของทีม B/C ไม่ตรวจสิทธิ์โดยสัญญา ⇒ ด่านทั้งหมดอยู่ที่นี่ ·
     # ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet) · คีย์จาก Helpers/SettlementPermissionScope ตัวเดียว
     "Accounting/Controllers/SettlementController.cs",
+    # เพิ่มรอบ 198 ข้อ 5 — สวิตช์บังคับแพ็กเกจบนหน้าเว็บ (กระทบทุกบริษัท) + ล้างผลโหมดเงา · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet) ·
+    # ด่าน = [Authorize(Roles = "SystemAdmin")] บน action (ระดับคลาสไม่นับ — scan อ่านเฉพาะช่วงของ action)
+    "Accounting/Controllers/AdminSubscriptionEnforcementController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

@@ -6179,6 +6179,30 @@ public static class DatabaseMigrationHelper
             // default true = กฎหมายวันนี้ · ตัวตัดสิน Helpers/AbbreviatedTaxInvoiceRule
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "RequirePhoR06ForAbbreviatedTaxInvoice" boolean NOT NULL DEFAULT true;""",
 
+            // ═══ รอบ 198 ข้อ 5: gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ — "รายงานก่อน แล้วค่อยเปิดบังคับ" ═══
+            // SubscriptionCheckMiddleware เดิมรู้บริษัทจาก X-Company-Id อย่างเดียว (api.js ไม่ส่ง) ⇒ หน้าเว็บไม่เคยถูก gate
+            // สวิตช์: 0=Off 1=Shadow 2=Enforce · DEFAULT 1 = ตัดสินแต่ไม่บล็อก (แถวเดิมได้ Shadow ทันทีโดยไม่มีใครถูกบล็อก)
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "SubscriptionEnforcementMode" integer NOT NULL DEFAULT 1;""",
+            // ผลโหมดเงา: 1 แถวต่อ (บริษัท, เหตุผล, ฟีเจอร์) · upsert นับครั้ง (atomic ข้าม instance แบบ ChatRateBuckets) ·
+            // ไม่มี PII: ไม่เก็บผู้ใช้/URL เต็ม เก็บแค่คีย์เส้นทางในตาราง RouteFeatureMap + method
+            """
+            CREATE TABLE IF NOT EXISTS "SubscriptionGateShadowHits" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "Reason" varchar(40) NOT NULL,
+                "Feature" varchar(60) NOT NULL DEFAULT '',
+                "Plan" varchar(40) NULL,
+                "RouteKey" varchar(80) NULL,
+                "LastMethod" varchar(10) NULL,
+                "WouldBlock" boolean NOT NULL DEFAULT true,
+                "HitCount" bigint NOT NULL DEFAULT 0,
+                "FirstSeenAt" timestamp NOT NULL DEFAULT now(),
+                "LastSeenAt" timestamp NOT NULL DEFAULT now()
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_Key" ON "SubscriptionGateShadowHits" ("CompanyId", "Reason", "Feature");""",
+            """CREATE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_LastSeen" ON "SubscriptionGateShadowHits" ("LastSeenAt");""",
+
             // ═══ POS เฟส 3: ขายแล้วกินวัตถุดิบตามสูตร (sell-consumes-BOM) ═══
             // เดิม BOM ถูกอ่านจาก ProductionOrderService ที่เดียว (ผลิตล่วงหน้า) ·
             // การขายไม่เคยอ่านสูตรเลย ⇒ ขายชานม 1 แก้วตัดสต็อก "ชานมไข่มุก" ตัวเดียว

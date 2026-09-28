@@ -450,48 +450,20 @@ public class SubscriptionService : ISubscriptionService
         // and blocks paid routes even after admin attached the company to an
         // Enterprise License. Mirrors the source-of-truth picked by
         // GetEffectivePlanAsync but stays inline so we don't double-query.
-        var plan = sub.Plan;
-        string? planName = null;
-        var status = sub.Status;
-        var features = sub.EnabledFeatures;
-        var endDate = sub.EndDate;
-        var maxUsers = sub.MaxUsers;
-        var maxCompanies = sub.MaxCompanies;
-        var maxDocs = sub.MaxDocumentsPerMonth;
-        var maxJournals = sub.MaxJournalEntriesPerMonth;
-        var maxStorage = sub.MaxStorageBytes;
-
-        if (sub.AccountSubscriptionId.HasValue)
-        {
-            var acct = await _db.AccountSubscriptions
-                .Include(a => a.PlanTemplate)
-                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
-            if (acct != null)
-            {
-                plan = acct.PlanTemplate.Plan;
-                planName = acct.PlanTemplate.Name;
-                status = acct.Status;
-                features = acct.EnabledFeatures;
-                endDate = acct.EndDate;
-                maxUsers = acct.MaxUsersPerCompany;
-                maxCompanies = acct.MaxCompanies;
-                maxDocs = acct.MaxDocumentsPerMonth;
-                maxJournals = acct.MaxJournalEntriesPerMonth;
-                maxStorage = acct.MaxStorageBytes;
-            }
-        }
-
-        // Owner-level subtractive override — when the Owner has flipped
-        // off features in CompanySettings.OwnerDisabledFeatures, mask
-        // them out so the frontend sees only what the Owner has chosen
-        // to expose. SystemAdmin's Subscription assignment is still
-        // the upper bound; this is opt-out only.
-        var ownerDisabled = await _db.Set<CompanySettings>()
-            .Where(s => s.CompanyId == companyId)
-            .Select(s => (FeatureFlags?)s.OwnerDisabledFeatures)
-            .FirstOrDefaultAsync() ?? FeatureFlags.None;
-        if (ownerDisabled != FeatureFlags.None)
-            features = features & ~ownerDisabled;
+        // รอบ 198 ข้อ 5: แยกเป็น ResolveGateOverlayAsync ตัวเดียวที่ GetGateStateAsync (middleware) ใช้ร่วม — แพ็กเกจ/สถานะ/ฟีเจอร์
+        // ที่หน้าเว็บเห็นกับที่ gate ตัดสินต้องมาจากสูตรเดียว
+        var ov = await ResolveGateOverlayAsync(sub, companyId);
+        var plan = ov.Plan;
+        string? planName = ov.PlanName;
+        var status = ov.Status;
+        var features = ov.Features;
+        var acct = ov.Account;
+        var endDate = acct?.EndDate ?? sub.EndDate;
+        var maxUsers = acct?.MaxUsersPerCompany ?? sub.MaxUsers;
+        var maxCompanies = acct?.MaxCompanies ?? sub.MaxCompanies;
+        var maxDocs = acct?.MaxDocumentsPerMonth ?? sub.MaxDocumentsPerMonth;
+        var maxJournals = acct?.MaxJournalEntriesPerMonth ?? sub.MaxJournalEntriesPerMonth;
+        var maxStorage = acct?.MaxStorageBytes ?? sub.MaxStorageBytes;
 
         // add-on ที่ซื้อเพิ่ม (string code) เดินทางมากับแพ็กเกจ เพื่อให้หน้าเว็บมี
         // ตัวตัดสินสิทธิ์ตัวเดียว (`Layout.hasFeature`) ไม่ต้องยิง endpoint ที่สอง
@@ -516,6 +488,57 @@ public class SubscriptionService : ISubscriptionService
             sub.IsPermanentFree,
             addOnCodes,
             planName);
+    }
+
+    /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
+    /// <see cref="GetSubscriptionAsync"/> และ <see cref="GetGateStateAsync"/></summary>
+    private sealed record GateOverlay(SubscriptionPlan Plan, string? PlanName, SubscriptionStatus Status,
+        FeatureFlags Features, AccountSubscription? Account);
+
+    private async Task<GateOverlay> ResolveGateOverlayAsync(Subscription sub, Guid companyId)
+    {
+        var plan = sub.Plan;
+        string? planName = null;
+        var status = sub.Status;
+        var features = sub.EnabledFeatures;
+        AccountSubscription? acct = null;
+
+        if (sub.AccountSubscriptionId.HasValue)
+        {
+            acct = await _db.AccountSubscriptions
+                .Include(a => a.PlanTemplate)
+                .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+            if (acct != null)
+            {
+                plan = acct.PlanTemplate.Plan;
+                planName = acct.PlanTemplate.Name;
+                status = acct.Status;
+                features = acct.EnabledFeatures;
+            }
+        }
+
+        // Owner-level subtractive override — when the Owner has flipped
+        // off features in CompanySettings.OwnerDisabledFeatures, mask
+        // them out so the frontend sees only what the Owner has chosen
+        // to expose. SystemAdmin's Subscription assignment is still
+        // the upper bound; this is opt-out only.
+        var ownerDisabled = await _db.Set<CompanySettings>()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (FeatureFlags?)s.OwnerDisabledFeatures)
+            .FirstOrDefaultAsync() ?? FeatureFlags.None;
+        if (ownerDisabled != FeatureFlags.None)
+            features = features & ~ownerDisabled;
+
+        return new GateOverlay(plan, planName, status, features, acct);
+    }
+
+    /// <inheritdoc/>
+    public async Task<SubscriptionGateState?> GetGateStateAsync(Guid companyId)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        if (sub == null) return null;
+        var ov = await ResolveGateOverlayAsync(sub, companyId);
+        return new SubscriptionGateState(ov.Plan, ov.Status, ov.Features);
     }
 
     /// <summary>

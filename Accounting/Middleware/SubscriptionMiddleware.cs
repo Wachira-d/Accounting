@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -9,18 +10,18 @@ namespace Accounting.Middleware;
 
 /// <summary>
 /// Middleware ตรวจสอบสถานะ Subscription และ Feature Access ก่อนเข้าถึง API
+///
+/// <para>รอบ 198 ข้อ 5 (คำตัดสินเจ้าของ "รายงานก่อน แล้วค่อยเปิดบังคับ"): เดิมรู้บริษัทจาก <c>X-Company-Id</c> อย่างเดียว
+/// แล้วข้ามทั้งหมดเมื่อไม่มี ⇒ หน้าเว็บ (api.js ไม่ส่ง header) ไม่เคยถูก gate แพ็กเกจ/ระงับบริษัท. ตอนนี้หาบริษัทด้วย
+/// <see cref="TenantCompanyId"/> ตัวเดียวกับ <c>TenantAccessMiddleware</c> (route ชนะ header) แล้วให้
+/// <see cref="SubscriptionGatePolicy"/> ตัดสิน: คำขอที่ส่ง header มาเอง = บังคับเหมือนเดิมเสมอ · คำขอที่รู้บริษัทจาก route
+/// อย่างเดียว = ตามสวิตช์แพลตฟอร์ม (Off / Shadow = ตัดสินแต่ไม่บล็อก + บันทึกลงรายงานแอดมิน / Enforce)</para>
 /// </summary>
 public class SubscriptionCheckMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly IConfiguration _config;
     private readonly ILogger<SubscriptionCheckMiddleware> _logger;
-
-    /// <summary>โหมดบังคับ readonly-after-expiry (kill-switch WP-A1) —
-    /// อ่านจาก config `Subscription:Enforcement:Mode`.
-    /// Off = ไม่ทำอะไร, LogOnly = log แต่ปล่อยผ่าน (default, ทยอยเปิด),
-    /// Enforce = บล็อก write จริง.</summary>
-    private enum EnforceMode { Off, LogOnly, Enforce }
 
     private static readonly HashSet<string> ExcludedPaths = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -46,102 +47,6 @@ public class SubscriptionCheckMiddleware
             || path.StartsWith("/api/company/", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// เส้นทางที่ **ห้าม gate ตามแพ็กเกจ** แม้จะตรงกับ RouteFeatureMap ด้านล่าง —
-    /// เพราะเป็นข้อบังคับตามกฎหมาย ไม่ใช่ฟีเจอร์เสริมที่ขายเพิ่มได้
-    ///
-    /// `/dimensions/branches` — สาขาผูกกับ **รหัสสาขาสรรพากร** ที่ §86/4 บังคับให้
-    /// ปรากฏบนใบกำกับภาษี (ประกาศอธิบดีฯ ฉบับที่ 199) และ §87 บังคับแยกรายงาน
-    /// ภาษีซื้อ/ขายต่อสถานประกอบการ. กิจการที่มี 2 สาขาแล้วอยู่แพ็กเกจเล็ก
-    /// จะออกเอกสารให้ถูกกฎหมายไม่ได้เลยถ้าโดน gate — ของที่ขายเพิ่มได้คือ
-    /// "มิติ/ศูนย์ต้นทุน" (`/dimensions` เส้นทางอื่น) ไม่ใช่ทะเบียนสาขา
-    /// </summary>
-    private static readonly string[] FeatureExemptRoutes =
-    {
-        "/dimensions/branches",
-    };
-
-    /// <summary>
-    /// Map URL path segments to required FeatureFlag.
-    /// Match is by path containing the key (case-insensitive).
-    /// More specific paths (longer keys) are evaluated first.
-    /// </summary>
-    private static readonly List<(string Path, FeatureFlags Feature)> RouteFeatureMap = new()
-    {
-        // Reports - more specific first
-        ("/reports/aging",            FeatureFlags.AgingReport),
-        ("/reports/budget",           FeatureFlags.BudgetManagement),
-        ("/reports/fpa",              FeatureFlags.FPA),
-        ("/reports/arap",             FeatureFlags.AdvancedReporting),
-        ("/reports/financial-mgmt",   FeatureFlags.AdvancedReporting),
-        ("/executive-reports",        FeatureFlags.AdvancedReporting),
-
-        // Operations
-        ("/payroll",                  FeatureFlags.Payroll),
-        ("/commission",               FeatureFlags.Commission),
-        ("/fixed-assets",             FeatureFlags.FixedAssets),
-        ("/recurring",                FeatureFlags.RecurringTransactions),
-        ("/revenue-recognition",      FeatureFlags.RevenueRecognition),
-        ("/loans",                    FeatureFlags.LoanManagement),
-        ("/multi-currency",           FeatureFlags.MultiCurrency),
-        ("/projects",                 FeatureFlags.ProjectAccounting),
-        ("/time-billing",             FeatureFlags.TimeBilling),
-        ("/dimensions",               FeatureFlags.CostCenter),
-        ("/intercompany",             FeatureFlags.MultiCompany),
-        ("/consolidation",            FeatureFlags.Consolidation),
-        ("/warehouse",                FeatureFlags.WarehouseManagement),
-        ("/inventory",                FeatureFlags.Inventory),
-        ("/products",                 FeatureFlags.Inventory),
-        ("/supplies",                 FeatureFlags.Inventory),
-        ("/budget",                   FeatureFlags.BudgetManagement),
-        ("/aging",                    FeatureFlags.AgingReport),
-
-        // Banking
-        ("/bank",                     FeatureFlags.BankReconciliation),
-
-        // Tax / Documents — more specific eTax routes evaluated first (longest-key wins in OrderByDescending)
-        ("/etax/send-email",          FeatureFlags.EtaxByEmail),
-        ("/etax/by-email",            FeatureFlags.EtaxByEmail),
-        ("/etax/sign-and-submit",     FeatureFlags.EtaxDirect),
-        ("/etax/quick-submit",        FeatureFlags.EtaxDirect),
-        ("/etax/submit",              FeatureFlags.EtaxDirect),
-        ("/etax/sign",                FeatureFlags.EtaxDirect),
-        ("/etax",                     FeatureFlags.EtaxInvoice),
-        ("/tax",                      FeatureFlags.TaxManagement),
-        ("/withholding-tax-certs",    FeatureFlags.TaxManagement),
-
-        // Workflow / Approval
-        ("/approval",                 FeatureFlags.ApprovalWorkflow),
-        ("/signatures",               FeatureFlags.ApprovalWorkflow),
-
-        // Audit
-        ("/audit",                    FeatureFlags.AuditLog),
-
-        // Integration / API
-        ("/api-developer",            FeatureFlags.APIAccess),
-        ("/integrations",             FeatureFlags.APIAccess),
-        ("/webhooks",                 FeatureFlags.Webhook),
-        ("/import-export",            FeatureFlags.BulkImport),
-
-        // AI
-        ("/ai-tools",                 FeatureFlags.AI_Features),
-        ("/ai/",                      FeatureFlags.AI_Features),
-        ("/ocr",                      FeatureFlags.DocumentOCR),
-
-        // Customer portal
-        ("/customer-portal",          FeatureFlags.CustomerPortal),
-
-        // FPA
-        ("/fpa",                      FeatureFlags.FPA),
-
-        // CMS
-        ("/cms/sites",                FeatureFlags.CmsWebsiteBuilder),
-        ("/cms/themes",               FeatureFlags.CmsWebsiteBuilder),
-        ("/cms/customers",            FeatureFlags.CmsWebsiteBuilder),
-        ("/commerce",                 FeatureFlags.CmsEcommerce),
-        ("/booking",                  FeatureFlags.CmsBooking),
-    };
-
     public SubscriptionCheckMiddleware(RequestDelegate next,
         IConfiguration config, ILogger<SubscriptionCheckMiddleware> logger)
     {
@@ -150,20 +55,12 @@ public class SubscriptionCheckMiddleware
         _logger = logger;
     }
 
-    private EnforceMode GetEnforceMode() =>
-        (_config["Subscription:Enforcement:Mode"] ?? "LogOnly").Trim().ToLowerInvariant() switch
-        {
-            "off" => EnforceMode.Off,
-            "enforce" => EnforceMode.Enforce,
-            _ => EnforceMode.LogOnly,   // default = ทยอยเปิด (log-only ก่อน)
-        };
-
     private static bool IsWriteMethod(string method) =>
         HttpMethods.IsPost(method) || HttpMethods.IsPut(method)
         || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
 
     public async Task InvokeAsync(HttpContext context,
-        ISubscriptionService subscriptionService, AccountingDbContext db)
+        ISubscriptionService subscriptionService, AccountingDbContext db, ISubscriptionGateShadowLog shadowLog)
     {
         var path = context.Request.Path.Value ?? "";
 
@@ -175,28 +72,35 @@ public class SubscriptionCheckMiddleware
             return;
         }
 
-        // Skip if no company header
-        if (!context.Request.Headers.TryGetValue("X-Company-Id", out var companyIdStr)
-            || !Guid.TryParse(companyIdStr, out var companyId))
+        // บริษัทของคำขอ — ตัวหาเดียวกับ TenantAccessMiddleware (route ชนะ header) ⇒ ปลอม header ของบริษัทอื่นเพื่อยืม
+        // แพ็กเกจไม่ได้ เพราะแพ็กเกจที่ตัดสินคือของบริษัทที่ผ่านด่านสมาชิกแล้วเสมอ
+        var target = TenantCompanyId.FromHttp(context);
+        if (target.CompanyId is not Guid companyId)
+        {
+            await _next(context);
+            return;
+        }
+        if (target.HeaderDisagreesWithRoute)
+            _logger.LogInformation("X-Company-Id ไม่ตรงกับบริษัทใน route {Path} — ใช้บริษัทใน route {CompanyId}", path, companyId);
+
+        // สวิตช์เว็บอ่านเฉพาะคำขอที่ไม่ได้ส่ง header — คำขอที่ส่ง header มาเองบังคับเสมอ (พฤติกรรมเดิม ห้ามหลวม)
+        var webMode = SubscriptionEnforcementMode.Off;
+        if (!target.HeaderCarried)
+            webMode = await shadowLog.GetWebModeAsync(context.RequestAborted);
+        var action = SubscriptionGatePolicy.ActionFor(target, webMode);
+        if (action == SubscriptionGateAction.Skip)
         {
             await _next(context);
             return;
         }
 
-        FeatureFlags enabledFeatures = FeatureFlags.None;
-        SubscriptionStatus status = SubscriptionStatus.Active;
-        SubscriptionPlan plan = SubscriptionPlan.FreeTrial;
-
+        // แพ็กเกจ/สถานะ/ฟีเจอร์จากสูตรเดียวกับ GetSubscriptionAsync แต่ไม่นับการใช้งาน (คำขอเว็บทุกตัวผ่านที่นี่แล้ว) ·
+        // ยังไม่มี subscription → GetSubscriptionAsync สร้าง FreeTrial ให้เหมือนเดิม
+        SubscriptionGateState sub;
         try
         {
-            var sub = await subscriptionService.GetSubscriptionAsync(companyId);
-            enabledFeatures = sub.EnabledFeatures;
-            status = sub.Status;
-            plan = sub.Plan;
-
-            context.Items["SubscriptionPlan"] = sub.Plan;
-            context.Items["SubscriptionStatus"] = sub.Status;
-            context.Items["EnabledFeatures"] = sub.EnabledFeatures;
+            sub = await subscriptionService.GetGateStateAsync(companyId)
+                  ?? ToGateState(await subscriptionService.GetSubscriptionAsync(companyId));
         }
         catch
         {
@@ -205,106 +109,106 @@ public class SubscriptionCheckMiddleware
             return;
         }
 
-        // Block if subscription is cancelled/suspended
-        if (status == SubscriptionStatus.Cancelled || status == SubscriptionStatus.Suspended)
-        {
-            await Write403(context, "SUBSCRIPTION_INACTIVE",
-                $"การสมัครสมาชิกของคุณ {GetStatusText(status)} โปรดต่ออายุ");
-            return;
-        }
-
-        var enforceMode = GetEnforceMode();
+        var writeMode = SubscriptionGatePolicy.ParseWriteMode(_config["Subscription:Enforcement:Mode"]);
         var isWrite = IsWriteMethod(context.Request.Method);
 
-        // ===== WP-A2: บังคับ CompanyStatus.Suspended (admin สั่งระงับบริษัท) =====
-        // Suspended = บล็อก write ทุกอย่าง (อ่านยังได้ ให้ export/ดูข้อมูลตาม PDPA);
-        // billing/auth ถูก whitelist ไว้แล้วผ่าน ExcludedPaths ด้านบน.
-        if (enforceMode != EnforceMode.Off && isWrite)
+        // ===== WP-A2/A1: ข้อเท็จจริงของด่านเขียน (บริษัทถูกระงับ · หมดอายุเกินผ่อนผัน) — โหลดเมื่อจำเป็นเท่านั้น =====
+        CompanyStatusRow? co = null;
+        SubscriptionService_EffectivePlan? eff = null;
+        if (SubscriptionGatePolicy.NeedsWriteFacts(sub.Status, isWrite, writeMode))
         {
-            var co = await SafeGetCompanyStatusAsync(db, companyId);
-
-            if (co != null && co.Status == CompanyStatus.Suspended)
-            {
-                var reason = string.IsNullOrWhiteSpace(co.SuspendReason)
-                    ? "โปรดติดต่อผู้ดูแลระบบ"
-                    : co.SuspendReason;
-                if (enforceMode == EnforceMode.Enforce)
-                {
-                    await Write403(context, "COMPANY_SUSPENDED",
-                        $"บริษัทนี้ถูกระงับการใช้งาน: {reason}");
-                    return;
-                }
-                _logger.LogInformation(
-                    "[Enforcement:LogOnly] would block WRITE {Method} {Path} — company {CompanyId} suspended",
-                    context.Request.Method, path, companyId);
-            }
+            co = await SafeGetCompanyStatusAsync(db, companyId);
+            eff = await SafeGetEffectivePlanAsync(subscriptionService, companyId);
         }
 
-        // ===== WP-A1: readonly-after-expiry — หมดอายุเกิน grace → บล็อก write =====
-        // read (GET/HEAD) ยังผ่านได้เสมอ; billing/auth whitelist แล้ว → ต่ออายุได้.
-        if (enforceMode != EnforceMode.Off && isWrite)
+        var required = SubscriptionGatePolicy.RequiredFeatureFor(path);
+        bool? companySuspended = co == null ? null : co.Status == CompanyStatus.Suspended;
+        var verdict = SubscriptionGatePolicy.Decide(new SubscriptionGateFacts(
+            sub.Status, sub.EnabledFeatures, isWrite, writeMode,
+            companySuspended,
+            eff?.IsActive,
+            required?.Feature));
+
+        // ===== โหมดเงา: ตัดสินแล้วบันทึก แต่ไม่บล็อก — แอดมินดูผลกระทบก่อนเปิดบังคับ =====
+        if (action == SubscriptionGateAction.Shadow)
         {
-            SubscriptionService_EffectivePlan? eff = null;
-            try
-            {
-                eff = await subscriptionService.GetEffectivePlanAsync(companyId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "GetEffectivePlanAsync {CompanyId} ล้มเหลว — ไม่บล็อก (fail-open)", companyId);
-            }
-
-            if (eff != null)
-            {
-                if (eff.InGrace)
-                    context.Response.Headers["X-Subscription-Grace"] = "true";
-
-                if (!eff.IsActive)
-                {
-                    if (enforceMode == EnforceMode.Enforce)
-                    {
-                        await WriteExpired(context, plan.ToString());
-                        return;
-                    }
-                    _logger.LogInformation(
-                        "[Enforcement:LogOnly] would block WRITE {Method} {Path} — plan expired past grace (company {CompanyId})",
-                        context.Request.Method, path, companyId);
-                }
-            }
-        }
-
-        // Determine required feature for this route (most specific match wins).
-        // Match is "segment-anchored": path contains "{key}/" or ends with "{key}"
-        // to avoid /payroll matching /payroll-history.
-        var lowerPath = path.ToLowerInvariant();
-
-        // เส้นทางที่กฎหมายบังคับ — ผ่านก่อน ไม่ต้องดู RouteFeatureMap
-        if (FeatureExemptRoutes.Any(r => lowerPath.Contains(r)))
-        {
+            await RecordShadowAsync(shadowLog, companyId, verdict, required, sub.Plan, context);
             await _next(context);
             return;
         }
 
-        var requiredFeature = RouteFeatureMap
-            .Where(m =>
-            {
-                var key = m.Path.ToLowerInvariant();
-                return lowerPath.Contains(key + "/") || lowerPath.EndsWith(key);
-            })
-            .OrderByDescending(m => m.Path.Length)
-            .Select(m => (FeatureFlags?)m.Feature)
-            .FirstOrDefault();
+        // ===== บังคับ (คำขอที่ส่ง header มาเอง = พฤติกรรมเดิม · หรือสวิตช์เว็บ = Enforce) =====
+        context.Items["SubscriptionPlan"] = sub.Plan;
+        context.Items["SubscriptionStatus"] = sub.Status;
+        context.Items["EnabledFeatures"] = sub.EnabledFeatures;
 
-        if (requiredFeature.HasValue && !enabledFeatures.HasFlag(requiredFeature.Value))
+        foreach (var r in verdict.LogOnly)
+            _logger.LogInformation(
+                "[Enforcement:LogOnly] would block WRITE {Method} {Path} — {Reason} (company {CompanyId})",
+                context.Request.Method, path, r, companyId);
+
+        if (eff is { InGrace: true } && SubscriptionGatePolicy.ReachedExpiryStep(verdict))
+            context.Response.Headers["X-Subscription-Grace"] = "true";
+
+        switch (verdict.Block)
         {
-            await Write403(context, "FEATURE_NOT_AVAILABLE",
-                $"ฟีเจอร์ \"{requiredFeature.Value}\" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด",
-                requiredFeature.Value.ToString(),
-                plan.ToString());
-            return;
+            case SubscriptionGateReason.SubscriptionInactive:
+                await Write403(context, "SUBSCRIPTION_INACTIVE",
+                    $"การสมัครสมาชิกของคุณ {GetStatusText(sub.Status)} โปรดต่ออายุ");
+                return;
+            case SubscriptionGateReason.CompanySuspended:
+                var suspendReason = string.IsNullOrWhiteSpace(co?.SuspendReason)
+                    ? "โปรดติดต่อผู้ดูแลระบบ"
+                    : co.SuspendReason;
+                await Write403(context, "COMPANY_SUSPENDED",
+                    $"บริษัทนี้ถูกระงับการใช้งาน: {suspendReason}");
+                return;
+            case SubscriptionGateReason.PlanExpired:
+                await WriteExpired(context, sub.Plan.ToString());
+                return;
+            case SubscriptionGateReason.FeatureNotInPlan:
+                var feature = verdict.Feature ?? FeatureFlags.None;
+                await Write403(context, "FEATURE_NOT_AVAILABLE",
+                    $"ฟีเจอร์ \"{feature}\" ไม่อยู่ในแพ็กเกจของคุณ — โปรดอัพเกรด",
+                    feature.ToString(),
+                    sub.Plan.ToString());
+                return;
         }
 
         await _next(context);
+    }
+
+    /// <summary>บันทึกผลโหมดเงา: เหตุที่จะบล็อก (WouldBlock) + เหตุที่ config ตั้งเป็น LogOnly (ไม่บล็อกแม้เปิด Enforce) ·
+    /// ไม่มี PII — เก็บแค่คีย์เส้นทางในตารางฟีเจอร์และ method</summary>
+    private static async Task RecordShadowAsync(ISubscriptionGateShadowLog shadowLog, Guid companyId,
+        SubscriptionGateVerdict verdict, (FeatureFlags Feature, string RouteKey)? required, SubscriptionPlan plan,
+        HttpContext context)
+    {
+        var method = context.Request.Method.Length > 10 ? context.Request.Method[..10] : context.Request.Method;
+        var ct = context.RequestAborted;
+        if (verdict.Blocks)
+            await shadowLog.RecordAsync(new SubscriptionGateShadowHit(companyId, verdict.Block,
+                verdict.Feature?.ToString(), plan.ToString(), required?.RouteKey, method, WouldBlock: true), ct);
+        foreach (var r in verdict.LogOnly)
+            await shadowLog.RecordAsync(new SubscriptionGateShadowHit(companyId, r,
+                null, plan.ToString(), required?.RouteKey, method, WouldBlock: false), ct);
+    }
+
+    private static SubscriptionGateState ToGateState(Models.DTOs.Subscription.SubscriptionResponse r) =>
+        new(r.Plan, r.Status, r.EnabledFeatures);
+
+    private async Task<SubscriptionService_EffectivePlan?> SafeGetEffectivePlanAsync(
+        ISubscriptionService subscriptionService, Guid companyId)
+    {
+        try
+        {
+            return await subscriptionService.GetEffectivePlanAsync(companyId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GetEffectivePlanAsync {CompanyId} ล้มเหลว — ไม่บล็อก (fail-open)", companyId);
+            return null;
+        }
     }
 
     private sealed record CompanyStatusRow(CompanyStatus Status, string? SuspendReason);

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **358 ไฟล์ · 3,360 `[Fact]` + 513 `[Theory]` (2,264 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **359 ไฟล์ · 3,378 `[Fact]` + 521 `[Theory]` (2,296 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4735,3 +4735,25 @@ settings `List` · ห้าม `RefundSettledAmount = intent.RefundedAmount` �
 | SP0-34 | รับใบกำกับลงวันที่เคลม 31/08 ขณะที่ ภ.พ.30 ส.ค. ประกาศยื่นแล้ว (งวดบัญชียังเปิด) | ปฏิเสธ "เดือนภาษี 08/2026 ยื่น/ประกาศว่ายื่นแล้ว — เคลมในเดือนที่ยังไม่ยื่น" · ไม่มี JE |
 | SP0-35 | รับใบกำกับเลขที่ `2026090001` ลว. 30/09 เคลมเดือน 10 สาขา 00001 แล้วสร้างรายงานภาษีซื้อ ต.ค. | บรรทัด JE_INPUT: วันที่ 30/09 · เลขที่ `2026090001` (ไม่ใช่เลขใบสำคัญ) · สาขา 00001 · เคลมได้ · JE อื่นที่ไม่มีช่องใบกำกับ = แสดงเหมือนเดิม |
 | SP0-36 | รายการคืน 2 ครั้งก่อนมีคอลัมน์ยอดรายครั้ง (ข้อความ "คืนเงิน 100.00 (สะสม 100.00)" + "คืนเงิน 200.00 (สะสม 300.00)") | migration เติมยอดรายครั้ง 100/200 · ผลรวมไม่ตรงยอดสะสม/แกะไม่ได้ = ไม่เติม · ข้อความ `RefundTimingUnknown` ไม่ชี้ไปเครื่องมือที่ไม่มี |
+
+## gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ — รายงานก่อน แล้วค่อยเปิดบังคับ — รอบ 198 ข้อ 5 (ทีม G)
+
+Unit: `SubscriptionGatePolicyTests` (ตัวหาบริษัท route/header · สวิตช์ Off/Shadow/Enforce · คำขอที่ส่ง header บังคับเสมอ · เส้นทาง→ฟีเจอร์ ·
+ลำดับการตัดสิน · config ด่านเขียน) · จุดเรียก: `required_call_site_check` (middleware เรียกตัวหาเดียว + บันทึกแล้วปล่อยผ่านในโหมดเงา ·
+TenantAccessMiddleware ใช้ตัวหาเดียวกัน) · `owner_action_wiring_check` / `write_permission_gate_check` (สวิตช์ = SystemAdmin + ห้ามคีย์) ·
+**ยังไม่ได้คอมไพล์/รันในเครื่องนี้** — CI เป็นตัวแรก
+
+| ID | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| SUB-G01 | สวิตช์ = Shadow (ค่าตั้งต้นหลัง migrate) · บริษัท FreeTrial เปิดหน้าเงินเดือน (`GET /api/companies/{id}/payroll/...`) จากเว็บ | หน้าโหลดได้ปกติ (ไม่ 403) · หน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ" มีแถว บริษัทนั้น · "ฟีเจอร์ Payroll ไม่อยู่ในแพ็กเกจ FreeTrial" · ครั้ง +1 ทุกคำขอ · แรก/ล่าสุดเป็นเวลาไทย |
+| SUB-G02 | สวิตช์ = Enforce · ทำ SUB-G01 ซ้ำ | 403 `FEATURE_NOT_AVAILABLE` · หน้าเว็บขึ้นข้อความแล้วพาไปหน้าแพ็กเกจ · บริษัท Enterprise เปิดหน้าเดียวกัน = ผ่าน (ทิศตรงข้าม) |
+| SUB-G03 | สวิตช์ = Off | พฤติกรรมเหมือนก่อนรอบ 198: เว็บไม่ถูกตรวจ · ไม่มีแถวใหม่ในผลโหมดเงา |
+| SUB-G04 | partner ส่ง `X-Company-Id` ของบริษัท FreeTrial เรียก `/payroll` ขณะสวิตช์ = Off หรือ Shadow | 403 เหมือนเดิม (คำขอแบบ header บังคับเสมอ — ห้ามหลวมลง) |
+| SUB-G05 | ผู้ใช้บริษัท A (FreeTrial) ส่ง `X-Company-Id` ของบริษัท B (Enterprise) กับ route `/api/companies/{A}/payroll` | 403 ด้วยแพ็กเกจของ A (route ชนะ) — เดิมตัดสินด้วยแพ็กเกจของ B |
+| SUB-G06 | subscription ของบริษัทถูกระงับ (Suspended) · สวิตช์ = Shadow · เปิดแดชบอร์ด | หน้าโหลดได้ · ผลโหมดเงา "การสมัครสมาชิกถูกยกเลิก/ระงับ — จะถูกบล็อกทุกคำขอ" · Enforce แล้ว = 403 `SUBSCRIPTION_INACTIVE` ทุกคำขอเว็บของบริษัทนั้น (เส้น `/api/subscription/*` ยังใช้ได้ — ต่ออายุได้) |
+| SUB-G07 | บริษัทถูกแอดมินระงับ (Company.Status = Suspended) · config `Subscription:Enforcement:Mode` = LogOnly · สวิตช์ = Shadow · กดบันทึกเอกสาร | ผ่าน · ผลโหมดเงาเป็นป้าย "log อย่างเดียว" (WouldBlock=false) · config = Enforce + สวิตช์ = Enforce ⇒ POST ได้ 403 `COMPANY_SUSPENDED` · GET ยังดูได้ |
+| SUB-G08 | หน้าแอดมิน → "คำนวณ" ตรวจล่วงหน้า | สรุป: ถูกบล็อกทุกคำขอ / ถูกบล็อกการเขียน / ยังไม่มีแพ็กเกจ · ตารางฟีเจอร์ที่ขาด + เส้นทาง · รายบริษัทเฉพาะที่มีผลกระทบ · ก่อนหน้า/ถัดไปทีละ 200 |
+| SUB-G09 | เปลี่ยนสวิตช์เป็น Enforce | confirm บอกจำนวนบริษัทที่จะถูกบล็อก · บันทึกแล้ว log Warning + audit ของ SiteSettings (old/new) · ส่ง `{mode:"2"}` / `{}` / `{mode:"x"}` = 400 "โหมดต้องเป็น Off, Shadow หรือ Enforce" |
+| SUB-G10 | เรียก `PUT /api/admin/subscription-enforcement/mode` ด้วย API key / ผู้ใช้ที่ไม่ใช่ SystemAdmin | 403 |
+| SUB-G11 | ลบตาราง `SubscriptionGateShadowHits` ชั่วคราว (จำลองตารางพัง) แล้วใช้เว็บในโหมดเงา | เว็บใช้งานได้ปกติ (fail-open · log Warning) · หน้าแอดมินแจ้ง "อ่านตารางผลโหมดเงาไม่ได้" |
+| SUB-G12 | `/api/companies/{id}/dimensions/branches` บริษัทที่ไม่มี CostCenter · สวิตช์ = Enforce | ผ่าน (§86/4 รหัสสาขา — ห้าม gate) · `/dimensions/cost-centers` = 403 |

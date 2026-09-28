@@ -3,6 +3,9 @@ using Accounting.Models.Enums;
 
 namespace Accounting.Services.Interfaces;
 
+/// <summary>ส่วนที่ gate แพ็กเกจต้องใช้ — ผลของ <see cref="ISubscriptionService.GetGateStateAsync"/></summary>
+public sealed record SubscriptionGateState(SubscriptionPlan Plan, SubscriptionStatus Status, FeatureFlags EnabledFeatures);
+
 public interface ISubscriptionService
 {
     // Trial Management
@@ -16,6 +19,10 @@ public interface ISubscriptionService
     // Subscription Management
     Task<SubscriptionResponse> ConvertTrialAsync(Guid companyId, ConvertTrialRequest request, string performedBy);
     Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId);
+    /// <summary>แพ็กเกจ/สถานะ/ฟีเจอร์ที่มีผลจริง (overlay User License + mask ที่เจ้าของปิดเอง — สูตรเดียวกับ
+    /// <see cref="GetSubscriptionAsync"/>) <b>โดยไม่นับการใช้งาน</b> — สำหรับ <c>SubscriptionCheckMiddleware</c> ที่ถูกเรียก
+    /// ทุกคำขอ (GetSubscriptionAsync นับสมุดรายวัน/ไฟล์แนบทุกครั้ง) · <c>null</c> = ยังไม่มี subscription (ไม่สร้างให้)</summary>
+    Task<SubscriptionGateState?> GetGateStateAsync(Guid companyId);
     Task<SubscriptionResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
     Task CancelSubscriptionAsync(Guid companyId, string performedBy);
 

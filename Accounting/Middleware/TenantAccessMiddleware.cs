@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -127,19 +128,11 @@ public class TenantAccessMiddleware
         await _next(context);
     }
 
+    // route (/api/companies/{companyId}/...) ก่อน แล้วค่อย header X-Company-Id — ตัวหาเดียวกับ SubscriptionCheckMiddleware
+    // (Helpers/TenantCompanyId) เพื่อให้ "บริษัทที่ตรวจสมาชิก" กับ "บริษัทที่ตัดสินแพ็กเกจ" เป็นบริษัทเดียวกันเสมอ (รอบ 198 ข้อ 5)
     private static Guid? ExtractCompanyId(HttpContext context)
     {
-        // From route: /api/companies/{companyId}/...
-        if (context.Request.RouteValues.TryGetValue("companyId", out var routeVal)
-            && Guid.TryParse(routeVal?.ToString(), out var routeId))
-            return routeId;
-
-        // From header
-        if (context.Request.Headers.TryGetValue("X-Company-Id", out var headerVal)
-            && Guid.TryParse(headerVal, out var headerId))
-            return headerId;
-
-        return null;
+        return TenantCompanyId.FromHttp(context).CompanyId;
     }
 
     private static Guid? GetUserId(HttpContext context)
