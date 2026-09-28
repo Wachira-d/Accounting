@@ -184,7 +184,9 @@ public class SettlementController : ControllerBase
         return new
         {
             batch,
-            actions = SettlementBatchActions.For(batch.Status, batch.Lines.Select(l => (l.Id, l.LineType))),
+            // ตัวตัดสินเดียวกับด่านของ service (ทีม S3): ลงค้างครึ่งทาง = ป้ายชุดเดียวกับ LoadEditableBatchAsync · ยกเลิกการลงบัญชี = SettlementUnpostGate
+            actions = SettlementBatchActions.For(batch.Status, batch.Lines.Select(l => (l.Id, l.LineType)), batch.PostingArtifacts,
+                await _posting.UnpostBlockersAsync(companyId, batchId, ct)),
             posting = new
             {
                 payoutJournalEntryId = head?.PayoutJournalEntryId,

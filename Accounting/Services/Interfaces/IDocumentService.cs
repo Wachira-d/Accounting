@@ -17,8 +17,12 @@ public interface IDocumentService
     /// <param name="depositChannelVatRate">รอบ 194 P1 — อัตรา VAT ของช่องทางที่ออกใบมัดจำ (ที่พัก <c>ChargeVat=false</c> = 0) · ตัวจัดรูปตามประเภท
     /// ใช้อัตรานี้เมื่อต่ำกว่าอัตราบริษัท (<c>DepositPolicyResolver.ShapingVatRate</c>) · <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b>
     /// (ค่าที่ client คุมได้ห้ามตัดสินเรื่องเงิน — ส่ง 0 มาเองเพื่อหลบ VAT ตอนริบไม่ได้) · null = อัตราบริษัท</param>
+    /// <param name="autoApproveBy">ผู้อนุมัติของใบที่ระบบอนุมัติให้ทันทีตอนสร้าง (ใบสำคัญจ่ายเงินสด) — null = <paramref name="createdBy"/> (พฤติกรรมเดิม) ·
+    /// รอบ 198 คำตัดสินเจ้าของข้อ 7: ใบค่าธรรมเนียมที่การลงบัญชีรอบโอนออกให้ ต้องบันทึก "คนที่กดลงบัญชี" เป็นผู้อนุมัติ ไม่ใช่ป้ายของระบบ
+    /// (ป้าย <paramref name="createdBy"/> ยังเป็นกุญแจทำต่อจากที่ค้าง) · <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b></param>
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
-        string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null);
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
+        string? autoApproveBy = null);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>

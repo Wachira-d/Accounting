@@ -61,6 +61,8 @@ public sealed record SettlementImportResult(
     IReadOnlyList<string> SkippedRows,
     IReadOnlyList<string> Warnings);
 
+/// <param name="PostingArtifacts">เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งการลงบัญชีสร้างให้รอบนี้ (มี &gt; 0 ขณะยังไม่ Posted = ลงค้างครึ่งทาง ⇒
+/// แก้/ยกเลิกรอบไม่ได้ · ฝ่ายค้าน C-1) · <c>null</c> = ไม่ได้ตรวจ (มุมมองรายการ) — ห้ามตีความเป็น 0</param>
 public sealed record SettlementBatchView(
     Guid Id,
     Guid ChannelId,
@@ -85,12 +87,14 @@ public sealed record SettlementBatchView(
     bool AnyClassifiedByAi,
     string? Note,
     DateTime CreatedAt,
-    IReadOnlyList<SettlementLineView> Lines);
+    IReadOnlyList<SettlementLineView> Lines,
+    int? PostingArtifacts = null);
 
 /// <param name="LineTypeLabel">ป้ายไทยของประเภท (จาก <c>SettlementLineTypeRules</c> — หน้าเว็บไม่ต้องมีตารางป้ายเอง)</param>
 /// <param name="ClassifyUsedAi">ครู (AI ภายนอก) ถูกเรียกจริงตอนจัดประเภทบรรทัดนี้ — ป้าย "🤖 AI แนะนำ" เฉพาะเมื่อ true ·
 /// ไม่งั้น "⚙️ ระบบแนะนำ" (กฎเหล็ก #1)</param>
 /// <param name="MatchNote">เหตุผลของสถานะจับคู่/สิ่งที่ผู้ใช้ต้องตัดสิน</param>
+/// <param name="MatchDecidedByUser">คนตัดสินการจับคู่เอง — การจับคู่อัตโนมัติไม่ทับ (หน้าเว็บติดป้าย "👤 ผู้ใช้เลือก" · R-B1)</param>
 public sealed record SettlementLineView(
     Guid Id,
     int Seq,
@@ -114,7 +118,8 @@ public sealed record SettlementLineView(
     string? MatchNote,
     IReadOnlyList<SettlementMatchCandidateView> MatchCandidates,
     Guid? OverrideAccountId,
-    string? AdjustmentReason);
+    string? AdjustmentReason,
+    bool MatchDecidedByUser = false);
 
 public sealed record SettlementMatchCandidateView(string Kind, Guid Id, string Label, decimal? OpenAmount, bool CanReceive, bool IsRefundTarget);
 

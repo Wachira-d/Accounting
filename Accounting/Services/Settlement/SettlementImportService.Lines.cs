@@ -20,7 +20,8 @@ public sealed partial class SettlementImportService
     // ═══════════════════ จับคู่ ═══════════════════
 
     /// <summary>จับคู่บรรทัดใน <paramref name="toMatch"/> ด้วยเลขออเดอร์ตรงตัว (tenant) — <paramref name="apply"/> = false ⇒ แค่คำนวณผู้สมัคร/เหตุผลให้หน้าจอ ·
-    /// ยอดของออเดอร์นับจากทุกบรรทัดของรอบโอน (<paramref name="allLines"/>) · ตัวตัดสิน = <see cref="SettlementSaleMatch.Decide"/> ตัวเดียว</summary>
+    /// ยอดของออเดอร์นับจากทุกบรรทัดของรอบโอน (<paramref name="allLines"/>) · ตัวตัดสิน = <see cref="SettlementSaleMatch.Decide"/> ตัวเดียว ·
+    /// บรรทัดที่คนตัดสินการจับคู่เอง (<c>MatchDecidedByUser</c>) ไม่ถูกเขียนทับ (R-B1)</summary>
     private async Task<Dictionary<Guid, SettlementMatchDecision>> MatchLinesAsync(Guid companyId, SettlementChannel channel,
         IReadOnlyList<SettlementLine> allLines, IReadOnlyCollection<SettlementLine> toMatch, bool apply, CancellationToken ct)
     {
@@ -29,7 +30,8 @@ public sealed partial class SettlementImportService
             .Where(l => SettlementLineTypeRules.For(l.LineType).RequiresSaleMatch && !string.IsNullOrWhiteSpace(l.ExternalOrderId))
             .Select(l => l.ExternalOrderId!.Trim()).Distinct(StringComparer.Ordinal).ToList();
 
-        var byOrder = new Dictionary<string, List<SettlementMatchCandidate>>(StringComparer.Ordinal);
+        // R-B4: เลขอ้างอิงในเอกสารที่ผู้ใช้พิมพ์เอง เทียบแบบตัดช่องว่าง ไม่สนตัวพิมพ์ — เลขเดียวกันต่างตัวพิมพ์ = ผู้สมัครหลายราย ⇒ คนเลือก (ไม่เดา)
+        var byOrder = new Dictionary<string, List<SettlementMatchCandidate>>(StringComparer.OrdinalIgnoreCase);
         void Add(string? key, SettlementMatchCandidate c)
         {
             if (string.IsNullOrWhiteSpace(key)) return;
@@ -40,8 +42,9 @@ public sealed partial class SettlementImportService
         foreach (var chunk in orderIds.Chunk(500))
         {
             var ids = chunk.ToList();
+            var upper = ids.Select(x => x.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToList();
             var docs = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && d.Reference != null && ids.Contains(d.Reference)
+                .Where(d => d.CompanyId == companyId && d.Reference != null && upper.Contains(d.Reference.Trim().ToUpper())
                     && SaleDocumentTypes.Contains(d.DocumentType) && d.Status != DocumentStatus.Voided)
                 .Select(d => new { d.Id, d.Reference, d.DocumentType, d.Status, d.DocumentNumber, d.BalanceDue })
                 .ToListAsync(ct);
@@ -56,7 +59,7 @@ public sealed partial class SettlementImportService
             }
 
             var reservations = await _db.LodgingReservations.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && r.SourceReference != null && ids.Contains(r.SourceReference))
+                .Where(r => r.CompanyId == companyId && r.SourceReference != null && upper.Contains(r.SourceReference.Trim().ToUpper()))
                 .Select(r => new { r.Id, r.SourceReference, r.ReservationNumber })
                 .ToListAsync(ct);
             foreach (var r in reservations)
@@ -64,33 +67,47 @@ public sealed partial class SettlementImportService
                     $"การจอง {r.ReservationNumber}", null, false, false));
         }
 
-        // intent ของ gateway ในระบบ — เฉพาะช่องทาง gateway ที่ผังพักตรงกับขาเงินเข้าของ intent (R-A1) · ไม่งั้น "อยู่ในผังพักแล้ว" เป็นเท็จ
-        if (orderIds.Count > 0 && channel.Kind == SettlementChannelKind.Gateway && channel.PaymentProviderConfigId is Guid cfgId)
+        // intent ของ gateway ในระบบ — R-B4: ค้นด้วยเลขอ้างอิงทั้งบริษัทเสมอ (ไม่ขึ้นกับชนิดช่องทาง/การผูก config) · ใช้รับชำระ/คืนเงินได้เฉพาะช่องทาง
+        // gateway ที่ผังพักตรงกับขาเงินเข้าของ intent (R-A1) · พบแต่ใช้ไม่ได้ ⇒ ผู้สมัครที่ใช้ไม่ได้ + เหตุผล ⇒ Unmatched (ห้ามตกใบขายสรุปซ้ำ)
+        if (orderIds.Count > 0)
         {
-            var providerCode = await _db.PaymentProviderConfigs.AsNoTracking()
-                .Where(c => c.Id == cfgId && c.CompanyId == companyId).Select(c => c.ProviderCode).FirstOrDefaultAsync(ct);
-            if (providerCode != null && await GatewayClearingMatchesAsync(companyId, channel, providerCode, ct))
+            string? usableProvider = null;
+            if (channel.Kind == SettlementChannelKind.Gateway && channel.PaymentProviderConfigId is Guid cfgId)
             {
-                var batchId = allLines.Count > 0 ? allLines[0].BatchId : Guid.Empty;
-                foreach (var chunk in orderIds.Chunk(500))
+                var providerCode = await _db.PaymentProviderConfigs.AsNoTracking()
+                    .Where(c => c.Id == cfgId && c.CompanyId == companyId).Select(c => c.ProviderCode).FirstOrDefaultAsync(ct);
+                if (providerCode != null && await GatewayClearingMatchesAsync(companyId, channel, providerCode, ct))
+                    usableProvider = providerCode;
+            }
+            var batchId = allLines.Count > 0 ? allLines[0].BatchId : Guid.Empty;
+            var deciding = toMatch.Select(l => l.Id).ToHashSet();
+            foreach (var chunk in orderIds.Chunk(500))
+            {
+                var ids = chunk.ToList();
+                var intents = await _db.PaymentIntents.AsNoTracking()
+                    .Where(i => i.CompanyId == companyId && i.ProviderRef != null && ids.Contains(i.ProviderRef))
+                    .Select(i => new { i.Id, i.ProviderRef, i.ProviderCode, i.Status, i.ConfirmedAt, i.Amount, i.RefundedAmount,
+                        i.SettlementJournalEntryId, i.SettlementBatchId, i.RefundOutcomeUnknownSince })
+                    .ToListAsync(ct);
+                var intentIds = intents.Select(i => i.Id).ToList();
+                // R-B2: ยอดคืนที่ถูกนับไปแล้วในบรรทัดคืนเงินของทุกรอบโอนที่ยังไม่ถูกยกเลิก (ไม่ว่ารอบไหนเป็นเจ้าของยอดขาย · ไม่รวมบรรทัดที่กำลังตัดสิน)
+                var refundCounted = intentIds.Count == 0
+                    ? new Dictionary<Guid, decimal>()
+                    : (await _db.SettlementLines.AsNoTracking()
+                            .Where(l => l.CompanyId == companyId && l.PaymentIntentId != null && intentIds.Contains(l.PaymentIntentId.Value)
+                                && l.LineType == SettlementLineType.Refund)
+                            .Select(l => new { l.Id, Intent = l.PaymentIntentId!.Value, l.Amount })
+                            .ToListAsync(ct))
+                        .Where(x => !deciding.Contains(x.Id))
+                        .GroupBy(x => x.Intent).ToDictionary(g => g.Key, g => -g.Sum(x => x.Amount));
+                foreach (var i in intents)
                 {
-                    var ids = chunk.ToList();
-                    var intents = await _db.PaymentIntents.AsNoTracking()
-                        .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode && i.ProviderRef != null
-                            && ids.Contains(i.ProviderRef))
-                        .Select(i => new { i.Id, i.ProviderRef, i.Status, i.ConfirmedAt, i.Amount, i.RefundedAmount,
-                            i.SettlementJournalEntryId, i.SettlementBatchId })
-                        .ToListAsync(ct);
-                    foreach (var i in intents)
-                    {
-                        // ถูกบันทึกรอบโอนด้วยเส้นเดิม หรืออยู่ในรอบโอนอื่นแล้ว ⇒ ผังพักถูกล้างไปแล้ว — "อยู่ในผังพัก" ไม่จริงอีกต่อไป
-                        var free = i.SettlementJournalEntryId == null && (i.SettlementBatchId == null || i.SettlementBatchId == batchId);
-                        var received = i.ConfirmedAt != null && (i.Status == PaymentIntentStatus.Succeeded
-                            || i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded);
-                        Add(i.ProviderRef, new SettlementMatchCandidate(SettlementMatchCandidateKind.PaymentIntent, i.Id,
-                            $"รายการรับชำระ {i.ProviderRef} ({i.Amount:N2})", i.Amount - i.RefundedAmount,
-                            CanReceive: free && received, IsRefundTarget: free && i.RefundedAmount > 0m));
-                    }
+                    var received = i.ConfirmedAt != null && (i.Status == PaymentIntentStatus.Succeeded
+                        || i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded);
+                    Add(i.ProviderRef, SettlementSaleMatch.IntentCandidate(new SettlementIntentFact(i.Id, i.ProviderRef, i.Amount,
+                        i.RefundedAmount, usableProvider != null && i.ProviderCode == usableProvider, received,
+                        i.SettlementJournalEntryId != null, i.SettlementBatchId, refundCounted.GetValueOrDefault(i.Id),
+                        i.RefundOutcomeUnknownSince != null), batchId));
                 }
             }
         }
@@ -101,12 +118,22 @@ public sealed partial class SettlementImportService
             .GroupBy(l => l.ExternalOrderId!.Trim(), StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount), StringComparer.Ordinal);
 
-        foreach (var l in toMatch)
+        var refundLeft = new Dictionary<Guid, decimal>();
+        foreach (var l in toMatch.OrderBy(x => x.Seq))
         {
+            if (apply && l.MatchDecidedByUser) continue;    // R-B1: คำตัดสินของคน — ตัวจับคู่อัตโนมัติห้ามทับ
             var key = l.ExternalOrderId?.Trim();
             var cands = key != null && byOrder.TryGetValue(key, out var c) ? c : new List<SettlementMatchCandidate>();
             var fromAdapter = IsIntentSourced(l) ? l.PaymentIntentId : null;
             var d = SettlementSaleMatch.Decide(l.LineType, key, key != null ? orderGroup.GetValueOrDefault(key) : l.Amount, cands, fromAdapter);
+            // R-B2: ยอดคืนผ่านระบบของ intent หนึ่งจัดสรรให้บรรทัดคืนเงินทีละบรรทัด — เกินยอดที่เหลือ ⇒ ให้คนเลือกใบขายเดิม
+            if (fromAdapter == null && d.PaymentIntentId is Guid pid
+                && SettlementLineTypeRules.For(l.LineType).Posting == SettlementPostingKind.Refund)
+            {
+                var left = refundLeft.TryGetValue(pid, out var v) ? v : cands.FirstOrDefault(x => x.Id == pid)?.RefundRemaining ?? 0m;
+                (d, left) = SettlementSaleMatch.ApplyIntentRefundCapacity(d, l.Amount, left);
+                refundLeft[pid] = left;
+            }
             decisions[l.Id] = d;
             if (!apply) continue;
             l.MatchStatus = d.Status;
@@ -151,7 +178,9 @@ public sealed partial class SettlementImportService
         var channel = await LoadChannelAsync(companyId, batch.ChannelId, tracked: false, ct);
         var lines = await _db.SettlementLines.AsNoTracking()
             .Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).OrderBy(l => l.Seq).ToListAsync(ct);
-        return await BuildBatchViewAsync(companyId, channel, batch, lines, ct);
+        var view = await BuildBatchViewAsync(companyId, channel, batch, lines, ct);
+        // ปุ่มของหน้าจอ (SettlementBatchActions) ต้องรู้ "ลงค้างครึ่งทาง" จากป้ายชุดเดียวกับด่าน LoadEditableBatchAsync (C-1)
+        return view with { PostingArtifacts = (await PostingArtifactsAsync(companyId, batch.Id, ct)).Count };
     }
 
     public async Task<IReadOnlyList<SettlementBatchView>> ListBatchesAsync(Guid companyId, Guid? channelId,
@@ -221,7 +250,7 @@ public sealed partial class SettlementImportService
                 ? Array.Empty<SettlementMatchCandidateView>()
                 : d.Candidates.Select(c => new SettlementMatchCandidateView(c.Kind.ToString(), c.Id, c.Label, c.OpenAmount,
                     c.CanReceive, c.IsRefundTarget)).ToList(),
-            l.OverrideAccountId, l.AdjustmentReason);
+            l.OverrideAccountId, l.AdjustmentReason, l.MatchDecidedByUser);
 
     // ═══════════════════ ผู้ใช้จัดประเภท (ปิดลูปการเรียนรู้) ═══════════════════
 
@@ -238,10 +267,10 @@ public sealed partial class SettlementImportService
         {
             _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // R-B3: ล็อกช่องทางก่อน แล้วค่อยโหลด/ตรวจ (อ่านก่อนล็อก = ตัดสินจากข้อมูลที่อาจเปลี่ยนระหว่างรอล็อก)
+            await LockChannelAsync(companyId, await LineChannelAsync(companyId, lineId, ct), ct);
             var line = await _db.SettlementLines.FirstOrDefaultAsync(l => l.Id == lineId && l.CompanyId == companyId, ct)
                        ?? throw new BusinessRuleException("ไม่พบบรรทัดนี้ในบริษัท", "SETTLEMENT-LINE", 404);
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.SettlementImport, line.ChannelId.ToString("N")) }, ct);
             var batch = await LoadEditableBatchAsync(companyId, line.BatchId, ct);
 
             // ด่านเครื่องหมาย — ตัวเดียวกับตัวคิดแผน (SettlementLineTypeRules.SignAllowed ผ่าน Fits)
@@ -271,24 +300,29 @@ public sealed partial class SettlementImportService
             var acceptedAi = line.ClassifyAiFeedbackId != null
                 && line.ClassifiedBy is SettlementClassifiedBy.Ai or SettlementClassifiedBy.Learned
                 && line.LineType == type;
+            // ประเภทก่อนเปลี่ยน — ตัดสินว่าคำตัดสินการจับคู่ของคนยังใช้ได้ไหม (R-B1)
+            var oldTypes = new Dictionary<Guid, SettlementLineType> { [line.Id] = line.LineType };
             Apply(line, type, SettlementClassifiedBy.User, overrideAccount, reason);
             var changed = new List<SettlementLine> { line };
 
             // ป้ายเดียวกัน+เครื่องหมายเดียวกันในรอบนี้ที่ผู้ใช้ยังไม่ได้เลือกเอง ⇒ ใช้คำตอบเดียวกัน (Learned — ไม่นับเป็นเสียงของผู้ใช้ซ้ำ)
             var batchLines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
             var norm = SettlementLineClassification.NormalizeLabel(line.RawTypeLabel);
+            // R-B1: เฉพาะบรรทัดที่ประเภท "เปลี่ยนจริง" — บรรทัดที่ประเภทเท่าเดิมไม่ต้องแตะ (เดิมถูกส่งไปจับคู่ใหม่ ⇒ การจับคู่ของคนถูกทับ)
             if (request.ApplyToSameLabel && norm.Length > 0 && !rule.RequiresReason)
                 foreach (var other in batchLines.Where(o => o.Id != line.Id && o.ClassifiedBy != SettlementClassifiedBy.User
+                             && o.LineType != type
                              && (o.Amount > 0m) == (line.Amount > 0m)
                              && SettlementLineClassification.NormalizeLabel(o.RawTypeLabel) == norm
                              && SettlementLineClassification.Fits(type, o.Amount)).ToList())
                 {
+                    oldTypes[other.Id] = other.LineType;
                     Apply(other, type, SettlementClassifiedBy.Learned, other.OverrideAccountId, null);
                     changed.Add(other);
                 }
 
             var channel = await LoadChannelAsync(companyId, line.ChannelId, tracked: false, ct);
-            await RematchChangedAsync(companyId, channel, batchLines, changed, ct);
+            await RematchChangedAsync(companyId, channel, batchLines, changed, oldTypes, ct);
             await SyncIntentStampsAsync(companyId, batch.Id, batchLines, ct);
             batch.Status = SettlementSaleMatch.DeriveImportStatus(batchLines.Select(l => (l.LineType, l.MatchStatus)));
             batch.UpdatedAt = DateTime.UtcNow;
@@ -329,13 +363,17 @@ public sealed partial class SettlementImportService
         l.UpdatedAt = DateTime.UtcNow;
     }
 
-    /// <summary>หลังเปลี่ยนประเภท: ประเภทที่ไม่ต้องจับคู่ ⇒ NotRequired (ถอดการจับคู่ที่ไม่ใช่ที่มาจาก adapter) · ต้องจับคู่ ⇒ จับคู่ใหม่</summary>
+    /// <summary>หลังเปลี่ยนประเภท: ประเภทที่ไม่ต้องจับคู่ ⇒ NotRequired (ถอดการจับคู่ที่ไม่ใช่ที่มาจาก adapter) · ต้องจับคู่ ⇒ จับคู่ใหม่ —
+    /// <b>ยกเว้น</b>บรรทัดที่คนตัดสินการจับคู่เองและยังอยู่กลุ่มการจับคู่เดิม (<see cref="SettlementSaleMatch.KeepUserMatch"/> · R-B1)</summary>
     private async Task RematchChangedAsync(Guid companyId, SettlementChannel channel, IReadOnlyList<SettlementLine> all,
-        IReadOnlyList<SettlementLine> changed, CancellationToken ct)
+        IReadOnlyList<SettlementLine> changed, IReadOnlyDictionary<Guid, SettlementLineType> oldTypes, CancellationToken ct)
     {
         var needMatch = new List<SettlementLine>();
         foreach (var l in changed)
         {
+            var before = oldTypes.TryGetValue(l.Id, out var t) ? t : l.LineType;
+            if (SettlementSaleMatch.KeepUserMatch(l.MatchDecidedByUser, before, l.LineType)) continue;
+            l.MatchDecidedByUser = false;
             if (SettlementLineTypeRules.For(l.LineType).RequiresSaleMatch) { needMatch.Add(l); continue; }
             l.MatchStatus = SettlementMatchStatus.NotRequired;
             l.MatchedDocumentId = null;
@@ -355,10 +393,10 @@ public sealed partial class SettlementImportService
         {
             _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // R-B3: ล็อกช่องทางก่อน แล้วค่อยโหลด/ตรวจ
+            await LockChannelAsync(companyId, await LineChannelAsync(companyId, lineId, ct), ct);
             var line = await _db.SettlementLines.FirstOrDefaultAsync(l => l.Id == lineId && l.CompanyId == companyId, ct)
                        ?? throw new BusinessRuleException("ไม่พบบรรทัดนี้ในบริษัท", "SETTLEMENT-LINE", 404);
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.SettlementImport, line.ChannelId.ToString("N")) }, ct);
             var batch = await LoadEditableBatchAsync(companyId, line.BatchId, ct);
             var rule = SettlementLineTypeRules.For(line.LineType);
             if (!rule.RequiresSaleMatch)
@@ -410,8 +448,10 @@ public sealed partial class SettlementImportService
         });
     }
 
+    /// <summary>คนตัดสินการจับคู่ — ติดธง <c>MatchDecidedByUser</c> (ตัวจับคู่อัตโนมัติห้ามทับ · R-B1)</summary>
     private static void SetMatch(SettlementLine l, SettlementMatchStatus status, Guid? documentId)
     {
+        l.MatchDecidedByUser = true;
         l.MatchStatus = status;
         l.MatchedDocumentId = documentId;
         l.ReservationId = null;
@@ -426,13 +466,15 @@ public sealed partial class SettlementImportService
         {
             _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // R-B3: ล็อกช่องทางก่อน แล้วค่อยโหลด/ตรวจว่ายังแก้ได้ (เดิมตรวจก่อนล็อก ⇒ รอล็อกหลังการลงบัญชีแล้วทำต่อบนข้อมูลเก่า)
+            await LockChannelAsync(companyId, await BatchChannelAsync(companyId, batchId, ct), ct);
             var batch = await LoadEditableBatchAsync(companyId, batchId, ct);
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.SettlementImport, batch.ChannelId.ToString("N")) }, ct);
             var channel = await LoadChannelAsync(companyId, batch.ChannelId, tracked: false, ct);
             var lines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
-            // บรรทัดที่ผู้ใช้/ระบบจับคู่ได้แล้ว (Matched/AmountMismatch) ไม่แตะ — จับใหม่เฉพาะที่ยังไม่มีเอกสาร (Unmatched/AutoSummary)
+            // บรรทัดที่ผู้ใช้/ระบบจับคู่ได้แล้ว (Matched/AmountMismatch) ไม่แตะ — จับใหม่เฉพาะที่ยังไม่มีเอกสาร (Unmatched/AutoSummary) ·
+            // R-B1: ใบขายสรุปที่คน "ยืนยัน" เอง (MatchDecidedByUser) ไม่ใช่ "ยังไม่มีเอกสาร" — ห้ามจับใหม่
             var toMatch = lines.Where(l => SettlementLineTypeRules.For(l.LineType).RequiresSaleMatch && !IsIntentSourced(l)
+                && !l.MatchDecidedByUser
                 && l.MatchStatus is SettlementMatchStatus.Unmatched or SettlementMatchStatus.AutoSummary).ToList();
             await MatchLinesAsync(companyId, channel, lines, toMatch, apply: true, ct);
             await SyncIntentStampsAsync(companyId, batch.Id, lines, ct);
@@ -458,9 +500,9 @@ public sealed partial class SettlementImportService
         {
             _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // R-B3 + C-1: ล็อกช่องทาง (ตัวเดียวกับการลงบัญชี) ก่อน แล้วค่อยโหลด/ตรวจ — ยกเลิกแทรกการลงบัญชีไม่ได้ · รอบที่ลงค้างครึ่งทางยกเลิกไม่ได้
+            await LockChannelAsync(companyId, await BatchChannelAsync(companyId, batchId, ct), ct);
             var batch = await LoadEditableBatchAsync(companyId, batchId, ct);
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.SettlementImport, batch.ChannelId.ToString("N")) }, ct);
             var lines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
             // รอบถัดไปมีบรรทัด "คืนเงินภายหลัง" ของ intent ในรอบนี้ ⇒ ยกเลิกรอบนี้แล้ว intent จะกลับมาเป็นรายการใหม่ (ยอดคืนนับซ้ำ)
             var ownedIntents = await _db.PaymentIntents.AsNoTracking()
@@ -500,6 +542,7 @@ public sealed partial class SettlementImportService
         });
     }
 
+    /// <summary>โหลดรอบโอนที่ยังแก้ได้ — <b>ต้องเรียกหลัง <see cref="LockChannelAsync"/></b> (R-B3) · ลงบัญชีแล้ว/ยกเลิกแล้ว/ลงค้างครึ่งทาง (C-1) ⇒ ล้มดังพร้อมทางไปต่อ</summary>
     private async Task<SettlementBatch> LoadEditableBatchAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
         var batch = await _db.SettlementBatches.FirstOrDefaultAsync(b => b.Id == batchId && b.CompanyId == companyId, ct)
@@ -508,6 +551,46 @@ public sealed partial class SettlementImportService
             throw new BusinessRuleException(
                 $"รอบโอน \"{batch.PayoutRef}\" ลงบัญชีแล้ว (สถานะ {batch.Status}) — แก้ไข/ยกเลิกไม่ได้ · กลับรายการลงบัญชีของรอบนี้ก่อน",
                 "SETTLEMENT-BATCH-LOCKED");
+        var artifacts = await PostingArtifactsAsync(companyId, batch.Id, ct);
+        if (!SettlementSaleMatch.IsEditable(batch.Status, artifacts.Count))
+            throw new BusinessRuleException(
+                $"รอบโอน \"{batch.PayoutRef}\" ลงบัญชีค้างครึ่งทาง — มี {string.Join(", ", artifacts.Take(10))} ที่การลงบัญชีสร้างไว้แล้ว · "
+                + "แก้บรรทัด/ยกเลิกรอบโอนตอนนี้ทำให้ของที่ออกแล้วไม่ตรงหรือกลายเป็นของกำพร้า (ลงซ้ำได้) — กด \"ลงบัญชี\" ต่อให้ครบแล้วค่อย "
+                + "\"ยกเลิกการลงบัญชี\" หรือยกเลิกเอกสาร/การรับชำระเหล่านั้นที่หน้าเอกสารก่อน", "SETTLEMENT-BATCH-PARTIAL", 409);
         return batch;
     }
+
+    /// <summary>เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งการลงบัญชีสร้างให้รอบโอนนี้ (ป้ายตัวเดียวกับผู้ลงบัญชี — <see cref="SettlementPostingKeys"/>)</summary>
+    private async Task<List<string>> PostingArtifactsAsync(Guid companyId, Guid batchId, CancellationToken ct)
+    {
+        var prefix = SettlementPostingKeys.CreatorPrefix(batchId);
+        var marker = SettlementPostingKeys.PaymentMarker(batchId);
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                && d.CreatedBy != null && d.CreatedBy.StartsWith(prefix))
+            .Select(d => "เอกสาร " + d.DocumentNumber).ToListAsync(ct);
+        var pays = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+            .Select(p => "การรับชำระ " + p.PaymentNumber).ToListAsync(ct);
+        return docs.Concat(pays).ToList();
+    }
+
+    /// <summary>ล็อกต่อช่องทาง <b>ตัวเดียวกับผู้ลงบัญชี</b> (<see cref="SettlementChannelLock"/> · C-1) — ธุรกรรมต้องเปิดแล้ว · เรียกก่อนโหลด/ตรวจทุกครั้ง (R-B3)</summary>
+    private async Task LockChannelAsync(Guid companyId, Guid channelId, CancellationToken ct)
+    {
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { SettlementChannelLock.Key(companyId, channelId) }, ct);
+    }
+
+    /// <summary>ช่องทางของบรรทัด (ไม่เปลี่ยนตลอดอายุบรรทัด — อ่านก่อนล็อกได้เพื่อรู้ว่าจะล็อกคีย์ไหน)</summary>
+    private async Task<Guid> LineChannelAsync(Guid companyId, Guid lineId, CancellationToken ct)
+        => await _db.SettlementLines.AsNoTracking().Where(l => l.Id == lineId && l.CompanyId == companyId)
+               .Select(l => (Guid?)l.ChannelId).FirstOrDefaultAsync(ct)
+           ?? throw new BusinessRuleException("ไม่พบบรรทัดนี้ในบริษัท", "SETTLEMENT-LINE", 404);
+
+    /// <summary>ช่องทางของรอบโอน (ไม่เปลี่ยนตลอดอายุรอบโอน — อ่านก่อนล็อกได้เพื่อรู้ว่าจะล็อกคีย์ไหน)</summary>
+    private async Task<Guid> BatchChannelAsync(Guid companyId, Guid batchId, CancellationToken ct)
+        => await _db.SettlementBatches.AsNoTracking().Where(b => b.Id == batchId && b.CompanyId == companyId)
+               .Select(b => (Guid?)b.ChannelId).FirstOrDefaultAsync(ct)
+           ?? throw new BusinessRuleException("ไม่พบรอบโอนนี้ในบริษัท", "SETTLEMENT-BATCH", 404);
 }

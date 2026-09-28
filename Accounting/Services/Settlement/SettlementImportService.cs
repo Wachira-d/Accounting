@@ -139,8 +139,12 @@ public sealed partial class SettlementImportService : ISettlementImportService
             throw new BusinessRuleException(
                 "ผังพักของช่องทางนี้ไม่ตรงกับผังที่ gateway ลงรับเงินไว้ (หรือยังไม่ได้ผูก) — บันทึกหน้าตั้งค่าช่องทางอีกครั้งเพื่อให้ระบบผูกผังเดียวกับ gateway "
                 + "ก่อนประกอบรอบโอน (ไม่งั้นยอดรับชำระกับยอดโอนจะอยู่คนละผังตลอดไป)", "SETTLEMENT-GATEWAY-CLEARING-MISMATCH");
-        var rows = await LoadIntentRowsAsync(companyId, channel.Id, providerCode, h.PeriodTo, ct);
+        var (rows, refundUnknown) = await LoadIntentRowsAsync(companyId, channel.Id, providerCode, h.PeriodTo, ct);
         var warnings = new List<string>();
+        // review198-E2 E2-10: การคืนเงินผลไม่แน่ชัด — ประกอบรอบโอนได้ (เห็นยอด) แต่ลงบัญชีไม่ได้จนกว่าจะตรวจผล (ด่านผู้ลงบัญชี RefundOutcomeUnknown)
+        if (refundUnknown > 0)
+            warnings.Add($"รายการรับชำระ {refundUnknown} รายการมีการคืนเงินที่ผลยังไม่แน่ชัด — ตรวจผลการคืนเงินกับผู้ให้บริการก่อน "
+                + "(รอบโอนนี้จะลงบัญชีไม่ได้จนกว่าจะตรวจผลแล้ว)");
         if (rows.FeeUnknownCount > 0)
             warnings.Add($"รายการรับชำระ {rows.FeeUnknownCount} รายการยังไม่รู้ค่าธรรมเนียมจริง (ไม่มีบรรทัดค่าธรรมเนียม) — "
                 + "ยอดรอบโอนจะไม่ลงตัวจนกว่าจะแก้ค่าธรรมเนียมหรือเพิ่มบรรทัดปรับปรุงที่มีเหตุผล");
@@ -152,8 +156,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
             warnings), ct);
     }
 
-    private async Task<SettlementIntentRows> LoadIntentRowsAsync(Guid companyId, Guid channelId, string providerCode,
-        DateTime? periodTo, CancellationToken ct)
+    /// <returns>บรรทัดจาก intent + จำนวน intent ที่การคืนเงินผลยังไม่แน่ชัด (E2-10)</returns>
+    private async Task<(SettlementIntentRows Rows, int RefundUnknown)> LoadIntentRowsAsync(Guid companyId, Guid channelId,
+        string providerCode, DateTime? periodTo, CancellationToken ct)
     {
         var to = periodTo is DateTime pt ? ThaiDate.CalendarDateUtc(pt).AddDays(1) : (DateTime?)null;
         // เงื่อนไขเดียวกับ GatewaySettlementService.SelectCandidatesAsync (ทีม E) + ยังไม่อยู่ในรอบโอนใด · ไม่แตะรายการที่เส้นเดิมบันทึกรอบโอนแล้ว
@@ -164,19 +169,22 @@ public sealed partial class SettlementImportService : ISettlementImportService
                     || ((i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded)
                         && i.RefundedAmount > 0m))
                 && (to == null || i.ConfirmedAt < to))
-            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt })
+            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt,
+                Unknown = i.RefundOutcomeUnknownSince != null })
             .ToListAsync(ct);
         // อยู่ในรอบโอนของเส้นใหม่แล้ว แต่คืนเงินภายหลัง — ผู้ให้บริการหักจากรอบถัดไป
         var late = await _db.PaymentIntents.AsNoTracking()
             .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode
                 && i.SettlementJournalEntryId == null && i.SettlementBatchId != null && i.RefundedAmount > 0m)
-            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt })
+            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt,
+                Unknown = i.RefundOutcomeUnknownSince != null })
             .ToListAsync(ct);
         var lateIds = late.Select(x => x.Id).ToList();
+        // R-B2/R-B17: ยอดคืนที่ถูกนับแล้วในบรรทัดคืนเงินของทุกช่องทาง (intent เป็นของบริษัท ไม่ใช่ของช่องทาง) — ไม่งั้นคืนเงินเดียวกันเข้าสองช่องทาง
         var refundInLines = lateIds.Count == 0
             ? new Dictionary<Guid, decimal>()
             : (await _db.SettlementLines.AsNoTracking()
-                    .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && l.PaymentIntentId != null
+                    .Where(l => l.CompanyId == companyId && l.PaymentIntentId != null
                         && lateIds.Contains(l.PaymentIntentId.Value) && l.LineType == SettlementLineType.Refund)
                     .Select(l => new { Id = l.PaymentIntentId!.Value, l.Amount })
                     .ToListAsync(ct))
@@ -186,7 +194,8 @@ public sealed partial class SettlementImportService : ISettlementImportService
                 i.FeeEstimated, i.ConfirmedAt, false, 0m))
             .Concat(late.Select(i => new SettlementIntentSnapshot(i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual,
                 i.FeeEstimated, i.ConfirmedAt, true, refundInLines.GetValueOrDefault(i.Id))));
-        return PaymentIntentAdapter.BuildRows(snaps);
+        return (PaymentIntentAdapter.BuildRows(snaps), fresh.Count(i => i.Unknown)
+            + late.Count(i => i.Unknown && i.RefundedAmount - refundInLines.GetValueOrDefault(i.Id) > 0m));
     }
 
     // ═══════════════════ บันทึก (ร่วมทุกทางเข้า) ═══════════════════
@@ -230,10 +239,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
             throw new BusinessRuleException("ไม่พบบัญชีธนาคารที่เลือกในบริษัทนี้", "SETTLEMENT-BANK", 404);
 
         // ── 2. คีย์กันซ้ำ + ตัดแถวที่มีแล้ว (อ่านอย่างเดียว — ตรวจซ้ำใต้ล็อก) ──
-        // ป้ายในคีย์ต้องตัด PII ก่อน (คีย์ถูกเก็บเป็น ExternalTxnId)
+        // คีย์รุ่น v2 (R-B5/R-B6): ป้ายถูกแฮชในคีย์ (ไม่มี PII · ไม่ขึ้นกับตัวตัด PII) · ใส่ยอด+วันที่ · แถวไม่มี id ใส่รอบโอนของแถว
         var keys = SettlementTxnKey.Assign(rows
-            .Select(r => new SettlementTxnKeyInput(r.RawTxnId, SettlementPiiScrubber.Scrub(r.RawTypeLabel), r.ExternalOrderId, r.Amount,
-                r.TxnDate)).ToList());
+            .Select(r => new SettlementTxnKeyInput(r.RawTxnId, r.RawTypeLabel, r.ExternalOrderId, r.Amount, r.TxnDate, payoutRef)).ToList());
         var existing = await ExistingKeysAsync(companyId, channelId, keys, ct);
         var prepared = rows.Select((r, i) => new PreparedLine
             {
@@ -255,8 +263,8 @@ public sealed partial class SettlementImportService : ISettlementImportService
         {
             _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.SettlementImport, channelId.ToString("N")) }, ct);
+            // ล็อกต่อช่องทางตัวเดียวกับผู้ลงบัญชี (C-1) — ก่อนอ่านอะไรใต้ธุรกรรม (R-B3)
+            await LockChannelAsync(companyId, channelId, ct);
             if (input.GatewayProviderCode is string pc)
                 // ล็อกเดียวกับเส้นบันทึกรอบโอนเดิม (GatewaySettlementService) — สองเส้นห้ามหยิบ intent ชุดเดียวกันพร้อมกัน
                 await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
@@ -281,12 +289,25 @@ public sealed partial class SettlementImportService : ISettlementImportService
             var batch = await _db.SettlementBatches
                 .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ChannelId == channelId && b.PayoutRef == payoutRef, ct);
             var created = batch == null;
-            if (batch != null && !SettlementSaleMatch.IsEditable(batch.Status))
+            // C-1(b): รอบที่ลงบัญชีค้างครึ่งทาง (มีเอกสาร/การรับชำระของการลงบัญชีแล้ว) เติมบรรทัดไม่ได้เหมือนรอบที่ลงบัญชีแล้ว
+            var artifacts = batch == null ? new List<string>() : await PostingArtifactsAsync(companyId, batch.Id, ct);
+            if (batch != null && !SettlementSaleMatch.IsEditable(batch.Status, artifacts.Count))
             {
                 if (toAdd.Count > 0)
-                    throw new BusinessRuleException(
-                        $"รอบโอน \"{payoutRef}\" ลงบัญชีแล้ว แต่ไฟล์มีรายการใหม่ {toAdd.Count} รายการ — แพลตฟอร์มอาจแก้รายงานย้อนหลัง · "
-                        + "นำเข้ารายการใหม่เป็นรอบโอนแยก (เลขรอบโอนอื่น) หรือกลับรายการรอบนี้ก่อน", "SETTLEMENT-BATCH-POSTED");
+                    throw new BusinessRuleException(SettlementSaleMatch.IsEditable(batch.Status)
+                        ? $"รอบโอน \"{payoutRef}\" ลงบัญชีค้างครึ่งทาง (มี {string.Join(", ", artifacts.Take(10))}) แต่ไฟล์มีรายการใหม่ {toAdd.Count} รายการ — "
+                          + "กด \"ลงบัญชี\" รอบนี้ต่อให้ครบแล้วนำเข้ารายการใหม่เป็นรอบโอนแยก หรือยกเลิกเอกสาร/การรับชำระเหล่านั้นก่อน"
+                        : $"รอบโอน \"{payoutRef}\" ลงบัญชีแล้ว แต่ไฟล์มีรายการใหม่ {toAdd.Count} รายการ — แพลตฟอร์มอาจแก้รายงานย้อนหลัง · "
+                          + "นำเข้ารายการใหม่เป็นรอบโอนแยก (เลขรอบโอนอื่น) หรือกลับรายการรอบนี้ก่อน", "SETTLEMENT-BATCH-POSTED");
+            }
+            // R-B5: แถวที่ถูกข้ามเพราะมีอยู่แล้ว ต้องบอกเป็นรายแถว (เดิมบอกแค่จำนวน — แถวจริงที่ชนคีย์หายเงียบ)
+            if (skippedDup > 0 && toAdd.Count > 0)
+            {
+                var addKeys = toAdd.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+                var skipped = rows.Select((r, i) => (r.SourceRow, Key: keys[i])).Where(x => !addKeys.Contains(x.Key)).ToList();
+                var refs = await BatchRefsOfKeysAsync(companyId, channelId, skipped.Select(x => x.Key).ToList(), ct);
+                warnings.Add($"ข้าม {skippedDup} แถวที่นำเข้าแล้ว (แถวที่ {string.Join(", ", skipped.Take(20).Select(x => x.SourceRow))}"
+                    + $"{(skipped.Count > 20 ? " …" : "")} · อยู่ในรอบโอน {string.Join(", ", refs)}) — ถ้าเป็นรายการใหม่จริง ตรวจว่าไฟล์ใส่เลขรายการซ้ำกับรอบก่อนหรือไม่");
             }
             if (batch == null && toAdd.Count == 0)
             {

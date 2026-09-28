@@ -21,6 +21,26 @@ Status legend: **CONFIRMED** means the code path was read end to end. **PLAUSIBL
 
 P2 and P3 are listed below: R-B6 through R-B22.
 
+## สถานะการแก้ — ทีม S3 รอบ 198 (ติ๊กไม่ลบแถว · sha เติมในคอมมิตตามหลัง)
+
+| ID | สถานะ | แก้ที่ / เหตุผลที่ยังค้าง |
+|---|---|---|
+| R-B1 | ✅ <pending> | `SettlementLines.MatchDecidedByUser` (migration `ADD COLUMN IF NOT EXISTS … DEFAULT false`) · `SetMatch` ติดธง · `MatchLinesAsync` ไม่เขียนทับบรรทัดที่คนตัดสิน · `RematchChangedAsync` คงคำตัดสินเมื่อยังอยู่กลุ่มการจับคู่เดิม (`SettlementSaleMatch.KeepUserMatch`) · "ใช้กับป้ายเดียวกัน" แตะเฉพาะบรรทัดที่ประเภทเปลี่ยนจริง · `RematchBatchAsync` ข้ามใบสรุปที่คนยืนยัน · echo ใน `SettlementLineView.MatchDecidedByUser` |
+| R-B2 | ✅ <pending> | `SettlementSaleMatch.IntentCandidate` — ต้นทางคืนเงิน = `RefundedAmount` − Σ บรรทัดคืนเงินที่อ้าง intent ในทุกรอบ (ไม่ดูว่ารอบไหนเป็นเจ้าของ) · จัดสรรทีละบรรทัด `ApplyIntentRefundCapacity` · เหตุผลแยก 3 สาเหตุ · ผู้ลงบัญชี: บรรทัดคืนเงินของ intent ที่รอบก่อนเป็นเจ้าของ **ไม่ใช่** "นับซ้ำ" (`IntentSettledElsewhere` — เดิมบล็อกทุกบรรทัดคืนเงินภายหลังรวมเส้น PaymentIntent) · `CommitPostedAsync` ไม่ย้ายเจ้าของ intent (`??=`) |
+| R-B3 | ✅ <pending> | ทุกเส้นแก้ข้อมูล (นำเข้า · จัดประเภท · จับคู่ · จับคู่ใหม่ · ยกเลิก) ล็อก `SettlementChannelLock` **ก่อน**โหลด/ตรวจ (`LockChannelAsync` → `LoadEditableBatchAsync`) · ล็อกตัวเดียวกับผู้ลงบัญชี (C-1) |
+| R-B4 | ✅ <pending> | ค้น intent ด้วย `ProviderRef` ทั้งบริษัทเสมอ · พบแต่ใช้ไม่ได้ (ไม่ผูก gateway นั้น/ผังพักไม่ตรง/เส้นเดิมบันทึกแล้ว) ⇒ `Unmatched` + เหตุผล ไม่เคย `AutoSummary` · `Reference`/`SourceReference` เทียบตัดช่องว่าง-ไม่สนตัวพิมพ์ · **ค้าง**: ค้นใน `ReceiptVoucher`/`BookingNumber` (backlog — ชนิด/ช่องใหม่ต้องตัดสินว่าเป็นใบรับชำระได้ไหม) · ไม่บล็อกนำเข้า CSV ของช่องทาง Gateway ที่ไม่ผูก config (ไม่จำเป็นแล้ว — ค้น intent เสมอ) |
+| R-B5 | ✅ <pending> | `SettlementTxnKey` รุ่น `v2:` — มี id: id + แฮช(ป้าย·ยอด·วันที่) · ไม่มี id: แฮช(ออเดอร์·ป้าย·ยอด·วันที่·**รอบโอน**) · `#n` เฉพาะแถวที่เหมือนกันทุกช่อง · แถวที่ถูกข้ามเตือนรายแถว + รอบโอนที่มีอยู่ · ไม่มีข้อมูลเดิมที่ต้องย้าย (ยังไม่มี controller/หน้าจอเรียก service นี้) |
+| R-B6 | ✅ <pending> | ป้ายในคีย์ผ่าน `SettlementTxnKey.FrozenLabel` ของคีย์เอง (ไม่ใช้ `NormalizeLabel`/ตัวตัด PII) และถูกแฮช · คำนำหน้ารุ่น `SettlementTxnKey.Version` · **ค้าง**: golden test ของไฟล์ตัวอย่าง (รอไฟล์จริงจากเจ้าของ — adapter เฉพาะเจ้าเขียนเมื่อมีไฟล์จริงเท่านั้น) |
+| R-B7–R-B11 | backlog | ตัวอ่านไฟล์ (xlsx เลขยาว · เขตเวลา · ลำดับวัน/เดือน · วงเล็บ+ลบ · แถวสรุปแบบกว้าง · เพดานแถว) — ไม่อยู่ในขอบเขตรอบนี้ (ทีม S3 = P1 ของ import/match + posting) |
+| R-B12 | ✅ <pending> | ขายผ่าน intent: ยอดของออเดอร์ ≠ ยอดที่รับชำระ ±0.01 ⇒ `AmountMismatch` (ผูก intent ไว้ให้คนตรวจ) · **ค้าง**: intent ที่บรรทัดขายอื่นอ้างแล้ว (ในรอบเดียวกันกลุ่มออเดอร์เดียวกัน = ตั้งใจ) |
+| R-B13 | backlog | รับชำระเกินข้ามรอบโอน — ต้องให้ผู้ลงบัญชีรวมยอดที่จับคู่ใบเดียวกันในรอบอื่นที่ยังไม่ลง (ด่าน `ReceiptDocumentNotPayable` กันได้แค่รอบที่ลงแล้ว) |
+| R-B14 | ✅ <pending> | `ParseClassifierAnswer` ต้องเป็นชื่อเดียวตรงตัว (`Enum.GetNames` ก่อน `TryParse`) |
+| R-B15 | backlog | แยก "เรียก AI แล้ว" กับ "แสดงคำแนะนำ AI" + warn-gate — งานของหน้าจอทีม D |
+| R-B16 | ✅ <pending> บางส่วน | `CorrectFeeAsync` ของ intent ที่อยู่ในรอบโอนแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (`SettlementSaleMatch.FeeEditBlockedByBatch`) · **ค้าง**: ตัวนับ "legacy refund" `:129` และ `isSettled` ของ `PaymentGatewayController` (ไฟล์ของทีม E — แจ้งทีม E3) |
+| R-B17 | ✅ <pending> บางส่วน | คืนเงินภายหลังนับยอดในบรรทัดของ**ทุกช่องทาง** (intent เป็นของบริษัท) ⇒ ช่องทางที่สองไม่ได้บรรทัดคืนซ้ำ · **ค้าง**: 1 ช่องทาง Gateway ต่อ config (กติกาของ `SettlementChannelService` — ต้องตัดสินว่าร้านหลายร้านบน gateway เดียวเป็นไปได้ไหม) |
+| R-B18 | backlog (มีตาข่าย) | ผู้ลงบัญชีบล็อกอยู่แล้ว (`ResolveMoneyInAccountAsync` คืน null ⇒ `ClearingSourceMismatch`) · ห้ามผูกช่องทางกับ provider ที่โอนตรงเข้าธนาคาร = งานของหน้าตั้งค่าช่องทาง |
+| R-B19–R-B22 | backlog | ผังพักที่เป็นลูกหนี้จริง · ค่าธรรมเนียมประมาณการ · วันที่ของบรรทัดคืนเงิน · `Kind` ค่าเริ่มต้น — ไม่อยู่ในขอบเขตรอบนี้ |
+
 ---
 
 ## 1. Dedupe key (`SettlementTxnKey`)

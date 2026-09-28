@@ -528,6 +528,7 @@
             </div>
             ${importResult ? this.renderImportResult(importResult) : ''}
             ${a.lockedReason ? `<div class="banner info">🔒 ${Layout.esc(a.lockedReason)}</div>` : ''}
+            ${a.unpostBlockedReason ? `<div class="banner warn">↩️ ${Layout.esc(a.unpostBlockedReason)}</div>` : ''}
             <div class="stat-row">
               <div class="stat"><div class="k">ยอดโอนเข้าธนาคาร</div><div class="v">${Layout.money(b.netPayout)}</div></div>
               <div class="stat"><div class="k">ผลรวมบรรทัด</div><div class="v">${Layout.money(b.linesTotal)}</div></div>
@@ -541,7 +542,7 @@
             <div class="actions">
               ${a.canPost ? '<button class="btn btn-primary" onclick="Page.loadPreview()">🔍 ดูตัวอย่างการลงบัญชี</button>' : ''}
               ${a.canEditLines ? '<button class="btn btn-secondary" onclick="Page.rematch()">🔁 จับคู่ใบขายใหม่ทั้งรอบ</button>' : ''}
-              ${a.canUnpost ? '<button class="btn btn-secondary" onclick="Page.loadPreview()">📄 ดูเอกสารที่ลงไว้</button>' : ''}
+              ${a.canUnpost || a.unpostBlockedReason ? '<button class="btn btn-secondary" onclick="Page.loadPreview()">📄 ดูเอกสารที่ลงไว้</button>' : ''}
               ${a.canBankMatch ? '<button class="btn btn-secondary" onclick="Page.loadDeposits()">🏦 จับคู่เงินเข้าธนาคาร</button>' : ''}
               ${a.canUnpost ? '<button class="btn btn-secondary" onclick="Page.askUnpost()">↩️ ยกเลิกการลงบัญชี</button>' : ''}
               ${a.canVoid ? '<button class="btn btn-danger" onclick="Page.askVoid()">🗑️ ยกเลิกรอบโอน</button>' : ''}

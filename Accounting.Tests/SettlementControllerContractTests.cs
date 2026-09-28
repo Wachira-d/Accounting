@@ -163,6 +163,39 @@ public class SettlementControllerContractTests
         Assert.False(string.IsNullOrWhiteSpace(voided.LockedReason));
     }
 
+    // ═══ ทีม S3: ปุ่มใช้ตัวตัดสินเดียวกับด่านของ service (C-1 · C-2) ═══
+
+    [Fact]
+    public void S3_ลงค้างครึ่งทาง_แก้บรรทัดและยกเลิกรอบไม่ได้พร้อมเหตุผล_ลงบัญชีต่อได้_ตัวตัดสินเดียวกับด่านservice()
+    {
+        var half = SettlementBatchActions.For(SettlementBatchStatus.Matched, Array.Empty<(Guid, SettlementLineType)>(), postingArtifacts: 2);
+        Assert.False(half.CanEditLines);
+        Assert.False(half.CanVoid);
+        Assert.True(half.CanPost);                                           // ลงต่อจากที่ค้าง
+        Assert.Contains("ค้างครึ่งทาง", half.LockedReason);
+        Assert.Equal(SettlementSaleMatch.IsEditable(SettlementBatchStatus.Matched, 2), half.CanEditLines);   // ไม่ drift จาก LoadEditableBatchAsync
+        // ทิศตรงข้าม: ยังไม่มีของ ⇒ เหมือนเดิม · ไม่ได้ตรวจ (null) ⇒ ตัดสินจากสถานะ (service ตรวจตอนกด)
+        var clean = SettlementBatchActions.For(SettlementBatchStatus.Matched, Array.Empty<(Guid, SettlementLineType)>(), postingArtifacts: 0);
+        Assert.True(clean.CanEditLines && clean.CanVoid && clean.CanPost);
+        Assert.Null(clean.LockedReason);
+        Assert.True(SettlementBatchActions.For(SettlementBatchStatus.Matched, Array.Empty<(Guid, SettlementLineType)>()).CanVoid);
+    }
+
+    [Fact]
+    public void S3_ลงบัญชีแล้วแต่ด่านยกเลิกการลงบัญชีปฏิเสธ_ซ่อนปุ่มพร้อมเหตุผลและทางไปต่อ_ไม่มีเหตุ_ปุ่มยังอยู่()
+    {
+        var refusals = new[] { new SettlementUnpostRefusal("TIV-0001", "e-Tax ตอบรับแล้ว", "ออกใบลดหนี้แทน") };
+        var blocked = SettlementBatchActions.For(SettlementBatchStatus.Posted, Array.Empty<(Guid, SettlementLineType)>(), 0, refusals);
+        Assert.False(blocked.CanUnpost);
+        Assert.Contains("TIV-0001", blocked.UnpostBlockedReason);
+        Assert.Contains("ออกใบลดหนี้แทน", blocked.UnpostBlockedReason);
+        Assert.True(blocked.CanBankMatch);                                   // ปุ่มอื่นไม่ถูกแตะ
+        var open = SettlementBatchActions.For(SettlementBatchStatus.Posted, Array.Empty<(Guid, SettlementLineType)>(), 0,
+            Array.Empty<SettlementUnpostRefusal>());
+        Assert.True(open.CanUnpost);
+        Assert.Null(open.UnpostBlockedReason);
+    }
+
     // ═══ ผู้สมัครเงินเข้าธนาคาร ═══
 
     private static readonly Guid Bank = Guid.NewGuid();
