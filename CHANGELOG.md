@@ -3709,3 +3709,13 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S4 — แ�
 - **ขายด่วน** (`quick-sale.html`, ค้างจากทีม W): ไม่กลืนผลอนุมัติ — มีคำเตือน = แบนเนอร์ "ร่าง" + ลิงก์ไปอนุมัติที่หน้าเอกสาร · error อื่น = ข้อความเซิร์ฟเวอร์ ·
   `tools/quick_sale_approve_sim.js`
 - S3-5 รอเจ้าของ · S3-11 backlog · เทสต์ `SettlementReview198S4Tests` · required_call_site +13/ปรับ 6 · TEST_PLAN SPS4-01..15 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แก้ฝ่ายค้าน review198-S4:
+- **S4-1** "ด่านยกเลิกการลงบัญชีปฏิเสธ" ≠ "ระบบยกเลิกไม่ได้": ทุกเหตุของ `SettlementUnpostGate` มี `SettlementUnpostRefusalKind` (`Unvoidable` = e-Tax ตอบรับ ·
+  รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบเสร็จอัตโนมัติ e-Tax ตอบรับ / `NeedsUserAction` = ภาษีเดือนที่ประกาศว่ายื่น · เอกสารลูก/ใบลดหนี้อ้าง · §78/1 · ค่าเริ่มต้น) ·
+  ของกำพร้าแยกสามกองด้วย `Helpers/SettlementOrphanTriage.Split` — กอง NeedsUserAction กลับมา**บล็อก** พร้อมทางไปต่อรายชิ้น (`SettlementPostingFacts.OrphanNeedsAction`)
+  เพราะใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น (เดิม S4 ลดเป็นคำเตือน ⇒ ค่าใช้จ่าย/ภาษีซื้อ/50 ทวิ ซ้ำ)
+- **S4-8** เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` (สูตรตัวกรอง ภ.พ.30/ภ.พ.36) · e-Tax ของใบเสร็จอัตโนมัติคู่การรับชำระที่ `VoidPaymentAsync` ยกเลิกเงียบ
+- **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
+- **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
+- S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_

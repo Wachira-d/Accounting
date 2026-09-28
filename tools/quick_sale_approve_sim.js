@@ -12,6 +12,8 @@
 //   (b) มีคำเตือน ⇒ ไม่อนุมัติ · ไม่ส่ง true (หน้านี้ไม่มีหน้าต่างให้คนรับทราบ) · แบนเนอร์บอก "ร่าง" + รายการคำเตือน (หนี HTML) + ลิงก์ไปหน้าเอกสาร
 //   (c) error อื่น ⇒ ข้อความของเซิร์ฟเวอร์ในแบนเนอร์ (ไม่กลืน)
 //   (d) submit() ต้องไม่กลืน error ของการอนุมัติอีก (`catch (_)` รอบ approveDocument)
+//   (e) review198-S4 S4-2: api.js คืน { success:false } โดย**ไม่ throw** (429 ถูกจำกัดอัตรา · 403 ขณะรายการบริษัทยังโหลดไม่เสร็จ) ⇒ ต้องไม่นับเป็นอนุมัติ
+//       และแบนเนอร์บอกข้อความนั้น (รูปคำตอบเดียวกับ api.js — ไม่ใช่ error object)
 // และ negative test ในตัว: ใส่บั๊กกลับทีละแบบแล้วชุดเดียวกันต้องล้ม
 'use strict';
 const fs = require('fs');
@@ -53,6 +55,9 @@ function makeApi(mode, log) {
       const ack = !!(body && body.acknowledgeWarnings);
       log.push('approve:' + (ack ? 'ack' : 'noack'));
       if (mode === 'forbidden') { const e = new Error('ผู้ใช้นี้ไม่มีสิทธิ์อนุมัติใบกำกับภาษี'); e.status = 403; throw e; }
+      // รูปเดียวกับ api.js: 429 และ 403-ช่วงโหลดบริษัท คืนค่าแทนการ throw
+      if (mode === 'ratelimited') return { success: false, data: null, message: 'กรุณารอสักครู่' };
+      if (mode === 'notready') return { success: false, data: null, message: 'company not ready' };
       if (mode === 'warnings' && !ack) {
         const e = new Error('เอกสารมีจุดที่ต้องตรวจก่อนยืนยันการอนุมัติ');
         e.status = 422; e.body = { data: { warnings: [WARN], aiHints: null } };
@@ -93,6 +98,15 @@ async function scenarios(src) {
     const html = r.approved ? '' : qs._draftNotice(r, link);
     if (!html.includes('ไม่มีสิทธิ์อนุมัติ')) fails.push('(c) ไม่แสดงข้อความของเซิร์ฟเวอร์');
   }
+  for (const mode of ['ratelimited', 'notready']) {
+    const log = [];
+    const qs = makeQs(src, makeApi(mode, log));
+    const r = await qs._approve('c-1', 'd-1');
+    if (r.approved) fails.push('(e) ' + mode + ': api.js คืน success:false แต่ถือว่าอนุมัติแล้ว (ขึ้น ✅ ทั้งที่ใบยังเป็นร่าง)');
+    const html = r.approved ? '' : qs._draftNotice(r, link);
+    if (!r.approved && !/ร่าง/.test(html)) fails.push('(e) ' + mode + ': แบนเนอร์ไม่บอกว่าเป็นร่าง');
+    if (mode === 'ratelimited' && !r.approved && !html.includes('กรุณารอสักครู่')) fails.push('(e) ratelimited: ไม่แสดงข้อความจาก api.js');
+  }
   {
     const m = /\n      async submit\(\)[\s\S]*?\n      \},/.exec(src);
     if (!m) fails.push('(d) หา submit() ไม่เจอ');
@@ -117,6 +131,7 @@ async function scenarios(src) {
     ['กลืน error แล้วนับเป็นอนุมัติ', s => s.replace('return this._approvalOutcome(e);', 'return { approved: true };')],
     ['ไม่หนี HTML ของคำเตือน', s => s.replace('`<li>${this._esc(w)}</li>`', '`<li>${w}</li>`')],
     ['ไม่แสดงข้อความของเซิร์ฟเวอร์', s => s.replace("(e && e.message) || 'อนุมัติไม่สำเร็จ'", "'อนุมัติไม่สำเร็จ'")],
+    ['ไม่ตรวจ success:false ของ api.js (S4-2)', s => s.replace('if (res && res.success === false)', 'if (false)')],
     ['submit กลับไปกลืน error', s => s.replace('const approval = await this._approve(co.id, docId);',
       'try { await API.c(co.id).approveDocument(docId); } catch (_) { } const approval = { approved: true };')],
   ];
@@ -132,5 +147,5 @@ async function scenarios(src) {
     console.error('❌ quick_sale_approve_sim — negative test ไม่ล้ม (ด่านไม่มีฟัน):\n  ' + survived.join('\n  '));
     process.exit(1);
   }
-  console.log(`✅ quick_sale_approve_sim — 4 ชุดเหตุการณ์ผ่าน · negative test ${mutants.length} แบบล้มครบ`);
+  console.log(`✅ quick_sale_approve_sim — 5 ชุดเหตุการณ์ผ่าน · negative test ${mutants.length} แบบล้มครบ`);
 })();

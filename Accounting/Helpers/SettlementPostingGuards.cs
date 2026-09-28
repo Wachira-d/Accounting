@@ -31,9 +31,11 @@ public static class SettlementChannelLock
     /// <summary>คีย์ตัวเลข — ตัวเดียวกับที่ <see cref="JobLock.RunExclusiveAsync"/> คำนวณจาก <see cref="Scope"/> + <see cref="Part"/></summary>
     public static long Key(Guid companyId, Guid channelId) => AdvisoryLockKey.For(companyId, Scope, Part(channelId));
 
-    /// <summary>ข้อความเมื่อล็อกถูกถือ — ตัวเดียวของทั้งฝั่งนำเข้า/แก้บรรทัด (ลองล็อกไม่รอ · review198-S3 S3-9) และฝั่งลงบัญชี/ยกเลิก/จับคู่</summary>
+    /// <summary>ข้อความเมื่อล็อกถูกถือ — ตัวเดียวของทั้งฝั่งนำเข้า/แก้บรรทัด (ลองล็อกไม่รอ · review198-S3 S3-9) และฝั่งลงบัญชี/ยกเลิก/จับคู่ ·
+    /// ผู้ถือล็อกเป็นได้ทุกเส้น (คีย์เดียวกัน · ไม่รู้ว่าใครถือ) ⇒ ข้อความต้องเป็นกลาง ไม่ระบุว่า "กำลังลงบัญชี" (review198-S4 S4-7)</summary>
     public const string BusyMessage =
-        "มีการลงบัญชี/ยกเลิก/จับคู่ของช่องทางนี้กำลังทำอยู่ — รอสักครู่แล้วกดใหม่ (ระบบไม่ทำซ้อนกันเพื่อกันลงบัญชีซ้ำ)";
+        "มีงานอื่นของช่องทางนี้กำลังทำอยู่ (นำเข้า · แก้/จับคู่บรรทัด · ลงบัญชี · ยกเลิกการลงบัญชี · จับคู่ธนาคาร) — รอสักครู่แล้วกดใหม่ "
+        + "(ระบบไม่ทำงานของช่องทางเดียวกันซ้อนกัน เพื่อกันข้อมูลชนกันและลงบัญชีซ้ำ · ระบบยังไม่ได้บันทึกอะไรจากการกดครั้งนี้)";
 }
 
 /// <summary>การรับชำระ 1 รายการที่มีป้ายของรอบโอน (<see cref="SettlementPostingKeys.PaymentMarker"/>) — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
@@ -225,10 +227,13 @@ public static class SettlementWhtCertResume
 /// <param name="InputVatBecameClaimableAt">ฝั่งซื้อ: วันที่ภาษีซื้อที่พักถึงกำหนด (null + พัก = ยังไม่อยู่ใน ภ.พ.30 เดือนใด)</param>
 /// <param name="VoidBlock">เหตุที่ <c>VoidDocumentAsync</c> เองปฏิเสธ (เอกสารลูก active · ใบลดหนี้/ใบเพิ่มหนี้อ้างเลขที่) — ตัวตัดสินเดียว
 /// <see cref="DocumentVoidPreconditions"/> (review198-S3 S3-3) · null = ไม่มี</param>
+/// <param name="TaxPointDate">จุดความรับผิด (<c>Document.TaxPointDate</c>) — เดือนภาษีของใบ = <c>TaxPointDate ?? DocumentDate</c> สูตรเดียวกับตัวกรองของ
+/// ภ.พ.30/ภ.พ.36 (<c>TaxService.GenerateVatReport/GeneratePp36Report</c>) · null = ใช้วันที่เอกสาร (review198-S4 S4-8)</param>
 public sealed record SettlementUnpostDocument(
     Guid Id, string Number, DocumentType Type, string Component, DateTime DocumentDate, decimal VatAmount,
     bool IsForeignService, bool EtaxAccepted, bool InLockedReport,
-    bool InputVatPostedAsUndue = false, DateTime? InputVatBecameClaimableAt = null, string? VoidBlock = null);
+    bool InputVatPostedAsUndue = false, DateTime? InputVatBecameClaimableAt = null, string? VoidBlock = null,
+    DateTime? TaxPointDate = null);
 
 /// <summary>50 ทวิ ที่ผูกกับเอกสารของรอบโอน (ยังไม่ถูกยกเลิก)</summary>
 public sealed record SettlementUnpostCertificate(
@@ -238,13 +243,29 @@ public sealed record SettlementUnpostCertificate(
 /// <param name="OutputVatDueAt">ใบบริการ (VAT พัก 21913): วันที่ภาษีขายถึงกำหนดเพราะรับเงิน (§78/1 · <c>Document.OutputVatDueAt</c>) — null = ไม่มี</param>
 /// <param name="DocumentPaidAmount">ยอดรับชำระสะสมของใบขาย (รวมรายการนี้)</param>
 /// <param name="BatchPaidOnDocument">Σ การรับชำระของรอบโอนนี้บนใบเดียวกัน (ทั้งหมดถูกยกเลิกพร้อมกัน)</param>
+/// <param name="ReceiptEtaxAccepted">ใบเสร็จอัตโนมัติที่ออกคู่การรับชำระนี้ (<c>Payment.ReceiptDocumentId</c> · ใบกำกับ ณ วันรับเงิน §78/1) มี e-Tax
+/// ที่กรมสรรพากรตอบรับแล้ว — <c>VoidPaymentAsync</c> ประทับใบนั้น Voided ตรงโดยไม่ดู e-Tax (review198-S4 S4-8)</param>
+/// <param name="ReceiptNumber">เลขที่ใบเสร็จอัตโนมัตินั้น (ใช้ในข้อความ)</param>
 public sealed record SettlementUnpostPayment(
     Guid Id, string? Number, Guid DocumentId, string? DocumentNumber, DateTime? OutputVatDueAt, decimal DocumentPaidAmount,
-    decimal BatchPaidOnDocument);
+    decimal BatchPaidOnDocument, bool ReceiptEtaxAccepted = false, string? ReceiptNumber = null);
+
+/// <summary>ชนิดของเหตุที่ด่านยกเลิกการลงบัญชีปฏิเสธ (review198-S4 S4-1) — ด่านนี้<b>เข้มกว่า</b>การยกเลิกทีละใบโดยตั้งใจ ⇒ "ด่านปฏิเสธ" ≠ "ระบบยกเลิกไม่ได้"</summary>
+public enum SettlementUnpostRefusalKind
+{
+    /// <summary>ชิ้นนี้ยกเลิกทีละใบได้เมื่อคนทำขั้นก่อนหน้า/รับผลทางภาษีเอง (ภ.พ.30/ภ.พ.36 ที่ประกาศว่ายื่นแล้วแต่ไม่ล็อก · มีเอกสารลูก/ใบลดหนี้อ้าง ·
+    /// ยกเลิกการรับชำระที่ทำให้ภาษีขายถึงกำหนด §78/1 ในเดือนที่ยื่นแล้ว) · ค่าเริ่มต้น = ทิศปลอดภัย (ของกำพร้ายังบล็อก)</summary>
+    NeedsUserAction = 0,
+    /// <summary>จุดที่ไม่มีทางกลับ: e-Tax ตอบรับแล้ว (Accepted) · อยู่ในรายงานภาษีที่ล็อกการยื่น (<c>FilingLockedAt</c>) ·
+    /// 50 ทวิ อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว (ชุดเดียวกับที่ <c>VoidDocumentAsync</c>/<see cref="WhtCertVoidGuard"/> ปฏิเสธ)</summary>
+    Unvoidable = 1,
+}
 
 /// <summary>เหตุผลที่ยกเลิกการลงบัญชีไม่ได้ 1 ข้อ — พร้อมทางไปต่อ</summary>
-/// <param name="ArtifactId">ชิ้นที่ระบบยกเลิกไม่ได้เพราะเหตุนี้ (เอกสาร · เอกสารของ 50 ทวิ · การรับชำระ) — ใช้แยก "ของกำพร้าที่ยกเลิกไม่ได้" (S3-6)</param>
-public sealed record SettlementUnpostRefusal(string Subject, string Reason, string NextStep, Guid? ArtifactId = null);
+/// <param name="ArtifactId">ชิ้นที่ด่านปฏิเสธเพราะเหตุนี้ (เอกสาร · เอกสารของ 50 ทวิ · การรับชำระ) — ใช้แยกของกำพร้า (S3-6 · <see cref="SettlementOrphanTriage"/>)</param>
+/// <param name="Kind">ยกเลิกไม่ได้จริง หรือ ต้องให้คนทำก่อน (S4-1) — ทุกจุดที่สร้างต้องระบุเอง · ค่าเริ่มต้น = <see cref="SettlementUnpostRefusalKind.NeedsUserAction"/> (ทิศบล็อก)</param>
+public sealed record SettlementUnpostRefusal(string Subject, string Reason, string NextStep, Guid? ArtifactId = null,
+    SettlementUnpostRefusalKind Kind = SettlementUnpostRefusalKind.NeedsUserAction);
 
 /// <summary>
 /// **ด่านก่อนยกเลิกการลงบัญชีรอบโอน — ตรวจทุกชิ้นก่อนแตะชิ้นแรก** (ฝ่ายค้าน C-2)
@@ -267,48 +288,63 @@ public static class SettlementUnpostGate
     {
         const string CreditNotePath = "ยกเลิกการลงบัญชีทั้งรอบไม่ได้แล้ว — ถ้ายอดผิด ให้ออกใบลดหนี้/ใบเพิ่มหนี้อ้างเอกสารนั้น (หรือบันทึกรายการปรับปรุง"
             + "ในงวดปัจจุบัน) แล้วนำเข้าส่วนต่างเป็นบรรทัดปรับปรุงของรอบโอนถัดไป · ระบบไม่แตะอะไรในรอบนี้";
+        const SettlementUnpostRefusalKind Hard = SettlementUnpostRefusalKind.Unvoidable;
+        const SettlementUnpostRefusalKind Soft = SettlementUnpostRefusalKind.NeedsUserAction;
         var result = new List<SettlementUnpostRefusal>();
         foreach (var d in documents)
         {
             if (d.EtaxAccepted)
-                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)", CreditNotePath, d.Id));
+                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)", CreditNotePath, d.Id, Hard));
             if (d.InLockedReport)
-                result.Add(new(d.Number, "เอกสารนี้อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว", CreditNotePath, d.Id));
+                result.Add(new(d.Number, "เอกสารนี้อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว", CreditNotePath, d.Id, Hard));
+            // S4-8: เดือนภาษี = TaxPointDate ?? DocumentDate (สูตรเดียวกับตัวกรองของ ภ.พ.30/ภ.พ.36) — เดิมใช้วันที่เอกสาร
+            var taxMonth = ReportDate(d);
             if (IsSaleSide(d.Component) && d.VatAmount != 0m
-                && declaredOrFiled.Contains((TaxType.VAT, d.DocumentDate.Year, d.DocumentDate.Month)))
-                result.Add(new(d.Number, $"ภาษีขายของเอกสารนี้อยู่ในเดือน {Period(d.DocumentDate)} ที่ประกาศว่ายื่น ภ.พ.30 แล้ว", CreditNotePath, d.Id));
-            // S3-2: ภาษีซื้อของใบค่าธรรมเนียม — เข้า ภ.พ.30 เดือนเอกสาร (ไม่พัก) หรือเดือนที่ภาษีซื้อที่พักถึงกำหนด · พักอยู่ยังไม่ถึงกำหนด = ยังไม่อยู่ในแบบใด
+                && declaredOrFiled.Contains((TaxType.VAT, taxMonth.Year, taxMonth.Month)))
+                result.Add(new(d.Number, $"ภาษีขายของเอกสารนี้อยู่ในเดือน {Period(taxMonth)} ที่ประกาศว่ายื่น ภ.พ.30 แล้ว", CreditNotePath, d.Id, Soft));
+            // S3-2: ภาษีซื้อของใบค่าธรรมเนียม — เข้า ภ.พ.30 เดือนจุดความรับผิด (ไม่พัก) หรือเดือนที่ภาษีซื้อที่พักถึงกำหนด · พักอยู่ยังไม่ถึงกำหนด = ยังไม่อยู่ในแบบใด
             if (!IsSaleSide(d.Component) && d.VatAmount != 0m && PurchaseVatMonth(d) is DateTime vm
                 && declaredOrFiled.Contains((TaxType.VAT, vm.Year, vm.Month)))
-                result.Add(new(d.Number, $"ภาษีซื้อของเอกสารนี้อยู่ในเดือน {Period(vm)} ที่ประกาศว่ายื่น ภ.พ.30 แล้ว", CreditNotePath, d.Id));
-            if (d.IsForeignService && declaredOrFiled.Contains((TaxType.VatPp36, d.DocumentDate.Year, d.DocumentDate.Month)))
-                result.Add(new(d.Number, $"VAT แทนผู้ประกอบการต่างประเทศของเอกสารนี้อยู่ในเดือน {Period(d.DocumentDate)} ที่ยื่น ภ.พ.36 แล้ว",
-                    CreditNotePath, d.Id));
+                result.Add(new(d.Number, $"ภาษีซื้อของเอกสารนี้อยู่ในเดือน {Period(vm)} ที่ประกาศว่ายื่น ภ.พ.30 แล้ว", CreditNotePath, d.Id, Soft));
+            if (d.IsForeignService && declaredOrFiled.Contains((TaxType.VatPp36, taxMonth.Year, taxMonth.Month)))
+                result.Add(new(d.Number, $"VAT แทนผู้ประกอบการต่างประเทศของเอกสารนี้อยู่ในเดือน {Period(taxMonth)} ที่ยื่น ภ.พ.36 แล้ว",
+                    CreditNotePath, d.Id, Soft));
             // S3-3: เหตุที่ VoidDocumentAsync เองปฏิเสธ — ตรวจก่อนแตะชิ้นแรก (เดิมใบแรกถูกยกเลิก ใบที่สองล้ม ⇒ ครึ่งกลับครึ่งค้าง)
             if (d.VoidBlock is string block)
                 result.Add(new(d.Number, block, "ยกเลิก/ปรับเอกสารที่อ้างใบนี้ก่อน (ถ้าเป็นใบลดหนี้ที่ออกให้ลูกค้าไปแล้ว ให้คงไว้และบันทึกรายการปรับปรุงในงวดปัจจุบันแทน) "
-                    + "แล้วกดยกเลิกการลงบัญชีอีกครั้ง · ระบบไม่แตะอะไรในรอบนี้", d.Id));
+                    + "แล้วกดยกเลิกการลงบัญชีอีกครั้ง · ระบบไม่แตะอะไรในรอบนี้", d.Id, Soft));
         }
         foreach (var c in certificates)
             if (WhtCertVoidGuard.Reason(c.Status, c.Number, c.FormType, c.Year, c.Month,
                     declaredOrFiled.Contains((c.FormType, c.Year, c.Month))) is string why)
-                result.Add(new(c.Number ?? "50 ทวิ", why, CreditNotePath, c.DocumentId));
-        // S3-7: ยกเลิกการรับชำระใบบริการ ⇒ กลับภาษีขายที่ถึงกำหนดตอนรับเงิน (§78/1 · 21911→21913) ถ้าไม่เหลือเงินรับอื่นบนใบ — เดือนนั้นยื่นแล้ว = ห้าม
+                result.Add(new(c.Number ?? "50 ทวิ", why, CreditNotePath, c.DocumentId, Hard));
         foreach (var p in payments ?? Array.Empty<SettlementUnpostPayment>())
+        {
+            // S3-7: ยกเลิกการรับชำระใบบริการ ⇒ กลับภาษีขายที่ถึงกำหนดตอนรับเงิน (§78/1 · 21911→21913) ถ้าไม่เหลือเงินรับอื่นบนใบ — เดือนนั้นยื่นแล้ว = ห้าม
             if (p.OutputVatDueAt is DateTime due && p.DocumentPaidAmount - p.BatchPaidOnDocument <= 0.005m
                 && declaredOrFiled.Contains((TaxType.VAT, due.Year, due.Month)))
                 result.Add(new(p.Number ?? "การรับชำระ",
                     $"การรับชำระนี้ทำให้ภาษีขายของใบ {p.DocumentNumber} ถึงกำหนด (§78/1 รับเงินค่าบริการ) ในเดือน {Period(due)} ที่ประกาศว่ายื่น ภ.พ.30 แล้ว "
-                    + "— ยกเลิกการรับชำระ = กลับภาษีขายของเดือนที่ยื่นแล้ว", CreditNotePath, p.Id));
+                    + "— ยกเลิกการรับชำระ = กลับภาษีขายของเดือนที่ยื่นแล้ว", CreditNotePath, p.Id, Soft));
+            // S4-8: ยกเลิกการรับชำระ ⇒ ใบเสร็จอัตโนมัติคู่กันถูกประทับ Voided (VoidPaymentAsync ไม่ดู e-Tax) — ใบที่กรมสรรพากรรับแล้ว = จุดที่ไม่มีทางกลับ
+            if (p.ReceiptEtaxAccepted)
+                result.Add(new(p.Number ?? "การรับชำระ",
+                    $"ใบเสร็จ {p.ReceiptNumber} ที่ออกคู่การรับชำระนี้ e-Tax ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted) — ยกเลิกการรับชำระ = ยกเลิกใบที่กรมสรรพากรรับแล้ว",
+                    CreditNotePath, p.Id, Hard));
+        }
         return result;
     }
 
     /// <summary>ชิ้นฝั่งขาย (ใบขายสรุปรายวัน)</summary>
     internal static bool IsSaleSide(string component) => component.StartsWith("sum-", StringComparison.Ordinal);
 
-    /// <summary>เดือนที่ภาษีซื้อของเอกสารฝั่งซื้อเข้า ภ.พ.30 — พักรอใบกำกับ ⇒ เดือนที่ถึงกำหนด (ยังไม่ถึง = null) · ไม่พัก ⇒ เดือนเอกสาร</summary>
+    /// <summary>เดือนที่ภาษีซื้อของเอกสารฝั่งซื้อเข้า ภ.พ.30 — พักรอใบกำกับ ⇒ เดือนที่ถึงกำหนด (ยังไม่ถึง = null) · ไม่พัก ⇒ เดือนจุดความรับผิด</summary>
     private static DateTime? PurchaseVatMonth(SettlementUnpostDocument d)
-        => d.InputVatPostedAsUndue ? d.InputVatBecameClaimableAt : d.DocumentDate;
+        => d.InputVatPostedAsUndue ? d.InputVatBecameClaimableAt : ReportDate(d);
+
+    /// <summary>วันที่ที่รายงานภาษีใช้เลือกงวด = <c>TaxPointDate ?? DocumentDate</c> — สำเนาของนิพจน์ในตัวกรอง EF ของ <c>TaxService</c> (ใน query เรียกเมธอดไม่ได้) ·
+    /// review198-S4 S4-8</summary>
+    private static DateTime ReportDate(SettlementUnpostDocument d) => d.TaxPointDate ?? d.DocumentDate;
 
     /// <summary>ลำดับยกเลิกคงที่: ฝั่งขายก่อน (เสี่ยงถูกปฏิเสธสุด — e-Tax/ภ.พ.30) → ใบค่าธรรมเนียม · ในกลุ่มเรียงตามเลขที่ ·
     /// การรับชำระ/ถอนการจับคู่ธนาคาร/กลับ JE รอบโอน ทำหลังเอกสารทั้งหมด (ผู้เรียก)</summary>
@@ -316,6 +352,84 @@ public static class SettlementUnpostGate
         => documents.OrderBy(d => IsSaleSide(d.Component) ? 0 : 1).ThenBy(d => d.Number, StringComparer.Ordinal).ToList();
 
     private static string Period(DateTime d) => $"{d:MM}/{d.Year + 543}";
+}
+
+/// <summary>ของกำพร้า 1 ชิ้น — เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้ว และยังไม่ถูกยกเลิก (C-1(d))</summary>
+/// <param name="BatchId">รอบโอนเจ้าของ (ที่ถูกยกเลิก/ลบแล้ว)</param>
+public sealed record SettlementOrphanArtifact(Guid Id, Guid BatchId, string PayoutRef, bool IsPayment, string? Number);
+
+/// <summary>ของกำพร้าที่ต้องให้คนจัดการก่อนยกเลิก — บล็อกพร้อมทางไปต่อของชิ้นนั้น (review198-S4 S4-1)</summary>
+public sealed record SettlementOrphanBlock(string Why, string NextStep);
+
+/// <summary>ผลการแยกของกำพร้า 3 กอง</summary>
+/// <param name="Voidable">ยกเลิกทีละใบได้ทันที ⇒ บล็อก (ทางไปต่อทั่วไป: ยกเลิกที่หน้าเอกสาร)</param>
+/// <param name="NeedsUserAction">ยกเลิกได้เมื่อคนทำขั้นก่อน (เอกสารลูก/ใบลดหนี้อ้าง · ภาษีเดือนที่ประกาศว่ายื่นแล้ว) ⇒ บล็อก + ทางไปต่อรายชิ้น</param>
+/// <param name="Unvoidable">ยกเลิกไม่ได้จริง (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว) ⇒ เตือน ไม่บล็อก (บล็อก = ช่องทางนี้ลงบัญชีไม่ได้อีกเลย)</param>
+public sealed record SettlementOrphanTriageResult(
+    IReadOnlyList<string> Voidable, IReadOnlyList<SettlementOrphanBlock> NeedsUserAction, IReadOnlyList<string> Unvoidable);
+
+/// <summary>
+/// **แยกของกำพร้าตาม "ยกเลิกได้จริงไหม" ไม่ใช่ "ด่านยกเลิกการลงบัญชีปฏิเสธไหม"** (review198-S4 S4-1)
+/// <para>ที่มา: S3-6 ใช้ "ชิ้นที่ <see cref="SettlementUnpostGate"/> ปฏิเสธ" เป็นนิยามของ "ระบบยกเลิกไม่ได้" แล้วลดเป็นคำเตือน — แต่ด่านนั้น<b>เข้มกว่า</b>
+/// <c>VoidDocumentAsync/VoidPaymentAsync</c> โดยตั้งใจ (กันกลับภาษีเดือนที่ประกาศว่ายื่นแล้วทั้งรอบ) ⇒ ใบค่าธรรมเนียมกำพร้าในเดือนที่ ภ.พ.30 ประกาศแล้ว
+/// (ยกเลิกทีละใบได้จริง) ถูกลดเป็นคำเตือน ⇒ ลงบัญชีรอบใหม่ทับ = ค่าใช้จ่าย/ภาษีซื้อ/50 ทวิ ซ้ำ (ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น)</para>
+/// <para>กติกา: ชิ้นที่มีเหตุ <see cref="SettlementUnpostRefusalKind.Unvoidable"/> อย่างน้อยหนึ่งข้อ ⇒ เตือน · มีแต่
+/// <see cref="SettlementUnpostRefusalKind.NeedsUserAction"/> ⇒ บล็อกพร้อมทางไปต่อที่ตรงเหตุ · ไม่มีเหตุ ⇒ บล็อก (ยกเลิกได้ทันที) · G6: pure</para>
+/// </summary>
+public static class SettlementOrphanTriage
+{
+    public static SettlementOrphanTriageResult Split(IReadOnlyList<SettlementOrphanArtifact> artifacts,
+        IReadOnlyList<SettlementUnpostRefusal> refusals, IReadOnlyList<SettlementUnpostDocument> documents)
+    {
+        var byArtifact = refusals.Where(r => r.ArtifactId != null).GroupBy(r => r.ArtifactId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var voidBlockOf = documents.Where(d => d.VoidBlock != null).GroupBy(d => d.Id).ToDictionary(g => g.Key, g => g.First().VoidBlock!);
+        var voidable = new List<string>();
+        var needs = new List<SettlementOrphanBlock>();
+        var hard = new List<string>();
+        foreach (var g in artifacts.GroupBy(a => (a.BatchId, a.IsPayment)))
+        {
+            var what = g.Key.IsPayment ? "การรับชำระ" : "เอกสาร";
+            var payoutRef = g.First().PayoutRef;
+            var open = g.Where(a => !byArtifact.ContainsKey(a.Id)).Select(a => a.Number).ToList();
+            if (open.Count > 0)
+                voidable.Add($"{what} {string.Join(", ", open)} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+            foreach (var a in g.Where(a => byArtifact.ContainsKey(a.Id)))
+            {
+                var rs = byArtifact[a.Id];
+                var head = $"{what} {a.Number} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว)";
+                var hardReasons = rs.Where(r => r.Kind == SettlementUnpostRefusalKind.Unvoidable).Select(r => r.Reason).Distinct().ToList();
+                if (hardReasons.Count > 0)
+                {
+                    hard.Add($"{head} ยกเลิกในระบบไม่ได้แล้ว: {string.Join(" · ", hardReasons)}");
+                    continue;
+                }
+                var reasons = rs.Select(r => r.Reason).Distinct().ToList();
+                var block = voidBlockOf.GetValueOrDefault(a.Id);
+                needs.Add(new SettlementOrphanBlock(
+                    $"{head} ยังไม่ถูกยกเลิก และต้องจัดการก่อนยกเลิก: {string.Join(" · ", reasons)}",
+                    NextStep(a.IsPayment, block != null, reasons.Any(r => r != block))));
+            }
+        }
+        return new SettlementOrphanTriageResult(voidable, needs, hard);
+    }
+
+    /// <summary>ทางไปต่อของของกำพร้าที่ยกเลิกได้เมื่อคนทำขั้นก่อน — ตรงเหตุ (ไม่ใช่ "ยกเลิกการลงบัญชีทั้งรอบไม่ได้" ของด่าน Unpost)</summary>
+    private static string NextStep(bool isPayment, bool hasChildBlock, bool hasTaxPeriodReason)
+    {
+        const string Duplicate = " · ถ้าปล่อยไว้แล้วลงบัญชีรอบนี้ทับ = ค่าธรรมเนียม/ภาษีซื้อ/รายได้/การรับชำระซ้ำ (ระบบจึงบล็อก)";
+        if (isPayment)
+            return "ยกเลิกการรับชำระนั้นที่หน้าเอกสาร (รอบโอนเจ้าของถูกยกเลิกแล้ว ระบบยกเลิกทีละรายการให้ได้) — ภาษีขายที่ถึงกำหนดตอนรับเงิน (§78/1) "
+                + "จะถูกกลับในเดือนที่ประกาศว่ายื่นแล้ว ⇒ ยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้นตามยอดที่เปลี่ยน แล้วดูตัวอย่างใหม่" + Duplicate;
+        var steps = new List<string>();
+        if (hasChildBlock)
+            steps.Add("ยกเลิกเอกสารที่อ้างใบนี้ก่อน (เอกสารลูก · ใบลดหนี้/ใบเพิ่มหนี้ที่อ้างเลขที่) แล้วยกเลิกใบนี้ที่หน้าเอกสาร");
+        if (hasTaxPeriodReason)
+            steps.Add("ยกเลิกใบนี้ที่หน้าเอกสาร (รายงานภาษีเดือนนั้นยังไม่ล็อกการยื่น ระบบยกเลิกให้ได้) แล้วยื่นแบบเพิ่มเติม (ภ.พ.30/ภ.พ.36) "
+                + "ของเดือนนั้นตามยอดภาษีที่เปลี่ยน");
+        if (steps.Count == 0) steps.Add("ยกเลิกใบนี้ที่หน้าเอกสาร");
+        return string.Join(" · ", steps) + " แล้วดูตัวอย่างใหม่" + Duplicate;
+    }
 }
 
 /// <summary>

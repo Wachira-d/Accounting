@@ -388,7 +388,7 @@
             lines
           });
           const docId = doc?.data?.id || doc?.id;
-          if (!docId) throw new Error('สร้างเอกสารไม่สำเร็จ');
+          if (!docId) throw new Error('สร้างเอกสารไม่สำเร็จ' + (doc?.message ? ' (' + doc.message + ')' : ''));
 
           // อนุมัติทันที (ความคาดหวังของ "ขายเร็ว") — แต่ห้ามกลืนผล (รอบ 198 ทีม S4 · ค้างจากทีม W รอบ 199): เดิม
           // `catch (_) {}` แล้วขึ้น "บันทึกสำเร็จ" ทั้งที่ใบยังเป็นร่าง (มีคำเตือน/ไม่มีสิทธิ์/ด่านบังคับ) ⇒ ผู้ใช้เข้าใจว่าออกเลข+ลงบัญชีแล้ว
@@ -421,12 +421,16 @@
        * คืน { approved: true } | { approved: false, warnings: [...] } | { approved: false, error: 'ข้อความจากเซิร์ฟเวอร์' }
        */
       async _approve(companyId, docId) {
+        let res;
         try {
-          await API.c(companyId).approveDocument(docId, { acknowledgeWarnings: false });
-          return { approved: true };
+          res = await API.c(companyId).approveDocument(docId, { acknowledgeWarnings: false });
         } catch (e) {
           return this._approvalOutcome(e);
         }
+        // review198-S4 S4-2: api.js คืน { success:false } โดยไม่ throw (429 ถูกจำกัดอัตรา · 403 ขณะรายการบริษัทยังโหลดไม่เสร็จ) ⇒ ไม่ใช่การอนุมัติ
+        if (res && res.success === false)
+          return { approved: false, error: 'เซิร์ฟเวอร์ยังไม่ได้อนุมัติ' + (res.message ? ' (' + res.message + ')' : '') + ' — ลองกดอนุมัติอีกครั้งที่หน้าเอกสาร' };
+        return { approved: true };
       },
 
       /** error ของการอนุมัติ → สิ่งที่ต้องบอกผู้ใช้ (422 + warnings = รอคนรับทราบ · อื่น ๆ = ข้อความของเซิร์ฟเวอร์) */

@@ -184,7 +184,7 @@ public class SettlementControllerContractTests
     [Fact]
     public void S3_ลงบัญชีแล้วแต่ด่านยกเลิกการลงบัญชีปฏิเสธ_ซ่อนปุ่มพร้อมเหตุผลและทางไปต่อ_ไม่มีเหตุ_ปุ่มยังอยู่()
     {
-        var refusals = new[] { new SettlementUnpostRefusal("TIV-0001", "e-Tax ตอบรับแล้ว", "ออกใบลดหนี้แทน") };
+        var refusals = new[] { new SettlementUnpostRefusal("TIV-0001", "e-Tax ตอบรับแล้ว", "ออกใบลดหนี้แทน", null, SettlementUnpostRefusalKind.Unvoidable) };
         var blocked = SettlementBatchActions.For(SettlementBatchStatus.Posted, Array.Empty<(Guid, SettlementLineType)>(), 0, refusals);
         Assert.False(blocked.CanUnpost);
         Assert.Contains("TIV-0001", blocked.UnpostBlockedReason);
