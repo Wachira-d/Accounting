@@ -1115,6 +1115,32 @@ const API = {
       // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
       updatePaymentIntentFee: (id, feeActual, reason) =>
         API.put(`${base}/pay/intents/${id}/fee`, { feeActual, reason }),
+      // ── Settlement: wallet ของ gateway/marketplace → ธนาคาร (รอบ 198 เฟส 1 ทีม D · SettlementController) ──
+      // ป้าย/ตัวเลือกทุกชุดมาจาก settlementReference() — หน้าเว็บไม่มีตารางป้ายเอง · เซิร์ฟเวอร์ตัดสินทุกยอด/สถานะ/ปุ่ม
+      settlementReference: () => API.get(`${base}/settlement/reference`),
+      listSettlementChannels: (includeInactive = false) =>
+        API.get(`${base}/settlement/channels?includeInactive=${includeInactive ? 'true' : 'false'}`),
+      getSettlementChannel: (id) => API.get(`${base}/settlement/channels/${id}`),
+      createSettlementChannel: (d) => API.post(`${base}/settlement/channels`, d),
+      updateSettlementChannel: (id, d) => API.put(`${base}/settlement/channels/${id}`, d),
+      inspectSettlementFile: (formData) => API.upload(`${base}/settlement/files/inspect`, formData),
+      importSettlementFile: (formData) => API.upload(`${base}/settlement/files/import`, formData),
+      importSettlementFromIntents: (d) => API.post(`${base}/settlement/batches/from-payment-intents`, d),
+      listSettlementBatches: (q = '') => API.get(`${base}/settlement/batches${q}`),
+      getSettlementBatch: (id) => API.get(`${base}/settlement/batches/${id}`),
+      voidSettlementBatch: (id, reason) => API.post(`${base}/settlement/batches/${id}/void`, { reason }),
+      rematchSettlementBatch: (id) => API.post(`${base}/settlement/batches/${id}/rematch`, {}),
+      // จัดประเภท = ผู้ใช้ตัดสินเอง ⇒ เซิร์ฟเวอร์บันทึกลงคลังเรียนรู้เป็น Explicit เสมอ (ไม่มีช่อง source)
+      reclassifySettlementLine: (lineId, d) => API.post(`${base}/settlement/lines/${lineId}/reclassify`, d),
+      assignSettlementLineMatch: (lineId, d) => API.post(`${base}/settlement/lines/${lineId}/match`, d),
+      resolveSettlementChargeback: (lineId, won) =>
+        API.post(`${base}/settlement/lines/${lineId}/chargeback-resolve`, { won: !!won }),
+      previewSettlementPosting: (id) => API.get(`${base}/settlement/batches/${id}/posting-preview`),
+      postSettlementBatch: (id) => API.post(`${base}/settlement/batches/${id}/post`, {}),
+      unpostSettlementBatch: (id, reason) => API.post(`${base}/settlement/batches/${id}/unpost`, { reason }),
+      getSettlementDepositCandidates: (id) => API.get(`${base}/settlement/batches/${id}/deposit-candidates`),
+      matchSettlementDeposit: (id, bankTransactionId) =>
+        API.post(`${base}/settlement/batches/${id}/deposit-match`, { bankTransactionId }),
       // ฝ่ายค้าน E-2: ตรวจผลการคืนเงินที่ผลไม่แน่ชัดกับผู้ให้บริการ
       verifyPaymentIntentRefund: (id) => API.post(`${base}/pay/intents/${id}/refund/verify`, {}),
       // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ + รับใบกำกับ (11630 → 11610)

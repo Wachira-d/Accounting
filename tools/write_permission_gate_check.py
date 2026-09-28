@@ -103,6 +103,10 @@ WATCHED = [
     # ลง JE รอบโอน มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ สมาชิกทุกบทบาทกดคืนเงินได้ ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 9) ·
     # ด่านจาก Helpers/PaymentGatewayPermissionScope ตัวเดียว
     "Accounting/Controllers/PaymentGatewayController.cs",
+    # เพิ่มรอบ 198 เฟส 1 ทีม D — ทางเข้า HTTP ของ settlement (นำเข้ารอบโอน · ลงบัญชีใบค่าธรรมเนียม/ใบขายสรุป/JE · ยกเลิก ·
+    # จับคู่ธนาคาร · chargeback · ตั้งผังพัก/โหมดภาษีของช่องทาง) — service ของทีม B/C ไม่ตรวจสิทธิ์โดยสัญญา ⇒ ด่านทั้งหมดอยู่ที่นี่ ·
+    # ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet) · คีย์จาก Helpers/SettlementPermissionScope ตัวเดียว
+    "Accounting/Controllers/SettlementController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

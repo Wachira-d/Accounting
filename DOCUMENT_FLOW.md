@@ -1386,12 +1386,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ---
 
-### 2.10 Settlement — เงินพักใน wallet ของ gateway/marketplace → โอนเข้าธนาคาร 🔨 รอบ 198 (เฟส 1 · แกนข้อมูล+คณิต ทีม A)
+### 2.10 Settlement — เงินพักใน wallet ของ gateway/marketplace → โอนเข้าธนาคาร ✅ รอบ 198 เฟส 1 (ทีม A สัญญา · B นำเข้า · C ลงบัญชี · D หน้าจอ+controller)
 
 > ที่มา/คำตัดสิน: `erp-review/2026-09-25/settlement/` (`DECISIONS.md` · `report-S1.md` JE ที่ถูก · `report-S2.md` §3 สถาปัตยกรรม) ·
 > **สถานะ**: สัญญา (enum · entity · ตาราง · migration · ผัง · helper คณิต) ✅ · **นำเข้า/จัดประเภท/จับคู่/ตั้งค่าช่องทาง (ทีม B) ✅ service** ·
-> **ลงบัญชี (ทีม C — `ISettlementPostingService`) ✅ service** · หน้าจอ+controller (ทีม D) 🔨 — service ของทีม B/C ยังไม่มี endpoint เรียก ·
-> เส้น gateway เดิม (`GatewaySettlementService/Math`) ยังเป็นเส้นที่ใช้งานจริงจนเฟส 2
+> **ลงบัญชี (ทีม C — `ISettlementPostingService`) ✅ service** · **หน้าจอ+controller (ทีม D) ✅** — `SettlementController` + `settlements.html` /
+> `settlement-channels.html` (ตาราง "ทางเข้า HTTP + หน้าจอ" ข้างล่าง) · เส้น gateway เดิม (`GatewaySettlementService/Math` · `payment-settlements.html`)
+> ยังใช้งานคู่กันจนเฟส 2 รวมเข้า batch
 
 **หน่วยความจริง = รอบโอน 1 รอบของผู้ให้บริการ** (`SettlementBatch`) · ยอดเข้าธนาคารจริง `NetPayout` เป็นตัวตั้ง · บรรทัด (`SettlementLine`) มีเครื่องหมายมุม wallet
 (บวก = ค้างเราเพิ่ม · ลบ = ถูกหัก) · สมการ **Σ บรรทัด = NetPayout + (ClosingWalletBalance − OpeningWalletBalance) ±0.01** ไม่ลงตัว = ปัญหาที่บล็อก
@@ -1421,7 +1422,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | จับคู่ใบขาย (อ่านอย่างเดียว) | `Helpers/SettlementSaleMatch.Decide` · `MatchLinesAsync` | เลขออเดอร์ตรงตัว (tenant) กับ `Document.Reference` (ใบแจ้งหนี้/ใบกำกับ/ใบเสร็จ ที่ไม่ Voided) · intent (`ProviderRef` · เฉพาะ gateway ที่ผังพักตรง) · การจองที่พัก (`SourceReference`) · ตัวเดียวรับชำระได้+ยอดตรง ⇒ `Matched` · ยอดต่าง ⇒ `AmountMismatch` (ยังผูกเอกสาร) · หลายรายการ/มีแต่ใบที่รับชำระไม่ได้/การจอง ⇒ `Unmatched` + ผู้สมัคร (**ไม่เดา · ไม่ตกใบสรุป** = กันรายได้ซ้ำ) · ไม่มีร่องรอยเลย ⇒ `AutoSummary` (ทีม C ออกใบขายสรุปรายวันเฉพาะสถานะนี้) · คืนเงินไม่รู้ใบเดิม ⇒ `Unmatched` · สถานะรอบ `DeriveImportStatus` (Imported/Classified/Matched — ไม่ประทับ Posted) |
 | ผู้ใช้แก้ | `ReclassifyLineAsync` · `AssignLineMatchAsync` · `RematchBatchAsync` | ประเภทต้องผ่าน `Fits` (เครื่องหมาย) · Adjustment บังคับเหตุผล+ผัง (tenant) · ใช้กับป้ายเดียวกันในรอบ (Learned) · ปิดลูป `RecordUserChoiceAsync(…, Explicit)` ในธุรกรรมเดียวกัน (บรรทัดที่ไม่เคยถาม AI ⇒ สร้างแถว feedback แบบ `Skipped/None` ให้นักเรียนเรียน) · จับคู่เอง: ขาย = ใบลูกหนี้ที่ออกแล้ว+มียอดค้าง (ทั้งออเดอร์ไปใบเดียว) · คืนเงิน = ใบขายที่ออกแล้ว · ยืนยันใบสรุปได้เฉพาะบรรทัดขาย |
 | ยกเลิกรอบ (ก่อนลงบัญชี) | `VoidBatchAsync` | soft-delete รอบ + บรรทัด (unique กรอง `IsDeleted` ⇒ นำเข้าไฟล์เดิมใหม่ได้ · R-A9) · ปลด `PaymentIntent.SettlementBatchId` · เหตุผลบังคับ · audit (hash chain) · รอบที่ลงบัญชีแล้ว ⇒ ล้มดัง |
-| ไฟล์ต้นฉบับ | `IFileAttachmentService.UploadBytesAsync(… "SettlementBatch" …)` | แนบในธุรกรรมเดียวกัน · อ่าน/ลบผ่าน `IAttachmentAccessGate` แถว `AttachmentPermissionScope["SettlementBatch"]` (คีย์ `Bank.Reconcile` จนกว่าทีม D เพิ่มคีย์ settlement · อัปโหลดจากหน้าเว็บไม่ได้) · เก็บ 5 ปี (`AttachmentRetention` — หลักฐาน) |
+| ไฟล์ต้นฉบับ | `IFileAttachmentService.UploadBytesAsync(… "SettlementBatch" …)` | แนบในธุรกรรมเดียวกัน · อ่าน/ลบผ่าน `IAttachmentAccessGate` แถว `AttachmentPermissionScope["SettlementBatch"]` (รอบ 198 ทีม D: อ่าน `Settlement.Import`/`Settlement.Post` · ลบ `Settlement.Import` — เดิม `Bank.Reconcile` ชั่วคราว · อัปโหลดจากหน้าเว็บไม่ได้) · เก็บ 5 ปี (`AttachmentRetention` — หลักฐาน) |
 
 ล็อก: `AdvisoryLockKey.SettlementImport` ต่อช่องทาง (นำเข้า · แก้บรรทัด · ยกเลิก) · ขอบเขตความรู้เฉพาะเจ้า = `tools/settlement_adapter_boundary_check.py`
 
@@ -1468,6 +1469,37 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ของแต่ละชิ้นมีป้ายที่บันทึก**พร้อมตัวมันในคำสั่งเดียว** (`Document.CreatedBy = system:settlement:{batch}:{fee-กลุ่ม|sum-yyyyMMdd}` · `Payment.Notes` มีป้าย) ⇒
   ล้มกลางทาง = `BusinessRuleException` 409 `SETTLEMENT-POST-PARTIAL` บอกขั้น + พรีวิวแสดง `PartialProgress` · กดใหม่ = ทำต่อ ไม่สร้างซ้ำ · เอกสารที่ค้างแต่ยอดไม่ตรงแผน/ไม่อยู่ในแผน = บล็อก (`StaleDocument`)
 - ห้าม `new JournalEntry`/`JournalEntries.Add` ใน `Services/Settlement/**` · สถานะ `Posted/BankMatched` ประทับได้เฉพาะไฟล์นี้ (`tools/terminal_status_writer_check.py`) · จุดเรียกล็อกด้วย `tools/required_call_site_check.py`
+
+**ทางเข้า HTTP + หน้าจอ** (รอบ 198 เฟส 1 ทีม D · `Controllers/SettlementController.cs` · route `api/companies/{companyId}/settlement/…` ·
+service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **ด่านทั้งหมดอยู่ที่ controller** จากตารางเดียว `Helpers/SettlementPermissionScope`):
+
+| endpoint | สิทธิ์ | คีย์ API | เรียก |
+| --- | --- | --- | --- |
+| `GET reference` | `Settlement.View` | ได้ | `Helpers/SettlementReferenceCatalog.Build` (ป้ายไทยของ enum ทุกตัว · ประเภทบรรทัดจาก `SettlementLineTypeRules` · บทบาทผังค่าธรรมเนียม · ช่องจับคู่คอลัมน์) + บัญชีธนาคาร/gateway ของบริษัท (tenant) |
+| `GET channels` · `GET channels/{id}` | View | ได้ | `ISettlementChannelService.List/Get` |
+| `POST channels` · `PUT channels/{id}` | **`Settlement.Channels`** | **ห้าม** | `Create/UpdateAsync` (ผังพัก 1134x · โหมด VAT/WHT ค่าธรรมเนียม) |
+| `POST files/inspect` (multipart `file`+`channelId`) | **`Settlement.Import`** | ได้ | `InspectFileAsync` (ไม่บันทึก) |
+| `POST files/import` (multipart `file`+`payload` JSON) | Import | ได้ | `ImportFileAsync` |
+| `POST batches/from-payment-intents` | Import | ได้ | `ImportFromPaymentIntentsAsync` |
+| `GET batches` · `GET batches/{id}` | View | ได้ | `List/GetBatchAsync` + `Helpers/SettlementBatchActions.For` (ปุ่มที่กดได้ตามสถานะ — ตัวเดียวกับด่าน service) + เลข JE รอบโอน |
+| `POST batches/{id}/rematch` · `lines/{id}/reclassify` · `lines/{id}/match` | Import | ได้ | `Rematch/Reclassify/AssignLineMatch` · reclassify = คำตอบ `Explicit` เสมอ (ล็อกที่ service ด้วย `required_call_site_check` — ไม่มีช่อง source ให้ผู้เรียกเปลี่ยนระดับ) |
+| `POST batches/{id}/void` (เหตุผลบังคับ) | Import | **ห้าม** | `VoidBatchAsync` |
+| `GET batches/{id}/posting-preview` | View | ได้ | `PreviewAsync` (ไม่เขียน) |
+| `POST batches/{id}/post` · `POST batches/{id}/unpost` (เหตุผล) | **`Settlement.Post`** | **ห้าม** | `Post/UnpostAsync` — `Ok=false` ⇒ **409 พร้อมผลทั้งก้อน** (แผน + ปัญหา + ทางไปต่อ) · ค้างครึ่งทาง ⇒ 409 `SETTLEMENT-POST-PARTIAL` |
+| `GET batches/{id}/deposit-candidates` | **Post** (รายการเดินบัญชีไม่เปิดให้คนที่มีแค่สิทธิ์ดู) | ได้ | `IBankService.GetUnreconciledAsync` (บัญชีของรอบ · tenant) → `Helpers/SettlementBankCandidates.Evaluate` (ตัดสินทีละแถวด้วย `SettlementBankMatch.Check` ตัวเดียวกับตอนจับคู่ · ±10 วัน) |
+| `POST batches/{id}/deposit-match` | Post | **ห้าม** | `MatchBankTransactionAsync` |
+| `POST lines/{id}/chargeback-resolve` | Post | **ห้าม** | `ResolveChargebackAsync` |
+
+- path ไม่มีคำว่า `/bank` โดยตั้งใจ (`SubscriptionMiddleware.RouteFeatureMap` จับแบบ "มีคำนี้ใน path" ⇒ endpoint เดียวจะถูกผูกแพ็กเกจกระทบยอดธนาคารโดยบังเอิญ)
+- `BusinessRuleException` ⇒ สถานะที่ service กำหนด + ข้อความไทย + `data.ruleCode` · ไฟล์ต้นฉบับ (`AttachmentPermissionScope["SettlementBatch"]`) อ่าน = Import/Post · ลบ = Import (ไฟล์ดิบยังไม่ตัด PII ⇒ View ไม่พอ)
+- สิทธิ์ใหม่ `Settlement.View/Import/Post/Channels` อยู่ในชุดอัตโนมัติของ `UserRole.Accountant` + template "Accountant" (พร้อมเมนู `settlements`/`settlement-channels`) ·
+  `tools/write_permission_gate_check.py` WATCHED + `tools/owner_action_wiring_check.py` 14 แถว (ห้ามคีย์ + ต้องมีคีย์สิทธิ์)
+- **หน้าเว็บ** (`wwwroot/pages/`): `settlement-channels.html` — ชนิด/gateway/ผังพัก **ล็อกพร้อมเหตุผลเมื่อ `HasBatches`** (ห้าม silent no-op) · ผู้ติดต่อผ่าน
+  `Layout.contactAutocomplete` · ผังค่าธรรมเนียมตามบทบาทจากเซิร์ฟเวอร์ · คำเตือนจาก view ของช่องทาง · แก้ไขส่งค่าที่ hydrate กลับครบ ·
+  `settlements.html` — รายการรอบ (ตัวกรอง `?channel=` · เปิดรอบ `?batch=`) · นำเข้า 2 ขั้น (ตรวจไฟล์ → จับคู่คอลัมน์แบบยาว/กว้าง + ตัวอย่างที่ตัด PII +
+  หัวรอบโอน · ช่องตัวเลขว่าง = ตัดคีย์) · บรรทัด: ป้าย "🤖 AI แนะนำ" เฉพาะ `ClassifyUsedAi` ไม่งั้น "⚙️ ระบบแนะนำ" · แก้ประเภท/ตัดสินจับคู่ผ่านโมดัล ·
+  พรีวิวแสดงปัญหา+ทางไปต่อแบบทั่วไป (ไม่ผูกรหัสปัญหา) · ปุ่มลงบัญชีเปิดเมื่อพรีวิวบอก `canPost` · ผลลงบัญชีลิงก์ `documents.html?openDoc=`/`journals.html?entryId=` ·
+  ยกเลิก/ยกเลิกการลงบัญชีบังคับเหตุผล · จับคู่เงินเข้า · ปิด chargeback · เมนูใต้ "เงิน & ธนาคาร"
 
 **ผังบัญชีใหม่** (`ChartOfAccountTemplates` + migration ใส่ให้บริษัทเดิมที่มีกลุ่มแม่ · `ON CONFLICT DO NOTHING` · ไม่ย้ายยอด): 11350 เงินที่ผู้ให้บริการกัน/ระงับไว้ ·
 53170 ค่าธรรมเนียมรับชำระเงิน · 57140 ขาดทุนจากการถูกปฏิเสธรายการ (chargeback) · **11341–11349 ไม่ seed** (สร้างตอนผูกช่องทาง)
@@ -3521,7 +3553,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม E2 ฝ่ายค้าน settlement: ยอดคืน ณ วันเงินเข้า (R-E2) · รับใบกำกับค่าธรรมเนียม 11630 → 11610 +
+_Last verified against codebase: 2026-09-28 (รอบ 198 เฟส 1 ทีม D: ทางเข้า HTTP + หน้าจอ settlement — `SettlementController` (ด่าน `Settlement.View/Import/Post/Channels` จาก `Helpers/SettlementPermissionScope` · ห้ามคีย์ API ที่งานขยับ GL/ภาษี · Ok=false = 409 พร้อมแผน) · `settlements.html` · `settlement-channels.html` · `SettlementReferenceCatalog`/`SettlementBatchActions`/`SettlementBankCandidates` · ไฟล์ต้นฉบับใช้คีย์ settlement (§2.10) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม E2 ฝ่ายค้าน settlement: ยอดคืน ณ วันเงินเข้า (R-E2) · รับใบกำกับค่าธรรมเนียม 11630 → 11610 +
 อายุ §82/3 (R-E3) · ค่าตั้งต้นปุ่มแก้ค่าธรรมเนียมจากเซิร์ฟเวอร์ (R-E4) · กระทบยอดสูตรเดียว (R-E5) · เตือนโหมด VAT (R-E6) · คืนเงินผลไม่แน่ชัด (E-2)
 (§2.6b) — commit cbd50b37)_
 

@@ -1,0 +1,385 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Settlement;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Accounting.Services.Settlement;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Controllers;
+
+/// <summary>
+/// **รอบโอนเงินจาก wallet ของ gateway/marketplace → ธนาคาร (settlement)** — ทางเข้า HTTP ของ service ทีม B (นำเข้า · จัดประเภท · จับคู่ ·
+/// ตั้งค่าช่องทาง) และทีม C (ลงบัญชี · ยกเลิก · จับคู่ธนาคาร · chargeback) · รอบ 198 เฟส 1 ทีม D · DOCUMENT_FLOW §2.10
+///
+/// <para>═══ ด่าน ═══ service กรอง <c>CompanyId</c> เองแต่<b>ไม่ตรวจสิทธิ์</b> (สัญญาของทีม B/C) ⇒ ทุก action ที่นี่มี
+/// <c>[RequirePermission]</c> จากตารางเดียว <see cref="SettlementPermissionScope"/> (ดู/นำเข้า/ลงบัญชี/ช่องทาง) · งานที่ขยับ GL หรือกำหนดภาษี
+/// (ลงบัญชี · ยกเลิกการลงบัญชี · ยกเลิกรอบ · จับคู่ธนาคาร · ปิด chargeback · ตั้งค่าช่องทาง) ห้ามคีย์ API (<c>[RejectApiKey]</c>) ·
+/// ไฟล์นี้อยู่ใน WATCHED ของ <c>tools/write_permission_gate_check.py</c> และแถวของ <c>tools/owner_action_wiring_check.py</c></para>
+///
+/// <para>═══ ข้อผิดพลาด ═══ <see cref="BusinessRuleException"/> ⇒ สถานะตามที่ service กำหนด (เช่น 409 <c>SETTLEMENT-POST-PARTIAL</c> =
+/// ลงบัญชีค้างครึ่งทาง กดใหม่ได้) + ข้อความไทย + <c>ruleCode</c> ใน data · ผลที่ service คืน <c>Ok=false</c> (ถูกบล็อกพร้อมแผน/เหตุผล)
+/// ⇒ 409 พร้อมตัวผลทั้งก้อน ให้หน้าเว็บแสดงปัญหา + ทางไปต่อ (ไม่ใช่ 200 ที่ว่างเปล่า — F2 ข้อ 7)</para>
+///
+/// <para>เส้นทางไม่ใช้คำว่า <c>/bank</c> โดยตั้งใจ — <c>SubscriptionMiddleware.RouteFeatureMap</c> จับ "มีคำนี้ใน path" ⇒ endpoint จับคู่เงินเข้า
+/// จะถูกผูกกับแพ็กเกจกระทบยอดธนาคารโดยบังเอิญ ขณะที่ endpoint อื่นของรอบโอนเดียวกันไม่ถูก (ใช้ <c>deposit-…</c> แทน)</para>
+/// </summary>
+[ApiController]
+[Route("api/companies/{companyId:guid}/settlement")]
+[Authorize]
+public class SettlementController : ControllerBase
+{
+    private readonly ISettlementImportService _import;
+    private readonly ISettlementChannelService _channels;
+    private readonly ISettlementPostingService _posting;
+    private readonly IBankService _bank;
+    private readonly AccountingDbContext _db;
+
+    public SettlementController(ISettlementImportService import, ISettlementChannelService channels, ISettlementPostingService posting,
+        IBankService bank, AccountingDbContext db)
+    {
+        _import = import; _channels = channels; _posting = posting; _bank = bank; _db = db;
+    }
+
+    private static readonly JsonSerializerOptions FormJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private Guid UserId => JwtHelper.GetUserIdFromClaims(User);
+
+    // ═════════════════════════════ ข้อมูลอ้างอิง ═════════════════════════════
+
+    /// <summary>ป้ายไทยของ enum ทุกตัว · บทบาทผังค่าธรรมเนียม · ช่องจับคู่คอลัมน์ · บัญชีธนาคาร/gateway ของบริษัทนี้ — หน้าเว็บไม่มีตารางป้ายเอง</summary>
+    [HttpGet("reference")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public async Task<ActionResult<ApiResponse<object>>> Reference(Guid companyId, CancellationToken ct)
+    {
+        var banks = await _db.BankAccounts.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.IsActive)
+            .OrderBy(b => b.BankName).ThenBy(b => b.AccountNumber)
+            .Select(b => new { id = b.Id, label = b.BankName + " " + b.AccountNumber + " (" + b.AccountName + ")" })
+            .ToListAsync(ct);
+        var gateways = await _db.PaymentProviderConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .OrderBy(c => c.ProviderCode)
+            .Select(c => new { id = c.Id, label = c.DisplayName ?? c.ProviderCode })
+            .ToListAsync(ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            catalog = SettlementReferenceCatalog.Build(),
+            bankAccounts = banks,
+            gatewayConfigs = gateways,
+        }));
+    }
+
+    // ═════════════════════════════ ช่องทาง ═════════════════════════════
+
+    [HttpGet("channels")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<IReadOnlyList<SettlementChannelView>>>> ListChannels(Guid companyId,
+        [FromQuery] bool includeInactive = false, CancellationToken ct = default)
+        => Guarded(() => _channels.ListAsync(companyId, includeInactive, ct));
+
+    [HttpGet("channels/{channelId:guid}")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<SettlementChannelView>>> GetChannel(Guid companyId, Guid channelId, CancellationToken ct)
+        => Guarded(() => _channels.GetAsync(companyId, channelId, ct));
+
+    /// <summary>สร้างช่องทาง — ผังพัก 1134x ถูกสร้าง/ผูกในธุรกรรมเดียวกัน · ตั้งโหมดภาษีของค่าธรรมเนียม ⇒ ห้ามคีย์ API</summary>
+    [HttpPost("channels")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่าช่องทางรับเงินผ่าน wallet")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Channels)]
+    public Task<ActionResult<ApiResponse<SettlementChannelView>>> CreateChannel(Guid companyId,
+        [FromBody] SettlementChannelUpsertRequest request, CancellationToken ct)
+        => Guarded(() => _channels.CreateAsync(companyId, UserId, request, ct), "บันทึกช่องทางแล้ว");
+
+    /// <summary>แก้ช่องทาง — มีรอบโอนแล้ว ⇒ ชนิด/gateway/ผังพักแก้ไม่ได้ (service ตีกลับพร้อมเหตุผล · หน้าเว็บล็อกช่องตาม <c>HasBatches</c>)</summary>
+    [HttpPut("channels/{channelId:guid}")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่าช่องทางรับเงินผ่าน wallet")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Channels)]
+    public Task<ActionResult<ApiResponse<SettlementChannelView>>> UpdateChannel(Guid companyId, Guid channelId,
+        [FromBody] SettlementChannelUpsertRequest request, CancellationToken ct)
+        => Guarded(() => _channels.UpdateAsync(companyId, UserId, channelId, request, ct), "บันทึกช่องทางแล้ว");
+
+    // ═════════════════════════════ นำเข้า ═════════════════════════════
+
+    /// <summary>ตรวจไฟล์ก่อนนำเข้า (ไม่บันทึกอะไร) — หัวคอลัมน์ · แถวตัวอย่างที่ตัด PII แล้ว · การจับคู่ที่จำไว้/ที่เสนอ</summary>
+    [HttpPost("files/inspect")]
+    [RequestSizeLimit(30 * 1024 * 1024)]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public async Task<ActionResult<ApiResponse<SettlementFileInspection>>> InspectFile(Guid companyId,
+        [FromForm] Guid channelId, IFormFile? file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<SettlementFileInspection>(false, null, "เลือกไฟล์รายงานรอบโอน (CSV หรือ Excel) ก่อน"));
+        await using var stream = file.OpenReadStream();
+        return await Guarded(() => _import.InspectFileAsync(companyId, channelId, file.FileName, stream, ct));
+    }
+
+    /// <summary>นำเข้าไฟล์เป็นรอบโอน — multipart: <c>file</c> + <c>payload</c> (JSON ของ <see cref="SettlementFileImportRequest"/>)</summary>
+    [HttpPost("files/import")]
+    [RequestSizeLimit(30 * 1024 * 1024)]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public async Task<ActionResult<ApiResponse<SettlementImportResult>>> ImportFile(Guid companyId,
+        [FromForm] string? payload, IFormFile? file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<SettlementImportResult>(false, null, "เลือกไฟล์รายงานรอบโอน (CSV หรือ Excel) ก่อน"));
+        SettlementFileImportRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(payload) ? null : JsonSerializer.Deserialize<SettlementFileImportRequest>(payload, FormJson);
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+        if (request == null || request.Header.ChannelId == Guid.Empty)
+            return BadRequest(new ApiResponse<SettlementImportResult>(false, null,
+                "ข้อมูลหัวรอบโอนไม่ครบ — เลือกช่องทาง แล้วกรอกวันที่เงินเข้าและยอดโอนเข้าธนาคารจริง"));
+        await using var stream = file.OpenReadStream();
+        return await Guarded(() => _import.ImportFileAsync(companyId, UserId, request, file.FileName, stream, ct),
+            "นำเข้ารอบโอนแล้ว");
+    }
+
+    /// <summary>ประกอบรอบโอนจากรายการรับชำระออนไลน์ในระบบ (ช่องทาง Gateway ที่ผูกการตั้งค่า gateway)</summary>
+    [HttpPost("batches/from-payment-intents")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public Task<ActionResult<ApiResponse<SettlementImportResult>>> ImportFromIntents(Guid companyId,
+        [FromBody] SettlementIntentBatchRequest request, CancellationToken ct)
+        => Guarded(() => _import.ImportFromPaymentIntentsAsync(companyId, UserId, request, ct), "ประกอบรอบโอนแล้ว");
+
+    // ═════════════════════════════ รอบโอน ═════════════════════════════
+
+    [HttpGet("batches")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<IReadOnlyList<SettlementBatchView>>>> ListBatches(Guid companyId,
+        [FromQuery] Guid? channelId, [FromQuery] SettlementBatchStatus? status,
+        [FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken ct = default)
+        => Guarded(() => _import.ListBatchesAsync(companyId, channelId, status, Math.Max(0, skip), take, ct));
+
+    /// <summary>รอบโอน + บรรทัด + ผู้สมัครจับคู่ + ปุ่มที่กดได้ (<see cref="SettlementBatchActions"/>) + ผลการลงบัญชีที่ผูกไว้</summary>
+    [HttpGet("batches/{batchId:guid}")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<object>>> GetBatch(Guid companyId, Guid batchId, CancellationToken ct)
+        => Guarded(() => BatchDetailAsync(companyId, batchId, ct));
+
+    private async Task<object> BatchDetailAsync(Guid companyId, Guid batchId, CancellationToken ct)
+    {
+        var batch = await _import.GetBatchAsync(companyId, batchId, ct);
+        var head = await _db.SettlementBatches.AsNoTracking()
+            .Where(b => b.Id == batchId && b.CompanyId == companyId)
+            .Select(b => new { b.PayoutJournalEntryId, b.BankTransactionId, b.PostedAt })
+            .FirstOrDefaultAsync(ct);
+        string? jeNumber = null;
+        if (head?.PayoutJournalEntryId is Guid jeId)
+            jeNumber = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.Id == jeId && j.CompanyId == companyId).Select(j => j.EntryNumber).FirstOrDefaultAsync(ct);
+        return new
+        {
+            batch,
+            actions = SettlementBatchActions.For(batch.Status, batch.Lines.Select(l => (l.Id, l.LineType))),
+            posting = new
+            {
+                payoutJournalEntryId = head?.PayoutJournalEntryId,
+                payoutJournalEntryNumber = jeNumber,
+                bankTransactionId = head?.BankTransactionId,
+                postedAt = head?.PostedAt,
+            },
+        };
+    }
+
+    public sealed record ReasonRequest(string? Reason);
+
+    /// <summary>ยกเลิกรอบโอนที่ยังไม่ลงบัญชี (soft-delete · นำเข้าไฟล์เดิมใหม่ได้) — บังคับเหตุผล · audit</summary>
+    [HttpPost("batches/{batchId:guid}/void")]
+    [Accounting.Filters.RejectApiKey("ยกเลิกรอบโอน")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public async Task<ActionResult<ApiResponse<object>>> VoidBatch(Guid companyId, Guid batchId, [FromBody] ReasonRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new ApiResponse<object>(false, null, "ระบุเหตุผลที่ยกเลิกรอบโอน (ผู้สอบบัญชีต้องเห็นว่ายกเลิกเพราะอะไร)"));
+        var reason = request.Reason.Trim();
+        return await Guarded<object>(async () =>
+        {
+            await _import.VoidBatchAsync(companyId, UserId, batchId, reason, ct);
+            return new { batchId };
+        }, "ยกเลิกรอบโอนแล้ว");
+    }
+
+    /// <summary>จับคู่ใบขายใหม่ทั้งรอบ (หลังสร้างเอกสารขายที่ขาด) — ไม่แตะบรรทัดที่ผู้ใช้ตัดสินเองแล้ว</summary>
+    [HttpPost("batches/{batchId:guid}/rematch")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public Task<ActionResult<ApiResponse<SettlementBatchView>>> Rematch(Guid companyId, Guid batchId, CancellationToken ct)
+        => Guarded(() => _import.RematchBatchAsync(companyId, batchId, ct), "จับคู่ใหม่แล้ว");
+
+    // ═════════════════════════════ บรรทัด ═════════════════════════════
+
+    /// <summary>ผู้ใช้เลือก/แก้ประเภทบรรทัด — ปิดลูปการเรียนรู้ (service บันทึก <c>RecordUserChoiceAsync(…, Explicit)</c> ในธุรกรรมเดียวกัน)</summary>
+    [HttpPost("lines/{lineId:guid}/reclassify")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public Task<ActionResult<ApiResponse<SettlementLineView>>> Reclassify(Guid companyId, Guid lineId,
+        [FromBody] SettlementReclassifyRequest request, CancellationToken ct)
+        => Guarded(() => _import.ReclassifyLineAsync(companyId, UserId, lineId, request, ct), "บันทึกประเภทแล้ว");
+
+    /// <summary>ผู้ใช้ตัดสินการจับคู่ของบรรทัดขาย/คืนเงิน (เลือกเอกสาร หรือยืนยันเข้าใบขายสรุปรายวัน)</summary>
+    [HttpPost("lines/{lineId:guid}/match")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
+    public Task<ActionResult<ApiResponse<SettlementLineView>>> AssignMatch(Guid companyId, Guid lineId,
+        [FromBody] SettlementAssignMatchRequest request, CancellationToken ct)
+        => Guarded(() => _import.AssignLineMatchAsync(companyId, lineId, request, ct), "บันทึกการจับคู่แล้ว");
+
+    public sealed record ChargebackResolveRequest(bool Won);
+
+    /// <summary>ปิดรายการ chargeback ที่พักไว้ (แพ้ = ขาดทุน · ชนะและได้เงินคืนนอกไฟล์ = กลับเข้าผังพัก) — ลง JE ⇒ ห้ามคีย์ API</summary>
+    [HttpPost("lines/{lineId:guid}/chargeback-resolve")]
+    [Accounting.Filters.RejectApiKey("ปิดรายการ chargeback")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementChargebackResult>>> ResolveChargeback(Guid companyId, Guid lineId,
+        [FromBody] ChargebackResolveRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var r = await _posting.ResolveChargebackAsync(companyId, lineId, request.Won, UserId, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementChargebackResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementChargebackResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    // ═════════════════════════════ ลงบัญชี ═════════════════════════════
+
+    /// <summary>พรีวิวการลงบัญชี (ไม่เขียนอะไร) — แผน · ปัญหาพร้อมทางไปต่อ · <c>CanPost</c> · ของที่ลงไว้แล้ว (ค้างครึ่งทาง/ลงแล้ว)</summary>
+    [HttpGet("batches/{batchId:guid}/posting-preview")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<SettlementPostingPreview>>> PostingPreview(Guid companyId, Guid batchId, CancellationToken ct)
+        => Guarded(() => _posting.PreviewAsync(companyId, batchId, UserId, ct));
+
+    /// <summary>ลงบัญชีรอบโอน — ถูกบล็อก ⇒ 409 พร้อมแผน (<c>Plan.Issues</c> มี <c>NextStep</c>) · ค้างครึ่งทาง ⇒ 409 <c>SETTLEMENT-POST-PARTIAL</c></summary>
+    [HttpPost("batches/{batchId:guid}/post")]
+    [Accounting.Filters.RejectApiKey("ลงบัญชีรอบโอน")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementPostingResult>>> Post(Guid companyId, Guid batchId, CancellationToken ct)
+    {
+        try
+        {
+            var r = await _posting.PostAsync(companyId, batchId, UserId, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementPostingResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementPostingResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    /// <summary>ยกเลิกการลงบัญชี (ถอนจับคู่ธนาคาร → ยกเลิกเอกสาร/การรับชำระ/50 ทวิ → กลับรายการ JE) — บังคับเหตุผล</summary>
+    [HttpPost("batches/{batchId:guid}/unpost")]
+    [Accounting.Filters.RejectApiKey("ยกเลิกการลงบัญชีรอบโอน")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementUnpostResult>>> Unpost(Guid companyId, Guid batchId,
+        [FromBody] ReasonRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var r = await _posting.UnpostAsync(companyId, batchId, UserId, request.Reason ?? string.Empty, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementUnpostResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementUnpostResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    // ═════════════════════════════ จับคู่เงินเข้าธนาคาร ═════════════════════════════
+
+    /// <summary>ผู้สมัครรายการเดินบัญชี — รายการที่ยังไม่กระทบยอดของบัญชีที่รอบโอนระบุ (<c>IBankService.GetUnreconciledAsync</c> · tenant) ·
+    /// ตัดสินทีละแถวด้วย <see cref="SettlementBankMatch.Check"/> ตัวเดียวกับตอนกดจับคู่ · คีย์ = <c>Settlement.Post</c> (ไม่ใช่ View):
+    /// รายการเดินบัญชีธนาคารไม่ควรเปิดให้คนที่มีแค่สิทธิ์ดูรอบโอน — เห็นได้เฉพาะคนที่มีสิทธิ์จับคู่</summary>
+    [HttpGet("batches/{batchId:guid}/deposit-candidates")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public Task<ActionResult<ApiResponse<object>>> DepositCandidates(Guid companyId, Guid batchId, CancellationToken ct)
+        => Guarded(() => DepositCandidatesAsync(companyId, batchId, ct));
+
+    private async Task<object> DepositCandidatesAsync(Guid companyId, Guid batchId, CancellationToken ct)
+    {
+        var b = await _db.SettlementBatches.AsNoTracking()
+            .Where(x => x.Id == batchId && x.CompanyId == companyId)
+            .Select(x => new SettlementBankBatchFacts(x.Id, x.Status, x.NetPayout, x.PayoutDate, x.BankAccountId,
+                x.PayoutJournalEntryId, x.BankTransactionId))
+            .FirstOrDefaultAsync(ct)
+            ?? throw new BusinessRuleException("ไม่พบรอบโอนนี้ในบริษัท", "SETTLEMENT-BATCH", 404);
+        if (b.BankAccountId is not Guid bankAccountId)
+            return new
+            {
+                candidates = Array.Empty<SettlementBankCandidate>(),
+                message = "รอบโอนนี้ยังไม่ได้ระบุบัญชีธนาคารที่รับเงิน — ยกเลิกรอบแล้วนำเข้าใหม่พร้อมเลือกบัญชีธนาคาร",
+            };
+        var txns = await _bank.GetUnreconciledAsync(companyId, bankAccountId);
+        var ids = txns.Select(t => t.Id).ToList();
+        var linked = await _db.SettlementBatches.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.Id != batchId && x.BankTransactionId != null && ids.Contains(x.BankTransactionId.Value))
+            .Select(x => new { x.Id, TxnId = x.BankTransactionId!.Value })
+            .ToListAsync(ct);
+        var linkedBy = linked.GroupBy(x => x.TxnId).ToDictionary(g => g.Key, g => g.First().Id);
+        var rows = txns.Select(t => new SettlementBankTxnRow(t.Id, t.BankAccountId, t.TransactionDate, t.TransactionType, t.Amount,
+            t.ReconciliationStatus, t.MatchedJournalEntryId, linkedBy.TryGetValue(t.Id, out var other) ? other : null,
+            t.Description, t.Reference));
+        var candidates = SettlementBankCandidates.Evaluate(b, rows);
+        return new
+        {
+            candidates,
+            message = candidates.Count == 0
+                ? $"ไม่พบรายการเดินบัญชีที่ยังไม่กระทบยอดในช่วง ±{SettlementBankCandidates.WindowDays} วันจากวันเงินเข้า — นำเข้าสเตทเมนต์ธนาคารก่อน"
+                : null,
+        };
+    }
+
+    public sealed record DepositMatchRequest(Guid BankTransactionId);
+
+    /// <summary>จับคู่ JE รอบโอนกับรายการเดินบัญชีจริง (สถานะ BankMatched) — กระทบยอดธนาคาร ⇒ ห้ามคีย์ API</summary>
+    [HttpPost("batches/{batchId:guid}/deposit-match")]
+    [Accounting.Filters.RejectApiKey("จับคู่เงินเข้าธนาคารของรอบโอน")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementBankMatchResult>>> MatchDeposit(Guid companyId, Guid batchId,
+        [FromBody] DepositMatchRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var r = await _posting.MatchBankTransactionAsync(companyId, batchId, request.BankTransactionId, UserId, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementBankMatchResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementBankMatchResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    // ═════════════════════════════ ตัวช่วย ═════════════════════════════
+
+    /// <summary>เรียก service แล้วห่อผล — ข้อผิดพลาดของผู้ใช้เป็นข้อความไทยพร้อม <c>ruleCode</c> (หน้าเว็บใช้แยก "ค้างครึ่งทาง" ออกจาก "ถูกบล็อก")</summary>
+    private async Task<ActionResult<ApiResponse<T>>> Guarded<T>(Func<Task<T>> work, string? okMessage = null)
+    {
+        try
+        {
+            return Ok(new ApiResponse<T>(true, await work(), okMessage));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    private ObjectResult Fail(BusinessRuleException ex)
+        => StatusCode(ex.StatusCode, new ApiResponse<object>(false, new { ruleCode = ex.RuleCode }, ex.Message));
+
+    private ObjectResult NotFoundMessage(KeyNotFoundException ex)
+        => StatusCode(404, new ApiResponse<object>(false, null,
+            ex.Message.Any(ch => ch is >= '฀' and <= '๿') ? ex.Message : "ไม่พบรายการนี้ในบริษัท"));
+}
