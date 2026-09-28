@@ -122,6 +122,11 @@ public class PaymentIntent : TenantEntity
     /// <summary>เวลาที่การคืนเงินผ่านผู้ให้บริการ "ผลไม่แน่ชัด" (ผู้ให้บริการไม่ตอบ/หมดเวลา — ฝ่ายค้าน E-2) · มีค่า = ล็อกการคืนเงินผ่านระบบ
     /// ของรายการนี้จนกว่าจะตรวจผลกับผู้ให้บริการ (<c>GatewayRefundService.VerifyUnknownRefundAsync</c>) · null = ไม่มีเรื่องค้าง</summary>
     public DateTime? RefundOutcomeUnknownSince { get; set; }
+    /// <summary>ยอดของครั้งที่ "ผลไม่แน่ชัด" (ฝ่ายค้าน E2-7) — การตรวจผลลงบัญชีได้เฉพาะเมื่อส่วนต่างของผู้ให้บริการเท่ายอดนี้ ·
+    /// null = แถวก่อนมีคอลัมน์ที่เติมย้อนหลังจากเหตุการณ์ ⚠️ ไม่ได้ (ต้องให้เจ้าของบันทึกผลด้วยมือ)</summary>
+    public decimal? RefundOutcomeUnknownAmount { get; set; }
+    /// <summary>เครื่องหมายเฉพาะของครั้งที่ "ผลไม่แน่ชัด" ที่แนบไปกับคำขอคืนเงิน (ฝ่ายค้าน E2-2) — ตรวจผลหา "ครั้งนี้" ในรายการคืนของผู้ให้บริการ</summary>
+    public string? RefundOutcomeUnknownAttempt { get; set; }
     public DateTime? LastRefundedAt { get; set; }
     /// <summary>JE คืนเงินครั้งล่าสุด (Dr ลูกหนี้ / Cr บัญชีพัก) — ผูกไว้ตามรอยจากหน้ารายการ</summary>
     public Guid? LastRefundJournalEntryId { get; set; }

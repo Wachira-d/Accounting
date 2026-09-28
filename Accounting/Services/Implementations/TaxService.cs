@@ -1330,17 +1330,23 @@ public partial class TaxService : ITaxService
                     // เข้าสต๊อก" จาก integration (TakeTime) ที่โพสต์ภาษีซื้อแต่ไม่แนบ
                     // เลขภาษีผู้ขาย → mark excluded ไม่รวมในยอดเคลม (เก็บไว้ audit).
                     // ภาษีซื้อจริงต้องมาจากใบกำกับซื้อ/ใบสำคัญจ่ายที่มีเลขภาษีผู้ขายครบ
-                    var jeInputTid = new string((jePayerId ?? "").Where(char.IsDigit).ToArray());
+                    // review198-E2 E2-5: JE ที่บันทึกใบกำกับเป็นข้อมูลโครงสร้าง (รับใบกำกับค่าธรรมเนียม) ⇒ วันที่/เลขที่/ผู้ออก/สาขาจากช่องโดยตรง
+                    // (ตัวตัดสินเดียว Helpers/JournalInputTaxInvoice) · JE อื่นใช้ค่าที่แกะจากคำอธิบายตามเดิม
+                    var inv = JournalInputTaxInvoice.Resolve(je.EntryDate, je.TaxInvoiceNo, je.TaxInvoiceDate,
+                        je.TaxInvoiceSupplierName, je.TaxInvoiceSupplierTaxId, je.TaxInvoiceSupplierBranch,
+                        ExtractDocRefFromJe(je), jePayerName, jePayerId);
+                    var jeInputTid = new string((inv.SupplierTaxId ?? "").Where(char.IsDigit).ToArray());
                     var jeInputClaimable = jeInputTid.Length == 13;
                     if (jeInputClaimable) inputVat += inputVatAmt;
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
-                        TransactionDate = je.EntryDate,
-                        Description = ExtractDocRefFromJe(je),   // เลขเอกสารจริงที่ JE อ้างถึง
-                        TaxPayerName = jePayerName,
-                        TaxPayerId = jePayerId,
+                        TransactionDate = inv.TransactionDate,
+                        Description = inv.DocumentNo,   // เลขเอกสารจริงที่ JE อ้างถึง
+                        TaxPayerName = inv.SupplierName ?? jePayerName,
+                        TaxPayerId = inv.SupplierTaxId,
+                        TaxPayerBranchCode = inv.SupplierBranch,
                         IncomeAmount = baseAmount,
                         TaxRate = companyVatRate,
                         TaxAmount = inputVatAmt,

@@ -22,6 +22,9 @@ public sealed record GatewayFeeVatAging(
     decimal DeferredTotal, decimal ClaimedTotal, decimal Outstanding,
     IReadOnlyList<GatewayFeeVatBucket> Buckets, GatewayFeeVatAgeLevel WorstLevel, string? Warning);
 
+/// <summary>ใบสำคัญ "รับใบกำกับค่าธรรมเนียม" ที่ลงไว้แล้ว — ใช้หาการเคลมซ้ำ (review198-E2 E2-4) · <c>SupplierTaxId</c> null = หาไม่เจอ (ใบเก่า)</summary>
+public readonly record struct GatewayFeeVatPriorClaim(string EntryNumber, string? InvoiceNo, string? SupplierTaxId);
+
 /// <summary>ผลตรวจคำขอ "รับใบกำกับค่าธรรมเนียม" (ย้าย 11630 → 11610)</summary>
 public readonly record struct GatewayFeeVatClaimCheck(
     bool Ok, string? Message, decimal Vat, decimal OutstandingAfter, bool IsLate, string BranchCode);
@@ -55,8 +58,54 @@ public static class GatewayFeeVatClaim
     /// <summary>เริ่มเตือนเมื่อค้างมาแล้วเท่านี้เดือน (เหลือเดือนสุดท้าย)</summary>
     public const int WarnFromMonths = 5;
 
+    /// <summary>คำนำของ tag ใบสำคัญ "รับใบกำกับค่าธรรมเนียม" (ทุกผู้ให้บริการ) — ใช้หาใบกำกับที่เคลมซ้ำข้ามผู้ให้บริการ (E2-4)</summary>
+    public const string ClaimTagPrefix = "gateway-fee-vat:";
+
     /// <summary>tag ของใบสำคัญ "รับใบกำกับค่าธรรมเนียม" ของผู้ให้บริการหนึ่ง — ใช้นับยอดที่เคลมแล้ว (ต้องตรงกันทั้งฝั่งเขียนและอ่าน)</summary>
-    public static string ClaimTag(string providerCode) => $"gateway-fee-vat:{providerCode}";
+    public static string ClaimTag(string providerCode) => ClaimTagPrefix + providerCode;
+
+    /// <summary>ใบสำคัญเคลมที่ลงไว้แล้ว (ยังไม่ถูกกลับรายการ) จากข้อมูลบนใบสำคัญ — เลขผู้เสียภาษีจากช่องโครงสร้าง (E2-5) ก่อน ·
+    /// ใบสำคัญก่อนมีช่อง = เลข 13 หลักตัวแรกในคำอธิบาย (รูป "ภาษีซื้อ-{ชื่อ} {เลข} สาขา {รหัส}" ที่เส้นเคลมเขียนเสมอ)</summary>
+    public static GatewayFeeVatPriorClaim PriorClaim(string entryNumber, string? reference, string? structuredTaxId, string? description)
+    {
+        var taxId = ThaiTaxId.Normalize(structuredTaxId);
+        if (string.IsNullOrEmpty(taxId) && description != null)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(description, @"(?<!\d)\d{13}(?!\d)");
+            if (m.Success) taxId = m.Value;
+        }
+        return new GatewayFeeVatPriorClaim(entryNumber, reference?.Trim(), string.IsNullOrEmpty(taxId) ? null : taxId);
+    }
+
+    /// <summary>ใบกำกับฉบับนี้ (เลขที่ + เลขผู้เสียภาษีผู้ออก) ถูกเคลมไปแล้วหรือยัง (review198-E2 E2-4) — null = ยัง
+    ///
+    /// <para>ใบกำกับฉบับเดียวเคลมภาษีซื้อได้ครั้งเดียว · เดิมด่านมีแค่ "ไม่เกินยอดพัก 11630" ⇒ กดซ้ำ/บันทึกซ้ำหนึ่งสัปดาห์ต่อมาผ่านได้ตราบที่ยอดพักยังพอ ·
+    /// รายงานภาษีซื้อมีเลขที่ใบกำกับซ้ำสองบรรทัด และบรรทัดที่สองไม่มีใบกำกับรองรับ (§82/5(1))</para>
+    /// <para>เทียบเลขที่แบบไม่สนตัวพิมพ์/ช่องว่างหัวท้าย · เลขผู้เสียภาษีเทียบเฉพาะตัวเลข · เลขที่เดียวกันจาก<b>ผู้ออกคนละราย</b> = คนละใบ (ผ่าน) ·
+    /// ใบสำคัญเก่าที่หาเลขผู้เสียภาษีไม่เจอ = นับว่าตรง (ทิศปลอดภัย: บล็อกพร้อมบอกเลขใบสำคัญ ให้คนตรวจ — ไม่ปล่อยเคลมซ้ำเงียบ)</para></summary>
+    public static GatewayFeeVatPriorClaim? FindDuplicate(IEnumerable<GatewayFeeVatPriorClaim> priors, string? invoiceNo, string? supplierTaxId)
+    {
+        var inv = (invoiceNo ?? "").Trim();
+        var tid = ThaiTaxId.Normalize(supplierTaxId);
+        if (inv.Length == 0) return null;
+        foreach (var p in priors)
+        {
+            if (!string.Equals((p.InvoiceNo ?? "").Trim(), inv, StringComparison.OrdinalIgnoreCase)) continue;
+            if (p.SupplierTaxId == null || string.IsNullOrEmpty(tid) || p.SupplierTaxId == tid) return p;
+        }
+        return null;
+    }
+
+    /// <summary>ข้อความเมื่อใบกำกับถูกเคลมไปแล้ว — บอกเลขใบสำคัญเดิม + ทางไปต่อ</summary>
+    public static string DuplicateMessage(GatewayFeeVatPriorClaim prior, string invoiceNo)
+        => $"ใบกำกับเลขที่ {invoiceNo.Trim()} ของผู้ออกรายนี้ถูกเคลมภาษีซื้อไปแล้วในใบสำคัญ {prior.EntryNumber} — ใบกำกับฉบับเดียวเคลมได้ครั้งเดียว "
+           + "(เคลมซ้ำ = ภาษีซื้อที่ไม่มีใบกำกับรองรับ §82/5(1)) · ถ้าใบสำคัญเดิมลงผิด ให้กลับรายการใบนั้นก่อนแล้วบันทึกใหม่";
+
+    /// <summary>ข้อความเมื่อเดือนภาษีของวันที่เคลมยื่น/ประกาศยื่น ภ.พ.30 แล้ว (review198-E2 E2-6) — ใบสำคัญที่ลงย้อนเข้าเดือนนั้น
+    /// ไม่ถูกหยิบเข้ารายงานที่ยื่นแล้ว ⇒ ภาษีซื้อหายเงียบ หรือถ้าสร้างรายงานใหม่ = แบบที่ยื่นแล้วเปลี่ยน</summary>
+    public static string DeclaredVatMonthMessage(DateTime claimDate)
+        => $"เดือนภาษี {ThaiDate.CalendarDateUtc(claimDate):MM/yyyy} ยื่น/ประกาศว่ายื่น ภ.พ.30 แล้ว — ลงภาษีซื้อย้อนเข้าเดือนนั้นไม่ได้ "
+           + "(ไม่เข้ารายงานที่ยื่นแล้ว = ภาษีซื้อหายเงียบ) · ให้เคลมในเดือนภาษีที่ยังไม่ยื่น (ยังอยู่ในกำหนด §82/3 ถ้าไม่เกิน 6 เดือนนับจากเดือนของใบกำกับ)";
 
     /// <summary>จำนวนเดือนปฏิทินระหว่างสองเดือน (to − from) · ติดลบได้</summary>
     private static int MonthsBetween(DateTime from, DateTime to)

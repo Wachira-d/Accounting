@@ -1143,6 +1143,8 @@ const API = {
         API.post(`${base}/settlement/batches/${id}/deposit-match`, { bankTransactionId }),
       // ฝ่ายค้าน E-2: ตรวจผลการคืนเงินที่ผลไม่แน่ชัดกับผู้ให้บริการ
       verifyPaymentIntentRefund: (id) => API.post(`${base}/pay/intents/${id}/refund/verify`, {}),
+      // review198-E2 E2-3: บันทึกผลการคืนเงินที่ผลไม่แน่ชัดด้วยมือ (เจ้าของกิจการ · ต้องมีหลักฐาน) — decision = "NoMoneyOut" | "MoneyWentOut"
+      resolvePaymentIntentRefundManually: (id, d) => API.post(`${base}/pay/intents/${id}/refund/resolve-manually`, d),
       // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ + รับใบกำกับ (11630 → 11610)
       getGatewayFeeVat: (code) =>
         API.get(`${base}/pay/settlements/fee-vat?providerCode=${encodeURIComponent(code)}`),

@@ -1163,16 +1163,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ประวัติ ⚠️ + สถานะจริง + ข้อความ "ห้ามกดคืนซ้ำ · ลงบัญชีมือ" (ไม่กลืน) · **ไม่ออกใบลดหนี้เอง** (§86/10) — `GET pay/intents` คืน `creditNoteState`/`needsCreditNote`
   (ต้นทาง Document: ใบลดหนี้ที่ออกแล้วอ้างใบนั้นรวม ≥ ยอดคืน · ต้นทางอื่น = `CannotTrace`) + ป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" · สถานะคืนแล้วแต่ยอดคืน = 0 = `refundUntracked` (ตรวจมือ)
   · ตัวลงบัญชีคืนเงินตัวเดียว `BookRefundAsync` เขียน **ยอดรายครั้ง** `PaymentIntentEvent.RefundAmount` + เวลาเงินออก (ใช้แยกยอดคืนก่อน/หลังวันเงินเข้า)
-  · **ผลไม่แน่ชัด (ฝ่ายค้าน E-2)**: ผู้ให้บริการโยน (หมดเวลา/เครือข่าย/ยกเลิก) ⇒ ประทับ `RefundOutcomeUnknownSince` + เหตุการณ์ ⚠️ (ธุรกรรมเดิมที่ถือล็อก) ⇒
-  `GatewayRefundMath.Check` ปฏิเสธการคืนเพิ่ม · `POST pay/intents/{id}/refund/verify` → `VerifyUnknownRefundAsync`: ยอดคืนสะสมจากผู้ให้บริการ
-  (`ProviderCharge.RefundedTotal`) ผ่าน `GatewayRefundMath.Verify` — เท่าที่บันทึก = ปลดล็อก · มากกว่า = ลงบัญชีส่วนต่าง (เวลาเงินออก = เวลาที่พยายามคืน) + ปลดล็อก ·
-  ไม่ส่ง/ขัดกัน = ล็อกต่อ · รอบโอนที่มีรายการนี้บล็อก `RefundOutcomeUnknown` (ยอดคืนจริงยังไม่รู้) · `GET pay/intents` คืน `refundOutcomeUnknown` (+ข้อความ) ·
-  ป้ายช่องค่าธรรมเนียม `feeInputLabel`
+  · **ผลไม่แน่ชัด (ฝ่ายค้าน E-2 · review198-E2)**: ผู้ให้บริการโยน (หมดเวลา/เครือข่าย) **หรือตอบ 5xx/408** (`GatewayRefundMath.ClassifyRefundHttpStatus` —
+  4xx อื่น = ปฏิเสธจริง · E2-1) ⇒ ประทับ `RefundOutcomeUnknownSince` + **ยอด** `RefundOutcomeUnknownAmount` + **เครื่องหมาย** `RefundOutcomeUnknownAttempt`
+  (แนบไปกับคำขอเป็น `metadata[attempt]`) + เหตุการณ์ ⚠️ (ธุรกรรมเดิมที่ถือล็อก) ⇒ `GatewayRefundMath.Check` ปฏิเสธการคืนเพิ่ม · คำขอเงินออกใช้
+  `CancellationToken.None` (ผู้ใช้ปิดหน้าไม่ตัดคำขอกลางทาง · E2-2) · คีย์ยังไม่ตั้ง = ปฏิเสธ (ไม่ล็อก) · `POST pay/intents/{id}/refund/verify` →
+  `VerifyUnknownRefundAsync`: ยอดคืนสะสม (`refunded_amount` · ไม่มีช่อง ⇒ ผลรวมรายการคืนที่ครบทั้งชุด) + รายการที่มีเครื่องหมาย ผ่าน `GatewayRefundMath.Verify` —
+  ส่วนต่าง 0 = ปลดล็อก**เฉพาะเมื่อพ้น `MinVerifyWait` (10 นาที) หลังพยายามคืน** (ก่อนนั้น `TooEarly` · E2-2) · ส่วนต่าง = ยอดที่พยายามคืน (หรือยอดของรายการที่มีเครื่องหมาย)
+  = ลงบัญชีส่วนต่าง (เวลาเงินออก = เวลาที่พยายามคืน · เลขอ้างอิงจริงเมื่อพบเครื่องหมาย) + ปลดล็อก · ส่วนต่างอื่น/ไม่รู้ยอดที่พยายามคืน = `Inconsistent` (E2-7 — เดิมลงทั้งก้อน)
+  · ไม่ส่ง/ขัดกัน = ล็อกต่อ → **บันทึกผลด้วยมือ** `POST pay/intents/{id}/refund/resolve-manually` (E2-3 · `[RequireOwner]` + `[RejectApiKey]` + สิทธิ์คืนเงิน ·
+  `GatewayRefundMath.CheckManualResolution`: หลักฐานบังคับ · NoMoneyOut ต้องพ้นช่วงรอ · MoneyWentOut ต้องมียอด ≤ ที่ยังคืนได้ + เลขอ้างอิงการคืน ⇒ `BookRefundAsync`) +
+  `AddChainedAuditLog` · ปลดล็อกทุกทางผ่าน `ClearOutcomeUnknown` ตัวเดียว · รอบโอน: รายการ**ยังไม่บันทึกรอบ**ในช่วงของรอบที่มีธงบล็อก `RefundOutcomeUnknown`
+  · รายการ**ที่บันทึกรอบแล้ว** = คำเตือน `SettledOutcomeUnknownWarning` เฉพาะรอบที่จุดตัดอยู่หลังเวลาพยายามคืน (เดิมบล็อกทุกรอบในอนาคต) · `GET pay/intents` คืน
+  `refundOutcomeUnknown` (+ข้อความ · `refundOutcomeUnknownAmount`) · ป้ายช่องค่าธรรมเนียม `feeInputLabel`
 - **รอบโอน** (`GatewaySettlementService` · พรีวิว `settlements/preview` · บันทึก `settlements`): ผู้เลือกรายการตัวเดียว `SelectCandidatesAsync` (หน้า
   `settlements/pending` ใช้ตัวเดียวกัน) = ยังไม่บันทึกรอบโอน (สำเร็จ · หรือคืนบางส่วน/เต็มที่รู้ยอดคืน) + บันทึกรอบโอนแล้วแต่คืนหลังจากนั้น
   (`RefundedAmount > RefundSettledAmount`) · สูตร `GatewaySettlementMath.Contribution/Plan`: ยอดล้างบัญชีพัก = `Amount − ยอดคืน ณ วันเงินเข้า` (คืนหลังรอบก่อน = ติดลบ) ·
   **ฝ่ายค้าน R-E2**: ยอดคืน ณ วันเงินเข้า = `GatewaySettlementMath.RefundedAsOf` (จุดตัด `RefundCutoffUtc(SettledAt)` = 00:00 เวลาไทยของวันเงินเข้า · คืนตั้งแต่วันนั้น
-  = รอบถัดไป · ต้องมียอดรายครั้งครบ ไม่งั้นบล็อก `RefundTimingUnknown`) — ใช้ทั้งรายการยังไม่บันทึกรอบและรายการคืนหลังรอบก่อน (เดิมใช้ปลายช่วง ToDate) ·
+  = รอบถัดไป · ต้องมียอดรายครั้งครบ ไม่งั้นบล็อก `RefundTimingUnknown` — ข้อความบอกตรง ๆ ว่ายังไม่มีหน้าจอเติมยอดรายครั้ง (E2-8) · migration แกะยอดรายครั้งจากข้อความ
+  "คืนเงิน {ยอด} (สะสม …)" เมื่อผลรวม = ยอดสะสม) — ใช้ทั้งรายการยังไม่บันทึกรอบและรายการคืนหลังรอบก่อน (เดิมใช้ปลายช่วง ToDate) ·
   ยอดไม่ตรงในรอบที่มีคืนเงินบอกให้ตรวจ "วันที่เงินเข้าบัญชี" ·
   ค่าธรรมเนียมตาม `GatewayFeeVatMode` (None = ทั้งก้อนค่าใช้จ่าย · IncludedInFee = แยก 7/107 · AddedOnTop = +7%) ⇒ **Dr 11630 ภาษีซื้อรอเครดิต** เฉพาะบริษัทจด VAT
   (`CompanyVatStatus`) · WHT ค่าธรรมเนียมฐาน**ก่อน VAT** × 3/97 แต่ `WhtCertificateRequired` = **บล็อก** (ห้ามลง 21917 ที่ไม่มี 50 ทวิ) · ด่านงวดปิดในพรีวิว +
@@ -1183,12 +1191,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รับใบกำกับค่าธรรมเนียม (ฝ่ายค้าน R-E3)**: `GET pay/settlements/fee-vat` (ยอด VAT ค่าธรรมเนียมใน 11630 ของผู้ให้บริการ = บรรทัด 11630 ในใบสำคัญรอบโอน −
   ที่เคลมแล้ว tag `gateway-fee-vat:{provider}` · อายุ FIFO ต่อเดือน `GatewayFeeVatClaim.Aging` · ≥ 5 เดือนเตือน · > 6 เดือน "อาจเลยกำหนด §82/3" — ไม่โอนเป็นค่าใช้จ่ายเอง)
   · `POST pay/settlements/fee-vat/claim` → `ClaimFeeVatAsync` (ล็อกเดียวกับรอบโอน): `GatewayFeeVatClaim.Check` (VAT > 0 และ ≤ ยอดค้าง · เลขที่ใบ · ชื่อ · เลขผู้เสียภาษี
-  13 หลัก+checksum · สาขา 5 หลัก · วันที่ใบ ≤ วันที่เคลม · §82/3 > 6 เดือนบล็อก · 1–6 เดือนต้องมีเหตุผล) + งวดปิด → **JV Dr 11610 / Cr 11630** (ไม่ลงค่าใช้จ่ายซ้ำ ·
-  Reference = เลขที่ใบกำกับ · คำอธิบาย "ภาษีซื้อ-{ชื่อ} {เลขผู้เสียภาษี} สาขา {รหัส}" ⇒ รายงานภาษีซื้อเส้นใบสำคัญ JE_INPUT นับเป็นเคลมได้) + `AddChainedAuditLog`
+  13 หลัก+checksum · สาขา 5 หลัก · วันที่ใบ ≤ วันที่เคลม · §82/3 > 6 เดือนบล็อก · 1–6 เดือนต้องมีเหตุผล) + **ใบกำกับเดิมเคลมแล้ว** (`GatewayFeeVatClaim.FindDuplicate`:
+  เลขที่ + เลขผู้เสียภาษีผู้ออก ในใบสำคัญเคลมที่ยังไม่ถูกกลับรายการ ทุกผู้ให้บริการ · E2-4) + งวดปิด + **เดือนภาษีที่ยื่น/ประกาศยื่น ภ.พ.30 แล้ว**
+  (`TaxFilingLockPolicy.DeclaredOrFiledStatuses` หรือ `FilingLockedAt` · E2-6) → **JV Dr 11610 / Cr 11630** (ไม่ลงค่าใช้จ่ายซ้ำ · Reference = เลขที่ใบกำกับ ·
+  คำอธิบาย "ภาษีซื้อ-{ชื่อ} {เลขผู้เสียภาษี} สาขา {รหัส}" + **ช่องโครงสร้าง** `JournalEntry.TaxInvoiceNo/Date/SupplierName/SupplierTaxId/SupplierBranch` (E2-5) ⇒
+  รายงานภาษีซื้อเส้นใบสำคัญ JE_INPUT อ่านผ่าน `Helpers/JournalInputTaxInvoice` — วันที่ใบกำกับ · เลขที่ตามจริง · สาขา — ไม่ regex) + `AddChainedAuditLog`
 - **กระทบยอด (`GET pay/reconciliation` · ฝ่ายค้าน R-E5)**: `GatewayReconciliation.Compute` ใช้ `Contribution` ตัวเดียวกับรอบโอน (โหมด VAT ของผู้ให้บริการ ·
   คืนเต็มยังไม่ถึงรอบ = ค้างติดลบเท่าค่าธรรมเนียม · บันทึกรอบแล้ว = `SettledAmount − RefundDeductedAfterSettlement` + ยอดคืนหลังรอบที่ยังไม่ถูกหัก)
 - **สิทธิ์ (G-8)**: `Helpers/PaymentGatewayPermissionScope` — คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` · บันทึกรอบโอน/แก้ค่าธรรมเนียม
-  `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง · คืนเงิน/ยืนยันมือ/บันทึกรอบโอน/แก้ค่าธรรมเนียม `[RejectApiKey]`
+  `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง · คืนเงิน/ตรวจผล/ยืนยันมือ/บันทึกรอบโอน/แก้ค่าธรรมเนียม/รับใบกำกับ `[RejectApiKey]` ·
+  บันทึกผลคืนเงินด้วยมือ = `[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
@@ -3562,6 +3574,11 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S3 ฝ่�
 รอบค้างครึ่งทางแก้/ยกเลิกไม่ได้ · คิดแผนใหม่ใต้ล็อก + ตรวจความครบก่อนประทับ Posted · ด่านก่อนยกเลิกการลงบัญชี (e-Tax/ภ.พ.30/ภ.พ.36/50 ทวิ) + ลำดับคงที่ ·
 50 ทวิ ที่ยื่นแล้วยกเลิกไม่ได้ทุกทางเข้า · ชิ้นของรอบที่ลงบัญชีแล้วยกเลิกทีละใบไม่ได้ · หัวใบขายสรุป §86/6 · คีย์กันซ้ำ v2 · คำตัดสินจับคู่ของคน ·
 คืนเงินภายหลังผ่าน intent · intent ค้นทั้งบริษัท · คืนเงินผลไม่แน่ชัด (§2.10) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม E3 แก้ผลตรวจ review198-E2: 5xx/408 ของคำขอคืนเงิน = ผลไม่แน่ชัด (E2-1) · ช่วงรอ 10 นาที +
+เครื่องหมายครั้งที่คืน + ไม่ตัดคำขอเงินออกกลางทาง (E2-2) · บันทึกผลด้วยมือระดับเจ้าของ + รอบโอนไม่บล็อกถาวร (E2-3) · ใบกำกับค่าธรรมเนียมเคลมซ้ำไม่ได้ (E2-4) ·
+ช่องใบกำกับโครงสร้างบน JE ภาษีซื้อ (E2-5) · เดือนภาษีที่ยื่นแล้ว (E2-6) · ลงบัญชีเฉพาะส่วนต่างที่เท่ายอดที่พยายามคืน (E2-7) · ข้อความ/migration ยอดคืนรายครั้ง (E2-8)
+(§2.6b) — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-28 (รอบ 198 เฟส 1 ทีม D: ทางเข้า HTTP + หน้าจอ settlement — `SettlementController` (ด่าน `Settlement.View/Import/Post/Channels` จาก `Helpers/SettlementPermissionScope` · ห้ามคีย์ API ที่งานขยับ GL/ภาษี · Ok=false = 409 พร้อมแผน) · `settlements.html` · `settlement-channels.html` · `SettlementReferenceCatalog`/`SettlementBatchActions`/`SettlementBankCandidates` · ไฟล์ต้นฉบับใช้คีย์ settlement (§2.10) — commit <pending>)_
 

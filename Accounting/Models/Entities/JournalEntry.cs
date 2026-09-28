@@ -58,6 +58,14 @@ public class JournalEntry : TenantEntity
 
     // Free-form metadata
     public string? Note { get; set; }                   // หมายเหตุเพิ่มเติม
+    /// <summary>ใบกำกับภาษี (ของผู้ขาย) ที่ JE ภาษีซื้อนี้อ้าง — เฉพาะ JE ที่<b>ไม่มีเอกสารต้นทาง</b> แต่บันทึกใบกำกับเป็นข้อมูลโครงสร้าง
+    /// (วันนี้: "รับใบกำกับค่าธรรมเนียม" ของผู้ให้บริการรับชำระเงิน · review198-E2 E2-5) ⇒ รายงานภาษีซื้อ §87 อ่านเลขที่/วันที่/ผู้ขาย/สาขา
+    /// จากช่องเหล่านี้ตรง ๆ (ตัวตัดสิน <c>Helpers/JournalInputTaxInvoice</c>) · null = ไม่มี ⇒ รายงานแกะจากคำอธิบายตามเดิม</summary>
+    public string? TaxInvoiceNo { get; set; }
+    public DateTime? TaxInvoiceDate { get; set; }
+    public string? TaxInvoiceSupplierName { get; set; }
+    public string? TaxInvoiceSupplierTaxId { get; set; }
+    public string? TaxInvoiceSupplierBranch { get; set; }
     public string? Tags { get; set; }                   // CSV tags e.g. "audit,external,2026Q1"
 
     public decimal TotalDebit { get; set; }
