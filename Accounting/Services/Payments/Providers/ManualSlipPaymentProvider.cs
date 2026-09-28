@@ -60,7 +60,7 @@ public class ManualSlipPaymentProvider : IPaymentProvider
             RawStatus: intent.ProviderStatusRaw ?? "awaiting_slip",
             Amount: intent.Amount));
 
-    public Task<ProviderRefund> RefundAsync(PaymentIntent intent, decimal amount, string reason,
+    public Task<ProviderRefund> RefundAsync(PaymentIntent intent, decimal amount, string reason, string attemptMarker,
         PaymentProviderConfig config, CancellationToken ct = default)
         // ห้ามคืน "สำเร็จ" ทั้งที่ไม่ได้ทำอะไร — เงินโอนคืนต้องมีคนทำจริงที่ธนาคาร
         => Task.FromResult(new ProviderRefund(string.Empty, amount, false,

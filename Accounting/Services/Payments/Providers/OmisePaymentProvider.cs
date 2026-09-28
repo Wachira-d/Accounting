@@ -149,6 +149,12 @@ public class OmisePaymentProvider : IPaymentProvider
             DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var exd)
             ? exd : null;
 
+        var refunds = ParseRefundList(el);
+        // ยอดคืนสะสม: ช่อง refunded_amount ก่อน · ไม่มีช่องนั้น ⇒ ผลรวมของรายการคืน (เฉพาะเมื่อรายการครบทั้งชุด · ฝ่ายค้าน E2-3) · ไม่มีทั้งคู่ = null (ไม่เดาเป็น 0)
+        decimal? refundedTotal = el.TryGetProperty("refunded_amount", out var ra) && ra.ValueKind == JsonValueKind.Number
+            ? FromMinorUnit(ra.GetInt64())
+            : refunds?.Sum(r => r.Amount);
+
         return new ProviderCharge(
             ProviderRef: el.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
             Status: MapStatus(status, paid),
@@ -161,9 +167,35 @@ public class OmisePaymentProvider : IPaymentProvider
             AuthorizeUrl: authorize,
             FailureCode: el.TryGetProperty("failure_code", out var fc) ? fc.GetString() : null,
             FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null,
-            // ยอดคืนสะสมของ charge (หน่วยสตางค์) — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2) · ไม่มีช่อง = null (ไม่เดาเป็น 0)
-            RefundedTotal: el.TryGetProperty("refunded_amount", out var ra) && ra.ValueKind == JsonValueKind.Number
-                ? FromMinorUnit(ra.GetInt64()) : null);
+            // ยอดคืนสะสมของ charge — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2)
+            RefundedTotal: refundedTotal,
+            Refunds: refunds);
+    }
+
+    /// <summary>รายการคืนเงินที่ฝังมากับ charge (list object: <c>data</c> + <c>total</c>) — คืนเฉพาะเมื่อ<b>ครบทั้งชุด</b>
+    /// (<c>total</c> = จำนวนใน <c>data</c>) · รายการที่ถูกยกเลิก (<c>voided</c>) ไม่นับ · ช่องยอดอ่านไม่ได้/ถูกตัดหน้า = null
+    /// (ไม่ครบ ≠ ไม่มี — ห้ามใช้หาว่า "ไม่มีครั้งนี้") · เครื่องหมายของครั้งที่สั่งคืนอยู่ที่ <c>metadata.attempt</c> (ฝ่ายค้าน E2-2)</summary>
+    private static List<ProviderRefundItem>? ParseRefundList(JsonElement charge)
+    {
+        if (!charge.TryGetProperty("refunds", out var list) || list.ValueKind != JsonValueKind.Object) return null;
+        if (!list.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return null;
+        if (!list.TryGetProperty("total", out var total) || total.ValueKind != JsonValueKind.Number
+            || total.GetInt64() != data.GetArrayLength()) return null;
+
+        var items = new List<ProviderRefundItem>();
+        foreach (var r in data.EnumerateArray())
+        {
+            if (r.ValueKind != JsonValueKind.Object) return null;
+            if (r.TryGetProperty("voided", out var voided) && voided.ValueKind == JsonValueKind.True) continue;
+            if (!r.TryGetProperty("amount", out var amt) || amt.ValueKind != JsonValueKind.Number) return null;
+            string? marker = null;
+            if (r.TryGetProperty("metadata", out var meta) && meta.ValueKind == JsonValueKind.Object
+                && meta.TryGetProperty("attempt", out var att) && att.ValueKind == JsonValueKind.String)
+                marker = att.GetString();
+            var id = r.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String ? idEl.GetString() ?? "" : "";
+            items.Add(new ProviderRefundItem(id, FromMinorUnit(amt.GetInt64()), marker));
+        }
+        return items;
     }
 
     // ── การทำงานหลัก ────────────────────────────────────────────────────
@@ -226,22 +258,41 @@ public class OmisePaymentProvider : IPaymentProvider
     }
 
     public async Task<ProviderRefund> RefundAsync(PaymentIntent intent, decimal amount,
-        string reason, PaymentProviderConfig config, CancellationToken ct = default)
+        string reason, string attemptMarker, PaymentProviderConfig config, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(intent.ProviderRef))
             return new ProviderRefund("", amount, false, "รายการนี้ไม่มีเลขอ้างอิงจากผู้ให้บริการ");
 
-        using var client = Client(config, ApiBase);
+        HttpClient client;
+        try
+        {
+            client = Client(config, ApiBase);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // คีย์ยังไม่ได้ตั้ง = ยังไม่มีคำขอออกไปเลย ⇒ ปฏิเสธที่ชัดเจน (เดิมโยน ⇒ ถูกตีเป็น "ผลไม่แน่ชัด" + ล็อกผิด · review198-E2 E2-12)
+            return new ProviderRefund("", amount, false, ex.Message);
+        }
+        using var ownedClient = client;
         var form = new List<KeyValuePair<string, string>>
         {
             new("amount", ToMinorUnit(amount).ToString(CultureInfo.InvariantCulture)),
             new("metadata[reason]", reason),
+            // เครื่องหมายของครั้งนี้ — การตรวจผลทีหลังหาในรายการคืนของ charge (ฝ่ายค้าน E2-2)
+            new("metadata[attempt]", attemptMarker),
         };
         using var resp = await client.PostAsync($"/charges/{intent.ProviderRef}/refunds",
             new FormUrlEncodedContent(form), ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
-            return new ProviderRefund("", amount, false, FriendlyError(body, resp.StatusCode.ToString()));
+        switch (GatewayRefundMath.ClassifyRefundHttpStatus((int)resp.StatusCode))
+        {
+            case GatewayRefundHttpOutcome.Refused:
+                return new ProviderRefund("", amount, false, FriendlyError(body, resp.StatusCode.ToString()));
+            case GatewayRefundHttpOutcome.Unknown:
+                // E2-1: 5xx/408 = ผู้ให้บริการอาจบันทึกแล้ว — ห้ามตอบว่า "ปฏิเสธ" (กดใหม่ = คืนซ้ำได้)
+                return new ProviderRefund("", amount, false,
+                    $"ผู้ให้บริการตอบผิดพลาด ({(int)resp.StatusCode}) — ไม่รู้ว่าคืนเงินแล้วหรือยัง", OutcomeUnknown: true);
+        }
 
         using var doc = JsonDocument.Parse(body);
         return new ProviderRefund(

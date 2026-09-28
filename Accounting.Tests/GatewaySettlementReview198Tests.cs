@@ -109,7 +109,10 @@ public class GatewaySettlementReview198Tests
         Assert.Equal(SettlementBlockReason.RefundTimingUnknown, p.Reason);
         Assert.Empty(p.Lines);
         Assert.Contains("วันเงินเข้า", p.Message);
-        Assert.Contains("ผู้ดูแลระบบ", p.Message);   // ทางไปต่อที่ทำได้จริง (ไม่ใช่ JV มือ — รายการจะค้างแล้วนับซ้ำ)
+        // review198-E2 E2-8: ห้ามชี้ไปเครื่องมือที่ไม่มีอยู่จริง ("ให้ผู้ดูแลระบบบันทึกยอดคืนรายครั้ง") — บอกตรง ๆ ว่ายังไม่มีหน้าจอ
+        Assert.DoesNotContain("ให้ผู้ดูแลระบบบันทึกยอดคืนรายครั้ง", p.Message);
+        Assert.Contains("ยังไม่มีหน้าจอ", p.Message);
+        Assert.Contains("อย่าลงใบสำคัญรอบโอนด้วยมือ", p.Message);   // ทางที่ห้าม (รายการจะค้างแล้วนับซ้ำ) ยังต้องบอก
     }
 
     [Fact]
@@ -352,22 +355,25 @@ public class GatewaySettlementReview198Tests
     [Fact]
     public void E2_ตรวจผลกับยอดคืนสะสมของผู้ให้บริการ()
     {
-        var silent = GatewayRefundMath.Verify(0m, null, 1000m);
+        // review198-E2: ตัวตัดสินรับยอดที่พยายามคืน + เวลา — ที่นี่ใช้เวลาที่พ้นช่วงรอแล้ว (พฤติกรรมเดิมของ E-2)
+        var at = Utc(2026, 9, 20, 3);
+        var later = at.AddMinutes(30);
+        var silent = GatewayRefundMath.Verify(0m, null, 1000m, 100m, null, at, later);
         Assert.Equal(GatewayRefundVerificationOutcome.ProviderSilent, silent.Outcome);
         Assert.False(silent.Resolves);    // ไม่รู้ = ล็อกต่อ (ห้ามเดาว่าไม่มีเงินออก)
 
-        var none = GatewayRefundMath.Verify(200m, 200m, 1000m);
+        var none = GatewayRefundMath.Verify(200m, 200m, 1000m, 100m, null, at, later);
         Assert.Equal(GatewayRefundVerificationOutcome.NoMoneyOut, none.Outcome);
         Assert.True(none.Resolves);
         Assert.Equal(0m, none.AmountToBook);
 
-        var out1 = GatewayRefundMath.Verify(200m, 500m, 1000m);
+        var out1 = GatewayRefundMath.Verify(200m, 500m, 1000m, 300m, null, at, later);
         Assert.Equal(GatewayRefundVerificationOutcome.MoneyWentOut, out1.Outcome);
         Assert.Equal(300m, out1.AmountToBook);
         Assert.True(out1.Resolves);
 
-        Assert.Equal(GatewayRefundVerificationOutcome.Inconsistent, GatewayRefundMath.Verify(500m, 200m, 1000m).Outcome);
-        Assert.Equal(GatewayRefundVerificationOutcome.Inconsistent, GatewayRefundMath.Verify(0m, 1200m, 1000m).Outcome);
-        Assert.False(GatewayRefundMath.Verify(500m, 200m, 1000m).Resolves);
+        Assert.Equal(GatewayRefundVerificationOutcome.Inconsistent, GatewayRefundMath.Verify(500m, 200m, 1000m, 100m, null, at, later).Outcome);
+        Assert.Equal(GatewayRefundVerificationOutcome.Inconsistent, GatewayRefundMath.Verify(0m, 1200m, 1000m, 100m, null, at, later).Outcome);
+        Assert.False(GatewayRefundMath.Verify(500m, 200m, 1000m, 100m, null, at, later).Resolves);
     }
 }

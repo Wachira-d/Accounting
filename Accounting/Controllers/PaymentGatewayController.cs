@@ -122,6 +122,7 @@ public class PaymentGatewayController : ControllerBase
                 i.RefundedAmount, i.LastRefundedAt, i.LastRefundJournalEntryId,
                 isSettled = i.SettlementJournalEntryId != null,
                 i.RefundOutcomeUnknownSince,
+                i.RefundOutcomeUnknownAmount,
             })
             .ToListAsync(ct);
 
@@ -153,6 +154,8 @@ public class PaymentGatewayController : ControllerBase
                 // E-2: คืนเงินผลไม่แน่ชัด — ล็อกคืนเพิ่ม · หน้าเว็บโชว์ปุ่ม "ตรวจผลการคืนเงิน" + ข้อความจากเซิร์ฟเวอร์
                 refundOutcomeUnknown = r.RefundOutcomeUnknownSince != null,
                 r.RefundOutcomeUnknownSince,
+                // E2-3: ยอดของครั้งที่ผลไม่แน่ชัด — ค่าตั้งต้นของ "บันทึกผลด้วยมือ" (null = แถวเก่าที่ไม่รู้ยอด)
+                r.RefundOutcomeUnknownAmount,
                 refundOutcomeUnknownMessage = r.RefundOutcomeUnknownSince != null ? GatewayRefundMath.OutcomeUnknownMessage : null,
             };
         }).ToList();
@@ -298,6 +301,39 @@ public class PaymentGatewayController : ControllerBase
     {
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.VerifyUnknownRefundAsync(companyId, intentId, actor, ct);
+        var data = new
+        {
+            amount = r.Amount,
+            refundedTotal = r.RefundedTotal,
+            journalEntryId = r.JournalEntryId,
+            journalEntryNumber = r.JournalEntryNumber,
+            nextStep = r.NextStep,
+        };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
+
+    /// <summary>คำขอบันทึกผลด้วยมือ — <c>Decision</c> = "NoMoneyOut" | "MoneyWentOut" (ชื่อ enum · อ่านไม่ออก = ปฏิเสธ)</summary>
+    public sealed record RefundManualResolutionRequest(string? Decision, decimal? Amount, string? ProviderRefundRef, string? Evidence);
+
+    /// <summary>บันทึกผลการคืนเงินที่ "ผลไม่แน่ชัด" ด้วยมือ (review198-E2 E2-3) — ทางไปต่อเมื่อผู้ให้บริการไม่ส่งยอดคืนสะสม/ข้อมูลขัดกัน ·
+    /// <b>เจ้าของกิจการเท่านั้น</b> (ตัดสินแทนผู้ให้บริการว่าเงินออกหรือไม่ — ปลดล็อกการคืนเงินและรอบโอน) + ห้ามคีย์ API + สิทธิ์คืนเงิน ·
+    /// ต้องมีหลักฐาน · เงินออก ⇒ ลงบัญชีคืนเงินเส้นเดียวกับคืนเงินปกติ · hash chain · ตัดสินที่ service (endpoint ห้ามปลดล็อกเอง)</summary>
+    [HttpPost("intents/{intentId:guid}/refund/resolve-manually")]
+    [Accounting.Filters.RejectApiKey("บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ")]
+    [Accounting.Filters.RequireOwner("บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ",
+        "เป็นการตัดสินแทนผู้ให้บริการว่าเงินออกหรือไม่ — ปลดล็อกการคืนเงินและรอบโอน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.Refund)]
+    public async Task<ActionResult<ApiResponse<object>>> ResolveRefundManually(
+        Guid companyId, Guid intentId, [FromBody] RefundManualResolutionRequest req,
+        [FromServices] IGatewayRefundService refunds, CancellationToken ct)
+    {
+        var decision = Enum.TryParse<GatewayRefundManualDecision>(req.Decision?.Trim(), ignoreCase: true, out var d)
+            && Enum.IsDefined(d) ? d : GatewayRefundManualDecision.Unspecified;
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await refunds.ResolveUnknownRefundManuallyAsync(companyId, intentId, decision, req.Amount, req.ProviderRefundRef,
+            req.Evidence, actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
         var data = new
         {
             amount = r.Amount,

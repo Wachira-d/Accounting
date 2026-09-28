@@ -382,8 +382,9 @@ public class GatewaySettlementService : IGatewaySettlementService
             .Where(i => i.CompanyId == companyId
                 && (providerCode == null || i.ProviderCode == providerCode)
                 && i.SettlementJournalEntryId != null
-                // E-2: คืนเงินผลไม่แน่ชัดหลังรอบโอน — ยอดคืนจริงยังไม่รู้ ⇒ ต้องเข้ามาให้แผนบล็อกพร้อมสาเหตุ (ไม่ใช่ "ยอดไม่ตรง")
-                && (i.RefundedAmount > i.RefundSettledAmount || i.RefundOutcomeUnknownSince != null))
+                // E2-3: คืนเงินผลไม่แน่ชัดหลังรอบโอน**ไม่ใช่**เหตุให้เข้ารอบ (เดิมเข้าทุกรอบโดยไม่มีตัวกรองวัน ⇒ ผู้ให้บริการเงียบ = บล็อกทุกรอบถาวร) ·
+                // แผนได้คำเตือนแยกจาก CountSettledOutcomeUnknownAsync (เฉพาะที่พยายามคืนก่อนวันเงินเข้ารอบนั้น)
+                && i.RefundedAmount > i.RefundSettledAmount)
             .OrderBy(i => i.LastRefundedAt)
             .ToListAsync(ct);
 
@@ -416,9 +417,19 @@ public class GatewaySettlementService : IGatewaySettlementService
         var result = unsettled.Select(i => Make(i, false)).ToList();
         // บันทึกแล้ว: เข้ารอบนี้เฉพาะยอดคืนก่อนวันเงินเข้าที่ยังไม่ถูกหัก · แยกไม่ได้ = เข้าไปให้แผนบล็อก (ไม่ทิ้งเงียบ)
         result.AddRange(refundedAfter.Select(i => Make(i, true))
-            .Where(c => c.Input.RefundTimingUnknown || c.Input.RefundOutcomeUnknown
-                || c.Input.RefundedAmount > c.Intent.RefundSettledAmount));
+            .Where(c => c.Input.RefundTimingUnknown || c.Input.RefundedAmount > c.Intent.RefundSettledAmount));
         return result;
+    }
+
+    /// <summary>จำนวนรายการที่<b>บันทึกรอบโอนแล้ว</b>แต่คืนเงินผลไม่แน่ชัด<b>ก่อนจุดตัดของรอบนี้</b> (review198-E2 E2-3) — ผู้ให้บริการอาจหักยอดนั้นในรอบนี้
+    /// ⇒ แผนเตือน (ไม่บล็อก) · พยายามคืนตั้งแต่จุดตัด = ของรอบถัดไป ไม่เกี่ยวกับรอบนี้</summary>
+    private Task<int> CountSettledOutcomeUnknownAsync(Guid companyId, string providerCode, DateTime refundCutoffUtc,
+        CancellationToken ct)
+    {
+        return _db.PaymentIntents.AsNoTracking()
+            .CountAsync(i => i.CompanyId == companyId && i.ProviderCode == providerCode
+                && i.SettlementJournalEntryId != null
+                && i.RefundOutcomeUnknownSince != null && i.RefundOutcomeUnknownSince < refundCutoffUtc, ct);
     }
 
     /// <summary>เลือกรายการที่เข้าเงื่อนไข แล้วให้ <see cref="GatewaySettlementMath"/> ตัดสิน + ด่านงวดปิด (G-5)</summary>
@@ -438,13 +449,16 @@ public class GatewaySettlementService : IGatewaySettlementService
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
 
         var inputs = candidates.Select(c => c.Input).ToList();
+        var settledOutcomeUnknown = await CountSettledOutcomeUnknownAsync(companyId, req.ProviderCode,
+            GatewaySettlementMath.RefundCutoffUtc(req.SettledAt), ct);
         var plan = GatewaySettlementMath.Plan(
             inputs,
             req.ActualNetReceived,
             config?.WhtOnFee ?? GatewayFeeWhtMode.None,
             req.SettlementRef,
             config?.FeeVatMode ?? GatewayFeeVatMode.None,
-            vatRegistered);
+            vatRegistered,
+            settledOutcomeUnknown);
 
         if (plan.Ok)
         {
@@ -597,12 +611,44 @@ public class GatewaySettlementService : IGatewaySettlementService
                 return new GatewayFeeVatClaimOutcome(false, check.Message ?? "บันทึกไม่ได้", null, null, aging.Outstanding);
             }
 
+            // E2-4: ใบกำกับฉบับเดียวเคลมได้ครั้งเดียว — หาใบสำคัญเคลมเดิม (ทุกผู้ให้บริการ · ยังไม่ถูกกลับรายการ) ที่เลขที่ + เลขผู้เสียภาษีผู้ออกตรงกัน
+            // (อยู่ใต้ล็อกเดียวกับการลงใบสำคัญ ⇒ กดซ้ำพร้อมกันเห็นใบแรกแล้ว)
+            var priorRows = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.ReversedByEntryId == null
+                    && j.Tags != null && j.Tags.StartsWith(GatewayFeeVatClaim.ClaimTagPrefix))
+                .Select(j => new { j.EntryNumber, j.Reference, j.TaxInvoiceNo, j.TaxInvoiceSupplierTaxId, j.Description })
+                .ToListAsync(ct);
+            var duplicate = GatewayFeeVatClaim.FindDuplicate(
+                priorRows.Select(j => GatewayFeeVatClaim.PriorClaim(j.EntryNumber, j.TaxInvoiceNo ?? j.Reference,
+                    j.TaxInvoiceSupplierTaxId, j.Description)),
+                req.TaxInvoiceNo, req.SupplierTaxId);
+            if (duplicate is GatewayFeeVatPriorClaim dup)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatClaimOutcome(false, GatewayFeeVatClaim.DuplicateMessage(dup, req.TaxInvoiceNo!),
+                    null, null, aging.Outstanding);
+            }
+
             var entryDate = ThaiDate.CalendarDateUtc(req.ClaimDate);
             var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct);
             if (closed != null)
             {
                 await tx.RollbackAsync(ct);
                 return new GatewayFeeVatClaimOutcome(false, closed, null, null, aging.Outstanding);
+            }
+
+            // E2-6: เดือนภาษีที่ยื่น/ประกาศว่ายื่น ภ.พ.30 แล้ว (ชุดสถานะจาก TaxFilingLockPolicy ตัวเดียว + ล็อกงวด) — เดิมตรวจแค่งวดบัญชีปิด
+            var vatMonthDeclared = await _db.TaxReports.AsNoTracking()
+                .AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.TaxType == TaxType.VAT
+                    && t.Year == entryDate.Year && t.Month == entryDate.Month
+                    && (TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status) || t.FilingLockedAt != null), ct);
+            if (vatMonthDeclared)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatClaimOutcome(false, GatewayFeeVatClaim.DeclaredVatMonthMessage(entryDate),
+                    null, null, aging.Outstanding);
             }
 
             var inputVat = await FindByCodeAsync(companyId, InputVatCode, ct);
@@ -631,6 +677,12 @@ public class GatewaySettlementService : IGatewaySettlementService
                     $"ล้างภาษีซื้อรอเครดิต — VAT ค่าธรรมเนียมที่พักไว้ตอนบันทึกรอบโอน ({req.ProviderCode})")
                 .PostAsync(actor, ct);
             je.Tags = GatewayFeeVatClaim.ClaimTag(req.ProviderCode);
+            // E2-5: ใบกำกับเป็นข้อมูลโครงสร้าง — รายงานภาษีซื้อ (JE_INPUT) อ่านเลขที่/วันที่/ผู้ออก/สาขาจากช่องเหล่านี้ตรง ๆ ไม่ regex คำอธิบาย
+            je.TaxInvoiceNo = invoiceNo;
+            je.TaxInvoiceDate = invoiceDate;
+            je.TaxInvoiceSupplierName = req.SupplierName!.Trim();
+            je.TaxInvoiceSupplierTaxId = taxId;
+            je.TaxInvoiceSupplierBranch = check.BranchCode;
             je.Note = check.IsLate
                 ? $"เคลมช้ากว่าเดือนของใบกำกับ (§82/3 ยังอยู่ในกำหนด) — เหตุผล: {req.LateReason!.Trim()}"
                 : null;

@@ -3591,3 +3591,20 @@ path ไม่มี `/bank` (กัน RouteFeatureMap จับแพ็กเ
 หน้า `settlements.html` + `settlement-channels.html` + api.js 20 เมธอด +
 เมนู · เทสต์ `SettlementControllerContractTests` + `tools/settlement_import_form_sim.js` (โค้ดจริงของหน้า + negative test) · WATCHED + owner_action_wiring 14 แถว ·
 ผู้สมัครเงินเข้า (รายการเดินบัญชีจริง) ต้อง `Settlement.Post` ไม่ใช่ View — commit <pending>)_
+— commit <pending>)_
+
+_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม E3 — แก้ผลตรวจฝ่ายค้าน review198-E2 (gateway คืนเงิน/รอบโอน/VAT ค่าธรรมเนียม):
+- **E2-1**: `GatewayRefundMath.ClassifyRefundHttpStatus` — คำขอคืนเงินที่ได้ 5xx/408 = ผลไม่แน่ชัด (`ProviderRefund.OutcomeUnknown`) ล็อกทางเดียวกับหมดเวลา · 4xx อื่น = ปฏิเสธจริง ·
+  คีย์ลับยังไม่ตั้ง = ปฏิเสธ (เดิมโยนแล้วถูกล็อกผิด)
+- **E2-2**: คำขอเงินออกใช้ `CancellationToken.None` · `MinVerifyWait` 10 นาทีก่อนยอม "ไม่มีเงินออก" (`TooEarly`) · `metadata[attempt]` + `PaymentIntent.RefundOutcomeUnknownAttempt`
+  · adapter อ่าน `refunds.data` (ครบทั้งชุด) หา "ครั้งนี้" + เลขอ้างอิงจริง
+- **E2-3**: ยอดคืนสะสมสำรองจากผลรวมรายการคืน · `POST pay/intents/{id}/refund/resolve-manually` (เจ้าของ · หลักฐาน · hash chain · ลงบัญชีเส้นเดียวกับคืนเงิน) ·
+  รอบโอนเตือนแทนบล็อกทุกรอบสำหรับรายการที่บันทึกรอบแล้ว (`SettledOutcomeUnknownWarning` · `CountSettledOutcomeUnknownAsync` เฉพาะก่อนจุดตัดของรอบ)
+- **E2-4**: `GatewayFeeVatClaim.FindDuplicate` — ใบกำกับค่าธรรมเนียมเคลมซ้ำไม่ได้ (เลขที่ + เลขผู้เสียภาษีผู้ออก)
+- **E2-5**: `JournalEntry.TaxInvoiceNo/Date/SupplierName/SupplierTaxId/SupplierBranch` + `Helpers/JournalInputTaxInvoice` — รายงานภาษีซื้อ JE_INPUT ใช้วันที่/เลขที่/สาขาจากใบกำกับ
+- **E2-6**: เคลมเข้าเดือนภาษีที่ยื่น/ประกาศยื่น ภ.พ.30 แล้วไม่ได้ (`TaxFilingLockPolicy.DeclaredOrFiledStatuses` + `FilingLockedAt`)
+- **E2-7**: `PaymentIntent.RefundOutcomeUnknownAmount` — ตรวจผลลงบัญชีเฉพาะส่วนต่างที่เท่ายอดที่สั่งคืน อื่น ๆ = ขัดกัน · migration เติมยอดของแถวที่ล็อกอยู่จากเหตุการณ์ ⚠️
+- **E2-8**: ข้อความ `RefundTimingUnknown` ไม่ชี้เครื่องมือที่ไม่มี · migration แกะยอดคืนรายครั้งหลายครั้งจากข้อความเมื่อผลรวม = ยอดสะสม
+- backlog: E2-9 (จุดตัดวันเงินเข้า — ต้องออกแบบ) · E2-11 (ต้องเก็บโหมดค่าธรรมเนียม ณ วันบันทึกรอบก่อน) · E2-12 ส่วนที่เหลือ · E2-10 ส่งทีม S3
+- เทสต์ `GatewayRefundReview198E2Tests` · `required_call_site_check` +13 กติกา · `owner_action_wiring_check` +7 แถว · DOCUMENT_FLOW §2.6b · PAYMENT_GATEWAY_DESIGN · TEST_PLAN SP0-26..36
+— commit <pending>)_

@@ -9,18 +9,18 @@
 
 | ID | Status | P | Topic |
 |---|---|---|---|
-| E2-1 | CONFIRMED | **P1** | An HTTP 5xx/504 from Omise on a refund is treated as a definite failure, so the refund is not locked and a retry can refund twice. This is the same defect class E-2 fixed, reaching the same result by another route. |
-| E2-2 | PLAUSIBLE | **P1** | The verify step unlocks with "NoMoneyOut" whenever the provider's refunded total equals ours. It has no minimum wait and no marker for the attempt, so a refund still in flight looks like "no money out", the lock opens and a second refund goes out. |
-| E2-3 | CONFIRMED (logic) / PLAUSIBLE (field) | **P1** | If the provider sends no refunded total (field `refunded_amount` missing, or `ProviderRef` empty), the refund lock never clears and **every future settlement round for that provider is blocked**. Settled intents are selected without a date filter. No admin exit exists. |
-| E2-4 | CONFIRMED | P1 | Recording a fee tax invoice has no duplicate guard on supplier tax id + invoice number, so the same invoice can be claimed repeatedly while the 11630 pool has room. The same invoice number then appears twice in the purchase VAT report. |
-| E2-5 | CONFIRMED | P2 | The purchase VAT report line for a fee-VAT claim shows the claim date, not the invoice date. The invoice number comes from a regex and may be truncated or replaced by the JV number. The branch column is empty. |
-| E2-6 | CONFIRMED | P2 | A fee-VAT claim only checks closed fiscal periods, not VAT months whose ภ.พ.30 is already declared or filed (`TaxFilingLockPolicy`). |
-| E2-7 | CONFIRMED | P2 | "Verify" books the whole provider-vs-recorded difference as the uncertain refund. It never compares the difference with the amount of the attempt. After an E-1 case (refund went out, JE failed, JE then booked by hand) this books the same money twice. |
-| E2-8 | CONFIRMED | P2 | The `RefundTimingUnknown` block tells the user to "ask an admin to record per-refund amounts", but no such tool exists. The test locks that dead end in place. The backfill could have parsed the amounts from the notes. |
-| E2-9 | PLAUSIBLE | P2 | The Bangkok-midnight cutoff on the payout date is a heuristic. When a boundary case is wrong, the only fix offered is to change the payout date, which posts the bank JE on the wrong day. |
-| E2-10 | PLAUSIBLE | P2 | The team-B settlement import path (`SettlementImportService`/`PaymentIntentAdapter`) ignores `RefundOutcomeUnknownSince`: another entry point skips the E-2 check. |
-| E2-11 | PLAUSIBLE | P2 | R-E5 on old data: settled rows whose refund was deducted in a later round under older code have `RefundDeductedAfterSettlement = 0`, so reconciliation stays off by the refund amount. The value could be derived, but there is no migration. |
-| E2-12 | CONFIRMED | P3 | A group of small issues, detailed below. |
+| ✅ <pending> E2-1 | CONFIRMED | **P1** | An HTTP 5xx/504 from Omise on a refund is treated as a definite failure, so the refund is not locked and a retry can refund twice. This is the same defect class E-2 fixed, reaching the same result by another route. |
+| ✅ <pending> E2-2 | PLAUSIBLE | **P1** | The verify step unlocks with "NoMoneyOut" whenever the provider's refunded total equals ours. It has no minimum wait and no marker for the attempt, so a refund still in flight looks like "no money out", the lock opens and a second refund goes out. |
+| ✅ <pending> E2-3 | CONFIRMED (logic) / PLAUSIBLE (field) | **P1** | If the provider sends no refunded total (field `refunded_amount` missing, or `ProviderRef` empty), the refund lock never clears and **every future settlement round for that provider is blocked**. Settled intents are selected without a date filter. No admin exit exists. |
+| ✅ <pending> E2-4 | CONFIRMED | P1 | Recording a fee tax invoice has no duplicate guard on supplier tax id + invoice number, so the same invoice can be claimed repeatedly while the 11630 pool has room. The same invoice number then appears twice in the purchase VAT report. |
+| ✅ <pending> E2-5 | CONFIRMED | P2 | The purchase VAT report line for a fee-VAT claim shows the claim date, not the invoice date. The invoice number comes from a regex and may be truncated or replaced by the JV number. The branch column is empty. |
+| ✅ <pending> E2-6 | CONFIRMED | P2 | A fee-VAT claim only checks closed fiscal periods, not VAT months whose ภ.พ.30 is already declared or filed (`TaxFilingLockPolicy`). |
+| ✅ <pending> E2-7 | CONFIRMED | P2 | "Verify" books the whole provider-vs-recorded difference as the uncertain refund. It never compares the difference with the amount of the attempt. After an E-1 case (refund went out, JE failed, JE then booked by hand) this books the same money twice. |
+| ✅ <pending> E2-8 | CONFIRMED | P2 | The `RefundTimingUnknown` block tells the user to "ask an admin to record per-refund amounts", but no such tool exists. The test locks that dead end in place. The backfill could have parsed the amounts from the notes. |
+| 📋 backlog E2-9 | PLAUSIBLE | P2 | The Bangkok-midnight cutoff on the payout date is a heuristic. When a boundary case is wrong, the only fix offered is to change the payout date, which posts the bank JE on the wrong day. |
+| ➡️ S3 E2-10 | PLAUSIBLE | P2 | The team-B settlement import path (`SettlementImportService`/`PaymentIntentAdapter`) ignores `RefundOutcomeUnknownSince`: another entry point skips the E-2 check. |
+| 📋 backlog E2-11 | PLAUSIBLE | P2 | R-E5 on old data: settled rows whose refund was deducted in a later round under older code have `RefundDeductedAfterSettlement = 0`, so reconciliation stays off by the refund amount. The value could be derived, but there is no migration. |
+| 🔨 บางส่วน <pending> E2-12 | CONFIRMED | P3 | A group of small issues, detailed below. |
 | — | NOT-A-BUG | — | Items checked and found fine, listed at the end. |
 
 ---
@@ -255,3 +255,26 @@ The population is probably small (the feature is from round 198 itself), but pri
   - The migration runs at first startup, before any refund with the new code, so the "old + new mixed" case cannot happen.
 - **`IsSettled` switch:** changing it to `SettlementJournalEntryId != null` is safe; `SettledAt` and `SettlementJournalEntryId` have always been written together.
 - **Compile (by eye):** `return (Fail(...), null)` to a nullable tuple · `$"VERIFY-{id:N}"[..15]` · `buckets.Max(b => b.Level)` on an enum · `PlanCore(...) with { Warning }` · the 10-argument `GatewayRefundOutcome` · `Map(c, vatRegistered)` updated at all 3 call sites. I found no errors.
+
+---
+
+## ผลการแก้ของทีม E3 (รอบ 198 · commit <pending>)
+
+ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — CI บน `claude/**` คือ compiler ตัวแรก
+
+| ID | สถานะ | ทำอะไร (ไฟล์) |
+|---|---|---|
+| E2-1 | ✅ | `GatewayRefundMath.ClassifyRefundHttpStatus` (2xx สำเร็จ · 4xx ยกเว้น 408 = ปฏิเสธ · 5xx/408/อื่น = ไม่รู้) · `ProviderRefund.OutcomeUnknown` · Omise adapter คืน `OutcomeUnknown: true` · `RefundCoreAsync` ล็อกทางเดียวกับข้อยกเว้น (`MarkOutcomeUnknown`) · เทสต์ `E21_*` (504/502/500/503/408 ล็อก · 400/401/404/409/422/429 ไม่ล็อก) |
+| E2-2 | ✅ | (c) `provider.RefundAsync(..., CancellationToken.None)` · (b) `MinVerifyWait` = 10 นาที — ส่วนต่าง 0 ก่อนนั้น = `TooEarly` (ล็อกต่อ) · (a) `metadata[attempt]` = เครื่องหมายเฉพาะครั้ง เก็บที่ `PaymentIntent.RefundOutcomeUnknownAttempt` · adapter อ่าน `refunds.data[].metadata.attempt` (เฉพาะเมื่อรายการครบทั้งชุด `total == data.length`) · พบ = หลักฐานตรง + เลขอ้างอิงจริง · ไม่พบ ≠ ไม่ออก · เทสต์ `E22_*` |
+| E2-3 | ✅ | ยอดสะสมสำรองจากผลรวม `refunds.data` (ไม่ใช้ช่อง `refunded` เพราะยืนยันเอกสารไม่ได้ — ไม่เดา) · `POST pay/intents/{id}/refund/resolve-manually` (`[RejectApiKey]` + `[RequireOwner]` + `Bank.PaymentInit` · `GatewayRefundMath.CheckManualResolution`: หลักฐานบังคับ · NoMoneyOut ต้องพ้นช่วงรอ · MoneyWentOut ต้องมียอด ≤ ที่ยังคืนได้ + เลขอ้างอิงการคืน → `BookRefundAsync` · `AddChainedAuditLog`) · รอบโอน: รายการที่บันทึกรอบแล้ว + ธง ⇒ **เตือน** (`SettledOutcomeUnknownWarning` เฉพาะรอบที่จุดตัดอยู่หลังเวลาพยายามคืน) ไม่บล็อกทุกรอบ · รายการยังไม่บันทึกรอบในช่วงยังบล็อก · เทสต์ `E23_*` |
+| E2-4 | ✅ | `GatewayFeeVatClaim.FindDuplicate/PriorClaim` (เลขที่ไม่สนตัวพิมพ์ + เลขผู้เสียภาษีผู้ออก · ใบสำคัญเคลมทุกผู้ให้บริการที่ยังไม่ถูกกลับรายการ · ใบเก่าอ่านเลขจากคำอธิบาย · หาไม่เจอ = บล็อกให้คนตรวจ) ก่อนลงใบสำคัญใต้ล็อกเดิม · เทสต์ `E24_*` สองทิศ |
+| E2-5 | ✅ | ช่องใหม่ `JournalEntry.TaxInvoiceNo/TaxInvoiceDate/TaxInvoiceSupplierName/TaxInvoiceSupplierTaxId/TaxInvoiceSupplierBranch` (migration `ADD COLUMN IF NOT EXISTS`) · เส้นเคลมเขียนช่องเหล่านี้ · รายงานภาษีซื้อ JE_INPUT อ่านผ่าน `Helpers/JournalInputTaxInvoice.Resolve` (วันที่ใบกำกับ · เลขที่ตามจริง · สาขา) · JE อื่นใช้ค่าที่แกะมาตามเดิม · ใบสำคัญเคลมเก่าก่อนมีช่อง = พฤติกรรมเดิม (ไม่ย้อนเติม — ข้อมูลอยู่ใน audit log) · เทสต์ `E25_*` |
+| E2-6 | ✅ | `ClaimFeeVatAsync` บล็อกเดือนภาษีที่ `TaxFilingLockPolicy.DeclaredOrFiledStatuses` หรือ `FilingLockedAt` (ตัวเดียวกับ `DocumentService.VatPeriodDeclaredOrFiledAsync`) · ข้อความ `DeclaredVatMonthMessage` บอกให้เคลมเดือนที่ยังไม่ยื่น · เทสต์ `E26_*` (ข้อความ — คิวรีล็อกด้วย `required_call_site_check`) |
+| E2-7 | ✅ | `PaymentIntent.RefundOutcomeUnknownAmount` · `Verify`: ส่วนต่าง = ยอดที่พยายามคืน (หรือยอดรายการที่มีเครื่องหมาย) ⇒ ลงบัญชี · อื่น ๆ/ไม่รู้ยอด ⇒ `Inconsistent` → บันทึกผลด้วยมือ · migration เติมยอดของแถวที่ล็อกอยู่จากเหตุการณ์ ⚠️ · เทสต์ `E27_*` |
+| E2-8 | ✅ | ข้อความ `RefundTimingUnknown` บอกตรง ๆ ว่ายังไม่มีหน้าจอเติมยอดรายครั้ง (ไม่ชี้ไปเครื่องมือที่ไม่มี) + เทสต์ `RE2_ยอดรายครั้งไม่ครบ…` เปลี่ยนเป็นล็อกข้อความใหม่ · migration แกะยอดรายครั้งของรายการที่คืนหลายครั้งจากข้อความ "คืนเงิน {ยอด} (สะสม …)" เมื่อ**ทุก**เหตุการณ์แกะได้และผลรวม = ยอดสะสม |
+| E2-9 | 📋 backlog | ต้องออกแบบ "เลือกยอดคืนเข้ารอบนี้รายรายการ + audit" หรือใช้ข้อมูล transfer ของผู้ให้บริการ — เปลี่ยนสัญญาของแผนรอบโอนทั้งเส้น (หน้าเว็บ + แผน + มาร์ก) ไม่ใช่การแก้เล็ก · ระหว่างนี้ข้อความ NetMismatch ยังบอกให้ตรวจวันเงินเข้า (ทางแก้ที่ผิดวัน JE ตามที่ผลตรวจชี้) — ควรให้เจ้าของเลือกทาง (override รายการ vs ดึงข้อมูล transfer) |
+| E2-10 | ➡️ ทีม S3 | ไฟล์ `SettlementImportService`/`PaymentIntentAdapter` อยู่ระหว่างแก้โดยทีม S3 — ส่งต่อให้ S3 ตามคำสั่ง ไม่แตะในรอบนี้ |
+| E2-11 | 📋 backlog | สูตรเติมย้อนหลัง `RefundSettledAmount − (Amount − FeeDeducted(mode) − SettledAmount)` ขึ้นกับโหมด VAT ค่าธรรมเนียม **ณ วันบันทึกรอบ** ซึ่งไม่ได้เก็บ (E2-12 ข้อ "Settled-row fee mode") ⇒ เติมด้วยโหมดวันนี้อาจผิดเงียบ · ทางที่ปลอดภัยกว่าคือแกะจากเหตุการณ์ "ยอดคืนเงินหลังรอบโอนก่อน X ถูกหัก…" แต่ข้อความนั้นเกิดในรอบ 198 เดียวกัน (ประชากรเกือบศูนย์) — รอเก็บโหมด ณ วันบันทึกรอบก่อน |
+| E2-12 | 🔨 บางส่วน | ✅ คีย์ลับยังไม่ตั้ง = ปฏิเสธ (ไม่ล็อกผิด) · ✅ ตรวจผลใช้เลขอ้างอิงจริงของผู้ให้บริการเมื่อพบเครื่องหมาย · 📋 วันที่ JE ของการตรวจผล (= วันนี้) · ClaimDate ในอนาคต/ก่อนรอบโอน · สาขาว่าง → 00000 เงียบ · โหมดค่าธรรมเนียม ณ วันบันทึกรอบ · รายการ Refunded ยอด 0 ค้าง −fee · ส่วนต่างปัดเศษ 11630 — ยังเป็น backlog |
+
+**ต้องให้เจ้าของตัดสิน**: (1) ระยะรอ `MinVerifyWait` = 10 นาที (ผลตรวจเสนอ ≥ 2) · (2) ปักหัว `Omise-Version` ไหม (วันนี้ไม่ปัก ⇒ ชื่อช่องขึ้นกับเวอร์ชันของบัญชี — ปักแล้วต้องทดสอบทุกเส้นใน sandbox) · (3) E2-9 ทางไหน · (4) บันทึกผลด้วยมือ "เงินออก" ลงบัญชีวันนี้ (ไม่ใช่วันที่พยายามคืน — เหตุผลเดียวกับ E2-12 ข้อแรก)
