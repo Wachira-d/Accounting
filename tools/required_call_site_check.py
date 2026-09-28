@@ -1202,6 +1202,11 @@ RULES += [
          must=["AbbreviatedTaxInvoiceRule.Judge(", "AbbreviatedInvoiceChannel.CashRegisterSlip"],
          forbid=["AbbreviatedInvoiceChannel.Document"],
          why="รอบ 199: สลิปจากเครื่อง POS ต้องผ่านด่าน ภ.พ.06 (ช่องทาง CashRegisterSlip)"),
+    dict(file="Services/Implementations/CompanyService.cs", method="UpdateAsync",
+         must=["company.IsRetailApproved = request.IsRetailApproved.Value"],
+         forbid=["PhoR06ApprovedDate == null"],
+         why="รอบ 199 ฝ่ายค้าน C-1: ธงขายปลีก (§86/6) บันทึกได้โดยไม่มีวันที่ ภ.พ.06 — บังคับวันที่ = ร้านไม่มีเครื่องต้องกรอก"
+             "วันที่ปลอม แล้ววันที่ปลอมไปเปิดสิทธิ์สลิป POS"),
 ]
 
 def mask(text: str, keep_strings: bool = False) -> str:

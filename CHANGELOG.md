@@ -3486,3 +3486,8 @@ _รอบ 197 ทีม K2 (2026-09-28) — แก้ผลฝ่ายค้�
 - เทสต์ `OcrVendorBranchReview197Tests` (ต่อ `BranchCodeExtractor` → `IsReliableBranch` → `Decide` · สองทิศทุกข้อ) · `OcrVendorBranchContactTests` (theory null/0.70/0.60) ·
   `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §1 OCR · TEST_PLAN OCR-U-08..11
 — commit <pending>)_
+
+_รอบ 199 ฝ่ายค้าน (`erp-review/2026-09-25/review-r199-ocr.md`) C-1: `CompanyService.UpdateAsync` ยังบังคับวันที่ ภ.พ.06 เมื่อติ๊กขายปลีก
+⇒ ร้านที่ไม่มีเครื่อง POS บันทึกธงไม่ได้ถ้าไม่กรอกวันที่ปลอม (ซึ่งไปเปิดสิทธิ์สลิป) — ถอดแล้ว + `required_call_site` ห้ามกลับมา ·
+ข้อความช่วยเหลือ/คำแนะนำหัวเอกสารที่ยังบอกว่าอย่างย่อต้องมี ภ.พ.06 แก้ตาม
+— commit <pending>)_

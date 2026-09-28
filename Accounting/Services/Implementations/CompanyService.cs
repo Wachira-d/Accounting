@@ -267,12 +267,10 @@ public class CompanyService : ICompanyService
         if (request.IndustryType.HasValue) company.IndustryType = request.IndustryType.Value;
         if (request.JuristicId != null) company.JuristicId = request.JuristicId;
         if (request.IsVatRegistered.HasValue) company.IsVatRegistered = request.IsVatRegistered.Value;
-        // ภ.พ.06 (§86/6): ธง+วันที่ต้องสอดคล้องกัน — ติ๊กว่าอนุมัติแล้วแต่ไม่กรอกวันที่
-        // = ไม่มีหลักฐาน ⇒ ปฏิเสธ ดีกว่าปล่อยให้ออกใบกำกับอย่างย่อโดยไม่มีสิทธิ์
-        if (request.IsRetailApproved == true
-            && request.PhoR06ApprovedDate == null && company.PhoR06ApprovedDate == null)
-            throw new InvalidOperationException(
-                "กรุณาระบุวันที่กรมสรรพากรอนุมัติ ภ.พ.06 ก่อนเปิดสิทธิ์ออกใบกำกับภาษีอย่างย่อ");
+        // ธง "ประกอบกิจการขายปลีก" (§86/6) กับวันที่อนุมัติ ภ.พ.06 เป็นคนละเรื่อง (รอบ 199 — คำตัดสินเจ้าของ 2026-09-28):
+        // ภ.พ.06 = ขออนุมัติใช้เครื่องบันทึกการเก็บเงิน คุมเฉพาะสลิป POS · ติ๊กขายปลีกโดยไม่มีวันที่ = ออกอย่างย่อจาก
+        // หน้าเอกสารได้ สลิปยังเป็นใบเสร็จ (AbbreviatedTaxInvoiceRule) ⇒ ห้ามบังคับวันที่ตอนบันทึก — เดิมบังคับ ทำให้ร้าน
+        // ที่ไม่มีเครื่องต้องกรอกวันที่ปลอม ซึ่งไปเปิดสิทธิ์สลิปโดยไม่มี ภ.พ.06 จริง
         if (request.IsRetailApproved.HasValue) company.IsRetailApproved = request.IsRetailApproved.Value;
         if (request.PhoR06ApprovedDate.HasValue)
             company.PhoR06ApprovedDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.PhoR06ApprovedDate.Value);
