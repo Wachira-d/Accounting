@@ -1117,9 +1117,17 @@ RULES += [
          forbid=["d.ContactId == scanResult.MatchedContactId.Value"],
          why="K-7: ตัวตัดสิน 'ผู้ขายคือเราเอง' ตัวเดียว · K-3: แบนเนอร์ PO ค้างมองทุกสาขาของนิติบุคคลเดียวกัน"),
     dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
-         must=["OcrSelfPartyGuard.IsOurContact("],
-         must_re=[r"if\s*\(\s*!\s*vendorIsUs\s*&&"],
-         why="K-7: เส้นสร้างเอกสารห้ามตัดสินสาขา/สร้างผู้ติดต่อ 'ผู้ขาย' ที่เป็นบริษัทเราเอง (สมมาตรกับเส้นสแกน)"),
+         must=["OcrSelfPartyGuard.IsOurContact(", "OcrSelfPartyGuard.DecideVendorContactFallback(",
+               "OcrSelfPartyGuard.VendorContactBlockMessage(vendorFallback)"],
+         must_re=[r"if\s*\(\s*!\s*vendorIsUs\s*&&",
+                  r"is\s+string\s+vendorBlockMessage\s*\)\s*throw\b",
+                  r"if\s*\(\s*vendorFallback\s*==\s*Accounting\s*\.\s*Helpers\s*\.\s*OcrVendorContactFallback\s*\.\s*CreateNew\s*\)",
+                  r"if\s*\(\s*!\s*vendorIsUs\s*&&\s*contactId\s*\.\s*HasValue"],
+         call_args=[("OcrSelfPartyGuard.DecideVendorContactFallback(", "vendorSameTaxIdRows")],
+         before=[("OcrSelfPartyGuard.DecideVendorContactFallback(", "Name = result.ExtractedVendorName")],
+         forbid=["if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))"],
+         why="K-7 → รอบ 199 ฝ่ายค้าน A-1: ผู้ขายเป็นเรา ⇒ ห้ามสร้างผู้ติดต่อ (ชื่อเรา+เลขเรา) · เลขมีแถวอยู่แล้ว ⇒ ห้ามสร้างแถวซ้ำ · "
+             "ตัวตัดสิน fallback ตัวเดียว (DecideVendorContactFallback) · ห้ามเติมเลขเราลงผู้ติดต่อที่ผู้ใช้เลือก"),
     dict(file=OCR, method="GetOpenPosForScanAsync",
          must=["ContactTaxBranchKey.SameEntityIdsAsync("],
          forbid=["d.ContactId == scan.MatchedContactId.Value"],
@@ -1207,6 +1215,42 @@ RULES += [
          forbid=["PhoR06ApprovedDate == null"],
          why="รอบ 199 ฝ่ายค้าน C-1: ธงขายปลีก (§86/6) บันทึกได้โดยไม่มีวันที่ ภ.พ.06 — บังคับวันที่ = ร้านไม่มีเครื่องต้องกรอก"
              "วันที่ปลอม แล้ววันที่ปลอมไปเปิดสิทธิ์สลิป POS"),
+]
+
+# ── รอบ 199 ฝ่ายค้าน (review-r199-ocr): หัวพิมพ์ซ้ำตามบทบาทที่ตรึง (C-2) · คะแนนรายช่องตามค่าที่ถูกสลับ (A-3) ·
+#    คำเตือน VAT ตัดสินจาก VAT ที่จะลงบัญชีตอนนี้ (B-2) — เทสต์ OcrReview199Tests ล็อก helper · ที่นี่ล็อกจุดเรียก ──
+RULES += [
+    dict(file=PDF_HTML, method="BuildDocumentHtml",
+         must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "doc.IsTaxInvoiceByLaw")],
+         why="C-2: renderer HTML — ใบที่ออกเลขแล้วพิมพ์หัวตามบทบาทที่ตรึง ไม่ใช่สิทธิ์บริษัท ณ วันพิมพ์"),
+    dict(file=PDF_QUEST, method="RenderDocumentPdfNative",
+         must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "doc.IsTaxInvoiceByLaw")],
+         why="C-2: renderer QuestPDF — ตัวตัดสินเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=PDF_HTML, method="ResolveDocumentTitlesAsync",
+         must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "doc.IsTaxInvoiceByLaw")],
+         why="C-2: หัวบนหน้าเว็บ/ตอนตรึงบทบาทต้องตรงกระดาษ"),
+    dict(file=PDF_HTML, method="ResolveDocumentHeadingAsync",
+         must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "document.IsTaxInvoiceByLaw")],
+         why="C-2: หัวในอีเมล/LINE ต้องตรงกับ PDF แนบ"),
+    dict(file=DOCSVC, method="GetDocumentAsync",
+         must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         before=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "AbbreviatedDowngradeNotice(")],
+         why="C-2: ใบที่ตรึงเป็นใบกำกับแล้วห้ามขึ้นข้อความ 'หัวถูกลดเป็นใบเสร็จ' (หัวพิมพ์อย่างย่อตามค่าที่ตรึง)"),
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrPartyResolver.FollowFieldConfidence(extractedData.FieldConfidence, vendorBlock0, buyerBlock0, v, b)",
+               "vendorBeforeAi, buyerBeforeAi, v2, b2)"],
+         before=[("OcrPartyResolver.FollowFieldConfidence(", "extractedData.VendorBranchCode = v.BranchCode")],
+         why="A-3: คะแนนสาขา 'ตามที่มา' (K-2) ต้องย้ายตามค่าเมื่อสลับฝั่ง — ไม่งั้นสาขาที่ย้ายมาถือคะแนนของช่องเดิม"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["OcrHeaderVatEvidence.ClassifyPosted("],
+         call_args=[("OcrHeaderVatEvidence.ClassifyPosted(", "linesVatNow"),
+                    ("OcrApprovalGapWarning.Build(", "postedVatSource")],
+         before=[("OcrHeaderVatEvidence.ClassifyPosted(", "OcrApprovalGapWarning.Build(")],
+         why="B-2: คำเตือน 'VAT ไม่ได้พิมพ์บนกระดาษ' ตัดสินจาก VAT ที่จะลงบัญชีตอนนี้ — แก้เป็นเลขบนกระดาษแล้วต้องหาย"),
 ]
 
 # ── รอบ 198 ฝ่ายค้าน R-E1 (P0): webhook ต้องตรวจความเป็นเจ้าของรายการก่อนเปลี่ยนสถานะ ──

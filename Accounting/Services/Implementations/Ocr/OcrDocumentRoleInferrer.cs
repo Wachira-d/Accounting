@@ -743,8 +743,16 @@ public static class OcrDocumentRoleInferrer
         var nextEnd = text.IndexOf('\n', lineEnd + 1);
         var next = text.Substring(lineEnd + 1, (nextEnd < 0 ? text.Length : nextEnd) - (lineEnd + 1));
         var continues = SentenceContinues.IsMatch(after) || SentenceContinuesNext.IsMatch(next);
-        return continues && AnnouncesReplacement(next.Replace("ตัวแทน", "", StringComparison.Ordinal));
+        return continues && AnnouncesReplacement(StripNonReplacementTan(next));
     }
+
+    /// <summary>ตัด "แทน" ที่ไม่ได้แปลว่า "ออกใบใหม่แทนใบเดิม" ออกก่อนค้น — ตัวแทน(จำหน่าย) · ผู้แทน(ขาย) · ใช้แทน(ใบเสร็จ/เงินสด)
+    /// (รอบ 199 ฝ่ายค้าน B-4: เดิมตัดแค่ "ตัวแทน" ⇒ บรรทัดถัดไป "ผู้แทนขาย …" ถูกนับเป็นประกาศแทนใบ แล้วการพบ "ใบกำกับภาษีอย่างย่อ"
+    /// ถูกปฏิเสธ = สลิปอย่างย่อจริงหลุดไปเคลมภาษีซื้อ §82/5(2))</summary>
+    private static string StripNonReplacementTan(string line)
+        => line.Replace("ตัวแทน", "", StringComparison.Ordinal)
+            .Replace("ผู้แทน", "", StringComparison.Ordinal)
+            .Replace("ใช้แทน", "", StringComparison.Ordinal);
 
     /// <summary>"แทน" · "ฉบับใหม่" · "replace…" — ประโยคประกาศว่าใบนี้มาแทนใบที่ถูกยกเลิก</summary>
     private static bool AnnouncesReplacement(string s)
@@ -752,7 +760,12 @@ public static class OcrDocumentRoleInferrer
             || System.Text.RegularExpressions.Regex.IsMatch(s, @"(?<![a-z])replac(?:e|ed|es|ing|ement)(?![a-z])",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-    /// <summary>ท้ายบรรทัดยังมีคำเชื่อมที่รอประโยคถัดไป ("และออกใบกำกับภาษี" · "and replaced") — ประโยคยังไม่จบ</summary>
+    /// <summary>บรรทัดนี้ (<b>หลัง</b>คำเป้าหมาย) มีคำเชื่อมที่รอประโยคถัดไป ("… และออกใบกำกับภาษี" · "and replaced") — ประโยคยังไม่จบ
+    /// <para>⚠️ <b>ไม่ยึดท้ายบรรทัดโดยตั้งใจ</b> (ยกเว้น "," ที่ต้องอยู่ท้าย): หมายเหตุ Scommerce จริงถูกตัดบรรทัด<b>หลัง</b>คำเชื่อม
+    /// ("…18/09/2026 และออกใบกำกับภาษี
+อิเล็กทรอนิกส์ฉบับใหม่แทน") — ยึด <c>$</c> ตามที่ฝ่ายค้านรอบ 199 (B-4) เสนอจะทำให้ใบนั้นกลับไปนับ
+    /// "อย่างย่อ" (เทสต์ <c>หมายเหตุScommerceตัดบรรทัด_ยังนับเป็นคำปฏิเสธ</c>) · ความเสี่ยงที่ฝ่ายค้านชี้ (บรรทัดถัดไปมี "แทน" คนละความหมาย)
+    /// ปิดที่ <see cref="StripNonReplacementTan"/> แทน</para></summary>
     private static readonly System.Text.RegularExpressions.Regex SentenceContinues = new(
         @"และ|พร้อม|(?<![a-z])and(?![a-z])|&|,[ \t]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 

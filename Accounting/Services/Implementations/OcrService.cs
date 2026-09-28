@@ -963,6 +963,8 @@ public class OcrService : IOcrService
                 {
                     var v = partyResolution.Vendor;
                     var b = partyResolution.Buyer;
+                    // คะแนนรายช่อง (รวมคะแนนสาขา "ตามที่มา" ของ K-2) ต้องย้ายตามค่าที่ถูกสลับ — ฝ่ายค้าน A-3 รอบ 199
+                    Accounting.Helpers.OcrPartyResolver.FollowFieldConfidence(extractedData.FieldConfidence, vendorBlock0, buyerBlock0, v, b);
                     var vendorNameCleared = !string.IsNullOrWhiteSpace(extractedData.VendorName) && string.IsNullOrWhiteSpace(v.Name);
                     var buyerNameCleared = !string.IsNullOrWhiteSpace(extractedData.BuyerName) && string.IsNullOrWhiteSpace(b.Name);
                     var vendorNameBefore = extractedData.VendorName;
@@ -1110,12 +1112,14 @@ public class OcrService : IOcrService
                             // คำตอบ AI ต้อง**ย้ายบล็อก**ด้วย ไม่ใช่แค่เปลี่ยนป้ายบทบาท — ไม่งั้นชื่อเราค้าง
                             // ช่องผู้ขายแล้ว sync ลงแถว = อาการเดิมของผู้ใช้กลับมาอีกทาง (ทีมตรวจ)
                             var aiSide = ai.Answer == "Buyer" ? Accounting.Helpers.OcrSelfSide.Buyer : Accounting.Helpers.OcrSelfSide.Seller;
-                            var (v2, b2) = Accounting.Helpers.OcrPartyResolver.ApplySide(
-                                new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
-                                    extractedData.VendorAddress, extractedData.VendorBranchCode),
-                                new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
-                                    extractedData.BuyerAddress, extractedData.BuyerBranchCode),
-                                aiSide, ourIdentity);
+                            var vendorBeforeAi = new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
+                                extractedData.VendorAddress, extractedData.VendorBranchCode);
+                            var buyerBeforeAi = new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
+                                extractedData.BuyerAddress, extractedData.BuyerBranchCode);
+                            var (v2, b2) = Accounting.Helpers.OcrPartyResolver.ApplySide(vendorBeforeAi, buyerBeforeAi, aiSide, ourIdentity);
+                            // คะแนนรายช่องย้ายตามค่า (ฝ่ายค้าน A-3 · ตัวเดียวกับเส้นตัดสินฝั่งจากป้าย)
+                            Accounting.Helpers.OcrPartyResolver.FollowFieldConfidence(extractedData.FieldConfidence,
+                                vendorBeforeAi, buyerBeforeAi, v2, b2);
                             if (!string.IsNullOrWhiteSpace(extractedData.VendorName) && string.IsNullOrWhiteSpace(v2.Name))
                                 extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerName] = 0.20;
                             if (!string.IsNullOrWhiteSpace(extractedData.BuyerName) && string.IsNullOrWhiteSpace(b2.Name))
@@ -6236,6 +6240,8 @@ public class OcrService : IOcrService
                 .FirstOrDefaultAsync();
             var vendorIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
                 result.ExtractedVendorTaxId, result.ExtractedVendorName, ourCompany?.TaxId, ourCompany?.Name, ourCompany?.NameEn);
+            // ผู้ติดต่อที่ถือเลขเดียวกับผู้ขายอยู่แล้ว (ทุกสาขา) — ใช้ทั้งตัวเลือกสาขาข้างล่างและด่าน "ห้ามสร้างแถวซ้ำ" ของ fallback (ฝ่ายค้าน A-1)
+            var vendorSameTaxIdRows = 0;
             if (!vendorIsUs && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(result.ExtractedVendorTaxId))
             {
                 var correctedFields = (result.UserCorrectedFields ?? "")
@@ -6243,6 +6249,7 @@ public class OcrService : IOcrService
                 var userPickedContact = correctedFields.Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
                 var siblingIds = await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
                     _db.Contacts, companyId, result.ExtractedVendorTaxId);
+                vendorSameTaxIdRows = siblingIds.Count;
                 if (siblingIds.Count > 0
                     && (!contactId.HasValue || (!userPickedContact && siblingIds.Contains(contactId.Value))))
                 {
@@ -6289,7 +6296,16 @@ public class OcrService : IOcrService
                         result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + branchPick.Trace;
                 }
             }
-            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+            // ── ยังไม่มีผู้ติดต่อผูก: สร้างใหม่ได้เฉพาะเมื่อผู้ขายไม่ใช่เรา และเลขนี้ยังไม่มีแถว (รอบ 199 ฝ่ายค้าน A-1) ──
+            // เดิม vendorIsUs ข้ามบล็อกเลือกแถวแล้วไหลมาที่นี่ ⇒ new Contact ชื่อเรา+เลขเรา (สำเนาใบขายของเรา) หรือผู้ติดต่อซ้ำของ
+            // บริษัทในเครือทุกใบ · ตอนนี้ตัวตัดสินเดียว OcrSelfPartyGuard.DecideVendorContactFallback — บล็อก = ข้อความบอกทางไปต่อ
+            // (เลือกผู้ติดต่อในผลสแกน / เปลี่ยนชนิดเอกสารเป็นฝั่งขาย) ไม่ใช่ผูก/สร้างเงียบ
+            var vendorFallback = Accounting.Helpers.OcrSelfPartyGuard.DecideVendorContactFallback(
+                hasContact: contactId.HasValue, vendorIsUs: vendorIsUs, sameTaxIdRows: vendorSameTaxIdRows,
+                hasVendorName: !string.IsNullOrWhiteSpace(result.ExtractedVendorName));
+            if (Accounting.Helpers.OcrSelfPartyGuard.VendorContactBlockMessage(vendorFallback) is string vendorBlockMessage)
+                throw new Accounting.Helpers.BusinessRuleException(vendorBlockMessage, "OCR-VENDOR-IS-US");
+            if (vendorFallback == Accounting.Helpers.OcrVendorContactFallback.CreateNew)
             {
                 // สาขาผู้ขายจากกระดาษ (§86/4 · คู่สมมาตรกับฝั่งผู้ซื้อข้างบน) — เดิมไม่เก็บ ⇒ ตกเป็นสำนักงานใหญ่
                 string? newVendorBranch = Accounting.Helpers.TaxBranchCode.TryNormalize(
@@ -6314,9 +6330,10 @@ public class OcrService : IOcrService
             // ได้จากใบ → อัปเดตให้ contact ครบ §86/4 (ไม่ต้องให้ user ไปแก้
             // มือในหน้า Contacts) — สอดคล้องกับ backfill ที่มีอยู่ใน
             // ProcessScanAsync :1529 ที่อาจไม่ทันรอบนี้.
-            if (contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
+            // ผู้ขายบนกระดาษเป็นเรา (ผู้ใช้เลือกผู้ติดต่อเอง) ⇒ ห้ามเติมเลขภาษี**ของเรา**ลงผู้ติดต่อที่ผู้ใช้เลือก (ฝ่ายค้าน A-1)
+            if (!vendorIsUs && contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorTaxId))
             {
-                var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId.Value);
+                var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId.Value && c.CompanyId == companyId);
                 if (existing != null && string.IsNullOrWhiteSpace(existing.TaxId))
                 {
                     existing.TaxId = result.ExtractedVendorTaxId.Trim();

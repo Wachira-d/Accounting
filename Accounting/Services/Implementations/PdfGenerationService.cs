@@ -1543,9 +1543,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
         var template = await ResolveDocumentTemplateAsync(db, companyId, document, null);
         await ResolveServedAsReceiptAsync(db, companyId, document);
-        var mayAbbrev = AbbreviatedTaxInvoiceRule.CanIssue(
-            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            document.DocumentDate, await RequirePhoR06Async(db), Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+        // ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้ (ฝ่ายค้าน C-2 รอบ 199) · ตัวตัดสินเดียวกับทั้งสอง renderer
+        var mayAbbrev = AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
+            DocumentStatusRules.IsIssued(document.Status), document.IsTaxInvoiceByLaw,
+            AbbreviatedTaxInvoiceRule.CanIssue(
+                company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+                document.DocumentDate, await RequirePhoR06Async(db), Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
         return ComputeDocumentHeading(document, template, settings, mayAbbrev);
     }
 
@@ -1620,10 +1623,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             // template ซึ่งเส้นทางนี้ใช้ร่วมกันทั้งหน้า (และไม่มีผลกับหัวเอกสาร)
             var template = PickTemplate(pool, doc, null, brandDefault);
             var lang = ResolveDocumentLanguage(null, doc, template, settings);
-            var mayAbbrev = issuer864 != null
+            // ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้ (ฝ่ายค้าน C-2 รอบ 199) — ตัวเดียวกับ PDF ทั้งสอง renderer
+            var mayAbbrev = Accounting.Helpers.AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
+                Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status), doc.IsTaxInvoiceByLaw,
+                issuer864 != null
                 && Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
                     issuer864.IsVatRegistered, issuer864.IsRetailApproved,
-                    issuer864.PhoR06ApprovedDate, doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+                    issuer864.PhoR06ApprovedDate, doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
             result[doc.Id] = ComputeDocumentTitle(doc, template, settings, lang, mayAbbrev);
         }
         return result;
@@ -1842,9 +1848,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         bool showFreeTierCredit = false,
         bool requirePhoR06 = true)
     {
-        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
-            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+        // ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้ (ฝ่ายค้าน C-2 รอบ 199) — ตัวเดียวกับ QuestPDF (ห้าม drift)
+        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
+            Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status), doc.IsTaxInvoiceByLaw,
+            Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+                company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+                doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
         var sb = new StringBuilder();

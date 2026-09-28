@@ -61,10 +61,13 @@ public partial class PdfGenerationService
         bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null,
         bool requirePhoR06 = true)
     {
-        // สิทธิ์ §86/6 ของผู้ออก — ตัวตัดสินตัวเดียวกับ HTML renderer (ห้าม drift)
-        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
-            company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+        // สิทธิ์ §86/6 ของผู้ออก — ตัวตัดสินตัวเดียวกับ HTML renderer (ห้าม drift) · ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้
+        // (ฝ่ายค้าน C-2 รอบ 199 — พิมพ์ซ้ำใบ REC เก่าต้องไม่กลายเป็น "ใบกำกับภาษีอย่างย่อ")
+        var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
+            Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status), doc.IsTaxInvoiceByLaw,
+            Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+                company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
+                doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
         EnsureThaiFontsRegistered();
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
