@@ -179,7 +179,7 @@ public class SettlementPostingService : ISettlementPostingService
         var component = SettlementPostingKeys.FeeComponent(fee.VatTreatment);
         var request = SettlementDocumentBuilder.FeeDocument(fee, gate.Accounts.FeeLineAccounts[index], gate.CounterpartyId!.Value,
             gate.Accounts.ClearingAccountId!.Value, gate.PayoutDay, batch.PayoutRef, gate.Loaded.Channel.DisplayName);
-        var docId = await CreateOrAdoptAsync(companyId, gate, component, request, ct);
+        var docId = await CreateOrAdoptAsync(companyId, gate, component, request, userId, ct);
         await ApproveIfDraftAsync(companyId, docId, userId);
 
         var cert = SettlementDocumentBuilder.WhtCertificate(fee, gate.CounterpartyId!.Value, docId, gate.PayoutDay, batch.PayoutRef);
@@ -216,7 +216,7 @@ public class SettlementPostingService : ISettlementPostingService
         walkInId ??= (await WalkInCustomerContact.GetOrCreateAsync(_db, companyId, ct)).Id;
         var request = SettlementDocumentBuilder.SummaryDocument(s, gate.VatRegistered, walkInId.Value,
             gate.Accounts.ClearingAccountId!.Value, batch.PayoutRef, gate.Loaded.Channel.DisplayName);
-        var docId = await CreateOrAdoptAsync(companyId, gate, component, request, ct);
+        var docId = await CreateOrAdoptAsync(companyId, gate, component, request, userId, ct);
 
         // ธงให้ตรวจรายได้ซ้ำ — ต่อท้าย InternalNotes (ไม่พิมพ์ลงกระดาษ · ห้ามเขียนทับของเดิม) ก่อนอนุมัติ
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == docId && d.CompanyId == companyId, ct)
@@ -243,7 +243,7 @@ public class SettlementPostingService : ISettlementPostingService
     /// <summary>หาเอกสารของชิ้นนี้ที่ลงไว้ครั้งก่อน (ป้าย CreatedBy) — ยอดต้องตรงแผนปัจจุบัน · ไม่มี ⇒ สร้างผ่าน <c>IDocumentService</c>
     /// แล้วตรวจยอดที่ได้กับแผน (กัน VAT/ยอดถูกคิดใหม่เพี้ยนจากแผน — review198-A R-A11)</summary>
     private async Task<Guid> CreateOrAdoptAsync(Guid companyId, Gate gate, string component,
-        Models.DTOs.Document.CreateDocumentRequest request, CancellationToken ct)
+        Models.DTOs.Document.CreateDocumentRequest request, Guid userId, CancellationToken ct)
     {
         var expected = request.Lines.Sum(l => Math.Round(l.Quantity * l.UnitPrice, 2, MidpointRounding.AwayFromZero)
             + (l.VatAmountOverride ?? 0m));
@@ -257,8 +257,10 @@ public class SettlementPostingService : ISettlementPostingService
             gate.ExpectedTotals[component] = expected;
             return existing.Id;
         }
+        // ป้ายของรอบโอนอยู่ใน CreatedBy (กุญแจทำต่อจากที่ค้าง — บันทึกพร้อมเอกสารในคำสั่งเดียว) · ผู้อนุมัติของใบที่อนุมัติทันทีตอนสร้าง
+        // (ใบสำคัญจ่ายเงินสด) = คนที่กดลงบัญชี — คำตัดสินเจ้าของข้อ 7 (review198-C C-7 · เดิมเป็นป้ายของระบบ ⇒ SoD ไม่เคยทำงาน)
         var created = await _documents.CreateDocumentAsync(companyId, request,
-            SettlementPostingKeys.Creator(gate.Loaded.Batch.Id, component));
+            SettlementPostingKeys.Creator(gate.Loaded.Batch.Id, component), autoApproveBy: userId.ToString());
         if (Math.Abs(created.TotalAmount - expected) > 0.005m)
             throw new BusinessRuleException(
                 $"เอกสาร {created.DocumentNumber} ที่ระบบสร้างมียอด {created.TotalAmount:N2} ไม่เท่าแผน {expected:N2} — ยกเลิกเอกสารนั้น "
@@ -510,6 +512,12 @@ public class SettlementPostingService : ISettlementPostingService
                     plan.SummarySales.Min(s => s.Date), requirePhoR06, AbbreviatedInvoiceChannel.Document);
         }
 
+        // คำตัดสินเจ้าของข้อ 7 + SoD: ผู้ทำ (maker) ของเอกสารที่ระบบออกให้ = ผู้นำเข้ารอบโอน (ผู้เตรียมข้อมูล) · ผู้ตรวจ (checker) = คนกดลงบัญชี ⇒
+        // บริษัทที่เปิดแยกหน้าที่ + คนเดียวกันทั้งสองบทบาท = บล็อกพร้อมทางไปต่อ (ห้ามข้ามเงียบ — ด่าน SoD ของ DocumentService เทียบกับป้ายระบบจึงไม่เคยทำงาน)
+        var sodOn = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => (bool?)s.SodBlockSelfApproval).FirstOrDefaultAsync(ct) ?? false;
+        var sodBlocked = SettlementPostingGate.SodSelfApproval(sodOn, batch.CreatedBy, userId);
+
         var saleType = vatRegistered ? DocumentType.TaxInvoice : DocumentType.Receipt;
         var facts = new SettlementPostingFacts(
             batch.Status, payoutDay, today, payoutClosed, summaryClosed, filedVat, filedWht, accounts.Errors,
@@ -518,7 +526,7 @@ public class SettlementPostingService : ISettlementPostingService
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PaymentVoucher),
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, saleType),
             existingDocs.Count + payments.Count,
-            summaryBlock, staleReceipts, orphans);
+            summaryBlock, staleReceipts, orphans, sodBlocked);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ

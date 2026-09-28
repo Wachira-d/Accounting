@@ -3617,3 +3617,9 @@ postingArtifacts, unpostRefusals)`: แก้บรรทัด/ยกเลิ�
 (เพิ่มใน interface · ตัวโหลดข้อเท็จจริงเดียวกับ `UnpostAsync`) ⇒ ซ่อนปุ่ม + `UnpostBlockedReason` บนหน้า · `SettlementBatchView.PostingArtifacts`
 (null = ไม่ได้ตรวจ) · เทสต์ `SettlementControllerContractTests` +2 สองทิศ · `required_call_site_check` +5 กติกา
 — commit <pending>)_
+
+_รอบ 198 ทีม S3 (ต่อ · คำตัดสินเจ้าของข้อ 7 = review198-C C-7): ใบสำคัญจ่ายค่าธรรมเนียมที่อนุมัติทันทีตอนลงบัญชีรอบโอน บันทึก**คนกดลงบัญชี**เป็นผู้อนุมัติ
+(`IDocumentService.CreateDocumentAsync(…, autoApproveBy)` · เดิมเป็นป้าย `system:settlement:…` ⇒ SoD ไม่เคยทำงาน) · ป้ายใน `CreatedBy` คงเป็นกุญแจทำต่อจากที่ค้าง ·
+แยกหน้าที่: ผู้นำเข้ารอบโอน = ผู้ทำ · คนกดลงบัญชี = ผู้อนุมัติ ⇒ `SodBlockSelfApproval` + คนเดียวกัน (หรือไม่รู้ผู้นำเข้า) ⇒ บล็อก `SodSelfApproval` พร้อมทางไปต่อ ·
+เทสต์ `C7_…` สองทิศ · `required_call_site_check` +3 กติกา
+— commit <pending>)_

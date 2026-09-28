@@ -1513,6 +1513,13 @@ RULES += [
          forbid=["new JournalEntry", "ExecuteDeleteAsync(", ".Remove("],
          why="C-2: ด่านภาษี/e-Tax/50 ทวิ ของทุกชิ้นก่อนแตะชิ้นแรก (ถูกปฏิเสธกลางทาง = สมุดครึ่งกลับ) · ลำดับคงที่: เอกสาร (ฝั่งขายก่อน) → "
              "การรับชำระ → ถอนจับคู่ธนาคาร → กลับ JE · C-8 สิทธิ์ใน service · ยกเลิกผ่านเส้นปกติ (ไม่ลบแถว)"),
+    dict(file=SETTLE_POST, method="CreateOrAdoptAsync",
+         call_args=[("_documents.CreateDocumentAsync(", "autoApproveBy: userId")],
+         why="คำตัดสินเจ้าของข้อ 7: ใบที่อนุมัติทันทีตอนสร้างต้องบันทึกคนกดลงบัญชีเป็นผู้อนุมัติ (ไม่ใช่ป้ายของระบบ)"),
+    dict(file=SETTLE_POST, method="BuildGateAsync", must=["SettlementPostingGate.SodSelfApproval(", "SodBlockSelfApproval", "batch.CreatedBy"],
+         why="คำตัดสินเจ้าของข้อ 7: แยกหน้าที่ ผู้นำเข้า ≠ ผู้กดลงบัญชี เมื่อบริษัทเปิด SoD — ห้ามข้ามเงียบ"),
+    dict(file=DOCSVC, method="CreateDocumentAsync", must=["autoApproveBy ?? createdBy"],
+         why="คำตัดสินเจ้าของข้อ 7: ผู้อนุมัติอัตโนมัติของใบสำคัญจ่ายเงินสด = ผู้ที่ผู้เรียกระบุ"),
     dict(file=SETTLE_POST, method="LoadUnpostFactsAsync",
          must=["TaxFilingLockPolicy.DeclaredOrFiledStatuses", "EtaxStatus.Accepted", "FilingLockedAt", "WithholdingTaxCertStatus.Voided"],
          why="C-2: ข้อเท็จจริงของด่านยกเลิกการลงบัญชี — ตัวโหลดเดียวของ UnpostAsync และปุ่มบนหน้าจอ (UnpostBlockersAsync)"),

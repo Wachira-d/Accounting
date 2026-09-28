@@ -404,6 +404,25 @@ public class SettlementReview198FixTests
         }).CanPost);
     }
 
+    // ═════════════ C-7 (คำตัดสินเจ้าของข้อ 7): ผู้อนุมัติ = คนกดลงบัญชี · แยกหน้าที่ ═════════════
+
+    [Fact]
+    public void C7_เปิดแยกหน้าที่_ผู้นำเข้ากดลงบัญชีเอง_บล็อก_คนอื่นกด_หรือไม่เปิด_ผ่าน()
+    {
+        var importer = Guid.NewGuid();
+        Assert.True(SettlementPostingGate.SodSelfApproval(true, importer.ToString(), importer));
+        Assert.True(SettlementPostingGate.SodSelfApproval(true, importer.ToString().ToUpperInvariant(), importer));
+        Assert.True(SettlementPostingGate.SodSelfApproval(true, null, importer));                   // ไม่รู้ผู้ทำ ⇒ ไม่ปล่อยผ่าน
+        Assert.False(SettlementPostingGate.SodSelfApproval(true, importer.ToString(), Guid.NewGuid()));
+        Assert.False(SettlementPostingGate.SodSelfApproval(false, importer.ToString(), importer));
+
+        var plan = PlanWithReceiptAndSummary();
+        var blocked = SettlementPostingGate.Evaluate(plan, Facts(plan) with { SodSelfApprovalBlocked = true });
+        Assert.False(blocked.CanPost);
+        Assert.Contains("คนอื่น", Assert.Single(blocked.Issues, i => i.Code == SettlementPlanIssueCode.SodSelfApproval).NextStep);
+        Assert.DoesNotContain(SettlementPostingGate.Evaluate(plan, Facts(plan)).Issues, i => i.Code == SettlementPlanIssueCode.SodSelfApproval);
+    }
+
     // ═════════════ C-5: ยกเลิกชิ้นของรอบโอนทีละชิ้นผ่านหน้าปกติ ═════════════
 
     [Fact]

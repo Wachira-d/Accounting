@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **358 ไฟล์ · 3,373 `[Fact]` + 512 `[Theory]` (2,256 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **358 ไฟล์ · 3,374 `[Fact]` + 512 `[Theory]` (2,256 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4731,6 +4731,8 @@ PaymentIntent · R-A1 ผังพัก gateway · R-A2 wallet ไม่ใช�
 | SPS-23 | แก้ค่าธรรมเนียมจริงของ intent ที่อยู่ในรอบโอน settlement แล้ว | ปฏิเสธพร้อมทางไปต่อ (ไม่บันทึกแล้วไม่มีผลเงียบ) (R-B16) |
 | SPS-24 | เปิดรอบโอนที่ลงค้างครึ่งทางในหน้า settlements | ป้าย 🔒 "ลงบัญชีค้างครึ่งทาง" · ไม่มีปุ่มแก้ประเภท/จับคู่/ยกเลิกรอบ · ยังมีปุ่มดูตัวอย่างการลงบัญชี (ลงต่อ) |
 | SPS-25 | เปิดรอบโอนที่ลงบัญชีแล้วซึ่งใบสรุป e-Tax ตอบรับแล้ว | ไม่มีปุ่ม "ยกเลิกการลงบัญชี" · ป้าย ↩️ บอกเหตุ + ทางไปต่อ (ข้อความเดียวกับที่ service ปฏิเสธ) · ปุ่มดูเอกสารที่ลงไว้/จับคู่ธนาคารยังอยู่ |
+| SPS-26 | บริษัทไม่เปิดแยกหน้าที่ · ผู้ใช้ A นำเข้าแล้วกดลงบัญชีเอง | ใบสำคัญจ่ายค่าธรรมเนียม: ผู้อนุมัติ (UpdatedBy/JE/ประวัติ) = A ไม่ใช่ "system:settlement" (คำตัดสินเจ้าของข้อ 7) |
+| SPS-27 | บริษัทเปิด "แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ" · A นำเข้าแล้วกดลงบัญชีเอง / B กดลงบัญชี | A: บล็อก `SodSelfApproval` "ให้ผู้มีสิทธิ์คนอื่นกด" · B: ลงบัญชีได้ ผู้อนุมัติทุกใบ = B |
 
 ### ฝ่ายค้านรอบ 198 ทีม E2 — R-E2..R-E6 + E-2
 

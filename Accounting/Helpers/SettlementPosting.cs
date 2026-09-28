@@ -212,6 +212,7 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// <param name="SummaryAbbreviatedBlock">ผลของ <c>AbbreviatedTaxInvoiceRule.Judge</c> ช่องทางเอกสาร ณ วันที่ใบขายสรุป (ฝ่ายค้าน C-6)</param>
 /// <param name="StaleReceipts">การรับชำระที่มีป้ายของรอบโอนแต่ไม่ตรงแผนปัจจุบัน (<see cref="SettlementReceiptReconcile.Stale"/> · C-4)</param>
 /// <param name="OrphanArtifacts">เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้วของช่องทางเดียวกัน (C-1(d))</param>
+/// <param name="SodSelfApprovalBlocked">ผลของ <see cref="SettlementPostingGate.SodSelfApproval"/> (คำตัดสินเจ้าของข้อ 7)</param>
 public sealed record SettlementPostingFacts(
     SettlementBatchStatus Status,
     DateTime PayoutDay,
@@ -232,7 +233,8 @@ public sealed record SettlementPostingFacts(
     int PartialItems,
     AbbreviatedInvoiceBlockReason SummaryAbbreviatedBlock = AbbreviatedInvoiceBlockReason.None,
     IReadOnlyList<string>? StaleReceipts = null,
-    IReadOnlyList<string>? OrphanArtifacts = null);
+    IReadOnlyList<string>? OrphanArtifacts = null,
+    bool SodSelfApprovalBlocked = false);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -384,6 +386,12 @@ public static class SettlementPostingGate
                 + "ถ้าเป็นออเดอร์คนละชุดจริง ให้ออกเอกสารขายของวันนั้นเองแล้วจับคู่บรรทัด (1 วัน/แพลตฟอร์ม มีใบสรุปได้ใบเดียว — DECISIONS ข้อ 2)",
                 d.LineIds, null);
 
+        // ── แยกหน้าที่ (คำตัดสินเจ้าของข้อ 7): ผู้นำเข้ารอบโอน = ผู้ทำ · ผู้กดลงบัญชี = ผู้อนุมัติเอกสารที่ระบบออกให้ ──
+        if (f.SodSelfApprovalBlocked && (plan.FeeDocuments.Count > 0 || plan.SummarySales.Count > 0))
+            Add(SettlementPlanIssueCode.SodSelfApproval, true,
+                "บริษัทเปิด \"แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ\" และผู้กดลงบัญชีคือผู้นำเข้ารอบโอนนี้เอง — เอกสารค่าธรรมเนียม/ใบขายสรุปที่ระบบออกให้จะมีผู้ทำและผู้อนุมัติคนเดียวกัน",
+                "ให้ผู้มีสิทธิ์อนุมัติคนอื่น (ไม่ใช่ผู้นำเข้ารอบโอน) เป็นผู้กดลงบัญชี — ระบบบันทึกผู้กดเป็นผู้อนุมัติเอกสารทุกใบของรอบนี้");
+
         // ── สิทธิ์ (ทุกทางเข้าอนุมัติเอกสารต้องผ่าน DocumentPermissionHelper.CanApproveAsync) ──
         if (plan.FeeDocuments.Count > 0 && !f.CanApproveFeeDocuments)
             Add(SettlementPlanIssueCode.PermissionDenied, true,
@@ -406,6 +414,16 @@ public static class SettlementPostingGate
             CanPost = plan.CanPost && !extra.Any(i => i.Blocking),
         };
     }
+
+    /// <summary>
+    /// **แยกหน้าที่ของเอกสารที่การลงบัญชีรอบโอนออกให้** (คำตัดสินเจ้าของรอบ 198 ข้อ 7 · review198-C C-7) — ผู้ทำ = ผู้นำเข้ารอบโอน
+    /// (<c>SettlementBatch.CreatedBy</c> = user id ของผู้นำเข้า) · ผู้อนุมัติ = คนกดลงบัญชี · บริษัทเปิด <c>SodBlockSelfApproval</c> และเป็นคนเดียวกัน ⇒ true (บล็อก)
+    /// <para>ผู้นำเข้าไม่รู้ (null/ว่าง) ⇒ <b>บล็อก</b> เมื่อเปิดแยกหน้าที่ — "ไม่รู้" ห้ามตกเป็น "ผ่าน" (DOCTRINE §1)</para>
+    /// </summary>
+    public static bool SodSelfApproval(bool sodBlockSelfApproval, string? batchCreatedBy, Guid postingUserId)
+        => sodBlockSelfApproval
+           && (string.IsNullOrWhiteSpace(batchCreatedBy)
+               || string.Equals(batchCreatedBy.Trim(), postingUserId.ToString(), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>จำนวนวันจันทร์–ศุกร์หลัง <paramref name="from"/> จนถึง <paramref name="to"/> (ไม่หักวันหยุดราชการ ⇒ นับวันทำการ<b>มากกว่าจริง</b>
     /// = เตือนเร็วกว่าจริง ทิศที่ปลอดภัย)</summary>

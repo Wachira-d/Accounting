@@ -64,6 +64,8 @@ public enum SettlementPlanIssueCode
     /// <summary>รายการรับชำระที่บรรทัดอ้างถึงมีการคืนเงินที่ผลยังไม่แน่ชัด (<c>PaymentIntent.RefundOutcomeUnknownSince</c>) — ต้องตรวจผลการคืนเงิน
     /// ก่อนลงบัญชี (review198-E2 E2-10)</summary>
     RefundOutcomeUnknown = 33,
+    /// <summary>บริษัทเปิดแยกหน้าที่ (SoD) และผู้กดลงบัญชีคือผู้นำเข้ารอบโอนเอง — ผู้ทำ = ผู้อนุมัติของเอกสารที่ระบบออกให้ (คำตัดสินเจ้าของรอบ 198 ข้อ 7)</summary>
+    SodSelfApproval = 34,
 
     // ── แจ้งให้ทราบ (ไม่บล็อก) ──
     /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>

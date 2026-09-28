@@ -864,7 +864,8 @@ public partial class DocumentService : IDocumentService
     }
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
-        string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null)
+        string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
+        string? autoApproveBy = null)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -1630,8 +1631,9 @@ public partial class DocumentService : IDocumentService
             {
                 try
                 {
-                    // ระบบอนุมัติอัตโนมัติ — ไม่มีคนเห็นคำเตือน (รอบ 193 ฝ่ายค้าน C5: ห้ามประทับว่าผู้ใช้รับทราบ)
-                    await ApproveDocumentAsync(companyId, doc.Id, createdBy,
+                    // ระบบอนุมัติอัตโนมัติ — ไม่มีคนเห็นคำเตือน (รอบ 193 ฝ่ายค้าน C5: ห้ามประทับว่าผู้ใช้รับทราบ) ·
+                    // ผู้อนุมัติ = ผู้ที่ผู้เรียกระบุ (รอบ 198 คำตัดสินเจ้าของข้อ 7) ไม่งั้นผู้สร้างตามเดิม
+                    await ApproveDocumentAsync(companyId, doc.Id, autoApproveBy ?? createdBy,
                         Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 }
                 catch (DocumentApprovalWarningsException warn)
