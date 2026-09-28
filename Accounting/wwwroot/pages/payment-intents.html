@@ -197,7 +197,8 @@
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
                       <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
             ${r.refundOutcomeUnknown
-              ? `<button class="btn btn-sm btn-warning" onclick="Page.verifyRefund('${r.id}')">ตรวจผลการคืนเงิน</button>`
+              ? `<button class="btn btn-sm btn-warning" onclick="Page.verifyRefund('${r.id}')">ตรวจผลการคืนเงิน</button>
+                 <button class="btn btn-sm btn-secondary" onclick="Page.resolveRefund('${r.id}')" title="เจ้าของกิจการเท่านั้น — เมื่อผู้ให้บริการไม่ส่งผล/ข้อมูลขัดกัน">บันทึกผลด้วยมือ</button>`
               : ((r.status === 'Succeeded' || (r.status === 'PartiallyRefunded' && Number(r.refundedAmount) > 0)) && Number(r.refundableRemaining) > 0
                 ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.refundableRemaining) || 0})">คืนเงิน</button>` : '')}
             ${!r.isSettled && ['Succeeded', 'PartiallyRefunded', 'Refunded'].includes(r.status)
@@ -263,6 +264,36 @@
           alert(res?.message || 'ตรวจแล้ว');
         } catch (e) {
           alert(e.message || 'ตรวจผลไม่สำเร็จ');
+        }
+        await this.load();
+      },
+
+      // review198-E2 E2-3: บันทึกผลด้วยมือ (เจ้าของกิจการ) — เซิร์ฟเวอร์ตัดสินทุกด่าน (หลักฐาน · ยอด · เวลารอ · สิทธิ์) หน้าเว็บแค่เก็บคำตอบ
+      async resolveRefund(id) {
+        const api = Layout.api(); if (!api) return;
+        const r = this.rows.find(x => x.id === id) || {};
+        const wentOut = confirm('ในแดชบอร์ดผู้ให้บริการ มีรายการคืนเงินของครั้งที่ผลไม่แน่ชัดหรือไม่?\n\n'
+          + 'ตกลง = มี (เงินออกแล้ว — ระบบจะลงบัญชีคืนเงินให้)\nยกเลิก = ไม่มี (ไปขั้นยืนยันว่าไม่มีเงินออก)');
+        const body = { decision: wentOut ? 'MoneyWentOut' : 'NoMoneyOut' };
+        if (wentOut) {
+          const raw = prompt('ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ด):',
+            r.refundOutcomeUnknownAmount == null ? '' : Number(r.refundOutcomeUnknownAmount).toFixed(2));
+          if (raw === null || raw.trim() === '') return;
+          body.amount = Number(raw);
+          const ref = prompt('เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ:', '');
+          if (!ref) return;
+          body.providerRefundRef = ref;
+        } else if (!confirm('ยืนยันว่าแดชบอร์ดผู้ให้บริการ "ไม่มี" รายการคืนเงินของครั้งนี้ — ระบบจะปลดล็อกให้คืนใหม่ได้')) {
+          return;
+        }
+        const evidence = prompt('หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้):', '');
+        if (!evidence) return;
+        body.evidence = evidence;
+        try {
+          const res = await api.resolvePaymentIntentRefundManually(id, body);
+          alert(res?.message || 'บันทึกผลแล้ว');
+        } catch (e) {
+          alert(e.message || 'บันทึกผลไม่สำเร็จ');
         }
         await this.load();
       },

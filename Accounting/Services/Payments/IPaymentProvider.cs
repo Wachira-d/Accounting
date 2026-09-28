@@ -55,13 +55,22 @@ public sealed record ProviderCharge(
     string? FailureCode = null,
     string? FailureMessage = null,
     // ฝ่ายค้าน E-2: ยอดคืนสะสมตามผู้ให้บริการ — ตัวตัดสินว่า "คืนเงินที่ผลไม่แน่ชัด" เงินออกจริงไหม · null = ผู้ให้บริการไม่ส่ง (ห้ามเดา)
-    decimal? RefundedTotal = null);
+    decimal? RefundedTotal = null,
+    // ฝ่ายค้าน E2-2: รายการคืนเงินรายครั้งของ charge (ครบทั้งชุดเท่านั้น) — ใช้หาเครื่องหมายของครั้งที่ผลไม่แน่ชัด · null = ไม่ส่ง/ไม่ครบ
+    IReadOnlyList<ProviderRefundItem>? Refunds = null);
 
+/// <summary>การคืนเงิน 1 ครั้งตามที่ผู้ให้บริการรายงาน (ฝ่ายค้าน E2-2) — <c>AttemptMarker</c> = เครื่องหมายที่เราแนบไปตอนสั่งคืน
+/// (null = ไม่มี/ผู้ให้บริการไม่ส่งกลับ ⇒ ไม่ใช่หลักฐานว่า "ไม่ใช่ครั้งนี้")</summary>
+public sealed record ProviderRefundItem(string ProviderRefundRef, decimal Amount, string? AttemptMarker);
+
+/// <summary>ผลการสั่งคืนเงิน · <c>OutcomeUnknown</c> = ผู้ให้บริการตอบแบบที่ไม่รู้ว่าเงินออกหรือยัง (5xx/408 · ฝ่ายค้าน E2-1)
+/// ⇒ ผู้เรียกต้องล็อกเหมือนหมดเวลา ห้ามตีเป็น "ถูกปฏิเสธ" (กดใหม่ = คืนซ้ำได้)</summary>
 public sealed record ProviderRefund(
     string ProviderRefundRef,
     decimal Amount,
     bool Succeeded,
-    string? FailureMessage = null);
+    string? FailureMessage = null,
+    bool OutcomeUnknown = false);
 
 /// <summary>เหตุการณ์จาก webhook ที่ **ยืนยันแล้ว** — ข้อมูลในนี้ต้องมาจากการ fetch
 /// กลับไปถาม provider ด้วยคีย์ของเรา ไม่ใช่จาก body ที่ใครก็ POST เข้ามาได้</summary>
@@ -136,7 +145,10 @@ public interface IPaymentProvider
     Task<ProviderCharge> GetChargeAsync(PaymentIntent intent,
         PaymentProviderConfig config, CancellationToken ct = default);
 
-    Task<ProviderRefund> RefundAsync(PaymentIntent intent, decimal amount, string reason,
+    /// <summary>สั่งคืนเงิน · <paramref name="attemptMarker"/> = เครื่องหมายเฉพาะของครั้งนี้ ให้ adapter แนบไปกับคำขอ (ถ้าเจ้านั้นรองรับ)
+    /// เพื่อให้การตรวจผลทีหลังหา "ครั้งนี้" เจอในรายการคืนเงินของ charge (ฝ่ายค้าน E2-2) · ผลไม่แน่ชัด (5xx/408) ต้องคืน
+    /// <see cref="ProviderRefund.OutcomeUnknown"/> = true หรือโยน — ห้ามคืน "ปฏิเสธ" (ฝ่ายค้าน E2-1)</summary>
+    Task<ProviderRefund> RefundAsync(PaymentIntent intent, decimal amount, string reason, string attemptMarker,
         PaymentProviderConfig config, CancellationToken ct = default);
 
     /// <summary>ยืนยัน webhook แล้วคืน event ที่เชื่อถือได้ — <c>null</c> = ปฏิเสธ

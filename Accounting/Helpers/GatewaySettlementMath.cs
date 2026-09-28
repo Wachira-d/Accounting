@@ -245,9 +245,23 @@ public static class GatewaySettlementMath
         GatewayFeeWhtMode whtMode,
         string settlementRef,
         GatewayFeeVatMode feeVatMode = GatewayFeeVatMode.None,
-        bool companyVatRegistered = true)
-        => PlanCore(intents, actualNetReceived, whtMode, settlementRef, feeVatMode, companyVatRegistered)
-            with { Warning = FeeVatModeWarning(feeVatMode, companyVatRegistered) };
+        bool companyVatRegistered = true,
+        int settledRefundOutcomeUnknown = 0)
+        => PlanCore(intents, actualNetReceived, whtMode, settlementRef, feeVatMode, companyVatRegistered, settledRefundOutcomeUnknown)
+            with { Warning = JoinWarnings(FeeVatModeWarning(feeVatMode, companyVatRegistered),
+                SettledOutcomeUnknownWarning(settledRefundOutcomeUnknown)) };
+
+    /// <summary>คำเตือน (ไม่บล็อก) เมื่อมีรายการที่<b>บันทึกรอบโอนไปแล้ว</b>แต่คืนเงินผลไม่แน่ชัดก่อนวันเงินเข้ารอบนี้ (review198-E2 E2-3) —
+    /// ถ้าเงินออกจริง ผู้ให้บริการอาจหักยอดนั้นจากรอบนี้ ⇒ ยอดอาจไม่ตรง · เดิมบล็อก<b>ทุกรอบในอนาคต</b>ของผู้ให้บริการ (ไม่มีตัวกรองวัน) ⇒ ติดถาวร
+    /// ถ้าผู้ให้บริการเงียบ · รายการที่<b>ยังไม่บันทึกรอบโอน</b>และอยู่ในช่วงของรอบนี้ยังบล็อกเหมือนเดิม (ยอดของรอบขึ้นกับยอดคืนนั้นตรง ๆ)</summary>
+    private static string? SettledOutcomeUnknownWarning(int count)
+        => count > 0
+            ? $"มี {count} รายการที่บันทึกรอบโอนไปแล้วแต่คืนเงินผลไม่แน่ชัดก่อนวันเงินเข้ารอบนี้ — ถ้าเงินออกจริง ผู้ให้บริการอาจหักยอดนั้นในรอบนี้ "
+              + "(ยอดจะไม่ตรง) · กด \"ตรวจผลการคืนเงิน\" ที่หน้ารายการรับชำระออนไลน์ก่อนถ้ายอดไม่ตรง"
+            : null;
+
+    private static string? JoinWarnings(string? a, string? b)
+        => a == null ? b : b == null ? a : a + " · " + b;
 
     private static SettlementPlan PlanCore(
         IReadOnlyCollection<SettlementIntentInput> intents,
@@ -255,7 +269,8 @@ public static class GatewaySettlementMath
         GatewayFeeWhtMode whtMode,
         string settlementRef,
         GatewayFeeVatMode feeVatMode,
-        bool companyVatRegistered)
+        bool companyVatRegistered,
+        int settledRefundOutcomeUnknown)
     {
         if (intents.Count == 0)
             return Blocked(SettlementBlockReason.NoIntents,
@@ -263,7 +278,8 @@ public static class GatewaySettlementMath
                 actualNetReceived);
 
         // E-2: ยอดคืนจริงยังไม่รู้ (ผู้ให้บริการไม่ตอบตอนคืน) — สาเหตุนี้ต้องมาก่อน ไม่งั้นผู้ใช้เห็น "ยอดไม่ตรง" แล้วไปแก้ค่าธรรมเนียมผิดจุด
-        var outcomeUnknown = intents.Count(i => i.RefundOutcomeUnknown);
+        // E2-3: บล็อกเฉพาะรายการที่<b>ยังไม่บันทึกรอบโอน</b> (อยู่ในช่วงของรอบนี้ ⇒ ยอดของรอบขึ้นกับยอดคืนนั้นตรง ๆ) · ที่บันทึกแล้ว = คำเตือน
+        var outcomeUnknown = intents.Count(i => i.RefundOutcomeUnknown && !i.AlreadySettled);
         if (outcomeUnknown > 0)
             return Blocked(SettlementBlockReason.RefundOutcomeUnknown,
                 $"มี {outcomeUnknown} รายการที่การคืนเงินผลไม่แน่ชัด (ผู้ให้บริการไม่ตอบ — เงินอาจออกไปแล้ว) · ยอดที่ผู้ให้บริการหักในรอบนี้จึงยังไม่รู้ — "
@@ -276,8 +292,9 @@ public static class GatewaySettlementMath
             return Blocked(SettlementBlockReason.RefundTimingUnknown,
                 $"มี {unknown} รายการที่คืนเงินครั้งล่าสุดตั้งแต่วันเงินเข้า แต่คืนบางครั้งก่อนระบบเริ่มเก็บยอดคืนรายครั้ง — "
                 + "ระบบแยกไม่ได้ว่าผู้ให้บริการหักยอดคืนส่วนไหนในรอบโอนนี้ · ทางไปต่อ: ถ้าวันเงินเข้าที่กรอกไม่ตรงสเตทเมนต์ให้แก้วันที่ · "
-                + "ถ้าตรงแล้ว ให้ผู้ดูแลระบบบันทึกยอดคืนรายครั้ง (วันที่ + ยอด) ของรายการนั้นตามแดชบอร์ดผู้ให้บริการก่อน แล้วดูตัวอย่างใหม่ "
-                + "(อย่าลงใบสำคัญรอบโอนด้วยมือ — รายการจะยังค้างในระบบและถูกนับซ้ำในรอบถัดไป)",
+                + "ถ้าตรงแล้ว รอบนี้บันทึกผ่านระบบไม่ได้ — ระบบยังไม่มีหน้าจอบันทึกยอดคืนรายครั้งย้อนหลัง "
+                + "(ต้องให้ฝ่ายสนับสนุนเติมยอดรายครั้งตามแดชบอร์ดผู้ให้บริการ) · "
+                + "อย่าลงใบสำคัญรอบโอนด้วยมือ — รายการจะยังค้างในระบบและถูกนับซ้ำในรอบถัดไป",
                 actualNetReceived, intents);
 
         var parts = intents.Select(i => Contribution(i, feeVatMode)).ToList();
@@ -311,6 +328,10 @@ public static class GatewaySettlementMath
                 + (intents.Any(i => i.RefundedAmount > 0m || i.AlreadySettled)
                     ? " · รอบนี้มีรายการคืนเงิน: ระบบนับยอดคืนที่ทำก่อนวันเงินเข้าเป็นส่วนที่ผู้ให้บริการหักในรอบนี้ "
                       + "(คืนตั้งแต่วันเงินเข้าไป = หักรอบถัดไป) — ตรวจว่า \"วันที่เงินเข้าบัญชี\" ตรงสเตทเมนต์"
+                    : "")
+                // E2-3: คืนเงินผลไม่แน่ชัดของรายการที่บันทึกรอบโอนแล้ว = สาเหตุที่เป็นไปได้ของผลต่าง (ไม่บล็อกแต่ต้องบอก)
+                + (settledRefundOutcomeUnknown > 0 || intents.Any(i => i.RefundOutcomeUnknown)
+                    ? " · มีรายการคืนเงินผลไม่แน่ชัดที่ผู้ให้บริการอาจหักในรอบนี้ — กด \"ตรวจผลการคืนเงิน\" ก่อน"
                     : "")
                 + " (ระบบไม่เดาส่วนต่างให้ เพราะ JE ที่ยอดธนาคารไม่ตรงสเตทเมนต์จะกระทบยอดไม่ได้ตลอดไป)",
                 actualNetReceived, intents, gross, feeDeducted, feeGross, wht, expectedNet, feeVatClaim, refundDeducted);
