@@ -85,6 +85,14 @@ WATCH = [
         "why": "อนุมัติเอกสารต้องผ่าน ApproveDocumentAsync (ด่านสิทธิ์ · โควตา · §86/4 · JE · สต็อก)",
     },
     {
+        # รอบ 198 ทีม C: "ลงบัญชีรอบโอนแล้ว" ประทับได้หลังทุกชิ้นของแผนลงครบ (ใบค่าธรรมเนียม/ใบสรุป/รับชำระ/JE) และ
+        # "เงินเข้าธนาคารแล้ว" ประทับได้เมื่อมีรายการเดินบัญชีจริงยอดเท่ากัน (SettlementBankMatch.Check) — เจ้าของคนเดียว
+        "label": "SettlementBatchStatus.Posted/BankMatched",
+        "regex": r"\.\s*Status\s*=\s*SettlementBatchStatus\s*\.\s*(?:Posted|BankMatched)\b",
+        "owners": ["Services/Settlement/SettlementPostingService.cs"],
+        "why": "สถานะ 'ลงบัญชีแล้ว/เงินเข้าธนาคารแล้ว' ของรอบโอน ตั้งได้เฉพาะผู้ลงบัญชีที่ลงครบทุกชิ้น + พบรายการเดินบัญชีจริง",
+    },
+    {
         "label": "StockDeducted = true",
         "regex": r"\.\s*StockDeducted\s*=\s*true\b",
         "owners": [],  # ไม่มีใครควรตั้งธงนี้โดยไม่ผ่าน IStockLedger — ทุกจุดต้องอยู่ใน baseline หรือถูกแก้
@@ -199,12 +207,23 @@ def self_test():
             "}\n"
         )
 
+        # รอบ 198: สถานะรอบโอน settlement — ประทับนอกผู้ลงบัญชีต้องถูกจับ · ในผู้ลงบัญชีต้องไม่ถูกฟ้อง
+        open(os.path.join(tmp, "Services", "Implementations", "SettlementImportService.cs"), "w", encoding="utf-8").write(
+            "class S { void M(Batch b) { b.Status = SettlementBatchStatus.BankMatched; } }\n")
+        os.makedirs(os.path.join(tmp, "Services", "Settlement"), exist_ok=True)
+        open(os.path.join(tmp, "Services", "Settlement", "SettlementPostingService.cs"), "w", encoding="utf-8").write(
+            "class P { void M(Batch b) { b.Status = SettlementBatchStatus.Posted; } }\n")
+
         saved, SRC = SRC, tmp
         try:
             keys = {k for k, _, _ in scan()}
         finally:
             SRC = saved
 
+        if not any("SettlementImportService.cs" in k for k in keys):
+            print("❌ self-test: ไม่จับการประทับสถานะรอบโอน settlement นอกผู้ลงบัญชี"); ok = False
+        if any("SettlementPostingService.cs" in k for k in keys):
+            print("❌ self-test: ฟ้องผู้ลงบัญชี settlement เอง (false positive)"); ok = False
         if not any("SomeOtherService.cs" in k for k in keys):
             print("❌ self-test: ไม่จับการประทับนอกเจ้าของกติกา"); ok = False
         if any("DocumentService.cs" in k for k in keys):

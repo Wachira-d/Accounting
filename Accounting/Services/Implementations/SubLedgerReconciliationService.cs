@@ -57,6 +57,11 @@ public class SubLedgerReconciliationService
             .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.ClearingAccountId != null)
             .Select(c => c.ClearingAccountId!.Value)
             .ToListAsync();
+        // รอบ 198 ฝ่ายค้าน R-A2: ผังพัก wallet ของช่องทาง settlement (รวมช่องทางที่ลบแล้ว — ยอดพักยังค้างในผังนั้นได้) ก็ไม่ใช่ลูกหนี้การค้า
+        gatewayClearingIds.AddRange(await _db.SettlementChannels.IgnoreQueryFilters().AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.ClearingAccountId != null)
+            .Select(c => c.ClearingAccountId!.Value)
+            .ToListAsync());
         var arCandidates = await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted
                 && (a.AccountCode.StartsWith("112") || a.AccountCode.StartsWith("113"))

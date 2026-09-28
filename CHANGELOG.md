@@ -3497,3 +3497,48 @@ _รอบ 198 ฝ่ายค้าน settlement (`erp-review/2026-09-25/settl
 ด้วย charge 0 บาท · แก้: `Helpers/PaymentWebhookOwnership.RejectReason` (บริษัท · ผู้ให้บริการ · ชุดตั้งค่า · ยอดสำเร็จ) + โหลดรายการ
 เฉพาะในบริษัทของ config · เทสต์ `PaymentWebhookOwnershipTests` (สองทิศ) · `required_call_site` ล็อกลำดับตรวจก่อน ApplyCharge
 — commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet → ธนาคาร)** ตาม `erp-review/2026-09-25/settlement/`
+(DECISIONS 4 ข้อ · report-S1 JE · report-S2 §3/§4):
+- enum `Models/Enums/SettlementEnums.cs` (persist ตัวเลข · API ชื่อ) · entity `Models/Entities/Settlement.cs` (`SettlementChannel/Batch/Line`) · `PaymentIntent.SettlementBatchId` ·
+  DbSet + query filter + index (unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง) · migration บล็อกเดียว `DatabaseMigrationHelper.SettlementSchemaStatements` ในเส้นหลัก
+- ผังมาตรฐาน 11350/53170/57140 (+ migration บริษัทเดิม `Helpers/SettlementChartSeed` · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) · ผังพักย่อย 11341–11349 สร้างตอนผูกช่องทาง
+  (`Helpers/SettlementChannelAccounts.EnsureClearingAccountAsync` · advisory lock ต่อบริษัท · ครบ 9 ล้มดัง)
+- `Helpers/SettlementLineTypeRules` (ตารางเดียว 19 ประเภท + `ParseClassifierAnswer` + `ParseFeeAccountMap`) · `Helpers/SettlementFeeTax` (ฐาน WHT ก่อน VAT · 3/97 ·
+  ไม่จด VAT ไม่มีขาภาษีซื้อ) · `Helpers/SettlementBatchMath.Plan` (สมการ batch ±0.01 · ปัญหาพร้อมทางไปต่อ · รับชำระ/ใบขายสรุปรายวัน/คืนเงิน/ใบค่าธรรมเนียมต่อกลุ่มภาษี/JE รอบโอน)
+- `AiFeatureKey.SettlementLineClassify = 57` + `GenericFeedbackDistillationModel` · checker `tools/settlement_line_type_rules_check.py` (+ self-test)
+- เทสต์ `SettlementBatchMathTests` · `SettlementRulesAndSchemaTests` (golden gateway 1,070/41.79/1,028.21 · marketplace 963/67.41+4.72 · reserve · ยอดติดลบ · คืนเงินหลังโอน ·
+  chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
+- ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
+— commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม B — **นำเข้า · จัดประเภท · จับคู่ · ตั้งค่าช่องทาง settlement** (ไม่ลงบัญชี — ทีม C · หน้าจอ/controller — ทีม D):
+- `Services/Settlement/Adapters/**` (ความรู้เฉพาะเจ้าอยู่ที่นี่ที่เดียว · `tools/settlement_adapter_boundary_check.py` + self-test): `ISettlementReportAdapter` ·
+  `GenericColumnMapAdapter` (จับคู่คอลัมน์ · จำใน `ColumnMapJson` · แบบยาว/กว้าง · ล้มดังทั้งไฟล์เมื่อรูปแบบเปลี่ยน) · `SettlementFileReader` (CSV UTF-8/874 · xlsx MiniExcel) ·
+  `SettlementValueParser` (วงเล็บ/ลบท้าย/เลขไทย · พ.ศ.→ค.ศ. · ปี 2 หลักไม่เดา) · `PaymentIntentAdapter` · `SettlementLabelSeed` (seed ป้าย cold-start)
+- Helpers pure: `SettlementTxnKey` (คีย์กันซ้ำขึ้นกับเนื้อหาแถว — R-A9) · `SettlementPiiScrubber` · `SettlementLineClassification` (ลำดับ local + ด่านคำตอบ AI) ·
+  `SettlementSaleMatch` (จับคู่ไม่เดา · สถานะรอบ)
+- `SettlementImportService` (ตรวจไฟล์ · นำเข้า · ประกอบจาก intent · จัดประเภท/จับคู่เอง · ยกเลิก) · `SettlementChannelService` · DI ใน Program.cs ·
+  prompt `SettlementLineClassifyPrompt` · ล็อก `AdvisoryLockKey.SettlementImport` · ไฟล์แนบชนิด "SettlementBatch" ใน `AttachmentPermissionScope` + `AttachmentAccessGate`
+- ฝ่ายค้านสัญญาทีม A: **R-A1** `SettlementChannelAccounts.EnsureClearingAccountAsync` รับผังจาก `IGatewayAccountResolver` (ตัวตัดสิน `DecideGatewayClearing`) ไม่สร้าง 1134x ให้ gateway ·
+  **R-A2** `TradeReceivableAccount.IsTradeReceivableControl` + `SubLedgerReconciliationService` ไม่นับ 11341–11349/ผังพักช่องทาง · **R-A9** คีย์ + void = soft-delete + 23505 เป็นข้อความไทย
+- เส้นเดิม `GatewaySettlementService.SelectCandidatesAsync` ข้าม intent ที่อยู่ใน `SettlementBatch` แล้ว
+- เทสต์ `SettlementImportTests` · `required_call_site_check` +14 กติกา · dead_helper: ต่อสาย `EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` + ตัด `ArApScope.IsReceivable` ออกจาก baseline
+- ส่งต่อทีม C: `Plan` ต้องออกใบขายสรุปเฉพาะ `AutoSummary` (บล็อก `Unmatched`/`AmountMismatch`) · ตรวจผังพักของบรรทัดที่พก `PaymentIntentId` ซ้ำ (R-A1)
+— commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม C — **ผู้ลงบัญชีรอบโอน settlement** (`Services/Settlement/SettlementPostingService` · ตัวตัดสินบริสุทธิ์ `Helpers/SettlementPosting.cs` · DOCUMENT_FLOW §2.10):
+- `ISettlementPostingService`: `PreviewAsync` · `PostAsync` (ล็อก session ต่อช่องทาง · ใบสำคัญจ่ายค่าธรรมเนียมจากผังพัก 1 ใบ/กลุ่มภาษี · ใบขายสรุปรายวัน (ทางเข้าใหม่ · ใบกำกับ/ใบเสร็จใบเดียว เงินเข้าผังพัก · ผู้ซื้อลูกค้าเงินสด ·
+  ธง `[SETTLEMENT-SUMMARY]`) · รับชำระใบที่จับคู่เข้าผังพัก · 50 ทวิ ของ W2/W3 · JE รอบโอนผ่าน `JournalEntryBuilder` + `Posted` ในธุรกรรมเดียว) · `MatchBankTransactionAsync` (R1: รายการจริงยอดเท่ากัน →
+  `IBankService.ReconcileAsync`) · `ResolveChargebackAsync` (`PlanChargebackResolution`) · `UnpostAsync` (ยกเลิกผ่านเส้นปกติ + กลับรายการ JE · ไม่ลบแถว)
+- ไม่ใช่ธุรกรรมเดียวทั้งรอบโดยตั้งใจ (เส้นเอกสารเปิดธุรกรรมเอง · ห้ามขยาย DocumentService) ⇒ ป้ายที่บันทึกพร้อมของ (`CreatedBy`/`Payment.Notes`) ทำให้ล้มกลางทางแล้วทำต่อได้ไม่ซ้ำ ·
+  ล้ม = 409 `SETTLEMENT-POST-PARTIAL` + พรีวิว `PartialProgress`
+- แก้สัญญาทีม A ตามฝ่ายค้าน review198-A: R-A3 ยอดคืนค่าธรรมเนียมตัดสินรายบรรทัด + WHT ของใบ = ชุดเดียวกับขา 21917 · R-A4 ภ.พ.36 ผู้จ่ายไม่จด VAT ยังตั้งหนี้ 21912 (VAT เป็นต้นทุน ·
+  `SelfAssessedPp36NotClaimable` · คำตัดสิน main agent) · R-A5 ต่างประเทศ + โหมดหัก = บล็อก (ภ.ง.ด.54/DTA) และไม่คิด WHT อัตราในประเทศ · R-A6 วันใบสรุป = ปฏิทินไทย ·
+  R-A8 สกุลของช่องทางต้องเป็นบาทด้วย · ด่านของผู้ลงบัญชี R-A1 (ผังพักต้นทางของ PaymentIntent/การรับชำระ) · R-A7 (เดือนภาษีที่ยื่นแล้ว · §87 3 วันทำการ · รายได้ซ้ำ)
+- สัญญาทีม B: ใบสรุปเฉพาะบรรทัด `MatchStatus = AutoSummary` · `Unmatched` = `SaleUnmatched` · `AmountMismatch` = `SaleAmountMismatch` (บล็อก — เดิมทุกบรรทัดที่ไม่มีใบเข้าใบสรุป)
+- `Helpers/WalkInCustomerContact` (ย้ายตัวสร้าง "ลูกค้าเงินสด" ออกจาก IntegrationService — ตัวเดียว) · `ArApScope.IsReceivable` มีผู้เรียกแล้ว (ตัดจาก dead baseline)
+- checker: `required_call_site_check` +12 กติกา + ห้ามประกอบ JE ทั้งโฟลเดอร์ `Services/Settlement/**` (self-test) · `terminal_status_writer_check` สถานะ `Posted/BankMatched` เจ้าของเดียว (self-test · เข้า check_all)
+- เทสต์ `SettlementPostingTests` (23) · แก้ `SettlementRulesAndSchemaTests` ภ.พ.36 ไม่จด VAT
+- ค้าง: controller/หน้าจอ (ทีม D) · คืนเงินที่จับคู่แล้วต้องออกใบลดหนี้เอง (เหตุผล §86/10) · ใบสรุปไม่ตัดสต็อก/ต้นทุน · continuity ยอด wallet (R-A12) · shipping VAT (R-A10)
+— commit <pending>)_

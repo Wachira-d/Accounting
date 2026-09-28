@@ -39,6 +39,10 @@ public static class ChartOfAccountTemplates
             // charge สำเร็จ ไม่งั้นยอดธนาคารในระบบไม่ตรงกับยอดจริงตลอดเวลา
             // (PAYMENT_GATEWAY_DESIGN.md §5 · ข้อสรุปทีม 2)
             new("11340", "ลูกหนี้ผู้ให้บริการรับชำระเงิน", "Payment Gateway Receivable", AccountType.Asset, 4),
+            // รอบ 198 (settlement · DECISIONS ข้อ 4 · report-S1 §1.2/§2 G6) — เงินที่ gateway/marketplace **กันไว้/ระงับ**
+            // (reserve/holdback) แยกจากยอดที่ถอนได้ในผังพักย่อย 11341–11349 (ผังย่อยต่อช่องทาง **ไม่ seed** — สร้างตอนผูก
+            // ช่องทางผ่าน Helpers/SettlementChannelAccounts) · ใส่ให้บริษัทเดิมด้วย migration (Helpers/SettlementChartSeed)
+            new("11350", "เงินที่ผู้ให้บริการกัน/ระงับไว้", "Funds Held by Payment Provider", AccountType.Asset, 4),
             new("114", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 3),
             new("11400", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
             new("115", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
@@ -225,6 +229,9 @@ public static class ChartOfAccountTemplates
             new("53130", "ค่าขนส่ง (ฝ่ายขาย)", "Freight-out / Delivery (Sales)", AccountType.Expense, 4),
             new("53140", "ค่านายหน้าการขาย", "Sales Commission", AccountType.Expense, 4),
             new("53150", "ค่าใช้จ่ายในการขายอื่นๆ", "Other Selling Expenses", AccountType.Expense, 4),
+            // รอบ 198 — ค่าธรรมเนียมรับชำระเงิน (MDR · gateway · payment fee ของ marketplace) แยกจาก 54710 ค่าธรรมเนียมธนาคาร
+            // (report-S1 §1.2 · D6: ใช้กับช่องทางที่ผูกใหม่ ไม่ย้ายยอดย้อนหลัง)
+            new("53170", "ค่าธรรมเนียมรับชำระเงิน", "Payment Processing Fees", AccountType.Expense, 4),
 
             // --- 54 ค่าใช้จ่ายในการบริหาร ---
             new("54", "ค่าใช้จ่ายในการบริหาร", "Administrative Expenses", AccountType.Expense, 2),
@@ -313,6 +320,9 @@ public static class ChartOfAccountTemplates
             new("57110", "ขาดทุนจากการขายสินทรัพย์", "Loss on Disposal of Assets", AccountType.Expense, 4),
             new("57120", "ขาดทุนจากการด้อยค่า", "Impairment Loss", AccountType.Expense, 4),
             new("57130", "หนี้สงสัยจะสูญ/หนี้สูญ", "Bad Debt Expense / Doubtful Accounts", AccountType.Expense, 4),
+            // รอบ 198 — แพ้ chargeback แล้วไม่ได้ของคืน (report-S1 G5 · D8) · **ห้ามรวม 57130** (หนี้สูญมีเงื่อนไขตัดจำหน่ายตามกฎกระทรวง 186
+            // คนละเรื่องกับเงินที่ผู้ถือบัตรเรียกคืน) · ภาษีขายเดิมคงอยู่ (ไม่ใช่เหตุออกใบลดหนี้ §86/10)
+            new("57140", "ขาดทุนจากการถูกปฏิเสธรายการ (chargeback)", "Chargeback Losses", AccountType.Expense, 4),
 
             // --- 58 ภาษีเงินได้ ---
             new("58", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2),

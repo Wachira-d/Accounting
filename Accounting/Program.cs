@@ -339,9 +339,21 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPublicPaymentResolver,
 // ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
     Accounting.Services.Payments.GatewaySettlementService>();
+// รอบ 198 เฟส 1 ทีม C — ผู้ลงบัญชีรอบโอน settlement (wallet → ธนาคาร) ตามแผนของ Helpers/SettlementBatchMath ·
+// ใบค่าธรรมเนียม/ใบขายสรุป/รับชำระผ่าน IDocumentService · JE รอบโอนผ่าน JournalEntryBuilder (DOCUMENT_FLOW §2.10)
+builder.Services.AddScoped<Accounting.Services.Settlement.ISettlementPostingService,
+    Accounting.Services.Settlement.SettlementPostingService>();
 // คืนเงินผ่าน gateway + JE คืนเงิน (Dr ลูกหนี้ / Cr บัญชีพัก) — รอบ 198 G-1 · เดิม endpoint คืนเงินไม่ลงบัญชีเลย
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewayRefundService,
     Accounting.Services.Payments.GatewayRefundService>();
+// รอบ 198 เฟส 1 ทีม B — settlement (wallet → ธนาคาร): นำเข้า · จัดประเภท (student-first ผ่าน IAiOrchestrator · SettlementLineClassify)
+// · จับคู่ใบขาย (อ่านอย่างเดียว) · ตั้งค่าช่องทาง — ไม่ลงบัญชี (ทีม C) · adapter อ่านไฟล์ลงทะเบียนเป็นชุด (เพิ่มเจ้าใหม่ = เพิ่มไฟล์ใน Services/Settlement/Adapters)
+builder.Services.AddSingleton<Accounting.Services.Settlement.Adapters.ISettlementReportAdapter,
+    Accounting.Services.Settlement.Adapters.GenericColumnMapAdapter>();
+builder.Services.AddScoped<Accounting.Services.Settlement.ISettlementImportService,
+    Accounting.Services.Settlement.SettlementImportService>();
+builder.Services.AddScoped<Accounting.Services.Settlement.ISettlementChannelService,
+    Accounting.Services.Settlement.SettlementChannelService>();
 // ตัวจัดการ "เงินเข้าแล้วทำอะไรต่อ" ต่อชนิดต้นทาง — เพิ่มทางเข้าใหม่ = เพิ่มไฟล์
 // ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
@@ -621,6 +633,8 @@ foreach (var genericFeatureKey in new[]
     Accounting.Models.Enums.AiFeatureKey.PaymentVoucherAccountingSuggestion,
     Accounting.Models.Enums.AiFeatureKey.DocumentConversionSuggestion,
     Accounting.Models.Enums.AiFeatureKey.OcrProjectMatch,
+    // รอบ 198 — ประเภทบรรทัด settlement (คำตอบเดียว = ชื่อ SettlementLineType) · ด่าน SettlementLineTypeRules.ParseClassifierAnswer
+    Accounting.Models.Enums.AiFeatureKey.SettlementLineClassify,
 })
 {
     var fk = genericFeatureKey;   // per-iteration capture for the factory closure

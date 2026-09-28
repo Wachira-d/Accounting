@@ -49,7 +49,7 @@ done
 # รอบ 193 ทีม C3: เริ่มจาก contact_taxid_only_match_check — เพิ่มชื่อ checker ที่มี --self-test ต่อท้ายลิสต์นี้ได้
 # settings_reader_check (ทีม W): --self-test รวม negative test กับเรพจริง (ถอดผู้อ่าน AutoAttachWhtCertPdf แล้วต้องฟ้อง)
 # owner_action_wiring_check (ทีม W หลังฝ่ายค้าน): ถอดด่านเจ้าของ/คีย์ออกจากไฟล์จริงแล้วต้องฟ้อง
-for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py; do
+for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py tools/settlement_line_type_rules_check.py tools/settlement_adapter_boundary_check.py tools/terminal_status_writer_check.py; do
   [ -e "$f" ] || continue
   out=$(python3 "$f" --self-test 2>&1); rc=$?
   if [ $rc -ne 0 ]; then red "❌ self-test $f"; echo "$out" | tail -20; fail=1; fi

@@ -4,7 +4,6 @@ AddOnPaymentPolicy.cs UsableWhilePending
 AiCallBilling.cs IsProviderAttemptStatus
 AiCallBilling.cs LooksLikeMislabelledLocalRow
 ArApScope.cs IsPayable
-ArApScope.cs IsReceivable
 BranchScope.cs ToCsv
 CmsRetiredSlug.cs IsRetired
 CmsSecurityHelper.cs IsValidDomain
