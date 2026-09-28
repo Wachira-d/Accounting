@@ -31,7 +31,8 @@ public sealed record SettlementReferenceData(
     IReadOnlyList<SettlementEnumOption> RevenueModels,
     IReadOnlyList<SettlementFeeRoleOption> FeeRoles,
     IReadOnlyList<SettlementColumnFieldOption> ColumnFields,
-    IReadOnlyList<SettlementEnumOption> DateOrders);
+    IReadOnlyList<SettlementEnumOption> DateOrders,
+    IReadOnlyList<SettlementEnumOption> BatchFilterStatuses);
 
 /// <summary>
 /// **ป้ายไทยของ enum settlement ทั้งชุด — ตัวตั้งตัวเดียวของหน้าเว็บ** (รอบ 198 เฟส 1 ทีม D · CLAUDE.md F2 ข้อ 4/5)
@@ -66,7 +67,19 @@ public static class SettlementReferenceCatalog
             new SettlementEnumOption("Auto", "ให้ระบบดูจากทั้งไฟล์"),
             new SettlementEnumOption("DayMonthYear", "วัน/เดือน/ปี"),
             new SettlementEnumOption("MonthDayYear", "เดือน/วัน/ปี"),
-        });
+        },
+        Options<SettlementBatchStatus>(BatchStatusLabel).Where(o => IsListable(Enum.Parse<SettlementBatchStatus>(o.Value))).ToList());
+
+    /// <summary>
+    /// **สถานะที่รายการรอบโอนกรองได้** (review198-D D-05) — รอบที่ยกเลิกแล้วถูก soft-delete (<c>IsDeleted</c> + ตัวกรองส่วนกลางของ EF) ⇒
+    /// ไม่มีทางอยู่ในรายการ · ตัวกรอง "ยกเลิกแล้ว" จึงคืนว่างเสมอ (ผู้ใช้เข้าใจว่าไม่เคยมีรอบที่ยกเลิก) — ตัดออกจากตัวเลือก และ endpoint รายการตอบ 400
+    /// พร้อมเหตุผลถ้าถูกส่งมา · ประวัติการยกเลิกอยู่ในประวัติการแก้ไข (audit) ของรอบโอนนั้น
+    /// </summary>
+    public static bool IsListable(SettlementBatchStatus s) => s != SettlementBatchStatus.Voided;
+
+    /// <summary>ข้อความเมื่อกรองด้วยสถานะที่ไม่มีทางอยู่ในรายการ (ไม่ใช่ 200 กับรายการว่าง — F2 ข้อ 7)</summary>
+    public const string VoidedNotListedMessage =
+        "รอบโอนที่ยกเลิกแล้วไม่อยู่ในรายการ (ถูกลบแบบเก็บหลักฐาน — นำเข้าไฟล์เดิมใหม่ได้) · ดูเหตุผล/ผู้ยกเลิกได้ที่ประวัติการแก้ไขของระบบ";
 
     private static IReadOnlyList<SettlementEnumOption> Options<T>(Func<T, (string Label, string? Description)> label)
         where T : struct, Enum

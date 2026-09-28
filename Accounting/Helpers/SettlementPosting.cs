@@ -40,7 +40,8 @@ public static class SettlementPostingKeys
 }
 
 /// <summary>ผังบัญชี 1 แถว<b>ของบริษัทที่กำลังลงบัญชี</b> (ผู้เรียกโหลดด้วย <c>CompanyId == companyId</c>)</summary>
-public sealed record SettlementChartAccount(Guid Id, string Code, bool IsActive);
+/// <param name="Name">ชื่อผัง — ใช้แสดงในพรีวิว (review198-D D-02) · ไม่มีผลต่อการหาผัง</param>
+public sealed record SettlementChartAccount(Guid Id, string Code, bool IsActive, string? Name = null);
 
 /// <summary>ดัชนีผังของบริษัทเดียว — id ที่ไม่อยู่ในดัชนี = <b>ไม่ใช่ผังของบริษัทนี้</b> (หรือถูกลบ) ⇒ ตัวหาผังปฏิเสธ ไม่ตกผังอื่นเงียบ</summary>
 public sealed class SettlementChartIndex
@@ -71,14 +72,29 @@ public sealed record SettlementResolvedJournalLine(Guid AccountId, decimal Debit
 /// <summary>ผลหาผังของแผนทั้งรอบ</summary>
 /// <param name="FeeLineAccounts">ผังรายบรรทัดของใบค่าธรรมเนียม — ขนานกับ <c>plan.FeeDocuments[i].Lines[j]</c></param>
 /// <param name="ClearingAccountId">ผังพักของช่องทาง (ตรวจแล้วว่าเป็นของบริษัทนี้และเปิดใช้) — ขาเงินของใบค่าธรรมเนียม/ใบขายสรุป/รับชำระ</param>
+/// <param name="Described">ผังที่จะลงจริงของทุกขา (รหัส+ชื่อ) สำหรับพรีวิว — คิดด้วยตัวหาผังตัวเดียวกับ <see cref="Journal"/> (D-02)</param>
 public sealed record SettlementAccountResolution(
     IReadOnlyList<SettlementResolvedJournalLine> Journal,
     IReadOnlyList<IReadOnlyList<Guid>> FeeLineAccounts,
     Guid? ClearingAccountId,
-    IReadOnlyList<string> Errors)
+    IReadOnlyList<string> Errors,
+    SettlementPlanAccounts? Described = null)
 {
     public bool Ok => Errors.Count == 0;
 }
+
+/// <summary>ผังที่ขาหนึ่งของแผน<b>จะลงจริง</b> (review198-D D-02) — หน้าพรีวิวแสดงค่านี้ ไม่ใช่ "ผังมาตรฐานของบทบาท"</summary>
+/// <param name="AccountId">ผังที่ตัวหาผังเลือก (null = หาไม่ได้ ⇒ ดู <paramref name="Problem"/>)</param>
+/// <param name="RoleLabel">ชื่อบทบาทภาษาไทย (บัญชีธนาคาร · ผังพัก · ค่าคอม · รายการปรับปรุง …)</param>
+/// <param name="Problem">เหตุที่หาผังไม่ได้ — ข้อความเดียวกับปัญหา <c>AccountUnresolved</c> ของแผน</param>
+public sealed record SettlementAccountRef(Guid? AccountId, string? Code, string? Name, string RoleLabel, string? Problem);
+
+/// <summary>ผังที่จะลงจริงของแผนทั้งรอบ — ขนานกับ <c>plan.PayoutJournal</c> และ <c>plan.FeeDocuments[i].Lines[j]</c> ·
+/// <c>Clearing</c> = ผังพัก (ขาเงินของใบค่าธรรมเนียม/ใบขายสรุป/รับชำระ/คืนเงิน)</summary>
+public sealed record SettlementPlanAccounts(
+    IReadOnlyList<SettlementAccountRef> PayoutJournal,
+    IReadOnlyList<IReadOnlyList<SettlementAccountRef>> FeeLines,
+    SettlementAccountRef? Clearing);
 
 /// <summary>
 /// **หาผังบัญชีของแผนลงบัญชีรอบโอน — ตัวเดียว** (ลำดับตาม <see cref="SettlementAccountRoles"/>):
@@ -109,7 +125,32 @@ public static class SettlementAccountResolver
         if (plan.ClearingAccountId is not null)
             clearing = ResolveOne(SettlementAccountRoles.Clearing, plan.ClearingAccountId, null, chart, bankGlAccountId, errors);
 
-        return new SettlementAccountResolution(journal, fees, clearing, errors.Distinct().ToList());
+        return new SettlementAccountResolution(journal, fees, clearing, errors.Distinct().ToList(), DescribePlan(plan, chart, bankGlAccountId));
+    }
+
+    /// <summary>
+    /// **ผังที่จะลงจริงของทุกขา — สำหรับพรีวิว** (review198-D D-02) · ใช้ <see cref="ResolveOne"/> ตัวเดียวกับการลงจริง ⇒ ผังที่หน้าจอแสดง =
+    /// ผังที่ JE/ใบค่าธรรมเนียมลง (ผังที่ผู้ใช้เลือกให้บรรทัดปรับปรุง · ผังใน FeeAccountMap ของช่องทาง · ผังที่ผูกกับบัญชีธนาคาร · ผังพัก) —
+    /// เดิมพรีวิวแสดง "รหัสผังมาตรฐานของบทบาท" ขณะที่ JE ลงผังที่ตั้งทับไว้ ⇒ ผู้กดลงบัญชีอนุมัติจากข้อมูลที่ไม่ตรง
+    /// </summary>
+    private static SettlementPlanAccounts DescribePlan(SettlementPostingPlan plan, SettlementChartIndex chart, Guid? bankGlAccountId)
+        => new(
+            plan.PayoutJournal.Select(l => Describe(l.AccountRole, l.AccountId, l.DefaultAccountCode, chart, bankGlAccountId)).ToList(),
+            plan.FeeDocuments
+                .Select(d => (IReadOnlyList<SettlementAccountRef>)d.Lines
+                    .Select(fl => Describe(fl.AccountRole, fl.AccountId, fl.DefaultAccountCode, chart, bankGlAccountId)).ToList())
+                .ToList(),
+            plan.ClearingAccountId is null ? null
+                : Describe(SettlementAccountRoles.Clearing, plan.ClearingAccountId, null, chart, bankGlAccountId));
+
+    /// <summary>ผังของขาเดียว (ไม่สะสม error ของแผน — ปัญหาอยู่ใน <see cref="SettlementAccountRef.Problem"/>)</summary>
+    private static SettlementAccountRef Describe(string role, Guid? accountId, string? defaultCode, SettlementChartIndex chart,
+        Guid? bankGlAccountId)
+    {
+        var problems = new List<string>();
+        var id = ResolveOne(role, accountId, defaultCode, chart, bankGlAccountId, problems);
+        var a = id is Guid g ? chart.ById(g) : null;
+        return new SettlementAccountRef(a?.Id, a?.Code, a?.Name, RoleLabel(role), problems.FirstOrDefault());
     }
 
     /// <summary>หาผังของขา JE ชุดหนึ่ง (JE รอบโอน · JE ปิด chargeback) — ขาที่หาผังไม่ได้ไม่อยู่ในผลลัพธ์ แต่อยู่ใน errors เสมอ</summary>

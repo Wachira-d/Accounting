@@ -19,9 +19,13 @@ namespace Accounting.Services.Settlement;
 public sealed record SettlementPostedItem(Guid Id, string Kind, string? Number, string Component, string Status, decimal Amount);
 
 /// <summary>พรีวิวการลงบัญชี — แผนของ <c>SettlementBatchMath.Plan</c> + ด่านของผู้ลงบัญชี (ปัญหาทุกข้อมีทางไปต่อ)</summary>
+/// <param name="Accounts">ผังที่จะลงจริงของทุกขา (รหัส+ชื่อ · รวมผังที่ตั้งทับ/ผังของบัญชีธนาคาร/ผังพัก) — ตัวหาผังตัวเดียวกับการลงจริง (review198-D D-02)</param>
+/// <param name="BankAccountLabel">บัญชีธนาคารที่รับเงินของรอบนี้ (ชื่อธนาคาร + เลขบัญชี) · null = ยังไม่ได้เลือก (D-03)</param>
 public sealed record SettlementPostingPreview(
     Guid BatchId, SettlementBatchStatus Status, bool CanPost, SettlementPostingPlan Plan,
-    IReadOnlyList<SettlementPostedItem> ExistingItems);
+    IReadOnlyList<SettlementPostedItem> ExistingItems,
+    SettlementPlanAccounts? Accounts = null,
+    string? BankAccountLabel = null);
 
 /// <summary>ผลการลงบัญชี — <c>AlreadyPosted</c> = ลงไว้แล้ว (กดซ้ำไม่ลงซ้ำ) · <c>Ok=false</c> = ถูกบล็อก ดู <c>Plan.Issues</c></summary>
 public sealed record SettlementPostingResult(
@@ -54,6 +58,11 @@ public interface ISettlementPostingService
 
     /// <summary>ปิดรายการ chargeback ที่พักไว้ (แพ้ = Dr 57140 · ชนะและได้เงินคืนนอกไฟล์ = Dr ผังพัก) ผ่าน <c>SettlementBatchMath.PlanChargebackResolution</c></summary>
     Task<SettlementChargebackResult> ResolveChargebackAsync(Guid companyId, Guid lineId, bool won, Guid userId,
+        CancellationToken ct = default);
+
+    /// <summary>chargeback ที่ปิดผลแล้ว (มี JE ปิดรายการที่ยังไม่ถูกกลับ) ของบรรทัดที่ระบุ — ข้อเท็จจริงชุดเดียวกับด่าน "ปิดไว้แล้ว" ของ
+    /// <see cref="ResolveChargebackAsync"/> ให้หน้าจอตัดปุ่มแพ้/ชนะ และแสดงผลที่ปิดไว้ (review198-D D-04) · ไม่เขียนอะไร</summary>
+    Task<IReadOnlyList<SettlementClosedChargeback>> ClosedChargebacksAsync(Guid companyId, IReadOnlyCollection<Guid> lineIds,
         CancellationToken ct = default);
 
     /// <summary>เหตุที่ยกเลิกการลงบัญชีรอบนี้ไม่ได้ (e-Tax ตอบรับ · ภาษีที่ยื่นแล้ว · 50 ทวิ ที่ยื่นแล้ว) — ด่านเดียวกับ <see cref="UnpostAsync"/>
@@ -118,7 +127,15 @@ public class SettlementPostingService : ISettlementPostingService
     {
         var loaded = await LoadAsync(companyId, batchId, ct);
         var gate = await BuildGateAsync(companyId, loaded, userId, ct);
-        return new SettlementPostingPreview(batchId, loaded.Batch.Status, gate.Plan.CanPost, gate.Plan, Items(gate));
+        // D-03: บอกผู้กดลงบัญชีว่าขาธนาคารลงบัญชีไหน (ชื่อธนาคาร + เลขบัญชี) — ผังของบัญชีนั้นอยู่ใน Accounts
+        string? bankLabel = null;
+        if (loaded.Batch.BankAccountId is Guid bankId)
+            bankLabel = await _db.BankAccounts.AsNoTracking()
+                .Where(b => b.Id == bankId && b.CompanyId == companyId)
+                .Select(b => b.BankName + " " + b.AccountNumber + " (" + b.AccountName + ")")
+                .FirstOrDefaultAsync(ct);
+        return new SettlementPostingPreview(batchId, loaded.Batch.Status, gate.Plan.CanPost, gate.Plan, Items(gate),
+            gate.Accounts.Described, bankLabel);
     }
 
     // ═════════════════════════════ ลงบัญชี ═════════════════════════════
@@ -463,7 +480,7 @@ public class SettlementPostingService : ISettlementPostingService
         // ผังของบริษัทนี้เท่านั้น — id ที่ไม่อยู่ในนี้ = คนละบริษัท ⇒ ตัวหาผังปฏิเสธ
         var chart = new SettlementChartIndex(await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted)
-            .Select(a => new SettlementChartAccount(a.Id, a.AccountCode, a.IsActive)).ToListAsync(ct));
+            .Select(a => new SettlementChartAccount(a.Id, a.AccountCode, a.IsActive, a.AccountName)).ToListAsync(ct));
         Guid? bankGl = null;
         if (batch.BankAccountId is Guid bankId)
             bankGl = await _db.BankAccounts.AsNoTracking()
@@ -1022,6 +1039,30 @@ public class SettlementPostingService : ISettlementPostingService
         return acquired && result is not null ? result : new SettlementChargebackResult(false, BusyMessage, null, null);
     }
 
+    /// <summary>JE ปิด chargeback ที่ยังมีผล (ไม่ถูกลบ · ไม่ถูกกลับรายการ) — นิยามเดียวของ "ปิดไว้แล้ว" ทั้งด่านกันลงซ้ำและปุ่มบนหน้าจอ (D-04)</summary>
+    private IQueryable<JournalEntry> OpenChargebackEntries(Guid companyId, IReadOnlyCollection<string> references)
+    {
+        var refs = references.ToList();
+        return _db.JournalEntries.Where(j => j.CompanyId == companyId && !j.IsDeleted && j.Reference != null
+            && refs.Contains(j.Reference) && j.ReversedByEntryId == null);
+    }
+
+    public async Task<IReadOnlyList<SettlementClosedChargeback>> ClosedChargebacksAsync(Guid companyId, IReadOnlyCollection<Guid> lineIds,
+        CancellationToken ct = default)
+    {
+        if (lineIds.Count == 0) return Array.Empty<SettlementClosedChargeback>();
+        var byRef = lineIds.Distinct().ToDictionary(id => SettlementPostingKeys.ChargebackReference(id), id => id, StringComparer.Ordinal);
+        var refs = byRef.Keys.ToList();
+        var rows = await OpenChargebackEntries(companyId, refs).AsNoTracking()
+            .Select(j => new { j.Id, j.EntryNumber, j.Reference, j.Description })
+            .ToListAsync(ct);
+        return rows.Where(r => r.Reference != null && byRef.ContainsKey(r.Reference))
+            .GroupBy(r => byRef[r.Reference!])
+            .Select(g => g.First())
+            .Select(r => new SettlementClosedChargeback(byRef[r.Reference!], r.Id, r.EntryNumber, r.Description))
+            .ToList();
+    }
+
     private async Task<SettlementChargebackResult> ResolveChargebackCoreAsync(Guid companyId, Guid lineId, bool won, Guid userId,
         CancellationToken ct)
     {
@@ -1036,8 +1077,7 @@ public class SettlementPostingService : ISettlementPostingService
                 "ลงบัญชีรอบโอนก่อน — ยอด chargeback ถูกพักไว้ที่ผังพัก dispute ตอนลงบัญชีรอบโอน", null, null);
 
         var reference = SettlementPostingKeys.ChargebackReference(lineId);
-        var done = await _db.JournalEntries.AsNoTracking()
-            .Where(j => j.CompanyId == companyId && !j.IsDeleted && j.Reference == reference && j.ReversedByEntryId == null)
+        var done = await OpenChargebackEntries(companyId, new[] { reference }).AsNoTracking()
             .Select(j => new { j.Id, j.EntryNumber }).FirstOrDefaultAsync(ct);
         if (done != null)
             return new SettlementChargebackResult(true, $"ปิดรายการ chargeback นี้ไว้แล้ว (ใบสำคัญ {done.EntryNumber}) — ไม่ลงซ้ำ",
@@ -1059,8 +1099,7 @@ public class SettlementPostingService : ISettlementPostingService
             // กันกดซ้ำพร้อมกัน — ล็อกต่อบรรทัด แล้วตรวจซ้ำใต้ล็อก
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                 new object[] { AdvisoryLockKey.For(companyId, SettlementPostingKeys.LockScope, reference) }, ct);
-            if (await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && !j.IsDeleted && j.Reference == reference
-                    && j.ReversedByEntryId == null, ct))
+            if (await OpenChargebackEntries(companyId, new[] { reference }).AnyAsync(ct))
             {
                 await tx.RollbackAsync(ct);
                 return new SettlementChargebackResult(true, "ปิดรายการ chargeback นี้ไว้แล้ว — ไม่ลงซ้ำ", null, null);

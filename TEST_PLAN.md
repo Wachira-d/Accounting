@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **359 ไฟล์ · 3,390 `[Fact]` + 515 `[Theory]` (2,270 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **360 ไฟล์ · 3,408 `[Fact]` + 515 `[Theory]` (2,270 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4733,6 +4733,37 @@ PaymentIntent · R-A1 ผังพัก gateway · R-A2 wallet ไม่ใช�
 | SPS-25 | เปิดรอบโอนที่ลงบัญชีแล้วซึ่งใบสรุป e-Tax ตอบรับแล้ว | ไม่มีปุ่ม "ยกเลิกการลงบัญชี" · ป้าย ↩️ บอกเหตุ + ทางไปต่อ (ข้อความเดียวกับที่ service ปฏิเสธ) · ปุ่มดูเอกสารที่ลงไว้/จับคู่ธนาคารยังอยู่ |
 | SPS-26 | บริษัทไม่เปิดแยกหน้าที่ · ผู้ใช้ A นำเข้าแล้วกดลงบัญชีเอง | ใบสำคัญจ่ายค่าธรรมเนียม: ผู้อนุมัติ (UpdatedBy/JE/ประวัติ) = A ไม่ใช่ "system:settlement" (คำตัดสินเจ้าของข้อ 7) |
 | SPS-27 | บริษัทเปิด "แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ" · A นำเข้าแล้วกดลงบัญชีเอง / B กดลงบัญชี | A: บล็อก `SodSelfApproval` "ให้ผู้มีสิทธิ์คนอื่นกด" · B: ลงบัญชีได้ ผู้อนุมัติทุกใบ = B |
+
+### ฝ่ายค้านรอบ 198 ทีม D2 — review198-D (D-01..D-11 · D-P1 · D-P2 · D-P4)
+
+เทสต์อัตโนมัติ: `SettlementReview198DTests` (สองทิศทุกข้อ · `SettlementSaleMatch.AssignRefusal/OrderGroupAmounts` เทียบกับ `Decide`/`ApplyIntentRefundCapacity` ·
+`SettlementAccountResolver.DescribePlan` = ผังเดียวกับ JE · `SettlementBankAccountRule` · `SettlementBatchActions` สิทธิ์+chargeback ที่ปิดแล้ว ·
+`SettlementPermissionScope.ColumnMapMemory` · `BatchFilterStatuses` · `SettlementPostingPlan.Balanced` · `SettlementFileReader.Capped`) ·
+`node tools/settlement_import_form_sim.js` (+`matchBody` · negative test 5 ตัว) · `owner_action_wiring_check` (+2 แถว reclassify) ·
+`required_call_site_check` (+13 กติกา: AssignLineMatchAsync · ToLineView · SetBankAccountAsync · PersistAsync · PreviewAsync · Describe ·
+ClosedChargebacksAsync · ResolveChargebackCoreAsync · BatchDetailAsync · ImportFile · ImportFromIntents · ResolveChargeback · ListBatches) ·
+เรพไม่มีเทสต์ที่มี DbContext/HttpContext ⇒ SD2 ด้านล่างต้องรันบน staging
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| SD2-01 | ช่องทาง gateway นำเข้า CSV · ออเดอร์หนึ่งตรงทั้งใบแจ้งหนี้และรายการรับชำระ (Unmatched) · เลือกรายการรับชำระที่ยอดตรง | บันทึกได้ · บรรทัดขายทั้งออเดอร์ `Matched` + ผูก `paymentIntentId` · ป้าย "👤 ผู้ใช้เลือก" · ลงบัญชีนับว่าอยู่ในผังพักแล้ว (D-01 — เดิม 404 "ไม่พบเอกสารขาย") |
+| SD2-02 | ทิศตรงข้าม: รายการรับชำระที่ยอดไม่ตรงยอดขายของออเดอร์ / อยู่รอบอื่นแล้ว / คืนเงินผลไม่แน่ชัด | radio ปิดพร้อมเหตุผลจากเซิร์ฟเวอร์ · ยิง API ตรงได้ 409 ข้อความเดียวกัน · ส่ง id ที่ไม่ใช่ผู้สมัคร = 404 |
+| SD2-03 | บรรทัดคืนเงินสองบรรทัด −300 ของรายการที่คืนผ่านระบบ 300 · เลือกรายการรับชำระให้ทั้งสอง | บรรทัดแรกสำเร็จ · บรรทัดที่สอง 409 "เกินยอดคืนเงินผ่านระบบที่ยังไม่ถูกนับ" |
+| SD2-04 | บรรทัดที่ประกอบจากรายการรับชำระในระบบ (`pi:`) | ไม่มีปุ่ม "ตัดสินการจับคู่" |
+| SD2-05 | ช่องทางแมปค่าคอมไป 53999 · บรรทัดปรับปรุงเลือกผัง 54990 · ดูตัวอย่างการลงบัญชี | คอลัมน์ "ผังบัญชีที่จะลง" แสดง 53999/54990 + ชื่อผัง · ขาธนาคารแสดงผังที่ผูกกับบัญชีธนาคาร + ชื่อธนาคาร/เลขบัญชี · ผังพักแสดงรหัส · ตรงกับ JE หลังลงบัญชี (D-02) |
+| SD2-06 | บริษัทมีบัญชีธนาคาร 2 บัญชี · นำเข้าโดยไม่เลือกบัญชี (ยอดโอน > 0) | ช่องบัญชีว่าง "— เลือกบัญชีที่เงินเข้าจริง —" · เซิร์ฟเวอร์ตีกลับ `SETTLEMENT-BANK-REQUIRED` พร้อมทางไปต่อ · ยอดโอน 0 นำเข้าได้โดยไม่เลือก (D-03) |
+| SD2-07 | บริษัทมีบัญชีธนาคารบัญชีเดียว | ช่องบัญชีถูกเลือกให้พร้อมข้อความ "มีบัญชีเดียว — เลือกให้แล้ว" |
+| SD2-08 | เปิดรอบโอนที่ยังไม่ลงบัญชี → เปลี่ยนบัญชีธนาคาร | หัวรอบโอนแสดงบัญชีใหม่ · audit มีค่าเดิม/ใหม่ · รอบที่ลงบัญชีแล้ว/ค้างครึ่งทาง ไม่มีช่องเปลี่ยน (API ตรงได้ 409) |
+| SD2-09 | ปิด chargeback "แพ้" แล้วเปิดรอบโอนใหม่ | ปุ่มแพ้/ชนะหาย · แสดง "ปิดรายการแล้ว: แพ้ chargeback … · ลิงก์ใบสำคัญ" · chargeback อื่นที่ยังไม่ปิดยังมีปุ่ม (D-04) |
+| SD2-10 | ผู้ใช้มีแค่ `Settlement.View` เปิดรอบโอน | ไม่มีปุ่มนำเข้า/แก้/ลงบัญชี/ยกเลิก/จับคู่ · มีป้าย 👤 บอกสิทธิ์ที่ขาด · ดูตัวอย่างการลงบัญชีได้ (ปุ่มดูอย่างเดียว) (D-06) |
+| SD2-11 | ผู้มี `Settlement.Post` แต่ไม่มี `Journal.Manage` · รอบลงบัญชีแล้วมี chargeback | ไม่มีปุ่มแพ้/ชนะ · ป้ายบอกสิทธิ์สมุดรายวัน · ยกเลิกการลงบัญชี/จับคู่เงินเข้ายังมี |
+| SD2-12 | ตัวกรองสถานะ | ไม่มี "ยกเลิกแล้ว" · `GET batches?status=Voided` ได้ 400 พร้อมเหตุผล (D-05) |
+| SD2-13 | API ตรง: `files/import` payload `{"header": null}` · `from-payment-intents` `{"header": null}` · `chargeback-resolve` `{}` | 400 ข้อความไทยทั้งหมด · chargeback ไม่ถูกปิดเป็น "แพ้" (D-07/D-08) |
+| SD2-14 | คีย์ API เรียก `lines/{id}/reclassify` | 403 RejectApiKey · คลังเรียนรู้ไม่มีแถว Explicit ใหม่ (D-P1) |
+| SD2-15 | ผู้มี Import แต่ไม่มี `Settlement.Channels` นำเข้าไฟล์ครั้งแรกของช่องทาง / คีย์ API นำเข้าพร้อม `rememberColumnMap=true` | นำเข้าได้ · ช่องทางไม่ถูกเปลี่ยน `ColumnMapJson` · ผลนำเข้ามีคำเตือน "ไม่ได้จำการจับคู่คอลัมน์" · หน้าเว็บไม่มีช่องติ๊ก แสดงเหตุผลแทน · ผู้มีสิทธิ์ช่องทาง = จำตามเดิม (D-P2) |
+| SD2-16 | อัปโหลดไฟล์ 26 MB / CSV 150,000 แถว / xlsx แถวที่อ้างคอลัมน์ XFD | หน้าเว็บเตือนก่อนอัปโหลด (ขนาด) · API ตรง 400 ไทย · แถว/คอลัมน์เกิน = ข้อความไทยพร้อมทางไปต่อ ไม่ใช่ 500/หน่วยความจำเต็ม (D-P4) |
+| SD2-17 | บริษัทมีรอบโอน 130 รอบ | หน้าแรก 50 รอบ + ปุ่ม "โหลดรอบที่เก่ากว่า" · กดจนครบแล้วปุ่มหาย (D-11) |
+| SD2-18 | พรีวิวที่ผลต่าง 0.01 / 0.02 | สีผลต่างตาม `plan.balanced` จากเซิร์ฟเวอร์ (เขียว/แดง) ตรงกับการมี/ไม่มีปัญหา "ยอดไม่ลงตัว" (D-10) |
 
 ### ฝ่ายค้านรอบ 198 ทีม E2 — R-E2..R-E6 + E-2
 

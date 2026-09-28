@@ -34,4 +34,25 @@ public static class SettlementPermissionScope
 
     /// <summary>ลบไฟล์ต้นฉบับ — หลักฐานประกอบรายการบัญชี (พ.ร.บ.การบัญชี ม.10) ⇒ เฉพาะคนนำเข้า (ไฟล์ของรอบที่ลงบัญชีแล้วยังมีด่านไฟล์แนบชั้นถัดไป)</summary>
     public static readonly IReadOnlyList<string> SourceFileWriters = new[] { Import };
+
+    /// <summary>
+    /// **จำการจับคู่คอลัมน์ไว้กับช่องทางตอนนำเข้าได้ไหม** (review198-D D-P2 · R5 "ทางเข้าอื่นไม่เดินด่านเดียวกัน")
+    ///
+    /// <para>การจับคู่ที่จำไว้ (<c>SettlementChannel.ColumnMapJson</c>) มี "กลับเครื่องหมาย"/"ยังไม่รวม VAT" ซึ่งกำหนดเครื่องหมายและ VAT ของ<b>ทุกรอบถัดไป</b>
+    /// = ค่าตั้งของช่องทาง ⇒ ด่านเดียวกับ <c>PUT channels/{id}</c>: ต้องมีสิทธิ์ <see cref="Channels"/> และห้ามคีย์ API · ไม่ผ่าน ⇒ ยังนำเข้าได้
+    /// (การจับคู่ใช้กับไฟล์นี้ไฟล์เดียว) แต่<b>ไม่จำ</b> + บอกผู้ใช้ในผลการนำเข้า (ห้าม silent no-op)</para>
+    /// </summary>
+    /// <param name="requested">ผู้ใช้ติ๊ก "จำการจับคู่นี้ไว้กับช่องทาง"</param>
+    /// <returns><c>Remember</c> = บันทึกลงช่องทาง · <c>Notice</c> = ข้อความถึงผู้ใช้เมื่อขอให้จำแต่ไม่ได้จำ (null = ไม่มีอะไรต้องบอก)</returns>
+    public static (bool Remember, string? Notice) ColumnMapMemory(bool requested, bool isApiKeyRequest, bool hasChannelsPermission)
+    {
+        if (!requested) return (false, null);
+        if (isApiKeyRequest)
+            return (false, "ไม่ได้จำการจับคู่คอลัมน์ไว้กับช่องทาง — คำขอจากคีย์ API เปลี่ยนค่าตั้งของช่องทางไม่ได้ (การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว) · "
+                + "ให้ผู้ใช้ที่มีสิทธิ์ตั้งค่าช่องทางนำเข้าจากหน้าเว็บ หรือแก้ที่หน้าตั้งค่าช่องทาง");
+        if (!hasChannelsPermission)
+            return (false, $"ไม่ได้จำการจับคู่คอลัมน์ไว้กับช่องทาง — ต้องมีสิทธิ์ “{PermissionKeys.LabelOf(Channels)}” "
+                + "(การจับคู่กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป) · การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว — ขอให้ผู้มีสิทธิ์บันทึกไว้ครั้งหน้า");
+        return (true, null);
+    }
 }

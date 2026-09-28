@@ -3640,3 +3640,14 @@ _รอบ 198 ทีม S3 (ต่อ · คำตัดสินเจ้า�
 แยกหน้าที่: ผู้นำเข้ารอบโอน = ผู้ทำ · คนกดลงบัญชี = ผู้อนุมัติ ⇒ `SodBlockSelfApproval` + คนเดียวกัน (หรือไม่รู้ผู้นำเข้า) ⇒ บล็อก `SodSelfApproval` พร้อมทางไปต่อ ·
 เทสต์ `C7_…` สองทิศ · `required_call_site_check` +3 กติกา
 — commit <pending>)_
+
+_รอบ 198 ทีม D2 (แก้ฝ่ายค้าน review198-D ของหน้าจอ+controller settlement): **D-01** โมดัลตัดสินการจับคู่เลือกรายการรับชำระออนไลน์ได้จริง —
+`SettlementAssignMatchRequest.PaymentIntentId` · ผู้สมัครคำนวณสดใต้ล็อก + `SettlementSaleMatch.AssignRefusal` ด่านเดียวกับการจับคู่อัตโนมัติ (ยอด ±0.01 ·
+ยอดคืนคงเหลือ · ผลคืนเงินไม่แน่ชัด · อยู่รอบอื่น · ช่องทางใช้ได้) · มุมมองติดธง `Selectable/SelectReason` + `CanAssignMatch` (เดิม 404 "ไม่พบเอกสารขาย" ทุกครั้ง) ·
+**D-02** พรีวิวแสดงผังที่จะลงจริง (`SettlementAccountResolver.DescribePlan` → `ResolveOne` ตัวเดียวกับ JE) · **D-03** บัญชีธนาคารไม่ถูกเลือกให้เงียบ ๆ
+(`SettlementBankAccountRule` · รอบที่มีเงินโอนต้องระบุ · ค่าเริ่มต้นเฉพาะมีบัญชีเดียว · `PUT batches/{id}/bank-account`) · **D-04** chargeback ที่ปิดแล้วไม่มีปุ่ม
+(`ClosedChargebacksAsync` นิยามเดียวกับด่านกันลงซ้ำ) · **D-05** ตัวกรองไม่มี "ยกเลิกแล้ว" + 400 · **D-06** ปุ่มตัดด้วยสิทธิ์ + `PermissionNote` ·
+**D-07/D-08/D-09** header null ⇒ 400 · `won` บังคับ · KeyNotFound ที่ไม่ใช่ข้อความไทย ⇒ 500 + รหัสอ้างอิง · **D-10** `plan.balanced` · **D-11** หน้าถัดไป ·
+**D-P1** `[RejectApiKey]` ที่ reclassify · **D-P2** จำการจับคู่คอลัมน์เฉพาะผู้มี `Settlement.Channels` และไม่ใช่คีย์ API (`ColumnMapMemory`) · **D-P4** เพดาน
+25 MB/100,000 แถว/500 คอลัมน์ · D-P3 (แพ็กเกจ) ส่งทีม G · D-P5 รอเจ้าของ · เทสต์ `SettlementReview198DTests` · sim `matchBody` · required +13 · owner_action +2
+— commit <pending>_

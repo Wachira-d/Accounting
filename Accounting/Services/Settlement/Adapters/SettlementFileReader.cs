@@ -18,7 +18,14 @@ public static class SettlementFileReader
     /// <summary>ขนาดไฟล์สูงสุด — ตรงกับเพดานของ attachment abstraction (25 MB) เพราะไฟล์ต้นฉบับต้องเก็บได้</summary>
     public const long MaxFileBytes = 25L * 1024 * 1024;
 
-    /// <summary>แถวของไฟล์ (ไม่ตัดแถวว่าง — ผู้เรียกข้ามเอง) · ค่าแต่ละช่องตัดช่องว่างหัวท้ายแล้ว</summary>
+    /// <summary>จำนวนแถวสูงสุดต่อไฟล์ (รวมหัวตาราง) — review198-D D-P4: xlsx 25 MB คลายได้หลาย GB / CSV แถวสั้นนับแสน ⇒ ทุกแถวเข้า list +
+    /// ธุรกรรมเดียว · อ่านทีละแถวแล้วหยุดทันทีที่เกิน (ไม่อ่านส่วนที่เหลือของไฟล์) · รายงานรอบโอนจริงต่อรอบอยู่ในหลักพัน–หมื่นแถว</summary>
+    public const int MaxRows = 100_000;
+
+    /// <summary>จำนวนคอลัมน์สูงสุดต่อแถว (Excel อ้างคอลัมน์ไกลสุด XFD ได้ ⇒ แถวเดียวกลายเป็นอาร์เรย์ 16,384 ช่อง)</summary>
+    public const int MaxColumns = 500;
+
+    /// <summary>แถวของไฟล์ (ไม่ตัดแถวว่าง — ผู้เรียกข้ามเอง) · ค่าแต่ละช่องตัดช่องว่างหัวท้ายแล้ว · เกิน <see cref="MaxRows"/>/<see cref="MaxColumns"/> ⇒ ล้มดังภาษาไทย</summary>
     public static IEnumerable<IReadOnlyList<string>> ReadRows(SettlementFileInput file)
     {
         if (file.Content.Length == 0)
@@ -26,10 +33,26 @@ public static class SettlementFileReader
         if (file.Content.LongLength > MaxFileBytes)
             throw new SettlementFormatException("file-too-large",
                 $"ไฟล์ใหญ่เกิน {MaxFileBytes / (1024 * 1024)} MB — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
-        if (file.IsExcel) return ReadExcel(file.Content);
-        if (file.IsCsv) return ReadCsv(Decode(file.Content));
+        if (file.IsExcel) return Capped(ReadExcel(file.Content), MaxRows, MaxColumns);
+        if (file.IsCsv) return Capped(ReadCsv(Decode(file.Content)), MaxRows, MaxColumns);
         throw new SettlementFormatException("unsupported-type",
             "รองรับเฉพาะไฟล์ .csv และ .xlsx — ถ้าเป็น .xls ให้เปิดใน Excel แล้วบันทึกเป็น .xlsx ก่อน");
+    }
+
+    /// <summary>ตัดการอ่านทันทีที่แถว/คอลัมน์เกินเพดาน (lazy — แถวที่เกินไม่ถูกอ่านต่อ) — ข้อความบอกทางไปต่อ (F2 ข้อ 8)</summary>
+    public static IEnumerable<IReadOnlyList<string>> Capped(IEnumerable<IReadOnlyList<string>> rows, int maxRows, int maxColumns)
+    {
+        var n = 0;
+        foreach (var r in rows)
+        {
+            if (++n > maxRows)
+                throw new SettlementFormatException("too-many-rows",
+                    $"ไฟล์มีมากกว่า {maxRows:N0} แถว — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
+            if (r.Count > maxColumns)
+                throw new SettlementFormatException("too-many-columns",
+                    $"แถวที่ {n:N0} มีมากกว่า {maxColumns:N0} คอลัมน์ — ไฟล์อาจเสีย/มีข้อมูลค้างที่คอลัมน์ไกล ๆ ส่งออกรายงานจากแพลตฟอร์มใหม่");
+            yield return r;
+        }
     }
 
     /// <summary>ถอดรหัสข้อความ CSV — ถอดไม่ได้ทั้ง UTF-8 และ Windows-874 ⇒ ล้มดัง (ไม่เดา)</summary>

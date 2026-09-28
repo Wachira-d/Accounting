@@ -46,6 +46,10 @@ public interface ISettlementImportService
 
     /// <summary>ยกเลิกรอบโอนที่ยังไม่ลงบัญชี — soft-delete รอบ + บรรทัด (นำเข้าไฟล์เดิมใหม่ได้) · ปลด PaymentIntent ออกจากรอบ · audit</summary>
     Task VoidBatchAsync(Guid companyId, Guid userId, Guid batchId, string reason, CancellationToken ct = default);
+
+    /// <summary>เปลี่ยนบัญชีธนาคารที่รับเงินของรอบโอนที่ยังแก้ได้ (ด่านเดียวกับแก้บรรทัด · ล็อกต่อช่องทาง · audit) — review198-D D-03</summary>
+    Task<SettlementBatchView> SetBankAccountAsync(Guid companyId, Guid userId, Guid batchId, Guid? bankAccountId,
+        CancellationToken ct = default);
 }
 
 /// <summary>

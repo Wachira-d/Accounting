@@ -1129,6 +1129,8 @@ const API = {
       listSettlementBatches: (q = '') => API.get(`${base}/settlement/batches${q}`),
       getSettlementBatch: (id) => API.get(`${base}/settlement/batches/${id}`),
       voidSettlementBatch: (id, reason) => API.post(`${base}/settlement/batches/${id}/void`, { reason }),
+      setSettlementBatchBankAccount: (id, bankAccountId) =>
+        API.put(`${base}/settlement/batches/${id}/bank-account`, { bankAccountId: bankAccountId || null }),
       rematchSettlementBatch: (id) => API.post(`${base}/settlement/batches/${id}/rematch`, {}),
       // จัดประเภท = ผู้ใช้ตัดสินเอง ⇒ เซิร์ฟเวอร์บันทึกลงคลังเรียนรู้เป็น Explicit เสมอ (ไม่มีช่อง source)
       reclassifySettlementLine: (lineId, d) => API.post(`${base}/settlement/lines/${lineId}/reclassify`, d),

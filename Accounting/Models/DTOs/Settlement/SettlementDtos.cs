@@ -95,6 +95,8 @@ public sealed record SettlementBatchView(
 /// ไม่งั้น "⚙️ ระบบแนะนำ" (กฎเหล็ก #1)</param>
 /// <param name="MatchNote">เหตุผลของสถานะจับคู่/สิ่งที่ผู้ใช้ต้องตัดสิน</param>
 /// <param name="MatchDecidedByUser">คนตัดสินการจับคู่เอง — การจับคู่อัตโนมัติไม่ทับ (หน้าเว็บติดป้าย "👤 ผู้ใช้เลือก" · R-B1)</param>
+/// <param name="CanAssignMatch">บรรทัดนี้คนตัดสินการจับคู่ได้ (ประเภทต้องจับคู่ใบขาย และไม่ใช่บรรทัดที่ประกอบจากรายการรับชำระในระบบ ซึ่ง service ตีกลับเสมอ ·
+/// review198-D D-01) — หน้าเว็บแสดงปุ่ม "ตัดสินการจับคู่" ตามนี้</param>
 public sealed record SettlementLineView(
     Guid Id,
     int Seq,
@@ -119,9 +121,14 @@ public sealed record SettlementLineView(
     IReadOnlyList<SettlementMatchCandidateView> MatchCandidates,
     Guid? OverrideAccountId,
     string? AdjustmentReason,
-    bool MatchDecidedByUser = false);
+    bool MatchDecidedByUser = false,
+    bool CanAssignMatch = false);
 
-public sealed record SettlementMatchCandidateView(string Kind, Guid Id, string Label, decimal? OpenAmount, bool CanReceive, bool IsRefundTarget);
+/// <param name="Selectable">คนเลือกผู้สมัครนี้ได้ไหม — ตัดสินที่เซิร์ฟเวอร์ด้วย <c>SettlementSaleMatch.AssignRefusal</c> ตัวเดียวกับด่านของ
+/// <c>AssignLineMatchAsync</c> (หน้าเว็บไม่ดู CanReceive/IsRefundTarget เอง · review198-D D-01)</param>
+/// <param name="SelectReason">เหตุผลที่เลือกไม่ได้ (ข้อความเดียวกับที่เซิร์ฟเวอร์ตีกลับ)</param>
+public sealed record SettlementMatchCandidateView(string Kind, Guid Id, string Label, decimal? OpenAmount, bool CanReceive, bool IsRefundTarget,
+    bool Selectable = false, string? SelectReason = null);
 
 /// <summary>ผู้ใช้เลือก/แก้ประเภทของบรรทัด (ปิดลูปการเรียนรู้ — กฎเหล็ก #1)</summary>
 public sealed record SettlementReclassifyRequest
@@ -140,8 +147,19 @@ public sealed record SettlementAssignMatchRequest
 {
     /// <summary>เอกสารขายที่ผู้ใช้เลือก (ต้องเป็นของบริษัทนี้)</summary>
     public Guid? DocumentId { get; init; }
+    /// <summary>รายการรับชำระออนไลน์ในระบบที่ผู้ใช้เลือก — ต้องเป็นผู้สมัครของเลขออเดอร์นี้ และผ่านด่านเดียวกับการจับคู่อัตโนมัติ
+    /// (<c>SettlementSaleMatch.AssignRefusal</c>: ยอด · ยอดคืนคงเหลือ · ผลคืนเงินไม่แน่ชัด · ช่องทางใช้ได้ · review198-D D-01) ·
+    /// ระบุพร้อม <see cref="DocumentId"/> ไม่ได้</summary>
+    public Guid? PaymentIntentId { get; init; }
     /// <summary>ยืนยันว่า "ไม่มีเอกสารในระบบ — ให้เข้าใบขายสรุปรายวัน" (ใช้ได้กับบรรทัดขายเท่านั้น · คืนเงินต้องมีใบเดิม)</summary>
     public bool UseDailySummary { get; init; }
+}
+
+/// <summary>เปลี่ยนบัญชีธนาคารที่รับเงินของรอบโอนที่ยังแก้ได้ (review198-D D-03) — บัญชีนี้คือขาเดบิตธนาคารของ JE รอบโอน
+/// และบัญชีที่ใช้หารายการเดินบัญชีตอนจับคู่เงินเข้า</summary>
+public sealed record SettlementBatchBankAccountRequest
+{
+    public Guid? BankAccountId { get; init; }
 }
 
 /// <summary>ประกอบรอบโอนจาก PaymentIntent ของ gateway ในระบบ</summary>

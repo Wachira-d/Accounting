@@ -112,11 +112,8 @@ public sealed partial class SettlementImportService
             }
         }
 
-        var orderGroup = allLines
-            .Where(l => SettlementLineTypeRules.For(l.LineType).Posting == SettlementPostingKind.SaleComponent
-                && !string.IsNullOrWhiteSpace(l.ExternalOrderId))
-            .GroupBy(l => l.ExternalOrderId!.Trim(), StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount), StringComparer.Ordinal);
+        // ยอดของออเดอร์ — ตัวตั้งตัวเดียวกับหน้าจอ (ผู้สมัครที่เลือกได้) และการตัดสินของคน (D-01)
+        var orderGroup = OrderGroupsOf(allLines);
 
         var refundLeft = new Dictionary<Guid, decimal>();
         foreach (var l in toMatch.OrderBy(x => x.Seq))
@@ -142,6 +139,16 @@ public sealed partial class SettlementImportService
             l.PaymentIntentId = fromAdapter ?? d.PaymentIntentId;
         }
         return decisions;
+    }
+
+    private static Dictionary<string, decimal> OrderGroupsOf(IEnumerable<SettlementLine> lines)
+        => SettlementSaleMatch.OrderGroupAmounts(lines.Select(l => (l.LineType, l.ExternalOrderId, l.Amount)));
+
+    /// <summary>ยอดของออเดอร์ของบรรทัดนี้ — ตรงกับอาร์กิวเมนต์ที่ <c>MatchLinesAsync</c> ส่งให้ <see cref="SettlementSaleMatch.Decide"/></summary>
+    private static decimal GroupAmountOf(SettlementLine l, IReadOnlyDictionary<string, decimal> groups)
+    {
+        var key = l.ExternalOrderId?.Trim();
+        return key != null ? groups.GetValueOrDefault(key) : l.Amount;
     }
 
     /// <summary>บรรทัดที่ adapter ประกอบจาก PaymentIntent (คีย์ขึ้นต้น "pi:") — PaymentIntentId เป็นที่มา ไม่ใช่ผลการจับคู่</summary>
@@ -228,7 +235,8 @@ public sealed partial class SettlementImportService
         var decisions = pending.Count == 0
             ? new Dictionary<Guid, SettlementMatchDecision>()
             : await MatchLinesAsync(companyId, channel, lines, pending, apply: false, ct);
-        var views = lines.OrderBy(l => l.Seq).Select(l => ToLineView(l, decisions.GetValueOrDefault(l.Id))).ToList();
+        var groups = OrderGroupsOf(lines);
+        var views = lines.OrderBy(l => l.Seq).Select(l => ToLineView(l, decisions.GetValueOrDefault(l.Id), groups)).ToList();
         return ToBatchView(batch, channel.DisplayName, lines.Sum(l => l.Amount), lines.Count,
             lines.Count(l => l.LineType == SettlementLineType.Unclassified),
             lines.Count(l => l.LineType != SettlementLineType.Unclassified && SettlementSaleMatch.NeedsDecision(l.MatchStatus)),
@@ -242,15 +250,25 @@ public sealed partial class SettlementImportService
             b.OpeningWalletBalance, b.ClosingWalletBalance, b.Status, b.SourceKind, b.SourceFileAttachmentId, b.BankAccountId,
             total, count, unclassified, needs, auto, anyAi, b.Note, b.CreatedAt, lines);
 
-    private static SettlementLineView ToLineView(SettlementLine l, SettlementMatchDecision? d)
-        => new(l.Id, l.Seq, l.LineType, SettlementLineTypeRules.For(l.LineType).LabelTh, l.RawTypeLabel, l.Description, l.TxnDate,
+    /// <summary>มุมมองบรรทัด — ผู้สมัครแต่ละรายติดธง "เลือกได้/เหตุผล" จาก <see cref="SettlementSaleMatch.AssignRefusal"/> ตัวเดียวกับด่านของ
+    /// <see cref="AssignLineMatchAsync"/> (D-01: หน้าเว็บเคยเปิดให้เลือกรายการรับชำระแล้ว server ตีกลับ 404 เสมอ)</summary>
+    private static SettlementLineView ToLineView(SettlementLine l, SettlementMatchDecision? d, IReadOnlyDictionary<string, decimal> groups)
+    {
+        var groupAmount = GroupAmountOf(l, groups);
+        return new(l.Id, l.Seq, l.LineType, SettlementLineTypeRules.For(l.LineType).LabelTh, l.RawTypeLabel, l.Description, l.TxnDate,
             l.ExternalOrderId, l.ExternalTxnId, l.Amount, l.VatAmount, l.WhtAmount, l.ClassifiedBy, l.ClassifyUsedAi,
             l.ClassifyAiFeedbackId, l.MatchStatus, l.MatchedDocumentId, l.PaymentIntentId, l.ReservationId, d?.Note,
             d == null
                 ? Array.Empty<SettlementMatchCandidateView>()
-                : d.Candidates.Select(c => new SettlementMatchCandidateView(c.Kind.ToString(), c.Id, c.Label, c.OpenAmount,
-                    c.CanReceive, c.IsRefundTarget)).ToList(),
-            l.OverrideAccountId, l.AdjustmentReason, l.MatchDecidedByUser);
+                : d.Candidates.Select(c =>
+                {
+                    var refusal = SettlementSaleMatch.AssignRefusal(c, l.LineType, groupAmount, l.Amount);
+                    return new SettlementMatchCandidateView(c.Kind.ToString(), c.Id, c.Label, c.OpenAmount,
+                        c.CanReceive, c.IsRefundTarget, refusal == null, refusal);
+                }).ToList(),
+            l.OverrideAccountId, l.AdjustmentReason, l.MatchDecidedByUser,
+            SettlementLineTypeRules.For(l.LineType).RequiresSaleMatch && !IsIntentSourced(l));
+    }
 
     // ═══════════════════ ผู้ใช้จัดประเภท (ปิดลูปการเรียนรู้) ═══════════════════
 
@@ -350,7 +368,7 @@ public sealed partial class SettlementImportService
             var decisions = SettlementSaleMatch.NeedsDecision(line.MatchStatus)
                 ? await MatchLinesAsync(companyId, channel, batchLines, new[] { line }, apply: false, ct)
                 : new Dictionary<Guid, SettlementMatchDecision>();
-            return ToLineView(line, decisions.GetValueOrDefault(line.Id));
+            return ToLineView(line, decisions.GetValueOrDefault(line.Id), OrderGroupsOf(batchLines));
         });
     }
 
@@ -413,11 +431,29 @@ public sealed partial class SettlementImportService
                     && SettlementLineTypeRules.For(l.LineType).Posting == SettlementPostingKind.SaleComponent
                     && !IsIntentSourced(l)).ToList();
 
+            if (request.DocumentId != null && request.PaymentIntentId != null)
+                throw new BusinessRuleException("เลือกได้อย่างเดียว — เอกสารขาย หรือรายการรับชำระออนไลน์ในระบบ", "SETTLEMENT-MATCH-ONE");
             if (request.UseDailySummary)
             {
                 if (isRefund)
                     throw new BusinessRuleException("คืนเงินต้องอ้างใบขายเดิม (§86/10) — เลือกใบขายของออเดอร์นี้", "SETTLEMENT-REFUND-NEEDS-DOC");
                 foreach (var l in group) SetMatch(l, SettlementMatchStatus.AutoSummary, null);
+            }
+            else if (request.PaymentIntentId is Guid intentId)
+            {
+                // D-01: รายการรับชำระ = ผู้สมัครของเลขออเดอร์นี้ที่ตัวจับคู่อัตโนมัติคำนวณสดใต้ล็อก (ข้อเท็จจริงชุดเดียวกัน: ช่องทางใช้ได้ ·
+                // อยู่รอบอื่นแล้ว · ผลคืนเงินไม่แน่ชัด · ยอดคืนที่ถูกนับแล้ว) แล้วตัดสินด้วย AssignRefusal ตัวเดียวกับที่หน้าจอใช้ติดธง "เลือกได้"
+                var channel = await LoadChannelAsync(companyId, line.ChannelId, tracked: false, ct);
+                var probe = await MatchLinesAsync(companyId, channel, batchLines, new[] { line }, apply: false, ct);
+                var candidate = (probe.TryGetValue(line.Id, out var pd) ? pd.Candidates : Array.Empty<SettlementMatchCandidate>())
+                    .FirstOrDefault(c => c.Kind == SettlementMatchCandidateKind.PaymentIntent && c.Id == intentId)
+                    ?? throw new BusinessRuleException(
+                        "รายการรับชำระที่เลือกไม่ใช่ผู้สมัครของเลขออเดอร์นี้ (เลขอ้างอิงไม่ตรง หรือไม่ใช่ของบริษัทนี้) — เปิดรอบโอนใหม่แล้วเลือกจากรายการที่ระบบเสนอ",
+                        "SETTLEMENT-MATCH-INTENT-NOT-CANDIDATE", 404);
+                var refusal = SettlementSaleMatch.AssignRefusal(candidate, line.LineType, GroupAmountOf(line, OrderGroupsOf(batchLines)), line.Amount);
+                if (refusal != null)
+                    throw new BusinessRuleException(refusal, "SETTLEMENT-MATCH-INTENT-REFUSED", 409);
+                foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, null, intentId);
             }
             else
             {
@@ -444,18 +480,19 @@ public sealed partial class SettlementImportService
             batch.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-            return ToLineView(line, null);
+            return ToLineView(line, null, OrderGroupsOf(batchLines));
         });
     }
 
     /// <summary>คนตัดสินการจับคู่ — ติดธง <c>MatchDecidedByUser</c> (ตัวจับคู่อัตโนมัติห้ามทับ · R-B1)</summary>
-    private static void SetMatch(SettlementLine l, SettlementMatchStatus status, Guid? documentId)
+    /// <param name="paymentIntentId">รายการรับชำระที่คนเลือก (D-01) — null = ไม่ผูก (ถอดของเดิม)</param>
+    private static void SetMatch(SettlementLine l, SettlementMatchStatus status, Guid? documentId, Guid? paymentIntentId = null)
     {
         l.MatchDecidedByUser = true;
         l.MatchStatus = status;
         l.MatchedDocumentId = documentId;
         l.ReservationId = null;
-        l.PaymentIntentId = null;
+        l.PaymentIntentId = paymentIntentId;
         l.UpdatedAt = DateTime.UtcNow;
     }
 
@@ -539,6 +576,55 @@ public sealed partial class SettlementImportService
             });
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
+        });
+    }
+
+    // ═══════════════════ บัญชีธนาคารที่รับเงิน (D-03) ═══════════════════
+
+    public async Task<SettlementBatchView> SetBankAccountAsync(Guid companyId, Guid userId, Guid batchId, Guid? bankAccountId,
+        CancellationToken ct = default)
+    {
+        if (bankAccountId is not Guid bankId)
+            throw new BusinessRuleException("เลือกบัญชีธนาคารที่เงินรอบนี้เข้าจริง (ตามสเตทเมนต์ธนาคาร)", "SETTLEMENT-BANK-REQUIRED");
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            _db.ChangeTracker.Clear();
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // ล็อกตัวเดียวกับผู้ลงบัญชีก่อนโหลด/ตรวจ (R-B3 · C-1) — เปลี่ยนบัญชีแทรกระหว่างการลงบัญชีไม่ได้ · รอบที่ลงแล้ว/ค้างครึ่งทางแก้ไม่ได้
+            await LockChannelAsync(companyId, await BatchChannelAsync(companyId, batchId, ct), ct);
+            var batch = await LoadEditableBatchAsync(companyId, batchId, ct);
+            var bank = await _db.BankAccounts.AsNoTracking()
+                .Where(b => b.Id == bankId && b.CompanyId == companyId && b.IsActive)
+                .Select(b => new { b.Id, b.BankName, b.AccountNumber })
+                .FirstOrDefaultAsync(ct)
+                ?? throw new BusinessRuleException("ไม่พบบัญชีธนาคารที่เลือกในบริษัทนี้ (หรือถูกปิดใช้) — เพิ่ม/เปิดใช้ที่ ตั้งค่า → บัญชีธนาคาร",
+                    "SETTLEMENT-BANK", 404);
+            var before = batch.BankAccountId;
+            if (before != bank.Id)
+            {
+                batch.BankAccountId = bank.Id;
+                batch.UpdatedAt = DateTime.UtcNow;
+                batch.UpdatedBy = userId.ToString();
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = userId,
+                    EntityType = nameof(SettlementBatch),
+                    EntityId = batch.Id.ToString(),
+                    Action = AuditAction.Update,
+                    OldValues = JsonSerializer.Serialize(new { bankAccountId = before }),
+                    NewValues = JsonSerializer.Serialize(new { action = "settlement-bank-account", bankAccountId = bank.Id,
+                        bank = bank.BankName + " " + bank.AccountNumber }),
+                    Timestamp = DateTime.UtcNow,
+                });
+                await _db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+            var channel = await LoadChannelAsync(companyId, batch.ChannelId, tracked: false, ct);
+            var lines = await _db.SettlementLines.AsNoTracking()
+                .Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).OrderBy(l => l.Seq).ToListAsync(ct);
+            return await BuildBatchViewAsync(companyId, channel, batch, lines, ct);
         });
     }
 
