@@ -503,6 +503,8 @@ builder.Services.AddScoped<IOcrService, OcrService>();
 builder.Services.AddScoped<IKnowledgeBaseService, KnowledgeBaseService>();
 builder.Services.AddScoped<IChatbotService, ChatbotService>();
 builder.Services.AddScoped<IChatRateLimiter, ChatRateLimiter>();
+// รอบ 198 ข้อ 5 — สวิตช์ gate แพ็กเกจบนหน้าเว็บ + ผลโหมดเงา (SubscriptionCheckMiddleware · หน้าแอดมิน)
+builder.Services.AddScoped<ISubscriptionGateShadowLog, SubscriptionGateShadowLog>();
 builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrSelfCorrectionService>();

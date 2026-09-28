@@ -74,6 +74,7 @@ const AdminLayout = {
     { id: 'account-subs', label: '🎫 Account Plans (User License)', icon: '🎫', href: '/admin/account-subscriptions.html' },
     { section: 'แพ็กเกจ' },
     { id: 'plans', label: 'จัดการแพ็กเกจ', icon: '💎', href: '/admin/plans.html' },
+    { id: 'subscription-enforcement', label: 'บังคับแพ็กเกจบนหน้าเว็บ', icon: '🚦', href: '/admin/subscription-enforcement.html' },
     { section: 'การเงิน' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },

@@ -62,6 +62,14 @@ public class SiteSettings : BaseEntity
     /// <para>ตัวตัดสินอยู่ที่ <c>Helpers/AbbreviatedTaxInvoiceRule</c> ตัวเดียว —
     /// ห้ามอ่านธงนี้ไปเขียนเงื่อนไขเองที่อื่น</para></summary>
     public bool RequirePhoR06ForAbbreviatedTaxInvoice { get; set; } = true;
+
+    /// <summary>gate แพ็กเกจ/ระงับบริษัทของคำขอที่รู้บริษัทจาก route (หน้าเว็บ) — <b>ค่าตั้งต้น Shadow</b>
+    /// (ตัดสินแต่ไม่บล็อก + บันทึกลงตาราง <c>SubscriptionGateShadowHits</c> ให้แอดมินดูผลกระทบก่อน)
+    /// <para>คำขอที่ส่ง <c>X-Company-Id</c> มาเอง (partner/integration) บังคับเหมือนเดิมเสมอ ไม่อ่านธงนี้ ·
+    /// ผู้อ่านตัวเดียว: <c>SubscriptionCheckMiddleware</c> ผ่าน <c>ISubscriptionGateShadowLog.GetWebModeAsync</c> ·
+    /// ตัวตัดสิน <c>Helpers/SubscriptionGatePolicy</c> · ตั้งจากหน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</para></summary>
+    public SubscriptionEnforcementMode SubscriptionEnforcementMode { get; set; } = SubscriptionEnforcementMode.Shadow;
+
     public string? MaintenanceMessage { get; set; }
     public string DefaultLanguage { get; set; } = "th";
 

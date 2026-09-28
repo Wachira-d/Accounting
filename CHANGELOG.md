@@ -3653,3 +3653,21 @@ _Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — ค�
   ค้าง: ปุ่ม "บันทึกและอนุมัติ" ของ `documents.html` ack โดยไม่แสดงคำเตือน + `bulk-approve`
 - เทสต์ `ApprovalAcknowledgementTests` +7 · `required_call_site_check` กติกา Approve (ด่านก่อนอนุมัติ · ใช้ผล · ห้าม `IsGapWarning`) + `RefuseApprovalAsync` + เคส B1a/B1b ·
   ACCOUNT_STRUCTURE §3.1 · `pages/api-developer.html` · TEST_PLAN GAP-02/GAP-04..06 — commit <pending>)_
+— commit <pending>)_
+
+_รอบ 198 ข้อ 5 ทีม G — **gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ: รายงานก่อน แล้วค่อยเปิดบังคับ**
+(คำตัดสินเจ้าของ `erp-review/2026-09-25/settlement/DECISIONS.md` ข้อ 5):
+- ต้นเหตุ: `SubscriptionCheckMiddleware` รู้บริษัทจาก `X-Company-Id` อย่างเดียว · api.js ไม่ส่ง ⇒ หน้าเว็บไม่เคยถูก gate แพ็กเกจ/ระงับบริษัท ·
+  และ header ของบริษัท B + route ของบริษัท A = ตัดสินแพ็กเกจด้วย B (ปลอม header ยืมแพ็กเกจได้)
+- `Helpers/TenantCompanyId` ตัวหาบริษัทเดียวของ `TenantAccessMiddleware` + `SubscriptionCheckMiddleware` (route ชนะ header)
+- `Helpers/SubscriptionGatePolicy` — `ActionFor` (ส่ง header = บังคับเสมอ · route อย่างเดียว = ตามสวิตช์) · `Decide` (ลำดับเดิม) ·
+  `RouteFeatureMap`/`FeatureExemptRoutes` ย้ายมาจาก middleware · `GatedFeatures` ให้รายงานใช้ตารางเดียวกัน
+- สวิตช์ `SiteSettings.SubscriptionEnforcementMode` Off/Shadow/Enforce (migration `DEFAULT 1` = Shadow) · ตาราง `SubscriptionGateShadowHits`
+  (upsert ต่อ บริษัท×เหตุ×ฟีเจอร์ · ไม่มี PII · fail-open) · `ISubscriptionGateShadowLog`
+- `ISubscriptionService.GetGateStateAsync` — แพ็กเกจ/สถานะ/ฟีเจอร์จากสูตรเดียวกับ `GetSubscriptionAsync` (`ResolveGateOverlayAsync`) แต่ไม่นับการใช้งาน
+  (middleware ถูกเรียกทุกคำขอเว็บแล้ว — เดิม `GetSubscriptionAsync` นับสมุดรายวัน/ไฟล์แนบทุกครั้ง)
+- หน้าแอดมิน `/admin/subscription-enforcement.html` + `AdminSubscriptionEnforcementController` (ผลโหมดเงา · ตรวจล่วงหน้า · สวิตช์ · ล้างผล —
+  SystemAdmin + `[RejectApiKey]`)
+- เทสต์ `SubscriptionGatePolicyTests` · `required_call_site_check` +3 กติกา · `owner_action_wiring_check` +4 แถว · `write_permission_gate_check` +1 คอนโทรลเลอร์ ·
+  ACCOUNT_STRUCTURE §5.2 · TEST_PLAN SUB-G01..12
+— commit <pending>)_

@@ -270,6 +270,18 @@ public enum SubscriptionStatus
     Suspended = 5
 }
 
+/// <summary>สวิตช์แพลตฟอร์ม: gate แพ็กเกจ/ระงับบริษัท สำหรับคำขอที่รู้บริษัทจาก <b>route</b> เท่านั้น
+/// (หน้าเว็บ — <c>api.js</c> ไม่ส่ง <c>X-Company-Id</c>) · คำขอที่ส่ง header มาเองบังคับเหมือนเดิมเสมอ
+/// ไม่ขึ้นกับสวิตช์นี้ (ตัวตัดสิน <c>Helpers/SubscriptionGatePolicy</c>)
+/// <para>Off = ไม่ตรวจ (พฤติกรรมก่อนรอบ 198) · Shadow = ตัดสินแต่ไม่บล็อก + บันทึกลงรายงานแอดมิน (ค่าตั้งต้น) ·
+/// Enforce = บล็อกจริง — คำตัดสินเจ้าของรอบ 198 ข้อ 5 "รายงานก่อน แล้วค่อยเปิดบังคับ"</para></summary>
+public enum SubscriptionEnforcementMode
+{
+    Off = 0,
+    Shadow = 1,
+    Enforce = 2
+}
+
 public enum BillingCycle
 {
     Monthly = 1,
