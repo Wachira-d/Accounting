@@ -1676,30 +1676,10 @@ public class IntegrationService : IIntegrationService
 
     // ===== Helpers =====
 
-    /// <summary>ผู้ติดต่อกลางสำหรับ "ลูกค้าเงินสด ไม่ประสงค์รับใบกำกับภาษี" —
-    /// สร้างครั้งเดียวต่อบริษัท ใช้ซ้ำทุกใบ. Address "-" ให้ §86/4 มีค่าพิมพ์
-    /// บนใบกำกับ (แนวปฏิบัติค้าปลีกที่สรรพากรยอมรับ — ผู้ซื้อเคลมภาษีซื้อไม่ได้
-    /// อยู่แล้วซึ่งตรงตามที่ผู้ซื้อเลือกเอง).</summary>
-    private async Task<Contact> GetOrCreateWalkInContactAsync(Guid companyId)
-    {
-        var walkIn = await _db.Set<Contact>().FirstOrDefaultAsync(
-            c => c.CompanyId == companyId && c.IsWalkInCustomer && !c.IsDeleted);
-        if (walkIn != null) return walkIn;
-
-        walkIn = new Contact
-        {
-            CompanyId = companyId,
-            Name = "ลูกค้าเงินสด (ไม่ประสงค์รับใบกำกับภาษี)",
-            Address = "-",
-            IsCustomer = true,
-            IsActive = true,
-            IsWalkInCustomer = true,
-            ContactType = ContactType.Individual,
-        };
-        _db.Set<Contact>().Add(walkIn);
-        await _db.SaveChangesAsync();
-        return walkIn;
-    }
+    /// <summary>ผู้ติดต่อกลางสำหรับ "ลูกค้าเงินสด ไม่ประสงค์รับใบกำกับภาษี" — ตัวสร้างตัวเดียวอยู่ที่
+    /// <see cref="WalkInCustomerContact"/> (รอบ 198: ใบขายสรุปรายวันของ settlement ใช้แถวเดียวกัน · ห้ามสำเนาที่สอง)</summary>
+    private Task<Contact> GetOrCreateWalkInContactAsync(Guid companyId)
+        => WalkInCustomerContact.GetOrCreateAsync(_db, companyId);
 
     private async Task<Contact> ResolveContactAsync(Guid companyId, string? externalId, string? name, string? taxId)
     {

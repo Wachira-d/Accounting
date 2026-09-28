@@ -36,12 +36,15 @@ public class SettlementBatchMathTests
         };
 
     private static int _seq;
+    // รอบ 198 ทีม C (สัญญาทีม B): บรรทัดขายที่ไม่มีใบเข้าใบสรุปเฉพาะเมื่อตัวจับคู่ตัดสินว่า "ไม่มีร่องรอย" (AutoSummary) —
+    // ค่าเริ่มต้นของ helper จำลองผลของตัวจับคู่ (มีใบ = Matched · ไม่มี = AutoSummary) · เคสกำกวม/ยอดไม่ตรงอยู่ใน SettlementPostingTests
     private static SettlementLine L(SettlementLineType t, decimal amount, Guid? doc = null, decimal? vat = null,
         Guid? intent = null, string? reason = null, Guid? account = null, string? order = null)
         => new()
         {
             CompanyId = Co, Seq = ++_seq, LineType = t, Amount = amount, VatAmount = vat, MatchedDocumentId = doc,
             PaymentIntentId = intent, AdjustmentReason = reason, OverrideAccountId = account, TxnDate = Day, ExternalOrderId = order,
+            MatchStatus = doc is not null ? SettlementMatchStatus.Matched : SettlementMatchStatus.AutoSummary,
         };
 
     private static void AssertBalancedJournal(SettlementPostingPlan p)

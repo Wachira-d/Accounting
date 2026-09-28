@@ -125,17 +125,20 @@ public class SettlementRulesAndSchemaTests
     }
 
     [Fact]
-    public void FeeTax_ภพ36_ประเมินเองเฉพาะบริษัทจดVAT()
+    public void FeeTax_ภพ36_ผู้จ่ายประเมินเสมอ_จดVATเคลมได้_ไม่จดเป็นต้นทุน()
     {
         var reg = SettlementFeeTax.Compute(450m, null, SettlementFeeVatMode.ForeignPp36, true, true, SettlementFeeWhtMode.None, "2");
         Assert.Equal(SettlementFeeVatTreatment.SelfAssessedPp36, reg.VatTreatment);
         Assert.Equal(450m, reg.Expense);
         Assert.Equal(31.50m, reg.InputVat);
         Assert.Equal(31.50m, reg.Pp36Payable);
+        // รอบ 198 ทีม C (review198-A R-A4 · คำตัดสิน main agent): §83/6 หน้าที่นำส่ง ภ.พ.36 อยู่ที่ผู้จ่ายแม้ไม่จด VAT —
+        // เดิมคืน NoVat/ไม่มีหนี้ ⇒ ไม่เคยนำส่ง · ตอนนี้ตั้งหนี้ 21912 แต่ VAT เป็นต้นทุน (เคลมไม่ได้)
         var nonReg = SettlementFeeTax.Compute(450m, null, SettlementFeeVatMode.ForeignPp36, true, false, SettlementFeeWhtMode.None, "2");
-        Assert.Equal(SettlementFeeVatTreatment.NoVat, nonReg.VatTreatment);
-        Assert.Equal(0m, nonReg.Pp36Payable);
-        Assert.Equal(450m, nonReg.Expense);
+        Assert.Equal(SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable, nonReg.VatTreatment);
+        Assert.Equal(31.50m, nonReg.Pp36Payable);
+        Assert.Equal(0m, nonReg.InputVat);
+        Assert.Equal(481.50m, nonReg.Expense);
     }
 
     [Fact]

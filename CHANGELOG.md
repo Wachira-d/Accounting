@@ -3474,3 +3474,19 @@ _รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet 
   chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
 - ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
 — commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม C — **ผู้ลงบัญชีรอบโอน settlement** (`Services/Settlement/SettlementPostingService` · ตัวตัดสินบริสุทธิ์ `Helpers/SettlementPosting.cs` · DOCUMENT_FLOW §2.10):
+- `ISettlementPostingService`: `PreviewAsync` · `PostAsync` (ล็อก session ต่อช่องทาง · ใบสำคัญจ่ายค่าธรรมเนียมจากผังพัก 1 ใบ/กลุ่มภาษี · ใบขายสรุปรายวัน (ทางเข้าใหม่ · ใบกำกับ/ใบเสร็จใบเดียว เงินเข้าผังพัก · ผู้ซื้อลูกค้าเงินสด ·
+  ธง `[SETTLEMENT-SUMMARY]`) · รับชำระใบที่จับคู่เข้าผังพัก · 50 ทวิ ของ W2/W3 · JE รอบโอนผ่าน `JournalEntryBuilder` + `Posted` ในธุรกรรมเดียว) · `MatchBankTransactionAsync` (R1: รายการจริงยอดเท่ากัน →
+  `IBankService.ReconcileAsync`) · `ResolveChargebackAsync` (`PlanChargebackResolution`) · `UnpostAsync` (ยกเลิกผ่านเส้นปกติ + กลับรายการ JE · ไม่ลบแถว)
+- ไม่ใช่ธุรกรรมเดียวทั้งรอบโดยตั้งใจ (เส้นเอกสารเปิดธุรกรรมเอง · ห้ามขยาย DocumentService) ⇒ ป้ายที่บันทึกพร้อมของ (`CreatedBy`/`Payment.Notes`) ทำให้ล้มกลางทางแล้วทำต่อได้ไม่ซ้ำ ·
+  ล้ม = 409 `SETTLEMENT-POST-PARTIAL` + พรีวิว `PartialProgress`
+- แก้สัญญาทีม A ตามฝ่ายค้าน review198-A: R-A3 ยอดคืนค่าธรรมเนียมตัดสินรายบรรทัด + WHT ของใบ = ชุดเดียวกับขา 21917 · R-A4 ภ.พ.36 ผู้จ่ายไม่จด VAT ยังตั้งหนี้ 21912 (VAT เป็นต้นทุน ·
+  `SelfAssessedPp36NotClaimable` · คำตัดสิน main agent) · R-A5 ต่างประเทศ + โหมดหัก = บล็อก (ภ.ง.ด.54/DTA) และไม่คิด WHT อัตราในประเทศ · R-A6 วันใบสรุป = ปฏิทินไทย ·
+  R-A8 สกุลของช่องทางต้องเป็นบาทด้วย · ด่านของผู้ลงบัญชี R-A1 (ผังพักต้นทางของ PaymentIntent/การรับชำระ) · R-A7 (เดือนภาษีที่ยื่นแล้ว · §87 3 วันทำการ · รายได้ซ้ำ)
+- สัญญาทีม B: ใบสรุปเฉพาะบรรทัด `MatchStatus = AutoSummary` · `Unmatched` = `SaleUnmatched` · `AmountMismatch` = `SaleAmountMismatch` (บล็อก — เดิมทุกบรรทัดที่ไม่มีใบเข้าใบสรุป)
+- `Helpers/WalkInCustomerContact` (ย้ายตัวสร้าง "ลูกค้าเงินสด" ออกจาก IntegrationService — ตัวเดียว) · `ArApScope.IsReceivable` มีผู้เรียกแล้ว (ตัดจาก dead baseline)
+- checker: `required_call_site_check` +12 กติกา + ห้ามประกอบ JE ทั้งโฟลเดอร์ `Services/Settlement/**` (self-test) · `terminal_status_writer_check` สถานะ `Posted/BankMatched` เจ้าของเดียว (self-test · เข้า check_all)
+- เทสต์ `SettlementPostingTests` (23) · แก้ `SettlementRulesAndSchemaTests` ภ.พ.36 ไม่จด VAT
+- ค้าง: controller/หน้าจอ (ทีม D) · คืนเงินที่จับคู่แล้วต้องออกใบลดหนี้เอง (เหตุผล §86/10) · ใบสรุปไม่ตัดสต็อก/ต้นทุน · continuity ยอด wallet (R-A12) · shipping VAT (R-A10)
+— commit <pending>)_

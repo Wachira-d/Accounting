@@ -13,13 +13,17 @@ public enum SettlementFeeVatTreatment
     SelfAssessedPp36 = 2,
     /// <summary>บริษัทไม่จด VAT — VAT ที่ถูกเรียกเก็บรวมอยู่ในค่าใช้จ่าย ไม่มีขาภาษีซื้อ (CompanyVatStatus · report-S1 §7 ข้อ 7)</summary>
     VatNotClaimable = 3,
+    /// <summary>ผู้ให้บริการต่างประเทศ + บริษัท<b>ไม่จด VAT</b> — §83/6 ให้<b>ผู้จ่าย</b>ประเมิน VAT และนำส่ง ภ.พ.36 ไม่ว่าจะจด VAT หรือไม่
+    /// (หน้าที่อยู่ที่ผู้จ่าย · ผู้ไม่จดแค่เคลมภาษีซื้อไม่ได้) ⇒ Cr 21912 เท่า VAT ที่ประเมิน · VAT นั้นเป็น<b>ต้นทุน</b> (ไม่มีขา 11640/11610)
+    /// — คำตัดสิน main agent รอบ 198 (review198-A R-A4) · report-S1 §5 ที่เขียนว่า "โรงแรมไม่จด VAT ไม่ต้อง ภ.พ.36" ขัดถ้อยคำ §83/6</summary>
+    SelfAssessedPp36NotClaimable = 4,
 }
 
 /// <summary>ผลแยกภาษีของค่าธรรมเนียม 1 ก้อน (ยอดบวกเสมอ — เครื่องหมายเป็นเรื่องของผู้เรียก)</summary>
 /// <param name="Deducted">ยอดที่ถูกหักจาก wallet จริง (= ยอดในไฟล์ · รวม VAT ไทยถ้ามี)</param>
 /// <param name="Expense">ค่าใช้จ่ายที่ลงผังค่าธรรมเนียม — ไม่รวมภาษีซื้อที่เคลมได้ · รวม VAT ที่เคลมไม่ได้ · <b>ไม่รวม</b>ภาษีที่ออกแทน (ดู <paramref name="WhtBorneExpense"/>)</param>
 /// <param name="InputVat">ภาษีซื้อที่เคลมได้ (11630 หรือ 11640 ของ ภ.พ.36)</param>
-/// <param name="Pp36Payable">หนี้ ภ.พ.36 ที่ประเมินเอง (21912) — มีเฉพาะ <see cref="SettlementFeeVatTreatment.SelfAssessedPp36"/></param>
+/// <param name="Pp36Payable">หนี้ ภ.พ.36 ที่ประเมินเอง (21912) — มีเฉพาะ <see cref="SettlementFeeVatTreatment.SelfAssessedPp36"/> · <see cref="SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable"/></param>
 /// <param name="WhtBase">ฐานหัก ณ ที่จ่าย = ค่าบริการ<b>ก่อน VAT</b> (ท.ป.4/2528) · 0 เมื่อไม่หัก</param>
 /// <param name="WhtAmount">ภาษีหัก ณ ที่จ่ายของก้อนนี้ (ยอดบน 50 ทวิ)</param>
 /// <param name="WhtCertIncome">เงินได้ที่พิมพ์บน 50 ทวิ — ปกติ = ฐาน · ออกภาษีแทน (W3) = ฐาน + ภาษี</param>
@@ -48,8 +52,11 @@ public readonly record struct SettlementFeeTaxResult(
 /// <item><b>ฐาน WHT = ก่อน VAT</b> (G-4: เส้นเดิม gross-up จากยอดรวม VAT ⇒ ภาษีเกิน ~7% · 50 ทวิ ผิด) · อัตราจาก <see cref="ThaiWhtRateTable"/>
 /// ผู้รับเป็นนิติบุคคล</item>
 /// <item><b>ออกภาษีแทน (W3)</b>: ภาษี = round(ฐาน × r/(100−r)) → 3% = ฐาน × 3/97 · เงินได้บน 50 ทวิ = ฐาน + ภาษี</item>
-/// <item><b>บริษัทไม่จด VAT</b>: ไม่มีขาภาษีซื้อ — VAT ที่ถูกเก็บรวมเป็นค่าใช้จ่าย · ภ.พ.36 ไม่สร้าง (ผู้ให้บริการต่างประเทศที่จด e-Service
-/// เก็บ VAT ในยอดแล้ว — report-S1 §5 · ความมั่นใจกลาง รอนักบัญชียืนยัน)</item>
+/// <item><b>บริษัทไม่จด VAT</b>: ไม่มีขาภาษีซื้อ — VAT ที่ถูกเก็บรวมเป็นค่าใช้จ่าย · ผู้ให้บริการ<b>ต่างประเทศ</b>: ยังต้องประเมิน ภ.พ.36 (§83/6
+/// หน้าที่ของผู้จ่าย) แต่ VAT นั้นเป็นต้นทุน (<see cref="SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable"/> · review198-A R-A4) ·
+/// ผู้ให้บริการต่างประเทศที่จด e-Service และเก็บ VAT ไทยในยอดแล้ว ⇒ ตั้งช่องทางเป็น ThaiVat7 (ไม่ใช่ ForeignPp36)</item>
+/// <item><b>ผู้ให้บริการต่างประเทศไม่หัก WHT ด้วยอัตราในประเทศ</b> — ผู้รับเงินต่างประเทศ = §70 ภ.ง.ด.54 (ไม่ใช่ภ.ง.ด.53) · ตาราง
+/// <see cref="ThaiWhtRateTable"/> มีแต่อัตราในประเทศ และยังไม่มีตาราง DTA ⇒ คืน WHT 0 · <c>SettlementBatchMath.Plan</c> บล็อกโหมดหักของช่องทางนี้ (R-A5)</item>
 /// </list></para>
 /// </summary>
 public static class SettlementFeeTax
@@ -86,13 +93,12 @@ public static class SettlementFeeTax
         else if (vatMode == SettlementFeeVatMode.ForeignPp36)
         {
             // ผู้ให้บริการต่างประเทศไม่เก็บ VAT ไทย ⇒ ยอดที่หัก = ฐาน · เราประเมินเอง 7% ของฐาน
+            // §83/6: หน้าที่ประเมิน+นำส่งอยู่ที่ผู้จ่ายทั้งผู้จด/ไม่จด VAT — ต่างกันแค่ "เคลมภาษีซื้อได้ไหม" (R-A4)
             preVat = deducted; chargedVat = 0m;
-            if (companyVatRegistered)
-            {
-                pp36 = R(deducted * VatRate / 100m);
-                treatment = pp36 > 0m ? SettlementFeeVatTreatment.SelfAssessedPp36 : SettlementFeeVatTreatment.NoVat;
-            }
-            else treatment = SettlementFeeVatTreatment.NoVat;
+            pp36 = R(deducted * VatRate / 100m);
+            treatment = pp36 <= 0m ? SettlementFeeVatTreatment.NoVat
+                : companyVatRegistered ? SettlementFeeVatTreatment.SelfAssessedPp36
+                : SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable;
         }
         else
         {
@@ -110,10 +116,16 @@ public static class SettlementFeeTax
             SettlementFeeVatTreatment.SelfAssessedPp36 => pp36,
             _ => 0m,
         };
-        var expense = treatment == SettlementFeeVatTreatment.VatNotClaimable ? deducted : preVat;
+        var expense = treatment switch
+        {
+            SettlementFeeVatTreatment.VatNotClaimable => deducted,
+            // VAT ที่ประเมินเองแต่เคลมไม่ได้ = ต้นทุนเพิ่มจากยอดที่ถูกหัก (ยอดที่หักจาก wallet ยังเท่าเดิม — ส่วน VAT จ่ายสรรพากรผ่าน 21912)
+            SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable => deducted + pp36,
+            _ => preVat,
+        };
 
-        // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคล) ──
-        var rate = whtMode == SettlementFeeWhtMode.None ? 0m
+        // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคลไทย) · ต่างประเทศ = ไม่ใช้อัตราในประเทศ (R-A5) ──
+        var rate = whtMode == SettlementFeeWhtMode.None || vatMode == SettlementFeeVatMode.ForeignPp36 ? 0m
             : ThaiWhtRateTable.RateFor(whtIncomeCode, payeeIsJuristic: true) ?? 0m;
         decimal whtBase = 0m, wht = 0m, certIncome = 0m, borne = 0m;
         if (rate > 0m && preVat > 0m)

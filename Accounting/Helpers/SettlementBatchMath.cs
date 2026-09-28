@@ -23,6 +23,38 @@ public enum SettlementPlanIssueCode
     CurrencyNotSupported = 11,
     RevenueModelNotSupported = 12,
     BankAccountMissing = 13,
+    /// <summary>ผู้ให้บริการต่างประเทศ + โหมดหัก ณ ที่จ่าย — ต้องเป็น ภ.ง.ด.54 (§70 · อัตราตามอนุสัญญาภาษีซ้อน) ไม่ใช่อัตราในประเทศ/ภ.ง.ด.53
+    /// (review198-A R-A5) · ระบบยังไม่มีตาราง DTA</summary>
+    ForeignWhtNotSupported = 14,
+    /// <summary>บรรทัดขายที่ไม่มีใบขายและตัวจับคู่<b>ไม่ได้</b>ตัดสินว่า "ไม่มีร่องรอยที่ไหน" (<c>MatchStatus != AutoSummary</c> — ผู้สมัครกำกวม ·
+    /// มีใบเสร็จ/การจองที่อาจเป็นออเดอร์เดียวกัน) — ออกใบสรุปทับ = รายได้ซ้ำ (สัญญาทีม B · รอบ 198)</summary>
+    SaleUnmatched = 15,
+    /// <summary>บรรทัดขาย/คืนเงินจับคู่ใบได้แต่ยอดไม่ตรงใบ (<c>MatchStatus == AmountMismatch</c>) — ต้องให้คนยืนยันก่อน</summary>
+    SaleAmountMismatch = 16,
+
+    // ── ด่านของผู้ลงบัญชี (ทีม C: Helpers/SettlementPosting.SettlementPostingGate — ต้องรู้ข้อมูลในฐาน) ──
+    /// <summary>วันที่ของ JE รอบโอน/เอกสารที่จะสร้าง อยู่ในงวดบัญชีที่ปิดแล้ว</summary>
+    PeriodClosed = 20,
+    /// <summary>เดือนภาษีของใบขายสรุป (ภ.พ.30) หรือของ WHT (ภ.ง.ด.53) ถูกประกาศว่ายื่นแล้ว (TaxFilingLockPolicy)</summary>
+    TaxPeriodFiled = 21,
+    /// <summary>หาผังบัญชีของบทบาทหนึ่งไม่เจอ / ผังที่ตั้งไว้ไม่ใช่ของบริษัทนี้หรือถูกปิดใช้</summary>
+    AccountUnresolved = 22,
+    /// <summary>ช่องทางยังไม่ผูกผู้ติดต่อของแพลตฟอร์ม (ผู้รับเงินค่าธรรมเนียม) หรือผู้ติดต่อไม่มีเลขผู้เสียภาษี (§65 ตรี (18))</summary>
+    CounterpartyMissing = 23,
+    /// <summary>คืนเงินที่จับคู่ใบเดิมได้แล้ว แต่ใบลดหนี้ต้องให้คนเลือกเหตุผล §86/10 (คืนสินค้า = คืนสต็อก / ปรับราคา) — ทำมือแล้วผูกบรรทัด</summary>
+    RefundNeedsCreditNote = 24,
+    /// <summary>ใบขายที่จับคู่ไว้รับชำระไม่ได้ (ไม่พบ · คนละบริษัท · ไม่ใช่ใบตั้งลูกหนี้ · สถานะ · ยอดค้างน้อยกว่ายอดโอน)</summary>
+    ReceiptDocumentNotPayable = 25,
+    /// <summary>บรรทัดที่อ้าง PaymentIntent/การรับชำระ ไม่ได้ลงไว้ที่ผังพักของช่องทางนี้ หรือถูกล้างไปแล้วด้วยเส้นอื่น (review198-A R-A1)</summary>
+    ClearingSourceMismatch = 26,
+    /// <summary>ผู้กดลงบัญชีไม่มีสิทธิ์อนุมัติเอกสารชนิดที่ระบบจะสร้าง</summary>
+    PermissionDenied = 27,
+    /// <summary>ออเดอร์/วันเดียวกันของแพลตฟอร์มนี้มีเอกสารขายอยู่แล้ว — ออกใบสรุปซ้ำ = รายได้และภาษีขายซ้ำ (review198-A R-A7)</summary>
+    SummarySaleDuplicate = 28,
+    /// <summary>รอบโอนนี้ยกเลิกแล้ว / ลงบัญชีแล้ว</summary>
+    StatusNotPostable = 29,
+    /// <summary>เอกสารจากการลงบัญชีครั้งก่อน (ค้างครึ่งทาง) ไม่อยู่ในแผนปัจจุบัน — บรรทัดถูกแก้ระหว่างนั้น ต้องยกเลิกเอกสารนั้นก่อน</summary>
+    StaleDocument = 30,
 
     // ── แจ้งให้ทราบ (ไม่บล็อก) ──
     /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>
@@ -31,6 +63,10 @@ public enum SettlementPlanIssueCode
     SummarySaleCreated = 51,
     /// <summary>แพลตฟอร์มเป็นตัวแทนหัก ณ ที่จ่าย — เก็บ 50 ทวิ แต่ห้ามนับเข้ายอดที่เรายื่นเอง</summary>
     WhtFiledByAgent = 52,
+    /// <summary>ใบขายสรุปลงวันที่เกิน 3 วันทำการก่อนวันนี้ — รายงานภาษีขาย §87 ต้องลงภายใน 3 วันทำการ (review198-A R-A7)</summary>
+    SummarySaleLate = 53,
+    /// <summary>ลงบัญชีครั้งก่อนค้างครึ่งทาง — มีเอกสาร/การรับชำระที่สร้างไว้แล้ว กดลงบัญชีอีกครั้งจะทำต่อจากขั้นที่ค้าง (ไม่สร้างซ้ำ)</summary>
+    PartialProgress = 54,
 }
 
 /// <summary>ปัญหา 1 ข้อของแผน</summary>
@@ -175,15 +211,28 @@ public static class SettlementBatchMath
                 Array.Empty<Guid>(), diff));
 
         // ── 2. ด่านระดับช่องทาง/รอบโอน ──
-        if (!string.Equals((batch.Currency ?? "THB").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
+        // R-A8 (review198-A): ต้องดูทั้งสกุลของรอบโอน**และ**ของช่องทาง — ช่องทาง USD ที่ adapter ไม่ได้ตั้งสกุลของรอบโอน (ค่าเริ่มต้น THB)
+        // เคยผ่านด่าน แล้วลง Dr ธนาคาร 1,000 "บาท" จากเงิน 1,000 ดอลลาร์
+        var batchCcy = (batch.Currency ?? "THB").Trim();
+        var channelCcy = (channel.Currency ?? "THB").Trim();
+        if (!string.Equals(batchCcy, "THB", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(channelCcy, "THB", StringComparison.OrdinalIgnoreCase))
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.CurrencyNotSupported, true,
-                $"รอบโอนสกุล {batch.Currency} — เฟส 1 รองรับเฉพาะเงินบาท",
+                $"รอบโอนสกุล {batchCcy} · ช่องทางสกุล {channelCcy} — เฟส 1 รองรับเฉพาะเงินบาททั้งสองฝั่ง",
                 "ลงบัญชีรอบนี้ด้วยมือ (สมุดรายวันทั่วไป) ไปก่อน — สกุลต่างประเทศ/อัตราแลกเปลี่ยนอยู่ในเฟส OTA",
                 Array.Empty<Guid>(), null));
         if (channel.RevenueModel == SettlementRevenueModel.NetRate)
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RevenueModelNotSupported, true,
                 "ช่องทางนี้ตั้งเป็น \"รายได้สุทธิ (ขายต่อให้แพลตฟอร์ม)\" — เฟส 1 รองรับเฉพาะรายได้เต็มจำนวน + ค่าธรรมเนียมเป็นค่าใช้จ่าย",
                 "ถ้าสัญญาเป็นแบบแพลตฟอร์มเก็บเงินแทน ให้เปลี่ยนเป็น \"รายได้เต็มจำนวน\" ในหน้าตั้งค่าช่องทาง · ถ้าเป็นแบบขายต่อจริง ลงบัญชีด้วยมือไปก่อน",
+                Array.Empty<Guid>(), null));
+        if (channel.FeeVatMode == SettlementFeeVatMode.ForeignPp36 && channel.FeeWhtMode != SettlementFeeWhtMode.None
+            && lines.Any(l => l.Amount != 0m && SettlementLineTypeRules.For(l.LineType) is { IsFee: true, WhtIncomeCode: not null }))
+            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ForeignWhtNotSupported, true,
+                $"ช่องทาง \"{channel.DisplayName}\" เป็นผู้ให้บริการต่างประเทศแต่ตั้งโหมดหัก ณ ที่จ่ายไว้ — ผู้รับเงินต่างประเทศต้องหักตาม §70 "
+                + "ยื่น ภ.ง.ด.54 (ทั่วไป 15% หรืออัตราตามอนุสัญญาภาษีซ้อน + หนังสือรับรองถิ่นที่อยู่) ไม่ใช่อัตราในประเทศ/ภ.ง.ด.53 · ระบบยังไม่มีตาราง DTA",
+                "ถ้าค่าธรรมเนียมเป็นกำไรธุรกิจของผู้ให้บริการที่ไม่มีสถานประกอบการถาวรในไทย (มีหนังสือรับรองถิ่นที่อยู่) ให้ตั้งโหมดหัก ณ ที่จ่ายเป็น \"ไม่หัก\" "
+                + "ในหน้าตั้งค่าช่องทาง · ถ้าต้องหักจริง บันทึกใบสำคัญจ่ายบริการต่างประเทศด้วยมือ (ติ๊ก ภ.พ.36 + หัก ภ.ง.ด.54) ไปก่อน",
                 Array.Empty<Guid>(), null));
         if (channel.ClearingAccountId is null)
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ClearingAccountMissing, true,
@@ -271,7 +320,23 @@ public static class SettlementBatchMath
             }
         }
 
-        // ── 4. ขาขาย: จับคู่ได้ ⇒ รับชำระต่อใบ · จับไม่ได้ ⇒ ใบขายสรุปรายวัน ──
+        // ── 4. ขาขาย: จับคู่ได้ ⇒ รับชำระต่อใบ · ตัวจับคู่ยืนยันว่าไม่มีร่องรอย (AutoSummary) ⇒ ใบขายสรุปรายวัน ·
+        //       ยอดไม่ตรง/กำกวม ⇒ บล็อกให้คนตัดสิน (สัญญาทีม B: เดิมทุกบรรทัดที่ไม่มีใบเข้าใบสรุป ⇒ ออเดอร์ที่มีใบเสร็จ/ผู้สมัครกำกวม = รายได้ซ้ำ) ──
+        var mismatched = sale.Concat(refunds).Where(l => l.MatchStatus == SettlementMatchStatus.AmountMismatch).ToList();
+        if (mismatched.Count > 0)
+            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SaleAmountMismatch, true,
+                $"บรรทัดขาย/คืนเงิน {mismatched.Count} บรรทัด ยอด {mismatched.Sum(l => l.Amount):N2} จับคู่ใบได้แต่ยอดไม่ตรงใบ",
+                "เปิดบรรทัดเหล่านั้นแล้วยืนยันการจับคู่ (ยอดต่างเพราะอะไร) หรือเลือกใบที่ถูก — ระบบไม่รับชำระ/ออกใบสรุปให้จนกว่าจะยืนยัน",
+                mismatched.Select(l => l.Id).ToList(), mismatched.Sum(l => l.Amount)));
+        sale = sale.Where(l => l.MatchStatus != SettlementMatchStatus.AmountMismatch).ToList();
+        refunds = refunds.Where(l => l.MatchStatus != SettlementMatchStatus.AmountMismatch).ToList();
+        var unresolved = sale.Where(l => l.MatchedDocumentId is null && l.MatchStatus != SettlementMatchStatus.AutoSummary).ToList();
+        if (unresolved.Count > 0)
+            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SaleUnmatched, true,
+                $"บรรทัดขาย {unresolved.Count} บรรทัด ยอด {unresolved.Sum(l => l.Amount):N2} ยังไม่ได้ข้อยุติว่าเป็นของใบขายไหน "
+                + "(ผู้สมัครกำกวม หรือมีใบเสร็จ/การจองที่อาจเป็นออเดอร์เดียวกัน)",
+                "เลือกใบขายให้บรรทัดเหล่านั้น หรือยืนยันว่า \"ไม่มีเอกสารขาย — ออกใบขายสรุปรายวัน\" (ห้ามให้ระบบเดา — ออกซ้ำ = รายได้และภาษีขายซ้ำ)",
+                unresolved.Select(l => l.Id).ToList(), unresolved.Sum(l => l.Amount)));
         var receipts = new List<SettlementReceiptPlan>();
         foreach (var g in sale.Where(l => l.MatchedDocumentId is not null).GroupBy(l => l.MatchedDocumentId!.Value))
         {
@@ -287,8 +352,10 @@ public static class SettlementBatchMath
             receipts.Add(new SettlementReceiptPlan(g.Key, amt, g.Select(l => l.Id).ToList()));
         }
         var summaries = new List<SettlementSummarySalePlan>();
-        foreach (var g in sale.Where(l => l.MatchedDocumentId is null)
-                     .GroupBy(l => (l.TxnDate ?? batch.PayoutDate).Date).OrderBy(g => g.Key))
+        foreach (var g in sale.Where(l => l.MatchedDocumentId is null && l.MatchStatus == SettlementMatchStatus.AutoSummary)
+                     // R-A6 (review198-A): วันตามปฏิทินไทย ไม่ใช่ .Date ของ UTC — ขายตี 1 วันที่ 1 ต.ค. (= 30 ก.ย. 18:00Z) ต้องอยู่ ต.ค.
+                     // (เดือนภาษี ภ.พ.30) · ค่าที่ adapter เก็บเป็น "วันไทย 00:00 UTC" อยู่แล้วได้วันเดิม
+                     .GroupBy(l => ThaiDate.CalendarDateUtc(l.TxnDate ?? batch.PayoutDate)).OrderBy(g => g.Key))
         {
             var gross = g.Sum(l => l.Amount);
             if (gross <= 0m)
@@ -329,6 +396,19 @@ public static class SettlementBatchMath
         foreach (var g in feeLines.GroupBy(f => f.VatTreatment).OrderBy(g => g.Key))
         {
             var docLines = g.Select(f => f.Line).ToList();
+            // R-A3 (review198-A): ยอดคืนต้องตัดสิน**รายบรรทัดของใบ** (ประเภท+ผัง) ไม่ใช่รวมทั้งกลุ่มภาษี — ค่าคอม −1,070 + คืนค่าโฆษณา +535
+            // เคยผ่าน (กลุ่มสุทธิ 535) แล้วได้บรรทัดติดลบบนเอกสารซื้อ + 50 ทวิ 20.73 แต่ 21917 30.93 (ขา WHT นับเฉพาะบรรทัดบวก)
+            var refundLines = docLines.Where(x => x.Deducted < 0m || x.WhtAmount < 0m).ToList();
+            if (refundLines.Count > 0)
+            {
+                foreach (var x in refundLines)
+                    issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.FeeGroupNetRefund, true,
+                        $"{x.LabelTh} รอบนี้สุทธิเป็นยอดคืน {-x.Deducted:N2} (แพลตฟอร์มคืนค่าธรรมเนียมมากกว่าที่เก็บ)",
+                        "บันทึกใบลดหนี้ค่าธรรมเนียมที่ได้รับจากแพลตฟอร์ม (อ้างใบค่าธรรมเนียมเดิม) แล้วเปลี่ยนประเภทบรรทัดคืนเงินนั้นเป็น "
+                        + "\"ปรับปรุงอื่น\" ที่ชี้ผังของใบลดหนี้ — ระบบยังไม่สร้างใบลดหนี้ค่าธรรมเนียมให้อัตโนมัติ",
+                        x.LineIds, x.Deducted));
+                continue;
+            }
             var deducted = docLines.Sum(x => x.Deducted);
             if (deducted <= 0m)
             {
@@ -339,10 +419,11 @@ public static class SettlementBatchMath
                         docLines.SelectMany(x => x.LineIds).ToList(), deducted));
                 continue;
             }
-            var whtMode = docLines.Any(x => x.WhtAmount != 0m) ? channel.FeeWhtMode : SettlementFeeWhtMode.None;
+            // ยอด WHT ของใบ = ชุดบรรทัดเดียวกับที่ AddWhtLegs ลง 21917 (บรรทัดบวก) — 50 ทวิ กับ JE ต้องเท่ากันเสมอ (R-A3)
+            var whtMode = docLines.Any(x => x.WhtAmount > 0m) ? channel.FeeWhtMode : SettlementFeeWhtMode.None;
             feeDocs.Add(new SettlementFeeDocumentPlan(g.Key, whtMode, deducted,
                 docLines.Sum(x => x.Expense), docLines.Sum(x => x.InputVat), docLines.Sum(x => x.Pp36Payable),
-                docLines.Sum(x => x.WhtAmount), docLines));
+                docLines.Where(x => x.WhtAmount > 0m).Sum(x => x.WhtAmount), docLines));
             AddWhtLegs(whtJournal, whtMode, docLines, reference);
         }
         if (feeDocs.Any(d => d.WhtMode == SettlementFeeWhtMode.AgentWithholds))

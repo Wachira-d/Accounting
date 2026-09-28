@@ -171,8 +171,8 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | Entity / ผัง | ไฟล์ | สถานะ |
 | --- | --- | --- |
 | `SettlementChannel` (ต่อบริษัท · 1 แถว/แพลตฟอร์ม/บัญชีร้าน) | `Models/Entities/Settlement.cs` | ✅ ตาราง+migration · ผังพัก `ClearingAccountId` · reserve/dispute · `FeeAccountMapJson` (คีย์ = `SettlementAccountRoles.Mappable` · อ่านด้วย `SettlementLineTypeRules.ParseFeeAccountMap`) · โหมด VAT/WHT/รายได้ ต่อช่องทาง · 🔨 หน้าตั้งค่า (ทีม D) |
-| `SettlementBatch` / `SettlementLine` | `Models/Entities/Settlement.cs` | ✅ ตาราง · unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง (WHERE IsDeleted = false — ยกเลิกแล้วนำเข้าใหม่ต้องลบแถวเดิม) · 🔨 นำเข้า (ทีม B) · ลงบัญชี (ทีม C) |
-| `PaymentIntent.SettlementBatchId` | `Models/Entities/Payments.cs` | ✅ คอลัมน์ · 🔨 ผู้เขียน (เฟส 2) |
+| `SettlementBatch` / `SettlementLine` | `Models/Entities/Settlement.cs` | ✅ ตาราง · unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง (WHERE IsDeleted = false — ยกเลิกแล้วนำเข้าใหม่ต้องลบแถวเดิม) · ✅ ลงบัญชี/ยกเลิก/จับคู่ธนาคาร/chargeback `ISettlementPostingService` (ทีม C · DOCUMENT_FLOW §2.10 · ยังไม่มี controller) · สถานะ `Posted`/`BankMatched` ประทับได้เฉพาะผู้ลงบัญชี · 🔨 นำเข้า (ทีม B) |
+| `PaymentIntent.SettlementBatchId` | `Models/Entities/Payments.cs` | ✅ คอลัมน์ · ✅ ผู้นำเข้า (ทีม B) ผูกตอนนำเข้า · ผู้ลงบัญชีรอบโอนยืนยันตอนลงบัญชี (ยกเลิกการลงบัญชีไม่ปล่อยคืน — บรรทัดยังอ้าง intent) · ด่านกัน intent ที่ถูกล้างด้วยรอบโอน gateway เดิม/อีก batch หรือลงคนละผังพัก (review198-A R-A1) · 🔨 ตัวสร้าง batch จาก PaymentIntent (เฟส 2) |
 | ผังพักย่อยต่อช่องทาง **11341–11349** "ลูกหนี้แพลตฟอร์ม {ชื่อ}" | `Helpers/SettlementChannelAccounts.cs` | ✅ helper (DECISIONS ข้อ 4) · ไม่ seed · สร้างตอนผูกช่องทาง · gateway ในระบบใช้ 11340 ของ `PaymentProviderConfig` · ครบ 9 ⇒ ล้มดัง |
 | ผังมาตรฐานใหม่ 11350 · 53170 · 57140 | `Services/ChartOfAccountTemplates.cs` · `Helpers/SettlementChartSeed.cs` | ✅ บริษัทใหม่ได้จาก seed · บริษัทเดิมได้จาก migration (มีกลุ่มแม่ 113/531/571 เท่านั้น · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) |
 
@@ -799,7 +799,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
+_Last verified against codebase: 2026-09-28 (rev 32 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit <pending>)_
 

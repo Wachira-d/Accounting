@@ -1342,8 +1342,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 2.10 Settlement — เงินพักใน wallet ของ gateway/marketplace → โอนเข้าธนาคาร 🔨 รอบ 198 (เฟส 1 · แกนข้อมูล+คณิต ทีม A)
 
 > ที่มา/คำตัดสิน: `erp-review/2026-09-25/settlement/` (`DECISIONS.md` · `report-S1.md` JE ที่ถูก · `report-S2.md` §3 สถาปัตยกรรม) ·
-> **สถานะ**: สัญญา (enum · entity · ตาราง · migration · ผัง · helper คณิต) ✅ · นำเข้า (ทีม B) · ลงบัญชี (ทีม C) · หน้าจอ (ทีม D) 🔨 ยังไม่มีผู้เรียก ·
-> เส้น gateway เดิม (`GatewaySettlementService/Math`) ยังเป็นเส้นที่ใช้งานจริงจนเฟส 2
+> **สถานะ**: สัญญา (enum · entity · ตาราง · migration · ผัง · helper คณิต) ✅ · ลงบัญชี (ทีม C — `ISettlementPostingService`) ✅ บริการ+DI (ยังไม่มี controller) ·
+> นำเข้า (ทีม B) · หน้าจอ/controller (ทีม D) 🔨 · เส้น gateway เดิม (`GatewaySettlementService/Math`) ยังเป็นเส้นที่ใช้งานจริงจนเฟส 2
 
 **หน่วยความจริง = รอบโอน 1 รอบของผู้ให้บริการ** (`SettlementBatch`) · ยอดเข้าธนาคารจริง `NetPayout` เป็นตัวตั้ง · บรรทัด (`SettlementLine`) มีเครื่องหมายมุม wallet
 (บวก = ค้างเราเพิ่ม · ลบ = ถูกหัก) · สมการ **Σ บรรทัด = NetPayout + (ClosingWalletBalance − OpeningWalletBalance) ±0.01** ไม่ลงตัว = ปัญหาที่บล็อก
@@ -1359,19 +1359,46 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 | แผนลงบัญชี | `Helpers/SettlementBatchMath.Plan(batch, lines, channel, companyVatRegistered)` | คืน `SettlementPostingPlan` — ไม่แตะฐานข้อมูล |
 | ผังพักย่อย | `Helpers/SettlementChannelAccounts.EnsureClearingAccountAsync` | 11341–11349 "ลูกหนี้แพลตฟอร์ม {ชื่อช่องทาง}" ใต้ 113 · idempotent · gateway ที่ผูก `PaymentProviderConfig` ใช้ผังพักของ config (11340) · ครบ 9 / ไม่มี 113 / ผังที่ผูกถูกปิด ⇒ ล้มดังพร้อมทางไปต่อ |
 
-**เส้นลงบัญชีที่แผนกำหนด** (report-S1 §2–§4 · ผู้ลงบัญชีจริง = ทีม C ผ่าน `JournalEntryBuilder` (ด่านงวด) + `IDocumentService` ในธุรกรรมเดียว):
+**เส้นลงบัญชีที่แผนกำหนด** (report-S1 §2–§4 · ผู้ลงบัญชีจริง = `Services/Settlement/SettlementPostingService` — ดู "ผู้ลงบัญชี" ข้างล่าง):
 1. **ขาขาย** (`Sale` + `SellerVoucher` ลดยอด + `PlatformVoucherSubsidy` เป็นยอดขาย/ฐาน VAT): จับคู่ใบขายได้ ⇒ รับชำระ 1 ครั้งต่อใบ เงินเข้า = ผังพัก ·
-   จับไม่ได้ ⇒ **ใบขายสรุปรายวัน** 1 ใบ/วัน/ช่องทาง (DECISIONS ข้อ 2–3) + ป้าย `SummarySaleCreated` ให้ตรวจรายได้ซ้ำ · มี `PaymentIntentId`/`PaymentId` ⇒ อยู่ในผังพักแล้ว ไม่ลงซ้ำ
+   ตัวจับคู่ (ทีม B) ยืนยันว่าไม่มีร่องรอย (`MatchStatus = AutoSummary`) ⇒ **ใบขายสรุปรายวัน** 1 ใบ/วัน/ช่องทาง (DECISIONS ข้อ 2–3) + ป้าย `SummarySaleCreated` ให้ตรวจรายได้ซ้ำ ·
+   ไม่มีใบแต่ยังกำกวม (`Unmatched` — ผู้สมัครหลายใบ/มีใบเสร็จ/การจอง) ⇒ บล็อก `SaleUnmatched` · ยอดไม่ตรงใบ (`AmountMismatch`) ⇒ บล็อก `SaleAmountMismatch` (รอบ 198 ทีม C ·
+   เดิมทุกบรรทัดที่ไม่มีใบเข้าใบสรุป = รายได้ซ้ำ) · มี `PaymentIntentId`/`PaymentId` ⇒ อยู่ในผังพักแล้ว ไม่ลงซ้ำ (ผู้ลงบัญชีตรวจว่าอยู่ผังเดียวกันจริง)
 2. **คืนเงิน** ⇒ ใบลดหนี้อ้างใบเดิม + จ่ายคืนจากผังพัก · ไม่รู้ใบเดิม ⇒ บล็อก (§86/10)
-3. **ค่าธรรมเนียม** ⇒ **เอกสารซื้อ 1 ใบ/batch/กลุ่มภาษี** (`InputVatPending` 11630 · `SelfAssessedPp36` 11640/21912 · `VatNotClaimable` · `NoVat`) จ่ายเต็มจากผังพัก ·
+3. **ค่าธรรมเนียม** ⇒ **เอกสารซื้อ 1 ใบ/batch/กลุ่มภาษี** (`InputVatPending` · `SelfAssessedPp36` 11640/21912 · `SelfAssessedPp36NotClaimable` 21912 + VAT เป็นต้นทุน ·
+   `VatNotClaimable` · `NoVat`) จ่ายเต็มจากผังพัก · (ภาษีซื้อไทยลงบัญชีผ่านด่าน §86/4 ของเอกสาร = 11640 จนเติมใบกำกับรายเดือน — ไม่ใช่ 11630 ตามชื่อ treatment) ·
    ผังตามบทบาท: ค่าคอม 53140 · ค่าธรรมเนียมรับชำระ **53170** · ขนส่ง 53130 · โฆษณา 53120 · ค่าบริการ 53150 · ถอนเงิน 54710 (ทับได้ด้วย `FeeAccountMapJson`) ·
-   สุทธิเป็นยอดคืน ⇒ บล็อก (ต้องมีใบลดหนี้ค่าธรรมเนียม)
+   สุทธิเป็นยอดคืน**รายบรรทัดของใบ (ประเภท+ผัง)** ⇒ บล็อก (ต้องมีใบลดหนี้ค่าธรรมเนียม · R-A3: เดิมดูรวมทั้งกลุ่มภาษี ⇒ บรรทัดติดลบ + 50 ทวิ ≠ 21917)
 4. **WHT บนค่าธรรมเนียม** (ค่าเริ่มต้น None): ตัวแทนหัก ⇒ เก็บ 50 ทวิ ไม่นับเข้ายอดที่เรายื่น · หักเองได้คืน ⇒ Dr 11320 / Cr 21917 · ออกภาษีแทน ⇒ Dr ผังค่าธรรมเนียม / Cr 21917 —
-   ขา WHT อยู่ใน JE รอบโอน **ห้ามหักซ้ำตอนจ่ายใบค่าธรรมเนียม**
+   ขา WHT อยู่ใน JE รอบโอน **ห้ามหักซ้ำตอนจ่ายใบค่าธรรมเนียม** · ยอด WHT ของใบ = ชุดบรรทัดเดียวกับขา 21917 (บรรทัดบวก) ·
+   **ผู้ให้บริการต่างประเทศ (`ForeignPp36`) + โหมดหัก ⇒ บล็อก `ForeignWhtNotSupported`** (§70 ภ.ง.ด.54 · ยังไม่มีตาราง DTA · R-A5) · `SettlementFeeTax` ไม่คิด WHT อัตราในประเทศให้ต่างประเทศ
 5. **JE รอบโอน**: Dr ธนาคาร NetPayout / Cr ผังพัก · reserve (11350) · chargeback เปิด (11320 → แพ้ 57140 ผ่าน `PlanChargebackResolution` · ชนะ = `ChargebackReversal`) ·
    ภาษีถูกหักโดยแพลตฟอร์ม (11910) · FX (43050/54950) · ค่าขนส่งที่แพลตฟอร์มช่วย (ลด 53130) · Adjustment (ผังที่ผู้ใช้เลือก)
 6. ยอด wallet ปลายรอบติดลบ ⇒ แจ้ง (ไม่บล็อก) — ยกไปหักรอบถัดไป
-7. **ยังไม่รองรับ (บล็อกพร้อมทางไปต่อ)**: สกุลเงินต่างประเทศ · `NetRate` (OTA ขายต่อ — เฟส 4)
+7. **ยังไม่รองรับ (บล็อกพร้อมทางไปต่อ)**: สกุลเงินต่างประเทศ — **ทั้งของรอบโอนและของช่องทาง** (R-A8) · `NetRate` (OTA ขายต่อ — เฟส 4)
+8. **ภ.พ.36 (§83/6)**: ผู้จ่ายประเมิน+นำส่งเสมอ ไม่ว่าจด VAT หรือไม่ (คำตัดสิน main agent · R-A4) — จด VAT: Dr 11640 / Cr 21912 (เคลมหลังนำส่ง) ·
+   ไม่จด VAT: Cr 21912 + VAT เป็นต้นทุน (`SelfAssessedPp36NotClaimable`) · ผู้ให้บริการต่างประเทศที่จด e-Service เก็บ VAT ไทยแล้ว ⇒ ตั้งช่องทางเป็น `ThaiVat7`
+9. **วันของใบขายสรุป** = วันตามปฏิทินไทยของ `TxnDate` (`ThaiDate.CalendarDateUtc` · R-A6 — เดิม `.Date` ของ UTC ⇒ ขายตี 1–7 ของวันที่ 1 ตกเดือนก่อน)
+
+**ผู้ลงบัญชี — `ISettlementPostingService`** (`Services/Settlement/SettlementPostingService.cs` · ตัวตัดสินบริสุทธิ์ `Helpers/SettlementPosting.cs` · รอบ 198 ทีม C):
+
+| ขั้น | ทำอะไร (ผ่านเส้นไหน) | JE ที่เกิด |
+| --- | --- | --- |
+| พรีวิว `PreviewAsync(co, batch, user)` | `SettlementBatchMath.Plan` → `SettlementAccountResolver.Resolve` (ผังของบริษัทนี้เท่านั้น — id ของบริษัทอื่นใน `FeeAccountMapJson`/บรรทัด = `AccountUnresolved` ไม่ถอยไปผังมาตรฐาน) → `SettlementPostingGate.Evaluate` | — |
+| ด่านของผู้ลงบัญชี | งวดปิด (วันรอบโอน · วันใบสรุป) · เดือน ภ.พ.30/ภ.ง.ด.53 ที่ยื่นแล้ว (`TaxFilingLockPolicy`) · ใบสรุปช้ากว่า 3 วันทำการ §87 (เตือน) · ผู้ติดต่อแพลตฟอร์ม+เลขภาษี (§65 ตรี (18)) · คืนเงินที่จับคู่แล้ว = `RefundNeedsCreditNote` (ใบลดหนี้ต้องให้คนเลือกเหตุผล §86/10 — ทางไปต่อ: ออกใบลดหนี้+จ่ายคืนจากผังพักเอง แล้วผูกบรรทัด) · ใบขายที่จะรับชำระ (พบ/ตั้งลูกหนี้/สถานะ/ยอดค้าง) · บรรทัดที่นับว่าอยู่ในผังพักแล้วต้องลงผังเดียวกันจริง (`IGatewayAccountResolver.ResolveMoneyInAccountAsync` · ไม่ถูกล้างด้วยรอบโอน gateway เดิม/อีก batch · R-A1) · รายได้ซ้ำ (ใบสรุปวันเดียวกันของช่องทางจากรอบอื่น · ออเดอร์ลงแล้วในรอบอื่น · ออเดอร์มีเอกสารขายที่ `Reference` = เลขออเดอร์ · R-A7) · สิทธิ์อนุมัติ (`DocumentPermissionHelper.CanApproveAsync` PV + ใบกำกับ/ใบเสร็จ) | — |
+| ลงบัญชี `PostAsync(co, batch, user)` | ล็อก session ต่อช่องทาง (`JobLock` · scope `settle-post`) · `CanPost` เท็จ = ไม่แตะอะไร · ลงแล้วกดซ้ำ = คืนผลเดิม | — |
+| 1 ใบค่าธรรมเนียม ×กลุ่มภาษี | `SettlementDocumentBuilder.FeeDocument` → **ใบสำคัญจ่าย (เงินสด) จ่ายจากผังพัก** (`PaymentAccountId` = ผังพัก · VAT ตามตัวเลขแผน `VatAmountOverride` · WHT บนใบ = 0 · ต่างประเทศ `IsForeignService`) → `CreateDocumentAsync` (อนุมัติอัตโนมัติตามเส้น PV เงินสดเดิม) / `ApproveDocumentAsync(…, SystemWorkflow)` · W2/W3 ⇒ 50 ทวิ `IWithholdingTaxCertService.CreateAsync+IssueAsync` (ยอด = ขา 21917 · W1 ตัวแทนหักไม่ออก) | Dr ค่าธรรมเนียม(53140/53170/…) + Dr 11640 (ไทย: รอใบกำกับรายเดือน · ต่างประเทศจด VAT: รอนำส่ง ภ.พ.36) / Cr ผังพัก · ต่างประเทศ + Cr 21912 · ไม่จด VAT: VAT เข้าค่าใช้จ่าย |
+| 2 ใบขายสรุปรายวัน ×วัน | `SettlementDocumentBuilder.SummaryDocument` → จด VAT: **ใบกำกับภาษี/ใบเสร็จรับเงินใบเดียว** (`IssuedAsCashReceipt` · เงินเข้า = ผังพัก · `DeliveryDate` = วันขาย) · ไม่จด VAT: ใบเสร็จรับเงิน · ผู้ซื้อ = `WalkInCustomerContact` (ไม่ประทับ `BuyerDeclinedTaxInvoice`) · ธง `[SETTLEMENT-SUMMARY]` ใน InternalNotes + เลขออเดอร์ · อนุมัติในนามผู้กด | Dr ผังพัก / Cr รายได้ 41000 + Cr 21911 (ไม่ตัดสต็อก/ต้นทุน — ไฟล์รอบโอนไม่มีรายการสินค้า) |
+| 3 รับชำระใบขายที่จับคู่ได้ | `SettlementDocumentBuilder.ReceiptPayment` → `CreatePaymentAsync` (`OverridePaymentAccountId` = ผังพัก · ป้าย `[SETTLEMENT:{batch}]` ใน Notes · ใบเสร็จตามค่าตั้งเดิม) | Dr ผังพัก / Cr ลูกหนี้ |
+| 4 ปิดรอบ (ธุรกรรมเดียว · `FOR UPDATE` แถวรอบโอน) | JE รอบโอนผ่าน `JournalEntryBuilder` (RV เงินเข้า · PV เงินออก · JV ไม่มีเงิน) · `Status = Posted` · `PayoutJournalEntryId` · `FeeDocumentIdsJson` · บรรทัดใบสรุป = `AutoSummary` · `PaymentIntent.SettlementBatchId` · audit `settlement-post` (hash chain) | Dr ธนาคาร / Cr ผังพัก + ขาตรง (reserve 11350 · chargeback 11320 · ภาษีถูกหัก 11910 · FX · ปรับปรุง) + ขา WHT (W2 Dr 11320 · W3 Dr ผังค่าธรรมเนียม / Cr 21917) |
+| จับคู่ธนาคาร `MatchBankTransactionAsync` | `SettlementBankMatch.Check` (รายการเดินบัญชีจริงของบริษัทนี้ · บัญชีเดียวกัน · ทิศเดียวกัน · ยอดเท่ากันพอดี · ไม่ผูกรอบอื่น — R1 ห้ามประทับเอง) → `IBankService.ReconcileAsync(txn, JE รอบโอน)` → `BankMatched` | — |
+| chargeback `ResolveChargebackAsync(co, line, won, user)` | `SettlementBatchMath.PlanChargebackResolution` → builder (Reference `STL-CB-{line}` กันปิดซ้ำ) | แพ้: Dr 57140 / Cr 11320 · ชนะ (เงินคืนนอกไฟล์): Dr ผังพัก / Cr 11320 |
+| ยกเลิก `UnpostAsync(co, batch, user, เหตุผล)` | ตรวจงวด+สิทธิ์ยกเลิกก่อนแตะ · มี JE ปิด chargeback = ต้องกลับก่อน · ถอนจับคู่ธนาคาร (`UnmatchTransactionAsync`) → `VoidPaymentAsync` → ยกเลิก 50 ทวิ + `VoidDocumentAsync` → `IAccountingService.ReverseJournalEntryAsync` (วันที่ของ JE เดิม) → สถานะกลับ `Matched` · ไม่ลบแถวใด · `PaymentIntent.SettlementBatchId` คงไว้ (กันเส้น gateway เดิมหยิบซ้ำ) | กลับรายการทั้งหมดผ่านเส้นปกติ |
+
+- **ไม่ใช่ธุรกรรมเดียวทั้งรอบ (ตั้งใจ)**: เส้นสร้าง/อนุมัติ/รับชำระ/ยกเลิกของ `DocumentService` เปิดธุรกรรมของตัวเอง (เรียกซ้อนไม่ได้ · ห้ามขยาย DocumentService F4 ข้อ 7) ⇒
+  ของแต่ละชิ้นมีป้ายที่บันทึก**พร้อมตัวมันในคำสั่งเดียว** (`Document.CreatedBy = system:settlement:{batch}:{fee-กลุ่ม|sum-yyyyMMdd}` · `Payment.Notes` มีป้าย) ⇒
+  ล้มกลางทาง = `BusinessRuleException` 409 `SETTLEMENT-POST-PARTIAL` บอกขั้น + พรีวิวแสดง `PartialProgress` · กดใหม่ = ทำต่อ ไม่สร้างซ้ำ · เอกสารที่ค้างแต่ยอดไม่ตรงแผน/ไม่อยู่ในแผน = บล็อก (`StaleDocument`)
+- ห้าม `new JournalEntry`/`JournalEntries.Add` ใน `Services/Settlement/**` · สถานะ `Posted/BankMatched` ประทับได้เฉพาะไฟล์นี้ (`tools/terminal_status_writer_check.py`) · จุดเรียกล็อกด้วย `tools/required_call_site_check.py`
 
 **ผังบัญชีใหม่** (`ChartOfAccountTemplates` + migration ใส่ให้บริษัทเดิมที่มีกลุ่มแม่ · `ON CONFLICT DO NOTHING` · ไม่ย้ายยอด): 11350 เงินที่ผู้ให้บริการกัน/ระงับไว้ ·
 53170 ค่าธรรมเนียมรับชำระเงิน · 57140 ขาดทุนจากการถูกปฏิเสธรายการ (chargeback) · **11341–11349 ไม่ seed** (สร้างตอนผูกช่องทาง)
@@ -3412,7 +3439,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 198 เฟส 1 ทีม A: สัญญา settlement — enum · entity 3 ตาราง · migration บล็อกเดียว · ผัง 11350/53170/57140 · `SettlementLineTypeRules`/`SettlementFeeTax`/`SettlementBatchMath`/`SettlementChannelAccounts` · `AiFeatureKey.SettlementLineClassify` (§2.10 · §6.4) — commit <pending>)_
+_Last verified against codebase: 2026-09-28 (รอบ 198 เฟส 1 ทีม C: ผู้ลงบัญชี settlement `ISettlementPostingService` — ใบสำคัญจ่ายค่าธรรมเนียมจากผังพัก · ใบขายสรุปรายวัน (ทางเข้าใหม่) · รับชำระเข้าผังพัก · JE รอบโอนผ่าน builder · จับคู่ธนาคาร · chargeback · ยกเลิก · แก้สัญญาทีม A ตามฝ่ายค้าน R-A3/A4/A5/A6/A8 + ด่าน R-A1/A7 (§2.10) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 198 เฟส 1 ทีม A: สัญญา settlement — enum · entity 3 ตาราง · migration บล็อกเดียว · ผัง 11350/53170/57140 · `SettlementLineTypeRules`/`SettlementFeeTax`/`SettlementBatchMath`/`SettlementChannelAccounts` · `AiFeatureKey.SettlementLineClassify` (§2.10 · §6.4) — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-25 (รอบ 198 ทีม E settlement เฟส 0: §2.6b gateway — JE คืนเงิน + ยอดคืนสะสม · รอบโอนนับคืนบางส่วน/คืนหลังรอบโอน ·
 VAT ค่าธรรมเนียม 11630 · WHT ค่าธรรมเนียมฐานก่อน VAT + บล็อก · ด่านงวด · แก้ค่าธรรมเนียม · ด่านสิทธิ์ · Integration รับชำระ: ขาเงินผ่าน `MoneyAccountFallback`

@@ -339,6 +339,10 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPublicPaymentResolver,
 // ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
     Accounting.Services.Payments.GatewaySettlementService>();
+// รอบ 198 เฟส 1 ทีม C — ผู้ลงบัญชีรอบโอน settlement (wallet → ธนาคาร) ตามแผนของ Helpers/SettlementBatchMath ·
+// ใบค่าธรรมเนียม/ใบขายสรุป/รับชำระผ่าน IDocumentService · JE รอบโอนผ่าน JournalEntryBuilder (DOCUMENT_FLOW §2.10)
+builder.Services.AddScoped<Accounting.Services.Settlement.ISettlementPostingService,
+    Accounting.Services.Settlement.SettlementPostingService>();
 // คืนเงินผ่าน gateway + JE คืนเงิน (Dr ลูกหนี้ / Cr บัญชีพัก) — รอบ 198 G-1 · เดิม endpoint คืนเงินไม่ลงบัญชีเลย
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewayRefundService,
     Accounting.Services.Payments.GatewayRefundService>();
