@@ -3693,3 +3693,6 @@ _รอบ 198 ทีม D2 (แก้ฝ่ายค้าน review198-D ข�
 **D-P1** `[RejectApiKey]` ที่ reclassify · **D-P2** จำการจับคู่คอลัมน์เฉพาะผู้มี `Settlement.Channels` และไม่ใช่คีย์ API (`ColumnMapMemory`) · **D-P4** เพดาน
 25 MB/100,000 แถว/500 คอลัมน์ · D-P3 (แพ็กเกจ) ส่งทีม G · D-P5 รอเจ้าของ · เทสต์ `SettlementReview198DTests` · sim `matchBody` · required +13 · owner_action +2
 — commit <pending>_
+
+_รอบ 198 main — CI แดง `1bc3f15e` CS0854: ทีม D2 เพิ่มพารามิเตอร์ optional `Name` ให้ `SettlementChartAccount` แล้วจุดสร้างใน
+`ResolveChargebackAsync` (อยู่ใน EF `Select` = expression tree) ไม่ส่งค่า ⇒ ใส่ `a.AccountName` ให้ครบ (จุดสร้างทั้งหมด 2 จุด ส่งครบแล้ว) — commit <pending>)_

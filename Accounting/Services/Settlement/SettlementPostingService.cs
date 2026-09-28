@@ -1086,7 +1086,7 @@ public class SettlementPostingService : ISettlementPostingService
         var plan = SettlementBatchMath.PlanChargebackResolution(line.Amount, won, loaded.Channel, reference);
         var chart = new SettlementChartIndex(await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted)
-            .Select(a => new SettlementChartAccount(a.Id, a.AccountCode, a.IsActive)).ToListAsync(ct));
+            .Select(a => new SettlementChartAccount(a.Id, a.AccountCode, a.IsActive, a.AccountName)).ToListAsync(ct));
         var (resolved, errors) = SettlementAccountResolver.ResolveJournal(plan, chart, null);
         if (errors.Count > 0)
             return new SettlementChargebackResult(false, string.Join(" · ", errors), null, null);
