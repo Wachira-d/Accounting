@@ -1545,7 +1545,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         await ResolveServedAsReceiptAsync(db, companyId, document);
         var mayAbbrev = AbbreviatedTaxInvoiceRule.CanIssue(
             company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            document.DocumentDate, await RequirePhoR06Async(db));
+            document.DocumentDate, await RequirePhoR06Async(db), Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
         return ComputeDocumentHeading(document, template, settings, mayAbbrev);
     }
 
@@ -1623,7 +1623,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             var mayAbbrev = issuer864 != null
                 && Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
                     issuer864.IsVatRegistered, issuer864.IsRetailApproved,
-                    issuer864.PhoR06ApprovedDate, doc.DocumentDate, requirePhoR06);
+                    issuer864.PhoR06ApprovedDate, doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
             result[doc.Id] = ComputeDocumentTitle(doc, template, settings, lang, mayAbbrev);
         }
         return result;
@@ -1686,7 +1686,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (why == null) return null;
         return "ใบนี้มีภาษีมูลค่าเพิ่ม และผู้ซื้อไม่มีข้อมูลครบสำหรับใบกำกับเต็มรูป จึงควรเป็น "
             + "\"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" แต่ " + why
-            + " · ถ้ากิจการไม่มีสิทธิ์ ภ.พ.06 ต้องออกใบกำกับภาษีเต็มรูปแทน (เก็บชื่อ+ที่อยู่ผู้ซื้อ) — "
+            + " · ถ้าไม่ใช่กิจการขายปลีก (§86/6) ต้องออกใบกำกับภาษีเต็มรูปแทน (เก็บชื่อ+ที่อยู่ผู้ซื้อ) — "
             + "ผู้จด VAT ต้องออกใบกำกับทุกครั้งที่ขาย (§86)";
     }
 
@@ -1844,7 +1844,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
             company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            doc.DocumentDate, requirePhoR06);
+            doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
         var sb = new StringBuilder();

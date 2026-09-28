@@ -12,7 +12,8 @@ public enum AbbreviatedInvoiceBlockReason
     None = 0,
     /// <summary>บริษัทยังไม่จด VAT — ไม่มีสิทธิ์ออกใบกำกับชนิดใดเลย (§77/1)</summary>
     NotVatRegistered = 1,
-    /// <summary>จด VAT แล้วแต่ยังไม่ได้รับอนุมัติ ภ.พ.06 (ประกอบกิจการค้าปลีก)</summary>
+    /// <summary>สลิปจากเครื่องบันทึกการเก็บเงิน (POS) แต่ยังไม่ได้รับอนุมัติ ภ.พ.06
+    /// (คำขออนุมัติใช้เครื่องบันทึกการเก็บเงิน) — <b>เฉพาะช่องทางสลิป</b></summary>
     NoPhoR06Approval = 2,
     /// <summary>บิลนี้ไม่มี VAT (ขายสินค้ายกเว้น §81 หรืออัตรา 0%) — ออกใบกำกับ
     /// อย่างย่อไม่ได้ ต้องเป็นใบเสร็จรับเงินธรรมดา</summary>
@@ -23,6 +24,23 @@ public enum AbbreviatedInvoiceBlockReason
     /// หรือ "สาขาที่ ____" · เดาเป็น <c>00000</c> = กระดาษประกาศเท็จว่าเป็นสำนักงานใหญ่
     /// <b>และ</b>เลขรันของสาขาไปปนกับเล่มสำนักงานใหญ่ ซึ่งแก้ย้อนหลังไม่ได้</summary>
     BranchTaxCodeMissing = 4,
+
+    /// <summary>ยังไม่ได้ระบุว่ากิจการเป็นการขายปลีก/ให้บริการในลักษณะขายปลีก — §86/6 ให้ออกใบกำกับอย่างย่อ
+    /// ได้เฉพาะกิจการลักษณะนี้ (ทุกช่องทาง)</summary>
+    NotRetailBusiness = 5,
+}
+
+/// <summary>ใบกำกับภาษีอย่างย่อออกจากช่องทางไหน — กติกาต่างกัน (คำตัดสินเจ้าของ 2026-09-28)
+///
+/// <para><b>ภ.พ.06 คือคำขออนุมัติใช้เครื่องบันทึกการเก็บเงิน</b> — คุมเฉพาะใบกำกับอย่างย่อที่พิมพ์เป็น
+/// <b>สลิปจากเครื่อง</b> (POS) · ใบกำกับอย่างย่อที่ออกเป็นเอกสารจากหน้าเอกสาร (พิมพ์/PDF) อาศัยสิทธิ์ §86/6
+/// ของกิจการขายปลีกโดยตรง ไม่ต้องใช้ ภ.พ.06</para></summary>
+public enum AbbreviatedInvoiceChannel
+{
+    /// <summary>เอกสารจากหน้าเอกสาร (HTML/PDF) — ต้องจด VAT + เป็นกิจการขายปลีก</summary>
+    Document = 1,
+    /// <summary>สลิปจากเครื่องบันทึกการเก็บเงิน/POS — ต้องจด VAT + ขายปลีก + ภ.พ.06 ที่อนุมัติแล้ว</summary>
+    CashRegisterSlip = 2,
 }
 
 /// <summary>ตัวตัดสิน<b>ตัวเดียว</b>ของคำถาม "บริษัทนี้มีสิทธิ์ออกใบกำกับภาษีอย่างย่อ
@@ -33,7 +51,9 @@ public enum AbbreviatedInvoiceBlockReason
 /// <para><b>ใบกำกับภาษีเต็มรูป (§86/4)</b> — ผู้ประกอบการที่<b>จด VAT</b> ออกได้เลย
 /// ไม่ต้องขออนุญาตอะไรเพิ่ม</para>
 /// <para><b>ใบกำกับภาษีอย่างย่อ (§86/6)</b> — ออกได้เฉพาะผู้ประกอบการที่<b>ประกอบ
-/// กิจการค้าปลีก</b> และ<b>ได้รับอนุมัติ ภ.พ.06</b> แล้ว · ผู้ที่ไม่มีสิทธิ์แล้วออก =
+/// กิจการขายปลีก/ให้บริการในลักษณะขายปลีก</b> · ถ้าออกเป็น<b>สลิปจากเครื่องบันทึกการเก็บเงิน</b> ต้องได้รับอนุมัติ
+/// <b>ภ.พ.06</b> ด้วย (ภ.พ.06 = คำขออนุมัติใช้เครื่อง ไม่ใช่ใบอนุญาตออกใบกำกับอย่างย่อ — แก้ 2026-09-28 ตามคำตัดสิน
+/// เจ้าของ: เดิมระบบบังคับ ภ.พ.06 กับทุกช่องทาง) · ผู้ที่ไม่มีสิทธิ์แล้วออก =
 /// ออกใบกำกับโดยไม่มีสิทธิ์ และผู้ซื้อที่รับไปตกอยู่ใต้ §82/5(5) คือเคลมภาษีซื้อไม่ได้
 /// ทั้งที่หน้ากระดาษบอกว่าเป็นใบกำกับ</para>
 ///
@@ -55,31 +75,39 @@ public static class AbbreviatedTaxInvoiceRule
     /// <summary>บริษัทนี้ออกใบกำกับภาษีอย่างย่อสำหรับเอกสารที่ลงวันที่
     /// <paramref name="issueDateUtc"/> ได้หรือไม่</summary>
     /// <param name="isVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่มแล้ว (§77/1)</param>
-    /// <param name="isRetailApproved">ธงว่าเป็นกิจการค้าปลีกที่ได้รับอนุมัติ — <b>เจตนา</b></param>
-    /// <param name="phoR06ApprovedDate">วันที่อนุมัติ ภ.พ.06 — <b>หลักฐาน</b> (ต้องมีคู่กับธง:
-    /// ธงอย่างเดียวคือ "ผู้ใช้ติ๊กไว้" ซึ่งไม่ใช่การอนุมัติ)</param>
-    /// <param name="issueDateUtc">วันที่บนเอกสาร — กันการออกย้อนไปก่อนวันอนุมัติ</param>
-    /// <param name="requirePhoR06">แอดมินแพลตฟอร์มบังคับ ภ.พ.06 อยู่หรือไม่
-    /// (<c>false</c> = กฎเปลี่ยนแล้ว/ปิดด่านชั่วคราว → จด VAT อย่างเดียวก็ออกได้)</param>
+    /// <param name="isRetailApproved">ธง "ประกอบกิจการขายปลีก/ให้บริการในลักษณะขายปลีก" (§86/6)
+    /// — ชื่อฟิลด์เดิม (<c>Company.IsRetailApproved</c>) คงไว้เพื่อไม่ต้อง migrate</param>
+    /// <param name="phoR06ApprovedDate">วันที่อนุมัติ ภ.พ.06 — ใช้<b>เฉพาะช่องทางสลิป</b></param>
+    /// <param name="issueDateUtc">วันที่บนเอกสาร — สลิปห้ามลงวันที่ก่อนวันอนุมัติ ภ.พ.06</param>
+    /// <param name="requirePhoR06">สวิตช์แพลตฟอร์ม (<c>false</c> = ปิดด่านชั่วคราว → จด VAT อย่างเดียวก็ออกได้
+    /// ทุกช่องทาง — พฤติกรรมเดิมของสวิตช์ ไม่เปลี่ยน)</param>
+    /// <param name="channel">ช่องทางที่ออก — <b>ไม่มีค่าตั้งต้นโดยตั้งใจ</b>: ผู้เรียกต้องรู้ว่ากำลังออกสลิปหรือเอกสาร</param>
     public static AbbreviatedInvoiceBlockReason Judge(
         bool isVatRegistered,
         bool isRetailApproved,
         DateTime? phoR06ApprovedDate,
         DateTime issueDateUtc,
-        bool requirePhoR06)
+        bool requirePhoR06,
+        AbbreviatedInvoiceChannel channel)
     {
         // §77/1 — ไม่จด VAT = ออกใบกำกับชนิดใดไม่ได้เลย · สวิตช์แอดมินไม่ครอบข้อนี้
         if (!isVatRegistered)
             return AbbreviatedInvoiceBlockReason.NotVatRegistered;
 
-        // แอดมินปิดด่าน ภ.พ.06 (เผื่อกฎหมายเปลี่ยน) → จด VAT แล้วออกได้เลย
+        // แอดมินปิดด่าน (เผื่อกฎหมายเปลี่ยน) → จด VAT แล้วออกได้เลย
         if (!requirePhoR06)
             return AbbreviatedInvoiceBlockReason.None;
 
-        // §86/6 — ต้องมีทั้งเจตนาและหลักฐาน และเอกสารต้องลงวันที่ไม่ก่อนวันอนุมัติ
-        if (!isRetailApproved
-            || phoR06ApprovedDate is not DateTime approved
-            || issueDateUtc.Date < approved.Date)
+        // §86/6 — ทุกช่องทาง: ต้องเป็นกิจการขายปลีก/บริการลักษณะขายปลีก
+        if (!isRetailApproved)
+            return AbbreviatedInvoiceBlockReason.NotRetailBusiness;
+
+        // เอกสารจากหน้าเอกสาร (พิมพ์/PDF) ไม่ใช้เครื่องบันทึกการเก็บเงิน ⇒ ไม่ต้องมี ภ.พ.06
+        if (channel == AbbreviatedInvoiceChannel.Document)
+            return AbbreviatedInvoiceBlockReason.None;
+
+        // สลิปจากเครื่อง — ต้องได้รับอนุมัติ ภ.พ.06 และสลิปลงวันที่ไม่ก่อนวันอนุมัติ
+        if (phoR06ApprovedDate is not DateTime approved || issueDateUtc.Date < approved.Date)
             return AbbreviatedInvoiceBlockReason.NoPhoR06Approval;
 
         return AbbreviatedInvoiceBlockReason.None;
@@ -93,8 +121,9 @@ public static class AbbreviatedTaxInvoiceRule
         bool isRetailApproved,
         DateTime? phoR06ApprovedDate,
         DateTime issueDateUtc,
-        bool requirePhoR06)
-        => Judge(isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06)
+        bool requirePhoR06,
+        AbbreviatedInvoiceChannel channel)
+        => Judge(isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06, channel)
            == AbbreviatedInvoiceBlockReason.None;
 
     /// <summary>ข้อความอธิบายพร้อม<b>ทางไปต่อ</b> — <c>null</c> เมื่อออกได้ปกติ</summary>
@@ -104,9 +133,13 @@ public static class AbbreviatedTaxInvoiceRule
             "บริษัทยังไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม — เอกสารพิมพ์เป็น \"ใบเสร็จรับเงิน\" "
             + "(จด VAT แล้วมาตั้งค่าในหน้าข้อมูลบริษัท)",
         AbbreviatedInvoiceBlockReason.NoPhoR06Approval =>
-            "ยังไม่ได้รับอนุมัติ ภ.พ.06 (ประกอบกิจการค้าปลีก) — ออกใบกำกับภาษีอย่างย่อไม่ได้ "
-            + "ตาม §86/6 · เอกสารพิมพ์เป็น \"ใบเสร็จรับเงิน\" ไปก่อน · ยื่น ภ.พ.06 แล้วกรอกวันที่"
-            + "อนุมัติในหน้าข้อมูลบริษัท",
+            "ยังไม่ได้รับอนุมัติ ภ.พ.06 (ขออนุมัติใช้เครื่องบันทึกการเก็บเงิน) — สลิปจากเครื่องจึงออกเป็น"
+            + "ใบกำกับภาษีอย่างย่อไม่ได้ · สลิปพิมพ์เป็น \"ใบเสร็จรับเงิน\" ไปก่อน · ยื่น ภ.พ.06 แล้วกรอกวันที่อนุมัติ"
+            + "ในหน้าข้อมูลบริษัท (ใบกำกับภาษีอย่างย่อที่ออกจากหน้าเอกสารไม่ต้องใช้ ภ.พ.06)",
+        AbbreviatedInvoiceBlockReason.NotRetailBusiness =>
+            "ยังไม่ได้ระบุว่ากิจการเป็นการขายปลีก/ให้บริการในลักษณะขายปลีก — ใบกำกับภาษีอย่างย่อออกได้เฉพาะ"
+            + "กิจการลักษณะนี้ (§86/6) · เอกสารพิมพ์เป็น \"ใบเสร็จรับเงิน\" ไปก่อน · ติ๊ก \"ประกอบกิจการขายปลีก\" "
+            + "ในหน้าข้อมูลบริษัท หรือออกใบกำกับภาษีเต็มรูปแทน",
         AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing =>
             "บิลนี้ออกจากสาขาที่ยังไม่ได้กรอก \"รหัสสาขา\" 5 หลัก — ใบกำกับภาษีอย่างย่อ "
             + "ต้องระบุสาขาตาม §86/4(2) · เอกสารพิมพ์เป็น \"ใบเสร็จรับเงิน\" ไปก่อน · "

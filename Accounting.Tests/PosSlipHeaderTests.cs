@@ -39,13 +39,25 @@ public class PosSlipHeaderTests
     }
 
     [Fact]
-    public void จด_VAT_แต่ไม่มี_ภพ06_ห้ามออก()
+    public void จด_VAT_แต่ไม่ได้ระบุกิจการขายปลีก_ห้ามออก()
     {
         // นี่คือเคสที่ระบบเดิมพลาด — บริษัทจด VAT แล้วจึงดู "ถูกต้อง" ผิวเผิน
+        // (2026-09-28: เหตุผลแยกจาก ภ.พ.06 — §86/6 ขายปลีกคุมทุกช่องทาง · ภ.พ.06 คุมเฉพาะสลิป)
         var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: true,
             billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.Receipt, r.Title);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness, r.Reason);
+        Assert.Contains("ขายปลีก", r.Message);
+    }
+
+    [Fact]
+    public void สลิป_ขายปลีกแต่ไม่มี_ภพ06_ห้ามออก()
+    {
+        // ภ.พ.06 = คำขออนุมัติใช้เครื่องบันทึกการเก็บเงิน — สลิปจากเครื่องต้องมี
+        var r = PosSlipHeader.Resolve(true, true, null, 7m, Today, requirePhoR06: true,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
+        Assert.False(r.CanIssueAbbreviated);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval, r.Reason);
         Assert.Contains("ภ.พ.06", r.Message);
     }
@@ -113,52 +125,79 @@ public class AbbreviatedTaxInvoiceRuleTests
 {
     private static readonly DateTime Approved = new(2026, 1, 15, 0, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime Today = new(2026, 9, 19, 0, 0, 0, DateTimeKind.Utc);
+    private const AbbreviatedInvoiceChannel S = AbbreviatedInvoiceChannel.CashRegisterSlip;
+    private const AbbreviatedInvoiceChannel D = AbbreviatedInvoiceChannel.Document;
 
     [Fact]
-    public void บังคับ_ภพ06_ไม่มีอนุมัติ_ออกไม่ได้()
+    public void บังคับ_ไม่ได้ระบุกิจการขายปลีก_ออกไม่ได้ทั้งสองช่องทาง()
+    {
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness,
+            AbbreviatedTaxInvoiceRule.Judge(true, false, null, Today, requirePhoR06: true, S));
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness,
+            AbbreviatedTaxInvoiceRule.Judge(true, false, Approved, Today, requirePhoR06: true, D));
+    }
+
+    // ── คำตัดสินเจ้าของ 2026-09-28: ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน ──
+    [Fact]
+    public void เอกสาร_ขายปลีกไม่มี_ภพ06_ออกอย่างย่อได้()
+        => Assert.Equal(AbbreviatedInvoiceBlockReason.None,
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: true, D));
+
+    [Fact]
+    public void เอกสาร_ลงวันที่ก่อนวันอนุมัติ_ภพ06_ก็ออกได้_เพราะไม่ได้ใช้เครื่อง()
+        => Assert.True(AbbreviatedTaxInvoiceRule.CanIssue(
+            true, true, Approved, Approved.AddDays(-10), requirePhoR06: true, D));
+
+    [Fact]
+    public void ทิศตรงข้าม_สลิป_ขายปลีกไม่มี_ภพ06_ยังออกไม่ได้()
         => Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval,
-            AbbreviatedTaxInvoiceRule.Judge(true, false, null, Today, requirePhoR06: true));
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: true, S));
+
+    [Fact]
+    public void ทิศตรงข้าม_เอกสาร_ยังไม่จด_VAT_ออกไม่ได้()
+        => Assert.Equal(AbbreviatedInvoiceBlockReason.NotVatRegistered,
+            AbbreviatedTaxInvoiceRule.Judge(false, true, Approved, Today, requirePhoR06: true, D));
 
     [Fact]
     public void ปิดสวิตช์_ไม่มี_ภพ06_ก็ออกได้()
         => Assert.Equal(AbbreviatedInvoiceBlockReason.None,
-            AbbreviatedTaxInvoiceRule.Judge(true, false, null, Today, requirePhoR06: false));
+            AbbreviatedTaxInvoiceRule.Judge(true, false, null, Today, requirePhoR06: false, S));
 
     [Fact]
     public void ปิดสวิตช์_แต่ยังไม่จด_VAT_ก็ยังออกไม่ได้()
     {
         // ทิศตรงข้าม: สวิตช์นี้ปิดได้เฉพาะด่าน ภ.พ.06 — §77/1 ปิดไม่ได้
         Assert.Equal(AbbreviatedInvoiceBlockReason.NotVatRegistered,
-            AbbreviatedTaxInvoiceRule.Judge(false, true, Approved, Today, requirePhoR06: false));
+            AbbreviatedTaxInvoiceRule.Judge(false, true, Approved, Today, requirePhoR06: false, S));
         Assert.Equal(AbbreviatedInvoiceBlockReason.NotVatRegistered,
-            AbbreviatedTaxInvoiceRule.Judge(false, false, null, Today, requirePhoR06: false));
+            AbbreviatedTaxInvoiceRule.Judge(false, false, null, Today, requirePhoR06: false, S));
     }
 
     [Fact]
     public void บังคับ_ครบทั้งธงและวันที่_ออกได้()
         => Assert.Equal(AbbreviatedInvoiceBlockReason.None,
-            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, Today, requirePhoR06: true));
+            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, Today, requirePhoR06: true, S));
 
     [Fact]
     public void บังคับ_มีแต่ธงไม่มีวันที่_ออกไม่ได้()
         => Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval,
-            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: true));
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: true, S));
 
     [Fact]
     public void บังคับ_ใบลงวันที่ก่อนวันอนุมัติ_ออกไม่ได้()
     {
         var beforeApproval = Approved.AddDays(-1);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval,
-            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, beforeApproval, requirePhoR06: true));
+            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, beforeApproval, requirePhoR06: true, S));
         // ขอบ: วันอนุมัติพอดี = ออกได้
         Assert.Equal(AbbreviatedInvoiceBlockReason.None,
-            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, Approved, requirePhoR06: true));
+            AbbreviatedTaxInvoiceRule.Judge(true, true, Approved, Approved, requirePhoR06: true, S));
     }
 
     [Fact]
     public void ปิดสวิตช์_ไม่สนวันที่อนุมัติย้อนหลัง()
         => Assert.True(AbbreviatedTaxInvoiceRule.CanIssue(
-            true, true, Approved, Approved.AddDays(-30), requirePhoR06: false));
+            true, true, Approved, Approved.AddDays(-30), requirePhoR06: false, S));
 
     [Fact]
     public void ทุกเหตุผลที่บล็อก_ต้องมีข้อความบอกทางไปต่อ()
@@ -169,6 +208,7 @@ public class AbbreviatedTaxInvoiceRuleTests
                      AbbreviatedInvoiceBlockReason.NoPhoR06Approval,
                      AbbreviatedInvoiceBlockReason.NoVatOnBill,
                      AbbreviatedInvoiceBlockReason.BranchTaxCodeMissing,
+                     AbbreviatedInvoiceBlockReason.NotRetailBusiness,
                  })
             Assert.False(string.IsNullOrWhiteSpace(AbbreviatedTaxInvoiceRule.Message(reason)));
         Assert.Null(AbbreviatedTaxInvoiceRule.Message(AbbreviatedInvoiceBlockReason.None));
@@ -273,7 +313,7 @@ public class AbbreviatedTaxInvoiceRuleTests
             billBelongsToBranch: true, issuerTaxBranchCode: null);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NotVatRegistered, noVat.Reason);
 
-        var noPhoR06 = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: true,
+        var noPhoR06 = PosSlipHeader.Resolve(true, true, null, 7m, Today, requirePhoR06: true,
             billBelongsToBranch: true, issuerTaxBranchCode: null);
         Assert.Equal(AbbreviatedInvoiceBlockReason.NoPhoR06Approval, noPhoR06.Reason);
 

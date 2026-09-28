@@ -1796,7 +1796,7 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefaultAsync() ?? true;
                 var reason = Accounting.Helpers.AbbreviatedTaxInvoiceRule.Judge(
                     issuer.IsVatRegistered, issuer.IsRetailApproved, issuer.PhoR06ApprovedDate,
-                    doc.DocumentDate, requirePhoR06);
+                    doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
                 resp = resp with
                 {
                     TaxInvoiceTitleNotice = PdfGenerationService.AbbreviatedDowngradeNotice(doc, reason),

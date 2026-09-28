@@ -1177,7 +1177,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`PosService.Orders.cs:1265`) โดย **`Helpers/AbbreviatedTaxInvoiceRule` เป็นตัวตัดสิน
   ตัวเดียว** (ใช้ร่วมกับเส้น PDF) + `Helpers/PosSlipHeader` ที่ถือกติกาเฉพาะของสลิป:
   1. ยังไม่จด VAT (§77/1) → ไม่ออกเลข หัวสลิป "ใบเสร็จรับเงิน"
-  2. ยังไม่อนุมัติ ภ.พ.06 → ไม่ออก **เว้นแต่แอดมินแพลตฟอร์มปิดสวิตช์**
+  2. ยังไม่ระบุว่าเป็นกิจการขายปลีก (`IsRetailApproved`) → ไม่ออก (`NotRetailBusiness`) ·
+     ขายปลีกแต่ยังไม่อนุมัติ **ภ.พ.06 (ขอใช้เครื่องบันทึกการเก็บเงิน)** / สลิปลงวันที่ก่อนวันอนุมัติ → ไม่ออก
+     (`NoPhoR06Approval` — **ช่องทาง `CashRegisterSlip` เท่านั้น** · รอบ 199) · ทั้งสองข้อ **เว้นแต่แอดมินแพลตฟอร์มปิดสวิตช์**
      (`SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` — ตั้งต้น `true`)
   3. บิลไม่มี VAT → ไม่ออก
   4. **บิลผูกสาขาแต่สาขายังไม่มีรหัส 5 หลัก → ไม่ออก** (รอบ 183):
@@ -2203,7 +2205,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ผู้เรียกต้องตอบเสมอ · คำตอบมาจาก `Helpers/AbbreviatedTaxInvoiceRule.CanIssue`
       ตัวเดียวของระบบ (ตัวเดียวกับสลิป POS ผ่าน `PosSlipHeader.Resolve`) ซึ่งรับ
       `IsVatRegistered` · `IsRetailApproved` · `PhoR06ApprovedDate` · วันที่บนเอกสาร ·
-      และนโยบายแพลตฟอร์ม `SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice`
+      นโยบายแพลตฟอร์ม `SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` · และ**ช่องทาง** `AbbreviatedInvoiceChannel`
+      - **รอบ 199 (คำตัดสินเจ้าของ 2026-09-28): ภ.พ.06 คุมเฉพาะสลิปจากเครื่อง** — ภ.พ.06 คือคำขออนุมัติใช้
+        เครื่องบันทึกการเก็บเงิน ไม่ใช่ใบอนุญาตออกใบกำกับอย่างย่อ ⇒ เส้นเอกสาร/PDF ทุกจุด (`PdfGenerationService` ×3 ·
+        `.DocumentRenderer` · `DocumentService` หัวเอกสาร/การ์ดเตือน) ส่ง `Document` = **จด VAT + กิจการขายปลีก (§86/6)** พอ ·
+        สลิป POS (`PosSlipHeader`) ส่ง `CashRegisterSlip` = + ภ.พ.06 ที่อนุมัติแล้ว · ผลต่อเลขชุด: ใบเสร็จมี VAT ของกิจการ
+        ขายปลีกที่ไม่มี ภ.พ.06 กลับได้หัว "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" + เลข **TIV** (ใบที่อนุมัติไปแล้วเป็น REC คงเดิม —
+        เลขตรึงตอนอนุมัติ §86/4 ห้ามแก้ย้อนหลัง)
       _(เดิมเส้นเอกสาร/PDF พิมพ์ "ใบกำกับภาษีอย่างย่อ" **โดยไม่เคยตรวจ ภ.พ.06 เลย** —
       ธงนี้มีผู้อ่านแค่ `PosService` ⇒ บริษัทที่ยังไม่ได้รับอนุมัติออกใบกำกับโดยไม่มีสิทธิ์
       ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(5))_
@@ -3372,7 +3380,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-25 (รอบ 198 ทีม E settlement เฟส 0: §2.6b gateway — JE คืนเงิน + ยอดคืนสะสม · รอบโอนนับคืนบางส่วน/คืนหลังรอบโอน ·
+_Last verified against codebase: 2026-09-28 (รอบ 199: ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน — `AbbreviatedInvoiceChannel` · เอกสาร = จด VAT + ขายปลีก §86/6 (§ ใบกำกับอย่างย่อ POS + หัวเอกสาร) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-25 (รอบ 198 ทีม E settlement เฟส 0: §2.6b gateway — JE คืนเงิน + ยอดคืนสะสม · รอบโอนนับคืนบางส่วน/คืนหลังรอบโอน ·
 VAT ค่าธรรมเนียม 11630 · WHT ค่าธรรมเนียมฐานก่อน VAT + บล็อก · ด่านงวด · แก้ค่าธรรมเนียม · ด่านสิทธิ์ · Integration รับชำระ: ขาเงินผ่าน `MoneyAccountFallback`
 (ห้าม prefix 112) + ผังลูกหนี้ `TradeReceivableAccount` + หาผังก่อนบันทึกการชำระ · POS ผังสำรองรหัสเต็ม · ค่าธรรมเนียมหักจากยอดโอน 54710 (§3.x) · กระทบบัญชีย่อยไม่นับ 11340 — commit <pending>)_
 

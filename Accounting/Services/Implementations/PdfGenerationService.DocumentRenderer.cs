@@ -64,7 +64,7 @@ public partial class PdfGenerationService
         // สิทธิ์ §86/6 ของผู้ออก — ตัวตัดสินตัวเดียวกับ HTML renderer (ห้าม drift)
         var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
             company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-            doc.DocumentDate, requirePhoR06);
+            doc.DocumentDate, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
         EnsureThaiFontsRegistered();
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);

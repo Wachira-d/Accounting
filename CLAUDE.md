@@ -182,8 +182,10 @@ await _recorder.RecordUserChoiceAsync(
   (`CancelledByDocumentId`, `ReplacedByDocumentId`)
 
 **§86/6 ใบกำกับภาษีอย่างย่อ:**
-- [ ] เปิดใช้เฉพาะ `Company.IsRetailApproved=true` + `PhoR06ApprovedDate != null`
-  (อนุมัติ ภ.พ.06 แล้ว); ตัวแทนห้ามออก
+- [ ] เปิดใช้เฉพาะกิจการขายปลีก/บริการลักษณะขายปลีก (`Company.IsRetailApproved=true`); ตัวแทนห้ามออก ·
+  **ภ.พ.06 (ขออนุมัติใช้เครื่องบันทึกการเก็บเงิน) คุมเฉพาะสลิปจากเครื่อง/POS** — สลิปต้อง `PhoR06ApprovedDate != null`
+  และลงวันที่ไม่ก่อนวันอนุมัติ · เอกสารจากหน้าเอกสารไม่ต้องใช้ ภ.พ.06 (คำตัดสินเจ้าของ 2026-09-28 ·
+  ตัวตัดสินเดียว `Helpers/AbbreviatedTaxInvoiceRule` + `AbbreviatedInvoiceChannel`)
 - [ ] header "ใบกำกับภาษีอย่างย่อ" + `PriceInclusiveVat=true`,
   `VatAmount = round(GrandTotal × 7/107, 2)`
 - [ ] **ห้ามใช้เป็นภาษีซื้อ** (§82/5(2)) — block insert ลง `PurchaseVatReport`,

@@ -1157,6 +1157,16 @@ RULES += [
          why="S-1 บัญชีพัก gateway (11340) ไม่ใช่ลูกหนี้การค้าในรายงานกระทบบัญชีย่อย"),
 ]
 
+# ── รอบ 199 (คำตัดสินเจ้าของ 2026-09-28): ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน ──
+#    เทสต์ AbbreviatedTaxInvoiceRuleTests ล็อกตัวตัดสิน · ที่นี่ล็อกว่าสลิป POS ส่งช่องทางสลิป (ถ้าเผลอส่ง Document
+#    สลิปจะพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่มี ภ.พ.06 ⇒ ผู้ซื้อเคลมภาษีซื้อไม่ได้) และหัวเอกสารส่งช่องทางเอกสาร
+RULES += [
+    dict(file="Helpers/PosSlipHeader.cs", method="Resolve",
+         must=["AbbreviatedTaxInvoiceRule.Judge(", "AbbreviatedInvoiceChannel.CashRegisterSlip"],
+         forbid=["AbbreviatedInvoiceChannel.Document"],
+         why="รอบ 199: สลิปจากเครื่อง POS ต้องผ่านด่าน ภ.พ.06 (ช่องทาง CashRegisterSlip)"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

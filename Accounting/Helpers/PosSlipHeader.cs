@@ -58,7 +58,8 @@ public static class PosSlipHeader
         string? issuerTaxBranchCode)
     {
         var eligibility = AbbreviatedTaxInvoiceRule.Judge(
-            isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06);
+            isVatRegistered, isRetailApproved, phoR06ApprovedDate, issueDateUtc, requirePhoR06,
+            AbbreviatedInvoiceChannel.CashRegisterSlip);
         if (eligibility != AbbreviatedInvoiceBlockReason.None)
             return new(Receipt, false, eligibility);
 
