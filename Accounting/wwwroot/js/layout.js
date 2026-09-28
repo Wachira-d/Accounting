@@ -2443,6 +2443,8 @@ const Layout = {
       if (e.key === 'Escape') {
         e.preventDefault();
         top.classList.remove('active');
+        // modal ที่มีผู้รอผล (เช่น หน้าต่างคำเตือนก่อนอนุมัติ) ตั้ง _onDismiss ไว้ ⇒ Escape = ยกเลิก ไม่ปล่อยผู้เรียกค้างรอ
+        if (typeof top._onDismiss === 'function') top._onDismiss();
         return;
       }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {

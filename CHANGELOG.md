@@ -3671,3 +3671,14 @@ _รอบ 198 ข้อ 5 ทีม G — **gate แพ็กเกจ/ระ�
 - เทสต์ `SubscriptionGatePolicyTests` · `required_call_site_check` +3 กติกา · `owner_action_wiring_check` +4 แถว · `write_permission_gate_check` +1 คอนโทรลเลอร์ ·
   ACCOUNT_STRUCTURE §5.2 · TEST_PLAN SUB-G01..12
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม W — ปิด backlog ที่ทีม H จดไว้ใน DOCUMENT_FLOW §3.2 (คำตัดสิน #12 · รอบ 198 ข้อ 6):
+- **หน้าเอกสาร**: ปุ่ม "บันทึกและอนุมัติ" และ chain "ลูกค้าจ่ายเงินแล้ว" เคยส่ง `acknowledgeWarnings:true` ตั้งแต่ครั้งแรก ⇒ `[Σ-GAP]`/ชุด VAT ไม่ได้พิมพ์บนกระดาษ/คำเตือนอื่น
+  ถูกบันทึก `APPROVE-ACK-WARNINGS` "ยืนยันโดย …" ทั้งที่ไม่มีใครเห็น · ตอนนี้ทุกทางอนุมัติของหน้า (ปุ่มอนุมัติ · บันทึกและอนุมัติ · เงินสดทันที · อนุมัติก่อนส่งอีเมล)
+  เดิน `_approveConfirmingWarnings` ตัวเดียว (false ก่อน → หน้าต่างคำเตือน → true เฉพาะหลังคนกดยืนยัน) · ยกเลิก/×/Escape = ใบคงร่าง ไม่หักมัดจำ ไม่รับชำระ
+  ไม่ส่งอีเมล ไม่ถามซ้ำ + บอกผู้ใช้ · `_postSaveApproval` แยกจาก `save()` · `Layout` Escape เรียก `_onDismiss` ของ modal บนสุด
+- **`POST documents/bulk-approve`**: แหล่ง `ApprovalAckSource.None` + ไม่เรียก AI · ใบมีคำเตือนคืนใน `needsAcknowledgement[]` · ธงเหมารวม = 400
+  `BULK-APPROVE-BLANKET-ACK-REFUSED` (`ApprovalAcknowledgement.BulkBlanketAckRefusal/BulkSummary`)
+- เทสต์ `ApprovalAcknowledgementTests` +3 · `tools/save_approve_warnings_sim.js` (โค้ดจริง · กลายพันธุ์ 7 แบบ) · `required_call_site_check` กติกา BulkApprove ·
+  TEST_PLAN GAP-07..09 · ตรวจแล้วไม่แตะ: มือถือ (`QuickApproveAsync` พรีวิวคำเตือน) · LINE (แหล่ง None) · `approval.html`/ลายเซ็น (ถามก่อน ack) ·
+  ค้าง: `quick-sale.html` กลืน error อนุมัติ (ไม่ ack แทนคน แต่จอบอกสำเร็จ) — commit <pending>)_

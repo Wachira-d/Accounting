@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **360 ไฟล์ · 3,415 `[Fact]` + 523 `[Theory]` (2,302 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **359 ไฟล์ · 3,400 `[Fact]` + 515 `[Theory]` (2,270 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4478,6 +4478,9 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | GAP-04 | (รอบ 199 · คำตัดสินรอบ 198 ข้อ 6) อนุมัติใบสแกนที่คำเตือน "VAT จากสแกนไม่ได้พิมพ์บนกระดาษ" ผ่าน `/api/v1/documents/{id}/approve` | 422 `data.code = APPROVE-SCAN-VAT-NOT-ON-PAPER` + `scanVatNotOnPaper:true` + `warnings[]` + ข้อความไทยบอกทางไปต่อ · เอกสารยัง Draft (ไม่มีเลข/JE) · `InternalNotes` มี `[API-APPROVE-REFUSED]` หนึ่งครั้ง · เรียกซ้ำ = 422 เดิม หมายเหตุไม่ต่อซ้ำ · เปิดบนเว็บกดอนุมัติ → 422 คำเตือน → รับทราบ → อนุมัติ (`ApprovalAcknowledgementTests`) |
 | GAP-05 | เหมือน GAP-04 แต่สแกนไม่มีข้อความให้ตรวจ (`VAT จากสแกนตรวจกับกระดาษไม่ได้`) · และใบที่มีทั้ง `[Σ-GAP]` + ชุด VAT | 422 รหัสเดียวกัน · รายการบล็อกมีแต่ข้อ VAT (ข้อยอดไม่ถูกนับเป็นเหตุปฏิเสธ) |
 | GAP-06 | ทิศตรงข้าม: ใบสแกนที่ VAT พิมพ์บนกระดาษ / ใบไม่มีคำเตือน / ใบมีแต่ `[Σ-GAP]` ผ่าน API · ใบที่มีคำเตือนอื่น (เช่นใบซ้ำ) ผ่าน API | อนุมัติเหมือนเดิม (`scanAmountGap` ตามจริง · `scanVatNotOnPaper:false`) · คำเตือนอื่น = 422 `APPROVE-WARNINGS-NEED-ACK` (เดิม 500) |
+| GAP-07 | (รอบ 199 ทีม W) หน้าเอกสาร "บันทึกและอนุมัติ" ใบที่มีคำเตือน (`[Σ-GAP]`/ชุด VAT/อื่น) | ครั้งแรกส่ง `acknowledgeWarnings:false` → หน้าต่างคำเตือนขึ้น · ส่ง `true` เฉพาะหลังกด "ยอมรับและอนุมัติต่อ" → `APPROVE-ACK-WARNINGS` · ใบไม่มีคำเตือน = อนุมัติเลยครั้งแรก (`tools/save_approve_warnings_sim.js` (a)(b)(f)) |
+| GAP-08 | เหมือน GAP-07 แต่กด "กลับไปแก้ไข" / × / Escape · และ chain "ลูกค้าจ่ายเงินแล้ว" / อนุมัติก่อนส่งอีเมล | ใบคงเป็นร่าง (ไม่มีเลข/JE) · ไม่หักมัดจำ · ไม่บันทึกชำระ · ไม่ส่งอีเมล · ไม่ถามซ้ำ · toast บอกว่าเป็นร่าง + ทางไปต่อ (sim (c)(c2)(c3)(d)(e)) |
+| GAP-09 | `POST documents/bulk-approve` ใบปน (ไม่มีคำเตือน · มีคำเตือน · ไม่มีสิทธิ์) · และส่ง `acknowledgeWarnings:true` | ไม่มีคำเตือน = อนุมัติ · มีคำเตือน = ไม่อนุมัติ อยู่ใน `needsAcknowledgement[]` พร้อมคำเตือน (ไม่นับ `failed`) · ไม่มีสิทธิ์ = `errors` · ธง `true` = 400 `BULK-APPROVE-BLANKET-ACK-REFUSED` ไม่แตะเอกสารใด (`ApprovalAcknowledgementTests` · `required_call_site_check` BulkApprove) |
 | SIGN-01 | ลูกค้าเซ็น → อนุมัติไม่ผ่าน → ผู้ใช้แก้ราคา → ลูกค้าเรียกซ้ำ | ลายเซ็นเดิมถูกแทนที่ ต้องเซ็นใหม่ (hash ไม่ตรง) · ไม่แก้ = ใช้ซ้ำได้ |
 | ETAXH-01 | บริษัทเปิด e-Tax อัตโนมัติ · ออกใบกำกับเต็มรูปจาก POS / API | มี `EtaxInvoice` · ล้ม = แถบแดง `[ETAX-AUTO-FAILED]` บนใบ + ข้อความใน response ของ API · ขายไม่ล้ม |
 | ETAXH-02 | ใบเสร็จรับชำระใบกำกับ · มัดจำ VAT พัก · CN ฝั่งซื้อ · walk-in | ไม่มีป้ายล้ม (ข้ามโดยเจตนา) |
