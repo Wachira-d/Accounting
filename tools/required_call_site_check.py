@@ -1209,6 +1209,15 @@ RULES += [
              "วันที่ปลอม แล้ววันที่ปลอมไปเปิดสิทธิ์สลิป POS"),
 ]
 
+# ── รอบ 198 ฝ่ายค้าน R-E1 (P0): webhook ต้องตรวจความเป็นเจ้าของรายการก่อนเปลี่ยนสถานะ ──
+RULES += [
+    dict(file="Controllers/PaymentGatewayController.cs", method="Receive",
+         must=["PaymentWebhookOwnership.RejectReason(", "i.CompanyId == cfg.CompanyId", "_intents.ApplyChargeAsync("],
+         before=[("PaymentWebhookOwnership.RejectReason(", "_intents.ApplyChargeAsync(")],
+         must_re=[r"if\s*\(\s*reject\s*!=\s*null\s*\)"],
+         why="R-E1: ลายเซ็นผ่านด้วยคีย์บริษัทหนึ่ง แต่ metadata อ้างรายการของอีกบริษัท ⇒ ปิดหนี้ร้านอื่นได้"),
+]
+
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)

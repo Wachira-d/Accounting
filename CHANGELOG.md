@@ -3491,3 +3491,9 @@ _รอบ 199 ฝ่ายค้าน (`erp-review/2026-09-25/review-r199-ocr.
 ⇒ ร้านที่ไม่มีเครื่อง POS บันทึกธงไม่ได้ถ้าไม่กรอกวันที่ปลอม (ซึ่งไปเปิดสิทธิ์สลิป) — ถอดแล้ว + `required_call_site` ห้ามกลับมา ·
 ข้อความช่วยเหลือ/คำแนะนำหัวเอกสารที่ยังบอกว่าอย่างย่อต้องมี ภ.พ.06 แก้ตาม
 — commit <pending>)_
+
+_รอบ 198 ฝ่ายค้าน settlement (`erp-review/2026-09-25/settlement/review198-A.md`) R-E1 **P0**: webhook ยืนยันลายเซ็นกับ config ทุกบริษัท
+แล้ว `ApplyChargeAsync` ด้วยรหัสรายการจาก metadata โดยไม่ตรวจเจ้าของ ⇒ tenant หนึ่ง (คีย์ทดสอบ Omise ฟรี) ปิดหนี้/ยืนยันการจองของร้านอื่นได้
+ด้วย charge 0 บาท · แก้: `Helpers/PaymentWebhookOwnership.RejectReason` (บริษัท · ผู้ให้บริการ · ชุดตั้งค่า · ยอดสำเร็จ) + โหลดรายการ
+เฉพาะในบริษัทของ config · เทสต์ `PaymentWebhookOwnershipTests` (สองทิศ) · `required_call_site` ล็อกลำดับตรวจก่อน ApplyCharge
+— commit <pending>)_

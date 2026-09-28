@@ -461,6 +461,23 @@ public class PaymentWebhookController : ControllerBase
             cfg.LastWebhookAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
+            // รอบ 198 ฝ่ายค้าน R-E1 (P0): ลายเซ็นผ่านด้วยคีย์ของบริษัทหนึ่ง ไม่ได้แปลว่ารายการที่ metadata อ้างเป็นของบริษัทนั้น —
+            // โหลดรายการ**ในบริษัทของ config** เท่านั้น แล้วให้ตัวตัดสินกลางตรวจความเป็นเจ้าของ + ยอด ก่อนเปลี่ยนสถานะใด ๆ
+            var owned = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.Id == verified.IntentId && i.CompanyId == cfg.CompanyId)
+                .Select(i => new Accounting.Helpers.PaymentWebhookOwnership.IntentFacts(
+                    i.CompanyId, i.ProviderConfigId, i.ProviderCode, i.Amount))
+                .FirstOrDefaultAsync(ct);
+            var reject = Accounting.Helpers.PaymentWebhookOwnership.RejectReason(owned, cfg.CompanyId, cfg.Id,
+                providerCode, verified.Charge.Status, verified.Charge.Amount);
+            if (reject != null)
+            {
+                // ห้ามตอบ error (ผู้ให้บริการจะ retry ไม่รู้จบ) แต่ต้องรู้ว่ามีคนยิงรายการที่ไม่ใช่ของบริษัทนี้เข้ามา
+                _logger.LogWarning("webhook {Provider}: ปฏิเสธ event {Event} ของบริษัท {Company} รายการ {Intent} — {Reason}",
+                    providerCode, verified.EventId, cfg.CompanyId, verified.IntentId, reject);
+                return Ok(new { received = true, handled = false });
+            }
+
             await _intents.ApplyChargeAsync(verified.IntentId, verified.Charge,
                 PaymentEventSource.Webhook, $"webhook:{providerCode}", ct);
             return Ok(new { received = true, handled = true });
