@@ -54,7 +54,7 @@ public class OcrVendorBranchReview197Tests
         Assert.Equal("00003", br.SellerBranchCode);                 // ค่ายังเติมฟอร์มได้ (กฎเหล็ก #3) — แต่ไฮไลต์
         Assert.Equal("00003", br.BuyerBranchCode);
         Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.WholePageFallback, br.SellerEvidence);
-        Assert.Equal(BranchCodeExtractor.FallbackEqualsBuyerConfidence, br.SellerConfidence);
+        Assert.Equal((double?)BranchCodeExtractor.FallbackEqualsBuyerConfidence, br.SellerConfidence);
         Assert.False(OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
     }
 
@@ -100,7 +100,7 @@ public class OcrVendorBranchReview197Tests
         var br = BranchCodeExtractor.Extract(OcrMakroBranchVendorTests.MakroPhoto);
         Assert.Equal("00005", br.SellerBranchCode);
         Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.IssuerStatement, br.SellerEvidence);
-        Assert.Equal(BranchCodeExtractor.IssuerStatementConfidence, br.SellerConfidence);
+        Assert.Equal((double?)BranchCodeExtractor.IssuerStatementConfidence, br.SellerConfidence);
     }
 
     [Fact]
