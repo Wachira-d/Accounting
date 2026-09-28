@@ -228,31 +228,41 @@ public class DocumentsV1Controller : PublicApiControllerBase
     /// <para>คีย์ไม่มี "ผู้ใช้" ในตัวเอง — ใช้ <c>ApiKey.CreatedByUserId</c> คือผู้ที่ออก
     /// คีย์ใบนี้ ซึ่งเป็นคนเดียวกับที่ <c>ApiKeyMiddleware</c> ใส่เป็น
     /// <c>ClaimTypes.NameIdentifier</c> ให้ทั้ง request อยู่แล้ว ⇒ คีย์ทำได้ไม่เกิน
-    /// สิทธิ์ของคนที่ออกมัน</para></summary>
+    /// สิทธิ์ของคนที่ออกมัน</para>
+    ///
+    /// <para><b>ด่านคำเตือน</b> (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · รอบ 199 ฝ่ายค้าน B-1): ใบสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ/ไม่มีข้อความให้ตรวจ
+    /// ⇒ <b>422 <c>APPROVE-SCAN-VAT-NOT-ON-PAPER</c></b> ก่อนเรียกอนุมัติ (ฉบับร่างคงเดิม · ให้คนรับทราบบนเว็บ/มือถือ) · คำเตือนชนิดอื่นที่ต้องมีคน
+    /// รับทราบ ⇒ 422 <c>APPROVE-WARNINGS-NEED-ACK</c> (เดิมหลุดเป็น 500) · [Σ-GAP] ยอดไม่ตรงกระดาษ = อนุมัติต่อแล้วคืน <c>scanAmountGap</c>
+    /// (คำตัดสินข้อ 12 — ไม่เปลี่ยน) · ตัวตัดสิน <c>Helpers/ApprovalAcknowledgement.ApiRefusal</c> ตัวเดียว</para></summary>
     [HttpPost("{documentId:guid}/approve")]
     public async Task<IActionResult> Approve(Guid documentId, CancellationToken ct)
     {
         var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
         if (error != null) return error;
 
-        var docType = await Db.Documents.AsNoTracking()
+        var target = await Db.Documents.AsNoTracking()
             .Where(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId)
-            .Select(d => (DocumentType?)d.DocumentType)
+            .Select(d => new { d.DocumentType, d.Status })
             .FirstOrDefaultAsync(ct);
-        if (docType == null)
+        if (target == null)
             return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารนี้ในบริษัทของคุณ"));
 
-        var permError = await CheckApprovePermissionAsync(ctx!, docType.Value, ct);
+        var permError = await CheckApprovePermissionAsync(ctx!, target.DocumentType, ct);
         if (permError != null) return permError;
 
         try
         {
             // รอบ 193 (ฝ่ายค้าน C6): ถามคำเตือนก่อน (ไม่อนุมัติ ไม่เรียก AI) แล้วค่อยอนุมัติครั้งเดียว — เดิมเรียกอนุมัติแบบไม่รับทราบ
             // ⇒ ด่านเรียก AI เสริมคำเตือน (สูงสุด 8 วินาที) แล้ว API โยนคำตอบทิ้ง = จ่าย token ฟรี + แถว feedback ที่ loop ไม่มีวันปิด
-            // · [Σ-GAP] ห้ามขัดจังหวะ API (คำตัดสินข้อ 12) ⇒ แหล่ง ApiClient ผ่านเฉพาะชุดนั้น แล้วคืนธงในโครงเดิม ·
-            // คำเตือนชนิดอื่นยังหยุด (ไม่เสริม AI) · ร่องรอยบอกว่า "API ส่งผ่าน" ไม่ใช่ผู้ใช้รับทราบ (Helpers/ApprovalAcknowledgement)
             var preview = await _documents.PreviewApprovalWarningsAsync(ctx!.CompanyId, documentId);
-            IReadOnlyList<string> scanGapWarnings = preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning).ToList();
+            // คำตัดสินเจ้าของรอบ 198 ข้อ 6 (รอบ 199 ฝ่ายค้าน B-1): VAT จากสแกนที่ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้ = ปฏิเสธ<b>ก่อน</b>
+            // เรียกอนุมัติ (ไม่ออกเลข ไม่ลง JE ไม่ซ่อมบรรทัด) ⇒ คนรับทราบบนเว็บ/มือถือ · คำเตือนชนิดอื่นที่ต้องมีคนรับทราบก็ปฏิเสธที่นี่ด้วยรูปเดียวกัน
+            // · [Σ-GAP] ยอดไม่ตรงกระดาษอย่างเดียว = ผ่าน (คำตัดสินข้อ 12 ไม่เปลี่ยน) · ตัวตัดสินตัวเดียว Helpers/ApprovalAcknowledgement
+            var refusal = Helpers.ApprovalAcknowledgement.ApiRefusal(preview);
+            if (refusal is not null)
+                return await RefuseApprovalAsync(ctx!.CompanyId, documentId, target.Status, preview, refusal, ct);
+
+            IReadOnlyList<string> scanGapWarnings = preview.Where(Helpers.OcrApprovalGapWarning.IsAmountGapWarning).ToList();
             var doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1",
                 Helpers.ApprovalAckSource.ApiClient, withAiHints: false);
             return Ok(new ApiResponse<object>(true, new
@@ -262,19 +272,56 @@ public class DocumentsV1Controller : PublicApiControllerBase
                 status = doc.Status.ToString(),
                 doc.TotalAmount,
                 // รอบ 193: ธงให้ระบบปลายทางรู้ว่าใบนี้มาจากสแกนที่ยอดไม่ตรงกระดาษ (อนุมัติแล้ว ไม่ได้หยุด)
-                scanAmountGap = scanGapWarnings.Any(w => !Helpers.OcrApprovalGapWarning.IsVatDerivedWarning(w)),
-                // รอบ 195 ฝ่ายค้านรอบสอง R2-3: VAT ที่ลงบัญชีไม่ได้พิมพ์บนกระดาษ (ระบบถอดจากยอดรวม) — ใบซื้อที่ไม่แสดงภาษีแยก = ไม่ครบ
-                // ม.86/4(6) ⇒ ภาษีซื้อต้องห้าม ม.82/5(1) · API ไม่ขัดจังหวะ (คำตัดสินข้อ 12) แต่ต้องบอกระบบปลายทางแยกจากธงยอด
-                scanVatNotOnPaper = scanGapWarnings.Any(Helpers.OcrApprovalGapWarning.IsVatDerivedWarning),
+                scanAmountGap = scanGapWarnings.Count > 0,
+                // รอบ 195 R2-3 → รอบ 199 (คำตัดสินข้อ 6): ใบที่ VAT ไม่ได้พิมพ์บนกระดาษถูกปฏิเสธ 422 ก่อนถึงตรงนี้เสมอ ⇒ ใบที่อนุมัติผ่าน API
+                // เป็น false ทุกใบ · คงช่องไว้ให้สัญญา v1 นิ่ง (ระบบปลายทางที่อ่านช่องนี้ไม่พัง)
+                scanVatNotOnPaper = false,
                 warnings = scanGapWarnings,
             }, scanGapWarnings.Count > 0
                 ? $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber} · หมายเหตุ: {string.Join(" · ", scanGapWarnings)}"
                 : $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber}"));
         }
+        catch (Accounting.Services.Implementations.DocumentApprovalWarningsException ex)
+        {
+            // ตาข่ายชั้นที่สอง: คำเตือนตอนอนุมัติจริงต่างจากพรีวิว (เช่นมีคนแก้เอกสารระหว่างสองคำขอ) — service หยุดก่อนออกเลขแล้ว
+            // (แหล่ง ApiClient ผ่านเฉพาะ [Σ-GAP]) ⇒ คืนรูปเดียวกับด่านข้างบน · เดิมตกไป middleware เป็น 500 ข้อความกลาง ๆ
+            return await RefuseApprovalAsync(ctx!.CompanyId, documentId, target.Status, ex.Warnings,
+                Helpers.ApprovalAcknowledgement.ApiRefusalOf(ex.Warnings), ct);
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new ApiResponse<string>(false, null, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// คืน 422 ปฏิเสธการอนุมัติ (รหัสให้เครื่องอ่าน + ข้อความไทยพร้อมทางไปต่อ) และลงหมายเหตุภายในบนเอกสาร<b>ครั้งแรก</b>ครั้งเดียว
+    /// (ระบบปลายทาง retry เป็นรอบ ๆ ⇒ กันซ้ำด้วยป้าย <c>ApprovalAcknowledgement.ApiRefusalNoteTag</c>) — คนที่เปิดใบร่างบนเว็บต้องรู้ว่า
+    /// ใบนี้ค้างเพราะอะไร (ล้มดังในที่ที่คนดู — F2 ข้อ 7) · ไม่เปลี่ยนสถานะ ไม่ออกเลข ไม่คิดค่าบริการ
+    /// </summary>
+    private async Task<IActionResult> RefuseApprovalAsync(Guid companyId, Guid documentId, DocumentStatus status,
+        IReadOnlyList<string> allWarnings, Helpers.ApiApprovalRefusal refusal, CancellationToken ct)
+    {
+        var tracked = await Db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
+        var note = tracked == null ? null
+            : Helpers.ApprovalAcknowledgement.ApiRefusalNote(tracked.InternalNotes, refusal, DateTime.UtcNow);
+        if (tracked != null && note != null)
+        {
+            tracked.InternalNotes = note;
+            await Db.SaveChangesAsync(ct);
+        }
+        _logger.LogInformation("API v1 ปฏิเสธอนุมัติเอกสาร {DocumentId} ({Code}) — ค้างเป็น {Status} ให้คนรับทราบบนเว็บ",
+            documentId, refusal.Code, status);
+        return UnprocessableEntity(new ApiResponse<object>(false, new
+        {
+            code = refusal.Code,
+            documentId,
+            status = status.ToString(),
+            scanVatNotOnPaper = refusal.ScanVatNotOnPaper,
+            scanAmountGap = allWarnings.Any(Helpers.OcrApprovalGapWarning.IsAmountGapWarning),
+            warnings = refusal.Warnings,
+        }, refusal.Message));
     }
 
     /// <summary>

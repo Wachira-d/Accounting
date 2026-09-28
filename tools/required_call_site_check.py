@@ -302,9 +302,6 @@ TUPLE_RULES = [
     (MOBILE, "QuickApproveAsync",
      ["PreviewApprovalWarningsAsync("], [("PreviewApprovalWarningsAsync(", "_db.ApprovalActions.Add(")], ["acknowledgeWarnings: true"],
      "C5: มือถือหยุดให้กดรับทราบคำเตือนทุกชุด (เหมือนเว็บ) ก่อนบันทึกผล"),
-    (APIV1, "Approve",
-     ["PreviewApprovalWarningsAsync(", "ApprovalAckSource.ApiClient", "withAiHints: false"], [], [],
-     "C6: API ห้ามเรียก AI เสริมคำเตือนแล้วโยนทิ้ง · [Σ-GAP] ไม่ขัดจังหวะ API"),
     # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
     (LODGING_LIFE, "CheckOutAsync",
      ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
@@ -431,6 +428,22 @@ TUPLE_RULES = [
 
 RULES += [dict(file=f, method=m, must=list(mu), before=list(b), forbid=list(fo), why=w)
           for (f, m, mu, b, fo, w) in TUPLE_RULES]
+
+# ── รอบ 199 (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · ฝ่ายค้าน B-1): API v1 ปฏิเสธใบสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ "ก่อน" เรียกอนุมัติ ──────
+# ถอดด่าน / ทิ้งผล (ไม่ return) / ย้ายไปหลังอนุมัติ / กลับไปใช้ IsGapWarning (ที่รวมชุด VAT) เป็นตัวแยกชุด "ผ่าน" = ฟ้อง
+RULES += [
+    dict(file=APIV1, method="Approve",
+         must=["PreviewApprovalWarningsAsync(", "ApprovalAcknowledgement.ApiRefusal(", "ApprovalAckSource.ApiClient",
+               "withAiHints: false", "OcrApprovalGapWarning.IsAmountGapWarning", "ApprovalAcknowledgement.ApiRefusalOf("],
+         must_re=[r"if\s*\(\s*refusal\s+is\s+not\s+null\s*\)\s*return\b"],
+         before=[("ApprovalAcknowledgement.ApiRefusal(", "_documents.ApproveDocumentAsync(")],
+         forbid=["OcrApprovalGapWarning.IsGapWarning", "acknowledgeWarnings: true"],
+         why="C6 + คำตัดสินข้อ 6: API ห้ามเรียก AI เสริมคำเตือน · VAT ไม่ได้พิมพ์บนกระดาษ = 422 ก่อนอนุมัติ · [Σ-GAP] ยอดอย่างเดียวไม่ขัดจังหวะ (ข้อ 12)"),
+    dict(file=APIV1, method="RefuseApprovalAsync",
+         must=["ApprovalAcknowledgement.ApiRefusalNote(", "UnprocessableEntity(", "refusal.Code"],
+         forbid=["ApproveDocumentAsync(", "MeterAsync("],
+         why="คำตัดสินข้อ 6: ปฏิเสธ = 422 พร้อมรหัส + หมายเหตุบนเอกสารครั้งเดียว · ห้ามอนุมัติ/คิดเงินในเส้นปฏิเสธ"),
+]
 
 # ── รอบ 193 ทีม O1 หลังฝ่ายค้านรอบสอง (C10 บางส่วน): ล็อก "ผลต้องถูกใช้" ไม่ใช่แค่ "มีการเรียก" ─────────────────
 RULES += [
@@ -1877,6 +1890,10 @@ REVIEWER_CASES = [
     ("P6", "UpdateComponentAsync", "if (request.CommissionTypeConfirmed == true) comp.CommissionTypeConfirmedAt", "comp.CommissionTypeConfirmedAt", True),
     ("FP1", "VoidOrderAsync", "Accounting.Helpers.PosVoidSaleJournal.Decide(chain", "Accounting.Helpers.PosVoidSaleJournal\n                    .Decide(chain", False),
     ("FP2", "CalculatePayrollAsync", "if (!canRecalc)\n", "if ( !canRecalc )\n", False),
+    # รอบ 199 B-1: ทิ้งผลของด่าน (คำนวณแล้วไม่ return) = อนุมัติใบ VAT ไม่อยู่บนกระดาษผ่าน API ต่อได้ ⇒ ต้องฟ้อง
+    ("B1a", "Approve", "if (refusal is not null)\n                return await RefuseApprovalAsync(", "if (refusal is not null)\n                _ = await RefuseApprovalAsync(", True),
+    # รอบ 199 B-1: กลับไปแยกชุด "ผ่าน" ด้วย IsGapWarning (รวมชุด VAT) = ขยายคำตัดสินข้อ 12 เองอีกครั้ง ⇒ ต้องฟ้อง
+    ("B1b", "Approve", "preview.Where(Helpers.OcrApprovalGapWarning.IsAmountGapWarning)", "preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning)", True),
 ]
 
 

@@ -202,7 +202,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `VAT จากสแกนตรวจกับกระดาษไม่ได้` · มีร่องรอย `[VAT back-calc]` ⇒ `NotOnPaper` ตามเดิม)):
     VAT ไม่อยู่บนกระดาษ + VAT ของบรรทัดตอนนี้ ≠ 0 ⇒ `VAT จากสแกนไม่ได้พิมพ์บนกระดาษ: …` (อ้าง ม.86/4(6) ⇒ ม.82/5(1) + ทางเลือก "ตั้ง VAT 0 ลงค่าใช้จ่ายเต็มจำนวน" ·
     **ไม่บล็อก ไม่เปลี่ยนค่า** — รอเจ้าของตัดสินว่าจะบังคับไหม) · อยู่ชุดเดียวกับ `[Σ-GAP]` (`IsGapWarning`): เว็บ/มือถือต้องกดรับทราบ · workflow/ลายเซ็นส่งผ่านเองไม่ได้ ·
-    `/api/v1` ไม่ขัดจังหวะ คืน `scanVatNotOnPaper:true` + `warnings[]` (รอบ 195 รอบสอง R2-3)
+    **`/api/v1` ปฏิเสธ** (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · รอบ 199 ฝ่ายค้าน B-1): 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` ก่อนเรียกอนุมัติ · เอกสารคงเป็นร่าง +
+    หมายเหตุภายใน `[API-APPROVE-REFUSED]` ครั้งแรกครั้งเดียว ⇒ คนรับทราบบนเว็บ/มือถือ (เดิมรอบ 195 R2-3: อนุมัติต่อแล้วคืน `scanVatNotOnPaper:true`) — §3.2 ApiClient
     · **การแยก VAT จากยอดรวมมีสูตรเดียว** `Helpers/OcrVatBackCalc.SplitInclusive` (AwayFromZero) หลังด่าน `VatBackCalcGuard.Decide` เสมอ:
     `ParseThaiDocument` (Decide → SplitInclusive) · `SmartFieldExtractor.ApplyAmountMath` และ **ZoneFallback** (`ApplyZoneAnalysisFallbackAsync`) → `OcrVatBackCalc.Plan`
     (เคารพ `[VAT skip]` เดิม · "ยกเว้น/ไม่มี/ไม่จดภาษีมูลค่าเพิ่ม" · "NON VAT" ไม่นับว่าพูดถึง VAT · แท็ก `[VAT back-calc]` และความมั่นใจตามด่าน ไม่ถูกดันเป็น 0.95)
@@ -237,7 +238,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `NetLineTotalAmount` · BOM · `T03` = ใบเสร็จ/ใบกำกับ (เดิม map เป็น Receipt) — ตาราง ETDA ครบ · ยอด XML เป็นตัวตั้ง (ไม่ผ่านขั้นยึดยอด) · ข้อความหน้า PDF
     (`PdfTextLayerExtractor`) ใช้หา**เฉพาะ**การปรับตอนชำระที่ XML ไม่มี (`ApplyEtaxSettlement`) ⇒ ใบ Shopee XML ได้ `[PAY≠TOTAL]` + `[PAY-PLAN]` เหมือนใบ PDF ·
     T05/T06 ⇒ §82/5(2) (§7) · fixture จริง `erp-review/2026-09-24/fixtures/` (ยังไม่มี PDF จริงของ Shopee)
-  - **`[Σ-GAP]` ตอนอนุมัติด้วยมือ (#12)** — §3.2 (คนกดรับทราบ · API ไม่ขัดจังหวะ)
+  - **`[Σ-GAP]` ตอนอนุมัติด้วยมือ (#12)** — §3.2 (คนกดรับทราบ · API ไม่ขัดจังหวะ · ชุด VAT ไม่อยู่บนกระดาษ API ปฏิเสธ 422 — คำตัดสินรอบ 198 ข้อ 6)
   - **ข้อมูลเก่าที่ผิด (#14)** — **รายงานเท่านั้น ไม่แก้หลังบ้าน**: `GET /api/ocr/amount-audit` (`OcrService.GetStoredAmountAuditAsync` · take 1..1000 · ตัดแถวที่เปิดไม่ได้) +
     `pages/ocr-amount-audit.html` · ตัวตัดสิน `Helpers/OcrStoredAmountAudit` (ชุดเดียวกับไปป์ไลน์) 4 ชนิด: ยอดสแกน ≠ ยอดกระดาษที่พิสูจน์ได้ · ส่วนลดที่เป็นการปรับตอนชำระแต่
     เอกสาร**ลดยอด**ตามไปแล้ว · ฐานหัวเอกสาร ≠ Σ บรรทัด (+ปัดเศษ) · ยอดรวม ≠ บรรทัด + VAT − WHT · `undefined` = "ไม่ได้รับผลตรวจ" ≠ "ไม่พบปัญหา"
@@ -1562,9 +1563,19 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 >   → ส่งซ้ำพร้อม `acknowledgeWarnings` (ผู้เซ็น = ผู้รับทราบ) · ลายเซ็นครบแต่อนุมัติไม่ผ่านด่านอื่น ⇒ 422 "เซ็นครบ รออนุมัติด้วยมือ" (ไม่ใช่ 500)
 > - **SystemWorkflow** (PV อนุมัติอัตโนมัติ · ใบแทน · ลายเซ็นที่ระบบประมวล): ผ่านคำเตือนทั่วไปได้พร้อมร่องรอย `APPROVE-SYSTEM-PASSED-WARNINGS`
 >   (PV อัตโนมัติเขียนหมายเหตุภายในบนใบด้วย) · **`[Σ-GAP]` ผ่านไม่ได้**
-> - **ApiClient** (`DocumentsV1Controller.Approve`): `PreviewApprovalWarningsAsync` (ไม่อนุมัติ · ไม่เรียก AI) → ถ้าคำเตือนเป็น gap ทั้งหมด
->   อนุมัติต่อด้วย ack ครั้งเดียว (`withAiHints:false`) แล้วคืน `scanAmountGap:true` + `warnings[]` ในโครงเดิม (**API ห้ามขัดจังหวะ**) ·
->   คำเตือนชุดอื่นยังทำตัวเดิม · ApiClient **ไม่ override** ด่านงบ/วงเงิน/วางบิลเกิน (เดิม ack:true ข้ามให้โดยบังเอิญ)
+> - **ApiClient** (`DocumentsV1Controller.Approve`): `PreviewApprovalWarningsAsync` (ไม่อนุมัติ · ไม่เรียก AI) → ตัวตัดสินตัวเดียว
+>   `ApprovalAcknowledgement.ApiRefusal`: เหลือแต่ **`[Σ-GAP]` ยอดไม่ตรงกระดาษ** (`OcrApprovalGapWarning.IsAmountGapWarning`) หรือไม่มีคำเตือน ⇒
+>   อนุมัติต่อด้วย ack ครั้งเดียว (`withAiHints:false`) แล้วคืน `scanAmountGap:true` + `warnings[]` ในโครงเดิม (**คำตัดสิน #12 ไม่เปลี่ยน**) ·
+>   **คำเตือน VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้** (`IsVatDerivedWarning`) ⇒ **422 `APPROVE-SCAN-VAT-NOT-ON-PAPER`** ก่อนเรียกอนุมัติ
+>   (คำตัดสินรอบ 198 ข้อ 6 — ไม่ออกเลข ไม่ลง JE ไม่ซ่อมบรรทัด · `data.{code,documentId,status,scanVatNotOnPaper,scanAmountGap,warnings}`) ·
+>   คำเตือนชนิดอื่น ⇒ 422 `APPROVE-WARNINGS-NEED-ACK` (เดิมหลุดเป็น 500) · ครั้งแรกที่ปฏิเสธลงหมายเหตุภายใน `[API-APPROVE-REFUSED]` (retry ไม่ต่อซ้ำ) ·
+>   service เองก็หยุดชุด VAT เมื่อแหล่ง = ApiClient (`Unacknowledged`) ⇒ คำเตือนที่เกิดระหว่างพรีวิวกับอนุมัติถูก catch เป็นรูป 422 เดียวกัน ·
+>   `success` ยังมีช่อง `scanVatNotOnPaper` (= false เสมอ · สัญญา v1 นิ่ง) · ApiClient **ไม่ override** ด่านงบ/วงเงิน/วางบิลเกิน
+> - **ทางเข้าอื่นที่อนุมัติโดยไม่มีคนเห็นคำเตือน** (ตรวจรอบ 199): SystemWorkflow ทุกจุด (PV อัตโนมัติ · ริบมัดจำ · ใบแทน · รอบโอน settlement · ลายเซ็นที่ไม่ส่ง ack)
+>   หยุดชุด VAT อยู่แล้ว (`IsGapWarning` รวมชุด VAT) · LINE / สร้าง+อนุมัติ OCR / recurring / ใบเบิก / เงินเดือนล่วงหน้า / integration แปลงใบ = แหล่ง `None`
+>   (หยุดทุกคำเตือน) · ที่พัก/PlatformBilling/CMS ส่ง `acknowledgeWarnings:true` แต่เป็นเอกสารที่เพิ่งสร้างเองในคำขอเดียวกัน (ไม่มีสแกนที่ `CreatedDocumentId`
+>   ชี้มา ⇒ ไม่มีคำเตือนชุดนี้) · ⚠️ **ยังเปิด**: ปุ่ม "บันทึกและอนุมัติ"/เงินสดทันทีใน `documents.html` ส่ง `acknowledgeWarnings:true` โดยไม่แสดงคำเตือน
+>   (คนอยู่หน้าจอแต่ไม่เห็น `[Σ-GAP]`/ชุด VAT) และ `POST documents/bulk-approve` รับ `AcknowledgeWarnings` จากผู้เรียก — backlog ต้องแก้ฝั่งหน้าเว็บ
 > - ⚠️ ผู้เรียกภายในที่ยังส่ง `acknowledgeWarnings:true` ตรง (ที่พัก ×2 · PlatformBilling ×3 · CMS ×2 ฯลฯ — เอกสารระบบสร้างเอง ไม่มี `[Σ-GAP]`)
 >   ร่องรอยยังเขียนว่า "ยืนยันโดย" — ควรย้ายไป `SystemWorkflow` (backlog 7 จุด)
 >
@@ -3444,6 +3455,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 | มัดจำ: ใบกำกับซ้ำ | `DepositPolicyResolver.GrossApplyBlocked` | `RD-86/4-DEPOSIT-TIV-DOUBLE` ทุกเส้น/ทุกงวด · `DEPOSIT-DRIVES-UNSUPPORTED` · `RD-78/1-DEPOSIT-VAT`/`RD-78-DEPOSIT-VAT` (คำเตือนค่าตั้ง) (§2.3) |
 | ที่พัก | `LodgingService` | `LODGING-EXTRA-PRICEMODE` · `LODGING-DEPOSIT-VAT-MISMATCH` · `LODGING-DEPOSIT-CONTACT` (§6.5) |
 | [Σ-GAP] ตอนอนุมัติด้วยมือ (คำตัดสิน #12) | `Helpers/OcrApprovalGapWarning` + `ApprovalAcknowledgement` | §3.2 ขั้นคำเตือน — คนต้องกด "รับทราบ" · API ไม่ขัดจังหวะ |
+| VAT สแกนไม่ได้พิมพ์บนกระดาษ ผ่าน API (คำตัดสินรอบ 198 ข้อ 6) | `ApprovalAcknowledgement.ApiRefusal` · `DocumentsV1Controller.Approve/RefuseApprovalAsync` | §3.2 ApiClient — 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` ก่อนอนุมัติ · ค้างร่าง |
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
 | §82/5(6) นโยบาย "ดุลพินิจผู้กรอก" | keyword auto-cut ถูกถอดออกทั้งหมด | ระบบ**ไม่เดา**จากข้อความไปตัดสิทธิ (เดิม "ค่าน้ำมัน" คำเดียวโดนตัด = น้ำมันรถกระบะผู้รับเหมาหายจาก ภ.พ.30). การตัดใช้เฉพาะ (a) flag รายบรรทัด IsVatClaimable (b) ผังบัญชีต้องห้ามที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42: กระบะตอนเดียว/แค็บ/บรรทุก/ตู้>10 เคลมได้; เก๋ง/กระบะ 4 ประตูไม่ได้) มี 2 จุด — approve warning + confirm ตอนติ๊กเคลมในหน้าเอกสาร · **รอบ 193: ทั้งสองจุดอ่านลิสต์คำชุดเดียว `InputVatVehicleRule`** (หน้าเอกสารถามเซิร์ฟเวอร์ — ลิสต์คำใน JS = 0) |
 | ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ | `CompleteSupplierTaxInvoiceAsync` + `ClaimInputVat` (Unclaim/ReclaimInputVatAsync) | แผงในหน้า detail ของ PV/Expense/PI (approved, VAT>0): เลิกเคลม → JE Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้"/Cr 11610 หรือ 11640 + set override=ผังค่าใช้จ่าย (marker ที่ ภ.พ.30 exclude อยู่แล้ว) + ติ๊กบรรทัดงวด Draft ออก; block เมื่อเคลมในงวด Filed แล้ว (ต้องยื่นเพิ่มเติม). กลับมาเคลม → require §86/4 ครบ + กรอบ 6 เดือน §82/3 → JE ย้อน + BecameClaimableAt=now (เข้า ภ.พ.30 งวดปัจจุบัน) + PV เปิด HasTaxInvoiceReference. แก้เลขที่/วันที่/สาขาใบกำกับได้ทุกใบจากแผงเดียวกัน |
@@ -3570,7 +3582,12 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S3 ฝ่ายค้าน settlement B+C+E2-10: ล็อกต่อช่องทางตัวเดียวของผู้นำเข้า/ผู้ลงบัญชี + ล็อกก่อนโหลด ·
+_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — คำตัดสินเจ้าของรอบ 198 ข้อ 6 / ฝ่ายค้าน B-1: `/api/v1/documents/{id}/approve` **ปฏิเสธ 422
+`APPROVE-SCAN-VAT-NOT-ON-PAPER`** เมื่อใบสแกนมีคำเตือน VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้ (ก่อนเรียกอนุมัติ · ค้างร่าง · หมายเหตุ `[API-APPROVE-REFUSED]` ครั้งเดียว) ·
+คำเตือนอื่น 422 `APPROVE-WARNINGS-NEED-ACK` (เดิม 500) · `[Σ-GAP]` ยอดอย่างเดียวอนุมัติต่อเหมือนเดิม (#12) · `ApprovalAckSource.ApiClient` ผ่านเฉพาะ
+`IsAmountGapWarning` (§1 OCR · §3.2) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S3 ฝ่ายค้าน settlement B+C+E2-10: ล็อกต่อช่องทางตัวเดียวของผู้นำเข้า/ผู้ลงบัญชี + ล็อกก่อนโหลด ·
 รอบค้างครึ่งทางแก้/ยกเลิกไม่ได้ · คิดแผนใหม่ใต้ล็อก + ตรวจความครบก่อนประทับ Posted · ด่านก่อนยกเลิกการลงบัญชี (e-Tax/ภ.พ.30/ภ.พ.36/50 ทวิ) + ลำดับคงที่ ·
 50 ทวิ ที่ยื่นแล้วยกเลิกไม่ได้ทุกทางเข้า · ชิ้นของรอบที่ลงบัญชีแล้วยกเลิกทีละใบไม่ได้ · หัวใบขายสรุป §86/6 · คีย์กันซ้ำ v2 · คำตัดสินจับคู่ของคน ·
 คืนเงินภายหลังผ่าน intent · intent ค้นทั้งบริษัท · คืนเงินผลไม่แน่ชัด (§2.10) — commit <pending>)_

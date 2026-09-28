@@ -184,6 +184,31 @@
 }</pre></div>
 </div>
 
+<div class="card" style="padding:16px;margin-bottom:16px" id="v1-approve-errors">
+  <h4 style="margin:0 0 8px;font-size:14px">Connected API: <code>POST /api/v1/documents/{id}/approve</code> — รหัสเมื่อปฏิเสธการอนุมัติ (HTTP 422)</h4>
+  <p style="margin:0 0 8px;font-size:13px;color:var(--gray-600)">เอกสารยังเป็นฉบับร่าง (ไม่ออกเลข ไม่ลงบัญชี ไม่คิดค่าบริการ) — ให้ผู้ใช้เปิดเอกสารบนหน้าเว็บหรือแอปมือถือ ตรวจแล้วกด "รับทราบ" และอนุมัติที่นั่น · อ่านรหัสจาก <code>data.code</code></p>
+  <table class="status-table">
+    <thead><tr><th>data.code</th><th>ความหมาย</th></tr></thead>
+    <tbody>
+      <tr><td><code>APPROVE-SCAN-VAT-NOT-ON-PAPER</code></td><td>เอกสารสร้างจากสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ (หรือไม่มีข้อความสแกนให้ตรวจ) — VAT ที่ระบบถอดจากยอดรวมเองอาจเป็นภาษีซื้อต้องห้าม ม.82/5(1) ต้องให้คนตรวจกับกระดาษก่อน</td></tr>
+      <tr><td><code>APPROVE-WARNINGS-NEED-ACK</code></td><td>เอกสารมีคำเตือนอื่นที่ต้องมีคนรับทราบก่อนอนุมัติ (เช่น อาจเป็นเอกสารซ้ำ)</td></tr>
+    </tbody>
+  </table>
+  <div class="code-block"><pre>{
+  "success": false,
+  "message": "ไม่อนุมัติผ่าน API — เอกสารนี้สร้างจากสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ ...",
+  "data": {
+    "code": "APPROVE-SCAN-VAT-NOT-ON-PAPER",
+    "documentId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "Draft",
+    "scanVatNotOnPaper": true,
+    "scanAmountGap": false,
+    "warnings": ["VAT จากสแกนไม่ได้พิมพ์บนกระดาษ: ..."]
+  }
+}</pre></div>
+  <p style="margin:8px 0 0;font-size:12px;color:var(--gray-500)">ใบสแกนที่มีแต่คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ยังอนุมัติได้ตามปกติ (HTTP 200) และคืน <code>scanAmountGap: true</code> พร้อม <code>warnings</code></p>
+</div>
+
 <!-- ==================== RATE LIMITING ==================== -->
 <h2 class="section-title" id="ratelimit">Rate Limiting</h2>
 <div class="card" style="padding:20px;margin-bottom:16px">
