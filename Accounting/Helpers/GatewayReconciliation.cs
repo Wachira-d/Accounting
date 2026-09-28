@@ -7,7 +7,9 @@ public readonly record struct GatewayIntentAmounts(
     decimal FeeEstimated,
     decimal? SettledAmount,
     bool IsRefundedFully,
-    bool IsSettled);
+    bool IsSettled,
+    // รอบ 198 G-2: ยอดคืนสะสมที่ระบบบันทึก (คืนบางส่วน) — 0 = ไม่มีข้อมูล/ไม่เคยคืน
+    decimal RefundedAmount = 0m);
 
 /// <summary>ผลการกระทบยอดของงวดหนึ่ง</summary>
 public sealed record GatewayReconciliationResult(
@@ -62,7 +64,8 @@ public static class GatewayReconciliation
         var rows = succeeded.ToList();
 
         var gross = rows.Sum(r => r.Amount);
-        var refunded = rows.Where(r => r.IsRefundedFully).Sum(r => r.Amount);
+        // คืนเต็ม = ยอดเต็ม (รวมแถวเก่าที่ไม่มียอดคืนบันทึก) · คืนบางส่วน = ยอดคืนสะสมที่บันทึกไว้ (G-2)
+        var refunded = rows.Sum(RefundedOf);
 
         // ค่าธรรมเนียม: ใช้ตัวจริงเมื่อมี · ตัวประมาณเมื่อยังไม่ settlement
         var fee = rows.Sum(r => r.FeeActual ?? r.FeeEstimated);
@@ -72,7 +75,7 @@ public static class GatewayReconciliation
 
         var unsettledRows = rows.Where(r => !r.IsSettled && !r.IsRefundedFully).ToList();
         // ยอดที่ "ควรจะได้" จากรายการที่ยังไม่ถึงรอบโอน = ยอดเต็มหักค่าธรรมเนียมของมันเอง
-        var unsettledNet = unsettledRows.Sum(r => r.Amount - (r.FeeActual ?? r.FeeEstimated));
+        var unsettledNet = unsettledRows.Sum(r => r.Amount - RefundedOf(r) - (r.FeeActual ?? r.FeeEstimated));
 
         var expectedNet = gross - refunded - fee;
 
@@ -87,6 +90,9 @@ public static class GatewayReconciliation
             UnsettledCount: unsettledRows.Count,
             UnsettledAmount: Round(unsettledNet));
     }
+
+    private static decimal RefundedOf(GatewayIntentAmounts r)
+        => r.IsRefundedFully ? r.Amount : Math.Max(0m, Math.Min(r.Amount, r.RefundedAmount));
 
     // เงินเป็น decimal และปัดแบบ AwayFromZero เสมอ (banker's rounding เป็นค่า default
     // ของ .NET และเคยทำให้ยอด OCR เพี้ยนมาแล้ว — CLAUDE.md กฎเหล็ก #4 E)

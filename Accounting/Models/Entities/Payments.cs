@@ -58,6 +58,10 @@ public class PaymentProviderConfig : TenantEntity
     /// ของลูกค้าจะยืนยัน (เป็นประเด็นที่ยังตีความต่างกัน ระบบจึงไม่ตัดสินแทน)</summary>
     public GatewayFeeWhtMode WhtOnFee { get; set; } = GatewayFeeWhtMode.None;
 
+    /// <summary>ค่าธรรมเนียมมี VAT อยู่ตรงไหน (รอบ 198 G-3) — ใช้แยกขา 11630 ภาษีซื้อรอเครดิตตอนบันทึกรอบโอน
+    /// · ค่าเริ่มต้น <c>None</c> = ลงค่าใช้จ่ายทั้งก้อน (พฤติกรรมเดิม)</summary>
+    public GatewayFeeVatMode FeeVatMode { get; set; } = GatewayFeeVatMode.None;
+
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
 }
@@ -103,6 +107,18 @@ public class PaymentIntent : TenantEntity
 
     public decimal FeeEstimated { get; set; }
     public decimal? FeeActual { get; set; }
+
+    // ── คืนเงิน (รอบ 198 G-1/G-2) ──
+    /// <summary>ยอดที่คืนให้ลูกค้าแล้ว<b>สะสม</b> (ทุกครั้งที่คืนผ่านระบบ) — ตัวตั้งของ JE คืนเงิน ·
+    /// รอบโอนนับรายการนี้ด้วยยอด <c>Amount − RefundedAmount</c> · 0 บนแถวที่สถานะคืนเงินแล้ว
+    /// = คืนก่อนระบบเริ่มบันทึกยอดคืน (ไม่มี JE คืนเงิน — ต้องตรวจมือ ห้ามเดา)</summary>
+    public decimal RefundedAmount { get; set; }
+    /// <summary>ส่วนของ <see cref="RefundedAmount"/> ที่ถูกหักในรอบโอนแล้ว — คืนเงิน<b>หลัง</b>รอบโอน
+    /// ผู้ให้บริการจะหักจากรอบโอนถัดไป ⇒ รอบถัดไปต้องนับส่วนต่างนี้เป็นยอดติดลบ</summary>
+    public decimal RefundSettledAmount { get; set; }
+    public DateTime? LastRefundedAt { get; set; }
+    /// <summary>JE คืนเงินครั้งล่าสุด (Dr ลูกหนี้ / Cr บัญชีพัก) — ผูกไว้ตามรอยจากหน้ารายการ</summary>
+    public Guid? LastRefundJournalEntryId { get; set; }
     public decimal? SettledAmount { get; set; }
     public DateTime? SettledAt { get; set; }
     public string? SettlementRef { get; set; }

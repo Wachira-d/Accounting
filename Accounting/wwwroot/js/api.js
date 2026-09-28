@@ -1112,6 +1112,9 @@ const API = {
         API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
       refundPaymentIntent: (id, amount, reason) =>
         API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
+      // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
+      updatePaymentIntentFee: (id, feeActual, reason) =>
+        API.put(`${base}/pay/intents/${id}/fee`, { feeActual, reason }),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),

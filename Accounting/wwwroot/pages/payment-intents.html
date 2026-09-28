@@ -28,6 +28,8 @@
     .banner.warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e }
     .ev { font-size:11.5px; color:#475569; line-height:1.7 }
     .ev b { color:#0f172a }
+    .cn-miss { background:#fee2e2; color:#991b1b }
+    .cn-ok { background:#dcfce7; color:#166534 }
   </style>
 </head>
 <body>
@@ -66,6 +68,7 @@
     //    และเดินผ่าน endpoint เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน
     const Page = {
       rows: [],
+      summary: { refundedAwaitingCreditNote: 0, refundUntracked: 0 },
       filter: { status: '', q: '' },
 
       async init() {
@@ -81,7 +84,13 @@
         const api = Layout.api(); if (!api) return;
         try {
           const q = this.filter.status ? `?status=${encodeURIComponent(this.filter.status)}&limit=300` : '?limit=300';
-          this.rows = (await api.listPaymentIntents(q))?.data || [];
+          const d = (await api.listPaymentIntents(q))?.data || {};
+          this.rows = d.items || [];
+          // ตัวนับมาจากเซิร์ฟเวอร์ (ตัดสินที่เดียว) — หน้าเว็บไม่นับเอง
+          this.summary = {
+            refundedAwaitingCreditNote: d.refundedAwaitingCreditNote || 0,
+            refundUntracked: d.refundUntracked || 0,
+          };
           this.render();
         } catch (e) {
           document.getElementById('body').innerHTML =
@@ -108,6 +117,15 @@
         const rows = this.visible();
         const stuckCount = this.rows.filter(r => this.isStuck(r)).length;
         document.getElementById('body').innerHTML = `
+          ${this.summary.refundedAwaitingCreditNote ? `<div class="banner warn">
+            🧾 มี <b>${this.summary.refundedAwaitingCreditNote}</b> รายการที่<b>คืนเงินแล้ว แต่ยังไม่พบใบลดหนี้</b> (§86/10) —
+            ระบบลงบัญชีคืนเงินแล้ว (ยอดรอใบลดหนี้อยู่ที่ลูกหนี้การค้า) · เปิดเอกสารต้นทางแล้วออกใบลดหนี้เพื่อลดภาษีขาย
+          </div>` : ''}
+          ${this.summary.refundUntracked ? `<div class="banner warn">
+            ⚠️ มี <b>${this.summary.refundUntracked}</b> รายการที่สถานะ "คืนเงินแล้ว" แต่<b>ไม่มีรายการบัญชีคืนเงิน</b>
+            (คืนก่อนระบบบันทึกยอดคืน หรือลงบัญชีไม่สำเร็จ — ดูประวัติของรายการ) · ต้องบันทึกรายการบัญชีด้วยมือ
+            และรายการเหล่านี้ไม่ถูกนับในรอบโอน
+          </div>` : ''}
           ${stuckCount ? `<div class="banner warn">
             ⚠️ มี <b>${stuckCount}</b> รายการค้างเกิน 30 นาที — สาเหตุที่พบบ่อยที่สุดคือ
             <b>ยังไม่ได้ตั้ง Webhook URL</b> ในแดชบอร์ดของผู้ให้บริการ
@@ -124,6 +142,7 @@
                   <option value="Failed">ล้มเหลว</option>
                   <option value="Expired">หมดอายุ</option>
                   <option value="Refunded">คืนเงินแล้ว</option>
+                  <option value="PartiallyRefunded">คืนเงินบางส่วน</option>
                 </select></div>
               <div style="flex:1;min-width:200px"><label>ค้นหา (เลขอ้างอิง / ที่มา / ยอด)</label>
                 <input class="form-input" id="fQ" value="${Layout.esc(this.filter.q)}"
@@ -161,13 +180,20 @@
           <td class="num">${Layout.money(r.amount)}</td>
           <td><span class="pill st-${Layout.esc(r.status)}">${Layout.esc(r.status)}</span>
             ${stuck ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ค้างนาน</div>' : ''}
-            ${r.failureMessage ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.failureMessage)}</div>` : ''}</td>
+            ${r.failureMessage ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.failureMessage)}</div>` : ''}
+            ${Number(r.refundedAmount) > 0 ? `<div style="font-size:11px;margin-top:2px">คืนแล้ว ${Layout.money(r.refundedAmount)}</div>` : ''}
+            ${r.needsCreditNote ? '<div style="margin-top:2px"><span class="pill cn-miss">ยังไม่ออกใบลดหนี้</span></div>' : ''}
+            ${r.creditNoteState === 'CreditNoteCovered' ? '<div style="margin-top:2px"><span class="pill cn-ok">ออกใบลดหนี้แล้ว</span></div>' : ''}
+            ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มีรายการบัญชีคืนเงิน — ตรวจมือ</div>' : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
                       <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
-            ${r.status === 'Succeeded' ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.amount) || 0})">คืนเงิน</button>` : ''}
+            ${(r.status === 'Succeeded' || (r.status === 'PartiallyRefunded' && Number(r.refundedAmount) > 0)) && Number(r.refundableRemaining) > 0
+              ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.refundableRemaining) || 0})">คืนเงิน</button>` : ''}
+            ${!r.isSettled && ['Succeeded', 'PartiallyRefunded', 'Refunded'].includes(r.status)
+              ? `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${r.id}', ${r.feeActual == null ? 'null' : Number(r.feeActual)})">ค่าธรรมเนียม</button>` : ''}
           </td>
         </tr>`;
       },
@@ -214,7 +240,28 @@
           // ขั้นถัดไปที่ระบบทำแทนไม่ได้ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้ผู้ใช้เดา
           alert(`${res?.message || 'คืนเงินแล้ว'}\n\nขั้นถัดไป: ${res?.data?.nextStep || ''}`);
           await this.load();
-        } catch (e) { Layout.toast(e.message || 'คืนเงินไม่สำเร็จ', 'error'); }
+        } catch (e) {
+          // เงินอาจออกไปแล้วแม้ลงบัญชีไม่สำเร็จ — ข้อความจากเซิร์ฟเวอร์บอกชัด ต้องให้ผู้ใช้อ่านครบ (ไม่ใช่ toast หายไป)
+          alert(e.message || 'คืนเงินไม่สำเร็จ');
+          await this.load();
+        }
+      },
+
+      // แก้ค่าธรรมเนียมจริงรายรายการ (ก่อนบันทึกรอบโอน) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
+      async editFee(id, current) {
+        const api = Layout.api(); if (!api) return;
+        const raw = prompt('ค่าธรรมเนียมจริงของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):',
+          current == null ? '' : Number(current).toFixed(2));
+        if (raw === null || raw.trim() === '') return;
+        const fee = Number(raw);
+        if (!(fee >= 0)) { Layout.toast('ค่าธรรมเนียมไม่ถูกต้อง', 'error'); return; }
+        const reason = prompt('เหตุผลที่แก้ (ผู้สอบบัญชีจะเห็นข้อความนี้):', 'ตามสเตทเมนต์ผู้ให้บริการ');
+        if (!reason) return;
+        try {
+          const res = await api.updatePaymentIntentFee(id, fee, reason);
+          Layout.toast(res?.message || 'แก้ค่าธรรมเนียมแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'แก้ค่าธรรมเนียมไม่สำเร็จ', 'error'); }
       },
 
       async events(id) {

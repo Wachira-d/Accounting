@@ -49,14 +49,23 @@ public class SubLedgerReconciliationService
         var lines = new List<ReconLine>();
 
         // ===== AR — ลูกหนี้การค้า =====
-        // Control account: typically AccountCode starting with "112" or "113"
-        // for ลูกหนี้. We pick the highest-balance Level-4+ account that matches.
-        var arAccounts = await _db.ChartOfAccounts.AsNoTracking()
+        // Control account: typically AccountCode starting with "112" or "113" for ลูกหนี้.
+        // รอบ 198 S-1: **บัญชีพักของผู้ให้บริการรับชำระเงิน (11340 + ผังที่ตั้งเป็นบัญชีพักใน PaymentProviderConfig)
+        // ไม่ใช่ลูกหนี้การค้า** — ไม่มีเอกสารลูกหนี้รองรับ ⇒ เดิมเทียบกับยอดค้างของใบแจ้งหนี้แล้วขึ้นส่วนต่างปลอมทุกเดือน ·
+        // ตัวตัดสินอยู่ที่ Helpers/TradeReceivableAccount ตัวเดียว
+        var gatewayClearingIds = await _db.PaymentProviderConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.ClearingAccountId != null)
+            .Select(c => c.ClearingAccountId!.Value)
+            .ToListAsync();
+        var arCandidates = await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted
                 && (a.AccountCode.StartsWith("112") || a.AccountCode.StartsWith("113"))
                 && a.AccountName.Contains("ลูกหนี้")
                 && a.AccountType == AccountType.Asset)
             .ToListAsync();
+        var arAccounts = arCandidates
+            .Where(a => TradeReceivableAccount.IsTradeReceivableControl(a.Id, a.AccountCode, a.AccountName, gatewayClearingIds))
+            .ToList();
         foreach (var acc in arAccounts)
         {
             var glBal = await ComputeGlBalanceAsync(companyId, acc.Id, asOfExclusive);

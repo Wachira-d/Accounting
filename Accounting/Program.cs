@@ -339,6 +339,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPublicPaymentResolver,
 // ขั้น "เงินเข้าธนาคารจริง" (settlement) — ล้างบัญชีพัก + ลงค่าธรรมเนียม + WHT
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewaySettlementService,
     Accounting.Services.Payments.GatewaySettlementService>();
+// คืนเงินผ่าน gateway + JE คืนเงิน (Dr ลูกหนี้ / Cr บัญชีพัก) — รอบ 198 G-1 · เดิม endpoint คืนเงินไม่ลงบัญชีเลย
+builder.Services.AddScoped<Accounting.Services.Payments.IGatewayRefundService,
+    Accounting.Services.Payments.GatewayRefundService>();
 // ตัวจัดการ "เงินเข้าแล้วทำอะไรต่อ" ต่อชนิดต้นทาง — เพิ่มทางเข้าใหม่ = เพิ่มไฟล์
 // ไม่ใช่แก้ service กลาง · ต้นทางที่ยังไม่มีตัวจัดการจะ log error ดัง ๆ (ไม่เงียบ)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,

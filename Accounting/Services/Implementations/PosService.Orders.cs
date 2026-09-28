@@ -1635,8 +1635,8 @@ public partial class PosService
 
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
 
-        // Debit: one line per payment method (Cash → 1011, BankTransfer/PromptPay → 1012,
-        // CreditCard → 1131 บัตรเครดิตค้างรับ). When the order has multiple payments
+        // Debit: one line per payment method (Cash → 11111, BankTransfer/PromptPay → บัญชีธนาคารที่ผูกไว้,
+        // CreditCard → 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน · EWallet → 11113 · เช็ค → 11131 — MoneyAccountFallback). When the order has multiple payments
         // — e.g. half cash half transfer — we record each leg into its own account so
         // the GL reconciles to the bank/cash position correctly.
         var paymentsToBook = order.Payments?.Where(p => !p.IsDeleted).ToList() ?? new List<PosPayment>();
@@ -1663,7 +1663,11 @@ public partial class PosService
                 // และกระทบยอดรายสาขาไม่ได้) · ตัวตัดสินคือ resolver ตัวเดียวของระบบ
                 var acct = await ResolveGatewayClearingAsync(companyId, pay)
                     ?? await ResolvePaymentAccountAsync(companyId, pay.PaymentMethod, jeTerminal);
-                if (acct == null) continue;
+                // รอบ 198 P-1: เดิม `continue` เงียบ ⇒ ขาเงินหาย JE ไม่สมดุล · ตอนนี้ resolver ล้มดังเองแล้ว บรรทัดนี้กันไว้อีกชั้น
+                if (acct == null)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบบัญชีรับเงินด้วยวิธี \"{PaymentMethodThaiLabel(pay.PaymentMethod)}\" — ตั้งค่าผังบัญชีของสาขา/เครื่องก่อนปิดบิล",
+                        "POS-NO-CASH-ACCOUNT");
                 // Use Amount (allocated to invoice), not ReceivedAmount, so cash-tendered-with-change
                 // posts the invoice value, not the full bill the customer handed over.
                 var debit = pay.Amount;
@@ -2192,10 +2196,9 @@ public partial class PosService
     private static PaymentResponse MapPayment(PosPayment p) => new(
         p.Id, p.PaymentMethod, p.Amount, p.ReceivedAmount, p.ChangeAmount, p.ReferenceNo, p.CardLastFour, p.PaidAt);
 
-    // Cash/bank/card account picker keyed by PaymentMethod. Defaults match
-    // the Thai SME chart-of-accounts seeded by SeedCoaService:
-    //   1011 เงินสด / 1012 ธนาคาร / 1131 บัตรเครดิตค้างรับ
-    // Fallback by prefix lets companies with a customized COA still resolve.
+    // Cash/bank/card account picker keyed by PaymentMethod — ผังสำรองมาจาก Helpers/MoneyAccountFallback ตัวเดียว
+    // (รอบ 198 P-1: เดิม 1011/1012/1131 ซึ่งไม่มีในผังมาตรฐาน 5 หลัก แล้วตกไป prefix "112" = เงินลงทุนชั่วคราว ·
+    //  "113" = ลูกหนี้ตัวไหนก็ได้)
     /// <summary>บัญชีพักของ gateway สำหรับรายการที่จ่ายผ่านระบบรับชำระออนไลน์ —
     /// <c>null</c> = ไม่ได้จ่ายผ่าน gateway (หรือ gateway นั้นเงินเข้าธนาคารทันที)
     /// ⇒ ผู้เรียกตกไปใช้ผังตามวิธีจ่ายเหมือนเดิม
@@ -2234,26 +2237,35 @@ public partial class PosService
                 terminal?.Name, acctId, companyId);
         }
 
-        string preferred; string prefix;
-        switch (method)
-        {
-            case PaymentMethod.Cash:
-                preferred = "1011"; prefix = "111"; break;
-            case PaymentMethod.BankTransfer:
-            case PaymentMethod.PromptPay:
-            case PaymentMethod.DirectDebit:
-            case PaymentMethod.EWallet:
-                preferred = "1012"; prefix = "112"; break;
-            case PaymentMethod.CreditCard:
-                preferred = "1131"; prefix = "113"; break;
-            case PaymentMethod.Cheque:
-                preferred = "1012"; prefix = "112"; break;
-            default:
-                preferred = "1011"; prefix = "111"; break;
-        }
+        // ไม่ได้ปักบนเครื่อง ⇒ ผังมาตรฐานรหัสเต็มตามวิธีจ่าย (ไม่ค้นด้วย prefix — "112" คือเงินลงทุนชั่วคราว)
+        var kind = Accounting.Helpers.MoneyAccountFallback.KindOf(method);
+        var code = Accounting.Helpers.MoneyAccountFallback.StandardCode(kind);
+        if (code != null)
+            return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode == code && a.IsActive && !a.IsDeleted)
+                ?? throw new Accounting.Helpers.BusinessRuleException(
+                    $"ไม่พบผังบัญชี {code} สำหรับรับเงินด้วยวิธี \"{PaymentMethodThaiLabel(method)}\" — เพิ่มผังบัญชีนี้ "
+                    + "หรือปักบัญชีรับเงินที่เครื่อง POS ก่อน (บิลยังอยู่ ทำรายการใหม่ได้ทันทีที่ตั้งค่าเสร็จ)",
+                    "POS-NO-MONEY-ACCOUNT");
 
-        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == preferred)
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4);
+        // โอน/พร้อมเพย์/หักบัญชี: ผังขึ้นกับว่าเข้าบัญชีธนาคารไหน — บัญชีที่ผูกผังไว้บัญชีเดียวใช้ได้ ·
+        // ไม่มี/หลายบัญชี ⇒ ล้มดัง (เลือกผิด = กระทบยอดรายบัญชีไม่ได้ตลอดไป)
+        var linked = await _db.Set<Accounting.Models.Entities.BankAccount>().AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId != null)
+            .Select(b => b.LinkedAccountId!.Value)
+            .ToListAsync();
+        var outcome = Accounting.Helpers.MoneyAccountFallback.PickBank(linked, out var picked);
+        if (picked is Guid bankGl)
+        {
+            var bank = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.Id == bankGl && a.CompanyId == companyId && a.IsActive && !a.IsDeleted);
+            if (bank != null) return bank;
+        }
+        throw new Accounting.Helpers.BusinessRuleException(
+            Accounting.Helpers.MoneyAccountFallback.BankNotResolvedMessage(outcome,
+                "ปักบัญชีธนาคารที่รับเงินไว้ที่เครื่อง POS (ตั้งค่าเครื่อง → บัญชีธนาคาร) "
+                + "(บิลยังอยู่ ทำรายการใหม่ได้ทันทีที่ตั้งค่าเสร็จ)"),
+            "POS-NO-BANK-ACCOUNT");
     }
 
     /// <summary>Merge one or more open orders into a destination order — items

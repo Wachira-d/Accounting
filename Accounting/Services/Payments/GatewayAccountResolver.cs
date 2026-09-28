@@ -12,6 +12,12 @@ public interface IGatewayAccountResolver
     /// มีค่า = ลงบัญชีพัก <b>11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน</b> เพราะเงินยังอยู่กับ
     /// ผู้ให้บริการ จะเข้าธนาคาร T+n หลังหักค่าธรรมเนียม</para></summary>
     Task<Guid?> ResolveMoneyInAccountAsync(PaymentIntent intent, CancellationToken ct = default);
+
+    /// <summary>บัญชีพักของผู้ให้บริการรายนี้ (ผังที่ตั้งไว้ใน config ชนะ · ไม่มี ⇒ 11340 ผังมาตรฐาน) —
+    /// ตัวเดียวกับที่ขา "เงินเข้า" ใช้ ⇒ JE คืนเงิน (รอบ 198 G-1) และ JE รอบโอนล้างผังเดียวกับที่ตอนรับเงินลงไว้เสมอ ·
+    /// <c>null</c> = หาไม่เจอ ⇒ ผู้เรียกต้องล้มดัง</summary>
+    Task<Guid?> ResolveClearingAccountAsync(Guid companyId, string providerCode, Guid? providerConfigId,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -63,23 +69,8 @@ public class GatewayAccountResolver : IGatewayAccountResolver
         }
         if (provider.SettlesDirectlyToBank) return null;
 
-        var config = intent.ProviderConfigId is Guid cid
-            ? await _db.PaymentProviderConfigs.AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == cid && c.CompanyId == intent.CompanyId, ct)
-            : await _db.PaymentProviderConfigs.AsNoTracking()
-                .FirstOrDefaultAsync(c => c.CompanyId == intent.CompanyId
-                    && c.ProviderCode == intent.ProviderCode && !c.IsDeleted, ct);
-
-        if (config?.ClearingAccountId is Guid chosen) return chosen;
-
-        // ยังไม่ได้ตั้งค่า → ใช้ผังมาตรฐาน · **ไม่ตกไปลงธนาคาร** เพราะเงินยังไม่เข้าจริง
-        // (ลงธนาคารเกินไว้ = กระทบยอดพังเงียบตลอดไป ซึ่งกู้ยากกว่าการมียอดค้างใน
-        // บัญชีพักที่มองเห็นได้และล้างได้ตอน settlement)
-        var standard = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == intent.CompanyId
-                && a.AccountCode == StandardClearingCode && !a.IsDeleted)
-            .Select(a => (Guid?)a.Id)
-            .FirstOrDefaultAsync(ct);
+        var standard = await ResolveClearingAccountAsync(intent.CompanyId, intent.ProviderCode,
+            intent.ProviderConfigId, ct);
 
         if (standard == null)
             _logger.LogError(
@@ -90,5 +81,27 @@ public class GatewayAccountResolver : IGatewayAccountResolver
                 intent.CompanyId, StandardClearingCode, intent.ProviderCode);
 
         return standard;
+    }
+
+    public async Task<Guid?> ResolveClearingAccountAsync(Guid companyId, string providerCode,
+        Guid? providerConfigId, CancellationToken ct = default)
+    {
+        var config = providerConfigId is Guid cid
+            ? await _db.PaymentProviderConfigs.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == cid && c.CompanyId == companyId, ct)
+            : await _db.PaymentProviderConfigs.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId
+                    && c.ProviderCode == providerCode && !c.IsDeleted, ct);
+
+        if (config?.ClearingAccountId is Guid chosen) return chosen;
+
+        // ยังไม่ได้ตั้งค่า → ใช้ผังมาตรฐาน · **ไม่ตกไปลงธนาคาร** เพราะเงินยังไม่เข้าจริง
+        // (ลงธนาคารเกินไว้ = กระทบยอดพังเงียบตลอดไป ซึ่งกู้ยากกว่าการมียอดค้างใน
+        // บัญชีพักที่มองเห็นได้และล้างได้ตอน settlement)
+        return await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId
+                && a.AccountCode == StandardClearingCode && !a.IsDeleted)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
     }
 }

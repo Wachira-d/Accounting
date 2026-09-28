@@ -148,6 +148,25 @@
             <b>วิธีจ่ายที่เปิด</b>
             <div class="method-grid">${methods}</div>
 
+            <b>VAT ของค่าธรรมเนียม</b>
+            <div>
+              <select class="form-input" id="fv_${Layout.esc(p.code)}">
+                ${this.feeVatOptions(c?.feeVatMode)}
+              </select>
+              <div class="hint">ตามใบกำกับ/สเตทเมนต์ของผู้ให้บริการ — ส่วนที่เป็น VAT ลง <b>11630 ภาษีซื้อรอเครดิต</b>
+                ตอนบันทึกรอบโอน (ย้ายเข้า 11610 เมื่อได้ใบกำกับรายเดือน) · บริษัทไม่จด VAT ลงค่าใช้จ่ายทั้งก้อนเสมอ</div>
+            </div>
+
+            <b>หัก ณ ที่จ่ายค่าธรรมเนียม</b>
+            <div>
+              <select class="form-input" id="fw_${Layout.esc(p.code)}">
+                <option value="None" ${c?.whtOnFee === 'Withhold3Percent' ? '' : 'selected'}>ไม่หัก</option>
+                <option value="Withhold3Percent" ${c?.whtOnFee === 'Withhold3Percent' ? 'selected' : ''}>หัก 3% (ออกภาษีแทน)</option>
+              </select>
+              <div class="hint">⚠️ ระบบยังออกหนังสือรับรอง 50 ทวิ ให้ผู้ให้บริการจากการบันทึกรอบโอนไม่ได้ —
+                เปิดโหมดหักไว้ การบันทึกรอบโอนจะถูกบล็อก (ห้ามลงภาษีค้างนำส่งที่ไม่มีใบรับรอง)</div>
+            </div>
+
             <b>URL แจ้งเตือน</b>
             <div>
               <div class="webhook-box">
@@ -174,6 +193,16 @@
           </div>
           <div class="hint" id="th_${Layout.esc(p.code)}"></div>
         </div>`;
+      },
+
+      /// ตัวเลือก VAT ของค่าธรรมเนียม — ค่าเป็น "ชื่อ" enum ตามที่เซิร์ฟเวอร์ echo กลับ (ไม่ใช่ตัวเลข)
+      feeVatOptions(current) {
+        const cur = current || 'None';
+        return [
+          ['None', 'ไม่แยก VAT (ลงค่าใช้จ่ายทั้งก้อน)'],
+          ['IncludedInFee', 'ค่าธรรมเนียมที่ได้รับรวม VAT แล้ว'],
+          ['AddedOnTop', 'หัก VAT 7% เพิ่มจากค่าธรรมเนียม'],
+        ].map(([v, t]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${Layout.esc(t)}</option>`).join('');
       },
 
       /// ป้ายวิธีจ่ายเป็นภาษาไทย — คีย์มาจากเซิร์ฟเวอร์ ค่าที่ไม่รู้จักแสดงตามเดิม
@@ -205,6 +234,8 @@
             testPublicKey: val('tp'), testSecretKey: val('ts'),
             livePublicKey: val('lp'), liveSecretKey: val('ls'),
             enabledMethods: methods, isActive: true,
+            feeVatMode: val('fv') || 'None',
+            whtOnFee: val('fw') || 'None',
           });
           Layout.toast('บันทึกแล้ว ✓');
           await this.load();

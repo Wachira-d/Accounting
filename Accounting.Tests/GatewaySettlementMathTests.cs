@@ -55,7 +55,9 @@ public class GatewaySettlementMathTests
             var rows = amounts.Zip(fees, (a, f) => I(a, f)).ToList();
             var net = amounts.Sum() - fees.Sum();
             var p = Plan(rows, net, wht);
-            Assert.True(p.Ok, p.Message);
+            // รอบ 198 G-4: โหมดหักถูกบล็อก (ยังออก 50 ทวิ จากเส้นนี้ไม่ได้) แต่แผนยังคำนวณบรรทัดให้พรีวิว — ต้องสมดุลเหมือนกัน
+            Assert.True(p.Ok || p.Reason == SettlementBlockReason.WhtCertificateRequired, p.Message);
+            Assert.NotEmpty(p.Lines);
             var dr = p.Lines.Sum(l => l.Debit);
             var cr = p.Lines.Sum(l => l.Credit);
             Assert.Equal(dr, cr);
@@ -71,7 +73,7 @@ public class GatewaySettlementMathTests
         // ⇒ ค่าบริการก่อนหัก = 100 · ภาษี = 3 (ไม่ใช่ 97 × 3% = 2.91)
         var p = Plan(new[] { I(1000m, 97m) }, 903m, GatewayFeeWhtMode.Withhold3Percent);
 
-        Assert.True(p.Ok, p.Message);
+        Assert.Equal(SettlementBlockReason.WhtCertificateRequired, p.Reason);
         Assert.Equal(97m, p.FeeNetPaid);
         Assert.Equal(3m, p.WhtOnFee);
         Assert.Equal(100m, p.FeeGrossedUp);
@@ -92,7 +94,7 @@ public class GatewaySettlementMathTests
             var feeNet = cents / 100m;
             var p = Plan(new[] { I(100000m, feeNet) }, 100000m - feeNet,
                 GatewayFeeWhtMode.Withhold3Percent);
-            Assert.True(p.Ok, p.Message);
+            Assert.Equal(SettlementBlockReason.WhtCertificateRequired, p.Reason);
             Assert.Equal(feeNet, p.FeeGrossedUp - p.WhtOnFee);
         }
     }
@@ -104,7 +106,8 @@ public class GatewaySettlementMathTests
         var withhold = Plan(new[] { I(1000m, 32.10m) }, 967.90m, GatewayFeeWhtMode.Withhold3Percent);
         var plain = Plan(new[] { I(1000m, 32.10m) }, 967.90m);
 
-        Assert.True(withhold.Ok);
+        Assert.False(withhold.Ok);   // รอบ 198 G-4: บล็อกจนกว่าจะออก 50 ทวิ ได้ — ตัวเลขพรีวิวยังต้องถูก
+        Assert.True(plain.Ok);
         Assert.Equal(plain.ExpectedNet, withhold.ExpectedNet);
         Assert.Equal(967.90m,
             withhold.Lines.Single(l => l.Role == SettlementLineRole.Bank).Debit);

@@ -17014,13 +17014,16 @@ public partial class DocumentService : IDocumentService
                     ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                         a.Id == payment.FeeAccountId.Value && a.CompanyId == companyId && !a.IsDeleted)
                     : null;
-                feeAcc ??= await FindAccountAsync(companyId, "53200")
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
-                        && a.IsActive && !a.IsDeleted && a.AccountType == AccountType.Expense
-                        && a.AccountName.Contains("ค่าธรรมเนียม"));
+                // รอบ 198 F-1: ผังสำรองต้องเป็นรหัสที่มีจริงแบบกำหนดแน่นอน — เดิม "53200" (ไม่มีในผังมาตรฐาน) แล้วตกไป
+                // "ผังค่าใช้จ่ายแรกที่ชื่อมีคำว่าค่าธรรมเนียม" แบบไม่เรียง (ได้ผังคนละตัวแล้วแต่ลำดับแถว) ⇒ 54710 รหัสเต็ม ·
+                // หาไม่เจอ = ล้มดัง (ไม่เดาผังอื่น)
+                const string feeFallbackCode = "54710";   // ค่าธรรมเนียมธนาคาร (ผังมาตรฐาน)
+                feeAcc ??= await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
+                    && a.AccountCode == feeFallbackCode && a.IsActive && !a.IsDeleted);
                 if (feeAcc == null)
-                    throw new InvalidOperationException(
-                        "ไม่พบผังบัญชีค่าธรรมเนียม (53xxx) — กรุณาเพิ่มก่อนบันทึกรับเงินแบบหักค่าธรรมเนียม");
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผังบัญชี {feeFallbackCode} ค่าธรรมเนียมธนาคาร — เพิ่มผังนี้ในผังบัญชีก่อน "
+                        + "บันทึกรับเงินแบบหักค่าธรรมเนียม (ผังสำรองต้องเป็นรหัสที่มีจริง ไม่เดาผังอื่น)", "PAY-NO-FEE-ACCOUNT");
                 pendingLines.Add((feeAcc.Id, thbFee, 0m, $"ค่าธรรมเนียม (หักจากยอดโอน) - {payment.PaymentNumber}"));
             }
             var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);

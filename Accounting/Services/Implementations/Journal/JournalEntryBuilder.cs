@@ -34,6 +34,7 @@ public class JournalEntryBuilder
     private readonly DateTime _entryDate;
     private readonly JournalEntry _je;
     private int _lineNo = 1;
+    private string? _numberPrefix;
 
     private JournalEntryBuilder(AccountingDbContext db, Guid companyId, DateTime entryDate)
     {
@@ -59,6 +60,8 @@ public class JournalEntryBuilder
     public JournalEntryBuilder SourceDocument(Guid? docId) { _je.SourceDocumentId = docId; return this; }
     public JournalEntryBuilder Project(Guid? projectId) { _je.ProjectId = projectId; return this; }
     public JournalEntryBuilder CreatedBy(string actor) { _je.CreatedBy = actor; return this; }
+    /// <summary>คำนำหน้าเลขใบสำคัญ (เช่น "RV" สมุดรายวันรับ) — ไม่ระบุ = JV/JE ตามชนิดสมุด</summary>
+    public JournalEntryBuilder NumberPrefix(string prefix) { _numberPrefix = prefix; return this; }
 
     public JournalEntryBuilder Debit(Guid accountId, decimal amount, string? desc = null)
     {
@@ -98,23 +101,45 @@ public class JournalEntryBuilder
         if (_je.Lines.Count < 2)
             throw new InvalidOperationException("JE ต้องมีอย่างน้อย 2 บรรทัด (Dr + Cr)");
 
+        // FiscalPeriod auto-resolve + ด่านงวดปิด — ตรวจ**ก่อน**ออกเลข (งวดปิดต้องไม่กินเลขใบสำคัญ)
+        var period = await FindPeriodAsync(_db, _companyId, _entryDate, ct);
+        if (period != null && period.Status != FiscalPeriodStatus.Open)
+            // คง InvalidOperationException (FxRevaluationService จับชนิดนี้เพื่อข้ามงวดปิดแบบนุ่ม) —
+            // ผู้เรียกที่ต้องการข้อความถึงผู้ใช้ให้ตรวจล่วงหน้าด้วย ClosedPeriodReasonAsync
+            throw new InvalidOperationException(ClosedPeriodMessage(period, _entryDate));
+        _je.FiscalPeriodId = period?.Id;
+
         // Resolve EntryNumber (advisory-lock per prefix ภายใน)
         if (string.IsNullOrEmpty(_je.EntryNumber))
             _je.EntryNumber = await NextJournalNumberAsync(_db, _companyId,
-                _je.JournalType == JournalType.General ? "JV" : "JE", _entryDate, ct);
-
-        // FiscalPeriod auto-resolve
-        var period = await _db.FiscalPeriods.AsNoTracking()
-            .FirstOrDefaultAsync(f => f.CompanyId == _companyId
-                && f.StartDate <= _entryDate && f.EndDate >= _entryDate, ct);
-        if (period != null && period.Status != FiscalPeriodStatus.Open)
-            throw new InvalidOperationException(
-                $"งวด {period.Name} ถูกปิด — เปิดงวดก่อนจึงจะ post JE ได้ (EntryDate: {_entryDate:yyyy-MM-dd})");
-        _je.FiscalPeriodId = period?.Id;
+                _numberPrefix ?? (_je.JournalType == JournalType.General ? "JV" : "JE"), _entryDate, ct);
 
         _db.JournalEntries.Add(_je);
         return _je;
     }
+
+    /// <summary>งวดบัญชีที่ครอบวันนั้น (<c>null</c> = ไม่มีแถวงวด ⇒ ถือว่าเปิด — convention เดียวกับ
+    /// <c>AccountingService.ValidateFiscalPeriodOpenForDateAsync</c> · X-9) · ยึด<b>วันที่</b> ไม่ใช่ FK</summary>
+    public static Task<FiscalPeriod?> FindPeriodAsync(AccountingDbContext db, Guid companyId, DateTime date,
+        CancellationToken ct = default)
+    {
+        var d = date.Date;
+        return db.FiscalPeriods.AsNoTracking()
+            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.StartDate <= d && f.EndDate >= d, ct);
+    }
+
+    /// <summary>งวดของวันนั้นปิดแล้วไหม — ตัวเดียวกับที่ <see cref="PostAsync"/> ใช้บล็อก ⇒ พรีวิวกับการลงจริงไม่มีวันขัดกัน
+    /// (<c>null</c> = เปิด/ไม่มีแถวงวด · มีค่า = ข้อความบอกงวดที่ปิด)</summary>
+    public static async Task<string?> ClosedPeriodReasonAsync(AccountingDbContext db, Guid companyId, DateTime date,
+        CancellationToken ct = default)
+    {
+        var period = await FindPeriodAsync(db, companyId, date, ct);
+        return period != null && period.Status != FiscalPeriodStatus.Open ? ClosedPeriodMessage(period, date) : null;
+    }
+
+    private static string ClosedPeriodMessage(FiscalPeriod period, DateTime date)
+        => $"วันที่ {date:dd/MM/yyyy} อยู่ในงวด '{period.Name}' ที่ปิดแล้ว ({period.Status}) — ลงรายการบัญชีในงวดที่ปิดไม่ได้ "
+           + "(กันงบย้อนหลังเปลี่ยนหลังออกรายงาน) · เลือกวันที่ในงวดที่เปิดอยู่ หรือให้ผู้มีสิทธิ์เปิดงวดก่อน";
 
     /// <summary>Static utility — ใช้ใน path ที่ยังไม่ migrate ไป builder.
     /// Advisory-lock per (companyId, prefix) ทำให้ N caller พร้อมกันยังได้

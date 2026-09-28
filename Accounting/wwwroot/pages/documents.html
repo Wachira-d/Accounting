@@ -11195,6 +11195,10 @@
                 <div class="form-group">
                   <label class="form-label">ค่าธรรมเนียมหักจากยอดโอน — ถ้ามี <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(marketplace/gateway/ธนาคาร — เอกสารถูกล้างที่ ยอดรับ+ค่าธรรมเนียม)</span></label>
                   <input id="rpFee" class="form-input" type="number" step="0.01" min="0" placeholder="0.00">
+                  <!-- รอบ 198 F-1: เลือกผังค่าธรรมเนียมได้ · ว่าง = 54710 ค่าธรรมเนียมธนาคาร (เซิร์ฟเวอร์ตัดสิน — ไม่มีผัง = แจ้งให้เพิ่ม ไม่เดาผังอื่น) -->
+                  <select id="rpFeeAccount" class="form-select" style="margin-top:6px">
+                    <option value="">— ผังค่าธรรมเนียม: 54710 ค่าธรรมเนียมธนาคาร (default) —</option>
+                  </select>
                 </div>
                 <!-- รอบ 193 (คำตัดสินเจ้าของข้อ 1/3): ฝั่งซื้อ — ใบกำกับคงยอดเต็ม ส่วนต่างกับเงินที่จ่ายจริงลงเป็นบรรทัดปรับ -->
                 <div id="rpSettleRow" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px 12px">
@@ -11338,6 +11342,25 @@
         // Populate the "fund from another GL account" dropdown — Asset +
         // Liability accounts (director advance, petty cash, clearing). Loaded
         // lazily + cached on Page so reopening the modal is instant.
+        // ผังค่าธรรมเนียม (ค่าใช้จ่าย) — ว่าง = ให้เซิร์ฟเวอร์ใช้ผังสำรอง 54710 · ต้องล้างค่าทุกครั้งที่เปิด (ห้ามค้างใบก่อน)
+        const rpFeeAcc = document.getElementById('rpFeeAccount');
+        if (rpFeeAcc) {
+          const fillFee = (accts) => {
+            rpFeeAcc.innerHTML = '<option value="">— ผังค่าธรรมเนียม: 54710 ค่าธรรมเนียมธนาคาร (default) —</option>' +
+              (accts || []).map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+            rpFeeAcc.value = '';
+          };
+          if (this._feeAccounts) fillFee(this._feeAccounts);
+          else {
+            fillFee([]);
+            Layout.api().getAccounts('?type=Expense&pageSize=500').then((res) => {
+              this._feeAccounts = (res?.data?.items || res?.data || [])
+                .filter(a => a.accountCode)
+                .sort((x, y) => (x.accountCode || '').localeCompare(y.accountCode || ''));
+              fillFee(this._feeAccounts);
+            }).catch(() => fillFee([]));
+          }
+        }
         const rpFund = document.getElementById('rpFundAccount');
         if (rpFund) {
           const fill = (accts) => {
@@ -11455,6 +11478,8 @@
                 : null,
               feeAmount: (parseFloat(document.getElementById('rpFee').value || '0') || 0) > 0
                 ? parseFloat(document.getElementById('rpFee').value) : null,
+              // ว่าง = null ⇒ เซิร์ฟเวอร์ใช้ผังสำรอง 54710 (รอบ 198 F-1)
+              feeAccountId: (document.getElementById('rpFeeAccount')?.value) || null,
               // ออกใบเสร็จรับเงินหลักฐานคู่กับการชำระ (default เปิดฝั่งขาย) —
               // backend สร้าง Receipt อ้างอิงเอกสาร ไม่ลง JE ซ้ำ ลงวันที่รับเงิน
               issueReceiptDocument: document.getElementById('rpIssueReceipt')?.checked || false,
