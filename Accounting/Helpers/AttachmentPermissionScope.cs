@@ -145,6 +145,9 @@ public static class AttachmentPermissionScope
             ["SubscriptionInvoice"] = Rule("SubscriptionInvoice", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.BillingManage }, None, false, "ใบแจ้งหนี้ค่าบริการ"),
             // สลิปมัดจำที่แขกส่งเข้ามา — ข้อมูลของบุคคลภายนอก ⇒ อ่านก็ต้องเป็นฝ่ายต้อนรับ
             ["LodgingReservation"] = Rule("LodgingReservation", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.LodgingManage }, new[] { PermissionKeys.LodgingManage }, false, "การจองที่พัก"),
+            // รอบ 198 ทีม B: ไฟล์ settlement report ต้นฉบับของรอบโอน (ระบบแนบตอนนำเข้า) — มีเลขออเดอร์/ข้อมูลผู้ซื้อ ⇒ อ่านก็ต้องเป็นคนกระทบยอด
+            // (คีย์ที่มีอยู่แล้ว Bank.Reconcile — ทีม D เปลี่ยนเป็นคีย์ settlement เมื่อเพิ่ม PermissionKeys)
+            ["SettlementBatch"] = Rule("SettlementBatch", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.BankReconcile }, new[] { PermissionKeys.BankReconcile }, false, "รอบโอนเงินจากแพลตฟอร์ม (settlement)"),
             ["SiteOrder"] = Rule("SiteOrder", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.CmsOrderManage }, new[] { PermissionKeys.CmsOrderManage }, false, "คำสั่งซื้อจากเว็บไซต์"),
             ["OcrScan"] = ocr,
         };

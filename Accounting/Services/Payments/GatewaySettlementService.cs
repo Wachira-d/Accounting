@@ -320,6 +320,8 @@ public class GatewaySettlementService : IGatewaySettlementService
             .Where(i => i.CompanyId == companyId
                 && (providerCode == null || i.ProviderCode == providerCode)
                 && i.SettlementJournalEntryId == null
+                // รอบ 198 ทีม B: intent ที่อยู่ในรอบโอนของเส้น settlement ใหม่แล้ว (SettlementBatch) ห้ามเส้นเดิมหยิบซ้ำ — ธนาคารจะเกินสองเท่า
+                && i.SettlementBatchId == null
                 && i.ConfirmedAt != null
                 && (i.Status == PaymentIntentStatus.Succeeded
                     || ((i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded)

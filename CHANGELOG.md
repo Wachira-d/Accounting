@@ -3474,3 +3474,18 @@ _รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet 
   chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
 - ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
 — commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม B — **นำเข้า · จัดประเภท · จับคู่ · ตั้งค่าช่องทาง settlement** (ไม่ลงบัญชี — ทีม C · หน้าจอ/controller — ทีม D):
+- `Services/Settlement/Adapters/**` (ความรู้เฉพาะเจ้าอยู่ที่นี่ที่เดียว · `tools/settlement_adapter_boundary_check.py` + self-test): `ISettlementReportAdapter` ·
+  `GenericColumnMapAdapter` (จับคู่คอลัมน์ · จำใน `ColumnMapJson` · แบบยาว/กว้าง · ล้มดังทั้งไฟล์เมื่อรูปแบบเปลี่ยน) · `SettlementFileReader` (CSV UTF-8/874 · xlsx MiniExcel) ·
+  `SettlementValueParser` (วงเล็บ/ลบท้าย/เลขไทย · พ.ศ.→ค.ศ. · ปี 2 หลักไม่เดา) · `PaymentIntentAdapter` · `SettlementLabelSeed` (seed ป้าย cold-start)
+- Helpers pure: `SettlementTxnKey` (คีย์กันซ้ำขึ้นกับเนื้อหาแถว — R-A9) · `SettlementPiiScrubber` · `SettlementLineClassification` (ลำดับ local + ด่านคำตอบ AI) ·
+  `SettlementSaleMatch` (จับคู่ไม่เดา · สถานะรอบ)
+- `SettlementImportService` (ตรวจไฟล์ · นำเข้า · ประกอบจาก intent · จัดประเภท/จับคู่เอง · ยกเลิก) · `SettlementChannelService` · DI ใน Program.cs ·
+  prompt `SettlementLineClassifyPrompt` · ล็อก `AdvisoryLockKey.SettlementImport` · ไฟล์แนบชนิด "SettlementBatch" ใน `AttachmentPermissionScope` + `AttachmentAccessGate`
+- ฝ่ายค้านสัญญาทีม A: **R-A1** `SettlementChannelAccounts.EnsureClearingAccountAsync` รับผังจาก `IGatewayAccountResolver` (ตัวตัดสิน `DecideGatewayClearing`) ไม่สร้าง 1134x ให้ gateway ·
+  **R-A2** `TradeReceivableAccount.IsTradeReceivableControl` + `SubLedgerReconciliationService` ไม่นับ 11341–11349/ผังพักช่องทาง · **R-A9** คีย์ + void = soft-delete + 23505 เป็นข้อความไทย
+- เส้นเดิม `GatewaySettlementService.SelectCandidatesAsync` ข้าม intent ที่อยู่ใน `SettlementBatch` แล้ว
+- เทสต์ `SettlementImportTests` · `required_call_site_check` +14 กติกา · dead_helper: ต่อสาย `EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` + ตัด `ArApScope.IsReceivable` ออกจาก baseline
+- ส่งต่อทีม C: `Plan` ต้องออกใบขายสรุปเฉพาะ `AutoSummary` (บล็อก `Unmatched`/`AmountMismatch`) · ตรวจผังพักของบรรทัดที่พก `PaymentIntentId` ซ้ำ (R-A1)
+— commit <pending>)_

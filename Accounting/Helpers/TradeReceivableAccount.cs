@@ -17,7 +17,9 @@ namespace Accounting.Helpers;
 ///
 /// <para>═══ กติกา ═══ ผังที่ผู้ใช้ปักไว้บนผู้ติดต่อ (<c>Contact.DefaultArAccountId</c>) ชนะ · ไม่มี ⇒ <b>11310 ลูกหนี้การค้า</b>
 /// รหัสเต็ม · หาไม่เจอ = ผู้เรียก<b>ล้มดัง</b> (ห้ามตกไปผังอื่นในหมวด 113 ที่ความหมายต่าง) · บัญชีพักของผู้ให้บริการรับชำระเงิน
-/// (11340 และผังที่ตั้งเป็นบัญชีพักใน <c>PaymentProviderConfig.ClearingAccountId</c>) <b>ไม่ใช่</b>ลูกหนี้การค้า</para>
+/// (11340 และผังที่ตั้งเป็นบัญชีพักใน <c>PaymentProviderConfig.ClearingAccountId</c>) <b>ไม่ใช่</b>ลูกหนี้การค้า · รอบ 198 ฝ่ายค้าน R-A2:
+/// ผังพัก wallet ต่อช่องทาง settlement (<b>11341–11349</b> "ลูกหนี้แพลตฟอร์ม {ชื่อ}" + ผังที่ผูกเป็น <c>SettlementChannel.ClearingAccountId</c>)
+/// ก็ไม่ใช่ — ชื่อมีคำว่า "ลูกหนี้" แต่ไม่มีเอกสารลูกหนี้รองรับ ⇒ เดิมยอด wallet ขึ้นเป็นส่วนต่าง AR ปลอมทุกสิ้นเดือน</para>
 ///
 /// <para><see cref="IsTradeReceivableControl"/> เป็น pure · <see cref="ResolveAsync"/> อ่านผังของบริษัท (tenant เสมอ)</para>
 /// </summary>
@@ -30,12 +32,13 @@ public static class TradeReceivableAccount
     public const string GatewayClearingCode = "11340";
 
     /// <summary>ผังนี้นับเป็น "บัญชีคุมลูกหนี้การค้า" ในรายงานกระทบบัญชีย่อยไหม
-    /// (<paramref name="gatewayClearingAccountIds"/> = ผังที่บริษัทตั้งเป็นบัญชีพักของผู้ให้บริการ)</summary>
+    /// (<paramref name="gatewayClearingAccountIds"/> = ผังที่บริษัทตั้งเป็นบัญชีพักของผู้ให้บริการ <b>และ</b>ผังพักของช่องทาง settlement)</summary>
     public static bool IsTradeReceivableControl(Guid accountId, string accountCode, string accountName,
         IReadOnlyCollection<Guid> gatewayClearingAccountIds)
     {
         if (gatewayClearingAccountIds.Contains(accountId)) return false;
         if (accountCode == GatewayClearingCode) return false;
+        if (SettlementChannelAccounts.IsClearingCode(accountCode)) return false;   // 11341–11349 wallet ต่อช่องทาง (R-A2)
         return (accountCode.StartsWith("112") || accountCode.StartsWith("113"))
                && accountName.Contains("ลูกหนี้");
     }

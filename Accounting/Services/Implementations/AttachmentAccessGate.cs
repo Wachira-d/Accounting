@@ -401,6 +401,7 @@ public class AttachmentAccessGate : IAttachmentAccessGate
         // ใบเสร็จนำส่ง (C2) — เดิมเขียนไฟล์ก่อนแล้วค่อยพบว่า remittance ไม่ใช่ของบริษัทนี้ (ไฟล์กำพร้าค้างในตาราง)
         "StatutoryRemittance" => _db.StatutoryRemittances.AsNoTracking()
             .AnyAsync(x => x.Id == entityId && x.CompanyId == companyId && !x.IsDeleted),
+        "SettlementBatch" => _db.SettlementBatches.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
         _ => Task.FromResult(true),
     };
 
