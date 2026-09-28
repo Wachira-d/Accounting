@@ -12,7 +12,8 @@ namespace Accounting.Helpers;
 /// แต่การอนุมัติด้วยมือ (หน้าเอกสาร · มือถือ · API) ไม่เคยเห็นเลย ⇒ ใบที่ระบบรู้อยู่แล้วว่า "ยอดที่จะลงไม่ตรงกระดาษ"
 /// ลง JE ได้ในคลิกเดียวโดยไม่มีร่องรอยว่ามีคนรับรู้ · เจ้าของตัดสิน: <b>เว็บ/มือถือ = คำเตือนที่ต้องกด "รับทราบ"</b>
 /// (กลไกเดิม <c>DocumentApprovalWarningsException</c> + audit <c>APPROVE-ACK-WARNINGS</c>) · <b>API ห้ามขัดจังหวะ</b> —
-/// คืนธง/ข้อความในโครงสร้างเดิมแทน (<see cref="IsGapWarning"/> ให้ผู้เรียกแยกคำเตือนชุดนี้ออกจากชุดอื่นได้)</para>
+/// คืนธง/ข้อความในโครงสร้างเดิมแทน (<see cref="IsAmountGapWarning"/> ให้ผู้เรียกแยกคำเตือนชุดนี้ออกจากชุดอื่นได้ · ชุด VAT ไม่อยู่บนกระดาษ
+/// API ปฏิเสธ — คำตัดสินรอบ 198 ข้อ 6)</para>
 ///
 /// <para>ข้อความต้องบอก "ตอนนี้ยอดเอกสารเท่าไร กระดาษเท่าไร" ด้วย — คำเตือนจากตอนสร้างอาจถูกแก้ไปแล้ว ผู้ใช้ต้องตัดสินได้จากตัวเลข
 /// ไม่ใช่เชื่อข้อความเก่า (F2 ข้อ 7: ข้อความที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง)</para>
@@ -23,8 +24,9 @@ public static class OcrApprovalGapWarning
     public const string Prefix = "ยอดจากสแกนไม่ตรงกระดาษ";
 
     /// <summary>คำขึ้นต้นของคำเตือน "VAT ที่จะลงบัญชีไม่ได้พิมพ์บนกระดาษ" (<see cref="OcrHeaderVatEvidence.DerivedTag"/>) — อยู่ในชุดเดียวกับ
-    /// <see cref="Prefix"/> (<see cref="IsGapWarning"/> คืน true ทั้งคู่ ⇒ เว็บ/มือถือต้องกดรับทราบ · workflow ส่งผ่านเองไม่ได้ · API ไม่ขัดจังหวะ
-    /// แต่คืนในคำตอบ — คำตัดสินเจ้าของข้อ 12) · แยกได้ด้วย <see cref="IsVatDerivedWarning"/></summary>
+    /// <see cref="Prefix"/> (<see cref="IsGapWarning"/> คืน true ทั้งคู่ ⇒ เว็บ/มือถือต้องกดรับทราบ · workflow ส่งผ่านเองไม่ได้) · แยกได้ด้วย
+    /// <see cref="IsVatDerivedWarning"/> · <b>API v1 ปฏิเสธ</b> (คำตัดสินเจ้าของรอบ 198 ข้อ 6 — ต่างจาก [Σ-GAP] ที่ API ไม่ขัดจังหวะตามข้อ 12 ·
+    /// <see cref="ApprovalAcknowledgement.ApiRefusal"/>)</summary>
     public const string VatDerivedPrefix = "VAT จากสแกนไม่ได้พิมพ์บนกระดาษ";
 
     /// <summary>คำขึ้นต้นเมื่อ<b>ไม่มีข้อความสแกนให้ตรวจ</b> (<see cref="OcrHeaderVatSource.NoTextToCheck"/>) — ชุดเดียวกับ <see cref="VatDerivedPrefix"/>
@@ -141,8 +143,8 @@ public static class OcrApprovalGapWarning
         _ => "อื่น ๆ",
     };
 
-    /// <summary>คำเตือนนี้มาจากตัวนี้ไหม — ทั้ง "ยอดไม่ตรงกระดาษ" และ "VAT ไม่ได้พิมพ์บนกระดาษ" (ผู้เรียกฝั่ง API ใช้ตัดสินว่า "ไม่ขัดจังหวะ" ·
-    /// workflow ใช้ตัดสินว่า "ต้องมีคนรับทราบ" — <see cref="ApprovalAcknowledgement"/>)</summary>
+    /// <summary>คำเตือนนี้มาจากตัวนี้ไหม — ทั้ง "ยอดไม่ตรงกระดาษ" และ "VAT ไม่ได้พิมพ์บนกระดาษ" (workflow ใช้ตัดสินว่า "ต้องมีคนรับทราบ" —
+    /// <see cref="ApprovalAcknowledgement"/>) · ฝั่ง API ใช้ <see cref="IsAmountGapWarning"/> (ชุดที่ไม่ขัดจังหวะ) ไม่ใช่ตัวนี้</summary>
     public static bool IsGapWarning(string? warning)
         => warning is not null && (warning.StartsWith(Prefix, StringComparison.Ordinal)
             || IsVatDerivedWarning(warning));
@@ -152,6 +154,11 @@ public static class OcrApprovalGapWarning
     public static bool IsVatDerivedWarning(string? warning)
         => warning is not null && (warning.StartsWith(VatDerivedPrefix, StringComparison.Ordinal)
             || warning.StartsWith(VatUncheckedPrefix, StringComparison.Ordinal));
+
+    /// <summary>คำเตือน <b>[Σ-GAP] ยอดไม่ตรงกระดาษ</b> อย่างเดียว (ไม่รวมชุด VAT) — ชุดที่คำตัดสินเจ้าของข้อ 12 ให้ API "ไม่ขัดจังหวะ"
+    /// (อนุมัติต่อแล้วคืน <c>scanAmountGap</c>) · ประกอบจากตัวแยกสองตัวข้างบน ไม่อ่านข้อความเอง (รอบ 199 ฝ่ายค้าน B-1 · คำตัดสินรอบ 198 ข้อ 6)</summary>
+    public static bool IsAmountGapWarning(string? warning)
+        => IsGapWarning(warning) && !IsVatDerivedWarning(warning);
 
     private static string Trim(string s) => s.Length > 240 ? s[..240] + "…" : s;
 }

@@ -15,8 +15,9 @@ public enum ApprovalAckSource
     /// <summary>ระบบ/workflow อนุมัติต่อโดยไม่มีคนเห็นคำเตือน (ลายเซ็นครบ · ใบสำคัญจ่ายเงินสดอัตโนมัติ · ใบแทน) —
     /// ผ่านได้เฉพาะคำเตือนทั่วไป · คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ" ต้องมีคนรับทราบเสมอ (คำตัดสินเจ้าของข้อ 12)</summary>
     SystemWorkflow = 2,
-    /// <summary>ระบบปลายทางผ่าน API v1 — คำตัดสินข้อ 12: [Σ-GAP] ห้ามขัดจังหวะ API ⇒ ผ่านเฉพาะคำเตือนชุดนั้น แล้วคืนธงในคำตอบ ·
-    /// คำเตือนชนิดอื่นยังหยุดตามเดิม</summary>
+    /// <summary>ระบบปลายทางผ่าน API v1 — คำตัดสินข้อ 12: [Σ-GAP] ยอดไม่ตรงกระดาษ ห้ามขัดจังหวะ API ⇒ ผ่านเฉพาะคำเตือนชุดนั้น แล้วคืนธงในคำตอบ ·
+    /// คำเตือนชนิดอื่นยังหยุดตามเดิม · <b>คำเตือน VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้ = หยุด</b> (คำตัดสินรอบ 198 ข้อ 6 · รอบ 199 ฝ่ายค้าน B-1 —
+    /// เดิมผ่านเพราะ <see cref="OcrApprovalGapWarning.IsGapWarning"/> ถูกขยายให้รวมชุด VAT แล้ว API อ้างข้อ 12 ซึ่งครอบแค่ [Σ-GAP])</summary>
     ApiClient = 3,
 }
 
@@ -50,9 +51,69 @@ public static class ApprovalAcknowledgement
         {
             ApprovalAckSource.User => Array.Empty<string>(),
             ApprovalAckSource.SystemWorkflow => warnings.Where(OcrApprovalGapWarning.IsGapWarning).ToList(),
-            ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsGapWarning(w)).ToList(),
+            ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsAmountGapWarning(w)).ToList(),
             _ => warnings,
         };
+    }
+
+    /// <summary>รหัสที่ API v1 คืน (ให้เครื่องอ่าน) เมื่อ<b>ปฏิเสธ</b>การอนุมัติเพราะ VAT ของใบสแกนไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้
+    /// (คำตัดสินรอบ 198 ข้อ 6) · สัญญา v1 — ห้ามเปลี่ยนค่า</summary>
+    public const string ApiVatNotOnPaperCode = "APPROVE-SCAN-VAT-NOT-ON-PAPER";
+
+    /// <summary>รหัสที่ API v1 คืนเมื่อปฏิเสธเพราะคำเตือนชนิดอื่นที่ต้องมีคนรับทราบ (เดิมหลุดเป็น 500 ข้อความกลาง ๆ) · สัญญา v1 — ห้ามเปลี่ยนค่า</summary>
+    public const string ApiWarningsNeedAckCode = "APPROVE-WARNINGS-NEED-ACK";
+
+    /// <summary>ป้ายหมายเหตุภายในที่ลงบนเอกสารครั้งแรกที่ API ถูกปฏิเสธ — ตัวกันลงซ้ำเมื่อระบบปลายทาง retry เป็นรอบ ๆ</summary>
+    public const string ApiRefusalNoteTag = "[API-APPROVE-REFUSED]";
+
+    /// <summary>
+    /// **คำตัดสินของ <c>/api/v1/documents/{id}/approve</c> ต่อคำเตือนก่อนอนุมัติ** — null = อนุมัติต่อได้ (ไม่มีคำเตือน หรือเหลือแต่ [Σ-GAP]
+    /// ที่คำตัดสินข้อ 12 ให้ผ่านแล้วคืนธง) · ไม่ null = <b>ปฏิเสธ</b> ต้องคืนก่อนเรียกอนุมัติ (เอกสารคงเป็นฉบับร่าง ไม่ออกเลข ไม่ลงบัญชี)
+    ///
+    /// <para>ที่มา: คำตัดสินเจ้าของรอบ 198 ข้อ 6 — ใบสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ (ระบบถอดจากยอดรวมเอง ⇒ ภาษีซื้อต้องห้าม ม.82/5(1)
+    /// ถ้าใบไม่แยก VAT ตาม ม.86/4(6)) ต้องให้คนตรวจกับกระดาษแล้วกด "รับทราบ" บนเว็บ/มือถือ เหมือนทางเข้าที่มีคนเห็น · ทางเข้าที่ไม่มีคนเห็น
+    /// ห้ามลงภาษีซื้อที่ระบบแต่ง (DECISION_DOCTRINE §2 write-gate · ราก R1/R5)</para>
+    /// </summary>
+    /// <param name="warnings">คำเตือนทั้งหมดของเอกสาร (<c>PreviewApprovalWarningsAsync</c>)</param>
+    public static ApiApprovalRefusal? ApiRefusal(IReadOnlyList<string> warnings)
+    {
+        var left = Unacknowledged(ApprovalAckSource.ApiClient, warnings);
+        return left.Count == 0 ? null : ApiRefusalOf(left);
+    }
+
+    /// <summary>คำตอบปฏิเสธจากรายการคำเตือนที่ยังไม่มีใครรับทราบ (ผู้เรียกกรองแล้ว — เช่น <c>DocumentApprovalWarningsException.Warnings</c>
+    /// ที่ service โยนเป็นตาข่ายชั้นที่สอง) · ชุด VAT มาก่อนเสมอ (รหัส <see cref="ApiVatNotOnPaperCode"/>)</summary>
+    public static ApiApprovalRefusal ApiRefusalOf(IReadOnlyList<string> unacknowledged)
+    {
+        var vatNotOnPaper = unacknowledged.Any(OcrApprovalGapWarning.IsVatDerivedWarning);
+        var list = string.Join(" · ", unacknowledged);
+        var message = vatNotOnPaper
+            ? "ไม่อนุมัติผ่าน API — เอกสารนี้สร้างจากสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ (หรือไม่มีข้อความสแกนให้ตรวจ) "
+              + "VAT ที่จะลงบัญชีระบบถอดจากยอดรวมเอง ถ้าใบไม่แยก VAT ตาม ม.86/4(6) จะเป็นภาษีซื้อต้องห้าม ม.82/5(1) — "
+              + "ให้ผู้ใช้เปิดเอกสารบนหน้าเว็บ (หรือแอปมือถือ) ตรวจกับกระดาษ แก้ VAT ตามกระดาษ/ตั้ง VAT 0 หรือกด \"รับทราบ\" แล้วอนุมัติที่นั่น · "
+              + "เอกสารยังเป็นฉบับร่าง ยังไม่ออกเลขและยังไม่ลงบัญชี"
+            : $"ไม่อนุมัติผ่าน API — เอกสารมีคำเตือน {unacknowledged.Count} ข้อที่ต้องมีคนรับทราบก่อนอนุมัติ — "
+              + "ให้ผู้ใช้เปิดเอกสารบนหน้าเว็บ (หรือแอปมือถือ) ตรวจแล้วกด \"รับทราบ\" และอนุมัติที่นั่น · "
+              + "เอกสารยังเป็นฉบับร่าง ยังไม่ออกเลขและยังไม่ลงบัญชี";
+        return new ApiApprovalRefusal(
+            vatNotOnPaper ? ApiVatNotOnPaperCode : ApiWarningsNeedAckCode,
+            list.Length == 0 ? message : message + " · คำเตือน: " + list,
+            unacknowledged, vatNotOnPaper);
+    }
+
+    /// <summary>หมายเหตุภายในที่ต่อท้ายเอกสารเมื่อ API ถูกปฏิเสธ — null = ไม่ต้องเขียน (เคยลงแล้ว · กันซ้ำเมื่อระบบปลายทาง retry)
+    /// · ให้คนที่เปิดเอกสารบนเว็บรู้ว่า "ใบนี้ค้างร่างเพราะ API ถูกปฏิเสธ รอคุณรับทราบ" (ล้มดังในที่ที่คนดู — F2 ข้อ 7)</summary>
+    /// <param name="existing">InternalNotes ปัจจุบัน</param>
+    /// <param name="refusal">คำตัดสินจาก <see cref="ApiRefusal"/></param>
+    /// <param name="utcNow">เวลา UTC (แสดงเป็นเวลาไทย)</param>
+    public static string? ApiRefusalNote(string? existing, ApiApprovalRefusal refusal, DateTime utcNow)
+    {
+        if (existing is not null && existing.Contains(ApiRefusalNoteTag, StringComparison.Ordinal)) return null;
+        var at = utcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        var note = $"{ApiRefusalNoteTag} {at} น. เวลาไทย — ระบบปลายทางขออนุมัติผ่าน API แต่ถูกปฏิเสธ ({refusal.Code}) · "
+            + "ตรวจเอกสาร (และกระดาษต้นฉบับถ้าสร้างจากสแกน) แล้วกด \"อนุมัติ\" บนหน้านี้ ระบบจะถามให้รับทราบคำเตือน\n"
+            + string.Join("\n", refusal.Warnings.Select(w => "• " + w));
+        return string.IsNullOrWhiteSpace(existing) ? note : existing.TrimEnd() + "\n\n" + note;
     }
 
     /// <summary>รหัสกฎของร่องรอยเมื่ออนุมัติทั้งที่มีคำเตือน</summary>
@@ -86,3 +147,10 @@ public static class ApprovalAcknowledgement
         return head + "\n" + string.Join("\n", warnings.Select(w => "• " + w)) + "\n" + tail;
     }
 }
+
+/// <summary>คำตอบปฏิเสธการอนุมัติผ่าน API v1 — <c>Code</c> ให้เครื่องอ่าน · <c>Message</c> ให้คนอ่าน (บอกเหตุผล + ทางไปต่อ)</summary>
+/// <param name="Code"><see cref="ApprovalAcknowledgement.ApiVatNotOnPaperCode"/> หรือ <see cref="ApprovalAcknowledgement.ApiWarningsNeedAckCode"/></param>
+/// <param name="Message">ข้อความไทยพร้อมทางไปต่อ</param>
+/// <param name="Warnings">คำเตือนที่ทำให้ปฏิเสธ</param>
+/// <param name="ScanVatNotOnPaper">มีคำเตือนชุด VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้</param>
+public sealed record ApiApprovalRefusal(string Code, string Message, IReadOnlyList<string> Warnings, bool ScanVatNotOnPaper);

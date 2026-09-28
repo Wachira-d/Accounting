@@ -18856,8 +18856,9 @@ public partial class DocumentService : IDocumentService
             warnings.Add($"อาจเป็นเอกสารซ้ำ — มี {dup} ของผู้ติดต่อรายนี้ ยอด {doc.TotalAmount:N2} ในช่วงวันที่เดียวกัน ตรวจสอบก่อนอนุมัติ");
 
         // 7. รอบ 193 (คำตัดสินเจ้าของข้อ 12): เอกสารจากสแกนที่ตอนสร้างระบบพบ "ยอดไม่ตรงกระดาษ" ([Σ-GAP]) —
-        //    เว็บ/มือถือต้องกด "รับทราบ" (audit APPROVE-ACK-WARNINGS ด้านบน) · API แยกคำเตือนชุดนี้ด้วย
-        //    OcrApprovalGapWarning.IsGapWarning แล้วไม่ขัดจังหวะ (DocumentsV1Controller) · ข้อความ+ตัวเลขจาก helper ตัวเดียว
+        //    เว็บ/มือถือต้องกด "รับทราบ" (audit APPROVE-ACK-WARNINGS ด้านบน) · API ผ่านเฉพาะชุดยอดที่แยกด้วย
+        //    OcrApprovalGapWarning.IsAmountGapWarning · ชุด VAT ไม่อยู่บนกระดาษ API ปฏิเสธ 422 (คำตัดสินรอบ 198 ข้อ 6 ·
+        //    ApprovalAcknowledgement.ApiRefusal · DocumentsV1Controller) · ข้อความ+ตัวเลขจาก helper ตัวเดียว
         var gapScan = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)

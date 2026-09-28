@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **358 ไฟล์ · 3,360 `[Fact]` + 513 `[Theory]` (2,264 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **358 ไฟล์ · 3,367 `[Fact]` + 513 `[Theory]` (2,264 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4473,8 +4473,11 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | RND-01 | สแกน Lazada 1,228.04 × 4 ส่วนลด 216.82 | บรรทัด 4,695.34 · ผลต่าง −0.01 · รวม 5,024.00 · JE มีขา 54960 · PDF ทั้งสอง renderer มีแถวผลต่างปัดเศษ |
 | RND-02 | บริษัทเก่าที่ไม่มีผัง 54960 (ลบทิ้ง) อนุมัติใบมีผลต่าง | ข้อความไทยบอกทางไปต่อ ไม่ลง JE ไม่สมดุล |
 | GAP-01 | อนุมัติใบจากสแกนที่มี `[Σ-GAP]` บนเว็บ | 422 พร้อมตัวเลข "รายการรวม X · กระดาษ Y" → กดรับทราบ → อนุมัติ + `APPROVE-ACK-WARNINGS` |
-| GAP-02 | อนุมัติใบเดียวกันผ่าน `/api/v1/documents/{id}/approve` | อนุมัติต่อ (ไม่ขัดจังหวะ) คืน `scanAmountGap:true` + `warnings[]` |
+| GAP-02 | อนุมัติใบเดียวกันผ่าน `/api/v1/documents/{id}/approve` (คำเตือนมีแต่ `[Σ-GAP]` ยอด) | อนุมัติต่อ (ไม่ขัดจังหวะ · คำตัดสิน #12) คืน `scanAmountGap:true` + `warnings[]` · ถ้ามีชุด VAT ไม่อยู่บนกระดาษด้วย ⇒ GAP-04 |
 | GAP-03 | PV อนุมัติอัตโนมัติที่ติด `[Σ-GAP]` | ไม่ผ่าน (SystemWorkflow ผ่าน gap ไม่ได้) + หมายเหตุภายในบนใบ |
+| GAP-04 | (รอบ 199 · คำตัดสินรอบ 198 ข้อ 6) อนุมัติใบสแกนที่คำเตือน "VAT จากสแกนไม่ได้พิมพ์บนกระดาษ" ผ่าน `/api/v1/documents/{id}/approve` | 422 `data.code = APPROVE-SCAN-VAT-NOT-ON-PAPER` + `scanVatNotOnPaper:true` + `warnings[]` + ข้อความไทยบอกทางไปต่อ · เอกสารยัง Draft (ไม่มีเลข/JE) · `InternalNotes` มี `[API-APPROVE-REFUSED]` หนึ่งครั้ง · เรียกซ้ำ = 422 เดิม หมายเหตุไม่ต่อซ้ำ · เปิดบนเว็บกดอนุมัติ → 422 คำเตือน → รับทราบ → อนุมัติ (`ApprovalAcknowledgementTests`) |
+| GAP-05 | เหมือน GAP-04 แต่สแกนไม่มีข้อความให้ตรวจ (`VAT จากสแกนตรวจกับกระดาษไม่ได้`) · และใบที่มีทั้ง `[Σ-GAP]` + ชุด VAT | 422 รหัสเดียวกัน · รายการบล็อกมีแต่ข้อ VAT (ข้อยอดไม่ถูกนับเป็นเหตุปฏิเสธ) |
+| GAP-06 | ทิศตรงข้าม: ใบสแกนที่ VAT พิมพ์บนกระดาษ / ใบไม่มีคำเตือน / ใบมีแต่ `[Σ-GAP]` ผ่าน API · ใบที่มีคำเตือนอื่น (เช่นใบซ้ำ) ผ่าน API | อนุมัติเหมือนเดิม (`scanAmountGap` ตามจริง · `scanVatNotOnPaper:false`) · คำเตือนอื่น = 422 `APPROVE-WARNINGS-NEED-ACK` (เดิม 500) |
 | SIGN-01 | ลูกค้าเซ็น → อนุมัติไม่ผ่าน → ผู้ใช้แก้ราคา → ลูกค้าเรียกซ้ำ | ลายเซ็นเดิมถูกแทนที่ ต้องเซ็นใหม่ (hash ไม่ตรง) · ไม่แก้ = ใช้ซ้ำได้ |
 | ETAXH-01 | บริษัทเปิด e-Tax อัตโนมัติ · ออกใบกำกับเต็มรูปจาก POS / API | มี `EtaxInvoice` · ล้ม = แถบแดง `[ETAX-AUTO-FAILED]` บนใบ + ข้อความใน response ของ API · ขายไม่ล้ม |
 | ETAXH-02 | ใบเสร็จรับชำระใบกำกับ · มัดจำ VAT พัก · CN ฝั่งซื้อ · walk-in | ไม่มีป้ายล้ม (ข้ามโดยเจตนา) |

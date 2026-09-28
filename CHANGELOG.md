@@ -3608,3 +3608,16 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม E3 — แ�
 - backlog: E2-9 (จุดตัดวันเงินเข้า — ต้องออกแบบ) · E2-11 (ต้องเก็บโหมดค่าธรรมเนียม ณ วันบันทึกรอบก่อน) · E2-12 ส่วนที่เหลือ · E2-10 ส่งทีม S3
 - เทสต์ `GatewayRefundReview198E2Tests` · `required_call_site_check` +13 กติกา · `owner_action_wiring_check` +7 แถว · DOCUMENT_FLOW §2.6b · PAYMENT_GATEWAY_DESIGN · TEST_PLAN SP0-26..36
 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — คำตัดสินเจ้าของรอบ 198 ข้อ 6 (`erp-review/2026-09-25/settlement/DECISIONS.md`) · ฝ่ายค้าน
+`erp-review/2026-09-25/review-r199-ocr.md` B-1 / `ocr-scommerce/review195-r2.md` R2-3:
+- **B-1**: `/api/v1/documents/{id}/approve` ปฏิเสธใบสแกนที่ VAT ไม่ได้พิมพ์บนกระดาษ/ไม่มีข้อความให้ตรวจ — 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` **ก่อน**เรียกอนุมัติ
+  (ไม่ออกเลข ไม่ลง JE) · เอกสารค้างร่าง + หมายเหตุภายใน `[API-APPROVE-REFUSED]` ครั้งแรกครั้งเดียว (retry ไม่ต่อซ้ำ) · คนรับทราบบนเว็บ/มือถือ
+- ตัวตัดสินตัวเดียว `ApprovalAcknowledgement.ApiRefusal/ApiRefusalOf/ApiRefusalNote` + `OcrApprovalGapWarning.IsAmountGapWarning` (ประกอบจาก `IsGapWarning` −
+  `IsVatDerivedWarning` · ไม่อ่านข้อความเอง) · `Unacknowledged(ApiClient)` ผ่านเฉพาะชุดยอด ⇒ service เป็นตาข่ายชั้นที่สอง (catch → 422 รูปเดียวกัน)
+- คำเตือนอื่นผ่าน API: 422 `APPROVE-WARNINGS-NEED-ACK` (เดิม `DocumentApprovalWarningsException` หลุดไป middleware เป็น 500) · `[Σ-GAP]` ยอดอย่างเดียว = อนุมัติต่อ
+  + `scanAmountGap` (คำตัดสิน #12 ไม่เปลี่ยน) · ช่อง `scanVatNotOnPaper` ของคำตอบสำเร็จคงไว้ (= false เสมอ)
+- ทางเข้าอื่นตรวจแล้ว (§3.2): SystemWorkflow หยุดชุด VAT อยู่แล้ว · แหล่ง None หยุดทุกข้อ · ที่พัก/PlatformBilling/CMS เอกสารสร้างเองไม่มีสแกน ·
+  ค้าง: ปุ่ม "บันทึกและอนุมัติ" ของ `documents.html` ack โดยไม่แสดงคำเตือน + `bulk-approve`
+- เทสต์ `ApprovalAcknowledgementTests` +7 · `required_call_site_check` กติกา Approve (ด่านก่อนอนุมัติ · ใช้ผล · ห้าม `IsGapWarning`) + `RefuseApprovalAsync` + เคส B1a/B1b ·
+  ACCOUNT_STRUCTURE §3.1 · `pages/api-developer.html` · TEST_PLAN GAP-02/GAP-04..06 — commit <pending>)_

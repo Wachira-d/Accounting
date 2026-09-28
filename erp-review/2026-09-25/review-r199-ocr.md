@@ -127,7 +127,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 
 ## B) รอบ 195 ทีม I3 — ฝ่ายค้านรอบสาม (merge `54fdae45`)
 
-### 📋 backlog (เจ้าของตัดสิน) B-1 · PLAUSIBLE · **P2 (ต้องให้เจ้าของตัดสิน)** — API v1 อนุมัติใบที่ VAT ไม่ได้พิมพ์บนกระดาษได้โดยไม่มีคนรับทราบ
+### ✅ <pending> (คำตัดสินเจ้าของรอบ 198 ข้อ 6: API ปฏิเสธ 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` · ทีม H) B-1 · PLAUSIBLE · **P2 (ต้องให้เจ้าของตัดสิน)** — API v1 อนุมัติใบที่ VAT ไม่ได้พิมพ์บนกระดาษได้โดยไม่มีคนรับทราบ
 - `ApprovalAcknowledgement.cs:53` `ApiClient => warnings.Where(w => !IsGapWarning(w))` + `OcrApprovalGapWarning.IsGapWarning` ขยายให้รวม `VatDerivedPrefix`
   (`OcrApprovalGapWarning.cs:140-142`) ⇒ `/api/v1/documents/{id}/approve` ผ่านคำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" เงียบ ๆ แล้วคืนแค่ `scanVatNotOnPaper`
   (`DocumentsV1Controller.cs:265-268`)
@@ -169,7 +169,7 @@ OcrVendorBranchReview197Tests · OcrApprovalGapWarningTests ฯลฯ) **ยั�
 | A-1 | CONFIRMED | **P1** | K-7: `vendorIsUs` ข้ามการเลือกสาขาแล้วตกไป "สร้างผู้ติดต่อใหม่" ⇒ ผู้ติดต่อซ้ำ (บริษัทในเครือชื่อซ้อน เลขต่าง) / ผู้ติดต่อเป็นตัวเราเอง |
 | A-2 | CONFIRMED | P2 | `SameEntityIdsAsync` ถือ `0000000000000` เป็นนิติบุคคลเดียว ⇒ ผูก PO/ใบต้นทางข้ามคู่ค้า |
 | C-2 | CONFIRMED | P2 | หัวเอกสารพิมพ์ซ้ำคำนวณสด ไม่ใช้ `IsTaxInvoiceByLaw` ที่ตรึง ⇒ ใบ REC เก่าพิมพ์ซ้ำเป็น "ใบกำกับภาษีอย่างย่อ" |
-| B-1 | PLAUSIBLE (owner) | P2 | API v1 ผ่านคำเตือน VAT-derived โดยอ้างคำตัดสินข้อ 12 ซึ่งครอบแค่ [Σ-GAP] |
+| ✅ B-1 | PLAUSIBLE (owner) | P2 | API v1 ผ่านคำเตือน VAT-derived โดยอ้างคำตัดสินข้อ 12 ซึ่งครอบแค่ [Σ-GAP] |
 | A-3 | PLAUSIBLE | P2 | คะแนนสาขาไม่สลับตาม party swap |
 | C-3, C-4, A-4..A-7, B-2..B-4 | — | P3 | ดูรายละเอียดข้างบน |
 
