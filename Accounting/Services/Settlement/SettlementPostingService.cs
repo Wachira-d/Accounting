@@ -512,7 +512,7 @@ public class SettlementPostingService : ISettlementPostingService
 
         var clearingSources = await ClearingSourcesAsync(companyId, batch, lines, ct);
         var duplicates = await DuplicateSalesAsync(companyId, batch, channel, plan, ct);
-        var orphans = await OrphanArtifactsAsync(companyId, batch, channel, ct);
+        var (orphans, unvoidableOrphans) = await OrphanArtifactsAsync(companyId, batch, channel, ct);
         // ฝ่ายค้าน C-4: การรับชำระที่ค้างจากครั้งก่อนต้องตรงแผนปัจจุบัน (ใบเดียวกัน · ยอดเท่ากัน)
         var staleReceipts = SettlementReceiptReconcile.Stale(plan.Receipts, payments.Select(MarkerOf).ToList());
 
@@ -543,7 +543,7 @@ public class SettlementPostingService : ISettlementPostingService
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PaymentVoucher),
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, saleType),
             existingDocs.Count + payments.Count,
-            summaryBlock, staleReceipts, orphans, sodBlocked);
+            summaryBlock, staleReceipts, orphans, sodBlocked, unvoidableOrphans);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
@@ -694,36 +694,69 @@ public class SettlementPostingService : ISettlementPostingService
     }
 
     /// <summary>ของกำพร้า (ฝ่ายค้าน C-1(d)): เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกของรอบโอนที่ถูกยกเลิก/ลบแล้วในช่องทางเดียวกัน — เกิดจาก
-    /// "ลงบัญชีค้างครึ่งทาง → ยกเลิกรอบโอน" ก่อนรอบนี้ (ตอนนี้ยกเลิกรอบโอนที่มีของแบบนี้ไม่ได้แล้ว) · ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่นเลย</summary>
-    private async Task<List<string>> OrphanArtifactsAsync(Guid companyId, SettlementBatch batch, SettlementChannel channel,
-        CancellationToken ct)
+    /// "ลงบัญชีค้างครึ่งทาง → ยกเลิกรอบโอน" ก่อนรอบนี้ (ตอนนี้ยกเลิกรอบโอนที่มีของแบบนี้ไม่ได้แล้ว) · ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่นเลย
+    /// <para>review198-S3 S3-6 (ทีม S4): แยกเป็นสองกอง — <b>ยกเลิกได้</b> ⇒ บล็อก (ทางไปต่อ: ยกเลิกทีละใบที่หน้าเอกสาร) · <b>ระบบยกเลิกไม่ได้แล้ว</b>
+    /// (ด่านตัวเดียวกับยกเลิกการลงบัญชี <see cref="SettlementUnpostGate"/>: e-Tax ตอบรับ · รายงานล็อก · ภาษีที่ยื่นแล้ว · 50 ทวิ ยื่นแล้ว · มีเอกสารอ้าง)
+    /// ⇒ เตือนไม่บล็อก — เดิมบล็อกทุกรอบโอนของช่องทางนั้นตลอดไปโดยไม่มีทางไปต่อ</para></summary>
+    private async Task<(List<string> Blocking, List<string> Unvoidable)> OrphanArtifactsAsync(Guid companyId, SettlementBatch batch,
+        SettlementChannel channel, CancellationToken ct)
     {
         var dead = await _db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
             .Where(b => b.CompanyId == companyId && b.ChannelId == channel.Id && b.Id != batch.Id
                 && (b.IsDeleted || b.Status == SettlementBatchStatus.Voided))
             .OrderByDescending(b => b.UpdatedAt ?? b.CreatedAt).Take(200)
             .Select(b => new { b.Id, b.PayoutRef }).ToListAsync(ct);
-        var result = new List<string>();
-        if (dead.Count == 0) return result;
+        var blocking = new List<string>();
+        var unvoidable = new List<string>();
+        if (dead.Count == 0) return (blocking, unvoidable);
         var parts = dead.Select(b => b.Id.ToString("N")).ToList();
         var refOf = dead.ToDictionary(b => b.Id.ToString("N"), b => b.PayoutRef);
-        var docs = await _db.Documents.AsNoTracking()
+        var prefixLength = SettlementPostingKeys.CreatorPrefix(Guid.Empty).Length;
+        var docRows = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
                 && d.CreatedBy != null && d.CreatedBy.StartsWith("system:settlement:")
                 && parts.Contains(d.CreatedBy.Substring(18, 32)))
-            .Select(d => new { d.DocumentNumber, d.CreatedBy }).ToListAsync(ct);
-        foreach (var g in docs.GroupBy(d => d.CreatedBy!.Substring(18, 32)))
-            result.Add($"เอกสาร {string.Join(", ", g.Select(d => d.DocumentNumber))} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+            .Select(d => new { d.Id, d.DocumentNumber, d.CreatedBy, d.DocumentType, d.Status, d.TotalAmount }).ToListAsync(ct);
+        var docs = docRows.Select(d => (Part: d.CreatedBy!.Substring(18, 32),
+                Doc: new ExistingDoc(d.Id, d.CreatedBy!.Length > prefixLength ? d.CreatedBy.Substring(prefixLength) : "", d.DocumentNumber,
+                    d.DocumentType, d.Status, d.TotalAmount)))
+            .ToList();
+        var pays = new List<(string Part, Payment Payment)>();
         foreach (var b in dead)
         {
             var marker = SettlementPostingKeys.PaymentMarker(b.Id);
-            var pays = await _db.Payments.AsNoTracking()
-                .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
-                .Select(p => p.PaymentNumber).ToListAsync(ct);
-            if (pays.Count > 0)
-                result.Add($"การรับชำระ {string.Join(", ", pays)} ที่ลงบัญชีให้รอบโอน {b.PayoutRef} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+            pays.AddRange((await _db.Payments.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+                    .ToListAsync(ct))
+                .Select(p => (b.Id.ToString("N"), p)));
         }
-        return result;
+        if (docs.Count == 0 && pays.Count == 0) return (blocking, unvoidable);
+
+        // ด่านตัวเดียวกับยกเลิกการลงบัญชี — ชิ้นที่ด่านปฏิเสธ = ระบบยกเลิกให้ไม่ได้แล้ว (ArtifactId)
+        var (unpostDocs, certs, filed, unpostPays) = await LoadUnpostFactsAsync(companyId, batch.PayoutDate,
+            docs.Select(d => d.Doc).ToList(), pays.Select(p => p.Payment).ToList(), ct);
+        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays);
+        var stuck = refusals.Where(r => r.ArtifactId != null).GroupBy(r => r.ArtifactId!.Value)
+            .ToDictionary(g => g.Key, g => string.Join(" · ", g.Select(r => r.Reason).Distinct()));
+
+        foreach (var g in docs.GroupBy(d => d.Part))
+        {
+            var open = g.Where(d => !stuck.ContainsKey(d.Doc.Id)).Select(d => d.Doc.Number).ToList();
+            if (open.Count > 0)
+                blocking.Add($"เอกสาร {string.Join(", ", open)} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+            foreach (var d in g.Where(d => stuck.ContainsKey(d.Doc.Id)))
+                unvoidable.Add($"เอกสาร {d.Doc.Number} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยกเลิกในระบบไม่ได้แล้ว: {stuck[d.Doc.Id]}");
+        }
+        foreach (var g in pays.GroupBy(p => p.Part))
+        {
+            var open = g.Where(p => !stuck.ContainsKey(p.Payment.Id)).Select(p => p.Payment.PaymentNumber).ToList();
+            if (open.Count > 0)
+                blocking.Add($"การรับชำระ {string.Join(", ", open)} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
+            foreach (var p in g.Where(p => stuck.ContainsKey(p.Payment.Id)))
+                unvoidable.Add($"การรับชำระ {p.Payment.PaymentNumber} ที่ลงบัญชีให้รอบโอน {refOf[g.Key]} (ถูกยกเลิกแล้ว) ยกเลิกในระบบไม่ได้แล้ว: "
+                    + stuck[p.Payment.Id]);
+        }
+        return (blocking, unvoidable);
     }
 
     // ═════════════════════════════ ยกเลิกการลงบัญชี ═════════════════════════════
@@ -794,8 +827,8 @@ public class SettlementPostingService : ISettlementPostingService
                 return Fail(closed + " — ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้จนกว่าจะเปิดงวด (หรือบันทึกรายการปรับปรุงในงวดปัจจุบันแทน)");
 
         // ── ฝ่ายค้าน C-2: ด่านภาษี/e-Tax/50 ทวิ ของ "ทุกชิ้น" ก่อนแตะชิ้นแรก — ถูกปฏิเสธกลางทาง = สมุดครึ่งกลับครึ่งค้าง ──
-        var (unpostDocs, certs, filed) = await LoadUnpostFactsAsync(companyId, batch, docs, ct);
-        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed);
+        var (unpostDocs, certs, filed, unpostPays) = await LoadUnpostFactsAsync(companyId, batch.PayoutDate, docs, payments, ct);
+        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays);
         if (refusals.Count > 0)
             return Fail("ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้ (ยังไม่ได้แตะอะไร): "
                 + string.Join(" · ", refusals.Select(r => $"{r.Subject}: {r.Reason}")) + " — " + refusals[0].NextStep);
@@ -893,13 +926,19 @@ public class SettlementPostingService : ISettlementPostingService
         });
     }
 
-    /// <summary>ข้อเท็จจริงของด่านยกเลิกการลงบัญชี (C-2) — ตัวโหลดเดียวของ <see cref="UnpostAsync"/> และ <see cref="UnpostBlockersAsync"/> (หน้าจอกับด่านจริงเห็นชุดเดียวกัน)</summary>
-    private async Task<UnpostFacts> LoadUnpostFactsAsync(Guid companyId, SettlementBatch batch, List<ExistingDoc> docs, CancellationToken ct)
+    /// <summary>ข้อเท็จจริงของด่านยกเลิกการลงบัญชี (C-2) — ตัวโหลดเดียวของ <see cref="UnpostAsync"/> · <see cref="UnpostBlockersAsync"/> (หน้าจอกับด่านจริง
+    /// เห็นชุดเดียวกัน) และตัวแยกของกำพร้าที่ยกเลิกไม่ได้ (<see cref="OrphanArtifactsAsync"/> · review198-S3 S3-6) · ทีม S4 เพิ่ม: ภาษีซื้อของใบค่าธรรมเนียม
+    /// (พัก/ถึงกำหนด · S3-2) · เหตุที่ <c>VoidDocumentAsync</c> ปฏิเสธเอง (<see cref="DocumentVoidPreconditions"/> · S3-3) · การรับชำระที่ทำให้ภาษีขาย
+    /// ถึงกำหนด §78/1 (S3-7)</summary>
+    /// <param name="fallbackDate">วันที่ของเอกสารที่หาไม่เจอ (ไม่ควรเกิด — ใช้วันที่รอบโอน)</param>
+    private async Task<UnpostFacts> LoadUnpostFactsAsync(Guid companyId, DateTime fallbackDate, List<ExistingDoc> docs,
+        IReadOnlyList<Payment> payments, CancellationToken ct)
     {
         var docIds = docs.Select(d => d.Id).ToList();
         var docFacts = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
-            .Select(d => new { d.Id, d.DocumentDate, d.VatAmount, d.IsForeignService }).ToListAsync(ct);
+            .Select(d => new { d.Id, d.DocumentDate, d.VatAmount, d.IsForeignService, d.InputVatPostedAsUndue, d.InputVatBecameClaimableAt })
+            .ToListAsync(ct);
         var accepted = (await _db.EtaxInvoices.AsNoTracking()
                 .Where(e => e.CompanyId == companyId && docIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
                 .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
@@ -917,17 +956,35 @@ public class SettlementPostingService : ISettlementPostingService
                 .Where(t => t.CompanyId == companyId && !t.IsDeleted && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
                 .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct))
             .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
+        // S3-3: เหตุที่ VoidDocumentAsync ปฏิเสธเอง — ตัวตัดสินเดียวกับเส้นยกเลิกเอกสาร (ห้ามสำเนา)
+        var childBlocks = await DocumentVoidPreconditions.ChildBlocksAsync(_db, companyId, docIds, ct);
         var unpostDocs = docs.Select(d =>
         {
             var f = docFacts.FirstOrDefault(x => x.Id == d.Id);
-            return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? batch.PayoutDate,
-                f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id));
+            return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? fallbackDate,
+                f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id),
+                f?.InputVatPostedAsUndue ?? false, f?.InputVatBecameClaimableAt, childBlocks.GetValueOrDefault(d.Id));
         }).ToList();
-        return new UnpostFacts(unpostDocs, certs, filed);
+
+        // S3-7: ใบขายที่รอบโอนรับชำระ — จุดความรับผิด §78/1 ที่เกิดจากการรับเงิน (OutputVatDueAt) + ยอดรับสะสมของใบ
+        var payDocIds = payments.Select(p => p.DocumentId).Distinct().ToList();
+        var payDocs = payDocIds.Count == 0
+            ? new Dictionary<Guid, (string Number, DateTime? DueAt, decimal Paid)>()
+            : (await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && payDocIds.Contains(d.Id))
+                    .Select(d => new { d.Id, d.DocumentNumber, d.OutputVatDueAt, d.PaidAmount }).ToListAsync(ct))
+                .ToDictionary(d => d.Id, d => (Number: d.DocumentNumber, DueAt: d.OutputVatDueAt, Paid: d.PaidAmount));
+        var unpostPays = payments.Select(p =>
+        {
+            var found = payDocs.TryGetValue(p.DocumentId, out var pd);
+            return new SettlementUnpostPayment(p.Id, p.PaymentNumber, p.DocumentId, found ? pd.Number : null, found ? pd.DueAt : null,
+                found ? pd.Paid : 0m, payments.Where(x => x.DocumentId == p.DocumentId).Sum(x => x.Amount));
+        }).ToList();
+        return new UnpostFacts(unpostDocs, certs, filed, unpostPays);
     }
 
     private sealed record UnpostFacts(List<SettlementUnpostDocument> Docs, List<SettlementUnpostCertificate> Certs,
-        HashSet<(TaxType TaxType, int Year, int Month)> Filed);
+        HashSet<(TaxType TaxType, int Year, int Month)> Filed, List<SettlementUnpostPayment> Payments);
 
     public async Task<IReadOnlyList<SettlementUnpostRefusal>> UnpostBlockersAsync(Guid companyId, Guid batchId,
         CancellationToken ct = default)
@@ -936,8 +993,9 @@ public class SettlementPostingService : ISettlementPostingService
         if (loaded.Batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched))
             return Array.Empty<SettlementUnpostRefusal>();
         var docs = await ExistingDocsAsync(companyId, batchId, ct);
-        var (unpostDocs, certs, filed) = await LoadUnpostFactsAsync(companyId, loaded.Batch, docs, ct);
-        return SettlementUnpostGate.Evaluate(unpostDocs, certs, filed);
+        var payments = await SettlementPaymentsAsync(companyId, batchId, ct);
+        var (unpostDocs, certs, filed, unpostPays) = await LoadUnpostFactsAsync(companyId, loaded.Batch.PayoutDate, docs, payments, ct);
+        return SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays);
     }
 
     // ═════════════════════════════ จับคู่ธนาคาร ═════════════════════════════
@@ -1151,8 +1209,8 @@ public class SettlementPostingService : ISettlementPostingService
 
     // ═════════════════════════════ ตัวช่วยอ่าน ═════════════════════════════
 
-    private const string BusyMessage =
-        "มีการลงบัญชี/ยกเลิก/จับคู่ของช่องทางนี้กำลังทำอยู่ — รอสักครู่แล้วกดใหม่ (ระบบไม่ทำซ้อนกันเพื่อกันลงบัญชีซ้ำ)";
+    /// <summary>ข้อความเดียวกับฝั่งนำเข้า (<see cref="SettlementChannelLock.BusyMessage"/> · review198-S3 S3-9)</summary>
+    private const string BusyMessage = SettlementChannelLock.BusyMessage;
 
     private sealed record Head(Guid ChannelId, SettlementBatchStatus Status);
 

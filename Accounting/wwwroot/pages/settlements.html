@@ -625,11 +625,11 @@
           <td class="num">${Layout.money(l.amount)}${l.vatAmount ? `<div class="hint">VAT ${Layout.money(l.vatAmount)}</div>` : ''}</td>
           <td>${unclassified ? `<b style="color:#b45309">${Layout.esc(l.lineTypeLabel)}</b>` : Layout.esc(l.lineTypeLabel)}
             <div>${this.classifyTag(l)}</div>
-            ${a.canEditLines ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openReclass(${i})">แก้ประเภท</button>` : ''}</td>
+            ${a.canEditLines || a.canRedecideLines ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openReclass(${i})">แก้ประเภท</button>` : ''}</td>
           <td>${Layout.esc(this.label(c.matchStatuses, l.matchStatus))}
             ${l.matchNote ? `<div class="hint">${Layout.esc(l.matchNote)}</div>` : ''}
             ${l.matchedDocumentId ? `<div>${this.docLink(l.matchedDocumentId, 'เปิดเอกสาร')}</div>` : ''}
-            ${a.canEditLines && l.canAssignMatch ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openMatch(${i})">ตัดสินการจับคู่</button>` : ''}
+            ${(a.canEditLines || a.canRedecideLines) && l.canAssignMatch ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openMatch(${i})">ตัดสินการจับคู่</button>` : ''}
             ${closedCb ? `<div class="hint">ปิดรายการแล้ว: ${Layout.esc(closedCb.description || '')} · ${this.jeLink(closedCb.journalEntryId, closedCb.entryNumber || 'เปิดใบสำคัญ')}</div>` : ''}
             ${cbIds.has(l.id) ? `<div class="actions" style="margin:4px 0 0">
               <button class="btn btn-sm btn-secondary" onclick="Page.resolveChargeback(${i}, false)">แพ้ (ตัดเป็นขาดทุน)</button>

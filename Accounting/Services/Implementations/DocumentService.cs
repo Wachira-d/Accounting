@@ -8065,40 +8065,14 @@ public partial class DocumentService : IDocumentService
 
         // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
         // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
-        // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว).
-        // ต้องยกเลิกลูกก่อน.
-        var activeChild = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == documentId
-                && !d.IsDeleted
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-            .Select(d => new { d.DocumentNumber, d.DocumentType })
-            .FirstOrDefaultAsync();
-        if (activeChild != null)
-            throw new InvalidOperationException(
-                $"ยกเลิกไม่ได้ — เอกสารนี้มีเอกสารลูก {activeChild.DocumentType} ({activeChild.DocumentNumber}) " +
-                "อ้างอิงอยู่ (เช่นใบกำกับภาษี/ใบเสร็จที่แปลงไป). กรุณายกเลิกเอกสารลูกก่อน");
-
-        // CN/DN legacy ที่อ้างใบนี้ด้วย "เลขที่" ในช่องอ้างอิง (text — ก่อนระบบ
-        // resolve เป็น RelatedDocumentId ตอน approve) ก็ต้องกัน void เหมือนกัน —
-        // ไม่งั้นใบเดิมถูกยกเลิกทั้งที่ใบลดหนี้ยัง active = ภ.พ.30 หักจากใบที่หายไป
-        var docNumber = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
-        if (!string.IsNullOrWhiteSpace(docNumber))
-        {
-            var textRefChild = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                    && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
-                    && d.RelatedDocumentId == null && d.Reference == docNumber
-                    && d.Status != DocumentStatus.Draft
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.DocumentNumber, d.DocumentType })
-                .FirstOrDefaultAsync();
-            if (textRefChild != null)
-                throw new InvalidOperationException(
-                    $"ยกเลิกไม่ได้ — มี{(textRefChild.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")} " +
-                    $"{textRefChild.DocumentNumber} อ้างเลขที่ใบนี้อยู่ (§86/9-10) — ยกเลิกใบนั้นก่อน");
-        }
+        // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว) · และ
+        // CN/DN legacy ที่อ้างใบนี้ด้วย "เลขที่" ในช่องอ้างอิง (ใบเดิมหายทั้งที่ใบลดหนี้
+        // ยัง active = ภ.พ.30 หักจากใบที่หายไป). รอบ 198 ทีม S4 (review198-S3 S3-3):
+        // ตัวตัดสินย้ายไป Helpers/DocumentVoidPreconditions ตัวเดียว — ด่านก่อน
+        // "ยกเลิกการลงบัญชีรอบโอน" ใช้ตัวเดียวกันตรวจทุกใบก่อนแตะใบแรก
+        if ((await DocumentVoidPreconditions.ChildBlocksAsync(_db, companyId, new[] { documentId }))
+                .TryGetValue(documentId, out var childBlock))
+            throw new InvalidOperationException(childBlock);
 
         // ── วันที่ลงรายการกลับบัญชี ──
         // default = **วันที่ของเอกสารเอง** ไม่ใช่วันที่กดยกเลิก: ยกเลิกใบของเดือน
@@ -8129,6 +8103,15 @@ public partial class DocumentService : IDocumentService
                     await transaction.RollbackAsync();
                     return;
                 }
+
+                // รอบ 198 ทีม S4 (review198-S3 S3-8): ตรวจด่าน C-5 ซ้ำใต้ธุรกรรม — อ่านแถวรอบโอน FOR SHARE ⇒ ถ้าการลงบัญชีกำลังประทับ Posted
+                // (ถือ FOR UPDATE ระหว่างตรวจความครบ→commit) เส้นนี้รอแล้วเห็นสถานะใหม่ · เดิมตรวจก่อนเปิดธุรกรรมอย่างเดียว ⇒ รอบโอน Posted พร้อมชิ้นที่หาย
+                if (await SettlementArtifactGuard.CheckLockedAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromCreator(doc.CreatedBy))
+                        is string settlementLocked)
+                    throw new BusinessRuleException(settlementLocked, "SETTLEMENT-ARTIFACT-VOID", 409);
+                if (await SettlementArtifactGuard.CheckDocumentPaymentsAsync(_db, companyId, documentId, lockBatchRows: true)
+                        is string settlementPaidLocked)
+                    throw new BusinessRuleException(settlementPaidLocked, "SETTLEMENT-ARTIFACT-VOID", 409);
 
                 // รอบ 194 R3-2 (ค) — ทุกใบมัดจำที่การยกเลิกนี้จะคืนยอด (ใบนี้เอง · ตัดชำระ JV เข้าใบนี้ ขั้น 2b · รับรู้เพื่อใบนี้ 2b-R · หักแบบขับ JE 7c)
                 // ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + อ่านค่าล่าสุด ก่อนขั้นใดอ่าน/เขียน DepositRealizedAmount · เดิม 2b เขียนโดยไม่ล็อกใบมัดจำ
@@ -9478,6 +9461,10 @@ public partial class DocumentService : IDocumentService
                     await tx.RollbackAsync();
                     return;
                 }
+                // รอบ 198 ทีม S4 (review198-S3 S3-8): ด่าน C-5 ซ้ำใต้ธุรกรรม (แถวรอบโอน FOR SHARE — รอการประทับ Posted ที่กำลังทำแล้วเห็นสถานะใหม่)
+                if (await SettlementArtifactGuard.CheckLockedAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromPaymentNotes(locked.Notes))
+                        is string settlementLocked)
+                    throw new BusinessRuleException(settlementLocked, "SETTLEMENT-ARTIFACT-VOID", 409);
 
                 // Multi-doc payment (เงินก้อนเดียวจัดสรรหลายใบ) ต้องใช้ path เฉพาะ:
                 // JE ใช้ Reference "{PayNo}/{i}" และยอดต้องคืนรายใบตาม allocation —

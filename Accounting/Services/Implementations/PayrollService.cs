@@ -3325,6 +3325,11 @@ public class PayrollService : IPayrollService
                 .Where(c => c.CompanyId == companyId && c.SourcePayrollRunId == run.Id
                     && c.Status != WithholdingTaxCertStatus.Voided)
                 .ToListAsync();
+            // รอบ 198 ทีม S4 (review198-S3 S3-10): 50 ทวิ ที่อยู่ใน ภ.ง.ด.1 ที่ประกาศ/ยื่นแล้ว ยกเลิกไม่ได้ — ตัวตัดสินเดียวกับหน้ายกเลิก 50 ทวิ/เอกสาร/
+            // ยกเลิกการลงบัญชีรอบโอน (Helpers/WhtCertVoidGuard) · เดิมประทับ Voided ตรง ⇒ ใบที่พนักงานถือฉบับจริงหายจากยอดนำส่ง/ไฟล์ยื่นเงียบ ๆ ·
+            // ปฏิเสธ = ไม่ยกเลิกไม่ออกใหม่ทั้งชุด แล้วดังผ่าน catch ด้านล่าง (LogError + แจ้งเตือน) · ทางไปต่อ: ยื่น ภ.ง.ด.1 เพิ่มเติม/ปรับปรุงงวดปัจจุบัน
+            if (await WhtCertVoidGuard.CheckAsync(_db, companyId, existingFromThisRun.Select(c => c.Id).ToList()) is string filedCert)
+                throw new BusinessRuleException(filedCert + " — ระบบไม่ยกเลิกและไม่ออกหนังสือรับรองของรอบนี้ใหม่", "RD-50TWI-FILED", 409);
             foreach (var ex in existingFromThisRun) ex.Status = WithholdingTaxCertStatus.Voided;
 
             // Map employee → contact (auto-create contact stub ถ้าไม่มี).

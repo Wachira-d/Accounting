@@ -3696,3 +3696,16 @@ _รอบ 198 ทีม D2 (แก้ฝ่ายค้าน review198-D ข�
 
 _รอบ 198 main — CI แดง `1bc3f15e` CS0854: ทีม D2 เพิ่มพารามิเตอร์ optional `Name` ให้ `SettlementChartAccount` แล้วจุดสร้างใน
 `ResolveChargebackAsync` (อยู่ใน EF `Select` = expression tree) ไม่ส่งค่า ⇒ ใส่ `a.AccountName` ให้ครบ (จุดสร้างทั้งหมด 2 จุด ส่งครบแล้ว) — commit <pending>)_
+
+_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S4 — แก้ฝ่ายค้าน review198-S3 ของ settlement:
+- **S3-1 (P1)** รอบโอนค้างครึ่งทางที่ชิ้นที่ออกแล้วยกเลิกไม่ได้ (ใบสรุป e-Tax Accepted · 50 ทวิ ใน ภ.ง.ด.53 ที่ยื่น · รายงานล็อก) แล้วขั้นรับชำระล้ม = ทางตัน ⇒
+  ตัดสินการจับคู่/จัดประเภทรายบรรทัดได้ เฉพาะเมื่อไม่เปลี่ยนชิ้นที่ออกแล้ว (`LoadRedecidableBatchAsync` + `SettlementPartialEdit.Refusal` · 409
+  `SETTLEMENT-BATCH-PARTIAL-FROZEN`) · ปุ่ม `CanRedecideLines` · ยกเลิกรอบ/จับคู่ใหม่ทั้งรอบ/บัญชีธนาคารยังล็อก
+- **S3-2/S3-3/S3-7** ด่านยกเลิกการลงบัญชีดูภาษีซื้อใบค่าธรรมเนียม (พัก/ถึงกำหนด) · เอกสารลูก/ใบลดหนี้อ้างเลขที่จาก `Helpers/DocumentVoidPreconditions`
+  (ตัวตัดสินเดียวที่ `VoidDocumentAsync` ใช้ด้วย) · §78/1 ที่เกิดจากการรับชำระในเดือนที่ยื่นแล้ว · `SettlementUnpostRefusal.ArtifactId`
+- **S3-4** คีย์กันซ้ำไม่ใช้เลขรอบโอนที่พิมพ์ (ไม่มีคอลัมน์ = ลายนิ้วมือเนื้อหาไฟล์ `v2:rowc:`) · เทียบคีย์รุ่นก่อน v1/v2 · ไฟล์ฉบับแก้เทียบเนื้อหาแบบนับจำนวน · เนื้อหาตรงรอบอื่นเตือน
+- **S3-6** ของกำพร้าที่ยกเลิกไม่ได้ = เตือนไม่บล็อก (ยกเลิกได้ = บล็อกเหมือนเดิม) · **S3-8** ด่าน C-5 ซ้ำใต้ธุรกรรม (`CheckLockedAsync` FOR SHARE) ·
+  **S3-9** ล็อกฝั่งนำเข้าลองล็อกไม่รอ + `SettlementChannelLock.BusyMessage` · **S3-10** ภ.ง.ด.1 re-post ผ่าน `WhtCertVoidGuard`
+- **ขายด่วน** (`quick-sale.html`, ค้างจากทีม W): ไม่กลืนผลอนุมัติ — มีคำเตือน = แบนเนอร์ "ร่าง" + ลิงก์ไปอนุมัติที่หน้าเอกสาร · error อื่น = ข้อความเซิร์ฟเวอร์ ·
+  `tools/quick_sale_approve_sim.js`
+- S3-5 รอเจ้าของ · S3-11 backlog · เทสต์ `SettlementReview198S4Tests` · required_call_site +13/ปรับ 6 · TEST_PLAN SPS4-01..15 — commit <pending>)_

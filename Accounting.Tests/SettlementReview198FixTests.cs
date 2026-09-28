@@ -225,9 +225,10 @@ public class SettlementReview198FixTests
     private static SettlementUnpostDocument Sum(bool accepted = false, bool locked = false)
         => new(DocA, "TIV-0001", DocumentType.TaxInvoice, SettlementPostingKeys.SummaryComponent(Day), Day, 70m, false, accepted, locked);
 
+    // ใบค่าธรรมเนียมกลุ่ม InputVatPending = ภาษีซื้อพัก 11640 รอใบกำกับ (ยังไม่ถึงกำหนด) — ทีม S4 (S3-2) ส่งข้อเท็จจริงนี้เข้าด่านจริงแทนการเดาจากชื่อชิ้น
     private static SettlementUnpostDocument Fee(bool foreign = false)
         => new(DocB, "PV-0001", DocumentType.PaymentVoucher, SettlementPostingKeys.FeeComponent(SettlementFeeVatTreatment.InputVatPending),
-            Day, 7m, foreign, false, false);
+            Day, 7m, foreign, false, false, InputVatPostedAsUndue: true, InputVatBecameClaimableAt: null);
 
     [Fact]
     public void C2_eTaxตอบรับแล้ว_หรือภพ30ประกาศว่ายื่นแล้ว_ปฏิเสธทั้งรอบก่อนแตะชิ้นแรก()
