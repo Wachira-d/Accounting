@@ -127,6 +127,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (รวม `MatchedContactId` เก่าที่ผูก สนญ. ไว้ และเมื่อผู้ใช้แก้รหัสสาขาในฟอร์ม) — **ผู้ใช้เลือกผู้ติดต่อเอง** (`MatchContactAsync` จด `MatchedContactId`
     ลง `UserCorrectedFields`) = ไม่ตัดสินทับ · ฝั่งผู้ซื้อ (ใบขาย/หาใบต้นทาง) = `ContactTaxBranchKey.FindAsync(เลข, BuyerBranchCode)` + ถอยจับชื่อบน `SoftScope` +
     `AdoptTaxId` · ที่อยู่สาขาจากทะเบียน VAT ผ่าน `IDbdLookupService.GetBranchAsync` + `Helpers/RdVatBranchRecords`
+    · **หลังฝ่ายค้านรอบ 197 (ทีม K2 · `erp-review/2026-09-25/makro-branch/review197.md`)**:
+    (K-2) คะแนนรหัสสาขาผู้ขาย**ตามที่มา** — `BranchCodeExtractor.Result.SellerEvidence/SellerConfidence` ตัวตั้งเดียวของ `EnrichFromRawText`
+    (`OcrService.cs:9761`) และ `ParseThaiDocument` (`:5637`): ประโยคประกาศสาขาผู้ออกใบ 0.90 · บล็อกผู้ขาย (ก่อนป้ายผู้ซื้อ) 0.85 · อ่านทั้งหน้าเพราะไม่มี
+    ป้ายผู้ซื้อ 0.70 · ถอยอ่านทั้งหน้าทั้งที่มีป้ายผู้ซื้อ 0.60 (ได้รหัสเดียวกับผู้ซื้อ 0.40) ⇒ สาขาของผู้ซื้อที่อยู่บนสุดไม่สร้างผู้ติดต่อถาวรตอนสแกนอีก (ค่ายังเติม
+    ฟอร์ม + ไฮไลต์) · `OcrIssuerBranch` รับป้ายสองภาษา “สาขาที่ออกใบกำกับภาษี/ Branch 00005” (Makro) · “(Branch No.) 00000” (กฟภ.) เป็นประโยคประกาศ ·
+    (K-6) `IsReliableBranch(null)` = **ไม่พอ** (ไม่รู้ที่มา ⇒ `OtherBranchRow` ผูกแถวเดิม + ข้อความเตือน ไม่สร้างแถว) · (K-1) `SubmitCorrectionAsync`
+    (`:4766`/`:4918`) นับ "ผู้ใช้แก้รหัสสาขา" เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ (`OcrCorrectedFieldList.From(…, OcrCorrectionBaseline)` · normalize 5 หลัก ·
+    ว่าง≠00000) **หรือ** ผู้ใช้พิมพ์ช่อง “รหัสสาขาผู้ขาย” เอง (`OcrCorrectionRequest.VendorBranchConfirmed` ← `dataset.userTouched` ใน document-scan.html) —
+    เดิมหน้าเว็บส่งค่าเดิมกลับทุกครั้ง ⇒ ด่านหลักฐานอ่อนไม่เคยกันบนเว็บ · เส้นสร้างเอกสาร (`:6257`) ใส่ข้อความเตือน `OtherBranchRow` ลง ProcessingNotes ·
+    (K-7) `OcrSelfPartyGuard.IsOurContact` ตัวเดียวของเส้นสแกน (`:2584`) และเส้นสร้างเอกสาร (`:6235` — ผู้ขายคือเรา ⇒ ไม่ตัดสินสาขา/ไม่สร้างแถว ·
+    แถวของเราไม่เป็นผู้สมัคร) · (K-3) **PO/ใบต้นทาง = นิติบุคคลเดียวกันทุกสาขา** — `ContactTaxBranchKey.SameEntityIdsAsync` (ตัวเอง + แถวเลขภาษีเดียวกัน ·
+    ไม่มีเลข = ตัวเองเท่านั้น · กรอง CompanyId) ใน แบนเนอร์ PO ตอนสแกน (`:3025`) · `GetOpenPosForScanAsync` (`:10044`) · ด่าน `LinkPurchaseOrderAsync`
+    (`:10102` ยังกัน PO ของนิติบุคคลอื่น) · ตัวหาใบต้นทาง (`:10214`) · ด่าน `LinkPredecessorAsync` (`:10347`) — **ยกเว้นเป้าหมายใบลด/เพิ่มหนี้**
+    (`OcrPredecessorMatcher.AcceptsSiblingBranchSource` · §86/9-10 ต้องแถวเดียวกับใบเดิม) · ⚠️ ค้าง: alias สินค้าที่ผูกผู้ขาย (`ProductAlias.ContactId`) ยังเป็น
+    รายแถว — alias ที่เรียนบนแถว สนญ. ไม่ช่วยแถวสาขา (backlog K-3b)
   - **ชื่อผู้ขายเป็นโลโก้** (รอบ 197 · ใบ Makro "ma ro") — (ก) เลขผู้เสียภาษีที่พิมพ์แบ่งกลุ่มแบบอื่น ("0 10 7 567 00041 4") ที่มีป้ายกำกับ ⇒
     `ThaiTaxId.LooseGroupingPattern` ใน `SmartFieldExtractor.ExtractTaxIdCandidates` (รับเฉพาะตัวมีป้าย) ⇒ `OcrVendorKeyEvidence` พิสูจน์กุญแจได้ ⇒ ทะเบียนชนะ ·
     ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" ถูกกลบใน `OcrPartyLabels` (เดิมนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย) (ข) ชื่อไม่มีรูปนิติบุคคล + เลขนิติบุคคล ⇒
@@ -3380,7 +3395,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 199: ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน — `AbbreviatedInvoiceChannel` · เอกสาร = จด VAT + ขายปลีก §86/6 (§ ใบกำกับอย่างย่อ POS + หัวเอกสาร) — commit <pending>)_
+_Last verified against codebase: 2026-09-28 (รอบ 197 ทีม K2 หลังฝ่ายค้าน: รหัสสาขา "ส่งค่าเดิม" ≠ "ผู้ใช้แก้" (K-1) · คะแนนสาขาตามที่มา + ป้ายสองภาษา
+(K-2) · ไม่มีคะแนน = ไม่พอสร้างแถว (K-6) · PO/ใบต้นทางทุกสาขาของนิติบุคคลเดียวกัน ยกเว้นใบลด/เพิ่มหนี้ (K-3) · ผู้ขายคือเราในเส้นสร้างเอกสาร (K-7)
+(§1 OCR) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 199: ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน — `AbbreviatedInvoiceChannel` · เอกสาร = จด VAT + ขายปลีก §86/6 (§ ใบกำกับอย่างย่อ POS + หัวเอกสาร) — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-25 (รอบ 198 ทีม E settlement เฟส 0: §2.6b gateway — JE คืนเงิน + ยอดคืนสะสม · รอบโอนนับคืนบางส่วน/คืนหลังรอบโอน ·
 VAT ค่าธรรมเนียม 11630 · WHT ค่าธรรมเนียมฐานก่อน VAT + บล็อก · ด่านงวด · แก้ค่าธรรมเนียม · ด่านสิทธิ์ · Integration รับชำระ: ขาเงินผ่าน `MoneyAccountFallback`

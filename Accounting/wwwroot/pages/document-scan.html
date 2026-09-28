@@ -2526,6 +2526,7 @@
               <div class="review-field">
                 <label>รหัสสาขาผู้ขาย</label>
                 <input type="text" class="form-input" id="revVendorBranch" maxlength="5" placeholder="00000"
+                  oninput="this.dataset.userTouched='1'"
                   value="${Layout.esc(scan.vendorBranchCode || '')}">
                 ${fc('SellerBranchCode')}
               </div>
@@ -3555,6 +3556,9 @@
           // ไปแล้ว แต่ payload builder ตัวเดียวของหน้านี้ไม่เคยส่งมาเลย
           // ⇒ ครึ่งเซิร์ฟเวอร์ของการแก้ ship ไปเฉย ๆ ผู้ใช้ยังแก้ไม่ได้
           vendorBranchCode: v('revVendorBranch'),
+          // รอบ 197 (ฝ่ายค้าน K-1): เซิร์ฟเวอร์นับ "ผู้ใช้แก้สาขา" เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ — ธงนี้บอกว่า
+          // ผู้ใช้ลงมือพิมพ์ช่องนี้เอง (ยืนยันสาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว) · ไม่แตะ = ไม่ส่ง
+          vendorBranchConfirmed: document.getElementById('revVendorBranch')?.dataset?.userTouched === '1' ? true : null,
           buyerTaxId: v('revBuyerTaxId'),
           buyerBranchCode: v('revBuyerBranch'),
           // §86/4 ที่เพิ่งเปิดให้แก้ (E-OCR-05) — ห้ามลืมจุดนี้ซ้ำรอยเดิม:

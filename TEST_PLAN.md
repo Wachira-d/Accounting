@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **348 ไฟล์ · 3,174 `[Fact]` + 493 `[Theory]` (2,176 `InlineData`)** ณ 2026-09-25 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **348 ไฟล์ · 3,149 `[Fact]` + 491 `[Theory]` (2,167 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1005,6 +1005,10 @@
 | OCR-U-06 | U | ใบ Makro 00005: ชื่อโลโก้ "ma ro" + เลขแบ่งกลุ่ม "0 10 7 567 00041 4" | กุญแจพิสูจน์ได้ (pattern หลวม + ป้าย) · ชื่อ = บรรทัดนิติบุคคลที่พิมพ์เหนือเลข · เลขผู้ซื้อ/บุคคลธรรมดา/ชื่อเรา ไม่ถูกแตะ — ✅ `OcrMakroBranchVendorTests` |
 | OCR-U-07 | U | อีเมล/เบอร์ในบล็อกผู้ซื้อ/ที่อยู่จัดส่ง | ไม่เป็นของผู้ขาย · อีเมลผู้ขายหัวใบ/ท้ายใบยังได้ · กระดาษไม่มีป้าย = ตัวแรกตามเดิม — ✅ `OcrMakroBranchVendorTests` |
 | OCR-I-04 | I | สร้างเอกสารจากสแกนเก่าที่ `MatchedContactId` = สนญ. แต่กระดาษสาขา 00005 | สร้าง/ผูกผู้ติดต่อสาขา 00005 · ผู้ใช้เลือกผู้ติดต่อเองแล้ว = ไม่ตัดสินทับ (ล็อกจุดเรียก: `required_call_site_check`) |
+| OCR-U-08 | U | (รอบ 197 K2 · K-2) สาขาผู้ขายจากการถอยอ่านทั้งหน้า (บล็อกผู้ซื้ออยู่บนสุด / ไม่มีป้ายผู้ซื้อ) | คะแนน < 0.85 ⇒ `OtherBranchRow` ไม่สร้างผู้ติดต่อ · ทิศตรงข้าม: Makro “สาขาที่ออกใบกำกับภาษี/ Branch 00005” = ประโยคประกาศ 0.90 ⇒ ยังสร้าง/ผูกแถว 00005 · บล็อกผู้ขาย 0.85 · Radisson ไม่ขยับ — ✅ `OcrVendorBranchReview197Tests` |
+| OCR-U-09 | U | (K-1) หน้าเว็บส่งรหัสสาขาเดิมกลับตอนสร้างเอกสาร | ไม่นับว่าผู้ใช้แก้ ⇒ ด่านหลักฐานอ่อนยังกัน · ทิศตรงข้าม: ค่าเปลี่ยน/ว่าง→00000/พิมพ์ยืนยัน (`VendorBranchConfirmed`) = แก้ ⇒ สร้างแถว · "5" ≡ "00005" · ไม่มี baseline = กติกาเดิม — ✅ `OcrVendorBranchReview197Tests` |
+| OCR-U-10 | U | (K-6/K-7) คะแนนสาขาไม่มี · ผู้ขายคือเรา | ไม่มีคะแนน ⇒ ผูกแถวเดิม + ข้อความเตือน (ผู้ใช้ยืนยัน ⇒ สร้าง) · `OcrSelfPartyGuard.IsOurContact` เลข/ชื่อไทย/อังกฤษ · ผู้ขายจริงไม่ถูกตีเป็นเรา — ✅ `OcrVendorBranchReview197Tests` · `OcrVendorBranchContactTests` |
+| OCR-U-11 | U | (K-3) PO/ใบต้นทางของผู้ขายหลายสาขา | `ContactTaxBranchKey.SameEntityIds` รวมแถว สนญ. (เลขมีขีดก็ตรง) ไม่รวมนิติบุคคลอื่น · ไม่มีเลข = ตัวเองเท่านั้น · ใบลด/เพิ่มหนี้ไม่ขยาย — ✅ `OcrVendorBranchReview197Tests` · จุดเรียก 5 จุดล็อกด้วย `required_call_site_check` |
 | OCR-U-05 | U | enrich TaxId ลง contact: name-sim < 0.90 | ไม่เขียน + มี ProcessingNote เตือน |
 | OCR-I-01 | I | สแกนใบเดิมซ้ำ 2 ครั้ง | ไม่สร้าง contact ซ้ำ, ไม่สร้างเอกสารซ้ำ (duplicate detection) |
 | OCR-I-02 | I | DTO ที่ส่งไป review modal | ทุก field §86/4 ไม่ null/empty (fallback chain เติมครบ) |

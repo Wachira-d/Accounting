@@ -47,7 +47,48 @@ public static class BranchCodeExtractor
     /// ที่อยู่ผู้ซื้อบนใบกำกับไทยยาวไม่เกินนี้ กว้างกว่านี้เริ่มกินเนื้อหาอื่น</summary>
     private const int BuyerWindowChars = 500;
 
-    public sealed record Result(string? SellerBranchCode, string? BuyerBranchCode);
+    /// <summary>
+    /// รหัสสาขาผู้ขายได้มาจาก "ส่วนไหนของกระดาษ" (รอบ 197 ฝ่ายค้าน K-2) — เดิมทุกทางให้คะแนนเท่ากัน 0.85 ซึ่ง<b>เท่าเกณฑ์</b>
+    /// <c>OcrVendorBranchContact.ReliableBranchConfidence</c> พอดี ⇒ ค่าที่ได้จากการ<b>ถอยไปอ่านทั้งหน้า</b> (มักเป็น "สาขาที่ 3"
+    /// ของผู้ซื้อที่อยู่บนสุด) ถูกนับเป็นหลักฐานพอจะสร้างผู้ติดต่อถาวรตั้งแต่ตอนสแกน
+    /// </summary>
+    public enum SellerBranchEvidence
+    {
+        /// <summary>อ่านไม่ได้</summary>
+        None,
+        /// <summary>ประโยคประกาศสาขาผู้ออกใบ (<c>OcrIssuerBranch</c>) — ป้ายกำกับตรงตัว</summary>
+        IssuerStatement,
+        /// <summary>บล็อกผู้ขาย (ข้อความก่อนป้ายผู้ซื้อ) — ตำแหน่งบอกฝั่ง</summary>
+        SellerBlock,
+        /// <summary>ไม่มีป้ายผู้ซื้อทั้งหน้า (ใบเสร็จร้านค้า/สลิป) ⇒ อ่านทั้งหน้าเป็นของผู้ขาย — ไม่มีอะไรยืนยันฝั่ง</summary>
+        WholePageNoBuyerBlock,
+        /// <summary>มีป้ายผู้ซื้อ แต่บล็อกผู้ขายไม่มีสาขา ⇒ ถอยไปอ่านทั้งหน้า — ตัวแรกของหน้ามักอยู่ในบล็อกผู้ซื้อ</summary>
+        WholePageFallback,
+    }
+
+    /// <summary>คะแนนของรหัสสาขาผู้ขายตามที่มา — ตัวตั้งตัวเดียวของทุกเส้น engine (<c>EnrichFromRawText</c> ·
+    /// <c>ParseThaiDocument</c>) · ต่ำกว่า 0.85 = ไม่พอจะสร้างผู้ติดต่อแถวใหม่ (ไฮไลต์เหลืองให้ตรวจด้วย)</summary>
+    public const double IssuerStatementConfidence = 0.90;
+    public const double SellerBlockConfidence = 0.85;
+    public const double WholePageNoBuyerBlockConfidence = 0.70;
+    public const double WholePageFallbackConfidence = 0.60;
+    /// <summary>ถอยอ่านทั้งหน้าแล้วได้รหัส<b>เดียวกับสาขาผู้ซื้อ</b> = เกือบแน่ว่าอ่านป้ายของผู้ซื้อซ้ำ</summary>
+    public const double FallbackEqualsBuyerConfidence = 0.40;
+
+    public sealed record Result(string? SellerBranchCode, string? BuyerBranchCode,
+        SellerBranchEvidence SellerEvidence = SellerBranchEvidence.None)
+    {
+        /// <summary>คะแนนของ <see cref="SellerBranchCode"/> — null เมื่ออ่านไม่ได้</summary>
+        public double? SellerConfidence => SellerBranchCode == null ? null : SellerEvidence switch
+        {
+            SellerBranchEvidence.IssuerStatement => IssuerStatementConfidence,
+            SellerBranchEvidence.SellerBlock => SellerBlockConfidence,
+            SellerBranchEvidence.WholePageNoBuyerBlock => WholePageNoBuyerBlockConfidence,
+            SellerBranchEvidence.WholePageFallback => string.Equals(SellerBranchCode, BuyerBranchCode, StringComparison.Ordinal)
+                ? FallbackEqualsBuyerConfidence : WholePageFallbackConfidence,
+            _ => WholePageFallbackConfidence,   // ไม่รู้ที่มา = ไม่พอสร้างแถว (DOCTRINE §1)
+        };
+    }
 
     /// <summary>กฎอ่านค่าจาก "ข้อความช่วงเดียว" — ใช้ร่วมทั้งฝั่งผู้ขาย/ผู้ซื้อ.
     /// คืน null เมื่อไม่พบ (ห้ามเดา 00000 ให้ — ผู้เรียกตัดสินเองว่าจะ default
@@ -84,8 +125,10 @@ public static class BranchCodeExtractor
         if (buyerAnchorIndex < 0)
         {
             // ไม่มีบล็อกผู้ซื้อให้แยก (ใบเสร็จร้านค้า/สลิป) — พฤติกรรมเดิม:
-            // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ
-            return new Result(issuer ?? FromSegment(rawText), null);
+            // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ (ค่าเดิม · คะแนนต่ำกว่าเกณฑ์สร้างแถว — K-2)
+            if (issuer != null) return new Result(issuer, null, SellerBranchEvidence.IssuerStatement);
+            var page = FromSegment(rawText);
+            return new Result(page, null, page == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageNoBuyerBlock);
         }
 
         var sellerSegment = rawText[..buyerAnchorIndex];
@@ -98,11 +141,15 @@ public static class BranchCodeExtractor
         if (tableAnchor.Success && tableAnchor.Index > 0)
             buyerSegment = buyerSegment[..tableAnchor.Index];
 
-        var seller = issuer ?? FromSegment(sellerSegment);
+        var buyer = FromSegment(buyerSegment);
+        if (issuer != null) return new Result(issuer, buyer, SellerBranchEvidence.IssuerStatement);
+        var sellerBlock = FromSegment(sellerSegment);
+        if (sellerBlock != null) return new Result(sellerBlock, buyer, SellerBranchEvidence.SellerBlock);
         // บล็อกผู้ขายมักอยู่หัวกระดาษเสมอ — แต่ถ้าหน้าตัดมาแล้วไม่เจอ (เช่น
         // ผู้ซื้ออยู่บนสุด) ยอมถอยไปอ่านทั้งหน้าเพื่อไม่ให้แย่กว่าเดิม
-        seller ??= FromSegment(rawText);
-
-        return new Result(seller, FromSegment(buyerSegment));
+        // ⚠️ ค่านี้ยังเติมฟอร์มได้ (กฎเหล็ก #3) แต่ติดที่มา WholePageFallback ⇒ คะแนน < 0.85 ⇒ ไม่สร้างผู้ติดต่อถาวร
+        // จากค่าที่อาจเป็นสาขาของผู้ซื้อ (ฝ่ายค้าน K-2 รอบ 197)
+        var page2 = FromSegment(rawText);
+        return new Result(page2, buyer, page2 == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageFallback);
     }
 }

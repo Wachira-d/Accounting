@@ -3470,3 +3470,19 @@ _รอบ 199 — ภ.พ.06 คุมเฉพาะสลิปจากเ�
 - ผู้เรียก 6 จุด (PDF ×3 · DocumentRenderer · DocumentService · PosSlipHeader) ส่งช่องทางครบ — รูปแบบเดิม (ไม่ส่งช่องทาง) เหลือ 0 จุด ·
   `required_call_site_check` ล็อกสลิป POS = CashRegisterSlip · หน้าตั้งค่าบริษัทแก้ป้าย · CLAUDE.md กฎเหล็ก #2 A §86/6
 — commit <pending>)_
+
+_รอบ 197 ทีม K2 (2026-09-28) — แก้ผลฝ่ายค้านของทีม K (`erp-review/2026-09-25/makro-branch/review197.md`):
+- **K-1**: หน้าเว็บส่ง `vendorBranchCode` ทุกครั้งที่บันทึก/สร้างเอกสาร + `OcrCorrectedFieldList.From` นับทุกช่องที่ไม่ null ⇒ `IsReliableBranch(userCorrected:true)`
+  เสมอบนเว็บ ⇒ ด่าน "หลักฐานสาขาอ่อน ⇒ ไม่สร้างผู้ติดต่อ" ไม่เคยกัน · แก้: `OcrCorrectionBaseline` (ค่าที่สแกนเก็บไว้ก่อนรับคำแก้) — รหัสสาขาสองฝั่งนับว่าแก้เฉพาะเมื่อ
+  ค่าเปลี่ยน (normalize 5 หลัก · ว่าง≠00000) หรือ `VendorBranchConfirmed` (ผู้ใช้พิมพ์ช่องเอง — ทางยืนยันสาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว) · ช่องอื่นกติกาเดิม
+  (WHT มีทรงเดียวกันแต่ "ยืนยัน" เป็นหลักฐานโดยนิยาม — backlog K-10 ให้เจ้าของตัดสิน)
+- **K-2**: `BranchCodeExtractor` ถอยอ่านทั้งหน้าแล้วได้ 0.85 = เท่าเกณฑ์ ⇒ สาขาผู้ซื้อที่อยู่บนสุดสร้างผู้ติดต่อผู้ขายถาวรตอนสแกน · แก้: `SellerBranchEvidence` +
+  `SellerConfidence` (0.90/0.85/0.70/0.60/0.40) ตัวตั้งเดียวของ `EnrichFromRawText`/`ParseThaiDocument` · `OcrIssuerBranch` รับป้ายสองภาษา
+  “สาขาที่ออกใบกำกับภาษี/ Branch 00005” / “(Branch No.)” — ไม่งั้นใบ Makro จริง (ค่ามาจากการถอยอ่านทั้งหน้า) จะหยุดสร้างแถวสาขา (ทิศตรงข้ามล็อกด้วยเทสต์)
+- **K-6**: `IsReliableBranch(null)` = ไม่พอ (DOCTRINE §1) ⇒ ผูกแถวเดิม + ข้อความเตือนในสแกน/ProcessingNotes
+- **K-3**: `ContactTaxBranchKey.SameEntityIdsAsync` — แบนเนอร์ PO · ตัวเสนอ PO · ด่านผูก PO · ตัวหาใบต้นทาง · ด่านผูกใบต้นทาง มองทุกสาขาของนิติบุคคลเดียวกัน
+  (ยังกันนิติบุคคลอื่น · ใบลด/เพิ่มหนี้ไม่ขยาย `OcrPredecessorMatcher.AcceptsSiblingBranchSource`) · alias สินค้ารายแถวค้าง (K-3b)
+- **K-7**: `OcrSelfPartyGuard.IsOurContact` ตัวเดียวของเส้นสแกน+สร้างเอกสาร
+- เทสต์ `OcrVendorBranchReview197Tests` (ต่อ `BranchCodeExtractor` → `IsReliableBranch` → `Decide` · สองทิศทุกข้อ) · `OcrVendorBranchContactTests` (theory null/0.70/0.60) ·
+  `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §1 OCR · TEST_PLAN OCR-U-08..11
+— commit <pending>)_

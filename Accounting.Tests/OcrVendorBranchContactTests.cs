@@ -194,8 +194,11 @@ public class OcrVendorBranchContactTests
     }
 
     [Theory]
-    [InlineData(null, false, true)]     // ไม่มีคะแนนแยกช่อง = ค่าที่ engine/e-Tax อ่านจากกระดาษ
-    [InlineData(0.85, false, true)]     // BranchCodeExtractor
+    [InlineData(null, false, false)]    // ไม่มีคะแนน = ไม่รู้ที่มา ⇒ ไม่พอสร้างแถว (รอบ 197 ฝ่ายค้าน K-6 · DOCTRINE §1 · e-Tax ใส่ 1.0 เอง)
+    [InlineData(null, true, true)]      // ไม่รู้ที่มา แต่ผู้ใช้แก้/ยืนยันเอง
+    [InlineData(0.85, false, true)]     // BranchCodeExtractor — บล็อกผู้ขาย
+    [InlineData(0.70, false, false)]    // อ่านทั้งหน้าเพราะไม่มีป้ายผู้ซื้อ (K-2)
+    [InlineData(0.60, false, false)]    // ถอยอ่านทั้งหน้าทั้งที่มีป้ายผู้ซื้อ (K-2)
     [InlineData(0.90, false, true)]     // ประโยคประกาศสาขาผู้ออกใบ
     [InlineData(0.50, false, false)]    // ขัดกับประโยคบนกระดาษ
     [InlineData(0.30, false, false)]    // อ่านไม่ได้

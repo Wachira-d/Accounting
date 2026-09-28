@@ -48,6 +48,14 @@ public static class OcrSelfPartyGuard
     /// <summary>ชื่อคู่ค้าที่อ่านได้ = บริษัทของเราเองหรือเปล่า (fuzzy — ตัดคำนำหน้า
     /// นิติบุคคลออกก่อนเทียบ) · ตัวเดียวของระบบ ใช้ทั้ง SmartFieldExtractor และ
     /// OcrDocumentRoleInferrer</summary>
+    /// <summary>
+    /// **ผู้ติดต่อ/คู่ค้าที่อ่านได้คือบริษัทเราเองไหม** — เลขภาษีเดียวกับเรา หรือชื่อเป็นเรา (ไทย/อังกฤษ) · ตัวเดียวของทั้งเส้นสแกน
+    /// (<c>ScanAsync</c> กรองผู้สมัครก่อนตัดสินสาขา/สร้างผู้ติดต่อ) และเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) —
+    /// รอบ 197 ฝ่ายค้าน K-7: เดิมเป็น local function ในเส้นสแกนเท่านั้น ⇒ เส้นสร้างเอกสารสร้าง "ผู้ขาย" สาขาหนึ่งที่เป็นตัวเราเองได้
+    /// </summary>
+    public static bool IsOurContact(string? taxId, string? name, string? ourTaxId, string? ourName, string? ourNameEn)
+        => ThaiTaxId.Same(taxId, ourTaxId) || IsSelf(name, ourName) || IsSelf(name, ourNameEn);
+
     public static bool IsSelf(string? partyName, string? companyName)
     {
         if (!NameOverlaps(partyName, companyName)) return false;

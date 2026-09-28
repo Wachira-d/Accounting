@@ -56,3 +56,22 @@
 - ความเสี่ยงคอมไพล์: สัญลักษณ์ที่อ้างถึงมีอยู่จริงทุกตัว (`NameMatchKind` · `SoftScope` · `AdoptTaxId` · `ContactAdoptOutcome.Reject` ·
   `OcrFieldSource.VendorHistory/PaperLabel` · `ContactType.Unknown` · `TaxIdCandidate.Position` · `ParseFieldConfidenceJson`)
   ไม่พบจุดที่น่าจะพัง — ต้องรอผล CI
+
+## สถานะหลังทีม K2 (2026-09-28 · คอมมิต WIP `b3b4a9f3` + คอมมิตตามหลัง)
+
+| ID | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|
+| K-1 | ✅ แก้ | `OcrCorrectedFieldList.From(req, OcrCorrectionBaseline)` — รหัสสาขาสองฝั่งนับว่าแก้เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ (normalize 5 หลัก · ว่าง≠00000) หรือ `VendorBranchConfirmed` (ช่อง `revVendorBranch` ถูกพิมพ์ — ทางยืนยันสาขาที่ระบบไม่แน่ใจ) · `SubmitCorrectionAsync` จับ baseline ก่อนรับคำแก้ (ล็อกด้วย `required_call_site_check`) |
+| K-2 | ✅ แก้ | `BranchCodeExtractor.Result.SellerEvidence/SellerConfidence` (ประโยคประกาศ 0.90 · บล็อกผู้ขาย 0.85 · ไม่มีป้ายผู้ซื้อ 0.70 · ถอยอ่านทั้งหน้า 0.60 · เท่ารหัสผู้ซื้อ 0.40) ใช้ทั้ง `EnrichFromRawText` และ `ParseThaiDocument` · **ทิศตรงข้าม**: ใบ Makro จริง (`MakroPhoto`) เดิมได้ 00005 จาก**การถอยอ่านทั้งหน้า** (ตัวอ่านประโยคประกาศไม่รู้จัก “/ Branch”) ⇒ ถ้าลดคะแนนอย่างเดียวจะหยุดสร้างแถวสาขาของผู้ใช้ ⇒ `OcrIssuerBranch` รับป้ายสองภาษา (“/ Branch” · “(Branch No.)”) · เทสต์ต่อ extractor → `IsReliableBranch` → `Decide` |
+| K-3 | ✅ แก้ (ยกเว้น alias) | `ContactTaxBranchKey.SameEntityIdsAsync` (ตัวเอง + เลขภาษีเดียวกัน · ไม่มีเลข = ตัวเอง · CompanyId) ใน 5 จุด: แบนเนอร์ PO ตอนสแกน (จุดที่ 5 ที่ฝ่ายค้านไม่ได้ระบุ) · `GetOpenPosForScanAsync` · ด่าน `LinkPurchaseOrderAsync` · `ComputePredecessorDecisionAsync` · ด่าน `LinkPredecessorAsync` · ใบลด/เพิ่มหนี้ไม่ขยาย (§86/9-10 + `DocumentService` โยนเมื่อ ContactId ต่าง) |
+| K-3b | 📋 backlog | `ProductAlias.ContactId` รายแถว — alias ที่เรียนบนแถว สนญ. ไม่ช่วยแถวสาขา · ต้องเปลี่ยนลายเซ็น `ProductMatcher` (vendorContactId → ชุด id) + raw SQL `GetVendorHistoryProductIdsAsync` + `GetVendorAdaptiveThresholdAsync` + `vendorHasProductHistory` — ไม่ใช่การแก้เล็ก |
+| K-4 | 📋 backlog | "แก้ในฟอร์มก่อน" (document-scan.html `contactId: scan.matchedContactId`) + `SubmitCorrectionAsync` ไม่ตัดสินผู้ติดต่อใหม่เมื่อรหัสสาขาเปลี่ยน — เส้นกดสร้างเอกสารตัดสินซ้ำแล้ว; เส้นฟอร์มยังไม่ |
+| K-5 | 📋 backlog | race อัปโหลดพร้อมกัน — ไม่มี unique index (CompanyId, TaxId, BranchCode) · ต้องตัดสินกับข้อมูลซ้ำที่มีอยู่ก่อน (migration) |
+| K-6 | ✅ แก้ | `IsReliableBranch(null)` = false ⇒ `OtherBranchRow` ผูกแถวเดิม + ข้อความ (เส้นสร้างเอกสารใส่ `ProcessingNotes`) · ผู้ใช้ยืนยัน ⇒ สร้าง · เส้น Tesseract/python ได้คะแนนแล้ว (ไม่ตกเป็น null) · e-Tax 1.0 ไม่กระทบ |
+| K-7 | ✅ แก้ | `OcrSelfPartyGuard.IsOurContact` ตัวเดียว (เส้นสแกนเปลี่ยน local function ให้เรียกตัวนี้) · เส้นสร้างเอกสาร: ผู้ขายคือเรา ⇒ ไม่ตัดสินสาขา/ไม่สร้างแถว · แถวของเราไม่เป็นผู้สมัคร |
+| K-8 | 📋 backlog | อีเมลใต้ช่องลายเซ็น "ผู้รับสินค้า" ท้ายบิลถูกทิ้ง (ทิศปลอดภัย: null ไม่ใช่ค่าผิด) |
+| K-9 | 📋 backlog | ที่อยู่แถวสาขาในเส้นสร้างเอกสาร (`paperIsIssuerBranchAddress:false`) อาจได้ที่อยู่ สนญ. จากหัวกระดาษ — ต้องเก็บ `VendorAddressFromIssuerBranch` ลงสแกนก่อน (ยังไม่มีคอลัมน์) |
+| K-10 | 📋 ใหม่ · ให้เจ้าของตัดสิน | ช่อง WHT (`hasWht`/`whtIncomeTypeCode`) หน้าเว็บส่งทุกครั้ง ⇒ `OcrWhtLearningScope.UserEdited` จริงเสมอบนเว็บ — แต่นิยามเดิมนับ "ยืนยัน" เป็นหลักฐานโดยตั้งใจ ⇒ ไม่เปลี่ยนเอง |
+| K-11 | 📋 ใหม่ | ใบ Makro (`MakroPhoto`): บล็อกผู้ซื้อของ `BranchCodeExtractor` เริ่มที่ "ต้นฉบับลูกค้า" (รายการคำของตัวเองยังไม่กลบป้ายฉบับ) + สองคอลัมน์สลับ ⇒ `BuyerBranchCode` = 00005 (ควร 00000) |
+
+หมายเหตุ verify: "file:line ใน DOCUMENT_FLOW ที่ K เขียนเลื่อนไปราว 8 บรรทัด" — K ไม่ได้เขียน file:line ตัวเลขใน DOCUMENT_FLOW เลย (ตรวจ `git show 47156575`) · K2 เติม file:line ปัจจุบันให้ส่วน OCR ผู้ติดต่อสาขาแทน

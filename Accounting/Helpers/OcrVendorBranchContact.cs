@@ -63,16 +63,21 @@ public sealed record OcrVendorBranchPick(
 public static class OcrVendorBranchContact
 {
     /// <summary>คะแนนขั้นต่ำของรหัสสาขาผู้ขายที่ถือว่า "มีหลักฐานบนกระดาษ" พอจะสร้างผู้ติดต่อแถวใหม่ —
-    /// ตัวอ่านป้าย <c>BranchCodeExtractor</c> ให้ 0.85 · ประโยคประกาศสาขาผู้ออกใบ 0.90 · ขัดกันเอง 0.50 · อ่านไม่ได้ 0.30</summary>
+    /// ประโยคประกาศสาขาผู้ออกใบ 0.90 · บล็อกผู้ขาย (ก่อนป้ายผู้ซื้อ) 0.85 · อ่านทั้งหน้าเพราะไม่มีป้ายผู้ซื้อ 0.70 ·
+    /// ถอยอ่านทั้งหน้าทั้งที่มีป้ายผู้ซื้อ 0.60 (ได้รหัสเดียวกับผู้ซื้อ 0.40) · ขัดกับประโยคบนกระดาษ 0.50 · อ่านไม่ได้ 0.30 ·
+    /// e-Tax XML 1.0 (ตัวตั้งของคะแนนจากตัวอ่านป้าย = <c>BranchCodeExtractor.Result.SellerConfidence</c> · รอบ 197 ฝ่ายค้าน K-2)</summary>
     public const double ReliableBranchConfidence = 0.85;
 
     /// <summary>ผู้ติดต่อที่เลขผู้เสียภาษีตรงกับกระดาษ (กรองบริษัทตัวเองออกแล้ว)</summary>
     public sealed record Candidate(Guid Id, string? Name, string? BranchCode);
 
-    /// <summary>รหัสสาขาผู้ขายมีหลักฐานพอไหม — <paramref name="confidence"/> null = ไม่มีคะแนนแยกช่อง (ค่ามาจาก engine/e-Tax
-    /// ที่อ่านจากกระดาษตรง ๆ) ถือว่ามี · ผู้ใช้แก้รหัสสาขาเอง = มีเสมอ</summary>
+    /// <summary>รหัสสาขาผู้ขายมีหลักฐานพอจะ<b>สร้างผู้ติดต่อแถวถาวร</b>ไหม — ผู้ใช้แก้/ยืนยันรหัสสาขาเอง = มีเสมอ ·
+    /// <paramref name="confidence"/> null = <b>ไม่รู้ว่ามาจากไหน</b> (สแกนรุ่นเก่าที่ไม่มีคะแนนแยกช่อง · ทางที่ลืมใส่คะแนน) ⇒
+    /// <b>ไม่พอ</b> (ฝ่ายค้าน K-6 รอบ 197 · DECISION_DOCTRINE §1 "เงื่อนไขที่เท็จเพราะไม่มีข้อมูล ห้ามตกเป็นผ่าน") —
+    /// ผลคือ <see cref="OcrVendorBranchOutcome.OtherBranchRow"/>: ผูกแถวเดิมของนิติบุคคลเดียวกัน + ข้อความเตือนให้ผู้ใช้ยืนยัน
+    /// (ทิศที่ความเสียหายมองเห็นและแก้ทัน) แทนการสร้างผู้ติดต่อถาวรจากค่าที่ไม่รู้ที่มา · e-Tax XML ใส่ 1.0 ไว้แล้วจึงไม่กระทบ</summary>
     public static bool IsReliableBranch(double? confidence, bool userCorrected = false)
-        => userCorrected || confidence is null || confidence.Value >= ReliableBranchConfidence;
+        => userCorrected || (confidence is double c && c >= ReliableBranchConfidence);
 
     /// <param name="candidates">แถวที่เลขผู้เสียภาษีตรง (normalize แล้ว) — ลำดับไม่มีผล</param>
     /// <param name="scannedBranch">สาขาผู้ขายที่อ่านได้ (ว่าง/ผิดรูป = อ่านไม่ได้)</param>
@@ -118,7 +123,8 @@ public static class OcrVendorBranchContact
             $"[Branch] ⚠ กระดาษน่าจะออกโดย {TaxBranchCode.Label(scanned)} ({scanned}) แต่รหัสสาขานี้ยังไม่แน่ใจ และในระบบมีผู้ติดต่อเลขนี้เฉพาะ "
             + existing
             + $" — ผูกกับ '{NameOf(fallback)}' ({BranchOf(fallback)}) ชั่วคราว · ไม่นำที่อยู่/สาขาจากกระดาษไปแก้ผู้ติดต่อรายนั้น · "
-            + "ตรวจรหัสสาขาบนกระดาษ ถ้าถูกต้อง แก้รหัสสาขาในหน้านี้แล้วกดสร้างเอกสาร ระบบจะสร้างผู้ติดต่อของสาขานั้นให้",
+            + "ตรวจรหัสสาขาบนกระดาษ ถ้าถูกต้อง พิมพ์รหัสสาขาในช่อง “รหัสสาขาผู้ขาย” ของหน้านี้ใหม่ (หรือแก้ให้ถูก) แล้วกดสร้างเอกสาร "
+            + "ระบบจะสร้างผู้ติดต่อของสาขานั้นให้",
             fallback);
     }
 
