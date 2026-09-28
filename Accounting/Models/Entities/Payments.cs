@@ -131,6 +131,9 @@ public class PaymentIntent : TenantEntity
     public Guid? ReceiptDocumentId { get; set; }
     public Guid? JournalEntryId { get; set; }
     public Guid? SettlementJournalEntryId { get; set; }
+    /// <summary>รอบโอน (<see cref="SettlementBatch"/>) ที่รวม intent นี้ — รอบ 198 เฟส 1 · null = ยังไม่เข้ารอบโอนใด
+    /// (เฟส 2 ย้าย GatewaySettlementService ให้สร้าง batch จาก intent)</summary>
+    public Guid? SettlementBatchId { get; set; }
 
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }
