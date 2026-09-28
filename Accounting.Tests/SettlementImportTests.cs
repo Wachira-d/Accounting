@@ -519,13 +519,18 @@ public class SettlementImportTests
     }
 
     [Fact]
-    public void ไฟล์ต้นฉบับของรอบโอน_ด่านอ่านและลบต้องมีคีย์กระทบยอด_อัปโหลดจากหน้าเว็บไม่ได้()
+    public void ไฟล์ต้นฉบับของรอบโอน_ด่านอ่านและลบต้องมีคีย์settlement_อัปโหลดจากหน้าเว็บไม่ได้()
     {
+        // รอบ 198 ทีม D: เดิม Bank.Reconcile ชั่วคราว → คีย์ settlement จาก SettlementPermissionScope (ตัวเดียวกับ controller)
         var rule = AttachmentPermissionScope.Resolve("SettlementBatch");
         Assert.True(rule.IsKnown);
         Assert.False(rule.ClientUploadAllowed);
-        Assert.Contains(PermissionKeys.BankReconcile, rule.ReadAnyOf);
-        Assert.Contains(PermissionKeys.BankReconcile, rule.WriteAnyOf);
+        Assert.Contains(PermissionKeys.SettlementImport, rule.ReadAnyOf);
+        Assert.Contains(PermissionKeys.SettlementPost, rule.ReadAnyOf);
+        Assert.Equal(new[] { PermissionKeys.SettlementImport }, rule.WriteAnyOf);
+        // ไฟล์ดิบยังไม่ตัด PII ⇒ แค่ "ดูรอบโอน" ไม่พอ · คีย์ธนาคารเดิมไม่เปิดไฟล์นี้อีก
+        Assert.DoesNotContain(PermissionKeys.SettlementView, rule.ReadAnyOf);
+        Assert.DoesNotContain(PermissionKeys.BankReconcile, rule.ReadAnyOf);
     }
 
     [Fact]

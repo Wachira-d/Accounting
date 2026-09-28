@@ -55,6 +55,10 @@ public interface ISettlementPostingService
     /// <summary>ปิดรายการ chargeback ที่พักไว้ (แพ้ = Dr 57140 · ชนะและได้เงินคืนนอกไฟล์ = Dr ผังพัก) ผ่าน <c>SettlementBatchMath.PlanChargebackResolution</c></summary>
     Task<SettlementChargebackResult> ResolveChargebackAsync(Guid companyId, Guid lineId, bool won, Guid userId,
         CancellationToken ct = default);
+
+    /// <summary>เหตุที่ยกเลิกการลงบัญชีรอบนี้ไม่ได้ (e-Tax ตอบรับ · ภาษีที่ยื่นแล้ว · 50 ทวิ ที่ยื่นแล้ว) — ด่านเดียวกับ <see cref="UnpostAsync"/>
+    /// (<c>SettlementUnpostGate.Evaluate</c> ข้อเท็จจริงชุดเดียวกัน) ให้หน้าจอบอกก่อนกด · ไม่เขียนอะไร · รอบที่ยังไม่ลงบัญชี = ว่าง (ฝ่ายค้าน C-2)</summary>
+    Task<IReadOnlyList<SettlementUnpostRefusal>> UnpostBlockersAsync(Guid companyId, Guid batchId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -765,29 +769,7 @@ public class SettlementPostingService : ISettlementPostingService
                 return Fail(closed + " — ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้จนกว่าจะเปิดงวด (หรือบันทึกรายการปรับปรุงในงวดปัจจุบันแทน)");
 
         // ── ฝ่ายค้าน C-2: ด่านภาษี/e-Tax/50 ทวิ ของ "ทุกชิ้น" ก่อนแตะชิ้นแรก — ถูกปฏิเสธกลางทาง = สมุดครึ่งกลับครึ่งค้าง ──
-        var accepted = (await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && docIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
-                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
-        var locked = (await _db.TaxReports.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && r.FilingLockedAt != null)
-                .SelectMany(r => r.Lines)
-                .Where(l => l.DocumentId != null && docIds.Contains(l.DocumentId.Value))
-                .Select(l => l.DocumentId!.Value).ToListAsync(ct)).ToHashSet();
-        var certs = await _db.WithholdingTaxCerts.AsNoTracking()
-            .Where(w => w.CompanyId == companyId && w.DocumentId != null && docIds.Contains(w.DocumentId.Value) && !w.IsDeleted
-                && w.Status != WithholdingTaxCertStatus.Voided)
-            .Select(w => new SettlementUnpostCertificate(w.Id, w.DocumentId!.Value, w.CertificateNumber, w.TaxFormType, w.TaxYear,
-                w.TaxMonth, w.Status)).ToListAsync(ct);
-        var filed = (await _db.TaxReports.AsNoTracking()
-                .Where(t => t.CompanyId == companyId && !t.IsDeleted && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
-                .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct))
-            .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
-        var unpostDocs = docs.Select(d =>
-        {
-            var f = docFacts.FirstOrDefault(x => x.Id == d.Id);
-            return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? batch.PayoutDate,
-                f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id));
-        }).ToList();
+        var (unpostDocs, certs, filed) = await LoadUnpostFactsAsync(companyId, batch, docs, ct);
         var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed);
         if (refusals.Count > 0)
             return Fail("ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้ (ยังไม่ได้แตะอะไร): "
@@ -884,6 +866,53 @@ public class SettlementPostingService : ISettlementPostingService
                 $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้", tracked.Status, reversalId,
                 voidedDocs, voidedPayments);
         });
+    }
+
+    /// <summary>ข้อเท็จจริงของด่านยกเลิกการลงบัญชี (C-2) — ตัวโหลดเดียวของ <see cref="UnpostAsync"/> และ <see cref="UnpostBlockersAsync"/> (หน้าจอกับด่านจริงเห็นชุดเดียวกัน)</summary>
+    private async Task<UnpostFacts> LoadUnpostFactsAsync(Guid companyId, SettlementBatch batch, List<ExistingDoc> docs, CancellationToken ct)
+    {
+        var docIds = docs.Select(d => d.Id).ToList();
+        var docFacts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentDate, d.VatAmount, d.IsForeignService }).ToListAsync(ct);
+        var accepted = (await _db.EtaxInvoices.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && docIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
+                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
+        var locked = (await _db.TaxReports.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.FilingLockedAt != null)
+                .SelectMany(r => r.Lines)
+                .Where(l => l.DocumentId != null && docIds.Contains(l.DocumentId.Value))
+                .Select(l => l.DocumentId!.Value).ToListAsync(ct)).ToHashSet();
+        var certs = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.DocumentId != null && docIds.Contains(w.DocumentId.Value) && !w.IsDeleted
+                && w.Status != WithholdingTaxCertStatus.Voided)
+            .Select(w => new SettlementUnpostCertificate(w.Id, w.DocumentId!.Value, w.CertificateNumber, w.TaxFormType, w.TaxYear,
+                w.TaxMonth, w.Status)).ToListAsync(ct);
+        var filed = (await _db.TaxReports.AsNoTracking()
+                .Where(t => t.CompanyId == companyId && !t.IsDeleted && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
+                .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct))
+            .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
+        var unpostDocs = docs.Select(d =>
+        {
+            var f = docFacts.FirstOrDefault(x => x.Id == d.Id);
+            return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? batch.PayoutDate,
+                f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id));
+        }).ToList();
+        return new UnpostFacts(unpostDocs, certs, filed);
+    }
+
+    private sealed record UnpostFacts(List<SettlementUnpostDocument> Docs, List<SettlementUnpostCertificate> Certs,
+        HashSet<(TaxType TaxType, int Year, int Month)> Filed);
+
+    public async Task<IReadOnlyList<SettlementUnpostRefusal>> UnpostBlockersAsync(Guid companyId, Guid batchId,
+        CancellationToken ct = default)
+    {
+        var loaded = await LoadAsync(companyId, batchId, ct);
+        if (loaded.Batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched))
+            return Array.Empty<SettlementUnpostRefusal>();
+        var docs = await ExistingDocsAsync(companyId, batchId, ct);
+        var (unpostDocs, certs, filed) = await LoadUnpostFactsAsync(companyId, loaded.Batch, docs, ct);
+        return SettlementUnpostGate.Evaluate(unpostDocs, certs, filed);
     }
 
     // ═════════════════════════════ จับคู่ธนาคาร ═════════════════════════════

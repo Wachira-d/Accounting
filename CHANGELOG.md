@@ -3581,6 +3581,17 @@ _รอบ 199 main — CI แดง `2599df78` (CS1519/CS1010): doc-comment ใ
 บรรทัดคอมเมนต์ · `--self-test` + negative test กับไฟล์ที่พังจริงจับได้บรรทัด 766) — ไม่มี checker เดิมตัวไหนมองบรรทัดนี้
 — commit <pending>)_
 
+_รอบ 198 เฟส 1 ทีม D — settlement: ทางเข้า HTTP + หน้าจอ (§2.10 · ACCOUNT_STRUCTURE §3.1d 🔨→✅) · service ทีม B/C ไม่ตรวจสิทธิ์โดยสัญญา ⇒
+`Controllers/SettlementController.cs` (route `api/companies/{companyId}/settlement/…` · 20 endpoint) ถือด่านทั้งหมดจากตารางเดียว
+`Helpers/SettlementPermissionScope` (คีย์ใหม่ `Settlement.View/Import/Post/Channels` · อยู่ในชุดอัตโนมัติของนักบัญชี + template "Accountant") ·
+ลงบัญชี/ยกเลิกการลงบัญชี/ยกเลิกรอบ/จับคู่ธนาคาร/chargeback/ตั้งค่าช่องทาง ห้ามคีย์ API · `Ok=false` = 409 พร้อมแผน (ไม่ใช่ 200 ว่าง) ·
+path ไม่มี `/bank` (กัน RouteFeatureMap จับแพ็กเกจผิด) · ไฟล์ต้นฉบับ `AttachmentPermissionScope["SettlementBatch"]` เปลี่ยนจาก `Bank.Reconcile`
+ชั่วคราวเป็นอ่าน Import/Post · ลบ Import · helper pure ใหม่ `SettlementReferenceCatalog` (ป้ายไทยทุก enum — หน้าเว็บไม่มีตารางป้าย) ·
+`SettlementBatchActions` (ปุ่มตามสถานะ = ด่านเดียวกับ service) · `SettlementBankCandidates` (ผู้สมัครเงินเข้า ตัดสินด้วย `SettlementBankMatch.Check`) ·
+หน้า `settlements.html` + `settlement-channels.html` + api.js 20 เมธอด +
+เมนู · เทสต์ `SettlementControllerContractTests` + `tools/settlement_import_form_sim.js` (โค้ดจริงของหน้า + negative test) · WATCHED + owner_action_wiring 14 แถว ·
+ผู้สมัครเงินเข้า (รายการเดินบัญชีจริง) ต้อง `Settlement.Post` ไม่ใช่ View — commit <pending>)_
+
 _รอบ 198 ทีม S3 — แก้ผลฝ่ายค้าน settlement review198-B (นำเข้า/จับคู่) + review198-C (ลงบัญชี) + review198-E2 E2-10:
 - **C-1 ล็อกเดียว**: `Helpers/SettlementChannelLock` — ผู้นำเข้า `pg_advisory_xact_lock(Key)` · ผู้ลงบัญชี `JobLock(Scope, Part)` คีย์เดียวกัน (เดิม `settlement-import` กับ `settle-post`
   ไม่กันกัน) · **R-B3** ทุกเส้นแก้ข้อมูลล็อกก่อนโหลด/ตรวจ · รอบที่ลงบัญชีค้างครึ่งทางแก้/เติม/ยกเลิกไม่ได้ (`IsEditable(status, artifacts)`) · `CommitPostedAsync`
@@ -3598,4 +3609,11 @@ _รอบ 198 ทีม S3 — แก้ผลฝ่ายค้าน settleme
 - **E2-10** intent ที่คืนเงินผลไม่แน่ชัด: CSV ⇒ Unmatched · ประกอบ ⇒ เตือน · ลงบัญชี ⇒ บล็อก `RefundOutcomeUnknown`
 - เจ้าของตัดสิน: C-7 (ผู้อนุมัติ = ระบบ) · C-9 (1 ใบสรุป/วัน vs หลาย payout) · C-6 ถาวร — เขียนไว้ใน review198-C.md O-1..O-3
 - เทสต์ `SettlementReview198FixTests` · `required_call_site_check` +17 กติกา · DOCUMENT_FLOW §2.10 · ACCOUNT_STRUCTURE §3.1d · TEST_PLAN SPS-01..23
+— commit <pending>)_
+
+_รอบ 198 ทีม S3 (ต่อ · หลัง merge ทีม D): ปุ่มของหน้าจอใช้ตัวตัดสินเดียวกับด่านของ service — `SettlementBatchActions.For(status, lines,
+postingArtifacts, unpostRefusals)`: แก้บรรทัด/ยกเลิกรอบ = `SettlementSaleMatch.IsEditable(status, artifacts)` (ตัวเดียวกับ `LoadEditableBatchAsync` —
+ลงค้างครึ่งทางแก้/ยกเลิกไม่ได้พร้อมเหตุผล · ลงต่อได้) · ยกเลิกการลงบัญชี = ผล `SettlementUnpostGate` จาก `ISettlementPostingService.UnpostBlockersAsync`
+(เพิ่มใน interface · ตัวโหลดข้อเท็จจริงเดียวกับ `UnpostAsync`) ⇒ ซ่อนปุ่ม + `UnpostBlockedReason` บนหน้า · `SettlementBatchView.PostingArtifacts`
+(null = ไม่ได้ตรวจ) · เทสต์ `SettlementControllerContractTests` +2 สองทิศ · `required_call_site_check` +5 กติกา
 — commit <pending>)_

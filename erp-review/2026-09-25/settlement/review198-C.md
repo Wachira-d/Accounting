@@ -30,6 +30,7 @@ The P2/P3 items (C-3 to C-16) follow.
 | C-13 | backlog | ล็อกตอนสร้างผู้ติดต่อ "ลูกค้าเงินสด" |
 | C-14 | ✅ <pending> | `ResolveChargebackAsync` ถือล็อกต่อช่องทางตัวเดียวกับยกเลิกการลงบัญชี |
 | C-15–C-20 | backlog | สต็อก/COGS ของใบสรุป · cut-off ค่าธรรมเนียมข้ามเดือน · คืนเงินของออเดอร์ในใบสรุปรอบเดียวกัน · ป้ายการรับชำระปลอมได้ (ควรเป็น FK) · ปุ่มทิ้งการลงค้าง · `ChangeTracker.Clear` ใน execution strategy |
+| ปุ่มหน้าจอ (ทีม D · หลัง merge) | ✅ <pending> | `SettlementBatchActions.For` ใช้ `SettlementSaleMatch.IsEditable(status, artifacts)` ตัวเดียวกับ `LoadEditableBatchAsync` + ผล `SettlementUnpostGate` จาก `ISettlementPostingService.UnpostBlockersAsync` (ตัวโหลดเดียวกับ `UnpostAsync`) ⇒ ปุ่มกับด่านไม่ drift · ปุ่มที่ซ่อนมีเหตุผลบนหน้า |
 | E2-10 (จาก review198-E2) | ✅ <pending> | intent ที่ `RefundOutcomeUnknownSince != null`: จับคู่ CSV ⇒ `Unmatched` "ตรวจผลการคืนเงินก่อน" · ประกอบจาก intent ⇒ เตือน · ผู้ลงบัญชี ⇒ บล็อก `RefundOutcomeUnknown` (NextStep "ตรวจผลการคืนเงินก่อน") |
 
 ### คำถามที่ต้องให้เจ้าของตัดสิน (ห้ามเดาแทน)

@@ -178,7 +178,9 @@ public sealed partial class SettlementImportService
         var channel = await LoadChannelAsync(companyId, batch.ChannelId, tracked: false, ct);
         var lines = await _db.SettlementLines.AsNoTracking()
             .Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).OrderBy(l => l.Seq).ToListAsync(ct);
-        return await BuildBatchViewAsync(companyId, channel, batch, lines, ct);
+        var view = await BuildBatchViewAsync(companyId, channel, batch, lines, ct);
+        // ปุ่มของหน้าจอ (SettlementBatchActions) ต้องรู้ "ลงค้างครึ่งทาง" จากป้ายชุดเดียวกับด่าน LoadEditableBatchAsync (C-1)
+        return view with { PostingArtifacts = (await PostingArtifactsAsync(companyId, batch.Id, ct)).Count };
     }
 
     public async Task<IReadOnlyList<SettlementBatchView>> ListBatchesAsync(Guid companyId, Guid? channelId,

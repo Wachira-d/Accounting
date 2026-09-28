@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>รอบโอนเงินจากแพลตฟอร์ม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:16px }
+    .card h3 { margin:0 0 4px; font-size:15px; font-weight:700; color:#0f172a }
+    .card .sub { margin:0 0 14px; font-size:12px; color:#64748b; line-height:1.6 }
+    .hint { font-size:11.5px; color:#64748b; line-height:1.6; margin-top:4px }
+    .stat-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px }
+    .stat { flex:1 1 140px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px }
+    .stat .k { font-size:11.5px; color:#64748b }
+    .stat .v { font-size:16px; font-weight:700; color:#0f172a; margin-top:2px }
+    .stat.bad .v { color:#b91c1c }
+    .stat.ok .v { color:#166534 }
+    .fgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 14px }
+    .fgrid label { font-size:12px; color:#475569; font-weight:600; display:block; margin-bottom:3px }
+    table.tbl { width:100%; border-collapse:collapse; font-size:12.5px }
+    table.tbl th, table.tbl td { padding:7px 9px; border-bottom:1px solid #eef2f7; text-align:left; vertical-align:top }
+    table.tbl th { background:#f8fafc; font-weight:600; color:#475569; font-size:11.5px }
+    table.tbl td.num, table.tbl th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+    table.tbl tr.click { cursor:pointer }
+    table.tbl tr.click:hover td { background:#f8fafc }
+    .scroll-x { overflow-x:auto }
+    .banner { border-radius:10px; padding:11px 14px; font-size:12.5px; line-height:1.7; margin-bottom:10px }
+    .banner.bad { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b }
+    .banner.ok { background:#dcfce7; border:1px solid #86efac; color:#166534 }
+    .banner.warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e }
+    .banner.info { background:#eff6ff; border:1px solid #93c5fd; color:#1e40af }
+    .chip { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; background:#e2e8f0; color:#334155 }
+    .chip.s-Imported, .chip.s-Classified { background:#fef3c7; color:#92400e }
+    .chip.s-Matched { background:#dbeafe; color:#1e40af }
+    .chip.s-Posted { background:#dcfce7; color:#166534 }
+    .chip.s-BankMatched { background:#bbf7d0; color:#14532d }
+    .chip.s-Voided { background:#f1f5f9; color:#64748b; text-decoration:line-through }
+    .tag { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:6px; background:#f1f5f9; color:#475569; margin-top:2px }
+    .tag.ai { background:#ede9fe; color:#5b21b6 }
+    .tag.user { background:#dcfce7; color:#166534 }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 }
+    .mono { font-family:ui-monospace,monospace; font-size:11.5px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1180px;margin:0 auto;padding:20px">
+      <div style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">🏦 รอบโอนเงินจากแพลตฟอร์ม (settlement)</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px;max-width:760px">
+            นำเข้ารายงานรอบโอนของแพลตฟอร์ม → ระบบจัดประเภทแต่ละบรรทัด (ยอดขาย · ค่าคอม · ค่าธรรมเนียม · คืนเงิน) → จับคู่ใบขาย →
+            ลงบัญชีครั้งเดียวทั้งรอบ · <b>ยอดที่เข้าธนาคารจริงเป็นตัวตั้ง</b> ระบบไม่เดาส่วนต่าง
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a class="btn btn-secondary" href="/pages/settlement-channels.html">⚙️ ตั้งค่าช่องทาง</a>
+          <button class="btn btn-primary" onclick="Page.startImport()">📥 นำเข้ารอบโอน</button>
+        </div>
+      </div>
+      <div id="filterBox"></div>
+      <div id="importBox"></div>
+      <div id="listBox"><div class="card">กำลังโหลด…</div></div>
+      <div id="detailBox"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="reclassModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <div class="modal-title">จัดประเภทบรรทัด</div>
+        <button class="modal-close" onclick="Layout.closeModal('reclassModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="reclassBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('reclassModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.saveReclass()">บันทึกประเภท</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="matchModal">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header">
+        <div class="modal-title">ตัดสินการจับคู่เอกสาร</div>
+        <button class="modal-close" onclick="Layout.closeModal('matchModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="matchBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('matchModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.saveMatch()">บันทึกการจับคู่</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="reasonModal">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <div class="modal-title" id="reasonTitle">ระบุเหตุผล</div>
+        <button class="modal-close" onclick="Layout.closeModal('reasonModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="reasonText" class="hint" style="font-size:13px;margin-bottom:10px"></div>
+        <textarea class="form-input" id="reasonInput" rows="3" maxlength="500" placeholder="เหตุผล (ผู้สอบบัญชีจะเห็นข้อความนี้)"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('reasonModal')">ยกเลิก</button>
+        <button class="btn btn-danger" onclick="Page.submitReason()">ยืนยัน</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // รอบโอนเงินจาก wallet → ธนาคาร (รอบ 198 เฟส 1 ทีม D · SettlementController · DOCUMENT_FLOW §2.10)
+    //
+    // กติกาที่หน้านี้ต้องรักษา:
+    //  • Server computes · page displays — ยอด/ส่วนต่าง/แผนลงบัญชี/ปุ่มที่กดได้ (actions)/ผู้สมัครจับคู่ มาจากเซิร์ฟเวอร์ทั้งหมด
+    //    ป้ายทุกชุดมาจาก GET settlement/reference · ปัญหาของแผนแสดงแบบทั่วไป (ข้อความ + ทางไปต่อ) ไม่ผูกกับรหัสปัญหาตัวใด
+    //  • ป้ายซื่อสัตย์ (กฎเหล็ก #1): "🤖 AI แนะนำ" เฉพาะบรรทัดที่ classifyUsedAi = true · ไม่งั้น "⚙️ ระบบแนะนำ"
+    //  • จัดประเภทเอง = ผู้ใช้เลือกในโมดัลแล้วกดยืนยัน — endpoint reclassify บันทึกคำตอบลงคลังเป็น Explicit เสมอที่เซิร์ฟเวอร์
+    //    (ล็อกด้วย required_call_site_check) จึงไม่มีช่อง source ให้ส่ง (ส่งช่องที่เซิร์ฟเวอร์ไม่อ่าน = silent no-op)
+    //  • ปุ่ม "ลงบัญชี" เปิดเมื่อพรีวิวล่าสุดบอก canPost เท่านั้น · ช่องตัวเลขที่เว้นว่างถูกตัดคีย์ทิ้ง (ไม่ส่ง null)
+    //  • ทุกข้อความจากไฟล์/แพลตฟอร์ม/ผู้ใช้ผ่าน Layout.esc · onclick ส่งแค่ดัชนี ไม่ส่งข้อความอิสระ
+    const Page = {
+      ref: null,
+      channels: [],
+      accounts: [],
+      batches: [],
+      detail: null,
+      preview: null,
+      deposits: [],
+      imp: null,
+      reclassIdx: -1,
+      matchIdx: -1,
+      reasonAction: null,
+
+      async init() {
+        await Layout.init();
+        if (!Layout.getCompanyId()) {
+          document.getElementById('listBox').innerHTML = '<div class="card">กรุณาเลือกบริษัทก่อน</div>';
+          return;
+        }
+        const params = new URLSearchParams(window.location.search);
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [refRes, chRes, accRes] = await Promise.all([
+            api.settlementReference(),
+            api.listSettlementChannels(true),
+            api.getAccounts(),
+          ]);
+          this.ref = refRes?.data || null;
+          this.channels = chRes?.data || [];
+          this.accounts = (accRes?.data || []).filter(a => a.isActive !== false);
+        } catch (e) {
+          document.getElementById('listBox').innerHTML = `<div class="card banner bad">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+          return;
+        }
+        this.renderFilters(params.get('channel') || '');
+        await this.loadBatches();
+        const batchId = params.get('batch');
+        if (batchId) await this.openBatch(batchId);
+      },
+
+      cat() { return this.ref?.catalog || {}; },
+      label(list, value) {
+        const o = (list || []).find(x => x.value === value);
+        return o ? o.label : (value == null ? '-' : String(value));
+      },
+      lineType(value) { return (this.cat().lineTypes || []).find(t => t.value === value) || null; },
+      chip(status) {
+        return `<span class="chip s-${Layout.esc(status)}">${Layout.esc(this.label(this.cat().batchStatuses, status))}</span>`;
+      },
+      options(list, selected, blank) {
+        return (blank != null ? `<option value="">${Layout.esc(blank)}</option>` : '')
+          + (list || []).map(o => `<option value="${Layout.esc(o.value)}" ${o.value === selected ? 'selected' : ''}>${Layout.esc(o.label)}</option>`).join('');
+      },
+      accountOptions(selected, blank) {
+        return `<option value="">${Layout.esc(blank)}</option>` + this.accounts.map(a =>
+          `<option value="${Layout.esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}</option>`).join('');
+      },
+      docLink(id, text) {
+        return id ? `<a href="/pages/documents.html?openDoc=${Layout.esc(encodeURIComponent(id))}" target="_blank">${Layout.esc(text || 'เปิดเอกสาร')}</a>` : '';
+      },
+      jeLink(id, text) {
+        return id ? `<a href="/pages/journals.html?entryId=${Layout.esc(encodeURIComponent(id))}" target="_blank">${Layout.esc(text || 'เปิดใบสำคัญ')}</a>` : '';
+      },
+
+      // ═════════════ รายการรอบโอน ═════════════
+
+      renderFilters(channelId) {
+        const chOpts = this.channels.map(c => ({ value: c.id, label: c.displayName + (c.isActive ? '' : ' (ปิด)') }));
+        document.getElementById('filterBox').innerHTML = `
+          <div class="card" style="padding:12px 18px">
+            <div class="fgrid">
+              <div><label>ช่องทาง</label><select class="form-select" id="fltChannel" onchange="Page.loadBatches()">${this.options(chOpts, channelId, 'ทุกช่องทาง')}</select></div>
+              <div><label>สถานะ</label><select class="form-select" id="fltStatus" onchange="Page.loadBatches()">${this.options(this.cat().batchStatuses, '', 'ทุกสถานะ')}</select></div>
+            </div>
+            ${this.channels.length ? '' : `<div class="banner info" style="margin-top:10px">ยังไม่มีช่องทาง —
+              <a href="/pages/settlement-channels.html">ตั้งค่าช่องทาง</a> ก่อน (ผังพัก · ผู้ติดต่อแพลตฟอร์ม · โหมดภาษีของค่าธรรมเนียม)</div>`}
+          </div>`;
+      },
+
+      async loadBatches() {
+        const api = Layout.api(); if (!api) return;
+        const q = new URLSearchParams();
+        const ch = document.getElementById('fltChannel')?.value;
+        const st = document.getElementById('fltStatus')?.value;
+        if (ch) q.set('channelId', ch);
+        if (st) q.set('status', st);
+        const qs = q.toString();
+        try {
+          const res = await api.listSettlementBatches(qs ? '?' + qs : '');
+          this.batches = res?.data || [];
+          this.renderList();
+        } catch (e) {
+          document.getElementById('listBox').innerHTML = `<div class="card banner bad">${Layout.esc(e.message || 'โหลดรอบโอนไม่สำเร็จ')}</div>`;
+        }
+      },
+
+      renderList() {
+        const box = document.getElementById('listBox');
+        if (!this.batches.length) {
+          box.innerHTML = '<div class="card"><div class="hint">ยังไม่มีรอบโอนตามตัวกรองนี้ — กด "นำเข้ารอบโอน" เพื่อเริ่ม</div></div>';
+          return;
+        }
+        box.innerHTML = `<div class="card"><div class="scroll-x"><table class="tbl">
+          <thead><tr><th>วันที่เงินเข้า</th><th>ช่องทาง</th><th>เลขรอบโอน</th><th class="num">ยอดโอนเข้า</th>
+            <th class="num">บรรทัด</th><th class="num">รอจัดประเภท</th><th class="num">รอตัดสินจับคู่</th><th>สถานะ</th></tr></thead><tbody>
+          ${this.batches.map((b, i) => `<tr class="click" onclick="Page.openBatchAt(${i})">
+            <td>${Layout.date(b.payoutDate)}</td>
+            <td>${Layout.esc(b.channelName)}</td>
+            <td class="mono">${Layout.esc(b.payoutRef)}</td>
+            <td class="num">${Layout.money(b.netPayout)}</td>
+            <td class="num">${Number(b.lineCount) || 0}</td>
+            <td class="num">${Number(b.unclassifiedCount) ? `<b style="color:#b45309">${Number(b.unclassifiedCount)}</b>` : '0'}</td>
+            <td class="num">${Number(b.needsMatchDecisionCount) ? `<b style="color:#b45309">${Number(b.needsMatchDecisionCount)}</b>` : '0'}</td>
+            <td>${this.chip(b.status)}</td>
+          </tr>`).join('')}
+          </tbody></table></div></div>`;
+      },
+
+      openBatchAt(i) { const b = this.batches[i]; if (b) this.openBatch(b.id); },
+
+      // ═════════════ นำเข้า ═════════════
+
+      activeChannels() { return this.channels.filter(c => c.isActive); },
+
+      startImport() {
+        const chs = this.activeChannels();
+        if (!chs.length) { Layout.toast('ยังไม่มีช่องทางที่ใช้งาน — ตั้งค่าช่องทางก่อน', 'error'); return; }
+        const current = document.getElementById('fltChannel')?.value;
+        const pick = chs.some(c => c.id === current) ? current : chs[0].id;
+        this.imp = { channelId: pick, inspection: null, map: null, file: null, mode: 'file' };
+        this.renderImportStart();
+      },
+
+      importChannel() { return this.channels.find(c => c.id === this.imp?.channelId) || null; },
+
+      renderImportStart() {
+        const chs = this.activeChannels().map(c => ({ value: c.id, label: c.displayName }));
+        const ch = this.importChannel();
+        document.getElementById('importBox').innerHTML = `
+          <div class="card" id="importCard">
+            <h3>นำเข้ารอบโอน — ขั้นที่ 1 เลือกช่องทางและไฟล์</h3>
+            <p class="sub">ไฟล์รายงานรอบโอน (CSV หรือ Excel) จากหน้ารายงานของแพลตฟอร์ม · ระบบตัดข้อมูลส่วนบุคคลของผู้ซื้อก่อนแสดง/เก็บ ·
+              นำเข้าไฟล์เดิมซ้ำได้ (บรรทัดที่มีแล้วถูกข้าม)</p>
+            <div class="fgrid">
+              <div><label>ช่องทาง</label><select class="form-select" id="impChannel" onchange="Page.onImportChannel()">${this.options(chs, this.imp.channelId)}</select></div>
+              <div><label>ไฟล์รายงาน</label><input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt"></div>
+            </div>
+            <div class="actions">
+              <button class="btn btn-primary" onclick="Page.inspect()">🔍 ตรวจไฟล์</button>
+              ${ch?.paymentProviderConfigId ? `<button class="btn btn-secondary" onclick="Page.startIntents()">💳 ประกอบจากรายการรับชำระออนไลน์ในระบบ</button>` : ''}
+              <button class="btn btn-secondary" onclick="Page.closeImport()">ปิด</button>
+            </div>
+          </div>`;
+      },
+
+      onImportChannel() {
+        this.imp.channelId = document.getElementById('impChannel').value;
+        this.renderImportStart();
+      },
+
+      closeImport() { this.imp = null; document.getElementById('importBox').innerHTML = ''; },
+
+      async inspect() {
+        const api = Layout.api(); if (!api) return;
+        const f = document.getElementById('impFile')?.files?.[0];
+        if (!f) { Layout.toast('เลือกไฟล์ก่อน', 'error'); return; }
+        const fd = new FormData();
+        fd.append('channelId', this.imp.channelId);
+        fd.append('file', f);
+        try {
+          const res = await api.inspectSettlementFile(fd);
+          this.imp.file = f;
+          this.imp.inspection = res?.data || null;
+          let map = {};
+          try { map = JSON.parse(this.imp.inspection?.suggestedColumnMapJson || '{}') || {}; } catch { map = {}; }
+          this.imp.map = map;
+          this.imp.mode = 'file';
+          this.renderMapping();
+        } catch (e) {
+          Layout.toast(e.message || 'ตรวจไฟล์ไม่สำเร็จ', 'error');
+        }
+      },
+
+      startIntents() {
+        this.imp.mode = 'intents';
+        this.imp.inspection = null;
+        document.getElementById('importBox').innerHTML = `
+          <div class="card" id="importCard">
+            <h3>ประกอบรอบโอนจากรายการรับชำระออนไลน์ — ${Layout.esc(this.importChannel()?.displayName || '')}</h3>
+            <p class="sub">ใช้รายการรับชำระของ gateway ที่ผูกกับช่องทางนี้ซึ่งยังไม่อยู่ในรอบโอนใด (รวมคืนเงินภายหลังของรอบก่อน)</p>
+            ${this.headerForm()}
+            <div class="actions">
+              <button class="btn btn-primary" onclick="Page.doImport()">📥 ประกอบรอบโอน</button>
+              <button class="btn btn-secondary" onclick="Page.renderImportStart()">ย้อนกลับ</button>
+            </div>
+          </div>`;
+      },
+
+      headerForm() {
+        const banks = (this.ref?.bankAccounts || []).map(b => ({ value: b.id, label: b.label }));
+        const today = Layout.toDateInput(new Date());
+        return `<div class="fgrid">
+            <div><label>เลขอ้างอิงรอบโอน (payout ID)</label><input class="form-input" id="hPayoutRef" maxlength="200" placeholder="ว่างได้ถ้าไฟล์มีคอลัมน์เลขรอบโอน"></div>
+            <div><label>วันที่เงินเข้าธนาคาร *</label><input type="date" class="form-input" id="hPayoutDate" value="${Layout.esc(today)}"></div>
+            <div><label>ยอดที่โอนเข้าธนาคารจริง *</label><input type="number" step="0.01" class="form-input" id="hNetPayout" placeholder="ตามสเตทเมนต์ธนาคาร"></div>
+            <div><label>บัญชีธนาคารที่รับเงิน</label><select class="form-select" id="hBank">${this.options(banks, banks[0]?.value || '', '(ไม่ระบุ)')}</select></div>
+            <div><label>ยอด wallet ต้นรอบ</label><input type="number" step="0.01" class="form-input" id="hOpening" placeholder="0.00"></div>
+            <div><label>ยอด wallet ปลายรอบ</label><input type="number" step="0.01" class="form-input" id="hClosing" placeholder="0.00"></div>
+            <div><label>ช่วงรายการ ตั้งแต่</label><input type="date" class="form-input" id="hFrom"></div>
+            <div><label>ถึง</label><input type="date" class="form-input" id="hTo"></div>
+            <div style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" id="hNote" maxlength="500"></div>
+          </div>
+          <div class="hint">สมการที่ระบบตรวจตอนลงบัญชี: ผลรวมบรรทัด = ยอดโอนเข้า + (ยอด wallet ปลายรอบ − ต้นรอบ) · ไม่ลงตัว = ต้องเพิ่มบรรทัดปรับปรุงที่มีเหตุผล</div>`;
+      },
+
+      /** หัวรอบโอน — ช่องตัวเลขที่เว้นว่าง "ตัดคีย์ทิ้ง" (DTO ใช้ค่า default / เซิร์ฟเวอร์บอกว่าขาด) ไม่ส่ง null */
+      readHeader() {
+        const v = (id) => (document.getElementById(id)?.value || '').trim();
+        const h = { channelId: this.imp.channelId };
+        if (v('hPayoutRef')) h.payoutRef = v('hPayoutRef');
+        if (v('hPayoutDate')) h.payoutDate = v('hPayoutDate');
+        if (v('hFrom')) h.periodFrom = v('hFrom');
+        if (v('hTo')) h.periodTo = v('hTo');
+        if (v('hBank')) h.bankAccountId = v('hBank');
+        if (v('hNote')) h.note = v('hNote');
+        [['hNetPayout', 'netPayout'], ['hOpening', 'openingWalletBalance'], ['hClosing', 'closingWalletBalance']].forEach(([id, key]) => {
+          const n = Layout.numOrNull(id);
+          if (n !== null) h[key] = n;
+        });
+        return h;
+      },
+
+      renderMapping() {
+        const ins = this.imp.inspection || {};
+        const map = this.imp.map || {};
+        const headers = ins.headers || [];
+        const layout = map.layout === 'Wide' ? 'Wide' : 'Long';
+        const c = this.cat();
+        const hdrOpts = (sel) => `<option value="">(ไม่ใช้)</option>` + headers.map(h =>
+          `<option value="${Layout.esc(h)}" ${h === sel ? 'selected' : ''}>${Layout.esc(h)}</option>`).join('');
+        const longOnly = new Set(['type', 'amount', 'amountIn', 'amountOut']);
+        const fields = (c.columnFields || []).filter(f => layout === 'Long' || !longOnly.has(f.key));
+        const amountCols = new Map((map.amountColumns || []).map(a => [a.header, a]));
+        const typeOpts = (sel) => `<option value="">(ให้ระบบจัดจากชื่อคอลัมน์)</option>` + (c.lineTypes || []).filter(t => t.postable)
+          .map(t => `<option value="${Layout.esc(t.value)}" ${t.value === sel ? 'selected' : ''}>${Layout.esc(t.label)}</option>`).join('');
+
+        document.getElementById('importBox').innerHTML = `
+          <div class="card" id="importCard">
+            <h3>นำเข้ารอบโอน — ขั้นที่ 2 จับคู่คอลัมน์ และหัวรอบโอน</h3>
+            <p class="sub">${Layout.esc(this.importChannel()?.displayName || '')} · ${Layout.esc(this.imp.file?.name || '')}</p>
+            ${ins.fromSavedMap ? '<div class="banner ok">ใช้การจับคู่คอลัมน์ที่ช่องทางนี้จำไว้ — ตรงกับไฟล์นี้ครบ</div>'
+              : `<div class="banner info">ระบบเสนอการจับคู่จากหัวคอลัมน์ที่รู้จัก — ตรวจแล้วแก้ให้ถูก (ระบบจำไว้ใช้ครั้งหน้า)
+                  ${Number(ins.savedMapMatch) > 0 && Number(ins.savedMapMatch) < 1 ? '<br>⚠️ รูปแบบไฟล์ต่างจากที่เคยจำไว้ — แพลตฟอร์มอาจเปลี่ยนคอลัมน์' : ''}</div>`}
+            ${(ins.issues || []).map(x => `<div class="banner warn">⚠️ ${Layout.esc(x)}</div>`).join('')}
+            <div class="fgrid">
+              <div><label>รูปแบบตาราง</label><select class="form-select" id="mLayout" onchange="Page.switchLayout()">
+                <option value="Long" ${layout === 'Long' ? 'selected' : ''}>แบบยาว — 1 แถว = 1 รายการ (มีคอลัมน์ประเภท)</option>
+                <option value="Wide" ${layout === 'Wide' ? 'selected' : ''}>แบบกว้าง — 1 แถว = 1 ออเดอร์ (ยอดแต่ละประเภทคนละคอลัมน์)</option>
+              </select></div>
+              ${fields.map(f => `<div><label>${Layout.esc(f.label)}${f.required ? ' *' : ''}</label>
+                <select class="form-select" data-map-field="${Layout.esc(f.key)}">${hdrOpts(map[f.key] || '')}</select>
+                ${f.hint ? `<div class="hint">${Layout.esc(f.hint)}</div>` : ''}</div>`).join('')}
+              <div><label>รูปแบบวันที่</label><select class="form-select" id="mDateOrder">${this.options(c.dateOrders, map.dateOrder || 'Auto')}</select></div>
+              ${layout === 'Long' ? `<div><label>ตัวเลือกยอด</label>
+                <label style="font-weight:500"><input type="checkbox" id="mNegate" ${map.negate ? 'checked' : ''}> กลับเครื่องหมายยอด</label>
+                <label style="font-weight:500"><input type="checkbox" id="mVatExcl" ${map.vatExclusive ? 'checked' : ''}> ยอดยังไม่รวม VAT</label></div>` : ''}
+            </div>
+            ${layout === 'Wide' ? `<h3 style="margin-top:14px">คอลัมน์ยอดเงิน</h3>
+              <p class="sub">ติ๊กคอลัมน์ที่เป็นยอดเงิน · คอลัมน์ที่ไม่ติ๊กและไม่ได้ใช้ข้างบน = "ไม่ใช้" (ระบบจำไว้ — ถ้าไฟล์ครั้งหน้ามีคอลัมน์ใหม่ ระบบจะหยุดให้ตรวจ)</p>
+              <div class="scroll-x"><table class="tbl"><thead><tr><th>ยอดเงิน</th><th>คอลัมน์</th><th>ประเภท</th><th>กลับเครื่องหมาย</th><th>ยังไม่รวม VAT</th></tr></thead><tbody>
+              ${headers.map((h, i) => { const a = amountCols.get(h); return `<tr>
+                <td><input type="checkbox" data-amt-idx="${i}" ${a ? 'checked' : ''}></td>
+                <td>${Layout.esc(h)}</td>
+                <td><select class="form-select" data-amt-type="${i}">${typeOpts(a?.type || '')}</select></td>
+                <td><input type="checkbox" data-amt-neg="${i}" ${a?.negate ? 'checked' : ''}></td>
+                <td><input type="checkbox" data-amt-vat="${i}" ${a?.vatExclusive ? 'checked' : ''}></td>
+              </tr>`; }).join('')}
+              </tbody></table></div>` : ''}
+            ${(ins.unmappedHeaders || []).length ? `<div class="hint">คอลัมน์ที่ระบบไม่รู้จัก: ${(ins.unmappedHeaders || []).map(h => Layout.esc(h)).join(' · ')}</div>` : ''}
+            <h3 style="margin-top:14px">ตัวอย่างข้อมูล (ตัดข้อมูลส่วนบุคคลแล้ว)</h3>
+            <div class="scroll-x"><table class="tbl"><thead><tr>${headers.map(h => `<th>${Layout.esc(h)}</th>`).join('')}</tr></thead><tbody>
+              ${(ins.sampleRows || []).map(r => `<tr>${(r || []).map(cell => `<td>${Layout.esc(cell)}</td>`).join('')}</tr>`).join('')}
+            </tbody></table></div>
+            <h3 style="margin-top:14px">หัวรอบโอน</h3>
+            ${this.headerForm()}
+            <label style="display:block;margin-top:8px;font-size:12.5px"><input type="checkbox" id="mRemember" checked> จำการจับคู่คอลัมน์นี้ไว้กับช่องทาง</label>
+            <div class="actions">
+              <button class="btn btn-primary" onclick="Page.doImport()">📥 นำเข้ารอบโอน</button>
+              <button class="btn btn-secondary" onclick="Page.renderImportStart()">ย้อนกลับ</button>
+            </div>
+          </div>`;
+      },
+
+      switchLayout() {
+        this.imp.map = this.readMap();
+        this.imp.map.layout = document.getElementById('mLayout').value;
+        this.renderMapping();
+      },
+
+      /** ประกอบการจับคู่คอลัมน์จากฟอร์ม — คีย์ตรงกับ SettlementColumnMap (รายชื่อช่องมาจากเซิร์ฟเวอร์) · เซิร์ฟเวอร์ตรวจความครบเอง */
+      readMap() {
+        const headers = this.imp.inspection?.headers || [];
+        const layout = document.getElementById('mLayout')?.value === 'Wide' ? 'Wide' : 'Long';
+        const map = { version: 1, layout };
+        const used = new Set();
+        document.querySelectorAll('[data-map-field]').forEach(sel => {
+          if (sel.value) { map[sel.dataset.mapField] = sel.value; used.add(sel.value); }
+        });
+        map.dateOrder = document.getElementById('mDateOrder')?.value || 'Auto';
+        if (layout === 'Long') {
+          map.negate = !!document.getElementById('mNegate')?.checked;
+          map.vatExclusive = !!document.getElementById('mVatExcl')?.checked;
+          map.amountColumns = [];
+        } else {
+          map.amountColumns = [];
+          headers.forEach((h, i) => {
+            const on = document.querySelector(`[data-amt-idx="${i}"]`)?.checked;
+            if (!on) return;
+            const type = document.querySelector(`[data-amt-type="${i}"]`)?.value || null;
+            map.amountColumns.push({
+              header: h, type,
+              negate: !!document.querySelector(`[data-amt-neg="${i}"]`)?.checked,
+              vatExclusive: !!document.querySelector(`[data-amt-vat="${i}"]`)?.checked,
+            });
+            used.add(h);
+          });
+        }
+        // คอลัมน์ที่ผู้ใช้เห็นบนหน้านี้แล้วไม่เลือกใช้ = "ไม่ใช้" อย่างตั้งใจ (คอลัมน์ใหม่ในไฟล์ครั้งหน้ายังถูกหยุดให้ตรวจ)
+        map.ignore = headers.filter(h => !used.has(h));
+        return map;
+      },
+
+      async doImport() {
+        const api = Layout.api(); if (!api) return;
+        const header = this.readHeader();
+        if (!header.payoutDate) { Layout.toast('ระบุวันที่เงินเข้าธนาคาร', 'error'); return; }
+        if (header.netPayout === undefined) { Layout.toast('ระบุยอดที่โอนเข้าธนาคารจริง (0 ได้ถ้ารอบนี้ไม่มีการโอน)', 'error'); return; }
+        try {
+          let res;
+          if (this.imp.mode === 'intents') {
+            res = await api.importSettlementFromIntents({ header });
+          } else {
+            const payload = {
+              header,
+              columnMapJson: JSON.stringify(this.readMap()),
+              rememberColumnMap: !!document.getElementById('mRemember')?.checked,
+            };
+            const fd = new FormData();
+            fd.append('payload', JSON.stringify(payload));
+            fd.append('file', this.imp.file);
+            res = await api.importSettlementFile(fd);
+          }
+          const r = res?.data;
+          this.closeImport();
+          await this.loadBatches();
+          if (r?.batch?.id) await this.openBatch(r.batch.id, r);
+        } catch (e) {
+          Layout.toast(e.message || 'นำเข้าไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ═════════════ รายละเอียดรอบโอน ═════════════
+
+      async openBatch(id, importResult) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getSettlementBatch(id);
+          this.detail = res?.data || null;
+          this.preview = null;
+          this.deposits = [];
+          this.renderDetail(importResult);
+          document.getElementById('detailBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+          Layout.toast(e.message || 'เปิดรอบโอนไม่สำเร็จ', 'error');
+        }
+      },
+
+      async reloadDetail() { if (this.detail?.batch?.id) await this.openBatch(this.detail.batch.id); await this.loadBatches(); },
+
+      classifyTag(l) {
+        const c = this.cat();
+        if (l.classifiedBy === 'User') return `<span class="tag user">${Layout.esc(this.label(c.classifiedBy, l.classifiedBy))}</span>`;
+        if (l.classifyUsedAi) return '<span class="tag ai">🤖 AI แนะนำ</span>';
+        if (l.classifiedBy === 'None') return '';
+        return `<span class="tag" title="${Layout.esc(this.label(c.classifiedBy, l.classifiedBy))}">⚙️ ระบบแนะนำ</span>`;
+      },
+
+      renderDetail(importResult) {
+        const d = this.detail; if (!d) return;
+        const b = d.batch, a = d.actions || {}, p = d.posting || {};
+        const c = this.cat();
+        const cbIds = new Set(a.resolvableChargebackLineIds || []);
+        document.getElementById('detailBox').innerHTML = `
+          <div class="card" id="detailCard">
+            <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div><h3>${Layout.esc(b.channelName)} · <span class="mono">${Layout.esc(b.payoutRef)}</span> ${this.chip(b.status)}</h3>
+                <p class="sub">เงินเข้า ${Layout.date(b.payoutDate)} · ${Layout.esc(this.label(c.sourceKinds, b.sourceKind))}
+                  ${b.periodFrom ? ` · รายการ ${Layout.date(b.periodFrom)}–${Layout.date(b.periodTo)}` : ''}
+                  ${b.note ? ` · ${Layout.esc(b.note)}` : ''}</p></div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.closeDetail()">ปิด</button>
+            </div>
+            ${importResult ? this.renderImportResult(importResult) : ''}
+            ${a.lockedReason ? `<div class="banner info">🔒 ${Layout.esc(a.lockedReason)}</div>` : ''}
+            ${a.unpostBlockedReason ? `<div class="banner warn">↩️ ${Layout.esc(a.unpostBlockedReason)}</div>` : ''}
+            <div class="stat-row">
+              <div class="stat"><div class="k">ยอดโอนเข้าธนาคาร</div><div class="v">${Layout.money(b.netPayout)}</div></div>
+              <div class="stat"><div class="k">ผลรวมบรรทัด</div><div class="v">${Layout.money(b.linesTotal)}</div></div>
+              <div class="stat"><div class="k">wallet ต้นรอบ → ปลายรอบ</div><div class="v">${Layout.money(b.openingWalletBalance)} → ${Layout.money(b.closingWalletBalance)}</div></div>
+              <div class="stat"><div class="k">บรรทัด · รอจัดประเภท · รอตัดสิน</div><div class="v">${Number(b.lineCount) || 0} · ${Number(b.unclassifiedCount) || 0} · ${Number(b.needsMatchDecisionCount) || 0}</div></div>
+              <div class="stat"><div class="k">เข้าใบขายสรุปรายวัน</div><div class="v">${Number(b.autoSummaryCount) || 0}</div></div>
+            </div>
+            <div class="hint">ผลรวมบรรทัดต้องเท่ายอดโอนเข้า + ส่วนต่าง wallet — ระบบตรวจและบอกผลต่างใน "ดูตัวอย่างการลงบัญชี"</div>
+            ${p.payoutJournalEntryId ? `<div class="banner ok">ลงบัญชีแล้ว · ใบสำคัญรอบโอน ${this.jeLink(p.payoutJournalEntryId, p.payoutJournalEntryNumber || 'เปิดใบสำคัญ')}
+              ${p.bankTransactionId ? ' · จับคู่รายการเดินบัญชีแล้ว' : ''}</div>` : ''}
+            <div class="actions">
+              ${a.canPost ? '<button class="btn btn-primary" onclick="Page.loadPreview()">🔍 ดูตัวอย่างการลงบัญชี</button>' : ''}
+              ${a.canEditLines ? '<button class="btn btn-secondary" onclick="Page.rematch()">🔁 จับคู่ใบขายใหม่ทั้งรอบ</button>' : ''}
+              ${a.canUnpost || a.unpostBlockedReason ? '<button class="btn btn-secondary" onclick="Page.loadPreview()">📄 ดูเอกสารที่ลงไว้</button>' : ''}
+              ${a.canBankMatch ? '<button class="btn btn-secondary" onclick="Page.loadDeposits()">🏦 จับคู่เงินเข้าธนาคาร</button>' : ''}
+              ${a.canUnpost ? '<button class="btn btn-secondary" onclick="Page.askUnpost()">↩️ ยกเลิกการลงบัญชี</button>' : ''}
+              ${a.canVoid ? '<button class="btn btn-danger" onclick="Page.askVoid()">🗑️ ยกเลิกรอบโอน</button>' : ''}
+            </div>
+            <div id="previewBox"></div>
+            <div id="depositBox"></div>
+            <h3 style="margin-top:12px">บรรทัดในรอบโอน</h3>
+            <div class="scroll-x"><table class="tbl">
+              <thead><tr><th>#</th><th>วันที่</th><th>ป้ายในไฟล์ / คำอธิบาย</th><th>ออเดอร์</th><th class="num">ยอด</th>
+                <th>ประเภท</th><th>การจับคู่</th></tr></thead><tbody>
+              ${(b.lines || []).map((l, i) => this.renderLine(l, i, a, cbIds)).join('')}
+              </tbody></table></div>
+          </div>`;
+      },
+
+      renderImportResult(r) {
+        return `<div class="banner ${r.importedLines > 0 ? 'ok' : 'info'}">
+            ${r.createdNew ? 'สร้างรอบโอนใหม่' : 'เติมเข้ารอบโอนเดิม'} · นำเข้า ${Number(r.importedLines) || 0} บรรทัด
+            ${Number(r.skippedDuplicates) ? ` · ข้ามที่มีอยู่แล้ว ${Number(r.skippedDuplicates)} บรรทัด` : ''}</div>
+          ${(r.warnings || []).map(w => `<div class="banner warn">⚠️ ${Layout.esc(w)}</div>`).join('')}
+          ${(r.skippedRows || []).length ? `<div class="hint">แถวที่ข้ามโดยตั้งใจ: ${(r.skippedRows || []).map(s => Layout.esc(s)).join(' · ')}</div>` : ''}`;
+      },
+
+      renderLine(l, i, a, cbIds) {
+        const c = this.cat();
+        const t = this.lineType(l.lineType);
+        const unclassified = t && !t.postable;
+        return `<tr>
+          <td>${Number(l.seq) || i + 1}</td>
+          <td>${l.txnDate ? Layout.date(l.txnDate) : '-'}</td>
+          <td>${Layout.esc(l.rawTypeLabel || '')}${l.description ? `<div class="hint">${Layout.esc(l.description)}</div>` : ''}
+            ${l.adjustmentReason ? `<div class="hint">เหตุผล: ${Layout.esc(l.adjustmentReason)}</div>` : ''}</td>
+          <td class="mono">${Layout.esc(l.externalOrderId || '')}</td>
+          <td class="num">${Layout.money(l.amount)}${l.vatAmount ? `<div class="hint">VAT ${Layout.money(l.vatAmount)}</div>` : ''}</td>
+          <td>${unclassified ? `<b style="color:#b45309">${Layout.esc(l.lineTypeLabel)}</b>` : Layout.esc(l.lineTypeLabel)}
+            <div>${this.classifyTag(l)}</div>
+            ${a.canEditLines ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openReclass(${i})">แก้ประเภท</button>` : ''}</td>
+          <td>${Layout.esc(this.label(c.matchStatuses, l.matchStatus))}
+            ${l.matchNote ? `<div class="hint">${Layout.esc(l.matchNote)}</div>` : ''}
+            ${l.matchedDocumentId ? `<div>${this.docLink(l.matchedDocumentId, 'เปิดเอกสาร')}</div>` : ''}
+            ${a.canEditLines && t?.requiresSaleMatch ? `<button class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="Page.openMatch(${i})">ตัดสินการจับคู่</button>` : ''}
+            ${cbIds.has(l.id) ? `<div class="actions" style="margin:4px 0 0">
+              <button class="btn btn-sm btn-secondary" onclick="Page.resolveChargeback(${i}, false)">แพ้ (ตัดเป็นขาดทุน)</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.resolveChargeback(${i}, true)">ชนะ (ได้เงินคืน)</button></div>` : ''}</td>
+        </tr>`;
+      },
+
+      closeDetail() { this.detail = null; document.getElementById('detailBox').innerHTML = ''; },
+
+      lineAt(i) { return this.detail?.batch?.lines?.[i] || null; },
+
+      // ═════════════ จัดประเภท (ปิดลูปการเรียนรู้) ═════════════
+
+      openReclass(i) {
+        const l = this.lineAt(i); if (!l) return;
+        this.reclassIdx = i;
+        const types = (this.cat().lineTypes || []).filter(t => t.postable);
+        const current = types.some(t => t.value === l.lineType) ? l.lineType : '';
+        document.getElementById('reclassBody').innerHTML = `
+          <div class="hint" style="margin-bottom:10px">บรรทัดที่ ${Number(l.seq) || i + 1} · ${Layout.esc(l.rawTypeLabel || '')} · ยอด ${Layout.money(l.amount)}</div>
+          <div class="fgrid" style="grid-template-columns:1fr">
+            <div><label>ประเภท</label><select class="form-select" id="rcType" onchange="Page.onReclassType()">${this.options(types, current, '— เลือกประเภท —')}</select></div>
+            <div id="rcReasonWrap"><label>เหตุผล (บังคับสำหรับรายการปรับปรุง)</label><input class="form-input" id="rcReason" maxlength="500" value="${Layout.esc(l.adjustmentReason || '')}"></div>
+            <div><label id="rcAccLabel">ผังบัญชีที่ใช้แทน (ไม่บังคับ)</label><select class="form-select" id="rcAccount">${this.accountOptions(l.overrideAccountId || '', '(ผังตามประเภท)')}</select></div>
+            <div><label style="font-weight:500"><input type="checkbox" id="rcApplySame" checked> ใช้ประเภทนี้กับบรรทัดอื่นในรอบนี้ที่ป้ายเดียวกัน (ที่ยังไม่ได้เลือกเอง)</label></div>
+          </div>`;
+        this.onReclassType();
+        Layout.openModal('reclassModal');
+      },
+
+      onReclassType() {
+        const t = this.lineType(document.getElementById('rcType')?.value);
+        const needs = !!t?.requiresReason;
+        document.getElementById('rcReasonWrap').style.display = needs ? '' : 'none';
+        document.getElementById('rcAccLabel').textContent = needs ? 'ผังบัญชีที่ลง (บังคับสำหรับรายการปรับปรุง)' : 'ผังบัญชีที่ใช้แทน (ไม่บังคับ)';
+      },
+
+      async saveReclass() {
+        const api = Layout.api(); if (!api) return;
+        const l = this.lineAt(this.reclassIdx); if (!l) return;
+        const lineType = document.getElementById('rcType').value;
+        if (!lineType) { Layout.toast('เลือกประเภท', 'error'); return; }
+        const t = this.lineType(lineType);
+        const body = {
+          lineType,
+          adjustmentReason: t?.requiresReason ? (document.getElementById('rcReason').value.trim() || null) : null,
+          overrideAccountId: document.getElementById('rcAccount').value || null,
+          applyToSameLabel: !!document.getElementById('rcApplySame').checked,
+        };
+        try {
+          const res = await api.reclassifySettlementLine(l.id, body);
+          Layout.closeModal('reclassModal');
+          Layout.toast(res?.message || 'บันทึกประเภทแล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
+      // ═════════════ ตัดสินการจับคู่ ═════════════
+
+      openMatch(i) {
+        const l = this.lineAt(i); if (!l) return;
+        this.matchIdx = i;
+        const t = this.lineType(l.lineType);
+        const isRefund = t?.posting === 'Refund';
+        const cands = l.matchCandidates || [];
+        document.getElementById('matchBody').innerHTML = `
+          <div class="hint" style="margin-bottom:10px">บรรทัดที่ ${Number(l.seq) || i + 1} · ${Layout.esc(l.lineTypeLabel)} · ออเดอร์
+            <span class="mono">${Layout.esc(l.externalOrderId || '-')}</span> · ยอด ${Layout.money(l.amount)}</div>
+          ${l.matchNote ? `<div class="banner info">${Layout.esc(l.matchNote)}</div>` : ''}
+          ${cands.length ? cands.map((m, idx) => {
+              const usable = isRefund ? m.isRefundTarget : m.canReceive;
+              return `<label style="display:block;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;${usable ? '' : 'opacity:.55'}">
+                <input type="radio" name="mPick" value="${idx}" ${usable ? '' : 'disabled'}> ${Layout.esc(m.label)}
+                ${m.openAmount != null ? ` · ค้าง ${Layout.money(m.openAmount)}` : ''}
+                ${usable ? '' : `<div class="hint">${isRefund ? 'ใช้เป็นใบเดิมของใบลดหนี้ไม่ได้' : 'รับชำระจากผังพักไม่ได้'}</div>`}</label>`;
+            }).join('') : '<div class="hint">ไม่มีเอกสารผู้สมัคร — สร้างเอกสารขายของออเดอร์นี้แล้วกด "จับคู่ใบขายใหม่ทั้งรอบ"</div>'}
+          ${isRefund ? '<div class="hint">คืนเงินต้องอ้างใบขายเดิม (§86/10) — เข้าใบขายสรุปรายวันไม่ได้</div>'
+            : `<label style="display:block;padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;margin-top:8px">
+                <input type="radio" name="mPick" value="summary"> ไม่มีเอกสารในระบบ — ให้เข้า <b>ใบขายสรุปรายวัน</b> (ระบบติดป้ายให้ตรวจรายได้ซ้ำ)</label>`}`;
+        Layout.openModal('matchModal');
+      },
+
+      async saveMatch() {
+        const api = Layout.api(); if (!api) return;
+        const l = this.lineAt(this.matchIdx); if (!l) return;
+        const pick = document.querySelector('input[name="mPick"]:checked')?.value;
+        if (pick == null) { Layout.toast('เลือกเอกสาร หรือยืนยันเข้าใบขายสรุปรายวัน', 'error'); return; }
+        const body = pick === 'summary'
+          ? { useDailySummary: true }
+          : { documentId: (l.matchCandidates || [])[Number(pick)]?.id || null, useDailySummary: false };
+        try {
+          const res = await api.assignSettlementLineMatch(l.id, body);
+          Layout.closeModal('matchModal');
+          Layout.toast(res?.message || 'บันทึกการจับคู่แล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
+      async rematch() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.rematchSettlementBatch(this.detail.batch.id);
+          Layout.toast(res?.message || 'จับคู่ใหม่แล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'จับคู่ใหม่ไม่สำเร็จ', 'error'); }
+      },
+
+      // ═════════════ ลงบัญชี ═════════════
+
+      async loadPreview() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.previewSettlementPosting(this.detail.batch.id);
+          this.preview = res?.data || null;
+          this.renderPreview(this.preview, null);
+        } catch (e) {
+          document.getElementById('previewBox').innerHTML = `<div class="banner bad">${Layout.esc(e.message || 'ดูตัวอย่างไม่สำเร็จ')}</div>`;
+        }
+      },
+
+      renderIssues(plan) {
+        const issues = plan?.issues || [];
+        if (!issues.length) return '';
+        return issues.map(x => `<div class="banner ${x.blocking ? 'bad' : 'info'}">
+            ${x.blocking ? '⛔' : 'ℹ️'} ${Layout.esc(x.message)}${x.amount != null ? ` (${Layout.money(x.amount)})` : ''}
+            ${x.nextStep ? `<div><b>ทางไปต่อ:</b> ${Layout.esc(x.nextStep)}</div>` : ''}</div>`).join('');
+      },
+
+      renderItems(items) {
+        if (!(items || []).length) return '';
+        return `<h3 style="margin-top:12px">เอกสาร/การรับชำระที่ผูกกับรอบนี้</h3>
+          <div class="scroll-x"><table class="tbl"><thead><tr><th>ชนิด</th><th>เลขที่</th><th>ส่วน</th><th>สถานะ</th><th class="num">ยอด</th></tr></thead><tbody>
+          ${items.map(it => `<tr>
+            <td>${it.kind === 'document' ? 'เอกสาร' : 'การรับชำระ'}</td>
+            <td>${it.kind === 'document' ? this.docLink(it.id, it.number || 'เปิดเอกสาร') : Layout.esc(it.number || '-')}</td>
+            <td class="mono">${Layout.esc(it.component)}</td>
+            <td>${Layout.esc(it.status)}</td>
+            <td class="num">${Layout.money(it.amount)}</td></tr>`).join('')}
+          </tbody></table></div>`;
+      },
+
+      renderPlan(plan) {
+        if (!plan) return '';
+        const jl = plan.payoutJournal || [];
+        const fees = plan.feeDocuments || [];
+        const sums = plan.summarySales || [];
+        const rcpts = plan.receipts || [];
+        const refunds = plan.refunds || [];
+        return `
+          <div class="stat-row">
+            <div class="stat"><div class="k">ผลรวมบรรทัด</div><div class="v">${Layout.money(plan.linesTotal)}</div></div>
+            <div class="stat"><div class="k">ที่ควรเป็น (ยอดโอน + ส่วนต่าง wallet)</div><div class="v">${Layout.money(plan.expectedTotal)}</div></div>
+            <div class="stat ${Math.abs(Number(plan.difference) || 0) > 0.01 ? 'bad' : 'ok'}"><div class="k">ผลต่าง</div><div class="v">${Layout.money(plan.difference)}</div></div>
+            <div class="stat"><div class="k">อยู่ในผังพักแล้ว (ไม่ลงซ้ำ)</div><div class="v">${Layout.money(plan.alreadyInClearing)}</div></div>
+          </div>
+          ${jl.length ? `<h3>ใบสำคัญรอบโอน</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>รายการ</th><th>บทบาทผัง</th><th class="num">เดบิต</th><th class="num">เครดิต</th></tr></thead><tbody>
+            ${jl.map(x => `<tr><td>${Layout.esc(x.description)}</td><td class="mono">${Layout.esc(x.accountRole)}${x.defaultAccountCode ? ' · ' + Layout.esc(x.defaultAccountCode) : ''}</td>
+              <td class="num">${Number(x.debit) ? Layout.money(x.debit) : ''}</td><td class="num">${Number(x.credit) ? Layout.money(x.credit) : ''}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}
+          ${fees.length ? `<h3 style="margin-top:10px">ใบค่าธรรมเนียม (เอกสารซื้อ จ่ายจากผังพัก)</h3><div class="scroll-x"><table class="tbl"><thead><tr>
+              <th>กลุ่มภาษี</th><th>รายการ</th><th class="num">ถูกหัก</th><th class="num">ค่าใช้จ่าย</th><th class="num">ภาษีซื้อ</th><th class="num">หัก ณ ที่จ่าย</th></tr></thead><tbody>
+            ${fees.map(f => `<tr><td class="mono">${Layout.esc(f.vatTreatment)}</td><td>${(f.lines || []).map(x => Layout.esc(x.labelTh)).join(' · ')}</td>
+              <td class="num">${Layout.money(f.deducted)}</td><td class="num">${Layout.money(f.expense)}</td>
+              <td class="num">${Layout.money(f.inputVat)}</td><td class="num">${Layout.money(f.whtAmount)}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}
+          ${sums.length ? `<h3 style="margin-top:10px">ใบขายสรุปรายวัน (ออกให้อัตโนมัติ + ติดป้ายให้ตรวจ)</h3><div class="scroll-x"><table class="tbl"><thead><tr>
+              <th>วันที่ขาย</th><th class="num">ออเดอร์</th><th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th></tr></thead><tbody>
+            ${sums.map(s => `<tr><td>${Layout.date(s.date)}</td><td class="num">${(s.externalOrderIds || []).length}</td>
+              <td class="num">${Layout.money(s.net)}</td><td class="num">${Layout.money(s.vat)}</td><td class="num">${Layout.money(s.gross)}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}
+          ${rcpts.length ? `<h3 style="margin-top:10px">รับชำระใบขายที่จับคู่ได้ (เงินเข้าผังพัก)</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>เอกสาร</th><th class="num">ยอด</th></tr></thead><tbody>
+            ${rcpts.map(r => `<tr><td>${this.docLink(r.documentId, 'เปิดเอกสาร')}</td><td class="num">${Layout.money(r.amount)}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}
+          ${refunds.length ? `<h3 style="margin-top:10px">คืนเงิน (อ้างใบขายเดิม)</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>ใบเดิม</th><th class="num">ยอด</th></tr></thead><tbody>
+            ${refunds.map(r => `<tr><td>${this.docLink(r.documentId, 'เปิดใบเดิม')}</td><td class="num">${Layout.money(r.amount)}</td></tr>`).join('')}
+            </tbody></table></div>` : ''}`;
+      },
+
+      renderPreview(pv, bannerMsg) {
+        const box = document.getElementById('previewBox'); if (!box) return;
+        if (!pv) { box.innerHTML = bannerMsg ? `<div class="banner bad">${Layout.esc(bannerMsg)}</div>` : ''; return; }
+        const canPost = pv.canPost === true && !!this.detail?.actions?.canPost;
+        box.innerHTML = `
+          <div class="card" style="background:#fbfdff">
+            <h3>ตัวอย่างการลงบัญชี</h3>
+            ${bannerMsg ? `<div class="banner bad">${Layout.esc(bannerMsg)}</div>` : ''}
+            ${canPost ? '<div class="banner ok">✅ ลงบัญชีได้ — ตรวจรายการด้านล่างแล้วกด "ลงบัญชี"</div>' : ''}
+            ${this.renderIssues(pv.plan)}
+            ${this.renderPlan(pv.plan)}
+            ${this.renderItems(pv.existingItems)}
+            ${this.detail?.actions?.canPost ? `<div class="actions">
+              <button class="btn btn-primary" id="btnPost" onclick="Page.post()" ${canPost ? '' : 'disabled'}
+                title="${canPost ? 'ลงบัญชีตามตัวอย่างนี้' : 'ยังมีปัญหาที่ต้องแก้ก่อน — ดูทางไปต่อด้านบน'}">✅ ลงบัญชี</button></div>` : ''}
+          </div>`;
+      },
+
+      async post() {
+        const api = Layout.api(); if (!api) return;
+        if (!(this.preview?.canPost === true)) { Layout.toast('ดูตัวอย่างการลงบัญชีก่อน และแก้ปัญหาที่บล็อกให้หมด', 'error'); return; }
+        if (!(await Layout.confirmDanger({
+          title: 'ลงบัญชีรอบโอน',
+          message: 'ระบบจะสร้างใบค่าธรรมเนียม ใบขายสรุปรายวัน การรับชำระ และใบสำคัญรอบโอนตามตัวอย่าง<br>'
+            + '<strong style="color:#dc2626">แก้ย้อนหลังต้องกด "ยกเลิกการลงบัญชี"</strong> (ยกเลิกเอกสาร + กลับรายการ)',
+          mode: 'math',
+        }))) return;
+        try {
+          const res = await api.postSettlementBatch(this.detail.batch.id);
+          const r = res?.data;
+          Layout.toast(res?.message || 'ลงบัญชีแล้ว');
+          await this.reloadDetail();
+          const box = document.getElementById('previewBox');
+          if (box && r) box.innerHTML = `<div class="card"><div class="banner ok">✅ ${Layout.esc(r.message || 'ลงบัญชีแล้ว')}
+              ${r.payoutJournalEntryId ? ' · ใบสำคัญ ' + this.jeLink(r.payoutJournalEntryId, r.payoutJournalEntryNumber || 'เปิดใบสำคัญ') : ''}</div>
+              ${this.renderItems(r.items)}</div>`;
+        } catch (e) {
+          // ถูกบล็อก (409 พร้อมแผน) หรือค้างครึ่งทาง (409 SETTLEMENT-POST-PARTIAL — ข้อความบอกให้กดใหม่) — แสดงตามที่เซิร์ฟเวอร์ส่งมา
+          const data = e.body?.data;
+          if (data?.plan) this.renderPreview({ canPost: false, plan: data.plan, existingItems: data.items }, e.message);
+          else this.renderPreview(this.preview, e.message);
+          Layout.toast(e.message || 'ลงบัญชีไม่สำเร็จ', 'error');
+        }
+      },
+
+      // ═════════════ ยกเลิก (ต้องมีเหตุผล) ═════════════
+
+      askReason(title, text, action) {
+        this.reasonAction = action;
+        document.getElementById('reasonTitle').textContent = title;
+        document.getElementById('reasonText').textContent = text;
+        document.getElementById('reasonInput').value = '';
+        Layout.openModal('reasonModal');
+      },
+
+      async submitReason() {
+        const reason = document.getElementById('reasonInput').value.trim();
+        if (!reason) { Layout.toast('ระบุเหตุผล', 'error'); return; }
+        const act = this.reasonAction;
+        Layout.closeModal('reasonModal');
+        if (act) await act(reason);
+      },
+
+      askVoid() {
+        this.askReason('ยกเลิกรอบโอน', 'รอบโอนและบรรทัดจะถูกยกเลิก (ยังไม่เคยลงบัญชี) — นำเข้าไฟล์เดิมใหม่ได้ภายหลัง', async (reason) => {
+          const api = Layout.api(); if (!api) return;
+          try {
+            const res = await api.voidSettlementBatch(this.detail.batch.id, reason);
+            Layout.toast(res?.message || 'ยกเลิกรอบโอนแล้ว');
+            this.closeDetail();
+            await this.loadBatches();
+          } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
+        });
+      },
+
+      askUnpost() {
+        this.askReason('ยกเลิกการลงบัญชี',
+          'ระบบจะถอนการจับคู่ธนาคาร → ยกเลิกการรับชำระ/เอกสาร/50 ทวิ ที่รอบนี้สร้าง → กลับรายการใบสำคัญรอบโอน · รอบโอนกลับไปแก้ไขได้',
+          async (reason) => {
+            const api = Layout.api(); if (!api) return;
+            try {
+              const res = await api.unpostSettlementBatch(this.detail.batch.id, reason);
+              Layout.toast(res?.message || 'ยกเลิกการลงบัญชีแล้ว');
+              await this.reloadDetail();
+            } catch (e) { Layout.toast(e.message || 'ยกเลิกการลงบัญชีไม่สำเร็จ', 'error'); }
+          });
+      },
+
+      // ═════════════ chargeback ═════════════
+
+      async resolveChargeback(i, won) {
+        const api = Layout.api(); if (!api) return;
+        const l = this.lineAt(i); if (!l) return;
+        if (!(await Layout.confirmDanger({
+          title: won ? 'ชนะ chargeback' : 'แพ้ chargeback',
+          message: won ? 'ได้เงินคืนนอกไฟล์ — ระบบลงใบสำคัญกลับเข้าผังพัก' : 'แพ้ — ระบบลงใบสำคัญตัดยอดที่พักไว้เป็นขาดทุน',
+          mode: 'math',
+        }))) return;
+        try {
+          const res = await api.resolveSettlementChargeback(l.id, won);
+          Layout.toast(res?.message || 'ปิดรายการแล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'ปิดรายการไม่สำเร็จ', 'error'); }
+      },
+
+      // ═════════════ จับคู่เงินเข้าธนาคาร ═════════════
+
+      async loadDeposits() {
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('depositBox');
+        try {
+          const res = await api.getSettlementDepositCandidates(this.detail.batch.id);
+          this.deposits = res?.data?.candidates || [];
+          const msg = res?.data?.message;
+          box.innerHTML = `<div class="card" style="background:#fbfdff"><h3>รายการเดินบัญชีที่อาจเป็นเงินรอบนี้</h3>
+            <p class="sub">ระบบตรวจทีละรายการด้วยเกณฑ์เดียวกับตอนกดจับคู่ (บัญชีเดียวกัน · ทิศเดียวกัน · ยอดเท่ากันพอดี)</p>
+            ${msg ? `<div class="banner info">${Layout.esc(msg)}</div>` : ''}
+            ${this.deposits.length ? `<div class="scroll-x"><table class="tbl"><thead><tr><th>วันที่</th><th>รายการ</th><th class="num">ยอด</th><th>ผลตรวจ</th><th></th></tr></thead><tbody>
+              ${this.deposits.map((d, i) => `<tr>
+                <td>${Layout.date(d.transactionDate)}<div class="hint">${Number(d.daysFromPayout) === 0 ? 'วันเดียวกัน' : (Number(d.daysFromPayout) > 0 ? '+' : '') + Number(d.daysFromPayout) + ' วัน'}</div></td>
+                <td>${Layout.esc(d.description || '')}${d.reference ? `<div class="hint mono">${Layout.esc(d.reference)}</div>` : ''}</td>
+                <td class="num">${Layout.money(d.amount)}</td>
+                <td>${d.canMatch ? '<span class="badge badge-success">จับคู่ได้</span>' : `<span class="hint">${Layout.esc(d.message)}</span>`}</td>
+                <td>${d.canMatch ? `<button class="btn btn-sm btn-primary" onclick="Page.matchDeposit(${i})">จับคู่</button>` : ''}</td>
+              </tr>`).join('')}</tbody></table></div>` : ''}</div>`;
+        } catch (e) {
+          box.innerHTML = `<div class="banner bad">${Layout.esc(e.message || 'โหลดรายการเดินบัญชีไม่สำเร็จ')}</div>`;
+        }
+      },
+
+      async matchDeposit(i) {
+        const api = Layout.api(); if (!api) return;
+        const d = this.deposits[i]; if (!d) return;
+        try {
+          const res = await api.matchSettlementDeposit(this.detail.batch.id, d.bankTransactionId);
+          Layout.toast(res?.message || 'จับคู่แล้ว');
+          await this.reloadDetail();
+        } catch (e) { Layout.toast(e.message || 'จับคู่ไม่สำเร็จ', 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>
