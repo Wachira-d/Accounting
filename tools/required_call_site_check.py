@@ -443,6 +443,17 @@ RULES += [
          must=["ApprovalAcknowledgement.ApiRefusalNote(", "UnprocessableEntity(", "refusal.Code"],
          forbid=["ApproveDocumentAsync(", "MeterAsync("],
          why="คำตัดสินข้อ 6: ปฏิเสธ = 422 พร้อมรหัส + หมายเหตุบนเอกสารครั้งเดียว · ห้ามอนุมัติ/คิดเงินในเส้นปฏิเสธ"),
+    # รอบ 199 ทีม W: อนุมัติหลายใบห้ามส่งธงรับทราบของผู้เรียกเข้า service (เดิม req.AcknowledgeWarnings ⇒ ประทับ "ผู้ใช้รับทราบ"
+    # ให้คำเตือนที่ไม่มีใครเห็น) · ปฏิเสธธงเหมารวมก่อนแตะเอกสาร · ใบที่มีคำเตือนคืนเป็นรายการ ไม่ใช่ "ล้มเหลว"
+    dict(file="Controllers/DocumentController.cs", method="BulkApprove",
+         must=["ApprovalAcknowledgement.BulkBlanketAckRefusal(", "ApprovalAckSource.None", "withAiHints: false",
+               "catch (DocumentApprovalWarningsException", "needsAck.Add(", "ApprovalAcknowledgement.BulkSummary("],
+         must_re=[r"if\s*\(\s*blanketAckRefusal\s+is\s+not\s+null\s*\)\s*return\b"],
+         before=[("ApprovalAcknowledgement.BulkBlanketAckRefusal(", "_documentService.ApproveDocumentAsync("),
+                 ("catch (DocumentApprovalWarningsException", "catch (Exception")],
+         call_args=[("_documentService.ApproveDocumentAsync(", "ApprovalAckSource.None")],
+         forbid=["userId, req.AcknowledgeWarnings", "ApprovalAckSource.User", "ApprovalAckSource.SystemWorkflow", "acknowledgeWarnings: true"],
+         why="คำตัดสิน #12 · รอบ 198 ข้อ 6: คำเตือนก่อนอนุมัติต้องมีคนเห็นทีละใบ — bulk ห้ามรับทราบแทนคน"),
 ]
 
 # ── รอบ 193 ทีม O1 หลังฝ่ายค้านรอบสอง (C10 บางส่วน): ล็อก "ผลต้องถูกใช้" ไม่ใช่แค่ "มีการเรียก" ─────────────────

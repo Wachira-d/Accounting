@@ -168,4 +168,37 @@ public class ApprovalAcknowledgementTests
         Assert.Null(ApprovalAcknowledgement.ApiRefusalNote(first, r, At));     // retry ของระบบปลายทาง ⇒ ไม่ต่อซ้ำ
         Assert.StartsWith(ApprovalAcknowledgement.ApiRefusalNoteTag, ApprovalAcknowledgement.ApiRefusalNote(null, r, At));
     }
+
+    // ── รอบ 199 ทีม W: POST documents/bulk-approve ไม่รับ "รับทราบคำเตือน" แบบเหมารวม ──────────────────────
+
+    [Fact]
+    public void อนุมัติหลายใบ_ส่งรับทราบเหมารวม_ถูกปฏิเสธดังพร้อมทางไปต่อ()
+    {
+        var refusal = ApprovalAcknowledgement.BulkBlanketAckRefusal(true);
+        Assert.NotNull(refusal);
+        var msg = refusal!;
+        Assert.Contains(ApprovalAcknowledgement.BulkBlanketAckRefusedCode, msg);
+        Assert.Contains("needsAcknowledgement", msg);            // บอกว่าใบที่มีคำเตือนไปอยู่ที่ไหน
+        Assert.Contains("ยังไม่มีเอกสารใบไหนถูกอนุมัติ", msg);     // บอกว่าคำขอนี้ไม่มีผลข้างเคียง
+    }
+
+    [Fact]
+    public void อนุมัติหลายใบ_ไม่ส่งธงหรือส่งfalse_รับคำขอ()
+    {
+        Assert.Null(ApprovalAcknowledgement.BulkBlanketAckRefusal(null));
+        Assert.Null(ApprovalAcknowledgement.BulkBlanketAckRefusal(false));
+        // แหล่งที่ bulk ใช้อนุมัติทีละใบ = None ⇒ คำเตือนทุกข้อยังหยุด (รวม [Σ-GAP] และคำเตือนทั่วไป)
+        Assert.Equal(new[] { Gap, Other }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.None, new[] { Gap, Other }));
+    }
+
+    [Fact]
+    public void สรุปผลอนุมัติหลายใบ_แยกใบที่รอรับทราบออกจากใบที่ล้มเหลว()
+    {
+        var s = ApprovalAcknowledgement.BulkSummary(5, 2, 2, 1);
+        Assert.StartsWith("อนุมัติ 2/5 ใบ", s);
+        Assert.Contains("มีคำเตือน 2 ใบ ยังไม่อนุมัติ", s);
+        Assert.Contains("ล้มเหลว 1 ใบ", s);
+        // ทิศตรงข้าม: ผ่านหมด ⇒ ไม่มีข้อความคำเตือน/ล้มเหลวปน
+        Assert.Equal("อนุมัติ 3/3 ใบ", ApprovalAcknowledgement.BulkSummary(3, 3, 0, 0));
+    }
 }

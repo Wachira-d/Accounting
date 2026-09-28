@@ -1357,12 +1357,21 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<IssuedReceiptResult>(true, result, msg));
     }
 
-    public sealed record BulkApproveRequest(List<Guid> DocumentIds, bool AcknowledgeWarnings);
-    public sealed record BulkApproveResult(int Total, int Approved, int Failed, List<string> Errors);
+    /// <param name="DocumentIds">เอกสารที่จะอนุมัติ (≤ 200)</param>
+    /// <param name="AcknowledgeWarnings">รอบ 199 ทีม W: <b>ไม่รับ true</b> (400 BULK-APPROVE-BLANKET-ACK-REFUSED) — คงช่องไว้เพื่อปฏิเสธดัง ๆ
+    /// แทนการเพิกเฉยเงียบ ๆ · ดู <c>ApprovalAcknowledgement.BulkBlanketAckRefusal</c></param>
+    public sealed record BulkApproveRequest(List<Guid> DocumentIds, bool? AcknowledgeWarnings = null);
+    /// <summary>ใบที่ยังไม่อนุมัติเพราะมีคำเตือนที่ต้องมีคนรับทราบ — เปิดใบนั้นแล้วกด "อนุมัติ" ทีละใบ</summary>
+    public sealed record BulkApproveNeedsAckItem(Guid DocumentId, IReadOnlyList<string> Warnings);
+    public sealed record BulkApproveResult(int Total, int Approved, int Failed, List<string> Errors,
+        List<BulkApproveNeedsAckItem> NeedsAcknowledgement);
 
     /// <summary>Bulk approval — Finance อนุมัติเอกสารหลายใบในคลิกเดียว
     /// (เช่นเงินเดือนเดือนนี้มี Expense 50 ใบ). ทำทีละใบใน try/catch —
-    /// ใบที่ throw รวมใน Errors แต่ไม่ stop การประมวลผลใบอื่น.</summary>
+    /// ใบที่ throw รวมใน Errors แต่ไม่ stop การประมวลผลใบอื่น.
+    /// <para>รอบ 199 ทีม W: อนุมัติทีละใบแบบ "ไม่มีใครรับทราบ" (<see cref="ApprovalAckSource.None"/> · ไม่เรียก AI) — ใบที่มีคำเตือนไม่ถูกอนุมัติ
+    /// และคืนใน <c>NeedsAcknowledgement</c> พร้อมคำเตือนของใบนั้น · เดิมส่งธงของผู้เรียกเข้า service ตรง ⇒ ประทับ "ผู้ใช้รับทราบ"
+    /// ให้คำเตือนที่ไม่มีใครเห็น (คำตัดสิน #12 · รอบ 198 ข้อ 6)</para></summary>
     [HttpPost("bulk-approve")]
     public async Task<ActionResult<ApiResponse<BulkApproveResult>>> BulkApprove(
         Guid companyId, [FromBody] BulkApproveRequest req)
@@ -1371,10 +1380,14 @@ public class DocumentController : ControllerBase
             return BadRequest(new ApiResponse<BulkApproveResult>(false, null!, "เลือกเอกสารอย่างน้อย 1 ใบ"));
         if (req.DocumentIds.Count > 200)
             return BadRequest(new ApiResponse<BulkApproveResult>(false, null!, "จำกัด bulk ครั้งละ 200 ใบ"));
+        var blanketAckRefusal = ApprovalAcknowledgement.BulkBlanketAckRefusal(req.AcknowledgeWarnings);
+        if (blanketAckRefusal is not null)
+            return BadRequest(new ApiResponse<BulkApproveResult>(false, null!, blanketAckRefusal));
 
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var userId = userIdGuid.ToString();
         var errors = new List<string>();
+        var needsAck = new List<BulkApproveNeedsAckItem>();
         int approved = 0, failed = 0;
         foreach (var docId in req.DocumentIds)
         {
@@ -1384,8 +1397,14 @@ public class DocumentController : ControllerBase
                 if (docType == null) { errors.Add($"{docId}: ไม่พบเอกสาร"); failed++; continue; }
                 if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
                 { errors.Add($"{docId}: ไม่มีสิทธิ์อนุมัติ {docType}"); failed++; continue; }
-                await _documentService.ApproveDocumentAsync(companyId, docId, userId, req.AcknowledgeWarnings);
+                await _documentService.ApproveDocumentAsync(companyId, docId, userId,
+                    ApprovalAckSource.None, withAiHints: false);
                 approved++;
+            }
+            catch (DocumentApprovalWarningsException wex)
+            {
+                // ไม่ใช่ "ล้มเหลว" — ใบยังเป็นร่าง รอคนเปิดดูคำเตือนแล้วกดรับทราบเอง (ทางไปต่อคนละทางกับ Errors)
+                needsAck.Add(new BulkApproveNeedsAckItem(docId, wex.Warnings));
             }
             catch (Exception ex)
             {
@@ -1394,7 +1413,7 @@ public class DocumentController : ControllerBase
             }
         }
         return Ok(new ApiResponse<BulkApproveResult>(true,
-            new BulkApproveResult(req.DocumentIds.Count, approved, failed, errors),
-            $"อนุมัติ {approved}/{req.DocumentIds.Count} ใบ" + (failed > 0 ? $" — ล้มเหลว {failed} ใบ" : "")));
+            new BulkApproveResult(req.DocumentIds.Count, approved, failed, errors, needsAck),
+            ApprovalAcknowledgement.BulkSummary(req.DocumentIds.Count, approved, needsAck.Count, failed)));
     }
 }

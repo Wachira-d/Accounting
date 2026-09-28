@@ -1574,8 +1574,17 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > - **ทางเข้าอื่นที่อนุมัติโดยไม่มีคนเห็นคำเตือน** (ตรวจรอบ 199): SystemWorkflow ทุกจุด (PV อัตโนมัติ · ริบมัดจำ · ใบแทน · รอบโอน settlement · ลายเซ็นที่ไม่ส่ง ack)
 >   หยุดชุด VAT อยู่แล้ว (`IsGapWarning` รวมชุด VAT) · LINE / สร้าง+อนุมัติ OCR / recurring / ใบเบิก / เงินเดือนล่วงหน้า / integration แปลงใบ = แหล่ง `None`
 >   (หยุดทุกคำเตือน) · ที่พัก/PlatformBilling/CMS ส่ง `acknowledgeWarnings:true` แต่เป็นเอกสารที่เพิ่งสร้างเองในคำขอเดียวกัน (ไม่มีสแกนที่ `CreatedDocumentId`
->   ชี้มา ⇒ ไม่มีคำเตือนชุดนี้) · ⚠️ **ยังเปิด**: ปุ่ม "บันทึกและอนุมัติ"/เงินสดทันทีใน `documents.html` ส่ง `acknowledgeWarnings:true` โดยไม่แสดงคำเตือน
->   (คนอยู่หน้าจอแต่ไม่เห็น `[Σ-GAP]`/ชุด VAT) และ `POST documents/bulk-approve` รับ `AcknowledgeWarnings` จากผู้เรียก — backlog ต้องแก้ฝั่งหน้าเว็บ
+>   ชี้มา ⇒ ไม่มีคำเตือนชุดนี้)
+> - **หน้าเอกสาร (`documents.html`) — ทุกปุ่มที่อนุมัติเดินทางเดียว `_approveConfirmingWarnings`** (รอบ 199 ทีม W · ปิด backlog ของทีม H):
+>   ปุ่ม "อนุมัติ" · "บันทึกและอนุมัติ" · chain "ลูกค้าจ่ายเงินแล้ว" (เงินสดทันที) · อนุมัติก่อนส่งอีเมล ⇒ ครั้งแรก `acknowledgeWarnings:false` → 422 + รายการ
+>   ⇒ หน้าต่างคำเตือน (`_showApprovalWarnings`) ⇒ ส่ง `true` **เฉพาะหลังกด "ยอมรับและอนุมัติต่อ"** · ไม่มีคำเตือน ⇒ อนุมัติเลยครั้งแรก ·
+>   "กลับไปแก้ไข" / × / Escape (`Layout` เรียก `wrap._onDismiss`) ⇒ ใบที่บันทึกแล้ว**คงเป็นร่าง** ไม่หักมัดจำ ไม่บันทึกชำระ ไม่ส่งอีเมล ไม่ถามซ้ำ + toast
+>   บอกว่าเป็นร่าง/ทางไปต่อ (`_postSaveApproval` แยกจาก `save()` · เดิมสองเส้นส่ง `true` ตั้งแต่ครั้งแรก ⇒ `[Σ-GAP]`/ชุด VAT ถูกบันทึก "ผู้ใช้รับทราบ"
+>   ทั้งที่ไม่มีใครเห็น) · ล็อกด้วย `tools/save_approve_warnings_sim.js` (โค้ดจริง + กลายพันธุ์ 7 แบบ)
+> - **`POST documents/bulk-approve`** (ไม่มีหน้าเว็บเรียก): อนุมัติทีละใบด้วย `ApprovalAckSource.None` + `withAiHints:false` · ใบที่มีคำเตือน**ไม่อนุมัติ**
+>   และคืนใน `needsAcknowledgement[] {documentId, warnings}` (ไม่นับเป็น `failed`) · ส่ง `acknowledgeWarnings:true` ⇒ **400 ทั้งคำขอ**
+>   `BULK-APPROVE-BLANKET-ACK-REFUSED` ก่อนแตะเอกสารใด (`ApprovalAcknowledgement.BulkBlanketAckRefusal` — ปฏิเสธดังแทนเพิกเฉยเงียบ) · ทางไปต่อ = เปิดใบแล้วกด "อนุมัติ"
+> - ⚠️ ยังเปิด (นอกขอบเขต — ไม่ใช่การรับทราบแทนคน): `quick-sale.html` อนุมัติโดยไม่ส่ง ack แล้ว `catch (_) {}` ⇒ ใบที่มีคำเตือนค้างร่างแต่จอบอก "บันทึกสำเร็จ"
 > - ⚠️ ผู้เรียกภายในที่ยังส่ง `acknowledgeWarnings:true` ตรง (ที่พัก ×2 · PlatformBilling ×3 · CMS ×2 ฯลฯ — เอกสารระบบสร้างเอง ไม่มี `[Σ-GAP]`)
 >   ร่องรอยยังเขียนว่า "ยืนยันโดย" — ควรย้ายไป `SystemWorkflow` (backlog 7 จุด)
 >
@@ -3582,7 +3591,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — คำตัดสินเจ้าของรอบ 198 ข้อ 6 / ฝ่ายค้าน B-1: `/api/v1/documents/{id}/approve` **ปฏิเสธ 422
+_Last verified against codebase: 2026-09-28 (รอบ 199 ทีม W — ปิด backlog ของทีม H: หน้าเอกสาร "บันทึกและอนุมัติ"/เงินสดทันที/อนุมัติก่อนส่งอีเมล/ปุ่มอนุมัติ
+เดินทางเดียว `_approveConfirmingWarnings` (คนเห็นคำเตือนก่อนส่ง `acknowledgeWarnings:true` · ยกเลิก/×/Escape = คงร่าง ไม่หักมัดจำ ไม่รับชำระ ไม่ถามซ้ำ) ·
+`bulk-approve` แหล่ง `None` + คืน `needsAcknowledgement[]` · ธงเหมารวม = 400 `BULK-APPROVE-BLANKET-ACK-REFUSED` (§3.2) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 199 ทีม H — คำตัดสินเจ้าของรอบ 198 ข้อ 6 / ฝ่ายค้าน B-1: `/api/v1/documents/{id}/approve` **ปฏิเสธ 422
 `APPROVE-SCAN-VAT-NOT-ON-PAPER`** เมื่อใบสแกนมีคำเตือน VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้ (ก่อนเรียกอนุมัติ · ค้างร่าง · หมายเหตุ `[API-APPROVE-REFUSED]` ครั้งเดียว) ·
 คำเตือนอื่น 422 `APPROVE-WARNINGS-NEED-ACK` (เดิม 500) · `[Σ-GAP]` ยอดอย่างเดียวอนุมัติต่อเหมือนเดิม (#12) · `ApprovalAckSource.ApiClient` ผ่านเฉพาะ
 `IsAmountGapWarning` (§1 OCR · §3.2) — commit <pending>)_

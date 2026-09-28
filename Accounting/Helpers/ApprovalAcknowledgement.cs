@@ -116,6 +116,43 @@ public static class ApprovalAcknowledgement
         return string.IsNullOrWhiteSpace(existing) ? note : existing.TrimEnd() + "\n\n" + note;
     }
 
+    /// <summary>รหัสที่ <c>POST documents/bulk-approve</c> คืน (400) เมื่อผู้เรียกส่ง <c>acknowledgeWarnings: true</c> แบบเหมารวม · ห้ามเปลี่ยนค่า</summary>
+    public const string BulkBlanketAckRefusedCode = "BULK-APPROVE-BLANKET-ACK-REFUSED";
+
+    /// <summary>
+    /// **คำตัดสินของ <c>POST documents/bulk-approve</c> ต่อธง <c>acknowledgeWarnings</c> ของผู้เรียก** — null = รับคำขอ (อนุมัติทีละใบแบบ
+    /// "ไม่มีใครรับทราบ" = <see cref="ApprovalAckSource.None"/>) · ไม่ null = ข้อความปฏิเสธทั้งคำขอ (ยังไม่แตะเอกสารใบไหน)
+    ///
+    /// <para>ที่มา (รอบ 199 ทีม W · ค้างจากทีม H): endpoint นี้เคยส่งธงของผู้เรียกเข้า <c>ApproveDocumentAsync</c> ตรง ⇒ ธงเดียวประทับ
+    /// "ผู้ใช้รับทราบ" ให้คำเตือนของเอกสาร 200 ใบที่ไม่มีใครเห็นสักข้อ (รวม [Σ-GAP] ยอดสแกนไม่ตรงกระดาษ และชุด VAT ไม่ได้พิมพ์บนกระดาษ ·
+    /// คำตัดสิน #12 / รอบ 198 ข้อ 6 ให้คนรับทราบ) · ทางที่ง่ายและปลอดภัยที่สุด: <b>ไม่รับการรับทราบแบบเหมารวม</b> — ใบที่มีคำเตือนถูกคืนเป็น
+    /// รายการ "ต้องเปิดรับทราบทีละใบ" พร้อมคำเตือนของใบนั้น (ไม่ใช่นับเป็นล้มเหลวเฉย ๆ)</para>
+    /// <para>ปฏิเสธดัง ๆ (ไม่ใช่เพิกเฉยธงเงียบ ๆ) เพราะผู้เรียกที่ส่ง true คาดว่าใบที่มีคำเตือนจะผ่าน — เพิกเฉยแล้วตอบ 200 = silent no-op
+    /// (กฎเหล็ก #4 A)</para>
+    /// </summary>
+    /// <param name="acknowledgeWarnings">ค่าที่ผู้เรียกส่งมา (null/false = ไม่ได้ขอรับทราบ)</param>
+    public static string? BulkBlanketAckRefusal(bool? acknowledgeWarnings)
+        => acknowledgeWarnings == true
+            ? "อนุมัติหลายใบไม่รับ \"รับทราบคำเตือน\" แบบเหมารวม (" + BulkBlanketAckRefusedCode + ") — คำเตือนก่อนอนุมัติต้องมีคนเห็นทีละใบ · "
+              + "ส่งคำขอใหม่โดยไม่ใส่ acknowledgeWarnings: ใบที่ไม่มีคำเตือนจะอนุมัติให้ ใบที่มีคำเตือนจะอยู่ในรายการ needsAcknowledgement "
+              + "ให้เปิดเอกสารใบนั้นแล้วกด \"อนุมัติ\" (ระบบจะแสดงคำเตือนให้กดรับทราบ) · ยังไม่มีเอกสารใบไหนถูกอนุมัติจากคำขอนี้"
+            : null;
+
+    /// <summary>ข้อความสรุปผลอนุมัติหลายใบ — แยก "ต้องเปิดรับทราบทีละใบ" ออกจาก "ล้มเหลว" (คนละทางไปต่อ)</summary>
+    /// <param name="total">จำนวนที่ขอ</param>
+    /// <param name="approved">อนุมัติสำเร็จ</param>
+    /// <param name="needsAcknowledgement">มีคำเตือน ยังไม่อนุมัติ รอคนรับทราบทีละใบ</param>
+    /// <param name="failed">ล้มด้วยเหตุอื่น (สิทธิ์ · ไม่พบ · ด่านบังคับ)</param>
+    public static string BulkSummary(int total, int approved, int needsAcknowledgement, int failed)
+    {
+        var msg = $"อนุมัติ {approved}/{total} ใบ";
+        if (needsAcknowledgement > 0)
+            msg += $" — มีคำเตือน {needsAcknowledgement} ใบ ยังไม่อนุมัติ: เปิดเอกสารแล้วกด \"อนุมัติ\" เพื่อรับทราบคำเตือนทีละใบ";
+        if (failed > 0)
+            msg += $" — ล้มเหลว {failed} ใบ";
+        return msg;
+    }
+
     /// <summary>รหัสกฎของร่องรอยเมื่ออนุมัติทั้งที่มีคำเตือน</summary>
     public static string RuleCode(ApprovalAckSource source) => source switch
     {

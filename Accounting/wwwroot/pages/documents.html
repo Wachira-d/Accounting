@@ -9184,6 +9184,8 @@
         try {
           let savedDocId = this.editingId;
           let savedStatus = null;   // ใช้ตัดสินว่าต้อง approve ก่อนส่งเมลไหม
+          // ผู้ใช้กด "กลับไปแก้ไข" ที่หน้าตรวจคำเตือนก่อนอนุมัติ ⇒ ใบคงเป็นร่าง · ห้ามถามซ้ำ/ห้ามทำ chain ต่อ (รอบ 199 ทีม W)
+          let _approvalDeclined = false;
           // แก้ไข "ร่าง/ถูกปฏิเสธ" (ยังไม่เคยลงบัญชี — ไม่ใช่ revision ใบอนุมัติ)
           // → chain "จ่ายแล้ว" ทำงานได้เหมือนตอนสร้างใหม่. จำเป็นกับใบที่แปลงมา
           // จากใบแจ้งหนี้: ใบเกิดเป็นร่างจาก convert เสมอ ผู้ใช้เปิดแก้เพื่อเลือก
@@ -9271,10 +9273,16 @@
                     + 'ระบบจึงยังไม่ส่งอีเมล ให้ผู้มีสิทธิ์อนุมัติแล้วกด "📧 ส่งอีเมล" ในหน้ารายการ', 'info', 9000);
                 } else {
                   try {
-                    await api.approveDocument(savedDocId);
-                    _canSend = true;
-                    savedStatus = 'Approved';   // กัน paid-chain ด้านล่าง approve ซ้ำ
-                    Layout.toast('อนุมัติเอกสาร (ออกเลขจริง) ก่อนส่งอีเมลแล้ว', 'success');
+                    // ทางเดียวกับปุ่ม "อนุมัติ" — มีคำเตือนต้องให้คนเห็นแล้วกดรับทราบเอง (รอบ 199 ทีม W)
+                    const _ar = await this._approveConfirmingWarnings(api, savedDocId);
+                    if (_ar.approved) {
+                      _canSend = true;
+                      savedStatus = 'Approved';   // กัน paid-chain ด้านล่าง approve ซ้ำ
+                      Layout.toast('อนุมัติเอกสาร (ออกเลขจริง) ก่อนส่งอีเมลแล้ว', 'success');
+                    } else {
+                      _approvalDeclined = true;   // ห้ามถามซ้ำใน chain ด้านล่าง
+                      Layout.toast(this._approvalDeclinedMessage('ยังไม่ส่งอีเมล'), 'info', 10000);
+                    }
                   } catch (ae) {
                     Layout.toast('เอกสารบันทึกแล้ว แต่ยังอนุมัติไม่ได้ จึงไม่ส่งอีเมล — '
                       + (ae.message || 'กรุณาตรวจข้อมูลให้ครบ (§86/4) แล้วอนุมัติเอง'), 'error', 9000);
@@ -9315,32 +9323,69 @@
             }
           }
 
-          // "ลูกค้าจ่ายเงินแล้ว" chain — only fires on CREATE (not edit) of
-          // an Invoice / TaxInvoice where the operator ticked the shortcut.
-          // Approves the document, then records a payment for the full
-          // total, in two API calls. Failures don't roll back the document
-          // (audit-friendly + operator can finish the chain manually) but
-          // surface as a warning toast so the operator knows.
-          const paidNow = document.getElementById('fPaidOnIssue')?.checked;
-          // ⛔ chain "จ่ายแล้ว" (approve + ชำระ + ใบเสร็จ) รันเฉพาะปุ่ม "บันทึกและ
-          // อนุมัติ" — เดิมกด "บันทึกร่าง" ก็ approve + บันทึกชำระเลย (ร่างที่ขยับ
-          // เงินจริง = ผิด principle of least surprise + ยกเลิกยากกว่าร่าง)
-          if (paidNow && !approveAfter && (!this.editingId || _editingDraft) && savedDocId) {
-            Layout.toast('บันทึกเป็นร่างแล้ว — ติ๊ก "ลูกค้าจ่ายเงินแล้ว" ไว้ แต่ร่างยังไม่อนุมัติ/บันทึกชำระ · กด "บันทึกและอนุมัติ" เมื่อพร้อม', 'info', 8000);
-          }
-          if (paidNow && approveAfter && (!this.editingId || _editingDraft) && savedDocId) {
-            // Derive method from the chosen payment channel — single source
-            // of truth so the Payment metadata can't drift from the GL.
-            const method = this._deriveMethodFromChannel().method;
-            try {
-              // Cash-sale chain implies the operator already committed to
-              // immediate approval — short-circuit the warnings prompt by
-              // acknowledging up front. Hard errors still throw.
-              // ข้าม approve ถ้า email-block อนุมัติไปแล้ว (กัน "อนุมัติซ้ำ" ที่ throw).
-              if (!['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
-                await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
-                savedStatus = 'Approved';
+          // chain "ลูกค้าจ่ายเงินแล้ว" + "บันทึกและอนุมัติ" — อนุมัติผ่านหน้าต่างคำเตือนเหมือนปุ่ม "อนุมัติ" (รอบ 199 ทีม W)
+          await this._postSaveApproval(api, {
+            savedDocId, savedStatus, approveAfter,
+            approvalDeclined: _approvalDeclined,
+            paidNow: !!document.getElementById('fPaidOnIssue')?.checked,
+            chainAllowed: !this.editingId || _editingDraft,
+            paymentDate: document.getElementById('fDate').value,
+          });
+
+          Layout.closeModal('formModal');
+          this.editingId = null;
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /**
+       * ขั้นหลังบันทึก: chain "ลูกค้าจ่ายเงินแล้ว" (อนุมัติ → หักมัดจำ → รับชำระ) และ "บันทึกและอนุมัติ" (อนุมัติ → หักมัดจำ)
+       * แยกออกจาก save() ในรอบ 199 ทีม W ให้ tools/save_approve_warnings_sim.js รันโค้ดจริงได้
+       *
+       * ⚖️ อนุมัติผ่าน _approveConfirmingWarnings เท่านั้น — ทางเดียวกับปุ่ม "อนุมัติ": ถามโดยไม่รับทราบก่อน · มีคำเตือน ⇒ แสดงให้คนดู
+       * แล้วส่ง acknowledgeWarnings:true เฉพาะเมื่อกด "ยอมรับและอนุมัติต่อ" · เดิมสองเส้นนี้ส่ง true ตั้งแต่ครั้งแรก ⇒ [Σ-GAP] / ชุด VAT
+       * ไม่ได้พิมพ์บนกระดาษ ถูกบันทึกว่า "ผู้ใช้รับทราบ" ทั้งที่ไม่มีใครเห็น (คำตัดสิน #12 · รอบ 198 ข้อ 6) · กด "กลับไปแก้ไข" ⇒ ใบคงเป็นร่าง
+       * ไม่หักมัดจำ ไม่บันทึกชำระ และบอกผู้ใช้ตรง ๆ
+       *
+       * ctx: { savedDocId, savedStatus, approveAfter, paidNow, chainAllowed, approvalDeclined, paymentDate }
+       * คืน { savedStatus, approvalDeclined } (สถานะหลังขั้นนี้ — ให้เทสต์/ผู้เรียกดู)
+       */
+      async _postSaveApproval(api, ctx) {
+        const approvedStates = ['Approved', 'Sent', 'PartiallyPaid', 'Paid'];
+        const savedDocId = ctx.savedDocId;
+        let savedStatus = ctx.savedStatus;
+        let approvalDeclined = !!ctx.approvalDeclined;
+
+        // "ลูกค้าจ่ายเงินแล้ว" chain — only fires on CREATE (not edit) of
+        // an Invoice / TaxInvoice where the operator ticked the shortcut.
+        // Approves the document, then records a payment for the full
+        // total, in two API calls. Failures don't roll back the document
+        // (audit-friendly + operator can finish the chain manually) but
+        // surface as a warning toast so the operator knows.
+        const paidNow = !!ctx.paidNow;
+        const approveAfter = !!ctx.approveAfter;
+        // ⛔ chain "จ่ายแล้ว" (approve + ชำระ + ใบเสร็จ) รันเฉพาะปุ่ม "บันทึกและ
+        // อนุมัติ" — เดิมกด "บันทึกร่าง" ก็ approve + บันทึกชำระเลย (ร่างที่ขยับ
+        // เงินจริง = ผิด principle of least surprise + ยกเลิกยากกว่าร่าง)
+        if (paidNow && !approveAfter && ctx.chainAllowed && savedDocId) {
+          Layout.toast('บันทึกเป็นร่างแล้ว — ติ๊ก "ลูกค้าจ่ายเงินแล้ว" ไว้ แต่ร่างยังไม่อนุมัติ/บันทึกชำระ · กด "บันทึกและอนุมัติ" เมื่อพร้อม', 'info', 8000);
+        }
+        if (paidNow && approveAfter && ctx.chainAllowed && savedDocId && !approvalDeclined) {
+          // Derive method from the chosen payment channel — single source
+          // of truth so the Payment metadata can't drift from the GL.
+          const method = this._deriveMethodFromChannel().method;
+          try {
+            // อนุมัติก่อน — มีคำเตือน ⇒ ถามผู้ใช้ก่อน (ไม่รับทราบแทน) · hard error ยัง throw
+            // ข้าม approve ถ้า email-block อนุมัติไปแล้ว (กัน "อนุมัติซ้ำ" ที่ throw).
+            if (!approvedStates.includes(savedStatus)) {
+              const ar = await this._approveConfirmingWarnings(api, savedDocId);
+              if (ar.approved) savedStatus = 'Approved';
+              else {
+                approvalDeclined = true;
+                Layout.toast(this._approvalDeclinedMessage('ยังไม่หักมัดจำและยังไม่บันทึกรับชำระ'), 'info', 10000);
               }
+            }
+            if (!approvalDeclined) {
               // ⭐ หักมัดจำ "ก่อน" บันทึกชำระ — เดิมจ่ายเต็ม balanceDue ก่อนแล้ว
               // ข้ามบล็อกหักมัดจำ (อยู่ใน approveAfter ที่ skip เพราะ Approved แล้ว)
               // → เงินเข้าธนาคารเต็ม 9,900 ทั้งที่รับจริงแค่ส่วนต่าง + มัดจำค้าง
@@ -9355,7 +9400,7 @@
               if (balance > 0.01) {
                 await api.createPayment({
                   documentId: savedDocId,
-                  paymentDate: document.getElementById('fDate').value,
+                  paymentDate: ctx.paymentDate,
                   amount: balance,
                   paymentMethod: method,
                   notes: 'รับเงินพร้อมออกใบกำกับ (cash sale)',
@@ -9378,24 +9423,29 @@
               }
               if (cashDepRes && cashDepRes.failCount)
                 Layout.toast(`⚠️ หักมัดจำไม่ผ่าน ${cashDepRes.failCount} ใบ — เปิดใบแล้วกด "หักมัดจำ" เอง (ก่อนบันทึกชำระเพิ่ม)`, 'warning', 9000);
-            } catch (e) {
-              Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
             }
+          } catch (e) {
+            Layout.toast('สร้างเอกสารแล้ว แต่บันทึกชำระไม่สำเร็จ: ' + e.message + ' — โปรดกด "💰 บันทึกชำระเงิน" ในหน้ารายละเอียดแทน', 'warning', 8000);
           }
+        }
 
-          // "บันทึกและอนุมัติ" — จบใน 1 คลิก: ออกเลขจริง + ลง GL + ตัดสต๊อก.
-          // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว.
-          // ⚠️ แก้บั๊ก "บันทึกสำเร็จแต่ไม่อนุมัติ": เดิม (1) เช็ค _canApproveDoc ฝั่ง
-          // client → ถ้า heuristic ไม่ตรง backend (เช่นมีสิทธิ์อนุมัติผ่าน UserRole
-          // แต่ไม่มี perm-key) จะ "ข้าม approve เงียบ ๆ"; (2) เรียก approve โดยไม่ส่ง
-          // acknowledgeWarnings → เอกสารที่มี soft-warning (422) ค้าง Draft ทั้งที่
-          // กดอนุมัติแยกในรายการผ่าน. แก้: ให้ backend ตัดสินสิทธิ์เอง + acknowledge
-          // soft-warning อัตโนมัติ (ปุ่มนี้ = ตั้งใจอนุมัติทันที; hard error §86/4/
-          // §82/5 ยัง block เหมือนเดิม) + จับ 403 แยกเป็นข้อความสิทธิ์
-          if (approveAfter && savedDocId
-              && !['Approved', 'Sent', 'PartiallyPaid', 'Paid'].includes(savedStatus)) {
-            try {
-              await api.approveDocument(savedDocId, { acknowledgeWarnings: true });
+        // "บันทึกและอนุมัติ" — จบใน 1 คลิก: ออกเลขจริง + ลง GL + ตัดสต๊อก.
+        // ข้ามถ้า flow อื่น (ส่งอีเมล/รับเงินสด) อนุมัติไปแล้ว หรือผู้ใช้กด "กลับไปแก้ไข" ที่หน้าคำเตือนไปแล้ว.
+        // ⚠️ แก้บั๊ก "บันทึกสำเร็จแต่ไม่อนุมัติ": เดิม (1) เช็ค _canApproveDoc ฝั่ง
+        // client → ถ้า heuristic ไม่ตรง backend (เช่นมีสิทธิ์อนุมัติผ่าน UserRole
+        // แต่ไม่มี perm-key) จะ "ข้าม approve เงียบ ๆ" ⇒ ให้ backend ตัดสินสิทธิ์เอง + จับ 403 แยกเป็นข้อความสิทธิ์.
+        // (2) soft-warning (422) ⇒ แสดงรายการให้ผู้ใช้กดรับทราบเอง (รอบ 199 ทีม W — เดิม acknowledge อัตโนมัติ
+        // = ประทับ "ผู้ใช้รับทราบ" ทั้งที่ไม่มีใครเห็น) · hard error §86/4/§82/5 ยัง block เหมือนเดิม
+        if (approveAfter && savedDocId && !approvalDeclined
+            && !approvedStates.includes(savedStatus)) {
+          try {
+            const ar = await this._approveConfirmingWarnings(api, savedDocId);
+            if (!ar.approved) {
+              approvalDeclined = true;
+              Layout.toast(this._approvalDeclinedMessage(
+                (this._pendingDepositApplies && this._pendingDepositApplies.length) ? 'ยังไม่หักมัดจำ' : ''), 'info', 10000);
+            } else {
+              savedStatus = 'Approved';
               // ── หักมัดจำเข้าใบนี้ (ถ้าเลือกไว้ตอนสร้าง) — ต่อจาก approve สำเร็จ ──
               // ใช้ ApplyDepositToInvoiceAsync (verified): Dr 217xx + Dr [21913|21911]
               // / Cr ลูกหนี้ + ลด BalanceDue. fail-soft: หักไม่ผ่าน → ใบยังอยู่ ให้หักเองได้
@@ -9408,24 +9458,54 @@
                 Layout.toast('บันทึก+อนุมัติแล้ว แต่หักมัดจำไม่ผ่าน — เปิดใบแล้วกด "หักมัดจำ" เองได้', 'warning', 9000);
               else
                 Layout.toast('บันทึกและอนุมัติแล้ว — ออกเลขเอกสารจริง + ลงบัญชีเรียบร้อย', 'success');
-            } catch (ae) {
-              if (ae?.status === 403) {
-                Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
-              } else {
-                Layout.toast('บันทึกเป็นร่างแล้ว แต่อนุมัติไม่ผ่าน: '
-                  + (ae.message || 'กรุณาตรวจข้อมูล (§86/4/§82/5) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
-              }
             }
-          } else if (this._pendingDepositApplies && this._pendingDepositApplies.length && savedDocId) {
-            // เลือกหักมัดจำแต่ไม่ได้กดอนุมัติ (บันทึกร่าง) → หักไม่ได้ (ต้อง approve ก่อน)
-            Layout.toast('บันทึกเป็นร่างแล้ว — การหักมัดจำต้อง "บันทึกและอนุมัติ" (เปิดใบแล้วหักมัดจำได้)', 'info', 8000);
+          } catch (ae) {
+            if (ae?.status === 403) {
+              Layout.toast('บันทึกเป็นร่างแล้ว — คุณไม่มีสิทธิ์อนุมัติ ให้ผู้มีสิทธิ์กด "อนุมัติ" ในหน้ารายการ', 'info', 8000);
+            } else {
+              Layout.toast('บันทึกเป็นร่างแล้ว แต่อนุมัติไม่ผ่าน: '
+                + (ae.message || 'กรุณาตรวจข้อมูล (§86/4/§82/5) แล้วอนุมัติจากหน้ารายการ'), 'warning', 9000);
+            }
           }
-          this._pendingDepositApplies = [];
+        } else if (!approvalDeclined && this._pendingDepositApplies && this._pendingDepositApplies.length && savedDocId) {
+          // เลือกหักมัดจำแต่ไม่ได้กดอนุมัติ (บันทึกร่าง) → หักไม่ได้ (ต้อง approve ก่อน)
+          Layout.toast('บันทึกเป็นร่างแล้ว — การหักมัดจำต้อง "บันทึกและอนุมัติ" (เปิดใบแล้วหักมัดจำได้)', 'info', 8000);
+        }
+        this._pendingDepositApplies = [];
+        return { savedStatus, approvalDeclined };
+      },
 
-          Layout.closeModal('formModal');
-          this.editingId = null;
-          await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+      /** ข้อความเมื่อผู้ใช้กด "กลับไปแก้ไข" ที่หน้าตรวจคำเตือนหลังบันทึก — ใบถูกบันทึกเป็นร่างแล้ว ต้องบอกว่าอะไรยังไม่เกิด + ทางไปต่อ */
+      _approvalDeclinedMessage(notDone) {
+        return 'บันทึกเป็นร่างแล้ว — ยังไม่อนุมัติ เพราะกด "กลับไปแก้ไข" ที่หน้าตรวจคำเตือน (ยังไม่ออกเลข ยังไม่ลงบัญชี'
+          + (notDone ? ' · ' + notDone : '') + ') · ตรวจแล้วเปิดใบในรายการกด "อนุมัติ" ระบบจะแสดงคำเตือนให้รับทราบอีกครั้ง';
+      },
+
+      /**
+       * อนุมัติแบบ "คนเห็นคำเตือนก่อนรับทราบ" — ทางเดียวของหน้านี้ (ปุ่มอนุมัติ · บันทึกและอนุมัติ · เงินสดทันที · อนุมัติก่อนส่งอีเมล)
+       * ครั้งแรกส่ง acknowledgeWarnings:false · เซิร์ฟเวอร์ตอบ 422 + warnings ⇒ แสดงหน้าต่างคำเตือน ⇒ ส่ง true เฉพาะเมื่อผู้ใช้กด
+       * "ยอมรับและอนุมัติต่อ" · ไม่มีคำเตือน ⇒ อนุมัติเลยในครั้งแรก · error อื่น (403 · ด่านบังคับ · workflow) throw ให้ผู้เรียกจัดการ
+       * (รอบ 199 ทีม W — เดิม "บันทึกและอนุมัติ"/เงินสดทันที ส่ง true ตั้งแต่ครั้งแรกโดยไม่มีใครเห็นคำเตือน)
+       * คืน { approved: true } | { approved: false, cancelled: true, warnings }
+       */
+      async _approveConfirmingWarnings(api, docId) {
+        try {
+          await api.approveDocument(docId, { acknowledgeWarnings: false });
+          return { approved: true };
+        } catch (e) {
+          const data = e && e.status === 422 && e.body && e.body.data;
+          if (!data || !Array.isArray(data.warnings) || !data.warnings.length) throw e;
+          return await new Promise((resolve, reject) => {
+            this._showApprovalWarnings(docId, data.warnings, data.aiHints,
+              async () => {
+                try {
+                  await api.approveDocument(docId, { acknowledgeWarnings: true });
+                  resolve({ approved: true });
+                } catch (e2) { reject(e2); }
+              },
+              () => resolve({ approved: false, cancelled: true, warnings: data.warnings }));
+          });
+        }
       },
 
       /**
@@ -10226,15 +10306,17 @@
       },
       async approve(id) {
         const api = Layout.api(); if (!api) return;
-        // Two-phase approve to surface soft warnings. First call: omit the
-        // acknowledge flag. If backend returns 422 with a warnings list, we
-        // show a modal listing them + a "ยอมรับและอนุมัติต่อ" button. Click
-        // → second call with acknowledgeWarnings=true. Hard errors (lines
-        // empty, fiscal period closed, WHT cap exceeded, etc.) still throw
+        // Two-phase approve to surface soft warnings — ผ่าน _approveConfirmingWarnings
+        // ตัวเดียวกับ "บันทึกและอนุมัติ"/เงินสดทันที/อนุมัติก่อนส่งอีเมล (รอบ 199 ทีม W):
+        // ครั้งแรกไม่รับทราบ · 422 + warnings ⇒ modal (aiHints[i] คู่กับ warnings[i]
+        // เมื่อ AI/นักเรียนตอบ) ⇒ "ยอมรับและอนุมัติต่อ" ⇒ ครั้งที่สองพร้อม
+        // acknowledgeWarnings=true · "กลับไปแก้ไข" ⇒ ไม่ทำอะไร (ยังเป็นร่าง). Hard errors
+        // (lines empty, fiscal period closed, WHT cap exceeded, etc.) still throw
         // back through the normal error toast — they're never optional.
-        const tryApprove = async (acknowledge) => {
+        const tryApprove = async () => {
           try {
-            await api.approveDocument(id, { acknowledgeWarnings: !!acknowledge });
+            const r = await this._approveConfirmingWarnings(api, id);
+            if (!r.approved) return;
             Layout.closeModal('detailModal');
             Layout.toast('อนุมัติเอกสารสำเร็จ');
             // ถ้าเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE → ระบบ
@@ -10245,13 +10327,6 @@
             await this._maybePromptFixedAssetReview();
             await this.load();
           } catch (e) {
-            if (e.status === 422 && e.body && e.body.data && Array.isArray(e.body.data.warnings)) {
-              // aiHints[i] aligns with warnings[i] when AI augmentation
-              // is on at the server. Null/undefined when AI is disabled
-              // or unreachable — modal falls back to plain warning text.
-              this._showApprovalWarnings(id, e.body.data.warnings, e.body.data.aiHints, () => tryApprove(true));
-              return;
-            }
             // เอกสารเข้ากฎอนุมัติหลายขั้น (workflow gate) → เดิมเป็นทางตัน
             // (error เฉย ๆ ไม่มีปุ่มไปต่อ) — เสนอส่งเข้าคิวขออนุมัติทันที
             const msg = e.message || '';
@@ -10272,7 +10347,7 @@
             Layout.toast(e.message, 'error');
           }
         };
-        await tryApprove(false);
+        await tryApprove();
       },
 
       // 🤖 Ask AI to suggest the GL expense category. Uses the document's
@@ -10404,8 +10479,12 @@
         } catch { /* best-effort */ }
       },
 
-      _showApprovalWarnings(docId, warnings, aiHints, onConfirm) {
+      // onCancel (รอบ 199 ทีม W): เรียกเมื่อผู้ใช้ปิดหน้าต่างโดยไม่รับทราบ — ปุ่ม "กลับไปแก้ไข" · × · Escape (Layout เรียก wrap._onDismiss)
+      // ⇒ ผู้เรียกที่รอผล (บันทึกและอนุมัติ) รู้ว่า "ยกเลิก" ไม่ค้างรอตลอดกาล · เรียก onConfirm/onCancel อย่างใดอย่างหนึ่งครั้งเดียว
+      _showApprovalWarnings(docId, warnings, aiHints, onConfirm, onCancel) {
         let wrap = document.getElementById('approvalWarningsModal');
+        // หน้าต่างรอบก่อนยังไม่ถูกตัดสิน (ไม่ควรเกิด) ⇒ ถือว่ายกเลิก ไม่ปล่อยผู้เรียกรอบก่อนค้าง
+        if (wrap && typeof wrap._onDismiss === 'function') wrap._onDismiss();
         if (!wrap) {
           wrap = document.createElement('div');
           wrap.id = 'approvalWarningsModal';
@@ -10414,7 +10493,7 @@
             <div class="modal" style="max-width:640px">
               <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #f59e0b">
                 <h3 class="modal-title" style="color:#92400e">⚠️ ตรวจรายการก่อนอนุมัติ</h3>
-                <button class="modal-close" onclick="document.getElementById('approvalWarningsModal').classList.remove('active')">&times;</button>
+                <button class="modal-close" id="awClose">&times;</button>
               </div>
               <div class="modal-body">
                 <p style="font-size:13px;color:#475569;margin-bottom:12px">
@@ -10465,9 +10544,23 @@
         }).join('');
         const cancelBtn = document.getElementById('awCancel');
         const confirmBtn = document.getElementById('awConfirm');
+        const closeBtn = document.getElementById('awClose');
         const companyId = Layout.getCompanyId();
-        cancelBtn.onclick = () => wrap.classList.remove('active');
+        let settled = false;
+        const cancel = () => {
+          if (settled) return;
+          settled = true;
+          wrap._onDismiss = null;
+          wrap.classList.remove('active');
+          if (typeof onCancel === 'function') onCancel();
+        };
+        cancelBtn.onclick = cancel;
+        if (closeBtn) closeBtn.onclick = cancel;
+        wrap._onDismiss = cancel;   // Escape (Layout._ensureModalKeyboardWired)
         confirmBtn.onclick = async () => {
+          if (settled) return;
+          settled = true;
+          wrap._onDismiss = null;
           wrap.classList.remove('active');
           // Record each user's "Acknowledge" pick as feedback so the
           // local model can learn which warning categories the user
