@@ -3454,3 +3454,9 @@ _รอบ 198 ทีม E — settlement เฟส 0 (erp-review/2026-09-25/set
 - **G-9** doc: DOCUMENT_FLOW §2.3/§2.6/§2.6b/ค่าธรรมเนียม · PAYMENT_GATEWAY_DESIGN §0 (สถานะปัจจุบัน) · §5 · §7.1 แถวเฟส 0
 - เทสต์ `SettlementPhase0Tests` (สองครึ่งทุกกลุ่ม) · checker `required_call_site_check` +15 กติกา
 — commit <pending>)_
+
+_รอบ 198 main — ฝ่ายค้านทีม E (main agent ตรวจเอง · `erp-review/2026-09-25/settlement/review198-E.md`):
+- **E-1** `GatewayRefundService`: หลังผู้ให้บริการคืนเงินสำเร็จ จับ**ทุก** exception (เดิมเฉพาะ InvalidOperation/DbUpdate ⇒ เครือข่าย DB หลุด/ยกเลิกคำขอ
+  หลุดออกไปโดยไม่มีประวัติ สถานะยัง Succeeded ⇒ กดคืนซ้ำได้) · งานเขียนกู้คืน + เปลี่ยนสถานะใช้ `CancellationToken.None`
+- backlog E-2 (ผู้ให้บริการ timeout = ผลไม่แน่ชัด) · E-3 (POS/Integration หลายบัญชีธนาคารต้องปักบัญชีก่อนรับโอน — พฤติกรรมเปลี่ยน) · E-4
+— commit <pending>)_

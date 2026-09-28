@@ -74,13 +74,15 @@ public class GatewayRefundService : IGatewayRefundService
 
         // สถานะเดินผ่านเครื่องสถานะตัวเดียวของระบบ (ที่เดียวที่เขียน PaymentIntent.Status) —
         // สะท้อนความจริงว่าเงินออกแล้ว แม้ลงบัญชีไม่สำเร็จ (ยอดคืนสะสม = 0 ⇒ ถูกแยกเป็น "ต้องตรวจมือ")
+        // เงินออกแล้ว ⇒ สถานะต้องถูกบันทึกแม้ผู้ใช้ยกเลิกคำขอ (ไม่งั้นสถานะยัง Succeeded แล้วกดคืนซ้ำได้) — ใช้ CancellationToken.None
         if (statusToApply is PaymentIntentStatus st)
         {
-            var intentNow = await _intents.FindAsync(companyId, intentId, ct);
+            var intentNow = await _intents.FindAsync(companyId, intentId, CancellationToken.None);
             if (intentNow != null)
                 await _intents.ApplyChargeAsync(intentId,
                     new ProviderCharge(intentNow.ProviderRef ?? string.Empty, st, "refunded", intentNow.Amount),
-                    PaymentEventSource.Manual, $"manual:{actor} · คืนเงิน {outcome.Amount:N2} ({refundRef})", ct);
+                    PaymentEventSource.Manual, $"manual:{actor} · คืนเงิน {outcome.Amount:N2} ({refundRef})",
+                    CancellationToken.None);
         }
 
         if (outcome.Ok)
@@ -186,10 +188,13 @@ public class GatewayRefundService : IGatewayRefundService
                     je.Id, je.EntryNumber, "", NextStepText),
                 newStatus, result.ProviderRefundRef);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or DbUpdateException)
+        catch (Exception ex)
         {
             // เงินออกไปแล้วจริง แต่ลงบัญชีไม่สำเร็จ — ห้ามกลืน: บันทึกประวัติ + สถานะจริง + ข้อความถึงผู้ใช้
-            await tx.RollbackAsync(ct);
+            // จับ**ทุก** exception (ไม่ใช่แค่ InvalidOperation/DbUpdate): เครือข่าย DB หลุด · คำขอถูกยกเลิก ฯลฯ หลังเงินออก
+            // ถ้าหลุดออกไป = ไม่มีประวัติ · สถานะยัง Succeeded · ยอดคืนสะสมไม่ขยับ ⇒ กดคืนซ้ำได้ = เงินออกสองรอบ ·
+            // งานเขียนกู้คืนใช้ CancellationToken.None — ผู้ใช้ปิดหน้าไม่ได้ทำให้เงินที่ออกไปแล้วหายจากบันทึก
+            await tx.RollbackAsync(CancellationToken.None);
             _db.ChangeTracker.Clear();
             _logger.LogError(ex, "คืนเงินที่ผู้ให้บริการสำเร็จแต่ลง JE ไม่สำเร็จ — intent {Intent} ยอด {Amount:N2} ref {Ref}",
                 intentId, check.Amount, result.ProviderRefundRef);
@@ -204,7 +209,7 @@ public class GatewayRefundService : IGatewayRefundService
                 Note = $"⚠️ คืนเงินที่ผู้ให้บริการสำเร็จ {check.Amount:N2} (อ้างอิง {result.ProviderRefundRef}) "
                      + $"แต่ลงบัญชีไม่สำเร็จ: {ex.Message} — ต้องบันทึกรายการบัญชีคืนเงินด้วยมือ",
             });
-            await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(CancellationToken.None);
             return new RefundStep(new GatewayRefundOutcome(false,
                     $"คืนเงินที่ผู้ให้บริการสำเร็จแล้ว ({check.Amount:N2} บาท · อ้างอิง {result.ProviderRefundRef}) "
                     + $"แต่ลงบัญชีไม่สำเร็จ: {ex.Message} — ห้ามกดคืนซ้ำ · ต้องบันทึกรายการบัญชีคืนเงิน "
