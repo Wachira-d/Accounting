@@ -3575,3 +3575,8 @@ _รอบ 198 ฝ่ายค้าน settlement ทีม E2 (`erp-review/202
   (`GatewayRefundMath.Verify` · Omise `refunded_amount`)
 - เทสต์ `GatewaySettlementReview198Tests` (22) · `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §2.6b · PAYMENT_GATEWAY_DESIGN §0/§4.5/บทเรียน 18 · TEST_PLAN
 — commit cbd50b37)_
+
+_รอบ 199 main — CI แดง `2599df78` (CS1519/CS1010): doc-comment ใน `OcrDocumentRoleInferrer` (ทีม K3) ยกข้อความหมายเหตุ Scommerce
+ที่มีขึ้นบรรทัดจริง ⇒ ครึ่งหลังหลุดเป็นโค้ด · แก้เป็น "⏎" · checker ใหม่ `tools/comment_line_break_check.py` (บรรทัดขึ้นต้นอักษรไทยต่อจาก
+บรรทัดคอมเมนต์ · `--self-test` + negative test กับไฟล์ที่พังจริงจับได้บรรทัด 766) — ไม่มี checker เดิมตัวไหนมองบรรทัดนี้
+— commit <pending>)_

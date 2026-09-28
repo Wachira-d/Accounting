@@ -595,6 +595,7 @@ python3 tools/write_permission_gate_check.py # endpoint ที่เขียน
 python3 tools/html_attr_escape_check.py # ข้อความอิสระเข้า attribute ไม่ผ่านตัวหนี → แตก attribute ยิงสคริปต์ได้
 python3 tools/escape_helper_check.py # ตัวหนี HTML ที่เขียนเองหนีไม่ครบ 5 ตัว → ปลอดภัยแค่ครึ่งเดียวแต่ดูเหมือนปลอดภัยแล้ว
 python3 tools/string_quote_close_check.py # CS1002 `"` ASCII ในสตริง**ธรรมดา** ปิดสตริงกลางคำ (verbatim_string_check ไม่ครอบ)
+python3 tools/comment_line_break_check.py # CS1519/CS1010 คอมเมนต์ `//`/`///` ถูกตัดบรรทัดกลางข้อความ (ยกข้อความกระดาษที่มีขึ้นบรรทัด) ⇒ ครึ่งหลังเป็นโค้ด (รอบ 199)
 python3 tools/onclick_js_string_check.py # esc() ใน JS string ของ onclick → เบราว์เซอร์ decode entity ก่อน JS อ่าน ⇒ ปิด string ได้อยู่ดี ทั้งหน้าตาย
 python3 tools/sequence_lock_check.py # ออกเลขรันเองด้วยการเรียงแบบข้อความ → ไม่มีล็อก และ "9999" ชนะ "10000" เลขวนกลับทับของเดิม
 python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่)
