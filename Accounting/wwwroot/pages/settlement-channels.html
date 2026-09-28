@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าช่องทางรับเงินผ่าน wallet - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px; margin-bottom:16px }
+    .card h3 { margin:0 0 4px; font-size:15px; font-weight:700; color:#0f172a }
+    .card .sub { margin:0 0 14px; font-size:12px; color:#64748b; line-height:1.6 }
+    .hint { font-size:11.5px; color:#64748b; line-height:1.6; margin-top:4px }
+    .fgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px 14px }
+    .fgrid label { font-size:12px; color:#475569; font-weight:600; display:block; margin-bottom:3px }
+    table.tbl { width:100%; border-collapse:collapse; font-size:12.5px }
+    table.tbl th, table.tbl td { padding:7px 9px; border-bottom:1px solid #eef2f7; text-align:left; vertical-align:top }
+    table.tbl th { background:#f8fafc; font-weight:600; color:#475569; font-size:11.5px }
+    .scroll-x { overflow-x:auto }
+    .banner { border-radius:10px; padding:11px 14px; font-size:12.5px; line-height:1.7; margin-bottom:12px }
+    .banner.bad { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b }
+    .banner.warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e }
+    .banner.info { background:#eff6ff; border:1px solid #93c5fd; color:#1e40af }
+    .locked { background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:8px 10px; font-size:12.5px; color:#334155 }
+    .locked .why { display:block; font-size:11.5px; color:#b45309; margin-top:3px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1080px;margin:0 auto;padding:20px">
+      <div style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
+        <div>
+          <h1 style="margin:0;font-size:24px;font-weight:700">⚙️ ช่องทางรับเงินผ่าน wallet</h1>
+          <p style="margin:4px 0 0;color:#64748b;font-size:14px;max-width:720px">
+            แพลตฟอร์มขายของ / ผู้ให้บริการรับชำระเงิน / เครื่องรูดบัตร <b>ถือเงินไว้ใน wallet ก่อนโอนเข้าธนาคาร</b> —
+            แต่ละช่องทางมีผังพักของตัวเอง (11341–11349) และกติกาภาษีของค่าธรรมเนียมที่ใช้กับทุกรอบโอน
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a class="btn btn-secondary" href="/pages/settlements.html">🏦 รอบโอนเงิน</a>
+          <button class="btn btn-primary" onclick="Page.startNew()">➕ เพิ่มช่องทาง</button>
+        </div>
+      </div>
+      <div id="listBox"><div class="card">กำลังโหลด…</div></div>
+      <div id="formBox"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // ตั้งค่าช่องทาง settlement (รอบ 198 เฟส 1 ทีม D · ISettlementChannelService)
+    //
+    // กติกาที่หน้านี้ต้องรักษา:
+    //  • ป้ายทุกชุด (ชนิด · โหมด VAT/หัก ณ ที่จ่าย · บทบาทผังค่าธรรมเนียม) มาจาก GET settlement/reference — ไม่มีตารางป้ายในไฟล์นี้
+    //  • คำเตือน (เช่น นิติบุคคลที่ไม่หัก ณ ที่จ่ายค่าธรรมเนียม) มาจากเซิร์ฟเวอร์ใน view ของช่องทาง — หน้าเว็บแสดงอย่างเดียว
+    //  • ห้าม silent no-op: มีรอบโอนแล้ว (hasBatches) ⇒ ชนิด/gateway/ผังพัก ถูกล็อกพร้อมเหตุผล (เซิร์ฟเวอร์ตีกลับถ้าส่งค่าต่าง)
+    //  • แก้ไขต้องส่งค่าที่ hydrate กลับครบ (ผู้ติดต่อ · reserve/dispute · ผังค่าธรรมเนียม ถูกแทนที่ทุกครั้งที่บันทึก)
+    const Page = {
+      ref: null,
+      channels: [],
+      accounts: [],
+      assetAccounts: [],
+      editing: null,
+      contactPicker: null,
+
+      async init() {
+        await Layout.init();
+        if (!Layout.getCompanyId()) {
+          document.getElementById('listBox').innerHTML = '<div class="card">กรุณาเลือกบริษัทก่อน</div>';
+          return;
+        }
+        await this.load();
+        const want = new URLSearchParams(window.location.search).get('id');
+        if (want) {
+          const i = this.channels.findIndex(c => c.id === want);
+          if (i >= 0) this.edit(i);
+        }
+      },
+
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const [refRes, chRes, accRes, assetRes] = await Promise.all([
+            api.settlementReference(),
+            api.listSettlementChannels(true),
+            api.getAccounts(),
+            api.getAccounts('?type=Asset'),
+          ]);
+          this.ref = refRes?.data || null;
+          this.channels = chRes?.data || [];
+          this.accounts = (accRes?.data || []).filter(a => a.isActive !== false);
+          this.assetAccounts = (assetRes?.data || []).filter(a => a.isActive !== false);
+          this.renderList();
+        } catch (e) {
+          document.getElementById('listBox').innerHTML =
+            `<div class="card banner bad">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+
+      label(list, value) {
+        const o = (list || []).find(x => x.value === value);
+        return o ? o.label : (value == null ? '-' : String(value));
+      },
+
+      renderList() {
+        const c = this.ref?.catalog || {};
+        const box = document.getElementById('listBox');
+        if (!this.channels.length) {
+          box.innerHTML = `<div class="card"><div class="banner info">ยังไม่มีช่องทาง — กด <b>"เพิ่มช่องทาง"</b> เพื่อเริ่ม
+            (เช่น ร้านบน marketplace · gateway รับบัตร/QR · เครื่องรูดบัตรของธนาคาร)</div></div>`;
+          return;
+        }
+        box.innerHTML = `<div class="card"><div class="scroll-x"><table class="tbl">
+          <thead><tr><th>ช่องทาง</th><th>ชนิด</th><th>ผู้ติดต่อแพลตฟอร์ม</th><th>ผังพัก</th>
+            <th>VAT ค่าธรรมเนียม</th><th>หัก ณ ที่จ่าย</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          ${this.channels.map((ch, i) => `<tr>
+            <td><b>${Layout.esc(ch.displayName)}</b>
+              ${(ch.warnings || []).length ? `<div class="hint" style="color:#b45309">⚠️ ${(ch.warnings || []).length} ข้อควรตรวจ</div>` : ''}</td>
+            <td>${Layout.esc(this.label(c.channelKinds, ch.kind))}</td>
+            <td>${ch.counterpartyName ? Layout.esc(ch.counterpartyName) : '<span style="color:#b45309">ยังไม่เลือก</span>'}</td>
+            <td>${ch.clearingAccountCode ? Layout.esc(ch.clearingAccountCode + ' ' + (ch.clearingAccountName || '')) : '-'}</td>
+            <td>${Layout.esc(this.label(c.feeVatModes, ch.feeVatMode))}</td>
+            <td>${Layout.esc(this.label(c.feeWhtModes, ch.feeWhtMode))}</td>
+            <td>${ch.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray">ปิด</span>'}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm btn-secondary" onclick="Page.edit(${i})">แก้ไข</button>
+              <a class="btn btn-sm btn-secondary" href="/pages/settlements.html?channel=${Layout.esc(encodeURIComponent(ch.id))}">รอบโอน</a>
+            </td>
+          </tr>`).join('')}
+          </tbody></table></div></div>`;
+      },
+
+      options(list, selected) {
+        return (list || []).map(o => `<option value="${Layout.esc(o.value)}" ${o.value === selected ? 'selected' : ''}>${Layout.esc(o.label)}</option>`).join('');
+      },
+
+      accountOptions(list, selected, blankLabel) {
+        return `<option value="">${Layout.esc(blankLabel)}</option>` + list.map(a =>
+          `<option value="${Layout.esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}</option>`).join('');
+      },
+
+      startNew() { this.editing = null; this.renderForm(null); },
+
+      edit(i) { this.editing = this.channels[i] || null; this.renderForm(this.editing); },
+
+      renderForm(ch) {
+        const c = this.ref?.catalog || {};
+        const locked = !!ch?.hasBatches;
+        const lockWhy = 'ช่องทางนี้มีรอบโอนแล้ว — แก้ไม่ได้ เพราะยอดพักและรายการเดิมผูกอยู่กับค่าเดิม (สร้างช่องทางใหม่แทน หรือยกเลิกรอบโอนทั้งหมดของช่องทางนี้ก่อน)';
+        let feeMap = {};
+        try { feeMap = ch?.feeAccountMapJson ? (JSON.parse(ch.feeAccountMapJson) || {}) : {}; } catch { feeMap = {}; }
+        const gateways = this.ref?.gatewayConfigs || [];
+        const kindSel = locked
+          ? `<div class="locked">${Layout.esc(this.label(c.channelKinds, ch.kind))}<span class="why">${Layout.esc(lockWhy)}</span></div>
+             <input type="hidden" id="fKind" value="${Layout.esc(ch.kind)}">`
+          : `<select class="form-select" id="fKind" onchange="Page.onKindChange()">${this.options(c.channelKinds, ch?.kind || 'Marketplace')}</select>`;
+        const gwCurrent = ch?.paymentProviderConfigId || '';
+        const gwLabel = (gateways.find(g => g.id === gwCurrent) || {}).label || '(ไม่ผูก)';
+        const gwSel = locked
+          ? `<div class="locked">${Layout.esc(gwLabel)}<span class="why">${Layout.esc(lockWhy)}</span></div>
+             <input type="hidden" id="fGateway" value="${Layout.esc(gwCurrent)}">`
+          : `<select class="form-select" id="fGateway"><option value="">(ไม่ผูก)</option>
+              ${gateways.map(g => `<option value="${Layout.esc(g.id)}" ${g.id === gwCurrent ? 'selected' : ''}>${Layout.esc(g.label)}</option>`).join('')}</select>`;
+        const clearingText = ch?.clearingAccountCode ? `${ch.clearingAccountCode} ${ch.clearingAccountName || ''}` : '';
+        const clearing = locked
+          ? `<div class="locked">${Layout.esc(clearingText || '-')}<span class="why">${Layout.esc(lockWhy)}</span></div>`
+          : `<select class="form-select" id="fClearing">${this.accountOptions(this.assetAccounts, ch?.clearingAccountId || '',
+               ch ? '(คงผังเดิม)' : '(ให้ระบบสร้างผังพัก 11341–11349 ให้)')}</select>
+             <div class="hint">เว้นว่างได้ — ระบบสร้างผังพักแยกต่อช่องทางให้ · ช่องทาง gateway ที่ผูกการตั้งค่าไว้ใช้ผังพักของ gateway นั้นเสมอ
+               · <b>ผังพักล็อกทันทีที่มีรอบโอนรอบแรก</b></div>`;
+
+        document.getElementById('formBox').innerHTML = `
+          <div class="card" id="channelForm">
+            <h3>${ch ? 'แก้ไขช่องทาง' : 'เพิ่มช่องทาง'}</h3>
+            <p class="sub">ค่าที่ตั้งที่นี่ใช้กับทุกรอบโอนถัดไปของช่องทางนี้ — ตรวจโหมดภาษีของค่าธรรมเนียมกับนักบัญชีก่อนลงบัญชีรอบแรก</p>
+            ${(ch?.warnings || []).map(w => `<div class="banner warn">⚠️ ${Layout.esc(w)}</div>`).join('')}
+            <div class="fgrid">
+              <div><label>ชื่อช่องทาง</label><input class="form-input" id="fName" maxlength="200" value="${Layout.esc(ch?.displayName || '')}" placeholder="เช่น ร้านหลักบน marketplace"></div>
+              <div><label>ชนิด</label>${kindSel}</div>
+              <div style="position:relative"><label>ผู้ติดต่อของแพลตฟอร์ม (ผู้ออกใบกำกับค่าธรรมเนียม)</label>
+                <input class="form-input" id="fContactName"><input type="hidden" id="fContactId">
+                <div class="hint">ใช้เป็นผู้ขายของใบค่าธรรมเนียม และผู้รับเงินใน 50 ทวิ — ต้องมีเลขผู้เสียภาษี</div></div>
+              <div id="gwWrap"><label>การตั้งค่า gateway ที่ผูก (เฉพาะชนิด Payment gateway)</label>${gwSel}</div>
+              <div><label>ผังพัก (wallet)</label>${clearing}</div>
+              <div><label>ผังเงินที่ถูกกันไว้ (reserve)</label>
+                <select class="form-select" id="fReserve">${this.accountOptions(this.assetAccounts, ch?.reserveAccountId || '', '(ผังมาตรฐาน)')}</select></div>
+              <div><label>ผังพัก chargeback</label>
+                <select class="form-select" id="fDispute">${this.accountOptions(this.assetAccounts, ch?.disputeAccountId || '', '(ผังมาตรฐาน)')}</select></div>
+              <div><label>VAT บนค่าธรรมเนียม</label><select class="form-select" id="fVat" onchange="Page.showModeHint()">${this.options(c.feeVatModes, ch?.feeVatMode || 'ThaiVat7')}</select></div>
+              <div><label>หัก ณ ที่จ่ายบนค่าธรรมเนียม</label><select class="form-select" id="fWht" onchange="Page.showModeHint()">${this.options(c.feeWhtModes, ch?.feeWhtMode || 'None')}</select></div>
+              <div><label>วิธีรับรู้รายได้</label><select class="form-select" id="fRevenue" onchange="Page.showModeHint()">${this.options(c.revenueModels, ch?.revenueModel || 'GrossWithFees')}</select></div>
+              <div><label>สกุลเงิน</label><input class="form-input" id="fCurrency" maxlength="3" value="${Layout.esc(ch?.currency || 'THB')}"></div>
+              <div><label>สถานะ</label><label style="font-weight:500"><input type="checkbox" id="fActive" ${ch && !ch.isActive ? '' : 'checked'}> ใช้งาน</label></div>
+            </div>
+            <div id="modeHint" class="hint" style="margin-top:8px"></div>
+
+            <h3 style="margin-top:18px">ผังค่าธรรมเนียม</h3>
+            <p class="sub">เว้นว่าง = ใช้ผังมาตรฐานที่แสดงในวงเล็บ · ใบค่าธรรมเนียมเป็นเอกสารซื้อ 1 ใบต่อกลุ่มภาษีต่อรอบโอน</p>
+            <div class="fgrid">
+              ${(c.feeRoles || []).map(r => `<div><label>${Layout.esc(r.label)}</label>
+                <select class="form-select" data-fee-role="${Layout.esc(r.role)}">${this.accountOptions(this.accounts, feeMap[r.role] || '',
+                  r.defaultAccountCode ? '(ผังมาตรฐาน ' + r.defaultAccountCode + ')' : '(ผังมาตรฐาน)')}</select></div>`).join('')}
+            </div>
+
+            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="Page.save()">💾 บันทึกช่องทาง</button>
+              <button class="btn btn-secondary" onclick="Page.cancel()">ยกเลิก</button>
+            </div>
+          </div>`;
+
+        this.contactPicker = Layout.contactAutocomplete('fContactName', 'fContactId', { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของแพลตฟอร์ม…' });
+        if (this.contactPicker) this.contactPicker.setValue(ch?.counterpartyContactId || '', ch?.counterpartyName || '');
+        this.onKindChange();
+        this.showModeHint();
+        document.getElementById('channelForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+
+      // ช่อง gateway ใช้ได้เฉพาะชนิด Gateway (เซิร์ฟเวอร์ตีกลับชนิดอื่น) — ซ่อนแทนการปล่อยให้เลือกแล้วโดนตีกลับ
+      onKindChange() {
+        const kind = document.getElementById('fKind')?.value;
+        const wrap = document.getElementById('gwWrap');
+        if (wrap) wrap.style.display = kind === 'Gateway' ? '' : 'none';
+      },
+
+      // คำอธิบายของโหมดที่เลือก — ข้อความจากข้อมูลอ้างอิงของเซิร์ฟเวอร์
+      showModeHint() {
+        const c = this.ref?.catalog || {};
+        const pick = (list, id) => (list || []).find(o => o.value === document.getElementById(id)?.value);
+        const parts = [pick(c.feeVatModes, 'fVat'), pick(c.feeWhtModes, 'fWht'), pick(c.revenueModels, 'fRevenue')]
+          .filter(o => o && o.description).map(o => `${Layout.esc(o.label)}: ${Layout.esc(o.description)}`);
+        const el = document.getElementById('modeHint');
+        if (el) el.innerHTML = parts.join('<br>');
+      },
+
+      cancel() { this.editing = null; document.getElementById('formBox').innerHTML = ''; },
+
+      payload() {
+        const val = (id) => (document.getElementById(id)?.value || '').trim();
+        const feeMap = {};
+        document.querySelectorAll('[data-fee-role]').forEach(sel => { if (sel.value) feeMap[sel.dataset.feeRole] = sel.value; });
+        const ch = this.editing;
+        const kind = val('fKind');
+        return {
+          kind,
+          displayName: val('fName'),
+          // ตัวอ่านไฟล์/การจับคู่คอลัมน์ไม่แก้ที่หน้านี้ — ส่งค่าเดิมกลับ (null = คงเดิม · การจับคู่จำจากหน้านำเข้า)
+          adapterCode: ch?.adapterCode || null,
+          columnMapJson: null,
+          counterpartyContactId: val('fContactId') || null,
+          paymentProviderConfigId: kind === 'Gateway' ? (val('fGateway') || null) : null,
+          // ล็อกแล้ว = ส่ง null (เซิร์ฟเวอร์คงผังเดิม) · สร้างใหม่ว่าง = ให้ระบบสร้าง 1134x
+          clearingAccountId: document.getElementById('fClearing') ? (val('fClearing') || null) : null,
+          reserveAccountId: val('fReserve') || null,
+          disputeAccountId: val('fDispute') || null,
+          feeAccountMapJson: Object.keys(feeMap).length ? JSON.stringify(feeMap) : null,
+          feeVatMode: val('fVat'),
+          feeWhtMode: val('fWht'),
+          revenueModel: val('fRevenue'),
+          currency: val('fCurrency') || null,
+          isActive: !!document.getElementById('fActive')?.checked,
+        };
+      },
+
+      async save() {
+        const api = Layout.api(); if (!api) return;
+        const body = this.payload();
+        if (!body.displayName) { Layout.toast('ระบุชื่อช่องทาง', 'error'); return; }
+        try {
+          const res = this.editing
+            ? await api.updateSettlementChannel(this.editing.id, body)
+            : await api.createSettlementChannel(body);
+          const saved = res?.data;
+          Layout.toast(res?.message || 'บันทึกแล้ว');
+          await this.load();
+          const i = saved ? this.channels.findIndex(c => c.id === saved.id) : -1;
+          if (i >= 0) this.edit(i); else this.cancel();
+        } catch (e) {
+          Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+        }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

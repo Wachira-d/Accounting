@@ -3580,3 +3580,14 @@ _รอบ 199 main — CI แดง `2599df78` (CS1519/CS1010): doc-comment ใ
 ที่มีขึ้นบรรทัดจริง ⇒ ครึ่งหลังหลุดเป็นโค้ด · แก้เป็น "⏎" · checker ใหม่ `tools/comment_line_break_check.py` (บรรทัดขึ้นต้นอักษรไทยต่อจาก
 บรรทัดคอมเมนต์ · `--self-test` + negative test กับไฟล์ที่พังจริงจับได้บรรทัด 766) — ไม่มี checker เดิมตัวไหนมองบรรทัดนี้
 — commit <pending>)_
+
+_รอบ 198 เฟส 1 ทีม D — settlement: ทางเข้า HTTP + หน้าจอ (§2.10 · ACCOUNT_STRUCTURE §3.1d 🔨→✅) · service ทีม B/C ไม่ตรวจสิทธิ์โดยสัญญา ⇒
+`Controllers/SettlementController.cs` (route `api/companies/{companyId}/settlement/…` · 20 endpoint) ถือด่านทั้งหมดจากตารางเดียว
+`Helpers/SettlementPermissionScope` (คีย์ใหม่ `Settlement.View/Import/Post/Channels` · อยู่ในชุดอัตโนมัติของนักบัญชี + template "Accountant") ·
+ลงบัญชี/ยกเลิกการลงบัญชี/ยกเลิกรอบ/จับคู่ธนาคาร/chargeback/ตั้งค่าช่องทาง ห้ามคีย์ API · `Ok=false` = 409 พร้อมแผน (ไม่ใช่ 200 ว่าง) ·
+path ไม่มี `/bank` (กัน RouteFeatureMap จับแพ็กเกจผิด) · ไฟล์ต้นฉบับ `AttachmentPermissionScope["SettlementBatch"]` เปลี่ยนจาก `Bank.Reconcile`
+ชั่วคราวเป็นอ่าน Import/Post · ลบ Import · helper pure ใหม่ `SettlementReferenceCatalog` (ป้ายไทยทุก enum — หน้าเว็บไม่มีตารางป้าย) ·
+`SettlementBatchActions` (ปุ่มตามสถานะ = ด่านเดียวกับ service) · `SettlementBankCandidates` (ผู้สมัครเงินเข้า ตัดสินด้วย `SettlementBankMatch.Check`) ·
+หน้า `settlements.html` + `settlement-channels.html` + api.js 20 เมธอด +
+เมนู · เทสต์ `SettlementControllerContractTests` + `tools/settlement_import_form_sim.js` (โค้ดจริงของหน้า + negative test) · WATCHED + owner_action_wiring 14 แถว ·
+ผู้สมัครเงินเข้า (รายการเดินบัญชีจริง) ต้อง `Settlement.Post` ไม่ใช่ View — commit <pending>)_

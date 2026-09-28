@@ -31,6 +31,9 @@ public class PermissionService : IPermissionService
         PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational, PermissionKeys.ReportsExport,
         PermissionKeys.TaxFile, PermissionKeys.TaxExport,
         PermissionKeys.BankView, PermissionKeys.BankReconcile, PermissionKeys.BankPaymentInit,
+        // settlement (รอบ 198 ทีม D) — งานกระทบยอดเงินจากแพลตฟอร์มคืองานนักบัญชีเหมือนธนาคาร
+        PermissionKeys.SettlementView, PermissionKeys.SettlementImport, PermissionKeys.SettlementPost,
+        PermissionKeys.SettlementChannels,
         PermissionKeys.JournalManage,
         PermissionKeys.ChartOfAccountsEdit, PermissionKeys.ContactEdit, PermissionKeys.ProductEdit,
         PermissionKeys.AccountingView, PermissionKeys.SensitiveDocsView,

@@ -138,6 +138,15 @@ public static class PermissionKeys
     public const string BankReconcile     = P + "Bank.Reconcile";
     public const string BankPaymentInit   = P + "Bank.PaymentInit";   // initiate outgoing transfer
 
+    // ───── Settlement (wallet ของ gateway/marketplace → ธนาคาร · รอบ 198 เฟส 1 ทีม D) ─────
+    // ระดับสิทธิ์เลือกจาก **ผลกระทบ** (แบบเดียวกับ Asset.*): ดู = อ่านรอบโอน/พรีวิว · นำเข้า = สร้าง/แก้รอบที่ยังไม่ลงบัญชี
+    // (ไม่แตะ GL) · ลงบัญชี = สร้างเอกสาร/JE/50 ทวิ + จับคู่ธนาคาร (ขยับ GL) · ช่องทาง = ตั้งผังพัก/โหมด VAT-WHT ของค่าธรรมเนียม
+    // (กำหนดภาษีของทุกรอบโอนถัดไป) — ตารางใช้งานอยู่ที่ Helpers/SettlementPermissionScope
+    public const string SettlementView     = P + "Settlement.View";
+    public const string SettlementImport   = P + "Settlement.Import";
+    public const string SettlementPost     = P + "Settlement.Post";
+    public const string SettlementChannels = P + "Settlement.Channels";
+
     // ───── Reporting ─────
     public const string ReportsDashboard  = P + "Reports.Dashboard";   // หน้าแดชบอร์ดภาพรวม + executive-reports + fpa + financial-mgmt
     public const string ReportsExecutive  = P + "Reports.Executive";   // executive / FP&A
@@ -261,6 +270,10 @@ public static class PermissionKeys
         new(BankView,         "ธนาคาร",  "ดูบัญชีธนาคาร",            "ยอดคงเหลือ · transactions"),
         new(BankReconcile,    "ธนาคาร",  "กระทบยอดบัญชี",            "match statement กับเอกสาร"),
         new(BankPaymentInit,  "ธนาคาร",  "สั่งโอนเงิน",              "initiate transfer (open banking)"),
+        new(SettlementView,     "ธนาคาร", "ดูรอบโอนจากแพลตฟอร์ม",        "รอบโอน settlement · บรรทัด · พรีวิวการลงบัญชี"),
+        new(SettlementImport,   "ธนาคาร", "นำเข้า/แก้รอบโอนจากแพลตฟอร์ม", "นำเข้าไฟล์ settlement · จัดประเภท · จับคู่ใบขาย · ยกเลิกรอบที่ยังไม่ลงบัญชี"),
+        new(SettlementPost,     "ธนาคาร", "ลงบัญชีรอบโอนจากแพลตฟอร์ม",   "สร้างใบค่าธรรมเนียม/ใบขายสรุป/JE · ยกเลิกการลงบัญชี · จับคู่เงินเข้าธนาคาร · ปิด chargeback"),
+        new(SettlementChannels, "ธนาคาร", "ตั้งค่าช่องทาง wallet",          "ผังพัก · ผู้ติดต่อแพลตฟอร์ม · โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียม"),
 
         // Reports
         new(ReportsDashboard,  "รายงาน","ดูแดชบอร์ดภาพรวม",         "หน้าแรก · financial overview · FP&A · executive reports"),
