@@ -1,0 +1,2697 @@
+From 11ed3e32eb8a2781ce98b9934f850c853580a3cf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 16:30:15 +0000
+Subject: [PATCH] =?UTF-8?q?=E0=B8=A3=E0=B8=AD=E0=B8=9A=20198=20=E0=B9=80?=
+ =?UTF-8?q?=E0=B8=9F=E0=B8=AA=201=20=E0=B8=97=E0=B8=B5=E0=B8=A1=20A:=20?=
+ =?UTF-8?q?=E0=B8=AA=E0=B8=B1=E0=B8=8D=E0=B8=8D=E0=B8=B2=20settlement=20(w?=
+ =?UTF-8?q?allet=20=E2=86=92=20=E0=B8=98=E0=B8=99=E0=B8=B2=E0=B8=84?=
+ =?UTF-8?q?=E0=B8=B2=E0=B8=A3)=20=E2=80=94=20enum=20=C2=B7=20entity=20?=
+ =?UTF-8?q?=C2=B7=20migration=20=C2=B7=20=E0=B8=9C=E0=B8=B1=E0=B8=87=20?=
+ =?UTF-8?q?=C2=B7=20=E0=B8=84=E0=B8=93=E0=B8=B4=E0=B8=95=E0=B8=A5=E0=B8=87?=
+ =?UTF-8?q?=E0=B8=9A=E0=B8=B1=E0=B8=8D=E0=B8=8A=E0=B8=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ทำไม: ลูกค้าที่ขายผ่าน gateway/marketplace มีเงินพักใน wallet ก่อนโอนเข้าบัญชีหลังหักค่าธรรมเนียม แต่ระบบวันนี้มีแค่
+เส้น gateway ของเราเอง (ค่าธรรมเนียมรวม VAT ลงค่าใช้จ่ายทั้งก้อน · ฐาน WHT รวม VAT) และไม่มีอะไรรองรับ marketplace
+(report-S2 §0) · ทีม B/C/D ต้องมี "สัญญา" ชุดเดียวก่อนเริ่ม ไม่งั้นได้ตรรกะภาษี/ผังสามสำเนา
+
+- enum SettlementEnums.cs (persist ตัวเลข · API ชื่อ) · entity Settlement.cs (Channel/Batch/Line) · PaymentIntent.SettlementBatchId
+  (ไม่แตะ RefundedAmount ของทีม E) · DbSet + filter + unique PayoutRef/ExternalTxnId ต่อช่องทาง
+- migration บล็อกเดียวในเส้นหลักที่ log ความล้มเหลว · เทสต์ล็อกชื่อ/เงื่อนไข index ให้ตรง model EF
+- ผัง 11350/53170/57140 (template + migration บริษัทเดิม ON CONFLICT DO NOTHING ไม่ย้ายยอด) · 11341–11349 ไม่ seed —
+  สร้างตอนผูกช่องทาง (DECISIONS ข้อ 4) ผ่าน SettlementChannelAccounts ตัวเดียว
+- SettlementLineTypeRules (ตารางเดียว 19 ประเภท) · SettlementFeeTax (ฐาน WHT ก่อน VAT · 3/97 · ไม่จด VAT ไม่มีขาภาษีซื้อ) ·
+  SettlementBatchMath.Plan (สมการ batch ±0.01 · ปัญหาพร้อมทางไปต่อ · ใบขายสรุปรายวันสำหรับบรรทัดที่จับคู่ไม่ได้ DECISIONS ข้อ 2–3)
+- AiFeatureKey.SettlementLineClassify = 57 + GenericFeedbackDistillationModel · checker settlement_line_type_rules_check (+self-test)
+
+F3:
+7. สัญลักษณ์ใหม่ทั้งหมด · ชื่อชนกับ SettlementPlan/SettlementLineRole/SettlementJournalLine เดิมของ GatewaySettlementMath
+   ตรวจแล้ว 0 จุด (ตั้งชื่อใหม่ SettlementPostingPlan/SettlementAccountRoles/SettlementJournalLinePlan)
+8. ทางเข้า: ยังไม่มีผู้เรียก (ทีม B นำเข้า · C ลงบัญชี · D หน้าจอ) — ทุกทางเข้าต้องผ่าน Plan ตัวเดียว · gateway เดิมยังเดิน
+   GatewaySettlementMath จนเฟส 2
+9. เข้มขึ้น: Unclassified/ไม่ลงตัว/คืนเงินไม่รู้ใบเดิม/ยังไม่ผูกผังพัก บล็อก — ทุกข้อมี NextStep · เทสต์ทิศตรงข้าม
+   "ทิศตรงข้าม_batchที่ลงตัว_ไม่มีบรรทัดปรับ..." · "ไม่ลงตัว_บล็อก...แล้วบรรทัดปรับ...ทำให้ผ่าน"
+10. ไม่มีข้อมูลเดิม (ตารางใหม่) · ผังเพิ่มอย่างเดียว · ไม่ซ่อม JE เก่า (DECISIONS ข้อ 11 รอเจ้าของ)
+11. แตะเงิน/ภาษี — ยังไม่ได้ส่งฝ่ายค้าน (main agent รวมกับ B/C ก่อน push)
+12. DOCUMENT_FLOW §2.10 + ตาราง AI §6.4 · ACCOUNT_STRUCTURE §3.1d · TEST_PLAN §0 · CHANGELOG
+ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) · dead_helper ฟ้อง 4 ตัว (Plan-side entry points รอทีม B/C/D ต่อสาย)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LNdHNkcNxcTEjiEWukA3FS
+---
+ ACCOUNT_STRUCTURE.md                          |  12 +
+ Accounting.Tests/SettlementBatchMathTests.cs  | 428 +++++++++++++++
+ .../SettlementRulesAndSchemaTests.cs          | 239 ++++++++
+ Accounting/Data/AccountingDbContext.cs        |  47 ++
+ Accounting/Data/DatabaseMigrationHelper.cs    |  34 +-
+ Accounting/Helpers/SettlementBatchMath.cs     | 511 ++++++++++++++++++
+ .../Helpers/SettlementChannelAccounts.cs      | 175 ++++++
+ Accounting/Helpers/SettlementChartSeed.cs     |  51 ++
+ Accounting/Helpers/SettlementFeeTax.cs        | 159 ++++++
+ Accounting/Helpers/SettlementLineTypeRules.cs | 228 ++++++++
+ Accounting/Models/Entities/Payments.cs        |   3 +
+ Accounting/Models/Entities/Settlement.cs      | 134 +++++
+ Accounting/Models/Enums/AllEnums.cs           |  12 +
+ Accounting/Models/Enums/SettlementEnums.cs    | 162 ++++++
+ Accounting/Program.cs                         |   2 +
+ .../Services/ChartOfAccountTemplates.cs       |  10 +
+ CHANGELOG.md                                  |  14 +
+ DOCUMENT_FLOW.md                              |  44 +-
+ TEST_PLAN.md                                  |   2 +-
+ tools/check_all.sh                            |   2 +-
+ tools/settlement_line_type_rules_check.py     | 125 +++++
+ 21 files changed, 2390 insertions(+), 4 deletions(-)
+ create mode 100644 Accounting.Tests/SettlementBatchMathTests.cs
+ create mode 100644 Accounting.Tests/SettlementRulesAndSchemaTests.cs
+ create mode 100644 Accounting/Helpers/SettlementBatchMath.cs
+ create mode 100644 Accounting/Helpers/SettlementChannelAccounts.cs
+ create mode 100644 Accounting/Helpers/SettlementChartSeed.cs
+ create mode 100644 Accounting/Helpers/SettlementFeeTax.cs
+ create mode 100644 Accounting/Helpers/SettlementLineTypeRules.cs
+ create mode 100644 Accounting/Models/Entities/Settlement.cs
+ create mode 100644 Accounting/Models/Enums/SettlementEnums.cs
+ create mode 100644 tools/settlement_line_type_rules_check.py
+
+diff --git a/ACCOUNT_STRUCTURE.md b/ACCOUNT_STRUCTURE.md
+index 866e660b..cd9c7027 100644
+--- a/ACCOUNT_STRUCTURE.md
++++ b/ACCOUNT_STRUCTURE.md
+@@ -166,6 +166,16 @@ subscription เดิมโดยสิ้นเชิง — โควตา
+ **อัตรา VAT รายบรรทัดของ integration** (สัญญา — `INTEGRATION_RESYNC.md` §11): `null` = ตามบริษัท · `7` · **`0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 · ห้ามส่ง 0 แทนยกเว้น)** ·
+ **`-1` = ยกเว้น §81 (ไม่ใช่ใบกำกับ)** · อัตรา ≤ 0 ⇒ VAT 0 (`DocumentLineVatConvention.SplitLine`) · ใบ 0% เดิมที่ธงบอกไม่ใช่ใบกำกับ → รายงาน `zero-rated-tax-invoices`
+ 
++### 3.1d ช่องทางรับเงินผ่าน wallet (Settlement) 🔨 รอบ 198 — ชั้น Company → SettlementChannel → SettlementBatch → SettlementLine
++
++| Entity / ผัง | ไฟล์ | สถานะ |
++| --- | --- | --- |
++| `SettlementChannel` (ต่อบริษัท · 1 แถว/แพลตฟอร์ม/บัญชีร้าน) | `Models/Entities/Settlement.cs` | ✅ ตาราง+migration · ผังพัก `ClearingAccountId` · reserve/dispute · `FeeAccountMapJson` (คีย์ = `SettlementAccountRoles.Mappable` · อ่านด้วย `SettlementLineTypeRules.ParseFeeAccountMap`) · โหมด VAT/WHT/รายได้ ต่อช่องทาง · 🔨 หน้าตั้งค่า (ทีม D) |
++| `SettlementBatch` / `SettlementLine` | `Models/Entities/Settlement.cs` | ✅ ตาราง · unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง (WHERE IsDeleted = false — ยกเลิกแล้วนำเข้าใหม่ต้องลบแถวเดิม) · 🔨 นำเข้า (ทีม B) · ลงบัญชี (ทีม C) |
++| `PaymentIntent.SettlementBatchId` | `Models/Entities/Payments.cs` | ✅ คอลัมน์ · 🔨 ผู้เขียน (เฟส 2) |
++| ผังพักย่อยต่อช่องทาง **11341–11349** "ลูกหนี้แพลตฟอร์ม {ชื่อ}" | `Helpers/SettlementChannelAccounts.cs` | ✅ helper (DECISIONS ข้อ 4) · ไม่ seed · สร้างตอนผูกช่องทาง · gateway ในระบบใช้ 11340 ของ `PaymentProviderConfig` · ครบ 9 ⇒ ล้มดัง |
++| ผังมาตรฐานใหม่ 11350 · 53170 · 57140 | `Services/ChartOfAccountTemplates.cs` · `Helpers/SettlementChartSeed.cs` | ✅ บริษัทใหม่ได้จาก seed · บริษัทเดิมได้จาก migration (มีกลุ่มแม่ 113/531/571 เท่านั้น · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) |
++
+ ### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
+ 
+ - `LodgingProperty` (`Models/Entities/Lodging.cs`) = "ที่พัก 1 แห่ง" ถือการตั้งค่าทั้งหมด (เวลาเข้า-ออก · กติกาจอง ·
+@@ -789,6 +799,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
+ 
+ ---
+ 
++_Last verified against codebase: 2026-09-25 (rev 30 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
++
+ _Last verified against codebase: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
+ _สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_
+ _หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit <pending>)_
+diff --git a/Accounting.Tests/SettlementBatchMathTests.cs b/Accounting.Tests/SettlementBatchMathTests.cs
+new file mode 100644
+index 00000000..0d4e9207
+--- /dev/null
++++ b/Accounting.Tests/SettlementBatchMathTests.cs
+@@ -0,0 +1,428 @@
++using Accounting.Helpers;
++using Accounting.Models.Entities;
++using Accounting.Models.Enums;
++using Xunit;
++
++namespace Accounting.Tests;
++
++/// <summary>
++/// รอบ 198 เฟส 1 ทีม A — แผนลงบัญชีรอบโอน settlement (Helpers/SettlementBatchMath) · ตัวเลข golden จาก
++/// erp-review/2026-09-25/settlement/report-S1.md §2 (gateway 1,070 · ค่าธรรมเนียม 39.06+2.73 · โอน 1,028.21) และ §3
++/// (marketplace 963 · โค้ดแพลตฟอร์ม 100 · ค่าธรรมเนียม 67.41+4.72) · สองครึ่ง: ใบที่ต้องถูกบล็อก/ติดป้าย และใบที่ถูกอยู่แล้ว
++/// ต้องไม่ถูกแตะ (ลงตัว ⇒ ไม่มีบรรทัดปรับ · ไม่มีปัญหาที่บล็อก)
++/// </summary>
++public class SettlementBatchMathTests
++{
++    private static readonly Guid Co = Guid.Parse("11111111-1111-1111-1111-111111111111");
++    private static readonly Guid Clearing = Guid.Parse("22222222-2222-2222-2222-222222222222");
++    private static readonly Guid Bank = Guid.Parse("33333333-3333-3333-3333-333333333333");
++    private static readonly Guid DocA = Guid.Parse("44444444-4444-4444-4444-444444444444");
++    private static readonly Guid DocB = Guid.Parse("55555555-5555-5555-5555-555555555555");
++    private static readonly DateTime Day = new(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc);
++
++    private static SettlementChannel Channel(SettlementChannelKind kind = SettlementChannelKind.Gateway,
++        SettlementFeeVatMode vat = SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode wht = SettlementFeeWhtMode.None)
++        => new()
++        {
++            CompanyId = Co, Kind = kind, DisplayName = kind == SettlementChannelKind.Gateway ? "Omise" : "Shopee ร้านหลัก",
++            ClearingAccountId = Clearing, FeeVatMode = vat, FeeWhtMode = wht,
++        };
++
++    private static SettlementBatch Batch(decimal netPayout, decimal opening = 0m, decimal closing = 0m, bool bank = true)
++        => new()
++        {
++            CompanyId = Co, PayoutRef = "PO-001", PayoutDate = Day, NetPayout = netPayout,
++            OpeningWalletBalance = opening, ClosingWalletBalance = closing, BankAccountId = bank ? Bank : null,
++        };
++
++    private static int _seq;
++    private static SettlementLine L(SettlementLineType t, decimal amount, Guid? doc = null, decimal? vat = null,
++        Guid? intent = null, string? reason = null, Guid? account = null, string? order = null)
++        => new()
++        {
++            CompanyId = Co, Seq = ++_seq, LineType = t, Amount = amount, VatAmount = vat, MatchedDocumentId = doc,
++            PaymentIntentId = intent, AdjustmentReason = reason, OverrideAccountId = account, TxnDate = Day, ExternalOrderId = order,
++        };
++
++    private static void AssertBalancedJournal(SettlementPostingPlan p)
++        => Assert.Equal(p.PayoutJournal.Sum(l => l.Debit), p.PayoutJournal.Sum(l => l.Credit));
++
++    private static void AssertClearingInvariant(SettlementPostingPlan p)
++        => Assert.Equal(p.LinesTotal - p.AlreadyInClearing - p.NetPayout, p.ClearingMovement);
++
++    // ═════════════════ gateway (report-S1 §2 G1–G2) ═════════════════
++
++    [Fact]
++    public void Gateway_ขาย1070_ค่าธรรมเนียม41_79_โอน1028_21_แยกVATเป็นภาษีซื้อรอเครดิต()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) }, Channel(), true);
++
++        Assert.True(p.CanPost);
++        Assert.Equal(0m, p.Difference);
++        var r = Assert.Single(p.Receipts);
++        Assert.Equal(DocA, r.DocumentId);
++        Assert.Equal(1070m, r.Amount);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(SettlementFeeVatTreatment.InputVatPending, fee.VatTreatment);
++        Assert.Equal(41.79m, fee.Deducted);
++        Assert.Equal(39.06m, fee.Expense);
++        Assert.Equal(2.73m, fee.InputVat);
++        var feeLine = Assert.Single(fee.Lines);
++        Assert.Equal(SettlementChartSeed.PaymentFeeAccountCode, feeLine.DefaultAccountCode);   // 53170 ไม่ใช่ 54710 (G-3)
++        var bank = Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Bank);
++        Assert.Equal(1028.21m, bank.Debit);
++        var clr = Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Clearing);
++        Assert.Equal(1028.21m, clr.Credit);
++        Assert.Equal(Clearing, clr.AccountId);
++        AssertBalancedJournal(p);
++        AssertClearingInvariant(p);
++        Assert.DoesNotContain(p.Issues, i => i.Blocking);
++    }
++
++    [Fact]
++    public void Gateway_บรรทัดขายที่มาจากPaymentIntent_อยู่ในบัญชีพักแล้ว_ไม่ลงรับชำระซ้ำ()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, intent: Guid.NewGuid()), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(), true);
++        Assert.True(p.CanPost);
++        Assert.Empty(p.Receipts);
++        Assert.Empty(p.SummarySales);
++        Assert.Equal(1070m, p.AlreadyInClearing);
++        AssertClearingInvariant(p);
++    }
++
++    // ═════════════════ marketplace (report-S1 §3 M1–M2) ═════════════════
++
++    [Fact]
++    public void Marketplace_963_โค้ดแพลตฟอร์ม100อยู่ในฐานVAT_ค่าธรรมเนียม67_41บวก4_72_จับคู่ไม่ได้เข้าใบขายสรุปรายวัน()
++    {
++        var lines = new[]
++        {
++            L(SettlementLineType.Sale, 863m, order: "SO-1"),
++            L(SettlementLineType.PlatformVoucherSubsidy, 100m, order: "SO-1"),
++            L(SettlementLineType.Commission, -51.52m),
++            L(SettlementLineType.PaymentFee, -20.61m),
++        };
++        var p = SettlementBatchMath.Plan(Batch(890.87m), lines, Channel(SettlementChannelKind.Marketplace), true);
++
++        Assert.True(p.CanPost);
++        var s = Assert.Single(p.SummarySales);
++        Assert.Equal(963m, s.Gross);
++        Assert.Equal(900m, s.Net);
++        Assert.Equal(63m, s.Vat);
++        Assert.Equal(100m, s.PlatformVoucher);
++        Assert.Equal(new[] { "SO-1" }, s.ExternalOrderIds);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(72.13m, fee.Deducted);
++        Assert.Equal(67.41m, fee.Expense);
++        Assert.Equal(4.72m, fee.InputVat);
++        var com = Assert.Single(fee.Lines, l => l.LineType == SettlementLineType.Commission);
++        Assert.Equal(48.15m, com.Expense);
++        Assert.Equal("53140", com.DefaultAccountCode);
++        var pay = Assert.Single(fee.Lines, l => l.LineType == SettlementLineType.PaymentFee);
++        Assert.Equal(19.26m, pay.Expense);
++        // ติดป้ายให้ตรวจ (DECISIONS ข้อ 3) แต่ไม่บล็อก
++        var tag = Assert.Single(p.Issues, i => i.Code == SettlementPlanIssueCode.SummarySaleCreated);
++        Assert.False(tag.Blocking);
++        AssertBalancedJournal(p);
++        AssertClearingInvariant(p);
++    }
++
++    [Fact]
++    public void Marketplace_ส่วนลดร้านลดยอดขาย_ไม่ใช่ค่าใช้จ่าย()
++    {
++        var p = SettlementBatchMath.Plan(Batch(963m),
++            new[] { L(SettlementLineType.Sale, 1070m), L(SettlementLineType.SellerVoucher, -107m) },
++            Channel(SettlementChannelKind.Marketplace), true);
++        Assert.True(p.CanPost);
++        var s = Assert.Single(p.SummarySales);
++        Assert.Equal(963m, s.Gross);
++        Assert.Equal(-107m, s.SellerVoucher);
++        Assert.Empty(p.FeeDocuments);
++    }
++
++    [Fact]
++    public void Marketplace_ส่วนลดของออเดอร์ที่จับคู่ได้_รวมเป็นรับชำระก้อนเดียวของใบนั้น()
++    {
++        var p = SettlementBatchMath.Plan(Batch(963m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.SellerVoucher, -107m, DocA) },
++            Channel(SettlementChannelKind.Marketplace), true);
++        var r = Assert.Single(p.Receipts);
++        Assert.Equal(963m, r.Amount);
++        Assert.Equal(2, r.LineIds.Count);
++        Assert.Empty(p.SummarySales);
++    }
++
++    // ═════════════════ reserve · ยอดติดลบ · คืนเงินหลังโอน ═════════════════
++
++    [Fact]
++    public void Reserve_กันไว้แล้วปล่อย_ลงผัง11350ทั้งสองทาง()
++    {
++        var hold = SettlementBatchMath.Plan(Batch(900m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.ReserveHold, -100m) }, Channel(), true);
++        Assert.True(hold.CanPost);
++        var dr = Assert.Single(hold.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Reserve);
++        Assert.Equal(100m, dr.Debit);
++        Assert.Equal("11350", dr.DefaultAccountCode);
++        AssertBalancedJournal(hold);
++        AssertClearingInvariant(hold);
++
++        var release = SettlementBatchMath.Plan(Batch(100m), new[] { L(SettlementLineType.ReserveRelease, 100m) }, Channel(), true);
++        Assert.True(release.CanPost);
++        var cr = Assert.Single(release.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Reserve);
++        Assert.Equal(100m, cr.Credit);
++        AssertBalancedJournal(release);
++    }
++
++    [Fact]
++    public void ยอดติดลบยกไป_รอบแรกไม่มีเงินเข้า_รอบถัดไปหักคืนแล้วสมการลงตัว()
++    {
++        var first = SettlementBatchMath.Plan(Batch(0m, opening: 0m, closing: -535m, bank: false),
++            new[] { L(SettlementLineType.Refund, -535m, DocA) }, Channel(SettlementChannelKind.Marketplace), true);
++        Assert.True(first.CanPost);
++        Assert.Contains(first.Issues, i => i.Code == SettlementPlanIssueCode.NegativeBalanceCarried && !i.Blocking);
++        Assert.DoesNotContain(first.Issues, i => i.Code == SettlementPlanIssueCode.BankAccountMissing);
++        Assert.DoesNotContain(first.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Bank);
++        var refund = Assert.Single(first.Refunds);
++        Assert.Equal(535m, refund.Amount);
++        AssertClearingInvariant(first);
++
++        var next = SettlementBatchMath.Plan(Batch(1605m, opening: -535m, closing: 0m),
++            new[] { L(SettlementLineType.Sale, 2140m, DocB) }, Channel(SettlementChannelKind.Marketplace), true);
++        Assert.True(next.CanPost);
++        Assert.Equal(0m, next.Difference);
++        Assert.Equal(1605m, Assert.Single(next.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Bank).Debit);
++    }
++
++    [Fact]
++    public void คืนเงินหลังโอน_ไม่รู้ใบเดิม_บล็อกพร้อมทางไปต่อ_86_10()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1605m),
++            new[] { L(SettlementLineType.Sale, 2140m, DocB), L(SettlementLineType.Refund, -535m, order: "SO-9") }, Channel(), true);
++        Assert.False(p.CanPost);
++        var i = Assert.Single(p.Issues, x => x.Code == SettlementPlanIssueCode.RefundUnmatched);
++        Assert.True(i.Blocking);
++        Assert.Contains("86/10", i.NextStep);
++        Assert.Contains("SO-9", i.Message);
++    }
++
++    // ═════════════════ chargeback ═════════════════
++
++    [Fact]
++    public void Chargeback_เปิดพักที่ลูกหนี้อื่น_แพ้ลง57140_ชนะคืนบัญชีพัก()
++    {
++        var ch = Channel();
++        var open = SettlementBatchMath.Plan(Batch(700m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.Chargeback, -300m) }, ch, true);
++        Assert.True(open.CanPost);
++        var dispute = Assert.Single(open.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Dispute);
++        Assert.Equal(300m, dispute.Debit);
++        Assert.Equal("11320", dispute.DefaultAccountCode);
++
++        var lost = SettlementBatchMath.PlanChargebackResolution(300m, won: false, ch, "CB-1");
++        Assert.Equal(300m, Assert.Single(lost, l => l.AccountRole == SettlementAccountRoles.ChargebackLoss).Debit);
++        Assert.Equal("57140", Assert.Single(lost, l => l.AccountRole == SettlementAccountRoles.ChargebackLoss).DefaultAccountCode);
++        Assert.Equal(300m, Assert.Single(lost, l => l.AccountRole == SettlementAccountRoles.Dispute).Credit);
++
++        var won = SettlementBatchMath.PlanChargebackResolution(300m, won: true, ch, "CB-1");
++        Assert.Equal(300m, Assert.Single(won, l => l.AccountRole == SettlementAccountRoles.Clearing).Debit);
++        Assert.DoesNotContain(won, l => l.AccountRole == SettlementAccountRoles.ChargebackLoss);
++
++        var reversal = SettlementBatchMath.Plan(Batch(300m), new[] { L(SettlementLineType.ChargebackReversal, 300m) }, ch, true);
++        Assert.True(reversal.CanPost);
++        Assert.Equal(300m, Assert.Single(reversal.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Dispute).Credit);
++    }
++
++    // ═════════════════ VAT บนค่าธรรมเนียม ═════════════════
++
++    [Fact]
++    public void ค่าธรรมเนียมที่ไฟล์ระบุVATเอง_เชื่อไฟล์()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m, vat: -2.73m) }, Channel(), true);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(39.06m, fee.Expense);
++        Assert.Equal(2.73m, fee.InputVat);
++    }
++
++    [Fact]
++    public void ค่าธรรมเนียมไม่มีVAT_ลงค่าใช้จ่ายเต็มจำนวน()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(vat: SettlementFeeVatMode.None), true);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(SettlementFeeVatTreatment.NoVat, fee.VatTreatment);
++        Assert.Equal(41.79m, fee.Expense);
++        Assert.Equal(0m, fee.InputVat);
++    }
++
++    [Fact]
++    public void บริษัทไม่จดVAT_ไม่มีขาภาษีซื้อ_ใบขายสรุปไม่มีVAT()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m), L(SettlementLineType.PaymentFee, -41.79m) }, Channel(), false);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(SettlementFeeVatTreatment.VatNotClaimable, fee.VatTreatment);
++        Assert.Equal(41.79m, fee.Expense);
++        Assert.Equal(0m, fee.InputVat);
++        var s = Assert.Single(p.SummarySales);
++        Assert.Equal(0m, s.Vat);
++        Assert.Equal(1070m, s.Net);
++    }
++
++    // ═════════════════ หัก ณ ที่จ่าย 3 โหมด (report-S1 D5 · W1–W3) ═════════════════
++
++    [Fact]
++    public void WHT_ตัวแทนหัก_คิดจากฐานก่อนVAT_ไม่มีขาJE_ติดป้ายว่าตัวแทนยื่น()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(wht: SettlementFeeWhtMode.AgentWithholds), true);
++        var fee = Assert.Single(p.FeeDocuments);
++        Assert.Equal(SettlementFeeWhtMode.AgentWithholds, fee.WhtMode);
++        Assert.Equal(1.17m, fee.WhtAmount);            // 39.06 × 3% — ไม่ใช่ 41.79 × 3% = 1.25 (G-4)
++        Assert.Equal(39.06m, Assert.Single(fee.Lines).WhtBase);
++        Assert.DoesNotContain(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.WhtPayable);
++        Assert.Contains(p.Issues, i => i.Code == SettlementPlanIssueCode.WhtFiledByAgent && !i.Blocking);
++    }
++
++    [Fact]
++    public void WHT_หักเองแพลตฟอร์มคืน_ตั้งลูกหนี้อื่นคู่21917()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(wht: SettlementFeeWhtMode.SelfWithholdReimbursed), true);
++        Assert.Equal(1.17m, Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.WhtReimbursable).Debit);
++        var pay = Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.WhtPayable);
++        Assert.Equal(1.17m, pay.Credit);
++        Assert.Equal("21917", pay.DefaultAccountCode);
++        Assert.Equal(41.79m, Assert.Single(p.FeeDocuments).Deducted);   // จ่ายเต็มจากบัญชีพัก — ห้ามหักซ้ำตอนจ่าย
++        AssertBalancedJournal(p);
++        AssertClearingInvariant(p);
++    }
++
++    [Fact]
++    public void WHT_ออกภาษีแทน_ฐานคูณ3ส่วน97_เงินได้บน50ทวิเท่าฐานบวกภาษี()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(wht: SettlementFeeWhtMode.SelfWithholdPayerBorne), true);
++        var line = Assert.Single(Assert.Single(p.FeeDocuments).Lines);
++        Assert.Equal(1.21m, line.WhtAmount);           // round(39.06 × 3/97) = 1.2080…
++        Assert.Equal(40.27m, line.WhtCertIncome);
++        var borne = Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.PaymentFee);
++        Assert.Equal(1.21m, borne.Debit);
++        Assert.Equal(1.21m, Assert.Single(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.WhtPayable).Credit);
++        AssertBalancedJournal(p);
++    }
++
++    [Fact]
++    public void WHT_บริษัทไม่จดVAT_ฐานยังเป็นก่อนVAT()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.21m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) },
++            Channel(wht: SettlementFeeWhtMode.SelfWithholdReimbursed), false);
++        Assert.Equal(1.17m, Assert.Single(p.FeeDocuments).WhtAmount);
++    }
++
++    // ═════════════════ ด่าน (ต้องบล็อกพร้อมทางไปต่อ) ═════════════════
++
++    [Fact]
++    public void ไม่ลงตัว_บล็อกพร้อมผลต่าง_แล้วบรรทัดปรับที่มีเหตุผลและผังทำให้ผ่าน()
++    {
++        var lines = new List<SettlementLine> { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) };
++        var bad = SettlementBatchMath.Plan(Batch(1023.21m), lines, Channel(), true);
++        Assert.False(bad.CanPost);
++        var u = Assert.Single(bad.Issues, i => i.Code == SettlementPlanIssueCode.Unbalanced);
++        Assert.Equal(5m, u.Amount);
++        Assert.False(string.IsNullOrWhiteSpace(u.NextStep));
++
++        var otherExpense = Guid.NewGuid();
++        lines.Add(L(SettlementLineType.Adjustment, -5m, reason: "ค่าปรับส่งช้าตามอีเมลแพลตฟอร์ม", account: otherExpense));
++        var fixedPlan = SettlementBatchMath.Plan(Batch(1023.21m), lines, Channel(), true);
++        Assert.True(fixedPlan.CanPost);
++        var adj = Assert.Single(fixedPlan.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Adjustment);
++        Assert.Equal(otherExpense, adj.AccountId);
++        Assert.Equal(5m, adj.Debit);
++        AssertBalancedJournal(fixedPlan);
++        AssertClearingInvariant(fixedPlan);
++    }
++
++    [Fact]
++    public void ทิศตรงข้าม_batchที่ลงตัว_ไม่มีบรรทัดปรับ_ไม่มีปัญหาที่บล็อก_ผลต่างเศษสตางค์ในเกณฑ์ผ่าน()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1028.20m),
++            new[] { L(SettlementLineType.Sale, 1070m, DocA), L(SettlementLineType.PaymentFee, -41.79m) }, Channel(), true);
++        Assert.True(p.CanPost);
++        Assert.Empty(p.Issues);
++        Assert.DoesNotContain(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Adjustment);
++    }
++
++    [Fact]
++    public void บรรทัดปรับไม่มีเหตุผลหรือผัง_บล็อกทั้งสองข้อ()
++    {
++        var p = SettlementBatchMath.Plan(Batch(995m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.Adjustment, -5m) }, Channel(), true);
++        Assert.False(p.CanPost);
++        Assert.Contains(p.Issues, i => i.Code == SettlementPlanIssueCode.AdjustmentReasonMissing);
++        Assert.Contains(p.Issues, i => i.Code == SettlementPlanIssueCode.AdjustmentAccountMissing);
++    }
++
++    [Fact]
++    public void บรรทัดยังไม่จัดประเภท_ห้ามลงบัญชี_ไม่ตกค่าใช้จ่ายอื่นเงียบ()
++    {
++        var p = SettlementBatchMath.Plan(Batch(990m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.Unclassified, -10m) }, Channel(), true);
++        Assert.False(p.CanPost);
++        Assert.Single(p.Issues, i => i.Code == SettlementPlanIssueCode.Unclassified);
++        Assert.Empty(p.FeeDocuments);
++        Assert.DoesNotContain(p.PayoutJournal, l => l.AccountRole == SettlementAccountRoles.Adjustment);
++    }
++
++    [Fact]
++    public void เครื่องหมายผิดประเภท_บล็อก_แถวศูนย์ไม่ใช่หลักฐาน()
++    {
++        var p = SettlementBatchMath.Plan(Batch(1100m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.ReserveHold, 100m), L(SettlementLineType.Commission, 0m) },
++            Channel(), true);
++        Assert.Single(p.Issues, i => i.Code == SettlementPlanIssueCode.SignNotAllowed);
++        Assert.Empty(p.FeeDocuments);
++    }
++
++    [Fact]
++    public void ยังไม่ผูกผังพักหรือบัญชีธนาคาร_บล็อก_สกุลต่างประเทศและโมเดลสุทธิยังไม่รองรับ()
++    {
++        var ch = Channel();
++        ch.ClearingAccountId = null;
++        ch.RevenueModel = SettlementRevenueModel.NetRate;
++        var b = Batch(1000m, bank: false);
++        b.Currency = "USD";
++        var p = SettlementBatchMath.Plan(b, new[] { L(SettlementLineType.Sale, 1000m, DocA) }, ch, true);
++        Assert.False(p.CanPost);
++        foreach (var code in new[] { SettlementPlanIssueCode.ClearingAccountMissing, SettlementPlanIssueCode.BankAccountMissing,
++                     SettlementPlanIssueCode.CurrencyNotSupported, SettlementPlanIssueCode.RevenueModelNotSupported })
++            Assert.Contains(p.Issues, i => i.Code == code && i.Blocking && i.NextStep.Length > 0);
++    }
++
++    [Fact]
++    public void ค่าธรรมเนียมคืนมากกว่าที่เก็บ_บล็อกให้บันทึกใบลดหนี้ค่าธรรมเนียม()
++    {
++        var p = SettlementBatchMath.Plan(Batch(20m), new[] { L(SettlementLineType.Commission, 20m) }, Channel(), true);
++        Assert.False(p.CanPost);
++        Assert.Single(p.Issues, i => i.Code == SettlementPlanIssueCode.FeeGroupNetRefund);
++    }
++
++    [Fact]
++    public void ผังจากFeeAccountMap_ชนะผังมาตรฐาน()
++    {
++        var mapped = Guid.NewGuid();
++        var ch = Channel(SettlementChannelKind.Marketplace);
++        ch.FeeAccountMapJson = "{\"commission\":\"" + mapped + "\"}";
++        var p = SettlementBatchMath.Plan(Batch(948.48m),
++            new[] { L(SettlementLineType.Sale, 1000m, DocA), L(SettlementLineType.Commission, -51.52m) }, ch, true);
++        Assert.Equal(mapped, Assert.Single(Assert.Single(p.FeeDocuments).Lines).AccountId);
++    }
++}
+diff --git a/Accounting.Tests/SettlementRulesAndSchemaTests.cs b/Accounting.Tests/SettlementRulesAndSchemaTests.cs
+new file mode 100644
+index 00000000..73f20ba5
+--- /dev/null
++++ b/Accounting.Tests/SettlementRulesAndSchemaTests.cs
+@@ -0,0 +1,239 @@
++using Accounting.Data;
++using Accounting.Helpers;
++using Accounting.Models.Entities;
++using Accounting.Models.Enums;
++using Accounting.Services;
++using Microsoft.EntityFrameworkCore;
++using Xunit;
++
++namespace Accounting.Tests;
++
++/// <summary>
++/// รอบ 198 เฟส 1 ทีม A — สัญญาที่ทีม B/C/D ใช้: ตารางกติกาประเภทบรรทัด · ภาษีค่าธรรมเนียม · ผังพักย่อย 11341–11349 ·
++/// ผังมาตรฐาน 11350/53170/57140 · migration ต้องตรงกับ model ของ EF (ชื่อ index + เงื่อนไข partial)
++/// </summary>
++public class SettlementRulesAndSchemaTests
++{
++    // ═════════════════ SettlementLineTypeRules ═════════════════
++
++    [Fact]
++    public void ทุกค่าของenum_มีกติกาแถวเดียว_และUnclassifiedเท่านั้นที่ลงบัญชีไม่ได้()
++    {
++        foreach (var t in Enum.GetValues<SettlementLineType>())
++        {
++            Assert.Single(SettlementLineTypeRules.All, r => r.Type == t);
++            Assert.Equal(t, SettlementLineTypeRules.For(t).Type);
++            Assert.Equal(t != SettlementLineType.Unclassified, SettlementLineTypeRules.For(t).Postable);
++        }
++        Assert.Equal(19, Enum.GetValues<SettlementLineType>().Length);
++        Assert.Equal(SettlementLineType.Unclassified, SettlementLineTypeRules.For((SettlementLineType)999).Type);
++    }
++
++    [Fact]
++    public void ค่าธรรมเนียมทุกประเภทมีบทบาทผังที่มีผังมาตรฐาน_และอัตราWHTมาจากตารางกฎหมาย()
++    {
++        foreach (var r in SettlementLineTypeRules.All.Where(r => r.IsFee))
++        {
++            Assert.Equal(SettlementPostingKind.FeeDocument, r.Posting);
++            Assert.NotNull(r.AccountRole);
++            Assert.NotNull(SettlementAccountRoles.DefaultCode(r.AccountRole!));
++            if (r.WhtIncomeCode != null)
++                Assert.NotNull(ThaiWhtRateTable.RateFor(r.WhtIncomeCode, payeeIsJuristic: true));
++        }
++        Assert.True(SettlementLineTypeRules.For(SettlementLineType.Adjustment).RequiresReason);
++        Assert.False(SettlementLineTypeRules.For(SettlementLineType.SellerVoucher).IsFee);   // ส่วนลดร้าน = ลดยอดขาย
++        Assert.Equal(SettlementPostingKind.SaleComponent, SettlementLineTypeRules.For(SettlementLineType.PlatformVoucherSubsidy).Posting);
++    }
++
++    [Fact]
++    public void ผังมาตรฐานของทุกบทบาทมีอยู่จริงในผังมาตรฐาน_ความหมายตรงชื่อ()
++    {
++        var chart = ChartOfAccountTemplates.GetCommonAccounts().ToDictionary(a => a.Code, a => a.NameTh);
++        var expectWord = new Dictionary<string, string>
++        {
++            [SettlementAccountRoles.Reserve] = "กัน", [SettlementAccountRoles.Dispute] = "ลูกหนี้",
++            [SettlementAccountRoles.Commission] = "นายหน้า", [SettlementAccountRoles.PaymentFee] = "รับชำระ",
++            [SettlementAccountRoles.Shipping] = "ขนส่ง", [SettlementAccountRoles.Ads] = "โฆษณา",
++            [SettlementAccountRoles.WithdrawalFee] = "ธรรมเนียม", [SettlementAccountRoles.WhtCredit] = "ถูกหัก",
++            [SettlementAccountRoles.FxGain] = "แลกเปลี่ยน", [SettlementAccountRoles.FxLoss] = "แลกเปลี่ยน",
++            [SettlementAccountRoles.ChargebackLoss] = "chargeback", [SettlementAccountRoles.WhtPayable] = "หัก ณ ที่จ่าย",
++            [SettlementAccountRoles.InputVatPending] = "ภาษีซื้อ", [SettlementAccountRoles.Pp36InputVat] = "ภาษีซื้อ",
++            [SettlementAccountRoles.Pp36Payable] = "36",
++        };
++        foreach (var (role, word) in expectWord)
++        {
++            var code = SettlementAccountRoles.DefaultCode(role);
++            Assert.True(code != null && chart.ContainsKey(code), $"บทบาท {role} → {code} ไม่มีในผังมาตรฐาน");
++            Assert.Contains(word, chart[code!]);
++        }
++        Assert.Null(SettlementAccountRoles.DefaultCode(SettlementAccountRoles.Adjustment));   // ผู้ใช้ต้องเลือก
++        Assert.Null(SettlementAccountRoles.DefaultCode(SettlementAccountRoles.Clearing));     // มาจากช่องทาง
++    }
++
++    [Theory]
++    [InlineData("Commission", SettlementLineType.Commission)]
++    [InlineData("  paymentfee ", SettlementLineType.PaymentFee)]
++    [InlineData("SellerVoucher", SettlementLineType.SellerVoucher)]
++    public void คำตอบตัวจัดประเภท_ชื่อในชุดที่ลงบัญชีได้_ผ่าน(string answer, SettlementLineType expected)
++        => Assert.Equal(expected, SettlementLineTypeRules.ParseClassifierAnswer(answer));
++
++    [Theory]
++    [InlineData(null)]
++    [InlineData("")]
++    [InlineData("Unclassified")]
++    [InlineData("5")]
++    [InlineData("99")]
++    [InlineData("-1")]
++    [InlineData("ค่าคอม")]
++    [InlineData("Commission, PaymentFee")]
++    public void คำตอบตัวจัดประเภท_แต่งหรือไม่รู้_ถูกปัดตก_คงรอจัดประเภท(string? answer)
++        => Assert.Null(SettlementLineTypeRules.ParseClassifierAnswer(answer));
++
++    [Fact]
++    public void FeeAccountMap_รับเฉพาะบทบาทที่ตั้งได้และGuid_ที่เหลือรายงานไม่ทิ้งเงียบ()
++    {
++        var id = Guid.NewGuid();
++        var (map, rejected) = SettlementLineTypeRules.ParseFeeAccountMap(
++            "{\"commission\":\"" + id + "\",\"clearing\":\"" + Guid.NewGuid() + "\",\"ads\":\"not-a-guid\"}");
++        Assert.Equal(id, Assert.Single(map).Value);
++        Assert.Contains("clearing", rejected);
++        Assert.Contains("ads", rejected);
++        Assert.Equal(new[] { "(json)" }, SettlementLineTypeRules.ParseFeeAccountMap("{oops").Rejected);
++        Assert.Empty(SettlementLineTypeRules.ParseFeeAccountMap(null).Map);
++    }
++
++    // ═════════════════ SettlementFeeTax ═════════════════
++
++    [Fact]
++    public void FeeTax_รวมVAT_แยกด้วย100ส่วน107_ปัดครั้งเดียว_ผลรวมเท่ายอดจริง()
++    {
++        var r = SettlementFeeTax.Compute(41.79m, null, SettlementFeeVatMode.ThaiVat7, true, true, SettlementFeeWhtMode.None, "8");
++        Assert.Equal(39.06m, r.Expense);
++        Assert.Equal(2.73m, r.InputVat);
++        Assert.Equal(r.Deducted, r.Expense + r.InputVat);
++        Assert.Equal(0m, r.WhtAmount);
++        Assert.Null(r.WhtIncomeCode);
++    }
++
++    [Fact]
++    public void FeeTax_ไฟล์ให้ยอดก่อนVAT_คิดVATทับแบบAwayFromZero()
++    {
++        Assert.Equal((41.79m, 2.73m), SettlementFeeTax.FromExclusive(39.06m));
++        Assert.Equal((10.70m, 0.70m), SettlementFeeTax.FromExclusive(10m));
++        Assert.Equal((0.54m, 0.04m), SettlementFeeTax.FromExclusive(0.50m));   // 0.035 → 0.04 (banker's จะได้ 0.04 เช่นกัน — ดูเคสถัดไป)
++        Assert.Equal((1.61m, 0.11m), SettlementFeeTax.FromExclusive(1.50m));   // 0.105 → 0.11 (banker's = 0.10)
++    }
++
++    [Fact]
++    public void FeeTax_ภพ36_ประเมินเองเฉพาะบริษัทจดVAT()
++    {
++        var reg = SettlementFeeTax.Compute(450m, null, SettlementFeeVatMode.ForeignPp36, true, true, SettlementFeeWhtMode.None, "2");
++        Assert.Equal(SettlementFeeVatTreatment.SelfAssessedPp36, reg.VatTreatment);
++        Assert.Equal(450m, reg.Expense);
++        Assert.Equal(31.50m, reg.InputVat);
++        Assert.Equal(31.50m, reg.Pp36Payable);
++        var nonReg = SettlementFeeTax.Compute(450m, null, SettlementFeeVatMode.ForeignPp36, true, false, SettlementFeeWhtMode.None, "2");
++        Assert.Equal(SettlementFeeVatTreatment.NoVat, nonReg.VatTreatment);
++        Assert.Equal(0m, nonReg.Pp36Payable);
++        Assert.Equal(450m, nonReg.Expense);
++    }
++
++    [Fact]
++    public void FeeTax_WHTประเภทที่ไม่หัก_หรือโหมดNone_ไม่มีภาษี()
++    {
++        var withdrawal = SettlementFeeTax.Compute(10.70m, null, SettlementFeeVatMode.ThaiVat7, true, true,
++            SettlementFeeWhtMode.SelfWithholdReimbursed, null);
++        Assert.Equal(SettlementFeeWhtMode.None, withdrawal.WhtMode);
++        Assert.Equal(0m, withdrawal.WhtAmount);
++        var ads = SettlementFeeTax.Compute(107m, null, SettlementFeeVatMode.ThaiVat7, true, true,
++            SettlementFeeWhtMode.SelfWithholdReimbursed, "8ad");
++        Assert.Equal(2m, ads.WhtRatePercent);
++        Assert.Equal(2.00m, ads.WhtAmount);            // 100 × 2%
++    }
++
++    [Fact]
++    public void SplitInclusive_ไม่จดVAT_ไม่แยก()
++    {
++        Assert.Equal((900m, 63m), SettlementFeeTax.SplitInclusive(963m, true));
++        Assert.Equal((963m, 0m), SettlementFeeTax.SplitInclusive(963m, false));
++    }
++
++    // ═════════════════ ผังพักย่อย 11341–11349 ═════════════════
++
++    [Fact]
++    public void ผังพักย่อย_รหัสถัดไปที่ว่าง_นับแถวที่ลบแล้ว_ครบ9คืนnull()
++    {
++        Assert.Equal("11341", SettlementChannelAccounts.NextClearingCode(Array.Empty<string>()));
++        Assert.Equal("11341", SettlementChannelAccounts.NextClearingCode(new[] { "11340", "11350", "113" }));
++        Assert.Equal("11342", SettlementChannelAccounts.NextClearingCode(new[] { "11341", "11343" }));
++        Assert.Null(SettlementChannelAccounts.NextClearingCode(Enumerable.Range(1, 9).Select(i => "1134" + i)));
++        Assert.True(SettlementChannelAccounts.IsClearingCode("11349"));
++        Assert.False(SettlementChannelAccounts.IsClearingCode("11340"));
++        Assert.False(SettlementChannelAccounts.IsClearingCode("113410"));
++        Assert.Equal("ลูกหนี้แพลตฟอร์ม Shopee ร้านหลัก", SettlementChannelAccounts.ClearingAccountName(" Shopee ร้านหลัก "));
++        Assert.True(SettlementChannelAccounts.ClearingAccountName(new string('ก', 400)).Length <= 256);
++    }
++
++    // ═════════════════ ผังมาตรฐาน + migration ═════════════════
++
++    [Fact]
++    public void ผังมาตรฐานมี11350_53170_57140_ใต้กลุ่มที่ถูกต้อง_และไม่seedผังพักย่อย()
++    {
++        var chart = ChartOfAccountTemplates.GetCommonAccounts();
++        Assert.Equal(AccountType.Asset, chart.Single(a => a.Code == "11350").Type);
++        Assert.Equal(AccountType.Expense, chart.Single(a => a.Code == "53170").Type);
++        Assert.Equal(AccountType.Expense, chart.Single(a => a.Code == "57140").Type);
++        foreach (var code in SettlementChartSeed.SeededCodes)
++            Assert.Contains(chart, a => a.Code == SettlementChartSeed.ParentGroupCode(code));
++        Assert.DoesNotContain(chart, a => SettlementChannelAccounts.IsClearingCode(a.Code));
++    }
++
++    [Fact]
++    public void Migration_ใส่ผังให้บริษัทเดิม_ONCONFLICTไม่ทับ_ไม่ย้ายยอด_อยู่เส้นหลักที่logความล้มเหลว()
++    {
++        var sql = SettlementChartSeed.MigrationSeedSql();
++        foreach (var code in new[] { "'11350','113'", "'53170','531'", "'57140','571'" })
++            Assert.Contains(code, sql);
++        Assert.EndsWith("ON CONFLICT DO NOTHING;", sql);
++        Assert.DoesNotContain("UPDATE", sql);
++        Assert.DoesNotContain("1134" + "1", sql);
++
++        var stmts = DatabaseMigrationHelper.SettlementSchemaStatements();
++        var all = DatabaseMigrationHelper.GetAlterStatements();
++        Assert.All(stmts, s => Assert.Contains(s, all));
++        Assert.Contains(stmts, s => s.Contains("ADD COLUMN IF NOT EXISTS \"SettlementBatchId\" uuid NULL", StringComparison.Ordinal));
++        Assert.DoesNotContain(stmts, s => s.Contains("RefundedAmount", StringComparison.Ordinal));   // ของทีม E
++        // ตารางก่อน index ก่อนผัง
++        var list = stmts.ToList();
++        Assert.True(list.FindIndex(s => s.Contains("CREATE TABLE IF NOT EXISTS \"SettlementLines\"")) <
++                    list.FindIndex(s => s.Contains("UX_SettlementLines_Channel_ExternalTxnId")));
++        Assert.Equal(sql, list[^1]);
++    }
++
++    [Fact]
++    public void Migration_indexตรงกับmodelของEF_ชื่อและเงื่อนไขpartial()
++    {
++        using var db = new AccountingDbContext(new DbContextOptionsBuilder<AccountingDbContext>()
++            .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=none;Password=none").Options);
++        var migration = string.Join("\n", DatabaseMigrationHelper.SettlementSchemaStatements());
++        foreach (var t in new[] { typeof(SettlementChannel), typeof(SettlementBatch), typeof(SettlementLine) })
++        {
++            var et = db.Model.FindEntityType(t)!;
++            Assert.Contains($"CREATE TABLE IF NOT EXISTS \"{et.GetTableName()}\"", migration);
++            foreach (var ix in et.GetIndexes().Where(i => i.GetDatabaseName()!.Contains("Settlement")))
++            {
++                var name = ix.GetDatabaseName()!;
++                var stmt = DatabaseMigrationHelper.SettlementSchemaStatements().Single(s => s.Contains($"\"{name}\""));
++                Assert.Equal(ix.IsUnique, stmt.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal));
++                if (ix.GetFilter() is string f) Assert.Contains("WHERE " + f + ";", stmt);
++                foreach (var p in ix.Properties) Assert.Contains($"\"{p.GetColumnName()}\"", stmt);
++            }
++            foreach (var p in et.GetProperties())
++                Assert.Contains($"\"{p.GetColumnName()}\"", migration);
++        }
++    }
++
++    [Fact]
++    public void AiFeatureKey_ใหม่ต่อท้าย_ค่าคงที่57()
++        => Assert.Equal(57, (int)AiFeatureKey.SettlementLineClassify);
++}
+diff --git a/Accounting/Data/AccountingDbContext.cs b/Accounting/Data/AccountingDbContext.cs
+index 890400e3..242112f1 100644
+--- a/Accounting/Data/AccountingDbContext.cs
++++ b/Accounting/Data/AccountingDbContext.cs
+@@ -212,6 +212,10 @@ public class AccountingDbContext : DbContext
+     public DbSet<PaymentProviderConfig> PaymentProviderConfigs => Set<PaymentProviderConfig>();
+     public DbSet<PaymentIntent> PaymentIntents => Set<PaymentIntent>();
+     public DbSet<PaymentIntentEvent> PaymentIntentEvents => Set<PaymentIntentEvent>();
++    // รอบ 198 — Settlement (wallet → ธนาคาร): ช่องทาง · รอบโอน · บรรทัด (Models/Entities/Settlement.cs)
++    public DbSet<SettlementChannel> SettlementChannels => Set<SettlementChannel>();
++    public DbSet<SettlementBatch> SettlementBatches => Set<SettlementBatch>();
++    public DbSet<SettlementLine> SettlementLines => Set<SettlementLine>();
+     public DbSet<WarehouseStock> WarehouseStocks => Set<WarehouseStock>();
+     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
+     public DbSet<StockTransferLine> StockTransferLines => Set<StockTransferLine>();
+@@ -3287,6 +3291,49 @@ public class AccountingDbContext : DbContext
+             e.HasQueryFilter(k => !k.IsDeleted);
+         });
+ 
++        // ===== Settlement (รอบ 198) — index ต้องตรงกับ DatabaseMigrationHelper.SettlementSchemaStatements
++        //      (ฐานใหม่ได้จาก EnsureCreated · ฐานเดิมได้จาก CREATE TABLE/INDEX IF NOT EXISTS) · tenant กรองที่ผู้เรียกเสมอ =====
++        modelBuilder.Entity<SettlementChannel>(e =>
++        {
++            e.Property(c => c.DisplayName).HasMaxLength(200);
++            e.Property(c => c.AdapterCode).HasMaxLength(64);
++            e.Property(c => c.Currency).HasMaxLength(3);
++            e.HasIndex(c => new { c.CompanyId, c.IsActive }).HasDatabaseName("IX_SettlementChannels_Company_Active");
++            e.HasQueryFilter(c => !c.IsDeleted);
++        });
++        modelBuilder.Entity<SettlementBatch>(e =>
++        {
++            e.Property(b => b.PayoutRef).HasMaxLength(200);
++            e.Property(b => b.Currency).HasMaxLength(3);
++            e.Property(b => b.FxRate).HasPrecision(18, 6);
++            e.Property(b => b.OpeningWalletBalance).HasPrecision(18, 2);
++            e.Property(b => b.ClosingWalletBalance).HasPrecision(18, 2);
++            e.Property(b => b.NetPayout).HasPrecision(18, 2);
++            e.Property(b => b.PostedBy).HasMaxLength(200);
++            e.HasOne(b => b.Channel).WithMany().HasForeignKey(b => b.ChannelId).OnDelete(DeleteBehavior.Restrict);
++            e.HasIndex(b => new { b.CompanyId, b.ChannelId, b.PayoutRef }).IsUnique()
++                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_SettlementBatches_Channel_PayoutRef");
++            e.HasIndex(b => new { b.CompanyId, b.Status, b.PayoutDate }).HasDatabaseName("IX_SettlementBatches_Company_Status_Date");
++            e.HasQueryFilter(b => !b.IsDeleted);
++        });
++        modelBuilder.Entity<SettlementLine>(e =>
++        {
++            e.Property(l => l.Description).HasMaxLength(500);
++            e.Property(l => l.RawTypeLabel).HasMaxLength(200);
++            e.Property(l => l.ExternalOrderId).HasMaxLength(200);
++            e.Property(l => l.ExternalTxnId).HasMaxLength(200);
++            e.Property(l => l.Amount).HasPrecision(18, 2);
++            e.Property(l => l.VatAmount).HasPrecision(18, 2);
++            e.Property(l => l.WhtAmount).HasPrecision(18, 2);
++            e.Property(l => l.AdjustmentReason).HasMaxLength(500);
++            e.HasOne(l => l.Batch).WithMany(b => b.Lines).HasForeignKey(l => l.BatchId).OnDelete(DeleteBehavior.Cascade);
++            e.HasIndex(l => new { l.BatchId, l.Seq }).HasDatabaseName("IX_SettlementLines_Batch_Seq");
++            e.HasIndex(l => new { l.CompanyId, l.ChannelId, l.ExternalTxnId }).IsUnique()
++                .HasFilter("\"ExternalTxnId\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_SettlementLines_Channel_ExternalTxnId");
++            e.HasIndex(l => new { l.CompanyId, l.ExternalOrderId }).HasDatabaseName("IX_SettlementLines_Company_Order");
++            e.HasQueryFilter(l => !l.IsDeleted);
++        });
++
+         // ===== Lodging (ธุรกิจที่พัก) =====
+         modelBuilder.Entity<LodgingProperty>(e =>
+         {
+diff --git a/Accounting/Data/DatabaseMigrationHelper.cs b/Accounting/Data/DatabaseMigrationHelper.cs
+index 2df64d51..4645faaa 100644
+--- a/Accounting/Data/DatabaseMigrationHelper.cs
++++ b/Accounting/Data/DatabaseMigrationHelper.cs
+@@ -173,11 +173,43 @@ public static class DatabaseMigrationHelper
+              + "END LOOP; END $dkdef$;";
+     }
+ 
+-    /// <summary>คำสั่งเส้นหลัก (<see cref="ApplyMissingColumns"/> — log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") · schema รอบ 194 ต่อท้าย (P6)</summary>
++    /// <summary>คำสั่งเส้นหลัก (<see cref="ApplyMissingColumns"/> — log ความล้มเหลวที่ไม่ใช่ "มีอยู่แล้ว") · schema รอบ 194 ต่อท้าย (P6) ·
++    /// Settlement รอบ 198 ต่อท้าย (บล็อกเดียว <see cref="SettlementSchemaStatements"/>)</summary>
+     internal static List<string> GetAlterStatements()
+     {
+         var list = CoreAlterStatements();
+         list.AddRange(DepositKindSchemaStatements());
++        list.AddRange(SettlementSchemaStatements());
++        return list;
++    }
++
++    /// <summary>รอบ 198 เฟส 1 ทีม A — Settlement (wallet → ธนาคาร) <b>บล็อกเดียว · รันทุกบูตได้</b> (อยู่เส้นหลักที่ log ความล้มเหลว
++    /// ไม่ใช่ชุด catch{}) · ลำดับ: ตาราง → index → คอลัมน์ → ผัง
++    /// <para>① ตาราง <c>SettlementChannels</c>/<c>SettlementBatches</c>/<c>SettlementLines</c> + index (ชื่อ/เงื่อนไขต้องตรงกับ
++    /// <c>AccountingDbContext</c> — ฐานใหม่ได้จาก EnsureCreated) · unique partial: <c>PayoutRef</c> ต่อช่องทาง · <c>ExternalTxnId</c> ต่อช่องทาง
++    /// (WHERE IsDeleted = false) · ② <c>PaymentIntents.SettlementBatchId</c> (NULL = ยังไม่เข้ารอบโอน · <b>ไม่แตะ RefundedAmount</b> — ทีม E) ·
++    /// ③ ผังมาตรฐานที่ต้องมี 11350/53170/57140 ให้บริษัทเดิม (แหล่งเดียวกับ <see cref="Accounting.Services.ChartOfAccountTemplates"/> ผ่าน
++    /// <c>SettlementChartSeed</c>) — ใส่เฉพาะบริษัทที่มีกลุ่มแม่ (113/531/571 = ผังมาตรฐาน) · <c>ON CONFLICT DO NOTHING</c> ⇒ ไม่ทับรหัสที่
++    /// ลูกค้าตั้งเอง · <b>ไม่ย้ายยอดใด ๆ</b> (DECISIONS: 53170 ไม่ย้ายย้อนหลัง) · 11341–11349 <b>ไม่ seed</b> (สร้างตอนผูกช่องทาง)</para></summary>
++    internal static IReadOnlyList<string> SettlementSchemaStatements()
++    {
++        var list = new List<string>
++        {
++            """CREATE TABLE IF NOT EXISTS "SettlementChannels" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Kind" integer NOT NULL DEFAULT 2, "DisplayName" varchar(200) NOT NULL, "AdapterCode" varchar(64) NULL, "ColumnMapJson" text NULL, "CounterpartyContactId" uuid NULL, "PaymentProviderConfigId" uuid NULL, "ClearingAccountId" uuid NULL, "ReserveAccountId" uuid NULL, "DisputeAccountId" uuid NULL, "FeeAccountMapJson" text NULL, "FeeVatMode" integer NOT NULL DEFAULT 1, "FeeWhtMode" integer NOT NULL DEFAULT 0, "RevenueModel" integer NOT NULL DEFAULT 1, "Currency" varchar(3) NOT NULL DEFAULT 'THB', "IsActive" boolean NOT NULL DEFAULT true, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementChannels_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
++            """CREATE INDEX IF NOT EXISTS "IX_SettlementChannels_Company_Active" ON "SettlementChannels" ("CompanyId", "IsActive");""",
++            """CREATE TABLE IF NOT EXISTS "SettlementBatches" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "ChannelId" uuid NOT NULL, "PayoutRef" varchar(200) NOT NULL, "PeriodFrom" timestamptz NULL, "PeriodTo" timestamptz NULL, "PayoutDate" timestamptz NOT NULL, "Currency" varchar(3) NOT NULL DEFAULT 'THB', "FxRate" numeric(18,6) NULL, "OpeningWalletBalance" numeric(18,2) NOT NULL DEFAULT 0, "ClosingWalletBalance" numeric(18,2) NOT NULL DEFAULT 0, "NetPayout" numeric(18,2) NOT NULL DEFAULT 0, "Status" integer NOT NULL DEFAULT 0, "SourceKind" integer NOT NULL DEFAULT 1, "SourceFileAttachmentId" uuid NULL, "BankAccountId" uuid NULL, "BankTransactionId" uuid NULL, "PayoutJournalEntryId" uuid NULL, "FeeDocumentIdsJson" text NULL, "PostedAt" timestamptz NULL, "PostedBy" varchar(200) NULL, "Note" text NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementBatches_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE, CONSTRAINT "FK_SettlementBatches_SettlementChannels_ChannelId" FOREIGN KEY ("ChannelId") REFERENCES "SettlementChannels"("Id") ON DELETE RESTRICT);""",
++            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SettlementBatches_Channel_PayoutRef" ON "SettlementBatches" ("CompanyId", "ChannelId", "PayoutRef") WHERE "IsDeleted" = false;""",
++            """CREATE INDEX IF NOT EXISTS "IX_SettlementBatches_Company_Status_Date" ON "SettlementBatches" ("CompanyId", "Status", "PayoutDate");""",
++            // index ของ FK ChannelId ที่ EF สร้างตามแบบแผน (ไม่มี index อื่นที่ขึ้นต้นด้วย ChannelId) — ฐานเดิมต้องได้ชื่อเดียวกัน
++            """CREATE INDEX IF NOT EXISTS "IX_SettlementBatches_ChannelId" ON "SettlementBatches" ("ChannelId");""",
++            """CREATE TABLE IF NOT EXISTS "SettlementLines" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "BatchId" uuid NOT NULL, "ChannelId" uuid NOT NULL, "Seq" integer NOT NULL DEFAULT 0, "LineType" integer NOT NULL DEFAULT 0, "Description" varchar(500) NULL, "RawTypeLabel" varchar(200) NULL, "TxnDate" timestamptz NULL, "ExternalOrderId" varchar(200) NULL, "ExternalTxnId" varchar(200) NULL, "Amount" numeric(18,2) NOT NULL DEFAULT 0, "VatAmount" numeric(18,2) NULL, "WhtAmount" numeric(18,2) NULL, "MatchedDocumentId" uuid NULL, "PaymentIntentId" uuid NULL, "PaymentId" uuid NULL, "ReservationId" uuid NULL, "MatchStatus" integer NOT NULL DEFAULT 0, "ClassifiedBy" integer NOT NULL DEFAULT 0, "ClassifyAiFeedbackId" uuid NULL, "ClassifyUsedAi" boolean NOT NULL DEFAULT false, "OverrideAccountId" uuid NULL, "AdjustmentReason" varchar(500) NULL, "CreatedAt" timestamptz NOT NULL DEFAULT now(), "UpdatedAt" timestamptz NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_SettlementLines_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE, CONSTRAINT "FK_SettlementLines_SettlementBatches_BatchId" FOREIGN KEY ("BatchId") REFERENCES "SettlementBatches"("Id") ON DELETE CASCADE);""",
++            """CREATE INDEX IF NOT EXISTS "IX_SettlementLines_Batch_Seq" ON "SettlementLines" ("BatchId", "Seq");""",
++            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SettlementLines_Channel_ExternalTxnId" ON "SettlementLines" ("CompanyId", "ChannelId", "ExternalTxnId") WHERE "ExternalTxnId" IS NOT NULL AND "IsDeleted" = false;""",
++            """CREATE INDEX IF NOT EXISTS "IX_SettlementLines_Company_Order" ON "SettlementLines" ("CompanyId", "ExternalOrderId");""",
++            // intent ที่ถูกรวมเข้ารอบโอน — NULL = ยังไม่เข้ารอบโอน (พฤติกรรมเดิมทุกแถว)
++            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SettlementBatchId" uuid NULL;""",
++        };
++        list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
+         return list;
+     }
+ 
+diff --git a/Accounting/Helpers/SettlementBatchMath.cs b/Accounting/Helpers/SettlementBatchMath.cs
+new file mode 100644
+index 00000000..e06ae84b
+--- /dev/null
++++ b/Accounting/Helpers/SettlementBatchMath.cs
+@@ -0,0 +1,511 @@
++using Accounting.Models.Entities;
++using Accounting.Models.Enums;
++
++namespace Accounting.Helpers;
++
++/// <summary>รหัสปัญหาของแผนลงบัญชีรอบโอน — ทุกตัวมีข้อความ + ทางไปต่อ (ไม่ใช่ throw เปล่า · CLAUDE.md F2 ข้อ 8)</summary>
++public enum SettlementPlanIssueCode
++{
++    /// <summary>Σ บรรทัด ≠ NetPayout + (ปลายรอบ − ต้นรอบ) เกิน ±0.01</summary>
++    Unbalanced = 1,
++    Unclassified = 2,
++    SignNotAllowed = 3,
++    AdjustmentReasonMissing = 4,
++    AdjustmentAccountMissing = 5,
++    /// <summary>คืนเงินที่ไม่รู้ใบขายเดิม — ใบลดหนี้ §86/10 ต้องอ้างใบเดิม</summary>
++    RefundUnmatched = 6,
++    /// <summary>ยอดขายรวมของใบขาย/วันหนึ่ง ≤ 0 (มีแต่ส่วนลด)</summary>
++    SaleGroupNotPositive = 7,
++    /// <summary>ค่าธรรมเนียมสุทธิของกลุ่มภาษีเป็นยอดคืน — ต้องมีใบลดหนี้ค่าธรรมเนียมจากแพลตฟอร์ม</summary>
++    FeeGroupNetRefund = 8,
++    ClearingAccountMissing = 9,
++    ExplicitVatInvalid = 10,
++    CurrencyNotSupported = 11,
++    RevenueModelNotSupported = 12,
++    BankAccountMissing = 13,
++
++    // ── แจ้งให้ทราบ (ไม่บล็อก) ──
++    /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>
++    NegativeBalanceCarried = 50,
++    /// <summary>มีบรรทัดขายที่จับคู่ใบขายไม่ได้ ⇒ สร้างใบขายสรุปรายวันให้ + ติดป้ายตรวจ (DECISIONS ข้อ 3)</summary>
++    SummarySaleCreated = 51,
++    /// <summary>แพลตฟอร์มเป็นตัวแทนหัก ณ ที่จ่าย — เก็บ 50 ทวิ แต่ห้ามนับเข้ายอดที่เรายื่นเอง</summary>
++    WhtFiledByAgent = 52,
++}
++
++/// <summary>ปัญหา 1 ข้อของแผน</summary>
++/// <param name="Blocking">true = ลงบัญชีไม่ได้จนกว่าจะแก้</param>
++/// <param name="NextStep">ผู้ใช้ทำอะไรต่อ (ข้อความไทย)</param>
++public sealed record SettlementPlanIssue(
++    SettlementPlanIssueCode Code,
++    bool Blocking,
++    string Message,
++    string NextStep,
++    IReadOnlyList<Guid> LineIds,
++    decimal? Amount);
++
++/// <summary>ขา JE 1 บรรทัด — ผู้ลงบัญชีใช้ <c>AccountId</c> ถ้ามี ไม่งั้นหา <c>DefaultAccountCode</c> ในผังของบริษัท (tenant) ·
++/// บทบาท <c>bank</c> = ผังที่ผูกกับ <c>SettlementPostingPlan.BankAccountId</c> · หาไม่เจอ = ล้มดังพร้อมชื่อบทบาท</summary>
++public sealed record SettlementJournalLinePlan(
++    string AccountRole,
++    Guid? AccountId,
++    string? DefaultAccountCode,
++    decimal Debit,
++    decimal Credit,
++    string Description,
++    IReadOnlyList<Guid> LineIds);
++
++/// <summary>1 บรรทัดของใบค่าธรรมเนียม (รวมตามประเภท+ผัง) — ยอดเป็นบวก (ค่าธรรมเนียม) · ยอดคืนถูกหักไว้แล้วในก้อนเดียวกัน</summary>
++public sealed record SettlementFeeDocumentLine(
++    SettlementLineType LineType,
++    string LabelTh,
++    string AccountRole,
++    Guid? AccountId,
++    string? DefaultAccountCode,
++    decimal Deducted,
++    decimal Expense,
++    decimal InputVat,
++    decimal Pp36Payable,
++    string? WhtIncomeCode,
++    decimal WhtRatePercent,
++    decimal WhtBase,
++    decimal WhtAmount,
++    decimal WhtCertIncome,
++    decimal WhtBorneExpense,
++    IReadOnlyList<Guid> LineIds);
++
++/// <summary>ใบค่าธรรมเนียม 1 ใบ (ต่อ batch ต่อกลุ่มภาษี) — เอกสารซื้อจากคู่ค้า <c>SettlementChannel.CounterpartyContactId</c> ·
++/// <b>จ่ายเต็ม <c>Deducted</c> จากบัญชีพัก</b> (<c>OverridePaymentAccountId</c> = clearing) · <b>ห้ามหัก WHT ตอนจ่ายซ้ำ</b> — ขา WHT อยู่ใน
++/// <c>PayoutJournal</c> แล้ว ใบนี้ถือข้อมูล WHT ไว้ออก 50 ทวิเท่านั้น</summary>
++public sealed record SettlementFeeDocumentPlan(
++    SettlementFeeVatTreatment VatTreatment,
++    SettlementFeeWhtMode WhtMode,
++    decimal Deducted,
++    decimal Expense,
++    decimal InputVat,
++    decimal Pp36Payable,
++    decimal WhtAmount,
++    IReadOnlyList<SettlementFeeDocumentLine> Lines);
++
++/// <summary>รับชำระใบขายที่จับคู่แล้ว — เงินเข้า = บัญชีพัก (<c>OverridePaymentAccountId</c> = clearing)</summary>
++public sealed record SettlementReceiptPlan(Guid DocumentId, decimal Amount, IReadOnlyList<Guid> LineIds);
++
++/// <summary>ใบลดหนี้ + จ่ายคืนจากบัญชีพัก ของใบขายเดิม (§86/10)</summary>
++public sealed record SettlementRefundPlan(Guid DocumentId, decimal Amount, IReadOnlyList<Guid> LineIds);
++
++/// <summary>ใบขายสรุปรายวันของบรรทัดขายที่จับคู่ไม่ได้ (DECISIONS ข้อ 2–3) — สร้างอัตโนมัติ + <b>ติดป้ายให้ตรวจ</b> · รับชำระเต็มจากบัญชีพัก ·
++/// <c>Gross</c> รวม VAT · <c>Net/Vat</c> แยกด้วย <see cref="SettlementFeeTax.SplitInclusive"/> (ไม่จด VAT ⇒ Vat = 0)</summary>
++public sealed record SettlementSummarySalePlan(
++    DateTime Date,
++    decimal Gross,
++    decimal Net,
++    decimal Vat,
++    decimal SaleAmount,
++    decimal SellerVoucher,
++    decimal PlatformVoucher,
++    IReadOnlyList<Guid> LineIds,
++    IReadOnlyList<string> ExternalOrderIds);
++
++/// <summary>แผนลงบัญชีของรอบโอน 1 รอบ — ผลของ <see cref="SettlementBatchMath.Plan"/></summary>
++/// <param name="CanPost">ไม่มีปัญหาที่บล็อก</param>
++/// <param name="LinesTotal">Σ Amount ทุกบรรทัด</param>
++/// <param name="ExpectedTotal">NetPayout + (ปลายรอบ − ต้นรอบ)</param>
++/// <param name="Difference">LinesTotal − ExpectedTotal</param>
++/// <param name="AlreadyInClearing">ยอดบรรทัดที่ลงบัญชีพักไว้แล้วจากทางอื่น (PaymentIntent/Payment) — ไม่ลงซ้ำ</param>
++public sealed record SettlementPostingPlan(
++    bool CanPost,
++    decimal LinesTotal,
++    decimal ExpectedTotal,
++    decimal Difference,
++    decimal NetPayout,
++    decimal AlreadyInClearing,
++    Guid? ClearingAccountId,
++    Guid? BankAccountId,
++    IReadOnlyList<SettlementPlanIssue> Issues,
++    IReadOnlyList<SettlementJournalLinePlan> PayoutJournal,
++    IReadOnlyList<SettlementFeeDocumentPlan> FeeDocuments,
++    IReadOnlyList<SettlementReceiptPlan> Receipts,
++    IReadOnlyList<SettlementSummarySalePlan> SummarySales,
++    IReadOnlyList<SettlementRefundPlan> Refunds)
++{
++    /// <summary>ผลรวมการเคลื่อนไหวของบัญชีพักจากทุกส่วนของแผน (บวก = Dr) — ต้องเท่ากับ LinesTotal − AlreadyInClearing − NetPayout
++    /// เมื่อแผนลงบัญชีได้ (invariant ที่เทสต์ล็อก)</summary>
++    public decimal ClearingMovement =>
++        PayoutJournal.Where(l => l.AccountRole == SettlementAccountRoles.Clearing).Sum(l => l.Debit - l.Credit)
++        + Receipts.Sum(r => r.Amount) + SummarySales.Sum(s => s.Gross)
++        - Refunds.Sum(r => r.Amount) - FeeDocuments.Sum(f => f.Deducted);
++}
++
++/// <summary>
++/// **แผนลงบัญชีของรอบโอน settlement — ฟังก์ชันบริสุทธิ์ตัวเดียว** (รอบ 198 เฟส 1 · report-S1 §2–§4/§7 · report-S2 §3)
++///
++/// <para>═══ หลัก ═══ ยอดเข้าธนาคารจริง (NetPayout) เป็นตัวตั้ง · สมการ Σ บรรทัด = NetPayout + (ปลายรอบ − ต้นรอบ) ±0.01 ·
++/// ไม่ลงตัว = ปัญหาพร้อมทางไปต่อ (<b>ไม่เดาส่วนต่าง</b> — ผู้ใช้เพิ่มบรรทัด Adjustment ที่มีเหตุผล หรือแก้ยอด) · ทุกบรรทัดต้องจัดประเภท ·
++/// ค่าธรรมเนียมเป็น<b>เอกสารซื้อ</b> 1 ใบ/กลุ่มภาษี จ่ายจากบัญชีพัก · ขาขายใช้การรับชำระเดิม (จับคู่ได้) หรือใบขายสรุปรายวัน (จับไม่ได้ ·
++/// DECISIONS ข้อ 3) · คืนเงินต้องอ้างใบเดิม · reserve/chargeback/ภาษีถูกหัก/FX/ปรับปรุง ลง JE รอบโอนตรง</para>
++///
++/// <para>แผนนี้ไม่แตะฐานข้อมูล — ผู้ลงบัญชี (ทีม C: <c>SettlementPostingService</c>) แปลงเป็น JE ผ่าน <c>JournalEntryBuilder</c> (ด่านงวด) +
++/// เอกสารผ่าน <c>IDocumentService</c> ในธุรกรรมเดียว · <b>ห้ามคำนวณยอด/ภาษีซ้ำเองที่อื่น</b></para>
++/// </summary>
++public static class SettlementBatchMath
++{
++    /// <summary>ผลต่างที่ยอมรับ (เศษปัดของผู้ให้บริการ)</summary>
++    public const decimal ToleranceBaht = 0.01m;
++
++    public static SettlementPostingPlan Plan(
++        SettlementBatch batch,
++        IReadOnlyList<SettlementLine> lines,
++        SettlementChannel channel,
++        bool companyVatRegistered)
++    {
++        var issues = new List<SettlementPlanIssue>();
++        var reference = string.IsNullOrWhiteSpace(batch.PayoutRef) ? "(ไม่มีเลขรอบโอน)" : batch.PayoutRef.Trim();
++        var feeMap = SettlementLineTypeRules.ParseFeeAccountMap(channel.FeeAccountMapJson).Map;
++
++        // ── 1. สมการของ batch ──
++        var linesTotal = lines.Sum(l => l.Amount);
++        var expected = batch.NetPayout + (batch.ClosingWalletBalance - batch.OpeningWalletBalance);
++        var diff = linesTotal - expected;
++        if (Math.Abs(diff) > ToleranceBaht)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.Unbalanced, true,
++                $"ยอดรวมบรรทัด ({linesTotal:N2}) ไม่เท่ากับยอดโอนเข้า ({batch.NetPayout:N2}) + ยอด wallet ที่เปลี่ยน "
++                + $"({batch.ClosingWalletBalance - batch.OpeningWalletBalance:N2}) — ต่างกัน {diff:N2} บาท",
++                "ตรวจยอดโอนเข้าและยอดยกมา/ยกไปให้ตรงสเตทเมนต์ของผู้ให้บริการ · ถ้าไฟล์ขาดรายการ เพิ่มบรรทัด \"ปรับปรุงอื่น\" "
++                + "พร้อมเหตุผลและผังบัญชี (ระบบไม่เดาส่วนต่างให้ — JE ที่ไม่ตรงเงินจริงกระทบยอดไม่ได้ตลอดไป)",
++                Array.Empty<Guid>(), diff));
++
++        // ── 2. ด่านระดับช่องทาง/รอบโอน ──
++        if (!string.Equals((batch.Currency ?? "THB").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.CurrencyNotSupported, true,
++                $"รอบโอนสกุล {batch.Currency} — เฟส 1 รองรับเฉพาะเงินบาท",
++                "ลงบัญชีรอบนี้ด้วยมือ (สมุดรายวันทั่วไป) ไปก่อน — สกุลต่างประเทศ/อัตราแลกเปลี่ยนอยู่ในเฟส OTA",
++                Array.Empty<Guid>(), null));
++        if (channel.RevenueModel == SettlementRevenueModel.NetRate)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RevenueModelNotSupported, true,
++                "ช่องทางนี้ตั้งเป็น \"รายได้สุทธิ (ขายต่อให้แพลตฟอร์ม)\" — เฟส 1 รองรับเฉพาะรายได้เต็มจำนวน + ค่าธรรมเนียมเป็นค่าใช้จ่าย",
++                "ถ้าสัญญาเป็นแบบแพลตฟอร์มเก็บเงินแทน ให้เปลี่ยนเป็น \"รายได้เต็มจำนวน\" ในหน้าตั้งค่าช่องทาง · ถ้าเป็นแบบขายต่อจริง ลงบัญชีด้วยมือไปก่อน",
++                Array.Empty<Guid>(), null));
++        if (channel.ClearingAccountId is null)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ClearingAccountMissing, true,
++                $"ช่องทาง \"{channel.DisplayName}\" ยังไม่ได้ผูกผังพัก (ลูกหนี้แพลตฟอร์ม)",
++                "กด \"สร้างผังพักให้อัตโนมัติ\" (11341–11349) หรือเลือกผังพักเองในหน้าตั้งค่าช่องทาง",
++                Array.Empty<Guid>(), null));
++        if (batch.NetPayout != 0m && batch.BankAccountId is null)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.BankAccountMissing, true,
++                $"รอบโอน {reference} มีเงินเข้า {batch.NetPayout:N2} แต่ยังไม่ได้เลือกบัญชีธนาคารที่รับเงิน",
++                "เลือกบัญชีธนาคารของรอบโอนนี้ (หรือจับคู่กับรายการเดินบัญชี)", Array.Empty<Guid>(), batch.NetPayout));
++        if (batch.ClosingWalletBalance < 0m)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.NegativeBalanceCarried, false,
++                $"ยอด wallet ปลายรอบติดลบ {batch.ClosingWalletBalance:N2} — แพลตฟอร์มจะหักจากรอบถัดไป",
++                "ไม่ต้องทำอะไรตอนนี้ · ผังพักจะมียอดด้านเครดิตจนรอบถัดไป — ถ้าปิดงวดบัญชีระหว่างนี้ ให้จัดประเภทเป็นเจ้าหนี้อื่น (21220) ในงบ",
++                Array.Empty<Guid>(), batch.ClosingWalletBalance));
++
++        // ── 3. ตรวจรายบรรทัด แล้วแยกตามทางลงบัญชี ──
++        var sale = new List<SettlementLine>();
++        var refunds = new List<SettlementLine>();
++        var fees = new List<SettlementLine>();
++        var direct = new List<SettlementLine>();
++        decimal already = 0m;
++        foreach (var l in lines)
++        {
++            if (l.Amount == 0m) continue;                          // แถว 0 ไม่ใช่หลักฐาน
++            var rule = SettlementLineTypeRules.For(l.LineType);
++            if (!rule.Postable)
++            {
++                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.Unclassified, true,
++                    $"บรรทัดที่ {l.Seq} ({Label(l)}) ยอด {l.Amount:N2} ยังไม่ได้จัดประเภท",
++                    "เลือกประเภทรายการของบรรทัดนี้ (ระบบจะจำไว้ใช้กับไฟล์ถัดไป)", new[] { l.Id }, l.Amount));
++                continue;
++            }
++            if (!rule.SignAllowed(l.Amount))
++            {
++                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SignNotAllowed, true,
++                    $"บรรทัดที่ {l.Seq} ประเภท \"{rule.LabelTh}\" ยอด {l.Amount:N2} เครื่องหมายผิดประเภท",
++                    "ตรวจประเภทที่เลือก (เช่น ยอดบวกที่เป็นเงินคืนค่าธรรมเนียม vs ยอดลบที่เป็นค่าธรรมเนียม) หรือแก้การจับคู่คอลัมน์ยอดเงิน",
++                    new[] { l.Id }, l.Amount));
++                continue;
++            }
++            if (rule.RequiresReason)
++            {
++                var bad = false;
++                if (string.IsNullOrWhiteSpace(l.AdjustmentReason))
++                {
++                    issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.AdjustmentReasonMissing, true,
++                        $"บรรทัดที่ {l.Seq} เป็นรายการปรับปรุง ยอด {l.Amount:N2} แต่ไม่มีเหตุผล",
++                        "ระบุเหตุผลของรายการปรับปรุง (ผู้สอบบัญชีจะถาม)", new[] { l.Id }, l.Amount));
++                    bad = true;
++                }
++                if (l.OverrideAccountId is null)
++                {
++                    issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.AdjustmentAccountMissing, true,
++                        $"บรรทัดที่ {l.Seq} เป็นรายการปรับปรุง ยอด {l.Amount:N2} แต่ยังไม่ได้เลือกผังบัญชี",
++                        "เลือกผังบัญชีที่รายการปรับปรุงนี้ควรลง", new[] { l.Id }, l.Amount));
++                    bad = true;
++                }
++                if (bad) continue;
++            }
++            if (l.VatAmount is decimal ev && (Math.Abs(ev) > Math.Abs(l.Amount) || (ev != 0m && Math.Sign(ev) != Math.Sign(l.Amount))))
++            {
++                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ExplicitVatInvalid, true,
++                    $"บรรทัดที่ {l.Seq} VAT ในไฟล์ ({ev:N2}) ไม่สอดคล้องกับยอด ({l.Amount:N2})",
++                    "ตรวจการจับคู่คอลัมน์ VAT/ยอดเงิน (VAT ต้องรวมอยู่ในยอดและเครื่องหมายเดียวกัน)", new[] { l.Id }, l.Amount));
++                continue;
++            }
++
++            switch (rule.Posting)
++            {
++                case SettlementPostingKind.SaleComponent:
++                    if (l.PaymentIntentId is not null || l.PaymentId is not null) already += l.Amount;
++                    else sale.Add(l);
++                    break;
++                case SettlementPostingKind.Refund:
++                    if (l.PaymentIntentId is not null || l.PaymentId is not null) already += l.Amount;
++                    else refunds.Add(l);
++                    break;
++                case SettlementPostingKind.FeeDocument:
++                    fees.Add(l);
++                    break;
++                default:
++                    direct.Add(l);
++                    break;
++            }
++        }
++
++        // ── 4. ขาขาย: จับคู่ได้ ⇒ รับชำระต่อใบ · จับไม่ได้ ⇒ ใบขายสรุปรายวัน ──
++        var receipts = new List<SettlementReceiptPlan>();
++        foreach (var g in sale.Where(l => l.MatchedDocumentId is not null).GroupBy(l => l.MatchedDocumentId!.Value))
++        {
++            var amt = g.Sum(l => l.Amount);
++            if (amt <= 0m)
++            {
++                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SaleGroupNotPositive, true,
++                    $"บรรทัดขายที่จับคู่กับเอกสารเดียวกันรวมได้ {amt:N2} (ไม่เป็นบวก)",
++                    "ตรวจการจับคู่ — ส่วนลดของออเดอร์ต้องจับคู่กับใบขายเดียวกับยอดขายของออเดอร์นั้น",
++                    g.Select(l => l.Id).ToList(), amt));
++                continue;
++            }
++            receipts.Add(new SettlementReceiptPlan(g.Key, amt, g.Select(l => l.Id).ToList()));
++        }
++        var summaries = new List<SettlementSummarySalePlan>();
++        foreach (var g in sale.Where(l => l.MatchedDocumentId is null)
++                     .GroupBy(l => (l.TxnDate ?? batch.PayoutDate).Date).OrderBy(g => g.Key))
++        {
++            var gross = g.Sum(l => l.Amount);
++            if (gross <= 0m)
++            {
++                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SaleGroupNotPositive, true,
++                    $"บรรทัดขายที่จับคู่ไม่ได้ของวันที่ {g.Key:yyyy-MM-dd} รวมได้ {gross:N2} (ไม่เป็นบวก)",
++                    "จับคู่ส่วนลดกับใบขายของออเดอร์นั้น หรือตรวจวันที่ของรายการ", g.Select(l => l.Id).ToList(), gross));
++                continue;
++            }
++            var (net, vat) = SettlementFeeTax.SplitInclusive(gross, companyVatRegistered);
++            summaries.Add(new SettlementSummarySalePlan(g.Key, gross, net, vat,
++                g.Where(l => l.LineType == SettlementLineType.Sale).Sum(l => l.Amount),
++                g.Where(l => l.LineType == SettlementLineType.SellerVoucher).Sum(l => l.Amount),
++                g.Where(l => l.LineType == SettlementLineType.PlatformVoucherSubsidy).Sum(l => l.Amount),
++                g.Select(l => l.Id).ToList(),
++                g.Select(l => l.ExternalOrderId).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).Distinct().ToList()));
++        }
++        if (summaries.Count > 0)
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.SummarySaleCreated, false,
++                $"บรรทัดขาย {summaries.Sum(s => s.LineIds.Count)} บรรทัด ยอด {summaries.Sum(s => s.Gross):N2} จับคู่ใบขายในระบบไม่ได้ "
++                + $"— ระบบจะออกใบขายสรุปรายวัน {summaries.Count} ใบให้ (ติดป้ายให้ตรวจ)",
++                "ตรวจว่ายอดขายเหล่านี้ยังไม่เคยออกเอกสารขายทางอื่น (กันรายได้ซ้ำ) — ถ้าเคยออกแล้ว จับคู่บรรทัดกับใบนั้นก่อนลงบัญชี",
++                summaries.SelectMany(s => s.LineIds).ToList(), summaries.Sum(s => s.Gross)));
++
++        // ── 5. คืนเงิน: ต้องอ้างใบเดิม ──
++        var refundPlans = new List<SettlementRefundPlan>();
++        foreach (var l in refunds.Where(l => l.MatchedDocumentId is null))
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RefundUnmatched, true,
++                $"บรรทัดที่ {l.Seq} คืนเงิน {-l.Amount:N2} (ออเดอร์ {l.ExternalOrderId ?? "-"}) ยังไม่รู้ใบขายเดิม",
++                "เลือกใบขายเดิมของออเดอร์นี้ — ใบลดหนี้ต้องอ้างเลขที่และวันที่ใบเดิม (§86/10)", new[] { l.Id }, l.Amount));
++        foreach (var g in refunds.Where(l => l.MatchedDocumentId is not null).GroupBy(l => l.MatchedDocumentId!.Value))
++            refundPlans.Add(new SettlementRefundPlan(g.Key, -g.Sum(l => l.Amount), g.Select(l => l.Id).ToList()));
++
++        // ── 6. ค่าธรรมเนียม → เอกสารซื้อต่อกลุ่มภาษี ──
++        var feeDocs = new List<SettlementFeeDocumentPlan>();
++        var whtJournal = new List<SettlementJournalLinePlan>();
++        var feeLines = BuildFeeLines(fees, channel, feeMap, companyVatRegistered);
++        foreach (var g in feeLines.GroupBy(f => f.VatTreatment).OrderBy(g => g.Key))
++        {
++            var docLines = g.Select(f => f.Line).ToList();
++            var deducted = docLines.Sum(x => x.Deducted);
++            if (deducted <= 0m)
++            {
++                if (deducted < 0m)
++                    issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.FeeGroupNetRefund, true,
++                        $"ค่าธรรมเนียมรอบนี้ (กลุ่ม {g.Key}) สุทธิเป็นยอดคืน {-deducted:N2}",
++                        "บันทึกใบลดหนี้ค่าธรรมเนียมที่ได้รับจากแพลตฟอร์ม (อ้างใบค่าธรรมเนียมเดิม) — ระบบยังไม่สร้างให้อัตโนมัติ",
++                        docLines.SelectMany(x => x.LineIds).ToList(), deducted));
++                continue;
++            }
++            var whtMode = docLines.Any(x => x.WhtAmount != 0m) ? channel.FeeWhtMode : SettlementFeeWhtMode.None;
++            feeDocs.Add(new SettlementFeeDocumentPlan(g.Key, whtMode, deducted,
++                docLines.Sum(x => x.Expense), docLines.Sum(x => x.InputVat), docLines.Sum(x => x.Pp36Payable),
++                docLines.Sum(x => x.WhtAmount), docLines));
++            AddWhtLegs(whtJournal, whtMode, docLines, reference);
++        }
++        if (feeDocs.Any(d => d.WhtMode == SettlementFeeWhtMode.AgentWithholds))
++            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.WhtFiledByAgent, false,
++                $"แพลตฟอร์มเป็นตัวแทนหัก ณ ที่จ่าย {feeDocs.Sum(d => d.WhtAmount):N2} แทนเรา",
++                "เก็บหนังสือรับรอง 50 ทวิ ที่แพลตฟอร์มออก — ยอดนี้ไม่เข้ายอดที่เรายื่น ภ.ง.ด.53 เอง",
++                Array.Empty<Guid>(), feeDocs.Sum(d => d.WhtAmount)));
++
++        // ── 7. JE รอบโอน: ธนาคาร + รายการตรง + ขา WHT ──
++        var journal = new List<SettlementJournalLinePlan>();
++        if (batch.NetPayout > 0m)
++        {
++            journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.Bank, null, null, batch.NetPayout, 0m,
++                $"รับโอนจาก {channel.DisplayName} รอบ {reference}", Array.Empty<Guid>()));
++            journal.Add(ClearingLine(channel, 0m, batch.NetPayout, $"ถอนเงินจาก wallet {channel.DisplayName} รอบ {reference}", Array.Empty<Guid>()));
++        }
++        else if (batch.NetPayout < 0m)
++        {
++            journal.Add(ClearingLine(channel, -batch.NetPayout, 0m, $"เติมเงินเข้า wallet {channel.DisplayName} รอบ {reference}", Array.Empty<Guid>()));
++            journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.Bank, null, null, 0m, -batch.NetPayout,
++                $"โอนเติมเงินให้ {channel.DisplayName} รอบ {reference}", Array.Empty<Guid>()));
++        }
++        foreach (var g in direct.GroupBy(l => (Role: DirectRole(l), l.OverrideAccountId, Positive: l.Amount > 0m)))
++        {
++            var amt = Math.Abs(g.Sum(l => l.Amount));
++            if (amt == 0m) continue;
++            var ids = g.Select(l => l.Id).ToList();
++            var label = SettlementLineTypeRules.For(g.First().LineType).LabelTh;
++            var desc = $"{label} — {channel.DisplayName} รอบ {reference}";
++            var counterId = g.Key.OverrideAccountId ?? RoleAccountId(g.Key.Role, channel, feeMap);
++            var counterCode = SettlementAccountRoles.DefaultCode(g.Key.Role);
++            if (g.Key.Positive)
++            {
++                journal.Add(ClearingLine(channel, amt, 0m, desc, ids));
++                journal.Add(new SettlementJournalLinePlan(g.Key.Role, counterId, counterCode, 0m, amt, desc, ids));
++            }
++            else
++            {
++                journal.Add(new SettlementJournalLinePlan(g.Key.Role, counterId, counterCode, amt, 0m, desc, ids));
++                journal.Add(ClearingLine(channel, 0m, amt, desc, ids));
++            }
++        }
++        journal.AddRange(whtJournal);
++
++        var canPost = !issues.Any(i => i.Blocking);
++        return new SettlementPostingPlan(canPost, linesTotal, expected, diff, batch.NetPayout, already,
++            channel.ClearingAccountId, batch.BankAccountId, issues, journal, feeDocs, receipts, summaries, refundPlans);
++    }
++
++    /// <summary>ผลของ chargeback ที่เปิดไว้ (พักที่ผัง dispute) — <b>แพ้</b>: Dr 57140 ขาดทุนจาก chargeback / Cr dispute
++    /// (ภาษีขายเดิมคงอยู่ — ไม่ใช่เหตุออกใบลดหนี้ §86/10 · ถ้าแพ้แล้ว<b>ได้ของคืน</b> = คืนเงินปกติ ใช้ใบลดหนี้ ไม่ใช่เมธอดนี้) ·
++    /// <b>ชนะ</b>และแพลตฟอร์มคืนเงินนอกไฟล์ settlement: Dr บัญชีพัก / Cr dispute (ถ้าคืนในไฟล์ ใช้บรรทัด ChargebackReversal แทน — ห้ามใช้ทั้งสองทาง)</summary>
++    public static IReadOnlyList<SettlementJournalLinePlan> PlanChargebackResolution(
++        decimal amount, bool won, SettlementChannel channel, string reference)
++    {
++        var amt = Math.Abs(amount);
++        if (amt == 0m) return Array.Empty<SettlementJournalLinePlan>();
++        var feeMap = SettlementLineTypeRules.ParseFeeAccountMap(channel.FeeAccountMapJson).Map;
++        var dispute = new SettlementJournalLinePlan(SettlementAccountRoles.Dispute, channel.DisputeAccountId,
++            SettlementAccountRoles.DefaultCode(SettlementAccountRoles.Dispute), 0m, amt,
++            $"ปิดรายการ chargeback {reference} — {channel.DisplayName}", Array.Empty<Guid>());
++        if (won)
++            return new[]
++            {
++                ClearingLine(channel, amt, 0m, $"ชนะ chargeback {reference} ได้เงินคืน — {channel.DisplayName}", Array.Empty<Guid>()),
++                dispute,
++            };
++        return new[]
++        {
++            new SettlementJournalLinePlan(SettlementAccountRoles.ChargebackLoss,
++                RoleAccountId(SettlementAccountRoles.ChargebackLoss, channel, feeMap),
++                SettlementAccountRoles.DefaultCode(SettlementAccountRoles.ChargebackLoss), amt, 0m,
++                $"แพ้ chargeback {reference} (ไม่ได้สินค้าคืน) — {channel.DisplayName}", Array.Empty<Guid>()),
++            dispute,
++        };
++    }
++
++    // ───────────────────────── ภายใน ─────────────────────────
++
++    private readonly record struct FeeLineWithTreatment(SettlementFeeVatTreatment VatTreatment, SettlementFeeDocumentLine Line);
++
++    /// <summary>รวมค่าธรรมเนียมตาม (ประเภท · ผัง) — บรรทัดที่ไฟล์ระบุ VAT คิดทีละบรรทัด (เชื่อไฟล์) · ที่เหลือรวมยอดแล้วแยก VAT ครั้งเดียว
++    /// (ใกล้ใบกำกับรายเดือนของแพลตฟอร์มกว่าการปัดทีละบรรทัด) · ยอดคืน (บวก) หักออกจากก้อนเดียวกัน</summary>
++    private static List<FeeLineWithTreatment> BuildFeeLines(
++        List<SettlementLine> fees, SettlementChannel channel, IReadOnlyDictionary<string, Guid> feeMap, bool vatRegistered)
++    {
++        var result = new List<FeeLineWithTreatment>();
++        foreach (var g in fees.GroupBy(l => (l.LineType, l.OverrideAccountId)).OrderBy(g => (int)g.Key.LineType))
++        {
++            var rule = SettlementLineTypeRules.For(g.Key.LineType);
++            var role = rule.AccountRole ?? SettlementAccountRoles.ServiceFee;
++            var accountId = g.Key.OverrideAccountId ?? RoleAccountId(role, channel, feeMap);
++            var parts = new List<(SettlementFeeTaxResult Tax, int Sign)>();
++            foreach (var l in g.Where(l => l.VatAmount is not null))
++                parts.Add((ComputeTax(Math.Abs(l.Amount), l.VatAmount, rule, channel, vatRegistered), l.Amount < 0m ? 1 : -1));
++            var implicitCharge = -g.Where(l => l.VatAmount is null).Sum(l => l.Amount);   // ค่าธรรมเนียม = ยอดลบ ⇒ กลับเป็นบวก
++            if (implicitCharge != 0m)
++                parts.Add((ComputeTax(Math.Abs(implicitCharge), null, rule, channel, vatRegistered), implicitCharge > 0m ? 1 : -1));
++
++            // กลุ่มภาษีของก้อน = ชนิดที่มี VAT ตัวแรก (ประเภท+ผังเดียวกันใต้ช่องทางเดียวกันได้ชนิดเดียวอยู่แล้ว) · ไม่มี VAT ทั้งก้อน ⇒ NoVat
++            var treatment = parts.Select(p => p.Tax.VatTreatment).FirstOrDefault(t => t != SettlementFeeVatTreatment.NoVat);
++            result.Add(new FeeLineWithTreatment(treatment, new SettlementFeeDocumentLine(
++                g.Key.LineType, rule.LabelTh, role, accountId, SettlementAccountRoles.DefaultCode(role),
++                parts.Sum(p => p.Sign * p.Tax.Deducted),
++                parts.Sum(p => p.Sign * p.Tax.Expense),
++                parts.Sum(p => p.Sign * p.Tax.InputVat),
++                parts.Sum(p => p.Sign * p.Tax.Pp36Payable),
++                parts.Select(p => p.Tax.WhtIncomeCode).FirstOrDefault(c => c != null),
++                parts.Select(p => p.Tax.WhtRatePercent).FirstOrDefault(r => r != 0m),
++                parts.Sum(p => p.Sign * p.Tax.WhtBase),
++                parts.Sum(p => p.Sign * p.Tax.WhtAmount),
++                parts.Sum(p => p.Sign * p.Tax.WhtCertIncome),
++                parts.Sum(p => p.Sign * p.Tax.WhtBorneExpense),
++                g.Select(l => l.Id).ToList())));
++        }
++        return result;
++    }
++
++    private static SettlementFeeTaxResult ComputeTax(decimal deducted, decimal? explicitVat, SettlementLineTypeRule rule,
++        SettlementChannel channel, bool vatRegistered)
++        => SettlementFeeTax.Compute(deducted, explicitVat, channel.FeeVatMode, rule.VatApplicable, vatRegistered,
++            channel.FeeWhtMode, rule.WhtIncomeCode);
++
++    /// <summary>ขา WHT ของใบค่าธรรมเนียม (ไม่ผ่านการจ่ายเงินของใบ — แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว):
++    /// W2 Dr ลูกหนี้แพลตฟอร์มรอคืน / Cr 21917 · W3 Dr ผังค่าธรรมเนียม (ภาษีที่ออกแทน) / Cr 21917 · W1 ไม่มีขา (ตัวแทนยื่นเอง)</summary>
++    private static void AddWhtLegs(List<SettlementJournalLinePlan> journal, SettlementFeeWhtMode mode,
++        List<SettlementFeeDocumentLine> docLines, string reference)
++    {
++        if (mode is SettlementFeeWhtMode.None or SettlementFeeWhtMode.AgentWithholds) return;
++        foreach (var d in docLines.Where(d => d.WhtAmount > 0m))
++        {
++            var ids = d.LineIds;
++            var desc = $"ภาษีหัก ณ ที่จ่าย {d.WhtRatePercent:0.##}% {d.LabelTh} รอบ {reference} (ภ.ง.ด.53)";
++            if (mode == SettlementFeeWhtMode.SelfWithholdReimbursed)
++                journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.WhtReimbursable, null,
++                    SettlementAccountRoles.DefaultCode(SettlementAccountRoles.WhtReimbursable), d.WhtAmount, 0m,
++                    desc + " — รอแพลตฟอร์มคืน", ids));
++            else
++                journal.Add(new SettlementJournalLinePlan(d.AccountRole, d.AccountId, d.DefaultAccountCode, d.WhtBorneExpense, 0m,
++                    desc + " — ภาษีที่ออกแทน", ids));
++            journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.WhtPayable, null,
++                SettlementAccountRoles.DefaultCode(SettlementAccountRoles.WhtPayable), 0m, d.WhtAmount, desc, ids));
++        }
++    }
++
++    /// <summary>บทบาทคู่บัญชีของบรรทัดที่ลง JE ตรง — FX แยกกำไร/ขาดทุนตามเครื่องหมาย</summary>
++    private static string DirectRole(SettlementLine l)
++        => l.LineType == SettlementLineType.FxDifference
++            ? (l.Amount > 0m ? SettlementAccountRoles.FxGain : SettlementAccountRoles.FxLoss)
++            : SettlementLineTypeRules.For(l.LineType).AccountRole ?? SettlementAccountRoles.Adjustment;
++
++    private static Guid? RoleAccountId(string role, SettlementChannel channel, IReadOnlyDictionary<string, Guid> feeMap)
++    {
++        if (role == SettlementAccountRoles.Clearing) return channel.ClearingAccountId;
++        if (role == SettlementAccountRoles.Reserve) return channel.ReserveAccountId;
++        if (role == SettlementAccountRoles.Dispute) return channel.DisputeAccountId;
++        return feeMap.TryGetValue(role, out var id) ? id : null;
++    }
++
++    private static SettlementJournalLinePlan ClearingLine(SettlementChannel channel, decimal dr, decimal cr, string desc, IReadOnlyList<Guid> ids)
++        => new(SettlementAccountRoles.Clearing, channel.ClearingAccountId, null, dr, cr, desc, ids);
++
++    private static string Label(SettlementLine l)
++        => !string.IsNullOrWhiteSpace(l.RawTypeLabel) ? l.RawTypeLabel!.Trim()
++            : !string.IsNullOrWhiteSpace(l.Description) ? l.Description!.Trim() : "ไม่มีคำอธิบาย";
++}
+diff --git a/Accounting/Helpers/SettlementChannelAccounts.cs b/Accounting/Helpers/SettlementChannelAccounts.cs
+new file mode 100644
+index 00000000..372eac9b
+--- /dev/null
++++ b/Accounting/Helpers/SettlementChannelAccounts.cs
+@@ -0,0 +1,175 @@
++using Accounting.Data;
++using Accounting.Models.Entities;
++using Accounting.Models.Enums;
++using Microsoft.EntityFrameworkCore;
++
++namespace Accounting.Helpers;
++
++/// <summary>
++/// **ผังพัก "ลูกหนี้แพลตฟอร์ม" ต่อช่องทาง (11341–11349)** — DECISIONS ข้อ 4 · report-S1 §1.2/D1
++///
++/// <para>ทำไมผังย่อยต่อช่องทาง ไม่ใช่ 11340 + มิติ: ยอดของผังพักต้อง = ยอดใน wallet ของแพลตฟอร์มนั้นทุกวัน (report-S1 §7 ข้อ 1) ·
++/// ผังเดียวรวมทุกแพลตฟอร์มทำให้กระทบยอดรายแพลตฟอร์มไม่ได้จากงบทดลอง · ผังย่อยไม่ seed ล่วงหน้า (บริษัทส่วนใหญ่ไม่มี marketplace)
++/// — สร้างตอนผูกช่องทางผ่านเมธอดนี้ตัวเดียว</para>
++///
++/// <para>═══ กติกา ═══
++/// <list type="bullet">
++/// <item><b>idempotent</b>: ผูกแล้ว (ผังยังอยู่ · ของบริษัทนี้ · เปิดใช้) ⇒ คืนตัวเดิม · ผังที่สร้างไว้แล้วแต่ยังไม่ได้ผูก (ล้มกลางทาง) ⇒ ผูกตัวเดิม</item>
++/// <item><b>gateway ในระบบ</b> (ผูก <c>PaymentProviderConfigId</c> ที่มีผังพักอยู่แล้ว) ⇒ ใช้ผังของ config (11340) — PaymentIntent ลงไว้ที่นั่นแล้ว
++/// ถ้าแยกผังใหม่ ยอดรับชำระกับยอดโอนจะอยู่คนละผังตลอดไป</item>
++/// <item>ผังที่ผูกไว้ถูกลบ/ปิดใช้ ⇒ <b>ล้มดัง</b> (ห้ามผูกผังใหม่เงียบ ๆ — ยอดพักค้างอยู่ในผังเดิม)</item>
++/// <item>ครบ 9 ช่องทางแล้ว ⇒ ล้มดังพร้อมทางไปต่อ · ไม่มีกลุ่ม 113 ⇒ ล้มดัง</item>
++/// <item>tenant: ทุก query กรอง <c>CompanyId</c> · ล็อก advisory ต่อบริษัท (สองคำขอพร้อมกันได้คนละรหัส ไม่ชน unique)</item>
++/// <item><b>บันทึกเอง</b> (SaveChanges + ธุรกรรมของตัวเองเมื่อผู้เรียกไม่มี) — เรียกตอนสร้าง/ผูกช่องทาง ไม่ใช่กลางธุรกรรมลงบัญชี</item>
++/// </list></para>
++/// </summary>
++public static class SettlementChannelAccounts
++{
++    internal const int FirstClearingSuffix = 1;
++    internal const int LastClearingSuffix = 9;
++    /// <summary>ต้นรหัสของผังพักย่อย ("1134" + 1..9)</summary>
++    internal const string ClearingCodeStem = "1134";
++    private const string LockScope = "settlement-clearing";
++
++    /// <summary>คืน AccountId ของผังพักของช่องทาง — สร้าง/ผูกให้ถ้ายังไม่มี (ดูกติกาที่หัวคลาส)</summary>
++    /// <exception cref="BusinessRuleException">ช่องทางไม่ใช่ของบริษัทนี้ · ผังที่ผูกไว้ใช้ไม่ได้ · ไม่มีกลุ่ม 113 · ครบ 9 ช่องทาง</exception>
++    public static async Task<Guid> EnsureClearingAccountAsync(
++        AccountingDbContext db, Guid companyId, SettlementChannel channel, CancellationToken ct = default)
++    {
++        if (channel.CompanyId != companyId)
++            throw new BusinessRuleException("ช่องทางนี้ไม่ใช่ของบริษัทที่เลือก", "SETTLEMENT-TENANT", 403);
++
++        if (channel.ClearingAccountId is Guid linked)
++        {
++            if (await IsUsableAsync(db, companyId, linked, ct)) return linked;
++            throw new BusinessRuleException(
++                $"ผังพักของช่องทาง \"{channel.DisplayName}\" ถูกลบหรือปิดใช้ — ยอดที่พักค้างอยู่ในผังเดิม ระบบจึงไม่ผูกผังใหม่ให้เอง · "
++                + "เปิดใช้ผังเดิมในหน้าผังบัญชี หรือเลือกผังพักใหม่ในหน้าตั้งค่าช่องทาง (แล้วโอนยอดคงค้างด้วยสมุดรายวัน)",
++                "SETTLEMENT-CLEARING-UNUSABLE");
++        }
++
++        if (channel.Kind == SettlementChannelKind.Gateway && channel.PaymentProviderConfigId is Guid cfgId)
++        {
++            var cfgClearing = await db.PaymentProviderConfigs.AsNoTracking()
++                .Where(c => c.Id == cfgId && c.CompanyId == companyId)
++                .Select(c => c.ClearingAccountId)
++                .FirstOrDefaultAsync(ct);
++            if (cfgClearing is Guid g && await IsUsableAsync(db, companyId, g, ct))
++            {
++                channel.ClearingAccountId = g;
++                await db.SaveChangesAsync(ct);
++                return g;
++            }
++        }
++
++        if (db.Database.CurrentTransaction != null)
++            return await CreateUnderLockAsync(db, companyId, channel, ct);
++
++        var strategy = db.Database.CreateExecutionStrategy();
++        return await strategy.ExecuteAsync(async () =>
++        {
++            await using var tx = await db.Database.BeginTransactionAsync(ct);
++            var id = await CreateUnderLockAsync(db, companyId, channel, ct);
++            await tx.CommitAsync(ct);
++            return id;
++        });
++    }
++
++    private static async Task<Guid> CreateUnderLockAsync(
++        AccountingDbContext db, Guid companyId, SettlementChannel channel, CancellationToken ct)
++    {
++        var lockKey = AdvisoryLockKey.For(companyId, LockScope, ClearingCodeStem);
++        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey }, ct);
++
++        var firstCode = ClearingCodeStem + FirstClearingSuffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
++        var parentCode = SettlementChartSeed.ParentGroupCode(firstCode);
++        var parent = await db.ChartOfAccounts
++            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive, ct);
++        if (parent == null)
++            throw new BusinessRuleException(
++                $"ผังบัญชีของบริษัทไม่มีกลุ่ม {parentCode} (ลูกหนี้การค้าและลูกหนี้อื่น) — สร้างผังพักย่อยให้อัตโนมัติไม่ได้ · "
++                + "เลือกผังพักที่มีอยู่เองในหน้าตั้งค่าช่องทาง หรือเพิ่มกลุ่ม 113 ในหน้าผังบัญชีก่อน",
++                "SETTLEMENT-CLEARING-NO-PARENT");
++
++        // รหัสที่ถูกใช้แล้ว — รวมแถวที่ลบแล้ว (unique index CompanyId+AccountCode ไม่ได้กรอง IsDeleted)
++        var used = await db.ChartOfAccounts.IgnoreQueryFilters()
++            .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(ClearingCodeStem))
++            .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.IsDeleted })
++            .ToListAsync(ct);
++
++        // ล้มกลางทางรอบก่อน (สร้างผังแล้วแต่ยังไม่ได้ผูก) ⇒ ผูกตัวเดิม ห้ามสร้างซ้ำ
++        var name = ClearingAccountName(channel.DisplayName);
++        foreach (var cand in used.Where(u => !u.IsDeleted && u.AccountName == name && IsClearingCode(u.AccountCode)))
++        {
++            var takenByOther = await db.SettlementChannels.AnyAsync(
++                c => c.CompanyId == companyId && c.ClearingAccountId == cand.Id && c.Id != channel.Id, ct);
++            if (!takenByOther)
++            {
++                channel.ClearingAccountId = cand.Id;
++                await db.SaveChangesAsync(ct);
++                return cand.Id;
++            }
++        }
++
++        var code = NextClearingCode(used.Select(u => u.AccountCode));
++        if (code == null)
++            throw new BusinessRuleException(
++                $"ผังพักย่อย {ClearingCodeStem}{FirstClearingSuffix}–{ClearingCodeStem}{LastClearingSuffix} ถูกใช้ครบ 9 ช่องทางแล้ว — "
++                + "ปิดช่องทางที่เลิกใช้แล้วเลือกผังพักเดิมของช่องทางนั้นให้ช่องทางนี้ หรือเลือกผังพักที่สร้างเองในหน้าตั้งค่าช่องทาง",
++                "SETTLEMENT-CLEARING-FULL");
++
++        var account = new ChartOfAccount
++        {
++            CompanyId = companyId,
++            AccountCode = code,
++            AccountName = name,
++            AccountNameEn = ClearingAccountNameEn(channel.DisplayName),
++            AccountType = AccountType.Asset,
++            ParentAccountId = parent.Id,
++            Level = parent.Level + 1,
++            IsActive = true,
++            IsSystemAccount = true,
++            Description = "สร้างอัตโนมัติเมื่อผูกช่องทางรับเงิน (settlement) — ยอดต้องเท่ายอดใน wallet ของแพลตฟอร์ม",
++        };
++        db.ChartOfAccounts.Add(account);
++        channel.ClearingAccountId = account.Id;
++        await db.SaveChangesAsync(ct);
++        return account.Id;
++    }
++
++    private static Task<bool> IsUsableAsync(AccountingDbContext db, Guid companyId, Guid accountId, CancellationToken ct)
++        => db.ChartOfAccounts.AnyAsync(a => a.Id == accountId && a.CompanyId == companyId && a.IsActive, ct);
++
++    /// <summary>รหัสถัดไปที่ว่างใน 11341–11349 (ข้ามรหัสที่ถูกใช้ รวมที่ลบแล้ว) · ครบ ⇒ null — เรียงด้วยตัวเลข ไม่ใช่ข้อความ</summary>
++    internal static string? NextClearingCode(IEnumerable<string?> usedCodes)
++    {
++        var used = new HashSet<string>(usedCodes.Where(c => c != null).Select(c => c!.Trim()), StringComparer.Ordinal);
++        for (var i = FirstClearingSuffix; i <= LastClearingSuffix; i++)
++        {
++            var code = ClearingCodeStem + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
++            if (!used.Contains(code)) return code;
++        }
++        return null;
++    }
++
++    internal static bool IsClearingCode(string? code)
++    {
++        if (code == null || code.Length != ClearingCodeStem.Length + 1 || !code.StartsWith(ClearingCodeStem, StringComparison.Ordinal))
++            return false;
++        var d = code[^1] - '0';
++        return d >= FirstClearingSuffix && d <= LastClearingSuffix;
++    }
++
++    /// <summary>ชื่อผังพักของช่องทาง — "ลูกหนี้แพลตฟอร์ม {ชื่อช่องทาง}" (ตัดให้พอดีคอลัมน์ 256)</summary>
++    internal static string ClearingAccountName(string? displayName)
++    {
++        var n = "ลูกหนี้แพลตฟอร์ม " + (string.IsNullOrWhiteSpace(displayName) ? "(ไม่มีชื่อ)" : displayName.Trim());
++        return n.Length > 256 ? n[..256] : n;
++    }
++
++    private static string ClearingAccountNameEn(string? displayName)
++    {
++        var n = "Platform Receivable - " + (string.IsNullOrWhiteSpace(displayName) ? "(unnamed)" : displayName.Trim());
++        return n.Length > 256 ? n[..256] : n;
++    }
++}
+diff --git a/Accounting/Helpers/SettlementChartSeed.cs b/Accounting/Helpers/SettlementChartSeed.cs
+new file mode 100644
+index 00000000..96d0b766
+--- /dev/null
++++ b/Accounting/Helpers/SettlementChartSeed.cs
+@@ -0,0 +1,51 @@
++using Accounting.Services;
++
++namespace Accounting.Helpers;
++
++/// <summary>
++/// ผังมาตรฐานที่ Settlement (wallet → ธนาคาร · รอบ 198) ต้องมี — <b>แหล่งเดียว</b>คือแถวใน
++/// <see cref="ChartOfAccountTemplates.GetCommonAccounts"/> (บริษัทใหม่ได้จากการ seed ปกติ) · ตัวนี้แค่ดึงแถวเหล่านั้นมาทำ
++/// SQL ใส่ให้<b>บริษัทเดิม</b> (DECISIONS ข้อ 4 · report-S1 §1.2)
++/// <para>11341–11349 (ลูกหนี้แพลตฟอร์มต่อช่องทาง) <b>ไม่อยู่ที่นี่</b> — สร้างตอนผูกช่องทางผ่าน
++/// <see cref="SettlementChannelAccounts.EnsureClearingAccountAsync"/></para>
++/// </summary>
++public static class SettlementChartSeed
++{
++    /// <summary>เงินที่ผู้ให้บริการกัน/ระงับไว้ (reserve/holdback · report-S1 G6)</summary>
++    public const string ReserveAccountCode = "11350";
++    /// <summary>ค่าธรรมเนียมรับชำระเงิน (MDR/gateway/payment fee · report-S1 D6)</summary>
++    public const string PaymentFeeAccountCode = "53170";
++    /// <summary>ขาดทุนจาก chargeback (report-S1 G5/D8) — ห้ามรวม 57130</summary>
++    public const string ChargebackLossAccountCode = "57140";
++
++    /// <summary>รหัสที่ migration ต้องใส่ให้บริษัทเดิม (เรียงตามเลข)</summary>
++    public static readonly IReadOnlyList<string> SeededCodes = new[]
++    {
++        ReserveAccountCode, PaymentFeeAccountCode, ChargebackLossAccountCode,
++    };
++
++    /// <summary>INSERT ผังทั้งสามให้บริษัทที่มีกลุ่มแม่ในผังมาตรฐานแล้ว (113 · 531 · 571) — ผูก <c>ParentAccountId</c> กับกลุ่มแม่ของบริษัทนั้น ·
++    /// <c>ON CONFLICT DO NOTHING</c> (unique CompanyId+AccountCode) ⇒ รันทุกบูตได้ ไม่ทับรหัสที่ลูกค้าตั้งเอง · ไม่ย้ายยอดใด ๆ</summary>
++    public static string MigrationSeedSql()
++    {
++        var common = ChartOfAccountTemplates.GetCommonAccounts();
++        var inv = System.Globalization.CultureInfo.InvariantCulture;
++        var rows = SeededCodes.Select(code =>
++        {
++            var t = common.Single(a => a.Code == code);
++            return "('" + Q(t.Code) + "','" + Q(ParentGroupCode(t.Code)) + "','" + Q(t.NameTh) + "','" + Q(t.NameEn) + "',"
++                 + ((int)t.Type).ToString(inv) + "," + t.Level.ToString(inv) + ")";
++        });
++        return "INSERT INTO \"ChartOfAccounts\" (\"Id\",\"CompanyId\",\"AccountCode\",\"AccountName\",\"AccountNameEn\",\"AccountType\","
++             + "\"ParentAccountId\",\"Level\",\"IsActive\",\"IsSystemAccount\",\"InputVatClaimable\",\"CashFlowSection\",\"CreatedAt\",\"IsDeleted\") "
++             + "SELECT gen_random_uuid(), p.\"CompanyId\", v.code, v.name_th, v.name_en, v.acct_type, p.\"Id\", v.lvl, true, true, true, 0, "
++             + "now() at time zone 'utc', false FROM (VALUES " + string.Join(",", rows) + ") AS v(code,parent,name_th,name_en,acct_type,lvl) "
++             + "JOIN \"ChartOfAccounts\" p ON p.\"AccountCode\" = v.parent AND p.\"IsDeleted\" = false "
++             + "ON CONFLICT DO NOTHING;";
++    }
++
++    /// <summary>กลุ่มแม่ 3 หลักของรหัส 5 หลัก ("11350" → "113")</summary>
++    public static string ParentGroupCode(string code) => code.Length >= 3 ? code[..3] : code;
++
++    private static string Q(string s) => s.Replace("'", "''", StringComparison.Ordinal);
++}
+diff --git a/Accounting/Helpers/SettlementFeeTax.cs b/Accounting/Helpers/SettlementFeeTax.cs
+new file mode 100644
+index 00000000..01bf6f09
+--- /dev/null
++++ b/Accounting/Helpers/SettlementFeeTax.cs
+@@ -0,0 +1,159 @@
++using Accounting.Models.Enums;
++
++namespace Accounting.Helpers;
++
++/// <summary>ภาษีซื้อของค่าธรรมเนียมไปทางไหน (ผลของ <see cref="SettlementFeeTax.Compute"/>) — เป็นคีย์แบ่ง "ใบค่าธรรมเนียมต่อกลุ่มภาษี"</summary>
++public enum SettlementFeeVatTreatment
++{
++    /// <summary>ไม่มี VAT บนค่าธรรมเนียม (โหมด None · ไฟล์ระบุ VAT = 0 · ประเภทที่ไม่มี VAT)</summary>
++    NoVat = 0,
++    /// <summary>ผู้ให้บริการไทยเก็บ VAT 7% — Dr 11630 ภาษีซื้อรอเครดิต จนได้ใบกำกับรายเดือน (report-S1 G2/G3)</summary>
++    InputVatPending = 1,
++    /// <summary>ผู้ให้บริการต่างประเทศ — ประเมินเอง ภ.พ.36: Dr 11640 / Cr 21912 (§83/6 · ForeignServiceVat)</summary>
++    SelfAssessedPp36 = 2,
++    /// <summary>บริษัทไม่จด VAT — VAT ที่ถูกเรียกเก็บรวมอยู่ในค่าใช้จ่าย ไม่มีขาภาษีซื้อ (CompanyVatStatus · report-S1 §7 ข้อ 7)</summary>
++    VatNotClaimable = 3,
++}
++
++/// <summary>ผลแยกภาษีของค่าธรรมเนียม 1 ก้อน (ยอดบวกเสมอ — เครื่องหมายเป็นเรื่องของผู้เรียก)</summary>
++/// <param name="Deducted">ยอดที่ถูกหักจาก wallet จริง (= ยอดในไฟล์ · รวม VAT ไทยถ้ามี)</param>
++/// <param name="Expense">ค่าใช้จ่ายที่ลงผังค่าธรรมเนียม — ไม่รวมภาษีซื้อที่เคลมได้ · รวม VAT ที่เคลมไม่ได้ · <b>ไม่รวม</b>ภาษีที่ออกแทน (ดู <paramref name="WhtBorneExpense"/>)</param>
++/// <param name="InputVat">ภาษีซื้อที่เคลมได้ (11630 หรือ 11640 ของ ภ.พ.36)</param>
++/// <param name="Pp36Payable">หนี้ ภ.พ.36 ที่ประเมินเอง (21912) — มีเฉพาะ <see cref="SettlementFeeVatTreatment.SelfAssessedPp36"/></param>
++/// <param name="WhtBase">ฐานหัก ณ ที่จ่าย = ค่าบริการ<b>ก่อน VAT</b> (ท.ป.4/2528) · 0 เมื่อไม่หัก</param>
++/// <param name="WhtAmount">ภาษีหัก ณ ที่จ่ายของก้อนนี้ (ยอดบน 50 ทวิ)</param>
++/// <param name="WhtCertIncome">เงินได้ที่พิมพ์บน 50 ทวิ — ปกติ = ฐาน · ออกภาษีแทน (W3) = ฐาน + ภาษี</param>
++/// <param name="WhtBorneExpense">ภาษีที่เราออกแทน (W3) — เป็นค่าใช้จ่ายเพิ่มจากค่าธรรมเนียม (Dr ผังค่าธรรมเนียม / Cr 21917)</param>
++public readonly record struct SettlementFeeTaxResult(
++    decimal Deducted,
++    decimal Expense,
++    decimal InputVat,
++    decimal Pp36Payable,
++    SettlementFeeVatTreatment VatTreatment,
++    SettlementFeeWhtMode WhtMode,
++    string? WhtIncomeCode,
++    decimal WhtRatePercent,
++    decimal WhtBase,
++    decimal WhtAmount,
++    decimal WhtCertIncome,
++    decimal WhtBorneExpense);
++
++/// <summary>
++/// **ภาษีของค่าธรรมเนียมแพลตฟอร์ม — ฟังก์ชันบริสุทธิ์ตัวเดียว** (รอบ 198 · report-S1 §2/§4 · แก้ G-3/G-4 ของ report-S2 ในเส้นใหม่)
++///
++/// <para>═══ สูตร ═══
++/// <list type="bullet">
++/// <item><b>VAT ไทยรวมในยอด</b>: ก่อน VAT = round(ยอด × 100/107, AwayFromZero) · VAT = ยอด − ก่อน VAT (ผลรวมเท่ายอดจริงเสมอ ไม่มีเศษหลุด)</item>
++/// <item><b>ไฟล์ระบุ VAT เอง</b>: เชื่อไฟล์ (ยอดจริงที่แพลตฟอร์มออกใบกำกับ) — ต้องไม่เกินยอดและไม่ติดลบ ไม่งั้นผู้เรียกแจ้งปัญหา</item>
++/// <item><b>ฐาน WHT = ก่อน VAT</b> (G-4: เส้นเดิม gross-up จากยอดรวม VAT ⇒ ภาษีเกิน ~7% · 50 ทวิ ผิด) · อัตราจาก <see cref="ThaiWhtRateTable"/>
++/// ผู้รับเป็นนิติบุคคล</item>
++/// <item><b>ออกภาษีแทน (W3)</b>: ภาษี = round(ฐาน × r/(100−r)) → 3% = ฐาน × 3/97 · เงินได้บน 50 ทวิ = ฐาน + ภาษี</item>
++/// <item><b>บริษัทไม่จด VAT</b>: ไม่มีขาภาษีซื้อ — VAT ที่ถูกเก็บรวมเป็นค่าใช้จ่าย · ภ.พ.36 ไม่สร้าง (ผู้ให้บริการต่างประเทศที่จด e-Service
++/// เก็บ VAT ในยอดแล้ว — report-S1 §5 · ความมั่นใจกลาง รอนักบัญชียืนยัน)</item>
++/// </list></para>
++/// </summary>
++public static class SettlementFeeTax
++{
++    /// <summary>อัตรา VAT ตามกฎหมาย (ตัวตั้งเดียว <see cref="PartnerVatRate.StatutoryRate"/>)</summary>
++    private static decimal VatRate => PartnerVatRate.StatutoryRate;
++
++    /// <summary>คิดภาษีของค่าธรรมเนียม 1 ก้อน</summary>
++    /// <param name="deducted">ยอดที่ถูกหักจาก wallet (ค่าบวก — ผู้เรียกใส่ |Amount|)</param>
++    /// <param name="explicitVat">VAT ที่ไฟล์ระบุ (รวมอยู่ใน <paramref name="deducted"/>) · null = ไม่ระบุ</param>
++    /// <param name="vatMode">โหมด VAT ของช่องทาง</param>
++    /// <param name="vatApplicable">ประเภทบรรทัดมี VAT ได้ (<see cref="SettlementLineTypeRule.VatApplicable"/>)</param>
++    /// <param name="companyVatRegistered">บริษัทจด VAT (<see cref="CompanyVatStatus"/>)</param>
++    /// <param name="whtMode">โหมดหัก ณ ที่จ่ายของช่องทาง</param>
++    /// <param name="whtIncomeCode">รหัสประเภทเงินได้ของประเภทบรรทัด · null = ประเภทนี้ไม่หัก</param>
++    public static SettlementFeeTaxResult Compute(
++        decimal deducted,
++        decimal? explicitVat,
++        SettlementFeeVatMode vatMode,
++        bool vatApplicable,
++        bool companyVatRegistered,
++        SettlementFeeWhtMode whtMode,
++        string? whtIncomeCode)
++    {
++        deducted = Math.Abs(deducted);
++
++        // ── VAT: แยกก่อน VAT ออกจากยอดที่ถูกหัก ──
++        decimal preVat, chargedVat, pp36 = 0m;
++        SettlementFeeVatTreatment treatment;
++        if (!vatApplicable || vatMode == SettlementFeeVatMode.None)
++        {
++            preVat = deducted; chargedVat = 0m; treatment = SettlementFeeVatTreatment.NoVat;
++        }
++        else if (vatMode == SettlementFeeVatMode.ForeignPp36)
++        {
++            // ผู้ให้บริการต่างประเทศไม่เก็บ VAT ไทย ⇒ ยอดที่หัก = ฐาน · เราประเมินเอง 7% ของฐาน
++            preVat = deducted; chargedVat = 0m;
++            if (companyVatRegistered)
++            {
++                pp36 = R(deducted * VatRate / 100m);
++                treatment = pp36 > 0m ? SettlementFeeVatTreatment.SelfAssessedPp36 : SettlementFeeVatTreatment.NoVat;
++            }
++            else treatment = SettlementFeeVatTreatment.NoVat;
++        }
++        else
++        {
++            chargedVat = explicitVat is decimal v ? Math.Abs(v) : deducted - R(deducted * 100m / (100m + VatRate));
++            if (chargedVat > deducted) chargedVat = deducted;   // ข้อมูลเสีย — ผู้เรียกฟ้องด้วย ExplicitVatInvalid
++            preVat = deducted - chargedVat;
++            treatment = chargedVat == 0m ? SettlementFeeVatTreatment.NoVat
++                : companyVatRegistered ? SettlementFeeVatTreatment.InputVatPending
++                : SettlementFeeVatTreatment.VatNotClaimable;
++        }
++
++        var inputVat = treatment switch
++        {
++            SettlementFeeVatTreatment.InputVatPending => chargedVat,
++            SettlementFeeVatTreatment.SelfAssessedPp36 => pp36,
++            _ => 0m,
++        };
++        var expense = treatment == SettlementFeeVatTreatment.VatNotClaimable ? deducted : preVat;
++
++        // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคล) ──
++        var rate = whtMode == SettlementFeeWhtMode.None ? 0m
++            : ThaiWhtRateTable.RateFor(whtIncomeCode, payeeIsJuristic: true) ?? 0m;
++        decimal whtBase = 0m, wht = 0m, certIncome = 0m, borne = 0m;
++        if (rate > 0m && preVat > 0m)
++        {
++            whtBase = preVat;
++            if (whtMode == SettlementFeeWhtMode.SelfWithholdPayerBorne)
++            {
++                wht = R(preVat * rate / (100m - rate));
++                certIncome = preVat + wht;
++                borne = wht;
++            }
++            else
++            {
++                wht = R(preVat * rate / 100m);
++                certIncome = preVat;
++            }
++        }
++        else whtMode = SettlementFeeWhtMode.None;
++
++        return new SettlementFeeTaxResult(deducted, expense, inputVat, pp36, treatment, whtMode,
++            whtMode == SettlementFeeWhtMode.None ? null : whtIncomeCode, rate, whtBase, wht, certIncome, borne);
++    }
++
++    /// <summary>ไฟล์ให้ค่าธรรมเนียม<b>ก่อน VAT</b> (VAT แยกคอลัมน์/คิดทับ) — คืน (ยอดที่ถูกหักรวม VAT, VAT) ให้ adapter เก็บลง
++    /// <c>SettlementLine.Amount</c>/<c>VatAmount</c> · VAT = round(ก่อน VAT × 7%, AwayFromZero)</summary>
++    public static (decimal Deducted, decimal Vat) FromExclusive(decimal preVat)
++    {
++        var net = Math.Abs(preVat);
++        var vat = R(net * VatRate / 100m);
++        return (net + vat, vat);
++    }
++
++    /// <summary>แยกยอดที่รวม VAT เป็น (ก่อน VAT, VAT) — ใบขายสรุปรายวัน/ค่าธรรมเนียม · บริษัทไม่จด VAT ⇒ (ยอด, 0)
++    /// <para>ก่อน VAT = round(ยอด × 100/107, AwayFromZero) · VAT = ยอด − ก่อน VAT (ห้ามปัดสองครั้ง)</para></summary>
++    public static (decimal Net, decimal Vat) SplitInclusive(decimal gross, bool vatApplies)
++    {
++        if (!vatApplies || gross == 0m) return (gross, 0m);
++        var net = R(gross * 100m / (100m + VatRate));
++        return (net, gross - net);
++    }
++
++    private static decimal R(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
++}
+diff --git a/Accounting/Helpers/SettlementLineTypeRules.cs b/Accounting/Helpers/SettlementLineTypeRules.cs
+new file mode 100644
+index 00000000..b55c4b4a
+--- /dev/null
++++ b/Accounting/Helpers/SettlementLineTypeRules.cs
+@@ -0,0 +1,228 @@
++using System.Text.Json;
++using Accounting.Models.Enums;
++
++namespace Accounting.Helpers;
++
++/// <summary>เครื่องหมายของ <c>SettlementLine.Amount</c> ที่ประเภทหนึ่งยอมรับ (มุม wallet: บวก = ค้างเราเพิ่ม · ลบ = ถูกหัก)</summary>
++public enum SettlementAmountSign
++{
++    Positive = 1,
++    Negative = 2,
++    Either = 3,
++}
++
++/// <summary>บรรทัดประเภทนี้ไปลงบัญชีทางไหน (ตัดสินใน <see cref="SettlementBatchMath.Plan"/>)</summary>
++public enum SettlementPostingKind
++{
++    /// <summary>ห้ามลงบัญชี (Unclassified)</summary>
++    None = 0,
++    /// <summary>องค์ประกอบของยอดขาย — รวมกับบรรทัดขายอื่นของใบขายเดียวกันเป็นการรับชำระ 1 ครั้ง หรือเข้าใบขายสรุปรายวัน</summary>
++    SaleComponent = 1,
++    /// <summary>คืนเงินผู้ซื้อ — ใบลดหนี้อ้างใบขายเดิม + จ่ายคืนจากบัญชีพัก</summary>
++    Refund = 2,
++    /// <summary>ค่าธรรมเนียม → เอกสารซื้อ 1 ใบ/batch/กลุ่มภาษี (ภ.พ.30/36 · 50 ทวิ · §65 ตรี เดินเส้นเดิม)</summary>
++    FeeDocument = 3,
++    /// <summary>ลงใน JE รอบโอนตรง (reserve · chargeback · ภาษีถูกหัก · FX · ปรับปรุง · ค่าขนส่งที่แพลตฟอร์มช่วย)</summary>
++    DirectJournal = 4,
++}
++
++/// <summary>กติกาของประเภทบรรทัดหนึ่ง — แถวเดียวในตาราง <see cref="SettlementLineTypeRules.All"/></summary>
++/// <param name="AccountRole">บทบาทผัง (<see cref="SettlementAccountRoles"/>) — คีย์ของ <c>SettlementChannel.FeeAccountMapJson</c> สำหรับค่าธรรมเนียม ·
++/// null = ผังมาจากเอกสาร (ขาย/คืนเงิน) หรือผู้ใช้ต้องเลือก (Adjustment)</param>
++/// <param name="IsFee">เป็นค่าธรรมเนียมที่ต้องออกเป็นเอกสารซื้อ</param>
++/// <param name="VatApplicable">ค่าธรรมเนียมประเภทนี้มี VAT ได้ (ตามโหมด VAT ของช่องทาง)</param>
++/// <param name="WhtIncomeCode">รหัสประเภทเงินได้ใน <see cref="ThaiWhtRateTable"/> เมื่อช่องทางเปิดหัก ณ ที่จ่าย · null = ไม่หัก</param>
++/// <param name="RequiresSaleMatch">ต้องจับคู่ใบขาย (จับไม่ได้ ⇒ ใบขายสรุปรายวัน สำหรับยอดขาย · บล็อกสำหรับคืนเงิน)</param>
++/// <param name="RequiresReason">บังคับเหตุผล + ผังที่ผู้ใช้เลือก (Adjustment)</param>
++public sealed record SettlementLineTypeRule(
++    SettlementLineType Type,
++    string LabelTh,
++    SettlementAmountSign AllowedSign,
++    SettlementPostingKind Posting,
++    string? AccountRole,
++    bool IsFee,
++    bool VatApplicable,
++    string? WhtIncomeCode,
++    bool RequiresSaleMatch,
++    bool RequiresReason)
++{
++    /// <summary>ลงบัญชีได้ไหม — Unclassified ห้ามเสมอ</summary>
++    public bool Postable => Posting != SettlementPostingKind.None;
++
++    /// <summary>ยอดนี้เครื่องหมายถูกตามประเภทไหม (0 ถือว่าผ่าน — แถว 0 ไม่ใช่หลักฐาน ตัวคิดแผนข้ามเอง)</summary>
++    public bool SignAllowed(decimal amount) => amount == 0m || AllowedSign switch
++    {
++        SettlementAmountSign.Positive => amount > 0m,
++        SettlementAmountSign.Negative => amount < 0m,
++        _ => true,
++    };
++}
++
++/// <summary>บทบาทผังที่แผนลงบัญชีใช้ — ผู้ลงบัญชี (ทีม C) แปลงเป็น AccountId ตามลำดับ:
++/// <c>SettlementLine.OverrideAccountId</c> → คอลัมน์ของช่องทาง (clearing/reserve/dispute) → <c>FeeAccountMapJson</c> → ผังมาตรฐาน
++/// (<see cref="DefaultCode"/>) · หาไม่เจอ = ล้มดังพร้อมชื่อบทบาท ห้ามตกผังอื่นเงียบ</summary>
++public static class SettlementAccountRoles
++{
++    public const string Bank = "bank";
++    public const string Clearing = "clearing";
++    public const string Reserve = "reserve";
++    public const string Dispute = "dispute";
++    public const string Commission = "commission";
++    public const string PaymentFee = "payment_fee";
++    public const string Shipping = "shipping";
++    public const string Ads = "ads";
++    public const string ServiceFee = "service_fee";
++    public const string WithdrawalFee = "withdrawal_fee";
++    public const string WhtCredit = "wht_credit";
++    public const string FxGain = "fx_gain";
++    public const string FxLoss = "fx_loss";
++    public const string Adjustment = "adjustment";
++    public const string ChargebackLoss = "chargeback_loss";
++    public const string WhtPayable = "wht_payable";
++    public const string WhtReimbursable = "wht_reimbursable";
++    public const string InputVatPending = "input_vat_pending";
++    public const string Pp36InputVat = "pp36_input_vat";
++    public const string Pp36Payable = "pp36_payable";
++
++    /// <summary>บทบาทที่ผู้ใช้ตั้งผังเองได้ใน <c>FeeAccountMapJson</c> (ที่เหลือมาจากคอลัมน์ของช่องทาง/บัญชีธนาคาร/ผังภาษีที่ตายตัว)</summary>
++    public static readonly IReadOnlyList<string> Mappable = new[]
++    {
++        Commission, PaymentFee, Shipping, Ads, ServiceFee, WithdrawalFee, WhtCredit, FxGain, FxLoss, ChargebackLoss,
++    };
++
++    /// <summary>ผังมาตรฐานของบทบาท — null = ไม่มีค่าเริ่มต้น (clearing/bank มาจากช่องทาง/รอบโอน · adjustment ผู้ใช้เลือก)
++    /// <para>ผังภาษี ภ.พ.36 ใช้ตัวตั้งของ <see cref="ForeignServiceVat"/> (ห้ามพิมพ์ซ้ำ)</para></summary>
++    public static string? DefaultCode(string role) => role switch
++    {
++        Reserve => SettlementChartSeed.ReserveAccountCode,
++        Dispute => "11320",            // ลูกหนี้อื่น — พัก chargeback ระหว่างรอผล (report-S1 G5)
++        Commission => "53140",         // ค่านายหน้าการขาย
++        PaymentFee => SettlementChartSeed.PaymentFeeAccountCode,
++        Shipping => "53130",           // ค่าขนส่ง (ฝ่ายขาย)
++        Ads => "53120",                // ค่าโฆษณาและส่งเสริมการขาย
++        ServiceFee => "53150",         // ค่าใช้จ่ายในการขายอื่นๆ
++        WithdrawalFee => "54710",      // ค่าธรรมเนียมธนาคาร
++        WhtCredit => "11910",          // ภาษีถูกหัก ณ ที่จ่าย
++        FxGain => "43050",             // รายได้จากอัตราแลกเปลี่ยน
++        FxLoss => "54950",             // ขาดทุนจากอัตราแลกเปลี่ยน
++        ChargebackLoss => SettlementChartSeed.ChargebackLossAccountCode,
++        WhtPayable => "21917",         // ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53 (แพลตฟอร์มเป็นนิติบุคคล)
++        WhtReimbursable => "11320",    // ลูกหนี้อื่น — ภาษีที่หักไว้รอแพลตฟอร์มคืน (W2)
++        InputVatPending => "11630",    // ภาษีซื้อรอเครดิต — จนได้ใบกำกับรายเดือน (report-S1 G3/M3)
++        Pp36InputVat => ForeignServiceVat.Pp36InputVatCode,
++        Pp36Payable => ForeignServiceVat.Pp36PayableCode,
++        _ => null,
++    };
++}
++
++/// <summary>
++/// **กติกาของประเภทบรรทัด settlement — ตารางเดียวทั้งระบบ** (รอบ 198 · report-S1 §7 · report-S2 §3.2)
++///
++/// <para>ทุกทางเข้า (adapter นำเข้า · ตัวจัดประเภท · ตัวคิดแผนลงบัญชี · หน้าจอ) ถามที่นี่ — ห้ามเขียน switch ของ
++/// <see cref="SettlementLineType"/> เองที่อื่น · enum ทุกค่าต้องมีแถว (<c>tools/settlement_line_type_rules_check.py</c> + เทสต์)</para>
++///
++/// <para>═══ ตัดสินใจที่ตั้งใจ ═══
++/// <list type="bullet">
++/// <item><b>Unclassified ห้ามลงบัญชี</b> — ไม่รู้ = บอกว่าไม่รู้ ห้ามตก "ค่าใช้จ่ายอื่น" เงียบ (report-S1 §7 ข้อ 2)</item>
++/// <item><b>ส่วนลดร้าน (SellerVoucher) ลดยอดขาย</b> ไม่ใช่ค่าใช้จ่าย และไม่อยู่ในฐาน VAT · <b>โค้ดแพลตฟอร์ม (PlatformVoucherSubsidy)
++/// เป็นส่วนของยอดขาย</b> อยู่ในฐาน VAT (report-S1 §3 — ความมั่นใจกลาง)</item>
++/// <item>ค่าธรรมเนียมยอมทั้งสองเครื่องหมาย (แพลตฟอร์มคืนค่าคอมได้) — ตัวคิดแผนรวมสุทธิต่อกลุ่มภาษี ถ้าสุทธิเป็นยอดคืน ⇒ ปัญหาพร้อมทางไปต่อ</item>
++/// <item>ค่าธรรมเนียมถอนเงินไม่หัก ณ ที่จ่าย (ค่าธรรมเนียมธนาคาร · report-S1 D11 ยังไม่ตัดสิน MDR) · อัตรามาจาก <see cref="ThaiWhtRateTable"/> เท่านั้น</item>
++/// </list></para>
++/// </summary>
++public static class SettlementLineTypeRules
++{
++    /// <summary>ทุกประเภท — ลำดับตามค่า enum</summary>
++    public static readonly IReadOnlyList<SettlementLineTypeRule> All = new[]
++    {
++        new SettlementLineTypeRule(SettlementLineType.Unclassified, "รอจัดประเภท", SettlementAmountSign.Either,
++            SettlementPostingKind.None, null, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.Sale, "ยอดขาย", SettlementAmountSign.Positive,
++            SettlementPostingKind.SaleComponent, null, false, false, null, true, false),
++        new SettlementLineTypeRule(SettlementLineType.Refund, "คืนเงินผู้ซื้อ", SettlementAmountSign.Negative,
++            SettlementPostingKind.Refund, null, false, false, null, true, false),
++        new SettlementLineTypeRule(SettlementLineType.Chargeback, "ถูกปฏิเสธรายการ (chargeback)", SettlementAmountSign.Negative,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Dispute, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.ChargebackReversal, "ชนะ chargeback ได้เงินคืน", SettlementAmountSign.Positive,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Dispute, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.Commission, "ค่าคอมมิชชัน", SettlementAmountSign.Either,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.Commission, true, true, "2", false, false),
++        new SettlementLineTypeRule(SettlementLineType.PaymentFee, "ค่าธรรมเนียมรับชำระเงิน", SettlementAmountSign.Either,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.PaymentFee, true, true, "8", false, false),
++        new SettlementLineTypeRule(SettlementLineType.ShippingFeeCharged, "ค่าขนส่งที่แพลตฟอร์มเรียกเก็บ", SettlementAmountSign.Either,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.Shipping, true, true, "8tr", false, false),
++        new SettlementLineTypeRule(SettlementLineType.ShippingSubsidy, "แพลตฟอร์มช่วยค่าขนส่ง", SettlementAmountSign.Positive,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Shipping, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.SellerVoucher, "ส่วนลดที่ร้านออกเอง", SettlementAmountSign.Negative,
++            SettlementPostingKind.SaleComponent, null, false, false, null, true, false),
++        new SettlementLineTypeRule(SettlementLineType.PlatformVoucherSubsidy, "โค้ดส่วนลดที่แพลตฟอร์มออกเงิน", SettlementAmountSign.Positive,
++            SettlementPostingKind.SaleComponent, null, false, false, null, true, false),
++        new SettlementLineTypeRule(SettlementLineType.AdsFee, "ค่าโฆษณา", SettlementAmountSign.Either,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.Ads, true, true, "8ad", false, false),
++        new SettlementLineTypeRule(SettlementLineType.ServiceFee, "ค่าบริการแพลตฟอร์ม", SettlementAmountSign.Either,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.ServiceFee, true, true, "8", false, false),
++        new SettlementLineTypeRule(SettlementLineType.WithdrawalFee, "ค่าธรรมเนียมถอนเงิน", SettlementAmountSign.Negative,
++            SettlementPostingKind.FeeDocument, SettlementAccountRoles.WithdrawalFee, true, true, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.ReserveHold, "แพลตฟอร์มกันเงินไว้", SettlementAmountSign.Negative,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Reserve, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.ReserveRelease, "ปล่อยเงินที่กันไว้", SettlementAmountSign.Positive,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Reserve, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.TaxWithheldByPlatform, "ภาษีที่แพลตฟอร์มหัก ณ ที่จ่ายจากเรา", SettlementAmountSign.Negative,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.WhtCredit, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.FxDifference, "ผลต่างอัตราแลกเปลี่ยน", SettlementAmountSign.Either,
++            SettlementPostingKind.DirectJournal, null, false, false, null, false, false),
++        new SettlementLineTypeRule(SettlementLineType.Adjustment, "ปรับปรุงอื่น (ระบุเหตุผล)", SettlementAmountSign.Either,
++            SettlementPostingKind.DirectJournal, SettlementAccountRoles.Adjustment, false, false, null, false, true),
++    };
++
++    private static readonly Dictionary<SettlementLineType, SettlementLineTypeRule> ByType = All.ToDictionary(r => r.Type);
++
++    /// <summary>กติกาของประเภทนี้ — ค่าที่ไม่มีในตาราง (ข้อมูลเสีย/ค่าจากอนาคต) ⇒ กติกาของ Unclassified (ห้ามลงบัญชี) ไม่ใช่ throw</summary>
++    public static SettlementLineTypeRule For(SettlementLineType type)
++        => ByType.TryGetValue(type, out var r) ? r : ByType[SettlementLineType.Unclassified];
++
++    /// <summary>แปลงคำตอบของตัวจัดประเภท (student/ครู — ชื่อ enum) เป็นประเภท <b>เฉพาะเมื่ออยู่ในชุดที่ลงบัญชีได้</b> —
++    /// ด่านกันคำตอบแต่ง (กฎเหล็ก #1 anti-hallucination) · ตัวเลข/ชื่อที่ไม่รู้จัก/Unclassified ⇒ null (= คงรอจัดประเภท)</summary>
++    public static SettlementLineType? ParseClassifierAnswer(string? answer)
++    {
++        if (string.IsNullOrWhiteSpace(answer)) return null;
++        var a = answer.Trim();
++        if (a.Length == 0 || char.IsDigit(a[0]) || a[0] == '-') return null;    // ห้ามรับตัวเลข — Enum.TryParse รับ "99" เป็นค่าไม่มีชื่อ
++        if (!Enum.TryParse<SettlementLineType>(a, ignoreCase: true, out var t)) return null;
++        if (!ByType.ContainsKey(t) || !For(t).Postable) return null;
++        return t;
++    }
++
++    /// <summary>อ่าน <c>SettlementChannel.FeeAccountMapJson</c> — ตัวอ่านตัวเดียว (หน้าตั้งค่า · ผู้ลงบัญชี)
++    /// <para>รับเฉพาะคีย์ใน <see cref="SettlementAccountRoles.Mappable"/> ที่ค่าเป็น Guid · คีย์อื่น/ค่าเสีย ⇒ อยู่ใน <c>Rejected</c>
++    /// (ผู้เรียกแสดงให้ผู้ใช้แก้ — ห้ามทิ้งเงียบ) · JSON พัง ⇒ ว่าง + Rejected = ["(json)"] · ผู้เรียกต้องตรวจ AccountId เป็นของบริษัทเอง</para></summary>
++    public static (IReadOnlyDictionary<string, Guid> Map, IReadOnlyList<string> Rejected) ParseFeeAccountMap(string? json)
++    {
++        var map = new Dictionary<string, Guid>(StringComparer.Ordinal);
++        var rejected = new List<string>();
++        if (string.IsNullOrWhiteSpace(json)) return (map, rejected);
++        try
++        {
++            using var doc = JsonDocument.Parse(json);
++            if (doc.RootElement.ValueKind != JsonValueKind.Object)
++            {
++                rejected.Add("(json)");
++                return (map, rejected);
++            }
++            foreach (var p in doc.RootElement.EnumerateObject())
++            {
++                if (SettlementAccountRoles.Mappable.Contains(p.Name, StringComparer.Ordinal)
++                    && p.Value.ValueKind == JsonValueKind.String
++                    && Guid.TryParse(p.Value.GetString(), out var id) && id != Guid.Empty)
++                    map[p.Name] = id;
++                else
++                    rejected.Add(p.Name);
++            }
++        }
++        catch (JsonException)
++        {
++            rejected.Add("(json)");
++        }
++        return (map, rejected);
++    }
++}
+diff --git a/Accounting/Models/Entities/Payments.cs b/Accounting/Models/Entities/Payments.cs
+index 2ec696e9..b086d26c 100644
+--- a/Accounting/Models/Entities/Payments.cs
++++ b/Accounting/Models/Entities/Payments.cs
+@@ -115,6 +115,9 @@ public class PaymentIntent : TenantEntity
+     public Guid? ReceiptDocumentId { get; set; }
+     public Guid? JournalEntryId { get; set; }
+     public Guid? SettlementJournalEntryId { get; set; }
++    /// <summary>รอบโอน (<see cref="SettlementBatch"/>) ที่รวม intent นี้ — รอบ 198 เฟส 1 · null = ยังไม่เข้ารอบโอนใด
++    /// (เฟส 2 ย้าย GatewaySettlementService ให้สร้าง batch จาก intent)</summary>
++    public Guid? SettlementBatchId { get; set; }
+ 
+     public int AttemptCount { get; set; }
+     public DateTime? LastPolledAt { get; set; }
+diff --git a/Accounting/Models/Entities/Settlement.cs b/Accounting/Models/Entities/Settlement.cs
+new file mode 100644
+index 00000000..2351ecf4
+--- /dev/null
++++ b/Accounting/Models/Entities/Settlement.cs
+@@ -0,0 +1,134 @@
++using Accounting.Models.Enums;
++
++namespace Accounting.Models.Entities;
++
++// ═══════════════════════════════════════════════════════════════════════
++// Settlement (wallet → ธนาคาร) — รอบ 198 เฟส 1 ทีม A (report-S2 §3.2)
++//
++// หน่วยความจริง = "รอบโอน" ของผู้ให้บริการ · ยอดเข้าธนาคารจริง (NetPayout) เป็นตัวตั้ง ·
++// ทุกบรรทัดต้องจัดประเภทก่อนลงบัญชี (Unclassified ห้ามลง) · สมการของ batch:
++//     Σ บรรทัด.Amount = NetPayout + (ClosingWalletBalance − OpeningWalletBalance)   (±0.01)
++// ตัวคิดแผนลงบัญชีตัวเดียว: Helpers/SettlementBatchMath.Plan · กติการายประเภท: Helpers/SettlementLineTypeRules
++// ตาราง/ดัชนีต้องตรงกับ DatabaseMigrationHelper.SettlementSchemaStatements
++// ═══════════════════════════════════════════════════════════════════════
++
++/// <summary>ช่องทางที่เงินพักอยู่ก่อนโอนเข้าบัญชีเรา (1 แถว/แพลตฟอร์ม/บัญชีร้าน)</summary>
++public class SettlementChannel : TenantEntity
++{
++    public SettlementChannelKind Kind { get; set; } = SettlementChannelKind.Marketplace;
++    /// <summary>ชื่อที่ผู้ใช้เห็น เช่น "Shopee ร้านหลัก" — ใช้ตั้งชื่อผังพักย่อย "ลูกหนี้แพลตฟอร์ม {DisplayName}"</summary>
++    public string DisplayName { get; set; } = null!;
++    /// <summary>รหัส adapter ที่อ่านไฟล์ (<c>generic-column-map</c> · <c>payment-intents</c> · ฯลฯ — ทีม B)</summary>
++    public string? AdapterCode { get; set; }
++    /// <summary>คอลัมน์ในไฟล์ → ช่องของบรรทัด ที่ผู้ใช้จับคู่ไว้ (ระบบจำ) — รูปแบบเป็นของ adapter</summary>
++    public string? ColumnMapJson { get; set; }
++    /// <summary>ผู้ติดต่อ = นิติบุคคลของแพลตฟอร์ม (ผู้ออกใบกำกับค่าธรรมเนียม · ผู้รับเงินใน 50 ทวิ) — คีย์เลขภาษี+สาขา (ContactTaxBranchKey)</summary>
++    public Guid? CounterpartyContactId { get; set; }
++    /// <summary>ผูกกับ gateway ในระบบ (ถ้ามี) — ช่องทาง gateway ใช้บัญชีพักของ config นั้น (11340) เพราะ PaymentIntent ลงไว้ที่นั่นแล้ว</summary>
++    public Guid? PaymentProviderConfigId { get; set; }
++
++    /// <summary>ผังพัก "ลูกหนี้แพลตฟอร์ม" ของช่องทางนี้ (11341–11349 · DECISIONS ข้อ 4) —
++    /// null = ยังไม่ผูก ⇒ <c>SettlementChannelAccounts.EnsureClearingAccountAsync</c> สร้าง/ผูกให้ · ลงบัญชีไม่ได้จนกว่าจะมี</summary>
++    public Guid? ClearingAccountId { get; set; }
++    /// <summary>ผังเงินที่ผู้ให้บริการกันไว้ — null = 11350</summary>
++    public Guid? ReserveAccountId { get; set; }
++    /// <summary>ผังพัก chargeback ระหว่างรอผล — null = 11320 ลูกหนี้อื่น</summary>
++    public Guid? DisputeAccountId { get; set; }
++    /// <summary>JSON object: บทบาทผัง → AccountId (Guid) เช่น <c>{"commission":"…","payment_fee":"…"}</c> ·
++    /// คีย์ = <c>SettlementAccountRoles</c> · ไม่ระบุ = ผังมาตรฐานของบทบาทนั้น · อ่านด้วย
++    /// <c>SettlementLineTypeRules.ParseFeeAccountMap</c> ตัวเดียว</summary>
++    public string? FeeAccountMapJson { get; set; }
++
++    public SettlementFeeVatMode FeeVatMode { get; set; } = SettlementFeeVatMode.ThaiVat7;
++    /// <summary>ค่าเริ่มต้น None + เตือนบริษัทนิติบุคคล (DECISIONS · report-S1 D5)</summary>
++    public SettlementFeeWhtMode FeeWhtMode { get; set; } = SettlementFeeWhtMode.None;
++    /// <summary>ค่าเริ่มต้น gross (DECISIONS ข้อ 1)</summary>
++    public SettlementRevenueModel RevenueModel { get; set; } = SettlementRevenueModel.GrossWithFees;
++    public string Currency { get; set; } = "THB";
++    public bool IsActive { get; set; } = true;
++}
++
++/// <summary>รอบโอน 1 รอบของผู้ให้บริการ (payout) — <c>NetPayout</c> คือยอดที่เข้าธนาคารจริง (ตัวตั้ง)</summary>
++public class SettlementBatch : TenantEntity
++{
++    public Guid ChannelId { get; set; }
++    public SettlementChannel Channel { get; set; } = null!;
++
++    /// <summary>เลขอ้างอิงรอบโอนของผู้ให้บริการ — unique ต่อช่องทาง (กันนำเข้าซ้ำ)</summary>
++    public string PayoutRef { get; set; } = null!;
++    public DateTime? PeriodFrom { get; set; }
++    public DateTime? PeriodTo { get; set; }
++    /// <summary>วันที่เงินเข้าธนาคาร (วันที่ของ JE รอบโอน)</summary>
++    public DateTime PayoutDate { get; set; }
++    public string Currency { get; set; } = "THB";
++    /// <summary>อัตราแลกเปลี่ยน (สกุลต่างประเทศ) — เฟส 1 รองรับ THB เท่านั้น</summary>
++    public decimal? FxRate { get; set; }
++
++    /// <summary>ยอดใน wallet ต้นรอบ (ติดลบได้ = ยอดติดลบยกมา)</summary>
++    public decimal OpeningWalletBalance { get; set; }
++    /// <summary>ยอดใน wallet ปลายรอบ (ติดลบได้ = แพลตฟอร์มจะหักรอบถัดไป)</summary>
++    public decimal ClosingWalletBalance { get; set; }
++    /// <summary>ยอดที่โอนเข้าธนาคารจริงรอบนี้ — <b>ตัวตั้ง</b> (0 ได้เมื่อไม่มีการโอน)</summary>
++    public decimal NetPayout { get; set; }
++
++    public SettlementBatchStatus Status { get; set; } = SettlementBatchStatus.Imported;
++    public SettlementSourceKind SourceKind { get; set; } = SettlementSourceKind.CsvImport;
++    /// <summary>ไฟล์ต้นฉบับ — เปิดผ่าน IAttachmentAccessGate เท่านั้น · retention 5 ปี</summary>
++    public Guid? SourceFileAttachmentId { get; set; }
++    /// <summary>บัญชีธนาคารที่รับเงิน (BankAccount.Id)</summary>
++    public Guid? BankAccountId { get; set; }
++    /// <summary>รายการเดินบัญชีที่จับคู่แล้ว (สถานะ BankMatched)</summary>
++    public Guid? BankTransactionId { get; set; }
++    public Guid? PayoutJournalEntryId { get; set; }
++    /// <summary>JSON array ของ Document.Id ที่สร้างจาก batch นี้ (ใบค่าธรรมเนียม · ใบขายสรุปรายวัน)</summary>
++    public string? FeeDocumentIdsJson { get; set; }
++    public DateTime? PostedAt { get; set; }
++    public string? PostedBy { get; set; }
++    public string? Note { get; set; }
++
++    public ICollection<SettlementLine> Lines { get; set; } = new List<SettlementLine>();
++}
++
++/// <summary>1 บรรทัดใน settlement report — <c>Amount</c> มีเครื่องหมายตามมุม wallet (บวก = ค้างเราเพิ่ม · ลบ = ถูกหัก)</summary>
++public class SettlementLine : TenantEntity
++{
++    public Guid BatchId { get; set; }
++    public SettlementBatch Batch { get; set; } = null!;
++    /// <summary>ช่องทางของ batch (สำเนาจาก <c>SettlementBatch.ChannelId</c>) — มีไว้ให้ unique index
++    /// (ช่องทาง, ExternalTxnId) กันรายการเดียวกันถูกนำเข้าซ้ำข้ามรอบโอน</summary>
++    public Guid ChannelId { get; set; }
++    /// <summary>ลำดับในไฟล์ (1-based) — ใช้อ้างอิงแถวตอนแจ้งปัญหา</summary>
++    public int Seq { get; set; }
++    public SettlementLineType LineType { get; set; } = SettlementLineType.Unclassified;
++    /// <summary>ข้อความรายการ — <b>ตัด PII แล้ว</b> (ชื่อ/ที่อยู่/เบอร์ผู้ซื้อห้ามเก็บ)</summary>
++    public string? Description { get; set; }
++    /// <summary>ป้ายประเภทดิบจากไฟล์ (เช่น "Commission fee") — ป้อนตัวจัดประเภท/คลังเรียนรู้</summary>
++    public string? RawTypeLabel { get; set; }
++    /// <summary>วันที่ของรายการ (ใช้แบ่งใบขายสรุปรายวัน) — null = ใช้วันที่รอบโอน</summary>
++    public DateTime? TxnDate { get; set; }
++    public string? ExternalOrderId { get; set; }
++    /// <summary>id รายการของผู้ให้บริการ — unique ต่อช่องทาง (กันบันทึกซ้ำข้าม batch)</summary>
++    public string? ExternalTxnId { get; set; }
++    /// <summary>ยอดมีเครื่องหมาย (รวม VAT ถ้ามี)</summary>
++    public decimal Amount { get; set; }
++    /// <summary>VAT ที่รวมอยู่ใน <c>Amount</c> ตามที่ไฟล์ระบุ — null = ไฟล์ไม่ระบุ (ระบบแยกเอง ×7/107 ตามโหมดช่องทาง)</summary>
++    public decimal? VatAmount { get; set; }
++    /// <summary>ภาษีหัก ณ ที่จ่ายตามที่ไฟล์ระบุ (ข้อมูล · ยอดที่ใช้คิดมาจาก SettlementFeeTax)</summary>
++    public decimal? WhtAmount { get; set; }
++
++    public Guid? MatchedDocumentId { get; set; }
++    public Guid? PaymentIntentId { get; set; }
++    public Guid? PaymentId { get; set; }
++    public Guid? ReservationId { get; set; }
++    public SettlementMatchStatus MatchStatus { get; set; } = SettlementMatchStatus.Unmatched;
++
++    public SettlementClassifiedBy ClassifiedBy { get; set; } = SettlementClassifiedBy.None;
++    /// <summary>แถว AiFeedback ของการจัดประเภท (กฎเหล็ก #1) — ปิดลูปด้วย RecordUserChoiceAsync ตอนผู้ใช้ยืนยัน/แก้</summary>
++    public Guid? ClassifyAiFeedbackId { get; set; }
++    public bool ClassifyUsedAi { get; set; }
++
++    /// <summary>ผังที่ผู้ใช้เลือกเองสำหรับบรรทัดนี้ (ชนะผังของบทบาท) — <b>บังคับ</b>สำหรับ Adjustment</summary>
++    public Guid? OverrideAccountId { get; set; }
++    /// <summary>เหตุผลของบรรทัดปรับปรุง — <b>บังคับ</b>สำหรับ Adjustment</summary>
++    public string? AdjustmentReason { get; set; }
++}
+diff --git a/Accounting/Models/Enums/AllEnums.cs b/Accounting/Models/Enums/AllEnums.cs
+index f6e4b3f0..75e89ed3 100644
+--- a/Accounting/Models/Enums/AllEnums.cs
++++ b/Accounting/Models/Enums/AllEnums.cs
+@@ -2040,6 +2040,18 @@ public enum AiFeatureKey
+     /// BulkBankStatementMatch)</para></summary>
+     OcrLineItemSplit = 56,
+ 
++    /// <summary>จัดประเภทบรรทัดใน settlement report ของ gateway/marketplace (รอบ 198 · report-S2 §3)
++    ///
++    /// <para>คำตอบ = ชื่อ <c>SettlementLineType</c> ตัวเดียว (single answer) ⇒ student =
++    /// <c>GenericFeedbackDistillationModel</c> (register ใน Program.cs) · อินพุตที่ใช้ทำ fingerprint =
++    /// ป้ายประเภทดิบจากไฟล์ + ชนิดช่องทาง + เครื่องหมายยอด (ห้ามใส่ยอด/เลขออเดอร์/ชื่อผู้ซื้อ) ·
++    /// ด่านรับคำตอบ = <c>SettlementLineTypeRules.ParseClassifierAnswer</c> (ชุดที่ลงบัญชีได้เท่านั้น) + confidence ≥ 0.70 ·
++    /// คำตอบ majority (≤ 0.45) ห้าม apply · ห้าม AI สร้างยอด/จับคู่ยอด</para>
++    /// <para>local path (kill-switch): กติกา adapter → คลังที่เรียน → ไม่รู้ = <c>Unclassified</c> (ห้ามลงบัญชี ผู้ใช้เลือกเอง)
++    /// ⇒ ปิด AI แล้วลงบัญชีได้ครบ เพียงแต่ผู้ใช้เลือกประเภทบรรทัดที่ไม่รู้จักเอง · ปิดลูปด้วย <c>SettlementLine.ClassifyAiFeedbackId</c>
++    /// ตอนผู้ใช้ยืนยัน/แก้ประเภท (ทีม B/D)</para></summary>
++    SettlementLineClassify = 57,
++
+     /// <summary>Catch-all for ad-hoc admin queries.</summary>
+     AdHocAnalysis = 99,
+ }
+diff --git a/Accounting/Models/Enums/SettlementEnums.cs b/Accounting/Models/Enums/SettlementEnums.cs
+new file mode 100644
+index 00000000..6070df6f
+--- /dev/null
++++ b/Accounting/Models/Enums/SettlementEnums.cs
+@@ -0,0 +1,162 @@
++namespace Accounting.Models.Enums;
++
++// ═══════════════════════════════════════════════════════════════════════
++// Settlement (wallet → ธนาคาร) — รอบ 198 เฟส 1 ทีม A
++// ที่มา: erp-review/2026-09-25/settlement/{DECISIONS,report-S1,report-S2}.md
++//
++// ⚠️ ทุกค่าในไฟล์นี้ **ถูกเก็บลงฐานเป็นตัวเลข** — ห้ามเปลี่ยนเลขของค่าที่มีอยู่ ·
++// เพิ่มค่าใหม่ต่อท้ายเท่านั้น · API ส่งออกเป็น "ชื่อ" (JsonStringEnumConverter ใน Program.cs)
++// หน้าเว็บห้ามตัดสินด้วยตัวเลข (tools/enum_number_compare_check.py)
++// · SettlementLineType ทุกค่าต้องมีกติกาใน Helpers/SettlementLineTypeRules
++//   (tools/settlement_line_type_rules_check.py)
++// ═══════════════════════════════════════════════════════════════════════
++
++/// <summary>ชนิดของช่องทางที่เงินพักอยู่ก่อนโอนเข้าธนาคาร</summary>
++public enum SettlementChannelKind
++{
++    /// <summary>Payment gateway (Omise · 2C2P · GB Prime Pay · Stripe · KBank/SCB)</summary>
++    Gateway = 1,
++    /// <summary>Marketplace (Shopee · Lazada · TikTok Shop · LINE MyShop)</summary>
++    Marketplace = 2,
++    /// <summary>OTA (Agoda · Booking.com · Expedia · Trip.com · Traveloka) — เฟส 4</summary>
++    Ota = 3,
++    /// <summary>เครื่องรูดบัตร/EDC ของธนาคาร (MDR)</summary>
++    CardAcquirer = 4,
++    /// <summary>แอปส่งอาหาร (Grab · LINE MAN · Robinhood)</summary>
++    Delivery = 5,
++    Other = 9,
++}
++
++/// <summary>สถานะของรอบโอน 1 รอบ (1 batch = 1 payout ของผู้ให้บริการ)</summary>
++public enum SettlementBatchStatus
++{
++    /// <summary>นำเข้าแล้ว ยังมีบรรทัดที่ยังไม่จัดประเภท/ยังไม่ตรวจ</summary>
++    Imported = 0,
++    /// <summary>ทุกบรรทัดจัดประเภทแล้ว (ไม่มี Unclassified)</summary>
++    Classified = 1,
++    /// <summary>บรรทัดขายจับคู่ใบขายแล้ว หรือถูกกำหนดให้เข้าใบขายสรุปรายวัน</summary>
++    Matched = 2,
++    /// <summary>ลงบัญชีแล้ว (JE รอบโอน + ใบค่าธรรมเนียม + รับชำระ)</summary>
++    Posted = 3,
++    /// <summary>เงินเข้าธนาคารจับคู่กับรายการเดินบัญชีแล้ว</summary>
++    BankMatched = 4,
++    Voided = 9,
++}
++
++/// <summary>บรรทัดของ batch มาจากไหน</summary>
++public enum SettlementSourceKind
++{
++    /// <summary>ไฟล์ CSV/Excel ที่ผู้ใช้อัปโหลด (adapter จับคู่คอลัมน์)</summary>
++    CsvImport = 1,
++    /// <summary>ประกอบจาก <c>PaymentIntent</c> ของ gateway ในระบบเราเอง</summary>
++    PaymentIntents = 2,
++    Manual = 3,
++    Api = 4,
++}
++
++/// <summary>ประเภทบรรทัดใน settlement report — 19 ค่าตาม report-S2 §3.2
++/// <para>ความหมาย/เครื่องหมาย/ผังของแต่ละค่า อยู่ใน <c>Helpers/SettlementLineTypeRules</c> ตัวเดียว</para>
++/// <para><b>เครื่องหมายของ <c>SettlementLine.Amount</c></b> = มุมมองยอดใน wallet: บวก = แพลตฟอร์มค้างเราเพิ่ม ·
++/// ลบ = ถูกหักออกจาก wallet</para></summary>
++public enum SettlementLineType
++{
++    /// <summary>ยังไม่รู้ว่าเป็นอะไร — <b>ห้ามลงบัญชี</b> (ไม่ตกค่าใช้จ่ายอื่นเงียบ · report-S1 §7 ข้อ 2)</summary>
++    Unclassified = 0,
++    /// <summary>ยอดขาย (ราคาที่ผู้ซื้อจ่าย) — บวก</summary>
++    Sale = 1,
++    /// <summary>คืนเงินผู้ซื้อ — ลบ · ต้องมีใบขายเดิม (ใบลดหนี้ §86/10)</summary>
++    Refund = 2,
++    /// <summary>ผู้ถือบัตรปฏิเสธรายการ (dispute เปิด) — ลบ · พักไว้ลูกหนี้อื่นจนรู้ผล</summary>
++    Chargeback = 3,
++    /// <summary>ชนะ dispute ได้เงินคืน — บวก</summary>
++    ChargebackReversal = 4,
++    /// <summary>ค่าคอมมิชชันแพลตฟอร์ม</summary>
++    Commission = 5,
++    /// <summary>ค่าธรรมเนียมรับชำระเงิน (MDR / transaction fee)</summary>
++    PaymentFee = 6,
++    /// <summary>ค่าขนส่งที่แพลตฟอร์มเรียกเก็บจากร้าน</summary>
++    ShippingFeeCharged = 7,
++    /// <summary>แพลตฟอร์มช่วยค่าขนส่ง — บวก · ลดค่าขนส่ง</summary>
++    ShippingSubsidy = 8,
++    /// <summary>ส่วนลด/โค้ดที่ร้านออกเงินเอง — ลบ · <b>ลดยอดขาย</b> (ไม่ใช่ค่าใช้จ่าย · ไม่อยู่ในฐาน VAT §79)</summary>
++    SellerVoucher = 9,
++    /// <summary>โค้ด/coins ที่แพลตฟอร์มออกเงินแทนผู้ซื้อ — บวก · <b>เป็นส่วนของยอดขาย</b> (อยู่ในฐาน VAT)</summary>
++    PlatformVoucherSubsidy = 10,
++    /// <summary>ค่าโฆษณาบนแพลตฟอร์มที่หักจาก wallet</summary>
++    AdsFee = 11,
++    /// <summary>ค่าบริการอื่นของแพลตฟอร์ม (โปรแกรมส่งฟรี · ค่าบริการร้าน ฯลฯ)</summary>
++    ServiceFee = 12,
++    /// <summary>ค่าธรรมเนียมถอนเงิน/โอนออก</summary>
++    WithdrawalFee = 13,
++    /// <summary>แพลตฟอร์มกันเงินไว้ (reserve/holdback) — ลบ</summary>
++    ReserveHold = 14,
++    /// <summary>ปล่อยเงินที่กันไว้ — บวก</summary>
++    ReserveRelease = 15,
++    /// <summary>แพลตฟอร์มหักภาษี ณ ที่จ่าย<b>จากเงินได้ของเรา</b> (e-Withholding) — ลบ · เป็นเครดิตภาษีของเรา</summary>
++    TaxWithheldByPlatform = 16,
++    /// <summary>ผลต่างอัตราแลกเปลี่ยน — ±</summary>
++    FxDifference = 17,
++    /// <summary>ปรับปรุงอื่น — ± · <b>บังคับเหตุผล + ผังบัญชี</b></summary>
++    Adjustment = 18,
++}
++
++/// <summary>ผลการจับคู่บรรทัดกับเอกสาร/รายการในระบบ</summary>
++public enum SettlementMatchStatus
++{
++    /// <summary>ยังไม่จับคู่ (หรือยังไม่ได้ตรวจ)</summary>
++    Unmatched = 0,
++    /// <summary>จับคู่กับใบขาย/intent/การรับชำระแล้ว</summary>
++    Matched = 1,
++    /// <summary>จับคู่ไม่ได้ ⇒ เข้าใบขายสรุปรายวันอัตโนมัติ + ติดป้ายให้ตรวจ (DECISIONS ข้อ 3)</summary>
++    AutoSummary = 2,
++    /// <summary>ประเภทนี้ไม่ต้องจับคู่ (ค่าธรรมเนียม · reserve ฯลฯ)</summary>
++    NotRequired = 3,
++    /// <summary>จับคู่ได้แต่ยอดไม่ตรงเอกสาร — ต้องตรวจ</summary>
++    AmountMismatch = 4,
++}
++
++/// <summary>ใครเป็นผู้จัดประเภทบรรทัด — ใช้แยกตัวชี้วัด "local โตจริง" (DECISION_DOCTRINE §3)</summary>
++public enum SettlementClassifiedBy
++{
++    None = 0,
++    /// <summary>กติกาของ adapter (ชื่อคอลัมน์/ป้ายรายการที่รู้จัก)</summary>
++    AdapterRule = 1,
++    /// <summary>คลังที่เรียนจากที่ผู้ใช้ยืนยัน (student ของ <c>AiFeatureKey.SettlementLineClassify</c>)</summary>
++    Learned = 2,
++    /// <summary>ครู (AI ภายนอก) ตอบ และผ่านด่านแล้ว</summary>
++    Ai = 3,
++    /// <summary>ผู้ใช้เลือกเอง</summary>
++    User = 4,
++}
++
++/// <summary>VAT บนค่าธรรมเนียมของช่องทาง (report-S1 §3/§5)</summary>
++public enum SettlementFeeVatMode
++{
++    /// <summary>ผู้ให้บริการไทยเก็บ VAT 7% — ภาษีซื้อ (พักที่ 11630 จนได้ใบกำกับ)</summary>
++    ThaiVat7 = 1,
++    /// <summary>ผู้ให้บริการต่างประเทศ — ประเมิน VAT เอง ภ.พ.36 §83/6 (11640 / 21912)</summary>
++    ForeignPp36 = 2,
++    /// <summary>ไม่มี VAT บนค่าธรรมเนียม</summary>
++    None = 3,
++}
++
++/// <summary>หัก ณ ที่จ่ายบนค่าธรรมเนียมที่เราจ่ายแพลตฟอร์ม (report-S1 D5 · §4 W1–W3) — ค่าเริ่มต้น None + เตือนนิติบุคคล</summary>
++public enum SettlementFeeWhtMode
++{
++    None = 0,
++    /// <summary>W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทนเรา — เก็บ 50 ทวิ แต่<b>ห้ามนับเข้ายอดที่เรายื่นเอง</b></summary>
++    AgentWithholds = 1,
++    /// <summary>W2 เราหักเองแล้วแพลตฟอร์มคืนให้ (Stripe) — ตั้งลูกหนี้แพลตฟอร์มรอคืน</summary>
++    SelfWithholdReimbursed = 2,
++    /// <summary>W3 เราออกภาษีแทน (แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว) — ภาษี = ฐาน × 3/97</summary>
++    SelfWithholdPayerBorne = 3,
++}
++
++/// <summary>วิธีรับรู้รายได้ของช่องทาง (DECISIONS ข้อ 1)</summary>
++public enum SettlementRevenueModel
++{
++    /// <summary>รายได้เต็มจำนวน + ค่าธรรมเนียมเป็นค่าใช้จ่าย (ตัวการ · TFRS NPAEs) — ค่าเริ่มต้น</summary>
++    GrossWithFees = 1,
++    /// <summary>รายได้ = ราคาสุทธิที่ขายให้แพลตฟอร์ม (OTA ซื้อมาขายต่อ) — <b>ยังไม่รองรับในเฟส 1</b> (เฟส 4)</summary>
++    NetRate = 2,
++}
+diff --git a/Accounting/Program.cs b/Accounting/Program.cs
+index 3ff29420..774ebcc4 100644
+--- a/Accounting/Program.cs
++++ b/Accounting/Program.cs
+@@ -618,6 +618,8 @@ foreach (var genericFeatureKey in new[]
+     Accounting.Models.Enums.AiFeatureKey.PaymentVoucherAccountingSuggestion,
+     Accounting.Models.Enums.AiFeatureKey.DocumentConversionSuggestion,
+     Accounting.Models.Enums.AiFeatureKey.OcrProjectMatch,
++    // รอบ 198 — ประเภทบรรทัด settlement (คำตอบเดียว = ชื่อ SettlementLineType) · ด่าน SettlementLineTypeRules.ParseClassifierAnswer
++    Accounting.Models.Enums.AiFeatureKey.SettlementLineClassify,
+ })
+ {
+     var fk = genericFeatureKey;   // per-iteration capture for the factory closure
+diff --git a/Accounting/Services/ChartOfAccountTemplates.cs b/Accounting/Services/ChartOfAccountTemplates.cs
+index c44c6a0d..2699d63d 100644
+--- a/Accounting/Services/ChartOfAccountTemplates.cs
++++ b/Accounting/Services/ChartOfAccountTemplates.cs
+@@ -39,6 +39,10 @@ public static class ChartOfAccountTemplates
+             // charge สำเร็จ ไม่งั้นยอดธนาคารในระบบไม่ตรงกับยอดจริงตลอดเวลา
+             // (PAYMENT_GATEWAY_DESIGN.md §5 · ข้อสรุปทีม 2)
+             new("11340", "ลูกหนี้ผู้ให้บริการรับชำระเงิน", "Payment Gateway Receivable", AccountType.Asset, 4),
++            // รอบ 198 (settlement · DECISIONS ข้อ 4 · report-S1 §1.2/§2 G6) — เงินที่ gateway/marketplace **กันไว้/ระงับ**
++            // (reserve/holdback) แยกจากยอดที่ถอนได้ในผังพักย่อย 11341–11349 (ผังย่อยต่อช่องทาง **ไม่ seed** — สร้างตอนผูก
++            // ช่องทางผ่าน Helpers/SettlementChannelAccounts) · ใส่ให้บริษัทเดิมด้วย migration (Helpers/SettlementChartSeed)
++            new("11350", "เงินที่ผู้ให้บริการกัน/ระงับไว้", "Funds Held by Payment Provider", AccountType.Asset, 4),
+             new("114", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 3),
+             new("11400", "เงินให้กู้ยืมระยะสั้น", "Short-term Loans", AccountType.Asset, 4),
+             new("115", "สินค้าคงเหลือ", "Inventories", AccountType.Asset, 3),
+@@ -225,6 +229,9 @@ public static class ChartOfAccountTemplates
+             new("53130", "ค่าขนส่ง (ฝ่ายขาย)", "Freight-out / Delivery (Sales)", AccountType.Expense, 4),
+             new("53140", "ค่านายหน้าการขาย", "Sales Commission", AccountType.Expense, 4),
+             new("53150", "ค่าใช้จ่ายในการขายอื่นๆ", "Other Selling Expenses", AccountType.Expense, 4),
++            // รอบ 198 — ค่าธรรมเนียมรับชำระเงิน (MDR · gateway · payment fee ของ marketplace) แยกจาก 54710 ค่าธรรมเนียมธนาคาร
++            // (report-S1 §1.2 · D6: ใช้กับช่องทางที่ผูกใหม่ ไม่ย้ายยอดย้อนหลัง)
++            new("53170", "ค่าธรรมเนียมรับชำระเงิน", "Payment Processing Fees", AccountType.Expense, 4),
+ 
+             // --- 54 ค่าใช้จ่ายในการบริหาร ---
+             new("54", "ค่าใช้จ่ายในการบริหาร", "Administrative Expenses", AccountType.Expense, 2),
+@@ -313,6 +320,9 @@ public static class ChartOfAccountTemplates
+             new("57110", "ขาดทุนจากการขายสินทรัพย์", "Loss on Disposal of Assets", AccountType.Expense, 4),
+             new("57120", "ขาดทุนจากการด้อยค่า", "Impairment Loss", AccountType.Expense, 4),
+             new("57130", "หนี้สงสัยจะสูญ/หนี้สูญ", "Bad Debt Expense / Doubtful Accounts", AccountType.Expense, 4),
++            // รอบ 198 — แพ้ chargeback แล้วไม่ได้ของคืน (report-S1 G5 · D8) · **ห้ามรวม 57130** (หนี้สูญมีเงื่อนไขตัดจำหน่ายตามกฎกระทรวง 186
++            // คนละเรื่องกับเงินที่ผู้ถือบัตรเรียกคืน) · ภาษีขายเดิมคงอยู่ (ไม่ใช่เหตุออกใบลดหนี้ §86/10)
++            new("57140", "ขาดทุนจากการถูกปฏิเสธรายการ (chargeback)", "Chargeback Losses", AccountType.Expense, 4),
+ 
+             // --- 58 ภาษีเงินได้ ---
+             new("58", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2),
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 63740a73..f6081d14 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -3382,3 +3382,17 @@ _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แ
+ - เทสต์ `OcrHeaderVatEvidenceTests` · `OcrVatBackCalcTests` + เพิ่มใน OcrLineVatPlanner/OcrApprovalGapWarning/OcrDocumentRoleInferrer/ThaiVatExemptKeyword ·
+   checker `required_call_site_check` +6 กติกา · ค้าง: ป้ายที่มาอัตรารายบรรทัด (ต้องมี provenance ต่อบรรทัด — backlog)
+ — commit c69a0b62)_
++
++_Last verified against codebase: 2026-09-25 (รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet → ธนาคาร)** ตาม `erp-review/2026-09-25/settlement/`
++(DECISIONS 4 ข้อ · report-S1 JE · report-S2 §3/§4):
++- enum `Models/Enums/SettlementEnums.cs` (persist ตัวเลข · API ชื่อ) · entity `Models/Entities/Settlement.cs` (`SettlementChannel/Batch/Line`) · `PaymentIntent.SettlementBatchId` ·
++  DbSet + query filter + index (unique `PayoutRef`/`ExternalTxnId` ต่อช่องทาง) · migration บล็อกเดียว `DatabaseMigrationHelper.SettlementSchemaStatements` ในเส้นหลัก
++- ผังมาตรฐาน 11350/53170/57140 (+ migration บริษัทเดิม `Helpers/SettlementChartSeed` · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) · ผังพักย่อย 11341–11349 สร้างตอนผูกช่องทาง
++  (`Helpers/SettlementChannelAccounts.EnsureClearingAccountAsync` · advisory lock ต่อบริษัท · ครบ 9 ล้มดัง)
++- `Helpers/SettlementLineTypeRules` (ตารางเดียว 19 ประเภท + `ParseClassifierAnswer` + `ParseFeeAccountMap`) · `Helpers/SettlementFeeTax` (ฐาน WHT ก่อน VAT · 3/97 ·
++  ไม่จด VAT ไม่มีขาภาษีซื้อ) · `Helpers/SettlementBatchMath.Plan` (สมการ batch ±0.01 · ปัญหาพร้อมทางไปต่อ · รับชำระ/ใบขายสรุปรายวัน/คืนเงิน/ใบค่าธรรมเนียมต่อกลุ่มภาษี/JE รอบโอน)
++- `AiFeatureKey.SettlementLineClassify = 57` + `GenericFeedbackDistillationModel` · checker `tools/settlement_line_type_rules_check.py` (+ self-test)
++- เทสต์ `SettlementBatchMathTests` · `SettlementRulesAndSchemaTests` (golden gateway 1,070/41.79/1,028.21 · marketplace 963/67.41+4.72 · reserve · ยอดติดลบ · คืนเงินหลังโอน ·
++  chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
++- ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
++— commit <pending>)_
+diff --git a/DOCUMENT_FLOW.md b/DOCUMENT_FLOW.md
+index ff291f1e..24bde6df 100644
+--- a/DOCUMENT_FLOW.md
++++ b/DOCUMENT_FLOW.md
+@@ -1281,6 +1281,45 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
+ 
+ ---
+ 
++### 2.10 Settlement — เงินพักใน wallet ของ gateway/marketplace → โอนเข้าธนาคาร 🔨 รอบ 198 (เฟส 1 · แกนข้อมูล+คณิต ทีม A)
++
++> ที่มา/คำตัดสิน: `erp-review/2026-09-25/settlement/` (`DECISIONS.md` · `report-S1.md` JE ที่ถูก · `report-S2.md` §3 สถาปัตยกรรม) ·
++> **สถานะ**: สัญญา (enum · entity · ตาราง · migration · ผัง · helper คณิต) ✅ · นำเข้า (ทีม B) · ลงบัญชี (ทีม C) · หน้าจอ (ทีม D) 🔨 ยังไม่มีผู้เรียก ·
++> เส้น gateway เดิม (`GatewaySettlementService/Math`) ยังเป็นเส้นที่ใช้งานจริงจนเฟส 2
++
++**หน่วยความจริง = รอบโอน 1 รอบของผู้ให้บริการ** (`SettlementBatch`) · ยอดเข้าธนาคารจริง `NetPayout` เป็นตัวตั้ง · บรรทัด (`SettlementLine`) มีเครื่องหมายมุม wallet
++(บวก = ค้างเราเพิ่ม · ลบ = ถูกหัก) · สมการ **Σ บรรทัด = NetPayout + (ClosingWalletBalance − OpeningWalletBalance) ±0.01** ไม่ลงตัว = ปัญหาที่บล็อก
++พร้อมทางไปต่อ (เพิ่มบรรทัด `Adjustment` ที่มีเหตุผล+ผัง หรือแก้ยอด — **ระบบไม่เดาส่วนต่าง**)
++
++| ชิ้น | ไฟล์ | หมายเหตุ |
++| --- | --- | --- |
++| enum (persist เป็นตัวเลข · API เป็นชื่อ) | `Models/Enums/SettlementEnums.cs` | `SettlementLineType` 19 ค่า (`Unclassified = 0` ห้ามลงบัญชี) · `SettlementFeeVatMode{ThaiVat7,ForeignPp36,None}` · `SettlementFeeWhtMode{None,AgentWithholds,SelfWithholdReimbursed,SelfWithholdPayerBorne}` · `SettlementRevenueModel{GrossWithFees,NetRate}` |
++| entity | `Models/Entities/Settlement.cs` | `SettlementChannel` (ผังพัก/reserve/dispute · `FeeAccountMapJson` · โหมด VAT/WHT/รายได้) · `SettlementBatch` (unique `PayoutRef` ต่อช่องทาง) · `SettlementLine` (unique `ExternalTxnId` ต่อช่องทาง · `ClassifyAiFeedbackId`/`ClassifyUsedAi` · `OverrideAccountId`/`AdjustmentReason`) · `PaymentIntent.SettlementBatchId` |
++| migration | `DatabaseMigrationHelper.SettlementSchemaStatements` | บล็อกเดียวในเส้นหลัก (`GetAlterStatements` — log ความล้มเหลว) · ชื่อ/เงื่อนไข index ล็อกกับ model ด้วยเทสต์ |
++| กติกาประเภทบรรทัด (ตารางเดียว) | `Helpers/SettlementLineTypeRules.cs` | เครื่องหมาย · ทางลงบัญชี (`SaleComponent`/`Refund`/`FeeDocument`/`DirectJournal`) · บทบาทผัง (`SettlementAccountRoles`) · VAT ได้ไหม · รหัสเงินได้ WHT (อัตราจาก `ThaiWhtRateTable`) · ต้องจับคู่ใบขาย · Adjustment บังคับเหตุผล · `ParseClassifierAnswer` = ด่านรับคำตอบตัวจัดประเภท · `tools/settlement_line_type_rules_check.py` |
++| ภาษีค่าธรรมเนียม | `Helpers/SettlementFeeTax.cs` | รวม VAT: ก่อน VAT = round(×100/107, AwayFromZero) · VAT = ส่วนที่เหลือ · ไฟล์ระบุ VAT ⇒ เชื่อไฟล์ · **ฐาน WHT = ก่อน VAT** · ออกภาษีแทน = ฐาน × 3/97 · ไม่จด VAT ⇒ ไม่มีขาภาษีซื้อ · ภ.พ.36 เฉพาะบริษัทจด VAT |
++| แผนลงบัญชี | `Helpers/SettlementBatchMath.Plan(batch, lines, channel, companyVatRegistered)` | คืน `SettlementPostingPlan` — ไม่แตะฐานข้อมูล |
++| ผังพักย่อย | `Helpers/SettlementChannelAccounts.EnsureClearingAccountAsync` | 11341–11349 "ลูกหนี้แพลตฟอร์ม {ชื่อช่องทาง}" ใต้ 113 · idempotent · gateway ที่ผูก `PaymentProviderConfig` ใช้ผังพักของ config (11340) · ครบ 9 / ไม่มี 113 / ผังที่ผูกถูกปิด ⇒ ล้มดังพร้อมทางไปต่อ |
++
++**เส้นลงบัญชีที่แผนกำหนด** (report-S1 §2–§4 · ผู้ลงบัญชีจริง = ทีม C ผ่าน `JournalEntryBuilder` (ด่านงวด) + `IDocumentService` ในธุรกรรมเดียว):
++1. **ขาขาย** (`Sale` + `SellerVoucher` ลดยอด + `PlatformVoucherSubsidy` เป็นยอดขาย/ฐาน VAT): จับคู่ใบขายได้ ⇒ รับชำระ 1 ครั้งต่อใบ เงินเข้า = ผังพัก ·
++   จับไม่ได้ ⇒ **ใบขายสรุปรายวัน** 1 ใบ/วัน/ช่องทาง (DECISIONS ข้อ 2–3) + ป้าย `SummarySaleCreated` ให้ตรวจรายได้ซ้ำ · มี `PaymentIntentId`/`PaymentId` ⇒ อยู่ในผังพักแล้ว ไม่ลงซ้ำ
++2. **คืนเงิน** ⇒ ใบลดหนี้อ้างใบเดิม + จ่ายคืนจากผังพัก · ไม่รู้ใบเดิม ⇒ บล็อก (§86/10)
++3. **ค่าธรรมเนียม** ⇒ **เอกสารซื้อ 1 ใบ/batch/กลุ่มภาษี** (`InputVatPending` 11630 · `SelfAssessedPp36` 11640/21912 · `VatNotClaimable` · `NoVat`) จ่ายเต็มจากผังพัก ·
++   ผังตามบทบาท: ค่าคอม 53140 · ค่าธรรมเนียมรับชำระ **53170** · ขนส่ง 53130 · โฆษณา 53120 · ค่าบริการ 53150 · ถอนเงิน 54710 (ทับได้ด้วย `FeeAccountMapJson`) ·
++   สุทธิเป็นยอดคืน ⇒ บล็อก (ต้องมีใบลดหนี้ค่าธรรมเนียม)
++4. **WHT บนค่าธรรมเนียม** (ค่าเริ่มต้น None): ตัวแทนหัก ⇒ เก็บ 50 ทวิ ไม่นับเข้ายอดที่เรายื่น · หักเองได้คืน ⇒ Dr 11320 / Cr 21917 · ออกภาษีแทน ⇒ Dr ผังค่าธรรมเนียม / Cr 21917 —
++   ขา WHT อยู่ใน JE รอบโอน **ห้ามหักซ้ำตอนจ่ายใบค่าธรรมเนียม**
++5. **JE รอบโอน**: Dr ธนาคาร NetPayout / Cr ผังพัก · reserve (11350) · chargeback เปิด (11320 → แพ้ 57140 ผ่าน `PlanChargebackResolution` · ชนะ = `ChargebackReversal`) ·
++   ภาษีถูกหักโดยแพลตฟอร์ม (11910) · FX (43050/54950) · ค่าขนส่งที่แพลตฟอร์มช่วย (ลด 53130) · Adjustment (ผังที่ผู้ใช้เลือก)
++6. ยอด wallet ปลายรอบติดลบ ⇒ แจ้ง (ไม่บล็อก) — ยกไปหักรอบถัดไป
++7. **ยังไม่รองรับ (บล็อกพร้อมทางไปต่อ)**: สกุลเงินต่างประเทศ · `NetRate` (OTA ขายต่อ — เฟส 4)
++
++**ผังบัญชีใหม่** (`ChartOfAccountTemplates` + migration ใส่ให้บริษัทเดิมที่มีกลุ่มแม่ · `ON CONFLICT DO NOTHING` · ไม่ย้ายยอด): 11350 เงินที่ผู้ให้บริการกัน/ระงับไว้ ·
++53170 ค่าธรรมเนียมรับชำระเงิน · 57140 ขาดทุนจากการถูกปฏิเสธรายการ (chargeback) · **11341–11349 ไม่ seed** (สร้างตอนผูกช่องทาง)
++
++**AI**: `AiFeatureKey.SettlementLineClassify = 57` (§6.4) — จัดประเภทบรรทัดเท่านั้น · ห้าม AI สร้างยอด/จับคู่ยอด
++
+ ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
+ 
+ ### 3.1 Create / Update (Draft → Draft)
+@@ -3062,6 +3101,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว
+ | Manual JE account suggest | `ManualJeAccountSuggestion = 35` | reuse `GlAccountDistillationModel` | – |
+ | Dimension allocation | `DimensionAllocationSuggestion = 36` | generic | – |
+ | Asset category suggest | `AssetCategorySuggestion = 37` | rule-based keyword (no AI by default) | ตอน user แก้ใน asset modal |
++| **ประเภทบรรทัด settlement** (รอบ 198 · 🔨 ผู้เรียกจริง = ทีม B) | `SettlementLineClassify = 57` | generic (คำตอบ = ชื่อ `SettlementLineType` · fingerprint = ป้ายดิบ + ชนิดช่องทาง + เครื่องหมาย — ห้ามยอด/เลขออเดอร์/ชื่อผู้ซื้อ) · ด่าน `SettlementLineTypeRules.ParseClassifierAnswer` + confidence ≥ 0.70 · majority ห้าม apply · kill-switch ⇒ `Unclassified` ให้ผู้ใช้เลือก | ตอนผู้ใช้ยืนยัน/แก้ประเภทบรรทัด (`SettlementLine.ClassifyAiFeedbackId`) |
+ 
+ **Litmus test ก่อน commit**: ปิด provider ทุกตัว → feature ยังทำงานครบ 100%
+ (`AiProviderConfig.IsActive = false`)
+@@ -3284,7 +3324,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต
+ ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
+ คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
+ 
+-_Last verified against codebase: 2026-09-25 (รอบ 195 ทีม I2: ฝ่ายค้าน C1 — ชั้นพิสูจน์ทั้งใบ/คำแนะนำใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษ (`OcrHeaderVatEvidence`) · `[VAT-DERIVED]` หยุดอนุมัติเอง · การแยก VAT จากยอดรวมผ่าน `VatBackCalcGuard` ทุกชุด · C2 "ยกเลิก…แทน" · P2 คำนมแคบลง · คำเตือนรวมข้อตรวจรากเดียว · ดึงรายการซ้ำล้าง [Σ-GAP] เก่า (§1 OCR) — commit c69a0b62)_
++_Last verified against codebase: 2026-09-25 (รอบ 198 เฟส 1 ทีม A: สัญญา settlement — enum · entity 3 ตาราง · migration บล็อกเดียว · ผัง 11350/53170/57140 · `SettlementLineTypeRules`/`SettlementFeeTax`/`SettlementBatchMath`/`SettlementChannelAccounts` · `AiFeatureKey.SettlementLineClassify` (§2.10 · §6.4) — commit <pending>)_
++
++_ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I2: ฝ่ายค้าน C1 — ชั้นพิสูจน์ทั้งใบ/คำแนะนำใช้ได้เฉพาะ VAT ที่พิมพ์บนกระดาษ (`OcrHeaderVatEvidence`) · `[VAT-DERIVED]` หยุดอนุมัติเอง · การแยก VAT จากยอดรวมผ่าน `VatBackCalcGuard` ทุกชุด · C2 "ยกเลิก…แทน" · P2 คำนมแคบลง · คำเตือนรวมข้อตรวจรากเดียว · ดึงรายการซ้ำล้าง [Σ-GAP] เก่า (§1 OCR) — commit c69a0b62)_
+ 
+ _ก่อนหน้า: 2026-09-25 (รอบ 196 ทีม Q: หน้ารวมบอกได้ว่าใบต้นทางออกเอกสารต่อแล้วหรือยัง — ตัวตัดสินเดียว `Helpers/DocumentConversionProgress` ·
+ batch `LoadConversionSummariesAsync` ใช้ร่วม list/detail/ตัวกรอง `?conversion=` · ป้ายบอกชนิดใบลูก · "ค้างชำระ" เฉพาะลูกหนี้/เจ้าหนี้ (§2.4a) — commit <pending>)_
+diff --git a/TEST_PLAN.md b/TEST_PLAN.md
+index 2349e2ab..26404780 100644
+--- a/TEST_PLAN.md
++++ b/TEST_PLAN.md
+@@ -14,7 +14,7 @@
+ | รายการ | สถานะ |
+ | --- | --- |
+ | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
+-| เทสต์ที่มี | **345 ไฟล์ · 3,097 `[Fact]` + 482 `[Theory]` (2,125 `InlineData`)** ณ 2026-09-25 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
++| เทสต์ที่มี | **347 ไฟล์ · 3,135 `[Fact]` + 484 `[Theory]` (2,136 `InlineData`)** ณ 2026-09-25 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+ | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
+ | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
+ | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
+diff --git a/tools/check_all.sh b/tools/check_all.sh
+index 54c052cb..1369cef8 100755
+--- a/tools/check_all.sh
++++ b/tools/check_all.sh
+@@ -49,7 +49,7 @@ done
+ # รอบ 193 ทีม C3: เริ่มจาก contact_taxid_only_match_check — เพิ่มชื่อ checker ที่มี --self-test ต่อท้ายลิสต์นี้ได้
+ # settings_reader_check (ทีม W): --self-test รวม negative test กับเรพจริง (ถอดผู้อ่าน AutoAttachWhtCertPdf แล้วต้องฟ้อง)
+ # owner_action_wiring_check (ทีม W หลังฝ่ายค้าน): ถอดด่านเจ้าของ/คีย์ออกจากไฟล์จริงแล้วต้องฟ้อง
+-for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py; do
++for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py tools/settlement_line_type_rules_check.py; do
+   [ -e "$f" ] || continue
+   out=$(python3 "$f" --self-test 2>&1); rc=$?
+   if [ $rc -ne 0 ]; then red "❌ self-test $f"; echo "$out" | tail -20; fail=1; fi
+diff --git a/tools/settlement_line_type_rules_check.py b/tools/settlement_line_type_rules_check.py
+new file mode 100644
+index 00000000..7893bf8d
+--- /dev/null
++++ b/tools/settlement_line_type_rules_check.py
+@@ -0,0 +1,125 @@
++#!/usr/bin/env python3
++# -*- coding: utf-8 -*-
++"""ทุกค่าของ `SettlementLineType` ต้องมีกติกาแถวเดียวใน `Helpers/SettlementLineTypeRules.cs` (รอบ 198 เฟส 1 ทีม A)
++
++ที่มา: ประเภทบรรทัด settlement กำหนด "ลงบัญชีทางไหน · เครื่องหมาย · ผัง · VAT/WHT · ต้องจับคู่ใบขายไหม" — ถ้ามีคนเพิ่มค่า enum
++(เช่นประเภทใหม่ของ Lazada) แต่ลืมแถวในตาราง `For()` จะคืนกติกาของ Unclassified ⇒ บรรทัดประเภทใหม่ลงบัญชีไม่ได้ทั้งที่ผู้ใช้
++เลือกแล้ว (ทิศปลอดภัย แต่เงียบว่าทำไม) · และถ้ามีคนเขียน `switch` ของ SettlementLineType เองที่อื่น = ตารางที่สอง (F2 ข้อ 4)
++
++กติกา:
++  1. ทุกชื่อใน `enum SettlementLineType` (Models/Enums/SettlementEnums.cs) มี `new SettlementLineTypeRule(SettlementLineType.<ชื่อ>`
++     ใน Helpers/SettlementLineTypeRules.cs **ครั้งเดียว** · แถวที่อ้างชื่อที่ไม่มีใน enum = ผิด
++  2. `case SettlementLineType.X` / `SettlementLineType.X =>` (switch) นอกไฟล์เจ้าของ = ผิด (ถามตาราง ห้ามตัดสินเอง)
++
++ใช้: python3 tools/settlement_line_type_rules_check.py [--self-test]
++negative test ในตัวรันทุกครั้ง: ถอดแถว / ซ้ำแถว / เพิ่ม switch นอกเจ้าของ บนสำเนาในหน่วยความจำ แล้วต้องฟ้อง
++"""
++import os
++import re
++import sys
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++SRC = os.path.join(ROOT, 'Accounting')
++ENUM_FILE = os.path.join(SRC, 'Models', 'Enums', 'SettlementEnums.cs')
++RULES_FILE = os.path.join(SRC, 'Helpers', 'SettlementLineTypeRules.cs')
++OWNERS = {os.path.normpath(RULES_FILE)}
++
++ENUM_BLOCK = re.compile(r'enum\s+SettlementLineType\s*\{(.*?)\}', re.S)
++ENUM_MEMBER = re.compile(r'^\s*([A-Z]\w*)\s*=\s*\d+\s*,', re.M)
++RULE_ROW = re.compile(r'new\s+SettlementLineTypeRule\(\s*SettlementLineType\.(\w+)')
++SWITCH_ARM = re.compile(r'(?:\bcase\s+SettlementLineType\.\w+|SettlementLineType\.\w+\s*=>)')
++
++
++def strip_comments(text):
++    text = re.sub(r'/\*.*?\*/', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
++    return re.sub(r'(?<!:)//[^\n]*', '', text)
++
++
++def enum_members(enum_src):
++    m = ENUM_BLOCK.search(strip_comments(enum_src))
++    return ENUM_MEMBER.findall(m.group(1)) if m else []
++
++
++def check(enum_src, rules_src, other_files):
++    problems = []
++    members = enum_members(enum_src)
++    if not members:
++        problems.append('หา enum SettlementLineType ไม่เจอ')
++    rows = RULE_ROW.findall(strip_comments(rules_src))
++    for name in members:
++        n = rows.count(name)
++        if n == 0:
++            problems.append(f'SettlementLineType.{name} ไม่มีกติกาใน SettlementLineTypeRules.All')
++        elif n > 1:
++            problems.append(f'SettlementLineType.{name} มีกติกา {n} แถว (ต้องแถวเดียว)')
++    for name in sorted(set(rows) - set(members)):
++        problems.append(f'กติกาอ้าง SettlementLineType.{name} ที่ไม่มีใน enum')
++    for path, text in other_files:
++        for i, line in enumerate(strip_comments(text).splitlines(), 1):
++            if SWITCH_ARM.search(line):
++                problems.append(f'{os.path.relpath(path, ROOT)}:{i}: ตัดสินตาม SettlementLineType เอง — ถามจาก '
++                                f'SettlementLineTypeRules.For(type) แทน')
++    return problems
++
++
++def repo_files():
++    out = []
++    for d, dirs, files in os.walk(SRC):
++        dirs[:] = [x for x in dirs if x not in ('bin', 'obj', 'wwwroot', 'node_modules')]
++        for f in files:
++            if f.endswith('.cs'):
++                p = os.path.normpath(os.path.join(d, f))
++                if p in OWNERS:
++                    continue
++                with open(p, encoding='utf-8', errors='replace') as fh:
++                    t = fh.read()
++                if 'SettlementLineType.' in t:
++                    out.append((p, t))
++    return out
++
++
++def self_test(enum_src, rules_src):
++    fails = []
++    members = enum_members(enum_src)
++    if len(members) < 2:
++        return ['self-test: enum สั้นผิดปกติ']
++    victim = members[1]
++    removed = re.sub(r'new\s+SettlementLineTypeRule\(\s*SettlementLineType\.' + victim + r'\b', 'new X(', rules_src, count=1)
++    if not check(enum_src, removed, []):
++        fails.append(f'self-test: ถอดแถว {victim} แล้วไม่ฟ้อง')
++    dup = rules_src + f'\n new SettlementLineTypeRule(SettlementLineType.{victim}, "x")'
++    if not check(enum_src, dup, []):
++        fails.append(f'self-test: ซ้ำแถว {victim} แล้วไม่ฟ้อง')
++    fake = [('Accounting/Services/Fake.cs', f'switch (t) {{ case SettlementLineType.{victim}: break; }}')]
++    if not check(enum_src, rules_src, fake):
++        fails.append('self-test: switch นอกเจ้าของแล้วไม่ฟ้อง')
++    arm = [('Accounting/Services/Fake2.cs', f'var x = t switch {{ SettlementLineType.{victim} => 1, _ => 0 }};')]
++    if not check(enum_src, rules_src, arm):
++        fails.append('self-test: switch expression นอกเจ้าของแล้วไม่ฟ้อง')
++    ok = [('Accounting/Services/Fake3.cs', f'if (l.LineType == SettlementLineType.{victim}) {{ }}')]
++    if check(enum_src, rules_src, ok):
++        fails.append('self-test: การเปรียบเทียบธรรมดาถูกฟ้องผิด (checker ที่ฟ้องผิด = checker ที่พัง)')
++    return fails
++
++
++def main():
++    with open(ENUM_FILE, encoding='utf-8') as f:
++        enum_src = f.read()
++    with open(RULES_FILE, encoding='utf-8') as f:
++        rules_src = f.read()
++    fails = self_test(enum_src, rules_src)
++    if '--self-test' in sys.argv:
++        print('\n'.join(fails) if fails else 'self-test: ผ่าน')
++        return 1 if fails else 0
++    problems = fails + check(enum_src, rules_src, repo_files())
++    if problems:
++        print('❌ settlement_line_type_rules_check:')
++        for p in problems:
++            print('  - ' + p)
++        return 1
++    print(f'✅ SettlementLineType {len(enum_members(enum_src))} ค่า มีกติกาครบในตารางเดียว')
++    return 0
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+-- 
+2.43.0
+

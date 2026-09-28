@@ -1,0 +1,881 @@
+From b3b4a9f3b75730cdfc958acf16a6ebaa77d0e693 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 08:51:57 +0000
+Subject: [PATCH] =?UTF-8?q?WIP=20=E0=B8=97=E0=B8=B5=E0=B8=A1=20K2=20?=
+ =?UTF-8?q?=E0=B8=A3=E0=B8=AD=E0=B8=9A=20197=20(=E0=B8=84=E0=B9=89?=
+ =?UTF-8?q?=E0=B8=B2=E0=B8=87=E0=B9=80=E0=B8=9E=E0=B8=A3=E0=B8=B2=E0=B8=B0?=
+ =?UTF-8?q?=E0=B9=82=E0=B8=84=E0=B8=A7=E0=B8=95=E0=B8=B2=20=E2=80=94=20?=
+ =?UTF-8?q?=E0=B8=A2=E0=B8=B1=E0=B8=87=E0=B9=84=E0=B8=A1=E0=B9=88=E0=B8=9C?=
+ =?UTF-8?q?=E0=B9=88=E0=B8=B2=E0=B8=99=20check=5Fall=20=C2=B7=20=E0=B8=AB?=
+ =?UTF-8?q?=E0=B9=89=E0=B8=B2=E0=B8=A1=20merge=20=E0=B8=95=E0=B8=A3?=
+ =?UTF-8?q?=E0=B8=87)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LNdHNkcNxcTEjiEWukA3FS
+---
+ .../OcrVendorBranchReview197Tests.cs          | 284 ++++++++++++++++++
+ Accounting/Helpers/ContactTaxBranchKey.cs     |  46 ++-
+ Accounting/Helpers/OcrCorrectedFieldList.cs   |  43 ++-
+ Accounting/Helpers/OcrIssuerBranch.cs         |   8 +-
+ Accounting/Helpers/OcrPredecessorMatcher.cs   |   9 +
+ Accounting/Helpers/OcrSelfPartyGuard.cs       |   8 +
+ Accounting/Helpers/OcrVendorBranchContact.cs  |  16 +-
+ Accounting/Models/DTOs/Ocr/OcrDtos.cs         |   7 +-
+ Accounting/Services/BranchCodeExtractor.cs    |  61 +++-
+ .../Services/Implementations/OcrService.cs    |  81 ++++-
+ Accounting/wwwroot/pages/document-scan.html   |   4 +
+ 11 files changed, 530 insertions(+), 37 deletions(-)
+ create mode 100644 Accounting.Tests/OcrVendorBranchReview197Tests.cs
+
+diff --git a/Accounting.Tests/OcrVendorBranchReview197Tests.cs b/Accounting.Tests/OcrVendorBranchReview197Tests.cs
+new file mode 100644
+index 00000000..f049aa99
+--- /dev/null
++++ b/Accounting.Tests/OcrVendorBranchReview197Tests.cs
+@@ -0,0 +1,284 @@
++using Accounting.Helpers;
++using Accounting.Models.DTOs.Ocr;
++using Accounting.Models.Enums;
++using Accounting.Services;
++using Xunit;
++using C = Accounting.Helpers.OcrVendorBranchContact.Candidate;
++
++namespace Accounting.Tests;
++
++/// <summary>
++/// รอบ 197 ทีม K2 — แก้ผลฝ่ายค้านของทีม K (<c>erp-review/2026-09-25/makro-branch/review197.md</c>)
++///
++/// <para>K-1: หน้าเว็บส่งรหัสสาขาผู้ขายทุกครั้ง ⇒ "ส่งมา" ถูกนับเป็น "ผู้ใช้แก้" ⇒ ด่านหลักฐานอ่อนไม่เคยกัน ·
++/// K-2: ตัวอ่านสาขาถอยไปอ่านทั้งหน้าแล้วได้ 0.85 = เท่าเกณฑ์สร้างผู้ติดต่อ ⇒ สาขาของผู้ซื้อกลายเป็นผู้ติดต่อผู้ขายถาวร ·
++/// K-3: สแกนผูกแถวสาขาแล้ว PO/ใบต้นทางที่ออกให้แถว สนญ. หายจากตัวเสนอ · K-6: ไม่มีคะแนน = "เชื่อได้" ·
++/// K-7: เส้นสร้างเอกสารไม่มีด่าน "ผู้ขายคือเราเอง"</para>
++///
++/// <para>สองครึ่งตาม CLAUDE.md §H: ทุกข้อมีทั้ง "ใบที่พังกลับมาถูก" และ "ใบที่ถูกอยู่แล้วไม่ถูกแตะ"
++/// (Makro สาขา 00005 ที่มีป้ายกำกับยังสร้าง/ผูกแถวสาขาได้ · ผู้ใช้แก้สาขาจริงยังนับว่าแก้)</para>
++/// </summary>
++public class OcrVendorBranchReview197Tests
++{
++    private static readonly Guid CpHq = Guid.Parse("60fb5887-0f47-4cf7-81cd-89e5f6c7ce76");
++    private static readonly Guid Cp5 = Guid.Parse("00000000-0000-0000-0000-000000000005");
++    private static readonly Guid Other = Guid.Parse("00000000-0000-0000-0000-0000000000ee");
++    private const string CpAxtra = "บริษัท ซีพี แอ็กซ์ตร้า จำกัด (มหาชน)";
++    private const string CpTin = "0107567000414";
++    private const string OurTin = "0203562005871";
++    private const string OurName = "หจก.แอม แฮปปี้เนส";
++
++    private static readonly C[] OnlyHq = { new(CpHq, CpAxtra, "00000") };
++
++    /// <summary>ต่อสายเหมือนเส้นสแกน: ผลตัวอ่านสาขา → คะแนน → IsReliableBranch → Decide (ช่องที่ฝ่ายค้านบอกว่าไม่มีเทสต์)</summary>
++    private static OcrVendorBranchPick DecideFromPaper(string paper, IReadOnlyList<C> contacts)
++    {
++        var br = BranchCodeExtractor.Extract(paper);
++        return OcrVendorBranchContact.Decide(contacts, br.SellerBranchCode,
++            branchReliable: OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
++    }
++
++    // ═════════ K-2 — ถอยอ่านทั้งหน้า ≠ หลักฐานพอสร้างผู้ติดต่อ ═════════
++
++    private const string BuyerBlockOnTop =
++        "ลูกค้า บริษัท ข จำกัด สาขาที่ 3\n" +
++        "เลขผู้เสียภาษี 0105500000002\n" +
++        "บริษัท ซีพี แอ็กซ์ตร้า จำกัด (มหาชน)\n" +
++        "เลขประจำตัวผู้เสียภาษี 0107567000414\n" +
++        "ลำดับ รายการ จำนวน\n";
++
++    [Fact]
++    public void BuyerBlockOnTop_SellerBranchFromWholePage_IsWeak_AndEqualsBuyer()
++    {
++        var br = BranchCodeExtractor.Extract(BuyerBlockOnTop);
++        Assert.Equal("00003", br.SellerBranchCode);                 // ค่ายังเติมฟอร์มได้ (กฎเหล็ก #3) — แต่ไฮไลต์
++        Assert.Equal("00003", br.BuyerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.WholePageFallback, br.SellerEvidence);
++        Assert.Equal(BranchCodeExtractor.FallbackEqualsBuyerConfidence, br.SellerConfidence);
++        Assert.False(OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
++    }
++
++    [Fact]
++    public void BuyerBlockOnTop_DoesNotCreateAPermanentVendorBranchRow()
++    {
++        // เดิม: 0.85 ⇒ NewBranchRow ⇒ ผู้ติดต่อ "ซีพี แอ็กซ์ตร้า สาขาที่ 3" ถูกสร้างตั้งแต่ตอนสแกนจากสาขาของผู้ซื้อ
++        var pick = DecideFromPaper(BuyerBlockOnTop, OnlyHq);
++        Assert.Equal(OcrVendorBranchOutcome.OtherBranchRow, pick.Outcome);
++        Assert.False(pick.MustCreateBranchRow);
++        Assert.Equal(CpHq, pick.ContactId);                        // ผูก สนญ. ชั่วคราว (พฤติกรรมก่อน K)
++        Assert.False(pick.MayEnrichMatchedRow);                     // ห้ามเอาสาขา/ที่อยู่จากกระดาษไปทับ สนญ.
++        Assert.Contains("รหัสสาขาผู้ขาย", pick.Trace);                // บอกทางไปต่อ: พิมพ์ยืนยัน/แก้ในช่องนี้
++    }
++
++    [Fact]
++    public void ReceiptWithoutBuyerBlock_WholePage_IsBelowThreshold_ButStillFilled()
++    {
++        var br = BranchCodeExtractor.Extract("ร้านสะดวกซื้อ สาขาที่ 00021\nรวม 107.00");
++        Assert.Equal("00021", br.SellerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.WholePageNoBuyerBlock, br.SellerEvidence);
++        Assert.True(br.SellerConfidence < OcrVendorBranchContact.ReliableBranchConfidence);
++    }
++
++    [Fact]
++    public void NothingRead_HasNoConfidence()
++    {
++        var br = BranchCodeExtractor.Extract("ร้าน ก\nรวม 100.00");
++        Assert.Null(br.SellerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.None, br.SellerEvidence);
++        Assert.Null(br.SellerConfidence);
++    }
++
++    // ─── ทิศตรงข้าม: สาขาผู้ขายที่มีป้ายกำกับยังสร้าง/ผูกแถวสาขาได้ ───
++
++    [Fact]
++    public void Makro00005_IssuerLabelWithEnglishGloss_IsAnIssuerStatement()
++    {
++        // “สาขาที่ออกใบกำกับภาษี/ Branch 00005” — เดิม “/ Branch” คั่นทำให้ตัวอ่านประโยคประกาศไม่ติด แล้วค่ามาจากการถอยอ่านทั้งหน้า
++        var s = OcrIssuerBranch.Detect(OcrMakroBranchVendorTests.MakroPhoto);
++        Assert.NotNull(s);
++        Assert.Equal("00005", s!.Code);
++        var br = BranchCodeExtractor.Extract(OcrMakroBranchVendorTests.MakroPhoto);
++        Assert.Equal("00005", br.SellerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.IssuerStatement, br.SellerEvidence);
++        Assert.Equal(BranchCodeExtractor.IssuerStatementConfidence, br.SellerConfidence);
++    }
++
++    [Fact]
++    public void Makro00005_OnlyHeadOfficeContact_StillCreatesTheBranchRow()
++    {
++        var pick = DecideFromPaper(OcrMakroBranchVendorTests.MakroPhoto, OnlyHq);
++        Assert.Equal(OcrVendorBranchOutcome.NewBranchRow, pick.Outcome);
++        Assert.True(pick.MustCreateBranchRow);
++        Assert.Equal("00005", pick.ScannedBranch);
++        Assert.Equal(CpHq, pick.TemplateContactId);
++    }
++
++    [Fact]
++    public void Makro00005_BranchRowExists_BindsIt()
++    {
++        var pick = DecideFromPaper(OcrMakroBranchVendorTests.MakroPhoto,
++            new[] { new C(CpHq, CpAxtra, "00000"), new C(Cp5, CpAxtra, "00005") });
++        Assert.Equal(OcrVendorBranchOutcome.ExactBranch, pick.Outcome);
++        Assert.Equal(Cp5, pick.ContactId);
++    }
++
++    [Fact]
++    public void MakroPage3of3_SellerBlockBranch_IsReliable()
++    {
++        // ข้อความรอบ 192: “... สาขาชลบุรี สาขาที่ 00005” อยู่ก่อนป้าย “ลูกค้า” = บล็อกผู้ขาย
++        var br = BranchCodeExtractor.Extract(OcrPaperSamples.MakroPage3of3);
++        Assert.Equal("00005", br.SellerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.SellerBlock, br.SellerEvidence);
++        Assert.True(OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
++        Assert.Equal(OcrVendorBranchOutcome.NewBranchRow, DecideFromPaper(OcrPaperSamples.MakroPage3of3, OnlyHq).Outcome);
++    }
++
++    [Fact]
++    public void RadissonPaperB_IssuerSentence_UnchangedAndReliable()
++    {
++        var br = BranchCodeExtractor.Extract(OcrPartyZoneRealPaperTests.PaperB);
++        Assert.Equal("00008", br.SellerBranchCode);
++        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.IssuerStatement, br.SellerEvidence);
++        Assert.True(OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
++    }
++
++    [Fact]
++    public void PeaBill_ParenthesisedGloss_IsAnIssuerStatement()
++        => Assert.Equal("00000", OcrIssuerBranch.Detect("สาขาที่ออกใบกำกับภาษี (Branch No.) 00000\nเลขประจำตัวผู้เสียภาษี (Tax ID No.) 0994000165501\n")?.Code);
++
++    [Theory]
++    [InlineData("สาขาที่ 3/ Branch 5")]                 // ไม่มีคำว่า "ออก" = ไม่ใช่ประโยคประกาศผู้ออกใบ
++    [InlineData("ลูกค้า สาขาที่ 3 / Branch 00003")]
++    [InlineData("ABC Co., Ltd. / Branch 00012")]
++    public void GlossWithoutIssuerWording_IsNotAnIssuerStatement(string text)
++        => Assert.Null(OcrIssuerBranch.Detect(text));
++
++    // ═════════ K-6 — ไม่มีคะแนน = ไม่รู้ ≠ เชื่อได้ ═════════
++
++    [Fact]
++    public void UnknownConfidence_OldScan_BindsExistingRowWithWarning_NoNewRow()
++    {
++        var pick = OcrVendorBranchContact.Decide(OnlyHq, "00005",
++            branchReliable: OcrVendorBranchContact.IsReliableBranch(null));
++        Assert.Equal(OcrVendorBranchOutcome.OtherBranchRow, pick.Outcome);
++        Assert.Equal(CpHq, pick.ContactId);
++        Assert.StartsWith("[Branch] ⚠", pick.Trace);
++    }
++
++    [Fact]
++    public void UnknownConfidence_ButUserConfirmed_CreatesBranchRow()
++    {
++        var pick = OcrVendorBranchContact.Decide(OnlyHq, "00005",
++            branchReliable: OcrVendorBranchContact.IsReliableBranch(null, userCorrected: true));
++        Assert.Equal(OcrVendorBranchOutcome.NewBranchRow, pick.Outcome);
++    }
++
++    // ═════════ K-1 — "หน้าเว็บส่งค่าเดิม" ≠ "ผู้ใช้แก้สาขา" ═════════
++
++    private static bool UserCorrectedBranch(OcrCorrectionRequest req, string? storedVendorBranch)
++        => OcrCorrectedFieldList.From(req, new OcrCorrectionBaseline(storedVendorBranch, "00000"))
++            .Contains("VendorBranchCode");
++
++    [Fact]
++    public void WebCreate_ResendsUnchangedBranch_IsNotACorrection_SoWeakEvidenceStillHolds()
++    {
++        // หน้ารีวิวส่ง vendorBranchCode = ค่าในช่อง (ที่ระบบเติมไว้เอง 00005 · คะแนน 0.50 ขัดกับประโยคบนกระดาษ)
++        var req = new OcrCorrectionRequest(VendorBranchCode: "00005", BuyerBranchCode: "00000", TotalAmount: 23812.25m);
++        Assert.False(UserCorrectedBranch(req, "00005"));
++        var pick = OcrVendorBranchContact.Decide(OnlyHq, "00005",
++            branchReliable: OcrVendorBranchContact.IsReliableBranch(0.50, userCorrected: UserCorrectedBranch(req, "00005")));
++        Assert.Equal(OcrVendorBranchOutcome.OtherBranchRow, pick.Outcome);   // เดิม: NewBranchRow ทุกครั้งบนเว็บ
++    }
++
++    [Theory]
++    [InlineData("5", "00005")]
++    [InlineData(" 00005 ", "00005")]
++    [InlineData("00000", "00000")]
++    public void SameBranchInAnotherSpelling_IsNotAChange(string submitted, string stored)
++        => Assert.False(UserCorrectedBranch(new OcrCorrectionRequest(VendorBranchCode: submitted), stored));
++
++    [Theory]
++    [InlineData("00005", "00000")]      // ผู้ใช้แก้ สนญ. → สาขา 5
++    [InlineData("00008", "00005")]
++    [InlineData("00000", null)]         // เติมช่องที่ว่าง ("ไม่รู้") = คำตอบของคน
++    public void ChangedBranch_IsACorrection_AndCreatesTheRow(string submitted, string? stored)
++    {
++        var req = new OcrCorrectionRequest(VendorBranchCode: submitted);
++        Assert.True(UserCorrectedBranch(req, stored));
++        Assert.True(OcrVendorBranchContact.IsReliableBranch(0.50, userCorrected: UserCorrectedBranch(req, stored)));
++    }
++
++    [Fact]
++    public void UserRetypedSameBranch_ConfirmFlag_CountsAsCorrection()
++    {
++        // ทางไปต่อของผู้ใช้ (F2 ข้อ 8): สาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว — พิมพ์ยืนยันในช่อง ⇒ นับว่าแก้ ⇒ สร้างแถวสาขาได้
++        var req = new OcrCorrectionRequest(VendorBranchCode: "00005", VendorBranchConfirmed: true);
++        Assert.True(UserCorrectedBranch(req, "00005"));
++        Assert.Equal(OcrVendorBranchOutcome.NewBranchRow, OcrVendorBranchContact.Decide(OnlyHq, "00005",
++            branchReliable: OcrVendorBranchContact.IsReliableBranch(0.50, userCorrected: UserCorrectedBranch(req, "00005"))).Outcome);
++    }
++
++    [Fact]
++    public void BuyerBranch_SameRule_OtherFieldsUnchanged()
++    {
++        var fields = OcrCorrectedFieldList.From(
++            new OcrCorrectionRequest(VendorName: "x", BuyerBranchCode: "00000", VendorBranchCode: "00005"),
++            new OcrCorrectionBaseline("00005", "00000"));
++        Assert.Equal(new[] { "VendorName" }, fields);               // ช่องอื่นยังกติกาเดิม (ส่งมา = แก้)
++        Assert.Contains("BuyerBranchCode", OcrCorrectedFieldList.From(
++            new OcrCorrectionRequest(BuyerBranchCode: "00003"), new OcrCorrectionBaseline("00005", "00000")));
++    }
++
++    [Fact]
++    public void NoBaseline_KeepsTheOldRule_ForOtherCallers()
++        => Assert.Contains("VendorBranchCode", OcrCorrectedFieldList.From(new OcrCorrectionRequest(VendorBranchCode: "00005")));
++
++    // ═════════ K-3 — PO/ใบต้นทางของนิติบุคคลเดียวกัน ทุกสาขา ═════════
++
++    [Fact]
++    public void SameEntityIds_BranchContact_IncludesHeadOfficeRow_SelfFirst()
++    {
++        var rows = new[]
++        {
++            new ContactKeyCandidate(CpHq, CpTin, "00000"),
++            new ContactKeyCandidate(Cp5, "0-1075-67000-41-4", "00005"),   // เลขเก่าที่มีขีด = เลขเดียวกัน
++            new ContactKeyCandidate(Other, "0105500000001", "00000"),     // คนละนิติบุคคล
++        };
++        var ids = ContactTaxBranchKey.SameEntityIds(Cp5, CpTin, rows);
++        Assert.Equal(new[] { Cp5, CpHq }, ids);                         // PO ที่ออกให้ สนญ. ถูกเสนอให้สแกนของสาขา 00005
++        Assert.DoesNotContain(Other, ids);                              // ยังกัน PO ของนิติบุคคลอื่น
++    }
++
++    [Theory]
++    [InlineData(null)]
++    [InlineData("")]
++    [InlineData("-")]
++    public void SameEntityIds_AnchorWithoutTaxId_IsOnlyItself(string? anchorTax)
++    {
++        // ไม่มีเลข = ไม่รู้ว่าใครเป็นนิติบุคคลเดียวกัน ⇒ ห้ามขยาย (แถว "-" ของรายอื่นไม่ใช่พี่น้อง · ฝ่ายค้าน C-8)
++        var rows = new[] { new ContactKeyCandidate(Other, "-", null), new ContactKeyCandidate(CpHq, anchorTax, null) };
++        Assert.Equal(new[] { CpHq }, ContactTaxBranchKey.SameEntityIds(CpHq, anchorTax, rows));
++    }
++
++    [Theory]
++    [InlineData(DocumentType.PurchaseInvoice, true)]
++    [InlineData(DocumentType.PaymentVoucher, true)]
++    [InlineData(DocumentType.TaxInvoice, true)]
++    [InlineData(DocumentType.CreditNote, false)]   // §86/9-10 ต้องแถวเดียวกับใบเดิม
++    [InlineData(DocumentType.DebitNote, false)]
++    public void SiblingBranchSource_NotForCreditOrDebitNotes(DocumentType target, bool expected)
++        => Assert.Equal(expected, OcrPredecessorMatcher.AcceptsSiblingBranchSource(target));
++
++    // ═════════ K-7 — ผู้ขายคือเราเอง (ตัวเดียวของเส้นสแกนและเส้นสร้างเอกสาร) ═════════
++
++    [Fact]
++    public void IsOurContact_TaxIdOrName()
++    {
++        Assert.True(OcrSelfPartyGuard.IsOurContact("0-2035-62005-87-1", "ร้านอะไรก็ได้", OurTin, OurName, null));
++        Assert.True(OcrSelfPartyGuard.IsOurContact(null, "ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส", OurTin, OurName, null));
++        Assert.True(OcrSelfPartyGuard.IsOurContact(null, "Am Happiness Ltd., Part.", OurTin, OurName, "Am Happiness Ltd., Part."));
++        // ทิศตรงข้าม: ผู้ขายจริง / เราไม่มีข้อมูล ⇒ ไม่ใช่เรา
++        Assert.False(OcrSelfPartyGuard.IsOurContact(CpTin, CpAxtra, OurTin, OurName, null));
++        Assert.False(OcrSelfPartyGuard.IsOurContact(CpTin, CpAxtra, null, null, null));
++    }
++}
+diff --git a/Accounting/Helpers/ContactTaxBranchKey.cs b/Accounting/Helpers/ContactTaxBranchKey.cs
+index 0a4ab75b..83dd179d 100644
+--- a/Accounting/Helpers/ContactTaxBranchKey.cs
++++ b/Accounting/Helpers/ContactTaxBranchKey.cs
+@@ -239,17 +239,57 @@ public static class ContactTaxBranchKey
+     {
+         if (!HasTaxId(taxId)) return new List<Guid>();
+         var raw = taxId!.Trim();
++        var rows = await LoadSameTaxRowsAsync(scope, companyId, raw, ct);
++        return SameTaxIdRowIds(rows, raw);
++    }
++
++    /// <summary>
++    /// **ผู้ติดต่อทุกแถวของนิติบุคคลเดียวกับ <paramref name="contactId"/>** (เลขภาษีเดียวกัน ทุกสาขา · รวมตัวเองเสมอ · ตัวเองมาก่อน)
++    /// — รอบ 197 ฝ่ายค้าน K-3: หลังสแกนผูกผู้ติดต่อ<b>ของสาขา</b>ได้ ใบสั่งซื้อ/ใบต้นทางที่ออกให้แถวสำนักงานใหญ่ (สั่ง สนญ. แต่สาขาออกใบกำกับ
++    /// — กรณีปกติ) หายจากตัวเสนอ PO · ตัวหาใบต้นทาง และถูกด่าน "ไม่ใช่ของผู้ขายที่จับคู่ไว้" โยนทิ้ง. ตัวนี้คือขอบเขต
++    /// "นิติบุคคลเดียวกัน" ตัวเดียวของงานนั้น (ห้ามเขียน <c>c.TaxId == x</c> เอง) · <b>ไม่ใช่</b>คีย์ผู้ติดต่อ (คีย์ = เลขภาษี+สาขา
++    /// <see cref="Pick"/>) — ใช้กับ "เอกสารของคู่ค้ารายนี้" เท่านั้น ห้ามใช้เลือกแถวที่จะผูก/เขียนทับ ·
++    /// ไม่มีเลขภาษี ("-"/ว่าง) = เฉพาะตัวเอง (ไม่รู้ว่าใครเป็นนิติบุคคลเดียวกัน) · กรอง <c>CompanyId</c> เสมอ (กฎ M)
++    /// </summary>
++    public static async Task<List<Guid>> SameEntityIdsAsync(IQueryable<Contact> scope, Guid companyId,
++        Guid contactId, CancellationToken ct = default)
++    {
++        var anchorTaxId = await scope
++            .Where(c => c.CompanyId == companyId && c.Id == contactId)
++            .Select(c => c.TaxId)
++            .FirstOrDefaultAsync(ct);
++        if (!HasTaxId(anchorTaxId)) return SameEntityIds(contactId, anchorTaxId, Array.Empty<ContactKeyCandidate>());
++        var rows = await LoadSameTaxRowsAsync(scope, companyId, anchorTaxId!.Trim(), ct);
++        return SameEntityIds(contactId, anchorTaxId, rows);
++    }
++
++    /// <summary>ตัวตัดสินของ <see cref="SameEntityIdsAsync"/> บนแถวที่โหลดแล้ว (pure — เทสต์ได้) · ลำดับ: ตัวเอง → สาขาอื่นเรียงรหัส</summary>
++    internal static List<Guid> SameEntityIds(Guid contactId, string? anchorTaxId, IEnumerable<ContactKeyCandidate> rows)
++    {
++        var ids = new List<Guid> { contactId };
++        if (!HasTaxId(anchorTaxId) || rows == null) return ids;
++        foreach (var id in SameTaxIdRowIds(rows, anchorTaxId!.Trim()))
++            if (id != contactId) ids.Add(id);
++        return ids;
++    }
++
++    /// <summary>แถวที่อาจถือเลขเดียวกัน (เทียบในหน่วยความจำต่อด้วย <see cref="SameTaxId"/>) — กรอง CompanyId</summary>
++    private static Task<List<ContactKeyCandidate>> LoadSameTaxRowsAsync(IQueryable<Contact> scope, Guid companyId,
++        string raw, CancellationToken ct)
++    {
+         var digits = Digits(raw);
+-        var rows = await scope
++        return scope
+             .Where(c => c.CompanyId == companyId && c.TaxId != null
+                 && (c.TaxId == raw || c.TaxId == digits || c.TaxId.Contains("-") || c.TaxId.Contains(" ")))
+             .Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode))
+             .ToListAsync(ct);
+-        return rows.Where(r => SameTaxId(r.TaxId, raw))
++    }
++
++    private static List<Guid> SameTaxIdRowIds(IEnumerable<ContactKeyCandidate> rows, string raw)
++        => rows.Where(r => SameTaxId(r.TaxId, raw))
+             .OrderBy(r => IsSpecified(r.BranchCode) ? TaxBranchCode.Normalize(r.BranchCode) : TaxBranchCode.HeadOffice, StringComparer.Ordinal)
+             .ThenBy(r => r.Id)
+             .Select(r => r.Id).ToList();
+-    }
+ 
+     /// <summary>เลขเดียวกันไหม (ไม่ดูสาขา) — 13 หลักเทียบตัวเลขล้วน · อื่น ๆ ตรงตัวหรือตัวเลขล้วน ≥ 10 หลัก (กติกาเดียวกับ <see cref="Pick"/>)</summary>
+     private static bool SameTaxId(string? candidate, string raw)
+diff --git a/Accounting/Helpers/OcrCorrectedFieldList.cs b/Accounting/Helpers/OcrCorrectedFieldList.cs
+index 8d2ece7d..7adeb946 100644
+--- a/Accounting/Helpers/OcrCorrectedFieldList.cs
++++ b/Accounting/Helpers/OcrCorrectedFieldList.cs
+@@ -19,8 +19,18 @@ public static class OcrCorrectedFieldList
+     /// <summary>ชื่อช่องที่ผู้ใช้ส่งค่ามาแก้ในคำขอนี้ (ว่าง = ไม่ได้แก้อะไรเลย)
+     ///
+     /// <para>นับเฉพาะช่องที่ <b>ไม่เป็น null</b> — record นี้ใช้ <c>null</c> แปลว่า
+-    /// "ไม่แตะ" อยู่แล้วทั้งชุด จึงเป็นสัญญาณที่ตรงความหมายที่สุด</para></summary>
+-    public static string[] From(OcrCorrectionRequest c)
++    /// "ไม่แตะ" อยู่แล้วทั้งชุด จึงเป็นสัญญาณที่ตรงความหมายที่สุด</para>
++    ///
++    /// <para><b>ยกเว้นรหัสสาขาสองฝั่ง</b> (รอบ 197 ฝ่ายค้าน K-1) เมื่อผู้เรียกส่ง <paramref name="before"/> (ค่าที่สแกนเก็บไว้
++    /// <b>ก่อน</b>รับคำแก้): หน้ารีวิวส่งสองช่องนี้มาทุกครั้ง ⇒ "ส่งค่ามา" กลายเป็น "ผู้ใช้แก้" เสมอ ⇒ ด่าน "หลักฐานสาขาอ่อน ⇒
++    /// ไม่สร้างผู้ติดต่อ" (<see cref="OcrVendorBranchContact.IsReliableBranch"/> ที่อ่าน "VendorBranchCode" จากรายการนี้) ไม่เคยกันได้
++    /// บนเว็บ. นับเฉพาะเมื่อค่าเปลี่ยนจริง (<see cref="BranchChanged"/>) หรือผู้ใช้พิมพ์ยืนยัน
++    /// (<see cref="OcrCorrectionRequest.VendorBranchConfirmed"/>) · <paramref name="before"/> null = กติกาเดิม (ส่งมา = แก้)</para>
++    ///
++    /// <para>ช่องอื่นยังใช้กติกาเดิม — ช่อง WHT มีบั๊กทรงเดียวกัน (หน้าเว็บส่ง hasWht/whtIncomeTypeCode ทุกครั้ง) แต่
++    /// <c>OcrWhtLearningScope</c> นิยาม "ยืนยัน" ว่าเป็นหลักฐานโดยตั้งใจ ⇒ เปลี่ยนต้องให้เจ้าของตัดสิน (backlog K-10 ใน
++    /// <c>erp-review/2026-09-25/makro-branch/review197.md</c>)</para></summary>
++    public static string[] From(OcrCorrectionRequest c, OcrCorrectionBaseline? before = null)
+     {
+         var fields = new List<string>();
+         void Add(string name, object? value) { if (value != null) fields.Add(name); }
+@@ -30,11 +40,16 @@ public static class OcrCorrectedFieldList
+         Add("OurRole", c.OurRole);
+         Add("VendorName", c.VendorName);
+         Add("VendorTaxId", c.VendorTaxId);
+-        Add("VendorBranchCode", c.VendorBranchCode);
++        if (before == null) Add("VendorBranchCode", c.VendorBranchCode);
++        else if (c.VendorBranchConfirmed == true
++                 || (c.VendorBranchCode != null && BranchChanged(c.VendorBranchCode, before.VendorBranchCode)))
++            fields.Add("VendorBranchCode");
+         Add("VendorAddress", c.VendorAddress);
+         Add("BuyerName", c.BuyerName);
+         Add("BuyerTaxId", c.BuyerTaxId);
+-        Add("BuyerBranchCode", c.BuyerBranchCode);
++        if (before == null) Add("BuyerBranchCode", c.BuyerBranchCode);
++        else if (c.BuyerBranchCode != null && BranchChanged(c.BuyerBranchCode, before.BuyerBranchCode))
++            fields.Add("BuyerBranchCode");
+         Add("BuyerAddress", c.BuyerAddress);
+         Add("DocumentNumber", c.DocumentNumber);
+         Add("DocumentDate", c.DocumentDate);
+@@ -53,6 +68,22 @@ public static class OcrCorrectedFieldList
+         return fields.ToArray();
+     }
+ 
++    /// <summary>รหัสสาขาที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — เทียบหลัง normalize 5 หลัก ("5" ≡ "00005") · ว่างทั้งคู่ = เท่ากัน ·
++    /// ว่าง ↔ "00000" = <b>ต่างกัน</b> (ว่าง = "ไม่รู้" ≠ สำนักงานใหญ่ — ผู้ใช้เติม 00000 ลงช่องว่างคือการตอบ) ·
++    /// ผิดรูป ("8A") เทียบข้อความตรงตัว</summary>
++    internal static bool BranchChanged(string? submitted, string? stored)
++    {
++        var a = Canon(submitted);
++        var b = Canon(stored);
++        return !string.Equals(a, b, StringComparison.Ordinal);
++
++        static string Canon(string? v)
++        {
++            if (string.IsNullOrWhiteSpace(v)) return "";
++            return TaxBranchCode.TryNormalize(v, out var code, out _) && code != null ? code : v.Trim();
++        }
++    }
++
+     /// <summary>รวมรายการเดิมกับรายการใหม่แบบไม่ซ้ำ เรียงตามตัวอักษร
+     /// (แก้หลายรอบต้องไม่ทำให้ช่องเดิมถูกนับซ้ำ)</summary>
+     public static string Merge(string? existingCsv, IEnumerable<string> newFields)
+@@ -65,3 +96,7 @@ public static class OcrCorrectedFieldList
+         return string.Join(",", set);
+     }
+ }
++
++/// <summary>ค่าที่สแกนเก็บไว้<b>ก่อน</b>รับคำแก้ — ตัวป้อนของ <see cref="OcrCorrectedFieldList.From"/> ให้แยก "ผู้ใช้เปลี่ยนค่า"
++/// ออกจาก "หน้าเว็บส่งค่าเดิมกลับมา" (รอบ 197 ฝ่ายค้าน K-1 · ใช้กับรหัสสาขาสองฝั่งเท่านั้น)</summary>
++public sealed record OcrCorrectionBaseline(string? VendorBranchCode, string? BuyerBranchCode);
+diff --git a/Accounting/Helpers/OcrIssuerBranch.cs b/Accounting/Helpers/OcrIssuerBranch.cs
+index 7782618b..2fc42407 100644
+--- a/Accounting/Helpers/OcrIssuerBranch.cs
++++ b/Accounting/Helpers/OcrIssuerBranch.cs
+@@ -46,9 +46,13 @@ public static class OcrIssuerBranch
+ 
+     /// <summary>ไทย: “สาขาที่ออกใบกำกับภาษี(คือ) สาขาที่ 8” · “สาขาที่ออกใบกำกับภาษี 00008” ·
+     /// “ออกโดยสาขาที่ 3” · “ออกใบกำกับภาษีโดย สาขาที่ 3” — “ที่” ยอมตกวรรณยุกต์เป็น “ที”
+-    /// (OCR ไทยทำหล่นบ่อย)</summary>
++    /// (OCR ไทยทำหล่นบ่อย) · รอบ 197 (ฝ่ายค้าน K-2): ป้ายสองภาษาที่มีคำแปลคั่นระหว่างป้ายกับเลข —
++    /// “สาขาที่ออกใบกำกับภาษี/ Branch 00005” (ใบ Makro) · “สาขาที่ออกใบกำกับภาษี (Branch No.) 00000” (ใบ กฟภ.)
++    /// เดิมไม่ติดเพราะ “/”/“(” คั่น ⇒ ตกไปให้ตัวอ่านทั่วไปถอยอ่านทั้งหน้า ซึ่งตอนนี้ได้คะแนนต่ำกว่าเกณฑ์สร้างผู้ติดต่อ</summary>
+     private static readonly Regex ThaiStatementRx = new(
+-        @"(?:สาขา(?:ที่|ที)?[ \t]*(?:ผู้)?ออก(?:ใบกำกับ(?:ภาษี)?|ใบเสร็จ(?:รับเงิน)?|เอกสาร)?[ \t]*(?:นี้)?[ \t]*(?:คือ|ได้แก่|:|：)?[ \t]*(?:สาขา(?:ที่|ที)?[ \t]*)?(?:เลขที่[ \t]*)?"
++        @"(?:สาขา(?:ที่|ที)?[ \t]*(?:ผู้)?ออก(?:ใบกำกับ(?:ภาษี)?|ใบเสร็จ(?:รับเงิน)?|เอกสาร)?[ \t]*(?:นี้)?[ \t]*"
++        + @"(?:[/(（][ \t]*(?i:branch)(?:[ \t]*(?i:no\.?|code))?[ \t]*[)）]?[ \t]*)?"
++        + @"(?:คือ|ได้แก่|:|：)?[ \t]*(?:สาขา(?:ที่|ที)?[ \t]*)?(?:เลขที่[ \t]*)?"
+         + @"|ออก(?:ใบกำกับ(?:ภาษี)?)?[ \t]*(?:โดย|ที่|ณ)[ \t]*สาขา(?:ที่|ที)?[ \t]*(?:เลขที่[ \t]*)?)"
+         + @"(\d{1,5})(?![\d/])",
+         RegexOptions.Compiled);
+diff --git a/Accounting/Helpers/OcrPredecessorMatcher.cs b/Accounting/Helpers/OcrPredecessorMatcher.cs
+index f157b592..a2c33672 100644
+--- a/Accounting/Helpers/OcrPredecessorMatcher.cs
++++ b/Accounting/Helpers/OcrPredecessorMatcher.cs
+@@ -52,6 +52,15 @@ public sealed record PredecessorDecision(RankedPredecessor? AutoLink, IReadOnlyL
+ /// </summary>
+ public static class OcrPredecessorMatcher
+ {
++    /// <summary>
++    /// ใบต้นทางที่ออกให้<b>สาขาอื่นของนิติบุคคลเดียวกัน</b> (เลขภาษีเดียวกัน · <see cref="ContactTaxBranchKey.SameEntityIdsAsync"/>)
++    /// เป็นต้นทางของเอกสารชนิดนี้ได้ไหม (รอบ 197 ฝ่ายค้าน K-3 — สั่งซื้อที่ สนญ. แต่สาขาออกใบกำกับ = กรณีปกติ) ·
++    /// <b>ใบลดหนี้/ใบเพิ่มหนี้ไม่ได้</b>: §86/9-10 ต้องออกให้คู่ค้ารายเดียวกับใบเดิม และ <c>DocumentService</c> โยนเมื่อ
++    /// <c>ContactId</c> ต่างกัน ⇒ เสนอใบของแถวอื่นให้ = ผู้ใช้กดผูกแล้วไปล้มตอนสร้าง
++    /// </summary>
++    public static bool AcceptsSiblingBranchSource(DocumentType target)
++        => target is not (DocumentType.CreditNote or DocumentType.DebitNote);
++
+     /// <summary>ยอดต่างได้ไม่เกินนี้ถือว่า "ตรง" — กันเศษปัด/OCR อ่านสตางค์เพี้ยน แต่ไม่กว้างจนใบคนละยอดผ่าน</summary>
+     public const decimal AmountTolerance = 1.00m;
+ 
+diff --git a/Accounting/Helpers/OcrSelfPartyGuard.cs b/Accounting/Helpers/OcrSelfPartyGuard.cs
+index e28f4485..a1a030b5 100644
+--- a/Accounting/Helpers/OcrSelfPartyGuard.cs
++++ b/Accounting/Helpers/OcrSelfPartyGuard.cs
+@@ -48,6 +48,14 @@ public static class OcrSelfPartyGuard
+     /// <summary>ชื่อคู่ค้าที่อ่านได้ = บริษัทของเราเองหรือเปล่า (fuzzy — ตัดคำนำหน้า
+     /// นิติบุคคลออกก่อนเทียบ) · ตัวเดียวของระบบ ใช้ทั้ง SmartFieldExtractor และ
+     /// OcrDocumentRoleInferrer</summary>
++    /// <summary>
++    /// **ผู้ติดต่อ/คู่ค้าที่อ่านได้คือบริษัทเราเองไหม** — เลขภาษีเดียวกับเรา หรือชื่อเป็นเรา (ไทย/อังกฤษ) · ตัวเดียวของทั้งเส้นสแกน
++    /// (<c>ScanAsync</c> กรองผู้สมัครก่อนตัดสินสาขา/สร้างผู้ติดต่อ) และเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) —
++    /// รอบ 197 ฝ่ายค้าน K-7: เดิมเป็น local function ในเส้นสแกนเท่านั้น ⇒ เส้นสร้างเอกสารสร้าง "ผู้ขาย" สาขาหนึ่งที่เป็นตัวเราเองได้
++    /// </summary>
++    public static bool IsOurContact(string? taxId, string? name, string? ourTaxId, string? ourName, string? ourNameEn)
++        => ThaiTaxId.Same(taxId, ourTaxId) || IsSelf(name, ourName) || IsSelf(name, ourNameEn);
++
+     public static bool IsSelf(string? partyName, string? companyName)
+     {
+         if (!NameOverlaps(partyName, companyName)) return false;
+diff --git a/Accounting/Helpers/OcrVendorBranchContact.cs b/Accounting/Helpers/OcrVendorBranchContact.cs
+index f3b7f8d7..2de262a2 100644
+--- a/Accounting/Helpers/OcrVendorBranchContact.cs
++++ b/Accounting/Helpers/OcrVendorBranchContact.cs
+@@ -63,16 +63,21 @@ public sealed record OcrVendorBranchPick(
+ public static class OcrVendorBranchContact
+ {
+     /// <summary>คะแนนขั้นต่ำของรหัสสาขาผู้ขายที่ถือว่า "มีหลักฐานบนกระดาษ" พอจะสร้างผู้ติดต่อแถวใหม่ —
+-    /// ตัวอ่านป้าย <c>BranchCodeExtractor</c> ให้ 0.85 · ประโยคประกาศสาขาผู้ออกใบ 0.90 · ขัดกันเอง 0.50 · อ่านไม่ได้ 0.30</summary>
++    /// ประโยคประกาศสาขาผู้ออกใบ 0.90 · บล็อกผู้ขาย (ก่อนป้ายผู้ซื้อ) 0.85 · อ่านทั้งหน้าเพราะไม่มีป้ายผู้ซื้อ 0.70 ·
++    /// ถอยอ่านทั้งหน้าทั้งที่มีป้ายผู้ซื้อ 0.60 (ได้รหัสเดียวกับผู้ซื้อ 0.40) · ขัดกับประโยคบนกระดาษ 0.50 · อ่านไม่ได้ 0.30 ·
++    /// e-Tax XML 1.0 (ตัวตั้งของคะแนนจากตัวอ่านป้าย = <c>BranchCodeExtractor.Result.SellerConfidence</c> · รอบ 197 ฝ่ายค้าน K-2)</summary>
+     public const double ReliableBranchConfidence = 0.85;
+ 
+     /// <summary>ผู้ติดต่อที่เลขผู้เสียภาษีตรงกับกระดาษ (กรองบริษัทตัวเองออกแล้ว)</summary>
+     public sealed record Candidate(Guid Id, string? Name, string? BranchCode);
+ 
+-    /// <summary>รหัสสาขาผู้ขายมีหลักฐานพอไหม — <paramref name="confidence"/> null = ไม่มีคะแนนแยกช่อง (ค่ามาจาก engine/e-Tax
+-    /// ที่อ่านจากกระดาษตรง ๆ) ถือว่ามี · ผู้ใช้แก้รหัสสาขาเอง = มีเสมอ</summary>
++    /// <summary>รหัสสาขาผู้ขายมีหลักฐานพอจะ<b>สร้างผู้ติดต่อแถวถาวร</b>ไหม — ผู้ใช้แก้/ยืนยันรหัสสาขาเอง = มีเสมอ ·
++    /// <paramref name="confidence"/> null = <b>ไม่รู้ว่ามาจากไหน</b> (สแกนรุ่นเก่าที่ไม่มีคะแนนแยกช่อง · ทางที่ลืมใส่คะแนน) ⇒
++    /// <b>ไม่พอ</b> (ฝ่ายค้าน K-6 รอบ 197 · DECISION_DOCTRINE §1 "เงื่อนไขที่เท็จเพราะไม่มีข้อมูล ห้ามตกเป็นผ่าน") —
++    /// ผลคือ <see cref="OcrVendorBranchOutcome.OtherBranchRow"/>: ผูกแถวเดิมของนิติบุคคลเดียวกัน + ข้อความเตือนให้ผู้ใช้ยืนยัน
++    /// (ทิศที่ความเสียหายมองเห็นและแก้ทัน) แทนการสร้างผู้ติดต่อถาวรจากค่าที่ไม่รู้ที่มา · e-Tax XML ใส่ 1.0 ไว้แล้วจึงไม่กระทบ</summary>
+     public static bool IsReliableBranch(double? confidence, bool userCorrected = false)
+-        => userCorrected || confidence is null || confidence.Value >= ReliableBranchConfidence;
++        => userCorrected || (confidence is double c && c >= ReliableBranchConfidence);
+ 
+     /// <param name="candidates">แถวที่เลขผู้เสียภาษีตรง (normalize แล้ว) — ลำดับไม่มีผล</param>
+     /// <param name="scannedBranch">สาขาผู้ขายที่อ่านได้ (ว่าง/ผิดรูป = อ่านไม่ได้)</param>
+@@ -118,7 +123,8 @@ public static class OcrVendorBranchContact
+             $"[Branch] ⚠ กระดาษน่าจะออกโดย {TaxBranchCode.Label(scanned)} ({scanned}) แต่รหัสสาขานี้ยังไม่แน่ใจ และในระบบมีผู้ติดต่อเลขนี้เฉพาะ "
+             + existing
+             + $" — ผูกกับ '{NameOf(fallback)}' ({BranchOf(fallback)}) ชั่วคราว · ไม่นำที่อยู่/สาขาจากกระดาษไปแก้ผู้ติดต่อรายนั้น · "
+-            + "ตรวจรหัสสาขาบนกระดาษ ถ้าถูกต้อง แก้รหัสสาขาในหน้านี้แล้วกดสร้างเอกสาร ระบบจะสร้างผู้ติดต่อของสาขานั้นให้",
++            + "ตรวจรหัสสาขาบนกระดาษ ถ้าถูกต้อง พิมพ์รหัสสาขาในช่อง “รหัสสาขาผู้ขาย” ของหน้านี้ใหม่ (หรือแก้ให้ถูก) แล้วกดสร้างเอกสาร "
++            + "ระบบจะสร้างผู้ติดต่อของสาขานั้นให้",
+             fallback);
+     }
+ 
+diff --git a/Accounting/Models/DTOs/Ocr/OcrDtos.cs b/Accounting/Models/DTOs/Ocr/OcrDtos.cs
+index ccd6a7e5..cbcec6dc 100644
+--- a/Accounting/Models/DTOs/Ocr/OcrDtos.cs
++++ b/Accounting/Models/DTOs/Ocr/OcrDtos.cs
+@@ -321,7 +321,12 @@ public record OcrCorrectionRequest(
+     /// ความสะดวก — §65 ตรี(3)/(14) ให้รายจ่ายที่พิสูจน์ไม่ได้ว่าเกี่ยวกับกิจการ
+     /// เป็น**รายจ่ายต้องห้าม** เหตุผลที่ผู้เบิกเขียนคือหลักฐานชิ้นแรกของเรื่องนี้</para>
+     /// </summary>
+-    string? Notes = null);
++    string? Notes = null,
++    /// <summary>ผู้ใช้<b>ลงมือพิมพ์</b>ช่องรหัสสาขาผู้ขายเอง (หน้ารีวิวส่ง <c>true</c> เมื่อช่องถูกแตะ · null = ไม่ได้แตะ) —
++    /// รอบ 197 ฝ่ายค้าน K-1: หน้าเว็บส่ง <see cref="VendorBranchCode"/> มาทุกครั้งที่บันทึก/สร้างเอกสาร ⇒ "ส่งค่ามา" ≠ "ผู้ใช้แก้"
++    /// ⇒ นับว่าแก้เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ <b>หรือ</b> ผู้ใช้พิมพ์ยืนยันค่าเดิม (สาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว —
++    /// ถ้าไม่มีธงนี้ ผู้ใช้ไม่มีทางยืนยันสาขาที่หลักฐานอ่อนได้เลย) · ตัวตัดสิน = <c>OcrCorrectedFieldList.From</c></summary>
++    bool? VendorBranchConfirmed = null);
+ 
+ /// <summary>
+ /// Request to record a Journal Entry directly from a scan — the "บันทึก JE
+diff --git a/Accounting/Services/BranchCodeExtractor.cs b/Accounting/Services/BranchCodeExtractor.cs
+index 529bda2e..2a352753 100644
+--- a/Accounting/Services/BranchCodeExtractor.cs
++++ b/Accounting/Services/BranchCodeExtractor.cs
+@@ -47,7 +47,48 @@ public static class BranchCodeExtractor
+     /// ที่อยู่ผู้ซื้อบนใบกำกับไทยยาวไม่เกินนี้ กว้างกว่านี้เริ่มกินเนื้อหาอื่น</summary>
+     private const int BuyerWindowChars = 500;
+ 
+-    public sealed record Result(string? SellerBranchCode, string? BuyerBranchCode);
++    /// <summary>
++    /// รหัสสาขาผู้ขายได้มาจาก "ส่วนไหนของกระดาษ" (รอบ 197 ฝ่ายค้าน K-2) — เดิมทุกทางให้คะแนนเท่ากัน 0.85 ซึ่ง<b>เท่าเกณฑ์</b>
++    /// <c>OcrVendorBranchContact.ReliableBranchConfidence</c> พอดี ⇒ ค่าที่ได้จากการ<b>ถอยไปอ่านทั้งหน้า</b> (มักเป็น "สาขาที่ 3"
++    /// ของผู้ซื้อที่อยู่บนสุด) ถูกนับเป็นหลักฐานพอจะสร้างผู้ติดต่อถาวรตั้งแต่ตอนสแกน
++    /// </summary>
++    public enum SellerBranchEvidence
++    {
++        /// <summary>อ่านไม่ได้</summary>
++        None,
++        /// <summary>ประโยคประกาศสาขาผู้ออกใบ (<c>OcrIssuerBranch</c>) — ป้ายกำกับตรงตัว</summary>
++        IssuerStatement,
++        /// <summary>บล็อกผู้ขาย (ข้อความก่อนป้ายผู้ซื้อ) — ตำแหน่งบอกฝั่ง</summary>
++        SellerBlock,
++        /// <summary>ไม่มีป้ายผู้ซื้อทั้งหน้า (ใบเสร็จร้านค้า/สลิป) ⇒ อ่านทั้งหน้าเป็นของผู้ขาย — ไม่มีอะไรยืนยันฝั่ง</summary>
++        WholePageNoBuyerBlock,
++        /// <summary>มีป้ายผู้ซื้อ แต่บล็อกผู้ขายไม่มีสาขา ⇒ ถอยไปอ่านทั้งหน้า — ตัวแรกของหน้ามักอยู่ในบล็อกผู้ซื้อ</summary>
++        WholePageFallback,
++    }
++
++    /// <summary>คะแนนของรหัสสาขาผู้ขายตามที่มา — ตัวตั้งตัวเดียวของทุกเส้น engine (<c>EnrichFromRawText</c> ·
++    /// <c>ParseThaiDocument</c>) · ต่ำกว่า 0.85 = ไม่พอจะสร้างผู้ติดต่อแถวใหม่ (ไฮไลต์เหลืองให้ตรวจด้วย)</summary>
++    public const double IssuerStatementConfidence = 0.90;
++    public const double SellerBlockConfidence = 0.85;
++    public const double WholePageNoBuyerBlockConfidence = 0.70;
++    public const double WholePageFallbackConfidence = 0.60;
++    /// <summary>ถอยอ่านทั้งหน้าแล้วได้รหัส<b>เดียวกับสาขาผู้ซื้อ</b> = เกือบแน่ว่าอ่านป้ายของผู้ซื้อซ้ำ</summary>
++    public const double FallbackEqualsBuyerConfidence = 0.40;
++
++    public sealed record Result(string? SellerBranchCode, string? BuyerBranchCode,
++        SellerBranchEvidence SellerEvidence = SellerBranchEvidence.None)
++    {
++        /// <summary>คะแนนของ <see cref="SellerBranchCode"/> — null เมื่ออ่านไม่ได้</summary>
++        public double? SellerConfidence => SellerBranchCode == null ? null : SellerEvidence switch
++        {
++            SellerBranchEvidence.IssuerStatement => IssuerStatementConfidence,
++            SellerBranchEvidence.SellerBlock => SellerBlockConfidence,
++            SellerBranchEvidence.WholePageNoBuyerBlock => WholePageNoBuyerBlockConfidence,
++            SellerBranchEvidence.WholePageFallback => string.Equals(SellerBranchCode, BuyerBranchCode, StringComparison.Ordinal)
++                ? FallbackEqualsBuyerConfidence : WholePageFallbackConfidence,
++            _ => WholePageFallbackConfidence,   // ไม่รู้ที่มา = ไม่พอสร้างแถว (DOCTRINE §1)
++        };
++    }
+ 
+     /// <summary>กฎอ่านค่าจาก "ข้อความช่วงเดียว" — ใช้ร่วมทั้งฝั่งผู้ขาย/ผู้ซื้อ.
+     /// คืน null เมื่อไม่พบ (ห้ามเดา 00000 ให้ — ผู้เรียกตัดสินเองว่าจะ default
+@@ -84,8 +125,10 @@ public static class BranchCodeExtractor
+         if (buyerAnchorIndex < 0)
+         {
+             // ไม่มีบล็อกผู้ซื้อให้แยก (ใบเสร็จร้านค้า/สลิป) — พฤติกรรมเดิม:
+-            // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ
+-            return new Result(issuer ?? FromSegment(rawText), null);
++            // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ (ค่าเดิม · คะแนนต่ำกว่าเกณฑ์สร้างแถว — K-2)
++            if (issuer != null) return new Result(issuer, null, SellerBranchEvidence.IssuerStatement);
++            var page = FromSegment(rawText);
++            return new Result(page, null, page == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageNoBuyerBlock);
+         }
+ 
+         var sellerSegment = rawText[..buyerAnchorIndex];
+@@ -98,11 +141,15 @@ public static class BranchCodeExtractor
+         if (tableAnchor.Success && tableAnchor.Index > 0)
+             buyerSegment = buyerSegment[..tableAnchor.Index];
+ 
+-        var seller = issuer ?? FromSegment(sellerSegment);
++        var buyer = FromSegment(buyerSegment);
++        if (issuer != null) return new Result(issuer, buyer, SellerBranchEvidence.IssuerStatement);
++        var sellerBlock = FromSegment(sellerSegment);
++        if (sellerBlock != null) return new Result(sellerBlock, buyer, SellerBranchEvidence.SellerBlock);
+         // บล็อกผู้ขายมักอยู่หัวกระดาษเสมอ — แต่ถ้าหน้าตัดมาแล้วไม่เจอ (เช่น
+         // ผู้ซื้ออยู่บนสุด) ยอมถอยไปอ่านทั้งหน้าเพื่อไม่ให้แย่กว่าเดิม
+-        seller ??= FromSegment(rawText);
+-
+-        return new Result(seller, FromSegment(buyerSegment));
++        // ⚠️ ค่านี้ยังเติมฟอร์มได้ (กฎเหล็ก #3) แต่ติดที่มา WholePageFallback ⇒ คะแนน < 0.85 ⇒ ไม่สร้างผู้ติดต่อถาวร
++        // จากค่าที่อาจเป็นสาขาของผู้ซื้อ (ฝ่ายค้าน K-2 รอบ 197)
++        var page2 = FromSegment(rawText);
++        return new Result(page2, buyer, page2 == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageFallback);
+     }
+ }
+diff --git a/Accounting/Services/Implementations/OcrService.cs b/Accounting/Services/Implementations/OcrService.cs
+index 397cdd7b..71354f5d 100644
+--- a/Accounting/Services/Implementations/OcrService.cs
++++ b/Accounting/Services/Implementations/OcrService.cs
+@@ -2582,9 +2582,8 @@ public class OcrService : IOcrService
+             // (สร้างไว้ออกใบให้ตัวเอง/ทดสอบ) และเดิมไม่มีด่านเลย ⇒ สแกนที่ engine ใส่ชื่อเรา
+             // ผิดช่องจะได้ MatchedContact = ตัวเอง แล้วเอกสารที่สร้างเป็นการซื้อขายกับตัวเอง
+             bool IsOurOwnContact(string? taxId, string? name)
+-                => Accounting.Helpers.ThaiTaxId.Same(taxId, companyContext?.TaxId)
+-                || Accounting.Helpers.OcrSelfPartyGuard.IsSelf(name, companyContext?.Name)
+-                || Accounting.Helpers.OcrSelfPartyGuard.IsSelf(name, companyContext?.NameEn);
++                => Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(taxId, name,
++                    companyContext?.TaxId, companyContext?.Name, companyContext?.NameEn);
+ 
+             // ผลตัดสิน "ใบนี้เป็นของผู้ติดต่อแถวไหน (สาขาไหน)" — null = ไม่ได้จับด้วยเลขผู้เสียภาษี
+             Accounting.Helpers.OcrVendorBranchPick? vendorBranchPick = null;
+@@ -3022,9 +3021,12 @@ public class OcrService : IOcrService
+                 try
+                 {
+                     var poCutoff = DateTime.UtcNow.AddMonths(-6);
++                    // ทุกสาขาของนิติบุคคลเดียวกัน (ฝ่ายค้าน K-3) — สแกนของสาขา 00005 ต้องเห็น PO ที่สั่งผ่านแถว สนญ.
++                    var poVendorIds = await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(
++                        _db.Contacts.AsNoTracking(), companyId, scanResult.MatchedContactId.Value);
+                     var openPos = await _db.Documents.AsNoTracking()
+                         .Where(d => d.CompanyId == companyId && !d.IsDeleted
+-                            && d.ContactId == scanResult.MatchedContactId.Value
++                            && poVendorIds.Contains(d.ContactId)
+                             && d.DocumentType == DocumentType.PurchaseOrder
+                             && d.Status != DocumentStatus.Voided
+                             && d.Status != DocumentStatus.Rejected
+@@ -4760,6 +4762,8 @@ public class OcrService : IOcrService
+             ?? throw new InvalidOperationException("OCR scan result not found.");
+ 
+         // Capture previous values BEFORE updating — used as negative examples
++        // + รหัสสาขาสองฝั่งก่อนรับคำแก้ ⇒ "ผู้ใช้แก้สาขา" = ค่าเปลี่ยนจริง/พิมพ์ยืนยัน ไม่ใช่แค่หน้าเว็บส่งค่าเดิมกลับมา (ฝ่ายค้าน K-1)
++        var correctionBaseline = new Accounting.Helpers.OcrCorrectionBaseline(result.VendorBranchCode, result.BuyerBranchCode);
+         var prevVendorName = result.ExtractedVendorName;
+         var prevVendorTaxId = result.ExtractedVendorTaxId;
+         var prevDocNumber = result.ExtractedDocumentNumber;
+@@ -4911,7 +4915,7 @@ public class OcrService : IOcrService
+         // ★ ตัวชี้วัดคุณภาพ (D4): "ผู้ใช้แก้จริง" ต้องแยกจาก "ระบบบันทึกแถว"
+         // — เดิมนับจาก UpdatedAt != null ซึ่งขยับทุกครั้งที่ระบบเซฟเอง ⇒ อัตราการแก้
+         // ~100% ทุก tenant = ตัวเลขที่อ่านไม่ได้ (ผลตรวจ 2026-09-06 · T5)
+-        var correctedFields = Accounting.Helpers.OcrCorrectedFieldList.From(correction);
++        var correctedFields = Accounting.Helpers.OcrCorrectedFieldList.From(correction, correctionBaseline);
+         if (correctedFields.Length > 0)
+         {
+             result.UserCorrectedAt ??= DateTime.UtcNow;   // ครั้งแรกเท่านั้น
+@@ -5627,7 +5631,12 @@ public class OcrService : IOcrService
+         // (ประกาศอธิบดีฯ 199 / §86/4)
+         var branches = BranchCodeExtractor.Extract(text);
+         if (!string.IsNullOrWhiteSpace(branches.SellerBranchCode))
++        {
+             data.VendorBranchCode = branches.SellerBranchCode;
++            // คะแนนตามที่มา — เดิมเส้นนี้ไม่ใส่คะแนน ⇒ "ไม่มีคะแนน" ถูกนับว่าเชื่อได้ (ฝ่ายค้าน K-6) · ตัวตั้งเดียวกับ EnrichFromRawText
++            if (branches.SellerConfidence is double parsedBranchConf)
++                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = parsedBranchConf;
++        }
+         if (!string.IsNullOrWhiteSpace(branches.BuyerBranchCode))
+             data.BuyerBranchCode = branches.BuyerBranchCode;
+ 
+@@ -6217,7 +6226,15 @@ public class OcrService : IOcrService
+             // สำนักงานใหญ่ไว้ ⇒ กดสร้างเอกสารแล้วใบของสาขาชลบุรีลงผู้ติดต่อสำนักงานใหญ่. ตอนนี้ตัดสินด้วยตัวเดียวกับเส้นสแกน
+             // (OcrVendorBranchContact → ContactTaxBranchKey.PickBranch) ทุกครั้งที่สร้าง — รวมเมื่อผู้ใช้แก้รหัสสาขาในฟอร์มก่อนกด ·
+             // ผู้ใช้เลือกผู้ติดต่อเอง (MatchContactAsync) = ชนะเสมอ ไม่ตัดสินทับ
+-            if (Accounting.Helpers.ContactTaxBranchKey.HasTaxId(result.ExtractedVendorTaxId))
++            // ผู้ขายบนกระดาษเป็นบริษัทเราเอง (เลข/ชื่อเรา) ⇒ ห้ามตัดสินสาขา/สร้างผู้ติดต่อ "ผู้ขาย" ที่เป็นตัวเราเอง
++            // (ฝ่ายค้าน K-7 รอบ 197 · ตัวเดียวกับเส้นสแกน OcrSelfPartyGuard.IsOurContact)
++            var ourCompany = await _db.Companies.AsNoTracking()
++                .Where(c => c.Id == companyId)
++                .Select(c => new { c.TaxId, c.Name, c.NameEn })
++                .FirstOrDefaultAsync();
++            var vendorIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
++                result.ExtractedVendorTaxId, result.ExtractedVendorName, ourCompany?.TaxId, ourCompany?.Name, ourCompany?.NameEn);
++            if (!vendorIsUs && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(result.ExtractedVendorTaxId))
+             {
+                 var correctedFields = (result.UserCorrectedFields ?? "")
+                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+@@ -6227,10 +6244,15 @@ public class OcrService : IOcrService
+                 if (siblingIds.Count > 0
+                     && (!contactId.HasValue || (!userPickedContact && siblingIds.Contains(contactId.Value))))
+                 {
+-                    var siblings = await _db.Contacts.AsNoTracking()
++                    var siblings = (await _db.Contacts.AsNoTracking()
+                         .Where(c => c.CompanyId == companyId && siblingIds.Contains(c.Id))
++                        .Select(c => new { c.Id, c.Name, c.BranchCode, c.TaxId })
++                        .ToListAsync())
++                        // แถวของบริษัทเราเองไม่ใช่ผู้สมัคร (สมมาตรกับ taxMatches ของเส้นสแกน)
++                        .Where(c => !Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
++                            c.TaxId, c.Name, ourCompany?.TaxId, ourCompany?.Name, ourCompany?.NameEn))
+                         .Select(c => new Accounting.Helpers.OcrVendorBranchContact.Candidate(c.Id, c.Name, c.BranchCode))
+-                        .ToListAsync();
++                        .ToList();
+                     var storedConf = ParseFieldConfidenceJson(result.FieldConfidenceJson);
+                     var branchPick = Accounting.Helpers.OcrVendorBranchContact.Decide(
+                         siblings, result.VendorBranchCode,
+@@ -6258,6 +6280,11 @@ public class OcrService : IOcrService
+                         || (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.ExactBranch
+                             && branchPick.ContactId != contactId))
+                         contactId = branchPick.ContactId;
++                    // หลักฐานสาขาอ่อน/ไม่รู้ที่มา (K-6) ⇒ ผูกแถวเดิมของนิติบุคคลเดียวกัน — ต้องบอกผู้ใช้ ไม่ผูกเงียบ
++                    if (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.OtherBranchRow
++                        && !string.IsNullOrEmpty(branchPick.Trace)
++                        && !(result.ProcessingNotes ?? "").Contains(branchPick.Trace, StringComparison.Ordinal))
++                        result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + branchPick.Trace;
+                 }
+             }
+             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(result.ExtractedVendorName))
+@@ -9729,8 +9756,13 @@ public class OcrService : IOcrService
+             if (string.IsNullOrWhiteSpace(data.VendorBranchCode) && br.SellerBranchCode != null)
+             {
+                 data.VendorBranchCode = br.SellerBranchCode;
+-                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = 0.85;
+-                data.ReasoningTrace.Add($"[Enrich] รหัสสาขาผู้ขายจากกระดาษ {br.SellerBranchCode}");
++                // คะแนนตามที่มา (ฝ่ายค้าน K-2 รอบ 197) — เดิม 0.85 คงที่ = เท่าเกณฑ์สร้างผู้ติดต่อสาขาพอดี แม้ค่าจะมาจาก
++                // การถอยอ่านทั้งหน้า (มักเป็นสาขาของผู้ซื้อ) ⇒ ตัวตั้งตัวเดียว BranchCodeExtractor.Result.SellerConfidence
++                var brConf = br.SellerConfidence ?? BranchCodeExtractor.WholePageFallbackConfidence;
++                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerBranchCode] = brConf;
++                data.ReasoningTrace.Add($"[Enrich] รหัสสาขาผู้ขายจากกระดาษ {br.SellerBranchCode}"
++                    + (brConf < Accounting.Helpers.OcrVendorBranchContact.ReliableBranchConfidence
++                        ? $" (ไม่มีป้ายฝั่งผู้ขายกำกับ — อ่านจากทั้งหน้า {brConf:0.00} · โปรดตรวจ)" : ""));
+             }
+             if (string.IsNullOrWhiteSpace(data.BuyerBranchCode) && br.BuyerBranchCode != null)
+             {
+@@ -10018,11 +10050,14 @@ public class OcrService : IOcrService
+ 
+         // Lookback window matches the ScanAsync warning (6 mo) so the picker
+         // mirrors the banner — never surfaces a PO the warning didn't flag.
++        // ผู้ขาย = ทุกสาขาของนิติบุคคลเดียวกัน (ฝ่ายค้าน K-3 · ขอบเขตเดียวกับแบนเนอร์ตอนสแกน)
+         var cutoff = DateTime.UtcNow.AddMonths(-6);
++        var vendorIds = await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(
++            _db.Contacts.AsNoTracking(), companyId, scan.MatchedContactId.Value);
+         var pos = await _db.Documents.AsNoTracking()
+             .Include(d => d.Lines).ThenInclude(l => l.Account)
+             .Where(d => d.CompanyId == companyId && !d.IsDeleted
+-                && d.ContactId == scan.MatchedContactId.Value
++                && vendorIds.Contains(d.ContactId)
+                 && d.DocumentType == DocumentType.PurchaseOrder
+                 && d.Status != DocumentStatus.Voided
+                 && d.Status != DocumentStatus.Rejected
+@@ -10060,7 +10095,10 @@ public class OcrService : IOcrService
+                 && d.CompanyId == companyId && !d.IsDeleted
+                 && d.DocumentType == DocumentType.PurchaseOrder)
+             ?? throw new KeyNotFoundException("ไม่พบใบสั่งซื้อ");
+-        if (scan.MatchedContactId.HasValue && po.ContactId != scan.MatchedContactId.Value)
++        // ผู้ขายเดียวกัน = นิติบุคคลเดียวกัน (เลขภาษีเดียวกัน ทุกสาขา · ฝ่ายค้าน K-3) — ยังกันการผูก PO ของนิติบุคคลอื่นด้วยการยิง id
++        if (scan.MatchedContactId.HasValue
++            && !(await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(
++                    _db.Contacts.AsNoTracking(), companyId, scan.MatchedContactId.Value)).Contains(po.ContactId))
+             throw new InvalidOperationException("ใบสั่งซื้อนี้ไม่ใช่ของผู้ขายที่จับคู่ไว้");
+ 
+         // Sanity-check the line mappings — each non-null poLineId must belong
+@@ -10171,12 +10209,18 @@ public class OcrService : IOcrService
+             return (new Accounting.Helpers.PredecessorDecision(null, Array.Empty<Accounting.Helpers.RankedPredecessor>(),
+                 isSales ? "ยังไม่รู้ว่าผู้ซื้อบนกระดาษเป็นลูกค้ารายไหน" : "ยังไม่ได้จับคู่ผู้ขาย"), new List<Accounting.Helpers.PredecessorCandidate>());
+ 
++        // คู่ค้า = ทุกสาขาของนิติบุคคลเดียวกัน (ฝ่ายค้าน K-3 — ใบเสนอราคา/PO ที่ออกให้แถว สนญ. ต้องยังถูกเสนอให้สแกนของสาขา) ·
++        // ยกเว้นใบลด/เพิ่มหนี้ (§86/9-10 ต้องแถวเดียวกับใบเดิม — OcrPredecessorMatcher.AcceptsSiblingBranchSource)
++        var partyIds = Accounting.Helpers.OcrPredecessorMatcher.AcceptsSiblingBranchSource(target.Type)
++            ? await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(_db.Contacts.AsNoTracking(), companyId, contactId.Value)
++            : new List<Guid> { contactId.Value };
++
+         // "เปิดอยู่" = ออกแล้วและยังไม่จบสาย — ร่าง/รออนุมัติยังไม่มีผลทางบัญชี · Paid = จบแล้ว
+         var cutoff = DateTime.UtcNow.AddMonths(-12);
+         var docs = await _db.Documents.AsNoTracking()
+             .Include(d => d.Lines)
+             .Where(d => d.CompanyId == companyId && !d.IsDeleted
+-                && d.ContactId == contactId.Value
++                && partyIds.Contains(d.ContactId)
+                 && predTypes.Contains(d.DocumentType)
+                 && d.Status != DocumentStatus.Draft
+                 && d.Status != DocumentStatus.WaitingApproval
+@@ -10297,8 +10341,15 @@ public class OcrService : IOcrService
+         // ฝั่งขายเทียบลูกค้าจากเลขภาษีผู้ซื้อเมื่อรู้)
+         var isSales = Accounting.Helpers.DocumentSide.IsSales(target.Type, scan.OurRole);
+         var expected = isSales ? await ResolveContactIdByTaxIdAsync(companyId, scan.BuyerTaxId, scan.BuyerBranchCode) : scan.MatchedContactId;
+-        if (expected.HasValue && doc.ContactId != expected.Value)
+-            throw new Accounting.Helpers.BusinessRuleException("เอกสารต้นทางนี้ไม่ใช่ของคู่ค้ารายเดียวกับกระดาษที่สแกน");
++        // คู่ค้าเดียวกัน = นิติบุคคลเดียวกัน ทุกสาขา (ฝ่ายค้าน K-3 · ขอบเขตเดียวกับตัวหาใบต้นทาง) — ใบลด/เพิ่มหนี้ต้องแถวเดียวกัน (§86/9-10)
++        if (expected.HasValue)
++        {
++            var allowedParty = Accounting.Helpers.OcrPredecessorMatcher.AcceptsSiblingBranchSource(target.Type)
++                ? await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(_db.Contacts.AsNoTracking(), companyId, expected.Value)
++                : new List<Guid> { expected.Value };
++            if (!allowedParty.Contains(doc.ContactId))
++                throw new Accounting.Helpers.BusinessRuleException("เอกสารต้นทางนี้ไม่ใช่ของคู่ค้ารายเดียวกับกระดาษที่สแกน");
++        }
+ 
+         if (doc.DocumentType == DocumentType.PurchaseOrder)
+         {
+diff --git a/Accounting/wwwroot/pages/document-scan.html b/Accounting/wwwroot/pages/document-scan.html
+index 85219d93..3ea90e96 100644
+--- a/Accounting/wwwroot/pages/document-scan.html
++++ b/Accounting/wwwroot/pages/document-scan.html
+@@ -2526,6 +2526,7 @@
+               <div class="review-field">
+                 <label>รหัสสาขาผู้ขาย</label>
+                 <input type="text" class="form-input" id="revVendorBranch" maxlength="5" placeholder="00000"
++                  oninput="this.dataset.userTouched='1'"
+                   value="${Layout.esc(scan.vendorBranchCode || '')}">
+                 ${fc('SellerBranchCode')}
+               </div>
+@@ -3555,6 +3556,9 @@
+           // ไปแล้ว แต่ payload builder ตัวเดียวของหน้านี้ไม่เคยส่งมาเลย
+           // ⇒ ครึ่งเซิร์ฟเวอร์ของการแก้ ship ไปเฉย ๆ ผู้ใช้ยังแก้ไม่ได้
+           vendorBranchCode: v('revVendorBranch'),
++          // รอบ 197 (ฝ่ายค้าน K-1): เซิร์ฟเวอร์นับ "ผู้ใช้แก้สาขา" เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ — ธงนี้บอกว่า
++          // ผู้ใช้ลงมือพิมพ์ช่องนี้เอง (ยืนยันสาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว) · ไม่แตะ = ไม่ส่ง
++          vendorBranchConfirmed: document.getElementById('revVendorBranch')?.dataset?.userTouched === '1' ? true : null,
+           buyerTaxId: v('revBuyerTaxId'),
+           buyerBranchCode: v('revBuyerBranch'),
+           // §86/4 ที่เพิ่งเปิดให้แก้ (E-OCR-05) — ห้ามลืมจุดนี้ซ้ำรอยเดิม:
+-- 
+2.43.0
+
