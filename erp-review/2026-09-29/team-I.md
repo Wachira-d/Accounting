@@ -1,7 +1,7 @@
 # รอบ 200 ทีม I — ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ
 
 ขอบเขต (BRIEF): R-B7–R-B11 (`review198-B.md`) · R-A9 (`review198-A.md`) · S4-3 · S4-4 (`review198-S4.md`) · ไฟล์ = ตัวอ่าน (`Services/Settlement/Adapters/**`)
-+ `Helpers/SettlementTxnKey` + การนำเข้า (`SettlementImportService`) · **ยังไม่ได้คอมไพล์** (env ไม่มี .NET SDK) · commit <pending> (ไม่ push)
++ `Helpers/SettlementTxnKey` + การนำเข้า (`SettlementImportService`) · **ยังไม่ได้คอมไพล์** (env ไม่มี .NET SDK) · commit `b7cd77eb` (ไม่ push)
 
 ทุกข้อ verify ที่ HEAD `5c1fe028` ก่อนแก้ · ทุกตัวตัดสินเป็น pure helper + เทสต์สองทิศ (`Accounting.Tests/SettlementReview200ReaderTests.cs`)
 

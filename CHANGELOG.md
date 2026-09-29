@@ -3734,4 +3734,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม I — ต�
 - **S4-3** `SettlementLine.ImportScope` (migration `ADD COLUMN IF NOT EXISTS`) + `SettlementTxnKey.SplitRevisedFilePool` — เทียบเนื้อหาเฉพาะไฟล์รุ่นก่อนของไฟล์เดียวกัน ·
   อีกไฟล์ของรอบเดียวกันไม่ถูกกลืน (เพิ่ม + เตือนรายแถว)
 - **S4-4** `Helpers/SettlementContentOverlap` ตัวเดียวของผู้นำเข้า + `BuildGateAsync` ⇒ คำเตือน `ContentOverlapElsewhere` (59 · ไม่บล็อก) ที่พรีวิว/ลงบัญชีทุกครั้ง
-- เทสต์ `SettlementReview200ReaderTests` · required_call_site +7/ปรับ 1 · TEST_PLAN SPI-01..14 — commit <pending>)_
+- เทสต์ `SettlementReview200ReaderTests` · required_call_site +7/ปรับ 1 · TEST_PLAN SPI-01..14 — commit b7cd77eb)_
