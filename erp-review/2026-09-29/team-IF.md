@@ -43,7 +43,7 @@
 
 ## ตัวตรวจ (เครื่องโหลดหนัก — รันเฉพาะตัวที่เกี่ยว)
 
-- `required_call_site_check` — ดูผลในคำตอบสุดท้าย (แถวที่ล้ม `SettlementPostingService.BuildGateAsync` `c.CountryCode` เป็นของทีม W ที่ HEAD `c26138d8` — ไฟล์นั้นไม่ถูกแตะในคอมมิตนี้)
+- `required_call_site_check` — ผ่านทุกแถวของทีม IF (รวม negative test ในตัว) · ล้ม **1 แถวที่ไม่ใช่ของทีมนี้**: `SettlementPostingService.BuildGateAsync` ไม่เรียก `c.CountryCode` (กติกาของทีม W ที่ HEAD `c26138d8` — ไฟล์นั้นไม่ถูกแตะในคอมมิตนี้ · ต้องให้ทีม W/ผู้รวม branch แก้)
 - ✅ `record_arg_check` · `nullable_arg_check` · `using_check` · `tuple_name_merge_check` · `regex_line_span_check` · `html_attr_escape_check` · `dead_helper_check` (ไม่มีตัวใหม่) ·
   `string_quote_close_check` · `comment_line_break_check` · `verbatim_string_check` · `identifier_space_check` · `namespace_shadow_check` · `service_interface_check` · `accessibility_check` ·
   `test_inventory --check` (วางแถวใหม่ — HEAD ค้างอยู่ 370 ไฟล์จากงานทีมอื่น)
