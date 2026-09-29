@@ -33,7 +33,10 @@ public static class SettlementPostingKeys
     public static string SummaryComponent(DateTime day) => "sum-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
     /// <summary>ป้ายใน <c>Payment.Notes</c> ของการรับชำระที่รอบโอนบันทึก (บันทึกพร้อมการรับชำระในคำสั่งเดียว)</summary>
-    public static string PaymentMarker(Guid batchId) => "[SETTLEMENT:" + batchId.ToString("N") + "]";
+    public static string PaymentMarker(Guid batchId) => PaymentMarkerHead + batchId.ToString("N") + "]";
+
+    /// <summary>ต้นของ <see cref="PaymentMarker"/> — ใช้ค้นการรับชำระของ "ทุกรอบโอน" ด้วยคำค้นเดียว (ตัวหาของกำพร้า · รอบ 200 S3-11 แทนการวนทีละรอบ)</summary>
+    public const string PaymentMarkerHead = "[SETTLEMENT:";
 
     /// <summary><c>JournalEntry.Reference</c> ของ JE ปิดรายการ chargeback ต่อบรรทัด — กันปิดซ้ำ</summary>
     public static string ChargebackReference(Guid lineId) => "STL-CB-" + lineId.ToString("N");
@@ -254,8 +257,10 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// <param name="StaleReceipts">การรับชำระที่มีป้ายของรอบโอนแต่ไม่ตรงแผนปัจจุบัน (<see cref="SettlementReceiptReconcile.Stale"/> · C-4)</param>
 /// <param name="OrphanArtifacts">เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้วของช่องทางเดียวกัน (C-1(d))</param>
 /// <param name="SodSelfApprovalBlocked">ผลของ <see cref="SettlementPostingGate.SodSelfApproval"/> (คำตัดสินเจ้าของข้อ 7)</param>
-/// <param name="UnvoidableOrphans">ของกำพร้าที่ระบบยกเลิกไม่ได้จริง (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว — <see cref="SettlementOrphanTriage"/> ·
-/// review198-S3 S3-6 / S4-1) — เตือน ไม่บล็อก</param>
+/// <param name="UnvoidableOrphans">ของกำพร้าที่ระบบยกเลิกไม่ได้จริง (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้ —
+/// <see cref="SettlementOrphanTriage"/> · review198-S3 S3-6 / S4-1) <b>ที่ยังไม่มีคนรับรู้</b> — บล็อก ทางไปต่อ = รับรู้ของกำพร้า (รอบ 200 DECISIONS ข้อ 10 ·
+/// เดิมเตือนเฉย ๆ)</param>
+/// <param name="AcknowledgedOrphans">ของกำพร้าที่ยกเลิกไม่ได้จริงและรับรู้แล้ว (ผู้/เวลา/เหตุผล) — แสดง ไม่บล็อก (รอบ 200 DECISIONS ข้อ 10)</param>
 /// <param name="OrphanNeedsAction">ของกำพร้าที่ยกเลิกได้เมื่อคนทำขั้นก่อน (ภาษีเดือนที่ประกาศว่ายื่นแล้ว · มีเอกสารอ้าง · §78/1) — บล็อก พร้อมทางไปต่อรายชิ้น
 /// (review198-S4 S4-1)</param>
 public sealed record SettlementPostingFacts(
@@ -281,7 +286,8 @@ public sealed record SettlementPostingFacts(
     IReadOnlyList<string>? OrphanArtifacts = null,
     bool SodSelfApprovalBlocked = false,
     IReadOnlyList<string>? UnvoidableOrphans = null,
-    IReadOnlyList<SettlementOrphanBlock>? OrphanNeedsAction = null);
+    IReadOnlyList<SettlementOrphanBlock>? OrphanNeedsAction = null,
+    IReadOnlyList<string>? AcknowledgedOrphans = null);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -428,12 +434,12 @@ public static class SettlementPostingGate
         // S4-1: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ระบบยกเลิกทีละใบได้เมื่อคนทำขั้นก่อน — ยังบล็อก (ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น) ด้วยทางไปต่อที่ตรงเหตุ
         foreach (var o in f.OrphanNeedsAction ?? Array.Empty<SettlementOrphanBlock>())
             Add(SettlementPlanIssueCode.OrphanPostingArtifacts, true, o.Why, o.NextStep);
-        // S3-6: ของกำพร้าที่ระบบยกเลิกไม่ได้แล้ว — บล็อกไว้ = ทุกรอบโอนของช่องทางนี้ลงบัญชีไม่ได้ตลอดไป (ไม่มีทางไปต่อ) ⇒ เตือนให้คนตรวจรายการซ้ำเอง
+        // S3-6 → รอบ 200 (DECISIONS ข้อ 10): ของกำพร้าที่ระบบยกเลิกไม่ได้แล้ว — ไม่มีทางยกเลิก แต่ก็ห้ามผ่านเงียบ (ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น) ⇒
+        // บล็อกจนกว่าผู้มีสิทธิ์ลงบัญชีจะ "รับรู้ของกำพร้า" พร้อมเหตุผล (ธงบนเอกสาร + audit) · รับรู้แล้ว ⇒ แสดงผู้รับรู้ ไม่บล็อกช่องทางนี้อีก
         foreach (var why in f.UnvoidableOrphans ?? Array.Empty<string>())
-            Add(SettlementPlanIssueCode.OrphanPostingArtifacts, false, why,
-                "ระบบไม่บล็อกเพราะเอกสาร/การรับชำระนี้ยกเลิกไม่ได้แล้ว (บล็อก = ช่องทางนี้ลงบัญชีไม่ได้อีกเลย) — ก่อนกดลงบัญชีตรวจว่ารอบนี้ไม่มีรายการเดียวกับรอบที่ยกเลิก: "
-                + "ถ้ามี ให้จัดประเภทบรรทัดที่ซ้ำเป็นรายการปรับปรุง (เหตุผล + ผังที่ผู้ทำบัญชีเลือก) หรือออกใบลดหนี้/ใบเพิ่มหนี้อ้างเอกสารนั้น "
-                + "(ไม่งั้นค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ)");
+            Add(SettlementPlanIssueCode.OrphanPostingArtifacts, true, why, SettlementOrphanTriage.UnacknowledgedNextStep);
+        foreach (var why in f.AcknowledgedOrphans ?? Array.Empty<string>())
+            Add(SettlementPlanIssueCode.OrphanPostingArtifacts, false, why, SettlementOrphanTriage.AcknowledgedNextStep);
 
         // ── รายได้ซ้ำ (R-A7) ──
         foreach (var d in f.DuplicateSales)
@@ -480,6 +486,17 @@ public static class SettlementPostingGate
         => sodBlockSelfApproval
            && (string.IsNullOrWhiteSpace(batchCreatedBy)
                || string.Equals(batchCreatedBy.Trim(), postingUserId.ToString(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// **ผู้ทำของรอบโอน = ผู้สร้างรอบ + ผู้ที่เติมไฟล์เข้ารอบเดิม** (review198-S3 S3-11 · รอบ 200 ทีม V2) — เดิมเทียบแค่ <c>SettlementBatch.CreatedBy</c> ⇒
+    /// คนที่นำเข้าไฟล์ที่สองเข้ารอบเดิม (บรรทัดของเขาอยู่ในใบค่าธรรมเนียม/ใบสรุปที่ระบบออก) กดลงบัญชีเองได้ทั้งที่บริษัทเปิดแยกหน้าที่ ·
+    /// ผู้สร้างบรรทัดที่ว่าง (แถวเก่า) ไม่นับ — ตัวตัดสิน "ผู้สร้างรอบไม่รู้ = บล็อก" ของรูปสามอาร์กิวเมนต์คงเดิม ·
+    /// ผู้ที่ตัดสินการจับคู่/จัดประเภทไม่ได้ถูกบันทึกบนบรรทัด (ยังไม่นับ — ข้อจำกัดในรายงานทีม V2)
+    /// </summary>
+    public static bool SodSelfApproval(bool sodBlockSelfApproval, string? batchCreatedBy, IEnumerable<string?> lineCreators, Guid postingUserId)
+        => SodSelfApproval(sodBlockSelfApproval, batchCreatedBy, postingUserId)
+           || (sodBlockSelfApproval && lineCreators.Any(c => !string.IsNullOrWhiteSpace(c)
+               && string.Equals(c!.Trim(), postingUserId.ToString(), StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>จำนวนวันจันทร์–ศุกร์หลัง <paramref name="from"/> จนถึง <paramref name="to"/> (ไม่หักวันหยุดราชการ ⇒ นับวันทำการ<b>มากกว่าจริง</b>
     /// = เตือนเร็วกว่าจริง ทิศที่ปลอดภัย)</summary>

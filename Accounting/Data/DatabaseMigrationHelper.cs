@@ -210,6 +210,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SettlementBatchId" uuid NULL;""",
             // review198-B R-B1: คนตัดสินการจับคู่เอง — false = ระบบจับคู่ (แถวเดิมทุกแถว: เฟส 1 ยังไม่มีหน้าจอ/endpoint ที่ให้คนตัดสิน ⇒ ไม่มีค่าที่ต้องย้อนเติม)
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "MatchDecidedByUser" boolean NOT NULL DEFAULT false;""",
+            // รอบ 200 ทีม V2 (DECISIONS ข้อ 10): "รับรู้ของกำพร้า" — ผู้/เวลา/เหตุผลบนเอกสาร/การรับชำระที่ยกเลิกไม่ได้จริงของรอบโอนที่ถูกยกเลิก ·
+            // NULL = ยังไม่รับรู้ (แถวเดิมทุกแถว ⇒ ของกำพร้าที่ยกเลิกไม่ได้บล็อกจนกว่าจะมีคนรับรู้)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckAt" timestamptz NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckBy" uuid NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReason" text NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckAt" timestamptz NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckBy" uuid NULL;""",
+            """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReason" text NULL;""",
         };
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;

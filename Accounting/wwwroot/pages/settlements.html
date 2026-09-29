@@ -768,6 +768,42 @@
             ${x.nextStep ? `<div><b>ทางไปต่อ:</b> ${Layout.esc(x.nextStep)}</div>` : ''}</div>`).join('');
       },
 
+      /** ของกำพร้าของช่องทางนี้ (รอบ 200 · DECISIONS ข้อ 10) — กอง/เหตุ/ทางไปต่อ/ผู้รับรู้มาจากเซิร์ฟเวอร์ทั้งหมด (ไม่มีกติกาในหน้านี้) ·
+       *  ปุ่ม "รับรู้ของกำพร้า" ขึ้นเฉพาะ canAcknowledge (กองยกเลิกไม่ได้จริง + ยังไม่รับรู้) และผู้ใช้มีสิทธิ์ลงบัญชี — สิทธิ์/กองตรวจซ้ำที่ server */
+      renderOrphans(orphans) {
+        const list = orphans || [];
+        if (!list.length) return '';
+        const canPost = !!this.detail?.actions?.canPost;
+        return `<h3 style="margin-top:12px">ของกำพร้าจากรอบโอนที่ยกเลิกแล้ว (ช่องทางเดียวกัน)</h3>
+          <div class="scroll-x"><table class="tbl"><thead><tr><th>รายการ</th><th>รอบโอนเดิม</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>
+          ${list.map((o, i) => `<tr>
+            <td>${o.isPayment ? 'การรับชำระ ' + Layout.esc(o.number || '-') : this.docLink(o.id, o.number || 'เปิดเอกสาร')}</td>
+            <td class="mono">${Layout.esc(o.payoutRef || '')}</td>
+            <td>${Layout.esc(o.pileLabel || '-')}${o.ack ? '<div class="hint">✅ รับรู้แล้ว</div>' : ''}</td>
+            <td>${Layout.esc(o.why || '')}${o.ack ? `<div class="hint">รับรู้โดย <b>${Layout.esc(o.ack.byName || o.ack.byUserId || '-')}</b>
+                เมื่อ ${Layout.date(o.ack.at)} · เหตุผล: ${Layout.esc(o.ack.reason || '')}</div>` : ''}
+              ${o.nextStep ? `<div class="hint"><b>ทางไปต่อ:</b> ${Layout.esc(o.nextStep)}</div>` : ''}</td>
+            <td>${o.canAcknowledge && canPost ? `<button class="btn btn-sm" onclick="Page.ackOrphan(${i})">รับรู้ของกำพร้า</button>` : ''}</td>
+          </tr>`).join('')}
+          </tbody></table></div>`;
+      },
+
+      ackOrphan(i) {
+        const o = (this.preview?.orphans || [])[i]; if (!o) return;
+        this.askReason('รับรู้ของกำพร้า',
+          `${o.isPayment ? 'การรับชำระ' : 'เอกสาร'} ${o.number || ''} ยกเลิกไม่ได้แล้ว — ระบบจะบันทึกชื่อผู้รับรู้ เวลา และเหตุผลบนรายการนี้ (ตรวจย้อนได้) แล้วไม่บล็อกการลงบัญชีของช่องทางนี้อีก · `
+            + 'ก่อนรับรู้ ตรวจว่ารอบนี้ไม่มีรายการเดียวกับรอบที่ยกเลิก (ถ้ามี ให้จัดประเภทบรรทัดที่ซ้ำเป็นรายการปรับปรุง)',
+          async (reason) => {
+            const api = Layout.api(); if (!api) return;
+            try {
+              const res = await api.acknowledgeSettlementOrphan(o.id, o.isPayment, reason);
+              if (res?.success === false) throw new Error(res?.message || 'รับรู้ไม่สำเร็จ');
+              Layout.toast(res?.message || 'รับรู้แล้ว');
+              await this.loadPreview();
+            } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error'); }
+          });
+      },
+
       renderItems(items) {
         if (!(items || []).length) return '';
         return `<h3 style="margin-top:12px">เอกสาร/การรับชำระที่ผูกกับรอบนี้</h3>
@@ -839,6 +875,7 @@
             ${bannerMsg ? `<div class="banner bad">${Layout.esc(bannerMsg)}</div>` : ''}
             ${canPost ? '<div class="banner ok">✅ ลงบัญชีได้ — ตรวจรายการด้านล่างแล้วกด "ลงบัญชี"</div>' : ''}
             ${this.renderIssues(pv.plan)}
+            ${this.renderOrphans(pv.orphans)}
             ${this.renderPlan(pv.plan, pv.accounts, pv.bankAccountLabel)}
             ${this.renderItems(pv.existingItems)}
             ${this.detail?.actions?.canPost ? `<div class="actions">

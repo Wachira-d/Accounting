@@ -7,7 +7,9 @@ namespace Accounting.Helpers;
 /// <summary>เอกสารที่อ้างใบหนึ่งอยู่จนยกเลิกใบนั้นไม่ได้ — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
 /// <param name="ByTextReference">true = ใบลดหนี้/ใบเพิ่มหนี้รุ่นเก่าที่อ้างด้วย "เลขที่" ในช่องอ้างอิง (ไม่มี <c>RelatedDocumentId</c>) ·
 /// false = เอกสารลูกที่ผูก <c>RelatedDocumentId</c></param>
-public sealed record DocumentVoidChildFact(Guid ParentId, DocumentType ChildType, string? ChildNumber, bool ByTextReference);
+/// <param name="ChildId">id ของใบที่อ้าง (รอบ 200 ทีม V2 — ตัวแยกของกำพร้าต้องรู้ว่าใบที่อ้าง "เอง" ยกเลิกได้ไหม · null = ผู้สร้างไม่ได้ระบุ)</param>
+public sealed record DocumentVoidChildFact(Guid ParentId, DocumentType ChildType, string? ChildNumber, bool ByTextReference,
+    Guid? ChildId = null);
 
 /// <summary>
 /// **เหตุที่ยกเลิกเอกสารไม่ได้เพราะมีเอกสารอื่นอ้างอยู่ — ตัวตัดสินตัวเดียว** ของ <c>DocumentService.VoidDocumentAsync</c> และด่านก่อน
@@ -37,16 +39,22 @@ public static class DocumentVoidPreconditions
     /// <summary>ตัวโหลดข้อเท็จจริง + ตัดสิน สำหรับเอกสารหลายใบ (ของบริษัทนี้) — คืนเหตุต่อใบ · ใบที่ยกเลิกได้ไม่อยู่ในผล</summary>
     public static async Task<IReadOnlyDictionary<Guid, string>> ChildBlocksAsync(AccountingDbContext db, Guid companyId,
         IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default)
+        => Decide(await ChildFactsAsync(db, companyId, documentIds, ct));
+
+    /// <summary>ข้อเท็จจริงดิบ (ใบที่อ้างแต่ละใบ พร้อม id) ชุดเดียวกับที่ <see cref="ChildBlocksAsync"/> ตัดสิน — ให้ตัวแยกของกำพร้าของรอบโอน
+    /// (<c>SettlementOrphanTriage</c> · รอบ 200 ทีม V2 · DECISIONS ข้อ 10) ตรวจต่อว่าใบที่อ้าง "เอง" ยกเลิกได้ไหม โดยไม่เขียนเงื่อนไขชุดที่สอง</summary>
+    public static async Task<IReadOnlyList<DocumentVoidChildFact>> ChildFactsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default)
     {
-        if (documentIds.Count == 0) return new Dictionary<Guid, string>();
+        if (documentIds.Count == 0) return Array.Empty<DocumentVoidChildFact>();
         var ids = documentIds.Distinct().ToList();
         var facts = (await db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.RelatedDocumentId != null && ids.Contains(d.RelatedDocumentId.Value)
                     && !d.IsDeleted
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { Parent = d.RelatedDocumentId!.Value, d.DocumentType, d.DocumentNumber })
+                .Select(d => new { d.Id, Parent = d.RelatedDocumentId!.Value, d.DocumentType, d.DocumentNumber })
                 .ToListAsync(ct))
-            .Select(d => new DocumentVoidChildFact(d.Parent, d.DocumentType, d.DocumentNumber, false))
+            .Select(d => new DocumentVoidChildFact(d.Parent, d.DocumentType, d.DocumentNumber, false, d.Id))
             .ToList();
 
         var numbers = (await db.Documents.AsNoTracking()
@@ -62,12 +70,12 @@ public static class DocumentVoidPreconditions
                     && d.RelatedDocumentId == null && d.Reference != null && nums.Contains(d.Reference)
                     && d.Status != DocumentStatus.Draft
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.Reference, d.DocumentType, d.DocumentNumber })
+                .Select(d => new { d.Id, d.Reference, d.DocumentType, d.DocumentNumber })
                 .ToListAsync(ct);
             foreach (var t in textRefs)
                 foreach (var parent in numbers.Where(n => n.DocumentNumber == t.Reference))
-                    facts.Add(new DocumentVoidChildFact(parent.Id, t.DocumentType, t.DocumentNumber, true));
+                    facts.Add(new DocumentVoidChildFact(parent.Id, t.DocumentType, t.DocumentNumber, true, t.Id));
         }
-        return Decide(facts);
+        return facts;
     }
 }
