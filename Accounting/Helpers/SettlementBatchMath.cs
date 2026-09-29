@@ -66,6 +66,12 @@ public enum SettlementPlanIssueCode
     RefundOutcomeUnknown = 33,
     /// <summary>บริษัทเปิดแยกหน้าที่ (SoD) และผู้กดลงบัญชีคือผู้นำเข้ารอบโอนเอง — ผู้ทำ = ผู้อนุมัติของเอกสารที่ระบบออกให้ (คำตัดสินเจ้าของรอบ 198 ข้อ 7)</summary>
     SodSelfApproval = 34,
+    /// <summary>ยอด wallet ต้นรอบไม่เท่ายอดปลายรอบของรอบโอนก่อนหน้าในช่องทางเดียวกัน — สมการของรอบโอนลงตัวได้ทั้งที่ผังพักคลาด
+    /// (สมการเป็นจริงตามนิยามเมื่อยอดยกมา/ยกไปถูกกรอกให้พอดี · review198-A R-A12 · รอบ 200 ทีม T)</summary>
+    WalletContinuityGap = 35,
+    /// <summary>วันนี้มีใบขายสรุปของแพลตฟอร์มนี้จากรอบโอนอื่นแล้ว แต่ใบแรกยังไม่ออกเลข (ลงบัญชีรอบนั้นค้าง) — ใบสรุปเพิ่มเติมต้องอ้างเลขใบแรก
+    /// (คำตัดสินรอบ 200 ข้อ 15)</summary>
+    SummarySaleFirstNotIssued = 36,
 
     // ── แจ้งให้ทราบ (ไม่บล็อก) ──
     /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>
@@ -78,6 +84,15 @@ public enum SettlementPlanIssueCode
     SummarySaleLate = 53,
     /// <summary>ลงบัญชีครั้งก่อนค้างครึ่งทาง — มีเอกสาร/การรับชำระที่สร้างไว้แล้ว กดลงบัญชีอีกครั้งจะทำต่อจากขั้นที่ค้าง (ไม่สร้างซ้ำ)</summary>
     PartialProgress = 54,
+    /// <summary>ใบขายสรุปรอบนี้เป็น "ใบสรุปเพิ่มเติม" ของวันเดียวกัน (เลขใหม่ · อ้างใบแรกของวัน · จุดความรับผิดวันเดิม) — payout หลายรอบมีออเดอร์
+    /// วันเดียวกัน (คำตัดสินรอบ 200 ข้อ 15 แทนการบล็อก SummarySaleDuplicate · review198-C C-9)</summary>
+    SummarySaleSupplementary = 55,
+    /// <summary>ใบขายสรุปไม่ตัดสต็อก/ต้นทุนขาย (ไฟล์รอบโอนไม่มีรายการสินค้า) และกิจการถือสต็อก หรือยังไม่ได้ระบุประเภทธุรกิจ (review198-C C-15)</summary>
+    SummarySaleNoStock = 56,
+    /// <summary>ค่าธรรมเนียมที่เกิดคนละเดือนกับวันเงินเข้า — ลงค่าใช้จ่าย/ภาษีซื้อ/50 ทวิ ตามวันเงินเข้า (review198-C C-16 · รอให้นักบัญชีตัดสินการตัดงวด)</summary>
+    FeeCutoffCrossesMonth = 57,
+    /// <summary>ไม่มีรอบโอนก่อนหน้าในช่องทางนี้ให้เทียบยอด wallet ต้นรอบ — "ไม่รู้" ไม่ใช่ "ต่อเนื่อง" (review198-A R-A12 · DOCTRINE §1)</summary>
+    WalletContinuityUnknown = 58,
 }
 
 /// <summary>ปัญหา 1 ข้อของแผน</summary>
@@ -400,10 +415,24 @@ public static class SettlementBatchMath
 
         // ── 5. คืนเงิน: ต้องอ้างใบเดิม ──
         var refundPlans = new List<SettlementRefundPlan>();
+        // review198-C C-17: คืนเงินของออเดอร์ที่กำลังจะเข้าใบขายสรุปของ "รอบนี้เอง" — ใบสรุปยังไม่เกิดจึงเลือกเป็นใบเดิมไม่ได้
+        // (ข้อความเดิม "เลือกใบขายเดิม" = ทางตัน) ⇒ บอกทางที่ทำได้จริง
+        var summaryOrders = summaries.SelectMany(s => s.ExternalOrderIds).Select(s => s.Trim()).ToHashSet(StringComparer.Ordinal);
         foreach (var l in refunds.Where(l => l.MatchedDocumentId is null))
-            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RefundUnmatched, true,
-                $"บรรทัดที่ {l.Seq} คืนเงิน {-l.Amount:N2} (ออเดอร์ {l.ExternalOrderId ?? "-"}) ยังไม่รู้ใบขายเดิม",
-                "เลือกใบขายเดิมของออเดอร์นี้ — ใบลดหนี้ต้องอ้างเลขที่และวันที่ใบเดิม (§86/10)", new[] { l.Id }, l.Amount));
+        {
+            var order = l.ExternalOrderId?.Trim();
+            if (!string.IsNullOrEmpty(order) && summaryOrders.Contains(order))
+                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RefundUnmatched, true,
+                    $"บรรทัดที่ {l.Seq} คืนเงิน {-l.Amount:N2} ของออเดอร์ {order} ซึ่งยอดขายอยู่ในใบขายสรุปที่รอบนี้กำลังจะออก — "
+                    + "ใบสรุปยังไม่เกิดจึงเลือกเป็นใบเดิมของใบลดหนี้ไม่ได้",
+                    $"ออกเอกสารขายของออเดอร์ {order} เอง (ใบกำกับภาษี/ใบเสร็จ) แล้วจับคู่ทั้งบรรทัดขายและบรรทัดคืนเงินของออเดอร์นี้กับเอกสารนั้น — "
+                    + "ระบบจะรับชำระเข้าผังพักแทนการรวมเข้าใบสรุป แล้วบอกให้ออกใบลดหนี้อ้างเอกสารนั้น (§86/10)",
+                    new[] { l.Id }, l.Amount));
+            else
+                issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.RefundUnmatched, true,
+                    $"บรรทัดที่ {l.Seq} คืนเงิน {-l.Amount:N2} (ออเดอร์ {l.ExternalOrderId ?? "-"}) ยังไม่รู้ใบขายเดิม",
+                    "เลือกใบขายเดิมของออเดอร์นี้ — ใบลดหนี้ต้องอ้างเลขที่และวันที่ใบเดิม (§86/10)", new[] { l.Id }, l.Amount));
+        }
         foreach (var g in refunds.Where(l => l.MatchedDocumentId is not null).GroupBy(l => l.MatchedDocumentId!.Value))
             refundPlans.Add(new SettlementRefundPlan(g.Key, -g.Sum(l => l.Amount), g.Select(l => l.Id).ToList()));
 
@@ -449,6 +478,8 @@ public static class SettlementBatchMath
                 $"แพลตฟอร์มเป็นตัวแทนหัก ณ ที่จ่าย {feeDocs.Sum(d => d.WhtAmount):N2} แทนเรา",
                 "เก็บหนังสือรับรอง 50 ทวิ ที่แพลตฟอร์มออก — ยอดนี้ไม่เข้ายอดที่เรายื่น ภ.ง.ด.53 เอง",
                 Array.Empty<Guid>(), feeDocs.Sum(d => d.WhtAmount)));
+        if (feeDocs.Count > 0 && FeeCutoff(fees, batch.PayoutDate) is { } cut)
+            issues.Add(cut);
 
         // ── 7. JE รอบโอน: ธนาคาร + รายการตรง + ขา WHT ──
         var journal = new List<SettlementJournalLinePlan>();
@@ -520,6 +551,27 @@ public static class SettlementBatchMath
     }
 
     // ───────────────────────── ภายใน ─────────────────────────
+
+    /// <summary>review198-C C-16: ค่าธรรมเนียมที่เกิด (วันที่รายการตามปฏิทินไทย) คนละเดือนกับวันเงินเข้า — ใบค่าธรรมเนียม · ภาษีซื้อ · 50 ทวิ ·
+    /// เดือน ภ.ง.ด.53 ใช้วันเงินเข้าทั้งหมด ⇒ ค่าใช้จ่ายของเดือนก่อนไปลงเดือนถัดไป · ยังไม่แยกตามเดือนเอง (การตัดงวด/ค้างจ่ายเป็นดุลยพินิจของผู้ทำบัญชี
+    /// — คำถามค้างในรายงานทีม T รอบ 200) ⇒ <b>เตือน</b> พร้อมยอดและเดือน · บรรทัดไม่มีวันที่ = ใช้วันเงินเข้า (ไม่เตือน)</summary>
+    private static SettlementPlanIssue? FeeCutoff(IReadOnlyList<SettlementLine> fees, DateTime payoutDate)
+    {
+        var payDay = ThaiDate.CalendarDateUtc(payoutDate);
+        var off = fees.Where(l => l.TxnDate is DateTime t
+                && (ThaiDate.CalendarDateUtc(t).Year != payDay.Year || ThaiDate.CalendarDateUtc(t).Month != payDay.Month))
+            .ToList();
+        if (off.Count == 0) return null;
+        var months = off.Select(l => ThaiDate.CalendarDateUtc(l.TxnDate!.Value))
+            .Select(d => $"{d:MM}/{d.Year + 543}").Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
+        var total = -off.Sum(l => l.Amount);
+        return new SettlementPlanIssue(SettlementPlanIssueCode.FeeCutoffCrossesMonth, false,
+            $"ค่าธรรมเนียม {off.Count} บรรทัด ยอด {total:N2} เกิดในเดือน {string.Join(", ", months)} แต่จะลงบัญชีเดือน {payDay:MM}/{payDay.Year + 543} "
+            + "(วันเงินเข้า) — ทั้งค่าใช้จ่าย ภาษีซื้อ และหนังสือรับรองหัก ณ ที่จ่าย",
+            "ลงบัญชีได้ · ถ้าต้องตัดค่าใช้จ่ายให้ตรงงวด ให้ผู้ทำบัญชีบันทึกค่าใช้จ่ายค้างจ่ายสิ้นเดือนนั้นแล้วกลับรายการในเดือนถัดไป "
+            + "(ระบบยังไม่แยกใบค่าธรรมเนียมตามเดือน) · ถ้าแพลตฟอร์มหักภาษี ณ ที่จ่ายตามวันที่หักค่าธรรมเนียม ให้ตรวจเดือนที่ยื่นกับผู้ทำบัญชี",
+            off.Select(l => l.Id).ToList(), total);
+    }
 
     private readonly record struct FeeLineWithTreatment(SettlementFeeVatTreatment VatTreatment, SettlementFeeDocumentLine Line);
 

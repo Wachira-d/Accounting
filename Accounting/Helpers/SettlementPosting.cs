@@ -33,7 +33,10 @@ public static class SettlementPostingKeys
     public static string SummaryComponent(DateTime day) => "sum-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
     /// <summary>ป้ายใน <c>Payment.Notes</c> ของการรับชำระที่รอบโอนบันทึก (บันทึกพร้อมการรับชำระในคำสั่งเดียว)</summary>
-    public static string PaymentMarker(Guid batchId) => "[SETTLEMENT:" + batchId.ToString("N") + "]";
+    public static string PaymentMarker(Guid batchId) => PaymentMarkerHead + batchId.ToString("N") + "]";
+
+    /// <summary>ต้นของ <see cref="PaymentMarker"/> — ค้น "การรับชำระที่รอบโอนใดก็ได้บันทึก" (review198-B R-B13 · รอบ 200)</summary>
+    public const string PaymentMarkerHead = "[SETTLEMENT:";
 
     /// <summary><c>JournalEntry.Reference</c> ของ JE ปิดรายการ chargeback ต่อบรรทัด — กันปิดซ้ำ</summary>
     public static string ChargebackReference(Guid lineId) => "STL-CB-" + lineId.ToString("N");
@@ -235,8 +238,12 @@ public static class SettlementAccountResolver
 /// <summary>ใบขายที่แผนจะรับชำระเข้าผังพัก — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
 /// <param name="Found">พบใบนี้ในบริษัทนี้ (ไม่พบ = ไม่มี หรือเป็นของบริษัทอื่น)</param>
 /// <param name="AlreadyReceived">รอบโอนนี้บันทึกรับชำระใบนี้ไปแล้ว (ลงบัญชีครั้งก่อนค้างครึ่งทาง) ⇒ ข้าม</param>
+/// <param name="PendingElsewhere">ยอดที่รอบโอน<b>อื่น</b>ที่ยังไม่ลงบัญชีจับคู่ใบนี้ไว้ (<see cref="SettlementCrossBatchReceipts.PendingElsewhere"/> ·
+/// review198-B R-B13) — 0 = ไม่มี/ไม่ได้ตรวจ</param>
+/// <param name="PendingPayoutRefs">เลขรอบโอนเหล่านั้น (ข้อความทางไปต่อ)</param>
 public sealed record SettlementReceiptTarget(
-    Guid DocumentId, bool Found, string? DocumentNumber, DocumentType Type, DocumentStatus Status, decimal BalanceDue, bool AlreadyReceived);
+    Guid DocumentId, bool Found, string? DocumentNumber, DocumentType Type, DocumentStatus Status, decimal BalanceDue, bool AlreadyReceived,
+    decimal PendingElsewhere = 0m, IReadOnlyList<string>? PendingPayoutRefs = null);
 
 /// <summary>บรรทัดที่แผนนับว่า "อยู่ในผังพักแล้ว" (อ้าง PaymentIntent/การรับชำระ) — ข้อเท็จจริงว่าเงินก้อนนั้นลงไว้ที่ผังไหนจริง (review198-A R-A1)</summary>
 /// <param name="PostedClearingAccountId">ผังที่ขาเงินเข้าของรายการนั้นลงไว้จริง (null = ลงธนาคาร/เงินสด หรือหาไม่เจอ)</param>
@@ -258,6 +265,12 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// review198-S3 S3-6 / S4-1) — เตือน ไม่บล็อก</param>
 /// <param name="OrphanNeedsAction">ของกำพร้าที่ยกเลิกได้เมื่อคนทำขั้นก่อน (ภาษีเดือนที่ประกาศว่ายื่นแล้ว · มีเอกสารอ้าง · §78/1) — บล็อก พร้อมทางไปต่อรายชิ้น
 /// (review198-S4 S4-1)</param>
+/// <param name="Wallet">ผลของ <see cref="SettlementWalletContinuity.Judge"/> (review198-A R-A12) — null = ไม่ได้ตรวจ</param>
+/// <param name="FiledPp36Periods">เดือน ภ.พ.36 ที่ประกาศว่ายื่นแล้ว (review198-C C-11) — null = ไม่ได้ตรวจ</param>
+/// <param name="WhtFormType">แบบ ภ.ง.ด. ที่ 50 ทวิ ของรอบนี้จะเป็นจริง (ตัวเลือกแบบเดียวกับผู้ออก 50 ทวิ — นิติบุคคล 53 · บุคคลธรรมดา 3 · C-11) ·
+/// <see cref="FiledWhtPeriods"/> ต้องเป็นเดือนที่ยื่นแล้วของแบบนี้</param>
+/// <param name="Supplementary">ใบสรุปของรอบนี้ที่เป็นใบสรุปเพิ่มเติมของวันเดียวกัน (<see cref="SettlementSummarySupplement.Judge"/> · คำตัดสินรอบ 200 ข้อ 15)</param>
+/// <param name="Stock">ลักษณะกิจการเรื่องสต็อก (<see cref="SettlementStock.StanceOf"/> · C-15)</param>
 public sealed record SettlementPostingFacts(
     SettlementBatchStatus Status,
     DateTime PayoutDay,
@@ -281,7 +294,12 @@ public sealed record SettlementPostingFacts(
     IReadOnlyList<string>? OrphanArtifacts = null,
     bool SodSelfApprovalBlocked = false,
     IReadOnlyList<string>? UnvoidableOrphans = null,
-    IReadOnlyList<SettlementOrphanBlock>? OrphanNeedsAction = null);
+    IReadOnlyList<SettlementOrphanBlock>? OrphanNeedsAction = null,
+    SettlementWalletContinuityResult? Wallet = null,
+    IReadOnlyCollection<(int Year, int Month)>? FiledPp36Periods = null,
+    TaxType WhtFormType = TaxType.WithholdingTax53,
+    IReadOnlyList<SettlementSupplementarySummary>? Supplementary = null,
+    SettlementStockStance Stock = SettlementStockStance.NotChecked);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -293,6 +311,14 @@ public static class SettlementPostingGate
 {
     /// <summary>§87 ลงรายงานภาษีขายภายใน 3 วันทำการ</summary>
     public const int SalesReportBusinessDays = 3;
+
+    /// <summary>ทางไปต่อเมื่อใบขายสรุป (ลูกค้าเงินสด) ออกเป็นใบกำกับไม่ได้ — คำตัดสินรอบ 200 ข้อ 16 (O-3): คงบล็อก · ภ.พ.06 ไม่เกี่ยว
+    /// (คำตัดสินเจ้าของ 2026-09-28: ภ.พ.06 คุมเฉพาะสลิปเครื่อง POS · <c>AbbreviatedTaxInvoiceRule</c> ช่องทางเอกสาร)</summary>
+    public const string SummaryRetailNextStep =
+        "ถ้าขายให้ผู้บริโภคทั่วไปผ่าน marketplace (ลักษณะขายปลีก) ให้ติ๊ก \"ประกอบกิจการขายปลีก\" ที่หน้าตั้งค่า → ข้อมูลบริษัท แล้วดูตัวอย่างใหม่ — "
+        + "ไม่ต้องขอ ภ.พ.06 (ภ.พ.06 ใช้เฉพาะสลิปจากเครื่อง POS/เครื่องบันทึกการเก็บเงิน) · ระบบไม่ติ๊กแทนเพราะเป็นการประกาศลักษณะกิจการของผู้ใช้ · "
+        + "ไม่ใช่ขายปลีก (เช่นผู้ซื้อเป็นผู้ประกอบการ) ⇒ ออกใบกำกับภาษีเต็มรูปรายออเดอร์ (ชื่อ/ที่อยู่ผู้ซื้อ) แล้วจับคู่บรรทัดขายกับใบนั้น "
+        + "(ระบบรับชำระเข้าผังพักแทนการออกใบสรุป)";
 
     public static SettlementPostingPlan Evaluate(SettlementPostingPlan plan, SettlementPostingFacts f)
     {
@@ -337,10 +363,20 @@ public static class SettlementPostingGate
         }
         var whtLegs = plan.FeeDocuments.Any(d => d.WhtAmount > 0m
             && d.WhtMode is SettlementFeeWhtMode.SelfWithholdReimbursed or SettlementFeeWhtMode.SelfWithholdPayerBorne);
+        // review198-C C-11: แบบที่ 50 ทวิ จะเป็นจริง (ผู้รับเงินบุคคลธรรมดา ⇒ ภ.ง.ด.3) — เดิมดูแต่ ภ.ง.ด.53
+        var whtForm = WhtUnissuedCertGate.FormLabel(f.WhtFormType);
         if (whtLegs && f.FiledWhtPeriods.Contains((f.PayoutDay.Year, f.PayoutDay.Month)))
             Add(SettlementPlanIssueCode.TaxPeriodFiled, true,
-                $"ภาษีหัก ณ ที่จ่ายของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น ภ.ง.ด.53 แล้ว",
-                "ยื่น ภ.ง.ด.53 เพิ่มเติมของเดือนนั้น แล้วให้ผู้มีสิทธิ์ปลดล็อกรายงานก่อนลงบัญชี — หรือเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทางถ้าแพลตฟอร์มเป็นผู้หักแทน");
+                $"ภาษีหัก ณ ที่จ่ายของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น {whtForm} แล้ว",
+                $"ยื่น {whtForm} เพิ่มเติมของเดือนนั้น แล้วให้ผู้มีสิทธิ์ปลดล็อกรายงานก่อนลงบัญชี — หรือเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทางถ้าแพลตฟอร์มเป็นผู้หักแทน");
+        // review198-C C-11: ใบค่าธรรมเนียมบริการต่างประเทศตั้ง ภ.พ.36 (21912) ในเดือนวันเงินเข้า — เดือนนั้นยื่น ภ.พ.36 แล้ว = ภาษีตกหล่นของเดือนที่ยื่นแล้ว
+        var pp36Amount = plan.FeeDocuments.Where(d => d.VatTreatment is SettlementFeeVatTreatment.SelfAssessedPp36
+            or SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable).Sum(d => d.Pp36Payable);
+        if (pp36Amount > 0m && f.FiledPp36Periods is { } filedPp36 && filedPp36.Contains((f.PayoutDay.Year, f.PayoutDay.Month)))
+            Add(SettlementPlanIssueCode.TaxPeriodFiled, true,
+                $"VAT แทนผู้ให้บริการต่างประเทศ {pp36Amount:N2} ของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น ภ.พ.36 แล้ว",
+                "ยื่น ภ.พ.36 เพิ่มเติมของเดือนนั้น (ชำระภาษีที่ตกหล่น) แล้วให้ผู้มีสิทธิ์ปลดล็อกรายงานก่อนลงบัญชี — ระบบไม่เพิ่มยอดเข้าแบบที่ยื่นแล้วเงียบ ๆ",
+                null, pp36Amount);
 
         // ── ผังบัญชี ──
         foreach (var err in f.AccountErrors)
@@ -373,16 +409,24 @@ public static class SettlementPostingGate
             var t = f.ReceiptTargets.FirstOrDefault(x => x.DocumentId == r.DocumentId);
             if (t is { AlreadyReceived: true }) continue;
             string? why = null;
+            var next = "จับคู่บรรทัดขายกับใบที่ถูกต้อง · ถ้าใบนั้นรับชำระทางอื่นไปแล้ว ให้ผูกบรรทัดกับการรับชำระนั้นแทน (ระบบจะไม่รับชำระซ้ำ)";
             if (t is null || !t.Found) why = "ไม่พบใบขายที่จับคู่ไว้ในบริษัทนี้";
             else if (!ArApScope.IsReceivable(t.Type)) why = $"ใบ {t.DocumentNumber} ไม่ใช่เอกสารตั้งลูกหนี้ (ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้)";
             else if (t.Status is not (DocumentStatus.Approved or DocumentStatus.Sent or DocumentStatus.PartiallyPaid or DocumentStatus.Overdue))
                 why = $"ใบ {t.DocumentNumber} อยู่สถานะ {t.Status} — รับชำระได้เฉพาะใบที่อนุมัติแล้วและยังค้างชำระ";
             else if (t.BalanceDue + 0.005m < r.Amount)
                 why = $"ใบ {t.DocumentNumber} ค้างชำระ {t.BalanceDue:N2} น้อยกว่ายอดที่แพลตฟอร์มโอน {r.Amount:N2} (เคยรับชำระทางอื่นแล้ว?)";
+            else if (t.PendingElsewhere > 0m && t.BalanceDue - t.PendingElsewhere + 0.005m < r.Amount)
+            {
+                // review198-B R-B13: รอบโอนอื่นที่ยังไม่ลงบัญชีจับคู่ใบเดียวกันไว้ — รวมกันเกินยอดค้าง (ด่านบรรทัดบนเห็นแค่การรับชำระที่ลงแล้ว)
+                var refs = string.Join(", ", t.PendingPayoutRefs ?? Array.Empty<string>());
+                why = $"ใบ {t.DocumentNumber} ค้างชำระ {t.BalanceDue:N2} แต่รอบโอนอื่นที่ยังไม่ลงบัญชี ({refs}) จับคู่ใบนี้ไว้แล้ว {t.PendingElsewhere:N2} "
+                    + $"— รวมกับรอบนี้ {r.Amount:N2} เกินยอดค้าง (รับชำระเกิน)";
+                next = $"ตรวจว่าออเดอร์เดียวกันอยู่ทั้งในรอบนี้และรอบ {refs} หรือไม่ (นำเข้าซ้ำ/จับคู่ผิดใบ) — ถอดการจับคู่ในรอบที่ผิด "
+                    + "หรือยกเลิกรอบโอนที่ซ้ำ · ถ้าเป็นการผ่อนชำระจริงหลายรอบ ยอดรวมทุกรอบต้องไม่เกินยอดค้างของใบ";
+            }
             if (why != null)
-                Add(SettlementPlanIssueCode.ReceiptDocumentNotPayable, true, why,
-                    "จับคู่บรรทัดขายกับใบที่ถูกต้อง · ถ้าใบนั้นรับชำระทางอื่นไปแล้ว ให้ผูกบรรทัดกับการรับชำระนั้นแทน (ระบบจะไม่รับชำระซ้ำ)",
-                    r.LineIds, r.Amount);
+                Add(SettlementPlanIssueCode.ReceiptDocumentNotPayable, true, why, next, r.LineIds, r.Amount);
         }
 
         // ── บรรทัดที่นับว่าอยู่ในผังพักแล้ว (R-A1) ──
@@ -413,8 +457,8 @@ public static class SettlementPostingGate
                 "ใบขายสรุปรายวันออกให้ \"ลูกค้าเงินสด\" (ไม่มีชื่อ/ที่อยู่ผู้ซื้อ) จึงเป็นใบกำกับภาษีเต็มรูป (§86/4) ไม่ได้ และบริษัทยังออกใบกำกับภาษีอย่างย่อ "
                 + "(§86/6) ไม่ได้ — ถ้าออกไป หัวจะถูกลดเป็น \"ใบเสร็จรับเงิน\" (เลขชุด REC) ทั้งที่ภาษีขายเข้า ภ.พ.30 · "
                 + AbbreviatedTaxInvoiceRule.Message(f.SummaryAbbreviatedBlock),
-                "ถ้ากิจการขายปลีก/ให้บริการลักษณะขายปลีกผ่านแพลตฟอร์ม ให้ติ๊ก \"ประกอบกิจการขายปลีก\" ในหน้าข้อมูลบริษัทแล้วดูตัวอย่างใหม่ · "
-                + "ไม่ใช่ ⇒ ออกใบกำกับภาษีเต็มรูปรายออเดอร์ (ชื่อ/ที่อยู่ผู้ซื้อ) แล้วจับคู่บรรทัดขายกับใบนั้น (ระบบรับชำระเข้าผังพักแทนการออกใบสรุป)",
+                // คำตัดสินรอบ 200 ข้อ 16 (O-3): คงบล็อก — ระบบไม่ประกาศแทนผู้ใช้ว่าเป็นกิจการขายปลีก · ทางไปต่อชัด
+                SummaryRetailNextStep,
                 plan.SummarySales.SelectMany(s => s.LineIds).ToList(), plan.SummarySales.Sum(s => s.Gross));
 
         // ── การรับชำระที่ค้างจากครั้งก่อนไม่ตรงแผน (C-4) · ของกำพร้าจากรอบโอนที่ยกเลิกแล้ว (C-1(d)) ──
@@ -439,8 +483,57 @@ public static class SettlementPostingGate
         foreach (var d in f.DuplicateSales)
             Add(SettlementPlanIssueCode.SummarySaleDuplicate, true, d.Evidence,
                 "ถ้าเป็นออเดอร์ชุดเดียวกัน (มีเอกสารขายแล้ว) ให้จับคู่บรรทัดกับเอกสารนั้นแทน — ระบบจะรับชำระเข้าผังพักให้ ไม่ออกใบสรุปซ้ำ · "
-                + "ถ้าเป็นออเดอร์คนละชุดจริง ให้ออกเอกสารขายของวันนั้นเองแล้วจับคู่บรรทัด (1 วัน/แพลตฟอร์ม มีใบสรุปได้ใบเดียว — DECISIONS ข้อ 2)",
+                + "ถ้าเป็นเอกสารของรอบโอนที่ยกเลิกแล้ว ให้ยกเลิกเอกสารนั้นก่อน (หรือจับคู่บรรทัดกับเอกสารนั้นถ้าเป็นยอดขายชุดเดียวกัน)",
                 d.LineIds, null);
+
+        // ── ใบสรุปเพิ่มเติมของวันเดียวกัน (คำตัดสินรอบ 200 ข้อ 15 · review198-C C-9) — แทนการบล็อก SummarySaleDuplicate ──
+        foreach (var sup in f.Supplementary ?? Array.Empty<SettlementSupplementarySummary>())
+        {
+            var gross = plan.SummarySales.Where(x => x.Date == sup.Day).Sum(x => x.Gross);
+            if (!sup.FirstIssued)
+                Add(SettlementPlanIssueCode.SummarySaleFirstNotIssued, true,
+                    $"วันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} มีใบขายสรุปจากรอบโอน {sup.FirstPayoutRef} แล้วแต่ยังไม่ออกเลข (ลงบัญชีรอบนั้นค้างครึ่งทาง) — "
+                    + "ใบสรุปเพิ่มเติมของรอบนี้ต้องอ้างเลขใบแรกของวัน",
+                    $"กด \"ลงบัญชี\" ที่รอบโอน {sup.FirstPayoutRef} ให้เสร็จก่อน (ระบบทำต่อจากขั้นที่ค้าง) แล้วดูตัวอย่างรอบนี้ใหม่",
+                    sup.LineIds, gross);
+            else
+                Add(SettlementPlanIssueCode.SummarySaleSupplementary, false,
+                    $"ใบขายสรุปวันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} ยอด {gross:N2} จะออกเป็นใบสรุปเพิ่มเติม (เลขใหม่ · อ้างใบแรกของวัน {sup.FirstNumber} "
+                    + $"จากรอบโอน {sup.FirstPayoutRef} · จุดความรับผิดวันเดิม) — แพลตฟอร์มโอนออเดอร์ของวันเดียวกันแยกหลายรอบ",
+                    "ลงบัญชีได้ · ตรวจว่าออเดอร์ในรอบนี้ไม่ใช่ชุดเดียวกับใบแรก (เมื่อไฟล์มีเลขออเดอร์ ระบบกันออเดอร์ที่ลงแล้ว/มีเอกสารของตัวเองให้แล้ว)",
+                    sup.LineIds, gross);
+        }
+
+        // ── ใบสรุปไม่ตัดสต็อก/ต้นทุนขาย (review198-C C-15) — เดิมบอกแค่ใน InternalNotes ที่ผู้กดลงบัญชีไม่เห็น ──
+        if (plan.SummarySales.Count > 0 && f.Stock is SettlementStockStance.KeepsInventory or SettlementStockStance.Unknown)
+            Add(SettlementPlanIssueCode.SummarySaleNoStock, false,
+                "ใบขายสรุปรายวันไม่ตัดสต็อกและไม่ลงต้นทุนขาย (ไฟล์รอบโอนไม่มีรายการสินค้า) — "
+                + (f.Stock == SettlementStockStance.KeepsInventory
+                    ? "กิจการนี้ถือสต็อก ⇒ สินค้าคงเหลือจะสูงเกินและต้นทุนขายต่ำเกินเท่ามูลค่าของที่ขายผ่านแพลตฟอร์ม"
+                    : "ยังไม่ได้ระบุประเภทธุรกิจของบริษัท ระบบจึงไม่รู้ว่ากิจการถือสต็อกหรือไม่"),
+                f.Stock == SettlementStockStance.KeepsInventory
+                    ? "ลงบัญชีได้ · ตัดสต็อกของที่ขายผ่านแพลตฟอร์มด้วยการนำเข้าคำสั่งซื้อรายออเดอร์ (มีรายการสินค้า) หรือบันทึกเบิกสินค้า/ต้นทุนขายตามรายงานยอดขายของแพลตฟอร์ม"
+                    : "ลงบัญชีได้ · ตั้งประเภทธุรกิจที่หน้าตั้งค่า → ข้อมูลบริษัท (กิจการบริการ ⇒ คำเตือนนี้หายไป · กิจการถือสต็อก ⇒ ตัดสต็อกตามรายงานยอดขาย)",
+                plan.SummarySales.SelectMany(s => s.LineIds).ToList(), plan.SummarySales.Sum(s => s.Gross));
+
+        // ── ยอด wallet ต่อเนื่องข้ามรอบโอน (review198-A R-A12) — สมการภายในรอบเป็นจริงได้ตามนิยามถ้ายอดยกมาถูกกรอกให้พอดี ──
+        if (f.Wallet is { } w)
+        {
+            if (w.Kind == SettlementWalletContinuityKind.Gap && w.Previous is { } prev)
+                Add(SettlementPlanIssueCode.WalletContinuityGap, true,
+                    $"ยอด wallet ต้นรอบ {w.Opening:N2} ไม่เท่ายอดปลายรอบของรอบโอนก่อนหน้า {prev.PayoutRef} "
+                    + $"({ThaiDate.ToThaiDisplayString(prev.PayoutDate)}) {prev.ClosingWalletBalance:N2} — ต่างกัน {w.Difference:N2} บาท "
+                    + "· ลงบัญชีทั้งที่ยอดไม่ต่อเนื่อง = ผังพักคลาดจาก wallet จริงถาวร",
+                    "ตรวจกับสเตทเมนต์ของผู้ให้บริการ: ถ้ามีรอบโอนที่ยังไม่ได้นำเข้าระหว่างสองรอบนี้ ให้นำเข้าก่อน · ถ้ายอดต้นรอบที่กรอกผิด ให้ยกเลิกรอบโอนนี้แล้วนำเข้าใหม่ "
+                    + "(ยอดต้นรอบ = ยอดปลายรอบก่อน) · ถ้ามีรายการที่แพลตฟอร์มหัก/เติมนอกรอบโอนจริง ให้นำเข้าใหม่ด้วยยอดต้นรอบ = ยอดปลายรอบก่อน "
+                    + "แล้วใส่รายการนั้นเป็นบรรทัด \"ปรับปรุงอื่น\" พร้อมเหตุผล (ผังพักจะตรง wallet จริง)",
+                    null, w.Difference);
+            else if (w.Kind == SettlementWalletContinuityKind.NoPreviousBatch)
+                Add(SettlementPlanIssueCode.WalletContinuityUnknown, false,
+                    $"รอบโอนแรกของช่องทางนี้ในระบบ — ยอด wallet ต้นรอบ {w.Opening:N2} เทียบกับรอบก่อนไม่ได้",
+                    "ตรวจยอดต้นรอบกับสเตทเมนต์ของผู้ให้บริการก่อนลงบัญชี (รอบถัดไประบบจะเทียบยอดต้นรอบกับยอดปลายรอบนี้ให้เอง)",
+                    null, w.Opening);
+        }
 
         // ── แยกหน้าที่ (คำตัดสินเจ้าของข้อ 7): ผู้นำเข้ารอบโอน = ผู้ทำ · ผู้กดลงบัญชี = ผู้อนุมัติเอกสารที่ระบบออกให้ ──
         if (f.SodSelfApprovalBlocked && (plan.FeeDocuments.Count > 0 || plan.SummarySales.Count > 0))
@@ -551,10 +644,15 @@ public static class SettlementDocumentBuilder
             IsForeignService: foreign);
     }
 
+    /// <param name="supplementOf">เลขใบขายสรุปใบแรกของวันเดียวกัน (จากรอบโอนอื่น) — มีค่า = ใบนี้เป็นใบสรุปเพิ่มเติม (คำตัดสินรอบ 200 ข้อ 15):
+    /// บรรทัด/หมายเหตุบนใบอ้างใบแรก · วันที่และจุดความรับผิดยังเป็นวันขายเดิม</param>
     public static CreateDocumentRequest SummaryDocument(SettlementSummarySalePlan s, bool vatRegistered, Guid walkInContactId,
-        Guid clearingAccountId, string payoutRef, string channelName)
+        Guid clearingAccountId, string payoutRef, string channelName, string? supplementOf = null)
     {
-        var desc = $"ยอดขายผ่าน {channelName} ประจำวันที่ {ThaiDate.ToThaiDisplayString(s.Date)} ({s.LineIds.Count} รายการ)"
+        var supplement = string.IsNullOrWhiteSpace(supplementOf) ? null : supplementOf.Trim();
+        var desc = (supplement is null ? "ยอดขายผ่าน" : "ยอดขายเพิ่มเติมผ่าน")
+            + $" {channelName} ประจำวันที่ {ThaiDate.ToThaiDisplayString(s.Date)} ({s.LineIds.Count} รายการ)"
+            + (supplement is null ? "" : $" · ใบสรุปเพิ่มเติมของวันเดียวกัน ต่อจากใบ {supplement}")
             + (s.SellerVoucher != 0m ? $" · หักส่วนลดร้าน {-s.SellerVoucher:N2}" : "")
             + (s.PlatformVoucher != 0m ? $" · รวมโค้ดส่วนลดที่แพลตฟอร์มออกเงิน {s.PlatformVoucher:N2}" : "");
         var line = s.Vat > 0m
@@ -563,7 +661,8 @@ public static class SettlementDocumentBuilder
         return new CreateDocumentRequest(
             vatRegistered ? DocumentType.TaxInvoice : DocumentType.Receipt,
             s.Date, null, walkInContactId, payoutRef,
-            $"สรุปยอดขายผ่าน {channelName} ประจำวันที่ {ThaiDate.ToThaiDisplayString(s.Date)} · รอบโอน {payoutRef}",
+            $"สรุปยอดขายผ่าน {channelName} ประจำวันที่ {ThaiDate.ToThaiDisplayString(s.Date)} · รอบโอน {payoutRef}"
+                + (supplement is null ? "" : $" · ใบสรุปเพิ่มเติม (ใบแรกของวัน: {supplement})"),
             new List<DocumentLineRequest> { line },
             IssuedAsCashReceipt: vatRegistered ? true : null,
             PaymentAccountId: clearingAccountId,
@@ -582,12 +681,15 @@ public static class SettlementDocumentBuilder
                 : "");
     }
 
-    /// <summary>รับชำระใบขายที่จับคู่ได้ — เงินเข้า = ผังพัก · WHT/ใบเสร็จตามค่าเดิมของเส้นรับชำระ · ป้ายของรอบโอนใน Notes (บันทึกพร้อมการรับชำระ)</summary>
+    /// <summary>รับชำระใบขายที่จับคู่ได้ — เงินเข้า = ผังพัก · ใบเสร็จตามค่าเดิมของเส้นรับชำระ · ป้ายของรอบโอนใน Notes (บันทึกพร้อมการรับชำระ)
+    /// <para>review198-C C-12: <c>WithholdingTaxAmount = 0</c> <b>ส่งชัด</b> — แพลตฟอร์มโอนยอดขายเต็ม ไม่ได้หัก ณ ที่จ่ายแทนผู้ซื้อ · ส่ง null =
+    /// <c>CreatePaymentAsync</c> คิด WHT ตามสัดส่วน/งวดสุดท้ายของใบที่ตั้ง WHT ลูกค้าไว้ ⇒ ขา WHT ที่ไม่มีใครหักจริง</para></summary>
     public static CreatePaymentRequest ReceiptPayment(SettlementReceiptPlan r, Guid batchId, Guid clearingAccountId,
         DateTime payoutDay, string payoutRef, string channelName)
         => new(r.DocumentId, payoutDay, r.Amount, PaymentMethod.EWallet, payoutRef, null,
             $"{SettlementPostingKeys.PaymentMarker(batchId)} รับเงินผ่าน {channelName} รอบโอน {payoutRef} (เงินเข้าผังพักของแพลตฟอร์ม — ยังไม่เข้าธนาคาร)",
-            OverridePaymentAccountId: clearingAccountId);
+            OverridePaymentAccountId: clearingAccountId,
+            WithholdingTaxAmount: 0m);
 
     /// <summary>50 ทวิ ของ WHT ที่ JE รอบโอนตั้ง 21917 (W2 หักเองแล้วแพลตฟอร์มคืน · W3 ออกภาษีแทน) — null = ไม่ต้องออก
     /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0)</summary>

@@ -68,13 +68,14 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   or 0% under a DTA with a CoR (report-S1 §5).
 - Fix: have `Plan` block this combination with a next step ("ภ.ง.ด.54/DTA ยังไม่รองรับ — ปิดโหมดหัก หรือบันทึกเป็นเอกสารซื้อต่างประเทศ"), or have the settings page refuse to save it.
 
-### R-A6 · PLAUSIBLE · P2: summary-sale date uses UTC `.Date`, not the Thai calendar date
+### ✅ 84d47dda R-A6 · PLAUSIBLE · P2: summary-sale date uses UTC `.Date`, not the Thai calendar date
 - `SettlementBatchMath.cs:290-291` groups by `(l.TxnDate ?? batch.PayoutDate).Date`. The repo convention for turning an instant into a day is `ThaiDate.CalendarDateUtc`.
 - If adapter B stores TxnDate as a real instant (for example a Shopee timestamp of 2026-10-01 03:00 +07 = 2026-09-30T20:00Z), the summary sale is dated **30 Sep**.
   That moves the tax invoice and the VAT month (ภ.พ.30) into September. The tests only use midnight UTC, so they cannot catch this.
 - Fix: `GroupBy(l => ThaiDate.CalendarDateUtc(l.TxnDate ?? batch.PayoutDate))`, plus a test at 00:00–07:00 Bangkok time around month end.
 
-### R-A7 · PLAUSIBLE · P2: summary sales are created late with no check against the §87 3-day window or a VAT month already filed
+### ✅ 84d47dda R-A7 · PLAUSIBLE · P2: summary sales are created late with no check against the §87 3-day window or a VAT month already filed
+> รอบ 200 ทีม T ตรวจที่ HEAD: `SummarySaleLate` (เตือน · 3 วันทำการ จ.–ศ. ไม่หักวันหยุด = เตือนเร็วกว่าจริง) + `TaxPeriodFiled` (บล็อก · `TaxFilingLockPolicy.DeclaredOrFiledStatuses`) ใน `SettlementPostingGate` · ใบสรุปวันเดียวกัน = ใบสรุปเพิ่มเติม (คำตัดสินรอบ 200 ข้อ 15)
 - The summary sale is created when the batch is posted, which is after the escrow release (often 7–15 days after delivery). It is dated from TxnDate, which is the date of the wallet
   entry, not the delivery date that D2 sets as the tax point. `Plan` has no issue for "summary date is older than 3 business days" or "that VAT month was already filed".
 - Numbers: delivered 28 Sep, released 8 Oct, payout imported 20 Oct. A summary invoice dated 28 Sep (or 8 Oct) is created after the September ภ.พ.30 was filed on 15 Oct (e-Filing).
@@ -85,7 +86,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: add an issue code `SummarySaleLate` (warn) and `SummarySaleInFiledVatPeriod` (block with a next step that points to the order-import path / amended return),
   using `TaxFilingLockPolicy`. Have the poster look up existing summaries per (channel, date).
 
-### R-A8 · PLAUSIBLE · P2: a channel in foreign currency with a batch left at the default THB passes the FX block
+### ✅ 84d47dda R-A8 · PLAUSIBLE · P2: a channel in foreign currency with a batch left at the default THB passes the FX block
 - `SettlementBatchMath.cs:178` checks only `batch.Currency`. The entity default is `"THB"` (`Settlement.cs:63`), and `channel.Currency` (`:47`) is never compared.
 - Numbers: a Stripe USD channel whose adapter does not set batch.Currency. A USD 1,000.00 payout is posted as Dr bank **1,000 THB**.
 - Fix: block when `channel.Currency != "THB"` or `channel.Currency != batch.Currency`.
@@ -105,13 +106,15 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   so the 3.27 is never matched and after 6 months it has to be written off (§82/3).
 - Fix: have the subsidy net against ShippingFeeCharged in the fee document (a positive line in the same group), or split VAT in the same mode. Add a test.
 
-### R-A11 · PLAUSIBLE · P3: the plan's VAT figures do not equal what `DocumentService` computes itself about 6.5% of the time
+### ✅ 84d47dda R-A11 · PLAUSIBLE · P3: the plan's VAT figures do not equal what `DocumentService` computes itself about 6.5% of the time
+> รอบ 200 ทีม T: builder ส่ง VAT ของแผนตรง (`VatAmountOverride`) + ผู้ลงบัญชีตรวจยอดหลังสร้าง (`SETTLEMENT-POST-AMOUNT`) · เพิ่มเทสต์ round-trip ผ่าน `DocumentService.PreviewTotals` 30,000 ยอด (`SettlementRound200TimeTaxTests.RA11_…`)
 - Brute force over 0.01–2,000.00 THB: `gross − R(gross×100/107)` differs from `R(net×7%)` for **13,084 of 200,000 amounts** (for example fee 1.15: plan VAT 0.08, exclusive ×7% gives 0.07).
 - If team C builds the fee document or summary sale from `Expense/Net` as exclusive prices and lets DocumentService compute VAT, the document total will not equal `Deducted`
   (a 0.01 AP residue or overpayment remains in the clearing account). Groups with explicit VAT in the file also cannot be reproduced by inclusive pricing.
 - Fix: in the plan's contract, require the poster to use inclusive pricing, one line per `SettlementFeeDocumentLine`, **or** pass the plan's VAT figure explicitly. Add a round-trip test once C exists.
 
-### R-A12 · PLAUSIBLE · P3: the balance equation turns into a tautology when the file has no wallet balance
+### ✅ <pending> R-A12 · PLAUSIBLE · P3: the balance equation turns into a tautology when the file has no wallet balance
+> รอบ 200 ทีม T: `Helpers/SettlementWalletContinuity` — ต้นรอบเทียบปลายรอบของรอบก่อนในช่องทางเดียวกัน ⇒ บล็อก `WalletContinuityGap` · รอบแรก ⇒ เตือน `WalletContinuityUnknown`
 - `Plan` never checks `OpeningWalletBalance` against the previous batch's `ClosingWalletBalance`, or against the GL balance of the clearing account. If the adapter derives `Closing − Opening = Σ lines − NetPayout` itself,
   the gate always passes, which is exactly what F2 #6 warns against.
 - Fix: have the poster (C) check the continuity Opening(n) = Closing(n−1) of the same channel, or = clearing account balance at PayoutDate−1, and block with the difference.

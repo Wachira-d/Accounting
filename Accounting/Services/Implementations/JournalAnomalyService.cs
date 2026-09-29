@@ -198,6 +198,24 @@ public class JournalAnomalyService
                 lastReversed.EntryDate.Date));
         }
 
+        // ── 4) JE เก่าที่ลงขาเงิน/ลูกหนี้ผิดหมวด (รอบ 198 I-1/P-1) — รายงานให้นักบัญชีตรวจ ไม่แก้อัตโนมัติ (คำตัดสินรอบ 200 ข้อ 20) ──
+        // ใช้ JE ชุดเดียวกับข้อ 1 (โพสต์แล้ว · ในช่วงที่เลือก) · ใบที่ถูกกลับรายการแล้ว = นักบัญชีจัดการแล้ว ไม่ฟ้อง · 1 ข้อต่อ JE ต่อกฎ
+        foreach (var j in journals.Where(j => j.ReversedByEntryId == null && j.OriginalEntryId == null))
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var l in j.Lines.Where(l => l.Account != null))
+            {
+                var isDebit = l.DebitAmount > 0m;
+                if (Accounting.Helpers.LegacyMoneyLegAudit.Classify(j.Description, l.Description, l.Account.AccountCode, isDebit) is not { } f
+                    || !seen.Add(f.RuleCode))
+                    continue;
+                anomalies.Add(new Anomaly(
+                    f.RuleCode, "Warning",
+                    $"{f.Message} · ผัง {l.Account.AccountCode} {l.Account.AccountName} ยอด {(isDebit ? l.DebitAmount : l.CreditAmount):N2}",
+                    f.Fix, j.SourceDocumentId, null, j.Id, j.EntryNumber, j.EntryDate.Date));
+            }
+        }
+
         return new ScanResult(from, to, journals.Count, docs.Count,
             anomalies
                 .OrderBy(a => a.Severity == "Error" ? 0 : 1)

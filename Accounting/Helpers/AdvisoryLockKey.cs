@@ -90,6 +90,11 @@ public static class AdvisoryLockKey
     /// (unique index เป็นตาข่ายชั้นสุดท้าย แต่ชนแล้วทั้งไฟล์ล้มด้วยข้อความของฐานข้อมูล)</summary>
     public const string SettlementImport = "settlement-import";
 
+    /// <summary>สร้างผู้ติดต่อกลาง "ลูกค้าเงินสด" ของบริษัท (<c>WalkInCustomerContact</c>) — part = "" · ตรวจ-แล้ว-สร้างเป็น read-modify-write:
+    /// ลงบัญชีรอบโอนสองช่องทางพร้อมกัน (คนละล็อกช่องทาง) หรือ integration = ได้สองแถว แล้ว <c>FirstOrDefault(IsWalkInCustomer)</c>
+    /// หยิบแถวไหนก็ได้ (review198-C C-13)</summary>
+    public const string WalkInContact = "walk-in-contact";
+
     /// <summary>งานเทรน local model จาก feedback (กฎเหล็ก #1 ขั้น DISTILL) —
     /// part = "global" · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant
     ///

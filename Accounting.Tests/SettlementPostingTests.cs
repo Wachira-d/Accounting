@@ -479,7 +479,7 @@ public class SettlementPostingTests
         Assert.Equal(1000m, req.Amount);
         Assert.Equal(Clearing, req.OverridePaymentAccountId);
         Assert.Contains(SettlementPostingKeys.PaymentMarker(batchId), req.Notes);
-        Assert.Null(req.WithholdingTaxAmount);
+        Assert.Equal(0m, req.WithholdingTaxAmount);   // review198-C C-12 (รอบ 200): แพลตฟอร์มไม่หัก — ส่ง 0 ชัด ไม่ให้เส้นรับชำระคิด WHT ตามสัดส่วน
     }
 
     // ═════════════ จับคู่ธนาคาร: ต้องมีรายการเดินบัญชีจริง (R1) ═════════════

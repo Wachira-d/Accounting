@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **363 ไฟล์ · 3,458 `[Fact]` + 523 `[Theory]` (2,302 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **364 ไฟล์ · 3,471 `[Fact]` + 523 `[Theory]` (2,302 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4783,6 +4783,29 @@ e-Tax ตอบรับ ⇒ เตือน) · ชนิดของทุก�
 | SPS5-04 | ใบขายสรุปวันที่ 30 ก.ย. แต่จุดความรับผิด (`TaxPointDate`) 1 ต.ค. · ภ.พ.30 ต.ค. ประกาศว่ายื่น → ยกเลิกการลงบัญชีรอบโอน | ปฏิเสธ "เดือน 10/2569" · ภ.พ.30 ก.ย. อย่างเดียว ⇒ ไม่ปฏิเสธ (S4-8 — เดือนเดียวกับรายงาน) |
 | SPS5-05 | รอบโอนรับชำระใบขาย แล้วใบเสร็จอัตโนมัติคู่การรับชำระส่ง e-Tax ได้รับตอบรับ → ยกเลิกการลงบัญชี | ปฏิเสธทั้งรอบ ระบุเลขใบเสร็จ + "e-Tax … Accepted" · ยังไม่ตอบรับ ⇒ ยกเลิกได้ (S4-8) |
 | SPS5-06 | ขายด่วนขณะถูกจำกัดอัตรา (429) หรือรายการบริษัทยังโหลดไม่เสร็จ (403) ตอนอนุมัติ | แบนเนอร์ "บันทึกเป็นร่างแล้ว — อนุมัติไม่สำเร็จ" + ข้อความ · ไม่ขึ้น ✅ (S4-2) |
+
+### รอบ 200 ทีม T — เวลา/ภาษีของรอบโอน settlement (R-A11/R-A12 · R-B13 · C-11..C-17 · C-20 · คำตัดสินข้อ 15/16/20)
+
+เทสต์อัตโนมัติ: `SettlementRound200TimeTaxTests` (สองทิศทุกข้อ · `SettlementWalletContinuity` · `SettlementCrossBatchReceipts` · `SettlementSummarySupplement` ·
+`SettlementStock` · `LegacyMoneyLegAudit` · round-trip ใบค่าธรรมเนียม/ใบสรุป → `DocumentService.PreviewTotals` 30,000 ยอด = ยอดของแผน) ·
+`required_call_site_check` (+11 กติกา: BuildGateAsync · WalletContinuityAsync · PendingReceiptsElsewhereAsync · DuplicateSalesAsync · EnsureSummaryDocumentAsync ·
+CommitPostedAsync/MatchCoreAsync/ResolveChargebackCoreAsync (C-20) · WalkInCustomerContact.GetOrCreateAsync (C-13) · JournalAnomalyService.ScanAsync) ·
+เรพไม่มีเทสต์ที่มี DbContext ⇒ ST200 ด้านล่างต้องรันบน staging
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| ST200-01 | รอบโอน PO-1 ปลายรอบ −100 (ติดลบยกไป) · นำเข้า PO-2 ด้วยยอดต้นรอบ 0 (บรรทัดลงตัวกับยอดโอน) → พรีวิว | **บล็อก** `WalletContinuityGap` "ต่างกัน 100.00" อ้าง PO-1 + ทางไปต่อ (นำเข้ารอบที่ขาด/นำเข้าใหม่ด้วยยอดต้นรอบที่ถูก) · ยอดต้นรอบ −100 ⇒ ผ่าน · รอบแรกของช่องทาง ⇒ ℹ️ เตือน (R-A12) |
+| ST200-02 | ใบกำกับ 1,000 · รอบโอน A (ยังไม่ลง) และรอบ B จับคู่ใบนี้คนละ 1,000 → พรีวิว B | **บล็อก** `ReceiptDocumentNotPayable` ระบุรอบ A + "รับชำระเกิน" · ผ่อน 600 + 400 ⇒ ผ่านทั้งคู่ · A ลงค้างครึ่งทาง (รับชำระแล้ว) ⇒ ไม่นับซ้ำ (R-B13) |
+| ST200-03 | ช่องทางหักภาษีแทน (W3) ผู้ติดต่อแพลตฟอร์มเป็นบุคคลธรรมดา · ภ.ง.ด.3 เดือนวันเงินเข้า ประกาศว่ายื่น | **บล็อก** `TaxPeriodFiled` ข้อความ "ภ.ง.ด.3" · ภ.ง.ด.53 ยื่นแล้วอย่างเดียว ⇒ ไม่บล็อก (C-11 — เดิมกลับกัน) |
+| ST200-04 | ช่องทางต่างประเทศ (ภ.พ.36) · ภ.พ.36 เดือนวันเงินเข้ายื่นแล้ว | **บล็อก** `TaxPeriodFiled` "ภ.พ.36" · เดือนอื่น ⇒ ไม่บล็อก (C-11) |
+| ST200-05 | ใบกำกับที่ตั้ง WHT ลูกค้า 3% จับคู่กับบรรทัดขายของรอบโอน → ลงบัญชี | การรับชำระ WHT = 0 (ไม่มีขา WHT · ไม่มี 50 ทวิ ลูกค้า) — ยอดค้างที่เหลือเท่า WHT ให้คนตัดสิน (C-12) |
+| ST200-06 | ลงบัญชีรอบโอนสองช่องทางพร้อมกันในบริษัทที่ยังไม่มี "ลูกค้าเงินสด" | ได้ผู้ติดต่อ `IsWalkInCustomer` แถวเดียว (C-13) |
+| ST200-07 | บริษัทประเภท "ซื้อมาขายไป" / ยังไม่ระบุประเภท / บริการ · รอบโอนมีใบสรุป | ℹ️ `SummarySaleNoStock` (สองแบบแรก · ทางไปต่อต่างกัน) · บริการ ⇒ ไม่เตือน (C-15) |
+| ST200-08 | ค่าคอม TxnDate 28 ก.ย. · เงินเข้า 3 ต.ค. | ℹ️ `FeeCutoffCrossesMonth` ระบุ 09/2569 → 10/2569 + ยอด · ลงบัญชีได้ · ตี 1 วันที่ 1 ต.ค. เวลาไทย ⇒ ไม่เตือน (C-16) |
+| ST200-09 | ออเดอร์ SP-5 ขายและคืนเงินในรอบเดียวกัน (ไม่มีใบขาย) | บล็อก `RefundUnmatched` ทางไปต่อ "ออกเอกสารขายของออเดอร์ SP-5 … จับคู่ทั้งบรรทัดขายและคืนเงิน" (C-17 — เดิม "เลือกใบขายเดิม" ที่ทำไม่ได้) |
+| ST200-10 | payout PO-1 ออกใบสรุป 21 ก.ย. แล้ว · PO-2 มีออเดอร์ 21 ก.ย. ชุดอื่น → ลงบัญชี PO-2 | ลงได้ · ℹ️ `SummarySaleSupplementary` · ใบใหม่เลขใหม่ วันที่ 21 ก.ย. บรรทัด "ยอดขายเพิ่มเติม … ต่อจากใบ {เลขใบแรก}" · ใบแรกยังเป็นร่าง ⇒ บล็อก `SummarySaleFirstNotIssued` · ออเดอร์เดียวกับ PO-1 ⇒ ยังบล็อก `SummarySaleDuplicate` (ข้อ 15) |
+| ST200-11 | บริษัทจด VAT ไม่ติ๊กกิจการขายปลีก · รอบโอนมีใบสรุป | บล็อก `SummaryTaxInvoiceNotAllowed` ทางไปต่อ "ติ๊ก ประกอบกิจการขายปลีก … ไม่ต้องขอ ภ.พ.06 … หรือใบเต็มรูปรายออเดอร์" (ข้อ 16) |
+| ST200-12 | บริษัทที่มี JE รับชำระ integration เก่าลง 11200 / POS QR ลง 11200 → หน้าเครื่องมือนักบัญชี งวดนั้น | การ์ด 🩺 แสดง 🟡 `JE-LEGACY-MONEY-112` / `JE-LEGACY-POS-MONEY` รายใบ + ทางไปต่อ "ให้นักบัญชีตรวจ — ระบบไม่แก้อัตโนมัติ" · JE ที่กลับรายการแล้ว/ลงผังถูก ⇒ ไม่ขึ้น (ข้อ 20) |
 
 ### ฝ่ายค้านรอบ 198 ทีม D2 — review198-D (D-01..D-11 · D-P1 · D-P2 · D-P4)
 
