@@ -1,7 +1,7 @@
 # รอบ 200 ทีม IF — แก้ผลฝ่ายค้านทีม I (ตัวอ่านไฟล์ settlement)
 
 แหล่ง: `review200-I.md` (CONFIRMED I-1…I-6 · PLAUSIBLE I-7…I-11) · `DECISIONS.md` ข้อ 12 (ห้าม adapter เฉพาะเจ้า) · ข้อ 39 (แถวไม่มีเลขในไฟล์แบบกว้าง) ·
-**ยังไม่ได้คอมไพล์** (env ไม่มี .NET SDK) · commit `<pending>` (ไม่ push) · ไม่แตะเส้นลงบัญชี/ModeMismatch (ทีม SF) และ `ConfirmedRangeUtc` (ทีม GF)
+**ยังไม่ได้คอมไพล์** (env ไม่มี .NET SDK) · commit `e1e9f900` (ไม่ push) · ไม่แตะเส้นลงบัญชี/ModeMismatch (ทีม SF) และ `ConfirmedRangeUtc` (ทีม GF)
 
 ทุกข้อ verify ที่ HEAD `c26138d8` ก่อนแก้ · ตัวตัดสินใหม่เป็น pure helper · เทสต์สองทิศใน `Accounting.Tests/SettlementReview200IfTests.cs`
 

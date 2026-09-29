@@ -3844,4 +3844,4 @@ _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม IF — แก้�
   พร้อมยอดจาก `LongAmount`/`WideAmounts` ตัวเดียวกับแถวจริง · **I-5** `SettlementColumnMap.CommaIsThousands` + ช่องติ๊กบนหน้าจับคู่ · ข้อความ `decimal-comma` ทางหลัก = ติ๊ก/.xlsx ·
   **I-6** `id-column-empty` · **I-8** `SplitRevisedFilePool` หักจำนวน + `RevisedScope` (บรรทัดจากไฟล์ฉบับแก้สืบลายนิ้วมือไฟล์รุ่นก่อน) · **I-9** ICT · (GMT+07:00) · "น" · 13:05 PM · 24:00 ·
   **I-10** `date-order-conflict` (เขตเวลาที่ตั้งยังชนะหัวคอลัมน์) · **I-11** กรองคำนำหน้าคีย์ใน SQL + "(ลงบัญชีแล้ว)" + `WhatToDo` ตัวเดียว
-- เทสต์ `SettlementReview200IfTests` + ปรับ `SettlementReview200ReaderTests` (IsSummaryRow · Warnings) / `SettlementImportTests` (แถว "รวม" = คำเตือน) · required_call_site ปรับ/เพิ่มแถว — commit <pending>)_
+- เทสต์ `SettlementReview200IfTests` + ปรับ `SettlementReview200ReaderTests` (IsSummaryRow · Warnings) / `SettlementImportTests` (แถว "รวม" = คำเตือน) · required_call_site ปรับ/เพิ่มแถว — commit e1e9f900)_
