@@ -3732,4 +3732,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V1 — ย�
 (แถบบนหน้าเอกสาร + งานค้าง `GET document/etax-cancel-required`) · ใบเสร็จที่ยกเลิกได้ยกเลิก e-Tax ที่ค้างตาม · ด่านยกเลิกการลงบัญชีเห็นใบเสร็จ Submitted
 (`SettlementUnpostPayment.ReceiptEtaxSubmitted`) · `VoidPaymentAsync` คืน `PaymentVoidResult`
 (3) S3-7 (ข้อ 17) ยืนยันว่าแก้แล้วที่ `c3116a4d` (`SettlementUnpostPayment.OutputVatDueAt` ใน `SettlementUnpostGate.Evaluate` + เทสต์ S4) — ล็อกจุดเรียกเพิ่ม
-· เทสต์ `VoidReissueR200Tests` · จุดเรียกล็อกใน `tools/required_call_site_check.py` — commit <pending>)_
+· เทสต์ `VoidReissueR200Tests` · จุดเรียกล็อกใน `tools/required_call_site_check.py` — commit d2335b38)_

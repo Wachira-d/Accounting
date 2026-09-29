@@ -55,4 +55,4 @@
 - **Q5** `CmsCommerceService.UpdateOrderStatusAsync` ไม่ `ChangeTracker.Clear()` หลัง `VoidDocumentAsync` ล้มกลางธุรกรรม (ของเดิม) — ถ้าล้มหลังแก้ entity แล้ว การ SaveChanges ของออเดอร์อาจบันทึกของค้าง · ไม่แก้รอบนี้ (ต้องโหลดออเดอร์ใหม่หลัง Clear — นอกขอบเขต)
 
 ## คอมมิต
-- โค้ด + เอกสาร: `<pending>` (เติม sha ในคอมมิตตามหลัง — ห้าม amend)
+- โค้ด + เอกสาร: `d2335b38` · เติม sha: คอมมิตตามหลัง (ห้าม amend)
