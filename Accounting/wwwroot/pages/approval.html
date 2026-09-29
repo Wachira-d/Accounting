@@ -97,25 +97,19 @@
         <div class="modal-body">
           <input type="hidden" id="ruleId">
           <div class="form-group"><label class="form-label">ชื่อกฎ *</label><input type="text" class="form-input" id="ruleName"></div>
-          <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
-            <select class="form-select" id="ruleEntityType">
-              <option value="Document">เอกสาร</option>
-              <option value="Payment">การชำระเงิน</option>
-              <option value="ExpenseClaim">เบิกค่าใช้จ่าย</option>
-              <option value="Journal">รายการบัญชี</option>
-              <option value="PayrollRun">เงินเดือน</option>
-            </select>
+          <div class="form-group"><label class="form-label">ประเภทเอกสาร</label>
+            <select class="form-select" id="ruleDocType"></select>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">จำนวนขั้นต่ำ (บาท)</label><input type="number" class="form-input" id="ruleMinAmount" step="0.01" value="0"></div>
             <div class="form-group"><label class="form-label">จำนวนขั้นสูง (บาท)</label><input type="number" class="form-input" id="ruleMaxAmount" step="0.01"></div>
           </div>
-          <div class="form-group"><label class="form-label">จำนวนขั้นตอนอนุมัติ</label><input type="number" class="form-input" id="ruleSteps" value="1" min="1" max="5"></div>
           <div class="form-group">
-            <label class="form-label">อีเมลผู้อนุมัติ (คั่นด้วย ,)
+            <label class="form-label">ผู้อนุมัติ (ตามลำดับขั้น) *
               <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestApprover()">🤖 ใครเคยอนุมัติแบบนี้</button>
             </label>
-            <input type="text" class="form-input" id="ruleApprovers" placeholder="user1@email.com, user2@email.com">
+            <div id="ruleStepList"></div>
+            <button type="button" class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="Page.addRuleStep()">+ เพิ่มขั้นอนุมัติ</button>
             <div id="approverHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
           </div>
         </div>
@@ -286,12 +280,12 @@
           const items = res.data?.items || res.data || [];
           const tbody = document.getElementById('rulesBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีกฎการอนุมัติ</td></tr>'; return; }
-          const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
+          // รอบ 200 (A07): แสดงตามสัญญาจริงของ ApprovalRuleResponse (name · documentType · steps[].approverName)
           tbody.innerHTML = items.map(r => `<tr>
-            <td class="font-medium">${Layout.esc(r.ruleName || r.name || '-')}</td>
-            <td>${typeMap[r.entityType] || Layout.esc(r.entityType)}</td>
-            <td>${r.minAmount != null ? Layout.money(r.minAmount) + ' - ' + Layout.money(r.maxAmount || 999999999) : 'ทั้งหมด'}</td>
-            <td class="text-xs">${Layout.esc((r.approverEmails || r.approvers || []).join(', ') || '-')}</td>
+            <td class="font-medium">${Layout.esc(r.name || '-')}</td>
+            <td>${r.documentType ? Layout.esc(Layout.docTypeLabel(r.documentType)) : 'ทุกประเภทเอกสาร'}</td>
+            <td>${r.minAmount != null || r.maxAmount != null ? Layout.money(r.minAmount || 0) + ' - ' + (r.maxAmount != null ? Layout.money(r.maxAmount) : 'ไม่จำกัด') : 'ทั้งหมด'}</td>
+            <td class="text-xs">${Layout.esc((r.steps || []).slice().sort((a, b) => a.stepOrder - b.stepOrder).map(s => s.approverName).join(' → ') || '-')}</td>
             <td>${r.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td class="flex gap-1">
               <button class="btn btn-sm btn-ghost" onclick="Page.editRule('${r.id}')" data-i18n="common.edit">แก้ไข</button>
@@ -305,13 +299,47 @@
         document.getElementById('ruleTitle').textContent = 'เพิ่มกฎการอนุมัติ';
         document.getElementById('ruleId').value = '';
         document.getElementById('ruleName').value = '';
-        document.getElementById('ruleEntityType').value = 'Document';
+        this._fillDocTypes('');
         document.getElementById('ruleMinAmount').value = '0';
         document.getElementById('ruleMaxAmount').value = '';
-        document.getElementById('ruleSteps').value = '1';
-        document.getElementById('ruleApprovers').value = '';
         const hint = document.getElementById('approverHint'); if (hint) hint.textContent = '';
+        this._renderSteps([{ approverUserId: '' }]);
         Layout.openModal('ruleModal');
+      },
+      // ── รอบ 200 (A07): ฟอร์มกฎตรงสัญญา CreateApprovalRuleRequest (name · documentType · min/max · steps[{stepOrder, approverUserId}]) ──
+      _fillDocTypes(selected) {
+        document.getElementById('ruleDocType').innerHTML =
+          `<option value="">ทุกประเภทเอกสาร</option>${Layout.docTypeOptions(selected || '')}`;
+      },
+      async _loadMembers() {
+        if (this._members) return this._members;
+        const api = Layout.api(); if (!api) return [];
+        try { const res = await api.getMembers(); this._members = res.data || []; }
+        catch (e) { this._members = []; Layout.toast('โหลดรายชื่อสมาชิกไม่สำเร็จ: ' + (e.message || ''), 'error'); }
+        return this._members;
+      },
+      async _renderSteps(steps) {
+        const members = await this._loadMembers();
+        const box = document.getElementById('ruleStepList');
+        box.innerHTML = steps.map((s, i) => `<div class="flex gap-2" style="margin-bottom:6px;align-items:center">
+            <span style="min-width:48px;font-size:12px;color:#64748b">ขั้น ${i + 1}</span>
+            <select class="form-select" data-step-approver>
+              <option value="">— เลือกผู้อนุมัติ —</option>
+              ${members.map(m => `<option value="${Layout.esc(m.userId)}"${m.userId === s.approverUserId ? ' selected' : ''}>${Layout.esc(m.fullName || m.email)}${m.email ? ' (' + Layout.esc(m.email) + ')' : ''}</option>`).join('')}
+            </select>
+            ${steps.length > 1 ? `<button type="button" class="btn btn-sm btn-ghost" onclick="Page.removeRuleStep(${i})">✕</button>` : ''}
+          </div>`).join('');
+      },
+      _readSteps() {
+        return [...document.querySelectorAll('#ruleStepList [data-step-approver]')].map(el => ({ approverUserId: el.value }));
+      },
+      addRuleStep() {
+        const steps = this._readSteps();
+        if (steps.length >= 5) { Layout.toast('ผู้อนุมัติได้ไม่เกิน 5 ขั้น', 'error'); return; }
+        steps.push({ approverUserId: '' }); this._renderSteps(steps);
+      },
+      removeRuleStep(i) {
+        const steps = this._readSteps(); steps.splice(i, 1); this._renderSteps(steps.length ? steps : [{ approverUserId: '' }]);
       },
 
       // AI suggest approver — ใครเคยอนุมัติเอกสารประเภท+ช่วงเงินคล้ายกัน
@@ -320,13 +348,9 @@
       async suggestApprover() {
         const hint = document.getElementById('approverHint');
         try {
-          const entityType = document.getElementById('ruleEntityType')?.value || 'Document';
-          const amount = parseFloat(document.getElementById('ruleMinAmount')?.value || '0') || 0;
-          // map generic rule entity → a representative DocumentType for the
-          // history query. The endpoint matches by amount band ±30% so even
-          // an approximate type surfaces the usual approver.
-          const docType = ({ Document: 'Invoice', Payment: 'PaymentVoucher',
-            ExpenseClaim: 'ExpenseClaim', Journal: 'Invoice', PayrollRun: 'PaymentVoucher' })[entityType] || 'Invoice';
+          const amount = Layout.numOrNull('ruleMinAmount') || 0;
+          // กฎที่ไม่ระบุชนิด ⇒ ถามประวัติของใบแจ้งหนี้เป็นตัวแทน (endpoint จับช่วงยอด ±30%)
+          const docType = document.getElementById('ruleDocType')?.value || 'Invoice';
           if (hint) hint.textContent = 'กำลังค้นหา...';
           const cid = Layout.getCompanyId();
           const token = localStorage.getItem('token');
@@ -339,16 +363,15 @@
             return;
           }
           if (hint) hint.innerHTML = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%) ` +
-            `<button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page._applyApprover('${d.approverName || ''}')">ใช้</button>`;
+            `<button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page._applyApprover(this.dataset.uid)" data-uid="${Layout.esc(d.approverUserId)}">ใช้</button>`;
         } catch (e) {
           if (hint) hint.textContent = 'ค้นหาไม่สำเร็จ';
         }
       },
-      _applyApprover(name) {
-        // ผู้ใช้ยืนยัน — แทรกชื่อเป็น placeholder ให้ผู้ใช้กรอกอีเมลที่ถูกต้อง
-        // (rule ใช้ email ไม่ใช่ user id — แสดงชื่อเพื่อให้รู้ว่าใคร)
-        const el = document.getElementById('ruleApprovers');
-        if (el && name && !el.value) el.placeholder = `(แนะนำ: ${name}) ใส่อีเมล…`;
+      _applyApprover(userId) {
+        // ผู้ใช้กด "ใช้" = เลือกผู้อนุมัติที่แนะนำลงขั้นแรกที่ยังว่าง (กฎใช้ user id ของสมาชิก)
+        const empty = [...document.querySelectorAll('#ruleStepList [data-step-approver]')].find(el => !el.value);
+        if (empty && userId && [...empty.options].some(o => o.value === userId)) empty.value = userId;
       },
 
       editRule(id) {
@@ -356,26 +379,29 @@
         if (!r) return;
         document.getElementById('ruleTitle').textContent = 'แก้ไขกฎการอนุมัติ';
         document.getElementById('ruleId').value = r.id;
-        document.getElementById('ruleName').value = r.ruleName || r.name || '';
-        document.getElementById('ruleEntityType').value = r.entityType || 'Document';
-        document.getElementById('ruleMinAmount').value = r.minAmount || 0;
-        document.getElementById('ruleMaxAmount').value = r.maxAmount || '';
-        document.getElementById('ruleSteps').value = r.steps || r.totalSteps || 1;
-        document.getElementById('ruleApprovers').value = (r.approverEmails || r.approvers || []).join(', ');
+        document.getElementById('ruleName').value = r.name || '';
+        this._fillDocTypes(r.documentType || '');
+        document.getElementById('ruleMinAmount').value = r.minAmount ?? 0;
+        document.getElementById('ruleMaxAmount').value = r.maxAmount ?? '';
+        const hint = document.getElementById('approverHint'); if (hint) hint.textContent = '';
+        const steps = (r.steps || []).slice().sort((a, b) => a.stepOrder - b.stepOrder).map(s => ({ approverUserId: s.approverUserId }));
+        this._renderSteps(steps.length ? steps : [{ approverUserId: '' }]);
         Layout.openModal('ruleModal');
       },
       async saveRule() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('ruleId').value;
+        const steps = this._readSteps();
         const data = {
-          ruleName: document.getElementById('ruleName').value,
-          entityType: document.getElementById('ruleEntityType').value,
-          minAmount: parseFloat(document.getElementById('ruleMinAmount').value) || 0,
-          maxAmount: parseFloat(document.getElementById('ruleMaxAmount').value) || null,
-          totalSteps: parseInt(document.getElementById('ruleSteps').value) || 1,
-          approverEmails: document.getElementById('ruleApprovers').value.split(',').map(e => e.trim()).filter(Boolean),
+          name: document.getElementById('ruleName').value.trim(),
+          description: null,
+          documentType: document.getElementById('ruleDocType').value || null,
+          minAmount: Layout.numOrNull('ruleMinAmount'),
+          maxAmount: Layout.numOrNull('ruleMaxAmount'),
+          steps: steps.map((s, i) => ({ stepOrder: i + 1, approverUserId: s.approverUserId, isRequired: true })),
         };
-        if (!data.ruleName) { Layout.toast('กรุณาระบุชื่อกฎ', 'error'); return; }
+        if (!data.name) { Layout.toast('กรุณาระบุชื่อกฎ', 'error'); return; }
+        if (!steps.length || steps.some(s => !s.approverUserId)) { Layout.toast('กรุณาเลือกผู้อนุมัติให้ครบทุกขั้น', 'error'); return; }
         try {
           if (id) { await api.updateApprovalRule(id, data); }
           else { await api.createApprovalRule(data); }

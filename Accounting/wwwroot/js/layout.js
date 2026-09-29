@@ -2888,17 +2888,22 @@ const Layout = {
       ? ' style="color:#7c3aed;font-weight:600"' : ''}>${this.esc(short)}</span>`;
   },
 
+  _DOC_TYPE_LABELS: {
+    Quotation: 'ใบเสนอราคา', Invoice: 'ใบแจ้งหนี้', Receipt: 'ใบเสร็จรับเงิน',
+    TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
+    DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
+    PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
+    GoodsReceiptNote: 'ใบรับสินค้า',
+    PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ใบบันทึกค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
+    CertificateInLieu: 'ใบรับรองแทนใบเสร็จรับเงิน'
+  },
   docTypeLabel(type) {
-    const map = {
-      Quotation: 'ใบเสนอราคา', Invoice: 'ใบแจ้งหนี้', Receipt: 'ใบเสร็จรับเงิน',
-      TaxInvoice: 'ใบกำกับภาษี', DebitNote: 'ใบเพิ่มหนี้', CreditNote: 'ใบลดหนี้',
-      DeliveryNote: 'ใบส่งของ', BillingNote: 'ใบวางบิล', ReceiptVoucher: 'ใบสำคัญรับ',
-      PurchaseRequisition: 'ใบขอซื้อ', PurchaseOrder: 'ใบสั่งซื้อ',
-      GoodsReceiptNote: 'ใบรับสินค้า',
-      PurchaseInvoice: 'ใบแจ้งหนี้ซื้อ', Expense: 'ใบบันทึกค่าใช้จ่าย', PaymentVoucher: 'ใบสำคัญจ่าย',
-      CertificateInLieu: 'ใบรับรองแทนใบเสร็จรับเงิน'
-    };
-    return map[type] || type;
+    return this._DOC_TYPE_LABELS[type] || type;
+  },
+  /** รอบ 200 (A07): &lt;option&gt; ของชนิดเอกสาร (ชื่อ enum = ค่าที่ API รับ) จากตารางป้ายเดียวกับ docTypeLabel — ห้ามพิมพ์ลิสต์ซ้ำในหน้า */
+  docTypeOptions(selected) {
+    return Object.entries(this._DOC_TYPE_LABELS).map(([k, v]) =>
+      `<option value="${this.esc(k)}"${k === selected ? ' selected' : ''}>${this.esc(v)}</option>`).join('');
   },
 
   // Export table to CSV

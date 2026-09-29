@@ -1587,6 +1587,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 >   หยุดชุด VAT อยู่แล้ว (`IsGapWarning` รวมชุด VAT) · LINE / สร้าง+อนุมัติ OCR / recurring / ใบเบิก / เงินเดือนล่วงหน้า / integration แปลงใบ = แหล่ง `None`
 >   (หยุดทุกคำเตือน) · ที่พัก/PlatformBilling/CMS ส่ง `acknowledgeWarnings:true` แต่เป็นเอกสารที่เพิ่งสร้างเองในคำขอเดียวกัน (ไม่มีสแกนที่ `CreatedDocumentId`
 >   ชี้มา ⇒ ไม่มีคำเตือนชุดนี้)
+> - **คำเตือน "เดือนภาษียื่น ภ.พ.30 แล้ว" (รอบ 200 ทีม R · B-09)**: ใบขายที่มี VAT (TaxInvoice/Receipt/RV/Invoice/CN/DN ฝั่งขาย · ไม่รวมมัดจำ VAT พัก)
+>   ที่เดือน tax point (`TaxPointDate ?? TaxPointResolver.Resolve`) ยื่น/ประกาศว่ายื่น/ล็อก ภ.พ.30 แล้ว (`VatPeriodDeclaredOrFiledAsync` — ชุดสถานะเดียวกับด่านรับรู้มัดจำ)
+>   ⇒ คำเตือนใน `CollectApprovalWarningsAsync` (warn-gate · ไม่บล็อก: ขายจริงในเดือนนั้น = ยื่นเพิ่มเติม · ขายวันนี้ = แก้วันที่) — เดิมด่านยกเลิก/กู้คืน/มัดจำบล็อก
+>   เดือนนั้นแต่การอนุมัติเงียบ
 > - **หน้าเอกสาร (`documents.html`) — ทุกปุ่มที่อนุมัติเดินทางเดียว `_approveConfirmingWarnings`** (รอบ 199 ทีม W · ปิด backlog ของทีม H):
 >   ปุ่ม "อนุมัติ" · "บันทึกและอนุมัติ" · chain "ลูกค้าจ่ายเงินแล้ว" (เงินสดทันที) · อนุมัติก่อนส่งอีเมล ⇒ ครั้งแรก `acknowledgeWarnings:false` → 422 + รายการ
 >   ⇒ หน้าต่างคำเตือน (`_showApprovalWarnings`) ⇒ ส่ง `true` **เฉพาะหลังกด "ยอมรับและอนุมัติต่อ"** · ไม่มีคำเตือน ⇒ อนุมัติเลยครั้งแรก ·
@@ -1624,8 +1628,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
    - **§90/2 hard-block**: `CompanyVatStatus.IsRegistered(...)` = false (มีแถวค่าตั้ง = `CompanySettings.VatRegistered` · ไม่มี = ธงบริษัท —
      รอบ 193 S-01 · §7 แถว §90/2) → ห้ามอนุมัติ
      ใบกำกับภาษี (ทุกกรณี) และเอกสารขายที่ VatAmount > 0 (Invoice/Receipt/RV/
-     BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็น PI/Expense/GRN
-     ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน; ฟอร์ม
+     BillingNote/CN/DN ฝั่งขาย — CN/DN ฝั่งซื้อที่ related เป็นชุด `AdjustmentNoteAccount.PurchaseSourceTypes`
+     (PI/Expense/**PV/CIL** · รอบ 200 B-07 — เดิมพิมพ์มือขาด PV/CIL) หรือ GRN ไม่ block); integration inbound invoice ก็ปฏิเสธด้วยเหตุผลเดียวกัน; ฟอร์ม
      สร้างเอกสาร (documents.html) ปิดตัวเลือกใบกำกับภาษี + ป้ายเตือน
    - **ภาษีซื้อฝั่งไม่จด VAT**: บริษัท `VatRegistered=false` → ทุกบรรทัดถูกบังคับ
      `IsVatClaimable=false` ตอน create/update (DocumentService) → posting รวม
@@ -1670,6 +1674,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
    ของเอกสารฝั่งซื้อ/ค่าใช้จ่าย Approved ที่ description มี "รับรอง" →
    excess clamp ที่ใบปัจจุบันรับผิดชอบ. §82/5(6) vehicle warning bypass
    เมื่อ `CompanySettings.IsVehicleDealer=true`.
+   **รอบ 200 (B-10)**: ช่วง "รอบบัญชี" ของฐานรายได้ · YTD ค่ารับรอง · (10) รายจ่ายรอบก่อน = `Helpers/FiscalYear.RangeFor`
+   ตาม `Company.FiscalYearStartMonth` (เดิมตายตัวปีปฏิทิน ⇒ บริษัทรอบ เม.ย.–มี.ค. ได้ฐาน/YTD ของช่วงผิด) ·
+   **(B-05 บางส่วน)** ผลตรวจที่บวกกลับ 0 บาท ((5) capex · (8) · (9) · (10) ฯลฯ) หน้าเอกสารแสดงกล่องเหลือง "ข้อสังเกต §65 ตรี" จาก
+   `NonDeductibleRuleJson` (เดิมกล่องเปิดเฉพาะยอด > 0 ⇒ ไม่มีใครเห็น) — การย้ายการประเมินขึ้นไปเป็นคำเตือนก่อนอนุมัติยังเป็น backlog
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
      (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
@@ -2092,7 +2100,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
       (ล่าช้า — อาจมีเงินเพิ่ม §89/1) **ห้ามนำส่งซ้ำ**ในการยื่นเพิ่มเติม" (เดิมสั่งยื่นเพิ่มเติมทั้งที่ใบกำกับเข้ารายงานเดือนริบ = VAT ซ้ำ) · เงินประกันที่หักเป็นค่าธรรมเนียม = วันที่ริบ ไม่มีธง
     - **ออกใบกำกับของยอดที่ริบ (M1)** — `RealizeDepositAsync` ล็อก `JobLock`(`AdvisoryLockKey.DepositRealize`, id ใบมัดจำ) แล้ว reload ก่อนตัดสิน (สองคำขอพร้อมกัน
       = `DEPOSIT-REALIZE-BUSY`) · `IssueForfeitTaxInvoiceAsync` **idempotent**: หาใบกำกับของการริบของมัดจำนี้ (ป้าย `DepositPolicyNote` `[DEPOSIT-FORFEIT-OF:{id}]` ·
-      สำรอง `Reference`+หมายเหตุคงที่) → `ResumeForfeitInvoice`: ร่างยอดตรง = อนุมัติต่อ · ออกแล้วยังค้าง = ตัดชำระต่อ · ตัดครบ/ยกเลิก = สร้างใหม่ ·
+      สำรอง `Reference`+หมายเหตุคงที่) → `ResumeForfeitInvoice`: ร่างยอดตรง = อนุมัติต่อ (**รอบ 200 · review194-r4 P4-1: ร่างที่ค้างจากรุ่นก่อน R3-1 ถูกล้าง
+      `PaymentDate` ก่อนอนุมัติ** ⇒ tax point = วันที่ใบ เหมือนใบที่สร้างใหม่) · ออกแล้วยังค้าง = ตัดชำระต่อ · ตัดครบ/ยกเลิก = สร้างใหม่ ·
       ยอดไม่ตรง/ค้างหลายใบ = ปฏิเสธพร้อมทางไปต่อ · ล้มกลางทาง ⇒ **`RevertTrackedChangesSinceAsync` ถอยเฉพาะของขั้นที่ล้ม** (ไม่ `ChangeTracker.Clear` — entity
       ของผู้เรียก เช่นการจองที่พัก ยังบันทึกหมายเหตุได้) + หมายเหตุ ⚠️ บนใบมัดจำ + คำตอบ · ทางไปต่อข้อความเดียว `ForfeitRetryHint` (DocumentService + ที่พัก ·
       "กดริบซ้ำ = ทำต่อจากใบที่ค้าง ไม่ออกใบซ้ำ") · ธง/หมายเหตุ tax point ลงใบมัดจำ**หลังสำเร็จเท่านั้น**
@@ -2288,6 +2297,13 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **50 ทวิ ภ.ง.ด.1** (D-01): เลขผู้เสียภาษีพนักงาน = `Helpers/EmployeeTaxIdentity.Resolve(taxId, citizenId)` (TaxId ที่กรอก → เลขบัตร → null) ใช้ใน 50 ทวิ
   รายเดือน (ด่าน + ค้นใบมือ + ค้น/สร้าง Contact) · รายปี · ไฟล์ ภ.ง.ด.1/1ก/91 · รายงาน ภ.ง.ด.1ก · Contact จากใบเบิก/เงินทดรอง — _เดิม `Employee.TaxId` ไม่มี
   ผู้เขียนแต่เป็นด่านเดียว ⇒ "ออก 50 ทวิไม่ครบ" ทุกงวด + นำส่ง ภ.ง.ด.1 ติด `WHT-CERT-UNISSUED` ตลอดกาล_ · ไฟล์ สปส.1-10 ใช้ `CitizenId` ตรง (ถูกต้อง)
+- **รอบ 200 ทีม R (กวาดค้างรอบ 189)**: ฐานภาษีสะสม (YTD) ของงวดก่อน = `PayrollIncomeBase.PriorTaxBase(TaxableGross, GrossIncome)` (D-09 — เดิม gross
+  รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
+  (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
+  (`PayrollRunResponse.SsoDueDate` · `GET payroll/sso-late-fee` preview — D-04 เดิม `payroll.html` คิด 15 ดิบ + `ceil(วัน/30)`) · ไฟล์ สปส.1-10/6-09 (.txt)
+  เลขประกันสังคมว่าง ⇒ เลขบัตรที่ checksum ผ่าน (`SsoInsuredNumber` · D-06) ไม่มีทั้งคู่ = ว่าง + นับเตือนในสรุป · รายงาน ภ.ง.ด.1/ปกส. ปิดบังเลขบัตร/เลข ปกส.
+  ถ้าไม่มี `Pii.View` (G2-05) · 50 ทวิรายปี audit เลขบัตรแบบปิดบังผ่าน `AddChainedAuditLog` (D-11) · API `GET tax/sso-rate` อ่าน `SsoRateSchedule` (D-03) ·
+  จ่ายทิป: ส่วนแบ่งเป็นสตางค์ Σ = กองทิป + อัตรา/เกณฑ์ WHT จาก `ThaiWhtRateTable` (`TipShareAllocation` · D-05) · ไม่มีผัง 21915 = ล้มดังก่อนลงบัญชี
 - **แก้ข้อมูลพนักงาน** (A05/D-07): `UpdateEmployeeRequest` +11 ช่อง (null = ไม่แตะ · "" = ล้าง) ผ่าน `Helpers/EmployeeRecordEdit` · Response +TaxId/ธนาคาร/
   `EmployeeCodeLocked`+เหตุผล · ทั้งสองหน้า hydrate = payload ชุดเดียว (`tools/employee_form_contract_sim.js`) · เลขบัตร checksum ผ่าน `ThaiTaxIdValidator`
   (เลขเดิมที่ไม่ได้แก้ไม่ถูกตรวจ) · วันเริ่มงานส่งเฉพาะเมื่อเปลี่ยนจริง · HRIS sync/นำเข้า CSV ยังไม่ตรวจ checksum (backlog)
@@ -2326,6 +2342,13 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
      ETDA ขมธอ.3-2560 — ใช้ยื่นภาษีได้)
   2. มี HTML template + Chromium headless → render HTML → PDF
   3. fallback: QuestPDF native (Thai-safe layout)
+- **HTML renderer — ช่องที่ผู้ใช้/คู่ค้า/OCR คุมได้ต้องหนีเสมอ (รอบ 200 ทีม R · G2-02/G2-11)**: อ้างอิง · เลขภาษีคู่ค้า/บริษัท · หัวกล่องคู่ค้า ·
+  ลายน้ำ · ข้อมูลการชำระเงินของเทมเพลต (หนีแล้วคงขึ้นบรรทัดด้วย `<br/>`) · เลขเอกสาร · อ้างอิง/วิธีชำระของใบเสร็จ ⇒ `WebUtility.HtmlEncode` ·
+  `src` ของโลโก้/ตราประทับ/ลายเซ็น (รวมลายเซ็นผู้จัดทำจากคู่ค้า `PreparerSignatureBase64`) ผ่าน `Helpers/HtmlImageSource.Attribute` ตัวเดียว
+  (data:image/* base64 · https/http · path ภายใน `/…` เท่านั้น — อย่างอื่นไม่พิมพ์รูป) · QuestPDF ไม่ใช่ HTML จึงไม่กระทบ ·
+  ล็อกด้วย `required_call_site_check` (must_lit)
+- **ด่านชั้นความลับ** (`generate-pdf` / `generate-html` · รอบ 200 · review193-r4 P4-7): เอกสารที่ `Sensitivity != None` ต้อง `ISensitivityService.CanViewAsync`
+  ผ่านก่อนสร้างไฟล์ (ด่านเดียวกับหน้าเอกสาร/ส่งอีเมล · ข้อความ `SensitivityAccess.DeniedMessage`) · เดิมผู้ที่รู้ documentId พิมพ์ใบลับได้
 - รองรับ template per `DocumentType + IsDefault` flag
 - ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
 - **ภาษาเอกสาร — resolver กลาง `ResolveDocumentLanguage`** (`PdfGenerationService.cs`)
@@ -2690,6 +2713,12 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ในหน้ารายละเอียดเอกสาร (`POST /fixedasset/from-document/{docId}?lineId=`) ·
   สถานะรายบรรทัด "มีทะเบียนไหม" อ่านจาก `GET /fixedasset/document-lines/{docId}`
   ตัวเดียว ทั้งหน้าเอกสารและหน้าทะเบียน (ดู §3.2 ข้อ 9)
+- **แก้ไข/ยืนยันทะเบียน (รอบ 200 ทีม R · A12/E-04)**: `UpdateFixedAssetRequest` รับ `UsefulLifeMonths/SalvageValue/DepreciationMethod`
+  (null = ไม่แตะ) — ตัดสินที่ `Helpers/FixedAssetValuationEdit.Problem`: ยังไม่มีค่าเสื่อมลงบัญชี ⇒ แก้ได้ + สร้างตารางที่ยังไม่ลงใหม่ ·
+  ลงบัญชีแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (TFRS บทที่ 10 เปลี่ยนประมาณการไปข้างหน้า — ระบบยังไม่มีเส้นนั้น) · ผังที่ดิน/CIP คิดค่าเสื่อมไม่ได้ ·
+  ราคาทุน/วันที่ซื้อ/ประเภท/สัญญาเช่า **ไม่รับตอนแก้** (ผูกกับ JE ตอนซื้อ) ⇒ หน้าเว็บล็อกช่อง + ป้ายเหตุผล (เดิม "แก้ไขสำเร็จ" แต่ไม่มีผล)
+- **นำเข้าทะเบียนจากไฟล์ (E-03)**: วิธีคิดค่าเสื่อมผ่าน `Helpers/FixedAssetImportMethod.Resolve` — หมวดที่ดิน/งานระหว่างก่อสร้าง ว่าง/None ⇒ ไม่คิดค่าเสื่อม
+  (อายุ 0 · ไม่มีตาราง) · หมวดนั้นกับวิธีอื่น ⇒ ปฏิเสธแถว · ข้อความวิธีคิดที่ไม่รู้จัก ⇒ ปฏิเสธแถว (เดิมกลายเป็นเส้นตรง 60 เดือนเงียบ)
 
 ---
 
@@ -2898,6 +2927,9 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   **แก้เนื้อความเมื่อไรต้องขยับเวอร์ชันด้วย**
 - ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `GET /api/legal/policy`
   ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ)
+- **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
+  ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า
+  เทียบเลขบัตรหลังถอดรหัส (`EncryptedIdMatch` — คอลัมน์เข้ารหัส nonce สุ่มเทียบใน SQL ไม่มีวันเจอ · G2-06) · audit 50 ทวิรายปีเก็บเลขแบบปิดบัง (D-11)
 
 ### 6.2b Convention ยอดรายบรรทัด — `DocumentLine.Amount` ต้องเป็น **net (ก่อน VAT)** เสมอ
 
@@ -3328,6 +3360,10 @@ CN/DN เดิมไม่ส่ง `doc.Contact` ต่างจากทุ�
 
 ### 6.3 §87/3 retention (5 ปี)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
+- **ด่านลบถาวร (`PurgeDocumentAsync`) — รอบ 200 (B-06)**: ตัดสินด้วย `Helpers/DocumentRetention` ตัวเดียว — ใบที่ **ออกแล้ว**
+  (ไม่ใช่ร่าง/รออนุมัติ/ถูกปฏิเสธ และเลขไม่ใช่ `DRAFT-`) ใช้ `RetentionUntil` ที่บันทึกไว้ หรือ **คำนวณจากวันที่เอกสาร** (สิ้นรอบบัญชี + 5 ปี
+  สูตรเดียวกับที่ Approve บันทึก `ComputeUntil`) เมื่อเป็น null ⇒ ใบกำกับจาก POS/API/นำเข้า/ข้ามบริษัท (เกิดเป็น Approved ตรง ไม่เคยเขียนค่า)
+  ถูกกันลบเหมือนใบจากหน้าเอกสาร (เดิม no-op เงียบ) · override ยังต้องเป็นเจ้าของ + เหตุผล (log `RETENTION-OVERRIDE`) · ไม่มี migration (ค่า null = "คำนวณตอนตรวจ")
 - nightly job ห้ามลบจริง (soft-delete + flag `legal_hold`)
 - e-Tax ที่ submitted แล้วยืดเป็น **7 ปี** (extended retention)
 - **ไฟล์สแกน (OcrScan) — รอบ 193 (S2)**: ตัดสินการลบด้วย `Helpers/OcrScanFileDisposal` ตัวเดียว (`DeleteScanAsync` · มี `CompanyId` ในคิวรีไฟล์ · `catch {}` → LogWarning):
@@ -3359,7 +3395,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
 | Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
-| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | – |
+| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | รอบ 200 (H-3): `ExplainAnomaly` บันทึกคำตอบลงรายการเมื่อ **ครูหรือนักเรียน** ตอบ (`AnomalyExplainVerdict.ShouldPersist` — เดิม `UsedAi` เท่านั้น ⇒ kill-switch แล้วว่างตลอด+ยิงซ้ำ) + คำตอบต้องอยู่ในชุด `LikelyError/LikelyLegit/NeedReview` · ป้าย `usedAi` ของคำตอบที่แคชอ่านจากแถว feedback (ครูตอบจริงไหม) |
 | Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
 | ~~Product match~~ | ~~`ProductMatch = 13`~~ | **ตายแล้ว `[Obsolete(error)]`** | **ไม่มี call site เลยทั้งเรพ** — การจับคู่สินค้าเดินผ่าน `Ocr.ProductMatcher` (heuristic cascade ไม่ผ่าน AI) |
 | ~~Contact match~~ | ~~`ContactMatch = 14`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `ContactFuzzyMatch` ที่ใช้งานจริง |
@@ -3417,6 +3453,10 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 > (รอบ 158: เดิมสองที่ถือคนละชุด — หน้าเว็บโฆษณา "Junior Suite ฿3,800 · 4 ประเภท · เช็คอิน 15:00 · ยกเลิกฟรีก่อน 3 วัน"
 > ขณะที่ที่พักที่จองได้จริงมี 3 ประเภท · 14:00 · 7 วัน ⇒ แขกเห็นราคา/กติกาบนหน้าแรกแล้วไปเจออีกอย่างตอนจอง) ·
 > **เว็บหนึ่งผูกที่พักได้แห่งเดียว** — `EnsureSiteNotBoundElsewhereAsync` + unique index `UX_LodgingProperties_CompanyId_SiteId_Live`
+
+**ข้อมูลสาธารณะ (รอบ 200 ทีม R · F-05/F-06)**: `GET …/lodging/info` ส่งประเภทห้องผ่าน `Helpers/LodgingPublicProjection.RoomTypes` — เฉพาะที่เปิดขาย ·
+ไม่มีรายการห้อง (เลขห้อง/หมายเหตุภายใน/สถานะแม่บ้าน) · ไม่มีสินค้าภายใน (เดิมใช้ DTO หน้าตั้งค่าทั้งก้อน) · หน้าจอง (`storefront.html` `_splitGuests`) แบ่งผู้ใหญ่/เด็กลงห้องให้
+ผลรวม = จำนวนจริง (เดิมปัดขึ้นต่อห้อง ⇒ 3 คน 2 ห้องคิด 4 คน · เด็กทั้งหมดห้องแรก) — `tools/lodging_guest_split_sim.js`
 
 **ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้;
 เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
@@ -3608,7 +3648,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม R — กวาดงานค้างรอบ 189/193/194: ตัวเรนเดอร์ HTML หนีทุกช่องที่ผู้ใช้/คู่ค้าคุม + รูปผ่าน `HtmlImageSource` (§5.1) · ลบถาวรเคารพช่วงเก็บรักษาของใบที่ไม่มี RetentionUntil ผ่าน `DocumentRetention` (§6.3) · §90/2 ใบลด/เพิ่มหนี้ฝั่งซื้อทุกชนิดต้นทาง (§3.2) · §65 ตรี ค่ารับรองตามรอบบัญชี + กล่องข้อสังเกต (§3.2) · คำเตือนเดือนภาษีที่ยื่นแล้วตอนอนุมัติ (B-09) · ใบกำกับริบมัดจำที่ค้างร่างล้าง PaymentDate (§3.7) · ข้อมูลที่พักสาธารณะไม่มีห้อง/เลขห้อง · เงินเดือน: PVD/ฐานภาษีสะสม/เงินเพิ่ม ปกส. ตัวเดียว + เลขบัตรปิดบัง (§3.8) · สินทรัพย์นำเข้า/แก้ไขอายุ-วิธีคิดก่อนลงค่าเสื่อม (§5.6) · กฎอนุมัติตรวจผู้อนุมัติเป็นสมาชิก · พิมพ์เทมเพลตผ่านด่านเอกสารลับ — ทะเบียนเต็ม `erp-review/2026-09-29/team-R.md` — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
 เฉพาะที่ยกเลิกไม่ได้จริงเป็นคำเตือน (`SettlementUnpostRefusalKind` + `SettlementOrphanTriage` · S4-1) · เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` + e-Tax ของใบเสร็จอัตโนมัติ
 คู่การรับชำระ (S4-8) · ข้อความล็อกช่องทางเป็นกลาง (S4-7) · แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วบอกทางไปต่อที่ถูก (S4-6) · ขายด่วนตรวจ `success:false` ของ api.js (S4-2) — commit <pending>)_
 

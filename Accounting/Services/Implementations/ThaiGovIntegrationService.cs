@@ -175,15 +175,18 @@ public class ThaiGovIntegrationService : IThaiGovIntegrationService
     {
         var now = DateTime.UtcNow.AddHours(7);
 
-        // SSO rates — updated annually by announcement
-        // 2024-2026 rates: 5% each (employee + employer), max salary base 15,000 THB
+        // รอบ 200 (D-03): อ่านจากตารางกฎหมายตัวเดียว (SsoRateSchedule · SsoWageBase.MinBase) — เดิมพิมพ์ 15,000 ไว้เอง
+        // ⇒ API ประกาศเพดาน 15,000 ขณะที่เครื่องคำนวณเงินเดือนหัก 17,500 (ปี 2026) = ตารางชุดที่สองที่ไม่มีใครอัปเดต
+        var (ceiling, rate) = Accounting.Helpers.SsoRateSchedule.GetDefault(now.Year);
+        var pct = rate * 100m;
         return Task.FromResult(new SsoContributionRate(
-            EmployeeRate: 5.0m,
-            EmployerRate: 5.0m,
-            MaxSalaryBase: 15000m,
-            MinSalaryBase: 1650m,
+            EmployeeRate: pct,
+            EmployerRate: pct,
+            MaxSalaryBase: ceiling,
+            MinSalaryBase: Accounting.Helpers.SsoWageBase.MinBase,
             Year: now.Year,
-            Notes: "อัตราสมทบมาตรา 33 (ลูกจ้างทั่วไป) — ฐานเงินเดือนสูงสุด 15,000 บาท"
+            Notes: $"อัตราสมทบมาตรา 33 (ลูกจ้างทั่วไป) — ฐานค่าจ้างสูงสุด {ceiling:N0} บาท · ขั้นต่ำ {Accounting.Helpers.SsoWageBase.MinBase:N0} บาท "
+                + $"(ค่าเริ่มต้นตามกฎหมาย — บริษัทตั้งอัตราลดชั่วคราวรายช่วงเดือนเองได้ที่หน้าเงินเดือน)"
         ));
     }
 

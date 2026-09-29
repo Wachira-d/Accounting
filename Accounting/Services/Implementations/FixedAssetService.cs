@@ -319,6 +319,48 @@ public class FixedAssetService : IFixedAssetService
         if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = G(request.AccumulatedDepreciationAccountId);
         if (request.ProjectId.HasValue) asset.ProjectId = G(request.ProjectId);
 
+        // รอบ 200 (A12/E-04): อายุ/ซาก/วิธีคิดค่าเสื่อม — เดิม DTO ไม่มีช่องเหล่านี้ ⇒ หน้าเว็บส่งมาแล้วไม่มีผล ("แก้ไขสำเร็จ" เงียบ ๆ)
+        // แก้ได้ก่อนมีค่าเสื่อมลงบัญชี (สร้างตารางที่ยังไม่ลงใหม่) · ตัวตัดสินเดียว Helpers/FixedAssetValuationEdit
+        var newMethod = request.DepreciationMethod ?? asset.DepreciationMethod;
+        var newLife = request.UsefulLifeMonths ?? asset.UsefulLifeMonths;
+        var newSalvage = request.SalvageValue ?? asset.SalvageValue;
+        if (newMethod != asset.DepreciationMethod || newLife != asset.UsefulLifeMonths || newSalvage != asset.SalvageValue)
+        {
+            var hasPosted = await _db.AssetDepreciations
+                .AnyAsync(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && d.IsPosted);
+            var acctCode = asset.AssetAccountId == null ? null
+                : await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.Id == asset.AssetAccountId && a.CompanyId == companyId)
+                    .Select(a => a.AccountCode).FirstOrDefaultAsync();
+            var nonDepreciable = Tax.FixedAssetAccountClassifier.Resolve(acctCode) is { Depreciable: false };
+            var problem = Accounting.Helpers.FixedAssetValuationEdit.Problem(
+                hasPosted, newMethod, newLife, newSalvage, asset.PurchaseCost, nonDepreciable);
+            if (problem != null) throw new Accounting.Helpers.BusinessRuleException(problem);
+
+            asset.DepreciationMethod = newMethod;
+            asset.UsefulLifeMonths = newMethod == DepreciationMethod.None ? 0 : newLife;
+            asset.SalvageValue = newSalvage;
+            var planned = await _db.AssetDepreciations
+                .Where(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && !d.IsPosted)
+                .ToListAsync();
+            _db.AssetDepreciations.RemoveRange(planned);
+            foreach (var row in BuildScheduleRows(asset))
+            {
+                _db.AssetDepreciations.Add(new AssetDepreciation
+                {
+                    CompanyId = companyId,
+                    FixedAssetId = asset.Id,
+                    Year = row.Year,
+                    Month = row.Month,
+                    Amount = row.Amount,
+                    AccumulatedAmount = row.Accumulated,
+                    NetBookValue = row.Nbv,
+                    IsPosted = false,
+                    CreatedBy = asset.CreatedBy
+                });
+            }
+        }
+
         // เมื่อผู้ใช้ "ยืนยัน" สินทรัพย์ที่ระบบ auto-register (กดบันทึกในหน้า edit)
         // → ปลดธง NeedsReview เพื่อออกจาก "รอตรวจสอบ" queue. ไม่ใช่ field ใน DTO
         // เพื่อกัน client เผลอเซ็ตกลับเป็น true; ใช้ implicit semantics ที่ว่า
@@ -1219,12 +1261,15 @@ public class FixedAssetService : IFixedAssetService
                 continue;
             }
 
-            var method = row.DepreciationMethod?.ToLower() switch
+            // รอบ 200 (E-03): ตัวตัดสินเดียว — หมวดที่ดิน/งานระหว่างก่อสร้างไม่คิดค่าเสื่อม (เหมือนเส้นสร้างด้วยมือ) ·
+            // ข้อความวิธีคิดที่ไม่รู้จัก = ปฏิเสธแถวพร้อมทางแก้ (เดิมกลายเป็นเส้นตรง 60 เดือนเงียบ ๆ)
+            var (resolvedMethod, methodError) = Accounting.Helpers.FixedAssetImportMethod.Resolve(row.DepreciationMethod, row.Category);
+            if (methodError != null || resolvedMethod == null)
             {
-                "decliningbalance" or "declining" or "ยอดลดลง" => DepreciationMethod.DecliningBalance,
-                "doubledecliningbalance" or "doubledeclining" or "ยอดลดลงทวีคูณ" => DepreciationMethod.DoubleDecliningBalance,
-                _ => DepreciationMethod.StraightLine
-            };
+                errors.Add($"แถวที่ {rowNum}: {methodError}");
+                continue;
+            }
+            var method = resolvedMethod.Value;
 
             var asset = new FixedAsset
             {
@@ -1237,7 +1282,8 @@ public class FixedAssetService : IFixedAssetService
                 PurchaseDate = row.PurchaseDate,
                 PurchaseCost = row.PurchaseCost,
                 SalvageValue = row.SalvageValue,
-                UsefulLifeMonths = row.UsefulLifeMonths > 0 ? row.UsefulLifeMonths : 60,
+                UsefulLifeMonths = method == DepreciationMethod.None ? 0
+                    : row.UsefulLifeMonths > 0 ? row.UsefulLifeMonths : 60,
                 DepreciationMethod = method,
                 NetBookValue = row.PurchaseCost,
                 CreatedBy = createdBy

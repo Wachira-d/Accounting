@@ -56,8 +56,24 @@ public class ApprovalService : IApprovalService
 
     // ==================== Rules ====================
 
+    /// <summary>รอบ 200 (A07/G2-09): ตรวจชื่อ · ช่วงเงิน · ขั้น · ผู้อนุมัติเป็นสมาชิกบริษัทนี้ — ก่อนแตะข้อมูล (สร้าง/แก้ใช้ตัวเดียวกัน)</summary>
+    private async Task ValidateRuleAsync(Guid companyId, CreateApprovalRuleRequest request)
+    {
+        var steps = (request.Steps ?? new List<ApprovalStepRequest>())
+            .Select(s => (s.StepOrder, s.ApproverUserId)).ToList();
+        var approverIds = steps.Select(s => s.ApproverUserId).Distinct().ToList();
+        var members = (await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && approverIds.Contains(cu.UserId))
+                .Select(cu => cu.UserId).ToListAsync())
+            .ToHashSet();
+        var problem = Accounting.Helpers.ApprovalRuleValidation.Problem(
+            request.Name, request.MinAmount, request.MaxAmount, steps, members);
+        if (problem != null) throw new Accounting.Helpers.BusinessRuleException(problem);
+    }
+
     public async Task<ApprovalRuleResponse> CreateRuleAsync(Guid companyId, CreateApprovalRuleRequest request)
     {
+        await ValidateRuleAsync(companyId, request);
         var rule = new ApprovalRule
         {
             CompanyId = companyId,
@@ -103,6 +119,7 @@ public class ApprovalService : IApprovalService
             .Include(r => r.Steps)
             .FirstOrDefaultAsync(r => r.Id == ruleId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบกฎการอนุมัติ");
+        await ValidateRuleAsync(companyId, request);
 
         rule.Name = request.Name;
         rule.Description = request.Description;

@@ -280,9 +280,16 @@ public class RolePermissionService : IRolePermissionService
         return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin);
     }
 
-    public async Task SeedDefaultRolesAsync(Guid companyId)
+    /// <summary>รอบ 200 ทีม R (G2-08): ต้องเป็นเจ้าของ (ด่านเดียวกับสร้าง/แก้ Role อื่น) + idempotent — เดิมสมาชิกคนไหนก็กดได้
+    /// และกดซ้ำ = Role ซ้ำชื่อทุกครั้ง · Role ระบบที่มีชื่อนั้นอยู่แล้วไม่ถูกสร้างซ้ำ (ไม่แตะสิทธิ์ที่เจ้าของปรับไว้)</summary>
+    public async Task SeedDefaultRolesAsync(Guid companyId, Guid actorUserId)
     {
+        await EnsureOwnerAccessAsync(companyId, actorUserId);
         var allMenuIds = GetAllMenuItemIds();
+        var existingNames = (await _db.CompanyRoles.AsNoTracking()
+                .Where(r => r.CompanyId == companyId)
+                .Select(r => r.Name).ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var defaults = new[]
         {
@@ -309,6 +316,7 @@ public class RolePermissionService : IRolePermissionService
 
         foreach (var d in defaults)
         {
+            if (existingNames.Contains(d.Name)) continue;
             var role = new CompanyRole
             {
                 CompanyId = companyId,

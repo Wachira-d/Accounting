@@ -4209,6 +4209,18 @@ public partial class DocumentService : IDocumentService
         {
             invoiceId = resume.InvoiceId!.Value;
             invoiceNo = resume.InvoiceNumber ?? "";
+            // รอบ 200 ทีม R (review194-r4 P4-1): ใบร่างที่ค้างจากรุ่นก่อน R3-1 ตั้ง PaymentDate = วันรับเงินไว้ ⇒ อนุมัติต่อ = tax point ย้อน
+            // (ภ.พ.30 เดือนรับเงิน แต่ JE Cr 21911 เดือนริบ) · ล้างก่อนอนุมัติให้เหมือนใบที่สร้างใหม่ (PaymentDate: null) — ใบที่อนุมัติแล้วไม่แตะ
+            if (needApprove)
+            {
+                var draft = await _db.Documents.FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId);
+                if (draft != null && draft.Status == DocumentStatus.Draft && draft.PaymentDate != null)
+                {
+                    draft.PaymentDate = null;
+                    await _db.SaveChangesAsync();
+                    baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
+                }
+            }
         }
 
         string Fail(string step, Exception ex) =>
@@ -5737,8 +5749,10 @@ public partial class DocumentService : IDocumentService
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
                     .Select(d => (DocumentType?)d.DocumentType)
                     .FirstOrDefaultAsync();
-                purchaseSideCnDn = relType is DocumentType.PurchaseInvoice
-                    or DocumentType.Expense or DocumentType.GoodsReceiptNote;
+                // รอบ 200 (B-07): ชุด "ใบต้นทางฝั่งซื้อ" ตัวเดียว (AdjustmentNoteAccount — PI/Expense/PV/CIL) + GRN ที่ด่านนี้เคยรับ ·
+                // เดิมพิมพ์มือ (ไม่มี PV/CIL) ⇒ บริษัทไม่จด VAT บันทึกใบลดหนี้ที่ผู้ขายออกอ้างใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จไม่ได้
+                purchaseSideCnDn = relType is DocumentType rt
+                    && (Accounting.Helpers.AdjustmentNoteAccount.SourceIsPurchaseSide(rt) || rt == DocumentType.GoodsReceiptNote);
             }
             var isSalesVatIssuance = doc.DocumentType == DocumentType.TaxInvoice
                 || (doc.VatAmount > 0 && !purchaseSideCnDn
@@ -6263,10 +6277,8 @@ public partial class DocumentService : IDocumentService
                     var startMonth = await _db.Companies.AsNoTracking()
                         .Where(c => c.Id == companyId)
                         .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
-                    var fy = Accounting.Helpers.FiscalYear.FiscalYearOf(doc.DocumentDate.Date, startMonth);
-                    var fyEnd = Accounting.Helpers.FiscalYear.RangeFor(fy, startMonth).EndInclusive;
-                    var basis = fyEnd > doc.DocumentDate.Date ? fyEnd : doc.DocumentDate.Date;
-                    doc.RetentionUntil = basis.AddYears(5);
+                    // รอบ 200 (B-06): สูตรเดียวกับด่านลบถาวร — Helpers/DocumentRetention ตัวตั้งตัวเดียว
+                    doc.RetentionUntil = Accounting.Helpers.DocumentRetention.ComputeUntil(doc.DocumentDate, startMonth);
                 }
 
                 // ===== §65 ตรี — รายจ่ายต้องห้าม (บวกกลับ ภ.ง.ด.50) =====
@@ -9040,13 +9052,17 @@ public partial class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
         // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 — ห้ามลบจริงก่อนครบอายุเก็บ 5 ปี
-        // (เอกสารที่ approve แล้วเท่านั้นที่มี RetentionUntil; Draft ลบได้).
-        var inRetention = doc.RetentionUntil.HasValue
-            && DateTime.UtcNow.Date < doc.RetentionUntil.Value.Date
-            && doc.Status != DocumentStatus.Draft;
+        // รอบ 200 (B-06): เดิมอ่านแค่ RetentionUntil ที่ Approve เขียน ⇒ ใบกำกับจาก POS/API/นำเข้า/ข้ามบริษัท
+        // (เกิดเป็น Approved ตรง ๆ · ค่า null) ลบได้เงียบ ๆ · ตอนนี้ "ออกแล้ว + ไม่มีค่า" = คำนวณจากวันที่เอกสาร
+        var fyStartMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
+        var retainUntil = Accounting.Helpers.DocumentRetention.EffectiveUntil(
+            doc.Status, doc.DocumentNumber, doc.RetentionUntil, doc.DocumentDate, fyStartMonth);
+        var inRetention = Accounting.Helpers.DocumentRetention.InRetention(retainUntil, DateTime.UtcNow);
         if (inRetention && !forceOverrideRetention)
             throw new InvalidOperationException(
-                $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3) ถึง {doc.RetentionUntil:dd/MM/yyyy}. " +
+                $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.การบัญชี ม.10) ถึง {retainUntil:dd/MM/yyyy}. " +
                 "ใช้ 'ยกเลิกเอกสาร' (Void) แทนเพื่อคงหลักฐานการตรวจสอบ");
 
         // Override path — บันทึก audit ว่าใคร force-delete เอกสารในช่วง retention
@@ -9062,7 +9078,7 @@ public partial class DocumentService : IDocumentService
             // ผ่าน ChangeTracker (append-only).
             _logger.LogWarning(
                 "RETENTION-OVERRIDE: user {UserId} force-deleted {DocNum} ({DocType}, retain until {Until:yyyy-MM-dd}). Reason: {Reason}",
-                userId, doc.DocumentNumber, doc.DocumentType, doc.RetentionUntil, overrideReason);
+                userId, doc.DocumentNumber, doc.DocumentType, retainUntil, overrideReason);
         }
 
         var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
@@ -13627,8 +13643,13 @@ public partial class DocumentService : IDocumentService
         // context: รายได้ทั้งปี + ทุนจดทะเบียน (สำหรับ cap ค่ารับรอง)
         var company = await _db.Companies.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == companyId);
-        var yearStart = new DateTime(doc.DocumentDate.Year, 1, 1);
-        var yearEnd = yearStart.AddYears(1);
+        // รอบ 200 (B-10): เพดานค่ารับรอง §65 ตรี(4) คิด "ต่อรอบบัญชี" (กฎกระทรวง 143) — เดิมตายตัวปีปฏิทิน
+        // ⇒ บริษัทรอบ เม.ย.–มี.ค. ได้ฐานรายได้และยอดค่ารับรองสะสมของช่วงผิด · ใช้ Helpers/FiscalYear ตัวเดียวกับระยะเก็บเอกสาร
+        var fyStartMonth = Accounting.Helpers.FiscalYear.NormalizeStartMonth(company?.FiscalYearStartMonth ?? 1);
+        var fyRange = Accounting.Helpers.FiscalYear.RangeFor(
+            Accounting.Helpers.FiscalYear.FiscalYearOf(doc.DocumentDate.Date, fyStartMonth), fyStartMonth);
+        var yearStart = fyRange.Start;
+        var yearEnd = fyRange.EndExclusive;
         var annualRevenue = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId
                 && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
@@ -18108,6 +18129,28 @@ public partial class DocumentService : IDocumentService
             warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ย้อนหลัง {(int)daysPast} วัน — ตรวจรอบการยื่นภาษีก่อนอนุมัติ");
         else if (daysPast < -30)
             warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ล่วงหน้าเกิน 30 วัน — โดยปกติออกเอกสารวันจริงเท่านั้น");
+
+        // รอบ 200 ทีม R (B-09): อนุมัติใบขายที่มี VAT เข้าเดือนที่ยื่น/ประกาศยื่น ภ.พ.30 แล้ว — ยกเลิก/กู้คืน/รับรู้มัดจำบล็อกเดือนนั้นอยู่แล้ว
+        // แต่การอนุมัติเงียบ ⇒ ภาษีขายก้อนนี้ไปโผล่เป็นบรรทัดที่ติ๊กออกในรายงานเดือนถัดไป · warn-gate (มองเห็น + รับทราบ) ไม่บล็อก
+        // เพราะการขายที่เกิดจริงในเดือนนั้นต้องออกใบลงวันที่จริง แล้วยื่นเพิ่มเติม (§83 + เงินเพิ่ม §89/1)
+        if (doc.VatAmount != 0m
+            && doc.DocumentType is DocumentType.TaxInvoice or DocumentType.Receipt or DocumentType.ReceiptVoucher
+                or DocumentType.Invoice or DocumentType.CreditNote or DocumentType.DebitNote
+            && !(doc.IsDeposit && doc.DepositOutputVatDeferred && doc.DepositOutputVatRecognizedAt == null))
+        {
+            var relatedType = doc.RelatedDocumentId.HasValue && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+                ? await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync()
+                : null;
+            var purchaseSide = doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
+                && Accounting.Helpers.AdjustmentNoteAccount.ResolveSide(relatedType, doc.CnDnPurchaseSideOverride) == true;
+            var taxDate = (doc.TaxPointDate ?? TaxPointResolver.Resolve(doc)).Date;
+            if (!purchaseSide && await VatPeriodDeclaredOrFiledAsync(companyId, taxDate))
+                warnings.Add($"⚠️ เดือนภาษี {taxDate:MM/yyyy} ของใบนี้ยื่น (หรือประกาศว่ายื่น/ล็อกงวด) ภ.พ.30 แล้ว — อนุมัติต่อได้ แต่ภาษีขาย "
+                    + $"{doc.VatAmount:N2} บาทจะไม่อยู่ในแบบที่ยื่นไป ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น (เงินเพิ่ม §89/1) · "
+                    + "ถ้าการขายเกิดขึ้นวันนี้จริง ให้แก้วันที่เอกสารเป็นวันนี้ก่อนอนุมัติ (§86/4 ห้ามลงวันที่ย้อนหลัง)");
+        }
 
         // VAT-eligible types need a contact TaxId for proper e-Tax XML and
         // ภ.พ.30 cross-matching. Without TaxId the e-Tax generator falls

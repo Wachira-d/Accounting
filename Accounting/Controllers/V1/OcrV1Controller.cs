@@ -157,22 +157,25 @@ public class OcrV1Controller : PublicApiControllerBase
         // รอบ 193 (ฝ่ายค้านรอบสอง): recorder ค้น feedback ด้วย Id อย่างเดียว ⇒ พาร์ตเนอร์ที่รู้ GUID ของบริษัทอื่น
         // เขียนทับคำตอบสอนโมเดลของบริษัทนั้นได้ — กรองให้เหลือเฉพาะ feedback ของบริษัทผู้เรียกก่อน (กฎ M tenant isolation)
         var askedIds = req.Fields.Where(x => x.FeedbackId.HasValue).Select(x => x.FeedbackId!.Value).Distinct().ToList();
-        var ownIds = askedIds.Count == 0 ? new HashSet<Guid>()
-            : (await Db.AiSuggestionFeedbacks.AsNoTracking()
+        // รอบ 200 (C-04): โหลดคำตอบของครู (AI) มาด้วย — acceptedAi ตัดสินที่นี่ด้วยตัวเทียบเดียวกับเส้นเว็บ
+        // (เดิมส่ง false ทุกครั้ง + คอมเมนต์อ้างว่า recorder ตัดสินให้ ซึ่งไม่จริง ⇒ อัตรา "AI แม่น" ของ API = 0% ตลอด)
+        var ownAnswers = askedIds.Count == 0 ? new Dictionary<Guid, string?>()
+            : await Db.AiSuggestionFeedbacks.AsNoTracking()
                 .Where(x => x.CompanyId == ctx!.CompanyId && askedIds.Contains(x.Id))
-                .Select(x => x.Id).ToListAsync(ct)).ToHashSet();
+                .ToDictionaryAsync(x => x.Id, x => x.AiPrimaryAnswer, ct);
 
         var recorded = 0;
         foreach (var f in req.Fields)
         {
             if (!f.FeedbackId.HasValue || string.IsNullOrWhiteSpace(f.FinalValue)) continue;
-            if (!ownIds.Contains(f.FeedbackId.Value)) continue;   // ไม่ใช่ของบริษัทนี้ = ไม่มีอยู่ (ไม่บอกว่ามีของคนอื่น)
+            if (!ownAnswers.TryGetValue(f.FeedbackId.Value, out var aiAnswer)) continue;   // ไม่ใช่ของบริษัทนี้ = ไม่มีอยู่ (ไม่บอกว่ามีของคนอื่น)
             try
             {
-                // acceptedAi ตัดสินที่ recorder โดยเทียบกับคำตอบเดิมที่บันทึกไว้
-                // พาร์ตเนอร์ส่งค่าที่ "ตรวจแล้วแก้แล้ว" กลับมา = การลงมือเลือกของฝั่งเขา
-            await recorder.RecordUserChoiceAsync(f.FeedbackId.Value, f.FinalValue!, acceptedAi: false, ct,
-                Accounting.Models.Enums.UserChoiceSource.Explicit);
+                // พาร์ตเนอร์ส่งค่าที่ "ตรวจแล้ว/แก้แล้ว" กลับมา = การลงมือเลือกของฝั่งเขา (Explicit) ·
+                // acceptedAi = ค่าสุดท้ายตรงกับคำตอบของครู (ไม่มีคำตอบครู = false · ตัวเทียบเดียวกับเส้นเว็บ)
+                await recorder.RecordUserChoiceAsync(f.FeedbackId.Value, f.FinalValue!,
+                    acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(aiAnswer, f.FinalValue), ct,
+                    Accounting.Models.Enums.UserChoiceSource.Explicit);
                 recorded++;
             }
             catch (Exception ex)

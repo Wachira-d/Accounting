@@ -2914,6 +2914,9 @@ public class AiSuggestionController : ControllerBase
         // it indefinite; admin retry button passes force=true.
         if (!force && !string.IsNullOrEmpty(anomaly.AiReasoning))
         {
+            // รอบ 200 (H-3): ป้าย "AI แนะนำ" ต้องซื่อสัตย์ — ครูตอบจริงไหมดูจากแถว feedback (นักเรียนตอบ = ไม่ใช่ AI)
+            var teacherAnswered = anomaly.AiFeedbackId.HasValue && await _db.AiSuggestionFeedbacks.AsNoTracking()
+                .AnyAsync(f => f.Id == anomaly.AiFeedbackId && f.CompanyId == companyId && f.AiPrimaryAnswer != null, ct);
             return Ok(new ApiResponse<object>(true, new
             {
                 primary = anomaly.AiVerdict,
@@ -2922,7 +2925,7 @@ public class AiSuggestionController : ControllerBase
                 suggestedActions = DeserializeList(anomaly.AiSuggestedActionsJson),
                 risks = DeserializeList(anomaly.AiRisksJson),
                 feedbackId = anomaly.AiFeedbackId,
-                usedAi = anomaly.AiFeedbackId.HasValue,
+                usedAi = teacherAnswered,
                 cached = true,
             }));
         }
@@ -2975,9 +2978,11 @@ public class AiSuggestionController : ControllerBase
         // is recorded via the existing /acknowledge / /resolve /
         // /false-positive endpoints and paired with AiFeedbackId via
         // a separate /ai-feedback/record call from the UI.
-        if (resp.UsedAi && !string.IsNullOrEmpty(resp.PrimaryAnswer))
+        // รอบ 200 (H-3): เดิมบันทึกเฉพาะ resp.UsedAi ⇒ ปิด provider แล้วคำตอบนักเรียนหายทุกครั้ง + ยิงซ้ำทุกการเปิดหน้า ·
+        // และไม่ตรวจชุดคำตอบ ⇒ ใช้ตัวตัดสินเดียว (ครูหรือนักเรียน + อยู่ในชุดที่ prompt กำหนด)
+        if (Accounting.Helpers.AnomalyExplainVerdict.ShouldPersist(resp.UsedAi, resp.FromLocalModel, resp.PrimaryAnswer))
         {
-            anomaly.AiVerdict = resp.PrimaryAnswer;
+            anomaly.AiVerdict = Accounting.Helpers.AnomalyExplainVerdict.Normalize(resp.PrimaryAnswer);
             anomaly.AiConfidence = resp.Confidence;
             anomaly.AiReasoning = resp.Reasoning;
             anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(resp.SuggestedActions);
