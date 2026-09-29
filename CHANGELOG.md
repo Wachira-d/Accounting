@@ -3844,3 +3844,20 @@ _2026-09-29 รอบ 200 ทีม GF — แก้ผลฝ่ายค้า�
 - **R200G-6** `PaymentIntentPolicy.IsProviderFeeFinal` — ค่าธรรมเนียมจาก charge ที่เงินยังไม่เคลื่อนไม่ถูกเก็บ · เส้น webhook ซ้ำใช้ตัวตัดสินเดียวกัน
 - **R200G-8** แจ้งเตือน "รับชำระค้าง" บอกสิทธิ์ `Bank.View` ที่ต้องใช้ · **R200G-4/5** เข้ารายการทดสอบ sandbox ใน `PAYMENT_GATEWAY_DESIGN.md` §4.4
 - เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit 6986653d)_
+
+_2026-09-29 รอบ 200 ทีม RF — แก้ผลฝ่ายค้านของทีม R (`erp-review/2026-09-29/review200-R.md` · รายงาน `team-RF.md`):
+- **R200-X1 (P1 security)** หัวเอกสาร (`CustomTitle`/`CustomTitleEn`/`DocumentTitleOverridesJson`) หนีก่อนต่อเข้า HTML · ทุกค่าที่เข้า `<style>` ของ `BuildCss`/`BuildLayoutCss`
+  ผ่าน `Helpers/DocumentTemplateStyle` ตัวเดียว (สี hex · ฟอนต์อนุญาต 4 ตัว · ขนาดในช่วง · กระดาษ/แนว · ขอบ/ความทึบ invariant) · `SanitizeHex`/`NormalizeFont`/
+  `ResolvePageSize`/ขนาดเนื้อความของ QuestPDF เรียกตัวเดียวกัน (สอง renderer ไม่ drift) · ตอนบันทึกเทมเพลต ค่าไม่ถูกรูป = 400 ข้อความไทย ·
+  `DocumentTemplateController` เส้นเขียนทั้ง 5 ต้องมี `CompanySettings.Edit` (DECISIONS ข้อ 34) + เข้า `write_permission_gate_check` · `refLabel` ประมาณการของ JE หนีด้วย ·
+  ไล่ `PdfGenerationService*` ทั้งไฟล์ — ช่องอื่นที่เข้า HTML หนีครบแล้ว (รายละเอียดใน team-RF §X1)
+- **R200-X2 (P2 · กฎเหล็ก #1)** `AnomalyExplanationDistillationModel` อ่าน payload ของ prompt จริงผ่าน `Helpers/AnomalyExplainStudent` · ตอบค่าในชุดเสมอ (cold-start = NeedReview) ·
+  คำอธิบายไปทาง `StructuredJson` ⇒ controller ใช้คำอธิบายของนักเรียนเมื่อปิด provider · **X8** คำตอบครูนอกชุด ⇒ `AnomalyExplainVerdict.Coerce` แล้วเก็บ (ไม่ยิงซ้ำ)
+- **R200-X3 (P2)** แก้กฎอนุมัติ: `description`/`projectId` ไม่มีคีย์ = คงเดิม · "" = ล้าง · `clearProjectId` ล้างโครงการ (`ApprovalRuleValidation.PatchDescription/PatchProjectId`) ·
+  โครงการต้องเป็นของบริษัทนี้ · `approval.html` มีช่องคำอธิบาย/โครงการ + hydrate + reset · simulation `tools/approval_rule_form_sim.js`
+- **R200-X4 (P3)** ใบกำกับการริบที่ค้าง: ล้าง PaymentDate ทุกสถานะที่ยังไม่ออกเลข (`DepositKindDocumentRules.ShouldClearStalePaymentDate`)
+- **R200-X5 (P3)** ด่านเจ้าของทั้ง `RolePermissionService` และ `CompanyService` (17 ผู้เรียก) โยน `OwnerActionGuard.NotOwner` = 403 ข้อความไทย (เดิม 401 ⇒ หน้าเว็บเด้งออกจากระบบ) ·
+  `roles.html` ปุ่มสร้าง Role เริ่มต้นขึ้นเฉพาะเจ้าของ
+- **R200-X6 (P3)** รายงาน ปกส. บนจอใช้ `SsoInsuredNumber.ForDisplay` (ตัวตัดสินเดียวกับไฟล์ สปส.1-10) · **R200-X7** `Math.Round` ในโมดูลเงินเดือนระบุ AwayFromZero ครบ
+  (11 จุด · checker ใหม่ `tools/payroll_rounding_check.py`) · แก้ข้อความ D-08 ใน team-R.md
+- เทสต์ `TeamRFRound200Tests` + ปรับ `AnomalyExplainVerdictTests` · required_call_site +14 แถว/ปรับ 3 + ชนิดกติกา `forbid_lit` — commit <pending>)_

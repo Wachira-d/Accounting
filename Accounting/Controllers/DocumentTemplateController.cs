@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Enums;
@@ -23,11 +25,27 @@ public class DocumentTemplateController : ControllerBase
     }
 
     // ===== Template CRUD =====
+    // รอบ 200 ทีม RF (R200-X1): เส้นเขียนเทมเพลตทุกเส้น (สร้าง/แก้/ลบ/ตั้งค่าเริ่มต้น/คัดลอก) ต้องมีสิทธิ์ตั้งค่าบริษัท
+    // (CompanySettings.Edit — คำอธิบายคีย์ครอบ "template" · DECISIONS ข้อ 34: เจ้าของ + Admin โดยปริยาย) · เดิมมีแค่ [Authorize]
+    // ⇒ ผู้ดูอย่างเดียวแก้เทมเพลต default ของบริษัทได้ (หัวเอกสาร/CSS ที่ไปโผล่ในพรีวิวของเจ้าของ)
+
+    /// <summary>ตัวตรวจค่าหน้าตาตอนบันทึก — ค่าที่ไม่ถูกรูป = 400 พร้อมข้อความไทย (Helpers/DocumentTemplateStyle ตัวเดียวกับตอน render)</summary>
+    private static string? StyleRejection(Accounting.Helpers.TemplateStyleInput input)
+    {
+        var errs = Accounting.Helpers.DocumentTemplateStyle.RejectReasons(input);
+        return errs.Count == 0 ? null : "บันทึกเทมเพลตไม่ได้: " + string.Join(" · ", errs);
+    }
 
     [HttpPost]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<DocumentTemplateResponse>>> Create(
         Guid companyId, [FromBody] CreateDocumentTemplateRequest request)
     {
+        if (StyleRejection(new Accounting.Helpers.TemplateStyleInput(
+                request.PaperSize, request.Orientation, request.FontFamily, request.BodyFontSize, request.TitleFontSize,
+                request.PrimaryColor, request.AccentColor, request.TableHeaderColor, request.TableHeaderTextColor,
+                request.HeaderBackgroundColor, request.HeaderTextColor, request.TableStripedColor)) is { } bad)
+            return BadRequest(new ApiResponse<DocumentTemplateResponse>(false, null, bad));
         var result = await _templateService.CreateAsync(companyId, request);
         return StatusCode(201, new ApiResponse<DocumentTemplateResponse>(true, result, "สร้างเทมเพลตสำเร็จ"));
     }
@@ -48,14 +66,21 @@ public class DocumentTemplateController : ControllerBase
     }
 
     [HttpPut("{templateId:guid}")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<DocumentTemplateResponse>>> Update(
         Guid companyId, Guid templateId, [FromBody] UpdateDocumentTemplateRequest request)
     {
+        if (StyleRejection(new Accounting.Helpers.TemplateStyleInput(
+                request.PaperSize, request.Orientation, request.FontFamily, request.BodyFontSize, request.TitleFontSize,
+                request.PrimaryColor, request.AccentColor, request.TableHeaderColor, request.TableHeaderTextColor,
+                request.HeaderBackgroundColor, request.HeaderTextColor, request.TableStripedColor)) is { } bad)
+            return BadRequest(new ApiResponse<DocumentTemplateResponse>(false, null, bad));
         var result = await _templateService.UpdateAsync(companyId, templateId, request);
         return Ok(new ApiResponse<DocumentTemplateResponse>(true, result));
     }
 
     [HttpDelete("{templateId:guid}")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid templateId)
     {
         await _templateService.DeleteAsync(companyId, templateId);
@@ -70,6 +95,7 @@ public class DocumentTemplateController : ControllerBase
     }
 
     [HttpPost("{templateId:guid}/set-default")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<bool>>> SetDefault(Guid companyId, Guid templateId)
     {
         await _templateService.SetDefaultAsync(companyId, templateId);
@@ -77,6 +103,7 @@ public class DocumentTemplateController : ControllerBase
     }
 
     [HttpPost("{templateId:guid}/duplicate")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
     public async Task<ActionResult<ApiResponse<DocumentTemplateResponse>>> Duplicate(
         Guid companyId, Guid templateId, [FromQuery] string newName)
     {

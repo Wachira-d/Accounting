@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **370 ไฟล์ · 3,558 `[Fact]` + 534 `[Theory]` (2,364 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **388 ไฟล์ · 3,663 `[Fact]` + 581 `[Theory]` (2,584 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5069,3 +5069,24 @@ Unit (สองทิศทุกไฟล์ — ใบที่พังกล
 | R200-24 | ผู้ไม่มีสิทธิ์ดูเอกสารลับเรียก `POST document-templates/generate-pdf` ของใบลับ (review193-r4 P4-7) | 403 ข้อความไทย · ผู้มีสิทธิ์พิมพ์ได้ |
 | R200-25 | ริบมัดจำที่มีใบร่างใบกำกับค้างจากรุ่นก่อน (PaymentDate = วันรับเงิน) (review194-r4 P4-1) | อนุมัติแล้ว tax point = วันที่ใบ (PaymentDate ถูกล้าง) · ใบที่อนุมัติแล้วไม่ถูกแตะ |
 | R200-26 | CMS booking auto-approve ที่ขั้นหลังอนุมัติล้ม (review194-r4 P4-2) | หมายเหตุบนการจองบอก "อนุมัติ/ลงบัญชีแล้ว แต่ขั้นหลังอนุมัติล้ม" (ไม่ใช่ "ยังเป็นร่าง") |
+
+### รอบ 200 ทีม RF — แก้ผลฝ่ายค้านทีม R (`erp-review/2026-09-29/review200-R.md`)
+
+เทสต์: `TeamRFRound200Tests` (สองทิศทุกกลุ่ม) · `AnomalyExplainVerdictTests` (ปรับตาม X8) · simulation `tools/approval_rule_form_sim.js`
+(โค้ดจริงจาก approval.html + negative test 3 แบบ) · checker ใหม่ `tools/payroll_rounding_check.py` · `write_permission_gate_check` เฝ้า
+`DocumentTemplateController` · จุดเรียก: `required_call_site_check` บล็อก "รอบ 200 ทีม RF" (+ ชนิดกติกา `forbid_lit`) ·
+**ยังไม่ได้คอมไพล์/รันในเครื่องนี้** — CI เป็นตัวแรก
+
+| ID | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| R200-RF-01 | ตั้งหัวเอกสารของเทมเพลต (CustomTitle) / หัวใน "ตั้งชื่อหัวเอกสาร" เป็น `<img src=x onerror=alert(1)>` แล้วเปิดพรีวิว/พิมพ์ (R200-X1) | หัวเอกสารแสดงเป็นตัวอักษร ไม่มีสคริปต์รัน · หัวภาษาไทยปกติเหมือนเดิมทุกตัวอักษร (ต่อท้าย "(ต้นฉบับ)" เหมือนเดิม) |
+| R200-RF-02 | `PUT document-templates/{id}` ด้วย `primaryColor: "x'</style><img …>"` / `fontFamily: "Comic"` / `titleFontSize: "999"` (R200-X1) | 400 "บันทึกเทมเพลตไม่ได้: …" บอกทุกช่องที่ผิดเป็นภาษาไทย · ค่าจากหน้าแก้เทมเพลตปกติ (สีจากจานสี · ฟอนต์ 4 ตัว · ขนาด 8–24/14–40) บันทึกผ่าน |
+| R200-RF-03 | เทมเพลตเก่าที่เก็บสีไม่ถูกรูปไว้ก่อนมีด่าน → พิมพ์เอกสาร (R200-X1) | พิมพ์ได้ด้วยสีเริ่มต้น (ไม่ล้ม · ไม่มีแท็กหลุดออกจาก `<style>`) · QuestPDF ได้ฟอนต์/ขนาดกระดาษ/ขนาดตัวอักษรชุดเดียวกับ HTML |
+| R200-RF-04 | ผู้ใช้บทบาท "ดูอย่างเดียว" กดบันทึก/ลบ/ตั้งค่าเริ่มต้น/คัดลอกเทมเพลต (R200-X1) | 403 ข้อความไทยบอกสิทธิ์ที่ต้องใช้ (`CompanySettings.Edit`) · เจ้าของ/Admin ทำได้เหมือนเดิม · พิมพ์/พรีวิวเอกสารยังทำได้ |
+| R200-RF-05 | ปิด provider ทุกตัว แล้วกด "อธิบายรายการผิดปกติ" บนการ์ดยอดสูงผิดปกติ (R200-X2) | ได้คำตัดสินในชุด (LikelyError/LikelyLegit/NeedReview) + คำอธิบายภาษาไทยของนักเรียน (ไม่ใช่ "Hybrid: local wins…") · บันทึกลงรายการ · เปิดหน้าใหม่ = คำตอบเดิม ป้าย "ระบบแนะนำ" |
+| R200-RF-06 | ครูตอบ `"likely_error"` / คำไทยนอกชุด (R200-X8) | บันทึกเป็น LikelyError / NeedReview (ความมั่นใจว่างเมื่อถูกแปลงเป็น NeedReview) · เปิดหน้าใหม่ไม่เรียกครูซ้ำ |
+| R200-RF-07 | กฎอนุมัติที่จำกัดโครงการ + มีคำอธิบาย → เปิด "แก้ไข" ที่หน้าอนุมัติ แล้วกดบันทึกโดยไม่แตะ (R200-X3) | คำอธิบาย/โครงการคงเดิม · เลือก "ทุกโครงการ" แล้วบันทึก = ล้างขอบเขตจริง · ล้างคำอธิบาย = ว่างจริง · เลือกโครงการของบริษัทอื่นผ่าน API = 400 |
+| R200-RF-08 | ริบมัดจำที่มีใบกำกับการริบค้างสถานะ "รออนุมัติ"/"ถูกปฏิเสธ" พร้อม PaymentDate = วันรับเงิน (R200-X4) | อนุมัติแล้ว tax point = วันที่ใบ (PaymentDate ถูกล้าง) · ใบที่ออกเลขแล้วไม่ถูกแตะ |
+| R200-RF-09 | สมาชิกที่ไม่ใช่เจ้าของเรียก `POST roles/seed-defaults` / endpoint เจ้าของอื่น (webhook · api-keys) (R200-X5) | 403 + ข้อความ "…ต้องทำโดยเจ้าของบริษัท (Owner) เท่านั้น" · ไม่ถูกออกจากระบบ · ปุ่ม "สร้าง Role เริ่มต้น" ไม่ขึ้นสำหรับคนที่ไม่ใช่เจ้าของ |
+| R200-RF-10 | รายงาน ปกส. บนจอของพนักงานที่ไม่มีเลข ปกส. แต่เลขบัตรถูกต้อง (R200-X6) | จอแสดงเลขบัตร (ปิดบังเมื่อไม่มี Pii.View) ตรงกับที่ไฟล์ สปส.1-10 ส่ง · เลข ปกส. ที่กรอกไว้ชนะ · ไม่มีทั้งคู่ = "-" |
+| R200-RF-11 | `python3 tools/payroll_rounding_check.py` หลังเพิ่ม `Math.Round(x, 2)` ในโมดูลเงินเดือน (R200-X7) | ล้มพร้อมไฟล์:บรรทัด · negative test ในตัวผ่าน |

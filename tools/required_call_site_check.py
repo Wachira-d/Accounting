@@ -13,6 +13,7 @@
   call_args  — ทุกการเรียก X ต้องส่งอาร์กิวเมนต์ที่มีคำ Y (เช่น ส่ง `lockEvidence` ไม่ใช่ `None`)
   before     — X ต้องมาก่อน Y · หา Y ไม่เจอ = ฟ้อง (ไม่ข้ามเงียบ)
   forbid     — ห้ามมี (ประกอบสูตรเองซ้ำ · ส่งค่าว่างแทนหลักฐาน · เขียน audit นอก chain)
+  forbid_lit — ห้ามมี (ค้นบนโค้ดที่ตัดแค่คอมเมนต์ — รูในสตริง interpolate เช่น `{t.AccentColor}` ที่ต่อเข้า CSS/HTML ดิบ · รอบ 200 ทีม RF)
 
 สิ่งที่ checker นี้ **ทำไม่ได้** (เขียนไว้ตรง ๆ — ต้องพึ่งเทสต์/compiler/คนตรวจ):
   • ความถูกต้องของค่า (เช่น ส่ง `lockEvidence` ของรอบอื่น · กรองสถานะผิดตัว) · ลำดับที่ขึ้นกับ control flow
@@ -595,8 +596,10 @@ RULES += [
          why="G2-06: คอลัมน์เข้ารหัส nonce สุ่ม เทียบใน SQL ไม่มีวันเจอ — ต้องถอดรหัสแล้วเทียบ"),
     dict(file=PAYROLL, method="GeneratePnd1Async", must=["PiiMask.CitizenId("],
          why="G2-05: รายงาน ภ.ง.ด.1 ปิดบังเลขบัตรสำหรับผู้ไม่มี Pii.View"),
-    dict(file=PAYROLL, method="GenerateSsoReportAsync", must=["PiiMask.CitizenId("],
-         why="G2-05: รายงาน ปกส. ปิดบังเลขประกันสังคมสำหรับผู้ไม่มี Pii.View"),
+    dict(file=PAYROLL, method="GenerateSsoReportAsync", must=["SsoInsuredNumber.ForDisplay("],
+         call_args=[("SsoInsuredNumber.ForDisplay(", "includePii")],
+         forbid=["PiiMask.CitizenId(d.Employee.SocialSecurityNumber)"],
+         why="G2-05 + R200-X6: รายงาน ปกส. ปิดบังเลขสำหรับผู้ไม่มี Pii.View · เลข ปกส. จากตัวตัดสินเดียวกับไฟล์ สปส.1-10"),
     dict(file="Controllers/PayrollController.cs", method="GetPnd1", must=["CanViewPiiAsync("],
          call_args=[("_service.GeneratePnd1Async(", "includePii")],
          why="G2-05: ด่าน PII (Pii.View + PiiAccessLog) ไม่ใช่แค่ด่านเงินเดือน"),
@@ -617,6 +620,8 @@ RULES += [
          must=["VatPeriodDeclaredOrFiledAsync(", "AdjustmentNoteAccount.ResolveSide("],
          why="B-09: อนุมัติใบขายเข้าเดือนที่ยื่น ภ.พ.30 แล้วต้องเตือน (สมมาตรกับด่านยกเลิก/กู้คืน)"),
     dict(file=DOC, method="IssueForfeitTaxInvoiceAsync",
+         must=["DepositKindDocumentRules.ShouldClearStalePaymentDate("],
+         forbid=["draft.Status == DocumentStatus.Draft"],
          must_re=[r"draft\s*\.\s*PaymentDate\s*=\s*null\s*;"],
          before=[("draft.PaymentDate = null", "ApproveDocumentAsync(")],
          why="review194-r4 P4-1: ใบร่างของการริบที่ค้างจากรุ่นก่อนต้องล้างวันรับเงินก่อนอนุมัติ (tax point = วันที่ใบ)"),
@@ -640,9 +645,9 @@ RULES += [
          must=["OcrAiLabelScope.AcceptedAi("], forbid=["acceptedAi: false"],
          why="C-04: ยืนยันผ่าน API ต้องบอกว่ารับคำตอบครูไหมตามจริง (เดิม false ทุกครั้ง)"),
     dict(file="Controllers/AiSuggestionController.cs", method="ExplainAnomaly",
-         must=["AnomalyExplainVerdict.ShouldPersist(", "AnomalyExplainVerdict.Normalize("],
-         forbid=["resp.UsedAi && !string.IsNullOrEmpty(resp.PrimaryAnswer)"],
-         why="H-3: นักเรียนตอบต้องบันทึกได้ (kill-switch) · คำตัดสินต้องอยู่ในชุดคำตอบ"),
+         must=["AnomalyExplainVerdict.ShouldPersist(", "AnomalyExplainVerdict.Coerce(", "AnomalyExplainStudent.ReadStructured("],
+         forbid=["resp.UsedAi && !string.IsNullOrEmpty(resp.PrimaryAnswer)", "anomaly.AiReasoning = resp.Reasoning;"],
+         why="H-3 + R200-X2/X8: นักเรียนตอบต้องบันทึกได้ (kill-switch) พร้อมคำอธิบายจริงของนักเรียน · คำตอบนอกชุดแปลงเข้าชุดแล้วเก็บ (ไม่ทิ้ง)"),
     dict(file="Services/Implementations/FixedAssetService.cs", method="ImportAsync",
          must=["FixedAssetImportMethod.Resolve("],
          why="E-03: นำเข้าเดินด่านที่ดิน/งานระหว่างก่อสร้างเดียวกับเส้นสร้างด้วยมือ"),
@@ -664,6 +669,61 @@ RULES += [
          why="A07/G2-09: แก้กฎใช้ด่านเดียวกับสร้าง"),
     dict(file=APPROVAL, method="ValidateRuleAsync", must=["ApprovalRuleValidation.Problem(", "cu.CompanyId == companyId"],
          why="G2-09: รายชื่อสมาชิกกรองบริษัทนี้"),
+]
+
+# ── รอบ 200 ทีม RF (แก้ผลฝ่ายค้านทีม R · review200-R.md): X1 หัวเอกสาร/CSS ของเทมเพลต + ด่านบันทึก · X2/X8 นักเรียนอธิบายรายการผิดปกติ ·
+#    X3 แก้กฎอนุมัติไม่ล้างช่องที่ไม่ได้ส่ง · X5 ไม่ใช่เจ้าของ = 403 · (X4 · X6 แก้แถวเดิมด้านบน) ──
+TPL_CTRL = "Controllers/DocumentTemplateController.cs"
+PDF_QUEST = "Services/Implementations/PdfGenerationService.DocumentRenderer.cs"
+RAW_TEMPLATE_CSS = ["{t.FontFamily}", "{t.BodyFontSize}", "{t.TitleFontSize}", "{t.PrimaryColor}", "{t.AccentColor}",
+                    "{t.HeaderBackgroundColor}", "{t.TableHeaderColor", "{t.TableHeaderTextColor", "{t.TableStripedColor}",
+                    "{t.PaperSize}", "{t.Orientation"]
+RULES += [
+    dict(file=PDF_HTML, method="BuildDocumentHtml",
+         must=["WebUtility.HtmlEncode(ComputeDocumentTitle("],
+         why="R200-X1: หัวเอกสาร (CustomTitle/CustomTitleEn/DocumentTitleOverridesJson) มาจากผู้แก้เทมเพลต/ค่าตั้ง — หนีก่อนต่อเข้า HTML"),
+    dict(file=PDF_HTML, method="BuildCss",
+         must=["DocumentTemplateStyle.Font(", "DocumentTemplateStyle.Color(", "DocumentTemplateStyle.Hex(",
+               "DocumentTemplateStyle.BodyFontSize(", "DocumentTemplateStyle.TitleFontSize(",
+               "DocumentTemplateStyle.PaperSize(", "DocumentTemplateStyle.Orientation("],
+         forbid_lit=RAW_TEMPLATE_CSS,
+         why="R200-X1: ค่าเทมเพลตทุกช่องที่เข้า <style> ผ่านตัวตรวจตัวเดียว — ค่าดิบปิด </style> แล้วยิงสคริปต์ได้"),
+    dict(file=PDF_HTML, method="BuildLayoutCss",
+         must=["DocumentTemplateStyle.Color(", "DocumentTemplateStyle.TitleFontSize("],
+         forbid=["var accent = t.AccentColor;"], forbid_lit=["{t.TitleFontSize}", "{t.AccentColor}"],
+         why="R200-X1: CSS ของโครงหน้าใช้สี/ขนาดที่ผ่านตัวตรวจแล้ว"),
+    dict(file=PDF_HTML, method="NormalizeFont", must=["DocumentTemplateStyle.Font("],
+         why="R200-X1: QuestPDF ใช้รายการฟอนต์อนุญาตชุดเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=PDF_QUEST, method="ResolvePageSize",
+         must=["DocumentTemplateStyle.PaperSize(", "DocumentTemplateStyle.Orientation("],
+         why="R200-X1: ขนาด/แนวกระดาษ QuestPDF = ตัวตรวจเดียวกับ @page ของ HTML"),
+    dict(file=PDF_QUEST, method="RenderDocumentPdfNative",
+         must=["DocumentTemplateStyle.BodyFontSize("], forbid=["float.TryParse(template.BodyFontSize"],
+         why="R200-X1: ขนาดเนื้อความ QuestPDF = ตัวตรวจเดียวกับ HTML"),
+    dict(file=TPL_CTRL, method="Create",
+         must=["StyleRejection("], before=[("StyleRejection(", "_templateService.CreateAsync(")],
+         why="R200-X1: ตรวจค่าหน้าตาเทมเพลตตอนบันทึก (400 + ข้อความไทย) ก่อนเขียน"),
+    dict(file=TPL_CTRL, method="Update",
+         must=["StyleRejection("], before=[("StyleRejection(", "_templateService.UpdateAsync(")],
+         why="R200-X1: ตรวจค่าหน้าตาเทมเพลตตอนแก้ ด่านเดียวกับสร้าง"),
+    dict(file=TPL_CTRL, method="StyleRejection", must=["DocumentTemplateStyle.RejectReasons("],
+         why="R200-X1: ตัวตรวจตอนบันทึก = ตัวเดียวกับตอน render"),
+    dict(file="Services/Ai/Distillation/AnomalyExplanationDistillationModel.cs", method="PredictAsync",
+         must=["AnomalyExplainStudent.ReadPrompt(", "AnomalyExplainStudent.Decide(", "AmountAnomalyDetector.CheckModifiedZScore(", "StructuredJson ="],
+         forbid=["ExtractInput("],
+         why="R200-X2: นักเรียนอ่าน payload ของ prompt จริง · ตอบค่าในชุด · คำอธิบายไปทาง StructuredJson (kill-switch ได้คำอธิบายครบ)"),
+    dict(file=APPROVAL, method="UpdateRuleAsync",
+         must=["ApprovalRuleValidation.PatchDescription(", "ApprovalRuleValidation.PatchProjectId("],
+         forbid=["rule.Description = request.Description;", "rule.ProjectId = request.ProjectId;"],
+         why="R200-X3: แก้กฎแล้วช่องที่ไม่ได้ส่ง (คำอธิบาย/โครงการ) ต้องคงเดิม — ห้ามเขียนทับด้วย null เงียบ ๆ"),
+    dict(file=APPROVAL, method="ValidateRuleAsync", must=["_db.Projects", "p.CompanyId == companyId"],
+         why="R200-X3: ขอบเขตโครงการของกฎต้องเป็นโครงการของบริษัทนี้"),
+    dict(file="Services/Implementations/RolePermissionService.cs", method="EnsureOwnerAccessAsync",
+         must=["OwnerActionGuard.NotOwner("], forbid=["new UnauthorizedAccessException("],
+         why="R200-X5: ไม่ใช่เจ้าของ = 403 + ข้อความ (401 ทำให้หน้าเว็บลบ token เด้งออกจากระบบ)"),
+    dict(file="Services/Implementations/CompanyService.cs", method="EnsureOwnerAccessAsync",
+         must=["OwnerActionGuard.NotOwner("], forbid=["new UnauthorizedAccessException("],
+         why="R200-X5: ด่านเจ้าของของ CompanyService (17 ผู้เรียก) — 403 ตัวสร้างเดียวกับ RolePermissionService"),
 ]
 
 # ── รอบ 193 ทีม W หลังฝ่ายค้านรอบสอง (W2-C2): audit hash chain — เรพไม่มี PostgreSQL ในเทสต์ ⇒ เทสต์เรียก Seal/Analyze ตรง
@@ -2625,6 +2685,10 @@ def check_rule(text: str, rule):
         m = pat(p).search(body)
         if m:
             errs.append(f"{rel}:{ln(m.start())} {meth} มี `{p}` ซึ่งห้ามใช้ที่นี่ (ประกอบเอง/ค่าว่างแทนหลักฐาน/นอก chain) — {why}")
+    for p in rule.get("forbid_lit", []):
+        m = pat(p).search(lit_body)
+        if m:
+            errs.append(f"{rel}:{ln(m.start())} {meth} มี `{p}` ซึ่งห้ามใช้ที่นี่ (ค่าดิบต่อเข้าสตริง) — {why}")
     return errs
 
 
@@ -2708,6 +2772,9 @@ def self_test() -> list:
         for p in rule.get("forbid", []):
             if not any("ห้ามใช้" in e for e in run(body.replace("{", "{ var __x = " + p + "1m);\n", 1))):
                 fails.append(f"self-test: ใส่ `{p}` ใน {meth} แล้วไม่ฟ้อง")
+        for p in rule.get("forbid_lit", []):
+            if not any("ห้ามใช้" in e for e in run(body.replace("{", '{ var __x = $@"' + p + '";\n', 1))):
+                fails.append(f"self-test: ใส่ `{p}` ในสตริงของ {meth} แล้วไม่ฟ้อง")
     for tag, meth, old, new, expect in REVIEWER_CASES:
         rule = by_method[meth]
         text = cache.setdefault(rule["file"], (SRC / rule["file"]).read_text(encoding="utf-8"))

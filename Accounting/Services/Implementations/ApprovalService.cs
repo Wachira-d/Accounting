@@ -69,6 +69,10 @@ public class ApprovalService : IApprovalService
         var problem = Accounting.Helpers.ApprovalRuleValidation.Problem(
             request.Name, request.MinAmount, request.MaxAmount, steps, members);
         if (problem != null) throw new Accounting.Helpers.BusinessRuleException(problem);
+        // รอบ 200 ทีม RF (R200-X3): ขอบเขตโครงการต้องเป็นโครงการของบริษัทนี้ (tenant) — เดิมรับ Guid อะไรก็ได้ ⇒ กฎที่ไม่มีวันทำงาน
+        if (request.ProjectId is { } pid
+            && !await _db.Projects.AsNoTracking().AnyAsync(p => p.Id == pid && p.CompanyId == companyId))
+            throw new Accounting.Helpers.BusinessRuleException("ไม่พบโครงการที่เลือกในบริษัทนี้ — เลือกโครงการจากรายการใหม่ หรือเลือก “ทุกโครงการ”");
     }
 
     public async Task<ApprovalRuleResponse> CreateRuleAsync(Guid companyId, CreateApprovalRuleRequest request)
@@ -122,11 +126,12 @@ public class ApprovalService : IApprovalService
         await ValidateRuleAsync(companyId, request);
 
         rule.Name = request.Name;
-        rule.Description = request.Description;
+        // รอบ 200 ทีม RF (R200-X3): ไม่มีคีย์/null = คงเดิม · "" = ล้าง (เดิมเขียนทับด้วย null ⇒ กฎจำกัดโครงการกลายเป็นทุกโครงการเงียบ ๆ)
+        rule.Description = Accounting.Helpers.ApprovalRuleValidation.PatchDescription(rule.Description, request.Description);
         rule.DocumentType = request.DocumentType;
         rule.MinAmount = request.MinAmount;
         rule.MaxAmount = request.MaxAmount;
-        rule.ProjectId = request.ProjectId;
+        rule.ProjectId = Accounting.Helpers.ApprovalRuleValidation.PatchProjectId(rule.ProjectId, request.ProjectId, request.ClearProjectId);
 
         _db.ApprovalSteps.RemoveRange(rule.Steps);
         foreach (var step in request.Steps)

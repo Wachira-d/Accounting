@@ -611,8 +611,9 @@ public class CompanyService : ICompanyService
         if (user?.IsSystemAdmin == true) return;
 
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
+        // รอบ 200 ทีม RF (R200-X5): 403 + ข้อความไทย (เดิม UnauthorizedAccessException ⇒ 401 ⇒ หน้าเว็บลบ token เด้งออกจากระบบ)
         if (cu == null || (cu.Role != UserRole.Owner && cu.Role != UserRole.SystemAdmin))
-            throw new UnauthorizedAccessException("ต้องเป็น Owner เท่านั้น");
+            throw Accounting.Helpers.OwnerActionGuard.NotOwner();
     }
 
     private static CompanyResponse MapToResponse(Company c)

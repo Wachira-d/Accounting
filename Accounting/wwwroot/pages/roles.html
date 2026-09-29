@@ -217,6 +217,8 @@
         return;
       }
 
+      // รอบ 200 ทีม RF (R200-X5): ปุ่มเขียน (สร้าง Role เริ่มต้น) โชว์ตามบทบาทจาก server (ensureMyRole) เท่านั้น
+      this._canManage = true;
       // Load server permission catalog in parallel with role list so
       // edit modal renders with the full 55-key picker.
       await Promise.all([this._loadServerPermCatalog(), this.loadRoles()]);
@@ -236,7 +238,7 @@
       }
 
       if (this.roles.length === 0) {
-        document.getElementById('btnSeed').style.display = '';
+        document.getElementById('btnSeed').style.display = this._canManage ? '' : 'none';
         el.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">🔐</div>

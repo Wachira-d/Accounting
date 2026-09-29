@@ -33,13 +33,14 @@ public partial class PdfGenerationService
     /// รวมถึงตอน Chromium ใช้ไม่ได้แล้ว fallback มา QuestPDF</summary>
     internal static PageSize ResolvePageSize(EntTemplate t)
     {
-        var size = (t.PaperSize ?? "A4").Trim().ToUpperInvariant() switch
+        // รอบ 200 ทีม RF (R200-X1): ขนาด/แนวกระดาษจากตัวตรวจตัวเดียวกับ HTML BuildCss (@page) — สอง renderer ห้าม drift
+        var size = Accounting.Helpers.DocumentTemplateStyle.PaperSize(t.PaperSize) switch
         {
             "A5" => PageSizes.A5,
-            "LETTER" => PageSizes.Letter,
+            "Letter" => PageSizes.Letter,
             _ => PageSizes.A4,
         };
-        return string.Equals((t.Orientation ?? "").Trim(), "Landscape", StringComparison.OrdinalIgnoreCase)
+        return Accounting.Helpers.DocumentTemplateStyle.Orientation(t.Orientation) == "Landscape"
             ? size.Landscape()
             : size;
     }
@@ -137,7 +138,8 @@ public partial class PdfGenerationService
                     if (avgMargin < 8) avgMargin = 15f;     // sensible floor
                     page.Margin(avgMargin, Unit.Millimetre);
                     page.PageColor(Colors.White);
-                    var bodyFont = float.TryParse(template.BodyFontSize, out var bf) ? bf : 10f;
+                    // รอบ 200 ทีม RF (R200-X1): ขนาดเนื้อความจากตัวตรวจตัวเดียวกับ HTML BuildCss (ช่วง 8–24 · อ่านไม่ออก = 14)
+                    var bodyFont = (float)Accounting.Helpers.DocumentTemplateStyle.BodyFontSize(template.BodyFontSize);
                     page.DefaultTextStyle(t => t.FontFamily(fontChain).FontSize(bodyFont).FontColor(primary));
 
                     // เอกสารที่ถูกยกเลิก (Voided) — ประทับตรา ยกเลิก สีแดง

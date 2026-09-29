@@ -1,8 +1,5 @@
-using System.Text.Json;
-using Accounting.Data;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Ocr;
-using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Ai.Distillation;
 
@@ -18,10 +15,11 @@ namespace Accounting.Services.Ai.Distillation;
 /// the orchestrator expects, so AnomalyExplanation can be served
 /// locally for the common case.
 ///
-/// Prompt schema (matches AdvancedPrompts.BuildAnomalyExplanation...):
-///   { "amount": 12345.67, "vendor": {...},
-///     "history": [1000, 1200, 950, 1100, ...],
-///     "documentType": "Invoice" }
+/// Prompt schema (ตัวจริง = <c>AnomalyExplainPrompt.Build</c> · รอบ 200 ทีม RF แก้ doc ให้ตรง — เดิมบรรยาย schema ที่ไม่มีใครส่ง):
+///   { "task": "anomaly_explain",
+///     "anomaly": { "amount": 12345.67, "mad_z_score": …, "typical_range": {min,max} },
+///     "vendor_history_12mo": { "history": [...] } | { "count", "avg", "min", "max", "median" },
+///     "recent_12mo": [...], "local_model": { "pick": "LikelyError|NeedReview|null" } }
 ///
 /// DeepSeek still wins on novel patterns or when the user wants prose
 /// commentary; this model handles the "obvious" 80% at zero token cost.
@@ -48,92 +46,28 @@ public class AnomalyExplanationDistillationModel : ILocalDistillationModel
 
     public Task<LocalPrediction?> PredictAsync(Guid companyId, string inputJson, CancellationToken ct)
     {
-        var input = ExtractInput(inputJson);
-        if (input == null) return Task.FromResult<LocalPrediction?>(null);
+        // รอบ 200 ทีม RF (R200-X2): อ่าน payload ของ AnomalyExplainPrompt.Build **ตัวจริง** (anomaly.amount · vendor_history_12mo ·
+        // recent_12mo · local_model.pick) ผ่าน Helpers/AnomalyExplainStudent — เดิมอ่าน root.amount/root.history ที่ prompt ไม่เคยส่ง
+        // ⇒ คืน null ทุกครั้ง · และ PrimaryAnswer ต้องเป็นค่าในชุด LikelyError/LikelyLegit/NeedReview (เดิมเป็น JSON ⇒ controller
+        // บันทึกไม่ได้) · คำอธิบาย/ข้อแนะนำไปทาง StructuredJson (รูปเดียวกับคำตอบครู) ⇒ ตอนปิด provider ยังได้คำอธิบายครบ
+        var facts = Accounting.Helpers.AnomalyExplainStudent.ReadPrompt(inputJson);
+        if (facts == null) return Task.FromResult<LocalPrediction?>(null);
 
-        // Defer to the same MAD-z detector the rest of the pipeline
-        // already uses — single source of truth for "is this an
-        // anomaly". Threshold 3.5 = standard outlier cutoff.
-        var result = AmountAnomalyDetector.CheckModifiedZScore(input.Amount, input.History);
-        if (result == null) return Task.FromResult<LocalPrediction?>(null);
+        // ตัวตรวจจับ MAD z ตัวเดียวกับชั้นตรวจจับ (single source of truth ของ "ผิดปกติไหม")
+        decimal? seriesZ = null;
+        if (facts.Amount > 0 && facts.Series.Count >= 3)
+            seriesZ = AmountAnomalyDetector.CheckModifiedZScore(facts.Amount, facts.Series)?.Score;
 
-        // Build the AI-shaped answer: { isAnomaly, severity, reason,
-        // suggestedActions[] }. This is what AnomalyExplanation prompts
-        // expect DeepSeek to return — we match the schema so call
-        // sites don't need a special-case for local vs remote.
-        var severity = result.IsAnomaly
-            ? (Math.Abs(result.Score) > 5m ? "High" : "Medium")
-            : "Low";
-        var actions = BuildActions(result, input);
-        var answer = JsonSerializer.Serialize(new
-        {
-            isAnomaly = result.IsAnomaly,
-            severity,
-            reason = result.Reason,
-            score = Math.Round(result.Score, 2),
-            suggestedActions = actions,
-        });
-
-        // Confidence: high when the MAD z-score is far from the
-        // threshold (clearly anomalous OR clearly normal); medium near
-        // the boundary so admin can route the borderline 5% to DeepSeek
-        // for narrative help.
-        var distance = Math.Abs(Math.Abs(result.Score) - 3.5m);
-        var confidence = (decimal)Math.Min(0.99, 0.70 + 0.05 * (double)distance);
-
+        var answer = Accounting.Helpers.AnomalyExplainStudent.Decide(facts, seriesZ);
+        var alternatives = Accounting.Helpers.AnomalyExplainVerdict.Candidates.Where(c => c != answer.Primary).ToArray();
         return Task.FromResult<LocalPrediction?>(new LocalPrediction(
-            PrimaryAnswer: answer,
-            Confidence: confidence,
-            Alternatives: Array.Empty<string>(),
-            SupportingSamples: input.History.Count,
-            ModelVersion: Version));
-    }
-
-    private static IReadOnlyList<string> BuildActions(
-        AmountAnomalyDetector.AnomalyResult r, InputDoc input)
-    {
-        if (!r.IsAnomaly) return Array.Empty<string>();
-        var actions = new List<string>();
-        if (r.Score > 0)
+            PrimaryAnswer: answer.Primary,
+            Confidence: answer.Confidence,
+            Alternatives: alternatives,
+            SupportingSamples: facts.Series.Count > 0 ? facts.Series.Count : facts.HistoryCount ?? 0,
+            ModelVersion: Version)
         {
-            // Higher-than-usual — typical reasons in Thai accounting:
-            actions.Add("ตรวจสอบใบกำกับภาษีว่า amount ตรงกับเอกสารกระดาษ");
-            if (input.Amount > 100_000)
-                actions.Add("ยอดเกิน 100,000 — ตรวจสอบ approval ระดับสูงขึ้น");
-            actions.Add("เช็คว่าเป็นค่าใช้จ่ายแบบ recurring หรือ one-off");
-        }
-        else
-        {
-            // Lower-than-usual — typically: partial payment, refund,
-            // or OCR misread of a decimal point.
-            actions.Add("ตรวจสอบว่ามียอด partial payment หรือไม่");
-            actions.Add("เช็ค OCR ว่าจุดทศนิยมถูกต้อง (เช่น 1,234.50 vs 12.3450)");
-        }
-        return actions;
+            StructuredJson = answer.ToJson(),
+        });
     }
-
-    private static InputDoc? ExtractInput(string json)
-    {
-        if (string.IsNullOrEmpty(json)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("amount", out var a)) return null;
-            var amount = a.GetDecimal();
-            if (amount <= 0) return null;
-
-            var history = new List<decimal>();
-            if (root.TryGetProperty("history", out var h) && h.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var el in h.EnumerateArray())
-                    if (el.TryGetDecimal(out var v) && v > 0) history.Add(v);
-            }
-            if (history.Count < 3) return null;
-            return new InputDoc(amount, history);
-        }
-        catch { return null; }
-    }
-
-    private sealed record InputDoc(decimal Amount, IReadOnlyList<decimal> History);
 }

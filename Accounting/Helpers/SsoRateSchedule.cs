@@ -31,7 +31,7 @@ public static class SsoRateSchedule
     public static decimal GetMaxContribution(int year)
     {
         var (ceiling, rate) = GetDefault(year);
-        return Math.Round(ceiling * rate, 2);
+        return Math.Round(ceiling * rate, 2, MidpointRounding.AwayFromZero);
     }
 
     // ===== ช่วงเดือนที่ override มีผล =====

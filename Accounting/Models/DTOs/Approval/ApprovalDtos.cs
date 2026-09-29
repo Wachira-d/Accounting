@@ -11,7 +11,10 @@ public record CreateApprovalRuleRequest(
     List<ApprovalStepRequest> Steps,
     /// <summary>Optional project scope. When set, the rule only fires for
     /// documents tagged with this project. Null = applies to all projects.</summary>
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    /// <summary>รอบ 200 ทีม RF (R200-X3) — ใช้เฉพาะตอน<b>แก้</b>กฎ: true = ล้างขอบเขตโครงการเป็น "ทุกโครงการ" ·
+    /// false/ไม่ส่ง + ProjectId ว่าง = คงโครงการเดิม (Guid? รับ "" ไม่ได้ จึงต้องมีธงแยก)</summary>
+    bool ClearProjectId = false);
 
 public record ApprovalStepRequest(
     int StepOrder,

@@ -26,4 +26,18 @@ public static class ApprovalRuleValidation
             return "ผู้อนุมัติบางคนไม่ใช่สมาชิกของบริษัทนี้ (อาจถูกถอดออกแล้ว) — เลือกผู้อนุมัติจากรายชื่อสมาชิกใหม่";
         return null;
     }
+
+    // ── รอบ 200 ทีม RF (R200-X3): แก้กฎแล้วช่องที่หน้าเว็บไม่ได้ส่ง/ไม่ได้แตะต้องไม่ถูกล้างเงียบ ─────────────────────
+    // เดิม UpdateRuleAsync เขียน `rule.Description = request.Description` · `rule.ProjectId = request.ProjectId` ตรง ๆ
+    // ⇒ หน้า approval.html ที่ส่ง description:null และไม่มี projectId ทำให้กฎที่จำกัดโครงการกลายเป็น "ทุกโครงการ" ทันทีที่กดบันทึก
+    // ⇒ เอกสารของโครงการอื่นถูกดึงเข้ากฎที่ไม่ได้ตั้งใจ · กติกาของเรพ: ไม่มีคีย์/null = คงเดิม · "" = ล้าง
+
+    /// <summary>คำอธิบายหลังแก้: <c>null</c> (ไม่ได้ส่ง) = คงเดิม · ว่าง/ช่องว่าง = ล้าง · อื่น ๆ = ค่าใหม่ (ตัดช่องว่างหัวท้าย)</summary>
+    public static string? PatchDescription(string? current, string? sent)
+        => sent == null ? current : string.IsNullOrWhiteSpace(sent) ? null : sent.Trim();
+
+    /// <summary>โครงการหลังแก้: <paramref name="clear"/> = ล้างเป็น "ทุกโครงการ" (Guid? ส่ง "" ไม่ได้ ⇒ ใช้ธงแยก) ·
+    /// ส่งค่า = ค่าใหม่ · ไม่ได้ส่ง (null) = คงเดิม · ธงล้างชนะค่าที่ส่งมาพร้อมกันไม่ได้ ⇒ ส่งทั้งคู่ = ใช้ค่าที่ส่ง (ทิศที่ไม่ขยายขอบเขตกฎ)</summary>
+    public static Guid? PatchProjectId(Guid? current, Guid? sent, bool clear)
+        => sent ?? (clear ? null : current);
 }
