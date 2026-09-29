@@ -1,5 +1,7 @@
 # รอบ 200 — ทีม K (OCR ผู้ติดต่อสาขา / ใบ Makro ค้าง)
 
+คอมมิตงาน: `53dc5921` (sha เติมในคอมมิตตามหลัง)
+
 แหล่ง: `erp-review/2026-09-25/makro-branch/review197.md` (ตาราง "สถานะหลังทีม K2": K-3b · K-4 · K-5 · K-8 · K-9 · K-10 · K-11) ·
 `erp-review/2026-09-25/review-r199-ocr.md` (แถวที่ยังไม่ ✅) · คำตัดสินเจ้าของ **ข้อ 19** (`DECISIONS.md`) · ใบจริง `makro-branch/paper-page3.jpg`
 

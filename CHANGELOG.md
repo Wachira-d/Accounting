@@ -3730,4 +3730,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K — OCR �
 - **K-8** ช่องลายเซ็นท้ายบิลไม่ใช่บล็อกผู้รับ (`OcrSignatureSlot`) · **K-9** ที่อยู่แถวสาขาใหม่ในเส้นสร้างเอกสาร = ที่พิสูจน์ได้เท่านั้น (`StoredAddressIsIssuerBranch`) ·
   **K-11** สาขาผู้ซื้ออ่านบนข้อความที่กลบป้ายฉบับ + ประโยคประกาศสาขาผู้ออกใบ (ใบ Makro 00005 → 00000 · จำลองชุดกระดาษ 77 ใบ เปลี่ยน 1 ใบ) ·
   **r199 A-5** ผูก PO จากเลขบนกระดาษเทียบ PO ค้างทั้งหมด (`OcrOpenPurchaseOrders`)
-- เทสต์ `OcrReview200Tests` · required_call_site +11/ปรับ 2 · TEST_PLAN OCR-U-15..23 — commit <pending>)_
+- เทสต์ `OcrReview200Tests` · required_call_site +11/ปรับ 2 · TEST_PLAN OCR-U-15..23 — commit 53dc5921)_
