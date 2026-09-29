@@ -104,6 +104,39 @@ public static class OcrIssuerBranch
         return new OcrIssuerBranchStatement(hits[0].Code, hits[0].Evidence, address);
     }
 
+    /// <summary>กลบ<b>ทุก</b>ประโยคประกาศสาขาผู้ออกใบด้วยช่องว่างความยาวเท่าเดิม (ตำแหน่งตัวอักษรอื่นคงเดิม) — ประโยคนั้นเป็นของ
+    /// <b>ผู้ขาย</b>เสมอ (แม้รหัสสองภาษาขัดกันจน <see cref="Detect"/> คืน null) ⇒ ห้ามถูกอ่านเป็นสาขาผู้ซื้อ (รอบ 200 K-11: ใบ Makro
+    /// สองคอลัมน์ "ชื่อลูกค้า … / สาขาที่ออกใบกำกับภาษี/ Branch 00005" สลับบรรทัด ⇒ สาขาผู้ซื้อได้ 00005 ของผู้ขาย)</summary>
+    public static string MaskStatements(string? rawText)
+    {
+        if (string.IsNullOrEmpty(rawText)) return "";
+        var chars = rawText.ToCharArray();
+        foreach (var rx in new[] { ThaiStatementRx, EnglishStatementRx })
+            foreach (Match m in rx.Matches(rawText))
+                for (var i = m.Index; i < m.Index + m.Length; i++)
+                    if (chars[i] != '\n') chars[i] = ' ';
+        return new string(chars);
+    }
+
+    /// <summary>
+    /// <b>ที่อยู่ผู้ขายที่สแกนเก็บไว้ "พิสูจน์ได้ว่าเป็นของสาขานี้" ไหม</b> (รอบ 200 K-9 · เส้นสร้างเอกสาร) — เส้นสแกนรู้จากธง
+    /// <c>VendorAddressFromIssuerBranch</c> ณ ตอนสกัด แต่ธงนั้นไม่ถูกเก็บลงแถวสแกน ⇒ เส้นสร้างเอกสาร (สแกนเก่า · ผู้ใช้แก้สาขาทีหลัง)
+    /// ต้องพิสูจน์ใหม่จากกระดาษด้วยตัวอ่านตัวเดียวกัน: ประโยคประกาศสาขา (<see cref="Detect"/>) บอกรหัส<b>เดียวกับ</b>
+    /// <paramref name="branchCode"/> และที่อยู่ที่พิมพ์ต่อจากประโยคนั้น<b>ตรงกับ</b> <paramref name="storedAddress"/> — หรือผู้ใช้พิมพ์ที่อยู่เอง
+    /// (<paramref name="userCorrectedAddress"/> — คนเห็นกระดาษ) · ไม่เข้าเงื่อนไข = "ไม่รู้" ⇒ ผู้เรียกไม่ส่งที่อยู่จากกระดาษเข้า
+    /// <see cref="ContactAddress"/> (ที่อยู่หัวกระดาษมักเป็นสำนักงานใหญ่ — ห้ามลงผู้ติดต่อของสาขา)
+    /// </summary>
+    public static bool StoredAddressIsIssuerBranch(string? rawText, string? branchCode, string? storedAddress,
+        bool userCorrectedAddress)
+    {
+        if (string.IsNullOrWhiteSpace(storedAddress)) return false;
+        if (userCorrectedAddress) return true;
+        if (string.IsNullOrWhiteSpace(branchCode) || TaxBranchCode.IsHeadOffice(branchCode)) return false;
+        var st = Detect(rawText);
+        if (st?.Address == null || st.Code != TaxBranchCode.Normalize(branchCode)) return false;
+        return OcrBuyerAddressReader.SameAddress(st.Address, storedAddress);
+    }
+
     /// <summary>ประโยคประกาศสาขาควรทำอะไรกับรหัสสาขาผู้ขายที่ถืออยู่ + ควรใช้ที่อยู่ของสาขานั้นไหม
     ///
     /// <para>ประโยคประกาศ (หลักฐานมีป้ายกำกับ · G1) ชนะ <c>00000</c>/ว่าง — ค่านั้นมักมาจากคำว่า

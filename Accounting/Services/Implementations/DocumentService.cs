@@ -11219,9 +11219,10 @@ public partial class DocumentService : IDocumentService
 
         var groups = new List<object>();
         // กลุ่มตามเลขภาษี+สาขา
+        // คีย์ตัวเดียวกับรายงาน contact-hygiene (Helpers/ContactDataHygiene.DuplicateKey · รอบ 200 K-5) — สองหน้านับกลุ่มตรงกัน
         foreach (var g in all
-            .Where(c => NormalizeTaxDigits(c.TaxId).Length == 13)
-            .GroupBy(c => NormalizeTaxDigits(c.TaxId) + "|" + NormalizeBranchCode(c.BranchCode))
+            .Where(c => Accounting.Helpers.ContactDataHygiene.DuplicateKey(c.TaxId, c.BranchCode) != null)
+            .GroupBy(c => Accounting.Helpers.ContactDataHygiene.DuplicateKey(c.TaxId, c.BranchCode)!)
             .Where(g => g.Count() > 1))
         {
             // แนะนำ "ตัวเก็บ": ข้อมูลครบสุด (ที่อยู่/อีเมล/โทร) แล้วเก่าสุด (เลขอ้าง

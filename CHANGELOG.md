@@ -3720,7 +3720,19 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม W — ภ.ง.ด.54/DTA คำตัดสินข้อ 13: ตัวตัดสินอัตราจ่ายต่างประเทศตัวเดียว `ForeignWhtRateResolver`
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K — OCR ผู้ติดต่อสาขา/ใบ Makro ค้าง (`erp-review/2026-09-29/team-K.md` · คำตัดสินเจ้าของข้อ 19):
+- **K-10** ช่อง WHT (`hasWht`/`whtRate`/`whtIncomeTypeCode`) นับว่าผู้ใช้แก้เฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (`OcrWhtBaseline` ใน `OcrCorrectionBaseline`) — เดิมหน้าเว็บส่งทุกครั้ง
+  ⇒ `OcrWhtLearningScope` = UserEdited ทุกใบบนเว็บ (ประวัติ WHT สอนตัวเอง) · ที่อยู่ผู้ขายใช้กติกาเดียวกัน (`OcrTextBaseline` — ป้อน K-9)
+- **K-5** ล็อก `pg_advisory_xact_lock` ต่อ (CompanyId, เลขผู้เสียภาษี) ตอนสร้างผู้ติดต่อจาก OCR ทุกเส้น (สแกน · สร้างเอกสาร · แก้ผลสแกน) + ถามคีย์กลางซ้ำใต้ล็อก ·
+  ไม่เพิ่ม unique index · แถวซ้ำเดิมรายงานใน contact-hygiene (`ContactDataHygiene.DuplicateKeyGroups` — คีย์เดียวกับแถบเตือนหน้าผู้ติดต่อ)
+- **K-4** `DecideScanVendorBranchContactAsync` ตัวเดียวของเส้นสร้างเอกสาร + `SubmitCorrectionAsync` (`ShouldRedecideOnCorrection`) ⇒ "แก้ในฟอร์มก่อน" ได้ผู้ติดต่อของสาขาที่แก้
+- **K-3b** alias/คำปฏิเสธ/ประวัติซื้อ/เกณฑ์ยอมรับอัตโนมัติ อ่านทุกแถวของนิติบุคคลเดียวกัน (`OcrVendorAliasScope` + `SameEntityIdsAsync`)
+- **K-8** ช่องลายเซ็นท้ายบิลไม่ใช่บล็อกผู้รับ (`OcrSignatureSlot`) · **K-9** ที่อยู่แถวสาขาใหม่ในเส้นสร้างเอกสาร = ที่พิสูจน์ได้เท่านั้น (`StoredAddressIsIssuerBranch`) ·
+  **K-11** สาขาผู้ซื้ออ่านบนข้อความที่กลบป้ายฉบับ + ประโยคประกาศสาขาผู้ออกใบ (ใบ Makro 00005 → 00000 · จำลองชุดกระดาษ 77 ใบ เปลี่ยน 1 ใบ) ·
+  **r199 A-5** ผูก PO จากเลขบนกระดาษเทียบ PO ค้างทั้งหมด (`OcrOpenPurchaseOrders`)
+- เทสต์ `OcrReview200Tests` · required_call_site +11/ปรับ 2 · TEST_PLAN OCR-U-15..23 — commit 53dc5921)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม W — ภ.ง.ด.54/DTA คำตัดสินข้อ 13: ตัวตัดสินอัตราจ่ายต่างประเทศตัวเดียว `ForeignWhtRateResolver`
 (ม.70 15%/ปันผล 10% · นอก ม.70/ไม่รู้ประเภท ⇒ ไม่มีอัตรา) + ตารางอนุสัญญา `DtaTreatyRates` (ว่างโดยตั้งใจ — เครือข่ายเปิดตัวบททางการไม่ได้ · ต้องมี CoR) ·
 รอบโอน settlement ผู้ให้บริการต่างประเทศหัก ภ.ง.ด.54 ได้ (21918 · 50 ทวิ แบบ 54) บล็อกเฉพาะ 40(8)/ตัวแทนหักแทน/ผู้ติดต่อต่างประเทศบนช่องทางไทย (§2.10) ·
 คำเตือนตอนอนุมัติจ่ายต่างประเทศเทียบรายบรรทัด (เลิกเตือนเหมาใบที่หักถูก 15%) + หมายเหตุไฟล์ ภ.ง.ด.54 · R-A4 ยืนยันแล้ว (84d47dda) — commit 79f3f8de)_

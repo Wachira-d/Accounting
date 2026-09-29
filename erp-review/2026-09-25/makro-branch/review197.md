@@ -75,3 +75,15 @@
 | K-11 | 📋 ใหม่ | ใบ Makro (`MakroPhoto`): บล็อกผู้ซื้อของ `BranchCodeExtractor` เริ่มที่ "ต้นฉบับลูกค้า" (รายการคำของตัวเองยังไม่กลบป้ายฉบับ) + สองคอลัมน์สลับ ⇒ `BuyerBranchCode` = 00005 (ควร 00000) |
 
 หมายเหตุ verify: "file:line ใน DOCUMENT_FLOW ที่ K เขียนเลื่อนไปราว 8 บรรทัด" — K ไม่ได้เขียน file:line ตัวเลขใน DOCUMENT_FLOW เลย (ตรวจ `git show 47156575`) · K2 เติม file:line ปัจจุบันให้ส่วน OCR ผู้ติดต่อสาขาแทน
+
+## สถานะหลังรอบ 200 ทีม K (2026-09-29 · คำตัดสินเจ้าของข้อ 19 · รายงาน `erp-review/2026-09-29/team-K.md`)
+
+| ID | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|
+| K-3b | ✅ 53dc5921 | ฝั่ง**อ่าน** alias/คำปฏิเสธ/ประวัติซื้อ/เกณฑ์ยอมรับอัตโนมัติ/คำแนะนำนำเข้าสต๊อก = ทุกแถวของนิติบุคคลเดียวกัน (`ProductMatcher.VendorEntityIdsAsync` → `ContactTaxBranchKey.SameEntityIdsAsync` + `Helpers/OcrVendorAliasScope`) · ฝั่ง**เขียน**ยังผูกแถวของใบนั้น · ไม่ต้องเปลี่ยนลายเซ็น `MatchAsync` (ขยายภายใน + แคชต่อคำขอ) |
+| K-4 | ✅ 53dc5921 | `DecideScanVendorBranchContactAsync` ตัวเดียวของเส้นสร้างเอกสาร + `SubmitCorrectionAsync` · ตัดสินใหม่เมื่อ `OcrVendorBranchContact.ShouldRedecideOnCorrection` (กุญแจผู้ขายเปลี่ยนจริง · ไม่ได้เลือกผู้ติดต่อเอง · ยังไม่สร้างเอกสาร · ฝั่งซื้อ) ⇒ "แก้ในฟอร์มก่อน" อ่าน `MatchedContactId` ใหม่หลังบันทึกคำแก้ (document-scan.html ไม่ต้องแก้ — โหลดผลสแกนใหม่อยู่แล้ว) |
+| K-5 | ✅ 53dc5921 | คำตัดสินข้อ 19: `pg_advisory_xact_lock` ต่อ (CompanyId, เลขผู้เสียภาษีตัวเลขล้วน) (`AdvisoryLockKey.OcrContactCreate` · `Helpers/OcrContactCreateLock`) ในธุรกรรมสั้นของ 3 เส้น (สแกน · สร้างเอกสาร · แก้ผลสแกน) + ถามคีย์กลางซ้ำใต้ล็อก · ไม่เพิ่ม unique index · แถวซ้ำเดิมรายงานในหน้า contact-hygiene (`ContactDataHygiene.DuplicateKeyGroups` — คีย์เดียวกับแถบเตือนหน้าผู้ติดต่อ) ไม่รวมอัตโนมัติ |
+| K-8 | ✅ 53dc5921 | `Helpers/OcrSignatureSlot` — บรรทัดของป้ายผู้รับที่มีคำลงนาม/เส้นให้เซ็น/บทบาทผู้ลงนาม ≥ 2/อยู่ใต้เส้นเซ็น = ช่องลายเซ็น ⇒ `OcrPartyLabels.FindRecipientAll` ไม่นับ · Makro "ชื่อผู้รับสินค้า/ Receiver" ยังเป็นบล็อกผู้ซื้อ |
+| K-9 | ✅ 53dc5921 | เส้นสร้างเอกสาร: ที่อยู่แถวสาขาใหม่ = ที่พิสูจน์ได้เท่านั้น (`OcrIssuerBranch.StoredAddressIsIssuerBranch` — คำนวณจากข้อความกระดาษที่เก็บไว้ด้วยตัวอ่านเดียวกับเส้นสแกน ⇒ ไม่ต้องเพิ่มคอลัมน์) หรือผู้ใช้**เปลี่ยน**ที่อยู่เอง (`OcrTextBaseline`) · ไม่รู้ = ว่าง + ข้อความให้เติม |
+| K-10 | ✅ 53dc5921 | คำตัดสินข้อ 19: `OcrWhtBaseline` — HasWht/WhtRate/WhtIncomeTypeCode นับว่าแก้เฉพาะเมื่อเปลี่ยนจากที่สแกน · แถวเดิมที่มี "HasWht" จากการส่งซ้ำของเว็บแยกไม่ได้ว่าอันไหนแก้จริง ⇒ ไม่ migrate (ดูคำถามค้างในรายงานทีม) |
+| K-11 | ✅ 53dc5921 | `BranchCodeExtractor` อ่านสาขาผู้ซื้อบนข้อความที่กลบป้ายฉบับ (`OcrPartyLabels.MaskCopyNoise`) + ประโยคประกาศสาขาผู้ออกใบ (`OcrIssuerBranch.MaskStatements`) · จุดแบ่งฝั่งผู้ขายไม่ขยับ · จำลองชุดกระดาษในเทสต์ 77 ใบ: เปลี่ยน 1 ใบ (MakroPhoto 00005 → 00000) |
