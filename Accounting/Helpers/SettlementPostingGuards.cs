@@ -246,9 +246,11 @@ public sealed record SettlementUnpostCertificate(
 /// <param name="ReceiptEtaxAccepted">ใบเสร็จอัตโนมัติที่ออกคู่การรับชำระนี้ (<c>Payment.ReceiptDocumentId</c> · ใบกำกับ ณ วันรับเงิน §78/1) มี e-Tax
 /// ที่กรมสรรพากรตอบรับแล้ว — <c>VoidPaymentAsync</c> ประทับใบนั้น Voided ตรงโดยไม่ดู e-Tax (review198-S4 S4-8)</param>
 /// <param name="ReceiptNumber">เลขที่ใบเสร็จอัตโนมัตินั้น (ใช้ในข้อความ)</param>
+/// <param name="ReceiptEtaxSubmitted">ใบเสร็จอัตโนมัตินั้นส่ง e-Tax แล้วแต่ยังไม่ตอบรับ (Submitted) — รอบ 200 ทีม V1 (คำตัดสินข้อ 11):
+/// <c>VoidPaymentAsync</c> ปฏิเสธใบที่ถึงกรมสรรพากรแล้วทุกสถานะ ⇒ ด่านต้องเห็นก่อนแตะชิ้นแรก · ทางไปต่อ = ยกเลิก e-Tax ของใบเสร็จก่อน</param>
 public sealed record SettlementUnpostPayment(
     Guid Id, string? Number, Guid DocumentId, string? DocumentNumber, DateTime? OutputVatDueAt, decimal DocumentPaidAmount,
-    decimal BatchPaidOnDocument, bool ReceiptEtaxAccepted = false, string? ReceiptNumber = null);
+    decimal BatchPaidOnDocument, bool ReceiptEtaxAccepted = false, string? ReceiptNumber = null, bool ReceiptEtaxSubmitted = false);
 
 /// <summary>ชนิดของเหตุที่ด่านยกเลิกการลงบัญชีปฏิเสธ (review198-S4 S4-1) — ด่านนี้<b>เข้มกว่า</b>การยกเลิกทีละใบโดยตั้งใจ ⇒ "ด่านปฏิเสธ" ≠ "ระบบยกเลิกไม่ได้"</summary>
 public enum SettlementUnpostRefusalKind
@@ -331,6 +333,13 @@ public static class SettlementUnpostGate
                 result.Add(new(p.Number ?? "การรับชำระ",
                     $"ใบเสร็จ {p.ReceiptNumber} ที่ออกคู่การรับชำระนี้ e-Tax ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted) — ยกเลิกการรับชำระ = ยกเลิกใบที่กรมสรรพากรรับแล้ว",
                     CreditNotePath, p.Id, Hard));
+            // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ส่งแล้วแต่ยังไม่ตอบรับ — VoidPaymentAsync ปฏิเสธเหมือนกัน (ตัวตัดสินเดียว
+            // DocumentVoidPreconditions.AutoReceiptOnPaymentVoid) ⇒ ต้องปฏิเสธที่นี่ก่อนแตะชิ้นแรก · คนยกเลิก e-Tax ของใบเสร็จได้ = NeedsUserAction
+            else if (p.ReceiptEtaxSubmitted)
+                result.Add(new(p.Number ?? "การรับชำระ",
+                    $"ใบเสร็จ {p.ReceiptNumber} ที่ออกคู่การรับชำระนี้ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted — ยังไม่ตอบรับ) — ยกเลิกการรับชำระ = ยกเลิกใบที่ส่งกรมสรรพากรแล้ว",
+                    "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนั้นก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) แล้วกดยกเลิกการลงบัญชีอีกครั้ง · ระบบไม่แตะอะไรในรอบนี้",
+                    p.Id, Soft));
         }
         return result;
     }
@@ -495,14 +504,35 @@ public static class SettlementArtifactGuard
             + "เปิดรอบโอนนั้นแล้วกด \"ยกเลิกการลงบัญชี\" (ระบบตรวจภาษี/e-Tax ก่อน แล้วยกเลิกทุกชิ้นพร้อมกลับรายการ JE รอบโอน)";
     }
 
+    /// <summary>
+    /// เหตุที่ยกเลิก<b>ใบขายของผู้ใช้</b>ที่รอบโอนที่ลงบัญชีแล้วรับชำระไว้ไม่ได้ — null = ยกเลิกได้ (เงื่อนไขเดียวกับ <see cref="VoidBlockedReason"/>)
+    /// · รอบ 200 ทีม V1 (คำตัดสินข้อ 9 · review198-S3 S3-5): ข้อความต้องพาไปทางที่ถูกตามเหตุ — เดิมบอกแค่ "ยกเลิกการลงบัญชี" ซึ่งทำไม่ได้ถาวร
+    /// เมื่อภาษีของรอบโอนยื่นแล้ว ⇒ ชื่อ/ที่อยู่ผู้ซื้อผิด = "ยกเลิกและออกใบแทน" · ยอดผิด = ใบลดหนี้/ใบเพิ่มหนี้ · ทั้งรอบผิด = ยกเลิกการลงบัญชี ·
+    /// ข้อความนี้ถึงทุกทางเข้า (หน้าเอกสาร · API/integration · CMS ยกเลิกออเดอร์/การจอง)
+    /// </summary>
+    internal static string? PaidDocumentVoidReason(SettlementBatchStatus? batchStatus, bool batchDeleted, bool unpostingThisBatch, string? payoutRef)
+    {
+        if (VoidBlockedReason(batchStatus, batchDeleted, unpostingThisBatch, payoutRef) == null) return null;
+        return $"ใบนี้รับชำระจากรอบโอน {payoutRef} ที่ลงบัญชีแล้ว — ยกเลิกใบนี้ตรง ๆ ไม่ได้ (การรับชำระจะถูกกลับรายการ แต่เงินยังอยู่ในผังพักของรอบโอน ⇒ ผังพักคลาด) · "
+            + "เลือกทางตามเหตุ: (1) ชื่อ/ที่อยู่ผู้ซื้อหรือคำบรรยายผิด ⇒ กด “ยกเลิกและออกใบแทน” ที่หน้าเอกสาร (ระบบย้ายการรับชำระไปใบใหม่ ยอดเท่าเดิม) · "
+            + "(2) ยอด/รายการผิด หรือลูกค้ายกเลิก/คืนสินค้า ⇒ ออกใบลดหนี้/ใบเพิ่มหนี้อ้างใบนี้ แล้วนำเข้าส่วนต่างเป็นบรรทัดของรอบโอนถัดไป · "
+            + "(3) รอบโอนทั้งรอบผิด ⇒ เปิดรอบโอนแล้วกด “ยกเลิกการลงบัญชี” · ระบบยังไม่ได้แตะอะไร";
+    }
+
+    private static async Task<(SettlementBatchStatus Status, bool IsDeleted, string PayoutRef)?> BatchStateAsync(
+        AccountingDbContext db, Guid companyId, Guid id, CancellationToken ct)
+    {
+        var batch = await db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => b.Id == id && b.CompanyId == companyId)
+            .Select(b => new { b.Status, b.IsDeleted, b.PayoutRef }).FirstOrDefaultAsync(ct);
+        return batch == null ? null : (batch.Status, batch.IsDeleted, batch.PayoutRef);
+    }
+
     /// <summary>ตัวโหลดข้อเท็จจริง + ตัดสิน — เรียกจากเส้นยกเลิกเอกสาร/การรับชำระของ <c>DocumentService</c></summary>
     public static async Task<string?> CheckAsync(AccountingDbContext db, Guid companyId, Guid? batchId, CancellationToken ct = default)
     {
         if (batchId is not Guid id) return null;
-        var batch = await db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
-            .Where(b => b.Id == id && b.CompanyId == companyId)
-            .Select(b => new { b.Status, b.IsDeleted, b.PayoutRef }).FirstOrDefaultAsync(ct);
-        if (batch == null) return null;
+        if (await BatchStateAsync(db, companyId, id, ct) is not { } batch) return null;
         return VoidBlockedReason(batch.Status, batch.IsDeleted, SettlementUnpostScope.IsUnposting(id), batch.PayoutRef);
     }
 
@@ -514,10 +544,16 @@ public static class SettlementArtifactGuard
     public static async Task<string?> CheckLockedAsync(AccountingDbContext db, Guid companyId, Guid? batchId, CancellationToken ct = default)
     {
         if (batchId is not Guid id) return null;
+        await LockBatchRowAsync(db, companyId, id, ct);
+        return await CheckAsync(db, companyId, id, ct);
+    }
+
+    /// <summary>อ่านแถวรอบโอน <c>FOR SHARE</c> (ต้องอยู่ในธุรกรรมที่เปิดแล้ว — ล็อกอยู่ถึง commit) · S3-8</summary>
+    private static async Task LockBatchRowAsync(AccountingDbContext db, Guid companyId, Guid id, CancellationToken ct)
+    {
         await db.Database.ExecuteSqlRawAsync(
             "SELECT 1 FROM \"SettlementBatches\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR SHARE",
             new object[] { id, companyId }, ct);
-        return await CheckAsync(db, companyId, id, ct);
     }
 
     /// <summary>ยกเลิกเอกสารที่มีการรับชำระจากรอบโอนผูกอยู่ (เส้นยกเลิกเอกสารกลับรายการการรับชำระของใบเองภายใน — ไม่ผ่าน VoidPaymentAsync) —
@@ -532,8 +568,10 @@ public static class SettlementArtifactGuard
             .Select(p => p.Notes).ToListAsync(ct);
         foreach (var n in notes)
         {
-            var batchId = BatchIdFromPaymentNotes(n);
-            var why = lockBatchRows ? await CheckLockedAsync(db, companyId, batchId, ct) : await CheckAsync(db, companyId, batchId, ct);
+            if (BatchIdFromPaymentNotes(n) is not Guid batchId) continue;
+            if (lockBatchRows) await LockBatchRowAsync(db, companyId, batchId, ct);
+            if (await BatchStateAsync(db, companyId, batchId, ct) is not { } batch) continue;
+            var why = PaidDocumentVoidReason(batch.Status, batch.IsDeleted, SettlementUnpostScope.IsUnposting(batchId), batch.PayoutRef);
             if (why != null) return why;
         }
         return null;

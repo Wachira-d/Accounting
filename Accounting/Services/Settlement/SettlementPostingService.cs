@@ -833,7 +833,8 @@ public class SettlementPostingService : ISettlementPostingService
             // 2) การรับชำระ (เส้นปกติ: กลับ JE + คืนยอดใบ) — หลังเอกสาร
             foreach (var p in payments)
             {
-                await _documents.VoidPaymentAsync(companyId, p.Id);
+                // รอบ 200 ทีม V1: ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้วถูกด่านด้านบนปฏิเสธก่อนแตะชิ้นแรก — ที่นี่เป็นตาข่ายชั้นสอง (ปฏิเสธ)
+                await _documents.VoidPaymentAsync(companyId, p.Id, PaymentVoidCause.SettlementUnpost);
                 voidedPayments.Add(p.Id);
             }
             // 3) ถอนการจับคู่ธนาคาร (เจ้าของการจับคู่ = IBankService) — ก่อนกลับ JE รอบโอน
@@ -959,13 +960,20 @@ public class SettlementPostingService : ISettlementPostingService
                     .Where(d => d.CompanyId == companyId && payDocIds.Contains(d.Id))
                     .Select(d => new { d.Id, d.DocumentNumber, d.OutputVatDueAt, d.PaidAmount }).ToListAsync(ct))
                 .ToDictionary(d => d.Id, d => (Number: d.DocumentNumber, DueAt: d.OutputVatDueAt, Paid: d.PaidAmount));
-        // S4-8: ใบเสร็จอัตโนมัติคู่การรับชำระ (VoidPaymentAsync ประทับ Voided ตรงโดยไม่ดู e-Tax) — ใบที่ e-Tax ตอบรับแล้ว = ยกเลิกไม่ได้
+        // S4-8: ใบเสร็จอัตโนมัติคู่การรับชำระ — ใบที่ e-Tax ตอบรับแล้ว = ยกเลิกไม่ได้ · รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบที่ส่งแล้วแต่ยังไม่ตอบรับ
+        // (Submitted) VoidPaymentAsync ปฏิเสธด้วย ⇒ ด่านต้องเห็นก่อนแตะชิ้นแรก (ไม่งั้นล้มกลางทางหลังยกเลิกเอกสารไปแล้ว) — ชุดสถานะจาก
+        // DocumentVoidPreconditions.EtaxReachedRdStatuses ตัวเดียวกับ VoidPaymentAsync
         var receiptIds = payments.Where(p => p.ReceiptDocumentId != null).Select(p => p.ReceiptDocumentId!.Value).Distinct().ToList();
-        var acceptedReceipts = receiptIds.Count == 0 ? new HashSet<Guid>()
+        var receiptEtax = receiptIds.Count == 0 ? new List<(Guid DocumentId, EtaxStatus Status)>()
             : (await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && receiptIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
-                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
-        var acceptedReceiptIds = acceptedReceipts.ToList();
+                .Where(e => e.CompanyId == companyId && receiptIds.Contains(e.DocumentId)
+                    && DocumentVoidPreconditions.EtaxReachedRdStatuses.Contains(e.Status))
+                .Select(e => new { e.DocumentId, e.Status }).ToListAsync(ct))
+                .Select(e => (e.DocumentId, e.Status)).ToList();
+        var acceptedReceipts = receiptEtax.Where(e => e.Status == EtaxStatus.Accepted).Select(e => e.DocumentId).ToHashSet();
+        var submittedReceipts = receiptEtax.Where(e => e.Status != EtaxStatus.Accepted).Select(e => e.DocumentId)
+            .Where(id => !acceptedReceipts.Contains(id)).ToHashSet();
+        var acceptedReceiptIds = acceptedReceipts.Concat(submittedReceipts).ToList();
         var receiptNumbers = acceptedReceiptIds.Count == 0 ? new Dictionary<Guid, string>()
             : await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && acceptedReceiptIds.Contains(d.Id))
@@ -975,9 +983,11 @@ public class SettlementPostingService : ISettlementPostingService
         {
             var found = payDocs.TryGetValue(p.DocumentId, out var pd);
             var receiptAccepted = p.ReceiptDocumentId is Guid rid && acceptedReceipts.Contains(rid);
+            var receiptSubmitted = p.ReceiptDocumentId is Guid sid && submittedReceipts.Contains(sid);
             return new SettlementUnpostPayment(p.Id, p.PaymentNumber, p.DocumentId, found ? pd.Number : null, found ? pd.DueAt : null,
                 found ? pd.Paid : 0m, payments.Where(x => x.DocumentId == p.DocumentId).Sum(x => x.Amount),
-                receiptAccepted, receiptAccepted ? receiptNumbers.GetValueOrDefault(p.ReceiptDocumentId!.Value) : null);
+                receiptAccepted, receiptAccepted || receiptSubmitted ? receiptNumbers.GetValueOrDefault(p.ReceiptDocumentId!.Value) : null,
+                ReceiptEtaxSubmitted: receiptSubmitted);
         }).ToList();
         return new UnpostFacts(unpostDocs, certs, filed, unpostPays);
     }

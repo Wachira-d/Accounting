@@ -289,8 +289,18 @@ public interface IDocumentService
     /// Amount; remainder lands as UnappliedCredit on the response.</summary>
     Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
     Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null);
-    /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร</summary>
-    Task VoidPaymentAsync(Guid companyId, Guid paymentId);
+    /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร · รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้ว ⇒
+    /// ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธพร้อมทางไปต่อ · เช็คเด้ง = กลับรายการเงินเสมอ + ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ (ตัวตัดสิน
+    /// <c>DocumentVoidPreconditions.AutoReceiptOnPaymentVoid</c>)</summary>
+    Task<PaymentVoidResult> VoidPaymentAsync(Guid companyId, Guid paymentId,
+        Accounting.Helpers.PaymentVoidCause cause = Accounting.Helpers.PaymentVoidCause.User);
+    /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ: ใบเดิม Voided ·
+    /// ใบใหม่ยอด/บรรทัด/อัตรา VAT/tax point เท่าเดิม (ต่างได้เฉพาะผู้ซื้อ/หมายเหตุ/คำบรรยาย) · การรับชำระ + JE ที่อ้างใบ + คู่จับของรอบโอน ย้ายไปใบใหม่
+    /// ในธุรกรรมเดียว · ออกเลขใหม่ ⇒ <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิก + อนุมัติมาก่อน</b></summary>
+    Task<DocumentResponse> ReissueSettlementPaidDocumentAsync(Guid companyId, Guid documentId,
+        ReissueSettlementPaidRequest request, string actor);
+    /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax"</summary>
+    Task<List<EtaxCancelRequiredItem>> ListEtaxCancelRequiredAsync(Guid companyId);
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>

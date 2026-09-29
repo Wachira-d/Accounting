@@ -272,13 +272,19 @@ public class ChequeService : IChequeService
         // ⚠ ห้ามกลืน error ในเส้นเงิน (กฎเหล็ก #4 E) — ถอยไม่สำเร็จแปลว่า
         // งบยังถือเงินที่ไม่มีจริง ⇒ ต้องล้มทั้งรายการ ไม่ใช่ประทับ Bounced
         // แล้วปล่อยผ่าน
+        // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): เช็คเด้ง **ห้ามบล็อก** — กลับรายการเงิน/JE เสมอ · ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้ว
+        // ไม่ถูกประทับ Voided เงียบ แต่ติดธง "ต้องยกเลิกทาง e-Tax" บนใบ (ตัวตัดสินเดียว DocumentVoidPreconditions.AutoReceiptOnPaymentVoid
+        // ผ่าน PaymentVoidCause.ChequeBounce) · ข้อความธงไปถึงผู้เรียกทาง log + webhook
+        string? etaxCancellationFlag = null;
         if (plan.ReversePayment && cheque.PaymentId.HasValue)
         {
             if (_documents == null)
                 throw new InvalidOperationException(
                     "ระบบยังไม่พร้อมกลับรายการชำระของเช็คใบนี้ — ติดต่อผู้ดูแลระบบ "
                     + "(บันทึกเช็คเด้งโดยไม่กลับรายการจะทำให้งบถือเงินที่ไม่มีจริง)");
-            await _documents.VoidPaymentAsync(companyId, cheque.PaymentId.Value);
+            var voided = await _documents.VoidPaymentAsync(companyId, cheque.PaymentId.Value,
+                Accounting.Helpers.PaymentVoidCause.ChequeBounce);
+            etaxCancellationFlag = voided.EtaxCancellationFlag;
         }
         else if (plan.RestoreBankBalanceDirectly)
         {
@@ -299,6 +305,8 @@ public class ChequeService : IChequeService
         await _db.SaveChangesAsync(ct);
         _logger.LogWarning("Cheque {Id} bounced ({Rule}): {Reason} — {Plan}",
             chequeId, plan.RuleCode, reason, plan.Reason);
+        if (etaxCancellationFlag != null)
+            _logger.LogWarning("Cheque {Id} bounced: {EtaxFlag}", chequeId, etaxCancellationFlag);
         await FireAsync(companyId, "cheque.bounced", new
         {
             id = cheque.Id, chequeNumber = cheque.ChequeNumber,
@@ -306,6 +314,7 @@ public class ChequeService : IChequeService
             reason = cheque.BounceReason,
             ruleCode = plan.RuleCode,
             reversedPayment = plan.ReversePayment ? cheque.PaymentId : null,
+            etaxCancellationRequired = etaxCancellationFlag,
         });
         return cheque;
     }

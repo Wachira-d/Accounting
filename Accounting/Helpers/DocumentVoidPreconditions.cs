@@ -35,14 +35,17 @@ public static class DocumentVoidPreconditions
             .ToDictionary(g => g.Key, g => Reason(g.OrderBy(f => f.ByTextReference ? 1 : 0).First()));
 
     /// <summary>ตัวโหลดข้อเท็จจริง + ตัดสิน สำหรับเอกสารหลายใบ (ของบริษัทนี้) — คืนเหตุต่อใบ · ใบที่ยกเลิกได้ไม่อยู่ในผล</summary>
+    /// <param name="ignoreChildIds">เอกสารลูกที่ผู้เรียกจัดการเองในธุรกรรมเดียวกัน (ไม่นับเป็นเหตุ) — รอบ 200 ทีม V1: ใบเสร็จอัตโนมัติของการรับชำระ
+    /// ที่ "ยกเลิกและออกใบแทน" ย้ายไปใบใหม่ (ยกเลิกใบเสร็จเดิม + ออกใหม่อ้างใบใหม่) · null/ว่าง = นับทุกใบ (พฤติกรรมเดิมของทุกผู้เรียก)</param>
     public static async Task<IReadOnlyDictionary<Guid, string>> ChildBlocksAsync(AccountingDbContext db, Guid companyId,
-        IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default)
+        IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default, IReadOnlyCollection<Guid>? ignoreChildIds = null)
     {
         if (documentIds.Count == 0) return new Dictionary<Guid, string>();
         var ids = documentIds.Distinct().ToList();
+        var ignore = (ignoreChildIds ?? Array.Empty<Guid>()).Distinct().ToList();
         var facts = (await db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.RelatedDocumentId != null && ids.Contains(d.RelatedDocumentId.Value)
-                    && !d.IsDeleted
+                    && !d.IsDeleted && !ignore.Contains(d.Id)
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { Parent = d.RelatedDocumentId!.Value, d.DocumentType, d.DocumentNumber })
                 .ToListAsync(ct))
@@ -70,4 +73,82 @@ public static class DocumentVoidPreconditions
         }
         return Decide(facts);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // รอบ 200 ทีม V1 · คำตัดสินข้อ 11 (review198-S4 S4-8 ค้าง): ใบเสร็จอัตโนมัติคู่การรับชำระ vs e-Tax
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>สถานะ e-Tax ที่ถือว่า "ถึงกรมสรรพากรแล้ว" (ส่งแล้ว/ตอบรับแล้ว) — เก็บเป็น array ให้ EF แปลเป็น <c>IN (...)</c> ได้ ·
+    /// ใบที่ถึงกรมสรรพากรแล้วห้ามถูกประทับ Voided ในฐานข้อมูลเราเงียบ ๆ (คำตัดสินข้อ 11) · Generated/Signed/Error/Rejected = ยังไม่ถึง</summary>
+    public static readonly EtaxStatus[] EtaxReachedRdStatuses = { EtaxStatus.Submitted, EtaxStatus.Accepted };
+
+    /// <summary>e-Tax สถานะนี้ถึงกรมสรรพากรแล้วไหม · null (ไม่มี e-Tax) = ยังไม่ถึง</summary>
+    internal static bool EtaxReachedRd(EtaxStatus? status) => status is EtaxStatus s && EtaxReachedRdStatuses.Contains(s);
+
+    /// <summary>สถานะ "ไปไกลที่สุด" ของ e-Tax หลายแถวของใบเดียว (ไม่นับ Voided) — Accepted &gt; Submitted &gt; อื่น ๆ · ไม่มีแถว = null</summary>
+    public static EtaxStatus? StrongestEtax(IEnumerable<EtaxStatus> statuses)
+    {
+        var live = statuses.Where(s => s != EtaxStatus.Voided).ToList();
+        if (live.Count == 0) return null;
+        if (live.Contains(EtaxStatus.Accepted)) return EtaxStatus.Accepted;
+        if (live.Contains(EtaxStatus.Submitted)) return EtaxStatus.Submitted;
+        return live[0];
+    }
+
+    /// <summary>
+    /// **ยกเลิกการรับชำระแล้วใบเสร็จอัตโนมัติคู่กัน (<c>Payment.ReceiptDocumentId</c>) ต้องทำอะไร — ตัวตัดสินตัวเดียว** ของ
+    /// <c>DocumentService.VoidPaymentAsync</c> ทุกทางเข้า (หน้าเอกสาร · ยกเลิกการลงบัญชีรอบโอน · เช็คเด้ง) และด่าน "ยกเลิกและออกใบแทน"
+    /// <para>คำตัดสินข้อ 11: ใบเสร็จยังไม่ถึงกรมสรรพากร ⇒ ยกเลิกได้เหมือนเดิม · ถึงแล้ว (ส่ง/ตอบรับ) ⇒ ผู้ใช้กดเอง = <b>ปฏิเสธพร้อมทางไปต่อ</b> ·
+    /// เช็คเด้ง = <b>ห้ามบล็อก</b> (เงินไม่เข้าจริง ต้องกลับรายการเงินเสมอ) แต่<b>ไม่ประทับ Voided เงียบ</b> — ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ
+    /// (ระบบยังไม่มีช่องทางส่งยกเลิก/ออกแทน e-Tax ที่กรมสรรพากรตอบรับแล้ว — มีแค่ยกเลิก e-Tax ที่ยังไม่ตอบรับ) · G6: pure</para>
+    /// </summary>
+    public static AutoReceiptEtaxDecision AutoReceiptOnPaymentVoid(EtaxStatus? strongestReceiptEtax, string? receiptNumber, PaymentVoidCause cause)
+    {
+        if (!EtaxReachedRd(strongestReceiptEtax))
+            return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null);
+        var no = string.IsNullOrWhiteSpace(receiptNumber) ? "คู่การรับชำระนี้" : receiptNumber!.Trim();
+        var accepted = strongestReceiptEtax == EtaxStatus.Accepted;
+        if (cause == PaymentVoidCause.ChequeBounce)
+            return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.FlagEtaxCancellation,
+                $"ต้องยกเลิกทาง e-Tax — เช็คเด้ง (เงินไม่เข้าจริง) ระบบกลับรายการรับชำระแล้ว แต่ใบเสร็จ {no} "
+                + (accepted ? "ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)" : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted)")
+                + " จึงยังไม่ถูกยกเลิกในระบบ — "
+                + (accepted
+                    ? "ดำเนินการยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) "
+                    : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ (ทำได้ก่อนกรมสรรพากรตอบรับ) ")
+                + "แล้วแจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล");
+        return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Refuse,
+            $"ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จ {no} ที่ออกคู่การรับชำระ "
+            + (accepted
+                ? "ได้รับตอบรับ e-Tax จากกรมสรรพากรแล้ว (Accepted) — ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากรก่อน (ระบบนี้ยังไม่มีช่องทางส่งยกเลิก e-Tax ที่ตอบรับแล้ว) "
+                  + "· ถ้าเงินไม่ได้เข้าจริง (เช็คเด้ง) ให้บันทึก “เช็คเด้ง” ที่หน้าเช็ค ระบบจะกลับรายการเงินและติดธงให้ตามยกเลิก e-Tax"
+                : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) "
+                  + "แล้วกดยกเลิกการชำระอีกครั้ง")
+            + " · ระบบยังไม่ได้แตะอะไร");
+    }
 }
+
+/// <summary>ทางเข้าที่ยกเลิกการรับชำระ — ตัดสินว่าใบเสร็จที่ถึงกรมสรรพากรแล้วต้องปฏิเสธหรือติดธง (<see cref="DocumentVoidPreconditions.AutoReceiptOnPaymentVoid"/>)</summary>
+public enum PaymentVoidCause
+{
+    /// <summary>ผู้ใช้กดยกเลิกการชำระ (หน้าเอกสาร) หรือเส้นที่ยกเลิกตามคำสั่งผู้ใช้ — ใบเสร็จถึงกรมสรรพากรแล้ว = ปฏิเสธ</summary>
+    User = 0,
+    /// <summary>ยกเลิกการลงบัญชีรอบโอน — ด่าน <see cref="SettlementUnpostGate"/> ปฏิเสธไว้ก่อนแตะชิ้นแรกแล้ว (ที่นี่เป็นตาข่ายชั้นสอง = ปฏิเสธ)</summary>
+    SettlementUnpost = 1,
+    /// <summary>เช็คเด้ง — เงินไม่เข้าจริง ห้ามบล็อก · ใบเสร็จที่ถึงกรมสรรพากรแล้ว = ติดธงให้ตามยกเลิกทาง e-Tax</summary>
+    ChequeBounce = 2,
+}
+
+/// <summary>สิ่งที่ต้องทำกับใบเสร็จอัตโนมัติเมื่อการรับชำระถูกยกเลิก</summary>
+public enum AutoReceiptEtaxAction
+{
+    /// <summary>ยกเลิกใบเสร็จได้ (ยังไม่ถึงกรมสรรพากร) — พฤติกรรมเดิม</summary>
+    Void = 0,
+    /// <summary>ปฏิเสธการยกเลิกการชำระทั้งรายการ (ข้อความพร้อมทางไปต่อ)</summary>
+    Refuse = 1,
+    /// <summary>กลับรายการเงินตามปกติ แต่คงใบเสร็จไว้พร้อมธง "ต้องยกเลิกทาง e-Tax" (เช็คเด้ง)</summary>
+    FlagEtaxCancellation = 2,
+}
+
+/// <param name="Message">ข้อความไทย — ข้อความปฏิเสธ (Refuse) หรือข้อความของธง (FlagEtaxCancellation) · Void = null</param>
+public sealed record AutoReceiptEtaxDecision(AutoReceiptEtaxAction Action, string? Message);

@@ -1093,6 +1093,45 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     + เจ้าหนี้ค้างตลอดกาล; CIL เข้า settlementTypes (PaidAmount push + cap
     + revert ตอน void) แล้ว
 
+#### 2.4c "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ ✅ รอบ 200 ทีม V1 (คำตัดสินข้อ 9 · review198-S3 S3-5)
+
+**ปัญหา**: ใบขายของผู้ใช้ที่รอบโอน `Posted/BankMatched` รับชำระเข้าผังพัก ยกเลิกทีละใบไม่ได้ (`SettlementArtifactGuard.CheckDocumentPaymentsAsync`) และถ้ารอบโอน
+ยกเลิกการลงบัญชีไม่ได้ (ภ.พ.30 ของใบสรุปประกาศแล้ว/e-Tax ตอบรับ) ⇒ ใบกำกับที่ชื่อ/ที่อยู่ผู้ซื้อผิด "ยกเลิกแล้วออกใหม่" (§86/4) ทำไม่ได้เลย
+
+- **Method**: `DocumentService.ReissueSettlementPaidDocumentAsync` (ไฟล์ partial `DocumentService.Reissue.cs` — F4 ข้อ 7) · endpoint
+  `POST /api/companies/{cid}/document/{id}/reissue-settlement-paid` (สิทธิ์ = **ยกเลิก และ อนุมัติ** ชนิดนั้น) · body `{ contactId?, notes?, lines:[{lineId, description}], reason }`
+- **ตัวตัดสิน (pure)**: `Helpers/SettlementPaidReissue` — `QuickRelevance`/`Decide` (ปุ่ม `DocumentResponse.CanReissueSettlementPaid` + endpoint ตัวเดียวกัน ·
+  null = ไม่เกี่ยว ไม่แสดงปุ่ม · false = ปุ่มปิดพร้อมเหตุผล) · `ForbiddenChanges` ("ใบใหม่เท่าใบเดิม") · `CopyScalars` (โคลนทุกช่องค่า)
+- **เกี่ยวเมื่อ**: ใบขาย (Invoice/TaxInvoice/Receipt) ที่ออกแล้วยังไม่ยกเลิก · ไม่ใช่ใบเสร็จอัตโนมัติ · ไม่ใช่ชิ้นของรอบโอนเอง · ยังไม่ถูกแทน ·
+  **มีการรับชำระจากรอบโอนที่ลงบัญชีแล้ว** (ไม่มี = ใช้ "ยกเลิกเอกสาร" ปกติ)
+- **ด่านเดิมของ "ยกเลิกเอกสาร" ครบทุกตัว** (บล็อกพร้อมทางไปต่อ · ไม่แตะอะไร): e-Tax ของใบ Accepted · อยู่ในรายงานภาษีที่ล็อก (`IsDocumentFilingLockedAsync`) ·
+  50 ทวิ ยื่นแล้ว (`WhtCertVoidGuard`) · เอกสารลูก/ใบลดหนี้อ้าง (`DocumentVoidPreconditions.ChildBlocksAsync` — **ไม่นับ** ใบเสร็จอัตโนมัติของการรับชำระที่ย้าย ·
+  พารามิเตอร์ `ignoreChildIds`) + งวดบัญชีของวันที่เอกสารปิด · การรับชำระที่จัดสรรหลายใบ · มัดจำ (ใบมัดจำ/มีมัดจำตัดชำระ — ยังไม่รองรับ) · 50 ทวิ ผูกอยู่ ·
+  เลื่อนภาษี (`VatDeferral`) · ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้ว (ตัวตัดสินข้อ 11 ตัวเดียวกัน)
+- **ทำอะไร (ธุรกรรมเดียว · ล็อกใบเดิม `FOR UPDATE` · แถวรอบโอน `FOR SHARE` · การรับชำระ `FOR UPDATE`)**:
+  1. ใบใหม่ = **สำเนาทุกช่องค่า**ของใบเดิม (`CopyScalars` — ช่องที่เพิ่มทีหลังตามมาเอง) ต่างได้เฉพาะ `ContactId` · `Notes` · คำบรรยายรายบรรทัด ·
+     ผู้ซื้อที่เป็นใบกำกับภาษีต้องครบ §86/4 (`TaxInvoiceCompletenessChecker.MissingBuyerFields` — ไม่ครบ = 409 `RD-86/4-REISSUE-BUYER`) ·
+     `ForbiddenChanges` ต้องว่าง (ยอด/บรรทัด/อัตรา VAT/วันที่/tax point/`OutputVatDueAt` ต่าง = 409 `REISSUE-CONTENT-CHANGED` → ใบลดหนี้/ใบเพิ่มหนี้)
+  2. เลขใหม่ลงวันที่เดิม (`ResolveNumberSeriesTypeAsync` — กติกาชุดเลขตัวเดียวกับ `ApproveDocumentAsync` ย้ายมาเป็นเมธอดเดียว) · `ReplacesDocumentId` · `ReplacementReason` ·
+     **`ReplacementCarriesPostings = true`** · หมายเหตุพิมพ์ "ยกเลิกและออกฉบับใหม่แทนฉบับเดิม เลขที่ … ลงวันที่ … · เหตุที่ยกเลิก: …" (`ComposeNotes`)
+  3. ใบเดิม `Voided` + `ReplacedByDocumentId` + `ReplacedAt` · **ไม่มีรายการกลับบัญชี** · e-Tax ที่ยังไม่ตอบรับของใบเดิมถูกยกเลิก (เหมือน `VoidDocumentAsync` ขั้น 3)
+  4. **ย้ายผลทางบัญชี** (`RepointDocumentLinksAsync` · tenant ทุกตาราง): `Payments.DocumentId` · `PaymentAllocations` · **JE ที่อ้างใบ** (`SourceDocumentId`
+     — รายได้/ภาษีขาย/รับชำระ/ย้ายภาษีขายถึงกำหนด §78/1) · **คู่จับของบรรทัดรอบโอน** (`SettlementLines.MatchedDocumentId`) · `StockMovements` · `WhtCreditsReceived` ·
+     `PostDatedChecks` · `ProjectCostEntries` · รายการกระทบยอดธนาคารชนิดเอกสาร · ลิงก์ของโมดูล (POS · ที่พัก · เว็บไซต์ · usage · time entry) ·
+     ไม่ย้าย: e-Tax · ประวัติแก้ไข/อนุมัติ/ลายเซ็น/อีเมล · แถวรายงานภาษี
+  5. ใบเสร็จอัตโนมัติของการรับชำระที่ย้าย: ยกเลิก (ไม่ soft-delete — เลขที่ยังมองเห็นเป็น "ยกเลิก") แล้ว `CreateSettlementReceiptAsync` ออกใหม่อ้างใบใหม่
+     วันรับเงินเดิม (ถือ VAT §78/1 ตามใบเดิม)
+  6. `AddChainedAuditLog` (`RD-86/4-VOID-REISSUE` · สิ่งที่เปลี่ยน · จำนวนที่ย้ายต่อตาราง) → commit → `IIssuedDocumentHooks.RunAsync` (e-Tax อัตโนมัติ) ของใบใหม่และใบเสร็จใหม่
+- **รอบโอน/ผังพัก/JE รอบโอนไม่ถูกแตะ** · ลายนิ้วมือของแผน (`MatchedDocumentId` ↔ `Payment.DocumentId`) ยังตรงกัน ⇒ ยกเลิกการลงบัญชีภายหลังยังทำงานกับใบใหม่
+- **รายงานภาษีขาย**: ใบเดิม Voided หลุด · ใบใหม่ (ยอด/tax point เดิม) เข้าแทน — ยอด VAT ไม่ขยับ
+- **ใบแทนสองชนิด** (`ReplacementCarriesPostings`): false = ใบแทนกระดาษ §2.4b (ข้าม JE/สต็อกตอนอนุมัติ/ยกเลิก) · true = ใบแทนแบบนี้ (ถือผลทางบัญชีเอง: อนุมัติใหม่
+  หลังกู้คืน = ลง JE/สต็อกตามปกติ · ยกเลิก = กลับรายการ/คืนสต็อกตามปกติ ไม่ปลดตราประทับบนใบเดิม) · **กู้คืนใบเดิมไม่ได้** (`RestoreVoidedDocumentAsync`
+  Gate 0 · 409 `DOC-RESTORE-REPLACED`)
+- **ข้อความ 409 ของทางเข้าอื่น**: `CheckDocumentPaymentsAsync` → `SettlementArtifactGuard.PaidDocumentVoidReason` บอก 3 ทางตามเหตุ (ออกใบแทน · ใบลดหนี้/ใบเพิ่มหนี้ +
+  บรรทัดรอบโอนถัดไป · ยกเลิกการลงบัญชี) ⇒ หน้าเอกสาร · API/integration (`VoidDocumentByExternalRefAsync` ส่งข้อความนี้กลับคู่ค้า) · CMS การจอง (notice) ·
+  CMS ออเดอร์ (`UpdateOrderStatusAsync` — เดิม log อย่างเดียว ⇒ ปักข้อความบน `SiteOrder.InternalNotes` `[ERP-VOID-FAILED …]`)
+- **เทสต์**: `Accounting.Tests/VoidReissueR200Tests.cs` · จุดเรียกล็อกใน `tools/required_call_site_check.py` (รอบ 200 ทีม V1)
+
 ### 2.5 CMS (เว็บไซต์ของฉัน) — Storefront commerce + booking
 - **สร้าง/ลบเว็บไซต์** (`CmsSiteService.CreateSiteAsync` · `DeleteSiteAsync`) — คีย์ไม่ซ้ำ 4 ตัว
   (`IX_Sites_CompanyId_Slug` · `IX_Sites_CompanyId_Subdomain` · `IX_Sites_CustomDomain` ·
@@ -1488,9 +1527,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **ตรวจซ้ำใต้ธุรกรรมของเส้นยกเลิก** (review198-S3 S3-8 ทีม S4): `SettlementArtifactGuard.CheckLockedAsync` อ่านแถวรอบโอน `FOR SHARE` หลังล็อกแถวเอกสาร/การรับชำระ ⇒ ถ้า `CommitPostedAsync` กำลังประทับ Posted (ถือ `FOR UPDATE`) เส้นยกเลิกรอแล้วเห็นสถานะใหม่ (เดิมตรวจก่อนเปิดธุรกรรมอย่างเดียว ⇒ Posted พร้อมชิ้นที่หาย)
 - **50 ทวิ ที่อยู่ในแบบ ภ.ง.ด. ที่ประกาศ/ยื่นแล้ว ยกเลิกไม่ได้ทุกทางเข้า** (`WhtCertVoidGuard` · C-2): หน้ายกเลิก 50 ทวิ (`WithholdingTaxCertService.VoidAsync`) ·
   ยกเลิกเอกสารต้นทาง (ตรวจก่อนเปิดธุรกรรม — เดิม cascade กลืน error แล้วเอกสารหายแต่ใบรับรองค้าง) · ด่าน Unpost · 409 `RD-50TWI-FILED` · ออก ภ.ง.ด.1 ใหม่ของรอบเงินเดือนที่ re-post (`PayrollService.IssueMonthlyPnd1CertsAsync` — เดิมประทับ Voided ตรง · ปฏิเสธ = ไม่ยกเลิกไม่ออกใหม่ + LogError/แจ้งเตือน · S3-10 · แจ้งเตือนของเหตุนี้แยกจาก catch ทั่วไป: คงชุดเดิม · ทางไปต่อ = ยื่น ภ.ง.ด.1 เพิ่มเติม/ปรับงวดถัดไป ไม่ใช่ "สร้างเอกสารใหม่" ที่ล้มซ้ำ · review198-S4 S4-6)
-- ⚠️ **ยังเปิด — รอเจ้าของตัดสิน** (review198-S3 S3-5): ใบขายของผู้ใช้ที่รอบโอน `Posted` รับชำระเข้าผังพักไว้ ยกเลิกทีละใบไม่ได้ (`CheckDocumentPaymentsAsync`)
-  และถ้ารอบโอนนั้น unpost ไม่ได้ (ภ.พ.30 ของใบสรุปประกาศแล้ว/e-Tax ตอบรับ) ⇒ ใบกำกับที่ต้อง "ยกเลิกแล้วออกใหม่" (ชื่อ/ที่อยู่ผู้ซื้อผิด) ทำไม่ได้เลย ·
-  ทางเลือกที่เสนอ: เส้น "ย้ายการรับชำระของรอบโอนไปใบใหม่" หรือยกเลิกใบ + การรับชำระนั้น + บรรทัดปรับปรุงผังพักในรอบถัดไป — ห้ามเดาแทนเจ้าของ
+- ✅ **ตัดสินแล้ว (รอบ 200 คำตัดสินข้อ 9 · ทีม V1)** — review198-S3 S3-5: ใบขายของผู้ใช้ที่รอบโอน `Posted` รับชำระ ยกเลิกทีละใบยังไม่ได้ (ถูกต้อง — กันผังพักคลาด)
+  แต่มีทางไปต่อ **"ยกเลิกและออกใบแทน"** (§2.4c) ที่ย้ายการรับชำระ + JE ที่อ้างใบ + คู่จับของบรรทัดรอบโอนไปใบใหม่ในธุรกรรมเดียว (รอบโอน/ผังพักไม่ถูกแตะ) ·
+  ข้อความ 409 ของ `CheckDocumentPaymentsAsync` ชี้ทางนี้ (`SettlementArtifactGuard.PaidDocumentVoidReason`)
+- **ใบเสร็จอัตโนมัติที่ส่ง e-Tax แล้วแต่ยังไม่ตอบรับ** (รอบ 200 ทีม V1 · คำตัดสินข้อ 11): ด่านยกเลิกการลงบัญชีปฏิเสธด้วย (`SettlementUnpostPayment.ReceiptEtaxSubmitted` ·
+  `NeedsUserAction` · ทางไปต่อ = ยกเลิก e-Tax ของใบเสร็จก่อน) — เพราะ `VoidPaymentAsync` ปฏิเสธใบที่ถึงกรมสรรพากรแล้วทุกสถานะ ⇒ ถ้าด่านไม่เห็น การยกเลิกจะล้มกลางทาง
+  (ชุดสถานะเดียว `DocumentVoidPreconditions.EtaxReachedRdStatuses`) · `UnpostCoreAsync` ส่ง `PaymentVoidCause.SettlementUnpost`
 - ห้าม `new JournalEntry`/`JournalEntries.Add` ใน `Services/Settlement/**` · สถานะ `Posted/BankMatched` ประทับได้เฉพาะไฟล์นี้ (`tools/terminal_status_writer_check.py`) · จุดเรียกล็อกด้วย `tools/required_call_site_check.py`
 
 **ทางเข้า HTTP + หน้าจอ** (รอบ 198 เฟส 1 ทีม D · `Controllers/SettlementController.cs` · route `api/companies/{companyId}/settlement/…` ·
@@ -1980,6 +2022,15 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ตัวเดียวที่ `ApproveDocumentAsync` ใช้เลือก post ด้วย — ใบเสนอราคา/ใบวางบิล/
   PR/PO/ใบส่งของ · ใบที่ยกเลิก · ใบเสร็จหลักฐานรับเงิน (`IsSettlementReceipt`)
   · ใบกำกับที่ออกแทนใบเดิม (`ReplacesDocumentId`) **ไม่มี JE คือถูกต้อง ห้ามเตือน**
+- **ยกเลิกการชำระ vs ใบเสร็จอัตโนมัติที่ส่ง e-Tax แล้ว** (รอบ 200 ทีม V1 · คำตัดสินข้อ 11 · review198-S4 S4-8 ค้าง): `VoidPaymentAsync(co, paymentId, PaymentVoidCause)`
+  → ทั้งเส้นใบเดียว (`ReversePaymentInternalAsync`) และหลายใบ (`ReverseMultiDocPaymentInternalAsync`) ถาม `DocumentVoidPreconditions.AutoReceiptOnPaymentVoid`
+  (ตัวตัดสินตัวเดียว · pure) **ก่อนแตะ JE**: e-Tax ของใบเสร็จยังไม่ถึงกรมสรรพากร (ไม่มี/Generated/Signed/Error/Rejected) ⇒ ยกเลิกใบเสร็จ + ยกเลิก e-Tax ที่ค้างของใบนั้น
+  (เดิมค้างสถานะเดิมบนใบที่ถูกยกเลิก) · ถึงแล้ว (`Submitted`/`Accepted` — `EtaxReachedRdStatuses`) + ผู้ใช้/ยกเลิกการลงบัญชี ⇒ **ปฏิเสธ 409 `RD-ETAX-RECEIPT-SENT`**
+  พร้อมทางไปต่อ (Submitted = ยกเลิก e-Tax ของใบเสร็จก่อน · Accepted = ยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากร — ระบบนี้ยังไม่มีช่องทางส่งใบแทน e-Tax) ·
+  **เช็คเด้ง** (`ChequeService.MarkBouncedAsync` → `PaymentVoidCause.ChequeBounce`) ⇒ **ห้ามบล็อก**: กลับรายการเงิน/JE เสมอ แต่ใบเสร็จที่ถึงกรมสรรพากรแล้ว**ไม่ถูกประทับ Voided**
+  — ติดธง `Document.EtaxCancelRequiredAt/Reason` (มองเห็นบนหน้าเอกสาร + แถบงานค้างบนหน้ารายการ `GET document/etax-cancel-required` + webhook `cheque.bounced`
+  ช่อง `etaxCancellationRequired`) · ผลกลับผู้เรียกเป็น `PaymentVoidResult.EtaxCancellationFlag`
+- **ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ**: ยกเลิกตรงไม่ได้ (409 ชี้ 3 ทาง) · แก้ผู้ซื้อ/คำบรรยาย = **ยกเลิกและออกใบแทน** (§2.4c) · กู้คืนใบเดิมที่ออกใบแทนแล้วไม่ได้
 - **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
   - `VoidPaymentAsync` (`DocumentService.cs`) — lock `Payments` row `FOR UPDATE`
     ในทรานแซกชัน + re-check `IsDeleted`; ถ้า void ไปแล้ว = no-op (กัน reverse
@@ -3608,7 +3659,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V1 — ยกเลิก-ออกแทน: "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ
+(ย้ายการรับชำระ + JE ที่อ้างใบ + คู่จับของรอบโอนไปใบใหม่ในธุรกรรมเดียว · `ReplacementCarriesPostings` · §2.4c · คำตัดสินข้อ 9) · ยกเลิกการชำระ/เช็คเด้งดู e-Tax ของใบเสร็จอัตโนมัติ
+(ปฏิเสธ vs ติดธง `EtaxCancelRequiredAt` · §3.5 · ข้อ 11) · ด่านยกเลิกการลงบัญชีเห็นใบเสร็จที่ส่ง e-Tax แล้ว (§2.10) · S3-7 ยืนยันแล้ว (`c3116a4d` · ข้อ 17) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
 เฉพาะที่ยกเลิกไม่ได้จริงเป็นคำเตือน (`SettlementUnpostRefusalKind` + `SettlementOrphanTriage` · S4-1) · เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` + e-Tax ของใบเสร็จอัตโนมัติ
 คู่การรับชำระ (S4-8) · ข้อความล็อกช่องทางเป็นกลาง (S4-7) · แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วบอกทางไปต่อที่ถูก (S4-6) · ขายด่วนตรวจ `success:false` ของ api.js (S4-2) — commit <pending>)_
 

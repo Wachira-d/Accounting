@@ -3719,3 +3719,17 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V1 — ยกเลิก-ออกแทน · คำตัดสินข้อ 9/11/17):
+(1) **ยกเลิกและออกใบแทน** ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (review198-S3 S3-5): `DocumentService.ReissueSettlementPaidDocumentAsync`
+(partial `DocumentService.Reissue.cs`) + `POST document/{id}/reissue-settlement-paid` (สิทธิ์ยกเลิก+อนุมัติ) · ตัวตัดสิน `Helpers/SettlementPaidReissue`
+(QuickRelevance/Decide · ForbiddenChanges · CopyScalars) · ใบเดิม Voided ไม่มีรายการกลับ · ใบใหม่โคลนทุกช่องค่า (ต่างได้เฉพาะผู้ซื้อ/หมายเหตุ/คำบรรยาย) ·
+ย้ายการรับชำระ + JE ที่อ้างใบ + คู่จับของบรรทัดรอบโอน + สต็อก + ลิงก์โมดูลไปใบใหม่ในธุรกรรมเดียว · ใบเสร็จอัตโนมัติออกใหม่อ้างใบใหม่ · คอลัมน์ใหม่
+`Documents.ReplacementCarriesPostings` (ใบแทนที่ถือผลทางบัญชีเอง — อนุมัติ/ยกเลิกเดินปกติ ต่างจากใบแทนกระดาษ §86/6→§86/4) · กู้คืนใบเดิมไม่ได้ ·
+ข้อความ 409 ของ `CheckDocumentPaymentsAsync` ชี้ 3 ทาง (`SettlementArtifactGuard.PaidDocumentVoidReason`) · CMS ออเดอร์ที่ยกเลิกเอกสาร ERP ไม่สำเร็จปักบน `InternalNotes`
+(2) **ยกเลิกการชำระ/เช็คเด้ง vs e-Tax ของใบเสร็จอัตโนมัติ** (review198-S4 S4-8 ค้าง): `DocumentVoidPreconditions.AutoReceiptOnPaymentVoid` +
+`PaymentVoidCause` — ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธ 409 `RD-ETAX-RECEIPT-SENT` · เช็คเด้ง = กลับรายการเงินเสมอ + ธง `Documents.EtaxCancelRequiredAt/Reason`
+(แถบบนหน้าเอกสาร + งานค้าง `GET document/etax-cancel-required`) · ใบเสร็จที่ยกเลิกได้ยกเลิก e-Tax ที่ค้างตาม · ด่านยกเลิกการลงบัญชีเห็นใบเสร็จ Submitted
+(`SettlementUnpostPayment.ReceiptEtaxSubmitted`) · `VoidPaymentAsync` คืน `PaymentVoidResult`
+(3) S3-7 (ข้อ 17) ยืนยันว่าแก้แล้วที่ `c3116a4d` (`SettlementUnpostPayment.OutputVatDueAt` ใน `SettlementUnpostGate.Evaluate` + เทสต์ S4) — ล็อกจุดเรียกเพิ่ม
+· เทสต์ `VoidReissueR200Tests` · จุดเรียกล็อกใน `tools/required_call_site_check.py` — commit <pending>)_

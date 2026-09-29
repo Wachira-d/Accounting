@@ -1823,21 +1823,34 @@ public partial class DocumentService : IDocumentService
                 FullTaxInvoiceBlockedReason = elig.Allowed ? null : elig.Message,
             };
         }
+        // รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — ปุ่ม "ยกเลิกและออกใบแทน" ของใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ: เซิร์ฟเวอร์ตัดสินด้วย
+        // ตัวเดียวกับ endpoint (SettlementPaidReissue.Decide) · ไม่เกี่ยว = null (หน้าเว็บไม่แสดงปุ่ม) · ใบที่ไม่เกี่ยวไม่อ่านฐานเพิ่ม (QuickRelevance)
+        var reissue = (await EvaluateSettlementPaidReissueAsync(companyId, doc, lockRows: false)).Verdict;
+        if (reissue.Relevant)
+            resp = resp with
+            {
+                CanReissueSettlementPaid = reissue.Allowed,
+                ReissueSettlementPaidBlockedReason = reissue.Allowed ? null : reissue.Reason,
+            };
         // เลขที่ของใบที่ผูกกัน — โชว์ให้ผู้ใช้กดไปดูได้ (ห้ามให้เขาไปค้นเองจาก id)
         var replacementLinkIds = new[] { doc.ReplacedByDocumentId, doc.ReplacesDocumentId }
             .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
         if (replacementLinkIds.Count > 0)
         {
-            var numbers = await _db.Documents.AsNoTracking()
+            var linked = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && replacementLinkIds.Contains(d.Id))
-                .Select(d => new { d.Id, d.DocumentNumber })
-                .ToDictionaryAsync(x => x.Id, x => x.DocumentNumber);
+                .Select(d => new { d.Id, d.DocumentNumber, d.ReplacementCarriesPostings })
+                .ToDictionaryAsync(x => x.Id);
             resp = resp with
             {
                 ReplacedByDocumentNumber = doc.ReplacedByDocumentId.HasValue
-                    && numbers.TryGetValue(doc.ReplacedByDocumentId.Value, out var byNo) ? byNo : null,
+                    && linked.TryGetValue(doc.ReplacedByDocumentId.Value, out var byDoc) ? byDoc.DocumentNumber : null,
                 ReplacesDocumentNumber = doc.ReplacesDocumentId.HasValue
-                    && numbers.TryGetValue(doc.ReplacesDocumentId.Value, out var ofNo) ? ofNo : null,
+                    && linked.TryGetValue(doc.ReplacesDocumentId.Value, out var ofDoc) ? ofDoc.DocumentNumber : null,
+                // ใบที่ถูกแทน: ชนิดของการแทนมาจากใบแทน (ยกเลิกและออกใบแทน vs ใบแทนกระดาษ) — หน้าเว็บเลือกข้อความแถบให้ตรง
+                ReplacementCarriesPostings = doc.ReplacementCarriesPostings
+                    || (doc.ReplacedByDocumentId.HasValue && linked.TryGetValue(doc.ReplacedByDocumentId.Value, out var repl)
+                        && repl.ReplacementCarriesPostings),
             };
         }
         return resp;
@@ -6192,20 +6205,8 @@ public partial class DocumentService : IDocumentService
                     // แค่ตัวย่อ ไม่แตะ DocumentType (ซึ่งคุม JE / การนับ ภ.พ.30 /
                     // สายแปลงเอกสาร) และตัวนับเลขนับจาก prefix อยู่แล้วจึงยังเรียง
                     // ไม่ขาดช่วงต่อ prefix ตาม §86/4
-                    var seriesType = doc.DocumentType;
-                    if (doc.IsTaxInvoiceByLaw.HasValue)
-                    {
-                        // null (ยังไม่เคยตั้ง) = เปิด — ดู TaxInvoiceSeriesPolicy
-                        // .IsUnifiedSeriesEnabled ห้ามเขียน `?? false` เองที่นี่
-                        var unify = Accounting.Helpers.TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled(
-                            await _db.CompanySettings.AsNoTracking()
-                                .Where(s => s.CompanyId == companyId)
-                                .Select(s => s.UnifyTaxInvoiceNumberSeries)
-                                .FirstOrDefaultAsync());
-                        if (unify)
-                            seriesType = Accounting.Helpers.TaxInvoiceSeriesPolicy
-                                .SeriesTypeOverride(doc, doc.IsTaxInvoiceByLaw.Value) ?? doc.DocumentType;
-                    }
+                    // รอบ 200 ทีม V1: ย้ายเป็น ResolveNumberSeriesTypeAsync ตัวเดียว — "ยกเลิกและออกใบแทน" ออกเลขด้วยกติกาเดียวกัน (ห้ามสำเนา)
+                    var seriesType = await ResolveNumberSeriesTypeAsync(companyId, doc);
                     doc.DocumentNumber = await Accounting.Helpers.DocumentNumberGenerator.NextAsync(
                         _db, companyId, seriesType, doc.DocumentDate);
                 }
@@ -6296,7 +6297,9 @@ public partial class DocumentService : IDocumentService
                 // ของรายการไม่เปลี่ยนเลย — เงินรับแล้ว รายได้รับรู้แล้ว ภาษีขายลง
                 // 21911 แล้วตั้งแต่ใบเดิม เปลี่ยนแค่ "กระดาษที่ผู้ซื้อถือ" ⇒ post JE
                 // ซ้ำ = รายได้/ภาษีขายเบิ้ล (และ ภ.พ.30 ก็สลับไปนับใบแทนแล้ว)
-                var isFullTaxInvoiceReplacement = doc.ReplacesDocumentId.HasValue;
+                // รอบ 200 ทีม V1: ใบแทนแบบ "ยกเลิกและออกใบแทน" (ReplacementCarriesPostings) ถือผลทางบัญชีเอง — ถ้าถูกกู้คืนแล้วอนุมัติใหม่
+                // ต้องลง JE/สต็อกตามปกติ (ห้ามข้ามแบบใบแทนกระดาษ ไม่งั้นรายได้หาย)
+                var isFullTaxInvoiceReplacement = doc.ReplacesDocumentId.HasValue && !doc.ReplacementCarriesPostings;
 
                 if (!hasExistingJournal
                     && Accounting.Helpers.DocumentJournalExpectation.PostsToJournal(doc.DocumentType)
@@ -8334,7 +8337,8 @@ public partial class DocumentService : IDocumentService
                 // ตอนอนุมัติ (ApproveDocumentAsync ข้ามให้ — ใบเดิมทำไปแล้ว) ⇒
                 // ตอน void ต้องข้ามการ "กลับ" ด้วย มิฉะนั้นจะได้สต๊อกผีคืนเข้าคลัง
                 // และยอดวางบิลโครงการติดลบ ทั้งที่ไม่มีอะไรเคยเกิดขึ้น
-                var isReplacementDoc = doc.ReplacesDocumentId.HasValue;
+                // รอบ 200 ทีม V1: ใบแทนแบบ "ยกเลิกและออกใบแทน" รับสต็อก/ยอดโครงการ/JE มาจากใบเดิมแล้ว ⇒ ยกเลิกใบนี้ต้องกลับตามปกติ
+                var isReplacementDoc = doc.ReplacesDocumentId.HasValue && !doc.ReplacementCarriesPostings;
 
                 if (doc.Status != DocumentStatus.Draft && !isReplacementDoc)
                     await ApplyProjectBillingAsync(companyId, doc, -1);
@@ -8414,10 +8418,11 @@ public partial class DocumentService : IDocumentService
                 // ตลอดไป ทั้งที่ใบแทนไม่มีอยู่แล้ว ⇒ **ภาษีขายหายทั้งใบ** โดยยอด
                 // ยังอยู่ใน GL (จับได้ตอนกระทบยอด ภ.พ.30 กับ GL เท่านั้น).
                 // ใบเดิมไม่ต้องคืนสถานะ — มันไม่เคยถูก void (ต่างจาก 7-supersede)
-                if (doc.ReplacesDocumentId.HasValue)
+                // ใบแทนแบบ "ยกเลิกและออกใบแทน" (รอบ 200): ใบเดิมถูก Voided ไปแล้ว ⇒ ไม่มีอะไรให้คืนเข้ารายงาน · คงตราประทับไว้เป็นประวัติ
+                if (isReplacementDoc && doc.ReplacesDocumentId is Guid replacedOfId)
                 {
                     var replacedSrc = await _db.Documents.FirstOrDefaultAsync(d =>
-                        d.Id == doc.ReplacesDocumentId.Value && d.CompanyId == companyId
+                        d.Id == replacedOfId && d.CompanyId == companyId
                         && d.ReplacedByDocumentId == documentId);
                     if (replacedSrc != null)
                     {
@@ -8655,6 +8660,20 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Voided)
             throw new InvalidOperationException(
                 $"กู้คืนได้เฉพาะเอกสารที่ 'ยกเลิก' แล้วเท่านั้น (สถานะปัจจุบัน: {doc.Status})");
+
+        // Gate 0 (รอบ 200 ทีม V1) — ใบที่ "ยกเลิกและออกใบแทน": รายการบัญชี/การรับชำระ/สต็อก ย้ายไปอยู่ใบแทนแล้ว ⇒ กู้คืนแล้วอนุมัติใหม่
+        // = ลงรายได้/ภาษีขายซ้ำกับใบแทน · ทางไปต่อ = แก้ที่ใบแทน (ยกเลิกและออกใบแทนซ้ำได้)
+        // (ใบแทนกระดาษ §86/6→§86/4 ไม่เข้าเงื่อนไขนี้ — ใบเดิมของชนิดนั้นเป็นเจ้าของผลทางบัญชีเอง พฤติกรรมเดิม)
+        if (doc.ReplacedByDocumentId is Guid replacedById)
+        {
+            var replacement = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == replacedById && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentNumber, d.ReplacementCarriesPostings }).FirstOrDefaultAsync();
+            if (replacement is { ReplacementCarriesPostings: true })
+                throw new BusinessRuleException(
+                    $"กู้คืนไม่ได้ — ใบนี้ถูกยกเลิกและออกใบแทนแล้ว ({replacement.DocumentNumber}) · การรับชำระและรายการบัญชีอยู่ที่ใบแทน "
+                    + "(กู้คืนใบนี้ = รายได้/ภาษีขายซ้ำ) — ถ้าต้องแก้อีก ให้แก้ที่ใบแทน", "DOC-RESTORE-REPLACED", 409);
+        }
 
         // Gate 1 — e-Tax ที่กรมสรรพากรตอบรับแล้ว (Accepted): ห้ามคืนชีพ เพราะ
         // เอกสารถูกนำส่ง RD ไปแล้ว (ปกติ void ก็ถูก block ตั้งแต่แรก แต่ตรวจซ้ำ
@@ -9426,7 +9445,8 @@ public partial class DocumentService : IDocumentService
     /// ยกเลิกการชำระเงิน — กลับรายการ JE ของการชำระ + คืนยอดให้เอกสารต้นทาง.
     /// ใช้ทั้งจาก endpoint โดยตรง และจาก VoidDocumentAsync (cascade).
     /// </summary>
-    public async Task VoidPaymentAsync(Guid companyId, Guid paymentId)
+    public async Task<PaymentVoidResult> VoidPaymentAsync(Guid companyId, Guid paymentId,
+        PaymentVoidCause cause = PaymentVoidCause.User)
     {
         var payment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId
             && p.CompanyId == companyId && !p.IsDeleted)
@@ -9441,6 +9461,7 @@ public partial class DocumentService : IDocumentService
             && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทาง");
 
+        string? etaxCancellationFlag = null;
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
@@ -9472,10 +9493,12 @@ public partial class DocumentService : IDocumentService
                 // ด้วยยอดเช็คทั้งใบ
                 var hasAllocations = await _db.PaymentAllocations
                     .AnyAsync(a => a.PaymentId == locked.Id && a.CompanyId == companyId && !a.IsDeleted);
+                // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบเสร็จอัตโนมัติคู่การชำระที่ e-Tax ถึงกรมสรรพากรแล้ว — ตัดสินใน internal ทั้งสองเส้น
+                // (DocumentVoidPreconditions.AutoReceiptOnPaymentVoid) · ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธ (rollback ทั้งก้อน) · เช็คเด้ง = ติดธง
                 if (hasAllocations)
-                    await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน");
+                    etaxCancellationFlag = await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน", cause: cause);
                 else
-                    await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน");
+                    etaxCancellationFlag = await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน", cause: cause);
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }
@@ -9517,6 +9540,66 @@ public partial class DocumentService : IDocumentService
                 "ปลดการจับคู่ธนาคารของการชำระที่ยกเลิก {PayId} ไม่สำเร็จ — " +
                 "ตรวจรายการเดินบัญชีที่ยังค้างสถานะกระทบยอดด้วยมือ", paymentId);
         }
+        return etaxCancellationFlag == null ? PaymentVoidResult.None : new PaymentVoidResult(etaxCancellationFlag);
+    }
+
+    /// <summary>
+    /// รอบ 200 ทีม V1 (คำตัดสินข้อ 11 · review198-S4 S4-8 ค้าง) — ใบเสร็จอัตโนมัติคู่การชำระที่กำลังถูกยกเลิก: ถามตัวตัดสินตัวเดียว
+    /// <see cref="DocumentVoidPreconditions.AutoReceiptOnPaymentVoid"/> จากสถานะ e-Tax ของใบนั้น แล้วทำตาม · เรียกใน internal ทั้งสองเส้น
+    /// (ใบเดียว · หลายใบ) <b>ก่อน</b>แตะ JE/ยอดใด ⇒ ปฏิเสธ = ไม่มีอะไรถูกเขียน (และธุรกรรมของผู้เรียก rollback)
+    /// <para>Void = ยกเลิกใบเสร็จ + ยกเลิก e-Tax ของใบที่ยังไม่ถึงกรมสรรพากร (เดิม e-Tax ค้างสถานะเดิมบนใบที่ถูกยกเลิก) ·
+    /// FlagEtaxCancellation = คงใบเสร็จไว้ + ธงที่มองเห็น (ไม่ประทับ Voided เงียบ) · คืนข้อความธง (null = ไม่มีธง)</para>
+    /// </summary>
+    private async Task<(AutoReceiptEtaxDecision Decision, Document? Receipt)> DecideAutoReceiptOnPaymentVoidAsync(
+        Guid companyId, Payment payment, PaymentVoidCause cause)
+    {
+        if (payment.ReceiptDocumentId is not Guid receiptId)
+            return (new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null), null);
+        var rcpt = await _db.Documents.FirstOrDefaultAsync(d => d.Id == receiptId && d.CompanyId == companyId);
+        if (rcpt is not { IsSettlementReceipt: true })
+            return (new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null), null);
+        var etaxStatuses = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.DocumentId == receiptId)
+            .Select(e => e.Status).ToListAsync();
+        var decision = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(
+            DocumentVoidPreconditions.StrongestEtax(etaxStatuses), rcpt.DocumentNumber, cause);
+        if (decision.Action == AutoReceiptEtaxAction.Refuse)
+            throw new BusinessRuleException(decision.Message ?? "ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จส่ง e-Tax แล้ว",
+                "RD-ETAX-RECEIPT-SENT", 409);
+        return (decision, rcpt);
+    }
+
+    /// <summary>ทำตามคำตัดสินของ <see cref="DecideAutoReceiptOnPaymentVoidAsync"/> กับใบเสร็จ (หลังกลับรายการเงินแล้ว) — คืนข้อความธง (null = ไม่มี)</summary>
+    private async Task<string?> ApplyAutoReceiptOnPaymentVoidAsync(Guid companyId, AutoReceiptEtaxDecision decision, Document? rcpt,
+        string paymentNumber)
+    {
+        if (rcpt == null) return null;
+        if (decision.Action == AutoReceiptEtaxAction.FlagEtaxCancellation)
+        {
+            rcpt.EtaxCancelRequiredAt = DateTime.UtcNow;
+            rcpt.EtaxCancelRequiredReason = decision.Message;
+            rcpt.UpdatedAt = DateTime.UtcNow;
+            _logger.LogWarning("ยกเลิกการชำระ {PayNo}: ใบเสร็จ {Receipt} e-Tax ถึงกรมสรรพากรแล้ว — ไม่ยกเลิกใบเสร็จ ติดธงต้องยกเลิกทาง e-Tax",
+                paymentNumber, rcpt.DocumentNumber);
+            return decision.Message;
+        }
+        // void ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ — ไม่มี JE ให้กลับ (evidence-only) แค่ mark Voided + soft-delete ไม่ให้ค้างในรายการ/พิมพ์ได้
+        rcpt.Status = DocumentStatus.Voided;
+        rcpt.IsDeleted = true;
+        rcpt.UpdatedAt = DateTime.UtcNow;
+        // e-Tax ของใบเสร็จที่ยังไม่ถึงกรมสรรพากร (สร้าง/เซ็น/ผิดพลาด/ถูกปฏิเสธ) ยกเลิกตาม — เดิมค้างสถานะเดิมบนใบที่ถูกยกเลิก
+        var pendingEtax = await _db.EtaxInvoices
+            .Where(e => e.CompanyId == companyId && e.DocumentId == rcpt.Id && e.Status != EtaxStatus.Voided
+                && !DocumentVoidPreconditions.EtaxReachedRdStatuses.Contains(e.Status))
+            .ToListAsync();
+        foreach (var etax in pendingEtax)
+        {
+            etax.Status = EtaxStatus.Voided;
+            etax.VoidedAt = DateTime.UtcNow;
+            etax.VoidReason = $"ยกเลิกพร้อมการชำระ {paymentNumber}";
+            etax.UpdatedAt = DateTime.UtcNow;
+        }
+        return null;
     }
 
     /// <summary>
@@ -9655,9 +9738,12 @@ public partial class DocumentService : IDocumentService
     /// </summary>
     /// <param name="reversalDate">วันที่กลับรายการ (null = วันนี้) — void ส่ง
     /// วันที่เอกสารมาให้ JE รับชำระกลับอยู่งวดเดียวกับที่บันทึกรับเงินไว้</param>
-    private async Task ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason,
-        DateTime? reversalDate = null)
+    private async Task<string?> ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason,
+        DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
+        // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
+        var (receiptDecision, receiptDoc) = await DecideAutoReceiptOnPaymentVoidAsync(companyId, payment, cause);
+
         // Reverse linked JEs created from this payment.
         // Payment JEs are linked via SourceDocumentId = doc.Id with a Reference matching payment.PaymentNumber.
         // รองรับ Reference แบบมี suffix "{PayNo}/{i}" ด้วย — ข้อมูลเก่าที่เคยเป็น
@@ -9720,19 +9806,8 @@ public partial class DocumentService : IDocumentService
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
 
-        // void ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ (ถ้ามี) — ไม่มี JE ให้กลับ
-        // (evidence-only) แค่ mark Voided + soft-delete ไม่ให้ค้างในรายการ/พิมพ์ได้
-        if (payment.ReceiptDocumentId.HasValue)
-        {
-            var rcpt = await _db.Documents.FirstOrDefaultAsync(d =>
-                d.Id == payment.ReceiptDocumentId.Value && d.CompanyId == companyId);
-            if (rcpt is { IsSettlementReceipt: true })
-            {
-                rcpt.Status = DocumentStatus.Voided;
-                rcpt.IsDeleted = true;
-                rcpt.UpdatedAt = DateTime.UtcNow;
-            }
-        }
+        // ใบเสร็จรับเงินหลักฐานที่ออกคู่กับการชำระนี้ (ถ้ามี) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" ตามคำตัดสินด้านบน (รอบ 200 ทีม V1)
+        var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, payment.PaymentNumber);
 
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
         // + หนี้ที่เคยปิดด้วยบรรทัดปรับ (รอบ 193 — ขา JE ถูกกลับพร้อม JE การชำระข้างบนแล้ว)
@@ -9799,6 +9874,7 @@ public partial class DocumentService : IDocumentService
                 }
             }
         }
+        return etaxCancellationFlag;
     }
 
     /// <summary>
@@ -9815,9 +9891,12 @@ public partial class DocumentService : IDocumentService
     /// Caller รับผิดชอบ transaction + SaveChangesAsync.
     /// </summary>
     /// <param name="reversalDate">วันที่กลับรายการ (null = วันนี้)</param>
-    private async Task ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
-        DateTime? reversalDate = null)
+    private async Task<string?> ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
+        DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
+        // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
+        var (receiptDecision, receiptDoc) = await DecideAutoReceiptOnPaymentVoidAsync(companyId, payment, cause);
+
         var allocations = await _db.PaymentAllocations
             .Where(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted)
             .ToListAsync();
@@ -9899,18 +9978,8 @@ public partial class DocumentService : IDocumentService
             alloc.UpdatedAt = DateTime.UtcNow;
         }
 
-        // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE)
-        if (payment.ReceiptDocumentId.HasValue)
-        {
-            var rcpt = await _db.Documents.FirstOrDefaultAsync(d =>
-                d.Id == payment.ReceiptDocumentId.Value && d.CompanyId == companyId);
-            if (rcpt is { IsSettlementReceipt: true })
-            {
-                rcpt.Status = DocumentStatus.Voided;
-                rcpt.IsDeleted = true;
-                rcpt.UpdatedAt = DateTime.UtcNow;
-            }
-        }
+        // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" (รอบ 200 ทีม V1)
+        var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, pn);
 
         // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง
         if (payment.WithholdingTaxAmount > 0)
@@ -9943,6 +10012,7 @@ public partial class DocumentService : IDocumentService
 
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
+        return etaxCancellationFlag;
     }
 
     /// <summary>
@@ -17474,6 +17544,10 @@ public partial class DocumentService : IDocumentService
         ReplacesDocumentId: d.ReplacesDocumentId,
         ReplacementReason: d.ReplacementReason,
         ReplacedAt: d.ReplacedAt,
+        // รอบ 200 ทีม V1 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ชนิดใบแทน + ธง "ต้องยกเลิกทาง e-Tax"
+        ReplacementCarriesPostings: d.ReplacementCarriesPostings,
+        EtaxCancelRequiredAt: d.EtaxCancelRequiredAt,
+        EtaxCancelRequiredReason: d.EtaxCancelRequiredReason,
         // รอบ 193 — เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A)
         ActualPaidAmount: d.ActualPaidAmount,
         RoundingAdjustment: d.RoundingAdjustment,

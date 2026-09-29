@@ -672,6 +672,9 @@ const API = {
       writeOffBadDebt: (id, reason) => API.post(`${base}/document/${id}/write-off-bad-debt`, { reason }),
       // ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4)
       issueFullTaxInvoice: (id, reason) => API.post(`${base}/document/${id}/issue-full-tax-invoice`, { reason }),
+      // รอบ 200 ทีม V1 — ยกเลิกและออกใบแทน ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (เซิร์ฟเวอร์ตัดสินทุกอย่าง)
+      reissueSettlementPaid: (id, payload) => API.post(`${base}/document/${id}/reissue-settlement-paid`, payload),
+      getEtaxCancelRequired: () => API.get(`${base}/document/etax-cancel-required`),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
