@@ -841,7 +841,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 _Last verified against codebase: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — **§5.2** คำตัดสินข้อ 21–24 + ฝ่ายค้าน S200-1..9: คีย์ `RouteFeatureMap` ตรง route จริง ·
 คีย์ใหม่เป็นเงาสำหรับทุกผู้เรียกจนกว่ากดบังคับ · `GET bank/accounts`/`warehouses` ไม่ผูก · `/api/v1` ตรวจสถานะผ่านสวิตช์เดียว · config เดิม Enforce ไม่หลวม ·
-เมนู/api.js ไม่ดีดก่อนบังคับ · ตัวตัดสินฟีเจอร์บริษัทตัวเดียว · รายงานเงาแยก partner — commit <pending>)_
+เมนู/api.js ไม่ดีดก่อนบังคับ · ตัวตัดสินฟีเจอร์บริษัทตัวเดียว · รายงานเงาแยก partner — commit 62de779a)_
 
 _ก่อนหน้า: 2026-09-29 (rev 38 · รอบ 200 ทีม P2 — **§3.1d** settlement เฟส 2: `PaymentIntent.SettlementBatchId` หนึ่งรายการหนึ่งเจ้าของ (`GatewayBatchIntentRules`) ·
 ช่องทางที่ผูก gateway config ต้องมีโหมดภาษีค่าธรรมเนียมตรงกับ config — commit 4d3b7ea9)_
