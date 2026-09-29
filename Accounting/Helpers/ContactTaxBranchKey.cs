@@ -471,6 +471,10 @@ public static class ContactTaxBranchKey
         @"\b(?:co|ltd|company|limited|plc|pcl|public|inc|corp|corporation|partnership|part|ordinary|registered)\b",
         System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    /// <summary>แก่นของชื่อ (ตัดคำบอกรูปนิติบุคคล · ช่องว่าง · จุด · วงเล็บ · ตัวพิมพ์เล็ก) — ตัวเดียวกับที่ <see cref="NameMatchKind"/> ใช้ ·
+    /// ผู้เรียกภายนอก: <c>OcrCounterpartyMatch</c> (รอบ 200 ทีม K2 · C-01) ใช้ตัดสิน "ชื่อบนกระดาษเป็นส่วนหนึ่งของชื่อผู้ติดต่อ" แบบเดียวกับตัวจับคู่กลาง</summary>
+    public static string NameCore(string? name) => CanonicalName(name);
+
     /// <summary>ชื่อแกน — ตัดคำบอกรูป (ซึ่งเทียบแยกด้วย <see cref="EntityFormOf"/>) + ตัวพิมพ์/เว้นวรรค/เครื่องหมาย</summary>
     private static string CanonicalName(string? name)
     {

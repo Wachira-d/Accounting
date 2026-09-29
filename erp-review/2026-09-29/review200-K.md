@@ -175,3 +175,20 @@ advisory_lock_key · namespace_shadow = 0 ทุกตัว · `required_call_s
 1. R1 — เพิ่ม `VendorBranchConfirmed` เข้า `vendorKeyChanged` + เทสต์ "พิมพ์ยืนยันค่าเดิม ⇒ ตัดสินใหม่" (P2 · แก้เล็ก)
 2. R2 — แก้ข้อความ team-K.md ข้อ 9 ให้ตรง และเปิดคำถามให้เจ้าของ: สัญญาณ "คนแตะ WHT ในฟอร์มเอกสาร" (P2 · ต้องตัดสิน เพราะผูกกับ D3-2)
 3. R3 — จดใน DOCUMENT_FLOW/คำถามค้างว่าสแกนค้างเก่ายังได้ที่อยู่กระดาษ (หรือผูกเวลา)
+
+---
+
+## สถานะหลังทีม K2 (รอบ 200 · `erp-review/2026-09-29/team-K2.md`)
+
+| # | สถานะ | ที่แก้ · เทสต์ |
+|---|---|---|
+| R1 | ✅ <pending> | `OcrVendorBranchContact.VendorKeyTouched` (นับ `VendorBranchConfirmed`) ใน `SubmitCorrectionAsync` · `OcrReview200K2Tests.R1_*` (สองทิศ) · required_call_site `call_args` |
+| R2 | ✅ <pending> (คำตัดสินข้อ 28) | `OcrPostedTruth.WhtTouched` ใน `DocumentService.SyncScanToPostedDocumentAsync` + ย้าย sync ขึ้นก่อน `TryTrainAsync` · `Wht28_*` · แก้ถ้อยคำ `team-K.md` ข้อ 9 |
+| R3 | ✅ <pending> (คำตัดสินข้อ 29) | คอลัมน์ `OcrScanResults.VendorAddressUserTyped` (DEFAULT false · ไม่ backfill) เขียนผ่าน `OcrCorrectedFieldList.VendorAddressTyped` · `DecideScanVendorBranchContactAsync` อ่านธงนี้ · `Addr29_*` |
+| R4 | 📋 | แถวสาขาที่สร้างตอนแก้ผลสแกนยังถาวร — มองเห็นได้ (`[Auto-Create] … ตอนแก้ผลสแกน`) และสอดคล้องกับเส้นสแกน · ทางเข้มขึ้น (สร้างเฉพาะเส้นฟอร์ม/รายงานแถวไม่มีเอกสาร) ต้องออกแบบกับ contact-hygiene |
+| R5 | ✅ <pending> | `OcrVendorBranchContact.ScanAlreadyPosted(CreatedDocumentId, CreatedJournalEntryId)` · `R5_*` |
+| R6 | ✅ <pending> | สแกน: `AdoptTaxIdUnderOcrContactLockAsync` · สร้างเอกสาร (AdoptTaxId ฝั่งขาย + backfill ฝั่งซื้อ): ถามคีย์ซ้ำหลัง `BeginTransactionAsync` แล้วถอนการเติม · ตัวตัดสิน `OcrContactCreateLock.MayAdoptAfterLock` · `R6_*` |
+| R7 | 📋 | เท่าพฤติกรรมเดิม (ไม่ถอย) — แถวไม่มีเลขภาษีไม่มีกุญแจให้ `FindAsync` เห็น · ทางแก้ต้องล็อกด้วยชื่อ (นอกคำตัดสินข้อ 19) |
+| R8 | ✅ <pending> | `try/catch when (contactCreateTx != null)` รอบบล็อกสร้าง → `UndoOcrContactCreateAfterRollback` (ถอดแถวที่เกิดในบล็อก · คืน `MatchedContactId` · บังคับเขียนแถวสแกนทั้งแถว) · required_call_site (ไม่มีเทสต์ DB — ต้องรอ CI/ทดสอบระบบ) |
+| ข้อสังเกต dispose | 📋 | ไม่แก้ — ปลอดภัยวันนี้ (ผู้เรียกทุกตัวปิดธุรกรรมของตัวเองก่อน) |
+

@@ -6490,6 +6490,11 @@ public static class DatabaseMigrationHelper
             //   (ไม่รู้ = บอกว่าไม่รู้ · G3 — ดีกว่าเดาที่มาให้ใบเก่าทุกใบ)
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "SuggestedWhtSource" integer NOT NULL DEFAULT 0;""",
 
+            // ═══ รอบ 200 ทีม K2 · คำตัดสินข้อ 29 (ฝ่ายค้าน K R3) — "ผู้ใช้พิมพ์ที่อยู่ผู้ขายเอง" ตามกติกา baseline ═══
+            // "VendorAddress" ใน UserCorrectedFields ของแถวก่อนรอบ 200 มาจากกติกาเดิม "ส่งมา = แก้" (หน้ารีวิวส่งทุกครั้ง) ⇒ แยกไม่ได้ว่าคนพิมพ์จริงไหม
+            // ⚠️ **ไม่ backfill โดยเจตนา** — DEFAULT false = "ไม่รู้" ⇒ ไม่นับเป็นหลักฐานที่อยู่ของแถวสาขาใหม่ (ปล่อยว่าง + ข้อความให้เติม — ทิศที่มองเห็น)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorAddressUserTyped" boolean NOT NULL DEFAULT false;""",
+
             // ═══ รอบ 184 · KPI คู่ — แยก "นักเรียนโตจริง" ออกจาก "ระบบเงียบลง" ═══
             // `UsedAi` ที่ลดลงตีความได้สองทางที่ตรงกันข้าม (นักเรียนเก่งขึ้น = ดี ·
             // ด่านปิด/เกินงบ/เลิกสุ่มถามครู = แย่) ⇒ ตัวเลขเดียวแยกไม่ออก

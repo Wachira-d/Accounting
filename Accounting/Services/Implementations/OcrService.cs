@@ -2188,7 +2188,18 @@ public class OcrService : IOcrService
             scanResult.PaymentTermsDays = extractedData.PaymentTermsDays;
             // สกุลเงิน: ค่าที่เอกสารประกาศไว้ (e-Tax XML) ก่อน แล้วค่อยเดาจากข้อความ
             // — เก็บลงแถวเพื่อให้เส้นสร้างเอกสาร/DTO ไม่ต้องเดาซ้ำคนละที่
-            scanResult.Currency = extractedData.Currency ?? InferCurrency(extractedText);
+            // รอบ 200 ทีม K2 (C-09): ตัวอ่านสกุลเงินตัวเดียว Helpers/OcrCurrencyEvidence — ดูบริเวณยอดรวมเมื่อหน้ามีทั้งบาทและสกุลต่างประเทศ ·
+            // ตัดสินไม่ได้ = คงบาท + ธง [CURRENCY-UNSURE] (OcrPostingReadiness หยุดอนุมัติเอง) — เดิม "เจอบาทที่ไหนก็ได้ = บาท" เงียบ
+            if (extractedData.Currency != null) scanResult.Currency = extractedData.Currency;
+            else
+            {
+                var currencyReading = Accounting.Helpers.OcrCurrencyEvidence.Read(extractedText);
+                scanResult.Currency = currencyReading.Code;
+                if (currencyReading.Unsure
+                    && !(scanResult.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrCurrencyEvidence.UnsureTag, StringComparison.Ordinal))
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n"
+                        + Accounting.Helpers.OcrCurrencyEvidence.UnsureNote(extractedText);
+            }
             scanResult.Confidence = extractedData.Confidence;
 
             // [Reasoning] ถูกย้ายไป dump ท้ายไปป์ไลน์ (ก่อน SaveChangesAsync) —
@@ -2773,6 +2784,12 @@ public class OcrService : IOcrService
                 && !IsOurOwnContact(extractedData.VendorTaxId, extractedData.VendorName);
             await using var contactCreateTx = lockContactCreate && _db.Database.CurrentTransaction == null
                 ? await _db.Database.BeginTransactionAsync() : null;
+            // ── ฝ่ายค้าน K R8 (รอบ 200 ทีม K2): ธุรกรรมสั้นนี้ rollback (commit ล้ม · ล้มหลัง SaveChanges แต่ก่อน commit) แต่ EF ถือว่าแถวผู้ติดต่อ/
+            // MatchedContactId ที่ SaveChanges ไปแล้ว "บันทึกแล้ว" ⇒ สแกน (และคำตอบถึงผู้ใช้) ชี้ผู้ติดต่อที่ไม่มีจริง · จำสภาพก่อนบล็อกไว้ แล้วคืนเมื่อล้ม
+            var matchedBeforeContactCreate = scanResult.MatchedContactId;
+            var contactsTrackedBeforeCreate = _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity.Id).ToHashSet();
+            try
+            {
             if (lockContactCreate)
             {
                 var wantedVendorBranch = mustCreateVendorBranchRow ? vendorBranchPick!.ScannedBranch : extractedData.VendorBranchCode;
@@ -2948,6 +2965,12 @@ public class OcrService : IOcrService
             }
             // K-5: ปล่อยล็อกสร้างผู้ติดต่อทันทีหลังบล็อกสร้าง (งานที่เหลือของสแกนไม่ต้องถือล็อก) · ล้มก่อนถึงตรงนี้ = dispose ⇒ rollback
             if (contactCreateTx != null) await contactCreateTx.CommitAsync();
+            }
+            catch (Exception) when (contactCreateTx != null)
+            {
+                UndoOcrContactCreateAfterRollback(scanResult, matchedBeforeContactCreate, contactsTrackedBeforeCreate);
+                throw;
+            }
             // Backfill ข้อมูลใน contact เดิม. แยก 2 step:
             //   (1) TaxId — รันเสมอเมื่อ OCR แกะได้ + contact ยังไม่มี (เคสปกติ
             //       ที่ vendor ถูก match จากชื่อ ตั้งแต่ตอนสร้าง contact แต่ไม่มี
@@ -2978,7 +3001,13 @@ public class OcrService : IOcrService
                     if (string.IsNullOrWhiteSpace(existing.TaxId) && enrichTaxDigits.Length == 13)
                     {
                         if (enrichNameSim >= 0.90)
-                        { existing.TaxId = extractedData.VendorTaxId; changed = true; }
+                        {
+                            // ฝ่ายค้าน K R6: การเติมเลขเข้าแถวเดิมสร้างคีย์ (เลข+สาขา) เหมือนการสร้างแถวใหม่ ⇒ อยู่ใต้ล็อก K-5 ตัวเดียวกัน
+                            if (await AdoptTaxIdUnderOcrContactLockAsync(companyId, existing, extractedData.VendorTaxId!,
+                                    existing.BranchCode ?? extractedData.VendorBranchCode) is string adoptSkipped)
+                                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + adoptSkipped;
+                            else changed = true;
+                        }
                         else
                             scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                                 + $"\n[Enrich] ไม่เติมเลขภาษี {enrichTaxDigits} ให้ '{existing.Name}' — ชื่อบนกระดาษ"
@@ -3437,7 +3466,8 @@ public class OcrService : IOcrService
                 // ที่อยู่จากกระดาษเมื่อสาขาตรง ⇒ ได้ที่อยู่สำนักงานใหญ่จากหัวกระดาษ ต่างจากเส้นสแกน)
                 var paperAddressProven = Accounting.Helpers.OcrIssuerBranch.StoredAddressIsIssuerBranch(
                     result.RawTextContent, branchPick.ScannedBranch, result.VendorAddress,
-                    userCorrectedAddress: correctedFields.Contains("VendorAddress", StringComparer.Ordinal));
+                    // คำตัดสินข้อ 29: อ่านธงของกติกา baseline — ไม่ใช่ "VendorAddress" ใน UserCorrectedFields (แถวก่อนรอบ 200 = ส่งมา = แก้ · แยกไม่ได้)
+                    userCorrectedAddress: result.VendorAddressUserTyped);
                 var branchRowAddress = Accounting.Helpers.OcrIssuerBranch.ContactAddress(
                     contactBranch: branchPick.ScannedBranch, scanBranch: result.VendorBranchCode,
                     dbdMatched: false, dbdAddress: null,
@@ -3493,6 +3523,87 @@ public class OcrService : IOcrService
             if (row == null || isOurs(row.TaxId, row.Name)) return null;
         }
         return reuseId;
+    }
+
+    /// <summary>
+    /// **ลูกค้า (คู่ค้าฝั่งขาย) ของสแกนคือใคร — ตัวหาตัวเดียวของเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) และพรีวิว "แก้ในฟอร์มก่อน"
+    /// (<c>PreviewDocumentLinesAsync</c>)** (รอบ 200 ทีม K2 · ผลตรวจรอบ 189 C-01/C-02) · ไม่สร้างผู้ติดต่อ (ผู้เรียกฝั่งสร้างเอกสารสร้างเองเมื่อได้ null)
+    /// <para>ลำดับ: ใบต้นทางที่ผูกไว้ → คีย์เลขภาษี+สาขาผู้ซื้อ (<see cref="Accounting.Helpers.ContactTaxBranchKey.FindAsync"/>) → ชื่อในชุดที่
+    /// <c>ContactTaxBranchKey.SoftScope</c> อนุญาต
+    /// ผ่าน <see cref="Accounting.Helpers.OcrCounterpartyMatch.PickBuyerByName"/> (เท่ากันหลัง normalize · หรือส่วนหนึ่งของชื่อ<b>ลูกค้ารายเดียว</b> · กำกวม/สั้น = ไม่จับ)
+    /// → <see cref="Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId"/> (Reject = ห้ามใช้แถว)</para>
+    /// <para><paramref name="forPreview"/> = อ่านอย่างเดียว (AsNoTracking — การเติมเลขของ AdoptTaxId ตกบน object ที่ไม่ถูกติดตาม จึงไม่ถูกบันทึก)</para>
+    /// </summary>
+    /// <returns>(ลูกค้าที่ผูก · แถวที่เพิ่งถูกเติมเลข (ต้องถามคีย์ซ้ำใต้ล็อก R6) · ข้อความลง ProcessingNotes)</returns>
+    private async Task<(Guid? ContactId, Contact? AdoptedRow, string? Note)> ResolveSalesCounterpartyAsync(
+        Guid companyId, OcrScanResult result, Guid? predecessorContactId, bool forPreview)
+    {
+        if (predecessorContactId.HasValue) return (predecessorContactId, null, null);
+        var buyerTax = result.BuyerTaxId;
+        var buyerNm = result.BuyerName;
+        var contacts = forPreview ? _db.Contacts.AsNoTracking() : _db.Contacts;
+        var buyerKey = default(Accounting.Helpers.ContactKeyMatch);
+        if (!string.IsNullOrWhiteSpace(buyerTax))
+        {
+            buyerKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(contacts, companyId, buyerTax, result.BuyerBranchCode);
+            if (buyerKey.ContactId is Guid byKey) return (byKey, null, null);
+        }
+        if (string.IsNullOrWhiteSpace(buyerNm)) return (null, null, null);
+        // ถอยไปจับชื่อได้เฉพาะในชุดที่ตัวจับคู่กลางอนุญาต (เลขนี้มีอยู่แล้วคนละสาขา ⇒ ห้าม · เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข)
+        var buyerSoft = Accounting.Helpers.ContactTaxBranchKey.SoftScope(contacts, companyId, buyerTax, buyerKey);
+        if (buyerSoft == null) return (null, null, null);
+        var name = buyerNm.Trim();
+        var rows = await buyerSoft
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(name))
+            .OrderBy(c => c.Name.Length).ThenBy(c => c.Id)
+            .Take(50)
+            .ToListAsync();
+        var pick = Accounting.Helpers.OcrCounterpartyMatch.PickBuyerByName(name,
+            rows.Select(c => new Accounting.Helpers.OcrCounterpartyCandidate(c.Id, c.Name, c.IsCustomer)));
+        var row = pick.ContactId is Guid pickedId ? rows.FirstOrDefault(c => c.Id == pickedId) : null;
+        if (row == null) return (null, null, pick.Note);
+        var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(row, buyerTax, result.BuyerBranchCode,
+            Accounting.Helpers.ContactTaxBranchKey.NameMatchKind(name, row.Name));
+        if (adopt == Accounting.Helpers.ContactAdoptOutcome.Reject) return (null, null, pick.Note);
+        return (row.Id, adopt == Accounting.Helpers.ContactAdoptOutcome.Adopted && !forPreview ? row : null, pick.Note);
+    }
+
+    /// <summary>
+    /// **เติมเลขผู้เสียภาษีลงผู้ติดต่อแถวเดิม ใต้ล็อกเดียวกับการสร้าง (K-5)** — รอบ 200 ทีม K2 · ฝ่ายค้าน K R6 (เส้น backfill ตอนสแกน):
+    /// เปิดธุรกรรมสั้น (ถ้ายังไม่มี) → ล็อก (CompanyId, เลข) → ถามคีย์ซ้ำ → แถว<b>อื่น</b>ถือคีย์นี้อยู่แล้ว = ไม่เติม (คืนข้อความให้ผู้เรียกลง
+    /// ProcessingNotes) · ไม่มี = เติม + บันทึก + commit (ปล่อยล็อก) · เลขที่ล็อกไม่ได้ (<see cref="Accounting.Helpers.OcrContactCreateLock.LockPart"/> = null)
+    /// = เติมตามเดิม (ไม่มีกุญแจให้ชน) · ตัวตัดสิน <see cref="Accounting.Helpers.OcrContactCreateLock.MayAdoptAfterLock"/>
+    /// </summary>
+    /// <returns>null = เติมแล้ว · ข้อความ = ไม่เติม (ผู้ติดต่อคงเดิม)</returns>
+    private async Task<string?> AdoptTaxIdUnderOcrContactLockAsync(Guid companyId, Contact row, string taxId, string? branchCode)
+    {
+        if (Accounting.Helpers.OcrContactCreateLock.LockPart(taxId) == null)
+        {
+            row.TaxId = taxId;
+            return null;
+        }
+        await using var adoptTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        var foundAfterLock = await LockAndFindConcurrentOcrContactAsync(companyId, taxId, branchCode, isOurs: null);
+        if (!Accounting.Helpers.OcrContactCreateLock.MayAdoptAfterLock(foundAfterLock, row.Id))
+            return Accounting.Helpers.OcrContactCreateLock.AdoptSkippedNote(taxId, branchCode, row.Name);
+        row.TaxId = taxId;
+        await _db.SaveChangesAsync();
+        if (adoptTx != null) await adoptTx.CommitAsync();
+        return null;
+    }
+
+    /// <summary>
+    /// **คืนสภาพหลังธุรกรรมสร้างผู้ติดต่อของสแกนถูก rollback** (รอบ 200 ทีม K2 · ฝ่ายค้าน K R8) — EF ถือว่าสิ่งที่ SaveChanges ไปในธุรกรรมนั้น
+    /// "บันทึกแล้ว" ทั้งที่ฐานข้อมูลไม่มี: ถอดแถวผู้ติดต่อที่เกิดในบล็อก · คืน <c>MatchedContactId</c> เดิม (ห้ามชี้แถวที่ไม่มีจริง) ·
+    /// บังคับเขียนแถวสแกนทั้งแถวตอนบันทึกท้าย <c>ScanAsync</c> (ค่าที่ EF คิดว่าบันทึกแล้วแต่ถูก rollback จะไม่ถูกส่งซ้ำถ้าไม่บังคับ)
+    /// </summary>
+    private void UndoOcrContactCreateAfterRollback(OcrScanResult scanResult, Guid? matchedBefore, HashSet<Guid> contactsTrackedBefore)
+    {
+        foreach (var entry in _db.ChangeTracker.Entries<Contact>().ToList())
+            if (!contactsTrackedBefore.Contains(entry.Entity.Id))
+                entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+        scanResult.MatchedContactId = matchedBefore;
+        _db.Entry(scanResult).State = Microsoft.EntityFrameworkCore.EntityState.Modified;
     }
 
     /// <summary>
@@ -3632,7 +3743,7 @@ public class OcrService : IOcrService
         var docKey = (data.DocumentNumber ?? "").Trim().ToLowerInvariant();
         var dateKey = data.DocumentDate?.ToString("yyyy-MM-dd") ?? "";
         var amtKey = data.TotalAmount.HasValue
-            ? Math.Round(data.TotalAmount.Value, 2).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+            ? Math.Round(data.TotalAmount.Value, 2, MidpointRounding.AwayFromZero).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
             : "";
         var input = $"{vendorKey}|{docKey}|{dateKey}|{amtKey}";
         return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
@@ -4206,37 +4317,8 @@ public class OcrService : IOcrService
             whtAmount, result.Id);
     }
 
-    /// <summary>อ่านสกุลเงินจากข้อความบนกระดาษ — คืน null เมื่อไม่พบ (ถือเป็นบาท)
-    ///
-    /// <para>เอกสารสกุลต่างประเทศที่ถูกบันทึกเป็นบาทคือความผิดพลาดแบบ "เงียบ":
-    /// ตัวเลขถูกเก็บเท่าเดิมแต่ความหมายต่างกันหลายสิบเท่า และไม่มีอะไรเตือน
-    /// — ตรวจไว้ดีกว่าปล่อยผ่าน (ตั้ง Currency แล้ว approve จะบังคับให้ระบุ
-    /// อัตราแลกเปลี่ยนเอง ซึ่งเป็นการล้มแบบดังกว่าการเงียบ)</para>
-    ///
-    /// <para>ระวัง false positive: "$" อย่างเดียวไม่พอ (บางใบพิมพ์ THB ด้วย $)
-    /// จึงต้องเจอรหัสสกุลเป็นคำเต็มหรือคู่กับตัวเลข</para></summary>
-    internal static string? InferCurrency(string? rawText)
-    {
-        if (string.IsNullOrWhiteSpace(rawText)) return null;
-        var t = rawText.ToUpperInvariant();
-        // มีคำว่าบาท/THB ชัดเจน = บาทแน่นอน ไม่ต้องเดาต่อ
-        if (t.Contains("THB") || rawText.Contains("บาท")) return null;
-        foreach (var (code, words) in new[]
-        {
-            ("USD", new[] { "USD", "US DOLLAR", "U.S. DOLLAR" }),
-            ("EUR", new[] { "EUR", "EURO" }),
-            ("JPY", new[] { "JPY", "YEN" }),
-            ("CNY", new[] { "CNY", "RMB", "YUAN" }),
-            ("GBP", new[] { "GBP", "POUND STERLING" }),
-            ("SGD", new[] { "SGD", "SINGAPORE DOLLAR" }),
-        })
-        {
-            foreach (var w in words)
-                if (System.Text.RegularExpressions.Regex.IsMatch(t, $@"\b{System.Text.RegularExpressions.Regex.Escape(w)}\b"))
-                    return code;
-        }
-        return null;
-    }
+    // InferCurrency ย้ายไป Helpers/OcrCurrencyEvidence (รอบ 200 ทีม K2 · C-09) — ตัวเดิมอ่าน "บาท" ทั้งหน้า ⇒ ใบ USD ที่มีบรรทัดอ้างอิงอัตรา
+    // แลกเปลี่ยนถูกบันทึกเป็นบาท · ไม่มีเทสต์ · ตอนนี้ pure helper + เทสต์กระดาษสองครึ่ง (OcrReview200K2Tests.Currency_*)
 
     /// <summary>อ่าน "เหตุผลการลดหนี้" จากข้อความบนกระดาษ (§86/10 บังคับระบุ)
     ///
@@ -4518,7 +4600,7 @@ public class OcrService : IOcrService
             }
             if (up <= 0m || qty <= 0m) continue;
 
-            var computed = System.Math.Round(up * qty, 2);
+            var computed = System.Math.Round(up * qty, 2, MidpointRounding.AwayFromZero);
             if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
 
             // ⚠️ แยกสองเคสให้ถูกตัว (บั๊กจริง — บิลค่าไฟ 59 ล้าน):
@@ -4583,7 +4665,7 @@ public class OcrService : IOcrService
                 var foldAmt = phantoms.Sum(EffAmt);
                 main.Amount = EffAmt(main) + foldAmt;
                 if (main.Quantity is decimal mq && mq > 0m)
-                    main.UnitPrice = Math.Round(main.Amount.Value / mq, 2);
+                    main.UnitPrice = Math.Round(main.Amount.Value / mq, 2, MidpointRounding.AwayFromZero);
                 foreach (var p in phantoms) data.Items.Remove(p);
             }
         }
@@ -4607,7 +4689,7 @@ public class OcrService : IOcrService
             // ราคา/หน่วยที่ยังไม่รู้ (null/0) ใช้คีย์ว่าง — ยุบกับบรรทัดที่ราคาเท่ากัน
             // ไม่ได้ แต่ยุบกับบรรทัดที่ยังไม่รู้ราคาเหมือนกันได้
             var priceKey = (item.UnitPrice ?? 0m) > 0m
-                ? Math.Round(item.UnitPrice!.Value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                ? Math.Round(item.UnitPrice!.Value, 2, MidpointRounding.AwayFromZero).ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : "";
             var key = string.IsNullOrEmpty(desc) ? "" : desc + "\u0001" + priceKey;
             if (string.IsNullOrEmpty(desc))
@@ -4620,7 +4702,7 @@ public class OcrService : IOcrService
                 existing.Quantity = (existing.Quantity ?? 0m) + (item.Quantity ?? 0m);
                 existing.Amount = (existing.Amount ?? 0m) + (item.Amount ?? 0m);
                 if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
-                    existing.UnitPrice = Math.Round(a / q, 2);
+                    existing.UnitPrice = Math.Round(a / q, 2, MidpointRounding.AwayFromZero);
                 if (string.IsNullOrEmpty(existing.SuggestedAccountCode)
                     && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                     existing.SuggestedAccountCode = item.SuggestedAccountCode;
@@ -5062,15 +5144,19 @@ public class OcrService : IOcrService
             result.UserCorrectedFields = Accounting.Helpers.OcrCorrectedFieldList.Merge(
                 result.UserCorrectedFields, correctedFields);
         }
+        // คำตัดสินข้อ 29 (ฝ่ายค้าน K R3): หลักฐาน "ผู้ใช้พิมพ์ที่อยู่เอง" ของแถวสาขาใหม่ = ธงของกติกา baseline เท่านั้น ("VendorAddress" ใน
+        // UserCorrectedFields ของแถวก่อนรอบ 200 มาจาก "ส่งมา = แก้" แยกไม่ได้) · OR กับค่าเดิม — การพิมพ์ครั้งก่อนยังเป็นหลักฐาน
+        if (Accounting.Helpers.OcrCorrectedFieldList.VendorAddressTyped(correctedFields, correctionBaseline))
+            result.VendorAddressUserTyped = true;
 
         // ── K-4 (รอบ 200): ผู้ใช้เปลี่ยนกุญแจผู้ขาย (รหัสสาขา/เลขผู้เสียภาษี) ⇒ ตัดสินผู้ติดต่อใหม่ด้วยตัวเดียวกับเส้นสแกน/สร้างเอกสาร ──
         // เส้น "แก้ในฟอร์มก่อน" ส่งคำแก้แล้วอ่าน MatchedContactId กลับไปเติมฟอร์ม ⇒ เดิมแก้สาขา 00000 → 00005 แล้วฟอร์มยังได้ผู้ติดต่อ สนญ.
         // (เส้นกดสร้างเอกสารตัดสินซ้ำอยู่แล้ว) · ส่งค่าเดิมกลับมา ≠ เปลี่ยน (K-1) · ผู้ใช้เลือกผู้ติดต่อเอง/สร้างเอกสารแล้ว/ฝั่งขาย = ไม่แตะ
-        var vendorKeyChanged =
-            (correction.VendorBranchCode != null
-                && Accounting.Helpers.OcrCorrectedFieldList.BranchChanged(correction.VendorBranchCode, correctionBaseline.VendorBranchCode))
-            || (correction.VendorTaxId != null
-                && Accounting.Helpers.ThaiTaxId.Normalize(correction.VendorTaxId) != Accounting.Helpers.ThaiTaxId.Normalize(prevVendorTaxId));
+        // รอบ 200 ทีม K2 (ฝ่ายค้าน K R1): "พิมพ์ยืนยันรหัสสาขาเดิม" (VendorBranchConfirmed) ก็นับ — ตัวตัดสินเดียว OcrVendorBranchContact.VendorKeyTouched
+        // (เดิมนับแค่ค่าเปลี่ยน ⇒ "แก้ในฟอร์มก่อน" ได้แถว สนญ. ขณะที่ "สร้างเอกสาร" ได้แถวสาขา บนใบเดียวกัน)
+        var vendorKeyChanged = Accounting.Helpers.OcrVendorBranchContact.VendorKeyTouched(
+            correction.VendorBranchCode, correctionBaseline.VendorBranchCode, correction.VendorBranchConfirmed,
+            correction.VendorTaxId, prevVendorTaxId);
         var correctionTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
             null, result.TargetDocumentType, result.DocumentType, hasLinkedPurchaseOrder: result.LinkedPurchaseOrderId.HasValue);
         var contactPickedByUser = (result.UserCorrectedFields ?? "")
@@ -5078,7 +5164,9 @@ public class OcrService : IOcrService
             .Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
         if (Accounting.Helpers.OcrVendorBranchContact.ShouldRedecideOnCorrection(
                 vendorKeyChanged: vendorKeyChanged, userPickedContact: contactPickedByUser,
-                documentCreated: result.CreatedDocumentId.HasValue,
+                // ฝ่ายค้าน K R5: สแกนที่ลง JE อย่างเดียวก็ "ลงแล้ว" — ห้ามเปลี่ยนผู้ติดต่อใต้รายการที่ลงบัญชีไปแล้ว
+                documentCreated: Accounting.Helpers.OcrVendorBranchContact.ScanAlreadyPosted(
+                    result.CreatedDocumentId, result.CreatedJournalEntryId),
                 salesSide: Accounting.Helpers.DocumentSide.IsSales(correctionTarget.Type, result.OurRole)))
         {
             var ourCo = await _db.Companies.AsNoTracking()
@@ -6197,7 +6285,8 @@ public class OcrService : IOcrService
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
-            ?? throw new InvalidOperationException("OCR scan result not found.");
+            // รอบ 200 ทีม K2 (C-03): ข้อความไทย — เดิมภาษาอังกฤษถูก middleware ปิดบังเป็นประโยคกลาง
+            ?? throw new KeyNotFoundException("ไม่พบผลสแกนนี้ (อาจถูกลบไปแล้ว) — รีเฟรชหน้าสแกนเอกสาร");
 
         // Normalise createdBy to a real user GUID so the document's creator
         // signature resolves (caller may pass an email/empty for headless/API
@@ -6206,7 +6295,9 @@ public class OcrService : IOcrService
             Guid.TryParse(createdBy, out _) ? createdBy : result.CreatedBy, createdBy);
 
         if (result.ScanStatus != "Completed")
-            throw new InvalidOperationException("OCR scan is not yet completed.");
+            throw new Accounting.Helpers.BusinessRuleException(
+                "สแกนนี้ยังอ่านเอกสารไม่เสร็จ (หรืออ่านไม่สำเร็จ) — รอให้การ์ดขึ้นสถานะ “เสร็จ” ก่อน · ถ้าขึ้น “ล้มเหลว” ให้กดสแกนใหม่ แล้วค่อยสร้างเอกสาร",
+                "OCR-SCAN-NOT-COMPLETED");
 
         if (result.CreatedDocumentId.HasValue)
             throw new Accounting.Helpers.BusinessRuleException(
@@ -6352,6 +6443,8 @@ public class OcrService : IOcrService
         Guid? contactId;
         // ผู้ติดต่อที่เส้นนี้เพิ่ง Add (ยังไม่บันทึก) — K-5: ถามซ้ำใต้ล็อกหลังเปิดธุรกรรม ว่าอีกคำขอสร้างคีย์เดียวกันไปแล้วหรือยัง
         Contact? pendingNewContact = null;
+        // ผู้ติดต่อแถวเดิมที่เส้นนี้เพิ่งเติมเลขผู้เสียภาษีให้ (ยังไม่บันทึก) — ฝ่ายค้าน K R6: ถามคีย์ซ้ำใต้ล็อกเดียวกันหลังเปิดธุรกรรม
+        Contact? taxIdAdoptedRow = null;
         if (isSalesSide)
         {
             // Counterparty = buyer on the paper. MatchedContactId points at the
@@ -6359,31 +6452,16 @@ public class OcrService : IOcrService
             // the primary pick here.
             // ใบต้นทางที่ผูกไว้รู้คู่ค้าอยู่แล้ว — ใช้ตัวนั้นก่อน (ไม่งั้น OCR อ่านชื่อผู้ซื้อเพี้ยน
             // แล้วสร้างลูกค้าใหม่ ทั้งที่ใบเสนอราคาต้นทางชี้ลูกค้าเดิมชัด ๆ)
-            contactId = linkedPred?.ContactId;
+            // รอบ 200 ทีม K2 (C-01/C-02): ตัวหาลูกค้าตัวเดียวของเส้นสร้างเอกสาร + พรีวิว "แก้ในฟอร์มก่อน" (ResolveSalesCounterpartyAsync)
+            // — คีย์เลขภาษี+สาขา → ชื่อผ่าน OcrCounterpartyMatch (ห้าม Name.Contains ดิบ "ชื่อสั้นสุดชนะ") · ไม่สร้างอะไรในตัวหา
             var buyerTax = result.BuyerTaxId;
             var buyerNm = result.BuyerName;
-            // คีย์ผู้ติดต่อ = เลขภาษี + สาขาผู้ซื้อ (รอบ 197 · คู่สมมาตรของฝั่งผู้ขาย) — เดิมหาแถวไหนก็ได้ของเลขนั้น แล้วถอยไป
-            // จับด้วยชื่อแบบ substring บนผู้ติดต่อทั้งหมด ⇒ ใบขายให้ลูกค้าสาขา 3 ผูกสำนักงานใหญ่ หรือผูกนิติบุคคลอื่นที่ชื่อคล้าย
-            var buyerKey = default(Accounting.Helpers.ContactKeyMatch);
-            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerTax))
-            {
-                buyerKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-                    _db.Contacts, companyId, buyerTax, result.BuyerBranchCode);
-                contactId = buyerKey.ContactId;
-            }
-            if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
-            {
-                // ถอยไปจับชื่อได้เฉพาะในชุดที่ตัวจับคู่กลางอนุญาต (เลขนี้มีอยู่แล้วคนละสาขา ⇒ ห้าม · เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข)
-                var buyerSoft = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, buyerTax, buyerKey);
-                var byName = buyerSoft == null ? null : await buyerSoft
-                    .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(buyerNm))
-                    .OrderBy(c => c.Name.Length).ThenBy(c => c.Id)
-                    .FirstOrDefaultAsync();
-                if (byName != null && Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(byName, buyerTax, result.BuyerBranchCode,
-                        Accounting.Helpers.ContactTaxBranchKey.NameMatchKind(buyerNm, byName.Name))
-                    != Accounting.Helpers.ContactAdoptOutcome.Reject)
-                    contactId = byName.Id;
-            }
+            var salesCp = await ResolveSalesCounterpartyAsync(companyId, result, linkedPred?.ContactId, forPreview: false);
+            contactId = salesCp.ContactId;
+            if (salesCp.AdoptedRow != null) taxIdAdoptedRow = salesCp.AdoptedRow;
+            if (!string.IsNullOrEmpty(salesCp.Note)
+                && !(result.ProcessingNotes ?? "").Contains(salesCp.Note, StringComparison.Ordinal))
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + salesCp.Note;
             if (!contactId.HasValue && !string.IsNullOrWhiteSpace(buyerNm))
             {
                 var cust = new Contact
@@ -6414,9 +6492,25 @@ public class OcrService : IOcrService
                     custRow.UpdatedBy = "OCR-Enrich";
                 }
             }
-            // Last resort so creation doesn't hard-fail when the buyer block
-            // was unreadable — the user can re-pick the customer on the doc.
-            contactId ??= result.MatchedContactId;
+            // ถอยสุดท้ายเมื่ออ่านบล็อกผู้ซื้อไม่ได้ — รอบ 200 ทีม K2 (C-01/C-03): ใช้ MatchedContactId ได้เฉพาะเมื่อ**ผู้ใช้เลือกเอง**
+            // ("จับคู่ผู้ติดต่อ" ในหน้ารีวิว) และไม่ใช่บริษัทเราเอง — เดิมถอยไปใช้เงียบ ๆ ทั้งที่บนใบขาย MatchedContactId คือฝั่งผู้ขาย (= เรา)
+            // ⇒ ใบกำกับออกให้ตัวเราเอง · ไม่เข้าเกณฑ์ ⇒ contactId ว่าง ⇒ ข้อความไทยบอกทางไปต่อข้างล่าง (ไม่ผูกเงียบ)
+            if (!contactId.HasValue && result.MatchedContactId is Guid pickedForSale
+                && (result.UserCorrectedFields ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Contains(MatchedContactCorrectionField, StringComparer.Ordinal))
+            {
+                var ourCoForSale = await _db.Companies.AsNoTracking()
+                    .Where(c => c.Id == companyId)
+                    .Select(c => new { c.TaxId, c.Name, c.NameEn })
+                    .FirstOrDefaultAsync();
+                var picked = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && c.Id == pickedForSale)
+                    .Select(c => new { c.TaxId, c.Name })
+                    .FirstOrDefaultAsync();
+                if (picked != null && !Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
+                        picked.TaxId, picked.Name, ourCoForSale?.TaxId, ourCoForSale?.Name, ourCoForSale?.NameEn))
+                    contactId = pickedForSale;
+            }
         }
         else
         {
@@ -6488,12 +6582,18 @@ public class OcrService : IOcrService
                 if (existing != null && string.IsNullOrWhiteSpace(existing.TaxId))
                 {
                     existing.TaxId = result.ExtractedVendorTaxId.Trim();
+                    // ฝ่ายค้าน K R6: การเติมเลขเข้าแถวเดิมสร้างคีย์ใหม่ ⇒ ถามคีย์ซ้ำใต้ล็อก K-5 หลังเปิดธุรกรรม (ข้างล่าง)
+                    taxIdAdoptedRow = existing;
                 }
             }
         }
 
         if (!contactId.HasValue)
-            throw new InvalidOperationException("Cannot create document: no contact could be resolved from OCR data.");
+            // รอบ 200 ทีม K2 (C-03): ข้อความไทยบอกทางไปต่อ — เดิม InvalidOperationException ภาษาอังกฤษ ⇒ middleware ปิดบังเป็น
+            // "ไม่สามารถดำเนินการนี้ได้ในสถานะปัจจุบัน" ผู้ใช้ตัน (หน้ารีวิวมีช่องชื่อ/จับคู่ผู้ติดต่ออยู่แล้ว)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.OcrCounterpartyMatch.NoCounterpartyMessage(isSalesSide),
+                Accounting.Helpers.OcrCounterpartyMatch.NoCounterpartyRuleCode);
 
         // CertificateInLieu legal fields — the printed form needs a certifier
         // (the person attesting the payment happened) — default to the
@@ -6693,6 +6793,20 @@ public class OcrService : IOcrService
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
                 + Accounting.Helpers.OcrContactCreateLock.ReusedNote(pendingNewContact.TaxId, pendingNewContact.BranchCode);
         }
+        // ── ฝ่ายค้าน K R6 (รอบ 200 ทีม K2): การเติมเลขผู้เสียภาษีเข้าแถวเดิม (AdoptTaxId ฝั่งขาย · backfill ฝั่งซื้อ) ก็สร้างคีย์ (เลข+สาขา) ──
+        // ถามคีย์ซ้ำใต้ล็อกเดียวกับ K-5 — มีแถว**อื่น**ถือคีย์นี้แล้ว (อีกคำขอเพิ่งสร้าง/มีอยู่ก่อน) ⇒ ถอนการเติม (ยังไม่บันทึก) + บอกผู้ใช้ · ผู้ติดต่อที่ผูกคงเดิม
+        if (taxIdAdoptedRow != null
+            && !Accounting.Helpers.OcrContactCreateLock.MayAdoptAfterLock(
+                await LockAndFindConcurrentOcrContactAsync(companyId, taxIdAdoptedRow.TaxId, taxIdAdoptedRow.BranchCode, isOurs: null),
+                taxIdAdoptedRow.Id))
+        {
+            var skippedTaxId = taxIdAdoptedRow.TaxId;
+            var adoptedEntry = _db.Entry(taxIdAdoptedRow);
+            adoptedEntry.CurrentValues.SetValues(adoptedEntry.OriginalValues);
+            adoptedEntry.State = Microsoft.EntityFrameworkCore.EntityState.Unchanged;
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+                + Accounting.Helpers.OcrContactCreateLock.AdoptSkippedNote(skippedTaxId, taxIdAdoptedRow.BranchCode, taxIdAdoptedRow.Name);
+        }
         var docNumber = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         // สาขาผู้ขาย: Contact ถูก enrich ด้วยสาขาที่ OCR แกะจากกระดาษตอน scan
         // แล้ว (BranchCodeExtractor → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย
@@ -6722,7 +6836,7 @@ public class OcrService : IOcrService
             // (ตัวเลขเท่าเดิมแต่ความหมายผิด = ยอดผิดหลายสิบเท่า) ตรวจจากสัญลักษณ์/
             // รหัสสกุลบนเอกสาร ไม่พบ = THB ตามเดิม
             // สกุลเงินที่เอกสารประกาศไว้ (e-Tax XML) ชนะการเดาจากข้อความเสมอ
-            Currency = result.Currency ?? InferCurrency(result.RawTextContent) ?? "THB",
+            Currency = result.Currency ?? Accounting.Helpers.OcrCurrencyEvidence.Infer(result.RawTextContent) ?? "THB",
             // เหตุผลการลดหนี้ (§86/10) — บังคับก่อนอนุมัติ เดิม OCR ไม่เคยเซ็ต
             // ใบลดหนี้ที่สแกนมาจึงติดบล็อก "ต้องระบุเหตุผล" ทุกใบ 100%
             // กระดาษมักพิมพ์เหตุผลไว้อยู่แล้ว → อ่านจากข้อความ ถ้าไม่พบค่อยให้ผู้ใช้เลือก
@@ -6971,10 +7085,20 @@ public class OcrService : IOcrService
                 // "AI ถูก" ทั้งที่คำตอบ AI ถูกทิ้งไปแล้ว ⇒ คลังคำตอบของนักเรียนเต็ม
                 // ไปด้วย label ปลอม (ผลตรวจ 2026-09-18 · D3-4) · เส้น
                 // SubmitCorrectionAsync เทียบถูกมาตลอด — สองทางเข้าต้องนิยามเดียวกัน
-                if (result.TargetDocTypeAiFeedbackId is Guid dtFid)
+                // รอบ 200 ทีม K2 (C-06): ช่องที่ผู้ใช้แก้เองในหน้ารีวิว = บันทึก Explicit ไปแล้ว — ห้ามเส้นนี้ลดชั้นเป็น Implicit
+                if (result.TargetDocTypeAiFeedbackId is Guid dtFid
+                    && Accounting.Helpers.OcrAiLabelScope.ImplicitMayRecord(result.UserCorrectedFields, "TargetDocumentType"))
                     await _feedbackRecorder.RecordUserChoiceAsync(dtFid, docType.ToString(),
                         acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(
                             result.TargetDocTypeAiSuggested, docType.ToString()),
+                        CancellationToken.None, Accounting.Models.Enums.UserChoiceSource.Implicit);
+                // ── บทบาทเรา (DocumentRoleInference) — ผลตรวจรอบ 189 C-06: เดิมปิดลูปเฉพาะเส้น SubmitCorrection ⇒ นักเรียนบทบาทเรียนแต่ใบที่
+                // เปิดรีวิว/ถูกแก้ (selection bias) · ใบที่กดสร้างจากการ์ด/LINE/มือถือ/API autoCreate = คำยืนยันแบบ Implicit ของบทบาทสุดท้าย ·
+                // "AI ถูกไหม" เทียบกับคำตอบของ AI (OurRoleAiSuggested) ไม่ใช่ค่าสุดท้าย (นิยามเดียวกับ SubmitCorrectionAsync)
+                if (result.OurRoleAiFeedbackId is Guid roleFid && !string.IsNullOrWhiteSpace(result.OurRole)
+                    && Accounting.Helpers.OcrAiLabelScope.ImplicitMayRecord(result.UserCorrectedFields, "OurRole"))
+                    await _feedbackRecorder.RecordUserChoiceAsync(roleFid, result.OurRole!,
+                        acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(result.OurRoleAiSuggested, result.OurRole),
                         CancellationToken.None, Accounting.Models.Enums.UserChoiceSource.Implicit);
                 if (result.AiSuggestionFeedbackId is Guid vFid && contactId is Guid chosenContact)
                     await _feedbackRecorder.RecordUserChoiceAsync(vFid, chosenContact.ToString(),
@@ -7346,8 +7470,8 @@ public class OcrService : IOcrService
                 if (headerWht > 0 && lineAmountSum > 0)
                 {
                     lineWht = i == items.Count - 1
-                        ? Math.Round(headerWht - whtAssigned, 2)
-                        : Math.Round(headerWht * amount / lineAmountSum, 2);
+                        ? Math.Round(headerWht - whtAssigned, 2, MidpointRounding.AwayFromZero)
+                        : Math.Round(headerWht * amount / lineAmountSum, 2, MidpointRounding.AwayFromZero);
                     whtAssigned += lineWht;
                 }
 
@@ -7393,7 +7517,7 @@ public class OcrService : IOcrService
                     // หักออกแล้วยอดตรงกับที่ ComputeLineAmounts คำนวณเป๊ะ ⇒ เปิดแก้ไข
                     // เอกสารแล้วบันทึกใหม่ ตัวเลขไม่ขยับ
                     // + priceRounding.Shift: บรรทัดโตตาม จำนวน × ราคา (ส่วนลดคงตามกระดาษ) — ส่วนต่างกลับไปที่ RoundingAdjustment
-                    Amount = (document.PricesIncludeVat ? Math.Round(amount - lineVat, 2) : amount) + priceShift,
+                    Amount = (document.PricesIncludeVat ? Math.Round(amount - lineVat, 2, MidpointRounding.AwayFromZero) : amount) + priceShift,
                     VatRate = item.VatRate ?? standardVatRate,
                     VatAmount = lineVat,
                     // WHT read off the paper → pre-fill rate + baht per line so
@@ -7640,6 +7764,31 @@ public class OcrService : IOcrService
             // — ส่งดัชนีต้นทางออกไปตรง ๆ แทนที่จะให้หน้าเว็บสมมติว่าลำดับตรงกัน
             items.Count > 0 ? l.LineOrder - 1 : -1)).ToList();
 
+        // ── คู่ค้าของฟอร์ม (รอบ 200 ทีม K2 · C-02): เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง ──
+        // เดิมปุ่ม "แก้ในฟอร์มก่อน" ส่ง**ผู้ขาย** (MatchedContactId/ชื่อ/เลขผู้ขาย) เป็นคู่ค้าเสมอ แม้ใบเป็นฝั่งขาย ⇒ ฟอร์มรายได้ได้ชื่อบริษัทเราเอง
+        // และชื่อ/เลขผู้ซื้อที่เพิ่งตรวจหาย · ฝั่งขายใช้ตัวหาตัวเดียวกับเส้นสร้างเอกสาร (อ่านอย่างเดียว) · ฝั่งซื้อ = ค่าที่ K-4 ตัดสินไว้บนแถวสแกน
+        Accounting.Models.DTOs.Ocr.OcrLinePreviewCounterparty counterparty;
+        if (isSalesSide)
+        {
+            Guid? predContactId = null;
+            if (linkedPo == null && result.LinkedPredecessorDocumentId.HasValue)
+            {
+                var pred = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == result.LinkedPredecessorDocumentId.Value && d.CompanyId == companyId && !d.IsDeleted)
+                    .Select(d => new { d.ContactId, d.DocumentType })
+                    .FirstOrDefaultAsync();
+                if (pred != null && DocumentService.GetPredecessorTypes(docType).Contains(pred.DocumentType))
+                    predContactId = pred.ContactId;
+            }
+            var salesCp = await ResolveSalesCounterpartyAsync(companyId, result, predContactId, forPreview: true);
+            counterparty = new Accounting.Models.DTOs.Ocr.OcrLinePreviewCounterparty(
+                salesCp.ContactId, result.BuyerName, result.BuyerTaxId, result.BuyerBranchCode, result.BuyerAddress, "Buyer");
+        }
+        else
+            counterparty = new Accounting.Models.DTOs.Ocr.OcrLinePreviewCounterparty(
+                result.MatchedContactId, result.ExtractedVendorName, result.ExtractedVendorTaxId, result.VendorBranchCode,
+                result.VendorAddress, "Vendor");
+
         var notesAfter = result.ProcessingNotes ?? "";
         var delta = notesAfter.Length > notesBefore.Length ? notesAfter[notesBefore.Length..].Trim() : null;
 
@@ -7656,7 +7805,8 @@ public class OcrService : IOcrService
                 && Accounting.Helpers.OcrSettlementProposal.Parse(notesAfter) is { } previewPlan
                 && Math.Abs(previewPlan.InvoiceTotal - (result.ExtractedTotalAmount ?? 0m))
                     <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance
-                ? previewPlan.AmountPaid : null);
+                ? previewPlan.AmountPaid : null,
+            Counterparty: counterparty);
     }
 
     /// <summary>ยอดก่อน VAT <b>หลังหักส่วนลด</b> ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c>
@@ -8464,7 +8614,7 @@ public class OcrService : IOcrService
         var qty = line.Quantity ?? 0m;
         var up = line.UnitPrice ?? 0m;
         if (qty > 0m && up > 0m)
-            line.Amount = System.Math.Round(qty * up, 2);
+            line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero);
 
         scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
@@ -8679,8 +8829,8 @@ public class OcrService : IOcrService
                     var qty = Num(el, "quantity", "qty") ?? 1m;
                     var unit = Num(el, "unitPrice", "price", "unit_price");
                     var amt = Num(el, "amount", "lineAmount", "total");
-                    if (!amt.HasValue && unit.HasValue) amt = Math.Round(unit.Value * qty, 2);
-                    if (!unit.HasValue && amt.HasValue && qty != 0) unit = Math.Round(amt.Value / qty, 2);
+                    if (!amt.HasValue && unit.HasValue) amt = Math.Round(unit.Value * qty, 2, MidpointRounding.AwayFromZero);
+                    if (!unit.HasValue && amt.HasValue && qty != 0) unit = Math.Round(amt.Value / qty, 2, MidpointRounding.AwayFromZero);
                     string? desc = null;
                     if (el.TryGetProperty("description", out var de) && de.ValueKind == System.Text.Json.JsonValueKind.String)
                         desc = de.GetString();
@@ -8715,7 +8865,7 @@ public class OcrService : IOcrService
             {
                 data.HasWht = true;
                 var baseAmt = (data.TotalAmount ?? 0) - (data.VatAmount ?? 0);
-                if (baseAmt > 0) data.WhtRate = Math.Round(extWht.Value / baseAmt * 100m, 2);
+                if (baseAmt > 0) data.WhtRate = Math.Round(extWht.Value / baseAmt * 100m, 2, MidpointRounding.AwayFromZero);
                 changed.Add($"wht={extWht:0.00}");
             }
             else if (extWhtRate.HasValue && extWhtRate.Value > 0)
@@ -9597,7 +9747,7 @@ public class OcrService : IOcrService
             OurRoleUsedAi: r.OurRoleUsedAi,
             // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
             // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
-            Currency: r.Currency ?? InferCurrency(r.RawTextContent),
+            Currency: r.Currency ?? Accounting.Helpers.OcrCurrencyEvidence.Infer(r.RawTextContent),
             GlAccountAiFeedbackId: r.GlAccountAiFeedbackId,
             SuggestedWhtRate: r.SuggestedWhtRate,
             SuggestedWhtSource: r.SuggestedWhtSource,

@@ -803,7 +803,7 @@ internal static class SmartFieldExtractor
         if (!data.SubTotal.HasValue) return;
         if (!data.HasWht || !data.WhtRate.HasValue) return;
 
-        var whtAmount = Math.Round(data.SubTotal.Value * data.WhtRate.Value / 100m, 2);
+        var whtAmount = Math.Round(data.SubTotal.Value * data.WhtRate.Value / 100m, 2, MidpointRounding.AwayFromZero);
         var vat = data.VatAmount ?? 0m;
         var netPayable = data.SubTotal.Value + vat - whtAmount;
 

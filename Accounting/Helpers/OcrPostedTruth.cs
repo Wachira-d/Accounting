@@ -69,6 +69,46 @@ public static class OcrPostedTruth
         TotalAmount: PickMoney(scan.TotalAmount, posted.TotalAmount),
         TargetDocumentType: PickText(scan.TargetDocumentType, posted.TargetDocumentType));
 
+    /// <summary>
+    /// **ช่อง WHT ที่ "คนแก้ในเอกสาร" ก่อนอนุมัติ** (รอบ 200 ทีม K2 · คำตัดสินข้อ 28 · ฝ่ายค้าน K R2) — ชื่อช่องชุดเดียวกับ
+    /// <see cref="OcrWhtLearningScope.WhtFieldNames"/> ให้ <c>SyncScanToPostedDocumentAsync</c> merge เข้า <c>UserCorrectedFields</c> ก่อนเรียนประวัติผู้ขาย
+    ///
+    /// <para>═══ ที่มา ═══ K-10 นับ WHT ในหน้ารีวิวเป็น "คนแก้" เฉพาะเมื่อค่าเปลี่ยน (ถูก) แต่ WHT ที่ผู้ใช้ติ๊ก/แก้ใน<b>ฟอร์มเอกสาร</b> (ปุ่มหลัก "แก้ในฟอร์มก่อน")
+    /// ไม่มีทางไหนบอกระบบเลย ⇒ <c>OcrWhtLearningScope</c> ตีเป็น <c>SystemSuggestedOnly</c> ⇒ ผู้ขายรายนั้นไม่เคยมีประวัติ WHT ผู้ใช้ต้องใส่เองทุกใบ
+    /// (ก่อน K-10 ถูกเรียน "โดยบังเอิญ" เพราะหน้ารีวิวส่ง hasWht ทุกครั้ง — ทรง CLAUDE.md §H ข้อแรก)</para>
+    ///
+    /// <para>baseline = ค่า WHT ของแถวสแกน (ตัวเดียวกับ K-10) ในรูปที่เส้นสร้างเอกสารใช้จริง: <c>HasWht &amp;&amp; WhtRate &gt; 0</c> ⇒ ทุกบรรทัดได้อัตรานั้น +
+    /// รหัสประเภทเงินได้ของสแกน · ไม่มีอัตรา = ไม่หัก (ข้อเสนอของระบบ <c>SuggestedWhtRate</c> ไม่เคยถูกหักให้เอง ⇒ ไม่ใช่ baseline) ⇒ เอกสารที่สร้างจากสแกน
+    /// โดยไม่มีใครแตะ ได้ผลว่าง (ไม่สอนตัวเอง) · ต่างจริงเท่านั้นถึงนับ: การมี/ไม่มี WHT · ชุดอัตรา (ปัด 2 ตำแหน่ง) · ชุดรหัสประเภทเงินได้ที่ระบุ</para>
+    /// </summary>
+    /// <param name="scan">ค่า WHT บนแถวสแกน (baseline — ไม่ใช่ค่ากระดาษ)</param>
+    /// <param name="postedLines">บรรทัดของเอกสารที่อนุมัติ (อัตรา WHT + รหัสประเภทเงินได้)</param>
+    public static string[] WhtTouched(OcrWhtBaseline scan, IEnumerable<OcrPostedWhtLine> postedLines)
+    {
+        var scanHas = scan.HasWht && scan.WhtRate is > 0m;
+        var scanRates = new SortedSet<decimal>();
+        var scanCodes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (scanHas)
+        {
+            scanRates.Add(Rate2(scan.WhtRate!.Value));
+            if (!string.IsNullOrWhiteSpace(scan.WhtIncomeTypeCode)) scanCodes.Add(scan.WhtIncomeTypeCode.Trim());
+        }
+
+        var whtLines = (postedLines ?? Enumerable.Empty<OcrPostedWhtLine>()).Where(l => l.WithholdingTaxRate > 0m).ToList();
+        var postedRates = new SortedSet<decimal>(whtLines.Select(l => Rate2(l.WithholdingTaxRate)));
+        var postedCodes = new SortedSet<string>(whtLines
+            .Where(l => !string.IsNullOrWhiteSpace(l.IncomeTypeCode))
+            .Select(l => l.IncomeTypeCode!.Trim()), StringComparer.OrdinalIgnoreCase);
+
+        var fields = new List<string>(3);
+        if ((whtLines.Count > 0) != scanHas) fields.Add("HasWht");
+        if (!postedRates.SetEquals(scanRates)) fields.Add("WhtRate");
+        if (!postedCodes.SetEquals(scanCodes)) fields.Add("WhtIncomeTypeCode");
+        return fields.ToArray();
+
+        static decimal Rate2(decimal r) => Math.Round(r, 2, MidpointRounding.AwayFromZero);
+    }
+
     private static string? PickText(string? current, string? postedValue)
     {
         if (string.IsNullOrWhiteSpace(postedValue)) return null;      // ไม่รู้ = ไม่แตะ
@@ -98,3 +138,6 @@ public static class OcrPostedTruth
         return p;
     }
 }
+
+/// <summary>บรรทัดของเอกสารที่อนุมัติ — เฉพาะส่วนที่ <see cref="OcrPostedTruth.WhtTouched"/> ใช้ (อัตรา WHT · รหัสประเภทเงินได้ ม.40)</summary>
+public readonly record struct OcrPostedWhtLine(decimal WithholdingTaxRate, string? IncomeTypeCode);

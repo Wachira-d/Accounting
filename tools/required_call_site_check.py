@@ -1217,7 +1217,9 @@ RULES += [
          why="รอบ 197: สาขาบนกระดาษ (มีหลักฐาน) ไม่ตรงผู้ติดต่อเดิม ⇒ สร้างแถวสาขา ห้ามถอยไปจับชื่อ/AI (ได้สำนักงานใหญ่คืน) · "
              "ชื่อโลโก้ → ชื่อนิติบุคคลที่พิมพ์ก่อนทะเบียน/ตัวเรียนรู้ · เตือนอีเมลผู้ซื้อที่ปนในผู้ติดต่อผู้ขาย"),
     dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
-         must=["DecideScanVendorBranchContactAsync(", "ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("],
+         # รอบ 200 ทีม K2 (C-01/C-02): คีย์กลาง + SoftScope ฝั่งผู้ซื้อย้ายไป ResolveSalesCounterpartyAsync ตัวเดียว (ใช้ร่วมกับพรีวิว
+         # "แก้ในฟอร์มก่อน") — แถวของเมธอดนั้นล็อก FindAsync/SoftScope/PickBuyerByName ต่อ (บล็อก K2 ข้างล่าง)
+         must=["DecideScanVendorBranchContactAsync(", "ResolveSalesCounterpartyAsync("],
          forbid=["NormalizeTaxDigits(c.TaxId) == vTaxDigits", "OcrVendorBranchContact.Decide("],
          why="รอบ 197: เส้นสร้างเอกสารตัดสินผู้ติดต่อด้วยตัวเดียวกับเส้นสแกน (รวม MatchedContactId เก่าที่ผูกสำนักงานใหญ่) · "
              "ผู้ใช้เลือกเองชนะ · ฝั่งผู้ซื้อใช้คีย์กลาง + SoftScope · รอบ 200 K-4: ตัวตัดสินสาขาย้ายไป DecideScanVendorBranchContactAsync "
@@ -2347,6 +2349,49 @@ RULES += [
     dict(file=DOCSVC, method="GetDuplicateContactGroupsAsync",
          must=["ContactDataHygiene.DuplicateKey("],
          why="รอบ 200 K-5: คีย์ผู้ติดต่อซ้ำตัวเดียวกับรายงาน contact-hygiene (สองหน้านับกลุ่มตรงกัน)"),
+]
+# ── รอบ 200 ทีม K2 (ฝ่ายค้าน K R1–R8 · คำตัดสินข้อ 28/29 · ผลตรวจรอบ 189 C-01..C-10) — เทสต์ล็อก helper pure ⇒ ล็อกจุดเรียกใน service ──
+RULES += [
+    dict(file=OCR, method="SubmitCorrectionAsync",
+         must=["OcrVendorBranchContact.VendorKeyTouched(", "OcrVendorBranchContact.ScanAlreadyPosted(",
+               "OcrCorrectedFieldList.VendorAddressTyped("],
+         call_args=[("OcrVendorBranchContact.VendorKeyTouched(", "VendorBranchConfirmed"),
+                    ("OcrVendorBranchContact.ScanAlreadyPosted(", "CreatedJournalEntryId")],
+         before=[("OcrCorrectedFieldList.VendorAddressTyped(", "DecideScanVendorBranchContactAsync(")],
+         why="K2 R1: พิมพ์ยืนยันรหัสสาขาเดิม = ตัดสินผู้ติดต่อใหม่ (สองเส้นต้องได้แถวเดียวกัน) · R5: สแกนที่ลง JE อย่างเดียวห้ามเปลี่ยนผู้ติดต่อ · "
+             "ข้อ 29: ธง \"ผู้ใช้พิมพ์ที่อยู่\" เขียนจากกติกา baseline ก่อนตัดสินแถวสาขา"),
+    dict(file=OCR, method="DecideScanVendorBranchContactAsync",
+         must=["result.VendorAddressUserTyped"],
+         why="คำตัดสินข้อ 29: ที่อยู่ของแถวสาขาใหม่นับ \"ผู้ใช้พิมพ์\" จากธงกติกาใหม่เท่านั้น (\"VendorAddress\" ในรายการช่องที่แก้ของแถวก่อนรอบ 200 แยกไม่ได้)"),
+    dict(file=DOC, method="SyncScanToPostedDocumentAsync",
+         must=["OcrPostedTruth.WhtTouched(", "touched.AddRange(whtTouched)"],
+         why="คำตัดสินข้อ 28: WHT ที่คนแก้ในฟอร์มเอกสาร (ต่างจาก baseline ของสแกน) ต้องถูกนับเป็นคำแก้ก่อนเรียนประวัติผู้ขาย"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         before=[("SyncScanToPostedDocumentAsync(", "_vendorIntel.TryTrainAsync(")],
+         why="คำตัดสินข้อ 28: sync สแกน (merge ช่อง WHT ที่คนแก้) ต้องมาก่อนการเรียนประวัติผู้ขาย — train ครั้งเดียวต่อเอกสาร"),
+    dict(file=OCR, method="ScanAsync",
+         must=["UndoOcrContactCreateAfterRollback(", "AdoptTaxIdUnderOcrContactLockAsync(", "OcrCurrencyEvidence.Read("],
+         forbid=["existing.TaxId = extractedData.VendorTaxId", "InferCurrency("],
+         why="K2 R8: ธุรกรรมสร้างผู้ติดต่อ rollback ⇒ สแกนห้ามชี้ผู้ติดต่อที่ไม่มีจริง · R6: เติมเลขภาษีเข้าแถวเดิมใต้ล็อก K-5 · "
+             "C-09: สกุลเงินจากตัวอ่านเดียว (ดูบริเวณยอดรวม)"),
+    dict(file=OCR, method="AdoptTaxIdUnderOcrContactLockAsync",
+         must=["LockAndFindConcurrentOcrContactAsync(", "OcrContactCreateLock.MayAdoptAfterLock(", "adoptTx.CommitAsync("],
+         why="K2 R6: ถามคีย์ซ้ำหลังได้ล็อกก่อนเติมเลขเข้าแถวเดิม"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
+         must=["ResolveSalesCounterpartyAsync(", "OcrContactCreateLock.MayAdoptAfterLock(", "OcrCounterpartyMatch.NoCounterpartyMessage(",
+               "OcrAiLabelScope.ImplicitMayRecord(", "result.OurRoleAiFeedbackId"],
+         before=[("BeginTransactionAsync(", "OcrContactCreateLock.MayAdoptAfterLock(")],
+         forbid=["c.Name.Contains(buyerNm)", "contactId ??= result.MatchedContactId",
+                 "Cannot create document: no contact"],
+         why="C-01: ลูกค้าจากชื่อผ่านตัวจับคู่เดียว (ห้าม substring ดิบ · ห้ามถอยไป MatchedContactId เงียบ) · C-03: ไม่รู้คู่ค้า = ข้อความไทยบอกทางไปต่อ · "
+             "C-06: ปิดลูปบทบาทเราบนเส้น 1-click · R6: เติมเลขเข้าแถวเดิมถูกถามซ้ำใต้ล็อก"),
+    dict(file=OCR, method="ResolveSalesCounterpartyAsync",
+         must=["OcrCounterpartyMatch.PickBuyerByName(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(",
+               "ContactTaxBranchKey.FindAsync("],
+         why="C-01: ตัวหาลูกค้าตัวเดียวของเส้นสร้างเอกสาร + พรีวิว (คีย์ → ชื่อในชุดที่อนุญาต → ตัวจับคู่ชื่อ)"),
+    dict(file=OCR, method="PreviewDocumentLinesAsync",
+         must=["ResolveSalesCounterpartyAsync(", "Counterparty: counterparty"],
+         why="C-02: \"แก้ในฟอร์มก่อน\" ได้คู่ค้าตามฝั่งเอกสารจากเซิร์ฟเวอร์ (ฝั่งขาย = ผู้ซื้อ ไม่ใช่ผู้ขาย = เรา)"),
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──

@@ -6445,6 +6445,22 @@ public partial class DocumentService : IDocumentService
             }
         });
 
+        // ปิดลูปการสอน — final choice ตอนอนุมัติ: ทุกบรรทัดที่มี FeedbackId
+        // + AccountId → บันทึก choice (acceptedAi=true ถ้าตรง AI's answer,
+        // false ถ้า user แก้). RecordLineAccountFeedbackAsync เป็น idempotent
+        // (ข้ามถ้า UserChosenAnswer เคย set แล้ว) → ปลอดภัย ถ้า Update เคย fire
+        var approvedLines = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id).ToListAsync();
+        await RecordLineAccountFeedbackAsync(approvedLines);
+
+        // ปิดลูปที่ "เอกสารที่ลงจริง" ไม่ใช่ "ช่องบนสแกน" (สถาปัตยกรรมเป้าหมาย D3)
+        // — ผู้ใช้เปิด Draft แล้วแก้ชื่อผู้ขาย/วันที่/ยอด/รหัสสาขาก่อนอนุมัติได้
+        // เดิมไม่มีใครบอกนักเรียนเลย ⇒ เรียนจากคำตอบที่ผู้ใช้ปฏิเสธไปแล้ว
+        // ⚠️ ต้องอยู่**ก่อน** TryTrainAsync (รอบ 200 ทีม K2 · คำตัดสินข้อ 28): sync นี้ merge "HasWht/WhtRate/WhtIncomeTypeCode" เข้า
+        // UserCorrectedFields เมื่อคนแก้ WHT ในฟอร์มเอกสาร — VendorIntelligence อ่านช่องนั้นตัดสินว่าเรียน WHT ได้ไหม (OcrWhtLearningScope)
+        // เดิม sync อยู่หลัง train ⇒ ต่อให้ sync เขียนแล้วก็ไม่ทันการเรียนของใบนั้น (train ครั้งเดียวต่อเอกสาร)
+        await SyncScanToPostedDocumentAsync(companyId, doc, approvedLines);
+
         // Best-effort: train vendor intelligence cache for OCR self-learning.
         // Failures are logged inside the helper — training is a derived side-effect
         // that can always be rebuilt via BackfillFromHistoryAsync.
@@ -6537,18 +6553,7 @@ public partial class DocumentService : IDocumentService
             }
         }
 
-        // ปิดลูปการสอน — final choice ตอนอนุมัติ: ทุกบรรทัดที่มี FeedbackId
-        // + AccountId → บันทึก choice (acceptedAi=true ถ้าตรง AI's answer,
-        // false ถ้า user แก้). RecordLineAccountFeedbackAsync เป็น idempotent
-        // (ข้ามถ้า UserChosenAnswer เคย set แล้ว) → ปลอดภัย ถ้า Update เคย fire
-        var approvedLines = await _db.DocumentLines.AsNoTracking()
-            .Where(l => l.DocumentId == doc.Id).ToListAsync();
-        await RecordLineAccountFeedbackAsync(approvedLines);
-
-        // ปิดลูปที่ "เอกสารที่ลงจริง" ไม่ใช่ "ช่องบนสแกน" (สถาปัตยกรรมเป้าหมาย D3)
-        // — ผู้ใช้เปิด Draft แล้วแก้ชื่อผู้ขาย/วันที่/ยอด/รหัสสาขาก่อนอนุมัติได้
-        // เดิมไม่มีใครบอกนักเรียนเลย ⇒ เรียนจากคำตอบที่ผู้ใช้ปฏิเสธไปแล้ว
-        await SyncScanToPostedDocumentAsync(companyId, doc, approvedLines);
+        // (ปิดลูป GL + sync สแกนย้ายขึ้นไปก่อน TryTrainAsync — รอบ 200 ทีม K2 · คำตัดสินข้อ 28)
 
         var approved = await GetDocumentAsync(companyId, documentId);
 
@@ -13586,7 +13591,16 @@ public partial class DocumentService : IDocumentService
             var change = Accounting.Helpers.OcrPostedTruth.Diff(current, posted);
             var linesJson = BuildScanItemsJsonFromLines(approvedLines);
             var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
-            if (!change.HasChanges && !linesChanged) return;
+            // ── คำตัดสินข้อ 28 (รอบ 200 ทีม K2 · ฝ่ายค้าน K R2): WHT ที่คนแก้ใน "ฟอร์มเอกสาร" ต้องถึงวงจรเรียนรู้ ──
+            // baseline = ค่า WHT บนแถวสแกน (ตัวเดียวกับ K-10) · ต่างจริงเท่านั้น (เอกสารที่สร้างจากสแกนโดยไม่มีใครแตะ = ว่าง ⇒ ไม่สอนตัวเอง) ·
+            // ฝั่งซื้อเท่านั้น (ประวัติ WHT เป็นของผู้ขาย · ฝั่งขายไม่เติมรหัสประเภทเงินได้ลงบรรทัด ⇒ เทียบแล้วได้ "แก้" ปลอม) ·
+            // ไม่เขียนค่ากลับลงคอลัมน์ WHT ของสแกน (คงเป็น baseline ⇒ อนุมัติซ้ำได้ชุดเดิม · Merge ไม่ซ้ำ) · ต้องรันก่อน VendorIntelligence.TryTrainAsync
+            var whtTouched = isPurchase
+                ? Accounting.Helpers.OcrPostedTruth.WhtTouched(
+                    new Accounting.Helpers.OcrWhtBaseline(scan.HasWht, scan.WhtRate, scan.WhtIncomeTypeCode),
+                    approvedLines.Select(l => new Accounting.Helpers.OcrPostedWhtLine(l.WithholdingTaxRate, l.IncomeTypeCode)))
+                : Array.Empty<string>();
+            if (!change.HasChanges && !linesChanged && whtTouched.Length == 0) return;
 
             if (change.VendorName != null) scan.ExtractedVendorName = change.VendorName;
             if (change.VendorTaxId != null) scan.ExtractedVendorTaxId = change.VendorTaxId;
@@ -13612,6 +13626,7 @@ public partial class DocumentService : IDocumentService
             if (change.TotalAmount != null) touched.Add("TotalAmount");
             if (change.TargetDocumentType != null) touched.Add("TargetDocumentType");
             if (linesChanged) touched.Add("Lines");
+            touched.AddRange(whtTouched);
             if (touched.Count > 0)
             {
                 scan.UserCorrectedAt ??= DateTime.UtcNow;
