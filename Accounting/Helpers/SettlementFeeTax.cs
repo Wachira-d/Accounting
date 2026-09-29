@@ -52,6 +52,8 @@ public readonly record struct SettlementFeeTaxResult(
 /// <item><b>ฐาน WHT = ก่อน VAT</b> (G-4: เส้นเดิม gross-up จากยอดรวม VAT ⇒ ภาษีเกิน ~7% · 50 ทวิ ผิด) · อัตราจาก <see cref="ThaiWhtRateTable"/>
 /// ผู้รับเป็นนิติบุคคล</item>
 /// <item><b>ออกภาษีแทน (W3)</b>: ภาษี = round(ฐาน × r/(100−r)) → 3% = ฐาน × 3/97 · ม.70 15% = ฐาน × 15/85 · เงินได้บนหนังสือรับรอง = ฐาน + ภาษี</item>
+/// <item><b>ฐาน ภ.พ.36 รวมภาษีที่ออกแทน</b> (คำตัดสินรอบ 200 ข้อ 40 · <see cref="ForeignServiceVat.Pp36Base"/>): ลำดับ = เงินได้รวมภาษีออกแทน → WHT → ภ.พ.36 ·
+/// 450 ออกภาษีแทน 15/85 ⇒ ฐาน 529.41 ⇒ ภ.พ.36 37.06 · หักจากเงินที่จ่าย (W2) ฐานเท่าเดิม 450 ⇒ 31.50</item>
 /// <item><b>บริษัทไม่จด VAT</b>: ไม่มีขาภาษีซื้อ — VAT ที่ถูกเก็บรวมเป็นค่าใช้จ่าย · ผู้ให้บริการ<b>ต่างประเทศ</b>: ยังต้องประเมิน ภ.พ.36 (§83/6
 /// หน้าที่ของผู้จ่าย) แต่ VAT นั้นเป็นต้นทุน (<see cref="SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable"/> · review198-A R-A4) ·
 /// ผู้ให้บริการต่างประเทศที่จด e-Service และเก็บ VAT ไทยในยอดแล้ว ⇒ ตั้งช่องทางเป็น ThaiVat7 (ไม่ใช่ ForeignPp36)</item>
@@ -96,11 +98,11 @@ public static class SettlementFeeTax
         }
         else if (vatMode == SettlementFeeVatMode.ForeignPp36)
         {
-            // ผู้ให้บริการต่างประเทศไม่เก็บ VAT ไทย ⇒ ยอดที่หัก = ฐาน · เราประเมินเอง 7% ของฐาน
+            // ผู้ให้บริการต่างประเทศไม่เก็บ VAT ไทย ⇒ ยอดที่หัก = ฐาน · เราประเมินเอง 7% — ยอด ภ.พ.36 คิดหลังขั้น WHT
+            // (คำตัดสินข้อ 40: ฐานรวมภาษีที่ออกแทน · ForeignServiceVat.Pp36Base ตัวเดียว) · ที่นี่ตั้งแค่ฐาน/ธงว่ามี VAT
             // §83/6: หน้าที่ประเมิน+นำส่งอยู่ที่ผู้จ่ายทั้งผู้จด/ไม่จด VAT — ต่างกันแค่ "เคลมภาษีซื้อได้ไหม" (R-A4)
             preVat = deducted; chargedVat = 0m;
-            pp36 = R(deducted * VatRate / 100m);
-            treatment = pp36 <= 0m ? SettlementFeeVatTreatment.NoVat
+            treatment = deducted <= 0m ? SettlementFeeVatTreatment.NoVat
                 : companyVatRegistered ? SettlementFeeVatTreatment.SelfAssessedPp36
                 : SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable;
         }
@@ -113,20 +115,6 @@ public static class SettlementFeeTax
                 : companyVatRegistered ? SettlementFeeVatTreatment.InputVatPending
                 : SettlementFeeVatTreatment.VatNotClaimable;
         }
-
-        var inputVat = treatment switch
-        {
-            SettlementFeeVatTreatment.InputVatPending => chargedVat,
-            SettlementFeeVatTreatment.SelfAssessedPp36 => pp36,
-            _ => 0m,
-        };
-        var expense = treatment switch
-        {
-            SettlementFeeVatTreatment.VatNotClaimable => deducted,
-            // VAT ที่ประเมินเองแต่เคลมไม่ได้ = ต้นทุนเพิ่มจากยอดที่ถูกหัก (ยอดที่หักจาก wallet ยังเท่าเดิม — ส่วน VAT จ่ายสรรพากรผ่าน 21912)
-            SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable => deducted + pp36,
-            _ => preVat,
-        };
 
         // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคลไทย) · ต่างประเทศ = ม.70 ผ่านตัวตัดสินเดียว ไม่ใช้อัตราในประเทศ (R-A5 · ทีม W) ──
         decimal rate;
@@ -153,6 +141,27 @@ public static class SettlementFeeTax
             }
         }
         else whtMode = SettlementFeeWhtMode.None;
+
+        // ── ภ.พ.36 (หลัง WHT): ฐาน = มูลค่าบริการ + ภาษีที่ออกแทน (คำตัดสินข้อ 40 · W-3) — หักจากเงินที่จ่าย (W2) borne = 0 ⇒ ฐานเดิม ──
+        if (treatment is SettlementFeeVatTreatment.SelfAssessedPp36 or SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable)
+        {
+            pp36 = ForeignServiceVat.SelfAssessedVatOn(ForeignServiceVat.Pp36Base(preVat, borne));
+            if (pp36 <= 0m) treatment = SettlementFeeVatTreatment.NoVat;
+        }
+
+        var inputVat = treatment switch
+        {
+            SettlementFeeVatTreatment.InputVatPending => chargedVat,
+            SettlementFeeVatTreatment.SelfAssessedPp36 => pp36,
+            _ => 0m,
+        };
+        var expense = treatment switch
+        {
+            SettlementFeeVatTreatment.VatNotClaimable => deducted,
+            // VAT ที่ประเมินเองแต่เคลมไม่ได้ = ต้นทุนเพิ่มจากยอดที่ถูกหัก (ยอดที่หักจาก wallet ยังเท่าเดิม — ส่วน VAT จ่ายสรรพากรผ่าน 21912)
+            SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable => deducted + pp36,
+            _ => preVat,
+        };
 
         return new SettlementFeeTaxResult(deducted, expense, inputVat, pp36, treatment, whtMode,
             whtMode == SettlementFeeWhtMode.None ? null : whtIncomeCode, rate, whtBase, wht, certIncome, borne);

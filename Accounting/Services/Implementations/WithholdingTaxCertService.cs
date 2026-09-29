@@ -184,7 +184,39 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         _db.WithholdingTaxCerts.Add(cert);
         await _db.SaveChangesAsync();
 
-        return await GetByIdAsync(companyId, cert.Id);
+        var created = await GetByIdAsync(companyId, cert.Id);
+        return created with { Warnings = await IssueWarningsAsync(companyId, cert, payee) };
+    }
+
+    /// <summary>
+    /// คำเตือนตอนออก/แก้ 50 ทวิ ด้วยมือ (ไม่บล็อก · รอบ 200 ทีม WF): (1) ใบ ภ.ง.ด.54 — อัตราแต่ละแถวเทียบตัวตัดสิน ม.70 ผ่านขอบเขตผู้รับ
+    /// ตัวเดียวกับคำเตือนตอนอนุมัติเอกสาร (<see cref="ForeignWhtPayeeCheck"/> · ฝ่ายค้าน W-5) · (2) "ออกให้ตลอดไป" ที่ผูกเอกสารบริการต่างประเทศ —
+    /// ภ.พ.36 ของเอกสารต้องคิดบนฐานรวมภาษีที่ออกแทน (<see cref="ForeignServiceVat.Pp36Shortfall"/> · คำตัดสินข้อ 40)
+    /// </summary>
+    private async Task<IReadOnlyList<string>> IssueWarningsAsync(Guid companyId, WithholdingTaxCert cert, Contact? payee)
+    {
+        var warnings = new List<string>();
+        if (cert.TaxFormType == TaxType.WithholdingTax54)
+            warnings.AddRange(ForeignWhtPayeeCheck.CertificateWarnings(
+                ForeignWhtPayeeCheck.ScopeOf(payee?.TaxId, payee?.ContactType ?? ContactType.Unknown, payee?.Name),
+                payee?.CountryCode,
+                cert.Lines.OrderBy(l => l.LineOrder).Select(l => ((string?)l.IncomeTypeCode, l.TaxRate, l.PaymentDate)).ToList()));
+
+        if (cert.CertificateType == WithholdingTaxCertType.PayAlways && cert.DocumentId is Guid docId && cert.TotalTaxAmount > 0m)
+        {
+            var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == docId && d.CompanyId == companyId && !d.IsDeleted);
+            if (doc is { IsForeignService: true } && doc.VatAmount > 0m)
+            {
+                var serviceValue = DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
+                var gap = ForeignServiceVat.Pp36Shortfall(serviceValue, cert.TotalTaxAmount, doc.VatAmount);
+                if (gap > 0m)
+                    warnings.Add($"ภ.พ.36 ของเอกสาร {doc.DocumentNumber} คิดจากฐาน {serviceValue:N2} แต่ภาษีเงินได้ที่ออกแทน {cert.TotalTaxAmount:N2} "
+                        + $"เป็นส่วนของมูลค่าบริการ (§79 · คำตัดสินข้อ 40) ⇒ ฐาน ภ.พ.36 = {ForeignServiceVat.Pp36Base(serviceValue, cert.TotalTaxAmount):N2} "
+                        + $"VAT ขาด {gap:N2} — แก้ VAT ของเอกสารก่อนนำส่ง หรือยื่น ภ.พ.36 เพิ่มเติมถ้ายื่นเดือนนั้นแล้ว");
+            }
+        }
+        return warnings;
     }
 
     public async Task<WithholdingTaxCertResponse> UpdateAsync(Guid companyId, Guid certId,
@@ -245,7 +277,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         cert.TotalTaxAmount = cert.Lines.Sum(l => l.TaxAmount);
 
         await _db.SaveChangesAsync();
-        return await GetByIdAsync(companyId, cert.Id);
+        var updated = await GetByIdAsync(companyId, cert.Id);
+        return updated with { Warnings = await IssueWarningsAsync(companyId, cert, updPayee) };
     }
 
     public async Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId)
@@ -381,13 +414,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         return certs.Select(w => MapToResponse(w, company)).ToList();
     }
 
-    private static string GetTaxFormName(TaxType type) => type switch
-    {
-        TaxType.WithholdingTax1 => "ภ.ง.ด.1",
-        TaxType.WithholdingTax3 => "ภ.ง.ด.3",
-        TaxType.WithholdingTax53 => "ภ.ง.ด.53",
-        _ => type.ToString()
-    };
+    // รอบ 200 ทีม WF: ป้ายแบบจากตัวตั้งเดียว (WhtUnissuedCertGate.FormLabel) — สำเนาเดิมไม่รู้จัก ภ.ง.ด.54 ⇒ ใบ 54 โชว์ "WithholdingTax54"
+    private static string GetTaxFormName(TaxType type) => WhtUnissuedCertGate.FormLabel(type);
 
     private static string GetIncomeTypeName(string code) => code switch
     {

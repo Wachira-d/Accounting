@@ -89,6 +89,13 @@ public sealed class SettlementChannelService : ISettlementChannelService
             throw new BusinessRuleException(
                 $"การตั้งผังค่าธรรมเนียมมีคีย์/ค่าที่ใช้ไม่ได้: {string.Join(", ", rejected)} — คีย์ที่ตั้งได้: "
                 + string.Join(", ", SettlementAccountRoles.Mappable) + " · ค่าต้องเป็นรหัสผัง (Guid)", "SETTLEMENT-CHANNEL-FEEMAP");
+        // รอบ 200 ทีม WF (คำตัดสินข้อ 41): ประเภทเงินได้ของค่าธรรมเนียมต่อประเภทบรรทัด — ตัวอ่านตัวเดียวกับผู้คิดแผน · ค่าเสีย = ล้มดังพร้อมชื่อ
+        var (incomeMap, incomeRejected) = SettlementWhtIncomeType.ParseMap(r.WhtIncomeTypeMapJson);
+        if (incomeRejected.Count > 0)
+            throw new BusinessRuleException(
+                $"การตั้งประเภทเงินได้ของค่าธรรมเนียมมีคีย์/ค่าที่ใช้ไม่ได้: {string.Join(", ", incomeRejected)} — คีย์ = ประเภทค่าธรรมเนียม ("
+                + string.Join(", ", SettlementWhtIncomeType.Options().Select(o => o.LineType)) + ") · ค่า = รหัสประเภทเงินได้ หรือ \""
+                + SettlementWhtIncomeType.NoWithholding + "\" (ไม่หัก)", "SETTLEMENT-CHANNEL-INCOMETYPE");
         string? columnMapJson = null;
         if (!string.IsNullOrWhiteSpace(r.ColumnMapJson))
         {
@@ -185,6 +192,7 @@ public sealed class SettlementChannelService : ISettlementChannelService
             channel.ReserveAccountId = r.ReserveAccountId;
             channel.DisputeAccountId = r.DisputeAccountId;
             channel.FeeAccountMapJson = feeMap.Count == 0 ? null : JsonSerializer.Serialize(feeMap);
+            channel.WhtIncomeTypeMapJson = SettlementWhtIncomeType.Serialize(incomeMap);
             channel.FeeVatMode = r.FeeVatMode;
             channel.FeeWhtMode = r.FeeWhtMode;
             channel.RevenueModel = r.RevenueModel;
@@ -224,7 +232,7 @@ public sealed class SettlementChannelService : ISettlementChannelService
     {
         kind = c.Kind.ToString(), c.DisplayName, c.AdapterCode, c.CounterpartyContactId, c.PaymentProviderConfigId, c.ClearingAccountId,
         c.ReserveAccountId, c.DisputeAccountId, c.FeeAccountMapJson, feeVat = c.FeeVatMode.ToString(), feeWht = c.FeeWhtMode.ToString(),
-        revenue = c.RevenueModel.ToString(), c.Currency, c.IsActive,
+        revenue = c.RevenueModel.ToString(), c.Currency, c.IsActive, c.WhtIncomeTypeMapJson,
     });
 
     /// <summary>ผู้ติดต่อของแพลตฟอร์ม — Id ที่ส่งมา (ต้องเป็นของบริษัทนี้) ชนะ · ไม่มี ⇒ เลขภาษี+สาขา (คีย์กลาง) · ไม่ระบุเลย ⇒ null</summary>
@@ -264,7 +272,8 @@ public sealed class SettlementChannelService : ISettlementChannelService
         if (c.FeeWhtMode == SettlementFeeWhtMode.None && foreignChannel)
             warnings.Add("ผู้ให้บริการต่างประเทศ — ค่าธรรมเนียม/ค่านายหน้า (40(2)) ที่จ่ายไปต่างประเทศต้องหัก ณ ที่จ่ายตาม "
                 + $"{ForeignWhtRateResolver.Section70Reference} {ForeignWhtRateResolver.Section70GeneralRate:0.##}% ยื่น ภ.ง.ด.54 "
-                + "(อัตราอนุสัญญาภาษีซ้อนใช้ได้เมื่อมีหนังสือรับรองถิ่นที่อยู่) · ค่าบริการ/ค่าโฆษณา 40(8) ไม่อยู่ใน ม.70 — ตรวจการจำแนกกับนักบัญชีแล้วตั้งโหมดให้ตรง");
+                + "(อัตราอนุสัญญาภาษีซ้อนใช้ได้เมื่อมีหนังสือรับรองถิ่นที่อยู่) · ระบบตั้งค่าคอม/ค่าธรรมเนียมของแพลตฟอร์มต่างประเทศเป็น 40(2) ไว้ก่อน "
+                + "(ค่าโฆษณา/ค่าขนส่ง 40(8) ไม่อยู่ใน ม.70) — ตรวจการจำแนกกับนักบัญชีแล้วตั้งโหมดและประเภทเงินได้ของค่าธรรมเนียมให้ตรง");
         else if (c.FeeWhtMode == SettlementFeeWhtMode.None && ThaiTaxId.IsJuristic(company?.TaxId))
             warnings.Add("บริษัทเป็นนิติบุคคล — ค่าธรรมเนียม/ค่าคอมที่จ่ายแพลตฟอร์มอาจต้องหัก ณ ที่จ่าย (3% ค่าบริการ · 2% โฆษณา · 1% ขนส่ง) "
                 + "ตรวจกับนักบัญชีว่าแพลตฟอร์มหักแทน/คืนให้/ต้องออกภาษีแทน แล้วตั้งโหมดให้ตรง");
@@ -274,10 +283,24 @@ public sealed class SettlementChannelService : ISettlementChannelService
             warnings.Add("รายได้แบบราคาสุทธิ (OTA ซื้อมาขายต่อ) ยังลงบัญชีไม่ได้ในเฟส 1");
         if (c.CounterpartyContactId == null)
             warnings.Add("ยังไม่ได้เลือกผู้ติดต่อของแพลตฟอร์ม — ใบค่าธรรมเนียม (เอกสารซื้อ) และ 50 ทวิ ต้องมีผู้ออก/ผู้รับเงิน");
+        if (SettlementWhtIncomeType.MapIssue(c) is SettlementPlanIssue badMap)
+            warnings.Add(badMap.Message + " — " + badMap.NextStep);
+
+        // ประเภทเงินได้ที่รอบโอนจะใช้จริง (ตัวตัดสินเดียวกับผู้คิดแผน) — หน้าเว็บแสดงอย่างเดียว
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        var incomeTypes = SettlementWhtIncomeType.Options()
+            .Select(o =>
+            {
+                var type = Enum.Parse<SettlementLineType>(o.LineType);
+                var choice = SettlementWhtIncomeType.For(type, c);
+                return new SettlementFeeIncomeTypeView(o.LineType, o.Label, choice.Code, choice.Source.ToString(),
+                    SettlementWhtIncomeType.Describe(choice, c.FeeVatMode, today));
+            })
+            .ToList();
 
         return new SettlementChannelView(c.Id, c.Kind, c.DisplayName, c.AdapterCode, c.ColumnMapJson, c.CounterpartyContactId, counterparty,
             c.PaymentProviderConfigId, c.ClearingAccountId, clearing?.AccountCode, clearing?.AccountName, c.ReserveAccountId,
             c.DisputeAccountId, c.FeeAccountMapJson, c.FeeVatMode, c.FeeWhtMode, c.RevenueModel, c.Currency, c.IsActive, hasBatches,
-            warnings);
+            warnings, c.WhtIncomeTypeMapJson, incomeTypes);
     }
 }

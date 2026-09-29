@@ -186,6 +186,9 @@ public sealed record SettlementChannelUpsertRequest
     public Guid? ReserveAccountId { get; init; }
     public Guid? DisputeAccountId { get; init; }
     public string? FeeAccountMapJson { get; init; }
+    /// <summary>ประเภทเงินได้ของค่าธรรมเนียมต่อประเภทบรรทัด เช่น <c>{"PaymentFee":"2","AdsFee":"none"}</c> — null/ว่าง = ใช้ค่าตั้งต้นทั้งหมด
+    /// (รอบ 200 ทีม WF · คำตัดสินข้อ 41 · ตัวอ่าน <c>SettlementWhtIncomeType.ParseMap</c>)</summary>
+    public string? WhtIncomeTypeMapJson { get; init; }
     public SettlementFeeVatMode FeeVatMode { get; init; } = SettlementFeeVatMode.ThaiVat7;
     public SettlementFeeWhtMode FeeWhtMode { get; init; } = SettlementFeeWhtMode.None;
     public SettlementRevenueModel RevenueModel { get; init; } = SettlementRevenueModel.GrossWithFees;
@@ -216,4 +219,12 @@ public sealed record SettlementChannelView(
     string Currency,
     bool IsActive,
     bool HasBatches,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    string? WhtIncomeTypeMapJson = null,
+    IReadOnlyList<SettlementFeeIncomeTypeView>? WhtIncomeTypes = null);
+
+/// <summary>ประเภทเงินได้ที่รอบโอนของช่องทางนี้จะใช้จริงต่อประเภทค่าธรรมเนียม (คำนวณที่เซิร์ฟเวอร์ด้วย <c>SettlementWhtIncomeType.For</c> — หน้าเว็บแสดงอย่างเดียว)</summary>
+/// <param name="Code">รหัสประเภทเงินได้ · null = ไม่หัก</param>
+/// <param name="Source">ชื่อ <c>SettlementIncomeTypeSource</c> (ตั้งที่ช่องทาง · ค่าตั้งต้นต่างประเทศ · ตารางประเภทบรรทัด)</param>
+/// <param name="Description">ป้ายไทยของรหัส + อัตรา/การตัดสินที่ใช้กับช่องทางนี้</param>
+public sealed record SettlementFeeIncomeTypeView(string LineType, string Label, string? Code, string Source, string Description);

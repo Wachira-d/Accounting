@@ -18717,11 +18717,16 @@ public partial class DocumentService : IDocumentService
             && Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode))
         {
             var foreignPayDate = doc.PaymentDate ?? doc.DocumentDate;
-            foreach (var line in doc.Lines.Where(l => l.WithholdingTaxRate > 0m))
+            // ฝ่ายค้าน W-7 (ทีม WF): (1) บรรทัดที่ไม่หักเลยแต่จำแนกประเภทเงินได้แล้ว ก็ตรวจ (ไม่หักเลย = หักขาดที่พบบ่อยที่สุด) — บรรทัดที่ไม่หัก
+            // และไม่มีรหัสจำแนกไม่ได้ จึงไม่ตรวจ · (2) ขอบเขตผู้รับจากข้อมูลผู้ติดต่อ: บุคคลธรรมดา = ไม่ใช่ ม.70 (เงียบ) · มีเลขนิติบุคคลไทย/ไม่รู้ประเภท
+            // = เตือนแบบบอกว่าไม่รู้ (ไม่ประกาศว่าหักขาด) — ตัวตัดสิน ForeignWhtPayeeCheck ตัวเดียวกับหน้าออก 50 ทวิ
+            var foreignScope = Accounting.Helpers.ForeignWhtPayeeCheck.ScopeOf(doc.Contact?.TaxId,
+                doc.Contact?.ContactType ?? ContactType.Unknown, doc.Contact?.Name);
+            foreach (var line in doc.Lines.Where(l => l.WithholdingTaxRate > 0m || !string.IsNullOrWhiteSpace(l.IncomeTypeCode)))
             {
                 var foreignWht = Accounting.Helpers.ForeignWhtRateResolver.ResolveForIncomeCode(line.IncomeTypeCode,
                     doc.Contact?.CountryCode, Accounting.Helpers.ResidenceCertificate.None, foreignPayDate);
-                if (Accounting.Helpers.ForeignWhtRateResolver.RateWarning(foreignWht, line.WithholdingTaxRate) is string foreignWarn)
+                if (Accounting.Helpers.ForeignWhtPayeeCheck.Warning(foreignScope, foreignWht, line.WithholdingTaxRate) is string foreignWarn)
                     warnings.Add($"🌐 จ่ายต่างประเทศ '{line.Description}': {foreignWarn}");
             }
         }

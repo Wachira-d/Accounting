@@ -3844,3 +3844,21 @@ _2026-09-29 รอบ 200 ทีม GF — แก้ผลฝ่ายค้า�
 - **R200G-6** `PaymentIntentPolicy.IsProviderFeeFinal` — ค่าธรรมเนียมจาก charge ที่เงินยังไม่เคลื่อนไม่ถูกเก็บ · เส้น webhook ซ้ำใช้ตัวตัดสินเดียวกัน
 - **R200G-8** แจ้งเตือน "รับชำระค้าง" บอกสิทธิ์ `Bank.View` ที่ต้องใช้ · **R200G-4/5** เข้ารายการทดสอบ sandbox ใน `PAYMENT_GATEWAY_DESIGN.md` §4.4
 - เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit 6986653d)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม WF — แก้ผลฝ่ายค้านทีม W (`erp-review/2026-09-29/review200-W.md`) ·
+คำตัดสินข้อ 40–41:
+- **W-1** แบบ ภ.ง.ด. ของด่าน "เดือนที่ยื่นแล้ว" ตัวตั้งเดียว `SettlementForeignWht.GateWhtForm(plan, domestic)` — ขา ภ.ง.ด.54 ของแผนชนะ · ในประเทศ 3/53 ตามผู้รับ ·
+  ใช้ทั้ง `SettlementPostingGate.Evaluate` (ข้อความ) และ `BuildGateAsync` (ชุดเดือนที่ยื่น) — เทสต์ `ด่านเดือนที่ยื่นแล้ว_ต่างประเทศพูดว่า_ภงด54` ผ่านโดยไม่พึ่งผู้เรียก
+- **W-3 (ข้อ 40)** ฐาน ภ.พ.36 = มูลค่าบริการ + ภาษีที่ออกแทน (`ForeignServiceVat.Pp36Base`/`SelfAssessedVatOn` · คิดหลัง WHT ใน `SettlementFeeTax.Compute`):
+  450 ⇒ เงินได้ 529.41 ⇒ ภ.พ.36 37.06 (เดิม 31.50) · หักจากเงินที่จ่ายฐานเดิม · รายงาน ภ.พ.36 บวกภาษีออกแทนจาก 50 ทวิ "ออกให้ตลอดไป" ที่ผูกใบ ·
+  ใบคีย์มือที่ออก 50 ทวิ ออกแทนภายหลัง ⇒ คำเตือน `Pp36Shortfall` ตอนออกใบ
+- **W-4/W-9 (ข้อ 41)** `Helpers/SettlementWhtIncomeType` ตัวตัดสินรหัสประเภทเงินได้ของค่าธรรมเนียม: ค่าตั้งช่องทาง (`SettlementChannels.WhtIncomeTypeMapJson`
+  ADD COLUMN IF NOT EXISTS · หน้า settlement-channels · audit · echo `WhtIncomeTypeMapJson` + `WhtIncomeTypes`) → ต่างประเทศ ค่าคอม/ค่าธรรมเนียมรับชำระ/
+  ค่าบริการแพลตฟอร์ม/ค่าถอนเงิน = 40(2) → ตาราง (ไทยเหมือนเดิม) · ค่าตั้งเสีย ⇒ บล็อก `WhtIncomeTypeMapInvalid`
+- **W-5** 50 ทวิ ด้วยมือ: `wht.html` มีแบบ ภ.ง.ด.54 + อัตราตั้งต้นจาก `foreignRate` (ตัวตัดสิน ม.70) · `CreateAsync/UpdateAsync` คืน `Warnings` ·
+  ป้ายแบบจาก `WhtUnissuedCertGate.FormLabel` (เดิม 54 โชว์ชื่อ enum)
+- **W-6** ทางไปต่อของ `PlanIssues` บอกให้แก้ config gateway ด้วยเมื่อช่องทางผูก gateway (ไม่แตะ `ModeMismatch`)
+- **W-7** `Helpers/ForeignWhtPayeeCheck` — ขอบเขตผู้รับ (บุคคลธรรมดาเงียบ · มีเลขนิติบุคคลไทย/ไม่รู้ประเภท = "ตัดสินไม่ได้") + ตรวจบรรทัดไม่หักเลยที่จำแนกแล้ว
+- **W-10** แบนเนอร์บริการต่างประเทศ `documents.html` อ่านอัตรา ม.70 จาก `GET /api/reference/foreign-wht`
+- W-2 ปิดแล้วที่ `34d4dd6f` (main agent) · W-8 📋 ปิดพร้อมแถวอนุสัญญาแรก + ช่อง CoR
+- เทสต์ `SettlementForeignWhtFollowupTests` · `ForeignWhtPayeeCheckTests` · ปรับตัวเลข ภ.พ.36 ใน `SettlementForeignWhtTests` 2 เมธอด · required_call_site +10/ปรับ 2 — commit <pending>)_

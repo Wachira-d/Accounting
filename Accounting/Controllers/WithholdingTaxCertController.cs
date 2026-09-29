@@ -196,8 +196,32 @@ public class WithholdingTaxCertController : ControllerBase
             CertificateRow = Accounting.Helpers.ThaiWhtRateTable.CertificateRow(t.Code),
             t.ApplicableForms,
             t.Note,
+            // รอบ 200 ทีม WF (ฝ่ายค้าน W-5): อัตราตั้งต้นเมื่อจ่ายนิติบุคคลต่างประเทศ (ภ.ง.ด.54) จากตัวตัดสิน ม.70 ตัวเดียว —
+            // null = ประเภทนี้ไม่อยู่ใน ม.70/ชี้ขาดไม่ได้ ⇒ หน้าเว็บล้างช่องให้ผู้ทำบัญชีกรอกเอง (ห้ามเติมอัตราในประเทศแทน)
+            ForeignRate = ForeignDecision(t.Code).RatePercent,
+            ForeignRuleCode = ForeignDecision(t.Code).RuleCode,
         });
 
         return Ok(new ApiResponse<object>(true, incomeTypes));
     }
+
+    private static Accounting.Helpers.ForeignWhtDecision ForeignDecision(string code)
+        => Accounting.Helpers.ForeignWhtRateResolver.ResolveForIncomeCode(code, null,
+            Accounting.Helpers.ResidenceCertificate.None, DateTime.UtcNow);
+
+    /// <summary>ข้อมูลอ้างอิง: อัตราหัก ณ ที่จ่ายจ่ายต่างประเทศ (ม.70 · ภ.ง.ด.54) — หน้าเว็บแสดงจากที่นี่ ห้ามพิมพ์ 15%/10% เอง
+    /// (รอบ 200 ทีม WF · ฝ่ายค้าน W-10 · ตัวเลขจาก <c>ForeignWhtRateResolver</c> ตัวเดียว)</summary>
+    [HttpGet("~/api/reference/foreign-wht")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<object>> GetForeignWht()
+        => Ok(new ApiResponse<object>(true, new
+        {
+            GeneralRate = Accounting.Helpers.ForeignWhtRateResolver.Section70GeneralRate,
+            DividendRate = Accounting.Helpers.ForeignWhtRateResolver.Section70DividendRate,
+            LegalReference = Accounting.Helpers.ForeignWhtRateResolver.Section70Reference,
+            PayableAccountCode = Accounting.Helpers.WhtPayableAccount.Pnd54Code,
+            Summary = $"นิติบุคคลต่างประเทศ {Accounting.Helpers.ForeignWhtRateResolver.Section70GeneralRate:0.##}% ทั่วไป / "
+                + $"{Accounting.Helpers.ForeignWhtRateResolver.Section70DividendRate:0.##}% เงินปันผล "
+                + $"({Accounting.Helpers.ForeignWhtRateResolver.Section70Reference} · ครอบ 40(2)(3)(4)(5)(6))",
+        }));
 }

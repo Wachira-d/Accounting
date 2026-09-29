@@ -63,7 +63,7 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แบบ *</label>
-              <select class="form-select" id="fFormType"><option value="WithholdingTax3">ภ.ง.ด.3</option><option value="WithholdingTax53">ภ.ง.ด.53</option><option value="WithholdingTax1">ภ.ง.ด.1</option></select>
+              <select class="form-select" id="fFormType" onchange="Page.onFormTypeChange()"><option value="WithholdingTax3">ภ.ง.ด.3</option><option value="WithholdingTax53">ภ.ง.ด.53</option><option value="WithholdingTax54">ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)</option><option value="WithholdingTax1">ภ.ง.ด.1</option></select>
             </div>
             <div class="form-group"><label class="form-label">ประเภท *</label>
               <select class="form-select" id="fCertType"><option value="Withhold">หัก ณ ที่จ่าย</option><option value="PayAlways">ออกให้ตลอดไป</option></select>
@@ -452,7 +452,7 @@
 
         const formRef = d.taxFormType === 'WithholdingTax1' ? 'ภ.ง.ด.1' :
                         d.taxFormType === 'WithholdingTax3' ? 'ภ.ง.ด.3' :
-                        d.taxFormType === 'WithholdingTax53' ? 'ภ.ง.ด.53' : 'ภ.ง.ด.___';
+                        d.taxFormType === 'WithholdingTax53' ? 'ภ.ง.ด.53' : (d.taxFormName || 'ภ.ง.ด.___');
 
         const thaiBahtText = (n) => {
           if (!n || n === 0) return 'ศูนย์บาทถ้วน';
@@ -907,7 +907,7 @@
         const row = document.createElement('tr');
         row.innerHTML = `
           <td><select class="form-select" data-f="code" style="font-size:12px">${
-            this._incomeTypes.map(x => `<option value="${Layout.esc(x.code)}" data-rate="${x.defaultRate ?? ''}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('')
+            this._incomeTypes.map(x => `<option value="${Layout.esc(x.code)}" data-rate="${Layout.esc(x.defaultRate ?? '')}" data-foreign-rate="${Layout.esc(x.foreignRate ?? '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('')
           }</select></td>
           <td><input type="date" class="form-input" data-f="date" value="${today}" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="income" step="0.01" style="font-size:12px"></td>
@@ -927,21 +927,31 @@
         //
         // ค่าที่กฎหมาย**ไม่ได้กำหนดคงที่** (เงินเดือน 40(1) = อัตราขั้นบันได)
         // ส่งมาเป็น null ⇒ ล้างช่องให้ผู้ใช้กรอกเอง **ห้ามใส่ตัวเลขปลอมให้ช่องไม่ว่าง**
+        //
+        // รอบ 200 ทีม WF (ฝ่ายค้าน W-5): แบบ ภ.ง.ด.54 (จ่ายนิติบุคคลต่างประเทศ) ใช้อัตราตั้งต้นจากตัวตัดสิน ม.70 ที่เซิร์ฟเวอร์ส่งมา
+        // (`foreignRate`) — ไม่ใช่อัตราในประเทศ · ประเภทนอก ม.70 ได้ null ⇒ ล้างช่องให้กรอกเอง · อัตราที่ผู้ใช้พิมพ์เองชนะเสมอ (userTouched)
         const codeSel = row.querySelector('[data-f="code"]');
         const rateInput = row.querySelector('[data-f="rate"]');
         const applyRate = () => {
           const opt = codeSel.selectedOptions[0];
-          const r = opt?.dataset.rate;
+          const foreign = document.getElementById('fFormType')?.value === 'WithholdingTax54';
+          const r = foreign ? opt?.dataset.foreignRate : opt?.dataset.rate;
           rateInput.value = (r === '' || r == null) ? '' : r;
-          rateInput.placeholder = (r === '' || r == null) ? 'อัตราขั้นบันได — กรอกเอง' : '';
+          rateInput.placeholder = (r === '' || r == null)
+            ? (foreign ? 'ไม่อยู่ใน ม.70 — ให้ผู้ทำบัญชีจำแนกแล้วกรอกเอง' : 'อัตราขั้นบันได — กรอกเอง') : '';
           calc();
         };
-        codeSel.addEventListener('change', applyRate);
+        row._applyRate = () => { if (!rateInput.dataset.userTouched) applyRate(); };
+        codeSel.addEventListener('change', () => { delete rateInput.dataset.userTouched; applyRate(); });
         applyRate();
 
         row.querySelector('[data-f="income"]').addEventListener('input', calc);
-        row.querySelector('[data-f="rate"]').addEventListener('input', calc);
+        row.querySelector('[data-f="rate"]').addEventListener('input', () => { rateInput.dataset.userTouched = '1'; calc(); });
         document.getElementById('linesBody').appendChild(row);
+      },
+      // เปลี่ยนแบบ ภ.ง.ด. ⇒ เติมอัตราตั้งต้นของแบบนั้นใหม่ให้ทุกแถวที่ผู้ใช้ยังไม่ได้พิมพ์อัตราเอง
+      onFormTypeChange() {
+        document.querySelectorAll('#linesBody tr').forEach(row => { if (typeof row._applyRate === 'function') row._applyRate(); });
       },
       openCreate() {
         this._editCertId = null;
@@ -1094,13 +1104,16 @@
           lines
         };
         try {
+          let res;
           if (this._editCertId) {
-            await api.updateWhtCert(this._editCertId, payload);
+            res = await api.updateWhtCert(this._editCertId, payload);
             Layout.toast('แก้ไขหนังสือรับรองสำเร็จ');
           } else {
-            await api.createWhtCert(payload);
+            res = await api.createWhtCert(payload);
             Layout.toast('ออกหนังสือรับรองสำเร็จ');
           }
+          // รอบ 200 ทีม WF (W-5 · ข้อ 40): คำเตือนจากเซิร์ฟเวอร์ (อัตรา ภ.ง.ด.54 ไม่ตรง ม.70 · ภ.พ.36 ไม่รวมภาษีออกแทน) — แสดงนาน ไม่บล็อก
+          (res?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 15000));
           this._editCertId = null;
           Layout.closeModal('formModal');
           await this.load();
@@ -1135,6 +1148,7 @@
             row.querySelector('[data-f="date"]').value = l.paymentDate ? Layout.toDateInput(l.paymentDate) : Layout.toDateInput(new Date());
             row.querySelector('[data-f="income"]').value = l.incomeAmount || 0;
             row.querySelector('[data-f="rate"]').value = l.taxRate || 0;
+            row.querySelector('[data-f="rate"]').dataset.userTouched = '1';   // อัตราที่บันทึกไว้แล้วไม่ถูกตั้งต้นทับ
             row.querySelector('[data-f="tax"]').value = (l.taxAmount || 0).toFixed(2);
           });
           if (!document.querySelector('#linesBody tr')) this.addLine();
