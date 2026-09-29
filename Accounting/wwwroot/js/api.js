@@ -354,6 +354,21 @@ const API = {
     return `${head}: ${parts.join(' · ')}`;
   },
 
+  /** รอบ 200 คำตัดสินข้อ 24: 403 ฟีเจอร์/แพ็กเกจ ทำอะไรต่อ — 'redirect' (พาไปหน้าแพ็กเกจ) หรือ 'notify' (แจ้งเตือน ไม่ขวาง)
+   *  · ดีดออกเฉพาะเมื่อ "โหลดหลักของหน้า" ถูกปฏิเสธ = ฟีเจอร์ที่เซิร์ฟเวอร์ส่งมาใน body (`feature`) ตรงกับฟีเจอร์ของหน้านี้เอง
+   *    (`Layout.currentPageFeature()` จากเมนู) · คำขอเบื้องหลังของฟีเจอร์อื่น (เช่นหน้าเอกสารโหลดตัวแนะนำ AI/บัญชีธนาคาร) ⇒ แจ้งเตือนแล้วทำงานหลักต่อได้
+   *  · การสมัครสมาชิกถูกยกเลิก/ระงับ (`SUBSCRIPTION_INACTIVE`) ⇒ ทุกคำขอถูกปฏิเสธอยู่แล้ว จึงพาไปหน้าแพ็กเกจเหมือนเดิม
+   *  · ไม่รู้ฟีเจอร์ของหน้า/เซิร์ฟเวอร์ไม่ส่งชื่อฟีเจอร์ ⇒ แจ้งเตือน (ทิศที่ผู้ใช้ยังทำงานต่อได้) */
+  featureDenialAction(body, pageFeature) {
+    if (!body) return 'notify';
+    if (body.code === 'SUBSCRIPTION_INACTIVE') return 'redirect';
+    if (body.code === 'FEATURE_NOT_AVAILABLE' && body.feature && pageFeature && body.feature === pageFeature) return 'redirect';
+    return 'notify';
+  },
+
+  /** ฟีเจอร์ที่แจ้งเตือนไปแล้วในหน้านี้ (คำขอเบื้องหลังหลายตัวของฟีเจอร์เดียวกัน = เตือนครั้งเดียว ไม่ท่วมจอ) */
+  _featureDenialNotified: new Set(),
+
   /** งานเบื้องหลังที่ผู้ใช้ไม่ได้สั่ง (badge แจ้งเตือน · poll) — ไม่ขึ้นตัวแสดง "กำลังทำงาน"
    *  ใช้: `API.quietly(() => API.get(url))` · ต้องเรียก API ภายใน fn แบบ synchronous
    *  (ตัวนับถูกอ่านตอนเริ่มคำขอ ก่อน await แรก) */
@@ -418,10 +433,17 @@ const API = {
         try {
           const json = await res.json();
           if (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE') {
-            // Auto-redirect to subscription page on locked feature
+            // ข้อ 24: ดีดไปหน้าแพ็กเกจเฉพาะเมื่อโหลดหลักของหน้าถูกปฏิเสธ · คำขอเบื้องหลัง = แจ้งเตือนครั้งเดียวต่อฟีเจอร์ ไม่ขวาง
             if (typeof Layout !== 'undefined' && Layout.toast) {
-              Layout.toast(json.message || this._t('api.featureLocked', 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ'), 'error');
-              setTimeout(() => { window.location.href = json.upgradeUrl || '/pages/subscription.html'; }, 1500);
+              const pageFeature = typeof Layout.currentPageFeature === 'function' ? Layout.currentPageFeature() : null;
+              if (this.featureDenialAction(json, pageFeature) === 'redirect') {
+                Layout.toast(json.message || this._t('api.featureLocked', 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ'), 'error');
+                setTimeout(() => { window.location.href = json.upgradeUrl || '/pages/subscription.html'; }, 1500);
+              } else if (!this._featureDenialNotified.has(json.feature || json.code)) {
+                this._featureDenialNotified.add(json.feature || json.code);
+                Layout.toast((json.message || this._t('api.featureLocked', 'ฟีเจอร์นี้ไม่อยู่ในแพ็กเกจของคุณ'))
+                  + ' ' + this._t('api.featureLockedPart', '(ส่วนนี้ของหน้าไม่แสดง — งานหลักของหน้ายังใช้ได้)'), 'warning', 6000);
+              }
             }
             const err = new Error(json.message || this._t('api.featureNotInPlan', 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ'));
             err.code = json.code; err.feature = json.feature;

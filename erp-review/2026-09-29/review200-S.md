@@ -157,3 +157,24 @@ precheck แสดง `/settlement` ใต้ BankReconciliation แต่ไม
 หมายเหตุ: checker เหล่านี้ล็อก "มีการเรียก" แต่ไม่จับ S200-1..4 (เป็นเรื่องทิศของพฤติกรรม/ผู้อ่านตัวที่สอง) — เทสต์ทิศตรงข้ามที่เสนอ:
 `legacyEnforce_adminShadow_partnerยังบล็อก` (S200-1) · `trialสำเนาว่าง_CheckFeatureAccessAsync_ได้DocumentEngine` (S200-4) ·
 `posting-preview_ดูอย่างเดียว_ไม่มียอดค้างในข้อความ` (S200-5)
+
+
+---
+
+## สถานะการแก้ (ทีม S2 · รอบ 200 · commit `62de779a` · รายงาน `team-S2.md`) — ติ๊กไว้ ไม่ลบแถวด้านบน
+
+| # | สถานะ | แก้ที่ | เทสต์/ด่าน |
+|---|---|---|---|
+| S200-1 | ✅ S2 | `SubscriptionEnforcementResolver.Resolve` — คีย์เดิม = `Enforce` ⇒ `LegacyHeaderEnforce` + `HeaderWriteGateMode = Enforce` จนกว่าลบคีย์ (ค่าอื่นไม่มีผล) · `LegacyBootWarning` → `Program.cs` log Warning ครั้งเดียวตอนบูต · หน้าแอดมินกรอบแดง · checklist A1 ย้ายขึ้น "ก่อน deploy" | `SubscriptionEnforcementResolverTests.S200_1_*` (3 เทสต์ · ทิศตรงข้าม: หน้าเว็บไม่เข้มขึ้น · ลบคีย์แล้ว LogOnly) · SUB-G21 |
+| S200-2 | ✅ S2 | `layout.js` `_navLockState` + เมนู `lockOnEnforce: true` (settlements/settlement-channels) ล็อกเมื่อ `featureGateMode` (จาก `GET /api/subscription/{id}` → ตัวตัดสินเดียวกับ middleware) = `Enforce` · โหมดเงา = ป้าย "แพ็กเกจไม่รวม" กดเข้าได้ · เมนูที่ล็อกก่อนรอบ 200 คงเดิม | `tools/nav_lock_mode_sim.js` (โค้ดจริง + negative) · required (`SubscriptionController.GetSubscription`) · SUB-G16/G28 |
+| S200-3 | ✅ S2 | `SubscriptionGatePolicy.NewlyGatedRouteKeys` + `FeaturePlanFor` — คีย์ใหม่รอบ 200 (`/settlement` + คีย์ข้อ 22) เป็นเงาสำหรับ partner จนกว่ากดบังคับ · คีย์เดิมของคำขอเดียวกันยังบังคับ · รายงานนับ partner (`PartnerHitCount`/`PartnerBlockedCount` · middleware บันทึก partner ทั้งเงา/บล็อกจริง/LogOnly) | `SubscriptionGateRound200S2Tests.S200_3_*` · required (InvokeAsync must_re ใหม่ 5 แถว) · SUB-G22/G23 |
+| S200-4 | ✅ S2 | `SubscriptionService.ResolvePlanFeaturesAsync` ตัวเดียว — `ResolveGateOverlayAsync` และ `GetEffectivePlanAsync` (ทั้งสายบริษัท/User License) เรียกตัวนี้ ⇒ `CheckFeatureAccessAsync` เห็นชุดเดียวกับหน้าเว็บ | `SubscriptionTrialReadinessTests.S200_4_*` · required (`ResolvePlanFeaturesAsync` · `GetEffectivePlanAsync` forbid `EnabledFeatures: acct.EnabledFeatures,` · overlay forbid เรียกตัวตัดสินเอง) · SUB-G29 |
+| S200-5 | ✅ S2 | `SettlementPermissionScope.HideReceivableDetails` + `SettlementController.PostingPreview` (สิทธิ์ชุดเดียวกับ D-P5) | `S200_5_*` · required (`PostingPreview`) · SUB-G30 |
+| S200-6 | ✅ S2 | `SubscriptionTrialReadiness.ResolveFeatures(TrialFeatureInputs, now)` — เฉพาะ Trial ที่ยังไม่เลยวันหมดอายุ · ฟรีถาวร Active · trial config รายบริษัทก่อนแพ็กเกจ · `None` ที่ตั้งไว้ = เคารพ (`AdminSetEmpty`) | `S200_6_*` (5 เทสต์ · ทิศตรงข้าม: วันสุดท้ายพอดียังเติม) |
+| S200-7 | ✅ S2 | `DatabaseMigrationHelper` — `CREATE UNIQUE INDEX …KeyV2` ก่อน `DROP INDEX …Key` + คอลัมน์ Partner* | อ่านโค้ด (ไม่มีเทสต์ DB) · checklist A2 |
+| S200-8 | ✅ S2 | `Helpers/SubscriptionAdminSwitchCache` (singleton ต่อเครื่อง · TTL 5 วิ · DB ยังเป็นความจริง) · `ReadAdminSwitchAsync` ผ่านแคช · หน้าแอดมิน `ReadAdminSwitchFreshAsync` · `SetMode` ล้างแคชของเครื่องนี้ | `S200_8_*` · required (`ReadAdminSwitchAsync` · `EffectiveAsync` · `SetMode` before) |
+| S200-9 | ✅ S2 | `HideCandidates` แทน `MatchNote` เฉพาะบรรทัดที่มีผู้สมัคร | `S200_9_*` + เทสต์ D-P5 เดิมยังผ่าน |
+| S200-10 | — | NOT-A-BUG (ไม่แตะ) | — |
+
+คำตัดสินที่ลงพร้อมกัน: ข้อ 21 (`FeatureExemptEndpoints` GET `bank/accounts` + GET `warehouses`) · ข้อ 22 (แก้คีย์ + wildcard `*`) · ข้อ 23 (`/api/v1`) · ข้อ 24 (`api.js`) —
+รายละเอียด/ความเสี่ยงใน `team-S2.md`

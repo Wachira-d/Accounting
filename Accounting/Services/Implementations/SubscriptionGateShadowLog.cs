@@ -11,14 +11,27 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<SubscriptionGateShadowLog> _logger;
+    private readonly SubscriptionAdminSwitchCache _cache;
 
-    public SubscriptionGateShadowLog(AccountingDbContext db, ILogger<SubscriptionGateShadowLog> logger)
+    public SubscriptionGateShadowLog(AccountingDbContext db, ILogger<SubscriptionGateShadowLog> logger, SubscriptionAdminSwitchCache cache)
     {
         _db = db;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<SubscriptionAdminSwitchRead> ReadAdminSwitchAsync(CancellationToken ct = default)
+    {
+        // S200-8: แคชสั้นต่อเครื่อง (ฐานข้อมูลยังเป็นความจริงตัวเดียว · ตามทันภายใน SubscriptionAdminSwitchCache.Ttl)
+        if (_cache.TryGet(DateTime.UtcNow) is SubscriptionAdminSwitchRead cached) return cached;
+        var read = await ReadAdminSwitchFreshAsync(ct);
+        _cache.Set(read, DateTime.UtcNow);
+        return read;
+    }
+
+    public void InvalidateAdminSwitchCache() => _cache.Invalidate();
+
+    public async Task<SubscriptionAdminSwitchRead> ReadAdminSwitchFreshAsync(CancellationToken ct = default)
     {
         try
         {
@@ -33,6 +46,7 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
         catch (Exception ex)
         {
             // คอลัมน์ยังไม่ถูกสร้าง (migration ยังไม่รัน) / DB สะดุด → ค่าตั้งต้น ไม่บล็อกใคร · หน้าแอดมินบอกเหตุผล (Unreadable)
+            // (ผลนี้ถูกแคชด้วย ⇒ เตือนไม่เกิน 1 ครั้งต่อ Ttl ต่อเครื่อง ไม่ใช่ทุกคำขอ)
             _logger.LogWarning(ex, "อ่านสวิตช์ SubscriptionEnforcementMode ไม่ได้ — ใช้ Shadow");
             return new SubscriptionAdminSwitchRead(SubscriptionEnforcementMode.Shadow, SubscriptionAdminSwitchSource.Unreadable);
         }
@@ -50,11 +64,13 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
                 """
                 INSERT INTO "SubscriptionGateShadowHits"
                     ("Id", "CompanyId", "Reason", "Feature", "Endpoint", "Plan", "SubscriptionStatus", "RouteKey", "LastMethod",
-                     "WouldBlock", "HitCount", "BlockedCount", "FirstSeenAt", "LastSeenAt")
-                VALUES (gen_random_uuid(), {0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, {11})
+                     "WouldBlock", "HitCount", "BlockedCount", "PartnerHitCount", "PartnerBlockedCount", "FirstSeenAt", "LastSeenAt")
+                VALUES (gen_random_uuid(), {0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, {12}, {13}, {13})
                 ON CONFLICT ("CompanyId", "Reason", "Feature", "Endpoint")
                 DO UPDATE SET "HitCount" = "SubscriptionGateShadowHits"."HitCount" + EXCLUDED."HitCount",
                               "BlockedCount" = "SubscriptionGateShadowHits"."BlockedCount" + EXCLUDED."BlockedCount",
+                              "PartnerHitCount" = "SubscriptionGateShadowHits"."PartnerHitCount" + EXCLUDED."PartnerHitCount",
+                              "PartnerBlockedCount" = "SubscriptionGateShadowHits"."PartnerBlockedCount" + EXCLUDED."PartnerBlockedCount",
                               "Plan" = EXCLUDED."Plan",
                               "SubscriptionStatus" = EXCLUDED."SubscriptionStatus",
                               "RouteKey" = EXCLUDED."RouteKey",
@@ -66,7 +82,10 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
                 {
                     hit.CompanyId, hit.Reason.ToString(), feature, endpoint, (object?)hit.Plan ?? DBNull.Value,
                     (object?)hit.SubscriptionStatus ?? DBNull.Value, (object?)hit.RouteKey ?? DBNull.Value, hit.Method,
-                    hit.WouldBlock, hit.Enforced ? 0L : 1L, hit.Enforced ? 1L : 0L, now,
+                    // S200-3: คำขอ partner (ส่ง header / คีย์ API ของ /api/v1) นับแยกคอลัมน์จากหน้าเว็บ
+                    hit.WouldBlock,
+                    !hit.Partner && !hit.Enforced ? 1L : 0L, !hit.Partner && hit.Enforced ? 1L : 0L,
+                    hit.Partner && !hit.Enforced ? 1L : 0L, hit.Partner && hit.Enforced ? 1L : 0L, now,
                 },
                 ct);
         }
@@ -89,6 +108,7 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
                        "Plan" AS "Plan", "SubscriptionStatus" AS "SubscriptionStatus",
                        "RouteKey" AS "RouteKey", "LastMethod" AS "LastMethod", "WouldBlock" AS "WouldBlock",
                        "HitCount" AS "HitCount", "BlockedCount" AS "BlockedCount",
+                       "PartnerHitCount" AS "PartnerHitCount", "PartnerBlockedCount" AS "PartnerBlockedCount",
                        "FirstSeenAt" AS "FirstSeenAt", "LastSeenAt" AS "LastSeenAt"
                 FROM "SubscriptionGateShadowHits"
                 ORDER BY "LastSeenAt" DESC
@@ -100,7 +120,8 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
                 r.RouteKey, r.LastMethod, r.WouldBlock, r.HitCount, r.BlockedCount,
                 // เขียนเป็น UTC (คอลัมน์ timestamp ไม่มีโซน) — ติด Kind ให้ JSON มี "Z" หน้าเว็บจะได้แปลงเป็นเวลาไทยถูก
                 DateTime.SpecifyKind(r.FirstSeenAt, DateTimeKind.Utc),
-                DateTime.SpecifyKind(r.LastSeenAt, DateTimeKind.Utc)))
+                DateTime.SpecifyKind(r.LastSeenAt, DateTimeKind.Utc),
+                r.PartnerHitCount, r.PartnerBlockedCount))
             .ToList();
     }
 
@@ -136,6 +157,8 @@ public class SubscriptionGateShadowLog : ISubscriptionGateShadowLog
         public bool WouldBlock { get; set; }
         public long HitCount { get; set; }
         public long BlockedCount { get; set; }
+        public long PartnerHitCount { get; set; }
+        public long PartnerBlockedCount { get; set; }
         public DateTime FirstSeenAt { get; set; }
         public DateTime LastSeenAt { get; set; }
     }

@@ -1085,11 +1085,33 @@ const Layout = {
     this.setHiddenMenuItems(Array.from(set));
   },
 
+  /** ฟีเจอร์แพ็กเกจของหน้านี้ (เมนูที่ตรง `currentPage` หรือ path ของหน้า) — api.js ใช้ตัดสินว่า 403 ฟีเจอร์เป็น "โหลดหลักของหน้า"
+   *  (พาไปหน้าแพ็กเกจ) หรือคำขอเบื้องหลัง (แจ้งเตือน) · รอบ 200 คำตัดสินข้อ 24 · ไม่รู้ = null */
+  currentPageFeature() {
+    const items = this.navItems || [];
+    let item = this.currentPage ? items.find(n => n.id === this.currentPage) : null;
+    if (!item && typeof window !== 'undefined' && window.location) {
+      const here = window.location.pathname;
+      item = items.find(n => n.href && n.href.split('?')[0] === here);
+    }
+    return (item && item.feature) || null;
+  },
+
+  /** สถานะล็อกของเมนูหนึ่งตามแพ็กเกจ — 'open' · 'locked' (🔒 พาไปหน้าแพ็กเกจ) · 'notInPlan' (ป้ายเล็ก "แพ็กเกจไม่รวม" แต่ยังกดเข้าได้)
+   *  รอบ 200 ฝ่ายค้าน S200-2: เมนูที่ผูกฟีเจอร์ใหม่รอบ 200 (`lockOnEnforce: true`) ล็อกตาม "โหมดที่มีผลจริง" ที่เซิร์ฟเวอร์ส่งมากับ
+   *  `/api/subscription` (`featureGateMode` — ตัวตัดสินเดียวกับ SubscriptionCheckMiddleware) · ยังไม่ใช่ "Enforce" = ไม่ล็อก (เซิร์ฟเวอร์เองก็ยังไม่บล็อก)
+   *  · เมนูที่ล็อกมาก่อนรอบ 200 คงพฤติกรรมเดิม (ห้ามหลวม/เข้มขึ้นเพราะรอบนี้) */
+  _navLockState(item) {
+    if (!item || !item.feature || !this.subscription || this.hasFeature(item.feature)) return 'open';
+    if (item.lockOnEnforce && this.subscription.featureGateMode !== 'Enforce') return 'notInPlan';
+    return 'locked';
+  },
+
   _enforcePageAccess() {
     if (!this.subscription || !this.currentPage) return;
     const item = this.navItems.find(n => n.id === this.currentPage);
     if (!item || !item.feature) return;
-    if (!this.hasFeature(item.feature)) {
+    if (this._navLockState(item) === 'locked') {
       this.toast(this._t('layout.upgradeRedirect', `ฟีเจอร์ "${item.label}" ไม่อยู่ในแพ็กเกจของคุณ — กำลังพาไปหน้าแพ็กเกจ`, { label: item.label }), 'error');
       setTimeout(() => { window.location.href = '/pages/subscription.html'; }, 1500);
     }
@@ -1109,7 +1131,8 @@ const Layout = {
     }
     const active = item.id === this.currentPage ? ' active' : '';
     const label = item._i18nKey ? this._t(item._i18nKey, item.label) : item.label;
-    const locked = item.feature && this.subscription && !this.hasFeature(item.feature);
+    const lockState = this._navLockState(item);
+    const locked = lockState === 'locked';
     // Tooltip: the description hover-text. Combine with the lock message
     // when the feature isn't available in the current plan.
     const tooltip = locked
@@ -1118,6 +1141,10 @@ const Layout = {
     const tt = ` title="${this._esc(tooltip)}"`;
     if (locked) {
       return `<a href="/pages/subscription.html" class="nav-item nav-item-locked${active}" data-nav-id="${item.id}"${tt} style="opacity:0.5"><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:11px">🔒</span></a>`;
+    }
+    if (lockState === 'notInPlan') {
+      const ttNotInPlan = ` title="${this._esc(this._t('layout.notInPlanYet', 'แพ็กเกจปัจจุบันไม่รวมฟีเจอร์นี้ — ยังใช้ได้ระหว่างที่ระบบยังไม่เปิดบังคับแพ็กเกจ') + ' — ' + (item.description || label))}"`;
+      return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${ttNotInPlan}><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:10px;opacity:0.7;white-space:nowrap">${this._esc(this._t('layout.notInPlanBadge', 'แพ็กเกจไม่รวม'))}</span></a>`;
     }
     return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${tt}><span class="icon">${item.icon}</span>${label}</a>`;
   },
@@ -1256,9 +1283,10 @@ const Layout = {
     // รอบ 198 เฟส 1 ทีม D — settlement (wallet → ธนาคาร) · ด่านสิทธิ์จริงอยู่ที่ SettlementController (คีย์ Settlement.*) ·
     // เมนูเปิดตามสิทธิ์เมนูของบทบาท (template "Accountant" ติ๊กให้แล้ว) · รอบ 200 ข้อ 14 (D-P3): ผูก feature แพ็กเกจเดียวกับกระทบยอดธนาคาร
     // (จับคู่เงินเข้าผ่าน IBankService.ReconcileAsync) — คู่กับ ("/settlement", BankReconciliation) ใน SubscriptionGatePolicy.RouteFeatureMap
-    { id: 'settlements', label: 'รอบโอนเงินจากแพลตฟอร์ม', icon: '🧾', href: '/pages/settlements.html', feature: 'BankReconciliation',
+    // S200-2: lockOnEnforce = ผูกฟีเจอร์ครั้งแรกรอบ 200 ⇒ ล็อก 🔒 เฉพาะเมื่อโหมดที่มีผลจริง (เซิร์ฟเวอร์) = Enforce · ก่อนนั้นป้าย "แพ็กเกจไม่รวม" กดเข้าได้
+    { id: 'settlements', label: 'รอบโอนเงินจากแพลตฟอร์ม', icon: '🧾', href: '/pages/settlements.html', feature: 'BankReconciliation', lockOnEnforce: true,
       description: 'นำเข้ารายงานรอบโอนของ marketplace/gateway/เครื่องรูดบัตร → จัดประเภทบรรทัด → จับคู่ใบขาย → ลงบัญชีใบค่าธรรมเนียม/ใบขายสรุป/JE → จับคู่เงินเข้าธนาคาร' },
-    { id: 'settlement-channels', label: 'ช่องทางรับเงินผ่าน wallet', icon: '⚙️', href: '/pages/settlement-channels.html', feature: 'BankReconciliation',
+    { id: 'settlement-channels', label: 'ช่องทางรับเงินผ่าน wallet', icon: '⚙️', href: '/pages/settlement-channels.html', feature: 'BankReconciliation', lockOnEnforce: true,
       description: 'ผังพักต่อแพลตฟอร์ม (11341–11349) · ผู้ติดต่อแพลตฟอร์ม · โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียม · ผังค่าธรรมเนียม' },
 
     // ───── 👥 พนักงาน (Self-Service) ─────

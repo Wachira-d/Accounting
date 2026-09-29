@@ -73,7 +73,9 @@ public static class SettlementPermissionScope
               + $"หรือ \u201C{PermissionKeys.LabelOf(Post)}\u201D (ข้อมูลลูกหนี้) — สถานะการจับคู่ยังดูได้ตามปกติ";
 
     /// <summary>ซ่อนผู้สมัคร/ข้อความที่อ้างผู้สมัครของทุกบรรทัด (<see cref="CandidatesHiddenReason"/> ไม่เป็น <c>null</c>) — สถานะ/เอกสารที่จับคู่แล้ว
-    /// (<c>MatchedDocumentId</c>) คงไว้ เพราะเป็นผลที่ลงแล้ว ไม่ใช่รายชื่อยอดค้าง</summary>
+    /// (<c>MatchedDocumentId</c>) คงไว้ เพราะเป็นผลที่ลงแล้ว ไม่ใช่รายชื่อยอดค้าง ·
+    /// รอบ 200 ฝ่ายค้าน S200-9: แทน <c>MatchNote</c> <b>เฉพาะบรรทัดที่มีผู้สมัคร</b> (ข้อความของตัวจับคู่ที่อ้างเลขที่/ยอดของผู้สมัครเกิดคู่กับผู้สมัครเสมอ —
+    /// <c>SettlementSaleMatch.Decide</c>) · บรรทัดที่ไม่มีผู้สมัคร (ยังไม่จัดประเภท · คืนเงินที่ไม่พบใบเดิม) คงเหตุผลของสถานะไว้ให้ผู้ดูเข้าใจ</summary>
     public static SettlementBatchView HideCandidates(SettlementBatchView view, string reason) =>
         view with
         {
@@ -81,8 +83,24 @@ public static class SettlementPermissionScope
                 .Select(l => l with
                 {
                     MatchCandidates = Array.Empty<SettlementMatchCandidateView>(),
-                    MatchNote = l.MatchNote is null ? null : reason,
+                    MatchNote = l.MatchNote is not null && l.MatchCandidates.Count > 0 ? reason : l.MatchNote,
                 })
+                .ToList(),
+        };
+
+    /// <summary>
+    /// รอบ 200 ฝ่ายค้าน S200-5: พรีวิวการลงบัญชี (<c>GET batches/{id}/posting-preview</c> · สิทธิ์ <see cref="View"/>) มีข้อความปัญหา
+    /// "ใบ X ค้างชำระ N …" (<see cref="SettlementPlanIssueCode.ReceiptDocumentNotPayable"/>) = ข้อมูลชนิดเดียวกับที่ D-P5 ซ่อน (เลขที่เอกสารขาย + ยอดค้าง) ⇒
+    /// ผู้มีแค่สิทธิ์ดู: แทนข้อความของปัญหาชนิดนั้นด้วยเหตุผลที่ซ่อน (ปัญหายังอยู่ · ยังบล็อก · ทางไปต่อยังอยู่) · ยอดของปัญหา (<c>Amount</c> = ยอดที่แพลตฟอร์มโอน
+    /// ไม่ใช่ยอดค้าง) คงไว้ · <c>Receipts</c> ของแผนมีแต่ยอดโอน ไม่แตะ
+    /// </summary>
+    public static SettlementPostingPlan HideReceivableDetails(SettlementPostingPlan plan, string reason) =>
+        plan with
+        {
+            Issues = plan.Issues
+                .Select(i => i.Code == SettlementPlanIssueCode.ReceiptDocumentNotPayable
+                    ? i with { Message = "ใบขายที่จับคู่ไว้ของบรรทัดนี้รับชำระจากรอบโอนไม่ได้ — " + reason }
+                    : i)
                 .ToList(),
         };
 }

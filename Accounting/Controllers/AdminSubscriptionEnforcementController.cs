@@ -15,10 +15,14 @@ namespace Accounting.Controllers;
 /// <param name="HitCount">ครั้งที่ "จะถูกบล็อก" (โหมดเงา)</param>
 /// <param name="BlockedCount">ครั้งที่ถูกบล็อกจริง (หน้าเว็บหลังเปิดบังคับ)</param>
 /// <param name="IsTrial">ลูกค้าทดลองใช้/แพ็กเกจฟรี (<see cref="SubscriptionTrialReadiness.IsTrialLike(string?, string?)"/>)</param>
+/// <param name="PartnerHitCount">รอบ 200 S200-3: ครั้งที่คำขอ partner (ส่ง X-Company-Id) / คีย์ API ของ /api/v1 "จะถูกบล็อก"</param>
+/// <param name="PartnerBlockedCount">ครั้งที่คำขอ partner / คีย์ API ถูกบล็อกจริง</param>
+/// <param name="NewlyGated">คีย์เส้นทางนี้เพิ่งเริ่มมีผลรอบ 200 (<see cref="SubscriptionGatePolicy.NewlyGatedRouteKeys"/>) — เป็นเงาสำหรับทุกผู้เรียกจนกว่าจะกดบังคับ</param>
 public record SubscriptionShadowHitDto(
     Guid CompanyId, string CompanyName, string Reason, string? Feature, string? Plan, string? SubscriptionStatus, bool IsTrial,
     string? RouteKey, string Endpoint, string? LastMethod, bool WouldBlock, long HitCount, long BlockedCount,
-    DateTime FirstSeenAt, DateTime LastSeenAt, string Description);
+    DateTime FirstSeenAt, DateTime LastSeenAt, string Description,
+    long PartnerHitCount = 0, long PartnerBlockedCount = 0, bool NewlyGated = false);
 
 /// <summary>โหมดที่มีผลจริง + เพราะอะไร (ตัวตัดสินเดียว <see cref="SubscriptionEnforcementResolver"/> — ชุดเดียวกับที่ middleware ใช้)</summary>
 /// <param name="EffectiveMode">โหมดที่มีผลจริง (Off/Shadow/Enforce — ชื่อ)</param>
@@ -26,9 +30,14 @@ public record SubscriptionShadowHitDto(
 /// <param name="AdminSwitchHasEffect">false = มี override ฉุกเฉินทับอยู่ — กดสวิตช์ได้ (บันทึก) แต่ยังไม่มีผลจนกว่าจะลบ override</param>
 /// <param name="OverrideKey">ชื่อคีย์ config ของ override ฉุกเฉิน</param>
 /// <param name="HeaderWriteGateMode">ด่านบริษัทถูกระงับ/หมดอายุของคำขอ partner ที่ส่ง X-Company-Id เอง (Enforce/LogOnly)</param>
+/// <param name="LegacyHeaderEnforce">S200-1: config เดิม <c>Subscription:Enforcement:Mode = Enforce</c> ยังตั้งอยู่ ⇒ partner ยังถูกบังคับด่านเขียนแบบเดิม
+/// (หน้าแอดมินแสดงกรอบเตือนแยก) — ลบคีย์เมื่อพร้อม</param>
+/// <param name="LegacyKey">ชื่อคีย์ config เดิมที่เลิกใช้</param>
+/// <param name="NewlyGatedRouteKeys">คีย์เส้นทางที่เพิ่งเริ่มมีผลรอบ 200 — โหมดเงาสำหรับทุกผู้เรียก (รวม partner) จนกว่าจะกดบังคับ (ข้อ 22)</param>
 public record SubscriptionEffectiveModeDto(
     string EffectiveMode, string EffectiveModeLabel, string Source, string Explanation, bool AdminSwitchHasEffect,
-    string? OverrideMode, string? OverrideRaw, string OverrideKey, string HeaderWriteGateMode, List<string> Warnings);
+    string? OverrideMode, string? OverrideRaw, string OverrideKey, string HeaderWriteGateMode, List<string> Warnings,
+    bool LegacyHeaderEnforce = false, string? LegacyKey = null, List<string>? NewlyGatedRouteKeys = null);
 
 /// <summary>สถานะสวิตช์ + โหมดที่มีผลจริง + รายงานเงา</summary>
 /// <param name="Mode">ค่าสวิตช์แอดมินที่บันทึกไว้ (Off/Shadow/Enforce — ชื่อเสมอ) · ไม่ใช่โหมดที่มีผลจริงเสมอไป ⇒ ดู <paramref name="Effective"/></param>
@@ -37,11 +46,15 @@ public record SubscriptionEffectiveModeDto(
 /// <param name="TrialBlocks">ลูกค้าทดลองใช้ (จะ) ถูกบล็อกกี่ครั้งเพราะอะไร — เซิร์ฟเวอร์สรุปให้ หน้าเว็บแสดงอย่างเดียว</param>
 /// <param name="RetentionDays">แถวที่ไม่ถูกพบซ้ำเกินกี่วันถูกตัดทิ้ง</param>
 /// <param name="PrunedRows">จำนวนแถวที่ตัดทิ้งในการเปิดหน้านี้ครั้งนี้</param>
+/// <param name="PartnerCompaniesWouldBlock">S200-3: บริษัทที่คำขอ partner/คีย์ API "จะถูกบล็อก" (แยกจากหน้าเว็บ)</param>
+/// <param name="PartnerHitsWouldBlock">จำนวนคำขอ partner/คีย์ API ที่ "จะถูกบล็อก"</param>
+/// <param name="PartnerHitsBlocked">จำนวนคำขอ partner/คีย์ API ที่ถูกบล็อกจริง</param>
 public record SubscriptionEnforcementStatusDto(
     string Mode, SubscriptionEffectiveModeDto Effective, string Guidance,
     int CompaniesWouldBlock, long HitsWouldBlock, int CompaniesBlocked, long HitsBlocked,
     List<TrialBlockSummary> TrialBlocks, List<SubscriptionShadowHitDto> Hits, bool HitsTruncated,
-    int RetentionDays, int PrunedRows);
+    int RetentionDays, int PrunedRows,
+    int PartnerCompaniesWouldBlock = 0, long PartnerHitsWouldBlock = 0, long PartnerHitsBlocked = 0);
 
 /// <summary>คำขอเปลี่ยนสวิตช์ — รับเป็น<b>ชื่อ</b> (Off/Shadow/Enforce) · ตัวเลข/ค่าว่าง/ชื่อที่ไม่รู้จัก = 400
 /// (ห้ามให้ "ไม่ส่งค่า" กลายเป็น Off เงียบ ๆ)</summary>
@@ -110,19 +123,23 @@ public class AdminSubscriptionEnforcementController : ControllerBase
         "โหมดเงา (Shadow) = ระบบตัดสินทุกคำขอจากหน้าเว็บเหมือนเปิดบังคับ แต่ไม่บล็อก แค่บันทึกไว้ที่นี่ · " +
         "ตรวจรายการ \u201Cจะถูกบล็อก\u201D ให้ครบ (แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้าที่ควรได้) แล้วค่อยเปลี่ยนเป็น \u201Cบังคับ\u201D · " +
         "สวิตช์นี้ (ฐานข้อมูล) เป็นตัวตัดสินหลักของทั้งการตัดสินฟีเจอร์และด่านบริษัทถูกระงับ/หมดอายุ · " +
-        "คำขอจาก partner/integration ที่ส่ง X-Company-Id มาเองถูกตัดสินฟีเจอร์อยู่แล้วตั้งแต่ก่อนรอบ 198 ไม่ขึ้นกับสวิตช์นี้";
+        "คำขอจาก partner/integration ที่ส่ง X-Company-Id มาเองถูกตัดสินฟีเจอร์ด้วยคีย์เดิมอยู่แล้วตั้งแต่ก่อนรอบ 198 · " +
+        "คีย์เส้นทางที่เพิ่งเริ่มมีผลรอบ 200 (รายการในกรอบด้านบน) และคำขอ /api/v1 เป็นเงาสำหรับทุกผู้เรียกจนกว่าจะกดบังคับ — " +
+        "คอลัมน์ “partner/API” นับแยกจากหน้าเว็บ";
 
-    /// <summary>โหมดที่มีผลจริง — ตัวตัดสินเดียวกับ middleware (<see cref="SubscriptionEnforcementResolver"/>)</summary>
+    /// <summary>โหมดที่มีผลจริง — ตัวตัดสินเดียวกับ middleware (<see cref="SubscriptionEnforcementResolver"/>) · อ่านสวิตช์สด (ไม่ผ่านแคช S200-8)</summary>
     private async Task<SubscriptionEnforcementState> EffectiveAsync(CancellationToken ct)
     {
-        var adminSwitch = await _shadow.ReadAdminSwitchAsync(ct);
+        var adminSwitch = await _shadow.ReadAdminSwitchFreshAsync(ct);
         return SubscriptionEnforcementResolver.Resolve(adminSwitch, _config);
     }
 
     private static SubscriptionEffectiveModeDto ToDto(SubscriptionEnforcementState e) => new(
         e.EffectiveMode.ToString(), SubscriptionEnforcementResolver.Label(e.EffectiveMode), e.Source.ToString(), e.Explanation,
         e.AdminSwitchHasEffect, e.OverrideMode?.ToString(), e.OverrideRaw, SubscriptionEnforcementResolver.OverrideKey,
-        e.HeaderWriteGateMode.ToString(), e.Warnings.ToList());
+        e.HeaderWriteGateMode.ToString(), e.Warnings.ToList(),
+        e.LegacyHeaderEnforce, SubscriptionEnforcementResolver.LegacyKey,
+        SubscriptionGatePolicy.NewlyGatedRouteKeys.OrderBy(k => k, StringComparer.Ordinal).ToList());
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<SubscriptionEnforcementStatusDto>>> Get(CancellationToken ct = default)
@@ -161,18 +178,23 @@ public class AdminSubscriptionEnforcementController : ControllerBase
                 names.TryGetValue(r.CompanyId, out var n) ? n : "(ไม่พบบริษัท)",
                 r.Reason, feature, r.Plan, r.SubscriptionStatus, SubscriptionTrialReadiness.IsTrialLike(r.Plan, r.SubscriptionStatus),
                 r.RouteKey, r.Endpoint, r.LastMethod, r.WouldBlock, r.HitCount, r.BlockedCount,
-                r.FirstSeenAt, r.LastSeenAt, text);
+                r.FirstSeenAt, r.LastSeenAt, text,
+                r.PartnerHitCount, r.PartnerBlockedCount,
+                r.RouteKey != null && SubscriptionGatePolicy.NewlyGatedRouteKeys.Contains(r.RouteKey));
         }).ToList();
 
         var wouldBlock = hits.Where(h => h.HitCount > 0).ToList();
         var blocked = hits.Where(h => h.BlockedCount > 0).ToList();
+        var partnerWouldBlock = hits.Where(h => h.PartnerHitCount > 0).ToList();
         var trial = SubscriptionTrialReadiness.SummarizeTrialBlocks(page.Select(r => new SubscriptionShadowTally(
             r.CompanyId, r.Reason, r.Feature, r.Plan, r.SubscriptionStatus, r.HitCount, r.BlockedCount))).ToList();
         return Ok(new ApiResponse<SubscriptionEnforcementStatusDto>(true, new SubscriptionEnforcementStatusDto(
             enforcement.AdminSwitch.ToString(), ToDto(enforcement), Guidance,
             wouldBlock.Select(h => h.CompanyId).Distinct().Count(), wouldBlock.Sum(h => h.HitCount),
             blocked.Select(h => h.CompanyId).Distinct().Count(), blocked.Sum(h => h.BlockedCount),
-            trial, hits, truncated, SubscriptionGatePolicy.ShadowRetentionDays, pruned)));
+            trial, hits, truncated, SubscriptionGatePolicy.ShadowRetentionDays, pruned,
+            partnerWouldBlock.Select(h => h.CompanyId).Distinct().Count(), partnerWouldBlock.Sum(h => h.PartnerHitCount),
+            hits.Sum(h => h.PartnerBlockedCount))));
     }
 
     /// <summary>ตรวจล่วงหน้าจากข้อมูลปัจจุบัน — ทีละหน้า (<paramref name="take"/> ≤ 500) เพราะเรียก resolver ต่อบริษัท</summary>
@@ -296,6 +318,8 @@ public class AdminSubscriptionEnforcementController : ControllerBase
         settings.UpdatedAt = DateTime.UtcNow;
         settings.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync(ct);   // AuditTrail จับ old/new ของ SiteSettings ให้อัตโนมัติ
+        // S200-8: เครื่องนี้มีผลทันที · เครื่องอื่นตามทันภายใน SubscriptionAdminSwitchCache.Ttl (5 วินาที)
+        _shadow.InvalidateAdminSwitchCache();
 
         // เปลี่ยนสวิตช์ระดับแพลตฟอร์ม = กระทบทุกบริษัท → ต้องมีร่องรอยใน log ด้วย ไม่ใช่เงียบ
         _logger.LogWarning("สวิตช์บังคับแพ็กเกจบนหน้าเว็บ: {Before} → {After} โดยผู้ใช้ {UserId}",

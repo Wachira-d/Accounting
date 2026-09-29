@@ -3720,7 +3720,24 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement (`erp-review/2026-09-29/review200-P2/T/V2.md` · DECISIONS ข้อ 25–27 ·
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม S2 — แพ็กเกจ/สิทธิ์: คำตัดสินข้อ 21–24 + แก้ผลฝ่ายค้านทีม S (`review200-S.md` S200-1..9) ·
+หลักใหญ่ "ก่อนเจ้าของกดบังคับ ห้ามมีใครถูกบล็อก/ถูกล็อกเมนูเพิ่มจากวันนี้" · ค่าตั้งต้นยัง Shadow (ไม่ได้พลิก):
+- **S200-1** config เดิม `Subscription:Enforcement:Mode=Enforce` ⇒ partner (header) ยังถูกบังคับด่านเขียนต่อแบบเดิมจนกว่าลบคีย์ (`LegacyHeaderEnforce`) ·
+  `LogWarning` ครั้งเดียวตอนบูต (`SubscriptionEnforcementResolver.LegacyBootWarning`) · กรอบแดงบนหน้าแอดมิน
+- **S200-3 + ข้อ 22** แก้คีย์ `RouteFeatureMap` ให้ตรง route จริง (`/fixedasset` · `/currency` · `/warehouses` · `/commissions` · `/approvals` · `/ai` ·
+  `/cms/sites/*/commerce|booking`) · `NewlyGatedRouteKeys` (+`/settlement`) = เงาสำหรับทุกผู้เรียกรวม partner จนกว่ากดบังคับ (`FeaturePlanFor` ·
+  คีย์เดิมของคำขอเดียวกันยังบังคับ partner — ไม่หลวม) · รายงานเงานับ partner แยกคอลัมน์ (`PartnerHitCount`/`PartnerBlockedCount`)
+- **ข้อ 21** `GET …/bank/accounts` + `GET …/warehouses` (รายการที่หน้าอื่นใช้เลือก) ไม่ผูกฟีเจอร์ (`FeatureExemptEndpoints` ราย method)
+- **ข้อ 23** `/api/v1` ตรวจสถานะระงับ/หมดอายุผ่านสวิตช์เดียวกัน (`WithPublicApiCompany` · `TenantCompanySource.ApiKey` · เงาก่อน)
+- **ข้อ 24** `api.js` 403 ฟีเจอร์: เบื้องหลัง = แจ้งเตือนครั้งเดียวต่อฟีเจอร์ · ดีดเฉพาะฟีเจอร์ของหน้าเอง (`API.featureDenialAction` · `Layout.currentPageFeature`)
+- **S200-2** เมนู `lockOnEnforce` ล็อกตาม `featureGateMode` จาก `GET /api/subscription/{id}` (โหมดเงา = ป้าย "แพ็กเกจไม่รวม" กดเข้าได้)
+- **S200-4** ฟีเจอร์ของบริษัทตัวเดียว `SubscriptionService.ResolvePlanFeaturesAsync` (overlay หน้าเว็บ/gate = `GetEffectivePlanAsync`/`CheckFeatureAccessAsync`)
+- **S200-5** posting-preview ซ่อนเลขที่/ยอดค้างสำหรับผู้มีแค่สิทธิ์ดู · **S200-6** เติมเฉพาะทดลองที่ยังไม่หมดอายุ/ฟรีถาวร Active + เคารพ trial config = None ·
+  **S200-7** migration CREATE unique ใหม่ก่อน DROP ตัวเก่า · **S200-8** แคชสวิตช์ต่อเครื่อง 5 วิ (`SubscriptionAdminSwitchCache`) · **S200-9** ไม่ทับ MatchNote ของบรรทัดที่ไม่มีผู้สมัคร
+- เทสต์ `SubscriptionGateRound200S2Tests` + เพิ่มใน `SubscriptionEnforcementResolverTests`/`SubscriptionTrialReadinessTests` · sim `tools/api_feature_denial_sim.js` ·
+  `tools/nav_lock_mode_sim.js` · TEST_PLAN SUB-G21..G30 · ไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 62de779a)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement (`erp-review/2026-09-29/review200-P2/T/V2.md` · DECISIONS ข้อ 25–27 ·
 รายงาน `erp-review/2026-09-29/team-SF.md`):
 - **X-1/X-3 (ข้อ 26)** `GatewayBatchIntentRules.ModeMismatch(…, companyVatRegistered)` นิยาม "ตรงกัน" = สองเส้น (รอบโอน gateway เดิม · รอบโอน settlement) ให้ผลภาษีเท่ากัน —
   ช่องทาง ภ.พ.36 ไม่ตรงเสมอ · ไม่หัก ↔ W2 ไม่ตรง · ไม่จด VAT ⇒ คู่ VAT ไทยผ่าน · ตรวจเพิ่มที่ `ImportFileAsync` · `PaymentSettingsController.Save` (`ConfigChangeRefusal`) ·

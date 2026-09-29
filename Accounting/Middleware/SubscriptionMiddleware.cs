@@ -79,7 +79,9 @@ public class SubscriptionCheckMiddleware
 
         // บริษัทของคำขอ — ตัวหาเดียวกับ TenantAccessMiddleware (route ชนะ header) ⇒ ปลอม header ของบริษัทอื่นเพื่อยืม
         // แพ็กเกจไม่ได้ เพราะแพ็กเกจที่ตัดสินคือของบริษัทที่ผ่านด่านสมาชิกแล้วเสมอ
-        var target = TenantCompanyId.FromHttp(context);
+        // รอบ 200 ข้อ 23: /api/v1 ไม่มีบริษัทใน route/header — บริษัทมาจากคีย์ API (ApiKeyMiddleware) ⇒ ตรวจสถานะระงับ/หมดอายุผ่านสวิตช์เดียวกัน
+        var target = SubscriptionGatePolicy.WithPublicApiCompany(TenantCompanyId.FromHttp(context), path,
+            context.Items.TryGetValue("CompanyId", out var keyCompany) ? keyCompany : null);
         if (target.CompanyId is not Guid companyId)
         {
             await _next(context);
@@ -127,36 +129,51 @@ public class SubscriptionCheckMiddleware
             eff = await SafeGetEffectivePlanAsync(subscriptionService, companyId);
         }
 
-        var required = SubscriptionGatePolicy.RequiredFeatureFor(path);
+        // รอบ 200 ข้อ 21/22: ตารางเส้นทาง→ฟีเจอร์รู้ method (GET รายการบัญชีธนาคาร/คลังที่หน้าอื่นใช้เลือก = ไม่ผูก) · คีย์ที่เพิ่งเริ่มมีผลเป็นเงาสำหรับ
+        // partner ด้วยจนกว่าเจ้าของกดบังคับ (FeaturePlanFor — คีย์เดิมของคำขอเดียวกันยังบังคับ ไม่หลวมลง) · /api/v1 ไม่ตรวจฟีเจอร์ตามตารางนี้
+        var required = SubscriptionGatePolicy.RequiredFeatureFor(path, context.Request.Method);
+        var featurePlan = SubscriptionGatePolicy.FeaturePlanFor(target, enforcement.EffectiveMode, required);
+        var partner = SubscriptionGatePolicy.IsPartnerCaller(target);
         bool? companySuspended = co == null ? null : co.Status == CompanyStatus.Suspended;
         var verdict = SubscriptionGatePolicy.Decide(new SubscriptionGateFacts(
             sub.Status, sub.EnabledFeatures, isWrite, writeMode,
             companySuspended,
             eff?.IsActive,
-            required?.Feature));
+            featurePlan.Enforce));
 
         // ===== โหมดเงา: ตัดสินแล้วบันทึก แต่ไม่บล็อก — แอดมินดูผลกระทบก่อนเปิดบังคับ =====
         if (action == SubscriptionGateAction.Shadow)
         {
-            await RecordShadowAsync(shadowLog, companyId, verdict, required, sub, context, enforced: false);
+            await RecordShadowAsync(shadowLog, companyId, verdict, featurePlan.EnforceRouteKey, sub, context, enforced: false, partner);
             await _next(context);
             return;
         }
 
-        // หน้าเว็บที่ถูกบล็อกจริง (โหมดที่มีผลจริง = บังคับ) ⇒ นับในรายงานเดียวกัน ("ถูกบล็อกจริง") ให้แอดมินเห็นผลหลังเปิดและย้อนได้ ·
-        // คำขอที่ส่ง header มาเองไม่นับ (ถูกบังคับมาตั้งแต่ก่อนรอบ 198 · ไม่ใช่ผลของสวิตช์นี้)
-        if (verdict.Blocks && !target.HeaderCarried)
-            await RecordShadowAsync(shadowLog, companyId, verdict, required, sub, context, enforced: true);
+        // ===== คำขอที่ถูกบังคับ: ส่วนที่ยังเป็นเงา (S200-3 · ข้อ 22) — บันทึกให้แอดมินเห็นก่อนกดบังคับ ไม่บล็อก =====
+        // (ก) คีย์ใหม่ของคำขอ partner ระหว่างโหมดที่มีผลจริงยังไม่ใช่บังคับ — ถามตัวตัดสินตัวเดียวกันด้วยฟีเจอร์นั้น (ไม่เขียนเงื่อนไขฟีเจอร์เอง)
+        if (featurePlan.ShadowOnly is FeatureFlags shadowFeature && verdict.Block != SubscriptionGateReason.SubscriptionInactive)
+            await RecordShadowAsync(shadowLog, companyId, SubscriptionGatePolicy.Decide(new SubscriptionGateFacts(
+                    sub.Status, sub.EnabledFeatures, IsWrite: false, SubscriptionWriteGateMode.Off, null, null, shadowFeature)),
+                featurePlan.ShadowRouteKey, sub, context, enforced: false, partner);
+        // (ข) ด่านเขียนที่ยัง log อย่างเดียวของ partner (ระงับ/หมดอายุ) — เดิมไปแค่ log ⇒ รายงานนับด้วย (คอลัมน์ partner)
+        foreach (var r in verdict.LogOnly)
+        {
+            _logger.LogInformation(
+                "[Enforcement:LogOnly] would block WRITE {Method} {Path} — {Reason} (company {CompanyId})",
+                context.Request.Method, path, r, companyId);
+            if (partner)
+                await RecordShadowAsync(shadowLog, companyId, new SubscriptionGateVerdict(r, null, Array.Empty<SubscriptionGateReason>()),
+                    null, sub, context, enforced: false, partner);
+        }
+
+        // ถูกบล็อกจริง ⇒ นับในรายงานเดียวกัน ("ถูกบล็อกจริง") ให้แอดมินเห็นผลหลังเปิดและย้อนได้ · partner แยกคอลัมน์ (S200-3: เดิมไม่นับเลย)
+        if (verdict.Blocks)
+            await RecordShadowAsync(shadowLog, companyId, verdict, featurePlan.EnforceRouteKey, sub, context, enforced: true, partner);
 
         // ===== บังคับ (คำขอที่ส่ง header มาเอง = พฤติกรรมเดิม · หรือสวิตช์เว็บ = Enforce) =====
         context.Items["SubscriptionPlan"] = sub.Plan;
         context.Items["SubscriptionStatus"] = sub.Status;
         context.Items["EnabledFeatures"] = sub.EnabledFeatures;
-
-        foreach (var r in verdict.LogOnly)
-            _logger.LogInformation(
-                "[Enforcement:LogOnly] would block WRITE {Method} {Path} — {Reason} (company {CompanyId})",
-                context.Request.Method, path, r, companyId);
 
         if (eff is { InGrace: true } && SubscriptionGatePolicy.ReachedExpiryStep(verdict))
             context.Response.Headers["X-Subscription-Grace"] = "true";
@@ -193,16 +210,17 @@ public class SubscriptionCheckMiddleware
     /// ไม่มี PII (ไม่มีผู้ใช้/URL เต็ม) · รอบ 200: โหมดเงาตัดสินด้วยด่านเขียนแบบบังคับ (<see cref="SubscriptionGatePolicy.WriteGateModeFor"/>)
     /// ⇒ ทุกเหตุที่บันทึก = "จะถูกบล็อกเมื่อกดบังคับ" จริง (ไม่มีแถว "log อย่างเดียว" ที่ทำให้แอดมินเข้าใจผิดอีก)</summary>
     private static async Task RecordShadowAsync(ISubscriptionGateShadowLog shadowLog, Guid companyId,
-        SubscriptionGateVerdict verdict, (FeatureFlags Feature, string RouteKey)? required, SubscriptionGateState sub,
-        HttpContext context, bool enforced)
+        SubscriptionGateVerdict verdict, string? routeKey, SubscriptionGateState sub,
+        HttpContext context, bool enforced, bool partner)
     {
         if (!verdict.Blocks) return;
         var method = context.Request.Method.Length > 10 ? context.Request.Method[..10] : context.Request.Method;
         var endpoint = SubscriptionGatePolicy.EndpointKey(
             (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText, context.Request.Path.Value);
         await shadowLog.RecordAsync(new SubscriptionGateShadowHit(companyId, verdict.Block,
-            verdict.Feature?.ToString(), sub.Plan.ToString(), required?.RouteKey, method, WouldBlock: true,
-            endpoint, sub.Status.ToString(), enforced), context.RequestAborted);
+            verdict.Feature?.ToString(), sub.Plan.ToString(),
+            verdict.Block == SubscriptionGateReason.FeatureNotInPlan ? routeKey : null, method, WouldBlock: true,
+            endpoint, sub.Status.ToString(), enforced, partner), context.RequestAborted);
     }
 
     private static SubscriptionGateState ToGateState(Models.DTOs.Subscription.SubscriptionResponse r) =>

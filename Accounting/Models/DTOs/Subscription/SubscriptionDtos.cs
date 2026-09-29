@@ -86,7 +86,11 @@ public record SubscriptionResponse(
     List<string>? EnabledAddOnCodes = null,
     /// <summary>ชื่อแพ็กเกจที่แอดมินตั้งใน PlanTemplate (เช่น "Starter") — หน้าเว็บแสดงค่านี้
     /// แทนการแปล enum เอง (`Basic`→"Starter" เคยถูกพิมพ์ซ้ำใน 5 หน้า และหน้าหนึ่งใช้คีย์ผิด)</summary>
-    string? PlanName = null);
+    string? PlanName = null,
+    /// <summary>รอบ 200 ฝ่ายค้าน S200-2: โหมดบังคับแพ็กเกจที่มีผลจริงกับหน้าเว็บ ("Off"/"Shadow"/"Enforce" — ชื่อ · จาก
+    /// <c>SubscriptionEnforcementResolver</c> ตัวเดียวกับ middleware) — เมนูที่ผูกฟีเจอร์ใหม่ (`lockOnEnforce` ใน layout.js) ล็อก 🔒 เฉพาะเมื่อ
+    /// "Enforce" · โหมดเงา = ป้ายเล็ก "แพ็กเกจไม่รวม" แต่ยังกดเข้าได้ · <c>null</c> = ไม่รู้ (ถือว่ายังไม่บังคับ)</summary>
+    string? FeatureGateMode = null);
 
 public record UsageLimits(
     int MaxUsers,

@@ -7,7 +7,21 @@ namespace Accounting.Helpers;
 /// <param name="FromTemplate">ค่ามาจากข้อมูลแพ็กเกจ (PlanTemplate) เพราะแถว subscription ว่าง</param>
 /// <param name="StillEmpty">ทั้งแถว subscription และข้อมูลแพ็กเกจว่าง — ลูกค้ารายนี้จะถูกบล็อกทุกเส้นทางที่ gate เมื่อเปิดบังคับ
 /// (รายงานแอดมินต้องแสดง · ระบบไม่แต่งชุดฟีเจอร์ขึ้นเอง)</param>
-public sealed record TrialFeatureResolution(FeatureFlags Features, bool FromTemplate, bool StillEmpty);
+/// <param name="AdminSetEmpty">รอบ 200 S200-6: แอดมินตั้ง <c>TrialConfig.TrialFeatures = None</c> ของบริษัทนี้เอง (หน้า trial config) ⇒ เคารพ ไม่เติมจากแพ็กเกจ</param>
+/// <param name="FromCompanyTrialConfig">ค่ามาจาก <c>TrialConfig.TrialFeatures</c> ที่ตั้งรายบริษัท (ไม่ว่าง) — เฉพาะกว่าข้อมูลแพ็กเกจ</param>
+public sealed record TrialFeatureResolution(FeatureFlags Features, bool FromTemplate, bool StillEmpty,
+    bool AdminSetEmpty = false, bool FromCompanyTrialConfig = false);
+
+/// <summary>ข้อมูลเข้าของ <see cref="SubscriptionTrialReadiness.ResolveFeatures"/> — แถว subscription (บริษัท หรือ User License) + ข้อมูลแพ็กเกจ</summary>
+/// <param name="Snapshot">สำเนาฟีเจอร์บนแถว (<c>Subscription.EnabledFeatures</c> / <c>AccountSubscription.EnabledFeatures</c>)</param>
+/// <param name="IsPermanentFree">แพ็กเกจฟรีถาวร (ไม่หมดอายุ)</param>
+/// <param name="EndDateUtc">วันหมดอายุของแถว — ช่วงทดลองที่เลยวันนี้แล้ว (งานเปลี่ยนสถานะยังไม่รัน) = ไม่ใช่ "ระหว่างทดลอง"</param>
+/// <param name="CompanyTrialFeatures"><c>TrialConfig.TrialFeatures</c> ที่ตั้งรายบริษัท · <c>null</c> = ไม่มี trial config (เช่น User License)</param>
+/// <param name="TemplateTrial"><c>PlanTemplate.TrialFeatures</c> · <c>null</c> = ไม่มีแพ็กเกจที่เปิดใช้</param>
+/// <param name="TemplateEnabled"><c>PlanTemplate.EnabledFeatures</c></param>
+public sealed record TrialFeatureInputs(
+    FeatureFlags Snapshot, SubscriptionPlan Plan, SubscriptionStatus Status, bool IsPermanentFree, DateTime EndDateUtc,
+    FeatureFlags? CompanyTrialFeatures, FeatureFlags? TemplateTrial, FeatureFlags? TemplateEnabled);
 
 /// <summary>ความพร้อมของแพ็กเกจหนึ่งสำหรับลูกค้าช่วงทดลอง/แพ็กเกจฟรี เมื่อเปิดบังคับ</summary>
 /// <param name="FeatureSource">ชุดที่ลูกค้ากลุ่มนี้ได้: <c>TrialFeatures</c> (ช่วงทดลอง) หรือ <c>EnabledFeatures</c> (แพ็กเกจฟรีถาวร)</param>
@@ -37,6 +51,11 @@ public sealed record TrialBlockSummary(
 ///
 /// <para>กติกา: สำเนาว่าง ⇒ อ่านจากข้อมูลแพ็กเกจ (ช่วงทดลอง = <c>TrialFeatures</c> · อื่น = <c>EnabledFeatures</c>) · แพ็กเกจก็ว่าง ⇒ คงว่าง
 /// แต่รายงานแอดมินแสดง (ห้ามแต่งชุดฟีเจอร์ขึ้นเอง — DOCTRINE §1 "ไม่รู้ต้องบอกว่าไม่รู้") · สำเนาที่ไม่ว่าง = ค่าที่ตั้งรายบริษัท ไม่แตะ</para>
+///
+/// <para>═══ รอบ 200 ฝ่ายค้าน ═══ S200-6: เติม<b>เฉพาะ</b> "ระหว่างทดลอง" (สถานะ Trial + ยังไม่เลยวันหมดอายุ) หรือแพ็กเกจฟรีถาวรที่ Active —
+/// เดิมครอบแพ็กเกจ FreeTrial ทุกสถานะ (Expired/PastDue ก็ได้ชุดแพ็กเกจ) · เคารพ <c>TrialConfig.TrialFeatures = None</c> ที่แอดมินตั้งรายบริษัท
+/// (เดิมเติมทับ) · S200-4: ผลเดียวกันนี้ใช้ทั้ง overlay ของหน้าเว็บ/gate และ <c>GetEffectivePlanAsync</c> (ด่านสร้างเอกสาร · EntitlementService)
+/// ผ่านเมธอดเดียวใน <c>SubscriptionService.ResolvePlanFeaturesAsync</c> — เดิมหน้าเว็บบอก "มีฟีเจอร์" แต่สร้างเอกสารไม่ได้</para>
 /// </summary>
 public static class SubscriptionTrialReadiness
 {
@@ -49,15 +68,32 @@ public static class SubscriptionTrialReadiness
         string.Equals(status, nameof(SubscriptionStatus.Trial), StringComparison.OrdinalIgnoreCase)
         || string.Equals(plan, nameof(SubscriptionPlan.FreeTrial), StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>ฟีเจอร์ที่ใช้ตัดสิน — สำเนาบนแถว subscription ชนะ · ว่างและเป็นลูกค้าทดลอง ⇒ ข้อมูลแพ็กเกจ · แพ็กเกจว่าง ⇒ ว่าง + <c>StillEmpty</c></summary>
-    /// <param name="templateTrial"><c>PlanTemplate.TrialFeatures</c> · <c>null</c> = ไม่มีแพ็กเกจที่เปิดใช้</param>
-    /// <param name="templateEnabled"><c>PlanTemplate.EnabledFeatures</c></param>
-    public static TrialFeatureResolution ResolveFeatures(FeatureFlags snapshot, SubscriptionPlan plan, SubscriptionStatus status,
-        FeatureFlags? templateTrial, FeatureFlags? templateEnabled)
+    /// <summary>ระหว่างทดลอง = สถานะ Trial และยังไม่เลยวันหมดอายุ (S200-6)</summary>
+    private static bool InActiveTrial(SubscriptionStatus status, DateTime endDateUtc, DateTime nowUtc) =>
+        status == SubscriptionStatus.Trial && endDateUtc >= nowUtc;
+
+    /// <summary>แพ็กเกจฟรีถาวรที่ใช้งานอยู่ (Free Edition — แพ็กเกจ FreeTrial สถานะ Active หรือแถวที่ติดธงฟรีถาวร)</summary>
+    private static bool ActivePermanentFree(SubscriptionPlan plan, SubscriptionStatus status, bool isPermanentFree) =>
+        status == SubscriptionStatus.Active && (isPermanentFree || plan == SubscriptionPlan.FreeTrial);
+
+    /// <summary>ต้องโหลดข้อมูลแพ็กเกจมาเติมไหม (ตัวตัดสินเดียวกับ <see cref="ResolveFeatures"/> · ใช้เลี่ยง query ในกรณีปกติที่สำเนาไม่ว่าง)</summary>
+    public static bool MayFillFromTemplate(FeatureFlags snapshot, SubscriptionPlan plan, SubscriptionStatus status, bool isPermanentFree,
+        DateTime endDateUtc, DateTime nowUtc) =>
+        snapshot == FeatureFlags.None
+        && (InActiveTrial(status, endDateUtc, nowUtc) || ActivePermanentFree(plan, status, isPermanentFree));
+
+    /// <summary>ฟีเจอร์ที่ใช้ตัดสิน — สำเนาบนแถว subscription ชนะ · ว่างและ "ระหว่างทดลอง" ⇒ trial config รายบริษัท (None ที่ตั้งไว้ = เคารพ) ⇒
+    /// ข้อมูลแพ็กเกจ <c>TrialFeatures</c> · ว่างและฟรีถาวร Active ⇒ ข้อมูลแพ็กเกจ <c>EnabledFeatures</c> · แพ็กเกจว่าง ⇒ ว่าง + <c>StillEmpty</c> ·
+    /// สถานะอื่น (หมดอายุ · ค้างชำระ · ทดลองที่เลยวันแล้ว · แพ็กเกจเสียเงิน) ⇒ ไม่เติม</summary>
+    public static TrialFeatureResolution ResolveFeatures(TrialFeatureInputs i, DateTime nowUtc)
     {
-        if (snapshot != FeatureFlags.None || !IsTrialLike(plan, status))
-            return new TrialFeatureResolution(snapshot, false, false);
-        var fromTemplate = status == SubscriptionStatus.Trial ? templateTrial : templateEnabled;
+        if (!MayFillFromTemplate(i.Snapshot, i.Plan, i.Status, i.IsPermanentFree, i.EndDateUtc, nowUtc))
+            return new TrialFeatureResolution(i.Snapshot, false, false);
+        if (InActiveTrial(i.Status, i.EndDateUtc, nowUtc) && i.CompanyTrialFeatures is FeatureFlags perCompany)
+            return perCompany == FeatureFlags.None
+                ? new TrialFeatureResolution(FeatureFlags.None, false, false, AdminSetEmpty: true)
+                : new TrialFeatureResolution(perCompany, false, false, FromCompanyTrialConfig: true);
+        var fromTemplate = InActiveTrial(i.Status, i.EndDateUtc, nowUtc) ? i.TemplateTrial : i.TemplateEnabled;
         return fromTemplate is FeatureFlags f && f != FeatureFlags.None
             ? new TrialFeatureResolution(f, true, false)
             : new TrialFeatureResolution(FeatureFlags.None, false, true);

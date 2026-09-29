@@ -519,16 +519,11 @@ public class SubscriptionService : ISubscriptionService
 
         // รอบ 200 ข้อ 14: ลูกค้าช่วงทดลอง/แพ็กเกจฟรีที่สำเนาฟีเจอร์ว่าง (คอลัมน์ DEFAULT 0 · แอดมินบันทึกรายการว่าง) ⇒ ใช้ฟีเจอร์ตามข้อมูล
         // แพ็กเกจ แทนการถูกบล็อกทุกเส้นทางเมื่อเปิดบังคับ · แพ็กเกจก็ว่าง = คงว่าง (รายงานแอดมินแสดง — ไม่แต่งชุดฟีเจอร์เอง) ·
-        // ตัวตัดสินเดียว SubscriptionTrialReadiness.ResolveFeatures · โหลดแพ็กเกจเฉพาะเมื่อว่าง (กรณีหายาก)
-        if (features == FeatureFlags.None && Accounting.Helpers.SubscriptionTrialReadiness.IsTrialLike(plan, status))
-        {
-            var tpl = acct?.PlanTemplate ?? await _db.PlanTemplates.AsNoTracking()
-                .Where(t => t.Plan == plan && t.IsActive)
-                .OrderBy(t => t.CreatedAt)
-                .FirstOrDefaultAsync();
-            features = Accounting.Helpers.SubscriptionTrialReadiness.ResolveFeatures(features, plan, status,
-                tpl?.TrialFeatures, tpl?.EnabledFeatures).Features;
-        }
+        // S200-4: เมธอดเดียวกับ GetEffectivePlanAsync (ResolvePlanFeaturesAsync) — หน้าเว็บ/gate กับด่านสร้างเอกสารเห็นชุดเดียวกัน
+        features = acct != null
+            ? await ResolvePlanFeaturesAsync(features, plan, status, acct.PlanTemplate?.IsPermanentFree ?? false, acct.EndDate,
+                subscriptionIdForTrialConfig: null, acct.PlanTemplate)
+            : await ResolvePlanFeaturesAsync(features, plan, status, sub.IsPermanentFree, sub.EndDate, sub.Id, null);
 
         // Owner-level subtractive override — when the Owner has flipped
         // off features in CompanySettings.OwnerDisabledFeatures, mask
@@ -543,6 +538,37 @@ public class SubscriptionService : ISubscriptionService
             features = features & ~ownerDisabled;
 
         return new GateOverlay(plan, planName, status, features, acct);
+    }
+
+    /// <summary>
+    /// <b>ฟีเจอร์ของแพ็กเกจที่มีผล (ก่อน mask ของเจ้าของบริษัท) — ตัวเดียวของทั้งระบบ</b> (รอบ 200 ฝ่ายค้าน S200-4)
+    ///
+    /// <para>เดิมมีสองตัวตัดสิน: <see cref="ResolveGateOverlayAsync"/> (หน้าเว็บ <c>hasFeature</c> + gate) เติมฟีเจอร์ทดลองจากแพ็กเกจเมื่อสำเนาว่าง แต่
+    /// <see cref="GetEffectivePlanAsync"/> → <see cref="CheckFeatureAccessAsync"/> (ด่านสร้างเอกสาร · EntitlementService) อ่านสำเนาว่างตรง ๆ ⇒ หน้าเว็บบอก
+    /// "มีฟีเจอร์" แต่กดสร้างเอกสารได้ "ไม่มีสิทธิ์ใช้ระบบเอกสาร". ตอนนี้ทั้งสองเรียกเมธอดนี้ · กติกาอยู่ที่
+    /// <see cref="Accounting.Helpers.SubscriptionTrialReadiness.ResolveFeatures"/> (เฉพาะระหว่างทดลองที่ยังไม่หมดอายุ/ฟรีถาวร Active · เคารพ
+    /// trial config รายบริษัท = None) · โหลดแพ็กเกจ/trial config เฉพาะเมื่อสำเนาว่างและอยู่ในเงื่อนไข (กรณีหายาก)</para>
+    /// </summary>
+    /// <param name="subscriptionIdForTrialConfig">แถว <c>Subscription</c> ของบริษัท (อ่าน <c>TrialConfig.TrialFeatures</c>) · <c>null</c> = สาย User License</param>
+    /// <param name="knownTemplate">แพ็กเกจที่โหลดมาแล้ว (สาย User License) · <c>null</c> = หาแพ็กเกจที่เปิดใช้ตามระดับ</param>
+    private async Task<FeatureFlags> ResolvePlanFeaturesAsync(FeatureFlags snapshot, SubscriptionPlan plan, SubscriptionStatus status,
+        bool isPermanentFree, DateTime endDate, Guid? subscriptionIdForTrialConfig, PlanTemplate? knownTemplate)
+    {
+        var now = DateTime.UtcNow;
+        if (!Accounting.Helpers.SubscriptionTrialReadiness.MayFillFromTemplate(snapshot, plan, status, isPermanentFree, endDate, now))
+            return snapshot;
+        var tpl = knownTemplate ?? await _db.PlanTemplates.AsNoTracking()
+            .Where(t => t.Plan == plan && t.IsActive)
+            .OrderBy(t => t.CreatedAt)
+            .FirstOrDefaultAsync();
+        FeatureFlags? companyTrial = subscriptionIdForTrialConfig is Guid subId
+            ? await _db.TrialConfigs.AsNoTracking()
+                .Where(tc => tc.SubscriptionId == subId)
+                .Select(tc => (FeatureFlags?)tc.TrialFeatures)
+                .FirstOrDefaultAsync()
+            : null;
+        return Accounting.Helpers.SubscriptionTrialReadiness.ResolveFeatures(new Accounting.Helpers.TrialFeatureInputs(
+            snapshot, plan, status, isPermanentFree, endDate, companyTrial, tpl?.TrialFeatures, tpl?.EnabledFeatures), now).Features;
     }
 
     /// <inheritdoc/>
@@ -757,9 +783,10 @@ public class SubscriptionService : ISubscriptionService
 
         // Per-company plan wins when AccountSubscriptionId is null (legacy /
         // explicit "this company pays its own bill" mode).
+        // S200-4: ฟีเจอร์ผ่าน ResolvePlanFeaturesAsync ตัวเดียวกับ overlay ของหน้าเว็บ/gate (ทดลองสำเนาว่าง ⇒ ตามข้อมูลแพ็กเกจ)
         if (!sub.AccountSubscriptionId.HasValue)
         {
-            return BuildFromCompanySub(sub);
+            return await WithPlanFeaturesAsync(BuildFromCompanySub(sub), sub);
         }
 
         // Account-plan path. If the account row is missing / deleted, fall back
@@ -772,7 +799,7 @@ public class SubscriptionService : ISubscriptionService
             // Defensive: detach the dangling pointer so the next check is clean.
             sub.AccountSubscriptionId = null;
             await _db.SaveChangesAsync();
-            return BuildFromCompanySub(sub);
+            return await WithPlanFeaturesAsync(BuildFromCompanySub(sub), sub);
         }
 
         var now = DateTime.UtcNow;
@@ -796,9 +823,19 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: acct.MaxOcrPagesPerMonth,
             AzureOcrPagesPerMonth: acct.AzureOcrPagesPerMonth,
             LocalOcrPagesPerMonth: acct.LocalOcrPagesPerMonth,
-            EnabledFeatures: acct.EnabledFeatures,
+            EnabledFeatures: await ResolvePlanFeaturesAsync(acct.EnabledFeatures,
+                acct.PlanTemplate != null ? acct.PlanTemplate.Plan : SubscriptionPlan.FreeTrial, acct.Status,
+                acct.PlanTemplate?.IsPermanentFree ?? false, acct.EndDate, subscriptionIdForTrialConfig: null, acct.PlanTemplate),
             Plan: acct.PlanTemplate != null ? acct.PlanTemplate.Plan : SubscriptionPlan.FreeTrial);
     }
+
+    /// <summary>S200-4: ฟีเจอร์ของสายบริษัทผ่านตัวเดียวกับ overlay (<see cref="ResolvePlanFeaturesAsync"/>)</summary>
+    private async Task<EffectivePlan> WithPlanFeaturesAsync(EffectivePlan eff, Subscription sub) =>
+        eff with
+        {
+            EnabledFeatures = await ResolvePlanFeaturesAsync(sub.EnabledFeatures, sub.Plan, sub.Status, sub.IsPermanentFree,
+                sub.EndDate, sub.Id, null),
+        };
 
     private static EffectivePlan BuildFromCompanySub(Subscription sub)
     {
