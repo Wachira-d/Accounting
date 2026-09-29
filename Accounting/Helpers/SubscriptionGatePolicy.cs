@@ -61,6 +61,25 @@ public sealed record SubscriptionGateVerdict(
     public bool Blocks => Block != SubscriptionGateReason.None;
 }
 
+/// <summary>เส้นทางนี้ต้องใช้ฟีเจอร์อะไร (ผลของ <see cref="SubscriptionGatePolicy.RequiredFeatureFor"/>)</summary>
+/// <param name="Feature">ฟีเจอร์ตามตารางปัจจุบัน (คีย์ยาวสุดที่ตรงชนะ)</param>
+/// <param name="RouteKey">คีย์ใน <see cref="SubscriptionGatePolicy.RouteFeatureMap"/> ที่ตรง</param>
+/// <param name="NewlyGated">คีย์นี้เพิ่ง "เริ่มมีผล" รอบ 200 (<see cref="SubscriptionGatePolicy.NewlyGatedRouteKeys"/>) — ต้องผ่านโหมดเงาสำหรับ<b>ทุก</b>ผู้เรียก
+/// (รวม partner ที่ส่ง header) จนกว่าเจ้าของกดบังคับ (คำตัดสินข้อ 22)</param>
+/// <param name="LegacyFeature">ฟีเจอร์ที่คำขอเดียวกันเคยถูกตัดสินก่อนคีย์ใหม่มีผล (คีย์ที่ไม่ใช่คีย์ใหม่ที่ตรงยาวสุด) · <c>null</c> = เดิมไม่ถูก gate —
+/// partner ยังถูกบังคับด้วยค่านี้ระหว่างโหมดเงา (ไม่หลวมลง)</param>
+/// <param name="LegacyRouteKey">คีย์เดิมของ <paramref name="LegacyFeature"/></param>
+public readonly record struct SubscriptionRouteRequirement(
+    FeatureFlags Feature, string RouteKey, bool NewlyGated, FeatureFlags? LegacyFeature, string? LegacyRouteKey);
+
+/// <summary>ฟีเจอร์ของคำขอนี้ต้องตัดสินแบบไหน (ผลของ <see cref="SubscriptionGatePolicy.FeaturePlanFor"/>)</summary>
+/// <param name="Enforce">ฟีเจอร์ที่ส่งเข้า <see cref="SubscriptionGatePolicy.Decide"/> (บล็อกได้เมื่อการกระทำของคำขอ = บังคับ) · <c>null</c> = ไม่ตรวจฟีเจอร์</param>
+/// <param name="EnforceRouteKey">คีย์ของ <paramref name="Enforce"/> (ลงรายงาน)</param>
+/// <param name="ShadowOnly">ฟีเจอร์ที่ "ตัดสินแล้วบันทึกอย่างเดียว" แม้คำขอถูกบังคับ — คีย์ใหม่ของคำขอ partner ระหว่างโหมดที่มีผลจริงยังไม่ใช่บังคับ</param>
+/// <param name="ShadowRouteKey">คีย์ของ <paramref name="ShadowOnly"/></param>
+public readonly record struct SubscriptionFeaturePlan(
+    FeatureFlags? Enforce, string? EnforceRouteKey, FeatureFlags? ShadowOnly, string? ShadowRouteKey);
+
 /// <summary>
 /// <b>ตัวตัดสิน gate แพ็กเกจ/ระงับบริษัทตัวเดียว</b> ของ <c>SubscriptionCheckMiddleware</c> — รอบ 198 ข้อ 5
 ///
@@ -89,6 +108,22 @@ public static class SubscriptionGatePolicy
         "/dimensions/branches",
     };
 
+    /// <summary>
+    /// endpoint ที่ <b>ห้าม gate ตามแพ็กเกจ</b> เฉพาะ method นั้น + ต้องจบที่คีย์ตรงตัว (ไม่รวมเส้นทางลูก) — รอบ 200 คำตัดสินข้อ 21:
+    /// "ผูกฟีเจอร์เฉพาะ endpoint ที่เป็นงานกระทบยอดจริง · การอ่านรายการบัญชีธนาคารเพื่อเลือกตอนรับ/จ่ายเงิน = งานพื้นฐาน ไม่ผูก"
+    /// <list type="bullet">
+    /// <item><c>GET …/bank/accounts</c> — รายการบัญชีธนาคารที่หน้าเอกสาร/ชำระเงิน/เช็ค/เงินสดย่อย/นำส่งภาษี/เงินเดือน/เกิดซ้ำ/ที่พัก/POS/เริ่มต้นใช้งาน
+    /// โหลดเบื้องหลังเพื่อให้เลือก (ไล่ผู้เรียกใน wwwroot แล้ว — มีแต่ GET รายการ · สร้าง/แก้บัญชี + ทุกเส้นกระทบยอดอยู่ใน bank.html ยังผูก)</item>
+    /// <item><c>GET …/warehouses</c> — รายการคลังที่หน้า POS (ตั้งเครื่อง POS · <c>pos.html</c>) และตั้งค่า SME โหลดเพื่อให้เลือก · หลักเดียวกับข้อ 21
+    /// (คีย์ <c>/warehouses</c> เพิ่งเริ่มมีผลรอบนี้ตามข้อ 22 — ถ้าไม่ยกเว้น POS ของแพ็กเกจที่ไม่มีคลังหลายแห่งจะได้ 403 เบื้องหลังเมื่อบังคับ)</item>
+    /// </list>
+    /// </summary>
+    private static readonly (string Method, string PathSuffix)[] FeatureExemptEndpoints =
+    {
+        ("GET", "/bank/accounts"),
+        ("GET", "/warehouses"),
+    };
+
     /// <summary>เส้นทาง → ฟีเจอร์ที่ต้องมี · จับคู่แบบ "ยึดท้าย segment" (มี <c>{key}/</c> หรือจบด้วย <c>{key}</c>) ·
     /// คีย์ยาวกว่าชนะ (เฉพาะเจาะจงกว่า)</summary>
     public static readonly IReadOnlyList<(string Path, FeatureFlags Feature)> RouteFeatureMap = new List<(string, FeatureFlags)>
@@ -103,18 +138,20 @@ public static class SubscriptionGatePolicy
 
         // Operations
         ("/payroll",                  FeatureFlags.Payroll),
-        ("/commission",               FeatureFlags.Commission),
-        ("/fixed-assets",             FeatureFlags.FixedAssets),
+        // รอบ 200 ข้อ 22: คีย์เดิม /commission · /fixed-assets · /multi-currency · /warehouse ไม่เคยตรง endpoint จริง (ฟีเจอร์ไม่ถูก gate เลย) ⇒
+        // แก้ให้ตรง route ของ controller — อยู่ใน NewlyGatedRouteKeys (โหมดเงาสำหรับทุกผู้เรียกจนกว่าเจ้าของกดบังคับ)
+        ("/commissions",              FeatureFlags.Commission),        // CommissionController
+        ("/fixedasset",               FeatureFlags.FixedAssets),       // FixedAssetController [controller]
         ("/recurring",                FeatureFlags.RecurringTransactions),
         ("/revenue-recognition",      FeatureFlags.RevenueRecognition),
         ("/loans",                    FeatureFlags.LoanManagement),
-        ("/multi-currency",           FeatureFlags.MultiCurrency),
+        ("/currency",                 FeatureFlags.MultiCurrency),     // CurrencyController [controller]
         ("/projects",                 FeatureFlags.ProjectAccounting),
         ("/time-billing",             FeatureFlags.TimeBilling),
         ("/dimensions",               FeatureFlags.CostCenter),
         ("/intercompany",             FeatureFlags.MultiCompany),
         ("/consolidation",            FeatureFlags.Consolidation),
-        ("/warehouse",                FeatureFlags.WarehouseManagement),
+        ("/warehouses",               FeatureFlags.WarehouseManagement), // WarehouseController (GET รายการ ยกเว้น — FeatureExemptEndpoints)
         ("/inventory",                FeatureFlags.Inventory),
         ("/products",                 FeatureFlags.Inventory),
         ("/supplies",                 FeatureFlags.Inventory),
@@ -140,7 +177,8 @@ public static class SubscriptionGatePolicy
         ("/withholding-tax-certs",    FeatureFlags.TaxManagement),
 
         // Workflow / Approval
-        ("/approval",                 FeatureFlags.ApprovalWorkflow),
+        ("/approval",                 FeatureFlags.ApprovalWorkflow),  // ApprovalController [controller] (กฎอนุมัติ — ตรงมาแต่เดิม)
+        ("/approvals",                FeatureFlags.ApprovalWorkflow),  // SignatureApprovalController (ลายเซ็นอนุมัติเอกสาร) — รอบ 200 ข้อ 22
         ("/signatures",               FeatureFlags.ApprovalWorkflow),
 
         // Audit
@@ -154,7 +192,10 @@ public static class SubscriptionGatePolicy
 
         // AI
         ("/ai-tools",                 FeatureFlags.AI_Features),
-        ("/ai/",                      FeatureFlags.AI_Features),
+        // รอบ 200 ข้อ 22: คีย์เดิม "/ai/" ต้องเจอ "/ai//" จึงไม่เคยตรง ⇒ "/ai" (AiController + AiSuggestionController) · "/ai/ocr/…" ยังเป็น /ocr
+        // และ "/ai/bank/…" ยังเป็น /bank (คีย์ยาวกว่าชนะ) · ⚠️ ตัวแนะนำหลายตัวถูกเรียกเบื้องหลังจากหน้าเอกสาร/สมุดรายวัน/เงินสดย่อย —
+        // ดูในรายงานเงาก่อนกดบังคับ (api.js ข้อ 24: 403 เบื้องหลัง = แจ้งเตือน ไม่ดีดออก)
+        ("/ai",                       FeatureFlags.AI_Features),
         ("/ocr",                      FeatureFlags.DocumentOCR),
 
         // Customer portal
@@ -167,9 +208,33 @@ public static class SubscriptionGatePolicy
         ("/cms/sites",                FeatureFlags.CmsWebsiteBuilder),
         ("/cms/themes",               FeatureFlags.CmsWebsiteBuilder),
         ("/cms/customers",            FeatureFlags.CmsWebsiteBuilder),
-        ("/commerce",                 FeatureFlags.CmsEcommerce),
-        ("/booking",                  FeatureFlags.CmsBooking),
+        // รอบ 200 ข้อ 22: "/commerce" · "/booking" แพ้ "/cms/sites" (ยาวกว่า) เสมอ ⇒ ไม่เคยมีผล · route จริงอยู่ใต้ /cms/sites/{siteId}/…
+        // ⇒ คีย์ที่มี * (ตรง 1 segment) — ยาวกว่า /cms/sites จึงชนะ
+        ("/cms/sites/*/commerce",     FeatureFlags.CmsEcommerce),
+        ("/cms/sites/*/booking",      FeatureFlags.CmsBooking),
     };
+
+    /// <summary>
+    /// คีย์ที่เพิ่ง "เริ่มมีผล" รอบ 200 (D-P3 <c>/settlement</c> + คำตัดสินข้อ 22 แก้คีย์ที่ไม่ตรง endpoint) — <b>ต้องผ่านโหมดเงาสำหรับทุกผู้เรียก
+    /// รวม partner ที่ส่ง <c>X-Company-Id</c></b> จนกว่าโหมดที่มีผลจริง = บังคับ (ข้อ 22 · ข้อ 5 "รายงานก่อน แล้วค่อยเปิดบังคับ") · คำขอเดียวกันที่เดิม
+    /// ถูกตัดสินด้วยคีย์อื่น (<see cref="SubscriptionRouteRequirement.LegacyFeature"/>) ยังถูกบังคับด้วยคีย์เดิม (ไม่หลวมลง) · คีย์ที่ตรงมาแต่เดิม
+    /// ห้ามอยู่ในชุดนี้ (partner ถูกบังคับมาก่อนรอบ 198 — ห้ามหลวม)
+    /// </summary>
+    public static readonly IReadOnlySet<string> NewlyGatedRouteKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "/settlement",
+        "/commissions", "/fixedasset", "/currency", "/warehouses", "/approvals", "/ai",
+        "/cms/sites/*/commerce", "/cms/sites/*/booking",
+    };
+
+    /// <summary>ตัวจับคู่ของแต่ละคีย์ (สร้างครั้งเดียว) — "ยึดท้าย segment": ตรงเมื่อตามด้วย <c>/</c> หรือจบ path · <c>*</c> = 1 segment ใดก็ได้</summary>
+    private static readonly IReadOnlyList<(string Path, FeatureFlags Feature, System.Text.RegularExpressions.Regex Match)> RouteMatchers =
+        RouteFeatureMap
+            .OrderByDescending(m => m.Path.Length)
+            .Select(m => (m.Path, m.Feature, new System.Text.RegularExpressions.Regex(
+                System.Text.RegularExpressions.Regex.Escape(m.Path.ToLowerInvariant()).Replace(@"\*", "[^/]+") + "(/|$)",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant)))
+            .ToList();
 
     /// <summary>ฟีเจอร์ทุกตัวที่มีเส้นทางถูก gate (ไม่ซ้ำ · เรียงตามชื่อ) — รายงานแอดมินใช้ตรวจล่วงหน้าว่าบริษัทไหนขาดอะไร</summary>
     public static IReadOnlyList<FeatureFlags> GatedFeatures { get; } = RouteFeatureMap
@@ -249,20 +314,67 @@ public static class SubscriptionGatePolicy
     public static bool NeedsWriteFacts(SubscriptionStatus status, bool isWrite, SubscriptionWriteGateMode writeMode) =>
         !IsInactive(status) && isWrite && writeMode != SubscriptionWriteGateMode.Off;
 
-    /// <summary>เส้นทางนี้ต้องใช้ฟีเจอร์อะไร (คีย์ยาวสุดที่ตรงชนะ) · <c>null</c> = ไม่ต้อง หรือเป็นเส้นทางที่กฎหมายบังคับ</summary>
-    public static (FeatureFlags Feature, string RouteKey)? RequiredFeatureFor(string? path)
+    /// <summary>เส้นทางนี้ต้องใช้ฟีเจอร์อะไร (คีย์ยาวสุดที่ตรงชนะ) · <c>null</c> = ไม่ต้อง หรือเป็นเส้นทางที่กฎหมาย/คำตัดสินยกเว้น
+    /// (<see cref="FeatureExemptRoutes"/> ทุก method · <see cref="FeatureExemptEndpoints"/> เฉพาะ method นั้น — <paramref name="method"/> <c>null</c> =
+    /// ไม่รู้ method ⇒ ไม่ใช้ข้อยกเว้นราย method) · ผลบอกด้วยว่าคีย์เพิ่งเริ่มมีผลไหม และคำขอเดียวกันเดิมถูกตัดสินด้วยคีย์ไหน</summary>
+    public static SubscriptionRouteRequirement? RequiredFeatureFor(string? path, string? method = null)
     {
-        var lowerPath = (path ?? "").ToLowerInvariant();
+        var lowerPath = (path ?? "").ToLowerInvariant().TrimEnd('/');
         if (FeatureExemptRoutes.Any(r => lowerPath.Contains(r)))
             return null;
-        foreach (var m in RouteFeatureMap.OrderByDescending(m => m.Path.Length))
+        if (method != null && FeatureExemptEndpoints.Any(e =>
+                string.Equals(e.Method, method, StringComparison.OrdinalIgnoreCase) && lowerPath.EndsWith(e.PathSuffix, StringComparison.Ordinal)))
+            return null;
+        (string Path, FeatureFlags Feature)? current = null, legacy = null;
+        foreach (var m in RouteMatchers)
         {
-            var key = m.Path.ToLowerInvariant();
-            if (lowerPath.Contains(key + "/") || lowerPath.EndsWith(key))
-                return (m.Feature, m.Path);
+            if (!m.Match.IsMatch(lowerPath)) continue;
+            current ??= (m.Path, m.Feature);
+            if (!NewlyGatedRouteKeys.Contains(m.Path)) { legacy = (m.Path, m.Feature); break; }
         }
-        return null;
+        if (current is not { } c) return null;
+        var isNew = NewlyGatedRouteKeys.Contains(c.Path);
+        return new SubscriptionRouteRequirement(c.Feature, c.Path, isNew,
+            isNew ? legacy?.Feature : c.Feature, isNew ? legacy?.Path : c.Path);
     }
+
+    /// <summary>
+    /// ฟีเจอร์ของคำขอนี้ต้องตัดสินแบบไหน — รอบ 200 คำตัดสินข้อ 22 + ข้อ 23 (ตัวเดียวของ middleware · ห้ามประกอบเงื่อนไขเองที่อื่น):
+    /// <list type="bullet">
+    /// <item>บริษัทมาจากคีย์ API ของ <c>/api/v1</c> (<see cref="TenantCompanySource.ApiKey"/>) ⇒ <b>ไม่ตรวจฟีเจอร์ตามตารางนี้</b> (Connected มีด่าน
+    /// scope + ฟีเจอร์ของตัวเองใน <c>PublicApiControllerBase</c>) — ข้อ 23 ขอแค่สถานะระงับ/หมดอายุ</item>
+    /// <item>คำขอ partner (ส่ง header) + คีย์ใหม่ + โหมดที่มีผลจริงยังไม่ใช่บังคับ ⇒ คีย์ใหม่ <b>ตัดสินแล้วบันทึกอย่างเดียว</b> (<see cref="SubscriptionFeaturePlan.ShadowOnly"/>)
+    /// · คีย์เดิมที่คำขอเดียวกันเคยถูกตัดสิน (<see cref="SubscriptionRouteRequirement.LegacyFeature"/>) ยังบังคับ (ไม่หลวมลง)</item>
+    /// <item>นอกนั้น ⇒ ฟีเจอร์ของคีย์ปัจจุบัน (หน้าเว็บ: การกระทำของคำขอตัดสินว่าเงา/บังคับ · partner คีย์เดิม: บังคับเหมือนก่อนรอบ 198)</item>
+    /// </list>
+    /// </summary>
+    public static SubscriptionFeaturePlan FeaturePlanFor(TenantCompanyTarget target, SubscriptionEnforcementMode effectiveMode,
+        SubscriptionRouteRequirement? requirement)
+    {
+        if (requirement is not { } r || target.Source == TenantCompanySource.ApiKey)
+            return new SubscriptionFeaturePlan(null, null, null, null);
+        if (target.HeaderCarried && r.NewlyGated && effectiveMode != SubscriptionEnforcementMode.Enforce)
+            return new SubscriptionFeaturePlan(r.LegacyFeature, r.LegacyRouteKey, r.Feature, r.RouteKey);
+        return new SubscriptionFeaturePlan(r.Feature, r.RouteKey, null, null);
+    }
+
+    /// <summary>ผู้เรียกเป็น partner/integration (ส่ง <c>X-Company-Id</c> เอง หรือคีย์ API ของ <c>/api/v1</c>) — รายงานเงานับแยกคอลัมน์จากหน้าเว็บ</summary>
+    public static bool IsPartnerCaller(TenantCompanyTarget target) =>
+        target.HeaderCarried || target.Source == TenantCompanySource.ApiKey;
+
+    /// <summary>เส้นทาง Connected (<c>/api/v1/…</c>) — บริษัทมาจากคีย์ API (<c>context.Items["CompanyId"]</c> ที่ <c>ApiKeyMiddleware</c> ใส่)</summary>
+    private static bool IsPublicApiPath(string? path) =>
+        (path ?? "").StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// บริษัทของคำขอ <c>/api/v1</c> — รอบ 200 คำตัดสินข้อ 23 "ตรวจสถานะระงับ/หมดอายุผ่านสวิตช์ตัวเดียวกัน (เงาก่อน)": คำขอที่ไม่มีบริษัทจาก route/header
+    /// แต่เป็นเส้น <c>/api/v1</c> ที่คีย์ API ผูกบริษัทไว้ ⇒ บริษัทของคีย์ (<see cref="TenantCompanySource.ApiKey"/> · ไม่ใช่ header ⇒ เดินตามโหมดที่มีผลจริง
+    /// เหมือนหน้าเว็บ: เงา = บันทึก · บังคับ = บล็อก) · คำขอที่มีบริษัทอยู่แล้ว (route/header) ไม่แตะ (partner ที่ส่ง header ถูกบังคับแบบเดิม)
+    /// </summary>
+    public static TenantCompanyTarget WithPublicApiCompany(TenantCompanyTarget target, string? path, object? apiKeyCompanyId) =>
+        target.CompanyId is null && IsPublicApiPath(path) && apiKeyCompanyId is Guid g && g != Guid.Empty
+            ? new TenantCompanyTarget(g, TenantCompanySource.ApiKey, false, false)
+            : target;
 
     /// <summary>ตัดสินตามลำดับเดิมของ middleware: Subscription ไม่ active → บริษัทถูกระงับ (เขียน) → หมดอายุเกินผ่อนผัน
     /// (เขียน) → ฟีเจอร์ไม่อยู่ในแพ็กเกจ · ด่านเขียนสองตัวทำงานเมื่อ WriteMode ≠ Off: Enforce = บล็อก · LogOnly = ผ่านแต่คืน

@@ -94,16 +94,75 @@ public class SubscriptionEnforcementResolverTests
     [InlineData("LogOnly")]
     [InlineData("Off")]
     [InlineData("Enforce")]
-    public void configเดิม_ไม่มีผลต่อการตัดสิน_แต่เตือนให้ลบ(string legacy)
+    public void configเดิม_ไม่เปลี่ยนโหมดที่มีผลจริง_และเตือนให้ลบ(string legacy)
     {
         foreach (var admin in new[] { SubscriptionEnforcementMode.Off, SubscriptionEnforcementMode.Shadow, SubscriptionEnforcementMode.Enforce })
         {
             var withLegacy = SubscriptionEnforcementResolver.Resolve(Stored(admin), null, legacy);
             var without = SubscriptionEnforcementResolver.Resolve(Stored(admin), null, null);
             Assert.Equal(without.EffectiveMode, withLegacy.EffectiveMode);
-            Assert.Equal(without.HeaderWriteGateMode, withLegacy.HeaderWriteGateMode);
             Assert.Contains(withLegacy.Warnings, w => w.Contains(SubscriptionEnforcementResolver.LegacyKey) && w.Contains("เลิกใช้"));
             Assert.Empty(without.Warnings);
+            Assert.False(without.LegacyHeaderEnforce);
+            // LogOnly/Off ของคีย์เดิม = ไม่เข้มกว่าเดิม ⇒ ไม่มีผล · Enforce = คุม partner ต่อ (ทดสอบแยกด้านล่าง)
+            if (legacy != "Enforce")
+            {
+                Assert.Equal(without.HeaderWriteGateMode, withLegacy.HeaderWriteGateMode);
+                Assert.False(withLegacy.LegacyHeaderEnforce);
+            }
+        }
+    }
+
+    // ════════ รอบ 200 ฝ่ายค้าน S200-1: คีย์เดิม = Enforce ห้ามหลวมลงเงียบ ๆ หลัง deploy ════════
+
+    [Theory]
+    [InlineData(SubscriptionEnforcementMode.Off)]
+    [InlineData(SubscriptionEnforcementMode.Shadow)]
+    public void S200_1_คีย์เดิมEnforce_สวิตช์ยังไม่บังคับ_partnerของบริษัทถูกระงับยังถูกบล็อกการเขียนแบบเดิม(SubscriptionEnforcementMode admin)
+    {
+        var e = SubscriptionEnforcementResolver.Resolve(Stored(admin), null, "Enforce");
+        Assert.True(e.LegacyHeaderEnforce);
+        Assert.Equal(SubscriptionWriteGateMode.Enforce, e.HeaderWriteGateMode);
+        Assert.Equal(admin, e.EffectiveMode);                 // หน้าเว็บไม่เข้มขึ้น (โหมดที่มีผลจริงยังตามสวิตช์)
+        Assert.Contains(SubscriptionEnforcementResolver.LegacyKey, e.Explanation);
+        Assert.Contains(e.Warnings, w => w.Contains("ยังมีผล"));
+
+        var partner = TenantCompanyId.Resolve(null, A.ToString());
+        var action = SubscriptionGatePolicy.ActionFor(partner, e.EffectiveMode);
+        var writeMode = SubscriptionGatePolicy.WriteGateModeFor(action, partner, e);
+        Assert.Equal(SubscriptionWriteGateMode.Enforce, writeMode);
+        var v = SubscriptionGatePolicy.Decide(new SubscriptionGateFacts(SubscriptionStatus.Active, FeatureFlags.TrialFeatures,
+            IsWrite: true, writeMode, CompanySuspended: true, PlanActive: true, RequiredFeature: null));
+        Assert.Equal(SubscriptionGateReason.CompanySuspended, v.Block);
+
+        // ทิศตรงข้าม: หน้าเว็บ (route) ในโหมดเงายังไม่ถูกบล็อก — คีย์เดิมไม่เคยบังคับหน้าเว็บ
+        var web = TenantCompanyId.Resolve(A.ToString(), null);
+        Assert.NotEqual(SubscriptionGateAction.Enforce, SubscriptionGatePolicy.ActionFor(web, e.EffectiveMode));
+    }
+
+    [Fact]
+    public void S200_1_ลบคีย์เดิมแล้ว_partnerเดินตามสวิตช์_LogOnlyระหว่างโหมดเงา()
+    {
+        var e = SubscriptionEnforcementResolver.Resolve(Stored(SubscriptionEnforcementMode.Shadow), null, "   ");
+        Assert.False(e.LegacyHeaderEnforce);
+        Assert.Equal(SubscriptionWriteGateMode.LogOnly, e.HeaderWriteGateMode);
+        Assert.Empty(e.Warnings);
+    }
+
+    [Theory]
+    [InlineData(null, false, false)]
+    [InlineData("", false, false)]
+    [InlineData("Enforce", true, true)]
+    [InlineData(" enforce ", true, true)]
+    [InlineData("LogOnly", true, false)]
+    public void S200_1_คำเตือนตอนบูต_เมื่อยังตั้งคีย์เดิม(string? legacy, bool warns, bool saysStillEffective)
+    {
+        var w = SubscriptionEnforcementResolver.LegacyBootWarning(legacy);
+        Assert.Equal(warns, w != null);
+        if (w != null)
+        {
+            Assert.Contains(SubscriptionEnforcementResolver.LegacyKey, w);
+            Assert.Equal(saysStillEffective, w.Contains("ยังมีผล"));
         }
     }
 

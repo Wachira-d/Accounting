@@ -20,10 +20,12 @@ public class SubscriptionController : ControllerBase
     private readonly ISaasBillingDocumentService _billing;
     private readonly ISlipOcrAssistService _slipOcr;
     private readonly Accounting.Data.AccountingDbContext _db;
+    private readonly ISubscriptionGateShadowLog _gateSwitch;
+    private readonly IConfiguration _config;
 
     public SubscriptionController(ISubscriptionService subscriptionService, IImageProcessingService images,
         IWebHostEnvironment env, ISaasBillingDocumentService billing, ISlipOcrAssistService slipOcr,
-        Accounting.Data.AccountingDbContext db)
+        Accounting.Data.AccountingDbContext db, ISubscriptionGateShadowLog gateSwitch, IConfiguration config)
     {
         _subscriptionService = subscriptionService;
         _images = images;
@@ -31,6 +33,8 @@ public class SubscriptionController : ControllerBase
         _billing = billing;
         _slipOcr = slipOcr;
         _db = db;
+        _gateSwitch = gateSwitch;
+        _config = config;
     }
 
     /// <summary>
@@ -138,7 +142,10 @@ public class SubscriptionController : ControllerBase
     public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> GetSubscription(Guid companyId)
     {
         var result = await _subscriptionService.GetSubscriptionAsync(companyId);
-        return Ok(new ApiResponse<SubscriptionResponse>(true, result));
+        // S200-2: เมนูล็อกตามโหมดที่มีผลจริง — ค่ามาจากตัวตัดสินเดียวกับ middleware (หน้าเว็บห้าม hardcode)
+        var enforcement = Accounting.Helpers.SubscriptionEnforcementResolver.Resolve(
+            await _gateSwitch.ReadAdminSwitchAsync(HttpContext.RequestAborted), _config);
+        return Ok(new ApiResponse<SubscriptionResponse>(true, result with { FeatureGateMode = enforcement.EffectiveMode.ToString() }));
     }
 
     /// <summary>

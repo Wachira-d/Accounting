@@ -25,6 +25,7 @@
     .effective-box { border:2px solid #e2e8f0; border-radius:12px; padding:12px 14px; margin:8px 0 4px; background:#f8fafc }
     .effective-box.override { border-color:#f59e0b; background:#fffbeb }
     .warn-line { font-size:12px; color:#92400e; margin-top:6px }
+    .legacy-box { border:2px solid #dc2626; border-radius:12px; padding:10px 14px; margin:8px 0; background:#fef2f2; font-size:13px; color:#7f1d1d }
   </style>
 </head>
 <body>
@@ -38,6 +39,7 @@
     <div class="admin-card">
       <div class="admin-card-header"><span class="admin-card-title">🚦 สวิตช์ (ตัวตัดสินหลัก — ใช้กับคำขอจากหน้าเว็บทุกบริษัท + ด่านบริษัทถูกระงับ/หมดอายุ)</span></div>
       <div id="effectiveBox" class="effective-box muted">กำลังโหลด...</div>
+      <div id="legacyBox" class="legacy-box" style="display:none"></div>
       <div id="modeState" class="muted"></div>
       <div class="mode-grid" id="modeGrid">
         <label class="mode-opt" data-mode="Off">
@@ -143,15 +145,27 @@
         document.getElementById('modeState').innerHTML =
           `ค่าสวิตช์ที่บันทึกไว้: <b>${AdminLayout.esc(this.modeLabel(d.mode))}</b>` +
           (e.adminSwitchHasEffect === false ? ' (ยังไม่มีผล — ดูกรอบด้านบน)' : '') + ` · ${AdminLayout.esc(d.guidance)}`;
+        // S200-1: config เดิม = Enforce ยังคุม partner ต่อ — กรอบแดงแยก (ไม่ใช่แค่บรรทัดเตือนเล็ก ๆ) · ข้อความ/สถานะมาจากเซิร์ฟเวอร์
+        const legacyBox = document.getElementById('legacyBox');
+        legacyBox.style.display = e.legacyHeaderEnforce ? '' : 'none';
+        legacyBox.innerHTML = e.legacyHeaderEnforce
+          ? `⚠️ <b>config เดิม <code>${AdminLayout.esc(e.legacyKey || '')}</code> = Enforce ยังตั้งอยู่</b> — partner ที่ส่ง X-Company-Id ของบริษัทที่ถูกระงับ/หมดอายุ` +
+            ` ยังถูกบล็อกการสร้าง/แก้ไขแบบเดิม (ระบบไม่หลวมลงเงียบ ๆ) · ลบคีย์นี้ออกจาก env/appsettings ทุกเครื่องเมื่อพร้อมให้ partner เดินตามสวิตช์นี้`
+          : '';
         document.getElementById('writeGateNote').innerHTML =
           `ด่านบริษัทถูกระงับ/หมดอายุของคำขอ partner ที่ส่ง X-Company-Id เอง: <b>${AdminLayout.esc(e.headerWriteGateMode || '-')}</b> ` +
-          `(ตามโหมดที่มีผลจริง) · override ฉุกเฉินตั้งได้ที่ config <code>${AdminLayout.esc(e.overrideKey || '')}</code> (ว่าง = ใช้สวิตช์นี้)`;
+          `(ตามโหมดที่มีผลจริง${e.legacyHeaderEnforce ? ' + config เดิม' : ''}) · override ฉุกเฉินตั้งได้ที่ config <code>${AdminLayout.esc(e.overrideKey || '')}</code> (ว่าง = ใช้สวิตช์นี้)` +
+          ((e.newlyGatedRouteKeys || []).length
+            ? `<br>คีย์เส้นทางที่เพิ่งเริ่มมีผลรอบ 200 (เป็นเงาสำหรับทุกผู้เรียกรวม partner/API จนกว่าจะกดบังคับ): ` +
+              e.newlyGatedRouteKeys.map(k => `<code>${AdminLayout.esc(k)}</code>`).join(' ')
+            : '');
 
         document.getElementById('hitSummary').innerHTML = `
           <div>บริษัทที่จะถูกบล็อก<b>${Number(d.companiesWouldBlock) || 0}</b></div>
           <div>คำขอที่จะถูกบล็อก<b>${(Number(d.hitsWouldBlock) || 0).toLocaleString('th-TH')}</b></div>
           <div>บริษัทที่ถูกบล็อกจริงแล้ว<b>${Number(d.companiesBlocked) || 0}</b></div>
           <div>คำขอที่ถูกบล็อกจริง<b>${(Number(d.hitsBlocked) || 0).toLocaleString('th-TH')}</b></div>
+          <div>partner/API ที่จะถูกบล็อก<b>${Number(d.partnerCompaniesWouldBlock) || 0} บริษัท</b><span class="muted">${(Number(d.partnerHitsWouldBlock) || 0).toLocaleString('th-TH')} คำขอ · บล็อกจริง ${(Number(d.partnerHitsBlocked) || 0).toLocaleString('th-TH')}</span></div>
           <div>เก็บผล<b>${Number(d.retentionDays) || 0} วัน</b><span class="muted">ตัดแถวเก่าครั้งนี้ ${Number(d.prunedRows) || 0} แถว</span></div>`;
 
         const tb = d.trialBlocks || [];
@@ -177,20 +191,24 @@
         document.getElementById('hits').innerHTML = `
           <div class="admin-table-wrap"><table class="admin-table">
             <thead><tr><th>บริษัท</th><th>เพราะอะไร</th><th>endpoint</th><th class="admin-text-right">จะถูกบล็อก</th>
-              <th class="admin-text-right">ถูกบล็อกจริง</th><th>พบครั้งแรก</th><th>ล่าสุด</th></tr></thead>
+              <th class="admin-text-right">ถูกบล็อกจริง</th><th class="admin-text-right">partner/API จะถูกบล็อก</th>
+              <th class="admin-text-right">partner/API ถูกบล็อกจริง</th><th>พบครั้งแรก</th><th>ล่าสุด</th></tr></thead>
             <tbody>${hits.map(h => `
               <tr>
                 <td><strong>${AdminLayout.esc(h.companyName)}</strong>
                   <div class="muted">${AdminLayout.esc(h.plan || '-')} · ${AdminLayout.esc(h.subscriptionStatus || '-')}
                   ${h.isTrial ? ' <span class="pill pill-amber">ทดลองใช้</span>' : ''}</div></td>
-                <td>${Number(h.blockedCount) > 0 ? '<span class="pill pill-red">ถูกบล็อกจริง</span> ' : ''}
-                  ${h.wouldBlock ? (Number(h.hitCount) > 0 ? '<span class="pill pill-red">จะถูกบล็อก</span>' : '')
+                <td>${Number(h.blockedCount) + Number(h.partnerBlockedCount || 0) > 0 ? '<span class="pill pill-red">ถูกบล็อกจริง</span> ' : ''}
+                  ${h.wouldBlock ? (Number(h.hitCount) + Number(h.partnerHitCount || 0) > 0 ? '<span class="pill pill-red">จะถูกบล็อก</span>' : '')
                     : '<span class="pill pill-gray">แถวเก่า (log อย่างเดียว)</span>'}
+                  ${h.newlyGated ? ' <span class="pill pill-amber">คีย์ใหม่รอบ 200 (เงาทุกผู้เรียก)</span>' : ''}
                   <div style="font-size:12px;margin-top:4px">${AdminLayout.esc(h.description)}</div></td>
                 <td class="muted"><code>${AdminLayout.esc(h.endpoint || '(แถวเก่า — ไม่ได้เก็บ endpoint)')}</code>
                   <div>${AdminLayout.esc(h.routeKey || '')} · ${AdminLayout.esc(h.lastMethod || '')}</div></td>
                 <td class="admin-text-right">${(Number(h.hitCount) || 0).toLocaleString('th-TH')}</td>
                 <td class="admin-text-right">${(Number(h.blockedCount) || 0).toLocaleString('th-TH')}</td>
+                <td class="admin-text-right">${(Number(h.partnerHitCount) || 0).toLocaleString('th-TH')}</td>
+                <td class="admin-text-right">${(Number(h.partnerBlockedCount) || 0).toLocaleString('th-TH')}</td>
                 <td class="muted">${this.fmt(h.firstSeenAt)}</td>
                 <td class="muted">${this.fmt(h.lastSeenAt)}</td>
               </tr>`).join('')}</tbody>

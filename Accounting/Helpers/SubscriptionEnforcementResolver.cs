@@ -43,6 +43,8 @@ public enum SubscriptionEnforcementSource
 /// <param name="AdminSwitchHasEffect">กดสวิตช์แอดมินแล้วมีผลทันทีไหม (false = มี override ทับอยู่ — บันทึกได้แต่ยังไม่มีผล)</param>
 /// <param name="Explanation">"โหมดที่มีผลจริง + เพราะอะไร" เป็นภาษาไทย (หน้าแอดมินแสดงตรง ๆ)</param>
 /// <param name="Warnings">สิ่งที่แอดมินต้องรู้ (ค่า config เก่าที่เลิกใช้ · ค่า override เพี้ยน)</param>
+/// <param name="LegacyHeaderEnforce">รอบ 200 ฝ่ายค้าน S200-1: config เดิม <c>Subscription:Enforcement:Mode = Enforce</c> ยังตั้งอยู่ ⇒ ด่านเขียน
+/// (ระงับ/หมดอายุ) ของคำขอที่ส่ง <c>X-Company-Id</c> ยัง<b>บังคับต่อแบบเดิม</b>จนกว่าจะลบคีย์ (ไม่หลวมลงเงียบ ๆ) · หน้าแอดมินแสดงเป็นกรอบเตือน</param>
 public sealed record SubscriptionEnforcementState(
     SubscriptionEnforcementMode EffectiveMode,
     SubscriptionWriteGateMode HeaderWriteGateMode,
@@ -54,7 +56,8 @@ public sealed record SubscriptionEnforcementState(
     bool OverrideRecognized,
     bool AdminSwitchHasEffect,
     string Explanation,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    bool LegacyHeaderEnforce = false);
 
 /// <summary>
 /// <b>ตัวตัดสิน "โหมดบังคับแพ็กเกจที่มีผลจริง" ตัวเดียว</b> — รอบ 200 คำตัดสินข้อ 14
@@ -71,6 +74,11 @@ public sealed record SubscriptionEnforcementState(
 ///
 /// <para>ไม่หลวม: คำขอที่ส่ง <c>X-Company-Id</c> มาเองยังถูกตัดสินฟีเจอร์/สถานะเสมอ (<see cref="SubscriptionGatePolicy.ActionFor"/>) ·
 /// override/สวิตช์คุมแค่ (ก) คำขอจากหน้าเว็บ (ข) ด่านเขียนของทุกคำขอ</para>
+///
+/// <para>═══ รอบ 200 ฝ่ายค้าน S200-1 ═══ ค่าเดิม <see cref="LegacyKey"/> = <c>Enforce</c> (แผน WP-A1 ให้ตั้งใน production หลัง monitor) เคยบล็อก
+/// การเขียนของ partner ที่บริษัทถูกระงับ/หมดอายุ · ถ้าตัดสินใหม่ว่า "คีย์เดิมไม่มีผล" ทันที = partner <b>หลวมลงเงียบ ๆ</b> หลัง deploy ⇒ คีย์เดิม =
+/// <c>Enforce</c> ยังคุมด่านเขียนของคำขอ header ต่อ (<see cref="SubscriptionEnforcementState.LegacyHeaderEnforce"/>) จนกว่าจะลบคีย์ · ค่าอื่นของคีย์เดิม
+/// (LogOnly/Off) ไม่มีผล (ไม่เข้มกว่าค่าเดิม) · ตอนบูต log เตือนครั้งเดียว (<see cref="LegacyBootWarning"/>) + หน้าแอดมินเตือนทุกครั้งที่เปิด</para>
 /// </summary>
 public static class SubscriptionEnforcementResolver
 {
@@ -114,22 +122,42 @@ public static class SubscriptionEnforcementResolver
             warnings.Add($"ค่า {OverrideKey} = “{raw}” ไม่รู้จัก (ต้องเป็น Off, Shadow หรือ Enforce) — ระบบถือเป็นโหมดเงา "
                 + "(ไม่บล็อกใคร) จนกว่าจะแก้ค่าหรือลบออก");
         var legacy = string.IsNullOrWhiteSpace(legacyRaw) ? null : legacyRaw.Trim();
+        // S200-1: คีย์เดิม = Enforce ⇒ partner ยังถูกบังคับด่านเขียนแบบเดิมจนกว่าคีย์ถูกลบ (ไม่หลวมลงเงียบ) — ค่าอื่นไม่มีผล (ไม่เข้มกว่าเดิม)
+        var legacyHeaderEnforce = IsLegacyEnforce(legacy) && effective != SubscriptionEnforcementMode.Enforce;
         if (legacy != null)
-        {
-            var text = $"ค่า config เดิม {LegacyKey} = “{legacy}” เลิกใช้แล้ว (รอบ 200) — ไม่มีผลต่อการตัดสิน · "
-                + "ด่านบริษัทถูกระงับ/หมดอายุเดินตามโหมดที่มีผลจริงด้านบน · ลบคีย์นี้ออกจาก config ได้";
-            if (string.Equals(legacy, "enforce", StringComparison.OrdinalIgnoreCase) && effective != SubscriptionEnforcementMode.Enforce)
-                text += " · เดิมค่านี้บล็อกการเขียนของบริษัทที่ถูกระงับ/หมดอายุจาก partner อยู่แล้ว — ตอนนี้จะบล็อกเมื่อโหมดที่มีผลจริง = บังคับ เท่านั้น";
-            warnings.Add(text);
-        }
+            warnings.Add(LegacyText(legacy, legacyHeaderEnforce));
 
         return new SubscriptionEnforcementState(
             effective,
-            effective == SubscriptionEnforcementMode.Enforce ? SubscriptionWriteGateMode.Enforce : SubscriptionWriteGateMode.LogOnly,
+            effective == SubscriptionEnforcementMode.Enforce || legacyHeaderEnforce
+                ? SubscriptionWriteGateMode.Enforce
+                : SubscriptionWriteGateMode.LogOnly,
             source, adminSwitch.Mode, adminSwitch.Source, overrideMode, raw, recognized,
             AdminSwitchHasEffect: !overrideMode.HasValue,
-            Explain(effective, source, adminSwitch, raw),
-            warnings);
+            Explain(effective, source, adminSwitch, raw) + (legacyHeaderEnforce
+                ? $" · แต่ config เดิม {LegacyKey} = Enforce ยังตั้งอยู่ ⇒ partner ที่ส่ง X-Company-Id ของบริษัทถูกระงับ/หมดอายุยังถูกบล็อกการสร้าง/แก้ไขแบบเดิม"
+                : ""),
+            warnings,
+            legacyHeaderEnforce);
+    }
+
+    private static bool IsLegacyEnforce(string? legacy) =>
+        string.Equals(legacy?.Trim(), "enforce", StringComparison.OrdinalIgnoreCase);
+
+    private static string LegacyText(string legacy, bool headerEnforce) =>
+        headerEnforce
+            ? $"ค่า config เดิม {LegacyKey} = “{legacy}” เลิกใช้แล้ว (รอบ 200) แต่ยังมีผลอยู่หนึ่งอย่าง: partner ที่ส่ง X-Company-Id ของบริษัทที่ถูกระงับ/"
+              + "หมดอายุยังถูกบล็อกการสร้าง/แก้ไขแบบเดิม (ไม่หลวมลงเงียบ ๆ) — ลบคีย์นี้ออกจาก config (env/appsettings) ทุกเครื่องเมื่อพร้อมให้ partner เดินตามสวิตช์นี้"
+            : $"ค่า config เดิม {LegacyKey} = “{legacy}” เลิกใช้แล้ว (รอบ 200) — ไม่มีผลต่อการตัดสิน · "
+              + "ด่านบริษัทถูกระงับ/หมดอายุเดินตามโหมดที่มีผลจริงด้านบน · ลบคีย์นี้ออกจาก config ได้";
+
+    /// <summary>ข้อความเตือนตอนบูต (ครั้งเดียวต่อ process · <c>Program.cs</c>) เมื่อยังตั้งคีย์เดิม <see cref="LegacyKey"/> · <c>null</c> = ไม่ได้ตั้ง
+    /// (S200-1: ทิศหลวมลงต้องมองเห็นใน log ไม่ใช่แค่บนหน้าแอดมินที่อาจไม่มีใครเปิด)</summary>
+    public static string? LegacyBootWarning(string? legacyRaw)
+    {
+        var legacy = string.IsNullOrWhiteSpace(legacyRaw) ? null : legacyRaw.Trim();
+        return legacy == null ? null : LegacyText(legacy, IsLegacyEnforce(legacy))
+            + (IsLegacyEnforce(legacy) ? "" : " (ค่านี้ไม่ใช่ Enforce จึงไม่มีผลใดเลย)");
     }
 
     /// <summary>ชื่อโหมด (ไม่สนตัวพิมพ์ · ห้ามตัวเลข — "2" ไม่ใช่ Enforce) · ไม่รู้จัก = <c>null</c></summary>

@@ -10,6 +10,10 @@ public enum TenantCompanySource
     Route = 1,
     /// <summary>header <c>X-Company-Id</c> — partner/integration ที่ส่งมาเอง (api.js ไม่ส่ง)</summary>
     Header = 2,
+    /// <summary>คีย์ API ของ <c>/api/v1</c> (<c>context.Items["CompanyId"]</c> ที่ <c>ApiKeyMiddleware</c> ใส่) — ไม่มี route/header · ใช้เฉพาะ
+    /// <c>SubscriptionCheckMiddleware</c> ผ่าน <c>SubscriptionGatePolicy.WithPublicApiCompany</c> (รอบ 200 คำตัดสินข้อ 23) · <see cref="TenantCompanyId.Resolve"/>
+    /// ไม่คืนค่านี้</summary>
+    ApiKey = 3,
 }
 
 /// <summary>ผลการหาบริษัทของคำขอ</summary>

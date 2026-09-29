@@ -6218,8 +6218,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "SubscriptionStatus" varchar(20) NULL;""",
             """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "BlockedCount" bigint NOT NULL DEFAULT 0;""",
             // คีย์ 3 คอลัมน์เดิมต้องถูกถอด ไม่งั้น endpoint ที่สองของ (บริษัท, เหตุ, ฟีเจอร์) เดิมชน unique แล้วการบันทึกล้มเงียบ (fail-open)
-            """DROP INDEX IF EXISTS "IX_SubscriptionGateShadowHits_Key";""",
+            // รอบ 200 ฝ่ายค้าน S200-7: CREATE ตัวใหม่ **ก่อน** DROP ตัวเก่า — เดิม DROP ก่อน ⇒ ถ้า CREATE ล้ม (lock timeout) ตารางไม่มี unique เลย
+            // แล้ว ON CONFLICT ล้มทุกคำขอ (log spam + รายงานว่างเงียบ) และเครื่องรุ่นเก่าระหว่าง rolling deploy ไม่มี index ของคีย์ 3 คอลัมน์รองรับ ·
+            // ลำดับนี้ = ทุกช่วงเวลามี unique ที่ตรงกับ ON CONFLICT ของรุ่นใดรุ่นหนึ่งเสมอ (คีย์ใหม่ ⊃ คีย์เดิม จึงไม่มีแถวซ้ำให้ CREATE ล้ม)
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_KeyV2" ON "SubscriptionGateShadowHits" ("CompanyId", "Reason", "Feature", "Endpoint");""",
+            """DROP INDEX IF EXISTS "IX_SubscriptionGateShadowHits_Key";""",
+            // รอบ 200 S200-3: คำขอ partner (ส่ง X-Company-Id / คีย์ API ของ /api/v1) นับแยกคอลัมน์จากหน้าเว็บ (เดิมไม่ถูกนับเลย)
+            """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "PartnerHitCount" bigint NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "PartnerBlockedCount" bigint NOT NULL DEFAULT 0;""",
             """CREATE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_LastSeen" ON "SubscriptionGateShadowHits" ("LastSeenAt");""",
 
             // ═══ POS เฟส 3: ขายแล้วกินวัตถุดิบตามสูตร (sell-consumes-BOM) ═══

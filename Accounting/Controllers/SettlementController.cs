@@ -357,7 +357,19 @@ public class SettlementController : ControllerBase
     [HttpGet("batches/{batchId:guid}/posting-preview")]
     [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
     public Task<ActionResult<ApiResponse<SettlementPostingPreview>>> PostingPreview(Guid companyId, Guid batchId, CancellationToken ct)
-        => Guarded(() => _posting.PreviewAsync(companyId, batchId, UserId, ct));
+    {
+        return Guarded(async () =>
+        {
+            var preview = await _posting.PreviewAsync(companyId, batchId, UserId, ct);
+            // S200-5 (ต่อจาก D-P5): ผู้มีแค่ Settlement.View ไม่เห็นเลขที่/ยอดค้างของใบขายผ่านข้อความปัญหา — ตัวตัดสินสิทธิ์ตัวเดียวกับหน้ารอบโอน
+            var hidden = SettlementPermissionScope.CandidatesHiddenReason(
+                await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Import),
+                await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Post));
+            return hidden is string reason
+                ? preview with { Plan = SettlementPermissionScope.HideReceivableDetails(preview.Plan, reason) }
+                : preview;
+        });
+    }
 
     /// <summary>ลงบัญชีรอบโอน — ถูกบล็อก ⇒ 409 พร้อมแผน (<c>Plan.Issues</c> มี <c>NextStep</c>) · ค้างครึ่งทาง ⇒ 409 <c>SETTLEMENT-POST-PARTIAL</c></summary>
     [HttpPost("batches/{batchId:guid}/post")]

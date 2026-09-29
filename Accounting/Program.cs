@@ -505,6 +505,8 @@ builder.Services.AddScoped<IChatbotService, ChatbotService>();
 builder.Services.AddScoped<IChatRateLimiter, ChatRateLimiter>();
 // รอบ 198 ข้อ 5 — สวิตช์ gate แพ็กเกจบนหน้าเว็บ + ผลโหมดเงา (SubscriptionCheckMiddleware · หน้าแอดมิน)
 builder.Services.AddScoped<ISubscriptionGateShadowLog, SubscriptionGateShadowLog>();
+// รอบ 200 S200-8: แคชสวิตช์บังคับแพ็กเกจต่อเครื่อง 5 วินาที (DB ยังเป็นความจริงตัวเดียว · ไม่มี state ที่ต้องตรงกันข้ามเครื่อง)
+builder.Services.AddSingleton<Accounting.Helpers.SubscriptionAdminSwitchCache>();
 builder.Services.AddScoped<IOcrQuotaService, OcrQuotaService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.AzureDocumentIntelligenceService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrSelfCorrectionService>();
@@ -951,6 +953,13 @@ var app = builder.Build();
 // มี logger จริงไว้เตือนเมื่อถูกเรียกนอก transaction ไม่งั้นคำเตือนหายเงียบ
 Accounting.Helpers.SequenceNumber.Log =
     app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SequenceNumber");
+
+// รอบ 200 ฝ่ายค้าน S200-1: config เดิม Subscription:Enforcement:Mode เลิกใช้แล้ว — ยังตั้งอยู่ = เตือนครั้งเดียวตอนบูต (ไม่ใช่แค่บนหน้าแอดมิน
+// ที่อาจไม่มีใครเปิด) · ค่า Enforce ยังคุมด่านเขียนของ partner ต่อแบบเดิมจนกว่าจะลบคีย์ (SubscriptionEnforcementResolver)
+if (Accounting.Helpers.SubscriptionEnforcementResolver.LegacyBootWarning(
+        app.Configuration[Accounting.Helpers.SubscriptionEnforcementResolver.LegacyKey]) is string legacyEnforcementWarning)
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SubscriptionEnforcement")
+        .LogWarning("{Warning}", legacyEnforcementWarning);
 
 // Non-null web root for static-file fallbacks below. WebRootPath can be null
 // when wwwroot doesn't exist at startup; coalesce to ContentRoot/wwwroot so the

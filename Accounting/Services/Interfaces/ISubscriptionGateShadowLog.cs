@@ -10,18 +10,22 @@ namespace Accounting.Services.Interfaces;
 /// <param name="Endpoint">คีย์ endpoint (<see cref="SubscriptionGatePolicy.EndpointKey"/> — route template ไม่มี id) · ส่วนหนึ่งของคีย์แถว</param>
 /// <param name="SubscriptionStatus">ชื่อสถานะ subscription (Trial/Active/…) — ใช้แยก "ลูกค้าทดลองใช้" ในรายงาน</param>
 /// <param name="Enforced">true = ถูกบล็อกจริง (นับใน BlockedCount) · false = โหมดเงา (นับใน HitCount)</param>
+/// <param name="Partner">รอบ 200 S200-3: ผู้เรียกเป็น partner (ส่ง <c>X-Company-Id</c>) หรือคีย์ API ของ <c>/api/v1</c> ⇒ นับใน
+/// <c>PartnerHitCount</c>/<c>PartnerBlockedCount</c> แทน (<see cref="SubscriptionGatePolicy.IsPartnerCaller"/>)</param>
 public sealed record SubscriptionGateShadowHit(
     Guid CompanyId, SubscriptionGateReason Reason, string? Feature, string? Plan,
     string? RouteKey, string Method, bool WouldBlock,
-    string Endpoint, string? SubscriptionStatus, bool Enforced);
+    string Endpoint, string? SubscriptionStatus, bool Enforced, bool Partner = false);
 
 /// <summary>แถวในรายงานแอดมิน (สะสมต่อ บริษัท × เหตุ × ฟีเจอร์ × endpoint)</summary>
 /// <param name="HitCount">ครั้งที่ "จะถูกบล็อก" ในโหมดเงา</param>
 /// <param name="BlockedCount">ครั้งที่ถูกบล็อกจริง (หน้าเว็บ · โหมดที่มีผลจริง = บังคับ)</param>
+/// <param name="PartnerHitCount">ครั้งที่ "จะถูกบล็อก" ของคำขอ partner/คีย์ API (คีย์ใหม่ระหว่างโหมดเงา · ด่านเขียนที่ยัง log อย่างเดียว · /api/v1 โหมดเงา)</param>
+/// <param name="PartnerBlockedCount">ครั้งที่คำขอ partner/คีย์ API ถูกบล็อกจริง</param>
 public sealed record SubscriptionGateShadowRow(
     Guid CompanyId, string Reason, string Feature, string Endpoint, string? Plan, string? SubscriptionStatus,
     string? RouteKey, string? LastMethod, bool WouldBlock, long HitCount, long BlockedCount,
-    DateTime FirstSeenAt, DateTime LastSeenAt);
+    DateTime FirstSeenAt, DateTime LastSeenAt, long PartnerHitCount = 0, long PartnerBlockedCount = 0);
 
 /// <summary>
 /// ที่เก็บผลโหมดเงาของ gate แพ็กเกจ/ระงับบริษัท + ตัวอ่านสวิตช์แพลตฟอร์ม — รอบ 198 ข้อ 5 "รายงานก่อน แล้วค่อยเปิดบังคับ" ·
@@ -38,6 +42,13 @@ public interface ISubscriptionGateShadowLog
     /// <see cref="SubscriptionEnforcementResolver.Resolve(SubscriptionAdminSwitchRead, Microsoft.Extensions.Configuration.IConfiguration)"/>
     /// (override ฉุกเฉินใน config) เสมอ — ห้ามใช้ค่านี้ตัดสินตรง ๆ</summary>
     Task<SubscriptionAdminSwitchRead> ReadAdminSwitchAsync(CancellationToken ct = default);
+
+    /// <summary>อ่านสวิตช์แอดมินสดจากฐานข้อมูล (ไม่ผ่านแคช <see cref="SubscriptionAdminSwitchCache"/>) — หน้าแอดมินใช้ตัวนี้ ให้กรอบ "โหมดที่มีผลจริง"
+    /// ตรงฐานข้อมูลเสมอ · middleware ใช้ <see cref="ReadAdminSwitchAsync"/> (แคชสั้น S200-8)</summary>
+    Task<SubscriptionAdminSwitchRead> ReadAdminSwitchFreshAsync(CancellationToken ct = default);
+
+    /// <summary>ล้างแคชสวิตช์ของเครื่องนี้ (หลังแอดมินกดเปลี่ยน) — เครื่องอื่นตามทันภายใน <see cref="SubscriptionAdminSwitchCache.Ttl"/></summary>
+    void InvalidateAdminSwitchCache();
 
     /// <summary>บวก 1 ให้แถว (บริษัท, เหตุ, ฟีเจอร์) · ไม่ throw</summary>
     Task RecordAsync(SubscriptionGateShadowHit hit, CancellationToken ct = default);
