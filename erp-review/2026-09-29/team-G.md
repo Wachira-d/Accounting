@@ -1,7 +1,7 @@
 # รอบ 200 — ทีม G: payment gateway ส่วนที่ยังไม่เคยถูกตรวจ
 
 > ขอบเขต (BRIEF): `GatewaySettlementService` G-2/G-3/G-4 · `PaymentGatewayController` G-8 ทุก endpoint · หน้าเว็บ gateway · E-3 · E-4 · E2-12 ที่ค้าง ·
-> DECISIONS ข้อ 18 (`MinVerifyWait` · `Omise-Version`) · มุมมอง security + นักบัญชี + วิศวกร payment · base `5c1fe028`
+> DECISIONS ข้อ 18 (`MinVerifyWait` · `Omise-Version`) · มุมมอง security + นักบัญชี + วิศวกร payment · base `5c1fe028` · คอมมิตแก้ `e004a2cc`
 > **ยังไม่ได้คอมไพล์** (ไม่มี .NET SDK ในเครื่องนี้) — CI บน `claude/**` คือ compiler ตัวแรก
 
 ## สรุป

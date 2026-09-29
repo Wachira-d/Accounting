@@ -3729,4 +3729,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม G — payme
 - **E2-12** `SettledFeeDeducted` (+ migration พิสูจน์ได้) · วันที่ใบสำคัญเงินคืนที่ยืนยันทีหลัง = วันเงินออก (`PastRefundBooking`) · สาขาว่าง/วันที่เคลมอนาคต = บล็อก
 - **E-3** POS: ช่อง "บัญชีธนาคารรับเงิน" บนตั้งค่าเครื่อง (เดิมไม่มีช่องทั้งที่ข้อความล้มดังชี้ไป) + `TerminalResponse.MoneyAccountWarning` ป้ายเตือนก่อนขาย · ชื่อเครื่อง/สินค้า esc
 - **E-4** ข้อความขาดผังลูกหนี้ `TradeReceivableAccount.MissingMessage` (บอก 11310 + ช่องบนผู้ติดต่อ) · หน้า payment-intents ประวัติอ่าน `from/to` · หน้ารอบโอนปิดปุ่มบันทึกเมื่อแก้หลังดูตัวอย่าง
-- เทสต์ `GatewayTeamGRound200Tests` · required_call_site +15 — commit <pending>)_
+- เทสต์ `GatewayTeamGRound200Tests` · required_call_site +15 — commit e004a2cc)_
