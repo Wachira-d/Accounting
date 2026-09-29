@@ -1146,8 +1146,9 @@ const API = {
       postSettlementBatch: (id) => API.post(`${base}/settlement/batches/${id}/post`, {}),
       unpostSettlementBatch: (id, reason) => API.post(`${base}/settlement/batches/${id}/unpost`, { reason }),
       // รอบ 200 (DECISIONS ข้อ 10): รับรู้ของกำพร้าที่ยกเลิกไม่ได้จริง — เซิร์ฟเวอร์ตัดสินกอง/สิทธิ์เอง (ปุ่มแสดงตาม canAcknowledge ของพรีวิว)
-      acknowledgeSettlementOrphan: (artifactId, isPayment, reason) =>
-        API.post(`${base}/settlement/orphans/acknowledge`, { artifactId, isPayment: !!isPayment, reason }),
+      // batchId = รอบโอนที่กำลังดูพรีวิว (ฝ่ายค้านรอบ 200 V2-P1 — เก็บลง audit ว่าตรวจเทียบรอบไหน)
+      acknowledgeSettlementOrphan: (artifactId, isPayment, reason, batchId) =>
+        API.post(`${base}/settlement/orphans/acknowledge`, { artifactId, isPayment: !!isPayment, reason, batchId: batchId || null }),
       getSettlementDepositCandidates: (id) => API.get(`${base}/settlement/batches/${id}/deposit-candidates`),
       matchSettlementDeposit: (id, bankTransactionId) =>
         API.post(`${base}/settlement/batches/${id}/deposit-match`, { bankTransactionId }),

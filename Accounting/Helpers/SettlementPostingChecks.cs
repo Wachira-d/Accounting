@@ -8,7 +8,13 @@ namespace Accounting.Helpers;
 // ═══════════════════════════════════════════════════════════════════════
 
 /// <summary>รอบโอนก่อนหน้าของช่องทางเดียวกัน (ไม่ถูกยกเลิก/ลบ · เรียงตามวันเงินเข้า) — ข้อเท็จจริงจากฐาน</summary>
-public sealed record SettlementWalletPrevious(string PayoutRef, DateTime PayoutDate, decimal ClosingWalletBalance);
+/// <param name="OpeningWalletBalance">ยอดต้นรอบของรอบก่อน — null = ไม่ได้ส่งมา (ใช้ตัดสิน "รอบก่อนไม่มียอด wallet" T-4)</param>
+public sealed record SettlementWalletPrevious(string PayoutRef, DateTime PayoutDate, decimal ClosingWalletBalance,
+    decimal? OpeningWalletBalance = null);
+
+/// <summary>รอบโอนอื่นของช่องทางเดียวกันที่อาจเป็นรอบก่อนหน้า (ไม่ถูกยกเลิก/ลบ) — ข้อเท็จจริงจากฐาน (T-3 · ฝ่ายค้านรอบ 200)</summary>
+public sealed record SettlementWalletCandidate(string PayoutRef, DateTime PayoutDate, DateTime CreatedAt,
+    decimal OpeningWalletBalance, decimal ClosingWalletBalance);
 
 public enum SettlementWalletContinuityKind
 {
@@ -18,6 +24,9 @@ public enum SettlementWalletContinuityKind
     Gap = 2,
     /// <summary>ไม่มีรอบก่อนให้เทียบ (รอบแรกของช่องทาง) — <b>ไม่รู้</b> ไม่ใช่ "ต่อเนื่อง" (DOCTRINE §1)</summary>
     NoPreviousBatch = 3,
+    /// <summary>รอบก่อนหน้ากรอกยอด wallet ต้น/ปลายรอบเป็น 0/0 (ไฟล์รุ่นเก่าไม่มียอด) แต่รอบนี้มียอดจริง — <b>ไม่รู้</b> ว่าต่อเนื่องไหม ⇒ เตือน ไม่บล็อก
+    /// (ฝ่ายค้านรอบ 200 T-4 — เดิมเป็น Gap ถาวร และบังคับให้กรอกยอดต้นรอบที่ไม่ใช่ยอดจริง)</summary>
+    PreviousHadNoBalances = 4,
 }
 
 /// <param name="Difference">ยอดต้นรอบ − ยอดปลายรอบของรอบก่อน (0 เมื่อไม่มีรอบก่อน)</param>
@@ -37,9 +46,30 @@ public static class SettlementWalletContinuity
         if (previous is null)
             return new SettlementWalletContinuityResult(SettlementWalletContinuityKind.NoPreviousBatch, opening, null, 0m);
         var diff = opening - previous.ClosingWalletBalance;
-        return new SettlementWalletContinuityResult(
-            SettlementBatchMath.IsBalanced(diff) ? SettlementWalletContinuityKind.Continuous : SettlementWalletContinuityKind.Gap,
-            opening, previous, diff);
+        if (SettlementBatchMath.IsBalanced(diff))
+            return new SettlementWalletContinuityResult(SettlementWalletContinuityKind.Continuous, opening, previous, diff);
+        // T-4: รอบก่อนเป็น 0/0 ทั้งคู่ = ไฟล์ไม่มียอด wallet ("ไม่รู้") ไม่ใช่หลักฐานว่ายอดขาด
+        var kind = previous.OpeningWalletBalance == 0m && previous.ClosingWalletBalance == 0m
+            ? SettlementWalletContinuityKind.PreviousHadNoBalances
+            : SettlementWalletContinuityKind.Gap;
+        return new SettlementWalletContinuityResult(kind, opening, previous, diff);
+    }
+
+    /// <summary>
+    /// **เลือกรอบก่อนหน้าของรอบนี้** (ฝ่ายค้านรอบ 200 T-3) — เดิมรอบวันเดียวกันเรียงด้วยเวลานำเข้า ⇒ payout สองรอบของวันเดียวกันที่นำเข้าสลับลำดับ
+    /// บล็อก Gap ทั้งสองรอบทั้งที่ยอดถูก · ตอนนี้: (1) รอบวันเดียวกันที่<b>ยอดปลายรอบ = ยอดต้นรอบของรอบนี้</b> = รอบก่อน (หลักฐานจากยอด ไม่ใช่ลำดับกด) ·
+    /// (2) ไม่มี ⇒ รอบวันเดียวกันที่นำเข้าก่อน <b>ยกเว้น</b>รอบที่ยอดต้นรอบ = ยอดปลายรอบของรอบนี้ (มันมาหลังรอบนี้) · (3) ไม่มี ⇒ รอบล่าสุดของวันก่อนหน้า · pure
+    /// </summary>
+    public static SettlementWalletPrevious? PickPrevious(DateTime createdAt, decimal opening, decimal closing,
+        IReadOnlyList<SettlementWalletCandidate> sameDay, SettlementWalletCandidate? earlierDay)
+    {
+        var chosen = sameDay.Where(c => SettlementBatchMath.IsBalanced(c.ClosingWalletBalance - opening))
+                         .OrderByDescending(c => c.CreatedAt).FirstOrDefault()
+                     ?? sameDay.Where(c => c.CreatedAt < createdAt && !SettlementBatchMath.IsBalanced(c.OpeningWalletBalance - closing))
+                         .OrderByDescending(c => c.CreatedAt).FirstOrDefault()
+                     ?? earlierDay;
+        return chosen is null ? null
+            : new SettlementWalletPrevious(chosen.PayoutRef, chosen.PayoutDate, chosen.ClosingWalletBalance, chosen.OpeningWalletBalance);
     }
 }
 
@@ -97,6 +127,33 @@ public static class SettlementSummarySupplement
         if (sameDay.Count == 0) return null;
         var first = sameDay.OrderBy(s => s.CreatedAt).ThenBy(s => s.Number, StringComparer.Ordinal).First();
         return new SettlementSupplementarySummary(day, lineIds, first.Number, first.PayoutRef, first.Issued, sameDay.Count);
+    }
+
+    /// <summary>
+    /// **ใบสรุปเพิ่มเติมที่เนื้อหาซ้ำรอบที่ออกใบแรก = รายได้ซ้ำ ไม่ใช่ใบเพิ่มเติม** (ฝ่ายค้านรอบ 200 T-2) — ก่อนข้อ 15 ด่าน <c>SummarySaleDuplicate</c>
+    /// กัน "ไฟล์เดิมนำเข้าด้วยเลขรอบโอนอื่น (ไม่มีเลขออเดอร์/เลขรายการ)" · หลังข้อ 15 เหลือแค่คำเตือนตอนนำเข้าที่ผู้กดลงบัญชีไม่เห็น ⇒ ตัดสินที่ด่านลงบัญชี
+    /// ด้วยข้อเท็จจริงเนื้อหาตัวเดียวกับผู้นำเข้า (<see cref="SettlementContentOverlap"/>): <b>ทุก</b>บรรทัดของใบสรุปวันนั้นมีบรรทัดเนื้อหาตรงกันในรอบโอนที่ออกใบแรก
+    /// ⇒ ย้ายเป็น <see cref="SettlementDuplicateSale"/> (บล็อก) · ตรงบางบรรทัด ⇒ ยังเป็นใบเพิ่มเติม (คำเตือน <c>ContentOverlapElsewhere</c> รายบรรทัดยังอยู่ —
+    /// แถวหน้าตาเหมือนกันอาจเป็นคนละรายการจริง R-B5) · pure
+    /// </summary>
+    public static (List<SettlementDuplicateSale> Duplicates, List<SettlementSupplementarySummary> Kept) SplitDuplicates(
+        IEnumerable<SettlementSupplementarySummary> supplementary, IReadOnlyList<SettlementContentHit<Guid>> contentHits)
+    {
+        var refsOf = contentHits.GroupBy(h => h.Id)
+            .ToDictionary(g => g.Key, g => g.SelectMany(h => h.PayoutRefs).ToHashSet(StringComparer.Ordinal));
+        var duplicates = new List<SettlementDuplicateSale>();
+        var kept = new List<SettlementSupplementarySummary>();
+        foreach (var sup in supplementary)
+        {
+            var sameAsFirst = sup.LineIds.Count > 0
+                && sup.LineIds.All(id => refsOf.TryGetValue(id, out var refs) && refs.Contains(sup.FirstPayoutRef));
+            if (!sameAsFirst) { kept.Add(sup); continue; }
+            duplicates.Add(new SettlementDuplicateSale(sup.LineIds,
+                $"ยอดขายวันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} ของรอบนี้ ({sup.LineIds.Count} บรรทัด) เนื้อหาตรงทุกบรรทัด (ออเดอร์ · ป้าย · ยอด · วันที่) "
+                + $"กับรอบโอน {sup.FirstPayoutRef} ที่ออกใบสรุปของวันนั้นแล้ว ({sup.FirstNumber}) — น่าจะเป็นไฟล์เดิมที่นำเข้าด้วยเลขรอบโอนอื่น · "
+                + "ออกเป็นใบสรุปเพิ่มเติม = รายได้และภาษีขายของวันนั้นซ้ำ (ถ้าเป็นไฟล์ซ้ำ ให้ยกเลิกรอบโอนนี้)"));
+        }
+        return (duplicates, kept);
     }
 }
 

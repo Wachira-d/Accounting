@@ -409,7 +409,20 @@ public sealed record SettlementOrphanItem(Guid Id, bool IsPayment, string? Numbe
         SettlementOrphanPile.NeedsUserAction => "ต้องทำขั้นก่อนแล้วยกเลิก",
         _ => "ยกเลิกได้ที่หน้าเอกสาร",
     };
+
+    /// <summary>การรับรู้มีผลกับรายการนี้จริงไหม — เฉพาะกองยกเลิกไม่ได้จริง (ฝ่ายค้านรอบ 200 V2-C2: หน้าจอเคยแสดง "รับรู้แล้ว" บนรายการที่การรับรู้ไม่มีผล
+    /// และกำลังบล็อกอยู่)</summary>
+    public bool AckEffective => Ack != null && Pile == SettlementOrphanPile.Unvoidable;
+
+    /// <summary>ป้ายสถานะการรับรู้สำหรับหน้าจอ (server computes · page displays) — null = ไม่มีการรับรู้</summary>
+    public string? AckStatusLabel => Ack == null ? null
+        : AckEffective ? "✅ รับรู้แล้ว"
+        : "⚠️ การรับรู้เดิมไม่มีผล (รายการนี้ยกเลิกได้แล้ว — ต้องยกเลิกแทน)";
 }
+
+/// <summary>รอบโอนที่ผู้ใช้กำลังลงบัญชี/ดูอยู่ — ใช้ตัดสินว่าการรับรู้ของกำพร้า "ครอบรอบนี้" ไหม (ฝ่ายค้านรอบ 200 V2-P1)</summary>
+/// <param name="CreatedAt">เวลานำเข้ารอบนี้ (การรับรู้ที่ทำก่อนหน้านั้นไม่ได้ตรวจเทียบรอบนี้)</param>
+public sealed record SettlementOrphanCurrentBatch(Guid BatchId, string PayoutRef, DateTime CreatedAt);
 
 /// <summary>ผลการแยกของกำพร้า 3 กอง</summary>
 /// <param name="Voidable">ยกเลิกทีละใบได้ทันที ⇒ บล็อก (ทางไปต่อทั่วไป: ยกเลิกที่หน้าเอกสาร)</param>
@@ -437,9 +450,11 @@ public static class SettlementOrphanTriage
     /// <summary>ความยาวสูงสุดของเหตุผลการรับรู้ (กันข้อความยาวผิดปกติ)</summary>
     public const int AckReasonMaxLength = 1000;
 
+    /// <param name="current">รอบที่กำลังลงบัญชี/ดูอยู่ (V2-P1) — รอบนี้ใช้<b>เลขรอบโอนเดียวกับรอบเจ้าของที่ยกเลิก</b> (ไฟล์เดิมนำเข้าใหม่ = ซ้ำแท้) และการรับรู้ทำ<b>ก่อน</b>
+    /// นำเข้ารอบนี้ ⇒ การรับรู้เดิมไม่ครอบรอบนี้ (ตรวจเทียบรอบอื่น) ⇒ ยังไม่รับรู้ ต้องตรวจและรับรู้ใหม่ · null = ไม่เทียบ</param>
     public static SettlementOrphanTriageResult Split(IReadOnlyList<SettlementOrphanArtifact> artifacts,
         IReadOnlyList<SettlementUnpostRefusal> refusals, IReadOnlyList<SettlementUnpostDocument> documents,
-        IReadOnlyList<SettlementOrphanChild>? children = null)
+        IReadOnlyList<SettlementOrphanChild>? children = null, SettlementOrphanCurrentBatch? current = null)
     {
         var byArtifact = refusals.Where(r => r.ArtifactId != null).GroupBy(r => r.ArtifactId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -477,7 +492,10 @@ public static class SettlementOrphanTriage
                 if (hardReasons.Count > 0)
                 {
                     var msg = $"{head} ยกเลิกในระบบไม่ได้แล้ว: {string.Join(" · ", hardReasons)}";
-                    if (a.Ack is SettlementOrphanAck ack)
+                    if (a.Ack is SettlementOrphanAck stale && !AckCovers(stale, payoutRef, current))
+                        msg += $" (เคยรับรู้ไว้เมื่อ {ThaiDate.ToThaiDisplayString(stale.At)} ก่อนนำเข้ารอบนี้ ซึ่งใช้เลขรอบโอน {payoutRef} เดียวกับรอบที่ยกเลิก — "
+                            + "อาจเป็นไฟล์เดิมนำเข้าซ้ำ · การรับรู้เดิมไม่ครอบรอบนี้ ต้องตรวจแล้วรับรู้ใหม่)";
+                    if (a.Ack is SettlementOrphanAck ack && AckCovers(ack, payoutRef, current))
                     {
                         var shown = msg + " — " + AckLabel(ack);
                         acked.Add(shown);
@@ -503,6 +521,12 @@ public static class SettlementOrphanTriage
         }
         return new SettlementOrphanTriageResult(voidable, needs, hard, acked, items);
     }
+
+    /// <summary>การรับรู้นี้ครอบรอบที่กำลังลงบัญชีไหม (V2-P1) — ไม่ครอบเฉพาะเมื่อรอบนี้ใช้เลขรอบโอนเดียวกับรอบเจ้าของที่ยกเลิก และรับรู้ไว้ก่อนนำเข้ารอบนี้</summary>
+    internal static bool AckCovers(SettlementOrphanAck ack, string ownerPayoutRef, SettlementOrphanCurrentBatch? current)
+        => current is null
+           || !string.Equals((ownerPayoutRef ?? "").Trim(), (current.PayoutRef ?? "").Trim(), StringComparison.Ordinal)
+           || ack.At >= current.CreatedAt;
 
     /// <summary>ชิ้นนี้มีเหตุให้ตัดสินรายชิ้นไหม (ด่านยกเลิกการลงบัญชีปฏิเสธ หรือมีใบที่อ้างซึ่งยกเลิกไม่ได้) — ไม่มี = กองยกเลิกได้ทันที</summary>
     private static bool Judged(SettlementOrphanArtifact a, Dictionary<Guid, List<SettlementUnpostRefusal>> byArtifact,

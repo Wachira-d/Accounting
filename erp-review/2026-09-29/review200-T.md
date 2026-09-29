@@ -146,3 +146,18 @@
   `SettlementWalletPrevious` ถูกสร้างใน EF `Select` แต่ไม่มีพารามิเตอร์ optional ✓
 - `SettlementPostingKeys.PaymentMarkerHead` มีจริง (`SettlementPosting.cs:39` `public const string`) ✓ · `TaxType.VatPp36`/`WithholdingTax54` มีจริง ✓ · `Company.IndustryType` non-nullable → cast `(IndustryType?)` ✓
 - `DocumentService.PreviewTotals` เป็น `internal static` — เทสต์เรียกได้ผ่าน InternalsVisibleTo ✓
+
+---
+
+## สถานะการแก้ (รอบ 200 ทีม SF · รายงาน `team-SF.md` · คำตัดสิน DECISIONS ข้อ 15, 20, 27)
+
+| ID | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|
+| T-1 | ✅ c7bad3f5 | `Helpers/SettlementPosting.cs` `SettlementReceiptWht.Decide` (ไม่มี WHT ⇒ 0 · รับยอดสุทธิที่เหลือครบ ⇒ `null` = งวดสุดท้ายเดิมของ `CreatePaymentAsync` ⇒ 11910 + ลูกหนี้ปิด · รับบางส่วน ⇒ บล็อกพร้อมทางไปต่อ) · `SettlementReceiptTarget.DocumentWht` · `EnsureReceiptAsync` ตัดสินจากข้อเท็จจริงสด · builder ล้มดังเมื่อ Undecidable · เทสต์ `T1_…` 4 ตัว (สองทิศ) |
+| T-2 | ✅ c7bad3f5 | `SettlementSummarySupplement.SplitDuplicates` — ทุกบรรทัดของใบสรุปวันนั้นเนื้อหาตรงรอบที่ออกใบแรก (`SettlementContentOverlap` ตัวเดียวกับผู้นำเข้า) ⇒ `SummarySaleDuplicate` · ตรงบางบรรทัด ⇒ ใบเพิ่มเติม · เทสต์ `T2_…` |
+| T-3 | ✅ c7bad3f5 | `SettlementWalletContinuity.PickPrevious` — รอบวันเดียวกันที่ปลายรอบ = ต้นรอบนี้ก่อน · ข้ามรอบที่มาหลังตามยอด · ข้อความ Gap บอกกรณีวันเดียวกัน · เทสต์ `T3_…` สองทิศ |
+| T-4 | ✅ c7bad3f5 | `SettlementWalletContinuityKind.PreviousHadNoBalances` ⇒ เตือน `WalletContinuityUnknown` ไม่บล็อก · เทสต์ `T4_…` (รอบก่อนมียอดจริงยังบล็อก) |
+| T-5 | 📋 | ข้อความ "ต่อจากใบ X" อยู่บนเอกสารที่ออกเลขแล้ว (แก้ย้อนไม่ได้ §86/4) · ยอด/ภาษีถูก · ถ้าจะแก้ต้องมีเส้น "ยกเลิก-ออกแทน" ของใบสรุป (ทีม V1) — ไม่ทำครึ่งเดียว |
+| T-6 | ✅ c7bad3f5 | ทางไปต่อ `SummarySaleFirstNotIssued` บอก "ลบร่าง {เลข} / ยกเลิกรอบโอน {ref}" · เทสต์ `T6_…` |
+| T-7 | ✅ c7bad3f5 | `LegacyMoneyLegAudit.AdjustedBy` — หลักฐาน = JE อื่นที่โพสต์แล้ว/ไม่ถูกกลับรายการซึ่งช่อง "อ้างอิง" = เลข JE นี้ตรงตัว (ไม่ fuzzy · ไม่อ้างตัวเอง) · `JournalAnomalyService.ScanAsync` ข้าม · ข้อความ Fix บอกวิธี · เทสต์ `T7_…` |
+| T-8 | ✅ c7bad3f5 | `SettlementBatchMath.FeeCutoff` เรียง (ปี, เดือน) · เทสต์ `T8_…` |

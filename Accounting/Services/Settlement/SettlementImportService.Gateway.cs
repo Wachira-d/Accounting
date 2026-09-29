@@ -42,7 +42,9 @@ public sealed partial class SettlementImportService
 
         // ข้อเท็จจริงเดียว: "ผู้ให้บริการคิด VAT บนค่าธรรมเนียมไหม · เราหัก ณ ที่จ่ายไหม" config กับช่องทางต้องตอบตรงกัน —
         // ไม่ตรง = รอบโอนแต่งภาษีซื้อ (config ไม่แยก + ช่องทาง VAT 7%) หรือยอดไม่ลงตัว/ภาษีซื้อหาย (config บวก VAT + ช่องทางไม่มี VAT)
-        if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, channel.FeeVatMode, channel.FeeWhtMode) is string modeBad)
+        // X-3 (DECISIONS ข้อ 26): "ตรงกัน" = สองเส้นให้ผลภาษีเท่ากัน — บริษัทไม่จด VAT ⇒ โหมด VAT ไทยทุกคู่เท่ากัน (ตัวตัดสินต้องรู้สถานะ VAT)
+        var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+        if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, channel.FeeVatMode, channel.FeeWhtMode, vatRegistered) is string modeBad)
             throw new BusinessRuleException(modeBad, "SETTLEMENT-GATEWAY-MODE-MISMATCH");
 
         // R-A1: บรรทัดที่พก PaymentIntentId ถูกนับว่า "อยู่ในผังพักแล้ว" — จริงเฉพาะเมื่อผังพักของช่องทาง = ผังที่ขาเงินเข้าของ intent ลงไว้

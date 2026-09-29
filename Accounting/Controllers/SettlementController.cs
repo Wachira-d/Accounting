@@ -395,7 +395,8 @@ public class SettlementController : ControllerBase
     }
 
     /// <param name="ArtifactId">id ของเอกสาร (<c>IsPayment=false</c>) หรือการรับชำระ (<c>IsPayment=true</c>) ที่เป็นของกำพร้า</param>
-    public sealed record OrphanAckRequest(Guid ArtifactId, bool IsPayment, string? Reason);
+    /// <param name="BatchId">รอบโอนที่ผู้ใช้กำลังดูพรีวิวและตรวจเทียบ (ฝ่ายค้านรอบ 200 V2-P1 — เก็บลง audit · การรับรู้เดิมที่ไม่ครอบรอบนี้รับรู้ใหม่ได้) · null = ไม่ระบุ</param>
+    public sealed record OrphanAckRequest(Guid ArtifactId, bool IsPayment, string? Reason, Guid? BatchId = null);
 
     /// <summary>**รับรู้ของกำพร้า** (รอบ 200 · DECISIONS ข้อ 10) — เฉพาะชิ้นที่ยกเลิกไม่ได้จริงของรอบโอนที่ถูกยกเลิกแล้ว · บังคับเหตุผล · ประทับผู้/เวลา/เหตุผล
     /// บนแถว + audit chain ⇒ ไม่บล็อกการลงบัญชีของช่องทางนั้นอีก · กำหนดว่ารอบโอนถัดไปลงบัญชีได้ (ขยับ GL) ⇒ ห้ามคีย์ API · ปฏิเสธ = 409 พร้อมทางไปต่อ</summary>
@@ -409,7 +410,8 @@ public class SettlementController : ControllerBase
             return BadRequest(new ApiResponse<SettlementOrphanAckResult>(false, null, "ระบุรายการของกำพร้าที่จะรับรู้ (เอกสารหรือการรับชำระ)"));
         try
         {
-            var r = await _posting.AcknowledgeOrphanAsync(companyId, request.ArtifactId, request.IsPayment, UserId, request.Reason, ct);
+            var r = await _posting.AcknowledgeOrphanAsync(companyId, request.ArtifactId, request.IsPayment, UserId, request.Reason,
+                request.BatchId, ct);
             return r.Ok
                 ? Ok(new ApiResponse<SettlementOrphanAckResult>(true, r, r.Message))
                 : Conflict(new ApiResponse<SettlementOrphanAckResult>(false, r, r.Message));

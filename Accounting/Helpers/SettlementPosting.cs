@@ -242,9 +242,43 @@ public static class SettlementAccountResolver
 /// <param name="PendingElsewhere">ยอดที่รอบโอน<b>อื่น</b>ที่ยังไม่ลงบัญชีจับคู่ใบนี้ไว้ (<see cref="SettlementCrossBatchReceipts.PendingElsewhere"/> ·
 /// review198-B R-B13) — 0 = ไม่มี/ไม่ได้ตรวจ</param>
 /// <param name="PendingPayoutRefs">เลขรอบโอนเหล่านั้น (ข้อความทางไปต่อ)</param>
+/// <param name="DocumentWht">ภาษีหัก ณ ที่จ่ายที่ใบตั้งไว้ว่าลูกค้าจะหัก (<c>Document.WithholdingTaxAmount</c> · ยอดค้างของใบสุทธิหลังหักแล้ว) —
+/// 0 = ใบไม่มี WHT (ฝ่ายค้านรอบ 200 T-1 · DECISIONS ข้อ 27 · <see cref="SettlementReceiptWht"/>)</param>
 public sealed record SettlementReceiptTarget(
     Guid DocumentId, bool Found, string? DocumentNumber, DocumentType Type, DocumentStatus Status, decimal BalanceDue, bool AlreadyReceived,
-    decimal PendingElsewhere = 0m, IReadOnlyList<string>? PendingPayoutRefs = null);
+    decimal PendingElsewhere = 0m, IReadOnlyList<string>? PendingPayoutRefs = null, decimal DocumentWht = 0m);
+
+/// <summary>การรับชำระใบขายผ่านรอบโอนจัดการภาษีหัก ณ ที่จ่ายของใบอย่างไร (DECISIONS ข้อ 27)</summary>
+public enum SettlementReceiptWhtKind
+{
+    /// <summary>ใบไม่มี WHT — ส่ง 0 (ไม่มีอะไรให้บันทึก)</summary>
+    None = 0,
+    /// <summary>รอบโอนรับชำระ<b>ยอดสุทธิที่เหลือครบ</b> ⇒ ผู้ซื้อหัก ณ ที่จ่ายไว้แล้ว — ให้ <c>CreatePaymentAsync</c> หยิบ WHT ที่เหลือของใบ (ตรรกะงวดสุดท้ายเดิม ·
+    /// Dr 11910 · ลูกหนี้ใน GL ปิดเต็มก้อน)</summary>
+    FinalInstallment = 1,
+    /// <summary>ใบมี WHT แต่รอบโอนรับชำระ<b>บางส่วน</b> — ระบบไม่รู้ว่าผู้ซื้อหักส่วนไหนในงวดนี้ ⇒ บล็อกพร้อมทางไปต่อ (ห้ามส่ง 0 เงียบ)</summary>
+    Undecidable = 2,
+}
+
+/// <summary>
+/// **WHT ของใบขายที่รอบโอนรับชำระ** (ฝ่ายค้านรอบ 200 T-1 → DECISIONS ข้อ 27) — เดิมส่ง <c>WithholdingTaxAmount = 0</c> ชัดทุกครั้ง ⇒ ใบที่ตั้ง WHT ลูกค้าไว้
+/// รับชำระยอดสุทธิครบผ่านรอบโอน = ใบ "ชำระแล้ว" แต่ลูกหนี้ใน GL ค้างเท่ายอด WHT ถาวร และ 11910 ไม่เคยถูกบันทึก (เครดิตภาษีหาย) · pure
+/// <para>เกณฑ์ "ครบ" = เกณฑ์งวดสุดท้ายตัวเดียวกับ <c>DocumentService.CreatePaymentAsync</c> (ยอด + 0.01 ≥ ยอดค้าง)</para>
+/// </summary>
+public static class SettlementReceiptWht
+{
+    public static SettlementReceiptWhtKind Decide(decimal documentWht, decimal balanceDue, decimal amount)
+        => documentWht <= 0m ? SettlementReceiptWhtKind.None
+            : amount + 0.01m >= balanceDue ? SettlementReceiptWhtKind.FinalInstallment
+            : SettlementReceiptWhtKind.Undecidable;
+
+    /// <summary>ข้อความ + ทางไปต่อเมื่อ <see cref="SettlementReceiptWhtKind.Undecidable"/></summary>
+    internal static (string Why, string Next) UndecidableMessage(string? documentNumber, decimal documentWht, decimal balanceDue, decimal amount)
+        => ($"ใบ {documentNumber} ตั้งภาษีหัก ณ ที่จ่ายของลูกค้าไว้ {documentWht:N2} แต่รอบโอนรับชำระ {amount:N2} ไม่ครบยอดค้าง {balanceDue:N2} — "
+            + "ระบบไม่รู้ว่าผู้ซื้อหัก ณ ที่จ่ายส่วนไหนในงวดนี้ (ส่ง 0 = ลูกหนี้ใน GL ค้างเท่ายอดภาษีและเครดิตภาษีถูกหักหาย)",
+            "รับชำระใบนี้ที่หน้าเอกสารเอง (ระบุภาษีหัก ณ ที่จ่ายของงวดนี้ตามหนังสือรับรองของลูกค้า · เลือกรับเข้าผังพักของช่องทาง) "
+            + "แล้วผูกบรรทัดขายกับการรับชำระนั้น (ระบบนับว่าอยู่ในผังพักแล้ว ไม่รับชำระซ้ำ) · ถ้าลูกค้าไม่ได้หักจริง ให้แก้ใบถอดภาษีหัก ณ ที่จ่ายก่อน");
+}
 
 /// <summary>บรรทัดที่แผนนับว่า "อยู่ในผังพักแล้ว" (อ้าง PaymentIntent/การรับชำระ) — ข้อเท็จจริงว่าเงินก้อนนั้นลงไว้ที่ผังไหนจริง (review198-A R-A1)</summary>
 /// <param name="PostedClearingAccountId">ผังที่ขาเงินเข้าของรายการนั้นลงไว้จริง (null = ลงธนาคาร/เงินสด หรือหาไม่เจอ)</param>
@@ -419,7 +453,13 @@ public static class SettlementPostingGate
             else if (t.Status is not (DocumentStatus.Approved or DocumentStatus.Sent or DocumentStatus.PartiallyPaid or DocumentStatus.Overdue))
                 why = $"ใบ {t.DocumentNumber} อยู่สถานะ {t.Status} — รับชำระได้เฉพาะใบที่อนุมัติแล้วและยังค้างชำระ";
             else if (t.BalanceDue + 0.005m < r.Amount)
+            {
                 why = $"ใบ {t.DocumentNumber} ค้างชำระ {t.BalanceDue:N2} น้อยกว่ายอดที่แพลตฟอร์มโอน {r.Amount:N2} (เคยรับชำระทางอื่นแล้ว?)";
+                // T-1: ยอดค้างของใบสุทธิหลัง WHT — เงินเข้าเต็มยอดก่อนหัก = ผู้ซื้อไม่ได้หัก ณ ที่จ่ายจริง
+                if (t.DocumentWht > 0m && t.BalanceDue + t.DocumentWht + 0.005m >= r.Amount)
+                    next = $"ใบนี้ตั้งภาษีหัก ณ ที่จ่ายของลูกค้าไว้ {t.DocumentWht:N2} แต่เงินเข้าเต็มยอดก่อนหัก — ถ้าผู้ซื้อไม่ได้หักจริง ให้แก้ใบถอดภาษีหัก ณ ที่จ่าย "
+                        + "แล้วดูตัวอย่างใหม่ · " + next;
+            }
             else if (t.PendingElsewhere > 0m && t.BalanceDue - t.PendingElsewhere + 0.005m < r.Amount)
             {
                 // review198-B R-B13: รอบโอนอื่นที่ยังไม่ลงบัญชีจับคู่ใบเดียวกันไว้ — รวมกันเกินยอดค้าง (ด่านบรรทัดบนเห็นแค่การรับชำระที่ลงแล้ว)
@@ -429,6 +469,8 @@ public static class SettlementPostingGate
                 next = $"ตรวจว่าออเดอร์เดียวกันอยู่ทั้งในรอบนี้และรอบ {refs} หรือไม่ (นำเข้าซ้ำ/จับคู่ผิดใบ) — ถอดการจับคู่ในรอบที่ผิด "
                     + "หรือยกเลิกรอบโอนที่ซ้ำ · ถ้าเป็นการผ่อนชำระจริงหลายรอบ ยอดรวมทุกรอบต้องไม่เกินยอดค้างของใบ";
             }
+            else if (SettlementReceiptWht.Decide(t.DocumentWht, t.BalanceDue, r.Amount) == SettlementReceiptWhtKind.Undecidable)
+                (why, next) = SettlementReceiptWht.UndecidableMessage(t.DocumentNumber, t.DocumentWht, t.BalanceDue, r.Amount);
             if (why != null)
                 Add(SettlementPlanIssueCode.ReceiptDocumentNotPayable, true, why, next, r.LineIds, r.Amount);
         }
@@ -498,7 +540,9 @@ public static class SettlementPostingGate
                 Add(SettlementPlanIssueCode.SummarySaleFirstNotIssued, true,
                     $"วันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} มีใบขายสรุปจากรอบโอน {sup.FirstPayoutRef} แล้วแต่ยังไม่ออกเลข (ลงบัญชีรอบนั้นค้างครึ่งทาง) — "
                     + "ใบสรุปเพิ่มเติมของรอบนี้ต้องอ้างเลขใบแรกของวัน",
-                    $"กด \"ลงบัญชี\" ที่รอบโอน {sup.FirstPayoutRef} ให้เสร็จก่อน (ระบบทำต่อจากขั้นที่ค้าง) แล้วดูตัวอย่างรอบนี้ใหม่",
+                    $"กด \"ลงบัญชี\" ที่รอบโอน {sup.FirstPayoutRef} ให้เสร็จก่อน (ระบบทำต่อจากขั้นที่ค้าง) แล้วดูตัวอย่างรอบนี้ใหม่ · "
+                    + $"ถ้ารอบ {sup.FirstPayoutRef} ลงบัญชีต่อไม่ได้ (ติดด่านอื่น) ให้ลบร่าง {sup.FirstNumber} ที่หน้าเอกสาร หรือยกเลิกรอบโอน {sup.FirstPayoutRef} "
+                    + "— ใบสรุปของรอบนี้จะเป็นใบแรกของวันแทน (รอบนั้นลงทีหลังจะออกเป็นใบสรุปเพิ่มเติม)",
                     sup.LineIds, gross);
             else
                 Add(SettlementPlanIssueCode.SummarySaleSupplementary, false,
@@ -530,8 +574,17 @@ public static class SettlementPostingGate
                     + "· ลงบัญชีทั้งที่ยอดไม่ต่อเนื่อง = ผังพักคลาดจาก wallet จริงถาวร",
                     "ตรวจกับสเตทเมนต์ของผู้ให้บริการ: ถ้ามีรอบโอนที่ยังไม่ได้นำเข้าระหว่างสองรอบนี้ ให้นำเข้าก่อน · ถ้ายอดต้นรอบที่กรอกผิด ให้ยกเลิกรอบโอนนี้แล้วนำเข้าใหม่ "
                     + "(ยอดต้นรอบ = ยอดปลายรอบก่อน) · ถ้ามีรายการที่แพลตฟอร์มหัก/เติมนอกรอบโอนจริง ให้นำเข้าใหม่ด้วยยอดต้นรอบ = ยอดปลายรอบก่อน "
-                    + "แล้วใส่รายการนั้นเป็นบรรทัด \"ปรับปรุงอื่น\" พร้อมเหตุผล (ผังพักจะตรง wallet จริง)",
+                    + "แล้วใส่รายการนั้นเป็นบรรทัด \"ปรับปรุงอื่น\" พร้อมเหตุผล (ผังพักจะตรง wallet จริง) · "
+                    + "รอบโอนวันเดียวกันหลายรอบ: ระบบเทียบกับรอบของวันนั้นที่ยอดปลายรอบตรงกับยอดต้นรอบนี้ให้เอง (ไม่ขึ้นกับลำดับที่นำเข้า) — "
+                    + "ยังขึ้นคำเตือนนี้ = ไม่มีรอบใดของวันนั้นที่ปลายรอบเท่ายอดต้นรอบนี้",
                     null, w.Difference);
+            else if (w.Kind == SettlementWalletContinuityKind.PreviousHadNoBalances && w.Previous is { } blank)
+                Add(SettlementPlanIssueCode.WalletContinuityUnknown, false,
+                    $"รอบโอนก่อนหน้า {blank.PayoutRef} ({ThaiDate.ToThaiDisplayString(blank.PayoutDate)}) ไม่มียอด wallet (ต้น/ปลายรอบ 0/0 — ไฟล์รุ่นเก่าไม่มียอด) "
+                    + $"จึงเทียบยอดต้นรอบ {w.Opening:N2} ของรอบนี้ไม่ได้",
+                    "ตรวจยอดต้นรอบกับสเตทเมนต์ของผู้ให้บริการก่อนลงบัญชี — ถ้ายอด wallet ต้นรอบนี้มาจากรายการก่อนเริ่มนำเข้ายอด ให้ผู้ทำบัญชีตั้งยอดยกมาของผังพักให้ตรง "
+                    + "(รอบถัดไประบบเทียบยอดต่อเนื่องให้เอง)",
+                    null, w.Opening);
             else if (w.Kind == SettlementWalletContinuityKind.NoPreviousBatch)
                 Add(SettlementPlanIssueCode.WalletContinuityUnknown, false,
                     $"รอบโอนแรกของช่องทางนี้ในระบบ — ยอด wallet ต้นรอบ {w.Opening:N2} เทียบกับรอบก่อนไม่ได้",
@@ -697,14 +750,21 @@ public static class SettlementDocumentBuilder
     }
 
     /// <summary>รับชำระใบขายที่จับคู่ได้ — เงินเข้า = ผังพัก · ใบเสร็จตามค่าเดิมของเส้นรับชำระ · ป้ายของรอบโอนใน Notes (บันทึกพร้อมการรับชำระ)
-    /// <para>review198-C C-12: <c>WithholdingTaxAmount = 0</c> <b>ส่งชัด</b> — แพลตฟอร์มโอนยอดขายเต็ม ไม่ได้หัก ณ ที่จ่ายแทนผู้ซื้อ · ส่ง null =
-    /// <c>CreatePaymentAsync</c> คิด WHT ตามสัดส่วน/งวดสุดท้ายของใบที่ตั้ง WHT ลูกค้าไว้ ⇒ ขา WHT ที่ไม่มีใครหักจริง</para></summary>
+    /// <para>WHT (ฝ่ายค้านรอบ 200 T-1 → DECISIONS ข้อ 27 · <see cref="SettlementReceiptWht"/>): ใบไม่มี WHT ⇒ 0 · รับยอดสุทธิที่เหลือครบ ⇒ <c>null</c> =
+    /// <c>CreatePaymentAsync</c> หยิบ WHT ที่เหลือของใบตามตรรกะงวดสุดท้ายเดิม (Dr 11910 · ลูกหนี้ใน GL ปิด) · รับบางส่วนของใบที่มี WHT ⇒ <b>ห้ามสร้าง</b>
+    /// (ด่านบล็อกไว้แล้ว — ถึงนี่ได้ = ข้อมูลเปลี่ยนระหว่างพรีวิวกับลงบัญชี ⇒ ล้มดัง) · เดิม (C-12) ส่ง 0 ทุกครั้ง ⇒ ลูกหนี้ค้างเท่ายอด WHT เงียบ</para></summary>
     public static CreatePaymentRequest ReceiptPayment(SettlementReceiptPlan r, Guid batchId, Guid clearingAccountId,
-        DateTime payoutDay, string payoutRef, string channelName)
-        => new(r.DocumentId, payoutDay, r.Amount, PaymentMethod.EWallet, payoutRef, null,
+        DateTime payoutDay, string payoutRef, string channelName, SettlementReceiptWhtKind wht)
+    {
+        if (wht == SettlementReceiptWhtKind.Undecidable)
+            throw new BusinessRuleException(
+                "ใบขายที่ตั้งภาษีหัก ณ ที่จ่ายของลูกค้าไว้ถูกรับชำระบางส่วนผ่านรอบโอน — ระบบไม่รู้ว่าผู้ซื้อหักส่วนไหนในงวดนี้ · "
+                + "ดูตัวอย่างการลงบัญชีใหม่แล้วทำตามทางไปต่อ", "SETTLEMENT-RECEIPT-WHT");
+        return new(r.DocumentId, payoutDay, r.Amount, PaymentMethod.EWallet, payoutRef, null,
             $"{SettlementPostingKeys.PaymentMarker(batchId)} รับเงินผ่าน {channelName} รอบโอน {payoutRef} (เงินเข้าผังพักของแพลตฟอร์ม — ยังไม่เข้าธนาคาร)",
             OverridePaymentAccountId: clearingAccountId,
-            WithholdingTaxAmount: 0m);
+            WithholdingTaxAmount: wht == SettlementReceiptWhtKind.FinalInstallment ? (decimal?)null : 0m);
+    }
 
     /// <summary>50 ทวิ ของ WHT ที่ JE รอบโอนตั้ง 21917 (W2 หักเองแล้วแพลตฟอร์มคืน · W3 ออกภาษีแทน) — null = ไม่ต้องออก
     /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0) ·

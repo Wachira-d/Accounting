@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **370 ไฟล์ · 3,558 `[Fact]` + 534 `[Theory]` (2,364 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **374 ไฟล์ · 3,615 `[Fact]` + 552 `[Theory]` (2,480 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4876,13 +4876,42 @@ GatewaySettlementService.SelectCandidatesAsync (ทิศกลับ)) · เ�
 | SPP2-01 | config gateway "บวก VAT เพิ่ม" ค่าธรรมเนียม 39.06 + 18.25 · ช่องทาง "VAT ไทย 7%" · ประกอบรอบโอนจากรายการรับชำระ ยอดโอน 1,508.68 | ลงตัว · ใบค่าธรรมเนียม 61.32 = ค่าใช้จ่าย 57.31 + 11630 4.01 (เท่าหน้ารอบโอนเดิม) · ไม่มีใบขายสรุป · ล้างผังพัก 1,570 |
 | SPP2-02 | config "รวม VAT ในค่าธรรมเนียม" 10.00 ×3 | ภาษีซื้อ 1.95 (ปัดต่อรายการ) ไม่ใช่ 1.96 |
 | SPP2-03 | config "ไม่แยก VAT" แต่ช่องทาง "VAT ไทย 7%" → ประกอบรอบโอน / บันทึกช่องทาง | 400 `SETTLEMENT-GATEWAY-MODE-MISMATCH` / `SETTLEMENT-CHANNEL-GATEWAY-MODE` พร้อมทางไปต่อ · ไม่มีรอบโอน/ช่องทางถูกบันทึก |
-| SPP2-04 | ทิศตรงข้าม: config/ช่องทางตรงกัน (ไม่แยก ↔ ไม่มี VAT หรือ ภ.พ.36 · รวม/บวก ↔ VAT 7% · หัก 3% ↔ เราออกภาษีแทน) | ผ่านตามเดิม |
+| SPP2-04 | ทิศตรงข้าม: config/ช่องทางตรงกัน (ไม่แยก ↔ ไม่มี VAT · รวม/บวก ↔ VAT 7% · หัก 3% ↔ เราออกภาษีแทน · บริษัทไม่จด VAT: คู่ VAT ไทยทุกคู่) | ผ่านตามเดิม — **ทีม SF (ข้อ 26)**: ไม่แยก ↔ ภ.พ.36 และ ไม่หัก ↔ "หักเองแล้วได้คืน" **ไม่ตรงแล้ว** (สองเส้นให้ภาษีต่าง) — ดู SSF-01 |
 | SPP2-05 | intent ที่บันทึกรอบโอนด้วยหน้าเดิมแล้ว + intent ที่อยู่รอบโอน batch อื่น → ประกอบรอบโอนใหม่ | ไม่ถูกดึง · หน้าเดิมไม่แสดง intent ที่ batch เป็นเจ้าของ |
 | SPP2-06 | intent ที่หน้าเดิมเป็นเจ้าของ คืนเงินภายหลัง → ประกอบรอบโอน batch | ไม่มีบรรทัดคืนเงิน (หน้าเดิมหักเองรอบถัดไป) |
 | SPP2-07 | คืนเงิน 100 ก่อนวันเงินเข้า + 200 วันเงินเข้า → ประกอบรอบนี้ · แล้วประกอบรอบถัดไป | รอบนี้บรรทัดคืน −100 · รอบถัดไป −200 (ไม่มีขาย/ค่าธรรมเนียมซ้ำ) |
 | SPP2-08 | คืนเงินบางครั้งก่อนระบบเก็บยอดรายครั้ง + คืนล่าสุดตั้งแต่วันเงินเข้า | 400 `SETTLEMENT-REFUND-TIMING-UNKNOWN` พร้อมทางไปต่อ (ห้ามเดา) |
 | SPP2-09 | หัวรอบโอนระบุต้นช่วง · มี intent ที่ยังไม่มีเจ้าของเก่ากว่าต้นช่วง | ไม่ถูกดึง + คำเตือนจำนวนรายการ · ไม่ระบุต้นช่วง ⇒ ดึงทั้งหมดตามเดิม |
 | SPP2-10 | สองช่องทางผูก config เดียวกัน กดประกอบรอบโอนพร้อมกัน · intent คืนเงินภายหลัง | คำขอที่สอง 400 `SETTLEMENT-INTENT-TAKEN` · บรรทัดคืนเงินมีชุดเดียว |
+
+### รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement (review200-P2 X-1..X-10 · review200-T T-1..T-8 · review200-V2 · DECISIONS ข้อ 25–27)
+
+เทสต์อัตโนมัติ: `SettlementReview200SfTests` (สองทิศทุกข้อ · ModeMismatch ตามผลภาษีจริง + สถานะ VAT บริษัท · ด่านลงบัญชี `PostingIssue` · `ConfigChangeRefusal` ·
+`ChannelModeTouched` · WHT ออกภาษีแทนจากฐานรวม 3.65 × 100 = 10.55 · `SettlementReceiptWht` + builder · ด่านรับชำระใบที่มี WHT · `SplitDuplicates` ·
+`PickPrevious`/0-0 · ทางไปต่อใบแรกเป็นร่าง · เรียงเดือนข้ามปี · `LegacyMoneyLegAudit.AdjustedBy` · `DocumentDeliveryEvidence` · `AckStatusLabel` · `AckCovers`) +
+แก้ `SettlementGatewayPhase2Tests` (ลายเซ็นใหม่ + คู่ ภ.พ.36/W2 ย้ายเป็นไม่ตรง) · `SettlementPostingTests` (ReceiptPayment ส่งชนิด WHT) ·
+`required_call_site_check` (+17 กติกา: BuildGateAsync · ImportFileAsync · SettlementChannelService.SaveAsync · ImportFromPaymentIntentsAsync ·
+PaymentSettingsController.Save · PersistAsync (X-5) · BuildFeeLines · SettlementFeeTax.Compute · EnsureReceiptAsync · WalletContinuityAsync · JournalAnomalyService.ScanAsync ·
+OrphanArtifactsAsync · AcknowledgeOrphanCoreAsync · AcknowledgeOrphanAsync · UnpostCoreAsync · SettlementController.AcknowledgeOrphan · OrphanChildrenAsync ห้ามสถานะ Sent) ·
+เรพไม่มีเทสต์ที่มี DbContext ⇒ SSF ด้านล่างต้องรันบน staging
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| SSF-01 | config gateway "ไม่แยก VAT" + ช่องทาง "ต่างประเทศ ภ.พ.36" (หรือ "หักเองแล้วได้คืน") → ประกอบรอบโอน / นำเข้าไฟล์ / บันทึกช่องทาง | 400 พร้อมทางไปต่อ (ภ.พ.36: ใช้ช่องทางไม่ผูก config + นำเข้าไฟล์) |
+| SSF-02 | รอบโอนที่นำเข้าก่อน deploy (config ไม่แยก VAT + ช่องทาง VAT 7% · ค่าธรรมเนียม 41.79) → ดูตัวอย่าง/กดลงบัญชี | บล็อก `GatewayModeMismatch` (ไม่มีภาษีซื้อ 2.73 ที่แต่งขึ้น) · แก้โหมดแล้วลงได้ |
+| SSF-03 | เปลี่ยนโหมด VAT ที่หน้า "ตั้งค่าการรับชำระเงินออนไลน์" ขณะมีช่องทางผูกที่โหมดจะขัด · ทิศตรงข้าม: แก้ชื่อ/คีย์โดยไม่แตะโหมด | 400 พร้อมชื่อช่องทาง · ทิศตรงข้ามบันทึกได้ |
+| SSF-04 | ช่องทางเดิมที่โหมดขัด → แก้ชื่อ/ปิดใช้งาน · บริษัทไม่จด VAT ผูก config ไม่แยก VAT กับช่องทาง VAT 7% | บันทึกได้ทั้งคู่ (X-10) |
+| SSF-05 | config "หัก 3%" + ช่องทาง "เราออกภาษีแทน" · ประกอบรอบโอนจาก 100 รายการ ค่าธรรมเนียม 3.65 | 50 ทวิ/21917 = 10.55 (ไม่ใช่ 11.00) · ภาษีซื้อ 24.00 |
+| SSF-06 | เติมรอบโอน gateway เดิม (PayoutRef ซ้ำ) ด้วยวันเงินเข้าต่างจากรอบเดิม | 400 `SETTLEMENT-GATEWAY-PAYOUT-DATE` |
+| SSF-07 | ใบกำกับ 1,070 ตั้ง WHT ลูกค้า 30 · รอบโอนจับคู่ 1,040 → ลงบัญชี | ใบ Paid · การรับชำระ WHT 30 · Dr 11910 30 · ลูกหนี้ใน GL = 0 |
+| SSF-08 | ใบเดียวกันรับ 500 ผ่านรอบโอน · ทิศตรงข้าม: ใบไม่มี WHT รับ 500 | บล็อก `ReceiptDocumentNotPayable` + ทางไปต่อ "รับชำระที่หน้าเอกสาร" · ทิศตรงข้ามลงได้ (ผ่อนชำระ) |
+| SSF-09 | ไฟล์เดิมนำเข้าด้วยเลขรอบโอนอื่น (ไม่มีเลขออเดอร์) ขณะรอบแรกออกใบสรุปของวันนั้นแล้ว → ดูตัวอย่าง | บล็อก `SummarySaleDuplicate` "เนื้อหาตรงทุกบรรทัด" · ไฟล์ที่ตรงบางบรรทัด ⇒ ใบเพิ่มเติม + คำเตือนรายบรรทัด |
+| SSF-10 | payout P1 (0→100) และ P2 (100→50) วันเดียวกัน นำเข้า P2 ก่อน P1 | ทั้งสองรอบไม่ติด `WalletContinuityGap` |
+| SSF-11 | รอบก่อนหน้ากรอกยอด wallet 0/0 · รอบนี้ต้นรอบ 250 | เตือน `WalletContinuityUnknown` "0/0" ไม่บล็อก |
+| SSF-12 | JE เก่าลงผัง 112 ถูกฟ้องในหน้านักบัญชี → บันทึก JE ปรับปรุงใส่เลข JE เดิมในช่อง "อ้างอิง" → สแกนใหม่ | คำเตือนของ JE นั้นหาย · อ้างเลขใกล้เคียง (ต่อท้ายตัวเลข) ยังเตือน |
+| SSF-13 | ใบลดหนี้ที่อ้างใบกำพร้าถูกอีเมลให้ลูกค้าสำเร็จ (ยังไม่ส่ง e-Tax) → ดูตัวอย่างรอบโอนใหม่ | ของกำพร้าอยู่กอง "ยกเลิกไม่ได้จริง" (ส่งให้ลูกค้าแล้ว) · ปุ่มรับรู้ขึ้น · อีเมลที่ล้ม ⇒ กองเดิม |
+| SSF-14 | รับรู้ของกำพร้าจากรอบ PO-NEW แล้วภายหลังนำเข้าไฟล์ PO-OLD (เลขเดียวกับรอบที่ยกเลิก) ใหม่ | บล็อกอีกครั้ง "การรับรู้เดิมไม่ครอบรอบนี้" · รับรู้ใหม่ได้ · audit มี `checkedBatchId` |
+| SSF-15 | ของกำพร้าที่รับรู้แล้วกลายเป็นยกเลิกได้ (ปลดล็อกรายงาน) → พรีวิว | คอลัมน์สถานะ "⚠️ การรับรู้เดิมไม่มีผล" (ไม่ใช่ "✅ รับรู้แล้ว") · กดลงบัญชีแล้วถูกบล็อก ⇒ ตารางของกำพร้ายังอยู่ |
 
 ### รอบ 200 ทีม T — เวลา/ภาษีของรอบโอน settlement (R-A11/R-A12 · R-B13 · C-11..C-17 · C-20 · คำตัดสินข้อ 15/16/20)
 

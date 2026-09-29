@@ -173,8 +173,23 @@ public class PaymentSettingsController : ControllerBase
             cfg.ClearingAccountId = req.ClearingAccountId == Guid.Empty ? null : req.ClearingAccountId;
         if (req.FeeExpenseAccountId.HasValue)
             cfg.FeeExpenseAccountId = req.FeeExpenseAccountId == Guid.Empty ? null : req.FeeExpenseAccountId;
+        var vatModeBefore = cfg.FeeVatMode;
+        var whtModeBefore = cfg.WhtOnFee;
         if (req.WhtOnFee.HasValue) cfg.WhtOnFee = req.WhtOnFee.Value;
         if (req.FeeVatMode.HasValue) cfg.FeeVatMode = req.FeeVatMode.Value;
+        // X-1/B-3 (รอบ 200 ฝ่ายค้าน · DECISIONS ข้อ 26): เปลี่ยนโหมดภาษีค่าธรรมเนียมที่นี่ต้องยังตรงกับทุกช่องทางรับเงินที่ผูก config นี้ —
+        // ไม่งั้นรอบโอนที่นำเข้าไว้แล้วจะได้ภาษีต่างจากเส้นรอบโอน gateway เดิม (ตัวตัดสินเดียวกับนำเข้า/บันทึกช่องทาง/ลงบัญชี) · แก้ช่องอื่นไม่ถูกตรวจ
+        if (cfg.FeeVatMode != vatModeBefore || cfg.WhtOnFee != whtModeBefore)
+        {
+            var bound = await _db.SettlementChannels.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.PaymentProviderConfigId == cfg.Id)
+                .Select(c => new { c.DisplayName, c.FeeVatMode, c.FeeWhtMode }).ToListAsync(ct);
+            var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+            if (GatewayBatchIntentRules.ConfigChangeRefusal(cfg.FeeVatMode, cfg.WhtOnFee, vatRegistered,
+                    bound.Select(b => (b.DisplayName, b.FeeVatMode, b.FeeWhtMode))) is string cfgModeBad)
+                return BadRequest(new ApiResponse<ConfigResponse>(false, null,
+                    cfgModeBad + " (แก้โหมดของช่องทางก่อน หรือบันทึกที่นี่ด้วยโหมดเดิม)"));
+        }
 
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

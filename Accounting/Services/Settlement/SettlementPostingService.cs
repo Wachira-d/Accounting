@@ -81,6 +81,7 @@ public interface ISettlementPostingService
     /// ต้องมีสิทธิ์ <c>Settlement.Post</c> (ตรวจใน service) + เหตุผล · กองที่ยังยกเลิกได้ (ทันที/เมื่อทำขั้นก่อน) = ปฏิเสธพร้อมทางไปต่อ · รับรู้ไว้แล้ว = ตอบซ้ำไม่บันทึกซ้ำ
     /// </summary>
     Task<SettlementOrphanAckResult> AcknowledgeOrphanAsync(Guid companyId, Guid artifactId, bool isPayment, Guid userId, string? reason,
+        Guid? checkedBatchId,
         CancellationToken ct = default);
 }
 
@@ -269,8 +270,14 @@ public class SettlementPostingService : ISettlementPostingService
     {
         if (gate.SettlementPayments.Any(p => p.DocumentId == r.DocumentId)) return;   // ลงไว้แล้วครั้งก่อน
         var batch = gate.Loaded.Batch;
+        // T-1 (ฝ่ายค้านรอบ 200 · DECISIONS ข้อ 27): WHT ของใบตัดสินจากข้อเท็จจริงสด ณ ตอนรับชำระ (ตัวเดียวกับด่าน) — ห้ามส่ง 0 เงียบ
+        var target = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == r.DocumentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.WithholdingTaxAmount, d.BalanceDue }).FirstOrDefaultAsync(ct)
+            ?? throw new BusinessRuleException("ไม่พบใบขายที่จับคู่ไว้ในบริษัทนี้ — ดูตัวอย่างการลงบัญชีใหม่", "SETTLEMENT-RECEIPT-MISSING", 404);
+        var wht = SettlementReceiptWht.Decide(target.WithholdingTaxAmount, target.BalanceDue, r.Amount);
         var request = SettlementDocumentBuilder.ReceiptPayment(r, batch.Id, gate.Accounts.ClearingAccountId!.Value,
-            gate.PayoutDay, batch.PayoutRef, gate.Loaded.Channel.DisplayName);
+            gate.PayoutDay, batch.PayoutRef, gate.Loaded.Channel.DisplayName, wht);
         await _documents.CreatePaymentAsync(companyId, request, userId.ToString());
     }
 
@@ -531,24 +538,31 @@ public class SettlementPostingService : ISettlementPostingService
             ? new List<SettlementReceiptTarget>()
             : (await _db.Documents.AsNoTracking()
                     .Where(d => d.CompanyId == companyId && !d.IsDeleted && receiptIds.Contains(d.Id))
-                    .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.BalanceDue }).ToListAsync(ct))
+                    .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.BalanceDue, d.WithholdingTaxAmount }).ToListAsync(ct))
                 .Select(d =>
                 {
                     pendingElsewhere.TryGetValue(d.Id, out var pend);
+                    // T-1 (DECISIONS ข้อ 27): WHT ลูกค้าของใบถึงด่าน — รับบางส่วนของใบที่มี WHT ⇒ บล็อก · รับยอดสุทธิครบ ⇒ บันทึก WHT ของใบ
                     return new SettlementReceiptTarget(d.Id, true, d.DocumentNumber, d.DocumentType, d.Status, d.BalanceDue,
-                        payments.Any(p => p.DocumentId == d.Id), pend?.Amount ?? 0m, pend?.PayoutRefs);
+                        payments.Any(p => p.DocumentId == d.Id), pend?.Amount ?? 0m, pend?.PayoutRefs, d.WithholdingTaxAmount);
                 })
                 .ToList();
 
         var clearingSources = await ClearingSourcesAsync(companyId, batch, lines, ct);
         var (duplicates, supplementary) = await DuplicateSalesAsync(companyId, batch, channel, plan, ct);
+        // T-2 (ฝ่ายค้านรอบ 200): ข้อเท็จจริง "เนื้อหาตรงรอบโอนอื่น" ตัวเดียวกับผู้นำเข้า — ใบเพิ่มเติมที่ทุกบรรทัดตรงรอบที่ออกใบแรก = ไฟล์ซ้ำ ⇒ บล็อก
+        var contentHits = await SettlementContentOverlap.ForBatchAsync(_db, companyId, batch.ChannelId, batch.Id, lines, ct);
+        var (supDuplicates, supKept) = SettlementSummarySupplement.SplitDuplicates(supplementary, contentHits);
+        duplicates.AddRange(supDuplicates);
+        supplementary = supKept;
         var wallet = await WalletContinuityAsync(companyId, batch, ct);
         // review198-C C-15: ใบสรุปไม่ตัดสต็อก — ตัวตัดสิน "กิจการถือสต็อกไหม" ตัวเดียวของระบบ (InventoryIndustry)
         var stock = SettlementStockStance.NotChecked;
         if (plan.SummarySales.Count > 0)
             stock = SettlementStock.StanceOf(await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
                 .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync(ct));
-        var orphans = await OrphanArtifactsAsync(companyId, batch.Id, channel.Id, batch.PayoutDate, ct);
+        var orphans = await OrphanArtifactsAsync(companyId, batch.Id, channel.Id, batch.PayoutDate,
+            new SettlementOrphanCurrentBatch(batch.Id, batch.PayoutRef, batch.CreatedAt), ct);
         // ฝ่ายค้าน C-4: การรับชำระที่ค้างจากครั้งก่อนต้องตรงแผนปัจจุบัน (ใบเดียวกัน · ยอดเท่ากัน)
         var staleReceipts = SettlementReceiptReconcile.Stale(plan.Receipts, payments.Select(MarkerOf).ToList());
 
@@ -587,9 +601,20 @@ public class SettlementPostingService : ISettlementPostingService
         if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
             && SettlementForeignWht.CounterpartyCountryIssue(channel, plan, counterparty?.CountryCode) is SettlementPlanIssue foreignWht)
             gated = gated with { CanPost = false, Issues = gated.Issues.Append(foreignWht).ToList() };
+        // X-1 (รอบ 200 ฝ่ายค้าน · DECISIONS ข้อ 26): ช่องทางผูก config ของ gateway ⇒ โหมดภาษีค่าธรรมเนียมสองที่ต้องให้ผลเท่ากัน "ตอนลงบัญชี" ด้วย —
+        // รอบโอนที่นำเข้า/ประกอบก่อนด่านนำเข้ามี หรือก่อนผู้ใช้เปลี่ยนโหมด ไม่เคยถูกถาม (คู่ค่าเริ่มต้น None↔ThaiVat7 = ภาษีซื้อ 7/107 ที่แต่งขึ้น)
+        if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
+            && channel.PaymentProviderConfigId is Guid boundCfgId)
+        {
+            var boundCfg = await _db.PaymentProviderConfigs.AsNoTracking()
+                .Where(c => c.Id == boundCfgId && c.CompanyId == companyId)
+                .Select(c => new { c.FeeVatMode, c.WhtOnFee }).FirstOrDefaultAsync(ct);
+            if (boundCfg != null && GatewayBatchIntentRules.PostingIssue(GatewayBatchIntentRules.ModeMismatch(boundCfg.FeeVatMode,
+                    boundCfg.WhtOnFee, channel.FeeVatMode, channel.FeeWhtMode, vatRegistered)) is SettlementPlanIssue modeIssue)
+                gated = gated with { CanPost = false, Issues = gated.Issues.Append(modeIssue).ToList() };
+        }
         // review198-S4 S4-4 (ทีม I รอบ 200): แถวไม่มีเลขรายการที่เนื้อหาตรงกับรอบโอนอื่น — เตือนที่พรีวิว/ลงบัญชีทุกครั้ง (เดิมเตือนครั้งเดียวตอนนำเข้า)
-        gated = SettlementContentOverlap.Annotate(gated,
-            await SettlementContentOverlap.ForBatchAsync(_db, companyId, batch.ChannelId, batch.Id, lines, ct), lines);
+        gated = SettlementContentOverlap.Annotate(gated, contentHits, lines);
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
         var planned = gated.FeeDocuments.Select(f => SettlementPostingKeys.FeeComponent(f.VatTreatment))
@@ -614,13 +639,20 @@ public class SettlementPostingService : ISettlementPostingService
     /// <summary>ยอด wallet ปลายรอบของรอบโอนก่อนหน้าในช่องทางเดียวกัน (review198-A R-A12) — ไม่นับรอบที่ยกเลิก/ลบ · เรียงวันเงินเข้า แล้วเวลาที่นำเข้า</summary>
     private async Task<SettlementWalletContinuityResult> WalletContinuityAsync(Guid companyId, SettlementBatch batch, CancellationToken ct)
     {
-        var previous = await _db.SettlementBatches.AsNoTracking()
+        // T-3 (ฝ่ายค้านรอบ 200): รอบวันเดียวกันทั้งหมด (ไม่ใช่แค่ที่นำเข้าก่อน) + รอบล่าสุดของวันก่อน — ตัวเลือกรอบก่อนตัวเดียวตัดสินจากยอดต่อกัน
+        var sameDay = await _db.SettlementBatches.AsNoTracking()
             .Where(b => b.CompanyId == companyId && b.ChannelId == batch.ChannelId && b.Id != batch.Id && !b.IsDeleted
-                && b.Status != SettlementBatchStatus.Voided
-                && (b.PayoutDate < batch.PayoutDate || (b.PayoutDate == batch.PayoutDate && b.CreatedAt < batch.CreatedAt)))
+                && b.Status != SettlementBatchStatus.Voided && b.PayoutDate == batch.PayoutDate)
+            .Select(b => new SettlementWalletCandidate(b.PayoutRef, b.PayoutDate, b.CreatedAt, b.OpeningWalletBalance, b.ClosingWalletBalance))
+            .ToListAsync(ct);
+        var earlierDay = await _db.SettlementBatches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ChannelId == batch.ChannelId && b.Id != batch.Id && !b.IsDeleted
+                && b.Status != SettlementBatchStatus.Voided && b.PayoutDate < batch.PayoutDate)
             .OrderByDescending(b => b.PayoutDate).ThenByDescending(b => b.CreatedAt)
-            .Select(b => new SettlementWalletPrevious(b.PayoutRef, b.PayoutDate, b.ClosingWalletBalance))
+            .Select(b => new SettlementWalletCandidate(b.PayoutRef, b.PayoutDate, b.CreatedAt, b.OpeningWalletBalance, b.ClosingWalletBalance))
             .FirstOrDefaultAsync(ct);
+        var previous = SettlementWalletContinuity.PickPrevious(batch.CreatedAt, batch.OpeningWalletBalance, batch.ClosingWalletBalance,
+            sameDay, earlierDay);
         return SettlementWalletContinuity.Judge(batch.OpeningWalletBalance, previous);
     }
 
@@ -808,8 +840,9 @@ public class SettlementPostingService : ISettlementPostingService
     /// การรับรู้ที่ประทับไว้ (ผู้/เวลา/เหตุผล) ส่งเข้าตัวแยก ⇒ รับรู้แล้วไม่บล็อก · S3-11: ไม่ตัด 200 รอบล่าสุดอีก และค้นการรับชำระของทุกรอบด้วยคำค้นเดียว</para></summary>
     /// <param name="excludeBatchId">รอบที่กำลังลงบัญชี (ไม่ใช่ของกำพร้าของตัวเอง) · null = ทุกรอบที่ยกเลิกแล้วของช่องทาง (ปุ่มรับรู้)</param>
     /// <param name="fallbackDate">วันที่ของเอกสารที่หาไม่เจอ (ส่งต่อให้ <see cref="LoadUnpostFactsAsync"/>)</param>
+    /// <param name="current">รอบที่กำลังลงบัญชี/ตรวจเทียบ (V2-P1 — การรับรู้ที่ทำก่อนนำเข้ารอบซึ่งใช้เลขรอบโอนเดียวกับรอบเจ้าของ ไม่ครอบรอบนั้น) · null = ไม่เทียบ</param>
     private async Task<SettlementOrphanTriageResult> OrphanArtifactsAsync(Guid companyId, Guid? excludeBatchId, Guid channelId,
-        DateTime fallbackDate, CancellationToken ct)
+        DateTime fallbackDate, SettlementOrphanCurrentBatch? current, CancellationToken ct)
     {
         var none = new SettlementOrphanTriageResult(Array.Empty<string>(), Array.Empty<SettlementOrphanBlock>(), Array.Empty<string>(),
             Array.Empty<string>(), Array.Empty<SettlementOrphanItem>());
@@ -837,8 +870,13 @@ public class SettlementPostingService : ISettlementPostingService
             .ToList();
         // S3-11: การรับชำระของทุกรอบที่ยกเลิกแล้วด้วยคำค้นเดียว (เดิมวนทีละรอบ + ตัด 200 รอบ) — ป้ายตัวเดียวกับ SettlementArtifactGuard
         var deadIds = dead.Select(b => b.Id).ToHashSet();
+        // V2-C4 (ฝ่ายค้านรอบ 200): กรองรอบตายใน SQL — ระบบเขียนป้ายไว้ต้น Notes เสมอ ⇒ id รอบ = 32 ตัวหลังหัวป้าย · แถวที่ป้ายไม่อยู่ต้น Notes (ผู้ใช้แก้ข้อความ)
+        // ยังถูกดึงมาให้ตัวอ่านป้ายตัวเดียวตัดสิน (ผลเท่าเดิมทุกแถว) · เดิมดึง Id+Notes ของการรับชำระจากรอบโอนทุกแถวของบริษัททุกครั้ง
+        var markerHead = SettlementPostingKeys.PaymentMarkerHead;
+        var markerHeadLength = markerHead.Length;
         var markedPays = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(SettlementPostingKeys.PaymentMarkerHead))
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(markerHead)
+                && (!p.Notes.StartsWith(markerHead) || parts.Contains(p.Notes.Substring(markerHeadLength, 32))))
             .Select(p => new { p.Id, p.Notes }).ToListAsync(ct);
         var payOwner = markedPays
             .Select(p => (p.Id, Owner: SettlementArtifactGuard.BatchIdFromPaymentNotes(p.Notes)))
@@ -869,7 +907,7 @@ public class SettlementPostingService : ISettlementPostingService
                 p.Payment.PaymentNumber,
                 AckOf(p.Payment.SettlementOrphanAckAt, p.Payment.SettlementOrphanAckBy, p.Payment.SettlementOrphanAckReason))))
             .ToList();
-        return SettlementOrphanTriage.Split(artifacts, refusals, unpostDocs, children);
+        return SettlementOrphanTriage.Split(artifacts, refusals, unpostDocs, children, current);
     }
 
     /// <summary>ใบที่อ้างของกำพร้าแต่ละใบ (ชุดเดียวกับที่ <c>VoidDocumentAsync</c> ปฏิเสธเพราะ "มีเอกสารอ้าง" — <see cref="DocumentVoidPreconditions.ChildFactsAsync"/>)
@@ -888,9 +926,9 @@ public class SettlementPostingService : ISettlementPostingService
                 .SelectMany(r => r.Lines)
                 .Where(l => l.DocumentId != null && childIds.Contains(l.DocumentId.Value))
                 .Select(l => l.DocumentId!.Value).ToListAsync(ct)).ToHashSet();
-        var sent = (await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && childIds.Contains(d.Id) && d.Status == DocumentStatus.Sent)
-                .Select(d => d.Id).ToListAsync(ct)).ToHashSet();
+        // V2-C1 (ฝ่ายค้านรอบ 200 · DECISIONS ข้อ 25): "ส่งลูกค้าแล้ว" = หลักฐานการส่งจริง (บันทึกอีเมล/e-Tax by email สำเร็จ) ผ่านตัวตัดสินเดียว —
+        // เดิมดูสถานะเอกสาร "ส่งแล้ว" ซึ่งไม่มีผู้ประทับ ⇒ ทริกเกอร์ของข้อ 10 ไม่เคยเป็นจริง
+        var sent = await DocumentDeliveryEvidence.DeliveredAsync(_db, companyId, childIds, ct);
         var whtFiled = new Dictionary<Guid, string?>();
         foreach (var id in childIds)
             whtFiled[id] = await WhtCertVoidGuard.CheckDocumentAsync(_db, companyId, id, ct);
@@ -914,7 +952,7 @@ public class SettlementPostingService : ISettlementPostingService
     // ═════════════════════════════ รับรู้ของกำพร้า (รอบ 200 · DECISIONS ข้อ 10) ═════════════════════════════
 
     public async Task<SettlementOrphanAckResult> AcknowledgeOrphanAsync(Guid companyId, Guid artifactId, bool isPayment, Guid userId,
-        string? reason, CancellationToken ct = default)
+        string? reason, Guid? checkedBatchId, CancellationToken ct = default)
     {
         static SettlementOrphanAckResult Fail(string m) => new(false, m, null);
         if (SettlementOrphanTriage.AckReasonProblem(reason) is string badReason) return Fail(badReason);
@@ -933,6 +971,17 @@ public class SettlementPostingService : ISettlementPostingService
             .Where(b => b.Id == ownerBatchId && b.CompanyId == companyId)
             .Select(b => new { b.ChannelId, b.PayoutDate }).FirstOrDefaultAsync(ct);
         if (owner == null) return Fail("ไม่พบรอบโอนเจ้าของรายการนี้ในบริษัทนี้");
+        // V2-P1 (ฝ่ายค้านรอบ 200): รอบที่ผู้ใช้ตรวจเทียบ (หน้าจอที่กดรับรู้) — ต้องอยู่ช่องทางเดียวกัน · เก็บลง audit ว่า "ตรวจแล้วไม่ซ้ำ" หมายถึงรอบไหน
+        SettlementOrphanCurrentBatch? checkedBatch = null;
+        if (checkedBatchId is Guid cbId)
+        {
+            var cb = await _db.SettlementBatches.AsNoTracking()
+                .Where(b => b.Id == cbId && b.CompanyId == companyId && !b.IsDeleted)
+                .Select(b => new { b.Id, b.PayoutRef, b.CreatedAt, b.ChannelId }).FirstOrDefaultAsync(ct);
+            if (cb == null || cb.ChannelId != owner.ChannelId)
+                return Fail("รอบโอนที่ตรวจเทียบไม่อยู่ในช่องทางเดียวกับของกำพร้านี้ — เปิดพรีวิวของรอบโอนในช่องทางนั้นแล้วกดรับรู้ใหม่");
+            checkedBatch = new SettlementOrphanCurrentBatch(cb.Id, cb.PayoutRef, cb.CreatedAt);
+        }
         var why = reason!.Trim();
         SettlementOrphanAckResult? result = null;
         // ล็อกต่อช่องทางตัวเดียวกับลงบัญชี/ยกเลิก — ตัดสิน "ยกเลิกไม่ได้จริง" ด้วยข้อเท็จจริงสดใต้ล็อก ไม่ใช่ของที่หน้าจอเห็นตอนโหลด
@@ -940,16 +989,17 @@ public class SettlementPostingService : ISettlementPostingService
             async () =>
             {
                 result = await AcknowledgeOrphanCoreAsync(companyId, artifactId, isPayment, userId, why, owner.ChannelId, owner.PayoutDate,
-                    ownerBatchId, ct);
+                    ownerBatchId, checkedBatch, ct);
             }, _logger, companyId, ct);
         return acquired && result is not null ? result : Fail(BusyMessage);
     }
 
     private async Task<SettlementOrphanAckResult> AcknowledgeOrphanCoreAsync(Guid companyId, Guid artifactId, bool isPayment, Guid userId,
-        string reason, Guid channelId, DateTime fallbackDate, Guid ownerBatchId, CancellationToken ct)
+        string reason, Guid channelId, DateTime fallbackDate, Guid ownerBatchId, SettlementOrphanCurrentBatch? checkedBatch, CancellationToken ct)
     {
-        // ตัวแยกของกำพร้าตัวเดียวกับด่านลงบัญชี — รับรู้ได้เฉพาะกองยกเลิกไม่ได้จริง (กอง NeedsUserAction/ยกเลิกได้ ⇒ ปฏิเสธพร้อมทางไปต่อ)
-        var triage = await OrphanArtifactsAsync(companyId, null, channelId, fallbackDate, ct);
+        // ตัวแยกของกำพร้าตัวเดียวกับด่านลงบัญชี — รับรู้ได้เฉพาะกองยกเลิกไม่ได้จริง (กอง NeedsUserAction/ยกเลิกได้ ⇒ ปฏิเสธพร้อมทางไปต่อ) ·
+        // V2-P1: เทียบกับรอบที่ผู้ใช้ตรวจ — การรับรู้เดิมที่ไม่ครอบรอบนั้น ⇒ รับรู้ใหม่ได้ (ไม่ใช่ตอบซ้ำ)
+        var triage = await OrphanArtifactsAsync(companyId, null, channelId, fallbackDate, checkedBatch, ct);
         if (SettlementOrphanTriage.AckRefusal(triage, artifactId, isPayment) is string refusal)
             return new SettlementOrphanAckResult(false, refusal, null);
         var item = (triage.Items ?? Array.Empty<SettlementOrphanItem>()).First(i => i.Id == artifactId && i.IsPayment == isPayment);
@@ -960,6 +1010,9 @@ public class SettlementPostingService : ISettlementPostingService
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
+            // V2-C3 (ฝ่ายค้านรอบ 200 · แบบแผน review198-C C-20): ตัวติดตามว่างต้น lambda — retry ต้องไม่บันทึก audit/ธงของรอบแรกซ้ำ ·
+            // ของที่โหลดก่อน lambda (triage) เป็น AsNoTracking ใช้อ่านอย่างเดียว · แถวที่เขียนโหลดใหม่ข้างใน
+            _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
             if (isPayment)
             {
@@ -992,6 +1045,8 @@ public class SettlementPostingService : ISettlementPostingService
                     payoutRef = item.PayoutRef,
                     number = item.Number,
                     unvoidableBecause = item.Why,
+                    checkedBatchId = checkedBatch?.BatchId,
+                    checkedPayoutRef = checkedBatch?.PayoutRef,
                 }),
                 Timestamp = now,
             });
@@ -1121,6 +1176,9 @@ public class SettlementPostingService : ISettlementPostingService
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+            // V2-C3 (ฝ่ายค้านรอบ 200 · แบบแผน C-20): ของที่โหลดก่อน lambda (loaded/payoutJe/docFacts) เป็น AsNoTracking ใช้อ่านอย่างเดียว ·
+            // ขั้น 1–3 (ยกเลิกเอกสาร/การรับชำระ/ถอนจับคู่) commit ธุรกรรมของตัวเองแล้ว · แถวที่เขียนข้างล่างโหลด/สร้างใหม่หลัง Clear
+            _db.ChangeTracker.Clear();
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
             await _db.Database.ExecuteSqlRawAsync(
                 "SELECT 1 FROM \"SettlementBatches\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
