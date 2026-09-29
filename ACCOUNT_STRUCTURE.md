@@ -826,7 +826,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 ---
 
 _Last verified against codebase: 2026-09-29 (rev 38 · รอบ 200 ทีม P2 — **§3.1d** settlement เฟส 2: `PaymentIntent.SettlementBatchId` หนึ่งรายการหนึ่งเจ้าของ (`GatewayBatchIntentRules`) ·
-ช่องทางที่ผูก gateway config ต้องมีโหมดภาษีค่าธรรมเนียมตรงกับ config — commit <pending>)_
+ช่องทางที่ผูก gateway config ต้องมีโหมดภาษีค่าธรรมเนียมตรงกับ config — commit 4d3b7ea9)_
 
 _ก่อนหน้า: 2026-09-28 (rev 37 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit <pending>)_
 

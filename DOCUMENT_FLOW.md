@@ -3611,7 +3611,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 
 _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม P2 — settlement เฟส 2: รายการ gateway เข้ารอบโอน batch ของช่องทาง Gateway ด้วยสูตรเดียวกับเส้นเดิม
 (`GatewaySettlementMath.Contribution` ตามโหมด VAT ของ config · ยอดคืน ณ วันเงินเข้า `RefundedAsOf`) · โหมดภาษีค่าธรรมเนียม config ↔ ช่องทางต้องตรงกัน (`GatewayBatchIntentRules.ModeMismatch`
-ทั้งตอนประกอบรอบโอนและตอนบันทึกช่องทาง) · หนึ่งรายการหนึ่งเจ้าของ (`UnclaimedForBatch`/`LateRefundInBatch` + ทิศกลับในเส้นเดิม) · ต้นช่วงมีผล · ตาข่ายยอดคืนใต้ล็อก (§2.10) — commit <pending>)_
+ทั้งตอนประกอบรอบโอนและตอนบันทึกช่องทาง) · หนึ่งรายการหนึ่งเจ้าของ (`UnclaimedForBatch`/`LateRefundInBatch` + ทิศกลับในเส้นเดิม) · ต้นช่วงมีผล · ตาข่ายยอดคืนใต้ล็อก (§2.10) — commit 4d3b7ea9)_
 
 _ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
 เฉพาะที่ยกเลิกไม่ได้จริงเป็นคำเตือน (`SettlementUnpostRefusalKind` + `SettlementOrphanTriage` · S4-1) · เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` + e-Tax ของใบเสร็จอัตโนมัติ

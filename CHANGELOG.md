@@ -3729,4 +3729,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม P2 — sett
   (เดิม config "ไม่แยก VAT" + ช่องทาง "VAT 7%" ⇒ ภาษีซื้อแต่งขึ้น)
 - **หนึ่งรายการ หนึ่งเจ้าของ** — ตัวเลือก intent เป็น expression ตัวเดียว (`UnclaimedForBatch` · `LateRefundInBatch`) · เส้นเดิมข้าม intent ที่รอบโอนเป็นเจ้าของ (ล็อกทั้งสองทิศด้วย
   `required_call_site_check`) · ตาข่ายยอดคืนใต้ล็อก `EnsureIntentRefundCapacityAsync` · ต้นช่วงของหัวรอบโอนมีผล (เดิมถูกเพิกเฉย) + เตือนรายการเก่ากว่าต้นช่วงที่ยังไม่มีเจ้าของ
-- ย้ายทางเข้า gateway ไป `Services/Settlement/SettlementImportService.Gateway.cs` · เทสต์ `SettlementGatewayPhase2Tests` · TEST_PLAN SPP2-01..10 — commit <pending>)_
+- ย้ายทางเข้า gateway ไป `Services/Settlement/SettlementImportService.Gateway.cs` · เทสต์ `SettlementGatewayPhase2Tests` · TEST_PLAN SPP2-01..10 — commit 4d3b7ea9)_
