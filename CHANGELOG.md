@@ -3975,4 +3975,4 @@ _2026-09-29 รอบ 200 ทีม V1G — แก้ผลฝ่ายค้า
 - **RV1F-9/10/11/12** ป้ายหลักฐาน `EvidenceLabel` (`EtaxNeverReachedRd` แยกจาก `EtaxVoidedInSystem`) · ใบเสร็จยกเลิกคงแสดง (`keepVisible`) · เทสต์ allowlist
   ผ่าน EF model · `PreparerName/PreparerSignatureBase64` ไม่ตามไปใบแทน
 - **ข้อ 44** รายงานอ่านอย่างเดียว `GET document/etax-reissue-review` (`Helpers/EtaxReissueReview`) + แถบบนหน้ารายการเอกสาร
-- เทสต์ `VoidReissueR200GTests` (สองทิศ + ลำดับ เช็คเด้ง→รับใหม่→ปิดธง ระดับตัวตัดสิน) · ปรับ `VoidReissueR200FTests` R3 · required_call_site +16 แถว/ปรับ 7 — commit <pending>)_
+- เทสต์ `VoidReissueR200GTests` (สองทิศ + ลำดับ เช็คเด้ง→รับใหม่→ปิดธง ระดับตัวตัดสิน) · ปรับ `VoidReissueR200FTests` R3 · required_call_site +16 แถว/ปรับ 7 — commit 3f4e1ea2)_
