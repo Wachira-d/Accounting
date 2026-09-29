@@ -1011,12 +1011,35 @@ public class TaxFilingExportService : ITaxFilingExportService
             "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(body),
             certs.Count, totalIncome, totalWht,
             $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {certs.Count} ราย WHT {totalWht:N2} บาท "
-            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)");
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + Pnd54RateNote(certs));
         // ⚠️ **ไม่เรียก `WhtRateNote` ที่ ภ.ง.ด.54 โดยตั้งใจ** — ตารางอัตราของ
         // `ThaiWhtRateTable` คือ ท.ป.4/2528 (ในประเทศ) ส่วน ภ.ง.ด.54 เดินตาม ม.70
-        // + อนุสัญญาภาษีซ้อน (DTA) ซึ่งมีอัตราของตัวเอง ⇒ เอามาตัดสินจะกลายเป็น
-        // คำเตือนที่ฟ้องใบถูกทุกใบของคนที่ใช้สิทธิ DTA (F2 ข้อ 8). ด่านของเส้นนี้
-        // คือด่าน DTA (คำตัดสิน Q6) ไม่ใช่ตารางนี้
+        // + อนุสัญญาภาษีซ้อน (DTA) ⇒ ด่านของเส้นนี้คือ `Pnd54RateNote` ซึ่งถาม
+        // `ForeignWhtRateResolver` ตัวเดียว (รอบ 200 ทีม W · แทนคำตัดสิน Q6)
+    }
+
+    /// <summary>ภ.ง.ด.54: อัตราบนหนังสือรับรองเทียบกับตัวตัดสิน ม.70/อนุสัญญาตัวเดียว (<see cref="Accounting.Helpers.ForeignWhtRateResolver"/>) —
+    /// ข้อความแนบท้ายผลส่งออก (ไม่บล็อก — ไฟล์ต้องตรงกับทะเบียนที่ออกไปแล้ว) · หักต่ำกว่า ม.70 = ใช้อัตราอนุสัญญาได้เฉพาะเมื่อเก็บหนังสือรับรองถิ่นที่อยู่
+    /// ของผู้รับไว้ (ระบบยังไม่มีช่อง CoR และตารางอนุสัญญายังไม่มีแถวที่ยืนยัน) · ไม่มีหลักฐาน = §54 ผู้จ่ายรับผิดส่วนที่ขาด</summary>
+    private static string Pnd54RateNote(IEnumerable<WithholdingTaxCert> certs)
+    {
+        var flagged = certs
+            .SelectMany(c => c.Lines.Select(l => (Cert: c, Line: l)))
+            .Where(x => x.Line.TaxRate > 0m)
+            .Select(x => (x.Cert, x.Line, Decision: Accounting.Helpers.ForeignWhtRateResolver.ResolveForIncomeCode(
+                x.Line.IncomeTypeCode, x.Cert.PayeeContact?.CountryCode, Accounting.Helpers.ResidenceCertificate.None, x.Line.PaymentDate)))
+            .Where(x => Accounting.Helpers.ForeignWhtRateResolver.RateWarning(x.Decision, x.Line.TaxRate) != null)
+            .ToList();
+        if (flagged.Count == 0) return "";
+        var samples = flagged.Take(3)
+            .Select(x => $"{x.Cert.PayeeContact?.Name ?? x.Cert.CertificateNumber} {x.Line.TaxRate:0.##}%"
+                + (x.Decision.RatePercent is decimal r ? $" (ม.70 {r:0.##}%)" : $" ({x.Decision.RuleCode})"))
+            .ToList();
+        return $" · ⚠️ {flagged.Count} บรรทัดอัตราไม่ตรงตัวตัดสิน ม.70 — " + string.Join(", ", samples)
+            + (flagged.Count > samples.Count ? ", …" : "")
+            + " — ถ้าใช้อัตราอนุสัญญาภาษีซ้อน ต้องเก็บหนังสือรับรองถิ่นที่อยู่ของผู้รับไว้ (ไม่มี = ส่วนที่หักขาดผู้จ่ายรับผิด §54) · "
+            + "ประเภทเงินได้นอก ม.70/ไม่ระบุ ให้ผู้ทำบัญชีจำแนกก่อนยื่น";
     }
 
     // =====================================================================

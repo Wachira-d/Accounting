@@ -23,8 +23,9 @@ public enum SettlementPlanIssueCode
     CurrencyNotSupported = 11,
     RevenueModelNotSupported = 12,
     BankAccountMissing = 13,
-    /// <summary>ผู้ให้บริการต่างประเทศ + โหมดหัก ณ ที่จ่าย — ต้องเป็น ภ.ง.ด.54 (§70 · อัตราตามอนุสัญญาภาษีซ้อน) ไม่ใช่อัตราในประเทศ/ภ.ง.ด.53
-    /// (review198-A R-A5) · ระบบยังไม่มีตาราง DTA</summary>
+    /// <summary>หัก ณ ที่จ่ายค่าธรรมเนียมของผู้ให้บริการต่างประเทศที่ระบบคิดให้ไม่ได้ — ประเภทเงินได้นอก ม.70/ไม่รู้ · โหมดตัวแทนหักแทน ·
+    /// ผู้ติดต่อต่างประเทศบนช่องทางที่ไม่ได้ตั้งเป็นต่างประเทศ (review198-A R-A5 · รอบ 200 ทีม W: <see cref="SettlementForeignWht"/>) —
+    /// ประเภทใน ม.70 คิด ภ.ง.ด.54 ให้แล้ว ไม่บล็อก</summary>
     ForeignWhtNotSupported = 14,
     /// <summary>บรรทัดขายที่ไม่มีใบขายและตัวจับคู่<b>ไม่ได้</b>ตัดสินว่า "ไม่มีร่องรอยที่ไหน" (<c>MatchStatus != AutoSummary</c> — ผู้สมัครกำกวม ·
     /// มีใบเสร็จ/การจองที่อาจเป็นออเดอร์เดียวกัน) — ออกใบสรุปทับ = รายได้ซ้ำ (สัญญาทีม B · รอบ 198)</summary>
@@ -139,6 +140,7 @@ public sealed record SettlementFeeDocumentLine(
 /// <summary>ใบค่าธรรมเนียม 1 ใบ (ต่อ batch ต่อกลุ่มภาษี) — เอกสารซื้อจากคู่ค้า <c>SettlementChannel.CounterpartyContactId</c> ·
 /// <b>จ่ายเต็ม <c>Deducted</c> จากบัญชีพัก</b> (<c>OverridePaymentAccountId</c> = clearing) · <b>ห้ามหัก WHT ตอนจ่ายซ้ำ</b> — ขา WHT อยู่ใน
 /// <c>PayoutJournal</c> แล้ว ใบนี้ถือข้อมูล WHT ไว้ออก 50 ทวิเท่านั้น</summary>
+/// <param name="WhtForm">แบบ ภ.ง.ด. ของหนังสือรับรอง/ขา WHT — ภ.ง.ด.53 (แพลตฟอร์มไทย) · ภ.ง.ด.54 (ผู้ให้บริการต่างประเทศ ม.70 · <see cref="SettlementForeignWht.WhtForm"/>)</param>
 public sealed record SettlementFeeDocumentPlan(
     SettlementFeeVatTreatment VatTreatment,
     SettlementFeeWhtMode WhtMode,
@@ -147,7 +149,8 @@ public sealed record SettlementFeeDocumentPlan(
     decimal InputVat,
     decimal Pp36Payable,
     decimal WhtAmount,
-    IReadOnlyList<SettlementFeeDocumentLine> Lines);
+    IReadOnlyList<SettlementFeeDocumentLine> Lines,
+    TaxType WhtForm = TaxType.WithholdingTax53);
 
 /// <summary>รับชำระใบขายที่จับคู่แล้ว — เงินเข้า = บัญชีพัก (<c>OverridePaymentAccountId</c> = clearing)</summary>
 public sealed record SettlementReceiptPlan(Guid DocumentId, decimal Amount, IReadOnlyList<Guid> LineIds);
@@ -259,14 +262,8 @@ public static class SettlementBatchMath
                 "ช่องทางนี้ตั้งเป็น \"รายได้สุทธิ (ขายต่อให้แพลตฟอร์ม)\" — เฟส 1 รองรับเฉพาะรายได้เต็มจำนวน + ค่าธรรมเนียมเป็นค่าใช้จ่าย",
                 "ถ้าสัญญาเป็นแบบแพลตฟอร์มเก็บเงินแทน ให้เปลี่ยนเป็น \"รายได้เต็มจำนวน\" ในหน้าตั้งค่าช่องทาง · ถ้าเป็นแบบขายต่อจริง ลงบัญชีด้วยมือไปก่อน",
                 Array.Empty<Guid>(), null));
-        if (channel.FeeVatMode == SettlementFeeVatMode.ForeignPp36 && channel.FeeWhtMode != SettlementFeeWhtMode.None
-            && lines.Any(l => l.Amount != 0m && SettlementLineTypeRules.For(l.LineType) is { IsFee: true, WhtIncomeCode: not null }))
-            issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ForeignWhtNotSupported, true,
-                $"ช่องทาง \"{channel.DisplayName}\" เป็นผู้ให้บริการต่างประเทศแต่ตั้งโหมดหัก ณ ที่จ่ายไว้ — ผู้รับเงินต่างประเทศต้องหักตาม §70 "
-                + "ยื่น ภ.ง.ด.54 (ทั่วไป 15% หรืออัตราตามอนุสัญญาภาษีซ้อน + หนังสือรับรองถิ่นที่อยู่) ไม่ใช่อัตราในประเทศ/ภ.ง.ด.53 · ระบบยังไม่มีตาราง DTA",
-                "ถ้าค่าธรรมเนียมเป็นกำไรธุรกิจของผู้ให้บริการที่ไม่มีสถานประกอบการถาวรในไทย (มีหนังสือรับรองถิ่นที่อยู่) ให้ตั้งโหมดหัก ณ ที่จ่ายเป็น \"ไม่หัก\" "
-                + "ในหน้าตั้งค่าช่องทาง · ถ้าต้องหักจริง บันทึกใบสำคัญจ่ายบริการต่างประเทศด้วยมือ (ติ๊ก ภ.พ.36 + หัก ภ.ง.ด.54) ไปก่อน",
-                Array.Empty<Guid>(), null));
+        // ผู้ให้บริการต่างประเทศ + โหมดหัก — ม.70 ภ.ง.ด.54 ผ่านตัวตัดสินเดียว · บล็อกเฉพาะที่คิดให้ไม่ได้ (รอบ 200 ทีม W · เดิมบล็อกเหมา R-A5)
+        issues.AddRange(SettlementForeignWht.PlanIssues(channel, lines, batch.PayoutDate));
         if (channel.ClearingAccountId is null)
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ClearingAccountMissing, true,
                 $"ช่องทาง \"{channel.DisplayName}\" ยังไม่ได้ผูกผังพัก (ลูกหนี้แพลตฟอร์ม)",
@@ -439,7 +436,7 @@ public static class SettlementBatchMath
         // ── 6. ค่าธรรมเนียม → เอกสารซื้อต่อกลุ่มภาษี ──
         var feeDocs = new List<SettlementFeeDocumentPlan>();
         var whtJournal = new List<SettlementJournalLinePlan>();
-        var feeLines = BuildFeeLines(fees, channel, feeMap, companyVatRegistered);
+        var feeLines = BuildFeeLines(fees, channel, feeMap, companyVatRegistered, batch.PayoutDate);
         foreach (var g in feeLines.GroupBy(f => f.VatTreatment).OrderBy(g => g.Key))
         {
             var docLines = g.Select(f => f.Line).ToList();
@@ -470,8 +467,9 @@ public static class SettlementBatchMath
             var whtMode = docLines.Any(x => x.WhtAmount > 0m) ? channel.FeeWhtMode : SettlementFeeWhtMode.None;
             feeDocs.Add(new SettlementFeeDocumentPlan(g.Key, whtMode, deducted,
                 docLines.Sum(x => x.Expense), docLines.Sum(x => x.InputVat), docLines.Sum(x => x.Pp36Payable),
-                docLines.Where(x => x.WhtAmount > 0m).Sum(x => x.WhtAmount), docLines));
-            AddWhtLegs(whtJournal, whtMode, docLines, reference);
+                docLines.Where(x => x.WhtAmount > 0m).Sum(x => x.WhtAmount), docLines,
+                SettlementForeignWht.WhtForm(channel.FeeVatMode)));
+            AddWhtLegs(whtJournal, whtMode, docLines, reference, SettlementForeignWht.IsForeignChannel(channel.FeeVatMode));
         }
         if (feeDocs.Any(d => d.WhtMode == SettlementFeeWhtMode.AgentWithholds))
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.WhtFiledByAgent, false,
@@ -578,7 +576,8 @@ public static class SettlementBatchMath
     /// <summary>รวมค่าธรรมเนียมตาม (ประเภท · ผัง) — บรรทัดที่ไฟล์ระบุ VAT คิดทีละบรรทัด (เชื่อไฟล์) · ที่เหลือรวมยอดแล้วแยก VAT ครั้งเดียว
     /// (ใกล้ใบกำกับรายเดือนของแพลตฟอร์มกว่าการปัดทีละบรรทัด) · ยอดคืน (บวก) หักออกจากก้อนเดียวกัน</summary>
     private static List<FeeLineWithTreatment> BuildFeeLines(
-        List<SettlementLine> fees, SettlementChannel channel, IReadOnlyDictionary<string, Guid> feeMap, bool vatRegistered)
+        List<SettlementLine> fees, SettlementChannel channel, IReadOnlyDictionary<string, Guid> feeMap, bool vatRegistered,
+        DateTime paymentDate)
     {
         var result = new List<FeeLineWithTreatment>();
         foreach (var g in fees.GroupBy(l => (l.LineType, l.OverrideAccountId)).OrderBy(g => (int)g.Key.LineType))
@@ -588,10 +587,10 @@ public static class SettlementBatchMath
             var accountId = g.Key.OverrideAccountId ?? RoleAccountId(role, channel, feeMap);
             var parts = new List<(SettlementFeeTaxResult Tax, int Sign)>();
             foreach (var l in g.Where(l => l.VatAmount is not null))
-                parts.Add((ComputeTax(Math.Abs(l.Amount), l.VatAmount, rule, channel, vatRegistered), l.Amount < 0m ? 1 : -1));
+                parts.Add((ComputeTax(Math.Abs(l.Amount), l.VatAmount, rule, channel, vatRegistered, paymentDate), l.Amount < 0m ? 1 : -1));
             var implicitCharge = -g.Where(l => l.VatAmount is null).Sum(l => l.Amount);   // ค่าธรรมเนียม = ยอดลบ ⇒ กลับเป็นบวก
             if (implicitCharge != 0m)
-                parts.Add((ComputeTax(Math.Abs(implicitCharge), null, rule, channel, vatRegistered), implicitCharge > 0m ? 1 : -1));
+                parts.Add((ComputeTax(Math.Abs(implicitCharge), null, rule, channel, vatRegistered, paymentDate), implicitCharge > 0m ? 1 : -1));
 
             // กลุ่มภาษีของก้อน = ชนิดที่มี VAT ตัวแรก (ประเภท+ผังเดียวกันใต้ช่องทางเดียวกันได้ชนิดเดียวอยู่แล้ว) · ไม่มี VAT ทั้งก้อน ⇒ NoVat
             var treatment = parts.Select(p => p.Tax.VatTreatment).FirstOrDefault(t => t != SettlementFeeVatTreatment.NoVat);
@@ -613,20 +612,23 @@ public static class SettlementBatchMath
     }
 
     private static SettlementFeeTaxResult ComputeTax(decimal deducted, decimal? explicitVat, SettlementLineTypeRule rule,
-        SettlementChannel channel, bool vatRegistered)
+        SettlementChannel channel, bool vatRegistered, DateTime paymentDate)
         => SettlementFeeTax.Compute(deducted, explicitVat, channel.FeeVatMode, rule.VatApplicable, vatRegistered,
-            channel.FeeWhtMode, rule.WhtIncomeCode);
+            channel.FeeWhtMode, rule.WhtIncomeCode, paymentDate);
 
     /// <summary>ขา WHT ของใบค่าธรรมเนียม (ไม่ผ่านการจ่ายเงินของใบ — แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว):
-    /// W2 Dr ลูกหนี้แพลตฟอร์มรอคืน / Cr 21917 · W3 Dr ผังค่าธรรมเนียม (ภาษีที่ออกแทน) / Cr 21917 · W1 ไม่มีขา (ตัวแทนยื่นเอง)</summary>
+    /// W2 Dr ลูกหนี้แพลตฟอร์มรอคืน / Cr 21917 · W3 Dr ผังค่าธรรมเนียม (ภาษีที่ออกแทน) / Cr 21917 · W1 ไม่มีขา (ตัวแทนยื่นเอง) ·
+    /// ผู้ให้บริการต่างประเทศ ⇒ Cr 21918 ภ.ง.ด.54 (ม.70 · บทบาท <see cref="SettlementAccountRoles.WhtPayable54"/>)</summary>
     private static void AddWhtLegs(List<SettlementJournalLinePlan> journal, SettlementFeeWhtMode mode,
-        List<SettlementFeeDocumentLine> docLines, string reference)
+        List<SettlementFeeDocumentLine> docLines, string reference, bool foreign)
     {
         if (mode is SettlementFeeWhtMode.None or SettlementFeeWhtMode.AgentWithholds) return;
         foreach (var d in docLines.Where(d => d.WhtAmount > 0m))
         {
             var ids = d.LineIds;
-            var desc = $"ภาษีหัก ณ ที่จ่าย {d.WhtRatePercent:0.##}% {d.LabelTh} รอบ {reference} (ภ.ง.ด.53)";
+            var desc = $"ภาษีหัก ณ ที่จ่าย {d.WhtRatePercent:0.##}% {d.LabelTh} รอบ {reference} "
+                + (foreign ? $"(ภ.ง.ด.54 · {ForeignWhtRateResolver.Section70Reference})" : "(ภ.ง.ด.53)");
+            var payableRole = foreign ? SettlementAccountRoles.WhtPayable54 : SettlementAccountRoles.WhtPayable;
             if (mode == SettlementFeeWhtMode.SelfWithholdReimbursed)
                 journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.WhtReimbursable, null,
                     SettlementAccountRoles.DefaultCode(SettlementAccountRoles.WhtReimbursable), d.WhtAmount, 0m,
@@ -634,8 +636,8 @@ public static class SettlementBatchMath
             else
                 journal.Add(new SettlementJournalLinePlan(d.AccountRole, d.AccountId, d.DefaultAccountCode, d.WhtBorneExpense, 0m,
                     desc + " — ภาษีที่ออกแทน", ids));
-            journal.Add(new SettlementJournalLinePlan(SettlementAccountRoles.WhtPayable, null,
-                SettlementAccountRoles.DefaultCode(SettlementAccountRoles.WhtPayable), 0m, d.WhtAmount, desc, ids));
+            journal.Add(new SettlementJournalLinePlan(payableRole, null,
+                SettlementAccountRoles.DefaultCode(payableRole), 0m, d.WhtAmount, desc, ids));
         }
     }
 

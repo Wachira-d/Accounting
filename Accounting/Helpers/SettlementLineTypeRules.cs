@@ -79,6 +79,8 @@ public static class SettlementAccountRoles
     public const string Adjustment = "adjustment";
     public const string ChargebackLoss = "chargeback_loss";
     public const string WhtPayable = "wht_payable";
+    /// <summary>ภาษีหัก ณ ที่จ่ายค้างนำส่ง ภ.ง.ด.54 — ค่าธรรมเนียมของผู้ให้บริการต่างประเทศ (ม.70 · รอบ 200 ทีม W)</summary>
+    public const string WhtPayable54 = "wht_payable_54";
     public const string WhtReimbursable = "wht_reimbursable";
     public const string InputVatPending = "input_vat_pending";
     public const string Pp36InputVat = "pp36_input_vat";
@@ -107,6 +109,7 @@ public static class SettlementAccountRoles
         FxLoss => "54950",             // ขาดทุนจากอัตราแลกเปลี่ยน
         ChargebackLoss => SettlementChartSeed.ChargebackLossAccountCode,
         WhtPayable => "21917",         // ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 53 (แพลตฟอร์มเป็นนิติบุคคล)
+        WhtPayable54 => WhtPayableAccount.Pnd54Code,   // ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 54 (ผู้ให้บริการต่างประเทศ ม.70) — ตัวตั้งเดียวของรหัส
         WhtReimbursable => "11320",    // ลูกหนี้อื่น — ภาษีที่หักไว้รอแพลตฟอร์มคืน (W2)
         InputVatPending => "11630",    // ภาษีซื้อรอเครดิต — จนได้ใบกำกับรายเดือน (report-S1 G3/M3)
         Pp36InputVat => ForeignServiceVat.Pp36InputVatCode,

@@ -53,7 +53,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: in `BuildFeeLines`, raise `FeeGroupNetRefund` per **(type, account) document line** when `Deducted < 0`, not per VAT group.
   Also make `AddWhtLegs` and `SettlementFeeDocumentPlan.WhtAmount` use the same set of lines. Add a test with exactly this pair.
 
-### R-A4 · PLAUSIBLE (legal) · P2: non-VAT company with a foreign provider (`ForeignPp36`) creates no ภ.พ.36 and gives no warning
+### ✅ 84d47dda R-A4 · PLAUSIBLE (legal) · P2: non-VAT company with a foreign provider (`ForeignPp36`) creates no ภ.พ.36 and gives no warning
 - `SettlementFeeTax.cs:86-96`: when `!companyVatRegistered` the treatment is `NoVat`, with pp36 = 0 and no issue raised. §83/6 puts the remittance duty on the **payer**
   whether or not the payer is VAT-registered; only the input-VAT credit is lost. The exception is a foreign provider registered for e-Service that charges VAT itself.
   report-S1 §5/§7 ("โรงแรมไม่จด VAT ไม่ต้อง ภ.พ.36") conflicts with the wording of §83/6. The comment at `SettlementFeeTax.cs:51-52` only covers the e-Service case.
@@ -61,7 +61,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: send it to an accountant (add to §10 of report-S1). Until then have `Plan` raise a non-blocking issue "ช่องทางต่างประเทศ + บริษัทไม่จด VAT — ตรวจว่าต้องยื่น ภ.พ.36 หรือผู้ให้บริการเก็บ VAT แล้ว".
   The DECISION_DOCTRINE rule is that an unknown must not pass silently.
 
-### R-A5 · CONFIRMED · P2: foreign provider + WHT mode = ภ.ง.ด.53 at the Thai rate
+### ✅ 84d47dda (บล็อก) · รอบ 200 ทีม W 79f3f8de (หัก ภ.ง.ด.54 ได้จริง) R-A5 · CONFIRMED · P2: foreign provider + WHT mode = ภ.ง.ด.53 at the Thai rate
 - `SettlementFeeTax.cs:116-117` always uses `ThaiWhtRateTable.RateFor(code, payeeIsJuristic: true)`. `DefaultCode(WhtPayable)` = 21917 (ภ.ง.ด.53).
   Nothing guards the combination `FeeVatMode == ForeignPp36 && FeeWhtMode != None`.
 - Numbers: a foreign ads platform charges 1,000 with W3. The system computes 20.41 (2/98) into 21917, as ภ.ง.ด.53 to a foreign payee. The correct treatment is ภ.ง.ด.54 at 15%,

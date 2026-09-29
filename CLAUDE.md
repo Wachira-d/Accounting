@@ -259,7 +259,9 @@ await _recorder.RecordUserChoiceAsync(
 - [ ] **กำหนดยื่น**: กระดาษ = วันที่ **7** ของเดือนถัดไป; e-Filing = วันที่ **15** (ขยายถึง 31 ม.ค. 2570);
   ถ้าตรงเสาร์/อาทิตย์/วันหยุด → next business day
 - [ ] **DTA override** — เก็บตาราง bilateral treaty rate, ใช้แทนอัตรา default เมื่อ
-  payee country มี DTA และเอกสาร TH8/CoR ครบ
+  payee country มี DTA และเอกสาร TH8/CoR ครบ · (รอบ 200: ตาราง `Helpers/DtaTreatyRates` + ตัวตัดสินเดียว
+  `Helpers/ForeignWhtRateResolver` — **ตารางยังว่าง** จนกว่าจะยืนยันกับตัวบททางการ ⇒ ม.70 เต็มเสมอ · ม.70 ครอบเฉพาะ
+  40(2)(3)(4)(5)(6) — 40(8) ไม่มีอัตรา ม.70 ต้องให้คนจำแนก · ม.70 ไม่มีเกณฑ์ 1,000 บาท)
 
 ### F. e-Tax Invoice / e-Receipt (ETDA ขมธอ.3-2560)
 

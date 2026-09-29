@@ -230,6 +230,7 @@ public static class SettlementAccountResolver
         SettlementAccountRoles.Adjustment => "รายการปรับปรุง",
         SettlementAccountRoles.ChargebackLoss => "ขาดทุนจาก chargeback",
         SettlementAccountRoles.WhtPayable => "ภาษีหัก ณ ที่จ่ายค้างนำส่ง ภ.ง.ด.53",
+        SettlementAccountRoles.WhtPayable54 => "ภาษีหัก ณ ที่จ่ายค้างนำส่ง ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)",
         SettlementAccountRoles.WhtReimbursable => "ภาษีหัก ณ ที่จ่ายรอแพลตฟอร์มคืน",
         _ => role,
     };
@@ -366,7 +367,7 @@ public static class SettlementPostingGate
         }
         var whtLegs = plan.FeeDocuments.Any(d => d.WhtAmount > 0m
             && d.WhtMode is SettlementFeeWhtMode.SelfWithholdReimbursed or SettlementFeeWhtMode.SelfWithholdPayerBorne);
-        // review198-C C-11: แบบที่ 50 ทวิ จะเป็นจริง (ผู้รับเงินบุคคลธรรมดา ⇒ ภ.ง.ด.3) — เดิมดูแต่ ภ.ง.ด.53
+        // review198-C C-11: แบบที่ 50 ทวิ จะเป็นจริง (ผู้รับเงินบุคคลธรรมดา ⇒ ภ.ง.ด.3 · ช่องทางต่างประเทศ ⇒ ภ.ง.ด.54 ทีม W) — เดิมดูแต่ ภ.ง.ด.53
         var whtForm = WhtUnissuedCertGate.FormLabel(f.WhtFormType);
         if (whtLegs && f.FiledWhtPeriods.Contains((f.PayoutDay.Year, f.PayoutDay.Month)))
             Add(SettlementPlanIssueCode.TaxPeriodFiled, true,
@@ -706,7 +707,8 @@ public static class SettlementDocumentBuilder
             WithholdingTaxAmount: 0m);
 
     /// <summary>50 ทวิ ของ WHT ที่ JE รอบโอนตั้ง 21917 (W2 หักเองแล้วแพลตฟอร์มคืน · W3 ออกภาษีแทน) — null = ไม่ต้องออก
-    /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0)</summary>
+    /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0) ·
+    /// แบบ ภ.ง.ด. = <c>fee.WhtForm</c> ของแผน (ผู้ให้บริการต่างประเทศ = ภ.ง.ด.54 · ขา 21918 · ทีม W)</summary>
     public static CreateWithholdingTaxCertRequest? WhtCertificate(SettlementFeeDocumentPlan fee, Guid counterpartyContactId,
         Guid feeDocumentId, DateTime payoutDay, string payoutRef)
     {
@@ -721,7 +723,7 @@ public static class SettlementDocumentBuilder
                 borne ? "2" : "1"))
             .ToList();
         if (lines.Count == 0) return null;
-        return new CreateWithholdingTaxCertRequest(counterpartyContactId, TaxType.WithholdingTax53,
+        return new CreateWithholdingTaxCertRequest(counterpartyContactId, fee.WhtForm,
             payoutDay.Year, payoutDay.Month,
             borne ? WithholdingTaxCertType.PayAlways : WithholdingTaxCertType.Withhold,
             lines, feeDocumentId);

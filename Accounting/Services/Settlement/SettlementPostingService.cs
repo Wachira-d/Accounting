@@ -493,8 +493,11 @@ public class SettlementPostingService : ISettlementPostingService
                 .FirstOrDefaultAsync(c => c.Id == cpId && c.CompanyId == companyId && !c.IsDeleted, ct)
             : null;
         // review198-C C-11: แบบที่ 50 ทวิ ของรอบนี้จะเป็นจริง — ตัวเลือกตัวเดียวกับ WithholdingTaxCertService.CreateAsync (ผู้รับบุคคลธรรมดา ⇒ ภ.ง.ด.3)
-        var whtForm = Accounting.Services.Implementations.WithholdingTaxCertService
-            .ResolveWhtFormType(counterparty, TaxType.WithholdingTax53).formType;
+        // ช่องทางผู้ให้บริการต่างประเทศ ⇒ ภ.ง.ด.54 (ทีม W · SettlementForeignWht ตัวเดียว) · ในประเทศ ⇒ ตัวเลือกของ 50 ทวิ
+        var whtForm = SettlementForeignWht.WhtForm(channel.FeeVatMode) == TaxType.WithholdingTax54
+            ? TaxType.WithholdingTax54
+            : Accounting.Services.Implementations.WithholdingTaxCertService
+                .ResolveWhtFormType(counterparty, TaxType.WithholdingTax53).formType;
 
         // เดือนภาษีที่ประกาศว่ายื่นแล้ว (TaxFilingLockPolicy ตัวเดียว) — ภ.พ.30 · แบบ ภ.ง.ด. ของ 50 ทวิ รอบนี้ · ภ.พ.36 (C-11)
         var filed = await _db.TaxReports.AsNoTracking()
@@ -580,6 +583,10 @@ public class SettlementPostingService : ISettlementPostingService
             summaryBlock, staleReceipts, orphans.Voidable, sodBlocked, orphans.Unvoidable, orphans.NeedsUserAction, orphans.Acknowledged,
             Wallet: wallet, FiledPp36Periods: filedPp36, WhtFormType: whtForm, Supplementary: supplementary, Stock: stock);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
+        // ผู้รับค่าธรรมเนียมอยู่ต่างประเทศ แต่ช่องทางคิด WHT แบบในประเทศ (ภ.ง.ด.53) ⇒ บล็อก — ม.70 ต้องเป็น ภ.ง.ด.54 (ทีม W · R-A5 อีกรูป)
+        if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
+            && SettlementForeignWht.CounterpartyCountryIssue(channel, plan, counterparty?.CountryCode) is SettlementPlanIssue foreignWht)
+            gated = gated with { CanPost = false, Issues = gated.Issues.Append(foreignWht).ToList() };
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
         var planned = gated.FeeDocuments.Select(f => SettlementPostingKeys.FeeComponent(f.VatTreatment))

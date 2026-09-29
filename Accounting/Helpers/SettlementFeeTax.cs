@@ -51,12 +51,14 @@ public readonly record struct SettlementFeeTaxResult(
 /// <item><b>ไฟล์ระบุ VAT เอง</b>: เชื่อไฟล์ (ยอดจริงที่แพลตฟอร์มออกใบกำกับ) — ต้องไม่เกินยอดและไม่ติดลบ ไม่งั้นผู้เรียกแจ้งปัญหา</item>
 /// <item><b>ฐาน WHT = ก่อน VAT</b> (G-4: เส้นเดิม gross-up จากยอดรวม VAT ⇒ ภาษีเกิน ~7% · 50 ทวิ ผิด) · อัตราจาก <see cref="ThaiWhtRateTable"/>
 /// ผู้รับเป็นนิติบุคคล</item>
-/// <item><b>ออกภาษีแทน (W3)</b>: ภาษี = round(ฐาน × r/(100−r)) → 3% = ฐาน × 3/97 · เงินได้บน 50 ทวิ = ฐาน + ภาษี</item>
+/// <item><b>ออกภาษีแทน (W3)</b>: ภาษี = round(ฐาน × r/(100−r)) → 3% = ฐาน × 3/97 · ม.70 15% = ฐาน × 15/85 · เงินได้บนหนังสือรับรอง = ฐาน + ภาษี</item>
 /// <item><b>บริษัทไม่จด VAT</b>: ไม่มีขาภาษีซื้อ — VAT ที่ถูกเก็บรวมเป็นค่าใช้จ่าย · ผู้ให้บริการ<b>ต่างประเทศ</b>: ยังต้องประเมิน ภ.พ.36 (§83/6
 /// หน้าที่ของผู้จ่าย) แต่ VAT นั้นเป็นต้นทุน (<see cref="SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable"/> · review198-A R-A4) ·
 /// ผู้ให้บริการต่างประเทศที่จด e-Service และเก็บ VAT ไทยในยอดแล้ว ⇒ ตั้งช่องทางเป็น ThaiVat7 (ไม่ใช่ ForeignPp36)</item>
-/// <item><b>ผู้ให้บริการต่างประเทศไม่หัก WHT ด้วยอัตราในประเทศ</b> — ผู้รับเงินต่างประเทศ = §70 ภ.ง.ด.54 (ไม่ใช่ภ.ง.ด.53) · ตาราง
-/// <see cref="ThaiWhtRateTable"/> มีแต่อัตราในประเทศ และยังไม่มีตาราง DTA ⇒ คืน WHT 0 · <c>SettlementBatchMath.Plan</c> บล็อกโหมดหักของช่องทางนี้ (R-A5)</item>
+/// <item><b>ผู้ให้บริการต่างประเทศไม่หัก WHT ด้วยอัตราในประเทศ</b> — ผู้รับเงินต่างประเทศ = §70 ภ.ง.ด.54 (ไม่ใช่ภ.ง.ด.53) · อัตราจาก
+/// <see cref="ForeignWhtRateResolver"/> ตัวเดียว (ผ่าน <see cref="SettlementForeignWht.Decide"/> · ม.70 15% → อนุสัญญาเมื่อมีแถว + CoR · รอบ 200 ทีม W) ·
+/// ประเภทเงินได้นอก ม.70/ไม่รู้ ⇒ WHT 0 และ <c>SettlementBatchMath.Plan</c> บล็อกพร้อมทางไปต่อ (<see cref="SettlementForeignWht.PlanIssues"/>) ·
+/// โหมดตัวแทนหักแทน (W1) ⇒ 0 + บล็อก</item>
 /// </list></para>
 /// </summary>
 public static class SettlementFeeTax
@@ -72,6 +74,7 @@ public static class SettlementFeeTax
     /// <param name="companyVatRegistered">บริษัทจด VAT (<see cref="CompanyVatStatus"/>)</param>
     /// <param name="whtMode">โหมดหัก ณ ที่จ่ายของช่องทาง</param>
     /// <param name="whtIncomeCode">รหัสประเภทเงินได้ของประเภทบรรทัด · null = ประเภทนี้ไม่หัก</param>
+    /// <param name="paymentDate">วันที่จ่าย (วันที่รอบโอน) — ใช้เลือกฉบับอนุสัญญาภาษีซ้อนของผู้ให้บริการต่างประเทศ · null = ไม่รู้ ⇒ อัตรา ม.70</param>
     public static SettlementFeeTaxResult Compute(
         decimal deducted,
         decimal? explicitVat,
@@ -79,7 +82,8 @@ public static class SettlementFeeTax
         bool vatApplicable,
         bool companyVatRegistered,
         SettlementFeeWhtMode whtMode,
-        string? whtIncomeCode)
+        string? whtIncomeCode,
+        DateTime? paymentDate = null)
     {
         deducted = Math.Abs(deducted);
 
@@ -124,9 +128,14 @@ public static class SettlementFeeTax
             _ => preVat,
         };
 
-        // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคลไทย) · ต่างประเทศ = ไม่ใช้อัตราในประเทศ (R-A5) ──
-        var rate = whtMode == SettlementFeeWhtMode.None || vatMode == SettlementFeeVatMode.ForeignPp36 ? 0m
-            : ThaiWhtRateTable.RateFor(whtIncomeCode, payeeIsJuristic: true) ?? 0m;
+        // ── WHT: ฐานก่อน VAT · อัตราจากตารางกฎหมายตัวเดียว (ผู้รับ = นิติบุคคลไทย) · ต่างประเทศ = ม.70 ผ่านตัวตัดสินเดียว ไม่ใช้อัตราในประเทศ (R-A5 · ทีม W) ──
+        decimal rate;
+        if (whtMode == SettlementFeeWhtMode.None) rate = 0m;
+        else if (SettlementForeignWht.IsForeignChannel(vatMode))
+            rate = whtMode is SettlementFeeWhtMode.SelfWithholdReimbursed or SettlementFeeWhtMode.SelfWithholdPayerBorne
+                ? SettlementForeignWht.Decide(whtIncomeCode, paymentDate ?? DateTime.MinValue).RatePercent ?? 0m
+                : 0m;   // W1 ตัวแทนหักแทน — ต่างประเทศยื่น ภ.ง.ด.54 แทนเราไม่ได้ (แผนบล็อก)
+        else rate = ThaiWhtRateTable.RateFor(whtIncomeCode, payeeIsJuristic: true) ?? 0m;
         decimal whtBase = 0m, wht = 0m, certIncome = 0m, borne = 0m;
         if (rate > 0m && preVat > 0m)
         {

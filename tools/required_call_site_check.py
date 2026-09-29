@@ -1972,6 +1972,46 @@ RULES += [
          why="ข้อ 5: บริษัทที่ตรวจสมาชิกกับบริษัทที่ตัดสินแพ็กเกจต้องมาจากตัวหาเดียวกัน — สำเนาที่สอง = header ปลอมยืมแพ็กเกจได้"),
 ]
 
+# ── รอบ 200 ทีม W (คำตัดสินข้อ 13): หัก ณ ที่จ่ายจ่ายต่างประเทศ (ม.70 ภ.ง.ด.54) ผ่านตัวตัดสินเดียว ForeignWhtRateResolver ──
+#    เทสต์ (ForeignWhtRateResolverTests · SettlementForeignWhtTests) ล็อกตัวตัดสิน pure · ที่นี่ล็อกว่าทุกทางเข้า (แผนรอบโอน · ด่านผู้ลงบัญชี ·
+#    คำเตือนตอนอนุมัติเอกสาร · ไฟล์ ภ.ง.ด.54) เรียกจริง และห้ามกลับไปบล็อกเหมา/เตือนเหมา/พิมพ์ ภ.ง.ด.53 ตายตัว
+W_FEETAX = "Helpers/SettlementFeeTax.cs"
+W_BATCH = "Helpers/SettlementBatchMath.cs"
+W_POSTING = "Helpers/SettlementPosting.cs"
+W_POSTSVC = "Services/Settlement/SettlementPostingService.cs"
+W_EXPORT = "Services/Implementations/TaxFilingExportService.cs"
+RULES += [
+    dict(file=W_FEETAX, method="Compute",
+         must=["SettlementForeignWht.IsForeignChannel(vatMode)", "SettlementForeignWht.Decide(whtIncomeCode"],
+         why="ทีม W: อัตรา WHT ค่าธรรมเนียมผู้ให้บริการต่างประเทศมาจากตัวตัดสิน ม.70/อนุสัญญาตัวเดียว (ห้ามอัตราในประเทศ · R-A5)"),
+    dict(file=W_BATCH, method="Plan",
+         must=["SettlementForeignWht.PlanIssues(", "SettlementForeignWht.WhtForm(channel.FeeVatMode)",
+               "SettlementForeignWht.IsForeignChannel(channel.FeeVatMode)"],
+         forbid=["SettlementPlanIssueCode.ForeignWhtNotSupported"],
+         why="ทีม W: บล็อกเฉพาะที่คิดให้ไม่ได้ (นอก ม.70 · ตัวแทนหักแทน) ผ่าน PlanIssues ตัวเดียว — ห้ามกลับไปบล็อกเหมาทุกช่องทางต่างประเทศ · "
+             "ใบค่าธรรมเนียมพกแบบ ภ.ง.ด. · ขา WHT ต่างประเทศลง 21918"),
+    dict(file=W_POSTING, method="WhtCertificate",
+         must=["fee.WhtForm"], forbid=["TaxType.WithholdingTax53"],
+         why="ทีม W: 50 ทวิ ของรอบโอนใช้แบบ ภ.ง.ด. ของแผน (ต่างประเทศ = ภ.ง.ด.54) — ห้ามพิมพ์ ภ.ง.ด.53 ตายตัว"),
+    dict(file=W_POSTSVC, method="BuildGateAsync",
+         must=["SettlementForeignWht.WhtForm(channel.FeeVatMode)", "t.TaxType == whtForm", "f.TaxType == whtForm",
+               "SettlementForeignWht.CounterpartyCountryIssue(", "c.CountryCode"],
+         forbid=["t.TaxType == TaxType.WithholdingTax53", "f.TaxType == TaxType.WithholdingTax53"],
+         why="ทีม W: เดือนที่ยื่นแล้วของแบบ WHT ตามช่องทาง (ต่างประเทศ = ภ.ง.ด.54) · ผู้ติดต่อต่างประเทศบนช่องทางไทยที่มีขา WHT = บล็อก (R-A5 อีกรูป)"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["WhtPayeeKind.IsForeignPayee(doc.IsForeignService", "ForeignWhtRateResolver.ResolveForIncomeCode(",
+               "ForeignWhtRateResolver.RateWarning("],
+         forbid=["maxRate >= 15m"],
+         why="ทีม W: คำเตือนจ่ายต่างประเทศเทียบอัตรารายบรรทัดกับตัวตัดสิน ม.70 (หักขาด §54 ต้องดัง · ใบที่หักถูกต้องเงียบ) — "
+             "ห้ามกลับไปเตือนเหมาทุกใบที่หัก 15%"),
+    dict(file=W_EXPORT, method="ExportPnd54Async", must=["Pnd54RateNote(certs)"],
+         why="ทีม W: ไฟล์ ภ.ง.ด.54 บอกบรรทัดที่อัตราไม่ตรงตัวตัดสิน ม.70/อนุสัญญา"),
+    dict(file=W_EXPORT, method="Pnd54RateNote",
+         must=["ForeignWhtRateResolver.ResolveForIncomeCode(", "ForeignWhtRateResolver.RateWarning("],
+         forbid=["ThaiWhtRateTable"],
+         why="ทีม W: ภ.ง.ด.54 ห้ามตัดสินด้วยตารางอัตราในประเทศ (ท.ป.4/2528) — ใช้ตัวตัดสิน ม.70 ตัวเดียว"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
