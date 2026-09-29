@@ -1253,11 +1253,12 @@ const Layout = {
       description: 'เช็คล่วงหน้า · เบิก-เคลียร์เงินสด · จ่ายรวม vendor · ใบแจ้งยอดลูกหนี้ — รวมในที่เดียว' },
     { id: 'cheques', label: 'จัดการเช็ค', icon: '✍️', href: '/pages/cheques.html', feature: 'DocumentEngine',
       description: 'เปิดเล่มเช็ค · ออกเช็ค · บันทึกเช็คคืน · ติดตามเช็คคงค้าง — Issued / Cleared / Bounced / Voided' },
-    // รอบ 198 เฟส 1 ทีม D — settlement (wallet → ธนาคาร) · ด่านจริงอยู่ที่ SettlementController (คีย์ Settlement.*) ·
-    // เมนูเปิดตามสิทธิ์เมนูของบทบาท (template "Accountant" ติ๊กให้แล้ว) · ไม่ผูก feature แพ็กเกจ (เหมือนหน้ากระทบยอดเงินรับออนไลน์)
-    { id: 'settlements', label: 'รอบโอนเงินจากแพลตฟอร์ม', icon: '🧾', href: '/pages/settlements.html',
+    // รอบ 198 เฟส 1 ทีม D — settlement (wallet → ธนาคาร) · ด่านสิทธิ์จริงอยู่ที่ SettlementController (คีย์ Settlement.*) ·
+    // เมนูเปิดตามสิทธิ์เมนูของบทบาท (template "Accountant" ติ๊กให้แล้ว) · รอบ 200 ข้อ 14 (D-P3): ผูก feature แพ็กเกจเดียวกับกระทบยอดธนาคาร
+    // (จับคู่เงินเข้าผ่าน IBankService.ReconcileAsync) — คู่กับ ("/settlement", BankReconciliation) ใน SubscriptionGatePolicy.RouteFeatureMap
+    { id: 'settlements', label: 'รอบโอนเงินจากแพลตฟอร์ม', icon: '🧾', href: '/pages/settlements.html', feature: 'BankReconciliation',
       description: 'นำเข้ารายงานรอบโอนของ marketplace/gateway/เครื่องรูดบัตร → จัดประเภทบรรทัด → จับคู่ใบขาย → ลงบัญชีใบค่าธรรมเนียม/ใบขายสรุป/JE → จับคู่เงินเข้าธนาคาร' },
-    { id: 'settlement-channels', label: 'ช่องทางรับเงินผ่าน wallet', icon: '⚙️', href: '/pages/settlement-channels.html',
+    { id: 'settlement-channels', label: 'ช่องทางรับเงินผ่าน wallet', icon: '⚙️', href: '/pages/settlement-channels.html', feature: 'BankReconciliation',
       description: 'ผังพักต่อแพลตฟอร์ม (11341–11349) · ผู้ติดต่อแพลตฟอร์ม · โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียม · ผังค่าธรรมเนียม' },
 
     // ───── 👥 พนักงาน (Self-Service) ─────

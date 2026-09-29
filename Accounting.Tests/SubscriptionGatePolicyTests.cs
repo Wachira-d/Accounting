@@ -134,6 +134,10 @@ public class SubscriptionGatePolicyTests
     [InlineData("/api/companies/x/etax/documents", FeatureFlags.EtaxInvoice, "/etax")]
     [InlineData("/api/companies/x/reports/aging", FeatureFlags.AgingReport, "/reports/aging")]
     [InlineData("/api/companies/x/dimensions/cost-centers", FeatureFlags.CostCenter, "/dimensions")]
+    // รอบ 200 D-P3: รอบโอน settlement ผูก feature เดียวกับกระทบยอดธนาคาร
+    [InlineData("/api/companies/x/settlement/batches", FeatureFlags.BankReconciliation, "/settlement")]
+    [InlineData("/api/companies/x/settlement/batches/abc/deposit-match", FeatureFlags.BankReconciliation, "/settlement")]
+    [InlineData("/api/companies/x/bank/accounts", FeatureFlags.BankReconciliation, "/bank")]
     public void เส้นทางที่ถูกgate_คีย์ยาวสุดชนะ(string path, FeatureFlags feature, string key)
     {
         var r = SubscriptionGatePolicy.RequiredFeatureFor(path);
@@ -147,6 +151,10 @@ public class SubscriptionGatePolicyTests
     [InlineData("/api/companies/x/dimensions/branches/abc")]
     [InlineData("/api/companies/x/payroll-history")]              // ยึดท้าย segment — ไม่ใช่ /payroll
     [InlineData("/api/companies/x/documents")]
+    // รอบ 200 D-P3 ทิศตรงข้าม: เส้นทางที่มีคำว่า settlement แต่ไม่ใช่โมดูลรอบโอน ต้องไม่ถูกผูกไปด้วย
+    [InlineData("/api/companies/x/pay/settlements/pending")]
+    [InlineData("/api/companies/x/documents/orphaned-settlement-receipts")]
+    [InlineData("/api/companies/x/pay/documents/abc/settlement-proposal")]
     [InlineData("")]
     public void เส้นทางที่ไม่ต้องใช้ฟีเจอร์_หรือกฎหมายบังคับ_ไม่gate(string path)
     {
@@ -267,18 +275,6 @@ public class SubscriptionGatePolicyTests
             features: FeatureFlags.TrialFeatures, need: FeatureFlags.Payroll));
         Assert.Equal(SubscriptionGateReason.CompanySuspended, v.Block);
         Assert.False(SubscriptionGatePolicy.ReachedExpiryStep(v));   // ไม่ติด header ผ่อนผันบนคำตอบระงับ (พฤติกรรมเดิม)
-    }
-
-    [Theory]
-    [InlineData(null, SubscriptionWriteGateMode.LogOnly)]
-    [InlineData("", SubscriptionWriteGateMode.LogOnly)]
-    [InlineData("LogOnly", SubscriptionWriteGateMode.LogOnly)]
-    [InlineData(" OFF ", SubscriptionWriteGateMode.Off)]
-    [InlineData("enforce", SubscriptionWriteGateMode.Enforce)]
-    [InlineData("อะไรก็ไม่รู้", SubscriptionWriteGateMode.LogOnly)]
-    public void config_ด่านเขียน_อ่านเหมือนเดิม(string? raw, SubscriptionWriteGateMode expected)
-    {
-        Assert.Equal(expected, SubscriptionGatePolicy.ParseWriteMode(raw));
     }
 
     [Fact]

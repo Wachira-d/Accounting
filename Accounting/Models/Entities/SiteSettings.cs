@@ -65,9 +65,11 @@ public class SiteSettings : BaseEntity
 
     /// <summary>gate แพ็กเกจ/ระงับบริษัทของคำขอที่รู้บริษัทจาก route (หน้าเว็บ) — <b>ค่าตั้งต้น Shadow</b>
     /// (ตัดสินแต่ไม่บล็อก + บันทึกลงตาราง <c>SubscriptionGateShadowHits</c> ให้แอดมินดูผลกระทบก่อน)
-    /// <para>คำขอที่ส่ง <c>X-Company-Id</c> มาเอง (partner/integration) บังคับเหมือนเดิมเสมอ ไม่อ่านธงนี้ ·
-    /// ผู้อ่านตัวเดียว: <c>SubscriptionCheckMiddleware</c> ผ่าน <c>ISubscriptionGateShadowLog.GetWebModeAsync</c> ·
-    /// ตัวตัดสิน <c>Helpers/SubscriptionGatePolicy</c> · ตั้งจากหน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</para></summary>
+    /// <para>คำขอที่ส่ง <c>X-Company-Id</c> มาเอง (partner/integration) ถูกตัดสินฟีเจอร์/สถานะเสมอไม่ว่าธงนี้เป็นอะไร ·
+    /// รอบ 200 ข้อ 14: ธงนี้คือ<b>ตัวตัดสินหลัก</b>ของทั้งหน้าเว็บและด่านบริษัทถูกระงับ/หมดอายุ (ทุกคำขอ) — config เหลือแค่ override ฉุกเฉิน
+    /// (<c>Subscription:Enforcement:EmergencyOverride</c>) · ผู้อ่าน: <c>ISubscriptionGateShadowLog.ReadAdminSwitchAsync</c> →
+    /// <c>Helpers/SubscriptionEnforcementResolver</c> (middleware + หน้าแอดมิน) · ตัวตัดสิน <c>Helpers/SubscriptionGatePolicy</c> ·
+    /// ตั้งจากหน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</para></summary>
     public SubscriptionEnforcementMode SubscriptionEnforcementMode { get; set; } = SubscriptionEnforcementMode.Shadow;
 
     public string? MaintenanceMessage { get; set; }

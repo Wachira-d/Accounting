@@ -250,9 +250,14 @@ public class SettlementController : ControllerBase
             await _perms.HasPermissionAsync(companyId, UserId, PermissionKeys.JournalManage));
         // D-03: บัญชีธนาคารที่ผูกกับรอบนี้ (รวมบัญชีที่ปิดใช้ภายหลัง — ต้องเห็นว่าผูกอะไรไว้)
         var bank = batch.BankAccountId is Guid bankId ? (await BankOptionsAsync(companyId, bankId, ct)).FirstOrDefault() : null;
+        // D-P5 (รอบ 200 ข้อ 14): ผู้มีแค่ Settlement.View ไม่เห็นผู้สมัครเอกสารขาย/ยอดค้าง — ตัดสินจากสิทธิ์ชุดเดียวกับปุ่ม (permissions) · ซ่อน = บอกเหตุผล
+        var candidatesHidden = SettlementPermissionScope.CandidatesHiddenReason(permissions.Import, permissions.Post);
+        if (candidatesHidden is string hiddenReason)
+            batch = SettlementPermissionScope.HideCandidates(batch, hiddenReason);
         return new
         {
             batch,
+            candidatesHiddenReason = candidatesHidden,
             // ตัวตัดสินเดียวกับด่านของ service (ทีม S3): ลงค้างครึ่งทาง = ป้ายชุดเดียวกับ LoadEditableBatchAsync · ยกเลิกการลงบัญชี = SettlementUnpostGate
             actions = SettlementBatchActions.For(batch.Status, batch.Lines.Select(l => (l.Id, l.LineType)), batch.PostingArtifacts,
                 await _posting.UnpostBlockersAsync(companyId, batchId, ct), closedChargebacks, permissions),

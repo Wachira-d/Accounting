@@ -517,6 +517,19 @@ public class SubscriptionService : ISubscriptionService
             }
         }
 
+        // รอบ 200 ข้อ 14: ลูกค้าช่วงทดลอง/แพ็กเกจฟรีที่สำเนาฟีเจอร์ว่าง (คอลัมน์ DEFAULT 0 · แอดมินบันทึกรายการว่าง) ⇒ ใช้ฟีเจอร์ตามข้อมูล
+        // แพ็กเกจ แทนการถูกบล็อกทุกเส้นทางเมื่อเปิดบังคับ · แพ็กเกจก็ว่าง = คงว่าง (รายงานแอดมินแสดง — ไม่แต่งชุดฟีเจอร์เอง) ·
+        // ตัวตัดสินเดียว SubscriptionTrialReadiness.ResolveFeatures · โหลดแพ็กเกจเฉพาะเมื่อว่าง (กรณีหายาก)
+        if (features == FeatureFlags.None && Accounting.Helpers.SubscriptionTrialReadiness.IsTrialLike(plan, status))
+        {
+            var tpl = acct?.PlanTemplate ?? await _db.PlanTemplates.AsNoTracking()
+                .Where(t => t.Plan == plan && t.IsActive)
+                .OrderBy(t => t.CreatedAt)
+                .FirstOrDefaultAsync();
+            features = Accounting.Helpers.SubscriptionTrialReadiness.ResolveFeatures(features, plan, status,
+                tpl?.TrialFeatures, tpl?.EnabledFeatures).Features;
+        }
+
         // Owner-level subtractive override — when the Owner has flipped
         // off features in CompanySettings.OwnerDisabledFeatures, mask
         // them out so the frontend sees only what the Owner has chosen

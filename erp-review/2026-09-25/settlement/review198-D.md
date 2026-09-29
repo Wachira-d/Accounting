@@ -92,19 +92,19 @@
 
 ## PLAUSIBLE / ต้องให้เจ้าของตัดสิน
 
-### ✅ <pending> D-P1 · P2 · คีย์ API (`acc_` = ตัวตนเจ้าของ) ยิง `reclassify` ได้ ⇒ คำตอบของเครื่องถูกบันทึกเป็น "ผู้ใช้เลือก (Explicit)"
+### ✅ 266acad2 D-P1 · P2 · คีย์ API (`acc_` = ตัวตนเจ้าของ) ยิง `reclassify` ได้ ⇒ คำตอบของเครื่องถูกบันทึกเป็น "ผู้ใช้เลือก (Explicit)"
 - `reclassify`/`match`/`rematch`/`files/import`/`from-payment-intents` ไม่มี `[RejectApiKey]` (ตั้งใจ — ไม่ขยับ GL) แต่ `ReclassifyLineAsync` เรียก
   `RecordUserChoiceAsync(…, Explicit)` เสมอ ⇒ integration ที่จัดประเภทเป็นชุดจะเข้าคลังเรียนรู้ในชั้นสูงสุด (DECISION_DOCTRINE §3 "กันคลังเอียง")
   และ `ApplyToSameLabel=true` ขยายผลไปทั้งรอบ
 - ทางเลือก: `[RejectApiKey]` ที่ reclassify · หรือ service รับ `source` จาก controller (Api ⇒ Implicit) — ต้องแก้คู่กับ `required_call_site_check` ของทีม B
 
-### ✅ <pending> D-P2 · P2 · การจับคู่คอลัมน์ของช่องทาง (`ColumnMapJson`) ถูกเขียนได้สองทางด้วยด่านต่างกัน
+### ✅ 266acad2 D-P2 · P2 · การจับคู่คอลัมน์ของช่องทาง (`ColumnMapJson`) ถูกเขียนได้สองทางด้วยด่านต่างกัน
 - `PUT channels/{id}` = `Settlement.Channels` + ห้ามคีย์ API · แต่ `files/import` + `rememberColumnMap=true` (ค่าเริ่มต้น) เขียน `channel.ColumnMapJson`
   ด้วยแค่ `Settlement.Import` และคีย์ API ได้ · แผนที่นี้มี `negate`/`vatExclusive` ซึ่งเปลี่ยนเครื่องหมาย/VAT ของทุกรอบถัดไป (ข้อความคีย์ Channels
   เองบอกว่า "กำหนดภาษีของทุกรอบถัดไป") — R5 "ทางเข้าอื่นไม่เดินด่านเดียวกัน" ในขนาดเล็ก · ผลกระทบถูกจำกัดเพราะทุกรอบยังต้องผ่านพรีวิว+Post
 - ทางเลือก: จำแผนเฉพาะเมื่อผู้เรียกมี Channels (ไม่มี ⇒ ใช้กับไฟล์นี้อย่างเดียว + บอกผู้ใช้) — ให้เจ้าของเลือก
 
-### 📋 ทีม G (คำตัดสินเจ้าของข้อ 5) D-P3 · P2 · โมดูล settlement ไม่ผูกแพ็กเกจเลย และหลบ `/bank` โดยตั้งใจ
+### ✅ รอบ 200 ทีม S (DECISIONS 2026-09-29 ข้อ 14 · 2bff9ece) D-P3 · P2 · โมดูล settlement ไม่ผูกแพ็กเกจเลย และหลบ `/bank` โดยตั้งใจ
 - ไม่มี `/settlement` ใน `SubscriptionMiddleware.RouteFeatureMap` · `deposit-match` เรียก `IBankService.ReconcileAsync` (งานของ `BankReconciliation`)
   ⇒ แพ็กเกจที่ไม่มีกระทบยอดธนาคารก็ได้งานกระทบยอดผ่านทางนี้ · เมนูไม่มี `feature` · เป็นการตัดสินเชิงผลิตภัณฑ์ — **ห้ามเดาแทนเจ้าของ**
 - หมายเหตุที่ตรวจเจอระหว่างทาง (ไม่ใช่ของทีม D): middleware นี้ข้ามทุกคำขอที่ไม่มี header `X-Company-Id` และ `api.js _requestCore` ไม่ส่ง header นี้เลย
@@ -114,7 +114,7 @@
 - controller จำกัด 30 MB · reader จำกัด 25 MB ของไฟล์ดิบ แต่ไม่มีเพดานแถว (`SettlementFileReader`/`GenericColumnMapAdapter`) · xlsx 25 MB ที่คลายเป็น
   หลาย GB หรือ CSV ~500k แถว ⇒ ทุกแถวเข้า list + ธุรกรรมเดียว · ของทีม B เป็นหลัก แต่ทางเข้าอยู่ที่ D
 
-### 📋 backlog (เจ้าของตัดสิน) D-P5 · P3 · `Settlement.View` เห็นผู้สมัครเอกสารขาย (เลขที่ + ยอดค้าง) โดยไม่ต้องมีสิทธิ์ดูเอกสารรายได้
+### ✅ รอบ 200 ทีม S (DECISIONS 2026-09-29 ข้อ 14 · 2bff9ece) D-P5 · P3 · `Settlement.View` เห็นผู้สมัครเอกสารขาย (เลขที่ + ยอดค้าง) โดยไม่ต้องมีสิทธิ์ดูเอกสารรายได้
 - `GET batches/{id}` คืน `MatchCandidates` ของทุกบรรทัด · บทบาทที่ถูกจำกัดการดูเอกสารขายจะเห็นยอดค้างผ่านทางนี้ · ประเมินว่าควรซ่อนผู้สมัครเมื่อไม่มี Import
 
 ---
@@ -171,9 +171,9 @@
 | D-11 | `GET batches` = `{items, skip, take, hasMore}` (≤100/หน้า) · ปุ่ม "โหลดรอบที่เก่ากว่า" | — |
 | D-P1 | `[RejectApiKey]` ที่ reclassify (ไม่เปลี่ยนสัญญา `Explicit` ของ service) | `owner_action_wiring_check` +2 แถว (self-test ถอดแล้วฟ้อง) |
 | D-P2 | `SettlementPermissionScope.ColumnMapMemory` — จำเฉพาะผู้มี `Settlement.Channels` และไม่ใช่คีย์ API · ไม่ผ่าน = ใช้กับไฟล์นี้ + คำเตือนในผล · หน้าเว็บแทนช่องติ๊กด้วยเหตุผล (`reference.columnMapMemory`) | DP2 · required (ImportFile) |
-| D-P3 | **ไม่แตะ** — คำตัดสินเจ้าของข้อ 5 (gate แพ็กเกจ) ทีม G รับไป · หมายเหตุ `X-Company-Id` ส่งต่อทีม G | — |
+| D-P3 | **ไม่แตะ** — คำตัดสินเจ้าของข้อ 5 (gate แพ็กเกจ) ทีม G รับไป · หมายเหตุ `X-Company-Id` ส่งต่อทีม G · **รอบ 200 ทีม S**: `("/settlement", BankReconciliation)` ใน `RouteFeatureMap` + เมนู 2 รายการ `feature: BankReconciliation` · `X-Company-Id` แก้แล้วรอบ 198 (`TenantCompanyId`) | `SubscriptionGatePolicyTests` (settlement ×2 + ทิศตรงข้าม ×3) · `SubscriptionTrialReadinessTests` |
 | D-P4 | controller ตอบ 400 ไทยเมื่อไฟล์ > 25 MB ก่อนอ่าน · หน้าเว็บเตือนก่อนอัปโหลดด้วยตัวเลขจากเซิร์ฟเวอร์ · `SettlementFileReader.Capped` 100,000 แถว / 500 คอลัมน์ อ่านทีละแถวหยุดทันที (xlsx/CSV) | DP4×2 |
-| D-P5 | backlog — "View เห็นผู้สมัครเอกสารขาย" เป็นคำถามขอบเขตสิทธิ์ (ซ่อนผู้สมัครเมื่อไม่มี Import หรือไม่) ให้เจ้าของตัดสิน | — |
+| D-P5 | backlog — "View เห็นผู้สมัครเอกสารขาย" เป็นคำถามขอบเขตสิทธิ์ (ซ่อนผู้สมัครเมื่อไม่มี Import หรือไม่) ให้เจ้าของตัดสิน · **รอบ 200 ทีม S (ข้อ 14)**: `SettlementPermissionScope.CandidatesHiddenReason/HideCandidates` — ไม่มีทั้ง Import และ Post ⇒ ซ่อน `MatchCandidates` + `MatchNote` + ตอบ `candidatesHiddenReason` (แบนเนอร์ 🔒) | `SubscriptionTrialReadinessTests` D-P5 ×2 · required (BatchDetailAsync) |
 
 ## ลำดับที่แนะนำ
 1. D-01 (ผู้ใช้เจอทางตันพร้อมข้อความผิด) · D-02 + D-03 (ข้อมูลที่ผู้อนุมัติเห็นไม่ตรงสิ่งที่ลงจริง — แก้คู่กัน: ให้ server resolve ผัง+ชื่อบัญชีธนาคารลงในพรีวิว)

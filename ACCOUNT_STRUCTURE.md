@@ -353,22 +353,31 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 แพ็กเกจ (`RouteFeatureMap`) และไม่เคยถูกบล็อกเมื่อบริษัท/subscription ถูกระงับ** · ถูกบังคับเฉพาะ partner/integration ที่ส่ง header
 มาเอง · และคำขอที่ส่ง header ของบริษัท B มากับ route ของบริษัท A ถูกตัดสินแพ็กเกจด้วย **B** ทั้งที่ผ่านด่านสมาชิกด้วย A.
 
-**คำตัดสินเจ้าของ** (`erp-review/2026-09-25/settlement/DECISIONS.md` ข้อ 5): รายงานก่อน แล้วค่อยเปิดบังคับ
+**คำตัดสินเจ้าของ** (`erp-review/2026-09-25/settlement/DECISIONS.md` ข้อ 5): รายงานก่อน แล้วค่อยเปิดบังคับ ·
+**รอบ 200 ข้อ 14** (`erp-review/2026-09-29/DECISIONS.md`): สวิตช์แอดมิน (ฐานข้อมูล) = ตัวตัดสินหลัก · config = override ฉุกเฉินเท่านั้น ·
+FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็กเกจ · settlement ผูก feature เดียวกับกระทบยอดธนาคาร · **ค่าตั้งต้นยังเป็น Shadow — เจ้าของกดบังคับเอง**
+(checklist ก่อนกดอยู่ใน `erp-review/2026-09-29/team-S.md`)
 
 | ชั้น | ตัวเดียวของระบบ | หมายเหตุ |
 | --- | --- | --- |
 | บริษัทของคำขอ | `Helpers/TenantCompanyId.FromHttp` (route `{companyId}` ก่อน แล้วค่อย header) | ใช้ร่วมกับ `TenantAccessMiddleware` ⇒ บริษัทที่ตรวจสมาชิก = บริษัทที่ตัดสินแพ็กเกจเสมอ · header ขัดกับ route = ใช้ route (log Information) |
-| ทำอะไรกับคำขอ | `SubscriptionGatePolicy.ActionFor` | **ส่ง header มาเอง = บังคับเสมอ** (พฤติกรรมเดิม ห้ามหลวม) · รู้บริษัทจาก route อย่างเดียว = ตามสวิตช์ · ค่าสวิตช์ที่ไม่รู้จัก = Shadow |
-| สวิตช์ | `SiteSettings.SubscriptionEnforcementMode` (`Off=0` · `Shadow=1` ค่าตั้งต้น · `Enforce=2`) · migration `DEFAULT 1` | อ่านผ่าน `ISubscriptionGateShadowLog.GetWebModeAsync` (ไม่มีแถว/อ่านไม่ได้ = Shadow) · ตั้งที่หน้าแอดมิน `/admin/subscription-enforcement.html` (`PUT /api/admin/subscription-enforcement/mode` · SystemAdmin + `[RejectApiKey]` · รับเป็นชื่อเท่านั้น) |
-| ตัดสิน | `SubscriptionGatePolicy.Decide` + ตาราง `RouteFeatureMap`/`FeatureExemptRoutes` (ย้ายมาจาก middleware) | ลำดับเดิม: subscription Cancelled/Suspended → 403 ทุกคำขอ · บริษัทถูกระงับ (เขียน) → 403 · หมดอายุเกินผ่อนผัน (เขียน) → 402 · ฟีเจอร์ไม่อยู่ในแพ็กเกจ → 403 · สองด่านเขียนยังขึ้นกับ config `Subscription:Enforcement:Mode` (Off/LogOnly/Enforce — ค่าใน appsettings = LogOnly) เหมือนเดิม |
-| แพ็กเกจ/สถานะ/ฟีเจอร์ | `ISubscriptionService.GetGateStateAsync` (overlay User License + mask ที่เจ้าของปิด — `ResolveGateOverlayAsync` ตัวเดียวกับ `GetSubscriptionAsync`) | ไม่นับการใช้งาน (คำขอเว็บทุกตัวผ่านที่นี่) · ไม่มี subscription → `GetSubscriptionAsync` สร้าง FreeTrial ให้เหมือนเดิม |
-| โหมดเงา | `SubscriptionGateShadowHits` (upsert ต่อ บริษัท×เหตุ×ฟีเจอร์ · นับครั้ง · แรก/ล่าสุด) | ไม่มี PII (ไม่มีผู้ใช้/URL — เก็บคีย์เส้นทางในตาราง + method) · `WouldBlock=false` = เหตุที่ config ด่านเขียนเป็น LogOnly · fail-open |
-| รายงาน | `GET /api/admin/subscription-enforcement` (ผลโหมดเงา) · `GET …/precheck?skip&take` (ตรวจล่วงหน้าจากข้อมูลปัจจุบัน ≤500 บริษัท/หน้า) · `DELETE …/hits` | ตรวจล่วงหน้าเรียกตัวตัดสินตัวเดียวกันด้วยคำขอสมมุติ (ห้ามเขียน HasFlag เอง) |
+| โหมดที่มีผลจริง | `Helpers/SubscriptionEnforcementResolver.Resolve(ReadAdminSwitchAsync(), config)` — **ตัวเดียว** ของ middleware + หน้าแอดมิน (รอบ 200 ข้อ 14) | สวิตช์แอดมิน (ฐานข้อมูล) ชนะ · config `Subscription:Enforcement:EmergencyOverride` (ว่าง = ไม่มี · Off/Shadow/Enforce = ทับสวิตช์ · ค่าเพี้ยน = Shadow + คำเตือน) · config เดิม `Subscription:Enforcement:Mode` **ไม่มีผลแล้ว** (หน้าแอดมินเตือนให้ลบ) · ผลลัพธ์มี `Explanation` "โหมดที่มีผลจริง + เพราะอะไร" ที่หน้าแอดมินแสดงตรง ๆ |
+| ทำอะไรกับคำขอ | `SubscriptionGatePolicy.ActionFor(target, EffectiveMode)` | **ส่ง header มาเอง = บังคับเสมอ** (พฤติกรรมเดิม ห้ามหลวม) · รู้บริษัทจาก route อย่างเดียว = ตามโหมดที่มีผลจริง · ค่าที่ไม่รู้จัก = Shadow |
+| สวิตช์ | `SiteSettings.SubscriptionEnforcementMode` (`Off=0` · `Shadow=1` ค่าตั้งต้น · `Enforce=2`) · migration `DEFAULT 1` | อ่านผ่าน `ISubscriptionGateShadowLog.ReadAdminSwitchAsync` (บอกที่มา Stored/NoRow/Unreadable · สองอย่างหลัง = Shadow) · ตั้งที่หน้าแอดมิน `/admin/subscription-enforcement.html` (`PUT /api/admin/subscription-enforcement/mode` · SystemAdmin + `[RejectApiKey]` · รับเป็นชื่อเท่านั้น · override ทับอยู่ ⇒ ตอบ "บันทึกแล้วแต่ยังไม่มีผล" ไม่ใช่สำเร็จเงียบ) |
+| ด่านเขียน (ระงับ/หมดอายุ) | `SubscriptionGatePolicy.WriteGateModeFor(action, target, state)` | **ไม่อ่าน config แล้ว**: โหมดเงา = ตัดสินแบบบังคับ (รายงานบอกผลของการกดบังคับครบ) · หน้าเว็บบังคับ = Enforce · คำขอ header = Enforce เมื่อโหมดที่มีผลจริง = Enforce ไม่งั้น LogOnly (ค่าเดิม — ไม่หลวม) |
+| ตัดสิน | `SubscriptionGatePolicy.Decide` + ตาราง `RouteFeatureMap`/`FeatureExemptRoutes` (ย้ายมาจาก middleware) | ลำดับเดิม: subscription Cancelled/Suspended → 403 ทุกคำขอ · บริษัทถูกระงับ (เขียน) → 403 · หมดอายุเกินผ่อนผัน (เขียน) → 402 · ฟีเจอร์ไม่อยู่ในแพ็กเกจ → 403 · รอบ 200 D-P3: `/settlement` → `BankReconciliation` (ตัวเดียวกับ `/bank` · เมนู settlements/settlement-channels ผูก feature เดียวกัน) |
+| แพ็กเกจ/สถานะ/ฟีเจอร์ | `ISubscriptionService.GetGateStateAsync` (overlay User License + mask ที่เจ้าของปิด — `ResolveGateOverlayAsync` ตัวเดียวกับ `GetSubscriptionAsync`) | ไม่นับการใช้งาน (คำขอเว็บทุกตัวผ่านที่นี่) · ไม่มี subscription → `GetSubscriptionAsync` สร้าง FreeTrial ให้เหมือนเดิม · รอบ 200: ลูกค้าทดลอง/แพ็กเกจฟรีที่สำเนาฟีเจอร์ว่าง ⇒ ใช้ฟีเจอร์ตามข้อมูลแพ็กเกจ (`SubscriptionTrialReadiness.ResolveFeatures` · ทดลอง = `TrialFeatures` · อื่น = `EnabledFeatures`) · แพ็กเกจก็ว่าง = คงว่าง + รายงาน (ไม่แต่งเอง) |
+| รายงานเงา | `SubscriptionGateShadowHits` (upsert ต่อ **บริษัท×เหตุ×ฟีเจอร์×endpoint** · `HitCount` จะถูกบล็อก · `BlockedCount` ถูกบล็อกจริง (หน้าเว็บหลังเปิดบังคับ) · สถานะ subscription · แรก/ล่าสุด) | endpoint = route template ไม่มี id (`SubscriptionGatePolicy.EndpointKey`) · ไม่มี PII · ตัดแถวที่ไม่ถูกพบซ้ำเกิน 90 วันทุกครั้งที่เปิดหน้ารายงาน (`PruneAsync` · DELETE ตามเวลา ปลอดภัยข้าม instance) · แถวก่อนรอบ 200 (`WouldBlock=false`/endpoint ว่าง) แสดงเป็น "แถวเก่า" · fail-open |
+| รายงาน | `GET /api/admin/subscription-enforcement` (โหมดที่มีผลจริง + รายงานเงา + สรุป "ลูกค้าทดลองใช้ (จะ) ถูกบล็อกกี่ครั้งเพราะอะไร") · `GET …/precheck?skip&take` (ตรวจล่วงหน้าแบบ "ถ้ากดบังคับวันนี้" ≤500 บริษัท/หน้า + ความพร้อมของแพ็กเกจทดลอง/ฟรีตามข้อมูลแพ็กเกจ `SubscriptionTrialReadiness.CheckTemplate`) · `DELETE …/hits` | ตรวจล่วงหน้าเรียกตัวตัดสินตัวเดียวกันด้วยคำขอสมมุติ (ห้ามเขียน HasFlag เอง) · รายการฟีเจอร์/เส้นทางมาจากเซิร์ฟเวอร์ (JS ไม่มีสำเนา) |
 
 - **ขั้นตอนของเจ้าของ**: เปิดหน้าแอดมิน → ดู "ผลโหมดเงา" (ใครใช้จริงแล้วจะถูกบล็อก) + กด "คำนวณ" ตรวจล่วงหน้า → แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้า
   ที่ควรได้ → "ล้างผล" แล้วสังเกตต่อ → เลือก "บังคับ" (มี confirm บอกจำนวนบริษัทที่จะถูกบล็อก)
 - **ยังไม่ครอบ**: คำขอ API key ที่ไม่มี `{companyId}` ใน route และไม่ส่ง header (`/api/v1/*` รู้บริษัทจาก `context.Items["CompanyId"]` ของคีย์) —
-  ยังไม่ถูก gate แพ็กเกจเหมือนเดิม (นอกขอบเขตคำตัดสินข้อ 5)
+  ยังไม่ถูก gate แพ็กเกจ/สถานะ (มีด่าน scope + feature ของ Connected เอง · สถานะระงับ/หมดอายุไม่ถูกตรวจ) — 📋 รอบ 200 team-S คำถามค้าง ·
+  `/api/signatures/*` เป็นลายเซ็นระดับผู้ใช้ (ไม่มีบริษัท) — ข้ามโดยถูกต้อง
+- **กฎ settlement (D-P5)**: `GET settlement/batches/{id}` ซ่อน `MatchCandidates` + `MatchNote` (เลขที่เอกสารขาย/ยอดค้าง) เมื่อผู้เรียกไม่มีทั้ง
+  `Settlement.Import` และ `Settlement.Post` (`SettlementPermissionScope.CandidatesHiddenReason/HideCandidates` · สิทธิ์ชุดเดียวกับปุ่ม) · ตอบ
+  `candidatesHiddenReason` ให้หน้าเว็บแสดงแทน (ไม่ใช่รายการว่างเงียบ)
 
 ---
 

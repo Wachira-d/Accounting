@@ -551,6 +551,7 @@
             ${a.lockedReason ? `<div class="banner info">🔒 ${Layout.esc(a.lockedReason)}</div>` : ''}
             ${a.unpostBlockedReason ? `<div class="banner warn">↩️ ${Layout.esc(a.unpostBlockedReason)}</div>` : ''}
             ${a.permissionNote ? `<div class="banner info">👤 ${Layout.esc(a.permissionNote)}</div>` : ''}
+            ${d.candidatesHiddenReason ? `<div class="banner info">🔒 ${Layout.esc(d.candidatesHiddenReason)}</div>` : ''}
             ${this.renderBankAccount(d, a)}
             <div class="stat-row">
               <div class="stat"><div class="k">ยอดโอนเข้าธนาคาร</div><div class="v">${Layout.money(b.netPayout)}</div></div>

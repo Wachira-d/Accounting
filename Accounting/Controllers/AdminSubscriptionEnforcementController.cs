@@ -10,19 +10,38 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
-/// <summary>หนึ่งแถวของผลโหมดเงา + ชื่อบริษัท + คำอธิบายภาษาไทย</summary>
+/// <summary>หนึ่งแถวของรายงานเงา + ชื่อบริษัท + คำอธิบายภาษาไทย — "บริษัทไหน · endpoint ไหน · เพราะอะไร · กี่ครั้ง"</summary>
+/// <param name="Endpoint">route template ของ endpoint (ไม่มี id) · ว่าง = แถวก่อนรอบ 200 ที่ยังไม่เก็บ endpoint</param>
+/// <param name="HitCount">ครั้งที่ "จะถูกบล็อก" (โหมดเงา)</param>
+/// <param name="BlockedCount">ครั้งที่ถูกบล็อกจริง (หน้าเว็บหลังเปิดบังคับ)</param>
+/// <param name="IsTrial">ลูกค้าทดลองใช้/แพ็กเกจฟรี (<see cref="SubscriptionTrialReadiness.IsTrialLike(string?, string?)"/>)</param>
 public record SubscriptionShadowHitDto(
-    Guid CompanyId, string CompanyName, string Reason, string? Feature, string? Plan, string? RouteKey,
-    string? LastMethod, bool WouldBlock, long HitCount, DateTime FirstSeenAt, DateTime LastSeenAt, string Description);
+    Guid CompanyId, string CompanyName, string Reason, string? Feature, string? Plan, string? SubscriptionStatus, bool IsTrial,
+    string? RouteKey, string Endpoint, string? LastMethod, bool WouldBlock, long HitCount, long BlockedCount,
+    DateTime FirstSeenAt, DateTime LastSeenAt, string Description);
 
-/// <summary>สถานะสวิตช์ + ผลโหมดเงา</summary>
-/// <param name="Mode">ชื่อ enum <see cref="SubscriptionEnforcementMode"/> (Off/Shadow/Enforce — ส่งเป็นชื่อเสมอ)</param>
-/// <param name="WriteGateMode">ค่า config <c>Subscription:Enforcement:Mode</c> (Off/LogOnly/Enforce) — ด่านเขียนของบริษัทถูกระงับ/หมดอายุ
-/// ใช้ค่านี้กับทุกคำขอ ไม่ใช่สวิตช์เว็บ</param>
-/// <param name="CompaniesWouldBlock">จำนวนบริษัทที่มีอย่างน้อย 1 เหตุที่ "จะถูกบล็อก" เมื่อเปิด Enforce</param>
+/// <summary>โหมดที่มีผลจริง + เพราะอะไร (ตัวตัดสินเดียว <see cref="SubscriptionEnforcementResolver"/> — ชุดเดียวกับที่ middleware ใช้)</summary>
+/// <param name="EffectiveMode">โหมดที่มีผลจริง (Off/Shadow/Enforce — ชื่อ)</param>
+/// <param name="Source">AdminSwitch / AdminSwitchDefault / AdminSwitchUnreadable / EmergencyOverride</param>
+/// <param name="AdminSwitchHasEffect">false = มี override ฉุกเฉินทับอยู่ — กดสวิตช์ได้ (บันทึก) แต่ยังไม่มีผลจนกว่าจะลบ override</param>
+/// <param name="OverrideKey">ชื่อคีย์ config ของ override ฉุกเฉิน</param>
+/// <param name="HeaderWriteGateMode">ด่านบริษัทถูกระงับ/หมดอายุของคำขอ partner ที่ส่ง X-Company-Id เอง (Enforce/LogOnly)</param>
+public record SubscriptionEffectiveModeDto(
+    string EffectiveMode, string EffectiveModeLabel, string Source, string Explanation, bool AdminSwitchHasEffect,
+    string? OverrideMode, string? OverrideRaw, string OverrideKey, string HeaderWriteGateMode, List<string> Warnings);
+
+/// <summary>สถานะสวิตช์ + โหมดที่มีผลจริง + รายงานเงา</summary>
+/// <param name="Mode">ค่าสวิตช์แอดมินที่บันทึกไว้ (Off/Shadow/Enforce — ชื่อเสมอ) · ไม่ใช่โหมดที่มีผลจริงเสมอไป ⇒ ดู <paramref name="Effective"/></param>
+/// <param name="CompaniesWouldBlock">จำนวนบริษัทที่มีอย่างน้อย 1 เหตุที่ "จะถูกบล็อก" (โหมดเงา)</param>
+/// <param name="CompaniesBlocked">จำนวนบริษัทที่ถูกบล็อกจริงแล้ว (หลังเปิดบังคับ)</param>
+/// <param name="TrialBlocks">ลูกค้าทดลองใช้ (จะ) ถูกบล็อกกี่ครั้งเพราะอะไร — เซิร์ฟเวอร์สรุปให้ หน้าเว็บแสดงอย่างเดียว</param>
+/// <param name="RetentionDays">แถวที่ไม่ถูกพบซ้ำเกินกี่วันถูกตัดทิ้ง</param>
+/// <param name="PrunedRows">จำนวนแถวที่ตัดทิ้งในการเปิดหน้านี้ครั้งนี้</param>
 public record SubscriptionEnforcementStatusDto(
-    string Mode, string WriteGateMode, string Guidance,
-    int CompaniesWouldBlock, long HitsWouldBlock, List<SubscriptionShadowHitDto> Hits, bool HitsTruncated);
+    string Mode, SubscriptionEffectiveModeDto Effective, string Guidance,
+    int CompaniesWouldBlock, long HitsWouldBlock, int CompaniesBlocked, long HitsBlocked,
+    List<TrialBlockSummary> TrialBlocks, List<SubscriptionShadowHitDto> Hits, bool HitsTruncated,
+    int RetentionDays, int PrunedRows);
 
 /// <summary>คำขอเปลี่ยนสวิตช์ — รับเป็น<b>ชื่อ</b> (Off/Shadow/Enforce) · ตัวเลข/ค่าว่าง/ชื่อที่ไม่รู้จัก = 400
 /// (ห้ามให้ "ไม่ส่งค่า" กลายเป็น Off เงียบ ๆ)</summary>
@@ -40,11 +59,18 @@ public record SubscriptionGatePrecheckRow(
 /// <summary>จำนวนบริษัทที่ขาดฟีเจอร์หนึ่ง</summary>
 public record SubscriptionFeatureGap(string Feature, int Companies, List<string> RouteKeys);
 
+/// <summary>ความพร้อมของลูกค้าช่วงทดลอง/แพ็กเกจฟรี (ข้อ 14) — ตามข้อมูลแพ็กเกจที่แอดมินตั้ง</summary>
+/// <param name="Plans">แพ็กเกจที่เปิดใช้ทุกตัว: ลูกค้าทดลองได้ฟีเจอร์อะไร · จะถูกปิดเส้นทางไหนเมื่อเปิดบังคับ · ตั้งไว้ว่างไหม</param>
+/// <param name="TrialSubscriptionsEmptySnapshot">subscription ทดลอง/ฟรีที่สำเนาฟีเจอร์ว่าง (ระบบใช้ข้อมูลแพ็กเกจแทนแล้ว)</param>
+/// <param name="Problems">ข้อความที่ต้องแก้ก่อนเปิดบังคับ (ว่าง = พร้อม)</param>
+public record TrialReadinessDto(List<PlanTrialReadinessRow> Plans, int TrialSubscriptionsEmptySnapshot, List<string> Problems);
+
 /// <summary>ผลตรวจล่วงหน้าทั้งหน้า</summary>
+/// <param name="WriteGateMode">ด่านเขียนที่ใช้ตัดสินล่วงหน้า = เหมือน "กดบังคับแล้ว" เสมอ (Enforce) — ตอบคำถาม "ถ้าเปิดวันนี้ใครโดน"</param>
 public record SubscriptionGatePrecheckDto(
     string WriteGateMode, int CompaniesChecked, int TotalCompanies, int Skip, int Take,
     int CompaniesBlockedEntirely, int CompaniesWritesBlocked, int CompaniesWithoutSubscription,
-    List<SubscriptionFeatureGap> FeatureGaps, List<SubscriptionGatePrecheckRow> Rows, string Guidance);
+    List<SubscriptionFeatureGap> FeatureGaps, List<SubscriptionGatePrecheckRow> Rows, TrialReadinessDto Trial, string Guidance);
 
 /// <summary>
 /// <b>หน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</b> — รอบ 198 ข้อ 5 (คำตัดสินเจ้าของ: รายงานก่อน แล้วค่อยเปิดบังคับ)
@@ -82,17 +108,28 @@ public class AdminSubscriptionEnforcementController : ControllerBase
 
     private const string Guidance =
         "โหมดเงา (Shadow) = ระบบตัดสินทุกคำขอจากหน้าเว็บเหมือนเปิดบังคับ แต่ไม่บล็อก แค่บันทึกไว้ที่นี่ · " +
-        "ตรวจรายการ \"จะถูกบล็อก\" ให้ครบ (แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้าที่ควรได้) แล้วค่อยเปลี่ยนเป็น \"บังคับ\" · " +
-        "คำขอจาก partner/integration ที่ส่ง X-Company-Id มาเองถูกบังคับอยู่แล้วตั้งแต่ก่อนรอบนี้ ไม่ขึ้นกับสวิตช์นี้ · " +
-        "บริษัทถูกระงับ/หมดอายุ บล็อกเฉพาะการสร้าง/แก้ไข และทำงานเมื่อค่า config Subscription:Enforcement:Mode = Enforce เท่านั้น";
+        "ตรวจรายการ \u201Cจะถูกบล็อก\u201D ให้ครบ (แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้าที่ควรได้) แล้วค่อยเปลี่ยนเป็น \u201Cบังคับ\u201D · " +
+        "สวิตช์นี้ (ฐานข้อมูล) เป็นตัวตัดสินหลักของทั้งการตัดสินฟีเจอร์และด่านบริษัทถูกระงับ/หมดอายุ · " +
+        "คำขอจาก partner/integration ที่ส่ง X-Company-Id มาเองถูกตัดสินฟีเจอร์อยู่แล้วตั้งแต่ก่อนรอบ 198 ไม่ขึ้นกับสวิตช์นี้";
 
-    private SubscriptionWriteGateMode WriteMode() =>
-        SubscriptionGatePolicy.ParseWriteMode(_config["Subscription:Enforcement:Mode"]);
+    /// <summary>โหมดที่มีผลจริง — ตัวตัดสินเดียวกับ middleware (<see cref="SubscriptionEnforcementResolver"/>)</summary>
+    private async Task<SubscriptionEnforcementState> EffectiveAsync(CancellationToken ct)
+    {
+        var adminSwitch = await _shadow.ReadAdminSwitchAsync(ct);
+        return SubscriptionEnforcementResolver.Resolve(adminSwitch, _config);
+    }
+
+    private static SubscriptionEffectiveModeDto ToDto(SubscriptionEnforcementState e) => new(
+        e.EffectiveMode.ToString(), SubscriptionEnforcementResolver.Label(e.EffectiveMode), e.Source.ToString(), e.Explanation,
+        e.AdminSwitchHasEffect, e.OverrideMode?.ToString(), e.OverrideRaw, SubscriptionEnforcementResolver.OverrideKey,
+        e.HeaderWriteGateMode.ToString(), e.Warnings.ToList());
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<SubscriptionEnforcementStatusDto>>> Get(CancellationToken ct = default)
     {
-        var mode = await _shadow.GetWebModeAsync(ct);
+        var enforcement = await EffectiveAsync(ct);
+        // ตารางไม่โตไม่จำกัด: ตัดแถวที่ไม่ถูกพบซ้ำเกินระยะเก็บ (DELETE ตามเวลา · ปลอดภัยข้าม instance)
+        var pruned = await _shadow.PruneAsync(SubscriptionGatePolicy.ShadowRetentionDays, ct);
         IReadOnlyList<SubscriptionGateShadowRow> rows;
         try
         {
@@ -119,18 +156,23 @@ public class AdminSubscriptionEnforcementController : ControllerBase
             var feature = string.IsNullOrEmpty(r.Feature) ? null : r.Feature;
             var text = SubscriptionGatePolicy.Describe(reason, feature, r.Plan);
             if (!r.WouldBlock)
-                text += " (ตอนนี้ config ด่านเขียนเป็น LogOnly — เปิดสวิตช์นี้อย่างเดียวยังไม่บล็อก)";
+                text += " (แถวก่อนรอบ 200: ตอนนั้น config ด่านเขียนเป็น LogOnly — ตอนนี้ด่านนี้บล็อกเมื่อโหมดที่มีผลจริง = บังคับ)";
             return new SubscriptionShadowHitDto(r.CompanyId,
                 names.TryGetValue(r.CompanyId, out var n) ? n : "(ไม่พบบริษัท)",
-                r.Reason, feature, r.Plan, r.RouteKey, r.LastMethod, r.WouldBlock, r.HitCount,
+                r.Reason, feature, r.Plan, r.SubscriptionStatus, SubscriptionTrialReadiness.IsTrialLike(r.Plan, r.SubscriptionStatus),
+                r.RouteKey, r.Endpoint, r.LastMethod, r.WouldBlock, r.HitCount, r.BlockedCount,
                 r.FirstSeenAt, r.LastSeenAt, text);
         }).ToList();
 
-        var blocking = hits.Where(h => h.WouldBlock).ToList();
+        var wouldBlock = hits.Where(h => h.HitCount > 0).ToList();
+        var blocked = hits.Where(h => h.BlockedCount > 0).ToList();
+        var trial = SubscriptionTrialReadiness.SummarizeTrialBlocks(page.Select(r => new SubscriptionShadowTally(
+            r.CompanyId, r.Reason, r.Feature, r.Plan, r.SubscriptionStatus, r.HitCount, r.BlockedCount))).ToList();
         return Ok(new ApiResponse<SubscriptionEnforcementStatusDto>(true, new SubscriptionEnforcementStatusDto(
-            mode.ToString(), WriteMode().ToString(), Guidance,
-            blocking.Select(h => h.CompanyId).Distinct().Count(), blocking.Sum(h => h.HitCount),
-            hits, truncated)));
+            enforcement.AdminSwitch.ToString(), ToDto(enforcement), Guidance,
+            wouldBlock.Select(h => h.CompanyId).Distinct().Count(), wouldBlock.Sum(h => h.HitCount),
+            blocked.Select(h => h.CompanyId).Distinct().Count(), blocked.Sum(h => h.BlockedCount),
+            trial, hits, truncated, SubscriptionGatePolicy.ShadowRetentionDays, pruned)));
     }
 
     /// <summary>ตรวจล่วงหน้าจากข้อมูลปัจจุบัน — ทีละหน้า (<paramref name="take"/> ≤ 500) เพราะเรียก resolver ต่อบริษัท</summary>
@@ -140,7 +182,8 @@ public class AdminSubscriptionEnforcementController : ControllerBase
     {
         skip = Math.Max(0, skip);
         take = Math.Clamp(take, 1, MaxPrecheckPage);
-        var writeMode = WriteMode();
+        // "ถ้ากดบังคับวันนี้ใครโดน" ⇒ ด่านเขียนแบบบังคับเสมอ (เหมือนโหมดเงา — SubscriptionGatePolicy.WriteGateModeFor)
+        var writeMode = SubscriptionWriteGateMode.Enforce;
 
         var total = await _db.Companies.AsNoTracking().CountAsync(ct);
         var companies = await _db.Companies.AsNoTracking()
@@ -175,9 +218,6 @@ public class AdminSubscriptionEnforcementController : ControllerBase
             else if (writeVerdict.Blocks) writesBlocked++;
             if (writeVerdict.Blocks)
                 impacts.Add(SubscriptionGatePolicy.Describe(writeVerdict.Block, null, state.Plan.ToString()));
-            foreach (var r in writeVerdict.LogOnly)
-                impacts.Add(SubscriptionGatePolicy.Describe(r, null, state.Plan.ToString())
-                            + " (config ด่านเขียน = LogOnly — ยังไม่บล็อก)");
 
             // ฟีเจอร์ที่ถูก gate — ถามตัวตัดสินทีละฟีเจอร์ด้วยคำขออ่านสมุติ (ไม่เขียนเงื่อนไข HasFlag ซ้ำที่นี่)
             var missing = new List<string>();
@@ -204,10 +244,33 @@ public class AdminSubscriptionEnforcementController : ControllerBase
                 SubscriptionGatePolicy.RouteFeatureMap.Where(m => m.Feature == g.Key).Select(m => m.Path).ToList()))
             .ToList();
 
+        var trial = await TrialReadinessAsync(ct);
         return Ok(new ApiResponse<SubscriptionGatePrecheckDto>(true, new SubscriptionGatePrecheckDto(
-            writeMode.ToString(), companies.Count, total, skip, take, blockedAll, writesBlocked, noSub, gaps, rows,
+            writeMode.ToString(), companies.Count, total, skip, take, blockedAll, writesBlocked, noSub, gaps, rows, trial,
             "ตรวจจากข้อมูลวันนี้ (ไม่ต้องรอการใช้งาน) · \"ฟีเจอร์ที่จะถูกปิด\" มีผลเฉพาะเมื่อผู้ใช้เปิดหน้าที่เรียกเส้นทางนั้น — " +
             "ดูผลโหมดเงาด้านบนเพื่อรู้ว่าใครใช้จริง")));
+    }
+
+    /// <summary>ข้อ 14: ลูกค้าช่วงทดลอง/แพ็กเกจฟรีได้ฟีเจอร์อะไรเมื่อเปิดบังคับ — ตามข้อมูลแพ็กเกจที่แอดมินตั้ง (ข้ามบริษัทโดยเจตนา: ข้อมูลแพลตฟอร์ม)</summary>
+    private async Task<TrialReadinessDto> TrialReadinessAsync(CancellationToken ct)
+    {
+        var templates = await _db.PlanTemplates.AsNoTracking()
+            .Where(t => t.IsActive)
+            .OrderBy(t => t.Plan).ThenBy(t => t.CreatedAt)
+            .Select(t => new { t.Plan, t.Name, t.IsPermanentFree, t.EnabledFeatures, t.TrialFeatures })
+            .ToListAsync(ct);
+        var plans = templates
+            .Select(t => SubscriptionTrialReadiness.CheckTemplate(t.Plan, t.Name, t.IsPermanentFree, t.EnabledFeatures, t.TrialFeatures))
+            .ToList();
+        var problems = plans.Where(p => p.Problem != null).Select(p => $"{p.Name} ({p.Plan}): {p.Problem}").ToList();
+        if (!templates.Any(t => t.Plan == SubscriptionPlan.FreeTrial))
+            problems.Add("ไม่มีแพ็กเกจ FreeTrial ที่เปิดใช้ — บริษัทใหม่/บริษัทเก่าที่ยังไม่มีแพ็กเกจจะได้ชุดฟีเจอร์ตั้งต้นของระบบ (TrialFeatures) "
+                + "ไม่ใช่ชุดที่แอดมินตั้ง · เปิดใช้/สร้างแพ็กเกจ FreeTrial ก่อนเปิดบังคับ");
+        var emptySnapshot = await _db.Subscriptions.AsNoTracking()
+            .Where(s => (s.Status == SubscriptionStatus.Trial || s.Plan == SubscriptionPlan.FreeTrial)
+                        && s.EnabledFeatures == FeatureFlags.None)
+            .CountAsync(ct);
+        return new TrialReadinessDto(plans, emptySnapshot, problems);
     }
 
     /// <summary>เปลี่ยนสวิตช์ (Off/Shadow/Enforce) — แอดมินแพลตฟอร์มที่ล็อกอินเท่านั้น (API key ห้าม)</summary>
@@ -217,10 +280,8 @@ public class AdminSubscriptionEnforcementController : ControllerBase
     public async Task<ActionResult<ApiResponse<SubscriptionEnforcementStatusDto>>> SetMode(
         [FromBody] SetSubscriptionEnforcementModeRequest request, CancellationToken ct = default)
     {
-        var raw = request?.Mode?.Trim();
-        if (string.IsNullOrEmpty(raw) || raw.Any(char.IsDigit)
-            || !Enum.TryParse<SubscriptionEnforcementMode>(raw, ignoreCase: true, out var mode)
-            || !Enum.IsDefined(mode))
+        // ตัวอ่านชื่อโหมดตัวเดียวกับ override ฉุกเฉิน (ชื่อเท่านั้น · ตัวเลข/ว่าง/ไม่รู้จัก = 400 — ห้ามให้ "ไม่ส่งค่า" กลายเป็น Off เงียบ ๆ)
+        if (SubscriptionEnforcementResolver.ParseMode(request?.Mode) is not SubscriptionEnforcementMode mode)
             return BadRequest(new ApiResponse<SubscriptionEnforcementStatusDto>(false, null,
                 "โหมดต้องเป็น Off, Shadow หรือ Enforce"));
 
@@ -239,7 +300,14 @@ public class AdminSubscriptionEnforcementController : ControllerBase
         // เปลี่ยนสวิตช์ระดับแพลตฟอร์ม = กระทบทุกบริษัท → ต้องมีร่องรอยใน log ด้วย ไม่ใช่เงียบ
         _logger.LogWarning("สวิตช์บังคับแพ็กเกจบนหน้าเว็บ: {Before} → {After} โดยผู้ใช้ {UserId}",
             before, mode, settings.UpdatedBy);
-        return await Get(ct);
+        // ห้าม silent no-op (ข้อ 14): มี override ฉุกเฉินทับอยู่ ⇒ บันทึกแล้วแต่ยังไม่มีผล — บอกในข้อความตอบกลับ (หน้าเว็บแสดงเป็นคำเตือน)
+        var enforcement = await EffectiveAsync(ct);
+        var result = await Get(ct);
+        if (!enforcement.AdminSwitchHasEffect && result.Result is OkObjectResult ok
+            && ok.Value is ApiResponse<SubscriptionEnforcementStatusDto> body && body.Data is not null)
+            return Ok(new ApiResponse<SubscriptionEnforcementStatusDto>(true, body.Data,
+                $"บันทึกสวิตช์เป็น {SubscriptionEnforcementResolver.Label(mode)} แล้ว แต่ยังไม่มีผล — {enforcement.Explanation}"));
+        return result;
     }
 
     /// <summary>ล้างผลโหมดเงาทั้งหมด (เริ่มนับใหม่หลังแก้แพ็กเกจให้ลูกค้าแล้ว)</summary>
