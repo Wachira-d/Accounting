@@ -589,13 +589,16 @@
           await this.load();
         } catch(e) { Layout.toast(e.message,'error'); }
       },
+      // รอบ 200 (A11/E-05/A19/E-12): ช่องตัวเลขว่าง = 0 ที่มองเห็นได้ (ราคา/ต้นทุน/สต็อกขั้นต่ำ) · VAT ว่าง = 7 ·
+      // เดิม parseFloat('') = NaN ⇒ JSON null ⇒ decimal แปลงไม่ได้ ⇒ ทิ้ง body ทั้งก้อน (สร้างไม่ได้) และตอนแก้ = คงค่าเดิมเงียบ ๆ ·
+      // สต็อกขั้นต่ำเป็น decimal — เดิม parseInt ตัดเศษ
       async save() {
         const api=Layout.api(); if(!api)return;
         const id=document.getElementById('editId').value;
         try {
           let saved;
-          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sku:document.getElementById('fSku').value||'',unit:document.getElementById('fUnit').value,trackStock:document.getElementById('fTrackStock').checked,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value),vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:parseInt(document.getElementById('fMinStock').value),description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
-          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:parseFloat(document.getElementById('fSellPrice').value),costPrice:parseFloat(document.getElementById('fCostPrice').value)||0,vatRate:parseFloat(document.getElementById('fVat').value),isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:parseInt(document.getElementById('fMinStock').value)||0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sku:document.getElementById('fSku').value||'',unit:document.getElementById('fUnit').value,trackStock:document.getElementById('fTrackStock').checked,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
           Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
           await this.load();
           // Keep modal open so the user can upload images right after creating —
@@ -695,7 +698,8 @@
       async saveAdjustStock() {
         const api=Layout.api(); if(!api||!this._current)return;
         try {
-          await api.adjustStock({productId:this._current.id,quantity:parseFloat(document.getElementById('adjQty').value),movementType:document.getElementById('adjType').value,unitCost:Layout.numOrNull('adjCost')/* 0 = ของแถม/รับบริจาค — ห้ามให้ระบบแทนด้วยต้นทุนเดิม */,reference:document.getElementById('adjRef').value||null,notes:document.getElementById('adjNote').value||null});
+          const adjQty=Layout.numOrNull('adjQty'); if(adjQty==null){Layout.toast('กรุณาระบุจำนวนที่ปรับ (ช่อง \u201cจำนวน\u201d)','error');return;}
+          await api.adjustStock({productId:this._current.id,quantity:adjQty,movementType:document.getElementById('adjType').value,unitCost:Layout.numOrNull('adjCost')/* 0 = ของแถม/รับบริจาค — ห้ามให้ระบบแทนด้วยต้นทุนเดิม */,reference:document.getElementById('adjRef').value||null,notes:document.getElementById('adjNote').value||null});
           Layout.closeModal('adjustModal');Layout.toast('ปรับสต็อกสำเร็จ');this.load();
         } catch(e) { Layout.toast(e.message,'error'); }
       },
@@ -711,7 +715,8 @@
       async saveConversion() {
         const api=Layout.api(); if(!api||!this._current)return;
         try {
-          await api.createUnitConversion(this._current.id,{productId:this._current.id,fromUnit:document.getElementById('cvFrom').value,toUnit:document.getElementById('cvTo').value,conversionRate:parseFloat(document.getElementById('cvRate').value),sellingPrice:document.getElementById('cvSell').value?parseFloat(document.getElementById('cvSell').value):null,costPrice:document.getElementById('cvCost').value?parseFloat(document.getElementById('cvCost').value):null,barcode:document.getElementById('cvBarcode').value||null});
+          const cvRate=Layout.numOrNull('cvRate'); if(cvRate==null||cvRate<=0){Layout.toast('กรุณาระบุอัตราแปลงหน่วยมากกว่า 0','error');return;}
+          await api.createUnitConversion(this._current.id,{productId:this._current.id,fromUnit:document.getElementById('cvFrom').value,toUnit:document.getElementById('cvTo').value,conversionRate:cvRate,sellingPrice:document.getElementById('cvSell').value?parseFloat(document.getElementById('cvSell').value):null,costPrice:document.getElementById('cvCost').value?parseFloat(document.getElementById('cvCost').value):null,barcode:document.getElementById('cvBarcode').value||null});
           Layout.closeModal('convModal');Layout.toast('เพิ่มการแปลงหน่วยสำเร็จ');this.viewDetail(this._current.id);
         } catch(e) { Layout.toast(e.message,'error'); }
       },

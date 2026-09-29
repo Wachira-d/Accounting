@@ -43,6 +43,9 @@ public class DuplicateDetector : IDuplicateDetector
     private readonly AccountingDbContext _db;
     public DuplicateDetector(AccountingDbContext db) { _db = db; }
 
+    // รอบ 200 (G2-06): เลขบัตรที่ถอดรหัสแล้วของพนักงานต่อบริษัท — โหลดครั้งเดียวต่อคำขอ (scoped · ไม่ใช่ static)
+    private readonly Dictionary<Guid, List<(Guid Id, string? CitizenId, string? TaxId)>> _employeeIds = new();
+
     public async Task<ImportDuplicateConflict?> DetectAsync(Guid companyId, string entityType,
         Dictionary<string, object?> stagedData, Guid? sessionId, string? sessionRef,
         int rowNumber, CancellationToken ct = default)
@@ -215,11 +218,26 @@ public class DuplicateDetector : IDuplicateDetector
         var empCode = Get(d, "EmployeeCode", "employeeCode", "รหัสพนักงาน");
         if (!string.IsNullOrWhiteSpace(idCard))
         {
-            var hit = await _db.Set<Employee>().AsNoTracking()
-                .Where(e => e.CompanyId == cid && (e.CitizenId == idCard || e.TaxId == idCard))
-                .Select(e => new { e.Id, e.EmployeeCode, e.CitizenId, e.FirstNameTh, e.LastNameTh, e.BaseSalary })
-                .FirstOrDefaultAsync(ct);
-            if (hit != null) return Pack(cid, "Employee", d, hit.Id, hit, 1.0, "เลขบัตรประชาชนตรงกัน", sid, sref, rn);
+            // รอบ 200 (G2-06): คอลัมน์เข้ารหัสแบบ nonce สุ่ม ⇒ เทียบใน SQL ไม่มีวันเจอ — ถอดรหัสแล้วเทียบในหน่วยความจำ
+            if (!_employeeIds.TryGetValue(cid, out var ids))
+            {
+                ids = (await _db.Set<Employee>().AsNoTracking()
+                        .Where(e => e.CompanyId == cid && (e.CitizenId != null || e.TaxId != null))
+                        .Select(e => new { e.Id, e.CitizenId, e.TaxId })
+                        .ToListAsync(ct))
+                    .Select(e => (e.Id, e.CitizenId, e.TaxId)).ToList();
+                _employeeIds[cid] = ids;
+            }
+            var matchId = ids.FirstOrDefault(e => Accounting.Helpers.EncryptedIdMatch.Same(e.CitizenId, idCard)
+                || Accounting.Helpers.EncryptedIdMatch.Same(e.TaxId, idCard)).Id;
+            if (matchId != Guid.Empty)
+            {
+                var hit = await _db.Set<Employee>().AsNoTracking()
+                    .Where(e => e.CompanyId == cid && e.Id == matchId)
+                    .Select(e => new { e.Id, e.EmployeeCode, e.CitizenId, e.FirstNameTh, e.LastNameTh, e.BaseSalary })
+                    .FirstOrDefaultAsync(ct);
+                if (hit != null) return Pack(cid, "Employee", d, hit.Id, hit, 1.0, "เลขบัตรประชาชนตรงกัน", sid, sref, rn);
+            }
         }
         if (!string.IsNullOrWhiteSpace(empCode))
         {

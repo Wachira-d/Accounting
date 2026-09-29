@@ -47,7 +47,12 @@ public record UpdateFixedAssetRequest(
     Guid? AssetAccountId,
     Guid? DepreciationExpenseAccountId,
     Guid? AccumulatedDepreciationAccountId,
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    // รอบ 200 (A12/E-04): เดิมหน้าเว็บส่งสามช่องนี้แต่ DTO ไม่มี ⇒ "แก้ไขสำเร็จ" โดยไม่มีผล · null = ไม่แตะ ·
+    // แก้ได้ก่อนมีค่าเสื่อมลงบัญชี (Helpers/FixedAssetValuationEdit) · ราคาทุน/วันที่ซื้อ/ประเภท ไม่รับตอนแก้ (หน้าเว็บล็อกช่อง)
+    int? UsefulLifeMonths = null,
+    decimal? SalvageValue = null,
+    DepreciationMethod? DepreciationMethod = null);
 
 public record FixedAssetResponse(
     Guid Id,

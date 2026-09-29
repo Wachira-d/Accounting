@@ -136,7 +136,8 @@ public class PayrollService : IPayrollService
             erRate = rate;
         }
         return (ceiling, rate, erRate,
-            Math.Round(ceiling * rate, 2), Math.Round(ceiling * erRate, 2));
+            // รอบ 200 (D-08): ปัด AwayFromZero เหมือนตัวส่งออก สปส.1-10 (TaxFilingExportService) — ห้าม banker's
+            Math.Round(ceiling * rate, 2, MidpointRounding.AwayFromZero), Math.Round(ceiling * erRate, 2, MidpointRounding.AwayFromZero));
     }
 
     /// <summary>Fire-and-forget — swallowed inside the engine itself.</summary>
@@ -1782,6 +1783,9 @@ public class PayrollService : IPayrollService
                 var priorDetails = priorDetailsByEmployee.TryGetValue(emp.Id, out var pd) ? pd : new List<PayrollDetail>();
 
                 var cumulativeIncome = priorDetails.Sum(d => d.GrossIncome);
+                // รอบ 200 (D-09): ฐานภาษีสะสม = ฐานภาษีของงวดก่อน (ไม่ใช่ gross ที่รวมสวัสดิการยกเว้น) — สมมาตรกับงวดนี้ที่ใช้ taxableGross
+                var cumulativeTaxable = priorDetails.Sum(d =>
+                    Accounting.Helpers.PayrollIncomeBase.PriorTaxBase(d.TaxableGross, d.GrossIncome));
                 var cumulativeTax = priorDetails.Sum(d => d.WithholdingTax);
 
                 // Calculate earnings from PayrollItems
@@ -2089,15 +2093,16 @@ public class PayrollService : IPayrollService
                 var pvdEmployer = 0m;
                 if (emp.HasProvidentFund)
                 {
-                    pvdEmployee = emp.BaseSalary * emp.ProvidentFundEmployeePercent / 100m;
-                    pvdEmployer = emp.BaseSalary * emp.ProvidentFundEmployerPercent / 100m;
+                    // รอบ 200 (D-10): ฐาน = เงินเดือนที่จ่ายจริงของงวด (เฉลี่ยวันทำงานแล้ว — ฐานเดียวกับ ปกส.) + ปัดเศษ
+                    pvdEmployee = Accounting.Helpers.PayrollIncomeBase.PvdContribution(proratedBaseSalary, emp.ProvidentFundEmployeePercent);
+                    pvdEmployer = Accounting.Helpers.PayrollIncomeBase.PvdContribution(proratedBaseSalary, emp.ProvidentFundEmployerPercent);
                 }
 
                 // Thai withholding tax: TRD-standard annualization = (YTD
                 // including this month) * 12 / elapsed months. Annualise the
                 // TAXABLE portion only — สวัสดิการยกเว้นภาษีถูกแยกไว้แล้วใน
                 // nonTaxableExtra → ไม่กระทบฐาน WHT.
-                var ytdIncome = cumulativeIncome + taxableGross;
+                var ytdIncome = cumulativeTaxable + taxableGross;
 
                 // ═══ ประมาณการเงินได้ทั้งปี — จาก "งวดที่เหลือ" ไม่ใช่ "เดือนที่ผ่านมา" ═══
                 // (D-T3/D-T4) สูตรเดิม `ytd × 12 ÷ เดือน` ทำสองอย่างผิดพร้อมกัน:
@@ -2941,7 +2946,9 @@ public class PayrollService : IPayrollService
                 // Audit trail: record every 50ทวิ generation so a dispute
                 // ("ผมไม่เคยได้ใบรับรอง") has an answer (when + who + which
                 // employee + amounts).
-                _db.AuditLogs.Add(new AuditLog
+                // รอบ 200 (D-11): AuditLog เป็น append-only ⇒ ห้ามเก็บเลขบัตรเต็ม (PDPA ม.26 — ไฟล์เดียวกันเขียนกติกานี้ไว้เอง) ·
+                // เขียนผ่าน AddChainedAuditLog (hash chain) ไม่ใช่ AuditLogs.Add ตรง
+                _db.AddChainedAuditLog(new AuditLog
                 {
                     CompanyId = companyId,
                     UserId = Guid.TryParse(requestedBy, out var actorId) ? actorId : (Guid?)null,
@@ -2950,7 +2957,7 @@ public class PayrollService : IPayrollService
                     EntityId = emp.Id.ToString(),
                     NewValues = System.Text.Json.JsonSerializer.Serialize(new
                     {
-                        emp.EmployeeCode, emp.CitizenId,
+                        emp.EmployeeCode, CitizenId = Accounting.Helpers.PiiMask.CitizenId(emp.CitizenId),
                         Year = year,
                         TotalIncome = totalIncome, TotalTax = totalTax,
                     }),
@@ -4137,7 +4144,9 @@ public class PayrollService : IPayrollService
 
     // ===== Tax Reports =====
 
-    public async Task<object> GeneratePnd1Async(Guid companyId, int year, int month)
+    /// <param name="includePii">รอบ 200 (G2-05): false = ปิดบังเลขบัตรแบบเดียวกับหน้ารายชื่อพนักงาน (PDPA ม.26) ·
+    /// true เฉพาะผู้มี <c>Pii.View</c> (controller เป็นผู้ตัดสิน + บันทึก PiiAccessLog) · ไฟล์ยื่นแบบไม่ผ่านเมธอดนี้</param>
+    public async Task<object> GeneratePnd1Async(Guid companyId, int year, int month, bool includePii)
     {
         var details = await _db.Set<PayrollDetail>()
             .Include(d => d.Employee)
@@ -4157,7 +4166,7 @@ public class PayrollService : IPayrollService
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
-            CitizenId = d.Employee.CitizenId,
+            CitizenId = includePii ? d.Employee.CitizenId : Accounting.Helpers.PiiMask.CitizenId(d.Employee.CitizenId),
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             IncomeType = "เงินเดือน ค่าจ้าง (ม.40(1))",
             TaxableIncome = d.GrossIncome,
@@ -4189,7 +4198,8 @@ public class PayrollService : IPayrollService
         };
     }
 
-    public async Task<object> GenerateSsoReportAsync(Guid companyId, int year, int month)
+    /// <param name="includePii">รอบ 200 (G2-05): false = ปิดบังเลขประกันสังคม (= เลขบัตรประชาชน) · true เฉพาะผู้มี <c>Pii.View</c></param>
+    public async Task<object> GenerateSsoReportAsync(Guid companyId, int year, int month, bool includePii)
     {
         var details = await _db.Set<PayrollDetail>()
             .Include(d => d.Employee)
@@ -4212,7 +4222,8 @@ public class PayrollService : IPayrollService
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
-            SocialSecurityNumber = d.Employee.SocialSecurityNumber,
+            SocialSecurityNumber = includePii ? d.Employee.SocialSecurityNumber
+                : Accounting.Helpers.PiiMask.CitizenId(d.Employee.SocialSecurityNumber),
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             SalaryBase = Math.Min(d.BaseSalary, ssoParams.MaxBase),
             EmployeeContribution = d.SocialSecurityEmployee,
@@ -4471,7 +4482,9 @@ public class PayrollService : IPayrollService
             ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason,
             CanRecalculate: canRecalc, RecalculateBlockReason: recalcReason,
             RecalculateWarning: PayrollRunEditPolicy.RecalculateWarning(lockEvidence),
-            CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can);
+            CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can,
+            // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. (เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
+            SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month));
     }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>
@@ -4795,22 +4808,9 @@ public class PayrollService : IPayrollService
     ///
     /// <para>⚠️ วันครบกำหนดต้องเลื่อนพ้นวันหยุด (ป.พ.พ. §193/8) — เดิมใช้วันที่ 15 ดิบ ๆ
     /// ⇒ คนที่จ่ายวันจันทร์เพราะวันที่ 15 ตรงเสาร์ ถูกคิดเงินเพิ่มทั้งที่จ่ายตรงกำหนด</para></summary>
+    // รอบ 200 (D-04): สูตรย้ายไป Helpers/SsoLateFee ตัวเดียว (หน้าเว็บ preview ผ่าน API ตัวเดียวกัน) — คงชื่อนี้ให้ผู้เรียกเดิม 5 จุด
     public static decimal ComputeSsoLateFee(int periodYear, int periodMonth, DateTime payDate, decimal totalSso)
     {
-        if (totalSso <= 0) return 0m;
-        var deadline = Accounting.Helpers.TaxFilingDeadline
-            .For("SsoSps110", periodYear, periodMonth).EFiling.Date;
-        if (payDate.Date <= deadline) return 0m;
-
-        var pay = payDate.Date;
-        // จำนวน "เดือนเต็ม" ที่ผ่านไปนับจากวันครบกำหนด (AddMonths ปัดสิ้นเดือนให้เอง)
-        var whole = (pay.Year - deadline.Year) * 12 + (pay.Month - deadline.Month);
-        if (deadline.AddMonths(whole) > pay) whole--;
-        // เศษของเดือนนับเป็นหนึ่งเดือน · ช้าแม้วันเดียว = 1 เดือน
-        var monthsLate = whole + (deadline.AddMonths(whole) < pay ? 1 : 0);
-        if (monthsLate < 1) monthsLate = 1;
-
-        var fee = Math.Round(totalSso * 0.02m * monthsLate, 2, MidpointRounding.AwayFromZero);
-        return Math.Min(fee, totalSso);   // เพดาน 100%
+        return Accounting.Helpers.SsoLateFee.Compute(periodYear, periodMonth, payDate, totalSso).Fee;
     }
 }

@@ -1168,10 +1168,11 @@ const Page = {
           if (r.ssoSettledAt) {
             ssoTag = `<span style="font-size:10px;color:#16a34a;display:block;margin-top:2px">✓ นำส่ง สปส. ${Layout.date(r.ssoSettledAt)}${r.ssoFilingNumber ? ' #'+Layout.esc(r.ssoFilingNumber) : ''}</span>`;
           } else {
-            const deadline = new Date(r.year, r.month, 15);    // = วันที่ 15 ของเดือนถัดไป (month is 0-indexed in JS)
-            const now = new Date();
-            const overdue = now > deadline;
-            ssoTag = `<span style="font-size:10px;color:${overdue?'#dc2626':'#d97706'};display:block;margin-top:2px">⏳ ยังไม่นำส่ง สปส. ${Layout.money(ssoTotal)} (กำหนด ${deadline.toLocaleDateString('th-TH')})${overdue?' • <b>เกินกำหนด!</b>':''}</span>`;
+            // รอบ 200 (D-04): วันครบกำหนดจากเซิร์ฟเวอร์ (เลื่อนวันหยุดแล้ว) — เดิมคิดเอง 15 ดิบ ⇒ วันอาทิตย์ขึ้น "เกินกำหนด" ผิด
+            const dueYmd = r.ssoDueDate ? String(r.ssoDueDate).slice(0, 10) : null;
+            const todayYmd = new Date().toLocaleDateString('sv-SE');
+            const overdue = !!dueYmd && todayYmd > dueYmd;
+            ssoTag = `<span style="font-size:10px;color:${overdue?'#dc2626':'#d97706'};display:block;margin-top:2px">⏳ ยังไม่นำส่ง สปส. ${Layout.money(ssoTotal)}${dueYmd ? ` (กำหนด ${Layout.date(dueYmd)})` : ''}${overdue?' • <b>เกินกำหนด!</b>':''}</span>`;
           }
         }
         const extTag = r.externalSystem
@@ -1343,17 +1344,17 @@ const Page = {
       const channels = chRes?.data || [];
       this._ssoCtx = { runId, year: r.year, month: r.month,
         total: Number(r.totalSocialSecurityEmployee || 0) + Number(r.totalSocialSecurityEmployer || 0) };
-      // กำหนดส่ง = วันที่ 15 ของเดือนถัดไป (JS Date: month 0-indexed → r.month หมายถึง next month index)
-      const deadline = new Date(r.year, r.month, 15);
-      const today = new Date(); today.setHours(0,0,0,0);
-      // Default = วันนี้ ถ้ายังไม่เลย deadline; ไม่งั้นใช้ deadline (=วันที่กำหนด)
-      const defaultDate = today <= deadline ? today : deadline;
+      // รอบ 200 (D-04): กำหนดส่งจากเซิร์ฟเวอร์ (Helpers/SsoLateFee · เลื่อนวันหยุดแล้ว) — ห้ามคิดวันที่ 15 เอง
+      const dueYmd = r.ssoDueDate ? String(r.ssoDueDate).slice(0, 10) : null;
+      const todayYmd = new Date().toLocaleDateString('sv-SE');
+      // Default = วันนี้ (เงินเพิ่มถ้ามี แสดงจากเซิร์ฟเวอร์ตามวันที่เลือก)
+      const defaultYmd = todayYmd;
       document.getElementById('settleSsoSummary').innerHTML = `
         <div><b>${Layout.esc(r.name)}</b> · งวด ${r.month}/${r.year}</div>
         <div style="margin-top:6px">ส่วนลูกจ้าง: <b>${Layout.money(r.totalSocialSecurityEmployee)}</b></div>
         <div>ส่วนนายจ้าง: <b>${Layout.money(r.totalSocialSecurityEmployer)}</b></div>
         <div style="border-top:1px solid #cbd5e1;margin-top:6px;padding-top:6px;font-size:14px">ยอดรวมที่ต้องนำส่ง: <b style="color:#0f766e">${Layout.money(this._ssoCtx.total)}</b></div>
-        <div style="margin-top:6px;font-size:11px;color:#64748b">กำหนดส่ง: ${deadline.toLocaleDateString('th-TH')}</div>
+        <div style="margin-top:6px;font-size:11px;color:#64748b">กำหนดส่ง: ${dueYmd ? Layout.date(dueYmd) : '-'}</div>
         ${(() => {
           // ม.33 ใช้ฐานเดียวกันทั้งสองฝั่ง — ไม่เท่ากันแปลว่ามีคนแก้ยอดข้างเดียว
           // ⇒ ยอดที่จะลงบัญชีจะไม่ตรงกับที่ สปส. เรียกเก็บ (เคสจริงต่างกัน 22 บาท
@@ -1374,7 +1375,7 @@ const Page = {
           </div>`;
         })()}
       `;
-      document.getElementById('settleSsoPayDate').value = defaultDate.toLocaleDateString('sv-SE');
+      document.getElementById('settleSsoPayDate').value = defaultYmd;
       document.getElementById('settleSsoFilingNumber').value = '';
       const bsel = document.getElementById('settleSsoBank');
       // แหล่งจ่ายครบ: ธนาคาร (value bank:<id>) + เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่น
@@ -1392,16 +1393,21 @@ const Page = {
           + '</optgroup>';
       }
       bsel.innerHTML = opts;
-      // late-fee preview
-      const refreshLate = () => {
-        const pd = new Date(document.getElementById('settleSsoPayDate').value);
-        if (isNaN(pd.getTime())) { document.getElementById('settleSsoLateFee').style.display = 'none'; return; }
-        const days = Math.max(0, Math.ceil((pd - deadline) / 86400000));
-        if (days <= 0) { document.getElementById('settleSsoLateFee').style.display = 'none'; return; }
-        const months = Math.ceil(days / 30);
-        const fee = Math.min(this._ssoCtx.total, Math.round(this._ssoCtx.total * 0.02 * months * 100) / 100);
-        document.getElementById('settleSsoLateFee').style.display = 'block';
-        document.getElementById('settleSsoLateFee').innerHTML = `⚠️ เลยกำหนด ${days} วัน → ระบบจะคำนวณเงินเพิ่ม 2% × ${months} เดือน = <b>${Layout.money(fee)}</b> (Dr ค่าใช้จ่ายอื่น)`;
+      // late-fee preview — รอบ 200 (D-04): ถามเซิร์ฟเวอร์ (สูตรเดียวกับตอนลงบัญชีจริง) · เดิมคิด ceil(วัน/30) เอง ⇒ ตัวเลขไม่ตรงกับ JE
+      const lateBox = document.getElementById('settleSsoLateFee');
+      const refreshLate = async () => {
+        const ymd = document.getElementById('settleSsoPayDate').value;
+        if (!ymd) { lateBox.style.display = 'none'; return; }
+        try {
+          const res = await Layout.api().ssoLateFeePreview(this._ssoCtx.year, this._ssoCtx.month, ymd, this._ssoCtx.total);
+          const p = res && res.data;
+          if (!p || !(Number(p.fee) > 0)) { lateBox.style.display = 'none'; return; }
+          lateBox.style.display = 'block';
+          lateBox.innerHTML = `⚠️ เลยกำหนด ${p.daysLate} วัน → ระบบจะคำนวณเงินเพิ่ม 2% × ${p.monthsLate} เดือน = <b>${Layout.money(p.fee)}</b> (Dr ค่าใช้จ่ายอื่น)`;
+        } catch (e) {
+          lateBox.style.display = 'block';
+          lateBox.innerHTML = `คำนวณเงินเพิ่มตัวอย่างไม่ได้ (${Layout.esc(e.message || '')}) — ระบบจะคำนวณตอนบันทึกนำส่ง`;
+        }
       };
       document.getElementById('settleSsoPayDate').onchange = refreshLate;
       refreshLate();

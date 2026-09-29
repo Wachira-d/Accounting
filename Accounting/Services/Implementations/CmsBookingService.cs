@@ -626,10 +626,17 @@ public class CmsBookingService : ICmsBookingService
                 foreach (var entry in TrackedChangeRevert.DetachSince(_db, baseline))
                     await entry.ReloadAsync();
                 TrackedChangeRevert.DetachStrays(_db, baseline);
-                // ล้มดังบนการจอง (ผู้เปิดดูเห็น) + log — ใบยังเป็นร่าง ไม่มีรายการบัญชี ผู้ใช้อนุมัติเองได้
-                booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
-                    $"⚠️ อนุมัติเอกสาร ERP {created.DocumentNumber} อัตโนมัติไม่สำเร็จ ({ex.Message}) — เอกสารยังเป็นร่าง ยังไม่ลงบัญชี · "
-                    + "เปิดเอกสารแล้วกด “อนุมัติ”");
+                // รอบ 200 ทีม R (review194-r4 P4-2): ขั้นหลัง CommitAsync ของการอนุมัติ (ชื่อผู้ติดต่อ/ดึงเอกสาร/webhook) โยนได้ทั้งที่ใบ
+                // อนุมัติแล้วจริง ⇒ ข้อความต้องตรวจสถานะจริงจากฐานข้อมูล (F2 #7) ไม่ใช่ประกาศ "ยังเป็นร่าง" เสมอ
+                var actual = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == created.Id && d.CompanyId == companyId)
+                    .Select(d => new { d.Status, d.DocumentNumber }).FirstOrDefaultAsync();
+                var stillDraft = actual == null || actual.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval;
+                booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, stillDraft
+                    ? $"⚠️ อนุมัติเอกสาร ERP {created.DocumentNumber} อัตโนมัติไม่สำเร็จ ({ex.Message}) — เอกสารยังเป็นร่าง ยังไม่ลงบัญชี · "
+                      + "เปิดเอกสารแล้วกด “อนุมัติ”"
+                    : $"⚠️ เอกสาร ERP {actual!.DocumentNumber} อนุมัติ/ลงบัญชีแล้ว แต่ขั้นหลังอนุมัติล้ม ({ex.Message}) — "
+                      + "ตรวจเอกสารใบนั้น (อีเมล/การแจ้งเตือนอาจไม่ถูกส่ง) · ไม่ต้องอนุมัติซ้ำ");
                 _logger.LogWarning(ex, "Booking auto-approve failed for {BookingNumber}", booking.BookingNumber);
             }
         }

@@ -82,6 +82,8 @@ public class TipPayoutService : ITipPayoutService
         if (Math.Abs(totalShare - 100m) > 0.01m)
             throw new InvalidOperationException(
                 $"สัดส่วนแจกจ่ายต้องรวม 100% (ได้รับ {totalShare:N2}%)");
+        // รอบ 200 (D-05): แบ่งเป็นสตางค์ให้ Σ ส่วนแบ่ง = กองทิปพอดี — เดิมปัดรายคน (banker's) และยอม ±0.01% ⇒ JE ไม่สมดุล
+        var shares = Accounting.Helpers.TipShareAllocation.Split(totalTip, staffSharePercent.ToList());
 
         // 2. Look up GL accounts
         // บัญชีเดียวกับที่ POS ลง Cr ตอนรับทิป (CompanySettings.PosTipPayableAccountCode → default) —
@@ -99,8 +101,8 @@ public class TipPayoutService : ITipPayoutService
             throw new InvalidOperationException(
                 "ไม่พบบัญชีทิปค้างจ่าย (ตั้งได้ที่ ตั้งค่า → POS → บัญชีทิปพนักงาน; ค่าแนะนำ 21814/21819) หรือบัญชีเงินสด 1011 — สร้าง/ตั้งค่าก่อน");
 
-        const decimal WhtThreshold = 1000m;
-        const decimal WhtRate = 3m;       // §50 ทวิ + ม.40(2) ค่าบริการ → 3%
+        // รอบ 200 (D-05): อัตรา/เกณฑ์จากตารางกฎหมายตัวเดียว (ThaiWhtRateTable) — เดิมพิมพ์ 3% / 1,000 เอง
+        var whtRate = Accounting.Helpers.TipShareAllocation.WhtRatePercent;
 
         var lines = new List<StaffTipPayoutLine>();
         var staffIds = staffSharePercent.Keys.ToList();
@@ -126,17 +128,16 @@ public class TipPayoutService : ITipPayoutService
         // Dr 2160 (เคลียร์ liability)
         builder.Debit(tipLiab.Id, totalTip, $"เคลียร์ทิปค้างจ่ายงวด {periodEnd:yyyy-MM}");
 
-        foreach (var (staffId, pct) in staffSharePercent)
+        foreach (var (staffId, grossTip) in shares)
         {
-            var grossTip = Math.Round(totalTip * pct / 100m, 2);
-            var withholding = grossTip >= WhtThreshold ? Math.Round(grossTip * WhtRate / 100m, 2) : 0m;
+            var withholding = Accounting.Helpers.TipShareAllocation.Withholding(grossTip);
             var net = grossTip - withholding;
 
             lines.Add(new StaffTipPayoutLine(
                 StaffId: staffId,
                 StaffName: staffMap.GetValueOrDefault(staffId, "(ไม่พบพนักงาน)"),
                 GrossTip: grossTip,
-                WhtRate: withholding > 0 ? WhtRate : 0m,
+                WhtRate: withholding > 0 ? whtRate : 0m,
                 WhtAmount: withholding,
                 NetPaid: net,
                 Wht50TawiCertId: null));   // เติมหลัง commit (ดู certTargets ด้านล่าง)
@@ -154,8 +155,13 @@ public class TipPayoutService : ITipPayoutService
         }
 
         // Cr WHT payable ถ้ามี withholding
-        if (totalWhtWithheld > 0 && whtPayable != null)
-            builder.Credit(whtPayable.Id, totalWhtWithheld, $"หัก ณ ที่จ่ายทิป §50 ทวิ");
+        // รอบ 200 (D-05): ไม่มีผัง 21915 ⇒ เดิมข้ามขา Cr เงียบ ๆ แล้ว JE ไม่สมดุล (ล้มด้วยข้อความที่ไม่บอกทางแก้) — บอกตรง ๆ ก่อนลงบัญชี
+        if (totalWhtWithheld > 0 && whtPayable == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ทิปงวดนี้ต้องหักภาษี ณ ที่จ่าย {totalWhtWithheld:N2} บาท แต่ไม่พบผัง 21915 (ภาษีหัก ณ ที่จ่ายค้างจ่าย) — "
+                + "สร้าง/เปิดใช้ผังนี้ที่หน้าผังบัญชีก่อน แล้วกดจ่ายทิปอีกครั้ง");
+        if (totalWhtWithheld > 0)
+            builder.Credit(whtPayable!.Id, totalWhtWithheld, $"หัก ณ ที่จ่ายทิป §50 ทวิ");
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         try
@@ -188,7 +194,7 @@ public class TipPayoutService : ITipPayoutService
                                 IncomeDescription: $"ค่าบริการ (ทิป) งวด {periodStart:yyyy-MM-dd} ถึง {periodEnd:yyyy-MM-dd}",
                                 PaymentDate: DateTime.UtcNow.Date,
                                 IncomeAmount: t.Gross,
-                                TaxRate: WhtRate,
+                                TaxRate: whtRate,
                                 TaxAmount: t.Wht,
                                 Condition: "หักภาษี ณ ที่จ่าย")
                         });

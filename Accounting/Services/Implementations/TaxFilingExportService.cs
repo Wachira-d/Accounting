@@ -458,11 +458,15 @@ public class TaxFilingExportService : ITaxFilingExportService
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{branchSeq}|{ratePercent:F2}|{period}|{allDetails.Count}");
 
         int seq = 1;
+        var missingSsn = 0;
         foreach (var detail in allDetails)
         {
             var emp = detail.Employee;
             var wageBase = Math.Min(WageOf(detail), wageCeiling);
-            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{emp.SocialSecurityNumber}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
+            // รอบ 200 (D-06): หน้าเว็บไม่มีช่องเลขประกันสังคม ⇒ ช่องว่างทุกคน — ใช้เลขบัตรที่ถูกต้อง (ผู้ประกันตนไทย) · ไม่มีทั้งคู่ = นับเตือน
+            var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
+            if (ssn.Length == 0) missingSsn++;
+            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{ssn}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{wageBase:F2}|{detail.SocialSecurityEmployee:F2}|{detail.SocialSecurityEmployer:F2}");
         }
 
         // Trailer with rate echo + total contribution (เดิมขาด rate echo)
@@ -471,7 +475,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         return new TaxFilingExportResult(
             "SSO110", "สปส.1-10", $"SSO110_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
             allDetails.Count, totalWages, totalEmpContrib + totalErContrib,
-            $"สปส.1-10 เดือน {month}/{year} จำนวน {allDetails.Count} คน สมทบรวม {totalEmpContrib + totalErContrib:N2} บาท (ลูกจ้าง {totalEmpContrib:N2} + นายจ้าง {totalErContrib:N2}) อัตรา {ratePercent:F2}%");
+            $"สปส.1-10 เดือน {month}/{year} จำนวน {allDetails.Count} คน สมทบรวม {totalEmpContrib + totalErContrib:N2} บาท (ลูกจ้าง {totalEmpContrib:N2} + นายจ้าง {totalErContrib:N2}) อัตรา {ratePercent:F2}%"
+            + Accounting.Helpers.SsoInsuredNumber.MissingNotice(missingSsn));
     }
 
     // =====================================================================
@@ -674,9 +679,12 @@ public class TaxFilingExportService : ITaxFilingExportService
         var branchSeq = company.BranchCode ?? "00000";
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|{company.Name}|{period}|{leavers.Count}");
         int seq = 1;
+        var missingSsn = 0;
         foreach (var emp in leavers)
         {
-            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{emp.SocialSecurityNumber}|{TitleCode(emp.TitleTh)}" +
+            var (ssn, _) = Accounting.Helpers.SsoInsuredNumber.Resolve(emp.SocialSecurityNumber, emp.CitizenId);
+            if (ssn.Length == 0) missingSsn++;
+            sb.AppendLine($"D|{seq++}|{emp.CitizenId}|{ssn}|{TitleCode(emp.TitleTh)}" +
                 $"|{emp.FirstNameTh}|{emp.LastNameTh}|{emp.EndDate:yyyyMMdd}|1");
         }
         sb.AppendLine($"T|{leavers.Count}");
@@ -685,7 +693,8 @@ public class TaxFilingExportService : ITaxFilingExportService
             "SPS609", "สปส.6-09", $"SPS609_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
             leavers.Count, 0, 0,
             $"สปส.6-09 (แจ้งออก) เดือน {month}/{year} จำนวน {leavers.Count} คน" +
-            (leavers.Count > 0 ? " — แจ้งภายในวันที่ 15 ของเดือนถัดไป" : " — ไม่มีพนักงานออก"));
+            (leavers.Count > 0 ? " — แจ้งภายในวันที่ 15 ของเดือนถัดไป" : " — ไม่มีพนักงานออก")
+            + Accounting.Helpers.SsoInsuredNumber.MissingNotice(missingSsn));
     }
 
     // =====================================================================

@@ -162,7 +162,8 @@ public partial class LodgingService
             PricesIncludeVat = p.PricesIncludeVat, VatRate = await EffectiveVatRateAsync(companyId, p),
             ServiceChargePercent = p.ServiceChargePercent, HouseRules = p.HouseRules, ConfirmationMessage = p.ConfirmationMessage,
             PaymentHoldMinutes = p.PaymentHoldMinutes, Currency = site?.DefaultCurrency ?? "THB",
-            RoomTypes = await GetRoomTypesAsync(companyId, p.Id),
+            // รอบ 200 (F-05): endpoint สาธารณะ — ตัดรายการห้อง (เลขห้อง/หมายเหตุภายใน/สถานะแม่บ้าน) + ประเภทที่ปิดขาย
+            RoomTypes = Accounting.Helpers.LodgingPublicProjection.RoomTypes(await GetRoomTypesAsync(companyId, p.Id)),
             // บริการที่ตั้งค่าไม่ครบ (#36) ไม่โชว์ให้แขกเลือก — คิดราคาไม่ได้ · เจ้าของเห็นป้ายเตือนในหน้าตั้งค่า
             Extras = (await GetExtrasAsync(companyId, p.Id)).Where(e => e.ShowOnWebsite && e.ConfigProblem == null).ToList(),
             RatePlans = (await GetRatePlansAsync(companyId, p.Id)).Where(r => r.IsActive).ToList(),

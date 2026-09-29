@@ -48,18 +48,18 @@
 - ถ้าพรุ่งนี้มีคนแก้ `ApplyAuditHashChain` กลับไปใช้ `ComputeRowHash` (v1 ยังเป็น `internal` จึงเรียกได้ทั้ง assembly) หรือถอด `ResolveTip` ออก **เทสต์ทั้ง 13 ตัวยังเขียว** และ `owner_action_wiring_check` ก็ไม่มีแถวของเส้นนี้ (RULES มี 40 แถว ไม่มี `AccountingDbContext` / `AuditTrailService` / `AuditTrailController`)
 - ขั้นต่ำที่ควรมี: เพิ่มแถวใน checker ⇒ `AccountingDbContext.cs` `ApplyAuditHashChain` ต้องมี `AuditHashChain.Seal(` และ `ResolveTip(` · `AuditTrailService.VerifyHashChainAsync` ต้องมี `FirstBrokenIndex(` · `AuditTrailController.VerifyHashChain` ต้องมี `VerifyRow(`. ส่วนเทสต์ที่ถือว่าเป็น "control ที่มีจริง" ต้องเป็นเทสต์ที่ write→SaveChanges→อ่านกลับ→verify ผ่าน Npgsql จริง (Testcontainers หรือ job CI ที่มี PostgreSQL) อย่างน้อย 3 กรณี: แถวเดียว · หลายแถวใน SaveChanges เดียว (ตรวจว่าลำดับ `Id` เท่ากับลำดับที่ประทับ) · `AddChainedAuditLog` สองครั้ง + ChangeTracker ใน SaveChanges เดียว
 
-### W2-C3 (P1 · ของเดิม · คลาสเดียวกับ email/line-config) `PaymentSettingsController` ไม่มีด่านสิทธิ์และไม่ปฏิเสธคีย์
+### ✅ b371d4c8 W2-C3 (P1 · ของเดิม · คลาสเดียวกับ email/line-config) `PaymentSettingsController` ไม่มีด่านสิทธิ์และไม่ปฏิเสธคีย์
 - `PaymentSettingsController.cs:120-165` (`PUT` บันทึก `Test/LiveSecretKey`, `ClearingAccountId`, `FeeExpenseAccountId`, `IsActive`) · `:167-187` (test) · `:194-240` (สลับเป็น **live**) มีแค่ `[Authorize]` ระดับคลาส ⇒ **สมาชิกทุกบทบาท รวมถึงคีย์ `acc_` ที่มีสิทธิ์เขียน แทนคีย์ลับของ gateway ด้วยบัญชีร้านค้าของตัวเองได้** ⇒ เงินที่ลูกค้าปลายทางจ่ายจะไปเข้าบัญชีอื่น (ด่าน "ต้องทดสอบผ่านก่อนเปิด live" ไม่ได้กันอะไร เพราะผู้โจมตีตั้ง webhook ของบัญชีตัวเองได้)
 - บันทึกการเปิด live ใช้ `_db.AuditLogs.Add` ตรง (`:216`) ⇒ `RowHash=null` คือแถวอยู่นอก chain
 - `write_permission_gate_check.py` ไม่ได้เฝ้าไฟล์นี้ (ลองรันด้วย path ของไฟล์นี้แล้วฟ้อง 3 จุด)
 
-### W2-C4 (P1 · ของเดิม) `SensitivityController.SetRule` ใครก็เปิดสิทธิ์ดูเอกสารลับ/เงินเดือนให้บทบาทตัวเองได้
+### ✅ b371d4c8 W2-C4 (P1 · ของเดิม) `SensitivityController.SetRule` ใครก็เปิดสิทธิ์ดูเอกสารลับ/เงินเดือนให้บทบาทตัวเองได้
 - `SensitivityController.cs:24-33` doc เขียนว่า "Owner only" แต่ไม่มีด่านอะไรเลย · `SensitivityService.cs:64-87` กันไว้อย่างเดียวคือ "ปิดสิทธิ์ของ Owner ไม่ได้" ⇒ บทบาท Viewer/Staff ส่ง `{Kind: Payroll, Role: Viewer, CanView: true}` แล้วจะเห็นเอกสาร `SensitivityKind.Payroll/ExecutivePay/HrPersonal/Confidential` (`DocumentService.cs:1865-1870`) · ถือเป็น privilege escalation และขัด PDPA ม.37 (RBAC)
 
-### W2-C5 (P1 · ของเดิม) กฎการอนุมัติ `ApprovalController` rules ไม่มีด่านเลย
+### ✅ b371d4c8 W2-C5 (P1 · ของเดิม) กฎการอนุมัติ `ApprovalController` rules ไม่มีด่านเลย
 - `ApprovalController.cs:31-52` POST/PUT/DELETE rules ไม่มีด่านใดเลย ⇒ สมาชิกทุกบทบาท (และคีย์) ลบหรือแก้ขั้นอนุมัติ (`ApproverUserId`, `MinAmount`) ได้. เรื่องนี้เป็นด่านควบคุมภายในแบบเดียวกับ `RequireApprovalForDocuments`/`SodBlockSelfApproval` ที่ W-C2 ย้ายไปอยู่หลัง `CompanySettings.Edit` + `[RejectApiKey]` แล้ว ⇒ นโยบายเดียวกันแต่มีสองเส้น และมีเส้นหนึ่งที่ไม่มีประตูเลย (R5)
 
-### W2-C6 (P2) `sso-config` ขาด `[RejectApiKey]` ขณะที่ `tax-rule-config` ซึ่งเป็นตารางกฎหมายประเภทเดียวกันมีแล้ว
+### ✅ b371d4c8 W2-C6 (P2) `sso-config` ขาด `[RejectApiKey]` ขณะที่ `tax-rule-config` ซึ่งเป็นตารางกฎหมายประเภทเดียวกันมีแล้ว
 - `PayrollController.cs:762` (PUT) · `:822` (DELETE) มีแค่ `RequirePayrollWriteAsync(PayrollApprove)` ⇒ คีย์ที่ถือตัวตนเจ้าของเปลี่ยนเพดาน/อัตราประกันสังคมได้ ขณะที่ `:916/:956` (อัตราภาษี) ปฏิเสธคีย์แล้ว
 
 ### W2-C7 (P3) หน้าต่างส่งอีเมลแสดงหัว/เนื้อที่ไม่ตรงกับสิ่งที่จะถูกส่ง

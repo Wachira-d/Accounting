@@ -11,5 +11,5 @@ public interface IRolePermissionService
     Task DeleteRoleAsync(Guid companyId, Guid roleId, Guid userId);
     Task AssignRoleAsync(Guid companyId, Guid targetUserId, Guid actingUserId, AssignCustomRoleRequest request);
     Task<MyPermissionsResponse> GetMyPermissionsAsync(Guid companyId, Guid userId);
-    Task SeedDefaultRolesAsync(Guid companyId);
+    Task SeedDefaultRolesAsync(Guid companyId, Guid actorUserId);
 }

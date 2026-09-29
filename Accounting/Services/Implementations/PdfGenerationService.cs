@@ -1895,7 +1895,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         else if (template.ShowWatermark || watermark != null)
         {
-            var wmText = watermark ?? template.WatermarkText ?? "";
+            // รอบ 200 (G2-11): ข้อความลายน้ำที่ผู้แก้เทมเพลตตั้งเอง — หนีก่อนต่อเข้า HTML (เดิมดิบ ⇒ ใส่แท็กได้)
+            var wmText = WebUtility.HtmlEncode(watermark ?? template.WatermarkText ?? "");
             sb.AppendLine($"<div class='watermark'>{wmText}</div>");
         }
 
@@ -1924,7 +1925,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             // Prefer an embedded data URI (works in headless Chromium + the
             // preview iframe srcdoc, neither of which resolves relative URLs);
             // fall back to the public LogoUrl. โลโก้แบรนด์ชนะโลโก้บริษัท
-            var logoSrc = TryLogoDataUri(issuer.LogoPath) ?? issuer.LogoUrl;
+            // รอบ 200 (G2-02): LogoUrl = ข้อความที่ผู้ใช้กรอก ⇒ ผ่านตัวตัดสิน src ตัวเดียว (scheme + HtmlEncode)
+            var logoSrc = Accounting.Helpers.HtmlImageSource.Attribute(TryLogoDataUri(issuer.LogoPath) ?? issuer.LogoUrl);
             if (!string.IsNullOrEmpty(logoSrc))
                 sb.AppendLine($"<img src='{logoSrc}' class='logo' style='max-width:{template.LogoWidth}mm;height:{template.LogoHeight}mm;'/>");
         }
@@ -1960,7 +1962,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             var brc = string.IsNullOrWhiteSpace(issuer.BranchLabel)
                 ? ""
                 : $" ({WebUtility.HtmlEncode(issuer.BranchLabel!)})";
-            sb.AppendLine($"<div>{L.TaxId}: {company.TaxId}{brc}</div>");
+            sb.AppendLine($"<div>{L.TaxId}: {WebUtility.HtmlEncode(company.TaxId)}{brc}</div>");
         }
         if (template.ShowCompanyPhone && !string.IsNullOrWhiteSpace(issuer.Phone)) sb.AppendLine($"<div>{L.Phone}: {WebUtility.HtmlEncode(issuer.Phone!)}</div>");
         if (template.ShowCompanyEmail && !string.IsNullOrWhiteSpace(issuer.Email)) sb.AppendLine($"<div>Email: {WebUtility.HtmlEncode(issuer.Email!)}</div>");
@@ -1997,10 +1999,11 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         // Document Info
         sb.AppendLine("<div class='doc-info'>");
-        if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {DisplayDocNumber(doc)}</div>");
+        if (template.ShowDocumentNumber) sb.AppendLine($"<div>{L.DocNumber}: {WebUtility.HtmlEncode(DisplayDocNumber(doc))}</div>");
         if (template.ShowDocumentDate) sb.AppendLine($"<div>{L.DocDate}: {L.Date(doc.DocumentDate)}</div>");
         if (template.ShowDueDate && doc.DueDate.HasValue) sb.AppendLine($"<div>{L.DueDateFor(doc.DocumentType)}: {L.Date(doc.DueDate!.Value)}</div>");
-        if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {doc.DisplayReference}</div>");
+        // รอบ 200 (G2-02): "อ้างอิง" เป็นข้อความอิสระ (ผู้ใช้/OCR/คู่ค้า API) — เดิมต่อดิบ ⇒ stored XSS ตอนเปิดพรีวิว
+        if (template.ShowReference && doc.DisplayReference != null) sb.AppendLine($"<div>{L.Reference}: {WebUtility.HtmlEncode(doc.DisplayReference)}</div>");
         // เอกสารสกุลเงินต่างประเทศ — เดิมพิมพ์ตัวเลขเปล่า ๆ ไม่บอกสกุลเงินเลย
         // ผู้อ่านแยกไม่ออกว่า 1,000 คือบาทหรือดอลลาร์ (และ TFRS บทที่ 19 ต้องเห็น
         // อัตราที่ใช้แปลงค่าด้วย)
@@ -2030,7 +2033,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             && contactTitleForLang != "ลูกค้า"
             ? contactTitleForLang
             : DefaultContactLabelFor(doc.DocumentType, L);
-        sb.AppendLine($"<div class='contact-section'><div class='section-title'>{contactSectionLabel}</div>");
+        sb.AppendLine($"<div class='contact-section'><div class='section-title'>{WebUtility.HtmlEncode(contactSectionLabel)}</div>");
         // ชื่ออังกฤษที่กรอกไว้ชนะเมื่อออกใบภาษาอังกฤษ (ไม่ถอดอักษรชื่อให้เอง —
         // การสะกดชื่อเฉพาะเป็นสิทธิ์ของเจ้าของชื่อ เดาผิด = ระบุคู่สัญญาผิดคน)
         sb.AppendLine($"<div class='contact-name'>{WebUtility.HtmlEncode(ThaiAddressFormatter.ResolvePartyName(lang == "en", doc.Contact.NameEn, doc.Contact.Name))}</div>");
@@ -2051,7 +2054,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 && (Accounting.Helpers.ContactTypeResolver.HasBranchStructure(doc.Contact.ContactType)
                     || (!string.IsNullOrWhiteSpace(doc.Contact.BranchCode)
                         && doc.Contact.BranchCode!.Trim().TrimStart('0').Length > 0));
-            sb.AppendLine($"<div>{L.TaxIdShort}: {doc.Contact.TaxId}"
+            sb.AppendLine($"<div>{L.TaxIdShort}: {WebUtility.HtmlEncode(doc.Contact.TaxId)}"
                 + (showContactBranch ? $" ({WebUtility.HtmlEncode(FormatBranch(doc.Contact.BranchCode, doc.Contact.BranchName, lang))})" : "")
                 + "</div>");
         }
@@ -2274,7 +2277,9 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
         if (template.ShowBankDetails && bankTextForLang != null)
-            sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentInfo}:</strong><br/>{bankTextForLang}</div>");
+            // รอบ 200 (G2-11): ข้อมูลการชำระเงินในเทมเพลต = ข้อความ (ไม่ใช่ HTML) — หนีแล้วคงการขึ้นบรรทัดด้วย <br/>
+            var bankHtml = WebUtility.HtmlEncode(bankTextForLang).Replace("\r\n", "\n").Replace("\n", "<br/>");
+            sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentInfo}:</strong><br/>{bankHtml}</div>");
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
@@ -2340,7 +2345,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             var stampApproved = doc.Status is not (DocumentStatus.Draft
                 or DocumentStatus.WaitingApproval or DocumentStatus.Rejected);
             var stampSrc = stampApproved
-                ? (TryLogoDataUri(settings?.StampPath) ?? settings?.StampUrl)
+                ? Accounting.Helpers.HtmlImageSource.Attribute(TryLogoDataUri(settings?.StampPath) ?? settings?.StampUrl)
                 : null;
             if (!string.IsNullOrEmpty(stampSrc))
             {
@@ -2368,8 +2373,10 @@ public partial class PdfGenerationService : IPdfGenerationService
                 // otherwise a signed box (image present) pushed its line lower
                 // than the unsigned boxes beside it.
                 sb.Append("<div class='sig-img-area'>");
-                if (s?.SignatureImageDataUri != null)
-                    sb.Append($"<img class='sig-img' src='{s.SignatureImageDataUri}' alt='signature'/>");
+                // รอบ 200 (G2-02): ลายเซ็นผู้จัดทำอาจมาจากคู่ค้า (PreparerSignatureBase64) — ผ่านตัวตัดสิน src ตัวเดียว
+                var sigSrc = Accounting.Helpers.HtmlImageSource.Attribute(s?.SignatureImageDataUri);
+                if (sigSrc != null)
+                    sb.Append($"<img class='sig-img' src='{sigSrc}' alt='signature'/>");
                 sb.Append("</div>");
                 sb.Append("<div class='sig-line'></div>");
                 sb.Append($"<div class='sig-role'>{WebUtility.HtmlEncode(roleLabel)}</div>");
@@ -2722,13 +2729,14 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         sb.AppendLine("</head><body>");
         sb.AppendLine($"<div style='text-align:center;font-size:18px;font-weight:bold;'>{WebUtility.HtmlEncode(company.Name)}</div>");
         sb.AppendLine($"<div style='text-align:center;font-size:16px;'>ใบเสร็จรับเงิน</div>");
-        sb.AppendLine($"<div>เลขที่: {payment.PaymentNumber}</div>");
+        sb.AppendLine($"<div>เลขที่: {WebUtility.HtmlEncode(payment.PaymentNumber)}</div>");
         sb.AppendLine($"<div>วันที่: {payment.PaymentDate:dd/MM/yyyy}</div>");
         sb.AppendLine($"<div>ลูกค้า: {WebUtility.HtmlEncode(payment.Document.Contact.Name)}</div>");
-        sb.AppendLine($"<div>เอกสารอ้างอิง: {payment.Document.DocumentNumber}</div>");
+        sb.AppendLine($"<div>เอกสารอ้างอิง: {WebUtility.HtmlEncode(payment.Document.DocumentNumber)}</div>");
         sb.AppendLine($"<div>จำนวนเงิน: {payment.Amount:N2} บาท</div>");
-        sb.AppendLine($"<div>วิธีการชำระ: {payment.PaymentMethod}</div>");
-        if (payment.Reference != null) sb.AppendLine($"<div>อ้างอิง: {payment.Reference}</div>");
+        // รอบ 200 (G2-02): วิธีชำระ/อ้างอิงของการรับชำระมาจากผู้ใช้/คู่ค้า — หนีก่อนต่อเข้า HTML
+        sb.AppendLine($"<div>วิธีการชำระ: {WebUtility.HtmlEncode(payment.PaymentMethod.ToString())}</div>");
+        if (payment.Reference != null) sb.AppendLine($"<div>อ้างอิง: {WebUtility.HtmlEncode(payment.Reference)}</div>");
         sb.AppendLine("</body></html>");
         return sb.ToString();
     }

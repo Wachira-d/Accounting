@@ -9979,7 +9979,16 @@
               <div style="margin-bottom:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:4px">⚠️ รายจ่ายต้องห้าม §65 ตรี — บวกกลับ ภ.ง.ด.50: ${Layout.money(d.nonDeductibleAmount)}</div>
                 <div style="font-size:12px;color:#7f1d1d">${(() => { try { return (JSON.parse(d.nonDeductibleRuleJson||'[]')).map(r => `• ${Layout.esc(r.RuleCode||r.ruleCode||'')}: ${Layout.esc(r.Message||r.message||'')}`).join('<br>'); } catch(_) { return ''; } })()}</div>
-              </div>` : ''}
+              </div>` : (() => {
+                // รอบ 200 (B-05): ผลตรวจ §65 ตรี ที่ยอดบวกกลับ 0 (ต้องบันทึกเป็นสินทรัพย์ (5) · ไม่มีหลักฐานจ่าย (8) · ไม่มีเอกสารต้นฉบับ (9) ·
+                // รายจ่ายรอบก่อน (10) ฯลฯ) เดิมเซิร์ฟเวอร์เก็บไว้แต่กล่องเปิดเฉพาะยอด > 0 ⇒ ผู้ใช้ไม่เคยเห็น — แสดงรายการที่เซิร์ฟเวอร์ตัดสินแล้ว
+                let rs = []; try { rs = JSON.parse(d.nonDeductibleRuleJson || '[]') || []; } catch (_) { rs = []; }
+                if (!Array.isArray(rs) || !rs.length) return '';
+                return `<div style="margin-bottom:12px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:8px">
+                  <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">⚠️ ข้อสังเกต §65 ตรี (รายจ่ายต้องห้าม) — ยังไม่บวกกลับ แต่ต้องตรวจ/ยืนยัน</div>
+                  <div style="font-size:12px;color:#78350f">${rs.map(r => `• ${Layout.esc(r.RuleCode||r.ruleCode||'')}${(r.LegalReference||r.legalReference) ? ' (' + Layout.esc(r.LegalReference||r.legalReference) + ')' : ''}: ${Layout.esc(r.Message||r.message||'')}`).join('<br>')}</div>
+                </div>`;
+              })()}
             ${d.bookingNumber ? `
               <div id="bookingLinked_${d.id}" style="margin-bottom:12px;padding:10px 12px;background:#f0fdfa;border:1px solid #5eead4;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#0f766e;margin-bottom:4px">🎫 เลขจอง: ${Layout.esc(d.bookingNumber)}</div>

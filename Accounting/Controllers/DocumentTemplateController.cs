@@ -4,6 +4,7 @@ using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -85,9 +86,28 @@ public class DocumentTemplateController : ControllerBase
 
     // ===== PDF Generation =====
 
+    /// <summary>รอบ 200 ทีม R (review193-r4 P4-7 · W2-P6 ส่วนที่เหลือ): ด่านชั้นความลับของเอกสารใบเดียว — ด่านเดียวกับหน้าเอกสาร/อีเมล
+    /// (<c>ISensitivityService.CanViewAsync</c> + ข้อความ <c>Helpers/SensitivityAccess</c>) · เดิม generate-pdf/html ส่งเนื้อหาใบลับ
+    /// ให้สมาชิกทุกคนที่รู้ documentId · ไม่มี ISensitivityService/DbContext ใน DI = ผ่าน (พฤติกรรมเดียวกับ DocumentController)</summary>
+    private async Task<string?> DenySensitiveAsync(Guid companyId, Guid documentId)
+    {
+        if (HttpContext.RequestServices.GetService(typeof(Accounting.Data.AccountingDbContext)) is not Accounting.Data.AccountingDbContext db)
+            return null;
+        var kind = await db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => d.Sensitivity).FirstOrDefaultAsync();
+        if (!Accounting.Helpers.SensitivityAccess.NeedsCheck(kind)) return null;
+        if (HttpContext.RequestServices.GetService(typeof(ISensitivityService)) is not ISensitivityService svc) return null;
+        return await svc.CanViewAsync(companyId, Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User), kind)
+            ? null
+            : Accounting.Helpers.SensitivityAccess.DeniedMessage(kind, "พิมพ์/ดาวน์โหลด");
+    }
+
     [HttpPost("generate-pdf")]
     public async Task<ActionResult> GeneratePdf(Guid companyId, [FromBody] GeneratePdfRequest request)
     {
+        if (await DenySensitiveAsync(companyId, request.DocumentId) is { } denied)
+            return StatusCode(403, new ApiResponse<object>(false, null, denied));
         var result = await _pdfService.GenerateDocumentPdfAsync(companyId, request);
         return File(result.PdfData, result.ContentType, result.FileName);
     }
@@ -98,6 +118,8 @@ public class DocumentTemplateController : ControllerBase
     [HttpPost("generate-html")]
     public async Task<ActionResult<string>> GenerateHtml(Guid companyId, [FromBody] GeneratePdfRequest request)
     {
+        if (await DenySensitiveAsync(companyId, request.DocumentId) is { } denied)
+            return StatusCode(403, new ApiResponse<object>(false, null, denied));
         var html = await _pdfService.GenerateDocumentHtmlAsync(companyId, request);
         return Content(html, "text/html; charset=utf-8");
     }

@@ -16,42 +16,42 @@
 
 ## 1. CONFIRMED (มี file:line)
 
-### W-C1 (P0) — คีย์ที่ถือตัวตนเจ้าของยัง "ลบเอกสารถาวรข้ามช่วงเก็บรักษา §87/3 · พ.ร.บ.บัญชี ม.10" ได้
+### ✅ c5df11c W-C1 (P0) — คีย์ที่ถือตัวตนเจ้าของยัง "ลบเอกสารถาวรข้ามช่วงเก็บรักษา §87/3 · พ.ร.บ.บัญชี ม.10" ได้
 - `Accounting/Controllers/DocumentController.cs:915-930` `DELETE documents/{id}/purge?force=true&reason=…` เช็กสิทธิ์แบบ inline ด้วย `role != UserRole.Owner` อย่างเดียว ไม่ได้เรียก `OwnerActionGuard`. `DocumentService.PurgeDocumentAsync` (`DocumentService.cs:8022+`) ข้าม `RetentionUntil` เมื่อได้ `force` และไม่มีด่านอื่นซ้อน
 - **ใครทำได้:** คีย์ `acc_` ที่มี `CanDelete` (claim NameIdentifier = `CreatedByUserId` ซึ่งต้องเป็นเจ้าของ/แอดมินเสมอ เพราะคนออกคีย์ได้มีแค่เจ้าของ) และคีย์ `int_` รุ่นเก่าในช่วงผ่อนผัน ซึ่งได้สิทธิ์เต็มรวม `CanDelete` และสวมเจ้าของได้ด้วย `X-Acting-User: <อีเมลเจ้าของ>`. นี่คือโมเดลภัยเดียวกับ C1
 - ทีม W จัดจุดนี้เป็น "override ทางธุรกิจ ไม่ใช่การให้สิทธิ์" (r193-W §5.3). **ไม่เห็นด้วย** เพราะผลคือทำลายหลักฐานบัญชีที่กฎหมายบังคับให้เก็บ และทำจากเครื่องที่ไม่มีคนนั่งอยู่
 - ในไฟล์ถัดไปเป็นชนิดเดียวกัน: `WithholdingTaxCertController.cs:78-93` ลบ 50 ทวิถาวร (เจ้าของเท่านั้น · เช็ก inline)
 - ทางแก้: ต่อ `OwnerActionGuard.IsApiKeyRequest(HttpContext)` เข้าสองจุดนี้ แล้วให้ `write_permission_gate_check` (หรือ checker แคบ ๆ) ฟ้องเมื่อพบ `role != UserRole.Owner` แบบ inline ใน controller
 
-### W-C2 (P1) — `PUT settings` ยังให้คีย์ที่ถือตัวตนเจ้าของเปลี่ยน "นโยบาย" ได้ทุกช่อง ยกเว้นสองช่องของ API
+### ✅ c5df11c W-C2 (P1) — `PUT settings` ยังให้คีย์ที่ถือตัวตนเจ้าของเปลี่ยน "นโยบาย" ได้ทุกช่อง ยกเว้นสองช่องของ API
 - `SettingsController.cs:51-62` ด่าน `[RequirePermission(CompanySettings.Edit)]` ผ่านให้ตัวตนเจ้าของเสมอ (`PermissionService.cs:53`) และด่านที่กันคีย์เพิ่มเฉพาะ `EnableApiAccess`/`MaxApiKeys`
 - ⇒ คีย์ยังเปลี่ยน `RequireApprovalForDocuments` · `ApprovalThresholdAmount` · `SodBlockSelfApproval` (ห้ามอนุมัติเอกสารตัวเอง) · `AllowNegativeStock` · `WhtRecognitionBasis` · `EtaxRdApiKey/Secret` · `EtaxCertificatePath/Password` · `DocumentTitleOverridesJson` ได้. เท่ากับคีย์ปิดด่านควบคุมภายในของบริษัทเองได้
 - ขัดกับกติกาที่ `OwnerActionGuard` เขียนไว้เองว่า "งานที่ให้สิทธิ์/**เปลี่ยนนโยบาย**/ปิดงวด ต้องมาจากคนที่ล็อกอิน" (`OwnerActionGuard.cs` doc) · `EtaxController:310` (`RequireEtaxAsync(..., CompanySettingsEdit)`) มีลักษณะเดียวกัน
 - ทางแก้ที่ง่ายที่สุด: ปฏิเสธ `PUT settings` ทั้งเส้นเมื่อเป็นคำขอจากคีย์ (หน้าตั้งค่าเป็นงานของคนอยู่แล้ว) · ถ้าต้องให้คีย์เขียนบางช่อง ให้ใช้ allow-list
 
-### W-C3 (P1 · ของเดิม ไม่ได้เกิดจากทีม W) — การเงินของ subscription ไม่มีด่านเจ้าของเลย (แม้แต่ JWT)
+### ✅ c5df11c W-C3 (P1 · ของเดิม ไม่ได้เกิดจากทีม W) — การเงินของ subscription ไม่มีด่านเจ้าของเลย (แม้แต่ JWT)
 - `SubscriptionController.cs:114-120` (`trial/extend`) · `:137` (`convert`) · `:148` (`PUT plan`) · `:159` (`cancel`) มีแค่ `[Authorize]` ส่วน `TenantAccessMiddleware` ตรวจแค่ว่าเป็นสมาชิก ⇒ **พนักงานบทบาท "ดูอย่างเดียว" หรือคีย์ใดก็ได้ ยกเลิก subscription ของบริษัทได้**
 - `SubscriptionService.cs:298` `additionalDays = request.AdditionalDays > 0 ? request.AdditionalDays : tc.ExtensionDays` — ผู้เรียกกำหนดจำนวนวันเองโดยไม่มีเพดาน (`MaxExtensions` จำกัดแค่จำนวนครั้ง) ⇒ ขยาย trial ครั้งเดียว 36,500 วันได้
 - `AccountSubscriptionController.cs:122` `start-trial` · `:174` `attach` · `:212` `detach` เช็ก `cu.Role == Owner` แบบ inline และรับ `CompanyId` จาก **body**. `TenantAccessMiddleware` ดูเฉพาะ route/`X-Company-Id` ⇒ คีย์ของบริษัท A (ตัวตนเจ้าของ) ผูก/ถอด**บริษัท B** ของเจ้าของคนเดียวกันใน Account Plan ได้ ซึ่งเป็นการข้ามขอบเขตบริษัทของคีย์. ทีม W จดไว้ว่า "×4 ไม่ได้แตะ" — ยืนยันว่าเป็นจริง
 - ทางแก้: `EnsureOwnerAccessAsync` (ซึ่งตอนนี้ปฏิเสธคีย์อยู่แล้ว) ในทั้ง 7 action · ใส่เพดาน `AdditionalDays ≤ tc.ExtensionDays`
 
-### W-C4 (P1) — S-12 ไม่มีผลกับเส้นที่ผู้ใช้ส่งอีเมลจริงบนเว็บ (silent no-op · กฎ #4 A · F2 ข้อ 5)
+### ✅ c5df11c W-C4 (P1) — S-12 ไม่มีผลกับเส้นที่ผู้ใช้ส่งอีเมลจริงบนเว็บ (silent no-op · กฎ #4 A · F2 ข้อ 5)
 - `documents.html:6860-6884` `refreshEmailTemplate()` ประกอบหัว `${Layout.docTypeLabel(docType)} - ${customer}` และเนื้อ HTML ภาษาไทยเสมอ (ใช้ตารางชื่อชนิดเอกสารของ JS เอง ไม่รู้จักภาษาของเทมเพลต/`DocumentTitleOverridesJson`/หัวรวม/หัวอย่างย่อ) แล้ว `:9051-9052` ส่งค่านี้ไปเป็น `subject`/`body` ที่ไม่ว่าง
 - `documents.html:10312-10313` หน้าต่าง "ส่งอีเมล" ของรายการเอกสารก็เติม `defSubject`/`defBody` เป็นภาษาไทยเช่นกัน แล้วส่งไปที่ `:10344` / e-Tax ที่ `:10340`
 - `DocumentEmailService.cs:61-62` ใช้หัว/เนื้อที่ server สร้างเฉพาะเมื่อ `req.Subject`/`req.Body` ว่าง ⇒ **ใบภาษาอังกฤษที่ส่งจากเว็บยังได้ "เรียน …" ภาษาไทยครอบ PDF ภาษาอังกฤษ** ซึ่งเป็นบั๊กเดียวกับที่ S-12 ตั้งใจแก้ · commit message ข้อ 8 ที่เขียนว่า "4 ช่องทางใช้ resolver ตัวเดียวกันครบ" จริงเฉพาะฝั่ง server
 - เพิ่มเติม: `refreshEmailTemplate` เอาชื่อลูกค้าต่อเข้า HTML ของเนื้ออีเมลโดยไม่หนี (`:6879`) ⇒ ยังเหลือช่อง HTML injection ในอีเมลที่ส่งถึงลูกค้า ซึ่งเป็นสิ่งที่ S-12 ตั้งใจปิด
 - ทางแก้: เพิ่ม `GET document/{id}/email-template` ที่คืน `BuildDefaultTemplate(doc, heading, …)` แล้วให้ทั้งสองหน้าต่างเติมค่าจาก endpoint นี้ (หรือส่ง null เมื่อผู้ใช้ไม่ได้แก้ข้อความ)
 
-### W-C5 (P2) — S-06: บันทึกหน้า site-settings แล้ว `MaintenanceMessage` ถูกล้างทุกครั้ง
+### ✅ c5df11c W-C5 (P2) — S-06: บันทึกหน้า site-settings แล้ว `MaintenanceMessage` ถูกล้างทุกครั้ง
 - `admin/site-settings.html` ถอด `maintenanceMessage` ออกจาก payload แล้ว แต่ `AdminController.cs:1827` ยังเขียน `settings.MaintenanceMessage = request.MaintenanceMessage;` **โดยไม่มีเงื่อนไข** ⇒ ค่าเดิมกลายเป็น null ทุกครั้งที่กดบันทึก. ที่ r193-W §1.8 และคอมเมนต์ในหน้าเขียนว่า "ค่าเดิมคงอยู่" จึงไม่จริงสำหรับช่องนี้
 - ผลกระทบวันนี้ต่ำ (ค่านี้ไม่มีผู้อ่าน) แต่ขัดกับเงื่อนไขที่ทีมตั้งไว้เอง ("ห้ามลบค่า — รอเจ้าของตัดสิน Q3") · `MaintenanceMode` (`:1825` มี `HasValue`) และ `OcrAutoCreateThreshold` (`:2341` มี `HasValue`) ปลอดภัย
 - ทางแก้: `if (request.MaintenanceMessage != null)` · ช่องข้อความอื่นของหน้า landing ในเมธอดเดียวกัน (`:1808-1821`) ก็เขียนทับแบบไม่มีเงื่อนไขเช่นกัน แต่หน้าส่งค่าเหล่านั้นครบทุกครั้ง จึงยังไม่เกิดปัญหา
 
-### W-C6 (P2) — ค่าตั้งที่ผู้ใช้กดได้แต่ไม่มีผล ยังไม่ถูกล็อก (checker จับได้ แต่อยู่ใน baseline)
+### ✅ c5df11c W-C6 (P2) — ค่าตั้งที่ผู้ใช้กดได้แต่ไม่มีผล ยังไม่ถูกล็อก (checker จับได้ แต่อยู่ใน baseline)
 - `TaxRuleConfig.HealthInsuranceCap` / `MortgageInterestCap`: `payroll.html` ให้แก้ได้ และ `PayrollController.cs:940-942` บันทึกค่า แต่ตัวคำนวณ ภ.ง.ด.1 ไม่อ่านสองค่านี้ (`PayrollService.cs:4251` อ่าน `TaxRuleConfigs` เฉพาะบางช่อง) ⇒ **แก้เพดานลดหย่อนแล้วภาษีหัก ณ ที่จ่ายไม่เปลี่ยน โดยไม่มีอะไรบอก** · เรื่องนี้แตะภาษี จึงควรล็อกหรือต่อสายก่อนช่องที่ S-06 ล็อกไปแล้ว
 - `EtaxByEmailAutoSendOnApprove` (`settings.html:1816/1854`) ติ๊กได้แต่ไม่มีงานส่งอัตโนมัติ — ทีม W จงใจส่งต่อให้ทีม V (r193-W §5.1) · ระหว่างรอควรติดป้ายชั่วคราว ไม่ปล่อยให้ติ๊กแล้วเงียบ
 
-### W-C7 (P3) — ข้อความ 403 หลังบังคับ `CompanySettings.Edit` ไม่บอกทางไปต่อ
+### ✅ c5df11c W-C7 (P3) — ข้อความ 403 หลังบังคับ `CompanySettings.Edit` ไม่บอกทางไปต่อ
 - `RequirePermissionAttribute.cs:61` ตอบ `"ไม่มีสิทธิ์เข้าถึง (ต้องการ CompanySettings.Edit)"` แล้ว `settings.html` save → `Layout.toast(e.message)` (หน้าไม่ได้ตรวจสิทธิ์ก่อน ⇒ ผู้ใช้กรอกทั้งหน้าก่อนจึงรู้ว่าบันทึกไม่ได้)
 - ข้อความไม่ได้บอกว่า "ขอเจ้าของบริษัทเปิดสิทธิ์ ตั้งค่าบริษัท ที่หน้าบทบาท" (F2 ข้อ 8) · ต่างจาก `IntegrationController.RequireSettingsAsync` (`:75`) ที่บอกไว้
 

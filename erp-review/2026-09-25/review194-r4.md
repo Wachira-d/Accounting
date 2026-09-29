@@ -4,21 +4,21 @@
 
 ## CONFIRMED
 
-**R4-1 (ต่ำ-กลาง) เช็คเอาต์ใช้ใบร่างเดิม — `DueDate` ค้างจากรอบก่อน ทั้งที่มี sentinel ล้างค่าอยู่แล้ว**
+✅ 8663946f **R4-1 (ต่ำ-กลาง) เช็คเอาต์ใช้ใบร่างเดิม — `DueDate` ค้างจากรอบก่อน ทั้งที่มี sentinel ล้างค่าอยู่แล้ว**
 - `LodgingService.Lifecycle.cs:750` ส่ง `DueDate: create.DueDate` · รอบนี้ `CollectBalanceNow=true` ⇒ `null` = "คงค่าเดิม" (`DocumentService.cs:2539`)
   ⇒ ใบที่เก็บเงินแล้วค้างวันครบกำหนด +30 วันของรอบที่ล้ม · ตัวล้างมีอยู่แล้ว: `DateTime.MinValue` ⇒ null (:2540-2542) — แก้ 1 คำ `create.DueDate ?? DateTime.MinValue`
 - ช่องมัดจำ: `""`/`0m` ล้าง `DepositAppliedRef`/`DepositBaseDeducted` ครบ (:2417-2418 · :2620) ✓ · `DepositAppliedAmount`/`DrivesJournal` เส้นที่พักไม่เคยตั้ง ✓
 - ช่องที่ยังไม่ล้าง: `BillDiscountAmount` — ใบร่างจากรุ่นก่อนรอบ 193 R3-1 (ตอนฐานมัดจำยังเก็บในส่วนลดท้ายบิล) ถ้าถูกหยิบมาใช้ ⇒ หักซ้ำ (ส่วนลด + ฐานมัดจำ) · `Plan` ระบุเองว่ารองรับ "ค้างจากรุ่นก่อนแก้" จึงควรส่ง `BillDiscountAmount: 0m, BillDiscountPercent: 0m` ด้วย
 - ใบร่างของการจองอื่น/บริษัทอื่นไม่ถูกหยิบ ✓ (`LodgingCheckoutDraft.cs:203-206` · เลขจอง unique ต่อบริษัท `AccountingDbContext.cs:3360` · ใบริบอ้างเลขใบมัดจำ ไม่ใช่เลขจอง ✓)
 
-**R4-2 (กลาง) integration ขายเงินสด: "รอสักครู่" ชั่วคราว ⇒ ลงบัญชีถาวรเป็นตั้งหนี้**
+✅ 8663946f **R4-2 (กลาง) integration ขายเงินสด: "รอสักครู่" ชั่วคราว ⇒ ลงบัญชีถาวรเป็นตั้งหนี้**
 - R3-2(ง) ทำให้ `PostCashSaleJournalAsync` ถือคีย์จริง ⇒ ชนปุ่มริบ/ตัดชำระได้ `DEPOSIT-REALIZE-BUSY` ⇒ `IntegrationService.cs:1138-1146` catch ทั่วไป ⇒ `IssuedAsCashReceipt=false` + JE ตั้งหนี้เต็มยอด · มัดจำไม่ถูกหัก · ตอบ `success=true`
 - ก่อนแก้เส้นนี้ข้ามล็อก (ผิดคนละแบบ) — ตอนนี้ความผิดพลาดชั่วคราวกลายเป็นผลบัญชีคนละเส้นที่ต้องจับคู่มือ (AR ค้างเท่ามัดจำ + 217xx ค้าง) · ควรแยก `DepositBusyRuleCode` ออกไปตอบ `success=false`/retry (ใบถูก Approved แล้ว — ต้องถอยแบบเดียวกับเส้น ImmediateVat หรือเก็บไว้ให้ยิงซ้ำ)
 
 ## PLAUSIBLE
 
-- **P4-1 ใบกำกับของการริบที่ค้างร่างจากรุ่นก่อนแก้**: `ResumeForfeitInvoice` อนุมัติใบร่างเดิม (:4148-4150 · :4206) โดยไม่ล้าง `PaymentDate` ที่รุ่นเก่าตั้ง = วันรับเงิน ⇒ R3-1 เกิดซ้ำกับใบที่ล้มกลางทางก่อน deploy (F2 #9) · แก้: ขั้น resume ตั้ง `PaymentDate=null` ก่อนอนุมัติ
-- **P4-2 CMS หมายเหตุอาจไม่ตรงความจริง**: `ApproveDocumentAsync` มีขั้นหลัง `CommitAsync` (:6417) ที่โยนได้ (`contactName` query :6449 · `GetDocumentAsync` · webhook) ⇒ catch ใน `CmsBookingService.cs:237-247` reload ได้ Approved จาก DB (ข้อมูลถูก) แต่เขียน "ยังเป็นร่าง ยังไม่ลงบัญชี" (F2 #7 — ข้อความต้องตรวจสาเหตุจริง) · แก้: อ่าน `Status` หลัง reload ก่อนเลือกข้อความ
+- ✅ 65efdd86 **P4-1 ใบกำกับของการริบที่ค้างร่างจากรุ่นก่อนแก้**: `ResumeForfeitInvoice` อนุมัติใบร่างเดิม (:4148-4150 · :4206) โดยไม่ล้าง `PaymentDate` ที่รุ่นเก่าตั้ง = วันรับเงิน ⇒ R3-1 เกิดซ้ำกับใบที่ล้มกลางทางก่อน deploy (F2 #9) · แก้: ขั้น resume ตั้ง `PaymentDate=null` ก่อนอนุมัติ
+- ✅ 65efdd86 **P4-2 CMS หมายเหตุอาจไม่ตรงความจริง**: `ApproveDocumentAsync` มีขั้นหลัง `CommitAsync` (:6417) ที่โยนได้ (`contactName` query :6449 · `GetDocumentAsync` · webhook) ⇒ catch ใน `CmsBookingService.cs:237-247` reload ได้ Approved จาก DB (ข้อมูลถูก) แต่เขียน "ยังเป็นร่าง ยังไม่ลงบัญชี" (F2 #7 — ข้อความต้องตรวจสาเหตุจริง) · แก้: อ่าน `Status` หลัง reload ก่อนเลือกข้อความ
 - **P4-3 `LockDepositBalancesAsync` reload เฉพาะ Unchanged**: ไม่ทิ้งการแก้ของผู้เรียก ✓ แต่แถวมัดจำที่ Modified ก่อนล็อกคงค่าเก่า (ถ้าผู้เรียกอ่านยอดจากมันต่อ = lost update) · ไม่พบจุดเกิดจริงใน 9 เส้น (void/purge ไม่แตะใบก่อนล็อก · drives/LoadTaxed โหลดหลังล็อก) — ควรโยนเมื่อพบ Modified แทนการข้ามเงียบ
 - **P4-4 P-4 เคสขอบ**: เลขอ้างอิงสองใบแต่ resolve ได้ใบเดียว (อีกใบถูกลบ) ⇒ `numbers.Count==1` ⇒ ขา Dr ของอีกใบถูกนับให้ใบที่เหลือ (คืนเกิน · ถูกหนีบที่ 0) · ขา Dr 21913 ที่ผูกไม่ได้ถูกข้ามเงียบ (ไม่นับใน `Unattributed`) ⇒ `RecognizedAt` ค้าง · ใบที่ void→กู้→void (JE ต้นฉบับสองชุด `OriginalEntryId==null`) นับฐานซ้ำ — มีมาก่อน
 - **P4-5 ขอบเดือน UTC**: `when = RealizeDate ?? UtcNow` (:3758) ใช้ตัดสิน `sameMonth` แต่วันที่ใบถูกทำเป็นวันไทย ⇒ ริบ 31/01 หลัง 17:00 UTC ธงอาจผิดเดือน (มีมาก่อน R3-1)

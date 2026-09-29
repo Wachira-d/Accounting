@@ -71,7 +71,7 @@ public class RolePermissionController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> SeedDefaults(Guid companyId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        await _roleService.SeedDefaultRolesAsync(companyId);
+        await _roleService.SeedDefaultRolesAsync(companyId, userId);
         return Ok(new ApiResponse<string>(true, null, "สร้าง Role เริ่มต้นสำเร็จ"));
     }
 

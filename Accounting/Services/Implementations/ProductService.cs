@@ -221,15 +221,9 @@ public class ProductService : IProductService
         // เดิม ADJUST ถูก Math.Abs ⇒ กรอกของหาย 5 กลายเป็นของเพิ่ม 5 เงียบ ๆ (ERP_REVIEW E-08)
         var qty = StockMovementSign.Normalize(request.MovementType, request.Quantity);
 
-        // ด่านสต็อกไม่พอ ต้องดูยอด **ในคลังนั้น** ไม่ใช่ยอดรวมทั้งบริษัท — ไม่งั้นสาขา A
-        // เบิกของที่กองอยู่สาขา B ได้ (ยอดรวมพอ แต่ของไม่ได้อยู่ที่นี่)
-        if (qty < 0)
-        {
-            var onHand = await _stock.GetQuantityAsync(companyId, request.ProductId, warehouseId);
-            if (onHand + qty < 0)
-                throw new InvalidOperationException(
-                    $"สต็อกไม่เพียงพอในคลังนี้: คงเหลือ {onHand:0.##} ต้องการเบิก {Math.Abs(qty):0.##}");
-        }
+        // ด่านสต็อกไม่พอ (ยอด **ในคลังนั้น**) อยู่ที่ ledger ตัวเดียว (`StockLedger.MoveAsync` → `NegativeStockGuard`)
+        // รอบ 200 (E-08): เดิมมีด่านตัวที่สองตรงนี้ที่ไม่อ่านค่าตั้ง "อนุญาตสต็อกติดลบ" ⇒ บริษัทที่เปิดสวิตช์ไว้ยังถูกบล็อก
+        // บนเส้นปรับสต็อก (สวิตช์ไม่มีผล) · ledger ตรวจแถวคลังเดียวกัน + เคารพค่าตั้ง + ข้อความไทยพร้อมรหัสกฎ
 
         var move = await _stock.MoveAsync(new StockMoveRequest(
             CompanyId: companyId,

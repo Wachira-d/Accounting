@@ -122,6 +122,6 @@ public interface IPayrollService
     Task<LeaveBalanceResponse> GetLeaveBalanceAsync(Guid companyId, Guid employeeId, int year);
 
     // Tax: ภ.ง.ด.1 generation
-    Task<object> GeneratePnd1Async(Guid companyId, int year, int month);
-    Task<object> GenerateSsoReportAsync(Guid companyId, int year, int month);
+    Task<object> GeneratePnd1Async(Guid companyId, int year, int month, bool includePii);
+    Task<object> GenerateSsoReportAsync(Guid companyId, int year, int month, bool includePii);
 }

@@ -1677,10 +1677,20 @@
         this._lgState.sel[roomTypeId] = +n;
         await this.lodgingQuote();
       },
+      // รอบ 200 (F-06): แบ่งแขกลงห้องให้ผลรวม = จำนวนจริง — เดิมปัดขึ้นต่อห้อง (ผู้ใหญ่ 3 · 2 ห้อง ⇒ คิด 4 คน = คิดค่าแขกเกิน)
+      // และยัดเด็กทุกคนลงห้องแรก (ติดเพดานเด็ก/ห้อง ทั้งที่รวมกันรับได้) · ห้องละอย่างน้อยผู้ใหญ่ 1 (minAdults)
+      _splitGuests(total, roomCount, minEach) {
+        const n = Math.max(0, roomCount | 0); if (!n) return [];
+        const t = Math.max(minEach * n, total | 0);
+        const per = Math.floor(t / n); let rem = t - per * n;
+        return Array.from({ length: n }, () => per + (rem-- > 0 ? 1 : 0));
+      },
       _quoteBody() {
         const st = this._lgState;
         const rooms = [];
-        for (const [rtId, n] of Object.entries(st.sel)) for (let i = 0; i < n; i++) rooms.push({ roomTypeId: rtId, adults: Math.max(1, Math.ceil(st.adults / Math.max(1, Object.values(st.sel).reduce((a,b)=>a+b,0)))), children: i === 0 ? st.children : 0, extraBeds: 0 });
+        for (const [rtId, n] of Object.entries(st.sel)) for (let i = 0; i < n; i++) rooms.push({ roomTypeId: rtId, adults: 1, children: 0, extraBeds: 0 });
+        const adults = this._splitGuests(st.adults, rooms.length, 1), kids = this._splitGuests(st.children, rooms.length, 0);
+        rooms.forEach((r, i) => { r.adults = adults[i]; r.children = kids[i]; });
         const extras = Object.entries(st.extras).filter(([,q]) => q > 0).map(([extraId, quantity]) => ({ extraId, quantity }));
         return { checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', rooms, extras, ratePlanId: st.ratePlanId };
       },

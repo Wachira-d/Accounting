@@ -335,7 +335,9 @@ public record PayrollRunResponse(
     // คำเตือน (ไม่ล็อก) — เช่นระบบเคยสร้างไฟล์ e-Filing ของงวดนี้แล้ว ("สร้างไฟล์ ≠ ยื่น") · รอบ 193 หลังฝ่ายค้าน
     string? RecalculateWarning = null,
     // แหล่งจ่ายรายคน — ไม่อยู่ในแบบยื่น จึงไม่ถูกล็อกด้วยหลักฐานการยื่นแบบ ✏️ แก้ยอด (PayrollRunEditPolicy.CanSetPaymentAccount)
-    bool CanSetPaymentAccount = false);
+    bool CanSetPaymentAccount = false,
+    // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. ของงวดนี้ (Helpers/SsoLateFee · เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
+    DateTime? SsoDueDate = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/

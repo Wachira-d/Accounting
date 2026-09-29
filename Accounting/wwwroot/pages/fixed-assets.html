@@ -112,6 +112,7 @@
             <div class="form-group"><label class="form-label" data-help="วันที่ได้มา (TFRS บทที่ 10) — ระบบใช้คำนวณค่าเสื่อมเริ่มเดือนถัดไป">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
             <div class="form-group"><label class="form-label" data-help="ราคาทุน + ค่าใช้จ่ายที่ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/อบรม) ตาม TFRS บทที่ 10 ย่อหน้า 17">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
           </div>
+          <div id="fLockHint" style="display:none;margin:-4px 0 10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="มูลค่าซาก (residual) = ราคาคาดว่าจะขายได้ตอนสิ้นอายุใช้งาน — 0 = คิดค่าเสื่อมเต็มมูลค่า">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
             <div class="form-group"><label class="form-label" data-help="อายุการใช้งานที่คาดการณ์ในหน่วย 'เดือน' — ตัวอย่าง 5 ปี = 60 เดือน • สรรพากรกำหนดอย่างน้อย: เครื่องจักร 5 ปี, รถ 5 ปี, คอม 3 ปี (สามารถยาวกว่านี้ได้ ตามอายุจริง)">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
@@ -526,6 +527,7 @@
         document.getElementById('fLeaseTerm').value = '';
         document.getElementById('fLeasePmt').value = '';
         document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
+        this._lockValuationFields(false);
         document.getElementById('fName').value = '';
         document.getElementById('fCategory').value = '';
         document.getElementById('fLocation').value = '';
@@ -559,6 +561,7 @@
           document.getElementById('fLeaseTerm').value = a.leaseTermMonths || '';
           document.getElementById('fLeasePmt').value = a.monthlyLeasePayment || '';
           document.getElementById('fCode').value = a.assetCode; document.getElementById('fCode').disabled = true;
+          this._lockValuationFields(true);
           document.getElementById('fName').value = a.name;
           document.getElementById('fCategory').value = a.category || '';
           document.getElementById('fLocation').value = a.location || '';
@@ -579,6 +582,16 @@
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // รอบ 200 (A12/E-04): ช่องที่เซิร์ฟเวอร์ไม่รับตอนแก้ไข (ผูกกับรายการบัญชีตอนซื้อ) — ล็อก + บอกเหตุผล (ห้าม silent no-op)
+      _VALUATION_LOCKED: ['fCost', 'fPurchaseDate', 'fAssetType', 'fLessor', 'fLeaseTerm', 'fLeasePmt'],
+      _lockValuationFields(locked) {
+        for (const id of this._VALUATION_LOCKED) { const el = document.getElementById(id); if (el) el.disabled = locked; }
+        const hint = document.getElementById('fLockHint');
+        if (hint) {
+          hint.style.display = locked ? 'block' : 'none';
+          hint.textContent = locked ? '🔒 ราคาทุน · วันที่ซื้อ · ประเภทสินทรัพย์ · ข้อมูลสัญญาเช่า ผูกกับรายการบัญชีตอนซื้อ — แก้ที่เอกสารต้นทาง หรือจำหน่าย/ลบรายการที่ลงทะเบียนผิดแล้วลงทะเบียนใหม่ · อายุใช้งาน/มูลค่าซาก/วิธีคิดค่าเสื่อม แก้ได้ก่อนมีค่าเสื่อมลงบัญชี' : '';
+        }
+      },
       async save() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('fId').value;
@@ -589,6 +602,35 @@
           Layout.toast('ต้องเลือกบัญชีสินทรัพย์และบัญชีเครดิตเพื่อบันทึกบัญชีตอนซื้อ', 'error');
           return;
         }
+        // รอบ 200 (E-05): ช่องตัวเลขว่าง = บอกเป็นไทย (เดิม NaN → null → decimal/int แปลงไม่ได้ ⇒ ทิ้ง body ทั้งก้อน)
+        const method = document.getElementById('fMethod').value;
+        const cost = Layout.numOrNull('fCost');
+        const life = Layout.intOrNull('fLife');
+        if (!id && (cost == null || cost <= 0)) { Layout.toast('กรุณาระบุราคาทุน (มากกว่า 0)', 'error'); return; }
+        if (method !== 'None' && (life == null || life <= 0)) { Layout.toast('กรุณาระบุอายุใช้งาน (เดือน) มากกว่า 0 — หรือเลือก “ไม่คิดค่าเสื่อม”', 'error'); return; }
+        if (id) {
+          // แก้ไข: ส่งเฉพาะช่องที่เซิร์ฟเวอร์รับ (UpdateFixedAssetRequest)
+          const upd = {
+            name: document.getElementById('fName').value,
+            category: document.getElementById('fCategory').value || null,
+            location: document.getElementById('fLocation').value || null,
+            serialNumber: document.getElementById('fSerial').value || null,
+            assetAccountId: assetAcct,   // ว่าง = คงผังเดิม (พฤติกรรมเดิม)
+            depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value || '00000000-0000-0000-0000-000000000000',
+            accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value || '00000000-0000-0000-0000-000000000000',
+            projectId: document.getElementById('fProject').value || '00000000-0000-0000-0000-000000000000',
+            usefulLifeMonths: method === 'None' ? 0 : life,
+            salvageValue: Layout.numOrNull('fSalvage') ?? 0,
+            depreciationMethod: method,
+          };
+          try {
+            await api.updateAsset(id, upd);
+            Layout.closeModal('formModal');
+            Layout.toast('แก้ไขสำเร็จ');
+            await this.load();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+          return;
+        }
         const data = {
           assetCode: document.getElementById('fCode').value,
           name: document.getElementById('fName').value,
@@ -596,9 +638,9 @@
           location: document.getElementById('fLocation').value || null,
           serialNumber: document.getElementById('fSerial').value || null,
           purchaseDate: document.getElementById('fPurchaseDate').value,
-          purchaseCost: parseFloat(document.getElementById('fCost').value),
-          salvageValue: parseFloat(document.getElementById('fSalvage').value) || 0,
-          usefulLifeMonths: parseInt(document.getElementById('fLife').value),
+          purchaseCost: cost,
+          salvageValue: Layout.numOrNull('fSalvage') ?? 0,
+          usefulLifeMonths: method === 'None' ? 0 : life,
           depreciationMethod: document.getElementById('fMethod').value,
           assetAccountId: assetAcct,
           // แก้ไข: "" = **ปลดค่า** (Guid.Empty sentinel — server แปลงเป็น null)

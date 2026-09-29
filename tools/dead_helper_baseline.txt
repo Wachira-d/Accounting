@@ -21,7 +21,6 @@ DocumentVatFallback.cs IsHeaderOnly
 EncryptionHelper.cs GenerateKey
 EncryptionHelper.cs HashForLog
 FeatureCatalog.cs IsSingleBit
-FiscalYear.cs NormalizeStartMonth
 JwtHelper.cs StorefrontAudience
 LodgingPricingEngine.cs SeasonFor
 OcrDuplicateScanRule.cs WithinWindow
@@ -34,7 +33,6 @@ OcrPredecessorMatcher.cs NormalizeForReference
 OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
 PayrollRunFilingScope.cs CanRemit
-PiiMask.cs BankAccountNo
 PndTextFileFormat.cs DetailRow
 PndTextFileFormat.cs SplitName
 Pp30SalesClassifier.cs ShouldReport

@@ -409,6 +409,19 @@ public class PayrollController : ControllerBase
                 User.Identity?.Name ?? "")));
     }
 
+    /// <summary>รอบ 200 (D-04): preview วันครบกำหนด + เงินเพิ่ม §49 ตามวันที่จ่ายที่เลือก — สูตรเดียวกับตอนนำส่งจริง
+    /// (Helpers/SsoLateFee) · อ่านอย่างเดียว ไม่แตะข้อมูล · เดิมหน้าเว็บคิดเองแล้วไม่ตรงกับที่ลงบัญชี</summary>
+    [HttpGet("sso-late-fee")]
+    public async Task<ActionResult<ApiResponse<Accounting.Helpers.SsoLateFee.Result>>> SsoLateFeePreview(
+        Guid companyId, [FromQuery] int year, [FromQuery] int month, [FromQuery] DateTime payDate, [FromQuery] decimal amount)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        if (month is < 1 or > 12 || year < 2000)
+            return BadRequest(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(false, null, "งวดไม่ถูกต้อง"));
+        return Ok(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(true,
+            Accounting.Helpers.SsoLateFee.Compute(year, month, payDate, amount)));
+    }
+
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]
     public async Task<ActionResult<ApiResponse<PayrollDetailResponse>>> GetDetail(Guid companyId, Guid runId, Guid employeeId)
     {
@@ -663,7 +676,9 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetPnd1(Guid companyId, int year, int month)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
-        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month)));
+        // รอบ 200 (G2-05): ด่าน "เงินเดือน" ไม่ใช่ด่าน PII — เลขบัตรเต็มเฉพาะผู้มี Pii.View (บันทึก PiiAccessLog ในตัวตัดสิน)
+        return Ok(new ApiResponse<object>(true, await _service.GeneratePnd1Async(companyId, year, month,
+            includePii: await CanViewPiiAsync(companyId))));
     }
 
     // `pnd3/{year}/{month}` ถูกลบรอบ 170 — เป็นสูตรที่ 3 ของยอด ภ.ง.ด.3 (นับจาก Documents ไม่กรองฝั่งซื้อ ·
@@ -674,7 +689,8 @@ public class PayrollController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetSso(Guid companyId, int year, int month)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
-        return Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month)));
+        return Ok(new ApiResponse<object>(true, await _service.GenerateSsoReportAsync(companyId, year, month,
+            includePii: await CanViewPiiAsync(companyId))));
     }
 
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1) เงินเดือน).

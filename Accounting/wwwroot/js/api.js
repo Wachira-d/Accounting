@@ -1045,6 +1045,8 @@ const API = {
       approvePayroll: (id) => API.post(`${base}/payroll/runs/${id}/approve`),
       payPayroll: (id) => API.post(`${base}/payroll/runs/${id}/pay`),
       settleSso: (id, body) => API.post(`${base}/payroll/runs/${id}/settle-sso`, body),
+      // รอบ 200 (D-04): preview กำหนดนำส่ง + เงินเพิ่ม §49 ด้วยสูตรเซิร์ฟเวอร์ตัวเดียว (Helpers/SsoLateFee)
+      ssoLateFeePreview: (year, month, payDate, amount) => API.get(`${base}/payroll/sso-late-fee?year=${year}&month=${month}&payDate=${encodeURIComponent(payDate)}&amount=${amount}`),
       // กลับรายการนำส่ง สปส. (นำส่งผิดยอด/ผิดวัน) — ปลดล็อกให้แก้แล้วนำส่งใหม่
       reverseSso: (id, reason) => API.post(`${base}/payroll/runs/${id}/reverse-sso`, { reason }),
       // ── นำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/3/53 + ภพ.30) ──

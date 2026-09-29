@@ -4,7 +4,7 @@
 
 ## CONFIRMED
 
-**C1: คีย์เก่า (legacy) ในช่วงผ่อนผัน หรือคีย์ใหม่ที่ผูกกับเจ้าของ ออกคีย์ `acc_` สิทธิ์เต็มแบบไม่หมดอายุได้ จึงหลุดทั้งวันเลิกใช้และขอบเขตสิทธิ์**
+**✅ 11e79b2 C1: คีย์เก่า (legacy) ในช่วงผ่อนผัน หรือคีย์ใหม่ที่ผูกกับเจ้าของ ออกคีย์ `acc_` สิทธิ์เต็มแบบไม่หมดอายุได้ จึงหลุดทั้งวันเลิกใช้และขอบเขตสิทธิ์**
 - `RequireOwnerAsync` (IntegrationController.cs:45) ปฏิเสธ API key ทุกดอก และคอมเมนต์ของมันเองระบุภัยนี้ไว้ แต่ปิดแค่ทาง `int_`
 - `SettingsController.CreateApiKey` (:144) เรียก `EnsureOwnerAccessAsync` (CompanyService.cs:574) ซึ่งดูแค่ role และไม่เช็ก `IsApiKeyAuth`
 - ขั้นการโจมตี:
@@ -16,19 +16,19 @@
 - ทางเชิญสมาชิก (CompanyService.cs:336) เป็นช่องแบบเดียวกัน
 - วิธีแก้: ปฏิเสธ `IsApiKeyAuth` ใน `EnsureOwnerAccessAsync` (หรือทำเป็นฟิลเตอร์กลางสำหรับ endpoint ระดับเจ้าของ) และใส่ด่าน `CompanySettings.Edit` ให้ `PUT settings`
 
-**C2: ทางเข้าอื่นที่ไม่ผ่านด่าน (R5): `StatutoryRemittanceController.UploadReceipt` (:115)**
+**✅ fd880c2 C2: ทางเข้าอื่นที่ไม่ผ่านด่าน (R5): `StatutoryRemittanceController.UploadReceipt` (:115)**
 - endpoint นี้ไม่มี `[RequirePermission]` และไม่เช็กว่า remittance เป็นของบริษัทก่อนเขียนไฟล์
 - ใช้ `UploadBytesAsync` ที่ตรวจแค่นามสกุลไฟล์ ไม่ตรวจไบต์จริง
 - ตาราง U2 บอกว่า `StatutoryRemittance` เขียนได้ด้วย `Tax.File` แต่สมาชิกทุกคนแนบไฟล์ผ่านเส้นนี้ได้
 - ข้อความ F3-8 ของ U2 ("ระบบแนบเองผ่าน service") จึงไม่ครอบเส้นนี้
 
-**C3: OCR เปิดไฟล์ที่ด่านเอกสารใหม่ปิดไว้**
+**✅ fd880c2 C3: OCR เปิดไฟล์ที่ด่านเอกสารใหม่ปิดไว้**
 - `GET ocr` (:294), `GET ocr/{scanId}` และ `GET ocr/{scanId}/image` (:1353) มีแค่ `[Authorize]`
 - หลังสร้างเอกสาร ไฟล์ถูกย้ายไปเป็น `EntityType="Document"` (OcrService.cs:8078) แต่ `scan.FileAttachmentId` ยังชี้ไฟล์เดิม
 - ผลคือผู้ใช้ที่ `DenyDocAsync` ปฏิเสธ (ไม่เห็นฝั่งรายจ่าย หรือใบเป็นข้อมูลลับ) ยังเปิดรูปใบเดียวกันผ่าน OCR ได้
 - กฎ `OcrScan` เองก็มี `ReadAnyOf` ว่าง
 
-**C4: ข้อสังเกตของ U2 (§5 ข้อ 161/189) ว่า "static `/uploads/` ยังเปิด" ไม่จริง**
+**NOT-A-BUG (ฝ่ายค้านยืนยันเอง) C4: ข้อสังเกตของ U2 (§5 ข้อ 161/189) ว่า "static `/uploads/` ยังเปิด" ไม่จริง**
 - Program.cs:1011–1044 เป็น allow-list ที่ตอบ 404 ให้ `/uploads/attachments/**`, `/uploads/{cid}/**` และ `/uploads/ocr`
 - middleware นี้รันก่อน `UseStaticFiles` ทั้งสองตัว
 - คำถามเจ้าของข้อ 1 จึงตกไป ควรจดลง §"ตรวจแล้วไม่ใช่บั๊ก"
