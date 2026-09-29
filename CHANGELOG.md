@@ -3736,7 +3736,7 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SF — แ�
 - **V2-C1 (ข้อ 25)** "ส่งลูกค้าแล้ว" = `Helpers/DocumentDeliveryEvidence` (บันทึกอีเมล/e-Tax by email สำเร็จ) แทนสถานะ `Sent` ที่ไม่มีผู้ประทับ · **V2-C2** ป้าย
   `AckStatusLabel` · **V2-C3** `ChangeTracker.Clear()` ต้น lambda ของปุ่มรับรู้ + ยกเลิกการลงบัญชี · **V2-C4** กรองการรับชำระของรอบตายใน SQL · **V2-P1** การรับรู้ไม่ครอบ
   รอบที่ใช้เลขรอบโอนเดียวกับรอบเจ้าของและนำเข้าหลังรับรู้ + audit `checkedBatchId` · **V2-P2** ตารางของกำพร้าไม่หายเมื่อกดลงบัญชีแล้วถูกบล็อก (หน้ารายงานช่องทาง 📋)
-- checker: แก้ literal ของแถวทีม W (`c.CountryCode` → `counterparty?.CountryCode` หลัง merge ทีม T) · เทสต์ `SettlementReview200SfTests` · TEST_PLAN SSF-01..15 — commit <pending>)_
+- checker: แก้ literal ของแถวทีม W (`c.CountryCode` → `counterparty?.CountryCode` หลัง merge ทีม T) · เทสต์ `SettlementReview200SfTests` · TEST_PLAN SSF-01..15 — commit c7bad3f5)_
 
 _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม I — ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ (review198-B R-B7–R-B11 · review198-A R-A9 · review198-S4 S4-3/S4-4):
 - **R-B7** เลขรายการ/ออเดอร์/รอบโอนที่ Excel ปัดหลักแล้ว (`1.2345678901234568E+17` · `1.23457E+17`) ⇒ ล้มดังทั้งไฟล์ `id-precision` พร้อมทางไปต่อ ·

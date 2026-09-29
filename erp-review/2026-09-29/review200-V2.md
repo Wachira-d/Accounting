@@ -145,11 +145,11 @@ audit ผ่าน `_db.AddChainedAuditLog` (`SettlementPostingService.cs:890`) 
 
 | ID | สถานะ | ที่แก้ / เหตุผล |
 |---|---|---|
-| V2-C1 | ✅ SF-PENDING | `Helpers/DocumentDeliveryEvidence.DeliveredAsync` (บันทึก `DocumentEmailLog` ส่งสำเร็จ — รวม e-Tax by email) แทน `DocumentStatus.Sent` ใน `OrphanChildrenAsync` · checker ห้าม `DocumentStatus.Sent` ในเมธอดนั้น · ส่งทาง LINE ยังไม่มีบันทึก (ข้อจำกัด) · เทสต์ `V2C1_…` |
-| V2-C2 | ✅ SF-PENDING | `SettlementOrphanItem.AckEffective` / `AckStatusLabel` (server computes) · settlements.html แสดงป้ายจากเซิร์ฟเวอร์ · เทสต์ `V2C2_…` |
-| V2-C3 | ✅ SF-PENDING | `ChangeTracker.Clear()` ต้น lambda ของ `AcknowledgeOrphanCoreAsync` และธุรกรรมท้ายของ `UnpostCoreAsync` (ตรวจแล้ว: ของที่โหลดก่อน lambda เป็น AsNoTracking · ขั้นยกเลิกเอกสาร/การรับชำระ commit ธุรกรรมของตัวเอง) · checker `before` |
-| V2-C4 | ✅ SF-PENDING | `OrphanArtifactsAsync` กรองการรับชำระของรอบตายใน SQL (`parts.Contains(p.Notes.Substring(…))` เมื่อป้ายอยู่ต้น Notes · ป้ายที่ไม่อยู่ต้น Notes ยังให้ตัวอ่านป้ายตัดสิน ⇒ ผลเท่าเดิม) |
-| V2-P1 | ✅ SF-PENDING | คำขอรับรู้ส่ง `batchId` ของรอบที่ตรวจเทียบ (ช่องทางเดียวกัน · audit `checkedBatchId/checkedPayoutRef`) · `SettlementOrphanTriage.AckCovers`: รอบที่ใช้เลขรอบโอนเดียวกับรอบเจ้าของและนำเข้าหลังการรับรู้ ⇒ การรับรู้เดิมไม่ครอบ ต้องรับรู้ใหม่ · เทสต์ `V2P1_…` สองทิศ |
-| V2-P2 | ✅ บางส่วน SF-PENDING | ตารางของกำพร้าไม่หายเมื่อกดลงบัญชีแล้วถูกบล็อก (409) · 📋 รายงานระดับช่องทาง/หน้าเอกสารที่เห็นยอดค้างผังพักของใบกำพร้าที่รับรู้แล้ว — ต้องมี endpoint/หน้าใหม่ (คำถามค้าง 5 ของทีม V2) |
+| V2-C1 | ✅ c7bad3f5 | `Helpers/DocumentDeliveryEvidence.DeliveredAsync` (บันทึก `DocumentEmailLog` ส่งสำเร็จ — รวม e-Tax by email) แทน `DocumentStatus.Sent` ใน `OrphanChildrenAsync` · checker ห้าม `DocumentStatus.Sent` ในเมธอดนั้น · ส่งทาง LINE ยังไม่มีบันทึก (ข้อจำกัด) · เทสต์ `V2C1_…` |
+| V2-C2 | ✅ c7bad3f5 | `SettlementOrphanItem.AckEffective` / `AckStatusLabel` (server computes) · settlements.html แสดงป้ายจากเซิร์ฟเวอร์ · เทสต์ `V2C2_…` |
+| V2-C3 | ✅ c7bad3f5 | `ChangeTracker.Clear()` ต้น lambda ของ `AcknowledgeOrphanCoreAsync` และธุรกรรมท้ายของ `UnpostCoreAsync` (ตรวจแล้ว: ของที่โหลดก่อน lambda เป็น AsNoTracking · ขั้นยกเลิกเอกสาร/การรับชำระ commit ธุรกรรมของตัวเอง) · checker `before` |
+| V2-C4 | ✅ c7bad3f5 | `OrphanArtifactsAsync` กรองการรับชำระของรอบตายใน SQL (`parts.Contains(p.Notes.Substring(…))` เมื่อป้ายอยู่ต้น Notes · ป้ายที่ไม่อยู่ต้น Notes ยังให้ตัวอ่านป้ายตัดสิน ⇒ ผลเท่าเดิม) |
+| V2-P1 | ✅ c7bad3f5 | คำขอรับรู้ส่ง `batchId` ของรอบที่ตรวจเทียบ (ช่องทางเดียวกัน · audit `checkedBatchId/checkedPayoutRef`) · `SettlementOrphanTriage.AckCovers`: รอบที่ใช้เลขรอบโอนเดียวกับรอบเจ้าของและนำเข้าหลังการรับรู้ ⇒ การรับรู้เดิมไม่ครอบ ต้องรับรู้ใหม่ · เทสต์ `V2P1_…` สองทิศ |
+| V2-P2 | ✅ บางส่วน c7bad3f5 | ตารางของกำพร้าไม่หายเมื่อกดลงบัญชีแล้วถูกบล็อก (409) · 📋 รายงานระดับช่องทาง/หน้าเอกสารที่เห็นยอดค้างผังพักของใบกำพร้าที่รับรู้แล้ว — ต้องมี endpoint/หน้าใหม่ (คำถามค้าง 5 ของทีม V2) |
 | V2-P3 | 📋 | การรับรู้ผูกกับ "เหตุ" (hash ของเหตุยกเลิกไม่ได้) — ต้องเก็บคอลัมน์เพิ่ม · ความเสี่ยงต่ำ (ต้องมีคนรับรู้แล้วครั้งหนึ่ง) |
 | V2-P4 | 📋 | ตามชั้นหลาน — คำถามค้าง 2 ของทีม V2 (กรณีหายาก) |

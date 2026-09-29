@@ -111,13 +111,13 @@ NOT-A-BUG (ตรวจแล้ว): สูตรค่าธรรมเนี
 
 | ID | สถานะ | ที่แก้ / เหตุผล |
 |---|---|---|
-| X-1 | ✅ SF-PENDING | ด่านลงบัญชี `SettlementPostingService.BuildGateAsync` → `GatewayBatchIntentRules.PostingIssue(ModeMismatch(…))` บล็อก `GatewayModeMismatch` (37) · นำเข้าไฟล์ `ImportFileAsync` · บันทึกค่าตั้ง gateway `PaymentSettingsController.Save` (`ConfigChangeRefusal` — B-3) · แก้ถ้อยคำ `team-P2.md` §5 · เทสต์ `X1_ด่านลงบัญชี_…` · `X1_บันทึกค่าตั้งgateway_…` |
+| X-1 | ✅ c7bad3f5 | ด่านลงบัญชี `SettlementPostingService.BuildGateAsync` → `GatewayBatchIntentRules.PostingIssue(ModeMismatch(…))` บล็อก `GatewayModeMismatch` (37) · นำเข้าไฟล์ `ImportFileAsync` · บันทึกค่าตั้ง gateway `PaymentSettingsController.Save` (`ConfigChangeRefusal` — B-3) · แก้ถ้อยคำ `team-P2.md` §5 · เทสต์ `X1_ด่านลงบัญชี_…` · `X1_บันทึกค่าตั้งgateway_…` |
 | X-2 | — | นอกขอบเขต (ทีม GF ทำ `ConfirmedRangeUtc`) |
-| X-3 | ✅ SF-PENDING | `ModeMismatch(…, companyVatRegistered)` นิยาม "ตรงกัน" = สองเส้นให้ผลภาษีเท่ากัน: ภ.พ.36 ไม่ตรงเสมอ (ทางไปต่อ: ช่องทางไม่ผูก config + นำเข้าไฟล์) · ไม่หัก ↔ W2 ไม่ตรง · W1 ตรง (ไม่มีขา JE/50 ทวิ) · DOCUMENT_FLOW §2.10 · docstring แก้ "สูตรเดียว" · เทสต์ `X3_โหมดต้องให้ผลภาษีเท่ากันทั้งสองเส้น` (Theory 10) · `X3_ForeignPp36_…` |
-| X-4 | ✅ SF-PENDING | `SettlementBatchMath.BuildFeeLines` คิด WHT จากฐานก่อน VAT รวมของบรรทัดใบครั้งเดียว (`SettlementFeeTax.WhtOnBase` สูตรเดียว — `Compute` เรียกตัวเดียวกัน) · ไม่ขัดตรรกะรายบรรทัดอื่น (VAT ยังต่อรายการ · ก้อนเดียวตัวเลขเท่าเดิม) · เทสต์ `X4_…10_55ไม่ใช่11_00` + ทิศตรงข้าม |
-| X-5 | ✅ SF-PENDING | `PersistAsync`: เติมรอบโอน gateway (PayoutRef ซ้ำ) ด้วยวันเงินเข้าต่างจากรอบเดิม ⇒ 400 `SETTLEMENT-GATEWAY-PAYOUT-DATE` (เส้นไฟล์คงคำเตือนเดิม) · checker |
+| X-3 | ✅ c7bad3f5 | `ModeMismatch(…, companyVatRegistered)` นิยาม "ตรงกัน" = สองเส้นให้ผลภาษีเท่ากัน: ภ.พ.36 ไม่ตรงเสมอ (ทางไปต่อ: ช่องทางไม่ผูก config + นำเข้าไฟล์) · ไม่หัก ↔ W2 ไม่ตรง · W1 ตรง (ไม่มีขา JE/50 ทวิ) · DOCUMENT_FLOW §2.10 · docstring แก้ "สูตรเดียว" · เทสต์ `X3_โหมดต้องให้ผลภาษีเท่ากันทั้งสองเส้น` (Theory 10) · `X3_ForeignPp36_…` |
+| X-4 | ✅ c7bad3f5 | `SettlementBatchMath.BuildFeeLines` คิด WHT จากฐานก่อน VAT รวมของบรรทัดใบครั้งเดียว (`SettlementFeeTax.WhtOnBase` สูตรเดียว — `Compute` เรียกตัวเดียวกัน) · ไม่ขัดตรรกะรายบรรทัดอื่น (VAT ยังต่อรายการ · ก้อนเดียวตัวเลขเท่าเดิม) · เทสต์ `X4_…10_55ไม่ใช่11_00` + ทิศตรงข้าม |
+| X-5 | ✅ c7bad3f5 | `PersistAsync`: เติมรอบโอน gateway (PayoutRef ซ้ำ) ด้วยวันเงินเข้าต่างจากรอบเดิม ⇒ 400 `SETTLEMENT-GATEWAY-PAYOUT-DATE` (เส้นไฟล์คงคำเตือนเดิม) · checker |
 | X-6 | 📋 | ล็อก gateway ครอบเส้นไฟล์/จับคู่มือ/rematch — ต้องแตะ `SettlementImportService.Lines` หลายเส้น (ไฟล์ทีม T/I) · ตาข่ายที่การลงบัญชีกันเงินผิดแล้ว (รอบค้าง ไม่ใช่เงินผิด) |
 | X-7 | 📋 | คู่ของ X-6 (ตาข่ายยอดคืนเส้นไฟล์) — ผลเห็นเป็นรอบไม่ลงตัว ไม่เงียบ |
 | X-8 | 📋 | `PeriodTo` ว่าง = ไม่มีขอบบน — อยู่ในเมธอดเดียวกับที่ทีม GF แก้ช่วงวันที่ (`LoadIntentRowsAsync`) · แก้พร้อม X-2 เพื่อไม่ conflict |
 | X-9 | 📋 | หน้าเคลม VAT ค่าธรรมเนียม gateway ไม่เห็น VAT ของ intent ที่ batch เป็นเจ้าของ — คู่ B-1 (ไฟล์ทีม G) |
-| X-10 | ✅ SF-PENDING | `SettlementChannelService.SaveAsync` ตรวจเฉพาะช่องทางใหม่/เมื่อการผูกหรือโหมดเปลี่ยน (`ChannelModeTouched`) · บริษัทไม่จด VAT คู่ VAT ไทยผ่าน · เทสต์ `X10_…` |
+| X-10 | ✅ c7bad3f5 | `SettlementChannelService.SaveAsync` ตรวจเฉพาะช่องทางใหม่/เมื่อการผูกหรือโหมดเปลี่ยน (`ChannelModeTouched`) · บริษัทไม่จด VAT คู่ VAT ไทยผ่าน · เทสต์ `X10_…` |
