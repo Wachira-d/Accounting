@@ -8,7 +8,7 @@
 
 ## CONFIRMED
 
-### S2-C1 (P0): `POST ocr/scan/{fileAttachmentId}` ทำให้ไฟล์แนบ**ทุกชนิด**ในบริษัทกลายเป็น "สแกนที่ยังไม่ผูก" จึงหลุดทุกด่านของ U2 และ S2
+### ✅ f4aa7d4 S2-C1 (P0): `POST ocr/scan/{fileAttachmentId}` ทำให้ไฟล์แนบ**ทุกชนิด**ในบริษัทกลายเป็น "สแกนที่ยังไม่ผูก" จึงหลุดทุกด่านของ U2 และ S2
 - **ต้นทาง:** `OcrController.cs:222-239` มีแค่ `[Authorize]` ระดับคลาส แล้วเรียก `OcrService.ScanAsync(companyId, fileAttachmentId)` ทันที
 - **service ไม่ดูชนิดไฟล์:** `OcrService.cs:148-150` ค้นไฟล์ด้วย `Id + CompanyId` อย่างเดียว ไม่ดู `EntityType` แล้วสร้าง `OcrScanResult` ใหม่ที่ `FileAttachmentId` ชี้ไฟล์นั้น (`:184-187`)
 - **ผล 1 (อ่านเนื้อหา):** response คือ `OcrResultResponse` ซึ่งมี `RawTextContent`, ชื่อผู้ขาย, เลขผู้เสียภาษี และยอด (`OcrService.cs:8914-8923` ใน `MapToResponse`)
@@ -29,7 +29,7 @@
   - `DeleteScanAsync` ลบไฟล์จริงเฉพาะเมื่อไฟล์ยังเป็นชนิด `OcrScan` และเดิน retention
   - เพิ่ม `Scan`, `Retry` และ `Delete` เข้า TARGETS
 
-### S2-C2 (P0): `POST ocr/{scanId}/link-document/{documentId}` ย้ายไฟล์ของเอกสารใบหนึ่งไปเป็นของอีกใบได้โดยไม่มีด่าน
+### ✅ f4aa7d4 S2-C2 (P0): `POST ocr/{scanId}/link-document/{documentId}` ย้ายไฟล์ของเอกสารใบหนึ่งไปเป็นของอีกใบได้โดยไม่มีด่าน
 - **จุดที่ไม่มีด่าน:**
   - `OcrController.cs:442-449` ไม่มีด่านใด
   - `LinkScanToExistingDocumentAsync` → `RelinkScanFileToDocumentAsync` (`OcrService.cs:8307-8316`, `:8325-8337`) ตั้ง `EntityType="Document", EntityId=<ใบปลายทาง>` ให้ไฟล์โดย**ไม่ดูว่าไฟล์เป็นของใครอยู่** และเขียนทับ `CreatedDocumentId`
@@ -46,7 +46,7 @@
   - relink ทั้งสองจุดทำเฉพาะเมื่อไฟล์ยังเป็น `EntityType == "OcrScan"`
   - `linked-scan` ต้องผ่านด่านอ่านเอกสาร
 
-### S2-C3 (P1): ด่านอ่านของ `GET ocr/{scanId}` ถูกข้ามได้ด้วย endpoint เขียนที่คืนผลอ่านเต็มใบ
+### ✅ f4aa7d4 S2-C3 (P1): ด่านอ่านของ `GET ocr/{scanId}` ถูกข้ามได้ด้วย endpoint เขียนที่คืนผลอ่านเต็มใบ
 ด่าน `DenyScanAsync` อยู่แค่ใน GetResult และ GetImage แต่ endpoint ข้างล่างนี้คืน `OcrResultResponse` เต็ม (รวม `RawTextContent`) หรือเนื้อหาบรรทัดของสแกนใดก็ได้ในบริษัท รวมสแกนที่ S2 ซ่อนไว้
 
 | endpoint | บรรทัด | ข้อจำกัด | สิ่งที่รั่ว |

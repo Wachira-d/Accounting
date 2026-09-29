@@ -17,7 +17,7 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
   `:341` fallback `list.FirstOrDefault()` อาจหยิบมัดจำค่าห้องเป็น "เงินประกัน" · CMS PrePayment (default เป็นเงินประกัน) ได้ `SecurityNotRevenue` ไม่รับรู้เลย
 - แก้: ตรวจ Nature ใน `DepositKindForAsync` (ไม่ผ่าน = ตกชั้นถัดไป + คำเตือน) และ/หรือ UpdateAsync/SetDefaultAsync ปฏิเสธเมื่อขัดกับการผูกของที่พัก
 
-**C2 (กลาง) ริบ/รับรู้มัดจำเต็มยอดกลายเป็น "ครั้งเดียว" — ถดถอยจากเดิม**
+✅ 4df544f8 **C2 (กลาง) ริบ/รับรู้มัดจำเต็มยอดกลายเป็น "ครั้งเดียว" — ถดถอยจากเดิม**
 - `DocumentService.cs:3801` บล็อกเมื่อ `DepositAppliedToDocumentId` มีค่า · การริบครั้งแรกออกใบกำกับแล้ว ApplyDeposit ⇒ ตั้งค่านี้ ⇒ รับรู้บางส่วนครั้งที่ 2
   ของใบเดียวกัน (ส่งมอบเป็นงวด) ล้ม · มัดจำที่เคยตัดชำระบางส่วนแล้วจะริบส่วนที่เหลือ ล้ม — "ทางไปต่อ" ให้ "คืน/โอนยอดมัดจำ" ซึ่งไม่ใช่เหตุการณ์จริง (F2 ข้อ 8)
 - ใบเดิม `DepositNature=NULL` + เต็มยอด ⇒ ค่าเริ่มต้น PriceOrFee ⇒ ปุ่ม "รับรู้" ทุกครั้งออกใบกำกับอัตโนมัติ (ตาม spec แต่เป็นพฤติกรรมใหม่ของใบเก่า — ต้องอยู่ใน DOCUMENT_FLOW/CHANGELOG ชัด)
@@ -30,7 +30,7 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
 - `DepositPolicyNote`/`DepositKindName` ไม่มีผู้อ่านใน `PdfGenerationService`/`DocumentRenderer` (grep 0) แต่ `settings.html` ป้ายช่องเหตุผล และ
   `DepositPolicyResolver.KindProblem` บอกว่า "ระบบพิมพ์เหตุผลเป็นหมายเหตุบนใบ" (F2 ข้อ 2 · ข้อความเท็จถึงผู้ใช้)
 
-**C5 (ต่ำ) สูตร "ผังมี 21530" สองชุด**
+✅ 4df544f8 **C5 (ต่ำ) สูตร "ผังมี 21530" สองชุด**
 - `DocumentService.cs:3549` ใช้ `!IsDeleted` · `LodgingService.cs:103`/`DepositKindCatalog.LoadContextAsync` ใช้ `IsActive` ⇒ 21530 ปิดใช้: ใบจริงลง 21530 (บัญชีปิด)
   ขณะหน้าตั้งค่า/ที่พักแสดง 21620
 

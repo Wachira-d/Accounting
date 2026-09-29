@@ -51,7 +51,7 @@
 
 ## 2. CONFIRMED ใหม่ (file:line)
 
-### R2-C1 (P1 · ถดถอยจาก f4aa7d4) ลบเอกสารร่างที่สร้างจากสแกน แล้วสแกนนั้น "ตาย" — ทุก action เขียนตอบ 404 และสร้างเอกสารใหม่ไม่ได้
+### ✅ 0a829110 R2-C1 (P1 · ถดถอยจาก f4aa7d4) ลบเอกสารร่างที่สร้างจากสแกน แล้วสแกนนั้น "ตาย" — ทุก action เขียนตอบ 404 และสร้างเอกสารใหม่ไม่ได้
 - เส้นปกติ: สร้างเอกสารจากสแกน → ไฟล์ถูกย้ายเป็น `EntityType="Document", EntityId=<ใบร่าง>` (`OcrService.cs:8361-8363`)
 - ผู้ใช้ลบใบร่าง: `DocumentService.DeleteDocumentAsync` ตัดตัวชี้ `scan.CreatedDocumentId = null` (`:7896-7910`) โดยตั้งใจให้ "สแกนกลับไปสถานะยังไม่ได้สร้างเอกสาร" (บั๊กผู้ใช้รายงาน 2026-09-18) แล้ว **hard-delete** แถวเอกสาร (`:7911-7912`) — **ไม่แตะแถวไฟล์** ⇒ ไฟล์ยังชี้เอกสารที่ไม่มีแล้ว
 - `AttachmentPermissionScope.ScanOwner` กติกาข้อ 1 (`:165-166`) คืนเจ้าของ = ไฟล์ **โดยไม่ตรวจว่าเจ้าของยังอยู่** (ข้อ 2/3 ตรวจ `…Exists` แต่ข้อ 1 ไม่ตรวจ) ⇒ `DenyDocAsync` ทิศเขียน `doc == null` → **404 "ไม่พบเอกสารนี้ในบริษัท"** (`AttachmentAccessGate.cs:406-410`)
@@ -59,7 +59,7 @@
 - ก่อน f4aa7d4 เส้นนี้ทำงาน (action เขียนไม่มีด่าน · relink ย้ายได้ทุกกรณี) ⇒ เป็นทิศตรงข้ามที่เทสต์ `ไฟล์ของสแกนเอง_ย้ายเข้าเอกสารได้_และเรียกซ้ำกับใบเดิมได้` ไม่ครอบ
 - แนวแก้: ข้อ 1 ของ `ScanOwner` ต้องรับ `fileOwnerExists` (เจ้าของหาย = ไม่ใช่เจ้าของ) และ `ScanFileRelinkable` ยอมย้ายเมื่อเอกสารเจ้าของถูกลบแล้ว — หรือ `DeleteDocumentAsync` คืนไฟล์ของสแกนที่ตัดตัวชี้กลับเป็น `OcrScan` (ร่าง = ไม่ใช่หลักฐานบัญชี) · เทสต์สองครึ่ง
 
-### R2-C2 (P0 · ไม่ใช่การถดถอย · พบจากคำอ้าง SoD ของ S2) อนุมัติ/จ่าย/ยกเลิกใบเบิกค่าใช้จ่าย **ไม่มีด่านสิทธิ์เลย** — ผู้ยื่นอนุมัติและจ่ายใบของตัวเองได้
+### ✅ 0a829110 R2-C2 (P0 · ไม่ใช่การถดถอย · พบจากคำอ้าง SoD ของ S2) อนุมัติ/จ่าย/ยกเลิกใบเบิกค่าใช้จ่าย **ไม่มีด่านสิทธิ์เลย** — ผู้ยื่นอนุมัติและจ่ายใบของตัวเองได้
 - `ExpenseClaimController.cs:80-110` (`approve` · `reject` · `pay` · `void` · `PUT`) มีแค่ `[Authorize]` ระดับคลาส (`:14`) · `ExpenseClaimService.ApproveAsync/MarkAsPaidAsync/VoidAsync` ไม่มี `HasPermission` สักจุด (grep = 0) · ไม่มีเงื่อนไข `approver != SubmittedByUserId`
 - มือถือ: `MobileApiService.QuickApproveAsync` → `HandleExpenseClaimApprovalAsync` (`:343-345`, `:503-530`) ไม่ตรวจสิทธิ์เช่นกัน (เอกสารชนิดอื่นในเมธอดเดียวกันตรวจ `CanApproveAsync` ที่ `:433`)
 - `MarkAsPaidAsync` สร้าง **ใบสำคัญจ่าย (PV) แล้วอนุมัติ** ในนาม `"system:expense-claim"` (`ExpenseClaimService.cs:467-468`) ⇒ ลง JE เงินสดออกโดยข้าม `DocumentPermissionHelper.CanApproveAsync` ที่ CLAUDE.md (ERP_REVIEW) บังคับให้ "ทุกทางเข้าอนุมัติเอกสาร" ต้องผ่าน
@@ -67,7 +67,7 @@
 - `write_permission_gate_check.WATCHED` ไม่มี `ExpenseClaimController.cs` ⇒ checker รายงานเขียว (บทเรียน "allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 8)
 - แนวแก้: `Expense.Approve`/`HR.Admin` ที่ approve/reject/void · คีย์จ่าย (หรือ `CanApproveAsync(PaymentVoucher)`) ที่ pay · ห้ามผู้ยื่นอนุมัติใบตัวเอง (ทางไปต่อสำหรับบริษัทคนเดียว = คำถามเจ้าของข้อ 1 ของ S2) · เพิ่มเข้า WATCHED
 
-### R2-C3 (P1 · R5 ทางเข้าอื่น) สแกน "ยังไม่ผูก" ลงทะเบียนสินทรัพย์ + JE และนำเข้าสต็อกได้ระดับสมาชิก
+### ✅ 0a829110 R2-C3 (P1 · R5 ทางเข้าอื่น) สแกน "ยังไม่ผูก" ลงทะเบียนสินทรัพย์ + JE และนำเข้าสต็อกได้ระดับสมาชิก
 - `ScanGateAsync` ส่ง `unlinkedEditIsMemberLevel: true` ให้**ทุก** action เขียน (`OcrController.cs:41-48`) ⇒ สแกนที่ยังไม่ผูก คีย์ = `ReadAnyOf` ของ OCR (ว่าง) = สมาชิกทุกคน
 - docstring ของ gate (`AttachmentAccessGate.cs:181-183`) บอกขอบเขตไว้แค่ "แก้บรรทัด · จับคู่ผู้ติดต่อ · ลบสแกนทิ้ง" แต่ค่าเดียวกันไปถึง:
   - `register-asset` (`OcrController.cs:775-786`) → `RegisterAssetFromScanAsync` สร้าง FixedAsset **และโพสต์ JE ตั้งสินทรัพย์** (`OcrService.cs:~8408-8420` doc) ขณะที่ `FixedAssetController` บังคับ `Asset.Manage`
@@ -75,36 +75,36 @@
 - `create-document` (`:387`) และ `create-journal-entry` (`:543`) มีด่านของตัวเองแล้ว ✔ — สองเส้นข้างบนไม่มี
 - ไม่ใช่การถดถอย (เดิม `[Authorize]` ล้วน) แต่ข้อความคอมมิต "ทุก action สแกนเดินด่านเดียว" ทำให้ดูเหมือนปิดแล้ว · แนวแก้: ส่ง `unlinkedEditIsMemberLevel` เฉพาะ action แก้ผลอ่าน และเพิ่มคีย์โมดูลปลายทาง (Asset.Manage · Inventory.Receive/Product.Edit)
 
-### R2-C4 (P2 · retention ม.10/§87/3 · PDPA) ระยะเก็บไฟล์สแกนกลับหัว: ที่ผู้ใช้ลบ = เก็บ**ตลอดไป** · ที่ลง JE แล้ว = **ลบจริงใน 30 วัน**
+### ✅ 0a829110 R2-C4 (P2 · retention ม.10/§87/3 · PDPA) ระยะเก็บไฟล์สแกนกลับหัว: ที่ผู้ใช้ลบ = เก็บ**ตลอดไป** · ที่ลง JE แล้ว = **ลบจริงใน 30 วัน**
 - ลบสแกนที่ยังไม่ผูก → `OcrScanFileDisposal` = `SoftDeleteKeepBytes` (`OcrScanFileDisposal.cs:44-47` · `MustKeepPhysicalFile("OcrScan") = true`) → `file.IsDeleted = true` + แถวสแกนถูกลบ (`OcrService.cs:8746`, `:8778`)
 - งาน purge ตัวเดียวที่ลบไฟล์สแกน (`OcrSelfCorrectionService.cs:185-213`) **ไล่จากแถวสแกน** และค้นไฟล์ผ่าน query filter `!IsDeleted` (`AccountingDbContext.cs:2252`) ⇒ ไฟล์ที่ soft-delete แล้ว (และแถวสแกนหายแล้ว) ไม่มีวันถูกเก็บกวาด · grep ไม่พบงานอื่นที่ purge `FileAttachments.IsDeleted` — ตอบคำถามโจทย์: **ค้างตลอดไป** (ไม่มี `RetainUntil` ให้ตัดสินด้วย) · ขัด §J "retention by purpose → purge/anonymize"
 - ทิศกลับกัน: งานเดียวกันลบ**ไฟล์จริง**ของสแกน `Completed && CreatedDocumentId == null` อายุ > 30 วัน (`:189`) ซึ่งรวมสแกนที่**ลงเป็น JE ตรง** (`CreatedJournalEntryId` ตั้งแล้ว แต่ไฟล์ยังเป็น `OcrScan` — `OcrService.cs:7720-7724` "stays attached to the scan") ⇒ JE ที่โพสต์แล้วเสียเอกสารประกอบภายใน 30 วัน ทั้งที่ S2-P3 เพิ่งประกาศว่าไฟล์นี้ใช้ด่านของ JE · ไม่มี `JobLock`/CompanyId (ไม่ใช่ประเด็นรอบนี้)
 - แนวแก้: purge ต้องข้าม `CreatedJournalEntryId != null` (หรือ relink ไฟล์เป็น `JournalEntry`) · ไฟล์ OcrScan ที่ผู้ใช้ลบตั้ง `RetainUntil`/วันลบ แล้วให้งานเดียวกันเก็บกวาดเมื่อครบ (สแกนที่ไม่เคยเป็นรายการบัญชี ≠ หลักฐานที่ต้องเก็บ 5 ปี)
 
-### R2-C5 (P1 · C3 × V) แถวที่ถูกจับผ่าน `RowsWithoutTaxId` ไม่ได้รับเลขภาษีของ payload ⇒ ใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข และ e-Tax ถูกข้าม**เงียบ**
+### ✅ 69ccf37 R2-C5 (P1 · C3 × V) แถวที่ถูกจับผ่าน `RowsWithoutTaxId` ไม่ได้รับเลขภาษีของ payload ⇒ ใบกำกับออกให้ผู้ซื้อที่ไม่มีเลข และ e-Tax ถูกข้าม**เงียบ**
 - Integration ใบขาย `ResolveContactAsync` (`IntegrationService.cs:1634-1637`): payload มีเลข 13 หลัก (เลขใหม่) + ชื่อตรงแถวที่ยังไม่มีเลข → คืนแถวนั้นเลย ไม่เขียน `TaxId` (`:1683` return) ⇒ TIV Approved ผู้ซื้อไม่มีเลข → `NotFullTaxInvoice` → hook ข้ามเป็น `EtaxAutoSkip.NotFullTaxInvoice` (ไม่มีป้าย) · PDF เป็นใบอย่างย่อ/ใบเสร็จ ผู้ซื้อเคลมภาษีซื้อไม่ได้
 - คลาสเดียวกัน (จับได้แต่ไม่เติม): `CmsCustomerService.cs:351-355` (อีเมล) · `ImportExportService.cs:521-560` (อีเมล — ทั้ง Merge และ Overwrite ไม่เขียน `TaxId` เลย แต่ `ContactType` ถูกคำนวณจากเลขในไฟล์ `:549-551` ⇒ แถวถูกตั้งเป็นนิติบุคคลแต่ไม่มีเลข · นำเข้าซ้ำก็ไม่ติด) · `DocumentsV1Controller.cs:347-356` (ชื่อข้ามภาษา)
 - เส้นที่ทำถูกแล้ว: `IntegrationService.ProcessCustomerAsync:646` (`MayWriteTaxId`) · ที่พัก `LodgingService.Reservations.cs:445-452` ⇒ สองแบบในระบบเดียว (R5)
 - แนวแก้: ตัวช่วยกลาง "จับผ่าน SoftScope แล้ว → เติมเลข+สาขาของ payload ด้วย `MayWriteTaxId`" ใน `ContactTaxBranchKey` ให้ทุกทางเข้าเรียก + ล็อกใน `required_call_site_check`
 
-### R2-C6 (P2 · V) e-Tax ข้ามเงียบกับ "ผู้ซื้อนิติบุคคลที่ข้อมูล §86/4 ไม่ครบ"
+### ✅ c641f6c R2-C6 (P2 · V) e-Tax ข้ามเงียบกับ "ผู้ซื้อนิติบุคคลที่ข้อมูล §86/4 ไม่ครบ"
 - `EtaxAutoSkip.NotFullTaxInvoice` รวม 3 เหตุ: walk-in · ผู้ซื้อไม่ประสงค์รับ · **ข้อมูลผู้ซื้อไม่ครบ** (`EtaxAutoIssueScope.cs:100` + `TaxService.cs:3104-3111`)
 - เส้นเว็บ: ผู้ซื้อนิติบุคคลไม่ครบ = **บล็อกอนุมัติ** พร้อมทางไปต่อ (`DocumentService.cs:5029-5070`) · เส้นที่ข้าม ApproveDocumentAsync (Integration TIV/CN/DN · `IntegrationService.cs:990-992`) ไม่มีด่านนี้ ⇒ ใบของลูกค้านิติบุคคลที่ต้นทางส่งสาขา/ที่อยู่ไม่ครบ เดิมได้ `[ETAX-AUTO-FAILED]` (ดัง) ตอนนี้ข้ามเงียบ = "ควรมีแต่ออกไม่ได้" ถูกจัดเป็น "ข้ามโดยเจตนา" (ขัดคำนิยามของ `EtaxAutoIssueScope` เอง `:39-41`)
 - แนวแก้: ข้ามเงียบเฉพาะ walk-in / declined / ผู้ซื้อไม่ใช่นิติบุคคล (`TaxInvoiceCompletenessChecker.IsJuristicBuyer`) · นิติบุคคลไม่ครบ = ปล่อยให้ `GenerateAsync` ล้มแล้วประทับป้าย
 
-### R2-C7 (P2 · V + ธงต้นทาง) ใบขายอัตรา 0% (§80/1 ส่งออก) ผ่าน Integration ได้ `IsTaxInvoiceByLaw=false` ⇒ e-Tax ถูกข้ามเงียบ และสร้างด้วยมือก็ถูกปฏิเสธ
+### ✅ c641f6c R2-C7 (P2 · V + ธงต้นทาง) ใบขายอัตรา 0% (§80/1 ส่งออก) ผ่าน Integration ได้ `IsTaxInvoiceByLaw=false` ⇒ e-Tax ถูกข้ามเงียบ และสร้างด้วยมือก็ถูกปฏิเสธ
 - `IntegrationService.cs:966-975` ตัดสินบทบาทด้วย `CarriesTaxInvoiceRole(probe{VatAmount=totalVat}, resolvedTitle: null)` = `TaxInvoice && VatAmount > 0` เท่านั้น (`TaxInvoiceSeriesPolicy.cs:60-62`) ⇒ 0% กับยกเว้น §81 ได้ธงเดียวกัน
 - ก่อน 7601891 ไม่มีใครอ่านธงนี้ · ตอนนี้ `Judge` ข้ามเป็น `NotTaxInvoiceByLaw` (ไม่มีป้าย) และ `GenerateAsync` โยน "ไม่ใช่ใบกำกับภาษี (เช่น ไม่มี VAT หรือยกเว้น §81)" (`EtaxInvoiceService.cs:160-168`) ⇒ ผู้ส่งออกที่ส่งยอดขายผ่าน API ออก e-Tax ไม่ได้ทั้งอัตโนมัติและด้วยมือ ทั้งที่กฎเหล็ก #2 D: ZeroRated = **ออกใบกำกับ rate 0**
 - เส้นเว็บไม่เป็น (หัวกระดาษของ TaxInvoice 0% ที่ผู้ซื้อครบยังมีคำว่าใบกำกับภาษี → `CarriesTaxInvoiceRole` จากหัว = true)
 - สันนิษฐาน: พาร์ตเนอร์ส่งบรรทัด `VatRate = 0` สำหรับส่งออก (ไม่ได้ยืนยันกับ payload จริง) · แนวแก้: Integration แยก 0% (`VatRate == 0`) กับยกเว้น (`-1`) ตอนตรึงธง หรือเรียก resolver หัวกระดาษตัวเดียวกับเว็บ
 
-### R2-C8 (P2 · V C-9) "ยืนยันสถานะ VAT แล้ว" ถูกประทับจากการกดบันทึกเรื่องอื่น ⇒ แถบเตือนหายโดยไม่มีใครตอบคำถาม
+### ✅ c641f6c R2-C8 (P2 · V C-9) "ยืนยันสถานะ VAT แล้ว" ถูกประทับจากการกดบันทึกเรื่องอื่น ⇒ แถบเตือนหายโดยไม่มีใครตอบคำถาม
 - แท็บตั้งค่า: ส่ง `vatRegistered` ทุกครั้งที่โหลดค่าได้ (`settings.html:2484-2487`) → `SettingsService.cs:141-146` ประทับ `VatStatusConfirmedAt = now` แม้ค่าไม่เปลี่ยน ⇒ เปลี่ยนภาษาเอกสาร/หัวอีเมล/ขนาดตรายาง = "ยืนยันว่าไม่จด VAT"
 - แท็บข้อมูลบริษัท: `saveCompany` ส่ง `isVatRegistered` ทุกครั้ง (`:2119`) → `CompanyService.cs:318-324` ประทับเช่นกัน · บริษัทจากหน้าสมัครที่ทำเช็กลิสต์ตั้งค่า (กรอกชื่อ/เลขภาษีบริษัท — `SetupStatusController.cs:55`) จะ "ยืนยันไม่จด" โดยไม่เคยเห็นคำถาม ⇒ แก้ C-9 ได้แค่ช่วงก่อนบันทึกครั้งแรก
 - แท็บข้อมูลบริษัทยัง hydrate `c.isVatRegistered || false` (`:1882`) โดยไม่มี guard โหลดล้ม ⇒ โหลดล้มแล้วกดบันทึก = พลิกบริษัทที่จดเป็น "ไม่จด" + ประทับยืนยัน (P-8 ฝั่งที่ทีมจดว่า "เสี่ยงต่ำ" — ตอนนี้ปิดแถบเตือนด้วย)
 - แนวแก้: ประทับเมื่อ**ผู้ใช้แตะช่อง VAT** (ส่งธง dirty) หรือเมื่อค่าเปลี่ยน · ส่งช่อง VAT เฉพาะเมื่อแตะ (ตรงกับกฎ #4 A `userTouched`)
 
-### R2-C9 (P2 · C3 · ไม่ใช่ถดถอย แต่ประกาศปิด) ใบค่าบริการแพลตฟอร์ม/ข้ามบริษัท: tenant ที่กรอกเลขภาษีทีหลังได้ผู้ติดต่อซ้ำ
+### ✅ 69ccf37 R2-C9 (P2 · C3 · ไม่ใช่ถดถอย แต่ประกาศปิด) ใบค่าบริการแพลตฟอร์ม/ข้ามบริษัท: tenant ที่กรอกเลขภาษีทีหลังได้ผู้ติดต่อซ้ำ
 - `PlatformBillingDocumentIssuer.cs:295-304`: มีเลข ⇒ ใช้ `FindAsync` อย่างเดียว ไม่ดูกุญแจ `ExternalSystem="NextAccTenant" + ExternalId` (ใช้แค่กิ่งไม่มีเลข `:309-310`) และไม่ถอยไป `SoftScope` (`RowsWithoutTaxId`)
 - วงจรจริง: สมัคร (`TaxId="-"` — ทั้ง `AuthService` และ `layout.js:2099` · `settings.html:2111` เขียน "-" เอง) → บิลแรกสร้างผู้ติดต่อไม่มีเลข + ExternalId → ลูกค้ากรอกเลข → บิลถัดไปสร้าง**แถวที่สอง**ที่ ExternalId เดียวกัน ⇒ ลูกหนี้/ประวัติใบกำกับแยกสองแถว แถวเก่าไม่เคยได้เลข
 - `CrossTenantWorkflowService.cs:460-468` แบบเดียวกัน (ไม่มี ExternalId เลย)
