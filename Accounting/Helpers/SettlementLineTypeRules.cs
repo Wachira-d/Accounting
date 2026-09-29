@@ -44,7 +44,8 @@ public sealed record SettlementLineTypeRule(
     bool VatApplicable,
     string? WhtIncomeCode,
     bool RequiresSaleMatch,
-    bool RequiresReason)
+    bool RequiresReason,
+    string? ForeignWhtIncomeCode = null)
 {
     /// <summary>ลงบัญชีได้ไหม — Unclassified ห้ามเสมอ</summary>
     public bool Postable => Posting != SettlementPostingKind.None;
@@ -149,9 +150,9 @@ public static class SettlementLineTypeRules
         new SettlementLineTypeRule(SettlementLineType.ChargebackReversal, "ชนะ chargeback ได้เงินคืน", SettlementAmountSign.Positive,
             SettlementPostingKind.DirectJournal, SettlementAccountRoles.Dispute, false, false, null, false, false),
         new SettlementLineTypeRule(SettlementLineType.Commission, "ค่าคอมมิชชัน", SettlementAmountSign.Either,
-            SettlementPostingKind.FeeDocument, SettlementAccountRoles.Commission, true, true, "2", false, false),
+            SettlementPostingKind.FeeDocument, SettlementAccountRoles.Commission, true, true, "2", false, false, ForeignWhtIncomeCode: "2"),
         new SettlementLineTypeRule(SettlementLineType.PaymentFee, "ค่าธรรมเนียมรับชำระเงิน", SettlementAmountSign.Either,
-            SettlementPostingKind.FeeDocument, SettlementAccountRoles.PaymentFee, true, true, "8", false, false),
+            SettlementPostingKind.FeeDocument, SettlementAccountRoles.PaymentFee, true, true, "8", false, false, ForeignWhtIncomeCode: "2"),
         new SettlementLineTypeRule(SettlementLineType.ShippingFeeCharged, "ค่าขนส่งที่แพลตฟอร์มเรียกเก็บ", SettlementAmountSign.Either,
             SettlementPostingKind.FeeDocument, SettlementAccountRoles.Shipping, true, true, "8tr", false, false),
         new SettlementLineTypeRule(SettlementLineType.ShippingSubsidy, "แพลตฟอร์มช่วยค่าขนส่ง", SettlementAmountSign.Positive,
@@ -163,9 +164,9 @@ public static class SettlementLineTypeRules
         new SettlementLineTypeRule(SettlementLineType.AdsFee, "ค่าโฆษณา", SettlementAmountSign.Either,
             SettlementPostingKind.FeeDocument, SettlementAccountRoles.Ads, true, true, "8ad", false, false),
         new SettlementLineTypeRule(SettlementLineType.ServiceFee, "ค่าบริการแพลตฟอร์ม", SettlementAmountSign.Either,
-            SettlementPostingKind.FeeDocument, SettlementAccountRoles.ServiceFee, true, true, "8", false, false),
+            SettlementPostingKind.FeeDocument, SettlementAccountRoles.ServiceFee, true, true, "8", false, false, ForeignWhtIncomeCode: "2"),
         new SettlementLineTypeRule(SettlementLineType.WithdrawalFee, "ค่าธรรมเนียมถอนเงิน", SettlementAmountSign.Negative,
-            SettlementPostingKind.FeeDocument, SettlementAccountRoles.WithdrawalFee, true, true, null, false, false),
+            SettlementPostingKind.FeeDocument, SettlementAccountRoles.WithdrawalFee, true, true, null, false, false, ForeignWhtIncomeCode: "2"),
         new SettlementLineTypeRule(SettlementLineType.ReserveHold, "แพลตฟอร์มกันเงินไว้", SettlementAmountSign.Negative,
             SettlementPostingKind.DirectJournal, SettlementAccountRoles.Reserve, false, false, null, false, false),
         new SettlementLineTypeRule(SettlementLineType.ReserveRelease, "ปล่อยเงินที่กันไว้", SettlementAmountSign.Positive,

@@ -43,12 +43,12 @@ public static class SettlementWhtIncomeType
     public static bool Configurable(SettlementLineType type) => SettlementLineTypeRules.For(type).IsFee;
 
     /// <summary>ค่าตั้งต้นของผู้ให้บริการต่างประเทศ — ค่าคอม/ค่าธรรมเนียม = 40(2) (คำตัดสินข้อ 41) · อื่น ๆ = ตารางประเภทบรรทัด</summary>
-    private static string? ForeignDefault(SettlementLineType type) => type switch
+    /// <para>ค่าอยู่ในตารางประเภทบรรทัดตัวเดียว (<see cref="SettlementLineTypeRule.ForeignWhtIncomeCode"/>) — ห้ามตัดสินตามชื่อประเภทเองนอกตาราง</para>
+    private static string? ForeignDefault(SettlementLineType type)
     {
-        SettlementLineType.Commission or SettlementLineType.PaymentFee
-            or SettlementLineType.ServiceFee or SettlementLineType.WithdrawalFee => "2",
-        _ => SettlementLineTypeRules.For(type).WhtIncomeCode,
-    };
+        var rule = SettlementLineTypeRules.For(type);
+        return rule.ForeignWhtIncomeCode ?? rule.WhtIncomeCode;
+    }
 
     /// <summary>ตัดสินรหัสของประเภทบรรทัดหนึ่ง (pure)</summary>
     public static SettlementIncomeTypeChoice Resolve(SettlementLineType type, SettlementFeeVatMode vatMode,

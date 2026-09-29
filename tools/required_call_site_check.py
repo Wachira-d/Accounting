@@ -2598,7 +2598,7 @@ RULES += [
     # ── ทีม WF: W-3 (ข้อ 40) ฐาน ภ.พ.36 รวมภาษีออกแทน · W-4/W-9 (ข้อ 41) ประเภทเงินได้ต่อช่องทาง · W-5 คำเตือนตอนออก 50 ทวิ · W-6 ทางไปต่อ ──
     dict(file=W_FEETAX, method="Compute",
          must=["ForeignServiceVat.SelfAssessedVatOn(ForeignServiceVat.Pp36Base(preVat, borne))"],
-         before=[("borne = wht", "ForeignServiceVat.Pp36Base(preVat, borne)")],
+         before=[("WhtOnBase(preVat, rate, whtMode)", "ForeignServiceVat.Pp36Base(preVat, borne)")],
          forbid=["R(deducted * VatRate / 100m)"],
          why="ทีม WF (คำตัดสินข้อ 40): ฐาน ภ.พ.36 = มูลค่าบริการ + ภาษีที่ออกแทน — คิดหลังขั้น WHT ด้วยสูตรตัวเดียว (ห้ามกลับไปคิดบนยอดที่ถูกหัก)"),
     dict(file=W_BATCH, method="ComputeTax",
