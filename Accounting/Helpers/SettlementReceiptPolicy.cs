@@ -24,10 +24,14 @@ public static class SettlementReceiptPolicy
     /// <para>เฉพาะ<b>ใบแจ้งหนี้</b>ที่มี VAT (พักไว้ที่ 21913) และปิดยอดใน<b>งวดเดียว</b>
     /// — ใบกำกับภาษี (TaxInvoice) ออก VAT ไปแล้วตั้งแต่ต้นทาง ใบเสร็จจึงต้อง VAT = 0
     /// ไม่งั้นภาษีขายถูกนับสองรอบ · ผ่อนหลายงวดก็ไม่เข้า เพราะใบกำกับ ณ วันรับเงิน
-    /// ต้องครอบ "การรับเงินครั้งนั้น" ทั้งก้อน ไม่ใช่เศษของหลายงวด</para></summary>
+    /// ต้องครอบ "การรับเงินครั้งนั้น" ทั้งก้อน ไม่ใช่เศษของหลายงวด</para>
+    /// <para>รอบ 200 ทีม V1F (ผลตามของ V1-R2): ใบแจ้งหนี้ที่<b>มีใบเสร็จถือ VAT ที่ยังมีผลอยู่แล้ว</b> (เช็คเด้งแต่ใบเสร็จถึงกรมสรรพากรแล้ว ⇒ ติดธง
+    /// ไม่ถูกยกเลิก) = ใบกำกับของการขายนี้ออกไปแล้ว ⇒ รับชำระใหม่ออกใบรับเปล่า (VAT 0) — ออกใบกำกับใบที่สอง = ภาษีขายเข้า ภ.พ.30 สองรอบ ·
+    /// ไม่มีค่าเริ่มต้นโดยตั้งใจ (พารามิเตอร์ที่ตัดสินผลทางกฎหมาย)</para></summary>
+    /// <param name="liveVatReceiptExists">ใบต้นทางมีใบเสร็จถือ VAT ที่ยังมีผลอยู่แล้ว</param>
     public static bool CarriesTaxInvoiceRole(
-        DocumentType sourceType, decimal sourceVatAmount, bool singleShotFull)
-        => sourceType == DocumentType.Invoice && sourceVatAmount > 0m && singleShotFull;
+        DocumentType sourceType, decimal sourceVatAmount, bool singleShotFull, bool liveVatReceiptExists)
+        => sourceType == DocumentType.Invoice && sourceVatAmount > 0m && singleShotFull && !liveVatReceiptExists;
 
     /// <summary>เหตุผล (ภาษาไทย เอาไปโชว์ได้) ที่ออกใบเสร็จย้อนหลังให้การรับชำระนี้
     /// ไม่ได้ — <c>null</c> = ออกได้

@@ -299,8 +299,14 @@ public interface IDocumentService
     /// ในธุรกรรมเดียว · ออกเลขใหม่ ⇒ <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิก + อนุมัติมาก่อน</b></summary>
     Task<DocumentResponse> ReissueSettlementPaidDocumentAsync(Guid companyId, Guid documentId,
         ReissueSettlementPaidRequest request, string actor);
+    /// <summary>รอบ 200 ทีม V1F (V1-R6) — ยกเลิกคำขอ "ยกเลิกและออกใบแทน" ที่ค้างรอผู้อนุมัติคนที่สอง · <b>ผู้เรียกต้องตรวจสิทธิ์มาก่อน</b></summary>
+    Task<DocumentResponse> CancelReissueRequestAsync(Guid companyId, Guid documentId, string actor);
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax"</summary>
     Task<List<EtaxCancelRequiredItem>> ListEtaxCancelRequiredAsync(Guid companyId);
+    /// <summary>รอบ 200 ทีม V1F (V1-R3) — "บันทึกว่ายกเลิกทาง e-Tax แล้ว" ของใบที่ติดธง: ต้องมีหลักฐาน (e-Tax ถูกยกเลิกในระบบ หรือเลขอ้างอิงการยกเลิก
+    /// จากกรมสรรพากร) ⇒ ยกเลิกใบเสร็จ + ล้างธง + ปลดบล็อกใบต้นทาง · คืนใบต้นทาง (null = ไม่มี) · <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิกมาก่อน</b></summary>
+    Task<DocumentResponse?> ResolveEtaxCancellationAsync(Guid companyId, Guid documentId,
+        ResolveEtaxCancellationRequest request, string actor);
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>

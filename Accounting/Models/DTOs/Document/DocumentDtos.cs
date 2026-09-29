@@ -923,18 +923,31 @@ public record DocumentResponse(
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — ปุ่ม "ยกเลิกและออกใบแทน" · <b>เซิร์ฟเวอร์ตัดสิน</b> ด้วย <c>SettlementPaidReissue.Decide</c>
     /// ตัวเดียวกับ endpoint · null = ไม่เกี่ยว/ยังไม่ได้คำนวณ (หน้าเว็บไม่แสดงปุ่ม) · false = เกี่ยวแต่กดไม่ได้ (แสดงปุ่มปิดพร้อมเหตุผล)</summary>
     bool? CanReissueSettlementPaid = null,
-    string? ReissueSettlementPaidBlockedReason = null);
+    string? ReissueSettlementPaidBlockedReason = null,
+    /// <summary>รอบ 200 ทีม V1F (V1-R6) — คำขอ "ยกเลิกและออกใบแทน" ที่รอผู้อนุมัติคนที่สอง (null = ไม่มี) · เก็บแล้วต้อง echo กลับ (กฎ #4 A)</summary>
+    DateTime? ReissueRequestedAt = null,
+    string? ReissueRequestedBy = null,
+    /// <summary>เหตุผลของคำขอที่ค้าง (จากคำขอที่บันทึกไว้) — ให้ผู้ยืนยันเห็นก่อนกด</summary>
+    string? ReissueRequestReason = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>
 /// <param name="Notes">หมายเหตุพิมพ์บนใบใหม่ — null = ของใบเดิม · ระบบต่อท้ายด้วยบรรทัดอ้างใบเดิมเสมอ</param>
 /// <param name="Lines">คำบรรยายรายบรรทัดที่แก้ (อ้าง Id บรรทัดของใบเดิม) — บรรทัดที่ไม่ส่ง = คำบรรยายเดิม · ยอด/จำนวน/อัตราแก้ไม่ได้</param>
 /// <param name="Reason">เหตุผล (บังคับ — เก็บให้ผู้สอบบัญชี)</param>
+/// <param name="ConfirmPendingRequest">รอบ 200 ทีม V1F (V1-R6): true = ยืนยัน "คำขอที่ค้าง" บนใบนี้ (ผู้อนุมัติคนที่สอง — ช่องอื่นถูกละ ใช้คำขอที่บันทึกไว้) ·
+/// null/false = ส่งคำขอใหม่</param>
 public sealed record ReissueSettlementPaidRequest(
-    Guid? ContactId, string? Notes, List<ReissueLineDescription>? Lines, string? Reason);
+    Guid? ContactId, string? Notes, List<ReissueLineDescription>? Lines, string? Reason, bool? ConfirmPendingRequest = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอแก้คำบรรยาย 1 บรรทัดของใบแทน (อ้าง Id บรรทัดของใบเดิม)</summary>
 public sealed record ReissueLineDescription(Guid LineId, string? Description);
+
+/// <summary>รอบ 200 ทีม V1F (V1-R3) — "บันทึกว่ายกเลิกทาง e-Tax แล้ว" ของใบที่ติดธง</summary>
+/// <param name="Reason">เหตุผล (บังคับ — เก็บให้ผู้สอบบัญชี)</param>
+/// <param name="RdCancellationReference">เลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้จากกรมสรรพากรหรือผู้ให้บริการ e-Tax — บังคับเมื่อใบถึงกรมสรรพากรแล้ว
+/// (ตอบรับ/e-Tax by Email) · ใบที่ยกเลิก e-Tax ในระบบแล้วไม่ต้องใส่</param>
+public sealed record ResolveEtaxCancellationRequest(string? Reason, string? RdCancellationReference);
 
 /// <summary>รอบ 200 ทีม V1 — ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (รายการงานค้าง)</summary>
 public sealed record EtaxCancelRequiredItem(Guid Id, string DocumentNumber, DocumentType DocumentType, DateTime DocumentDate,

@@ -1089,9 +1089,47 @@ public class DocumentController : ControllerBase
 
         var result = await _documentService.ReissueSettlementPaidDocumentAsync(
             companyId, documentId, request, userIdGuid.ToString());
+        // รอบ 200 ทีม V1F (V1-R6): SoD/วงเงินเซ็นหลายขั้น ⇒ คำขอถูกบันทึกรอคนที่สอง (คืนใบเดิมที่ยังไม่ถูกแตะ) — บอกตรง ๆ ไม่ใช่ "ออกใบแทนแล้ว"
+        if (result.Id == documentId)
+            return Ok(new ApiResponse<DocumentResponse>(true, result,
+                "บันทึกคำขอยกเลิกและออกใบแทนแล้ว — ยังไม่ได้ยกเลิกหรือออกเลขใด ๆ · รอผู้มีสิทธิ์ยกเลิกและอนุมัติคนอื่นกด “ยืนยันออกใบแทน” "
+                + "(บริษัทเปิดการแบ่งแยกหน้าที่ หรือยอดถึงเกณฑ์เซ็นหลายขั้น)"));
         return Ok(new ApiResponse<DocumentResponse>(true, result,
             $"ยกเลิกใบเดิมและออกใบแทน {result.DocumentNumber} แล้ว — ย้ายการรับชำระและคู่จับของรอบโอนไปใบใหม่ (ยอดเท่าเดิม) · "
             + "ส่งใบใหม่ให้ลูกค้าและเรียกคืนใบเดิม"));
+    }
+
+    /// <summary>รอบ 200 ทีม V1F (V1-R6) — ยกเลิกคำขอ "ยกเลิกและออกใบแทน" ที่ค้างรอผู้อนุมัติคนที่สอง · สิทธิ์เดียวกับการออกใบแทน (ยกเลิก + อนุมัติ)</summary>
+    [HttpDelete("{documentId:guid}/reissue-settlement-paid/request")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> CancelReissueRequest(Guid companyId, Guid documentId)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value)
+            || !await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                "ไม่มีสิทธิ์ยกเลิกคำขอออกใบแทน (ต้องมีทั้งสิทธิ์ยกเลิกและสิทธิ์อนุมัติเอกสารชนิดนี้)");
+        var result = await _documentService.CancelReissueRequestAsync(companyId, documentId, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ยกเลิกคำขอยกเลิกและออกใบแทนแล้ว — ใบนี้ไม่ถูกแตะ"));
+    }
+
+    /// <summary>รอบ 200 ทีม V1F (V1-R3 · คำตัดสินข้อ 11) — <b>บันทึกว่ายกเลิกทาง e-Tax แล้ว</b> ของใบที่ติดธง "ต้องยกเลิกทาง e-Tax":
+    /// ต้องมีหลักฐาน (e-Tax ถูกยกเลิกในระบบ หรือเลขอ้างอิงการยกเลิก/ใบลดหนี้จากกรมสรรพากร) · ยกเลิกใบเสร็จ + ปลดบล็อกใบต้นทาง ·
+    /// สิทธิ์ = ยกเลิกเอกสารชนิดนั้น</summary>
+    [HttpPost("{documentId:guid}/etax-cancellation")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse?>>> ResolveEtaxCancellation(
+        Guid companyId, Guid documentId, [FromBody] ResolveEtaxCancellationRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse?>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse?>("ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกการยกเลิกทาง e-Tax ต้องใช้สิทธิ์ยกเลิกเอกสาร");
+        var source = await _documentService.ResolveEtaxCancellationAsync(companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse?>(true, source,
+            "บันทึกการยกเลิกทาง e-Tax แล้ว — ใบเสร็จถูกยกเลิกในระบบ"
+            + (source != null ? $" · ใบต้นทาง {source.DocumentNumber} ยกเลิก/แก้ไขต่อได้" : "")));
     }
 
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (เช็คเด้งแต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว) ·

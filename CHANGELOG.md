@@ -3844,3 +3844,22 @@ _2026-09-29 รอบ 200 ทีม GF — แก้ผลฝ่ายค้า�
 - **R200G-6** `PaymentIntentPolicy.IsProviderFeeFinal` — ค่าธรรมเนียมจาก charge ที่เงินยังไม่เคลื่อนไม่ถูกเก็บ · เส้น webhook ซ้ำใช้ตัวตัดสินเดียวกัน
 - **R200G-8** แจ้งเตือน "รับชำระค้าง" บอกสิทธิ์ `Bank.View` ที่ต้องใช้ · **R200G-4/5** เข้ารายการทดสอบ sandbox ใน `PAYMENT_GATEWAY_DESIGN.md` §4.4
 - เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit 6986653d)_
+
+_2026-09-29 รอบ 200 ทีม V1F — แก้ผลฝ่ายค้านของทีม V1 (`erp-review/2026-09-29/review200-V1.md` · รายงาน `team-V1F.md`):
+- **V1-R1 (P1 ภาษี)** ด่าน "ยกเลิกและออกใบแทน" ดูรายงานภาษีที่ล็อก + งวดบัญชีของ**ใบเสร็จอัตโนมัติ**ทุกใบ (ใบเสร็จถือ VAT §78/1 เป็นเจ้าของแถว ภ.พ.30) —
+  `ReissueReceiptFact(…, FilingLocked, ClosedPeriodName)` · `REISSUE-RECEIPT-FILING-LOCKED` / `REISSUE-RECEIPT-PERIOD-CLOSED` · `ClosedPeriodNameAsync` ตัวเดียว
+- **V1-R2 (P1 ภาษี)** เช็คเด้งที่ใบเสร็จถือ VAT ติดธง ⇒ ไม่ถอยภาษีขายถึงกำหนด (`DocumentVoidPreconditions.ShouldUndoOutputVatReclass` + `FlaggedReceiptKeepsTaxPoint` +
+  `LiveVatReceiptExistsAsync`) · รับชำระใหม่ไม่ออกใบกำกับใบที่สอง (`SettlementReceiptPolicy.CarriesTaxInvoiceRole(…, liveVatReceiptExists)` — ไม่มีค่าเริ่มต้น)
+- **V1-R3** ปิดธง "ต้องยกเลิกทาง e-Tax": `POST document/{id}/etax-cancellation` · ตัวตัดสิน `EtaxCancellationResolution` (หลักฐาน: e-Tax ยกเลิกในระบบ หรือเลขอ้างอิงจาก
+  กรมสรรพากร · Submitted/ไม่มีเหตุผล/ไม่มีเลขอ้างอิง = ปฏิเสธ) ⇒ ยกเลิกใบเสร็จ + ล้างธง + ถอยภาษีขายเมื่อไม่เหลือเงินรับ + audit chain · ปุ่มบนแถบธงใน documents.html
+- **V1-R4** ใบขายที่ e-Tax Submitted = บล็อกออกใบแทน (`REISSUE-ETAX-SUBMITTED`) · ขั้นยกเลิก e-Tax ของใบเดิมใช้ `EtaxReachedRdStatuses` ตัวเดียวกับใบเสร็จ
+- **V1-R5** `IntegrationService.VoidDocumentByExternalRefAsync` ตามสายใบแทน ⇒ `INTEGRATION-VOID-REPLACED` พร้อมเลขใบแทน (`SettlementPaidReissue.IntegrationVoid`) ·
+  ค้น ExternalRef เลือกใบที่ยังมีผลก่อน · `Reference` ตามไปใบแทน (การขายเดียวกัน)
+- **V1-R6** `Helpers/ApprovalControlPolicy` (ตัวเดียวของ `ApproveDocumentAsync` + ออกใบแทน): SoD/วงเงินเซ็นหลายขั้น ⇒ บันทึกคำขอบนใบเดิม (`Documents.ReissueRequestedAt/By/Json`
+  · migration ADD COLUMN) รอผู้อนุมัติคนอื่นกดยืนยัน · ผู้ขอยืนยันเองไม่ได้ · `DELETE …/reissue-settlement-paid/request` ยกเลิกคำขอ · echo ใน `DocumentResponse`
+- **V1-R7..R10** คัดลอกแบบ allowlist (`DocumentCarriedFields`/`LineCarriedFields` + เทสต์จัดกลุ่มครบทุกช่อง) · ด่านคำขอผู้ใช้ `RequestLineIssues` + หมายเหตุไม่สะสม
+  (`StripReplacementNote`) · ย้าย `PaymentIntent.SourceId/ReceiptDocumentId` + `ProjectCostEntry.DocumentLineId` + คำบรรยาย JE · ผู้ซื้อ §86/4
+  `TaxInvoiceCompletenessChecker.MustEnforceBuyerFields/BuyerBlockingFields` ตัวเดียวกับเส้นอนุมัติ (บุคคลธรรมดาไม่บล็อก · ไม่ประสงค์รับของผู้ซื้อเดิมไม่ตามไป)
+- **P1** e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลา = ถึงกรมสรรพากร (`EffectiveEtaxAsync` ตัวโหลดเดียว — ยกเลิกการชำระ · ออกใบแทน · ด่านยกเลิกการลงบัญชี) ·
+  **P2** ยกเลิกการลงบัญชีรอบโอน: ใบเสร็จที่ถูกส่ง e-Tax ระหว่างทาง ⇒ ติดธง ไม่ throw กลางลูป · **P4** hooks หลัง commit อยู่นอก execution strategy
+- เทสต์ `VoidReissueR200FTests` (สองทิศทุกข้อ) + ปรับ `VoidReissueR200Tests` / `SettlementReceiptPolicyTests` · required_call_site +9 แถว/ปรับ 7 — commit <pending>)_

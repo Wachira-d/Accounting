@@ -120,6 +120,34 @@ public static class TaxInvoiceCompletenessChecker
         return missing;
     }
 
+    /// <summary>
+    /// **เอกสารชนิดนี้ต้องบังคับข้อมูลผู้ซื้อ §86/4 ไหม** (รอบ 200 ทีม V1F · V1-R10 — ย้ายจาก <c>ApproveDocumentAsync</c> ให้เส้นออกใบแทนถามตัวเดียวกัน):
+    /// ใบกำกับภาษี · ใบเสร็จ/ใบสำคัญรับที่มี VAT (ใบกำกับโดยสภาพ) · หรือค่าตั้งบริษัทเปิดบังคับกับใบเสร็จ/ใบลดหนี้/ใบเพิ่มหนี้
+    /// </summary>
+    public static bool MustEnforceBuyerFields(Models.Enums.DocumentType type, decimal vatAmount, bool enforceFullTaxInvoiceFieldsSetting)
+    {
+        var vatBearingReceipt = (type is Models.Enums.DocumentType.Receipt or Models.Enums.DocumentType.ReceiptVoucher) && vatAmount > 0;
+        return type == Models.Enums.DocumentType.TaxInvoice
+            || vatBearingReceipt
+            || (enforceFullTaxInvoiceFieldsSetting && (type is Models.Enums.DocumentType.TaxInvoice or Models.Enums.DocumentType.Receipt
+                or Models.Enums.DocumentType.DebitNote or Models.Enums.DocumentType.CreditNote));
+    }
+
+    /// <summary>
+    /// **ผู้ซื้อ §86/4 ไม่ครบจนต้องบล็อกไหม — ตัวตัดสินเดียว** ของเส้นอนุมัติและเส้นยกเลิกและออกใบแทน (V1-R10 · เดิมเส้นออกใบแทนมีกติกาสำเนาที่สอง
+    /// ที่บล็อกผู้ซื้อบุคคลธรรมดาด้วย) · คืนรายการช่องที่ขาดเมื่อ<b>ต้องบล็อก</b> (ผู้ซื้อนิติบุคคล) · null = ผ่าน
+    /// <para>ไม่บล็อก: ไม่ต้องบังคับ · ไม่มี VAT · ลูกค้าเงินสด (walk-in) · มัดจำที่ VAT ยังพัก · ผู้ซื้อแจ้งไม่ประสงค์รับใบกำกับ · ผู้ซื้อบุคคลธรรมดา
+    /// (หัวเอกสารลดเป็นใบเสร็จ/ใบกำกับอย่างย่อเอง — VAT ยังนำส่งครบ)</para>
+    /// </summary>
+    public static IReadOnlyList<string>? BuyerBlockingFields(bool mustEnforce, decimal vatAmount, Contact? buyer,
+        bool isDeferredVatDeposit, bool buyerDeclinedTaxInvoice)
+    {
+        if (!mustEnforce || vatAmount <= 0 || buyer == null || buyer.IsWalkInCustomer || isDeferredVatDeposit || buyerDeclinedTaxInvoice)
+            return null;
+        var missing = MissingBuyerFields(buyer);
+        return missing.Count > 0 && IsJuristicBuyer(buyer) ? missing : null;
+    }
+
     private static string Digits(string? raw) =>
         new((raw ?? "").Where(char.IsDigit).ToArray());
 

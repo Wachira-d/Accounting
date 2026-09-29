@@ -4359,10 +4359,15 @@ public class IntegrationService : IIntegrationService
             }
             if (doc == null && !string.IsNullOrWhiteSpace(request.ExternalRef))
             {
+                // รอบ 200 ทีม V1F (V1-R5): ใบแทน ("ยกเลิกและออกใบแทน") ถือเลขอ้างอิงภายนอกเดียวกับใบเดิม ⇒ เลือกใบที่ยังมีผลก่อน แล้วใหม่สุด
+                // (เดิม FirstOrDefault ไม่มีลำดับ ⇒ ผลขึ้นกับลำดับแถว · ตรงกับเส้นสร้าง/รับชำระที่กรอง Voided + เรียงแล้ว)
                 doc = await _db.Documents
-                    .FirstOrDefaultAsync(d => d.CompanyId == companyId
+                    .Where(d => d.CompanyId == companyId
                         && d.Reference == request.ExternalRef
-                        && !d.IsDeleted);
+                        && !d.IsDeleted)
+                    .OrderBy(d => d.Status == DocumentStatus.Voided ? 1 : 0)
+                    .ThenByDescending(d => d.CreatedAt)
+                    .FirstOrDefaultAsync();
             }
             if (doc == null && !string.IsNullOrWhiteSpace(request.ExternalId))
             {
@@ -4376,7 +4381,22 @@ public class IntegrationService : IIntegrationService
             if (doc == null)
                 throw new InvalidOperationException("ไม่พบเอกสารตามที่ระบุ — กรุณาตรวจสอบ ExternalRef / ExternalId / DocumentId");
 
-            if (doc.Status == DocumentStatus.Voided)
+            // รอบ 200 ทีม V1F (V1-R5): ใบที่ถูก "ยกเลิกและออกใบแทน" — ตามสายการแทนไปหาใบที่ยังมีผล แล้วบอกความจริง (ใบแทนเลข X ยังถือรายได้/
+            // ภาษีขาย/การรับชำระ) แทนการตอบ "already voided" สำเร็จ (HTTP 200 โกหก) · ตัวตัดสิน SettlementPaidReissue.IntegrationVoid
+            Document? liveReplacement = null;
+            var hop = doc;
+            for (var i = 0; i < 10 && hop is { Status: DocumentStatus.Voided, ReplacedByDocumentId: Guid nextId }; i++)
+            {
+                hop = await _db.Documents.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Id == nextId && d.CompanyId == companyId && !d.IsDeleted);
+                if (hop is { Status: not DocumentStatus.Voided }) liveReplacement = hop;
+            }
+            var voidOutcome = Accounting.Helpers.SettlementPaidReissue.IntegrationVoid(
+                doc.Status, doc.DocumentNumber, liveReplacement?.DocumentNumber, liveReplacement?.Id);
+            if (voidOutcome.Kind == Accounting.Helpers.IntegrationVoidKind.Replaced)
+                throw new Accounting.Helpers.BusinessRuleException(voidOutcome.Message ?? "เอกสารนี้ถูกยกเลิกและออกใบแทนแล้ว",
+                    "INTEGRATION-VOID-REPLACED", 409);
+            if (voidOutcome.Kind == Accounting.Helpers.IntegrationVoidKind.AlreadyVoided)
             {
                 // Idempotency: a re-sent void on an already-voided document is a no-op.
                 log.Status = "Skipped";

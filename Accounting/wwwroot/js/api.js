@@ -675,6 +675,10 @@ const API = {
       // รอบ 200 ทีม V1 — ยกเลิกและออกใบแทน ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (เซิร์ฟเวอร์ตัดสินทุกอย่าง)
       reissueSettlementPaid: (id, payload) => API.post(`${base}/document/${id}/reissue-settlement-paid`, payload),
       getEtaxCancelRequired: () => API.get(`${base}/document/etax-cancel-required`),
+      // รอบ 200 ทีม V1F — ยืนยัน/ยกเลิกคำขอออกใบแทนที่รอคนที่สอง (SoD/วงเงินเซ็นหลายขั้น) · บันทึกว่ายกเลิกทาง e-Tax แล้ว (ต้องมีหลักฐาน)
+      confirmReissueSettlementPaid: (id) => API.post(`${base}/document/${id}/reissue-settlement-paid`, { confirmPendingRequest: true }),
+      cancelReissueRequest: (id) => API.del(`${base}/document/${id}/reissue-settlement-paid/request`),
+      resolveEtaxCancellation: (id, payload) => API.post(`${base}/document/${id}/etax-cancellation`, payload),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
