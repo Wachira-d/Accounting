@@ -76,6 +76,9 @@ public enum SettlementPlanIssueCode
     /// <summary>ช่องทางผูก config ของ payment gateway แต่โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียมสองที่ให้ผลภาษีต่างกัน — ลงบัญชีไม่ได้จนกว่าจะแก้ให้ตรง
     /// (รอบ 200 ฝ่ายค้าน X-1/X-3 · DECISIONS ข้อ 26 · <c>GatewayBatchIntentRules.PostingIssue</c>)</summary>
     GatewayModeMismatch = 37,
+    /// <summary>ค่าตั้ง "ประเภทเงินได้ของค่าธรรมเนียม" ของช่องทางอ่านไม่ได้ — ห้ามคิดภาษีจากค่าที่ข้ามไปเงียบ ๆ (รอบ 200 ทีม WF · คำตัดสินข้อ 41 ·
+    /// <see cref="SettlementWhtIncomeType.MapIssue"/>)</summary>
+    WhtIncomeTypeMapInvalid = 60, // เดิมทีม WF ใช้ 37 ชนกับ GatewayModeMismatch ของทีม SF ตอนรวม
 
     // ── แจ้งให้ทราบ (ไม่บล็อก) ──
     /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>
@@ -630,8 +633,12 @@ public static class SettlementBatchMath
 
     private static SettlementFeeTaxResult ComputeTax(decimal deducted, decimal? explicitVat, SettlementLineTypeRule rule,
         SettlementChannel channel, bool vatRegistered, DateTime paymentDate)
-        => SettlementFeeTax.Compute(deducted, explicitVat, channel.FeeVatMode, rule.VatApplicable, vatRegistered,
-            channel.FeeWhtMode, rule.WhtIncomeCode, paymentDate);
+    {
+        // รอบ 200 ทีม WF (คำตัดสินข้อ 41): รหัสประเภทเงินได้จากตัวตัดสินเดียว (ค่าตั้งของช่องทาง → ต่างประเทศ 40(2) → ตารางประเภทบรรทัด)
+        var incomeCode = SettlementWhtIncomeType.For(rule.Type, channel).Code;
+        return SettlementFeeTax.Compute(deducted, explicitVat, channel.FeeVatMode, rule.VatApplicable, vatRegistered,
+            channel.FeeWhtMode, incomeCode, paymentDate);
+    }
 
     /// <summary>ขา WHT ของใบค่าธรรมเนียม (ไม่ผ่านการจ่ายเงินของใบ — แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว):
     /// W2 Dr ลูกหนี้แพลตฟอร์มรอคืน / Cr 21917 · W3 Dr ผังค่าธรรมเนียม (ภาษีที่ออกแทน) / Cr 21917 · W1 ไม่มีขา (ตัวแทนยื่นเอง) ·

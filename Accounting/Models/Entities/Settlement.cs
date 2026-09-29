@@ -38,6 +38,10 @@ public class SettlementChannel : TenantEntity
     /// คีย์ = <c>SettlementAccountRoles</c> · ไม่ระบุ = ผังมาตรฐานของบทบาทนั้น · อ่านด้วย
     /// <c>SettlementLineTypeRules.ParseFeeAccountMap</c> ตัวเดียว</summary>
     public string? FeeAccountMapJson { get; set; }
+    /// <summary>JSON object: ประเภทบรรทัดค่าธรรมเนียม → รหัสประเภทเงินได้ (หรือ <c>"none"</c> = ไม่หัก) ที่ผู้ทำบัญชีจำแนกไว้ครั้งเดียว ·
+    /// null = ค่าตั้งต้น (ไทย = ตารางประเภทบรรทัด · ต่างประเทศ = ค่าคอม/ค่าธรรมเนียม 40(2)) · อ่านด้วย <c>SettlementWhtIncomeType.ParseMap</c> ตัวเดียว
+    /// (รอบ 200 ทีม WF · คำตัดสินข้อ 41)</summary>
+    public string? WhtIncomeTypeMapJson { get; set; }
 
     public SettlementFeeVatMode FeeVatMode { get; set; } = SettlementFeeVatMode.ThaiVat7;
     /// <summary>ค่าเริ่มต้น None + เตือนบริษัทนิติบุคคล (DECISIONS · report-S1 D5)</summary>

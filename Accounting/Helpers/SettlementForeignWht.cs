@@ -26,6 +26,17 @@ public static class SettlementForeignWht
     public static TaxType WhtForm(SettlementFeeVatMode vatMode)
         => IsForeignChannel(vatMode) ? TaxType.WithholdingTax54 : TaxType.WithholdingTax53;
 
+    /// <summary>
+    /// **แบบ ภ.ง.ด. ของขา WHT รอบโอน — ตัวตั้งเดียวของด่าน "เดือนที่ยื่นแล้ว"** (รอบ 200 ทีม WF · ฝ่ายค้าน W-1)
+    /// <para>กติกา: ขา WHT ค่าธรรมเนียมผู้ให้บริการต่างประเทศ ⇒ <b>แผนเป็นเจ้าของแบบ</b> (<c>fee.WhtForm</c> = ภ.ง.ด.54 จาก <see cref="WhtForm"/> ·
+    /// ตัวเดียวกับที่ 50 ทวิ และขา 21918 ใช้) · ในประเทศ ⇒ <b>ผู้ลงบัญชีเป็นเจ้าของ</b> (ภ.ง.ด.3/53 ตามผู้รับ — ตัวเลือกของ 50 ทวิ ·
+    /// review198-C C-11) · ผู้เรียกทุกตัว (ด่าน pure + ตัวโหลดเดือนที่ยื่นแล้ว) ต้องผ่านที่นี่ — เดิมสองที่ตัดสินแยกกัน ⇒ ผู้เรียกที่ลืมส่งแบบ
+    /// ได้ข้อความ/ชุดเดือนของ ภ.ง.ด.53 กับรอบโอนต่างประเทศโดยไม่มีอะไรฟ้อง</para>
+    /// </summary>
+    /// <param name="domesticPayeeForm">แบบในประเทศตามผู้รับ (3/53) ที่ผู้ลงบัญชีหาได้ — ไม่ใช้เมื่อแผนมีขา ภ.ง.ด.54</param>
+    public static TaxType GateWhtForm(SettlementPostingPlan plan, TaxType domesticPayeeForm)
+        => plan.FeeDocuments.Any(d => d.WhtForm == TaxType.WithholdingTax54) ? TaxType.WithholdingTax54 : domesticPayeeForm;
+
     /// <summary>คำตัดสินอัตราของค่าธรรมเนียมประเภทหนึ่ง — ผู้รับ = แพลตฟอร์มต่างประเทศ · ยังไม่มีข้อมูลประเทศ/CoR ในช่องทาง ⇒ ม.70 เสมอ
     /// (ดูสถานะใน <see cref="DtaTreatyRates"/>)</summary>
     public static ForeignWhtDecision Decide(string? whtIncomeCode, DateTime paymentDate)
@@ -35,10 +46,14 @@ public static class SettlementForeignWht
     public static IReadOnlyList<SettlementPlanIssue> PlanIssues(SettlementChannel channel, IReadOnlyList<SettlementLine> lines, DateTime paymentDate)
     {
         var issues = new List<SettlementPlanIssue>();
+        // ค่าตั้งประเภทเงินได้ของช่องทางอ่านไม่ได้ ⇒ บล็อก (ทุกช่องทาง — ห้ามคิดภาษีจากค่าที่ข้ามไปเงียบ ๆ · คำตัดสินข้อ 41)
+        if (channel.FeeWhtMode != SettlementFeeWhtMode.None && SettlementWhtIncomeType.MapIssue(channel) is SettlementPlanIssue badMap)
+            issues.Add(badMap);
         if (!IsForeignChannel(channel.FeeVatMode) || channel.FeeWhtMode == SettlementFeeWhtMode.None) return issues;
+        // รหัสประเภทเงินได้จากตัวตัดสินเดียวกับผู้คิดภาษี (ค่าตั้งของช่องทาง → 40(2) ตั้งต้นของต่างประเทศ → ตารางประเภทบรรทัด)
         var feeLines = lines
-            .Select(l => (Line: l, Rule: SettlementLineTypeRules.For(l.LineType)))
-            .Where(x => x.Line.Amount != 0m && x.Rule.IsFee && x.Rule.WhtIncomeCode != null)
+            .Select(l => (Line: l, Rule: SettlementLineTypeRules.For(l.LineType), Code: SettlementWhtIncomeType.For(l.LineType, channel).Code))
+            .Where(x => x.Line.Amount != 0m && x.Rule.IsFee && x.Code != null)
             .ToList();
         if (feeLines.Count == 0) return issues;
 
@@ -48,25 +63,33 @@ public static class SettlementForeignWht
                 $"ช่องทาง \"{channel.DisplayName}\" เป็นผู้ให้บริการต่างประเทศ แต่ตั้งว่า \"แพลตฟอร์มเป็นตัวแทนหัก ณ ที่จ่ายแทนเรา\" — "
                 + $"ภาษีของเงินได้ที่จ่ายไปต่างประเทศเป็นหน้าที่ของผู้จ่าย ยื่น ภ.ง.ด.54 เอง ({ForeignWhtRateResolver.Section70Reference})",
                 "ถ้าต้องหัก ให้ตั้งโหมดหักเป็น \"หักเอง\" หรือ \"ออกภาษีแทน\" (ระบบคิดตาม ม.70 ลง ภ.ง.ด.54 ให้) · "
-                + "ถ้าผู้ทำบัญชีจำแนกแล้วว่าไม่ต้องหัก ให้ตั้งเป็น \"ไม่หัก\"",
+                + "ถ้าผู้ทำบัญชีจำแนกแล้วว่าไม่ต้องหัก ให้ตั้งเป็น \"ไม่หัก\"" + GatewayConfigHint(channel),
                 feeLines.Select(x => x.Line.Id).ToList(), null));
             return issues;
         }
 
-        foreach (var g in feeLines.GroupBy(x => x.Rule.WhtIncomeCode))
+        foreach (var g in feeLines.GroupBy(x => x.Code))
         {
             var decision = Decide(g.Key, paymentDate);
             if (decision.HasRate) continue;
             var labels = string.Join(", ", g.Select(x => x.Rule.LabelTh).Distinct());
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.ForeignWhtNotSupported, true,
                 $"[{decision.RuleCode}] {labels} ของผู้ให้บริการต่างประเทศ \"{channel.DisplayName}\" — {decision.Explanation}",
-                "ให้ผู้ทำบัญชีจำแนกประเภทเงินได้: ถ้าไม่ต้องหัก ตั้งโหมดหัก ณ ที่จ่ายของช่องทางเป็น \"ไม่หัก\" · ถ้าต้องหัก "
-                + "บันทึกใบสำคัญจ่ายบริการต่างประเทศด้วยมือ (ติ๊ก ภ.พ.36 + หัก ภ.ง.ด.54 ตามประเภทเงินได้ที่จำแนก) แล้วเปลี่ยนบรรทัดนั้นเป็น "
-                + "\"ปรับปรุงอื่น\" ที่ชี้ผังของใบนั้น",
+                // คำตัดสินข้อ 41: ทางไปต่อระดับช่องทาง (จำแนกครั้งเดียว ใช้ทุกรอบ) แทนการทำใบมือทุกรอบโอน
+                $"ให้ผู้ทำบัญชีจำแนกประเภทเงินได้ของ \"{labels}\" ครั้งเดียวที่หน้าตั้งค่าช่องทาง → \"ประเภทเงินได้ของค่าธรรมเนียม\" "
+                + "(ค่าธรรมเนียม/ค่านายหน้า = 40(2) ⇒ ระบบหักตาม ม.70 ลง ภ.ง.ด.54 ให้ · ไม่ต้องหัก = \"ไม่หัก ณ ที่จ่าย\") แล้วดูตัวอย่างใหม่"
+                + GatewayConfigHint(channel),
                 g.Select(x => x.Line.Id).ToList(), null));
         }
         return issues;
     }
+
+    /// <summary>ฝ่ายค้าน W-6: ช่องทางที่ผูกการตั้งค่า gateway — โหมดหัก ณ ที่จ่ายเก็บสองที่ (config gateway · ช่องทาง) และต้องตรงกัน (คำตัดสินข้อ 26)
+    /// ⇒ ทางไปต่อที่ให้ "เปลี่ยนโหมดของช่องทาง" ต้องบอกให้แก้ config ของ gateway ด้วย ไม่งั้นผู้ใช้ไปชนด่านโหมดไม่ตรงกันต่อ</summary>
+    private static string GatewayConfigHint(SettlementChannel channel)
+        => channel.PaymentProviderConfigId is null ? ""
+            : " · ช่องทางนี้ผูกการตั้งค่า gateway: ถ้าเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทาง ต้องแก้ \"หัก ณ ที่จ่ายค่าธรรมเนียม\" ที่หน้า "
+              + "\"ตั้งค่าการรับชำระเงินออนไลน์\" ให้ตรงกันด้วย (ระบบตรวจว่าสองที่ตอบตรงกัน)";
 
     /// <summary>
     /// ผู้ติดต่อของช่องทางอยู่ต่างประเทศ แต่ช่องทางไม่ได้ตั้งเป็นต่างประเทศ และแผนมีขาหัก ณ ที่จ่ายที่เราต้องยื่นเอง ⇒ บล็อก (null = ไม่มีปัญหา)

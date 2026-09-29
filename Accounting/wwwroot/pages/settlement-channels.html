@@ -150,6 +150,11 @@
         const lockWhy = 'ช่องทางนี้มีรอบโอนแล้ว — แก้ไม่ได้ เพราะยอดพักและรายการเดิมผูกอยู่กับค่าเดิม (สร้างช่องทางใหม่แทน หรือยกเลิกรอบโอนทั้งหมดของช่องทางนี้ก่อน)';
         let feeMap = {};
         try { feeMap = ch?.feeAccountMapJson ? (JSON.parse(ch.feeAccountMapJson) || {}) : {}; } catch { feeMap = {}; }
+        // รอบ 200 ทีม WF (คำตัดสินข้อ 41): ประเภทเงินได้ของค่าธรรมเนียมที่ตั้งไว้ (ฟอร์มใหม่ = ว่าง ห้ามค้างค่าของช่องทางก่อน)
+        let incomeMap = {};
+        try { incomeMap = ch?.whtIncomeTypeMapJson ? (JSON.parse(ch.whtIncomeTypeMapJson) || {}) : {}; } catch { incomeMap = {}; }
+        const effective = {};
+        (ch?.whtIncomeTypes || []).forEach(x => { effective[x.lineType] = x.description; });
         const gateways = this.ref?.gatewayConfigs || [];
         const kindSel = locked
           ? `<div class="locked">${Layout.esc(this.label(c.channelKinds, ch.kind))}<span class="why">${Layout.esc(lockWhy)}</span></div>
@@ -203,6 +208,17 @@
                   r.defaultAccountCode ? '(ผังมาตรฐาน ' + r.defaultAccountCode + ')' : '(ผังมาตรฐาน)')}</select></div>`).join('')}
             </div>
 
+            <h3 style="margin-top:18px">ประเภทเงินได้ของค่าธรรมเนียม (หัก ณ ที่จ่าย)</h3>
+            <p class="sub">เว้นว่าง = ใช้ค่าตั้งต้นในวงเล็บ (ผู้ให้บริการต่างประเทศ: ค่าคอม/ค่าธรรมเนียม = 40(2) หักตาม ม.70 ลง ภ.ง.ด.54) ·
+              ผู้ทำบัญชีจำแนกครั้งเดียว ใช้กับทุกรอบโอนถัดไป · มีผลเมื่อเปิดโหมดหัก ณ ที่จ่ายของช่องทาง</p>
+            <div class="fgrid">
+              ${(c.feeIncomeTypes || []).map(t => `<div><label>${Layout.esc(t.label)}</label>
+                <select class="form-select" data-income-line="${Layout.esc(t.lineType)}"
+                  data-default-domestic="${Layout.esc(t.domesticDefault || '')}" data-default-foreign="${Layout.esc(t.foreignDefault || '')}">
+                  ${this.incomeOptions(incomeMap[t.lineType] || '')}</select>
+                ${effective[t.lineType] ? `<div class="hint">ที่ใช้อยู่: ${Layout.esc(effective[t.lineType])}</div>` : ''}</div>`).join('')}
+            </div>
+
             <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn btn-primary" onclick="Page.save()">💾 บันทึกช่องทาง</button>
               <button class="btn btn-secondary" onclick="Page.cancel()">ยกเลิก</button>
@@ -214,6 +230,25 @@
         this.onKindChange();
         this.showModeHint();
         document.getElementById('channelForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+
+      // ตัวเลือกประเภทเงินได้ — รหัส/ป้ายจากเซิร์ฟเวอร์ (ThaiWhtRateTable ตัวเดียว) · ตัวแรกว่าง = ค่าตั้งต้น (ป้ายเติมตามโหมด VAT ที่เลือก)
+      incomeOptions(selected) {
+        const codes = this.ref?.catalog?.whtIncomeCodes || [];
+        return `<option value="" data-default-option="1">(ค่าตั้งต้น)</option>` + codes.map(o =>
+          `<option value="${Layout.esc(o.value)}" ${o.value === selected ? 'selected' : ''}>${Layout.esc(o.label)}</option>`).join('');
+      },
+
+      // ป้ายของตัวเลือก "ค่าตั้งต้น" ขึ้นกับว่าช่องทางเป็นผู้ให้บริการต่างประเทศไหม — ค่าตั้งต้นทั้งสองบริบทมาจากเซิร์ฟเวอร์ (feeIncomeTypes)
+      refreshIncomeDefaults() {
+        const foreign = document.getElementById('fVat')?.value === 'ForeignPp36';
+        const codes = this.ref?.catalog?.whtIncomeCodes || [];
+        document.querySelectorAll('[data-income-line]').forEach(sel => {
+          const def = foreign ? sel.dataset.defaultForeign : sel.dataset.defaultDomestic;
+          const opt = sel.querySelector('option[data-default-option]');
+          const label = def ? ((codes.find(o => o.value === def) || {}).label || def) : 'ไม่หัก ณ ที่จ่าย';
+          if (opt) opt.textContent = `(ค่าตั้งต้น: ${label})`;
+        });
       },
 
       // ช่อง gateway ใช้ได้เฉพาะชนิด Gateway (เซิร์ฟเวอร์ตีกลับชนิดอื่น) — ซ่อนแทนการปล่อยให้เลือกแล้วโดนตีกลับ
@@ -231,6 +266,7 @@
           .filter(o => o && o.description).map(o => `${Layout.esc(o.label)}: ${Layout.esc(o.description)}`);
         const el = document.getElementById('modeHint');
         if (el) el.innerHTML = parts.join('<br>');
+        this.refreshIncomeDefaults();
       },
 
       cancel() { this.editing = null; document.getElementById('formBox').innerHTML = ''; },
@@ -239,6 +275,8 @@
         const val = (id) => (document.getElementById(id)?.value || '').trim();
         const feeMap = {};
         document.querySelectorAll('[data-fee-role]').forEach(sel => { if (sel.value) feeMap[sel.dataset.feeRole] = sel.value; });
+        const incomeMap = {};
+        document.querySelectorAll('[data-income-line]').forEach(sel => { if (sel.value) incomeMap[sel.dataset.incomeLine] = sel.value; });
         const ch = this.editing;
         const kind = val('fKind');
         return {
@@ -254,6 +292,8 @@
           reserveAccountId: val('fReserve') || null,
           disputeAccountId: val('fDispute') || null,
           feeAccountMapJson: Object.keys(feeMap).length ? JSON.stringify(feeMap) : null,
+          // ว่าง = ค่าตั้งต้นทั้งหมด (เซิร์ฟเวอร์ล้างค่าที่เคยตั้ง) — ค่าที่เคยตั้งถูก hydrate กลับในฟอร์มแล้ว จึงไม่หายเงียบตอนแก้ช่องอื่น
+          whtIncomeTypeMapJson: Object.keys(incomeMap).length ? JSON.stringify(incomeMap) : null,
           feeVatMode: val('fVat'),
           feeWhtMode: val('fWht'),
           revenueModel: val('fRevenue'),

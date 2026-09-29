@@ -33,7 +33,9 @@ public sealed record SettlementReferenceData(
     IReadOnlyList<SettlementColumnFieldOption> ColumnFields,
     IReadOnlyList<SettlementEnumOption> DateOrders,
     IReadOnlyList<SettlementEnumOption> BatchFilterStatuses,
-    IReadOnlyList<SettlementEnumOption> TimeZones);
+    IReadOnlyList<SettlementEnumOption> TimeZones,
+    IReadOnlyList<SettlementFeeIncomeTypeOption>? FeeIncomeTypes = null,
+    IReadOnlyList<SettlementEnumOption>? WhtIncomeCodes = null);
 
 /// <summary>
 /// **ป้ายไทยของ enum settlement ทั้งชุด — ตัวตั้งตัวเดียวของหน้าเว็บ** (รอบ 198 เฟส 1 ทีม D · CLAUDE.md F2 ข้อ 4/5)
@@ -76,7 +78,13 @@ public static class SettlementReferenceCatalog
             new SettlementEnumOption("Auto", "ให้ระบบดูจากหัวคอลัมน์ (ถามเมื่อไม่แน่ใจ)"),
             new SettlementEnumOption("Bangkok", "เวลาไทย (UTC+7)"),
             new SettlementEnumOption("Utc", "UTC (ระบบบวก 7 ชั่วโมงก่อนตัดวัน)"),
-        });
+        },
+        // รอบ 200 ทีม WF (คำตัดสินข้อ 41): ประเภทเงินได้ของค่าธรรมเนียมต่อประเภทบรรทัด — ค่าตั้งต้นสองบริบท + ตัวเลือกรหัสจากตารางกฎหมายตัวเดียว
+        SettlementWhtIncomeType.Options(),
+        ThaiWhtRateTable.All.Where(t => t.Code != "1")
+            .Select(t => new SettlementEnumOption(t.Code, $"{t.TaxSection} {t.Name}"))
+            .Prepend(new SettlementEnumOption(SettlementWhtIncomeType.NoWithholding, "ไม่หัก ณ ที่จ่าย"))
+            .ToList());
 
     /// <summary>
     /// **สถานะที่รายการรอบโอนกรองได้** (review198-D D-05) — รอบที่ยกเลิกแล้วถูก soft-delete (<c>IsDeleted</c> + ตัวกรองส่วนกลางของ EF) ⇒

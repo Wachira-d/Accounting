@@ -1591,6 +1591,20 @@ public partial class TaxService : ITaxService
         if (remittedElsewhere.Count > 0)
             docs = docs.Where(d => !remittedElsewhere.Contains(d.Id)).ToList();
 
+        // คำตัดสินรอบ 200 ข้อ 40 (ทีม WF · ฝ่ายค้าน W-3): ฐาน ภ.พ.36 รวมภาษีเงินได้ที่ผู้จ่ายออกแทน — ภาษีที่ออกแทนอ่านจาก 50 ทวิ แบบ
+        // "ออกให้ตลอดไป" ที่ผูกเอกสาร (ใบค่าธรรมเนียมรอบโอน settlement · ใบที่ผู้ใช้ออก 50 ทวิ ออกแทนเอง) · สูตรเดียว ForeignServiceVat.Pp36Base
+        var pp36DocIds = docs.Select(d => d.Id).ToList();
+        var borneByDoc = pp36DocIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.WithholdingTaxCerts.AsNoTracking()
+                    .Where(w => w.CompanyId == companyId && w.DocumentId != null && pp36DocIds.Contains(w.DocumentId.Value)
+                        && w.CertificateType == WithholdingTaxCertType.PayAlways
+                        && w.Status != WithholdingTaxCertStatus.Voided)
+                    .Select(w => new { DocId = w.DocumentId!.Value, w.TotalTaxAmount })
+                    .ToListAsync())
+                .GroupBy(x => x.DocId)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.TotalTaxAmount));
+
         var lineOrder = 1;
         foreach (var doc in docs.OrderBy(d => d.TaxPointDate ?? d.DocumentDate))
         {
@@ -1599,8 +1613,9 @@ public partial class TaxService : ITaxService
             // `doc.Lines?.Sum(...) ?? fallback` — Lines เป็น collection ที่ init
             // ไว้เสมอ (ไม่มีวัน null) ⇒ fallback เป็น dead code, ใบ header-only
             // ได้ฐาน 0 ทั้งที่มี VAT นำส่ง (จอ+ไฟล์ยื่นโชว์ฐาน 0.00)
-            var baseAmount = Accounting.Helpers.DocumentVatFallback.TaxBase(
-                doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
+            var baseAmount = Accounting.Helpers.ForeignServiceVat.Pp36Base(
+                Accounting.Helpers.DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount),
+                borneByDoc.TryGetValue(doc.Id, out var borneTax) ? borneTax : 0m);
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,

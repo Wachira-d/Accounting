@@ -304,8 +304,10 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// (review198-S4 S4-1)</param>
 /// <param name="Wallet">ผลของ <see cref="SettlementWalletContinuity.Judge"/> (review198-A R-A12) — null = ไม่ได้ตรวจ</param>
 /// <param name="FiledPp36Periods">เดือน ภ.พ.36 ที่ประกาศว่ายื่นแล้ว (review198-C C-11) — null = ไม่ได้ตรวจ</param>
-/// <param name="WhtFormType">แบบ ภ.ง.ด. ที่ 50 ทวิ ของรอบนี้จะเป็นจริง (ตัวเลือกแบบเดียวกับผู้ออก 50 ทวิ — นิติบุคคล 53 · บุคคลธรรมดา 3 · C-11) ·
-/// <see cref="FiledWhtPeriods"/> ต้องเป็นเดือนที่ยื่นแล้วของแบบนี้</param>
+/// <param name="WhtFormType">แบบ ภ.ง.ด. <b>ในประเทศ</b>ตามผู้รับ (ตัวเลือกแบบเดียวกับผู้ออก 50 ทวิ — นิติบุคคล 53 · บุคคลธรรมดา 3 · C-11) ·
+/// ขา WHT ผู้ให้บริการต่างประเทศใช้แบบของแผน (ภ.ง.ด.54) เสมอ — ตัดสินที่ <c>SettlementForeignWht.GateWhtForm</c> ตัวเดียว (ฝ่ายค้าน W-1 ·
+/// ผู้ลงบัญชีส่งผลของ <c>GateWhtForm</c> มาแล้วก็ได้ — เรียกซ้ำได้ผลเดิม) ·
+/// <see cref="FiledWhtPeriods"/> ต้องเป็นเดือนที่ยื่นแล้วของแบบที่ <c>GateWhtForm</c> คืน</param>
 /// <param name="Supplementary">ใบสรุปของรอบนี้ที่เป็นใบสรุปเพิ่มเติมของวันเดียวกัน (<see cref="SettlementSummarySupplement.Judge"/> · คำตัดสินรอบ 200 ข้อ 15)</param>
 /// <param name="Stock">ลักษณะกิจการเรื่องสต็อก (<see cref="SettlementStock.StanceOf"/> · C-15)</param>
 public sealed record SettlementPostingFacts(
@@ -402,7 +404,8 @@ public static class SettlementPostingGate
         var whtLegs = plan.FeeDocuments.Any(d => d.WhtAmount > 0m
             && d.WhtMode is SettlementFeeWhtMode.SelfWithholdReimbursed or SettlementFeeWhtMode.SelfWithholdPayerBorne);
         // review198-C C-11: แบบที่ 50 ทวิ จะเป็นจริง (ผู้รับเงินบุคคลธรรมดา ⇒ ภ.ง.ด.3 · ช่องทางต่างประเทศ ⇒ ภ.ง.ด.54 ทีม W) — เดิมดูแต่ ภ.ง.ด.53
-        var whtForm = WhtUnissuedCertGate.FormLabel(f.WhtFormType);
+        // ฝ่ายค้าน W-1 (ทีม WF): ตัวตั้งเดียว — ขา ภ.ง.ด.54 แผนเป็นเจ้าของ · ในประเทศ (3/53) ผู้ลงบัญชีเป็นเจ้าของ (ผู้เรียกลืมส่งแบบ ≠ ข้อความผิดแบบ)
+        var whtForm = WhtUnissuedCertGate.FormLabel(SettlementForeignWht.GateWhtForm(plan, f.WhtFormType));
         if (whtLegs && f.FiledWhtPeriods.Contains((f.PayoutDay.Year, f.PayoutDay.Month)))
             Add(SettlementPlanIssueCode.TaxPeriodFiled, true,
                 $"ภาษีหัก ณ ที่จ่ายของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น {whtForm} แล้ว",

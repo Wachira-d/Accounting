@@ -500,11 +500,10 @@ public class SettlementPostingService : ISettlementPostingService
                 .FirstOrDefaultAsync(c => c.Id == cpId && c.CompanyId == companyId && !c.IsDeleted, ct)
             : null;
         // review198-C C-11: แบบที่ 50 ทวิ ของรอบนี้จะเป็นจริง — ตัวเลือกตัวเดียวกับ WithholdingTaxCertService.CreateAsync (ผู้รับบุคคลธรรมดา ⇒ ภ.ง.ด.3)
-        // ช่องทางผู้ให้บริการต่างประเทศ ⇒ ภ.ง.ด.54 (ทีม W · SettlementForeignWht ตัวเดียว) · ในประเทศ ⇒ ตัวเลือกของ 50 ทวิ
-        var whtForm = SettlementForeignWht.WhtForm(channel.FeeVatMode) == TaxType.WithholdingTax54
-            ? TaxType.WithholdingTax54
-            : Accounting.Services.Implementations.WithholdingTaxCertService
-                .ResolveWhtFormType(counterparty, TaxType.WithholdingTax53).formType;
+        // ฝ่ายค้าน W-1 (ทีม WF): ตัวตั้งเดียวกับด่าน pure — ขา ภ.ง.ด.54 ของแผน (ช่องทางต่างประเทศ) ชนะ · ในประเทศ ⇒ ตัวเลือกของ 50 ทวิ
+        var domesticWhtForm = Accounting.Services.Implementations.WithholdingTaxCertService
+            .ResolveWhtFormType(counterparty, TaxType.WithholdingTax53).formType;
+        var whtForm = SettlementForeignWht.GateWhtForm(plan, domesticWhtForm);
 
         // เดือนภาษีที่ประกาศว่ายื่นแล้ว (TaxFilingLockPolicy ตัวเดียว) — ภ.พ.30 · แบบ ภ.ง.ด. ของ 50 ทวิ รอบนี้ · ภ.พ.36 (C-11)
         var filed = await _db.TaxReports.AsNoTracking()

@@ -49,6 +49,34 @@ public static class ForeignServiceVat
         => isForeignService && vatAmount > 0 ? vatAmount : 0m;
 
     /// <summary>
+    /// **ฐาน ภ.พ.36 — ตัวตั้งเดียวของทุกเส้น** (รอบ 200 ทีม WF · คำตัดสินข้อ 40 · ฝ่ายค้าน W-3)
+    /// <para>ฐาน = มูลค่าบริการ + ภาษีเงินได้ที่ผู้จ่าย<b>ออกแทน</b>ผู้ให้บริการต่างประเทศ (§79: มูลค่าทั้งหมดที่ได้รับ รวมประโยชน์ที่ผู้รับได้ ·
+    /// ภาษีที่ออกแทนเป็นประโยชน์ของผู้รับ) · หักจากเงินที่จ่าย (ไม่ได้ออกแทน) ⇒ <paramref name="payerBorneIncomeTax"/> = 0 ⇒ ฐาน = มูลค่าบริการเดิม ·
+    /// ตัวอย่าง: 450 ออกภาษีแทน ม.70 15/85 = 79.41 ⇒ ฐาน 529.41 ⇒ ภ.พ.36 37.06 (ไม่ใช่ 31.50)</para>
+    /// <para>ลำดับคำนวณที่ถูก: เงินได้รวมภาษีออกแทน → WHT → ภ.พ.36 (ผู้เรียกคิด WHT ก่อนแล้วส่งยอดภาษีที่ออกแทนเข้ามา)</para>
+    /// </summary>
+    public static decimal Pp36Base(decimal serviceValue, decimal payerBorneIncomeTax)
+        => serviceValue + (payerBorneIncomeTax > 0m ? payerBorneIncomeTax : 0m);
+
+    /// <summary>VAT ที่ประเมินเอง (ภ.พ.36) บนฐาน — round(ฐาน × อัตรา VAT ตามกฎหมาย, AwayFromZero) · อัตราจาก <see cref="PartnerVatRate.StatutoryRate"/> ตัวเดียว</summary>
+    public static decimal SelfAssessedVatOn(decimal pp36Base)
+        => pp36Base <= 0m ? 0m : Math.Round(pp36Base * PartnerVatRate.StatutoryRate / 100m, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// ภ.พ.36 ที่บันทึกไว้ต่ำกว่าฐานที่รวมภาษีออกแทนไหม — ส่วนที่ขาด (&gt; 0) หรือ 0 · ใช้กับเส้นเอกสารคีย์มือ/OCR ที่ติ๊กบริการต่างประเทศ
+    /// แล้วออก 50 ทวิ แบบ "ออกให้ตลอดไป" ภายหลัง (เอกสารคิด VAT จากบรรทัดก่อนรู้ว่ามีภาษีออกแทน)
+    /// </summary>
+    /// <param name="serviceValue">ฐานค่าบริการของเอกสาร (ไม่รวมภาษีออกแทน)</param>
+    /// <param name="payerBorneIncomeTax">ภาษีที่ออกแทนตาม 50 ทวิ</param>
+    /// <param name="recordedVat">ภ.พ.36 ที่เอกสารตั้งไว้</param>
+    public static decimal Pp36Shortfall(decimal serviceValue, decimal payerBorneIncomeTax, decimal recordedVat)
+    {
+        var expected = SelfAssessedVatOn(Pp36Base(serviceValue, payerBorneIncomeTax));
+        var gap = expected - recordedVat;
+        return gap > 0.005m ? gap : 0m;
+    }
+
+    /// <summary>
     /// แยกขาเครดิตหนึ่งก้อน (<paramref name="creditTotal"/> = ยอดที่ "จะเครดิต
     /// ให้ผู้รับเงิน" ถ้าไม่ใช่บริการต่างประเทศ) ออกเป็น ผู้รับเงิน + ภ.พ.36
     ///

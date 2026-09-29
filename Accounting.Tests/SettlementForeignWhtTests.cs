@@ -68,7 +68,7 @@ public class SettlementForeignWhtTests
         Assert.Equal(15m, line.WhtRatePercent);
         Assert.Equal(450m, line.WhtBase);
         Assert.Equal(529.41m, line.WhtCertIncome);                                // ออกภาษีแทน: เงินได้ = ฐาน + ภาษี
-        Assert.Equal(31.50m, fee.Pp36Payable);                                   // ภ.พ.36 ยังเกิดตามเดิม
+        Assert.Equal(37.06m, fee.Pp36Payable);                                   // คำตัดสินข้อ 40 (ทีม WF): ฐาน ภ.พ.36 = 529.41 รวมภาษีออกแทน (เดิม 31.50 บนฐาน 450)
 
         var legs54 = plan.PayoutJournal.Where(l => l.AccountRole == SettlementAccountRoles.WhtPayable54).ToList();
         Assert.Equal(79.41m, legs54.Sum(l => l.Credit));
@@ -121,9 +121,9 @@ public class SettlementForeignWhtTests
         Assert.True(plan.CanPost);
         var fee = Assert.Single(plan.FeeDocuments);
         Assert.Equal(SettlementFeeVatTreatment.SelfAssessedPp36NotClaimable, fee.VatTreatment);
-        Assert.Equal(31.50m, fee.Pp36Payable);                                    // §83/6 ผู้จ่ายยื่นเสมอ
+        Assert.Equal(37.06m, fee.Pp36Payable);                                    // §83/6 ผู้จ่ายยื่นเสมอ · ฐานรวมภาษีออกแทน 529.41 (ข้อ 40)
         Assert.Equal(0m, fee.InputVat);                                           // เคลมไม่ได้
-        Assert.Equal(481.50m, fee.Expense);                                       // ⇒ ต้นทุน
+        Assert.Equal(487.06m, fee.Expense);                                       // ⇒ ต้นทุน (450 + 37.06)
         Assert.Equal(79.41m, fee.WhtAmount);                                      // ฐาน WHT = 450 (ไม่รวม VAT ที่ประเมินเอง)
         Assert.Equal(TaxType.WithholdingTax54, fee.WhtForm);
     }

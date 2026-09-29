@@ -52,7 +52,10 @@ public record WithholdingTaxCertResponse(
     string? DocumentNumber = null,
     Guid? SourcePayrollRunId = null,
     // true เมื่อแก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
-    bool IsEditable = false);
+    bool IsEditable = false,
+    // รอบ 200 ทีม WF (ฝ่ายค้าน W-5 · คำตัดสินข้อ 40): คำเตือนตอนออก/แก้ใบ (ไม่บล็อก) — อัตรา ภ.ง.ด.54 ไม่ตรงตัวตัดสิน ม.70 ·
+    // ภ.พ.36 ของเอกสารต้นทางไม่รวมภาษีที่ออกแทน · null = ไม่ได้ตรวจ (ตอบจาก GET) · [] = ตรวจแล้วไม่มีปัญหา
+    IReadOnlyList<string>? Warnings = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,
