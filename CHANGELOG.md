@@ -3794,4 +3794,4 @@ _2026-09-29 รอบ 200 ทีม GF — แก้ผลฝ่ายค้า�
 - **R200G-3** `LoadIntentRowsAsync` ขอบช่วงเวลาไทย (`GatewaySettlementMath.ConfirmedFromUtc`/`ConfirmedToExclusiveUtc`) — รูปแบบ `CalendarDateUtc(x).AddDays(1)` เทียบ `ConfirmedAt` เหลือ 0 จุด
 - **R200G-6** `PaymentIntentPolicy.IsProviderFeeFinal` — ค่าธรรมเนียมจาก charge ที่เงินยังไม่เคลื่อนไม่ถูกเก็บ · เส้น webhook ซ้ำใช้ตัวตัดสินเดียวกัน
 - **R200G-8** แจ้งเตือน "รับชำระค้าง" บอกสิทธิ์ `Bank.View` ที่ต้องใช้ · **R200G-4/5** เข้ารายการทดสอบ sandbox ใน `PAYMENT_GATEWAY_DESIGN.md` §4.4
-- เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit <pending>)_
+- เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit 6986653d)_

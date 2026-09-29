@@ -136,11 +136,11 @@
 
 | ID | สถานะ | ที่แก้ | เทสต์ |
 |---|---|---|---|
-| R200G-1 | ✅ <pending> | `pos.html` ตารางสินค้า/ปุ่มหมวด/ป้ายช่องทางชำระ (`Layout.esc` · `Layout.jsArg`) · สีโต๊ะ: เซิร์ฟเวอร์**ไม่เคย**ตรวจ ⇒ `Helpers/PosTableStyle` (บันทึก 400 · อ่านส่งค่าปลอดภัย) + กรองซ้ำที่หน้า · `pos-floorplan.html` หนี `shape`/กรองสี | `STYLE_*` |
-| R200G-2 | ✅ <pending> | `MoneyAccountFallback.TerminalPinFor` — ธนาคารที่ปักเฉพาะ `BankDeposit` · ปิดบิล + คืนเงินผ่าน resolver ตัวเดียว · SQL อ่านอย่างเดียวใน `team-GF.md` (ไม่แก้ JE เก่า — DECISIONS ข้อ 20) | `PIN_*` |
-| R200G-3 | ✅ <pending> | `LoadIntentRowsAsync` → `GatewaySettlementMath.ConfirmedFromUtc/ConfirmedToExclusiveUtc` (ต้นช่วงก็เลื่อน 7 ชม. — แก้ทั้งคู่) · รูปแบบเดิมเหลือ 0 จุด | `RANGE_*` |
+| R200G-1 | ✅ 6986653d | `pos.html` ตารางสินค้า/ปุ่มหมวด/ป้ายช่องทางชำระ (`Layout.esc` · `Layout.jsArg`) · สีโต๊ะ: เซิร์ฟเวอร์**ไม่เคย**ตรวจ ⇒ `Helpers/PosTableStyle` (บันทึก 400 · อ่านส่งค่าปลอดภัย) + กรองซ้ำที่หน้า · `pos-floorplan.html` หนี `shape`/กรองสี | `STYLE_*` |
+| R200G-2 | ✅ 6986653d | `MoneyAccountFallback.TerminalPinFor` — ธนาคารที่ปักเฉพาะ `BankDeposit` · ปิดบิล + คืนเงินผ่าน resolver ตัวเดียว · SQL อ่านอย่างเดียวใน `team-GF.md` (ไม่แก้ JE เก่า — DECISIONS ข้อ 20) | `PIN_*` |
+| R200G-3 | ✅ 6986653d | `LoadIntentRowsAsync` → `GatewaySettlementMath.ConfirmedFromUtc/ConfirmedToExclusiveUtc` (ต้นช่วงก็เลื่อน 7 ชม. — แก้ทั้งคู่) · รูปแบบเดิมเหลือ 0 จุด | `RANGE_*` |
 | R200G-4 | 📋 sandbox | `PAYMENT_GATEWAY_DESIGN.md` §4.4 รายการทดสอบ + ข้อความเตือนล่วงหน้า | — |
 | R200G-5 | 📋 sandbox | `PAYMENT_GATEWAY_DESIGN.md` §4.4 | — |
-| R200G-6 | ✅ <pending> | `PaymentIntentPolicy.IsProviderFeeFinal` · เส้น duplicate ใช้ตัวตัดสินเดียวกับ `ApplyChargeToEntity` | `FEE_*` |
-| R200G-7 | ✅ <pending> | เกณฑ์ผังที่ปักได้ตัวเดียว `UsableTerminalMoneyPin` (สินทรัพย์ · ใช้งาน) ทั้งตัวตรวจ/ตอนปิดบิล/ป้าย · `TerminalPinWarning` | `WARN_*` |
-| R200G-8 | ✅ <pending> | ข้อความแจ้งเตือนบอกสิทธิ์ `Bank.View` + ทางไปต่อ · เมนูไม่ gate คงเป็นคำถามค้างของทีม G | — |
+| R200G-6 | ✅ 6986653d | `PaymentIntentPolicy.IsProviderFeeFinal` · เส้น duplicate ใช้ตัวตัดสินเดียวกับ `ApplyChargeToEntity` | `FEE_*` |
+| R200G-7 | ✅ 6986653d | เกณฑ์ผังที่ปักได้ตัวเดียว `UsableTerminalMoneyPin` (สินทรัพย์ · ใช้งาน) ทั้งตัวตรวจ/ตอนปิดบิล/ป้าย · `TerminalPinWarning` | `WARN_*` |
+| R200G-8 | ✅ 6986653d | ข้อความแจ้งเตือนบอกสิทธิ์ `Bank.View` + ทางไปต่อ · เมนูไม่ gate คงเป็นคำถามค้างของทีม G | — |
