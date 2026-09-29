@@ -5801,8 +5801,6 @@ public partial class DocumentService : IDocumentService
         // ที่ขาด field บังคับ (BuyerTaxId 13 หลัก + BuyerAddress + BuyerBranchCode 5 หลัก).
         // กัน operator-error: ตอนนี้ระบบเตือนแล้ว user กด acknowledge ผ่านได้ →
         // ใบกำกับที่ไม่ครบ §86/4 หลุดเข้า GL → ลูกค้ารับใบไปใช้ภาษีซื้อไม่ได้.
-        var rd864Types = new[] { DocumentType.TaxInvoice, DocumentType.Receipt,
-            DocumentType.DebitNote, DocumentType.CreditNote };
         // default = บังคับ (เดิม opt-in default off → ใบกำกับไม่ครบหลุดเข้า GL).
         var enforce864 = await _db.CompanySettings.AsNoTracking()
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
@@ -5815,11 +5813,8 @@ public partial class DocumentService : IDocumentService
         // ข้อมูลผู้ซื้อไม่ครบ). ถ้าผู้ซื้อครบ → หัว upgrade เป็นใบกำกับ/ใบเสร็จ; ถ้า
         // ไม่ครบ (นิติบุคคล) → block ให้เติมข้อมูล หรือติ๊กไม่ประสงค์ใบกำกับ (→ ใบเสร็จล้วน).
         // opt-out ผ่าน flag ยังใช้กับ CN/DN. ใบที่ไม่ครบ = ลูกค้าเคลมภาษีซื้อไม่ได้.
-        var vatBearingReceipt = doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
-            && doc.VatAmount > 0;
-        var mustEnforce864 = doc.DocumentType == DocumentType.TaxInvoice
-            || vatBearingReceipt
-            || (enforce864 && rd864Types.Contains(doc.DocumentType));
+        // รอบ 200 ทีม V1F (V1-R10): ตัวตัดสินเดียวกับเส้นยกเลิกและออกใบแทน (TaxInvoiceCompletenessChecker.MustEnforceBuyerFields)
+        var mustEnforce864 = Tax.TaxInvoiceCompletenessChecker.MustEnforceBuyerFields(doc.DocumentType, doc.VatAmount, enforce864);
         // ── §83/6: ติ๊ก "บริการต่างประเทศ ภ.พ.36" แต่ VAT = 0 ──
         // self-assess VAT คือหัวใจของ ภ.พ.36 — VAT 0 = ใบนี้ไม่เข้า dashboard
         // นำส่ง ไม่มีอะไรให้รับรู้ ไม่มีภาษีซื้อเข้า ภ.พ.30 = หายทั้งวงจรเงียบ ๆ
@@ -5894,49 +5889,43 @@ public partial class DocumentService : IDocumentService
         // ผู้ซื้อ §86/4 (ใบกำกับจริงออกตอนใช้บริการ/ชำระครบ ค่อยบังคับ)
         var isDeferredVatDeposit = doc.IsDeposit && doc.DepositOutputVatDeferred
             && doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher;
-        if (mustEnforce864 && doc.VatAmount > 0 && doc.Contact != null
-            && !doc.Contact.IsWalkInCustomer && !isDeferredVatDeposit
-            && !doc.BuyerDeclinedTaxInvoice)
+        // รอบ 200 ทีม V1F (V1-R10): ตัวตัดสินเดียว TaxInvoiceCompletenessChecker.BuyerBlockingFields — เส้นยกเลิกและออกใบแทนถามตัวเดียวกัน
+        var blockingBuyerFields = Tax.TaxInvoiceCompletenessChecker.BuyerBlockingFields(
+            mustEnforce864, doc.VatAmount, doc.Contact, isDeferredVatDeposit, doc.BuyerDeclinedTaxInvoice);
+        if (blockingBuyerFields != null)
         {
             // เกณฑ์กลาง (แหล่งเดียวกับที่ PdfGenerationService ใช้ตัดสินหัวเอกสาร
             // — เดิมเป็นโค้ดคนละชุดจึง drift ได้): §86/4(3) บังคับแค่ชื่อ+ที่อยู่
             // ผู้ซื้อ; เลขภาษี + สาขา บังคับเฉพาะผู้ซื้อที่เป็นผู้ประกอบการจด
             // ทะเบียน (ประกาศอธิบดีฯ 194/199) — บุคคลธรรมดาที่ให้ชื่อ+ที่อยู่ครบ
             // **ออกใบกำกับภาษีเต็มรูปให้ได้** ไม่ต้อง downgrade เป็นใบเสร็จ
-            var missing = Tax.TaxInvoiceCompletenessChecker
-                .MissingBuyerFields(doc.Contact).ToList();
-            var isJuristicBuyer = Tax.TaxInvoiceCompletenessChecker.IsJuristicBuyer(doc.Contact);
-            if (missing.Count > 0)
-            {
-                // หลักบัญชี: "เอกสารที่ §86/4 ไม่ครบ = ไม่ใช่ใบกำกับภาษีเต็มรูป จึง
-                // ไม่ควรมีหัวว่า 'ใบกำกับภาษี'" — แต่การจัดการต่างกันตามชนิดผู้ซื้อ:
-                //
-                //  • ผู้ซื้อ "นิติบุคคล" (จด VAT) → ตั้งใจจะเอาไปเคลมภาษีซื้อ การ
-                //    downgrade เป็นใบเสร็จเงียบ ๆ จะทำให้ผู้ซื้อเสียสิทธิเคลม →
-                //    block + ชี้ทางออกชัดเจน (เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับ)
-                //    ผู้ใช้ไม่ตัน มีทางไปต่อเสมอ
-                //  • ผู้ซื้อ "บุคคลธรรมดา/ไม่มีเลขภาษี" (ขายปลีก) → ไม่ต้องใช้ใบกำกับ
-                //    เต็มรูปอยู่แล้ว → ไม่ block. หัวเอกสารเปลี่ยนเป็น "ใบเสร็จรับเงิน/
-                //    ใบกำกับภาษีอย่างย่อ" (§86/6) เองอยู่แล้วโดย**ไม่ต้องประทับธง**
-                //    VAT ขายยังลง ภ.พ.30 ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร)
-                //    ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
-                //
-                // ⚠️ **ห้ามเขียน `doc.BuyerDeclinedTaxInvoice = true` กลับมาอีก**
-                // (คำตัดสินรอบ 181): ธงนั้นแปลว่า "**ผู้ซื้อ**แจ้งว่าไม่ประสงค์รับ
-                // ใบกำกับ" = เจตนาของมนุษย์ ระบบแต่งขึ้นแทนไม่ได้ — และเมื่อ persist
-                // แล้วมันจะถูก clone ต่อไปเอกสารลูก + โผล่ในข้อความ e-Tax ราวกับ
-                // ลูกค้าเคยปฏิเสธจริง. ผู้อ่านธงนี้ทุกตัวตรวจ "ผู้ซื้อ §86/4 ไม่ครบ"
-                // ด้วยตัวเองอยู่แล้ว (PdfGenerationService `buyerDeclined` /
-                // `IsAbbreviatedTaxInvoiceDoc` · TaxService `NotFullTaxInvoice`)
-                // ⇒ หัวเอกสาร/รายงานภาษีเหมือนเดิมทุกใบ
-                if (isJuristicBuyer)
-                    throw new InvalidOperationException(
-                        $"⛔ §86/4: ใบกำกับภาษีเต็มรูปต้องมี {string.Join(", ", missing)} " +
-                        "(ผู้ซื้อนิติบุคคล). เติมข้อมูลผู้ซื้อให้ครบ หรือ ติ๊ก " +
-                        "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็น " +
-                        "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ §86/6 " +
-                        "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2))");
-            }
+            // หลักบัญชี: "เอกสารที่ §86/4 ไม่ครบ = ไม่ใช่ใบกำกับภาษีเต็มรูป จึง
+            // ไม่ควรมีหัวว่า 'ใบกำกับภาษี'" — แต่การจัดการต่างกันตามชนิดผู้ซื้อ:
+            //
+            //  • ผู้ซื้อ "นิติบุคคล" (จด VAT) → ตั้งใจจะเอาไปเคลมภาษีซื้อ การ
+            //    downgrade เป็นใบเสร็จเงียบ ๆ จะทำให้ผู้ซื้อเสียสิทธิเคลม →
+            //    block + ชี้ทางออกชัดเจน (เติมข้อมูล หรือ ติ๊กไม่ประสงค์รับ)
+            //    ผู้ใช้ไม่ตัน มีทางไปต่อเสมอ
+            //  • ผู้ซื้อ "บุคคลธรรมดา/ไม่มีเลขภาษี" (ขายปลีก) → ไม่ต้องใช้ใบกำกับ
+            //    เต็มรูปอยู่แล้ว → ไม่ block. หัวเอกสารเปลี่ยนเป็น "ใบเสร็จรับเงิน/
+            //    ใบกำกับภาษีอย่างย่อ" (§86/6) เองอยู่แล้วโดย**ไม่ต้องประทับธง**
+            //    VAT ขายยังลง ภ.พ.30 ครบ (ภาระภาษีไม่ขึ้นกับหัวเอกสาร)
+            //    ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2)
+            //
+            // ⚠️ **ห้ามเขียน `doc.BuyerDeclinedTaxInvoice = true` กลับมาอีก**
+            // (คำตัดสินรอบ 181): ธงนั้นแปลว่า "**ผู้ซื้อ**แจ้งว่าไม่ประสงค์รับ
+            // ใบกำกับ" = เจตนาของมนุษย์ ระบบแต่งขึ้นแทนไม่ได้ — และเมื่อ persist
+            // แล้วมันจะถูก clone ต่อไปเอกสารลูก + โผล่ในข้อความ e-Tax ราวกับ
+            // ลูกค้าเคยปฏิเสธจริง. ผู้อ่านธงนี้ทุกตัวตรวจ "ผู้ซื้อ §86/4 ไม่ครบ"
+            // ด้วยตัวเองอยู่แล้ว (PdfGenerationService `buyerDeclined` /
+            // `IsAbbreviatedTaxInvoiceDoc` · TaxService `NotFullTaxInvoice`)
+            // ⇒ หัวเอกสาร/รายงานภาษีเหมือนเดิมทุกใบ
+            throw new InvalidOperationException(
+                $"⛔ §86/4: ใบกำกับภาษีเต็มรูปต้องมี {string.Join(", ", blockingBuyerFields)} " +
+                "(ผู้ซื้อนิติบุคคล). เติมข้อมูลผู้ซื้อให้ครบ หรือ ติ๊ก " +
+                "'☑ ผู้ซื้อไม่ประสงค์รับใบกำกับภาษี' เพื่อออกเป็น " +
+                "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ §86/6 " +
+                "(VAT ยังนำส่ง ภ.พ.30 ครบ — ผู้ซื้อเคลมภาษีซื้อไม่ได้ §82/5(2))");
         }
 
         // Enforce CompanySettings.RequireApprovalForDocuments: เกินวงเงิน →
@@ -5946,10 +5935,11 @@ public partial class DocumentService : IDocumentService
         // มิฉะนั้น flow ที่ setting นี้บังคับใช้เองจะโดน block ตัวเอง (deadlock).
         var settings = await _db.CompanySettings.AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        if (settings is { RequireApprovalForDocuments: true })
+        // รอบ 200 ทีม V1F (V1-R6): เกณฑ์อยู่ที่ ApprovalControlPolicy ตัวเดียว (เส้นยกเลิกและออกใบแทนถามตัวเดียวกัน)
+        if (settings != null && Accounting.Helpers.ApprovalControlPolicy.NeedsSignatureFlow(
+                settings.RequireApprovalForDocuments, settings.ApprovalThresholdAmount, doc.TotalAmount))
         {
             var threshold = settings.ApprovalThresholdAmount ?? 0m;
-            if (doc.TotalAmount >= threshold)
             {
                 var sigRows = await _db.Set<DocumentApproval>().AsNoTracking()
                     .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && !a.IsDeleted)
@@ -5975,9 +5965,8 @@ public partial class DocumentService : IDocumentService
         // มาตรฐาน internal control ระดับ ERP — ผู้สร้างเอกสารห้ามอนุมัติ
         // เอกสารของตัวเอง (opt-in ผ่าน settings; default ปิดเพื่อไม่ block
         // เจ้าของกิจการคนเดียวที่ทำทุกหน้าที่)
-        if (settings is { SodBlockSelfApproval: true }
-            && !string.IsNullOrEmpty(doc.CreatedBy)
-            && string.Equals(doc.CreatedBy, approvedBy, StringComparison.OrdinalIgnoreCase))
+        if (settings != null && Accounting.Helpers.ApprovalControlPolicy.SelfApprovalBlocked(
+                settings.SodBlockSelfApproval, doc.CreatedBy, approvedBy))
             throw new InvalidOperationException(
                 "SoD: ผู้สร้างเอกสารห้ามอนุมัติเอกสารของตัวเอง (การแบ่งแยกหน้าที่เปิดอยู่) — " +
                 "ให้ผู้มีสิทธิ์อนุมัติคนอื่นเป็นผู้อนุมัติ");
@@ -9580,11 +9569,10 @@ public partial class DocumentService : IDocumentService
         var rcpt = await _db.Documents.FirstOrDefaultAsync(d => d.Id == receiptId && d.CompanyId == companyId);
         if (rcpt is not { IsSettlementReceipt: true })
             return (new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null), null);
-        var etaxStatuses = await _db.EtaxInvoices.AsNoTracking()
-            .Where(e => e.CompanyId == companyId && e.DocumentId == receiptId)
-            .Select(e => e.Status).ToListAsync();
-        var decision = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(
-            DocumentVoidPreconditions.StrongestEtax(etaxStatuses), rcpt.DocumentNumber, cause);
+        // รอบ 200 ทีม V1F (V1-P1): ตัวโหลดเดียว — แถว e-Tax + e-Tax by Email ที่ประทับเวลาแล้ว (ถึงกรมสรรพากร ⇒ ห้ามยกเลิกเงียบ)
+        var effectiveEtax = (await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, new[] { receiptId }))
+            .GetValueOrDefault(receiptId);
+        var decision = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(effectiveEtax, rcpt.DocumentNumber, cause);
         if (decision.Action == AutoReceiptEtaxAction.Refuse)
             throw new BusinessRuleException(decision.Message ?? "ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จส่ง e-Tax แล้ว",
                 "RD-ETAX-RECEIPT-SENT", 409);
@@ -9849,8 +9837,22 @@ public partial class DocumentService : IDocumentService
         // ไม่ใช่เลข Payment ⇒ ตัวเลือก JE ด้านบนไม่แตะ ⇒ void การชำระแล้ว VAT
         // ยังค้างที่ 21911 + OutputVatDueAt ยังตั้ง ⇒ ภ.พ.30 งวดนั้นเก็บภาษีขาย
         // ของเงินที่ไม่เคยได้รับ และรับชำระใหม่ก็ถูก idempotent guard บล็อกถาวร
+        //
+        // รอบ 200 ทีม V1F (ฝ่ายค้าน V1-R2): ใบเสร็จถือ VAT ที่ยังมีผล (เช็คเด้งแต่ใบเสร็จถึงกรมสรรพากรแล้ว ⇒ ติดธง ไม่ถูกยกเลิก · หรือใบเสร็จถือ VAT
+        // ใบอื่นของใบนี้) = ใบกำกับที่ออกไปแล้ว ⇒ ความรับผิดยังอยู่ · ห้ามถอยภาษีขายออกจาก ภ.พ.30 เงียบ ๆ — เงินกลับ (ลูกหนี้เปิดใหม่) แต่ VAT ยังรายงาน
+        // จนกว่าจะบันทึกว่ายกเลิกทาง e-Tax แล้ว (ResolveEtaxCancellationAsync ถอยให้ตอนนั้น) · ตัวตัดสินเดียว ShouldUndoOutputVatReclass
         if (doc.PaidAmount <= 0.005m && doc.OutputVatDueAt != null)
-            await TryUndoUndueOutputVatReclassAsync(companyId, doc, reason);
+        {
+            var liveVatReceiptKeepsTaxPoint =
+                (receiptDoc != null && DocumentVoidPreconditions.FlaggedReceiptKeepsTaxPoint(receiptDecision.Action, receiptDoc.VatAmount))
+                || await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: receiptDoc?.Id);
+            if (DocumentVoidPreconditions.ShouldUndoOutputVatReclass(doc.PaidAmount, doc.OutputVatDueAt != null, liveVatReceiptKeepsTaxPoint))
+                await TryUndoUndueOutputVatReclassAsync(companyId, doc, reason);
+            else
+                _logger.LogInformation(
+                    "ยกเลิกการชำระ {PayNo}: ไม่ถอยภาษีขายถึงกำหนดของ {Doc} — ยังมีใบเสร็จถือ VAT ที่มีผลอยู่ (ใบกำกับออกไปแล้ว)",
+                    payment.PaymentNumber, doc.DocumentNumber);
+        }
 
         // ── ทะเบียนเครดิตภาษีถูกหัก ณ ที่จ่ายฝั่งขาย 11910 (M-4) ─────────────
         // SyncWhtCreditReceivedAsync อ่านจาก GL จริงและลบแถวเองเมื่อยอดเป็น 0
@@ -12098,7 +12100,8 @@ public partial class DocumentService : IDocumentService
             var paymentCount = await _db.Payments.CountAsync(
                 pm => pm.DocumentId == doc.Id && pm.CompanyId == companyId && !pm.IsDeleted);
             var carryVat = Accounting.Helpers.SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-                doc.DocumentType, doc.VatAmount, doc.BalanceDue <= 0.005m && paymentCount == 1);
+                doc.DocumentType, doc.VatAmount, doc.BalanceDue <= 0.005m && paymentCount == 1,
+                liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: null));
 
             // สิทธิ์อนุมัติของ "ผู้กดออกใบ" → ใบสมบูรณ์ทันที (เลขจริง) หรือ Draft
             // รอผู้มีสิทธิ์อนุมัติ — กติกาเดียวกับตอนบันทึกรับชำระ
@@ -12474,8 +12477,10 @@ public partial class DocumentService : IDocumentService
                     // กติกาเดียวกับเส้นออกใบย้อนหลัง (Helpers/SettlementReceiptPolicy)
                     // — ห้ามเขียนเงื่อนไขซ้ำสองที่ ไม่งั้นใบเดียวกันถือ VAT หรือไม่ถือ
                     // ขึ้นกับว่าผู้ใช้กดปุ่มไหน
+                    // รอบ 200 ทีม V1F: ใบกำกับของการขายนี้ออกไปแล้ว (ใบเสร็จถือ VAT ที่ติดธงยังมีผล) ⇒ ใบรับเปล่า (ไม่ออกใบกำกับใบที่สอง)
                     var carryVat = Accounting.Helpers.SettlementReceiptPolicy
-                        .CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount, singleShotFull);
+                        .CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount, singleShotFull,
+                            liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: null));
                     var receiptDoc = await CreateSettlementReceiptAsync(companyId, doc, payment, createdBy, recorderCanApprove, carryVat);
                     payment.ReceiptDocumentId = receiptDoc.Id;
                     await _db.SaveChangesAsync();
@@ -17586,6 +17591,10 @@ public partial class DocumentService : IDocumentService
         ReplacementCarriesPostings: d.ReplacementCarriesPostings,
         EtaxCancelRequiredAt: d.EtaxCancelRequiredAt,
         EtaxCancelRequiredReason: d.EtaxCancelRequiredReason,
+        // รอบ 200 ทีม V1F (V1-R6) — คำขอยกเลิกและออกใบแทนที่รอคนที่สอง (เก็บแล้วต้อง echo กลับ)
+        ReissueRequestedAt: d.ReissueRequestedAt,
+        ReissueRequestedBy: d.ReissueRequestedBy,
+        ReissueRequestReason: SettlementPaidReissueRequestCodec.ReasonOf(d.ReissueRequestJson),
         // รอบ 193 — เก็บแล้วต้อง echo กลับ (กฎเหล็ก #4 A)
         ActualPaidAmount: d.ActualPaidAmount,
         RoundingAdjustment: d.RoundingAdjustment,

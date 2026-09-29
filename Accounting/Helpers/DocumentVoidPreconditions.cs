@@ -104,11 +104,46 @@ public static class DocumentVoidPreconditions
     }
 
     /// <summary>
+    /// **สถานะ e-Tax ที่ใช้ตัดสินการยกเลิก** (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-P1) — e-Tax by Email (SME: ส่งอีเมลพร้อม CC ที่อยู่ประทับเวลาของ
+    /// กรมสรรพากร) ไม่เปลี่ยน <c>EtaxInvoice.Status</c> แต่ใบถึงผู้ประทับเวลาแล้วจริง ⇒ มีบันทึกการส่งสำเร็จ = ถือเท่า "ตอบรับแล้ว"
+    /// (ยกเลิกจากระบบนี้ไม่ได้ — ต้องยกเลิก/ลดหนี้ทางกรมสรรพากร) · ไม่มีบันทึก = สถานะแถว e-Tax ตามเดิม · G6: pure
+    /// </summary>
+    internal static EtaxStatus? EffectiveEtax(EtaxStatus? strongest, bool sentByEmailWithRdTimestamp)
+        => sentByEmailWithRdTimestamp ? EtaxStatus.Accepted : strongest;
+
+    /// <summary>ตัวโหลดเดียวของสถานะ e-Tax ที่ใช้ตัดสินการยกเลิก — แถว e-Tax (ไปไกลที่สุด ไม่นับ Voided) + บันทึก e-Tax by Email ที่ส่งสำเร็จ
+    /// พร้อม CC ประทับเวลา (<see cref="EffectiveEtax"/>) · ทุก id ที่ถามอยู่ในผล (ไม่มี e-Tax = null) · tenant แล้ว</summary>
+    public static async Task<Dictionary<Guid, EtaxStatus?>> EffectiveEtaxAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default)
+    {
+        var result = new Dictionary<Guid, EtaxStatus?>();
+        if (documentIds.Count == 0) return result;
+        var ids = documentIds.Distinct().ToList();
+        var rows = await db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && ids.Contains(e.DocumentId))
+            .Select(e => new { e.DocumentId, e.Status })
+            .ToListAsync(ct);
+        var emailed = (await db.DocumentEmailLogs.AsNoTracking()
+                .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.DocumentId != null && ids.Contains(l.DocumentId.Value)
+                    && l.IsEtaxByEmail && l.IncludedRdTimestamp && l.Status == EmailLogStatus.Sent)
+                .Select(l => l.DocumentId!.Value)
+                .ToListAsync(ct))
+            .ToHashSet();
+        foreach (var id in ids)
+            result[id] = EffectiveEtax(StrongestEtax(rows.Where(r => r.DocumentId == id).Select(r => r.Status)), emailed.Contains(id));
+        return result;
+    }
+
+    /// <summary>
     /// **ยกเลิกการรับชำระแล้วใบเสร็จอัตโนมัติคู่กัน (<c>Payment.ReceiptDocumentId</c>) ต้องทำอะไร — ตัวตัดสินตัวเดียว** ของ
     /// <c>DocumentService.VoidPaymentAsync</c> ทุกทางเข้า (หน้าเอกสาร · ยกเลิกการลงบัญชีรอบโอน · เช็คเด้ง) และด่าน "ยกเลิกและออกใบแทน"
-    /// <para>คำตัดสินข้อ 11: ใบเสร็จยังไม่ถึงกรมสรรพากร ⇒ ยกเลิกได้เหมือนเดิม · ถึงแล้ว (ส่ง/ตอบรับ) ⇒ ผู้ใช้กดเอง = <b>ปฏิเสธพร้อมทางไปต่อ</b> ·
-    /// เช็คเด้ง = <b>ห้ามบล็อก</b> (เงินไม่เข้าจริง ต้องกลับรายการเงินเสมอ) แต่<b>ไม่ประทับ Voided เงียบ</b> — ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ
-    /// (ระบบยังไม่มีช่องทางส่งยกเลิก/ออกแทน e-Tax ที่กรมสรรพากรตอบรับแล้ว — มีแค่ยกเลิก e-Tax ที่ยังไม่ตอบรับ) · G6: pure</para>
+    /// <para>คำตัดสินข้อ 11: ใบเสร็จยังไม่ถึงกรมสรรพากร ⇒ ยกเลิกได้เหมือนเดิม · ถึงแล้ว (ส่ง/ตอบรับ/อีเมลประทับเวลา) ⇒ ผู้ใช้กดเอง =
+    /// <b>ปฏิเสธพร้อมทางไปต่อ</b> · เช็คเด้ง = <b>ห้ามบล็อก</b> (เงินไม่เข้าจริง ต้องกลับรายการเงินเสมอ) แต่<b>ไม่ประทับ Voided เงียบ</b> —
+    /// ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ · G6: pure</para>
+    /// <para>รอบ 200 ทีม V1F (ฝ่ายค้าน V1-P2): <b>ยกเลิกการลงบัญชีรอบโอน</b> = ติดธงแบบเช็คเด้ง (เดิมปฏิเสธ) — ด่าน <see cref="SettlementUnpostGate"/>
+    /// ปฏิเสธใบเสร็จที่ส่ง e-Tax แล้วไว้ก่อนแตะชิ้นแรกอยู่แล้ว ที่นี่ถึงได้เฉพาะเมื่อใบเสร็จถูกส่ง e-Tax <b>ระหว่าง</b>ด่านกับลูป ⇒ throw กลางลูป =
+    /// เอกสารยกเลิกไปแล้วบางใบ การรับชำระค้างครึ่ง · ธงมองเห็นและตามปิดได้ (<see cref="EtaxCancellationResolution"/>) โดยภาษีขายของใบยังอยู่ในแบบ
+    /// (<see cref="ShouldUndoOutputVatReclass"/>)</para>
     /// </summary>
     public static AutoReceiptEtaxDecision AutoReceiptOnPaymentVoid(EtaxStatus? strongestReceiptEtax, string? receiptNumber, PaymentVoidCause cause)
     {
@@ -116,24 +151,99 @@ public static class DocumentVoidPreconditions
             return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null);
         var no = string.IsNullOrWhiteSpace(receiptNumber) ? "คู่การรับชำระนี้" : receiptNumber!.Trim();
         var accepted = strongestReceiptEtax == EtaxStatus.Accepted;
-        if (cause == PaymentVoidCause.ChequeBounce)
+        if (cause is PaymentVoidCause.ChequeBounce or PaymentVoidCause.SettlementUnpost)
             return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.FlagEtaxCancellation,
-                $"ต้องยกเลิกทาง e-Tax — เช็คเด้ง (เงินไม่เข้าจริง) ระบบกลับรายการรับชำระแล้ว แต่ใบเสร็จ {no} "
-                + (accepted ? "ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)" : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted)")
-                + " จึงยังไม่ถูกยกเลิกในระบบ — "
+                "ต้องยกเลิกทาง e-Tax — "
+                + (cause == PaymentVoidCause.ChequeBounce
+                    ? "เช็คเด้ง (เงินไม่เข้าจริง) ระบบกลับรายการรับชำระแล้ว"
+                    : "ยกเลิกการลงบัญชีรอบโอน ระบบกลับรายการรับชำระแล้ว (ใบเสร็จถูกส่ง e-Tax ระหว่างทาง)")
+                + $" แต่ใบเสร็จ {no} "
                 + (accepted
-                    ? "ดำเนินการยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) "
+                    ? "ถึงกรมสรรพากรแล้วและยกเลิกจากระบบนี้ไม่ได้ (Accepted — ตอบรับแล้ว หรือ e-Tax by Email ที่ประทับเวลาแล้ว)"
+                    : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted)")
+                + " จึงยังไม่ถูกยกเลิกในระบบ · ภาษีขายตามใบนี้ (ถ้าใบถือ VAT) ยังรายงานใน ภ.พ.30 จนกว่าจะยกเลิกทางกรมสรรพากร — "
+                + (accepted
+                    ? "ดำเนินการยกเลิก/ออกใบลดหนี้ที่ระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) "
                     : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ (ทำได้ก่อนกรมสรรพากรตอบรับ) ")
-                + "แล้วแจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล");
+                + "แล้วกด “บันทึกว่ายกเลิกทาง e-Tax แล้ว” บนใบเสร็จนี้ (ระบบยกเลิกใบเสร็จและปลดบล็อกใบต้นทางให้) · แจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล");
         return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Refuse,
             $"ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จ {no} ที่ออกคู่การรับชำระ "
             + (accepted
-                ? "ได้รับตอบรับ e-Tax จากกรมสรรพากรแล้ว (Accepted) — ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากรก่อน (ระบบนี้ยังไม่มีช่องทางส่งยกเลิก e-Tax ที่ตอบรับแล้ว) "
+                ? "ถึงกรมสรรพากรแล้วและยกเลิกจากระบบนี้ไม่ได้ (Accepted — ตอบรับแล้ว หรือ e-Tax by Email ที่ประทับเวลาแล้ว) — ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากรก่อน "
                   + "· ถ้าเงินไม่ได้เข้าจริง (เช็คเด้ง) ให้บันทึก “เช็คเด้ง” ที่หน้าเช็ค ระบบจะกลับรายการเงินและติดธงให้ตามยกเลิก e-Tax"
                 : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) "
                   + "แล้วกดยกเลิกการชำระอีกครั้ง")
             + " · ระบบยังไม่ได้แตะอะไร");
     }
+
+    /// <summary>
+    /// **กลับ "ภาษีขายถึงกำหนด" (§78/1 · ย้าย 21911 กลับ 21913) ได้ไหม** เมื่อการรับชำระถูกยกเลิก หรือใบเสร็จถูกบันทึกว่ายกเลิกทาง e-Tax แล้ว —
+    /// ตัวตัดสินเดียว (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-R2)
+    /// <para>ใบเสร็จถือ VAT (ใบกำกับ ณ วันรับเงิน) ที่ยังมีผลที่กรมสรรพากร (ติดธงต้องยกเลิกทาง e-Tax) = ความรับผิดเกิดแล้วตามใบกำกับที่ออก ⇒
+    /// <b>ห้ามถอยภาษีขายออกจาก ภ.พ.30</b> จนกว่าจะยกเลิก/ลดหนี้ตามกฎหมาย · เงินกลับได้ (ลูกหนี้เปิดใหม่) แต่ VAT ยังรายงาน ·
+    /// ยังมีการรับชำระเหลือ = ไม่กลับ (พฤติกรรมเดิม) · G6: pure</para>
+    /// </summary>
+    /// <param name="remainingPaidAmount">ยอดรับชำระที่เหลือบนใบต้นทางหลังยกเลิก</param>
+    /// <param name="outputVatDue">ใบต้นทางถูกย้ายภาษีขายถึงกำหนดแล้ว (<c>OutputVatDueAt != null</c>)</param>
+    /// <param name="liveVatReceiptKeepsTaxPoint">ยังมีใบเสร็จถือ VAT ที่มีผลอยู่ (ติดธง/ยังไม่ยกเลิก) ของใบต้นทางนี้</param>
+    public static bool ShouldUndoOutputVatReclass(decimal remainingPaidAmount, bool outputVatDue, bool liveVatReceiptKeepsTaxPoint)
+        => remainingPaidAmount <= 0.005m && outputVatDue && !liveVatReceiptKeepsTaxPoint;
+
+    /// <summary>ใบเสร็จที่ติดธงยังถือภาษีขายไหม — เงื่อนไขเดียวกับตัวเลือกเจ้าของแถว ภ.พ.30 ของ <c>TaxService</c> (<c>VatAmount &gt; 0.005</c>) ·
+    /// ใบที่ถูกยกเลิกตามปกติ (Void) ไม่ถือแล้ว</summary>
+    public static bool FlaggedReceiptKeepsTaxPoint(AutoReceiptEtaxAction action, decimal receiptVatAmount)
+        => action == AutoReceiptEtaxAction.FlagEtaxCancellation && receiptVatAmount > 0.005m;
+
+    /// <summary>
+    /// **ปิดธง "ต้องยกเลิกทาง e-Tax"** (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-R3) — ตัวตัดสินเดียวของ endpoint "บันทึกว่ายกเลิกทาง e-Tax แล้ว"
+    /// <para>R1 (DECISION_AUDIT): ระบบ<b>ไม่ประทับ</b>สถานะของกรมสรรพากรเอง — ต้องมีหลักฐาน: (ก) e-Tax ทุกแถวของใบถูกยกเลิกในระบบแล้ว
+    /// (ผู้ใช้กดยกเลิกที่หน้า e-Tax ก่อนตอบรับ) หรือ (ข) ใบถึงกรมสรรพากรแล้ว (ตอบรับ/อีเมลประทับเวลา) + <b>เลขอ้างอิงการยกเลิก/ใบลดหนี้</b>
+    /// ที่ผู้ใช้ได้จากกรมสรรพากร/ผู้ให้บริการ (แถว e-Tax ไม่ถูกแตะ) · ส่งแล้วยังไม่รู้ผล (Submitted) ⇒ ปฏิเสธพร้อมทางไปต่อ · เหตุผลบังคับ · G6: pure</para>
+    /// </summary>
+    /// <param name="flagged">ใบนี้ติดธงอยู่จริง</param>
+    /// <param name="effectiveEtax">สถานะ e-Tax ที่ใช้ตัดสิน (<see cref="EffectiveEtaxAsync"/> — null = ไม่มีแถวที่ยังมีผล)</param>
+    public static EtaxCancellationResolutionVerdict EtaxCancellationResolution(bool flagged, EtaxStatus? effectiveEtax,
+        string? rdCancellationReference, string? reason)
+    {
+        const string Tail = " · ระบบยังไม่ได้แตะอะไร";
+        if (!flagged)
+            return EtaxCancellationResolutionVerdict.Refused("เอกสารนี้ไม่ได้ติดธง “ต้องยกเลิกทาง e-Tax”" + Tail);
+        if (string.IsNullOrWhiteSpace(reason))
+            return EtaxCancellationResolutionVerdict.Refused("กรุณาระบุเหตุผล (เก็บไว้ให้ผู้สอบบัญชี)" + Tail);
+        if (effectiveEtax == EtaxStatus.Submitted)
+            return EtaxCancellationResolutionVerdict.Refused(
+                "e-Tax ของใบนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
+                + "หรือรอผลตอบรับแล้วยกเลิกทางกรมสรรพากรพร้อมเลขอ้างอิง" + Tail);
+        if (EtaxReachedRd(effectiveEtax))
+        {
+            var reference = rdCancellationReference?.Trim() ?? "";
+            if (reference.Length < 3)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "ใบนี้ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว) — ระบบยืนยันการยกเลิกกับกรมสรรพากรเองไม่ได้ "
+                    + "กรุณาระบุเลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้ที่ออกทางระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) เป็นหลักฐาน" + Tail);
+            return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.RdReference);
+        }
+        return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.EtaxVoidedInSystem);
+    }
+}
+
+/// <summary>หลักฐานที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" (<see cref="DocumentVoidPreconditions.EtaxCancellationResolution"/>)</summary>
+public enum EtaxCancellationEvidence
+{
+    /// <summary>ไม่มี (ถูกปฏิเสธ)</summary>
+    None = 0,
+    /// <summary>e-Tax ทุกแถวของใบถูกยกเลิกในระบบแล้ว (ก่อนกรมสรรพากรตอบรับ)</summary>
+    EtaxVoidedInSystem = 1,
+    /// <summary>เลขอ้างอิงการยกเลิก/ใบลดหนี้จากกรมสรรพากรหรือผู้ให้บริการ e-Tax (ผู้ใช้ยืนยัน · แถว e-Tax ไม่ถูกแตะ)</summary>
+    RdReference = 2,
+}
+
+/// <param name="Allowed">ปิดธงได้</param>
+/// <param name="Reason">ข้อความไทยพร้อมทางไปต่อเมื่อปิดไม่ได้</param>
+/// <param name="Evidence">หลักฐานที่ใช้ (ลง audit)</param>
+public sealed record EtaxCancellationResolutionVerdict(bool Allowed, string? Reason, EtaxCancellationEvidence Evidence)
+{
+    internal static EtaxCancellationResolutionVerdict Refused(string reason) => new(false, reason, EtaxCancellationEvidence.None);
 }
 
 /// <summary>ทางเข้าที่ยกเลิกการรับชำระ — ตัดสินว่าใบเสร็จที่ถึงกรมสรรพากรแล้วต้องปฏิเสธหรือติดธง (<see cref="DocumentVoidPreconditions.AutoReceiptOnPaymentVoid"/>)</summary>
@@ -141,7 +251,8 @@ public enum PaymentVoidCause
 {
     /// <summary>ผู้ใช้กดยกเลิกการชำระ (หน้าเอกสาร) หรือเส้นที่ยกเลิกตามคำสั่งผู้ใช้ — ใบเสร็จถึงกรมสรรพากรแล้ว = ปฏิเสธ</summary>
     User = 0,
-    /// <summary>ยกเลิกการลงบัญชีรอบโอน — ด่าน <see cref="SettlementUnpostGate"/> ปฏิเสธไว้ก่อนแตะชิ้นแรกแล้ว (ที่นี่เป็นตาข่ายชั้นสอง = ปฏิเสธ)</summary>
+    /// <summary>ยกเลิกการลงบัญชีรอบโอน — ด่าน <see cref="SettlementUnpostGate"/> ปฏิเสธไว้ก่อนแตะชิ้นแรกแล้ว · ที่นี่ถึงได้เฉพาะใบเสร็จที่ถูกส่ง e-Tax
+    /// ระหว่างด่านกับลูป ⇒ ติดธงแบบเช็คเด้ง ไม่ throw กลางลูป (รอบ 200 ทีม V1F · V1-P2)</summary>
     SettlementUnpost = 1,
     /// <summary>เช็คเด้ง — เงินไม่เข้าจริง ห้ามบล็อก · ใบเสร็จที่ถึงกรมสรรพากรแล้ว = ติดธงให้ตามยกเลิกทาง e-Tax</summary>
     ChequeBounce = 2,

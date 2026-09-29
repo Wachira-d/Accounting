@@ -21,23 +21,23 @@ public class SettlementReceiptPolicyTests
     [Fact]
     public void ใบแจ้งหนี้มีVATปิดยอดงวดเดียว_ใบเสร็จคือใบกำกับณวันรับเงิน()
         => Assert.True(SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-            DocumentType.Invoice, 700m, singleShotFull: true));
+            DocumentType.Invoice, 700m, singleShotFull: true, liveVatReceiptExists: false));
 
     [Fact]
     public void ใบกำกับภาษีต้นทาง_ใบเสร็จต้องไม่ถือVATซ้ำ()
         // VAT ออกไปแล้วที่ใบกำกับ — ถือซ้ำ = ภาษีขายเข้า ภ.พ.30 สองรอบ
         => Assert.False(SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-            DocumentType.TaxInvoice, 7_525m, singleShotFull: true));
+            DocumentType.TaxInvoice, 7_525m, singleShotFull: true, liveVatReceiptExists: false));
 
     [Fact]
     public void ผ่อนหลายงวด_ใบเสร็จเป็นใบรับเปล่า()
         => Assert.False(SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-            DocumentType.Invoice, 700m, singleShotFull: false));
+            DocumentType.Invoice, 700m, singleShotFull: false, liveVatReceiptExists: false));
 
     [Fact]
     public void ใบแจ้งหนี้ไม่มีVAT_ไม่ถือบทบาทใบกำกับ()
         => Assert.False(SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-            DocumentType.Invoice, 0m, singleShotFull: true));
+            DocumentType.Invoice, 0m, singleShotFull: true, liveVatReceiptExists: false));
 
     // ── ด่าน "ออกใบย้อนหลังได้ไหม" ──
     [Fact]

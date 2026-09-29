@@ -418,6 +418,14 @@ public class Document : TenantEntity
     /// <summary>ข้อความของธง "ต้องยกเลิกทาง e-Tax" (เหตุ + ทางไปต่อ) — แสดงบนหน้าเอกสารและรายการงานค้าง</summary>
     public string? EtaxCancelRequiredReason { get; set; }
 
+    /// <summary>คำขอ "ยกเลิกและออกใบแทน" ที่รอผู้อนุมัติคนที่สอง (รอบ 200 ทีม V1F · V1-R6 — SoD เปิด หรือยอดถึงเกณฑ์เซ็นหลายขั้น) ·
+    /// ระหว่างรอ ใบนี้/การรับชำระ/รอบโอนเหมือนเดิมทุกอย่าง (ไม่มีสภาพครึ่งทาง) · null = ไม่มีคำขอค้าง · ล้างเมื่อยืนยัน/ยกเลิกคำขอ</summary>
+    public DateTime? ReissueRequestedAt { get; set; }
+    /// <summary>ผู้ขอ (id ผู้ใช้) — ผู้ยืนยันต้องเป็นคนอื่น (<c>ApprovalControlPolicy.ForReissue</c>)</summary>
+    public string? ReissueRequestedBy { get; set; }
+    /// <summary>คำขอที่บันทึกไว้ (JSON ของ <c>ReissueSettlementPaidRequest</c>) — ผู้ยืนยันอนุมัติ "สิ่งที่ผู้ขอส่ง" ไม่ใช่ข้อมูลที่ส่งมาใหม่</summary>
+    public string? ReissueRequestJson { get; set; }
+
     /// <summary>ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ — <c>true</c> = ฝั่งซื้อ
     /// (ลดภาษีซื้อ 116x), <c>false</c> = ฝั่งขาย (ลดภาษีขาย 2191x),
     /// <c>null</c> = ให้ระบบตัดสินเอง (ใบต้นทาง → GL → บทบาทคู่ค้า)

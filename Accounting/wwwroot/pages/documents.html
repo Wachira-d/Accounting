@@ -9809,6 +9809,18 @@
             banners += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               ⚠️ <b>ต้องยกเลิกทาง e-Tax</b> (ติดธงเมื่อ ${Layout.date(d.etaxCancelRequiredAt)})
               <div style="margin-top:4px">${Layout.esc(d.etaxCancelRequiredReason || '')}</div>
+              <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกว่ายกเลิกทาง e-Tax แล้ว</button></div>
+            </div>`;
+          }
+          // รอบ 200 ทีม V1F (V1-R6): คำขอยกเลิกและออกใบแทนที่รอผู้อนุมัติคนที่สอง — เซิร์ฟเวอร์ตัดสินว่าใครยืนยันได้ (ผู้ขอยืนยันเองไม่ได้)
+          if (d.reissueRequestedAt) {
+            banners += `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              ⏳ <b>คำขอยกเลิกและออกใบแทนรอยืนยัน</b> (ส่งเมื่อ ${Layout.date(d.reissueRequestedAt)}) — ใบนี้ยังไม่ถูกแตะ
+              <div style="margin-top:4px">เหตุผล: ${Layout.esc(d.reissueRequestReason || '-')}</div>
+              <div style="margin-top:6px">
+                <button class="btn btn-warning" onclick="Page.confirmReissue('${d.id}')">✅ ยืนยันออกใบแทน</button>
+                <button class="btn btn-secondary" onclick="Page.cancelReissueRequest('${d.id}')">✖ ยกเลิกคำขอ</button>
+              </div>
             </div>`;
           }
           banners += this._nextStepBanner(d);
@@ -11857,10 +11869,54 @@
           const res = await api.reissueSettlementPaid(id, { contactId, notes, lines, reason });
           Layout.closeModal('reissueModal');
           Layout.closeModal('detailModal');
-          Layout.toast(res?.message || 'ออกใบแทนแล้ว', 'success', 8000);
+          // ข้อความมาจากเซิร์ฟเวอร์เสมอ — กรณีบันทึกคำขอรอคนที่สอง (SoD/วงเงิน) เซิร์ฟเวอร์คืนใบเดิมพร้อมข้อความว่ายังไม่ได้แตะอะไร
+          Layout.toast(res?.message || 'ดำเนินการแล้ว', 'success', 10000);
           await this.load();
           if (res?.data?.id) await this.detail(res.data.id);
         } catch (e) { Layout.toast(e.message || 'ยกเลิกและออกใบแทนไม่สำเร็จ', 'error', 10000); }
+      },
+      // รอบ 200 ทีม V1F (V1-R6) — ผู้อนุมัติคนที่สองยืนยันคำขอที่บันทึกไว้ (เซิร์ฟเวอร์ใช้คำขอที่บันทึกไว้ ไม่ใช่ข้อมูลใหม่ · ผู้ขอยืนยันเองไม่ได้)
+      async confirmReissue(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'ยืนยันออกใบแทน',
+          message: 'ยืนยันคำขอยกเลิกและออกใบแทนตามที่ผู้ขอบันทึกไว้ — เลขที่ใบเดิมจะถูกยกเลิกถาวร (§86/4) และการรับชำระจะย้ายไปใบใหม่',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.confirmReissueSettlementPaid(id);
+          Layout.closeModal('detailModal');
+          Layout.toast(res?.message || 'ดำเนินการแล้ว', 'success', 10000);
+          await this.load();
+          if (res?.data?.id) await this.detail(res.data.id);
+        } catch (e) { Layout.toast(e.message || 'ยืนยันออกใบแทนไม่สำเร็จ', 'error', 10000); }
+      },
+      async cancelReissueRequest(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ยกเลิกคำขอยกเลิกและออกใบแทนของใบนี้? (ใบนี้ไม่ถูกแตะ)')) return;
+        try {
+          const res = await api.cancelReissueRequest(id);
+          Layout.toast(res?.message || 'ยกเลิกคำขอแล้ว', 'success', 8000);
+          await this.detail(id);
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกคำขอไม่สำเร็จ', 'error', 10000); }
+      },
+      // รอบ 200 ทีม V1F (V1-R3) — ปิดธง "ต้องยกเลิกทาง e-Tax": เซิร์ฟเวอร์ตัดสินว่าหลักฐานพอไหม (ยกเลิก e-Tax ในระบบแล้ว หรือเลขอ้างอิงจากกรมสรรพากร)
+      async resolveEtaxCancellation(id) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผล (เก็บไว้ให้ผู้สอบบัญชี):', 'เช็คเด้ง — ยกเลิกใบเสร็จทาง e-Tax แล้ว');
+        if (reason === null) return;
+        const rdCancellationReference = prompt(
+          'เลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้จากระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax)\n'
+          + '— เว้นว่างได้ถ้ากดยกเลิก e-Tax ของใบนี้ในหน้า e-Tax แล้ว (ก่อนกรมสรรพากรตอบรับ)', '');
+        if (rdCancellationReference === null) return;
+        try {
+          const res = await api.resolveEtaxCancellation(id, { reason, rdCancellationReference });
+          Layout.closeModal('detailModal');
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 10000);
+          await this.load();
+          await this.loadEtaxCancelNotice();
+          if (res?.data?.id) await this.detail(res.data.id);
+        } catch (e) { Layout.toast(e.message || 'บันทึกการยกเลิกทาง e-Tax ไม่สำเร็จ', 'error', 10000); }
       },
       // รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — แถบงานค้าง "ต้องยกเลิกทาง e-Tax" บนหน้ารายการ (เซิร์ฟเวอร์ส่งรายการ · ไม่มี = ซ่อน)
       async loadEtaxCancelNotice() {

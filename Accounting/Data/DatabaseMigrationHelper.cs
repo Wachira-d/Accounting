@@ -6263,6 +6263,10 @@ public static class DatabaseMigrationHelper
             // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จอัตโนมัติที่เช็คเด้งแต่ e-Tax ถึงกรมสรรพากรแล้ว
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxCancelRequiredAt" timestamp with time zone NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxCancelRequiredReason" text NULL;""",
+            // รอบ 200 ทีม V1F (V1-R6): คำขอ "ยกเลิกและออกใบแทน" ที่รอผู้อนุมัติคนที่สอง (SoD/วงเงินเซ็นหลายขั้น) — null = ไม่มีคำขอ (พฤติกรรมเดิม)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestedAt" timestamp with time zone NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestedBy" text NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestJson" text NULL;""",
 
             // ═══ Payment gateway เฟส 1: ชั้นกลาง (PAYMENT_GATEWAY_DESIGN.md) ═══
             // ระบบมี 4 เส้นทางรับเงินแบบสลิปที่ต่างคนต่างเขียน — ถ้าต่อ gateway ทีละทาง

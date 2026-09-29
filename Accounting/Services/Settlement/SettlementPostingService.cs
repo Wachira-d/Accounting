@@ -1135,6 +1135,7 @@ public class SettlementPostingService : ISettlementPostingService
 
         var voidedPayments = new List<Guid>();
         var voidedDocs = new List<Guid>();
+        var etaxFlags = new List<string>();
         try
         {
             // ขอบเขต "กำลังยกเลิกการลงบัญชีรอบโอนนี้" — ด่าน C-5 ในเส้นยกเลิกเอกสาร/การรับชำระปล่อยผ่านเฉพาะเส้นนี้
@@ -1149,8 +1150,10 @@ public class SettlementPostingService : ISettlementPostingService
             // 2) การรับชำระ (เส้นปกติ: กลับ JE + คืนยอดใบ) — หลังเอกสาร
             foreach (var p in payments)
             {
-                // รอบ 200 ทีม V1: ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้วถูกด่านด้านบนปฏิเสธก่อนแตะชิ้นแรก — ที่นี่เป็นตาข่ายชั้นสอง (ปฏิเสธ)
-                await _documents.VoidPaymentAsync(companyId, p.Id, PaymentVoidCause.SettlementUnpost);
+                // รอบ 200 ทีม V1: ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้วถูกด่านด้านบนปฏิเสธก่อนแตะชิ้นแรก · รอบ 200 ทีม V1F (V1-P2): ใบที่ถูกส่ง
+                // e-Tax ระหว่างด่านกับลูป ⇒ ติดธง "ต้องยกเลิกทาง e-Tax" (ไม่ throw กลางลูป = ไม่ครึ่งกลับครึ่งค้าง) และบอกในผลลัพธ์
+                var voidResult = await _documents.VoidPaymentAsync(companyId, p.Id, PaymentVoidCause.SettlementUnpost);
+                if (voidResult.EtaxCancellationFlag != null) etaxFlags.Add(voidResult.EtaxCancellationFlag);
                 voidedPayments.Add(p.Id);
             }
             // 3) ถอนการจับคู่ธนาคาร (เจ้าของการจับคู่ = IBankService) — ก่อนกลับ JE รอบโอน
@@ -1225,8 +1228,10 @@ public class SettlementPostingService : ISettlementPostingService
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return new SettlementUnpostResult(true,
-                $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้", tracked.Status, reversalId,
-                voidedDocs, voidedPayments);
+                $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้"
+                + (etaxFlags.Count == 0 ? "" : $" · ⚠️ ใบเสร็จ {etaxFlags.Count} ใบถูกส่ง e-Tax ระหว่างทางจึงติดธง “ต้องยกเลิกทาง e-Tax”: "
+                    + string.Join(" · ", etaxFlags)),
+                tracked.Status, reversalId, voidedDocs, voidedPayments);
         });
     }
 
@@ -1283,12 +1288,12 @@ public class SettlementPostingService : ISettlementPostingService
         // (Submitted) VoidPaymentAsync ปฏิเสธด้วย ⇒ ด่านต้องเห็นก่อนแตะชิ้นแรก (ไม่งั้นล้มกลางทางหลังยกเลิกเอกสารไปแล้ว) — ชุดสถานะจาก
         // DocumentVoidPreconditions.EtaxReachedRdStatuses ตัวเดียวกับ VoidPaymentAsync
         var receiptIds = payments.Where(p => p.ReceiptDocumentId != null).Select(p => p.ReceiptDocumentId!.Value).Distinct().ToList();
-        var receiptEtax = receiptIds.Count == 0 ? new List<(Guid DocumentId, EtaxStatus Status)>()
-            : (await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && receiptIds.Contains(e.DocumentId)
-                    && DocumentVoidPreconditions.EtaxReachedRdStatuses.Contains(e.Status))
-                .Select(e => new { e.DocumentId, e.Status }).ToListAsync(ct))
-                .Select(e => (e.DocumentId, e.Status)).ToList();
+        // รอบ 200 ทีม V1F (V1-P1): ตัวโหลดเดียว EffectiveEtaxAsync — e-Tax by Email ที่ประทับเวลาแล้ว = ถึงกรมสรรพากร (ถือเท่า Accepted)
+        var receiptEtaxById = await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, receiptIds, ct);
+        var receiptEtax = receiptEtaxById
+            .Where(kv => kv.Value is EtaxStatus st && DocumentVoidPreconditions.EtaxReachedRdStatuses.Contains(st))
+            .Select(kv => (DocumentId: kv.Key, Status: kv.Value!.Value))
+            .ToList();
         var acceptedReceipts = receiptEtax.Where(e => e.Status == EtaxStatus.Accepted).Select(e => e.DocumentId).ToHashSet();
         var submittedReceipts = receiptEtax.Where(e => e.Status != EtaxStatus.Accepted).Select(e => e.DocumentId)
             .Where(id => !acceptedReceipts.Contains(id)).ToHashSet();

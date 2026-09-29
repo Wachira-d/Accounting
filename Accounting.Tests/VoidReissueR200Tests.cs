@@ -50,10 +50,14 @@ public class VoidReissueR200Tests
     [Theory]
     [InlineData(EtaxStatus.Submitted)]
     [InlineData(EtaxStatus.Accepted)]
-    public void R200_V1_ยกเลิกการลงบัญชีรอบโอน_ใบเสร็จถึงกรมสรรพากรแล้ว_ตาข่ายชั้นสองปฏิเสธ(EtaxStatus status)
+    public void R200_V1_ยกเลิกการลงบัญชีรอบโอน_ใบเสร็จถึงกรมสรรพากรระหว่างทาง_ตาข่ายชั้นสองติดธงไม่throwกลางลูป(EtaxStatus status)
     {
+        // รอบ 200 ทีม V1F (ฝ่ายค้าน V1-P2): เดิมปฏิเสธ ⇒ throw กลางลูปยกเลิกการลงบัญชี = เอกสารยกเลิกไปแล้วบางใบ การรับชำระค้างครึ่ง ·
+        // ด่านก่อนแตะชิ้นแรก (SettlementUnpostGate) ยังปฏิเสธใบที่ส่งแล้วตามเดิม — ที่นี่ถึงได้เฉพาะใบที่ถูกส่งระหว่างด่านกับลูป
         var d = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(status, "RE-0001", PaymentVoidCause.SettlementUnpost);
-        Assert.Equal(AutoReceiptEtaxAction.Refuse, d.Action);
+        Assert.Equal(AutoReceiptEtaxAction.FlagEtaxCancellation, d.Action);
+        Assert.StartsWith("ต้องยกเลิกทาง e-Tax", d.Message);
+        Assert.Contains("ยกเลิกการลงบัญชีรอบโอน", d.Message);
     }
 
     [Theory]
@@ -133,9 +137,9 @@ public class VoidReissueR200Tests
     private static SettlementPaidReissueFacts OkFacts() => new(
         DocumentType.TaxInvoice, DocumentStatus.Paid, IsSettlementReceipt: false, AlreadyReplaced: false, CreatedBySettlementBatch: false,
         PostedBatchPaymentBlock: "ใบนี้รับชำระจากรอบโอน PO-1 ที่ลงบัญชีแล้ว", IsDeposit: false, HasDepositApplied: false,
-        EtaxAccepted: false, FilingLocked: false, WhtFiledBlock: null, ChildBlock: null, ClosedPeriodName: null,
+        DocumentEtax: null, FilingLocked: false, WhtFiledBlock: null, ChildBlock: null, ClosedPeriodName: null,
         SharedPaymentNumber: null, ActiveWhtCertificates: 0, HasVatDeferral: false,
-        Receipts: new[] { new ReissueReceiptFact("RE-0001", null) });
+        Receipts: new[] { new ReissueReceiptFact("RE-0001", null, false, null) });
 
     [Fact]
     public void R200_V1_ใบขายที่รอบโอนPostedรับชำระ_ด่านเดิมผ่านทุกตัว_กดยกเลิกและออกใบแทนได้()
@@ -145,7 +149,7 @@ public class VoidReissueR200Tests
         Assert.True(v.Allowed);
         Assert.Null(v.Reason);
         // ใบเสร็จอัตโนมัติที่ยังไม่ถึงกรมสรรพากร (สร้าง/ผิดพลาด) ไม่บล็อก — ระบบยกเลิกแล้วออกใหม่ให้
-        Assert.True(SettlementPaidReissue.Decide(OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-1", EtaxStatus.Error) } }).Allowed);
+        Assert.True(SettlementPaidReissue.Decide(OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-1", EtaxStatus.Error, false, null) } }).Allowed);
         Assert.True(SettlementPaidReissue.Decide(OkFacts() with { Type = DocumentType.Invoice, Status = DocumentStatus.PartiallyPaid }).Allowed);
     }
 
@@ -183,7 +187,7 @@ public class VoidReissueR200Tests
     {
         var f = which switch
         {
-            "etax" => OkFacts() with { EtaxAccepted = true },
+            "etax" => OkFacts() with { DocumentEtax = EtaxStatus.Accepted },
             "locked" => OkFacts() with { FilingLocked = true },
             "wht" => OkFacts() with { WhtFiledBlock = "50 ทวิ อยู่ในแบบที่ยื่นแล้ว" },
             "child" => OkFacts() with { ChildBlock = "ยกเลิกไม่ได้ — มีใบลดหนี้ CN-1 อ้างเลขที่ใบนี้อยู่" },
@@ -193,8 +197,8 @@ public class VoidReissueR200Tests
             "applied" => OkFacts() with { HasDepositApplied = true },
             "cert" => OkFacts() with { ActiveWhtCertificates = 1 },
             "deferral" => OkFacts() with { HasVatDeferral = true },
-            "receiptSubmitted" => OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-0001", EtaxStatus.Submitted) } },
-            _ => OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-0001", EtaxStatus.Accepted) } },
+            "receiptSubmitted" => OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-0001", EtaxStatus.Submitted, false, null) } },
+            _ => OkFacts() with { Receipts = new[] { new ReissueReceiptFact("RE-0001", EtaxStatus.Accepted, false, null) } },
         };
         var v = SettlementPaidReissue.Decide(f);
         Assert.True(v.Relevant);    // ปุ่มแสดงแบบปิดพร้อมเหตุผล (ไม่หายเงียบ)
@@ -272,8 +276,8 @@ public class VoidReissueR200Tests
         var (doc, lines) = Invoice();
         doc.Contact = new Contact { Name = "ผู้ซื้อ ก" };
         var neo = new Document();
-        SettlementPaidReissue.CopyScalars(doc, neo);
-        Assert.Equal(doc.Id, neo.Id);                       // ผู้เรียกต้องตั้ง Id ใหม่เอง (service ทำ)
+        SettlementPaidReissue.CopyDocumentForReissue(doc, neo);
+        Assert.NotEqual(doc.Id, neo.Id);                    // allowlist (V1F R7): ตัวตนไม่ตามไป — ใบใหม่ได้ Id ของตัวเอง
         Assert.Equal(1070m, neo.TotalAmount);
         Assert.Equal(DocumentType.TaxInvoice, neo.DocumentType);
         Assert.Equal(Day, neo.TaxPointDate);
@@ -286,7 +290,7 @@ public class VoidReissueR200Tests
         var newLines = lines.Select(l =>
         {
             var nl = new DocumentLine();
-            SettlementPaidReissue.CopyScalars(l, nl);
+            SettlementPaidReissue.CopyLineForReissue(l, nl);
             nl.Id = Guid.NewGuid();
             nl.DocumentId = neo.Id;
             return nl;
