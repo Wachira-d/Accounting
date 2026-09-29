@@ -409,6 +409,9 @@
               <div><label>รูปแบบวันที่</label><select class="form-select" id="mDateOrder">${this.options(c.dateOrders, map.dateOrder || 'Auto')}</select></div>
               <div><label>เขตเวลาในไฟล์</label><select class="form-select" id="mTimeZone">${this.options(c.timeZones, map.timeZone || 'Auto')}</select>
                 <div class="hint">มีผลเฉพาะวันที่ที่มีเวลาแต่ไม่บอกเขตเวลา — รายงานแบบ UTC ขาย 18:00 = ตี 1 วันถัดไปของไทย</div></div>
+              <div><label>จุลภาคในยอดเงิน</label>
+                <label style="font-weight:500"><input type="checkbox" id="mCommaThousands" ${map.commaIsThousands ? 'checked' : ''}> จุลภาคในยอด = คั่นหลักพัน</label>
+                <div class="hint">ติ๊กเฉพาะไฟล์ CSV ที่คั่นคอลัมน์ด้วย ; และยอดเป็นบาทเต็ม เช่น 1,500 = หนึ่งพันห้าร้อยบาท</div></div>
               ${layout === 'Long' ? `<div><label>ตัวเลือกยอด</label>
                 <label style="font-weight:500"><input type="checkbox" id="mNegate" ${map.negate ? 'checked' : ''}> กลับเครื่องหมายยอด</label>
                 <label style="font-weight:500"><input type="checkbox" id="mVatExcl" ${map.vatExclusive ? 'checked' : ''}> ยอดยังไม่รวม VAT</label></div>` : ''}
@@ -458,6 +461,7 @@
         });
         map.dateOrder = document.getElementById('mDateOrder')?.value || 'Auto';
         map.timeZone = document.getElementById('mTimeZone')?.value || 'Auto';
+        map.commaIsThousands = !!document.getElementById('mCommaThousands')?.checked;
         if (layout === 'Long') {
           map.negate = !!document.getElementById('mNegate')?.checked;
           map.vatExclusive = !!document.getElementById('mVatExcl')?.checked;

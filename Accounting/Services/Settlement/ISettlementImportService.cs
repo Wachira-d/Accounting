@@ -19,8 +19,10 @@ public interface ISettlementImportService
 
     /// <summary>นำเข้าไฟล์เป็นรอบโอน (สถานะ Imported/Classified/Matched) — idempotent ต่อ <c>ExternalTxnId</c> ต่อช่องทาง ·
     /// <c>PayoutRef</c> เดิมที่ยังไม่ลงบัญชี ⇒ เติมเฉพาะบรรทัดใหม่ · ไฟล์ต้นฉบับเก็บผ่าน attachment abstraction (ชนิด "SettlementBatch")</summary>
+    /// <param name="memoryBlockedReason">เหตุที่การจับคู่ครั้งนี้<b>จำไม่ได้</b> (ไม่มีสิทธิ์ตั้งค่าช่องทาง · คีย์ API — ผู้เรียกตัดสินด่านสิทธิ์) — ข้อความถาม
+    /// รูปแบบวันที่/เขตเวลาบอกผู้ใช้ตามจริง (ฝ่ายค้าน I-2) · null = จำได้ หรือผู้ใช้ไม่ได้ติ๊กจำเอง</param>
     Task<SettlementImportResult> ImportFileAsync(Guid companyId, Guid userId, SettlementFileImportRequest request,
-        string fileName, Stream content, CancellationToken ct = default);
+        string fileName, Stream content, string? memoryBlockedReason, CancellationToken ct = default);
 
     /// <summary>ประกอบรอบโอนจาก PaymentIntent ของ gateway ที่ผูกกับช่องทาง (ยังไม่อยู่ในรอบใด + คืนเงินภายหลังของรอบก่อน)</summary>
     Task<SettlementImportResult> ImportFromPaymentIntentsAsync(Guid companyId, Guid userId, SettlementIntentBatchRequest request,

@@ -23,6 +23,9 @@ namespace Accounting.Services.Settlement.Adapters;
 /// <param name="RawTxnId">id รายการดิบจากไฟล์ (ยังไม่ทำให้ไม่ซ้ำ) — null = ไฟล์ไม่มี</param>
 /// <param name="PayoutRef">เลขรอบโอนของแถว (ถ้าไฟล์มีคอลัมน์นี้)</param>
 /// <param name="PaymentIntentId">แถวที่ประกอบจาก PaymentIntent ในระบบ — อยู่ในผังพักแล้ว (SettlementBatchMath.Plan ไม่ลงซ้ำ)</param>
+/// <param name="LiteralDates">วันที่ของแถวนี้ตามที่<b>ตัวอ่านก่อนรอบ 200</b>อ่าน (ทิ้งเวลา/เขตเวลาท้ายค่า · ลำดับวัน/เดือนแบบเดิม) — ทีละ "ชุด"
+/// (index เดียวกันทุกแถวของไฟล์) · <b>ใช้คิดคีย์กันซ้ำรุ่นก่อนเท่านั้น</b> (<c>SettlementTxnKey.LegacyKeys</c> · ฝ่ายค้าน I-1) ห้ามใช้เป็นวันที่รายการ ·
+/// null = ไม่มีไฟล์ (PaymentIntent)</param>
 public sealed record SettlementParsedRow(
     int SourceRow,
     string? RawTypeLabel,
@@ -35,24 +38,32 @@ public sealed record SettlementParsedRow(
     decimal? WhtAmount,
     SettlementLineType? ExplicitType,
     string? PayoutRef = null,
-    Guid? PaymentIntentId = null);
+    Guid? PaymentIntentId = null,
+    IReadOnlyList<DateTime?>? LiteralDates = null);
 
 /// <summary>ผลการอ่านไฟล์ทั้งไฟล์</summary>
 /// <param name="Headers">หัวคอลัมน์ที่พบ (ตามลำดับในไฟล์)</param>
 /// <param name="SkippedRows">แถวที่ข้ามโดยตั้งใจ (แถวว่าง · แถวสรุปยอด "รวม/Total") พร้อมเหตุผล — ไม่ใช่แถวที่อ่านพลาด</param>
 /// <param name="LearnedDateOrder">ลำดับวัน/เดือนที่<b>ไฟล์นี้พิสูจน์ได้</b>ขณะการจับคู่ยังเป็น Auto (R-B9) — ผู้นำเข้าจำให้ช่องทาง · null = ไม่มีอะไรใหม่ให้จำ</param>
 /// <param name="LearnedTimeZone">เขตเวลาที่หัวคอลัมน์วันที่ประกาศไว้ขณะการจับคู่ยังเป็น Auto (R-B8) — ผู้นำเข้าจำให้ช่องทาง</param>
+/// <param name="Warnings">สิ่งที่ผู้ใช้<b>ต้องเห็นชัด</b> (แถบเตือน ไม่ใช่บรรทัดเทาของ <paramref name="SkippedRows"/>) — แถวสรุปที่ข้ามพร้อมยอด ·
+/// แถวไม่มีเลขอ้างอิงที่นำเข้าเป็นรายการ (DECISIONS ข้อ 39 · ฝ่ายค้าน I-7) · null = ไม่มี</param>
 public sealed record SettlementParseResult(
     string AdapterCode,
     IReadOnlyList<string> Headers,
     IReadOnlyList<SettlementParsedRow> Rows,
     IReadOnlyList<string> SkippedRows,
     SettlementDateOrder? LearnedDateOrder = null,
-    SettlementFileTimeZone? LearnedTimeZone = null);
+    SettlementFileTimeZone? LearnedTimeZone = null,
+    IReadOnlyList<string>? Warnings = null);
 
 /// <summary>ข้อมูลจากหัวรอบโอนที่ผู้ใช้กรอก ซึ่งตัวอ่านใช้เป็นหลักฐานได้ (ไม่ใช่การเดา) — ช่วงวันที่ของรอบโอน (วันตามปฏิทินไทย)
 /// ตัดสินลำดับวัน/เดือนของไฟล์ช่วงสั้นที่ไม่มีวันที่เกิน 12 (R-B9)</summary>
-public sealed record SettlementParseContext(DateTime? PeriodFrom, DateTime? PeriodTo);
+/// <param name="WillRemember">ค่าที่ผู้ใช้เลือกในขั้นจับคู่คอลัมน์ครั้งนี้จะถูกจำไว้กับช่องทางจริงไหม (สิทธิ์ตั้งค่าช่องทาง + ไม่ใช่คีย์ API + ติ๊กจำ ·
+/// ฝ่ายค้าน I-2) — ข้อความถามรูปแบบวันที่/เขตเวลาห้ามสัญญาว่า "จำให้" เมื่อ false</param>
+/// <param name="NotRememberedReason">เหตุที่ไม่จำ (ไม่มีสิทธิ์/คีย์ API) — null เมื่อจำ หรือเมื่อผู้ใช้ไม่ได้ติ๊กจำเอง</param>
+public sealed record SettlementParseContext(DateTime? PeriodFrom, DateTime? PeriodTo, bool WillRemember = false,
+    string? NotRememberedReason = null);
 
 /// <summary>ไฟล์ที่ผู้ใช้อัปโหลด (ถือไบต์ไว้แล้ว — ตัวนำเข้าต้องเก็บไฟล์ต้นฉบับผ่าน attachment abstraction อยู่ดี)</summary>
 public sealed record SettlementFileInput(string FileName, byte[] Content)

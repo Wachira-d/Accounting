@@ -140,9 +140,10 @@ public static class SettlementValueParser
     private static readonly Regex NumericDate = new(@"^(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})(?:[ T](.*))?$", RegexOptions.Compiled);
     private static readonly Regex NamedDate = new(@"^(\d{1,2})[\s\-]+([^\s\-\d]+)[\s\-,]+(\d{2,4})(?:\s+(.*))?$", RegexOptions.Compiled);
     private static readonly Regex NamedDateMonthFirst = new(@"^([^\s\-\d,]+)[\s\-]+(\d{1,2}),?[\s\-]+(\d{2,4})(?:\s+(.*))?$", RegexOptions.Compiled);
-    // ส่วนเวลาท้ายวันที่: 18:30 · 18:30:05.123 · 6:30 PM · 18:30 น. · + เขตเวลาในตัว (Z · UTC · GMT · +07:00 · +0700 · GMT+7)
+    // ส่วนเวลาท้ายวันที่: 18:30 · 18:30:05.123 · 6:30 PM · 18:30 น. / น · + เขตเวลาในตัว (Z · UTC · GMT · ICT · +07:00 · +0700 · GMT+7 ·
+    // ในวงเล็บ "(GMT+07:00)") — ฝ่ายค้าน I-9 (รอบ 200): ICT · วงเล็บ · "น" ไม่มีจุด เดิมตกเป็น "เวลาอ่านไม่ออก" ⇒ ถามเขตเวลาทั้งที่ค่าบอกไว้แล้ว
     private static readonly Regex TimeTail = new(
-        @"^(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d{1,7})?)?[ ]*(am|pm|น\.)?[ ]*(z|utc|gmt|(?:utc|gmt)?[ ]*[+\-][ ]*\d{1,2}(?::?\d{2})?)?$",
+        @"^(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d{1,7})?)?[ ]*(am|pm|น\.?)?[ ]*\(?[ ]*(z|utc|gmt|ict|(?:utc|gmt)?[ ]*[+\-][ ]*\d{1,2}(?::?\d{2})?)?[ ]*\)?$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex LooksLikeTime = new(@"\d:\d", RegexOptions.Compiled);
     private static readonly TimeSpan BangkokOffset = TimeSpan.FromHours(7);
@@ -226,6 +227,25 @@ public static class SettlementValueParser
                && asBkk != asUtc;
     }
 
+    /// <summary>
+    /// **วันที่ "ตามตัวอักษร" แบบที่ตัวอ่านก่อนรอบ 200 อ่าน** (ฝ่ายค้าน I-1) — ISO ที่มี offset แปลงเป็นวันไทย · รูปอื่น<b>ทิ้งส่วนเวลา/เขตเวลาท้ายค่า</b>
+    /// แล้วใช้วันที่ตามที่เขียน · <b>ใช้คิดคีย์กันซ้ำรุ่นก่อนเท่านั้น</b> (บรรทัดที่นำเข้าก่อน deploy เก็บคีย์ที่คิดจากวันที่นี้ — ตัวอ่านใหม่ที่แปลงเขตเวลา
+    /// ให้วันที่ต่างไป ⇒ คีย์ไม่ตรง ⇒ ไฟล์เดิมเข้าซ้ำ) · ห้ามใช้เป็นวันที่ของรายการ
+    /// </summary>
+    public static bool TryParseLiteralDate(string? raw, SettlementDateOrder order, out DateTime? value)
+    {
+        value = null;
+        if (raw == null) return true;
+        var s = ThaiDigitsToAscii(raw).Trim();
+        if (s.Length == 0 || s == "-") return true;
+        if (IsoWithOffset(s) is DateTimeOffset dto)
+        {
+            var bkk = dto.ToOffset(BangkokOffset);
+            return Make(bkk.Year, bkk.Month, bkk.Day, out value);
+        }
+        return TryReadParts(s, order, out var p) && Make(p.Year, p.Month, p.Day, out value);
+    }
+
     /// <summary>ISO 8601 ที่มีเขตเวลา (Z / +07:00) — null = ไม่ใช่รูปนี้</summary>
     private static DateTimeOffset? IsoWithOffset(string s)
     {
@@ -291,12 +311,18 @@ public static class SettlementValueParser
         var min = int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
         var sec = m.Groups[3].Success ? int.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture) : 0;
         var ampm = m.Groups[4].Value.ToLowerInvariant();
-        if (ampm == "am" || ampm == "pm")
+        // I-9: "13:05 PM" = นาฬิกา 24 ชม. ที่ต่อ PM เกินมา — ตีความได้ทางเดียว (ไม่กำกวม) ⇒ ใช้ชั่วโมงตามตัวเลข ·
+        // "18:30 AM" / "0:30 AM" = ขัดกันเอง ⇒ อ่านไม่ได้
+        var pmOn24HourClock = ampm == "pm" && h >= 13 && h <= 23;
+        if ((ampm == "am" || ampm == "pm") && !pmOn24HourClock)
         {
             if (h < 1 || h > 12) return false;
             h = ampm == "pm" ? (h % 12) + 12 : h % 12;
         }
-        if (h > 23 || min > 59 || sec > 59) return false;
+        if (min > 59 || sec > 59) return false;
+        // I-9: "24:00" (ISO 8601 = สิ้นวันที่เขียน) — เฉพาะ 24:00:00 พอดี · ไม่รับกับ AM/PM · ชั่วโมงอื่นเกิน 23 = อ่านไม่ได้
+        var endOfDay = h == 24 && min == 0 && sec == 0 && ampm is not ("am" or "pm");
+        if (h > 23 && !endOfDay) return false;
         TimeSpan? offset = null;
         if (m.Groups[5].Success && m.Groups[5].Value.Length > 0)
         {
@@ -307,11 +333,16 @@ public static class SettlementValueParser
         return true;
     }
 
-    /// <summary>"Z" · "UTC" · "GMT" = 0 · "+07:00" · "+0700" · "+7" · "GMT+7" · "UTC-05:30" — อ่านไม่ได้ = false</summary>
+    /// <summary>"Z" · "UTC" · "GMT" = 0 · "ICT" = +7 · "+07:00" · "+0700" · "+7" · "GMT+7" · "UTC-05:30" — อ่านไม่ได้ = false</summary>
     internal static bool TryParseOffset(string raw, out TimeSpan offset)
     {
         offset = TimeSpan.Zero;
         var z = raw.Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant();
+        if (z == "ict")
+        {
+            offset = BangkokOffset;                                          // Indochina Time = UTC+7 (I-9)
+            return true;
+        }
         if (z.StartsWith("utc", StringComparison.Ordinal) || z.StartsWith("gmt", StringComparison.Ordinal)) z = z[3..];
         if (z.Length == 0 || z == "z") return true;
         var sign = z[0] == '-' ? -1 : z[0] == '+' ? 1 : 0;
@@ -331,7 +362,8 @@ public static class SettlementValueParser
         return true;
     }
 
-    /// <summary>ส่วนของวันที่ → วันตามปฏิทินไทย (แปลงเขตเวลาเมื่อมีเวลา และมี offset ในตัว หรือไฟล์เป็น UTC)</summary>
+    /// <summary>ส่วนของวันที่ → วันตามปฏิทินไทย (แปลงเขตเวลาเมื่อมีเวลา และมี offset ในตัว หรือไฟล์เป็น UTC) ·
+    /// "24:00" เวลาไทยไม่มี offset = สิ้นวันที่เขียน ⇒ วันตามที่เขียน (เหมือนเวลาอื่นของวันนั้น) · UTC/มี offset ⇒ บวกครบ 24 ชม. แล้วแปลงตามปกติ</summary>
     private static bool Resolve(DateParts p, SettlementFileTimeZone zone, out DateTime? value)
     {
         value = null;

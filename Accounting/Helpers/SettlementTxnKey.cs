@@ -12,8 +12,9 @@ public readonly record struct SettlementTxnKeyInput(string? RawTxnId, string? La
 /// <summary>บรรทัดเดิมแบบไม่มี id: คีย์เนื้อหา (<see cref="SettlementTxnKey.ContentKey"/>) + ไฟล์ที่นำเข้ามา (<c>SettlementLine.ImportScope</c> · null = ก่อนรอบ 200)</summary>
 public readonly record struct SettlementStoredContent(string ContentKey, string? ImportScope);
 
-/// <summary>ผลของ <see cref="SettlementTxnKey.SplitRevisedFilePool"/> — คีย์เนื้อหาของบรรทัดเดิมที่เทียบได้ (ไฟล์รุ่นก่อนของไฟล์นี้) และที่ห้ามกลืน (ไฟล์อื่น)</summary>
-public sealed record SettlementContentPool(IReadOnlyList<string> SameFile, IReadOnlyList<string> OtherFiles);
+/// <summary>ผลของ <see cref="SettlementTxnKey.SplitRevisedFilePool"/> — คีย์เนื้อหาของบรรทัดเดิมที่เทียบได้ (ไฟล์รุ่นก่อนของไฟล์นี้) และที่ห้ามกลืน (ไฟล์อื่น) ·
+/// <paramref name="RevisedScope"/> = ลายนิ้วมือของไฟล์รุ่นก่อน (กลุ่มใหญ่สุดที่ไฟล์นี้ครอบ) ที่บรรทัดใหม่ต้องสืบ (I-8) · null = ไฟล์นี้ไม่ใช่ฉบับแก้ของไฟล์ใด</summary>
+public sealed record SettlementContentPool(IReadOnlyList<string> SameFile, IReadOnlyList<string> OtherFiles, string? RevisedScope = null);
 
 /// <summary>
 /// **คีย์กันนำเข้าซ้ำของบรรทัด settlement (<c>SettlementLine.ExternalTxnId</c> · unique ต่อช่องทาง) — pure · deterministic · รุ่น v2**
@@ -73,40 +74,61 @@ public static class SettlementTxnKey
     /// <item>v1 (เฟส 1 ทีม B): id + "|" + ป้ายของตัวจัดประเภท (ป้ายผ่านตัวตัด PII) · ไม่มี id ⇒ <c>row:</c> + แฮช(ออเดอร์|ป้าย|ยอด|วันที่) —
     /// ใช้ตัว normalize ของ<b>วันนี้</b> ⇒ ถ้าตัว normalize เปลี่ยนหลังนำเข้า คีย์ v1 บางแถวอาจไม่ตรง (ข้อจำกัดที่รู้ · R-B6 คือเหตุที่ v2 เลิกใช้)</item>
     /// <item>v2 ก่อนแก้ S3-4: แถวไม่มี id ที่ไฟล์ไม่มีคอลัมน์รอบโอน ⇒ <c>v2:row:</c> + แฮช(… | เลขรอบโอนที่ผู้ใช้พิมพ์ <paramref name="typedPayoutRef"/>)</item>
+    /// <item><b>วันที่ตามตัวอักษร</b> (ฝ่ายค้าน I-1 · ทีม IF รอบ 200): ทุกรุ่นข้างบน<b>และกติกาปัจจุบัน</b> คิดซ้ำด้วยวันที่แบบที่ตัวอ่านก่อนรอบ 200 อ่าน
+    /// (<paramref name="literalDateSets"/> — ทิ้งเวลา/เขตเวลาท้ายค่า · ลำดับวัน/เดือนแบบเดิม) — ตัวอ่านใหม่แปลงเขตเวลา (หัวคอลัมน์ "(UTC)" · ค่า "… UTC")
+    /// ⇒ แถวเวลา 17:00–24:00 ได้วันที่ใหม่ ⇒ คีย์ทุกรุ่นเปลี่ยน (วันที่อยู่ในคีย์ + ลายนิ้วมือไฟล์) ⇒ ไฟล์ที่นำเข้าก่อน deploy นำเข้าซ้ำได้</item>
     /// </list>
     /// คืนรายการต่อแถว (ลำดับเดียวกับ <paramref name="rows"/>) — คีย์ที่เท่ากับรุ่นปัจจุบันไม่ซ้ำใส่
     /// </summary>
-    public static IReadOnlyList<IReadOnlyList<string>> LegacyKeys(IReadOnlyList<SettlementTxnKeyInput> rows, string? typedPayoutRef)
+    /// <param name="literalDateSets">วันที่ตามตัวอักษรทีละชุด (แต่ละชุดยาวเท่า <paramref name="rows"/>) — null/ชุดที่เท่ากับวันที่ของแถว = ไม่มีอะไรเพิ่ม</param>
+    public static IReadOnlyList<IReadOnlyList<string>> LegacyKeys(IReadOnlyList<SettlementTxnKeyInput> rows, string? typedPayoutRef,
+        IReadOnlyList<IReadOnlyList<DateTime?>>? literalDateSets = null)
     {
-        var v1 = AssignCore(rows, r =>
-        {
-            var label = SettlementLineClassification.NormalizeLabel(SettlementPiiScrubber.Scrub(r.Label));
-            if (!string.IsNullOrWhiteSpace(r.RawTxnId))
-            {
-                var id = r.RawTxnId.Trim();
-                return label.Length == 0 ? id : id + "|" + label;
-            }
-            return "row:" + Hash(string.Join("|", (r.OrderId ?? "").Trim(), label,
-                r.Amount.ToString("0.00", CultureInfo.InvariantCulture),
-                r.Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? ""))[..40];
-        });
         var typed = (typedPayoutRef ?? "").Trim();
-        var v2Typed = AssignCore(rows, r =>
-        {
-            var (label, amount, date) = Parts(r);
-            if (!string.IsNullOrWhiteSpace(r.RawTxnId)) return IdKey(r.RawTxnId.Trim(), label, amount, date);
-            var column = (r.PayoutRef ?? "").Trim();
-            return Version + "row:" + Hash(string.Join("|", (r.OrderId ?? "").Trim(), label, amount, date,
-                column.Length > 0 ? column : typed))[..40];
-        });
         var current = Assign(rows);
+        var variants = new List<IReadOnlyList<string>> { V1(rows), V2Typed(rows, typed) };
+        foreach (var set in literalDateSets ?? Array.Empty<IReadOnlyList<DateTime?>>())
+        {
+            if (set.Count != rows.Count || rows.Select(r => r.Date).SequenceEqual(set)) continue;
+            var literal = rows.Select((r, i) => r with { Date = set[i] }).ToList();
+            variants.Add(V1(literal));
+            variants.Add(V2Typed(literal, typed));
+            variants.Add(Assign(literal));
+        }
         var result = new List<IReadOnlyList<string>>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
-            result.Add(new[] { v1[i], v2Typed[i] }
-                .Where(k => !string.Equals(k, current[i], StringComparison.Ordinal))
+        {
+            var at = i;
+            result.Add(variants.Select(v => v[at])
+                .Where(k => !string.Equals(k, current[at], StringComparison.Ordinal))
                 .Distinct(StringComparer.Ordinal).ToList());
+        }
         return result;
     }
+
+    /// <summary>กติกา v1 (เฟส 1 ทีม B) — ใช้เทียบเท่านั้น</summary>
+    private static IReadOnlyList<string> V1(IReadOnlyList<SettlementTxnKeyInput> rows) => AssignCore(rows, r =>
+    {
+        var label = SettlementLineClassification.NormalizeLabel(SettlementPiiScrubber.Scrub(r.Label));
+        if (!string.IsNullOrWhiteSpace(r.RawTxnId))
+        {
+            var id = r.RawTxnId.Trim();
+            return label.Length == 0 ? id : id + "|" + label;
+        }
+        return "row:" + Hash(string.Join("|", (r.OrderId ?? "").Trim(), label,
+            r.Amount.ToString("0.00", CultureInfo.InvariantCulture),
+            r.Date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? ""))[..40];
+    });
+
+    /// <summary>กติกา v2 ก่อนแก้ S3-4 (แถวไม่มี id ใช้เลขรอบโอนที่พิมพ์) — ใช้เทียบเท่านั้น</summary>
+    private static IReadOnlyList<string> V2Typed(IReadOnlyList<SettlementTxnKeyInput> rows, string typed) => AssignCore(rows, r =>
+    {
+        var (label, amount, date) = Parts(r);
+        if (!string.IsNullOrWhiteSpace(r.RawTxnId)) return IdKey(r.RawTxnId.Trim(), label, amount, date);
+        var column = (r.PayoutRef ?? "").Trim();
+        return Version + "row:" + Hash(string.Join("|", (r.OrderId ?? "").Trim(), label, amount, date,
+            column.Length > 0 ? column : typed))[..40];
+    });
 
     /// <summary>ลายนิ้วมือเนื้อหาของแถวทั้งชุดที่นำเข้าครั้งนี้ — ไม่ขึ้นกับลำดับแถว/รูปแบบไฟล์/สิ่งที่ผู้ใช้พิมพ์ (S3-4)</summary>
     internal static string ContentScope(IReadOnlyList<SettlementTxnKeyInput> rows)
@@ -155,36 +177,82 @@ public static class SettlementTxnKey
 
     /// <summary>
     /// **ลายนิ้วมือเนื้อหาของไฟล์ที่นำเข้าครั้งนี้** — ค่าเดียวกับที่ใส่ในคีย์ <c>v2:rowc:</c> (<see cref="ContentScope"/>) · เก็บต่อบรรทัดใน
-    /// <c>SettlementLine.ImportScope</c> ให้ผู้นำเข้ารู้ว่าบรรทัดเดิมมาจาก "ไฟล์ไหน" (review198-S4 S4-3 · ทีม I รอบ 200) · ว่าง ⇒ null
+    /// <c>SettlementLine.ImportScope</c> ให้ผู้นำเข้ารู้ว่าบรรทัดเดิมมาจาก "ไฟล์ไหน" (review198-S4 S4-3 · ทีม I รอบ 200) · ว่าง ⇒ null ·
+    /// ไฟล์ฉบับแก้ที่เติมเข้ารอบเดิม ⇒ บรรทัดที่เพิ่มเก็บลายนิ้วมือของไฟล์รุ่นก่อนแทน (<see cref="SettlementContentPool.RevisedScope"/> · I-8)
     /// </summary>
     public static string? ImportScopeOf(IReadOnlyList<SettlementTxnKeyInput> rows)
         => rows.Count == 0 ? null : ContentScope(rows);
 
     /// <summary>
-    /// **แยกบรรทัดเดิม (ไม่มี id) ของรอบโอนเดียวกันเป็น "ไฟล์รุ่นก่อนของไฟล์นี้" กับ "ไฟล์อื่น"** (review198-S4 S4-3 · ทีม I รอบ 200)
+    /// **แยกบรรทัดเดิม (ไม่มี id) ของรอบโอนเดียวกันเป็น "ไฟล์รุ่นก่อนของไฟล์นี้" กับ "ไฟล์อื่น"** (review198-S4 S4-3 · ทีม I รอบ 200 · ฝ่ายค้าน I-8 ทีม IF)
     /// <para>ที่มา: S3-4 เทียบเนื้อหาแบบนับจำนวนกับบรรทัด<b>ทุกบรรทัด</b>ของรอบ ⇒ รอบที่สร้างจากไฟล์ 1 แล้ว<b>เติม</b>ไฟล์ 2 (ส่วนที่เหลือของรอบ) ซึ่งมีรายการจริง
     /// ที่หน้าตาเหมือนแถวในไฟล์ 1 ทุกช่อง (ค่าธรรมเนียมถอนเงิน −10 วันเดียวกัน) ⇒ แถวจริงถูกข้ามว่า "นำเข้าแล้ว" (R-B5 ถอยในรอบเดียว)</para>
     /// <para>กติกา: บรรทัดเดิมจัดกลุ่มตาม <c>ImportScope</c> (ไฟล์ที่นำเข้ามา) · กลุ่มที่<b>ทุกบรรทัด</b>มีแถวเนื้อหาเดียวกันในไฟล์นี้ (นับจำนวน ⊆) =
     /// ไฟล์นี้คือฉบับแก้ของไฟล์นั้น ⇒ <c>SameFile</c> (เทียบเนื้อหาได้ เหมือน S3-4) · กลุ่มที่ไฟล์นี้ไม่ครอบทั้งหมด = ไฟล์อื่น ⇒ <c>OtherFiles</c>
     /// (ห้ามกลืนแถว — ผู้เรียกเตือนรายแถวแทน · ทิศที่มองเห็นได้: แถวซ้ำโผล่ให้เห็นในรอบ + สมการรอบโอนไม่ลงตัว ดีกว่าแถวจริงหายเงียบ) ·
     /// บรรทัดที่นำเข้าก่อนมีคอลัมน์ (<c>ImportScope</c> null) = พฤติกรรมเดิมของ S3-4 (<c>SameFile</c>) — ไม่มีข้อมูลให้แยก</para>
+    /// <para>I-8: (1) ตรวจทีละกลุ่มแบบ<b>หักจำนวน</b> — แถวของไฟล์นี้ที่กลุ่มหนึ่งใช้ครอบแล้ว ห้ามนำไปครอบกลุ่มอื่นซ้ำ (กลุ่มใหญ่ก่อน · เท่ากันเรียงตามลายนิ้วมือ
+    /// ⇒ ผลไม่ขึ้นกับลำดับ) · (2) <c>RevisedScope</c> = ลายนิ้วมือของกลุ่มที่ใหญ่ที่สุดที่ไฟล์นี้ครอบ — ผู้นำเข้าเก็บบรรทัดที่เพิ่มจากไฟล์ฉบับแก้ด้วยลายนิ้วมือ
+    /// <b>ของกลุ่มที่มันขยาย</b> (ไม่ใช่ของไฟล์ฉบับแก้) ⇒ กลุ่มโตตามไฟล์ล่าสุด · เดิมแถวที่เติมจากไฟล์ฉบับแก้เป็นกลุ่มเล็ก (เช่น "ถอนเงิน −10" แถวเดียว)
+    /// ที่ไฟล์อื่นของรอบครอบได้โดยบังเอิญ ⇒ แถวจริงของไฟล์นั้นถูกกลืน (บั๊ก S4-3 กลับมาในรอบที่ผ่านการแก้ไฟล์)</para>
     /// </summary>
     public static SettlementContentPool SplitRevisedFilePool(IReadOnlyList<string?> newContentKeys, IReadOnlyList<SettlementStoredContent> stored)
     {
-        var incoming = new Dictionary<string, int>(StringComparer.Ordinal);
+        var remaining = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var k in newContentKeys)
-            if (k != null) incoming[k] = incoming.TryGetValue(k, out var n) ? n + 1 : 1;
+            if (k != null) remaining[k] = remaining.TryGetValue(k, out var n) ? n + 1 : 1;
         var same = new List<string>();
         var other = new List<string>();
-        foreach (var g in stored.GroupBy(x => x.ImportScope, StringComparer.Ordinal))
+        string? revisedScope = null;
+        var groups = stored.GroupBy(x => x.ImportScope, StringComparer.Ordinal)
+            .Select(g => (Scope: g.Key, Keys: g.Select(x => x.ContentKey).ToList()))
+            .OrderByDescending(g => g.Keys.Count).ThenBy(g => g.Scope, StringComparer.Ordinal)
+            .ToList();
+        foreach (var (scope, keys) in groups)
         {
-            var keys = g.Select(x => x.ContentKey).ToList();
-            if (g.Key == null) { same.AddRange(keys); continue; }
-            var covered = keys.GroupBy(k => k, StringComparer.Ordinal)
-                .All(kg => incoming.TryGetValue(kg.Key, out var have) && have >= kg.Count());
-            (covered ? same : other).AddRange(keys);
+            if (scope == null) { same.AddRange(keys); continue; }
+            var need = keys.GroupBy(k => k, StringComparer.Ordinal).Select(kg => (Key: kg.Key, Count: kg.Count())).ToList();
+            var covered = need.All(x => remaining.TryGetValue(x.Key, out var have) && have >= x.Count);
+            if (!covered)
+            {
+                other.AddRange(keys);
+                continue;
+            }
+            foreach (var (key, count) in need) remaining[key] -= count;
+            same.AddRange(keys);
+            revisedScope ??= scope;
         }
-        return new SettlementContentPool(same, other);
+        return new SettlementContentPool(same, other, revisedScope);
+    }
+
+    /// <summary>
+    /// index ของแถวใหม่ที่<b>เลขรายการเดียวกับบรรทัดที่เก็บแล้ว</b> แต่คีย์ไม่ตรง (ป้าย/ยอด/วันที่ต่าง) — ฝ่ายค้าน I-1: เส้น "ไฟล์มีรายการใหม่" ต้องบอกเหตุจริง ·
+    /// คืนเงินครั้งที่สอง/ยอดปรับของ id เดียวกันเป็นรายการจริงได้ (R-B5) ⇒ ใช้เพื่อ<b>บอก</b>เท่านั้น ห้ามใช้กลืนแถว ·
+    /// คีย์ที่ถูกย่อเป็น "h:" (ยาวเกิน) ดึง id กลับไม่ได้ ⇒ ไม่นับ
+    /// </summary>
+    public static IReadOnlySet<int> SharesRawIdWith(IReadOnlyList<string?> newRawIds, IEnumerable<string> storedKeys)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var k in storedKeys)
+            if (RawIdOf(k) is string id) ids.Add(id);
+        var hit = new HashSet<int>();
+        for (var i = 0; i < newRawIds.Count; i++)
+            if (!string.IsNullOrWhiteSpace(newRawIds[i]) && ids.Contains(newRawIds[i]!.Trim())) hit.Add(i);
+        return hit;
+    }
+
+    /// <summary>id ดิบจากคีย์ที่เก็บ — v2 <c>v2:{id}:{แฮช}</c> (ต่อท้าย "#n" ได้) · v1 <c>{id}|{ป้าย}</c> หรือ <c>{id}</c> · คีย์แถวไม่มี id/intent/ย่อ = null</summary>
+    private static string? RawIdOf(string key)
+    {
+        if (IsRowKey(key) || key.StartsWith("pi:", StringComparison.Ordinal) || key.StartsWith("h:", StringComparison.Ordinal)) return null;
+        if (key.StartsWith(Version, StringComparison.Ordinal))
+        {
+            var body = key[Version.Length..];
+            var colon = body.LastIndexOf(':');
+            return colon > 0 ? body[..colon] : null;
+        }
+        var bar = key.IndexOf('|');
+        return bar > 0 ? key[..bar] : key.Length > 0 ? key : null;
     }
 
     /// <summary>คีย์ของบรรทัดที่ประกอบจาก PaymentIntent — ส่วน = "sale" · "fee" · "refund@{ยอดคืนสะสม}" (ยอดคืนเพิ่มภายหลัง ⇒ คีย์ใหม่)</summary>

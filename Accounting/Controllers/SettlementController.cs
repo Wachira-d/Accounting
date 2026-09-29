@@ -171,13 +171,16 @@ public class SettlementController : ControllerBase
         if (request is null || !HeaderPresent(request.Header))
             return BadRequest(new ApiResponse<SettlementImportResult>(false, null, HeaderMissingMessage));
         // D-P2: จำการจับคู่คอลัมน์ = เปลี่ยนค่าตั้งของช่องทาง ⇒ ด่านเดียวกับ PUT channels (สิทธิ์ Channels + ห้ามคีย์ API) · ไม่ผ่าน = ใช้กับไฟล์นี้อย่างเดียว + บอก
-        var memory = SettlementPermissionScope.ColumnMapMemory(request.RememberColumnMap, OwnerActionGuard.IsApiKeyRequest(HttpContext),
-            await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Channels));
+        var isApiKey = OwnerActionGuard.IsApiKeyRequest(HttpContext);
+        var canChannels = await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Channels);
+        var memory = SettlementPermissionScope.ColumnMapMemory(request.RememberColumnMap, isApiKey, canChannels);
         var effective = request with { RememberColumnMap = memory.Remember };
+        // I-2: เหตุที่จำไม่ได้ ⇒ ข้อความถามรูปแบบวันที่/เขตเวลาตอนล้มบอกตามจริง (ไม่สัญญาว่า "ระบบจำไว้ให้")
+        var memoryBlocked = SettlementPermissionScope.ColumnMapMemoryBlocker(isApiKey, canChannels);
         await using var stream = file.OpenReadStream();
         return await Guarded(async () =>
         {
-            var r = await _import.ImportFileAsync(companyId, UserId, effective, file.FileName, stream, ct);
+            var r = await _import.ImportFileAsync(companyId, UserId, effective, file.FileName, stream, memoryBlocked, ct);
             return memory.Notice is string notice ? r with { Warnings = r.Warnings.Append(notice).ToList() } : r;
         }, "นำเข้ารอบโอนแล้ว");
     }

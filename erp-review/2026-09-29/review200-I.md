@@ -123,3 +123,21 @@ diff `5c1fe028..worktree-agent-a06a7d910e888f5da` (`b7cd77eb` + `318f0d59`) · �
 2. **I-7** — อย่างน้อยย้ายแถวแบบกว้างที่ข้ามเพราะ "ไม่มีเลข" (และช่องแรกไม่ใช่คำสรุป) เข้า `Warnings` พร้อมยอดที่ถูกเครื่องหมาย (ปิด I-4 ไปด้วย)
 3. **I-2/I-3** ข้อความตามสิทธิ์จริง + ไม่บอก "จำแล้ว" บนเส้นที่ rollback
 4. ที่เหลือ (I-5, I-6, I-8–I-11) เป็น backlog P3
+
+---
+
+## สถานะหลังแก้ (ทีม IF · รอบ 200 · รายละเอียด `team-IF.md`)
+
+| ID | สถานะ | แก้ที่ | เทสต์ |
+|---|---|---|---|
+| I-1 (P2) คีย์ drift | ✅ `<pending>` | `SettlementParsedRow.LiteralDates` ← `SettlementValueParser.TryParseLiteralDate` × `SettlementFileDecisions.LegacyReadOrders` · `SettlementTxnKey.LegacyKeys(..., literalDateSets)` คิด v1/v2-พิมพ์/กติกาปัจจุบันซ้ำด้วยวันที่ตามตัวอักษร · `PersistAsync` ส่ง `LiteralDateSets(rows)` · เส้นรอบลงบัญชีแล้ว `PostedBatchNewRowsMessage` (+`SharesRawIdWith`) บอกเหตุจริง · รอบที่ยังแก้ได้เตือนเลขรายการซ้ำเนื้อหาต่าง | `I1_*` 6 ชุด |
+| I-2 (P2) ข้อความ "จำให้" + ถามทีละเรื่อง | ✅ `<pending>` | `SettlementFileDecisions.DecideDates` (ถามครั้งเดียว · `date-order-timezone-ambiguous`) · `MemoryClause` ← `SettlementParseContext.WillRemember/NotRememberedReason` ← controller `SettlementPermissionScope.ColumnMapMemoryBlocker` (`ColumnMapMemory` ตัดสินด้วยตัวเดียวกัน) · `ImportFileAsync(..., memoryBlockedReason, ct)` · ค่าตั้งต้นของช่องทางเดิม (Bangkok) = คำถามถึงเจ้าของ ไม่เดา | `I2_*` 2 ชุด |
+| I-3 (P3) "จำแล้ว" บนเส้น rollback | ✅ `<pending>` | ข้อความของ `Learn` ย้ายเป็น `PersistInput.LearnNotes` เติมเฉพาะเส้นที่บันทึก `ColumnMapJson` (หลังเส้น rollback — ล็อกลำดับใน `required_call_site_check`) | call-site (ไม่มีเทสต์ DbContext) · TEST_PLAN SPIF-01 |
+| I-4 (P3) ยอดแถวสรุปไม่กลับเครื่องหมาย | ✅ `<pending>` | `SummaryNotice` ใช้ `LongAmount`/`WideAmounts` ตัวเดียวกับแถวจริง (Negate · VatExclusive · AmountOut) | `I4_*` · `RB11_xlsx…` (1,521.50 = 1605 − 53.5 − 30) |
+| I-5 (P3) CSV `;` บาทเต็ม | ✅ `<pending>` | `SettlementColumnMap.CommaIsThousands` + ช่องติ๊กหน้าจับคู่ · ข้อความ `decimal-comma` ทางหลัก = ติ๊ก / .xlsx | `I5_*` |
+| I-6 (P3) ข้อความผิดเหตุ | ✅ `<pending>` | `SettlementFileDecisions.WideIdColumnsEmpty` ⇒ `id-column-empty` ชี้คอลัมน์เลข | `I6_*` |
+| I-7 (P2) → DECISIONS ข้อ 39 | ✅ `<pending>` | `IsSummaryRow` แบบกว้าง = คำสรุป · ไม่มีวันที่ · `TotalsIdRows` (≥ 2 แถวที่มีเลข) · แถวไม่มีเลขที่มีวันที่ = รายการจริง + คำเตือนรายแถว · แถวสรุปที่ข้ามไป `SettlementParseResult.Warnings` (แถบเตือน) | `D39_*` 2 ชุด · ปรับ `RB11_*` |
+| I-8 (P3) กลุ่มเล็กถูกครอบ | ✅ `<pending>` | `SplitRevisedFilePool` หักจำนวนระหว่างกลุ่ม (ใหญ่ก่อน · ลายนิ้วมือ) + `RevisedScope` ⇒ บรรทัดจากไฟล์ฉบับแก้สืบ `ImportScope` ของไฟล์รุ่นก่อน (ต้นเหตุจริงของฉากในรายงาน — หักจำนวนอย่างเดียวไม่พอ) | `I8_*` 2 ชุด (รวมทิศ "บั๊กเดิม") |
+| I-9 (P3) ส่วนท้ายเวลา | ✅ `<pending>` | `TimeTail` รับ `ICT` · วงเล็บ `(GMT+07:00)` · "น" · `13:05 PM` = 24 ชม. · `24:00` = สิ้นวันที่เขียน · `UnreadTime` ยังนับเป็นกำกวม (ทิศปลอดภัย — ไม่ทำตามข้อเสนอ "กำกวมเฉพาะเมื่อเลือก Utc" เพราะ = เดาไทยเงียบ) | `I9_*` 3 ชุด |
+| I-10 (P3) ค่าที่จำขัดกับไฟล์ | ✅ `<pending>` | `DecideDates` ⇒ `date-order-conflict` บอกว่ามาจากค่าที่จำ + ทางล้าง "อัตโนมัติ" · เขตเวลาที่ตั้งยังชนะหัวคอลัมน์ (คำประกาศไม่ใช่หลักฐาน — ถ้าบล็อก ผู้ใช้ที่รู้ว่าหัวคอลัมน์ผิดจะไม่มีทางไปต่อ) | `I10_*` |
+| I-11 (P3) โหลดทั้งวัน + เตือนสมมาตร | ✅ `<pending>` | `LoadOtherBatchesAsync` กรอง `StartsWith(RowKeyPrefix/LegacyRowKeyPrefix)` ใน SQL + `l.Batch.Status` · `RefsWithStatus` "(ลงบัญชีแล้ว)" · `WhatToDo` ตัวเดียวของพรีวิวและตอนนำเข้า (ห้ามชักชวนยกเลิกรอบที่ลงแล้ว) | `I11_*` 2 ชุด |
