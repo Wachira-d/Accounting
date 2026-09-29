@@ -132,9 +132,17 @@ public sealed class SettlementChannelService : ISettlementChannelService
         }
         string? providerCode = null;
         if (r.PaymentProviderConfigId is Guid cfgId)
-            providerCode = await _db.PaymentProviderConfigs.AsNoTracking()
-                               .Where(c => c.Id == cfgId && c.CompanyId == companyId).Select(c => c.ProviderCode).FirstOrDefaultAsync(ct)
-                           ?? throw new BusinessRuleException("ไม่พบการตั้งค่า gateway ที่เลือกในบริษัท", "SETTLEMENT-CHANNEL-GATEWAY", 404);
+        {
+            var cfg = await _db.PaymentProviderConfigs.AsNoTracking()
+                          .Where(c => c.Id == cfgId && c.CompanyId == companyId)
+                          .Select(c => new { c.ProviderCode, c.FeeVatMode, c.WhtOnFee }).FirstOrDefaultAsync(ct)
+                      ?? throw new BusinessRuleException("ไม่พบการตั้งค่า gateway ที่เลือกในบริษัท", "SETTLEMENT-CHANNEL-GATEWAY", 404);
+            providerCode = cfg.ProviderCode;
+            // รอบ 200 ทีม P2: "ค่าธรรมเนียมมี VAT ไหม · เราหัก ณ ที่จ่ายไหม" เก็บสองที่ (config gateway · ช่องทาง) — ต้องตอบตรงกัน
+            // ไม่งั้นรอบโอนที่ประกอบจากรายการรับชำระแต่งภาษีซื้อ/ทิ้ง VAT (ตัวตัดสินเดียวกับ ImportFromPaymentIntentsAsync)
+            if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, r.FeeVatMode, r.FeeWhtMode) is string modeBad)
+                throw new BusinessRuleException(modeBad, "SETTLEMENT-CHANNEL-GATEWAY-MODE");
+        }
         var counterpartyId = await ResolveCounterpartyAsync(companyId, r, ct);
 
         var strategy = _db.Database.CreateExecutionStrategy();

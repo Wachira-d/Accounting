@@ -474,7 +474,7 @@ public class SettlementImportTests
         var b = new SettlementIntentSnapshot(Guid.NewGuid(), "ch_b", 500m, 0m, null, 0m, t0.AddMinutes(1), false, 0m);
         var late = new SettlementIntentSnapshot(Guid.NewGuid(), "ch_c", 800m, 300m, 10m, 0m, t0.AddMinutes(2), true, 100m);
         var done = new SettlementIntentSnapshot(Guid.NewGuid(), "ch_d", 800m, 300m, 10m, 0m, t0.AddMinutes(3), true, 300m);
-        var r = PaymentIntentAdapter.BuildRows(new[] { a, b, late, done });
+        var r = PaymentIntentAdapter.BuildRows(new[] { a, b, late, done }, GatewayFeeVatMode.None);
         Assert.All(r.Rows, x => Assert.NotNull(x.PaymentIntentId));
         Assert.Equal(new[] { 1070m, -41.79m, -100m }, r.Rows.Where(x => x.PaymentIntentId == a.Id).Select(x => x.Amount));
         Assert.Equal(1, r.FeeUnknownCount);                          // b ไม่รู้ค่าธรรมเนียม ⇒ ไม่แต่งตัวเลข

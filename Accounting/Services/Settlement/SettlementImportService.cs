@@ -118,85 +118,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
     }
 
     // ═══════════════════ ประกอบจาก PaymentIntent ═══════════════════
-
-    public async Task<SettlementImportResult> ImportFromPaymentIntentsAsync(Guid companyId, Guid userId,
-        SettlementIntentBatchRequest request, CancellationToken ct = default)
-    {
-        var h = request.Header;
-        var channel = await LoadChannelAsync(companyId, h.ChannelId, tracked: false, ct);
-        EnsureActive(channel);
-        if (channel.Kind != SettlementChannelKind.Gateway || channel.PaymentProviderConfigId is not Guid cfgId)
-            throw new BusinessRuleException(
-                "ช่องทางนี้ไม่ได้ผูกกับ payment gateway ในระบบ — ประกอบรอบโอนจากรายการรับชำระได้เฉพาะช่องทางชนิด Gateway ที่ผูกการตั้งค่า gateway แล้ว "
-                + "(ช่องทางอื่นให้นำเข้าไฟล์ settlement report แทน)", "SETTLEMENT-NOT-GATEWAY");
-        var providerCode = await _db.PaymentProviderConfigs.AsNoTracking()
-            .Where(c => c.Id == cfgId && c.CompanyId == companyId)
-            .Select(c => c.ProviderCode).FirstOrDefaultAsync(ct)
-            ?? throw new BusinessRuleException("ไม่พบการตั้งค่า gateway ที่ช่องทางนี้ผูกไว้ — แก้การผูกในหน้าตั้งค่าช่องทาง", "SETTLEMENT-GATEWAY-MISSING", 404);
-
-        // R-A1: บรรทัดที่พก PaymentIntentId ถูกนับว่า "อยู่ในผังพักแล้ว" — จริงเฉพาะเมื่อผังพักของช่องทาง = ผังที่ขาเงินเข้าของ intent ลงไว้
-        if (!await GatewayClearingMatchesAsync(companyId, channel, providerCode, ct))
-            throw new BusinessRuleException(
-                "ผังพักของช่องทางนี้ไม่ตรงกับผังที่ gateway ลงรับเงินไว้ (หรือยังไม่ได้ผูก) — บันทึกหน้าตั้งค่าช่องทางอีกครั้งเพื่อให้ระบบผูกผังเดียวกับ gateway "
-                + "ก่อนประกอบรอบโอน (ไม่งั้นยอดรับชำระกับยอดโอนจะอยู่คนละผังตลอดไป)", "SETTLEMENT-GATEWAY-CLEARING-MISMATCH");
-        var (rows, refundUnknown) = await LoadIntentRowsAsync(companyId, channel.Id, providerCode, h.PeriodTo, ct);
-        var warnings = new List<string>();
-        // review198-E2 E2-10: การคืนเงินผลไม่แน่ชัด — ประกอบรอบโอนได้ (เห็นยอด) แต่ลงบัญชีไม่ได้จนกว่าจะตรวจผล (ด่านผู้ลงบัญชี RefundOutcomeUnknown)
-        if (refundUnknown > 0)
-            warnings.Add($"รายการรับชำระ {refundUnknown} รายการมีการคืนเงินที่ผลยังไม่แน่ชัด — ตรวจผลการคืนเงินกับผู้ให้บริการก่อน "
-                + "(รอบโอนนี้จะลงบัญชีไม่ได้จนกว่าจะตรวจผลแล้ว)");
-        if (rows.FeeUnknownCount > 0)
-            warnings.Add($"รายการรับชำระ {rows.FeeUnknownCount} รายการยังไม่รู้ค่าธรรมเนียมจริง (ไม่มีบรรทัดค่าธรรมเนียม) — "
-                + "ยอดรอบโอนจะไม่ลงตัวจนกว่าจะแก้ค่าธรรมเนียมหรือเพิ่มบรรทัดปรับปรุงที่มีเหตุผล");
-        if (rows.Rows.Count == 0)
-            throw new BusinessRuleException("ไม่มีรายการรับชำระที่รอเข้ารอบโอนของ gateway นี้ (หรือถูกบันทึกรอบโอนด้วยเส้นเดิมแล้ว)",
-                "SETTLEMENT-NO-INTENTS");
-        return await PersistAsync(new PersistInput(companyId, userId, channel.Id, h, rows.Rows, Array.Empty<string>(),
-            SettlementSourceKind.PaymentIntents, null, null, PaymentIntentAdapter.AdapterCode, rows.NewIntentIds, providerCode,
-            warnings), ct);
-    }
-
-    /// <returns>บรรทัดจาก intent + จำนวน intent ที่การคืนเงินผลยังไม่แน่ชัด (E2-10)</returns>
-    private async Task<(SettlementIntentRows Rows, int RefundUnknown)> LoadIntentRowsAsync(Guid companyId, Guid channelId,
-        string providerCode, DateTime? periodTo, CancellationToken ct)
-    {
-        var to = periodTo is DateTime pt ? ThaiDate.CalendarDateUtc(pt).AddDays(1) : (DateTime?)null;
-        // เงื่อนไขเดียวกับ GatewaySettlementService.SelectCandidatesAsync (ทีม E) + ยังไม่อยู่ในรอบโอนใด · ไม่แตะรายการที่เส้นเดิมบันทึกรอบโอนแล้ว
-        var fresh = await _db.PaymentIntents.AsNoTracking()
-            .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode
-                && i.SettlementJournalEntryId == null && i.SettlementBatchId == null && i.ConfirmedAt != null
-                && (i.Status == PaymentIntentStatus.Succeeded
-                    || ((i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded)
-                        && i.RefundedAmount > 0m))
-                && (to == null || i.ConfirmedAt < to))
-            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt,
-                Unknown = i.RefundOutcomeUnknownSince != null })
-            .ToListAsync(ct);
-        // อยู่ในรอบโอนของเส้นใหม่แล้ว แต่คืนเงินภายหลัง — ผู้ให้บริการหักจากรอบถัดไป
-        var late = await _db.PaymentIntents.AsNoTracking()
-            .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode
-                && i.SettlementJournalEntryId == null && i.SettlementBatchId != null && i.RefundedAmount > 0m)
-            .Select(i => new { i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated, i.ConfirmedAt,
-                Unknown = i.RefundOutcomeUnknownSince != null })
-            .ToListAsync(ct);
-        var lateIds = late.Select(x => x.Id).ToList();
-        // R-B2/R-B17: ยอดคืนที่ถูกนับแล้วในบรรทัดคืนเงินของทุกช่องทาง (intent เป็นของบริษัท ไม่ใช่ของช่องทาง) — ไม่งั้นคืนเงินเดียวกันเข้าสองช่องทาง
-        var refundInLines = lateIds.Count == 0
-            ? new Dictionary<Guid, decimal>()
-            : (await _db.SettlementLines.AsNoTracking()
-                    .Where(l => l.CompanyId == companyId && l.PaymentIntentId != null
-                        && lateIds.Contains(l.PaymentIntentId.Value) && l.LineType == SettlementLineType.Refund)
-                    .Select(l => new { Id = l.PaymentIntentId!.Value, l.Amount })
-                    .ToListAsync(ct))
-                .GroupBy(x => x.Id).ToDictionary(g => g.Key, g => -g.Sum(x => x.Amount));
-
-        var snaps = fresh.Select(i => new SettlementIntentSnapshot(i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual,
-                i.FeeEstimated, i.ConfirmedAt, false, 0m))
-            .Concat(late.Select(i => new SettlementIntentSnapshot(i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual,
-                i.FeeEstimated, i.ConfirmedAt, true, refundInLines.GetValueOrDefault(i.Id))));
-        return (PaymentIntentAdapter.BuildRows(snaps), fresh.Count(i => i.Unknown)
-            + late.Count(i => i.Unknown && i.RefundedAmount - refundInLines.GetValueOrDefault(i.Id) > 0m));
-    }
+    // ย้ายไป SettlementImportService.Gateway.cs (รอบ 200 ทีม P2 — settlement เฟส 2)
 
     // ═══════════════════ บันทึก (ร่วมทุกทางเข้า) ═══════════════════
 
@@ -293,6 +215,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
             // ตรวจซ้ำใต้ล็อกด้วยคีย์ทุกรุ่นของ "ทุกแถว" — ชุดที่ได้ = บรรทัดที่แถวในไฟล์นี้อ้างด้วยคีย์แล้ว (ห้ามถูกนับซ้ำด้วยเนื้อหาด้านล่าง)
             var underLock = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
             var toAdd = prepared.Where(p => !p.AllKeys.Any(underLock.Contains)).ToList();
+            // รอบ 200 ทีม P2: ยอดคืนก้อนเดียวถูกนับในรอบโอนเดียว — ตรวจซ้ำใต้ล็อก gateway (อ่าน "ยอดในบรรทัดแล้ว" นอกล็อก ⇒ สองช่องทางพร้อมกันได้ซ้ำ)
+            if (input.GatewayProviderCode != null)
+                await EnsureIntentRefundCapacityAsync(companyId, toAdd.Select(p => p.Row).ToList(), ct);
 
             var batch = await _db.SettlementBatches
                 .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ChannelId == channelId && b.PayoutRef == payoutRef, ct);

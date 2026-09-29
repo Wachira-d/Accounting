@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **363 ไฟล์ · 3,458 `[Fact]` + 523 `[Theory]` (2,302 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **364 ไฟล์ · 3,470 `[Fact]` + 525 `[Theory]` (2,316 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4783,6 +4783,28 @@ e-Tax ตอบรับ ⇒ เตือน) · ชนิดของทุก�
 | SPS5-04 | ใบขายสรุปวันที่ 30 ก.ย. แต่จุดความรับผิด (`TaxPointDate`) 1 ต.ค. · ภ.พ.30 ต.ค. ประกาศว่ายื่น → ยกเลิกการลงบัญชีรอบโอน | ปฏิเสธ "เดือน 10/2569" · ภ.พ.30 ก.ย. อย่างเดียว ⇒ ไม่ปฏิเสธ (S4-8 — เดือนเดียวกับรายงาน) |
 | SPS5-05 | รอบโอนรับชำระใบขาย แล้วใบเสร็จอัตโนมัติคู่การรับชำระส่ง e-Tax ได้รับตอบรับ → ยกเลิกการลงบัญชี | ปฏิเสธทั้งรอบ ระบุเลขใบเสร็จ + "e-Tax … Accepted" · ยังไม่ตอบรับ ⇒ ยกเลิกได้ (S4-8) |
 | SPS5-06 | ขายด่วนขณะถูกจำกัดอัตรา (429) หรือรายการบริษัทยังโหลดไม่เสร็จ (403) ตอนอนุมัติ | แบนเนอร์ "บันทึกเป็นร่างแล้ว — อนุมัติไม่สำเร็จ" + ข้อความ · ไม่ขึ้น ✅ (S4-2) |
+
+### รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway เข้ารอบโอน batch (DECISIONS ข้อ 12)
+
+เทสต์อัตโนมัติ: `SettlementGatewayPhase2Tests` (สองทิศทุกข้อ · **parity กับเส้นเดิม**: ประกอบบรรทัดด้วย `PaymentIntentAdapter` แล้วคิดแผนด้วย
+`SettlementBatchMath.Plan` ต้องได้ ภาษีซื้อ/ค่าใช้จ่าย/ยอดที่ถูกหัก/ผังพัก เท่า `GatewaySettlementMath.Plan` ทุกโหมด VAT + บริษัทไม่จด VAT · ผลรวมบรรทัดต่อ intent =
+`Contribution.Net` · expression `UnclaimedForBatch`/`LateRefundInBatch` compile แล้วรันกับวัตถุจริง · `ModeMismatch` 11 คู่ · ตาข่าย `RefundLinesOverRefunded`) ·
+`required_call_site_check` (+9 กติกา: ImportFromPaymentIntentsAsync · LoadIntentRowsAsync (ห้ามเขียนเงื่อนไขเจ้าของซ้ำ/ส่งยอดคืนสะสม) · EnsureIntentRefundCapacityAsync ·
+RefundInLinesAsync · PersistAsync (ตาข่ายหลังล็อก ก่อนเพิ่มบรรทัด) · PaymentIntentAdapter.BuildRows (ห้ามสูตรที่สอง) · SettlementChannelService.SaveAsync ·
+GatewaySettlementService.SelectCandidatesAsync (ทิศกลับ)) · เรพไม่มีเทสต์ที่มี DbContext ⇒ SPP2 ด้านล่างต้องรันบน staging
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| SPP2-01 | config gateway "บวก VAT เพิ่ม" ค่าธรรมเนียม 39.06 + 18.25 · ช่องทาง "VAT ไทย 7%" · ประกอบรอบโอนจากรายการรับชำระ ยอดโอน 1,508.68 | ลงตัว · ใบค่าธรรมเนียม 61.32 = ค่าใช้จ่าย 57.31 + 11630 4.01 (เท่าหน้ารอบโอนเดิม) · ไม่มีใบขายสรุป · ล้างผังพัก 1,570 |
+| SPP2-02 | config "รวม VAT ในค่าธรรมเนียม" 10.00 ×3 | ภาษีซื้อ 1.95 (ปัดต่อรายการ) ไม่ใช่ 1.96 |
+| SPP2-03 | config "ไม่แยก VAT" แต่ช่องทาง "VAT ไทย 7%" → ประกอบรอบโอน / บันทึกช่องทาง | 400 `SETTLEMENT-GATEWAY-MODE-MISMATCH` / `SETTLEMENT-CHANNEL-GATEWAY-MODE` พร้อมทางไปต่อ · ไม่มีรอบโอน/ช่องทางถูกบันทึก |
+| SPP2-04 | ทิศตรงข้าม: config/ช่องทางตรงกัน (ไม่แยก ↔ ไม่มี VAT หรือ ภ.พ.36 · รวม/บวก ↔ VAT 7% · หัก 3% ↔ เราออกภาษีแทน) | ผ่านตามเดิม |
+| SPP2-05 | intent ที่บันทึกรอบโอนด้วยหน้าเดิมแล้ว + intent ที่อยู่รอบโอน batch อื่น → ประกอบรอบโอนใหม่ | ไม่ถูกดึง · หน้าเดิมไม่แสดง intent ที่ batch เป็นเจ้าของ |
+| SPP2-06 | intent ที่หน้าเดิมเป็นเจ้าของ คืนเงินภายหลัง → ประกอบรอบโอน batch | ไม่มีบรรทัดคืนเงิน (หน้าเดิมหักเองรอบถัดไป) |
+| SPP2-07 | คืนเงิน 100 ก่อนวันเงินเข้า + 200 วันเงินเข้า → ประกอบรอบนี้ · แล้วประกอบรอบถัดไป | รอบนี้บรรทัดคืน −100 · รอบถัดไป −200 (ไม่มีขาย/ค่าธรรมเนียมซ้ำ) |
+| SPP2-08 | คืนเงินบางครั้งก่อนระบบเก็บยอดรายครั้ง + คืนล่าสุดตั้งแต่วันเงินเข้า | 400 `SETTLEMENT-REFUND-TIMING-UNKNOWN` พร้อมทางไปต่อ (ห้ามเดา) |
+| SPP2-09 | หัวรอบโอนระบุต้นช่วง · มี intent ที่ยังไม่มีเจ้าของเก่ากว่าต้นช่วง | ไม่ถูกดึง + คำเตือนจำนวนรายการ · ไม่ระบุต้นช่วง ⇒ ดึงทั้งหมดตามเดิม |
+| SPP2-10 | สองช่องทางผูก config เดียวกัน กดประกอบรอบโอนพร้อมกัน · intent คืนเงินภายหลัง | คำขอที่สอง 400 `SETTLEMENT-INTENT-TAKEN` · บรรทัดคืนเงินมีชุดเดียว |
 
 ### ฝ่ายค้านรอบ 198 ทีม D2 — review198-D (D-01..D-11 · D-P1 · D-P2 · D-P4)
 

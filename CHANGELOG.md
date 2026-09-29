@@ -3719,3 +3719,14 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway (PaymentIntent) เข้ารอบโอน `SettlementBatch` ของช่องทาง Gateway
+(`erp-review/2026-09-29/DECISIONS.md` ข้อ 12 · รายงาน `erp-review/2026-09-29/team-P2.md`):
+- **สูตรเดียว** — `PaymentIntentAdapter.BuildRows(…, GatewayFeeVatMode)` คิดค่าธรรมเนียมที่ถูกหัก + VAT ต่อรายการด้วย `GatewaySettlementMath.Contribution` ตัวเดียวกับเส้นเดิม
+  (เดิมใส่ `FeeActual ?? FeeEstimated` ไม่ดูโหมด ⇒ "บวก VAT เพิ่ม" ยอดไม่ลงตัวทุกรอบ · "รวม VAT" ปัด 7/107 จากก้อนรวม ≠ เส้นเดิม) · ยอดคืน = ยอดคืน ณ วันเงินเข้า
+  (`RefundCutoffUtc` + `RefundedAsOf` — เดิมยอดสะสมวันนี้) · แยกไม่ได้ ⇒ บล็อก `SETTLEMENT-REFUND-TIMING-UNKNOWN`
+- **ข้อเท็จจริงเดียว** — `Helpers/GatewayBatchIntentRules.ModeMismatch`: โหมด VAT/WHT ค่าธรรมเนียมของ config gateway ↔ ช่องทางต้องตรงกัน ทั้งตอนประกอบรอบโอนและตอนบันทึกช่องทาง
+  (เดิม config "ไม่แยก VAT" + ช่องทาง "VAT 7%" ⇒ ภาษีซื้อแต่งขึ้น)
+- **หนึ่งรายการ หนึ่งเจ้าของ** — ตัวเลือก intent เป็น expression ตัวเดียว (`UnclaimedForBatch` · `LateRefundInBatch`) · เส้นเดิมข้าม intent ที่รอบโอนเป็นเจ้าของ (ล็อกทั้งสองทิศด้วย
+  `required_call_site_check`) · ตาข่ายยอดคืนใต้ล็อก `EnsureIntentRefundCapacityAsync` · ต้นช่วงของหัวรอบโอนมีผล (เดิมถูกเพิกเฉย) + เตือนรายการเก่ากว่าต้นช่วงที่ยังไม่มีเจ้าของ
+- ย้ายทางเข้า gateway ไป `Services/Settlement/SettlementImportService.Gateway.cs` · เทสต์ `SettlementGatewayPhase2Tests` · TEST_PLAN SPP2-01..10 — commit <pending>)_
