@@ -2277,9 +2277,11 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var bankTextForLang = PickLangText(template.BankDetailsText, template.BankDetailsTextEn, lang);
         if (template.ShowBankDetails && bankTextForLang != null)
+        {
             // รอบ 200 (G2-11): ข้อมูลการชำระเงินในเทมเพลต = ข้อความ (ไม่ใช่ HTML) — หนีแล้วคงการขึ้นบรรทัดด้วย <br/>
-            var bankHtml = WebUtility.HtmlEncode(bankTextForLang).Replace("\r\n", "\n").Replace("\n", "<br/>");
+            var bankHtml = System.Net.WebUtility.HtmlEncode(bankTextForLang).Replace("\r\n", "\n").Replace("\n", "<br/>");
             sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentInfo}:</strong><br/>{bankHtml}</div>");
+        }
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
