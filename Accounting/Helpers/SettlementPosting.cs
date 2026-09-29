@@ -227,6 +227,7 @@ public static class SettlementAccountResolver
         SettlementAccountRoles.Adjustment => "รายการปรับปรุง",
         SettlementAccountRoles.ChargebackLoss => "ขาดทุนจาก chargeback",
         SettlementAccountRoles.WhtPayable => "ภาษีหัก ณ ที่จ่ายค้างนำส่ง ภ.ง.ด.53",
+        SettlementAccountRoles.WhtPayable54 => "ภาษีหัก ณ ที่จ่ายค้างนำส่ง ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)",
         SettlementAccountRoles.WhtReimbursable => "ภาษีหัก ณ ที่จ่ายรอแพลตฟอร์มคืน",
         _ => role,
     };
@@ -337,10 +338,12 @@ public static class SettlementPostingGate
         }
         var whtLegs = plan.FeeDocuments.Any(d => d.WhtAmount > 0m
             && d.WhtMode is SettlementFeeWhtMode.SelfWithholdReimbursed or SettlementFeeWhtMode.SelfWithholdPayerBorne);
+        // แบบของขา WHT ตามแผน (ภ.ง.ด.54 เมื่อผู้ให้บริการต่างประเทศ · ทีม W) — ผู้ลงบัญชีส่งเดือนที่ยื่นแล้วของแบบเดียวกันมาใน FiledWhtPeriods
+        var whtFormLabel = plan.FeeDocuments.Any(d => d.WhtForm == TaxType.WithholdingTax54) ? "ภ.ง.ด.54" : "ภ.ง.ด.53";
         if (whtLegs && f.FiledWhtPeriods.Contains((f.PayoutDay.Year, f.PayoutDay.Month)))
             Add(SettlementPlanIssueCode.TaxPeriodFiled, true,
-                $"ภาษีหัก ณ ที่จ่ายของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น ภ.ง.ด.53 แล้ว",
-                "ยื่น ภ.ง.ด.53 เพิ่มเติมของเดือนนั้น แล้วให้ผู้มีสิทธิ์ปลดล็อกรายงานก่อนลงบัญชี — หรือเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทางถ้าแพลตฟอร์มเป็นผู้หักแทน");
+                $"ภาษีหัก ณ ที่จ่ายของรอบโอนนี้ตกเดือน {f.PayoutDay:MM}/{f.PayoutDay.Year + 543} ที่ยื่น {whtFormLabel} แล้ว",
+                $"ยื่น {whtFormLabel} เพิ่มเติมของเดือนนั้น แล้วให้ผู้มีสิทธิ์ปลดล็อกรายงานก่อนลงบัญชี — หรือเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทางถ้าแพลตฟอร์มเป็นผู้หักแทน");
 
         // ── ผังบัญชี ──
         foreach (var err in f.AccountErrors)
@@ -590,7 +593,8 @@ public static class SettlementDocumentBuilder
             OverridePaymentAccountId: clearingAccountId);
 
     /// <summary>50 ทวิ ของ WHT ที่ JE รอบโอนตั้ง 21917 (W2 หักเองแล้วแพลตฟอร์มคืน · W3 ออกภาษีแทน) — null = ไม่ต้องออก
-    /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0)</summary>
+    /// (None · W1 แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน — ห้ามนับเข้ายอดที่เรายื่นเอง) · ยอด = ชุดบรรทัดเดียวกับขา 21917 (WhtAmount &gt; 0) ·
+    /// แบบ ภ.ง.ด. = <c>fee.WhtForm</c> ของแผน (ผู้ให้บริการต่างประเทศ = ภ.ง.ด.54 · ขา 21918 · ทีม W)</summary>
     public static CreateWithholdingTaxCertRequest? WhtCertificate(SettlementFeeDocumentPlan fee, Guid counterpartyContactId,
         Guid feeDocumentId, DateTime payoutDay, string payoutRef)
     {
@@ -605,7 +609,7 @@ public static class SettlementDocumentBuilder
                 borne ? "2" : "1"))
             .ToList();
         if (lines.Count == 0) return null;
-        return new CreateWithholdingTaxCertRequest(counterpartyContactId, TaxType.WithholdingTax53,
+        return new CreateWithholdingTaxCertRequest(counterpartyContactId, fee.WhtForm,
             payoutDay.Year, payoutDay.Month,
             borne ? WithholdingTaxCertType.PayAlways : WithholdingTaxCertType.Withhold,
             lines, feeDocumentId);

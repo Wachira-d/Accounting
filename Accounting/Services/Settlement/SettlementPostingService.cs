@@ -468,14 +468,15 @@ public class SettlementPostingService : ISettlementPostingService
             if (await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, s.Date, ct) is string r)
                 summaryClosed[s.Date] = r;
 
-        // เดือนภาษีที่ประกาศว่ายื่นแล้ว (TaxFilingLockPolicy ตัวเดียว)
+        // เดือนภาษีที่ประกาศว่ายื่นแล้ว (TaxFilingLockPolicy ตัวเดียว) · แบบ WHT ตามช่องทาง — ต่างประเทศ = ภ.ง.ด.54 (ทีม W)
+        var whtForm = SettlementForeignWht.WhtForm(channel.FeeVatMode);
         var filed = await _db.TaxReports.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted
-                && (t.TaxType == TaxType.VAT || t.TaxType == TaxType.WithholdingTax53)
+                && (t.TaxType == TaxType.VAT || t.TaxType == whtForm)
                 && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
             .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct);
         var filedVat = filed.Where(f => f.TaxType == TaxType.VAT).Select(f => (f.Year, f.Month)).ToHashSet();
-        var filedWht = filed.Where(f => f.TaxType == TaxType.WithholdingTax53).Select(f => (f.Year, f.Month)).ToHashSet();
+        var filedWht = filed.Where(f => f.TaxType == whtForm).Select(f => (f.Year, f.Month)).ToHashSet();
 
         // ผังของบริษัทนี้เท่านั้น — id ที่ไม่อยู่ในนี้ = คนละบริษัท ⇒ ตัวหาผังปฏิเสธ
         var chart = new SettlementChartIndex(await _db.ChartOfAccounts.AsNoTracking()
@@ -492,7 +493,7 @@ public class SettlementPostingService : ISettlementPostingService
         var counterparty = channel.CounterpartyContactId is Guid cpId
             ? await _db.Contacts.AsNoTracking()
                 .Where(c => c.Id == cpId && c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => new { c.Id, c.TaxId }).FirstOrDefaultAsync(ct)
+                .Select(c => new { c.Id, c.TaxId, c.CountryCode }).FirstOrDefaultAsync(ct)
             : null;
 
         // ของที่ลงไว้ครั้งก่อน (ค้างครึ่งทาง)
@@ -545,6 +546,10 @@ public class SettlementPostingService : ISettlementPostingService
             existingDocs.Count + payments.Count,
             summaryBlock, staleReceipts, orphans.Voidable, sodBlocked, orphans.Unvoidable, orphans.NeedsUserAction);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
+        // ผู้รับค่าธรรมเนียมอยู่ต่างประเทศ แต่ช่องทางคิด WHT แบบในประเทศ (ภ.ง.ด.53) ⇒ บล็อก — ม.70 ต้องเป็น ภ.ง.ด.54 (ทีม W · R-A5 อีกรูป)
+        if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
+            && SettlementForeignWht.CounterpartyCountryIssue(channel, plan, counterparty?.CountryCode) is SettlementPlanIssue foreignWht)
+            gated = gated with { CanPost = false, Issues = gated.Issues.Append(foreignWht).ToList() };
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
         var planned = gated.FeeDocuments.Select(f => SettlementPostingKeys.FeeComponent(f.VatTreatment))

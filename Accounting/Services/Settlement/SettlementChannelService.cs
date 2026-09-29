@@ -251,7 +251,13 @@ public sealed class SettlementChannelService : ISettlementChannelService
             .Select(x => new { x.TaxId }).FirstOrDefaultAsync(ct);
 
         var warnings = new List<string>();
-        if (c.FeeWhtMode == SettlementFeeWhtMode.None && ThaiTaxId.IsJuristic(company?.TaxId))
+        // ผู้ให้บริการต่างประเทศ: ม.70 ใช้กับผู้จ่ายทุกราย (ไม่ใช่เฉพาะนิติบุคคล) และอัตราไม่ใช่อัตราในประเทศ — ตัวเลขจากตัวตัดสินเดียว (ทีม W)
+        var foreignChannel = SettlementForeignWht.IsForeignChannel(c.FeeVatMode);
+        if (c.FeeWhtMode == SettlementFeeWhtMode.None && foreignChannel)
+            warnings.Add("ผู้ให้บริการต่างประเทศ — ค่าธรรมเนียม/ค่านายหน้า (40(2)) ที่จ่ายไปต่างประเทศต้องหัก ณ ที่จ่ายตาม "
+                + $"{ForeignWhtRateResolver.Section70Reference} {ForeignWhtRateResolver.Section70GeneralRate:0.##}% ยื่น ภ.ง.ด.54 "
+                + "(อัตราอนุสัญญาภาษีซ้อนใช้ได้เมื่อมีหนังสือรับรองถิ่นที่อยู่) · ค่าบริการ/ค่าโฆษณา 40(8) ไม่อยู่ใน ม.70 — ตรวจการจำแนกกับนักบัญชีแล้วตั้งโหมดให้ตรง");
+        else if (c.FeeWhtMode == SettlementFeeWhtMode.None && ThaiTaxId.IsJuristic(company?.TaxId))
             warnings.Add("บริษัทเป็นนิติบุคคล — ค่าธรรมเนียม/ค่าคอมที่จ่ายแพลตฟอร์มอาจต้องหัก ณ ที่จ่าย (3% ค่าบริการ · 2% โฆษณา · 1% ขนส่ง) "
                 + "ตรวจกับนักบัญชีว่าแพลตฟอร์มหักแทน/คืนให้/ต้องออกภาษีแทน แล้วตั้งโหมดให้ตรง");
         if (c.Currency != "THB")

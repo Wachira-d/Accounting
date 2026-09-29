@@ -143,7 +143,8 @@ public static class SettlementReferenceCatalog
     private static (string, string?) FeeVatModeLabel(SettlementFeeVatMode m) => m switch
     {
         SettlementFeeVatMode.ThaiVat7 => ("VAT 7% (ผู้ให้บริการไทย)", "ภาษีซื้อรอใบกำกับรายเดือน"),
-        SettlementFeeVatMode.ForeignPp36 => ("ผู้ให้บริการต่างประเทศ — ภ.พ.36", "ผู้จ่ายประเมิน VAT เอง §83/6"),
+        SettlementFeeVatMode.ForeignPp36 => ("ผู้ให้บริการต่างประเทศ — ภ.พ.36",
+            "ผู้จ่ายประเมิน VAT เอง §83/6 (ไม่จด VAT ก็ต้องยื่น — VAT เป็นต้นทุน) · ถ้าหัก ณ ที่จ่าย = ม.70 ภ.ง.ด.54"),
         SettlementFeeVatMode.None => ("ไม่มี VAT", null),
         _ => (m.ToString(), null),
     };
@@ -153,7 +154,9 @@ public static class SettlementReferenceCatalog
         SettlementFeeWhtMode.None => ("ไม่หัก ณ ที่จ่าย", null),
         SettlementFeeWhtMode.AgentWithholds => ("แพลตฟอร์มเป็นตัวแทนหัก/ยื่นแทน", "เก็บ 50 ทวิ แต่ไม่นับเข้ายอดที่เรายื่นเอง"),
         SettlementFeeWhtMode.SelfWithholdReimbursed => ("เราหักเองแล้วแพลตฟอร์มคืนให้", "ตั้งลูกหนี้แพลตฟอร์มรอคืน"),
-        SettlementFeeWhtMode.SelfWithholdPayerBorne => ("เราออกภาษีแทน", "แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว — ภาษี = ฐาน × 3/97"),
+        SettlementFeeWhtMode.SelfWithholdPayerBorne => ("เราออกภาษีแทน",
+            "แพลตฟอร์มหักค่าธรรมเนียมเต็มไปแล้ว — ภาษี = ฐาน × r/(100−r) (ในประเทศ 3% = 3/97 · ต่างประเทศ ม.70 "
+            + $"{ForeignWhtRateResolver.Section70GeneralRate:0.##}% = {ForeignWhtRateResolver.Section70GeneralRate:0.##}/{100m - ForeignWhtRateResolver.Section70GeneralRate:0.##})"),
         _ => (m.ToString(), null),
     };
 

@@ -18589,19 +18589,23 @@ public partial class DocumentService : IDocumentService
         // `WhtCumulativeScope.SumDistinct` ที่ด่านใหม่ใช้ ⇒ การซื้อครั้งเดียวที่มี
         // ทั้งใบกำกับและใบสำคัญจ่ายถูกนับสองรอบ. ด่านเดียวที่เหลือคือด่านใหม่
 
-        // DTA bilateral treaty — เตือนเมื่อจ่ายไปต่างประเทศ + ใช้ default rate
-        // (15% ม.70) แต่ payee country มี DTA ลดเหลือ 5-10% บ่อย → ผู้ใช้
-        // อาจหักเกินไปเสียค่าใช้จ่ายให้ vendor เปล่าๆ
+        // ── จ่ายต่างประเทศ (ม.70 ภ.ง.ด.54) — อัตรารายบรรทัดเทียบกับตัวตัดสินเดียว ForeignWhtRateResolver (รอบ 200 ทีม W · คำตัดสินข้อ 13) ──
+        // เดิมเตือน "WHT ≥ 15% ตรวจ DTA — ส่วนใหญ่ลดเหลือ 5-10%" กับ**ทุกใบที่หักถูกตาม ม.70** (คำเตือนที่ฟ้องใบถูกทุกใบ = ปิดด่าน F2 ข้อ 8 ·
+        // และตัวเลข 5-10% ไม่มีแหล่งยืนยัน) ขณะที่ใบที่หัก**ขาด** (เช่น 3% อัตราในประเทศกับผู้รับต่างประเทศ ⇒ §54 ผู้จ่ายรับผิด) เงียบสนิท ·
+        // "ต่างประเทศ" ใช้สองสัญญาณของ WhtPayeeKind ตัวเดียวกับทะเบียน 50 ทวิ/ผัง 21918 · ยังไม่มีช่อง CoR ⇒ ResidenceCertificate.None (= ม.70)
         if ((doc.DocumentType == DocumentType.PaymentVoucher
              || doc.DocumentType == DocumentType.Expense
              || doc.DocumentType == DocumentType.PurchaseInvoice)
-            && doc.WithholdingTaxAmount > 0m
-            && !string.IsNullOrEmpty(doc.Contact?.CountryCode)
-            && !string.Equals(doc.Contact.CountryCode, "TH", StringComparison.OrdinalIgnoreCase))
+            && Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode))
         {
-            var maxRate = doc.Lines?.Max(l => l.WithholdingTaxRate) ?? 0m;
-            if (maxRate >= 15m)
-                warnings.Add($"🌐 จ่ายต่างประเทศ ({doc.Contact.CountryCode}): WHT {maxRate}% (ม.70 default). ตรวจ DTA bilateral treaty — ส่วนใหญ่ลดเหลือ 5-10% ถ้ามี Certificate of Residence/Form TH8 ของ payee");
+            var foreignPayDate = doc.PaymentDate ?? doc.DocumentDate;
+            foreach (var line in doc.Lines.Where(l => l.WithholdingTaxRate > 0m))
+            {
+                var foreignWht = Accounting.Helpers.ForeignWhtRateResolver.ResolveForIncomeCode(line.IncomeTypeCode,
+                    doc.Contact?.CountryCode, Accounting.Helpers.ResidenceCertificate.None, foreignPayDate);
+                if (Accounting.Helpers.ForeignWhtRateResolver.RateWarning(foreignWht, line.WithholdingTaxRate) is string foreignWarn)
+                    warnings.Add($"🌐 จ่ายต่างประเทศ '{line.Description}': {foreignWarn}");
+            }
         }
 
         // Sticker-shock guard — flag invoices > 500k THB. Catches a typo
