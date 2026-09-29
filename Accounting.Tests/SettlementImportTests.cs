@@ -31,6 +31,9 @@ public class SettlementImportTests
         Type = "ประเภทรายการ",
         Description = "รายละเอียด",
         Amount = "จำนวนเงิน",
+        // ทีม I รอบ 200 (R-B9): ไฟล์นี้มีแต่วันที่ 1–2 ⇒ อ่านได้ทั้ง วัน/เดือน และ เดือน/วัน — ช่องทางที่จำรูปแบบไว้แล้วได้ผลเหมือนเดิมทุกตัว
+        // (ทิศ "ไฟล์ที่ถูกอยู่แล้วไม่ถูกแตะ") · กรณี Auto + กำกวม = ล้มดัง อยู่ใน SettlementReview200ReaderTests
+        DateOrder = SettlementDateOrder.DayMonthYear,
     }.ToJson();
 
     private const string LongCsv =
@@ -189,7 +192,8 @@ public class SettlementImportTests
         Assert.False(SettlementValueParser.TryParseDate("01/09/69", SettlementDateOrder.DayMonthYear, out _));
         Assert.Equal(SettlementDateOrder.DayMonthYear, SettlementValueParser.DetectDateOrder(new[] { "13/01/2026", "02/03/2026" }));
         Assert.Equal(SettlementDateOrder.MonthDayYear, SettlementValueParser.DetectDateOrder(new[] { "01/13/2026", "02/03/2026" }));
-        Assert.Equal(SettlementDateOrder.DayMonthYear, SettlementValueParser.DetectDateOrder(new[] { "01/02/2026" }));
+        // ทีม I รอบ 200 (R-B9): ไม่มีหลักฐาน = "ไม่รู้" (เดิมคืน วัน/เดือน เงียบ ๆ) — ตัวตัดสินขั้นสุดท้ายคือ SettlementFileDecisions.DecideDateOrder
+        Assert.Equal(SettlementDateOrder.Auto, SettlementValueParser.DetectDateOrder(new[] { "01/02/2026" }));
         Assert.Throws<SettlementFormatException>(() => SettlementValueParser.DetectDateOrder(new[] { "13/01/2026", "01/13/2026" }));
     }
 

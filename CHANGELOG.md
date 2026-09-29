@@ -3720,7 +3720,23 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม S — ความพร้อมก่อนเปิดบังคับแพ็กเกจบนหน้าเว็บ · คำตัดสินข้อ 14:
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม I — ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ (review198-B R-B7–R-B11 · review198-A R-A9 · review198-S4 S4-3/S4-4):
+- **R-B7** เลขรายการ/ออเดอร์/รอบโอนที่ Excel ปัดหลักแล้ว (`1.2345678901234568E+17` · `1.23457E+17`) ⇒ ล้มดังทั้งไฟล์ `id-precision` พร้อมทางไปต่อ ·
+  xlsx เซลล์ตัวเลข ≥ 1e15 (double/decimal/long) คงรูป scientific ใน `SettlementFileReader.CellText` ให้ด่านเห็น (`SettlementValueParser.IdLostPrecision`)
+- **R-B8** `SettlementColumnMap.TimeZone` (Auto/Bangkok/Utc) + `Adapters/SettlementFileDecisions.DecideTimeZone` — offset ในค่าชนะเสมอ · หัวคอลัมน์ประกาศ (UTC · GMT+7 · ICT ·
+  เวลาไทย · เขตอื่น ⇒ ล้มดัง) · ไม่มีเวลาที่ข้ามวัน = ไทย (ไม่มีผล) · กำกวมและข้ามวัน ⇒ ล้มดัง `timezone-ambiguous` · หน้าจับคู่คอลัมน์มีช่อง "เขตเวลาในไฟล์"
+- **R-B9** `DetectDateOrder` ไม่มีหลักฐาน = `Auto` (เดิมคืน วัน/เดือน เงียบ) · `DecideDateOrder`: ค่าที่ตั้ง → หลักฐาน > 12 → ไม่ขึ้นกับลำดับ → ช่วงวันที่ของรอบโอน (หลักฐานจากหัวรอบโอน
+  `SettlementParseContext`) → ล้มดัง `date-order-ambiguous` · สิ่งที่ไฟล์พิสูจน์ได้ถูกจำให้ช่องทาง (`SettlementColumnMap.Learn` · แจ้งผู้ใช้)
+- **R-B10** เครื่องหมายสองชั้น `(-100)` · `-100-` · `(+100)` อ่านไม่ได้ (เดิม `(-100)` = +100) · ขีดลบยูนิโค้ดครบ · CSV `;` + "1,500" ไม่มีทศนิยม ⇒ ล้มดัง `decimal-comma`
+- **R-B11** แถวสรุปของไฟล์แบบกว้าง = ไม่มีเลขอ้างอิงใดเลย (ช่องแรกว่าง/"ยอดสุทธิ") ⇒ ข้าม + แจ้งยอด · แบบยาวเพิ่มคำสรุป + แถวไม่มีเลข/ป้าย/วันที่ (เดิมล้ม `type-missing`) ·
+  เพดานแถว/ขนาดไฟล์มีแล้วตั้งแต่ `266acad2` (review198-D D-P4)
+- **R-A9** ยืนยันปิดแล้วที่ `60db75ee` (คีย์ v2) + `71c8fdeb` (ยกเลิก = soft-delete) · เทสต์รูปข้อมูลออเดอร์เดียวหลายคอลัมน์ค่าธรรมเนียม
+- **S4-3** `SettlementLine.ImportScope` (migration `ADD COLUMN IF NOT EXISTS`) + `SettlementTxnKey.SplitRevisedFilePool` — เทียบเนื้อหาเฉพาะไฟล์รุ่นก่อนของไฟล์เดียวกัน ·
+  อีกไฟล์ของรอบเดียวกันไม่ถูกกลืน (เพิ่ม + เตือนรายแถว)
+- **S4-4** `Helpers/SettlementContentOverlap` ตัวเดียวของผู้นำเข้า + `BuildGateAsync` ⇒ คำเตือน `ContentOverlapElsewhere` (59 · ไม่บล็อก) ที่พรีวิว/ลงบัญชีทุกครั้ง
+- เทสต์ `SettlementReview200ReaderTests` · required_call_site +7/ปรับ 1 · TEST_PLAN SPI-01..14 — commit b7cd77eb)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม S — ความพร้อมก่อนเปิดบังคับแพ็กเกจบนหน้าเว็บ · คำตัดสินข้อ 14:
 - **สองสวิตช์ขัดกัน**: ด่านบริษัทถูกระงับ/หมดอายุเคยอ่าน config `Subscription:Enforcement:Mode` (LogOnly) ขณะที่การตัดสินฟีเจอร์อ่านสวิตช์แอดมิน
   ⇒ กดบังคับแล้วบริษัทที่ถูกระงับยังเขียนได้ (silent no-op) · ตอนนี้ `Helpers/SubscriptionEnforcementResolver` ตัวเดียว (middleware + หน้าแอดมิน):
   สวิตช์แอดมินชนะ · `Subscription:Enforcement:EmergencyOverride` = override ฉุกเฉินเท่านั้น (ค่าเพี้ยน = Shadow + เตือน) · คีย์เดิมไม่มีผล (เตือนให้ลบ) ·

@@ -109,6 +109,10 @@ public class SettlementLine : TenantEntity
     public string? ExternalOrderId { get; set; }
     /// <summary>id รายการของผู้ให้บริการ — unique ต่อช่องทาง (กันบันทึกซ้ำข้าม batch)</summary>
     public string? ExternalTxnId { get; set; }
+    /// <summary>ลายนิ้วมือเนื้อหาของ "ไฟล์" ที่บรรทัดนี้นำเข้ามา (<c>SettlementTxnKey.ImportScopeOf</c> — ตัวเดียวกับในคีย์ <c>v2:rowc:</c>) ·
+    /// ผู้นำเข้าใช้แยก "ไฟล์รุ่นก่อนของไฟล์เดียวกัน" ออกจาก "อีกไฟล์ของรอบเดียวกัน" ตอนเทียบเนื้อหา (review198-S4 S4-3 · ทีม I รอบ 200) ·
+    /// null = บรรทัดจาก PaymentIntent หรือนำเข้าก่อนรอบ 200 (ใช้พฤติกรรมเดิม — คำนวณย้อนไม่ได้เพราะไม่ได้เก็บแถวดิบ)</summary>
+    public string? ImportScope { get; set; }
     /// <summary>ยอดมีเครื่องหมาย (รวม VAT ถ้ามี)</summary>
     public decimal Amount { get; set; }
     /// <summary>VAT ที่รวมอยู่ใน <c>Amount</c> ตามที่ไฟล์ระบุ — null = ไฟล์ไม่ระบุ (ระบบแยกเอง ×7/107 ตามโหมดช่องทาง)</summary>

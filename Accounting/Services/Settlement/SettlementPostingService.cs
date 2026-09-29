@@ -587,6 +587,9 @@ public class SettlementPostingService : ISettlementPostingService
         if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
             && SettlementForeignWht.CounterpartyCountryIssue(channel, plan, counterparty?.CountryCode) is SettlementPlanIssue foreignWht)
             gated = gated with { CanPost = false, Issues = gated.Issues.Append(foreignWht).ToList() };
+        // review198-S4 S4-4 (ทีม I รอบ 200): แถวไม่มีเลขรายการที่เนื้อหาตรงกับรอบโอนอื่น — เตือนที่พรีวิว/ลงบัญชีทุกครั้ง (เดิมเตือนครั้งเดียวตอนนำเข้า)
+        gated = SettlementContentOverlap.Annotate(gated,
+            await SettlementContentOverlap.ForBatchAsync(_db, companyId, batch.ChannelId, batch.Id, lines, ct), lines);
 
         // เอกสารจากการลงบัญชีครั้งก่อนที่ไม่อยู่ในแผนปัจจุบัน (บรรทัดถูกแก้ระหว่างนั้น) — ห้ามปล่อยค้างเงียบ
         var planned = gated.FeeDocuments.Select(f => SettlementPostingKeys.FeeComponent(f.VatTreatment))

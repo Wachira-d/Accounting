@@ -40,11 +40,19 @@ public sealed record SettlementParsedRow(
 /// <summary>ผลการอ่านไฟล์ทั้งไฟล์</summary>
 /// <param name="Headers">หัวคอลัมน์ที่พบ (ตามลำดับในไฟล์)</param>
 /// <param name="SkippedRows">แถวที่ข้ามโดยตั้งใจ (แถวว่าง · แถวสรุปยอด "รวม/Total") พร้อมเหตุผล — ไม่ใช่แถวที่อ่านพลาด</param>
+/// <param name="LearnedDateOrder">ลำดับวัน/เดือนที่<b>ไฟล์นี้พิสูจน์ได้</b>ขณะการจับคู่ยังเป็น Auto (R-B9) — ผู้นำเข้าจำให้ช่องทาง · null = ไม่มีอะไรใหม่ให้จำ</param>
+/// <param name="LearnedTimeZone">เขตเวลาที่หัวคอลัมน์วันที่ประกาศไว้ขณะการจับคู่ยังเป็น Auto (R-B8) — ผู้นำเข้าจำให้ช่องทาง</param>
 public sealed record SettlementParseResult(
     string AdapterCode,
     IReadOnlyList<string> Headers,
     IReadOnlyList<SettlementParsedRow> Rows,
-    IReadOnlyList<string> SkippedRows);
+    IReadOnlyList<string> SkippedRows,
+    SettlementDateOrder? LearnedDateOrder = null,
+    SettlementFileTimeZone? LearnedTimeZone = null);
+
+/// <summary>ข้อมูลจากหัวรอบโอนที่ผู้ใช้กรอก ซึ่งตัวอ่านใช้เป็นหลักฐานได้ (ไม่ใช่การเดา) — ช่วงวันที่ของรอบโอน (วันตามปฏิทินไทย)
+/// ตัดสินลำดับวัน/เดือนของไฟล์ช่วงสั้นที่ไม่มีวันที่เกิน 12 (R-B9)</summary>
+public sealed record SettlementParseContext(DateTime? PeriodFrom, DateTime? PeriodTo);
 
 /// <summary>ไฟล์ที่ผู้ใช้อัปโหลด (ถือไบต์ไว้แล้ว — ตัวนำเข้าต้องเก็บไฟล์ต้นฉบับผ่าน attachment abstraction อยู่ดี)</summary>
 public sealed record SettlementFileInput(string FileName, byte[] Content)
@@ -79,5 +87,7 @@ public interface ISettlementReportAdapter
 
     /// <summary>อ่านทั้งไฟล์ — อ่านไม่ได้/รูปแบบเปลี่ยน ⇒ <see cref="SettlementFormatException"/> (ห้ามคืนครึ่งไฟล์)</summary>
     /// <param name="columnMapJson">การจับคู่คอลัมน์ที่ใช้ (ของคำขอนี้ หรือที่ช่องทางจำไว้)</param>
-    SettlementParseResult Parse(SettlementFileInput file, SettlementChannel channel, string? columnMapJson);
+    /// <param name="context">ช่วงวันที่ของรอบโอนจากหัวรอบโอน (หลักฐานตัดสินลำดับวัน/เดือน) — null = ไม่มี</param>
+    SettlementParseResult Parse(SettlementFileInput file, SettlementChannel channel, string? columnMapJson,
+        SettlementParseContext? context = null);
 }

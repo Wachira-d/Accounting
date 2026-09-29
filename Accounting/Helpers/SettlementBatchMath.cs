@@ -94,6 +94,9 @@ public enum SettlementPlanIssueCode
     FeeCutoffCrossesMonth = 57,
     /// <summary>ไม่มีรอบโอนก่อนหน้าในช่องทางนี้ให้เทียบยอด wallet ต้นรอบ — "ไม่รู้" ไม่ใช่ "ต่อเนื่อง" (review198-A R-A12 · DOCTRINE §1)</summary>
     WalletContinuityUnknown = 58,
+    /// <summary>บรรทัดแบบไม่มีเลขรายการที่เนื้อหาตรงกับบรรทัดของรอบโอนอื่นในช่องทางเดียวกัน — อาจเป็นไฟล์เดิม/ฉบับแก้ที่นำเข้าด้วยเลขรอบโอนที่พิมพ์ต่าง
+    /// (review198-S4 S4-4 · ทีม I รอบ 200 · <c>SettlementContentOverlap</c>) · เลข 59 เว้นช่วง 55–58 ให้ทีมอื่นของรอบ 200</summary>
+    ContentOverlapElsewhere = 59,
 }
 
 /// <summary>ปัญหา 1 ข้อของแผน</summary>

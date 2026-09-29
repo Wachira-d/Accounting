@@ -9,6 +9,12 @@ namespace Accounting.Helpers;
 public readonly record struct SettlementTxnKeyInput(string? RawTxnId, string? Label, string? OrderId, decimal Amount, DateTime? Date,
     string? PayoutRef = null);
 
+/// <summary>บรรทัดเดิมแบบไม่มี id: คีย์เนื้อหา (<see cref="SettlementTxnKey.ContentKey"/>) + ไฟล์ที่นำเข้ามา (<c>SettlementLine.ImportScope</c> · null = ก่อนรอบ 200)</summary>
+public readonly record struct SettlementStoredContent(string ContentKey, string? ImportScope);
+
+/// <summary>ผลของ <see cref="SettlementTxnKey.SplitRevisedFilePool"/> — คีย์เนื้อหาของบรรทัดเดิมที่เทียบได้ (ไฟล์รุ่นก่อนของไฟล์นี้) และที่ห้ามกลืน (ไฟล์อื่น)</summary>
+public sealed record SettlementContentPool(IReadOnlyList<string> SameFile, IReadOnlyList<string> OtherFiles);
+
 /// <summary>
 /// **คีย์กันนำเข้าซ้ำของบรรทัด settlement (<c>SettlementLine.ExternalTxnId</c> · unique ต่อช่องทาง) — pure · deterministic · รุ่น v2**
 /// (รอบ 198 เฟส 1 ทีม B · แก้ฝ่ายค้าน review198-B R-B5/R-B6 ทีม S3 · review198-S3 S3-4 ทีม S4)
@@ -145,6 +151,40 @@ public static class SettlementTxnKey
             matched.Add(i);
         }
         return matched;
+    }
+
+    /// <summary>
+    /// **ลายนิ้วมือเนื้อหาของไฟล์ที่นำเข้าครั้งนี้** — ค่าเดียวกับที่ใส่ในคีย์ <c>v2:rowc:</c> (<see cref="ContentScope"/>) · เก็บต่อบรรทัดใน
+    /// <c>SettlementLine.ImportScope</c> ให้ผู้นำเข้ารู้ว่าบรรทัดเดิมมาจาก "ไฟล์ไหน" (review198-S4 S4-3 · ทีม I รอบ 200) · ว่าง ⇒ null
+    /// </summary>
+    public static string? ImportScopeOf(IReadOnlyList<SettlementTxnKeyInput> rows)
+        => rows.Count == 0 ? null : ContentScope(rows);
+
+    /// <summary>
+    /// **แยกบรรทัดเดิม (ไม่มี id) ของรอบโอนเดียวกันเป็น "ไฟล์รุ่นก่อนของไฟล์นี้" กับ "ไฟล์อื่น"** (review198-S4 S4-3 · ทีม I รอบ 200)
+    /// <para>ที่มา: S3-4 เทียบเนื้อหาแบบนับจำนวนกับบรรทัด<b>ทุกบรรทัด</b>ของรอบ ⇒ รอบที่สร้างจากไฟล์ 1 แล้ว<b>เติม</b>ไฟล์ 2 (ส่วนที่เหลือของรอบ) ซึ่งมีรายการจริง
+    /// ที่หน้าตาเหมือนแถวในไฟล์ 1 ทุกช่อง (ค่าธรรมเนียมถอนเงิน −10 วันเดียวกัน) ⇒ แถวจริงถูกข้ามว่า "นำเข้าแล้ว" (R-B5 ถอยในรอบเดียว)</para>
+    /// <para>กติกา: บรรทัดเดิมจัดกลุ่มตาม <c>ImportScope</c> (ไฟล์ที่นำเข้ามา) · กลุ่มที่<b>ทุกบรรทัด</b>มีแถวเนื้อหาเดียวกันในไฟล์นี้ (นับจำนวน ⊆) =
+    /// ไฟล์นี้คือฉบับแก้ของไฟล์นั้น ⇒ <c>SameFile</c> (เทียบเนื้อหาได้ เหมือน S3-4) · กลุ่มที่ไฟล์นี้ไม่ครอบทั้งหมด = ไฟล์อื่น ⇒ <c>OtherFiles</c>
+    /// (ห้ามกลืนแถว — ผู้เรียกเตือนรายแถวแทน · ทิศที่มองเห็นได้: แถวซ้ำโผล่ให้เห็นในรอบ + สมการรอบโอนไม่ลงตัว ดีกว่าแถวจริงหายเงียบ) ·
+    /// บรรทัดที่นำเข้าก่อนมีคอลัมน์ (<c>ImportScope</c> null) = พฤติกรรมเดิมของ S3-4 (<c>SameFile</c>) — ไม่มีข้อมูลให้แยก</para>
+    /// </summary>
+    public static SettlementContentPool SplitRevisedFilePool(IReadOnlyList<string?> newContentKeys, IReadOnlyList<SettlementStoredContent> stored)
+    {
+        var incoming = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var k in newContentKeys)
+            if (k != null) incoming[k] = incoming.TryGetValue(k, out var n) ? n + 1 : 1;
+        var same = new List<string>();
+        var other = new List<string>();
+        foreach (var g in stored.GroupBy(x => x.ImportScope, StringComparer.Ordinal))
+        {
+            var keys = g.Select(x => x.ContentKey).ToList();
+            if (g.Key == null) { same.AddRange(keys); continue; }
+            var covered = keys.GroupBy(k => k, StringComparer.Ordinal)
+                .All(kg => incoming.TryGetValue(kg.Key, out var have) && have >= kg.Count());
+            (covered ? same : other).AddRange(keys);
+        }
+        return new SettlementContentPool(same, other);
     }
 
     /// <summary>คีย์ของบรรทัดที่ประกอบจาก PaymentIntent — ส่วน = "sale" · "fee" · "refund@{ยอดคืนสะสม}" (ยอดคืนเพิ่มภายหลัง ⇒ คีย์ใหม่)</summary>

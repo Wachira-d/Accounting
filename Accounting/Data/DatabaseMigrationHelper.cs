@@ -218,6 +218,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckAt" timestamptz NULL;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckBy" uuid NULL;""",
             """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReason" text NULL;""",
+            // review198-S4 S4-3 (ทีม I รอบ 200): ไฟล์ที่บรรทัดนำเข้ามา — NULL = บรรทัดเดิมทุกแถว (ใช้พฤติกรรมเทียบเนื้อหาแบบเดิม · คำนวณย้อนไม่ได้)
+            """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "ImportScope" varchar(64) NULL;""",
         };
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;
