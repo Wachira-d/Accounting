@@ -3862,4 +3862,4 @@ _2026-09-29 รอบ 200 ทีม V1F — แก้ผลฝ่ายค้า
   `TaxInvoiceCompletenessChecker.MustEnforceBuyerFields/BuyerBlockingFields` ตัวเดียวกับเส้นอนุมัติ (บุคคลธรรมดาไม่บล็อก · ไม่ประสงค์รับของผู้ซื้อเดิมไม่ตามไป)
 - **P1** e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลา = ถึงกรมสรรพากร (`EffectiveEtaxAsync` ตัวโหลดเดียว — ยกเลิกการชำระ · ออกใบแทน · ด่านยกเลิกการลงบัญชี) ·
   **P2** ยกเลิกการลงบัญชีรอบโอน: ใบเสร็จที่ถูกส่ง e-Tax ระหว่างทาง ⇒ ติดธง ไม่ throw กลางลูป · **P4** hooks หลัง commit อยู่นอก execution strategy
-- เทสต์ `VoidReissueR200FTests` (สองทิศทุกข้อ) + ปรับ `VoidReissueR200Tests` / `SettlementReceiptPolicyTests` · required_call_site +9 แถว/ปรับ 7 — commit <pending>)_
+- เทสต์ `VoidReissueR200FTests` (สองทิศทุกข้อ) + ปรับ `VoidReissueR200Tests` / `SettlementReceiptPolicyTests` · required_call_site +9 แถว/ปรับ 7 — commit c6b4908a)_
