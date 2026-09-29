@@ -3730,4 +3730,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V2 — ข�
 - **S3-8** ตรวจแล้วแก้ไปก่อนหน้า (`SettlementArtifactGuard.CheckLockedAsync` FOR SHARE ใต้ธุรกรรม · ทีม S4) — ไม่แตะ
 - **S3-11** ตัวหาของกำพร้าไม่ตัด `Take(200)` + ค้นการรับชำระของทุกรอบด้วยคำค้นเดียว · `UnpostBlockersAsync` อ่านแค่หัวรอบ (ไม่พังเมื่อช่องทางถูกลบ) ·
   SoD นับผู้สร้างบรรทัด · ที่เหลือ (JournalManage · ป้ายใน Notes) 📋 เหตุผลใน `erp-review/2026-09-29/team-V2.md` · **S4-5** 📋
-- เทสต์ `SettlementRound200V2Tests` + ปรับ `S41_ทิศตรงข้าม…` / `S36_…` ตามความหมายใหม่ · required_call_site +8 แถว/ปรับ 1 — commit <pending>)_
+- เทสต์ `SettlementRound200V2Tests` + ปรับ `S41_ทิศตรงข้าม…` / `S36_…` ตามความหมายใหม่ · required_call_site +8 แถว/ปรับ 1 — commit d7fb2c43)_

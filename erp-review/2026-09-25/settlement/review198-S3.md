@@ -21,7 +21,7 @@
 | ✅ <pending> S3-8 | PLAUSIBLE | P3 | race ช่วงสั้น: ยกเลิกเอกสารผ่านหน้าปกติระหว่าง completeness check กับ commit ของ `CommitPostedAsync` |
 | ✅ <pending> S3-9 | PLAUSIBLE | P3 | ล็อกฝั่งนำเข้า `pg_advisory_xact_lock` แบบ**รอ** ขณะลงบัญชีถือ session lock นาน ⇒ คำขอเว็บค้างจน command timeout (500) |
 | ✅ <pending> S3-10 | CONFIRMED | P3 | `WhtCertVoidGuard` ไม่ใช่ "ตัวตัดสินตัวเดียว" จริง — `PayrollService.cs:3328` ประทับ Voided ตรง |
-| ✅ <pending> S3-11 (3/5 · รอบ 200 V2 — ที่เหลือ 📋 ใน erp-review/2026-09-29/team-V2.md) | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
+| ✅ d7fb2c43 S3-11 (3/5 · รอบ 200 V2 — ที่เหลือ 📋 ใน erp-review/2026-09-29/team-V2.md) | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
 | — | NOT-A-BUG | — | ล็อกร่วม (คีย์/รูปแบบเดียวกัน) · deadlock · AsyncLocal · `autoApproveBy` · EF translation · fingerprint false positive · tenant · R1 |
 
 **ไม่พบ P0 ที่ยืนยันได้** · P1 ที่ต้องแก้ก่อน merge เข้า main: S3-1
@@ -154,7 +154,7 @@ e-Tax Accepted / อยู่ในรายงานล็อก / ใบค่
 
 ---
 
-## ผลการแก้ — รอบ 200 ทีม V2 (คอมมิต <pending>)
+## ผลการแก้ — รอบ 200 ทีม V2 (คอมมิต d7fb2c43)
 
 | ID | สถานะ | ที่แก้ / เหตุผล |
 |---|---|---|
