@@ -305,7 +305,11 @@ def declared_in(body: str, params: str):
 
 def main():
     files = sorted(p for p in ROOT.rglob("*.cs")
-                   if not any(part in {"obj", "bin", ".claude"} for part in p.parts))
+                   if not any(part in {"obj", "bin", ".claude"} for part in p.relative_to(ROOT).parts))
+    if not files:
+        # ตรวจ 0 ไฟล์ = checker พัง (รอบ 200: รันใน worktree ใต้ .claude/ แล้วตัดทุกไฟล์ทิ้ง ⇒ "ผ่าน" ทั้งที่ไม่ได้ตรวจอะไร)
+        print("❌ undeclared_local_check: ไม่พบไฟล์ .cs ให้ตรวจเลย — ตัวกรอง path ผิด")
+        sys.exit(1)
     problems = []
     for f in files:
         raw = f.read_text(encoding="utf-8", errors="replace")
