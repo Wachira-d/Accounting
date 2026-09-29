@@ -148,8 +148,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ไม่มีเลข**ที่ใช้ได้** (ว่าง/"-" · ศูนย์ล้วน "0000000000000" · 13 หลักไม่ผ่าน mod-11 — รอบ 199 A-2) หรือแถว walk-in = ตัวเองเท่านั้น · กรอง CompanyId)
     ใน แบนเนอร์ PO ตอนสแกน (`:3029`) · `GetOpenPosForScanAsync` (`:10044`) · ด่าน `LinkPurchaseOrderAsync`
     (`:10102` ยังกัน PO ของนิติบุคคลอื่น) · ตัวหาใบต้นทาง (`:10214`) · ด่าน `LinkPredecessorAsync` (`:10347`) — **ยกเว้นเป้าหมายใบลด/เพิ่มหนี้**
-    (`OcrPredecessorMatcher.AcceptsSiblingBranchSource` · §86/9-10 ต้องแถวเดียวกับใบเดิม) · ⚠️ ค้าง: alias สินค้าที่ผูกผู้ขาย (`ProductAlias.ContactId`) ยังเป็น
-    รายแถว — alias ที่เรียนบนแถว สนญ. ไม่ช่วยแถวสาขา (backlog K-3b)
+    (`OcrPredecessorMatcher.AcceptsSiblingBranchSource` · §86/9-10 ต้องแถวเดียวกับใบเดิม)
+    · **รอบ 200 ทีม K (`erp-review/2026-09-29/team-K.md` · คำตัดสินเจ้าของข้อ 19)**:
+    (K-3b) alias/คำปฏิเสธ/ประวัติซื้อของผู้ขาย**อ่าน**ทุกแถวของนิติบุคคลเดียวกัน — `ProductMatcher.VendorEntityIdsAsync` → `SameEntityIdsAsync` +
+    `Helpers/OcrVendorAliasScope` (MatchAsync · เกณฑ์ยอมรับอัตโนมัติตามจำนวน alias · คำแนะนำ "นำเข้าสต๊อก" ใน ScanAsync) · **เขียน**ยังผูกแถวของใบนั้น ·
+    (K-4) ตัวตัดสินผู้ติดต่อตามสาขาย้ายเป็น `DecideScanVendorBranchContactAsync` ตัวเดียว ใช้ทั้งเส้นสร้างเอกสารและ `SubmitCorrectionAsync`: ผู้ใช้เปลี่ยน
+    รหัสสาขา/เลขผู้ขายจริง (`BranchChanged` — ส่งค่าเดิม ≠ เปลี่ยน) + ไม่ได้เลือกผู้ติดต่อเอง + ยังไม่สร้างเอกสาร + ฝั่งซื้อ
+    (`OcrVendorBranchContact.ShouldRedecideOnCorrection`) ⇒ ตัดสิน `MatchedContactId` ใหม่ (แถวสาขาใหม่เกิดใต้ล็อก K-5) ⇒ "แก้ในฟอร์มก่อน" ได้ผู้ติดต่อของสาขาใหม่ ·
+    (K-5) สร้างผู้ติดต่อจากสแกน (ScanAsync Branch 0/1/2 · เส้นสร้างเอกสาร · เส้นแก้ผลสแกน) อยู่ใต้ `pg_advisory_xact_lock` ต่อ (CompanyId, เลขผู้เสียภาษีตัวเลขล้วน)
+    (`AdvisoryLockKey.OcrContactCreate` · `Helpers/OcrContactCreateLock` · `LockAndFindConcurrentOcrContactAsync`) แล้วถาม `ContactTaxBranchKey.FindAsync` ซ้ำ —
+    มีแถวคีย์เดียวกันแล้ว (อัปโหลดพร้อมกัน) ⇒ ผูกแถวนั้น + `[Auto-Create] ไม่สร้างผู้ติดต่อซ้ำ …` · ไม่เพิ่ม unique index · แถวซ้ำที่มีอยู่แล้ว**รายงาน**ที่
+    `contact-hygiene` (`ContactDataHygiene.DuplicateKeyGroups` — คีย์เดียวกับแถบเตือนหน้าผู้ติดต่อ `DuplicateKey`) ไม่รวมอัตโนมัติ ·
+    (K-9) ที่อยู่แถวสาขาใหม่ในเส้นสร้างเอกสาร = ที่อยู่ที่**พิสูจน์ได้**ว่าเป็นของสาขานั้นเท่านั้น (`OcrIssuerBranch.StoredAddressIsIssuerBranch`: ประโยคประกาศสาขา
+    พิมพ์ที่อยู่เดียวกัน หรือผู้ใช้**เปลี่ยน**ที่อยู่เอง — `OcrCorrectionBaseline.VendorAddress`) · ไม่รู้ = ว่าง + ข้อความให้เติม (เดิมได้ที่อยู่ สนญ. จากหัวกระดาษ) ·
+    (K-11) สาขาผู้ซื้อ: `BranchCodeExtractor` อ่านบนข้อความที่กลบป้ายฉบับ (`OcrPartyLabels.MaskCopyNoise`) + ประโยคประกาศสาขาผู้ออกใบ
+    (`OcrIssuerBranch.MaskStatements`) — ใบ Makro ได้ผู้ซื้อ 00000 (เดิม 00005 ของผู้ขาย) · จุดแบ่งฝั่งผู้ขายไม่ขยับ ·
+    (r199 A-5) ผูก PO อัตโนมัติเทียบเลขบนกระดาษกับ PO ค้าง**ทั้งหมด** (`Helpers/OcrOpenPurchaseOrders.Plan`) · "ค้าง N ใบ" = จำนวนจริง · แสดงไม่เกิน 5 ใบ (ใบที่ถูกอ้างก่อน)
   - **ชื่อผู้ขายเป็นโลโก้** (รอบ 197 · ใบ Makro "ma ro") — (ก) เลขผู้เสียภาษีที่พิมพ์แบ่งกลุ่มแบบอื่น ("0 10 7 567 00041 4") ที่มีป้ายกำกับ ⇒
     `ThaiTaxId.LooseGroupingPattern` ใน `SmartFieldExtractor.ExtractTaxIdCandidates` (รับเฉพาะตัวมีป้าย) ⇒ `OcrVendorKeyEvidence` พิสูจน์กุญแจได้ ⇒ ทะเบียนชนะ ·
     ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" ถูกกลบใน `OcrPartyLabels` (เดิมนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย) (ข) ชื่อไม่มีรูปนิติบุคคล + เลขนิติบุคคล ⇒
@@ -159,7 +173,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - **อีเมล/เบอร์ผู้ขาย** (รอบ 197) — `Helpers/OcrSellerContactChannel`: ตัวที่อยู่ใต้ป้ายผู้ซื้อ/ผู้รับ/ที่อยู่จัดส่ง (`OcrPartyLabels.FindRecipientAll` —
     รายการแยกจากป้ายตัดสินบทบาท) ใกล้กว่าป้ายผู้ขาย และห่างไม่เกิน 10 บรรทัด = ของผู้ซื้อ ⇒ ไม่เป็น `VendorEmail`/`VendorPhone` (เดิมอีเมลตัวแรกของหน้า ⇒
     อีเมลผู้รับสินค้าลงผู้ติดต่อ ซีพี แอ็กซ์ตร้า) · กระดาษไม่มีป้าย = ตัวแรกตามเดิม · ผู้ติดต่อที่ผูกมีอีเมล = อีเมลฝั่งผู้ซื้อของใบนี้ ⇒ `[Contact] ⚠` ใน
-    ProcessingNotes (ไม่ลบให้ — แยกไม่ได้ว่าผู้ใช้กรอกเอง)
+    ProcessingNotes (ไม่ลบให้ — แยกไม่ได้ว่าผู้ใช้กรอกเอง) · รอบ 200 (K-8): ป้าย "ผู้รับสินค้า/Receiver" ใน**ช่องลายเซ็นท้ายบิล** (`Helpers/OcrSignatureSlot` —
+    บรรทัดมีคำลงนาม/เส้นให้เซ็น/บทบาทผู้ลงนาม ≥ 2 บทบาท/อยู่ใต้เส้นเซ็น) ไม่นับเป็นบล็อกผู้รับ ⇒ อีเมล/เบอร์ผู้ขายใต้ช่องลายเซ็นไม่หาย
   - **วันที่ที่ระบบเดา/ทับ/สงสัย** (`OcrDateReader.NeedsHumanConfirm` — ความมั่นใจ < 0.85 และไม่ใช่ "ตรงกับป้าย") ⇒ แท็ก
     `[DATE-UNSURE]` ใน ProcessingNotes ⇒ `OcrPostingReadiness` ห้ามอนุมัติอัตโนมัติ (ทุกช่องทาง) — ฝ่ายค้านรอบ 190: ไม่งั้นวันที่
     ที่เติมจากตัวเลขลอย ๆ ทำให้ `[DATE-UNKNOWN]` ไม่เกิด แล้วใบลงงวด ภ.พ.30 ผิดเงียบ
@@ -3608,7 +3623,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K — OCR ผู้ติดต่อสาขา/ใบ Makro ค้าง: WHT นับว่าแก้เฉพาะเมื่อเปลี่ยน (K-10) · ล็อกสร้างผู้ติดต่อ
+ต่อ (CompanyId, เลขภาษี) + รายงานแถวซ้ำ (K-5) · แก้ผลสแกนเปลี่ยนสาขา ⇒ ตัดสินผู้ติดต่อใหม่ (K-4) · alias ข้ามสาขา (K-3b) · อีเมลใต้ช่องลายเซ็น (K-8) ·
+ที่อยู่แถวสาขาในเส้นสร้างเอกสาร (K-9) · สาขาผู้ซื้อใบ Makro (K-11) · PO ค้างทั้งหมด (A-5) (§1 OCR) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
 เฉพาะที่ยกเลิกไม่ได้จริงเป็นคำเตือน (`SettlementUnpostRefusalKind` + `SettlementOrphanTriage` · S4-1) · เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` + e-Tax ของใบเสร็จอัตโนมัติ
 คู่การรับชำระ (S4-8) · ข้อความล็อกช่องทางเป็นกลาง (S4-7) · แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วบอกทางไปต่อที่ถูก (S4-6) · ขายด่วนตรวจ `success:false` ของ api.js (S4-2) — commit <pending>)_
 

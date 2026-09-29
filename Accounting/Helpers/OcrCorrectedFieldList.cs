@@ -27,9 +27,13 @@ public static class OcrCorrectedFieldList
     /// บนเว็บ. นับเฉพาะเมื่อค่าเปลี่ยนจริง (<see cref="BranchChanged"/>) หรือผู้ใช้พิมพ์ยืนยัน
     /// (<see cref="OcrCorrectionRequest.VendorBranchConfirmed"/>) · <paramref name="before"/> null = กติกาเดิม (ส่งมา = แก้)</para>
     ///
-    /// <para>ช่องอื่นยังใช้กติกาเดิม — ช่อง WHT มีบั๊กทรงเดียวกัน (หน้าเว็บส่ง hasWht/whtIncomeTypeCode ทุกครั้ง) แต่
-    /// <c>OcrWhtLearningScope</c> นิยาม "ยืนยัน" ว่าเป็นหลักฐานโดยตั้งใจ ⇒ เปลี่ยนต้องให้เจ้าของตัดสิน (backlog K-10 ใน
-    /// <c>erp-review/2026-09-25/makro-branch/review197.md</c>)</para></summary>
+    /// <para><b>ช่อง WHT สามช่อง</b> (รอบ 200 · คำตัดสินเจ้าของข้อ 19 · K-10) เมื่อ <paramref name="before"/> มี <see cref="OcrCorrectionBaseline.Wht"/>:
+    /// หน้ารีวิวส่ง <c>hasWht</c> (true/false เสมอ) · <c>whtRate</c> · <c>whtIncomeTypeCode</c> ("" เมื่อไม่เลือก) มาทุกครั้ง ⇒ เดิม "HasWht" เข้ารายการทุกใบบนเว็บ
+    /// ⇒ <c>OcrWhtLearningScope</c> ตีเป็น <c>UserEdited</c> ⇒ ประวัติ WHT ของผู้ขายถูกสอนด้วยค่าที่ไม่มีใครแตะ (วงจรสอนตัวเองที่ D3-2 ปิดไว้ กลับมาทางประตูนี้).
+    /// ตอนนี้นับเฉพาะเมื่อค่า<b>เปลี่ยนจากที่สแกนเก็บไว้</b> (<see cref="WhtChanged"/>) — รูปแบบเดียวกับรหัสสาขา (K-1) ·
+    /// <c>Wht</c> null = กติกาเดิม (ส่งมา = แก้) สำหรับผู้เรียกที่ไม่มีค่าก่อนแก้</para>
+    ///
+    /// <para>ช่องอื่นยังใช้กติกาเดิม (ส่งมา = แก้)</para></summary>
     public static string[] From(OcrCorrectionRequest c, OcrCorrectionBaseline? before = null)
     {
         var fields = new List<string>();
@@ -44,7 +48,10 @@ public static class OcrCorrectedFieldList
         else if (c.VendorBranchConfirmed == true
                  || (c.VendorBranchCode != null && BranchChanged(c.VendorBranchCode, before.VendorBranchCode)))
             fields.Add("VendorBranchCode");
-        Add("VendorAddress", c.VendorAddress);
+        // ที่อยู่ผู้ขาย (รอบ 200 · K-9): หน้ารีวิวส่ง vendorAddress ทุกครั้งที่ช่องมีค่า ⇒ ตัวอ่าน "ผู้ใช้พิมพ์ที่อยู่เอง" (ที่อยู่แถวสาขาใหม่
+        // ในเส้นสร้างเอกสาร) ต้องนับเฉพาะเมื่อเปลี่ยนจริง — กติกาเดียวกับสาขา/WHT
+        if (before?.VendorAddress is not OcrTextBaseline addr) Add("VendorAddress", c.VendorAddress);
+        else if (c.VendorAddress != null && TextChanged(c.VendorAddress, addr.Value)) fields.Add("VendorAddress");
         Add("BuyerName", c.BuyerName);
         Add("BuyerTaxId", c.BuyerTaxId);
         if (before == null) Add("BuyerBranchCode", c.BuyerBranchCode);
@@ -59,9 +66,19 @@ public static class OcrCorrectedFieldList
         Add("ExpenseCategory", c.ExpenseCategory);
         Add("DebitAccountCode", c.DebitAccountCode);
         Add("CreditAccountCode", c.CreditAccountCode);
-        Add("HasWht", c.HasWht);
-        Add("WhtRate", c.WhtRate);
-        Add("WhtIncomeTypeCode", c.WhtIncomeTypeCode);
+        if (before?.Wht is not OcrWhtBaseline wht)
+        {
+            Add("HasWht", c.HasWht);
+            Add("WhtRate", c.WhtRate);
+            Add("WhtIncomeTypeCode", c.WhtIncomeTypeCode);
+        }
+        else
+        {
+            if (c.HasWht is bool hasWht && hasWht != wht.HasWht) fields.Add("HasWht");
+            if (c.WhtRate is decimal rate && rate != (wht.WhtRate ?? 0m)) fields.Add("WhtRate");
+            if (c.WhtIncomeTypeCode != null && WhtChanged(c.WhtIncomeTypeCode, wht.WhtIncomeTypeCode))
+                fields.Add("WhtIncomeTypeCode");
+        }
         Add("PaymentTermsDays", c.PaymentTermsDays);
         // Notes = เหตุผลทางธุรกิจที่ผู้ใช้พิมพ์เอง — ระบบไม่เคยเติมให้อยู่แล้ว
         // การกรอกจึงไม่ใช่ "การแก้สิ่งที่ OCR ทำผิด" ⇒ ไม่นับเข้าตัวชี้วัด
@@ -84,6 +101,19 @@ public static class OcrCorrectedFieldList
         }
     }
 
+    /// <summary>รหัสประเภทเงินได้ที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — ว่าง/ช่องว่าง ≡ ไม่ระบุ ("" คือค่าที่หน้าเว็บส่งเมื่อไม่ได้เลือก) ·
+    /// เทียบหลังตัดช่องว่างแบบไม่สนตัวพิมพ์ (รหัสเป็นตัวอักษร+เลข เช่น "40(2)")</summary>
+    internal static bool WhtChanged(string? submitted, string? stored)
+        => !string.Equals((submitted ?? "").Trim(), (stored ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>ข้อความอิสระที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — ว่าง ≡ ไม่มีค่า · ตัดช่องว่างหัวท้ายและยุบช่องว่างซ้อน (hydrate ลง input แล้วส่งกลับ
+    /// ต้องไม่นับว่าแก้) · ตัวพิมพ์เล็ก/ใหญ่นับว่าต่าง (ผู้ใช้แก้ตัวสะกดได้)</summary>
+    internal static bool TextChanged(string? submitted, string? stored)
+        => !string.Equals(Squash(submitted), Squash(stored), StringComparison.Ordinal);
+
+    private static string Squash(string? v)
+        => string.Join(' ', (v ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     /// <summary>รวมรายการเดิมกับรายการใหม่แบบไม่ซ้ำ เรียงตามตัวอักษร
     /// (แก้หลายรอบต้องไม่ทำให้ช่องเดิมถูกนับซ้ำ)</summary>
     public static string Merge(string? existingCsv, IEnumerable<string> newFields)
@@ -98,5 +128,12 @@ public static class OcrCorrectedFieldList
 }
 
 /// <summary>ค่าที่สแกนเก็บไว้<b>ก่อน</b>รับคำแก้ — ตัวป้อนของ <see cref="OcrCorrectedFieldList.From"/> ให้แยก "ผู้ใช้เปลี่ยนค่า"
-/// ออกจาก "หน้าเว็บส่งค่าเดิมกลับมา" (รอบ 197 ฝ่ายค้าน K-1 · ใช้กับรหัสสาขาสองฝั่งเท่านั้น)</summary>
-public sealed record OcrCorrectionBaseline(string? VendorBranchCode, string? BuyerBranchCode);
+/// ออกจาก "หน้าเว็บส่งค่าเดิมกลับมา" (รอบ 197 ฝ่ายค้าน K-1: รหัสสาขาสองฝั่ง · รอบ 200 K-10: ช่อง WHT ผ่าน <paramref name="Wht"/>)</summary>
+public sealed record OcrCorrectionBaseline(string? VendorBranchCode, string? BuyerBranchCode, OcrWhtBaseline? Wht = null,
+    OcrTextBaseline? VendorAddress = null);
+
+/// <summary>ค่าข้อความหนึ่งช่องของสแกนก่อนรับคำแก้ (null ทั้งตัว = ผู้เรียกไม่มีค่าก่อนแก้ ⇒ กติกาเดิม "ส่งมา = แก้")</summary>
+public sealed record OcrTextBaseline(string? Value);
+
+/// <summary>ช่อง WHT ของสแกนก่อนรับคำแก้ (<c>OcrScanResult.HasWht/WhtRate/WhtIncomeTypeCode</c>) — ค่าเดียวกับที่หน้ารีวิว hydrate ลงฟอร์ม</summary>
+public sealed record OcrWhtBaseline(bool HasWht, decimal? WhtRate, string? WhtIncomeTypeCode);

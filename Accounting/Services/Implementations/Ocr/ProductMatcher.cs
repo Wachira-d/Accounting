@@ -39,6 +39,10 @@ public class ProductMatcher
     private readonly AccountingDbContext _db;
     private readonly GlobalProductLearner? _global;
 
+    /// <summary>แถวผู้ติดต่อทุกแถวของนิติบุคคลเดียวกับผู้ขาย (ต่อคำขอ — service นี้เป็น scoped) · ไม่ใช่ state ข้ามคำขอ
+    /// (MatchAsync ถูกเรียกทีละบรรทัด ⇒ ไม่ยิง query ซ้ำทุกบรรทัด)</summary>
+    private readonly Dictionary<(Guid CompanyId, Guid VendorId), IReadOnlyList<Guid>> _vendorIdsCache = new();
+
     public ProductMatcher(AccountingDbContext db, GlobalProductLearner? global = null)
     { _db = db; _global = global; }
 
@@ -216,9 +220,24 @@ public class ProductMatcher
     private const double VendorHistoryBoost = 0.10;
     private const double MaxBoostedScore = 0.94;
 
-    private async Task<HashSet<Guid>> GetVendorHistoryProductIdsAsync(Guid companyId, Guid? vendorContactId)
+    /// <summary>
+    /// "ผู้ขายรายนี้" = ทุกแถวของนิติบุคคลเดียวกัน (รอบ 200 · K-3b) — ตัวตัดสิน <see cref="Accounting.Helpers.OcrVendorAliasScope"/> +
+    /// ขอบเขตกลาง <see cref="Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync"/> · ไม่มีผู้ขาย = ว่าง
+    /// </summary>
+    private async Task<IReadOnlyList<Guid>> VendorEntityIdsAsync(Guid companyId, Guid? vendorContactId)
     {
-        if (!vendorContactId.HasValue) return new();
+        if (vendorContactId is not Guid vid) return Array.Empty<Guid>();
+        if (_vendorIdsCache.TryGetValue((companyId, vid), out var cached)) return cached;
+        var same = await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(
+            _db.Contacts.AsNoTracking(), companyId, vid);
+        var ids = Accounting.Helpers.OcrVendorAliasScope.VendorIds(vid, same);
+        _vendorIdsCache[(companyId, vid)] = ids;
+        return ids;
+    }
+
+    private async Task<HashSet<Guid>> GetVendorHistoryProductIdsAsync(Guid companyId, IReadOnlyList<Guid> vendorIds)
+    {
+        if (vendorIds.Count == 0) return new();
         try
         {
             var sql = @"
@@ -229,12 +248,12 @@ public class ProductMatcher
                                    AND p.""CompanyId"" = d.""CompanyId""
                                    AND p.""IsDeleted"" = false
                 WHERE d.""CompanyId"" = {0}
-                  AND d.""ContactId"" = {1}
+                  AND d.""ContactId"" = ANY({1})
                   AND d.""DocumentType"" IN (7, 8, 9, 13)
                   AND dl.""ProductCode"" IS NOT NULL
                   AND dl.""IsDeleted"" = false";
             var ids = await _db.Database
-                .SqlQueryRaw<VendorHistoryRow>(sql, companyId, vendorContactId.Value)
+                .SqlQueryRaw<VendorHistoryRow>(sql, companyId, vendorIds.ToArray())
                 .ToListAsync();
             return ids.Select(x => x.Id).ToHashSet();
         }
@@ -280,7 +299,10 @@ public class ProductMatcher
 
         var byProductId = new Dictionary<Guid, ProductMatchCandidate>();
         var descBrands = ExtractBrandTokens(description);
-        var vendorHistoryIds = await GetVendorHistoryProductIdsAsync(companyId, vendorContactId);
+        // ผู้ขาย = ทุกแถวของนิติบุคคลเดียวกัน (K-3b): alias/คำปฏิเสธ/ประวัติที่เรียนบนแถว สนญ. ใช้กับใบของสาขาได้ และกลับกัน
+        var vendorIds = await VendorEntityIdsAsync(companyId, vendorContactId);
+        var vendorIdsNullable = vendorIds.Select(id => (Guid?)id).ToList();
+        var vendorHistoryIds = await GetVendorHistoryProductIdsAsync(companyId, vendorIds);
 
         // Negative aliases — products the user has previously rejected for
         // this exact wording. Filter them out of the candidate set so a
@@ -289,7 +311,7 @@ public class ProductMatcher
             .AsNoTracking()
             .Where(n => n.CompanyId == companyId && !n.IsDeleted
                      && n.NormalizedName == norm
-                     && (n.ContactId == null || n.ContactId == vendorContactId))
+                     && (n.ContactId == null || vendorIdsNullable.Contains(n.ContactId)))
             .Select(n => n.RejectedProductId)
             .ToListAsync();
         var rejectedSet = rejectedIds.ToHashSet();
@@ -302,7 +324,7 @@ public class ProductMatcher
         foreach (var a in aliasHits)
         {
             if (a.Product == null || a.Product.IsDeleted || !a.Product.IsActive) continue;
-            var score = (vendorContactId.HasValue && a.ContactId == vendorContactId) ? VendorAliasScore
+            var score = Accounting.Helpers.OcrVendorAliasScope.IsVendorAlias(a.ContactId, vendorIds) ? VendorAliasScore
                        : (a.ContactId == null ? GlobalAliasScore : 0.0);
             if (score == 0.0) continue;
             // Promote frequently-confirmed aliases slightly within the same tier.
@@ -613,9 +635,11 @@ public class ProductMatcher
     public async Task<double> GetVendorAdaptiveThresholdAsync(Guid companyId, Guid? vendorContactId)
     {
         if (!vendorContactId.HasValue) return AutoAcceptThreshold;
+        // ทุกแถวของนิติบุคคลเดียวกัน (K-3b) — แถวสาขาใหม่ไม่เริ่มนับจาก 0 ทั้งที่ผู้ใช้สอน alias ของผู้ขายรายนี้ไว้แล้วที่แถว สนญ.
+        var vendorIdsNullable = (await VendorEntityIdsAsync(companyId, vendorContactId)).Select(id => (Guid?)id).ToList();
         var count = await _db.ProductAliases
             .AsNoTracking()
-            .CountAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.ContactId == vendorContactId);
+            .CountAsync(a => a.CompanyId == companyId && !a.IsDeleted && vendorIdsNullable.Contains(a.ContactId));
         if (count >= 100) return 0.65;
         if (count >= 50)  return 0.72;
         if (count >= 10)  return 0.78;

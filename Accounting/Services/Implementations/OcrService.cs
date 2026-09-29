@@ -2764,6 +2764,29 @@ public class OcrService : IOcrService
             // (the freshly-created contact already has every field we'd fill).
             bool contactJustCreated = false;
 
+            // ───── K-5 (รอบ 200 · คำตัดสินเจ้าของข้อ 19): สร้างผู้ติดต่อจากสแกนทีละคำขอต่อ (CompanyId, เลขผู้เสียภาษี) ─────
+            // หน้าเว็บอัปโหลดพร้อมกัน 3 ไฟล์ + ไม่มี unique index (ตั้งใจ — ข้อมูลซ้ำเดิมยังไม่ถูกจัดการ) ⇒ ใบ Makro 00005 สองใบที่มาพร้อมกัน
+            // ต่างคนต่างสร้างแถวสาขาเดียวกัน · ล็อก advisory คีย์คงที่ข้ามเครื่อง (AdvisoryLockKey.OcrContactCreate) ในธุรกรรมสั้น ๆ
+            // แล้วถามคีย์ผู้ติดต่อกลางซ้ำ — มีแถวแล้ว (อีกคำขอเพิ่งสร้าง) = ผูกแถวนั้น ไม่สร้างซ้ำ · ธุรกรรมปิดทันทีหลังบล็อกสร้าง (commit ข้างล่าง)
+            var lockContactCreate = !scanResult.MatchedContactId.HasValue
+                && Accounting.Helpers.OcrContactCreateLock.LockPart(extractedData.VendorTaxId) != null
+                && !IsOurOwnContact(extractedData.VendorTaxId, extractedData.VendorName);
+            await using var contactCreateTx = lockContactCreate && _db.Database.CurrentTransaction == null
+                ? await _db.Database.BeginTransactionAsync() : null;
+            if (lockContactCreate)
+            {
+                var wantedVendorBranch = mustCreateVendorBranchRow ? vendorBranchPick!.ScannedBranch : extractedData.VendorBranchCode;
+                if (await LockAndFindConcurrentOcrContactAsync(companyId, extractedData.VendorTaxId, wantedVendorBranch, IsOurOwnContact)
+                    is Guid concurrentContactId)
+                {
+                    scanResult.MatchedContactId = concurrentContactId;
+                    mustCreateVendorBranchRow = false;
+                    var reusedNote = Accounting.Helpers.OcrContactCreateLock.ReusedNote(extractedData.VendorTaxId, wantedVendorBranch);
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + reusedNote;
+                    extractedData.ReasoningTrace.Add(reusedNote);
+                }
+            }
+
             // ───── Branch 0 (รอบ 197 · ใบ Makro สาขา 00005): นิติบุคคลเดียวกัน คนละสถานประกอบการ ─────
             // เลขผู้เสียภาษีตรงผู้ติดต่อที่มีอยู่ แต่สาขาบนกระดาษ (มีหลักฐาน) ไม่ตรงสาขาใดเลย ⇒ สร้างแถวของสาขานั้น
             // (§86/4 · ประกาศอธิบดีฯ 199 — ใบกำกับต้องผูกสาขาที่ออกใบ · เดิมผูกสำนักงานใหญ่เงียบ ๆ)
@@ -2923,6 +2946,8 @@ public class OcrService : IOcrService
                         + $"\n[Manual Review Required] ไม่สามารถยืนยัน TaxID {extractedData.VendorTaxId} จาก DBD/RD และข้อมูลผู้ขายไม่เพียงพอ — กรุณาตรวจสอบและสร้าง Contact ด้วยตนเอง";
                 }
             }
+            // K-5: ปล่อยล็อกสร้างผู้ติดต่อทันทีหลังบล็อกสร้าง (งานที่เหลือของสแกนไม่ต้องถือล็อก) · ล้มก่อนถึงตรงนี้ = dispose ⇒ rollback
+            if (contactCreateTx != null) await contactCreateTx.CommitAsync();
             // Backfill ข้อมูลใน contact เดิม. แยก 2 step:
             //   (1) TaxId — รันเสมอเมื่อ OCR แกะได้ + contact ยังไม่มี (เคสปกติ
             //       ที่ vendor ถูก match จากชื่อ ตั้งแต่ตอนสร้าง contact แต่ไม่มี
@@ -3038,35 +3063,30 @@ public class OcrService : IOcrService
                             && d.Status != DocumentStatus.Paid   // fully billed = no longer open
                             && d.DocumentDate >= poCutoff)
                         .OrderByDescending(d => d.DocumentDate)
-                        .Select(d => new { d.Id, d.DocumentNumber })
-                        .Take(5)
+                        .Select(d => new Accounting.Helpers.OcrOpenPo(d.Id, d.DocumentNumber))
                         .ToListAsync();
-                    if (openPos.Count > 0)
+                    // ฝ่ายค้าน r199 A-5 (รอบ 200): เทียบเลขบนกระดาษกับ PO ค้าง<b>ทั้งหมด</b> แล้วค่อยตัดเพดานเฉพาะรายการที่แสดง — เดิม Take(5)
+                    // ก่อนเทียบ ⇒ ผู้ขายเครือใหญ่ (ทุกสาขารวม > 5 ใบ) ใบที่กระดาษอ้างจริงหลุด = ไม่ผูก และ "ค้าง N ใบ" ถูกเพดาน 5
+                    var poPlan = Accounting.Helpers.OcrOpenPurchaseOrders.Plan(openPos, extractedText);
+                    if (poPlan.Total > 0)
                     {
                         scanResult.OpenPoNumbersJson = System.Text.Json.JsonSerializer.Serialize(
-                            openPos.Select(p => p.DocumentNumber));
+                            poPlan.Display.Select(p => p.DocumentNumber));
                         scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
-                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {openPos.Count} ใบ ({string.Join(", ", openPos.Take(3).Select(p => p.DocumentNumber))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
+                            + $"\n[PO] ผู้ขายรายนี้มีใบสั่งซื้อค้างในระบบ {poPlan.Total} ใบ ({string.Join(", ", poPlan.Display.Take(3).Select(p => p.DocumentNumber))}) — หากรายการนี้สั่งผ่าน PO กรุณาบันทึกผ่านฟังก์ชันรับตามใบสั่งซื้อ ไม่ใช่สร้างใหม่";
 
                         // AUTO-LINK BY PAPER REFERENCE: many invoices print the
                         // buyer's PO number ("อ้างอิงใบสั่งซื้อ PO-2026-0012").
                         // When exactly ONE open PO's number appears verbatim in
                         // the OCR text, link automatically — the strongest
                         // possible match signal, no user action needed. Two or
-                        // more hits stay manual (ambiguous).
-                        if (!scanResult.LinkedPurchaseOrderId.HasValue)
+                        // more hits stay manual (ambiguous). ตัวตัดสิน: OcrOpenPurchaseOrders.Plan
+                        if (!scanResult.LinkedPurchaseOrderId.HasValue && poPlan.AutoLink is Accounting.Helpers.OcrOpenPo hit)
                         {
-                            var hits = openPos.Where(p =>
-                                    p.DocumentNumber.Length >= 4
-                                    && (extractedText ?? "").Contains(p.DocumentNumber, StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-                            if (hits.Count == 1)
-                            {
-                                scanResult.LinkedPurchaseOrderId = hits[0].Id;
-                                scanResult.LinkedPurchaseOrderNumber = hits[0].DocumentNumber;
-                                scanResult.ProcessingNotes += $"\n[PO] พบเลขที่ {hits[0].DocumentNumber} บนเอกสาร → ผูกกับใบสั่งซื้อให้อัตโนมัติ";
-                                extractedData.ReasoningTrace.Add($"[PO] เอกสารอ้างอิง {hits[0].DocumentNumber} → auto-link");
-                            }
+                            scanResult.LinkedPurchaseOrderId = hit.Id;
+                            scanResult.LinkedPurchaseOrderNumber = hit.DocumentNumber;
+                            scanResult.ProcessingNotes += $"\n[PO] พบเลขที่ {hit.DocumentNumber} บนเอกสาร → ผูกกับใบสั่งซื้อให้อัตโนมัติ";
+                            extractedData.ReasoningTrace.Add($"[PO] เอกสารอ้างอิง {hit.DocumentNumber} → auto-link");
                         }
                     }
                 }
@@ -3091,10 +3111,18 @@ public class OcrService : IOcrService
             // A hint only — the user still chooses; never blocks anything.
             try
             {
-                var vendorHasProductHistory = scanResult.MatchedContactId.HasValue
+                // "ผู้ขายรายนี้" = ทุกแถวของนิติบุคคลเดียวกัน (รอบ 200 · K-3b) — แถวสาขาที่เพิ่งสร้างไม่ใช่ "ผู้ขายใหม่ไม่เคยมีประวัติ"
+                // (ขอบเขตกลาง SameEntityIdsAsync + ตัวตัดสิน OcrVendorAliasScope ตัวเดียวกับ ProductMatcher)
+                var aliasVendorIds = scanResult.MatchedContactId.HasValue
+                    ? Accounting.Helpers.OcrVendorAliasScope.VendorIds(scanResult.MatchedContactId,
+                        await Accounting.Helpers.ContactTaxBranchKey.SameEntityIdsAsync(
+                            _db.Contacts.AsNoTracking(), companyId, scanResult.MatchedContactId.Value))
+                        .Select(id => (Guid?)id).ToList()
+                    : new List<Guid?>();
+                var vendorHasProductHistory = aliasVendorIds.Count > 0
                     && await _db.ProductAliases.AsNoTracking().AnyAsync(a =>
                         a.CompanyId == companyId && !a.IsDeleted
-                        && a.ContactId == scanResult.MatchedContactId.Value);
+                        && aliasVendorIds.Contains(a.ContactId));
                 // ⚠️ เดิมใช้สัญญาณเดียว (ผู้ขายเคยนำเข้าสต๊อกไหม) ⇒ บริษัทค้าขายที่
                 // เพิ่งเริ่มใช้ระบบ ทุกใบซื้อสินค้าถูกแนะนำเป็นค่าใช้จ่าย ทั้งที่
                 // ApplyProductCrossReferenceAsync จับคู่บรรทัดกับ Product master
@@ -3363,6 +3391,109 @@ public class OcrService : IOcrService
 
     private static decimal ClampPct(decimal value, decimal min, decimal max, decimal fallback)
         => (value <= 0 || value > 1) ? fallback : Math.Clamp(value, min, max);
+
+    /// <summary>
+    /// **ตัดสินผู้ติดต่อผู้ขายของสแกนตามรหัสสาขา — ตัวเดียวของเส้นสร้างเอกสาร (<c>CreateDocumentFromScanCoreAsync</c>) และเส้นแก้ผลสแกน
+    /// (<c>SubmitCorrectionAsync</c> · "แก้ในฟอร์มก่อน")** (รอบ 200 · K-4 — เดิมโค้ดชุดนี้อยู่ในเส้นสร้างเอกสารที่เดียว ⇒ ผู้ใช้แก้รหัสสาขาในหน้ารีวิว
+    /// แล้วกด "แก้ในฟอร์มก่อน" ฟอร์มยังได้ผู้ติดต่อสำนักงานใหญ่ · สามเส้นที่ผลิตของชิ้นเดียวกันต้องเรียกตัวสร้างตัวเดียว — CLAUDE.md §H)
+    /// <para>กติกา = เส้นสแกน: <see cref="Accounting.Helpers.OcrVendorBranchContact.Decide"/> → <see cref="Accounting.Helpers.ContactTaxBranchKey.PickBranch"/> ·
+    /// ผู้ใช้เลือกผู้ติดต่อเอง (<c>MatchContactAsync</c>) ชนะเสมอ · แถวของบริษัทเราไม่ใช่ผู้สมัคร · ต้องสร้างแถวสาขา ⇒ Add เข้า change tracker
+    /// (ผู้เรียกบันทึกเอง ภายใต้ล็อก K-5) · ที่อยู่ของแถวใหม่ = ที่อยู่ที่<b>พิสูจน์ได้</b>ว่าเป็นของสาขานั้นเท่านั้น (K-9
+    /// <see cref="Accounting.Helpers.OcrIssuerBranch.StoredAddressIsIssuerBranch"/> — ไม่รู้ = ว่าง ไม่เอาที่อยู่สำนักงานใหญ่จากหัวกระดาษมาใส่)</para>
+    /// <para>ผู้เรียกต้องกันกรณี "ผู้ขายคือเรา" และ "ไม่มีเลขผู้เสียภาษี" มาก่อน (ไม่ตัดสินสาขาของตัวเราเอง — K-7)</para>
+    /// </summary>
+    /// <returns>(ผู้ติดต่อที่ผูก · จำนวนแถวที่ถือเลขเดียวกัน (ทุกสาขา — ป้อนด่าน fallback "ห้ามสร้างแถวซ้ำ") · แถวสาขาใหม่ที่เพิ่ง Add หรือ null)</returns>
+    private async Task<(Guid? ContactId, int SameTaxIdRows, Contact? NewBranchRow)> DecideScanVendorBranchContactAsync(
+        Guid companyId, OcrScanResult result, Guid? contactId, string? ourTaxId, string? ourName, string? ourNameEn, string whereLabel)
+    {
+        var correctedFields = (result.UserCorrectedFields ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var userPickedContact = correctedFields.Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
+        var siblingIds = await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
+            _db.Contacts, companyId, result.ExtractedVendorTaxId);
+        Contact? newRow = null;
+        if (siblingIds.Count > 0
+            && (!contactId.HasValue || (!userPickedContact && siblingIds.Contains(contactId.Value))))
+        {
+            var siblings = (await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && siblingIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Name, c.BranchCode, c.TaxId })
+                .ToListAsync())
+                // แถวของบริษัทเราเองไม่ใช่ผู้สมัคร (สมมาตรกับ taxMatches ของเส้นสแกน)
+                .Where(c => !Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(c.TaxId, c.Name, ourTaxId, ourName, ourNameEn))
+                .Select(c => new Accounting.Helpers.OcrVendorBranchContact.Candidate(c.Id, c.Name, c.BranchCode))
+                .ToList();
+            var storedConf = ParseFieldConfidenceJson(result.FieldConfidenceJson);
+            var branchPick = Accounting.Helpers.OcrVendorBranchContact.Decide(
+                siblings, result.VendorBranchCode,
+                branchReliable: Accounting.Helpers.OcrVendorBranchContact.IsReliableBranch(
+                    storedConf != null && storedConf.TryGetValue(Accounting.Helpers.OcrFieldKeys.SellerBranchCode, out var storedBranchConf)
+                        ? storedBranchConf : (double?)null,
+                    userCorrected: correctedFields.Contains("VendorBranchCode", StringComparer.Ordinal)));
+            if (branchPick.MustCreateBranchRow)
+            {
+                // K-9: ที่อยู่ของสแกนเข้าแถวสาขาได้เฉพาะเมื่อพิสูจน์ได้ว่าเป็นของสาขานั้น (ประโยคประกาศสาขาบนกระดาษพิมพ์ที่อยู่เดียวกัน ·
+                // หรือผู้ใช้พิมพ์ที่อยู่เอง) — ไม่มีทะเบียนในเส้นนี้ ⇒ ไม่รู้ = ปล่อยว่าง (เดิมส่ง paperIsIssuerBranchAddress:false แต่ตัวตัดสินยังคืน
+                // ที่อยู่จากกระดาษเมื่อสาขาตรง ⇒ ได้ที่อยู่สำนักงานใหญ่จากหัวกระดาษ ต่างจากเส้นสแกน)
+                var paperAddressProven = Accounting.Helpers.OcrIssuerBranch.StoredAddressIsIssuerBranch(
+                    result.RawTextContent, branchPick.ScannedBranch, result.VendorAddress,
+                    userCorrectedAddress: correctedFields.Contains("VendorAddress", StringComparer.Ordinal));
+                var branchRowAddress = Accounting.Helpers.OcrIssuerBranch.ContactAddress(
+                    contactBranch: branchPick.ScannedBranch, scanBranch: result.VendorBranchCode,
+                    dbdMatched: false, dbdAddress: null,
+                    paperAddress: paperAddressProven ? result.VendorAddress : null,
+                    paperIsIssuerBranchAddress: paperAddressProven).Address;
+                newRow = await NewVendorBranchContactAsync(companyId, branchPick.TemplateContactId,
+                    taxId: result.ExtractedVendorTaxId!, branchCode: branchPick.ScannedBranch!,
+                    registryName: null, registryBranchName: null, paperName: result.ExtractedVendorName,
+                    address: branchRowAddress, phone: null, email: null, createdBy: "OCR-BranchAutoCreate");
+                contactId = newRow.Id;
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + $"\n[Auto-Create] สร้างผู้ติดต่อของ{Accounting.Helpers.TaxBranchCode.Label(newRow.BranchCode)} ({newRow.BranchCode}) "
+                    + $"{whereLabel}: {newRow.Name} — ผู้ติดต่อเดิมของเลขนี้เป็นคนละสาขา"
+                    + (string.IsNullOrWhiteSpace(branchRowAddress) ? " (ยังไม่มีที่อยู่ของสาขาที่พิสูจน์ได้ — โปรดเติมที่หน้าผู้ติดต่อ)" : "");
+            }
+            else if (!contactId.HasValue
+                || (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.ExactBranch
+                    && branchPick.ContactId != contactId))
+                contactId = branchPick.ContactId;
+            // หลักฐานสาขาอ่อน/ไม่รู้ที่มา (K-6) ⇒ ผูกแถวเดิมของนิติบุคคลเดียวกัน — ต้องบอกผู้ใช้ ไม่ผูกเงียบ
+            if (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.OtherBranchRow
+                && !string.IsNullOrEmpty(branchPick.Trace)
+                && !(result.ProcessingNotes ?? "").Contains(branchPick.Trace, StringComparison.Ordinal))
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + branchPick.Trace;
+        }
+        return (contactId, siblingIds.Count, newRow);
+    }
+
+    /// <summary>
+    /// **K-5 (รอบ 200 · คำตัดสินเจ้าของข้อ 19)** — ล็อก advisory ต่อ (CompanyId, เลขผู้เสียภาษี) <b>ภายในธุรกรรม</b> แล้วถามคีย์ผู้ติดต่อกลางซ้ำ
+    /// (<see cref="Accounting.Helpers.ContactTaxBranchKey.FindAsync"/>) · คืน id ของแถวคีย์เดียวกันที่เกิดขึ้นแล้ว (อีกคำขอสร้างระหว่างรอ) หรือ null = สร้างได้ ·
+    /// เลขที่ไม่ใช่ตัวตน (<see cref="Accounting.Helpers.OcrContactCreateLock.LockPart"/> = null) ⇒ ไม่ล็อก คืน null · <paramref name="isOurs"/> = ตัวกรอง
+    /// "แถวของบริษัทเรา" ของผู้เรียก (แถวของเราไม่ใช่ผู้ขาย — สมมาตรกับ taxMatches) · คีย์คงที่ข้ามเครื่อง (<c>tools/advisory_lock_key_check.py</c>)
+    /// </summary>
+    private async Task<Guid?> LockAndFindConcurrentOcrContactAsync(Guid companyId, string? taxId, string? branchCode,
+        Func<string?, string?, bool>? isOurs)
+    {
+        var part = Accounting.Helpers.OcrContactCreateLock.LockPart(taxId);
+        if (part == null) return null;
+        if (_db.Database.CurrentTransaction == null)
+            throw new InvalidOperationException(
+                "ล็อกสร้างผู้ติดต่อจาก OCR ต้องอยู่ในธุรกรรม — นอกธุรกรรม pg_advisory_xact_lock ถูกปล่อยทันทีหลังคำสั่ง (ไม่กันอะไร)");
+        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.OcrContactCreate, part);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
+        var afterLock = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts.AsNoTracking(), companyId, taxId, branchCode);
+        if (Accounting.Helpers.OcrContactCreateLock.ReuseAfterLock(afterLock) is not Guid reuseId) return null;
+        if (isOurs != null)
+        {
+            var row = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Id == reuseId)
+                .Select(c => new { c.TaxId, c.Name })
+                .FirstOrDefaultAsync();
+            if (row == null || isOurs(row.TaxId, row.Name)) return null;
+        }
+        return reuseId;
+    }
 
     /// <summary>
     /// **ผู้ติดต่อแถวใหม่ของสาขาที่ออกใบ** (รอบ 197 ทีม K · ใบ Makro สาขาชลบุรี 00005) — ตัวสร้างตัวเดียวของทั้งเส้นสแกน
@@ -4767,7 +4898,12 @@ public class OcrService : IOcrService
 
         // Capture previous values BEFORE updating — used as negative examples
         // + รหัสสาขาสองฝั่งก่อนรับคำแก้ ⇒ "ผู้ใช้แก้สาขา" = ค่าเปลี่ยนจริง/พิมพ์ยืนยัน ไม่ใช่แค่หน้าเว็บส่งค่าเดิมกลับมา (ฝ่ายค้าน K-1)
-        var correctionBaseline = new Accounting.Helpers.OcrCorrectionBaseline(result.VendorBranchCode, result.BuyerBranchCode);
+        // + ช่อง WHT ก่อนรับคำแก้ (รอบ 200 · คำตัดสินข้อ 19 · K-10) — หน้าเว็บส่ง hasWht/whtIncomeTypeCode ทุกครั้ง ⇒ นับว่าแก้เฉพาะเมื่อค่าเปลี่ยน
+        //   (มิฉะนั้น OcrWhtLearningScope ตีเป็น UserEdited ทุกใบบนเว็บ แล้วประวัติ WHT ของผู้ขายถูกสอนด้วยค่าที่ไม่มีใครแตะ)
+        //   + ที่อยู่ผู้ขาย (K-9): "ผู้ใช้พิมพ์ที่อยู่เอง" เป็นหลักฐานที่อยู่ของแถวสาขาใหม่ ⇒ ต้องเป็นการเปลี่ยนจริง ไม่ใช่หน้าเว็บส่งค่าเดิมกลับมา
+        var correctionBaseline = new Accounting.Helpers.OcrCorrectionBaseline(result.VendorBranchCode, result.BuyerBranchCode,
+            new Accounting.Helpers.OcrWhtBaseline(result.HasWht, result.WhtRate, result.WhtIncomeTypeCode),
+            new Accounting.Helpers.OcrTextBaseline(result.VendorAddress));
         var prevVendorName = result.ExtractedVendorName;
         var prevVendorTaxId = result.ExtractedVendorTaxId;
         var prevDocNumber = result.ExtractedDocumentNumber;
@@ -4925,6 +5061,62 @@ public class OcrService : IOcrService
             result.UserCorrectedAt ??= DateTime.UtcNow;   // ครั้งแรกเท่านั้น
             result.UserCorrectedFields = Accounting.Helpers.OcrCorrectedFieldList.Merge(
                 result.UserCorrectedFields, correctedFields);
+        }
+
+        // ── K-4 (รอบ 200): ผู้ใช้เปลี่ยนกุญแจผู้ขาย (รหัสสาขา/เลขผู้เสียภาษี) ⇒ ตัดสินผู้ติดต่อใหม่ด้วยตัวเดียวกับเส้นสแกน/สร้างเอกสาร ──
+        // เส้น "แก้ในฟอร์มก่อน" ส่งคำแก้แล้วอ่าน MatchedContactId กลับไปเติมฟอร์ม ⇒ เดิมแก้สาขา 00000 → 00005 แล้วฟอร์มยังได้ผู้ติดต่อ สนญ.
+        // (เส้นกดสร้างเอกสารตัดสินซ้ำอยู่แล้ว) · ส่งค่าเดิมกลับมา ≠ เปลี่ยน (K-1) · ผู้ใช้เลือกผู้ติดต่อเอง/สร้างเอกสารแล้ว/ฝั่งขาย = ไม่แตะ
+        var vendorKeyChanged =
+            (correction.VendorBranchCode != null
+                && Accounting.Helpers.OcrCorrectedFieldList.BranchChanged(correction.VendorBranchCode, correctionBaseline.VendorBranchCode))
+            || (correction.VendorTaxId != null
+                && Accounting.Helpers.ThaiTaxId.Normalize(correction.VendorTaxId) != Accounting.Helpers.ThaiTaxId.Normalize(prevVendorTaxId));
+        var correctionTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            null, result.TargetDocumentType, result.DocumentType, hasLinkedPurchaseOrder: result.LinkedPurchaseOrderId.HasValue);
+        var contactPickedByUser = (result.UserCorrectedFields ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
+        if (Accounting.Helpers.OcrVendorBranchContact.ShouldRedecideOnCorrection(
+                vendorKeyChanged: vendorKeyChanged, userPickedContact: contactPickedByUser,
+                documentCreated: result.CreatedDocumentId.HasValue,
+                salesSide: Accounting.Helpers.DocumentSide.IsSales(correctionTarget.Type, result.OurRole)))
+        {
+            var ourCo = await _db.Companies.AsNoTracking()
+                .Where(c => c.Id == companyId)
+                .Select(c => new { c.TaxId, c.Name, c.NameEn })
+                .FirstOrDefaultAsync();
+            var correctionVendorIsUs = Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
+                result.ExtractedVendorTaxId, result.ExtractedVendorName, ourCo?.TaxId, ourCo?.Name, ourCo?.NameEn);
+            if (!correctionVendorIsUs && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(result.ExtractedVendorTaxId))
+            {
+                var matchedBefore = result.MatchedContactId;
+                var redecided = await DecideScanVendorBranchContactAsync(companyId, result, result.MatchedContactId,
+                    ourCo?.TaxId, ourCo?.Name, ourCo?.NameEn, "ตอนแก้ผลสแกน");
+                var decidedContactId = redecided.ContactId;
+                if (redecided.NewBranchRow is Contact newBranchRow)
+                {
+                    // K-5: แถวสาขาใหม่ต้องเกิดใต้ล็อกเดียวกับเส้นสแกน/สร้างเอกสาร — ธุรกรรมสั้นครอบ "ถามซ้ำ + บันทึก"
+                    await using var redecideTx = _db.Database.CurrentTransaction == null
+                        ? await _db.Database.BeginTransactionAsync() : null;
+                    if (await LockAndFindConcurrentOcrContactAsync(companyId, newBranchRow.TaxId, newBranchRow.BranchCode, isOurs: null)
+                            is Guid concurrentRowId
+                        && concurrentRowId != newBranchRow.Id)
+                    {
+                        _db.Entry(newBranchRow).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+                        decidedContactId = concurrentRowId;
+                        result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+                            + Accounting.Helpers.OcrContactCreateLock.ReusedNote(newBranchRow.TaxId, newBranchRow.BranchCode);
+                    }
+                    result.MatchedContactId = decidedContactId;
+                    await _db.SaveChangesAsync();
+                    if (redecideTx != null) await redecideTx.CommitAsync();
+                }
+                else result.MatchedContactId = decidedContactId;
+                if (result.MatchedContactId != matchedBefore)
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                        + $"\n[Branch] ผู้ใช้แก้ผู้ขายเป็น{Accounting.Helpers.TaxBranchCode.Label(result.VendorBranchCode)} ⇒ ผูกผู้ติดต่อใหม่ตามสาขา "
+                        + "(ตัวตัดสินเดียวกับเส้นสแกน/สร้างเอกสาร)";
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -6158,6 +6350,8 @@ public class OcrService : IOcrService
         }
 
         Guid? contactId;
+        // ผู้ติดต่อที่เส้นนี้เพิ่ง Add (ยังไม่บันทึก) — K-5: ถามซ้ำใต้ล็อกหลังเปิดธุรกรรม ว่าอีกคำขอสร้างคีย์เดียวกันไปแล้วหรือยัง
+        Contact? pendingNewContact = null;
         if (isSalesSide)
         {
             // Counterparty = buyer on the paper. MatchedContactId points at the
@@ -6206,6 +6400,7 @@ public class OcrService : IOcrService
                 };
                 _db.Contacts.Add(cust);
                 contactId = cust.Id;
+                pendingNewContact = cust;
             }
             // ลูกค้าที่มีอยู่แล้วแต่ยังไม่มีสาขา — เติมจากกระดาษ (เติมเฉพาะตอน
             // ว่าง ไม่ทับค่าที่ผู้ใช้ตั้งไว้ — pattern เดียวกับฝั่งผู้ขาย)
@@ -6244,57 +6439,12 @@ public class OcrService : IOcrService
             var vendorSameTaxIdRows = 0;
             if (!vendorIsUs && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(result.ExtractedVendorTaxId))
             {
-                var correctedFields = (result.UserCorrectedFields ?? "")
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var userPickedContact = correctedFields.Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
-                var siblingIds = await Accounting.Helpers.ContactTaxBranchKey.AllBranchIdsAsync(
-                    _db.Contacts, companyId, result.ExtractedVendorTaxId);
-                vendorSameTaxIdRows = siblingIds.Count;
-                if (siblingIds.Count > 0
-                    && (!contactId.HasValue || (!userPickedContact && siblingIds.Contains(contactId.Value))))
-                {
-                    var siblings = (await _db.Contacts.AsNoTracking()
-                        .Where(c => c.CompanyId == companyId && siblingIds.Contains(c.Id))
-                        .Select(c => new { c.Id, c.Name, c.BranchCode, c.TaxId })
-                        .ToListAsync())
-                        // แถวของบริษัทเราเองไม่ใช่ผู้สมัคร (สมมาตรกับ taxMatches ของเส้นสแกน)
-                        .Where(c => !Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
-                            c.TaxId, c.Name, ourCompany?.TaxId, ourCompany?.Name, ourCompany?.NameEn))
-                        .Select(c => new Accounting.Helpers.OcrVendorBranchContact.Candidate(c.Id, c.Name, c.BranchCode))
-                        .ToList();
-                    var storedConf = ParseFieldConfidenceJson(result.FieldConfidenceJson);
-                    var branchPick = Accounting.Helpers.OcrVendorBranchContact.Decide(
-                        siblings, result.VendorBranchCode,
-                        branchReliable: Accounting.Helpers.OcrVendorBranchContact.IsReliableBranch(
-                            storedConf != null && storedConf.TryGetValue(Accounting.Helpers.OcrFieldKeys.SellerBranchCode, out var storedBranchConf)
-                                ? storedBranchConf : (double?)null,
-                            userCorrected: correctedFields.Contains("VendorBranchCode", StringComparer.Ordinal)));
-                    if (branchPick.MustCreateBranchRow)
-                    {
-                        // ที่อยู่ของสแกนเป็นของสาขาบนกระดาษ (ไม่มีทะเบียนในเส้นนี้) — ไม่รู้ = ปล่อยว่าง ไม่เอาที่อยู่สำนักงานใหญ่มาใส่
-                        var branchRowAddress = Accounting.Helpers.OcrIssuerBranch.ContactAddress(
-                            contactBranch: branchPick.ScannedBranch, scanBranch: result.VendorBranchCode,
-                            dbdMatched: false, dbdAddress: null, paperAddress: result.VendorAddress,
-                            paperIsIssuerBranchAddress: false).Address;
-                        var branchRow = await NewVendorBranchContactAsync(companyId, branchPick.TemplateContactId,
-                            taxId: result.ExtractedVendorTaxId!, branchCode: branchPick.ScannedBranch!,
-                            registryName: null, registryBranchName: null, paperName: result.ExtractedVendorName,
-                            address: branchRowAddress, phone: null, email: null, createdBy: "OCR-BranchAutoCreate");
-                        contactId = branchRow.Id;
-                        result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                            + $"\n[Auto-Create] สร้างผู้ติดต่อของ{Accounting.Helpers.TaxBranchCode.Label(branchRow.BranchCode)} ({branchRow.BranchCode}) "
-                            + $"ตอนสร้างเอกสาร: {branchRow.Name} — ผู้ติดต่อเดิมของเลขนี้เป็นคนละสาขา";
-                    }
-                    else if (!contactId.HasValue
-                        || (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.ExactBranch
-                            && branchPick.ContactId != contactId))
-                        contactId = branchPick.ContactId;
-                    // หลักฐานสาขาอ่อน/ไม่รู้ที่มา (K-6) ⇒ ผูกแถวเดิมของนิติบุคคลเดียวกัน — ต้องบอกผู้ใช้ ไม่ผูกเงียบ
-                    if (branchPick.Outcome == Accounting.Helpers.OcrVendorBranchOutcome.OtherBranchRow
-                        && !string.IsNullOrEmpty(branchPick.Trace)
-                        && !(result.ProcessingNotes ?? "").Contains(branchPick.Trace, StringComparison.Ordinal))
-                        result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + branchPick.Trace;
-                }
+                // ตัวตัดสินผู้ติดต่อตามสาขา<b>ตัวเดียว</b>ของเส้นสร้างเอกสาร + เส้นแก้ผลสแกน (รอบ 200 · K-4 — เดิมโค้ดชุดนี้อยู่ในเมธอดนี้ที่เดียว)
+                var branchDecision = await DecideScanVendorBranchContactAsync(companyId, result, contactId,
+                    ourCompany?.TaxId, ourCompany?.Name, ourCompany?.NameEn, "ตอนสร้างเอกสาร");
+                contactId = branchDecision.ContactId;
+                vendorSameTaxIdRows = branchDecision.SameTaxIdRows;
+                if (branchDecision.NewBranchRow != null) pendingNewContact = branchDecision.NewBranchRow;
             }
             // ── ยังไม่มีผู้ติดต่อผูก: สร้างใหม่ได้เฉพาะเมื่อผู้ขายไม่ใช่เรา และเลขนี้ยังไม่มีแถว (รอบ 199 ฝ่ายค้าน A-1) ──
             // เดิม vendorIsUs ข้ามบล็อกเลือกแถวแล้วไหลมาที่นี่ ⇒ new Contact ชื่อเรา+เลขเรา (สำเนาใบขายของเรา) หรือผู้ติดต่อซ้ำของ
@@ -6323,6 +6473,7 @@ public class OcrService : IOcrService
                 };
                 _db.Contacts.Add(newContact);
                 contactId = newContact.Id;
+                pendingNewContact = newContact;
             }
             // Backfill TaxId เข้า contact เดิม — เคสที่ vendor "ABC จำกัด" ถูก
             // match จากชื่อ (fuzzy / canonical) ตั้งแต่ตอน OCR ก่อนหน้า ตอนนั้น
@@ -6529,6 +6680,19 @@ public class OcrService : IOcrService
         // ที่ store ใน DB เสมอ. Bonus: ลบ Draft ไม่สร้าง gap ใน sequence
         // (§86/4 compliance).
         await using var txn = await _db.Database.BeginTransactionAsync();
+        // ── K-5 (รอบ 200 · คำตัดสินข้อ 19): ผู้ติดต่อที่เส้นนี้เพิ่ง Add — ล็อก (CompanyId, เลขผู้เสียภาษี) แล้วถามคีย์กลางซ้ำ ──
+        // อีกคำขอ (สแกนพร้อมกัน · สร้างเอกสารจากหลายสแกนพร้อมกัน · อีกเครื่อง) สร้างแถวคีย์เดียวกันไปแล้วระหว่างนี้ ⇒ ใช้แถวนั้น ถอดแถวของเราออก
+        // (ล็อกถือถึงตอน commit เอกสาร — แถวของเราถูกบันทึกในธุรกรรมเดียวกับเอกสาร)
+        if (pendingNewContact != null
+            && await LockAndFindConcurrentOcrContactAsync(companyId, pendingNewContact.TaxId, pendingNewContact.BranchCode, isOurs: null)
+                is Guid concurrentContactId
+            && concurrentContactId != pendingNewContact.Id)
+        {
+            _db.Entry(pendingNewContact).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+            if (contactId == pendingNewContact.Id) contactId = concurrentContactId;
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+                + Accounting.Helpers.OcrContactCreateLock.ReusedNote(pendingNewContact.TaxId, pendingNewContact.BranchCode);
+        }
         var docNumber = $"DRAFT-{Guid.NewGuid():N}".Substring(0, 14);
         // สาขาผู้ขาย: Contact ถูก enrich ด้วยสาขาที่ OCR แกะจากกระดาษตอน scan
         // แล้ว (BranchCodeExtractor → Contact.BranchCode) — ใช้ค่านั้นก่อน ค่อย

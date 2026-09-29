@@ -119,9 +119,22 @@ public static class OcrPartyLabels
         ("Consignee", LabelMatch.Anywhere),
     };
 
-    /// <summary>ตำแหน่งป้ายบล็อกผู้รับ/ที่อยู่จัดส่งทุกตัว (ดู <see cref="RecipientLabels"/>)</summary>
+    /// <summary>ตำแหน่งป้ายบล็อกผู้รับ/ที่อยู่จัดส่งทุกตัว (ดู <see cref="RecipientLabels"/>) — <b>ยกเว้นช่องลายเซ็นท้ายบิล</b>
+    /// ("ลงชื่อ.......ผู้รับสินค้า" · รอบ 200 K-8 · ตัวตัดสิน <see cref="OcrSignatureSlot"/>): ช่องลายเซ็นไม่ใช่บล็อกข้อมูลผู้รับ ⇒
+    /// อีเมล/เบอร์ของผู้ขายที่พิมพ์ใต้ช่องนั้นต้องไม่ถูกนับเป็นของผู้ซื้อ</summary>
     public static IReadOnlyList<int> FindRecipientAll(string? text)
-        => string.IsNullOrEmpty(text) ? Array.Empty<int>() : FindEvery(MaskNoise(text), RecipientLabels);
+    {
+        if (string.IsNullOrEmpty(text)) return Array.Empty<int>();
+        var masked = MaskNoise(text);
+        return FindEvery(masked, RecipientLabels)
+            .Where(i => !OcrSignatureSlot.IsSignatureSlot(masked, i))
+            .ToList();
+    }
+
+    /// <summary>ข้อความเดิมที่กลบป้ายฉบับ/ข้อความรบกวน ("ต้นฉบับลูกค้า" · "For Customer" · "customer copy" …) ด้วยช่องว่าง
+    /// <b>ความยาวเท่าเดิม</b> — ให้ตัวอ่านอื่นที่มีรายการคำของตัวเอง (<c>BranchCodeExtractor</c>) ไม่เริ่มบล็อกผู้ซื้อที่ป้ายฉบับ
+    /// (รอบ 200 K-11: ใบ Makro "ต้นฉบับลูกค้า" มุมขวาบน ⇒ บล็อกผู้ซื้อเริ่มเหนือหัวใบผู้ขาย) · ตำแหน่งทุกตัวอักษรคงเดิม</summary>
+    public static string MaskCopyNoise(string? text) => string.IsNullOrEmpty(text) ? "" : MaskNoise(text);
 
     /// <summary>ตำแหน่งป้ายฝั่งผู้ซื้อ/ผู้ขายที่พบเป็นตัวแรก (-1 = ไม่มีบนกระดาษ)</summary>
     public static (int BuyerPos, int SellerPos) Find(string? text)

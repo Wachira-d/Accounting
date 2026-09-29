@@ -12,6 +12,12 @@ public sealed record ContactScanEvidence(string? VendorBranchCode, string? Vendo
 /// <param name="Reason">ข้อความไทยสำหรับหน้ารายงาน</param>
 public sealed record HeadOfficeAddressVerdict(bool Suspect, bool? RegistryDiffers, string? BranchPaperCode, string Reason);
 
+/// <summary>ผู้ติดต่อหนึ่งแถว (ข้อมูลเท่าที่รายงานแถวซ้ำต้องใช้)</summary>
+public sealed record ContactKeyRow(Guid Id, string? Name, string? TaxId, string? BranchCode, string? CreatedBy, DateTime CreatedAt);
+
+/// <summary>กลุ่มผู้ติดต่อที่ถือคีย์เดียวกัน (เลขภาษี 13 หลัก + สาขา) — <paramref name="Key"/> รูปเดียวกับกลุ่มของหน้าผู้ติดต่อ (<c>เลข|สาขา</c>)</summary>
+public sealed record ContactDuplicateGroup(string Key, string TaxId, string BranchCode, IReadOnlyList<ContactKeyRow> Rows, int OcrCreated);
+
 /// <summary>
 /// **ตัวตัดสินของรายงาน "ผู้ติดต่อข้อมูลเสีย"** (รอบ 193 · คำตัดสินเจ้าของข้อ 19 · ทีม P Q-P5 · ทีม C คำถาม 3) —
 /// รายงานอย่างเดียว <b>ไม่แก้ข้อมูล</b> (ที่อยู่ที่ถูกตัด/ถูกทับกู้ด้วย SQL ไม่ได้ และอาจเป็นค่าที่ผู้ใช้แก้เองแล้ว)
@@ -51,6 +57,41 @@ public static class ContactDataHygiene
         var ms = Postal.Matches(address);
         return ms.Count == 0 ? null : ms[^1].Groups[1].Value;
     }
+
+    /// <summary>
+    /// คีย์ผู้ติดต่อซ้ำ = เลขภาษี 13 หลัก (ตัวเลขล้วน) + รหัสสาขา (ว่าง ≡ 00000 สำนักงานใหญ่) — <b>ตัวเดียว</b>ของทั้งแถบเตือน/เครื่องมือรวมในหน้า
+    /// ผู้ติดต่อ (<c>DocumentService.GetDuplicateContactGroupsAsync</c>) และรายงานนี้ (รอบ 200 K-5 — เดิมสูตรนี้อยู่ใน DocumentService ที่เดียว ⇒
+    /// ถ้าเขียนสำเนาที่สองในรายงาน สองหน้าจะนับกลุ่มไม่ตรงกัน) · เลขไม่ครบ 13 หลัก = null (ไม่ตัดสินว่าซ้ำด้วยเลข)
+    /// </summary>
+    public static string? DuplicateKey(string? taxId, string? branchCode)
+    {
+        var tax = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        if (tax.Length != 13) return null;
+        var br = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+        return tax + "|" + (br.Length == 0 ? TaxBranchCode.HeadOffice : br.PadLeft(5, '0'));
+    }
+
+    /// <summary>
+    /// <b>ผู้ติดต่อซ้ำที่มีอยู่แล้ว</b> (รอบ 200 · คำตัดสินเจ้าของข้อ 19 · K-5) — ล็อกสร้างผู้ติดต่อจาก OCR กันแถวซ้ำ<b>ใหม่</b> แต่แถวซ้ำที่เกิดไปแล้ว
+    /// (อัปโหลดพร้อมกันก่อนมีล็อก · ระบบรุ่นก่อน) ยังอยู่ ⇒ <b>รายงาน</b>ให้คนรวมเอง ไม่รวมอัตโนมัติ (การรวมย้ายเอกสาร/ประวัติทั้งหมด = ย้อนไม่ได้) และยัง
+    /// <b>ไม่</b>เพิ่ม unique index จนกว่ากลุ่มเหล่านี้จะถูกจัดการ · เรียงกลุ่มที่ OCR สร้างมากก่อน แล้วตามเลขภาษี · ในกลุ่มเรียงแถวเก่าสุดก่อน
+    /// </summary>
+    public static IReadOnlyList<ContactDuplicateGroup> DuplicateKeyGroups(IEnumerable<ContactKeyRow> rows)
+        => (rows ?? Array.Empty<ContactKeyRow>())
+            .Select(r => (Key: DuplicateKey(r.TaxId, r.BranchCode), Row: r))
+            .Where(x => x.Key != null)
+            .GroupBy(x => x.Key!, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1)
+            .Select(g =>
+            {
+                var ordered = g.Select(x => x.Row).OrderBy(r => r.CreatedAt).ThenBy(r => r.Id).ToList();
+                var parts = g.Key.Split('|');
+                return new ContactDuplicateGroup(g.Key, parts[0], parts[1], ordered,
+                    ordered.Count(r => IsOcrManaged(r.CreatedBy, null)));
+            })
+            .OrderByDescending(g => g.OcrCreated)
+            .ThenBy(g => g.Key, StringComparer.Ordinal)
+            .ToList();
 
     public static HeadOfficeAddressVerdict JudgeHeadOffice(
         string? contactBranch, string? createdBy, string? updatedBy,

@@ -23,6 +23,7 @@
     </div>
 
     <div class="card" id="summary" style="margin-bottom:16px"></div>
+    <div class="card" id="duplicates" style="margin-bottom:16px"></div>
     <div class="card" id="truncated" style="margin-bottom:16px"></div>
     <div class="card" id="hq"></div>
   </div>
@@ -44,6 +45,7 @@
         this._offset = typeof offset === 'number' ? offset : 0;
         const loading = '<div class="text-center text-gray-400" style="padding:32px">กำลังตรวจ… (ถามทะเบียนกรมสรรพากรอาจใช้เวลาสักครู่)</div>';
         document.getElementById('summary').innerHTML = loading;
+        document.getElementById('duplicates').innerHTML = '';
         document.getElementById('truncated').innerHTML = '';
         document.getElementById('hq').innerHTML = '';
         try {
@@ -59,10 +61,13 @@
       },
       render(d) {
         const trunc = Array.isArray(d.truncatedAddresses) ? d.truncatedAddresses : [];
+        // undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่งช่องนี้ ("ยังไม่ได้ตรวจ" ≠ "ไม่พบ")
+        const dups = Array.isArray(d.duplicateKeyGroups) ? d.duplicateKeyGroups : null;
         const sus = Array.isArray(d.headOfficeSuspects) ? d.headOfficeSuspects : [];
         const unchecked = typeof d.headOfficeUnchecked === 'number' ? d.headOfficeUnchecked : null;
         document.getElementById('summary').innerHTML = `
           <div style="padding:12px 16px;font-size:14px;line-height:1.7">
+            ผู้ติดต่อซ้ำ (เลขผู้เสียภาษี + สาขาเดียวกัน): <b>${dups ? dups.length : '-'}</b> กลุ่ม ·
             ที่อยู่ขึ้นต้น "/เลข" (เลขบ้านหาย): <b>${trunc.length}</b> ราย ·
             สำนักงานใหญ่ที่อาจถูกที่อยู่สาขาทับ: <b>${sus.length}</b> ราย
             ${typeof d.headOfficeCandidates === 'number'
@@ -73,6 +78,27 @@
                 + '</div>'
               : '<div class="text-xs text-gray-500">ไม่มีข้อมูลจำนวนแถวที่ตรวจ</div>'}
           </div>`;
+
+        document.getElementById('duplicates').innerHTML = `
+          <div style="padding:12px 16px;font-weight:700">ผู้ติดต่อซ้ำ — เลขผู้เสียภาษีและสาขาเดียวกันมากกว่าหนึ่งแถว</div>
+          <div class="text-xs text-gray-500" style="padding:0 16px 8px">
+            ระบบ<b>ไม่รวมให้อัตโนมัติ</b> (การรวมย้ายเอกสาร/ประวัติทั้งหมดไปแถวเดียว ย้อนกลับไม่ได้) — เปิด
+            <a href="/pages/contacts.html">หน้าผู้ติดต่อ</a> แล้วกด “รวม” ที่แถบเตือน “พบผู้ติดต่อซ้ำ” ·
+            สแกนใหม่จะไม่สร้างแถวซ้ำอีก (สร้างผู้ติดต่อจากสแกนทีละคำขอต่อเลขผู้เสียภาษี)
+          </div>
+          ${dups === null ? '<div class="text-center text-gray-400" style="padding:20px">ยังไม่มีข้อมูลส่วนนี้จากเซิร์ฟเวอร์</div>'
+            : dups.length ? `
+          <div class="table-container" style="border:none"><table class="table">
+            <thead><tr><th>เลขผู้เสียภาษี / สาขา</th><th>ผู้ติดต่อในกลุ่ม</th><th>สร้างจากสแกน</th></tr></thead>
+            <tbody>${dups.map(g => `<tr>
+              <td class="font-medium">${Layout.esc(g.taxId || '-')}<div class="text-xs text-gray-500">${Layout.esc(g.branchLabel || g.branchCode || '')}</div></td>
+              <td>${(Array.isArray(g.contacts) ? g.contacts : []).map(c => `<div style="display:flex;gap:8px;align-items:center;margin:2px 0">
+                <span>${Layout.esc(c.name || '-')}</span>
+                <span class="text-xs text-gray-500">${Layout.esc(c.createdBy || '')}</span>
+                ${this._openLink(c.contactId)}</div>`).join('')}</td>
+              <td class="text-xs">${Layout.esc(String(g.ocrCreated ?? '-'))}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>` : '<div class="text-center text-gray-400" style="padding:20px">✓ ไม่พบ</div>'}`;
 
         document.getElementById('truncated').innerHTML = `
           <div style="padding:12px 16px;font-weight:700">ที่อยู่ขึ้นต้นด้วย "/เลข"</div>

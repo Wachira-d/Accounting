@@ -3719,3 +3719,15 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K — OCR ผู้ติดต่อสาขา/ใบ Makro ค้าง (`erp-review/2026-09-29/team-K.md` · คำตัดสินเจ้าของข้อ 19):
+- **K-10** ช่อง WHT (`hasWht`/`whtRate`/`whtIncomeTypeCode`) นับว่าผู้ใช้แก้เฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (`OcrWhtBaseline` ใน `OcrCorrectionBaseline`) — เดิมหน้าเว็บส่งทุกครั้ง
+  ⇒ `OcrWhtLearningScope` = UserEdited ทุกใบบนเว็บ (ประวัติ WHT สอนตัวเอง) · ที่อยู่ผู้ขายใช้กติกาเดียวกัน (`OcrTextBaseline` — ป้อน K-9)
+- **K-5** ล็อก `pg_advisory_xact_lock` ต่อ (CompanyId, เลขผู้เสียภาษี) ตอนสร้างผู้ติดต่อจาก OCR ทุกเส้น (สแกน · สร้างเอกสาร · แก้ผลสแกน) + ถามคีย์กลางซ้ำใต้ล็อก ·
+  ไม่เพิ่ม unique index · แถวซ้ำเดิมรายงานใน contact-hygiene (`ContactDataHygiene.DuplicateKeyGroups` — คีย์เดียวกับแถบเตือนหน้าผู้ติดต่อ)
+- **K-4** `DecideScanVendorBranchContactAsync` ตัวเดียวของเส้นสร้างเอกสาร + `SubmitCorrectionAsync` (`ShouldRedecideOnCorrection`) ⇒ "แก้ในฟอร์มก่อน" ได้ผู้ติดต่อของสาขาที่แก้
+- **K-3b** alias/คำปฏิเสธ/ประวัติซื้อ/เกณฑ์ยอมรับอัตโนมัติ อ่านทุกแถวของนิติบุคคลเดียวกัน (`OcrVendorAliasScope` + `SameEntityIdsAsync`)
+- **K-8** ช่องลายเซ็นท้ายบิลไม่ใช่บล็อกผู้รับ (`OcrSignatureSlot`) · **K-9** ที่อยู่แถวสาขาใหม่ในเส้นสร้างเอกสาร = ที่พิสูจน์ได้เท่านั้น (`StoredAddressIsIssuerBranch`) ·
+  **K-11** สาขาผู้ซื้ออ่านบนข้อความที่กลบป้ายฉบับ + ประโยคประกาศสาขาผู้ออกใบ (ใบ Makro 00005 → 00000 · จำลองชุดกระดาษ 77 ใบ เปลี่ยน 1 ใบ) ·
+  **r199 A-5** ผูก PO จากเลขบนกระดาษเทียบ PO ค้างทั้งหมด (`OcrOpenPurchaseOrders`)
+- เทสต์ `OcrReview200Tests` · required_call_site +11/ปรับ 2 · TEST_PLAN OCR-U-15..23 — commit <pending>)_

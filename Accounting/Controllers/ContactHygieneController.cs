@@ -14,6 +14,9 @@ namespace Accounting.Controllers;
 /// <para>สองกลุ่ม: (1) ที่อยู่ขึ้นต้น <c>/เลข</c> (เลขบ้านส่วนหน้าถูกตัด — บั๊กตัวอ่านก่อนรอบ 190)
 /// (2) แถว<b>สำนักงานใหญ่</b>ที่ OCR สร้าง/แก้ แล้วอาจถูกที่อยู่ของใบสาขาทับ — ตัดสินด้วย
 /// <see cref="ContactDataHygiene.JudgeHeadOffice"/> (ทะเบียนบอกรหัสไปรษณีย์ต่าง · หรือใบสาขาพิมพ์ที่อยู่เดียวกัน)</para>
+/// <para>(3) <b>ผู้ติดต่อซ้ำ</b> — เลขภาษี + สาขาเดียวกันมากกว่าหนึ่งแถว (รอบ 200 · คำตัดสินเจ้าของข้อ 19 · K-5): ล็อกสร้างผู้ติดต่อจาก OCR
+/// กันแถวซ้ำใหม่แล้ว แต่แถวซ้ำที่เกิดไปก่อนต้องให้คนรวมเอง (เครื่องมือรวมที่หน้าผู้ติดต่อ) — ไม่รวมอัตโนมัติ · ตัวจัดกลุ่ม
+/// <see cref="ContactDataHygiene.DuplicateKeyGroups"/> (คีย์เดียวกับแถบเตือนหน้าผู้ติดต่อ)</para>
 /// <para>ทะเบียนเป็นเครือข่ายภายนอก (ช้า) ⇒ ตรวจได้ไม่เกิน <c>registryLimit</c> แถวต่อครั้ง (แคช 24 ชม.) ·
 /// แถวที่ยังไม่ได้ตรวจนับแยกเป็น <c>headOfficeUnchecked</c> — "ยังไม่ได้ตรวจ" ≠ "ไม่มีปัญหา"</para>
 /// </summary>
@@ -121,9 +124,31 @@ public class ContactHygieneController : ControllerBase
             });
         }
 
+        // (3) ผู้ติดต่อซ้ำ (เลขภาษี + สาขา) — ทุกแถว ไม่เฉพาะที่มีที่อยู่
+        var keyRows = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.TaxId != null && c.TaxId != "")
+            .Select(c => new ContactKeyRow(c.Id, c.Name, c.TaxId, c.BranchCode, c.CreatedBy, c.CreatedAt))
+            .ToListAsync(ct);
+        var duplicateGroups = ContactDataHygiene.DuplicateKeyGroups(keyRows)
+            .Select(g => new
+            {
+                key = g.Key,
+                taxId = g.TaxId,
+                branchCode = g.BranchCode,
+                branchLabel = TaxBranchCode.Label(g.BranchCode),
+                ocrCreated = g.OcrCreated,
+                contacts = g.Rows.Select(r => new
+                {
+                    contactId = r.Id, name = r.Name, createdBy = r.CreatedBy, createdAt = r.CreatedAt,
+                    ocrCreated = ContactDataHygiene.IsOcrManaged(r.CreatedBy, null),
+                }).ToList(),
+            })
+            .ToList();
+
         return Ok(new ApiResponse<object>(true, new
         {
             truncatedAddresses = truncated,
+            duplicateKeyGroups = duplicateGroups,
             headOfficeSuspects = suspects,
             headOfficeCandidates = hq.Count,
             headOfficeRegistryChecked = registryOk,
@@ -131,7 +156,7 @@ public class ContactHygieneController : ControllerBase
             registryLimit,
             registryOffset,
             nextRegistryOffset = registryOffset + registryLimit < hq.Count ? registryOffset + registryLimit : (int?)null,
-            note = "รายงานอย่างเดียว — ระบบไม่แก้ข้อมูลผู้ติดต่อให้ (เปิดผู้ติดต่อแล้วแก้ หรือกดดึงข้อมูลจาก DBD เอง)",
+            note = "รายงานอย่างเดียว — ระบบไม่แก้ข้อมูลผู้ติดต่อให้ (เปิดผู้ติดต่อแล้วแก้ หรือกดดึงข้อมูลจาก DBD เอง) · ผู้ติดต่อซ้ำรวมที่หน้าผู้ติดต่อ (ไม่รวมอัตโนมัติ)",
         }));
     }
 }

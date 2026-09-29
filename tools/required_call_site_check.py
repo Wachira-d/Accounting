@@ -1105,13 +1105,21 @@ RULES += [
          why="รอบ 197: สาขาบนกระดาษ (มีหลักฐาน) ไม่ตรงผู้ติดต่อเดิม ⇒ สร้างแถวสาขา ห้ามถอยไปจับชื่อ/AI (ได้สำนักงานใหญ่คืน) · "
              "ชื่อโลโก้ → ชื่อนิติบุคคลที่พิมพ์ก่อนทะเบียน/ตัวเรียนรู้ · เตือนอีเมลผู้ซื้อที่ปนในผู้ติดต่อผู้ขาย"),
     dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
-         must=["ContactTaxBranchKey.AllBranchIdsAsync(", "OcrVendorBranchContact.Decide(", "NewVendorBranchContactAsync(",
-               "ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("],
-         call_args=[("OcrVendorBranchContact.Decide(", "branchReliable")],
-         must_re=[r"userPickedContact\s*=\s*correctedFields\s*\.\s*Contains\s*\(\s*MatchedContactCorrectionField"],
-         forbid=["NormalizeTaxDigits(c.TaxId) == vTaxDigits"],
+         must=["DecideScanVendorBranchContactAsync(", "ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("],
+         forbid=["NormalizeTaxDigits(c.TaxId) == vTaxDigits", "OcrVendorBranchContact.Decide("],
          why="รอบ 197: เส้นสร้างเอกสารตัดสินผู้ติดต่อด้วยตัวเดียวกับเส้นสแกน (รวม MatchedContactId เก่าที่ผูกสำนักงานใหญ่) · "
-             "ผู้ใช้เลือกเองชนะ · ฝั่งผู้ซื้อใช้คีย์กลาง + SoftScope"),
+             "ผู้ใช้เลือกเองชนะ · ฝั่งผู้ซื้อใช้คีย์กลาง + SoftScope · รอบ 200 K-4: ตัวตัดสินสาขาย้ายไป DecideScanVendorBranchContactAsync "
+             "ตัวเดียว (ใช้ร่วมกับ SubmitCorrectionAsync) — ห้ามมีสำเนาในเมธอดนี้"),
+    dict(file=OCR, method="DecideScanVendorBranchContactAsync",
+         must=["ContactTaxBranchKey.AllBranchIdsAsync(", "OcrVendorBranchContact.Decide(", "NewVendorBranchContactAsync(",
+               "OcrSelfPartyGuard.IsOurContact(", "OcrIssuerBranch.StoredAddressIsIssuerBranch("],
+         call_args=[("OcrVendorBranchContact.Decide(", "branchReliable"),
+                    ("OcrIssuerBranch.ContactAddress(", "paperAddressProven")],
+         must_re=[r"userPickedContact\s*=\s*correctedFields\s*\.\s*Contains\s*\(\s*MatchedContactCorrectionField"],
+         before=[("OcrIssuerBranch.StoredAddressIsIssuerBranch(", "NewVendorBranchContactAsync(")],
+         forbid=["paperIsIssuerBranchAddress: false"],
+         why="รอบ 200 K-4/K-9: ตัวตัดสินผู้ติดต่อตามสาขาตัวเดียวของเส้นสร้างเอกสาร + เส้นแก้ผลสแกน · ผู้ใช้เลือกเองชนะ · แถวของเราไม่ใช่ผู้สมัคร · "
+             "ที่อยู่แถวสาขาใหม่ต้องพิสูจน์ได้ว่าเป็นของสาขานั้น (ไม่รู้ = ว่าง ไม่เอาที่อยู่ สนญ. จากหัวกระดาษ)"),
     dict(file=OCR, method="MatchContactAsync",
          must=["MatchedContactCorrectionField"],
          why="รอบ 197: ผู้ใช้เลือกผู้ติดต่อเอง ต้องถูกจดไว้ ไม่งั้นเส้นสร้างเอกสารตัดสินสาขาทับคำตอบของคน"),
@@ -1125,7 +1133,8 @@ RULES += [
          why="รอบ 197: เส้น Tesseract ใช้ตัวตัดสินอีเมล/เบอร์ตัวเดียวกัน"),
     # ── รอบ 197 ทีม K2 (ฝ่ายค้าน review197.md) ──
     dict(file=OCR, method="SubmitCorrectionAsync",
-         call_args=[("OcrCorrectedFieldList.From(", "correctionBaseline")],
+         call_args=[("OcrCorrectedFieldList.From(", "correctionBaseline"),
+                    ("new Accounting.Helpers.OcrCorrectionBaseline(", "OcrWhtBaseline")],
          before=[("new Accounting.Helpers.OcrCorrectionBaseline(", "result.VendorBranchCode = correction.VendorBranchCode")],
          why="K-1: หน้าเว็บส่งรหัสสาขามาทุกครั้ง — นับว่าผู้ใช้แก้สาขาเฉพาะเมื่อค่าเปลี่ยนจากที่เก็บไว้ก่อนรับคำแก้/พิมพ์ยืนยัน "
              "(ไม่งั้นด่านหลักฐานอ่อน ⇒ ไม่สร้างผู้ติดต่อ ไม่เคยกันบนเว็บ)"),
@@ -1779,6 +1788,62 @@ RULES += [
          must=["TenantCompanyId.FromHttp(context)"],
          forbid=["Headers.TryGetValue(", "RouteValues.TryGetValue("],
          why="ข้อ 5: บริษัทที่ตรวจสมาชิกกับบริษัทที่ตัดสินแพ็กเกจต้องมาจากตัวหาเดียวกัน — สำเนาที่สอง = header ปลอมยืมแพ็กเกจได้"),
+]
+
+# ── รอบ 200 ทีม K (OCR ผู้ติดต่อสาขา/ใบ Makro · คำตัดสินเจ้าของข้อ 19): เทสต์ล็อกแค่ helper pure ⇒ ล็อกจุดเรียกใน service ──
+PRODUCT_MATCHER = "Services/Implementations/Ocr/ProductMatcher.cs"
+_K5_WHY = ("รอบ 200 K-5 (คำตัดสินข้อ 19): สร้างผู้ติดต่อจากสแกนต้องอยู่ใต้ advisory lock ต่อ (CompanyId, เลขผู้เสียภาษี) ในธุรกรรม แล้วถาม"
+           "คีย์กลางซ้ำ — อัปโหลดพร้อมกันไม่งั้นได้แถวสาขาซ้ำ (ไม่มี unique index โดยตั้งใจ)")
+RULES += [
+    dict(file=OCR, method="SubmitCorrectionAsync",
+         must=["OcrVendorBranchContact.ShouldRedecideOnCorrection(", "DecideScanVendorBranchContactAsync(",
+               "LockAndFindConcurrentOcrContactAsync("],
+         call_args=[("OcrVendorBranchContact.ShouldRedecideOnCorrection(", "contactPickedByUser")],
+         before=[("OcrCorrectedFieldList.From(", "DecideScanVendorBranchContactAsync("),
+                 ("LockAndFindConcurrentOcrContactAsync(", "redecideTx.CommitAsync(")],
+         why="รอบ 200 K-4: ผู้ใช้เปลี่ยนรหัสสาขา/เลขผู้ขายในหน้ารีวิว ⇒ \"แก้ในฟอร์มก่อน\" ต้องได้ผู้ติดต่อของสาขาใหม่ (ตัวตัดสินเดียวกับเส้นสแกน) · "
+             "ตัดสินหลังนับช่องที่ผู้ใช้แก้ (ให้ userCorrected ของสาขาถูกต้อง) · แถวใหม่เกิดใต้ล็อก K-5"),
+    dict(file=OCR, method="LockAndFindConcurrentOcrContactAsync",
+         must=["OcrContactCreateLock.LockPart(", "AdvisoryLockKey.For(", "AdvisoryLockKey.OcrContactCreate",
+               "ContactTaxBranchKey.FindAsync(", "OcrContactCreateLock.ReuseAfterLock("],
+         must_lit=["pg_advisory_xact_lock"],
+         must_re=[r"if\s*\(\s*_db\s*\.\s*Database\s*\.\s*CurrentTransaction\s*==\s*null\s*\)\s*throw\b"],
+         before=[("ExecuteSqlRawAsync(", "ContactTaxBranchKey.FindAsync(")],
+         forbid=["HashCode.Combine(", "GetHashCode("],
+         why=_K5_WHY + " · ถามคีย์ซ้ำหลังได้ล็อกเท่านั้น · นอกธุรกรรม = ล็อกหลุดทันที ⇒ throw"),
+    dict(file=OCR, method="ScanAsync",
+         must=["LockAndFindConcurrentOcrContactAsync(", "contactCreateTx.CommitAsync(", "OcrOpenPurchaseOrders.Plan("],
+         before=[("LockAndFindConcurrentOcrContactAsync(", "NewVendorBranchContactAsync("),
+                 ("LockAndFindConcurrentOcrContactAsync(", "_db.Contacts.Add(newContact)"),
+                 ("_db.Contacts.Add(newContact)", "contactCreateTx.CommitAsync(")],
+         why=_K5_WHY + " · r199 A-5: ผูก PO อัตโนมัติจากเลขบนกระดาษเทียบ PO ค้างทั้งหมด (ตัดเพดานเฉพาะรายการที่แสดง)"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
+         must=["LockAndFindConcurrentOcrContactAsync("],
+         before=[("BeginTransactionAsync(", "LockAndFindConcurrentOcrContactAsync(")],
+         why=_K5_WHY + " · ผู้ติดต่อที่เส้นสร้างเอกสารเพิ่ง Add ต้องถูกถามซ้ำใต้ล็อกในธุรกรรมเดียวกับเอกสาร"),
+    dict(file=PRODUCT_MATCHER, method="MatchAsync",
+         must=["VendorEntityIdsAsync(", "OcrVendorAliasScope.IsVendorAlias("],
+         forbid=["a.ContactId == vendorContactId", "n.ContactId == vendorContactId"],
+         why="รอบ 200 K-3b: alias/คำปฏิเสธ/ประวัติซื้อที่เรียนบนแถว สนญ. ใช้กับแถวสาขาของนิติบุคคลเดียวกัน (ขอบเขตกลาง SameEntityIdsAsync)"),
+    dict(file=PRODUCT_MATCHER, method="VendorEntityIdsAsync",
+         must=["ContactTaxBranchKey.SameEntityIdsAsync(", "OcrVendorAliasScope.VendorIds("],
+         why="รอบ 200 K-3b: ขอบเขต \"ผู้ขายรายนี้\" ตัวเดียว (ห้ามเขียน c.TaxId == x เอง)"),
+    dict(file=PRODUCT_MATCHER, method="GetVendorAdaptiveThresholdAsync",
+         must=["VendorEntityIdsAsync("], forbid=["a.ContactId == vendorContactId"],
+         why="รอบ 200 K-3b: เกณฑ์ยอมรับอัตโนมัติของผู้ขายนับ alias ทุกแถวของนิติบุคคลเดียวกัน"),
+    dict(file="Services/BranchCodeExtractor.cs", method="Extract",
+         must=["OcrIssuerBranch.MaskStatements(", "OcrPartyLabels.MaskCopyNoise("],
+         why="รอบ 200 K-11: สาขาผู้ซื้ออ่านบนข้อความที่กลบป้ายฉบับ (ต้นฉบับลูกค้า) + ประโยคประกาศสาขาผู้ออกใบ (ของผู้ขายเสมอ) — ใบ Makro ได้ 00005 แทน 00000"),
+    dict(file="Helpers/OcrPartyLabels.cs", method="FindRecipientAll",
+         must=["OcrSignatureSlot.IsSignatureSlot("],
+         why="รอบ 200 K-8: ช่องลายเซ็นท้ายบิล (\"ลงชื่อ....ผู้รับสินค้า\") ไม่ใช่บล็อกผู้รับ — อีเมล/เบอร์ผู้ขายใต้ช่องลายเซ็นต้องไม่หายเป็นของผู้ซื้อ"),
+    dict(file="Controllers/ContactHygieneController.cs", method="Get",
+         must=["ContactDataHygiene.DuplicateKeyGroups("],
+         forbid=["MergeContactsAsync("],
+         why="รอบ 200 K-5 (คำตัดสินข้อ 19): แถวผู้ติดต่อซ้ำที่มีอยู่แล้ว <รายงาน> ไม่รวมอัตโนมัติ (การรวมย้อนไม่ได้)"),
+    dict(file=DOCSVC, method="GetDuplicateContactGroupsAsync",
+         must=["ContactDataHygiene.DuplicateKey("],
+         why="รอบ 200 K-5: คีย์ผู้ติดต่อซ้ำตัวเดียวกับรายงาน contact-hygiene (สองหน้านับกลุ่มตรงกัน)"),
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──

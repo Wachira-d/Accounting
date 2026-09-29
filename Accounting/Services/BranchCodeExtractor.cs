@@ -110,18 +110,7 @@ public static class BranchCodeExtractor
         // (ใบ B Radisson: หัวพิมพ์ทั้งสำนักงานใหญ่และสาขาผู้ออก) · ตัวตัดสินอยู่ Helpers/OcrIssuerBranch
         var issuer = Accounting.Helpers.OcrIssuerBranch.Detect(rawText)?.Code;
 
-        var buyerAnchorIndex = -1;
-        var buyerAnchor = BuyerAnchorRegex.Match(rawText);
-        if (buyerAnchor.Success) buyerAnchorIndex = buyerAnchor.Index;
-        else
-        {
-            // ── ขั้นสำรอง (รอบ 190): ป้ายผู้ซื้อชุดกลางของระบบ (Helpers/OcrPartyLabels) ──
-            // ใบเสร็จ "ได้รับเงินจาก / Received From" ไม่อยู่ในรายการคำของตัวนี้ ⇒ เดิมทั้งหน้า
-            // (รวม ☑ สำนักงานใหญ่ ในช่องติ๊กของผู้ซื้อ) ถูกอ่านเป็นของผู้ขาย · ใช้เฉพาะเมื่อรายการ
-            // เดิมหาไม่เจอ ⇒ ใบที่เคยแยกบล็อกได้อยู่แล้ว ผลไม่ขยับ
-            var label = Accounting.Helpers.OcrPartyLabels.FindBuyer(rawText);
-            if (label > 0) buyerAnchorIndex = label;
-        }
+        var buyerAnchorIndex = BuyerAnchorIndex(rawText);
         if (buyerAnchorIndex < 0)
         {
             // ไม่มีบล็อกผู้ซื้อให้แยก (ใบเสร็จร้านค้า/สลิป) — พฤติกรรมเดิม:
@@ -132,16 +121,28 @@ public static class BranchCodeExtractor
         }
 
         var sellerSegment = rawText[..buyerAnchorIndex];
-        var buyerStart = buyerAnchorIndex;
-        var buyerEnd = Math.Min(rawText.Length, buyerStart + BuyerWindowChars);
-        var buyerSegment = rawText[buyerStart..buyerEnd];
 
-        // ตัดที่หัวตารางรายการ ถ้าเจอก่อนหมดหน้าต่าง (กันเลขในตารางปน)
-        var tableAnchor = ItemTableAnchorRegex.Match(buyerSegment);
-        if (tableAnchor.Success && tableAnchor.Index > 0)
-            buyerSegment = buyerSegment[..tableAnchor.Index];
+        // ── สาขาผู้ซื้อ (รอบ 200 K-11 · ใบ Makro) — อ่านบนข้อความที่กลบสองอย่างที่<b>ไม่ใช่ของผู้ซื้อแน่</b> (ความยาวเท่าเดิม):
+        // (1) ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" (มุมขวาบน — เดิมเป็นจุดเริ่มบล็อกผู้ซื้อ ⇒ บล็อกกินหัวใบผู้ขาย)
+        // (2) ประโยคประกาศสาขาผู้ออกใบ "สาขาที่ออกใบกำกับภาษี/ Branch 00005" (ของผู้ขายเสมอ — engine อ่านสองคอลัมน์สลับบรรทัด
+        //     ⇒ อยู่ใต้ "ชื่อลูกค้า" ทันที) · เดิมได้สาขาผู้ซื้อ 00005 ทั้งที่กระดาษพิมพ์ "Tax ID 0203562005871 สาขา 00000"
+        // จุดแบ่งฝั่ง<b>ผู้ขาย</b>ข้างบนไม่ขยับ (คะแนน/ค่าสาขาผู้ขายของทุกใบเท่าเดิม — ขอบเขตของ K-11 คือสาขาผู้ซื้อ)
+        var buyerText = Accounting.Helpers.OcrIssuerBranch.MaskStatements(
+            Accounting.Helpers.OcrPartyLabels.MaskCopyNoise(rawText));
+        var buyerStart = BuyerAnchorIndex(buyerText);
+        string? buyer = null;
+        if (buyerStart >= 0)
+        {
+            var buyerEnd = Math.Min(buyerText.Length, buyerStart + BuyerWindowChars);
+            var buyerSegment = buyerText[buyerStart..buyerEnd];
 
-        var buyer = FromSegment(buyerSegment);
+            // ตัดที่หัวตารางรายการ ถ้าเจอก่อนหมดหน้าต่าง (กันเลขในตารางปน)
+            var tableAnchor = ItemTableAnchorRegex.Match(buyerSegment);
+            if (tableAnchor.Success && tableAnchor.Index > 0)
+                buyerSegment = buyerSegment[..tableAnchor.Index];
+
+            buyer = FromSegment(buyerSegment);
+        }
         if (issuer != null) return new Result(issuer, buyer, SellerBranchEvidence.IssuerStatement);
         var sellerBlock = FromSegment(sellerSegment);
         if (sellerBlock != null) return new Result(sellerBlock, buyer, SellerBranchEvidence.SellerBlock);
@@ -151,5 +152,16 @@ public static class BranchCodeExtractor
         // จากค่าที่อาจเป็นสาขาของผู้ซื้อ (ฝ่ายค้าน K-2 รอบ 197)
         var page2 = FromSegment(rawText);
         return new Result(page2, buyer, page2 == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageFallback);
+    }
+
+    /// <summary>จุดเริ่มบล็อกผู้ซื้อ — รายการคำของตัวนี้ก่อน · ไม่เจอจึงใช้ป้ายผู้ซื้อชุดกลาง (Helpers/OcrPartyLabels) · -1 = ไม่มี
+    /// <para>ขั้นสำรอง (รอบ 190): ใบเสร็จ "ได้รับเงินจาก / Received From" ไม่อยู่ในรายการคำของตัวนี้ ⇒ เดิมทั้งหน้า
+    /// (รวม ☑ สำนักงานใหญ่ ในช่องติ๊กของผู้ซื้อ) ถูกอ่านเป็นของผู้ขาย · ใช้เฉพาะเมื่อรายการเดิมหาไม่เจอ ⇒ ใบที่เคยแยกบล็อกได้อยู่แล้ว ผลไม่ขยับ</para></summary>
+    private static int BuyerAnchorIndex(string text)
+    {
+        var buyerAnchor = BuyerAnchorRegex.Match(text);
+        if (buyerAnchor.Success) return buyerAnchor.Index;
+        var label = Accounting.Helpers.OcrPartyLabels.FindBuyer(text);
+        return label > 0 ? label : -1;
     }
 }
