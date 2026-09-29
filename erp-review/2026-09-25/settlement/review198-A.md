@@ -113,7 +113,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
   (a 0.01 AP residue or overpayment remains in the clearing account). Groups with explicit VAT in the file also cannot be reproduced by inclusive pricing.
 - Fix: in the plan's contract, require the poster to use inclusive pricing, one line per `SettlementFeeDocumentLine`, **or** pass the plan's VAT figure explicitly. Add a round-trip test once C exists.
 
-### ✅ <pending> R-A12 · PLAUSIBLE · P3: the balance equation turns into a tautology when the file has no wallet balance
+### ✅ 80908ecb R-A12 · PLAUSIBLE · P3: the balance equation turns into a tautology when the file has no wallet balance
 > รอบ 200 ทีม T: `Helpers/SettlementWalletContinuity` — ต้นรอบเทียบปลายรอบของรอบก่อนในช่องทางเดียวกัน ⇒ บล็อก `WalletContinuityGap` · รอบแรก ⇒ เตือน `WalletContinuityUnknown`
 - `Plan` never checks `OpeningWalletBalance` against the previous batch's `ClosingWalletBalance`, or against the GL balance of the clearing account. If the adapter derives `Closing − Opening = Σ lines − NetPayout` itself,
   the gate always passes, which is exactly what F2 #6 warns against.

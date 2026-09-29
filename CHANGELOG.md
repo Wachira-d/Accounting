@@ -3731,4 +3731,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม T — เ�
 - **ข้อ 15** ใบสรุปเพิ่มเติมของวันเดียวกัน (`Helpers/SettlementSummarySupplement` · `SummarySaleSupplementary` / `SummarySaleFirstNotIssued`) แทนบล็อก ·
   **ข้อ 16** `SettlementPostingGate.SummaryRetailNextStep` · **ข้อ 20** `Helpers/LegacyMoneyLegAudit` → `JournalAnomalyService` ข้อ 4 (หน้านักบัญชี) + แก้ SQL `JournalType IN (3,4)`
 - 📋 C-18 (FK ป้ายรับชำระ) · C-19 (ทิ้งการลงค้าง — ทีม V2) · E2-9 (รอเฟส 2 gateway) · E2-11 (ต้องเก็บโหมดค่าธรรมเนียม ณ วันบันทึกก่อน) ·
-  เทสต์ `SettlementRound200TimeTaxTests` · required_call_site +11 — commit <pending>)_
+  เทสต์ `SettlementRound200TimeTaxTests` · required_call_site +11 — commit 80908ecb)_
