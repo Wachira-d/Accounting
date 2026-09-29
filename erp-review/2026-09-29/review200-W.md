@@ -162,13 +162,13 @@ nullable_arg · accessibility · arg_type · tuple_name_merge · undeclared_loca
 
 | ID | สถานะ | ที่แก้ | เทสต์ |
 |---|---|---|---|
-| W-1 | ✅ `<pending>` | ตัวตั้งเดียว `SettlementForeignWht.GateWhtForm(plan, domestic)` — ขา ภ.ง.ด.54 ของแผนชนะ · ในประเทศ 3/53 ตามผู้รับ · ใช้ทั้ง `SettlementPostingGate.Evaluate` (ข้อความ) และ `BuildGateAsync` (ชุดเดือนที่ยื่น) | `SettlementForeignWhtTests.ด่านเดือนที่ยื่นแล้ว_ต่างประเทศพูดว่า_ภงด54` (ผ่านโดยไม่ส่งแบบ) · `W1_*` 2 เมธอด |
+| W-1 | ✅ `939bbdfc` | ตัวตั้งเดียว `SettlementForeignWht.GateWhtForm(plan, domestic)` — ขา ภ.ง.ด.54 ของแผนชนะ · ในประเทศ 3/53 ตามผู้รับ · ใช้ทั้ง `SettlementPostingGate.Evaluate` (ข้อความ) และ `BuildGateAsync` (ชุดเดือนที่ยื่น) | `SettlementForeignWhtTests.ด่านเดือนที่ยื่นแล้ว_ต่างประเทศพูดว่า_ภงด54` (ผ่านโดยไม่ส่งแบบ) · `W1_*` 2 เมธอด |
 | W-2 | ✅ `34d4dd6f` (main agent ก่อนทีม WF) | กติกา `BuildGateAsync` อ่าน `counterparty?.CountryCode` | required_call_site_check |
-| W-3 | ✅ `<pending>` (คำตัดสินข้อ 40) | `ForeignServiceVat.Pp36Base`/`SelfAssessedVatOn` · `SettlementFeeTax.Compute` คิด ภ.พ.36 หลัง WHT · รายงาน ภ.พ.36 บวกภาษีออกแทนจาก 50 ทวิ "ออกให้ตลอดไป" ที่ผูกใบ · เส้นเอกสารคีย์มือ/OCR ไม่มีโหมดออกภาษีแทนในตัวเอกสาร ⇒ ตรวจตอนออก 50 ทวิ "ออกให้ตลอดไป" (`Pp36Shortfall` เตือนส่วนขาด) | `W3_*` 4 เมธอด (450 → 529.41 → 37.06 · ทิศตรงข้าม 31.50) |
-| W-4 | ✅ `<pending>` (คำตัดสินข้อ 41) | `Helpers/SettlementWhtIncomeType` + `SettlementChannels.WhtIncomeTypeMapJson` (migration · DTO echo · หน้า settlement-channels · audit · สิทธิ์ `Settlement.Channels` ที่ controller เดิม) | `W4_*` 7 เมธอด |
-| W-5 | ✅ `<pending>` | `wht.html` แบบ ภ.ง.ด.54 + อัตราตั้งต้น `foreignRate` · `CreateAsync/UpdateAsync` คืน `Warnings` ผ่าน `ForeignWhtPayeeCheck.CertificateWarnings` | `ForeignWhtPayeeCheckTests.หนังสือรับรองภงด54ที่ออกเอง_*` |
-| W-6 | ✅ `<pending>` | ข้อความทางไปต่อใน `SettlementForeignWht.PlanIssues` เท่านั้น (`GatewayConfigHint`) — ไม่แตะ `ModeMismatch` | `W6_*` |
-| W-7 | ✅ `<pending>` | `ForeignWhtPayeeCheck` (บุคคลธรรมดาเงียบ · เลขนิติบุคคลไทย/ไม่รู้ประเภท = "ตัดสินไม่ได้") · ตรวจบรรทัดไม่หักเลยที่มีรหัสประเภทเงินได้ | `ForeignWhtPayeeCheckTests` 4 เมธอด |
+| W-3 | ✅ `939bbdfc` (คำตัดสินข้อ 40) | `ForeignServiceVat.Pp36Base`/`SelfAssessedVatOn` · `SettlementFeeTax.Compute` คิด ภ.พ.36 หลัง WHT · รายงาน ภ.พ.36 บวกภาษีออกแทนจาก 50 ทวิ "ออกให้ตลอดไป" ที่ผูกใบ · เส้นเอกสารคีย์มือ/OCR ไม่มีโหมดออกภาษีแทนในตัวเอกสาร ⇒ ตรวจตอนออก 50 ทวิ "ออกให้ตลอดไป" (`Pp36Shortfall` เตือนส่วนขาด) | `W3_*` 4 เมธอด (450 → 529.41 → 37.06 · ทิศตรงข้าม 31.50) |
+| W-4 | ✅ `939bbdfc` (คำตัดสินข้อ 41) | `Helpers/SettlementWhtIncomeType` + `SettlementChannels.WhtIncomeTypeMapJson` (migration · DTO echo · หน้า settlement-channels · audit · สิทธิ์ `Settlement.Channels` ที่ controller เดิม) | `W4_*` 7 เมธอด |
+| W-5 | ✅ `939bbdfc` | `wht.html` แบบ ภ.ง.ด.54 + อัตราตั้งต้น `foreignRate` · `CreateAsync/UpdateAsync` คืน `Warnings` ผ่าน `ForeignWhtPayeeCheck.CertificateWarnings` | `ForeignWhtPayeeCheckTests.หนังสือรับรองภงด54ที่ออกเอง_*` |
+| W-6 | ✅ `939bbdfc` | ข้อความทางไปต่อใน `SettlementForeignWht.PlanIssues` เท่านั้น (`GatewayConfigHint`) — ไม่แตะ `ModeMismatch` | `W6_*` |
+| W-7 | ✅ `939bbdfc` | `ForeignWhtPayeeCheck` (บุคคลธรรมดาเงียบ · เลขนิติบุคคลไทย/ไม่รู้ประเภท = "ตัดสินไม่ได้") · ตรวจบรรทัดไม่หักเลยที่มีรหัสประเภทเงินได้ | `ForeignWhtPayeeCheckTests` 4 เมธอด |
 | W-8 | 📋 | ปิดพร้อมแถวอนุสัญญาแรก + ช่อง CoR ที่ผู้ติดต่อ (Q-W4) — ไม่เพิ่มช่องก่อนมีแถว ("มีช่อง ≠ มีผล") | — |
-| W-9 | ✅ `<pending>` | ค่าถอนเงินของช่องทางต่างประเทศ = 40(2) (ในประเทศยังไม่หัก) | `W4_ต่างประเทศ_ค่าธรรมเนียมแพลตฟอร์ม_402_หัก15_ไม่บล็อก(WithdrawalFee)` |
-| W-10 | ✅ `<pending>` | `documents.html` อ่านอัตรา ม.70 จาก `GET /api/reference/foreign-wht` | TEST_PLAN WF-06 (มือ) |
+| W-9 | ✅ `939bbdfc` | ค่าถอนเงินของช่องทางต่างประเทศ = 40(2) (ในประเทศยังไม่หัก) | `W4_ต่างประเทศ_ค่าธรรมเนียมแพลตฟอร์ม_402_หัก15_ไม่บล็อก(WithdrawalFee)` |
+| W-10 | ✅ `939bbdfc` | `documents.html` อ่านอัตรา ม.70 จาก `GET /api/reference/foreign-wht` | TEST_PLAN WF-06 (มือ) |

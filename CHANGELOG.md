@@ -3861,4 +3861,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม WF — แ�
 - **W-7** `Helpers/ForeignWhtPayeeCheck` — ขอบเขตผู้รับ (บุคคลธรรมดาเงียบ · มีเลขนิติบุคคลไทย/ไม่รู้ประเภท = "ตัดสินไม่ได้") + ตรวจบรรทัดไม่หักเลยที่จำแนกแล้ว
 - **W-10** แบนเนอร์บริการต่างประเทศ `documents.html` อ่านอัตรา ม.70 จาก `GET /api/reference/foreign-wht`
 - W-2 ปิดแล้วที่ `34d4dd6f` (main agent) · W-8 📋 ปิดพร้อมแถวอนุสัญญาแรก + ช่อง CoR
-- เทสต์ `SettlementForeignWhtFollowupTests` · `ForeignWhtPayeeCheckTests` · ปรับตัวเลข ภ.พ.36 ใน `SettlementForeignWhtTests` 2 เมธอด · required_call_site +10/ปรับ 2 — commit <pending>)_
+- เทสต์ `SettlementForeignWhtFollowupTests` · `ForeignWhtPayeeCheckTests` · ปรับตัวเลข ภ.พ.36 ใน `SettlementForeignWhtTests` 2 เมธอด · required_call_site +10/ปรับ 2 — commit 939bbdfc)_
