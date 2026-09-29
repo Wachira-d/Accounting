@@ -2277,7 +2277,7 @@ RULES += [
          why="ทีม W: 50 ทวิ ของรอบโอนใช้แบบ ภ.ง.ด. ของแผน (ต่างประเทศ = ภ.ง.ด.54) — ห้ามพิมพ์ ภ.ง.ด.53 ตายตัว"),
     dict(file=W_POSTSVC, method="BuildGateAsync",
          must=["SettlementForeignWht.WhtForm(channel.FeeVatMode)", "t.TaxType == whtForm", "f.TaxType == whtForm",
-               "SettlementForeignWht.CounterpartyCountryIssue(", "c.CountryCode"],
+               "SettlementForeignWht.CounterpartyCountryIssue(", "counterparty?.CountryCode"],
          forbid=["t.TaxType == TaxType.WithholdingTax53", "f.TaxType == TaxType.WithholdingTax53"],
          why="ทีม W: เดือนที่ยื่นแล้วของแบบ WHT ตามช่องทาง (ต่างประเทศ = ภ.ง.ด.54) · ผู้ติดต่อต่างประเทศบนช่องทางไทยที่มีขา WHT = บล็อก (R-A5 อีกรูป)"),
     dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
