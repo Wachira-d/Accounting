@@ -359,6 +359,13 @@
               ไม่งั้นขายที่ไหนก็ตัดจากกองเดียวกันหมด</div>
           </div>
           <div class="form-group">
+            <label class="form-label">บัญชีธนาคารรับเงิน (โอน/พร้อมเพย์/หักบัญชี)</label>
+            <select class="form-select" id="fTermBankAccount"><option value="">— ไม่ปัก (ใช้บัญชีธนาคารเดียวของบริษัท) —</option></select>
+            <div class="form-hint">เงินโอน/พร้อมเพย์ของบิลจากเครื่องนี้ลงบัญชีนี้ — บริษัทที่มีบัญชีธนาคารหลายบัญชี<b>ต้องเลือก</b>
+              ไม่งั้นบิลโอน/พร้อมเพย์ปิดไม่ได้ (ระบบไม่เดาว่าเงินเข้าบัญชีไหน)</div>
+            <div id="termMoneyWarn" class="form-hint" style="display:none;color:#991b1b;font-weight:600"></div>
+          </div>
+          <div class="form-group">
             <label class="form-label">ตัวย่อเลขใบกำกับภาษีอย่างย่อ</label>
             <input type="text" class="form-input" id="fTermAbbrevPrefix" maxlength="10" placeholder="เช่น ABB (เว้นว่าง = ABB)">
             <div class="form-hint">เลขรัน gap-free <b>ต่อสาขาต่อเดือน</b> (§86/6) — ออกให้เฉพาะบริษัทที่ได้รับอนุมัติ ภ.พ.06 แล้ว</div>
@@ -1196,7 +1203,8 @@
           this.terminals = res.data || [];
           const sel = document.getElementById('terminalSelect');
           sel.innerHTML = this.terminals.length
-            ? this.terminals.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
+            // รอบ 200 ทีม G: ชื่อเครื่องเป็นข้อความที่ผู้ใช้พิมพ์ — ต้องผ่านตัวหนี (เดิมต่อ HTML ดิบ = ยิงสคริปต์ใส่แคชเชียร์/เจ้าของได้)
+            ? this.terminals.map(t => `<option value="${Layout.esc(t.id)}">${Layout.esc(t.name)}</option>`).join('')
             : '<option value="">-- ยังไม่มีเครื่องขาย กรุณาสร้างก่อน --</option>';
           if (this.terminals.length) {
             this._renderBranchBadge();
@@ -1216,6 +1224,8 @@
         if (!el) return;
         const id = document.getElementById('terminalSelect')?.value;
         const t = (this.terminals || []).find(x => x.id === id);
+        // รอบ 200 ทีม G (E-3): เตือนก่อนขายว่าบิลโอน/พร้อมเพย์จะปิดไม่ได้ — ข้อความจากเซิร์ฟเวอร์ (หน้าเว็บไม่ตัดสินเอง)
+        this._renderMoneyWarning(t);
         if (!t) { el.style.display = 'none'; return; }
         el.style.display = '';
         if (t.branchId && t.branchTaxCode) {
@@ -1232,6 +1242,57 @@
           el.textContent = '⚠️ เครื่องนี้ยังไม่ผูกสาขา';
           el.title = 'ยอดขาย/สต็อกจะลงที่คลังหลักและไม่มีมิติสาขา — กด "⚙️ ตั้งค่าเครื่อง" เพื่อผูก';
         }
+      },
+
+      _renderMoneyWarning(t) {
+        let w = document.getElementById('termMoneyBadge');
+        const badge = document.getElementById('termBranchBadge');
+        if (!w && badge) {
+          w = document.createElement('span');
+          w.id = 'termMoneyBadge';
+          w.style.cssText = 'align-self:center;font-size:12px;font-weight:700;border-radius:6px;padding:3px 8px;'
+            + 'background:#fee2e2;color:#991b1b;border:1px solid #ef4444;cursor:pointer;';
+          w.onclick = () => this.openEditTerminal();
+          badge.insertAdjacentElement('afterend', w);
+        }
+        if (!w) return;
+        if (t && t.moneyAccountWarning) {
+          w.style.display = '';
+          w.textContent = '⚠️ บิลโอน/พร้อมเพย์จะปิดไม่ได้';
+          w.title = t.moneyAccountWarning;
+        } else {
+          w.style.display = 'none';
+        }
+      },
+
+      /// บัญชีธนาคารที่ผูกผังแล้ว (ค่าที่เก็บ = ผังบัญชีของธนาคาร) — ไม่มีสิทธิ์ดูธนาคาร = รายการว่าง + บอกตรง ๆ ไม่เดา
+      async _fillTerminalBankSelect(selectedGlId) {
+        const sel = document.getElementById('fTermBankAccount');
+        if (!sel) return;
+        if (!this._bankOptions) {
+          const api = Layout.api();
+          let rows = [];
+          try { const r = await api.getBankAccounts(); rows = r?.data?.items || r?.data || []; }
+          catch (e) { this._bankOptionsError = 'โหลดรายชื่อบัญชีธนาคารไม่สำเร็จ: ' + (e.message || ''); }
+          this._bankOptions = rows.filter(b => b.linkedAccountId && b.isActive !== false);
+        }
+        sel.innerHTML = '<option value="">— ไม่ปัก (ใช้บัญชีธนาคารเดียวของบริษัท) —</option>'
+          + this._bankOptions.map(b => `<option value="${Layout.esc(b.linkedAccountId)}">${Layout.esc(b.bankName || '')} `
+            + `${Layout.esc(b.accountNumber || '')} · ${Layout.esc(b.accountName || '')}`
+            + ` (${Layout.esc(b.linkedAccountCode || '')})</option>`).join('');
+        // ค่าที่ปักไว้แต่ไม่อยู่ในรายการ (ผังถูกปิด/ไม่มีสิทธิ์ดู) — คงค่าไว้ ห้ามล้างเงียบตอนบันทึก
+        if (selectedGlId && !this._bankOptions.some(b => b.linkedAccountId === selectedGlId)) {
+          sel.insertAdjacentHTML('beforeend', `<option value="${Layout.esc(selectedGlId)}">(บัญชีที่ปักไว้เดิม)</option>`);
+        }
+        sel.value = selectedGlId || '';
+      },
+
+      _showTerminalMoneyWarning(t) {
+        const el = document.getElementById('termMoneyWarn');
+        if (!el) return;
+        const msg = [(t && t.moneyAccountWarning) || '', this._bankOptionsError || ''].filter(Boolean).join(' · ');
+        el.textContent = msg ? '⚠️ ' + msg : '';
+        el.style.display = msg ? '' : 'none';
       },
 
       showGuide() {
@@ -1284,6 +1345,8 @@
         document.getElementById('fTermLocation').value = '';
         document.getElementById('fTermAbbrevPrefix').value = '';
         await this._fillTerminalScopeSelects('', '');
+        await this._fillTerminalBankSelect('');
+        this._showTerminalMoneyWarning(null);
         Layout.openModal('terminalModal');
       },
 
@@ -1299,6 +1362,8 @@
         document.getElementById('fTermLocation').value = t.location || '';
         document.getElementById('fTermAbbrevPrefix').value = t.abbreviatedInvoicePrefix || '';
         await this._fillTerminalScopeSelects(t.branchId, t.warehouseId);
+        await this._fillTerminalBankSelect(t.bankAccountId || '');
+        this._showTerminalMoneyWarning(t);
         Layout.openModal('terminalModal');
       },
 
@@ -1311,6 +1376,7 @@
         const branch = document.getElementById('fTermBranch').value;
         const warehouse = document.getElementById('fTermWarehouse').value;
         const prefix = document.getElementById('fTermAbbrevPrefix').value.trim();
+        const bankGl = document.getElementById('fTermBankAccount')?.value || '';
         try {
           if (this._editingTerminalId) {
             await api.updatePosTerminal(this._editingTerminalId, {
@@ -1320,6 +1386,7 @@
               settingsJson: null,
               branchId: branch || EMPTY,
               warehouseId: warehouse || EMPTY,
+              bankAccountId: bankGl || EMPTY,
               abbreviatedInvoicePrefix: prefix,
             });
           } else {
@@ -1330,6 +1397,7 @@
               settingsJson: null,
               branchId: branch || null,
               warehouseId: warehouse || null,
+              bankAccountId: bankGl || null,
               abbreviatedInvoicePrefix: prefix || null,
             });
           }
@@ -1661,7 +1729,7 @@
           const net = gross - disc;
           return `
           <div class="order-item-row">
-            <div class="oi-name">${c.name}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}</div>
+            <div class="oi-name">${Layout.esc(c.name)}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}</div>
             <button class="oi-remove" onclick="Page.updateQty(${i},-1)">-</button>
             <span class="oi-qty">${c.quantity}</span>
             <button class="oi-remove" style="color:var(--success)" onclick="Page.updateQty(${i},1)">+</button>

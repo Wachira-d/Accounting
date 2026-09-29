@@ -2308,7 +2308,11 @@ public class IntegrationService : IIntegrationService
 
                 if (arAccount == null || revenueAccount == null)
                 {
-                    Skip(onSkip, "ไม่พบผังบัญชีลูกหนี้การค้า/รายได้ที่ใช้งานอยู่");
+                    // รอบ 200 ทีม G (review198-E ข้อ E-4): บอก "ผังไหน" ให้ชัด — รอบ 198 I-1 เปลี่ยนจาก "113 ตัวไหนก็ได้" เป็น 11310 ตรงตัว
+                    // (หรือผังที่ปักบนผู้ติดต่อ) ⇒ ผังที่ปรับแต่งเองโดยไม่มี 11310 ต้องรู้ว่าแก้ที่ไหน ไม่ใช่ข้อความรวม "ลูกหนี้/รายได้"
+                    Skip(onSkip, arAccount == null
+                        ? Accounting.Helpers.TradeReceivableAccount.MissingMessage
+                        : "ไม่พบผังบัญชีรายได้ที่ใช้งานอยู่ (หมวด 4) — เพิ่ม/เปิดใช้ผังรายได้ก่อน");
                     return null;
                 }
 

@@ -386,7 +386,9 @@ public class GatewayRefundService : IGatewayRefundService
         // เงินออกไปแล้วจริง — ลงบัญชีส่วนต่างด้วยเส้นเดียวกับคืนเงินปกติ (ผัง/งวดต้องพร้อม ไม่งั้นล็อกคงอยู่ + บอกทางไปต่อ)
         var clearingId = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
         var ar = await TradeReceivableAccount.ResolveAsync(_db, companyId, await ContactArPinAsync(companyId, intent, ct), ct);
-        var entryDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        // รอบ 200 ทีม G (E2-12): ลงวันที่เงินออกจริง (เวลาที่พยายามคืน) · งวดนั้นปิดแล้ว ⇒ วันนี้พร้อมหมายเหตุ — ตัวตัดสินเดียวกับบันทึกผลด้วยมือ
+        var booking = await PastRefundBookingAsync(companyId, attemptAt, ct);
+        var entryDate = booking.EntryDate;
         var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct);
         if (clearingId is not Guid clearing || ar == null || closed != null)
             return (Fail($"ผู้ให้บริการคืนเงินไปแล้วจริง {v.AmountToBook:N2} บาท แต่ยังลงบัญชีไม่ได้: "
@@ -403,12 +405,21 @@ public class GatewayRefundService : IGatewayRefundService
             ? marked!.ProviderRefundRef
             : $"VERIFY-{intentId:N}"[..15];
         var je = await BookRefundAsync(companyId, intent, ar.Id, clearing, entryDate, v.AmountToBook, newTotal, refundRef,
-            "ตรวจผลการคืนเงินที่ไม่แน่ชัด — ผู้ให้บริการยืนยันว่าคืนแล้ว", actor, intent.Status, newStatus, attemptAt, ct);
+            "ตรวจผลการคืนเงินที่ไม่แน่ชัด — ผู้ให้บริการยืนยันว่าคืนแล้ว" + (booking.Note == null ? "" : " · " + booking.Note),
+            actor, intent.Status, newStatus, attemptAt, ct);
         ClearOutcomeUnknown(intent);
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return (new GatewayRefundOutcome(true, $"{v.Message} — ใบสำคัญ {je.EntryNumber}", refundRef, v.AmountToBook, isFull,
             newTotal, je.Id, je.EntryNumber, "", NextStepText), newStatus);
+    }
+
+    /// <summary>วันที่ใบสำคัญของเงินคืนที่ยืนยันทีหลัง — ถามงวดของวันที่เงินออกจริงแล้วให้ <see cref="GatewayRefundMath.PastRefundBooking"/> ตัดสิน</summary>
+    private async Task<GatewayPastRefundBooking> PastRefundBookingAsync(Guid companyId, DateTime attemptAtUtc, CancellationToken ct)
+    {
+        var attemptClosed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId,
+            ThaiDate.CalendarDateUtc(attemptAtUtc), ct) != null;
+        return GatewayRefundMath.PastRefundBooking(attemptAtUtc, DateTime.UtcNow, attemptClosed);
     }
 
     /// <summary>ปลดล็อก "ผลไม่แน่ชัด" — ล้างทั้งธง ยอด และเครื่องหมายของครั้งนั้นพร้อมกัน (ห้ามล้างแค่ธงแล้วทิ้งยอดเก่าไว้ให้ครั้งหน้าอ่านผิด)</summary>
@@ -475,7 +486,9 @@ public class GatewayRefundService : IGatewayRefundService
             // ลงบัญชีด้วยเส้นเดียวกับคืนเงินปกติ — ผัง/งวดต้องพร้อม ไม่งั้นล็อกคงอยู่ + บอกทางไปต่อ (ไม่มีอะไรถูกเขียน)
             var clearingId = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
             var ar = await TradeReceivableAccount.ResolveAsync(_db, companyId, await ContactArPinAsync(companyId, intent, ct), ct);
-            var entryDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            // รอบ 200 ทีม G (E2-12 + คำถามเจ้าของข้อ 4): วันที่เงินออกจริง ไม่ใช่วันที่กดบันทึก — ตัวตัดสินเดียวกับการตรวจผล
+            var booking = await PastRefundBookingAsync(companyId, attemptAt, ct);
+            var entryDate = booking.EntryDate;
             var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct);
             if (clearingId is not Guid clearing || ar == null || closed != null)
                 return (Fail("ยังลงบัญชีคืนเงินไม่ได้: "
@@ -490,7 +503,8 @@ public class GatewayRefundService : IGatewayRefundService
             newStatus = newTotal >= intent.Amount - GatewayRefundMath.Tolerance
                 ? PaymentIntentStatus.Refunded : PaymentIntentStatus.PartiallyRefunded;
             je = await BookRefundAsync(companyId, intent, ar.Id, clearing, entryDate, check.AmountToBook, newTotal, refundRef,
-                $"บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ — {evidenceText}", actor, intent.Status, newStatus.Value, attemptAt, ct);
+                $"บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ — {evidenceText}" + (booking.Note == null ? "" : " · " + booking.Note),
+                actor, intent.Status, newStatus.Value, attemptAt, ct);
         }
         else
         {

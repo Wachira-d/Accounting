@@ -28,6 +28,11 @@ public static class TradeReceivableAccount
     /// <summary>11310 ลูกหนี้การค้า</summary>
     public const string StandardCode = "11310";
 
+    /// <summary>ข้อความเมื่อหาผังลูกหนี้ไม่เจอ (<see cref="ResolveAsync"/> คืน null) — บอกทั้งสองทางแก้ (รอบ 200 ทีม G · review198-E ข้อ E-4)</summary>
+    public const string MissingMessage =
+        "ไม่พบผังลูกหนี้การค้า " + StandardCode + " ที่ใช้งานอยู่ และผู้ติดต่อของเอกสารไม่ได้ปักผังลูกหนี้ไว้ — "
+        + "เพิ่ม/เปิดใช้ผัง " + StandardCode + " ในผังบัญชี หรือเลือกช่อง \"ถ้าเป็นลูกหนี้ จะบันทึกบัญชี\" ที่หน้าผู้ติดต่อ (ระบบไม่ลงผังอื่นในหมวด 113 แทน เพราะความหมายต่างกัน)";
+
     /// <summary>ผังบัญชีพักของผู้ให้บริการรับชำระเงินตามผังมาตรฐาน — ไม่ใช่ลูกหนี้การค้า</summary>
     public const string GatewayClearingCode = "11340";
 

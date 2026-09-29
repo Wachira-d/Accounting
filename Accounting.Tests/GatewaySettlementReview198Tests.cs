@@ -281,9 +281,10 @@ public class GatewaySettlementReview198Tests
         Assert.Equal(4.45m, c.OutstandingAfter);   // ส่วนต่างที่ยังค้าง — บอกผู้ใช้
         Assert.False(c.IsLate);
         Assert.Equal("00000", c.BranchCode);
-        // สาขาเว้นว่าง = สำนักงานใหญ่
-        Assert.Equal("00000", GatewayFeeVatClaim.Check(1m, 30m, "X1", Utc(2026, 9, 1), Utc(2026, 9, 1),
-            "ผู้ให้บริการ", ValidTaxId, null, null).BranchCode);
+        // รอบ 200 ทีม G (review198-E2 E2-12): สาขาเว้นว่าง**ไม่ใช่**สำนักงานใหญ่อีกต่อไป (เดิมเติม 00000 เงียบ = ค่าที่แต่งขึ้นลงรายงานภาษีซื้อ) —
+        // ต้องกรอกตามใบ · เทสต์นี้เคยล็อกพฤติกรรมเดิมไว้ ⇒ กลับทิศ (ดู GatewayTeamGRound200Tests.VAT_*)
+        Assert.False(GatewayFeeVatClaim.Check(1m, 30m, "X1", Utc(2026, 9, 1), Utc(2026, 9, 1),
+            "ผู้ให้บริการ", ValidTaxId, null, null).Ok);
     }
 
     [Fact]

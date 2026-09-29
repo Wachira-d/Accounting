@@ -3720,7 +3720,18 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V2 — ของกำพร้าในรอบโอน settlement (DECISIONS ข้อ 10):
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม G — payment gateway ส่วนที่ยังไม่เคยตรวจ (review198-E "ยังไม่ได้ตรวจ" · E-3 · E-4 · E2-12 · DECISIONS ข้อ 18):
+- **ข้อ 18** ปักรุ่น API `Omise-Version: 2019-05-29` (ค่าคงที่ตัวเดียว `OmisePaymentProvider.ApiVersion` · ส่งจาก `Client()` ทุกคำขอ) — รุ่น 2017-11-02 ใช้ช่อง
+  `refunded` แทน `refunded_amount` ⇒ ไม่ปัก = ตรวจผลคืนเงินเงียบตลอดบนบัญชีรุ่นเก่า · `MinVerifyWait` 10 นาทีคงเดิม
+- **G-8** สิทธิ์อ่าน: รายการ/ประวัติ/กระทบยอด/ค้างโอน = `Bank.View` · สถานะสด (ถามผู้ให้บริการ + เปลี่ยนสถานะ) = สิทธิ์ต้นทางหรือ `Bank.View` · ยืนยันมือบนช่องทางที่
+  ผู้ให้บริการถือเงินแต่ไม่มี charge = ปฏิเสธ · webhook ตรวจรูปเลข event ก่อนต่อเข้า path ที่แนบ secret key
+- **G-2** ขอบช่วงวันที่รับเงิน (แผนรอบโอน + กระทบยอด) = เที่ยงคืนเวลาไทย (`ConfirmedRangeUtc` — เดิมเลื่อน 7 ชม.) · ค่าธรรมเนียมจากผู้ให้บริการไม่ทับค่าที่แก้มือ/อยู่ในรอบโอน
+- **E2-12** `SettledFeeDeducted` (+ migration พิสูจน์ได้) · วันที่ใบสำคัญเงินคืนที่ยืนยันทีหลัง = วันเงินออก (`PastRefundBooking`) · สาขาว่าง/วันที่เคลมอนาคต = บล็อก
+- **E-3** POS: ช่อง "บัญชีธนาคารรับเงิน" บนตั้งค่าเครื่อง (เดิมไม่มีช่องทั้งที่ข้อความล้มดังชี้ไป) + `TerminalResponse.MoneyAccountWarning` ป้ายเตือนก่อนขาย · ชื่อเครื่อง/สินค้า esc
+- **E-4** ข้อความขาดผังลูกหนี้ `TradeReceivableAccount.MissingMessage` (บอก 11310 + ช่องบนผู้ติดต่อ) · หน้า payment-intents ประวัติอ่าน `from/to` · หน้ารอบโอนปิดปุ่มบันทึกเมื่อแก้หลังดูตัวอย่าง
+- เทสต์ `GatewayTeamGRound200Tests` · required_call_site +15 — commit e004a2cc)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม V2 — ของกำพร้าในรอบโอน settlement (DECISIONS ข้อ 10):
 - **(ก)** ตัวแยกของกำพร้า (`SettlementOrphanTriage.Split`) รับข้อเท็จจริงของ "ใบที่อ้าง" (`SettlementOrphanChild` จาก `DocumentVoidPreconditions.ChildFactsAsync`
   ตัวเดียวกับ `VoidDocumentAsync`) — ใบที่อ้างซึ่งตัวเองยกเลิกไม่ได้ (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ส่งลูกค้าแล้ว) ⇒ ใบกำพร้า = `Unvoidable`
   (เดิมตกกอง NeedsUserAction ที่ทางไปต่อ "ยกเลิกใบที่อ้างก่อน" ทำไม่ได้ ⇒ ช่องทางบล็อกถาวร · review198-S4 S4-1 ความเสี่ยงที่เหลือ)

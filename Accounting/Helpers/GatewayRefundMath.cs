@@ -76,6 +76,9 @@ public enum GatewayRefundCreditNoteState
     CannotTrace = 3,
 }
 
+/// <summary>วันที่ใบสำคัญ + หมายเหตุ ของเงินคืนที่ยืนยันทีหลัง (<see cref="GatewayRefundMath.PastRefundBooking"/>) — <c>Note</c> null = ลงวันที่เงินออกจริง</summary>
+public readonly record struct GatewayPastRefundBooking(DateTime EntryDate, string? Note);
+
 /// <summary>
 /// **คืนเงินผ่านผู้ให้บริการรับชำระเงิน — ตัวตัดสินตัวเดียว** (รอบ 198 G-1)
 ///
@@ -257,6 +260,21 @@ public static class GatewayRefundMath
             return new(true, null, paid);
         }
         return new(false, "กรุณาเลือกผล: \"ไม่มีเงินออก\" หรือ \"เงินออกแล้ว\"", 0m);
+    }
+
+    /// <summary>วันที่ใบสำคัญของเงินคืนที่ "ผลไม่แน่ชัด" แล้วยืนยันทีหลัง (ตรวจผล/บันทึกผลด้วยมือ) — รอบ 200 ทีม G · review198-E2 E2-12 + คำถามเจ้าของข้อ 4
+    ///
+    /// <para>═══ ที่มา ═══ เส้นตรวจผล/บันทึกผลด้วยมือลงใบสำคัญ<b>วันนี้</b> ทั้งที่เหตุการณ์และ <c>LastRefundedAt</c> = เวลาที่พยายามคืน ⇒
+    /// พยายามคืนสิ้นเดือน ตรวจผลต้นเดือนถัดไป = เงินออกเดือนหนึ่ง ใบสำคัญอยู่อีกเดือน (ยอดบัญชีพัก/ลูกหนี้ ณ สิ้นเดือนผิด)</para>
+    /// <para>═══ กติกา (ทิศที่มองเห็นและย้อนได้) ═══ งวดของวันที่เงินออกยังเปิด ⇒ ลงวันนั้น · ปิดแล้ว ⇒ ลงวันนี้ <b>พร้อมข้อความบอกวันที่เงินออกจริง</b>
+    /// บนใบสำคัญ (ปรับปรุงในงวดปัจจุบัน — แก้งวดที่ปิดไม่ได้) · ห้ามเลื่อนเงียบ</para></summary>
+    public static GatewayPastRefundBooking PastRefundBooking(DateTime attemptAtUtc, DateTime nowUtc, bool attemptPeriodClosed)
+    {
+        var attemptDate = ThaiDate.CalendarDateUtc(attemptAtUtc);
+        var today = ThaiDate.CalendarDateUtc(nowUtc);
+        if (!attemptPeriodClosed || attemptDate >= today) return new GatewayPastRefundBooking(attemptDate, null);
+        return new GatewayPastRefundBooking(today,
+            $"เงินออกจริงวันที่ {ThaiDate.ToThaiDisplayString(attemptAtUtc)} แต่งวดบัญชีของวันนั้นปิดแล้ว — ลงบัญชีวันนี้ (ปรับปรุงในงวดปัจจุบัน)");
     }
 
     /// <summary>ต้องมีคนตามออกใบลดหนี้ไหม (ป้าย "คืนเงินแล้ว ยังไม่ออกใบลดหนี้")</summary>
