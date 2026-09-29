@@ -200,8 +200,19 @@ public class JournalAnomalyService
 
         // ── 4) JE เก่าที่ลงขาเงิน/ลูกหนี้ผิดหมวด (รอบ 198 I-1/P-1) — รายงานให้นักบัญชีตรวจ ไม่แก้อัตโนมัติ (คำตัดสินรอบ 200 ข้อ 20) ──
         // ใช้ JE ชุดเดียวกับข้อ 1 (โพสต์แล้ว · ในช่วงที่เลือก) · ใบที่ถูกกลับรายการแล้ว = นักบัญชีจัดการแล้ว ไม่ฟ้อง · 1 ข้อต่อ JE ต่อกฎ
-        foreach (var j in journals.Where(j => j.ReversedByEntryId == null && j.OriginalEntryId == null))
+        // T-7 (ฝ่ายค้านรอบ 200): JE ที่นักบัญชีปรับปรุงแล้ว (มี JE อื่นอ้างเลขนี้ในช่องเลขอ้างอิง) ไม่ฟ้องซ้ำ — หลักฐานจาก LegacyMoneyLegAudit.AdjustedBy ตัวเดียว
+        var legacyCandidates = journals.Where(j => j.ReversedByEntryId == null && j.OriginalEntryId == null).ToList();
+        var legacyNumbers = legacyCandidates.Select(j => j.EntryNumber).Distinct().ToList();
+        var adjusting = legacyNumbers.Count == 0
+            ? new List<Accounting.Helpers.LegacyMoneyLegAudit.AdjustingEntry>()
+            : await _db.JournalEntries.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && !e.IsDeleted && e.Status == JournalEntryStatus.Posted
+                    && e.ReversedByEntryId == null && e.Reference != null && legacyNumbers.Contains(e.Reference.Trim()))
+                .Select(e => new Accounting.Helpers.LegacyMoneyLegAudit.AdjustingEntry(e.Id, e.EntryNumber, e.Reference))
+                .ToListAsync();
+        foreach (var j in legacyCandidates)
         {
+            if (Accounting.Helpers.LegacyMoneyLegAudit.AdjustedBy(j.Id, j.EntryNumber, adjusting) != null) continue;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var l in j.Lines.Where(l => l.Account != null))
             {

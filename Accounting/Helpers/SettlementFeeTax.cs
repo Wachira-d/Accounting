@@ -140,22 +140,26 @@ public static class SettlementFeeTax
         if (rate > 0m && preVat > 0m)
         {
             whtBase = preVat;
-            if (whtMode == SettlementFeeWhtMode.SelfWithholdPayerBorne)
-            {
-                wht = R(preVat * rate / (100m - rate));
-                certIncome = preVat + wht;
-                borne = wht;
-            }
-            else
-            {
-                wht = R(preVat * rate / 100m);
-                certIncome = preVat;
-            }
+            (wht, certIncome, borne) = WhtOnBase(preVat, rate, whtMode);
         }
         else whtMode = SettlementFeeWhtMode.None;
 
         return new SettlementFeeTaxResult(deducted, expense, inputVat, pp36, treatment, whtMode,
             whtMode == SettlementFeeWhtMode.None ? null : whtIncomeCode, rate, whtBase, wht, certIncome, borne);
+    }
+
+    /// <summary>ภาษีหัก ณ ที่จ่ายของฐานก่อน VAT หนึ่งก้อน — สูตรตัวเดียวของทั้งรายก้อน (<see cref="Compute"/>) และรายบรรทัดใบ
+    /// (<c>SettlementBatchMath.BuildFeeLines</c> คิดซ้ำจากฐานรวมของบรรทัดใบ — ฝ่ายค้านรอบ 200 X-4: ปัดทีละรายการแล้วรวม ⇒ 50 ทวิ/ภ.ง.ด.53 สูงเกิน) ·
+    /// ออกภาษีแทน (W3) = ฐาน × อัตรา/(100 − อัตรา) · เงินได้บน 50 ทวิ = ฐาน + ภาษี · อื่น ๆ = ฐาน × อัตรา/100 · ปัด AwayFromZero</summary>
+    public static (decimal Wht, decimal CertIncome, decimal Borne) WhtOnBase(decimal preVatBase, decimal ratePercent, SettlementFeeWhtMode whtMode)
+    {
+        if (ratePercent <= 0m || preVatBase <= 0m || whtMode == SettlementFeeWhtMode.None) return (0m, 0m, 0m);
+        if (whtMode == SettlementFeeWhtMode.SelfWithholdPayerBorne)
+        {
+            var borneWht = R(preVatBase * ratePercent / (100m - ratePercent));
+            return (borneWht, preVatBase + borneWht, borneWht);
+        }
+        return (R(preVatBase * ratePercent / 100m), preVatBase, 0m);
     }
 
     /// <summary>ไฟล์ให้ค่าธรรมเนียม<b>ก่อน VAT</b> (VAT แยกคอลัมน์/คิดทับ) — คืน (ยอดที่ถูกหักรวม VAT, VAT) ให้ adapter เก็บลง

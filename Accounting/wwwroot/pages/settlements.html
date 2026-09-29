@@ -783,7 +783,7 @@
           ${list.map((o, i) => `<tr>
             <td>${o.isPayment ? 'การรับชำระ ' + Layout.esc(o.number || '-') : this.docLink(o.id, o.number || 'เปิดเอกสาร')}</td>
             <td class="mono">${Layout.esc(o.payoutRef || '')}</td>
-            <td>${Layout.esc(o.pileLabel || '-')}${o.ack ? '<div class="hint">✅ รับรู้แล้ว</div>' : ''}</td>
+            <td>${Layout.esc(o.pileLabel || '-')}${o.ackStatusLabel ? `<div class="hint">${Layout.esc(o.ackStatusLabel)}</div>` : ''}</td>
             <td>${Layout.esc(o.why || '')}${o.ack ? `<div class="hint">รับรู้โดย <b>${Layout.esc(o.ack.byName || o.ack.byUserId || '-')}</b>
                 เมื่อ ${Layout.date(o.ack.at)} · เหตุผล: ${Layout.esc(o.ack.reason || '')}</div>` : ''}
               ${o.nextStep ? `<div class="hint"><b>ทางไปต่อ:</b> ${Layout.esc(o.nextStep)}</div>` : ''}</td>
@@ -800,7 +800,7 @@
           async (reason) => {
             const api = Layout.api(); if (!api) return;
             try {
-              const res = await api.acknowledgeSettlementOrphan(o.id, o.isPayment, reason);
+              const res = await api.acknowledgeSettlementOrphan(o.id, o.isPayment, reason, this.detail?.batch?.id);
               if (res?.success === false) throw new Error(res?.message || 'รับรู้ไม่สำเร็จ');
               Layout.toast(res?.message || 'รับรู้แล้ว');
               await this.loadPreview();
@@ -909,7 +909,8 @@
         } catch (e) {
           // ถูกบล็อก (409 พร้อมแผน) หรือค้างครึ่งทาง (409 SETTLEMENT-POST-PARTIAL — ข้อความบอกให้กดใหม่) — แสดงตามที่เซิร์ฟเวอร์ส่งมา
           const data = e.body?.data;
-          if (data?.plan) this.renderPreview({ canPost: false, plan: data.plan, existingItems: data.items }, e.message);
+          // ฝ่ายค้านรอบ 200 V2-P2: คงตารางของกำพร้า (ผู้รับรู้/ปุ่มรับรู้) จากพรีวิวล่าสุด — ผล 409 ไม่ส่ง orphans มา
+          if (data?.plan) this.renderPreview({ canPost: false, plan: data.plan, existingItems: data.items, orphans: this.preview?.orphans }, e.message);
           else this.renderPreview(this.preview, e.message);
           Layout.toast(e.message || 'ลงบัญชีไม่สำเร็จ', 'error');
         }

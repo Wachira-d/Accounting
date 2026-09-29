@@ -474,12 +474,12 @@ public class SettlementPostingTests
     {
         var batchId = Guid.NewGuid();
         var req = SettlementDocumentBuilder.ReceiptPayment(new SettlementReceiptPlan(DocA, 1000m, Array.Empty<Guid>()),
-            batchId, Clearing, Day, "PO-001", "Shopee");
+            batchId, Clearing, Day, "PO-001", "Shopee", SettlementReceiptWhtKind.None);
         Assert.Equal(DocA, req.DocumentId);
         Assert.Equal(1000m, req.Amount);
         Assert.Equal(Clearing, req.OverridePaymentAccountId);
         Assert.Contains(SettlementPostingKeys.PaymentMarker(batchId), req.Notes);
-        Assert.Equal(0m, req.WithholdingTaxAmount);   // review198-C C-12 (รอบ 200): แพลตฟอร์มไม่หัก — ส่ง 0 ชัด ไม่ให้เส้นรับชำระคิด WHT ตามสัดส่วน
+        Assert.Equal(0m, req.WithholdingTaxAmount);   // ใบไม่มี WHT ⇒ 0 ชัด (ใบที่มี WHT: DECISIONS ข้อ 27 — ดู SettlementReview200SfTests)
     }
 
     // ═════════════ จับคู่ธนาคาร: ต้องมีรายการเดินบัญชีจริง (R1) ═════════════

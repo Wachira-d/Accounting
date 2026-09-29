@@ -199,16 +199,18 @@ public class SettlementGatewayPhase2Tests
     [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.Withhold3Percent, SettlementFeeVatMode.None, SettlementFeeWhtMode.None, true)]
     [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.Withhold3Percent, SettlementFeeVatMode.None, SettlementFeeWhtMode.SelfWithholdReimbursed, true)]
     [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.None, SettlementFeeWhtMode.SelfWithholdPayerBorne, true)]
+    // X-3 (ฝ่ายค้านรอบ 200 · DECISIONS ข้อ 26): คู่ที่เคยผ่านแต่สองเส้นให้ภาษีต่างกัน ⇒ ไม่ตรง
+    [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.ForeignPp36, SettlementFeeWhtMode.None, true)]
+    [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.None, SettlementFeeWhtMode.SelfWithholdReimbursed, true)]
     // ตรงกัน ⇒ ผ่าน (ทิศตรงข้าม — ของที่ตั้งถูกต้องไม่ถูกบล็อก)
     [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.None, SettlementFeeWhtMode.None, false)]
-    [InlineData(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.ForeignPp36, SettlementFeeWhtMode.None, false)]
     [InlineData(GatewayFeeVatMode.IncludedInFee, GatewayFeeWhtMode.None, SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, false)]
     [InlineData(GatewayFeeVatMode.AddedOnTop, GatewayFeeWhtMode.Withhold3Percent, SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.SelfWithholdPayerBorne, false)]
     [InlineData(GatewayFeeVatMode.AddedOnTop, GatewayFeeWhtMode.None, SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.AgentWithholds, false)]
     public void โหมดภาษีค่าธรรมเนียม_configกับช่องทาง_ต้องตรงกัน(GatewayFeeVatMode gVat, GatewayFeeWhtMode gWht,
         SettlementFeeVatMode cVat, SettlementFeeWhtMode cWht, bool blocked)
     {
-        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht);
+        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht, companyVatRegistered: true);
         Assert.Equal(blocked, why != null);
         if (blocked) Assert.Contains("ทางไปต่อ", why);
     }
@@ -223,7 +225,7 @@ public class SettlementGatewayPhase2Tests
         Assert.Equal(2.73m, Assert.Single(plan.FeeDocuments).InputVat);
         Assert.Equal(0m, LegacyPlan(snaps, GatewayFeeVatMode.None).FeeVat);
         Assert.NotNull(GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.None, GatewayFeeWhtMode.None,
-            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None));
+            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, companyVatRegistered: true));
     }
 
     // ═════════════════ หนึ่งรายการ หนึ่งเจ้าของ (สองทิศ) ═════════════════

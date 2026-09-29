@@ -21,7 +21,7 @@ endpoint `POST settlement/batches/from-payment-intents` · ปุ่มโหม
 |---|---|---|
 | หนึ่งเจ้าของ | intent เข้ารอบโอนได้ครั้งเดียว — เส้นเดิมประทับ `SettlementJournalEntryId` · เส้นใหม่ประทับ `SettlementBatchId` · ทั้งสองเส้นเลือกเฉพาะ intent ที่ **ทั้งสองช่องว่าง** · ถือล็อก `GatewaySettlement` ตัวเดียวกัน | `UnclaimedForBatch` (expression ตัวเดียว · EF แปล SQL · เทสต์ compile รันกับวัตถุจริง) · `required_call_site_check`: `LoadIntentRowsAsync` ห้ามเขียนเงื่อนไขเจ้าของเอง · `GatewaySettlementService.SelectCandidatesAsync` ต้องมี `i.SettlementBatchId == null` (ทิศกลับ) |
 | คืนเงินภายหลังตามเจ้าของ | เจ้าของเดิม ⇒ เส้นเดิมหักรอบถัดไปของมัน · เจ้าของ batch ⇒ บรรทัดคืนเงินในรอบโอนถัดไปของ batch · ยอดคืนก้อนเดียวไม่ถูกหักสองเส้น | `LateRefundInBatch` (`SettlementJournalEntryId == null && SettlementBatchId != null`) · ตาข่ายใต้ล็อก `RefundLinesOverRefunded` |
-| สูตรเดียว | ค่าธรรมเนียมที่ถูกหัก + VAT ค่าธรรมเนียม = `GatewaySettlementMath.Contribution` ตามโหมดของ config · ยอดคืน ณ วันเงินเข้า = `RefundCutoffUtc` + `RefundedAsOf` · ภาษีของใบค่าธรรมเนียม = `SettlementFeeTax.Compute` (รับ VAT ที่ระบุต่อรายการ) | `required_call_site_check` แถว `PaymentIntentAdapter.BuildRows` (ห้าม `FeeActual ?? FeeEstimated` · ห้าม 7/107 · ห้าม `SettlementFeeTax.` ในตัวประกอบ) · เทสต์ parity |
+| สูตรเดียว (ทีม SF: จริงเฉพาะคู่โหมดที่ให้ผลภาษีเท่ากัน — คู่ ภ.พ.36 / "หักเองแล้วได้คืน" ถูกนิยามเป็น "ไม่ตรง" ตาม DECISIONS ข้อ 26) | ค่าธรรมเนียมที่ถูกหัก + VAT ค่าธรรมเนียม = `GatewaySettlementMath.Contribution` ตามโหมดของ config · ยอดคืน ณ วันเงินเข้า = `RefundCutoffUtc` + `RefundedAsOf` · ภาษีของใบค่าธรรมเนียม = `SettlementFeeTax.Compute` (รับ VAT ที่ระบุต่อรายการ) | `required_call_site_check` แถว `PaymentIntentAdapter.BuildRows` (ห้าม `FeeActual ?? FeeEstimated` · ห้าม 7/107 · ห้าม `SettlementFeeTax.` ในตัวประกอบ) · เทสต์ parity |
 | ข้อเท็จจริงเดียว | "ผู้ให้บริการคิด VAT บนค่าธรรมเนียมไหม · เราหัก ณ ที่จ่ายไหม" เก็บสองที่ (config gateway · ช่องทาง) ⇒ ต้องตรงกัน ไม่งั้นบล็อกพร้อมทางไปต่อ (ระบบไม่เลือกฝั่งให้) | `ModeMismatch` ที่ทางเข้า 2 ทาง (ประกอบรอบโอน · บันทึกช่องทาง) |
 
 **ไม่ปิดเส้นเดิม** ในรอบนี้ (ทางเลือกที่ย้อนได้): ทั้งสองเส้นให้ตัวเลขเท่ากันแล้ว และ intent อยู่ได้เส้นเดียว ⇒ ไม่มีเงินซ้ำ · การปิดเส้นเดิมต่อ provider
@@ -74,7 +74,7 @@ endpoint `POST settlement/batches/from-payment-intents` · ปุ่มโหม
 
 ## 5. ค่าที่ persist ไว้ก่อนแก้ (F3 ข้อ 10) — ไม่มี migration อัตโนมัติ (JE ในงวดปิดห้ามแก้เงียบ · สอดคล้อง DECISIONS ข้อ 20)
 
-- รอบโอนที่ประกอบจาก intent **ยังไม่ลงบัญชี**: โหมด "บวก VAT" ⇒ ไม่ลงตัว (ถูกบล็อกอยู่แล้ว) — ทางไปต่อ: ยกเลิกรอบแล้วประกอบใหม่ (ได้บรรทัดสูตรใหม่) · โหมดอื่นลงได้ตามเดิม (VAT อาจต่างเป็นสตางค์)
+- รอบโอนที่ประกอบจาก intent **ยังไม่ลงบัญชี**: โหมด "บวก VAT" ⇒ ไม่ลงตัว (ถูกบล็อกอยู่แล้ว) — ทางไปต่อ: ยกเลิกรอบแล้วประกอบใหม่ (ได้บรรทัดสูตรใหม่) · ~~โหมดอื่นลงได้ตามเดิม (VAT อาจต่างเป็นสตางค์)~~ **แก้ถ้อยคำ (ฝ่ายค้าน X-1 · ทีม SF):** ผิดสำหรับคู่ค่าเริ่มต้น config "ไม่แยก VAT" ↔ ช่องทาง "VAT ไทย 7%" — ต่าง**เต็ม 7/107** ของค่าธรรมเนียม ไม่ใช่สตางค์ (ภาษีซื้อแต่งขึ้น ≈ 6.54%) · ตั้งแต่ทีม SF ด่านลงบัญชี (`BuildGateAsync` → `GatewayBatchIntentRules.PostingIssue`) บล็อกรอบโอนที่โหมดสองที่ให้ผลภาษีต่างกัน (`GatewayModeMismatch`) ⇒ รอบที่ค้างก่อน deploy ต้องแก้โหมดให้ตรงแล้วยกเลิก/ประกอบใหม่ — SQL ด้านล่างยังใช้คัดกรองรอบที่**ลงไปแล้ว**
 - รอบโอนที่**ลงบัญชีแล้ว**ขณะโหมดขัดกัน (ภาษีซื้อ 11630 อาจแต่งขึ้น): รายงานให้นักบัญชีตรวจ — query อ่านอย่างเดียว (โหมด ณ วันนี้ ไม่ใช่ ณ วันนำเข้า — ใช้คัดกรองเท่านั้น):
 
 ```sql

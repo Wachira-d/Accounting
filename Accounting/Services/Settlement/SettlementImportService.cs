@@ -98,6 +98,18 @@ public sealed partial class SettlementImportService : ISettlementImportService
         var h = request.Header;
         var channel = await LoadChannelAsync(companyId, h.ChannelId, tracked: false, ct);
         EnsureActive(channel);
+        // X-1 (รอบ 200 ฝ่ายค้าน · DECISIONS ข้อ 26): ช่องทางที่ผูก config ของ gateway — ไฟล์ที่ไม่มีคอลัมน์ VAT ถูกแยก VAT ตามโหมดของช่องทาง
+        // ⇒ โหมดสองที่ต้องให้ผลภาษีเท่ากันก่อนรับไฟล์ (ตัวตัดสินเดียวกับประกอบจากรายการรับชำระ/บันทึกช่องทาง/ลงบัญชี) · config หาไม่เจอ ⇒ ช่องทางเป็นคำตอบเดียว
+        if (channel.PaymentProviderConfigId is Guid boundCfgId)
+        {
+            var boundCfg = await _db.PaymentProviderConfigs.AsNoTracking()
+                .Where(c => c.Id == boundCfgId && c.CompanyId == companyId)
+                .Select(c => new { c.FeeVatMode, c.WhtOnFee }).FirstOrDefaultAsync(ct);
+            var fileVatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+            if (boundCfg != null && GatewayBatchIntentRules.ModeMismatch(boundCfg.FeeVatMode, boundCfg.WhtOnFee, channel.FeeVatMode,
+                    channel.FeeWhtMode, fileVatRegistered) is string fileModeBad)
+                throw new BusinessRuleException(fileModeBad, "SETTLEMENT-GATEWAY-MODE-MISMATCH");
+        }
         var file = new SettlementFileInput(fileName, await ReadBoundedAsync(content, ct));
         var adapter = ResolveFileAdapter(channel);
         var mapJson = string.IsNullOrWhiteSpace(request.ColumnMapJson) ? channel.ColumnMapJson : request.ColumnMapJson;
@@ -234,6 +246,13 @@ public sealed partial class SettlementImportService : ISettlementImportService
             var batch = await _db.SettlementBatches
                 .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ChannelId == channelId && b.PayoutRef == payoutRef, ct);
             var created = batch == null;
+            // X-5 (ฝ่ายค้านรอบ 200): เติมรอบโอน gateway เดิม (PayoutRef ซ้ำ) — ยอดคืนเงินของบรรทัดถูกตัดด้วยวันเงินเข้าที่ส่งมาครั้งนี้ แต่รอบโอนใช้วันเดิม
+            // ⇒ วันไม่ตรง = คืนเงินตกผิดรอบ/ยอดไม่ลงตัว · ปฏิเสธพร้อมทางไปต่อ (เส้นไฟล์ยังเตือนตามเดิม — ไฟล์ไม่ได้ใช้วันนี้ตัดยอดคืน)
+            if (batch != null && input.GatewayProviderCode != null && ThaiDate.CalendarDateUtc(payoutDateRaw) != batch.PayoutDate)
+                throw new BusinessRuleException(
+                    $"รอบโอน \"{payoutRef}\" มีอยู่แล้วด้วยวันเงินเข้า {ThaiDate.ToThaiDisplayString(batch.PayoutDate)} แต่คำขอนี้ระบุวันอื่น — "
+                    + "ยอดคืนเงินของรายการรับชำระถูกตัดด้วยวันเงินเข้า จึงเติมรอบเดิมด้วยวันต่างกันไม่ได้ · ทางไปต่อ: ระบุวันเงินเข้าให้ตรงรอบเดิม "
+                    + "หรือถ้าวันเดิมผิด ให้ยกเลิกรอบโอนนั้นแล้วประกอบใหม่", "SETTLEMENT-GATEWAY-PAYOUT-DATE");
             // S3-4: ไฟล์ฉบับแก้ของรอบโอนเดิม (มีแถวเพิ่ม ⇒ ลายนิ้วมือเนื้อหาใหม่ ⇒ คีย์แถวไม่มี id เปลี่ยน) — แถวไม่มี id ที่เนื้อหาตรงกับบรรทัดของ
             // รอบโอนนี้ซึ่งยังไม่ถูกแถวใดอ้างด้วยคีย์ = มีอยู่แล้ว (นับจำนวน · แถวเหมือนกัน 3 กับบรรทัดเดิม 2 ⇒ เพิ่ม 1)
             // S4-3 (ทีม I รอบ 200): เทียบเนื้อหาเฉพาะกับบรรทัดของ "ไฟล์รุ่นก่อนของไฟล์นี้" (ทุกบรรทัดของไฟล์นั้นมีแถวเดียวกันในไฟล์นี้) —

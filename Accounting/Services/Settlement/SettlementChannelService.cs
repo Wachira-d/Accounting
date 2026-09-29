@@ -140,7 +140,17 @@ public sealed class SettlementChannelService : ISettlementChannelService
             providerCode = cfg.ProviderCode;
             // รอบ 200 ทีม P2: "ค่าธรรมเนียมมี VAT ไหม · เราหัก ณ ที่จ่ายไหม" เก็บสองที่ (config gateway · ช่องทาง) — ต้องตอบตรงกัน
             // ไม่งั้นรอบโอนที่ประกอบจากรายการรับชำระแต่งภาษีซื้อ/ทิ้ง VAT (ตัวตัดสินเดียวกับ ImportFromPaymentIntentsAsync)
-            if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, r.FeeVatMode, r.FeeWhtMode) is string modeBad)
+            // X-10 (ฝ่ายค้านรอบ 200): ตรวจเฉพาะช่องทางใหม่/เมื่อการผูกหรือโหมดเปลี่ยน — ช่องทางเดิมที่โหมดขัดยังแก้ชื่อ/ปิดใช้งานได้
+            // (ด่านนำเข้า/ประกอบ/ลงบัญชีตรวจซ้ำทุกครั้งอยู่แล้ว ⇒ ไม่มีรอบโอนที่ลงด้วยโหมดขัด) · บริษัทไม่จด VAT ⇒ คู่ VAT ไทยให้ผลเท่ากัน (ข้อ 26)
+            var prior = channelId is Guid priorId
+                ? await _db.SettlementChannels.AsNoTracking().Where(c => c.Id == priorId && c.CompanyId == companyId)
+                    .Select(c => new { c.PaymentProviderConfigId, c.FeeVatMode, c.FeeWhtMode }).FirstOrDefaultAsync(ct)
+                : null;
+            var touched = GatewayBatchIntentRules.ChannelModeTouched(prior?.PaymentProviderConfigId, prior?.FeeVatMode, prior?.FeeWhtMode,
+                r.PaymentProviderConfigId, r.FeeVatMode, r.FeeWhtMode);
+            var channelVatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+            if (touched && GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, r.FeeVatMode, r.FeeWhtMode,
+                    channelVatRegistered) is string modeBad)
                 throw new BusinessRuleException(modeBad, "SETTLEMENT-CHANNEL-GATEWAY-MODE");
         }
         var counterpartyId = await ResolveCounterpartyAsync(companyId, r, ct);

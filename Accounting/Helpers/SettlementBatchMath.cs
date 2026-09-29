@@ -73,6 +73,9 @@ public enum SettlementPlanIssueCode
     /// <summary>วันนี้มีใบขายสรุปของแพลตฟอร์มนี้จากรอบโอนอื่นแล้ว แต่ใบแรกยังไม่ออกเลข (ลงบัญชีรอบนั้นค้าง) — ใบสรุปเพิ่มเติมต้องอ้างเลขใบแรก
     /// (คำตัดสินรอบ 200 ข้อ 15)</summary>
     SummarySaleFirstNotIssued = 36,
+    /// <summary>ช่องทางผูก config ของ payment gateway แต่โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียมสองที่ให้ผลภาษีต่างกัน — ลงบัญชีไม่ได้จนกว่าจะแก้ให้ตรง
+    /// (รอบ 200 ฝ่ายค้าน X-1/X-3 · DECISIONS ข้อ 26 · <c>GatewayBatchIntentRules.PostingIssue</c>)</summary>
+    GatewayModeMismatch = 37,
 
     // ── แจ้งให้ทราบ (ไม่บล็อก) ──
     /// <summary>ยอด wallet ปลายรอบติดลบ — ยกไปหักรอบถัดไป (report-S1 G7)</summary>
@@ -563,8 +566,10 @@ public static class SettlementBatchMath
                 && (ThaiDate.CalendarDateUtc(t).Year != payDay.Year || ThaiDate.CalendarDateUtc(t).Month != payDay.Month))
             .ToList();
         if (off.Count == 0) return null;
+        // T-8 (ฝ่ายค้านรอบ 200): เรียงตาม (ปี, เดือน) ก่อนจัดรูป — เรียงข้อความ "MM/YYYY" ทำให้ 01/2569 มาก่อน 12/2568
         var months = off.Select(l => ThaiDate.CalendarDateUtc(l.TxnDate!.Value))
-            .Select(d => $"{d:MM}/{d.Year + 543}").Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
+            .Select(d => (d.Year, d.Month)).Distinct().OrderBy(m => m.Year).ThenBy(m => m.Month)
+            .Select(m => $"{m.Month:00}/{m.Year + 543}").ToList();
         var total = -off.Sum(l => l.Amount);
         return new SettlementPlanIssue(SettlementPlanIssueCode.FeeCutoffCrossesMonth, false,
             $"ค่าธรรมเนียม {off.Count} บรรทัด ยอด {total:N2} เกิดในเดือน {string.Join(", ", months)} แต่จะลงบัญชีเดือน {payDay:MM}/{payDay.Year + 543} "
@@ -597,6 +602,15 @@ public static class SettlementBatchMath
 
             // กลุ่มภาษีของก้อน = ชนิดที่มี VAT ตัวแรก (ประเภท+ผังเดียวกันใต้ช่องทางเดียวกันได้ชนิดเดียวอยู่แล้ว) · ไม่มี VAT ทั้งก้อน ⇒ NoVat
             var treatment = parts.Select(p => p.Tax.VatTreatment).FirstOrDefault(t => t != SettlementFeeVatTreatment.NoVat);
+            // ฝ่ายค้านรอบ 200 X-4: ภาษีหัก ณ ที่จ่ายคิดจาก "ฐานก่อน VAT รวมของบรรทัดใบ" ครั้งเดียว (บรรทัดใบ = บรรทัดบน 50 ทวิ) — เดิมรวม WHT ที่ปัดทีละรายการ
+            // (บรรทัดที่ระบุ VAT ต่อรายการ เช่นรอบโอนจาก PaymentIntent) ⇒ ค่าธรรมเนียม 3.65 × 100 รายการ ออกภาษีแทน 11.00 แทน 10.55 · VAT ยังต่อรายการ
+            var whtBase = parts.Sum(p => p.Sign * p.Tax.WhtBase);
+            var whtRate = parts.Select(p => p.Tax.WhtRatePercent).FirstOrDefault(r => r != 0m);
+            var whtModeOfLine = parts.Select(p => p.Tax.WhtMode).FirstOrDefault(m => m != SettlementFeeWhtMode.None);
+            var (whtAmount, whtCertIncome, whtBorne) = parts.Count > 1 && whtBase > 0m && whtRate > 0m
+                ? SettlementFeeTax.WhtOnBase(whtBase, whtRate, whtModeOfLine)
+                : (parts.Sum(p => p.Sign * p.Tax.WhtAmount), parts.Sum(p => p.Sign * p.Tax.WhtCertIncome),
+                    parts.Sum(p => p.Sign * p.Tax.WhtBorneExpense));
             result.Add(new FeeLineWithTreatment(treatment, new SettlementFeeDocumentLine(
                 g.Key.LineType, rule.LabelTh, role, accountId, SettlementAccountRoles.DefaultCode(role),
                 parts.Sum(p => p.Sign * p.Tax.Deducted),
@@ -605,10 +619,10 @@ public static class SettlementBatchMath
                 parts.Sum(p => p.Sign * p.Tax.Pp36Payable),
                 parts.Select(p => p.Tax.WhtIncomeCode).FirstOrDefault(c => c != null),
                 parts.Select(p => p.Tax.WhtRatePercent).FirstOrDefault(r => r != 0m),
-                parts.Sum(p => p.Sign * p.Tax.WhtBase),
-                parts.Sum(p => p.Sign * p.Tax.WhtAmount),
-                parts.Sum(p => p.Sign * p.Tax.WhtCertIncome),
-                parts.Sum(p => p.Sign * p.Tax.WhtBorneExpense),
+                whtBase,
+                whtAmount,
+                whtCertIncome,
+                whtBorne,
                 g.Select(l => l.Id).ToList())));
         }
         return result;

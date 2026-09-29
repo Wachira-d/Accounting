@@ -3720,7 +3720,25 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม I — ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ (review198-B R-B7–R-B11 · review198-A R-A9 · review198-S4 S4-3/S4-4):
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement (`erp-review/2026-09-29/review200-P2/T/V2.md` · DECISIONS ข้อ 25–27 ·
+รายงาน `erp-review/2026-09-29/team-SF.md`):
+- **X-1/X-3 (ข้อ 26)** `GatewayBatchIntentRules.ModeMismatch(…, companyVatRegistered)` นิยาม "ตรงกัน" = สองเส้น (รอบโอน gateway เดิม · รอบโอน settlement) ให้ผลภาษีเท่ากัน —
+  ช่องทาง ภ.พ.36 ไม่ตรงเสมอ · ไม่หัก ↔ W2 ไม่ตรง · ไม่จด VAT ⇒ คู่ VAT ไทยผ่าน · ตรวจเพิ่มที่ `ImportFileAsync` · `PaymentSettingsController.Save` (`ConfigChangeRefusal`) ·
+  **ด่านลงบัญชี** `BuildGateAsync` → `PostingIssue` (`GatewayModeMismatch` 37) — รอบโอนที่นำเข้าก่อนด่าน/ก่อนเปลี่ยนโหมดไม่ได้ภาษีซื้อแต่งขึ้นอีก ·
+  **X-10** บันทึกช่องทางตรวจเฉพาะเมื่อช่องทางใหม่/การผูกหรือโหมดเปลี่ยน (`ChannelModeTouched`) · แก้ถ้อยคำ team-P2 §5 "ต่างเป็นสตางค์"
+- **X-4** WHT ต่อบรรทัดใบค่าธรรมเนียมคิดจากฐานก่อน VAT รวมครั้งเดียว (`SettlementFeeTax.WhtOnBase` สูตรเดียว) — 3.65 × 100 ออกภาษีแทน 10.55 ไม่ใช่ 11.00 ·
+  **X-5** เติมรอบโอน gateway เดิมด้วยวันเงินเข้าอื่น ⇒ 400 `SETTLEMENT-GATEWAY-PAYOUT-DATE`
+- **T-1 (ข้อ 27)** รับชำระใบที่ตั้ง WHT ลูกค้าผ่านรอบโอน: `SettlementReceiptWht.Decide` — รับยอดสุทธิที่เหลือครบ ⇒ `WithholdingTaxAmount = null` (งวดสุดท้ายเดิมของ
+  `CreatePaymentAsync` ⇒ 11910 + ลูกหนี้ปิด) · รับบางส่วน ⇒ ด่านบล็อกพร้อมทางไปต่อ + builder ล้มดัง · ไม่มี WHT ⇒ 0 (เดิม C-12 ส่ง 0 ทุกครั้ง)
+- **T-2** ใบสรุปเพิ่มเติมที่ทุกบรรทัดเนื้อหาตรงรอบที่ออกใบแรก ⇒ `SummarySaleDuplicate` (`SettlementSummarySupplement.SplitDuplicates`) · **T-3** รอบก่อนหน้าวันเดียวกัน
+  ตัดสินจากยอดต่อกัน (`PickPrevious`) · **T-4** รอบก่อน 0/0 ⇒ เตือนไม่รู้ · **T-6** ทางไปต่อลบร่าง/ยกเลิกรอบแรก · **T-7** JE ที่มี JE ปรับปรุงอ้างเลขในช่องอ้างอิง ⇒ เลิกเตือน
+  (`LegacyMoneyLegAudit.AdjustedBy`) · **T-8** เรียงเดือนตามปฏิทิน · T-5 📋
+- **V2-C1 (ข้อ 25)** "ส่งลูกค้าแล้ว" = `Helpers/DocumentDeliveryEvidence` (บันทึกอีเมล/e-Tax by email สำเร็จ) แทนสถานะ `Sent` ที่ไม่มีผู้ประทับ · **V2-C2** ป้าย
+  `AckStatusLabel` · **V2-C3** `ChangeTracker.Clear()` ต้น lambda ของปุ่มรับรู้ + ยกเลิกการลงบัญชี · **V2-C4** กรองการรับชำระของรอบตายใน SQL · **V2-P1** การรับรู้ไม่ครอบ
+  รอบที่ใช้เลขรอบโอนเดียวกับรอบเจ้าของและนำเข้าหลังรับรู้ + audit `checkedBatchId` · **V2-P2** ตารางของกำพร้าไม่หายเมื่อกดลงบัญชีแล้วถูกบล็อก (หน้ารายงานช่องทาง 📋)
+- checker: แก้ literal ของแถวทีม W (`c.CountryCode` → `counterparty?.CountryCode` หลัง merge ทีม T) · เทสต์ `SettlementReview200SfTests` · TEST_PLAN SSF-01..15 — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม I — ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ (review198-B R-B7–R-B11 · review198-A R-A9 · review198-S4 S4-3/S4-4):
 - **R-B7** เลขรายการ/ออเดอร์/รอบโอนที่ Excel ปัดหลักแล้ว (`1.2345678901234568E+17` · `1.23457E+17`) ⇒ ล้มดังทั้งไฟล์ `id-precision` พร้อมทางไปต่อ ·
   xlsx เซลล์ตัวเลข ≥ 1e15 (double/decimal/long) คงรูป scientific ใน `SettlementFileReader.CellText` ให้ด่านเห็น (`SettlementValueParser.IdLostPrecision`)
 - **R-B8** `SettlementColumnMap.TimeZone` (Auto/Bangkok/Utc) + `Adapters/SettlementFileDecisions.DecideTimeZone` — offset ในค่าชนะเสมอ · หัวคอลัมน์ประกาศ (UTC · GMT+7 · ICT ·

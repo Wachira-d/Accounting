@@ -24,8 +24,28 @@ public static class LegacyMoneyLegAudit
 
     private const string Fix =
         "ให้นักบัญชีตรวจ — ระบบไม่แก้อัตโนมัติ (JE ในงวดที่ปิด/ยื่นภาษีแล้วห้ามแก้เงียบ) · ถ้ายืนยันว่าลงผิดผัง: บันทึก JE ปรับปรุงในงวดปัจจุบัน "
-        + "ย้ายยอดจากผังนี้ไปผังที่ถูก (บัญชีธนาคารที่รับเงินจริง · 11340 ลูกหนี้บัตรเครดิต/ผู้ให้บริการรับชำระ · 11310 ลูกหนี้การค้า) พร้อมอ้างเลข JE นี้ · "
+        + "ย้ายยอดจากผังนี้ไปผังที่ถูก (บัญชีธนาคารที่รับเงินจริง · 11340 ลูกหนี้บัตรเครดิต/ผู้ให้บริการรับชำระ · 11310 ลูกหนี้การค้า) "
+        + "โดยใส่เลข JE นี้ในช่อง \"อ้างอิง\" ของ JE ปรับปรุง (หน้าสมุดรายวัน) — ระบบเลิกเตือน JE นี้เมื่อพบ JE ที่โพสต์แล้วและอ้างเลขนี้ตรงตัว (หรือกลับรายการ JE นี้แล้วลงใหม่) · "
         + "ถ้าผังนี้ถูกตั้งใจ (เช่นปักผังลูกหนี้ไว้บนลูกค้า) ไม่ต้องทำอะไร";
+
+    /// <summary>JE ที่อ้างเลขในช่องอ้างอิง (ผู้เรียกกรองมาแล้ว: บริษัทเดียวกัน · โพสต์แล้ว · ไม่ถูกกลับรายการ)</summary>
+    public sealed record AdjustingEntry(Guid Id, string EntryNumber, string? Reference);
+
+    /// <summary>
+    /// **JE เก่าที่ถูกฟ้องได้รับการปรับปรุงแล้วหรือยัง — ตัดสินจากหลักฐาน** (ฝ่ายค้านรอบ 200 T-7: ทำตาม Fix แล้วคำเตือนไม่เคยหาย = ฟ้องใบที่จัดการแล้ว ·
+    /// F2 ข้อ 8) — หลักฐาน = JE <b>อื่น</b>ที่โพสต์แล้ว/ไม่ถูกกลับรายการ ซึ่งช่อง <c>Reference</c> เท่ากับเลข JE นี้<b>ตรงตัว</b> (ตัดช่องว่าง · ไม่ fuzzy ·
+    /// ไม่ค้นในคำอธิบาย — F2 ข้อ 3 ตัวเลขล้วนไม่มีการสะกดผิด) · คืนเลข JE ปรับปรุง · null = ยังไม่มีหลักฐาน (ยังเตือน) · pure
+    /// </summary>
+    public static string? AdjustedBy(Guid entryId, string entryNumber, IEnumerable<AdjustingEntry> candidates)
+    {
+        var no = (entryNumber ?? "").Trim();
+        if (no.Length == 0) return null;
+        return candidates
+            .Where(c => c.Id != entryId && string.Equals((c.Reference ?? "").Trim(), no, StringComparison.Ordinal))
+            .Select(c => c.EntryNumber)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .FirstOrDefault();
+    }
 
     /// <param name="journalDescription"><c>JournalEntry.Description</c></param>
     /// <param name="lineDescription"><c>JournalEntryLine.Description</c></param>
