@@ -3842,4 +3842,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K2 — แ�
   (`OCR-NO-COUNTERPARTY` · `OCR-SCAN-NOT-COMPLETED`) · **C-05** AI เติมชื่อ/เลขผู้ซื้อ · **C-06** ปิดลูปบทบาทเราบนเส้น 1-click (`OcrAiLabelScope.ImplicitMayRecord`) ·
   **C-07** สองปุ่มผ่าน `API.post` · **C-08** ประเภทเงินได้ไม่ล้างเงียบ (`_whtIncomeTypePayload` · ไม่แคชความล้มเหลว · sim ใหม่) ·
   **C-09** `Helpers/OcrCurrencyEvidence` + `[CURRENCY-UNSURE]` (blocking) · **C-10** `AwayFromZero` 13 จุด + `tools/ocr_round_midpoint_check.py`
-- เทสต์ `OcrReview200K2Tests` · sim `tools/wht_income_type_payload_sim.js` · required_call_site +9 แถว/ปรับ 1 · ยังไม่ได้คอมไพล์ — commit <pending>)_
+- เทสต์ `OcrReview200K2Tests` · sim `tools/wht_income_type_payload_sim.js` · required_call_site +9 แถว/ปรับ 1 · ยังไม่ได้คอมไพล์ — commit fb459244)_

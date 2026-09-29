@@ -125,8 +125,8 @@ P0 ที่ยังจริงเมื่อเริ่ม: **G2-02** (stor
 ## 4. ส่งต่อทีมอื่น (อยู่ในไฟล์ที่ทีมอื่นถือ — ไม่แตะ)
 | ID | P | ส่งทีม | เหตุ |
 |---|---|---|---|
-| C-01 · C-02 · C-03 | P1 | **K** (OCR) | อยู่ใน `OcrService.cs` / `document-scan.html` เส้นสแกน — ✅ <pending> ทีม K2 (`team-K2.md`) |
-| C-05 · C-06 · C-07 · C-08 · C-09 · C-10 | P2/P3 | **K** | `OcrService.cs` / `Helpers/Ocr*` / `document-scan.html` — ✅ <pending> ทีม K2 (C-07/C-09 บางส่วนเป็น 📋 ดู `team-K2.md`) |
+| C-01 · C-02 · C-03 | P1 | **K** (OCR) | อยู่ใน `OcrService.cs` / `document-scan.html` เส้นสแกน — ✅ fb459244 ทีม K2 (`team-K2.md`) |
+| C-05 · C-06 · C-07 · C-08 · C-09 · C-10 | P2/P3 | **K** | `OcrService.cs` / `Helpers/Ocr*` / `document-scan.html` — ✅ fb459244 ทีม K2 (C-07/C-09 บางส่วนเป็น 📋 ดู `team-K2.md`) |
 
 ## 5. backlog 📋 (ยังจริง · ใหญ่เกินรอบนี้ หรือไม่ใช่เงิน/ภาษีหลัก)
 | ID | P | ทำไมไม่แก้รอบนี้ · แผน |
