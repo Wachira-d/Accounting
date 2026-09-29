@@ -71,6 +71,7 @@ public class SettlementReview198S5Tests
     private static SettlementPostingFacts WithOrphans(SettlementPostingFacts f, SettlementOrphanTriageResult t) => f with
     {
         OrphanArtifacts = t.Voidable, UnvoidableOrphans = t.Unvoidable, OrphanNeedsAction = t.NeedsUserAction,
+        AcknowledgedOrphans = t.Acknowledged,
     };
 
     // ═════════════ S4-1: "ด่านยกเลิกการลงบัญชีปฏิเสธ" ≠ "ระบบยกเลิกไม่ได้" ═════════════
@@ -95,8 +96,10 @@ public class SettlementReview198S5Tests
         Assert.Equal(block.NextStep, issue.NextStep);
     }
 
+    /// <summary>รอบ 200 (DECISIONS ข้อ 10) เปลี่ยนความหมาย: เดิม "ยกเลิกไม่ได้จริง = เตือนไม่บล็อก" (กดลงบัญชีทับได้โดยไม่มีใครตรวจรายการซ้ำ) ⇒
+    /// ยังไม่มีคนรับรู้ = บล็อก ทางไปต่อ = "รับรู้ของกำพร้า" · รับรู้แล้ว = ไม่บล็อก ⇒ ช่องทางไม่ถูกล็อกตลอดไป (เจตนาเดิมของเทสต์นี้ยังอยู่)</summary>
     [Fact]
-    public void S41_ทิศตรงข้าม_ใบกำพร้าที่eTaxตอบรับแล้ว_เตือนไม่บล็อก_ช่องทางไม่ถูกล็อกตลอดไป()
+    public void S41_ทิศตรงข้าม_ใบกำพร้าที่eTaxตอบรับแล้ว_บล็อกจนรับรู้_รับรู้แล้วช่องทางไม่ถูกล็อกตลอดไป()
     {
         var t = Triage(new[] { FeeDoc(etaxAccepted: true) }, Array.Empty<SettlementUnpostPayment>(), NothingFiled);
         Assert.Empty(t.NeedsUserAction);
@@ -108,8 +111,19 @@ public class SettlementReview198S5Tests
         var (plan, facts) = NewBatch();
         Assert.True(SettlementPostingGate.Evaluate(plan, facts).CanPost);           // ฐาน: ไม่มีของกำพร้า ลงได้
         var gated = SettlementPostingGate.Evaluate(plan, WithOrphans(facts, t));
-        Assert.True(gated.CanPost);
-        Assert.False(Assert.Single(gated.Issues, i => i.Code == SettlementPlanIssueCode.OrphanPostingArtifacts).Blocking);
+        Assert.False(gated.CanPost);
+        var issue = Assert.Single(gated.Issues, i => i.Code == SettlementPlanIssueCode.OrphanPostingArtifacts);
+        Assert.True(issue.Blocking);
+        Assert.Contains("รับรู้ของกำพร้า", issue.NextStep);
+
+        var ack = new SettlementOrphanAck(Guid.NewGuid(), "ผู้ทำบัญชี ก", Day, "ตรวจแล้วรอบใหม่ไม่ซ้ำ");
+        var acked = SettlementOrphanTriage.Split(new[] { Orphan(DocB, false, "PV-0009") with { Ack = ack } },
+            SettlementUnpostGate.Evaluate(new[] { FeeDoc(etaxAccepted: true) }, Array.Empty<SettlementUnpostCertificate>(), NothingFiled),
+            new[] { FeeDoc(etaxAccepted: true) });
+        Assert.Empty(acked.Unvoidable);
+        var open = SettlementPostingGate.Evaluate(plan, WithOrphans(facts, acked));
+        Assert.True(open.CanPost);
+        Assert.False(Assert.Single(open.Issues, i => i.Code == SettlementPlanIssueCode.OrphanPostingArtifacts).Blocking);
     }
 
     [Fact]

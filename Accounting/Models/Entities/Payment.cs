@@ -106,6 +106,15 @@ public class Payment : TenantEntity
     /// ใบเสร็จรับเงิน"). ตอน void payment → ใบเสร็จนี้ถูก void ตามด้วย.</summary>
     public Guid? ReceiptDocumentId { get; set; }
 
+    /// <summary>"รับรู้ของกำพร้า" (รอบ 200 · DECISIONS ข้อ 10): การรับชำระที่การลงบัญชีรอบโอนบันทึกให้รอบที่ถูกยกเลิกไปแล้ว และ<b>ยกเลิกไม่ได้จริง</b>
+    /// (ใบเสร็จอัตโนมัติคู่กัน e-Tax ตอบรับแล้ว) — ผู้มีสิทธิ์ลงบัญชีรอบโอนรับรู้พร้อมเหตุผลแล้ว ⇒ ไม่บล็อกการลงบัญชีของช่องทางนั้นอีก ·
+    /// ประทับผ่าน <c>SettlementPostingService.AcknowledgeOrphanAsync</c> เท่านั้น (+ audit chain) · null = ยังไม่รับรู้</summary>
+    public DateTime? SettlementOrphanAckAt { get; set; }
+    /// <summary>ผู้รับรู้ของกำพร้า (user id) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
+    public Guid? SettlementOrphanAckBy { get; set; }
+    /// <summary>เหตุผลที่รับรู้ของกำพร้า (บังคับ) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
+    public string? SettlementOrphanAckReason { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list

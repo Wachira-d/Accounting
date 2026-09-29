@@ -354,65 +354,217 @@ public static class SettlementUnpostGate
     private static string Period(DateTime d) => $"{d:MM}/{d.Year + 543}";
 }
 
+/// <summary>การ "รับรู้ของกำพร้า" ที่ประทับไว้บนเอกสาร/การรับชำระ (รอบ 200 · DECISIONS ข้อ 10) — ผู้/เวลา/เหตุผล · ใช้ได้เฉพาะชิ้นที่<b>ยกเลิกไม่ได้จริง</b></summary>
+/// <param name="ByName">ชื่อผู้รับรู้ (สมาชิกบริษัทนี้) — null = หาชื่อไม่เจอ (แสดง id แทน · ไม่เดา)</param>
+public sealed record SettlementOrphanAck(Guid ByUserId, string? ByName, DateTime At, string Reason);
+
 /// <summary>ของกำพร้า 1 ชิ้น — เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้ว และยังไม่ถูกยกเลิก (C-1(d))</summary>
 /// <param name="BatchId">รอบโอนเจ้าของ (ที่ถูกยกเลิก/ลบแล้ว)</param>
-public sealed record SettlementOrphanArtifact(Guid Id, Guid BatchId, string PayoutRef, bool IsPayment, string? Number);
+/// <param name="Ack">การรับรู้ที่ประทับไว้ (<c>SettlementOrphanAck*</c> บนแถว) · null = ยังไม่มีใครรับรู้</param>
+public sealed record SettlementOrphanArtifact(Guid Id, Guid BatchId, string PayoutRef, bool IsPayment, string? Number,
+    SettlementOrphanAck? Ack = null);
+
+/// <summary>ใบที่อ้างของกำพร้า (เอกสารลูก · ใบลดหนี้/ใบเพิ่มหนี้อ้างเลขที่ — ชุดเดียวกับ <see cref="DocumentVoidPreconditions.ChildFactsAsync"/>) พร้อมข้อเท็จจริงว่า
+/// ใบนั้น<b>เอง</b>ยกเลิกได้ไหม (รอบ 200 ทีม V2 · review198-S4 S4-1 "ความเสี่ยงที่เหลือ")</summary>
+/// <param name="EtaxAccepted">e-Tax ของใบที่อ้างได้รับตอบรับจากกรมสรรพากรแล้ว</param>
+/// <param name="InLockedReport">ใบที่อ้างอยู่ในรายงานภาษีที่ล็อกการยื่น (<c>FilingLockedAt</c>)</param>
+/// <param name="SentToCustomer">ใบที่อ้างส่งให้ลูกค้าแล้ว (<c>DocumentStatus.Sent</c>) — DECISIONS ข้อ 10 นับเป็นยกเลิกไม่ได้ (ใบลดหนี้ที่ลูกค้าถือไว้แล้ว
+/// ต้องคงไว้ แล้วปรับปรุงในงวดปัจจุบัน — ทางไปต่อเดิมของ <see cref="SettlementUnpostGate"/>)</param>
+/// <param name="WhtFiled">เหตุจาก <see cref="WhtCertVoidGuard.CheckDocumentAsync"/> ของใบที่อ้าง (50 ทวิ อยู่ในแบบที่ยื่นแล้ว) · null = ไม่มี</param>
+public sealed record SettlementOrphanChild(Guid ParentId, Guid ChildId, DocumentType Type, string? Number,
+    bool EtaxAccepted, bool InLockedReport, bool SentToCustomer, string? WhtFiled = null);
 
 /// <summary>ของกำพร้าที่ต้องให้คนจัดการก่อนยกเลิก — บล็อกพร้อมทางไปต่อของชิ้นนั้น (review198-S4 S4-1)</summary>
-public sealed record SettlementOrphanBlock(string Why, string NextStep);
+public sealed record SettlementOrphanBlock(string Why, string NextStep, Guid? ArtifactId = null);
+
+/// <summary>กองของของกำพร้า 1 ชิ้น</summary>
+public enum SettlementOrphanPile
+{
+    /// <summary>ยกเลิกทีละใบได้ทันที ⇒ บล็อก</summary>
+    Voidable = 0,
+    /// <summary>ยกเลิกได้เมื่อคนทำขั้นก่อน ⇒ บล็อก + ทางไปต่อรายชิ้น</summary>
+    NeedsUserAction = 1,
+    /// <summary>ยกเลิกไม่ได้จริง ⇒ บล็อกจนกว่าจะมีคน "รับรู้" (DECISIONS ข้อ 10) · รับรู้แล้ว ⇒ แสดงผู้รับรู้ ไม่บล็อก</summary>
+    Unvoidable = 2,
+}
+
+/// <summary>ของกำพร้า 1 ชิ้นสำหรับหน้าจอ (ลิงก์ · กอง · เหตุ · ผู้รับรู้ · ปุ่มรับรู้)</summary>
+/// <param name="CanAcknowledge">กองยกเลิกไม่ได้จริงและยังไม่มีคนรับรู้ ⇒ หน้าจอแสดงปุ่ม "รับรู้ของกำพร้า" (สิทธิ์ตรวจซ้ำที่ server)</param>
+public sealed record SettlementOrphanItem(Guid Id, bool IsPayment, string? Number, string PayoutRef, SettlementOrphanPile Pile,
+    string Why, string NextStep, SettlementOrphanAck? Ack, bool CanAcknowledge)
+{
+    /// <summary>ป้ายไทยของกอง — หน้าเว็บไม่มีตารางป้ายเอง (F2 ข้อ 5)</summary>
+    public string PileLabel => Pile switch
+    {
+        SettlementOrphanPile.Unvoidable => "ยกเลิกไม่ได้จริง",
+        SettlementOrphanPile.NeedsUserAction => "ต้องทำขั้นก่อนแล้วยกเลิก",
+        _ => "ยกเลิกได้ที่หน้าเอกสาร",
+    };
+}
 
 /// <summary>ผลการแยกของกำพร้า 3 กอง</summary>
 /// <param name="Voidable">ยกเลิกทีละใบได้ทันที ⇒ บล็อก (ทางไปต่อทั่วไป: ยกเลิกที่หน้าเอกสาร)</param>
 /// <param name="NeedsUserAction">ยกเลิกได้เมื่อคนทำขั้นก่อน (เอกสารลูก/ใบลดหนี้อ้าง · ภาษีเดือนที่ประกาศว่ายื่นแล้ว) ⇒ บล็อก + ทางไปต่อรายชิ้น</param>
-/// <param name="Unvoidable">ยกเลิกไม่ได้จริง (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว) ⇒ เตือน ไม่บล็อก (บล็อก = ช่องทางนี้ลงบัญชีไม่ได้อีกเลย)</param>
+/// <param name="Unvoidable">ยกเลิกไม่ได้จริง (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้) <b>และยังไม่มีคนรับรู้</b> ⇒ บล็อก
+/// (ทางไปต่อ = รับรู้ของกำพร้า · รอบ 200 DECISIONS ข้อ 10 — เดิม S4 เตือนเฉย ๆ ⇒ กดลงบัญชีทับได้โดยไม่มีใครตรวจรายการซ้ำ)</param>
+/// <param name="Acknowledged">ยกเลิกไม่ได้จริงและรับรู้แล้ว (ผู้/เวลา/เหตุผล) ⇒ แสดง ไม่บล็อก</param>
+/// <param name="Items">ทุกชิ้นรายตัว (ทุกกอง) สำหรับหน้าจอ + ด่านของปุ่มรับรู้ (<see cref="SettlementOrphanTriage.AckRefusal"/>)</param>
 public sealed record SettlementOrphanTriageResult(
-    IReadOnlyList<string> Voidable, IReadOnlyList<SettlementOrphanBlock> NeedsUserAction, IReadOnlyList<string> Unvoidable);
+    IReadOnlyList<string> Voidable, IReadOnlyList<SettlementOrphanBlock> NeedsUserAction, IReadOnlyList<string> Unvoidable,
+    IReadOnlyList<string>? Acknowledged = null, IReadOnlyList<SettlementOrphanItem>? Items = null);
 
 /// <summary>
 /// **แยกของกำพร้าตาม "ยกเลิกได้จริงไหม" ไม่ใช่ "ด่านยกเลิกการลงบัญชีปฏิเสธไหม"** (review198-S4 S4-1)
 /// <para>ที่มา: S3-6 ใช้ "ชิ้นที่ <see cref="SettlementUnpostGate"/> ปฏิเสธ" เป็นนิยามของ "ระบบยกเลิกไม่ได้" แล้วลดเป็นคำเตือน — แต่ด่านนั้น<b>เข้มกว่า</b>
 /// <c>VoidDocumentAsync/VoidPaymentAsync</c> โดยตั้งใจ (กันกลับภาษีเดือนที่ประกาศว่ายื่นแล้วทั้งรอบ) ⇒ ใบค่าธรรมเนียมกำพร้าในเดือนที่ ภ.พ.30 ประกาศแล้ว
 /// (ยกเลิกทีละใบได้จริง) ถูกลดเป็นคำเตือน ⇒ ลงบัญชีรอบใหม่ทับ = ค่าใช้จ่าย/ภาษีซื้อ/50 ทวิ ซ้ำ (ใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น)</para>
-/// <para>กติกา: ชิ้นที่มีเหตุ <see cref="SettlementUnpostRefusalKind.Unvoidable"/> อย่างน้อยหนึ่งข้อ ⇒ เตือน · มีแต่
-/// <see cref="SettlementUnpostRefusalKind.NeedsUserAction"/> ⇒ บล็อกพร้อมทางไปต่อที่ตรงเหตุ · ไม่มีเหตุ ⇒ บล็อก (ยกเลิกได้ทันที) · G6: pure</para>
+/// <para>กติกา: ชิ้นที่มีเหตุ <see cref="SettlementUnpostRefusalKind.Unvoidable"/> อย่างน้อยหนึ่งข้อ <b>หรือมีใบที่อ้างซึ่งใบนั้นเองยกเลิกไม่ได้</b>
+/// (<see cref="ChildUnvoidableReason"/> · รอบ 200 ทีม V2 — เดิมตกกอง "ต้องให้คนทำก่อน" ทั้งที่ขั้นก่อนทำไม่ได้ ⇒ ช่องทางบล็อกถาวร) ⇒ ยกเลิกไม่ได้จริง ·
+/// ยังไม่รับรู้ = บล็อก · รับรู้แล้ว = แสดง · มีแต่ <see cref="SettlementUnpostRefusalKind.NeedsUserAction"/> ⇒ บล็อกพร้อมทางไปต่อที่ตรงเหตุ ·
+/// ไม่มีเหตุ ⇒ บล็อก (ยกเลิกได้ทันที) · การรับรู้ที่ค้างบนชิ้นซึ่ง<b>ตอนนี้ยกเลิกได้แล้ว</b> ไม่มีผล (บอกบนข้อความ) · G6: pure</para>
 /// </summary>
 public static class SettlementOrphanTriage
 {
+    /// <summary>ความยาวสูงสุดของเหตุผลการรับรู้ (กันข้อความยาวผิดปกติ)</summary>
+    public const int AckReasonMaxLength = 1000;
+
     public static SettlementOrphanTriageResult Split(IReadOnlyList<SettlementOrphanArtifact> artifacts,
-        IReadOnlyList<SettlementUnpostRefusal> refusals, IReadOnlyList<SettlementUnpostDocument> documents)
+        IReadOnlyList<SettlementUnpostRefusal> refusals, IReadOnlyList<SettlementUnpostDocument> documents,
+        IReadOnlyList<SettlementOrphanChild>? children = null)
     {
         var byArtifact = refusals.Where(r => r.ArtifactId != null).GroupBy(r => r.ArtifactId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
         var voidBlockOf = documents.Where(d => d.VoidBlock != null).GroupBy(d => d.Id).ToDictionary(g => g.Key, g => g.First().VoidBlock!);
+        // รอบ 200: ใบที่อ้างซึ่งตัวเองยกเลิกไม่ได้ ⇒ ใบกำพร้ายกเลิกไม่ได้ด้วย (ต้องยกเลิกใบที่อ้างก่อน — ทำไม่ได้)
+        var childHardOf = (children ?? Array.Empty<SettlementOrphanChild>())
+            .Select(c => (c.ParentId, Why: ChildUnvoidableReason(c))).Where(x => x.Why != null)
+            .GroupBy(x => x.ParentId).ToDictionary(g => g.Key, g => g.Select(x => x.Why!).Distinct().ToList());
         var voidable = new List<string>();
         var needs = new List<SettlementOrphanBlock>();
         var hard = new List<string>();
+        var acked = new List<string>();
+        var items = new List<SettlementOrphanItem>();
         foreach (var g in artifacts.GroupBy(a => (a.BatchId, a.IsPayment)))
         {
             var what = g.Key.IsPayment ? "การรับชำระ" : "เอกสาร";
             var payoutRef = g.First().PayoutRef;
-            var open = g.Where(a => !byArtifact.ContainsKey(a.Id)).Select(a => a.Number).ToList();
+            var open = g.Where(a => !Judged(a, byArtifact, childHardOf)).ToList();
             if (open.Count > 0)
-                voidable.Add($"{what} {string.Join(", ", open)} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก");
-            foreach (var a in g.Where(a => byArtifact.ContainsKey(a.Id)))
             {
-                var rs = byArtifact[a.Id];
+                var line = $"{what} {string.Join(", ", open.Select(a => a.Number))} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว) ยังไม่ถูกยกเลิก"
+                    + (open.Any(a => a.Ack != null) ? StaleAckNote : "");
+                voidable.Add(line);
+                foreach (var a in open)
+                    items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.Voidable, line,
+                        VoidableNextStep, a.Ack, false));
+            }
+            foreach (var a in g.Where(a => Judged(a, byArtifact, childHardOf)))
+            {
+                var rs = byArtifact.GetValueOrDefault(a.Id) ?? new List<SettlementUnpostRefusal>();
                 var head = $"{what} {a.Number} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว)";
-                var hardReasons = rs.Where(r => r.Kind == SettlementUnpostRefusalKind.Unvoidable).Select(r => r.Reason).Distinct().ToList();
+                var childHard = a.IsPayment ? new List<string>() : childHardOf.GetValueOrDefault(a.Id) ?? new List<string>();
+                var hardReasons = rs.Where(r => r.Kind == SettlementUnpostRefusalKind.Unvoidable).Select(r => r.Reason)
+                    .Concat(childHard).Distinct().ToList();
                 if (hardReasons.Count > 0)
                 {
-                    hard.Add($"{head} ยกเลิกในระบบไม่ได้แล้ว: {string.Join(" · ", hardReasons)}");
+                    var msg = $"{head} ยกเลิกในระบบไม่ได้แล้ว: {string.Join(" · ", hardReasons)}";
+                    if (a.Ack is SettlementOrphanAck ack)
+                    {
+                        var shown = msg + " — " + AckLabel(ack);
+                        acked.Add(shown);
+                        items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.Unvoidable, shown,
+                            AcknowledgedNextStep, ack, false));
+                    }
+                    else
+                    {
+                        hard.Add(msg);
+                        items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.Unvoidable, msg,
+                            UnacknowledgedNextStep, null, true));
+                    }
                     continue;
                 }
                 var reasons = rs.Select(r => r.Reason).Distinct().ToList();
                 var block = voidBlockOf.GetValueOrDefault(a.Id);
-                needs.Add(new SettlementOrphanBlock(
-                    $"{head} ยังไม่ถูกยกเลิก และต้องจัดการก่อนยกเลิก: {string.Join(" · ", reasons)}",
-                    NextStep(a.IsPayment, block != null, reasons.Any(r => r != block))));
+                var why = $"{head} ยังไม่ถูกยกเลิก และต้องจัดการก่อนยกเลิก: {string.Join(" · ", reasons)}" + (a.Ack != null ? StaleAckNote : "");
+                var next = NextStep(a.IsPayment, block != null, reasons.Any(r => r != block));
+                needs.Add(new SettlementOrphanBlock(why, next, a.Id));
+                items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.NeedsUserAction, why, next,
+                    a.Ack, false));
             }
         }
-        return new SettlementOrphanTriageResult(voidable, needs, hard);
+        return new SettlementOrphanTriageResult(voidable, needs, hard, acked, items);
     }
+
+    /// <summary>ชิ้นนี้มีเหตุให้ตัดสินรายชิ้นไหม (ด่านยกเลิกการลงบัญชีปฏิเสธ หรือมีใบที่อ้างซึ่งยกเลิกไม่ได้) — ไม่มี = กองยกเลิกได้ทันที</summary>
+    private static bool Judged(SettlementOrphanArtifact a, Dictionary<Guid, List<SettlementUnpostRefusal>> byArtifact,
+        Dictionary<Guid, List<string>> childHardOf)
+        => byArtifact.ContainsKey(a.Id) || (!a.IsPayment && childHardOf.ContainsKey(a.Id));
+
+    /// <summary>
+    /// **ใบที่อ้างของกำพร้า "เอง" ยกเลิกไม่ได้เพราะอะไร** — null = ยกเลิกได้ (ทางไปต่อ "ยกเลิกใบที่อ้างก่อน" ยังใช้ได้) · ชุดเดียวกับ
+    /// <see cref="SettlementUnpostRefusalKind.Unvoidable"/> (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว) + ส่งให้ลูกค้าแล้ว (DECISIONS ข้อ 10) · pure
+    /// </summary>
+    internal static string? ChildUnvoidableReason(SettlementOrphanChild c)
+    {
+        var reasons = new List<string>();
+        if (c.EtaxAccepted) reasons.Add("e-Tax ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)");
+        if (c.InLockedReport) reasons.Add("อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว");
+        if (!string.IsNullOrWhiteSpace(c.WhtFiled)) reasons.Add(c.WhtFiled!);
+        if (c.SentToCustomer) reasons.Add("ส่งให้ลูกค้าแล้ว");
+        if (reasons.Count == 0) return null;
+        var what = c.Type switch
+        {
+            DocumentType.CreditNote => "ใบลดหนี้",
+            DocumentType.DebitNote => "ใบเพิ่มหนี้",
+            _ => "เอกสาร",
+        };
+        return $"{what} {c.Number} ที่อ้างใบนี้ยกเลิกไม่ได้ ({string.Join(" · ", reasons)}) จึงยกเลิกใบนี้ไม่ได้ด้วย";
+    }
+
+    /// <summary>
+    /// **ด่านของปุ่ม "รับรู้ของกำพร้า"** (DECISIONS ข้อ 10) — รับรู้ได้เฉพาะชิ้นในกองยกเลิกไม่ได้จริง · null = รับรู้ได้ (รวมกรณีรับรู้ไว้แล้ว — ผู้เรียกตอบซ้ำแบบ
+    /// idempotent) · กองอื่น = ข้อความพร้อมทางไปต่อของกองนั้น (รับรู้แทนการยกเลิก = ลงบัญชีซ้ำ) · pure
+    /// </summary>
+    public static string? AckRefusal(SettlementOrphanTriageResult triage, Guid artifactId, bool isPayment)
+    {
+        var item = (triage.Items ?? Array.Empty<SettlementOrphanItem>()).FirstOrDefault(i => i.Id == artifactId && i.IsPayment == isPayment);
+        if (item == null)
+            return "รายการนี้ไม่ใช่ของกำพร้าแล้ว (ถูกยกเลิกไปแล้ว หรือรอบโอนเจ้าของยังไม่ถูกยกเลิก) — ไม่มีอะไรต้องรับรู้ · ดูตัวอย่างการลงบัญชีใหม่";
+        return item.Pile switch
+        {
+            SettlementOrphanPile.Unvoidable => null,
+            SettlementOrphanPile.NeedsUserAction => "รายการนี้ยังยกเลิกได้เมื่อทำขั้นก่อนหน้า — รับรู้ได้เฉพาะรายการที่ยกเลิกไม่ได้จริง "
+                + "(e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้) · ทางไปต่อ: " + item.NextStep,
+            _ => "รายการนี้ยกเลิกทีละรายการได้ที่หน้าเอกสาร — ให้ยกเลิกแทนการรับรู้ (ปล่อยไว้แล้วลงบัญชีรอบใหม่ทับ = ค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ)",
+        };
+    }
+
+    /// <summary>เหตุผลของการรับรู้ใช้ได้ไหม — null = ใช้ได้ · pure</summary>
+    public static string? AckReasonProblem(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "ระบุเหตุผลที่รับรู้ของกำพร้า (เช่น ตรวจแล้วรอบใหม่ไม่มีรายการซ้ำกับรอบที่ยกเลิก หรือปรับปรุงส่วนที่ซ้ำแล้วที่ใบสำคัญเลขที่ใด) — ผู้สอบบัญชีต้องเห็นเหตุผล";
+        if (reason.Trim().Length > AckReasonMaxLength)
+            return $"เหตุผลยาวเกิน {AckReasonMaxLength} ตัวอักษร — สรุปให้สั้นลง (รายละเอียดแนบเป็นไฟล์ที่เอกสารได้)";
+        return null;
+    }
+
+    /// <summary>ป้าย "รับรู้แล้วโดย … เมื่อ … เหตุผล …"</summary>
+    internal static string AckLabel(SettlementOrphanAck ack)
+        => $"รับรู้แล้วโดย {ack.ByName ?? ack.ByUserId.ToString()} เมื่อ {ThaiDate.ToThaiDisplayString(ack.At)} · เหตุผล: {ack.Reason}";
+
+    private const string StaleAckNote = " (เคยมีการรับรู้ไว้ แต่ตอนนี้รายการนี้ยกเลิกได้แล้ว — การรับรู้เดิมไม่มีผล)";
+
+    private const string VoidableNextStep = "ยกเลิกรายการนี้ที่หน้าเอกสาร (รอบโอนเจ้าของถูกยกเลิกแล้ว ระบบยกเลิกทีละรายการให้ได้) แล้วดูตัวอย่างใหม่";
+
+    /// <summary>ทางไปต่อของกองยกเลิกไม่ได้ที่ยังไม่รับรู้ — ใช้ทั้งบนหน้าจอและในด่านลงบัญชี (<see cref="SettlementPostingGate"/>)</summary>
+    internal const string UnacknowledgedNextStep = "ตรวจว่ารอบโอนนี้ไม่มีรายการเดียวกับรอบที่ยกเลิก (ถ้ามี ให้จัดประเภทบรรทัดที่ซ้ำเป็นรายการปรับปรุง หรือออกใบลดหนี้/ใบเพิ่มหนี้อ้างเอกสารนั้น) "
+        + "แล้วกด “รับรู้ของกำพร้า” ที่รายการนั้นพร้อมเหตุผล (ต้องมีสิทธิ์ลงบัญชีรอบโอน · ระบบบันทึกผู้/เวลา/เหตุผลบนเอกสารและ audit) แล้วดูตัวอย่างใหม่ · "
+        + "ระบบบล็อกไว้จนกว่าจะมีคนรับรู้ เพราะใบค่าธรรมเนียมไม่มีตัวกันซ้ำอื่น (ปล่อยผ่านเงียบ = ค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ)";
+
+    /// <summary>ทางไปต่อของกองยกเลิกไม่ได้ที่รับรู้แล้ว (ไม่บล็อก)</summary>
+    internal const string AcknowledgedNextStep = "รับรู้แล้ว ระบบไม่บล็อกการลงบัญชีของช่องทางนี้เพราะรายการนี้อีก — ถ้ารอบนี้มีรายการเดียวกับรอบที่ยกเลิก "
+        + "ให้จัดประเภทบรรทัดที่ซ้ำเป็นรายการปรับปรุง หรือออกใบลดหนี้/ใบเพิ่มหนี้อ้างเอกสารนั้น (ไม่งั้นค่าธรรมเนียม/ภาษีซื้อ/รายได้ซ้ำ)";
 
     /// <summary>ทางไปต่อของของกำพร้าที่ยกเลิกได้เมื่อคนทำขั้นก่อน — ตรงเหตุ (ไม่ใช่ "ยกเลิกการลงบัญชีทั้งรอบไม่ได้" ของด่าน Unpost)</summary>
     private static string NextStep(bool isPayment, bool hasChildBlock, bool hasTaxPeriodReason)
@@ -466,7 +618,7 @@ public static class SettlementUnpostScope
 /// </summary>
 public static class SettlementArtifactGuard
 {
-    private const string MarkerHead = "[SETTLEMENT:";
+    private const string MarkerHead = SettlementPostingKeys.PaymentMarkerHead;
 
     /// <summary>รอบโอนเจ้าของเอกสาร จาก <c>Document.CreatedBy</c> (<see cref="SettlementPostingKeys.CreatorPrefix"/>) — ไม่ใช่ของรอบโอน = null</summary>
     public static Guid? BatchIdFromCreator(string? createdBy)

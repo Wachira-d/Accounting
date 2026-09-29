@@ -389,6 +389,30 @@ public class SettlementController : ControllerBase
         catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
     }
 
+    /// <param name="ArtifactId">id ของเอกสาร (<c>IsPayment=false</c>) หรือการรับชำระ (<c>IsPayment=true</c>) ที่เป็นของกำพร้า</param>
+    public sealed record OrphanAckRequest(Guid ArtifactId, bool IsPayment, string? Reason);
+
+    /// <summary>**รับรู้ของกำพร้า** (รอบ 200 · DECISIONS ข้อ 10) — เฉพาะชิ้นที่ยกเลิกไม่ได้จริงของรอบโอนที่ถูกยกเลิกแล้ว · บังคับเหตุผล · ประทับผู้/เวลา/เหตุผล
+    /// บนแถว + audit chain ⇒ ไม่บล็อกการลงบัญชีของช่องทางนั้นอีก · กำหนดว่ารอบโอนถัดไปลงบัญชีได้ (ขยับ GL) ⇒ ห้ามคีย์ API · ปฏิเสธ = 409 พร้อมทางไปต่อ</summary>
+    [HttpPost("orphans/acknowledge")]
+    [Accounting.Filters.RejectApiKey("รับรู้ของกำพร้าของรอบโอน")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementOrphanAckResult>>> AcknowledgeOrphan(Guid companyId,
+        [FromBody] OrphanAckRequest? request, CancellationToken ct)
+    {
+        if (request is null || request.ArtifactId == Guid.Empty)
+            return BadRequest(new ApiResponse<SettlementOrphanAckResult>(false, null, "ระบุรายการของกำพร้าที่จะรับรู้ (เอกสารหรือการรับชำระ)"));
+        try
+        {
+            var r = await _posting.AcknowledgeOrphanAsync(companyId, request.ArtifactId, request.IsPayment, UserId, request.Reason, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementOrphanAckResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementOrphanAckResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
     // ═════════════════════════════ จับคู่เงินเข้าธนาคาร ═════════════════════════════
 
     /// <summary>ผู้สมัครรายการเดินบัญชี — รายการที่ยังไม่กระทบยอดของบัญชีที่รอบโอนระบุ (<c>IBankService.GetUnreconciledAsync</c> · tenant) ·

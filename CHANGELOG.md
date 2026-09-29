@@ -3719,3 +3719,15 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V2 — ของกำพร้าในรอบโอน settlement (DECISIONS ข้อ 10):
+- **(ก)** ตัวแยกของกำพร้า (`SettlementOrphanTriage.Split`) รับข้อเท็จจริงของ "ใบที่อ้าง" (`SettlementOrphanChild` จาก `DocumentVoidPreconditions.ChildFactsAsync`
+  ตัวเดียวกับ `VoidDocumentAsync`) — ใบที่อ้างซึ่งตัวเองยกเลิกไม่ได้ (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ส่งลูกค้าแล้ว) ⇒ ใบกำพร้า = `Unvoidable`
+  (เดิมตกกอง NeedsUserAction ที่ทางไปต่อ "ยกเลิกใบที่อ้างก่อน" ทำไม่ได้ ⇒ ช่องทางบล็อกถาวร · review198-S4 S4-1 ความเสี่ยงที่เหลือ)
+- **(ข)** "รับรู้ของกำพร้า": กอง `Unvoidable` ที่ยังไม่รับรู้ = **บล็อก** (เดิมเตือนเฉย ๆ) · `POST settlement/orphans/acknowledge` (สิทธิ์ `Settlement.Post` ที่ controller + service ·
+  `[RejectApiKey]` · เหตุผลบังคับ · ล็อกช่องทาง · `AckRefusal` ตัดสินใต้ล็อก) ⇒ ประทับ `Document/Payment.SettlementOrphanAckAt/By/Reason` (คอลัมน์ใหม่ใน
+  `SettlementSchemaStatements`) + `AddChainedAuditLog` ⇒ ไม่บล็อก · พรีวิวแสดงรายชิ้น (`SettlementPostingPreview.Orphans`) + ปุ่มใน settlements.html
+- **S3-8** ตรวจแล้วแก้ไปก่อนหน้า (`SettlementArtifactGuard.CheckLockedAsync` FOR SHARE ใต้ธุรกรรม · ทีม S4) — ไม่แตะ
+- **S3-11** ตัวหาของกำพร้าไม่ตัด `Take(200)` + ค้นการรับชำระของทุกรอบด้วยคำค้นเดียว · `UnpostBlockersAsync` อ่านแค่หัวรอบ (ไม่พังเมื่อช่องทางถูกลบ) ·
+  SoD นับผู้สร้างบรรทัด · ที่เหลือ (JournalManage · ป้ายใน Notes) 📋 เหตุผลใน `erp-review/2026-09-29/team-V2.md` · **S4-5** 📋
+- เทสต์ `SettlementRound200V2Tests` + ปรับ `S41_ทิศตรงข้าม…` / `S36_…` ตามความหมายใหม่ · required_call_site +8 แถว/ปรับ 1 — commit d7fb2c43)_

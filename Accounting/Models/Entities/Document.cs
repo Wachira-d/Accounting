@@ -265,6 +265,15 @@ public class Document : TenantEntity
     /// <summary>Payment ต้นทางที่ออกใบเสร็จหลักฐานนี้ (คู่กับ IsSettlementReceipt).</summary>
     public Guid? SettlementPaymentId { get; set; }
 
+    /// <summary>"รับรู้ของกำพร้า" (รอบ 200 · DECISIONS ข้อ 10): เอกสารที่การลงบัญชีรอบโอนสร้างให้รอบที่ถูกยกเลิกไปแล้ว และ<b>ยกเลิกไม่ได้จริง</b>
+    /// (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว · ใบที่อ้างมันยกเลิกไม่ได้) — ผู้มีสิทธิ์ลงบัญชีรอบโอนรับรู้พร้อมเหตุผลแล้ว ⇒ ไม่บล็อกการลงบัญชี
+    /// ของช่องทางนั้นอีก · ประทับผ่าน <c>SettlementPostingService.AcknowledgeOrphanAsync</c> เท่านั้น (+ audit chain) · null = ยังไม่รับรู้</summary>
+    public DateTime? SettlementOrphanAckAt { get; set; }
+    /// <summary>ผู้รับรู้ของกำพร้า (user id) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
+    public Guid? SettlementOrphanAckBy { get; set; }
+    /// <summary>เหตุผลที่รับรู้ของกำพร้า (บังคับ) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
+    public string? SettlementOrphanAckReason { get; set; }
+
     /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
     /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
     /// 0 = ยังไม่คืน.</summary>

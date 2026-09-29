@@ -224,20 +224,22 @@ public class SettlementReview198S4Tests
 
     // ═════════════ S3-6: ของกำพร้าที่ยกเลิกไม่ได้ ไม่บล็อกทั้งช่องทางตลอดไป ═════════════
 
+    /// <summary>รอบ 200 (DECISIONS ข้อ 10): ของกำพร้าที่ยกเลิกไม่ได้ — ยังไม่รับรู้ = บล็อก (ทางไปต่อ = รับรู้ของกำพร้า) · รับรู้แล้ว = เตือนไม่บล็อก ⇒ ไม่ล็อกช่องทางตลอดไป</summary>
     [Fact]
-    public void S36_ของกำพร้าที่ยกเลิกไม่ได้_เตือนไม่บล็อก_ของกำพร้าที่ยกเลิกได้_ยังบล็อก()
+    public void S36_ของกำพร้าที่ยกเลิกไม่ได้_รับรู้แล้วเตือนไม่บล็อก_ยังไม่รับรู้บล็อก_ของกำพร้าที่ยกเลิกได้_ยังบล็อก()
     {
         var s = new Scenario();
         var plan = s.Plan();
         SettlementReceiptTarget Open(Guid id) => new(id, true, "INV-A", DocumentType.Invoice, DocumentStatus.Approved, 1000m, false);
-        var warned = SettlementPostingGate.Evaluate(plan, Facts(plan, Open, 0) with
-        {
-            UnvoidableOrphans = new[] { "เอกสาร TIV-9 ที่ลงบัญชีให้รอบโอน PO-X (ถูกยกเลิกแล้ว) ยกเลิกในระบบไม่ได้แล้ว: e-Tax ตอบรับแล้ว" },
-        });
+        const string Hard = "เอกสาร TIV-9 ที่ลงบัญชีให้รอบโอน PO-X (ถูกยกเลิกแล้ว) ยกเลิกในระบบไม่ได้แล้ว: e-Tax ตอบรับแล้ว";
+        var warned = SettlementPostingGate.Evaluate(plan, Facts(plan, Open, 0) with { AcknowledgedOrphans = new[] { Hard + " — รับรู้แล้วโดย ก" } });
         Assert.True(warned.CanPost);
         var issue = Assert.Single(warned.Issues, i => i.Code == SettlementPlanIssueCode.OrphanPostingArtifacts);
         Assert.False(issue.Blocking);
         Assert.Contains("ซ้ำ", issue.NextStep);
+        var unacked = SettlementPostingGate.Evaluate(plan, Facts(plan, Open, 0) with { UnvoidableOrphans = new[] { Hard } });
+        Assert.False(unacked.CanPost);
+        Assert.Contains("รับรู้ของกำพร้า", Assert.Single(unacked.Issues, i => i.Code == SettlementPlanIssueCode.OrphanPostingArtifacts).NextStep);
         // ทิศตรงข้าม: ของกำพร้าที่ยังยกเลิกได้ ⇒ บล็อกเหมือนเดิม (ทางไปต่อ = ยกเลิกทีละใบ)
         var blocked = SettlementPostingGate.Evaluate(plan, Facts(plan, Open, 0) with { OrphanArtifacts = new[] { "เอกสาร PV-9 ยังไม่ถูกยกเลิก" } });
         Assert.False(blocked.CanPost);

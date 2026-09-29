@@ -21,7 +21,7 @@
 | ✅ <pending> S3-8 | PLAUSIBLE | P3 | race ช่วงสั้น: ยกเลิกเอกสารผ่านหน้าปกติระหว่าง completeness check กับ commit ของ `CommitPostedAsync` |
 | ✅ <pending> S3-9 | PLAUSIBLE | P3 | ล็อกฝั่งนำเข้า `pg_advisory_xact_lock` แบบ**รอ** ขณะลงบัญชีถือ session lock นาน ⇒ คำขอเว็บค้างจน command timeout (500) |
 | ✅ <pending> S3-10 | CONFIRMED | P3 | `WhtCertVoidGuard` ไม่ใช่ "ตัวตัดสินตัวเดียว" จริง — `PayrollService.cs:3328` ประทับ Voided ตรง |
-| 📋 S3-11 (backlog) | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
+| ✅ d7fb2c43 S3-11 (3/5 · รอบ 200 V2 — ที่เหลือ 📋 ใน erp-review/2026-09-29/team-V2.md) | CONFIRMED | P3 | ของเล็ก: `OrphanArtifactsAsync` `Take(200)` · `UnpostBlockersAsync` ใน GET ทุกครั้ง (LoadAsync ทั้งรอบ · ช่องทางถูกลบ ⇒ GET พัง) · SoD เทียบแค่ผู้สร้างรอบ · Unpost/Post ไม่ตรวจ `JournalManage` สำหรับ JE รอบโอน |
 | — | NOT-A-BUG | — | ล็อกร่วม (คีย์/รูปแบบเดียวกัน) · deadlock · AsyncLocal · `autoApproveBy` · EF translation · fingerprint false positive · tenant · R1 |
 
 **ไม่พบ P0 ที่ยืนยันได้** · P1 ที่ต้องแก้ก่อน merge เข้า main: S3-1
@@ -151,3 +151,13 @@ e-Tax Accepted / อยู่ในรายงานล็อก / ใบค่
 | S3-9 | ✅ | `LockChannelAsync` = `JobLock.TryXactLockAsync` + `SettlementChannelLock.BusyMessage` (ข้อความเดียวกับฝั่งลงบัญชี) |
 | S3-10 | ✅ | `PayrollService.IssueMonthlyPnd1CertsAsync` เรียก `WhtCertVoidGuard.CheckAsync` ก่อนประทับ Voided (ปฏิเสธ = ล้มดังผ่าน catch เดิม: LogError + แจ้งเตือน) |
 | S3-11 | 📋 | ของเล็ก 5 ข้อ — backlog (ไม่มีข้อใดทำให้ข้อมูลผิดเงียบ · `Take(200)` / GET โหลดซ้ำ / SoD ผู้ทำจริง / JournalManage ใน Post / ป้ายใน Notes) |
+
+---
+
+## ผลการแก้ — รอบ 200 ทีม V2 (คอมมิต d7fb2c43)
+
+| ID | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|
+| S3-6 (ค้าง) | ✅ | DECISIONS รอบ 200 ข้อ 10 "รับรู้ของกำพร้า" — ใบที่อ้างซึ่งยกเลิกไม่ได้ ⇒ ใบกำพร้า Unvoidable · กอง Unvoidable บล็อกจนผู้มีสิทธิ์ Settlement.Post รับรู้พร้อมเหตุผล (ธง + audit) |
+| S3-8 | ✅ (ยืนยัน) | ทีม S4 แก้แล้ว — `CheckLockedAsync` FOR SHARE ใต้ธุรกรรมของ VoidDocumentAsync/VoidPaymentAsync + แถว required_call_site · รอแค่ช่วงธุรกรรม commit ของ CommitPostedAsync (สั้น) ไม่ใช่ session lock ⇒ ไม่ค้าง |
+| S3-11 | ✅ 3/5 · 📋 2/5 | ✅ Take(200) · ✅ GET อ่านแค่หัวรอบ · ✅ SoD นับผู้สร้างบรรทัด (ผู้ตัดสินการจับคู่ยังไม่ถูกบันทึกบนบรรทัด — 📋) · 📋 JournalManage (สิทธิ์ Settlement.Post นิยามรวม JE รอบโอนแล้ว — ต้องให้เจ้าของเปลี่ยนนโยบาย) · 📋 ป้ายใน Notes (ต้องแก้ CreatePaymentAsync ของทีม V1 หรือเพิ่มคอลัมน์) |
