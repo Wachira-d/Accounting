@@ -913,7 +913,39 @@ public record DocumentResponse(
     /// <summary>ลักษณะเงินเป็น<b>ชื่อ enum</b> (PartOfPrice · RefundableSecurity · NonVatSupply) · null = ไม่ทราบ (ใบก่อนรอบ 194)</summary>
     string? DepositNature = null,
     /// <summary>หมายเหตุนโยบายที่ระบบประทับ (เหตุผลเลื่อน VAT · ตั้ง VAT 0 ทับ · [DEPOSIT-LATE-VAT])</summary>
-    string? DepositPolicyNote = null);
+    string? DepositPolicyNote = null,
+    /// <summary>รอบ 200 ทีม V1 — ใบแทนแบบ "ยกเลิกและออกใบแทน" (ผลทางบัญชีย้ายมาใบนี้ · ใบเดิม Voided) · false = ใบแทนกระดาษเดิม/ไม่ใช่ใบแทน ·
+    /// บนใบเดิม = ค่าของใบแทนที่มาแทน (หน้าเว็บเลือกข้อความแถบ "ถูกแทนที่" ให้ตรงชนิด)</summary>
+    bool ReplacementCarriesPostings = false,
+    /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — ธง "ต้องยกเลิกทาง e-Tax" (ใบเสร็จอัตโนมัติที่เช็คเด้งแต่ e-Tax ถึงกรมสรรพากรแล้ว) · null = ไม่มีธง</summary>
+    DateTime? EtaxCancelRequiredAt = null,
+    string? EtaxCancelRequiredReason = null,
+    /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — ปุ่ม "ยกเลิกและออกใบแทน" · <b>เซิร์ฟเวอร์ตัดสิน</b> ด้วย <c>SettlementPaidReissue.Decide</c>
+    /// ตัวเดียวกับ endpoint · null = ไม่เกี่ยว/ยังไม่ได้คำนวณ (หน้าเว็บไม่แสดงปุ่ม) · false = เกี่ยวแต่กดไม่ได้ (แสดงปุ่มปิดพร้อมเหตุผล)</summary>
+    bool? CanReissueSettlementPaid = null,
+    string? ReissueSettlementPaidBlockedReason = null);
+
+/// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
+/// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>
+/// <param name="Notes">หมายเหตุพิมพ์บนใบใหม่ — null = ของใบเดิม · ระบบต่อท้ายด้วยบรรทัดอ้างใบเดิมเสมอ</param>
+/// <param name="Lines">คำบรรยายรายบรรทัดที่แก้ (อ้าง Id บรรทัดของใบเดิม) — บรรทัดที่ไม่ส่ง = คำบรรยายเดิม · ยอด/จำนวน/อัตราแก้ไม่ได้</param>
+/// <param name="Reason">เหตุผล (บังคับ — เก็บให้ผู้สอบบัญชี)</param>
+public sealed record ReissueSettlementPaidRequest(
+    Guid? ContactId, string? Notes, List<ReissueLineDescription>? Lines, string? Reason);
+
+/// <summary>รอบ 200 ทีม V1 — คำขอแก้คำบรรยาย 1 บรรทัดของใบแทน (อ้าง Id บรรทัดของใบเดิม)</summary>
+public sealed record ReissueLineDescription(Guid LineId, string? Description);
+
+/// <summary>รอบ 200 ทีม V1 — ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (รายการงานค้าง)</summary>
+public sealed record EtaxCancelRequiredItem(Guid Id, string DocumentNumber, DocumentType DocumentType, DateTime DocumentDate,
+    decimal TotalAmount, DateTime EtaxCancelRequiredAt, string? Reason);
+
+/// <summary>รอบ 200 ทีม V1 — ผลของ "ยกเลิกการชำระ" ให้ผู้เรียกบอกต่อ (เช็คเด้ง: ใบเสร็จที่ติดธงแทนการยกเลิก)</summary>
+/// <param name="EtaxCancellationFlag">ข้อความธงที่ติดบนใบเสร็จ — null = ไม่มี (ยกเลิกใบเสร็จตามปกติ/ไม่มีใบเสร็จ)</param>
+public sealed record PaymentVoidResult(string? EtaxCancellationFlag)
+{
+    public static PaymentVoidResult None { get; } = new((string?)null);
+}
 
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)

@@ -15,9 +15,9 @@
 | ✅ <pending> S3-2 | CONFIRMED | P2 | ด่านยกเลิกการลงบัญชี (C-2) ไม่ตรวจภาษีซื้อของใบค่าธรรมเนียมในเดือน ภ.พ.30 ที่ประกาศว่ายื่นแล้ว — อสมมาตรกับฝั่งขาย |
 | ✅ <pending> S3-3 | CONFIRMED | P2 | ด่าน C-2 ไม่ครอบเหตุที่ `VoidDocumentAsync` ปฏิเสธเอง (เอกสารลูก active / ใบลดหนี้อ้างเลขที่) ⇒ ยกเลิกครึ่งทางแบบ C-2 เดิมยังเกิดได้ |
 | ✅ <pending> S3-4 | PLAUSIBLE | P2 | คีย์กันซ้ำ v2 ใส่ `payoutRef` ในแถวไม่มี id — เลขรอบโอนที่ผู้ใช้พิมพ์ต่างกันครั้งที่สอง ⇒ แถวเดิมเข้าอีกรอบ (R-A9 ถอย) · และไม่มีการเทียบคีย์ v1 ที่เก็บไว้แล้ว |
-| ⏸ S3-5 (รอเจ้าของ) | CONFIRMED (ผลข้างเคียง) | P2 | `CheckDocumentPaymentsAsync` ใน `VoidDocumentAsync` ทำให้ใบขายของผู้ใช้ที่รอบโอนรับชำระ **ยกเลิก-ออกใหม่ไม่ได้ถาวร** เมื่อรอบโอนนั้น unpost ไม่ได้ (ภ.พ.30 ของใบสรุปถูกประกาศแล้ว) |
+| ✅ V1 d2335b38 S3-5 (คำตัดสินรอบ 200 ข้อ 9) | CONFIRMED (ผลข้างเคียง) | P2 | `CheckDocumentPaymentsAsync` ใน `VoidDocumentAsync` ทำให้ใบขายของผู้ใช้ที่รอบโอนรับชำระ **ยกเลิก-ออกใหม่ไม่ได้ถาวร** เมื่อรอบโอนนั้น unpost ไม่ได้ (ภ.พ.30 ของใบสรุปถูกประกาศแล้ว) |
 | ✅ <pending> S3-6 | PLAUSIBLE | P2 | ของกำพร้า (C-1(d)) ที่ยกเลิกไม่ได้ ⇒ `OrphanPostingArtifacts` บล็อก **ทุกรอบโอนของช่องทางนั้นตลอดไป** |
-| ✅ <pending> S3-7 | PLAUSIBLE | P2 | ด่าน C-2 ไม่ดูการรับชำระ (tax point บริการ §78/1 / undue VAT) ในเดือนที่ประกาศว่ายื่นแล้ว |
+| ✅ c3116a4d S3-7 (ยืนยันรอบ 200 ทีม V1) | PLAUSIBLE | P2 | ด่าน C-2 ไม่ดูการรับชำระ (tax point บริการ §78/1 / undue VAT) ในเดือนที่ประกาศว่ายื่นแล้ว |
 | ✅ <pending> S3-8 | PLAUSIBLE | P3 | race ช่วงสั้น: ยกเลิกเอกสารผ่านหน้าปกติระหว่าง completeness check กับ commit ของ `CommitPostedAsync` |
 | ✅ <pending> S3-9 | PLAUSIBLE | P3 | ล็อกฝั่งนำเข้า `pg_advisory_xact_lock` แบบ**รอ** ขณะลงบัญชีถือ session lock นาน ⇒ คำขอเว็บค้างจน command timeout (500) |
 | ✅ <pending> S3-10 | CONFIRMED | P3 | `WhtCertVoidGuard` ไม่ใช่ "ตัวตัดสินตัวเดียว" จริง — `PayrollService.cs:3328` ประทับ Voided ตรง |
@@ -145,6 +145,7 @@ e-Tax Accepted / อยู่ในรายงานล็อก / ใบค่
 | S3-3 | ✅ | `Helpers/DocumentVoidPreconditions` ตัวตัดสินเดียว (ย้ายจาก `VoidDocumentAsync` ข้อความเดิมทุกตัวอักษร) · `LoadUnpostFactsAsync` เรียกตัวเดียวกัน → `SettlementUnpostDocument.VoidBlock` |
 | S3-4 | ✅ | คีย์ใช้เลขรอบโอนจากคอลัมน์ในไฟล์เท่านั้น · ไม่มีคอลัมน์ = ลายนิ้วมือเนื้อหาไฟล์ (`v2:rowc:`) · เทียบคีย์รุ่นก่อน (v1 + v2 เลขพิมพ์) · ไฟล์ฉบับแก้ของรอบเดิมเทียบเนื้อหาแบบนับจำนวน · เนื้อหาตรงรอบอื่น = เตือน · ข้อจำกัด: v1 ใช้ตัว normalize ของวันนี้ (ไม่มี migration rekey — ไม่มีฐาน production ที่รันเฟส 1) |
 | S3-5 | ⏸ | ต้องให้เจ้าของเลือกทาง (ย้ายการรับชำระไปใบใหม่ vs ยกเลิก+ปรับปรุงรอบถัดไป) — จดใน DOCUMENT_FLOW §2.10 |
+| S3-5 (รอบ 200) | ✅ | คำตัดสินข้อ 9: "ยกเลิกและออกใบแทน" ย้ายการรับชำระ + JE + คู่จับของรอบโอนไปใบใหม่ในธุรกรรมเดียว — `DocumentService.Reissue.cs` · `Helpers/SettlementPaidReissue` · DOCUMENT_FLOW §2.4c · รายงาน `erp-review/2026-09-29/team-V1.md` |
 | S3-6 | ✅ | เลือกทาง "ของกำพร้าที่ยกเลิกไม่ได้ = เตือนไม่บล็อก" (ด่าน Unpost ตัวเดียวผ่าน `ArtifactId`) · ยกเลิกได้ = บล็อกเหมือนเดิม · ไม่เพิ่ม schema (owner-ack ไม่จำเป็นเมื่อระบบรู้เองว่ายกเลิกไม่ได้) |
 | S3-7 | ✅ | `SettlementUnpostPayment` (OutputVatDueAt + ยอดรับสะสม) → ปฏิเสธเมื่อยกเลิกแล้วภาษีขายของเดือนที่ยื่นแล้วถูกกลับ |
 | S3-8 | ✅ | `SettlementArtifactGuard.CheckLockedAsync` (แถวรอบโอน `FOR SHARE`) ใต้ธุรกรรมของ `VoidDocumentAsync`/`VoidPaymentAsync` |

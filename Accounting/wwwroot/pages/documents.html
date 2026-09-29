@@ -160,6 +160,9 @@
       </div>
     </div>
 
+    <!-- รอบ 200 ทีม V1 (คำตัดสินข้อ 11): งานค้าง "ต้องยกเลิกทาง e-Tax" — ใบเสร็จที่เช็คเด้งแต่ e-Tax ถึงกรมสรรพากรแล้ว (เซิร์ฟเวอร์ส่งรายการ) -->
+    <div id="etaxCancelNotice" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#991b1b;line-height:1.7"></div>
+
     <!-- Side selector -->
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="btn btn-sm" id="sideAll" onclick="Page.setSide('')" style="font-weight:600;background:var(--primary);color:#fff" data-i18n="common.all">ทั้งหมด</button>
@@ -1263,6 +1266,41 @@
     <!-- แก้วันที่รายการกลับบัญชี — เอกสาร 1 ใบมีตัวกลับได้หลายใบ (ใบซื้อ/ขาย +
          รับ-จ่ายชำระ + มัดจำ) ผู้ใช้ต้องเห็นก่อนกดว่า "ใบไหนย้ายจากวันไหนไปวันไหน"
          เดิมใช้ prompt() ถามวันเดียวโดยไม่บอกว่าจะไปแตะใบไหนบ้าง -->
+    <!-- รอบ 200 ทีม V1 (คำตัดสินข้อ 9): ยกเลิกและออกใบแทน — แก้ได้เฉพาะผู้ซื้อ · หมายเหตุ · คำบรรยาย (ยอด/จำนวน/อัตราอ่านอย่างเดียว · เซิร์ฟเวอร์ตรวจซ้ำ) -->
+    <div class="modal-overlay" id="reissueModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header">
+          <h3 class="modal-title">🔁 ยกเลิกและออกใบแทน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('reissueModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="rsInfo" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px;line-height:1.7"></div>
+          <div class="form-group">
+            <label class="form-label">ผู้ซื้อของใบใหม่</label>
+            <select class="form-input" id="rsContact"></select>
+            <div class="text-xs text-gray-500" style="margin-top:4px">ถ้าชื่อ/ที่อยู่ในทะเบียนผู้ติดต่อผิด ให้แก้ที่ผู้ติดต่อก่อน แล้วเลือกผู้ซื้อเดิม — ใบกำกับภาษีต้องมีข้อมูลผู้ซื้อครบตาม §86/4</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">รายการ (แก้ได้เฉพาะคำบรรยาย — ยอด/จำนวน/อัตรา VAT ต้องเท่าเดิม)</label>
+            <table class="table" style="font-size:12px"><thead><tr><th style="width:40px">#</th><th>คำบรรยาย</th><th style="text-align:right">จำนวน × ราคา</th><th style="text-align:right">จำนวนเงิน</th></tr></thead>
+              <tbody id="rsLines"></tbody></table>
+          </div>
+          <div class="form-group">
+            <label class="form-label">หมายเหตุ (พิมพ์บนใบใหม่ — ระบบต่อท้ายด้วยข้อความอ้างใบเดิมให้เอง)</label>
+            <textarea class="form-input" id="rsNotes" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เหตุผลที่ยกเลิก (บังคับ — พิมพ์บนใบใหม่และเก็บให้ผู้สอบบัญชี)</label>
+            <input class="form-input" id="rsReason" placeholder="เช่น ชื่อผู้ซื้อไม่ถูกต้อง / ที่อยู่ผู้ซื้อไม่ครบ">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reissueModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitReissue()">ยืนยัน ยกเลิกและออกใบแทน</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="redateReversalModal">
       <div class="modal" style="max-width:720px">
         <div class="modal-header">
@@ -1626,6 +1664,7 @@
         this.applyVatRegistrationLock();
         this.applyAnalysisAxisVisibility();
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
+        this.loadEtaxCancelNotice();
         // Load active projects (for the document → project tagging dropdown).
         // ProjectId on a document propagates to JournalEntry on auto-post, so
         // the project's P&L (ProjectAccountingService.GetGlSummaryAsync) will
@@ -9715,7 +9754,15 @@
           // ต้องเห็นทั้งสองทิศ: ใบที่ถูกแทนต้องบอกว่า "ทำไมหายจากรายงานภาษีขาย"
           // และใบแทนต้องบอกว่า "ทำไมไม่มีรายการบัญชีของตัวเอง" — ไม่งั้นทั้งคู่
           // ดูเหมือนข้อมูลผิดตอนกระทบยอด
-          if (d.replacedByDocumentId) {
+          // รอบ 200 ทีม V1: ใบแทนแบบ "ยกเลิกและออกใบแทน" (replacementCarriesPostings — เซิร์ฟเวอร์ตัดสิน) ใช้ข้อความคนละชุดกับใบแทนกระดาษ
+          if (d.replacedByDocumentId && d.replacementCarriesPostings === true) {
+            banners += `<div style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              🔁 <b>ใบนี้ถูกยกเลิกและออกใบแทนแล้ว</b> — ใบแทน
+              <b>${Layout.esc(d.replacedByDocumentNumber || '')}</b> เมื่อ ${d.replacedAt ? Layout.date(d.replacedAt) : '-'}
+              <div style="margin-top:4px;color:#78350f">การรับชำระ รายการบัญชี และคู่จับของรอบโอนย้ายไปอยู่ใบแทนแล้ว (ยอดเท่าเดิม · ไม่มีรายการกลับบัญชี)
+              — ใบนี้ไม่มีผลทางบัญชี/ภาษีอีก และกู้คืนไม่ได้ (ถ้าต้องแก้อีก ให้แก้ที่ใบแทน)</div>
+            </div>`;
+          } else if (d.replacedByDocumentId) {
             banners += `<div style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               🔁 <b>ใบนี้ถูกแทนที่แล้ว</b> — ออกใบกำกับภาษีเต็มรูป
               <b>${Layout.esc(d.replacedByDocumentNumber || '')}</b> แทนไปเมื่อ
@@ -9726,13 +9773,28 @@
               ${d.replacementReason ? `<div style="margin-top:4px;color:#78350f">เหตุผล: ${Layout.esc(d.replacementReason)}</div>` : ''}
             </div>`;
           }
-          if (d.replacesDocumentId) {
+          if (d.replacesDocumentId && d.replacementCarriesPostings === true) {
+            banners += `<div style="background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              🧾 <b>ใบแทน (ยกเลิกและออกใบแทน)</b> — แทนใบ
+              <b>${Layout.esc(d.replacesDocumentNumber || '')}</b> ที่ยกเลิกแล้ว
+              <div style="margin-top:4px;color:#1e3a8a">ยอด · รายการ · อัตรา VAT · วันที่ เท่าใบเดิม · รับการรับชำระ รายการบัญชี และคู่จับของรอบโอนมาจากใบเดิม ·
+              ใบนี้คือใบที่อยู่ในรายงานภาษีขาย</div>
+              ${d.replacementReason ? `<div style="margin-top:4px;color:#1e3a8a">เหตุผล: ${Layout.esc(d.replacementReason)}</div>` : ''}
+            </div>`;
+          } else if (d.replacesDocumentId) {
             banners += `<div style="background:#eff6ff;border:1px solid #93c5fd;color:#1e40af;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               🧾 <b>ใบกำกับภาษีเต็มรูป (ออกแทน)</b> — แทนใบ
               <b>${Layout.esc(d.replacesDocumentNumber || '')}</b> ที่เรียกคืนแล้ว
               <div style="margin-top:4px;color:#1e3a8a">ใช้วันที่และยอดของใบเดิม ·
               <b>ไม่มีรายการบัญชีของตัวเอง</b> (รายได้/ภาษีขายลงไปแล้วตั้งแต่ใบเดิม) ·
               ใบนี้คือใบที่อยู่ในรายงานภาษีขาย</div>
+            </div>`;
+          }
+          // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ธง "ต้องยกเลิกทาง e-Tax" — ข้อความ (เหตุ + ทางไปต่อ) มาจากเซิร์ฟเวอร์
+          if (d.etaxCancelRequiredAt) {
+            banners += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              ⚠️ <b>ต้องยกเลิกทาง e-Tax</b> (ติดธงเมื่อ ${Layout.date(d.etaxCancelRequiredAt)})
+              <div style="margin-top:4px">${Layout.esc(d.etaxCancelRequiredReason || '')}</div>
             </div>`;
           }
           banners += this._nextStepBanner(d);
@@ -10207,6 +10269,14 @@
                      && !d.replacedByDocumentId) {
             // บอกเหตุผลเสมอ — "ปุ่มหายไปเฉย ๆ" คือ silent no-op ที่ผู้ใช้ debug ไม่ได้
             actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.fullTaxInvoiceBlockedReason)}">🧾 ออกใบกำกับเต็มรูปไม่ได้</button>`;
+          }
+
+          // ── ยกเลิกและออกใบแทน (รอบ 200 ทีม V1 · คำตัดสินข้อ 9) — ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ ──
+          // เซิร์ฟเวอร์ตัดสิน (canReissueSettlementPaid) · null/undefined = ไม่เกี่ยว ไม่วาดอะไร · false = บอกเหตุผลเสมอ (ห้ามปุ่มหายเงียบ)
+          if (d.canReissueSettlementPaid === true) {
+            actions += ` <button data-g="primary" class="btn btn-warning" onclick="Page.openReissue('${d.id}')" title="ใบนี้รับชำระจากรอบโอนที่ลงบัญชีแล้ว จึงยกเลิกตรง ๆ ไม่ได้ — ใช้ปุ่มนี้เมื่อชื่อ/ที่อยู่ผู้ซื้อหรือคำบรรยายผิด: ระบบยกเลิกใบนี้และออกใบใหม่ยอดเท่าเดิม แล้วย้ายการรับชำระไปใบใหม่ (ยอดผิด = ใช้ใบลดหนี้/ใบเพิ่มหนี้)">🔁 ยกเลิกและออกใบแทน</button>`;
+          } else if (d.canReissueSettlementPaid === false && d.reissueSettlementPaidBlockedReason) {
+            actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.reissueSettlementPaidBlockedReason)}">🔁 ยกเลิกและออกใบแทนไม่ได้</button>`;
           }
 
           // Bad debt write-off: only for AR docs that are still outstanding
@@ -11717,6 +11787,72 @@
           if (docId) await this.detail(docId);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 8000); }
+      },
+
+      // รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — ยกเลิกและออกใบแทน: หน้านี้ส่งเฉพาะสิ่งที่ผู้ใช้แก้ได้ (ผู้ซื้อ · หมายเหตุ · คำบรรยาย · เหตุผล)
+      // เซิร์ฟเวอร์ตัดสินทุกอย่าง (กดได้ไหม · ใบใหม่เท่าใบเดิมไหม · §86/4 ผู้ซื้อครบไหม) — ห้ามเขียนเกณฑ์ซ้ำที่นี่
+      openReissue(id) {
+        const d = this._currentDoc;
+        if (!d || d.id !== id) return;
+        this._reissueDocId = id;
+        document.getElementById('rsInfo').innerHTML =
+          `ใบ <b>${Layout.esc(d.documentNumber || '')}</b> รับชำระจากรอบโอนที่ลงบัญชีแล้ว — ระบบจะ <b>ยกเลิกใบนี้</b> และออก <b>ใบใหม่เลขที่ใหม่</b> ลงวันที่เดิม `
+          + 'ยอด/รายการ/อัตรา VAT เท่าเดิมทุกตัว แล้วย้ายการรับชำระ รายการบัญชี และคู่จับของรอบโอนไปใบใหม่ (ไม่กลับรายการเงิน) · '
+          + 'ใบเสร็จอัตโนมัติของการรับชำระจะถูกออกใหม่อ้างใบใหม่ · <b style="color:#b91c1c">ต้องเรียกคืนใบเดิมจากลูกค้า</b> · '
+          + 'ถ้ายอดหรือรายการผิด ให้ออกใบลดหนี้/ใบเพิ่มหนี้แทน';
+        const list = this.contacts || [];
+        const cur = d.contact || {};
+        let opts = list.map(c => `<option value="${Layout.esc(c.id)}"${c.id === cur.id ? ' selected' : ''}>${Layout.esc(c.name || '')}${c.taxId ? ' · ' + Layout.esc(c.taxId) : ''}</option>`).join('');
+        if (cur.id && !list.some(c => c.id === cur.id))
+          opts = `<option value="${Layout.esc(cur.id)}" selected>${Layout.esc(cur.name || 'ผู้ซื้อเดิม')}</option>` + opts;
+        document.getElementById('rsContact').innerHTML = opts;
+        document.getElementById('rsNotes').value = d.notes || '';
+        document.getElementById('rsReason').value = '';
+        document.getElementById('rsLines').innerHTML = (d.lines || []).map((l, i) => `<tr>
+            <td>${i + 1}</td>
+            <td><input class="form-input rs-desc" data-line-id="${Layout.esc(l.id)}" value="${Layout.esc(l.description || '')}"></td>
+            <td style="text-align:right;white-space:nowrap">${Layout.money(l.quantity)} × ${Layout.money(l.unitPrice)}</td>
+            <td style="text-align:right;white-space:nowrap">${Layout.money(l.amount)}</td></tr>`).join('');
+        Layout.openModal('reissueModal');
+      },
+      async submitReissue() {
+        const api = Layout.api(); if (!api) return;
+        const id = this._reissueDocId;
+        if (!id) return;
+        const reason = (document.getElementById('rsReason').value || '').trim();
+        if (!reason) { Layout.toast('กรุณาระบุเหตุผลที่ยกเลิกและออกใบแทน', 'error'); return; }
+        const contactId = document.getElementById('rsContact').value || null;
+        const notes = document.getElementById('rsNotes').value;
+        const lines = [...document.querySelectorAll('#rsLines .rs-desc')]
+          .map(el => ({ lineId: el.dataset.lineId, description: el.value }));
+        if (!(await Layout.confirmDanger({
+          title: 'ยกเลิกและออกใบแทน',
+          message: 'ยืนยันยกเลิกใบนี้และออกใบใหม่แทน — เลขที่ใบเดิมจะถูกยกเลิกถาวร (§86/4) และการรับชำระจะย้ายไปใบใหม่',
+          mode: 'math'
+        }))) return;
+        try {
+          const res = await api.reissueSettlementPaid(id, { contactId, notes, lines, reason });
+          Layout.closeModal('reissueModal');
+          Layout.closeModal('detailModal');
+          Layout.toast(res?.message || 'ออกใบแทนแล้ว', 'success', 8000);
+          await this.load();
+          if (res?.data?.id) await this.detail(res.data.id);
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกและออกใบแทนไม่สำเร็จ', 'error', 10000); }
+      },
+      // รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — แถบงานค้าง "ต้องยกเลิกทาง e-Tax" บนหน้ารายการ (เซิร์ฟเวอร์ส่งรายการ · ไม่มี = ซ่อน)
+      async loadEtaxCancelNotice() {
+        const el = document.getElementById('etaxCancelNotice');
+        const api = Layout.api();
+        if (!el || !api) return;
+        try {
+          const r = await api.getEtaxCancelRequired();
+          const items = r?.data || [];
+          if (!items.length) { el.style.display = 'none'; return; }
+          el.innerHTML = `⚠️ <b>มี ${items.length} ใบที่ต้องตามยกเลิกทาง e-Tax</b> (เช็คเด้ง — ระบบกลับรายการเงินแล้ว แต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว): `
+            + items.slice(0, 10).map(x => `<a href="#" onclick="Page.detail('${x.id}');return false" style="color:#991b1b;text-decoration:underline">${Layout.esc(x.documentNumber || '')}</a>`).join(' · ')
+            + (items.length > 10 ? ' …' : '');
+          el.style.display = '';
+        } catch (e) { el.style.display = 'none'; }
       },
 
       async voidPayment(paymentId) {

@@ -1070,6 +1070,41 @@ public class DocumentController : ControllerBase
     }
 
     /// <summary>
+    /// รอบ 200 ทีม V1 (คำตัดสินข้อ 9 · review198-S3 S3-5) — <b>ยกเลิกและออกใบแทน</b> ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ
+    /// (ชื่อ/ที่อยู่ผู้ซื้อหรือคำบรรยายผิด): ใบเดิม Voided · ใบใหม่ยอด/บรรทัด/อัตรา VAT/tax point เท่าเดิม · การรับชำระและคู่จับของรอบโอนย้ายไปใบใหม่
+    /// <para>สิทธิ์ = ยกเลิก <b>และ</b> อนุมัติเอกสารชนิดนั้น (ยกเลิกใบเดิม + ออกเลขใหม่ตาม §86/4) · ด่านอื่นทั้งหมดอยู่ใน service
+    /// (<c>SettlementPaidReissue.Decide</c> ตัวเดียวกับปุ่มบนหน้าเอกสาร)</para>
+    /// </summary>
+    [HttpPost("{documentId:guid}/reissue-settlement-paid")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> ReissueSettlementPaid(
+        Guid companyId, Guid documentId, [FromBody] ReissueSettlementPaidRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value)
+            || !await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                "ไม่มีสิทธิ์ยกเลิกและออกใบแทน (ต้องมีทั้งสิทธิ์ยกเลิกและสิทธิ์อนุมัติเอกสารชนิดนี้ — ยกเลิกใบเดิมและออกเลขที่ใหม่)");
+
+        var result = await _documentService.ReissueSettlementPaidDocumentAsync(
+            companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"ยกเลิกใบเดิมและออกใบแทน {result.DocumentNumber} แล้ว — ย้ายการรับชำระและคู่จับของรอบโอนไปใบใหม่ (ยอดเท่าเดิม) · "
+            + "ส่งใบใหม่ให้ลูกค้าและเรียกคืนใบเดิม"));
+    }
+
+    /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (เช็คเด้งแต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว) ·
+    /// อ่านอย่างเดียว</summary>
+    [HttpGet("etax-cancel-required")]
+    public async Task<ActionResult<ApiResponse<List<EtaxCancelRequiredItem>>>> EtaxCancelRequired(Guid companyId)
+    {
+        var result = await _documentService.ListEtaxCancelRequiredAsync(companyId);
+        return Ok(new ApiResponse<List<EtaxCancelRequiredItem>>(true, result,
+            result.Count == 0 ? "ไม่มีเอกสารที่ต้องตามยกเลิกทาง e-Tax" : $"มี {result.Count} ใบที่ต้องตามยกเลิกทาง e-Tax"));
+    }
+
+    /// <summary>
     /// Valid conversion targets for a document, per the Thai accounting
     /// workflow rules in DocumentService.ValidConversions. The convert UI
     /// calls this so it never offers an option the backend would reject —

@@ -685,6 +685,12 @@ public class CmsCommerceService : ICmsCommerceService
             {
                 _logger.LogWarning(ex, "ยกเลิกออเดอร์ {Order} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการ/ออกใบลดหนี้เอง",
                     order.OrderNumber, order.ErpDocumentId);
+                // รอบ 200 ทีม V1 (review198-S3 S3-5 ทางเข้าอื่น): เดิม log อย่างเดียว = เงียบ (ออเดอร์ขึ้น "ยกเลิก" แต่เอกสาร ERP ยังมีผล) ⇒ ปักบนออเดอร์
+                // ด้วยข้อความของกฎธุรกิจ (ไทย · พาไปทางที่ถูก เช่น ใบที่รอบโอน settlement รับชำระ ⇒ ใบลดหนี้ / ยกเลิกและออกใบแทน) · ข้อผิดพลาดภายในไม่ echo
+                var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
+                var stamp = $"[ERP-VOID-FAILED {DateTime.UtcNow:yyyy-MM-dd HH:mm}Z] ยกเลิกออเดอร์แล้วแต่ยกเลิกเอกสาร ERP ไม่สำเร็จ — "
+                    + $"เอกสารยังมีผลทางบัญชี ต้องจัดการเอง: {why}";
+                order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes) ? stamp : order.InternalNotes + "\n" + stamp;
             }
         }
 
