@@ -303,10 +303,15 @@ public interface IDocumentService
     Task<DocumentResponse> CancelReissueRequestAsync(Guid companyId, Guid documentId, string actor);
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax"</summary>
     Task<List<EtaxCancelRequiredItem>> ListEtaxCancelRequiredAsync(Guid companyId);
-    /// <summary>รอบ 200 ทีม V1F (V1-R3) — "บันทึกว่ายกเลิกทาง e-Tax แล้ว" ของใบที่ติดธง: ต้องมีหลักฐาน (e-Tax ถูกยกเลิกในระบบ หรือเลขอ้างอิงการยกเลิก
-    /// จากกรมสรรพากร) ⇒ ยกเลิกใบเสร็จ + ล้างธง + ปลดบล็อกใบต้นทาง · คืนใบต้นทาง (null = ไม่มี) · <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิกมาก่อน</b></summary>
-    Task<DocumentResponse?> ResolveEtaxCancellationAsync(Guid companyId, Guid documentId,
+    /// <summary>รอบ 200 ทีม V1F (V1-R3) · แยกทางรอบ V1G (ข้อ 46–48) — "บันทึกการยกเลิกทาง e-Tax" ของใบที่ติดธง: (ก) ยกเลิกทาง e-Tax สำเร็จ ⇒ ยกเลิก
+    /// ใบเสร็จ (คงแสดง) + ถอย/ย้ายภาษีขายลงเดือนที่ถูก + ออกใบกำกับ ณ วันรับเงินให้การรับชำระที่ยังมีผล · (ข) ใบลดหนี้ในระบบ ⇒ ใบเสร็จคงมีผล ·
+    /// <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิก + ด่านไฟล์แนบของไฟล์หลักฐานมาก่อน</b></summary>
+    Task<EtaxCancellationResult> ResolveEtaxCancellationAsync(Guid companyId, Guid documentId,
         ResolveEtaxCancellationRequest request, string actor);
+    /// <summary>รอบ 200 ทีม V1G (ข้อ 47) — ใบลดหนี้ในระบบที่เลือกปิดธงทาง (ข) ได้ (ตัวเลือกบนหน้าจอ)</summary>
+    Task<List<EtaxCancellationCreditNoteOption>> ListEtaxCancellationCreditNotesAsync(Guid companyId, Guid receiptId);
+    /// <summary>รอบ 200 ทีม V1G (ข้อ 44) — รายงานอ่านอย่างเดียวให้นักบัญชีตรวจ (ใบเสร็จติดธงที่ถูกถอยภาษีไปแล้ว · ปิดธงด้วยเส้นเดิม · ใบแทนที่คัดลอกช่องเกิน)</summary>
+    Task<Accounting.Helpers.EtaxReissueReviewReport> GetEtaxReissueReviewAsync(Guid companyId);
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>

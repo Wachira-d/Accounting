@@ -104,14 +104,19 @@ public class VoidReissueR200FTests
 
     // ═════════════ V1-R3: ปิดธง "ต้องยกเลิกทาง e-Tax" ต้องมีหลักฐาน (ห้ามประทับสถานะของกรมสรรพากรเอง) ═════════════
 
+    // รอบ 200 ทีม V1G: ตัวตัดสินรับ EtaxCancellationClaim (แยกทาง ก/ข · ไฟล์หลักฐาน · ป้ายตามความจริง) — เทสต์เดิมปรับตามลายเซ็นใหม่ ความหมายเดิมคงอยู่
+    private static EtaxCancellationClaim Claim(bool flagged, EtaxStatus? etax, string? reference, string? reason, bool anyVoided = true,
+        bool file = true)
+        => new(flagged, etax, anyVoided, EtaxCancellationPath.CancelledAtRd, reason, reference, file, null, 70m, 0m);
+
     [Fact]
     public void R200_V1F_R3_ปิดธงได้เมื่อมีหลักฐาน_eTaxถูกยกเลิกในระบบ_หรือเลขอ้างอิงจากกรมสรรพากร()
     {
-        var voided = DocumentVoidPreconditions.EtaxCancellationResolution(true, effectiveEtax: null, null, "เช็คเด้ง ยกเลิก e-Tax แล้ว");
+        var voided = DocumentVoidPreconditions.EtaxCancellationResolution(Claim(true, null, null, "เช็คเด้ง ยกเลิก e-Tax แล้ว"));
         Assert.True(voided.Allowed);
         Assert.Equal(EtaxCancellationEvidence.EtaxVoidedInSystem, voided.Evidence);
 
-        var rd = DocumentVoidPreconditions.EtaxCancellationResolution(true, EtaxStatus.Accepted, "CN-RD-2569-0001", "ออกใบลดหนี้ทาง e-Tax แล้ว");
+        var rd = DocumentVoidPreconditions.EtaxCancellationResolution(Claim(true, EtaxStatus.Accepted, "CANCEL-RD-2569-0001", "ยกเลิกทาง e-Tax แล้ว"));
         Assert.True(rd.Allowed);
         Assert.Equal(EtaxCancellationEvidence.RdReference, rd.Evidence);
     }
@@ -124,7 +129,7 @@ public class VoidReissueR200FTests
     [InlineData(true, EtaxStatus.Accepted, "ab", "เหตุผล", "เลขอ้างอิง")]
     public void R200_V1F_R3_ไม่มีหลักฐาน_ปฏิเสธพร้อมทางไปต่อ_ไม่แตะอะไร(bool flagged, EtaxStatus? etax, string? reference, string reason, string expect)
     {
-        var v = DocumentVoidPreconditions.EtaxCancellationResolution(flagged, etax, reference, reason);
+        var v = DocumentVoidPreconditions.EtaxCancellationResolution(Claim(flagged, etax, reference, reason));
         Assert.False(v.Allowed);
         Assert.Equal(EtaxCancellationEvidence.None, v.Evidence);
         Assert.Contains(expect, v.Reason);

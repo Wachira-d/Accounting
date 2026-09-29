@@ -172,3 +172,24 @@ race ยืนยันพร้อมกัน: `FOR UPDATE` ใบเดิม
 ## 7. สิ่งที่ยังไม่ครอบด้วยเทสต์ (F2 ข้อ 2 — เทสต์เรียกแค่ helper)
 เทสต์ V1F ทั้งหมดเป็น pure helper · ไม่มีเทสต์ลำดับเหตุการณ์ของ service: เช็คเด้ง→รับใหม่→ปิดธง (RV1F-3) · ปิดธงเมื่อไม่มีเงินเหลือแล้วดูวันที่ JE ตัวกลับ (RV1F-2) ·
 บันทึกคำขอ→ยืนยัน/ยกเลิก (สถานะคอลัมน์คำขอ) · `required_call_site_check` ล็อกว่ามีการเรียก แต่ไม่ล็อก "วันที่" หรือ "ลำดับเหตุการณ์ข้ามคำขอ"
+
+---
+
+## ตารางสถานะ (ทีม V1G · รอบ 200 · รายงาน `team-V1G.md`)
+
+| ID | สถานะ | ที่แก้ | เทสต์ |
+|---|---|---|---|
+| RV1F-1 | ✅ 3f4e1ea2 | `DocumentVoidPreconditions.EtaxCancellationResolution(EtaxCancellationClaim)` แยกทาง `EtaxCancellationPath.CancelledAtRd`/`CreditNote` · ทาง (ข) ต้องเป็นใบลดหนี้ในระบบ (`EtaxCreditNoteFact` · `Documents.EtaxCancelledByCreditNoteId` + unique index) ใบเสร็จเดิมคงมีผล · `ResolveEtaxCancellationAsync` · ตัวเลือก `GET …/etax-cancellation/credit-notes` · modal ใน documents.html | `R200_V1G_RV1F1_*` (3) |
+| RV1F-2 | ✅ 3f4e1ea2 | `UndoUndueOutputVatReclassAsync` ลงวันที่ JE ย้ายภาษีเอง (ไม่ catch) · `OutputVatPeriodLockReasonAsync` · `ReclassLockReasonAsync` · `OutputVatUndoOnPaymentVoid` ใน `ReversePaymentInternalAsync` (ผู้ใช้ 409 · เช็คเด้ง/ยกเลิกการลงบัญชี ธง + `PaymentVoidResult.OutputVatNotice`) · ด่าน R3 ตรวจวันที่ใบเสร็จ + วันที่ JE ย้ายภาษี + วันรับเงินที่เหลือ | `R200_V1G_RV1F2_*` (3) |
+| RV1F-3 | ✅ 3f4e1ea2 | `EtaxCancellationFollowUp` — ถอย/ย้ายภาษีไปวันรับเงินจริง + ออกใบกำกับ ณ วันรับเงินในธุรกรรมเดียว (`CreateSettlementReceiptAsync(carryVatFromSource: true)` · ยกเลิกใบรับเปล่าเดิมแบบคงแสดง · hooks หลัง commit) | `R200_V1G_ลำดับ_*` (5) |
+| RV1F-4 | ✅ 3f4e1ea2 | `DocumentController.ResolveEtaxCancellation` เดิน `IAttachmentAccessGate` (+ แถว `attachment_gate_check`) · service ตรวจไฟล์เป็นของใบเสร็จนี้ (`a.EntityId == rcpt.Id`) | `R200_V1G_RV1F4_*` |
+| RV1F-5 | ✅ 3f4e1ea2 | `Helpers/SettlementPaidReissueRequestView` (Build · Hash · ConfirmMismatch) · `BuildReissueRequestViewAsync` (หน้าจอ + ยืนยันใต้ล็อก) · `ReissueSettlementPaidRequest.ConfirmRequestHash` · `DocumentResponse.ReissueRequestDetail` · แถบรอยืนยันแสดงเดิม→ใหม่ | `R200_V1G_RV1F5_*` (2) |
+| RV1F-6 | ✅ 3f4e1ea2 | `DocumentVoidEtaxBlock` + `EffectiveEtaxAsync`: `VoidDocumentAsync` (cascade เฉพาะแถวที่ยังไม่ถึง) · `RestoreVoidedDocumentAsync` · `SettlementPostingService.LoadUnpostFactsAsync`/`OrphanChildrenAsync` (+ `EtaxSubmitted`) · integration void ผ่าน `VoidDocumentAsync` · `EtaxStatus.Accepted` ที่ตัดสินเองในเส้นยกเลิก = 0 จุด | `R200_V1G_RV1F6_*` (3) |
+| RV1F-7 | ✅ 3f4e1ea2 | `CancelReissueRequestAsync` ธุรกรรม + `FOR UPDATE` + ตรวจ `Voided`/`ReplacedByDocumentId` ใต้ล็อก (`REISSUE-ALREADY-REPLACED`) | required_call_site |
+| RV1F-8 | ✅ 3f4e1ea2 | `ResolveEtaxCancellationAsync` ล็อกใบต้นทางก่อนใบเสร็จ (ลำดับเดียวกับ `CreatePaymentAsync`) | required_call_site (`before`) |
+| RV1F-9 | ✅ 3f4e1ea2 | `EtaxCancellationEvidence.EtaxNeverReachedRd` แยกจาก `EtaxVoidedInSystem` · `EvidenceLabel` ลง audit/หมายเหตุ ("ไม่ใช่คำยืนยันจากกรมสรรพากร") · ข้อจำกัด `EtaxInvoiceService.VoidAsync` ยังไม่ส่งคำยกเลิกถึงกรมสรรพากร = คำถามค้าง | `R200_V1G_RV1F9_*` |
+| RV1F-10 | ✅ 3f4e1ea2 | `ApplyAutoReceiptOnPaymentVoidAsync(…, keepVisible: true)` ในเส้นปิดธง — Voided คงแสดง ไม่ soft-delete (ภ.พ.30 กรอง Voided อยู่แล้ว) | required_call_site (`call_args`) |
+| RV1F-11 | ✅ 3f4e1ea2 | เทสต์นับทุก property ที่ EF map (`IEntityType.GetProperties()`) | `R200_V1G_RV1F11_*` |
+| RV1F-12 | ✅ 3f4e1ea2 | `PreparerName`/`PreparerSignatureBase64` ย้ายไป `DocumentNotCarriedFields` (ผู้จัดทำ = ผู้ขอ ผ่าน `CreatedBy`) | `R200_V1G_RV1F12_*` |
+| RV1F-13 | NOT-A-BUG | สภาพ "ใบต้นทางถูกยกเลิกขณะใบเสร็จติดธงยังมีผล" เกิดไม่ได้: `VoidDocumentAsync` ปฏิเสธใบต้นทางที่มีเอกสารลูกยังมีผล (`ChildBlocksAsync` — ใบเสร็จอัตโนมัติ `RelatedDocumentId` = ใบต้นทาง) · cascade ยกเลิกการชำระใน `VoidDocumentAsync` ใช้ `PaymentVoidCause.User` ⇒ ใบเสร็จที่ถึงกรมสรรพากร = ปฏิเสธ (ไม่ติดธง) · ธงเกิดได้เฉพาะเช็คเด้ง/`VoidPaymentAsync(SettlementUnpost)` ซึ่งไม่ยกเลิกใบต้นทาง | — |
+| ข้อ 44 | ✅ 3f4e1ea2 | `GET document/etax-reissue-review` (`GetEtaxReissueReviewAsync` · `Helpers/EtaxReissueReview`) อ่านอย่างเดียว + แถบบนหน้ารายการ | `R200_V1G_ข้อ44_*` (2) |

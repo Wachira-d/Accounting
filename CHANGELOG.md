@@ -3957,3 +3957,22 @@ _2026-09-29 รอบ 200 ทีม V1F — แก้ผลฝ่ายค้า
 - **P1** e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลา = ถึงกรมสรรพากร (`EffectiveEtaxAsync` ตัวโหลดเดียว — ยกเลิกการชำระ · ออกใบแทน · ด่านยกเลิกการลงบัญชี) ·
   **P2** ยกเลิกการลงบัญชีรอบโอน: ใบเสร็จที่ถูกส่ง e-Tax ระหว่างทาง ⇒ ติดธง ไม่ throw กลางลูป · **P4** hooks หลัง commit อยู่นอก execution strategy
 - เทสต์ `VoidReissueR200FTests` (สองทิศทุกข้อ) + ปรับ `VoidReissueR200Tests` / `SettlementReceiptPolicyTests` · required_call_site +9 แถว/ปรับ 7 — commit c6b4908a)_
+
+_2026-09-29 รอบ 200 ทีม V1G — แก้ผลฝ่ายค้านรอบสองของทีม V1F (`erp-review/2026-09-29/review200-round2-V1F.md` · DECISIONS ข้อ 43–49 · รายงาน `team-V1G.md`):
+- **RV1F-1 (ข้อ 47)** ปิดธง "ต้องยกเลิกทาง e-Tax" แยกสองทาง: (ก) ยกเลิกทาง e-Tax สำเร็จ ⇒ ยกเลิกใบเสร็จแบบคงแสดง · (ข) ใบลดหนี้ ⇒ ต้องเป็นใบลดหนี้ในระบบ
+  (`EtaxCreditNoteFact` · `Documents.EtaxCancelledByCreditNoteId` + unique index · migration ADD COLUMN) ใบเสร็จเดิมคงมีผล ไม่แตะภาษีเดือนเดิม · ห้ามรับเลขที่ข้อความ
+- **RV1F-2 (ข้อ 48)** `UndoUndueOutputVatReclassAsync` (แทน `TryUndoUndueOutputVatReclassAsync`) ลงวันที่ของ JE ย้ายภาษีเอง · ไม่กลืน error · ด่านงวด
+  `OutputVatPeriodLockReasonAsync`/`ReclassLockReasonAsync` + ตัวตัดสิน `OutputVatUndoOnPaymentVoid` (ผู้ใช้ = 409 · เช็คเด้ง/ยกเลิกการลงบัญชี = ธง `[VAT-UNDO-BLOCKED]`
+  + `PaymentVoidResult.OutputVatNotice`) — กระทบผู้เรียกเดิมทุกจุด (ยกเลิกการชำระ · cascade ยกเลิกเอกสาร · เช็คเด้ง · ยกเลิกการลงบัญชี)
+- **RV1F-3 (ข้อ 48)** ตัวตัดสิน `EtaxCancellationFollowUp`: ปิดธงเมื่อมีการรับชำระที่ยังมีผล ⇒ ถอย/ย้ายภาษีไปวันรับเงินจริง + ออกใบกำกับ ณ วันรับเงินในธุรกรรมเดียว
+  (`CreateSettlementReceiptAsync(carryVatFromSource: true)` · `TryReclassifyUndueOutputVatAsync(throwOnFailure: true)`)
+- **RV1F-4 (ข้อ 46)** ทางเลขอ้างอิงต้องมีไฟล์หลักฐานที่แนบที่ใบเสร็จ — controller เดิน `IAttachmentAccessGate` (แถวใหม่ใน `attachment_gate_check`) · service ตรวจเจ้าของไฟล์
+- **RV1F-5 (ข้อ 49)** `DocumentResponse.ReissueRequestDetail` (ผู้ซื้อ/เลขภาษี/สาขา/ที่อยู่ เดิม→ใหม่ · หมายเหตุ · คำบรรยาย) จาก `Helpers/SettlementPaidReissueRequestView`
+  · ยืนยันส่ง `confirmRequestHash` — เทียบใต้ล็อก ต่าง = 409 `REISSUE-REQUEST-CHANGED` · หน้า documents.html แสดงตารางเดิม→ใหม่ (Layout.esc ทุกช่อง)
+- **RV1F-6 (ข้อ 43)** `DocumentVoidEtaxBlock` + `EffectiveEtaxAsync` ใน `VoidDocumentAsync` (ไม่พลิก Submitted เป็น Voided) · `RestoreVoidedDocumentAsync` ·
+  `SettlementPostingService.LoadUnpostFactsAsync`/`OrphanChildrenAsync` (+ `EtaxSubmitted` = NeedsUserAction) · integration void ผ่าน `VoidDocumentAsync`
+- **RV1F-7/8** ยกเลิกคำขอใบแทนเปิดธุรกรรม + `FOR UPDATE` + ตรวจใบถูกแทนแล้วใต้ล็อก · ปิดธงล็อกใบต้นทางก่อนใบเสร็จ · **RV1F-13** NOT-A-BUG (รายงานทีม)
+- **RV1F-9/10/11/12** ป้ายหลักฐาน `EvidenceLabel` (`EtaxNeverReachedRd` แยกจาก `EtaxVoidedInSystem`) · ใบเสร็จยกเลิกคงแสดง (`keepVisible`) · เทสต์ allowlist
+  ผ่าน EF model · `PreparerName/PreparerSignatureBase64` ไม่ตามไปใบแทน
+- **ข้อ 44** รายงานอ่านอย่างเดียว `GET document/etax-reissue-review` (`Helpers/EtaxReissueReview`) + แถบบนหน้ารายการเอกสาร
+- เทสต์ `VoidReissueR200GTests` (สองทิศ + ลำดับ เช็คเด้ง→รับใหม่→ปิดธง ระดับตัวตัดสิน) · ปรับ `VoidReissueR200FTests` R3 · required_call_site +16 แถว/ปรับ 7 — commit 3f4e1ea2)_

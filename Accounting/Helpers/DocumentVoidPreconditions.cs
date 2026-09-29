@@ -194,57 +194,280 @@ public static class DocumentVoidPreconditions
     public static bool FlaggedReceiptKeepsTaxPoint(AutoReceiptEtaxAction action, decimal receiptVatAmount)
         => action == AutoReceiptEtaxAction.FlagEtaxCancellation && receiptVatAmount > 0.005m;
 
+
     /// <summary>
-    /// **ปิดธง "ต้องยกเลิกทาง e-Tax"** (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-R3) — ตัวตัดสินเดียวของ endpoint "บันทึกว่ายกเลิกทาง e-Tax แล้ว"
-    /// <para>R1 (DECISION_AUDIT): ระบบ<b>ไม่ประทับ</b>สถานะของกรมสรรพากรเอง — ต้องมีหลักฐาน: (ก) e-Tax ทุกแถวของใบถูกยกเลิกในระบบแล้ว
-    /// (ผู้ใช้กดยกเลิกที่หน้า e-Tax ก่อนตอบรับ) หรือ (ข) ใบถึงกรมสรรพากรแล้ว (ตอบรับ/อีเมลประทับเวลา) + <b>เลขอ้างอิงการยกเลิก/ใบลดหนี้</b>
-    /// ที่ผู้ใช้ได้จากกรมสรรพากร/ผู้ให้บริการ (แถว e-Tax ไม่ถูกแตะ) · ส่งแล้วยังไม่รู้ผล (Submitted) ⇒ ปฏิเสธพร้อมทางไปต่อ · เหตุผลบังคับ · G6: pure</para>
+    /// **ปิดธง "ต้องยกเลิกทาง e-Tax"** — ตัวตัดสินเดียวของ endpoint "บันทึกการยกเลิกทาง e-Tax" (รอบ 200 ทีม V1F · V1-R3 · แก้ต่อรอบ V1G ·
+    /// คำตัดสินข้อ 46–47)
+    /// <para>R1 (DECISION_AUDIT): ระบบ<b>ไม่ประทับ</b>สถานะของกรมสรรพากรเอง — แยก<b>สองทาง</b> (ข้อ 47 · RV1F-1 — เดิม "เลขที่ใบลดหนี้" ถูกใช้เป็นหลักฐาน
+    /// แล้วระบบยกเลิกใบเสร็จ ⇒ ภาษีขายหายจากเดือนเดิมย้อนหลังทั้งที่ใบลดหนี้ไม่มีในระบบ):</para>
+    /// <para>(ก) <see cref="EtaxCancellationPath.CancelledAtRd"/> — ใบกำกับถูกยกเลิกแล้ว ⇒ ยกเลิกใบเสร็จ (คงแสดงเป็น Voided) · หลักฐาน: แถว e-Tax
+    /// ไม่ถึงกรมสรรพากร/ถูกยกเลิกในระบบนี้ หรือ (ถึงแล้ว) <b>เลขอ้างอิงการยกเลิก + ไฟล์หลักฐานที่แนบผ่านด่านไฟล์แนบ</b> (ข้อ 46 · RV1F-4)</para>
+    /// <para>(ข) <see cref="EtaxCancellationPath.CreditNote"/> — ออกใบลดหนี้แล้ว ⇒ <b>ใบลดหนี้ต้องมีอยู่ในระบบนี้</b> (อ้างใบเสร็จ/ใบต้นทาง ·
+    /// ผู้ซื้อเดียวกัน · ออกแล้ว · ภาษีครอบภาษีของใบเสร็จ · ยังไม่เคยใช้ปิดธงใบอื่น) — ใบเสร็จเดิมคงอยู่ (ภาษีขายลดในเดือนของใบลดหนี้ §86/10) ·
+    /// ห้ามรับแค่ "เลขที่" ข้อความ</para>
+    /// <para>ส่งแล้วยังไม่รู้ผล (Submitted) ⇒ ปฏิเสธพร้อมทางไปต่อทั้งสองทาง · เหตุผลบังคับ · G6: pure</para>
     /// </summary>
-    /// <param name="flagged">ใบนี้ติดธงอยู่จริง</param>
-    /// <param name="effectiveEtax">สถานะ e-Tax ที่ใช้ตัดสิน (<see cref="EffectiveEtaxAsync"/> — null = ไม่มีแถวที่ยังมีผล)</param>
-    public static EtaxCancellationResolutionVerdict EtaxCancellationResolution(bool flagged, EtaxStatus? effectiveEtax,
-        string? rdCancellationReference, string? reason)
+    public static EtaxCancellationResolutionVerdict EtaxCancellationResolution(EtaxCancellationClaim c)
     {
         const string Tail = " · ระบบยังไม่ได้แตะอะไร";
-        if (!flagged)
+        if (!c.Flagged)
             return EtaxCancellationResolutionVerdict.Refused("เอกสารนี้ไม่ได้ติดธง “ต้องยกเลิกทาง e-Tax”" + Tail);
-        if (string.IsNullOrWhiteSpace(reason))
+        if (string.IsNullOrWhiteSpace(c.Reason))
             return EtaxCancellationResolutionVerdict.Refused("กรุณาระบุเหตุผล (เก็บไว้ให้ผู้สอบบัญชี)" + Tail);
-        if (effectiveEtax == EtaxStatus.Submitted)
+        if (c.EffectiveEtax == EtaxStatus.Submitted)
             return EtaxCancellationResolutionVerdict.Refused(
                 "e-Tax ของใบนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
-                + "หรือรอผลตอบรับแล้วยกเลิกทางกรมสรรพากรพร้อมเลขอ้างอิง" + Tail);
-        if (EtaxReachedRd(effectiveEtax))
+                + "หรือรอผลตอบรับแล้วบันทึกตามสิ่งที่ทำจริงที่กรมสรรพากร (ยกเลิก หรือออกใบลดหนี้)" + Tail);
+
+        if (c.Path == EtaxCancellationPath.CreditNote)
         {
-            var reference = rdCancellationReference?.Trim() ?? "";
+            if (c.EffectiveEtax != EtaxStatus.Accepted)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "ใบนี้ไม่ได้ถึงกรมสรรพากร (ไม่มีใบกำกับที่มีผลให้ลดหนี้) — ใช้ทาง “ยกเลิกทาง e-Tax แล้ว” แทน" + Tail);
+            if (c.SourceRemainingPaid > 0.005m)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ใบต้นทางยังมีการรับชำระที่มีผลอยู่ {c.SourceRemainingPaid:N2} บาท — การขายยังเกิดจริง ใบลดหนี้เต็มจำนวนจะทำให้ยอดลดหนี้รวมรับชำระเกินหนี้ "
+                    + "(§86/10) · ถ้าลูกค้าชำระใหม่แล้ว ใบเสร็จนี้อาจยังเป็นใบกำกับของการขายนี้ได้ — ปรึกษาผู้ทำบัญชีก่อน (ยกเลิกการรับชำระที่เหลือก่อน "
+                    + "หรือใช้ทาง “ยกเลิกทาง e-Tax แล้ว” เมื่อยกเลิกทางกรมสรรพากรแล้ว)" + Tail);
+            if (c.CreditNote is not { Found: true } cn)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "เลือกใบลดหนี้ในระบบนี้ที่ออกอ้างใบเสร็จ/ใบต้นทางแล้ว (สร้างใบลดหนี้ที่หน้าเอกสารก่อน) — ระบบรับเลขที่เป็นข้อความอย่างเดียวไม่ได้ "
+                    + "(ภ.พ.30 ต้องเห็นใบลดหนี้จริงในเดือนที่ออก)" + Tail);
+            if (cn.Type != DocumentType.CreditNote)
+                return EtaxCancellationResolutionVerdict.Refused($"เอกสาร {cn.Number} ไม่ใช่ใบลดหนี้" + Tail);
+            if (!DocumentStatusRules.IsIssued(cn.Status) || cn.Status == DocumentStatus.Voided)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ใบลดหนี้ {cn.Number} ยังไม่ได้ออก/ถูกยกเลิก (สถานะ {cn.Status}) — อนุมัติใบลดหนี้ก่อนแล้วกดอีกครั้ง" + Tail);
+            if (!cn.ReferencesReceiptOrSource)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ใบลดหนี้ {cn.Number} ไม่ได้อ้างใบเสร็จนี้หรือใบต้นทางของใบเสร็จ (§86/10 ต้องอ้างใบกำกับเดิม)" + Tail);
+            if (!cn.SameContact)
+                return EtaxCancellationResolutionVerdict.Refused($"ใบลดหนี้ {cn.Number} ออกให้ผู้ซื้อคนละรายกับใบเสร็จนี้" + Tail);
+            if (cn.VatAmount + 0.005m < c.ReceiptVatAmount)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ภาษีของใบลดหนี้ {cn.Number} ({cn.VatAmount:N2}) น้อยกว่าภาษีของใบเสร็จนี้ ({c.ReceiptVatAmount:N2}) — ใบกำกับเดิมยังมีผลบางส่วน" + Tail);
+            if (!string.IsNullOrWhiteSpace(cn.AlreadyResolvesReceiptNumber))
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ใบลดหนี้ {cn.Number} ถูกใช้ปิดธงของใบเสร็จ {cn.AlreadyResolvesReceiptNumber} ไปแล้ว" + Tail);
+            return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.CreditNoteInSystem);
+        }
+
+        if (EtaxReachedRd(c.EffectiveEtax))
+        {
+            var reference = c.RdCancellationReference?.Trim() ?? "";
             if (reference.Length < 3)
                 return EtaxCancellationResolutionVerdict.Refused(
                     "ใบนี้ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว) — ระบบยืนยันการยกเลิกกับกรมสรรพากรเองไม่ได้ "
-                    + "กรุณาระบุเลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้ที่ออกทางระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) เป็นหลักฐาน" + Tail);
+                    + "กรุณาระบุเลขอ้างอิงการยกเลิกที่ได้จากระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) · ถ้าออกใบลดหนี้แทนการยกเลิก "
+                    + "ให้เลือกทาง “ออกใบลดหนี้แล้ว”" + Tail);
+            if (!c.EvidenceFileAttached)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "แนบไฟล์หลักฐานการยกเลิก (ภาพ/ไฟล์ตอบกลับจากกรมสรรพากรหรือผู้ให้บริการ e-Tax) ที่ใบเสร็จนี้ด้วย — เลขอ้างอิงอย่างเดียวระบบตรวจไม่ได้ "
+                    + "(คำตัดสินข้อ 46)" + Tail);
             return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.RdReference);
         }
-        return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.EtaxVoidedInSystem);
+        // ไม่ถึงกรมสรรพากร: ป้ายตามความจริง (RV1F-9) — แถวถูกยกเลิกในระบบนี้ ≠ ไม่เคยถึงกรมสรรพากร
+        return new EtaxCancellationResolutionVerdict(true, null,
+            c.EffectiveEtax == null && c.AnyEtaxRowVoided ? EtaxCancellationEvidence.EtaxVoidedInSystem : EtaxCancellationEvidence.EtaxNeverReachedRd);
+    }
+
+    /// <summary>ป้ายหลักฐานที่ลง audit/หมายเหตุภายใน — บอก "สิ่งที่ระบบรู้จริง" ห้ามเกินความจริง (RV1F-9: ยกเลิกในระบบนี้ ≠ กรมสรรพากรยกเลิก) · pure</summary>
+    public static string EvidenceLabel(EtaxCancellationEvidence e) => e switch
+    {
+        EtaxCancellationEvidence.EtaxVoidedInSystem =>
+            "ผู้ใช้ยกเลิกแถว e-Tax ในระบบนี้ก่อนกรมสรรพากรตอบรับ (ระบบไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร — ไม่ใช่คำยืนยันจากกรมสรรพากร)",
+        EtaxCancellationEvidence.EtaxNeverReachedRd =>
+            "e-Tax ของใบนี้ไม่ได้ถึงกรมสรรพากร (สถานะที่เหลือไม่ใช่ส่งแล้ว/ตอบรับ) — ไม่มีอะไรต้องยกเลิกที่กรมสรรพากร",
+        EtaxCancellationEvidence.RdReference =>
+            "เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ + ไฟล์หลักฐานแนบ (ผู้ใช้ยืนยัน — ระบบตรวจกับกรมสรรพากรเองไม่ได้)",
+        EtaxCancellationEvidence.CreditNoteInSystem =>
+            "ใบลดหนี้ในระบบนี้อ้างใบกำกับเดิม (ใบเสร็จเดิมยังมีผล · ภาษีขายลดในเดือนของใบลดหนี้ §86/10)",
+        _ => "ไม่มีหลักฐาน",
+    };
+
+    // ═══ RV1F-2/3 (คำตัดสินข้อ 48): ถอยภาษีขายลงเดือนที่ตั้งรายการ · งวดปิด/เดือนล็อก = ปฏิเสธดัง · ปิดธงแล้วการขายต้องมีใบกำกับเสมอ ═══
+
+    /// <summary>
+    /// **ยกเลิกการรับชำระแล้วต้องถอยภาษีขายถึงกำหนด (§78/1) แต่เดือนที่ตั้งรายการปิด/ยื่นแล้ว — ทำอะไร** (ตัวตัดสินเดียว · ข้อ 48 · RV1F-2)
+    /// <para>ตัวกลับลงวันที่เดียวกับ JE ย้ายภาษี (เดือนรับเงิน) เสมอ — เดิมลงวันที่ใบแจ้งหนี้ ⇒ ม.ค. −70 / ก.พ. +70 ขณะที่ ภ.พ.30 = 0/0 ·
+    /// เดือนนั้นปิด/ยื่น/ล็อก ⇒ ผู้ใช้กดเอง = <b>ปฏิเสธดัง</b>พร้อมทางไปต่อ (เดิม LogError แล้วตอบสำเร็จ) · เช็คเด้ง/ยกเลิกการลงบัญชีรอบโอน =
+    /// <b>ห้ามบล็อก</b>การกลับรายการเงิน (ข้อ 11) ⇒ ไม่ถอยภาษี + ธงที่มองเห็นบนใบต้นทางและในผลลัพธ์ · G6: pure</para>
+    /// </summary>
+    /// <param name="reclassPeriodLock">เหตุที่เดือนของ JE ย้ายภาษีปิด/ยื่นแล้ว (null = เปิด)</param>
+    public static OutputVatUndoDecision OutputVatUndoOnPaymentVoid(string? reclassPeriodLock, PaymentVoidCause cause, string? invoiceNumber)
+    {
+        if (string.IsNullOrWhiteSpace(reclassPeriodLock))
+            return new OutputVatUndoDecision(OutputVatUndoAction.Undo, null);
+        var no = string.IsNullOrWhiteSpace(invoiceNumber) ? "ใบต้นทาง" : invoiceNumber!.Trim();
+        if (cause == PaymentVoidCause.User)
+            return new OutputVatUndoDecision(OutputVatUndoAction.Refuse,
+                $"ยกเลิกการชำระนี้ไม่ได้ — ภาษีขายของ {no} ถึงกำหนดตอนรับเงินใน{reclassPeriodLock} · ถอยภาษีย้อนเข้างวดนั้นไม่ได้ "
+                + "(แบบที่ยื่น/งบที่ปิดจะไม่ตรงบัญชี) — ทางไปต่อ: เปิดงวด/Reject & Reverse รายงานเดือนนั้นก่อน "
+                + "หรือออกใบลดหนี้อ้างใบนี้ในเดือนปัจจุบัน (ภาษีขายลดในเดือนที่ออกใบลดหนี้ §86/10) · ระบบยังไม่ได้แตะอะไร");
+        return new OutputVatUndoDecision(OutputVatUndoAction.KeepAndFlag,
+            $"[VAT-UNDO-BLOCKED] {(cause == PaymentVoidCause.ChequeBounce ? "เช็คเด้ง" : "ยกเลิกการลงบัญชีรอบโอน")} — กลับรายการเงินแล้ว "
+            + $"แต่ภาษีขายของ {no} ถึงกำหนดใน{reclassPeriodLock} จึงยังอยู่ในแบบ/บัญชีภาษีขาย (ถอยย้อนเข้างวดนั้นไม่ได้) — "
+            + "ออกใบลดหนี้อ้างใบนี้ในเดือนปัจจุบัน (§86/10) หรือเปิดงวด/Reject & Reverse รายงานเดือนนั้นแล้วตรวจกับผู้ทำบัญชี");
+    }
+
+    /// <summary>
+    /// **หลังปิดธงทาง (ก) ใบต้นทางต้องทำอะไรต่อ** (ข้อ 48 · RV1F-2/RV1F-3) — ใบเสร็จถือ VAT ที่ถูกยกเลิกเคยถือจุดความรับผิด §78/1 ของการขายนี้:
+    /// <list type="bullet">
+    /// <item>ใบเสร็จถือ VAT อื่นยังมีผล ⇒ ไม่ต้องทำอะไร (จุดความรับผิดยังถูกถือ)</item>
+    /// <item>ไม่มีการรับชำระเหลือ ⇒ ถอยภาษีขาย (ลงเดือนที่ตั้งรายการ) · เดือนนั้นปิด/ยื่นแล้ว ⇒ ปฏิเสธ + ทางไปต่อ (ใบลดหนี้)</item>
+    /// <item>มีการรับชำระที่ยังมีผล (เช็คเด้ง → รับใหม่ → ปิดธง · RV1F-3) ⇒ จุดความรับผิดย้ายไปวันรับเงินจริงครั้งแรกที่เหลือ (ถอยในเดือนเดิม +
+    /// ย้ายใหม่ ณ วันรับเงิน) · รับครบงวดเดียว (กติกาเดียวกับ <see cref="SettlementReceiptPolicy.CarriesTaxInvoiceRole"/>) ⇒ <b>ออกใบกำกับ ณ วันรับเงิน</b>
+    /// ให้การรับชำระนั้นในธุรกรรมเดียวกัน (ยกเลิกใบรับเปล่าเดิม) — ไม่มีช่วงที่การขายไม่มีใบกำกับ · ใบรับเปล่าที่ส่ง e-Tax แล้ว / งวดของวันรับเงินปิด ⇒ ปฏิเสธ</item>
+    /// </list>
+    /// G6: pure</summary>
+    public static EtaxCancelFollowUpPlan EtaxCancellationFollowUp(EtaxCancelFollowUpFacts f)
+    {
+        const string Tail = " · ระบบยังไม่ได้แตะอะไร";
+        var none = new EtaxCancelFollowUpPlan(true, null, false, null, null, null);
+        if (f.OtherLiveVatReceipt) return none;
+
+        if (f.LivePayments.Count == 0)
+        {
+            if (f.OutputVatDueAt == null) return none;
+            if (!string.IsNullOrWhiteSpace(f.ReclassPeriodLock))
+                return EtaxCancelFollowUpPlan.Refused(
+                    $"ภาษีขายของใบต้นทางถึงกำหนดใน{f.ReclassPeriodLock} — ยกเลิกใบเสร็จแล้วต้องถอยภาษีย้อนเข้างวดนั้น ซึ่งทำไม่ได้ · ทางไปต่อ: "
+                    + "ออกใบลดหนี้อ้างใบต้นทางในเดือนปัจจุบันแล้วเลือกทาง “ออกใบลดหนี้แล้ว” (ภาษีขายลดในเดือนของใบลดหนี้) "
+                    + "หรือเปิดงวด/Reject & Reverse รายงานเดือนนั้นก่อน" + Tail);
+            return none with { UndoReclass = true };
+        }
+
+        var first = f.LivePayments.OrderBy(p => p.PaymentDate).ThenBy(p => p.PaymentId).First();
+        var singleFull = f.LivePayments.Count == 1 && !first.HasAllocations && f.SourceFullyPaid;
+        var carries = SettlementReceiptPolicy.CarriesTaxInvoiceRole(f.SourceType, f.SourceVat, singleFull, liveVatReceiptExists: false)
+            && first.ReceiptVat <= 0.005m;
+        var moveTaxPoint = f.OutputVatDueAt?.Date != first.PaymentDate.Date;
+        if (moveTaxPoint && f.OutputVatDueAt != null && !string.IsNullOrWhiteSpace(f.ReclassPeriodLock))
+            return EtaxCancelFollowUpPlan.Refused(
+                $"ภาษีขายของใบต้นทางถึงกำหนดใน{f.ReclassPeriodLock} (วันที่ใบเสร็จที่ยกเลิก) แต่เงินที่มีผลรับจริงวันที่ {first.PaymentDate:dd/MM/yyyy} — "
+                + "ย้ายจุดความรับผิดต้องถอยในงวดเดิมซึ่งปิด/ยื่นแล้ว · ทางไปต่อ: เปิดงวด/Reject & Reverse รายงานเดือนนั้นก่อน (หรือปรึกษาผู้ทำบัญชี — "
+                + "ถ้าการรับเงินใหม่อยู่ในเดือนเดียวกัน ใบกำกับเดิมอาจยังใช้ได้โดยไม่ต้องยกเลิก)" + Tail);
+        if ((moveTaxPoint || carries) && !string.IsNullOrWhiteSpace(f.FirstPaymentPeriodLock))
+            return EtaxCancelFollowUpPlan.Refused(
+                $"การรับชำระที่มีผล ({first.PaymentDate:dd/MM/yyyy}) อยู่ใน{f.FirstPaymentPeriodLock} — ภาษีขาย/ใบกำกับ ณ วันรับเงินต้องลงงวดนั้นซึ่งปิด/ยื่นแล้ว · "
+                + "ทางไปต่อ: เปิดงวด/Reject & Reverse รายงานเดือนนั้นก่อน" + Tail);
+        if (carries && first.ReceiptReachedRd)
+            return EtaxCancelFollowUpPlan.Refused(
+                $"การรับชำระที่มีผลอยู่มีใบรับ {first.ReceiptNumber} ที่ส่ง e-Tax แล้ว — ระบบต้องออกใบกำกับ ณ วันรับเงินแทนใบรับนั้น (การขายนี้ต้องมีใบกำกับ) "
+                + "แต่ยกเลิกใบที่ถึงกรมสรรพากรแล้วเงียบ ๆ ไม่ได้ · ทางไปต่อ: ยกเลิก e-Tax ของใบรับนั้นก่อน (หรือยกเลิกทางกรมสรรพากร) แล้วกดอีกครั้ง" + Tail);
+        return new EtaxCancelFollowUpPlan(true, null,
+            UndoReclass: moveTaxPoint && f.OutputVatDueAt != null,
+            ReclassAt: moveTaxPoint ? first.PaymentDate.Date : null,
+            IssueVatReceiptForPaymentId: carries ? first.PaymentId : null,
+            VoidPlainReceiptId: carries ? first.ReceiptId : null);
+    }
+
+    /// <summary>
+    /// **ยกเลิก/กู้คืนเอกสารที่ e-Tax ถึงกรมสรรพากรแล้ว** (ข้อ 43 · RV1F-6) — ตัวตัดสินเดียวของ <c>VoidDocumentAsync</c> และ <c>RestoreVoidedDocumentAsync</c>
+    /// (ทุกทางเข้า: หน้าเอกสาร · integration · ยกเลิกการลงบัญชีรอบโอน) · ชุดสถานะ <see cref="EtaxReachedRdStatuses"/> + e-Tax by Email (<see cref="EffectiveEtaxAsync"/>)
+    /// — เดิมดูแค่ Accepted แล้วพลิก Submitted เป็น Voided เงียบ ⇒ กรมสรรพากรตอบรับภายหลังได้ทั้งที่ระบบเรายกเลิกไปแล้ว · null = ไม่บล็อก · G6: pure
+    /// </summary>
+    public static string? DocumentVoidEtaxBlock(EtaxStatus? effectiveEtax, string? documentNumber, bool restore)
+    {
+        if (!EtaxReachedRd(effectiveEtax)) return null;
+        var no = string.IsNullOrWhiteSpace(documentNumber) ? "เอกสารนี้" : documentNumber!.Trim();
+        var what = restore ? "กู้คืน" : "ยกเลิก";
+        return effectiveEtax == EtaxStatus.Accepted
+            ? $"{what}ไม่ได้ — e-Tax ของ {no} ถึงกรมสรรพากรแล้ว (ตอบรับแล้ว หรือ e-Tax by Email ที่ประทับเวลาแล้ว) · "
+              + (restore ? "ออกเอกสารใหม่แทน" : "ต้องยกเลิกทางระบบ e-Tax ของกรมสรรพากรก่อน หรือออกใบลดหนี้อ้างใบนี้ (§86/10)")
+              + " · ระบบยังไม่ได้แตะอะไร"
+            : $"{what}ไม่ได้ — e-Tax ของ {no} ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) · เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
+              + $"(ทำได้ก่อนกรมสรรพากรตอบรับ) แล้ว{what}อีกครั้ง · ระบบยังไม่ได้แตะอะไร";
     }
 }
 
-/// <summary>หลักฐานที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" (<see cref="DocumentVoidPreconditions.EtaxCancellationResolution"/>)</summary>
+/// <summary>ทางของการปิดธง "ต้องยกเลิกทาง e-Tax" (คำตัดสินข้อ 47)</summary>
+public enum EtaxCancellationPath
+{
+    /// <summary>(ก) ยกเลิกทาง e-Tax สำเร็จ — ใบเสร็จไม่มีผลแล้ว ⇒ ยกเลิกใบเสร็จ (คงแสดงเป็น Voided)</summary>
+    CancelledAtRd = 0,
+    /// <summary>(ข) ออกใบลดหนี้แล้ว — ใบเสร็จเดิมยังมีผล ⇒ ผูกใบลดหนี้ในระบบนี้ (ภาษีขายลดในเดือนของใบลดหนี้)</summary>
+    CreditNote = 1,
+}
+
+/// <summary>หลักฐานที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" (<see cref="DocumentVoidPreconditions.EtaxCancellationResolution"/>) — ป้าย
+/// <see cref="DocumentVoidPreconditions.EvidenceLabel"/></summary>
 public enum EtaxCancellationEvidence
 {
     /// <summary>ไม่มี (ถูกปฏิเสธ)</summary>
     None = 0,
-    /// <summary>e-Tax ทุกแถวของใบถูกยกเลิกในระบบแล้ว (ก่อนกรมสรรพากรตอบรับ)</summary>
+    /// <summary>แถว e-Tax ของใบถูกยกเลิก<b>ในระบบนี้</b>ก่อนกรมสรรพากรตอบรับ (ไม่ใช่คำยืนยันจากกรมสรรพากร — RV1F-9)</summary>
     EtaxVoidedInSystem = 1,
-    /// <summary>เลขอ้างอิงการยกเลิก/ใบลดหนี้จากกรมสรรพากรหรือผู้ให้บริการ e-Tax (ผู้ใช้ยืนยัน · แถว e-Tax ไม่ถูกแตะ)</summary>
+    /// <summary>เลขอ้างอิงการยกเลิกจากกรมสรรพากรหรือผู้ให้บริการ e-Tax + ไฟล์หลักฐานที่แนบ (ผู้ใช้ยืนยัน · แถว e-Tax ไม่ถูกแตะ · ข้อ 46)</summary>
     RdReference = 2,
+    /// <summary>e-Tax ของใบไม่เคยถึงกรมสรรพากร (สถานะที่เหลือ สร้าง/เซ็น/ผิดพลาด/ถูกปฏิเสธ — RV1F-9)</summary>
+    EtaxNeverReachedRd = 3,
+    /// <summary>ใบลดหนี้ในระบบนี้อ้างใบกำกับเดิม (ทาง ข · ข้อ 47)</summary>
+    CreditNoteInSystem = 4,
 }
+
+/// <summary>ใบลดหนี้ที่ผู้ใช้เลือกปิดธงทาง (ข) — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
+/// <param name="Found">พบใบนี้ในบริษัทนี้ (false = ไม่พบ)</param>
+/// <param name="ReferencesReceiptOrSource">อ้าง (<c>RelatedDocumentId</c>) ใบเสร็จนี้หรือใบต้นทางของใบเสร็จ</param>
+/// <param name="AlreadyResolvesReceiptNumber">เลขที่ใบเสร็จอื่นที่ใบลดหนี้นี้เคยปิดธงไปแล้ว (null = ยังไม่เคย)</param>
+public sealed record EtaxCreditNoteFact(bool Found, string? Number, DocumentType Type, DocumentStatus Status, bool ReferencesReceiptOrSource,
+    bool SameContact, decimal VatAmount, string? AlreadyResolvesReceiptNumber);
+
+/// <summary>คำขอปิดธง + ข้อเท็จจริงที่ตัวตัดสินต้องใช้ (<see cref="DocumentVoidPreconditions.EtaxCancellationResolution"/>)</summary>
+/// <param name="EffectiveEtax">สถานะ e-Tax ที่ใช้ตัดสิน (<see cref="DocumentVoidPreconditions.EffectiveEtaxAsync"/> — null = ไม่มีแถวที่ยังมีผล)</param>
+/// <param name="AnyEtaxRowVoided">มีแถว e-Tax ของใบที่ถูกยกเลิก (Voided) ในระบบนี้</param>
+/// <param name="EvidenceFileAttached">ไฟล์หลักฐานที่ผู้ใช้ระบุผ่านด่านไฟล์แนบแล้ว และเป็นไฟล์ของใบเสร็จนี้จริง</param>
+/// <param name="SourceRemainingPaid">ยอดรับชำระที่ยังมีผลบนใบต้นทาง</param>
+public sealed record EtaxCancellationClaim(bool Flagged, EtaxStatus? EffectiveEtax, bool AnyEtaxRowVoided, EtaxCancellationPath Path,
+    string? Reason, string? RdCancellationReference, bool EvidenceFileAttached, EtaxCreditNoteFact? CreditNote, decimal ReceiptVatAmount,
+    decimal SourceRemainingPaid);
 
 /// <param name="Allowed">ปิดธงได้</param>
 /// <param name="Reason">ข้อความไทยพร้อมทางไปต่อเมื่อปิดไม่ได้</param>
-/// <param name="Evidence">หลักฐานที่ใช้ (ลง audit)</param>
+/// <param name="Evidence">หลักฐานที่ใช้ (ลง audit ด้วยป้าย <see cref="DocumentVoidPreconditions.EvidenceLabel"/>)</param>
 public sealed record EtaxCancellationResolutionVerdict(bool Allowed, string? Reason, EtaxCancellationEvidence Evidence)
 {
     internal static EtaxCancellationResolutionVerdict Refused(string reason) => new(false, reason, EtaxCancellationEvidence.None);
 }
+
+/// <summary>การรับชำระที่ยังมีผลของใบต้นทาง (ตอนปิดธงทาง ก)</summary>
+/// <param name="ReceiptVat">ภาษีของใบเสร็จอัตโนมัติของการรับชำระนี้ (0 = ใบรับเปล่า/ไม่มีใบ)</param>
+/// <param name="ReceiptReachedRd">ใบเสร็จอัตโนมัติของการรับชำระนี้ถึงกรมสรรพากรแล้ว (ยกเลิกเงียบไม่ได้)</param>
+public sealed record EtaxCancelLivePayment(Guid PaymentId, DateTime PaymentDate, bool HasAllocations, Guid? ReceiptId, string? ReceiptNumber,
+    decimal ReceiptVat, bool ReceiptReachedRd);
+
+/// <summary>ข้อเท็จจริงของ <see cref="DocumentVoidPreconditions.EtaxCancellationFollowUp"/></summary>
+/// <param name="OutputVatDueAt">วันที่ภาษีขายถึงกำหนดของใบต้นทาง (null = ยังพัก/ไม่มี)</param>
+/// <param name="OtherLiveVatReceipt">มีใบเสร็จถือ VAT อื่น (นอกจากใบที่กำลังยกเลิก) ที่ยังมีผล</param>
+/// <param name="ReclassPeriodLock">เหตุที่เดือนของ JE ย้ายภาษีขายปิด/ยื่นแล้ว (null = เปิด)</param>
+/// <param name="FirstPaymentPeriodLock">เหตุที่เดือนของวันรับเงินครั้งแรกที่ยังมีผลปิด/ยื่นแล้ว (null = เปิด/ไม่มี)</param>
+public sealed record EtaxCancelFollowUpFacts(DocumentType SourceType, decimal SourceVat, bool SourceFullyPaid, DateTime? OutputVatDueAt,
+    bool OtherLiveVatReceipt, IReadOnlyList<EtaxCancelLivePayment> LivePayments, string? ReclassPeriodLock, string? FirstPaymentPeriodLock);
+
+/// <param name="UndoReclass">ถอยภาษีขายถึงกำหนด (ลงวันที่ของ JE ย้ายภาษีเอง)</param>
+/// <param name="ReclassAt">ย้ายภาษีขายถึงกำหนดใหม่ ณ วันรับเงินนี้ (null = ไม่ย้าย)</param>
+/// <param name="IssueVatReceiptForPaymentId">ออกใบเสร็จถือ VAT (ใบกำกับ ณ วันรับเงิน) ให้การรับชำระนี้</param>
+/// <param name="VoidPlainReceiptId">ใบรับเปล่าเดิมของการรับชำระนั้นที่ต้องยกเลิก (คงแสดงเป็น Voided)</param>
+public sealed record EtaxCancelFollowUpPlan(bool Allowed, string? Reason, bool UndoReclass, DateTime? ReclassAt,
+    Guid? IssueVatReceiptForPaymentId, Guid? VoidPlainReceiptId)
+{
+    internal static EtaxCancelFollowUpPlan Refused(string reason) => new(false, reason, false, null, null, null);
+}
+
+/// <summary>ผลของ <see cref="DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid"/></summary>
+public enum OutputVatUndoAction
+{
+    /// <summary>ถอยภาษีขายได้ (ลงเดือนที่ตั้งรายการ)</summary>
+    Undo = 0,
+    /// <summary>ปฏิเสธการยกเลิกการชำระทั้งรายการ (ข้อความพร้อมทางไปต่อ)</summary>
+    Refuse = 1,
+    /// <summary>กลับรายการเงินต่อ แต่ไม่ถอยภาษี + ธงบนใบต้นทาง/ในผลลัพธ์ (เช็คเด้ง · ยกเลิกการลงบัญชีรอบโอน)</summary>
+    KeepAndFlag = 2,
+}
+
+/// <param name="Message">ข้อความไทย — ปฏิเสธ หรือธง · Undo = null</param>
+public sealed record OutputVatUndoDecision(OutputVatUndoAction Action, string? Message);
+
 
 /// <summary>ทางเข้าที่ยกเลิกการรับชำระ — ตัดสินว่าใบเสร็จที่ถึงกรมสรรพากรแล้วต้องปฏิเสธหรือติดธง (<see cref="DocumentVoidPreconditions.AutoReceiptOnPaymentVoid"/>)</summary>
 public enum PaymentVoidCause

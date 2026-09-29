@@ -1,5 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using Accounting.Models.Enums;
+// รอบ 200 ทีม V1G: alias ระดับ global — ใต้ namespace นี้ `Accounting.` ผูกไป Accounting.Models.DTOs.Accounting ก่อน (namespace_shadow_check)
+using ReissueRequestView = Accounting.Helpers.ReissueRequestView;
+using EtaxCancellationPath = Accounting.Helpers.EtaxCancellationPath;
 
 namespace Accounting.Models.DTOs.Document;
 
@@ -928,7 +931,12 @@ public record DocumentResponse(
     DateTime? ReissueRequestedAt = null,
     string? ReissueRequestedBy = null,
     /// <summary>เหตุผลของคำขอที่ค้าง (จากคำขอที่บันทึกไว้) — ให้ผู้ยืนยันเห็นก่อนกด</summary>
-    string? ReissueRequestReason = null);
+    string? ReissueRequestReason = null,
+    /// <summary>รอบ 200 ทีม V1G (คำตัดสินข้อ 49 · RV1F-5) — คำขอฉบับเต็มที่ผู้ยืนยันต้องเห็น (ผู้ซื้อ/เลขภาษี/สาขา/ที่อยู่ เดิม→ใหม่ · หมายเหตุ ·
+    /// คำบรรยาย) + hash ที่การยืนยันต้องส่งกลับ · null = ไม่มีคำขอ/อ่านไม่ได้</summary>
+    ReissueRequestView? ReissueRequestDetail = null,
+    /// <summary>รอบ 200 ทีม V1G (ข้อ 47) — ใบลดหนี้ที่ใช้ปิดธง e-Tax ของใบเสร็จนี้ (เก็บแล้วต้อง echo) · null = ไม่มี</summary>
+    Guid? EtaxCancelledByCreditNoteId = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>
@@ -937,17 +945,30 @@ public record DocumentResponse(
 /// <param name="Reason">เหตุผล (บังคับ — เก็บให้ผู้สอบบัญชี)</param>
 /// <param name="ConfirmPendingRequest">รอบ 200 ทีม V1F (V1-R6): true = ยืนยัน "คำขอที่ค้าง" บนใบนี้ (ผู้อนุมัติคนที่สอง — ช่องอื่นถูกละ ใช้คำขอที่บันทึกไว้) ·
 /// null/false = ส่งคำขอใหม่</param>
+/// <param name="ConfirmRequestHash">รอบ 200 ทีม V1G (คำตัดสินข้อ 49 · RV1F-5): hash ของคำขอฉบับที่ผู้ยืนยันเห็น (<c>DocumentResponse.ReissueRequestDetail.RequestHash</c>) —
+/// บังคับเมื่อยืนยัน · คำขอ/ผู้ซื้อที่คำขอชี้ถูกแก้หลังเปิดดู ⇒ 409 (ต้องดูใหม่แล้วยืนยันใหม่)</param>
 public sealed record ReissueSettlementPaidRequest(
-    Guid? ContactId, string? Notes, List<ReissueLineDescription>? Lines, string? Reason, bool? ConfirmPendingRequest = null);
+    Guid? ContactId, string? Notes, List<ReissueLineDescription>? Lines, string? Reason, bool? ConfirmPendingRequest = null,
+    string? ConfirmRequestHash = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอแก้คำบรรยาย 1 บรรทัดของใบแทน (อ้าง Id บรรทัดของใบเดิม)</summary>
 public sealed record ReissueLineDescription(Guid LineId, string? Description);
 
-/// <summary>รอบ 200 ทีม V1F (V1-R3) — "บันทึกว่ายกเลิกทาง e-Tax แล้ว" ของใบที่ติดธง</summary>
+/// <summary>รอบ 200 ทีม V1F (V1-R3) · แยกทางรอบ V1G (คำตัดสินข้อ 46–47) — "บันทึกการยกเลิกทาง e-Tax" ของใบที่ติดธง</summary>
 /// <param name="Reason">เหตุผล (บังคับ — เก็บให้ผู้สอบบัญชี)</param>
-/// <param name="RdCancellationReference">เลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้จากกรมสรรพากรหรือผู้ให้บริการ e-Tax — บังคับเมื่อใบถึงกรมสรรพากรแล้ว
-/// (ตอบรับ/e-Tax by Email) · ใบที่ยกเลิก e-Tax ในระบบแล้วไม่ต้องใส่</param>
-public sealed record ResolveEtaxCancellationRequest(string? Reason, string? RdCancellationReference);
+/// <param name="RdCancellationReference">ทาง (ก): เลขอ้างอิงการยกเลิกจากกรมสรรพากรหรือผู้ให้บริการ e-Tax — บังคับเมื่อใบถึงกรมสรรพากรแล้ว
+/// (ตอบรับ/e-Tax by Email) พร้อมไฟล์หลักฐาน · ใบที่ยกเลิก e-Tax ในระบบแล้วไม่ต้องใส่</param>
+/// <param name="Path">ทาง (ก) ยกเลิกทาง e-Tax สำเร็จ (ค่าเริ่มต้น) · (ข) ออกใบลดหนี้แล้ว</param>
+/// <param name="EvidenceAttachmentId">ทาง (ก): ไฟล์หลักฐาน (แนบที่ใบเสร็จนี้ก่อน — ผ่านด่านไฟล์แนบตัวเดียว · ข้อ 46)</param>
+/// <param name="CreditNoteDocumentId">ทาง (ข): ใบลดหนี้ในระบบนี้ที่อ้างใบเสร็จ/ใบต้นทาง (ห้ามส่งแค่เลขที่ · ข้อ 47)</param>
+public sealed record ResolveEtaxCancellationRequest(string? Reason, string? RdCancellationReference,
+    EtaxCancellationPath? Path = null, Guid? EvidenceAttachmentId = null, Guid? CreditNoteDocumentId = null);
+
+/// <summary>ผลของ "บันทึกการยกเลิกทาง e-Tax" (รอบ 200 ทีม V1G) — ใบต้นทาง (null = ไม่มี) + ข้อความที่บอกสิ่งที่ระบบทำจริง (ทาง ก/ข · ใบกำกับใหม่ที่ออก)</summary>
+public sealed record EtaxCancellationResult(DocumentResponse? Source, string Message);
+
+/// <summary>ใบลดหนี้ที่เลือกปิดธงทาง (ข) ได้ (อ้างใบเสร็จ/ใบต้นทาง · ผู้ซื้อเดียวกัน · ออกแล้ว · ยังไม่เคยใช้) — ตัวเลือกบนหน้าจอ ตัวตัดสินจริงอยู่ที่ endpoint</summary>
+public sealed record EtaxCancellationCreditNoteOption(Guid Id, string DocumentNumber, DateTime DocumentDate, decimal TotalAmount, decimal VatAmount);
 
 /// <summary>รอบ 200 ทีม V1 — ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (รายการงานค้าง)</summary>
 public sealed record EtaxCancelRequiredItem(Guid Id, string DocumentNumber, DocumentType DocumentType, DateTime DocumentDate,
@@ -955,7 +976,9 @@ public sealed record EtaxCancelRequiredItem(Guid Id, string DocumentNumber, Docu
 
 /// <summary>รอบ 200 ทีม V1 — ผลของ "ยกเลิกการชำระ" ให้ผู้เรียกบอกต่อ (เช็คเด้ง: ใบเสร็จที่ติดธงแทนการยกเลิก)</summary>
 /// <param name="EtaxCancellationFlag">ข้อความธงที่ติดบนใบเสร็จ — null = ไม่มี (ยกเลิกใบเสร็จตามปกติ/ไม่มีใบเสร็จ)</param>
-public sealed record PaymentVoidResult(string? EtaxCancellationFlag)
+/// <param name="OutputVatNotice">รอบ 200 ทีม V1G (ข้อ 48 · RV1F-2): เช็คเด้ง/ยกเลิกการลงบัญชีรอบโอนกลับรายการเงินแล้วแต่ถอยภาษีขายไม่ได้
+/// (เดือนที่ตั้งรายการปิด/ยื่นแล้ว) — ข้อความเดียวกับธงบนใบต้นทาง · null = ไม่มี</param>
+public sealed record PaymentVoidResult(string? EtaxCancellationFlag, string? OutputVatNotice = null)
 {
     public static PaymentVoidResult None { get; } = new((string?)null);
 }

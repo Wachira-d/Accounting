@@ -6267,6 +6267,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestedAt" timestamp with time zone NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestedBy" text NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReissueRequestJson" text NULL;""",
+            // รอบ 200 ทีม V1G (คำตัดสินข้อ 47 · RV1F-1): ปิดธง "ต้องยกเลิกทาง e-Tax" ด้วยใบลดหนี้ในระบบ — ใบเสร็จคงมีผล · ใบลดหนี้หนึ่งใบใช้ปิดได้ใบเดียว ·
+            // null = พฤติกรรมเดิม (ไม่ต้องซ่อมข้อมูลเก่า — รายงานอ่านอย่างเดียวของข้อ 44 ให้นักบัญชีตรวจใบที่ปิดไปก่อนรอบนี้)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxCancelledByCreditNoteId" uuid NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Documents_EtaxCancelledByCreditNote" ON "Documents" ("EtaxCancelledByCreditNoteId") WHERE "EtaxCancelledByCreditNoteId" IS NOT NULL;""",
 
             // ═══ Payment gateway เฟส 1: ชั้นกลาง (PAYMENT_GATEWAY_DESIGN.md) ═══
             // ระบบมี 4 เส้นทางรับเงินแบบสลิปที่ต่างคนต่างเขียน — ถ้าต่อ gateway ทีละทาง
