@@ -4828,6 +4828,28 @@ MapTerminal · CompanyBankPickAsync · Create/UpdateTerminalAsync)
 | GWG-13 | ตั้งชื่อเครื่อง/สินค้า `<img src=x onerror=alert(1)>` | แสดงเป็นข้อความ ไม่รันสคริปต์ |
 | GWG-14 | integration ส่งใบแจ้งหนี้ บริษัทไม่มีผัง 11310 | เอกสารมีหมายเหตุ `[ยังไม่ลงบัญชี]` บอก 11310 + ช่องบนผู้ติดต่อ · log PartialSuccess · คำตอบคู่ค้ามีเหตุผล |
 
+### รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway เข้ารอบโอน batch (DECISIONS ข้อ 12)
+
+เทสต์อัตโนมัติ: `SettlementGatewayPhase2Tests` (สองทิศทุกข้อ · **parity กับเส้นเดิม**: ประกอบบรรทัดด้วย `PaymentIntentAdapter` แล้วคิดแผนด้วย
+`SettlementBatchMath.Plan` ต้องได้ ภาษีซื้อ/ค่าใช้จ่าย/ยอดที่ถูกหัก/ผังพัก เท่า `GatewaySettlementMath.Plan` ทุกโหมด VAT + บริษัทไม่จด VAT · ผลรวมบรรทัดต่อ intent =
+`Contribution.Net` · expression `UnclaimedForBatch`/`LateRefundInBatch` compile แล้วรันกับวัตถุจริง · `ModeMismatch` 11 คู่ · ตาข่าย `RefundLinesOverRefunded`) ·
+`required_call_site_check` (+9 กติกา: ImportFromPaymentIntentsAsync · LoadIntentRowsAsync (ห้ามเขียนเงื่อนไขเจ้าของซ้ำ/ส่งยอดคืนสะสม) · EnsureIntentRefundCapacityAsync ·
+RefundInLinesAsync · PersistAsync (ตาข่ายหลังล็อก ก่อนเพิ่มบรรทัด) · PaymentIntentAdapter.BuildRows (ห้ามสูตรที่สอง) · SettlementChannelService.SaveAsync ·
+GatewaySettlementService.SelectCandidatesAsync (ทิศกลับ)) · เรพไม่มีเทสต์ที่มี DbContext ⇒ SPP2 ด้านล่างต้องรันบน staging
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| SPP2-01 | config gateway "บวก VAT เพิ่ม" ค่าธรรมเนียม 39.06 + 18.25 · ช่องทาง "VAT ไทย 7%" · ประกอบรอบโอนจากรายการรับชำระ ยอดโอน 1,508.68 | ลงตัว · ใบค่าธรรมเนียม 61.32 = ค่าใช้จ่าย 57.31 + 11630 4.01 (เท่าหน้ารอบโอนเดิม) · ไม่มีใบขายสรุป · ล้างผังพัก 1,570 |
+| SPP2-02 | config "รวม VAT ในค่าธรรมเนียม" 10.00 ×3 | ภาษีซื้อ 1.95 (ปัดต่อรายการ) ไม่ใช่ 1.96 |
+| SPP2-03 | config "ไม่แยก VAT" แต่ช่องทาง "VAT ไทย 7%" → ประกอบรอบโอน / บันทึกช่องทาง | 400 `SETTLEMENT-GATEWAY-MODE-MISMATCH` / `SETTLEMENT-CHANNEL-GATEWAY-MODE` พร้อมทางไปต่อ · ไม่มีรอบโอน/ช่องทางถูกบันทึก |
+| SPP2-04 | ทิศตรงข้าม: config/ช่องทางตรงกัน (ไม่แยก ↔ ไม่มี VAT หรือ ภ.พ.36 · รวม/บวก ↔ VAT 7% · หัก 3% ↔ เราออกภาษีแทน) | ผ่านตามเดิม |
+| SPP2-05 | intent ที่บันทึกรอบโอนด้วยหน้าเดิมแล้ว + intent ที่อยู่รอบโอน batch อื่น → ประกอบรอบโอนใหม่ | ไม่ถูกดึง · หน้าเดิมไม่แสดง intent ที่ batch เป็นเจ้าของ |
+| SPP2-06 | intent ที่หน้าเดิมเป็นเจ้าของ คืนเงินภายหลัง → ประกอบรอบโอน batch | ไม่มีบรรทัดคืนเงิน (หน้าเดิมหักเองรอบถัดไป) |
+| SPP2-07 | คืนเงิน 100 ก่อนวันเงินเข้า + 200 วันเงินเข้า → ประกอบรอบนี้ · แล้วประกอบรอบถัดไป | รอบนี้บรรทัดคืน −100 · รอบถัดไป −200 (ไม่มีขาย/ค่าธรรมเนียมซ้ำ) |
+| SPP2-08 | คืนเงินบางครั้งก่อนระบบเก็บยอดรายครั้ง + คืนล่าสุดตั้งแต่วันเงินเข้า | 400 `SETTLEMENT-REFUND-TIMING-UNKNOWN` พร้อมทางไปต่อ (ห้ามเดา) |
+| SPP2-09 | หัวรอบโอนระบุต้นช่วง · มี intent ที่ยังไม่มีเจ้าของเก่ากว่าต้นช่วง | ไม่ถูกดึง + คำเตือนจำนวนรายการ · ไม่ระบุต้นช่วง ⇒ ดึงทั้งหมดตามเดิม |
+| SPP2-10 | สองช่องทางผูก config เดียวกัน กดประกอบรอบโอนพร้อมกัน · intent คืนเงินภายหลัง | คำขอที่สอง 400 `SETTLEMENT-INTENT-TAKEN` · บรรทัดคืนเงินมีชุดเดียว |
+
 ### ฝ่ายค้านรอบ 198 ทีม D2 — review198-D (D-01..D-11 · D-P1 · D-P2 · D-P4)
 
 เทสต์อัตโนมัติ: `SettlementReview198DTests` (สองทิศทุกข้อ · `SettlementSaleMatch.AssignRefusal/OrderGroupAmounts` เทียบกับ `Decide`/`ApplyIntentRefundCapacity` ·
