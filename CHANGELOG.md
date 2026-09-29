@@ -3733,4 +3733,4 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม S — ค�
 - **D-P3** `/settlement` → `BankReconciliation` (RouteFeatureMap + เมนู 2 รายการ) · **D-P5** `SettlementPermissionScope.CandidatesHiddenReason/HideCandidates`
   (View อย่างเดียวไม่เห็นผู้สมัคร/ยอดค้าง + เหตุผล) · **D-P2** verify แล้ว (266acad2)
 - **ค่าตั้งต้นยังเป็น Shadow** · เทสต์ `SubscriptionEnforcementResolverTests` · `SubscriptionTrialReadinessTests` · TEST_PLAN SUB-G13..G20 · required_call_site +8/ปรับ 2
-  · รายงาน + checklist เจ้าของ `erp-review/2026-09-29/team-S.md` — commit <pending>)_
+  · รายงาน + checklist เจ้าของ `erp-review/2026-09-29/team-S.md` — commit 2bff9ece)_
