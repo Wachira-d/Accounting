@@ -148,4 +148,12 @@ precheck แสดง `/settlement` ใต้ BankReconciliation แต่ไม
 
 ## checker บนสำเนา `git archive team-S-r200`
 
-(ดูท้ายไฟล์ — เติมหลังรันเสร็จ)
+ผ่านทั้งหมด (สำเนาจาก `git archive team-S-r200` ใน scratchpad — ไม่แตะ working tree หลัก):
+`required_call_site_check` 373 กติกา + negative 14 · `dead_helper_check` ไม่มีตัวใหม่ · `using_check` · `record_arg_check` · `nullable_arg_check` ·
+`accessibility_check` · `undeclared_local_check` · `tuple_name_merge_check` · `service_interface_check` · `settings_reader_check` = 0 ปัญหา ·
+`test_inventory --check` ตรง · sha `2bff9ece`/`8b239819` อยู่บน `team-S-r200` (`merge-base --is-ancestor`) ·
+**ไม่ได้ build/test จริง** (ไม่มี SDK) — ข้อคอมไพล์ใน S200-10 ข้อ 9 มาจากการอ่าน
+
+หมายเหตุ: checker เหล่านี้ล็อก "มีการเรียก" แต่ไม่จับ S200-1..4 (เป็นเรื่องทิศของพฤติกรรม/ผู้อ่านตัวที่สอง) — เทสต์ทิศตรงข้ามที่เสนอ:
+`legacyEnforce_adminShadow_partnerยังบล็อก` (S200-1) · `trialสำเนาว่าง_CheckFeatureAccessAsync_ได้DocumentEngine` (S200-4) ·
+`posting-preview_ดูอย่างเดียว_ไม่มียอดค้างในข้อความ` (S200-5)
