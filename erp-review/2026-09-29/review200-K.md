@@ -4,7 +4,7 @@ diff: `5c1fe028..worktree-agent-a3dc3a4026cab58e1` (`53dc5921` + `ae28d49a`) · 
 เลขบรรทัดอ้างไฟล์บน branch `worktree-agent-a3dc3a4026cab58e1` (OcrService.cs = รุ่นบน branch)
 
 static checker ที่รันบนสำเนา branch (git archive ลง scratchpad): using · record_arg · nullable_arg · tuple_name_merge · undeclared_local ·
-advisory_lock_key · namespace_shadow = 0 ทุกตัว · `required_call_site_check` ยังรันไม่จบตอนเขียน (มีหลาย agent รันพร้อมกัน)
+advisory_lock_key · namespace_shadow = 0 ทุกตัว · `required_call_site_check` ถูกตัดที่ timeout 580 วิ (exit 143 · มีหลาย agent รันพร้อมกัน) — ไม่มีผล ต้องรันซ้ำ
 
 ## สรุป
 
