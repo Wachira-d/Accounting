@@ -2,6 +2,8 @@
 
 ขอบเขต: `BRIEF.md` แถว W · `DECISIONS.md` ข้อ 13 · `settlement/review198-A.md` R-A4/R-A5 · มุมมอง: นักกฎหมายภาษีไทย + นักบัญชี + วิศวกร
 
+> คอมมิตหลัก: `79f3f8de` · `bash tools/check_all.sh` ผ่านทั้งหมด (checker 53 · simulation 8 · TEST_PLAN §0)
+>
 > ⚠️ **ยังไม่ได้คอมไพล์** — เครื่องนี้ไม่มี .NET SDK · ต้อง rebuild/test ฝั่ง CI (ดู §5 ความเสี่ยงคอมไพล์)
 
 ## 1. สรุป

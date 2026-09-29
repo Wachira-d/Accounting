@@ -61,7 +61,7 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: send it to an accountant (add to §10 of report-S1). Until then have `Plan` raise a non-blocking issue "ช่องทางต่างประเทศ + บริษัทไม่จด VAT — ตรวจว่าต้องยื่น ภ.พ.36 หรือผู้ให้บริการเก็บ VAT แล้ว".
   The DECISION_DOCTRINE rule is that an unknown must not pass silently.
 
-### ✅ 84d47dda (บล็อก) · รอบ 200 ทีม W `<pending>` (หัก ภ.ง.ด.54 ได้จริง) R-A5 · CONFIRMED · P2: foreign provider + WHT mode = ภ.ง.ด.53 at the Thai rate
+### ✅ 84d47dda (บล็อก) · รอบ 200 ทีม W 79f3f8de (หัก ภ.ง.ด.54 ได้จริง) R-A5 · CONFIRMED · P2: foreign provider + WHT mode = ภ.ง.ด.53 at the Thai rate
 - `SettlementFeeTax.cs:116-117` always uses `ThaiWhtRateTable.RateFor(code, payeeIsJuristic: true)`. `DefaultCode(WhtPayable)` = 21917 (ภ.ง.ด.53).
   Nothing guards the combination `FeeVatMode == ForeignPp36 && FeeWhtMode != None`.
 - Numbers: a foreign ads platform charges 1,000 with W3. The system computes 20.41 (2/98) into 21917, as ภ.ง.ด.53 to a foreign payee. The correct treatment is ภ.ง.ด.54 at 15%,
