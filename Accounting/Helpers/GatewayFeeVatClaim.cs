@@ -107,6 +107,20 @@ public static class GatewayFeeVatClaim
         => $"เดือนภาษี {ThaiDate.CalendarDateUtc(claimDate):MM/yyyy} ยื่น/ประกาศว่ายื่น ภ.พ.30 แล้ว — ลงภาษีซื้อย้อนเข้าเดือนนั้นไม่ได้ "
            + "(ไม่เข้ารายงานที่ยื่นแล้ว = ภาษีซื้อหายเงียบ) · ให้เคลมในเดือนภาษีที่ยังไม่ยื่น (ยังอยู่ในกำหนด §82/3 ถ้าไม่เกิน 6 เดือนนับจากเดือนของใบกำกับ)";
 
+    /// <summary>วันที่เคลมอยู่ในอนาคต (วันไทย) — <c>null</c> = ไม่ใช่ (รอบ 200 ทีม G · review198-E2 E2-12)
+    ///
+    /// <para>ใบสำคัญเคลมลงวันที่ล่วงหน้า = ภาษีซื้อเข้า ภ.พ.30 ของเดือนที่ยังไม่ถึง และยอดพัก 11630 ของเดือนนี้ถูกหักไปก่อนรอบโอนจริงจะเกิด ·
+    /// แยกจาก <see cref="Check"/> เพราะต้องรู้ "วันนี้" (ผู้เรียกส่ง <c>DateTime.UtcNow</c>) — service เรียกทั้งสองตัวเสมอ
+    /// (ล็อกด้วย <c>tools/required_call_site_check.py</c>)</para></summary>
+    public static string? FutureClaimDateMessage(DateTime claimDate, DateTime nowUtc)
+    {
+        var claim = ThaiDate.CalendarDateUtc(claimDate);
+        var today = ThaiDate.CalendarDateUtc(nowUtc);
+        return claim > today
+            ? $"วันที่เคลม {claim:dd/MM/yyyy} อยู่ในอนาคต — ลงภาษีซื้อล่วงหน้าไม่ได้ (เข้า ภ.พ.30 เดือนที่ยังไม่ถึง) · เลือกวันที่ไม่เกินวันนี้"
+            : null;
+    }
+
     /// <summary>จำนวนเดือนปฏิทินระหว่างสองเดือน (to − from) · ติดลบได้</summary>
     private static int MonthsBetween(DateTime from, DateTime to)
         => (to.Year - from.Year) * 12 + (to.Month - from.Month);
@@ -171,7 +185,9 @@ public static class GatewayFeeVatClaim
         string? supplierName, string? supplierTaxId, string? supplierBranchCode, string? lateReason)
     {
         var vat = R(vatAmount);
-        var branch = string.IsNullOrWhiteSpace(supplierBranchCode) ? "00000" : supplierBranchCode.Trim();
+        // รอบ 200 ทีม G (review198-E2 E2-12): สาขาว่าง ≠ สำนักงานใหญ่ — §86/4 + ประกาศอธิบดีฯ 199 บังคับให้ใบกำกับมีสาขา ⇒ ต้องกรอกตามใบ
+        // (เดิมเติม 00000 เงียบ ๆ = ค่าที่แต่งขึ้นลงรายงานภาษีซื้อ) · หน้าเว็บตั้งค่าเริ่มต้น 00000 ไว้ให้แล้ว ผู้ใช้ที่ลบทิ้งต้องเห็นว่าว่าง
+        var branch = (supplierBranchCode ?? "").Trim();
         GatewayFeeVatClaimCheck Fail(string m) => new(false, m, vat, R(outstanding), false, branch);
 
         if (vat <= 0m)
@@ -187,6 +203,8 @@ public static class GatewayFeeVatClaim
         if (!ThaiTaxId.IsValid(supplierTaxId))
             return Fail("เลขประจำตัวผู้เสียภาษีของผู้ออกใบกำกับต้องเป็นตัวเลข 13 หลักที่ checksum ถูกต้อง — "
                 + "ภาษีซื้อที่ไม่มีเลขผู้ขายเคลมไม่ได้ (§82/5(1))");
+        if (branch.Length == 0)
+            return Fail("กรุณากรอกรหัสสาขาผู้ออกใบกำกับตามที่พิมพ์บนใบ (00000 = สำนักงานใหญ่ · §86/4)");
         if (branch.Length != 5 || !branch.All(char.IsDigit))
             return Fail("รหัสสาขาผู้ออกใบกำกับต้องเป็นตัวเลข 5 หลัก (00000 = สำนักงานใหญ่)");
 

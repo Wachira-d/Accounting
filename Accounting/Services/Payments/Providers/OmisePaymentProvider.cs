@@ -36,6 +36,17 @@ public class OmisePaymentProvider : IPaymentProvider
     public const string HttpClientName = "payments:omise";
 
     private const string ApiBase = "https://api.omise.co";
+
+    /// <summary>รุ่น API ที่ adapter นี้อ่านชื่อช่อง — <b>ปักทุกคำขอ</b> (หัว <c>Omise-Version</c> · คำตัดสินรอบ 200 ข้อ 18)
+    ///
+    /// <para>ไม่ปัก = รุ่นตั้งต้นของบัญชีผู้ขายแต่ละราย ⇒ ชื่อช่องเปลี่ยนตามบัญชี: รุ่น 2017-11-02 ใช้ <c>refunded</c> (เป็นยอด) แต่ adapter อ่าน
+    /// <c>refunded_amount</c> (เปลี่ยนชื่อในรุ่น 2019-05-29) ⇒ ยอดคืนสะสม = null เงียบ ๆ ⇒ "ตรวจผลการคืนเงิน" ได้ ProviderSilent ตลอด ·
+    /// ช่องที่ adapter อ่านทั้งหมด (<c>status</c> · <c>paid</c> · <c>fee</c> · <c>refunded_amount</c> · <c>refunds{data,total}</c> ·
+    /// <c>source.scannable_code</c> · <c>authorize_uri</c> · <c>metadata</c> · <c>failure_*</c>) เป็นชื่อของรุ่นนี้ ·
+    /// เปลี่ยนรุ่น = ต้องไล่ทุกช่องใน <see cref="ParseCharge"/> แล้วทดสอบใน sandbox ก่อน</para></summary>
+    public const string ApiVersion = "2019-05-29";
+    /// <summary>ชื่อหัวที่ใช้ปักรุ่น API</summary>
+    public const string ApiVersionHeader = "Omise-Version";
     private const string VaultBase = "https://vault.omise.co";
     private const string CdnBase = "https://cdn.omise.co";
     /// <summary>สคริปต์ฝั่งเบราว์เซอร์ที่แปลงเลขบัตรเป็นโทเคน · หน้าเว็บขอค่านี้จาก API
@@ -98,6 +109,9 @@ public class OmisePaymentProvider : IPaymentProvider
         // HTTP Basic: secret key เป็นชื่อผู้ใช้ รหัสผ่านว่าง
         var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(SecretKey(cfg) + ":"));
         c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", basic);
+        // รอบ 200 ข้อ 18: ปักรุ่น API — ชื่อช่องที่อ่านต้องไม่ขึ้นกับรุ่นตั้งต้นของบัญชีผู้ขาย
+        c.DefaultRequestHeaders.Remove(ApiVersionHeader);
+        c.DefaultRequestHeaders.Add(ApiVersionHeader, ApiVersion);
         return c;
     }
 
@@ -325,6 +339,9 @@ public class OmisePaymentProvider : IPaymentProvider
             return null;
         }
         if (string.IsNullOrWhiteSpace(eventId)) return null;
+        // รอบ 200 ทีม G: เลข event มาจาก body ที่ใครก็ POST ได้ แล้วถูกต่อเข้า path ของคำขอที่แนบ secret key ของบริษัท —
+        // ต้องเป็นรูปเลข event เท่านั้น (กัน "../charges/…" / "?…" พาคำขอไปปลายทางอื่นด้วยคีย์ของร้าน) · ไม่ผ่าน = ไม่ยิงออกเลย
+        if (!IsWellFormedEventId(eventId)) return null;
 
         try
         {
@@ -364,6 +381,13 @@ public class OmisePaymentProvider : IPaymentProvider
             return null;
         }
     }
+
+    /// <summary>รูปเลข event ของผู้ให้บริการนี้ (<c>evnt_</c> + ตัวอักษร/ตัวเลข/ขีดล่าง · โหมดทดสอบ = <c>evnt_test_…</c>) —
+    /// ด่านก่อนต่อเข้า path (ไม่มี <c>/</c> <c>.</c> <c>?</c> <c>%</c>) · pure</summary>
+    internal static bool IsWellFormedEventId(string? eventId)
+        => eventId is { Length: > 5 and <= 100 }
+           && eventId.StartsWith("evnt_", StringComparison.Ordinal)
+           && eventId.All(ch => ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
 
     public async Task<ProviderHealth> TestConnectionAsync(PaymentProviderConfig config,
         CancellationToken ct = default)

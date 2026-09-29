@@ -165,8 +165,23 @@ public static class GatewaySettlementMath
     /// (ผู้ให้บริการคำนวณยอดโอนก่อนเงินถึงธนาคาร — คืนวันเดียวกับวันเงินเข้าจึงเป็นของรอบถัดไป) · ถ้าผลต่างของรอบเท่ากับยอดคืน
     /// ข้อความ "ยอดไม่ตรง" บอกให้ตรวจวันเงินเข้า (ทางแก้ที่ผู้ใช้ทำได้จริง)</para>
     /// <para>ประเทศไทยไม่มีเวลาออมแสง ⇒ +07:00 คงที่</para></summary>
-    public static DateTime RefundCutoffUtc(DateTime settledAt)
-        => DateTime.SpecifyKind(ThaiDate.CalendarDateUtc(settledAt).AddHours(-7), DateTimeKind.Utc);
+    public static DateTime RefundCutoffUtc(DateTime settledAt) => BangkokMidnightUtc(settledAt);
+
+    /// <summary>ช่วง "วันที่รับเงิน" ที่ผู้ใช้เลือก (วันไทย รวมปลาย) → ช่วงเวลา UTC แบบ <c>[เริ่ม, จบ)</c> สำหรับเทียบกับ <c>ConfirmedAt</c> (รอบ 200 ทีม G)
+    ///
+    /// <para>═══ ที่มา (บั๊กจริง) ═══ แผนรอบโอนและรายงานกระทบยอดเทียบ <c>ConfirmedAt</c> (เวลา UTC จริง) กับ <c>ThaiDate.CalendarDateUtc(วันที่)</c>
+    /// ซึ่งเป็น "ป้ายวันไทย" ที่ 00:00 <b>UTC</b> ⇒ ขอบช่วงเลื่อนไป 7 ชั่วโมง: รับเงินตี 1–7 โมงเช้าของวันแรกหลุดออก · ตี 1–7 โมงเช้าของ
+    /// วันถัดจากวันสุดท้ายถูกนับเข้า ⇒ รอบโอน "ยอดไม่ตรง" ทั้งที่ค่าธรรมเนียมถูก · ขอบที่ถูก = เที่ยงคืนเวลาไทย (สูตรเดียวกับ <see cref="RefundCutoffUtc"/>)</para></summary>
+    public static (DateTime StartUtc, DateTime EndUtcExclusive) ConfirmedRangeUtc(DateTime fromDate, DateTime toDate)
+    {
+        var start = BangkokMidnightUtc(fromDate);
+        var end = BangkokMidnightUtc(toDate).AddDays(1);
+        return (start, end);
+    }
+
+    /// <summary>เที่ยงคืนต้นวันไทยของ <paramref name="date"/> เป็นเวลา UTC (ไทยไม่มีเวลาออมแสง ⇒ −7 ชั่วโมงคงที่)</summary>
+    private static DateTime BangkokMidnightUtc(DateTime date)
+        => DateTime.SpecifyKind(ThaiDate.CalendarDateUtc(date).AddHours(-7), DateTimeKind.Utc);
 
     /// <summary>ยอดคืนสะสม ณ จุดตัด (ฝ่ายค้าน R-E2 — เดิมใช้ยอดคืนสะสมวันนี้ ⇒ คืนหลังวันเงินเข้าแต่บันทึกรอบโอนทีหลัง = ยอดไม่ตรงถาวร)
     ///

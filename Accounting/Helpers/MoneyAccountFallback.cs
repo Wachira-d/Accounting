@@ -94,6 +94,21 @@ public static class MoneyAccountFallback
         };
     }
 
+    /// <summary>คำเตือน<b>ล่วงหน้า</b>ของเครื่อง POS (รอบ 200 ทีม G · review198-E ข้อ E-3) — <c>null</c> = บิลโอน/พร้อมเพย์ของเครื่องนี้ลงบัญชีได้
+    ///
+    /// <para>═══ ที่มา ═══ รอบ 198 P-1 เปลี่ยน "เดา prefix 112" เป็น "ล้มดัง" เมื่อบริษัทมีบัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 บัญชีและเครื่องไม่ได้ปัก ·
+    /// ถูกทิศ แต่ผู้ใช้เจอครั้งแรก<b>ตอนปิดบิล</b> (รวมบิล offline ที่ sync เข้ามา — เงินรับไปแล้ว) · และข้อความชี้ไป "ตั้งค่าเครื่อง → บัญชีธนาคาร"
+    /// ซึ่ง<b>ไม่มีช่องนั้นบนหน้าจอ</b> (ต่อสายในรอบนี้) ⇒ ตัดสินจากกติกาเดียวกับ <see cref="PickBank"/> แล้วให้หน้าตั้งค่า/หัว POS แสดงก่อนขาย</para></summary>
+    public static string? TerminalBankWarning(bool terminalBankPinned, BankAccountPickOutcome companyBanks)
+    {
+        if (terminalBankPinned || companyBanks == BankAccountPickOutcome.Single) return null;
+        return companyBanks == BankAccountPickOutcome.Ambiguous
+            ? "บริษัทมีบัญชีธนาคารที่ผูกผังบัญชีหลายบัญชี แต่เครื่องนี้ยังไม่ได้เลือก \"บัญชีธนาคารรับเงิน\" — บิลที่รับโอน/พร้อมเพย์/หักบัญชี "
+              + "(รวมบิล offline ที่ sync เข้ามา) จะปิดไม่ได้ · กด \"⚙️ ตั้งค่าเครื่อง\" แล้วเลือกบัญชีธนาคารที่เงินของเครื่องนี้เข้า"
+            : "ยังไม่มีบัญชีธนาคารที่ผูกผังบัญชี — บิลที่รับโอน/พร้อมเพย์/หักบัญชีจะปิดไม่ได้ · เพิ่มบัญชีธนาคารและเลือกผังบัญชีที่หน้า "
+              + "\"บัญชีธนาคาร\" แล้วเลือกเป็นบัญชีรับเงินของเครื่องนี้";
+    }
+
     /// <summary>ข้อความล้มดังเมื่อหาบัญชีธนาคารให้ไม่ได้ — บอกทางไปต่อตามช่องทาง</summary>
     public static string BankNotResolvedMessage(BankAccountPickOutcome outcome, string channelHint)
         => outcome == BankAccountPickOutcome.Ambiguous

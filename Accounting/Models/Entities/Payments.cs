@@ -131,6 +131,10 @@ public class PaymentIntent : TenantEntity
     /// <summary>JE คืนเงินครั้งล่าสุด (Dr ลูกหนี้ / Cr บัญชีพัก) — ผูกไว้ตามรอยจากหน้ารายการ</summary>
     public Guid? LastRefundJournalEntryId { get; set; }
     public decimal? SettledAmount { get; set; }
+    /// <summary>ค่าธรรมเนียมที่ถูกหักจริงในรอบโอนของรายการนี้ (รวม VAT ถ้าโหมด AddedOnTop) <b>ณ วันบันทึกรอบ</b> (รอบ 200 ทีม G · review198-E2 E2-12) —
+    /// รายงานกระทบยอดใช้ค่านี้กับแถวที่บันทึกรอบแล้วแทนการคิดใหม่ด้วยโหมด VAT ค่าธรรมเนียม<b>วันนี้</b> (เปลี่ยนโหมดทีหลัง = รอบเก่าไม่สมดุล) ·
+    /// null = แถวก่อนมีคอลัมน์ที่เติมย้อนหลังแบบพิสูจน์ไม่ได้ (ใช้สูตรเดิม)</summary>
+    public decimal? SettledFeeDeducted { get; set; }
     public DateTime? SettledAt { get; set; }
     public string? SettlementRef { get; set; }
 

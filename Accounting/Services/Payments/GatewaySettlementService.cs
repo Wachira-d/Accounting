@@ -249,6 +249,8 @@ public class GatewaySettlementService : IGatewaySettlementService
                 var c = GatewaySettlementMath.Contribution(cand.Input, feeVatMode);
                 var fee = intent.FeeActual ?? intent.FeeEstimated;
                 intent.SettledAmount = c.Net;
+                // รอบ 200 ทีม G: ค่าธรรมเนียมที่ถูกหักจริง ณ วันบันทึกรอบ (ตามโหมด VAT วันนี้) — กระทบยอดย้อนหลังไม่คิดใหม่ด้วยโหมดวันหน้า
+                intent.SettledFeeDeducted = c.FeeDeducted;
                 intent.SettledAt = req.SettledAt;
                 intent.SettlementRef = req.SettlementRef;
                 intent.SettlementJournalEntryId = je.Id;
@@ -439,8 +441,8 @@ public class GatewaySettlementService : IGatewaySettlementService
     private async Task<(SettlementPlan Plan, List<SettlementCandidate> Candidates)> BuildPlanAsync(
         Guid companyId, RecordSettlementRequest req, CancellationToken ct)
     {
-        var from = ThaiDate.CalendarDateUtc(req.FromDate);
-        var to = ThaiDate.CalendarDateUtc(req.ToDate).AddDays(1);   // ปลายช่วงแบบ exclusive
+        // รอบ 200 ทีม G: ขอบช่วง = เที่ยงคืนเวลาไทยเป็น UTC (เดิมใช้ป้ายวันไทยที่ 00:00 UTC ⇒ เลื่อน 7 ชม.) · ปลายช่วง exclusive
+        var (from, to) = GatewaySettlementMath.ConfirmedRangeUtc(req.FromDate, req.ToDate);
 
         // R-E2: ยอดคืนนับ ณ วันเงินเข้า (คืนตั้งแต่วันนั้น = รอบถัดไป) — ไม่ใช่ยอดสะสมวันที่กดบันทึก
         var candidates = await SelectCandidatesAsync(companyId, req.ProviderCode, from, to,
@@ -596,6 +598,10 @@ public class GatewaySettlementService : IGatewaySettlementService
         if (!await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct))
             return new GatewayFeeVatClaimOutcome(false,
                 "บริษัทไม่ได้จดทะเบียน VAT — เคลมภาษีซื้อไม่ได้ (VAT ของค่าธรรมเนียมเป็นต้นทุนรวมในค่าธรรมเนียมอยู่แล้ว)", null, null, 0m);
+
+        // รอบ 200 ทีม G (E2-12): วันที่เคลมล่วงหน้าไม่ได้ — ตรวจก่อนแตะอะไร (ด่านนี้แยกจาก Check เพราะต้องรู้วันนี้)
+        if (GatewayFeeVatClaim.FutureClaimDateMessage(req.ClaimDate, DateTime.UtcNow) is string future)
+            return new GatewayFeeVatClaimOutcome(false, future, null, null, 0m);
 
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>

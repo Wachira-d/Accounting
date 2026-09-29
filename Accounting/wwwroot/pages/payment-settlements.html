@@ -198,6 +198,26 @@
             <div id="previewBox" style="margin-top:14px"></div>
           </div>
           ${this.renderFeeVat()}`;
+        this.bindPreviewInvalidation();
+      },
+
+      // รอบ 200 ทีม G: "ต้องเห็น JE ก่อนกดบันทึก" — แก้ช่องใดหลังดูตัวอย่างแล้ว = ตัวอย่างเดิมไม่ใช่สิ่งที่จะลง ⇒ ปิดปุ่มบันทึกจนกว่าจะดูตัวอย่างใหม่
+      //   (เดิมปุ่มยังเปิด: เปลี่ยนช่วงวันที่/บัญชีธนาคารแล้วกดบันทึกได้โดยไม่เห็นรายการบัญชีของชุดใหม่)
+      bindPreviewInvalidation() {
+        ['fFrom', 'fTo', 'fNet', 'fDate', 'fBank', 'fRef'].forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const stale = () => {
+            const btn = document.getElementById('btnSave');
+            if (btn && !btn.disabled) {
+              btn.disabled = true;
+              const box = document.getElementById('previewBox');
+              if (box) box.innerHTML = '<div class="banner info">แก้ข้อมูลหลังดูตัวอย่างแล้ว — กด "ดูตัวอย่างก่อนบันทึก" อีกครั้ง</div>';
+            }
+          };
+          el.addEventListener('input', stale);
+          el.addEventListener('change', stale);
+        });
       },
 
       // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 → 11610 เมื่อได้ใบกำกับรายเดือนของผู้ให้บริการ
@@ -240,9 +260,9 @@
               <div><label>VAT บนใบกำกับ</label><input type="number" step="0.01" class="form-input" id="vVat" placeholder="0.00"></div>
               <div><label>ชื่อผู้ออกใบกำกับ</label><input class="form-input" id="vName" placeholder="ตามที่พิมพ์บนใบ"></div>
               <div><label>เลขประจำตัวผู้เสียภาษีผู้ออกใบ</label><input class="form-input" id="vTax" placeholder="13 หลัก"></div>
-              <div><label>สาขาผู้ออกใบ</label><input class="form-input" id="vBranch" value="00000"></div>
+              <div><label>สาขาผู้ออกใบ (ตามที่พิมพ์บนใบ · 00000 = สำนักงานใหญ่)</label><input class="form-input" id="vBranch" value="00000" maxlength="5"></div>
               <div><label>วันที่เคลม (วันที่ใบสำคัญ = เดือน ภ.พ.30)</label>
-                <input type="date" class="form-input" id="vClaimDate" value="${Layout.toDateInput(new Date())}"></div>
+                <input type="date" class="form-input" id="vClaimDate" value="${Layout.toDateInput(new Date())}" max="${Layout.toDateInput(new Date())}"></div>
               <div><label>เหตุผลที่เคลมช้า (ถ้าเคลมต่างเดือนกับใบกำกับ)</label><input class="form-input" id="vLate"></div>
             </div>
             <div style="margin-top:10px">

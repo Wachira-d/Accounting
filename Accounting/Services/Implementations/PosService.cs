@@ -42,6 +42,7 @@ public partial class PosService : IPosService
     public async Task<TerminalResponse> CreateTerminalAsync(Guid companyId, CreateTerminalRequest request)
     {
         await ValidateTerminalScopeAsync(companyId, request.BranchId, request.WarehouseId);
+        await ValidateTerminalMoneyAccountsAsync(companyId, request.CashAccountId, request.BankAccountId);
         var terminal = new PosTerminal
         {
             CompanyId = companyId,
@@ -76,6 +77,28 @@ public partial class PosService : IPosService
             throw new KeyNotFoundException("ไม่พบคลังที่เลือกในบริษัทนี้");
     }
 
+    /// <summary>บัญชีรับเงินที่ปักบนเครื่องต้องเป็นผังของบริษัทนี้ที่ยังใช้งาน (รอบ 200 ทีม G · E-3) — เดิมรับ id อะไรก็ได้ ⇒ ปักผังที่ถูกลบ/
+    /// ของบริษัทอื่นแล้วเงียบ (ตอนปิดบิลตกไปผังมาตรฐานพร้อมแค่ LogWarning) · Guid.Empty = ล้างค่า ไม่ต้องตรวจ</summary>
+    private async Task ValidateTerminalMoneyAccountsAsync(Guid companyId, Guid? cashAccountId, Guid? bankAccountId)
+    {
+        foreach (var (id, label) in new[] { (Normalize(cashAccountId), "บัญชีเงินสด"), (Normalize(bankAccountId), "บัญชีธนาคารรับเงิน") })
+        {
+            if (id is not Guid acc) continue;
+            if (!await _db.ChartOfAccounts.AnyAsync(a => a.Id == acc && a.CompanyId == companyId && a.IsActive && !a.IsDeleted))
+                throw new KeyNotFoundException($"ไม่พบ{label}ที่เลือกในผังบัญชีของบริษัทนี้ (หรือถูกปิดใช้งาน) — เลือกใหม่");
+        }
+    }
+
+    /// <summary>ผลการเลือกบัญชีธนาคารของบริษัทเมื่อเครื่องไม่ได้ปัก — กติกาเดียวกับตอนปิดบิล (<c>ResolvePaymentAccountAsync</c>)</summary>
+    private async Task<Accounting.Helpers.BankAccountPickOutcome> CompanyBankPickAsync(Guid companyId)
+    {
+        var linked = await _db.Set<Accounting.Models.Entities.BankAccount>().AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId != null)
+            .Select(b => b.LinkedAccountId!.Value)
+            .ToListAsync();
+        return Accounting.Helpers.MoneyAccountFallback.PickBank(linked, out _);
+    }
+
     public async Task<List<TerminalResponse>> GetTerminalsAsync(Guid companyId)
     {
         var terminals = await _db.PosTerminals
@@ -84,7 +107,8 @@ public partial class PosService : IPosService
             .ToListAsync();
         // ชื่อสาขา/คลังดึงทีเดียวทั้งบริษัท — เครื่องมีไม่กี่ตัว แต่ N+1 ก็ไม่ควรมี
         var names = await LoadScopeNamesAsync(companyId);
-        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions, names)).ToList();
+        var banks = await CompanyBankPickAsync(companyId);
+        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions, names, banks)).ToList();
     }
 
     public async Task<TerminalResponse> UpdateTerminalAsync(Guid companyId, Guid terminalId, UpdateTerminalRequest request)
@@ -99,6 +123,10 @@ public partial class PosService : IPosService
         // Guid.Empty = ล้างค่า · null = ไม่แตะ — ต้องแยกสองความหมายนี้ ไม่งั้นถอด
         // สาขาออกจากเครื่องไม่ได้เลย (defect class "ห้าม silent no-op")
         await ValidateTerminalScopeAsync(companyId, request.BranchId, request.WarehouseId);
+        // ตรวจเฉพาะค่าที่เปลี่ยน — ค่าเดิมที่ผังถูกปิดทีหลังต้องไม่ขวางการแก้ช่องอื่น (ปิดบิลยังล้มดัง/ตกผังมาตรฐานพร้อม log ตามเดิม)
+        await ValidateTerminalMoneyAccountsAsync(companyId,
+            request.CashAccountId == terminal.CashAccountId ? null : request.CashAccountId,
+            request.BankAccountId == terminal.BankAccountId ? null : request.BankAccountId);
         if (request.BranchId.HasValue) terminal.BranchId = Normalize(request.BranchId);
         if (request.WarehouseId.HasValue) terminal.WarehouseId = Normalize(request.WarehouseId);
         if (request.CashAccountId.HasValue) terminal.CashAccountId = Normalize(request.CashAccountId);
@@ -227,10 +255,11 @@ public partial class PosService : IPosService
     }
 
     private async Task<TerminalResponse> MapTerminalAsync(PosTerminal t, int openSessions)
-        => MapTerminal(t, openSessions, await LoadScopeNamesAsync(t.CompanyId));
+        => MapTerminal(t, openSessions, await LoadScopeNamesAsync(t.CompanyId), await CompanyBankPickAsync(t.CompanyId));
 
     private static TerminalResponse MapTerminal(PosTerminal t, int openSessions,
-        (Dictionary<Guid, (string Name, string? TaxCode)> Branches, Dictionary<Guid, string> Warehouses) names)
+        (Dictionary<Guid, (string Name, string? TaxCode)> Branches, Dictionary<Guid, string> Warehouses) names,
+        Accounting.Helpers.BankAccountPickOutcome companyBanks)
     {
         string? branchName = null, branchTaxCode = null;
         if (t.BranchId is Guid bid && names.Branches.TryGetValue(bid, out var b))
@@ -247,7 +276,8 @@ public partial class PosService : IPosService
             t.Id, t.Name, t.BusinessMode, t.IsActive, t.Location, t.SettingsJson, openSessions,
             t.BranchId, branchName, branchTaxCode,
             t.WarehouseId, warehouseName,
-            t.CashAccountId, t.BankAccountId, t.AbbreviatedInvoicePrefix);
+            t.CashAccountId, t.BankAccountId, t.AbbreviatedInvoicePrefix,
+            Accounting.Helpers.MoneyAccountFallback.TerminalBankWarning(t.BankAccountId != null, companyBanks));
     }
 
     private async Task<SessionResponse> MapSessionAsync(PosSession s)

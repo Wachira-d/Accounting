@@ -29,6 +29,20 @@ public static class PaymentGatewayPermissionScope
     /// <summary>ดูตัวอย่างรอบโอน (ไม่เขียนอะไร)</summary>
     public const string PreviewSettlement = PermissionKeys.BankView;
 
+    /// <summary>ดูรายการรับชำระ/ประวัติ/รายงานกระทบยอด (อ่านอย่างเดียว · รอบ 200 ทีม G G-8) — ข้อมูลระดับบัญชีธนาคาร
+    /// (ยอด · สถานะคืนเงิน · เหตุผล/หลักฐานที่คนพิมพ์) ⇒ สิทธิ์เดียวกับดูบัญชีธนาคาร · เดิมมีแค่ <c>[Authorize]</c> = สมาชิกคนไหนก็เห็น</summary>
+    public const string ViewPayments = PermissionKeys.BankView;
+
+    /// <summary>สิทธิ์ที่อ่าน/ถามสถานะสดของรายการหนึ่งได้ — สิทธิ์เริ่มรับชำระของต้นทาง (คนสร้าง QR ต้อง poll ได้) <b>หรือ</b>ดูธนาคาร
+    /// (นักบัญชีกด "ตรวจสถานะสด" จากหน้ารายการ) · ข้อใดข้อหนึ่งพอ</summary>
+    public static IReadOnlyList<string> StatusKeysFor(PaymentSourceKind kind)
+        => StartKeyFor(kind) == ViewPayments ? new[] { ViewPayments } : new[] { StartKeyFor(kind), ViewPayments };
+
+    /// <summary>ข้อความเมื่อไม่มีสิทธิ์ดูสถานะรายการ — บอกทั้งสองทางที่ผ่านได้</summary>
+    public static string StatusDeniedMessage(PaymentSourceKind kind)
+        => $"ไม่มีสิทธิ์ดูสถานะรายการชำระเงินนี้ (ต้องการ {StartKeyFor(kind).Replace("perm:", "")} หรือ {ViewPayments.Replace("perm:", "")}) — "
+           + "ขอสิทธิ์จากเจ้าของกิจการ";
+
     /// <summary>สิทธิ์เริ่มรับชำระของต้นทางแต่ละชนิด — ต้นทางที่ไม่รู้จัก ⇒ สิทธิ์การเงินที่เข้มที่สุด (ไม่ใช่ "ใครก็ได้")</summary>
     public static string StartKeyFor(PaymentSourceKind kind) => kind switch
     {

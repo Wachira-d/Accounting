@@ -89,20 +89,32 @@ public class PaymentGatewayController : ControllerBase
     /// <summary>สถานะปัจจุบัน — หน้าเว็บ poll ตัวนี้ระหว่างรอลูกค้าจ่าย
     ///
     /// <para>ถ้ายังเปิดอยู่จะ**ถามสถานะสด**จากผู้ให้บริการด้วย เพื่อให้ไม่ต้องรอ webhook
-    /// (webhook หายเป็นเรื่องที่เกิดจริง — poll คือตาข่ายรับ)</para></summary>
+    /// (webhook หายเป็นเรื่องที่เกิดจริง — poll คือตาข่ายรับ)</para>
+    ///
+    /// <para>รอบ 200 ทีม G (G-8): เดิมมีแค่ <c>[Authorize]</c> ⇒ สมาชิกคนไหนก็ได้ (รวมบทบาทดูอย่างเดียว) อ่านยอด/สถานะรายการของทุกโมดูล และ
+    /// <c>live=true</c> สั่งถามผู้ให้บริการ + <b>เปลี่ยนสถานะ</b> (ส่งต่อให้ต้นทางออกใบเสร็จ/ตัดหนี้) ได้ · ตอนนี้ต้องมีสิทธิ์เริ่มรับชำระของต้นทางนั้น
+    /// (คนที่สร้าง QR ต้อง poll ได้) <b>หรือ</b>สิทธิ์ดูธนาคาร (นักบัญชีตรวจสถานะจากหน้ารายการ) — <see cref="PaymentGatewayPermissionScope.StatusKeysFor"/></para></summary>
     [HttpGet("intents/{intentId:guid}/status")]
     public async Task<ActionResult<ApiResponse<IntentResponse>>> Status(
         Guid companyId, Guid intentId, [FromQuery] bool live = true, CancellationToken ct = default)
     {
-        var intent = live
-            ? await _intents.RefreshAsync(companyId, intentId, ct)
-            : await _intents.FindAsync(companyId, intentId, ct);
-        if (intent == null) return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+        var found = await _intents.FindAsync(companyId, intentId, ct);
+        if (found == null) return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var allowed = false;
+        foreach (var key in PaymentGatewayPermissionScope.StatusKeysFor(found.SourceKind))
+            if (await _permissions.HasPermissionAsync(companyId, userId, key)) { allowed = true; break; }
+        if (!allowed)
+            return StatusCode(403, new ApiResponse<IntentResponse>(false, null,
+                PaymentGatewayPermissionScope.StatusDeniedMessage(found.SourceKind)));
+
+        var intent = live ? await _intents.RefreshAsync(companyId, intentId, ct) : found;
         return Ok(new ApiResponse<IntentResponse>(true, Map(intent, await IsTestModeAsync(intent, ct))));
     }
 
-    /// <summary>รายการชำระเงินของบริษัท — หน้าติดตาม/ตรวจสอบของผู้ดูแล</summary>
+    /// <summary>รายการชำระเงินของบริษัท — หน้าติดตาม/ตรวจสอบของผู้ดูแล · รอบ 200 ทีม G (G-8): สิทธิ์ดูธนาคาร (เดิมสมาชิกคนไหนก็เห็นยอด/สถานะคืนเงินทั้งบริษัท)</summary>
     [HttpGet("intents")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ViewPayments)]
     public async Task<ActionResult<ApiResponse<object>>> List(
         Guid companyId, [FromServices] IGatewayRefundService refunds,
         [FromQuery] string? status, [FromQuery] int limit = 100,
@@ -174,12 +186,15 @@ public class PaymentGatewayController : ControllerBase
     /// Σ ที่โอนเข้าจริง + ที่ยังไม่ถึงรอบโอน</c> · <b>ผลต่างที่อธิบายไม่ได้ต้องเป็น 0</b>
     /// — ไม่เป็นศูนย์แปลว่ามีเงินหายหรือค่าธรรมเนียมไม่ตรงที่คาด ต้องมีคนดู</para></summary>
     [HttpGet("reconciliation")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ViewPayments)]
     public async Task<ActionResult<ApiResponse<object>>> Reconciliation(
         Guid companyId, [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         CancellationToken ct = default)
     {
-        var toDate = (to ?? DateTime.UtcNow).Date.AddDays(1);
-        var fromDate = (from ?? DateTime.UtcNow.AddDays(-30)).Date;
+        // รอบ 200 ทีม G: ขอบช่วง = เที่ยงคืนเวลาไทย (ตัวเดียวกับแผนรอบโอน) — เดิม .Date ของเวลา UTC ⇒ เลื่อน 7 ชม.
+        var fromLabel = ThaiDate.CalendarDateUtc(from ?? DateTime.UtcNow.AddDays(-30));
+        var toLabel = ThaiDate.CalendarDateUtc(to ?? DateTime.UtcNow);
+        var (fromDate, toDate) = GatewaySettlementMath.ConfirmedRangeUtc(fromLabel, toLabel);
 
         var raw = await _db.PaymentIntents.AsNoTracking()
             .Where(i => i.CompanyId == companyId
@@ -193,6 +208,7 @@ public class PaymentGatewayController : ControllerBase
                 IsRefundedFully = i.Status == PaymentIntentStatus.Refunded,
                 IsSettled = i.SettlementJournalEntryId != null,
                 i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement,
+                i.SettledFeeDeducted,
             })
             .ToListAsync(ct);
         // R-E5: โหมด VAT ค่าธรรมเนียมของผู้ให้บริการแต่ละราย — สูตรเดียวกับแผนรอบโอน (AddedOnTop = ถูกหักรวม VAT)
@@ -204,12 +220,13 @@ public class PaymentGatewayController : ControllerBase
             => modes.FirstOrDefault(m => m.ProviderCode == code)?.FeeVatMode ?? GatewayFeeVatMode.None;
         var rows = raw.Select(i => new GatewayIntentAmounts(
             i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount, i.IsRefundedFully, i.IsSettled,
-            i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement, ModeOf(i.ProviderCode))).ToList();
+            i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement, ModeOf(i.ProviderCode),
+            i.SettledFeeDeducted)).ToList();
 
         var result = GatewayReconciliation.Compute(rows);
         return Ok(new ApiResponse<object>(true, new
         {
-            fromDate, toDate = toDate.AddDays(-1),
+            fromDate = fromLabel, toDate = toLabel,
             result.SucceededCount, result.GrossCharged, result.RefundedAmount,
             result.FeeTotal, result.FeeIsEstimated, result.ExpectedNet,
             result.SettledTotal, result.UnsettledCount, result.UnsettledAmount,
@@ -233,7 +250,8 @@ public class PaymentGatewayController : ControllerBase
     [Accounting.Filters.RejectApiKey("ยืนยันการรับเงินด้วยมือ")]
     [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
     public async Task<ActionResult<ApiResponse<IntentResponse>>> ConfirmManually(
-        Guid companyId, Guid intentId, [FromBody] ManualConfirmRequest req, CancellationToken ct)
+        Guid companyId, Guid intentId, [FromBody] ManualConfirmRequest req,
+        [FromServices] IEnumerable<IPaymentProvider> providers, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Reason))
             return BadRequest(new ApiResponse<IntentResponse>(false, null,
@@ -243,6 +261,13 @@ public class PaymentGatewayController : ControllerBase
         var intent = await _intents.FindAsync(companyId, intentId, ct);
         if (intent == null)
             return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+
+        // รอบ 200 ทีม G: ช่องทางที่ผู้ให้บริการถือเงินไว้ก่อน แต่ไม่มี charge ที่ผู้ให้บริการเลย ⇒ ยืนยันที่นี่ = Dr บัญชีพักด้วยเงินที่ไม่มีวันถูกโอนมา
+        var adapter = providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
+        var blocked = PaymentIntentPolicy.ManualConfirmBlockReason(
+            adapter != null && !adapter.SettlesDirectlyToBank, intent.ProviderRef);
+        if (blocked != null)
+            return BadRequest(new ApiResponse<IntentResponse>(false, null, blocked));
 
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
         var updated = await _intents.ApplyChargeAsync(intentId,
@@ -411,6 +436,7 @@ public class PaymentGatewayController : ControllerBase
     /// <para>รอบ 198: เกณฑ์เลือก + ตัวเลขทุกช่องมาจาก service ตัวเดียวกับแผน JE (<see cref="IGatewaySettlementService.ListPendingAsync"/>)
     /// — เดิมเขียนเงื่อนไขซ้ำที่นี่ (เฉพาะ Succeeded) ⇒ รายการคืนบางส่วนหายจากทั้งหน้าและแผน</para></summary>
     [HttpGet("settlements/pending")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PreviewSettlement)]
     public async Task<ActionResult<ApiResponse<object>>> PendingSettlement(
         Guid companyId, [FromQuery] string? providerCode,
         [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
@@ -523,8 +549,10 @@ public class PaymentGatewayController : ControllerBase
             : BadRequest(new ApiResponse<object>(false, data, r.Message));
     }
 
-    /// <summary>ประวัติของรายการเดียว — "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ตอบจากตรงนี้</summary>
+    /// <summary>ประวัติของรายการเดียว — "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ตอบจากตรงนี้ · รอบ 200 ทีม G (G-8): สิทธิ์ดูธนาคาร
+    /// (ข้อความประวัติมีเหตุผลคืนเงิน/หลักฐาน/ผู้ยืนยัน)</summary>
     [HttpGet("intents/{intentId:guid}/events")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ViewPayments)]
     public async Task<ActionResult<ApiResponse<object>>> Events(
         Guid companyId, Guid intentId, CancellationToken ct)
     {

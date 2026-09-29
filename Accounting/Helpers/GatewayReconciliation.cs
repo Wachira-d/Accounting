@@ -18,7 +18,9 @@ public readonly record struct GatewayIntentAmounts(
     decimal RefundedAmount = 0m,
     decimal RefundSettledAmount = 0m,
     decimal RefundDeductedAfterSettlement = 0m,
-    GatewayFeeVatMode FeeVatMode = GatewayFeeVatMode.None);
+    GatewayFeeVatMode FeeVatMode = GatewayFeeVatMode.None,
+    // รอบ 200 ทีม G (E2-12): ค่าธรรมเนียมที่ถูกหักจริง ณ วันบันทึกรอบ — มีค่า ⇒ แถวที่บันทึกรอบแล้วใช้ค่านี้ ไม่คิดใหม่ด้วยโหมด VAT วันนี้
+    decimal? SettledFeeDeducted = null);
 
 /// <summary>ผลการกระทบยอดของงวดหนึ่ง</summary>
 public sealed record GatewayReconciliationResult(
@@ -94,6 +96,9 @@ public static class GatewayReconciliation
             // ตลอดอายุรายการ — สูตรเดียวกับแผน JE (ค่าธรรมเนียมตัวจริงก่อนตัวประมาณ · AddedOnTop รวม VAT · คืนเต็มนับ 0 แต่ค่าธรรมเนียมยังถูกหัก)
             var lifetime = GatewaySettlementMath.Contribution(
                 new SettlementIntentInput(Guid.Empty, r.Amount, r.FeeActual, r.FeeEstimated, refundedTotal), r.FeeVatMode);
+            // รอบ 200 ทีม G (E2-12): บันทึกรอบแล้ว + รู้ค่าธรรมเนียมที่ถูกหักจริง ⇒ ใช้ค่านั้น (เปลี่ยนโหมด VAT ทีหลังต้องไม่ทำให้รอบเก่าไม่สมดุล)
+            if (r.IsSettled && r.SettledFeeDeducted is decimal settledFee)
+                lifetime = lifetime with { FeeDeducted = settledFee };
             fee += lifetime.FeeDeducted;
             expectedNet += lifetime.Net;
 

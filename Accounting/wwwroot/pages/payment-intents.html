@@ -317,13 +317,15 @@
         } catch (e) { Layout.toast(e.message || 'แก้ค่าธรรมเนียมไม่สำเร็จ', 'error'); }
       },
 
+      // รอบ 200 ทีม G: คีย์ของ GET pay/intents/{id}/events คือ from/to (ไม่ใช่ fromStatus/toStatus) — เดิมอ่านชื่อที่เซิร์ฟเวอร์ไม่เคยส่ง
+      //   ⇒ ประวัติทุกแถวแสดง "— →" ว่าง (ตอบคำถาม "ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้" ไม่ได้)
       async events(id) {
         const api = Layout.api(); if (!api) return;
         try {
           const rows = (await api.getPaymentIntentEvents(id))?.data || [];
           const html = rows.map(e => `<div class="ev">
             <b>${Layout.date(e.at)} ${new Date(e.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</b>
-            · ${Layout.esc(e.source || '')} · ${Layout.esc(e.fromStatus || '—')} → ${Layout.esc(e.toStatus || '')}
+            · ${Layout.esc(e.source || '')} · ${Layout.esc(e.from || '—')} → ${Layout.esc(e.to || '')}
             ${e.note ? `<br><span style="color:#64748b">${Layout.esc(e.note)}</span>` : ''}
           </div>`).join('<hr style="border:0;border-top:1px solid #eef2f7;margin:6px 0">');
           document.getElementById('evBody').innerHTML =

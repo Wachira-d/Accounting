@@ -392,13 +392,16 @@ public class PaymentIntentService : IPaymentIntentService
     /// เขียนคนละชุดฟิลด์</summary>
     private static void ApplyChargeToEntity(PaymentIntent intent, ProviderCharge charge)
     {
+        // รอบ 200 ทีม G: ค่าธรรมเนียมที่แก้ด้วยมือ/อยู่ในรอบโอนแล้วห้ามถูกทับ — ตัดสินก่อนเปลี่ยนสถานะ (ใช้สถานะเดิม)
+        var takeFee = charge.Fee.HasValue && PaymentIntentPolicy.ShouldTakeProviderFee(
+            intent.Status, intent.FeeActual, intent.SettlementJournalEntryId != null || intent.SettlementBatchId != null);
         intent.Status = charge.Status;
         if (!string.IsNullOrWhiteSpace(charge.ProviderRef)) intent.ProviderRef = charge.ProviderRef;
         intent.ProviderStatusRaw = charge.RawStatus;
         if (charge.QrPayload != null) intent.QrPayload = charge.QrPayload;
         if (charge.QrExpiresAt != null) intent.QrExpiresAt = charge.QrExpiresAt;
         if (charge.AuthorizeUrl != null) intent.AuthorizeUrl = charge.AuthorizeUrl;
-        if (charge.Fee.HasValue) intent.FeeActual = charge.Fee;
+        if (takeFee) intent.FeeActual = charge.Fee;
         intent.FailureCode = charge.FailureCode;
         intent.FailureMessage = charge.FailureMessage;
         intent.UpdatedAt = DateTime.UtcNow;

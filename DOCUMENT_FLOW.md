@@ -1202,10 +1202,26 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **สิทธิ์ (G-8)**: `Helpers/PaymentGatewayPermissionScope` — คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` · บันทึกรอบโอน/แก้ค่าธรรมเนียม
   `Journal.Manage` · พรีวิว `Bank.View` · เริ่มรับชำระ = สิทธิ์โมดูลต้นทาง · คืนเงิน/ตรวจผล/ยืนยันมือ/บันทึกรอบโอน/แก้ค่าธรรมเนียม/รับใบกำกับ `[RejectApiKey]` ·
   บันทึกผลคืนเงินด้วยมือ = `[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`
+- **รอบ 200 ทีม G (ตรวจส่วนที่ยังไม่เคยตรวจ · `erp-review/2026-09-29/team-G.md`)**: adapter **ปักรุ่น API** (`OmisePaymentProvider.ApiVersion` =
+  `2019-05-29` ส่งหัว `Omise-Version` ทุกคำขอ — ชื่อช่อง `refunded_amount` ของรุ่นนี้ · ไม่ปัก = รุ่นตั้งต้นของบัญชี ⇒ รุ่น 2017 ใช้ `refunded` ⇒ ตรวจผลคืนเงินเงียบตลอด ·
+  คำตัดสินข้อ 18 · `MinVerifyWait` 10 นาทีคงเดิม) · webhook: เลข event จาก body ต้องเป็นรูป `evnt_[A-Za-z0-9_]+` ก่อนต่อเข้า path ที่แนบ secret key
+  (`IsWellFormedEventId` · ไม่ผ่าน = ไม่ยิงออก) · ค่าธรรมเนียมจากผู้ให้บริการ**ไม่ทับ**ค่าที่แก้มือ/อยู่ในรอบโอนแล้ว (`PaymentIntentPolicy.ShouldTakeProviderFee` — รับเฉพาะ
+  ยังไม่มีค่า หรือรายการยังเปิด) · ยืนยันรับเงินด้วยมือบนช่องทางที่ผู้ให้บริการถือเงินแต่**ไม่มี charge** = ปฏิเสธ (`ManualConfirmBlockReason`) ·
+  **ขอบช่วง "วันที่รับเงิน"** ของแผนรอบโอนและรายงานกระทบยอด = เที่ยงคืนเวลาไทยเป็น UTC (`GatewaySettlementMath.ConfirmedRangeUtc` — เดิมป้ายวันที่ 00:00 UTC ⇒ เลื่อน 7 ชม.) ·
+  บันทึกรอบโอนเก็บ `PaymentIntent.SettledFeeDeducted` (ค่าธรรมเนียมที่ถูกหัก ณ วันบันทึกรอบ · migration เติมย้อนหลังเฉพาะที่พิสูจน์ได้) ⇒ กระทบยอดแถวที่บันทึกแล้วไม่คิดใหม่
+  ด้วยโหมด VAT วันนี้ · ใบสำคัญคืนเงินที่ยืนยันทีหลัง (ตรวจผล/บันทึกผลด้วยมือ) ลง**วันที่เงินออกจริง** — งวดนั้นปิด ⇒ วันนี้ + หมายเหตุวันจริง (`GatewayRefundMath.PastRefundBooking`) ·
+  รับใบกำกับค่าธรรมเนียม: สาขาว่าง = **บล็อก** (เดิมเติม 00000) · วันที่เคลมในอนาคต = บล็อก (`GatewayFeeVatClaim.FutureClaimDateMessage`) ·
+  **สิทธิ์อ่าน (G-8)**: `GET pay/intents` · `intents/{id}/events` · `reconciliation` = `Bank.View` (`PaymentGatewayPermissionScope.ViewPayments`) · `settlements/pending` =
+  `Bank.View` · `intents/{id}/status` (live = ถามผู้ให้บริการ + เปลี่ยนสถานะ) = สิทธิ์เริ่มรับชำระของต้นทาง **หรือ** `Bank.View` (`StatusKeysFor`) — เดิมมีแค่ `[Authorize]` ·
+  หน้า `payment-intents.html` ประวัติอ่านคีย์ `from/to` (เดิมอ่าน `fromStatus/toStatus` ที่ไม่มี ⇒ ว่างทุกแถว) · `payment-settlements.html` แก้ช่องหลังดูตัวอย่าง = ปิดปุ่มบันทึกจนกว่าจะดูใหม่
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
 ### 2.6 POS (Point of Sale)
+- **บัญชีธนาคารรับเงินของเครื่อง (รอบ 200 ทีม G · review198-E ข้อ E-3)**: หน้าตั้งค่าเครื่อง (`pos.html` โมดัล "ตั้งค่าเครื่อง") มีช่อง **"บัญชีธนาคารรับเงิน"**
+  (ค่า = ผังบัญชีของบัญชีธนาคารที่ผูกผัง · `PosTerminal.BankAccountId` — เดิมมีใน API แต่ไม่มีช่องบนจอ ทั้งที่ข้อความล้มดังชี้ไปที่ช่องนั้น) · `TerminalResponse.MoneyAccountWarning`
+  (`MoneyAccountFallback.TerminalBankWarning` — กติกาเดียวกับตอนปิดบิล: ไม่ปัก + บริษัทมีบัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ เตือน) แสดงเป็นป้ายแดงข้างป้ายสาขาก่อนขาย ·
+  สร้าง/แก้เครื่องตรวจผังที่ปักว่าเป็นของบริษัทและใช้งานอยู่ (แก้ไขตรวจเฉพาะค่าที่เปลี่ยน) · ชื่อเครื่อง/ชื่อสินค้าในตะกร้าผ่าน `Layout.esc`
 - **Method**: `PosService.CompleteOrderAsync` (`Services/Implementations/PosService.Orders.cs:1286`) ·
   ออฟไลน์ `SyncOfflineOrderAsync` (`:816`) เดินลำดับเดียวกัน
 - **ลำดับ (รอบ 193 · E-01)**: **ตัดสต็อกก่อน → ต้นทุน → JE** — `DeductSaleStockAsync` (`:1358`) ตัดผ่าน `IStockLedger`
@@ -3608,7 +3624,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม G — gateway ส่วนที่ยังไม่เคยตรวจ: ปักรุ่น API ของผู้ให้บริการ (ข้อ 18) · เลข event webhook ·
+ค่าธรรมเนียมไม่ถูกทับ · ขอบช่วงวันเวลาไทย · ค่าธรรมเนียม ณ วันบันทึกรอบ · วันที่ใบสำคัญเงินคืนที่ยืนยันทีหลัง · สาขา/วันที่เคลมใบกำกับค่าธรรมเนียม ·
+สิทธิ์อ่าน/สถานะสด · POS บัญชีธนาคารรับเงิน + คำเตือนล่วงหน้า (E-3) · ข้อความขาดผังลูกหนี้ (E-4) (§2.6 · §2.6b) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-28 (รอบ 198 ทีม S5 แก้ฝ่ายค้าน review198-S4: ของกำพร้าที่ด่านยกเลิกการลงบัญชีปฏิเสธแต่ยกเลิกทีละใบได้ยังบล็อกพร้อมทางไปต่อรายชิ้น
 เฉพาะที่ยกเลิกไม่ได้จริงเป็นคำเตือน (`SettlementUnpostRefusalKind` + `SettlementOrphanTriage` · S4-1) · เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` + e-Tax ของใบเสร็จอัตโนมัติ
 คู่การรับชำระ (S4-8) · ข้อความล็อกช่องทางเป็นกลาง (S4-7) · แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วบอกทางไปต่อที่ถูก (S4-6) · ขายด่วนตรวจ `success:false` ของ api.js (S4-2) — commit <pending>)_
 
