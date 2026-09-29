@@ -276,6 +276,7 @@ public class ChequeService : IChequeService
         // ไม่ถูกประทับ Voided เงียบ แต่ติดธง "ต้องยกเลิกทาง e-Tax" บนใบ (ตัวตัดสินเดียว DocumentVoidPreconditions.AutoReceiptOnPaymentVoid
         // ผ่าน PaymentVoidCause.ChequeBounce) · ข้อความธงไปถึงผู้เรียกทาง log + webhook
         string? etaxCancellationFlag = null;
+        string? outputVatNotice = null;
         if (plan.ReversePayment && cheque.PaymentId.HasValue)
         {
             if (_documents == null)
@@ -285,6 +286,8 @@ public class ChequeService : IChequeService
             var voided = await _documents.VoidPaymentAsync(companyId, cheque.PaymentId.Value,
                 Accounting.Helpers.PaymentVoidCause.ChequeBounce);
             etaxCancellationFlag = voided.EtaxCancellationFlag;
+            // รอบ 200 ทีม V1G (ข้อ 48 · RV1F-2): เดือนที่ภาษีขายถึงกำหนดปิด/ยื่นแล้ว ⇒ เงินกลับแต่ภาษีขายค้างในแบบ — ธงอยู่บนใบต้นทางแล้ว · บอกผู้เรียกด้วย
+            outputVatNotice = voided.OutputVatNotice;
         }
         else if (plan.RestoreBankBalanceDirectly)
         {
@@ -307,6 +310,8 @@ public class ChequeService : IChequeService
             chequeId, plan.RuleCode, reason, plan.Reason);
         if (etaxCancellationFlag != null)
             _logger.LogWarning("Cheque {Id} bounced: {EtaxFlag}", chequeId, etaxCancellationFlag);
+        if (outputVatNotice != null)
+            _logger.LogWarning("Cheque {Id} bounced: {VatNotice}", chequeId, outputVatNotice);
         await FireAsync(companyId, "cheque.bounced", new
         {
             id = cheque.Id, chequeNumber = cheque.ChequeNumber,
@@ -315,6 +320,7 @@ public class ChequeService : IChequeService
             ruleCode = plan.RuleCode,
             reversedPayment = plan.ReversePayment ? cheque.PaymentId : null,
             etaxCancellationRequired = etaxCancellationFlag,
+            outputVatUndoBlocked = outputVatNotice,
         });
         return cheque;
     }

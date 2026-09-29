@@ -1114,22 +1114,45 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "ยกเลิกคำขอยกเลิกและออกใบแทนแล้ว — ใบนี้ไม่ถูกแตะ"));
     }
 
-    /// <summary>รอบ 200 ทีม V1F (V1-R3 · คำตัดสินข้อ 11) — <b>บันทึกว่ายกเลิกทาง e-Tax แล้ว</b> ของใบที่ติดธง "ต้องยกเลิกทาง e-Tax":
-    /// ต้องมีหลักฐาน (e-Tax ถูกยกเลิกในระบบ หรือเลขอ้างอิงการยกเลิก/ใบลดหนี้จากกรมสรรพากร) · ยกเลิกใบเสร็จ + ปลดบล็อกใบต้นทาง ·
-    /// สิทธิ์ = ยกเลิกเอกสารชนิดนั้น</summary>
+    /// <summary>รอบ 200 ทีม V1F (V1-R3 · คำตัดสินข้อ 11) · แยกทางรอบ V1G (ข้อ 46–48) — <b>บันทึกการยกเลิกทาง e-Tax</b> ของใบที่ติดธง
+    /// "ต้องยกเลิกทาง e-Tax": (ก) ยกเลิกทาง e-Tax สำเร็จ (หลักฐาน: e-Tax ไม่ถึง/ถูกยกเลิกในระบบ หรือเลขอ้างอิง + ไฟล์หลักฐานที่แนบที่ใบเสร็จ) ⇒ ยกเลิกใบเสร็จ ·
+    /// (ข) ออกใบลดหนี้แล้ว (ใบลดหนี้ในระบบ) ⇒ ใบเสร็จคงมีผล · สิทธิ์ = ยกเลิกเอกสารชนิดนั้น
+    /// <para>RV1F-4 (ข้อ 46): ไฟล์หลักฐานเดินด่านไฟล์แนบ<b>ตัวเดียว</b> (<see cref="IAttachmentAccessGate"/> — อ่านไฟล์ของเอกสารใบนี้) ก่อนถึง service ·
+    /// service ตรวจต่อว่าไฟล์เป็นของใบเสร็จนี้จริง</para></summary>
     [HttpPost("{documentId:guid}/etax-cancellation")]
     public async Task<ActionResult<ApiResponse<DocumentResponse?>>> ResolveEtaxCancellation(
-        Guid companyId, Guid documentId, [FromBody] ResolveEtaxCancellationRequest request)
+        Guid companyId, Guid documentId, [FromBody] ResolveEtaxCancellationRequest request, [FromServices] IAttachmentAccessGate gate)
     {
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var docType = await GetDocumentTypeAsync(companyId, documentId);
         if (docType == null) return NotFound(new ApiResponse<DocumentResponse?>(false, null, "ไม่พบเอกสาร"));
         if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
             return Forbid403<DocumentResponse?>("ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกการยกเลิกทาง e-Tax ต้องใช้สิทธิ์ยกเลิกเอกสาร");
-        var source = await _documentService.ResolveEtaxCancellationAsync(companyId, documentId, request, userIdGuid.ToString());
-        return Ok(new ApiResponse<DocumentResponse?>(true, source,
-            "บันทึกการยกเลิกทาง e-Tax แล้ว — ใบเสร็จถูกยกเลิกในระบบ"
-            + (source != null ? $" · ใบต้นทาง {source.DocumentNumber} ยกเลิก/แก้ไขต่อได้" : "")));
+        var deny = await gate.DenyAttachmentAsync(companyId, userIdGuid, "Document", documentId, AttachmentAccess.Read,
+            "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิกทาง e-Tax", request.EvidenceAttachmentId);
+        if (deny != null) return StatusCode(deny.Status, new ApiResponse<DocumentResponse?>(false, null, deny.Message));
+        var result = await _documentService.ResolveEtaxCancellationAsync(companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse?>(true, result.Source, result.Message));
+    }
+
+    /// <summary>รอบ 200 ทีม V1G (ข้อ 47) — ใบลดหนี้ในระบบที่เลือกปิดธงทาง (ข) ได้ · อ่านอย่างเดียว (ตัวตัดสินจริงอยู่ที่ endpoint ปิดธง)</summary>
+    [HttpGet("{documentId:guid}/etax-cancellation/credit-notes")]
+    public async Task<ActionResult<ApiResponse<List<EtaxCancellationCreditNoteOption>>>> EtaxCancellationCreditNotes(Guid companyId, Guid documentId)
+    {
+        var result = await _documentService.ListEtaxCancellationCreditNotesAsync(companyId, documentId);
+        return Ok(new ApiResponse<List<EtaxCancellationCreditNoteOption>>(true, result,
+            result.Count == 0 ? "ยังไม่มีใบลดหนี้ที่อ้างใบเสร็จ/ใบต้นทางนี้ — สร้างใบลดหนี้อ้างใบต้นทางที่หน้าเอกสารก่อน" : null));
+    }
+
+    /// <summary>รอบ 200 ทีม V1G (คำตัดสินข้อ 44) — รายงาน<b>อ่านอย่างเดียว</b>ให้นักบัญชีตรวจ: ใบเสร็จติดธงที่ภาษีขายถูกถอยไปแล้ว · ใบเสร็จที่ปิดธงด้วยเส้นเดิม
+    /// (อาจเป็นใบลดหนี้) · ใบแทนที่คัดลอกช่องของใบเดิมเกิน — ระบบไม่แก้อะไรอัตโนมัติ</summary>
+    [HttpGet("etax-reissue-review")]
+    public async Task<ActionResult<ApiResponse<EtaxReissueReviewReport>>> GetEtaxReissueReview(Guid companyId)
+    {
+        var r = await _documentService.GetEtaxReissueReviewAsync(companyId);
+        var total = r.FlaggedReceiptsVatUndone.Count + r.ResolvedBeforeSplit.Count + r.ReplacementsCarriedExcess.Count;
+        return Ok(new ApiResponse<EtaxReissueReviewReport>(true, r,
+            total == 0 ? "ไม่พบรายการที่ต้องตรวจ" : $"พบ {total} รายการที่ต้องให้นักบัญชีตรวจ (ระบบไม่แก้อัตโนมัติ)"));
     }
 
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (เช็คเด้งแต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว) ·

@@ -229,11 +229,13 @@ public static class SettlementWhtCertResume
 /// <see cref="DocumentVoidPreconditions"/> (review198-S3 S3-3) · null = ไม่มี</param>
 /// <param name="TaxPointDate">จุดความรับผิด (<c>Document.TaxPointDate</c>) — เดือนภาษีของใบ = <c>TaxPointDate ?? DocumentDate</c> สูตรเดียวกับตัวกรองของ
 /// ภ.พ.30/ภ.พ.36 (<c>TaxService.GenerateVatReport/GeneratePp36Report</c>) · null = ใช้วันที่เอกสาร (review198-S4 S4-8)</param>
+/// <param name="EtaxSubmitted">รอบ 200 ทีม V1G (ข้อ 43): e-Tax ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล — <c>VoidDocumentAsync</c> ปฏิเสธ ⇒ ต้องยกเลิก e-Tax ก่อน ·
+/// <paramref name="EtaxAccepted"/> = ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว (ตัวโหลด <c>DocumentVoidPreconditions.EffectiveEtaxAsync</c>)</param>
 public sealed record SettlementUnpostDocument(
     Guid Id, string Number, DocumentType Type, string Component, DateTime DocumentDate, decimal VatAmount,
     bool IsForeignService, bool EtaxAccepted, bool InLockedReport,
     bool InputVatPostedAsUndue = false, DateTime? InputVatBecameClaimableAt = null, string? VoidBlock = null,
-    DateTime? TaxPointDate = null);
+    DateTime? TaxPointDate = null, bool EtaxSubmitted = false);
 
 /// <summary>50 ทวิ ที่ผูกกับเอกสารของรอบโอน (ยังไม่ถูกยกเลิก)</summary>
 public sealed record SettlementUnpostCertificate(
@@ -296,7 +298,11 @@ public static class SettlementUnpostGate
         foreach (var d in documents)
         {
             if (d.EtaxAccepted)
-                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)", CreditNotePath, d.Id, Hard));
+                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว)", CreditNotePath, d.Id, Hard));
+            else if (d.EtaxSubmitted)
+                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted)",
+                    "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของเอกสารนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) แล้วกดยกเลิกการลงบัญชีอีกครั้ง · ระบบไม่แตะอะไรในรอบนี้",
+                    d.Id, Soft));
             if (d.InLockedReport)
                 result.Add(new(d.Number, "เอกสารนี้อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว", CreditNotePath, d.Id, Hard));
             // S4-8: เดือนภาษี = TaxPointDate ?? DocumentDate (สูตรเดียวกับตัวกรองของ ภ.พ.30/ภ.พ.36) — เดิมใช้วันที่เอกสาร
@@ -380,8 +386,10 @@ public sealed record SettlementOrphanArtifact(Guid Id, Guid BatchId, string Payo
 /// <param name="SentToCustomer">ใบที่อ้างส่งให้ลูกค้าแล้ว (<c>DocumentStatus.Sent</c>) — DECISIONS ข้อ 10 นับเป็นยกเลิกไม่ได้ (ใบลดหนี้ที่ลูกค้าถือไว้แล้ว
 /// ต้องคงไว้ แล้วปรับปรุงในงวดปัจจุบัน — ทางไปต่อเดิมของ <see cref="SettlementUnpostGate"/>)</param>
 /// <param name="WhtFiled">เหตุจาก <see cref="WhtCertVoidGuard.CheckDocumentAsync"/> ของใบที่อ้าง (50 ทวิ อยู่ในแบบที่ยื่นแล้ว) · null = ไม่มี</param>
+/// <param name="EtaxSubmitted">รอบ 200 ทีม V1G (ข้อ 43): e-Tax ของใบที่อ้างส่งแล้วยังไม่รู้ผล — ยกเลิกไม่ได้จนกว่าจะยกเลิก e-Tax ก่อน ·
+/// <paramref name="EtaxAccepted"/> = ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว</param>
 public sealed record SettlementOrphanChild(Guid ParentId, Guid ChildId, DocumentType Type, string? Number,
-    bool EtaxAccepted, bool InLockedReport, bool SentToCustomer, string? WhtFiled = null);
+    bool EtaxAccepted, bool InLockedReport, bool SentToCustomer, string? WhtFiled = null, bool EtaxSubmitted = false);
 
 /// <summary>ของกำพร้าที่ต้องให้คนจัดการก่อนยกเลิก — บล็อกพร้อมทางไปต่อของชิ้นนั้น (review198-S4 S4-1)</summary>
 public sealed record SettlementOrphanBlock(string Why, string NextStep, Guid? ArtifactId = null);
@@ -540,7 +548,8 @@ public static class SettlementOrphanTriage
     internal static string? ChildUnvoidableReason(SettlementOrphanChild c)
     {
         var reasons = new List<string>();
-        if (c.EtaxAccepted) reasons.Add("e-Tax ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted)");
+        if (c.EtaxAccepted) reasons.Add("e-Tax ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว)");
+        else if (c.EtaxSubmitted) reasons.Add("e-Tax ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted — ยกเลิก e-Tax ที่หน้า e-Tax ก่อน)");
         if (c.InLockedReport) reasons.Add("อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว");
         if (!string.IsNullOrWhiteSpace(c.WhtFiled)) reasons.Add(c.WhtFiled!);
         if (c.SentToCustomer) reasons.Add("ส่งให้ลูกค้าแล้ว");

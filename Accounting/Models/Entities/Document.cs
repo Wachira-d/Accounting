@@ -426,6 +426,10 @@ public class Document : TenantEntity
     /// <summary>คำขอที่บันทึกไว้ (JSON ของ <c>ReissueSettlementPaidRequest</c>) — ผู้ยืนยันอนุมัติ "สิ่งที่ผู้ขอส่ง" ไม่ใช่ข้อมูลที่ส่งมาใหม่</summary>
     public string? ReissueRequestJson { get; set; }
 
+    /// <summary>ใบลดหนี้ (ในระบบนี้) ที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" ของใบเสร็จนี้ทาง (ข) — รอบ 200 ทีม V1G · คำตัดสินข้อ 47 (RV1F-1):
+    /// ใบเสร็จยังมีผล (ใบกำกับเดิมที่กรมสรรพากรมี) · ภาษีขายลดในเดือนของใบลดหนี้ · ใบลดหนี้หนึ่งใบปิดธงได้ใบเดียว (unique index) · null = ไม่ได้ปิดด้วยใบลดหนี้</summary>
+    public Guid? EtaxCancelledByCreditNoteId { get; set; }
+
     /// <summary>ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ — <c>true</c> = ฝั่งซื้อ
     /// (ลดภาษีซื้อ 116x), <c>false</c> = ฝั่งขาย (ลดภาษีขาย 2191x),
     /// <c>null</c> = ให้ระบบตัดสินเอง (ใบต้นทาง → GL → บทบาทคู่ค้า)

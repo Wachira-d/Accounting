@@ -1155,6 +1155,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`NeedsSignatureFlow`) ⇒ ผู้ขอคนเดียวไม่พอ: ด่านทั้งหมดรันครบ แล้ว**บันทึกคำขอบนใบเดิม** (`Documents.ReissueRequestedAt/By/Json` · audit `void-and-reissue-requested`)
   โดย**ไม่แตะเงิน/เลข/สถานะ** · ผู้มีสิทธิ์คนอื่นกด "ยืนยันออกใบแทน" (`confirmPendingRequest: true` — ใช้คำขอที่บันทึกไว้ ไม่ใช่ข้อมูลใหม่) · ผู้ขอยืนยันเอง =
   409 `REISSUE-SOD-SAME-PERSON` · มีคำขอค้างแล้วส่งใหม่ = 409 `REISSUE-PENDING-EXISTS` · ยกเลิกคำขอได้ · ไม่ต้องมีคนที่สอง = ทำทันที (พฤติกรรมเดิม)
+  · **รอบ 200 ทีม V1G (ข้อ 49 · RV1F-5)**: หน้าเอกสาร/API แสดง**คำขอเต็ม** (`DocumentResponse.ReissueRequestDetail` — ผู้ซื้อ/เลขภาษี/สาขา/ที่อยู่ เดิม→ใหม่ · หมายเหตุ ·
+  คำบรรยายที่เปลี่ยน · ตัวประกอบเดียว `BuildReissueRequestViewAsync` → `Helpers/SettlementPaidReissueRequestView`) · ยืนยันต้องส่ง `confirmRequestHash`
+  (SHA-256 ของคำขอที่เห็น) — ประกอบใหม่ใต้ล็อกแล้วเทียบ · คำขอ/ทะเบียนผู้ซื้อถูกแก้หลังเปิดดู ⇒ 409 `REISSUE-REQUEST-CHANGED` · ยกเลิกคำขอเปิดธุรกรรม + ล็อก
+  `FOR UPDATE` (RV1F-7 — ใบที่ถูกแทนไปแล้ว ⇒ 409 `REISSUE-ALREADY-REPLACED` บอกเลขใบแทน) · ผู้จัดทำ/ลายเซ็นผู้จัดทำของใบเดิมไม่ตามไป (RV1F-12)
 - **ทำอะไร (ธุรกรรมเดียว · ล็อกใบเดิม `FOR UPDATE` · แถวรอบโอน `FOR SHARE` · การรับชำระ `FOR UPDATE`)**:
   1. ใบใหม่ = **สำเนาเฉพาะช่องที่ตามไป** (allowlist — ไม่พาลายเซ็นรับของ/ตอบรับใบเสนอราคา · ผลตรวจ RD · feedback AI · ธง e-Tax/รอบโอน/ใบแทน · aging ·
      หมายเหตุภายใน · เลข/สถานะ · `Reference` **ตามไป** = การขายเดียวกัน) ต่างได้เฉพาะ `ContactId` · `Notes` · คำบรรยายรายบรรทัด ·
@@ -2078,11 +2082,13 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   1. Reverse linked **Payments** → `ReversePaymentInternalAsync`
   2. Reverse posted JEs → `ReverseJournalEntryAsync` (สร้าง JE ใหม่ Dr↔Cr กลับ
      + link `OriginalEntryId/ReversedByEntryId`, ไม่ลบ JE เดิม)
-  3. Void linked **e-Tax invoices** (soft — เก็บ XML ไว้ audit; รวมสถานะ
-     `Submitted` ด้วย). **Guard ก่อน void**: block เฉพาะ e-Tax ที่
-     `Accepted` (RD ตอบรับแล้ว = จุด no-return, ต้องยื่นขอยกเลิกที่ RD);
-     `Submitted` (เซ็น/คิว ยังไม่ได้ตอบรับ) ยกเลิกได้ก่อนนำส่ง ภ.พ.30 —
-     งวดที่ Filed แล้วถูกกันด้วย filing-lock guard แยกอยู่แล้ว
+  3. Void linked **e-Tax invoices** (soft — เก็บ XML ไว้ audit) — **เฉพาะแถวที่ยังไม่ถึงกรมสรรพากร** (สร้าง/เซ็น/ผิดพลาด/ถูกปฏิเสธ).
+     **Guard ก่อน void (รอบ 200 ทีม V1G · คำตัดสินข้อ 43 · RV1F-6)**: ตัวโหลดเดียว `DocumentVoidPreconditions.EffectiveEtaxAsync` + ตัวตัดสินเดียว
+     `DocumentVoidEtaxBlock` — ส่งแล้ว (`Submitted`) · ตอบรับ (`Accepted`) · **e-Tax by Email ที่ประทับเวลาแล้ว** = 409 `RD-ETAX-REACHED-VOID`
+     พร้อมทางไปต่อ (Submitted ⇒ ยกเลิก e-Tax ที่หน้า e-Tax ก่อน · Accepted ⇒ ยกเลิกทางกรมสรรพากรหรือออกใบลดหนี้) · เดิมบล็อกแค่ Accepted แล้ว**พลิก Submitted
+     เป็น Voided** พร้อมเอกสาร (กรมสรรพากรตอบรับภายหลังได้ทั้งที่ระบบเรายกเลิกแล้ว) และมองไม่เห็น e-Tax by Email · ทางเข้าเดียวกันทุกเส้น (หน้าเอกสาร ·
+     integration `document.voided` · ยกเลิกการลงบัญชีรอบโอน — ด่านก่อนเริ่ม `LoadUnpostFactsAsync`/`OrphanChildrenAsync` ใช้ตัวโหลดเดียวกัน · Submitted =
+     `NeedsUserAction`) · กู้คืน (`RestoreVoidedDocumentAsync`) ใช้ตัวตัดสินเดียวกัน (409 `RD-ETAX-REACHED-RESTORE`) · งวดที่ Filed แล้วถูกกันด้วย filing-lock guard แยกอยู่แล้ว
   4. Unlink **BankTransactions** (clear matched reference)
   5. Revert source-doc adjustments (ลูกของ CN/DN กลับ AR/AP ของต้นทาง)
   6. Reverse stock (`ApplyStockMovementsAsync(−1)`) + project cost entries
@@ -2158,6 +2164,27 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ใบเสร็จถือ VAT อื่นเหลือ + audit chain (`etax-cancellation-recorded`) ⇒ ใบต้นทางยกเลิก/แก้ต่อได้ · (P1) e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลา =
   ถึงกรมสรรพากร (ตัวโหลด `EffectiveEtaxAsync` ทุกเส้น: ยกเลิกการชำระ · ออกใบแทน · ด่านยกเลิกการลงบัญชี) · (P2) ยกเลิกการลงบัญชีรอบโอนที่เจอใบเสร็จถูกส่ง e-Tax
   **ระหว่าง**ด่านกับลูป ⇒ ติดธงแบบเช็คเด้ง (ไม่ throw กลางลูป) และบอกในผลลัพธ์
+  · **รอบ 200 ทีม V1G (ฝ่ายค้านรอบสอง review200-round2-V1F · คำตัดสินข้อ 46–48)**:
+  (1) **ถอยภาษีขายถึงกำหนดลงเดือนที่ตั้งรายการ** — `UndoUndueOutputVatReclassAsync` (แทน `TryUndo…`) กลับ JE ย้ายภาษี (`OutputVatReclassJournalsAsync` — ขา Dr 21913)
+  **ลงวันที่ของ JE นั้นเอง** (เดือนรับเงิน · เดิมลงวันที่ใบแจ้งหนี้ ⇒ GL↔ภ.พ.30 คลาดสองเดือน) และ**ไม่กลืน error** · ด่านก่อนถอย `ReclassLockReasonAsync` →
+  `OutputVatPeriodLockReasonAsync` (งวดบัญชีไม่เปิด หรือ ภ.พ.30 ยื่น/ประกาศว่ายื่น/ล็อก) → ตัวตัดสินเดียว `DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid`:
+  ผู้ใช้ยกเลิกการชำระ (รวม cascade จาก `VoidDocumentAsync`) = **409 `RD-78/1-VAT-UNDO-LOCKED`** พร้อมทางไปต่อ (เปิดงวด/Reject & Reverse หรือใบลดหนี้) ·
+  เช็คเด้ง/ยกเลิกการลงบัญชี = **ห้ามบล็อก** กลับเงินต่อ แต่ไม่ถอยภาษี + ธง `[VAT-UNDO-BLOCKED]` บนใบต้นทาง + `PaymentVoidResult.OutputVatNotice` (webhook
+  `cheque.bounced` ช่อง `outputVatUndoBlocked` · ข้อความผลลัพธ์ยกเลิกการลงบัญชี) · เส้นหลายใบ (`ReverseMultiDocPaymentInternalAsync`) ยังไม่ถอยภาษีขาย (ของเดิม — คำถามค้าง V1G)
+  (2) **ปิดธงแยกสองทาง** `POST document/{id}/etax-cancellation` `{ reason, path, rdCancellationReference?, evidenceAttachmentId?, creditNoteDocumentId? }` —
+  ตัวตัดสิน `EtaxCancellationResolution(EtaxCancellationClaim)`: **(ก) `CancelledAtRd`** ยกเลิกทาง e-Tax สำเร็จ ⇒ ใบเสร็จ **Voided คงแสดง** (ไม่ soft-delete · RV1F-10)
+  · ใบที่ถึงกรมสรรพากรต้องมีเลขอ้างอิง **+ ไฟล์หลักฐานที่แนบที่ใบเสร็จนี้** (controller เดินด่าน `IAttachmentAccessGate` ตัวเดียว · service ตรวจว่าไฟล์เป็นของใบนี้ ·
+  ข้อ 46) · ด่านงวดของทุกวันที่ที่จะเขียน: เดือนของใบเสร็จ (`OutputVatPeriodLockReasonAsync` แทน `ClosedPeriodNameAsync`) · เดือนของ JE ย้ายภาษี · เดือนของวันรับเงินที่เหลือ
+  — ตัวตัดสิน `EtaxCancellationFollowUp`: ไม่มีเงินรับเหลือ ⇒ ถอยภาษีในเดือนที่ตั้งรายการ · **มีการรับชำระที่ยังมีผล (เช็คเด้ง→รับใหม่→ปิดธง · RV1F-3)** ⇒ ถอยในเดือนเดิม +
+  ย้ายใหม่ ณ วันรับเงินจริง (`TryReclassifyUndueOutputVatAsync(…, throwOnFailure: true)`) และถ้ารับครบงวดเดียว (`CarriesTaxInvoiceRole`) ⇒ **ออกใบกำกับ ณ วันรับเงิน
+  ในธุรกรรมเดียวกัน** (`CreateSettlementReceiptAsync(carryVatFromSource: true)` · ยกเลิกใบรับเปล่าเดิมแบบคงแสดง · e-Tax อัตโนมัติหลัง commit · ผู้กดต้องมีสิทธิ์อนุมัติใบเสร็จ)
+  ⇒ ใบแจ้งหนี้ไม่โผล่เป็นแถว ภ.พ.30 เอง · ใบรับเปล่าที่ส่ง e-Tax แล้ว/งวดปิด ⇒ 409 `ETAX-CANCEL-FOLLOWUP-BLOCKED` · รับหลายงวด = ใบต้นทางรายงาน ณ วันรับเงินครั้งแรก
+  (กติกาเดิมของการรับหลายงวด) · **(ข) `CreditNote`** ออกใบลดหนี้แล้ว ⇒ ต้องเป็นใบลดหนี้**ในระบบนี้** (ออกแล้ว · อ้างใบเสร็จ/ใบต้นทาง · ผู้ซื้อเดียวกัน · ภาษี ≥ ภาษีของ
+  ใบเสร็จ · ยังไม่เคยใช้ — `Documents.EtaxCancelledByCreditNoteId` + unique index) · ใบต้นทางไม่มีเงินรับที่มีผล · **ใบเสร็จเดิมคงมีผล** · ภาษีขายลดในเดือนของใบลดหนี้ ·
+  ไม่แตะเดือนเดิม (RV1F-1) · ตัวเลือก `GET document/{id}/etax-cancellation/credit-notes` · ล็อกใบต้นทางก่อนใบเสร็จ (RV1F-8) · audit `etax-cancellation-recorded`
+  พร้อม `path` + ป้าย `EvidenceLabel` ตามความจริง (ยกเลิกในระบบนี้ ≠ กรมสรรพากรยกเลิก · ไม่เคยถึง ≠ ถูกยกเลิก · RV1F-9)
+  (3) **รายงานอ่านอย่างเดียว** `GET document/etax-reissue-review` (ข้อ 44 · `Helpers/EtaxReissueReview`): ใบเสร็จติดธงที่ภาษีขายถูกถอยไปแล้ว · ใบเสร็จที่ปิดธงด้วยเส้นเดิม
+  (ยกเลิก+ซ่อน `[ETAX-CANCELLED]` — อาจเป็นใบลดหนี้) · ใบแทนที่พาช่องของใบเดิมมาเกิน — ระบบไม่แก้อัตโนมัติ (แถบบนหน้ารายการเอกสาร)
 - **ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ**: ยกเลิกตรงไม่ได้ (409 ชี้ 3 ทาง) · แก้ผู้ซื้อ/คำบรรยาย = **ยกเลิกและออกใบแทน** (§2.4c) · กู้คืนใบเดิมที่ออกใบแทนแล้วไม่ได้
 - **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
   - `VoidPaymentAsync` (`DocumentService.cs`) — lock `Payments` row `FOR UPDATE`
@@ -3838,7 +3865,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V1F — แก้ผลฝ่ายค้านทีม V1: ด่านรายงานล็อก/งวดปิดของออกใบแทนดูใบเสร็จอัตโนมัติ (R1) · เช็คเด้งไม่ถอยภาษีขายของใบเสร็จที่ติดธง + รับชำระใหม่ไม่ออกใบกำกับใบที่สอง (R2) · ปิดธง "ต้องยกเลิกทาง e-Tax" ด้วยหลักฐาน (R3) · ใบขาย e-Tax Submitted บล็อกออกใบแทน (R4) · integration ยกเลิกใบที่ถูกแทน ⇒ บอกเลขใบแทน (R5) · SoD/วงเงินเซ็นหลายขั้นของออกใบแทน = คำขอรอคนที่สอง (R6) · คัดลอก allowlist (R7) · ด่านคำขอผู้ใช้ + หมายเหตุไม่สะสม (R8) · ย้าย PaymentIntent/บรรทัดโครงการ/คำบรรยาย JE (R9) · ผู้ซื้อ §86/4 ตัวตัดสินเดียว (R10) · e-Tax by Email = ถึงกรมสรรพากร (P1) · ยกเลิกการลงบัญชีไม่ throw กลางลูป (P2) · hooks นอก execution strategy (P4) (§2.4c · §3.5) — commit c6b4908a)_
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม V1G — แก้ผลฝ่ายค้านรอบสองของ V1F: ปิดธงแยกทางยกเลิก/ใบลดหนี้ในระบบ (RV1F-1 · ข้อ 47) · ถอยภาษีขายลงเดือนที่ตั้งรายการ + งวดปิดปฏิเสธดัง/ธงเช็คเด้ง (RV1F-2 · ข้อ 48) · เช็คเด้ง→รับใหม่→ปิดธง ออกใบกำกับ ณ วันรับเงินในธุรกรรมเดียว (RV1F-3) · ไฟล์หลักฐานผ่านด่านไฟล์แนบ (RV1F-4 · ข้อ 46) · คำขอใบแทนเต็ม + ยืนยันผูก hash (RV1F-5 · ข้อ 49) · ยกเลิก/กู้คืนเอกสาร/ด่านรอบโอนดูชุด "ถึงกรมสรรพากร" เดียว (RV1F-6 · ข้อ 43) · ล็อกยกเลิกคำขอ/ปิดธง (RV1F-7/8) · ป้ายหลักฐานตามจริง (RV1F-9) · ใบเสร็จยกเลิกคงแสดง (RV1F-10) · ผู้จัดทำไม่ตามไป (RV1F-12) · รายงานอ่านอย่างเดียวข้อ 44 (§2.4c · §3.5) — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม WF — แก้ฝ่ายค้านทีม W: แบบ ภ.ง.ด. ของด่านเดือนที่ยื่นแล้วตัวตั้งเดียว `GateWhtForm` (W-1) ·
 ฐาน ภ.พ.36 รวมภาษีที่ออกแทน ทั้งรอบโอน/รายงาน ภ.พ.36/คำเตือน 50 ทวิ (W-3 · ข้อ 40) · ค่าคอม/ค่าธรรมเนียมแพลตฟอร์มต่างประเทศ 40(2) + ประเภทเงินได้ต่อช่องทาง

@@ -372,7 +372,7 @@ public static class SettlementPaidReissue
         nameof(Document.CustomTermsAndConditions), nameof(Document.RevenueContractId), nameof(Document.PerformanceObligationId),
         nameof(Document.CertificateReason), nameof(Document.CertifierName), nameof(Document.CertifierPosition), nameof(Document.WitnessName),
         nameof(Document.WitnessPosition), nameof(Document.PaymentDate), nameof(Document.IsForeignService),
-        nameof(Document.EarlyPaymentDiscountTermId), nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64),
+        nameof(Document.EarlyPaymentDiscountTermId),
         nameof(Document.DeliveryDate), nameof(Document.OwnershipTransferDate), nameof(Document.ServiceUsedDate),
         nameof(Document.CustomsDutyPaidDate), nameof(Document.TaxPointDate), nameof(Document.RetentionUntil),
         nameof(Document.NonDeductibleAmount), nameof(Document.NonDeductibleRuleJson), nameof(Document.LateReason),
@@ -399,6 +399,9 @@ public static class SettlementPaidReissue
         nameof(Document.OcrTenantMismatchFlag), nameof(Document.AgingDays), nameof(Document.AgingLastEvaluatedAt),
         nameof(Document.LastDunningSentAt), nameof(Document.LastDunningLevel), nameof(Document.ReissueRequestedAt),
         nameof(Document.ReissueRequestedBy), nameof(Document.ReissueRequestJson),
+        // รอบ 200 ทีม V1G: RV1F-12 — ผู้จัดทำใบแทนคือผู้ขอ (CreatedBy) ไม่ใช่ผู้จัดทำภายนอกของใบเดิม ⇒ ลายเซ็นผู้จัดทำใบเดิมไม่ตามไป ·
+        // ใบลดหนี้ที่ปิดธง e-Tax ของใบเสร็จ (ข้อ 47) เป็นของใบเสร็จนั้นเท่านั้น
+        nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.EtaxCancelledByCreditNoteId),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

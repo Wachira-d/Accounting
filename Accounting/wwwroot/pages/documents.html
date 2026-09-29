@@ -162,6 +162,8 @@
 
     <!-- รอบ 200 ทีม V1 (คำตัดสินข้อ 11): งานค้าง "ต้องยกเลิกทาง e-Tax" — ใบเสร็จที่เช็คเด้งแต่ e-Tax ถึงกรมสรรพากรแล้ว (เซิร์ฟเวอร์ส่งรายการ) -->
     <div id="etaxCancelNotice" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#991b1b;line-height:1.7"></div>
+    <!-- รอบ 200 ทีม V1G (คำตัดสินข้อ 44): รายงานอ่านอย่างเดียวให้นักบัญชีตรวจ — เซิร์ฟเวอร์จำแนก · ไม่มีรายการ = ซ่อน -->
+    <div id="etaxReviewNotice" style="display:none;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.7"></div>
 
     <!-- Side selector -->
     <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -1301,6 +1303,52 @@
       </div>
     </div>
 
+    <!-- รอบ 200 ทีม V1G (คำตัดสินข้อ 46–48): บันทึกการยกเลิกทาง e-Tax — แยกสองทาง · เซิร์ฟเวอร์ตัดสินหลักฐานทั้งหมด (หน้าเว็บแค่เก็บข้อมูล) -->
+    <div class="modal-overlay" id="etaxCancelModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 class="modal-title">บันทึกการยกเลิกทาง e-Tax</h3>
+          <button class="modal-close" onclick="Layout.closeModal('etaxCancelModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="ecDocId">
+          <div class="form-group">
+            <label class="form-label">ทำอะไรที่กรมสรรพากร/ผู้ให้บริการ e-Tax</label>
+            <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" name="ecPath" value="CancelledAtRd" checked onchange="Page.etaxCancelPathChanged()">
+              (ก) ยกเลิกใบนี้ทาง e-Tax สำเร็จ — ใบเสร็จนี้ไม่มีผลแล้ว (ระบบยกเลิกใบเสร็จ คงแสดงเป็น “ยกเลิก”)</label>
+            <label style="display:block;font-size:13px"><input type="radio" name="ecPath" value="CreditNote" onchange="Page.etaxCancelPathChanged()">
+              (ข) ออกใบลดหนี้แล้ว — ใบเสร็จนี้ยังมีผล (ต้องมีใบลดหนี้ในระบบนี้ · ภาษีขายลดในเดือนของใบลดหนี้)</label>
+          </div>
+          <div id="ecPathA">
+            <div class="form-group">
+              <label class="form-label">เลขอ้างอิงการยกเลิก (จำเป็นเมื่อใบถึงกรมสรรพากรแล้ว)</label>
+              <input class="form-input" id="ecReference" placeholder="เลขอ้างอิงจากระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการ">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ไฟล์หลักฐานการยกเลิก (จำเป็นเมื่อใช้เลขอ้างอิง — แนบเข้าเอกสารนี้)</label>
+              <input class="form-input" type="file" id="ecEvidence" accept="image/*,application/pdf">
+              <div class="text-xs text-gray-500" style="margin-top:4px">เว้นว่างได้ถ้ากดยกเลิก e-Tax ของใบนี้ในหน้า e-Tax แล้ว (ก่อนกรมสรรพากรตอบรับ)</div>
+            </div>
+          </div>
+          <div id="ecPathB" style="display:none">
+            <div class="form-group">
+              <label class="form-label">ใบลดหนี้ในระบบนี้ (อ้างใบเสร็จ/ใบต้นทาง · ผู้ซื้อเดียวกัน · อนุมัติแล้ว)</label>
+              <select class="form-input" id="ecCreditNote"></select>
+              <div class="text-xs text-gray-500" id="ecCreditNoteHint" style="margin-top:4px"></div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">เหตุผล (บังคับ — เก็บไว้ให้ผู้สอบบัญชี)</label>
+            <input class="form-input" id="ecReason" value="เช็คเด้ง — จัดการใบเสร็จทาง e-Tax แล้ว">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('etaxCancelModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitEtaxCancellation()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="redateReversalModal">
       <div class="modal" style="max-width:720px">
         <div class="modal-header">
@@ -1665,6 +1713,7 @@
         this.applyAnalysisAxisVisibility();
         try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
         this.loadEtaxCancelNotice();
+        this.loadEtaxReissueReview();
         // Load active projects (for the document → project tagging dropdown).
         // ProjectId on a document propagates to JournalEntry on auto-post, so
         // the project's P&L (ProjectAccountingService.GetGlSummaryAsync) will
@@ -9809,16 +9858,36 @@
             banners += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               ⚠️ <b>ต้องยกเลิกทาง e-Tax</b> (ติดธงเมื่อ ${Layout.date(d.etaxCancelRequiredAt)})
               <div style="margin-top:4px">${Layout.esc(d.etaxCancelRequiredReason || '')}</div>
-              <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกว่ายกเลิกทาง e-Tax แล้ว</button></div>
+              <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกการยกเลิกทาง e-Tax (ยกเลิกสำเร็จ / ออกใบลดหนี้)</button></div>
             </div>`;
           }
           // รอบ 200 ทีม V1F (V1-R6): คำขอยกเลิกและออกใบแทนที่รอผู้อนุมัติคนที่สอง — เซิร์ฟเวอร์ตัดสินว่าใครยืนยันได้ (ผู้ขอยืนยันเองไม่ได้)
           if (d.reissueRequestedAt) {
+            // รอบ 200 ทีม V1G (คำตัดสินข้อ 49 · RV1F-5): ผู้ยืนยันต้องเห็นคำขอเต็ม — ผู้ซื้อ/เลขภาษี/สาขา/ที่อยู่ เดิม→ใหม่ · หมายเหตุ · คำบรรยาย
+            // (เซิร์ฟเวอร์ประกอบ + hash · หน้าเว็บแสดงอย่างเดียว · ทุกช่องผ่าน Layout.esc) · อ่านคำขอไม่ได้ = ไม่มีปุ่มยืนยัน
+            const rq = d.reissueRequestDetail;
+            const party = (p) => p && p.name
+              ? `${Layout.esc(p.name)}<br><span style="color:#78350f">เลขภาษี ${Layout.esc(p.taxId || '-')} · สาขา ${Layout.esc(p.branchCode || '-')}</span><br><span style="color:#78350f">${Layout.esc(p.address || '-')}</span>`
+              : '<i>ไม่พบผู้ติดต่อ</i>';
+            const cell = 'border:1px solid #fde68a;padding:4px 6px;vertical-align:top';
+            let detailHtml = '';
+            if (rq) {
+              detailHtml += `<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:12px">
+                <tr><th style="${cell};text-align:left;width:22%"></th><th style="${cell};text-align:left">เดิม</th><th style="${cell};text-align:left">ใหม่ (ที่ขอ)</th></tr>
+                <tr><td style="${cell}">ผู้ซื้อ${rq.buyerChanged ? ' ⚠️ เปลี่ยน' : ''}</td><td style="${cell}">${party(rq.buyerBefore)}</td><td style="${cell}">${party(rq.buyerAfter)}</td></tr>
+                <tr><td style="${cell}">หมายเหตุ${rq.notesChanged ? ' ⚠️ เปลี่ยน' : ''}</td><td style="${cell};white-space:pre-wrap">${Layout.esc(rq.notesBefore || '-')}</td><td style="${cell};white-space:pre-wrap">${Layout.esc(rq.notesAfter || '-')}</td></tr>
+                ${(rq.lines || []).map(l => `<tr><td style="${cell}">บรรทัด ${Layout.esc(String(l.lineOrder))}</td><td style="${cell}">${Layout.esc(l.before || '-')}</td><td style="${cell}">${Layout.esc(l.after || '-')}</td></tr>`).join('')}
+              </table>`;
+              if (!(rq.lines || []).length) detailHtml += '<div style="margin-top:4px">คำบรรยายรายการ: ไม่เปลี่ยน</div>';
+            } else {
+              detailHtml = '<div style="margin-top:4px;color:#b91c1c">อ่านคำขอที่บันทึกไว้ไม่ได้ — ยกเลิกคำขอแล้วให้ผู้ขอส่งใหม่</div>';
+            }
             banners += `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
-              ⏳ <b>คำขอยกเลิกและออกใบแทนรอยืนยัน</b> (ส่งเมื่อ ${Layout.date(d.reissueRequestedAt)}) — ใบนี้ยังไม่ถูกแตะ
-              <div style="margin-top:4px">เหตุผล: ${Layout.esc(d.reissueRequestReason || '-')}</div>
+              ⏳ <b>คำขอยกเลิกและออกใบแทนรอยืนยัน</b> (ส่งเมื่อ ${Layout.date(d.reissueRequestedAt)}) — ใบนี้ยังไม่ถูกแตะ · ตรวจสิ่งที่ขอเปลี่ยนก่อนยืนยัน
+              <div style="margin-top:4px">เหตุผล: ${Layout.esc((rq && rq.reason) || d.reissueRequestReason || '-')}</div>
+              ${detailHtml}
               <div style="margin-top:6px">
-                <button class="btn btn-warning" onclick="Page.confirmReissue('${d.id}')">✅ ยืนยันออกใบแทน</button>
+                ${rq ? `<button class="btn btn-warning" data-hash="${Layout.esc(rq.requestHash)}" onclick="Page.confirmReissue('${d.id}', this.dataset.hash)">✅ ยืนยันออกใบแทนตามที่แสดง</button>` : ''}
                 <button class="btn btn-secondary" onclick="Page.cancelReissueRequest('${d.id}')">✖ ยกเลิกคำขอ</button>
               </div>
             </div>`;
@@ -11876,7 +11945,8 @@
         } catch (e) { Layout.toast(e.message || 'ยกเลิกและออกใบแทนไม่สำเร็จ', 'error', 10000); }
       },
       // รอบ 200 ทีม V1F (V1-R6) — ผู้อนุมัติคนที่สองยืนยันคำขอที่บันทึกไว้ (เซิร์ฟเวอร์ใช้คำขอที่บันทึกไว้ ไม่ใช่ข้อมูลใหม่ · ผู้ขอยืนยันเองไม่ได้)
-      async confirmReissue(id) {
+      // รอบ 200 ทีม V1G (ข้อ 49): ส่ง hash ของคำขอฉบับที่แสดงอยู่ — คำขอ/ผู้ซื้อถูกแก้หลังเปิดดู เซิร์ฟเวอร์ตอบ 409 ให้ดูใหม่
+      async confirmReissue(id, requestHash) {
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({
           title: 'ยืนยันออกใบแทน',
@@ -11884,7 +11954,7 @@
           mode: 'math'
         }))) return;
         try {
-          const res = await api.confirmReissueSettlementPaid(id);
+          const res = await api.confirmReissueSettlementPaid(id, requestHash);
           Layout.closeModal('detailModal');
           Layout.toast(res?.message || 'ดำเนินการแล้ว', 'success', 10000);
           await this.load();
@@ -11900,23 +11970,64 @@
           await this.detail(id);
         } catch (e) { Layout.toast(e.message || 'ยกเลิกคำขอไม่สำเร็จ', 'error', 10000); }
       },
-      // รอบ 200 ทีม V1F (V1-R3) — ปิดธง "ต้องยกเลิกทาง e-Tax": เซิร์ฟเวอร์ตัดสินว่าหลักฐานพอไหม (ยกเลิก e-Tax ในระบบแล้ว หรือเลขอ้างอิงจากกรมสรรพากร)
+      // รอบ 200 ทีม V1F (V1-R3) · แยกทางรอบ V1G (คำตัดสินข้อ 46–48) — บันทึกการยกเลิกทาง e-Tax: (ก) ยกเลิกสำเร็จ (เลขอ้างอิง + ไฟล์หลักฐาน)
+      // หรือ (ข) ใบลดหนี้ในระบบ · เซิร์ฟเวอร์ตัดสินว่าหลักฐานพอไหม/ถอยภาษีได้ไหม/ต้องออกใบกำกับใหม่ไหม — หน้าเว็บแค่เก็บข้อมูลแล้วแสดงข้อความของเซิร์ฟเวอร์
       async resolveEtaxCancellation(id) {
         const api = Layout.api(); if (!api) return;
-        const reason = prompt('เหตุผล (เก็บไว้ให้ผู้สอบบัญชี):', 'เช็คเด้ง — ยกเลิกใบเสร็จทาง e-Tax แล้ว');
-        if (reason === null) return;
-        const rdCancellationReference = prompt(
-          'เลขอ้างอิงการยกเลิก/เลขที่ใบลดหนี้จากระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax)\n'
-          + '— เว้นว่างได้ถ้ากดยกเลิก e-Tax ของใบนี้ในหน้า e-Tax แล้ว (ก่อนกรมสรรพากรตอบรับ)', '');
-        if (rdCancellationReference === null) return;
+        document.getElementById('ecDocId').value = id;
+        document.getElementById('ecReference').value = '';
+        document.getElementById('ecEvidence').value = '';
+        document.querySelectorAll('input[name="ecPath"]').forEach(r => { r.checked = r.value === 'CancelledAtRd'; });
+        const sel = document.getElementById('ecCreditNote');
+        const hint = document.getElementById('ecCreditNoteHint');
+        sel.innerHTML = '<option value="">— กำลังโหลด —</option>';
+        hint.textContent = '';
+        this.etaxCancelPathChanged();
+        Layout.openModal('etaxCancelModal');
         try {
-          const res = await api.resolveEtaxCancellation(id, { reason, rdCancellationReference });
+          const r = await api.getEtaxCancellationCreditNotes(id);
+          const items = r?.data || [];
+          sel.innerHTML = '<option value="">— เลือกใบลดหนี้ —</option>' + items.map(cn =>
+            `<option value="${Layout.esc(cn.id)}">${Layout.esc(cn.documentNumber)} · ${Layout.date(cn.documentDate)} · ภาษี ${Number(cn.vatAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</option>`).join('');
+          hint.textContent = r?.message || '';
+        } catch (e) {
+          sel.innerHTML = '<option value="">— โหลดรายการใบลดหนี้ไม่สำเร็จ —</option>';
+          hint.textContent = e.message || '';
+        }
+      },
+      etaxCancelPathChanged() {
+        const path = document.querySelector('input[name="ecPath"]:checked')?.value || 'CancelledAtRd';
+        document.getElementById('ecPathA').style.display = path === 'CancelledAtRd' ? '' : 'none';
+        document.getElementById('ecPathB').style.display = path === 'CreditNote' ? '' : 'none';
+      },
+      async submitEtaxCancellation() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('ecDocId').value;
+        const path = document.querySelector('input[name="ecPath"]:checked')?.value || 'CancelledAtRd';
+        const reason = document.getElementById('ecReason').value;
+        const payload = { reason, path };
+        try {
+          if (path === 'CreditNote') {
+            payload.creditNoteDocumentId = document.getElementById('ecCreditNote').value || null;
+          } else {
+            payload.rdCancellationReference = document.getElementById('ecReference').value;
+            const file = document.getElementById('ecEvidence').files?.[0];
+            if (file) {
+              // แนบไฟล์เข้าใบเสร็จนี้ผ่านเส้นไฟล์แนบปกติ (ด่านไฟล์แนบตัวเดียว) แล้วส่ง id เป็นหลักฐาน — เซิร์ฟเวอร์ตรวจซ้ำว่าเป็นไฟล์ของใบนี้
+              const fd = new FormData();
+              fd.append('file', file);
+              const up = await api.uploadAttachment('Document', id, fd);
+              payload.evidenceAttachmentId = up?.data?.id || null;
+            }
+          }
+          const res = await api.resolveEtaxCancellation(id, payload);
+          Layout.closeModal('etaxCancelModal');
           Layout.closeModal('detailModal');
-          Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 10000);
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 12000);
           await this.load();
           await this.loadEtaxCancelNotice();
           if (res?.data?.id) await this.detail(res.data.id);
-        } catch (e) { Layout.toast(e.message || 'บันทึกการยกเลิกทาง e-Tax ไม่สำเร็จ', 'error', 10000); }
+        } catch (e) { Layout.toast(e.message || 'บันทึกการยกเลิกทาง e-Tax ไม่สำเร็จ', 'error', 12000); }
       },
       // รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — แถบงานค้าง "ต้องยกเลิกทาง e-Tax" บนหน้ารายการ (เซิร์ฟเวอร์ส่งรายการ · ไม่มี = ซ่อน)
       async loadEtaxCancelNotice() {
@@ -11930,6 +12041,27 @@
           el.innerHTML = `⚠️ <b>มี ${items.length} ใบที่ต้องตามยกเลิกทาง e-Tax</b> (เช็คเด้ง — ระบบกลับรายการเงินแล้ว แต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว): `
             + items.slice(0, 10).map(x => `<a href="#" onclick="Page.detail('${x.id}');return false" style="color:#991b1b;text-decoration:underline">${Layout.esc(x.documentNumber || '')}</a>`).join(' · ')
             + (items.length > 10 ? ' …' : '');
+          el.style.display = '';
+        } catch (e) { el.style.display = 'none'; }
+      },
+
+      // รอบ 200 ทีม V1G (คำตัดสินข้อ 44) — รายงานอ่านอย่างเดียว: ใบเสร็จติดธงที่ภาษีขายถูกถอยไปแล้ว · ปิดธงด้วยเส้นเดิม (อาจเป็นใบลดหนี้) ·
+      // ใบแทนที่พาช่องของใบเดิมมาเกิน — ระบบไม่แก้อัตโนมัติ (ข้อความ/การจำแนกมาจากเซิร์ฟเวอร์ · หน้าเว็บแสดงอย่างเดียว)
+      async loadEtaxReissueReview() {
+        const el = document.getElementById('etaxReviewNotice');
+        const api = Layout.api();
+        if (!el || !api) return;
+        try {
+          const r = await api.getEtaxReissueReview();
+          const d = r?.data;
+          const rows = [...(d?.flaggedReceiptsVatUndone || []), ...(d?.resolvedBeforeSplit || [])];
+          const reps = d?.replacementsCarriedExcess || [];
+          if (!rows.length && !reps.length) { el.style.display = 'none'; return; }
+          const link = (id, no) => `<a href="#" onclick="Page.detail('${id}');return false" style="color:#92400e;text-decoration:underline">${Layout.esc(no || '')}</a>`;
+          el.innerHTML = `📋 <b>${Layout.esc(r?.message || 'มีรายการที่ต้องให้นักบัญชีตรวจ')}</b>`
+            + rows.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
+            + reps.slice(0, 20).map(x => `<div>• ใบแทน ${link(x.replacementId, x.replacementNumber)} ของ ${Layout.esc(x.originalNumber || '')} พาช่องของใบเดิมมา: ${Layout.esc((x.carriedFields || []).join(', '))}</div>`).join('')
+            + (rows.length + reps.length > 40 ? '<div>…</div>' : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },

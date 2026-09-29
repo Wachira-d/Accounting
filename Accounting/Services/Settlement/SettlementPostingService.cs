@@ -917,9 +917,11 @@ public class SettlementPostingService : ISettlementPostingService
         var facts = await DocumentVoidPreconditions.ChildFactsAsync(_db, companyId, documentIds, ct);
         var childIds = facts.Where(f => f.ChildId != null).Select(f => f.ChildId!.Value).Distinct().ToList();
         if (childIds.Count == 0) return new List<SettlementOrphanChild>();
-        var accepted = (await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && childIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
-                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
+        // รอบ 200 ทีม V1G (ข้อ 43 · RV1F-6): ตัวโหลดเดียว EffectiveEtaxAsync — ส่งแล้ว/ตอบรับ/e-Tax by Email (เดิมดูแค่แถว Accepted ⇒ ใบที่อ้างซึ่ง
+        // VoidDocumentAsync ปฏิเสธแล้วดูเหมือน "ยกเลิกได้") · ตอบรับ = ยกเลิกไม่ได้ · ส่งแล้วยังไม่รู้ผล = ต้องยกเลิก e-Tax ก่อน
+        var childEtax = await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, childIds, ct);
+        var accepted = childEtax.Where(kv => kv.Value == EtaxStatus.Accepted).Select(kv => kv.Key).ToHashSet();
+        var submitted = childEtax.Where(kv => kv.Value == EtaxStatus.Submitted).Select(kv => kv.Key).ToHashSet();
         var locked = (await _db.TaxReports.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.FilingLockedAt != null)
                 .SelectMany(r => r.Lines)
@@ -933,7 +935,8 @@ public class SettlementPostingService : ISettlementPostingService
             whtFiled[id] = await WhtCertVoidGuard.CheckDocumentAsync(_db, companyId, id, ct);
         return facts.Where(f => f.ChildId != null)
             .Select(f => new SettlementOrphanChild(f.ParentId, f.ChildId!.Value, f.ChildType, f.ChildNumber,
-                accepted.Contains(f.ChildId.Value), locked.Contains(f.ChildId.Value), sent.Contains(f.ChildId.Value), whtFiled[f.ChildId.Value]))
+                accepted.Contains(f.ChildId.Value), locked.Contains(f.ChildId.Value), sent.Contains(f.ChildId.Value), whtFiled[f.ChildId.Value],
+                EtaxSubmitted: submitted.Contains(f.ChildId.Value)))
             .ToList();
     }
 
@@ -1154,6 +1157,8 @@ public class SettlementPostingService : ISettlementPostingService
                 // e-Tax ระหว่างด่านกับลูป ⇒ ติดธง "ต้องยกเลิกทาง e-Tax" (ไม่ throw กลางลูป = ไม่ครึ่งกลับครึ่งค้าง) และบอกในผลลัพธ์
                 var voidResult = await _documents.VoidPaymentAsync(companyId, p.Id, PaymentVoidCause.SettlementUnpost);
                 if (voidResult.EtaxCancellationFlag != null) etaxFlags.Add(voidResult.EtaxCancellationFlag);
+                // รอบ 200 ทีม V1G (ข้อ 48): เดือนที่ภาษีขายถึงกำหนดปิด/ยื่นแล้ว ⇒ ถอยภาษีไม่ได้ (ธงบนใบต้นทาง) — บอกในผลลัพธ์ ห้ามทิ้งผล
+                if (voidResult.OutputVatNotice != null) etaxFlags.Add(voidResult.OutputVatNotice);
                 voidedPayments.Add(p.Id);
             }
             // 3) ถอนการจับคู่ธนาคาร (เจ้าของการจับคู่ = IBankService) — ก่อนกลับ JE รอบโอน
@@ -1229,7 +1234,7 @@ public class SettlementPostingService : ISettlementPostingService
             await tx.CommitAsync(ct);
             return new SettlementUnpostResult(true,
                 $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้"
-                + (etaxFlags.Count == 0 ? "" : $" · ⚠️ ใบเสร็จ {etaxFlags.Count} ใบถูกส่ง e-Tax ระหว่างทางจึงติดธง “ต้องยกเลิกทาง e-Tax”: "
+                + (etaxFlags.Count == 0 ? "" : $" · ⚠️ มี {etaxFlags.Count} รายการที่ต้องตามต่อ (ใบเสร็จที่ส่ง e-Tax ระหว่างทาง/ภาษีขายที่ถอยไม่ได้): "
                     + string.Join(" · ", etaxFlags)),
                 tracked.Status, reversalId, voidedDocs, voidedPayments);
         });
@@ -1249,9 +1254,11 @@ public class SettlementPostingService : ISettlementPostingService
             .Select(d => new { d.Id, d.DocumentDate, d.VatAmount, d.IsForeignService, d.InputVatPostedAsUndue, d.InputVatBecameClaimableAt,
                 d.TaxPointDate })
             .ToListAsync(ct);
-        var accepted = (await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && docIds.Contains(e.DocumentId) && e.Status == EtaxStatus.Accepted)
-                .Select(e => e.DocumentId).ToListAsync(ct)).ToHashSet();
+        // รอบ 200 ทีม V1G (ข้อ 43 · RV1F-6): ตัวโหลดเดียว EffectiveEtaxAsync — VoidDocumentAsync ปฏิเสธใบที่ e-Tax ส่งแล้ว/ตอบรับ/อีเมลประทับเวลา ⇒
+        // ด่านต้องเห็นชุดเดียวกันก่อนแตะชิ้นแรก (เดิมดูแค่แถว Accepted ⇒ ใบส่ง e-Tax by Email ผ่านด่านแล้วถูกยกเลิกเงียบ)
+        var docEtax = await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, docIds, ct);
+        var accepted = docEtax.Where(kv => kv.Value == EtaxStatus.Accepted).Select(kv => kv.Key).ToHashSet();
+        var submittedDocs = docEtax.Where(kv => kv.Value == EtaxStatus.Submitted).Select(kv => kv.Key).ToHashSet();
         var locked = (await _db.TaxReports.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.FilingLockedAt != null)
                 .SelectMany(r => r.Lines)
@@ -1273,7 +1280,8 @@ public class SettlementPostingService : ISettlementPostingService
             var f = docFacts.FirstOrDefault(x => x.Id == d.Id);
             return new SettlementUnpostDocument(d.Id, d.Number, d.Type, d.Component, f?.DocumentDate ?? fallbackDate,
                 f?.VatAmount ?? 0m, f?.IsForeignService ?? false, accepted.Contains(d.Id), locked.Contains(d.Id),
-                f?.InputVatPostedAsUndue ?? false, f?.InputVatBecameClaimableAt, childBlocks.GetValueOrDefault(d.Id), f?.TaxPointDate);
+                f?.InputVatPostedAsUndue ?? false, f?.InputVatBecameClaimableAt, childBlocks.GetValueOrDefault(d.Id), f?.TaxPointDate,
+                EtaxSubmitted: submittedDocs.Contains(d.Id));
         }).ToList();
 
         // S3-7: ใบขายที่รอบโอนรับชำระ — จุดความรับผิด §78/1 ที่เกิดจากการรับเงิน (OutputVatDueAt) + ยอดรับสะสมของใบ

@@ -91,6 +91,10 @@ TARGETS = [
     # ── เอกสาร → สแกนที่ผูก (S2-C2) ──
     ("Accounting/Controllers/DocumentController.cs", "GetLinkedScan", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
      [r"\.OcrScanResults\b"], [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read"]),
+    # ── รอบ 200 ทีม V1G (คำตัดสินข้อ 46 · RV1F-4): ไฟล์หลักฐานการยกเลิกทาง e-Tax — ด่านอ่านไฟล์ของเอกสารใบนี้ก่อนถึง service ──
+    ("Accounting/Controllers/DocumentController.cs", "ResolveEtaxCancellation", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
+     [r"\.ResolveEtaxCancellationAsync\s*\("],
+     [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read", r"\bEvidenceAttachmentId\b"]),
 ]
 
 # กติกาเชิงโครงสร้าง: controller → [(regex ของพารามิเตอร์, regex ของด่าน, regex อาร์กิวเมนต์ที่ต้องมี)]
