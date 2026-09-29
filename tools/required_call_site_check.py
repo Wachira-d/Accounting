@@ -1529,6 +1529,41 @@ RULES += [
          why="R-A2: 11341–11349 ไม่ใช่ลูกหนี้การค้า (ไม่มีเอกสารลูกหนี้รองรับ)"),
 ]
 
+# ── รอบ 200 ทีม I: ตัวอ่านไฟล์ settlement + คีย์กันซ้ำ (review198-B R-B7–R-B11 · review198-S4 S4-3/S4-4) — ด่านอยู่ใน pure helper
+#    (SettlementValueParser · SettlementFileDecisions · SettlementTxnKey · SettlementContentOverlap) · ที่นี่ล็อกว่าตัวอ่าน/ผู้นำเข้า/ผู้ลงบัญชีเรียกจริง ──
+SETTLE_ADAPTER = "Services/Settlement/Adapters/GenericColumnMapAdapter.cs"
+RULES += [
+    dict(file=SETTLE_ADAPTER, method="Parse",
+         must=["EnsureIdIntact(txn", "EnsureIdIntact(orderId", "EnsureIdIntact(payout", "SettlementFileDecisions.IsSummaryRow(",
+               "SettlementFileDecisions.DecimalCommaAmbiguity(", "SettlementFileDecisions.DecideDateOrder(",
+               "SettlementFileDecisions.DecideTimeZone(", "opened.CsvDelimiter"],
+         call_args=[("ParseDate(", "zone")],
+         before=[("SettlementFileDecisions.IsSummaryRow(", "SettlementFileDecisions.DecideDateOrder("),
+                 ("SettlementFileDecisions.DecideTimeZone(", "ParseDate(")],
+         forbid=["SettlementValueParser.DetectDateOrder("],
+         why="R-B7 เลขอ้างอิงที่ Excel ปัดหลัก ⇒ ล้มดัง · R-B11 แถวสรุปตัดก่อนตัดสินวันที่ · R-B10 CSV ; + 1,500 ⇒ ล้มดัง · "
+             "R-B8/R-B9 ลำดับวัน/เดือน + เขตเวลาผ่านตัวตัดสินทั้งไฟล์ตัวเดียว (ห้ามเรียกตัวหาหลักฐานตรง — ค่าตั้งต้นเงียบคือบั๊กเดิม)"),
+    dict(file=SETTLE_ADAPTER, method="EnsureIdIntact", must=["SettlementValueParser.IdLostPrecision("],
+         must_re=[r"if\s*\(\s*!\s*SettlementValueParser\s*\.\s*IdLostPrecision\s*\(\s*raw\s*\)\s*\)\s*return\s*;\s*throw\b"],
+         why="R-B7: ผลของด่านต้องถูกใช้ (ล้มทั้งไฟล์) — เรียกแล้วทิ้งผล = เลขที่เสียหลักเข้าคีย์กันซ้ำเงียบ ๆ"),
+    dict(file=SETTLE_IMPORT, method="ImportFileAsync",
+         must=["new SettlementParseContext(", "parsed.LearnedDateOrder", "parsed.LearnedTimeZone", ".Learn(", "request.RememberColumnMap"],
+         before=[("adapter.Parse(", ".Learn(")],
+         why="R-B9: ช่วงวันที่ของรอบโอนเป็นหลักฐานให้ตัวอ่าน · สิ่งที่ไฟล์พิสูจน์ได้ถูกจำให้ช่องทาง (เฉพาะเมื่อด่านสิทธิ์จำเปิด) และบอกผู้ใช้"),
+    dict(file=SETTLE_IMPORT, method="PersistAsync",
+         must=["SettlementTxnKey.ImportScopeOf(", "ImportScope = importScope", "SettlementTxnKey.SplitRevisedFilePool(", "pool.SameFile",
+               "pool.OtherFiles"],
+         why="S4-3: เทียบเนื้อหาเฉพาะบรรทัดของไฟล์รุ่นก่อนของไฟล์นี้ (บรรทัดจากอีกไฟล์ของรอบเดียวกันห้ามกลืนแถวจริง — เตือนรายแถวแทน)"),
+    dict(file=SETTLE_IMPORT, method="ContentOverlapElsewhereAsync",
+         must=["SettlementContentOverlap.LoadOtherBatchesAsync(", "SettlementContentOverlap.Find("],
+         call_args=[("SettlementContentOverlap.Find(", "claimed")],
+         why="S4-4: ผู้นำเข้ากับด่านลงบัญชีใช้ข้อเท็จจริง \"เนื้อหาตรงรอบอื่น\" ตัวเดียวกัน (ห้ามสูตรเทียบสองชุด)"),
+    dict(file="Services/Settlement/SettlementPostingService.cs", method="BuildGateAsync",
+         must=["SettlementContentOverlap.ForBatchAsync(", "SettlementContentOverlap.Annotate("],
+         before=[("SettlementPostingGate.Evaluate(", "SettlementContentOverlap.Annotate(")],
+         why="S4-4: เนื้อหาตรงรอบโอนอื่นต้องเตือนที่พรีวิว/ลงบัญชีทุกครั้ง (เดิมเตือนครั้งเดียวตอนนำเข้า ⇒ ค่าธรรมเนียมลงซ้ำได้)"),
+]
+
 # ── รอบ 198 เฟส 1 ทีม C: ผู้ลงบัญชีรอบโอน settlement — เทสต์ล็อกแค่ helper pure (SettlementBatchMath · SettlementPostingGate ·
 #    SettlementAccountResolver · SettlementDocumentBuilder · SettlementBankMatch) เพราะเรพไม่มีเทสต์ที่มี DbContext ·
 #    ที่นี่ล็อกว่า service เรียกด่าน/ล็อก/builder จริง เรียงถูก และใช้ผลของด่าน ──
@@ -1681,9 +1716,12 @@ RULES += [
     dict(file=SETTLE_IMPORT, method="StoredRowContentAsync", must=["SettlementTxnKey.IsRowKey(", "!claimed.Contains("],
          must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId"],
          why="S3-4: บรรทัดที่แถวในไฟล์อ้างด้วยคีย์แล้วห้ามถูกนับซ้ำด้วยเนื้อหา (แถวใหม่จริงหายเงียบ) · tenant"),
-    dict(file=SETTLE_IMPORT, method="ContentOverlapElsewhereAsync", must=["SettlementTxnKey.IsRowKey(", "!claimed.Contains("],
-         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId"],
-         why="S3-4: เตือนเนื้อหาตรงรอบโอนอื่น — tenant · ไม่นับบรรทัดที่ถูกอ้างด้วยคีย์แล้ว"),
+    # ทีม I รอบ 200 (S4-4): ตรรกะเทียบย้ายเข้า Helpers/SettlementContentOverlap (ตัวเดียวของผู้นำเข้า + ผู้ลงบัญชี) — ล็อกที่ตัว helper
+    dict(file="Helpers/SettlementContentOverlap.cs", method="Find", must=["SettlementTxnKey.IsRowKey(", "!claimed.Contains("],
+         why="S3-4: เตือนเนื้อหาตรงรอบโอนอื่น — เฉพาะบรรทัดไม่มี id · ไม่นับบรรทัดที่ถูกอ้างด้วยคีย์แล้ว"),
+    dict(file="Helpers/SettlementContentOverlap.cs", method="LoadOtherBatchesAsync",
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId", r"l\s*\.\s*ChannelId\s*==\s*channelId"],
+         why="S3-4/S4-4: tenant + ช่องทางเดียวกัน"),
     dict(file=SETTLE_IMPORT, method="PersistAsync", must=["SettlementBankAccountRule.MissingForImport("],
          why="D-03: ระบบไม่เลือกบัญชีธนาคารให้ — รอบใหม่ที่มีเงินโอนต้องระบุบัญชี"),
     dict(file=SETTLE_POST, method="PreviewAsync", must=["gate.Accounts.Described", "BuildGateAsync("],

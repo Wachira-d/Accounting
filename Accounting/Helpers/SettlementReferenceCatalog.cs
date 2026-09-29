@@ -32,7 +32,8 @@ public sealed record SettlementReferenceData(
     IReadOnlyList<SettlementFeeRoleOption> FeeRoles,
     IReadOnlyList<SettlementColumnFieldOption> ColumnFields,
     IReadOnlyList<SettlementEnumOption> DateOrders,
-    IReadOnlyList<SettlementEnumOption> BatchFilterStatuses);
+    IReadOnlyList<SettlementEnumOption> BatchFilterStatuses,
+    IReadOnlyList<SettlementEnumOption> TimeZones);
 
 /// <summary>
 /// **ป้ายไทยของ enum settlement ทั้งชุด — ตัวตั้งตัวเดียวของหน้าเว็บ** (รอบ 198 เฟส 1 ทีม D · CLAUDE.md F2 ข้อ 4/5)
@@ -68,7 +69,14 @@ public static class SettlementReferenceCatalog
             new SettlementEnumOption("DayMonthYear", "วัน/เดือน/ปี"),
             new SettlementEnumOption("MonthDayYear", "เดือน/วัน/ปี"),
         },
-        Options<SettlementBatchStatus>(BatchStatusLabel).Where(o => IsListable(Enum.Parse<SettlementBatchStatus>(o.Value))).ToList());
+        Options<SettlementBatchStatus>(BatchStatusLabel).Where(o => IsListable(Enum.Parse<SettlementBatchStatus>(o.Value))).ToList(),
+        // review198-B R-B8 (ทีม I รอบ 200): เขตเวลาของ "วันที่+เวลา" ที่ไม่มี offset ในไฟล์ — ค่าตรงกับ SettlementFileTimeZone (ชื่อ enum)
+        new[]
+        {
+            new SettlementEnumOption("Auto", "ให้ระบบดูจากหัวคอลัมน์ (ถามเมื่อไม่แน่ใจ)"),
+            new SettlementEnumOption("Bangkok", "เวลาไทย (UTC+7)"),
+            new SettlementEnumOption("Utc", "UTC (ระบบบวก 7 ชั่วโมงก่อนตัดวัน)"),
+        });
 
     /// <summary>
     /// **สถานะที่รายการรอบโอนกรองได้** (review198-D D-05) — รอบที่ยกเลิกแล้วถูก soft-delete (<c>IsDeleted</c> + ตัวกรองส่วนกลางของ EF) ⇒

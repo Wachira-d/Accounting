@@ -26,15 +26,25 @@ public static class SettlementFileReader
     public const int MaxColumns = 500;
 
     /// <summary>แถวของไฟล์ (ไม่ตัดแถวว่าง — ผู้เรียกข้ามเอง) · ค่าแต่ละช่องตัดช่องว่างหัวท้ายแล้ว · เกิน <see cref="MaxRows"/>/<see cref="MaxColumns"/> ⇒ ล้มดังภาษาไทย</summary>
-    public static IEnumerable<IReadOnlyList<string>> ReadRows(SettlementFileInput file)
+    public static IEnumerable<IReadOnlyList<string>> ReadRows(SettlementFileInput file) => Open(file).Rows;
+
+    /// <summary>
+    /// เปิดไฟล์ — แถว (อ่านทีละแถว) + ตัวคั่นคอลัมน์ของ CSV (<c>null</c> = xlsx) · ตัวคั่น <c>;</c> = สัญญาณไฟล์รูปแบบยุโรป (จุลภาค = ทศนิยม) ที่
+    /// ตัวอ่านยอดต้องรู้ (review198-B R-B10 · <see cref="SettlementFileDecisions.DecimalCommaAmbiguity"/>)
+    /// </summary>
+    public static SettlementFileRows Open(SettlementFileInput file)
     {
         if (file.Content.Length == 0)
             throw new SettlementFormatException("empty-file", "ไฟล์ว่างเปล่า — ส่งออกรายงานจากแพลตฟอร์มใหม่แล้วอัปโหลดอีกครั้ง");
         if (file.Content.LongLength > MaxFileBytes)
             throw new SettlementFormatException("file-too-large",
                 $"ไฟล์ใหญ่เกิน {MaxFileBytes / (1024 * 1024)} MB — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
-        if (file.IsExcel) return Capped(ReadExcel(file.Content), MaxRows, MaxColumns);
-        if (file.IsCsv) return Capped(ReadCsv(Decode(file.Content)), MaxRows, MaxColumns);
+        if (file.IsExcel) return new SettlementFileRows(Capped(ReadExcel(file.Content), MaxRows, MaxColumns), null);
+        if (file.IsCsv)
+        {
+            var text = Decode(file.Content);
+            return new SettlementFileRows(Capped(ReadCsv(text), MaxRows, MaxColumns), DetectDelimiter(StripBom(text)));
+        }
         throw new SettlementFormatException("unsupported-type",
             "รองรับเฉพาะไฟล์ .csv และ .xlsx — ถ้าเป็น .xls ให้เปิดใน Excel แล้วบันทึกเป็น .xlsx ก่อน");
     }
@@ -86,7 +96,7 @@ public static class SettlementFileReader
     /// <summary>แยก CSV ทีละแถว — ค่าในเครื่องหมายคำพูดข้ามบรรทัดได้ · คำพูดไม่ปิดจนจบไฟล์ ⇒ ล้มดัง</summary>
     public static IEnumerable<IReadOnlyList<string>> ReadCsv(string content)
     {
-        if (content.Length > 0 && content[0] == '﻿') content = content[1..];
+        content = StripBom(content);
         var delimiter = DetectDelimiter(content);
         var cell = new StringBuilder();
         var row = new List<string>();
@@ -125,6 +135,8 @@ public static class SettlementFileReader
             yield return row;
         }
     }
+
+    private static string StripBom(string content) => content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
 
     private static char DetectDelimiter(string content)
     {
@@ -190,6 +202,10 @@ public static class SettlementFileReader
         DateTime d => d.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
         double d => d.ToString("R", CultureInfo.InvariantCulture),
         float f => f.ToString("R", CultureInfo.InvariantCulture),
+        // R-B7: เลข ≥ 1e15 ในเซลล์ตัวเลขของ Excel เสียหลักท้ายไปแล้ว (Excel เก็บ 15 หลัก) — คงรูป scientific ให้ด่านเลขอ้างอิงเห็น
+        // (SettlementValueParser.IdLostPrecision) แทนที่จะพิมพ์เลขเต็มที่ดูถูกแต่หลักท้ายผิด · ยอดเงินอ่านรูปนี้ได้ตามเดิม
+        decimal m when Math.Abs(m) >= 1e15m => ((double)m).ToString("R", CultureInfo.InvariantCulture),
+        long l when l >= 1_000_000_000_000_000L || l <= -1_000_000_000_000_000L => ((double)l).ToString("R", CultureInfo.InvariantCulture),
         decimal m => m.ToString(CultureInfo.InvariantCulture),
         IFormattable f => f.ToString(null, CultureInfo.InvariantCulture).Trim(),
         _ => (v.ToString() ?? "").Trim(),
@@ -209,3 +225,6 @@ public static class SettlementFileReader
         return n - 1;
     }
 }
+
+/// <summary>ไฟล์ที่เปิดแล้ว — แถว (lazy) + ตัวคั่นคอลัมน์ของ CSV (<c>null</c> = xlsx)</summary>
+public sealed record SettlementFileRows(IEnumerable<IReadOnlyList<string>> Rows, char? CsvDelimiter);

@@ -210,6 +210,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SettlementBatchId" uuid NULL;""",
             // review198-B R-B1: คนตัดสินการจับคู่เอง — false = ระบบจับคู่ (แถวเดิมทุกแถว: เฟส 1 ยังไม่มีหน้าจอ/endpoint ที่ให้คนตัดสิน ⇒ ไม่มีค่าที่ต้องย้อนเติม)
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "MatchDecidedByUser" boolean NOT NULL DEFAULT false;""",
+            // review198-S4 S4-3 (ทีม I รอบ 200): ไฟล์ที่บรรทัดนำเข้ามา — NULL = บรรทัดเดิมทุกแถว (ใช้พฤติกรรมเทียบเนื้อหาแบบเดิม · คำนวณย้อนไม่ได้)
+            """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "ImportScope" varchar(64) NULL;""",
         };
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;

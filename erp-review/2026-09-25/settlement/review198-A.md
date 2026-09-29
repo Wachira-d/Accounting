@@ -91,6 +91,9 @@ The P2/P3 items follow. They block nothing today, but several must be fixed befo
 - Fix: block when `channel.Currency != "THB"` or `channel.Currency != batch.Currency`.
 
 ### R-A9 · PLAUSIBLE · P2: the unique `(CompanyId, ChannelId, ExternalTxnId)` index clashes with how the data is shaped
+> ✅ `60db75ee` + `71c8fdeb` (ตรวจยืนยันรอบ 200 ทีม I · เทสต์รูปข้อมูล <pending>): คีย์ v2 = id + แฮช(ป้าย · ยอด · วันที่) ⇒ บรรทัดย่อยของ txn เดียวกัน
+> (ขาย/ค่าธรรมเนียม/คืนเงินที่พก id เดิม · ออเดอร์เดียวหลายคอลัมน์ค่าธรรมเนียม) ได้คีย์คนละตัว · ยกเลิกรอบ = soft-delete รอบ+บรรทัด (unique กรอง `IsDeleted`) ⇒ นำเข้าใหม่ได้ ·
+> 23505 ที่เหลือ ⇒ ข้อความไทย `SETTLEMENT-DUPLICATE` · เทสต์ `SettlementReview200ReaderTests.RA9_*` · `erp-review/2026-09-29/team-I.md`
 - `AccountingDbContext.cs:3331-3332` and the migration (`DatabaseMigrationHelper.cs:207`). The model splits one provider transaction into several lines
   (Sale 1,070 + PaymentFee −41.79, following the golden test). In Omise the fee sits inside the same transaction id `trxn_…`, and Shopee/Lazada reports have one order id
   carrying several fee columns. If adapter B puts the same txn id on every component line, the second line fails with **DbUpdateException 23505 (HTTP 500)**.

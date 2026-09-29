@@ -61,6 +61,10 @@ public sealed class SettlementColumnMap
     public bool VatExclusive { get; set; }
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public SettlementDateOrder DateOrder { get; set; } = SettlementDateOrder.Auto;
+    /// <summary>เขตเวลาของวันที่+เวลาที่ไม่มี offset ในไฟล์ (review198-B R-B8 · ทีม I รอบ 200) — <c>Auto</c> = ดูจากหัวคอลัมน์/ข้อมูล
+    /// (ตัดสินไม่ได้และมีผลต่อวันที่ ⇒ ล้มดังให้เลือก) · ระบบจำค่าที่ไฟล์พิสูจน์ได้ให้ช่องทาง (<see cref="Learn"/>)</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public SettlementFileTimeZone TimeZone { get; set; } = SettlementFileTimeZone.Auto;
 
     /// <summary>แบบกว้าง: คอลัมน์ยอดเงิน</summary>
     public List<SettlementAmountColumn> AmountColumns { get; set; } = new();
@@ -122,6 +126,28 @@ public sealed class SettlementColumnMap
             if (dup != null) p.Add($"คอลัมน์ \"{dup.First().Header}\" ถูกเลือกเป็นยอดเงินซ้ำ");
         }
         return p;
+    }
+
+    /// <summary>
+    /// **จำสิ่งที่ไฟล์พิสูจน์แล้ว** (R-B9: "บันทึกลำดับวัน/เดือนเมื่อไฟล์พิสูจน์ได้") — เติมเฉพาะช่องที่ยังเป็น <c>Auto</c> (ค่าที่ผู้ใช้เลือกเองชนะเสมอ) ·
+    /// คืนข้อความแจ้งผู้ใช้ต่อค่าที่จำ (ไม่จำเงียบ — ผิดแล้วแก้ได้ที่หน้าจับคู่คอลัมน์)
+    /// </summary>
+    public IReadOnlyList<string> Learn(SettlementDateOrder? provenOrder, SettlementFileTimeZone? provenZone)
+    {
+        var notes = new List<string>();
+        if (DateOrder == SettlementDateOrder.Auto && provenOrder is SettlementDateOrder o && o != SettlementDateOrder.Auto)
+        {
+            DateOrder = o;
+            notes.Add($"ระบบจำรูปแบบวันที่ \"{(o == SettlementDateOrder.MonthDayYear ? "เดือน/วัน/ปี" : "วัน/เดือน/ปี")}\" ไว้กับช่องทางนี้แล้ว "
+                + "(พิสูจน์จากวันที่ในไฟล์หรือช่วงวันที่ของรอบโอน) — ถ้าไม่ถูก แก้ได้ที่ขั้นจับคู่คอลัมน์");
+        }
+        if (TimeZone == SettlementFileTimeZone.Auto && provenZone is SettlementFileTimeZone z && z != SettlementFileTimeZone.Auto)
+        {
+            TimeZone = z;
+            notes.Add($"ระบบจำเขตเวลาของไฟล์ \"{(z == SettlementFileTimeZone.Utc ? "UTC" : "เวลาไทย")}\" ไว้กับช่องทางนี้แล้ว "
+                + "(ดูจากหัวคอลัมน์วันที่) — ถ้าไม่ถูก แก้ได้ที่ขั้นจับคู่คอลัมน์");
+        }
+        return notes;
     }
 
     /// <summary>ประเภทที่ผู้ใช้กำหนดต่อคอลัมน์ — รับเฉพาะชื่อที่ลงบัญชีได้ (ด่านเดียวกับคำตอบตัวจัดประเภท)</summary>

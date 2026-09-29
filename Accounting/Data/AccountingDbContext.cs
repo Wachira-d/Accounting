@@ -3322,6 +3322,7 @@ public class AccountingDbContext : DbContext
             e.Property(l => l.RawTypeLabel).HasMaxLength(200);
             e.Property(l => l.ExternalOrderId).HasMaxLength(200);
             e.Property(l => l.ExternalTxnId).HasMaxLength(200);
+            e.Property(l => l.ImportScope).HasMaxLength(64);
             e.Property(l => l.Amount).HasPrecision(18, 2);
             e.Property(l => l.VatAmount).HasPrecision(18, 2);
             e.Property(l => l.WhtAmount).HasPrecision(18, 2);

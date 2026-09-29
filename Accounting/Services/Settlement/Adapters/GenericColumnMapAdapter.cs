@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -20,7 +19,10 @@ public sealed record SettlementColumnMapSuggestion(
 /// <para>═══ ล้มดังทั้งไฟล์ (ไม่มีแถวใดถูกบันทึก) เมื่อ ═══ ยังไม่มีการจับคู่ · หัวคอลัมน์ที่จับคู่ไว้หายไป (รูปแบบไฟล์เปลี่ยน) ·
 /// หัวคอลัมน์ซ้ำ · ไฟล์แบบกว้างมีคอลัมน์ใหม่ที่ยังไม่ได้เลือกว่าใช้/ไม่ใช้ · ยอด/วันที่ในช่องที่จับคู่อ่านไม่ได้ ·
 /// วันที่ปนสองรูปแบบ — ข้อความบอกแถว/คอลัมน์และทางไปต่อ (จับคู่คอลัมน์ใหม่)</para>
-/// <para>ข้ามโดยตั้งใจ (นับแจ้งผู้ใช้): แถวว่าง · แถวสรุปยอด ("รวม" · "Total") · แถวยอด 0 (ไม่ใช่หลักฐาน — ตัวคิดแผนข้ามอยู่แล้ว)</para>
+/// <para>ข้ามโดยตั้งใจ (นับแจ้งผู้ใช้): แถวว่าง · แถวสรุปยอด (<see cref="SettlementFileDecisions.IsSummaryRow"/> — แบบกว้าง = ไม่มีเลขอ้างอิงใดเลย ·
+/// แบบยาว = "รวม/Total/ยอดสุทธิ" หรือไม่มีเลข/ป้าย/วันที่) · แถวยอด 0 (ไม่ใช่หลักฐาน — ตัวคิดแผนข้ามอยู่แล้ว)</para>
+/// <para>ทีม I รอบ 200 (review198-B R-B7–R-B11): เลขอ้างอิงที่ Excel ปัดหลักแล้ว ⇒ ล้มดัง · ลำดับวัน/เดือน + เขตเวลาตัดสินจากทั้งไฟล์
+/// (<see cref="SettlementFileDecisions"/> — กำกวมและมีผล ⇒ ล้มดังให้เลือก · พิสูจน์ได้ ⇒ คืนให้ผู้นำเข้าจำ) · CSV ; + ยอด "1,500" ⇒ ล้มดัง</para>
 /// </summary>
 public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
 {
@@ -29,9 +31,6 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
 
     /// <summary>จำนวนแถวแรกที่ค้นหาหัวตาราง (รายงานบางเจ้ามีหัวกระดาษก่อนตาราง)</summary>
     private const int HeaderSearchRows = 30;
-
-    private static readonly Regex TotalRow = new(@"^(?:รวม|ยอดรวม|total|subtotal|sub total|grand total|sum)(?![A-Za-z])",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public decimal Detect(IReadOnlyList<string> headers, IReadOnlyList<IReadOnlyList<string>> sampleRows, SettlementChannel channel)
     {
@@ -45,7 +44,8 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
         return Math.Round((decimal)refs.Count(have.Contains) / refs.Count, 2, MidpointRounding.AwayFromZero);
     }
 
-    public SettlementParseResult Parse(SettlementFileInput file, SettlementChannel channel, string? columnMapJson)
+    public SettlementParseResult Parse(SettlementFileInput file, SettlementChannel channel, string? columnMapJson,
+        SettlementParseContext? context = null)
     {
         var map = SettlementColumnMap.Parse(columnMapJson)
                   ?? throw new SettlementFormatException("column-map-missing",
@@ -54,12 +54,13 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
         if (mapIssues.Count > 0)
             throw new SettlementFormatException("column-map-invalid", "การจับคู่คอลัมน์ยังไม่ครบ: " + string.Join(" · ", mapIssues));
 
-        using var rows = SettlementFileReader.ReadRows(file).GetEnumerator();
+        var opened = SettlementFileReader.Open(file);
+        using var rows = opened.Rows.GetEnumerator();
         var (headerRowNo, headers) = FindHeader(rows, map);
         var index = BuildIndex(headers, map);
 
-        // ── เก็บเฉพาะช่องที่จับคู่ (ไม่เก็บคอลัมน์ชื่อ/ที่อยู่ผู้ซื้อเลย) แล้วค่อยแปลงค่า — ต้องเห็นวันที่ทั้งไฟล์ก่อนตัดสินลำดับวัน/เดือน ──
-        var raw = new List<(int RowNo, Dictionary<string, string> Cells, string FirstCell)>();
+        // ── เก็บเฉพาะช่องที่จับคู่ (ไม่เก็บคอลัมน์ชื่อ/ที่อยู่ผู้ซื้อเลย) แล้วค่อยแปลงค่า — ต้องเห็นวันที่ทั้งไฟล์ก่อนตัดสินลำดับวัน/เดือน/เขตเวลา ──
+        var body = new List<(int RowNo, Dictionary<string, string> Cells, string First, string? Txn, string? Order, string? Payout)>();
         var skipped = new List<string>();
         var rowNo = headerRowNo;
         while (rows.MoveNext())
@@ -70,41 +71,60 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
             var cells = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (key, col) in index)
                 cells[key] = col < r.Count ? r[col] : "";
-            raw.Add((rowNo, cells, r.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? ""));
-        }
-
-        var order = map.DateOrder != SettlementDateOrder.Auto ? map.DateOrder
-            : map.Date == null ? SettlementDateOrder.DayMonthYear
-            : SettlementValueParser.DetectDateOrder(raw.Select(x => x.Cells.GetValueOrDefault(Key(map.Date!))));
-
-        var parsed = new List<SettlementParsedRow>();
-        foreach (var (no, cells, first) in raw)
-        {
-            string? Cell(string? header) => header == null ? null : NullIfBlank(cells.GetValueOrDefault(Key(header)));
-            var txn = Cell(map.TxnId);
-            var orderId = Cell(map.OrderId);
-            if (txn == null && orderId == null && TotalRow.IsMatch(first.Trim()))
+            var first = r.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? "";
+            var txn = Cell(cells, map.TxnId);
+            var orderId = Cell(cells, map.OrderId);
+            var payout = Cell(cells, map.PayoutRef);
+            // R-B7: เลขอ้างอิงที่ผ่านตัวเลขของ Excel แล้วเสียหลักท้าย ⇒ ล้มดังทั้งไฟล์ (เก็บไว้ = คีย์กันซ้ำชน + จับคู่ใบขายไม่เจอ)
+            EnsureIdIntact(txn, rowNo, map.TxnId);
+            EnsureIdIntact(orderId, rowNo, map.OrderId);
+            EnsureIdIntact(payout, rowNo, map.PayoutRef);
+            // R-B11: แถวสรุป/แถวรวม — แบบกว้าง = ไม่มีเลขอ้างอิงใดเลย · แบบยาว = ไม่มีเลขอ้างอิง + คำสรุปหรือไม่มีป้าย/วันที่
+            if (SettlementFileDecisions.IsSummaryRow(map.Layout, txn, orderId,
+                    map.Layout == SettlementFileLayout.Long ? Cell(cells, map.Type) : null, Cell(cells, map.Date), first))
             {
-                skipped.Add($"แถว {no}: แถวสรุปยอด \"{Truncate(first, 40)}\" (ไม่นำเข้า — นับซ้ำกับรายการ)");
+                skipped.Add(SummaryNotice(rowNo, first, cells, map));
                 continue;
             }
-            var date = ParseDate(Cell(map.Date), order, no, map.Date);
-            var desc = Cell(map.Description);
-            var payout = Cell(map.PayoutRef);
+            body.Add((rowNo, cells, first, txn, orderId, payout));
+        }
+
+        // R-B10: CSV คั่นด้วย ; + ยอด "1,500" ไม่มีจุดทศนิยม = อ่านได้สองแบบ ⇒ ล้มดัง (ไม่เดาว่าเป็น 1,500 หรือ 1.5)
+        var amountHeaders = map.Layout == SettlementFileLayout.Long
+            ? new[] { map.Amount, map.AmountIn, map.AmountOut, map.Vat, map.Wht }.Where(h => h != null).Select(h => h!).ToList()
+            : map.AmountColumns.Select(c => c.Header).ToList();
+        if (SettlementFileDecisions.DecimalCommaAmbiguity(opened.CsvDelimiter,
+                body.SelectMany(b => amountHeaders.Select(h => (b.RowNo, h, Cell(b.Cells, h)))).ToList()) is string decimalComma)
+            throw new SettlementFormatException("decimal-comma", decimalComma);
+
+        // R-B9/R-B8: ลำดับวัน/เดือน และเขตเวลา — ตัดสินจากทั้งไฟล์ · กำกวมและมีผล = ล้มดังให้เลือก (ไม่เดา) · พิสูจน์ได้ = จำให้ช่องทาง
+        var dateRaws = new List<(int RowNo, string? Raw)>();
+        if (map.Date != null)
+            foreach (var b in body) dateRaws.Add((b.RowNo, Cell(b.Cells, map.Date)));
+        var orderDecision = SettlementFileDecisions.DecideDateOrder(map.DateOrder, dateRaws, map.Date, context?.PeriodFrom, context?.PeriodTo);
+        var zoneDecision = SettlementFileDecisions.DecideTimeZone(map.TimeZone, map.Date, dateRaws, orderDecision.Value);
+        var order = orderDecision.Value;
+        var zone = zoneDecision.Value;
+
+        var parsed = new List<SettlementParsedRow>();
+        foreach (var (no, cells, first, txn, orderId, payout) in body)
+        {
+            var date = ParseDate(Cell(cells, map.Date), order, zone, no, map.Date);
+            var desc = Cell(cells, map.Description);
 
             if (map.Layout == SettlementFileLayout.Long)
             {
-                var label = Cell(map.Type);
+                var label = Cell(cells, map.Type);
                 decimal? amount;
                 if (map.Amount != null)
                 {
-                    amount = ParseAmount(Cell(map.Amount), no, map.Amount);
+                    amount = ParseAmount(Cell(cells, map.Amount), no, map.Amount);
                     if (amount is decimal a0 && map.Negate) amount = -a0;
                 }
                 else
                 {
-                    var inn = ParseAmount(Cell(map.AmountIn), no, map.AmountIn);
-                    var outt = ParseAmount(Cell(map.AmountOut), no, map.AmountOut);
+                    var inn = ParseAmount(Cell(cells, map.AmountIn), no, map.AmountIn);
+                    var outt = ParseAmount(Cell(cells, map.AmountOut), no, map.AmountOut);
                     amount = inn == null && outt == null ? null : Math.Abs(inn ?? 0m) - Math.Abs(outt ?? 0m);
                 }
                 if (amount is not decimal amt || amt == 0m)
@@ -112,9 +132,9 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
                     skipped.Add($"แถว {no}: ยอด 0 หรือว่าง (\"{Truncate(label ?? first, 40)}\")");
                     continue;
                 }
-                var vat = AlignSign(ParseAmount(Cell(map.Vat), no, map.Vat), amt);
+                var vat = AlignSign(ParseAmount(Cell(cells, map.Vat), no, map.Vat), amt);
                 if (map.VatExclusive && vat is decimal v && v != 0m) amt += v;      // ยอดในไฟล์ยังไม่รวมคอลัมน์ VAT
-                var wht = ParseAmount(Cell(map.Wht), no, map.Wht);
+                var wht = ParseAmount(Cell(cells, map.Wht), no, map.Wht);
                 if (label == null)
                     throw new SettlementFormatException("type-missing",
                         $"แถว {no}: ไม่มีค่าในคอลัมน์ประเภทรายการ \"{map.Type}\" — ตรวจว่าจับคู่คอลัมน์ถูก หรือไฟล์มีแถวที่ไม่สมบูรณ์");
@@ -125,7 +145,7 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
                 var any = false;
                 foreach (var col in map.AmountColumns)
                 {
-                    var value = ParseAmount(Cell(col.Header), no, col.Header);
+                    var value = ParseAmount(Cell(cells, col.Header), no, col.Header);
                     if (value is not decimal v0 || v0 == 0m) continue;
                     any = true;
                     var amt = col.Negate ? -v0 : v0;
@@ -146,8 +166,43 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
         if (parsed.Count == 0)
             throw new SettlementFormatException("no-rows",
                 "ไม่พบรายการที่มียอดเงินในไฟล์ — ตรวจว่าเลือกไฟล์ถูกรอบ และจับคู่คอลัมน์ยอดเงินถูกต้อง");
-        return new SettlementParseResult(AdapterCode, headers, parsed, skipped);
+        return new SettlementParseResult(AdapterCode, headers, parsed, skipped,
+            orderDecision.Proven ? order : null, zoneDecision.Proven ? zone : null);
     }
+
+    /// <summary>R-B7: เลขอ้างอิงที่เสียหลักแล้ว (<see cref="SettlementValueParser.IdLostPrecision"/>) ⇒ ล้มดังทั้งไฟล์พร้อมทางไปต่อ</summary>
+    private static void EnsureIdIntact(string? raw, int rowNo, string? header)
+    {
+        if (!SettlementValueParser.IdLostPrecision(raw)) return;
+        throw new SettlementFormatException("id-precision",
+            $"แถว {rowNo} คอลัมน์ \"{header}\": \"{Truncate(raw, 30)}\" เป็นตัวเลขของ Excel ที่เสียหลักท้ายไปแล้ว (Excel เก็บตัวเลขได้ 15 หลัก — "
+            + "เลขออเดอร์/เลขรายการที่ยาวกว่านั้นถูกปัด) · ส่งออกรายงานจากแพลตฟอร์มเป็น CSV โดยตรง (ไม่เปิดแล้วบันทึกด้วย Excel) หรือจัดรูปแบบคอลัมน์นั้น"
+            + "เป็นข้อความก่อนบันทึก แล้วนำเข้าใหม่ (ไม่มีรายการใดถูกนำเข้า — เลขที่ผิดจะทำให้รายการต่างกันชนกันและจับคู่ใบขายไม่เจอ)");
+    }
+
+    /// <summary>ข้อความแจ้งแถวสรุปที่ข้าม — บอกยอดในคอลัมน์ที่เลือก (ผู้ใช้เห็นว่าข้ามอะไรไป · ถ้าเป็นรายการจริงสมการรอบโอนจะไม่ลงตัว)</summary>
+    private static string SummaryNotice(int rowNo, string first, Dictionary<string, string> cells, SettlementColumnMap map)
+    {
+        decimal total = 0m;
+        var seen = false;
+        IEnumerable<string?> cols = map.Layout == SettlementFileLayout.Long
+            ? new[] { map.Amount, map.AmountIn }
+            : map.AmountColumns.Select(c => (string?)c.Header);
+        foreach (var h in cols)
+            if (SettlementValueParser.TryParseAmount(Cell(cells, h), out var v) && v is decimal d)
+            {
+                total += d;
+                seen = true;
+            }
+        var amount = seen ? $" · ยอดในคอลัมน์ที่เลือก {total:N2}" : "";
+        if (map.Layout == SettlementFileLayout.Wide)
+            return $"แถว {rowNo}: แถวสรุปยอด/แถวรวม — ไม่มีเลขออเดอร์และเลขรายการ (\"{Truncate(first, 40)}\"{amount}) ไม่นำเข้า · "
+                   + "ถ้าเป็นรายการจริง ให้เติมเลขออเดอร์ในไฟล์แล้วนำเข้าใหม่";
+        return $"แถว {rowNo}: แถวสรุปยอด \"{Truncate(first, 40)}\"{amount} (ไม่นำเข้า — นับซ้ำกับรายการ)";
+    }
+
+    private static string? Cell(Dictionary<string, string> cells, string? header)
+        => header == null ? null : NullIfBlank(cells.GetValueOrDefault(Key(header)));
 
     // ═══ หัวตาราง ═══
 
@@ -214,11 +269,11 @@ public sealed class GenericColumnMapAdapter : ISettlementReportAdapter
         return v;
     }
 
-    private static DateTime? ParseDate(string? raw, SettlementDateOrder order, int rowNo, string? header)
+    private static DateTime? ParseDate(string? raw, SettlementDateOrder order, SettlementFileTimeZone zone, int rowNo, string? header)
     {
-        if (!SettlementValueParser.TryParseDate(raw, order, out var d))
+        if (!SettlementValueParser.TryParseDate(raw, order, zone, out var d))
             throw new SettlementFormatException("date-invalid",
-                $"แถว {rowNo} คอลัมน์ \"{header}\": \"{Truncate(raw, 30)}\" อ่านเป็นวันที่ไม่ได้ (ปี 2 หลักถือว่ากำกวม) — "
+                $"แถว {rowNo} คอลัมน์ \"{header}\": \"{Truncate(raw, 30)}\" อ่านเป็นวันที่ไม่ได้ (ปี 2 หลักถือว่ากำกวม · เวลาต้องเป็น ชม.:นาที) — "
                 + "ส่งออกรายงานให้ปีเป็น 4 หลัก หรือจับคู่คอลัมน์วันที่ใหม่ (ไม่มีรายการใดถูกนำเข้า)");
         return d;
     }
