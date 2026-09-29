@@ -81,6 +81,24 @@ public static class MoneyAccountFallback
         _ => null,
     };
 
+    /// <summary>บัญชีที่ปักบนเครื่อง POS ตัวไหน<b>ใช้กับวิธีจ่ายนี้</b> — <c>null</c> = ไม่มีบัญชีที่ปักสำหรับวิธีนี้ ⇒ ผู้เรียกใช้ผังตาม
+    /// <see cref="KindOf"/>/<see cref="StandardCode"/> (รอบ 200 ฝ่ายค้านทีม G · R200G-2)
+    ///
+    /// <para>═══ ที่มา (บั๊กจริง) ═══ เดิม <c>method == Cash ? CashAccountId : BankAccountId</c> ⇒ ปักบัญชีธนาคารแล้ว
+    /// <b>ทุกวิธีที่ไม่ใช่เงินสด</b>ลง Dr ธนาคารที่ปัก — บัตรเครดิต (ควร 11340 ลูกหนี้ผู้ให้บริการรับบัตร · เงินเข้าจริง T+n หลังหัก MDR) ·
+    /// e-Wallet (11113) · เช็คที่ยังไม่นำฝาก (11131) ⇒ ยอดธนาคารในระบบเกินสเตทเมนต์ · MDR ไม่มีที่ลง · กระทบยอดธนาคารไม่ได้ ·
+    /// รอบ 200 ทีม G เปิดช่องนี้บนหน้าจอและ<b>สั่ง</b>บริษัทหลายบัญชีให้ปัก ⇒ เส้นนี้เกิดจริง</para>
+    ///
+    /// <para>═══ กติกา ═══ บัญชีเงินสดที่ปักใช้กับชนิด <see cref="MoneyAccountKind.Cash"/> (เงินสด + "อื่น ๆ" — ตรงกับผังสำรอง 11111 ของชนิดนั้น) ·
+    /// บัญชีธนาคารที่ปักใช้เฉพาะ <see cref="MoneyAccountKind.BankDeposit"/> (โอน/พร้อมเพย์/หักบัญชี — ตรงกับป้ายบนหน้าตั้งค่าเครื่อง) ·
+    /// ชนิดอื่นไม่มีช่องปักบนเครื่อง ⇒ ผังมาตรฐานของชนิดนั้นเสมอ</para></summary>
+    public static Guid? TerminalPinFor(PaymentMethod method, Guid? cashPin, Guid? bankPin) => KindOf(method) switch
+    {
+        MoneyAccountKind.Cash => cashPin,
+        MoneyAccountKind.BankDeposit => bankPin,
+        _ => null,
+    };
+
     /// <summary>เลือกบัญชีธนาคารจากรายการ GL ของบัญชีธนาคารที่ผูกผังไว้ (active) — ไม่เดาเมื่อมีหลายบัญชี</summary>
     public static BankAccountPickOutcome PickBank(IReadOnlyCollection<Guid> linkedBankGlIds, out Guid? picked)
     {
@@ -99,7 +117,7 @@ public static class MoneyAccountFallback
     /// <para>═══ ที่มา ═══ รอบ 198 P-1 เปลี่ยน "เดา prefix 112" เป็น "ล้มดัง" เมื่อบริษัทมีบัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 บัญชีและเครื่องไม่ได้ปัก ·
     /// ถูกทิศ แต่ผู้ใช้เจอครั้งแรก<b>ตอนปิดบิล</b> (รวมบิล offline ที่ sync เข้ามา — เงินรับไปแล้ว) · และข้อความชี้ไป "ตั้งค่าเครื่อง → บัญชีธนาคาร"
     /// ซึ่ง<b>ไม่มีช่องนั้นบนหน้าจอ</b> (ต่อสายในรอบนี้) ⇒ ตัดสินจากกติกาเดียวกับ <see cref="PickBank"/> แล้วให้หน้าตั้งค่า/หัว POS แสดงก่อนขาย</para></summary>
-    public static string? TerminalBankWarning(bool terminalBankPinned, BankAccountPickOutcome companyBanks)
+    private static string? TerminalBankWarning(bool terminalBankPinned, BankAccountPickOutcome companyBanks)
     {
         if (terminalBankPinned || companyBanks == BankAccountPickOutcome.Single) return null;
         return companyBanks == BankAccountPickOutcome.Ambiguous
@@ -107,6 +125,20 @@ public static class MoneyAccountFallback
               + "(รวมบิล offline ที่ sync เข้ามา) จะปิดไม่ได้ · กด \"⚙️ ตั้งค่าเครื่อง\" แล้วเลือกบัญชีธนาคารที่เงินของเครื่องนี้เข้า"
             : "ยังไม่มีบัญชีธนาคารที่ผูกผังบัญชี — บิลที่รับโอน/พร้อมเพย์/หักบัญชีจะปิดไม่ได้ · เพิ่มบัญชีธนาคารและเลือกผังบัญชีที่หน้า "
               + "\"บัญชีธนาคาร\" แล้วเลือกเป็นบัญชีรับเงินของเครื่องนี้";
+    }
+
+    /// <summary>คำเตือนหน้าเครื่อง POS ที่รู้ว่า "ปักไว้" กับ "ปักผังที่ใช้ได้" ต่างกัน (รอบ 200 ฝ่ายค้านทีม G · R200G-7) —
+    /// เดิมส่งแค่ <c>BankAccountId != null</c> ⇒ ปักผังที่ถูกลบ/ปิดใช้/ไม่ใช่สินทรัพย์ ป้ายเงียบ ขณะที่ตอนปิดบิลตกไป <see cref="PickBank"/> (อาจล้ม
+    /// หรือลงบัญชีธนาคารที่เจ้าของไม่ได้ปัก) · <paramref name="pinUsable"/> ต้องมาจากเกณฑ์เดียวกับตัวเลือกผังตอนปิดบิล</summary>
+    public static string? TerminalPinWarning(bool terminalBankPinned, bool pinUsable, BankAccountPickOutcome companyBanks)
+    {
+        if (terminalBankPinned && !pinUsable)
+            return "บัญชีธนาคารรับเงินที่ปักไว้บนเครื่องนี้ใช้ไม่ได้แล้ว (ถูกลบ/ปิดใช้งาน/ไม่ใช่ผังสินทรัพย์) — บิลโอน/พร้อมเพย์/หักบัญชี"
+                + (companyBanks == BankAccountPickOutcome.Single
+                    ? "จะลงบัญชีธนาคารเดียวของบริษัทแทน"
+                    : "จะปิดไม่ได้")
+                + " · กด \"⚙️ ตั้งค่าเครื่อง\" แล้วเลือกบัญชีธนาคารรับเงินใหม่";
+        return TerminalBankWarning(terminalBankPinned, companyBanks);
     }
 
     /// <summary>ข้อความล้มดังเมื่อหาบัญชีธนาคารให้ไม่ได้ — บอกทางไปต่อตามช่องทาง</summary>

@@ -88,8 +88,10 @@ public sealed partial class SettlementImportService
     private async Task<GatewayIntentLoad> LoadIntentRowsAsync(Guid companyId, string providerCode, GatewayFeeVatMode feeVatMode,
         DateTime? periodFrom, DateTime? periodTo, DateTime payoutDate, CancellationToken ct)
     {
-        var from = periodFrom is DateTime pf ? ThaiDate.CalendarDateUtc(pf) : (DateTime?)null;
-        var to = periodTo is DateTime pt ? ThaiDate.CalendarDateUtc(pt).AddDays(1) : (DateTime?)null;
+        // R200G-3 (รอบ 200): ขอบช่วง = เที่ยงคืนเวลาไทย ตัวเดียวกับแผนรอบโอนเส้นเดิม/รายงานกระทบยอด (GatewaySettlementMath) —
+        // เดิม CalendarDateUtc(วันที่) = 00:00 UTC (07:00 ไทย) ⇒ รับเงินตี 0–7 ของวันถัดจากปลายช่วงถูกดึงเข้ารอบนี้ · ของวันแรกหลุด
+        var from = periodFrom is DateTime pf ? GatewaySettlementMath.ConfirmedFromUtc(pf) : (DateTime?)null;
+        var to = periodTo is DateTime pt ? GatewaySettlementMath.ConfirmedToExclusiveUtc(pt) : (DateTime?)null;
         // ยังไม่มีเจ้าของรอบโอน (เส้นเดิม SettlementJournalEntryId · เส้นนี้ SettlementBatchId ว่างทั้งคู่) — ตัวตัดสินตัวเดียว (expression)
         var fresh = await _db.PaymentIntents.AsNoTracking()
             .Where(GatewayBatchIntentRules.UnclaimedForBatch(companyId, providerCode, from, to))

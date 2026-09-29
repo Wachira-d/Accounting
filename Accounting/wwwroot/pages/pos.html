@@ -1518,7 +1518,9 @@
         const cats = [...new Set(this.allItems.map(i => i.category))].sort();
         const el = document.getElementById('categories');
         el.innerHTML = `<button class="cat-btn active" onclick="Page.selectCategory('')" data-i18n="common.all">ทั้งหมด</button>` +
-          cats.map(c => `<button class="cat-btn" onclick="Page.selectCategory('${c}')">${c}</button>`).join('');
+          // R200G-1 (รอบ 200): หมวดสินค้าเป็นข้อความอิสระ (พิมพ์เอง/นำเข้า/integration) — JS string ใน onclick หนีด้วย jsArg ·
+          // ข้อความบนปุ่มหนีด้วย esc (เดิมต่อดิบทั้งสองที่ ⇒ หมวด `<img onerror=…>` รันสคริปต์ทุกครั้งที่เปิดหน้า POS)
+          cats.map(c => `<button class="cat-btn" onclick="Page.selectCategory('${Layout.jsArg(c)}')">${Layout.esc(c)}</button>`).join('');
       },
 
       selectCategory(cat) {
@@ -1566,10 +1568,10 @@
           return;
         }
         grid.innerHTML = this.filteredItems.map(i => `
-          <div class="pos-item" onclick="Page.addToCart('${i.type}','${i.id}')">
-            <div class="item-name">${this._menuLang==='en'?(i.nameEn||i.name):i.name}</div>
+          <div class="pos-item" onclick="Page.addToCart('${Layout.jsArg(i.type)}','${Layout.jsArg(i.id)}')">
+            <div class="item-name">${Layout.esc(this._menuLang==='en'?(i.nameEn||i.name):i.name)}</div>
             <div class="item-price">${Layout.money(i.price)}</div>
-            ${i.code ? `<div class="item-code">${i.code}</div>` : ''}
+            ${i.code ? `<div class="item-code">${Layout.esc(i.code)}</div>` : ''}
           </div>
         `).join('');
       },
@@ -2649,7 +2651,8 @@
           else if (t.status === 'OnHold') { bg = '#fef3c7'; border = '#f59e0b'; tip = 'บิลพัก'; }
           else if (t.status === 'Active') { bg = '#dbeafe'; border = '#3b82f6'; tip = 'มีออเดอร์'; }
           else if (t.status === 'Reserved') { bg = '#ede9fe'; border = '#8b5cf6'; tip = `จองโดย ${t.upcomingReservationName||''}`; }
-          else if (t.color) { bg = t.color + '40'; border = t.color; }
+          // R200G-1: สีต่อเข้า style="" — เซิร์ฟเวอร์ส่งเฉพาะ hex แล้ว (PosTableStyle.SafeColor) · กรองซ้ำที่นี่กันค่าแปลกปลอมแตก attribute
+          else if (t.color && /^#[0-9a-f]{3,8}$/i.test(t.color)) { bg = t.color + '40'; border = t.color; }
           const dataAttrs = t.activeOrderId ? `data-oid="${t.activeOrderId}"` : '';
           const radius = t.shape === 'circle' ? '50%' : (t.shape === 'square' ? '6px' : '8px');
           // Reservation time badge — countdown to the booking so cashier sees
@@ -2877,7 +2880,7 @@
               <h4 style="margin:16px 0 8px;">แยกตามช่องทางชำระ</h4>
               <div class="table-container"><table class="table" style="font-size:13px;">
                 <thead><tr><th>ช่องทาง</th><th class="text-right">จำนวน</th><th class="text-right">ยอด</th></tr></thead>
-                <tbody>${d.paymentBreakdown.map(p => `<tr><td>${Page.payMethodLabel(p.method)}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td></tr>`).join('')}</tbody>
+                <tbody>${d.paymentBreakdown.map(p => `<tr><td>${Layout.esc(Page.payMethodLabel(p.method))}</td><td class="text-right">${p.count}</td><td class="text-right">${Layout.money(p.total)}</td></tr>`).join('')}</tbody>
               </table></div>
             ` : ''}
           `;

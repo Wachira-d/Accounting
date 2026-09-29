@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **364 ไฟล์ · 3,469 `[Fact]` + 525 `[Theory]` (2,308 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **371 ไฟล์ · 3,561 `[Fact]` + 544 `[Theory]` (2,399 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4840,6 +4840,27 @@ MapTerminal · CompanyBankPickAsync · Create/UpdateTerminalAsync)
 | GWG-12 | บริษัทมีบัญชีธนาคารผูกผัง 2 บัญชี · เครื่อง POS ไม่ปัก | ป้ายแดง "บิลโอน/พร้อมเพย์จะปิดไม่ได้" ข้างป้ายสาขา · โมดัลตั้งค่าเครื่องมีช่องเลือก + คำเตือน · เลือกแล้วป้ายหาย · บัญชีเดียว = ไม่มีป้าย |
 | GWG-13 | ตั้งชื่อเครื่อง/สินค้า `<img src=x onerror=alert(1)>` | แสดงเป็นข้อความ ไม่รันสคริปต์ |
 | GWG-14 | integration ส่งใบแจ้งหนี้ บริษัทไม่มีผัง 11310 | เอกสารมีหมายเหตุ `[ยังไม่ลงบัญชี]` บอก 11310 + ช่องบนผู้ติดต่อ · log PartialSuccess · คำตอบคู่ค้ามีเหตุผล |
+
+### รอบ 200 ทีม GF — แก้ผลฝ่ายค้านทีม G (`erp-review/2026-09-29/review200-G.md` · `team-GF.md`)
+
+เทสต์อัตโนมัติ: `GatewayTeamGFRound200Tests` (สองทิศทุกข้อ) · `GatewayTeamGRound200Tests.E3_*` เรียก `TerminalPinWarning` · `required_call_site_check` (+11:
+ResolvePaymentAccountAsync · ValidateTerminalMoneyAccountsAsync · UsableTerminalPinsAsync · LoadIntentRowsAsync · ApplyChargeToEntity · ApplyChargeAsync ·
+CreateTable · UpdateTable · BulkSave · List · ปรับ MapTerminal)
+
+| ID | สถานการณ์ | คาดหวัง |
+| --- | --- | --- |
+| GWGF-01 | บริษัทมีบัญชีธนาคาร 2 บัญชี · เครื่อง POS ปักบัญชี A · ปิดบิลบัตรเครดิต 1,000 | JE Dr **11340** 1,000 (ไม่ใช่บัญชี A) · ขาดผัง 11340 ⇒ ล้มดังพร้อมทางไปต่อ |
+| GWGF-02 | เครื่องเดียวกัน ปิดบิลโอน/พร้อมเพย์ | Dr บัญชี A ตามเดิม |
+| GWGF-03 | บิลครึ่งเงินสดครึ่งบัตร จากเครื่องที่ปักทั้งลิ้นชักและธนาคาร | เงินสด → ลิ้นชักที่ปัก · บัตร → 11340 |
+| GWGF-04 | คืนเงินบิลบัตรด้วยวิธีบัตร | Cr 11340 (ภาพสะท้อนของขาย) |
+| GWGF-05 | ปักบัญชีธนาคารแล้วปิดใช้ผังนั้น | หน้าตั้งค่าเครื่อง/หัว POS ขึ้นป้ายแดง "ใช้ไม่ได้แล้ว" · ปิดบิลโอน = ใช้บัญชีเดียวของบริษัทหรือล้มดัง |
+| GWGF-06 | ปักผังรายได้เป็นบัญชีรับเงินผ่าน API | 404 "ไม่ใช่ผังสินทรัพย์" |
+| GWGF-07 | สินค้าชื่อ/รหัส/หมวด `<img src=x onerror=alert(1)>` หรือหมวดมี `'` | ตารางสินค้าและปุ่มหมวดแสดงเป็นข้อความ · กดหมวดกรองได้ |
+| GWGF-08 | API บันทึกโต๊ะสี `#fff" onmouseover="…` / รูปร่าง `hexagon` | 400 พร้อมเหตุผล · โต๊ะเก่าที่เก็บค่าแปลกไว้แสดงสีเริ่มต้น/สี่เหลี่ยม |
+| GWGF-09 | ประกอบรอบโอนจากรายการรับชำระ ช่วง 14–20/09 · รับเงิน 21/09 01:00 และ 14/09 01:00 เวลาไทย | 21/09 ไม่อยู่ · 14/09 อยู่ (เดิมกลับกัน) |
+| GWGF-10 | charge PromptPay pending `fee: 0` → ยืนยันมือ → webhook สำเร็จ fee 39.06 | `FeeActual` = 39.06 (เดิมค้าง 0) |
+| GWGF-11 | ค่าธรรมเนียมที่แก้มือแล้ว → webhook ซ้ำ | ไม่ถูกทับ |
+| GWGF-12 | ผู้รับแจ้งเตือน "รับชำระค้าง" ไม่มีสิทธิ์ดูบัญชีธนาคาร | ข้อความบอกสิทธิ์ `Bank.View` และให้ขอผู้ดูแล |
 
 ### รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway เข้ารอบโอน batch (DECISIONS ข้อ 12)
 

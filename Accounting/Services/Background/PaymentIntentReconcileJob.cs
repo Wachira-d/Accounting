@@ -183,7 +183,10 @@ public class PaymentIntentReconcileJob : BackgroundService
                     Message = $"มีรายการรับชำระ {amount:N2} บาท ผ่าน {providerCode} "
                         + $"ค้างเกิน {StuckThreshold.TotalMinutes:0} นาที — "
                         + "สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง Webhook URL ในแดชบอร์ดของผู้ให้บริการ "
-                        + "(ถ้าลูกค้าจ่ายแล้วจริง ให้เปิดหน้ารายการรับชำระออนไลน์แล้วกด \"ตรวจสถานะสด\")",
+                        + "(ถ้าลูกค้าจ่ายแล้วจริง ให้เปิดหน้ารายการรับชำระออนไลน์แล้วกด \"ตรวจสถานะสด\" — "
+                        // R200G-8: หน้านั้นต้องมีสิทธิ์ดูบัญชีธนาคาร · ผู้รับแจ้งเตือนที่ไม่มีสิทธิ์ต้องรู้ว่าต้องขอใคร ไม่ใช่เจอ "โหลดไม่สำเร็จ"
+                        + $"ต้องมีสิทธิ์ \"ดูบัญชีธนาคาร\" ({Accounting.Helpers.PaymentGatewayPermissionScope.ViewPayments.Replace("perm:", "")}) "
+                        + "ถ้ายังไม่มี ให้เจ้าของ/ผู้ดูแลบริษัทมอบสิทธิ์ หรือส่งต่อให้ผู้ที่มีสิทธิ์)",
                     ActionUrl = "/pages/payment-intents.html",
                     EntityType = "PaymentIntent", EntityId = intentId,
                 });

@@ -173,11 +173,14 @@ public static class GatewaySettlementMath
     /// ซึ่งเป็น "ป้ายวันไทย" ที่ 00:00 <b>UTC</b> ⇒ ขอบช่วงเลื่อนไป 7 ชั่วโมง: รับเงินตี 1–7 โมงเช้าของวันแรกหลุดออก · ตี 1–7 โมงเช้าของ
     /// วันถัดจากวันสุดท้ายถูกนับเข้า ⇒ รอบโอน "ยอดไม่ตรง" ทั้งที่ค่าธรรมเนียมถูก · ขอบที่ถูก = เที่ยงคืนเวลาไทย (สูตรเดียวกับ <see cref="RefundCutoffUtc"/>)</para></summary>
     public static (DateTime StartUtc, DateTime EndUtcExclusive) ConfirmedRangeUtc(DateTime fromDate, DateTime toDate)
-    {
-        var start = BangkokMidnightUtc(fromDate);
-        var end = BangkokMidnightUtc(toDate).AddDays(1);
-        return (start, end);
-    }
+        => (ConfirmedFromUtc(fromDate), ConfirmedToExclusiveUtc(toDate));
+
+    /// <summary>ขอบต้นของช่วงที่เปิดปลายได้ (ผู้เลือกระบุแค่ต้นช่วง) — สูตรเดียวกับ <see cref="ConfirmedRangeUtc"/>
+    /// (ฝ่ายค้านทีม G · R200G-3: ตัวประกอบรอบโอนจาก PaymentIntent ยังใช้ <c>CalendarDateUtc(วันที่)</c> ⇒ ขอบเลื่อน 7 ชม. ทั้งสองฝั่ง)</summary>
+    public static DateTime ConfirmedFromUtc(DateTime fromDate) => BangkokMidnightUtc(fromDate);
+
+    /// <summary>ขอบปลาย (ไม่รวม) ของช่วงที่เปิดต้นได้ = เที่ยงคืนเวลาไทยของวันถัดจาก <paramref name="toDate"/> — สูตรเดียวกับ <see cref="ConfirmedRangeUtc"/></summary>
+    public static DateTime ConfirmedToExclusiveUtc(DateTime toDate) => BangkokMidnightUtc(toDate).AddDays(1);
 
     /// <summary>เที่ยงคืนต้นวันไทยของ <paramref name="date"/> เป็นเวลา UTC (ไทยไม่มีเวลาออมแสง ⇒ −7 ชั่วโมงคงที่)</summary>
     private static DateTime BangkokMidnightUtc(DateTime date)

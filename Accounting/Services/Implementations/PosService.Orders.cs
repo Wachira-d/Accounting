@@ -2224,16 +2224,21 @@ public partial class PosService
         // บัญชีที่ตั้งไว้ **บนเครื่อง** ชนะเสมอ — สาขาที่มีบัญชีธนาคาร/ลิ้นชักเงินสด
         // ของตัวเองต้องลงคนละบัญชี ไม่งั้นเงินของทุกสาขากองรวมกันแล้วกระทบยอด
         // ธนาคารรายสาขาไม่ได้เลย (ค่า null = ใช้ผังบัญชีตามวิธีจ่ายเหมือนเดิม)
-        var pinned = method == PaymentMethod.Cash ? terminal?.CashAccountId : terminal?.BankAccountId;
+        // รอบ 200 R200G-2: บัญชีธนาคารที่ปักใช้เฉพาะโอน/พร้อมเพย์/หักบัญชี — บัตร/e-Wallet/เช็คไปผังของชนิดนั้นเสมอ
+        // (เดิม "ไม่ใช่เงินสด = ธนาคารที่ปัก" ⇒ บิลบัตรเครดิตลง Dr ธนาคารเต็มยอดข้าม 11340) · ตัวตัดสินตัวเดียว MoneyAccountFallback.TerminalPinFor
+        var pinned = Accounting.Helpers.MoneyAccountFallback.TerminalPinFor(method, terminal?.CashAccountId, terminal?.BankAccountId);
         if (pinned is Guid acctId)
         {
+            // R200G-7: เกณฑ์เดียวกับ ValidateTerminalMoneyAccountsAsync + คำเตือนหน้าเครื่อง (ผังสินทรัพย์ที่ยังใช้งาน) —
+            // เดิมรับผังที่ปิดใช้/ไม่ใช่สินทรัพย์ต่อ ขณะที่ตัวตรวจตอนบันทึกปฏิเสธ ⇒ สองชั้นขัดกัน
             var pinnedAccount = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.Id == acctId && a.CompanyId == companyId);
+                .Where(UsableTerminalMoneyPin(companyId))
+                .FirstOrDefaultAsync(a => a.Id == acctId);
             if (pinnedAccount != null) return pinnedAccount;
-            // ตั้งไว้แต่หาไม่เจอ (ถูกลบ/ย้ายบริษัท) → ตกไปใช้ผังบัญชีมาตรฐาน
-            // แต่ต้องดัง ไม่ใช่เงียบ — เงินจะลงบัญชีที่เจ้าของไม่ได้ตั้งใจ
+            // ตั้งไว้แต่ใช้ไม่ได้ (ถูกลบ/ปิดใช้/ย้ายบริษัท/ไม่ใช่ผังสินทรัพย์) → ตกไปใช้ผังบัญชีมาตรฐาน
+            // แต่ต้องดัง ไม่ใช่เงียบ — เงินจะลงบัญชีที่เจ้าของไม่ได้ตั้งใจ (หน้าตั้งค่าเครื่องแสดงป้ายแดงด้วย · R200G-7)
             _logger.LogWarning(
-                "เครื่อง POS {Terminal} ตั้งบัญชีรับเงิน {Account} ไว้ แต่ไม่พบในผังบัญชีของบริษัท {Company} — ใช้บัญชีมาตรฐานแทน",
+                "เครื่อง POS {Terminal} ตั้งบัญชีรับเงิน {Account} ไว้ แต่ใช้ไม่ได้ในผังบัญชีของบริษัท {Company} — ใช้บัญชีมาตรฐานแทน",
                 terminal?.Name, acctId, companyId);
         }
 

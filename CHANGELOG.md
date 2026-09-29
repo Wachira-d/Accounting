@@ -3783,3 +3783,15 @@ _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม V2 — ของ�
 - **S3-11** ตัวหาของกำพร้าไม่ตัด `Take(200)` + ค้นการรับชำระของทุกรอบด้วยคำค้นเดียว · `UnpostBlockersAsync` อ่านแค่หัวรอบ (ไม่พังเมื่อช่องทางถูกลบ) ·
   SoD นับผู้สร้างบรรทัด · ที่เหลือ (JournalManage · ป้ายใน Notes) 📋 เหตุผลใน `erp-review/2026-09-29/team-V2.md` · **S4-5** 📋
 - เทสต์ `SettlementRound200V2Tests` + ปรับ `S41_ทิศตรงข้าม…` / `S36_…` ตามความหมายใหม่ · required_call_site +8 แถว/ปรับ 1 — commit d7fb2c43)_
+
+_2026-09-29 รอบ 200 ทีม GF — แก้ผลฝ่ายค้านของทีม G (`erp-review/2026-09-29/review200-G.md` · รายงาน `team-GF.md`):
+- **R200G-2 (P1 เงิน)** `MoneyAccountFallback.TerminalPinFor` — บัญชีธนาคารที่ปักบนเครื่อง POS ใช้เฉพาะโอน/พร้อมเพย์/หักบัญชี · บัตร 11340 · e-Wallet 11113 · เช็ค 11131 เสมอ
+  (เดิม "ไม่ใช่เงินสด = ธนาคารที่ปัก") · ปิดบิล + คืนเงินผ่าน `ResolvePaymentAccountAsync` ตัวเดียว · JE เก่าไม่แก้อัตโนมัติ (DECISIONS ข้อ 20 · SQL อ่านอย่างเดียวในรายงานทีม)
+- **R200G-7** เกณฑ์ "ผังที่ปักได้" ตัวเดียว `UsableTerminalMoneyPin` (สินทรัพย์ · ใช้งาน · ของบริษัท) ใช้ทั้งตัวตรวจตอนบันทึก/ตอนปิดบิล/ป้ายเตือน ·
+  `TerminalPinWarning` เตือนเมื่อปักผังที่ใช้ไม่ได้ (`TerminalBankWarning` เป็น private)
+- **R200G-1 (P1 security)** `pos.html` ตารางสินค้า (ชื่อ/ชื่ออังกฤษ/รหัส) + ปุ่มหมวด (`Layout.esc` + `Layout.jsArg`) · สีโต๊ะกรอง hex · `Helpers/PosTableStyle`
+  (บันทึก: สี hex/รูปร่างชุดปิด ไม่ผ่าน = 400 · อ่าน: ค่าเก่าส่งออกเป็นค่าปลอดภัย) · `pos-floorplan.html` หนีรูปร่าง/กรองสี
+- **R200G-3** `LoadIntentRowsAsync` ขอบช่วงเวลาไทย (`GatewaySettlementMath.ConfirmedFromUtc`/`ConfirmedToExclusiveUtc`) — รูปแบบ `CalendarDateUtc(x).AddDays(1)` เทียบ `ConfirmedAt` เหลือ 0 จุด
+- **R200G-6** `PaymentIntentPolicy.IsProviderFeeFinal` — ค่าธรรมเนียมจาก charge ที่เงินยังไม่เคลื่อนไม่ถูกเก็บ · เส้น webhook ซ้ำใช้ตัวตัดสินเดียวกัน
+- **R200G-8** แจ้งเตือน "รับชำระค้าง" บอกสิทธิ์ `Bank.View` ที่ต้องใช้ · **R200G-4/5** เข้ารายการทดสอบ sandbox ใน `PAYMENT_GATEWAY_DESIGN.md` §4.4
+- เทสต์ `GatewayTeamGFRound200Tests` + ปรับ `GatewayTeamGRound200Tests.E3_*` ให้เรียก `TerminalPinWarning` · required_call_site +11 แถว/ปรับ 1 — commit <pending>)_

@@ -281,9 +281,11 @@
       _tableHtml(t) {
         const sel = this.selectedId === t.id ? 'selected' : '';
         const inactive = !t.isActive ? 'opacity:.45;filter:grayscale(.6);' : '';
-        const bg = t.color || '#e0f2fe';
-        const border = this._darken(t.color || '#38bdf8');
-        return `<div class="fp-table shape-${t.shape} ${sel}"
+        // R200G-1: สี/รูปร่างต่อเข้า style=""/class="" — เซิร์ฟเวอร์ตรวจตอนบันทึกและส่งออกเฉพาะค่าปลอดภัย (PosTableStyle) · กรองซ้ำที่นี่
+        const color = /^#[0-9a-f]{3,8}$/i.test(t.color || '') ? t.color : null;
+        const bg = color || '#e0f2fe';
+        const border = this._darken(color || '#38bdf8');
+        return `<div class="fp-table shape-${Layout.esc(t.shape)} ${sel}"
                      data-id="${t.id}"
                      style="left:${t.x}px;top:${t.y}px;width:${t.width}px;height:${t.height}px;transform:rotate(${t.rotation}deg);background:${bg};border-color:${border};${inactive}"
                      onmousedown="Page.startDrag(event,'${t.id}')"

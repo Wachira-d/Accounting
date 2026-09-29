@@ -108,7 +108,9 @@ public class PosFloorPlanController : ControllerBase
                     if (status == "Free") status = "Reserved";
                 }
 
-                return new TableDto(t.Id, t.TableNumber, t.Seats, t.Shape, t.X, t.Y, t.Width, t.Height, t.Rotation, t.Color, t.IsActive,
+                // R200G-1: สี/รูปร่างต่อเข้า CSS ของหน้า POS/ผังร้าน — ค่าที่เก็บไว้ก่อนมีด่านเขียนส่งออกเป็นค่าปลอดภัย
+                return new TableDto(t.Id, t.TableNumber, t.Seats, PosTableStyle.SafeShape(t.Shape), t.X, t.Y, t.Width, t.Height, t.Rotation,
+                    PosTableStyle.SafeColor(t.Color), t.IsActive,
                     status, oid, onum, oamt, oat,
                     rId, rName, rAt, rParty);
             }).ToList())).ToList();
@@ -180,6 +182,9 @@ public class PosFloorPlanController : ControllerBase
         if (fp == null) return NotFound();
         if (string.IsNullOrWhiteSpace(req.TableNumber))
             return BadRequest(new ApiResponse<Guid>(false, default, "เลขโต๊ะ ห้ามว่าง"));
+        // R200G-1: สี/รูปร่างต่อเข้า CSS ของหน้าเว็บ — ข้อความอิสระ = แตก attribute ได้
+        if (PosTableStyle.RejectReason(req.TableNumber, req.Shape, req.Color) is string styleCreateErr)
+            return BadRequest(new ApiResponse<Guid>(false, default, styleCreateErr));
         // Dedupe per floor — same number on the same floor would confuse the cashier.
         var dup = await _db.PosTables.AnyAsync(t => t.FloorPlanId == floorId && t.TableNumber == req.TableNumber && !t.IsDeleted);
         if (dup) return BadRequest(new ApiResponse<Guid>(false, default, $"เลขโต๊ะ \"{req.TableNumber}\" ซ้ำในชั้นนี้"));
@@ -204,6 +209,8 @@ public class PosFloorPlanController : ControllerBase
     {
         var t = await _db.PosTables.FirstOrDefaultAsync(x => x.Id == tableId && x.FloorPlanId == floorId && x.CompanyId == companyId && !x.IsDeleted);
         if (t == null) return NotFound();
+        if (PosTableStyle.RejectReason(req.TableNumber, req.Shape, req.Color) is string styleUpdateErr)
+            return BadRequest(new ApiResponse<string>(false, null, styleUpdateErr));
         if (!string.IsNullOrWhiteSpace(req.TableNumber) && req.TableNumber != t.TableNumber)
         {
             var dup = await _db.PosTables.AnyAsync(x => x.FloorPlanId == floorId && x.TableNumber == req.TableNumber && x.Id != tableId && !x.IsDeleted);
@@ -252,6 +259,10 @@ public class PosFloorPlanController : ControllerBase
         var dupKey = req.Tables.GroupBy(t => t.TableNumber).FirstOrDefault(g => g.Count() > 1)?.Key;
         if (!string.IsNullOrEmpty(dupKey))
             return BadRequest(new ApiResponse<object>(false, null, $"เลขโต๊ะ \"{dupKey}\" ซ้ำในรายการ"));
+        // R200G-1: ตรวจทั้งชุดก่อนแตะแถวใด — ห้ามบันทึกครึ่งชุด
+        var styleBulkErr = req.Tables.Select(x => PosTableStyle.RejectReason(x.TableNumber, x.Shape, x.Color)).FirstOrDefault(e => e != null);
+        if (styleBulkErr != null)
+            return BadRequest(new ApiResponse<object>(false, null, styleBulkErr));
 
         var existing = await _db.PosTables
             .Where(t => t.FloorPlanId == floorId && !t.IsDeleted)
