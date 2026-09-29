@@ -2216,7 +2216,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     - **ออกใบกำกับของยอดที่ริบ (M1)** — `RealizeDepositAsync` ล็อก `JobLock`(`AdvisoryLockKey.DepositRealize`, id ใบมัดจำ) แล้ว reload ก่อนตัดสิน (สองคำขอพร้อมกัน
       = `DEPOSIT-REALIZE-BUSY`) · `IssueForfeitTaxInvoiceAsync` **idempotent**: หาใบกำกับของการริบของมัดจำนี้ (ป้าย `DepositPolicyNote` `[DEPOSIT-FORFEIT-OF:{id}]` ·
       สำรอง `Reference`+หมายเหตุคงที่) → `ResumeForfeitInvoice`: ร่างยอดตรง = อนุมัติต่อ (**รอบ 200 · review194-r4 P4-1: ร่างที่ค้างจากรุ่นก่อน R3-1 ถูกล้าง
-      `PaymentDate` ก่อนอนุมัติ** ⇒ tax point = วันที่ใบ เหมือนใบที่สร้างใหม่) · ออกแล้วยังค้าง = ตัดชำระต่อ · ตัดครบ/ยกเลิก = สร้างใหม่ ·
+      `PaymentDate` ก่อนอนุมัติ** ⇒ tax point = วันที่ใบ เหมือนใบที่สร้างใหม่ · ทีม RF R200-X4: ครอบทุกสถานะที่ยังไม่ออกเลข Draft/WaitingApproval/Rejected
+      ผ่าน `DepositKindDocumentRules.ShouldClearStalePaymentDate` — ชุดเดียวกับที่ `ResumeForfeitInvoice` ส่งมาอนุมัติ) · ออกแล้วยังค้าง = ตัดชำระต่อ · ตัดครบ/ยกเลิก = สร้างใหม่ ·
       ยอดไม่ตรง/ค้างหลายใบ = ปฏิเสธพร้อมทางไปต่อ · ล้มกลางทาง ⇒ **`RevertTrackedChangesSinceAsync` ถอยเฉพาะของขั้นที่ล้ม** (ไม่ `ChangeTracker.Clear` — entity
       ของผู้เรียก เช่นการจองที่พัก ยังบันทึกหมายเหตุได้) + หมายเหตุ ⚠️ บนใบมัดจำ + คำตอบ · ทางไปต่อข้อความเดียว `ForfeitRetryHint` (DocumentService + ที่พัก ·
       "กดริบซ้ำ = ทำต่อจากใบที่ค้าง ไม่ออกใบซ้ำ") · ธง/หมายเหตุ tax point ลงใบมัดจำ**หลังสำเร็จเท่านั้น**
@@ -2416,7 +2417,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   รวมสวัสดิการยกเว้น ⇒ หักเกินงวดหลัง · แถวเก่าที่ TaxableGross = 0 ใช้ gross เหมือนเดิม) · PVD = `PayrollIncomeBase.PvdContribution(proratedBaseSalary, %)`
   (D-10 — เดิมเต็มเดือน + ไม่ปัด) · เพดานสมทบปัด AwayFromZero (D-08) · กำหนดนำส่ง สปส. + เงินเพิ่ม §49 = `Helpers/SsoLateFee` ตัวเดียว
   (`PayrollRunResponse.SsoDueDate` · `GET payroll/sso-late-fee` preview — D-04 เดิม `payroll.html` คิด 15 ดิบ + `ceil(วัน/30)`) · ไฟล์ สปส.1-10/6-09 (.txt)
-  เลขประกันสังคมว่าง ⇒ เลขบัตรที่ checksum ผ่าน (`SsoInsuredNumber` · D-06) ไม่มีทั้งคู่ = ว่าง + นับเตือนในสรุป · รายงาน ภ.ง.ด.1/ปกส. ปิดบังเลขบัตร/เลข ปกส.
+  เลขประกันสังคมว่าง ⇒ เลขบัตรที่ checksum ผ่าน (`SsoInsuredNumber` · D-06) ไม่มีทั้งคู่ = ว่าง + นับเตือนในสรุป · รายงาน ปกส. บนจอใช้ตัวตัดสินเดียวกัน
+  (`SsoInsuredNumber.ForDisplay` · R200-X6 — เดิมจอขึ้น "-" ขณะที่ไฟล์ส่งเลขบัตร) · Math.Round ทั้งโมดูลเงินเดือนระบุ AwayFromZero (R200-X7 · `payroll_rounding_check`) · รายงาน ภ.ง.ด.1/ปกส. ปิดบังเลขบัตร/เลข ปกส.
   ถ้าไม่มี `Pii.View` (G2-05) · 50 ทวิรายปี audit เลขบัตรแบบปิดบังผ่าน `AddChainedAuditLog` (D-11) · API `GET tax/sso-rate` อ่าน `SsoRateSchedule` (D-03) ·
   จ่ายทิป: ส่วนแบ่งเป็นสตางค์ Σ = กองทิป + อัตรา/เกณฑ์ WHT จาก `ThaiWhtRateTable` (`TipShareAllocation` · D-05) · ไม่มีผัง 21915 = ล้มดังก่อนลงบัญชี
 - **แก้ข้อมูลพนักงาน** (A05/D-07): `UpdateEmployeeRequest` +11 ช่อง (null = ไม่แตะ · "" = ล้าง) ผ่าน `Helpers/EmployeeRecordEdit` · Response +TaxId/ธนาคาร/
@@ -2462,6 +2464,14 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   `src` ของโลโก้/ตราประทับ/ลายเซ็น (รวมลายเซ็นผู้จัดทำจากคู่ค้า `PreparerSignatureBase64`) ผ่าน `Helpers/HtmlImageSource.Attribute` ตัวเดียว
   (data:image/* base64 · https/http · path ภายใน `/…` เท่านั้น — อย่างอื่นไม่พิมพ์รูป) · QuestPDF ไม่ใช่ HTML จึงไม่กระทบ ·
   ล็อกด้วย `required_call_site_check` (must_lit)
+- **หัวเอกสาร + ค่าหน้าตาของเทมเพลต (รอบ 200 ทีม RF · R200-X1)**: หัวเอกสาร (`CustomTitle`/`CustomTitleEn`/`DocumentTitleOverridesJson`) หนีด้วย
+  `WebUtility.HtmlEncode` ก่อนต่อเข้า `.doc-title` (ป้าย "ต้นฉบับ" จาก `DocumentLabels` ต่อหลังหนี) · ทุกค่าที่เข้า `<style>` (`BuildCss`/`BuildLayoutCss`:
+  สีทุกช่อง · ฟอนต์ · ขนาดตัวอักษร · ขนาด/แนวกระดาษ · ขอบ · ความทึบลายน้ำ) ผ่าน `Helpers/DocumentTemplateStyle` ตัวเดียว — สี `#RGB`/`#RRGGBB`
+  (ตัวเดียวกับ `SanitizeHex` ของ QuestPDF) · ฟอนต์จากรายการอนุญาต (THSarabunNew/Prompt/NotoSansThai/Sarabun) · ขนาดเนื้อความ 8–24 · หัว 12–40 ·
+  ค่าที่เก็บไว้ก่อนมีด่าน ⇒ ค่าเริ่มต้นของ entity (ไม่ล้ม) · QuestPDF ใช้ตัวเดียวกัน (`NormalizeFont` · `ResolvePageSize` · ขนาดเนื้อความ) ⇒ สอง renderer ไม่ drift ·
+  **ด่านตอนบันทึก**: `DocumentTemplateController` Create/Update ⇒ ค่าไม่ถูกรูป = 400 + ข้อความไทย (`DocumentTemplateStyle.RejectReasons`) ·
+  **ด่านสิทธิ์**: สร้าง/แก้/ลบ/ตั้งค่าเริ่มต้น/คัดลอกเทมเพลต ต้องมี `CompanySettings.Edit` (DECISIONS ข้อ 34 · เดิมมีแค่ `[Authorize]` ⇒ ผู้ดูอย่างเดียวแก้เทมเพลต
+  default ได้) — `write_permission_gate_check` เฝ้าไฟล์นี้แล้ว (POST สร้าง PDF/HTML/พรีวิว = อ่านอย่างเดียว)
 - **ด่านชั้นความลับ** (`generate-pdf` / `generate-html` · รอบ 200 · review193-r4 P4-7): เอกสารที่ `Sensitivity != None` ต้อง `ISensitivityService.CanViewAsync`
   ผ่านก่อนสร้างไฟล์ (ด่านเดียวกับหน้าเอกสาร/ส่งอีเมล · ข้อความ `SensitivityAccess.DeniedMessage`) · เดิมผู้ที่รู้ documentId พิมพ์ใบลับได้
 - รองรับ template per `DocumentType + IsDefault` flag
@@ -3513,7 +3523,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
 | Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
-| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | รอบ 200 (H-3): `ExplainAnomaly` บันทึกคำตอบลงรายการเมื่อ **ครูหรือนักเรียน** ตอบ (`AnomalyExplainVerdict.ShouldPersist` — เดิม `UsedAi` เท่านั้น ⇒ kill-switch แล้วว่างตลอด+ยิงซ้ำ) + คำตอบต้องอยู่ในชุด `LikelyError/LikelyLegit/NeedReview` · ป้าย `usedAi` ของคำตอบที่แคชอ่านจากแถว feedback (ครูตอบจริงไหม) |
+| Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | รอบ 200 (H-3): `ExplainAnomaly` บันทึกคำตอบลงรายการเมื่อ **ครูหรือนักเรียน** ตอบ (`AnomalyExplainVerdict.ShouldPersist` — เดิม `UsedAi` เท่านั้น ⇒ kill-switch แล้วว่างตลอด+ยิงซ้ำ) + คำตอบต้องอยู่ในชุด `LikelyError/LikelyLegit/NeedReview` · ป้าย `usedAi` ของคำตอบที่แคชอ่านจากแถว feedback (ครูตอบจริงไหม) · **รอบ 200 ทีม RF (R200-X2/X8)**: นักเรียนอ่าน payload ของ prompt จริง (`anomaly.amount` · `vendor_history_12mo` ชุดยอดหรือสรุป · `recent_12mo` · `local_model.pick`) ผ่าน `Helpers/AnomalyExplainStudent` (เดิมอ่าน `root.amount` ⇒ ไม่เคยตอบ) · ตอบค่าในชุดเสมอ (z-score → ช่วงประวัติ → กติการะดับความรุนแรง → `NeedReview` = cold-start) · คำอธิบายไปทาง `StructuredJson` ⇒ ปิด provider ยังได้คำอธิบาย+บันทึกลงรายการ · คำตอบครูนอกชุด ⇒ `AnomalyExplainVerdict.Coerce` (รูปแบบต่าง ⇒ ค่าในชุด · อื่น ๆ ⇒ `NeedReview`) แล้วเก็บ ไม่ทิ้ง |
 | Forecast narrative | `ForecastNarrative = 12` | – (essay) | – |
 | ~~Product match~~ | ~~`ProductMatch = 13`~~ | **ตายแล้ว `[Obsolete(error)]`** | **ไม่มี call site เลยทั้งเรพ** — การจับคู่สินค้าเดินผ่าน `Ocr.ProductMatcher` (heuristic cascade ไม่ผ่าน AI) |
 | ~~Contact match~~ | ~~`ContactMatch = 14`~~ | **ตายแล้ว `[Obsolete(error)]`** | ซ้ำกับ `ContactFuzzyMatch` ที่ใช้งานจริง |
@@ -3766,7 +3776,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement: โหมดภาษีค่าธรรมเนียม config ↔ ช่องทางต้องให้ผลเท่ากันทั้งสองเส้น ตรวจที่นำเข้าไฟล์/บันทึกช่องทาง/บันทึกค่าตั้ง gateway/ลงบัญชี (ข้อ 26 · X-1/X-3/X-10) · WHT ออกภาษีแทนคิดจากฐานรวมต่อบรรทัดใบ (X-4) · เติมรอบโอน gateway ด้วยวันอื่น ⇒ ปฏิเสธ (X-5) · รับชำระใบที่มี WHT ลูกค้าผ่านรอบโอน (ข้อ 27 · T-1) · ใบเพิ่มเติมที่ซ้ำรอบแรก (T-2) · รอบโอนวันเดียวกันสลับลำดับ (T-3) · รอบก่อน 0/0 (T-4) · ทางไปต่อใบแรกเป็นร่าง (T-6) · JE ปรับปรุงแล้วเลิกเตือน (T-7) · เรียงเดือน (T-8) · ส่งลูกค้าแล้ว = หลักฐานการส่ง (ข้อ 25 · V2-C1) · ป้ายรับรู้ (V2-C2) · ChangeTracker ว่าง (V2-C3) · กรองรอบตายใน SQL (V2-C4) · การรับรู้ครอบรอบ (V2-P1) (§2.10) — commit c7bad3f5)_
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม RF — แก้ฝ่ายค้านทีม R: หัวเอกสาร/CSS ของเทมเพลตผ่านตัวหนี/ตัวตรวจตัวเดียว + ด่านบันทึก 400 + ด่านสิทธิ์ `CompanySettings.Edit` บนเส้นเขียนเทมเพลต (R200-X1 · §6 PDF) · นักเรียนอธิบายรายการผิดปกติตอบได้จริง + คำตอบครูนอกชุดถูกเก็บ (R200-X2/X8 · ตาราง distillation) · แก้กฎอนุมัติไม่ล้างคำอธิบาย/โครงการ (R200-X3) · ใบริบค้างทุกสถานะที่ยังไม่ออกเลขล้างวันรับเงิน (R200-X4) · ไม่ใช่เจ้าของ = 403 (R200-X5) · เลข ปกส. บนจอ = ตัวตัดสินเดียวกับไฟล์ (R200-X6) · Math.Round เงินเดือน AwayFromZero (R200-X7) — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement: โหมดภาษีค่าธรรมเนียม config ↔ ช่องทางต้องให้ผลเท่ากันทั้งสองเส้น ตรวจที่นำเข้าไฟล์/บันทึกช่องทาง/บันทึกค่าตั้ง gateway/ลงบัญชี (ข้อ 26 · X-1/X-3/X-10) · WHT ออกภาษีแทนคิดจากฐานรวมต่อบรรทัดใบ (X-4) · เติมรอบโอน gateway ด้วยวันอื่น ⇒ ปฏิเสธ (X-5) · รับชำระใบที่มี WHT ลูกค้าผ่านรอบโอน (ข้อ 27 · T-1) · ใบเพิ่มเติมที่ซ้ำรอบแรก (T-2) · รอบโอนวันเดียวกันสลับลำดับ (T-3) · รอบก่อน 0/0 (T-4) · ทางไปต่อใบแรกเป็นร่าง (T-6) · JE ปรับปรุงแล้วเลิกเตือน (T-7) · เรียงเดือน (T-8) · ส่งลูกค้าแล้ว = หลักฐานการส่ง (ข้อ 25 · V2-C1) · ป้ายรับรู้ (V2-C2) · ChangeTracker ว่าง (V2-C3) · กรองรอบตายใน SQL (V2-C4) · การรับรู้ครอบรอบ (V2-P1) (§2.10) — commit c7bad3f5)_
 
 _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม GF — แก้ฝ่ายค้านทีม G: บัญชีธนาคารที่ปักบนเครื่อง POS ใช้เฉพาะโอน/พร้อมเพย์/หักบัญชี (R200G-2) ·
 XSS ตารางสินค้า/ปุ่มหมวด/สีโต๊ะ POS (R200G-1) · ขอบช่วงเวลาไทยในตัวประกอบรอบโอนจาก PaymentIntent (R200G-3) · ค่าธรรมเนียม pending ไม่นับเป็นค่าจริง (R200G-6) ·

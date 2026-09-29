@@ -97,6 +97,10 @@
         <div class="modal-body">
           <input type="hidden" id="ruleId">
           <div class="form-group"><label class="form-label">ชื่อกฎ *</label><input type="text" class="form-input" id="ruleName"></div>
+          <div class="form-group"><label class="form-label">คำอธิบาย</label><textarea class="form-textarea" id="ruleDescription" rows="2" placeholder="(ไม่บังคับ)"></textarea></div>
+          <div class="form-group"><label class="form-label">ใช้กับโครงการ</label>
+            <select class="form-select" id="ruleProject"><option value="">ทุกโครงการ</option></select>
+          </div>
           <div class="form-group"><label class="form-label">ประเภทเอกสาร</label>
             <select class="form-select" id="ruleDocType"></select>
           </div>
@@ -299,6 +303,10 @@
         document.getElementById('ruleTitle').textContent = 'เพิ่มกฎการอนุมัติ';
         document.getElementById('ruleId').value = '';
         document.getElementById('ruleName').value = '';
+        // รอบ 200 ทีม RF (R200-X3): ฟอร์มใหม่ห้ามค้างค่าของกฎที่เปิดแก้ก่อนหน้า
+        document.getElementById('ruleDescription').value = '';
+        this._editingProjectId = null;
+        this._fillProjects('');
         this._fillDocTypes('');
         document.getElementById('ruleMinAmount').value = '0';
         document.getElementById('ruleMaxAmount').value = '';
@@ -307,6 +315,23 @@
         Layout.openModal('ruleModal');
       },
       // ── รอบ 200 (A07): ฟอร์มกฎตรงสัญญา CreateApprovalRuleRequest (name · documentType · min/max · steps[{stepOrder, approverUserId}]) ──
+      // รอบ 200 ทีม RF (R200-X3): ขอบเขตโครงการ — เดิมหน้าไม่มีช่องนี้และไม่ส่ง projectId ⇒ เปิดแก้กฎที่จำกัดโครงการแล้วกดบันทึก
+      // = กลายเป็นทุกโครงการเงียบ ๆ · โครงการเดิมที่ไม่อยู่ในรายการ (ปิดไปแล้ว/เกินหน้า) ยังคงเลือกไว้ ไม่ถูกล้างเพราะหาไม่เจอ
+      async _loadProjects() {
+        if (this._projects) return this._projects;
+        const api = Layout.api(); if (!api) return [];
+        try { const res = await api.getProjects('?pageSize=200'); this._projects = res.data?.items || res.data || []; }
+        catch (e) { this._projects = []; }
+        return this._projects;
+      },
+      async _fillProjects(selected) {
+        const projects = await this._loadProjects();
+        const sel = document.getElementById('ruleProject');
+        const known = projects.some(p => p.id === selected);
+        sel.innerHTML = `<option value="">ทุกโครงการ</option>`
+          + projects.map(p => `<option value="${Layout.esc(p.id)}"${p.id === selected ? ' selected' : ''}>${Layout.esc((p.code ? p.code + ' · ' : '') + (p.name || ''))}</option>`).join('')
+          + (selected && !known ? `<option value="${Layout.esc(selected)}" selected>(โครงการเดิมของกฎนี้)</option>` : '');
+      },
       _fillDocTypes(selected) {
         document.getElementById('ruleDocType').innerHTML =
           `<option value="">ทุกประเภทเอกสาร</option>${Layout.docTypeOptions(selected || '')}`;
@@ -380,6 +405,10 @@
         document.getElementById('ruleTitle').textContent = 'แก้ไขกฎการอนุมัติ';
         document.getElementById('ruleId').value = r.id;
         document.getElementById('ruleName').value = r.name || '';
+        // รอบ 200 ทีม RF (R200-X3): hydrate คำอธิบาย + โครงการจาก ApprovalRuleResponse (เก็บแล้วต้อง echo กลับ)
+        document.getElementById('ruleDescription').value = r.description || '';
+        this._editingProjectId = r.projectId || null;
+        this._fillProjects(r.projectId || '');
         this._fillDocTypes(r.documentType || '');
         document.getElementById('ruleMinAmount').value = r.minAmount ?? 0;
         document.getElementById('ruleMaxAmount').value = r.maxAmount ?? '';
@@ -392,14 +421,20 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('ruleId').value;
         const steps = this._readSteps();
+        const desc = document.getElementById('ruleDescription').value.trim();
+        const projectId = document.getElementById('ruleProject').value || null;
         const data = {
           name: document.getElementById('ruleName').value.trim(),
-          description: null,
+          // สร้าง: ว่าง = null · แก้: "" = ล้าง (server: ไม่มีคีย์/null = คงเดิม)
+          description: id ? desc : (desc || null),
+          projectId,
           documentType: document.getElementById('ruleDocType').value || null,
           minAmount: Layout.numOrNull('ruleMinAmount'),
           maxAmount: Layout.numOrNull('ruleMaxAmount'),
           steps: steps.map((s, i) => ({ stepOrder: i + 1, approverUserId: s.approverUserId, isRequired: true })),
         };
+        // เลือก "ทุกโครงการ" ตอนแก้กฎที่เคยจำกัดโครงการ = ตั้งใจล้าง (Guid? ส่ง "" ไม่ได้ ⇒ ธงแยก)
+        if (id && !projectId && this._editingProjectId) data.clearProjectId = true;
         if (!data.name) { Layout.toast('กรุณาระบุชื่อกฎ', 'error'); return; }
         if (!steps.length || steps.some(s => !s.approverUserId)) { Layout.toast('กรุณาเลือกผู้อนุมัติให้ครบทุกขั้น', 'error'); return; }
         try {

@@ -4227,7 +4227,8 @@ public partial class DocumentService : IDocumentService
             if (needApprove)
             {
                 var draft = await _db.Documents.FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId);
-                if (draft != null && draft.Status == DocumentStatus.Draft && draft.PaymentDate != null)
+                // รอบ 200 ทีม RF (R200-X4): ทุกสถานะที่ยังไม่ออกเลข (ชุดเดียวกับที่ ResumeForfeitInvoice ส่งมาอนุมัติ) — เดิมแค่ Draft
+                if (draft != null && Accounting.Helpers.DepositKindDocumentRules.ShouldClearStalePaymentDate(draft.Status, draft.PaymentDate))
                 {
                     draft.PaymentDate = null;
                     await _db.SaveChangesAsync();

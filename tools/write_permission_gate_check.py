@@ -110,6 +110,10 @@ WATCHED = [
     # เพิ่มรอบ 198 ข้อ 5 — สวิตช์บังคับแพ็กเกจบนหน้าเว็บ (กระทบทุกบริษัท) + ล้างผลโหมดเงา · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet) ·
     # ด่าน = [Authorize(Roles = "SystemAdmin")] บน action (ระดับคลาสไม่นับ — scan อ่านเฉพาะช่วงของ action)
     "Accounting/Controllers/AdminSubscriptionEnforcementController.cs",
+    # เพิ่มรอบ 200 ทีม RF (R200-X1) — สร้าง/แก้/ลบ/ตั้งค่าเริ่มต้น/คัดลอกเทมเพลตเอกสาร มีแค่ [Authorize] ระดับคลาสมาตลอด ⇒ ผู้ดูอย่างเดียว
+    # แก้เทมเพลต default ของบริษัทได้ (หัวเอกสาร/CSS ที่ไปโผล่ในพรีวิวของเจ้าของ) ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 10) ·
+    # ด่าน = CompanySettings.Edit ชุดเดียวกับ SettingsController · POST สร้าง PDF/HTML/พรีวิว = อ่านอย่างเดียว (READ_ONLY_POSTS_IN_FILE)
+    "Accounting/Controllers/DocumentTemplateController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -181,6 +185,16 @@ READ_ONLY_POSTS = {
     "ParseAddress",          # แปลงที่อยู่ free-text → structured
 }
 
+# POST ที่ "อ่านอย่างเดียว" ระบุรายไฟล์ (ชื่อ GeneratePdf ฯลฯ มีหลายคอนโทรลเลอร์ — ชื่อลอยจะเปิดช่องให้ไฟล์อื่นเขียวไปด้วย) ·
+# รอบ 200 ทีม RF: สร้าง PDF/HTML/พรีวิวจากเทมเพลต — `PdfGenerationService` ไม่เรียก SaveChanges เลย (ตรวจด้วย grep ตอนเพิ่ม)
+READ_ONLY_POSTS_IN_FILE = {
+    ("DocumentTemplateController.cs", "GeneratePdf"),
+    ("DocumentTemplateController.cs", "GenerateHtml"),
+    ("DocumentTemplateController.cs", "PreviewHtmlDraft"),
+    ("DocumentTemplateController.cs", "GenerateWhtPdf"),
+    ("DocumentTemplateController.cs", "GenerateReceiptPdf"),
+}
+
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
 # เพราะ "Create" มีทุกคอนโทรลเลอร์ (ชื่อลอย = เปิดช่องให้ Create ของไฟล์อื่นเขียวไปด้วย)
 SELF_SERVICE_POSTS = {
@@ -236,6 +250,8 @@ def scan(path):
         if name in READ_ONLY_POSTS:
             continue
         if (os.path.basename(path), name) in SELF_SERVICE_POSTS:
+            continue
+        if (os.path.basename(path), name) in READ_ONLY_POSTS_IN_FILE:
             continue
         if any(k in body for k in GATE_MARKERS) or ATTR_GATE_RE.search(body):
             continue

@@ -745,7 +745,7 @@ public class PayrollController : ControllerBase
                     WageCeiling = defCeiling,
                     RatePercent = defRate * 100m,
                     EmployerRatePercent = defRate * 100m,
-                    MaxMonthlyContribution = Math.Round(defCeiling * defRate, 2),
+                    MaxMonthlyContribution = Math.Round(defCeiling * defRate, 2, MidpointRounding.AwayFromZero),
                     EffectiveFromMonth = 1,
                     EffectiveToMonth = 12,
                     IsOverride = false,
@@ -761,7 +761,7 @@ public class PayrollController : ControllerBase
                     WageCeiling = ov.WageCeiling,
                     RatePercent = rate * 100m,
                     EmployerRatePercent = ov.EmployerRatePercent,
-                    MaxMonthlyContribution = Math.Round(ov.WageCeiling * rate, 2),
+                    MaxMonthlyContribution = Math.Round(ov.WageCeiling * rate, 2, MidpointRounding.AwayFromZero),
                     EffectiveFromMonth = f,
                     EffectiveToMonth = t,
                     IsOverride = true,
@@ -831,7 +831,7 @@ public class PayrollController : ControllerBase
             existing.RatePercent,
             existing.EffectiveFromMonth,
             existing.EffectiveToMonth,
-            MaxMonthlyContribution = Math.Round(existing.WageCeiling * existing.RatePercent / 100m, 2),
+            MaxMonthlyContribution = Math.Round(existing.WageCeiling * existing.RatePercent / 100m, 2, MidpointRounding.AwayFromZero),
         }, $"บันทึกค่าประกันสังคมปี {year} ({scope}) แล้ว — สมทบสูงสุด {existing.WageCeiling * existing.RatePercent / 100m:N2} บาท/เดือน"));
     }
 

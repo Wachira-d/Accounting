@@ -1212,7 +1212,7 @@ public class PayrollService : IPayrollService
             // validate ที่นี่เพื่อ reject 422 ทันที (แทนที่จะ fail cryptic ตอน pay).
             var empDeductions = line.SocialSecurityEmployee + line.WithholdingTax
                 + line.ProvidentFundEmployee + line.SalaryAdvance + line.OtherDeductions;
-            var expectedNet = Math.Round(line.GrossIncome - empDeductions, 2);
+            var expectedNet = Math.Round(line.GrossIncome - empDeductions, 2, MidpointRounding.AwayFromZero);
             if (Math.Abs(expectedNet - line.NetPay) > 0.01m)
                 throw new InvalidOperationException(
                     $"บรรทัด {idx} ({emp.FirstNameTh} {emp.LastNameTh}): netPay ไม่ตรง — " +
@@ -2755,7 +2755,7 @@ public class PayrollService : IPayrollService
                                 Diff = Math.Round(d.GrossIncome
                                     - d.WithholdingTax - d.SocialSecurityEmployee
                                     - d.ProvidentFundEmployee - d.LoanDeduction
-                                    - d.OtherDeductions - d.NetPay, 2)
+                                    - d.OtherDeductions - d.NetPay, 2, MidpointRounding.AwayFromZero)
                             })
                             .Where(x => Math.Abs(x.Diff) > 0.01m)
                             .Take(5).ToList();
@@ -2908,7 +2908,7 @@ public class PayrollService : IPayrollService
                 var totalTax = g.Sum(d => d.WithholdingTax);
                 // Effective rate (display): tax / income × 100. แสดงเป็น
                 // อัตราเฉลี่ยรายปี (RD ยอมรับ).
-                var effRate = totalIncome > 0 ? Math.Round(totalTax * 100m / totalIncome, 2) : 0m;
+                var effRate = totalIncome > 0 ? Math.Round(totalTax * 100m / totalIncome, 2, MidpointRounding.AwayFromZero) : 0m;
 
                 var cert = new WithholdingTaxCert
                 {
@@ -2937,7 +2937,7 @@ public class PayrollService : IPayrollService
                         IncomeDescription = $"เงินเดือน เดือน {d.PayrollRun.Month:D2}/{year}",
                         PaymentDate = d.PayrollRun.PayDate,
                         IncomeAmount = d.GrossIncome,
-                        TaxRate = d.GrossIncome > 0 ? Math.Round(d.WithholdingTax * 100m / d.GrossIncome, 2) : 0m,
+                        TaxRate = d.GrossIncome > 0 ? Math.Round(d.WithholdingTax * 100m / d.GrossIncome, 2, MidpointRounding.AwayFromZero) : 0m,
                         TaxAmount = d.WithholdingTax,
                     });
                 }
@@ -3439,7 +3439,7 @@ public class PayrollService : IPayrollService
                     IncomeDescription = $"เงินเดือนประจำเดือน {run.Month:D2}/{run.Year}",
                     PaymentDate = run.PayDate,
                     IncomeAmount = taxableIncome,
-                    TaxRate = taxableIncome > 0 ? Math.Round(d.WithholdingTax / taxableIncome * 100, 4) : 0,
+                    TaxRate = taxableIncome > 0 ? Math.Round(d.WithholdingTax / taxableIncome * 100, 4, MidpointRounding.AwayFromZero) : 0,
                     TaxAmount = d.WithholdingTax
                 });
                 issuedCount++;
@@ -4222,8 +4222,9 @@ public class PayrollService : IPayrollService
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
-            SocialSecurityNumber = includePii ? d.Employee.SocialSecurityNumber
-                : Accounting.Helpers.PiiMask.CitizenId(d.Employee.SocialSecurityNumber),
+            // รอบ 200 ทีม RF (R200-X6): ตัวตัดสินเลข ปกส. ตัวเดียวกับไฟล์ สปส.1-10 (ช่องว่าง ⇒ เลขบัตรที่ checksum ผ่าน) แล้วค่อยปิดบัง
+            SocialSecurityNumber = Accounting.Helpers.SsoInsuredNumber.ForDisplay(
+                d.Employee.SocialSecurityNumber, d.Employee.CitizenId, includePii),
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
             SalaryBase = Math.Min(d.BaseSalary, ssoParams.MaxBase),
             EmployeeContribution = d.SocialSecurityEmployee,

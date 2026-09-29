@@ -582,8 +582,8 @@ public class TaxFilingExportService : ITaxFilingExportService
                 ["คำนำหน้าชื่อ"] = title,
                 ["ชื่อผู้ประกันตน"] = firstName,
                 ["นามสกุลผู้ประกันตน"] = lastName,
-                ["ค่าจ้าง"] = Math.Round(xlWageOf(d), 2),
-                ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2),
+                ["ค่าจ้าง"] = Math.Round(xlWageOf(d), 2, MidpointRounding.AwayFromZero),
+                ["จำนวนเงินสมทบ"] = Math.Round(d.SocialSecurityEmployee, 2, MidpointRounding.AwayFromZero),
             });
         }
 

@@ -24,6 +24,18 @@ public static class OwnerActionGuard
 {
     public const string RuleCode = "OWNER-ACTION-NO-API-KEY";
 
+    /// <summary>รหัสกฎของ "ล็อกอินแล้วแต่ไม่ใช่เจ้าของ" (รอบ 200 ทีม RF · R200-X5)</summary>
+    public const string NotOwnerRuleCode = "OWNER-ONLY";
+
+    /// <summary>ข้อผิดพลาด "ไม่ใช่เจ้าของบริษัท" — <b>403</b> พร้อมข้อความไทย · รอบ 200 ทีม RF (R200-X5): เดิมด่านเจ้าของทั้งสองตัว
+    /// (<c>CompanyService</c> · <c>RolePermissionService</c>) โยน <c>UnauthorizedAccessException</c> ⇒ middleware ตอบ <b>401</b>
+    /// ⇒ <c>api.js</c> ลบ token แล้วเด้งไปหน้า login = สมาชิกที่กดปุ่มระดับเจ้าของถูกออกจากระบบแทนที่จะเห็นเหตุผล ·
+    /// ตัวสร้างตัวเดียวของทั้งสองด่าน (ข้อความ/รหัส/สถานะไม่ drift)</summary>
+    public static BusinessRuleException NotOwner(string? verb = null)
+        => new((string.IsNullOrWhiteSpace(verb) ? "งานนี้" : verb.Trim())
+               + "ต้องทำโดยเจ้าของบริษัท (Owner) เท่านั้น — ติดต่อเจ้าของบริษัทให้ดำเนินการแทน",
+            NotOwnerRuleCode, 403);
+
     /// <summary>ชื่อ claim/ค่าที่ ApiKeyMiddleware mint ให้ identity ของคีย์</summary>
     public const string AuthMethodClaim = "AuthMethod";
 

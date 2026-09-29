@@ -19,6 +19,16 @@ public static class SsoInsuredNumber
         return ThaiTaxId.HasValidChecksum(citizenId) ? (ThaiTaxId.Normalize(citizenId), true) : ("", false);
     }
 
+    /// <summary>เลขประกันสังคมที่<b>รายงานบนจอ</b>แสดง — รอบ 200 ทีม RF (R200-X6): ตัวตัดสินเดียวกับไฟล์ สปส.1-10 (<see cref="Resolve"/>)
+    /// แล้วค่อยปิดบังด้วย <c>PiiMask.CitizenId</c> เมื่อไม่มีสิทธิ์ Pii.View · เดิมจออ่าน <c>Employee.SocialSecurityNumber</c> ตรง ๆ (ว่างเกือบทุกคน)
+    /// ⇒ จอขึ้น "-" ขณะที่ไฟล์ส่งเลขบัตร = สองความจริงของ "เลข ปกส. ของคนนี้" · ไม่รู้ = <c>null</c> (ไม่แต่งเลข)</summary>
+    public static string? ForDisplay(string? socialSecurityNumber, string? citizenId, bool includePii)
+    {
+        var (number, _) = Resolve(socialSecurityNumber, citizenId);
+        if (number.Length == 0) return null;
+        return includePii ? number : PiiMask.CitizenId(number);
+    }
+
     /// <summary>ข้อความเตือนต่อท้ายสรุปไฟล์เมื่อมีแถวที่ไม่มีเลขประกันสังคม (null = ไม่มี)</summary>
     public static string? MissingNotice(int missingCount)
         => missingCount <= 0 ? null

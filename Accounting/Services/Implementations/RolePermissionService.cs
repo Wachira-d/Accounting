@@ -359,8 +359,10 @@ public class RolePermissionService : IRolePermissionService
         if (user?.IsSystemAdmin == true) return;
 
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
+        // รอบ 200 ทีม RF (R200-X5): "ล็อกอินแล้วแต่ไม่มีสิทธิ์" = 403 ไม่ใช่ 401 — เดิม UnauthorizedAccessException ⇒ middleware ตอบ 401
+        // ⇒ api.js ลบ token แล้วเด้งไปหน้า login (สมาชิกที่กด "สร้าง Role เริ่มต้น" ถูกออกจากระบบแทนที่จะเห็นข้อความ)
         if (cu == null || (cu.Role != UserRole.Owner && cu.Role != UserRole.SystemAdmin))
-            throw new UnauthorizedAccessException("ต้องเป็น Owner เท่านั้น");
+            throw Accounting.Helpers.OwnerActionGuard.NotOwner("จัดการบทบาทและสิทธิ์");
     }
 
     private static CompanyRoleResponse MapToResponse(CompanyRole r, int memberCount)

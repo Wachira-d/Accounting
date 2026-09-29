@@ -116,3 +116,16 @@ E-02(ข้อความ) · D-03 · D-04 · D-05 · D-06 · D-09 · D-10 · D
 - `required_call_site_check.py` = **399 กติกาผ่าน** (+ negative test ในตัว 14 เคส) · `html_attr_escape_check.py` = 0 จุด (ตัวนี้ดูเฉพาะ `.html` — จึงไม่เห็น X1 ที่อยู่ใน renderer C#)
 - `dead_helper_check.py` ฟ้อง `SettlementPostingChecks.PendingElsewhere/StanceOf` — ไฟล์นี้ **ไม่อยู่บน branch ทีม R** (`git cat-file -e` = ไม่มี) แต่โผล่ในสำเนาเพราะ scratchpad ถูก session อื่นเขียนร่วม ⇒ ไม่นับเป็นของทีม R ·
   ผลทั้งสามตัวจึงเป็น "indicative" — ควรรัน `bash tools/check_all.sh` บน worktree ของทีม R อีกครั้งก่อน merge
+
+## 6. สถานะหลังแก้ (ทีม RF · รอบ 200 · รายงาน `team-RF.md`)
+
+| ID | ระดับ | สถานะ | แก้ที่ | ล็อกด้วย |
+|---|---|---|---|---|
+| R200-X1 | P1 | ✅ `<pending>` | หัวเอกสาร `WebUtility.HtmlEncode(ComputeDocumentTitle(…))` · `BuildCss`/`BuildLayoutCss` ผ่าน `Helpers/DocumentTemplateStyle` ทุกช่อง (สี/ฟอนต์/ขนาด/กระดาษ/ขอบ/ความทึบ) · QuestPDF `SanitizeHex`/`NormalizeFont`/`ResolvePageSize`/ขนาดเนื้อความเรียกตัวเดียวกัน · ตอนบันทึก 400 ข้อความไทย · `DocumentTemplateController` เส้นเขียน 5 เส้น `[RequirePermission(CompanySettings.Edit)]` · `refLabel` ประมาณการ JE หนีด้วย | `TeamRFRound200Tests.X1_*` · `write_permission_gate_check` (เฝ้าไฟล์นี้แล้ว + negative test ถอดด่าน Duplicate ⇒ ฟ้อง) · `required_call_site_check` (+`forbid_lit` รูในสตริง `{t.X}`) |
+| R200-X2 | P2 | ✅ `<pending>` | นักเรียนอ่าน payload จริง (`Helpers/AnomalyExplainStudent.ReadPrompt`) · ตอบค่าในชุดเสมอ · คำอธิบายทาง `StructuredJson` · controller ใช้คำอธิบายของนักเรียนเมื่อ `!UsedAi && FromLocalModel` | `X2_KillSwitch_*` (สองรูป payload) · `X2_ColdStart_*` · `X2_ทิศตรงข้าม_*` · call-site `PredictAsync`/`ExplainAnomaly` |
+| R200-X3 | P2 | ✅ `<pending>` | `UpdateRuleAsync` ใช้ `ApprovalRuleValidation.PatchDescription/PatchProjectId` (ไม่มีคีย์ = คงเดิม · "" = ล้าง · `clearProjectId`) · โครงการต้องเป็นของบริษัทนี้ · `approval.html` ช่องคำอธิบาย/โครงการ hydrate+reset+ส่ง | `X3_*` · `tools/approval_rule_form_sim.js` (baseline `4a9ebd5a` ล้ม 5 ข้อ · negative test 3/3) |
+| R200-X4 | P3 | ✅ `<pending>` | `DepositKindDocumentRules.ShouldClearStalePaymentDate` = `!IsIssued` | `X4_*` · call-site `IssueForfeitTaxInvoiceAsync` (forbid เช็ค Draft) |
+| R200-X5 | P3 | ✅ `<pending>` | `OwnerActionGuard.NotOwner` 403 — ใช้ทั้ง `RolePermissionService` **และ** `CompanyService.EnsureOwnerAccessAsync` (17 ผู้เรียก — คลาสเดียวกัน) · `roles.html` ปุ่มสร้าง Role เริ่มต้นตามบทบาทจาก server | `X5_*` · call-site ทั้งสองด่าน (forbid `new UnauthorizedAccessException(`) |
+| R200-X6 | P3 | ✅ `<pending>` | `SsoInsuredNumber.ForDisplay` (Resolve แล้วค่อย mask) ใน `GenerateSsoReportAsync` | `X6_*` · call-site (call_args `includePii`) |
+| R200-X7 | P3 | ✅ `<pending>` | `Math.Round` ในโมดูลเงินเดือน 11 จุด (PayrollService 5 · PayrollController 3 · SsoRateSchedule 1 · TaxFilingExportService 2) + แก้ข้อความ D-08 ใน team-R.md | `tools/payroll_rounding_check.py` (negative test ในตัว) |
+| R200-X8 | P3 | ✅ `<pending>` | `AnomalyExplainVerdict.Coerce` (รูปแบบต่าง ⇒ ค่าในชุด · อื่น ๆ ⇒ NeedReview) + เก็บคำอธิบาย ⇒ ไม่ยิงซ้ำ · ความมั่นใจว่างเมื่อถูกแปลง | `X8_*` · `AnomalyExplainVerdictTests` ปรับตาม |

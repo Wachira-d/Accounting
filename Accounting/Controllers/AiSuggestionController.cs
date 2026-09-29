@@ -2980,26 +2980,39 @@ public class AiSuggestionController : ControllerBase
         // a separate /ai-feedback/record call from the UI.
         // รอบ 200 (H-3): เดิมบันทึกเฉพาะ resp.UsedAi ⇒ ปิด provider แล้วคำตอบนักเรียนหายทุกครั้ง + ยิงซ้ำทุกการเปิดหน้า ·
         // และไม่ตรวจชุดคำตอบ ⇒ ใช้ตัวตัดสินเดียว (ครูหรือนักเรียน + อยู่ในชุดที่ prompt กำหนด)
+        // รอบ 200 ทีม RF (R200-X2): คำตอบของนักเรียน (ตอนปิด provider/short-circuit) — orchestrator ใส่ Reasoning เป็นข้อความ routing
+        // ("Hybrid: local wins…"/"AI ไม่พร้อม…") และ SuggestedActions ว่าง ⇒ คำอธิบายจริงของนักเรียนอยู่ใน RawResponseJson (StructuredJson)
+        var studentText = !resp.UsedAi && resp.FromLocalModel
+            ? Accounting.Helpers.AnomalyExplainStudent.ReadStructured(resp.RawResponseJson)
+            : null;
+        var reasoning = studentText?.Reasoning ?? resp.Reasoning;
+        var actions = studentText?.SuggestedActions ?? resp.SuggestedActions;
+        var risks = studentText?.Risks ?? resp.Risks;
+        // R200-X8: คำตอบครูนอกชุด ⇒ แปลงเข้าชุด (รูปแบบต่าง ⇒ ค่าในชุด · อย่างอื่น ⇒ NeedReview) แล้วเก็บ — เดิมทิ้ง ⇒ จ่าย token แล้วยิงซ้ำ ·
+        // ความมั่นใจของผู้ตอบใช้ได้เฉพาะเมื่อคำตอบถูกจำได้ (ไม่ใช่ถูกแปลงเป็น NeedReview)
+        var verdict = Accounting.Helpers.AnomalyExplainVerdict.Coerce(resp.PrimaryAnswer);
+        var verdictConfidence = Accounting.Helpers.AnomalyExplainVerdict.IsRecognized(resp.PrimaryAnswer) ? resp.Confidence : null;
         if (Accounting.Helpers.AnomalyExplainVerdict.ShouldPersist(resp.UsedAi, resp.FromLocalModel, resp.PrimaryAnswer))
         {
-            anomaly.AiVerdict = Accounting.Helpers.AnomalyExplainVerdict.Normalize(resp.PrimaryAnswer);
-            anomaly.AiConfidence = resp.Confidence;
-            anomaly.AiReasoning = resp.Reasoning;
-            anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(resp.SuggestedActions);
-            anomaly.AiRisksJson = JsonSerializer.Serialize(resp.Risks);
+            anomaly.AiVerdict = verdict;
+            anomaly.AiConfidence = verdictConfidence;
+            anomaly.AiReasoning = reasoning;
+            anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(actions);
+            anomaly.AiRisksJson = JsonSerializer.Serialize(risks);
             anomaly.AiFeedbackId = resp.FeedbackId;
             anomaly.AiExplainedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
         }
         return Ok(new ApiResponse<object>(true, new
         {
-            primary = resp.PrimaryAnswer,
-            confidence = resp.Confidence,
-            reasoning = resp.Reasoning,
-            suggestedActions = resp.SuggestedActions,
-            risks = resp.Risks,
+            primary = verdict ?? resp.PrimaryAnswer,
+            confidence = verdictConfidence,
+            reasoning,
+            suggestedActions = actions,
+            risks,
             feedbackId = resp.FeedbackId,
             usedAi = resp.UsedAi,
+            fromLocalModel = resp.FromLocalModel,
             cached = false,
         }));
     }

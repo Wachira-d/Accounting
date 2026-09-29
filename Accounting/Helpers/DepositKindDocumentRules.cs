@@ -186,6 +186,15 @@ public static class DepositKindDocumentRules
     public static bool ApplyToAnotherTargetAllowed(bool priorIsForfeitInvoiceOfDeposit, bool targetIsForfeitInvoiceOfDeposit)
         => priorIsForfeitInvoiceOfDeposit || targetIsForfeitInvoiceOfDeposit;
 
+    /// <summary>
+    /// ใบกำกับของการริบที่ค้างจากรุ่นก่อน R3-1 (ตั้ง <c>PaymentDate</c> = วันรับเงิน) ต้องล้าง <c>PaymentDate</c> ก่อนอนุมัติต่อไหม —
+    /// รอบ 200 ทีม RF (R200-X4): ครอบ<b>ทุกสถานะที่ยังไม่ออกเลข</b> (Draft · WaitingApproval · Rejected) ตรงกับชุดที่
+    /// <see cref="ResumeForfeitInvoice"/> คืน <c>ApproveThenApply</c> (<c>!DocumentStatusRules.IsIssued</c>) · เดิมเช็คแค่ Draft
+    /// ⇒ ใบที่ถูกส่งรออนุมัติไว้อนุมัติด้วยวันรับเงินเดิม = tax point ย้อนเดือนรับเงิน · ใบที่ออกเลขแล้วไม่แตะ (ห้ามแก้ย้อนหลัง §86/4)
+    /// </summary>
+    public static bool ShouldClearStalePaymentDate(DocumentStatus status, DateTime? paymentDate)
+        => paymentDate != null && !DocumentStatusRules.IsIssued(status);
+
     /// <summary>ข้อความเมื่อด่าน "มัดจำ 1 ใบ → ใบปลายทาง 1 ใบ" ปฏิเสธ — <b>ข้อความเดียว</b>ของทุกเส้น (ตัดชำระ · หักมัดจำหลายใบ · หักแบบขับ JE)
     /// พร้อมทางไปต่อที่ไม่ใช่ทางตัน (R2-6: เดิมเส้นหักแบบขับ JE บอกแค่ "ถูกนำไปหักกับ … แล้ว")</summary>
     /// <param name="context">ชื่อเส้น (เช่น "หักมัดจำแบบขับ JE") — ว่าง = ตัดชำระ</param>

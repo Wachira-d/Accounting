@@ -14,11 +14,12 @@ public class AnomalyExplainVerdictTests
     public void ครูตอบในชุด_บันทึกได้เหมือนเดิม()
         => Assert.True(AnomalyExplainVerdict.ShouldPersist(usedAi: true, fromLocalModel: false, "LikelyError"));
 
+    // รอบ 200 ทีม RF (R200-X8): คำตอบ "นอกชุด" ไม่ถูกทิ้งแล้ว — แปลงเป็น NeedReview แล้วบันทึก (TeamRFRound200Tests.X8_*) ·
+    // ที่ยังห้ามเขียนคือ "ไม่มีคำตอบ" (ว่าง/null)
     [Theory]
-    [InlineData("Probably fine")]
     [InlineData("")]
     [InlineData(null)]
-    public void คำตอบนอกชุดหรือว่าง_ห้ามเขียน(string? primary)
+    public void คำตอบว่าง_ห้ามเขียน(string? primary)
         => Assert.False(AnomalyExplainVerdict.ShouldPersist(usedAi: true, fromLocalModel: false, primary));
 
     [Fact]

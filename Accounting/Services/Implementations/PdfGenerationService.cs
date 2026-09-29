@@ -1972,7 +1972,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         // Document Title — หัวเรื่องทุกเคส (พื้นฐาน + เงื่อนไข + มัดจำ) คำนวณจาก
         // resolver กลาง ComputeDocumentTitle (ตั้งเองได้ผ่าน settings) — เดิม logic
         // ซ้ำกับ native renderer เสี่ยง drift
-        var title = ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated);
+        // รอบ 200 ทีม RF (R200-X1): หัวเอกสารมาจาก template.CustomTitle/CustomTitleEn หรือ CompanySettings.DocumentTitleOverridesJson
+        // ที่ผู้แก้เทมเพลต/ค่าตั้งพิมพ์เอง ⇒ หนีก่อนต่อเข้า HTML (เดิมดิบ ⇒ ใส่แท็กยิงสคริปต์ในพรีวิวได้) · ป้าย "ต้นฉบับ" ต่อหลังหนี
+        // (มาจาก DocumentLabels — ห้ามหนีซ้ำ) · QuestPDF พิมพ์เป็นข้อความอยู่แล้ว ⇒ หน้าตาเท่ากันสองฝั่ง
+        var title = WebUtility.HtmlEncode(ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated));
         // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
         var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
                 or DocumentType.DebitNote or DocumentType.CreditNote
@@ -2410,7 +2413,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             // JE EntryNumber ใช้ counter ของ JV/PV/RV ที่ต่างกับ DocumentNumber
             // (เช่น doc PV-202606-0017 → JE PV-202606-0026 → สับสน). ใช้ doc
             // number เป็น reference แทน + แสดง JE no เฉพาะ entry ที่ persist จริง
-            var refLabel = gl.EntryNumber.StartsWith("(") ? gl.EntryNumber   // projected — "(ประมาณการ — ก่อนอนุมัติ)"
+            var refLabel = gl.EntryNumber.StartsWith("(") ? WebUtility.HtmlEncode(gl.EntryNumber)   // projected — "(ประมาณการ — ก่อนอนุมัติ)"
                 : $"{(en ? "ref" : "อ้างอิง")} {WebUtility.HtmlEncode(doc.DocumentNumber)} · {(en ? "JE" : "เลขที่ JE")} {WebUtility.HtmlEncode(gl.EntryNumber)}";
             sb.AppendLine($"<span style='font-weight:700;color:#64748b'>{(en ? "Posting" : "การบันทึกบัญชี")}</span> " +
                 $"<span style='color:#94a3b8'>{refLabel} · {gl.EntryDate:dd/MM/yy}</span>");
@@ -2841,9 +2844,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// left-accent, compact, minimal, centred-formal — via class-scoped rules.
     /// Classic adds nothing (the base CSS already is the classic look).
     /// </summary>
-    private static string BuildLayoutCss(string layout, DocumentTemplate t)
+    internal static string BuildLayoutCss(string layout, DocumentTemplate t)
     {
-        var accent = t.AccentColor;
+        // รอบ 200 ทีม RF (R200-X1): ทุกค่าจากเทมเพลตที่เข้า <style> ผ่าน Helpers/DocumentTemplateStyle ตัวเดียว (ค่าเก่าที่ไม่ถูกรูป ⇒ ค่าปลอดภัย)
+        var accent = Accounting.Helpers.DocumentTemplateStyle.Color(t.AccentColor, "#4472C4");
+        var titlePx = Accounting.Helpers.DocumentTemplateStyle.TitleFontSize(t.TitleFontSize);
         switch (layout)
         {
             case "ModernLeft":
@@ -2911,7 +2916,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                 // full-width colored banner — reorders the page via flex order.
                 return $@"
                     .layout-BoldHeader {{ display:flex; flex-direction:column; }}
-                    .layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:{t.TitleFontSize}px; }}
+                    .layout-BoldHeader .doc-title {{ order:-2; text-align:left; background:{accent}; color:#fff; border:none; border-radius:10px; padding:16px 20px; margin:0 0 14px; letter-spacing:1px; font-size:{titlePx}px; }}
                     .layout-BoldHeader .header {{ order:-1; border-bottom:2px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px; }}
                     .layout-BoldHeader .doc-info {{ justify-content:flex-start; gap:28px; }}
                     .layout-BoldHeader .contact-section {{ border:none; background:#f8fafc; }}
@@ -2921,7 +2926,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                 // boxed meta card (number/date/due stacked) with an accent edge.
                 return $@"
                     .layout-SplitHeader .header {{ border-bottom:3px solid {accent}; padding-bottom:10px; margin-bottom:14px; }}
-                    .layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:{t.TitleFontSize}px; margin:8px 0; }}
+                    .layout-SplitHeader .doc-title {{ text-align:left; border:none; font-size:{titlePx}px; margin:8px 0; }}
                     .layout-SplitHeader .doc-info {{ flex-direction:column; align-items:flex-start; gap:3px; background:#f8fafc; border:1px solid #e5e7eb; border-left:4px solid {accent}; padding:10px 14px; border-radius:6px; width:max-content; margin-left:auto; }}
                     .layout-SplitHeader .contact-section {{ background:#f8fafc; border-color:#e5e7eb; }}
                     .layout-SplitHeader .items-table th {{ background:{accent}; }}
@@ -2934,7 +2939,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                     .layout-Letterhead .logo {{ margin:0 0 6px 0; }}
                     .layout-Letterhead .company-info {{ text-align:center; }}
                     .layout-Letterhead .company-name {{ font-size:24px; letter-spacing:1px; }}
-                    .layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:{t.TitleFontSize}px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
+                    .layout-Letterhead .doc-title {{ text-align:left; border:none; font-size:{titlePx}px; letter-spacing:2px; margin:16px 0 4px; text-transform:uppercase; }}
                     .layout-Letterhead .doc-info {{ justify-content:flex-start; gap:24px; border-bottom:1px solid #e5e7eb; padding-bottom:10px; }}
                     .layout-Letterhead .contact-section {{ border:none; padding:0; margin:12px 0; }}
                     .layout-Letterhead .items-table th {{ background:none !important; color:{accent} !important; border-bottom:2px solid {accent}; }}
@@ -2945,29 +2950,45 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         }
     }
 
-    private static string BuildCss(DocumentTemplate t)
+    internal static string BuildCss(DocumentTemplate t)
     {
         var headTextAlign = "left";
+        // รอบ 200 ทีม RF (R200-X1): ค่าจากเทมเพลตทุกช่องที่เข้า <style> ผ่านตัวตรวจตัวเดียว (Helpers/DocumentTemplateStyle) — เดิมต่อดิบ
+        // ⇒ ค่า x'</style><img onerror=…> ปิด style แล้วยิงสคริปต์ได้ · ค่าเก่าที่ไม่ถูกรูป ⇒ ค่าเริ่มต้นของ entity (สีเดียวกับเดิมทุกเทมเพลตปกติ)
+        var paper = Accounting.Helpers.DocumentTemplateStyle.PaperSize(t.PaperSize);
+        var orient = Accounting.Helpers.DocumentTemplateStyle.Orientation(t.Orientation).ToLowerInvariant();
+        var font = Accounting.Helpers.DocumentTemplateStyle.Font(t.FontFamily);
+        var bodyPx = Accounting.Helpers.DocumentTemplateStyle.BodyFontSize(t.BodyFontSize);
+        var titlePx = Accounting.Helpers.DocumentTemplateStyle.TitleFontSize(t.TitleFontSize);
+        var primary = Accounting.Helpers.DocumentTemplateStyle.Color(t.PrimaryColor, "#333333");
+        var accentC = Accounting.Helpers.DocumentTemplateStyle.Color(t.AccentColor, "#4472C4");
+        var headerBg = Accounting.Helpers.DocumentTemplateStyle.Hex(t.HeaderBackgroundColor);
+        var thBg = Accounting.Helpers.DocumentTemplateStyle.Color(t.TableHeaderColor, "#4472C4");
+        var thText = Accounting.Helpers.DocumentTemplateStyle.Color(t.TableHeaderTextColor, "#FFFFFF");
+        var stripe = Accounting.Helpers.DocumentTemplateStyle.Hex(t.TableStripedColor);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var wmOpacity = Math.Clamp(t.WatermarkOpacity, 0m, 1m).ToString(inv);
+        string Mm(decimal v) => Math.Clamp(v, 0m, 100m).ToString(inv);
         return $@"
             * {{ box-sizing: border-box; }}
-            @page {{ size: {t.PaperSize} {t.Orientation.ToLower()}; margin: {t.MarginTop}mm {t.MarginRight}mm {t.MarginBottom}mm {t.MarginLeft}mm; }}
-            body {{ font-family: '{t.FontFamily}', sans-serif; font-size: {t.BodyFontSize}px; color: {t.PrimaryColor}; line-height: 1.45; margin: 0; }}
-            .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{t.WatermarkOpacity}); z-index: -1; white-space: nowrap; }}
+            @page {{ size: {paper} {orient}; margin: {Mm(t.MarginTop)}mm {Mm(t.MarginRight)}mm {Mm(t.MarginBottom)}mm {Mm(t.MarginLeft)}mm; }}
+            body {{ font-family: '{font}', sans-serif; font-size: {bodyPx}px; color: {primary}; line-height: 1.45; margin: 0; }}
+            .watermark {{ position: fixed; top: 40%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 90px; color: rgba(0,0,0,{wmOpacity}); z-index: -1; white-space: nowrap; }}
             .watermark-void {{ color: rgba(220,38,38,0.20); font-weight: 800; font-size: 120px; letter-spacing: 10px; z-index: 999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 
             /* Header: logo left, company details fill remaining width.
                ลดขนาดให้กระชับขึ้น (เดิม header bar ใหญ่กิน 1/4 หน้า). cap
                logo สูงสุดที่ 22mm กันรูปยักษ์ขยายเต็มซ้าย */
-            .header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 10px; {(t.HeaderBackgroundColor != null ? $"background:{t.HeaderBackgroundColor};padding:8px 10px;border-radius:5px;" : "")} }}
+            .header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 10px; {(headerBg != null ? $"background:{headerBg};padding:8px 10px;border-radius:5px;" : "")} }}
             .logo {{ flex: 0 0 auto; object-fit: contain; max-width: 22mm !important; max-height: 22mm !important; }}
             .company-info {{ flex: 1 1 auto; }}
             .company-info > div {{ margin: 0; line-height: 1.25; }}
-            .company-name {{ font-size: 16px; font-weight: 700; color: {t.AccentColor}; line-height: 1.15; }}
+            .company-name {{ font-size: 16px; font-weight: 700; color: {accentC}; line-height: 1.15; }}
             .company-name-en {{ font-size: 12px; color: #666; }}
 
             /* Title + doc meta — cap ที่ 22px เพื่อกันชื่อยักษ์ (template เก่า
                อาจตั้ง TitleFontSize 30+ ผ่าน wizard) */
-            .doc-title {{ text-align: center; font-size: min({t.TitleFontSize}px, 22px); font-weight: 700; color: {t.AccentColor}; margin: 10px 0 8px; border-bottom: 1.5px solid {t.AccentColor}; padding-bottom: 4px; letter-spacing: 0.5px; }}
+            .doc-title {{ text-align: center; font-size: min({titlePx}px, 22px); font-weight: 700; color: {accentC}; margin: 10px 0 8px; border-bottom: 1.5px solid {accentC}; padding-bottom: 4px; letter-spacing: 0.5px; }}
             .doc-info {{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 14px; }}
             .doc-info > div {{ white-space: nowrap; }}
 
@@ -2986,7 +3007,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
             /* Contact box */
             .contact-section {{ border: 1px solid #e2e2e2; padding: 10px 12px; margin-bottom: 16px; border-radius: 6px; }}
-            .section-title {{ font-weight: 700; color: {t.AccentColor}; margin-bottom: 4px; font-size: 13px; }}
+            .section-title {{ font-weight: 700; color: {accentC}; margin-bottom: 4px; font-size: 13px; }}
             .contact-name {{ font-size: 16px; font-weight: 700; margin-bottom: 2px; }}
             .contact-section > div {{ margin: 1px 0; }}
 
@@ -3008,18 +3029,18 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
             /* Items table — numeric columns right-aligned, headers match cells */
             .items-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; }}
-            .items-table th {{ background: {t.TableHeaderColor ?? "#4472C4"}; color: {t.TableHeaderTextColor ?? "#fff"}; padding: 8px; text-align: {headTextAlign}; font-size: 13px; font-weight: 600; }}
+            .items-table th {{ background: {thBg}; color: {thText}; padding: 8px; text-align: {headTextAlign}; font-size: 13px; font-weight: 600; }}
             .items-table td {{ padding: 6px 8px; font-size: 13px; vertical-align: top; {(t.TableBorderStyle == "Full" ? "border: 1px solid #e0e0e0;" : t.TableBorderStyle == "HeaderOnly" ? "border-bottom: 1px solid #eee;" : "")} }}
             .items-table th.right, .items-table td.right {{ text-align: right; }}
             .items-table th.center, .items-table td.center {{ text-align: center; }}
-            {(t.TableStripedColor != null ? $".items-table tbody tr:nth-child(even) {{ background: {t.TableStripedColor}; }}" : "")}
+            {(stripe != null ? $".items-table tbody tr:nth-child(even) {{ background: {stripe}; }}" : "")}
             .right {{ text-align: right; }}
             .center {{ text-align: center; }}
 
             /* Summary block, aligned right */
             .summary {{ width: 46%; min-width: 280px; margin-left: auto; margin-bottom: 8px; }}
             .sum-row {{ display: flex; justify-content: space-between; gap: 16px; padding: 5px 2px; border-bottom: 1px solid #eee; }}
-            .sum-row.total {{ font-size: 16px; font-weight: 700; color: {t.AccentColor}; border-bottom: 2px solid {t.AccentColor}; border-top: 2px solid {t.AccentColor}; margin-top: 2px; }}
+            .sum-row.total {{ font-size: 16px; font-weight: 700; color: {accentC}; border-bottom: 2px solid {accentC}; border-top: 2px solid {accentC}; margin-top: 2px; }}
             .amount-words {{ text-align: center; margin: 12px 0; font-style: italic; color: #444; }}
 
             /* Footer sections */
@@ -3090,12 +3111,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// <summary>Normalise a hex colour to "#RRGGBB" or return null when it
     /// isn't a valid 6-digit hex (so QuestPDF never throws on bad input).</summary>
     internal static string? SanitizeHex(string? color)
-    {
-        if (string.IsNullOrWhiteSpace(color)) return null;
-        var c = color.Trim();
-        if (c[0] != '#') c = "#" + c;
-        return Regex.IsMatch(c, "^#[0-9A-Fa-f]{6}$") ? c.ToUpperInvariant() : null;
-    }
+        // รอบ 200 ทีม RF (R200-X1): ตัวตรวจสีตัวเดียวกับ HTML BuildCss — เดิมสองตัว (ตัวนี้รับแค่ 6 หลัก) ⇒ สองความจริง
+        => Accounting.Helpers.DocumentTemplateStyle.Hex(color);
 
     /// <summary>เอกสารฝั่งซื้อที่ "ใบกำกับภาษีตัวจริงเป็นของผู้ขาย" — เลขที่/วันที่
     /// ที่มีผลทางภาษีคือ SupplierInvoiceNumber/SupplierTaxInvoiceDate ไม่ใช่เลขรัน
@@ -3315,11 +3332,12 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     private static string? NormalizeFont(string? font)
     {
         if (string.IsNullOrWhiteSpace(font)) return null;
-        return font.Trim() switch
+        // รอบ 200 ทีม RF (R200-X1): รายการอนุญาตตัวเดียวกับ HTML BuildCss — ฟอนต์นอกรายการ ⇒ ค่าเริ่มต้น (สองฝั่งได้ฟอนต์เดียวกัน)
+        return Accounting.Helpers.DocumentTemplateStyle.Font(font) switch
         {
             "THSarabunNew" => "TH Sarabun New",
             "NotoSansThai" => "Noto Sans Thai",
-            _ => font.Trim(),   // Sarabun / Prompt / custom — used as-is if registered
+            var f => f,   // Sarabun / Prompt
         };
     }
 
