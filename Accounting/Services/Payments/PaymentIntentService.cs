@@ -279,7 +279,11 @@ public class PaymentIntentService : IPaymentIntentService
         {
             // ซ้ำเป็นเรื่องปกติของ webhook ทุกเจ้า — ห้าม throw (provider จะ retry ไม่รู้จบ)
             // แต่ยังต้องรับข้อมูลเสริมที่อาจเพิ่งมี เช่นค่าธรรมเนียมจริง
-            if (charge.Fee.HasValue && intent.FeeActual == null) intent.FeeActual = charge.Fee;
+            // R200G-6: ตัวตัดสินเดียวกับ ApplyChargeToEntity (เดิมเขียนเงื่อนไขเองเป็นผู้เขียน FeeActual คนที่สอง)
+            if (charge.Fee.HasValue && PaymentIntentPolicy.IsProviderFeeFinal(charge.Status)
+                && PaymentIntentPolicy.ShouldTakeProviderFee(intent.Status, intent.FeeActual,
+                    intent.SettlementJournalEntryId != null || intent.SettlementBatchId != null))
+                intent.FeeActual = charge.Fee;
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return intent;
@@ -393,7 +397,9 @@ public class PaymentIntentService : IPaymentIntentService
     private static void ApplyChargeToEntity(PaymentIntent intent, ProviderCharge charge)
     {
         // รอบ 200 ทีม G: ค่าธรรมเนียมที่แก้ด้วยมือ/อยู่ในรอบโอนแล้วห้ามถูกทับ — ตัดสินก่อนเปลี่ยนสถานะ (ใช้สถานะเดิม)
-        var takeFee = charge.Fee.HasValue && PaymentIntentPolicy.ShouldTakeProviderFee(
+        // R200G-6: ค่าธรรมเนียมจาก charge ที่ยังรอจ่าย (มักเป็น 0) ไม่ใช่ค่าจริง — ห้ามเก็บเป็น "รู้แล้ว"
+        var takeFee = charge.Fee.HasValue && PaymentIntentPolicy.IsProviderFeeFinal(charge.Status)
+            && PaymentIntentPolicy.ShouldTakeProviderFee(
             intent.Status, intent.FeeActual, intent.SettlementJournalEntryId != null || intent.SettlementBatchId != null);
         intent.Status = charge.Status;
         if (!string.IsNullOrWhiteSpace(charge.ProviderRef)) intent.ProviderRef = charge.ProviderRef;

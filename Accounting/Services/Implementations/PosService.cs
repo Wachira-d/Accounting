@@ -84,9 +84,28 @@ public partial class PosService : IPosService
         foreach (var (id, label) in new[] { (Normalize(cashAccountId), "บัญชีเงินสด"), (Normalize(bankAccountId), "บัญชีธนาคารรับเงิน") })
         {
             if (id is not Guid acc) continue;
-            if (!await _db.ChartOfAccounts.AnyAsync(a => a.Id == acc && a.CompanyId == companyId && a.IsActive && !a.IsDeleted))
-                throw new KeyNotFoundException($"ไม่พบ{label}ที่เลือกในผังบัญชีของบริษัทนี้ (หรือถูกปิดใช้งาน) — เลือกใหม่");
+            if (!await _db.ChartOfAccounts.Where(UsableTerminalMoneyPin(companyId)).AnyAsync(a => a.Id == acc))
+                throw new KeyNotFoundException($"ไม่พบ{label}ที่เลือกในผังบัญชีของบริษัทนี้ (หรือถูกปิดใช้งาน/ไม่ใช่ผังสินทรัพย์) — เลือกใหม่");
         }
+    }
+
+    /// <summary>ผังที่ "ปักบนเครื่อง POS เป็นบัญชีรับเงินได้" — เกณฑ์ตัวเดียวของตัวตรวจตอนบันทึก (<see cref="ValidateTerminalMoneyAccountsAsync"/>) ·
+    /// ตัวเลือกผังตอนปิดบิล/คืนเงิน (<c>ResolvePaymentAccountAsync</c>) · คำเตือนหน้าเครื่อง (<see cref="UsableTerminalPinsAsync"/>)
+    /// (รอบ 200 R200G-7: เดิมตัวตรวจปฏิเสธผังปิดใช้ แต่ตอนปิดบิลใช้ต่อ และป้ายเตือนดูแค่ "ปักไว้ไหม" · ไม่ตรวจชนิดผัง ⇒ ปักผังรายได้ผ่าน API ได้)</summary>
+    private static System.Linq.Expressions.Expression<Func<ChartOfAccount, bool>> UsableTerminalMoneyPin(Guid companyId)
+        => a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.AccountType == AccountType.Asset;
+
+    /// <summary>ผังที่ปักบนเครื่องตัวไหนยังใช้ได้ (เกณฑ์ <see cref="UsableTerminalMoneyPin"/>) — ใช้ตัดสินป้ายเตือนหน้าเครื่อง</summary>
+    private async Task<HashSet<Guid>> UsableTerminalPinsAsync(Guid companyId, IEnumerable<Guid?> pinnedIds)
+    {
+        var ids = pinnedIds.Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new HashSet<Guid>();
+        var usable = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(UsableTerminalMoneyPin(companyId))
+            .Where(a => ids.Contains(a.Id))
+            .Select(a => a.Id)
+            .ToListAsync();
+        return usable.ToHashSet();
     }
 
     /// <summary>ผลการเลือกบัญชีธนาคารของบริษัทเมื่อเครื่องไม่ได้ปัก — กติกาเดียวกับตอนปิดบิล (<c>ResolvePaymentAccountAsync</c>)</summary>
@@ -108,7 +127,8 @@ public partial class PosService : IPosService
         // ชื่อสาขา/คลังดึงทีเดียวทั้งบริษัท — เครื่องมีไม่กี่ตัว แต่ N+1 ก็ไม่ควรมี
         var names = await LoadScopeNamesAsync(companyId);
         var banks = await CompanyBankPickAsync(companyId);
-        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions, names, banks)).ToList();
+        var usablePins = await UsableTerminalPinsAsync(companyId, terminals.Select(x => x.Terminal.BankAccountId));
+        return terminals.Select(x => MapTerminal(x.Terminal, x.OpenSessions, names, banks, usablePins)).ToList();
     }
 
     public async Task<TerminalResponse> UpdateTerminalAsync(Guid companyId, Guid terminalId, UpdateTerminalRequest request)
@@ -255,11 +275,12 @@ public partial class PosService : IPosService
     }
 
     private async Task<TerminalResponse> MapTerminalAsync(PosTerminal t, int openSessions)
-        => MapTerminal(t, openSessions, await LoadScopeNamesAsync(t.CompanyId), await CompanyBankPickAsync(t.CompanyId));
+        => MapTerminal(t, openSessions, await LoadScopeNamesAsync(t.CompanyId), await CompanyBankPickAsync(t.CompanyId),
+            await UsableTerminalPinsAsync(t.CompanyId, new[] { t.BankAccountId }));
 
     private static TerminalResponse MapTerminal(PosTerminal t, int openSessions,
         (Dictionary<Guid, (string Name, string? TaxCode)> Branches, Dictionary<Guid, string> Warehouses) names,
-        Accounting.Helpers.BankAccountPickOutcome companyBanks)
+        Accounting.Helpers.BankAccountPickOutcome companyBanks, HashSet<Guid> usablePins)
     {
         string? branchName = null, branchTaxCode = null;
         if (t.BranchId is Guid bid && names.Branches.TryGetValue(bid, out var b))
@@ -277,7 +298,11 @@ public partial class PosService : IPosService
             t.BranchId, branchName, branchTaxCode,
             t.WarehouseId, warehouseName,
             t.CashAccountId, t.BankAccountId, t.AbbreviatedInvoicePrefix,
-            Accounting.Helpers.MoneyAccountFallback.TerminalBankWarning(t.BankAccountId != null, companyBanks));
+            // R200G-7: "ปักไว้" ต้องแปลว่า "ปักผังที่ใช้ได้" — ปักผังที่ถูกลบ/ปิดใช้ ตอนปิดบิลตกไป PickBank (อาจล้ม) ⇒ ป้ายต้องไม่เงียบ
+            Accounting.Helpers.MoneyAccountFallback.TerminalPinWarning(
+                t.BankAccountId != null,
+                t.BankAccountId is Guid pin && usablePins.Contains(pin),
+                companyBanks));
     }
 
     private async Task<SessionResponse> MapSessionAsync(PosSession s)

@@ -47,7 +47,7 @@ public record TerminalResponse(
     Guid? CashAccountId = null,
     Guid? BankAccountId = null,
     string? AbbreviatedInvoicePrefix = null,
-    // รอบ 200 ทีม G (E-3): คำเตือนล่วงหน้า "บิลโอน/พร้อมเพย์ของเครื่องนี้จะปิดไม่ได้" — เซิร์ฟเวอร์ตัดสิน (MoneyAccountFallback.TerminalBankWarning)
+    // รอบ 200 ทีม G (E-3): คำเตือนล่วงหน้า "บิลโอน/พร้อมเพย์ของเครื่องนี้จะปิดไม่ได้" — เซิร์ฟเวอร์ตัดสิน (MoneyAccountFallback.TerminalPinWarning · R200G-7 รู้ว่าปักผังที่ใช้ไม่ได้)
     string? MoneyAccountWarning = null);
 
 // ===== POS Session =====

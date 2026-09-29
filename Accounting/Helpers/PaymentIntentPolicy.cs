@@ -92,6 +92,16 @@ public static class PaymentIntentPolicy
     public static bool ShouldTakeProviderFee(PaymentIntentStatus currentStatus, decimal? feeActual, bool alreadySettled)
         => !alreadySettled && (feeActual == null || IsOpen(currentStatus));
 
+    /// <summary>ค่าธรรมเนียมที่มากับ charge สถานะนี้ "เป็นค่าจริง" ไหม — ทุกเส้นที่รับ <c>charge.Fee</c> ต้องผ่านตัวนี้ก่อน
+    /// (รอบ 200 ฝ่ายค้านทีม G · R200G-6)
+    ///
+    /// <para>═══ ที่มา ═══ charge ที่ยังรอจ่าย (pending) รายงาน <c>fee: 0</c> ⇒ เดิมเก็บเป็น <c>FeeActual = 0</c> ⇒ ถ้ารายการไปถึง "สำเร็จ" ด้วยทางที่ไม่มี
+    /// ค่าธรรมเนียม (ยืนยันด้วยมือ) webhook "สำเร็จ" ที่ตามมาเป็น duplicate ซึ่งรับค่าเฉพาะเมื่อ <c>FeeActual == null</c> ⇒ ค่าจริงไม่ถูกรับ ⇒ รอบโอนยอดไม่ตรง
+    /// (0 ที่ยังไม่รู้ ถูกนับเป็น "รู้แล้ว") · กติกา: รับค่าเฉพาะจาก charge ที่เงินเคลื่อนแล้ว (สำเร็จ/คืนบางส่วน/คืนเต็ม) —
+    /// สถานะเปิด/ล้มเหลว/หมดอายุ = ยังไม่มีค่าธรรมเนียมจริง ⇒ <c>FeeActual</c> คงเป็น null (ใช้ตัวประมาณจนกว่าค่าจริงมา)</para></summary>
+    public static bool IsProviderFeeFinal(PaymentIntentStatus chargeStatus)
+        => chargeStatus is PaymentIntentStatus.Succeeded or PaymentIntentStatus.PartiallyRefunded or PaymentIntentStatus.Refunded;
+
     /// <summary>"ยืนยันรับเงินด้วยมือ" ทำได้ไหม — <c>null</c> = ได้ (รอบ 200 ทีม G)
     ///
     /// <para>ช่องทางที่<b>ผู้ให้บริการถือเงินไว้ก่อน</b> (ขาเงินเข้าลงบัญชีพัก 11340) แต่รายการ<b>ไม่มี charge ที่ผู้ให้บริการเลย</b>

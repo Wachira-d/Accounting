@@ -265,11 +265,11 @@ public class GatewayTeamGRound200Tests
     [Fact]
     public void E3_บัญชีธนาคารหลายบัญชีหรือไม่มีเลย_เครื่องไม่ปัก_เตือนล่วงหน้า()
     {
-        var many = MoneyAccountFallback.TerminalBankWarning(false, BankAccountPickOutcome.Ambiguous);
+        var many = MoneyAccountFallback.TerminalPinWarning(false, false, BankAccountPickOutcome.Ambiguous);
         Assert.NotNull(many);
         Assert.Contains("หลายบัญชี", many);
         Assert.Contains("ตั้งค่าเครื่อง", many);
-        var none = MoneyAccountFallback.TerminalBankWarning(false, BankAccountPickOutcome.None);
+        var none = MoneyAccountFallback.TerminalPinWarning(false, false, BankAccountPickOutcome.None);
         Assert.NotNull(none);
         Assert.Contains("ยังไม่มีบัญชีธนาคาร", none);
     }
@@ -277,9 +277,9 @@ public class GatewayTeamGRound200Tests
     [Fact]
     public void E3_ทิศตรงข้าม_ปักแล้วหรือมีบัญชีเดียว_ไม่เตือน()
     {
-        Assert.Null(MoneyAccountFallback.TerminalBankWarning(true, BankAccountPickOutcome.Ambiguous));
-        Assert.Null(MoneyAccountFallback.TerminalBankWarning(true, BankAccountPickOutcome.None));
-        Assert.Null(MoneyAccountFallback.TerminalBankWarning(false, BankAccountPickOutcome.Single));
+        Assert.Null(MoneyAccountFallback.TerminalPinWarning(true, true, BankAccountPickOutcome.Ambiguous));
+        Assert.Null(MoneyAccountFallback.TerminalPinWarning(true, true, BankAccountPickOutcome.None));
+        Assert.Null(MoneyAccountFallback.TerminalPinWarning(false, false, BankAccountPickOutcome.Single));
     }
 
     // ═══ E-4: ข้อความเมื่อไม่มีผังลูกหนี้บอกผังที่ต้องแก้ ═══
