@@ -56,8 +56,9 @@ public class SettlementImportTests
         Assert.Equal(new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), r.Rows[0].TxnDate);
         Assert.Equal("O-1", r.Rows[1].ExternalOrderId);
         Assert.Equal("ค่าคอมมิชชั่น", r.Rows[1].RawTypeLabel);
-        Assert.Equal(2, r.SkippedRows.Count);                        // แถวยอด 0 + แถว "รวม"
-        Assert.Contains(r.SkippedRows, s => s.Contains("สรุปยอด"));
+        Assert.Single(r.SkippedRows);                                 // แถวยอด 0 (บรรทัดเทา)
+        // DECISIONS ข้อ 39 (ทีม IF รอบ 200): แถว "รวม" ที่ข้ามแสดงเป็นคำเตือนพร้อมยอด (ไม่ใช่บรรทัดเทา)
+        Assert.Contains(r.Warnings!, s => s.Contains("สรุปยอด") && s.Contains("816.50"));
     }
 
     [Fact]

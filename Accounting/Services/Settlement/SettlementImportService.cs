@@ -93,7 +93,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
     // ═══════════════════ นำเข้าไฟล์ ═══════════════════
 
     public async Task<SettlementImportResult> ImportFileAsync(Guid companyId, Guid userId, SettlementFileImportRequest request,
-        string fileName, Stream content, CancellationToken ct = default)
+        string fileName, Stream content, string? memoryBlockedReason, CancellationToken ct = default)
     {
         var h = request.Header;
         var channel = await LoadChannelAsync(companyId, h.ChannelId, tracked: false, ct);
@@ -116,27 +116,32 @@ public sealed partial class SettlementImportService : ISettlementImportService
         SettlementParseResult parsed;
         try
         {
-            // R-B9: ช่วงวันที่ของรอบโอนที่ผู้ใช้กรอก = หลักฐานตัดสินลำดับวัน/เดือนของไฟล์ช่วงสั้น (ไม่ใช่การเดา)
+            // R-B9: ช่วงวันที่ของรอบโอนที่ผู้ใช้กรอก = หลักฐานตัดสินลำดับวัน/เดือนของไฟล์ช่วงสั้น (ไม่ใช่การเดา) ·
+            // I-2: ข้อความถามรูปแบบวันที่/เขตเวลาบอกตามจริงว่าจะจำไหม (RememberColumnMap ถูก controller ปิดเมื่อไม่มีสิทธิ์/คีย์ API — เหตุมาจาก controller)
             parsed = adapter.Parse(file, channel, mapJson,
-                new SettlementParseContext(ThaiDate.CalendarDateUtc(h.PeriodFrom), ThaiDate.CalendarDateUtc(h.PeriodTo)));
+                new SettlementParseContext(ThaiDate.CalendarDateUtc(h.PeriodFrom), ThaiDate.CalendarDateUtc(h.PeriodTo),
+                    request.RememberColumnMap, request.RememberColumnMap ? null : memoryBlockedReason));
         }
         catch (SettlementFormatException ex)
         {
             throw FormatError(ex);
         }
         // จำการจับคู่: ของที่ผู้ใช้ส่งมา + สิ่งที่ไฟล์นี้พิสูจน์ได้ (ลำดับวัน/เดือน · เขตเวลาจากหัวคอลัมน์ — R-B8/R-B9) · ด่านสิทธิ์จำอยู่ที่ controller
-        // (RememberColumnMap ถูกปิดเมื่อไม่มีสิทธิ์ตั้งค่าช่องทาง/คีย์ API) · จำแล้วบอกผู้ใช้เสมอ (ไม่จำเงียบ)
-        var warnings = new List<string>();
+        // (RememberColumnMap ถูกปิดเมื่อไม่มีสิทธิ์ตั้งค่าช่องทาง/คีย์ API) · จำแล้วบอกผู้ใช้เสมอ (ไม่จำเงียบ) — I-3: ข้อความ "จำแล้ว" เติมเฉพาะบนเส้นที่
+        // บันทึกค่าตั้งจริง (PersistAsync หลัง commit) · เส้นไฟล์ซ้ำที่ rollback ไม่บอกว่าจำ
+        // DECISIONS ข้อ 39 / I-7: สิ่งที่ตัวอ่านต้องให้ผู้ใช้เห็นชัด (แถวสรุปที่ข้ามพร้อมยอด · แถวไม่มีเลขที่นำเข้า) = คำเตือน
+        var warnings = new List<string>(parsed.Warnings ?? Array.Empty<string>());
         string? remember = null;
+        IReadOnlyList<string> learnNotes = Array.Empty<string>();
         var learned = parsed.LearnedDateOrder != null || parsed.LearnedTimeZone != null;
         if (request.RememberColumnMap && (!string.IsNullOrWhiteSpace(request.ColumnMapJson) || learned))
         {
             var toSave = SettlementColumnMap.Parse(mapJson)!;
-            warnings.AddRange(toSave.Learn(parsed.LearnedDateOrder, parsed.LearnedTimeZone));
+            learnNotes = toSave.Learn(parsed.LearnedDateOrder, parsed.LearnedTimeZone);
             remember = toSave.ToJson();
         }
         return await PersistAsync(new PersistInput(companyId, userId, channel.Id, h, parsed.Rows, parsed.SkippedRows,
-            SettlementSourceKind.CsvImport, file, remember, adapter.Code, Array.Empty<Guid>(), null, warnings), ct);
+            SettlementSourceKind.CsvImport, file, remember, adapter.Code, Array.Empty<Guid>(), null, warnings, learnNotes), ct);
     }
 
     // ═══════════════════ ประกอบจาก PaymentIntent ═══════════════════
@@ -148,7 +153,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
         Guid CompanyId, Guid UserId, Guid ChannelId, SettlementBatchHeaderRequest Header,
         IReadOnlyList<SettlementParsedRow> Rows, IReadOnlyList<string> SkippedRows, SettlementSourceKind SourceKind,
         SettlementFileInput? File, string? RememberMapJson, string AdapterCode, IReadOnlyList<Guid> FreshIntentIds,
-        string? GatewayProviderCode, List<string> Warnings);
+        string? GatewayProviderCode, List<string> Warnings, IReadOnlyList<string>? LearnNotes = null);
 
     /// <summary>บรรทัดที่เตรียมไว้ (ยังไม่ใช่ entity — สร้าง entity ใต้ธุรกรรมเท่านั้น)</summary>
     private sealed class PreparedLine
@@ -192,7 +197,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
         var keyInputs = rows
             .Select(r => new SettlementTxnKeyInput(r.RawTxnId, r.RawTypeLabel, r.ExternalOrderId, r.Amount, r.TxnDate, r.PayoutRef)).ToList();
         var keys = SettlementTxnKey.Assign(keyInputs);
-        var legacyKeys = SettlementTxnKey.LegacyKeys(keyInputs, payoutRef);
+        // I-1: คีย์รุ่นก่อนคิดซ้ำด้วย "วันที่ตามตัวอักษร" (แบบที่ตัวอ่านก่อนรอบ 200 อ่าน) — ตัวอ่านใหม่แปลงเขตเวลา ⇒ วันที่/คีย์เปลี่ยน ⇒ ไฟล์ที่นำเข้าก่อน deploy
+        // ต้องยังถูกจับว่าซ้ำ (ใช้เทียบเท่านั้น · บรรทัดใหม่เก็บคีย์รุ่นปัจจุบัน)
+        var legacyKeys = SettlementTxnKey.LegacyKeys(keyInputs, payoutRef, LiteralDateSets(rows));
         // S4-3: ไฟล์ที่บรรทัดมาจาก (ลายนิ้วมือเนื้อหา — ตัวเดียวกับคีย์ v2:rowc:) · เส้น PaymentIntent ไม่มีไฟล์
         var importScope = input.File != null ? SettlementTxnKey.ImportScopeOf(keyInputs) : null;
         var all = rows.Select((r, i) => new PreparedLine
@@ -258,11 +265,14 @@ public sealed partial class SettlementImportService : ISettlementImportService
             // S4-3 (ทีม I รอบ 200): เทียบเนื้อหาเฉพาะกับบรรทัดของ "ไฟล์รุ่นก่อนของไฟล์นี้" (ทุกบรรทัดของไฟล์นั้นมีแถวเดียวกันในไฟล์นี้) —
             // บรรทัดที่มาจากไฟล์อื่นของรอบเดียวกัน (ไฟล์ส่วนที่เหลือของรอบ) ห้ามกลืนแถวจริงที่หน้าตาเหมือนกัน ⇒ เพิ่มเข้า + เตือนรายแถว
             var contentMatched = 0;
+            var lineScope = importScope;
             if (batch != null && toAdd.Count > 0)
             {
                 var newContent = toAdd.Select(ContentKeyOf).ToList();
                 var pool = SettlementTxnKey.SplitRevisedFilePool(newContent,
                     await StoredRowContentAsync(companyId, channelId, batch.Id, underLock, ct));
+                // I-8: ไฟล์ฉบับแก้ ⇒ บรรทัดที่เพิ่มสืบลายนิ้วมือของไฟล์รุ่นก่อน (กลุ่มโตตามไฟล์ล่าสุด · ไม่เกิดกลุ่มเล็กที่ไฟล์อื่นครอบได้โดยบังเอิญ)
+                if (input.File != null && pool.RevisedScope != null) lineScope = pool.RevisedScope;
                 var hit = SettlementTxnKey.MatchByContent(newContent, pool.SameFile);
                 contentMatched = hit.Count;
                 var lookAlike = SettlementTxnKey.MatchByContent(
@@ -279,6 +289,15 @@ public sealed partial class SettlementImportService : ISettlementImportService
             // ที่หน้าตาเหมือนกัน · R-B5) ⇒ ระบบตัดสินแทนไม่ได้ ⇒ เตือนเป็นรายแถวพร้อมรอบโอนที่ตรง (ไม่เงียบ · ไม่บล็อก)
             if (await ContentOverlapElsewhereAsync(companyId, channelId, batch?.Id, toAdd, underLock, ct) is string overlap)
                 warnings.Add(overlap);
+            // I-1: แถว "ใหม่" ที่เลขรายการเดียวกับบรรทัดเดิมของรอบนี้แต่ป้าย/ยอด/วันที่ต่าง — บอกเหตุจริง (อ่านวันที่/เขตเวลาต่างจากครั้งที่นำเข้า
+            // หรือแพลตฟอร์มแก้รายงาน) · ไม่กลืน: คืนเงินครั้งที่สอง/ยอดปรับของ id เดียวกันเป็นรายการจริงได้ (R-B5)
+            var sameIdRows = new List<int>();
+            if (batch != null && toAdd.Count > 0)
+            {
+                var sharing = SettlementTxnKey.SharesRawIdWith(toAdd.Select(p => p.Row.RawTxnId).ToList(),
+                    await BatchKeysAsync(companyId, channelId, batch.Id, ct));
+                sameIdRows = sharing.Select(i => toAdd[i].Row.SourceRow).Distinct().OrderBy(x => x).ToList();
+            }
             // C-1(b): รอบที่ลงบัญชีค้างครึ่งทาง (มีเอกสาร/การรับชำระของการลงบัญชีแล้ว) เติมบรรทัดไม่ได้เหมือนรอบที่ลงบัญชีแล้ว
             var artifacts = batch == null ? new List<string>() : await PostingArtifactsAsync(companyId, batch.Id, ct);
             if (batch != null && !SettlementSaleMatch.IsEditable(batch.Status, artifacts.Count))
@@ -287,9 +306,13 @@ public sealed partial class SettlementImportService : ISettlementImportService
                     throw new BusinessRuleException(SettlementSaleMatch.IsEditable(batch.Status)
                         ? $"รอบโอน \"{payoutRef}\" ลงบัญชีค้างครึ่งทาง (มี {string.Join(", ", artifacts.Take(10))}) แต่ไฟล์มีรายการใหม่ {toAdd.Count} รายการ — "
                           + "กด \"ลงบัญชี\" รอบนี้ต่อให้ครบแล้วนำเข้ารายการใหม่เป็นรอบโอนแยก หรือยกเลิกเอกสาร/การรับชำระเหล่านั้นก่อน"
-                        : $"รอบโอน \"{payoutRef}\" ลงบัญชีแล้ว แต่ไฟล์มีรายการใหม่ {toAdd.Count} รายการ — แพลตฟอร์มอาจแก้รายงานย้อนหลัง · "
-                          + "นำเข้ารายการใหม่เป็นรอบโอนแยก (เลขรอบโอนอื่น) หรือกลับรายการรอบนี้ก่อน", "SETTLEMENT-BATCH-POSTED");
+                        : PostedBatchNewRowsMessage(payoutRef, toAdd.Select(p => p.Row.SourceRow).Distinct().OrderBy(x => x).ToList(), sameIdRows),
+                        "SETTLEMENT-BATCH-POSTED");
             }
+            if (sameIdRows.Count > 0)
+                warnings.Add($"แถวที่ {RowList(sameIdRows)} มีเลขรายการเดียวกับบรรทัดเดิมในรอบโอน \u201C{payoutRef}\u201D แต่ป้าย/ยอด/วันที่ต่างกัน — "
+                    + "ระบบเพิ่มเป็นบรรทัดใหม่ (คืนเงินครั้งที่สอง/ยอดปรับของรายการเดิมเป็นรายการจริงได้) · ถ้าเป็นรายการเดียวกันที่อ่านวันที่/เขตเวลาต่างจากครั้งก่อน "
+                    + "ให้ยกเลิกรอบโอนนี้ แล้วนำเข้าใหม่ด้วย \u201Cรูปแบบวันที่\u201D/\u201Cเขตเวลาในไฟล์\u201D ที่ถูก (ยอดรวมของรอบจะไม่ลงตัวถ้าซ้ำ)");
             // R-B5: แถวที่ถูกข้ามเพราะมีอยู่แล้ว ต้องบอกเป็นรายแถว (เดิมบอกแค่จำนวน — แถวจริงที่ชนคีย์หายเงียบ)
             if (skippedDup > 0 && toAdd.Count > 0)
             {
@@ -371,7 +394,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
                     TxnDate = p.Row.TxnDate,
                     ExternalOrderId = Fit(p.Row.ExternalOrderId?.Trim(), 200),
                     ExternalTxnId = p.Key,
-                    ImportScope = importScope,
+                    ImportScope = lineScope,
                     Amount = R(p.Row.Amount),
                     VatAmount = p.Row.VatAmount is decimal v ? R(v) : null,
                     WhtAmount = p.Row.WhtAmount is decimal w ? R(w) : null,
@@ -390,6 +413,8 @@ public sealed partial class SettlementImportService : ISettlementImportService
 
             if (input.RememberMapJson != null)
             {
+                // I-3: บอก "ระบบจำ…ไว้แล้ว" เฉพาะเส้นที่บันทึกค่าตั้งจริง (เส้นไฟล์ซ้ำ rollback ด้านบน ไม่ถึงตรงนี้)
+                if (input.LearnNotes is { Count: > 0 } notes) warnings.AddRange(notes);
                 channel.ColumnMapJson = input.RememberMapJson;
                 channel.AdapterCode = input.AdapterCode;
                 channel.UpdatedAt = DateTime.UtcNow;
@@ -572,6 +597,47 @@ public sealed partial class SettlementImportService : ISettlementImportService
         return found;
     }
 
+    /// <summary>
+    /// ข้อความ "รอบลงบัญชีแล้วแต่ไฟล์มีรายการที่รอบนี้ไม่มี" ที่บอกเหตุจริง (ฝ่ายค้าน I-1 — เดิมบอกแต่ "แพลตฟอร์มอาจแก้รายงานย้อนหลัง" แม้เหตุจริงคือ
+    /// การอ่านวันที่/เขตเวลาต่างจากครั้งที่นำเข้า) · <paramref name="sameIdRows"/> = แถวที่เลขรายการตรงบรรทัดเดิมแต่เนื้อหาต่าง
+    /// </summary>
+    internal static string PostedBatchNewRowsMessage(string payoutRef, IReadOnlyList<int> newRows, IReadOnlyList<int> sameIdRows)
+    {
+        var head = $"รอบโอน \u201C{payoutRef}\u201D ลงบัญชีแล้ว แต่ไฟล์มี {newRows.Count} รายการที่ไม่ตรงกับบรรทัดใดของรอบนี้ (เทียบเลขรายการ · ป้าย · ยอด · วันที่ — "
+                   + $"แถวที่ {RowList(newRows)})";
+        var why = sameIdRows.Count > 0
+            ? $" — แถวที่ {RowList(sameIdRows)} มีเลขรายการเดียวกับบรรทัดที่ลงบัญชีแล้วแต่ป้าย/ยอด/วันที่ต่างกัน: ถ้าเป็นไฟล์เดิม เหตุคือการอ่านวันที่ต่างจากครั้งที่นำเข้า "
+              + "(ตรวจ \u201Cรูปแบบวันที่\u201D และ \u201Cเขตเวลาในไฟล์\u201D ในขั้นจับคู่คอลัมน์ให้เหมือนครั้งก่อน แล้วนำเข้าใหม่) · ถ้าแพลตฟอร์มแก้รายงานย้อนหลังจริง "
+            : " — เลขรายการเหล่านี้ไม่เคยอยู่ในรอบนี้: ไฟล์อาจครอบช่วงวันที่กว้างกว่ารอบ หรือแพลตฟอร์มเพิ่มรายการย้อนหลัง · ";
+        return head + why + "นำเข้ารายการที่ต่างเป็นรอบโอนแยก (เลขรอบโอนอื่น) หรือกลับรายการรอบนี้ก่อน (ไม่มีรายการใดถูกนำเข้า)";
+    }
+
+    private static string RowList(IReadOnlyList<int> rows)
+        => string.Join(", ", rows.Take(20)) + (rows.Count > 20 ? " …" : "");
+
+    /// <summary>คีย์กันซ้ำทุกตัวของบรรทัดในรอบโอนหนึ่ง (tenant · ช่องทาง)</summary>
+    private async Task<List<string>> BatchKeysAsync(Guid companyId, Guid channelId, Guid batchId, CancellationToken ct)
+        => await _db.SettlementLines.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && l.BatchId == batchId && l.ExternalTxnId != null)
+            .Select(l => l.ExternalTxnId!)
+            .ToListAsync(ct);
+
+    /// <summary>
+    /// ชุด "วันที่ตามตัวอักษร" ของทุกแถว (ฝ่ายค้าน I-1) — ชุดที่ k = วันที่แบบที่ตัวอ่านก่อนรอบ 200 อ่านด้วยลำดับวัน/เดือนที่ k (แถวที่ไม่มีค่าใช้วันที่ของแถว) ·
+    /// ไม่มีไฟล์ (PaymentIntent) ⇒ ว่าง
+    /// </summary>
+    private static IReadOnlyList<IReadOnlyList<DateTime?>> LiteralDateSets(IReadOnlyList<SettlementParsedRow> rows)
+    {
+        var count = rows.Count == 0 ? 0 : rows.Max(r => r.LiteralDates?.Count ?? 0);
+        var sets = new List<IReadOnlyList<DateTime?>>(count);
+        for (var k = 0; k < count; k++)
+        {
+            var at = k;
+            sets.Add(rows.Select(r => r.LiteralDates is { } l && at < l.Count ? l[at] : r.TxnDate).ToList());
+        }
+        return sets;
+    }
+
     /// <summary>คีย์เนื้อหาของแถวที่ไม่มี id (S3-4) — ค่าที่ผ่านการตัด PII/ตัดความยาว/ปัดเศษแบบเดียวกับที่เก็บลงบรรทัด · แถวที่มี id/มาจาก intent = null (ไม่เทียบ)</summary>
     private static string? ContentKeyOf(PreparedLine p)
         => !string.IsNullOrWhiteSpace(p.Row.RawTxnId) || p.Row.PaymentIntentId != null
@@ -607,11 +673,11 @@ public sealed partial class SettlementImportService : ISettlementImportService
             toAdd.Where(p => p.Row.TxnDate != null).Select(p => p.Row.TxnDate!.Value), ct);
         var hits = SettlementContentOverlap.Find(candidates, others, claimed);
         if (hits.Count == 0) return null;
-        var refs = hits.SelectMany(x => x.PayoutRefs).Distinct().Take(5).ToList();
+        // I-11: บอกสถานะรอบที่ตรง + ทางไปต่อตัวเดียวกับพรีวิว/ลงบัญชี (ห้ามชักชวนให้ยกเลิกรอบที่ลงบัญชีแล้ว)
+        var refs = SettlementContentOverlap.RefsWithStatus(hits);
+        var whatToDo = SettlementContentOverlap.WhatToDo(hits);
         return $"แถวที่ {string.Join(", ", hits.Take(20).Select(x => x.Id))}{(hits.Count > 20 ? " …" : "")} ไม่มีเลขรายการ และเนื้อหาตรงทุกช่อง "
-            + $"(ออเดอร์ · ป้าย · ยอด · วันที่) กับบรรทัดในรอบโอน {string.Join(", ", refs)} ที่นำเข้าไว้แล้ว — ถ้าเป็นรายการเดียวกัน (ไฟล์ช่วงวันทับกัน "
-            + "หรือนำเข้าไฟล์เดิมด้วยเลขรอบโอนที่พิมพ์ต่าง) ห้ามลงบัญชีรอบนี้ทั้งอย่างนั้น: ยกเลิกรอบโอนนี้แล้วนำเข้าใหม่ด้วยเลขรอบโอนเดิม "
-            + "· ถ้าเป็นคนละรายการจริง (หน้าตาเหมือนกัน) ไม่ต้องทำอะไร (หน้าตัวอย่างการลงบัญชีจะเตือนเรื่องนี้ซ้ำจนกว่าจะตัดสิน)";
+            + $"(ออเดอร์ · ป้าย · ยอด · วันที่) กับบรรทัดในรอบโอน {refs} ที่นำเข้าไว้แล้ว — {whatToDo} (หน้าตัวอย่างการลงบัญชีจะเตือนเรื่องนี้ซ้ำจนกว่าจะตัดสิน)";
     }
 
     private async Task<List<string>> BatchRefsOfKeysAsync(Guid companyId, Guid channelId, IReadOnlyList<string> keys,

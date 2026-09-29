@@ -66,6 +66,10 @@ public sealed class SettlementColumnMap
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public SettlementFileTimeZone TimeZone { get; set; } = SettlementFileTimeZone.Auto;
 
+    /// <summary>จุลภาคในยอดเงินของไฟล์นี้ = คั่นหลักพัน (ไม่ใช่จุดทศนิยม) — ผู้ใช้ยืนยันให้ CSV คั่นคอลัมน์ด้วย ; ที่ยอดเป็นบาทเต็ม "1,500"
+    /// (ฝ่ายค้าน I-5 · รอบ 200) · false = ระบบตัดสินจากไฟล์ (กำกวม ⇒ ล้มดัง <c>decimal-comma</c>) · ระบบไม่จำค่านี้เอง (ผู้ใช้ติ๊กเท่านั้น)</summary>
+    public bool CommaIsThousands { get; set; }
+
     /// <summary>แบบกว้าง: คอลัมน์ยอดเงิน</summary>
     public List<SettlementAmountColumn> AmountColumns { get; set; } = new();
     /// <summary>หัวคอลัมน์ที่ผู้ใช้เลือก "ไม่ใช้" (ชื่อผู้ซื้อ · ที่อยู่ · เบอร์ ฯลฯ) — แบบกว้างใช้ตรวจคอลัมน์ใหม่</summary>

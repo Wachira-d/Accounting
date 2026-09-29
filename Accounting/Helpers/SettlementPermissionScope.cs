@@ -47,14 +47,26 @@ public static class SettlementPermissionScope
     /// <returns><c>Remember</c> = บันทึกลงช่องทาง · <c>Notice</c> = ข้อความถึงผู้ใช้เมื่อขอให้จำแต่ไม่ได้จำ (null = ไม่มีอะไรต้องบอก)</returns>
     public static (bool Remember, string? Notice) ColumnMapMemory(bool requested, bool isApiKeyRequest, bool hasChannelsPermission)
     {
+        // ตัวตัดสินเดียว (ColumnMapMemoryBlocker) · ที่นี่คืนข้อความยาวสำหรับหลังนำเข้าสำเร็จ · ตัวอ่านไฟล์ใช้เหตุสั้นในข้อความถามตอนล้ม (I-2)
         if (!requested) return (false, null);
+        if (ColumnMapMemoryBlocker(isApiKeyRequest, hasChannelsPermission) == null) return (true, null);
         if (isApiKeyRequest)
             return (false, "ไม่ได้จำการจับคู่คอลัมน์ไว้กับช่องทาง — คำขอจากคีย์ API เปลี่ยนค่าตั้งของช่องทางไม่ได้ (การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว) · "
                 + "ให้ผู้ใช้ที่มีสิทธิ์ตั้งค่าช่องทางนำเข้าจากหน้าเว็บ หรือแก้ที่หน้าตั้งค่าช่องทาง");
-        if (!hasChannelsPermission)
-            return (false, $"ไม่ได้จำการจับคู่คอลัมน์ไว้กับช่องทาง — ต้องมีสิทธิ์ “{PermissionKeys.LabelOf(Channels)}” "
-                + "(การจับคู่กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป) · การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว — ขอให้ผู้มีสิทธิ์บันทึกไว้ครั้งหน้า");
-        return (true, null);
+        return (false, $"ไม่ได้จำการจับคู่คอลัมน์ไว้กับช่องทาง — ต้องมีสิทธิ์ “{PermissionKeys.LabelOf(Channels)}” "
+            + "(การจับคู่กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป) · การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว — ขอให้ผู้มีสิทธิ์บันทึกไว้ครั้งหน้า");
+    }
+
+    /// <summary>
+    /// **เหตุสั้น ๆ ที่การจับคู่คอลัมน์จำไว้กับช่องทางไม่ได้** (ฝ่ายค้าน I-2 · รอบ 200 ทีม IF) — ส่งเข้าตัวอ่านไฟล์ให้ข้อความถาม "รูปแบบวันที่/เขตเวลา"
+    /// บอกตามจริงตั้งแต่ตอนล้ม (เดิมสัญญาว่า "ระบบจำไว้ให้" แล้วค่อยบอกว่าไม่จำเมื่อนำเข้าสำเร็จ) · <see cref="ColumnMapMemory"/> ตัดสินด้วยตัวนี้ ·
+    /// ไม่ขึ้นกับว่าติ๊ก "จำ" ไหม (หน้าเว็บซ่อนช่องติ๊กของผู้ที่จำไม่ได้ ⇒ คำขอมาแบบไม่ติ๊ก แต่เหตุจริงคือสิทธิ์) · null = ผู้เรียกคนนี้จำได้
+    /// </summary>
+    public static string? ColumnMapMemoryBlocker(bool isApiKeyRequest, bool hasChannelsPermission)
+    {
+        if (isApiKeyRequest) return "คำขอจากคีย์ API เปลี่ยนค่าตั้งของช่องทางไม่ได้";
+        if (!hasChannelsPermission) return $"ผู้นำเข้าไม่มีสิทธิ์ “{PermissionKeys.LabelOf(Channels)}” — ขอให้ผู้มีสิทธิ์นี้ตั้งค่าให้";
+        return null;
     }
 
     /// <summary>

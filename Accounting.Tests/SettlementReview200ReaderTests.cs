@@ -364,19 +364,22 @@ public class SettlementReview200ReaderTests
     // ═════════════════ R-B11 · แถวสรุปของไฟล์แบบกว้าง/ยาว ═════════════════
 
     [Fact]
-    public void RB11_ตัวตัดสินแถวสรุป_กว้างไม่มีเลขอ้างอิง_ยาวคำสรุปหรือไม่มีป้ายและวันที่()
+    public void RB11_ตัวตัดสินแถวสรุป_กว้างต้องพิสูจน์ได้_ยาวคำสรุปหรือไม่มีป้ายและวันที่()
     {
         var wide = SettlementFileLayout.Wide;
         var lng = SettlementFileLayout.Long;
-        Assert.True(SettlementFileDecisions.IsSummaryRow(wide, null, null, null, null, "ยอดสุทธิ"));
-        Assert.True(SettlementFileDecisions.IsSummaryRow(wide, null, "  ", null, "13/09/2026", "1605"));   // ช่องแรกว่าง/มีวันที่ก็ยังใช่
-        Assert.False(SettlementFileDecisions.IsSummaryRow(wide, null, "SO-1", null, null, "SO-1"));
-        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, null, null, "รวม"));
-        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, "Net total", "13/09/2026", "Net total"));
-        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, null, null, "816.50"));
+        Assert.True(SettlementFileDecisions.IsSummaryRow(wide, null, null, null, "13/09/2026", "ยอดสุทธิ", false));
+        // DECISIONS ข้อ 39 (ทีม IF): แบบกว้าง ไม่มีเลข + มีวันที่ = ข้ามเฉพาะเมื่อยอดเท่าผลรวมของแถวที่มีเลข (เดิม "ใช่เสมอ")
+        Assert.True(SettlementFileDecisions.IsSummaryRow(wide, null, "  ", null, "13/09/2026", "1605", true));
+        Assert.False(SettlementFileDecisions.IsSummaryRow(wide, null, "  ", null, "13/09/2026", "1605", false));
+        Assert.True(SettlementFileDecisions.IsSummaryRow(wide, null, null, null, null, "1605", false));     // ไม่มีวันที่
+        Assert.False(SettlementFileDecisions.IsSummaryRow(wide, null, "SO-1", null, null, "SO-1", true));
+        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, null, null, "รวม", false));
+        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, "Net total", "13/09/2026", "Net total", false));
+        Assert.True(SettlementFileDecisions.IsSummaryRow(lng, null, null, null, null, "816.50", false));
         // ทิศตรงข้าม: แถวไม่มีเลขที่มีป้าย+วันที่ = รายการจริง (ค่าธรรมเนียมถอนเงิน) · มีเลข = รายการเสมอ
-        Assert.False(SettlementFileDecisions.IsSummaryRow(lng, null, null, "ค่าธรรมเนียมถอนเงิน", "13/09/2026", "13/09/2026"));
-        Assert.False(SettlementFileDecisions.IsSummaryRow(lng, "T9", null, null, null, "รวม"));
+        Assert.False(SettlementFileDecisions.IsSummaryRow(lng, null, null, "ค่าธรรมเนียมถอนเงิน", "13/09/2026", "13/09/2026", false));
+        Assert.False(SettlementFileDecisions.IsSummaryRow(lng, "T9", null, null, null, "รวม", false));
     }
 
     [Fact]
@@ -395,8 +398,10 @@ public class SettlementReview200ReaderTests
         Assert.Equal(before.Rows.Select(x => (x.ExternalOrderId, x.RawTypeLabel, x.Amount)),
             r.Rows.Select(x => (x.ExternalOrderId, x.RawTypeLabel, x.Amount)));
         Assert.Equal(5, r.Rows.Count);
-        Assert.Equal(2, r.SkippedRows.Count(s => s.Contains("แถวสรุปยอด")));
-        Assert.Contains(r.SkippedRows, s => s.Contains("1,521.50"));      // ยอดของแถวที่ข้ามบนหน้าจอ
+        // DECISIONS ข้อ 39 (ทีม IF): แถวสรุปที่ข้ามไปที่คำเตือน (ไม่ใช่บรรทัดเทา) · แถวรวมพิสูจน์ด้วย "ยอดเท่าผลรวมของแถวที่มีเลข"
+        Assert.Equal(2, r.Warnings!.Count(s => s.Contains("แถวสรุปยอด")));
+        Assert.Contains(r.Warnings!, s => s.Contains("1,521.50") && s.Contains("ผลรวม"));   // I-4: 1605 − 53.5 − 30 (Transaction Fee กลับเครื่องหมาย)
+        Assert.DoesNotContain(r.SkippedRows, s => s.Contains("แถวสรุปยอด"));
     }
 
     [Fact]
@@ -409,7 +414,7 @@ public class SettlementReview200ReaderTests
         var r = new GenericColumnMapAdapter().Parse(Csv(csv), Channel(), LongMap());
         Assert.Equal(new[] { 1070m, -10m }, r.Rows.Select(x => x.Amount));
         Assert.Null(r.Rows[1].RawTxnId);
-        Assert.Contains(r.SkippedRows, s => s.Contains("แถวสรุปยอด") && s.Contains("1,060.00"));
+        Assert.Contains(r.Warnings!, s => s.Contains("แถวสรุปยอด") && s.Contains("1,060.00"));
     }
 
     // ═════════════════ R-A9 · บรรทัดย่อยของรายการเดียวกัน ═════════════════

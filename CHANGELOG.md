@@ -3907,3 +3907,16 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K2 — แ�
   **C-07** สองปุ่มผ่าน `API.post` · **C-08** ประเภทเงินได้ไม่ล้างเงียบ (`_whtIncomeTypePayload` · ไม่แคชความล้มเหลว · sim ใหม่) ·
   **C-09** `Helpers/OcrCurrencyEvidence` + `[CURRENCY-UNSURE]` (blocking) · **C-10** `AwayFromZero` 13 จุด + `tools/ocr_round_midpoint_check.py`
 - เทสต์ `OcrReview200K2Tests` · sim `tools/wht_income_type_payload_sim.js` · required_call_site +9 แถว/ปรับ 1 · ยังไม่ได้คอมไพล์ — commit fb459244)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม IF — แก้ผลฝ่ายค้านทีม I (`erp-review/2026-09-29/review200-I.md`) · ตัวอ่านไฟล์ settlement:
+- **I-1** คีย์กันซ้ำไม่ drift เมื่อการอ่านเขตเวลาเปลี่ยน — adapter คืน `SettlementParsedRow.LiteralDates` (วันที่แบบตัวอ่านก่อนรอบ 200 ·
+  `SettlementValueParser.TryParseLiteralDate` × `SettlementFileDecisions.LegacyReadOrders`) · `SettlementTxnKey.LegacyKeys(..., literalDateSets)` คิด v1/v2-พิมพ์/**กติกาปัจจุบัน**
+  ซ้ำด้วยวันที่นั้น ⇒ ไฟล์หัว "(UTC)" ที่นำเข้าก่อน deploy ถูกจับว่าซ้ำ · เส้น `SETTLEMENT-BATCH-POSTED` บอกเหตุจริง (`SharesRawIdWith` + `PostedBatchNewRowsMessage`) ·
+  รอบที่ยังแก้ได้เตือนรายแถวเมื่อเลขรายการซ้ำแต่เนื้อหาต่าง
+- **I-2/I-3** `DecideDates` ถามรูปแบบวันที่+เขตเวลาในรอบเดียว (`date-order-timezone-ambiguous`) · `MemoryClause` บอกตามจริงว่าจะจำไหม (`SettlementParseContext.WillRemember` ·
+  `SettlementPermissionScope.ColumnMapMemoryBlocker` จาก controller · `ImportFileAsync(..., memoryBlockedReason, ct)`) · ข้อความ "จำแล้ว" เติมหลังเส้น rollback เท่านั้น (`PersistInput.LearnNotes`)
+- **I-7 → DECISIONS ข้อ 39** (ปิด I-4) แถวสรุปต้องพิสูจน์ได้ (คำสรุป · ไม่มีวันที่ · `TotalsIdRows`) · แถวไม่มีเลขที่มีวันที่ = รายการจริง + คำเตือน · แถวสรุปที่ข้ามไป `SettlementParseResult.Warnings`
+  พร้อมยอดจาก `LongAmount`/`WideAmounts` ตัวเดียวกับแถวจริง · **I-5** `SettlementColumnMap.CommaIsThousands` + ช่องติ๊กบนหน้าจับคู่ · ข้อความ `decimal-comma` ทางหลัก = ติ๊ก/.xlsx ·
+  **I-6** `id-column-empty` · **I-8** `SplitRevisedFilePool` หักจำนวน + `RevisedScope` (บรรทัดจากไฟล์ฉบับแก้สืบลายนิ้วมือไฟล์รุ่นก่อน) · **I-9** ICT · (GMT+07:00) · "น" · 13:05 PM · 24:00 ·
+  **I-10** `date-order-conflict` (เขตเวลาที่ตั้งยังชนะหัวคอลัมน์) · **I-11** กรองคำนำหน้าคีย์ใน SQL + "(ลงบัญชีแล้ว)" + `WhatToDo` ตัวเดียว
+- เทสต์ `SettlementReview200IfTests` + ปรับ `SettlementReview200ReaderTests` (IsSummaryRow · Warnings) / `SettlementImportTests` (แถว "รวม" = คำเตือน) · required_call_site ปรับ/เพิ่มแถว — commit e1e9f900)_
