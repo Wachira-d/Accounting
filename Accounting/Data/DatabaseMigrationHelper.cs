@@ -6202,7 +6202,14 @@ public static class DatabaseMigrationHelper
                 "LastSeenAt" timestamp NOT NULL DEFAULT now()
             );
             """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_Key" ON "SubscriptionGateShadowHits" ("CompanyId", "Reason", "Feature");""",
+            // รอบ 200 ข้อ 14: รายงานต้องบอก "endpoint ไหน" (route template ไม่มี id — SubscriptionGatePolicy.EndpointKey) + แยก "ถูกบล็อกจริง"
+            // จาก "จะถูกบล็อก" + สถานะ subscription (แยกลูกค้าทดลองใช้) ⇒ คีย์แถว = บริษัท × เหตุ × ฟีเจอร์ × endpoint (แถวเดิมได้ Endpoint = '')
+            """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "Endpoint" varchar(200) NOT NULL DEFAULT '';""",
+            """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "SubscriptionStatus" varchar(20) NULL;""",
+            """ALTER TABLE "SubscriptionGateShadowHits" ADD COLUMN IF NOT EXISTS "BlockedCount" bigint NOT NULL DEFAULT 0;""",
+            // คีย์ 3 คอลัมน์เดิมต้องถูกถอด ไม่งั้น endpoint ที่สองของ (บริษัท, เหตุ, ฟีเจอร์) เดิมชน unique แล้วการบันทึกล้มเงียบ (fail-open)
+            """DROP INDEX IF EXISTS "IX_SubscriptionGateShadowHits_Key";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_KeyV2" ON "SubscriptionGateShadowHits" ("CompanyId", "Reason", "Feature", "Endpoint");""",
             """CREATE INDEX IF NOT EXISTS "IX_SubscriptionGateShadowHits_LastSeen" ON "SubscriptionGateShadowHits" ("LastSeenAt");""",
 
             // ═══ POS เฟส 3: ขายแล้วกินวัตถุดิบตามสูตร (sell-consumes-BOM) ═══

@@ -21,6 +21,10 @@
     .summary-row { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0 12px }
     .summary-row div { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 14px; min-width:150px }
     .summary-row b { display:block; font-size:20px }
+    .pill-amber { background:#fef3c7; color:#92400e }
+    .effective-box { border:2px solid #e2e8f0; border-radius:12px; padding:12px 14px; margin:8px 0 4px; background:#f8fafc }
+    .effective-box.override { border-color:#f59e0b; background:#fffbeb }
+    .warn-line { font-size:12px; color:#92400e; margin-top:6px }
   </style>
 </head>
 <body>
@@ -32,8 +36,9 @@
     </div>
 
     <div class="admin-card">
-      <div class="admin-card-header"><span class="admin-card-title">🚦 สวิตช์ (ใช้กับคำขอจากหน้าเว็บทุกบริษัท)</span></div>
-      <div id="modeState" class="muted">กำลังโหลด...</div>
+      <div class="admin-card-header"><span class="admin-card-title">🚦 สวิตช์ (ตัวตัดสินหลัก — ใช้กับคำขอจากหน้าเว็บทุกบริษัท + ด่านบริษัทถูกระงับ/หมดอายุ)</span></div>
+      <div id="effectiveBox" class="effective-box muted">กำลังโหลด...</div>
+      <div id="modeState" class="muted"></div>
       <div class="mode-grid" id="modeGrid">
         <label class="mode-opt" data-mode="Off">
           <input type="radio" name="mode" value="Off"><b>ปิด (Off)</b>
@@ -46,7 +51,7 @@
         <label class="mode-opt" data-mode="Enforce">
           <input type="radio" name="mode" value="Enforce"><b>บังคับ (Enforce)</b>
           <div class="desc">บล็อกจริง: ฟีเจอร์ไม่อยู่ในแพ็กเกจ → 403 และหน้าเว็บพาไปหน้าแพ็กเกจ ·
-            การสมัครสมาชิกถูกยกเลิก/ระงับ → 403 ทุกคำขอ</div>
+            การสมัครสมาชิกถูกยกเลิก/ระงับ → 403 ทุกคำขอ · บริษัทถูกระงับ/หมดอายุเกินผ่อนผัน → บล็อกการสร้าง/แก้ไข (ทุกช่องทาง)</div>
         </label>
       </div>
       <div style="margin-top:12px">
@@ -56,8 +61,13 @@
     </div>
 
     <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🧪 ลูกค้าทดลองใช้ / แพ็กเกจฟรี — (จะ) ถูกบล็อกกี่ครั้ง เพราะอะไร</span></div>
+      <div id="trialBlocks" class="muted">กำลังโหลด...</div>
+    </div>
+
+    <div class="admin-card">
       <div class="admin-card-header">
-        <span class="admin-card-title">👀 ผลโหมดเงา — บริษัทที่ "จะถูกบล็อก" (จากการใช้งานจริง)</span>
+        <span class="admin-card-title">👀 รายงานเงา — บริษัทไหน · endpoint ไหน · เพราะอะไร · กี่ครั้ง (จากการใช้งานจริง)</span>
         <button class="admin-btn admin-btn-outline admin-btn-sm" id="clearHitsBtn">ล้างผล / เริ่มนับใหม่</button>
       </div>
       <div id="hitSummary" class="summary-row"></div>
@@ -120,36 +130,67 @@
       render(d) {
         this.status = d;
         this.mode = d.mode;
+        const e = d.effective || {};
         document.querySelectorAll('input[name="mode"]').forEach(r => { r.checked = r.value === d.mode; });
         this.highlight(d.mode);
+        // โหมดที่มีผลจริง + เพราะอะไร — ข้อความมาจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับ middleware) หน้านี้แสดงอย่างเดียว
+        const box = document.getElementById('effectiveBox');
+        box.className = 'effective-box' + (e.adminSwitchHasEffect === false ? ' override' : '');
+        box.innerHTML = `<div><b>${AdminLayout.esc(e.effectiveModeLabel || '-')}</b>
+            ${e.adminSwitchHasEffect === false ? '<span class="pill pill-amber">override ฉุกเฉินทับสวิตช์อยู่</span>' : ''}</div>
+          <div style="font-size:13px;margin-top:4px">${AdminLayout.esc(e.explanation || '')}</div>
+          ${(e.warnings || []).map(w => `<div class="warn-line">⚠️ ${AdminLayout.esc(w)}</div>`).join('')}`;
         document.getElementById('modeState').innerHTML =
-          `สถานะตอนนี้: <b>${AdminLayout.esc(this.modeLabel(d.mode))}</b> · ${AdminLayout.esc(d.guidance)}`;
+          `ค่าสวิตช์ที่บันทึกไว้: <b>${AdminLayout.esc(this.modeLabel(d.mode))}</b>` +
+          (e.adminSwitchHasEffect === false ? ' (ยังไม่มีผล — ดูกรอบด้านบน)' : '') + ` · ${AdminLayout.esc(d.guidance)}`;
         document.getElementById('writeGateNote').innerHTML =
-          `ด่านเขียนของบริษัทถูกระงับ/หมดอายุ ใช้ค่า config <code>Subscription:Enforcement:Mode</code> = ` +
-          `<b>${AdminLayout.esc(d.writeGateMode)}</b> (แก้ใน appsettings — ไม่ขึ้นกับสวิตช์นี้)`;
+          `ด่านบริษัทถูกระงับ/หมดอายุของคำขอ partner ที่ส่ง X-Company-Id เอง: <b>${AdminLayout.esc(e.headerWriteGateMode || '-')}</b> ` +
+          `(ตามโหมดที่มีผลจริง) · override ฉุกเฉินตั้งได้ที่ config <code>${AdminLayout.esc(e.overrideKey || '')}</code> (ว่าง = ใช้สวิตช์นี้)`;
 
         document.getElementById('hitSummary').innerHTML = `
-          <div>บริษัทที่จะถูกบล็อก<b>${d.companiesWouldBlock}</b></div>
-          <div>จำนวนคำขอที่จะถูกบล็อก<b>${Number(d.hitsWouldBlock).toLocaleString('th-TH')}</b></div>`;
+          <div>บริษัทที่จะถูกบล็อก<b>${Number(d.companiesWouldBlock) || 0}</b></div>
+          <div>คำขอที่จะถูกบล็อก<b>${(Number(d.hitsWouldBlock) || 0).toLocaleString('th-TH')}</b></div>
+          <div>บริษัทที่ถูกบล็อกจริงแล้ว<b>${Number(d.companiesBlocked) || 0}</b></div>
+          <div>คำขอที่ถูกบล็อกจริง<b>${(Number(d.hitsBlocked) || 0).toLocaleString('th-TH')}</b></div>
+          <div>เก็บผล<b>${Number(d.retentionDays) || 0} วัน</b><span class="muted">ตัดแถวเก่าครั้งนี้ ${Number(d.prunedRows) || 0} แถว</span></div>`;
+
+        const tb = d.trialBlocks || [];
+        document.getElementById('trialBlocks').innerHTML = tb.length === 0
+          ? '<div class="muted" style="padding:8px 0">ยังไม่มีลูกค้าทดลองใช้/แพ็กเกจฟรีที่ (จะ) ถูกบล็อก — ตรวจ "ความพร้อมของแพ็กเกจทดลอง" ในส่วนตรวจล่วงหน้าด้านล่างด้วย</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>เพราะอะไร</th><th class="admin-text-right">บริษัท</th>
+                <th class="admin-text-right">จะถูกบล็อก (ครั้ง)</th><th class="admin-text-right">ถูกบล็อกจริง (ครั้ง)</th></tr></thead>
+              <tbody>${tb.map(t => `<tr>
+                <td>${AdminLayout.esc(t.description)}</td>
+                <td class="admin-text-right">${Number(t.companies) || 0}</td>
+                <td class="admin-text-right">${(Number(t.wouldBlockHits) || 0).toLocaleString('th-TH')}</td>
+                <td class="admin-text-right">${(Number(t.blockedHits) || 0).toLocaleString('th-TH')}</td></tr>`).join('')}</tbody>
+            </table></div>`;
 
         const hits = d.hits || [];
         if (hits.length === 0) {
-          document.getElementById('hits').innerHTML = d.mode === 'Off'
-            ? '<div class="muted" style="padding:12px">สวิตช์ปิดอยู่ — ไม่มีการบันทึกผล</div>'
-            : '<div class="muted" style="padding:12px">ยังไม่มีคำขอที่จะถูกบล็อก (หรือยังไม่มีการใช้งานตั้งแต่เปิดโหมดเงา)</div>';
+          document.getElementById('hits').innerHTML = e.effectiveMode === 'Off'
+            ? '<div class="muted" style="padding:12px">โหมดที่มีผลจริงปิดอยู่ — ไม่มีการบันทึกผล</div>'
+            : '<div class="muted" style="padding:12px">ยังไม่มีคำขอที่ (จะ) ถูกบล็อก (หรือยังไม่มีการใช้งานตั้งแต่เปิดโหมดเงา)</div>';
           return;
         }
         document.getElementById('hits').innerHTML = `
           <div class="admin-table-wrap"><table class="admin-table">
-            <thead><tr><th>บริษัท</th><th>ผลเมื่อเปิดบังคับ</th><th>เส้นทาง</th><th class="admin-text-right">ครั้ง</th>
-              <th>พบครั้งแรก</th><th>ล่าสุด</th></tr></thead>
+            <thead><tr><th>บริษัท</th><th>เพราะอะไร</th><th>endpoint</th><th class="admin-text-right">จะถูกบล็อก</th>
+              <th class="admin-text-right">ถูกบล็อกจริง</th><th>พบครั้งแรก</th><th>ล่าสุด</th></tr></thead>
             <tbody>${hits.map(h => `
               <tr>
-                <td><strong>${AdminLayout.esc(h.companyName)}</strong><div class="muted">${AdminLayout.esc(h.plan || '-')}</div></td>
-                <td>${h.wouldBlock ? '<span class="pill pill-red">จะถูกบล็อก</span>' : '<span class="pill pill-gray">log อย่างเดียว</span>'}
+                <td><strong>${AdminLayout.esc(h.companyName)}</strong>
+                  <div class="muted">${AdminLayout.esc(h.plan || '-')} · ${AdminLayout.esc(h.subscriptionStatus || '-')}
+                  ${h.isTrial ? ' <span class="pill pill-amber">ทดลองใช้</span>' : ''}</div></td>
+                <td>${Number(h.blockedCount) > 0 ? '<span class="pill pill-red">ถูกบล็อกจริง</span> ' : ''}
+                  ${h.wouldBlock ? (Number(h.hitCount) > 0 ? '<span class="pill pill-red">จะถูกบล็อก</span>' : '')
+                    : '<span class="pill pill-gray">แถวเก่า (log อย่างเดียว)</span>'}
                   <div style="font-size:12px;margin-top:4px">${AdminLayout.esc(h.description)}</div></td>
-                <td class="muted">${AdminLayout.esc(h.routeKey || '-')} · ${AdminLayout.esc(h.lastMethod || '')}</td>
-                <td class="admin-text-right">${Number(h.hitCount).toLocaleString('th-TH')}</td>
+                <td class="muted"><code>${AdminLayout.esc(h.endpoint || '(แถวเก่า — ไม่ได้เก็บ endpoint)')}</code>
+                  <div>${AdminLayout.esc(h.routeKey || '')} · ${AdminLayout.esc(h.lastMethod || '')}</div></td>
+                <td class="admin-text-right">${(Number(h.hitCount) || 0).toLocaleString('th-TH')}</td>
+                <td class="admin-text-right">${(Number(h.blockedCount) || 0).toLocaleString('th-TH')}</td>
                 <td class="muted">${this.fmt(h.firstSeenAt)}</td>
                 <td class="muted">${this.fmt(h.lastSeenAt)}</td>
               </tr>`).join('')}</tbody>
@@ -170,11 +211,35 @@
         try {
           const res = await AdminAPI.put(this.base + '/mode', { mode: m });
           this.render(res.data);
-          AdminLayout.toast('บันทึกสวิตช์แล้ว: ' + this.modeLabel(res.data.mode));
+          // มี override ฉุกเฉินทับ ⇒ เซิร์ฟเวอร์บอกว่า "บันทึกแล้วแต่ยังไม่มีผล" — ห้ามแสดงเหมือนสำเร็จเงียบ ๆ
+          const noEffect = res.data && res.data.effective && res.data.effective.adminSwitchHasEffect === false;
+          AdminLayout.toast(res.message || ('บันทึกสวิตช์แล้ว: ' + this.modeLabel(res.data.mode)), noEffect ? 'error' : undefined);
         } catch (e) {
           AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
           this.highlight(this.mode);
         } finally { btn.disabled = false; }
+      },
+
+      /** ความพร้อมของแพ็กเกจทดลอง/ฟรี — รายการฟีเจอร์/เส้นทางมาจากเซิร์ฟเวอร์ (ข้อมูลแพ็กเกจ) หน้านี้ไม่มีรายการฟีเจอร์ของตัวเอง */
+      renderTrialReadiness(t) {
+        if (!t) return '';
+        const problems = (t.problems || []).map(x => `<div class="warn-line">⚠️ ${AdminLayout.esc(x)}</div>`).join('');
+        const rows = (t.plans || []).map(pl => `
+          <tr>
+            <td><strong>${AdminLayout.esc(pl.name)}</strong><div class="muted">${AdminLayout.esc(pl.plan)}${pl.isPermanentFree ? ' · ฟรีถาวร' : ''}</div></td>
+            <td class="muted">${AdminLayout.esc(pl.featureSource)}</td>
+            <td class="feat-list">${pl.problem ? `<span class="pill pill-red">ว่าง</span> ${AdminLayout.esc(pl.problem)}`
+              : `<details><summary>${(pl.features || []).length} ฟีเจอร์</summary>${(pl.features || []).map(f => AdminLayout.esc(f)).join(', ')}</details>`}</td>
+            <td class="feat-list">${(pl.gatedRoutesBlocked || []).length
+              ? `<details><summary>${(pl.gatedFeaturesMissing || []).length} ฟีเจอร์ · ${(pl.gatedRoutesBlocked || []).length} เส้นทาง</summary>${(pl.gatedRoutesBlocked || []).map(r => AdminLayout.esc(r)).join(' · ')}</details>`
+              : '-'}</td>
+          </tr>`).join('');
+        return `<h4 style="margin:8px 0">ความพร้อมของแพ็กเกจทดลอง / ฟรี (ตามข้อมูลแพ็กเกจที่ตั้งไว้)</h4>
+          ${problems || '<div class="muted">ทุกแพ็กเกจที่เปิดใช้ตั้งฟีเจอร์ช่วงทดลองไว้แล้ว</div>'}
+          ${Number(t.trialSubscriptionsEmptySnapshot) ? `<div class="muted">subscription ทดลอง/ฟรีที่สำเนาฟีเจอร์ว่าง ${Number(t.trialSubscriptionsEmptySnapshot)} ราย — ระบบใช้ฟีเจอร์ตามข้อมูลแพ็กเกจแทนแล้ว</div>` : ''}
+          ${rows ? `<div class="admin-table-wrap" style="margin-top:6px"><table class="admin-table">
+            <thead><tr><th>แพ็กเกจ</th><th>ชุดที่ลูกค้าได้</th><th>ฟีเจอร์</th><th>จะถูกปิดเมื่อเปิดบังคับ</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>` : ''}`;
       },
 
       async clearHits() {
@@ -221,7 +286,8 @@
             <div>ถูกบล็อกการสร้าง/แก้ไข<b>${p.companiesWritesBlocked}</b></div>
             <div>ยังไม่มีแพ็กเกจ<b>${p.companiesWithoutSubscription}</b></div>
           </div>
-          <div class="muted" style="margin-bottom:8px">${AdminLayout.esc(p.guidance)} · config ด่านเขียน = ${AdminLayout.esc(p.writeGateMode)}</div>
+          <div class="muted" style="margin-bottom:8px">${AdminLayout.esc(p.guidance)} · ตัดสินเหมือนกดบังคับแล้ว (ด่านเขียน = ${AdminLayout.esc(p.writeGateMode)})</div>
+          ${this.renderTrialReadiness(p.trial)}
           ${gaps ? `<h4 style="margin:8px 0">ฟีเจอร์ที่บริษัทในหน้านี้ขาด</h4>
             <div class="admin-table-wrap"><table class="admin-table">
               <thead><tr><th>ฟีเจอร์</th><th class="admin-text-right">บริษัท</th><th>เส้นทางที่จะถูกบล็อก</th></tr></thead>

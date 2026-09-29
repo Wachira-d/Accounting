@@ -1,4 +1,5 @@
 using Accounting.Models.Constants;
+using Accounting.Models.DTOs.Settlement;
 
 namespace Accounting.Helpers;
 
@@ -55,4 +56,33 @@ public static class SettlementPermissionScope
                 + "(การจับคู่กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป) · การจับคู่นี้ใช้กับไฟล์นี้อย่างเดียว — ขอให้ผู้มีสิทธิ์บันทึกไว้ครั้งหน้า");
         return (true, null);
     }
+
+    /// <summary>
+    /// **ผู้สมัครเอกสารขาย/ยอดค้างของบรรทัดรอบโอน เห็นได้ไหม** (review198-D D-P5 · รอบ 200 คำตัดสินข้อ 14)
+    ///
+    /// <para><c>GET batches/{id}</c> (สิทธิ์ <see cref="View"/>) เคยคืน <c>MatchCandidates</c> (เลขที่เอกสารขาย + ยอดค้าง) และ <c>MatchNote</c>
+    /// (ข้อความที่อ้างเลขที่/ยอดของผู้สมัคร) ของทุกบรรทัด ⇒ บทบาทที่ถูกจำกัดการดูเอกสารรายได้เห็นยอดค้างลูกหนี้ผ่านทางนี้ · ผู้สมัครมีไว้ให้
+    /// "ตัดสินการจับคู่" ซึ่งต้องใช้ <see cref="Import"/> อยู่แล้ว ⇒ เห็นได้เมื่อมี <see cref="Import"/> หรือ <see cref="Post"/> (ผู้ลงบัญชีต้องตรวจ
+    /// ว่าจับคู่ถูกก่อนลง) · ไม่มีทั้งสอง ⇒ ซ่อน + บอกเหตุผล (ไม่ใช่รายการว่างเงียบ ๆ ที่อ่านได้ว่า "ไม่มีผู้สมัคร")</para>
+    /// </summary>
+    /// <returns><c>null</c> = เห็นได้ · ข้อความ = เหตุผลที่ซ่อน (หน้าเว็บ/ผู้เรียก API แสดงแทนผู้สมัคร)</returns>
+    public static string? CandidatesHiddenReason(bool canImport, bool canPost) =>
+        canImport || canPost
+            ? null
+            : $"ผู้สมัครเอกสารขายและยอดค้างของแต่ละบรรทัดแสดงเฉพาะผู้มีสิทธิ์ \u201C{PermissionKeys.LabelOf(Import)}\u201D "
+              + $"หรือ \u201C{PermissionKeys.LabelOf(Post)}\u201D (ข้อมูลลูกหนี้) — สถานะการจับคู่ยังดูได้ตามปกติ";
+
+    /// <summary>ซ่อนผู้สมัคร/ข้อความที่อ้างผู้สมัครของทุกบรรทัด (<see cref="CandidatesHiddenReason"/> ไม่เป็น <c>null</c>) — สถานะ/เอกสารที่จับคู่แล้ว
+    /// (<c>MatchedDocumentId</c>) คงไว้ เพราะเป็นผลที่ลงแล้ว ไม่ใช่รายชื่อยอดค้าง</summary>
+    public static SettlementBatchView HideCandidates(SettlementBatchView view, string reason) =>
+        view with
+        {
+            Lines = view.Lines
+                .Select(l => l with
+                {
+                    MatchCandidates = Array.Empty<SettlementMatchCandidateView>(),
+                    MatchNote = l.MatchNote is null ? null : reason,
+                })
+                .ToList(),
+        };
 }

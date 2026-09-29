@@ -13,8 +13,8 @@ public enum SubscriptionGateAction
     Enforce = 2,
 }
 
-/// <summary>ค่า config <c>Subscription:Enforcement:Mode</c> (WP-A1/A2: เขียนหลังหมดอายุ · บริษัทถูกระงับ) —
-/// สวิตช์เดิมที่ใช้กับ<b>ทุก</b>คำขอที่ถูกตรวจ ไม่ใช่สวิตช์เว็บ</summary>
+/// <summary>โหมดของด่านเขียน (WP-A1/A2: เขียนหลังหมดอายุ · บริษัทถูกระงับ) — รอบ 200 ข้อ 14: <b>ไม่ได้อ่านจาก config แล้ว</b>
+/// ได้จาก <see cref="SubscriptionGatePolicy.WriteGateModeFor"/> ตามโหมดที่มีผลจริง (<see cref="SubscriptionEnforcementResolver"/>)</summary>
 public enum SubscriptionWriteGateMode
 {
     Off = 0,
@@ -123,6 +123,10 @@ public static class SubscriptionGatePolicy
 
         // Banking
         ("/bank",                     FeatureFlags.BankReconciliation),
+        // รอบ 200 ข้อ 14 (review198-D D-P3): รอบโอน wallet → ธนาคาร จับคู่เงินเข้าผ่าน IBankService.ReconcileAsync = งานกระทบยอดธนาคาร ⇒
+        // feature key เดียวกับ /bank (เมนู settlements/settlement-channels ใน layout.js ผูก BankReconciliation คู่กัน) · "/pay/settlements"
+        // ของ gateway ไม่ตรงคีย์นี้ (ส่วน "/settlements/" ≠ "/settlement/")
+        ("/settlement",               FeatureFlags.BankReconciliation),
 
         // Tax / Documents — more specific eTax routes evaluated first (longest-key wins)
         ("/etax/send-email",          FeatureFlags.EtaxByEmail),
@@ -172,7 +176,8 @@ public static class SubscriptionGatePolicy
         .Select(m => m.Feature).Distinct().OrderBy(f => f.ToString(), StringComparer.Ordinal).ToList();
 
     /// <summary>คำขอนี้ต้องทำอะไร — คำขอที่ <b>ส่ง header มาเอง</b> บังคับเสมอ (พฤติกรรมก่อนรอบ 198 · ห้ามหลวม) ไม่ว่า
-    /// สวิตช์เว็บจะเป็นอะไร · คำขอที่รู้บริษัทจาก route อย่างเดียวเดินตามสวิตช์ · ค่าสวิตช์ที่ไม่รู้จัก = Shadow
+    /// สวิตช์เว็บจะเป็นอะไร · คำขอที่รู้บริษัทจาก route อย่างเดียวเดินตาม<b>โหมดที่มีผลจริง</b>
+    /// (<see cref="SubscriptionEnforcementState.EffectiveMode"/> — สวิตช์แอดมิน หรือ override ฉุกเฉิน) · ค่าที่ไม่รู้จัก = Shadow
     /// (ไม่บล็อกใครเพราะค่าเพี้ยน แต่ยังบันทึกให้เห็น)</summary>
     public static SubscriptionGateAction ActionFor(TenantCompanyTarget target, SubscriptionEnforcementMode webMode)
     {
@@ -186,14 +191,55 @@ public static class SubscriptionGatePolicy
         };
     }
 
-    /// <summary>อ่านค่า config <c>Subscription:Enforcement:Mode</c> — ว่าง/ไม่รู้จัก = LogOnly (ค่าเดิมของ middleware)</summary>
-    public static SubscriptionWriteGateMode ParseWriteMode(string? raw) =>
-        (raw ?? "LogOnly").Trim().ToLowerInvariant() switch
+    /// <summary>
+    /// โหมดของด่านเขียน (บริษัทถูกระงับ/หมดอายุ) สำหรับคำขอนี้ — รอบ 200 ข้อ 14 (แทนการอ่าน config <c>Subscription:Enforcement:Mode</c>
+    /// ที่ขัดกับสวิตช์แอดมิน):
+    /// <list type="bullet">
+    /// <item>โหมดเงา ⇒ <b>Enforce สมมุติ</b> — รายงานเงาต้องบอกผลของ "ถ้ากดบังคับ" ครบทุกเหตุ (เดิมบันทึกเป็น "log อย่างเดียว" เพราะ config
+    /// = LogOnly ⇒ แอดมินอ่านว่าไม่มีผล แล้วกด Enforce ก็ไม่มีผลจริง)</item>
+    /// <item>หน้าเว็บที่บังคับ (โหมดที่มีผลจริง = Enforce) ⇒ Enforce</item>
+    /// <item>คำขอที่ส่ง header มาเอง ⇒ <see cref="SubscriptionEnforcementState.HeaderWriteGateMode"/> (Enforce เมื่อโหมดที่มีผลจริง = Enforce ·
+    /// ไม่งั้น LogOnly = ค่าเดิมของ appsettings — ไม่หลวมกว่าเดิม)</item>
+    /// <item>ไม่ตรวจ ⇒ Off</item>
+    /// </list>
+    /// </summary>
+    public static SubscriptionWriteGateMode WriteGateModeFor(SubscriptionGateAction action, TenantCompanyTarget target,
+        SubscriptionEnforcementState enforcement) => action switch
+    {
+        SubscriptionGateAction.Skip => SubscriptionWriteGateMode.Off,
+        SubscriptionGateAction.Shadow => SubscriptionWriteGateMode.Enforce,
+        _ => target.HeaderCarried ? enforcement.HeaderWriteGateMode : SubscriptionWriteGateMode.Enforce,
+    };
+
+    /// <summary>ผลโหมดเงาที่ไม่ถูกพบซ้ำเกินกี่วันจะถูกตัดทิ้ง (ตารางไม่โตไม่จำกัด · DELETE ตามเวลา ปลอดภัยข้าม instance)</summary>
+    public const int ShadowRetentionDays = 90;
+
+    /// <summary>ความยาวสูงสุดของคีย์ endpoint ที่เก็บ</summary>
+    public const int EndpointMaxLength = 200;
+
+    /// <summary>
+    /// คีย์ endpoint ของรายงานเงา — "endpoint ไหน" โดยไม่เก็บ id/PII และไม่ทำให้ตารางโตตามจำนวนเอกสาร: ใช้ route template ของ endpoint
+    /// (<c>api/companies/{companyId:guid}/bank/accounts</c> ⇒ <c>api/companies/{companyId}/bank/accounts</c>) · ไม่มี template ⇒ path ที่แทน
+    /// ส่วนที่เป็น GUID/ตัวเลขด้วย <c>{id}</c> · ตัดที่ <see cref="EndpointMaxLength"/>
+    /// </summary>
+    public static string EndpointKey(string? routeTemplate, string? path)
+    {
+        string key;
+        if (!string.IsNullOrWhiteSpace(routeTemplate))
         {
-            "off" => SubscriptionWriteGateMode.Off,
-            "enforce" => SubscriptionWriteGateMode.Enforce,
-            _ => SubscriptionWriteGateMode.LogOnly,
-        };
+            // ตัด constraint/ค่าตั้งต้นใน {name:guid} {name=x} {name?} ⇒ {name}
+            key = System.Text.RegularExpressions.Regex.Replace(routeTemplate.Trim().TrimStart('/'),
+                @"\{\*?([A-Za-z0-9_]+)[^}]*\}", "{$1}");
+        }
+        else
+        {
+            var segs = (path ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(seg => Guid.TryParse(seg, out _) || seg.All(char.IsDigit) ? "{id}" : seg);
+            key = string.Join('/', segs);
+        }
+        key = key.ToLowerInvariant();
+        return key.Length > EndpointMaxLength ? key[..EndpointMaxLength] : key;
+    }
 
     /// <summary>Subscription สถานะนี้ถูกปฏิเสธทุกคำขอ (อ่าน+เขียน) หรือไม่</summary>
     private static bool IsInactive(SubscriptionStatus status) =>

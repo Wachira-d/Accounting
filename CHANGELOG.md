@@ -3719,3 +3719,18 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม S — ความพร้อมก่อนเปิดบังคับแพ็กเกจบนหน้าเว็บ · คำตัดสินข้อ 14:
+- **สองสวิตช์ขัดกัน**: ด่านบริษัทถูกระงับ/หมดอายุเคยอ่าน config `Subscription:Enforcement:Mode` (LogOnly) ขณะที่การตัดสินฟีเจอร์อ่านสวิตช์แอดมิน
+  ⇒ กดบังคับแล้วบริษัทที่ถูกระงับยังเขียนได้ (silent no-op) · ตอนนี้ `Helpers/SubscriptionEnforcementResolver` ตัวเดียว (middleware + หน้าแอดมิน):
+  สวิตช์แอดมินชนะ · `Subscription:Enforcement:EmergencyOverride` = override ฉุกเฉินเท่านั้น (ค่าเพี้ยน = Shadow + เตือน) · คีย์เดิมไม่มีผล (เตือนให้ลบ) ·
+  `SubscriptionGatePolicy.WriteGateModeFor` (โหมดเงาตัดสินแบบบังคับ · partner = LogOnly เดิมจนกว่าจะบังคับ) · หน้าแอดมินแสดง "โหมดที่มีผลจริง + เพราะอะไร"
+  และ PUT ตอบ "บันทึกแล้วแต่ยังไม่มีผล" เมื่อ override ทับ · ลบ `ParseWriteMode`
+- **FreeTrial**: `SubscriptionTrialReadiness.ResolveFeatures` ใน `ResolveGateOverlayAsync` — ลูกค้าทดลอง/ฟรีที่สำเนาฟีเจอร์ว่างใช้ข้อมูลแพ็กเกจ ·
+  precheck มี "ความพร้อมของแพ็กเกจทดลอง/ฟรี" (`CheckTemplate`) · รายงานเงาสรุป "ลูกค้าทดลองใช้ (จะ) ถูกบล็อกกี่ครั้งเพราะอะไร" (`SummarizeTrialBlocks`)
+- **รายงานเงา**: คีย์แถว + endpoint (route template ไม่มี id) · `BlockedCount` ถูกบล็อกจริง (หน้าเว็บหลังบังคับ) แยกจาก `HitCount` · สถานะ subscription ·
+  ตัดแถวเก่า 90 วัน (`PruneAsync`) · migration: 3 คอลัมน์ + ถอด unique 3 คอลัมน์ → `IX_SubscriptionGateShadowHits_KeyV2`
+- **D-P3** `/settlement` → `BankReconciliation` (RouteFeatureMap + เมนู 2 รายการ) · **D-P5** `SettlementPermissionScope.CandidatesHiddenReason/HideCandidates`
+  (View อย่างเดียวไม่เห็นผู้สมัคร/ยอดค้าง + เหตุผล) · **D-P2** verify แล้ว (266acad2)
+- **ค่าตั้งต้นยังเป็น Shadow** · เทสต์ `SubscriptionEnforcementResolverTests` · `SubscriptionTrialReadinessTests` · TEST_PLAN SUB-G13..G20 · required_call_site +8/ปรับ 2
+  · รายงาน + checklist เจ้าของ `erp-review/2026-09-29/team-S.md` — commit <pending>)_

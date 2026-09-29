@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **363 ไฟล์ · 3,458 `[Fact]` + 523 `[Theory]` (2,302 `InlineData`)** ณ 2026-09-28 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **365 ไฟล์ · 3,473 `[Fact]` + 532 `[Theory]` (2,352 `InlineData`)** ณ 2026-09-29 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4870,9 +4870,17 @@ TenantAccessMiddleware ใช้ตัวหาเดียวกัน) · `own
 | SUB-G04 | partner ส่ง `X-Company-Id` ของบริษัท FreeTrial เรียก `/payroll` ขณะสวิตช์ = Off หรือ Shadow | 403 เหมือนเดิม (คำขอแบบ header บังคับเสมอ — ห้ามหลวมลง) |
 | SUB-G05 | ผู้ใช้บริษัท A (FreeTrial) ส่ง `X-Company-Id` ของบริษัท B (Enterprise) กับ route `/api/companies/{A}/payroll` | 403 ด้วยแพ็กเกจของ A (route ชนะ) — เดิมตัดสินด้วยแพ็กเกจของ B |
 | SUB-G06 | subscription ของบริษัทถูกระงับ (Suspended) · สวิตช์ = Shadow · เปิดแดชบอร์ด | หน้าโหลดได้ · ผลโหมดเงา "การสมัครสมาชิกถูกยกเลิก/ระงับ — จะถูกบล็อกทุกคำขอ" · Enforce แล้ว = 403 `SUBSCRIPTION_INACTIVE` ทุกคำขอเว็บของบริษัทนั้น (เส้น `/api/subscription/*` ยังใช้ได้ — ต่ออายุได้) |
-| SUB-G07 | บริษัทถูกแอดมินระงับ (Company.Status = Suspended) · config `Subscription:Enforcement:Mode` = LogOnly · สวิตช์ = Shadow · กดบันทึกเอกสาร | ผ่าน · ผลโหมดเงาเป็นป้าย "log อย่างเดียว" (WouldBlock=false) · config = Enforce + สวิตช์ = Enforce ⇒ POST ได้ 403 `COMPANY_SUSPENDED` · GET ยังดูได้ |
+| SUB-G07 | บริษัทถูกแอดมินระงับ (Company.Status = Suspended) · สวิตช์ = Shadow · กดบันทึกเอกสาร | ผ่าน · รายงานเงามีแถว "บริษัทถูกระงับ — จะถูกบล็อกเฉพาะการสร้าง/แก้ไข" **ป้ายจะถูกบล็อก** (รอบ 200: ไม่มี "log อย่างเดียว" อีก) · สวิตช์ = Enforce (config เดิม `Subscription:Enforcement:Mode` = LogOnly ยังอยู่ก็ตาม) ⇒ POST ได้ 403 `COMPANY_SUSPENDED` · GET ยังดูได้ · `SubscriptionEnforcementResolverTests.แอดมินกดบังคับ_configเดิมLogOnly_…` |
 | SUB-G08 | หน้าแอดมิน → "คำนวณ" ตรวจล่วงหน้า | สรุป: ถูกบล็อกทุกคำขอ / ถูกบล็อกการเขียน / ยังไม่มีแพ็กเกจ · ตารางฟีเจอร์ที่ขาด + เส้นทาง · รายบริษัทเฉพาะที่มีผลกระทบ · ก่อนหน้า/ถัดไปทีละ 200 |
 | SUB-G09 | เปลี่ยนสวิตช์เป็น Enforce | confirm บอกจำนวนบริษัทที่จะถูกบล็อก · บันทึกแล้ว log Warning + audit ของ SiteSettings (old/new) · ส่ง `{mode:"2"}` / `{}` / `{mode:"x"}` = 400 "โหมดต้องเป็น Off, Shadow หรือ Enforce" |
 | SUB-G10 | เรียก `PUT /api/admin/subscription-enforcement/mode` ด้วย API key / ผู้ใช้ที่ไม่ใช่ SystemAdmin | 403 |
 | SUB-G11 | ลบตาราง `SubscriptionGateShadowHits` ชั่วคราว (จำลองตารางพัง) แล้วใช้เว็บในโหมดเงา | เว็บใช้งานได้ปกติ (fail-open · log Warning) · หน้าแอดมินแจ้ง "อ่านตารางผลโหมดเงาไม่ได้" |
 | SUB-G12 | `/api/companies/{id}/dimensions/branches` บริษัทที่ไม่มี CostCenter · สวิตช์ = Enforce | ผ่าน (§86/4 รหัสสาขา — ห้าม gate) · `/dimensions/cost-centers` = 403 |
+| SUB-G13 | (รอบ 200 ข้อ 14) ตั้ง env `Subscription__Enforcement__EmergencyOverride=Off` แล้วเริ่มระบบใหม่ · สวิตช์ = Enforce | หน้าเว็บไม่ถูกตรวจ · หน้าแอดมินกรอบ "โหมดที่มีผลจริง: ปิด (Off) — เพราะ config … override ฉุกเฉิน" สีเหลือง + "สวิตช์ที่บันทึกไว้ … ยังไม่มีผล" · กดบันทึกสวิตช์ ⇒ toast แดง "บันทึกสวิตช์เป็น … แล้ว แต่ยังไม่มีผล" · ลบ env แล้วเริ่มใหม่ ⇒ กลับเป็น Enforce · partner ที่ส่ง header ยังได้ 403 ฟีเจอร์ตลอด |
+| SUB-G14 | override = `enfroce` (พิมพ์ผิด) | โหมดที่มีผลจริง = โหมดเงา · คำเตือน "ไม่รู้จัก" บนหน้าแอดมิน · ไม่มีใครถูกบล็อก |
+| SUB-G15 | ยังตั้ง config เดิม `Subscription:Enforcement:Mode` ไว้ (ค่าใดก็ได้) | ไม่มีผลต่อการตัดสิน · หน้าแอดมินเตือน "เลิกใช้แล้ว — ลบคีย์นี้ออก" |
+| SUB-G16 | บริษัท Free Edition (FreeTrial ฟรีถาวร) เปิด `/settlement/batches` และ `/bank/accounts` ในโหมดเงา | ผ่าน · รายงานเงา 2 แถวแยก endpoint (`api/companies/{companyid}/settlement/batches` · `…/bank/accounts`) เหตุ "BankReconciliation ไม่อยู่ในแพ็กเกจ" · การ์ด "ลูกค้าทดลองใช้" นับ 1 บริษัท · เมนู "รอบโอนเงินจากแพลตฟอร์ม" ขึ้นกุญแจ (D-P3) |
+| SUB-G17 | แอดมินแก้แพ็กเกจ Starter ให้ฟีเจอร์ช่วงทดลองว่าง แล้วกด "คำนวณ" | ส่วน "ความพร้อมของแพ็กเกจทดลอง / ฟรี" ขึ้นป้ายแดง "ว่าง" + ข้อความ "ลูกค้าจะถูกบล็อกทุกเส้นทางที่ gate (รวมรายงานภาษี)" · subscription ทดลองที่สำเนาว่างใช้ฟีเจอร์จากแพ็กเกจ (ถ้าแพ็กเกจไม่ว่าง) — `SubscriptionTrialReadinessTests` |
+| SUB-G18 | สวิตช์ = Enforce · บริษัท Free Edition เปิด `/payroll` | 403 · รายงานแถวนั้น "ถูกบล็อกจริง" +1 · การ์ดลูกค้าทดลอง "ถูกบล็อกจริง (ครั้ง)" +1 · สลับกลับ Shadow = หยุดบล็อกทันที (ย้อนได้) |
+| SUB-G19 | แถวรายงานที่ไม่ถูกพบซ้ำ > 90 วัน แล้วเปิดหน้าแอดมิน | ถูกตัดทิ้ง · สรุป "ตัดแถวเก่าครั้งนี้ N แถว" |
+| SUB-G20 | (D-P5) ผู้ใช้ที่มีแค่ `Settlement.View` เปิดรอบโอนที่มีบรรทัดรอตัดสิน | ไม่เห็นผู้สมัคร/เลขที่/ยอดค้าง · แบนเนอร์ 🔒 บอกสิทธิ์ที่ต้องขอ · API `batch.lines[].matchCandidates = []` + `candidatesHiddenReason` · ผู้มี Import หรือ Post เห็นครบ (ทิศตรงข้าม) |
