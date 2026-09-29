@@ -3895,4 +3895,4 @@ _2026-09-29 รอบ 200 ทีม RF — แก้ผลฝ่ายค้า�
   `roles.html` ปุ่มสร้าง Role เริ่มต้นขึ้นเฉพาะเจ้าของ
 - **R200-X6 (P3)** รายงาน ปกส. บนจอใช้ `SsoInsuredNumber.ForDisplay` (ตัวตัดสินเดียวกับไฟล์ สปส.1-10) · **R200-X7** `Math.Round` ในโมดูลเงินเดือนระบุ AwayFromZero ครบ
   (11 จุด · checker ใหม่ `tools/payroll_rounding_check.py`) · แก้ข้อความ D-08 ใน team-R.md
-- เทสต์ `TeamRFRound200Tests` + ปรับ `AnomalyExplainVerdictTests` · required_call_site +14 แถว/ปรับ 3 + ชนิดกติกา `forbid_lit` — commit <pending>)_
+- เทสต์ `TeamRFRound200Tests` + ปรับ `AnomalyExplainVerdictTests` · required_call_site +14 แถว/ปรับ 3 + ชนิดกติกา `forbid_lit` — commit ff927ca9)_
