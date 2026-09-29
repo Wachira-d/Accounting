@@ -29,6 +29,21 @@ public static class OcrContactCreateLock
     /// (ห้ามสร้างซ้ำ) · ไม่พบ = สร้างได้ · ผู้เรียกตัดสิน "ต้องสร้าง" มาแล้วก่อนล็อก ดังนั้นแถวที่เจอตอนนี้คือแถวที่<b>เพิ่งเกิด</b></summary>
     public static Guid? ReuseAfterLock(ContactKeyMatch afterLock) => afterLock.ContactId;
 
+    /// <summary>
+    /// **เติมเลขผู้เสียภาษีลงผู้ติดต่อแถวเดิมได้ไหม หลังได้ล็อกแล้ว** (รอบ 200 ทีม K2 · ฝ่ายค้าน K R6) — เส้น "ผูกเลขภาษีเข้าแถวเดิม" (backfill ตอนสแกน ·
+    /// <c>AdoptTaxId</c> ฝั่งขาย · backfill ฝั่งซื้อตอนสร้างเอกสาร) ก็สร้างคีย์ (เลข+สาขา) ขึ้นมาเหมือนการสร้างแถวใหม่ ⇒ ต้องอยู่ใต้ล็อกเดียวกับ K-5 ·
+    /// ถามคีย์ซ้ำแล้วพบแถว<b>อื่น</b>ที่ถือคีย์นี้อยู่แล้ว (อีกคำขอเพิ่งสร้าง หรือมีอยู่ก่อน) = ห้ามเติม (ได้แถวคีย์ซ้ำ) · ไม่พบ/พบแถวตัวเอง = เติมได้
+    /// </summary>
+    /// <param name="foundAfterLock">ผลของการถามคีย์ซ้ำหลังได้ล็อก (<see cref="ReuseAfterLock"/>)</param>
+    /// <param name="adoptingRowId">แถวที่กำลังจะรับเลข</param>
+    public static bool MayAdoptAfterLock(Guid? foundAfterLock, Guid adoptingRowId)
+        => foundAfterLock == null || foundAfterLock == adoptingRowId;
+
+    /// <summary>ข้อความลง ProcessingNotes เมื่อไม่เติมเลขลงแถวเดิมเพราะมีแถวอื่นถือคีย์นี้แล้ว — ผู้ใช้เห็นว่าทำไมผู้ติดต่อยังไม่มีเลข และไปรวมที่หน้าผู้ติดต่อได้</summary>
+    public static string AdoptSkippedNote(string? taxId, string? branchCode, string? rowName)
+        => $"[Enrich] ไม่เติมเลขผู้เสียภาษี {ThaiTaxId.Normalize(taxId)} ให้ '{rowName}' — มีผู้ติดต่ออีกแถวถือเลขนี้"
+           + $" {TaxBranchCode.Label(branchCode)} อยู่แล้ว (อาจสร้างพร้อมกันจากอีกคำขอ) · ตรวจ/รวมผู้ติดต่อซ้ำที่หน้าผู้ติดต่อ";
+
     /// <summary>ข้อความลง ProcessingNotes เมื่อใช้แถวที่อีกคำขอเพิ่งสร้าง — ผู้ใช้เห็นว่าทำไมไม่มี "[Auto-Create]" ในใบนี้</summary>
     public static string ReusedNote(string? taxId, string? branchCode)
         => $"[Auto-Create] ไม่สร้างผู้ติดต่อซ้ำ — มีคำขออื่น (อัปโหลดพร้อมกัน) สร้างผู้ติดต่อของเลข {ThaiTaxId.Normalize(taxId)} "

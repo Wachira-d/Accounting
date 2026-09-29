@@ -145,6 +145,28 @@ public static class OcrVendorBranchContact
         => vendorKeyChanged && !userPickedContact && !documentCreated && !salesSide;
 
     /// <summary>
+    /// **ผู้ใช้ลงมือกับกุญแจผู้ขายในคำแก้นี้ไหม** — ตัวป้อน <c>vendorKeyChanged</c> ของ <see cref="ShouldRedecideOnCorrection"/>
+    /// (รอบ 200 ทีม K2 · ฝ่ายค้าน K R1): นับเมื่อ (ก) รหัสสาขาเปลี่ยนจากที่เก็บไว้ (<see cref="OcrCorrectedFieldList.BranchChanged"/>) ·
+    /// (ข) ผู้ใช้<b>พิมพ์ยืนยัน</b>รหัสสาขา (<c>VendorBranchConfirmed == true</c>) แม้ค่าเท่าเดิม — ข้อความ <see cref="OcrVendorBranchOutcome.OtherBranchRow"/>
+    /// สั่งให้ผู้ใช้ "พิมพ์รหัสสาขาใหม่" เองเพื่อยืนยัน · เดิมข้อ (ข) ไม่นับ ⇒ ปุ่ม "แก้ในฟอร์มก่อน" ได้แถวสำนักงานใหญ่ ขณะที่ปุ่ม "สร้างเอกสาร"
+    /// (ซึ่งอ่าน "VendorBranchCode" ใน <c>UserCorrectedFields</c> — นับการยืนยันอยู่แล้ว) ได้แถวสาขา = สองเส้นให้ผู้ติดต่อคนละแถวบนใบเดียว ·
+    /// (ค) เลขผู้เสียภาษีเปลี่ยน (เทียบตัวเลขล้วน) · ส่งค่าเดิมกลับมาโดยไม่ยืนยัน = ไม่นับ (K-1)
+    /// </summary>
+    public static bool VendorKeyTouched(string? submittedBranch, string? storedBranch, bool? branchConfirmed,
+        string? submittedTaxId, string? storedTaxId)
+        => branchConfirmed == true
+           || (submittedBranch != null && OcrCorrectedFieldList.BranchChanged(submittedBranch, storedBranch))
+           || (submittedTaxId != null && ThaiTaxId.Normalize(submittedTaxId) != ThaiTaxId.Normalize(storedTaxId));
+
+    /// <summary>
+    /// **สแกนนี้ลงบัญชีไปแล้วหรือยัง** (ตัวป้อน <c>documentCreated</c> ของ <see cref="ShouldRedecideOnCorrection"/>) — รอบ 200 ทีม K2 · ฝ่ายค้าน K R5:
+    /// เดิมดูแค่ <c>CreatedDocumentId</c> ⇒ สแกนที่ลงเป็น JE อย่างเดียว (<c>CreatedJournalEntryId</c>) ยังถูกเปลี่ยนผู้ติดต่อได้เมื่อแก้สาขา ⇒ สแกนกับรายการ
+    /// ที่ลงแล้วชี้ผู้ติดต่อคนละแถว · ลงแล้วทางใดทางหนึ่ง = แก้ที่ตัวรายการ ไม่ใช่ที่ผลสแกน
+    /// </summary>
+    public static bool ScanAlreadyPosted(Guid? createdDocumentId, Guid? createdJournalEntryId)
+        => createdDocumentId.HasValue || createdJournalEntryId.HasValue;
+
+    /// <summary>
     /// ชื่อของผู้ติดต่อแถวใหม่ของสาขา — <b>ชื่อนิติบุคคล</b> (ทุกสาขาของเลขเดียวกันคือนิติบุคคลเดียว): ทะเบียนก่อน →
     /// ชื่อของแถวแม่แบบ (ตัดป้ายสาขาท้ายชื่อออก — "(สำนักงานใหญ่)" ไม่ใช่ชื่อของสาขาอื่น) → ชื่อที่อ่านจากกระดาษ ·
     /// ชื่อสาขาเก็บที่ <c>Contact.BranchName</c> ไม่ต่อท้ายชื่อ

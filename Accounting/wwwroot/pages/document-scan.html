@@ -1439,8 +1439,23 @@
             name: x.name ?? x.Name,
             taxSection: x.taxSection ?? x.TaxSection,
           })).filter(x => x.code);
-        } catch { this._whtIncomeTypes = []; }
+        } catch {
+          // รอบ 200 ทีม K2 (C-08): **ห้ามแคชความล้มเหลว** — เดิมเก็บ [] (truthy) ⇒ dropdown เหลือ "— ไม่ระบุ —" ทั้ง session
+          // แล้วทุกการบันทึกส่ง "" = ล้างประเภทเงินได้ที่เคยตั้งไว้ · คงเป็น null ให้เปิดรีวิวครั้งหน้าโหลดใหม่
+          this._whtIncomeTypes = null;
+          return [];
+        }
         return this._whtIncomeTypes;
+      },
+
+      /// ค่าช่อง "ประเภทเงินได้ (ม.40)" ที่จะส่งไปกับคำแก้ (รอบ 200 ทีม K2 · C-08) — null = ไม่แตะ · "" = ผู้ใช้เลือก "— ไม่ระบุ —" เอง (ล้างค่า)
+      /// เดิมส่ง `v() ?? ''` เสมอ ⇒ ตารางโหลดไม่ได้ (มีแต่ตัวเลือกว่าง) หรือรหัสเดิมไม่อยู่ในตัวเลือก = **ล้างรหัสที่เก็บไว้เงียบ ๆ**
+      /// ⇒ บรรทัดเอกสารได้ IncomeTypeCode = null ⇒ 50 ทวิ/ภ.ง.ด.3/53 ตกไปประเภท "8" · ส่ง "" ได้เฉพาะเมื่อผู้ใช้แตะช่องนี้เอง
+      _whtIncomeTypePayload(el) {
+        if (!el) return null;
+        const val = el.value || '';
+        if (val) return val;
+        return el.dataset && el.dataset.userTouched === '1' ? '' : null;
       },
 
       /// ผู้ใช้ยอมรับอัตราที่กฎหมายกำหนด — ระบบไม่ติ๊กให้เอง (หักเกินก็ผิด)
@@ -1538,6 +1553,8 @@
             ...pick('PAY-SETTLED'),
             // รอบ 195 ฝ่ายค้าน C1 — VAT ไม่มีบนกระดาษ (ระบบคำนวณเอง · ข้อความจากเซิร์ฟเวอร์ Helpers/OcrHeaderVatEvidence)
             ...pick('VAT-DERIVED'),
+            // รอบ 200 ทีม K2 (C-09) — สกุลเงินไม่แน่ใจ (ข้อความจากเซิร์ฟเวอร์ Helpers/OcrCurrencyEvidence)
+            ...pick('CURRENCY-UNSURE'),
             ...skip,
           ],
         };
@@ -2145,26 +2162,20 @@
 
         const cid = Layout.getCompanyId();
         try {
-          const res = await fetch(`/api/companies/${cid}/ocr/${scanId}/register-asset`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            },
-            body: JSON.stringify({
-              lineIndex: candidate.lineIndex,
-              assetCode: code,
-              name,
-              description: candidate.description,
-              category: candidate.suggestedCategory,
-              purchaseCost: cost,
-              salvageValue: salvage,
-              usefulLifeMonths: months,
-              depreciationMethod: 1,  // 1 = StraightLine (enum DepreciationMethod)
-            }),
+          // รอบ 200 ทีม K2 (C-07): ผ่าน API.request ตัวกลาง — เซสชันหมดอายุพาไป login · ฟีเจอร์นอกแพ็กเกจพาไปหน้าอัปเกรด ·
+          // ตอบไม่ใช่ JSON บอกชัด (เดิม fetch ดิบแล้ว r.json() ⇒ toast แดงแล้วค้างหน้าเดิม)
+          const data = await API.post(`/api/companies/${cid}/ocr/${scanId}/register-asset`, {
+            lineIndex: candidate.lineIndex,
+            assetCode: code,
+            name,
+            description: candidate.description,
+            category: candidate.suggestedCategory,
+            purchaseCost: cost,
+            salvageValue: salvage,
+            usefulLifeMonths: months,
+            depreciationMethod: 1,  // 1 = StraightLine (enum DepreciationMethod)
           });
-          const data = await res.json();
-          if (!data.success) { Layout.toast(data.message || 'ลงทะเบียนล้มเหลว', 'error'); return; }
+          if (!data || !data.success) { Layout.toast(data?.message || 'ลงทะเบียนล้มเหลว', 'error'); return; }
           Layout.toast(data.message || 'ลงทะเบียนเรียบร้อย — JE balanced', 'success');
           // Refresh the review modal so the candidate disappears from the list
           await this.openReview(scanId);
@@ -3455,10 +3466,9 @@
 
       _applyAiCorrections(c) {
         // Apply each correction to the corresponding form field. The
-        // review-modal IDs use the rev* prefix (see line 1538+
-        // renderReviewForm). Buyer-name/tax-id fields aren't in the
-        // current review form — when AI returns them we surface as
-        // a note in the verdict panel instead of writing them.
+        // review-modal IDs use the rev* prefix (renderReviewForm).
+        // รอบ 200 ทีม K2 (C-05): ชื่อ/เลขผู้ซื้อมีช่องในฟอร์มแล้ว (revBuyerName · revBuyerTaxId ตั้งแต่ E-OCR-05) และเซิร์ฟเวอร์
+        // ตรวจคำตอบสองช่องนี้แล้ว (OcrReviewGuard: mod-11 + ต้องปรากฏบนกระดาษ) — เดิมคอมเมนต์ตรงนี้บอกว่า "ไม่มีช่อง" แล้วทิ้งคำตอบเงียบ
         // ── ด่านกันค่าที่ถูกปิดบังเขียนทับข้อมูลจริง ──
         //
         // ตัวกรอง PII ฝั่งเซิร์ฟเวอร์แปลงเลข 13 หลักเป็น "0xxxxxxxxx5" ก่อนส่งให้
@@ -3485,6 +3495,8 @@
         set('revDate', c.document_date);
         set('revVendorName', c.vendor_name);
         set('revVendorTaxId', c.vendor_tax_id);
+        set('revBuyerName', c.buyer_name);
+        set('revBuyerTaxId', c.buyer_tax_id);
         set('revSubTotal', c.sub_total);
         set('revVatAmount', c.vat_amount);
         set('revTotalAmount', c.total_amount);
@@ -3550,7 +3562,7 @@
           whtRate: f('revWhtRate'),
           // ⚠️ เพิ่มช่องใน request DTO ไม่ได้แปลว่าผู้ใช้กรอกได้ — ต้องไล่ให้ครบ
           // ฟอร์ม → payload builder → DTO → persist (กฎเหล็ก #4 B)
-          whtIncomeTypeCode: v('revWhtIncomeType') ?? '',
+          whtIncomeTypeCode: this._whtIncomeTypePayload(document.getElementById('revWhtIncomeType')),
           notes: document.getElementById('revUserNotes')?.value ?? '',
           // ⚠️ 3 ช่องนี้ถูกเพิ่มใน OcrCorrectionRequest + persist ฝั่งเซิร์ฟเวอร์
           // ไปแล้ว แต่ payload builder ตัวเดียวของหน้านี้ไม่เคยส่งมาเลย
@@ -3776,10 +3788,11 @@
         const btn = document.getElementById('reviewCreateJeBtn');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก JE...';
         try {
-          const r = await fetch(`/api/companies/${cid}/ocr/${this._reviewScan.id}/create-journal-entry`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          // รอบ 200 ทีม K2 (C-07): ผ่าน API.request ตัวกลาง (401 → login · 403 แพ็กเกจ → หน้าอัปเกรด · ไม่ใช่ JSON บอกชัด) —
+          // ตัวกลางโยน Error(ข้อความเซิร์ฟเวอร์) เมื่อ HTTP ไม่ ok ⇒ ด่านกันซ้ำอ่านจาก err.message (รูปเดียวกับปุ่มสร้างเอกสาร)
+          let j;
+          try {
+            j = await API.post(`/api/companies/${cid}/ocr/${this._reviewScan.id}/create-journal-entry`, {
               debitAccountCode: debit,
               creditAccountCode: credit,
               description: (document.getElementById('revVendorName')?.value || '').trim() || null,
@@ -3787,9 +3800,11 @@
               postVat: true,
               postWht: true,
               allowDuplicate: allowDuplicate,
-            }),
-          });
-          const j = await r.json();
+            });
+          } catch (postErr) {
+            j = { success: false, message: postErr.message };
+          }
+          if (!j) return;   // 401 — ตัวกลางพาไปหน้า login แล้ว
           // ด่านกันซ้ำเพิ่งถูกต่อสายเข้าเส้น JE (เดิมไม่มีเลย — ผลตรวจ T1-14)
           // ⇒ ต้องมีทางยืนยันเหมือนเส้นสร้างเอกสาร ไม่ใช่ตันที่ toast สีแดง
           if (!j.success && !allowDuplicate && this._isDuplicateBlock({ message: j.message })) {
@@ -4551,14 +4566,21 @@
         const currency = scan.currency || scan.detectedCurrency || 'THB';
         // (pricesIncludeVat คำนวณไว้ด้านบนแล้ว ก่อน reconcile block)
 
+        // คู่ค้าของฟอร์ม: **เซิร์ฟเวอร์ตัดสินตามฝั่งเอกสาร** (line-preview · รอบ 200 ทีม K2 · C-02) — เดิมส่งผู้ขายเสมอ ⇒ ใบฝั่งขาย
+        // เปิดฟอร์มรายได้พร้อมชื่อบริษัทเราเอง และชื่อ/เลขผู้ซื้อที่เพิ่งตรวจหาย · เซิร์ฟเวอร์รุ่นก่อน (ไม่มี counterparty) ⇒ ฝั่งซื้อใช้ผู้ขายตามเดิม
+        // ฝั่งขายปล่อยว่างให้ผู้ใช้เลือก (ห้ามเดาเป็นผู้ขาย = เรา)
+        const cp = preview.counterparty
+          || (side === 'expense'
+            ? { contactId: scan.matchedContactId, name: scan.extractedVendorName, taxId: scan.extractedVendorTaxId }
+            : {});
         const handoff = {
           source: 'ocr-scan',
           scanId: scan.id,
           side,
           documentType: targetType,
-          contactId: scan.matchedContactId || null,
-          contactName: scan.extractedVendorName || null,
-          contactTaxId: scan.extractedVendorTaxId || null,
+          contactId: cp.contactId || null,
+          contactName: cp.name || null,
+          contactTaxId: cp.taxId || null,
           documentDate: scan.extractedDate || null,
           dueDate,
           paymentDate,

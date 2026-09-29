@@ -127,6 +127,8 @@ public static class OcrScanSnapshot
             // (ตัวชี้วัดคู่ใน Helpers/OcrQualityKpi จะอ่านไม่ได้ทันที)
             nameof(OcrScanResult.UserCorrectedAt),
             nameof(OcrScanResult.UserCorrectedFields),
+            // รอบ 200 ทีม K2 (คำตัดสินข้อ 29): "ผู้ใช้พิมพ์ที่อยู่เอง" เป็นร่องรอยคนแก้ของแถวนี้ — ชุดเดียวกับสองช่องบน
+            nameof(OcrScanResult.VendorAddressUserTyped),
         };
 
     // อ่าน metadata ครั้งเดียวตอนโหลดคลาส — reflection ต่อการเรียกจะช้าเกินไป

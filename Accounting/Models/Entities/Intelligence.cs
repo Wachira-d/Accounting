@@ -221,6 +221,14 @@ public class OcrScanResult : TenantEntity
     /// เพื่อจัดลำดับงานปรับปรุง ไม่ใช่แค่รู้ว่า "ถูกแก้"</summary>
     public string? UserCorrectedFields { get; set; }
 
+    /// <summary>ผู้ใช้<b>พิมพ์เปลี่ยน</b>ที่อยู่ผู้ขายในหน้ารีวิว ตามกติกา baseline (รอบ 200 · คำตัดสินข้อ 29 · ฝ่ายค้าน K R3)
+    ///
+    /// <para>"VendorAddress" ใน <see cref="UserCorrectedFields"/> ของแถวก่อนรอบ 200 มาจากกติกาเดิม "ส่งมา = แก้" (หน้ารีวิวส่งช่องนี้ทุกครั้ง)
+    /// ⇒ แยกไม่ได้ว่าคนพิมพ์จริงไหม · ตัวอ่าน "ที่อยู่ของแถวสาขาใหม่พิสูจน์ได้ไหม" อ่านช่องนี้แทน · แถวเดิม = false = ไม่รู้ ⇒ ไม่นับ
+    /// (ปล่อยที่อยู่ว่าง + ข้อความให้เติม) · ผู้เขียนตัวเดียว: <c>OcrService.SubmitCorrectionAsync</c> ผ่าน
+    /// <c>Helpers/OcrCorrectedFieldList.VendorAddressTyped</c> · เป็นร่องรอยของ<b>การอัปโหลดครั้งนั้น</b> ไม่คัดลอกไปสแกนสำเนา</para></summary>
+    public bool VendorAddressUserTyped { get; set; }
+
     /// <summary>**สมุดที่มาของค่ารายช่อง** — JSON ของ
     /// <c>Helpers/OcrFieldArbiter.ToJson()</c> (สถาปัตยกรรมเป้าหมาย D1)
     ///

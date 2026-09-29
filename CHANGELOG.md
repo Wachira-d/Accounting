@@ -3896,3 +3896,14 @@ _2026-09-29 รอบ 200 ทีม RF — แก้ผลฝ่ายค้า�
 - **R200-X6 (P3)** รายงาน ปกส. บนจอใช้ `SsoInsuredNumber.ForDisplay` (ตัวตัดสินเดียวกับไฟล์ สปส.1-10) · **R200-X7** `Math.Round` ในโมดูลเงินเดือนระบุ AwayFromZero ครบ
   (11 จุด · checker ใหม่ `tools/payroll_rounding_check.py`) · แก้ข้อความ D-08 ใน team-R.md
 - เทสต์ `TeamRFRound200Tests` + ปรับ `AnomalyExplainVerdictTests` · required_call_site +14 แถว/ปรับ 3 + ชนิดกติกา `forbid_lit` — commit ff927ca9)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K2 — แก้ผลฝ่ายค้านทีม K + ข้อ OCR ที่ทีม R ส่งต่อ · รายงาน `erp-review/2026-09-29/team-K2.md`
+- **R1** พิมพ์ยืนยันรหัสสาขาเดิม = ตัดสินผู้ติดต่อใหม่ (`OcrVendorBranchContact.VendorKeyTouched`) · **R5** สแกน JE-only = ลงแล้ว (`ScanAlreadyPosted`) ·
+  **R6** เติมเลขภาษีเข้าแถวเดิมใต้ล็อก K-5 (`OcrContactCreateLock.MayAdoptAfterLock` · 3 เส้น) · **R8** rollback ไม่ชี้ผู้ติดต่อที่ไม่มี (`UndoOcrContactCreateAfterRollback`) · R4/R7 📋
+- **คำตัดสินข้อ 28** WHT ที่คนแก้ในฟอร์มเอกสาร (`OcrPostedTruth.WhtTouched` ใน `SyncScanToPostedDocumentAsync` · sync ย้ายก่อน `TryTrainAsync`) ·
+  **ข้อ 29** คอลัมน์ใหม่ `OcrScanResults.VendorAddressUserTyped` (DEFAULT false · ไม่ backfill = ไม่รู้) แทนการอ่าน "VendorAddress" ใน UserCorrectedFields
+- **C-01** `Helpers/OcrCounterpartyMatch` + `ResolveSalesCounterpartyAsync` · **C-02** `OcrLinePreviewResponse.Counterparty` + handoff ตามฝั่ง · **C-03** ข้อความไทย
+  (`OCR-NO-COUNTERPARTY` · `OCR-SCAN-NOT-COMPLETED`) · **C-05** AI เติมชื่อ/เลขผู้ซื้อ · **C-06** ปิดลูปบทบาทเราบนเส้น 1-click (`OcrAiLabelScope.ImplicitMayRecord`) ·
+  **C-07** สองปุ่มผ่าน `API.post` · **C-08** ประเภทเงินได้ไม่ล้างเงียบ (`_whtIncomeTypePayload` · ไม่แคชความล้มเหลว · sim ใหม่) ·
+  **C-09** `Helpers/OcrCurrencyEvidence` + `[CURRENCY-UNSURE]` (blocking) · **C-10** `AwayFromZero` 13 จุด + `tools/ocr_round_midpoint_check.py`
+- เทสต์ `OcrReview200K2Tests` · sim `tools/wht_income_type_payload_sim.js` · required_call_site +9 แถว/ปรับ 1 · ยังไม่ได้คอมไพล์ — commit fb459244)_

@@ -734,7 +734,9 @@ public class LineBotService : ILineBotService
             Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, Accounting.Helpers.OcrSettlementProposal.PlanTag,
             Accounting.Helpers.OcrSettlementProposal.SettledTag,
             // รอบ 195 ฝ่ายค้าน C1 — VAT ไม่มีบนกระดาษ (blocking tag ต้องมีคำอธิบายบนการ์ดด้วย)
-            Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag };
+            Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag,
+            // รอบ 200 ทีม K2 (C-09) — สกุลเงินไม่แน่ใจ (blocking tag ต้องมีคำอธิบายบนการ์ด)
+            Accounting.Helpers.OcrCurrencyEvidence.UnsureTag };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();

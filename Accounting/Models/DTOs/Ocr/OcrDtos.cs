@@ -191,7 +191,16 @@ public record OcrLinePreviewResponse(
     // รอบ 193 (ฝ่ายค้าน C3): เส้น "แก้ในฟอร์มก่อน" ต้องได้ผลต่างปัดเศษชุดเดียวกับเส้นสร้างเอกสาร (BuildScanLinesAsync) —
     // เดิมไม่มีช่องนี้ ⇒ ฟอร์มคิดใหม่ได้ 5,024.01 ≠ กระดาษ · ยอดชำระจริงส่งเฉพาะเอกสารตั้งหนี้ฝั่งซื้อ (ใช้เติมหน้าบันทึกการชำระ)
     decimal RoundingAdjustment = 0m,
-    decimal? ActualPaidAmount = null);
+    decimal? ActualPaidAmount = null,
+    // รอบ 200 ทีม K2 (C-02): คู่ค้าของฟอร์มตามฝั่งเอกสาร — เซิร์ฟเวอร์ตัดสิน (ฝั่งขาย = ผู้ซื้อบนกระดาษ · ฝั่งซื้อ = ผู้ขาย) · null = เซิร์ฟเวอร์รุ่นก่อน
+    OcrLinePreviewCounterparty? Counterparty = null);
+
+/// <summary>คู่ค้าที่ปุ่ม "แก้ในฟอร์มก่อน" ต้องเติมลงฟอร์ม (รอบ 200 ทีม K2 · ผลตรวจรอบ 189 C-02) — เดิมหน้าเว็บส่ง<b>ผู้ขาย</b>เสมอ
+/// ⇒ ใบฝั่งขายเปิดฟอร์มรายได้พร้อมชื่อบริษัทเราเอง และชื่อ/เลขผู้ซื้อที่ผู้ใช้เพิ่งตรวจไม่ถูกส่งไป</summary>
+/// <param name="ContactId">ผู้ติดต่อที่ตัดสินได้ (ฝั่งขาย: ตัวหาเดียวกับเส้นสร้างเอกสาร แบบอ่านอย่างเดียว · null = ยังไม่มีในระบบ ให้ผู้ใช้เลือก/สร้าง)</param>
+/// <param name="Role">"Buyer" (ฝั่งขาย) · "Vendor" (ฝั่งซื้อ)</param>
+public record OcrLinePreviewCounterparty(
+    Guid? ContactId, string? Name, string? TaxId, string? BranchCode, string? Address, string Role);
 
 /// <param name="SourceItemIndex">ลำดับของ <c>ExtractedItems[i]</c> ที่บรรทัดนี้มาจาก
 /// — หน้า review ใช้จับคู่กลับไปยังแถวในตาราง "รายการที่อ่านได้" เพื่อโชว์อัตรา VAT

@@ -85,6 +85,15 @@ public static class OcrCorrectedFieldList
         return fields.ToArray();
     }
 
+    /// <summary>
+    /// **"ผู้ใช้พิมพ์ที่อยู่ผู้ขายเอง" ตามกติกาใหม่ไหม** (รอบ 200 ทีม K2 · คำตัดสินข้อ 29 · ฝ่ายค้าน K R3) — ผู้เขียน <c>OcrScanResult.VendorAddressUserTyped</c>
+    /// <para>นับเฉพาะเมื่อคำขอนี้มี baseline ของที่อยู่ (<see cref="OcrCorrectionBaseline.VendorAddress"/>) <b>และ</b> <see cref="From"/> นับ "VendorAddress" —
+    /// ไม่มี baseline = กติกาเดิม "ส่งมา = แก้" ⇒ แยกไม่ได้ว่าคนพิมพ์จริง ⇒ <c>false</c> (ไม่รู้ ≠ ผ่าน · DOCTRINE §1) · ค่าที่เคยเป็น true ไม่ถูกล้างด้วยคำขอ
+    /// ถัดไป (ผู้เรียก OR กับค่าเดิม — การพิมพ์ครั้งก่อนยังเป็นหลักฐาน)</para>
+    /// </summary>
+    public static bool VendorAddressTyped(IReadOnlyCollection<string> correctedFields, OcrCorrectionBaseline? before)
+        => before?.VendorAddress != null && correctedFields.Contains("VendorAddress", StringComparer.Ordinal);
+
     /// <summary>รหัสสาขาที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — เทียบหลัง normalize 5 หลัก ("5" ≡ "00005") · ว่างทั้งคู่ = เท่ากัน ·
     /// ว่าง ↔ "00000" = <b>ต่างกัน</b> (ว่าง = "ไม่รู้" ≠ สำนักงานใหญ่ — ผู้ใช้เติม 00000 ลงช่องว่างคือการตอบ) ·
     /// ผิดรูป ("8A") เทียบข้อความตรงตัว</summary>

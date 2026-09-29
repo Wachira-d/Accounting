@@ -164,6 +164,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (K-11) สาขาผู้ซื้อ: `BranchCodeExtractor` อ่านบนข้อความที่กลบป้ายฉบับ (`OcrPartyLabels.MaskCopyNoise`) + ประโยคประกาศสาขาผู้ออกใบ
     (`OcrIssuerBranch.MaskStatements`) — ใบ Makro ได้ผู้ซื้อ 00000 (เดิม 00005 ของผู้ขาย) · จุดแบ่งฝั่งผู้ขายไม่ขยับ ·
     (r199 A-5) ผูก PO อัตโนมัติเทียบเลขบนกระดาษกับ PO ค้าง**ทั้งหมด** (`Helpers/OcrOpenPurchaseOrders.Plan`) · "ค้าง N ใบ" = จำนวนจริง · แสดงไม่เกิน 5 ใบ (ใบที่ถูกอ้างก่อน)
+    · **รอบ 200 ทีม K2 (`erp-review/2026-09-29/team-K2.md` · ฝ่ายค้าน K R1–R8 · คำตัดสินข้อ 28/29 · ผลตรวจรอบ 189 C-01..C-10)**:
+    (R1) "พิมพ์ยืนยันรหัสสาขาเดิม" (`VendorBranchConfirmed`) ก็ตัดสินผู้ติดต่อใหม่ในเส้นแก้ผลสแกน — `OcrVendorBranchContact.VendorKeyTouched` ⇒ "แก้ในฟอร์มก่อน" กับ
+    "สร้างเอกสาร" ได้แถวเดียวกัน · (R5) สแกนที่ลง JE อย่างเดียวถือว่าลงแล้ว (`ScanAlreadyPosted`) ไม่เปลี่ยนผู้ติดต่อ ·
+    (ข้อ 29) "ผู้ใช้พิมพ์ที่อยู่เอง" ของแถวสาขาใหม่อ่านจาก `OcrScanResult.VendorAddressUserTyped` (ผู้เขียน `OcrCorrectedFieldList.VendorAddressTyped` — เฉพาะกติกา
+    baseline) · แถวก่อนรอบ 200 = false = ไม่รู้ ⇒ ที่อยู่ว่าง + ข้อความให้เติม (ไม่แก้ข้อมูลเก่า) ·
+    (R6) การเติมเลขผู้เสียภาษีเข้าแถวเดิม (backfill ตอนสแกน · `AdoptTaxId` ฝั่งขาย · backfill ฝั่งซื้อตอนสร้างเอกสาร) ถามคีย์ซ้ำใต้ล็อก K-5
+    (`OcrContactCreateLock.MayAdoptAfterLock`) — มีแถวอื่นถือคีย์แล้ว ⇒ ไม่เติม + `[Enrich] ไม่เติมเลขผู้เสียภาษี …` ·
+    (R8) ธุรกรรมสร้างผู้ติดต่อของสแกน rollback ⇒ `UndoOcrContactCreateAfterRollback` คืน `MatchedContactId` เดิม + ถอดแถวที่ไม่มีจริง + เขียนแถวสแกนใหม่ทั้งแถว ·
+    (C-01) ลูกค้าฝั่งขาย: `ResolveSalesCounterpartyAsync` ตัวเดียว (ใบต้นทาง → คีย์เลขภาษี+สาขา → ชื่อผ่าน `Helpers/OcrCounterpartyMatch.PickBuyerByName`:
+    ชื่อเท่ากันหลัง normalize · หรือส่วนหนึ่งของชื่อ**ลูกค้ารายเดียว** · แก่นชื่อ < 4 ตัว/กำกวม = ไม่จับ + `[BUYER]`) · ถอยไป `MatchedContactId` ได้เฉพาะเมื่อผู้ใช้
+    เลือกเองและไม่ใช่บริษัทเรา · (C-02) พรีวิว "แก้ในฟอร์มก่อน" คืน `Counterparty` ตามฝั่ง (ขาย = ผู้ซื้อ · ซื้อ = ผู้ขาย) — หน้าเว็บไม่ส่งผู้ขายเป็นคู่ค้าใบขายอีก ·
+    (C-03) ไม่รู้คู่ค้า/สแกนยังไม่เสร็จ = `BusinessRuleException` ไทย (`OCR-NO-COUNTERPARTY` · `OCR-SCAN-NOT-COMPLETED`) บอกช่องบนหน้ารีวิว ·
+    (C-06) เส้น 1-click ปิดลูป `OurRoleAiFeedbackId` แบบ Implicit (ไม่ทับช่องที่ผู้ใช้แก้เอง — `OcrAiLabelScope.ImplicitMayRecord`) ·
+    (C-09) สกุลเงิน = `Helpers/OcrCurrencyEvidence` (หน้ามีทั้งบาท+ต่างประเทศ ⇒ ดูบรรทัดยอดรวม · ตัดสินไม่ได้ ⇒ บาท + `[CURRENCY-UNSURE]` = blocking tag) ·
+    (C-10) `Math.Round` ทุกจุดใน `OcrService`/`SmartFieldExtractor` = `AwayFromZero` (ล็อกด้วย `tools/ocr_round_midpoint_check.py`)
   - **ชื่อผู้ขายเป็นโลโก้** (รอบ 197 · ใบ Makro "ma ro") — (ก) เลขผู้เสียภาษีที่พิมพ์แบ่งกลุ่มแบบอื่น ("0 10 7 567 00041 4") ที่มีป้ายกำกับ ⇒
     `ThaiTaxId.LooseGroupingPattern` ใน `SmartFieldExtractor.ExtractTaxIdCandidates` (รับเฉพาะตัวมีป้าย) ⇒ `OcrVendorKeyEvidence` พิสูจน์กุญแจได้ ⇒ ทะเบียนชนะ ·
     ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" ถูกกลบใน `OcrPartyLabels` (เดิมนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย) (ข) ชื่อไม่มีรูปนิติบุคคล + เลขนิติบุคคล ⇒
@@ -490,6 +505,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ใครแตะ ⇒ **ไม่เรียน** (ทุกทางเข้ารวม backfill เดินด่านเดียวกัน)
   - ⚠️ **ผลที่ผู้ใช้เห็น**: ผู้ขายบริการประจำที่กระดาษไม่พิมพ์ส่วนหัก จะ**ไม่ถูกเติม
     WHT อัตโนมัติอีก** — ใบมี `WithholdingTaxAmount = 0` + โน้ต `[WHT-SUGGEST]` ให้คนกรอก
+  - **คนแก้ WHT ใน "ฟอร์มเอกสาร" = คำแก้ (รอบ 200 ทีม K2 · คำตัดสินข้อ 28)**: ตอนอนุมัติ `SyncScanToPostedDocumentAsync` เทียบ WHT ของบรรทัดเอกสาร
+    กับ baseline ของสแกน (`HasWht && WhtRate > 0` + `WhtIncomeTypeCode` — ตัวเดียวกับ K-10) ผ่าน `Helpers/OcrPostedTruth.WhtTouched` ⇒ ต่างจริง ⇒ merge
+    `HasWht/WhtRate/WhtIncomeTypeCode` เข้า `UserCorrectedFields` ⇒ `OcrWhtLearningScope` = `UserEdited` · เอกสารที่สร้างจากสแกนโดยไม่มีใครแตะ = ว่าง (ไม่สอนตัวเอง) ·
+    ฝั่งซื้อเท่านั้น · ไม่เขียนค่ากลับลงคอลัมน์ WHT ของสแกน · **ลำดับ: sync สแกน → `VendorIntelligence.TryTrainAsync`** (เดิม train ก่อน sync ⇒ ไม่ทัน)
 
 ### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
 
@@ -3776,7 +3795,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม RF — แก้ฝ่ายค้านทีม R: หัวเอกสาร/CSS ของเทมเพลตผ่านตัวหนี/ตัวตรวจตัวเดียว + ด่านบันทึก 400 + ด่านสิทธิ์ `CompanySettings.Edit` บนเส้นเขียนเทมเพลต (R200-X1 · §6 PDF) · นักเรียนอธิบายรายการผิดปกติตอบได้จริง + คำตอบครูนอกชุดถูกเก็บ (R200-X2/X8 · ตาราง distillation) · แก้กฎอนุมัติไม่ล้างคำอธิบาย/โครงการ (R200-X3) · ใบริบค้างทุกสถานะที่ยังไม่ออกเลขล้างวันรับเงิน (R200-X4) · ไม่ใช่เจ้าของ = 403 (R200-X5) · เลข ปกส. บนจอ = ตัวตัดสินเดียวกับไฟล์ (R200-X6) · Math.Round เงินเดือน AwayFromZero (R200-X7) — commit ff927ca9)_
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม K2 — แก้ผลฝ่ายค้าน K (R1 ยืนยันสาขาเดิม = ตัดสินใหม่ · R5 สแกน JE-only · R6 เติมเลขภาษีใต้ล็อก · R8 rollback ไม่ชี้ผู้ติดต่อที่ไม่มี) · คำตัดสินข้อ 28 (WHT ที่คนแก้ในฟอร์มเอกสารเรียนตอนอนุมัติ · sync ก่อน train) · ข้อ 29 (ธง VendorAddressUserTyped) · C-01/02/03/05/06/07/08/09/10 ของรอบ 189 — `erp-review/2026-09-29/team-K2.md` — commit fb459244)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม RF — แก้ฝ่ายค้านทีม R: หัวเอกสาร/CSS ของเทมเพลตผ่านตัวหนี/ตัวตรวจตัวเดียว + ด่านบันทึก 400 + ด่านสิทธิ์ `CompanySettings.Edit` บนเส้นเขียนเทมเพลต (R200-X1 · §6 PDF) · นักเรียนอธิบายรายการผิดปกติตอบได้จริง + คำตอบครูนอกชุดถูกเก็บ (R200-X2/X8 · ตาราง distillation) · แก้กฎอนุมัติไม่ล้างคำอธิบาย/โครงการ (R200-X3) · ใบริบค้างทุกสถานะที่ยังไม่ออกเลขล้างวันรับเงิน (R200-X4) · ไม่ใช่เจ้าของ = 403 (R200-X5) · เลข ปกส. บนจอ = ตัวตัดสินเดียวกับไฟล์ (R200-X6) · Math.Round เงินเดือน AwayFromZero (R200-X7) — commit ff927ca9)_
 
 _ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม SF — แก้ผลฝ่ายค้าน settlement: โหมดภาษีค่าธรรมเนียม config ↔ ช่องทางต้องให้ผลเท่ากันทั้งสองเส้น ตรวจที่นำเข้าไฟล์/บันทึกช่องทาง/บันทึกค่าตั้ง gateway/ลงบัญชี (ข้อ 26 · X-1/X-3/X-10) · WHT ออกภาษีแทนคิดจากฐานรวมต่อบรรทัดใบ (X-4) · เติมรอบโอน gateway ด้วยวันอื่น ⇒ ปฏิเสธ (X-5) · รับชำระใบที่มี WHT ลูกค้าผ่านรอบโอน (ข้อ 27 · T-1) · ใบเพิ่มเติมที่ซ้ำรอบแรก (T-2) · รอบโอนวันเดียวกันสลับลำดับ (T-3) · รอบก่อน 0/0 (T-4) · ทางไปต่อใบแรกเป็นร่าง (T-6) · JE ปรับปรุงแล้วเลิกเตือน (T-7) · เรียงเดือน (T-8) · ส่งลูกค้าแล้ว = หลักฐานการส่ง (ข้อ 25 · V2-C1) · ป้ายรับรู้ (V2-C2) · ChangeTracker ว่าง (V2-C3) · กรองรอบตายใน SQL (V2-C4) · การรับรู้ครอบรอบ (V2-P1) (§2.10) — commit c7bad3f5)_
 

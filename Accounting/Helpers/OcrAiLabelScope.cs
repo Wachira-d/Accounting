@@ -30,4 +30,20 @@ public static class OcrAiLabelScope
         return string.Equals(aiSuggestedAnswer.Trim(), finalChoice.Trim(),
             StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// **เส้น "กดสร้างจากการ์ด" (1-click) บันทึกคำยืนยันแบบ Implicit ของช่องนี้ได้ไหม** (รอบ 200 ทีม K2 · ผลตรวจรอบ 189 C-06)
+    /// <para>ผู้ใช้<b>แก้ช่องนั้นเองในหน้ารีวิว</b>แล้ว (ชื่อช่องอยู่ใน <c>OcrScanResult.UserCorrectedFields</c>) ⇒ <c>SubmitCorrectionAsync</c> บันทึกเป็น
+    /// <c>Explicit</c> ไปแล้ว · ถ้าเส้นสร้างเอกสารบันทึกซ้ำเป็น Implicit (<c>RecordUserChoiceAsync</c> เขียนทับ <c>UserChoiceOrigin</c>) = <b>ลดชั้น</b>
+    /// คำตอบของคนเป็น "กดผ่าน" ⇒ คืน false · ไม่มีชื่อช่อง = ยังไม่มีคนแตะ ⇒ บันทึก Implicit ได้ (ปิดลูปฝั่ง "ยอมรับ" ของใบที่ไม่เปิดรีวิว)</para>
+    /// </summary>
+    /// <param name="userCorrectedFields">CSV ของช่องที่ผู้ใช้แก้</param>
+    /// <param name="fieldName">ชื่อช่อง เช่น "OurRole" · "TargetDocumentType"</param>
+    public static bool ImplicitMayRecord(string? userCorrectedFields, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(userCorrectedFields)) return true;
+        foreach (var f in userCorrectedFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (string.Equals(f, fieldName, StringComparison.Ordinal)) return false;
+        return true;
+    }
 }
