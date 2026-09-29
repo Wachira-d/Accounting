@@ -3720,7 +3720,20 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
 - S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
-_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway (PaymentIntent) เข้ารอบโอน `SettlementBatch` ของช่องทาง Gateway
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม T — เวลา/ภาษีของรอบโอน settlement (`erp-review/2026-09-29/team-T.md`):
+- **ตรวจแล้วแก้ไปก่อนหน้า** (ติ๊ก ✅ 84d47dda ในไฟล์ต้นทาง): R-A6 วันใบสรุปตามปฏิทินไทย · R-A7 เตือน §87 3 วันทำการ + บล็อกเดือน ภ.พ.30 ที่ยื่นแล้ว ·
+  R-A8 สกุลของช่องทาง · R-A11 VAT ของแผนส่งตรง (`VatAmountOverride`) — รอบนี้เพิ่มเทสต์ round-trip ผ่าน `DocumentService.PreviewTotals` 30,000 ยอด
+- **R-A12** `Helpers/SettlementWalletContinuity` — ต้นรอบ ≠ ปลายรอบของรอบก่อน (ช่องทางเดียวกัน) ⇒ บล็อก `WalletContinuityGap` · รอบแรก ⇒ เตือน `WalletContinuityUnknown`
+- **R-B13** `Helpers/SettlementCrossBatchReceipts` — ยอดที่รอบโอนอื่นที่ยังไม่ลงบัญชีจับคู่ใบเดียวกัน ⇒ ด่าน `ReceiptDocumentNotPayable` เห็นรับชำระเกินข้ามรอบ
+- **C-11** ด่านเดือนที่ยื่นแล้วใช้แบบ ภ.ง.ด. ที่ 50 ทวิ จะเป็นจริง (`ResolveWhtFormType`) + ภ.พ.36 · **C-12** รับชำระจากแพลตฟอร์ม `WithholdingTaxAmount = 0` ·
+  **C-13** `WalkInCustomerContact` ตรวจ-แล้ว-สร้างใต้ `pg_advisory_xact_lock` (`AdvisoryLockKey.WalkInContact`) · **C-15** เตือน `SummarySaleNoStock` ·
+  **C-16** เตือน `FeeCutoffCrossesMonth` · **C-17** ทางไปต่อของคืนเงินในใบสรุปรอบเดียวกัน · **C-20** `ChangeTracker.Clear()` ใน execution strategy (ยกเว้น Unpost = ทีม V2)
+- **ข้อ 15** ใบสรุปเพิ่มเติมของวันเดียวกัน (`Helpers/SettlementSummarySupplement` · `SummarySaleSupplementary` / `SummarySaleFirstNotIssued`) แทนบล็อก ·
+  **ข้อ 16** `SettlementPostingGate.SummaryRetailNextStep` · **ข้อ 20** `Helpers/LegacyMoneyLegAudit` → `JournalAnomalyService` ข้อ 4 (หน้านักบัญชี) + แก้ SQL `JournalType IN (3,4)`
+- 📋 C-18 (FK ป้ายรับชำระ) · C-19 (ทิ้งการลงค้าง — ทีม V2) · E2-9 (รอเฟส 2 gateway) · E2-11 (ต้องเก็บโหมดค่าธรรมเนียม ณ วันบันทึกก่อน) ·
+  เทสต์ `SettlementRound200TimeTaxTests` · required_call_site +11 — commit 80908ecb)_
+
+_ก่อนหน้า: 2026-09-29 (รอบ 200 ทีม P2 — settlement เฟส 2: รายการ payment gateway (PaymentIntent) เข้ารอบโอน `SettlementBatch` ของช่องทาง Gateway
 (`erp-review/2026-09-29/DECISIONS.md` ข้อ 12 · รายงาน `erp-review/2026-09-29/team-P2.md`):
 - **สูตรเดียว** — `PaymentIntentAdapter.BuildRows(…, GatewayFeeVatMode)` คิดค่าธรรมเนียมที่ถูกหัก + VAT ต่อรายการด้วย `GatewaySettlementMath.Contribution` ตัวเดียวกับเส้นเดิม
   (เดิมใส่ `FeeActual ?? FeeEstimated` ไม่ดูโหมด ⇒ "บวก VAT เพิ่ม" ยอดไม่ลงตัวทุกรอบ · "รวม VAT" ปัด 7/107 จากก้อนรวม ≠ เส้นเดิม) · ยอดคืน = ยอดคืน ณ วันเงินเข้า

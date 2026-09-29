@@ -1897,6 +1897,54 @@ RULES += [
          why="C-2: 50 ทวิ ที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้วยกเลิกไม่ได้ (ตัวตัดสินเดียวกับด่าน Unpost)"),
 ]
 
+# ── รอบ 200 ทีม T (เวลา/ภาษีของรอบโอน): เทสต์ล็อกตัวตัดสิน pure (SettlementWalletContinuity · SettlementCrossBatchReceipts ·
+#    SettlementSummarySupplement · SettlementStock · LegacyMoneyLegAudit) — ที่นี่ล็อกว่า service หาข้อเท็จจริงแล้วส่งถึงด่านจริง ──
+RULES += [
+    dict(file=SETTLE_POST, method="BuildGateAsync",
+         must=["WalletContinuityAsync(", "PendingReceiptsElsewhereAsync(", "SettlementStock.StanceOf(", "ResolveWhtFormType(",
+               "TaxType.VatPp36", "Wallet: wallet", "FiledPp36Periods: filedPp36", "WhtFormType: whtForm", "Supplementary: supplementary",
+               "Stock: stock", "pend?.Amount", "supplementary.Where(s => s.FirstIssued)"],
+         must_re=[r"t\s*\.\s*TaxType\s*==\s*whtForm"],
+         forbid=["t.TaxType == TaxType.WithholdingTax53"],
+         before=[("WalletContinuityAsync(", "SettlementPostingGate.Evaluate("),
+                 ("PendingReceiptsElsewhereAsync(", "SettlementPostingGate.Evaluate("),
+                 ("ResolveWhtFormType(", "SettlementPostingGate.Evaluate(")],
+         why="รอบ 200 ทีม T: R-A12 ความต่อเนื่องของ wallet · R-B13 รับชำระเกินข้ามรอบ · C-11 เดือนที่ยื่นแล้วของแบบ ภ.ง.ด. ที่ 50 ทวิ จะเป็นจริง "
+             "(ตัวเลือกเดียวกับผู้ออกใบรับรอง) + ภ.พ.36 · C-15 สต็อก · ข้อ 15 ใบสรุปเพิ่มเติม — ข้อเท็จจริงไม่ถึงด่าน = ด่านไม่มี"),
+    dict(file=SETTLE_POST, method="WalletContinuityAsync",
+         must=["SettlementWalletContinuity.Judge(", "SettlementBatchStatus.Voided", "b.ChannelId == batch.ChannelId", "!b.IsDeleted"],
+         must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="R-A12: รอบก่อนหน้า = ช่องทางเดียวกัน · ไม่นับรอบที่ยกเลิก/ลบ · tenant"),
+    dict(file=SETTLE_POST, method="PendingReceiptsElsewhereAsync",
+         must=["SettlementCrossBatchReceipts.PendingElsewhere(", "SettlementPostingKeys.PaymentMarker(", "l.BatchId != batchId",
+               "SettlementBatchStatus.Matched"],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
+         forbid=["SettlementBatchStatus.Posted"],
+         why="R-B13: นับเฉพาะรอบโอนอื่นที่ยังไม่ลงบัญชี (ที่ลงแล้วลดยอดค้างของใบไปแล้ว) · รอบที่รับชำระใบนั้นไปแล้วไม่นับซ้ำ · tenant"),
+    dict(file=SETTLE_POST, method="DuplicateSalesAsync",
+         must=["SettlementSummarySupplement.Judge(", "DocumentStatusRules.IsIssued(", "other.Dead"],
+         why="คำตัดสินรอบ 200 ข้อ 15: ใบสรุปวันเดียวกันของรอบที่ยังมีผล = ใบสรุปเพิ่มเติม (ไม่บล็อก) · ของรอบที่ยกเลิกแล้วยังเป็นรายได้ซ้ำ"),
+    dict(file=SETTLE_POST, method="EnsureSummaryDocumentAsync",
+         call_args=[("SettlementDocumentBuilder.SummaryDocument(", "SupplementOf")],
+         why="ข้อ 15: ใบสรุปเพิ่มเติมต้องอ้างเลขใบแรกของวันบนเอกสาร (ไม่ส่ง = ใบที่สองของวันไม่มีร่องรอยว่าเป็นใบเพิ่มเติม)"),
+    dict(file=SETTLE_POST, method="CommitPostedAsync", must=["_db.ChangeTracker.Clear()"],
+         before=[("_db.ChangeTracker.Clear()", "BeginTransactionAsync(")],
+         why="review198-C C-20: lambda ของ execution strategy เริ่มด้วยตัวติดตามว่าง — retry ต้องไม่บันทึก JE รอบแรกซ้ำ"),
+    dict(file=SETTLE_POST, method="MatchCoreAsync", must=["_db.ChangeTracker.Clear()"],
+         before=[("_db.ChangeTracker.Clear()", "BeginTransactionAsync(")],
+         why="review198-C C-20"),
+    dict(file=SETTLE_POST, method="ResolveChargebackCoreAsync", must=["_db.ChangeTracker.Clear()"],
+         before=[("_db.ChangeTracker.Clear()", "BeginTransactionAsync(")],
+         why="review198-C C-20"),
+    dict(file="Helpers/WalkInCustomerContact.cs", method="GetOrCreateAsync",
+         must=["AdvisoryLockKey.WalkInContact", "FindAsync("], must_lit=["pg_advisory_xact_lock"],
+         before=[("AdvisoryLockKey.WalkInContact", "db.Set<Contact>().Add(")],
+         why="review198-C C-13: ตรวจ-แล้ว-สร้างผู้ติดต่อ \"ลูกค้าเงินสด\" ใต้ล็อกคีย์คงที่ต่อบริษัท — สองเส้นพร้อมกันต้องได้แถวเดียว"),
+    dict(file="Services/Implementations/JournalAnomalyService.cs", method="ScanAsync",
+         must=["LegacyMoneyLegAudit.Classify(", "j.ReversedByEntryId == null"],
+         why="คำตัดสินรอบ 200 ข้อ 20: JE เก่าที่ลงขาเงิน/ลูกหนี้ผิดหมวด (I-1/P-1) ต้องถึงหน้านักบัญชี — อ่านอย่างเดียว ไม่แก้อัตโนมัติ"),
+]
+
 # ── รอบ 198 ข้อ 5 (คำตัดสินเจ้าของ): gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ — รายงานก่อน แล้วค่อยเปิดบังคับ ──
 # เทสต์ของ Helpers/SubscriptionGatePolicy + TenantCompanyId ล็อกแค่ตัวตัดสิน · ถอดการเรียกใน middleware แล้วเทสต์ยังเขียว ⇒ ล็อกจุดเรียก
 SUB_MW = "Middleware/SubscriptionMiddleware.cs"

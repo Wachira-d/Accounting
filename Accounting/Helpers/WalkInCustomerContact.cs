@@ -22,9 +22,21 @@ public static class WalkInCustomerContact
 
     public static async Task<Contact> GetOrCreateAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
     {
-        var walkIn = await db.Set<Contact>().FirstOrDefaultAsync(
-            c => c.CompanyId == companyId && c.IsWalkInCustomer && !c.IsDeleted, ct);
+        var walkIn = await FindAsync(db, companyId, ct);
         if (walkIn != null) return walkIn;
+
+        // review198-C C-13: ตรวจ-แล้ว-สร้างใต้ล็อกคีย์คงที่ข้ามเครื่องต่อบริษัท — สองเส้น (ลงบัญชีรอบโอนสองช่องทาง · integration) พร้อมกันต้องได้แถวเดียว ·
+        // ผู้เรียกมีธุรกรรมอยู่แล้ว ⇒ ล็อกอยู่จนผู้เรียก commit · ไม่มี ⇒ เปิดธุรกรรมสั้นของตัวเอง
+        var ownTx = db.Database.CurrentTransaction is null;
+        await using var tx = ownTx ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.WalkInContact, "") }, ct);
+        walkIn = await FindAsync(db, companyId, ct);
+        if (walkIn != null)
+        {
+            if (tx != null) await tx.CommitAsync(ct);
+            return walkIn;
+        }
 
         walkIn = new Contact
         {
@@ -38,6 +50,11 @@ public static class WalkInCustomerContact
         };
         db.Set<Contact>().Add(walkIn);
         await db.SaveChangesAsync(ct);
+        if (tx != null) await tx.CommitAsync(ct);
         return walkIn;
     }
+
+    private static Task<Contact?> FindAsync(AccountingDbContext db, Guid companyId, CancellationToken ct)
+        => db.Set<Contact>().Where(c => c.CompanyId == companyId && c.IsWalkInCustomer && !c.IsDeleted)
+            .OrderBy(c => c.CreatedAt).FirstOrDefaultAsync(ct);
 }

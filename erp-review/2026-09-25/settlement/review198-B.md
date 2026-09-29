@@ -33,7 +33,7 @@ P2 and P3 are listed below: R-B6 through R-B22.
 | R-B6 | ✅ <pending> | ป้ายในคีย์ผ่าน `SettlementTxnKey.FrozenLabel` ของคีย์เอง (ไม่ใช้ `NormalizeLabel`/ตัวตัด PII) และถูกแฮช · คำนำหน้ารุ่น `SettlementTxnKey.Version` · **ค้าง**: golden test ของไฟล์ตัวอย่าง (รอไฟล์จริงจากเจ้าของ — adapter เฉพาะเจ้าเขียนเมื่อมีไฟล์จริงเท่านั้น) |
 | R-B7–R-B11 | backlog | ตัวอ่านไฟล์ (xlsx เลขยาว · เขตเวลา · ลำดับวัน/เดือน · วงเล็บ+ลบ · แถวสรุปแบบกว้าง · เพดานแถว) — ไม่อยู่ในขอบเขตรอบนี้ (ทีม S3 = P1 ของ import/match + posting) |
 | R-B12 | ✅ <pending> | ขายผ่าน intent: ยอดของออเดอร์ ≠ ยอดที่รับชำระ ±0.01 ⇒ `AmountMismatch` (ผูก intent ไว้ให้คนตรวจ) · **ค้าง**: intent ที่บรรทัดขายอื่นอ้างแล้ว (ในรอบเดียวกันกลุ่มออเดอร์เดียวกัน = ตั้งใจ) |
-| R-B13 | backlog | รับชำระเกินข้ามรอบโอน — ต้องให้ผู้ลงบัญชีรวมยอดที่จับคู่ใบเดียวกันในรอบอื่นที่ยังไม่ลง (ด่าน `ReceiptDocumentNotPayable` กันได้แค่รอบที่ลงแล้ว) |
+| R-B13 | ✅ 80908ecb (รอบ 200 ทีม T — `Helpers/SettlementCrossBatchReceipts` + `PendingReceiptsElsewhereAsync` · ด่าน `ReceiptDocumentNotPayable` รวมยอดของรอบโอนอื่นที่ยังไม่ลง) | รับชำระเกินข้ามรอบโอน — ต้องให้ผู้ลงบัญชีรวมยอดที่จับคู่ใบเดียวกันในรอบอื่นที่ยังไม่ลง (ด่าน `ReceiptDocumentNotPayable` กันได้แค่รอบที่ลงแล้ว) |
 | R-B14 | ✅ <pending> | `ParseClassifierAnswer` ต้องเป็นชื่อเดียวตรงตัว (`Enum.GetNames` ก่อน `TryParse`) |
 | R-B15 | backlog | แยก "เรียก AI แล้ว" กับ "แสดงคำแนะนำ AI" + warn-gate — งานของหน้าจอทีม D |
 | R-B16 | ✅ <pending> บางส่วน | `CorrectFeeAsync` ของ intent ที่อยู่ในรอบโอนแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (`SettlementSaleMatch.FeeEditBlockedByBatch`) · **ค้าง**: ตัวนับ "legacy refund" `:129` และ `isSettled` ของ `PaymentGatewayController` (ไฟล์ของทีม E — แจ้งทีม E3) |
