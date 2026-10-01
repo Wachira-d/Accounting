@@ -4087,7 +4087,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
 
