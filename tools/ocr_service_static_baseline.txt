@@ -1,0 +1,33 @@
+# ratchet ของ tools/ocr_helper_test_check.py (รอบ 201 ทีม OC · A-OC4) — static method ใน OcrService.cs ที่มีอยู่ก่อนกติกานี้
+# ตัวตัดสิน OCR ใหม่ต้องเกิดใน Helpers/Ocr*.cs พร้อมเทสต์ — ห้ามเพิ่มแถวเพื่อให้ checker เขียว · ย้ายออก/ลบแล้วต้องตัดแถวทิ้ง
+# (InferCreditNoteReason / MapAzureDocType ย้ายแล้วรอบ 201 · ResolveHeaderSubTotal = ตัวแปลงแถวสแกน → OcrHeaderAmounts.NetSubTotal ที่มีเทสต์แล้ว)
+ApplyEtaxSettlement
+ApplyKeyValueFallback
+ApplyPredecessorLink
+ApplyPrintedVendorLegalName
+ApplyTotalFirst
+ApplyWhtSuggestion
+BuildActualFieldValues
+BuildGatewayConfig
+BuildQualityDto
+ClampPct
+ClearPredecessorLink
+ComputeContentFingerprint
+EnrichContactAddress
+ExtractDigits
+ExtractDistinctiveKeyword
+FallbackLineDescription
+MapEtaxToOcrData
+ParseAddressIntoParts
+ParseDecimal
+ParseFieldConfidenceJson
+ParseThaiDocument
+RemoveAssetCandidate
+ResolveHeaderSubTotal
+SanePhone
+SanitizeVatSplitArtifacts
+ScanBillDiscount
+ScanLineDescriptions
+SerializeExtractedItems
+SetTargetDocumentType
+ToCandidateDtos

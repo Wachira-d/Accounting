@@ -1151,22 +1151,21 @@
           <div id="ocrAiRawContent" style="overflow:auto;flex:1;font-size:12px"><div class="text-sm" style="color:#64748b">กำลังโหลด…</div></div>
         </div>`;
         try {
-          const token = localStorage.getItem('token');
+          // รอบ 201 ทีม OC (A-OC3): ผ่าน API.get (401 → หน้าเข้าสู่ระบบ · 403 → ข้อความสิทธิ์ของเซิร์ฟเวอร์ · ไม่ใช่ JSON → ข้อความจริง)
+          // — เดิม fetch ดิบ + r.json() ⇒ 401/403/หน้า HTML กลายเป็น "Unexpected token <" ที่ไม่บอกอะไร · ไม่ต้องจับ token เอง
           // Try OcrFullReview first (the rich-corrections call), then the
           // narrower GL-account suggestion as a fallback.
+          const base = `/api/companies/${encodeURIComponent(cid)}/ai-feedback/latest`;
+          const sid = encodeURIComponent(scanId);
           let payload = null;
           for (const featureKey of ['OcrFullReview', 'GlAccountSuggestion', 'DocumentConversionSuggestion']) {
-            const r = await fetch(`/api/companies/${cid}/ai-feedback/latest?featureKey=${featureKey}&sourceEntityId=${scanId}&sourceEntityType=OcrScanResult`,
-              { headers: { 'Authorization': 'Bearer ' + token } });
-            const j = await r.json();
-            if (j.success && j.data) { payload = j.data; break; }
+            const j = await API.get(`${base}?featureKey=${featureKey}&sourceEntityId=${sid}&sourceEntityType=OcrScanResult`);
+            if (j && j.success && j.data) { payload = j.data; break; }
           }
           if (!payload) {
             // Last resort: any feedback row touching this scan id regardless of feature.
-            const r = await fetch(`/api/companies/${cid}/ai-feedback/latest?sourceEntityId=${scanId}`,
-              { headers: { 'Authorization': 'Bearer ' + token } });
-            const j = await r.json();
-            payload = j.success ? j.data : null;
+            const j = await API.get(`${base}?sourceEntityId=${sid}`);
+            payload = j && j.success ? j.data : null;
           }
           if (!payload) {
             document.getElementById('ocrAiRawContent').innerHTML =
@@ -1201,7 +1200,7 @@
             ${block('Prompt JSON (sent to AI)', d.promptJson)}`;
         } catch (e) {
           document.getElementById('ocrAiRawContent').innerHTML =
-            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
         }
       },
 
@@ -2774,6 +2773,12 @@
                        onfocus="Page.searchContacts(this.value)">
                 <input type="hidden" id="revMatchedContactId" value="${scan.matchedContactId || ''}">
                 <div class="contact-search-results" id="contactSearchResults"></div>
+                ${scan.ourRole === 'Seller' && !scan.createdDocumentId ? `
+                <div style="margin-top:6px;font-size:12px;color:#64748b">
+                  อ่านชื่อผู้ซื้อไม่ได้และเป็นการขายหน้าร้าน?
+                  <button class="btn btn-sm btn-outline" onclick="Page.matchWalkInBuyer()"
+                          title="ใช้ได้เฉพาะเอกสารที่ไม่ใช่ใบกำกับภาษีเต็มรูป — เซิร์ฟเวอร์ตรวจให้ (§86/4 บังคับชื่อผู้ซื้อบนใบกำกับ)">👤 ใช้ลูกค้าเงินสด (walk-in)</button>
+                </div>` : ''}
                 ${scan.matchedContactId ? `<div style="margin-top:6px;font-size:13px;color:#059669;font-weight:500">&#x2705; จับคู่แล้ว (ID: ${Layout.esc(scan.matchedContactId)})</div>` : `
                 <div style="margin-top:8px;padding:10px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
                   ⚠️ <strong>ไม่พบผู้ติดต่อ และระบบสร้างอัตโนมัติไม่ได้</strong> (เช่น เอกสารไม่มีเลขผู้เสียภาษีให้ดึงข้อมูล)<br>
@@ -3380,6 +3385,25 @@
           } catch (err) {
             Layout.toast('จับคู่ไม่สำเร็จ: ' + err.message, 'error');
           }
+        }
+      },
+
+      // รอบ 201 ทีม OC (C-24 · คำตัดสินข้อ 97): ผูกลูกค้าเงินสด (walk-in) — เซิร์ฟเวอร์ตัดสินว่าใช้ได้ไหม (ใบกำกับเต็มรูป = ข้อความบอกทางไปต่อ)
+      // หน้านี้ไม่มีสำเนากติกา — แสดงปุ่มเฉพาะสแกนฝั่งขาย แล้วแสดงข้อความของเซิร์ฟเวอร์ตามจริง
+      async matchWalkInBuyer() {
+        if (!this._reviewScan) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.post(`/api/companies/${encodeURIComponent(cid)}/ocr/${encodeURIComponent(this._reviewScan.id)}/match-walk-in`, {});
+          const data = res && res.data;
+          if (data && data.matchedContactId) {
+            this._reviewScan.matchedContactId = data.matchedContactId;
+            const hid = document.getElementById('revMatchedContactId');
+            if (hid) hid.value = data.matchedContactId;
+          }
+          Layout.toast((res && res.message) || 'ผูกลูกค้าเงินสดแล้ว', 'success');
+        } catch (err) {
+          Layout.toast(err.message || 'ผูกลูกค้าเงินสดไม่สำเร็จ', 'error', 9000);
         }
       },
 

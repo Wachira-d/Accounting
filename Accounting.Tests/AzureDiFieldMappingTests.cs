@@ -1,4 +1,4 @@
-using Accounting.Services.Implementations;
+using Accounting.Helpers;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -13,7 +13,7 @@ public class AzureDiFieldMappingTests
     [Fact]
     public void ใบกำกับภาษี_ถึงโมเดลจะเป็น_receipt_ก็ต้องไม่ใช่_Receipt()
     {
-        var t = OcrService.MapAzureDocTypeForTest(
+        var t = OcrPaperDocumentType.FromAzure(
             azureDocType: "receipt", modelId: "prebuilt-receipt",
             rawText: "ใบกำกับภาษี/ใบเสร็จรับเงิน\nบริษัท ทดสอบ จำกัด\nเลขประจำตัวผู้เสียภาษี 0105561012345");
         Assert.Equal("Invoice", t);
@@ -21,20 +21,20 @@ public class AzureDiFieldMappingTests
 
     [Fact]
     public void Tax_Invoice_ภาษาอังกฤษก็ต้องได้ผลเดียวกัน()
-        => Assert.Equal("Invoice", OcrService.MapAzureDocTypeForTest("receipt", "prebuilt-receipt", "TAX INVOICE No. IV-001"));
+        => Assert.Equal("Invoice", OcrPaperDocumentType.FromAzure("receipt", "prebuilt-receipt", "TAX INVOICE No. IV-001"));
 
     [Fact]
     public void ใบลดหนี้กับใบเพิ่มหนี้แยกออกจากกัน()
     {
-        Assert.Equal("CreditNote", OcrService.MapAzureDocTypeForTest("invoice", "prebuilt-invoice", "ใบลดหนี้ เลขที่ CN-001"));
-        Assert.Equal("DebitNote", OcrService.MapAzureDocTypeForTest("invoice", "prebuilt-invoice", "ใบเพิ่มหนี้ เลขที่ DN-001"));
+        Assert.Equal("CreditNote", OcrPaperDocumentType.FromAzure("invoice", "prebuilt-invoice", "ใบลดหนี้ เลขที่ CN-001"));
+        Assert.Equal("DebitNote", OcrPaperDocumentType.FromAzure("invoice", "prebuilt-invoice", "ใบเพิ่มหนี้ เลขที่ DN-001"));
     }
 
     [Fact]
     public void ใบเสร็จจริงที่ไม่มีคำว่าใบกำกับ_ยังเป็น_Receipt()
-        => Assert.Equal("Receipt", OcrService.MapAzureDocTypeForTest("receipt", "prebuilt-receipt", "ใบเสร็จรับเงิน\nร้านกาแฟ"));
+        => Assert.Equal("Receipt", OcrPaperDocumentType.FromAzure("receipt", "prebuilt-receipt", "ใบเสร็จรับเงิน\nร้านกาแฟ"));
 
     [Fact]
     public void ไม่มีข้อความเลย_ตกไปใช้ชนิดที่โมเดลบอก()
-        => Assert.Equal("Receipt", OcrService.MapAzureDocTypeForTest("receipt", "prebuilt-receipt", null));
+        => Assert.Equal("Receipt", OcrPaperDocumentType.FromAzure("receipt", "prebuilt-receipt", null));
 }

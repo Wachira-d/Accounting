@@ -4048,3 +4048,17 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACKLOG §1.7 A-OC1..A-OC5 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97 · รายงาน `erp-review/2026-10-01/team-OC.md`):
+- (A-OC1) known-good ชื่อ/ที่อยู่ผู้ขายจากเส้นแก้ผลสแกนจำเฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (`OcrCorrectedFieldList.ShouldRememberKnownGood`) — หน้าเว็บส่งค่าเดิมทุกครั้ง ⇒ เดิมค่าที่ OCR อ่านผิดกลายเป็น UserCorrection ชนะ Azure ถาวร
+- (A-OC4) `InferCreditNoteReason`/`MapAzureDocType` ย้ายตรงตัวเป็น `Helpers/OcrCreditNoteReasonReader`/`Helpers/OcrPaperDocumentType` (+เทสต์สองครึ่ง) · `ocr_helper_test_check` ratchet static method ใน `OcrService.cs` (`tools/ocr_service_static_baseline.txt` 30 แถว · negative test ในตัว)
+- (A-OC3) `document-scan.html` ยิง `ai-feedback/latest` ผ่าน `API.get` · checker ใหม่ `tools/raw_fetch_api_check.py` (ratchet ต่อไฟล์ `tools/raw_fetch_api_baseline.txt` 172 จุด/41 ไฟล์ · negative test ในตัว)
+- (A-OC2) `contact-hygiene` ส่วน "แถวสาขาที่ระบบสแกนสร้างแต่ไม่มีอะไรอ้าง" + `POST contact-hygiene/ocr-branch-orphans/{id}/retire` (soft · ทีละแถว · `Contact.Edit` · ตรวจซ้ำ) · แท็ก `ContactDataHygiene.OcrBranchAutoCreateTag` ตัวเดียว
+- (A-OC5) audit การลบสแกนผ่าน `AddChainedAuditLog`
+- (C-18) คอลัมน์ `OcrScanResults.WhtCorrectionsPredateBaseline` (migration DO block ตีธงครั้งเดียวตอนสร้างคอลัมน์) ⇒ `OcrWhtLearningScope` = `UserEditedBeforeBaseline` (ไม่เรียน) ทั้งเรียนทีละใบและ backfill
+- (C-19) `BranchCodeExtractor`: ไม่มีป้ายผู้ซื้อ + รหัสสาขาเดียวทั้งหน้า ⇒ `WholePageSingleBranch` 0.85 · `OcrIssuerBranch.HasAnyStatement` กันประโยคประกาศขัดกัน
+- (C-20) ใบรับ/จ่ายเงินฝั่งซื้อที่ผูกใบต้นทางสืบทอดผู้ติดต่อของใบต้นทาง (`Helpers/OcrSettlementCounterparty`) — เส้นสร้างเอกสาร + พรีวิว
+- (C-22) ที่อยู่แถวสาขา = กระดาษที่พิสูจน์ได้ หรือทะเบียน VAT ที่ยืนยันสาขานั้น (`OcrExtractedData.DbdAddressIsBranch`) · ไม่รู้ = ว่าง + `BranchAddressUnknownNote`
+- (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
+- (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
+- เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit <pending>)_

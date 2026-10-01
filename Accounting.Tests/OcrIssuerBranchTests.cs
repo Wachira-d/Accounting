@@ -139,12 +139,25 @@ public class OcrIssuerBranchTests
     }
 
     [Fact]
-    public void Contactสาขา_ที่อยู่กระดาษไม่ได้มาจากประโยคประกาศ_ทะเบียนยังชนะ()
+    public void Contactสาขา_ที่อยู่กระดาษไม่ได้มาจากประโยคประกาศ_และทะเบียนเป็นของสำนักงานใหญ่_ว่าง()
     {
-        // ที่อยู่ที่ engine อ่านเองอาจเป็นที่อยู่สำนักงานใหญ่ปนสองภาษา (อาการใบ B เดิม) — ไม่ชนะทะเบียน
+        // ที่อยู่ที่ engine อ่านเองอาจเป็นที่อยู่สำนักงานใหญ่ปนสองภาษา (อาการใบ B เดิม) — ไม่ใช้ · รอบ 201 ทีม OC (C-22 · คำตัดสินข้อ 95):
+        // เดิมถอยไปใช้ทะเบียน (= ที่ตั้งสำนักงานใหญ่ นนทบุรี) ลงแถวสาขาที่ 8 = ค่าแต่ง ⇒ ตอนนี้ "ไม่รู้ = ว่าง" (ผู้เรียกบอกให้เติม)
         var (addr, fromRegistry) = OcrIssuerBranch.ContactAddress("00008", "00008", true, Dbd, "200 Justmine ... Nonthaburi บริษัท ...", false);
-        Assert.Equal(Dbd, addr);
+        Assert.Null(addr);
+        Assert.False(fromRegistry);
+    }
+
+    [Fact]
+    public void Contactสาขา_ทะเบียนVATยืนยันสาขานี้_ใช้ที่อยู่ทะเบียนของสาขา()
+    {
+        // ทิศตรงข้ามของ C-22: ทะเบียน VAT คืนที่อยู่ของสาขาที่ 8 เอง (DbdAddressIsBranch) = หลักฐานจริง ⇒ ใช้ได้
+        var (addr, fromRegistry) = OcrIssuerBranch.ContactAddress("00008", "00008", true, BranchAddr, null, false,
+            registryAddressIsBranch: true);
+        Assert.Equal(BranchAddr, addr);
         Assert.True(fromRegistry);
+        // ทะเบียนยืนยันสาขา 8 แต่แถวที่จะเขียนเป็นสาขาอื่น ⇒ ไม่ใช้
+        Assert.Null(OcrIssuerBranch.ContactAddress("00003", "00008", true, BranchAddr, null, false, registryAddressIsBranch: true).Address);
     }
 
     [Fact]

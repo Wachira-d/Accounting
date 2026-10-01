@@ -1,0 +1,34 @@
+using Accounting.Models.Enums;
+
+namespace Accounting.Helpers;
+
+/// <summary>
+/// **อ่าน "เหตุผลการลดหนี้" จากข้อความบนกระดาษ** (§86/10 บังคับระบุ) — pure, ไม่มี I/O
+///
+/// <para>═══ ที่มา (รอบ 201 ทีม OC · A-OC4 · team-K2 C-09 ส่วนที่เหลือ) ═══ ตัวตัดสินนี้เคยฝังเป็น
+/// <c>OcrService.InferCreditNoteReason</c> โดยไม่มีเทสต์สักตัว (CLAUDE.md §H: "ตรรกะที่ยังฝังใน OcrService.cs คือที่ที่ถดถอยเกิดโดยไม่มี
+/// อะไรฟ้อง") · ย้ายมา<b>ตรงตัว</b> (คำและลำดับเดิมทุกตัว — ใบที่เคยได้คำตอบไหนยังได้คำตอบเดิม) แล้วล็อกด้วยเทสต์สองครึ่ง
+/// (<c>OcrReview201OcTests.CreditNoteReason_*</c>)</para>
+///
+/// <para>คืน null เมื่อไม่พบคำบ่งชี้ชัดเจน — ปล่อยให้ผู้ใช้เลือกเอง ดีกว่าเดาผิดแล้วลงบัญชีผิด (เฉพาะ "คืนสินค้า" เท่านั้นที่กระทบสต๊อก
+/// อีก 3 แบบไม่กระทบ) · เรียงตามความจำเพาะ: คืนสินค้าเป็นเคสเดียวที่กระทบสต๊อก จึงต้องชัดจริงก่อน</para>
+/// </summary>
+public static class OcrCreditNoteReasonReader
+{
+    public static CreditNoteReason? Read(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+        var t = rawText.ToLowerInvariant();
+        if (t.Contains("คืนสินค้า") || t.Contains("รับคืนสินค้า") || t.Contains("สินค้าคืน")
+            || t.Contains("goods return") || t.Contains("sales return"))
+            return CreditNoteReason.Return;
+        if (t.Contains("ส่วนลด") || t.Contains("ลดราคา") || t.Contains("discount"))
+            return CreditNoteReason.Discount;
+        if (t.Contains("ตัดหนี้สูญ") || t.Contains("หนี้สูญ") || t.Contains("write-off") || t.Contains("write off"))
+            return CreditNoteReason.Writeoff;
+        if (t.Contains("ปรับปรุงยอด") || t.Contains("ปรับยอด") || t.Contains("คลาดเคลื่อน")
+            || t.Contains("ไม่ครบตามจำนวน") || t.Contains("adjustment"))
+            return CreditNoteReason.Adjustment;
+        return null;   // ไม่เดา — ผู้ใช้เลือกเองบนฟอร์ม
+    }
+}
