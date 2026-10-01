@@ -62,7 +62,8 @@ public class ExceptionMiddleware
                 SELECT @p,@m,@q,@s,@et,@msg,@st,@ie,@u,@ip,@ua,now()
                 WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
             using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString());
+            // ฝ่ายค้าน GWO-6: path ของ webhook มีรหัสลับของร้าน — ปิดบังก่อนเก็บลงตาราง
+            cmd.Parameters.AddWithValue("@p", Accounting.Helpers.GatewayWebhookRoute.RedactPath(context.Request.Path.ToString()));
             cmd.Parameters.AddWithValue("@m", context.Request.Method);
             cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString());
             cmd.Parameters.AddWithValue("@s", statusCode);

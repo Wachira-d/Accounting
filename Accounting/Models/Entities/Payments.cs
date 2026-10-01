@@ -55,6 +55,12 @@ public class PaymentProviderConfig : TenantEntity
     public PaymentProviderMode? LastTokenWebhookMode { get; set; }
     /// <summary>ครั้งล่าสุดที่ webhook ผ่านการยืนยันทาง URL เดิม (ไม่มีรหัสลับ) — หน้าตั้งค่าเตือน "ยังใช้ URL เดิม"</summary>
     public DateTime? LastLegacyWebhookAt { get; set; }
+    /// <summary>มีหลักฐานว่าร้านนี้ใช้ URL แจ้งเตือนแบบเดิม (ไม่มีรหัสลับ) — ฝ่ายค้าน GWO-1 · migration ตั้ง true <b>ครั้งเดียว</b>เฉพาะแถวที่เคยได้รับ webhook
+    /// ก่อนมีคอลัมน์ · แถวใหม่ false เสมอ ⇒ URL เดิมไม่ลอง config นี้ (<c>GatewayWebhookRoute.AcceptsLegacy</c>)</summary>
+    public bool LegacyWebhookEligible { get; set; }
+    /// <summary>ครั้งล่าสุดที่มีคำขอทาง URL เดิมที่อ้างรายการของร้านนี้แต่ config ถูกข้าม (ไม่ยิงคำขอออก) — ฝ่ายค้าน GWO-7 · หน้าตั้งค่าเตือน
+    /// "ตั้ง URL เดิมค้างไว้" (เดิมไม่มีการบันทึก ⇒ คำเตือนกิ่งนั้นไม่มีวันขึ้น)</summary>
+    public DateTime? LastLegacySkippedAt { get; set; }
 
     /// <summary>JSON array ของวิธีจ่ายที่เปิด เช่น <c>["card","promptpay"]</c></summary>
     public string? EnabledMethodsJson { get; set; }

@@ -206,28 +206,37 @@ public static class GatewayFeeVatClaim
     /// (ปัดยอดรวม) ต่างกันได้ไม่เกินสตางค์ต่อรายการ · ต่อใบ 1 บาทครอบหลายร้อยรายการ · เกินนี้ = ไม่ใช่เศษ (ใบกำกับที่ยังไม่เคลม/โหมด VAT ไม่ตรง)</summary>
     public const decimal ResiduePerInvoiceBaht = 1.00m;
 
+    /// <summary>จำนวนใบกำกับสูงสุดที่นับเข้าเกณฑ์ (ฝ่ายค้าน GWO-2) — เกณฑ์ไม่สะสมไม่จำกัด: ไม่ปรับปรุงนาน ๆ ใบเคลมสะสมจนเกณฑ์ใหญ่พอกลบ VAT ที่ยังไม่ได้เคลมทั้งเดือน ·
+    /// 12 ใบ (ใบกำกับรายเดือน 1 ปี) ⇒ เกณฑ์สูงสุด 12 บาท · ปรับปรุงบ่อยกว่าปีละครั้งไม่ถูกกระทบ</summary>
+    public const int ResidueMaxInvoicesCounted = 12;
+
     /// <summary>ตรวจคำขอปรับปรุงเศษ — ล้าง 11630 ของผู้ให้บริการนี้ทั้งยอดที่ค้าง (ไม่ให้เลือกยอด: เศษคือส่วนที่เหลือทั้งหมดหลังเคลมครบ)
     /// <para>ด่าน: (1) มีใบกำกับที่เคลมแล้วตั้งแต่การปรับปรุงครั้งก่อนอย่างน้อยหนึ่งใบ (เศษเกิดจากการเคลมเท่านั้น) (2) ยอดค้างไม่เป็นศูนย์
-    /// (3) |ยอดค้าง| ≤ เกณฑ์ × จำนวนใบ (4) ใบกำกับล่าสุดที่เคลมครอบเดือนของรอบโอนล่าสุดที่พัก VAT แล้ว — ยังมีเดือนที่ไม่ได้รับใบกำกับ ⇒ ยอดค้างคือ VAT
-    /// ที่รอใบ ไม่ใช่เศษ (ปรับปรุงทิ้ง = เสียสิทธิ์เคลม)</para></summary>
+    /// (3) |ยอดค้าง| ≤ เกณฑ์ × จำนวนใบ (นับไม่เกิน <see cref="ResidueMaxInvoicesCounted"/> ใบ — GWO-2) (4) <b>ระดับวัน</b> (ฝ่ายค้าน GWO-2): ไม่มีบรรทัดพัก 11630
+    /// ของรอบโอนที่<b>วันที่ลงบัญชีหลังวันที่ใบกำกับที่เคลมล่าสุด</b> — มี ⇒ ยอดค้างอาจเป็น VAT ที่รอใบ ไม่ใช่เศษ (ปรับปรุงทิ้ง = เสียสิทธิ์เคลม) ·
+    /// เดิมเทียบระดับเดือน ⇒ ใบกำกับลงวันที่ 15 "ครอบ" รอบโอนวันที่ 28 ของเดือนเดียวกันได้</para></summary>
     public static GatewayFeeVatResidueCheck ResidueCheck(decimal outstanding, int claimsSinceLastResidue,
-        DateTime? latestDeferredMonthStartUtc, DateTime? latestClaimedInvoiceDate)
+        DateTime? latestDeferredEntryDateUtc, DateTime? latestClaimedInvoiceDate)
     {
         var amount = R(outstanding);
-        var threshold = R(ResiduePerInvoiceBaht * Math.Max(0, claimsSinceLastResidue));
+        var counted = Math.Min(ResidueMaxInvoicesCounted, Math.Max(0, claimsSinceLastResidue));
+        var threshold = R(ResiduePerInvoiceBaht * counted);
         GatewayFeeVatResidueCheck Fail(string m) => new(false, m, amount, threshold);
         if (claimsSinceLastResidue <= 0)
             return Fail("ยังไม่มีใบกำกับที่เคลมแล้วตั้งแต่การปรับปรุงครั้งก่อน — เศษปัดเกิดหลังเคลมใบกำกับเท่านั้น (ยอดค้างตอนนี้คือ VAT ที่รอใบกำกับ)");
         if (amount == 0m)
             return Fail("ไม่มียอดค้าง 11630 ของผู้ให้บริการนี้ให้ปรับปรุง");
         if (Math.Abs(amount) > threshold)
-            return Fail($"ยอดค้าง {amount:N2} เกินเกณฑ์เศษปัด {threshold:N2} บาท ({ResiduePerInvoiceBaht:N2} บาท × ใบกำกับที่เคลม {claimsSinceLastResidue} ใบ) — "
+            return Fail($"ยอดค้าง {amount:N2} เกินเกณฑ์เศษปัด {threshold:N2} บาท ({ResiduePerInvoiceBaht:N2} บาท × ใบกำกับที่เคลม {counted} ใบ"
+                + (claimsSinceLastResidue > counted ? $" — นับสูงสุด {ResidueMaxInvoicesCounted} ใบ" : "") + ") — "
                 + "ไม่ใช่เศษปัด: มีใบกำกับที่ยังไม่ได้เคลม หรือ \"VAT ของค่าธรรมเนียม\" ตั้งไม่ตรงกับที่ผู้ให้บริการคิด · "
                 + "ตรวจใบกำกับรายเดือนให้ครบก่อน (ถ้าเลยกำหนด §82/3 ให้นักบัญชีลงใบสำคัญโอนเป็นค่าใช้จ่ายเอง)");
-        if (latestDeferredMonthStartUtc is DateTime lastMonth
-            && (latestClaimedInvoiceDate is not DateTime lastInv || MonthsBetween(lastMonth, ThaiDate.CalendarDateUtc(lastInv)) < 0))
-            return Fail($"ยังมี VAT จากรอบโอนเดือน {lastMonth.ToString("MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} ที่ใบกำกับที่เคลมล่าสุดยังไม่ครอบ — ยอดค้างอาจเป็น VAT ที่รอใบกำกับ ไม่ใช่เศษ · "
-                + "รับใบกำกับของเดือนนั้นก่อนแล้วค่อยปรับปรุงเศษ");
+        if (latestDeferredEntryDateUtc is DateTime lastDeferred
+            && (latestClaimedInvoiceDate is not DateTime lastInv
+                || ThaiDate.CalendarDateUtc(lastDeferred) > ThaiDate.CalendarDateUtc(lastInv)))
+            return Fail($"ยังมี VAT จากรอบโอนวันที่ {ThaiDate.ToThaiDisplayString(lastDeferred)} ซึ่งหลังวันที่ใบกำกับที่เคลมล่าสุด"
+                + (latestClaimedInvoiceDate is DateTime inv ? $" ({ThaiDate.ToThaiDisplayString(inv)})" : "")
+                + " — ยอดค้างอาจเป็น VAT ที่รอใบกำกับ ไม่ใช่เศษ · รับใบกำกับที่ครอบรอบโอนนั้นก่อนแล้วค่อยปรับปรุงเศษ");
         return new GatewayFeeVatResidueCheck(true, null, amount, threshold);
     }
 

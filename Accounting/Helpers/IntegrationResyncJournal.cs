@@ -51,4 +51,17 @@ public static class IntegrationResyncJournal
     public const string ResendNextStep =
         "ทางแก้: ตรวจการจับคู่ผังบัญชี (mapping) ของการเชื่อมต่อนี้ที่หน้า \"เชื่อมต่อระบบ\" ให้ชี้ผังที่ใช้งานได้ แล้วให้ระบบต้นทางส่งเอกสารนี้ซ้ำแบบแก้ไข "
         + "(resyncUpdate = true) — ระบบจะลงรายการบัญชีให้ใหม่";
+
+    /// <summary>คำเตือนในคำตอบ resync ถึงระบบต้นทาง (ฝ่ายค้าน GWO-5) — คง JE เดิม ⇒ เหตุผล + "ยอดในบัญชียังเป็นยอดเดิม" · ทางอื่นที่สร้าง JE ไม่ได้ (มีเหตุผลข้าม)
+    /// ⇒ เหตุผลนั้น · ไม่มีอะไรต้องเตือน = null (ช่องคำเตือนว่าง ไม่ใช่รายการว่าง)</summary>
+    public static List<string>? Warnings(IntegrationResyncJournalAction action, string? skipReason)
+    {
+        if (action == IntegrationResyncJournalAction.KeepOriginal)
+            return new List<string>
+            {
+                "JE เดิมคงไว้ — ยอดในบัญชียังเป็นยอดก่อนแก้ไข: "
+                + (string.IsNullOrWhiteSpace(skipReason) ? "สร้างรายการบัญชีของยอดใหม่ไม่ได้" : skipReason.Trim()),
+            };
+        return string.IsNullOrWhiteSpace(skipReason) ? null : new List<string> { skipReason.Trim() };
+    }
 }

@@ -60,7 +60,8 @@ public class RequestLoggingMiddleware
             // properties in JSON sinks (Elastic / Loki / Datadog).
             _logger.Log(level, thrown,
                 "HTTP {Method} {Path} → {StatusCode} ({Duration}ms) User={UserId} Company={CompanyId} Trace={TraceId}",
-                ctx.Request.Method, path, status, sw.ElapsedMilliseconds,
+                // ฝ่ายค้าน GWO-6: path ของ webhook มีรหัสลับของร้าน — ปิดบังก่อนเขียน log (ตัวเดียวกับ GatewayWebhookRoute)
+                ctx.Request.Method, Accounting.Helpers.GatewayWebhookRoute.RedactPath(path), status, sw.ElapsedMilliseconds,
                 userId ?? "anon", companyId ?? "n/a", Activity.Current?.Id ?? ctx.TraceIdentifier);
         }
     }

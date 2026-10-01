@@ -62,6 +62,21 @@ public class OmisePaymentProvider : IPaymentProvider
         + "(ระบบบล็อกเมื่อยอดไม่ตรงอยู่แล้ว ไม่ลงบัญชีผิดเงียบ) · ถ้าใบกำกับของผู้ให้บริการแยก VAT ให้ตั้ง \"VAT ของค่าธรรมเนียม\" เป็น "
         + "\"หัก VAT 7% เพิ่มจากค่าธรรมเนียม\" · ยอดไม่ตรงเพราะค่าธรรมเนียม ให้แก้ค่าธรรมเนียมรายรายการตามสเตทเมนต์ที่หน้ารายการรับชำระออนไลน์";
 
+    /// <summary>เลขรายการที่ event อ้าง (<c>data.metadata.intentId</c>) จากเนื้อคำขอที่ยังไม่ยืนยัน — ไม่มีคำขอออก · ใช้แค่ประทับคำเตือน URL เดิม (GWO-7)</summary>
+    Guid? IPaymentProvider.UnverifiedIntentHint(string rawBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawBody);
+            return doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+                   && data.TryGetProperty("metadata", out var meta) && meta.ValueKind == JsonValueKind.Object
+                   && meta.TryGetProperty("intentId", out var el) && el.ValueKind == JsonValueKind.String
+                   && Guid.TryParse(el.GetString(), out var id)
+                ? id : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
     /// <summary>โดเมนที่ CSP ต้องอนุญาต — ประกาศที่นี่ ไม่ใช่ใน SecurityMiddleware
     /// เพื่อให้การเพิ่มเจ้าใหม่ไม่ต้องแตะไฟล์นอกโฟลเดอร์นี้ (เกณฑ์ผ่านเฟส 6)</summary>
     public ProviderCspNeeds CspNeeds { get; } = new(

@@ -670,8 +670,31 @@ public class GatewaySettlementService : IGatewaySettlementService
         var lastResidue = tagged.Where(t => t.Tags == residueTag).Select(t => (DateTime?)t.CreatedAt).Max();
         var claims = tagged.Where(t => t.Tags == claimTag && (lastResidue == null || t.CreatedAt > lastResidue)).ToList();
         var latestInvoice = tagged.Where(t => t.Tags == claimTag).Select(t => (DateTime?)(t.TaxInvoiceDate ?? t.EntryDate)).Max();
-        var latestDeferred = aging.Buckets.Where(b => b.Deferred != 0m).Select(b => (DateTime?)b.MonthStartUtc).Max();
+        // ฝ่ายค้าน GWO-2: ตัดสินระดับวัน — วันที่ลงบัญชีของบรรทัดพัก 11630 ล่าสุด (ไม่ใช่ต้นเดือน) เทียบวันที่ใบกำกับที่เคลมล่าสุด
+        var latestDeferred = await LatestFeeVatDeferralDateAsync(companyId, providerCode, ct);
         return GatewayFeeVatClaim.ResidueCheck(aging.Outstanding, claims.Count, latestDeferred, latestInvoice);
+    }
+
+    /// <summary>วันที่ลงบัญชีของบรรทัดพัก VAT ค่าธรรมเนียม (Dr 11630) ล่าสุดจากรอบโอนเส้นเดิมของผู้ให้บริการนี้ — ชุด JE เดียวกับ <see cref="LoadFeeVatAgingAsync"/> ·
+    /// null = ไม่มีบรรทัดพัก</summary>
+    private async Task<DateTime?> LatestFeeVatDeferralDateAsync(Guid companyId, string providerCode, CancellationToken ct)
+    {
+        var vatAcc = await FindByCodeAsync(companyId, FeeInputVatDeferredCode, ct);
+        if (vatAcc == null) return null;
+        var settlementJeIds = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.ProviderCode == providerCode && i.SettlementJournalEntryId != null)
+            .Select(i => i.SettlementJournalEntryId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+        if (settlementJeIds.Count == 0) return null;
+        return await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.AccountId == vatAcc.Id && settlementJeIds.Contains(l.JournalEntryId)
+                && l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.ReversedByEntryId == null
+                && l.DebitAmount > l.CreditAmount)
+            .Select(l => (DateTime?)l.JournalEntry.EntryDate)
+            .MaxAsync(ct);
     }
 
     public async Task<GatewayFeeVatResidueOutcome> WriteOffFeeVatResidueAsync(Guid companyId, string providerCode, DateTime entryDate,

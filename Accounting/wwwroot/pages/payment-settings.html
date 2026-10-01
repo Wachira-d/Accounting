@@ -177,8 +177,12 @@
             <div>
               <div class="webhook-box">
                 <span id="wh_${Layout.esc(p.code)}">${Layout.esc(c?.webhookUrl || '—')}</span>
-                <button class="btn btn-sm btn-ghost" onclick="Page.copyWebhook('${Layout.jsArg(p.code)}')">คัดลอก</button>
+                ${c?.webhookTokenMasked ? '' : `<button class="btn btn-sm btn-ghost" onclick="Page.copyWebhook('${Layout.jsArg(p.code)}')">คัดลอก</button>`}
               </div>
+              ${c?.webhookTokenMasked
+                ? '<div class="hint">รหัสลับใน URL แสดงเต็มเฉพาะเจ้าของกิจการ</div>'
+                : (c?.id ? `<div class="hint"><button class="btn btn-sm btn-ghost" onclick="Page.rotateToken('${Layout.jsArg(p.code)}')">ออกรหัสลับใหม่</button>
+                    ใช้เมื่อ URL หลุดไปที่อื่น — URL ที่มีรหัสเก่าจะใช้ไม่ได้ทันที</div>` : '')}
               <div class="hint">
                 ${gotWebhook
                   ? 'ได้รับการแจ้งเตือนล่าสุดเมื่อ ' + Layout.esc(new Date(c.lastWebhookAt).toLocaleString('th-TH'))
@@ -186,7 +190,7 @@
                 · URL นี้มีรหัสลับของร้าน — อย่าเผยแพร่ ตั้งไว้ในแดชบอร์ดผู้ให้บริการเท่านั้น (ทั้งโหมดทดสอบและโหมดใช้งานจริง)
               </div>
               ${c?.webhookUrlWarning ? `<div class="hint" style="color:#b45309;font-weight:600">⚠️ ${Layout.esc(c.webhookUrlWarning)}</div>` : ''}
-              ${c?.legacyWebhookUrl ? `<div class="hint">URL แบบเดิม (ยังรับได้ระหว่างเปลี่ยน · ไม่ต้องใช้ถ้าตั้ง URL ด้านบนแล้ว):
+              ${c?.legacyWebhookUrl ? `<div class="hint">URL แบบเดิม (ยังรับได้ระหว่างเปลี่ยนจนถึงวันปิดในคำเตือนด้านบน · ไม่ต้องใช้ถ้าตั้ง URL ด้านบนแล้ว):
                 <span style="font-family:ui-monospace,monospace;word-break:break-all">${Layout.esc(c.legacyWebhookUrl)}</span></div>` : ''}
             </div>
           </div>
@@ -265,6 +269,16 @@
         } catch (e) {
           if (box) box.innerHTML = '❌ ' + Layout.esc(e.message);
         }
+      },
+
+      async rotateToken(code) {
+        if (!confirm('ออกรหัสลับใหม่ใช่ไหม?\n\nURL แจ้งเตือนที่ตั้งไว้ในแดชบอร์ดผู้ให้บริการจะใช้ไม่ได้ทันที '
+          + 'ต้องคัดลอก URL ใหม่ไปตั้งทั้งโหมดทดสอบและโหมดใช้งานจริง')) return;
+        try {
+          const res = await Layout.api().rotatePaymentWebhookToken(code);
+          Layout.toast(res?.message || 'ออกรหัสใหม่แล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async setMode(code, mode) {

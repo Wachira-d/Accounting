@@ -165,4 +165,8 @@ public static class AdvisoryLockKey
     /// เดียวกันแล้วประทับ PrevHash เดียวกัน = แตกกิ่ง ⇒ ถือ <c>pg_advisory_xact_lock</c> ตั้งแต่อ่านปลาย chain จนธุรกรรมจบ ·
     /// ผู้ใช้คีย์นี้มีที่เดียว: <c>AccountingDbContext.SaveChanges/SaveChangesAsync</c> (ล็อกท้ายสุดของคำสั่ง — หลังล็อกเอกสาร/เลข JE)</summary>
     public const string AuditChain = "audit-chain";
+
+    /// <summary>resync เอกสารจากระบบภายนอก — part = id เอกสาร (ฝ่ายค้าน GWO-4 รอบ 201 ทีม GW): dry-run → กลับ JE เดิม → ลง JE ใหม่ ต้องเป็นธุรกรรมเดียวและ
+    /// คำขอ resync ซ้อนของเอกสารเดียวกันต้องรอกัน (ไม่งั้นสองคำขอเห็น JE เดิมชุดเดียวกัน ⇒ กลับซ้ำ/ลงซ้ำ)</summary>
+    public const string IntegrationResync = "int-resync";
 }

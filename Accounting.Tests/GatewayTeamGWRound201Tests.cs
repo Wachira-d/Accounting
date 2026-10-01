@@ -3,6 +3,7 @@ using System.Text;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Payments;
 using Accounting.Services.Payments.Providers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -46,22 +47,27 @@ public class GatewayTeamGWRound201Tests
         public bool IsUsable(string? value) => !string.IsNullOrEmpty(value);
     }
 
+    /// <summary>เวลาก่อนวันปิด URL เดิม (วันที่รอบ 201) — เทสต์ไม่ขึ้นกับนาฬิกาเครื่อง</summary>
+    private static readonly DateTime BeforeSunset = new(2026, 10, 1, 5, 0, 0, DateTimeKind.Utc);
+
     private static PaymentProviderConfig Cfg(string token, DateTime? tokenSeen = null, PaymentProviderMode? seenMode = null,
-        PaymentProviderMode mode = PaymentProviderMode.Test)
+        PaymentProviderMode mode = PaymentProviderMode.Test, bool legacyEligible = false)
         => new()
         {
             Id = Guid.NewGuid(), CompanyId = Guid.NewGuid(), ProviderCode = OmisePaymentProvider.Code, Mode = mode,
             TestSecretKeyProtected = "k_test_" + token[..4], WebhookToken = token,
-            LastTokenWebhookAt = tokenSeen, LastTokenWebhookMode = seenMode,
+            LastTokenWebhookAt = tokenSeen, LastTokenWebhookMode = seenMode, LegacyWebhookEligible = legacyEligible,
         };
 
+    private static GatewayWebhookConfigFacts FactsOf(PaymentProviderConfig c)
+        => new(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode, c.LegacyWebhookEligible);
+
     /// <summary>เส้นเดียวกับ controller: ตัวตัดสินเลือก config → ยืนยันกับ adapter เฉพาะชุดที่เลือก</summary>
-    private static async Task<int> SimulateWebhookAsync(IReadOnlyList<PaymentProviderConfig> configs, string? token, CapturingHandler h)
+    private static async Task<int> SimulateWebhookAsync(IReadOnlyList<PaymentProviderConfig> configs, string? token, CapturingHandler h,
+        DateTime? nowUtc = null)
     {
         var p = new OmisePaymentProvider(new FakeFactory(h), new PlainSecrets(), NullLogger<OmisePaymentProvider>.Instance);
-        var toTry = GatewayWebhookRoute.ConfigsToTry(
-            configs.Select(c => new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode)),
-            token);
+        var toTry = GatewayWebhookRoute.ConfigsToTry(configs.Select(FactsOf), token, nowUtc ?? BeforeSunset);
         foreach (var c in configs.Where(c => toTry.Contains(c.Id)))
             await p.VerifyWebhookAsync("{\"id\":\"evnt_test_abc\"}", new Dictionary<string, string>(), c);
         return toTry.Count;
@@ -77,8 +83,8 @@ public class GatewayTeamGWRound201Tests
         Assert.Equal(0, tried);
         Assert.Empty(h.Requests);
         // รูปผิด (สั้น/อักขระแปลก) ก็ไม่ลอง
-        Assert.Empty(GatewayWebhookRoute.ConfigsToTry(new[] { new GatewayWebhookConfigFacts(a.Id, a.WebhookToken, null) }, "../x"));
-        Assert.Empty(GatewayWebhookRoute.ConfigsToTry(new[] { new GatewayWebhookConfigFacts(a.Id, a.WebhookToken, null) }, ""));
+        Assert.Empty(GatewayWebhookRoute.ConfigsToTry(new[] { new GatewayWebhookConfigFacts(a.Id, a.WebhookToken, null) }, "../x", BeforeSunset));
+        Assert.Empty(GatewayWebhookRoute.ConfigsToTry(new[] { new GatewayWebhookConfigFacts(a.Id, a.WebhookToken, null) }, "", BeforeSunset));
     }
 
     [Fact]
@@ -93,10 +99,10 @@ public class GatewayTeamGWRound201Tests
     }
 
     [Fact]
-    public async Task GW1_ทิศตรงข้าม_URLเดิมยังลองทุกconfigที่ยังไม่ย้าย()
+    public async Task GW1_ทิศตรงข้าม_URLเดิมยังลองconfigที่มีหลักฐานใช้URLเดิมและยังไม่ย้าย()
     {
-        var a = Cfg(GatewayWebhookRoute.NewToken());
-        var b = Cfg(GatewayWebhookRoute.NewToken());
+        var a = Cfg(GatewayWebhookRoute.NewToken(), legacyEligible: true);
+        var b = Cfg(GatewayWebhookRoute.NewToken(), legacyEligible: true);
         var h = new CapturingHandler();
         var tried = await SimulateWebhookAsync(new[] { a, b }, null, h);
         Assert.Equal(2, tried);
@@ -106,16 +112,15 @@ public class GatewayTeamGWRound201Tests
     [Fact]
     public void GW1_URLเดิมเลิกลองconfigที่ย้ายแล้วในโหมดปัจจุบันเท่านั้น()
     {
-        var moved = Cfg(GatewayWebhookRoute.NewToken(), DateTime.UtcNow, PaymentProviderMode.Test, PaymentProviderMode.Test);
+        var moved = Cfg(GatewayWebhookRoute.NewToken(), BeforeSunset, PaymentProviderMode.Test, PaymentProviderMode.Test, legacyEligible: true);
         // ย้ายในโหมดทดสอบแล้วสลับเป็นใช้จริง — แดชบอร์ดใช้จริงยังเป็น URL เดิม ⇒ ต้องยังรับได้
-        var switched = Cfg(GatewayWebhookRoute.NewToken(), DateTime.UtcNow, PaymentProviderMode.Test, PaymentProviderMode.Live);
-        var facts = new[] { moved, switched }.Select(c =>
-            new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode)).ToList();
-        var legacy = GatewayWebhookRoute.ConfigsToTry(facts, null);
+        var switched = Cfg(GatewayWebhookRoute.NewToken(), BeforeSunset, PaymentProviderMode.Test, PaymentProviderMode.Live, legacyEligible: true);
+        var facts = new[] { moved, switched }.Select(FactsOf).ToList();
+        var legacy = GatewayWebhookRoute.ConfigsToTry(facts, null, BeforeSunset);
         Assert.DoesNotContain(moved.Id, legacy);
         Assert.Contains(switched.Id, legacy);
         // เส้น token ยังลองได้เสมอ
-        Assert.Equal(new[] { moved.Id }, GatewayWebhookRoute.ConfigsToTry(facts, moved.WebhookToken));
+        Assert.Equal(new[] { moved.Id }, GatewayWebhookRoute.ConfigsToTry(facts, moved.WebhookToken, BeforeSunset));
     }
 
     [Fact]
@@ -138,13 +143,93 @@ public class GatewayTeamGWRound201Tests
     [Fact]
     public void GW1_คำเตือนURLเดิม_สองทิศ()
     {
-        var now = DateTime.UtcNow;
-        var notMoved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", null);
-        Assert.Contains("URL แบบเดิม", GatewayWebhookRoute.LegacyUrlWarning(now, notMoved));
-        Assert.Null(GatewayWebhookRoute.LegacyUrlWarning(null, notMoved));
-        var moved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", now, PaymentProviderMode.Test, PaymentProviderMode.Test);
-        Assert.Null(GatewayWebhookRoute.LegacyUrlWarning(now.AddDays(-1), moved));   // เก่ากว่าการย้าย = ไม่เตือน
-        Assert.Contains("สองที่", GatewayWebhookRoute.LegacyUrlWarning(now.AddMinutes(5), moved));
+        var now = BeforeSunset;
+        // ร้านที่ URL เดิมยังรับ ⇒ เตือนพร้อมวันปิด (ไม่ต้องรอให้มีคำขอทาง URL เดิมก่อน)
+        var notMoved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", null, LegacyEligible: true);
+        Assert.Contains(GatewayWebhookRoute.LegacyRouteSunsetDisplay, GatewayWebhookRoute.LegacyUrlWarning(null, null, notMoved, now));
+        // ร้านใหม่ (ไม่มีหลักฐานใช้ URL เดิม) ที่ไม่มีคำขอทาง URL เดิม ⇒ ไม่เตือน
+        Assert.Null(GatewayWebhookRoute.LegacyUrlWarning(null, null, new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", null), now));
+        var moved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", now, PaymentProviderMode.Test, PaymentProviderMode.Test, true);
+        Assert.Null(GatewayWebhookRoute.LegacyUrlWarning(now.AddDays(-1), null, moved, now));   // เก่ากว่าการย้าย = ไม่เตือน
+        Assert.Contains("ไม่รับ", GatewayWebhookRoute.LegacyUrlWarning(now.AddMinutes(5), null, moved, now));
+    }
+
+    // ═══ ฝ่ายค้าน GWO-1: URL เดิมลองเฉพาะร้านที่มีหลักฐานใช้ URL เดิม + วันปิด ═══
+
+    [Fact]
+    public async Task GWO1_ร้านที่ไม่มีหลักฐานใช้URLเดิม_POSTนิรนามไม่ยิงคำขอออกด้วยคีย์ของร้าน()
+    {
+        // ทุกแถว ณ วัน deploy ที่ไม่เคยรับ webhook + ทุกแถวที่สร้างหลังรอบนี้ (ธง false) — เดิมถูกลองทั้งหมด
+        var neverReceived = Cfg(GatewayWebhookRoute.NewToken());
+        var createdLater = Cfg(GatewayWebhookRoute.NewToken());
+        var h = new CapturingHandler();
+        Assert.Equal(0, await SimulateWebhookAsync(new[] { neverReceived, createdLater }, null, h));
+        Assert.Empty(h.Requests);
+        Assert.False(new PaymentProviderConfig().LegacyWebhookEligible);   // แถวใหม่ = false เสมอ
+    }
+
+    [Fact]
+    public async Task GWO1_หลังวันปิด_URLเดิมไม่ลองใครเลย_แต่URLรหัสลับยังรับ()
+    {
+        var a = Cfg(GatewayWebhookRoute.NewToken(), legacyEligible: true);
+        var h = new CapturingHandler();
+        Assert.Equal(0, await SimulateWebhookAsync(new[] { a }, null, h, GatewayWebhookRoute.LegacyRouteSunsetUtc));
+        Assert.Empty(h.Requests);
+        Assert.Equal(1, await SimulateWebhookAsync(new[] { a }, a.WebhookToken, h, GatewayWebhookRoute.LegacyRouteSunsetUtc.AddDays(30)));
+        Assert.Single(h.Requests);
+        // ทิศตรงข้าม: นาทีก่อนวันปิดยังรับ
+        Assert.True(GatewayWebhookRoute.AcceptsLegacy(FactsOf(a), GatewayWebhookRoute.LegacyRouteSunsetUtc.AddMinutes(-1)));
+        Assert.Equal("01/01/2570", GatewayWebhookRoute.LegacyRouteSunsetDisplay);
+        // หลังวันปิด ร้านที่ยังไม่ย้ายเห็นว่า "ปิดแล้ว"
+        Assert.Contains("ปิดแล้ว", GatewayWebhookRoute.LegacyUrlWarning(null, null, FactsOf(a), GatewayWebhookRoute.LegacyRouteSunsetUtc));
+    }
+
+    // ═══ ฝ่ายค้าน GWO-7: คำขอทาง URL เดิมที่ถูกข้าม ⇒ ประทับเวลา ⇒ คำเตือนกิ่ง "ไม่รับ" ขึ้นจริง ═══
+
+    [Fact]
+    public void GWO7_ประทับเฉพาะconfigที่ถูกข้าม_ไม่ถี่กว่า10นาที()
+    {
+        var skipped = FactsOf(Cfg(GatewayWebhookRoute.NewToken(), BeforeSunset, PaymentProviderMode.Test, PaymentProviderMode.Test, legacyEligible: true));
+        Assert.True(GatewayWebhookRoute.ShouldStampLegacySkip(skipped, null, BeforeSunset));
+        Assert.False(GatewayWebhookRoute.ShouldStampLegacySkip(skipped, BeforeSunset.AddMinutes(-3), BeforeSunset));
+        Assert.True(GatewayWebhookRoute.ShouldStampLegacySkip(skipped, BeforeSunset.AddMinutes(-10), BeforeSunset));
+        // ทิศตรงข้าม: config ที่ URL เดิมยังลอง (ถูกยืนยันตามปกติ) ไม่ใช่ "ถูกข้าม"
+        var accepted = FactsOf(Cfg(GatewayWebhookRoute.NewToken(), legacyEligible: true));
+        Assert.False(GatewayWebhookRoute.ShouldStampLegacySkip(accepted, null, BeforeSunset));
+        // เวลาที่ถูกข้ามหลังการรับทาง URL ใหม่ ⇒ คำเตือนขึ้น (เดิมกิ่งนี้ไม่มีวันขึ้นเพราะไม่มีการบันทึก)
+        Assert.NotNull(GatewayWebhookRoute.LegacyUrlWarning(null, BeforeSunset.AddMinutes(1), skipped, BeforeSunset));
+        Assert.Null(GatewayWebhookRoute.LegacyUrlWarning(null, BeforeSunset.AddMinutes(-1), skipped, BeforeSunset));
+    }
+
+    [Fact]
+    public void GWO7_เลขรายการจากเนื้อคำขอ_อ่านโดยไม่ยิงคำขอออก()
+    {
+        var h = new CapturingHandler();
+        IPaymentProvider p = new OmisePaymentProvider(new FakeFactory(h), new PlainSecrets(), NullLogger<OmisePaymentProvider>.Instance);
+        var id = Guid.NewGuid();
+        Assert.Equal(id, p.UnverifiedIntentHint("{\"id\":\"evnt_x\",\"data\":{\"object\":\"charge\",\"metadata\":{\"intentId\":\"" + id + "\"}}}"));
+        Assert.Null(p.UnverifiedIntentHint("{\"data\":{\"metadata\":{\"intentId\":\"ไม่ใช่เลข\"}}}"));
+        Assert.Null(p.UnverifiedIntentHint("ไม่ใช่ JSON"));
+        Assert.Null(p.UnverifiedIntentHint("{\"data\":[]}"));
+        Assert.Empty(h.Requests);
+    }
+
+    // ═══ ฝ่ายค้าน GWO-6: รหัสลับไม่หลุดผ่านหน้าจอผู้อื่น/log ═══
+
+    [Fact]
+    public void GWO6_ปิดบังรหัสในURLและในpathของlog()
+    {
+        var t = GatewayWebhookRoute.NewToken();
+        var masked = GatewayWebhookRoute.MaskedPath("omise", t);
+        Assert.DoesNotContain(t, masked);
+        Assert.EndsWith(t[^4..], masked);
+        Assert.Equal("/api/pay/webhooks/omise/[redacted]", GatewayWebhookRoute.RedactPath("/api/pay/webhooks/omise/" + t));
+        Assert.Equal("/API/pay/webhooks/omise/[redacted]/x", GatewayWebhookRoute.RedactPath("/API/pay/webhooks/omise/" + t + "/x"));
+        // ทิศตรงข้าม: URL เดิม/ path อื่นไม่ถูกแตะ
+        Assert.Equal("/api/pay/webhooks/omise", GatewayWebhookRoute.RedactPath("/api/pay/webhooks/omise"));
+        Assert.Equal("/api/pay/webhooks/omise/", GatewayWebhookRoute.RedactPath("/api/pay/webhooks/omise/"));
+        Assert.Equal("/api/companies/x/payment-settings", GatewayWebhookRoute.RedactPath("/api/companies/x/payment-settings"));
+        Assert.Equal("/api/pay/webhooks/omise", GatewayWebhookRoute.MaskedPath("omise", null));
     }
 
     // ═══ A-GW4: รอบโอน batch ที่ลงบัญชีแล้ว = โอนแล้ว (กระทบยอด) ═══
@@ -445,7 +530,7 @@ public class GatewayTeamGWRound201Tests
         Assert.False(GatewayFeeVatClaim.ResidueCheck(0.37m, 0, sept, null).Ok);
         var late = GatewayFeeVatClaim.ResidueCheck(0.37m, 1, sept, new DateTime(2026, 8, 31));
         Assert.False(late.Ok);
-        Assert.Contains("09/2026", late.Message);
+        Assert.Contains("01/09/2569", late.Message);
         Assert.False(GatewayFeeVatClaim.ResidueCheck(0m, 1, sept, new DateTime(2026, 9, 30)).Ok);
         Assert.False(GatewayFeeVatClaim.ResidueTag("x").StartsWith(GatewayFeeVatClaim.ClaimTagPrefix));   // ไม่เข้าการหาเคลมซ้ำ
     }
@@ -513,5 +598,82 @@ public class GatewayTeamGWRound201Tests
         Assert.Contains(OmisePaymentProvider.ApiVersion, omise.PendingVerificationNotice);
         var slip = (Accounting.Services.Payments.IPaymentProvider)new ManualSlipPaymentProvider();
         Assert.Null(slip.PendingVerificationNotice);
+    }
+    // ═══ ฝ่ายค้าน GWO-2: เศษ 11630 ตัดสินระดับวัน + เกณฑ์ไม่สะสมไม่จำกัด ═══
+
+    [Fact]
+    public void GWO2_รอบโอนหลังวันที่ใบกำกับที่เคลมล่าสุดในเดือนเดียวกัน_ปฏิเสธ()
+    {
+        var deferredOn28 = new DateTime(2026, 9, 28, 0, 0, 0, DateTimeKind.Utc);
+        var r = GatewayFeeVatClaim.ResidueCheck(0.37m, 1, deferredOn28, new DateTime(2026, 9, 15));
+        Assert.False(r.Ok);   // เดิมระดับเดือน: ใบวันที่ 15 "ครอบ" รอบโอนวันที่ 28 ⇒ ปรับปรุง VAT ที่ยังรอใบทิ้ง
+        Assert.Contains("28/09/2569", r.Message);
+        // ทิศตรงข้าม: ใบกำกับลงวันที่หลัง/วันเดียวกับรอบโอนล่าสุด = ผ่าน
+        Assert.True(GatewayFeeVatClaim.ResidueCheck(0.37m, 1, deferredOn28, new DateTime(2026, 9, 28)).Ok);
+        Assert.True(GatewayFeeVatClaim.ResidueCheck(0.37m, 1, deferredOn28, new DateTime(2026, 9, 30)).Ok);
+    }
+
+    [Fact]
+    public void GWO2_เกณฑ์นับใบกำกับไม่เกิน12ใบ()
+    {
+        var day = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+        var inv = new DateTime(2026, 9, 30);
+        var over = GatewayFeeVatClaim.ResidueCheck(12.01m, 40, day, inv);
+        Assert.False(over.Ok);   // เดิม 40 ใบ ⇒ เกณฑ์ 40 บาท
+        Assert.Equal(12.00m, over.Threshold);
+        Assert.True(GatewayFeeVatClaim.ResidueCheck(12.00m, 40, day, inv).Ok);
+        // ทิศตรงข้าม: ต่ำกว่าเพดาน = เกณฑ์ตามจำนวนใบเดิม
+        Assert.Equal(3.00m, GatewayFeeVatClaim.ResidueCheck(0.5m, 3, day, inv).Threshold);
+    }
+
+    // ═══ ฝ่ายค้าน GWO-3: ยอดคืนย้อนหลังของรายการที่บันทึกรอบโอนแล้ว ═══
+
+    private static readonly DateTime MoneyIn = new(2026, 9, 20, 3, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void GWO3_คืนก่อนวันเงินเข้า_บังคับเลือก_หักแล้วตั้งยอดที่หัก()
+    {
+        var before = MoneyIn.AddDays(-5);
+        var none = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.Unspecified);
+        Assert.False(none.Ok);   // เดิมไม่ถาม ⇒ รอบถัดไปหักซ้ำ
+        Assert.Contains("PO-1", none.Message);
+        var deducted = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInRecordedRound);
+        Assert.True(deducted.Ok);
+        Assert.True(deducted.MarkDeductedInRecordedRound);
+        Assert.DoesNotContain("ตามปกติ", deducted.OutcomeText);
+        var later = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInLaterRound);
+        Assert.True(later.Ok);
+        Assert.False(later.MarkDeductedInRecordedRound);
+        // วันเดียวกับวันเงินเข้า = ระบบไม่เดา (ต้องเลือก)
+        Assert.False(GatewayRefundMath.LegacyRefundRoundTiming(MoneyIn.AddHours(2), MoneyIn, null, GatewayLegacyRefundRoundTiming.Unspecified).Ok);
+    }
+
+    [Fact]
+    public void GWO3_ทิศตรงข้าม_ยังไม่เข้ารอบหรือคืนหลังวันเงินเข้า_ไม่ต้องเลือก()
+    {
+        var notSettled = GatewayRefundMath.LegacyRefundRoundTiming(MoneyIn, null, null, GatewayLegacyRefundRoundTiming.Unspecified);
+        Assert.True(notSettled.Ok);
+        Assert.False(notSettled.MarkDeductedInRecordedRound);
+        var after = MoneyIn.AddDays(3);
+        var r = GatewayRefundMath.LegacyRefundRoundTiming(after, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.Unspecified);
+        Assert.True(r.Ok);
+        Assert.False(r.MarkDeductedInRecordedRound);
+        Assert.Contains("รอบโอนถัดไป", r.OutcomeText);
+        // คืนหลังวันเงินเข้าแต่เลือก "หักในรอบที่บันทึกแล้ว" = ขัดกับวันที่ ⇒ ปฏิเสธ
+        Assert.False(GatewayRefundMath.LegacyRefundRoundTiming(after, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInRecordedRound).Ok);
+    }
+
+    // ═══ ฝ่ายค้าน GWO-5: คง JE เดิม ⇒ อยู่ในช่องคำเตือนของคำตอบ ═══
+
+    [Fact]
+    public void GWO5_คงJEเดิมอยู่ในคำเตือน_ทางที่สำเร็จไม่มีคำเตือน()
+    {
+        var w = IntegrationResyncJournal.Warnings(IntegrationResyncJournalAction.KeepOriginal, "ผังบัญชีที่ mapping ชี้ไปปิดใช้");
+        Assert.NotNull(w);
+        Assert.Contains("JE เดิมคงไว้", w![0]);
+        Assert.Contains("ปิดใช้", w[0]);
+        Assert.Null(IntegrationResyncJournal.Warnings(IntegrationResyncJournalAction.InPlace, null));
+        Assert.Null(IntegrationResyncJournal.Warnings(IntegrationResyncJournalAction.ReverseAndRepost, "  "));
+        Assert.Equal(new[] { "ไม่มีผัง" }, IntegrationResyncJournal.Warnings(IntegrationResyncJournalAction.PostFresh, "ไม่มีผัง"));
     }
 }
