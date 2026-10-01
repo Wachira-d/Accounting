@@ -3247,6 +3247,26 @@ RULES += [
          must=["_companyService.CheckOwnershipTransferAsync(", "_companyService.TransferOwnershipAsync("],
          before=[("_companyService.CheckOwnershipTransferAsync(", "_companyService.TransferOwnershipAsync(")],
          why="C-4 ด่านก่อนเขียน + ข้อความปฏิเสธไทย"),
+    # B-9: วันหยุดราชการระดับแพลตฟอร์ม — ผู้อ่านกำหนดยื่น (ปฏิทินภาษี · หน้านำส่ง) ส่งชุดวันหยุดเข้าตัวตัดสินเดียว (ว่าง = เดิม)
+    dict(file="Services/Implementations/TaxCalendarService.cs", method="InitializeYearAsync",
+         must=["PlatformHolidayStore.LoadSetAsync("],
+         call_args=[("TaxFilingDeadline.For(", "holidays"), ("TaxFilingDeadline.RollToBusinessDay(", "holidays")],
+         why="B-9 กำหนดยื่นในปฏิทินภาษีเลื่อนพ้นวันหยุดราชการของแพลตฟอร์มด้วย (ป.พ.พ. §193/8)"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="BuildItem",
+         call_args=[("DueDates(", "_holidays")],
+         why="B-9 ธงเลยกำหนดของหน้านำส่งใช้วันหยุดราชการชุดเดียวกับปฏิทินภาษี"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="BuildCell",
+         call_args=[("DueDates(", "_holidays")],
+         why="B-9 ปฏิทินยื่นของหน้านำส่งใช้วันหยุดราชการชุดเดียวกัน"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetDashboardAsync",
+         must=["EnsureHolidaysAsync("], before=[("EnsureHolidaysAsync(", "BuildItem(")],
+         why="B-9 โหลดวันหยุดก่อนคิดธงเลยกำหนด (ไม่งั้นเงียบกลับไปเสาร์/อาทิตย์)"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetFilingCalendarAsync",
+         must=["EnsureHolidaysAsync("], before=[("EnsureHolidaysAsync(", "BuildCell(")],
+         why="B-9 โหลดวันหยุดก่อนสร้างปฏิทินยื่น"),
+    dict(file="Helpers/TaxFilingDeadline.cs", method="RollToBusinessDay#1",
+         must=["BusinessDayCalendar.RollForward("],
+         why="B-9 การเลื่อนวันทำการมีตัวตัดสินเดียว (เสาร์/อาทิตย์ + วันหยุดราชการ)"),
 ]
 
 # ── รอบ 201 ทีม DV (BACKLOG A-DV1..A-DV6 · C-1 · คำตัดสินข้อ 62/65/66/67/68/74): เอกสาร ยกเลิก/ออกใบแทน/e-Tax (pure ทดสอบใน VoidReissueR201DvTests) ──

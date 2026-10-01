@@ -4093,3 +4093,11 @@ _2026-10-01 รอบ 201 ทีม PL — รวมงานทีม DV (merge
 - `audit_direct_add_check` baseline ลดเป็น 29 จุด/8 ไฟล์ (DocumentService ย้ายเข้า chain โดยทีม DV)
 - แถว audit นอก chain รุ่นเก่า **ไม่เติม hash ย้อนหลัง** — `AuditHashChain.UnchainedNote` + `AuditChainVerifyResult.UnchainedCount/UnchainedLatestAt/UnchainedNote` ·
   endpoint `verify-hash-chain` ส่ง `unchainedLatestAt`/`unchainedNote` · job log จำนวน · เทสต์ `Unchained_legacy_rows_are_reported_separately_not_as_tampered` — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 4 — B-9 วันหยุดราชการระดับแพลตฟอร์ม (ส่วนที่ทำได้ก่อน · ข้อมูลภายนอกห้ามแต่ง):
+- ตาราง `PlatformHolidays` (entity + migration · unique วันที่ในแถวที่ยังไม่ลบ) · หน้าแอดมิน `admin/platform-holidays.html` + `api/admin/platform-holidays` (SystemAdmin · ปฏิเสธคีย์ ·
+  แสดงงวดที่กำหนดยื่นเลื่อนเพราะวันหยุดทันที) · เมนูแอดมิน "วันหยุดราชการ (กำหนดยื่นภาษี)"
+- `Helpers/BusinessDayCalendar` ตัวตัดสินวันทำการเดียว · `TaxFilingDeadline` overload รับชุดวันหยุด (overload เดิมคงพฤติกรรมเสาร์/อาทิตย์) ·
+  `PlatformHolidayStore.LoadSetAsync` (อ่านไม่ได้ = ชุดว่าง + log) · ผู้อ่าน: `TaxCalendarService.InitializeYearAsync` · `StatutoryRemittanceService` (ธงเลยกำหนด/ปฏิทินยื่น)
+- 📋 ผู้อ่านในไฟล์ทีมอื่นยังเสาร์/อาทิตย์ (ComplianceService · TaxComplianceChecker · SsoLateFee · DepositPolicyResolver · PayrollService · SettlementPosting §87)
+- เทสต์ `BusinessDayCalendarTests` · required_call_site +6 แถว — commit <pending>)_

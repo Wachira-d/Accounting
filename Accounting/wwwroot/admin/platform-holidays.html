@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>วันหยุดราชการ (กำหนดยื่นภาษี) - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .form-row { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:8px }
+    .form-row label { display:flex; flex-direction:column; font-size:12px; color:#475569; gap:4px }
+    .form-row input, .form-row select { padding:6px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px; background:#f1f5f9; color:#475569 }
+    .shift-list { font-size:12px; color:#334155; line-height:1.7 }
+  </style>
+</head>
+<body>
+  <!-- รอบ 201 ทีม PL (B-9): วันหยุดราชการระดับแพลตฟอร์ม — ข้อมูลภายนอก (ประกาศ ครม.) แอดมินกรอกเอง · ผลกระทบคำนวณที่เซิร์ฟเวอร์ (หน้านี้แสดงอย่างเดียว) -->
+  <div id="pageContent">
+    <div class="info-box" id="guidance">กำลังโหลด...</div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">📅 วันหยุดราชการ ปี
+          <select id="yearSel"></select></span>
+      </div>
+      <div class="form-row">
+        <label>วันที่<input type="date" id="hDate"></label>
+        <label>ชื่อวันหยุด (ไทย)<input type="text" id="hNameTh" maxlength="200" style="min-width:220px"></label>
+        <label>ชื่อ (อังกฤษ)<input type="text" id="hNameEn" maxlength="200"></label>
+        <label>ประเภท<select id="hKind">
+          <option value="Public">ราชการ/นักขัตฤกษ์</option>
+          <option value="Substitute">ชดเชย</option>
+          <option value="Special">พิเศษ (มติ ครม.)</option>
+        </select></label>
+        <label>ที่มา (เลขประกาศ/มติ)<input type="text" id="hSource" maxlength="500"></label>
+        <button class="admin-btn admin-btn-primary" id="addBtn">เพิ่ม</button>
+      </div>
+      <div id="list" style="margin-top:12px">กำลังโหลด...</div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">⚖️ กำหนดยื่นรายเดือนที่เลื่อนเพราะวันหยุดในตาราง</span></div>
+      <div id="shifted" class="shift-list">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      base: '/platform-holidays',
+      year: new Date().getFullYear(),
+
+      init() {
+        AdminLayout.init('platform-holidays');
+        const sel = document.getElementById('yearSel');
+        for (let y = this.year - 1; y <= this.year + 2; y++) {
+          const o = document.createElement('option');
+          o.value = String(y); o.textContent = `${y} (พ.ศ. ${y + 543})`;
+          if (y === this.year) o.selected = true;
+          sel.appendChild(o);
+        }
+        sel.addEventListener('change', () => { this.year = Number(sel.value); this.load(); });
+        document.getElementById('addBtn').addEventListener('click', () => this.add());
+        document.getElementById('list').addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-del]');
+          if (btn) this.remove(btn.dataset.del, btn.dataset.label);
+        });
+        this.load();
+      },
+
+      fmtDate(t) { return t ? new Date(t).toLocaleDateString('th-TH', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' }) : '-'; },
+
+      async load() {
+        try {
+          const res = await AdminAPI.get(`${this.base}?year=${this.year}`);
+          this.render(res.data);
+        } catch (e) {
+          document.getElementById('list').innerHTML = `<div style="color:#dc2626">${AdminLayout.esc(e.message)}</div>`;
+        }
+      },
+
+      render(d) {
+        document.getElementById('guidance').textContent = d.guidance || '';
+        const rows = d.holidays || [];
+        document.getElementById('list').innerHTML = rows.length === 0
+          ? '<div class="muted">ยังไม่มีวันหยุดของปีนี้ — กำหนดยื่นเลื่อนเฉพาะเสาร์/อาทิตย์</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table">
+              <thead><tr><th>วันที่</th><th>ชื่อ</th><th>ประเภท</th><th>ที่มา</th><th></th></tr></thead>
+              <tbody>${rows.map(h => `<tr>
+                <td>${AdminLayout.esc(this.fmtDate(h.date))}</td>
+                <td><strong>${AdminLayout.esc(h.nameTh)}</strong><div class="muted">${AdminLayout.esc(h.nameEn || '')}</div></td>
+                <td><span class="pill">${AdminLayout.esc(h.kind)}</span></td>
+                <td class="muted">${AdminLayout.esc(h.sourceReference || '-')}</td>
+                <td><button class="admin-btn admin-btn-outline admin-btn-sm" data-del="${AdminLayout.esc(h.id)}" data-label="${AdminLayout.esc(h.nameTh)}">ลบ</button></td>
+              </tr>`).join('')}</tbody></table></div>`;
+        const sh = d.shiftedDeadlines || [];
+        document.getElementById('shifted').innerHTML = sh.length === 0
+          ? '<div class="muted">ไม่มีงวดที่เลื่อนเพราะวันหยุดในตาราง</div>'
+          : sh.map(s => `<div>${AdminLayout.esc(s)}</div>`).join('');
+      },
+
+      async add() {
+        const body = {
+          date: document.getElementById('hDate').value || null,
+          nameTh: document.getElementById('hNameTh').value.trim(),
+          nameEn: document.getElementById('hNameEn').value.trim() || null,
+          kind: document.getElementById('hKind').value,
+          sourceReference: document.getElementById('hSource').value.trim() || null,
+        };
+        const btn = document.getElementById('addBtn');
+        btn.disabled = true;
+        try {
+          const res = await AdminAPI.post(this.base, body);
+          AdminLayout.toast(res.message || 'เพิ่มแล้ว');
+          document.getElementById('hNameTh').value = '';
+          document.getElementById('hNameEn').value = '';
+          await this.load();
+        } catch (e) {
+          AdminLayout.toast('เพิ่มไม่สำเร็จ: ' + e.message, 'error');
+        } finally { btn.disabled = false; }
+      },
+
+      async remove(id, label) {
+        if (!confirm(`ลบวันหยุด "${label}"? กำหนดยื่นที่เคยเลื่อนเพราะวันนี้จะกลับเป็นวันเดิม`)) return;
+        try {
+          const res = await AdminAPI.del(`${this.base}/${encodeURIComponent(id)}`);
+          AdminLayout.toast(res.message || 'ลบแล้ว');
+          await this.load();
+        } catch (e) { AdminLayout.toast('ลบไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

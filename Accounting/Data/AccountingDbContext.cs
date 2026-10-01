@@ -63,6 +63,8 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     /// <summary>watermark งานตรวจ audit chain ต่อบริษัท (รอบ 201 ทีม PL · A-PL3)</summary>
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
+    /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
+    public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
@@ -951,6 +953,17 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(a => a.Timestamp);
             e.Property(a => a.EntityType).HasMaxLength(100);
+        });
+
+        // ===== PlatformHoliday (รอบ 201 ทีม PL · B-9) — วันที่ไม่ซ้ำในแถวที่ยังไม่ลบ =====
+        modelBuilder.Entity<PlatformHoliday>(e =>
+        {
+            e.HasIndex(h => h.Date).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_PlatformHolidays_Date");
+            e.Property(h => h.NameTh).HasMaxLength(200);
+            e.Property(h => h.NameEn).HasMaxLength(200);
+            e.Property(h => h.Kind).HasMaxLength(20);
+            e.Property(h => h.SourceReference).HasMaxLength(500);
+            e.HasQueryFilter(h => !h.IsDeleted);
         });
 
         // ===== AuditChainCheckpoint (รอบ 201 ทีม PL · A-PL3) — แถวเดียวต่อบริษัท =====

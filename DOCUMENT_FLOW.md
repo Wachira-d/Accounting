@@ -2920,7 +2920,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - กำหนดยื่น — **ตารางเดียวของทั้งระบบ** `Helpers/TaxFilingDeadline` (รอบ 164):
   ปกส. 15/15 · ภ.พ.30 กระดาษ 15 e-Filing 23 · **ภ.พ.36 กระดาษ 7 e-Filing 15**
   (§83/6 — ไม่ใช่ 23) · ภ.ง.ด.1/3/53/54 กระดาษ 7 e-Filing 15
-  · เลื่อนพ้นเสาร์/อาทิตย์ตาม **ป.พ.พ. §193/8** (ยังไม่มีตารางวันหยุดราชการ — backlog)
+  · เลื่อนพ้นเสาร์/อาทิตย์ตาม **ป.พ.พ. §193/8** · **รอบ 201 ทีม PL (B-9)**: + วันหยุดราชการระดับแพลตฟอร์ม (ตาราง `PlatformHolidays` ·
+    แอดมินกรอกจากประกาศ ครม. ที่ `admin/platform-holidays.html` — ระบบไม่แต่ง · **ว่าง = เสาร์/อาทิตย์ตามเดิม**) ผ่านตัวตัดสินวันทำการเดียว
+    `Helpers/BusinessDayCalendar` (overload `TaxFilingDeadline.For/RollToBusinessDay/EFilingFor(…, holidays)`) · ผู้อ่านที่ต่อสายแล้ว: `TaxCalendarService.InitializeYearAsync` ·
+    `StatutoryRemittanceService` (ธงเลยกำหนด + ปฏิทินยื่น · `PlatformHolidayStore.LoadSetAsync`) · 📋 ยังเสาร์/อาทิตย์: `ComplianceService` · `TaxComplianceChecker` ·
+    `SsoLateFee` · `DepositPolicyResolver` · `PayrollService` (สปส.6-09) · §87 `SettlementPosting.WeekdaysAfter` (ไฟล์ทีมอื่น — `BusinessDayCalendar.BusinessDaysAfter` พร้อมใช้)
   · e-Filing นับจากวันครบกำหนด **ก่อนเลื่อน** (เดิมปฏิทินเลื่อนกระดาษก่อนแล้ว +8
   ⇒ ช้ากว่ากฎหมาย 2 วันเมื่อวันที่ 7 ตรงเสาร์)
   · ผู้เรียก: `StatutoryRemittanceService.DueDates` · `TaxCalendarService` ·

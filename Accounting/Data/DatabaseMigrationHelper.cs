@@ -7105,6 +7105,9 @@ public static class DatabaseMigrationHelper
             """CREATE TABLE IF NOT EXISTS "AuditChainCheckpoints" ("CompanyId" uuid PRIMARY KEY, "LastVerifiedId" bigint NOT NULL DEFAULT 0, "LastRunAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "LastFullVerifiedAt" timestamp without time zone NULL, "LastFindingCount" integer NOT NULL DEFAULT 0, "LastForkCount" integer NOT NULL DEFAULT 0);""",
             // C-3: สวิตช์บังคับด่าน "เจ้าของปิดฟีเจอร์" ระดับ service — DEFAULT false = โหมดเงา (ห้ามเริ่มที่บังคับ · ข้อ 76)
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OwnerFeatureMaskEnforced" boolean NOT NULL DEFAULT false;""",
+            // B-9: วันหยุดราชการระดับแพลตฟอร์ม (แอดมินกรอกจากประกาศ ครม. — ข้อมูลภายนอก ระบบไม่ seed เอง) · ตารางว่าง = พฤติกรรมเดิม
+            """CREATE TABLE IF NOT EXISTS "PlatformHolidays" ("Id" uuid PRIMARY KEY, "Date" timestamp without time zone NOT NULL, "NameTh" varchar(200) NOT NULL DEFAULT '', "NameEn" varchar(200) NULL, "Kind" varchar(20) NOT NULL DEFAULT 'Public', "SourceReference" varchar(500) NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformHolidays_Date" ON "PlatformHolidays" ("Date") WHERE "IsDeleted" = false;""",
             // ═══ จบบล็อกรอบ 201 ทีม PL ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
