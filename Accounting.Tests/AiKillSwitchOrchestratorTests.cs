@@ -134,6 +134,22 @@ public class AiKillSwitchOrchestratorTests
         Assert.DoesNotContain(AiFeatureKey.PaymentVoucherAccountingSuggestion, DistillationModelRegistry.GenericFeatureKeys);
         Assert.Contains(typeof(PaymentVoucherAccountingDistillationModel), DistillationModelRegistry.BespokeModels);
     }
+
+    [Fact]
+    public void ค่า_enum_ที่เลิกใช้_ไม่นับเป็นช่องว่างของนักเรียน_ตัวที่ใช้อยู่ยังถูกนับ()
+    {
+        // CI รอบ 201: ใส่ค่า [Obsolete(error: true)] ในรายการค้าง = CS0619 ⇒ ตัวตรวจต้องข้ามค่าที่เลิกใช้เอง (ทิศตรงข้าม: ค่าที่ใช้อยู่ห้ามถูกข้าม)
+        var retired = Enum.GetValues<AiFeatureKey>().Where(DistillationModelRegistry.IsRetired).ToList();
+        Assert.True(retired.Count >= 4, "ค่าที่เลิกใช้: " + string.Join(", ", retired));
+        Assert.False(DistillationModelRegistry.IsRetired(AiFeatureKey.ContactFuzzyMatch));
+        var missing = DistillationModelRegistry.MissingStudents(Array.Empty<AiFeatureKey>());
+        foreach (var r in retired) Assert.DoesNotContain(r, missing);
+        // ไม่มีนักเรียนเลย ⇒ ทุกค่าที่ใช้อยู่และไม่อยู่ในรายการค้างต้องถูกฟ้อง (ตัวข้ามต้องไม่กลืนค่าที่ใช้อยู่)
+        var expected = Enum.GetValues<AiFeatureKey>()
+            .Where(k => !DistillationModelRegistry.IsRetired(k) && !DistillationModelRegistry.KnownGapsWithoutStudent.ContainsKey(k)).ToList();
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected.OrderBy(k => k), missing.OrderBy(k => k));
+    }
 }
 
 /// <summary>ชุดประกอบเทสต์ kill-switch — orchestrator ตัวจริงที่ป้อนค่าตั้ง/รายชื่อ provider แทนฐานข้อมูล
@@ -236,21 +252,5 @@ internal static class KillSwitchRig
             => throw new InvalidOperationException("ไม่ควรถึงขั้นส่งออก");
         public string ComputePromptHash(string sanitizedUserPromptJson, string systemPrompt, string model)
             => throw new InvalidOperationException("ไม่ควรถึงขั้นส่งออก");
-    }
-
-    [Fact]
-    public void ค่า_enum_ที่เลิกใช้_ไม่นับเป็นช่องว่างของนักเรียน_ตัวที่ใช้อยู่ยังถูกนับ()
-    {
-        // CI รอบ 201: ใส่ค่า [Obsolete(error: true)] ในรายการค้าง = CS0619 ⇒ ตัวตรวจต้องข้ามค่าที่เลิกใช้เอง (ทิศตรงข้าม: ค่าที่ใช้อยู่ห้ามถูกข้าม)
-        var retired = Enum.GetValues<AiFeatureKey>().Where(DistillationModelRegistry.IsRetired).ToList();
-        Assert.True(retired.Count >= 4, "ค่าที่เลิกใช้: " + string.Join(", ", retired));
-        Assert.False(DistillationModelRegistry.IsRetired(AiFeatureKey.ContactFuzzyMatch));
-        var missing = DistillationModelRegistry.MissingStudents(Array.Empty<AiFeatureKey>());
-        foreach (var r in retired) Assert.DoesNotContain(r, missing);
-        // ไม่มีนักเรียนเลย ⇒ ทุกค่าที่ใช้อยู่และไม่อยู่ในรายการค้างต้องถูกฟ้อง (ตัวข้ามต้องไม่กลืนค่าที่ใช้อยู่)
-        var expected = Enum.GetValues<AiFeatureKey>()
-            .Where(k => !DistillationModelRegistry.IsRetired(k) && !DistillationModelRegistry.KnownGapsWithoutStudent.ContainsKey(k)).ToList();
-        Assert.NotEmpty(expected);
-        Assert.Equal(expected.OrderBy(k => k), missing.OrderBy(k => k));
     }
 }
