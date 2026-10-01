@@ -81,7 +81,7 @@
 - **Q2 (K2-5)** สัญลักษณ์ `¥` (JPY/CNY) และ `$` (บางใบพิมพ์ THB ด้วย $ · USD/SGD) ไม่นับ — ไม่เดา · ใบต่างประเทศที่มีแต่สัญลักษณ์เหล่านี้ = บาท (เดิม)
 - **Q3 (S2-6)** คำขออ่าน `/api/v1` ของบริษัทที่ subscription ถูก**ยกเลิก**ก็อ่านได้ (ถ้อยคำข้อ 23 พูดถึงการเขียน) — ถ้าต้องการให้ยกเลิก = ปิดทั้งหมดเหมือนหน้าเว็บ ต้องตัดสิน
 - **Q4 (RF-3)** `GET document-templates/default/{type}` **สร้าง**เทมเพลตให้เมื่อยังไม่มี (เขียนผ่าน GET · ไม่ผ่านด่าน `CompanySettings.Edit`) — พฤติกรรมเดิม ไม่อยู่ในรายงาน · ไม่แตะ
-- **Q5 (K2-4)** `RecordLineAccountFeedbackAsync` → `AiFeedbackRecorder` ใช้ context เดียวกัน · ถ้า SaveChanges ของตัวบันทึกล้ม แถว feedback ค้าง Modified แบบเดียวกัน — ไม่แตะ (นอกรายงาน · ตัวบันทึกใช้ร่วมหลายเส้น)
+- ✅ ce1328ec (รอบ 201 ทีม AI · A-AI8 — `AiFeedbackRecorder.DiscardUnsaved`) **Q5 (K2-4)** `RecordLineAccountFeedbackAsync` → `AiFeedbackRecorder` ใช้ context เดียวกัน · ถ้า SaveChanges ของตัวบันทึกล้ม แถว feedback ค้าง Modified แบบเดียวกัน — ไม่แตะ (นอกรายงาน · ตัวบันทึกใช้ร่วมหลายเส้น)
 
 ## ฝ่ายค้านรอบสาม (main agent ส่ง · 2026-10-01) — ผลและการแก้
 

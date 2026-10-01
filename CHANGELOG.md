@@ -4058,4 +4058,4 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - **A-AI2 (H-4)** `DocumentAiSuggestion.FromStudent/FromRule/HasAnswer/HasModelAnswer` · `Convert`/`BankAiAugmenter` ส่งธงต่อ · `BankFeedService` ใช้ `HasModelAnswer` + ScreenAiProposals (≥0.70) · ป้าย BankFeed ซื่อสัตย์ (`BANK-MATCH-LOCAL-DOC`)
 - **A-AI5 (H-7)** `Helpers/GlSuggestionApplyPolicy` (write-gate ≥0.70 + ผังของบริษัท) · `SuggestPvAccountingLineResult.MayAutoFill` · documents.html (ช่วง bulk-PV) อ่านธง/ป้ายจากเซิร์ฟเวอร์ + จับคู่บรรทัดด้วย tempId (เดิมเลื่อนผิดบรรทัดเมื่อมีการ์ดว่าง)
 - **A-AI8 (ข้อ 58)** `AiFeedbackRecorder.DiscardUnsaved` ในทุก catch ที่ SaveChanges (user choice · rollup 3 ตัว) — context ร่วมไม่ค้าง Modified/Added
-- เทสต์ 6 ไฟล์ใหม่ · required_call_site +24 แถว · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>
+- เทสต์ 6 ไฟล์ใหม่ · required_call_site +24 แถว · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce1328ec
