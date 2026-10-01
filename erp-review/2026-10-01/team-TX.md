@@ -1,6 +1,6 @@
 # รอบ 201 ทีม TX — ภาษี / ด่านอนุมัติ / มัดจำ (ระยะ 1)
 
-> ฐาน: `5eed54bf` (branch `claude/erp-system-review-team-660mev`) · ขอบเขต: BACKLOG §1.5 (A-TX1…A-TX10 · A-TX11 = ระยะ 2 ไม่ทำรอบนี้) + C-7 · C-21 · B-7
+> คอมมิตหลัก: `2d7020af` · ฐาน: `5eed54bf` (branch `claude/erp-system-review-team-660mev`) · ขอบเขต: BACKLOG §1.5 (A-TX1…A-TX10 · A-TX11 = ระยะ 2 ไม่ทำรอบนี้) + C-7 · C-21 · B-7
 > ทุกข้อเปิดไฟล์จริงที่ HEAD ก่อนแก้ · **ยังไม่ได้คอมไพล์/รันเทสต์ในเครื่องนี้ (ไม่มี .NET SDK) — CI คือ compiler ตัวแรก**
 
 ## 1. ตารางรายการ

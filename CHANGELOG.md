@@ -4058,4 +4058,4 @@ _2026-10-01 รอบ 201 ทีม TX — ภาษี/ด่านอนุม
 - **A-TX5/6/7/8** มัดจำ: แก้ก่อนล็อก = ล้มดัง · นับเลขบนใบ + ขา 21913 ที่ผูกไม่ได้ · วันไทย · ข้ามปีไม่ใช่เหตุ + หมายเหตุ §86
 - **C-21** ด่านขายปลีก §86/6 ก่อนสวิตช์ ภ.พ.06 (+ ข้อความหน้าแอดมิน) · **B-7** `TaxFilingDeadline.WarnBy/WarnByFor/EFilingCaveat` — ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ
 - 📋 A-TX4 (ไฟล์ทีม DV) · A-TX10 (รอเทสต์ DB ของ PL) · C-7 (`TipPayoutService` ไม่มีทางเข้า + ไม่มีที่เก็บยอดสะสมรายคน) · A-TX11 (ระยะ 2)
-- เทสต์ `Section65TerApprovalWarningGoldenTests` · `Round201TxTests` · ปรับ `DepositRound194R2Tests`/`PosSlipHeaderTests` · required_call_site +13 แถว — commit <pending>)_
+- เทสต์ `Section65TerApprovalWarningGoldenTests` · `Round201TxTests` · ปรับ `DepositRound194R2Tests`/`PosSlipHeaderTests` · required_call_site +13 แถว — commit 2d7020af)_
