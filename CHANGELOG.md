@@ -4280,5 +4280,5 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 4 — แก้ตามฝ่�
 - **PL-C1** ยอดสรุปบังคับแพ็กเกจไม่รวมเหตุ `OwnerDisabledFeature` · **PL-C2** `CheckFeatureAccessAsync(..., recordShadow)` — `GET features/{x}` ไม่บันทึกเงา
 - **RV2-1** `Helpers/AuditRedaction` — ช่องลับเก็บ `[redacted]` ใน `CaptureAuditEntries` + ปิดตอนแสดงแถวเก่า (หน้า audit บริษัท/แอดมิน) · **RV2-2** `AuditMiddleware` ใช้ `RedactPath`
 - เทสต์ `Db/AuditChainCommitDbTests` · `PlatformHolidayReadersRound201Tests` · `AuditRedactionRound201Tests` · +2 `AuditChainCheckpointTests` · แก้ C4 ใน `PlatformOwnerRound201Tests` ·
-  required_call_site: เขียนแถว audit chain ใหม่ 8 แถว + เพิ่ม 14 แถว (negative test ฉีดในสคริปต์) — commit <pending>)_
+  required_call_site: เขียนแถว audit chain ใหม่ 8 แถว + เพิ่ม 14 แถว (negative test ฉีดในสคริปต์) — commit 9f226f15)_
 
