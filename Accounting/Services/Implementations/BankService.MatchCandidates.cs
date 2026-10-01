@@ -191,6 +191,8 @@ public partial class BankService
         var pickHomeCurrency = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
 
+        var bankTxnIsInflowForSort = bankTxn.TransactionType == BankTransactionType.Deposit
+            || bankTxn.TransactionType == BankTransactionType.Interest;
         var rankedPaymentsAll = paymentCandidates
             .Select(p =>
             {
@@ -211,11 +213,9 @@ public partial class BankService
                 // Deposit info: derive from PaymentMethod + BankAccount field on Payment.
                 var (depLabel, depCat) = DerivePaymentDeposit(p);
 
-                // Bonus: bank-deposit txns prefer Bank candidates; if cash-only payment, slight penalty
-                var bankTxnIsDeposit = bankTxn.TransactionType == BankTransactionType.Deposit
-                    || bankTxn.TransactionType == BankTransactionType.Interest;
-                if (bankTxnIsDeposit && depCat == "Bank") score = Math.Min(100, score + 5);
-                if (depCat == "Cash" && bankTxnIsDeposit && p.Amount < 5000) score = Math.Max(0, score - 5);
+                // ⚠ รอบ 201 ทีม AI · A-AI3 (H-5): เดิมบวก/ลบคะแนนตาม "เงินลงที่ไหน" (+5/−5) **เฉพาะบนจอนี้** ⇒ ตัวเลขที่คน
+                // เห็นไม่ใช่ตัวเลขที่ arbiter ใช้ประทับ · ตอนนี้คะแนน = BankMatchScorer ตัวเดียวทุกเส้น และหลักฐานเงินลงที่ไหน
+                // ใช้เรียงลำดับรองที่ BankMatchScorer.DepositPreference (ด้านล่าง) — ไม่เปลี่ยนคำตัดสินของเส้นเครื่อง
 
                 return new MatchCandidate(
                     Type: "Payment",
@@ -238,6 +238,8 @@ public partial class BankService
                         ? null : fx.Reason);
             })
             .OrderByDescending(c => c.Score)
+            .ThenByDescending(c => Accounting.Helpers.BankMatchScorer.DepositPreference(
+                c.Type, c.DepositCategory, bankTxnIsInflowForSort, c.Amount))
             .ThenBy(c => c.DateDiffDays)
             .ToList();
 
@@ -295,10 +297,7 @@ public partial class BankService
                 jeLinesByEntry.TryGetValue(j.Id, out var lines);
                 var (depLabel, depCat) = DeriveJeDeposit(lines, bankTxnIsDeposit2);
 
-                // Score adjustment: prefer bank-posting JEs for bank deposits
-                if (bankTxnIsDeposit2 && depCat == "Bank") score = Math.Min(100, score + 8);
-                else if (bankTxnIsDeposit2 && depCat == "Mixed") score = Math.Min(100, score + 4);
-                else if (bankTxnIsDeposit2 && depCat == "Cash") score = Math.Max(0, score - 8);
+                // รอบ 201 A-AI3: เดิม +8/+4/−8 เฉพาะบนจอนี้ — ย้ายไปเป็นลำดับรอง (BankMatchScorer.DepositPreference)
 
                 return new MatchCandidate(
                     Type: "JournalEntry",
@@ -317,6 +316,8 @@ public partial class BankService
                     DepositCategory: depCat);
             })
             .OrderByDescending(c => c.Score)
+            .ThenByDescending(c => Accounting.Helpers.BankMatchScorer.DepositPreference(
+                c.Type, c.DepositCategory, bankTxnIsDeposit2, c.Amount))
             .ThenBy(c => c.DateDiffDays)
             .ToList();
 

@@ -91,7 +91,10 @@ public sealed record BulkPvAccountingResult(
     IReadOnlyDictionary<Guid, DocumentAiSuggestion> ByLineId,
     IReadOnlyList<string> CrossLineObservations,
     IReadOnlyList<string> Warnings,
-    bool UsedAi);
+    bool UsedAi,
+    /// <summary>คำตอบมาจาก<b>นักเรียน</b> (โมเดลในบ้าน) — แยกจาก <see cref="UsedAi"/> เพื่อให้ป้ายบนจอซื่อสัตย์
+    /// (รอบ 201 ทีม AI · A-AI2/A-AI4)</summary>
+    bool FromLocalModel = false);
 
 public sealed record BulkApprovalWarningFixResult(
     IReadOnlyList<DocumentAiSuggestion> Hints,    // index-aligned with input warnings
@@ -108,7 +111,23 @@ public sealed record DocumentAiSuggestion(
     string? Reasoning,
     IReadOnlyList<string> SuggestedActions,
     bool UsedAi,
-    Guid? FeedbackId);
+    Guid? FeedbackId,
+    /// <summary>คำตอบนี้มาจาก<b>นักเรียน</b> (<c>AiResponse.FromLocalModel</c>) — รอบ 201 ทีม AI · A-AI2 (H-4):
+    /// เดิม record นี้มีแต่ <see cref="UsedAi"/> ⇒ ผู้บริโภคแยก "นักเรียนตอบ" กับ "ไม่มีใครตอบ" ไม่ออก
+    /// (ป้าย "⚙️ ระบบ" ขึ้นทั้งที่ไม่มีใครตอบ · BankFeed ทิ้งคำตอบนักเรียนทุกครั้ง) — คู่กับ
+    /// <c>OcrAiAugmentationResult.FromStudent</c> ให้สองฝั่งเหมือนกัน</summary>
+    bool FromStudent = false,
+    /// <summary>คำตอบนี้มาจาก<b>กฎในบ้าน</b> (เช่น <c>DurableGoodsHeuristic</c> §65 ตรี (5)) ไม่ใช่โมเดล —
+    /// ยังเติมให้ได้ตอน AI ปิด (เดิมเติมได้อยู่แล้ว · ห้ามถดถอย) แต่ป้ายต้องไม่บอกว่าเป็น AI/โมเดล (รอบ 201 A-AI5)</summary>
+    bool FromRule = false)
+{
+    /// <summary>มีคำตอบจริงจากผู้ตอบคนใดคนหนึ่ง (AI · นักเรียน · กฎ) — ค่าเดิมของบรรทัดที่ส่งกลับมาไม่นับ</summary>
+    public bool HasAnswer => !string.IsNullOrWhiteSpace(Answer) && (UsedAi || FromStudent || FromRule);
+
+    /// <summary>มีคำตอบของโมเดล (AI หรือนักเรียน) ให้พิจารณาไหม — <b>ห้ามใช้เดี่ยว ๆ เป็นด่าน apply</b>
+    /// ต้องคู่กับเกณฑ์ความมั่นใจเป็นตัวเลขเสมอ (DOCTRINE §2.5: tier-2 ของนักเรียนไม่ดูอินพุต)</summary>
+    public bool HasModelAnswer => (UsedAi || FromStudent) && !string.IsNullOrWhiteSpace(Answer);
+}
 
 public class DocumentAiAugmenter : IDocumentAiAugmenter
 {
@@ -139,20 +158,26 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     //  user accepts/edits a single line, and distillation training
     //  picks up the per-line label naturally.
     // ────────────────────────────────────────────────────────────────
+    /// <param name="answerFromAi">คำตอบมาจาก AI จริง (true) หรือจาก<b>นักเรียน</b> (false) — รอบ 201 ทีม AI · A-AI4:
+    /// คำตอบของนักเรียนต้องลงช่อง LocalModel* + สถานะ Skipped · เดิมลงเป็นคำตอบครู (Success/DeepSeek) เสมอ ⇒
+    /// งานกลางคืนเรียนคำตอบของนักเรียนเองเป็น "pseudo-label ของครู" = คลังสอนตัวเอง (DOCTRINE §3)</param>
     private async Task<Guid> SynthesiseChildFeedbackAsync(
         Guid companyId, AiFeatureKey feature,
         string syntheticPromptJson, string? aiAnswer, decimal? aiConfidence,
         string? sourceEntityType, Guid? sourceEntityId,
-        Guid parentFeedbackId, CancellationToken ct)
+        Guid parentFeedbackId, CancellationToken ct, bool answerFromAi = true)
     {
         var record = new AiFeedbackRecord(
             CompanyId: companyId, FeatureKey: feature,
             PromptHash: "", PromptJson: syntheticPromptJson,
             ResponseJson: null,
-            AiPrimaryAnswer: aiAnswer, AiConfidence: aiConfidence,
-            LocalModelAnswer: null, LocalModelConfidence: null, LocalModelVersion: null,
+            AiPrimaryAnswer: answerFromAi ? aiAnswer : null, AiConfidence: answerFromAi ? aiConfidence : null,
+            LocalModelAnswer: answerFromAi ? null : aiAnswer,
+            LocalModelConfidence: answerFromAi ? null : aiConfidence,
+            LocalModelVersion: null,
             SourceEntityType: sourceEntityType, SourceEntityId: sourceEntityId,
-            Status: AiCallStatus.Success, ProviderUsed: AiProviderType.DeepSeek,
+            Status: answerFromAi ? AiCallStatus.Success : AiCallStatus.Skipped,
+            ProviderUsed: answerFromAi ? AiProviderType.DeepSeek : AiProviderType.None,
             ModelVersion: null,
             LatencyMs: 0, InputTokens: 0, OutputTokens: 0, CostUsd: 0m,
             CacheHitOfFeedbackId: parentFeedbackId == Guid.Empty ? null : parentFeedbackId,
@@ -538,7 +563,7 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 businessContext: bizCtx);
             var resp = await _orchestrator.AskAsync(req, ct);
 
-            var parsed = ParseBulkPvResponse(resp, lines);
+            var parsed = ParseBulkPvResponse(resp, lines, _logger);
 
             // Synthesise per-line child feedback rows so the GL-account
             // distillation model has the single-line shape it knows how
@@ -566,6 +591,7 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                         Answer = priorCode,
                         Confidence = priorConf,
                         Reasoning = $"[heuristic override §65 ตรี (5)] {priorCode} (เครื่องใช้ทน/durable goods). เดิม AI แนะนำ {aiSugg.Answer}",
+                        FromRule = true,
                     };
                 }
                 if (!byLineWorking.TryGetValue(l.LineId, out var sugg))
@@ -573,11 +599,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                     withChildIds[l.LineId] = Fallback(null, null);
                     continue;
                 }
-                var perLineJson = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    vendor = new { name = vendorName, tax_id = vendorTaxId, industry = vendorIndustry },
-                    line = new { description = l.Description, amount = l.Amount },
-                });
+                // รูปคำถามรายบรรทัดตัวเดียวกับที่นักเรียนแตกจากคำถามทั้งใบ (รอบ 201 A-AI4) — กุญแจเขียน = กุญแจอ่าน
+                var perLineJson = Distillation.PaymentVoucherAccountingDistillationModel.BuildPerLineInputJson(
+                    vendorName, vendorTaxId, vendorIndustry, l.Description, l.Amount);
                 var childFid = await SynthesiseChildFeedbackAsync(
                     companyId,
                     AiFeatureKey.PaymentVoucherAccountingSuggestion,
@@ -587,7 +611,8 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                     sourceEntityType: "DocumentLine",
                     sourceEntityId: l.LineId,
                     parentFeedbackId: resp.FeedbackId ?? Guid.Empty,
-                    ct);
+                    ct,
+                    answerFromAi: resp.UsedAi);
                 withChildIds[l.LineId] = sugg with { FeedbackId = childFid };
             }
             return parsed with { ByLineId = withChildIds };
@@ -607,14 +632,22 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
     /// line; we fall back to local for any missing lineId and record
     /// a warning. Each line entry also writes a per-line feedback row
     /// via the orchestrator so GlAccountDistillationModel still learns
-    /// from each prediction.</summary>
-    private BulkPvAccountingResult ParseBulkPvResponse(AiResponse resp,
-        IReadOnlyList<(Guid LineId, string Description, decimal Amount, string? CurrentAccountCode)> lines)
+    /// from each prediction.
+    ///
+    /// <para>รอบ 201 ทีม AI · A-AI4 (H-6): (1) อ่านคำตอบแบบมีโครงของ<b>นักเรียน</b>ได้ (FallbackToLocal/short-circuit ส่ง
+    /// <c>StructuredJson</c> มาใน <c>RawResponseJson</c>) · (2) ไม่เอา <c>PrimaryAnswer</c> คำเดี่ยวของนักเรียนไป parse เป็น JSON
+    /// อีก · (3) ข้อความล้ม/ขาดบรรทัดบอก<b>ผู้ตอบจริง</b> (AI / โมเดลในบ้าน / ไม่มีใครตอบ) — เดิมขึ้น "AI ตอบกลับ JSON ไม่ valid"
+    /// ทั้งที่ไม่ได้เรียก AI · <c>internal static</c> ให้เทสต์ kill-switch เรียกที่จุดใช้คำตอบจริง</para></summary>
+    internal static BulkPvAccountingResult ParseBulkPvResponse(AiResponse resp,
+        IReadOnlyList<(Guid LineId, string Description, decimal Amount, string? CurrentAccountCode)> lines,
+        ILogger? logger = null)
     {
         var byId = new Dictionary<Guid, DocumentAiSuggestion>();
         var observations = new List<string>();
         var warnings = new List<string>();
-        var raw = resp.RawResponseJson ?? resp.PrimaryAnswer;
+        var who = Accounting.Helpers.AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel);
+        // คำตอบคำเดี่ยวของนักเรียน (PrimaryAnswer) ไม่ใช่โครงทั้งใบ — ห้ามเอาไป parse
+        var raw = resp.RawResponseJson ?? (resp.UsedAi ? resp.PrimaryAnswer : null);
         if (!string.IsNullOrWhiteSpace(raw))
         {
             try
@@ -629,6 +662,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 }
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 var root = doc.RootElement;
+                // ราก JSON ที่ไม่ใช่ object (ตัวเลข/สตริงเดี่ยว) ⇒ TryGetProperty โยน InvalidOperationException ไม่ใช่ JsonException
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    throw new System.Text.Json.JsonException("ราก JSON ไม่ใช่ object");
                 if (root.TryGetProperty("lines", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
                 {
                     foreach (var el in arr.EnumerateArray())
@@ -657,7 +693,8 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                             ComplianceFlags: flags,
                             Reasoning: reasoning,
                             SuggestedActions: Array.Empty<string>(),
-                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId);
+                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId,
+                            FromStudent: resp.FromLocalModel);
                     }
                 }
                 if (root.TryGetProperty("cross_line_observations", out var obsEl)
@@ -669,18 +706,23 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
             }
             catch (System.Text.Json.JsonException ex)
             {
-                _logger.LogWarning(ex, "Bulk PV parse failed; falling back to local for all lines");
-                warnings.Add("AI ตอบกลับ JSON ไม่ valid — ใช้ local สำหรับทุกบรรทัด");
+                logger?.LogWarning(ex, "Bulk PV parse failed ({Source}); keeping current accounts for all lines", who);
+                warnings.Add(Accounting.Helpers.AiAnswerSource.UnreadableMessage(who));
             }
         }
-        // Fill missing lines from local fallback.
+        // บรรทัดที่ไม่มีใครตอบ = คงผังเดิมของบรรทัดนั้น (ไม่ใช่คำตอบของโมเดล) · บอกผู้ตอบจริง
+        var missing = 0;
         foreach (var l in lines)
         {
             if (byId.ContainsKey(l.LineId)) continue;
             byId[l.LineId] = Fallback(l.CurrentAccountCode, null);
-            warnings.Add($"AI ไม่ตอบบรรทัด {l.LineId.ToString()[..8]}… — ใช้ local");
+            missing++;
         }
-        return new BulkPvAccountingResult(byId, observations, warnings, resp.UsedAi);
+        if (missing > 0)
+            warnings.Add(who == Accounting.Helpers.AiAnswerSource.Kind.None
+                ? Accounting.Helpers.AiAnswerSource.NobodyAnsweredMessage(missing)
+                : Accounting.Helpers.AiAnswerSource.MissingLinesMessage(who, missing));
+        return new BulkPvAccountingResult(byId, observations, warnings, resp.UsedAi, resp.FromLocalModel);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -763,7 +805,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         var byIdx = new Dictionary<int, DocumentAiSuggestion>();
         string? rootCause = null;
         var parseWarnings = new List<string>();
-        var raw = resp.RawResponseJson ?? resp.PrimaryAnswer;
+        var who = Accounting.Helpers.AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel);
+        // รอบ 201 A-AI4 (คลาสเดียวกับ bulk PV): คำตอบคำเดี่ยวของนักเรียนไม่ใช่โครง {fixes:[…]} — ห้ามเอาไป parse
+        var raw = resp.RawResponseJson ?? (resp.UsedAi ? resp.PrimaryAnswer : null);
         if (!string.IsNullOrWhiteSpace(raw))
         {
             try
@@ -778,6 +822,8 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 }
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    throw new System.Text.Json.JsonException("ราก JSON ไม่ใช่ object");
                 if (root.TryGetProperty("root_cause", out var rcEl)) rootCause = rcEl.GetString();
                 if (root.TryGetProperty("fixes", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
                 {
@@ -800,14 +846,15 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                             ComplianceFlags: Array.Empty<string>(),
                             Reasoning: reasoning,
                             SuggestedActions: actions,
-                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId);
+                            UsedAi: resp.UsedAi, FeedbackId: resp.FeedbackId,
+                            FromStudent: resp.FromLocalModel);
                     }
                 }
             }
             catch (System.Text.Json.JsonException ex)
             {
-                _logger.LogWarning(ex, "Bulk approval parse failed");
-                parseWarnings.Add("AI ตอบกลับ JSON ไม่ valid — ใช้ local");
+                _logger.LogWarning(ex, "Bulk approval parse failed ({Source})", who);
+                parseWarnings.Add(Accounting.Helpers.AiAnswerSource.UnreadableMessage(who));
             }
         }
         var hints = new List<DocumentAiSuggestion>(warnings.Count);
@@ -898,7 +945,9 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
         Reasoning: resp.Reasoning,
         SuggestedActions: resp.SuggestedActions,
         UsedAi: resp.UsedAi,
-        FeedbackId: resp.FeedbackId);
+        FeedbackId: resp.FeedbackId,
+        // รอบ 201 A-AI2 (H-4): ส่งธง "นักเรียนตอบ" ต่อ — เดิมทิ้ง ⇒ ผู้บริโภคเห็นแต่ UsedAi
+        FromStudent: resp.FromLocalModel);
 
     private static DocumentAiSuggestion Fallback(string? localAnswer, decimal? confidence) => new(
         Answer: localAnswer,

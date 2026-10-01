@@ -5458,15 +5458,22 @@ public partial class DocumentService : IDocumentService
                 return new SuggestPvAccountingLineResult(
                     line.TempId, line.CurrentAccountCode, null,
                     Array.Empty<string>(), null, false, null);
-            var ans = !string.IsNullOrWhiteSpace(sugg.Answer) && allCodes.Contains(sugg.Answer!)
-                ? sugg.Answer
-                : line.CurrentAccountCode;
+            var inCoa = !string.IsNullOrWhiteSpace(sugg.Answer) && allCodes.Contains(sugg.Answer!);
+            var ans = inCoa ? sugg.Answer : line.CurrentAccountCode;
+            // write-gate ฝั่งเซิร์ฟเวอร์ (รอบ 201 ทีม AI · A-AI5 · H-7) — เดิมเกณฑ์ 0.70 อยู่ใน JS ตัวเดียว
+            var mayAutoFill = Accounting.Helpers.GlSuggestionApplyPolicy.MayAutoFill(
+                sugg.Answer, sugg.Confidence, sugg.HasAnswer, inCoa);
             return new SuggestPvAccountingLineResult(
                 line.TempId, ans, sugg.Confidence,
-                sugg.Alternatives, sugg.Reasoning, sugg.UsedAi, sugg.FeedbackId);
+                sugg.Alternatives, sugg.Reasoning, sugg.UsedAi, sugg.FeedbackId,
+                MayAutoFill: mayAutoFill, FromLocalModel: sugg.FromStudent);
         }).ToList();
 
-        return new SuggestPvAccountingResponse(results, bulk.CrossLineObservations, bulk.UsedAi);
+        var who = Accounting.Helpers.AiAnswerSource.Of(bulk.UsedAi, bulk.FromLocalModel);
+        return new SuggestPvAccountingResponse(results, bulk.CrossLineObservations, bulk.UsedAi,
+            FromLocalModel: bulk.FromLocalModel,
+            SourceLabel: Accounting.Helpers.AiAnswerSource.LabelWithRules(who, bulk.ByLineId.Values.Any(v => v.FromRule)),
+            Warnings: bulk.Warnings);
     }
 
     public async Task<SupplierTaxInvoiceCheckResponse> CheckSupplierTaxInvoiceAsync(Guid companyId, Guid? contactId,

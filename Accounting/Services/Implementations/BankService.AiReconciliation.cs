@@ -855,7 +855,10 @@ public partial class BankService
                         isPayment ? ReconciliationItemType.Payment : ReconciliationItemType.JournalEntry,
                         cid, Math.Abs(txn.Amount)));
                 }
-                await CaptureConfirmedMatchAsync(companyId, txn, capturedItems);
+                // แหล่งของคำยืนยันต่อแถว (รอบ 201 ทีม AI · A-AI1): ยืนยันทั้งก้อนจากแผน AI = BulkApprove ·
+                // เลือกคู่เองในหน้าต่างจับคู่ = Explicit · ไม่ส่ง (API ภายนอก/ผู้เรียกเก่า) = Implicit — คลังนับความมั่นใจเฉพาะ Explicit
+                await CaptureConfirmedMatchAsync(companyId, txn, capturedItems,
+                    Accounting.Helpers.BankPatternEvidence.ParseSource(item.Source));
 
                 // Audit row — captures who confirmed, when, what alternatives
                 // they saw, and at what confidence. Used by dispute lookup.

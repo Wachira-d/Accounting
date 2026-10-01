@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **409 ไฟล์ · 3,921 `[Fact]` + 641 `[Theory]` (2,843 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **415 ไฟล์ · 3,960 `[Fact]` + 644 `[Theory]` (2,866 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5262,3 +5262,22 @@ baseline สูตรเดิมที่อ่านแค่ IN/OUT = 130 ต
 | IN-21 | แก้รายการบริการเสริมของการจองหลังเช็คเอาต์ (ยอดเปลี่ยน) แล้วกดออกใบใหม่ | ปฏิเสธ `LODGING-CHECKOUT-REISSUE` บอกยอดสองตัว + ทางไปต่อใบลด/เพิ่มหนี้ · ไม่มีเลขเอกสารถูกใช้ |
 | IN-22 | (regression) เช็คเอาต์ปกติ / เช็คเอาต์ซ้ำหลังอนุมัติล้ม / ทำต่อหลังใช้มัดจำล้ม | ผลเหมือนก่อนรอบนี้ (ตัวสร้างรายการ/ใบร่าง/ใช้มัดจำย้ายเป็นเมธอดคำต่อคำ) |
 
+### รอบ 201 ทีม AI — AI / ธนาคาร (`erp-review/2026-10-01/team-AI.md`)
+
+เทสต์อัตโนมัติ: `BankAiCandidateGuardTests` (A-AI7 สองทิศ) · `BankPatternEvidenceTests` (A-AI1 "กดรับรัว ๆ ไม่ดันความมั่นใจ" + backfill เท่าสูตรเดิม) ·
+`BankMatchSingleStandardTests` (A-AI3 ลำดับรองเท่าค่าเดิม + อันดับที่เปลี่ยน) · `AiKillSwitchOrchestratorTests` (A-AI6 orchestrator จริง · provider ทุกตัว
+IsActive=false · ทะเบียนนักเรียนจริง ratchet · negative ถอดนักเรียน) · `BulkPvStudentTests` (A-AI4/A-AI2/A-AI5 จุดใช้คำตอบจริง + write-gate) ·
+`AiFeedbackRecorderDiscardTests` (A-AI8) · required_call_site +24 แถว (บล็อก "รอบ 201 ทีม AI") · `ai_feedback_source_check` กติกา 3–4 (bank)
+
+| ID | ขั้นตอน | ผลที่คาด |
+| --- | --- | --- |
+| AI-01 | ธนาคาร → "🤖 จับคู่ทั้งเดือนด้วย AI" ในบัญชีที่ AI ตอบ candidateId ที่ไม่มีอยู่จริง (จำลองด้วย provider ทดสอบ) | แถวนั้นไม่ขึ้น หรือขึ้นพร้อม "⚠ AI อ้างเอกสาร/รายการที่ไม่มีอยู่จริง N รายการ — ตัดออกแล้ว" · มั่นใจ ≤ 55% ไม่ถูกติ๊กอัตโนมัติ · คำเตือนของแผนบอกจำนวนที่ถูกตัด |
+| AI-02 | ยืนยันแผนทั้งก้อน (batch) ที่มี id ซึ่งถูกลบไปแล้ว | 404 "ไม่พบรายการที่จะจับคู่ N รายการ … โหลดหน้าจับคู่ใหม่" (ไม่ใช่ "ไม่รู้ทิศ สมุดรายวัน a1b2c3d4") · ไม่มีอะไรถูกบันทึก |
+| AI-03 | หน้ากระทบยอดกลุ่ม → "✨ AI จับคู่จากประวัติ" → ยืนยันกลุ่มโดยไม่แตะรายการที่ถูกติ๊ก × 20 ครั้ง (ข้อมูลทดสอบ) | `BankReconciliationPatterns.TimesConfirmed` เพิ่ม แต่ `ExplicitConfirmCount` ไม่เพิ่ม · ข้อเสนอครั้งถัดไปไม่ "มั่นใจขึ้นเอง" |
+| AI-04 | เหมือน AI-03 แต่ผู้ใช้ติ๊กรายการเองกับมือ | `ExplicitConfirmCount` เพิ่มทีละ 1 · เหตุผลบนข้อเสนอ "ผู้ใช้เลือกคู่แบบนี้เอง N ครั้ง" |
+| AI-05 | "✨ AI จับคู่จากประวัติ" บรรทัดที่มีรายการค้างยอด+วันเท่ากัน 2 ใบ | ไม่ติ๊กให้ (arbiter `Suggest`) · toast บอก "หลักฐานยังไม่พอจะติ๊กให้ — เลือกเอง" |
+| AI-06 | หน้าจับคู่ด้วยมือ: บรรทัดเงินเข้า มี JV เงินสด (คะแนน 85) กับ RV ธนาคาร (คะแนน 80) | ตัวเลขบนจอ 85/80 (เดิม 77/88) · คะแนนเท่ากัน ⇒ รายการที่ลงธนาคารขึ้นก่อน |
+| AI-07 | ปิด provider ทุกตัว (AiProviderConfig.IsActive=false) → ใบสำคัญจ่าย → "AI แนะนำผังบัญชี" | ป้าย "⚙️ ระบบ (โมเดลในบ้าน)" เมื่อนักเรียนตอบ / "ยังไม่มีคำแนะนำ" เมื่อไม่มีใครตอบ · ไม่มีข้อความ "AI ตอบกลับ JSON ไม่ valid" · บรรทัดที่เติมให้ = เฉพาะ `mayAutoFill` |
+| AI-08 | ใบสำคัญจ่ายที่มีการ์ดว่างคั่นกลาง (บรรทัด 2 ว่าง) → "AI แนะนำผังบัญชี" | ผังลงบรรทัดตาม tempId ถูกการ์ด (เดิมเลื่อนผิดบรรทัด) |
+| AI-09 | เรียก `POST document/ai-suggest-pv-accounting` ตรง (สคริปต์) | ทุกบรรทัดมี `mayAutoFill` ที่เซิร์ฟเวอร์ตัดสิน (≥0.70 + รหัสอยู่ในผังของบริษัท) · `sourceLabel` · `warnings` |
+| AI-10 | ฟีดธนาคาร (BankFeed) ตอนปิด provider และนักเรียนตอบเอกสารที่อยู่ในชุดจริง | แถว `Suggested` ป้าย "⚙️ ระบบเสนอ (ดึงจากธนาคาร)" `BANK-MATCH-LOCAL-DOC` (ไม่ใช่ "🤖 AI เสนอ") |

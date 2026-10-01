@@ -5187,7 +5187,7 @@
         const sourceId = document.getElementById('fTaxInvSourceDoc')?.value || null;
 
         banner.style.display = 'block';
-        banner.innerHTML = '<div style="color:#1e40af;font-size:13px">🤖 กำลังถาม AI…</div>';
+        banner.innerHTML = '<div style="color:#1e40af;font-size:13px">กำลังหาคำแนะนำผังบัญชี…</div>';
         try {
           const res = await API.post(
             `/api/companies/${Layout.getCompanyId()}/document/ai-suggest-pv-accounting`,
@@ -5201,22 +5201,30 @@
             });
           const data = res.data || {};
           const items = data.lines || [];
-          const used = data.usedAi ? '🤖 AI' : '⚙️ ระบบ (local model)';
+          // ป้ายผู้ตอบ + เกณฑ์เติมให้ = เซิร์ฟเวอร์ตัดสิน (รอบ 201 ทีม AI · A-AI2/A-AI5 · Helpers/AiAnswerSource +
+          // GlSuggestionApplyPolicy) — เดิม JS ติดป้าย "⚙️ ระบบ" ทั้งที่ไม่มีใครตอบ และถือเกณฑ์ 0.70 ไว้เอง
+          const used = data.sourceLabel || (data.usedAi ? '🤖 AI' : 'ยังไม่มีคำแนะนำ');
           const observe = (data.crossLineObservations || []).filter(Boolean);
+          const serverWarnings = (data.warnings || []).filter(Boolean);
+          const cards = document.querySelectorAll('#linesBody .line-card');
+          // tempId = 'line-<ลำดับการ์ด>' — ต้องจับคู่ด้วย tempId ไม่ใช่ลำดับในผลลัพธ์ (การ์ดที่ไม่มีรายละเอียดถูกข้ามตอนส่ง
+          // ⇒ ลำดับในผลลัพธ์เลื่อนจากลำดับการ์ด = เติมผังผิดบรรทัด)
+          const rowOf = (it) => {
+            const n = parseInt(String(it.tempId || '').replace('line-', ''), 10);
+            return Number.isInteger(n) ? cards[n] : null;
+          };
 
-          // Apply ผังที่แนะนำลงในแต่ละบรรทัด (≥0.70 ถึงจะ auto-fill;
-          // ต่ำกว่านั้นแสดงในตารางอย่างเดียวให้ผู้ใช้ดูแล้วเลือกเอง)
           let applied = 0;
-          items.forEach((it, idx) => {
+          items.forEach((it) => {
             if (!it.accountCode) return;
-            const row = document.querySelectorAll('#linesBody .line-card')[idx];
+            const row = rowOf(it);
             if (!row) return;
             const sugCodeEl = row.querySelector('[data-f="glAiSuggestedCode"]');
             if (sugCodeEl) sugCodeEl.dataset.code = it.accountCode;
             const fidEl = row.querySelector('[data-f="glAiFeedbackId"]');
             if (fidEl && it.feedbackId) fidEl.dataset.feedbackId = it.feedbackId;
-            // Auto-fill เฉพาะ confidence ≥0.70 — ต่ำกว่าให้ผู้ใช้เลือกเอง
-            if ((it.confidence ?? 0) >= 0.70) {
+            // เติมเฉพาะบรรทัดที่เซิร์ฟเวอร์ตัดสินว่าเติมได้ (mayAutoFill) — ที่เหลือแสดงในตารางให้เลือกเอง
+            if (it.mayAutoFill === true) {
               const accInp = row.querySelector('[data-f="accountCode"]');
               if (accInp && !accInp.value.trim()) {
                 accInp.value = it.accountCode;
@@ -5226,13 +5234,17 @@
             }
           });
 
-          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${used} แนะนำผังบัญชี GL — เติมให้ ${applied}/${items.length} บรรทัด (confidence ≥70%) ส่วนที่เหลือผู้ใช้เลือกเอง</div>`;
+          let html = `<div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:8px">${Layout.esc(used)} แนะนำผังบัญชี GL — เติมให้ ${applied}/${items.length} บรรทัด (เฉพาะที่ระบบตัดสินว่ามั่นใจพอ) ส่วนที่เหลือผู้ใช้เลือกเอง</div>`;
+          if (serverWarnings.length) {
+            html += `<div style="margin-bottom:6px;font-size:12px;color:#b45309">⚠️ ${serverWarnings.map(Layout.esc).join(' · ')}</div>`;
+          }
           html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
           html += '<thead><tr style="text-align:left;border-bottom:1px solid #93c5fd"><th style="padding:4px">บรรทัด</th><th style="padding:4px">รายละเอียด</th><th style="padding:4px">ผังที่แนะนำ</th><th style="padding:4px;text-align:right">มั่นใจ</th><th style="padding:4px">เหตุผล</th></tr></thead><tbody>';
           items.forEach((it, idx) => {
             const ln = lines.find(l => l.tempId === it.tempId);
             const conf = it.confidence != null ? Math.round(it.confidence * 100) + '%' : '—';
-            const color = it.confidence >= 0.85 ? '#15803d' : it.confidence >= 0.70 ? '#ca8a04' : '#dc2626';
+            // สีบอกผลการตัดสินของเซิร์ฟเวอร์ (เติมให้ได้ / แนะนำเฉย ๆ / ไม่มีคำตอบ) — ไม่ถือเกณฑ์ตัวเลขใน JS
+            const color = it.mayAutoFill ? '#15803d' : it.accountCode ? '#ca8a04' : '#dc2626';
             const code = it.accountCode || '—';
             const accName = this.coaByCode?.[it.accountCode]?.accountName || '';
             html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)} <span style="color:#6b7280;font-weight:400">${Layout.esc(accName)}</span></td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
@@ -5241,7 +5253,7 @@
           if (observe.length) {
             html += `<div style="margin-top:6px;font-size:11px;color:#475569">💡 ${observe.map(Layout.esc).join(' · ')}</div>`;
           }
-          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: AI เติมเฉพาะที่มั่นใจ ≥70% — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่ save ระบบจะบันทึกผลให้ local model เรียนรู้ต่อ</div>';
+          html += '<div style="margin-top:8px;font-size:11px;color:#64748b">หมายเหตุ: ระบบเติมเฉพาะบรรทัดที่มั่นใจพอและรหัสอยู่ในผังบัญชีของบริษัท — ผู้ใช้ตัดสินใจขั้นสุดท้าย ทุกครั้งที่ save ระบบจะบันทึกผลให้โมเดลในบ้านเรียนรู้ต่อ</div>';
           banner.innerHTML = html;
         } catch (e) {
           banner.innerHTML = `<div style="color:#dc2626;font-size:13px">ขอแนะนำไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;

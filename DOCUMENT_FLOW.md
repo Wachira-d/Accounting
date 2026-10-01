@@ -3155,6 +3155,19 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **พยากรณ์เงินสด (`Helpers/CashForecastTiming`)** — เดิมใช้ `DueDate` ล้วน ⇒ ลูกค้าที่จ่าย
   ช้าประจำถูกนับว่าจ่ายตรงวัน · ตอนนี้เลื่อนตาม**มัธยฐาน**ความช้าจริง (ต้องมี ≥3 ใบ) ·
   ไม่มีประวัติ/จ่ายตรง/เคยจ่ายก่อนกำหนด = **ไม่ขยับเลย** (ห้ามมองโลกในแง่ดีโดยไม่มีสิทธิ์)
+- **รอบ 201 ทีม AI · A-AI7 — คู่ที่ AI แต่ง (`Helpers/BankAiCandidateGuard`)**: แผนจับคู่ทั้งก้อน (`BulkBankAiMatchService.ProposeAsync`)
+  ตัดข้อเสนอของ AI ที่อ้าง `bankTxnId`/`candidateId` นอกชุดจริง **ก่อน** ธง AiValidated/pre-dedup/dedup (`ScreenAiMatches`) และตรวจซ้ำในชั้น
+  ปรับเทียบ (ทุกข้อเสนอ) · ตัดบางส่วน = เพดานความมั่นใจ 0.55 + เหตุผลบนแถว · ทิ้งทั้งก้อน = นับในคำเตือนของแผน · **ยอดของ AI ไม่มีทางรอดถึงจอ**
+  (เดิม `? ra2 : c.Amount`) · ฝั่งเขียน `ValidateMatchAmountAsync` (เส้น batch + `/api/v1`) ตอบ "ไม่พบรายการที่จะจับคู่ N รายการ" แทน "ไม่รู้ทิศ"
+- **รอบ 201 · A-AI3 — มาตรฐานเดียว**: หน้าจับคู่ด้วยมือเลิกบวก/ลบคะแนนตามเงินลงที่ไหน (+5/−5 · +8/+4/−8) — ตัวเลขบนจอ = `BankMatchScorer.Score`
+  ตัวเดียวกับเส้นเครื่อง · เงินลงที่ไหนเป็น**ลำดับรอง** (`BankMatchScorer.DepositPreference`) ⇒ คำตัดสินของ AutoMatch/BankFeed/OpenBanking ไม่เปลี่ยน
+  · ที่อันดับบนจอเปลี่ยน: คู่ที่คะแนนต่าง < 13 และโบนัสเดิมพลิกลำดับ (เช่น JV เงินสด 85 กับ RV ธนาคาร 80 — เดิมจอแสดง 77/88) · ปุ่ม
+  "✨ AI จับคู่จากประวัติ" (`GetLearnedSuggestionsAsync`) เลิกใช้สูตรที่ 3 (0..1) — แพตเทิร์นแค่เลือกว่าจะเสนอรายการไหน · คะแนน = scorer ·
+  ติ๊กให้ (`AutoSelect`) = arbiter `Apply` บน**รายการค้างทั้งหมด** · หน้าเว็บอ่านธง (เดิม JS ติ๊กทุกตัว ≥ 0.4)
+- **รอบ 201 · A-AI1 — คลังห้ามสอนตัวเอง**: `BankReconciliationPattern.ExplicitConfirmCount` (backfill = `TimesConfirmed` ครั้งเดียวใน DO-block)
+  · ความเกี่ยวข้อง/ความมั่นใจนับเฉพาะ Explicit (`Helpers/BankPatternEvidence`) · แหล่งของคำยืนยันเดินจากคำขอ (`ReconcileRequest.Source` ·
+  `BatchReconcileItem.Source` · `ReconciliationGroupItemRequest.Source` ต่อรายการ) · ไม่ส่ง = Implicit · `tools/ai_feedback_source_check.py` ครอบ
+  body ยืนยันการจับคู่ + `matchItems` ใน bank.html แล้ว
 
 ### 6.0a-ter เลขที่ JE ต้องนับ "ใบที่ Add ค้างยังไม่ save" ด้วย
 
@@ -3707,7 +3720,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 
 | จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
 | --- | --- | --- | --- |
-| OCR full review | `OcrFullReview = 22` | `GenericFeedbackDistillationModel` (register ใน Program.cs) | `SubmitCorrectionAsync` (OcrService) |
+| OCR full review | `OcrFullReview = 22` | `OcrFullReviewDistillationModel.cs` (bespoke รายช่อง — doc เดิมเขียน generic) | `SubmitCorrectionAsync` (OcrService) |
 | ผังบัญชี GL ต่อบรรทัด | `GlAccountSuggestion = 2` | `GlAccountDistillationModel.cs` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
 | OCR document type label | `DocumentTypeClassification = 3` | generic | ตอน user แก้ในหน้า scan |
 | OCR เราเป็นผู้ซื้อ/ผู้ขาย (ถามเฉพาะเมื่อ `OcrPartyResolver.ShouldAskAi`) | `DocumentRoleInference = 4` | generic (`Buyer`/`Seller`) | ตอน user แก้ `OurRole` ในหน้า scan (`OurRoleAiFeedbackId`) — รอบ 156 |
@@ -3717,7 +3730,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | **เข้าข่ายหัก ณ ที่จ่ายไหม (ตอนอนุมัติ)** — ถามเฉพาะเมื่อ `WhtApplicabilityEvidence.Judge` = `Unknown` | `WhtCategoryInference = 5` (**คลังเดียวกัน ห้ามตั้ง key ใหม่**) | generic | `WhtAdviceAiFeedbackId` บนเอกสาร → ปิดตอนอนุมัติ |
 | Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
 | Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |
-| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
+| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` — **รอบ 201 A-AI1**: ความมั่นใจนับเฉพาะ `BankReconciliationPattern.ExplicitConfirmCount` (ผู้ใช้เลือกคู่เอง) ผ่าน `Helpers/BankPatternEvidence.StudentConfidence` · ไม่มีคำยืนยันแบบตั้งใจ = เพดาน 0.45 | ตอน user reconcile — ทุกทางเข้าส่ง `source` (1:1/เลือกเอง = Explicit · แผน AI ทั้งก้อน = BulkApprove · ติ๊กจากคลัง = Implicit · ไม่ส่ง = Implicit) |
 | Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
 | Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | รอบ 200 (H-3): `ExplainAnomaly` บันทึกคำตอบลงรายการเมื่อ **ครูหรือนักเรียน** ตอบ (`AnomalyExplainVerdict.ShouldPersist` — เดิม `UsedAi` เท่านั้น ⇒ kill-switch แล้วว่างตลอด+ยิงซ้ำ) + คำตอบต้องอยู่ในชุด `LikelyError/LikelyLegit/NeedReview` · ป้าย `usedAi` ของคำตอบที่แคชอ่านจากแถว feedback (ครูตอบจริงไหม) · **รอบ 200 ทีม RF (R200-X2/X8)**: นักเรียนอ่าน payload ของ prompt จริง (`anomaly.amount` · `vendor_history_12mo` ชุดยอดหรือสรุป · `recent_12mo` · `local_model.pick`) ผ่าน `Helpers/AnomalyExplainStudent` (เดิมอ่าน `root.amount` ⇒ ไม่เคยตอบ) · ตอบค่าในชุดเสมอ (z-score → ช่วงประวัติ → กติการะดับความรุนแรง → `NeedReview` = cold-start) · คำอธิบายไปทาง `StructuredJson` ⇒ ปิด provider ยังได้คำอธิบาย+บันทึกลงรายการ · คำตอบครูนอกชุด ⇒ `AnomalyExplainVerdict.Coerce` (รูปแบบต่าง ⇒ ค่าในชุด · อื่น ๆ ⇒ `NeedReview`) แล้วเก็บ ไม่ทิ้ง · **รอบ 200 ทีม Z (RF-6)**: ทางเข้าเฉพาะกิจ `POST anomaly/explain` ใช้ `AnomalyExplainVerdict.View` ตัวเดียวกับทางเข้าที่บันทึก ⇒ ปิด provider แล้วเห็นคำอธิบายนักเรียน (ไม่ใช่ข้อความ routing) + คำตอบผ่าน Coerce |
@@ -3729,26 +3742,33 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | Aging explanation | `AgingExplanation = 17` | – (essay) | – |
 | Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
 | Stock movement validation | `StockMovementValidation = 19` | generic | – |
-| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | bespoke (ใน prompts) | ตอน user save PV |
-| Manual JE line suggest | `ManualJournalSuggestion = 21` | generic | ตอน user save JE |
+| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | **รอบ 201 A-AI4**: `PaymentVoucherAccountingDistillationModel.cs` — คำถามรายบรรทัดส่งต่อ generic ตัวใน · คำถามทั้งใบแตกเป็นรายบรรทัด (กุญแจ `BuildPerLineInputJson` ตัวเดียวกับแถว feedback ลูก) แล้วตอบ `StructuredJson {"lines":[…]}` · ตอบไม่ครบ = ความมั่นใจ 0 (ไม่ข้ามครู) · เดิม generic ⇒ ปิด provider แล้ว "AI ตอบ JSON ไม่ valid" · เติมให้เอง = เซิร์ฟเวอร์ตัดสิน `Helpers/GlSuggestionApplyPolicy` (≥0.70 + ผังของบริษัท · `MayAutoFill`) · ป้ายผู้ตอบ `Helpers/AiAnswerSource` | ตอน user save PV · แถวลูกจากนักเรียนบันทึกเป็น LocalModelAnswer/Skipped (ไม่ใช่คำตอบครู — กันคลังสอนตัวเอง) |
+| Manual JE line suggest | `ManualJournalSuggestion = 21` | – (ไม่มีจุดเรียก AI ในเรพ · รอบ 201 ตรวจ) | – |
 | Reorder forecast | `ReorderForecast = 24` | local Croston/Holt-Winters | – |
 | Bulk bank statement match | `BulkBankStatementMatch = 25` | bespoke | – |
 | Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
 | Import data review | `ImportDataReview = 27` | – (essay) | – |
 | **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
 | OCR project match | `OcrProjectMatch = 29` | generic | `SetExtractedLineProjectAsync` / `SetAllExtractedLineProjectsAsync` (ตอน user override project ราย line — ปิดลูปด้วย `ProjectAiFeedbackId` ฝังใน line) |
-| VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
+| VAT type per line | `VatTypeInference = 30` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) · กติกา `ThaiVatTypeRule` | ตอน user แก้ |
 | Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
-| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
-| Project allocation per line | `ProjectAllocationSuggestion = 33` | generic | ตอน user เลือก project |
-| Contact fuzzy match | `ContactFuzzyMatch = 34` | generic | – |
-| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | reuse `GlAccountDistillationModel` | – |
-| Dimension allocation | `DimensionAllocationSuggestion = 36` | generic | – |
+| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | ตอน user เปลี่ยน select |
+| Project allocation per line | `ProjectAllocationSuggestion = 33` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | ตอน user เลือก project |
+| Contact fuzzy match | `ContactFuzzyMatch = 34` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | – |
+| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) (orchestrator เลือกนักเรียนด้วย FeatureKey — `GlAccountDistillationModel` ตอบแค่ `GlAccountSuggestion`) | – |
+| Dimension allocation | `DimensionAllocationSuggestion = 36` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | – |
 | Asset category suggest | `AssetCategorySuggestion = 37` | rule-based keyword (no AI by default) | ตอน user แก้ใน asset modal |
 | **ประเภทบรรทัด settlement** (รอบ 198 · ✅ ผู้เรียก = `SettlementImportService.ClassifyAsync` ทีม B) | `SettlementLineClassify = 57` | generic (คำตอบ = ชื่อ `SettlementLineType` · payload `SettlementLineClassification.BuildPromptPayload` = ป้ายที่ normalize + ตัด PII แล้ว + ชนิดช่องทาง + เครื่องหมาย — ไม่มียอด/เลขออเดอร์/ชื่อผู้ซื้อ) · ถามเฉพาะป้ายที่ adapter/คลังต่อช่องทาง/seed ตอบไม่ได้ · ด่าน `SettlementLineClassification.AcceptModelAnswer` = `ParseClassifierAnswer` + ไม่ใช่ Adjustment + `SignAllowed` + confidence ≥ 0.70 + `UsedAi`/`FromLocalModel` และไม่ใช่ majority (`-majority`) · เก็บ `ClassifyAiFeedbackId`/`ClassifyUsedAi` · kill-switch ⇒ `Unclassified` เงียบ | `ReclassifyLineAsync` → `RecordUserChoiceAsync(…, Explicit)` ในธุรกรรมเดียวกับการแก้ (บรรทัดที่ไม่เคยถาม ⇒ สร้างแถว feedback `Skipped/None` ก่อน) |
 
 **Litmus test ก่อน commit**: ปิด provider ทุกตัว → feature ยังทำงานครบ 100%
 (`AiProviderConfig.IsActive = false`)
+
+**รอบ 201 ทีม AI (A-AI6) — ทะเบียนนักเรียนตัวเดียว + kill-switch ที่ล้มได้จริง**: การลงทะเบียนนักเรียนย้ายจาก `Program.cs`
+ไป `Services/Ai/Distillation/DistillationModelRegistry.AddLocalDistillationModels` · `AiKillSwitchOrchestratorTests` ประกอบ DI จากเมธอดเดียวกัน
+แล้วรัน `AiOrchestrator` ตัวจริงที่ provider ทุกตัว `IsActive=false` ทุก feature ที่มีนักเรียน (seam `LoadSiteSettingsAsync`/`LoadActiveProviderAsync`
+· ตัวกรอง `ActiveProviderFilter` ตัวเดียวกับ query จริง) · negative: ถอดนักเรียนแล้วล้ม · **ตาข่ายชั้นนอกคืนคำตอบนักเรียน**เมื่อขั้นหลังทำนาย
+โยน exception (เดิมคำตอบหาย) · feature ที่ยังไม่มีนักเรียน **29 ตัวที่มีจุดเรียก AI** + 9 ตัวที่ไม่มีจุดเรียก อยู่ใน
+`KnownGapsWithoutStudent` (ratchet สองทิศ — ห้ามเพิ่มแถว · เพิ่มนักเรียนแล้วต้องลบแถว) = กฎเหล็ก #1 ข้อ 2 **ยังไม่ผ่าน**สำหรับ 29 ตัวนั้น (backlog)
 
 ---
 
@@ -3977,7 +3997,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม IN — วิธีคิดต้นทุนตั้งได้ต่อสินค้า + ด่านเปลี่ยนหลังมีความเคลื่อนไหว (A-IN1) ·
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI — AI/ธนาคาร: คู่ที่ AI แต่งในแผนจับคู่ทั้งก้อน `BankAiCandidateGuard` (§6.0c-bis) · คลังจับคู่ธนาคารนับเฉพาะคำยืนยันแบบตั้งใจ `ExplicitConfirmCount`/`BankPatternEvidence` · มาตรฐานคะแนนเดียว (โบนัสเฉพาะจอ → ลำดับรอง · ข้อเสนอจากประวัติผ่าน scorer+arbiter) · ทะเบียนนักเรียน `DistillationModelRegistry` + kill-switch ผ่าน orchestrator จริง (§6.4) · นักเรียน bulk PV `PaymentVoucherAccountingDistillationModel` + write-gate `GlSuggestionApplyPolicy` + ป้าย `AiAnswerSource` · ตัวบันทึก feedback ถอยของค้างเมื่อล้ม — commit ce1328ec)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม IN — วิธีคิดต้นทุนตั้งได้ต่อสินค้า + ด่านเปลี่ยนหลังมีความเคลื่อนไหว (A-IN1) ·
 คิว FIFO/rebuild ถัวเฉลี่ยเห็นยอดยกมา/ตรวจนับ ไม่นับโอนคลัง (A-IN2) · เครื่องออกเลขรับรหัสสาขา (A-IN4 ส่วนเครื่อง — สวิตช์ 📋) · ออกใบเช็คเอาต์ใหม่หลังยกเลิก
 (A-IN5) · เปลี่ยนประมาณการค่าเสื่อมไปข้างหน้ารวมวิธีคิด (A-IN3) · สีบริษัทตรวจรูป (A-IN6) · เปลี่ยนประเภทธุรกิจเติมประเภทมัดจำ (A-IN7) · ตรวจ/ซ่อมยอดสต็อกรวม (C-5) ·
 ทบทวนอายุในรายการปิดปี (C-6) (§3.2 ข้อ 8 · §5.6 · §6.5) — commit a4dfa177)_

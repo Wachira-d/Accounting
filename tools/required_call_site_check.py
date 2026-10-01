@@ -3291,6 +3291,111 @@ RULES += [
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
+# ── รอบ 201 ทีม AI (A-AI1..A-AI8 · AI/ธนาคาร): เทสต์ล็อกตัวตัดสิน pure (BankAiCandidateGuardTests · BankPatternEvidenceTests ·
+#    BankMatchSingleStandardTests · AiKillSwitchOrchestratorTests · BulkPvStudentTests · AiFeedbackRecorderDiscardTests) ⇒ ล็อกจุดเรียกที่นี่ ──
+_AI_BULKBANK = "Services/Implementations/Bank/BulkBankAiMatchService.cs"
+_AI_BANK = "Services/Implementations/BankService.cs"
+_AI_LEARN = "Services/Implementations/BankService.Learning.cs"
+_AI_DOCAI = "Services/Ai/DocumentAiAugmenter.cs"
+_AI_ORCH = "Services/Ai/AiOrchestrator.cs"
+_AI_REC = "Services/Ai/AiFeedbackRecorder.cs"
+_AI_WHY7 = ("A-AI7 (H-9): candidateId/bankTxnId ที่ AI แต่งต้องถูกตัดก่อนแย่งคู่จริง (ก่อน AiValidated/dedup) และห้ามพกยอดของ AI ถึงจอ — "
+            "ตัวตัดสิน Helpers/BankAiCandidateGuard ตัวเดียว · ข้อเสนอที่ถูกตัดต้องถูกนับในคำเตือน (ไม่หายเงียบ)")
+_AI_WHY1 = ("A-AI1 (H-1): คลังจับคู่ธนาคารนับความมั่นใจเฉพาะคำยืนยันที่ผู้ใช้เลือกคู่เอง (Explicit) — แหล่งของคำยืนยันต้องเดินจาก"
+            "คำขอถึง UpsertPatternAsync ทุกทางเข้า (1:1 · batch · กลุ่ม M:N) · ไม่ส่ง = Implicit")
+_AI_WHY_REC = "A-AI8 (คำตัดสินข้อ 58): ตัวบันทึก feedback ใช้ context ร่วม — catch ต้องถอยการแก้ของตัวเอง ไม่งั้น SaveChanges ถัดไปของผู้เรียกล้มตาม"
+RULES += [
+    dict(file=_AI_BULKBANK, method="ProposeAsync",
+         must=["ScreenAiMatches(aiParsed", "BankAiCandidateGuard.Screen(", "BankAiCandidateGuard.PlanWarning(",
+               "realAmountById[key]", "recordIndexOfMatch.Add("],
+         before=[("ScreenAiMatches(aiParsed", "aiBankCandPairs.Add("),
+                 ("ScreenAiMatches(aiParsed", "DeduplicateMatches(parsed)")],
+         forbid=["? ra2 : c.Amount", "recordIndexOfMatch[mi]"],
+         why=_AI_WHY7),
+    dict(file=_AI_BULKBANK, method="ScreenAiMatches",
+         must=["BankAiCandidateGuard.Screen(", "BankAiCandidateGuard.CapConfidence(", "BankAiCandidateGuard.PlanWarning("],
+         why=_AI_WHY7),
+    dict(file=_AI_BANK, method="ValidateMatchAmountAsync",
+         must=["BankAiCandidateGuard.MissingIds(ids, foundIds)"],
+         must_re=[r"if\s*\(\s*missingIds\s*\.\s*Count\s*>\s*0\s*\)\s*throw\b"],
+         before=[("BankAiCandidateGuard.MissingIds(", "BankMatchAmountReconciler.Reconcile(")],
+         why="A-AI7 ฝั่งเขียน: เส้น batch/api ยืนยันคู่ต้องตรวจว่าทุก id มีอยู่จริงในบริษัทนี้ก่อนกระทบยอด (เส้น 1:1 ตรวจอยู่แล้ว)"),
+    dict(file=_AI_LEARN, method="UpsertPatternAsync",
+         must=["BankPatternEvidence.ExplicitIncrement(source)", "existing.ExplicitConfirmCount += explicitInc",
+               "ExplicitConfirmCount = explicitInc"],
+         why=_AI_WHY1),
+    dict(file=_AI_LEARN, method="CaptureConfirmedMatchAsync",
+         call_args=[("UpsertPatternAsync(", "source")],
+         why=_AI_WHY1),
+    dict(file=_AI_LEARN, method="RecordReconciliationPatternsAsync",
+         call_args=[("UpsertPatternAsync(", "itemSource")],
+         why=_AI_WHY1),
+    dict(file=_AI_BANK, method="ReconcileAsync",
+         call_args=[("CaptureConfirmedMatchAsync(", "ParseSource")],
+         must=["BankPatternEvidence.ParseSource(request.Source)"],
+         why=_AI_WHY1),
+    dict(file="Services/Implementations/BankService.AiReconciliation.cs", method="BatchReconcileAsync",
+         call_args=[("CaptureConfirmedMatchAsync(", "ParseSource")],
+         must=["BankPatternEvidence.ParseSource(item.Source)"],
+         why=_AI_WHY1),
+    dict(file="Services/Implementations/BankService.Reconciliation.cs", method="CreateReconciliationGroupAsync",
+         must=["BankPatternEvidence.ParseSource(mi.Source)"],
+         call_args=[("RecordReconciliationPatternsAsync(", "sourceByItem")],
+         why=_AI_WHY1),
+    dict(file="Services/Ai/Distillation/BankMatchDistillationModel.cs", method="LoadFromFeedbackAsync",
+         must=["BankPatternEvidence.StudentConfidence(", "x.ExplicitConfirmCount"],
+         forbid=["Wilson(x.TimesConfirmed"],
+         why=_AI_WHY1 + " · นักเรียนห้ามนับ TimesConfirmed เป็นหลักฐาน (กดผ่านรัว ๆ ดัน Wilson ทะลุ 0.85)"),
+    dict(file=_AI_LEARN, method="GetLearnedSuggestionsAsync",
+         must=["BankPatternEvidence.Relevance(", "BankMatchScorer.Score(", "BankMatchArbiter.Decide(options)"],
+         must_re=[r"autoSelect\s*=\s*isChosen\s*&&\s*decision\s*\.\s*Verdict\s*==\s*Accounting\s*\.\s*Helpers\s*\.\s*BankMatchVerdict\s*\.\s*Apply"],
+         forbid=["p.TimesConfirmed / 10.0", "0.2 * Math.Min("],
+         why="A-AI3 (H-5): ข้อเสนอจากประวัติให้คะแนนด้วย BankMatchScorer + ตัดสินติ๊กด้วย BankMatchArbiter เหมือนทุกเส้น (ห้ามสูตรที่ 3)"),
+    dict(file="Services/Implementations/BankService.MatchCandidates.cs", method="GetMatchCandidatesAsync",
+         must=["BankMatchScorer.DepositPreference("],
+         forbid=["score = Math.Min(100, score +", "score = Math.Max(0, score -"],
+         why="A-AI3 (H-5): ตัวเลขบนจอ = ตัวเลขที่ arbiter ใช้ประทับ — หลักฐานเงินลงที่ไหนเป็นลำดับรองเท่านั้น ห้ามบวกเข้าคะแนนเฉพาะจอ"),
+    dict(file=_AI_ORCH, method="AskAsync",
+         must=["progress.Request", "fromLocalModel: progress.HasLocal"],
+         why="A-AI6: ตาข่ายชั้นนอกของ orchestrator ต้องคืนคำตอบนักเรียนที่ทำนายไว้แล้ว (ฐานข้อมูล/provider ล่ม = ยังมีคำตอบ)"),
+    dict(file=_AI_ORCH, method="AskInternalAsync",
+         must=["LoadSiteSettingsAsync(ct)", "LoadActiveProviderAsync(ct)", "progress.HasLocal = true"],
+         before=[("TryPredictLocalAsync(", "LoadSiteSettingsAsync(")],
+         forbid=["_db.AiProviderConfigs", "_db.SiteSettings"],
+         why="A-AI6: เทสต์ kill-switch ป้อนค่าผ่าน seam ตัวเดียวกับเส้นจริง — อ่านฐานข้อมูลตรงในเมธอดนี้ = เทสต์ไม่ได้ตรวจเส้นจริงอีก"),
+    dict(file=_AI_DOCAI, method="ParseBulkPvResponse",
+         must=["AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel)", "FromStudent: resp.FromLocalModel",
+               "AiAnswerSource.UnreadableMessage(who)"],
+         must_re=[r"resp\s*\.\s*RawResponseJson\s*\?\?\s*\(\s*resp\s*\.\s*UsedAi\s*\?"],
+         forbid=["resp.RawResponseJson ?? resp.PrimaryAnswer"],
+         why="A-AI4 (H-6): คำตอบนักเรียนแบบมีโครงต้องใช้ได้ · คำเดี่ยวห้าม parse เป็น JSON · ข้อความบอกผู้ตอบจริง (ห้ามโทษ AI ที่ไม่ได้ถูกถาม)"),
+    dict(file=_AI_DOCAI, method="ParseBulkApprovalResponse",
+         must=["AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel)", "FromStudent: resp.FromLocalModel",
+               "AiAnswerSource.UnreadableMessage(who)"],
+         forbid=["resp.RawResponseJson ?? resp.PrimaryAnswer"],
+         why="A-AI4 คลาสเดียวกัน (แก้ที่หนึ่ง grep ทั้งเรพ): bulk คำเตือนอนุมัติ"),
+    dict(file=_AI_DOCAI, method="SuggestAllPaymentVoucherAccountingAsync",
+         must=["PaymentVoucherAccountingDistillationModel.BuildPerLineInputJson(", "ParseBulkPvResponse(resp, lines, _logger)"],
+         call_args=[("SynthesiseChildFeedbackAsync(", "answerFromAi")],
+         why="A-AI4: กุญแจแถว feedback ลูก = กุญแจที่นักเรียนแตก (ตัวสร้างเดียว) · คำตอบนักเรียนห้ามบันทึกเป็นคำตอบครู (คลังสอนตัวเอง)"),
+    dict(file="Services/Ai/BankAiAugmenter.cs", method="SuggestStatementMatchAsync",
+         must=["FromStudent: resp.FromLocalModel"],
+         why="A-AI2 (H-4): ธงนักเรียนต้องเดินทางถึงผู้บริโภค (BankFeedService)"),
+    dict(file="Services/Implementations/BankFeedService.cs", method="TryAutoMatchAsync",
+         must=["aiResult.HasModelAnswer", "BankMatchArbiter.ScreenAiProposals("],
+         forbid=["!aiResult.UsedAi"],
+         why="A-AI2 (H-4): ด่าน 'มีคำตอบให้ใช้ไหม' = HasModelAnswer + เกณฑ์ตัวเลข/candidate set (ScreenAiProposals) — UsedAi ทิ้งคำตอบนักเรียนตอนปิด provider"),
+    dict(file="Services/Implementations/DocumentService.cs", method="SuggestPaymentVoucherAccountingAsync",
+         must=["GlSuggestionApplyPolicy.MayAutoFill(", "MayAutoFill: mayAutoFill", "AiAnswerSource.LabelWithRules("],
+         why="A-AI5 (H-7): เกณฑ์เติมผังให้เอง (≥0.70 + ผังของบริษัท) ตัดสินที่เซิร์ฟเวอร์ — ทางเข้าอื่น (มือถือ/สคริปต์) ได้ด่านเดียวกัน"),
+    dict(file=_AI_REC, method="RecordUserChoiceAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="BumpTenantReviewAsync", must=["DiscardUnsaved(_db, target)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="UpsertTenantRollupAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="UpsertDailyRollupAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+]
+# ── จบบล็อกรอบ 201 ทีม AI ──
+
+
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
     patterns=[r"\bnew\s+JournalEntry\b", r"\bnew\s+JournalEntryLine\b", r"\bJournalEntries\s*\.\s*Add(?:Range)?\s*\("],
