@@ -19,8 +19,10 @@ public interface ISettingsService
     Task<NumberSeriesResponse> UpdateNumberSeriesAsync(Guid companyId, Guid seriesId, UpdateNumberSeriesRequest request);
     Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType);
     /// <summary>Same as GetNextNumberAsync but uses yyyyMM ของ documentDate
-    /// (สอดคล้องเลข+วันที่). null = ใช้ DateTime.UtcNow ตามเดิม</summary>
-    Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType, DateTime? documentDate);
+    /// (สอดคล้องเลข+วันที่). null = ใช้ DateTime.UtcNow ตามเดิม
+    /// <para>รอบ 201 ทีม IN (A-IN4): <c>branchCode</c> = เล่มของสาขา (null/00000 = เล่มบริษัท · เดิมทุกประการ)</para></summary>
+    Task<string> GetNextNumberAsync(Guid companyId, Accounting.Models.Enums.DocumentType documentType, DateTime? documentDate,
+        string? branchCode = null);
 
     // API Key Management
     Task<ApiKeyCreatedResponse> CreateApiKeyAsync(Guid companyId, Guid userId, CreateApiKeyRequest request);

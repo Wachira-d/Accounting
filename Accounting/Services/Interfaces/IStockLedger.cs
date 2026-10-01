@@ -122,7 +122,26 @@ public interface IStockLedger
     /// <summary>ยอดคงเหลือของสินค้าในคลังนั้น (0 ถ้าไม่มีแถว)</summary>
     Task<decimal> GetQuantityAsync(Guid companyId, Guid productId, Guid warehouseId, CancellationToken ct = default);
 
-    /// <summary>ซ่อม <c>Product.CurrentStock</c> ให้เท่ากับ Σ <c>WarehouseStock</c>
-    /// — ใช้หลัง migration และในงานตรวจสอบความสอดคล้อง</summary>
-    Task<int> ReconcileProductTotalsAsync(Guid companyId, CancellationToken ct = default);
+    /// <summary>รายงาน (อ่านอย่างเดียว) สินค้าที่ <c>Product.CurrentStock</c> ≠ Σ <c>WarehouseStock</c> พร้อมหลักฐานชั้นที่สาม
+    /// (ยอดจากประวัติการเคลื่อนไหว) — เครื่องมือแอดมิน ไม่มีงานไหนเรียกอัตโนมัติ (รอบ 201 ทีม IN · C-5 · คำตัดสินข้อ 78)</summary>
+    Task<List<Accounting.Helpers.StockTotalMismatch>> FindProductTotalMismatchesAsync(Guid companyId, CancellationToken ct = default);
+
+    /// <summary>ซ่อม <c>CurrentStock := Σ คลัง</c> เฉพาะแถวที่ผู้ใช้เห็นและเลือก · ค่าตอนซ่อมต้องเท่าที่เห็น · ประวัติไม่ตรงต้องยืนยันว่า
+    /// ตรวจนับแล้ว (<c>Helpers/StockTotalsReconciliation.SkipReason</c>) · ทุกแถวที่ซ่อมเข้า audit chain · บันทึกในตัว
+    /// (เครื่องมือเดี่ยวในธุรกรรมของตัวเอง — ไม่มีผู้เรียกที่ประกอบ entity ค้างไว้)</summary>
+    Task<StockTotalsRepairResult> RepairProductTotalsAsync(Guid companyId, IReadOnlyList<StockTotalsRepairItem> items,
+        bool confirmPhysicalCount, string actor, CancellationToken ct = default);
 }
+
+/// <summary>แถวที่ผู้ใช้เลือกซ่อม พร้อมค่าที่เห็นในรายงาน (กันซ่อมทับค่าที่ขยับไปแล้ว)</summary>
+public sealed record StockTotalsRepairItem(Guid ProductId, decimal SeenCurrentStock, decimal SeenWarehouseTotal);
+
+/// <summary>ผลซ่อมรายแถว — <c>Repaired = false</c> มีเหตุผลเสมอ</summary>
+public sealed record StockTotalsRepairOutcome(Guid ProductId, string? Code, bool Repaired, decimal Before, decimal After, string? Reason);
+
+/// <summary>ผลซ่อมทั้งคำขอ</summary>
+public sealed record StockTotalsRepairResult(int RepairedCount, int SkippedCount, List<StockTotalsRepairOutcome> Items);
+
+/// <summary>รอบ 201 ทีม IN (C-5): คำขอซ่อมยอดสต็อกรวม — แถวที่ผู้ใช้เลือกจากรายงาน พร้อมค่าที่เห็น ·
+/// <c>ConfirmPhysicalCount</c> = ยืนยันว่าตรวจนับแถวคลังแล้ว (จำเป็นเมื่อประวัติการเคลื่อนไหวไม่ตรงผลรวมคลัง)</summary>
+public sealed record StockTotalsRepairRequest(List<StockTotalsRepairItem>? Items, bool ConfirmPhysicalCount = false);

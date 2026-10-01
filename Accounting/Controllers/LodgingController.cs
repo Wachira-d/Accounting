@@ -301,6 +301,15 @@ public class LodgingController : ControllerBase
         return Wrap(r, msg);
     }
 
+    // รอบ 201 ทีม IN (A-IN5 · คำตัดสินข้อ 36): ใบเช็คเอาต์ถูกยกเลิก ⇒ ออกใบใหม่ยอดเท่าเดิมผ่านตัวสร้างของที่พัก (ไม่ประกอบเองที่หน้าเอกสาร)
+    [HttpPost("reservations/{id:guid}/reissue-final")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> ReissueFinal(Guid companyId, Guid id, [FromBody] LodgingReissueFinalRequest? req)
+    {
+        var r = await _svc.ReissueFinalDocumentAsync(companyId, id, req ?? new LodgingReissueFinalRequest(), Uid);
+        return Wrap(r, $"ออกใบเช็คเอาต์ใหม่แล้ว · {r.FinalDocumentNumber}" + (r.BalanceDue > 0 ? $" (ค้างชำระ {r.BalanceDue:N2})" : ""));
+    }
+
     [HttpPost("reservations/{id:guid}/cancel")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> Cancel(Guid companyId, Guid id, [FromBody] LodgingCancelRequest? req)

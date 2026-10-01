@@ -649,19 +649,15 @@ public class FixedAssetService : IFixedAssetService
         if (asset.Status != AssetStatus.Active)
             throw new InvalidOperationException("สามารถปรับอายุการใช้งานได้เฉพาะสินทรัพย์ที่ Active เท่านั้น");
 
-        if (request.NewUsefulLifeMonths <= 0)
-            throw new ArgumentException("อายุการใช้งานต้องมากกว่า 0 เดือน");
-
-        if (request.NewSalvageValue.HasValue)
-        {
-            if (request.NewSalvageValue.Value < 0)
-                throw new ArgumentException("มูลค่าซากต้องไม่ติดลบ");
-            asset.SalvageValue = request.NewSalvageValue.Value;
-        }
+        // รอบ 201 ทีม IN (A-IN3 · คำตัดสินข้อ 38): เปลี่ยนประมาณการไปข้างหน้า — อายุ · ซาก · **วิธีคิด** ผ่านตัวตัดสินเดียว
+        // Helpers/DepreciationEstimateChange · ไม่มีค่าใดเปลี่ยน = บันทึกว่าทบทวนแล้ว (C-6) โดยไม่สร้างฐานใหม่
+        var newMethod = request.NewDepreciationMethod ?? asset.DepreciationMethod;
+        var newSalvage = request.NewSalvageValue ?? asset.SalvageValue;
+        var newLife = request.NewUsefulLifeMonths;
 
         // งวดล่าสุดที่โพสต์ไปแล้ว = จุดที่การทบทวนเริ่มมีผลกับงวดถัดไป
         var lastPosted = await _db.AssetDepreciations
-            .Where(d => d.FixedAssetId == asset.Id && d.IsPosted)
+            .Where(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && d.IsPosted)
             .OrderByDescending(d => d.Year).ThenByDescending(d => d.Month)
             .Select(d => new { d.Year, d.Month })
             .FirstOrDefaultAsync();
@@ -670,59 +666,77 @@ public class FixedAssetService : IFixedAssetService
             : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
                   asset.PurchaseDate, lastPosted.Year, lastPosted.Month);
         var elapsed = postedIndex + 1;                       // จำนวนงวดที่คิดไปแล้ว
-        var remaining = request.NewUsefulLifeMonths - elapsed;
-        if (remaining <= 0)
-            throw new Accounting.Helpers.BusinessRuleException(
-                $"อายุใหม่ {request.NewUsefulLifeMonths} เดือน สั้นกว่าที่คิดค่าเสื่อมไปแล้ว "
-                + $"({elapsed} งวด) — ถ้าต้องการตัดจบทันที ให้ใช้ “ตัดจำหน่าย” แทน",
-                "ASSET-LIFE-TOO-SHORT");
 
-        // เปลี่ยนประมาณการ = **prospective** — ตรึงฐานที่เหลือ (NBV) กับอายุคงเหลือ
-        // ไว้ตรง ๆ แทนการหวังให้สูตรที่หารจากราคาทุนเดาถูก (ผลตรวจทีม E · E-06)
+        var acctCode = asset.AssetAccountId == null ? null
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.Id == asset.AssetAccountId && a.CompanyId == companyId)
+                .Select(a => a.AccountCode).FirstOrDefaultAsync();
+        var nonDepreciable = Tax.FixedAssetAccountClassifier.Resolve(acctCode) is { Depreciable: false };
+        var problem = Accounting.Helpers.DepreciationEstimateChange.Problem(
+            asset.DepreciationMethod, newMethod, newLife, newSalvage, elapsed, asset.NetBookValue, nonDepreciable);
+        if (problem != null)
+            throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.DepreciationEstimateChange.RuleCode);
+
+        var changed = Accounting.Helpers.DepreciationEstimateChange.IsChange(
+            asset.DepreciationMethod, asset.UsefulLifeMonths, asset.SalvageValue, newMethod, newLife, newSalvage);
         var before = new
         {
-            asset.UsefulLifeMonths, asset.SalvageValue,
+            method = asset.DepreciationMethod.ToString(), asset.UsefulLifeMonths, asset.SalvageValue,
             asset.NetBookValue, asset.AccumulatedDepreciation,
         };
-        asset.UsefulLifeMonths = request.NewUsefulLifeMonths;
-        asset.DepreciableBaseAtReview = asset.NetBookValue - asset.SalvageValue;
-        asset.RemainingLifeMonthsAtReview = remaining;
-        asset.ReviewEffectiveFromMonthIndex = elapsed;
+
+        if (changed)
+        {
+            // เปลี่ยนประมาณการ = **prospective** — ตรึงฐานที่เหลือ (NBV − ซากใหม่) กับอายุคงเหลือไว้ตรง ๆ แทนการหวังให้สูตรที่หาร
+            // จากราคาทุนเดาถูก (ผลตรวจทีม E · E-06) · วิธีใหม่ใช้กับฐาน/อายุคงเหลือนี้ (EffectiveDepParams) ไม่แตะงวดที่ลงแล้ว
+            asset.DepreciationMethod = newMethod;
+            asset.UsefulLifeMonths = newLife;
+            asset.SalvageValue = newSalvage;
+            asset.DepreciableBaseAtReview = Accounting.Helpers.DepreciationEstimateChange.RemainingBase(asset.NetBookValue, newSalvage);
+            asset.RemainingLifeMonthsAtReview = newLife - elapsed;
+            asset.ReviewEffectiveFromMonthIndex = elapsed;
+
+            // แถวแผนที่ยังไม่โพสต์เป็นตารางของประมาณการ**เดิม** — ต้องสร้างใหม่ในธุรกรรม
+            // เดียวกัน ไม่งั้นหน้าจอโชว์แผนเก่าขณะที่ยอดโพสต์เดินตามฐานใหม่
+            var stalePlan = await _db.AssetDepreciations
+                .Where(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && !d.IsPosted)
+                .ToListAsync();
+            _db.AssetDepreciations.RemoveRange(stalePlan);
+            foreach (var (y, m, amount, accumulated, nbv) in BuildScheduleRows(asset))
+            {
+                _db.AssetDepreciations.Add(new AssetDepreciation
+                {
+                    CompanyId = companyId, FixedAssetId = asset.Id,
+                    Year = y, Month = m, Amount = amount,
+                    AccumulatedAmount = accumulated, NetBookValue = nbv,
+                    IsPosted = false, CreatedBy = performedBy,
+                });
+            }
+        }
         asset.UsefulLifeReviewedAt = DateTime.UtcNow;
         asset.UsefulLifeReviewedBy = performedBy;
 
-        // แถวแผนที่ยังไม่โพสต์เป็นตารางของอายุ**เดิม** — ต้องสร้างใหม่ในธุรกรรม
-        // เดียวกัน ไม่งั้นหน้าจอโชว์แผนเก่าขณะที่ยอดโพสต์เดินตามฐานใหม่
-        var stalePlan = await _db.AssetDepreciations
-            .Where(d => d.FixedAssetId == asset.Id && !d.IsPosted)
-            .ToListAsync();
-        _db.AssetDepreciations.RemoveRange(stalePlan);
-        foreach (var (y, m, amount, accumulated, nbv) in BuildScheduleRows(asset))
+        // การเปลี่ยนตัวเลขที่กระทบค่าใช้จ่าย (และการยืนยันว่าทบทวนแล้ว) ต้องเข้า audit chain —
+        // ผู้สอบบัญชีถามว่า "ใครเปลี่ยนอายุจาก X เป็น Y ด้วยอำนาจอะไร" · รอบ 201: เดิม AuditLogs.Add ตรง (นอก hash chain · ไม่มี CompanyId)
+        _db.AddChainedAuditLog(new AuditLog
         {
-            _db.AssetDepreciations.Add(new AssetDepreciation
-            {
-                CompanyId = companyId, FixedAssetId = asset.Id,
-                Year = y, Month = m, Amount = amount,
-                AccumulatedAmount = accumulated, NetBookValue = nbv,
-                IsPosted = false, CreatedBy = performedBy,
-            });
-        }
-
-        // การเปลี่ยนตัวเลขที่กระทบค่าใช้จ่ายต้องเข้า AuditLog (hash chain) —
-        // ผู้สอบบัญชีถามว่า "ใครเปลี่ยนอายุจาก X เป็น Y ด้วยอำนาจอะไร"
-        _db.AuditLogs.Add(new AuditLog
-        {
-            UserId = Guid.TryParse(performedBy, out var uid) ? uid : Guid.Empty,
+            CompanyId = companyId,
+            UserId = Guid.TryParse(performedBy, out var uid) ? uid : null,
             Action = Models.Enums.AuditAction.Update,
             EntityType = nameof(FixedAsset),
             EntityId = asset.Id.ToString(),
             OldValues = System.Text.Json.JsonSerializer.Serialize(before),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
+                action = changed ? "depreciation-estimate-change" : "useful-life-review-confirmed",
+                method = asset.DepreciationMethod.ToString(),
                 asset.UsefulLifeMonths, asset.SalvageValue,
                 asset.DepreciableBaseAtReview, asset.RemainingLifeMonthsAtReview,
+                effectiveFromMonthIndex = elapsed,
                 Reason = request.Reason,
+                ruleCode = Accounting.Helpers.DepreciationEstimateChange.RuleCode,
             }),
+            Timestamp = DateTime.UtcNow,
         });
 
         await _db.SaveChangesAsync();

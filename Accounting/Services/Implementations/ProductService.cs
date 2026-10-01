@@ -95,6 +95,11 @@ public class ProductService : IProductService
         if (await _db.Products.AnyAsync(p => p.CompanyId == companyId && p.Code == request.Code))
             throw new InvalidOperationException($"รหัสสินค้า {request.Code} ซ้ำ");
 
+        // รอบ 201 ทีม IN (A-IN1 · คำตัดสินข้อ 30): วิธีคิดต้นทุน — ไม่ระบุ = ถัวเฉลี่ย (ค่าเดิม) · ค่านอกตัวเลือก/LIFO/มาตรฐาน = ปฏิเสธดัง
+        var costing = request.CostingMethod ?? CostingMethodPolicy.Default;
+        if (CostingMethodPolicy.RejectReason(costing) is { } costingProblem)
+            throw new BusinessRuleException(costingProblem, CostingMethodPolicy.RuleCode);
+
         var product = new Product
         {
             CompanyId = companyId,
@@ -118,12 +123,14 @@ public class ProductService : IProductService
             SuppliesExpenseAccountId = request.SuppliesExpenseAccountId,
             TrackStock = request.TrackStock || request.ProductType == ProductType.Supplies,
             MinimumStock = request.MinimumStock,
-            PrintStation = string.IsNullOrWhiteSpace(request.PrintStation) ? null : request.PrintStation
+            PrintStation = string.IsNullOrWhiteSpace(request.PrintStation) ? null : request.PrintStation,
+            CostingMethod = costing,
         };
 
         _db.Products.Add(product);
         await _db.SaveChangesAsync();
-        return MapToResponse(product);
+        // สินค้าใหม่ยังไม่มีความเคลื่อนไหว ⇒ ยังเปลี่ยนวิธีได้
+        return MapToResponse(product) with { CostingMethodLocked = false };
     }
 
     public async Task<ProductResponse> GetByIdAsync(Guid companyId, Guid productId)
@@ -135,7 +142,7 @@ public class ProductService : IProductService
             .Include(p => p.InventoryAccount)
             .FirstOrDefaultAsync(p => p.Id == productId && p.CompanyId == companyId && !p.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบสินค้า");
-        return MapToResponse(product);
+        return WithCostingLock(MapToResponse(product), await HasStockMovementsAsync(companyId, productId));
     }
 
     public async Task<PagedResponse<ProductResponse>> GetAllAsync(Guid companyId, PagedRequest request)
@@ -153,8 +160,14 @@ public class ProductService : IProductService
             .Take(request.PageSize)
             .ToListAsync();
 
+        // สถานะล็อกวิธีคิดต้นทุนของทั้งหน้าใน query เดียว (หน้าแก้ไขเปิดจาก cache ของลิสต์ — ต้องรู้ก่อนผู้ใช้กดบันทึก)
+        var pageIds = items.Select(p => p.Id).ToList();
+        var moved = (await _db.StockMovements.IgnoreQueryFilters().AsNoTracking()
+                .Where(m => m.CompanyId == companyId && pageIds.Contains(m.ProductId))
+                .Select(m => m.ProductId).Distinct().ToListAsync())
+            .ToHashSet();
         return new PagedResponse<ProductResponse>(
-            items.Select(p => MapToResponse(p)).ToList(),
+            items.Select(p => WithCostingLock(MapToResponse(p), moved.Contains(p.Id))).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -186,9 +199,46 @@ public class ProductService : IProductService
         if (request.SuppliesAccountId.HasValue) product.SuppliesAccountId = request.SuppliesAccountId;
         if (request.SuppliesExpenseAccountId.HasValue) product.SuppliesExpenseAccountId = request.SuppliesExpenseAccountId;
 
+        // รอบ 201 ทีม IN (A-IN1 · คำตัดสินข้อ 30): เปลี่ยนวิธีคิดต้นทุน — สินค้าที่มีความเคลื่อนไหวแล้ว = ปฏิเสธพร้อมทางไปต่อ
+        // (COGS ที่ลงไปแล้วคิดด้วยวิธีเดิม · TFRS for NPAEs บทที่ 8 ให้ใช้สม่ำเสมอ) — ห้ามสลับแล้ว COGS งวดถัดไปขยับเงียบ ๆ
+        var hasMovements = await HasStockMovementsAsync(companyId, productId);
+        if (request.CostingMethod is { } requestedCosting && requestedCosting != product.CostingMethod)
+        {
+            if (CostingMethodPolicy.ChangeRejectReason(product.CostingMethod, requestedCosting, hasMovements) is { } costingProblem)
+                throw new BusinessRuleException(costingProblem, CostingMethodPolicy.RuleCode);
+            var before = product.CostingMethod;
+            product.CostingMethod = requestedCosting;
+            // นโยบายบัญชีของสินค้า — ผู้สอบบัญชีถามว่าใครเปลี่ยนเมื่อไร (hash chain)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                EntityType = nameof(Product),
+                EntityId = product.Id.ToString(),
+                Action = AuditAction.Update,
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { costingMethod = before.ToString() }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "product-costing-method",
+                    costingMethod = requestedCosting.ToString(),
+                    ruleCode = CostingMethodPolicy.RuleCode,
+                    legalReference = CostingMethodPolicy.LegalReference,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+        }
+
         await _db.SaveChangesAsync();
-        return MapToResponse(product);
+        return WithCostingLock(MapToResponse(product), hasMovements);
     }
+
+    /// <summary>สินค้ามีแถวการเคลื่อนไหวสต็อกใด ๆ แล้วหรือไม่ — รวมแถวที่ลบแบบ soft (ทิศปลอดภัย: ล็อกไว้ก่อน) · กรองบริษัทเสมอ</summary>
+    private Task<bool> HasStockMovementsAsync(Guid companyId, Guid productId)
+        => _db.StockMovements.IgnoreQueryFilters().AsNoTracking()
+            .AnyAsync(m => m.CompanyId == companyId && m.ProductId == productId);
+
+    /// <summary>ใส่สถานะล็อกวิธีคิดต้นทุนลงคำตอบ (ข้อความจาก <see cref="CostingMethodPolicy.LockedNotice"/> ตัวเดียว)</summary>
+    private static ProductResponse WithCostingLock(ProductResponse r, bool locked)
+        => r with { CostingMethodLocked = locked, CostingMethodLockReason = locked ? CostingMethodPolicy.LockedNotice : null };
 
     public async Task DeleteAsync(Guid companyId, Guid productId)
     {
@@ -1218,7 +1268,8 @@ public class ProductService : IProductService
             p.UnitConversions?.Select(MapConversion).ToList(),
             imgs,
             imgs.Count > 0 ? imgs[0] : null,
-            p.PrintStation);
+            p.PrintStation,
+            p.CostingMethod);
     }
 
     private static List<string> ParseImageUrls(string? json)

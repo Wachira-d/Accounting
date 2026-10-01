@@ -224,8 +224,9 @@ public class StockLedger : IStockLedger
         if (r.SerialNumber != null) row.SerialNumber = r.SerialNumber;
 
         // `CurrentStock` = ผลรวมทุกคลัง · บวก delta เข้าไปตรง ๆ ถูกต้องและถูกกว่าการ
-        // SUM ทั้งตารางทุกครั้ง — ความถูกต้องยืนยันด้วย ReconcileProductTotalsAsync
-        // ที่งานตรวจสอบเรียกเป็นระยะ (ถ้าเพี้ยน = มีใครเขียนนอก ledger ซึ่ง checker ห้ามไว้)
+        // SUM ทั้งตารางทุกครั้ง — ⚠️ ไม่มีงานไหนตรวจซ้ำอัตโนมัติ (คอมเมนต์เดิมอ้างว่ามี ซึ่งไม่จริง · E-10):
+        // ตาข่ายคือเครื่องมือแอดมิน "ตรวจยอดสต็อกรวม" (`FindProductTotalMismatchesAsync` → `RepairProductTotalsAsync`
+        // · รายงานก่อน ซ่อมเมื่อกด + audit · รอบ 201 C-5) — ถ้าเพี้ยน = ข้อมูลก่อนเฟส 0 หรือมีใครเขียนนอก ledger (checker ห้ามไว้)
         product.CurrentStock += delta;
 
         var movement = new StockMovement
@@ -253,32 +254,120 @@ public class StockLedger : IStockLedger
         return new StockMoveResult(movement, warehouseId, row.Quantity, product.CurrentStock, unitCost);
     }
 
-    public async Task<int> ReconcileProductTotalsAsync(Guid companyId, CancellationToken ct = default)
+    // ═══ ตรวจ/ซ่อมยอดรวมสต็อก — เครื่องมือแอดมิน (รอบ 201 ทีม IN · C-5 · คำตัดสินข้อ 78) ═══
+    // เดิม `ReconcileProductTotalsAsync` ซ่อมเงียบทุกแถว (log warning อย่างเดียว) และไม่มีผู้เรียก ⇒ แยกเป็น "รายงาน" (อ่านอย่างเดียว)
+    // กับ "ซ่อมเมื่อกด" ที่ซ่อมเฉพาะแถวที่ผู้ใช้เห็น + audit chain ทุกแถว · ไม่มีงานไหนเรียกอัตโนมัติ (ซ่อมเงียบ = เปลี่ยนสต็อกโดยไม่มีคนเห็น)
+
+    public async Task<List<StockTotalMismatch>> FindProductTotalMismatchesAsync(Guid companyId, CancellationToken ct = default)
+        => StockTotalsReconciliation.Find(await LoadTotalsEvidenceAsync(companyId, null, ct));
+
+    public async Task<StockTotalsRepairResult> RepairProductTotalsAsync(Guid companyId, IReadOnlyList<StockTotalsRepairItem> items,
+        bool confirmPhysicalCount, string actor, CancellationToken ct = default)
     {
-        // สินค้าที่ผลรวมคลังไม่เท่ากับ CurrentStock — ปกติต้องเป็น 0 แถว
-        var sums = await _db.WarehouseStocks.AsNoTracking()
-            .Where(s => s.CompanyId == companyId && !s.IsDeleted)
-            .GroupBy(s => s.ProductId)
-            .Select(g => new { ProductId = g.Key, Total = g.Sum(x => x.Quantity) })
-            .ToListAsync(ct);
-        var byProduct = sums.ToDictionary(x => x.ProductId, x => x.Total);
+        if (items == null || items.Count == 0)
+            throw new BusinessRuleException("ยังไม่ได้เลือกสินค้าที่จะซ่อม — เปิดรายงานตรวจยอดสต็อกรวมแล้วเลือกแถวก่อน",
+                StockTotalsReconciliation.RuleCode);
 
-        var products = await _db.Products
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.TrackStock)
-            .ToListAsync(ct);
+        await using var tx = _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        // หนึ่งการซ่อมต่อบริษัทในเวลาเดียวกัน (สองแอดมินกดพร้อมกัน = audit ซ้ำ)
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.StockAdjust, "reconcile:totals") }, ct);
 
-        var fixedCount = 0;
-        foreach (var p in products)
+        var wanted = items.GroupBy(i => i.ProductId).Select(g => g.First()).ToList();
+        var ids = wanted.Select(i => i.ProductId).ToList();
+        var evidence = (await LoadTotalsEvidenceAsync(companyId, ids, ct)).ToDictionary(e => e.ProductId);
+        Guid? actorId = Guid.TryParse(actor, out var uid) ? uid : null;
+
+        var outcomes = new List<StockTotalsRepairOutcome>();
+        foreach (var item in wanted)
         {
-            var total = byProduct.GetValueOrDefault(p.Id, 0m);
-            if (p.CurrentStock == total) continue;
-            _logger.LogWarning(
-                "ยอดสต็อกไม่สอดคล้อง: {Product} CurrentStock={Cur} แต่ผลรวมคลัง={Sum} — ซ่อมให้ตรงผลรวมคลัง",
-                p.Code, p.CurrentStock, total);
-            p.CurrentStock = total;
-            fixedCount++;
+            if (!evidence.TryGetValue(item.ProductId, out var now))
+            {
+                outcomes.Add(new(item.ProductId, null, false, item.SeenCurrentStock, item.SeenCurrentStock, "ไม่พบสินค้าในบริษัทนี้"));
+                continue;
+            }
+            var skip = StockTotalsReconciliation.SkipReason(item.SeenCurrentStock, item.SeenWarehouseTotal, now, confirmPhysicalCount);
+            if (skip != null)
+            {
+                outcomes.Add(new(now.ProductId, now.Code, false, now.CurrentStock, now.CurrentStock, skip));
+                continue;
+            }
+            // เขียนแบบมีเงื่อนไข "ยังเท่าค่าที่อ่าน" — ledger ที่กำลังเขียนสินค้าตัวเดียวกันถือ row lock อยู่ ⇒ รอจนเขาเสร็จแล้ว
+            // เงื่อนไขเป็นเท็จ = ข้าม (ไม่ทับยอดที่เพิ่งขยับ)
+            var target = now.WarehouseTotal;
+            var before = now.CurrentStock;
+            var affected = await _db.Products
+                .Where(p => p.Id == now.ProductId && p.CompanyId == companyId && p.CurrentStock == before)
+                .ExecuteUpdateAsync(set => set.SetProperty(p => p.CurrentStock, target), ct);
+            if (affected == 0)
+            {
+                outcomes.Add(new(now.ProductId, now.Code, false, before, before,
+                    "ยอดเปลี่ยนไปหลังเปิดรายงาน (มีรายการสต็อกเข้ามาระหว่างนั้น) — กดตรวจใหม่แล้วค่อยซ่อม"));
+                continue;
+            }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = actorId,
+                EntityType = nameof(Product),
+                EntityId = now.ProductId.ToString(),
+                Action = Models.Enums.AuditAction.Update,
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { currentStock = before }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "stock-totals-reconcile",
+                    currentStock = target,
+                    warehouseTotal = now.WarehouseTotal,
+                    movementBalance = now.MovementBalance,
+                    historyAgrees = now.MovementBalance == now.WarehouseTotal,
+                    confirmPhysicalCount,
+                    ruleCode = StockTotalsReconciliation.RuleCode,
+                    by = actor,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            _logger.LogInformation("ซ่อมยอดสต็อกรวม {Code}: {Before} → {After} (ผลรวมคลัง) โดย {Actor}",
+                now.Code, before, target, actor);
+            outcomes.Add(new(now.ProductId, now.Code, true, before, target, null));
         }
-        if (fixedCount > 0) await _db.SaveChangesAsync(ct);
-        return fixedCount;
+
+        await _db.SaveChangesAsync(ct);
+        if (tx != null) await tx.CommitAsync(ct);
+        var repaired = outcomes.Count(o => o.Repaired);
+        return new StockTotalsRepairResult(repaired, outcomes.Count - repaired, outcomes);
+    }
+
+    /// <summary>หลักฐานต่อสินค้า (ยอดรวม · ผลรวมคลัง · ยอดจากประวัติ) — กรองบริษัททุก query · <paramref name="onlyProducts"/> = null คือทั้งบริษัท</summary>
+    private async Task<List<StockTotalsEvidence>> LoadTotalsEvidenceAsync(Guid companyId, List<Guid>? onlyProducts,
+        CancellationToken ct)
+    {
+        var pq = _db.Products.AsNoTracking().Where(p => p.CompanyId == companyId && !p.IsDeleted);
+        if (onlyProducts is { } pIds) pq = pq.Where(p => pIds.Contains(p.Id));
+        var products = await pq.Select(p => new { p.Id, p.Code, p.Name, p.CurrentStock }).ToListAsync(ct);
+
+        var wq = _db.WarehouseStocks.AsNoTracking().Where(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (onlyProducts is { } wIds) wq = wq.Where(s => wIds.Contains(s.ProductId));
+        var wh = (await wq.GroupBy(s => s.ProductId)
+                .Select(g => new { ProductId = g.Key, Total = g.Sum(x => x.Quantity) })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.ProductId, x => x.Total);
+
+        var mq = _db.StockMovements.AsNoTracking().Where(m => m.CompanyId == companyId && !m.IsDeleted);
+        if (onlyProducts is { } mIds) mq = mq.Where(m => mIds.Contains(m.ProductId));
+        var mv = await mq.GroupBy(m => new { m.ProductId, m.MovementType })
+            .Select(g => new
+            {
+                g.Key.ProductId,
+                g.Key.MovementType,
+                Signed = g.Sum(x => x.Quantity),
+                Abs = g.Sum(x => Math.Abs(x.Quantity)),
+            })
+            .ToListAsync(ct);
+        var balance = mv.GroupBy(x => x.ProductId).ToDictionary(g => g.Key,
+            g => StockTotalsReconciliation.MovementBalance(g.Select(x => ((string?)x.MovementType, x.Signed, x.Abs))));
+
+        return products.Select(p => new StockTotalsEvidence(p.Id, p.Code, p.Name, p.CurrentStock,
+            wh.GetValueOrDefault(p.Id, 0m), balance.GetValueOrDefault(p.Id, 0m))).ToList();
     }
 }

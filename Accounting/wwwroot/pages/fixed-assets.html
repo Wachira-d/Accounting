@@ -238,11 +238,21 @@
     <!-- Adjust Life Modal -->
     <div class="modal-overlay" id="adjustLifeModal">
       <div class="modal" style="max-width:450px">
-        <div class="modal-header"><h3 class="modal-title">ปรับอายุการใช้งาน</h3><button class="modal-close" onclick="Layout.closeModal('adjustLifeModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">ปรับอายุการใช้งาน / ทบทวนประมาณการ</h3><button class="modal-close" onclick="Layout.closeModal('adjustLifeModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="alId">
+          <p style="font-size:12px;color:#64748b;margin-bottom:8px">มีผลตั้งแต่งวดถัดจากงวดที่ลงบัญชีล่าสุด (งวดที่ลงแล้วไม่ถูกแตะ · TFRS for NPAEs บทที่ 10) · ไม่เปลี่ยนค่าใดแล้วกดบันทึก = บันทึกว่าทบทวนแล้วสิ้นรอบบัญชี</p>
           <div class="form-group"><label class="form-label">อายุใช้งานใหม่ (เดือน) *</label><input type="number" class="form-input" id="alLife" min="1"></div>
           <div class="form-group"><label class="form-label">มูลค่าซากใหม่</label><input type="number" class="form-input" id="alSalvage" step="0.01" placeholder="ไม่เปลี่ยนแปลง"></div>
+          <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+            <select class="form-select" id="alMethod">
+              <option value="">— คงวิธีเดิม —</option>
+              <option value="StraightLine">เส้นตรง</option>
+              <option value="DecliningBalance">ยอดลดลง</option>
+              <option value="DoubleDecliningBalance">ยอดลดลงสองเท่า</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">เหตุผล / หลักฐานการทบทวน</label><input type="text" class="form-input" id="alReason" placeholder="เช่น ทบทวนสิ้นปี 2569 สภาพใช้งานตามแผนเดิม"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('adjustLifeModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -801,6 +811,8 @@
         document.getElementById('alLife').value = life;
         document.getElementById('alSalvage').value = '';
         document.getElementById('alSalvage').placeholder = `ปัจจุบัน: ${Layout.money(salvage)}`;
+        document.getElementById('alMethod').value = '';
+        document.getElementById('alReason').value = '';
         Layout.closeModal('detailModal'); Layout.openModal('adjustLifeModal');
       },
       async confirmAdjustLife() {
@@ -810,6 +822,9 @@
           await api.adjustAssetLife(document.getElementById('alId').value, {
             newUsefulLifeMonths: parseInt(document.getElementById('alLife').value),
             newSalvageValue: salvageVal !== '' ? parseFloat(salvageVal) : null,
+            // รอบ 201 ทีม IN (A-IN3): ว่าง = คงวิธีเดิม (null) · เหตุผลเข้า audit
+            newDepreciationMethod: document.getElementById('alMethod').value || null,
+            reason: document.getElementById('alReason').value || null,
           });
           Layout.closeModal('adjustLifeModal'); Layout.toast('ปรับอายุการใช้งานสำเร็จ'); this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
