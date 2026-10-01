@@ -4189,4 +4189,4 @@ _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACK
 _2026-10-01 รอบ 201 ทีม PL ชุด 6 — คำสั่ง main agent หลังทีม OC (merge origin):
 - `write_permission_gate_check` WATCHED + `ContactHygieneController` (endpoint เขียน `POST …/ocr-branch-orphans/{id}/retire` · ด่าน `HasPermissionAsync(Contact.Edit)`) ·
   negative test ฉีด POST ไม่มีด่านลงไฟล์จริงในโหมด WATCHED · marker `ScanGateAsync(`/`DocGateAsync(`/`DenyScanSourceAsync(` (รูปการใช้ผลล็อกโดย attachment_gate_check) ⇒
-  baseline deny-list 547 → 529 (ลดอย่างเดียว) · audit_direct_add baseline 28 → 27 (OcrService เข้า chain โดยทีม OC) — commit <pending>)_
+  baseline deny-list 547 → 529 (ลดอย่างเดียว) · audit_direct_add baseline 28 → 27 (OcrService เข้า chain โดยทีม OC) — commit 97aab100)_
