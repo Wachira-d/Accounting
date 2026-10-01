@@ -32,8 +32,8 @@ public static class EtaxVoidPolicy
                 return EtaxVoidVerdict.Refused("e-Tax นี้ถูกยกเลิกในระบบนี้ไปแล้ว" + Tail);
             case EtaxStatus.Accepted:
                 return EtaxVoidVerdict.Refused(
-                    "ยกเลิก e-Tax ที่กรมสรรพากรตอบรับแล้ว (Accepted) จากระบบนี้ไม่ได้ — ต้องยกเลิกหรือออกใบลดหนี้ที่ระบบ e-Tax ของกรมสรรพากร "
-                    + "(หรือผู้ให้บริการ e-Tax) แล้วบันทึกผลที่เอกสารต้นทาง" + Tail);
+                    "ยกเลิก e-Tax ที่ถึงกรมสรรพากรแล้ว (ตอบรับแล้ว หรือ e-Tax by Email ที่ประทับเวลาแล้ว) จากระบบนี้ไม่ได้ — ต้องยกเลิกหรือออกใบลดหนี้ที่ระบบ e-Tax "
+                    + "ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) แล้วบันทึกผลที่เอกสารต้นทาง" + Tail);
             case EtaxStatus.Submitted:
                 if (string.IsNullOrWhiteSpace(reason))
                     return EtaxVoidVerdict.Refused(
@@ -41,7 +41,8 @@ public static class EtaxVoidPolicy
                 if (!evidenceFileAttached)
                     return EtaxVoidVerdict.Refused(
                         "e-Tax นี้ส่งไปกรมสรรพากรแล้ว (Submitted) — ระบบนี้ไม่ได้ส่งคำยกเลิกถึงกรมสรรพากรเอง · ดำเนินการยกเลิกที่ระบบ e-Tax ของกรมสรรพากร"
-                        + "หรือผู้ให้บริการ e-Tax ก่อน แล้วแนบไฟล์หลักฐานการยกเลิก (ภาพ/ไฟล์ตอบกลับ) เข้าเอกสารนี้ (คำตัดสินข้อ 51)" + Tail);
+                        + "หรือผู้ให้บริการ e-Tax ก่อน แล้วแนบไฟล์หลักฐานการยกเลิก (ภาพ/ไฟล์ตอบกลับ) เข้าเอกสารนี้ — ไฟล์ต้องแนบหลังวันที่ส่ง e-Tax "
+                        + "(ไฟล์ที่แนบไว้ก่อนส่งไม่ใช่หลักฐานการยกเลิก) (คำตัดสินข้อ 51)" + Tail);
                 return new EtaxVoidVerdict(true, null,
                     "ยกเลิกในระบบนี้ตามหลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการที่แนบ (ผู้ใช้ยืนยัน — ระบบตรวจกับกรมสรรพากรเองไม่ได้)");
             default:
@@ -49,6 +50,23 @@ public static class EtaxVoidPolicy
                     "ยกเลิกในระบบนี้ก่อนส่งถึงกรมสรรพากร (ไม่มีอะไรต้องยกเลิกที่กรมสรรพากร)");
         }
     }
+
+    /// <summary>
+    /// **สถานะที่ใช้ตัดสินการยกเลิกแถว e-Tax นี้** (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O2) — สถานะของแถวเอง + บันทึก e-Tax by Email ที่ประทับเวลาของ
+    /// กรมสรรพากรของเอกสารนี้ (เกณฑ์เดียวกับ <see cref="DocumentVoidPreconditions.EffectiveEtaxAsync"/>): ส่งอีเมลประทับเวลาแล้ว = ถึงกรมสรรพากร (ถือเท่าตอบรับ ⇒
+    /// ยกเลิกจากระบบนี้ไม่ได้) แม้แถวยังเป็น “ลงนามแล้ว” · เดิมดูแค่สถานะแถว ⇒ แถว Signed ที่ส่งอีเมลแล้วยกเลิกได้โดยไม่มีหลักฐาน และ audit เขียนว่า
+    /// “ก่อนส่งถึงกรมสรรพากร” (เท็จ) · ใช้สถานะของ<b>แถว</b> ไม่ใช่สถานะแรงสุดของทั้งเอกสาร (แถว Error ที่ค้างคู่แถวที่ตอบรับแล้วยังยกเลิกได้) ·
+    /// แถวที่ยกเลิกแล้วคงเป็น Voided · G6: pure
+    /// </summary>
+    public static EtaxStatus StatusForVoid(EtaxStatus rowStatus, bool documentSentByEmailWithRdTimestamp)
+        => rowStatus == EtaxStatus.Voided ? EtaxStatus.Voided
+            : DocumentVoidPreconditions.EffectiveEtax(rowStatus, documentSentByEmailWithRdTimestamp) ?? rowStatus;
+
+    /// <summary>
+    /// **ไฟล์หลักฐานการยกเลิกต้องแนบหลังเวลานี้** (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O5) — หลักฐานการยกเลิกเกิดได้หลังส่ง e-Tax เท่านั้น ⇒ ไฟล์ของเอกสาร
+    /// ที่แนบก่อนส่ง (เช่น PDF ใบเสร็จต้นฉบับ) ไม่นับ · แถวไม่มีเวลาส่ง (ข้อมูลเก่า) = เวลาสร้างแถว e-Tax · G6: pure
+    /// </summary>
+    public static DateTime EvidenceNotBefore(DateTime? submittedAt, DateTime rowCreatedAt) => submittedAt ?? rowCreatedAt;
 
     /// <summary>หมายเหตุของแถวที่ถูกยกเลิก (หน้าจอแสดงคู่ป้าย <see cref="VoidedLabel"/>) — null = แถวไม่ได้ถูกยกเลิก</summary>
     public static string? VoidedStatusNote(EtaxStatus status, string? voidReason)

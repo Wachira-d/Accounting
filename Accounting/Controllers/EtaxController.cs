@@ -194,9 +194,14 @@ public class EtaxController : ControllerBase
         if (documentId is not Guid docId) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบ e-Tax Invoice"));
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var evidenceId = request?.EvidenceAttachmentId;
-        var deny = await gate.DenyAttachmentAsync(companyId, userId, "Document", docId, AttachmentAccess.Read,
-            "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิก e-Tax", evidenceId);
-        if (deny != null) return StatusCode(deny.Status, new ApiResponse<bool>(false, false, deny.Message));
+        // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O6): ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์มา — ไม่ส่งไฟล์ = service ไม่แตะไฟล์ใด (แถวที่ยังไม่ถึงกรมสรรพากรยกเลิกได้โดยไม่ต้องแนบ ·
+        // แถว Submitted ถูก service ปฏิเสธเพราะไม่มีหลักฐาน) · เดิมเรียกทุกครั้ง ⇒ ผู้มีสิทธิ์ยกเลิก e-Tax ที่อ่านไฟล์แนบของเอกสารไม่ได้ ยกเลิกแถวที่ยังไม่ส่งไม่ได้
+        if (evidenceId != null)
+        {
+            var deny = await gate.DenyAttachmentAsync(companyId, userId, "Document", docId, AttachmentAccess.Read,
+                "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิก e-Tax", evidenceId);
+            if (deny != null) return StatusCode(deny.Status, new ApiResponse<bool>(false, false, deny.Message));
+        }
         await _etaxService.VoidAsync(companyId, etaxId, request, userId.ToString());
         return Ok(new ApiResponse<bool>(true, true, $"ยกเลิกแล้ว ({EtaxVoidPolicy.VoidedLabel} — ระบบไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร)"));
     }

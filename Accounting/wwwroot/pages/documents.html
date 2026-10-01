@@ -12079,8 +12079,10 @@
           mode: 'math'
         }))) return;
         try {
-          await api.voidPayment(paymentId);
-          Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
+          const res = await api.voidPayment(paymentId);
+          // รอบ 200 ทีม V1I (V1H-O1): ธงที่ติดระหว่างยกเลิก (ข้อความจากเซิร์ฟเวอร์) ต้องถึงผู้กด — ไม่ใช่แค่ “สำเร็จ”
+          if (res && res.data) Layout.toast(res.message || 'ยกเลิกการชำระเงินสำเร็จ', 'warning', 15000);
+          else Layout.toast('ยกเลิกการชำระเงินสำเร็จ');
           if (this._currentDoc?.id) await this.detail(this._currentDoc.id);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }

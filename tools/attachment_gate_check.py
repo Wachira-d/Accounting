@@ -45,6 +45,11 @@ fileAttachmentId/documentId ต้องอยู่ใน `OTHER_GUID_PARAMS` �
   • action ที่รับ id ผ่าน body (record ใน `[FromBody]`) — มองเห็นแค่พารามิเตอร์ของ signature
   • control flow ภายใน `try` (เช่น return ก่อนด่านใน try) — ตรวจแค่ว่าด่านอยู่ก่อน sink ตัวแรก
 
+═══ ด่านภายใต้เงื่อนไข "มีไฟล์" (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O6) ═══
+target ที่ id ของไฟล์เป็น**ตัวเลือก** (ไม่ส่งไฟล์ = service ไม่แตะไฟล์ใด) ใส่ช่องที่ 7 = regex ของเงื่อนไขที่อนุญาต (เช่น `evidenceId != null`) ⇒
+ด่านอยู่ใน `if (<เงื่อนไขนั้นตรงตัว>) { … }` ที่ระดับบนสุดได้ · เงื่อนไขอื่น/กลับทิศ/ซ้อนในบล็อกอื่น = ฟ้องเหมือนเดิม · target ที่ไม่มีช่องนี้ยังต้องเรียก
+ด่านทุกครั้ง (เดิมเรียกทุกครั้ง ⇒ ผู้มีสิทธิ์ยกเลิกที่อ่านไฟล์แนบไม่ได้ยกเลิกแถวที่ไม่ต้องใช้ไฟล์ไม่ได้)
+
 รันเปล่า ๆ = ตรวจเรพ **และ** negative test (ถอดการเรียกด่านจากไฟล์จริงทีละ target แล้วต้องฟ้อง) ·
 `--self-test` = negative test อย่างเดียว
 """
@@ -94,11 +99,15 @@ TARGETS = [
     # ── รอบ 200 ทีม V1G (คำตัดสินข้อ 46 · RV1F-4): ไฟล์หลักฐานการยกเลิกทาง e-Tax — ด่านอ่านไฟล์ของเอกสารใบนี้ก่อนถึง service ──
     ("Accounting/Controllers/DocumentController.cs", "ResolveEtaxCancellation", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
      [r"\.ResolveEtaxCancellationAsync\s*\("],
-     [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read", r"\bEvidenceAttachmentId\b"]),
+     [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read", r"\bEvidenceAttachmentId\b"],
+     # V1I (V1H-O6): ไฟล์เป็นตัวเลือก — ด่านเฉพาะเมื่อส่ง id ของไฟล์ (service ไม่แตะไฟล์เมื่อไม่มี id)
+     r"request\s*\.\s*EvidenceAttachmentId\s*(?:!=\s*null|is\s+not\s+null)"),
     # ── รอบ 200 ทีม V1H (คำตัดสินข้อ 51): ไฟล์หลักฐานการยกเลิก e-Tax ที่ส่งแล้ว — ด่านอ่านไฟล์ของเอกสารของแถวนี้ก่อนถึง service ──
     ("Accounting/Controllers/EtaxController.cs", "Void", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
      [r"\.VoidAsync\s*\("],
-     [r'"Document"', r"\bdocId\b", r"AttachmentAccess\.Read", r"\bevidenceId\b"]),
+     [r'"Document"', r"\bdocId\b", r"AttachmentAccess\.Read", r"\bevidenceId\b"],
+     # V1I (V1H-O6): ไฟล์เป็นตัวเลือก — แถวที่ยังไม่ถึงกรมสรรพากรยกเลิกได้โดยไม่ส่งไฟล์ (service ไม่แตะไฟล์เมื่อไม่มี id)
+     r"evidenceId\s*(?:!=\s*null|is\s+not\s+null)"),
 ]
 
 # กติกาเชิงโครงสร้าง: controller → [(regex ของพารามิเตอร์, regex ของด่าน, regex อาร์กิวเมนต์ที่ต้องมี)]
@@ -404,7 +413,32 @@ def _unconditional(body, pos):
     return re.search(r"(?:^|[;{}\s])try\s*$", body[:i]) is not None and _depth_at(body, i) == 1
 
 
-def check_target(text, name, gate_re, use_re, sinks, arg_res=()):
+def _guarded(body, pos, guard_re):
+    """ด่านที่ pos อยู่ใน `if (<guard_re ตรงตัว>) { … }` ที่ตัวมันเองอยู่ระดับบนสุดของเมธอดไหม (V1I · V1H-O6) — เงื่อนไขต้องเป็นรูปที่ target อนุญาต
+    ทั้งก้อน (เติม `&& …`/`|| …` = ไม่นับ) · ซ้อนในบล็อกอื่น = ไม่นับ"""
+    if not guard_re or _depth_at(body, pos) != 2:
+        return False
+    depth = 0
+    i = pos - 1
+    while i >= 0:
+        if body[i] == "}":
+            depth += 1
+        elif body[i] == "{":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    if i < 0 or _depth_at(body, i) != 1:
+        return False
+    return re.search(r"\bif\s*\(\s*(?:" + guard_re + r")\s*\)\s*$", body[:i]) is not None
+
+
+def _target_parts(t):
+    """TARGETS แถว 6 หรือ 7 ช่อง → (rel, name, gate, use, sinks, args, guard)"""
+    return (*t[:6], t[6] if len(t) > 6 else None)
+
+
+def check_target(text, name, gate_re, use_re, sinks, arg_res=(), guard_re=None):
     """คืนข้อความปัญหา (str) หรือ None"""
     s = strip_code(text)
     span = find_method(s, name)
@@ -422,8 +456,9 @@ def check_target(text, name, gate_re, use_re, sinks, arg_res=()):
     problems = []
     for m, paren in found:
         var = m.group(1)
-        if not _unconditional(body, m.start()):
-            problems.append(f"{name}: ด่าน {_human(gate_re)} อยู่ในบล็อกเงื่อนไข/วนซ้ำ — ต้องเรียกที่ระดับบนสุดของเมธอด")
+        if not _unconditional(body, m.start()) and not _guarded(body, m.start(), guard_re):
+            problems.append(f"{name}: ด่าน {_human(gate_re)} อยู่ในบล็อกเงื่อนไข/วนซ้ำ — ต้องเรียกที่ระดับบนสุดของเมธอด"
+                            + (" (หรือใต้เงื่อนไข \"มีไฟล์\" ที่ target อนุญาตตรงตัว)" if guard_re else ""))
             continue
         after = body[m.end():]
         if not re.search(use_re.format(v=re.escape(var)), after):
@@ -569,9 +604,10 @@ def run_checks(root=ROOT, overrides=None, with_discover=True):
     def text_of(rel):
         return overrides[rel] if rel in overrides else read(rel, root)
 
-    for rel, name, gate, use, sinks, args in TARGETS:
+    for t in TARGETS:
+        rel, name, gate, use, sinks, args, guard = _target_parts(t)
         try:
-            msg = check_target(text_of(rel), name, gate, use, sinks, args)
+            msg = check_target(text_of(rel), name, gate, use, sinks, args, guard)
         except FileNotFoundError:
             msg = f"ไม่พบไฟล์ {rel}"
         if msg:
@@ -670,12 +706,13 @@ def self_test(root=ROOT):
             ok = False
 
     # 1. ถอดการเรียกด่านออกจากไฟล์จริงทีละ target ⇒ ต้องฟ้อง target นั้น
-    for rel, name, gate, use, sinks, args in TARGETS:
+    for t in TARGETS:
+        rel, name, gate, use, sinks, args, guard = _target_parts(t)
         mutated = _remove_gate_statement(read(rel, root), name, gate)
         expect(mutated is not None, f"หาประโยคด่านใน {rel}:{name} ไม่เจอ (สร้าง mutation ไม่ได้)")
         if mutated is None:
             continue
-        expect(check_target(mutated, name, gate, use, sinks, args) is not None, f"ถอดด่านจาก {rel}:{name} แล้วไม่ฟ้อง")
+        expect(check_target(mutated, name, gate, use, sinks, args, guard) is not None, f"ถอดด่านจาก {rel}:{name} แล้วไม่ฟ้อง")
     # 1b. ถอด ScanGateAsync ออกจาก action จริงใน OcrController ทีละตัว ⇒ กติกาเชิงโครงสร้างต้องฟ้อง
     ocr_text = read(OCR, root)
     scan_actions = [nm for nm, head, _ in actions(ocr_text) if re.search(r"\bGuid\s+scanId\b", head)]
@@ -797,6 +834,28 @@ public class X : ControllerBase
                                + old.replace("        ", "            ") + "        }\n        return NotFound();\n", 1)
         expect(any("GetResult:" in p for p in run_checks(root, {OCR: in_catch}, with_discover=False)),
                "ด่านที่อยู่ใน catch (มีเงื่อนไข) ไม่ถูกฟ้อง")
+    # V1I (V1H-O6): ด่านใต้เงื่อนไข "มีไฟล์" — ยอมเฉพาะเงื่อนไขที่ target อนุญาตตรงตัว ที่ระดับบนสุด · ทุกทางอื่นต้องฟ้อง
+    etx = "Accounting/Controllers/EtaxController.cs"
+    fires(etx, "if (evidenceId != null)\n        {\n            var deny", "if (User != null)\n        {\n            var deny",
+          "V1I-G1 EtaxController.Void ด่านใต้เงื่อนไขอื่น (ไม่ใช่ \"มีไฟล์\")")
+    fires(etx, "if (evidenceId != null)\n        {\n            var deny", "if (evidenceId == null)\n        {\n            var deny",
+          "V1I-G2 EtaxController.Void เงื่อนไขกลับทิศ")
+    fires(etx, "if (evidenceId != null)\n        {\n            var deny", "if (evidenceId != null && User == null)\n        {\n            var deny",
+          "V1I-G3 EtaxController.Void เงื่อนไขถูกเติม && (อ่อนลง)")
+    nested_src = read(etx, root)
+    nested_old = "if (evidenceId != null)\n        {\n            var deny"
+    expect(nested_old in nested_src, "V1I-G5: หา `if (evidenceId != null)` ใน EtaxController ไม่เจอ (โค้ดขยับ — ปรับเคสให้ตรง)")
+    if nested_old in nested_src:
+        nested = nested_src.replace(nested_old, "if (userId != Guid.Empty)\n        {\n        if (evidenceId != null)\n        {\n            var deny", 1)
+        nested = nested.replace("        await _etaxService.VoidAsync(companyId, etaxId, request, userId.ToString());",
+                                "        }\n        await _etaxService.VoidAsync(companyId, etaxId, request, userId.ToString());", 1)
+        expect(any("Void:" in p for p in run_checks(root, {etx: nested}, with_discover=False)),
+               "V1I-G5 ด่านใต้เงื่อนไขที่อนุญาตแต่ซ้อนในบล็อกอื่น ไม่ถูกฟ้อง")
+    # ข้อยกเว้นผูกกับ target ไม่ใช่รูปของเงื่อนไข — ไฟล์จริงของ EtaxController.Void ตรวจโดยไม่ให้ช่องเงื่อนไข ต้องฟ้อง
+    t_void = next(_target_parts(x) for x in TARGETS if x[0] == etx and x[1] == "Void")
+    expect(check_target(nested_src, "Void", t_void[2], t_void[3], t_void[4], t_void[5], None) is not None,
+           "V1I-G6 ด่านใต้เงื่อนไขของ target ที่ไม่ได้รับอนุญาต (ไม่มีช่องที่ 7) ไม่ถูกฟ้อง")
+    expect(check_target(nested_src, "Void", *t_void[2:]) is None, "V1I-G7 (ควบคุม) EtaxController.Void ของจริงถูกฟ้องผิด")
     return ok
 
 

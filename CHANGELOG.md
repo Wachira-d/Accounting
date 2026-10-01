@@ -4024,3 +4024,18 @@ _2026-10-01 รอบ 200 ทีม V1H — ลงมือตามคำตั
 - **ข้อ 54** ปิดธงทาง (ค) `EtaxCancellationPath.OriginalStillValid` / `EtaxCancellationEvidence.OriginalInvoiceStillValid` — ครอบยอดด้วย `LivePaymentCoverageAsync` · ไม่มีใบกำกับอื่น ·
   ภาษีไม่ถูกถอยไปแล้ว · สิทธิ์อนุมัติตรวจใน service · ล้างธงอย่างเดียว + audit · หน้าเอกสารเพิ่มตัวเลือก (ค)
 - เทสต์ `VoidReissueR200HTests` (สองทิศทุกข้อ) · required_call_site +5 แถว/ปรับ 3 — commit abf0892f)_
+
+_2026-10-01 รอบ 200 ทีม V1I — แก้ผลฝ่ายค้านงาน V1H (merge `82eddbe6` · รายงาน `erp-review/2026-09-29/team-V1I.md`):
+- **V1H-O1** ทาง (ค) แล้วการรับชำระที่ครอบยอดถูกยกเลิก/เช็คเด้ง — `DocumentService.ReflagKeptOriginalReceiptsAsync` (ตัวเดียวของ `ReversePaymentInternalAsync` + `ReverseMultiDocPaymentInternalAsync`)
+  ติดธง `EtaxCancelRequiredAt` กลับเมื่อ `LivePaymentCoverageAsync(..., excludePaymentId)` < ยอดใบกำกับ · ตัวตัดสิน `DocumentVoidPreconditions.KeptOriginalCoverageLost` ·
+  ป้าย `EtaxReissueReview.KeptOriginalMarker` + `LastResolutionKeptOriginal` (ตัวเดียวฝั่งเขียน/อ่าน — รูปที่ V1H เขียนไว้แล้วอ่านได้ ไม่ต้อง migration) ·
+  `POST document/payments/{id}/void` ตอบข้อความธง/ภาษี (เดิมทิ้งผล) + หน้าเอกสารแสดงเป็นคำเตือน
+- **V1H-O2** `EtaxVoidPolicy.StatusForVoid` (สถานะแถว + e-Tax by Email ประทับเวลา) · `DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync` (เกณฑ์เดียวที่ `EffectiveEtaxAsync` ใช้ด้วย) ·
+  ข้อความ Accepted บอก e-Tax by Email · ruleCode ของ audit ตามสถานะที่ใช้ตัดสิน
+- **V1H-O3** `VoidPaymentAsync` ล็อกเอกสารทุกใบที่การชำระแตะ `ORDER BY "Id" FOR UPDATE` ก่อนแถว Payment (`LockDocumentsForPaymentVoidAsync` + อ่านใหม่แถวที่ context ถือไว้) ·
+  แถว Payment อ่านใหม่ใต้ล็อก (เดิม identity resolution คืนค่าก่อนล็อก ⇒ ด่าน idempotent ไม่เห็นการยกเลิกซ้อน)
+- **V1H-O5** ไฟล์หลักฐานยกเลิก e-Tax ต้องแนบหลัง `SubmittedAt` (`EtaxVoidPolicy.EvidenceNotBefore`)
+- **V1H-O6** ด่านไฟล์แนบของ `EtaxController.Void` + `DocumentController.ResolveEtaxCancellation` เรียกเฉพาะเมื่อส่ง id ไฟล์ · `tools/attachment_gate_check.py` ช่องที่ 7
+  (เงื่อนไข "มีไฟล์" ตรงตัวต่อ target) + negative test G1–G7
+- **V1H-O7** ธงเช็คเด้ง/ยกเลิกการลงบัญชีของใบเสร็จ Submitted ไม่แนะนำทาง (ค)
+- เทสต์ `VoidReissueR200ITests` (สองทิศทุกข้อ) · required_call_site +9 แถว — commit <pending>)_

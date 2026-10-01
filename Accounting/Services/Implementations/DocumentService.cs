@@ -9471,6 +9471,17 @@ public partial class DocumentService : IDocumentService
             await using var tx = await _db.Database.BeginTransactionAsync();
             try
             {
+                // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O3): ล็อกเอกสารทุกใบที่การชำระนี้แตะ (ใบต้นทาง + ทุกใบในการจัดสรร) ก่อนแถว Payment — ลำดับเดียวกับ
+                // CreatePaymentAsync/CreateMultiDocPaymentAsync (ล็อกเอกสาร ORDER BY Id ก่อนเขียนการชำระ) ⇒ การรับชำระใหม่ที่ commit พร้อมกันต้องรอ แล้วเส้นนี้
+                // อ่าน PaidAmount ใหม่ใต้ล็อก · เดิมล็อกแค่แถว Payment แล้วอ่านยอดของเอกสารที่ context ถือไว้ก่อนเปิดธุรกรรม ⇒ ถอยภาษีขาย/ล้าง OutputVatDueAt
+                // จากค่าเก่าทั้งที่มีการชำระที่มีผล (ภ.พ.30 ขาด) + lost update ของ PaidAmount
+                var lockDocIds = await _db.PaymentAllocations.AsNoTracking()
+                    .Where(a => a.PaymentId == paymentId && a.CompanyId == companyId && !a.IsDeleted)
+                    .Select(a => a.DocumentId)
+                    .ToListAsync();
+                lockDocIds.Add(payment.DocumentId);
+                await LockDocumentsForPaymentVoidAsync(companyId, lockDocIds);
+
                 // Lock the payment row INSIDE the transaction เพื่อกัน void ซ้อน
                 // (two concurrent voids ต่างอ่าน IsDeleted=false แล้ว reverse ทั้งคู่
                 //  → bank balance/PaidAmount ถูกกลับสองรอบ). Re-read สถานะหลัง lock:
@@ -9480,6 +9491,10 @@ public partial class DocumentService : IDocumentService
                         """SELECT * FROM "Payments" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""",
                         paymentId, companyId)
                     .FirstOrDefaultAsync();
+                // V1I (V1H-O3): แถวนี้ context ถือไว้แล้วตั้งแต่อ่านนอกธุรกรรม (identity resolution ไม่เขียนค่าใหม่ทับ) ⇒ อ่านใหม่ใต้ล็อก
+                // ไม่งั้นการยกเลิกซ้อนที่ commit ไปแล้วยังเห็น IsDeleted = false
+                if (locked != null)
+                    await _db.Entry(locked).ReloadAsync();
                 if (locked == null || locked.IsDeleted)
                 {
                     await tx.RollbackAsync();
@@ -9546,6 +9561,23 @@ public partial class DocumentService : IDocumentService
         return etaxCancellationFlag == null && outputVatNotice == null
             ? PaymentVoidResult.None
             : new PaymentVoidResult(etaxCancellationFlag, outputVatNotice);
+    }
+
+    /// <summary>
+    /// ล็อกเอกสารที่การยกเลิกการชำระจะแตะยอด (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O3) — <c>ORDER BY "Id" FOR UPDATE</c> คำสั่งเดียว (ลำดับเดียวกับ
+    /// <c>CreateMultiDocPaymentAsync</c> กัน deadlock) แล้ว<b>อ่านใหม่</b>แถวที่ context ถือไว้ (Unchanged — identity resolution ไม่อ่านค่าใหม่ให้เอง) ·
+    /// ต้องเรียกภายในธุรกรรมของผู้เรียก · tenant
+    /// </summary>
+    private async Task LockDocumentsForPaymentVoidAsync(Guid companyId, IEnumerable<Guid> documentIds)
+    {
+        var ids = documentIds.Distinct().ToArray();
+        if (ids.Length == 0) return;
+        await _db.Database.ExecuteSqlRawAsync(
+            @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
+            ids, companyId);
+        foreach (var e in _db.ChangeTracker.Entries<Document>()
+                     .Where(e => e.State == EntityState.Unchanged && ids.Contains(e.Entity.Id)).ToList())
+            await e.ReloadAsync();
     }
 
     /// <summary>
@@ -9832,6 +9864,9 @@ public partial class DocumentService : IDocumentService
         // ── กลับ "ภาษีขายถึงกำหนด" เมื่อไม่เหลือการรับชำระแล้ว (M-6 · V1F V1-R2 · V1G ข้อ 48) — เหตุผลเต็มอยู่ที่ UndoOutputVatOnPaymentVoidAsync
         // รอบ 200 ทีม V1H (ข้อ 50): ตัวถอยภาษีตัวเดียวกับเส้นจัดสรรหลายใบ
         var vatNotice = await UndoOutputVatOnPaymentVoidAsync(companyId, doc, receiptDecision, receiptDoc, cause, reason, payment.PaymentNumber);
+        // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): ใบกำกับที่ยืนยันทาง (ค) ด้วยการรับชำระนี้ — ยอดที่ยังมีผลไม่ครอบแล้ว ⇒ ติดธงกลับ (เดิมจบเงียบ)
+        etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
+            await ReflagKeptOriginalReceiptsAsync(companyId, doc, payment.Id, receiptDoc?.Id, payment.PaymentNumber));
 
         // ── ทะเบียนเครดิตภาษีถูกหัก ณ ที่จ่ายฝั่งขาย 11910 (M-4) ─────────────
         // SyncWhtCreditReceivedAsync อ่านจาก GL จริงและลบแถวเองเมื่อยอดเป็น 0
@@ -9930,6 +9965,57 @@ public partial class DocumentService : IDocumentService
         }
         await UndoUndueOutputVatReclassAsync(companyId, doc, reason);
         return null;
+    }
+
+    /// <summary>
+    /// **ติดธงกลับให้ใบกำกับที่ยืนยันทาง (ค) “ใบกำกับเดิมยังใช้ได้” เมื่อการรับชำระที่ครอบยอดมันถูกยกเลิก** (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O1) — ตัวเดียวของ
+    /// เส้นใบเดียว (<see cref="ReversePaymentInternalAsync"/>) และเส้นจัดสรรหลายใบ (<see cref="ReverseMultiDocPaymentInternalAsync"/>) ทุกทางเข้า
+    /// (ผู้ใช้ · เช็คเด้ง · ยกเลิกการลงบัญชีรอบโอน)
+    /// <para>ทาง (ค) ล้างธงของใบเสร็จเดิมโดยอาศัยการรับชำระใหม่ที่ครอบยอด · การรับชำระนั้นถูกยกเลิก ⇒ ใบเสร็จเดิมยังเป็นใบกำกับที่มีผล (ตัวถอยภาษีจึงไม่ถอย)
+    /// แต่ระบุเงินที่ไม่ได้รับจริง — เดิมจบด้วย LogInformation เงียบ (ก่อน V1H ใบนี้ยังติดธงให้เห็น) ⇒ ติดธง "ต้องยกเลิกทาง e-Tax" กลับ + คืนข้อความถึงผู้เรียก ·
+    /// ตัวตัดสิน pure <see cref="DocumentVoidPreconditions.KeptOriginalCoverageLost"/> · ยอดครอบนับจากรายการรับชำระจริง <b>ไม่นับ</b>รายการที่กำลังยกเลิก
+    /// (ยังไม่ save) · ไม่ถอยภาษี ไม่ยกเลิกอะไร (ผู้ใช้เลือกทางปิดธงใหม่) · tenant</para>
+    /// </summary>
+    /// <param name="voidedPaymentId">การรับชำระที่กำลังยกเลิก</param>
+    /// <param name="exceptReceiptId">ใบเสร็จอัตโนมัติของการรับชำระที่กำลังยกเลิก (ตัดสินแล้วด้วยตัวตัดสินของมันเอง)</param>
+    /// <returns>ข้อความธง (null = ไม่มีใบที่ต้องติดธง)</returns>
+    private async Task<string?> ReflagKeptOriginalReceiptsAsync(Guid companyId, Document doc, Guid voidedPaymentId, Guid? exceptReceiptId,
+        string paymentNumber)
+    {
+        var kept = await _db.Documents
+            .Where(r => r.CompanyId == companyId && r.RelatedDocumentId == doc.Id
+                && (exceptReceiptId == null || r.Id != exceptReceiptId)
+                && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+                && !DocumentStatusRules.NotIssued.Contains(r.Status)
+                && r.Status != DocumentStatus.Voided
+                && !r.IsDeleted
+                && r.EtaxCancelRequiredAt == null
+                && r.EtaxCancelledByCreditNoteId == null
+                && r.InternalNotes != null && r.InternalNotes.Contains(EtaxReissueReview.KeptOriginalMarker))
+            .ToListAsync();
+        if (kept.Count == 0) return null;
+        var coverage = await LivePaymentCoverageAsync(companyId, doc.Id, excludePaymentId: voidedPaymentId);
+        var notices = new List<string>();
+        foreach (var r in kept)
+        {
+            var flag = DocumentVoidPreconditions.KeptOriginalCoverageLost(EtaxReissueReview.LastResolutionKeptOriginal(r.InternalNotes),
+                r.EtaxCancelRequiredAt != null, r.VatAmount, r.TotalAmount, coverage, r.DocumentNumber, paymentNumber);
+            if (flag == null) continue;
+            r.EtaxCancelRequiredAt = DateTime.UtcNow;
+            r.EtaxCancelRequiredReason = flag;
+            r.UpdatedAt = DateTime.UtcNow;
+            _logger.LogWarning("ยกเลิกการชำระ {PayNo}: ใบกำกับ {Receipt} ที่ยืนยันว่าใบกำกับเดิมยังใช้ได้ เสียยอดครอบ ({Coverage}) — ติดธงกลับ",
+                paymentNumber, r.DocumentNumber, coverage);
+            notices.Add(flag);
+        }
+        return notices.Count == 0 ? null : string.Join(" · ", notices);
+    }
+
+    /// <summary>รวมข้อความแจ้งผู้เรียกหลายแหล่ง (ไม่นับค่าว่าง) — ว่างทั้งหมด = null</summary>
+    private static string? CombineNotices(params string?[] parts)
+    {
+        var live = parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        return live.Count == 0 ? null : string.Join(" · ", live);
     }
 
     /// <summary>
@@ -10046,6 +10132,9 @@ public partial class DocumentService : IDocumentService
             if (!docMap.TryGetValue(undoDocId, out var undoDoc)) continue;
             if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, receiptDecision, receiptDoc, cause, reason, pn) is string notice)
                 vatNotices.Add(notice);
+            // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): ตัวเดียวกับเส้นใบเดียว — ใบกำกับทาง (ค) ของใบนี้ที่เสียยอดครอบ ⇒ ติดธงกลับ
+            etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
+                await ReflagKeptOriginalReceiptsAsync(companyId, undoDoc, payment.Id, receiptDoc?.Id, pn));
         }
 
         // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง

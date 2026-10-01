@@ -3025,6 +3025,56 @@ RULES += [
          why="ข้อ 53 (V1H): ตัวกลับภาษีขายที่ลงคนละเดือนอยู่ในรายงานข้อ 44 — อ่านอย่างเดียว · tenant ทุกตาราง"),
 ]
 
+# ── รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1/O2/O3/O5/O6): ล็อกจุดเรียก (pure ทดสอบใน VoidReissueR200ITests) ──
+RULES += [
+    dict(file=DOCSVC, method="ReflagKeptOriginalReceiptsAsync",
+         must=["DocumentVoidPreconditions.KeptOriginalCoverageLost(", "EtaxReissueReview.LastResolutionKeptOriginal(",
+               "EtaxReissueReview.KeptOriginalMarker", "r.EtaxCancelRequiredAt = DateTime.UtcNow", "r.EtaxCancelRequiredReason = flag"],
+         must_re=[r"r\s*\.\s*CompanyId\s*==\s*companyId", r"r\s*\.\s*EtaxCancelledByCreditNoteId\s*==\s*null"],
+         call_args=[("LivePaymentCoverageAsync(", "excludePaymentId: voidedPaymentId")],
+         before=[("LivePaymentCoverageAsync(", "DocumentVoidPreconditions.KeptOriginalCoverageLost(")],
+         forbid=["catch", "UndoUndueOutputVatReclassAsync(", "Status = DocumentStatus.Voided"],
+         why="V1H-O1 (V1I): ใบกำกับที่ยืนยันทาง (ค) แล้วการรับชำระที่ครอบยอดถูกยกเลิก ⇒ ติดธงกลับ (เดิมจบเงียบ) · ยอดครอบไม่นับรายการที่กำลังยกเลิก · "
+             "ไม่ถอยภาษี/ไม่ยกเลิกเอง · tenant"),
+    dict(file=DOCSVC, method="ReversePaymentInternalAsync",
+         must=["ReflagKeptOriginalReceiptsAsync("],
+         call_args=[("ReflagKeptOriginalReceiptsAsync(", "payment.Id"), ("ReflagKeptOriginalReceiptsAsync(", "receiptDoc?.Id")],
+         why="V1H-O1 (V1I): เส้นใบเดียวต้องถึงตัวติดธงกลับของทาง (ค) และส่งข้อความถึงผู้เรียก"),
+    dict(file=DOCSVC, method="ReverseMultiDocPaymentInternalAsync",
+         must=["ReflagKeptOriginalReceiptsAsync("],
+         call_args=[("ReflagKeptOriginalReceiptsAsync(", "payment.Id"), ("ReflagKeptOriginalReceiptsAsync(", "undoDoc")],
+         why="V1H-O1 (V1I): เส้นจัดสรรหลายใบเดินตัวเดียวกับเส้นใบเดียว (R5) — รายใบ"),
+    dict(file=DOCSVC, method="VoidPaymentAsync",
+         must=["LockDocumentsForPaymentVoidAsync(", "lockDocIds.Add(payment.DocumentId)", "_db.Entry(locked).ReloadAsync("],
+         call_args=[("LockDocumentsForPaymentVoidAsync(", "lockDocIds")],
+         before=[("LockDocumentsForPaymentVoidAsync(", ".FromSqlRaw("), ("LockDocumentsForPaymentVoidAsync(", "ReversePaymentInternalAsync("),
+                 ("LockDocumentsForPaymentVoidAsync(", "ReverseMultiDocPaymentInternalAsync(")],
+         why="V1H-O3 (V1I): ล็อกเอกสารทุกใบที่การชำระแตะ (ORDER BY Id — ลำดับเดียวกับเส้นรับชำระ) ก่อนแถว Payment แล้วอ่านใหม่ใต้ล็อก — "
+             "ไม่งั้นถอยภาษี/ล้าง OutputVatDueAt จาก PaidAmount เก่าที่มีการรับชำระใหม่ commit พร้อมกัน"),
+    dict(file=DOCSVC, method="LockDocumentsForPaymentVoidAsync",
+         must=["ExecuteSqlRawAsync(", "e.ReloadAsync("],
+         must_lit=['ORDER BY ""Id"" FOR UPDATE', '""CompanyId"" = {1}'],
+         call_args=[("ExecuteSqlRawAsync(", "companyId")],
+         why="V1H-O3 (V1I): ล็อกเรียงตาม Id คำสั่งเดียว (กัน deadlock) · tenant · อ่านใหม่แถวที่ context ถือไว้"),
+    dict(file="Controllers/DocumentController.cs", method="VoidPayment",
+         must=["voided.EtaxCancellationFlag", "voided.OutputVatNotice"],
+         why="V1H-O1 (V1I): ธงที่ติดระหว่างยกเลิกการชำระต้องถึงผู้กด (เดิมทิ้งผล ตอบแค่สำเร็จ = ล้มเงียบ F2 ข้อ 7)"),
+    dict(file=DOC_REISSUE, method="ResolveEtaxCancellationAsync",
+         must=["EtaxReissueReview.KeptOriginalMarker"],
+         why="V1H-O1 (V1I): ป้ายทาง (ค) ฝั่งเขียนใช้ค่าคงที่ตัวเดียวกับฝั่งอ่าน (LastResolutionKeptOriginal)"),
+    dict(file=ETAX, method="VoidAsync",
+         must=["EtaxVoidPolicy.StatusForVoid(", "DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(", "EtaxVoidPolicy.EvidenceNotBefore(",
+               "a.CreatedAt > evidenceNotBefore"],
+         call_args=[("EtaxVoidPolicy.Decide(", "decidedStatus"), ("EtaxVoidPolicy.EvidenceNotBefore(", "etax.SubmittedAt")],
+         before=[("EtaxVoidPolicy.StatusForVoid(", "EtaxVoidPolicy.Decide(")],
+         forbid=["EtaxVoidPolicy.Decide(etax.Status"],
+         why="V1H-O2/O5 (V1I): ตัดสินด้วยสถานะที่รวม e-Tax by Email ประทับเวลาแล้ว (เกณฑ์เดียวกับ EffectiveEtaxAsync) · หลักฐานต้องแนบหลังส่ง e-Tax"),
+    dict(file="Helpers/DocumentVoidPreconditions.cs", method="EffectiveEtaxAsync",
+         must=["EtaxEmailedWithRdTimestampAsync("],
+         forbid=["DocumentEmailLogs"],
+         why="V1H-O2 (V1I): เกณฑ์ e-Tax by Email ประทับเวลามีตัวเดียว (EtaxEmailedWithRdTimestampAsync) — ห้ามสำเนาคิวรี"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
