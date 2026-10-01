@@ -273,6 +273,12 @@ public class Document : TenantEntity
     public Guid? SettlementOrphanAckBy { get; set; }
     /// <summary>เหตุผลที่รับรู้ของกำพร้า (บังคับ) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
     public string? SettlementOrphanAckReason { get; set; }
+    /// <summary>รอบ 201 ทีม ST (A-ST5): ลายนิ้วมือของ "เหตุที่ยกเลิกไม่ได้" ณ เวลารับรู้ (<c>SettlementOrphanTriage.ReasonHash</c>) — เหตุเปลี่ยน ⇒ การรับรู้เดิมไม่มีผล ·
+    /// null = รับรู้ก่อนระบบเก็บเหตุ (ไม่รู้ ⇒ ไม่ครอบ · DOCTRINE §1)</summary>
+    public string? SettlementOrphanAckReasonHash { get; set; }
+    /// <summary>รอบ 201 ทีม ST (A-ST8 · review198-S4 S4-5): ลายนิ้วมือของชิ้นแผนรอบโอนที่เอกสารนี้ออกตาม (<c>SettlementPlanFingerprint.PieceHash</c>) — ประทับตอนผู้ลงบัญชีรอบโอน
+    /// สร้างเอกสาร · ตัวเทียบ "การแก้บรรทัดเปลี่ยนชิ้นที่ออกแล้วไหม" และการรับเอกสารเดิมมาลงต่อ เทียบกับค่านี้ · null = ไม่ใช่เอกสารของรอบโอน หรือออกก่อนรอบ 201 (ไม่รู้ ⇒ พฤติกรรมเดิม)</summary>
+    public string? SettlementPieceFingerprint { get; set; }
 
     /// <summary>ยอดมัดจำ (รวม VAT) ที่คืนให้ลูกค้าแล้ว (กรณียกเลิกการจอง).
     /// RefundDepositAsync gen reversal JE + ออกใบลดหนี้กลับ output VAT.
@@ -429,6 +435,12 @@ public class Document : TenantEntity
     /// <summary>ใบลดหนี้ (ในระบบนี้) ที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" ของใบเสร็จนี้ทาง (ข) — รอบ 200 ทีม V1G · คำตัดสินข้อ 47 (RV1F-1):
     /// ใบเสร็จยังมีผล (ใบกำกับเดิมที่กรมสรรพากรมี) · ภาษีขายลดในเดือนของใบลดหนี้ · ใบลดหนี้หนึ่งใบปิดธงได้ใบเดียว (unique index) · null = ไม่ได้ปิดด้วยใบลดหนี้</summary>
     public Guid? EtaxCancelledByCreditNoteId { get; set; }
+
+    /// <summary>รอบ 201 ทีม DV (A-DV2 · คำตัดสินข้อ 65) — การปิดธง "ต้องยกเลิกทาง e-Tax" <b>ครั้งล่าสุด</b>ของใบเสร็จนี้เป็นทาง (ค) "ใบกำกับเดิมยังใช้ได้" เมื่อไร ·
+    /// ผู้เขียนตัวเดียว <c>ResolveEtaxCancellationAsync</c> (ทาง ค = ตั้ง · ทาง ก/ข = ล้าง) · ผู้อ่าน: ตัวติดธงกลับเมื่อเสียยอดครอบ + รายงานข้อ 44 ผ่าน
+    /// <c>EtaxReissueReview.KeptOriginal</c> · null = ไม่ใช่ทาง (ค) — ใบเก่าที่ migration เติมไม่ได้ อ่านป้ายในหมายเหตุภายในเป็นทางสำรอง ·
+    /// ข้อเท็จจริงทางภาษีไม่ควรอยู่ในช่องข้อความอิสระ (F2 ข้อ 9)</summary>
+    public DateTime? EtaxKeptOriginalAt { get; set; }
 
     /// <summary>ใบลดหนี้/ใบเพิ่มหนี้: บังคับฝั่งด้วยมือ — <c>true</c> = ฝั่งซื้อ
     /// (ลดภาษีซื้อ 116x), <c>false</c> = ฝั่งขาย (ลดภาษีขาย 2191x),

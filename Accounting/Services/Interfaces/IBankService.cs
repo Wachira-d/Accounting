@@ -1,5 +1,6 @@
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Bank;
+using Accounting.Models.Enums;
 
 namespace Accounting.Services.Interfaces;
 
@@ -49,7 +50,8 @@ public interface IBankService
 
     // AI learning — pattern memory built from confirmed reconciliations
     Task<LearnedSuggestionsResponse> GetLearnedSuggestionsAsync(Guid companyId, Guid bankTransactionId);
-    Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId);
+    Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId,
+        IReadOnlyDictionary<Guid, UserChoiceSource>? sourceByItemId = null);
 
     /// <summary>
     /// Cascade cleanup: when an item that's a member of one or more

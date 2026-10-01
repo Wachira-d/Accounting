@@ -15,10 +15,10 @@
 | S3-8 race ตอน commit | ✅ (ยืนยัน — ทีม S4 แก้แล้ว) | `SettlementArtifactGuard.CheckLockedAsync` (`FOR SHARE` แถวรอบโอน) ใต้ธุรกรรมของ `VoidDocumentAsync`/`VoidPaymentAsync` + แถว required_call_site เดิม · รอเฉพาะช่วงธุรกรรม commit ของ `CommitPostedAsync` (สั้น — ไม่ใช่ session lock ที่ถือทั้งการลงบัญชี) ⇒ ไม่ทำให้คำขอค้าง · ไม่แตะโค้ด | (เดิม) |
 | S3-11 (1) `Take(200)` | ✅ | `OrphanArtifactsAsync` ไม่ตัดรอบ · การรับชำระของทุกรอบที่ยกเลิกค้นด้วยคำค้นเดียว (`SettlementPostingKeys.PaymentMarkerHead` + `BatchIdFromPaymentNotes`) แทนวนทีละรอบ · checker `forbid .Take(` | (checker) |
 | S3-11 (2) GET โหลดทั้งรอบ/ช่องทางถูกลบ | ✅ | `UnpostBlockersAsync` อ่านแค่หัวรอบ (Status/PayoutDate) · checker `forbid await LoadAsync(` | (checker) |
-| S3-11 (3) SoD แค่ผู้สร้างรอบ | ✅ บางส่วน | `SettlementPostingGate.SodSelfApproval(bool, string?, IEnumerable<string?>, Guid)` นับผู้สร้างบรรทัด (ผู้เติมไฟล์เข้ารอบเดิม) · ผู้ตัดสินการจับคู่/จัดประเภท **ไม่ได้ถูกบันทึกบนบรรทัด** (Lines.cs ไม่ประทับ `UpdatedBy` — ไฟล์ทีม T/I) ⇒ 📋 | `S311_SoD_ผู้เติมไฟล์เข้ารอบเดิมกดลงบัญชีเอง_บล็อก…` |
+| S3-11 (3) SoD แค่ผู้สร้างรอบ | ✅ บางส่วน | `SettlementPostingGate.SodSelfApproval(bool, string?, IEnumerable<string?>, Guid)` นับผู้สร้างบรรทัด (ผู้เติมไฟล์เข้ารอบเดิม) · ผู้ตัดสินการจับคู่/จัดประเภท **ไม่ได้ถูกบันทึกบนบรรทัด** (Lines.cs ไม่ประทับ `UpdatedBy` — ไฟล์ทีม T/I) ⇒ 📋 | `S311_SoD_ผู้เติมไฟล์เข้ารอบเดิมกดลงบัญชีเอง_บล็อก…` | · ✅ 07baa11b รอบ 201 ทีม ST (A-ST7)
 | S3-11 (4) JournalManage ใน Post/Unpost | 📋 (คำถามค้าง) | ไม่แก้: คำอธิบายสิทธิ์ `Settlement.Post` (`PermissionKeys.cs:275`) นิยามรวม "สร้าง…JE · ยกเลิกการลงบัญชี" ไว้แล้ว ⇒ เพิ่มเงื่อนไข JournalManage = เปลี่ยนนโยบายสิทธิ์ (ผู้ที่มี Post แต่ไม่มี Journal ถูกกันทันที) — ต้องให้เจ้าของตัดสิน | — |
-| S3-11 (5) ป้าย `[SETTLEMENT:]` ใน `Payment.Notes` ที่ผู้ใช้พิมพ์ได้ | 📋 | ต้องแก้ที่ `DocumentService.CreatePaymentAsync` (ขอบเขตทีม V1) หรือเพิ่มคอลัมน์ `Payment.SettlementBatchId` แล้วย้ายตัวหาทุกตัว (ป้ายเดียวกันใช้ใน `SettlementArtifactGuard`/`Lines.cs`/ตัวหาของกำพร้า) — insider เท่านั้น (ต้องรู้ id รอบ) · ขนาดเกินรอบนี้ | — |
-| S4-5 ลายนิ้วมือ Piece ตอนออกเอกสาร | 📋 | ต้อง (1) คอลัมน์ใหม่บน `Document` เก็บลายนิ้วมือตอน `CreateOrAdoptAsync` **และ** (2) เปลี่ยนตัวเทียบใน `SettlementImportService.Lines.LoadRedecidableBatchAsync` (ไฟล์ทีม T) + (3) ตัดสินเอกสารเก่าที่ไม่มีลายนิ้วมือ · ทำแค่ (1) = เก็บค่าที่ไม่มีผู้อ่าน (F2 ข้อ 2) จึงไม่ทำครึ่งเดียว | — |
+| S3-11 (5) ป้าย `[SETTLEMENT:]` ใน `Payment.Notes` ที่ผู้ใช้พิมพ์ได้ | 📋 | ต้องแก้ที่ `DocumentService.CreatePaymentAsync` (ขอบเขตทีม V1) หรือเพิ่มคอลัมน์ `Payment.SettlementBatchId` แล้วย้ายตัวหาทุกตัว (ป้ายเดียวกันใช้ใน `SettlementArtifactGuard`/`Lines.cs`/ตัวหาของกำพร้า) — insider เท่านั้น (ต้องรู้ id รอบ) · ขนาดเกินรอบนี้ | — | · ✅ 07baa11b รอบ 201 ทีม ST (A-ST1)
+| S4-5 ลายนิ้วมือ Piece ตอนออกเอกสาร | 📋 | ต้อง (1) คอลัมน์ใหม่บน `Document` เก็บลายนิ้วมือตอน `CreateOrAdoptAsync` **และ** (2) เปลี่ยนตัวเทียบใน `SettlementImportService.Lines.LoadRedecidableBatchAsync` (ไฟล์ทีม T) + (3) ตัดสินเอกสารเก่าที่ไม่มีลายนิ้วมือ · ทำแค่ (1) = เก็บค่าที่ไม่มีผู้อ่าน (F2 ข้อ 2) จึงไม่ทำครึ่งเดียว | — | · ✅ 07baa11b รอบ 201 ทีม ST (A-ST8)
 
 ## การเปลี่ยนพฤติกรรมที่ผู้ใช้เห็น (F2 ข้อ 8)
 
@@ -43,9 +43,9 @@
 ## คำถามค้าง (ให้เจ้าของตัดสิน)
 
 1. **"ส่งลูกค้าแล้ว" (`DocumentStatus.Sent`) ของใบที่อ้าง = ยกเลิกไม่ได้** — DECISIONS ข้อ 10 ระบุไว้ในคำถาม แต่ `VoidDocumentAsync` ยังยกเลิกใบ Sent ได้ · เลือกทิศ "ให้รับรู้ได้" (มองเห็น · มีผู้/เหตุผล · ย้อนดูได้) — ถ้าเจ้าของต้องการให้ยกเลิกใบลดหนี้ก่อนเสมอ ให้ถอด `SentToCustomer` ออกจาก `ChildUnvoidableReason`
-2. ใบที่อ้างซ้อนอีกชั้น (หลานของใบกำพร้า) ไม่ตามต่อ — ใบลูกที่มีหลานซึ่งยกเลิกไม่ได้ยังตกกอง NeedsUserAction
+2. ใบที่อ้างซ้อนอีกชั้น (หลานของใบกำพร้า) ไม่ตามต่อ — ใบลูกที่มีหลานซึ่งยกเลิกไม่ได้ยังตกกอง NeedsUserAction · ✅ 07baa11b รอบ 201 ทีม ST (A-ST6)
 3. การรับรู้ไม่มีปุ่ม "ถอนการรับรู้" (ประทับครั้งเดียว + audit) — ถ้าต้องการ ต้องเพิ่ม endpoint + audit ฝั่งถอน
 4. S3-11 (4) JournalManage ใน Post/Unpost — ดูตารางด้านบน
-5. ธงรับรู้ไม่ได้ echo ใน `DocumentResponse` (หน้าเอกสาร) — แสดงเฉพาะในพรีวิวรอบโอน (ตามโจทย์) · ถ้าต้องการบนหน้าเอกสาร ต้องแตะ `MapToResponse` ของ `DocumentService` (ขอบเขตทีม V1)
+5. ✅ 49458e34 (รอบ 201 ทีม DV · A-DV5) ธงรับรู้ไม่ได้ echo ใน `DocumentResponse` (หน้าเอกสาร) — แสดงเฉพาะในพรีวิวรอบโอน (ตามโจทย์) · ถ้าต้องการบนหน้าเอกสาร ต้องแตะ `MapToResponse` ของ `DocumentService` (ขอบเขตทีม V1)
 6. **F3 ข้อ 11 (ฝ่ายค้าน)** ยังไม่ได้ทำ — agent ทีมนี้ไม่มีเครื่องมือเรียก subagent · ขอให้ main agent ส่ง diff `d7fb2c43` ให้ฝ่ายค้าน 1 รอบ
    (3 คำถาม: ทางเข้าอื่นที่ประทับธง/ข้ามด่าน? ทิศตรงข้าม — ของกำพร้าที่ยกเลิกได้หลุดเป็น "รับรู้ได้" ไหม? สถานะปลายทางประทับเองไหม — ธงรับรู้ประทับเฉพาะเมื่อคนกด)

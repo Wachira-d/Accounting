@@ -427,14 +427,12 @@ public class SettlementReview198FixTests
     // ═════════════ C-5: ยกเลิกชิ้นของรอบโอนทีละชิ้นผ่านหน้าปกติ ═════════════
 
     [Fact]
-    public void C5_ป้ายเจ้าของอ่านได้จากCreatedByและNotes_ของที่ไม่ใช่ของรอบโอนไม่ถูกตีความ()
+    public void C5_ป้ายเจ้าของเอกสารอ่านได้จากCreatedBy_ของที่ไม่ใช่ของรอบโอนไม่ถูกตีความ()
     {
+        // รอบ 201 ทีม ST (A-ST1): เจ้าของการรับชำระ = คอลัมน์ Payment.SettlementBatchId — ตัวอ่านป้ายจาก Notes ถูกถอด (เทสต์ใน SettlementRound201StTests)
         Assert.Equal(BatchA, SettlementArtifactGuard.BatchIdFromCreator(SettlementPostingKeys.Creator(BatchA, "fee-InputVatPending")));
         Assert.Null(SettlementArtifactGuard.BatchIdFromCreator("user-1"));
         Assert.Null(SettlementArtifactGuard.BatchIdFromCreator(null));
-        Assert.Equal(BatchA, SettlementArtifactGuard.BatchIdFromPaymentNotes(SettlementPostingKeys.PaymentMarker(BatchA) + " รับเงินผ่าน Shopee"));
-        Assert.Null(SettlementArtifactGuard.BatchIdFromPaymentNotes("[SETTLEMENT:ไม่ใช่เลข]"));
-        Assert.Null(SettlementArtifactGuard.BatchIdFromPaymentNotes("โอนเงินปกติ"));
     }
 
     [Fact]

@@ -136,13 +136,43 @@ public static class DocumentVoidPreconditions
     {
         if (documentIds.Count == 0) return new HashSet<Guid>();
         var ids = documentIds.Distinct().ToList();
-        return (await db.DocumentEmailLogs.AsNoTracking()
-                .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.DocumentId != null && ids.Contains(l.DocumentId.Value)
-                    && l.IsEtaxByEmail && l.IncludedRdTimestamp && l.Status == EmailLogStatus.Sent)
+        return (await RdTimestampEmailLogs(db, companyId)
+                .Where(l => l.DocumentId != null && ids.Contains(l.DocumentId.Value))
                 .Select(l => l.DocumentId!.Value)
                 .ToListAsync(ct))
             .ToHashSet();
     }
+
+    /// <summary>
+    /// **ตัวโหลดเดียวของเวลาอ้างอิง "หลักฐานต้องแนบหลังส่ง"** (รอบ 201 ทีม DV · ฝ่ายค้าน DV-O3) — ทาง (ก) ของ <c>ResolveEtaxCancellationAsync</c> และการยกเลิกแถว e-Tax
+    /// (<c>EtaxInvoiceService.VoidAsync</c>) ใช้กติกาชุดเดียว: แถว e-Tax ที่ยังไม่ถูกยกเลิกของเอกสาร + บันทึก e-Tax by Email ประทับเวลา → <see cref="CancellationEvidenceNotBefore"/> ·
+    /// null = เอกสารไม่ถึงกรมสรรพากร · tenant แล้ว
+    /// </summary>
+    public static async Task<DateTime?> CancellationEvidenceNotBeforeAsync(AccountingDbContext db, Guid companyId, Guid documentId,
+        CancellationToken ct = default)
+    {
+        var rows = await db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.DocumentId == documentId && e.Status != EtaxStatus.Voided)
+            .Select(e => new { e.Status, e.SubmittedAt, e.CreatedAt })
+            .ToListAsync(ct);
+        return CancellationEvidenceNotBefore(rows.Select(e => (e.Status, e.SubmittedAt, e.CreatedAt)),
+            await EtaxRdTimestampEmailTimesAsync(db, companyId, documentId, ct));
+    }
+
+    /// <summary>เวลาที่ใบนี้ถึงผู้ประทับเวลาของกรมสรรพากรทาง e-Tax by Email (เวลาส่งอีเมล · ไม่มี = เวลาสร้างบันทึก) — เกณฑ์อีเมลตัวเดียวกับ
+    /// <see cref="EtaxEmailedWithRdTimestampAsync"/> (รอบ 201 ทีม DV · A-DV3 · คำตัดสินข้อ 67: เวลาอ้างอิงของหลักฐานการยกเลิก) · tenant แล้ว</summary>
+    internal static async Task<List<(DateTime? SentAt, DateTime CreatedAt)>> EtaxRdTimestampEmailTimesAsync(AccountingDbContext db, Guid companyId,
+        Guid documentId, CancellationToken ct = default)
+        => (await RdTimestampEmailLogs(db, companyId)
+                .Where(l => l.DocumentId == documentId)
+                .Select(l => new { l.SentAt, l.CreatedAt })
+                .ToListAsync(ct))
+            .Select(l => (l.SentAt, l.CreatedAt)).ToList();
+
+    /// <summary>บันทึก e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลาของกรมสรรพากร — เงื่อนไขตัวเดียวของเกณฑ์อีเมล (ห้ามสำเนาคิวรี) · tenant</summary>
+    private static IQueryable<Accounting.Models.Entities.DocumentEmailLog> RdTimestampEmailLogs(AccountingDbContext db, Guid companyId)
+        => db.DocumentEmailLogs.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.IsEtaxByEmail && l.IncludedRdTimestamp && l.Status == EmailLogStatus.Sent);
 
     /// <summary>
     /// **ยกเลิกการรับชำระแล้วใบเสร็จอัตโนมัติคู่กัน (<c>Payment.ReceiptDocumentId</c>) ต้องทำอะไร — ตัวตัดสินตัวเดียว** ของ
@@ -339,7 +369,7 @@ public static class DocumentVoidPreconditions
             if (!c.EvidenceFileAttached)
                 return EtaxCancellationResolutionVerdict.Refused(
                     "แนบไฟล์หลักฐานการยกเลิก (ภาพ/ไฟล์ตอบกลับจากกรมสรรพากรหรือผู้ให้บริการ e-Tax) ที่ใบเสร็จนี้ด้วย — เลขอ้างอิงอย่างเดียวระบบตรวจไม่ได้ "
-                    + "(คำตัดสินข้อ 46)" + Tail);
+                    + "(คำตัดสินข้อ 46) · ไฟล์ต้องแนบหลังเวลาที่ใบนี้ถึงกรมสรรพากร — ไฟล์ที่แนบไว้ก่อน เช่น PDF ต้นฉบับ ไม่นับ (คำตัดสินข้อ 67)" + Tail);
             return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.RdReference);
         }
         // ไม่ถึงกรมสรรพากร: ป้ายตามความจริง (RV1F-9) — แถวถูกยกเลิกในระบบนี้ ≠ ไม่เคยถึงกรมสรรพากร
@@ -476,7 +506,91 @@ public static class DocumentVoidPreconditions
             : $"{what}ไม่ได้ — e-Tax ของ {no} ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) · เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
               + $"(ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) แล้ว{what}อีกครั้ง · ระบบยังไม่ได้แตะอะไร";
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // รอบ 201 ทีม DV (BACKLOG A-DV3 · A-DV4 · C-1 · คำตัดสินข้อ 67 · 68 · 74)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// **ยอดรับชำระที่ยังมีผลของใบต้นทาง** (รอบ 201 ทีม DV · A-DV4 · คำตัดสินข้อ 68) — รวมยอดรายรายการรับชำระ (การรับตรง = ยอด + ค่าธรรมเนียม +
+    /// บรรทัดปรับ · การจัดสรรหลายใบ = ยอดที่จัดสรรให้ใบนั้น — ตัวโหลดคือ <c>DocumentService.LivePaymentCoverageAsync</c>) <b>ไม่นับ</b>รายการที่กำลังยกเลิก
+    /// ในหน่วยงานเดียวกัน · เดิมไม่นับได้แค่รายการเดียว ⇒ cascade ของ <c>VoidDocumentAsync</c> ที่ยกเลิกหลายรายการในลูปเดียว นับรายการก่อนหน้าในลูป
+    /// (ยังไม่ save — แถวในฐานยังไม่ถูกลบ) ว่ายังมีผล ⇒ ใบกำกับทาง (ค) ที่เสียยอดครอบไม่ถูกติดธงกลับ · G6: pure
+    /// </summary>
+    /// <param name="livePaymentRows">รายการรับชำระที่แถวในฐานยังไม่ถูกลบ (id · ยอดที่ครอบใบต้นทาง)</param>
+    /// <param name="voidingPaymentIds">รายการที่กำลังยกเลิกในธุรกรรมนี้ (ยังไม่ save)</param>
+    public static decimal LivePaymentCoverage(IEnumerable<(Guid PaymentId, decimal Amount)> livePaymentRows,
+        IReadOnlyCollection<Guid> voidingPaymentIds)
+        => livePaymentRows.Where(r => !voidingPaymentIds.Contains(r.PaymentId)).Sum(r => r.Amount);
+
+    /// <summary>
+    /// **ยกเลิกเอกสารที่ถูกชำระร่วมกับเอกสารอื่นในการชำระเดียวกัน — ปฏิเสธ** (ตัวตัดสินเดียวของ <c>VoidDocumentAsync</c> · รอบ 201 ทีม DV ฝ่ายค้าน DV-O1):
+    /// เงินก้อนเดียวจัดสรรหลายใบ ยกเลิกใบเดียวแล้วแกะเงินออกบางส่วน ⇒ ยอดเช็ค/การจัดสรรที่เหลือไม่ตรงเงินที่รับ-จ่ายจริง ⇒ ต้องยกเลิก "การชำระทั้งใบ" ก่อนแล้วจัดสรรใหม่ ·
+    /// ข้อความเดิมทุกตัวอักษร (ย้ายจากลูปขั้น 1 มาตรวจทันทีหลังล็อกใบนี้ ก่อนล็อก/กลับรายการใด) · null = ไม่บล็อก · G6: pure
+    /// </summary>
+    /// <param name="allocationsOfTouchingPayments">การจัดสรรที่ยังมีผลของทุกการชำระที่แตะใบนี้ (เลขที่การชำระ · ใบที่จัดสรรให้)</param>
+    public static string? SharedPaymentVoidBlock(IEnumerable<(string? PaymentNumber, Guid DocumentId)> allocationsOfTouchingPayments, Guid documentId)
+    {
+        foreach (var a in allocationsOfTouchingPayments)
+            if (a.DocumentId != documentId)
+                return $"เอกสารนี้ถูกชำระร่วมกับเอกสารอื่นในใบรับ/จ่ายเงินเดียวกัน ({a.PaymentNumber}) — "
+                    + "กรุณายกเลิกการชำระเงินใบนั้นทั้งใบก่อน แล้วจึงยกเลิกเอกสารและจัดสรรเงินใหม่";
+        return null;
+    }
+
+    /// <summary>
+    /// **ไฟล์หลักฐานของทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ" ต้องแนบหลังเวลานี้** (รอบ 201 ทีม DV · A-DV3 · คำตัดสินข้อ 67 — กติกา "แนบหลังส่ง" เดียวกับ
+    /// <see cref="EtaxVoidPolicy.EvidenceNotBefore"/> ของการยกเลิกแถว e-Tax) — หลักฐานต้องเกิด<b>หลัง</b>เหตุที่มันพิสูจน์: ใบถึงกรมสรรพากรเมื่อไร
+    /// การยกเลิกก็เกิดหลังจากนั้น · ไฟล์ที่แนบไว้ก่อน (PDF ต้นฉบับ · สลิป) ไม่ใช่หลักฐานการยกเลิก
+    /// <para>เวลาอ้างอิง = <b>ล่าสุด</b>ของ (1) แถว e-Tax ที่ถึงกรมสรรพากร (<see cref="EtaxReachedRdStatuses"/> · เวลาส่ง หรือเวลาสร้างแถวเมื่อแถวเก่าไม่มีเวลาส่ง ·
+    /// แถวที่ยกเลิกแล้วไม่นับ) และ (2) บันทึก e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลาของกรมสรรพากร (เวลาส่งอีเมล = เวลาประทับ · ไม่มีเวลาส่ง =
+    /// เวลาสร้างบันทึก) · ไม่มีอะไรถึงกรมสรรพากร = null (ทาง ก ไม่ต้องใช้ไฟล์) · G6: pure</para>
+    /// </summary>
+    internal static DateTime? CancellationEvidenceNotBefore(IEnumerable<(EtaxStatus Status, DateTime? SubmittedAt, DateTime CreatedAt)> etaxRows,
+        IEnumerable<(DateTime? SentAt, DateTime CreatedAt)> rdTimestampEmails)
+    {
+        DateTime? latest = null;
+        foreach (var r in etaxRows)
+        {
+            if (!EtaxReachedRdStatuses.Contains(r.Status)) continue;
+            var t = EtaxVoidPolicy.EvidenceNotBefore(r.SubmittedAt, r.CreatedAt);
+            if (latest == null || t > latest.Value) latest = t;
+        }
+        foreach (var m in rdTimestampEmails)
+        {
+            var t = m.SentAt ?? m.CreatedAt;
+            if (latest == null || t > latest.Value) latest = t;
+        }
+        return latest;
+    }
+
+    /// <summary>
+    /// **ออกใบแทนในเดือนภาษีที่ "ประกาศว่ายื่นแล้ว"** (รอบ 201 ทีม DV · C-1 · คำตัดสินข้อ 74) — ด่านเดิมดูแค่ "รายงานล็อก" (มีเลขรับ) แต่คำตัดสินข้อ 9
+    /// เขียนว่า "เดือนภาษีที่<b>ยื่นแล้ว</b>" · ใบแทนลงวันที่เดิมและออกเลขใหม่ในงวดที่ผู้ใช้บอกว่ายื่นแล้ว = เล่าคนละเรื่องกับแบบที่กรมสรรพากรถือ ⇒
+    /// บล็อกด้วยชุดสถานะ <see cref="TaxFilingLockPolicy.DeclaredOrFiledStatuses"/> (ประกาศว่ายื่น หรือยื่นพร้อมเลขรับ) พร้อมทางไปต่อ ·
+    /// ใบเดิมและใบเสร็จถือ VAT ที่ระบบจะยกเลิกแล้วออกใหม่ตรวจทุกใบ (ใบเสร็จ ณ วันรับเงินเป็นเจ้าของแถว ภ.พ.30 — V1-R1) · null = ไม่บล็อก · G6: pure
+    /// </summary>
+    public static string? ReissueDeclaredVatMonthBlock(IEnumerable<ReissueVatMonthFact> facts)
+    {
+        foreach (var f in facts)
+        {
+            if (f.VatReportStatus is not TaxReportStatus s || !TaxFilingLockPolicy.DeclaredOrFiled(s)) continue;
+            var no = string.IsNullOrWhiteSpace(f.DocumentNumber) ? "เอกสารนี้" : f.DocumentNumber!.Trim();
+            var month = $"{f.TaxDate.Month:D2}/{f.TaxDate.Year + 543}";
+            var state = s == TaxReportStatus.Filed ? "ยื่นแล้ว (มีเลขรับของกรมสรรพากร)" : "ประกาศว่ายื่นแล้ว";
+            return $"รายงาน ภ.พ.30 เดือนภาษี {month} ของ {no} {state} — ยกเลิกและออกใบแทนลงวันที่เดิมในเดือนนั้น (ยกเลิกใบเดิม + ออกเลขใหม่) "
+                + "จะทำให้ข้อมูลในระบบต่างจากแบบที่ยื่น · ทางไปต่อ: ถ้ายังไม่ได้ยื่นจริง ให้กด “ปลดล็อก/กลับเป็นร่าง” ที่รายงาน ภ.พ.30 เดือนนั้นพร้อมเหตุผล "
+                + "แล้วกดอีกครั้ง · ถ้ายื่นแล้ว ให้ออกใบลดหนี้/ใบเพิ่มหนี้ในเดือนปัจจุบันแทน (ผิดเฉพาะชื่อ/ที่อยู่ผู้ซื้อ: ปรึกษาผู้ทำบัญชีเรื่องยื่นเพิ่มเติม) "
+                + "· ระบบยังไม่ได้แตะอะไร";
+        }
+        return null;
+    }
 }
+
+/// <summary>ใบหนึ่งใบที่ "ยกเลิกและออกใบแทน" จะยกเลิกแล้วออกเลขใหม่ลงวันที่เดิม + สถานะรายงาน ภ.พ.30 ของเดือนภาษีนั้น (รอบ 201 ทีม DV · C-1)</summary>
+/// <param name="TaxDate">วันที่ภาษีของใบ (<c>TaxPointDate ?? DocumentDate</c> — กติกาเดียวกับด่านกู้คืนเอกสาร)</param>
+/// <param name="VatReportStatus">สถานะรายงาน ภ.พ.30 ของเดือนนั้นที่ประกาศว่ายื่น/ยื่นแล้ว · null = ไม่มีรายงาน หรือยังเป็นร่าง</param>
+public sealed record ReissueVatMonthFact(string? DocumentNumber, DateTime TaxDate, TaxReportStatus? VatReportStatus);
 
 /// <summary>ทางของการปิดธง "ต้องยกเลิกทาง e-Tax" (คำตัดสินข้อ 47)</summary>
 public enum EtaxCancellationPath

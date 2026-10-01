@@ -710,6 +710,9 @@ const Layout = {
     // สิทธิ์เมนูบริษัท. พนักงานที่มีสิทธิ์อนุมัติแต่ไม่มีสิทธิ์เข้า "ตั้งค่าบริษัท"
     // ต้องอัพเดทลายเซ็นตัวเองได้ (ไม่งั้นเอกสารที่เขาอนุมัติจะเว้นช่องลายเซ็น)
     if (menuId === 'my-signature') return true;
+    // รอบ 201 ทีม GW (A-GW10): เมนูที่เซิร์ฟเวอร์บอกว่าไม่มีสิทธิ์ตามคีย์ perm:* ของหน้านั้น (PaymentGatewayPermissionScope.MenuPermissionKeys)
+    // — ตัดก่อน "*" (ผู้ใช้ไม่ผูกบทบาทเห็นทุกเมนู แต่หน้ารับชำระออนไลน์ต้องมีสิทธิ์ดูบัญชีธนาคาร · เดิมเห็นเมนูแล้วกดได้ 403)
+    if ((this.myPermissions.permissionDeniedMenuIds || []).includes(menuId)) return false;
     const allowed = this.myPermissions.allowedMenuIds || [];
     // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
     // (preserves legacy access for plain Employee / Manager UserRoles).

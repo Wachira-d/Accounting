@@ -90,7 +90,10 @@ public partial class BankService
     /// ตัวนี้ **ก่อน commit** ⇒ ผู้ใช้เห็น error แล้วกดใหม่ได้ (ความเสียหาย
     /// มองเห็นและแก้ทัน — G5) ดีกว่าคลังที่ไม่โตโดยไม่มีอะไรฟ้อง
     /// </summary>
-    public async Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId)
+    /// <param name="sourceByItemId">แหล่งของคำยืนยันต่อรายการฝั่งเอกสาร (รอบ 201 ทีม AI · A-AI1) — รายการที่ไม่อยู่ใน
+    /// แผนที่/ค่า null = <see cref="UserChoiceSource.Implicit"/> (ค่าปลอดภัย: นับเป็น "เคยเห็น" แต่ไม่ดันความมั่นใจ)</param>
+    public async Task RecordReconciliationPatternsAsync(Guid companyId, Guid groupId,
+        IReadOnlyDictionary<Guid, UserChoiceSource>? sourceByItemId = null)
     {
         var group = await _db.ReconciliationGroups.AsNoTracking()
             .Include(g => g.Items)
@@ -137,8 +140,10 @@ public partial class BankService
                 else if (item.ItemType == ReconciliationItemType.Document)
                     docContactMap.TryGetValue(item.ItemId, out contactId);
 
+                var itemSource = sourceByItemId != null && sourceByItemId.TryGetValue(item.ItemId, out var src)
+                    ? src : UserChoiceSource.Implicit;
                 await UpsertPatternAsync(companyId, group.BankAccountId, sig, bucket,
-                    item.ItemType, contactId, Math.Abs(item.AllocatedAmount));
+                    item.ItemType, contactId, Math.Abs(item.AllocatedAmount), itemSource);
             }
         }
 
@@ -161,9 +166,12 @@ public partial class BankService
     /// </summary>
     /// <param name="txn">บรรทัดธนาคารที่เพิ่งถูกยืนยัน</param>
     /// <param name="items">คู่ที่ถูกยืนยัน — (ชนิด, id, ยอดในสกุลบัญชีธนาคาร)</param>
+    /// <param name="source">ผู้ใช้เลือกคู่เอง (Explicit) หรือระบบเสนอแล้วปล่อยผ่าน (Implicit/BulkApprove) —
+    /// รอบ 201 ทีม AI · A-AI1: ความมั่นใจของคลังนับเฉพาะ Explicit (<c>Helpers/BankPatternEvidence</c>)</param>
     public async Task CaptureConfirmedMatchAsync(
         Guid companyId, BankTransaction txn,
-        IReadOnlyList<(ReconciliationItemType Type, Guid Id, decimal Amount)> items)
+        IReadOnlyList<(ReconciliationItemType Type, Guid Id, decimal Amount)> items,
+        UserChoiceSource source = UserChoiceSource.Implicit)
     {
         if (txn == null || items == null || items.Count == 0) return;
 
@@ -195,7 +203,7 @@ public partial class BankService
             else if (type == ReconciliationItemType.Document) docContacts.TryGetValue(id, out contactId);
 
             await UpsertPatternAsync(companyId, txn.BankAccountId, sig, bucket,
-                type, contactId, Math.Abs(amount));
+                type, contactId, Math.Abs(amount), source);
         }
 
         // ผู้ใช้ยืนยันคู่นี้แล้ว → ถ้าเคยมี "ตัวอย่างลบ" ของคู่เดียวกันค้างอยู่
@@ -215,8 +223,10 @@ public partial class BankService
     }
 
     private async Task UpsertPatternAsync(Guid companyId, Guid bankAccountId, string sig, string bucket,
-        ReconciliationItemType targetType, Guid? contactId, decimal amount)
+        ReconciliationItemType targetType, Guid? contactId, decimal amount, UserChoiceSource source)
     {
+        // ทุกคำยืนยันนับเป็น "เคยเห็น" (TimesConfirmed) · เฉพาะที่ผู้ใช้เลือกเองนับเป็นหลักฐาน (ExplicitConfirmCount)
+        var explicitInc = Accounting.Helpers.BankPatternEvidence.ExplicitIncrement(source);
         var existing = await _db.BankReconciliationPatterns
             .FirstOrDefaultAsync(p => p.CompanyId == companyId
                 && p.BankAccountId == bankAccountId
@@ -227,6 +237,7 @@ public partial class BankService
         if (existing != null)
         {
             existing.TimesConfirmed += 1;
+            existing.ExplicitConfirmCount += explicitInc;
             existing.LastUsedAt = DateTime.UtcNow;
             existing.AvgAmount = ((existing.AvgAmount * (existing.TimesConfirmed - 1)) + amount) / existing.TimesConfirmed;
             if (amount < existing.MinAmount || existing.MinAmount == 0) existing.MinAmount = amount;
@@ -244,6 +255,7 @@ public partial class BankService
                 TargetType = targetType,
                 ContactId = contactId,
                 TimesConfirmed = 1,
+                ExplicitConfirmCount = explicitInc,
                 LastUsedAt = DateTime.UtcNow,
                 AvgAmount = amount,
                 MinAmount = amount,
@@ -253,9 +265,19 @@ public partial class BankService
     }
 
     /// <summary>
-    /// Suggest items for a single unmatched bank txn based on learned patterns.
-    /// Returns a flat list ordered by confidence — UI surfaces them as
-    /// "📚 จากประวัติ" hints alongside the heuristic AI suggestions.
+    /// เสนอรายการที่จะจับคู่กับบรรทัดธนาคาร 1 บรรทัด จากคลังแพตเทิร์นที่เรียนไว้ (ปุ่ม "✨ AI จับคู่จากประวัติ")
+    ///
+    /// ═══ รอบ 201 ทีม AI ═══
+    /// • <b>A-AI3 (H-5) — มาตรฐานเดียว</b>: เดิมเส้นนี้มีสูตรคะแนนเป็นของตัวเอง (0..1 จากความเกี่ยวข้องของแพตเทิร์น
+    ///   · หน้าเว็บติ๊กให้เมื่อ ≥ 0.4) = "สูตรที่ 3" ที่ <c>BankMatchArbiter</c> ประกาศว่าปิดแล้ว ⇒ คนเห็นอันดับหนึ่งแบบ
+    ///   เครื่องประทับอีกแบบ · ตอนนี้แพตเทิร์นทำหน้าที่ "หาว่าจะเสนอรายการไหน" อย่างเดียว · คะแนนของทุกรายการมาจาก
+    ///   <see cref="Accounting.Helpers.BankMatchScorer.Score"/> (สเกล 0..100 ตัวเดียวกับหน้าจับคู่/จับคู่อัตโนมัติ) และ
+    ///   การติ๊กให้อัตโนมัติ (<c>AutoSelect</c>) ตัดสินด้วย <see cref="Accounting.Helpers.BankMatchArbiter.Decide"/> บน
+    ///   <b>รายการค้างทั้งหมด</b> (ไม่ใช่เฉพาะรายการของแพตเทิร์น — มิฉะนั้นคู่แข่งที่ดีพอกันจะหายจากการเทียบ) ·
+    ///   เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่อ่านธง (หลักการข้อ 5)
+    /// • <b>A-AI1 (H-1) — ห้ามสอนตัวเอง</b>: ความเกี่ยวข้องของแพตเทิร์นนับเฉพาะคำยืนยันที่ผู้ใช้เลือกคู่เอง
+    ///   (<see cref="Accounting.Helpers.BankPatternEvidence.Relevance"/>) · รายการที่ติ๊กจากปุ่มนี้ถูกส่งกลับเป็น
+    ///   Implicit ตอนยืนยันกลุ่ม ⇒ ไม่ดันหลักฐานของแพตเทิร์นที่เสนอเอง
     /// </summary>
     public async Task<LearnedSuggestionsResponse> GetLearnedSuggestionsAsync(Guid companyId, Guid bankTransactionId)
     {
@@ -274,57 +296,99 @@ public partial class BankService
                 && (p.DescriptionSignature == sig || p.AmountBucket == bucket))
             .ToListAsync();
 
-        // In-memory ranking — small N (≤ a few thousand patterns per account).
-        var scored = rawPatterns.Select(p =>
+        // ความเกี่ยวข้องของแพตเทิร์น (ใช้ "หาว่าจะเสนอรายการไหน" เท่านั้น — ไม่ใช่คะแนนจับคู่)
+        var now = DateTime.UtcNow;
+        var relevant = rawPatterns.Select(p =>
         {
             var theirTokens = p.DescriptionSignature.Split('|').Where(t => t.Length > 0).ToHashSet();
             var overlap = sigTokens.Intersect(theirTokens).Count();
             var unionSize = Math.Max(1, sigTokens.Union(theirTokens).Count());
-            var jaccard = overlap / (double)unionSize;        // 0..1
-            var bucketBoost = p.AmountBucket == bucket ? 0.3 : 0.0;
-            var recencyDays = (DateTime.UtcNow - p.LastUsedAt).TotalDays;
-            var recencyDecay = Math.Max(0.5, 1.0 - recencyDays / 365.0);   // half-life ~1 year
-            var confidence = (0.5 * jaccard + bucketBoost + 0.2 * Math.Min(1.0, p.TimesConfirmed / 10.0)) * recencyDecay;
-            return (Pattern: p, Score: confidence);
+            var relevance = Accounting.Helpers.BankPatternEvidence.Relevance(
+                overlap / (double)unionSize, p.AmountBucket == bucket,
+                p.ExplicitConfirmCount, (now - p.LastUsedAt).TotalDays);
+            return (Pattern: p, Relevance: relevance);
         })
-        .Where(x => x.Score > 0.2)
-        .OrderByDescending(x => x.Score)
+        .Where(x => x.Relevance > Accounting.Helpers.BankPatternEvidence.MinRelevance)
+        .OrderByDescending(x => x.Relevance)
         .Take(20)
         .ToList();
 
-        if (scored.Count == 0)
-            return new LearnedSuggestionsResponse(new List<LearnedSuggestion>(), sig, bucket, 0);
+        if (relevant.Count == 0)
+            return new LearnedSuggestionsResponse(new List<LearnedSuggestion>(), sig, bucket, rawPatterns.Count);
+
+        // รายการค้างทั้งบัญชี — โหลดครั้งเดียว (เดิมโหลดซ้ำทุกแพตเทิร์น สูงสุด 20 รอบ)
+        var pool = await GetUnmatchedItemsAsync(companyId, txn.BankAccountId, search: null, fromDate: null, toDate: null);
+
+        // ── คะแนนสเกลเดียวกับทุกเส้น (BankMatchScorer) + คำตัดสินของ arbiter บนรายการค้างทั้งหมด ──
+        var bankAmount = Math.Abs(txn.Amount);
+        Accounting.Helpers.BankMatchScorer.Result ScoreItem(UnmatchedItem it)
+            => Accounting.Helpers.BankMatchScorer.Score(new Accounting.Helpers.BankMatchScorer.Input(
+                CandidateAmount: Math.Abs(it.BankLegAmount ?? it.Amount),
+                BankAmount: bankAmount,
+                CandidateDate: it.Date,
+                BankDate: txn.TransactionDate,
+                CandidateRef: null,
+                CandidateNotes: it.Description,
+                CandidateDocNumber: it.Number,
+                CandidateName: it.ContactName,
+                BankDescription: txn.Description,
+                BankReference: txn.Reference,
+                BankPayee: txn.Payee));
+        var allItems = pool.Payments.Concat(pool.JournalEntries).Concat(pool.Documents).ToList();
+        var scoreById = new Dictionary<(string, Guid), Accounting.Helpers.BankMatchScorer.Result>();
+        var options = new List<Accounting.Helpers.BankMatchArbiter.Option>(allItems.Count);
+        foreach (var it in allItems)
+        {
+            var r = ScoreItem(it);
+            scoreById[(it.ItemType, it.Id)] = r;
+            options.Add(new Accounting.Helpers.BankMatchArbiter.Option(it.Id, it.ItemType, r.Score, r.HasIdentitySignal, r.Reason));
+        }
+        var decision = Accounting.Helpers.BankMatchArbiter.Decide(options);
 
         // Materialise candidate items based on the suggested (targetType, contactId)
         // tuples — for each top-pattern, surface the actually-unmatched items.
         var suggestions = new List<LearnedSuggestion>();
         var seenItems = new HashSet<(string, Guid)>();
-        foreach (var (pat, score) in scored)
+        foreach (var (pat, relevance) in relevant)
         {
-            var items = await ResolveUnmatchedItemsForPatternAsync(companyId, txn.BankAccountId, pat, sig, bucket);
-            foreach (var it in items)
+            foreach (var it in ResolveUnmatchedItemsForPattern(pool, pat, bucket))
             {
                 var key = (it.ItemType, it.Id);
                 if (!seenItems.Add(key)) continue;
+                var sc = scoreById.TryGetValue(key, out var found) ? found : ScoreItem(it);
+                var isChosen = decision.Chosen != null && decision.Chosen.Id == it.Id
+                    && string.Equals(decision.Chosen.ItemType, it.ItemType, StringComparison.Ordinal);
+                var autoSelect = isChosen && decision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply;
+                var patternWhy = Accounting.Helpers.BankPatternEvidence.Reason(
+                    pat.ExplicitConfirmCount, pat.TimesConfirmed, pat.LastUsedAt);
                 suggestions.Add(new LearnedSuggestion(
                     it.ItemType, it.Id, it.Number, it.Date, it.Description,
                     it.Amount, it.ContactName,
-                    Math.Round(score, 3),
-                    $"พบรูปแบบนี้ {pat.TimesConfirmed} ครั้ง · ใช้ล่าสุด {pat.LastUsedAt:dd/MM/yyyy}"));
+                    Confidence: sc.Score / 100.0,
+                    Reason: string.IsNullOrEmpty(sc.Reason) ? patternWhy : $"{sc.Reason} · {patternWhy}",
+                    Score: sc.Score,
+                    Verdict: isChosen ? decision.Verdict.ToString() : Accounting.Helpers.BankMatchVerdict.None.ToString(),
+                    AutoSelect: autoSelect,
+                    ExplicitConfirmations: pat.ExplicitConfirmCount,
+                    PatternRelevance: Math.Round(relevance, 3, MidpointRounding.AwayFromZero)));
                 if (suggestions.Count >= 10) break;
             }
             if (suggestions.Count >= 10) break;
         }
 
+        // เรียงด้วยคะแนนสเกลเดียวกับหน้าจับคู่ก่อน แล้วค่อยความเกี่ยวข้องของแพตเทิร์น
+        suggestions = suggestions
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.PatternRelevance)
+            .ToList();
         return new LearnedSuggestionsResponse(suggestions, sig, bucket, rawPatterns.Count);
     }
 
-    private async Task<List<UnmatchedItem>> ResolveUnmatchedItemsForPatternAsync(
-        Guid companyId, Guid bankAccountId, BankReconciliationPattern pattern, string sig, string bucket)
+    private static List<UnmatchedItem> ResolveUnmatchedItemsForPattern(
+        UnmatchedItemsResponse pool, BankReconciliationPattern pattern, string bucket)
     {
         // Reuse the master unmatched-items pool then filter to the pattern's
         // target type + contact.
-        var pool = await GetUnmatchedItemsAsync(companyId, bankAccountId, search: null, fromDate: null, toDate: null);
         var typed = pattern.TargetType switch
         {
             ReconciliationItemType.Payment => pool.Payments,

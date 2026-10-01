@@ -133,7 +133,8 @@ public interface IDocumentService
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>
     /// <param name="reversalDate">วันที่ลงรายการกลับบัญชี — null = วันที่ของ
     /// เอกสารเอง (ไม่ใช่วันที่กดยกเลิก) เพื่อให้รายการกลับอยู่งวดเดียวกับต้นฉบับ</param>
-    Task VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null);
+    /// <returns>รอบ 201 ทีม DV (A-DV4): ข้อความธง/ภาษีจากการยกเลิกการชำระใน cascade — ผู้เรียกที่มีผู้กดต้องแสดง (ไม่มี = <c>PaymentVoidResult.None</c>)</returns>
+    Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null);
     /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่งวดที่
     /// ถูกต้อง — สำหรับใบที่ถูกยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น
     /// (รายการกลับไปตกเดือนที่กด). คืนจำนวน JE ที่ย้าย</summary>

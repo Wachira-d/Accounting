@@ -22,6 +22,32 @@ public readonly record struct GatewayIntentAmounts(
     // รอบ 200 ทีม G (E2-12): ค่าธรรมเนียมที่ถูกหักจริง ณ วันบันทึกรอบ — มีค่า ⇒ แถวที่บันทึกรอบแล้วใช้ค่านี้ ไม่คิดใหม่ด้วยโหมด VAT วันนี้
     decimal? SettledFeeDeducted = null);
 
+/// <summary>บรรทัดรอบโอน settlement 1 บรรทัดที่อ้าง intent (<c>SettlementLine.PaymentIntentId</c>) <b>ในรอบโอนที่ลงบัญชีแล้ว</b> — ยอดมีเครื่องหมายตามมุม wallet
+/// (ขาย +ยอด · ค่าธรรมเนียม −ยอดที่หัก · คืนเงิน −ยอดคืน)</summary>
+public readonly record struct GatewayBatchLineFact(SettlementLineType LineType, decimal Amount);
+
+/// <summary>ยอดที่รอบโอน settlement (batch) ที่ลงบัญชีแล้วโอนเข้าให้ intent หนึ่ง — รอบ 201 ทีม GW (A-GW4)</summary>
+/// <param name="SettledAmount">Σ บรรทัดทุกบรรทัดของ intent ในรอบที่ลงบัญชีแล้ว = ยอดที่โอนเข้าจริงสำหรับรายการนี้ (รวมยอดคืนที่ถูกหักในรอบหลัง)</param>
+/// <param name="RefundSettledAmount">ยอดคืนที่ถูกหักในรอบที่ลงบัญชีแล้ว (บวก)</param>
+/// <param name="FeeDeducted">ค่าธรรมเนียมที่ถูกหักในรอบที่ลงบัญชีแล้ว (บวก · รวม VAT ถ้าโหมดบวกเพิ่ม)</param>
+public readonly record struct GatewayBatchSettledAmounts(decimal SettledAmount, decimal RefundSettledAmount, decimal FeeDeducted);
+
+/// <summary>แถว intent ที่หน้ากระทบยอดอ่าน + ข้อเท็จจริงเรื่อง "เจ้าของรอบโอน" (เส้นเดิม = ใบสำคัญรอบโอน · เส้น batch = รอบโอน settlement)</summary>
+public readonly record struct GatewayReconciliationIntentRow(
+    decimal Amount,
+    decimal? FeeActual,
+    decimal FeeEstimated,
+    decimal? SettledAmount,
+    bool IsRefundedFully,
+    bool SettledByJournal,
+    decimal RefundedAmount,
+    decimal RefundSettledAmount,
+    decimal RefundDeductedAfterSettlement,
+    GatewayFeeVatMode FeeVatMode,
+    decimal? SettledFeeDeducted,
+    bool OwnedByBatch,
+    bool BatchPosted);
+
 /// <summary>ผลการกระทบยอดของงวดหนึ่ง</summary>
 public sealed record GatewayReconciliationResult(
     int SucceededCount,
@@ -132,6 +158,60 @@ public static class GatewayReconciliation
             UnsettledCount: outstandingCount,
             UnsettledAmount: Round(outstanding));
     }
+
+    /// <summary>รอบโอน settlement สถานะนี้ "โอนเข้าแล้ว" ไหม — ลงบัญชีแล้ว (Posted) หรือจับคู่เงินเข้าธนาคารแล้ว (BankMatched) ·
+    /// ตัวตัดสินตัวเดียวของหน้ากระทบยอด/หน้ารายการ (รอบ 201 ทีม GW · A-GW4) · ฉบับร่าง/จัดประเภท/จับคู่ใบขาย/ยกเลิก = ยังไม่โอน</summary>
+    public static bool IsBatchPosted(SettlementBatchStatus? status)
+        => status is SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched;
+
+    /// <summary>ยอดที่รอบโอน settlement ที่ลงบัญชีแล้วโอนเข้าให้ intent หนึ่ง — จากบรรทัดรอบโอนที่อ้าง intent (ผู้เรียกส่งเฉพาะบรรทัดของรอบที่
+    /// <see cref="IsBatchPosted"/>) · ไม่มีบรรทัด = 0 ทุกช่อง</summary>
+    public static GatewayBatchSettledAmounts BatchSettled(IEnumerable<GatewayBatchLineFact> postedLines)
+    {
+        decimal settled = 0m, refund = 0m, fee = 0m;
+        foreach (var l in postedLines)
+        {
+            settled += l.Amount;
+            if (l.LineType == SettlementLineType.Refund) refund += -l.Amount;
+            else if (l.LineType == SettlementLineType.PaymentFee) fee += -l.Amount;
+        }
+        return new GatewayBatchSettledAmounts(Round(settled), Round(refund), Round(fee));
+    }
+
+    /// <summary>แปลงแถว intent เป็นยอดเข้าการกระทบยอด — <b>ตัวตัดสินตัวเดียว</b>ว่า "โอนเข้าแล้ว" (รอบ 201 ทีม GW · A-GW4 · team-P2 B-1)
+    ///
+    /// <para>═══ ที่มา ═══ เดิมหน้ากระทบยอดเขียน <c>IsSettled = SettlementJournalEntryId != null</c> ⇒ intent ที่รอบโอน settlement (batch) เป็นเจ้าของและ
+    /// <b>ลงบัญชีแล้ว</b> ถูกนับเป็น "ยังไม่ถึงรอบโอน" ตลอดไป (เส้น batch ไม่ประทับ <c>SettlementJournalEntryId</c>/<c>SettledAmount</c> — คนละเจ้าของ)</para>
+    /// <para>═══ กติกา ═══ เจ้าของเส้นเดิม = ตามเดิมทุกช่อง · เจ้าของ batch: โอนแล้วเมื่อรอบโอน <see cref="IsBatchPosted"/> · ยอดที่โอนเข้า/ยอดคืนที่ถูกหัก/
+    /// ค่าธรรมเนียมที่ถูกหัก มาจากบรรทัดรอบโอนที่ลงบัญชีแล้ว (<paramref name="postedBatch"/>) — ยอดคืนที่ถูกหักในรอบหลังรวมอยู่ใน Σ บรรทัดแล้ว
+    /// (<c>RefundDeductedAfterSettlement</c> = 0) · รอบโอนยังไม่ลงบัญชี = ยังไม่โอน (ไม่อ่านช่องเส้นเดิมที่ไม่ใช่ของมัน)</para></summary>
+    public static GatewayIntentAmounts FromIntent(GatewayReconciliationIntentRow r, GatewayBatchSettledAmounts? postedBatch)
+    {
+        if (r.OwnedByBatch && !r.SettledByJournal)
+        {
+            if (!r.BatchPosted)
+                return new GatewayIntentAmounts(r.Amount, r.FeeActual, r.FeeEstimated, null, r.IsRefundedFully, false,
+                    r.RefundedAmount, 0m, 0m, r.FeeVatMode, null);
+            var b = postedBatch ?? new GatewayBatchSettledAmounts(0m, 0m, 0m);
+            return new GatewayIntentAmounts(r.Amount, r.FeeActual, r.FeeEstimated, b.SettledAmount, r.IsRefundedFully, true,
+                r.RefundedAmount, b.RefundSettledAmount, 0m, r.FeeVatMode, b.FeeDeducted);
+        }
+        return new GatewayIntentAmounts(r.Amount, r.FeeActual, r.FeeEstimated, r.SettledAmount, r.IsRefundedFully, r.SettledByJournal,
+            r.RefundedAmount, r.RefundSettledAmount, r.RefundDeductedAfterSettlement, r.FeeVatMode, r.SettledFeeDeducted);
+    }
+
+    /// <summary>แถวเก่าที่<b>แยกไม่ได้</b>ว่ายอดโอนเข้าที่บันทึกรวมยอดคืนที่ถูกหักในรอบโอนหลังไปเท่าไร (รอบ 201 ทีม GW · A-GW9 · review198-E2 E2-11)
+    /// <para>รอบโอนเส้นเดิมที่บันทึกก่อนรอบ 200 (<c>SettledFeeDeducted</c> ว่าง = เติมย้อนหลังแบบพิสูจน์ไม่ได้) และมียอดคืนที่ถูกหักในรอบโอนแล้ว —
+    /// ส่วนที่ถูกหักในรอบหลังก่อนมีคอลัมน์ <c>RefundDeductedAfterSettlement</c> ไม่ถูกเก็บ ⇒ "ผลต่างที่อธิบายไม่ได้" ของรายงานอาจมาจากแถวนี้ ·
+    /// <b>ไม่เติมย้อนหลัง</b> (ต้องรู้โหมด VAT ค่าธรรมเนียม ณ วันบันทึกรอบ — ไม่ได้เก็บ · เติมด้วยค่าวันนี้ = ค่าที่แต่งขึ้น) ⇒ นับให้เห็นแทน</para></summary>
+    public static bool LateRefundSplitUnknown(GatewayReconciliationIntentRow r)
+        => r.SettledByJournal && r.SettledFeeDeducted == null && r.RefundSettledAmount > 0m;
+
+    /// <summary>ข้อความของรายงานเมื่อมีแถวเก่าตาม <see cref="LateRefundSplitUnknown"/> — null = ไม่มี</summary>
+    public static string? LateRefundSplitUnknownMessage(int count)
+        => count <= 0 ? null
+            : $"มี {count} รายการที่บันทึกรอบโอนก่อนระบบเก็บ \"ยอดคืนที่ถูกหักในรอบโอนหลัง\" — ยอดโอนเข้าของรายการเหล่านี้อาจนับยอดคืนซ้ำ/ขาด "
+              + "ผลต่างที่อธิบายไม่ได้ของงวดที่มีรายการเหล่านี้ให้ตรวจกับสเตทเมนต์ผู้ให้บริการก่อนสรุปว่าเงินหาย (ระบบไม่เติมย้อนหลังเพราะพิสูจน์ไม่ได้)";
 
     private static decimal RefundedOf(GatewayIntentAmounts r)
         // สถานะคืนเต็ม = เงินออกเต็มยอดจริง (รวมแถวเก่าที่ไม่มียอดคืนบันทึก และคืนที่ลงบัญชีไม่สำเร็จ E-1) · คืนบางส่วน = ยอดสะสมที่บันทึก

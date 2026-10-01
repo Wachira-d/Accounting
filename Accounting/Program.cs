@@ -587,81 +587,10 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Ai.IDistillationC
 // Knowledge-distillation local student models — SINGLETON because each
 // holds an in-memory (CompanyId, key) → ranked candidates dictionary
 // that the nightly AiFeedbackTrainingJob rebuilds from feedback rows.
-// Scoped lifetime would discard learned state on every HTTP request.
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.VendorCanonDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.GlAccountDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.BankMatchDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.DuplicateDocumentDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.AnomalyExplanationDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.ApprovalWarningDistillationModel>();
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.PaymentTypeDistillationModel>();
-// Generic feedback-distillation students for single-answer AI features that
-// previously called DeepSeek with NO local fallback (feature-parity gap — see
-// CLAUDE.md "🛡️ Local-First Sovereignty"). One instance per feature, each
-// learns its own (input→answer) map from confirmed feedback + keeps a company
-// majority fallback so the feature still answers when the provider is off.
-// Free-form/bulk features (ImportColumnMatch, BulkBankStatementMatch,
-// AgingExplanation, …) are intentionally excluded — a single-answer model is the
-// wrong shape for them; they keep their own heuristic fallbacks.
-//
-// ⚠️ OcrFullReview เคยอยู่ในลิสต์ยกเว้นนี้ด้วย ทั้งที่ CLAUDE.md กฎเหล็ก #1 ระบุ
-// ชื่อ OcrFullReviewDistillationModel ไว้ตรง ๆ ว่าต้องมี ⇒ ปิด provider ทุกตัวแล้ว
-// feature ตายเงียบ (หน้าเว็บขึ้น toast "AI ไม่ตอบ") = kill-switch test ไม่ผ่าน
-// และไม่มีใครเรียนจากคำตอบครูเลย จ่าย token ฟรีทุกครั้ง
-// → เขียน student แบบ bespoke ที่เรียน "รายช่อง" แทน single-answer (ดูไฟล์นั้น)
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.OcrFullReviewDistillationModel>();
-// นักเรียนของ OcrLineItemSplit — AiFeatureKey ตัวสุดท้ายในไปป์ไลน์ OCR ที่ยังไม่มี
-// student (กฎเหล็ก #1 ข้อ 2 feature parity) ⇒ ปิด provider แล้วกระดาษที่ engine อ่าน
-// ตารางไม่ออกจะได้บรรทัดสรุปใบเดียวตลอดกาล = ขัดกฎเหล็ก #3 ข้อ 6 ตรง ๆ.
-// ตอบสองชั้น: จำโครงบิลประจำที่ผู้ใช้ยืนยันแล้ว → กติกา RawTextLineSplitter
-// (ตอบได้ตั้งแต่ใบแรกของ tenant ใหม่ = cold-start ไม่ว่างเปล่า)
-builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel,
-    Accounting.Services.Ai.Distillation.LineSplitDistillationModel>();
-foreach (var genericFeatureKey in new[]
-{
-    Accounting.Models.Enums.AiFeatureKey.DocumentTypeClassification,
-    // เราเป็นผู้ซื้อ/ผู้ขาย — single answer (Buyer/Seller) ⇒ generic student พอ
-    // (เดิม enum มีแต่ไม่มี student = feature ที่เรียก AI ได้แต่ปิด provider แล้วไม่มีใครตอบ)
-    Accounting.Models.Enums.AiFeatureKey.DocumentRoleInference,
-    Accounting.Models.Enums.AiFeatureKey.WhtCategoryInference,
-    Accounting.Models.Enums.AiFeatureKey.CreditNoteReasonClassification,
-    Accounting.Models.Enums.AiFeatureKey.StockMovementValidation,
-    Accounting.Models.Enums.AiFeatureKey.PaymentVoucherAccountingSuggestion,
-    Accounting.Models.Enums.AiFeatureKey.DocumentConversionSuggestion,
-    Accounting.Models.Enums.AiFeatureKey.OcrProjectMatch,
-    // รอบ 198 — ประเภทบรรทัด settlement (คำตอบเดียว = ชื่อ SettlementLineType) · ด่าน SettlementLineTypeRules.ParseClassifierAnswer
-    Accounting.Models.Enums.AiFeatureKey.SettlementLineClassify,
-})
-{
-    var fk = genericFeatureKey;   // per-iteration capture for the factory closure
-    builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel>(sp =>
-        new Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel(
-            fk, sp,
-            sp.GetRequiredService<ILogger<Accounting.Services.Ai.Distillation.GenericFeedbackDistillationModel>>()));
-}
-// Chatbot students (free-form Q→A — จับคู่คำถามด้วย embedding ไม่ใช่
-// fingerprint ตรงตัว จึงต้องเป็น bespoke model ตามกฎเหล็ก #1 ข้อ 2)
-foreach (var chatFeatureKey in new[]
-{
-    Accounting.Models.Enums.AiFeatureKey.PublicFaqChat,
-    Accounting.Models.Enums.AiFeatureKey.TenantAssistantChat,
-})
-{
-    var cfk = chatFeatureKey;
-    builder.Services.AddSingleton<Accounting.Services.Ai.Distillation.ILocalDistillationModel>(sp =>
-        new Accounting.Services.Ai.Distillation.ChatAnswerDistillationModel(
-            cfk, sp,
-            sp.GetRequiredService<Accounting.Services.Ai.Embedding.IEmbeddingService>(),
-            sp.GetRequiredService<ILogger<Accounting.Services.Ai.Distillation.ChatAnswerDistillationModel>>()));
-}
+// ทะเบียนนักเรียนทั้งหมดย้ายไป Services/Ai/Distillation/DistillationModelRegistry (รอบ 201 ทีม AI · A-AI6) —
+// เทสต์ kill-switch ประกอบ DI จากเมธอดเดียวกันนี้ ⇒ ถอด/ลืมลงทะเบียนนักเรียนตัวไหน เทสต์ล้มทันที
+// (เดิมอยู่ที่นี่ล้วน และ AiKillSwitchTests เรียกแต่ pure helper ⇒ ไม่มีทางล้ม)
+Accounting.Services.Ai.Distillation.DistillationModelRegistry.AddLocalDistillationModels(builder.Services);
 // Risk scoring & smart approval routing — surfaces decisions the
 // admin/AR/AP teams use directly + feeds the corresponding AI narrative
 // features (AgingExplanation, ApprovalWarningFixSuggestion).

@@ -163,6 +163,23 @@ public static class MoneyAccountFallback
         return TerminalBankWarning(terminalBankPinned, companyBanks);
     }
 
+    /// <summary>คำเตือน<b>ล่วงหน้า</b>บนหน้า "เชื่อมต่อระบบ" (รอบ 201 ทีม GW · A-GW11 · team-G E-3i) — <c>null</c> = รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
+    /// จากระบบที่เชื่อมต่อลงบัญชีธนาคารได้แม้ระบบต้นทางไม่ระบุบัญชี
+    /// <para>═══ ที่มา ═══ ทาง POS มีคำเตือนก่อนขาย (<see cref="TerminalPinWarning"/>) แต่ทาง integration ไม่มี "เครื่อง" ให้ปัก ⇒ ผู้ใช้เจอครั้งแรกตอน
+    /// <b>รายการชำระถูกปฏิเสธ</b> (<c>INT-NO-BANK-ACCOUNT</c>) · ตัดสินจากกติกาเดียวกับตอนรับรายการ (<see cref="PickBank"/>) — ทางไปต่อเดียวของ integration
+    /// คือระบบต้นทางส่ง <c>bankAccountName</c> ให้ตรงชื่อ/เลขบัญชีในระบบ (ตัวเลือกที่ชนะ PickBank)</para></summary>
+    public static string? IntegrationBankWarning(BankAccountPickOutcome companyBanks) => companyBanks switch
+    {
+        BankAccountPickOutcome.Single => null,
+        BankAccountPickOutcome.Ambiguous =>
+            "บริษัทมีบัญชีธนาคารที่ผูกผังบัญชีหลายบัญชี — รายการรับ/จ่ายชำระแบบโอน/พร้อมเพย์/หักบัญชีจากระบบที่เชื่อมต่อจะถูกปฏิเสธ "
+            + "ถ้าระบบต้นทางไม่ส่งชื่อหรือเลขบัญชีธนาคารที่รับเงิน (bankAccountName) ให้ตรงกับบัญชีในหน้า \"บัญชีธนาคาร\" "
+            + "(ระบบไม่เดาว่าเงินเข้าบัญชีไหน — เดาผิด = กระทบยอดรายบัญชีไม่ได้)",
+        _ =>
+            "ยังไม่มีบัญชีธนาคารที่ผูกผังบัญชี — รายการรับ/จ่ายชำระแบบโอน/พร้อมเพย์/หักบัญชีจากระบบที่เชื่อมต่อจะถูกปฏิเสธ · "
+            + "เพิ่มบัญชีธนาคารและเลือกผังบัญชีที่หน้า \"บัญชีธนาคาร\" ก่อน",
+    };
+
     /// <summary>ข้อความล้มดังเมื่อหาบัญชีธนาคารให้ไม่ได้ — บอกทางไปต่อตามช่องทาง</summary>
     public static string BankNotResolvedMessage(BankAccountPickOutcome outcome, string channelHint)
         => outcome == BankAccountPickOutcome.Ambiguous

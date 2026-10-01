@@ -40,6 +40,10 @@ public class SettlementRound200V2Tests
     private static readonly SettlementOrphanAck Ack = new(Guid.Parse("88888888-8888-8888-8888-888888888888"), "สมหญิง ผู้ทำบัญชี", Day,
         "ตรวจแล้ว รอบ PO-NEW ไม่มีค่าธรรมเนียมซ้ำกับรอบที่ยกเลิก");
 
+    /// <summary>รอบ 201 ทีม ST (A-ST5): การรับรู้ประทับลายนิ้วมือเหตุที่รายการแสดงตอนกด (ตัวเดียวกับ service) — ไม่มีลายนิ้วมือ = ไม่ครอบ</summary>
+    private static SettlementOrphanAck AckFor(SettlementOrphanTriageResult unacked, Guid id, bool isPayment = false)
+        => Ack with { ReasonHash = Assert.Single(unacked.Items!, i => i.Id == id && i.IsPayment == isPayment).ReasonHash };
+
     private static SettlementOrphanTriageResult TriageFee(SettlementUnpostDocument doc, IReadOnlyList<SettlementOrphanChild>? children,
         SettlementOrphanAck? ack = null)
     {
@@ -150,13 +154,14 @@ public class SettlementRound200V2Tests
         Assert.True(bi.Blocking);
         Assert.Contains("รับรู้ของกำพร้า", bi.NextStep);
 
-        var t = TriageFee(FeeDoc(ChildBlock()), new[] { Child(etax: true) }, Ack);
+        var ack = AckFor(TriageFee(FeeDoc(ChildBlock()), new[] { Child(etax: true) }), Fee);
+        var t = TriageFee(FeeDoc(ChildBlock()), new[] { Child(etax: true) }, ack);
         Assert.Empty(t.Unvoidable);
         var shown = Assert.Single(t.Acknowledged!);
         Assert.Contains("สมหญิง ผู้ทำบัญชี", shown);
         Assert.Contains("ไม่มีค่าธรรมเนียมซ้ำ", shown);
         var item = Assert.Single(t.Items!);
-        Assert.Equal(Ack, item.Ack);
+        Assert.Equal(ack, item.Ack);
         Assert.False(item.CanAcknowledge);
         var open = Gate(t);
         Assert.True(open.CanPost);
@@ -186,7 +191,8 @@ public class SettlementRound200V2Tests
         var unacked = SettlementOrphanTriage.Split(new[] { Orphan(PayA, true, "RV-0001") }, refusals, Array.Empty<SettlementUnpostDocument>());
         Assert.Null(SettlementOrphanTriage.AckRefusal(unacked, PayA, true));
         Assert.NotNull(SettlementOrphanTriage.AckRefusal(unacked, PayA, false));      // id เดียวกันแต่คนละชนิด ⇒ ไม่ใช่ชิ้นนี้
-        var acked = SettlementOrphanTriage.Split(new[] { Orphan(PayA, true, "RV-0001", Ack) }, refusals, Array.Empty<SettlementUnpostDocument>());
+        var acked = SettlementOrphanTriage.Split(new[] { Orphan(PayA, true, "RV-0001", AckFor(unacked, PayA, true)) }, refusals,
+            Array.Empty<SettlementUnpostDocument>());
         Assert.True(Gate(acked).CanPost);
         Assert.False(Gate(unacked).CanPost);
     }

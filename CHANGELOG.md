@@ -4049,6 +4049,81 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
 
+_2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
+- **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
+  (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
+- **A-DV1 (ข้อ 62/66)** รายงานข้อ 44 + 4 กลุ่ม (`StuckOutputVatAfterPaymentVoid` · `SubmittedEtaxVoidedWithoutEvidence` · `KeptOriginalCoverageLost` · `EmailedEtaxVoidedInSystem`) · `EtaxReissueReviewReport.Total`
+- **A-DV2 (ข้อ 65)** `Documents.EtaxKeptOriginalAt` + migration `Round201DvStatements` (เติมจากป้ายตัวสุดท้าย/audit) · ตัวอ่านเดียว `EtaxReissueReview.KeptOriginal` · `LastResolutionKeptOriginal` → internal
+- **A-DV3 (ข้อ 67)** หลักฐานทาง (ก) แนบหลังเวลาที่ใบถึงกรมสรรพากร (`CancellationEvidenceNotBefore` · `EtaxRdTimestampEmailTimesAsync` ใช้เงื่อนไขอีเมลตัวเดียว)
+- **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
+- **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
+- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
+
+_2026-10-01 รอบ 201 ทีม IN — สต็อก/สินทรัพย์/ค่าตั้ง/ที่พัก (`erp-review/2026-10-01/team-IN.md` · BACKLOG §1.8 + C-5/C-6):
+- **A-IN1** วิธีคิดต้นทุนตั้งได้ต่อสินค้า (DTO สร้าง/แก้/คำตอบ + หน้าสินค้า) — `Helpers/CostingMethodPolicy` (ถัวเฉลี่ย/FIFO · ห้าม LIFO/มาตรฐาน ·
+  เปลี่ยนหลังมีความเคลื่อนไหว = ปฏิเสธพร้อมทางไปต่อ · audit chain) · ข้อความศูนย์ช่วยเหลือแก้ตาม
+- **A-IN2** คิว FIFO + rebuild ถัวเฉลี่ยผ่าน `Helpers/InventoryCostFlow` (ยกมา/ตรวจนับเข้าคิว · โอนคลังไม่นับ · แถวที่ยังไม่ save นับด้วย · กรองบริษัท)
+- **A-IN3** `adjust-life` รับ `NewDepreciationMethod` + เหตุผล · ยืนยันค่าเดิม = บันทึกว่าทบทวน · `Helpers/DepreciationEstimateChange` · audit chain
+- **A-IN4 (ส่วนเครื่อง)** `DocumentNumberGenerator.NextAsync(…, branchCode)` · `Helpers/DocumentNumberBook` — สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋
+- **A-IN5** ปุ่ม/endpoint “ออกใบเช็คเอาต์ใหม่” (`ReissueFinalDocumentAsync`) — ตัวสร้างรายการ/ใบร่าง/ใช้มัดจำแยกเป็นเมธอดเดียวที่เช็คเอาต์ใช้ร่วม ·
+  `Helpers/LodgingCheckoutReissue` (ยอด/ชนิดเท่าเดิม)
+- **A-IN6** สีบริษัทตรวจด้วย `DocumentTemplateStyle.ColorRejectReason/Hex` (บันทึก · อ่าน · หัวเอกสาร) · **A-IN7** `DepositKindSeed.AddedByIndustryChange` → เติมประเภทมัดจำ
+- **C-5** เครื่องมือแอดมินตรวจ/ซ่อมยอดสต็อกรวม (`FindProductTotalMismatchesAsync` / `RepairProductTotalsAsync` · `Helpers/StockTotalsReconciliation`) แทน
+  `ReconcileProductTotalsAsync` (ซ่อมเงียบ ไม่มีผู้เรียก) · คอมเมนต์ใน ledger ที่อ้าง "งานตรวจเรียกเป็นระยะ" แก้ให้ตรงความจริง
+- **C-6** รายการตรวจก่อนปิดงวดเดือนสุดท้ายของรอบบัญชีเตือนสินทรัพย์ที่ยังไม่ทบทวนอายุ (`Helpers/UsefulLifeReview`)
+- เทสต์ 6 ไฟล์ใหม่ (สองทิศ) · sim `product_form_contract_sim.js` · required_call_site +14 แถว — commit a4dfa177)_
+
+### รอบ 201 ทีม AI — AI / ธนาคาร (`erp-review/2026-10-01/team-AI.md` · BACKLOG §1.6)
+- **A-AI7 (H-9)** `Helpers/BankAiCandidateGuard` — แผนจับคู่ทั้งก้อนตัด bankTxnId/candidateId ที่ AI แต่ง **ก่อน** AiValidated/dedup (`ScreenAiMatches`) + ชั้นปรับเทียบตรวจซ้ำทุกข้อเสนอ · ยอดของ AI ไม่มีทางรอดถึงจอ (เดิม `? ra2 : c.Amount`) · ตัดบางส่วน = เพดาน 0.55 + เหตุผลบนแถว · ทิ้งทั้งก้อน = นับในคำเตือนของแผน · ดัชนีแถว feedback เดินคู่กับข้อเสนอที่รอด (เดิม int[] ต่อ parsed) · ฝั่งเขียน `ValidateMatchAmountAsync` ตอบ "ไม่พบรายการที่จะจับคู่"
+- **A-AI1 (H-1 · P1)** `BankReconciliationPattern.ExplicitConfirmCount` (DO-block: ADD COLUMN + backfill ครั้งเดียว) · `Helpers/BankPatternEvidence` (ParseSource · Relevance · StudentConfidence · Reason) · แหล่งของคำยืนยันเดินจาก `ReconcileRequest/BatchReconcileItem/ReconciliationGroupItemRequest.Source` ถึง `UpsertPatternAsync` ทุกทางเข้า · `BankMatchDistillationModel` นับเฉพาะ Explicit (ไม่มี = เพดาน 0.45) · bank.html ส่ง source ทุกจุด (+ batch ส่ง `wasAiValidated`/`confidenceAtApply` ที่ไม่เคยส่ง) · `ai_feedback_source_check` กติกา 3–4
+- **A-AI3 (H-5)** โบนัส "เงินลงที่ไหน" ที่บวกเฉพาะบนจอ → ลำดับรอง `BankMatchScorer.DepositPreference` (คำตัดสินเส้นเครื่องไม่เปลี่ยน) · `GetLearnedSuggestionsAsync` เลิกสูตรที่ 3: คะแนน = scorer · ติ๊กให้ = arbiter `Apply` บนรายการค้างทั้งหมด (`AutoSelect`) · โหลด pool ครั้งเดียว (เดิม ≤20 รอบ)
+- **A-AI6 (H-8)** `Services/Ai/Distillation/DistillationModelRegistry` (Program.cs เรียกตัวเดียว) · seam `LoadSiteSettingsAsync`/`LoadActiveProviderAsync` + `ActiveProviderFilter` · ตาข่ายชั้นนอกคืนคำตอบนักเรียน · `AiKillSwitchOrchestratorTests` · รายการค้าง 29+9 feature ไม่มีนักเรียน (`KnownGapsWithoutStudent` ratchet) · DOCUMENT_FLOW §6.4 แก้แถวที่เขียน "generic" ทั้งที่ไม่มีนักเรียน 7 แถว
+- **A-AI4 (H-6)** `PaymentVoucherAccountingDistillationModel` (bespoke · แตกคำถามทั้งใบเป็นรายบรรทัดด้วยกุญแจเดียวกับแถว feedback ลูก) · `ParseBulkPvResponse`/`ParseBulkApprovalResponse` อ่านโครงของนักเรียน · ไม่ parse คำเดี่ยว · ข้อความบอกผู้ตอบจริง (`Helpers/AiAnswerSource`) · แถวลูกจากนักเรียนบันทึกเป็น LocalModel/Skipped (กันคลังสอนตัวเอง)
+- **A-AI2 (H-4)** `DocumentAiSuggestion.FromStudent/FromRule/HasAnswer/HasModelAnswer` · `Convert`/`BankAiAugmenter` ส่งธงต่อ · `BankFeedService` ใช้ `HasModelAnswer` + ScreenAiProposals (≥0.70) · ป้าย BankFeed ซื่อสัตย์ (`BANK-MATCH-LOCAL-DOC`)
+- **A-AI5 (H-7)** `Helpers/GlSuggestionApplyPolicy` (write-gate ≥0.70 + ผังของบริษัท) · `SuggestPvAccountingLineResult.MayAutoFill` · documents.html (ช่วง bulk-PV) อ่านธง/ป้ายจากเซิร์ฟเวอร์ + จับคู่บรรทัดด้วย tempId (เดิมเลื่อนผิดบรรทัดเมื่อมีการ์ดว่าง)
+- **A-AI8 (ข้อ 58)** `AiFeedbackRecorder.DiscardUnsaved` ในทุก catch ที่ SaveChanges (user choice · rollup 3 ตัว) — context ร่วมไม่ค้าง Modified/Added
+- เทสต์ 6 ไฟล์ใหม่ · required_call_site +24 แถว · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce1328ec
+
+_2026-10-01 รอบ 201 ทีม GW — Gateway/Integration (BACKLOG §1.1 A-GW1..A-GW12 · C-10 · C-11 · B-1 · รายงาน `erp-review/2026-10-01/team-GW.md`):
+- **A-GW1** webhook รหัสลับต่อ config `PaymentProviderConfig.WebhookToken` (+`LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt` · migration บล็อกทีม GW) · action เดียวสอง route ·
+  `Helpers/GatewayWebhookRoute` (ตัวเลือก config ตัวเดียว · รหัสผิด = ไม่ยิงคำขอออก · URL เดิมคงไว้ เลิกลองร้านที่โหมดปัจจุบันย้ายแล้ว) · หน้าตั้งค่า URL ใหม่ + คำเตือน URL เดิม
+- **A-GW4** กระทบยอดรู้จักรอบโอน batch (`GatewayReconciliation.IsBatchPosted/BatchSettled/FromIntent`) + การ์ดกระทบยอดบนหน้ากระทบยอดเงินรับออนไลน์ (endpoint เดิมไม่มีผู้เรียก)
+- **A-GW5** VAT ค่าธรรมเนียมของรอบโอน batch (ใบสำคัญจ่าย · 11640) แสดงแยก + ข้อความในด่าน "เกินที่พัก" — **ไม่รวมเข้า 11630** (คนละผังพัก · รวม = ภาษีซื้อซ้ำ)
+- **A-GW12** resync integration: dry-run สร้างบรรทัดใหม่ก่อนกลับ JE เดิม · สร้างไม่ได้ = คง JE เดิม + ดังสามที่ (`Helpers/IntegrationResyncJournal`) · ข้อความทางไปต่อ "ส่งซ้ำแบบ resyncUpdate" แทนปุ่มที่ไม่มี
+- **A-GW11** `IntegrationDashboardResponse.MoneyAccountWarning` (`MoneyAccountFallback.IntegrationBankWarning`) + แถบเตือนหน้าเชื่อมต่อระบบ
+- **A-GW6** ตัวนับ "คืนก่อนระบบเก็บยอด" ไม่นับ intent ที่ batch ถือ
+- **A-GW2** ป้าย/ปุ่ม/ค้างนานจากเซิร์ฟเวอร์ (`PaymentIntentPolicy.StatusLabel/SourceKindLabel/StatusOptions/IsStuck/StuckThreshold/CanEditFee` · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · งานเบื้องหลังใช้เกณฑ์เดียวกัน
+- **A-GW3** `PaymentIntentPolicy.SafeReturnUrl` ใน `StartAsync` (โดเมนเว็บไซต์ของบริษัท + `App:BaseUrl`)
+- **A-GW7** `POST pay/intents/{id}/refund/record-legacy` (`RecordLegacyRefundAsync` · `GatewayRefundMath.CheckLegacyRefundEntry` · เจ้าของ + หลักฐาน · hash chain)
+- **A-GW8** `POST pay/settlements/fee-vat/residue` (`WriteOffFeeVatResidueAsync` · `GatewayFeeVatClaim.ResidueCheck/ResidueTag`)
+- **A-GW9** 📋 ไม่เติมย้อนหลัง (แถวที่ `SettledFeeDeducted` มีค่าถูกอยู่แล้ว · ที่เหลือพิสูจน์ไม่ได้) — นับให้เห็นบนรายงาน (`LateRefundSplitUnknown`)
+- **A-GW10** `MyPermissionsResponse.PermissionDeniedMenuIds` (`PaymentGatewayPermissionScope.MenuPermissionKeys`) + layout ซ่อนเมนู · `tools/payment_menu_gate_sim.js`
+- **C-10** (ข้อ 83) config ผูกช่องทาง batch ⇒ เส้นเดิมไม่รับรายการใหม่ (คงเส้นคืนเงินภายหลัง) · **C-11** (ข้อ 84) `payment_fee` จาก config ตอนผูกครั้งแรก
+  (`IGatewayAccountResolver.ResolveFeeExpenseAccountAsync` ตัวเดียวกับเส้นเดิม · แตะ `SettlementChannelService.SaveAsync` จุดเดียว) · **B-1** `IPaymentProvider.PendingVerificationNotice` บนหน้าตั้งค่า (ไม่ต่อสาย fee_vat)
+- **DV-O4** (ฝ่ายค้านทีม DV · งานเพิ่ม): integration ไม่ทิ้งผล `VoidDocumentAsync` อีก — `VoidDocumentByExternalRefAsync` ส่งธง e-Tax/ภาษีขาย เป็น `InboundSyncResponse.Warnings` + sync log · `ProcessInvoiceAsync` (ยกเลิกขายเงินสดที่หักมัดจำ) ต่อธงเข้าคำตอบปฏิเสธ (`WithVoidNotices`)
+- เทสต์ `GatewayTeamGWRound201Tests` (สองทิศทุกข้อ) · required_call_site +33 แถว (negative test มือ 16/16) — commit bba8cfc7 · DV-O4 + รายงานทีม 97f1f255)_
+
+_2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
+- **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
+  (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม) — ก่อนล็อกใบต้นทาง/มัดจำ/กลับรายการใด
+- **DV-O2** รายงานข้อ 44 กลุ่มอีเมลไม่นับแถวที่ audit ยกเลิกบันทึกหลักฐาน (`EtaxReissueReview.VoidAuditHasEvidence`)
+- **DV-O3** `EtaxInvoiceService.VoidAsync` ใช้ตัวโหลดเดียวกับทาง (ก) `DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync`
+- **DV-O5** C-1 นับใบเสร็จเฉพาะที่ถือ VAT · ยุบ `DeclaredVatReportStatusAsync` เข้า `VatPeriodFilingStatusAsync` (คิวรีงวด ภ.พ.30 ตัวเดียว · `VatPeriodDeclaredOrFiledAsync` เรียกตัวนี้)
+- **DV-O6** ป้ายทาง (ค) นับเฉพาะต้นข้อความ/ต้นบรรทัด (ตัวอ่าน + regex migration `LastResolutionLinePattern` ชุดเดียว) · เหตุผล/เลขอ้างอิงที่ผู้ใช้พิมพ์ยุบเป็นบรรทัดเดียว (`OneLine`) ·
+  migration เติม `EtaxKeptOriginalAt` ครั้งเดียวในขั้นที่สร้างคอลัมน์ (DO block + advisory lock คีย์คงที่ · แถวแคบ)
+- **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
+- เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit 8c5e36d2)_
+
+_2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 + C-9 · รายงาน `erp-review/2026-10-01/team-ST.md`):
+- **A-ST1** เจ้าของการรับชำระ = `Payment.SettlementBatchId` (ประทับใน SaveChanges เดียวกับ INSERT ผ่าน `Helpers/SettlementPaymentOwner` · ผู้อ่าน 8 จุดย้ายมาอ่านคอลัมน์ · `BatchIdFromPaymentNotes` ถูกถอด ·
+  backfill ครั้งเดียวตอนสร้างคอลัมน์เฉพาะป้ายที่พิสูจน์ได้ · checker NOTES_MARKER_FORBID ทั้งเรพ) · แตะ `DocumentService.VoidPaymentAsync` 2 นิพจน์ (ช่วงทีม DV)
+- **A-ST2** ล็อก gateway ทุกเส้นที่ประทับ intent + ตรวจซ้ำใต้ล็อก · **A-ST3** ทางไปต่อของยอดไม่ลงตัวเมื่อไม่กรอกถึงวันที่ · **A-ST4** `GET settlement/channels/{id}/orphans` + ปุ่มบนหน้าช่องทาง
+- **A-ST5** ลายนิ้วมือเหตุของการรับรู้ของกำพร้า (การรับรู้ก่อนรอบ 201 ต้องรับรู้ใหม่) · **A-ST6** ใบที่อ้างทุกชั้น · **A-ST7** ผู้ตัดสินบรรทัดเข้าชุดผู้ทำของ SoD ·
+  **A-ST8** ลายนิ้วมือชิ้นตอนออกเอกสาร + คำเตือน `IssuedPieceDrift` · **A-ST9** `SettlementLine.KeyVersion` + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน
+- **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
+- **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
+  required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_
+
 _2026-10-01 รอบ 201 ทีม TX — ภาษี/ด่านอนุมัติ/มัดจำ ระยะ 1 (`erp-review/2026-10-01/team-TX.md` · BACKLOG §1.5 + C-7/C-21/B-7):
 - **A-TX1** §65 ตรี ขึ้นเป็นคำเตือนก่อนอนุมัติ — `EvaluateSection65TerAsync` (อ่านอย่างเดียว) ใช้ร่วมธุรกรรม/คำเตือน · `Helpers/Section65TerApprovalWarnings` (ชุดชนิด + ข้อที่ยกขึ้น ·
   วัดก่อนเปิดด้วย golden: ใบปกติ 0 คำเตือน) · ตัวตรวจคำ: อังกฤษทั้งคำ + ตัดคำไทยที่คล้าย ("ค่าปรับปรุง", "เงินเพิ่มเติม")

@@ -680,6 +680,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ลิงก์ Original/ReversedBy) + post JE ใหม่
     เลขเอกสารคงเดิมทั้งสองโหมด; response message ระบุโหมดชัด
     ("(in-place)" / "(reversal)") ให้ระบบต้นทางแสดงผลถูก.
+    • **รอบ 201 ทีม GW (A-GW12 · team-G E-4b)**: เส้นปรับ JE ตัวเดียว `ApplyResyncJournalAsync` (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ/ทำไม่ได้ ⇒
+      **dry-run สร้างบรรทัด JE ใหม่ก่อน** (`DryRunMappingJournalAsync` = ตัวสร้าง + ด่านโครงสร้างตัวเดียวกับตอนลงจริง ไม่บันทึก) แล้วค่อยกลับ JE เดิม ·
+      สร้างไม่ได้ ⇒ **คง JE เดิม** (ไม่กลับ — เดิมกลับก่อนแล้วสร้างใหม่ไม่ได้ ⇒ เอกสารไม่มี JE) + หมายเหตุ `[JE ยังเป็นยอดเดิม]` บนเอกสาร + sync log `PartialSuccess` +
+      ข้อความตอบคู่ค้า "(JE เดิมคงไว้)" · ตัวตัดสิน `Helpers/IntegrationResyncJournal.Decide` · ทางไปต่อที่มีจริง (`ResendNextStep`): แก้ mapping แล้วให้ระบบต้นทาง
+      ส่งซ้ำแบบ `resyncUpdate` (หมายเหตุ `[ยังไม่ลงบัญชี]` เดิมชี้ปุ่ม "ลงบัญชีใหม่จากหน้าเอกสาร" ที่ไม่มีในระบบ — แก้ข้อความแล้ว)
+  - **คำเตือนบัญชีธนาคารรับเงินล่วงหน้า (รอบ 201 ทีม GW · A-GW11)**: `GET integrations/dashboard` คืน `MoneyAccountWarning`
+    (`MoneyAccountFallback.IntegrationBankWarning` ← `PickBank` กติกาเดียวกับตอนรับรายการชำระ: บัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
+    ที่ไม่ส่ง `bankAccountName` จะถูกปฏิเสธ `INT-NO-BANK-ACCOUNT`) · หน้า `integrations.html` แสดงแถบเตือน + ลิงก์หน้าบัญชีธนาคาร
+  - **ยกเลิกเอกสารผ่าน API คู่ค้า ส่งธงของการยกเลิกกลับ (รอบ 201 ทีม GW · ฝ่ายค้าน DV-O4)**: `VoidDocumentByExternalRefAsync` และการยกเลิกอัตโนมัติใน `ProcessInvoiceAsync` (ขายเงินสดที่หักมัดจำที่ออกใบกำกับแล้ว) อ่าน `PaymentVoidResult` (`EtaxCancellationFlag` · `OutputVatNotice`) แล้วส่งเป็น `InboundSyncResponse.Warnings` (+ `ErrorMessage` ของ sync log) — เดิมทิ้งผล ⇒ คู่ค้าไม่รู้ว่าต้องยกเลิก e-Tax/ภาษีขายถอยไม่ได้
     Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
     แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
     Status="Updated"
@@ -1327,6 +1336,37 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **สิทธิ์อ่าน (G-8)**: `GET pay/intents` · `intents/{id}/events` · `reconciliation` = `Bank.View` (`PaymentGatewayPermissionScope.ViewPayments`) · `settlements/pending` =
   `Bank.View` · `intents/{id}/status` (live = ถามผู้ให้บริการ + เปลี่ยนสถานะ) = สิทธิ์เริ่มรับชำระของต้นทาง **หรือ** `Bank.View` (`StatusKeysFor`) — เดิมมีแค่ `[Authorize]` ·
   หน้า `payment-intents.html` ประวัติอ่านคีย์ `from/to` (เดิมอ่าน `fromStatus/toStatus` ที่ไม่มี ⇒ ว่างทุกแถว) · `payment-settlements.html` แก้ช่องหลังดูตัวอย่าง = ปิดปุ่มบันทึกจนกว่าจะดูใหม่
+- **รอบ 201 ทีม GW (BACKLOG §1.1 · `erp-review/2026-10-01/team-GW.md`)**:
+  **webhook รหัสลับต่อ config (A-GW1)** — action เดียว `PaymentWebhookController.Receive` สอง route: `api/pay/webhooks/{provider}/{token}` (`PaymentProviderConfig.WebhookToken`
+  สุ่ม 256 บิต · ออกตอนบันทึกตั้งค่า + migration เติมแถวเดิม · ลองยืนยันเฉพาะ config ที่รหัสตรง (เทียบเวลาคงที่) · รหัสผิด/รูปผิด = ไม่ยิงคำขอออก) และ URL เดิม
+  `{provider}` (คงไว้ — ลองเฉพาะ config ที่โหมดปัจจุบันยังไม่เคยได้รับทาง URL ใหม่ · `LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt`) · ตัวเลือกตัวเดียว
+  `GatewayWebhookRoute.ConfigsToTry` · หน้าตั้งค่าแสดง URL ใหม่ + URL เดิม + คำเตือน "ยังใช้ URL เดิม" (`LegacyUrlWarning`) ·
+  **กระทบยอดรู้จักรอบโอน batch (A-GW4)** — intent ที่ `SettlementBatchId` เป็นเจ้าของ = โอนแล้วเมื่อรอบโอน Posted/BankMatched (`GatewayReconciliation.IsBatchPosted`) ·
+  ยอดโอนเข้า/ยอดคืนที่ถูกหัก/ค่าธรรมเนียมที่ถูกหัก จากบรรทัดรอบโอนที่ลงบัญชีแล้ว (`BatchSettled` · `FromIntent`) · `GET pay/intents` `isSettled` ใช้ตัวตัดสินเดียวกัน ·
+  หน้า `payment-settlements.html` มีการ์ดกระทบยอด 30 วัน (เดิม endpoint ไม่มีผู้เรียก) + นับแถวเก่าที่แยกยอดคืนหักรอบหลังไม่ได้ (`LateRefundSplitUnknown` · A-GW9 —
+  ไม่เติมย้อนหลัง: แถวที่ `SettledFeeDeducted` มีค่ามียอดถูกต้องอยู่แล้ว ที่เหลือพิสูจน์ไม่ได้) ·
+  **VAT ค่าธรรมเนียมของรอบโอน batch (A-GW5)** — อยู่ในใบสำคัญจ่ายค่าธรรมเนียมของรอบโอน (ภาษีซื้อพัก 11640 จนกรอกใบกำกับที่เอกสาร) **ไม่ใช่ 11630** ⇒ ไม่รวมเข้ายอดเคลมของ
+  หน้านี้ (รวม = 11630 ติดลบ + ภาษีซื้อซ้ำ) · `GET settlements/fee-vat` แสดง `batchUndueVat/Documents` + `batchPortionNote` และด่าน "VAT เกินที่พัก" ต่อข้อความนี้ ·
+  **ปรับปรุงเศษ 11630 (A-GW8)** `POST pay/settlements/fee-vat/residue` → `WriteOffFeeVatResidueAsync` (ล็อกเดียวกับรอบโอน/เคลม · `GatewayFeeVatClaim.ResidueCheck`:
+  มีใบเคลมตั้งแต่ปรับปรุงครั้งก่อน · |ยอดค้าง| ≤ 1 บาท × จำนวนใบ · ใบกำกับล่าสุดครอบเดือนรอบโอนล่าสุด) → JE ค่าธรรมเนียม ↔ 11630 tag `gateway-fee-vat-residue:{provider}`
+  (นับเป็น "ล้างแล้ว" ในอายุ 11630 · ไม่เข้าการหาเคลมซ้ำ) + hash chain ·
+  **บันทึกยอดคืนย้อนหลัง (A-GW7)** `POST pay/intents/{id}/refund/record-legacy` (`[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`) →
+  `RecordLegacyRefundAsync`: `GatewayRefundMath.CheckLegacyRefundEntry` (สถานะคืนแล้ว · ยอดคืนในระบบ = 0 · ยอดไม่เกินยอดรับ · คืนเต็ม = เท่ายอดรับ · วันที่ไม่อนาคต · เลขอ้างอิง +
+  หลักฐาน · เลือก `BookNow` = ลงใบสำคัญคืนเงินเส้นเดียวกับคืนเงินปกติ (วันที่เงินออกจริง/งวดปิด = วันนี้+หมายเหตุ) หรือ `AlreadyBookedManually` = บันทึกยอดอย่างเดียว) ⇒
+  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง ⇒ รายการเข้ารอบโอนตามปกติ · hash chain ·
+  **ป้าย/ปุ่ม/ค้างนาน (A-GW2)** — `GET pay/intents` คืน `statusLabel/sourceKindLabel/isStuck/canCheckLive/canRefund/canEditFee` + `statusOptions` + `stuck/stuckMinutes`
+  (`PaymentIntentPolicy` · เกณฑ์ค้าง `StuckThreshold` ตัวเดียวกับงานเบื้องหลัง · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · JS ไม่มีสำเนาเกณฑ์ ·
+  **URL กลับหลังจ่าย (A-GW3)** — `StartAsync` ผ่าน `PaymentIntentPolicy.SafeReturnUrl` (โดเมน `SiteDomains` ที่อนุมัติ/`Sites.CustomDomain` ของบริษัท + `App:BaseUrl` ·
+  path สัมพัทธ์ต่อท้ายโดเมนระบบ · นอกนั้นแทนด้วยหน้าแรกของระบบ) ·
+  **ตัวนับ "คืนก่อนระบบเก็บยอด" (A-GW6)** ไม่นับ intent ที่รอบโอน batch ถือ ·
+  **ปิดเส้นเดิมสำหรับรายการใหม่ (C-10 · คำตัดสินข้อ 83)** — config ที่ผูกช่องทางรอบโอนชนิด Gateway ที่เปิดใช้ ⇒ `ListPendingAsync`/`BuildPlanAsync` ตัดรายการใหม่ออก
+  (`GatewayBatchIntentRules.LegacyAcceptsNewIntents`) + ข้อความ/ลิงก์หน้ารอบโอน (`LegacyNewIntentsMovedMessage`) · **คงเส้นหักยอดคืนภายหลัง** ของรายการที่เส้นนี้เป็นเจ้าของ ·
+  **ผังค่าธรรมเนียมช่วงเปลี่ยนผ่าน (C-11 · ข้อ 84)** — ผูก config ครั้งแรกที่ช่องทาง ⇒ `FeeAccountMapJson["payment_fee"]` = ผังของเส้นเดิม
+  (`IGatewayAccountResolver.ResolveFeeExpenseAccountAsync`: ผังใน config → 54710 · ตัวเดียวกับ `GatewaySettlementService.ResolveAccountsAsync`) · แก้ได้ · ไม่ย้ายย้อนหลัง ·
+  **คำเตือนล่วงหน้าบนหน้าตั้งค่า (B-1)** — `IPaymentProvider.PendingVerificationNotice` (adapter ประกาศ: ค่าธรรมเนียมที่อ่าน = ก่อน VAT ตามรุ่น API ที่ปัก · ยังไม่ยืนยันใน sandbox
+  ⇒ รอบโอนแรกหลังเปิดใช้/อัปเดตอาจยอดไม่ตรง) · **ไม่ต่อสาย `fee_vat`** จนกว่ามีผล sandbox ·
+  **เมนู (A-GW10)** — `MyPermissionsResponse.PermissionDeniedMenuIds` (ตาราง `PaymentGatewayPermissionScope.MenuPermissionKeys`) ⇒ layout ซ่อนเมนูรายการรับชำระ/กระทบยอด
+  เมื่อไม่มี `Bank.View`
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
@@ -1668,6 +1708,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 | --- | --- | --- | --- |
 | `GET reference` | `Settlement.View` | ได้ | `Helpers/SettlementReferenceCatalog.Build` (ป้ายไทยของ enum ทุกตัว · ประเภทบรรทัดจาก `SettlementLineTypeRules` · บทบาทผังค่าธรรมเนียม · ช่องจับคู่คอลัมน์ · **สถานะที่ตัวกรองรายการใช้ได้ `BatchFilterStatuses` (ไม่มี "ยกเลิกแล้ว" — D-05)**) · `defaultBankAccountId` (มีบัญชีเดียวเท่านั้น · D-03) · `maxUploadBytes`/`maxUploadMessage` (D-P4) · `columnMapMemory {allowed, reason}` (D-P2) + บัญชีธนาคาร/gateway ของบริษัท (tenant) |
 | `GET channels` · `GET channels/{id}` | View | ได้ | `ISettlementChannelService.List/Get` |
+| `GET channels/{id}/orphans` (รอบ 201 ทีม ST · A-ST4) | View (ยอดแสดงเฉพาะ Import/Post — D-P5) | ได้ | `ChannelOrphanReportAsync` — ของกำพร้าของช่องทาง (กอง · เหตุ · ผู้/เวลา/เหตุผลที่รับรู้) + ยอด + ผลต่อผังพัก (`Helpers/SettlementOrphanReport` · ใบสรุป/การรับชำระ = Dr · ใบค่าธรรมเนียม = Cr · ไม่รู้ชิ้น = ไม่เดา) + Σ ค้างผังพักของรายการที่รับรู้แล้ว · ปุ่ม "ของกำพร้า" ที่ `settlement-channels.html` |
 | `POST channels` · `PUT channels/{id}` | **`Settlement.Channels`** | **ห้าม** | `Create/UpdateAsync` (ผังพัก 1134x · โหมด VAT/WHT ค่าธรรมเนียม) |
 | `POST files/inspect` (multipart `file`+`channelId`) | **`Settlement.Import`** | ได้ | `InspectFileAsync` (ไม่บันทึก) |
 | `POST files/import` (multipart `file`+`payload` JSON) | Import | ได้ | `ImportFileAsync` · หัวรอบโอนไม่มี/`"header": null` ⇒ 400 ไทย (D-07 — เดิม 500) · **จำการจับคู่คอลัมน์ไว้กับช่องทางเฉพาะผู้มีสิทธิ์ `Settlement.Channels` และไม่ใช่คีย์ API** (`SettlementPermissionScope.ColumnMapMemory` · ด่านเดียวกับ `PUT channels` เพราะแผนที่คอลัมน์กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป · ไม่ผ่าน = นำเข้าได้ แต่ไม่จำ + คำเตือนในผล · D-P2) |
@@ -1698,6 +1739,32 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   รายขา + ผังค่าใช้จ่ายรายบรรทัดของใบค่าธรรมเนียม + บัญชีธนาคาร/ผังพัก · สีผลต่างจาก `plan.balanced` · หัวรอบโอนแสดง/เปลี่ยนบัญชีธนาคาร · ฟอร์มนำเข้าไม่เลือกบัญชีธนาคารให้
   (เว้นมีบัญชีเดียว) · ช่อง "จำการจับคู่คอลัมน์" ถูกแทนด้วยเหตุผลเมื่อผู้ใช้ไม่มีสิทธิ์ · ตัวกรองสถานะไม่มี "ยกเลิกแล้ว" · รายการรอบ "โหลดรอบที่เก่ากว่า" ·
   **ยังไม่ผูกแพ็กเกจ** (`SubscriptionMiddleware.RouteFeatureMap` ไม่มี `/settlement` — คำตัดสินเจ้าของข้อ 5 · ทีม G รับไป)
+
+**รอบ 201 ทีม ST** (รายงาน `erp-review/2026-10-01/team-ST.md` · BACKLOG §1.2 · คำตัดสินข้อ 82 C-9):
+- **A-ST1 เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId`** (เดิมป้าย `[SETTLEMENT:{id}]` ใน `Payment.Notes` ที่ผู้ใช้พิมพ์ได้) — ผู้เขียนตัวเดียว:
+  `EnsureReceiptAsync` เปิด `Helpers/SettlementPaymentOwner.StampOnSave` ครอบ `CreatePaymentAsync` ⇒ ตัวฟัง `SavingChanges` ประทับแถว Payment ที่กำลังเพิ่มของใบนั้น
+  **ใน SaveChanges เดียวกับ INSERT** แล้วตรวจว่าประทับจริง (ไม่ประทับ = 409 `SETTLEMENT-RECEIPT-OWNER`) · `CreatePaymentRequest` **ไม่มีช่องนี้** (เส้นรับชำระทั่วไป/API ตั้งไม่ได้) ·
+  ผู้อ่านทั้งหมดย้ายมาอ่านคอลัมน์: `SettlementPaymentsAsync` · ตัวหาของกำพร้า · ปุ่มรับรู้ · รับชำระข้ามรอบ (`PendingReceiptsElsewhereAsync`) · `FrozenPartsAsync` ·
+  `PostingArtifactsAsync` · `SettlementArtifactGuard.CheckDocumentPaymentsAsync` · `DocumentService.VoidPaymentAsync` (2 นิพจน์ — ช่วงเมธอดทีม DV) · ตัวอ่านป้าย
+  `BatchIdFromPaymentNotes` ถูกถอด · migration `PaymentSettlementOwnerMigrationSql` สร้างคอลัมน์ + **backfill ครั้งเดียวตอนสร้างคอลัมน์** (advisory lock คีย์คงที่ ·
+  เฉพาะป้ายที่พิสูจน์ได้: ป้ายอยู่ต้น Notes + ข้อความระบบ + รอบโอนของบริษัทเดียวกัน + `Reference` = เลขรอบโอน + e-Wallet + มีผังพัก — `SettlementPostingKeys.PaymentOwnerBackfillSql`) +
+  index `IX_Payments_Company_SettlementBatch` · ป้ายใน Notes ยังเขียนให้คนอ่าน แต่**ไม่มีผลกับด่านใด** (`tools/required_call_site_check.py` NOTES_MARKER_FORBID ทั้งเรพ)
+- **A-ST2** เส้นนำเข้าไฟล์/จับคู่มือ/จัดประเภท/จับคู่ใหม่/ยกเลิกรอบ ถือล็อก gateway ตัวเดียวกับเส้นประกอบและ `GatewaySettlementService` (`LockGatewaysAsync` ใน
+  `SyncIntentStampsAsync` + `VoidBatchAsync` · `LockGatewayAsync` ตัวเดียวรวม `PersistAsync`) · ตรวจซ้ำใต้ล็อก: intent ที่เส้นเดิมบันทึกรอบโอนไประหว่างนี้ ⇒ 409 `SETTLEMENT-INTENT-TAKEN`
+- **A-ST3** ยอดไม่ลงตัวของรอบที่ประกอบจาก intent โดยไม่กรอก "ถึงวันที่" ⇒ ทางไปต่อชี้ให้ประกอบใหม่โดยกรอกถึงวันที่ (ผู้ให้บริการ T+0) ก่อนเติมบรรทัดปรับปรุง (`SettlementBatchMath.UnbalancedNextStep`)
+- **A-ST5** การรับรู้ของกำพร้าประทับลายนิ้วมือเหตุ (`SettlementOrphanAckReasonHash` บน Document/Payment · `SettlementOrphanTriage.ReasonHash` จากรหัสโครงสร้างของเหตุ) ⇒
+  เหตุเปลี่ยน = การรับรู้เดิมไม่มีผล (รับรู้ใหม่ได้) · **การรับรู้ก่อนรอบ 201 (ไม่มีลายนิ้วมือ) = ไม่ครอบ** (DOCTRINE §1) ⇒ ต้องรับรู้ใหม่หนึ่งครั้ง
+- **A-ST6** ใบที่อ้างของกำพร้าไล่ทุกชั้น (`OrphanChildrenAsync` ≤ `MaxChildDepth` · กันวน) · หลานที่ยกเลิกไม่ได้ ⇒ ใบกำพร้าอยู่กองยกเลิกไม่ได้จริง (ข้อความบอกสายเอกสาร)
+- **A-ST7** ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด (`SettlementLine.DecidedBy/DecidedAt`) เข้าชุดผู้ทำของ SoD การลงบัญชี (`Helpers/SettlementLineMakers` → พารามิเตอร์เดิมของ `SodSelfApproval`)
+- **A-ST8** เอกสารที่ผู้ลงบัญชีสร้างประทับลายนิ้วมือชิ้นแผน (`Document.SettlementPieceFingerprint` · `SettlementPlanFingerprint.PieceHash`) — ตัวเทียบรอบค้างครึ่งทางยอมให้แก้
+  ที่ทำให้ชิ้นกลับมาตรงที่ออกไปจริง · พรีวิวเตือน (ไม่บล็อก) `IssuedPieceDrift` เมื่อเอกสารที่ลงไว้มีเนื้อหาไม่ตรงแผนปัจจุบัน · ไม่มีลายนิ้วมือ = พฤติกรรมเดิม
+- **A-ST9** `SettlementLine.KeyVersion` (`SettlementTxnKey.StoredKeyVersion`) · คีย์รุ่นก่อนที่คิดด้วยวันที่ตามตัวอักษรนับว่า "นำเข้าแล้ว" เฉพาะบรรทัดที่ไม่มีรุ่น (นำเข้าก่อนรอบ 201) —
+  แถวคืนเงินยอดเท่ากันข้ามเที่ยงคืนไม่ถูกข้ามว่าซ้ำกับอีกรายการ (`LegacyKeySets` · `CountsAsExisting`)
+- **C-9 (ข้อ 82)** ใบสรุปของรอบที่ยกเลิกแล้วซึ่ง**รับรู้แล้วและการรับรู้มีผล** = ใบแรกของวันของใบสรุปเพิ่มเติม (เดิมบล็อกเป็นรายได้ซ้ำถาวร) · ด่านเนื้อหาซ้ำทำงานต่อ:
+  `SplitDuplicates` เทียบบรรทัดของรอบเจ้าของ (รวมที่ถูกลบพร้อมรอบ — `SettlementContentOverlap.AgainstBatchesAsync`) + เลขรายการ/เลขออเดอร์ตรงรอบเจ้าของ = รายได้ซ้ำ
+  (`SettlementSummarySupplement.OrphanFirstDuplicates`) · ตัวแยกของกำพร้าย้ายมาก่อน `DuplicateSalesAsync` ใน `BuildGateAsync`
+- **คำถามค้าง DV Q1** `UnpostCoreAsync` รวมผลของ `VoidDocumentAsync` (ธง e-Tax · ภาษีขายที่ถอยไม่ได้) เข้าข้อความผลการยกเลิกการลงบัญชี + audit (`notices`) — เดิมทิ้งผล
+- **A-ST10 NOT-A-BUG**: `DocumentLineDeliveryService.SendDocumentLineAsync` ไม่มีผู้เรียก (มีแค่ DI) ⇒ ไม่มีการส่งเอกสารผ่าน LINE ให้นับเป็นหลักฐาน (`DocumentDeliveryEvidence` บันทึกเงื่อนไขถ้าจะต่อสาย)
 
 **ผังบัญชีใหม่** (`ChartOfAccountTemplates` + migration ใส่ให้บริษัทเดิมที่มีกลุ่มแม่ · `ON CONFLICT DO NOTHING` · ไม่ย้ายยอด): 11350 เงินที่ผู้ให้บริการกัน/ระงับไว้ ·
 53170 ค่าธรรมเนียมรับชำระเงิน · 57140 ขาดทุนจากการถูกปฏิเสธรายการ (chargeback) · **11341–11349 ไม่ seed** (สร้างตอนผูกช่องทาง)
@@ -1943,6 +2010,15 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
      ไม่ใช่ `CostPrice` นิ่ง); void = ต้นทุนเดิมของ movement ต้นทาง
      (ให้กลับรายการหักล้างมูลค่าเท่ากัน). POS ใช้ helper `EffectiveUnitCost`
      เดียวกันทั้ง COGS JE / stock stamp / refund
+   - **วิธีคิดต้นทุนต่อสินค้า (รอบ 201 ทีม IN · A-IN1/A-IN2 · คำตัดสินข้อ 30)**: `CreateProductRequest/UpdateProductRequest.CostingMethod`
+     + ช่อง "วิธีคิดต้นทุนสินค้า" บน `products.html` (echo `ProductResponse.CostingMethod/CostingMethodLocked/CostingMethodLockReason`) ·
+     ตัวตัดสินเดียว `Helpers/CostingMethodPolicy`: เลือกได้ ถัวเฉลี่ย/FIFO (ค่าเริ่มต้นถัวเฉลี่ย = พฤติกรรมเดิม) · ต้นทุนมาตรฐาน/ค่านอก enum
+     (รวม LIFO) ⇒ 400 `TFRS-NPAES-8-COSTING` · **สินค้าที่มีแถว `StockMovement` แล้ว (รวม soft-delete) เปลี่ยนวิธีไม่ได้** ⇒ ปฏิเสธพร้อม
+     ทางไปต่อ (สร้างรหัสใหม่ + ปรับสต็อกโอนยอด) · หน้าเว็บล็อกช่อง + เหตุผลจากเซิร์ฟเวอร์ · เปลี่ยนได้ ⇒ `AddChainedAuditLog`
+     · คิวต้นทุน FIFO + rebuild ถัวเฉลี่ย (`InventoryCostingService`) จำแนกแถวผ่าน `Helpers/InventoryCostFlow` ตัวเดียว: ยอดยกมา
+     (`OPENING`) และตรวจนับ/ปรับ (`ADJUST` ±) เข้าคิว · โอนระหว่างคลังไม่นับ (ต้นทุนระดับบริษัท) · OUT ใช้ค่าสัมบูรณ์ · ล็อตไม่มีต้นทุน
+     คิดด้วย `CostPrice` · อ่านแถวที่ ledger เพิ่มใน context แต่ยังไม่ save ด้วย (ใบเดียวสินค้าซ้ำสองบรรทัด · rebuild หลัง void) ·
+     rebuild ใช้ `WeightedAverageCost.Next` ตัวเดียวกับ ledger (เดิมข้าม ADJUST/OPENING)
 9. **Fixed asset auto-register** — `AutoRegisterFixedAssetsAsync` (DocumentService)
    เป็นแค่ตัวห่อ: มอบต่อให้ **`FixedAssetService.RegisterFromDocumentAsync(companyId,
    doc, onlyLineId: null, actor, skipIfScanRegistered: true)`** ซึ่งเป็น**ตัวขึ้นทะเบียน
@@ -2241,6 +2317,33 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   (3) **V1H-O6** ด่านไฟล์แนบของ `POST etax/{id}/void` และ `POST document/{id}/etax-cancellation` เรียก**เฉพาะเมื่อส่ง id ไฟล์** (ไม่ส่งไฟล์ = service ไม่แตะไฟล์) —
   `tools/attachment_gate_check.py` รับด่านใต้เงื่อนไข "มีไฟล์" ตรงตัวของ target ที่ระบุเท่านั้น (negative test ในตัว)
   (4) **V1H-O7** ธงของใบเสร็จที่ส่ง e-Tax แล้วแต่ยังไม่รู้ผล (Submitted) ไม่แนะนำทาง (ค) อีก (ทาง ค ปฏิเสธ Submitted) · ใบที่ตอบรับแล้วยังแนะนำ
+  · **รอบ 201 ทีม DV (รายงาน `erp-review/2026-10-01/team-DV.md` · คำตัดสินข้อ 62/65/66/67/68/74)**:
+  (1) **A-DV4 (ข้อ 68) · แก้ตามฝ่ายค้าน DV-O1** cascade ของ `VoidDocumentAsync` (ขั้น 1 ยกเลิกการชำระของใบ): การชำระที่**ชำระร่วมกับเอกสารอื่น**ถูกปฏิเสธ
+  **ทันทีหลังล็อกใบนี้ ก่อนล็อก/กลับรายการใด** (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม · เดิมตรวจในลูปหลังกลับรายการการชำระก่อนหน้าไปแล้ว)
+  ⇒ cascade แตะแค่ใบนี้ · **ไม่ล็อก "ใบอื่นของการชำระ"** (รอบแรกของ A-DV4 ล็อกไว้ — ว่างเสมอในเส้นที่สำเร็จ แต่สร้างวงรอกับ `VoidPaymentAsync`/
+  `CreateMultiDocPaymentAsync` ที่ล็อก ORDER BY Id) · ตรวจใต้ล็อกใบนี้คงที่ (การรับชำระใหม่ที่แตะใบนี้ต้องล็อกใบนี้ก่อน) · ยอดครอบของทาง (ค) ไม่นับ**ทุก**รายการที่
+  ธุรกรรมนี้กำลังยกเลิก (`PaymentsVoidingInThisContext` → `LivePaymentCoverageAsync(..., excludePaymentIds)` → pure `DocumentVoidPreconditions.LivePaymentCoverage`) ·
+  **`VoidDocumentAsync` คืน `PaymentVoidResult`** (ข้อความธง/ภาษีของทุกรายการในลูป) และ `POST document/{id}/void` ตอบข้อความถึงผู้กด (หน้าเอกสารแสดงคำเตือน 15 วินาที) — ผู้เรียกอื่น
+  (integration · CMS · settlement unpost) ทิ้งผลตามเดิม (ไม่มีผู้กด) · หมายเหตุ: ใบที่มีใบเสร็จ/ใบกำกับลูกที่ยังมีผลถูกด่านลูก `ChildBlocksAsync` บล็อกก่อนถึง cascade อยู่แล้ว ⇒
+  ข้อความในทางปฏิบัติส่วนใหญ่มาจากภาษีขายที่ถอยไม่ได้
+  (2) **A-DV1 (ข้อ 62/66)** รายงานอ่านอย่างเดียวข้อ 44 (`GET document/etax-reissue-review`) เพิ่ม 4 กลุ่ม: `StuckOutputVatAfterPaymentVoid` (ใบแจ้งหนี้ที่ยังตั้ง `OutputVatDueAt`
+  แต่ไม่เหลือเงินรับ/ใบเสร็จถือ VAT และเคยมีการจัดสรรหลายใบที่ถูกยกเลิก) · `SubmittedEtaxVoidedWithoutEvidence` (แถว e-Tax Voided ที่มีเวลาส่งแต่ไม่มี audit `etax-voided-in-system`) ·
+  `KeptOriginalCoverageLost` (ใบทาง ค ที่ยอดครอบหายแต่ไม่มีธง — ตัวตัดสินเดียวกับเส้นยกเลิกการชำระ) · `EmailedEtaxVoidedInSystem` (แถว e-Tax Voided ของใบที่ส่ง e-Tax by Email
+  ประทับเวลาแล้ว) · เอกสารที่บันทึกยกเลิกทาง e-Tax พร้อมหลักฐาน (`RD-ETAX-CANCEL-EVIDENCE`) ไม่นับ · ตัวนับรวม `EtaxReissueReviewReport.Total` · ไม่แก้อัตโนมัติ
+  · ฝ่ายค้าน DV-O2: กลุ่มอีเมลไม่นับแถวที่ audit ยกเลิกบันทึกหลักฐาน (`EtaxReissueReview.VoidAuditHasEvidence`) · DV-O7: แถบบนหน้าเอกสารบอก "… อีก N รายการ" ต่อกลุ่ม
+  (3) **A-DV2 (ข้อ 65)** คอลัมน์ `Documents.EtaxKeptOriginalAt` — ผู้เขียนตัวเดียว `ResolveEtaxCancellationAsync` (ทาง ค = ตั้ง · ทาง ก/ข = ล้าง) · ผู้อ่าน `EtaxReissueReview.KeptOriginal`
+  (คอลัมน์เป็นหลัก · ป้าย `KeptOriginalMarker` ตัวสุดท้าย**ที่ต้นข้อความ/ต้นบรรทัด**เป็นทางสำรองของใบเก่า — DV-O6: ป้ายที่ผู้ใช้พิมพ์กลางบรรทัดไม่นับ · เหตุผล/เลขอ้างอิงที่ผู้ใช้พิมพ์ถูกยุบเป็นบรรทัดเดียว `EtaxReissueReview.OneLine`) ใน `ReflagKeptOriginalReceiptsAsync` + รายงานข้อ 44 · migration `Round201DvStatements`
+  (DV-O6: **ครั้งเดียว**ในขั้นที่สร้างคอลัมน์ — DO block + information_schema + advisory lock คีย์คงที่ · เติมเฉพาะใบเสร็จ/ใบสำคัญรับที่มีภาษีและมีป้าย · regex `LastResolutionLinePattern` กติกาเดียวกับตัวอ่าน · เวลา = audit `RD-ETAX-ORIGINAL-STILL-VALID`) · ไม่ตามไปใบแทน (`DocumentNotCarriedFields`) · echo ใน `DocumentResponse` + แถบเขียวบนหน้าเอกสาร
+  (4) **A-DV3 (ข้อ 67) · DV-O3** ทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ" **และ** การยกเลิกแถว e-Tax (`EtaxInvoiceService.VoidAsync`) ใช้ตัวโหลดเดียว
+  `DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync` (กติกา "แนบหลังส่ง" ชุดเดียว): ไฟล์หลักฐานต้องแนบ**หลัง**เวลาที่ใบถึงกรมสรรพากร — `DocumentVoidPreconditions.CancellationEvidenceNotBefore` = ล่าสุดของ
+  (แถว e-Tax Submitted/Accepted: `EtaxVoidPolicy.EvidenceNotBefore`) และ (บันทึก e-Tax by Email ประทับเวลา: เวลาส่ง ไม่มี = เวลาสร้าง · ตัวโหลด `EtaxRdTimestampEmailTimesAsync`
+  ใช้เงื่อนไขอีเมลตัวเดียวกับ `EtaxEmailedWithRdTimestampAsync`) · ไม่ถึงกรมสรรพากร = ไม่จำกัด · audit เก็บ `evidenceNotBefore`
+  (5) **C-1 (ข้อ 74)** "ยกเลิกและออกใบแทน" บล็อกเมื่อรายงาน ภ.พ.30 ของเดือนภาษี (`TaxPointDate ?? DocumentDate`) ของใบเดิมหรือใบเสร็จถือ VAT ที่ระบบจะออกใหม่ อยู่ใน
+  `TaxFilingLockPolicy.DeclaredOrFiledStatuses` (ประกาศว่ายื่น/ยื่นแล้ว — เดิมดูแค่รายงานที่ล็อก) · DV-O5: ใบเสร็จนับเฉพาะที่ถือ VAT (`IsTaxInvoiceByLaw == true` และมีภาษี) · คิวรีงวดตัวเดียว `VatPeriodFilingStatusAsync` (`VatPeriodDeclaredOrFiledAsync` เรียกตัวนี้) · 409 `REISSUE-VAT-MONTH-DECLARED` พร้อมทางไปต่อ (ปลดล็อก/กลับเป็นร่างพร้อมเหตุผล ·
+  หรือใบลดหนี้/ใบเพิ่มหนี้เดือนปัจจุบัน) · ตัวตัดสิน `DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock` ทำงานหลัง `SettlementPaidReissue.Decide` ใน `EvaluateSettlementPaidReissueAsync`
+  (ปุ่มและการกดจริงใช้ตัวเดียว)
+  (6) **A-DV5** ธง "รับรู้ของกำพร้า" (`SettlementOrphanAckAt/By/Reason` + ชื่อผู้รับรู้ที่เป็นสมาชิกบริษัท) echo ใน `DocumentResponse` + แถบบนหน้าเอกสาร (อ่านอย่างเดียว)
+  (7) **A-DV6** `AuditLogs.Add` ตรง 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog` (เข้า hash chain)
 - **ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ**: ยกเลิกตรงไม่ได้ (409 ชี้ 3 ทาง) · แก้ผู้ซื้อ/คำบรรยาย = **ยกเลิกและออกใบแทน** (§2.4c) · กู้คืนใบเดิมที่ออกใบแทนแล้วไม่ได้
 - **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
   - `VoidPaymentAsync` (`DocumentService.cs`) — **ล็อกเอกสารทุกใบที่การชำระแตะ (ใบต้นทาง + ทุกใบในการจัดสรร) `ORDER BY "Id" FOR UPDATE`
@@ -2250,7 +2353,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     bank balance/PaidAmount สองรอบ)
   - **ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE (advisory)"** (ฝ่ายค้านรอบสาม V1I-X1): `ApproveDocumentAsync` และ `VoidDocumentAsync` เรียก
     `LockRelatedSourceDocumentAsync` ทันทีหลังล็อกใบตัวเอง — ก่อน `AutoPostToJournalAsync`/`ReverseJournalEntryAsync` ที่ถือล็อกเลข JE ·
-    เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม
+    เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม ·
+    รอบ 201 ทีม DV (A-DV4 · ฝ่ายค้าน DV-O1): `VoidDocumentAsync` ปฏิเสธการชำระที่ชำระร่วมกับเอกสารอื่น**ทันทีหลังล็อกใบตัวเอง** (ก่อนล็อกใบต้นทาง) แล้วจึงไม่มีใบอื่น
+    ให้ล็อก — **ไม่ล็อกเอกสารอื่นของการชำระ** (กันวงรอกับเส้นที่ล็อก ORDER BY Id) · ล็อกยอดมัดจำ (`LockDepositBalancesAsync`) ใช้ `pg_try_advisory_xact_lock`
+    (ไม่รอ — ชน = "รอสักครู่" แล้ว rollback) ⇒ ลำดับ "ล็อกมัดจำก่อนแถวใบ" ของปุ่มรับรู้ VAT มัดจำ (`RecognizeDepositOutputVatAsync`) ไม่เกิดวงรอกับเส้นยกเลิก
   - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
     + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
     OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน
@@ -3018,6 +3124,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 ### 5.6 Stock / Fixed Asset register
 - Stock: `StockMovement` row ที่ post ตอน approve — query ผ่าน
   `/inventory/movements`
+- **ตรวจ/ซ่อมยอดสต็อกรวม (รอบ 201 ทีม IN · C-5 · คำตัดสินข้อ 78)**: `GET product/inventory/stock-totals-check` (สิทธิ์ `Inventory.View`) รายงาน
+  สินค้าที่ `CurrentStock ≠ Σ WarehouseStock` พร้อมหลักฐานชั้นที่สาม (ยอดจากประวัติ movement) · `POST …/repair` (สิทธิ์ `Inventory.Adjust`)
+  ซ่อม `CurrentStock := Σ คลัง` เฉพาะแถวที่ผู้ใช้เลือกและค่ายังเท่าที่เห็น (`ExecuteUpdate` มีเงื่อนไข) · ประวัติไม่ตรงผลรวมคลัง = ต้องติ๊ก
+  "ตรวจนับแล้ว" · ทุกแถวเข้า audit chain · **ไม่มีงานไหนรันอัตโนมัติ** · ตัวตัดสิน `Helpers/StockTotalsReconciliation` · หน้า products.html
+  เมนู "🔎 ตรวจยอดสต็อกรวม" (แทน `ReconcileProductTotalsAsync` ที่ซ่อมเงียบและไม่มีผู้เรียก)
 - Fixed Asset: `FixedAsset` row สร้างอัตโนมัติ → ผู้ใช้กรอก
   `UsefulLifeMonths + DepreciationMethod` ในหน้า fixed-assets แล้วยืนยัน
   (`NeedsReview = false`) → schedule depreciation ปกติ · ใบที่อนุมัติแล้วแต่บรรทัด
@@ -3027,8 +3138,16 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ตัวเดียว ทั้งหน้าเอกสารและหน้าทะเบียน (ดู §3.2 ข้อ 9)
 - **แก้ไข/ยืนยันทะเบียน (รอบ 200 ทีม R · A12/E-04)**: `UpdateFixedAssetRequest` รับ `UsefulLifeMonths/SalvageValue/DepreciationMethod`
   (null = ไม่แตะ) — ตัดสินที่ `Helpers/FixedAssetValuationEdit.Problem`: ยังไม่มีค่าเสื่อมลงบัญชี ⇒ แก้ได้ + สร้างตารางที่ยังไม่ลงใหม่ ·
-  ลงบัญชีแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (TFRS บทที่ 10 เปลี่ยนประมาณการไปข้างหน้า — ระบบยังไม่มีเส้นนั้น) · ผังที่ดิน/CIP คิดค่าเสื่อมไม่ได้ ·
+  ลงบัญชีแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (ชี้ปุ่ม “ปรับอายุการใช้งาน” — เส้นเปลี่ยนประมาณการไปข้างหน้าด้านล่าง) · ผังที่ดิน/CIP คิดค่าเสื่อมไม่ได้ ·
   ราคาทุน/วันที่ซื้อ/ประเภท/สัญญาเช่า **ไม่รับตอนแก้** (ผูกกับ JE ตอนซื้อ) ⇒ หน้าเว็บล็อกช่อง + ป้ายเหตุผล (เดิม "แก้ไขสำเร็จ" แต่ไม่มีผล)
+- **เปลี่ยนประมาณการไปข้างหน้า (รอบ 201 ทีม IN · A-IN3 · คำตัดสินข้อ 38)**: `PUT fixedasset/{id}/adjust-life` รับ `NewUsefulLifeMonths ·
+  NewSalvageValue · NewDepreciationMethod (ใหม่ · null = คงเดิม) · Reason` → ตัวตัดสินเดียว `Helpers/DepreciationEstimateChange`: ฐานใหม่ =
+  NBV − ซากใหม่ · อายุคงเหลือ = อายุใหม่ − งวดที่ลงแล้ว · มีผลตั้งแต่งวดถัดไป (สร้างใหม่เฉพาะแผนที่ยังไม่ลง) · หยุดคิดค่าเสื่อม/ที่ดิน/ซากเกิน NBV/
+  อายุสั้นกว่าที่คิดไปแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ · **ไม่มีค่าใดเปลี่ยน = ยืนยันว่าทบทวนแล้ว** (ประทับ `UsefulLifeReviewedAt` ไม่สร้างฐานใหม่) ·
+  audit ผ่าน `AddChainedAuditLog` (เดิม `AuditLogs.Add` ตรงไม่มี CompanyId)
+- **ทบทวนอายุสิ้นรอบ (รอบ 201 ทีม IN · C-6 · คำตัดสินข้อ 79)**: รายการตรวจก่อนปิดงวด (`PreCloseChecklistService` · หน้า accountant.html) เพิ่มข้อ
+  `USEFUL_LIFE_REVIEW` **เฉพาะเดือนสุดท้ายของรอบบัญชี** (`Company.FiscalYearStartMonth`) — Warning เมื่อมีสินทรัพย์ Active ที่คิดค่าเสื่อม ซื้อก่อนรอบนี้
+  และ `UsefulLifeReviewedAt` (ปฏิทินไทย) ก่อนวันเริ่มรอบ · ตัวตัดสิน `Helpers/UsefulLifeReview`
 - **นำเข้าทะเบียนจากไฟล์ (E-03)**: วิธีคิดค่าเสื่อมผ่าน `Helpers/FixedAssetImportMethod.Resolve` — หมวดที่ดิน/งานระหว่างก่อสร้าง ว่าง/None ⇒ ไม่คิดค่าเสื่อม
   (อายุ 0 · ไม่มีตาราง) · หมวดนั้นกับวิธีอื่น ⇒ ปฏิเสธแถว · ข้อความวิธีคิดที่ไม่รู้จัก ⇒ ปฏิเสธแถว (เดิมกลายเป็นเส้นตรง 60 เดือนเงียบ)
 
@@ -3142,6 +3261,19 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **พยากรณ์เงินสด (`Helpers/CashForecastTiming`)** — เดิมใช้ `DueDate` ล้วน ⇒ ลูกค้าที่จ่าย
   ช้าประจำถูกนับว่าจ่ายตรงวัน · ตอนนี้เลื่อนตาม**มัธยฐาน**ความช้าจริง (ต้องมี ≥3 ใบ) ·
   ไม่มีประวัติ/จ่ายตรง/เคยจ่ายก่อนกำหนด = **ไม่ขยับเลย** (ห้ามมองโลกในแง่ดีโดยไม่มีสิทธิ์)
+- **รอบ 201 ทีม AI · A-AI7 — คู่ที่ AI แต่ง (`Helpers/BankAiCandidateGuard`)**: แผนจับคู่ทั้งก้อน (`BulkBankAiMatchService.ProposeAsync`)
+  ตัดข้อเสนอของ AI ที่อ้าง `bankTxnId`/`candidateId` นอกชุดจริง **ก่อน** ธง AiValidated/pre-dedup/dedup (`ScreenAiMatches`) และตรวจซ้ำในชั้น
+  ปรับเทียบ (ทุกข้อเสนอ) · ตัดบางส่วน = เพดานความมั่นใจ 0.55 + เหตุผลบนแถว · ทิ้งทั้งก้อน = นับในคำเตือนของแผน · **ยอดของ AI ไม่มีทางรอดถึงจอ**
+  (เดิม `? ra2 : c.Amount`) · ฝั่งเขียน `ValidateMatchAmountAsync` (เส้น batch + `/api/v1`) ตอบ "ไม่พบรายการที่จะจับคู่ N รายการ" แทน "ไม่รู้ทิศ"
+- **รอบ 201 · A-AI3 — มาตรฐานเดียว**: หน้าจับคู่ด้วยมือเลิกบวก/ลบคะแนนตามเงินลงที่ไหน (+5/−5 · +8/+4/−8) — ตัวเลขบนจอ = `BankMatchScorer.Score`
+  ตัวเดียวกับเส้นเครื่อง · เงินลงที่ไหนเป็น**ลำดับรอง** (`BankMatchScorer.DepositPreference`) ⇒ คำตัดสินของ AutoMatch/BankFeed/OpenBanking ไม่เปลี่ยน
+  · ที่อันดับบนจอเปลี่ยน: คู่ที่คะแนนต่าง < 13 และโบนัสเดิมพลิกลำดับ (เช่น JV เงินสด 85 กับ RV ธนาคาร 80 — เดิมจอแสดง 77/88) · ปุ่ม
+  "✨ AI จับคู่จากประวัติ" (`GetLearnedSuggestionsAsync`) เลิกใช้สูตรที่ 3 (0..1) — แพตเทิร์นแค่เลือกว่าจะเสนอรายการไหน · คะแนน = scorer ·
+  ติ๊กให้ (`AutoSelect`) = arbiter `Apply` บน**รายการค้างทั้งหมด** · หน้าเว็บอ่านธง (เดิม JS ติ๊กทุกตัว ≥ 0.4)
+- **รอบ 201 · A-AI1 — คลังห้ามสอนตัวเอง**: `BankReconciliationPattern.ExplicitConfirmCount` (backfill = `TimesConfirmed` ครั้งเดียวใน DO-block)
+  · ความเกี่ยวข้อง/ความมั่นใจนับเฉพาะ Explicit (`Helpers/BankPatternEvidence`) · แหล่งของคำยืนยันเดินจากคำขอ (`ReconcileRequest.Source` ·
+  `BatchReconcileItem.Source` · `ReconciliationGroupItemRequest.Source` ต่อรายการ) · ไม่ส่ง = Implicit · `tools/ai_feedback_source_check.py` ครอบ
+  body ยืนยันการจับคู่ + `matchItems` ใน bank.html แล้ว
 
 ### 6.0a-ter เลขที่ JE ต้องนับ "ใบที่ Add ค้างยังไม่ save" ด้วย
 
@@ -3694,7 +3826,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 
 | จุดเรียก AI | Feature key (enum) | Local model class | Round-trip feedback |
 | --- | --- | --- | --- |
-| OCR full review | `OcrFullReview = 22` | `GenericFeedbackDistillationModel` (register ใน Program.cs) | `SubmitCorrectionAsync` (OcrService) |
+| OCR full review | `OcrFullReview = 22` | `OcrFullReviewDistillationModel.cs` (bespoke รายช่อง — doc เดิมเขียน generic) | `SubmitCorrectionAsync` (OcrService) |
 | ผังบัญชี GL ต่อบรรทัด | `GlAccountSuggestion = 2` | `GlAccountDistillationModel.cs` (4-tier: vendor+keyword exact → fuzzy → company-keyword ×0.85 → industry-keyword ×0.55) | `RecordLineAccountFeedbackAsync` ตอน approve |
 | OCR document type label | `DocumentTypeClassification = 3` | generic | ตอน user แก้ในหน้า scan |
 | OCR เราเป็นผู้ซื้อ/ผู้ขาย (ถามเฉพาะเมื่อ `OcrPartyResolver.ShouldAskAi`) | `DocumentRoleInference = 4` | generic (`Buyer`/`Seller`) | ตอน user แก้ `OurRole` ในหน้า scan (`OurRoleAiFeedbackId`) — รอบ 156 |
@@ -3704,7 +3836,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | **เข้าข่ายหัก ณ ที่จ่ายไหม (ตอนอนุมัติ)** — ถามเฉพาะเมื่อ `WhtApplicabilityEvidence.Judge` = `Unknown` | `WhtCategoryInference = 5` (**คลังเดียวกัน ห้ามตั้ง key ใหม่**) | generic | `WhtAdviceAiFeedbackId` บนเอกสาร → ปิดตอนอนุมัติ |
 | Line item structured parse | `LineItemStructuredParse = 6` | – (ไม่มี student — heavy AI) | – |
 | Approval warning fix | `ApprovalWarningFixSuggestion = 7` | `ApprovalWarningDistillationModel.cs` | – |
-| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` | ตอน user reconcile |
+| Bank statement match | `BankStatementMatch = 8` | `BankMatchDistillationModel.cs` — **รอบ 201 A-AI1**: ความมั่นใจนับเฉพาะ `BankReconciliationPattern.ExplicitConfirmCount` (ผู้ใช้เลือกคู่เอง) ผ่าน `Helpers/BankPatternEvidence.StudentConfidence` · ไม่มีคำยืนยันแบบตั้งใจ = เพดาน 0.45 | ตอน user reconcile — ทุกทางเข้าส่ง `source` (1:1/เลือกเอง = Explicit · แผน AI ทั้งก้อน = BulkApprove · ติ๊กจากคลัง = Implicit · ไม่ส่ง = Implicit) |
 | Credit note reason | `CreditNoteReasonClassification = 9` | generic | ตอน user เลือก radio |
 | Fuzzy duplicate doc | `FuzzyDuplicateDetection = 10` | `DuplicateDocumentDistillationModel.cs` | – |
 | Anomaly explanation | `AnomalyExplanation = 11` | `AnomalyExplanationDistillationModel.cs` | รอบ 200 (H-3): `ExplainAnomaly` บันทึกคำตอบลงรายการเมื่อ **ครูหรือนักเรียน** ตอบ (`AnomalyExplainVerdict.ShouldPersist` — เดิม `UsedAi` เท่านั้น ⇒ kill-switch แล้วว่างตลอด+ยิงซ้ำ) + คำตอบต้องอยู่ในชุด `LikelyError/LikelyLegit/NeedReview` · ป้าย `usedAi` ของคำตอบที่แคชอ่านจากแถว feedback (ครูตอบจริงไหม) · **รอบ 200 ทีม RF (R200-X2/X8)**: นักเรียนอ่าน payload ของ prompt จริง (`anomaly.amount` · `vendor_history_12mo` ชุดยอดหรือสรุป · `recent_12mo` · `local_model.pick`) ผ่าน `Helpers/AnomalyExplainStudent` (เดิมอ่าน `root.amount` ⇒ ไม่เคยตอบ) · ตอบค่าในชุดเสมอ (z-score → ช่วงประวัติ → กติการะดับความรุนแรง → `NeedReview` = cold-start) · คำอธิบายไปทาง `StructuredJson` ⇒ ปิด provider ยังได้คำอธิบาย+บันทึกลงรายการ · คำตอบครูนอกชุด ⇒ `AnomalyExplainVerdict.Coerce` (รูปแบบต่าง ⇒ ค่าในชุด · อื่น ๆ ⇒ `NeedReview`) แล้วเก็บ ไม่ทิ้ง · **รอบ 200 ทีม Z (RF-6)**: ทางเข้าเฉพาะกิจ `POST anomaly/explain` ใช้ `AnomalyExplainVerdict.View` ตัวเดียวกับทางเข้าที่บันทึก ⇒ ปิด provider แล้วเห็นคำอธิบายนักเรียน (ไม่ใช่ข้อความ routing) + คำตอบผ่าน Coerce |
@@ -3716,26 +3848,33 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | Aging explanation | `AgingExplanation = 17` | – (essay) | – |
 | Tax filing pre-check | `TaxFilingPreCheck = 18` | – (essay) | – |
 | Stock movement validation | `StockMovementValidation = 19` | generic | – |
-| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | bespoke (ใน prompts) | ตอน user save PV |
-| Manual JE line suggest | `ManualJournalSuggestion = 21` | generic | ตอน user save JE |
+| **Bulk PV accounting** (ใบสำคัญจ่าย) | `PaymentVoucherAccountingSuggestion = 20` | **รอบ 201 A-AI4**: `PaymentVoucherAccountingDistillationModel.cs` — คำถามรายบรรทัดส่งต่อ generic ตัวใน · คำถามทั้งใบแตกเป็นรายบรรทัด (กุญแจ `BuildPerLineInputJson` ตัวเดียวกับแถว feedback ลูก) แล้วตอบ `StructuredJson {"lines":[…]}` · ตอบไม่ครบ = ความมั่นใจ 0 (ไม่ข้ามครู) · เดิม generic ⇒ ปิด provider แล้ว "AI ตอบ JSON ไม่ valid" · เติมให้เอง = เซิร์ฟเวอร์ตัดสิน `Helpers/GlSuggestionApplyPolicy` (≥0.70 + ผังของบริษัท · `MayAutoFill`) · ป้ายผู้ตอบ `Helpers/AiAnswerSource` | ตอน user save PV · แถวลูกจากนักเรียนบันทึกเป็น LocalModelAnswer/Skipped (ไม่ใช่คำตอบครู — กันคลังสอนตัวเอง) |
+| Manual JE line suggest | `ManualJournalSuggestion = 21` | – (ไม่มีจุดเรียก AI ในเรพ · รอบ 201 ตรวจ) | – |
 | Reorder forecast | `ReorderForecast = 24` | local Croston/Holt-Winters | – |
 | Bulk bank statement match | `BulkBankStatementMatch = 25` | bespoke | – |
 | Import column match | `ImportColumnMatch = 26` | bespoke | ตอน user map |
 | Import data review | `ImportDataReview = 27` | – (essay) | – |
 | **Payment type** (Cash/Credit) | `PaymentTypeSuggestion = 28` | `PaymentTypeDistillationModel.cs` | ตอน user เปลี่ยน select |
 | OCR project match | `OcrProjectMatch = 29` | generic | `SetExtractedLineProjectAsync` / `SetAllExtractedLineProjectsAsync` (ตอน user override project ราย line — ปิดลูปด้วย `ProjectAiFeedbackId` ฝังใน line) |
-| VAT type per line | `VatTypeInference = 30` | generic | ตอน user แก้ |
+| VAT type per line | `VatTypeInference = 30` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) · กติกา `ThaiVatTypeRule` | ตอน user แก้ |
 | Payment terms / credit days | `PaymentTermsSuggestion = 31` | – (pure lookup, ทุกครั้งผ่าน orchestrator) | ตอน user แก้ |
-| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | generic | ตอน user เปลี่ยน select |
-| Project allocation per line | `ProjectAllocationSuggestion = 33` | generic | ตอน user เลือก project |
-| Contact fuzzy match | `ContactFuzzyMatch = 34` | generic | – |
-| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | reuse `GlAccountDistillationModel` | – |
-| Dimension allocation | `DimensionAllocationSuggestion = 36` | generic | – |
+| Payment channel (แหล่งเงิน) | `PaymentChannelSuggestion = 32` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | ตอน user เปลี่ยน select |
+| Project allocation per line | `ProjectAllocationSuggestion = 33` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | ตอน user เลือก project |
+| Contact fuzzy match | `ContactFuzzyMatch = 34` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | – |
+| Manual JE account suggest | `ManualJeAccountSuggestion = 35` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) (orchestrator เลือกนักเรียนด้วย FeatureKey — `GlAccountDistillationModel` ตอบแค่ `GlAccountSuggestion`) | – |
+| Dimension allocation | `DimensionAllocationSuggestion = 36` | **– ไม่มีนักเรียน** (รอบ 201: `DistillationModelRegistry.KnownGapsWithoutStudent` — doc เดิมเขียนว่า generic ซึ่งไม่จริง) | – |
 | Asset category suggest | `AssetCategorySuggestion = 37` | rule-based keyword (no AI by default) | ตอน user แก้ใน asset modal |
 | **ประเภทบรรทัด settlement** (รอบ 198 · ✅ ผู้เรียก = `SettlementImportService.ClassifyAsync` ทีม B) | `SettlementLineClassify = 57` | generic (คำตอบ = ชื่อ `SettlementLineType` · payload `SettlementLineClassification.BuildPromptPayload` = ป้ายที่ normalize + ตัด PII แล้ว + ชนิดช่องทาง + เครื่องหมาย — ไม่มียอด/เลขออเดอร์/ชื่อผู้ซื้อ) · ถามเฉพาะป้ายที่ adapter/คลังต่อช่องทาง/seed ตอบไม่ได้ · ด่าน `SettlementLineClassification.AcceptModelAnswer` = `ParseClassifierAnswer` + ไม่ใช่ Adjustment + `SignAllowed` + confidence ≥ 0.70 + `UsedAi`/`FromLocalModel` และไม่ใช่ majority (`-majority`) · เก็บ `ClassifyAiFeedbackId`/`ClassifyUsedAi` · kill-switch ⇒ `Unclassified` เงียบ | `ReclassifyLineAsync` → `RecordUserChoiceAsync(…, Explicit)` ในธุรกรรมเดียวกับการแก้ (บรรทัดที่ไม่เคยถาม ⇒ สร้างแถว feedback `Skipped/None` ก่อน) |
 
 **Litmus test ก่อน commit**: ปิด provider ทุกตัว → feature ยังทำงานครบ 100%
 (`AiProviderConfig.IsActive = false`)
+
+**รอบ 201 ทีม AI (A-AI6) — ทะเบียนนักเรียนตัวเดียว + kill-switch ที่ล้มได้จริง**: การลงทะเบียนนักเรียนย้ายจาก `Program.cs`
+ไป `Services/Ai/Distillation/DistillationModelRegistry.AddLocalDistillationModels` · `AiKillSwitchOrchestratorTests` ประกอบ DI จากเมธอดเดียวกัน
+แล้วรัน `AiOrchestrator` ตัวจริงที่ provider ทุกตัว `IsActive=false` ทุก feature ที่มีนักเรียน (seam `LoadSiteSettingsAsync`/`LoadActiveProviderAsync`
+· ตัวกรอง `ActiveProviderFilter` ตัวเดียวกับ query จริง) · negative: ถอดนักเรียนแล้วล้ม · **ตาข่ายชั้นนอกคืนคำตอบนักเรียน**เมื่อขั้นหลังทำนาย
+โยน exception (เดิมคำตอบหาย) · feature ที่ยังไม่มีนักเรียน **29 ตัวที่มีจุดเรียก AI** + 9 ตัวที่ไม่มีจุดเรียก อยู่ใน
+`KnownGapsWithoutStudent` (ratchet สองทิศ — ห้ามเพิ่มแถว · เพิ่มนักเรียนแล้วต้องลบแถว) = กฎเหล็ก #1 ข้อ 2 **ยังไม่ผ่าน**สำหรับ 29 ตัวนั้น (backlog)
 
 ---
 
@@ -3780,7 +3919,11 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 | เหตุการณ์ | เอกสาร | หมายเหตุ |
 | --- | --- | --- |
 | ยืนยัน + รับมัดจำ (`ConfirmAsync`) | `Receipt` `IsDeposit=true` `BookingNumber=RES-…` `PricesIncludeVat=true` · **รอบ 194: ประเภทเงินมัดจำจาก `DepositPolicyResolver.ResolveKind`** (`LodgingService.DepositKindForAsync`: ประเภทของที่พัก `RoomDepositKindId` → ค่าเดิมของที่พัก `DepositVatTreatment` → ประเภทเริ่มต้นบริษัท → ค่าบริษัท → ประเภทธุรกิจ · supply = บริการ · `priceChannel: true` = ประเภทของที่พัก/ค่าเริ่มต้นที่เป็นเงินประกันถูกข้าม + คำเตือน `DEP-KIND-NATURE` — ฝ่ายค้าน C1) · รูปใบผ่าน `DepositDocumentShaping.Apply` (ไม่มีประเภทเลย = รูปเดิมทุกตัวอักษร) · ส่ง `DepositKindId:` ⇒ ใบตรึงประเภท/ลักษณะ · หมายเหตุภายในบอกประเภท + ลักษณะ + โหมดที่ลงจริง (`OfDocument`) → Approve(ack) | VAT ทันที: Cr 217xx + 21911 (§78/1) · รอเรียกเก็บ: Cr 217xx + 21913 · เต็มยอด: Cr 217xx เต็ม · บริการที่ไม่ใช่ VAT ทันที ⇒ หมายเหตุ `RD-78/1-DEPOSIT-VAT` · ตรวจห้องว่างซ้ำก่อนยืนยัน (`LODGING-OVERSOLD`) · สถานะหลังรับมัดจำ `LodgingDepositSettlement.StatusAfterDeposit`: พนักงานกด "ยืนยัน" = ยืนยันเสมอ · เงินเข้าจาก gateway (`LodgingReservationPaymentHandler` `fromOnlinePayment:true`) = ยืนยันเฉพาะเมื่อเปิด `AutoConfirmOnDeposit` (ปิด = รอพนักงาน + ล้าง hold กันยกเลิกอัตโนมัติ) · ปุ่ม "รับชำระเพิ่ม" ส่ง `confirmReservation:false` · รับชำระบนการจองที่เช็คอินแล้วไม่ถอยสถานะ · webhook ซ้ำไม่ออกใบมัดจำซ้ำ (S-06 · รอบ 193) |
-| เช็คเอาต์ (`CheckOutAsync` → `SettleCheckOutAsync`) | `TaxInvoice` (บริษัทจด VAT) / `Invoice` ทั้งการเข้าพัก: บรรทัดค่าห้องต่อห้อง (AccountCode = `RoomRevenueAccountCode`, ProductCode ของประเภทห้อง) + บริการเสริม (1 บรรทัด/รายการ ยอดรวม — ห้ามหาร Total/Qty) + folio Pending (VatRate รายบรรทัดผ่าน `LodgingPricingEngine.ChargeVatRate` — บริษัทไม่จด VAT = 0 ไม่ว่าเก็บอะไรไว้) + service charge (`ServiceChargeAccountCode`) · **รอบ 193 (P0-1/P0-3/C2)**: `LodgingDepositSettlement.PlanCheckout(มัดจำค่าห้องของการจอง — รอบ 194 กรองเงินประกันออกด้วย `LodgingDepositSettlement.RoomDeposits` ทุกเส้น (เช็คเอาต์/ทำต่อ/ยกเลิก/คืนเงิน), ฐานใบสุดท้าย, DocumentService.PreviewTotals)` วางแผน**ก่อนออกเลข**: มัดจำ "ออกใบกำกับแล้ว" ⇒ หักฐานบนใบ (ส่วนหักท้ายบิล) + การอนุมัติรับรู้ฐาน (`RealizeTaxedDepositDeductionsAsync`) · มัดจำ "พัก/เต็มยอด" ⇒ `ApplyDepositToInvoiceAsync` หลังอนุมัติ · เก็บ `BalanceDue` หลังหักจริง · มัดจำเกินยอด ⇒ ใช้เท่าที่ใบรับได้ ส่วนเกินเป็น `RefundAmount` ค้างคืน → ถ้า `CollectBalanceNow` และ `BalanceDue>0` → `CreatePaymentAsync` | ประทับ `FinalDocumentId` ทันทีหลังอนุมัติ · ใบออกแล้วแต่ใช้มัดจำล้ม ⇒ กดเช็คเอาต์ซ้ำ = ทำต่อ (`ResumeCheckOutAsync` · ไม่ตัดซ้ำ) · **อนุมัติล้ม (ยังไม่ประทับ) ⇒ กดซ้ำใช้ใบร่างเดิม** (`LodgingCheckoutDraft.LeftoverOf`/`Plan` → `UpdateDocumentAsync` ด้วยเนื้อหารอบนี้ · ชนิดเปลี่ยน = ลบใบร่างแล้วสร้างใหม่ · รอบ 194 R3 P-1 — เดิมได้ใบร่างใหม่ทุกครั้ง) · ล้ม = หมายเหตุ + audit + ข้อความ · ด่าน `LODGING-DEPOSIT-VAT-MISMATCH`/`LODGING-DEPOSIT-CONTACT` + หาผู้ติดต่อ**ก่อน**สร้างรายการค่าเสียหาย/เช็คเอาต์ช้า (รายการใหม่ผูกหลังออกใบสำเร็จ) · `RoundingDelta` ≠ 0 ⇒ หมายเหตุ · _เดิมส่ง `DepositAppliedDrivesJournal=true` บนใบเครดิตที่ AutoPost ไม่อ่าน ⇒ ลูกหนี้เต็ม + เก็บเงินซ้ำมัดจำ + VAT มัดจำซ้ำ_ · ใบเช็คเอาต์ถูก void ⇒ `FinalDocumentNote` บอกทางออกใบใหม่ที่หน้าเอกสาร (ไม่มีปุ่มในโมดูล — คำถามเจ้าของ Q11) · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
+| เช็คเอาต์ (`CheckOutAsync` → `SettleCheckOutAsync`) | `TaxInvoice` (บริษัทจด VAT) / `Invoice` ทั้งการเข้าพัก: บรรทัดค่าห้องต่อห้อง (AccountCode = `RoomRevenueAccountCode`, ProductCode ของประเภทห้อง) + บริการเสริม (1 บรรทัด/รายการ ยอดรวม — ห้ามหาร Total/Qty) + folio Pending (VatRate รายบรรทัดผ่าน `LodgingPricingEngine.ChargeVatRate` — บริษัทไม่จด VAT = 0 ไม่ว่าเก็บอะไรไว้) + service charge (`ServiceChargeAccountCode`) · **รอบ 193 (P0-1/P0-3/C2)**: `LodgingDepositSettlement.PlanCheckout(มัดจำค่าห้องของการจอง — รอบ 194 กรองเงินประกันออกด้วย `LodgingDepositSettlement.RoomDeposits` ทุกเส้น (เช็คเอาต์/ทำต่อ/ยกเลิก/คืนเงิน), ฐานใบสุดท้าย, DocumentService.PreviewTotals)` วางแผน**ก่อนออกเลข**: มัดจำ "ออกใบกำกับแล้ว" ⇒ หักฐานบนใบ (ส่วนหักท้ายบิล) + การอนุมัติรับรู้ฐาน (`RealizeTaxedDepositDeductionsAsync`) · มัดจำ "พัก/เต็มยอด" ⇒ `ApplyDepositToInvoiceAsync` หลังอนุมัติ · เก็บ `BalanceDue` หลังหักจริง · มัดจำเกินยอด ⇒ ใช้เท่าที่ใบรับได้ ส่วนเกินเป็น `RefundAmount` ค้างคืน → ถ้า `CollectBalanceNow` และ `BalanceDue>0` → `CreatePaymentAsync` | ประทับ `FinalDocumentId` ทันทีหลังอนุมัติ · ใบออกแล้วแต่ใช้มัดจำล้ม ⇒ กดเช็คเอาต์ซ้ำ = ทำต่อ (`ResumeCheckOutAsync` · ไม่ตัดซ้ำ) · **อนุมัติล้ม (ยังไม่ประทับ) ⇒ กดซ้ำใช้ใบร่างเดิม** (`LodgingCheckoutDraft.LeftoverOf`/`Plan` → `UpdateDocumentAsync` ด้วยเนื้อหารอบนี้ · ชนิดเปลี่ยน = ลบใบร่างแล้วสร้างใหม่ · รอบ 194 R3 P-1 — เดิมได้ใบร่างใหม่ทุกครั้ง) · ล้ม = หมายเหตุ + audit + ข้อความ · ด่าน `LODGING-DEPOSIT-VAT-MISMATCH`/`LODGING-DEPOSIT-CONTACT` + หาผู้ติดต่อ**ก่อน**สร้างรายการค่าเสียหาย/เช็คเอาต์ช้า (รายการใหม่ผูกหลังออกใบสำเร็จ) · `RoundingDelta` ≠ 0 ⇒ หมายเหตุ · _เดิมส่ง `DepositAppliedDrivesJournal=true` บนใบเครดิตที่ AutoPost ไม่อ่าน ⇒ ลูกหนี้เต็ม + เก็บเงินซ้ำมัดจำ + VAT มัดจำซ้ำ_ · ใบเช็คเอาต์ถูก void ⇒ **รอบ 201 ทีม IN (A-IN5 · คำตัดสินข้อ 36)**: การจองที่เช็คเอาต์แล้ว ⇒ ปุ่ม “ออกใบเช็คเอาต์ใหม่” (`POST …/reissue-final` ·
+`LodgingManage` · `ReissueFinalDocumentAsync`): รายการจาก `BuildFinalInvoiceLinesAsync` (ตัวสร้างเดียวกับเช็คเอาต์ · folio ที่ `Paid` = ที่อยู่บนใบเดิม) + แผนมัดจำ
+จากสถานะปัจจุบัน + ใบร่างผ่าน `UpsertFinalDraftAsync` + ใช้มัดจำผ่าน `ApplyFinalDepositPlanAsync` (ตัวเดียวกับเช็คเอาต์) · ยอด/ชนิดต้องเท่าใบเดิมก่อนออกเลข
+(`Helpers/LodgingCheckoutReissue` · ต่าง = ปฏิเสธ ทางไปต่อใบลด/เพิ่มหนี้) · ผู้ซื้อเดิม · หมายเหตุอ้างเลขใบเดิม · ไม่นับมิเตอร์/ไม่สร้างงานแม่บ้าน/ไม่รับเงินซ้ำ ·
+ไม่ตั้ง `ReplacesDocumentId` (ช่องนั้นเป็นของใบแทน §86/6 ที่ไม่ลงบัญชี) · ยังเช็คอินอยู่ (ขั้นใช้มัดจำค้าง) ⇒ `FinalDocumentNote` ทางเดิมที่หน้าเอกสาร · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
 | ยกเลิก / no-show (`CancelCoreAsync`) | ค่าปรับ = `LodgingPricingEngine.CancellationFee` จาก **snapshot** นโยบาย ณ วันจอง (no-show = `NoShowChargePercent`) · **รอบ 193 (F-03/P0-2)**: ด่านสถานะ (Terminal + เช็คอินแล้ว) อยู่ในตัวกลาง ⇒ เส้นแขกยกเลิกซ้ำ = "ยกเลิกไปแล้ว" · บันทึกสถานะยกเลิก + `RefundAmount` (ยอด**ต้องคืน**) ก่อน แล้วลงบัญชีส่วนริบ `RealizeDepositAsync(ฐาน, ForfeitAs: PriceOrFee)` (`LodgingDepositSettlement.PlanCancellation` — เดิมส่ง gross เข้าช่องฐาน ⇒ ล้มทุกครั้งเมื่อจด VAT) · **รอบ 194 (spec S3)**: มัดจำค่าห้อง = ส่วนหนึ่งของราคา ⇒ ริบเป็นราคา/ค่าธรรมเนียมยกเลิก — VAT ทันที = คงเดิม · รอเรียกเก็บ = ย้าย 21913→21911 + ธง `[DEPOSIT-LATE-VAT]` · เต็มยอด = ออกใบกำกับของยอดที่ริบแล้วตัดชำระ (ตัดสินที่ `ForfeitVatDecision` ใน DocumentService — เดิมรายได้ไม่มี VAT เงียบ ๆ) · รอบ 194 ทีม M: ส่งอัตรา VAT ของที่พัก (`channelVatRate`) ⇒ ที่พักไม่คิด VAT ไม่ได้ใบกำกับ 7% · ล้ม ⇒ หมายเหตุบนการจองถูกบันทึกจริง (DocumentService ไม่ล้าง change tracker ทั้งก้อน) + ทางไปต่อข้อความเดียว `ForfeitRetryHint` · เงินประกันถูกกรองออกก่อนวางแผน (ไม่ถูกริบเป็นค่าปรับ) + หมายเหตุให้ปิดที่ปุ่มเงินประกัน · **ไม่ลง JE คืนเงิน/ใบลดหนี้ตอนยกเลิกแล้ว** | ค่าปรับเกินมัดจำ = บันทึกส่วนต่างที่ยังไม่เรียกเก็บใน InternalNotes · แขกไม่เห็นข้อความภายในเมื่อยกเลิกสำเร็จแต่ลงรายได้ส่วนริบล้ม (หมายเหตุ + audit ฝั่งพนักงาน) · night audit บันทึก no-show แต่ไม่ริบ/คืน (backlog) |
 | ยืนยันคืนเงินแล้ว (`POST /lodging/reservations/{id}/refund-paid` · สิทธิ์ `LodgingManage` · `RecordRefundPaidAsync`) | พนักงานยืนยันว่าโอนคืนจริง → `RefundDepositAsync` (JE + ใบลดหนี้) ทีละใบมัดจำ **จากบัญชีที่เงินเข้า** (ขา Dr ของ JE รับมัดจำ เช่น 11340 gateway) หรือบัญชีธนาคารที่เลือก · หาไม่ได้ = ปฏิเสธให้เลือก (ไม่เดา 111) | `RefundPaidAmount/RefundPaidAt/RefundPaidBy/RefundReference` · `RefundState` (None/Pending/Paid/Unknown) คำนวณจากสองตัวเลขเท่านั้น · แถวยกเลิกเดิมที่โค้ดเก่า "ลงคืนแล้ว" = ป้าย `legacy:posted-at-cancel` ⇒ `Unknown` "ไม่มีข้อมูลการโอนคืน" (กดคืนไม่ได้ · ไม่อยู่ในคิว) · ล็อกระดับการจอง (`JobLock` + `AdvisoryLockKey.LodgingRefundPaid`) · ตัวซ่อมยอด `RefundPaidCatchUp` นับเฉพาะการคืนหลัง `RefundBaselineGross` (ยอดคืนบนใบมัดจำ ณ จุดตั้งยอดค้าง) · ห้ามลงวันที่ย้อนเข้างวด ภ.พ.30 ที่ยื่น/ประกาศว่ายื่นแล้ว หรือวันที่อนาคต · หน้า front desk: ป้าย "ค้างคืน" · มุมมอง "ต้องคืนเงินแขก" · หน้าแขก "รอที่พักโอนคืน ฿X"/"ที่พักโอนคืนแล้ว" |
 | รับเงินประกันความเสียหาย (`POST /lodging/reservations/{id}/security-deposit` · `LodgingManage` · `ReceiveSecurityDepositAsync` · รอบ 194) | `Receipt` `IsDeposit=true` เลขจองเดียวกัน · ประเภท = `LodgingProperty.SecurityDepositKindId` (ต้องเป็นลักษณะ `RefundableSecurity` · เป็น "ประเภทบนใบ" ของ `ResolveKind` — ไม่ผ่านชั้นของมัดจำค่าห้อง) · ยอดเริ่มต้น `SecurityDepositAmount` · `DepositKindId:` ⇒ ใบตรึงลักษณะเงินประกัน · บัญชี 21530 (ผังโรงแรม) ไม่งั้น 21620 · SECURITY seed = เต็มยอด VAT 0 → Approve(ack) → ผูก `SecurityDepositDocumentId` | สถานะ Confirmed/CheckedIn · โหมดไม่ออกเอกสาร = ปฏิเสธ · ใบค้างอยู่ = รับซ้ำไม่ได้ (ปิดใบเดิมก่อน) — ตัดสินที่ `LodgingDepositSettlement.SecurityLinkState` ตัวเดียว: ใบที่ผูกถูกยกเลิก/ลบที่หน้าเอกสาร = `DocumentGone` = ไม่ค้าง ⇒ รับใหม่ได้ (ลิงก์ถูกแทน + หมายเหตุ + audit `replacedVoidedSecurityDocumentId`) · หน้าจอใช้ `SecurityDepositOpen`/`SecurityDepositNote` จากเซิร์ฟเวอร์ (ฝ่ายค้าน C3 — เดิมค้างตลอดไป: รับใหม่ไม่ได้ ปิดก็ไม่ได้) · ใบเงินประกันของการจอง = **เฉพาะใบที่ผูก** (`SecurityDeposit` ไม่ fallback ใบลักษณะเงินประกันใบอื่นแล้ว) · **ไม่นับใน `PaidAmount`/`BalanceDue`** (ไม่ใช่ค่าห้อง) · ไม่เข้าแผนเช็คเอาต์/ยกเลิก/คืนเงินค่าห้อง (`RoomDeposits`) |
@@ -3962,6 +4105,19 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม TX — §65 ตรี เป็นคำเตือนก่อนอนุมัติ (§3.2 ข้อ 6) · SoD ตัวตัดสินเดียว + โหมดเงา (§3.2 ข้อ 2) · tax point §83/6 = วันจ่าย (§3.2 ข้อ 4) · มัดจำ: ล็อกก่อนแก้/นับเลขบนใบ/วันไทย/ข้ามปีไม่ใช่เหตุ (§3.7) · ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ (§5.3) · ใบกำกับอย่างย่อ: ขายปลีกก่อนสวิตช์ ภ.พ.06 — commit 2d7020af)_
 
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม GW — gateway/integration: webhook รหัสลับต่อ config + URL เดิมคงไว้ · กระทบยอดรู้จักรอบโอน batch · VAT ค่าธรรมเนียม batch แสดงแยก · ปรับปรุงเศษ 11630 · บันทึกยอดคืนย้อนหลัง · ป้าย/ปุ่มจากเซิร์ฟเวอร์ · URL กลับหลังจ่าย · resync สร้างใหม่ก่อนกลับ JE · คำเตือนบัญชีธนาคาร integration · C-10/C-11/B-1 (§2.3 · §2.6b) — commit bba8cfc7 · DV-O4 97f1f255)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม AI — AI/ธนาคาร: คู่ที่ AI แต่งในแผนจับคู่ทั้งก้อน `BankAiCandidateGuard` (§6.0c-bis) · คลังจับคู่ธนาคารนับเฉพาะคำยืนยันแบบตั้งใจ `ExplicitConfirmCount`/`BankPatternEvidence` · มาตรฐานคะแนนเดียว (โบนัสเฉพาะจอ → ลำดับรอง · ข้อเสนอจากประวัติผ่าน scorer+arbiter) · ทะเบียนนักเรียน `DistillationModelRegistry` + kill-switch ผ่าน orchestrator จริง (§6.4) · นักเรียน bulk PV `PaymentVoucherAccountingDistillationModel` + write-gate `GlSuggestionApplyPolicy` + ป้าย `AiAnswerSource` · ตัวบันทึก feedback ถอยของค้างเมื่อล้ม — commit ce1328ec)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม IN — วิธีคิดต้นทุนตั้งได้ต่อสินค้า + ด่านเปลี่ยนหลังมีความเคลื่อนไหว (A-IN1) ·
+คิว FIFO/rebuild ถัวเฉลี่ยเห็นยอดยกมา/ตรวจนับ ไม่นับโอนคลัง (A-IN2) · เครื่องออกเลขรับรหัสสาขา (A-IN4 ส่วนเครื่อง — สวิตช์ 📋) · ออกใบเช็คเอาต์ใหม่หลังยกเลิก
+(A-IN5) · เปลี่ยนประมาณการค่าเสื่อมไปข้างหน้ารวมวิธีคิด (A-IN3) · สีบริษัทตรวจรูป (A-IN6) · เปลี่ยนประเภทธุรกิจเติมประเภทมัดจำ (A-IN7) · ตรวจ/ซ่อมยอดสต็อกรวม (C-5) ·
+ทบทวนอายุในรายการปิดปี (C-6) (§3.2 ข้อ 8 · §5.6 · §6.5) — commit a4dfa177)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34)_
+
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม V1I — แก้ผลฝ่ายค้านงาน V1H: ใบกำกับทาง (ค) ที่เสียยอดครอบถูกติดธงกลับ (O1) · ยกเลิก e-Tax ดู e-Tax by Email + หลักฐานต้องแนบหลังส่ง (O2/O5) · ยกเลิกการชำระล็อกเอกสารก่อนแถว Payment (O3) · ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์ (O6) · ธง Submitted ไม่แนะนำทาง ค (O7) (§2.4c · §3.5) — commit 3f644286)_
@@ -4109,3 +4265,5 @@ _ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I: ใบ Scommer
 _ก่อนหน้า: 2026-09-25 (รอบ 194 ฝ่ายค้านถดถอย/ความปลอดภัย: C1 ลักษณะเงินของช่องมัดจำราคา/ค่าเริ่มต้น · C3 ใบเงินประกันถูกยกเลิก · C4 ข้อความ · P4 · P6 — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · **หลังฝ่ายค้านรอบสี่**: ลายเซ็นลูกค้า `IsSignatureCurrent` + hash v2 (§2.8/§3.2 · de5dc4cd) · migration ฐานมัดจำครั้งเดียว + `[DEPOSIT-BASE-SPLIT]` + ฝั่งขายเท่านั้น (c3820dce) · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคล · `[TAXID-CHECKSUM]` (§6.2i · cb552889) · ข้อความขาดตอน (§6.1 · 960e98cd) · รายละเอียดรอบ `CHANGELOG.md` — commit 7a16f097)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม ST — Settlement (§2.10): เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId` + backfill ครั้งเดียว (A-ST1) · ล็อก gateway ทุกเส้นที่ประทับ intent (A-ST2) · ข้อความยอดไม่ลงตัวของ intent (A-ST3) · รายงานของกำพร้าระดับช่องทาง (A-ST4) · ลายนิ้วมือเหตุของการรับรู้ (A-ST5) · ใบที่อ้างทุกชั้น (A-ST6) · ผู้ตัดสินบรรทัดใน SoD (A-ST7) · ลายนิ้วมือชิ้นตอนออกเอกสาร (A-ST8) · รุ่นคีย์ต่อบรรทัด (A-ST9) · C-9 ใบกำพร้าที่รับรู้ = ใบแรกของวัน · unpost รวมผล VoidDocumentAsync (DV Q1) — commit 07baa11b)_

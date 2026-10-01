@@ -32,11 +32,31 @@ public static class SettlementPostingKeys
     /// <summary>ชิ้นใบขายสรุปรายวัน (วันตามปฏิทินไทย)</summary>
     public static string SummaryComponent(DateTime day) => "sum-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
-    /// <summary>ป้ายใน <c>Payment.Notes</c> ของการรับชำระที่รอบโอนบันทึก (บันทึกพร้อมการรับชำระในคำสั่งเดียว)</summary>
-    public static string PaymentMarker(Guid batchId) => PaymentMarkerHead + batchId.ToString("N") + "]";
+    /// <summary>ป้ายใน <c>Payment.Notes</c> ของการรับชำระที่รอบโอนบันทึก — <b>ข้อความให้คนอ่านอย่างเดียว</b> (รอบ 201 ทีม ST · A-ST1): เจ้าของจริง =
+    /// คอลัมน์ <c>Payment.SettlementBatchId</c> (<see cref="SettlementPaymentOwner"/>) · ห้ามอ่านป้ายนี้กลับมาตัดสินอะไร (Notes ผู้ใช้พิมพ์ได้ทุกทางเข้า) ·
+    /// ผู้อ่านที่เหลือตัวเดียว = backfill ครั้งเดียวตอนสร้างคอลัมน์ (<see cref="PaymentOwnerBackfillSql"/>)</summary>
+    internal static string PaymentMarker(Guid batchId) => PaymentMarkerHead + batchId.ToString("N") + "]";
 
-    /// <summary>ต้นของ <see cref="PaymentMarker"/> — ใช้ค้นการรับชำระของ "ทุกรอบโอน" ด้วยคำค้นเดียว (ตัวหาของกำพร้า · รอบ 200 S3-11 · และ R-B13 รับชำระเกินข้ามรอบ)</summary>
+    /// <summary>ต้นของ <see cref="PaymentMarker"/></summary>
     public const string PaymentMarkerHead = "[SETTLEMENT:";
+
+    /// <summary>ข้อความที่ระบบเขียนต่อจากป้ายเสมอ (<see cref="SettlementDocumentBuilder.ReceiptPayment"/> — รูปแบบเดิมตั้งแต่ 84d47dda) — ส่วนหนึ่งของ "หลักฐานว่าระบบเขียน" ใน backfill</summary>
+    public const string PaymentNoteLead = " รับเงินผ่าน ";
+
+    /// <summary>
+    /// **backfill เจ้าของการรับชำระจากป้ายเดิม — เฉพาะแถวที่พิสูจน์ได้ว่าระบบเขียน** (รอบ 201 ทีม ST · A-ST1) · เงื่อนไขทุกข้อพร้อมกัน:
+    /// (1) ป้ายอยู่<b>ต้น</b> Notes ตามด้วย <see cref="PaymentNoteLead"/> (รูปแบบที่ <see cref="SettlementDocumentBuilder.ReceiptPayment"/> เขียนตั้งแต่วันแรก) ·
+    /// (2) id ในป้าย = รอบโอนที่มีจริง<b>ของบริษัทเดียวกัน</b> (นับรอบที่ยกเลิก/ลบแล้วด้วย — ตัวหาของกำพร้าต้องเห็น) · (3) <c>Reference</c> = เลขรอบโอนนั้น ·
+    /// (4) ช่องทางชำระ = e-Wallet · (5) มีผังเงินเข้าแทนที่ (ผังพัก) · แถวที่ไม่ผ่านแม้ข้อเดียว = ไม่ใช่ของรอบโอน (ป้ายที่ผู้ใช้พิมพ์เองไม่มีผล) ·
+    /// <b>รันครั้งเดียวตอนสร้างคอลัมน์</b> (ผู้เรียกตรวจว่าคอลัมน์ยังไม่มี) ⇒ ป้ายที่พิมพ์หลัง deploy ไม่ถูกนับแม้รูปแบบตรง
+    /// </summary>
+    public static string PaymentOwnerBackfillSql() =>
+        "UPDATE \"Payments\" p SET \"SettlementBatchId\" = b.\"Id\" FROM \"SettlementBatches\" b "
+        + "WHERE p.\"SettlementBatchId\" IS NULL AND b.\"CompanyId\" = p.\"CompanyId\" "
+        + "AND p.\"Notes\" LIKE ('" + PaymentMarkerHead + "' || replace(b.\"Id\"::text, '-', '') || ']" + PaymentNoteLead + "%') "
+        + "AND p.\"Reference\" = b.\"PayoutRef\" "
+        + "AND p.\"PaymentMethod\" = " + (int)PaymentMethod.EWallet + " "
+        + "AND p.\"OverridePaymentAccountId\" IS NOT NULL;";
 
     /// <summary><c>JournalEntry.Reference</c> ของ JE ปิดรายการ chargeback ต่อบรรทัด — กันปิดซ้ำ</summary>
     public static string ChargebackReference(Guid lineId) => "STL-CB-" + lineId.ToString("N");
@@ -655,7 +675,9 @@ public static class SettlementPostingGate
     /// **ผู้ทำของรอบโอน = ผู้สร้างรอบ + ผู้ที่เติมไฟล์เข้ารอบเดิม** (review198-S3 S3-11 · รอบ 200 ทีม V2) — เดิมเทียบแค่ <c>SettlementBatch.CreatedBy</c> ⇒
     /// คนที่นำเข้าไฟล์ที่สองเข้ารอบเดิม (บรรทัดของเขาอยู่ในใบค่าธรรมเนียม/ใบสรุปที่ระบบออก) กดลงบัญชีเองได้ทั้งที่บริษัทเปิดแยกหน้าที่ ·
     /// ผู้สร้างบรรทัดที่ว่าง (แถวเก่า) ไม่นับ — ตัวตัดสิน "ผู้สร้างรอบไม่รู้ = บล็อก" ของรูปสามอาร์กิวเมนต์คงเดิม ·
-    /// ผู้ที่ตัดสินการจับคู่/จัดประเภทไม่ได้ถูกบันทึกบนบรรทัด (ยังไม่นับ — ข้อจำกัดในรายงานทีม V2)
+    /// รอบ 201 ทีม ST (A-ST7): ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด (<c>SettlementLine.DecidedBy</c>) ถูกบันทึกแล้ว และผู้เรียกส่งรวมมาใน
+    /// <paramref name="lineCreators"/> (<c>SettlementLineMakers.Of</c>) — นับเป็นผู้ทำด้วย (เดิมเขียนไว้ว่ายังไม่ถูกบันทึก — ไม่จริงแล้ว) ·
+    /// สูตร SoD อยู่ที่ <see cref="ApprovalControlPolicy.SelfApproval"/> ตัวเดียว (รอบ 201 ทีม TX · A-TX3)
     /// </summary>
     public static bool SodSelfApproval(bool sodBlockSelfApproval, string? batchCreatedBy, IEnumerable<string?> lineCreators, Guid postingUserId)
     {
@@ -782,7 +804,7 @@ public static class SettlementDocumentBuilder
                 "ใบขายที่ตั้งภาษีหัก ณ ที่จ่ายของลูกค้าไว้ถูกรับชำระบางส่วนผ่านรอบโอน — ระบบไม่รู้ว่าผู้ซื้อหักส่วนไหนในงวดนี้ · "
                 + "ดูตัวอย่างการลงบัญชีใหม่แล้วทำตามทางไปต่อ", "SETTLEMENT-RECEIPT-WHT");
         return new(r.DocumentId, payoutDay, r.Amount, PaymentMethod.EWallet, payoutRef, null,
-            $"{SettlementPostingKeys.PaymentMarker(batchId)} รับเงินผ่าน {channelName} รอบโอน {payoutRef} (เงินเข้าผังพักของแพลตฟอร์ม — ยังไม่เข้าธนาคาร)",
+            $"{SettlementPostingKeys.PaymentMarker(batchId)}{SettlementPostingKeys.PaymentNoteLead}{channelName} รอบโอน {payoutRef} (เงินเข้าผังพักของแพลตฟอร์ม — ยังไม่เข้าธนาคาร)",
             OverridePaymentAccountId: clearingAccountId,
             WithholdingTaxAmount: wht == SettlementReceiptWhtKind.FinalInstallment ? (decimal?)null : 0m);
     }

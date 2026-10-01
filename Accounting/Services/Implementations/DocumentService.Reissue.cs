@@ -107,7 +107,24 @@ public partial class DocumentService
             HasVatDeferral = vatDeferral,
             Receipts = receiptFacts,
         };
-        return (SettlementPaidReissue.Decide(facts), payments, receipts);
+        var verdict = SettlementPaidReissue.Decide(facts);
+        // รอบ 201 ทีม DV (C-1 · คำตัดสินข้อ 74): เดือนภาษีที่ "ประกาศว่ายื่นแล้ว" (ยังไม่ล็อก) ก็บล็อก — ด่านเดิมดูแค่รายงานที่ล็อก (มีเลขรับ) · ใบเดิม + ใบเสร็จ
+        // ถือ VAT ที่ระบบจะยกเลิกแล้วออกใหม่ลงวันที่เดิมตรวจทุกใบ · ตัวตัดสิน pure ตัวเดียว (ปุ่มบนหน้าเอกสาร + การกดจริงผ่านเมธอดนี้ทั้งคู่)
+        if (verdict.Allowed)
+        {
+            var monthFacts = new List<ReissueVatMonthFact>
+            {
+                new(doc.DocumentNumber, doc.TaxPointDate ?? doc.DocumentDate,
+                    await VatPeriodFilingStatusAsync(companyId, doc.TaxPointDate ?? doc.DocumentDate)),
+            };
+            // DV-O5: เฉพาะใบเสร็จที่ถือ VAT (ใบกำกับตามกฎหมาย · มีภาษี) — ใบรับธรรมดาไม่มีแถว ภ.พ.30 ของตัวเอง
+            foreach (var r in receipts.Where(r => r.IsTaxInvoiceByLaw == true && r.VatAmount > 0.005m))
+                monthFacts.Add(new ReissueVatMonthFact(r.DocumentNumber, r.TaxPointDate ?? r.DocumentDate,
+                    await VatPeriodFilingStatusAsync(companyId, r.TaxPointDate ?? r.DocumentDate)));
+            if (DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock(monthFacts) is string declaredBlock)
+                verdict = SettlementPaidReissueVerdict.Blocked(declaredBlock, "REISSUE-VAT-MONTH-DECLARED");
+        }
+        return (verdict, payments, receipts);
     }
 
     /// <summary>ชื่องวดบัญชีที่ไม่เปิด (ปิด/ล็อก) ของวันที่นั้น — null = เปิด/ไม่มีงวด · ตัวเดียวของใบขายและใบเสร็จในด่านออกใบแทน</summary>
@@ -688,9 +705,14 @@ public partial class DocumentService
                 var anyEtaxRowVoided = await _db.EtaxInvoices.AsNoTracking()
                     .AnyAsync(e => e.CompanyId == companyId && e.DocumentId == rcpt.Id && e.Status == EtaxStatus.Voided);
                 // RV1F-4 (ข้อ 46): ไฟล์หลักฐานต้องเป็นไฟล์แนบของใบเสร็จนี้จริง (บริษัทนี้ · ยังไม่ถูกลบ) — ด่านสิทธิ์อ่านไฟล์อยู่ที่ controller (IAttachmentAccessGate)
+                // รอบ 201 ทีม DV (A-DV3 · คำตัดสินข้อ 67): และต้องแนบ<b>หลัง</b>เวลาที่ใบนี้ถึงกรมสรรพากร (แถว e-Tax ที่ส่งแล้ว · บันทึก e-Tax by Email ที่ประทับเวลา) —
+                // กติกา "แนบหลังส่ง" เดียวกับการยกเลิกแถว e-Tax (O5) · เดิมรับไฟล์ใดก็ได้ของใบเสร็จ (PDF ต้นฉบับที่แนบก่อนส่งก็ผ่าน) · ไม่ถึงกรมสรรพากร = null (ไม่จำกัด)
+                // DV-O3: ตัวโหลดเดียวกับการยกเลิกแถว e-Tax (EtaxInvoiceService.VoidAsync) — กติกา "แนบหลังส่ง" ชุดเดียว
+                var evidenceNotBefore = await DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(_db, companyId, rcpt.Id);
                 var evidenceAttached = request.EvidenceAttachmentId is Guid evidenceId
                     && await _db.FileAttachments.AsNoTracking().AnyAsync(a => a.Id == evidenceId && a.CompanyId == companyId && !a.IsDeleted
-                        && a.EntityType == "Document" && a.EntityId == rcpt.Id);
+                        && a.EntityType == "Document" && a.EntityId == rcpt.Id
+                        && (evidenceNotBefore == null || a.CreatedAt > evidenceNotBefore.Value));
                 Document? creditNote = null;
                 EtaxCreditNoteFact? creditNoteFact = null;
                 if (path == EtaxCancellationPath.CreditNote && request.CreditNoteDocumentId is Guid cnId)
@@ -748,9 +770,11 @@ public partial class DocumentService
                     // (ตอนรับเงินใหม่ CarriesTaxInvoiceRole เห็นใบนี้เป็นใบถือ VAT ที่มีผล) ──
                     rcpt.EtaxCancelRequiredAt = null;
                     rcpt.EtaxCancelRequiredReason = null;
+                    // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): ข้อเท็จจริง "ปิดครั้งล่าสุดด้วยทาง ค" อยู่ในคอลัมน์ (ผู้อ่าน: ตัวติดธงกลับ + รายงานข้อ 44) · ป้ายในหมายเหตุคงไว้เป็นประวัติ/ทางสำรอง
+                    rcpt.EtaxKeptOriginalAt = now;
                     rcpt.UpdatedAt = now;
                     rcpt.UpdatedBy = actor;
-                    AppendInternalNote(rcpt, EtaxReissueReview.KeptOriginalMarker + $" — {evidenceLabel} · ยอดรับชำระที่มีผล {liveCoverage:N2} — {reason}");
+                    AppendInternalNote(rcpt, EtaxReissueReview.KeptOriginalMarker + $" — {evidenceLabel} · ยอดรับชำระที่มีผล {liveCoverage:N2} — {EtaxReissueReview.OneLine(reason)}");
                     message = $"บันทึกแล้ว — ใบเสร็จ {rcpt.DocumentNumber} ยังมีผล (ใบกำกับของการขายนี้) · การรับชำระใหม่ {liveCoverage:N2} บาทครอบยอดใบเสร็จ "
                         + "· ภาษีขายไม่ถูกถอย · ไม่มีการยกเลิกใด ๆ";
                 }
@@ -760,9 +784,10 @@ public partial class DocumentService
                     rcpt.EtaxCancelledByCreditNoteId = creditNote!.Id;
                     rcpt.EtaxCancelRequiredAt = null;
                     rcpt.EtaxCancelRequiredReason = null;
+                    rcpt.EtaxKeptOriginalAt = null;   // A-DV2: การปิดครั้งล่าสุดไม่ใช่ทาง (ค) แล้ว
                     rcpt.UpdatedAt = now;
                     rcpt.UpdatedBy = actor;
-                    AppendInternalNote(rcpt, $"{EtaxReissueReview.ResolvedMarker} ปิดธงด้วยใบลดหนี้ {creditNote.DocumentNumber} — {evidenceLabel} — {reason}");
+                    AppendInternalNote(rcpt, $"{EtaxReissueReview.ResolvedMarker} ปิดธงด้วยใบลดหนี้ {creditNote.DocumentNumber} — {evidenceLabel} — {EtaxReissueReview.OneLine(reason)}");
                     message = $"บันทึกแล้ว — ใบเสร็จ {rcpt.DocumentNumber} ยังมีผล (ใบกำกับเดิมที่กรมสรรพากรมี) · ภาษีขายลดด้วยใบลดหนี้ "
                         + $"{creditNote.DocumentNumber} ในเดือนของใบลดหนี้ · ภาษีขายของเดือนเดิมไม่ถูกแตะ";
                 }
@@ -834,9 +859,10 @@ public partial class DocumentService
 
                     rcpt.EtaxCancelRequiredAt = null;
                     rcpt.EtaxCancelRequiredReason = null;
+                    rcpt.EtaxKeptOriginalAt = null;   // A-DV2: การปิดครั้งล่าสุดไม่ใช่ทาง (ค) แล้ว
                     rcpt.UpdatedBy = actor;
                     AppendInternalNote(rcpt, $"{EtaxReissueReview.ResolvedMarker} ยกเลิกทาง e-Tax แล้ว — {evidenceLabel}"
-                        + (string.IsNullOrEmpty(reference) ? "" : $" · อ้างอิง {reference}") + $" — {reason}");
+                        + (string.IsNullOrEmpty(reference) ? "" : $" · อ้างอิง {EtaxReissueReview.OneLine(reference)}") + $" — {EtaxReissueReview.OneLine(reason)}");
                     // ยกเลิกใบเสร็จ — คงแสดงเป็น Voided (RV1F-10: เลขใบกำกับที่ออกจริงต้องมองเห็นว่าถูกยกเลิก) · แถว e-Tax ที่ถึงกรมสรรพากรแล้วไม่ถูกแตะ
                     await ApplyAutoReceiptOnPaymentVoidAsync(companyId, new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Void, null), rcpt,
                         rcpt.DocumentNumber, keepVisible: true);
@@ -902,6 +928,7 @@ public partial class DocumentService
                         evidenceLabel,
                         rdCancellationReference = reference,
                         evidenceAttachmentId = evidenceAttached ? request.EvidenceAttachmentId : null,
+                        evidenceNotBefore,
                         creditNoteId = creditNote?.Id,
                         creditNoteNumber = creditNote?.DocumentNumber,
                         effectiveEtax = etax?.ToString(),
@@ -1028,27 +1055,141 @@ public partial class DocumentService
                 + "GL ภาษีขาย (21911) ของสองเดือนคลาดกับ ภ.พ.30 (ตัวถอยรุ่นก่อนคำตัดสินข้อ 48 ลงวันที่ใบแจ้งหนี้) · ระบบไม่แก้อัตโนมัติ — ให้ผู้ทำบัญชีตรวจว่าต้องปรับ "
                 + "GL/ยื่นเพิ่มเติมไหม"))
             .ToList();
-        return new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated);
+
+        // ── รอบ 201 ทีม DV (A-DV1 · คำตัดสินข้อ 62 · 66): อีก 4 กลุ่มอ่านอย่างเดียว — ไม่แก้อัตโนมัติ (งวดที่อาจยื่นแล้วห้ามแก้เงียบ · แนวข้อ 20/44/53) ──
+        // (1) ภาษีขายถึงกำหนดค้างหลังยกเลิกการชำระหลายใบ (ก่อนข้อ 50 เส้นจัดสรรหลายใบไม่ถอยภาษี) — การจัดสรรที่ถูกยกเลิกต้องมองเห็น (ตัวกรอง IsDeleted ของตาราง)
+        var voidedAllocDocIds = await _db.PaymentAllocations.IgnoreQueryFilters().AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsDeleted)
+            .Select(a => a.DocumentId).Distinct().ToListAsync();
+        var stuckCandidates = voidedAllocDocIds.Count == 0 ? new List<Document>() : await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && voidedAllocDocIds.Contains(d.Id)
+                && d.DocumentType == DocumentType.Invoice && d.Status != DocumentStatus.Voided && d.OutputVatDueAt != null)
+            .ToListAsync();
+        var stuckRows = new List<EtaxReviewDocumentRow>();
+        foreach (var d in stuckCandidates)
+        {
+            if (!EtaxReissueReview.StuckOutputVatAfterPaymentVoid(d.DocumentType, d.Status, d.OutputVatDueAt, d.PaidAmount,
+                    await LiveVatReceiptExistsAsync(companyId, d.Id, exceptReceiptId: null), hadVoidedMultiDocAllocation: true))
+                continue;
+            stuckRows.Add(new EtaxReviewDocumentRow(d.Id, d.DocumentNumber, d.DocumentDate, d.VatAmount, d.OutputVatDueAt,
+                $"ภาษีขายถึงกำหนด (§78/1) ของใบนี้ถูกรายงาน ณ {d.OutputVatDueAt:dd/MM/yyyy} แต่ไม่เหลือการรับชำระที่มีผลและไม่มีใบเสร็จถือ VAT — "
+                + "เคยรับชำระแบบจัดสรรหลายใบแล้วถูกยกเลิก (ก่อนคำตัดสินข้อ 50 เส้นนี้ไม่ถอยภาษี) ⇒ ภ.พ.30 ของเดือนนั้นอาจมีภาษีขายของเงินที่ไม่ได้รับ · "
+                + "ระบบไม่แก้อัตโนมัติ — ให้ผู้ทำบัญชีตรวจว่าต้องถอยภาษี/ยื่นเพิ่มเติมไหม"));
+        }
+
+        // (2)+(4) แถว e-Tax ที่ถูกยกเลิกในระบบนี้ทั้งที่ถึงกรมสรรพากรแล้ว — (2) มีเวลาส่งแต่ไม่มี audit การตัดสินยกเลิกแถว (ก่อนข้อ 51) ·
+        //         (4) เอกสารส่ง e-Tax by Email ประทับเวลาแล้ว (ก่อน V1I-O2) · เอกสารที่บันทึกยกเลิกทาง e-Tax พร้อมหลักฐานแล้วไม่นับ
+        var voidedEtax = await (
+            from e in _db.EtaxInvoices.AsNoTracking()
+            join d in _db.Documents.IgnoreQueryFilters().AsNoTracking() on e.DocumentId equals d.Id
+            where e.CompanyId == companyId && d.CompanyId == companyId && e.Status == EtaxStatus.Voided
+            select new { e.Id, e.DocumentId, d.DocumentNumber, e.EtaxRefNumber, e.SubmittedAt, e.VoidedAt, e.VoidReason, e.Status })
+            .ToListAsync();
+        var etaxRowsSubmitted = new List<EtaxReviewEtaxRow>();
+        var etaxRowsEmailed = new List<EtaxReviewEtaxRow>();
+        if (voidedEtax.Count > 0)
+        {
+            var etaxIdTexts = voidedEtax.Select(x => x.Id.ToString()).ToList();
+            var voidAudits = await _db.AuditLogs.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.EntityType == nameof(EtaxInvoice) && a.EntityId != null && etaxIdTexts.Contains(a.EntityId)
+                    && a.NewValues != null && a.NewValues.Contains("etax-voided-in-system"))
+                .Select(a => new { EntityId = a.EntityId!, a.NewValues })
+                .ToListAsync();
+            var decided = voidAudits.Select(a => a.EntityId).ToHashSet();
+            // DV-O2: audit ที่บันทึกหลักฐาน (ruleCode Submitted + ไฟล์) — กลุ่ม (4) ไม่นับ (ยกเลิกถึงกรมสรรพากรพร้อมหลักฐานแล้ว)
+            var evidencedVoid = voidAudits.Where(a => EtaxReissueReview.VoidAuditHasEvidence(a.NewValues)).Select(a => a.EntityId).ToHashSet();
+            var docIdTexts = voidedEtax.Select(x => x.DocumentId.ToString()).Distinct().ToList();
+            var cancelRecorded = (await _db.AuditLogs.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.EntityType == nameof(Document) && a.EntityId != null && docIdTexts.Contains(a.EntityId)
+                        && a.NewValues != null && a.NewValues.Contains("RD-ETAX-CANCEL-EVIDENCE"))
+                    .Select(a => a.EntityId!).ToListAsync())
+                .ToHashSet();
+            var emailed = await DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(_db, companyId,
+                voidedEtax.Select(x => x.DocumentId).Distinct().ToList());
+            foreach (var x in voidedEtax)
+            {
+                var docCancelled = cancelRecorded.Contains(x.DocumentId.ToString());
+                if (EtaxReissueReview.SubmittedEtaxVoidedWithoutEvidence(x.Status, x.SubmittedAt, decided.Contains(x.Id.ToString()), docCancelled))
+                    etaxRowsSubmitted.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
+                        $"แถว e-Tax {x.EtaxRefNumber} ส่งไปกรมสรรพากร/ผู้ให้บริการแล้ว ({x.SubmittedAt:dd/MM/yyyy}) แต่ถูกยกเลิกในระบบนี้โดยไม่มีไฟล์หลักฐานการยกเลิก "
+                        + "(ก่อนคำตัดสินข้อ 51) — ตรวจที่ระบบ e-Tax ของกรมสรรพากรว่าใบนี้ถูกตอบรับ/ยกเลิก/ปฏิเสธ · ถ้ากรมสรรพากรยังถือใบนี้ ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
+                        + "· ถ้าถูกปฏิเสธไปแล้ว ไม่ต้องทำอะไร · ระบบไม่แก้อัตโนมัติ"));
+                else if (EtaxReissueReview.EmailedEtaxVoidedInSystem(x.Status, emailed.Contains(x.DocumentId), docCancelled,
+                             evidencedVoid.Contains(x.Id.ToString())))
+                    etaxRowsEmailed.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
+                        $"เอกสาร {x.DocumentNumber} ส่ง e-Tax by Email พร้อมประทับเวลาของกรมสรรพากรแล้ว แต่แถว e-Tax {x.EtaxRefNumber} ถูกยกเลิกในระบบนี้ "
+                        + "(ก่อนรอบ V1I บันทึกว่า “ก่อนส่งถึงกรมสรรพากร”) — ใบนี้ยังมีผลที่กรมสรรพากร · ถ้าต้องการยกเลิกจริง ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
+                        + "· ระบบไม่แก้อัตโนมัติ"));
+            }
+        }
+
+        // (3) ใบทาง (ค) "ใบกำกับเดิมยังใช้ได้" ที่เสียยอดครอบแล้วแต่ไม่มีธง (ก่อนตัวติดธงกลับของ V1I) — ตัวตัดสินเดียวกับเส้นยกเลิกการชำระ
+        var keptCandidates = await (
+            from r in _db.Documents.AsNoTracking()
+            join src in _db.Documents.AsNoTracking() on r.RelatedDocumentId equals src.Id
+            where r.CompanyId == companyId && src.CompanyId == companyId && !r.IsDeleted
+                  && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+                  && !DocumentStatusRules.NotIssued.Contains(r.Status) && r.Status != DocumentStatus.Voided
+                  && r.EtaxCancelRequiredAt == null && r.EtaxCancelledByCreditNoteId == null && r.VatAmount > 0.005m
+                  && (r.EtaxKeptOriginalAt != null || (r.InternalNotes != null && r.InternalNotes.Contains(EtaxReissueReview.KeptOriginalMarker)))
+            select new
+            {
+                r.Id, r.DocumentNumber, r.DocumentDate, r.VatAmount, r.TotalAmount, r.InternalNotes, r.EtaxKeptOriginalAt,
+                SourceId = src.Id, SourceNumber = src.DocumentNumber,
+            }).ToListAsync();
+        var keptLostRows = new List<EtaxReviewReceiptRow>();
+        foreach (var k in keptCandidates)
+        {
+            var coverage = await LivePaymentCoverageAsync(companyId, k.SourceId);
+            if (DocumentVoidPreconditions.KeptOriginalCoverageLost(EtaxReissueReview.KeptOriginal(k.EtaxKeptOriginalAt, k.InternalNotes), false,
+                    k.VatAmount, k.TotalAmount, coverage, k.DocumentNumber, null) == null)
+                continue;
+            keptLostRows.Add(new EtaxReviewReceiptRow(k.Id, k.DocumentNumber, k.DocumentDate, k.VatAmount, k.SourceId, k.SourceNumber, null,
+                $"ใบกำกับนี้ถูกยืนยันว่า “ใบกำกับเดิมยังใช้ได้” แต่ยอดรับชำระที่ยังมีผลของใบต้นทาง ({coverage:N2}) ไม่ครอบยอดใบนี้ ({k.TotalAmount:N2}) และไม่มีธง "
+                + "(การรับชำระที่ครอบถูกยกเลิกก่อนรอบที่ระบบติดธงกลับให้) — ใบกำกับยังมีผลที่กรมสรรพากรและภาษีขายยังอยู่ใน ภ.พ.30 · ตรวจว่าลูกค้าชำระจริงไหม "
+                + "แล้วบันทึกการรับชำระ หรือยกเลิกทาง e-Tax/ออกใบลดหนี้ · ระบบไม่แก้อัตโนมัติ"));
+        }
+
+        return new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated,
+            stuckRows, etaxRowsSubmitted, keptLostRows, etaxRowsEmailed);
     }
 
     /// <summary>ยอดรับชำระที่ยังมีผลของใบต้นทาง นับจาก<b>รายการรับชำระจริง</b> (ไม่ใช่ <c>PaidAmount</c> ซึ่งรวมใบลดหนี้ที่หักล้างด้วย) — การรับชำระตรง =
     /// ยอด + ค่าธรรมเนียม + บรรทัดปรับ (สูตรเดียวกับตอนคืนยอดใน <c>ReversePaymentInternalAsync</c>) · การจัดสรรหลายใบ = ยอดที่จัดสรรให้ใบนี้ · tenant
     /// (รอบ 200 ทีม V1H · คำตัดสินข้อ 54 — ทาง (ค) ต้องครอบยอดใบเสร็จเดิม)
     /// <para>รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): <paramref name="excludePaymentId"/> = การรับชำระที่กำลังยกเลิกในธุรกรรมนี้ (ยังไม่ save — แถวในฐานยังไม่ถูกลบ)
-    /// ⇒ ไม่นับทั้งการรับตรงและการจัดสรรของรายการนั้น</para></summary>
-    private async Task<decimal> LivePaymentCoverageAsync(Guid companyId, Guid sourceDocumentId, Guid? excludePaymentId = null)
+    /// ⇒ ไม่นับทั้งการรับตรงและการจัดสรรของรายการนั้น</para>
+    /// <para>รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): รับ<b>ชุด</b>รายการที่กำลังยกเลิก (เดิมรายการเดียว) — cascade ของ <c>VoidDocumentAsync</c> ยกเลิกหลายรายการ
+    /// ในลูปเดียว · ผลรวมผ่านตัวตัดสิน pure <see cref="DocumentVoidPreconditions.LivePaymentCoverage"/> ตัวเดียว</para></summary>
+    private async Task<decimal> LivePaymentCoverageAsync(Guid companyId, Guid sourceDocumentId, IReadOnlyCollection<Guid>? excludePaymentIds = null)
     {
         var allocated = await _db.PaymentAllocations.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.DocumentId == sourceDocumentId && !a.IsDeleted
-                && (excludePaymentId == null || a.PaymentId != excludePaymentId.Value)
                 && _db.Payments.Any(p => p.Id == a.PaymentId && p.CompanyId == companyId && !p.IsDeleted))
-            .SumAsync(a => (decimal?)a.AllocatedAmount) ?? 0m;
+            .Select(a => new { a.PaymentId, Amount = a.AllocatedAmount })
+            .ToListAsync();
         var direct = await _db.Payments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.DocumentId == sourceDocumentId && !p.IsDeleted
-                && (excludePaymentId == null || p.Id != excludePaymentId.Value)
                 && !_db.PaymentAllocations.Any(a => a.PaymentId == p.Id && a.CompanyId == companyId && !a.IsDeleted))
-            .SumAsync(p => (decimal?)(p.Amount + p.FeeAmount + p.SettlementAdjustmentAmount)) ?? 0m;
-        return allocated + direct;
+            .Select(p => new { PaymentId = p.Id, Amount = p.Amount + p.FeeAmount + p.SettlementAdjustmentAmount })
+            .ToListAsync();
+        return DocumentVoidPreconditions.LivePaymentCoverage(
+            allocated.Select(a => (a.PaymentId, a.Amount)).Concat(direct.Select(d => (d.PaymentId, d.Amount))),
+            excludePaymentIds ?? Array.Empty<Guid>());
+    }
+
+    /// <summary>การรับชำระที่หน่วยงาน (DbContext) นี้กำลังยกเลิก — แถวที่ถูกตั้ง <c>IsDeleted = true</c> ในธุรกรรมนี้แต่ยังไม่ save (ค่าเดิมในฐาน = false)
+    /// + รายการที่ผู้เรียกระบุ · รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): cascade ของ <c>VoidDocumentAsync</c> ยกเลิกหลายรายการในลูปเดียว ⇒ ยอดครอบต้องไม่นับ
+    /// รายการก่อนหน้าในลูป (คิวรี AsNoTracking ยังเห็นแถวเป็นมีผล) · tenant</summary>
+    private IReadOnlyCollection<Guid> PaymentsVoidingInThisContext(Guid companyId, Guid voidingPaymentId)
+    {
+        var ids = _db.ChangeTracker.Entries<Payment>()
+            .Where(e => e.State == EntityState.Modified && e.Entity.CompanyId == companyId && e.Entity.IsDeleted
+                && !e.Property(p => p.IsDeleted).OriginalValue)
+            .Select(e => e.Entity.Id)
+            .ToHashSet();
+        ids.Add(voidingPaymentId);
+        return ids;
     }
 
     /// <summary>ใบต้นทางยังมีใบเสร็จ "ถือ VAT" ที่มีผลอยู่ไหม (เงื่อนไขเดียวกับตัวเลือกเจ้าของแถว ภ.พ.30 ของ TaxService) — ใช้ตัดสินว่าจุดความรับผิด §78/1

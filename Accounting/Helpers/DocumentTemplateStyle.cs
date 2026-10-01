@@ -52,6 +52,13 @@ public static class DocumentTemplateStyle
         return "#" + d;
     }
 
+    /// <summary>เหตุที่ปฏิเสธค่าสีจากผู้ใช้ (null = รับได้ · ว่าง = ใช้ค่าเริ่มต้น/ล้างค่า ผ่าน) — ข้อความเดียวของทั้งเทมเพลตและ
+    /// ค่าตั้งบริษัท (<c>CompanySettings.PrimaryColor/SecondaryColor</c> · รอบ 201 ทีม IN A-IN6)</summary>
+    public static string? ColorRejectReason(string? raw, string label)
+        => !string.IsNullOrWhiteSpace(raw) && Hex(raw) == null
+            ? $"{label} ต้องเป็นรหัสสีแบบ #RRGGBB (เช่น #4472C4) หรือเว้นว่าง"
+            : null;
+
     /// <summary>สีที่ต่อเข้า CSS ได้เสมอ — ค่าไม่ถูกรูป/ว่าง ⇒ <paramref name="fallback"/> (ผู้เรียกส่งค่าคงที่ของตัวเอง)</summary>
     public static string Color(string? raw, string fallback) => Hex(raw) ?? fallback;
 
@@ -96,8 +103,7 @@ public static class DocumentTemplateStyle
         var errs = new List<string>();
         void CheckColor(string? v, string label)
         {
-            if (!string.IsNullOrWhiteSpace(v) && Hex(v) == null)
-                errs.Add($"{label} ต้องเป็นรหัสสีแบบ #RRGGBB (เช่น #4472C4) หรือเว้นว่าง");
+            if (ColorRejectReason(v, label) is { } why) errs.Add(why);
         }
         void CheckSize(string? v, string label, int min, int max)
         {

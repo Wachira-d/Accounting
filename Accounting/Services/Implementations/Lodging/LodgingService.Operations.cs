@@ -54,14 +54,21 @@ public partial class LodgingService
 
         // C4 (ฝ่ายค้านรอบสอง) — ใบเช็คเอาต์ถูกยกเลิก: มัดจำกลับเป็นคงค้างแล้ว (void กลับการรับรู้/ตัดชำระ) · บอกทางออกใบใหม่
         string? finalNote = null;
+        var canReissueFinal = false;
         if (r.FinalDocumentId is Guid finalDocId)
         {
             var finalStatus = await _db.Documents.AsNoTracking().Where(d => d.Id == finalDocId && d.CompanyId == companyId)
                 .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync();
+            // รอบ 201 ทีม IN (A-IN5 · คำตัดสินข้อ 36): การจองที่เช็คเอาต์แล้ว ⇒ ปุ่ม “ออกใบเช็คเอาต์ใหม่” (ตัวสร้างของที่พักตัวเดียว · ยอดเท่าเดิม)
+            // แทนการให้ผู้ใช้ประกอบใบเองที่หน้าเอกสาร · การจองที่ยังเช็คอินอยู่ (ขั้นใช้มัดจำค้าง) คงทางเดิม
+            canReissueFinal = LodgingCheckoutReissue.CanOffer(r.Status, finalStatus, prop.AccountingMode == LodgingAccountingMode.Off);
             if (finalStatus == DocumentStatus.Voided)
-                finalNote = $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว — มัดจำกลับเป็นยอดคงค้าง · ออกใบใหม่ที่หน้า “เอกสาร”: "
-                    + "ใบกำกับภาษีถึงลูกค้าเดิม ติ๊ก “ขายเงินสดใบเดียว” แล้วเลือกหักมัดจำใบเดิม (มัดจำที่ออกใบกำกับแล้ว ระบบหักมูลค่าก่อน VAT "
-                    + "และรับรู้ให้เมื่ออนุมัติ) · มัดจำแบบภาษีรอเรียกเก็บ/เต็มยอด ใช้ปุ่ม “หักมัดจำ” หลังอนุมัติ";
+                finalNote = canReissueFinal
+                    ? $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว — มัดจำกลับเป็นยอดคงค้าง · กด “ออกใบเช็คเอาต์ใหม่” "
+                      + "เพื่อออกใบแทนยอดเท่าใบเดิม (อ้างเลขใบเดิม · หักมัดจำให้ตามเดิม) · ถ้ายอดต้องเปลี่ยน ให้ออกใบใหม่แล้วออกใบลด/เพิ่มหนี้ส่วนต่าง"
+                    : $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว — มัดจำกลับเป็นยอดคงค้าง · ออกใบใหม่ที่หน้า “เอกสาร”: "
+                      + "ใบกำกับภาษีถึงลูกค้าเดิม ติ๊ก “ขายเงินสดใบเดียว” แล้วเลือกหักมัดจำใบเดิม (มัดจำที่ออกใบกำกับแล้ว ระบบหักมูลค่าก่อน VAT "
+                      + "และรับรู้ให้เมื่ออนุมัติ) · มัดจำแบบภาษีรอเรียกเก็บ/เต็มยอด ใช้ปุ่ม “หักมัดจำ” หลังอนุมัติ";
         }
 
         var res = new LodgingReservationResponse
@@ -104,6 +111,7 @@ public partial class LodgingService
             SecurityDepositNote = securityLink == LodgingSecurityLinkState.DocumentGone ? LodgingDepositSettlement.SecurityDocumentGoneNote : null,
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
             FinalDocumentNote = includeInternal ? finalNote : null,
+            CanReissueFinalDocument = includeInternal && canReissueFinal,
             OnlinePayableAmount = LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
             OnlinePaymentNote = LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,

@@ -363,7 +363,10 @@ public class BankFeedService : IBankFeedService
                 companyId, txn.Id, memo, txn.TransactionDate, txn.Amount, feedCurrency,
                 txn.TransactionType, localBestDocumentId: null, localConfidence: 0m,
                 aiCts.Token);
-            if (!aiResult.UsedAi
+            // รอบ 201 ทีม AI · A-AI2 (H-4): ด่าน "มีคำตอบให้ใช้ไหม" = HasModelAnswer (AI **หรือนักเรียน**) — เดิม `!UsedAi`
+            // ทิ้งคำตอบนักเรียนทุกครั้งที่ปิด provider (kill-switch) · เกณฑ์ความมั่นใจเป็นตัวเลขอยู่ที่ ScreenAiProposals (≥ 0.70)
+            // + candidate set ด้านล่าง (DOCTRINE §2.5 ห้ามใช้ HasModelAnswer เดี่ยว ๆ)
+            if (!aiResult.HasModelAnswer
                 || string.IsNullOrEmpty(aiResult.Answer) || aiResult.Answer == "__NEW__"
                 || !Guid.TryParse(aiResult.Answer, out var aiDocId))
                 return false;
@@ -409,14 +412,18 @@ public class BankFeedService : IBankFeedService
             var viaPayment = byId.Values.FirstOrDefault(p => p.DocumentId == aiDocId);
 
             txn.ReconciliationStatus = Models.Enums.ReconciliationStatus.Suggested;
-            txn.ReconciledBy = Accounting.Helpers.BankMatchAttribution.BankFeedAiSuggested;
-            txn.MatchRuleCode = "BANK-MATCH-AI-DOC";
+            // ป้ายซื่อสัตย์ (กฎเหล็ก #1): "🤖 AI เสนอ" เฉพาะตอนเรียก AI จริง · นักเรียนตอบ = "⚙️ ระบบเสนอ"
+            txn.ReconciledBy = aiResult.UsedAi
+                ? Accounting.Helpers.BankMatchAttribution.BankFeedAiSuggested
+                : Accounting.Helpers.BankMatchAttribution.BankFeedSuggested;
+            txn.MatchRuleCode = aiResult.UsedAi ? "BANK-MATCH-AI-DOC" : "BANK-MATCH-LOCAL-DOC";
+            var proposer = aiResult.UsedAi ? "AI " : "ระบบ (โมเดลในบ้าน) ";
             if (viaPayment != null)
             {
                 txn.MatchedPaymentId = viaPayment.Id;
                 txn.SuggestedDocumentId = aiDocId;
                 txn.MatchReason =
-                    $"AI เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
+                    $"{proposer}เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
                     + "และพบรายการชำระของเอกสารเดียวกันในกรอบวันที่ — รอยืนยัน";
                 _logger.LogInformation("Bank txn {Txn} → AI เสนอรายการชำระ {PaymentId} ({Conf:P0})",
                     txn.Id, viaPayment.Id, aiResult.Confidence ?? 0m);
@@ -425,7 +432,7 @@ public class BankFeedService : IBankFeedService
             {
                 txn.SuggestedDocumentId = aiDocId;
                 txn.MatchReason =
-                    $"AI เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
+                    $"{proposer}เสนอเอกสารนี้ (ความมั่นใจ {(aiResult.Confidence ?? 0m):P0}) "
                     + "แต่ยังไม่มีรายการชำระของเอกสารนี้ — บันทึกการชำระก่อนจึงจะกระทบยอดได้";
                 _logger.LogInformation("Bank txn {Txn} → AI เสนอเอกสาร {Doc} ({Conf:P0}) — ยังไม่มีรายการชำระ",
                     txn.Id, aiDocId, aiResult.Confidence ?? 0m);

@@ -114,6 +114,32 @@ public class PreCloseChecklistService
                                   : "⚠️ ยังไม่ได้รันค่าเสื่อมในงวดนี้"),
             depJeCount, "/pages/fixed-assets.html"));
 
+        // 9. ทบทวนอายุใช้งาน/ซาก/วิธีคิดค่าเสื่อมสิ้นรอบบัญชี (รอบ 201 ทีม IN · C-6 · คำตัดสินข้อ 79 · TFRS for NPAEs บทที่ 10)
+        // เตือนเฉพาะเดือนสุดท้ายของรอบบัญชี · ตัวตัดสินเดียว Helpers/UsefulLifeReview · ไม่บล็อกการปิด (Warning) — ทางไปต่อ:
+        // หน้าสินทรัพย์ถาวร → “ปรับอายุการใช้งาน” (ยืนยันค่าเดิมได้ = บันทึกว่าทบทวนแล้ว)
+        var fyStartMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        if (Accounting.Helpers.UsefulLifeReview.IsFiscalYearEndMonth(month, fyStartMonth))
+        {
+            var fyStart = Accounting.Helpers.UsefulLifeReview.FiscalYearStart(year, month, fyStartMonth);
+            var assets = await _db.FixedAssets.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.Status == AssetStatus.Active)
+                .Select(a => new { a.AssetCode, a.Status, a.DepreciationMethod, a.UsefulLifeMonths, a.PurchaseDate, a.UsefulLifeReviewedAt })
+                .ToListAsync();
+            var notReviewed = assets
+                .Where(a => Accounting.Helpers.UsefulLifeReview.NeedsReview(a.Status, a.DepreciationMethod, a.UsefulLifeMonths,
+                    a.PurchaseDate, a.UsefulLifeReviewedAt, fyStart))
+                .Select(a => a.AssetCode).OrderBy(c => c, StringComparer.Ordinal).ToList();
+            var sample = string.Join(", ", notReviewed.Take(5)) + (notReviewed.Count > 5 ? " …" : "");
+            items.Add(new("USEFUL_LIFE_REVIEW", "ทบทวนอายุใช้งานสินทรัพย์สิ้นรอบบัญชี", notReviewed.Count == 0,
+                notReviewed.Count == 0 ? "Info" : "Warning",
+                notReviewed.Count == 0
+                    ? "สินทรัพย์ที่คิดค่าเสื่อมทุกตัวทบทวนอายุใช้งานในรอบบัญชีนี้แล้ว (หรือขึ้นทะเบียนในรอบนี้)"
+                    : $"สินทรัพย์ {notReviewed.Count} รายการยังไม่ได้ทบทวนอายุใช้งาน/มูลค่าซากในรอบบัญชีนี้ ({sample}) — "
+                      + "TFRS for NPAEs บทที่ 10 ให้ทบทวนทุกสิ้นรอบ · เปิดหน้าสินทรัพย์ถาวร → “ปรับอายุการใช้งาน” (ยืนยันค่าเดิมได้)",
+                notReviewed.Count, "/pages/fixed-assets.html"));
+        }
+
         // 8. Period not already closed
         var period = await _db.FiscalPeriods.AsNoTracking()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Year == year && p.Month == month);

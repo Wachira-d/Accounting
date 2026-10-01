@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Product;
 using Accounting.Services.Interfaces;
@@ -13,10 +14,50 @@ namespace Accounting.Controllers;
 public class ProductController : ControllerBase
 {
     private readonly IProductService _productService;
+    private readonly IStockLedger _stock;
+    private readonly IPermissionService _permissions;
 
-    public ProductController(IProductService productService)
+    public ProductController(IProductService productService, IStockLedger stock, IPermissionService permissions)
     {
         _productService = productService;
+        _stock = stock;
+        _permissions = permissions;
+    }
+
+    /// <summary>ด่านสิทธิ์ของเครื่องมือตรวจ/ซ่อมยอดสต็อกรวม — 403 ไทยพร้อมชื่อสิทธิ์ที่ต้องขอ (แบบเดียวกับ FixedAssetController)</summary>
+    private async Task<ActionResult?> RequireInventoryAsync(Guid companyId, string permKey, string verb)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await _permissions.HasPermissionAsync(companyId, userId, permKey))
+            return null;
+        return StatusCode(403, new ApiResponse<object>(false, new
+        {
+            requiredPermission = permKey.Replace("perm:", ""),
+        }, $"ไม่มีสิทธิ์{verb} — ต้องได้รับสิทธิ์ \u201c{permKey.Replace("perm:", "")}\u201d จากเจ้าของบริษัทก่อน"));
+    }
+
+    // ===== ตรวจ/ซ่อมยอดสต็อกรวม (รอบ 201 ทีม IN · C-5 · คำตัดสินข้อ 78) =====
+    // รายงานก่อน (อ่านอย่างเดียว) → ซ่อมเฉพาะแถวที่ผู้ใช้เลือกเมื่อกด + audit chain · ไม่มีงานไหนเรียกอัตโนมัติ
+
+    [HttpGet("inventory/stock-totals-check")]
+    public async Task<ActionResult<ApiResponse<List<StockTotalMismatch>>>> StockTotalsCheck(Guid companyId)
+    {
+        if (await RequireInventoryAsync(companyId, PermissionKeys.InventoryView, "ดูรายงานตรวจยอดสต็อก") is { } deny) return deny;
+        var result = await _stock.FindProductTotalMismatchesAsync(companyId);
+        return Ok(new ApiResponse<List<StockTotalMismatch>>(true, result,
+            result.Count == 0 ? "ยอดสต็อกรวมตรงกับผลรวมคลังทุกสินค้า" : $"พบ {result.Count} สินค้าที่ยอดรวมไม่ตรงผลรวมคลัง"));
+    }
+
+    [HttpPost("inventory/stock-totals-check/repair")]
+    public async Task<ActionResult<ApiResponse<StockTotalsRepairResult>>> StockTotalsRepair(
+        Guid companyId, [FromBody] StockTotalsRepairRequest request)
+    {
+        if (await RequireInventoryAsync(companyId, PermissionKeys.InventoryAdjust, "ซ่อมยอดสต็อก") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _stock.RepairProductTotalsAsync(companyId, request.Items ?? new List<StockTotalsRepairItem>(),
+            request.ConfirmPhysicalCount, userId);
+        return Ok(new ApiResponse<StockTotalsRepairResult>(true, result,
+            $"ซ่อมแล้ว {result.RepairedCount} รายการ · ข้าม {result.SkippedCount} รายการ"));
     }
 
     [HttpGet]

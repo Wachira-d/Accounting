@@ -155,4 +155,33 @@ public static class BankMatchScorer
             nameConfident,
             refMatch);
     }
+
+    /// <summary>
+    /// **ลำดับรองจาก "เงินลงที่ไหน"** (เงินสด/ธนาคาร) — ใช้เรียง<b>หลัง</b>คะแนนเท่านั้น ไม่บวกเข้าคะแนน ·
+    /// รอบ 201 ทีม AI · A-AI3 (H-5)
+    ///
+    /// <para>เดิมหน้าจับคู่ด้วยมือบวก/ลบคะแนนเอง (Payment +5/−5 · JE +8/+4/−8) ที่เส้นเครื่อง
+    /// (<c>AutoMatchAsync</c> · BankFeed · OpenBanking) ไม่มี ⇒ ตัวเลขที่คนเห็นบนจอกับตัวเลขที่ arbiter ใช้ประทับ
+    /// เป็นคนละค่า (ระยะห่างขั้นต่ำ 10 คะแนนของ arbiter วัดบนตัวเลขที่ไม่มีโบนัส) = "สองมาตรฐาน".
+    /// ทางที่เลือก: <b>คะแนนเป็นของ <see cref="Score"/> ตัวเดียวทุกเส้น</b> · หลักฐาน "เงินลงที่ไหน" ยังใช้จัดลำดับ
+    /// ระหว่างรายการที่คะแนนเท่ากัน (และยังแสดงเป็นป้ายบนแถว) — ไม่เปลี่ยนคำตัดสินของเส้นเครื่องเลยแม้แต่ใบเดียว
+    /// (ถ้าบวกเข้าคะแนนทุกเส้น ใบ "ยอดตรง + ห่าง 7 วัน + โอนเข้าธนาคาร" จะข้ามเกณฑ์ประทับเอง 80 = ประทับมากขึ้นโดยไม่มีใครตัดสิน)</para>
+    /// </summary>
+    /// <param name="candidateKind">"Payment" | "JournalEntry"</param>
+    /// <param name="depositCategory">"Bank" | "Mixed" | "Cash" | null (ไม่รู้)</param>
+    /// <param name="bankIsInflow">บรรทัดธนาคารเป็นเงินเข้า (ฝาก/ดอกเบี้ย)</param>
+    /// <param name="candidateAmount">ยอดของรายการ (ใช้กับกติกา "รับเงินสดยอดเล็ก")</param>
+    /// <returns>ค่ามากกว่า = ควรอยู่ก่อน · 0 = ไม่มีหลักฐาน</returns>
+    public static int DepositPreference(string? candidateKind, string? depositCategory, bool bankIsInflow, decimal candidateAmount)
+    {
+        if (!bankIsInflow || string.IsNullOrEmpty(depositCategory)) return 0;
+        var isJe = string.Equals(candidateKind, "JournalEntry", StringComparison.Ordinal);
+        return depositCategory switch
+        {
+            "Bank" => isJe ? 8 : 5,
+            "Mixed" => isJe ? 4 : 0,
+            "Cash" => isJe ? -8 : (candidateAmount < 5000m ? -5 : 0),
+            _ => 0,
+        };
+    }
 }

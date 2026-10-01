@@ -304,21 +304,33 @@ TUPLE_RULES = [
      ["PreviewApprovalWarningsAsync("], [("PreviewApprovalWarningsAsync(", "_db.ApprovalActions.Add(")], ["acknowledgeWarnings: true"],
      "C5: มือถือหยุดให้กดรับทราบคำเตือนทุกชุด (เหมือนเว็บ) ก่อนบันทึกผล"),
     # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
+    # รอบ 201 ทีม IN (A-IN5): ตัวสร้างรายการ/ใบร่าง/การใช้มัดจำ แยกเป็นเมธอดที่เส้นเช็คเอาต์และเส้นออกใบใหม่ใช้ร่วม ⇒ ย้ายจุดล็อก
+    # ChargeVatRate → BuildFinalInvoiceLinesAsync · CreateDocumentAsync → UpsertFinalDraftAsync (ลำดับ "วางแผนก่อนออกเลข" ล็อกที่จุดเรียก)
     (LODGING_LIFE, "CheckOutAsync",
      ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
-      "LodgingPricingEngine.ChargeVatRate(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
+      "BuildFinalInvoiceLinesAsync(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
       "DepositBaseDeducted: depositPlan.BaseDeducted"],
-     [("LodgingDepositSettlement.PlanCheckout(", "_docService.CreateDocumentAsync("),
+     [("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
       ("FindOrCreateContactAsync(", "r.Charges.Add("),
       ("_docService.ApproveDocumentAsync(", "r.Charges.Add(")],
      ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan"],
      "R3-1 ฐานมัดจำลงช่องของตัวเอง (ห้ามใส่ช่องส่วนลดการค้า) · C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
      "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
     (LODGING_LIFE, "SettleCheckOutAsync",
-     ["RealizedForFinalByDepositAsync(", "new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId)",
-      "Math.Min(a.Gross, finalDoc.BalanceDue)", "r.RefundAmount = plan.ExcessGross", "r.RefundBaselineGross ="],
-     [("RealizedForFinalByDepositAsync(", "RealizeDepositAsync(")], [],
+     ["ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross", "r.RefundBaselineGross ="],
+     [("ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross")], [],
      "C4/N1 รับรู้เฉพาะส่วนที่อนุมัติยังไม่ได้รับรู้ (ห้ามซ้ำ) · ผูกใบสุดท้าย · ตัดชำระไม่เกินยอดใบ · ส่วนเกิน = ค้างคืน + จุดตั้งยอด (N3)"),
+    # รอบ 201 ทีม IN (A-IN5): ตัวรับรู้/ตัดชำระมัดจำย้ายจาก SettleCheckOutAsync คำต่อคำ (ใช้ร่วมกับ ReissueFinalDocumentAsync)
+    (LODGING_LIFE, "ApplyFinalDepositPlanAsync",
+     ["RealizedForFinalByDepositAsync(", "new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId)",
+      "Math.Min(a.Gross, finalDoc.BalanceDue)"],
+     [("RealizedForFinalByDepositAsync(", "RealizeDepositAsync(")], ["ForfeitAs:"],
+     "C4/N1 รับรู้เฉพาะส่วนที่อนุมัติยังไม่ได้รับรู้ (ห้ามซ้ำ) · ผูกใบสุดท้าย · ตัดชำระไม่เกินยอดใบ (ตัวเดียวของเช็คเอาต์และออกใบใหม่ · รอบ 201)"),
+    # รอบ 201 ทีม IN (A-IN5): บรรทัด folio ผ่านด่าน §90/2 ในตัวสร้างรายการตัวเดียว
+    (LODGING_LIFE, "BuildFinalInvoiceLinesAsync",
+     ["LodgingPricingEngine.ChargeVatRate(", "prop.RoomRevenueAccountCode", "prop.ServiceChargeAccountCode"],
+     [], [],
+     "C8: folio ของบริษัทไม่จด VAT = อัตรา 0 · ค่าห้อง/service charge ลงผังของที่พัก — ตัวสร้างรายการใบสุดท้ายตัวเดียว (รอบ 201 A-IN5)"),
     (LODGING_LIFE, "ResumeCheckOutAsync",
      ["DepositRealizedForDocumentId == finalId", "LodgingDepositSettlement.PlanCheckout(",
       "finalDoc.DepositBaseDeducted - realizedForFinal"], [], ["finalDoc.BillDiscountAmount"],
@@ -1016,9 +1028,10 @@ RULES += [
          must=["TrackedChangeRevert.DetachSince(", "TrackedChangeRevert.DetachStrays(", "ReloadAsync("],
          before=[("TrackedChangeRevert.DetachSince(", "ReloadAsync(")],
          why="รอบ 194 R3 P-1: อนุมัติล้มแล้วห้ามบันทึก entity ที่ถูกแก้ค้าง (ใบ Approved ไม่มี JE)"),
-    dict(file=LODGING_LIFE, method="CheckOutAsync",
+    # รอบ 201 ทีม IN (A-IN5): ใบร่างย้ายเข้า UpsertFinalDraftAsync (ใช้ร่วมกับออกใบใหม่) · "ใบร่างก่อนอนุมัติ" ล็อกที่จุดเรียก (บล็อกทีม IN)
+    dict(file=LODGING_LIFE, method="UpsertFinalDraftAsync",
          must=["LodgingCheckoutDraft.LeftoverOf(", "LodgingCheckoutDraft.Plan(", "UpdateDocumentAsync("],
-         before=[("LodgingCheckoutDraft.LeftoverOf(", "CreateDocumentAsync("), ("LodgingCheckoutDraft.Plan(", "ApproveDocumentAsync(")],
+         before=[("LodgingCheckoutDraft.LeftoverOf(", "CreateDocumentAsync("), ("LodgingCheckoutDraft.Plan(", "UpdateDocumentAsync(")],
          why="รอบ 194 R3 P-1: เช็คเอาต์ที่อนุมัติล้มแล้วกดซ้ำ = ใช้ใบร่างเดิม (idempotent) ไม่สร้างใบร่างใหม่ทุกครั้ง"),
     dict(file=DOC, method="RefundDepositAsync",
          must=["JobLock.TryXactLockAsync(", "AdvisoryLockKey.DepositRealizeKey("],
@@ -1682,6 +1695,7 @@ RULES += [
 
 # ── รอบ 198 ฝ่ายค้าน R-E1 (P0): webhook ต้องตรวจความเป็นเจ้าของรายการก่อนเปลี่ยนสถานะ ──
 RULES += [
+    # รอบ 201 ทีม GW (A-GW1): action เดียวรับทั้ง URL เดิมและ URL รหัสลับ (สอง [HttpPost])
     dict(file="Controllers/PaymentGatewayController.cs", method="Receive",
          must=["PaymentWebhookOwnership.RejectReason(", "i.CompanyId == cfg.CompanyId", "_intents.ApplyChargeAsync("],
          before=[("PaymentWebhookOwnership.RejectReason(", "_intents.ApplyChargeAsync(")],
@@ -1756,7 +1770,7 @@ RULES += [
          why="P2/R-B17: ยอดคืนที่อยู่ในบรรทัดแล้วนับทุกช่องทางของบริษัท · tenant"),
     dict(file=SETTLE_IMPORT, method="PersistAsync",
          must=["EnsureIntentRefundCapacityAsync("],
-         before=[("AdvisoryLockKey.For(", "EnsureIntentRefundCapacityAsync("), ("LockChannelAsync(", "EnsureIntentRefundCapacityAsync("),
+         before=[("LockGatewayAsync(", "EnsureIntentRefundCapacityAsync("), ("LockChannelAsync(", "EnsureIntentRefundCapacityAsync("),
                  ("EnsureIntentRefundCapacityAsync(", "_db.SettlementLines.Add(")],
          why="P2: ตาข่ายยอดคืนต้องอยู่ใต้ล็อกช่องทาง + ล็อก gateway และก่อนเพิ่มบรรทัด"),
     dict(file="Services/Settlement/Adapters/PaymentIntentAdapter.cs", method="BuildRows",
@@ -1824,9 +1838,9 @@ RULES += [
          must_re=[r"is\s+string\s+why\s*\)\s*throw\s+new\s+BusinessRuleException\s*\(\s*why\b"],
          why="S3-1: ผลของตัวตัดสินต้องถูกใช้ (ปฏิเสธทั้งธุรกรรม) — เรียกแล้วทิ้งผล = แก้ชิ้นที่ออกแล้วได้เงียบ ๆ"),
     dict(file=SETTLE_LINES, method="FrozenPartsAsync",
-         must=["SettlementPostingKeys.CreatorPrefix(", "SettlementPostingKeys.PaymentMarker(", "DocumentStatus.Voided"],
+         must=["SettlementPostingKeys.CreatorPrefix(", "p.SettlementBatchId == batchId", "DocumentStatus.Voided"],
          must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
-         why="S3-1: ชิ้นที่ออกแล้ว = ป้ายชุดเดียวกับผู้ลงบัญชี (ไม่นับที่ยกเลิกแล้ว) · tenant"),
+         why="S3-1: ชิ้นที่ออกแล้ว = กุญแจชุดเดียวกับผู้ลงบัญชี (ไม่นับที่ยกเลิกแล้ว) · tenant · รอบ 201 A-ST1: การรับชำระ = คอลัมน์ SettlementBatchId"),
     dict(file=SETTLE_LINES, method="RematchBatchAsync",
          must=["LockChannelAsync(", "LoadEditableBatchAsync(", "!l.MatchDecidedByUser"],
          before=[("LockChannelAsync(", "LoadEditableBatchAsync(")],
@@ -1898,7 +1912,7 @@ RULES += [
     dict(file=SETTLE_IMPORT, method="PersistAsync",
          must=["SettlementTxnKey.ImportScopeOf(", "ImportScope = lineScope", "pool.RevisedScope", "SettlementTxnKey.SplitRevisedFilePool(", "pool.SameFile",
                "pool.OtherFiles", "LiteralDateSets(rows)", "SettlementTxnKey.SharesRawIdWith(", "PostedBatchNewRowsMessage(", "input.LearnNotes"],
-         call_args=[("SettlementTxnKey.LegacyKeys(", "LiteralDateSets")],
+         call_args=[("SettlementTxnKey.LegacyKeySets(", "LiteralDateSets")],
          before=[("await tx.RollbackAsync(", "input.LearnNotes")],
          why="S4-3/I-8: เทียบเนื้อหาเฉพาะไฟล์รุ่นก่อนของไฟล์นี้ + บรรทัดที่เติมจากไฟล์ฉบับแก้สืบลายนิ้วมือของไฟล์รุ่นก่อน · I-1 คีย์รุ่นก่อนคิดจากวันที่ตามตัวอักษรด้วย "
              "(ไฟล์ก่อน deploy ต้องถูกจับว่าซ้ำ) + เส้นรอบลงบัญชีแล้วบอกเหตุจริง · I-3 ข้อความจำเฉพาะหลังเส้น rollback"),
@@ -2020,7 +2034,7 @@ RULES += [
          why="S3-7: การรับชำระที่จะถูกยกเลิกต้องเข้าด่านด้วย (ไม่ส่ง = ด่านไม่เห็น §78/1 ของเดือนที่ยื่นแล้ว)"),
     dict(file=SETTLE_POST, method="OrphanArtifactsAsync",
          must=["LoadUnpostFactsAsync(", "SettlementUnpostGate.Evaluate(", "SettlementOrphanTriage.Split(", "OrphanChildrenAsync(",
-               "SettlementPostingKeys.PaymentMarkerHead", "SettlementArtifactGuard.BatchIdFromPaymentNotes(", "d.SettlementOrphanAckAt",
+               "p.SettlementBatchId != null && deadIds.Contains(p.SettlementBatchId.Value)", "d.SettlementOrphanAckAt",
                "p.Payment.SettlementOrphanAckAt"],
          call_args=[("SettlementUnpostGate.Evaluate(", "unpostPays"), ("SettlementOrphanTriage.Split(", "refusals"),
                     ("SettlementOrphanTriage.Split(", "children")],
@@ -2039,7 +2053,7 @@ RULES += [
     dict(file=SETTLE_POST, method="AcknowledgeOrphanAsync",
          must=["SettlementOrphanTriage.AckReasonProblem(", "PermissionKeys.SettlementPost", "JobLock.RunExclusiveAsync(",
                "SettlementChannelLock.Scope", "AcknowledgeOrphanCoreAsync(", "SettlementArtifactGuard.BatchIdFromCreator(",
-               "SettlementArtifactGuard.BatchIdFromPaymentNotes("],
+               "Select(p => p.SettlementBatchId)"],
          must_re=[r"if\s*\(\s*!\s*await\s+_perms\s*\.\s*HasPermissionAsync\s*\([^;]*PermissionKeys\s*\.\s*SettlementPost\s*\)\s*\)\s*return\b"],
          before=[("SettlementOrphanTriage.AckReasonProblem(", "JobLock.RunExclusiveAsync("),
                  ("PermissionKeys.SettlementPost", "JobLock.RunExclusiveAsync(")],
@@ -2051,7 +2065,7 @@ RULES += [
          before=[("SettlementOrphanTriage.AckRefusal(", "BeginTransactionAsync("), ("OrphanArtifactsAsync(", "SettlementOrphanTriage.AckRefusal(")],
          forbid=["AuditLogs.Add(", "ExecuteUpdateAsync("],
          why="ข้อ 10: รับรู้ได้เฉพาะกองยกเลิกไม่ได้จริง — ตัดสินด้วยตัวแยกตัวเดียวกับด่านลงบัญชี (ข้อเท็จจริงสดใต้ล็อก) ก่อนประทับ · ผู้/เวลา/เหตุผล + audit ใน hash chain"),
-    dict(file=SETTLE_POST, method="BuildGateAsync", must=["orphans.Acknowledged", "orphans.Items", "lines.Select(l => l.CreatedBy)"],
+    dict(file=SETTLE_POST, method="BuildGateAsync", must=["orphans.Acknowledged", "orphans.Items", "(l.CreatedBy, l.DecidedBy)"],
          why="ข้อ 10: ของกำพร้าที่รับรู้แล้วต้องถึงด่าน (แสดง ไม่บล็อก) และถึงหน้าจอ · S3-11: ผู้เติมไฟล์เข้ารอบเดิมนับเป็นผู้ทำใน SoD"),
     dict(file=SETTLE_POST, method="PreviewAsync", must=["gate.OrphanItems"],
          why="ข้อ 10: หน้าจอเห็นของกำพร้ารายชิ้น (กอง · ผู้รับรู้ · ปุ่มรับรู้) จากตัวแยกเดียวกับด่าน"),
@@ -2078,7 +2092,7 @@ RULES += [
     dict(file=SETTLE_LINES, method="AssignLineMatchAsync",
          must=["SettlementSaleMatch.AssignRefusal(", "MatchLinesAsync(", "request.PaymentIntentId"],
          before=[("LockChannelAsync(", "MatchLinesAsync("),
-                 ("SettlementSaleMatch.AssignRefusal(", "SetMatch(l, SettlementMatchStatus.Matched, null, intentId)")],
+                 ("SettlementSaleMatch.AssignRefusal(", "SetMatch(l, SettlementMatchStatus.Matched, null, userId, intentId)")],
          why="D-01: เลือกรายการรับชำระได้ด้วยด่านเดียวกับการจับคู่อัตโนมัติ (ผู้สมัครคำนวณสดใต้ล็อก · AssignRefusal ตัวเดียวกับที่หน้าจอติดธง)"),
     dict(file=SETTLE_LINES, method="ToLineView", must=["SettlementSaleMatch.AssignRefusal(", "IsIntentSourced(l)"],
          why="D-01: หน้าจอติดธง 'เลือกได้/เหตุผล' ด้วยตัวตัดสินเดียวกับด่านของ AssignLineMatchAsync · บรรทัดจาก intent ไม่มีปุ่มตัดสิน"),
@@ -2089,7 +2103,7 @@ RULES += [
          forbid=["AuditLogs.Add("],
          why="D-03: เปลี่ยนบัญชีธนาคารของรอบ = ด่านเดียวกับแก้บรรทัด (ล็อกก่อนโหลด · ลงแล้ว/ค้างครึ่งทางแก้ไม่ได้) · tenant · audit"),
     dict(file=SETTLE_IMPORT, method="PersistAsync",
-         must=["SettlementTxnKey.LegacyKeys(", "SettlementTxnKey.MatchByContent(", "StoredRowContentAsync(", "ContentOverlapElsewhereAsync(",
+         must=["SettlementTxnKey.LegacyKeySets(", "SettlementTxnKey.MatchByContent(", "StoredRowContentAsync(", "ContentOverlapElsewhereAsync(",
                "r.TxnDate, r.PayoutRef)"],
          forbid=["r.TxnDate, payoutRef)"],
          before=[("SettlementTxnKey.MatchByContent(", "_db.SettlementLines.Add(")],
@@ -2173,13 +2187,14 @@ RULES += [
     dict(file="Helpers/SettlementPostingGuards.cs", method="LockBatchRowAsync", must=["ExecuteSqlRawAsync("], must_lit=["FOR SHARE"],
          why="S3-8: ล็อกแถวรอบโอน FOR SHARE (ตัวเดียวของ CheckLockedAsync และ CheckDocumentPaymentsAsync)"),
     dict(file="Helpers/SettlementPostingGuards.cs", method="CheckDocumentPaymentsAsync",
-         must=["BatchIdFromPaymentNotes(", "BatchStateAsync(", "PaidDocumentVoidReason(", "SettlementUnpostScope.IsUnposting("],
+         must=["p.SettlementBatchId != null", "BatchStateAsync(", "PaidDocumentVoidReason(", "SettlementUnpostScope.IsUnposting("],
          before=[("LockBatchRowAsync(", "BatchStateAsync("), ("BatchStateAsync(", "PaidDocumentVoidReason(")],
          call_args=[("LockBatchRowAsync(", "companyId")],
          why="รอบ 200 ทีม V1 (คำตัดสินข้อ 9 · S3-5): ใบขายที่รอบโอน Posted รับชำระ — ข้อความ 409 ต้องพาไปทางที่ถูก (ยกเลิกและออกใบแทน · "
              "ใบลดหนี้ · ยกเลิกการลงบัญชี) ทุกทางเข้า · ล็อกแถวรอบโอนก่อนอ่านเมื่อเรียกใต้ธุรกรรม (S3-8)"),
     dict(file=DOCSVC, method="VoidPaymentAsync",
-         must=["SettlementArtifactGuard.CheckAsync(", "SettlementArtifactGuard.BatchIdFromPaymentNotes("],
+         must=["SettlementArtifactGuard.CheckAsync(_db, companyId, payment.SettlementBatchId)",
+               "SettlementArtifactGuard.CheckLockedAsync(_db, companyId, locked.SettlementBatchId)"],
          before=[("SettlementArtifactGuard.CheckAsync(", "BeginTransactionAsync(")],
          why="C-5: การรับชำระของรอบโอนที่ลงบัญชีแล้วยกเลิกทีละรายการไม่ได้ (ต้องผ่าน Unpost)"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="VoidAsync",
@@ -2207,7 +2222,7 @@ RULES += [
          must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId"],
          why="R-A12: รอบก่อนหน้า = ช่องทางเดียวกัน · ไม่นับรอบที่ยกเลิก/ลบ · tenant"),
     dict(file=SETTLE_POST, method="PendingReceiptsElsewhereAsync",
-         must=["SettlementCrossBatchReceipts.PendingElsewhere(", "SettlementPostingKeys.PaymentMarker(", "l.BatchId != batchId",
+         must=["SettlementCrossBatchReceipts.PendingElsewhere(", "otherBatches.Contains(p.SettlementBatchId.Value)", "l.BatchId != batchId",
                "SettlementBatchStatus.Matched"],
          must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
          forbid=["SettlementBatchStatus.Posted"],
@@ -2478,9 +2493,9 @@ RULES += [
          why="T-7: JE เก่าที่มี JE ปรับปรุงอ้างเลขในช่องอ้างอิงแล้ว ไม่ฟ้องซ้ำ (หลักฐาน ไม่ใช่ fuzzy)"),
     # V2
     dict(file=SETTLE_POST, method="OrphanArtifactsAsync",
-         must=["parts.Contains(p.Notes.Substring("],
+         must=["deadIds.Contains(p.SettlementBatchId.Value)"],
          call_args=[("SettlementOrphanTriage.Split(", "current")],
-         why="V2-C4: กรองการรับชำระของรอบตายใน SQL · V2-P1: ตัวแยกรู้รอบที่กำลังลง/ตรวจเทียบ"),
+         why="V2-C4: กรองการรับชำระของรอบตายใน SQL (รอบ 201 A-ST1: ด้วยคอลัมน์เจ้าของ) · V2-P1: ตัวแยกรู้รอบที่กำลังลง/ตรวจเทียบ"),
     dict(file=SETTLE_POST, method="AcknowledgeOrphanCoreAsync",
          must=["_db.ChangeTracker.Clear()", "checkedBatchId = checkedBatch?.BatchId"],
          call_args=[("OrphanArtifactsAsync(", "checkedBatch")],
@@ -3019,7 +3034,7 @@ RULES += [
          must_re=[r"a\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId", r"!\s*p\s*\.\s*IsDeleted"],
          why="ข้อ 54: ยอดครอบนับจากการรับชำระจริงที่ยังมีผล (ไม่ใช่ PaidAmount ที่รวมใบลดหนี้) · tenant"),
     dict(file=DOC_REISSUE, method="GetEtaxReissueReviewAsync",
-         must=["EtaxReissueReview.ReclassReversalMisdated(", "new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated)"],
+         must=["EtaxReissueReview.ReclassReversalMisdated(", "new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated,"],
          must_lit=['"21913"'],
          must_re=[r"rev\s*\.\s*CompanyId\s*==\s*companyId", r"orig\s*\.\s*CompanyId\s*==\s*companyId", r"a\s*\.\s*CompanyId\s*==\s*companyId"],
          forbid=["SaveChangesAsync(", "ReverseJournalEntryAsync("],
@@ -3029,10 +3044,12 @@ RULES += [
 # ── รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1/O2/O3/O5/O6): ล็อกจุดเรียก (pure ทดสอบใน VoidReissueR200ITests) ──
 RULES += [
     dict(file=DOCSVC, method="ReflagKeptOriginalReceiptsAsync",
-         must=["DocumentVoidPreconditions.KeptOriginalCoverageLost(", "EtaxReissueReview.LastResolutionKeptOriginal(",
-               "EtaxReissueReview.KeptOriginalMarker", "r.EtaxCancelRequiredAt = DateTime.UtcNow", "r.EtaxCancelRequiredReason = flag"],
+         must=["DocumentVoidPreconditions.KeptOriginalCoverageLost(", "EtaxReissueReview.KeptOriginal(",
+               "EtaxReissueReview.KeptOriginalMarker", "r.EtaxCancelRequiredAt = DateTime.UtcNow", "r.EtaxCancelRequiredReason = flag",
+               "r.EtaxKeptOriginalAt != null"],
          must_re=[r"r\s*\.\s*CompanyId\s*==\s*companyId", r"r\s*\.\s*EtaxCancelledByCreditNoteId\s*==\s*null"],
-         call_args=[("LivePaymentCoverageAsync(", "excludePaymentId: voidedPaymentId")],
+         # รอบ 201 ทีม DV (A-DV4 · ข้อ 68): ไม่นับทุกรายการที่ธุรกรรมนี้กำลังยกเลิก (เดิมรายการเดียว — cascade หลายรายการนับรายการก่อนหน้าว่ายังมีผล)
+         call_args=[("LivePaymentCoverageAsync(", "PaymentsVoidingInThisContext"), ("PaymentsVoidingInThisContext(", "voidedPaymentId")],
          before=[("LivePaymentCoverageAsync(", "DocumentVoidPreconditions.KeptOriginalCoverageLost(")],
          forbid=["catch", "UndoUndueOutputVatReclassAsync(", "Status = DocumentStatus.Voided"],
          why="V1H-O1 (V1I): ใบกำกับที่ยืนยันทาง (ค) แล้วการรับชำระที่ครอบยอดถูกยกเลิก ⇒ ติดธงกลับ (เดิมจบเงียบ) · ยอดครอบไม่นับรายการที่กำลังยกเลิก · "
@@ -3064,12 +3081,21 @@ RULES += [
          must=["EtaxReissueReview.KeptOriginalMarker"],
          why="V1H-O1 (V1I): ป้ายทาง (ค) ฝั่งเขียนใช้ค่าคงที่ตัวเดียวกับฝั่งอ่าน (LastResolutionKeptOriginal)"),
     dict(file=ETAX, method="VoidAsync",
-         must=["EtaxVoidPolicy.StatusForVoid(", "DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(", "EtaxVoidPolicy.EvidenceNotBefore(",
-               "a.CreatedAt > evidenceNotBefore"],
-         call_args=[("EtaxVoidPolicy.Decide(", "decidedStatus"), ("EtaxVoidPolicy.EvidenceNotBefore(", "etax.SubmittedAt")],
+         # รอบ 201 ฝ่ายค้าน DV-O3: เวลาอ้างอิงหลักฐานมาจากตัวโหลดเดียวกับทาง (ก) (CancellationEvidenceNotBeforeAsync → EtaxVoidPolicy.EvidenceNotBefore ภายใน)
+         must=["EtaxVoidPolicy.StatusForVoid(", "DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(",
+               "DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(", "a.CreatedAt > evidenceNotBefore.Value"],
+         call_args=[("EtaxVoidPolicy.Decide(", "decidedStatus"), ("DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(", "etax.DocumentId")],
          before=[("EtaxVoidPolicy.StatusForVoid(", "EtaxVoidPolicy.Decide(")],
-         forbid=["EtaxVoidPolicy.Decide(etax.Status"],
+         forbid=["EtaxVoidPolicy.Decide(etax.Status", "EtaxVoidPolicy.EvidenceNotBefore("],
          why="V1H-O2/O5 (V1I): ตัดสินด้วยสถานะที่รวม e-Tax by Email ประทับเวลาแล้ว (เกณฑ์เดียวกับ EffectiveEtaxAsync) · หลักฐานต้องแนบหลังส่ง e-Tax"),
+    dict(file="Helpers/DocumentVoidPreconditions.cs", method="CancellationEvidenceNotBefore",
+         must=["EtaxVoidPolicy.EvidenceNotBefore(", "EtaxReachedRdStatuses.Contains("],
+         why="รอบ 201 ฝ่ายค้าน DV-O3: กติกา 'แนบหลังส่ง' ชุดเดียวของการยกเลิกแถว e-Tax และทาง (ก) — แถวเก่าไม่มีเวลาส่ง = เวลาสร้างแถว"),
+    dict(file="Helpers/DocumentVoidPreconditions.cs", method="CancellationEvidenceNotBeforeAsync",
+         must=["CancellationEvidenceNotBefore(", "EtaxRdTimestampEmailTimesAsync("],
+         must_re=[r"e\s*\.\s*CompanyId\s*==\s*companyId"],
+         forbid=["DocumentEmailLogs"],
+         why="รอบ 201 ฝ่ายค้าน DV-O3: ตัวโหลดเดียวของเวลาอ้างอิงหลักฐาน · เกณฑ์อีเมลตัวเดียว · tenant"),
     dict(file="Helpers/DocumentVoidPreconditions.cs", method="EffectiveEtaxAsync",
          must=["EtaxEmailedWithRdTimestampAsync("],
          forbid=["DocumentEmailLogs"],
@@ -3147,6 +3173,355 @@ RULES += [
          why="PR1: รายชื่อ + เงินเดือนพนักงานต้องผ่านด่านดูข้อมูลเงินเดือน · เงินเดือนคืนตามสิทธิ์ดูเงินเดือน"),
 ]
 
+# ── รอบ 201 ทีม DV (BACKLOG A-DV1..A-DV6 · C-1 · คำตัดสินข้อ 62/65/66/67/68/74): เอกสาร ยกเลิก/ออกใบแทน/e-Tax (pure ทดสอบใน VoidReissueR201DvTests) ──
+_DV_WHY_LOCK = ("A-DV4 (ข้อ 68) + ฝ่ายค้าน DV-O1: การชำระที่ชำระร่วมกับเอกสารอื่นถูกปฏิเสธทันทีหลังล็อกใบนี้ ก่อนล็อกอื่น/กลับรายการใด (ตัวตัดสินเดียว "
+                "SharedPaymentVoidBlock) ⇒ cascade แตะแค่ใบนี้ · ห้ามล็อก 'ใบอื่นของการชำระ' (ว่างเสมอในเส้นที่สำเร็จ แต่สร้างวงรอกับ VoidPaymentAsync/"
+                "CreateMultiDocPaymentAsync ที่ล็อก ORDER BY Id) · ข้อความธงของทุกรายการในลูปถึงผู้กด (ห้ามทิ้งผล)")
+RULES += [
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["DocumentVoidPreconditions.SharedPaymentVoidBlock(",
+               "CombineNotices(cascadeEtaxFlag, cascadeVoid.EtaxFlag)", "CombineNotices(cascadeVatNotice, cascadeVoid.VatNotice)"],
+         must_re=[r"new\s+PaymentVoidResult\s*\(\s*cascadeEtaxFlag\s*,\s*cascadeVatNotice\s*\)",
+                  r"is\s+string\s+sharedPaymentBlock\s*\)\s*throw\b",
+                  r"a\s*\.\s*CompanyId\s*==\s*companyId\s*&&\s*p\s*\.\s*CompanyId\s*==\s*companyId"],
+         call_args=[("DocumentVoidPreconditions.SharedPaymentVoidBlock(", "documentId")],
+         before=[("ExecuteSqlRawAsync(", "DocumentVoidPreconditions.SharedPaymentVoidBlock("),
+                 ("DocumentVoidPreconditions.SharedPaymentVoidBlock(", "LockRelatedSourceDocumentAsync(companyId, documentId)"),
+                 ("DocumentVoidPreconditions.SharedPaymentVoidBlock(", "LockDepositBalancesAsync("),
+                 ("DocumentVoidPreconditions.SharedPaymentVoidBlock(", "ReversePaymentInternalAsync("),
+                 ("DocumentVoidPreconditions.SharedPaymentVoidBlock(", "ReverseJournalEntryAsync(")],
+         forbid=["LockDocumentsForPaymentVoidAsync(", "otherDocs"],
+         why=_DV_WHY_LOCK),
+    dict(file="Controllers/DocumentController.cs", method="VoidDocument",
+         must=["voided.EtaxCancellationFlag", "voided.OutputVatNotice"],
+         why="A-DV4 (ข้อ 68): ธงที่ติดระหว่างยกเลิกการชำระใน cascade ต้องถึงผู้กด (เดิมตอบแค่สำเร็จ = ล้มเงียบ F2 ข้อ 7)"),
+    dict(file=DOC_REISSUE, method="LivePaymentCoverageAsync",
+         must=["DocumentVoidPreconditions.LivePaymentCoverage("],
+         call_args=[("DocumentVoidPreconditions.LivePaymentCoverage(", "excludePaymentIds")],
+         why="A-DV4 (ข้อ 68): ยอดครอบรวมผ่านตัวตัดสิน pure ตัวเดียวและไม่นับชุดรายการที่กำลังยกเลิก"),
+    dict(file=DOC_REISSUE, method="PaymentsVoidingInThisContext",
+         must=["e.Entity.IsDeleted", "OriginalValue", "ids.Add(voidingPaymentId)", "EntityState.Modified"],
+         must_re=[r"e\s*\.\s*Entity\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-DV4 (ข้อ 68): รายการที่ถูกตั้งยกเลิกในธุรกรรมนี้ (ยังไม่ save) ต้องไม่ถูกนับว่ายังมีผล · tenant"),
+    dict(file=DOC_REISSUE, method="ResolveEtaxCancellationAsync",
+         must=["DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(", "a.CreatedAt > evidenceNotBefore.Value",
+               "rcpt.EtaxKeptOriginalAt = now", "rcpt.EtaxKeptOriginalAt = null"],
+         must_lit=["EtaxReissueReview.OneLine(reason)", "EtaxReissueReview.OneLine(reference)"],
+         call_args=[("DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(", "rcpt.Id")],
+         before=[("DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(", "DocumentVoidPreconditions.EtaxCancellationResolution("),
+                 ("rcpt.EtaxKeptOriginalAt = now", "_db.AddChainedAuditLog(")],
+         forbid=["DocumentEmailLogs"], forbid_lit=["{reason}", "{reference}"],
+         why="A-DV3 (ข้อ 67) + DV-O3/O6: หลักฐานทาง (ก) ต้องแนบหลังเวลาที่ใบถึงกรมสรรพากร (แถว e-Tax ที่ส่ง · อีเมลประทับเวลา — เกณฑ์อีเมลตัวเดียว) · "
+             "A-DV2 (ข้อ 65): ทาง (ค) ตั้งคอลัมน์ · ทาง ก/ข ล้าง (ผู้เขียนตัวเดียว)"),
+    dict(file=DOC_REISSUE, method="EvaluateSettlementPaidReissueAsync",
+         must=["DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock(", "VatPeriodFilingStatusAsync(",
+               "r.IsTaxInvoiceByLaw == true && r.VatAmount > 0.005m"],
+         must_re=[r"verdict\s*=\s*SettlementPaidReissueVerdict\s*\.\s*Blocked\s*\(\s*declaredBlock", r"return\s*\(\s*verdict\s*,"],
+         before=[("SettlementPaidReissue.Decide(", "DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock(")],
+         why="C-1 (ข้อ 74): ออกใบแทนในเดือนภาษีที่ประกาศว่ายื่น/ยื่นแล้ว = บล็อกพร้อมทางไปต่อ (ปุ่ม + การกดจริงผ่านตัวประเมินตัวเดียว)"),
+    dict(file=DOC, method="VatPeriodFilingStatusAsync",
+         must=["TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status)", "t.TaxType == TaxType.VAT", "t.FilingLockedAt != null"],
+         must_re=[r"t\s*\.\s*CompanyId\s*==\s*companyId"],
+         forbid=["TaxReportStatus.Draft"],
+         why="C-1 (ข้อ 74) + ฝ่ายค้าน DV-O5: คิวรีเดียวของ 'งวด ภ.พ.30 ประกาศว่ายื่น/ยื่นแล้ว/ล็อก' (ด่านมัดจำ/ใบปรับปรุง/ใบแทนใช้ร่วม) · tenant"),
+    dict(file=DOC, method="VatPeriodDeclaredOrFiledAsync",
+         must=["VatPeriodFilingStatusAsync("], forbid=["_db.TaxReports"],
+         why="ฝ่ายค้าน DV-O5: ห้ามมีคิวรีงวด ภ.พ.30 ชุดที่สอง"),
+    dict(file=DOC_REISSUE, method="GetEtaxReissueReviewAsync",
+         must=["EtaxReissueReview.StuckOutputVatAfterPaymentVoid(", "EtaxReissueReview.SubmittedEtaxVoidedWithoutEvidence(",
+               "EtaxReissueReview.VoidAuditHasEvidence(",
+               "EtaxReissueReview.EmailedEtaxVoidedInSystem(", "DocumentVoidPreconditions.KeptOriginalCoverageLost(", "EtaxReissueReview.KeptOriginal(",
+               "DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(", "LivePaymentCoverageAsync(", "IgnoreQueryFilters()"],
+         must_re=[r"e\s*\.\s*CompanyId\s*==\s*companyId", r"d\s*\.\s*CompanyId\s*==\s*companyId"],
+         call_args=[("new EtaxReissueReviewReport(", "stuckRows"), ("new EtaxReissueReviewReport(", "etaxRowsSubmitted"),
+                    ("new EtaxReissueReviewReport(", "keptLostRows"), ("new EtaxReissueReviewReport(", "etaxRowsEmailed")],
+         forbid=["SaveChangesAsync(", "DocumentEmailLogs", "ReverseJournalEntryAsync("],
+         why="A-DV1 (ข้อ 62/66): 4 กลุ่มใหม่ของรายงานข้อ 44 — อ่านอย่างเดียว · ตัวตัดสิน pure · ใบทาง ค ใช้ตัวตัดสินเดียวกับเส้นยกเลิกการชำระ · tenant"),
+    dict(file="Controllers/DocumentController.cs", method="GetEtaxReissueReview",
+         must=["r.Total"],
+         why="A-DV1: ตัวนับเดียวของทุกกลุ่ม (เดิมนับเอง 4 กลุ่ม — กลุ่มใหม่จะหลุดข้อความ)"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="EtaxKeptOriginalBackfillSql",
+         must=["EtaxReissueReview.KeptOriginalMarker", "EtaxReissueReview.LastResolutionLinePattern", "EtaxKeptOriginalLockKey"],
+         must_lit=["RD-ETAX-ORIGINAL-STILL-VALID", "\"EtaxKeptOriginalAt\" IS NULL", "a.\"CompanyId\" = d.\"CompanyId\"", "information_schema.columns",
+                   "pg_advisory_xact_lock("],
+         forbid_lit=["ADD COLUMN IF NOT EXISTS"],
+         why="A-DV2 (ข้อ 65) + ฝ่ายค้าน DV-O6: เติมครั้งเดียวในขั้นที่สร้างคอลัมน์ (ไม่สแกนทั้งตารางทุกบูต) · ป้ายตัวสุดท้ายที่ต้นบรรทัด (กติกาเดียวกับตัวอ่าน) · "
+             "audit ของบริษัทเดียวกัน · ข้อความป้ายจากค่าคงที่ตัวเดียว"),
+]
+
+# ── รอบ 201 ทีม IN (สต็อก/สินทรัพย์/ค่าตั้ง/ที่พัก · BACKLOG §1.8 + C-5/C-6): ตัวตัดสิน pure ทดสอบใน InventoryCostingMethodTests ·
+#    StockTotalsReconciliationTests · DepreciationEstimateChangeTests · CompanySettingsInRound201Tests · DocumentNumberBookTests ·
+#    LodgingCheckoutReissueTests ⇒ ล็อกว่า service เรียกจริง/ลำดับถูก/ไม่ประกอบเอง ──
+RULES += [
+    dict(file="Services/Implementations/ProductService.cs", method="CreateAsync",
+         must=["CostingMethodPolicy.RejectReason("],
+         before=[("CostingMethodPolicy.RejectReason(", "_db.Products.Add(")],
+         why="A-IN1: วิธีคิดต้นทุนของสินค้าใหม่ผ่านตัวตัดสินเดียว (ห้าม LIFO/ต้นทุนมาตรฐาน · TFRS for NPAEs บทที่ 8)"),
+    dict(file="Services/Implementations/ProductService.cs", method="UpdateAsync",
+         must=["CostingMethodPolicy.ChangeRejectReason(", "HasStockMovementsAsync(", "AddChainedAuditLog("],
+         before=[("CostingMethodPolicy.ChangeRejectReason(", "product.CostingMethod = requestedCosting")],
+         forbid=["_db.AuditLogs.Add("],
+         why="A-IN1: เปลี่ยนวิธีคิดต้นทุนของสินค้าที่มีความเคลื่อนไหวแล้ว = ปฏิเสธก่อนแตะ entity · ทุกการเปลี่ยนเข้า audit chain"),
+    dict(file="Services/Implementations/Inventory/InventoryCostingService.cs", method="ResolveOutboundCostAsync",
+         must=["InventoryCostFlow.FifoQueue(", "LoadCostMovementsAsync(", "FifoLayerCost.Resolve("],
+         why="A-IN2: คิว FIFO เห็นยอดยกมา/ตรวจนับ/ไม่นับโอนคลัง ผ่านตัวจำแนกเดียว (ห้ามกลับไปอ่านเฉพาะ IN/OUT)"),
+    dict(file="Services/Implementations/Inventory/InventoryCostingService.cs", method="RebuildAverageCostAsync",
+         must=["InventoryCostFlow.RebuildWeightedAverage(", "LoadCostMovementsAsync("],
+         why="A-IN2: rebuild ถัวเฉลี่ยใช้ตัวจำแนก+สูตรเดียวกับ ledger (WeightedAverageCost.Next)"),
+    dict(file="Services/Implementations/Inventory/StockLedger.cs", method="RepairProductTotalsAsync",
+         must=["StockTotalsReconciliation.SkipReason(", "AddChainedAuditLog(", "LoadTotalsEvidenceAsync("],
+         before=[("StockTotalsReconciliation.SkipReason(", "ExecuteUpdateAsync("),
+                 ("ExecuteUpdateAsync(", "AddChainedAuditLog(")],
+         forbid=["AuditLogs.Add("],
+         why="C-5: ซ่อมยอดสต็อกรวมเฉพาะแถวที่ผู้ใช้เห็นและยังเท่าค่าที่เห็น · ประวัติไม่ตรงต้องยืนยันตรวจนับ · ทุกแถวเข้า audit chain"),
+    dict(file="Controllers/ProductController.cs", method="StockTotalsRepair",
+         before=[("RequireInventoryAsync(", "_stock.RepairProductTotalsAsync(")],
+         call_args=[("RequireInventoryAsync(", "PermissionKeys.InventoryAdjust")],
+         must_re=[r"RequireInventoryAsync\s*\([^;]*\)\s*is\s*\{\s*\}\s*deny\s*\)\s*return\s+deny"],
+         why="C-5: ซ่อมยอดสต็อก (เปลี่ยนตัวเลขสต็อก) ต้องผ่านด่านสิทธิ์ปรับสต็อกก่อน และใช้ผลของด่าน"),
+    dict(file="Controllers/ProductController.cs", method="StockTotalsCheck",
+         before=[("RequireInventoryAsync(", "_stock.FindProductTotalMismatchesAsync(")],
+         why="C-5: รายงานยอดสต็อกต้องผ่านด่านสิทธิ์ดูคลัง"),
+    dict(file="Services/Implementations/PreCloseChecklistService.cs", method="RunAsync",
+         must=["UsefulLifeReview.IsFiscalYearEndMonth(", "UsefulLifeReview.NeedsReview("],
+         why="C-6: รายการตรวจปิดปีเตือนสินทรัพย์ที่ยังไม่ทบทวนอายุใช้งาน (ผู้อ่านของ UsefulLifeReviewedAt)"),
+    dict(file="Services/Implementations/FixedAssetService.cs", method="AdjustUsefulLifeAsync",
+         must=["DepreciationEstimateChange.Problem(", "DepreciationEstimateChange.IsChange(", "AddChainedAuditLog("],
+         before=[("DepreciationEstimateChange.Problem(", "RemoveRange(stalePlan)")],
+         forbid=["_db.AuditLogs.Add("],
+         why="A-IN3: เปลี่ยนประมาณการค่าเสื่อม (อายุ/ซาก/วิธี) ไปข้างหน้าผ่านตัวตัดสินเดียว · ยืนยันค่าเดิม = บันทึกว่าทบทวน · audit chain"),
+    dict(file="Services/Implementations/SettingsService.cs", method="UpdateSettingsAsync",
+         must=["DocumentTemplateStyle.ColorRejectReason("],
+         before=[("DocumentTemplateStyle.ColorRejectReason(", "settings.PrimaryColor =")],
+         forbid=["settings.PrimaryColor = request.PrimaryColor", "settings.SecondaryColor = request.SecondaryColor"],
+         why="A-IN6: สีบริษัทผ่านตัวตรวจสีเดียวกับเทมเพลตก่อนเก็บ (เดิมรับข้อความอะไรก็ได้แล้วไหลเข้า CSS หัวเอกสาร)"),
+    dict(file="Services/Implementations/CompanyService.cs", method="UpdateAsync",
+         must=["DepositKindSeed.AddedByIndustryChange(", "DepositKindSeed.EnsureSeededAsync("],
+         why="A-IN7: เปลี่ยนประเภทธุรกิจภายหลังต้องเติมประเภทเงินมัดจำเริ่มต้นของธุรกิจใหม่ (ตารางเดียวกับตอนสร้างบริษัท)"),
+    dict(file="Helpers/DocumentNumberGenerator.cs", method="NextAsync#1",
+         must=["DocumentNumberBook.BookPrefix("],
+         before=[("DocumentNumberBook.BookPrefix(", "AdvisoryLockKey.For(")],
+         why="A-IN4: ตัวนำหน้าเล่ม (บริษัท/สาขา) ตัดสินที่เดียวก่อนล็อก — ล็อกต่อเล่ม ไม่ใช่ต่อชนิดเอกสาร"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="ReissueFinalDocumentAsync",
+         must=["LodgingCheckoutReissue.Problem(", "BuildFinalInvoiceLinesAsync(", "UpsertFinalDraftAsync(",
+               "ApplyFinalDepositPlanAsync(", "AddChainedAuditLog("],
+         before=[("LodgingCheckoutReissue.Problem(", "UpsertFinalDraftAsync("),
+                 ("BuildFinalInvoiceLinesAsync(", "LodgingCheckoutReissue.Problem(")],
+         forbid=["MeterStayAsync(", "CreatePaymentAsync(", "AuditLogs.Add("],
+         why="A-IN5: ใบเช็คเอาต์ใหม่ผ่านตัวสร้างของที่พักตัวเดียว · ยอด/ชนิดต้องเท่าใบเดิมก่อนออกเลข · ไม่นับมิเตอร์/ไม่รับเงินซ้ำ"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="CheckOutAsync",
+         must=["BuildFinalInvoiceLinesAsync(", "UpsertFinalDraftAsync("],
+         before=[("UpsertFinalDraftAsync(", "_docService.ApproveDocumentAsync(")],
+         why="A-IN5: เช็คเอาต์กับออกใบใหม่ใช้ตัวสร้างรายการ/ใบร่างตัวเดียวกัน (ห้ามสำเนาที่สอง) · ใบร่าง (ใช้ซ้ำได้) ก่อนอนุมัติ"),
+]
+
+# ── รอบ 201 ทีม GW: Gateway/Integration (BACKLOG §1.1 A-GW1..A-GW12 · C-10 · C-11 · B-1) ──
+ROLE_PERM = "Services/Implementations/RolePermissionService.cs"
+PAY_INTENT = "Services/Payments/PaymentIntentService.cs"
+RULES += [
+    dict(file=GW_CTL, method="Receive",
+         must=["GatewayWebhookRoute.IsWellFormedToken(", "GatewayWebhookRoute.ConfigsToTry(", "toTry.Contains(c.Id)",
+               "cfg.LastTokenWebhookMode = cfg.Mode", "cfg.LastLegacyWebhookAt = cfg.LastWebhookAt"],
+         must_re=[r"c\s*\.\s*WebhookToken\s*==\s*token"],
+         before=[("GatewayWebhookRoute.IsWellFormedToken(", "ReadToEndAsync("),
+                 ("GatewayWebhookRoute.ConfigsToTry(", "provider.VerifyWebhookAsync(")],
+         forbid=["foreach (var cfg in candidates)"],
+         why="A-GW1: webhook นิรนาม — ลองยืนยัน (= ยิงคำขอออกด้วยคีย์ของร้าน) เฉพาะ config ที่ตัวตัดสินเลือก · รหัสลับผิด/รูปผิด = ไม่ยิงอะไรออก"),
+    dict(file="Controllers/PaymentSettingsController.cs", method="Save",
+         must=["cfg.WebhookToken ??= GatewayWebhookRoute.NewToken()"],
+         why="A-GW1: config ทุกแถวมีรหัสลับ — ออกครั้งเดียว (บันทึกครั้งถัดไปห้ามเปลี่ยน URL ที่ตั้งในแดชบอร์ดแล้ว)"),
+    dict(file=GW_CTL, method="Reconciliation",
+         must=["GatewayReconciliation.FromIntent(", "LoadBatchSettlementAsync(", "GatewayReconciliation.LateRefundSplitUnknown"],
+         forbid=["IsSettled = i.SettlementJournalEntryId != null"],
+         why="A-GW4: รอบโอน batch ที่ลงบัญชีแล้ว = โอนแล้ว (ตัวตัดสินเดียว) · A-GW9 นับแถวเก่าที่แยกยอดคืนหักรอบหลังไม่ได้"),
+    dict(file=GW_CTL, method="LoadBatchSettlementAsync",
+         must=["GatewayReconciliation.IsBatchPosted(", "GatewayReconciliation.BatchSettled("],
+         must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId", r"l\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-GW4: สถานะรอบโอน + ยอดจากบรรทัดของรอบที่ลงบัญชีแล้ว · tenant"),
+    dict(file=GW_CTL, method="List",
+         must=["PaymentIntentPolicy.IsStuck(", "PaymentIntentPolicy.StatusLabel(", "PaymentIntentPolicy.SourceKindLabel(",
+               "GatewayRefundMath.Check(", "PaymentIntentPolicy.CanEditFee(", "PaymentIntentPolicy.StatusOptions(",
+               "LoadBatchSettlementAsync("],
+         forbid=["isSettled = i.SettlementJournalEntryId != null"],
+         why="A-GW2: ป้าย/ปุ่ม/ค้างนาน ตัดสินที่เซิร์ฟเวอร์ (JS ไม่มีสำเนาเกณฑ์) · ปุ่มคืนเงิน = ด่านเดียวกับ service"),
+    dict(file=GW_CTL, method="RecordLegacyRefund", must=["refunds.RecordLegacyRefundAsync("],
+         why="A-GW7: endpoint ส่งต่อ service (ด่านทั้งหมดอยู่ที่ service · เจ้าของ + ห้ามคีย์ API ที่ attribute)"),
+    dict(file=GW_CTL, method="WriteOffFeeVatResidue", must=["settlements.WriteOffFeeVatResidueAsync("],
+         why="A-GW8: endpoint ส่งต่อ service (เกณฑ์/ผัง/งวด/ล็อก/audit อยู่ที่ service)"),
+    dict(file=GW_SETTLE, method="ListPendingAsync",
+         must=["i.SettlementBatchId == null", "GatewayBatchIntentRules.LegacyAcceptsNewIntents(",
+               "GatewayBatchIntentRules.LegacyNewIntentsMovedMessage(", "ActiveBatchChannelNamesByProviderAsync("],
+         why="A-GW6: ตัวนับคืนก่อนระบบเก็บยอดไม่นับ intent ที่ batch ถือ · C-10: config ผูกช่องทาง batch ⇒ รายการใหม่ไม่อยู่ในหน้านี้ + ข้อความ/ลิงก์"),
+    dict(file=GW_SETTLE, method="BuildPlanAsync",
+         must=["GatewayBatchIntentRules.LegacyAcceptsNewIntents(", "candidates = candidates.Where(c => c.Input.AlreadySettled)",
+               "GatewayBatchIntentRules.LegacyNewIntentsMovedMessage("],
+         before=[("GatewayBatchIntentRules.LegacyAcceptsNewIntents(", "GatewaySettlementMath.Plan(")],
+         why="C-10 (คำตัดสินข้อ 83): ตัดรายการใหม่ก่อนคิดแผน ⇒ แผนกับการมาร์ก (RecordAsync) ใช้ชุดเดียวกัน · คงเส้นคืนเงินภายหลัง"),
+    dict(file=GW_SETTLE, method="ActiveBatchChannelNamesByProviderAsync",
+         must=["SettlementChannelKind.Gateway", "s.IsActive"],
+         must_re=[r"s\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="C-10: ช่องทางที่ปิดเส้นเดิม = ชนิด Gateway ที่เปิดใช้และผูก config ของบริษัทนี้"),
+    dict(file=GW_SETTLE, method="ResolveAccountsAsync", must=["_accounts.ResolveFeeExpenseAccountAsync("],
+         forbid=["config?.FeeExpenseAccountId"],
+         why="C-11: ผังค่าธรรมเนียมของเส้นเดิมมาจากตัวตัดสินเดียวกับค่าตั้งต้นของช่องทาง batch (ผังเดียวต่อผู้ให้บริการ)"),
+    dict(file=SETTLE_CHANNEL, method="SaveAsync",
+         must=["GatewayBatchIntentRules.SeedFeeAccountMapOnFirstBinding(", "_gatewayAccounts.ResolveFeeExpenseAccountAsync("],
+         why="C-11 (คำตัดสินข้อ 84): ผูก config ครั้งแรก ⇒ payment_fee = ผังของเส้นเดิม (แก้ได้ · ไม่ย้ายย้อนหลัง)"),
+    dict(file=GW_SETTLE, method="FeeVatStatusAsync",
+         must=["LoadBatchFeeVatUndueAsync(", "GatewayFeeVatClaim.BatchPortionNote(", "ResidueCheckAsync("],
+         why="A-GW5: VAT ค่าธรรมเนียมของรอบโอน batch ที่รอใบกำกับ (11640 ในใบสำคัญจ่าย) แสดงคู่กัน · A-GW8 สถานะปรับปรุงเศษจากตัวตรวจเดียว"),
+    dict(file=GW_SETTLE, method="ClaimFeeVatAsync",
+         must=["GatewayFeeVatClaim.BatchPortionNote(", "LoadBatchFeeVatUndueAsync("],
+         why="A-GW5: ยอดเกินที่พัก 11630 ต้องบอกว่าส่วนของรอบโอน batch เคลมที่ใบสำคัญจ่าย (ห้ามเคลมรวมที่นี่)"),
+    dict(file=GW_SETTLE, method="LoadBatchFeeVatUndueAsync",
+         must=["d.InputVatPostedAsUndue", "d.InputVatBecameClaimableAt == null", "SettlementBatchStatus.Posted"],
+         must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId", r"b\s*\.\s*CompanyId\s*==\s*companyId", r"d\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-GW5: อ่านอย่างเดียว · tenant ทุก query"),
+    dict(file=GW_SETTLE, method="LoadFeeVatAgingAsync", must=["GatewayFeeVatClaim.ResidueTag("],
+         why="A-GW8: ใบปรับปรุงเศษล้าง 11630 เหมือนใบเคลม (ฝั่งอ่านกับฝั่งเขียนใช้ tag ตัวเดียว)"),
+    dict(file=GW_SETTLE, method="ResidueCheckAsync", must=["GatewayFeeVatClaim.ResidueCheck("],
+         must_re=[r"j\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-GW8: สถานะบนหน้ากับด่านตอนบันทึกมาจากตัวตรวจเดียว · tenant"),
+    dict(file=GW_SETTLE, method="WriteOffFeeVatResidueAsync",
+         must=["AdvisoryLockKey.For(", "ResidueCheckAsync(", "JournalEntryBuilder.ClosedPeriodReasonAsync(", "JournalEntryBuilder.For(",
+               "GatewayFeeVatClaim.ResidueTag(", "_db.AddChainedAuditLog(", "_accounts.ResolveFeeExpenseAccountAsync("],
+         must_re=[r"if\s*\(\s*!\s*check\s*\.\s*Ok\s*\)"],
+         before=[("AdvisoryLockKey.For(", "ResidueCheckAsync("), ("ResidueCheckAsync(", "JournalEntryBuilder.For(")],
+         forbid=["AuditLogs.Add(", "new JournalEntry"],
+         why="A-GW8: ปรับปรุงเศษ 11630 ภายใต้เกณฑ์ ใต้ล็อกเดียวกับรอบโอน/เคลม · JE ผ่าน builder · hash chain"),
+    dict(file=GW_REFUND, method="RecordLegacyRefundAsync",
+         must=["GatewayRefundMath.CheckLegacyRefundEntry(", "_db.AddChainedAuditLog(", "BookRefundAsync(", "PastRefundBookingAsync(",
+               "AdvisoryLockKey.For("],
+         must_re=[r"if\s*\(\s*!\s*check\s*\.\s*Ok\s*\)", r"i\s*\.\s*CompanyId\s*==\s*companyId"],
+         before=[("GatewayRefundMath.CheckLegacyRefundEntry(", "BookRefundAsync(")],
+         forbid=["AuditLogs.Add(", "new JournalEntry"],
+         why="A-GW7: บันทึกยอดคืนย้อนหลังผ่านด่านเดียว · ลงบัญชีด้วยตัวลงบัญชีคืนเงินตัวเดียว · hash chain"),
+    dict(file=PAY_INTENT, method="StartAsync",
+         must=["SafeReturnUrlAsync(", "ReturnUrl = returnUrl"],
+         forbid=["ReturnUrl = request.ReturnUrl", "request.CardToken, request.ReturnUrl"],
+         why="A-GW3: URL กลับหลังจ่ายจำกัดโดเมนของบริษัท/ระบบ (open redirect หลัง 3-D Secure) — ทุกทางเข้าเดินผ่าน StartAsync"),
+    dict(file=PAY_INTENT, method="SafeReturnUrlAsync",
+         must=["PaymentIntentPolicy.SafeReturnUrl("],
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"x\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-GW3: โดเมนที่อนุญาต = เว็บไซต์ของบริษัทนี้ (tenant) + โดเมนระบบ · ตัวตัดสิน pure ตัวเดียว"),
+    dict(file=INTEG, method="ApplyResyncJournalAsync",
+         must=["DryRunMappingJournalAsync(", "IntegrationResyncJournal.Decide(", "IntegrationResyncJournal.KeepOriginalNote("],
+         before=[("DryRunMappingJournalAsync(", "ResyncReverseOriginalsAsync("),
+                 ("IntegrationResyncJournal.Decide(", "ResyncReverseOriginalsAsync(")],
+         why="A-GW12: สร้างบรรทัด JE ใหม่ได้ก่อน (dry-run) ค่อยกลับ JE เดิม · สร้างไม่ได้ = คง JE เดิม + ดังสามที่"),
+    dict(file=INTEG, method="DryRunMappingJournalAsync",
+         must=["BuildIntegrationJournalLinesAsync(", "ValidateAndAutofixJournalAsync("],
+         forbid=["_db.JournalEntries.Add(", "SaveChangesAsync("],
+         why="A-GW12: dry-run ใช้ตัวสร้าง + ด่านโครงสร้างตัวเดียวกับตอนลงจริง และไม่บันทึกอะไร"),
+    dict(file=INTEG, method="ResyncUpdateInvoiceAsync", must=["ApplyResyncJournalAsync("], forbid=["ResyncReverseOriginalsAsync("],
+         why="A-GW12: resync ใบแจ้งหนี้เดินเส้นปรับ JE ตัวเดียว (ห้ามกลับ JE เดิมเอง)"),
+    dict(file=INTEG, method="ResyncUpdateExpenseAsync", must=["ApplyResyncJournalAsync("], forbid=["ResyncReverseOriginalsAsync("],
+         why="A-GW12: resync ค่าใช้จ่ายเดินเส้นปรับ JE ตัวเดียว (ห้ามกลับ JE เดิมเอง)"),
+    dict(file=INTEG, method="PostMappingJournalAsync", must=["IntegrationResyncJournal.ResendNextStep"],
+         why="A-GW12: ทางไปต่อที่มีจริง (ส่งซ้ำแบบแก้ไข) — เดิมชี้ปุ่ม 'ลงบัญชีใหม่จากหน้าเอกสาร' ที่ไม่มี"),
+    dict(file=INTEG, method="GetDashboardAsync",
+         must=["MoneyAccountFallback.IntegrationBankWarning(", "MoneyAccountFallback.PickBank("],
+         must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-GW11: คำเตือนล่วงหน้าบัญชีธนาคารรับเงินจากกติกาเดียวกับตอนรับรายการชำระ · tenant"),
+    dict(file=INTEG, method="VoidDocumentByExternalRefAsync",
+         must=["var voidResult = await _documentService.VoidDocumentAsync(", "VoidNotices(voidResult)", "Warnings: voidNotices"],
+         why="ฝ่ายค้าน DV-O4 (A-GW · รอบ 201): ธงจาก cascade ยกเลิกการชำระ (e-Tax/ภาษีขาย) ต้องถึงคู่ค้า — ห้ามทิ้งผล VoidDocumentAsync"),
+    dict(file=INTEG, method="ProcessInvoiceAsync",
+         must=["voidResult = await _documentService!.VoidDocumentAsync(", "WithVoidNotices(rejected, voidResult)"],
+         why="ฝ่ายค้าน DV-O4 (A-GW · รอบ 201): ยกเลิกอัตโนมัติของขายเงินสดที่หักมัดจำ — ธงของการยกเลิกต่อท้ายคำตอบ"),
+    dict(file=ROLE_PERM, method="GetMyPermissionsAsync", must=["PermissionDeniedMenuIdsAsync("],
+         why="A-GW10: เมนูรับชำระออนไลน์ซ่อนเมื่อไม่มีสิทธิ์ (เดิมเห็นแล้วกด 403)"),
+    dict(file=ROLE_PERM, method="PermissionDeniedMenuIdsAsync",
+         must=["PaymentGatewayPermissionScope.MenuPermissionKeys", "_permissions.HasPermissionAsync("],
+         why="A-GW10: ตารางเมนู→สิทธิ์ตัวเดียว · ตรวจด้วยด่านเดียวกับ endpoint"),
+]
+
+# ── รอบ 201 ทีม ST (Settlement · BACKLOG §1.2 A-ST1..9 · คำตัดสินข้อ 82 C-9 · คำถามค้าง DV Q1): เทสต์ SettlementRound201StTests ล็อกตัวตัดสิน pure —
+#    ที่นี่ล็อกว่า service เรียกจริง/ใช้ผล/ลำดับถูก (ป้ายใน Payment.Notes ห้ามมีผล = NOTES_MARKER_FORBID ทั้งเรพ) ──
+_ST_WHY_OWNER = ("รอบ 201 ทีม ST (A-ST1): เจ้าของการรับชำระของรอบโอน = คอลัมน์ Payment.SettlementBatchId ประทับใน SaveChanges เดียวกับ INSERT "
+                 "(SettlementPaymentOwner) แล้วตรวจว่าประทับจริง — ป้ายใน Notes (ผู้ใช้พิมพ์ได้) ไม่มีผลกับด่านใด")
+RULES += [
+    dict(file=SETTLE_POST, method="EnsureReceiptAsync",
+         must=["SettlementPaymentOwner.StampOnSave(_db, batch.Id, r.DocumentId)", "p.SettlementBatchId == batch.Id",
+               "p.CompanyId == companyId"],
+         must_re=[r"AnyAsync\s*\([^;]*SettlementBatchId\s*==\s*batch\s*\.\s*Id[^;]*\)\s*\)\s*throw\s+new\s+BusinessRuleException\b"],
+         before=[("SettlementPaymentOwner.StampOnSave(", "_documents.CreatePaymentAsync(")],
+         why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="OrphanArtifactsAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="PendingReceiptsElsewhereAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="AcknowledgeOrphanAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_LINES, method="FrozenPartsAsync", forbid=["p.Notes"],
+         must=["SettlementPieceFingerprint", "new SettlementFrozenParts(components, received, issued)"],
+         why=_ST_WHY_OWNER + " · A-ST8: ชิ้นที่ออกแล้วพกลายนิ้วมือตอนออกไปถึงตัวเทียบ (ไม่ส่ง = ตัวเทียบไม่เคยรู้ว่าเนื้อหาที่ออกคืออะไร)"),
+    dict(file=SETTLE_LINES, method="PostingArtifactsAsync", must=["p.SettlementBatchId == batchId"], forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file="Helpers/SettlementPostingGuards.cs", method="CheckDocumentPaymentsAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    # A-ST2: ล็อก gateway ตัวเดียวทุกเส้นที่ประทับ intent (ไฟล์ · จับคู่มือ · จัดประเภท · จับคู่ใหม่ · ยกเลิกรอบ) + ตรวจซ้ำใต้ล็อก
+    dict(file=SETTLE_LINES, method="SyncIntentStampsAsync",
+         must=["LockGatewaysAsync(companyId, batchId, referenced, ct)", "i.SettlementJournalEntryId != null", "takenByLegacy++"],
+         must_re=[r"if\s*\(\s*takenByLegacy\s*>\s*0\s*\)\s*throw\s+new\s+BusinessRuleException\b"],
+         before=[("LockGatewaysAsync(", "_db.PaymentIntents")],
+         why="รอบ 201 ทีม ST (A-ST2 · X-6/X-7): ล็อก gateway ก่อนอ่าน intent แบบติดตาม · intent ที่เส้นเดิมบันทึกรอบโอนไประหว่างนี้ = ล้มดัง (ไม่ประทับซ้ำสองเจ้าของ)"),
+    dict(file=SETTLE_LINES, method="LockGatewaysAsync",
+         must=["LockGatewayAsync(companyId, pc, ct)", "OrderBy(p => p, StringComparer.Ordinal)"],
+         must_re=[r"i\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-ST2: ล็อกทุกผู้ให้บริการของ intent ที่รอบถือ/จะถือ เรียงชื่อก่อน (ลำดับคงที่ กัน deadlock) · tenant"),
+    dict(file=SETTLE_LINES, method="LockGatewayAsync",
+         must=["AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, providerCode)"], must_lit=["pg_advisory_xact_lock"],
+         why="A-ST2: คีย์ล็อกเดียวกับ GatewaySettlementService/เส้นประกอบ (คงที่ข้ามเครื่อง)"),
+    dict(file=SETTLE_LINES, method="VoidBatchAsync", before=[("LockGatewaysAsync(", "ownedIntents")],
+         why="A-ST2: ล็อก gateway ก่อนตรวจ 'รอบถัดไปมีบรรทัดคืนเงินของ intent ในรอบนี้' (อีกช่องทางที่ผูก config เดียวกันเพิ่มบรรทัดพร้อมกันได้)"),
+    dict(file=SETTLE_IMPORT, method="PersistAsync",
+         must=["LockGatewayAsync(companyId, pc, ct)", "SettlementTxnKey.LegacyKeySets(", "KeyVersion = SettlementTxnKey.StoredKeyVersion", "literalOnly"],
+         forbid=["AdvisoryLockKey.GatewaySettlement"],
+         why="A-ST2: ตัวล็อก gateway ตัวเดียว · A-ST9: บรรทัดใหม่ประทับรุ่นตัวอ่าน + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน"),
+    dict(file=SETTLE_IMPORT, method="ExistingKeysAsync", must=["SettlementTxnKey.CountsAsExisting(", "l.KeyVersion"],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-ST9 (R2M-9): คีย์วันที่ตามตัวอักษรนับเป็น 'มีแล้ว' เฉพาะบรรทัดที่นำเข้าด้วยตัวอ่านรุ่นก่อน (ตัวตัดสินเดียว CountsAsExisting)"),
+    # A-ST5 / A-ST6: การรับรู้ผูกกับเหตุ · ไล่ใบที่อ้างทุกชั้น
+    dict(file=SETTLE_POST, method="AcknowledgeOrphanCoreAsync",
+         must=["p.SettlementOrphanAckReasonHash = item.ReasonHash", "d.SettlementOrphanAckReasonHash = item.ReasonHash", "reasonHash = item.ReasonHash"],
+         why="รอบ 201 ทีม ST (A-ST5): การรับรู้ประทับลายนิ้วมือเหตุที่ผู้รับรู้เห็น (ไม่ประทับ = การรับรู้ใหม่ไม่มีผลเลย) + audit"),
+    dict(file=SETTLE_POST, method="OrphanChildrenAsync", must=["SettlementOrphanTriage.MaxChildDepth", "seen.Add("],
+         why="รอบ 201 ทีม ST (A-ST6): ใบที่อ้างทุกชั้น (ลูก → หลาน) ด้วยตัวโหลดเดียวกับ VoidDocumentAsync · กันวน"),
+    # A-ST4: รายงานของกำพร้าระดับช่องทาง
+    dict(file=SETTLE_POST, method="ChannelOrphanReportAsync",
+         must=["OrphanArtifactsAsync(", "SettlementOrphanReport.Build("],
+         must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId", r"d\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="รอบ 201 ทีม ST (A-ST4): ตัวแยกเดียวกับด่านลงบัญชี · ทิศต่อผังพักจากตัวตัดสินเดียว · tenant ทุก query"),
+    dict(file="Controllers/SettlementController.cs", method="ChannelOrphans",
+         before=[("SettlementPermissionScope.CandidatesHiddenReason(", "_posting.ChannelOrphanReportAsync(")],
+         call_args=[("_posting.ChannelOrphanReportAsync(", "hidden")],
+         why="A-ST4 (D-P5): ผู้มีแค่สิทธิ์ดูเห็นรายการแต่ไม่เห็นยอด — ตัวตัดสินสิทธิ์ตัวเดียวกับหน้ารอบโอน"),
+    # A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทนับเป็นผู้ทำใน SoD
+    dict(file=SETTLE_POST, method="BuildGateAsync",
+         must=["SettlementLineMakers.Of(", "l.DecidedBy", "SettlementPlanFingerprint.IssuedDrift(", "SettlementContentOverlap.AgainstBatchesAsync(",
+               "orphanFirstBatches"],
+         call_args=[("SettlementSummarySupplement.SplitDuplicates(", "supContentHits"), ("DuplicateSalesAsync(", "orphans.Items")],
+         before=[("OrphanArtifactsAsync(", "DuplicateSalesAsync("), ("SettlementLineMakers.Of(", "SettlementPostingGate.Evaluate(")],
+         why="รอบ 201 ทีม ST: A-ST7 ผู้ตัดสินบรรทัดเข้าชุดผู้ทำของ SoD (พารามิเตอร์เดิมของ SodSelfApproval) · A-ST8 เตือนเอกสารที่ออกแล้วซึ่งเนื้อหาไม่ตรงแผน · "
+             "C-9 (ข้อ 82) ตัวแยกของกำพร้ามาก่อน ⇒ ใบกำพร้าที่รับรู้แล้วเป็นใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบบรรทัดของรอบเจ้าของ (รวมที่ถูกลบ)"),
+    dict(file=SETTLE_LINES, method="AssignLineMatchAsync", call_args=[("SetMatch(", "userId")],
+         why="A-ST7: ทุกการจับคู่โดยคนประทับผู้ตัดสิน"),
+    dict(file=SETTLE_LINES, method="ReclassifyLineAsync", must=["MarkDecided(line, userId)", "MarkDecided(other, userId)"],
+         why="A-ST7: การจัดประเภทโดยคน (รวม 'ใช้กับป้ายเดียวกัน') ประทับผู้ตัดสิน"),
+    # A-ST8: ลายนิ้วมือตอนออกเอกสาร
+    dict(file=SETTLE_POST, method="CreateOrAdoptAsync",
+         must=["SettlementPlanFingerprint.PieceHash(gate.Plan, component)", "d.CompanyId == companyId"],
+         before=[("_documents.CreateDocumentAsync(", "SettlementPieceFingerprint =")],
+         why="รอบ 201 ทีม ST (A-ST8): ประทับลายนิ้วมือชิ้นแผนบนเอกสารที่เพิ่งสร้าง (ตัว canonical เดียว PieceHash)"),
+    # C-9 (คำตัดสินข้อ 82)
+    dict(file=SETTLE_POST, method="DuplicateSalesAsync",
+         must=["SettlementSummarySupplement.AckedOrphanCountsAsFirst(d.Id, orphanItems)", "SettlementSummarySupplement.OrphanFirstDuplicates(",
+               "IgnoreQueryFilters()"],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId\s*&&\s*l\s*\.\s*ChannelId\s*==\s*channel\s*\.\s*Id"],
+         why="C-9 (ข้อ 82): ใบสรุปกำพร้าที่รับรู้แล้วมีผล = ใบแรกของวัน · รายการเดียวกับรอบเจ้าของ (เลขรายการ/ออเดอร์) = รายได้ซ้ำ · tenant+ช่องทาง"),
+    # คำถามค้าง DV Q1: ผลของการยกเลิกเอกสาร/การรับชำระในเส้นถอยรอบโอนต้องถึงผู้กด
+    dict(file=SETTLE_POST, method="UnpostCoreAsync",
+         must=["docVoid.EtaxCancellationFlag", "docVoid.OutputVatNotice", "voidResult.OutputVatNotice", "notices = etaxFlags"],
+         must_re=[r"var\s+docVoid\s*=\s*await\s+_documents\s*\.\s*VoidDocumentAsync\s*\("],
+         why="รอบ 201 ทีม ST (DV Q1): VoidDocumentAsync คืน PaymentVoidResult แล้ว — ทิ้งผล = ธง e-Tax/ภาษีขายที่ถอยไม่ได้หายเงียบจากผู้กดยกเลิกการลงบัญชี"),
+]
+
 # ── รอบ 201 ทีม TX (ภาษี/ด่านอนุมัติ/มัดจำ · BACKLOG §1.5): ด่านที่เทสต์ล็อกแค่ helper — ล็อกจุดเรียกใน service ──
 _TX_WHY_S65 = "A-TX1: §65 ตรี ต้องเห็นก่อนกดอนุมัติ — ตัวประเมินเดียว (EvaluateSection65TerAsync) ของคำเตือนและธุรกรรม · ชุดชนิด/ข้อที่ยกขึ้น = Section65TerApprovalWarnings"
 RULES += [
@@ -3205,6 +3580,111 @@ RULES += [
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
+# ── รอบ 201 ทีม AI (A-AI1..A-AI8 · AI/ธนาคาร): เทสต์ล็อกตัวตัดสิน pure (BankAiCandidateGuardTests · BankPatternEvidenceTests ·
+#    BankMatchSingleStandardTests · AiKillSwitchOrchestratorTests · BulkPvStudentTests · AiFeedbackRecorderDiscardTests) ⇒ ล็อกจุดเรียกที่นี่ ──
+_AI_BULKBANK = "Services/Implementations/Bank/BulkBankAiMatchService.cs"
+_AI_BANK = "Services/Implementations/BankService.cs"
+_AI_LEARN = "Services/Implementations/BankService.Learning.cs"
+_AI_DOCAI = "Services/Ai/DocumentAiAugmenter.cs"
+_AI_ORCH = "Services/Ai/AiOrchestrator.cs"
+_AI_REC = "Services/Ai/AiFeedbackRecorder.cs"
+_AI_WHY7 = ("A-AI7 (H-9): candidateId/bankTxnId ที่ AI แต่งต้องถูกตัดก่อนแย่งคู่จริง (ก่อน AiValidated/dedup) และห้ามพกยอดของ AI ถึงจอ — "
+            "ตัวตัดสิน Helpers/BankAiCandidateGuard ตัวเดียว · ข้อเสนอที่ถูกตัดต้องถูกนับในคำเตือน (ไม่หายเงียบ)")
+_AI_WHY1 = ("A-AI1 (H-1): คลังจับคู่ธนาคารนับความมั่นใจเฉพาะคำยืนยันที่ผู้ใช้เลือกคู่เอง (Explicit) — แหล่งของคำยืนยันต้องเดินจาก"
+            "คำขอถึง UpsertPatternAsync ทุกทางเข้า (1:1 · batch · กลุ่ม M:N) · ไม่ส่ง = Implicit")
+_AI_WHY_REC = "A-AI8 (คำตัดสินข้อ 58): ตัวบันทึก feedback ใช้ context ร่วม — catch ต้องถอยการแก้ของตัวเอง ไม่งั้น SaveChanges ถัดไปของผู้เรียกล้มตาม"
+RULES += [
+    dict(file=_AI_BULKBANK, method="ProposeAsync",
+         must=["ScreenAiMatches(aiParsed", "BankAiCandidateGuard.Screen(", "BankAiCandidateGuard.PlanWarning(",
+               "realAmountById[key]", "recordIndexOfMatch.Add("],
+         before=[("ScreenAiMatches(aiParsed", "aiBankCandPairs.Add("),
+                 ("ScreenAiMatches(aiParsed", "DeduplicateMatches(parsed)")],
+         forbid=["? ra2 : c.Amount", "recordIndexOfMatch[mi]"],
+         why=_AI_WHY7),
+    dict(file=_AI_BULKBANK, method="ScreenAiMatches",
+         must=["BankAiCandidateGuard.Screen(", "BankAiCandidateGuard.CapConfidence(", "BankAiCandidateGuard.PlanWarning("],
+         why=_AI_WHY7),
+    dict(file=_AI_BANK, method="ValidateMatchAmountAsync",
+         must=["BankAiCandidateGuard.MissingIds(ids, foundIds)"],
+         must_re=[r"if\s*\(\s*missingIds\s*\.\s*Count\s*>\s*0\s*\)\s*throw\b"],
+         before=[("BankAiCandidateGuard.MissingIds(", "BankMatchAmountReconciler.Reconcile(")],
+         why="A-AI7 ฝั่งเขียน: เส้น batch/api ยืนยันคู่ต้องตรวจว่าทุก id มีอยู่จริงในบริษัทนี้ก่อนกระทบยอด (เส้น 1:1 ตรวจอยู่แล้ว)"),
+    dict(file=_AI_LEARN, method="UpsertPatternAsync",
+         must=["BankPatternEvidence.ExplicitIncrement(source)", "existing.ExplicitConfirmCount += explicitInc",
+               "ExplicitConfirmCount = explicitInc"],
+         why=_AI_WHY1),
+    dict(file=_AI_LEARN, method="CaptureConfirmedMatchAsync",
+         call_args=[("UpsertPatternAsync(", "source")],
+         why=_AI_WHY1),
+    dict(file=_AI_LEARN, method="RecordReconciliationPatternsAsync",
+         call_args=[("UpsertPatternAsync(", "itemSource")],
+         why=_AI_WHY1),
+    dict(file=_AI_BANK, method="ReconcileAsync",
+         call_args=[("CaptureConfirmedMatchAsync(", "ParseSource")],
+         must=["BankPatternEvidence.ParseSource(request.Source)"],
+         why=_AI_WHY1),
+    dict(file="Services/Implementations/BankService.AiReconciliation.cs", method="BatchReconcileAsync",
+         call_args=[("CaptureConfirmedMatchAsync(", "ParseSource")],
+         must=["BankPatternEvidence.ParseSource(item.Source)"],
+         why=_AI_WHY1),
+    dict(file="Services/Implementations/BankService.Reconciliation.cs", method="CreateReconciliationGroupAsync",
+         must=["BankPatternEvidence.ParseSource(mi.Source)"],
+         call_args=[("RecordReconciliationPatternsAsync(", "sourceByItem")],
+         why=_AI_WHY1),
+    dict(file="Services/Ai/Distillation/BankMatchDistillationModel.cs", method="LoadFromFeedbackAsync",
+         must=["BankPatternEvidence.StudentConfidence(", "x.ExplicitConfirmCount"],
+         forbid=["Wilson(x.TimesConfirmed"],
+         why=_AI_WHY1 + " · นักเรียนห้ามนับ TimesConfirmed เป็นหลักฐาน (กดผ่านรัว ๆ ดัน Wilson ทะลุ 0.85)"),
+    dict(file=_AI_LEARN, method="GetLearnedSuggestionsAsync",
+         must=["BankPatternEvidence.Relevance(", "BankMatchScorer.Score(", "BankMatchArbiter.Decide(options)"],
+         must_re=[r"autoSelect\s*=\s*isChosen\s*&&\s*decision\s*\.\s*Verdict\s*==\s*Accounting\s*\.\s*Helpers\s*\.\s*BankMatchVerdict\s*\.\s*Apply"],
+         forbid=["p.TimesConfirmed / 10.0", "0.2 * Math.Min("],
+         why="A-AI3 (H-5): ข้อเสนอจากประวัติให้คะแนนด้วย BankMatchScorer + ตัดสินติ๊กด้วย BankMatchArbiter เหมือนทุกเส้น (ห้ามสูตรที่ 3)"),
+    dict(file="Services/Implementations/BankService.MatchCandidates.cs", method="GetMatchCandidatesAsync",
+         must=["BankMatchScorer.DepositPreference("],
+         forbid=["score = Math.Min(100, score +", "score = Math.Max(0, score -"],
+         why="A-AI3 (H-5): ตัวเลขบนจอ = ตัวเลขที่ arbiter ใช้ประทับ — หลักฐานเงินลงที่ไหนเป็นลำดับรองเท่านั้น ห้ามบวกเข้าคะแนนเฉพาะจอ"),
+    dict(file=_AI_ORCH, method="AskAsync",
+         must=["progress.Request", "fromLocalModel: progress.HasLocal"],
+         why="A-AI6: ตาข่ายชั้นนอกของ orchestrator ต้องคืนคำตอบนักเรียนที่ทำนายไว้แล้ว (ฐานข้อมูล/provider ล่ม = ยังมีคำตอบ)"),
+    dict(file=_AI_ORCH, method="AskInternalAsync",
+         must=["LoadSiteSettingsAsync(ct)", "LoadActiveProviderAsync(ct)", "progress.HasLocal = true"],
+         before=[("TryPredictLocalAsync(", "LoadSiteSettingsAsync(")],
+         forbid=["_db.AiProviderConfigs", "_db.SiteSettings"],
+         why="A-AI6: เทสต์ kill-switch ป้อนค่าผ่าน seam ตัวเดียวกับเส้นจริง — อ่านฐานข้อมูลตรงในเมธอดนี้ = เทสต์ไม่ได้ตรวจเส้นจริงอีก"),
+    dict(file=_AI_DOCAI, method="ParseBulkPvResponse",
+         must=["AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel)", "FromStudent: resp.FromLocalModel",
+               "AiAnswerSource.UnreadableMessage(who)"],
+         must_re=[r"resp\s*\.\s*RawResponseJson\s*\?\?\s*\(\s*resp\s*\.\s*UsedAi\s*\?"],
+         forbid=["resp.RawResponseJson ?? resp.PrimaryAnswer"],
+         why="A-AI4 (H-6): คำตอบนักเรียนแบบมีโครงต้องใช้ได้ · คำเดี่ยวห้าม parse เป็น JSON · ข้อความบอกผู้ตอบจริง (ห้ามโทษ AI ที่ไม่ได้ถูกถาม)"),
+    dict(file=_AI_DOCAI, method="ParseBulkApprovalResponse",
+         must=["AiAnswerSource.Of(resp.UsedAi, resp.FromLocalModel)", "FromStudent: resp.FromLocalModel",
+               "AiAnswerSource.UnreadableMessage(who)"],
+         forbid=["resp.RawResponseJson ?? resp.PrimaryAnswer"],
+         why="A-AI4 คลาสเดียวกัน (แก้ที่หนึ่ง grep ทั้งเรพ): bulk คำเตือนอนุมัติ"),
+    dict(file=_AI_DOCAI, method="SuggestAllPaymentVoucherAccountingAsync",
+         must=["PaymentVoucherAccountingDistillationModel.BuildPerLineInputJson(", "ParseBulkPvResponse(resp, lines, _logger)"],
+         call_args=[("SynthesiseChildFeedbackAsync(", "answerFromAi")],
+         why="A-AI4: กุญแจแถว feedback ลูก = กุญแจที่นักเรียนแตก (ตัวสร้างเดียว) · คำตอบนักเรียนห้ามบันทึกเป็นคำตอบครู (คลังสอนตัวเอง)"),
+    dict(file="Services/Ai/BankAiAugmenter.cs", method="SuggestStatementMatchAsync",
+         must=["FromStudent: resp.FromLocalModel"],
+         why="A-AI2 (H-4): ธงนักเรียนต้องเดินทางถึงผู้บริโภค (BankFeedService)"),
+    dict(file="Services/Implementations/BankFeedService.cs", method="TryAutoMatchAsync",
+         must=["aiResult.HasModelAnswer", "BankMatchArbiter.ScreenAiProposals("],
+         forbid=["!aiResult.UsedAi"],
+         why="A-AI2 (H-4): ด่าน 'มีคำตอบให้ใช้ไหม' = HasModelAnswer + เกณฑ์ตัวเลข/candidate set (ScreenAiProposals) — UsedAi ทิ้งคำตอบนักเรียนตอนปิด provider"),
+    dict(file="Services/Implementations/DocumentService.cs", method="SuggestPaymentVoucherAccountingAsync",
+         must=["GlSuggestionApplyPolicy.MayAutoFill(", "MayAutoFill: mayAutoFill", "AiAnswerSource.LabelWithRules("],
+         why="A-AI5 (H-7): เกณฑ์เติมผังให้เอง (≥0.70 + ผังของบริษัท) ตัดสินที่เซิร์ฟเวอร์ — ทางเข้าอื่น (มือถือ/สคริปต์) ได้ด่านเดียวกัน"),
+    dict(file=_AI_REC, method="RecordUserChoiceAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="BumpTenantReviewAsync", must=["DiscardUnsaved(_db, target)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="UpsertTenantRollupAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+    dict(file=_AI_REC, method="UpsertDailyRollupAsync", must=["DiscardUnsaved(_db, row)"], why=_AI_WHY_REC),
+]
+# ── จบบล็อกรอบ 201 ทีม AI ──
+
+
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
     patterns=[r"\bnew\s+JournalEntry\b", r"\bnew\s+JournalEntryLine\b", r"\bJournalEntries\s*\.\s*Add(?:Range)?\s*\("],
@@ -3246,6 +3726,76 @@ def settlement_folder_self_test(files) -> list:
         if settlement_folder_errors([(rel, "class __Y { void F() { " + ok + " } }\n")]):
             fails.append(f"self-test SETTLEMENT_FOLDER_FORBID: `{ok}` ถูกฟ้องผิด")
     return fails
+
+# ── รอบ 201 ทีม ST (A-ST1): ป้าย [SETTLEMENT:] ใน Payment.Notes (ผู้ใช้พิมพ์ได้) ห้ามมีผลกับด่านใดอีก — เจ้าของการรับชำระ = คอลัมน์
+#    Payment.SettlementBatchId ตัวเดียว · ทั้งเรพห้ามอ้างตัวอ่านป้าย/ป้ายเอง ยกเว้นไฟล์ที่ "เขียน" ป้ายเป็นข้อความให้คนอ่าน (SettlementPosting.cs:
+#    ตัวสร้างข้อความ + SQL backfill ครั้งเดียวตอนสร้างคอลัมน์) ──
+NOTES_MARKER_FORBID = dict(
+    allow={"Helpers/SettlementPosting.cs"},
+    code_patterns=[r"\bBatchIdFromPaymentNotes\b", r"\bPaymentMarker(?:Head)?\b", r"\bPaymentOwnerBackfillSql\b"],
+    literal_patterns=[r"\[SETTLEMENT:"],
+    why="รอบ 201 ทีม ST (A-ST1): ป้ายใน Payment.Notes เป็นข้อความที่ผู้ใช้พิมพ์ได้ — อ่านเจ้าของจากคอลัมน์ Payment.SettlementBatchId "
+        "(ผู้ลงบัญชีประทับผ่าน SettlementPaymentOwner) · backfill จากป้ายมีที่เดียวใน SettlementPostingKeys.PaymentOwnerBackfillSql "
+        "ซึ่ง DatabaseMigrationHelper.PaymentSettlementOwnerMigrationSql เรียกครั้งเดียวตอนสร้างคอลัมน์",
+)
+NOTES_MARKER_MIGRATION_CALLER = "Data/DatabaseMigrationHelper.cs"
+
+
+def notes_marker_files():
+    out = []
+    for path in sorted(SRC.rglob("*.cs")):
+        rel = str(path.relative_to(SRC))
+        if "/bin/" in "/" + rel or "/obj/" in "/" + rel:
+            continue
+        out.append((rel, path.read_text(encoding="utf-8")))
+    return out
+
+
+def notes_marker_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        if rel in NOTES_MARKER_FORBID["allow"]:
+            continue
+        checks = [(mask(text), NOTES_MARKER_FORBID["code_patterns"]), (mask(text, keep_strings=True), NOTES_MARKER_FORBID["literal_patterns"])]
+        for code, pats in checks:
+            for rx in pats:
+                for m in re.finditer(rx, code):
+                    # ผู้เรียก backfill ที่อนุญาตตัวเดียว (เรียกใน DO block ตอนสร้างคอลัมน์)
+                    if rel == NOTES_MARKER_MIGRATION_CALLER and m.group(0) == "PaymentOwnerBackfillSql":
+                        continue
+                    line = code.count("\n", 0, m.start()) + 1
+                    errs.append(f"{rel}:{line} อ้างป้ายใน Payment.Notes `{m.group(0)}` — {NOTES_MARKER_FORBID['why']}")
+    return errs
+
+
+def notes_marker_self_test(files) -> list:
+    fails = []
+    if not files:
+        return ["self-test NOTES_MARKER_FORBID: ไม่พบไฟล์ .cs (glob ผิด?)"]
+    target = "Services/Settlement/SettlementPostingService.cs"
+    base = dict(files).get(target)
+    if base is None:
+        return [f"self-test NOTES_MARKER_FORBID: ไม่พบ {target}"]
+    if notes_marker_errors([(target, base)]):
+        fails.append(f"self-test NOTES_MARKER_FORBID: {target} ปัจจุบันถูกฟ้อง (ต้องแก้โค้ดก่อน)")
+    for sample in ["var b = SettlementArtifactGuard.BatchIdFromPaymentNotes(p.Notes);",
+                   "var ok = p.Notes.Contains(SettlementPostingKeys.PaymentMarker(batchId));",
+                   "var h = SettlementPostingKeys.PaymentMarkerHead;",
+                   "var ok = p.Notes != null && p.Notes.StartsWith(\"[SETTLEMENT:\");",
+                   "var sql = SettlementPostingKeys.PaymentOwnerBackfillSql();"]:
+        if not notes_marker_errors([(target, base + "\nclass __X { void F() { " + sample + " } }\n")]):
+            fails.append(f"self-test NOTES_MARKER_FORBID: ใส่ `{sample}` แล้วไม่ฟ้อง")
+    for ok in ["// เดิมอ่าน BatchIdFromPaymentNotes(p.Notes) และ [SETTLEMENT:]",
+               "var owner = p.SettlementBatchId;"]:
+        if notes_marker_errors([(target, "class __Y { void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test NOTES_MARKER_FORBID: `{ok}` ถูกฟ้องผิด")
+    # ผู้เรียก backfill ที่อนุญาตต้องผ่าน · แต่ป้ายดิบในไฟล์ migration ต้องถูกฟ้อง
+    if notes_marker_errors([(NOTES_MARKER_MIGRATION_CALLER, "class __Z { string F() => Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql(); }\n")]):
+        fails.append("self-test NOTES_MARKER_FORBID: ผู้เรียก backfill ใน DatabaseMigrationHelper ถูกฟ้องผิด")
+    if not notes_marker_errors([(NOTES_MARKER_MIGRATION_CALLER, "class __Z { string F() => \"UPDATE x WHERE n LIKE '[SETTLEMENT:%'\"; }\n")]):
+        fails.append("self-test NOTES_MARKER_FORBID: ป้ายดิบใน DatabaseMigrationHelper ไม่ถูกฟ้อง")
+    return fails
+
 
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -3571,7 +4121,10 @@ def main() -> int:
     errs += folder_forbid_errors(ocr_files)
     settle_files = settlement_folder_files()
     errs += settlement_folder_errors(settle_files)
-    st = self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
+    marker_files = notes_marker_files()
+    errs += notes_marker_errors(marker_files)
+    st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
+          + notes_marker_self_test(marker_files))
     for e in errs + st:
         print("❌ " + e)
     if errs or st:
