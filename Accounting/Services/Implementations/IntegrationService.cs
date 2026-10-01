@@ -1124,9 +1124,11 @@ public class IntegrationService : IIntegrationService
                     // ใบยังอนุมัติอยู่ + ไม่มี JE ⇒ ต้องยกเลิก/ออกใบลดหนี้ด้วยมือ · ยิงซ้ำก็ยังล้ม (ดูด่าน idempotent ด้านบน)
                     var voidedId = document.Id;
                     var voidedNo = document.DocumentNumber;
+                    Accounting.Models.DTOs.Document.PaymentVoidResult voidResult;
                     try
                     {
-                        await _documentService!.VoidDocumentAsync(companyId, voidedId);
+                        // รอบ 201 ทีม GW (ฝ่ายค้าน DV-O4): ผลของ cascade ยกเลิกการชำระ (ธง e-Tax/ภาษีขาย) ต้องถึงคู่ค้า — ห้ามทิ้งผลเงียบ
+                        voidResult = await _documentService!.VoidDocumentAsync(companyId, voidedId);
                     }
                     catch (Exception exVoid)
                     {
@@ -1150,7 +1152,8 @@ public class IntegrationService : IIntegrationService
                         document.InternalNotes, "[" + exTiv.RuleCode + "] ยกเลิกอัตโนมัติ — " + exTiv.Message);
                     await _db.SaveChangesAsync();
                     _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ยกเลิกใบ ไม่ถอยไปตั้งหนี้", voidedNo);
-                    return await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, voidedId, voidedNo);
+                    var rejected = await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, voidedId, voidedNo);
+                    return WithVoidNotices(rejected, voidResult);
                 }
                 catch (Exception exCash)
                 {
@@ -3245,6 +3248,23 @@ public class IntegrationService : IIntegrationService
         _ => "Resync updated — ลงรายการบัญชีใหม่ (ไม่มี JE เดิม)" + JeSkipSuffix(skipReason),
     };
 
+    /// <summary>ธงจาก cascade ยกเลิกการชำระของ <c>VoidDocumentAsync</c> (e-Tax ที่ต้องยกเลิก · ภาษีขายที่ถอยไม่ได้) เป็นคำเตือนถึงคู่ค้า —
+    /// null = ไม่มี (รอบ 201 ทีม GW · ฝ่ายค้าน DV-O4 · ชุดเดียวกับที่ <c>DocumentController</c> ต่อท้ายข้อความ)</summary>
+    private static List<string>? VoidNotices(Accounting.Models.DTOs.Document.PaymentVoidResult r)
+    {
+        var list = new[] { r.EtaxCancellationFlag, r.OutputVatNotice }
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n!).ToList();
+        return list.Count == 0 ? null : list;
+    }
+
+    /// <summary>ต่อธงของการยกเลิกเข้าคำตอบที่สร้างไว้แล้ว (คงคำเตือนเดิม)</summary>
+    private static InboundSyncResponse WithVoidNotices(InboundSyncResponse response, Accounting.Models.DTOs.Document.PaymentVoidResult r)
+    {
+        var notices = VoidNotices(r);
+        if (notices == null) return response;
+        return response with { Warnings = (response.Warnings ?? new List<string>()).Concat(notices).ToList() };
+    }
+
     /// <summary>ข้อความวิธีปรับ JE บนหมายเหตุ resync (A-GW12)</summary>
     private static string ResyncModeNote(Accounting.Helpers.IntegrationResyncJournalAction action) => action switch
     {
@@ -4466,13 +4486,17 @@ public class IntegrationService : IIntegrationService
                 return new InboundSyncResponse(true, "Document already voided", doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
             }
 
-            await _documentService.VoidDocumentAsync(companyId, doc.Id);
+            // รอบ 201 ทีม GW (ฝ่ายค้าน DV-O4): cascade ยกเลิกการชำระคืนธง e-Tax/ภาษีขาย — ส่งต่อเป็นคำเตือนในคำตอบ + sync log (เดิมทิ้งผล)
+            var voidResult = await _documentService.VoidDocumentAsync(companyId, doc.Id);
+            var voidNotices = VoidNotices(voidResult);
 
             log.Status = "Success";
             log.CreatedDocumentId = doc.Id;
+            if (voidNotices != null) log.ErrorMessage = string.Join("\n", voidNotices);
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
-            return new InboundSyncResponse(true, "Document voided " + (request.Reason ?? ""), doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
+            return new InboundSyncResponse(true, "Document voided " + (request.Reason ?? ""), doc.Id, doc.ContactId, null, null, doc.DocumentNumber,
+                Warnings: voidNotices);
         }
         catch (Exception ex)
         {

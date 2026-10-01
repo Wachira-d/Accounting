@@ -688,6 +688,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - **คำเตือนบัญชีธนาคารรับเงินล่วงหน้า (รอบ 201 ทีม GW · A-GW11)**: `GET integrations/dashboard` คืน `MoneyAccountWarning`
     (`MoneyAccountFallback.IntegrationBankWarning` ← `PickBank` กติกาเดียวกับตอนรับรายการชำระ: บัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
     ที่ไม่ส่ง `bankAccountName` จะถูกปฏิเสธ `INT-NO-BANK-ACCOUNT`) · หน้า `integrations.html` แสดงแถบเตือน + ลิงก์หน้าบัญชีธนาคาร
+  - **ยกเลิกเอกสารผ่าน API คู่ค้า ส่งธงของการยกเลิกกลับ (รอบ 201 ทีม GW · ฝ่ายค้าน DV-O4)**: `VoidDocumentByExternalRefAsync` และการยกเลิกอัตโนมัติใน `ProcessInvoiceAsync` (ขายเงินสดที่หักมัดจำที่ออกใบกำกับแล้ว) อ่าน `PaymentVoidResult` (`EtaxCancellationFlag` · `OutputVatNotice`) แล้วส่งเป็น `InboundSyncResponse.Warnings` (+ `ErrorMessage` ของ sync log) — เดิมทิ้งผล ⇒ คู่ค้าไม่รู้ว่าต้องยกเลิก e-Tax/ภาษีขายถอยไม่ได้
     Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
     แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
     Status="Updated"
