@@ -4067,4 +4067,4 @@ _2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 +
   **A-ST8** ลายนิ้วมือชิ้นตอนออกเอกสาร + คำเตือน `IssuedPieceDrift` · **A-ST9** `SettlementLine.KeyVersion` + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน
 - **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
 - **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
-  required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit <pending>)_
+  required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_

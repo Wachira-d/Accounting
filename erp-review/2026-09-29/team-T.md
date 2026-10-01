@@ -22,7 +22,7 @@
 | C-15 | ✅ 80908ecb | `SettlementStock.StanceOf` (ผ่าน `InventoryIndustry` ตัวเดียว — ผลตรวจเขียน `BusinessType` แต่แกนที่ถูกคือ `IndustryType` ตามที่ `InventoryIndustry` บันทึกไว้) · เตือน `SummarySaleNoStock` (ถือสต็อก / ยังไม่ระบุ — ทางไปต่อต่างกัน) | `C15_…` |
 | C-16 | ✅ 80908ecb เตือน + ❓ คำถามค้าง | `SettlementBatchMath` (private `FeeCutoff`) เตือน `FeeCutoffCrossesMonth` ยอด+เดือน (ปฏิทินไทย) — ไม่แยกใบตามเดือนเอง (ดูคำถามค้าง 1) | `C16_…` |
 | C-17 | ✅ 80908ecb | `Plan` ข้อ 5: คืนเงินของออเดอร์ที่อยู่ในใบสรุปรอบนี้ ⇒ `RefundUnmatched` ทางไปต่อที่ทำได้จริง (ออกเอกสารขายของออเดอร์เอง → จับคู่ขาย+คืน → รับชำระ + ใบลดหนี้) | `C17_…` |
-| C-18 | 📋 | ดูแผนข้างล่าง | — |
+| C-18 | 📋 | ดูแผนข้างล่าง | — | · ✅ 07baa11b รอบ 201 ทีม ST (A-ST1 Payment.SettlementBatchId)
 | C-19 | 📋 ➡️ V2 | orphan/unpost = ขอบเขตทีม V2 · ทางไปต่อวันนี้มีแล้ว (ยกเลิกทีละใบได้ตั้งแต่ S3/S4) | — |
 | C-20 | ✅ 80908ecb บางส่วน | `_db.ChangeTracker.Clear()` ต้น lambda ของ `CommitPostedAsync` · `MatchCoreAsync` · `ResolveChargebackCoreAsync` · **ค้าง `UnpostCoreAsync`** (ไฟล์เดียวกันแต่เป็นเส้นของทีม V2 — ห้ามแตะตาม BRIEF) · วันนี้ไม่มี `EnableRetryOnFailure` (latent) | required_call_site ×3 |
 | E2-9 | 📋 | ดูแผนข้างล่าง | — |
@@ -43,7 +43,7 @@
 
 ## 📋 backlog พร้อมแผน
 
-- **C-18 ป้ายการรับชำระปลอมได้** — แผน: (1) `Payment.SettlementBatchId uuid NULL` + index (`DatabaseMigrationHelper` ADD COLUMN IF NOT EXISTS) (2) `ReceiptPayment` ตั้งคอลัมน์ (ต้องเพิ่มช่องใน `CreatePaymentRequest` หรือให้ผู้ลงบัญชีประทับหลังสร้างในธุรกรรมเดียว)
+- **C-18 ป้ายการรับชำระปลอมได้** — แผน: (1) `Payment.SettlementBatchId uuid NULL` + index (`DatabaseMigrationHelper` ADD COLUMN IF NOT EXISTS) (2) `ReceiptPayment` ตั้งคอลัมน์ (ต้องเพิ่มช่องใน `CreatePaymentRequest` หรือให้ผู้ลงบัญชีประทับหลังสร้างในธุรกรรมเดียว) · ✅ 07baa11b รอบ 201 ทีม ST (A-ST1 ทำตามแผน — ประทับใน SaveChanges เดียวกับ INSERT)
   (3) backfill จาก Notes `[SETTLEMENT:{N}]` ของแถวเดิม (4) ผู้อ่านป้าย 6 จุดเปลี่ยนไปอ่านคอลัมน์ — `SettlementPaymentsAsync` · `OrphanArtifactsAsync` · `PendingReceiptsElsewhereAsync` (รอบนี้) ·
   `SettlementImportService.PostingArtifactsAsync` · `DocumentService.VoidPaymentAsync` (`SettlementArtifactGuard.BatchIdFromPaymentNotes`) · ยกเลิกการลงบัญชี (5) ด่านบันทึกรับชำระทั่วไปห้ามตั้งคอลัมน์นี้เอง ·
   ข้ามขอบเขตทีม V1/V2 (Void* · orphan/unpost) ⇒ ทำเป็นงานเดียวหลัง merge รอบ 200
@@ -57,7 +57,7 @@
 
 1. **C-16** ค่าธรรมเนียมข้ามเดือน: แยกใบค่าธรรมเนียม/50 ทวิ ตามเดือนของ `TxnDate` หรือยอมรับวันเงินเข้า (+ ผู้ทำบัญชีตั้งค้างจ่ายเอง)? — ตอนนี้ **เตือน** (ไม่เปลี่ยนตัวเลขที่ลง)
 2. **R-A7** นับ 3 วันทำการยังไม่หักวันหยุดราชการ (ไม่มีปฏิทินวันหยุดในระบบ — ฟีเจอร์ใน SYSTEM_REVIEW กอง 1) — เตือนเร็วกว่าจริง ไม่ผิดทิศ
-3. **ข้อ 15 × ข้อ 10** ใบสรุปกำพร้าที่ทีม V2 "รับรู้" แล้ว ควรนับเป็นใบแรกของวันสำหรับใบสรุปเพิ่มเติมไหม — ตอนนี้ยังบล็อกเป็นรายได้ซ้ำ (ทิศที่มองเห็น)
+3. **ข้อ 15 × ข้อ 10** ใบสรุปกำพร้าที่ทีม V2 "รับรู้" แล้ว ควรนับเป็นใบแรกของวันสำหรับใบสรุปเพิ่มเติมไหม — ตอนนี้ยังบล็อกเป็นรายได้ซ้ำ (ทิศที่มองเห็น) · ✅ 07baa11b รอบ 201 ทีม ST (C-9 คำตัดสินข้อ 82)
 
 ## เครื่องมือ
 
