@@ -11444,9 +11444,15 @@ public partial class DocumentService : IDocumentService
         // Lock obligation row + contract row to prevent two parallel invoice-creations
         // from both seeing IsSatisfied=false and creating duplicate invoices for the
         // same milestone.
-        using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        // รอบ 201 ทีม PL (ฝ่ายค้านรอบสาม P1-1): เดิม Serializable ⇒ snapshot จับตั้งแต่คำสั่งแรก ตัวประทับ audit ตอน commit อ่านปลาย chain จาก snapshot เก่า
+        // ⇒ PrevHash ซ้ำกับธุรกรรมที่ commit ระหว่างนั้น (chain แตกกิ่ง) · ตอนนี้ ReadCommitted + ล็อกแถว FOR UPDATE (ภาระงาน → สัญญา · ลำดับเดียวทุกคำขอ)
+        // ⇒ คำขอที่สองรอแล้วอ่าน IsSatisfied ที่ commit แล้ว (ยังกันออกใบซ้ำ) · ภาระงานอื่นของสัญญาเดียวกันต่อคิวที่แถวสัญญา (ธง Completed ไม่หลุด)
+        using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
         try
         {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PerformanceObligations\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                performanceObligationId, companyId);
             var obligation = await _db.Set<PerformanceObligation>()
                 .Include(o => o.Contract)
                 .FirstOrDefaultAsync(o => o.Id == performanceObligationId && o.CompanyId == companyId)
@@ -11461,6 +11467,9 @@ public partial class DocumentService : IDocumentService
 
             var contract = obligation.Contract
                 ?? throw new InvalidOperationException("ไม่พบสัญญารายได้ของภาระงานนี้");
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"RevenueContracts\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                contract.Id, companyId);
 
             var lineDescription = string.IsNullOrEmpty(obligation.Description)
                 ? obligation.Name

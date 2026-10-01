@@ -1227,11 +1227,29 @@ public class AdminController : ControllerBase
         var cu = await _db.CompanyUsers
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
         if (cu == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบสมาชิกในบริษัทนี้"));
-        // รอบ 201 ทีม PL (Q2 · ข้อ 77): PlatformSupport ตั้งผ่านหน้านี้ไม่ได้ (เกิดเฉพาะตอนแอดมินสร้างบริษัท · ส่งมอบด้วยโอนความเป็นเจ้าของ)
-        if (!Accounting.Helpers.OwnershipTransferPolicy.MayAssign(request.Role, callerIsPlatformAdmin: true))
-            return BadRequest(new ApiResponse<string>(false, null, Accounting.Helpers.OwnershipTransferPolicy.AssignDeniedMessage(request.Role)));
+        // รอบ 201 ทีม PL (Q2 · ข้อ 77): PlatformSupport ตั้งผ่านหน้านี้ไม่ได้ (เกิดเฉพาะตอนแอดมินสร้างบริษัท · ส่งมอบด้วยโอนความเป็นเจ้าของ) ·
+        // ฝ่ายค้านรอบสาม P1-2: ตั้ง/ลด Owner จากหน้านี้ข้ามตัวตัดสินโอนเจ้าของ (ข้อ 105 · DenySelf) ⇒ ปฏิเสธพร้อมชี้เส้นโอนเจ้าของ
+        var blocked = Accounting.Helpers.OwnershipTransferPolicy.AdminRoleChangeBlock(cu.Role, request.Role);
+        if (blocked != null)
+            return BadRequest(new ApiResponse<string>(false, null, blocked));
+        if (cu.Role == request.Role)
+            return Ok(new ApiResponse<string>(true, null, $"บทบาทเป็น {request.Role} อยู่แล้ว"));
 
+        var before = cu.Role;
         cu.Role = request.Role;
+        // CompanyUser ไม่ใช่ BaseEntity/TenantEntity ⇒ ตัวจับ audit อัตโนมัติไม่เห็น — บันทึกบทบาทเดิม/ใหม่เข้า hash chain เอง
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = JwtHelper.GetUserIdFromClaims(User),
+            UserEmail = User.FindFirstValue(ClaimTypes.Email) ?? "",
+            Action = AuditAction.Update,
+            EntityType = "CompanyUser",
+            EntityId = userId.ToString(),
+            OldValues = JsonSerializer.Serialize(new { role = before.ToString() }),
+            NewValues = JsonSerializer.Serialize(new { role = request.Role.ToString(), via = "admin/customers" }),
+            IpAddress = HttpContext?.Connection?.RemoteIpAddress?.ToString(),
+        });
         await _db.SaveChangesAsync();
 
         return Ok(new ApiResponse<string>(true, null, $"เปลี่ยน Role เป็น {request.Role} สำเร็จ"));

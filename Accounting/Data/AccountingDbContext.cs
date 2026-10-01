@@ -3743,48 +3743,60 @@ public class AccountingDbContext : DbContext
     internal const string AuditLockTimeoutSql = "SET LOCAL lock_timeout = '15s'";
 
     /// <summary>ตัวประทับตอน commit (เรียกจาก <see cref="AuditChainCommitInterceptor"/> ก่อน commit จริง ภายในธุรกรรมเดียวกัน) —
-    /// lock_timeout → ล็อกทุกบริษัทที่เกี่ยวพร้อมกันเรียงคีย์ → ปลาย chain → Seal → INSERT (SQL ตรง ไม่ผ่าน ChangeTracker — ไม่ flush ของอื่นของผู้เรียก)</summary>
-    internal async Task SealDeferredAuditAtCommitAsync(Guid transactionId, CancellationToken ct)
+    /// ด่านระดับ isolation → lock_timeout → ล็อกทุกบริษัทที่เกี่ยวพร้อมกันเรียงคีย์ → ปลาย chain → Seal → INSERT หลายแถวต่อคำสั่ง
+    /// (SQL ตรง ไม่ผ่าน ChangeTracker — ไม่ flush ของอื่นของผู้เรียก)
+    /// <para>ฝ่ายค้านรอบสาม P1-1: ธุรกรรม Serializable/RepeatableRead อ่านปลาย chain จาก snapshot ตั้งแต่คำสั่งแรก (แม้ได้ล็อกแล้ว) ⇒ ล้มดังก่อนล็อก
+    /// (<see cref="Accounting.Helpers.AuditChainScope.IsolationBlockReason"/>) · P2-1: INSERT ชุดละ <see cref="Accounting.Helpers.AuditChainScope.InsertBatchRows"/>
+    /// แถว (เดิมทีละแถว = round-trip ต่อแถวขณะถือล็อก)</para></summary>
+    internal async Task SealDeferredAuditAtCommitAsync(Guid transactionId, System.Data.IsolationLevel isolation, CancellationToken ct)
     {
         var rows = TakeDeferredAudit(transactionId);
         if (rows.Count == 0) return;
+        var blocked = Accounting.Helpers.AuditChainScope.IsolationBlockReason(isolation);
+        if (blocked != null) throw new InvalidOperationException(blocked);
         Accounting.Helpers.AuditChainScope.Normalize(rows);
         await Database.ExecuteSqlRawAsync(AuditLockTimeoutSql, ct);
         await LockAuditChainAsync(rows, ct);
         ApplyAuditHashChain(rows);
-        var (sql, args) = AuditInsertCommand();
-        foreach (var row in rows)
-            await Database.ExecuteSqlRawAsync(sql, args(row), ct);
+        foreach (var (sql, args) in AuditInsertBatches(rows))
+            await Database.ExecuteSqlRawAsync(sql, args, ct);
     }
 
-    internal void SealDeferredAuditAtCommit(Guid transactionId)
+    internal void SealDeferredAuditAtCommit(Guid transactionId, System.Data.IsolationLevel isolation)
     {
         var rows = TakeDeferredAudit(transactionId);
         if (rows.Count == 0) return;
+        var blocked = Accounting.Helpers.AuditChainScope.IsolationBlockReason(isolation);
+        if (blocked != null) throw new InvalidOperationException(blocked);
         Accounting.Helpers.AuditChainScope.Normalize(rows);
         Database.ExecuteSqlRaw(AuditLockTimeoutSql);
         LockAuditChain(rows);
         ApplyAuditHashChain(rows);
-        var (sql, args) = AuditInsertCommand();
-        foreach (var row in rows)
-            Database.ExecuteSqlRaw(sql, args(row));
+        foreach (var (sql, args) in AuditInsertBatches(rows))
+            Database.ExecuteSqlRaw(sql, args);
     }
 
-    /// <summary>INSERT แถว audit (ชื่อตาราง/คอลัมน์จากโมเดล EF — ไม่พิมพ์ซ้ำ) · Id = identity ของฐาน</summary>
-    private (string Sql, Func<Models.Entities.AuditLog, object[]> Args) AuditInsertCommand()
+    /// <summary>INSERT แถว audit เป็นชุด (ชื่อตาราง/คอลัมน์จากโมเดล EF — ไม่พิมพ์ซ้ำ · รูป SQL จาก <see cref="Accounting.Helpers.AuditChainScope.InsertSql"/>) ·
+    /// Id = identity ของฐาน · ลำดับแถวใน VALUES = ลำดับ chain (ประทับแล้ว)</summary>
+    private IEnumerable<(string Sql, object[] Args)> AuditInsertBatches(List<Models.Entities.AuditLog> rows)
     {
         var et = Model.FindEntityType(typeof(Models.Entities.AuditLog))!;
         var props = new[] { "CompanyId", "UserId", "UserEmail", "Action", "EntityType", "EntityId", "OldValues", "NewValues",
             "IpAddress", "UserAgent", "Timestamp", "PrevHash", "RowHash" };
-        var cols = string.Join(", ", props.Select(p => "\"" + et.FindProperty(p)!.GetColumnName() + "\""));
-        var vals = string.Join(", ", props.Select((_, i) => "{" + i + "}"));
-        var sql = "INSERT INTO \"" + et.GetTableName() + "\" (" + cols + ") VALUES (" + vals + ")";
+        var cols = props.Select(p => et.FindProperty(p)!.GetColumnName()).ToList();
         static object N(object? v) => v ?? DBNull.Value;
-        return (sql, r => new object[]
+        for (var i = 0; i < rows.Count; i += Accounting.Helpers.AuditChainScope.InsertBatchRows)
         {
-            N(r.CompanyId), N(r.UserId), N(r.UserEmail), (int)r.Action, r.EntityType, N(r.EntityId), N(r.OldValues), N(r.NewValues),
-            N(r.IpAddress), N(r.UserAgent), r.Timestamp, N(r.PrevHash), N(r.RowHash),
-        });
+            var chunk = rows.Skip(i).Take(Accounting.Helpers.AuditChainScope.InsertBatchRows).ToList();
+            var args = new List<object>(chunk.Count * cols.Count);
+            foreach (var r in chunk)
+                args.AddRange(new object[]
+                {
+                    N(r.CompanyId), N(r.UserId), N(r.UserEmail), (int)r.Action, r.EntityType, N(r.EntityId), N(r.OldValues), N(r.NewValues),
+                    N(r.IpAddress), N(r.UserAgent), r.Timestamp, N(r.PrevHash), N(r.RowHash),
+                });
+            yield return (Accounting.Helpers.AuditChainScope.InsertSql(et.GetTableName()!, cols, chunk.Count), args.ToArray());
+        }
     }
 
     /// <summary>คีย์ล็อกต่อบริษัทของแถวที่จะประทับ — คงที่ข้ามเครื่อง (AdvisoryLockKey) · เรียงก่อนล็อก (ทุกธุรกรรมขอชุดเดียวกันตามลำดับเดียวกัน
