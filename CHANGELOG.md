@@ -4323,4 +4323,4 @@ _2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้า�
 - **P2-3** `Helpers/ExpenseClaimPayVoucher` → `Helpers/LinkedPayVoucher` (ใบเบิก + เงินทดรอง) · `SalaryAdvanceService.DisburseAsync` ผูก PV ร่างก่อนอนุมัติ · 422 `ADVANCE-PAY-PV-WARNINGS`
 - **P2-4** audit "อนุมัติทั้งที่มีคำเตือน" อ้างมาตราของชุดที่ผ่านจริง (`ApprovalAcknowledgement.LegalReference`)
 - **P2-6** ที่พัก ×4 · PlatformBilling ×3 · CMS ×2 จาก `acknowledgeWarnings: true` → `SystemWorkflow` (ผลการอนุมัติเท่าเดิม · ร่องรอยไม่ใช่คนรับทราบ)
-- เทสต์ `Round201TxTests.P12_*/P22_*/P23_*/P24_*` · required_call_site +16 แถว + แก้ RTX-5 (negative test ในสคริปต์ทีม) — commit <pending>)_
+- เทสต์ `Round201TxTests.P12_*/P22_*/P23_*/P24_*` · required_call_site +16 แถว + แก้ RTX-5 (negative test ในสคริปต์ทีม) — commit 4f7daac6)_

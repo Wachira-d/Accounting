@@ -107,7 +107,7 @@ GROUP BY d."CompanyId";
 **ความเสี่ยงคอมไพล์เพิ่ม**: `ApprovalAckSource.Unattended = 4` (switch expression อื่นในเรพไม่ครอบ enum นี้แบบครบชุด — ตรวจแล้วมีแค่ในไฟล์เดียว) · `EFilingCaveat` overload (string) / (string, (DateTime, DateTime)?, DateTime?) · `WarnByFor` 4 อาร์กิวเมนต์ ·
 `existingPv` ternary ระหว่าง anonymous type กับ `null` · ชื่อ `ExpenseClaimPayVoucher.StepFor` (เดิมชื่อ `Decide` — `nullable_arg_check` สับสนกับ `Decide(bool)` ตัวอื่น ⇒ เปลี่ยนชื่อ)
 
-## 8. แก้ผลฝ่ายค้านรอบสาม (P1-2 · P2-2/3/4/6) — คอมมิต `<pending>` · หลัง merge `2c8e64d8`
+## 8. แก้ผลฝ่ายค้านรอบสาม (P1-2 · P2-2/3/4/6) — คอมมิต `4f7daac6` · หลัง merge `2c8e64d8`
 
 | ID | ตรวจซ้ำที่ HEAD | สถานะ | ที่แก้ | เทสต์ |
 |---|---|---|---|---|
