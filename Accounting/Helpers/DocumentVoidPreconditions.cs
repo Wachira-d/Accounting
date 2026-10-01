@@ -143,9 +143,25 @@ public static class DocumentVoidPreconditions
             .ToHashSet();
     }
 
+    /// <summary>
+    /// **ตัวโหลดเดียวของเวลาอ้างอิง "หลักฐานต้องแนบหลังส่ง"** (รอบ 201 ทีม DV · ฝ่ายค้าน DV-O3) — ทาง (ก) ของ <c>ResolveEtaxCancellationAsync</c> และการยกเลิกแถว e-Tax
+    /// (<c>EtaxInvoiceService.VoidAsync</c>) ใช้กติกาชุดเดียว: แถว e-Tax ที่ยังไม่ถูกยกเลิกของเอกสาร + บันทึก e-Tax by Email ประทับเวลา → <see cref="CancellationEvidenceNotBefore"/> ·
+    /// null = เอกสารไม่ถึงกรมสรรพากร · tenant แล้ว
+    /// </summary>
+    public static async Task<DateTime?> CancellationEvidenceNotBeforeAsync(AccountingDbContext db, Guid companyId, Guid documentId,
+        CancellationToken ct = default)
+    {
+        var rows = await db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.DocumentId == documentId && e.Status != EtaxStatus.Voided)
+            .Select(e => new { e.Status, e.SubmittedAt, e.CreatedAt })
+            .ToListAsync(ct);
+        return CancellationEvidenceNotBefore(rows.Select(e => (e.Status, e.SubmittedAt, e.CreatedAt)),
+            await EtaxRdTimestampEmailTimesAsync(db, companyId, documentId, ct));
+    }
+
     /// <summary>เวลาที่ใบนี้ถึงผู้ประทับเวลาของกรมสรรพากรทาง e-Tax by Email (เวลาส่งอีเมล · ไม่มี = เวลาสร้างบันทึก) — เกณฑ์อีเมลตัวเดียวกับ
     /// <see cref="EtaxEmailedWithRdTimestampAsync"/> (รอบ 201 ทีม DV · A-DV3 · คำตัดสินข้อ 67: เวลาอ้างอิงของหลักฐานการยกเลิก) · tenant แล้ว</summary>
-    public static async Task<List<(DateTime? SentAt, DateTime CreatedAt)>> EtaxRdTimestampEmailTimesAsync(AccountingDbContext db, Guid companyId,
+    internal static async Task<List<(DateTime? SentAt, DateTime CreatedAt)>> EtaxRdTimestampEmailTimesAsync(AccountingDbContext db, Guid companyId,
         Guid documentId, CancellationToken ct = default)
         => (await RdTimestampEmailLogs(db, companyId)
                 .Where(l => l.DocumentId == documentId)
@@ -508,6 +524,21 @@ public static class DocumentVoidPreconditions
         => livePaymentRows.Where(r => !voidingPaymentIds.Contains(r.PaymentId)).Sum(r => r.Amount);
 
     /// <summary>
+    /// **ยกเลิกเอกสารที่ถูกชำระร่วมกับเอกสารอื่นในการชำระเดียวกัน — ปฏิเสธ** (ตัวตัดสินเดียวของ <c>VoidDocumentAsync</c> · รอบ 201 ทีม DV ฝ่ายค้าน DV-O1):
+    /// เงินก้อนเดียวจัดสรรหลายใบ ยกเลิกใบเดียวแล้วแกะเงินออกบางส่วน ⇒ ยอดเช็ค/การจัดสรรที่เหลือไม่ตรงเงินที่รับ-จ่ายจริง ⇒ ต้องยกเลิก "การชำระทั้งใบ" ก่อนแล้วจัดสรรใหม่ ·
+    /// ข้อความเดิมทุกตัวอักษร (ย้ายจากลูปขั้น 1 มาตรวจทันทีหลังล็อกใบนี้ ก่อนล็อก/กลับรายการใด) · null = ไม่บล็อก · G6: pure
+    /// </summary>
+    /// <param name="allocationsOfTouchingPayments">การจัดสรรที่ยังมีผลของทุกการชำระที่แตะใบนี้ (เลขที่การชำระ · ใบที่จัดสรรให้)</param>
+    public static string? SharedPaymentVoidBlock(IEnumerable<(string? PaymentNumber, Guid DocumentId)> allocationsOfTouchingPayments, Guid documentId)
+    {
+        foreach (var a in allocationsOfTouchingPayments)
+            if (a.DocumentId != documentId)
+                return $"เอกสารนี้ถูกชำระร่วมกับเอกสารอื่นในใบรับ/จ่ายเงินเดียวกัน ({a.PaymentNumber}) — "
+                    + "กรุณายกเลิกการชำระเงินใบนั้นทั้งใบก่อน แล้วจึงยกเลิกเอกสารและจัดสรรเงินใหม่";
+        return null;
+    }
+
+    /// <summary>
     /// **ไฟล์หลักฐานของทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ" ต้องแนบหลังเวลานี้** (รอบ 201 ทีม DV · A-DV3 · คำตัดสินข้อ 67 — กติกา "แนบหลังส่ง" เดียวกับ
     /// <see cref="EtaxVoidPolicy.EvidenceNotBefore"/> ของการยกเลิกแถว e-Tax) — หลักฐานต้องเกิด<b>หลัง</b>เหตุที่มันพิสูจน์: ใบถึงกรมสรรพากรเมื่อไร
     /// การยกเลิกก็เกิดหลังจากนั้น · ไฟล์ที่แนบไว้ก่อน (PDF ต้นฉบับ · สลิป) ไม่ใช่หลักฐานการยกเลิก
@@ -515,7 +546,7 @@ public static class DocumentVoidPreconditions
     /// แถวที่ยกเลิกแล้วไม่นับ) และ (2) บันทึก e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลาของกรมสรรพากร (เวลาส่งอีเมล = เวลาประทับ · ไม่มีเวลาส่ง =
     /// เวลาสร้างบันทึก) · ไม่มีอะไรถึงกรมสรรพากร = null (ทาง ก ไม่ต้องใช้ไฟล์) · G6: pure</para>
     /// </summary>
-    public static DateTime? CancellationEvidenceNotBefore(IEnumerable<(EtaxStatus Status, DateTime? SubmittedAt, DateTime CreatedAt)> etaxRows,
+    internal static DateTime? CancellationEvidenceNotBefore(IEnumerable<(EtaxStatus Status, DateTime? SubmittedAt, DateTime CreatedAt)> etaxRows,
         IEnumerable<(DateTime? SentAt, DateTime CreatedAt)> rdTimestampEmails)
     {
         DateTime? latest = null;

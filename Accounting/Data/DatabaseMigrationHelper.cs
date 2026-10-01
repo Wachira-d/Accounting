@@ -7107,37 +7107,52 @@ public static class DatabaseMigrationHelper
     // รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG A-DV2 · คำตัดสินข้อ 65)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// <summary>รอบ 201 ทีม DV — คอลัมน์ <c>Documents.EtaxKeptOriginalAt</c> (ใบเสร็จที่ปิดธงครั้งล่าสุดด้วยทาง ค) + เติมจากของเดิม · รันทุกบูตได้
-    /// (ADD COLUMN IF NOT EXISTS · UPDATE เฉพาะแถวที่ยังว่าง)</summary>
-    internal static IReadOnlyList<string> Round201DvStatements() => new[]
-    {
-        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxKeptOriginalAt" timestamp with time zone NULL;""",
-        EtaxKeptOriginalBackfillSql(),
-    };
+    /// <summary>รอบ 201 ทีม DV — คอลัมน์ <c>Documents.EtaxKeptOriginalAt</c> (ใบเสร็จที่ปิดธงครั้งล่าสุดด้วยทาง ค) + เติมจากของเดิม <b>ครั้งเดียว</b>ในขั้นเดียวกับที่สร้างคอลัมน์
+    /// (ฝ่ายค้าน DV-O6 — เดิม UPDATE ด้วย LIKE ทั่วทั้งตารางทุกบูต) · ฐานใหม่ได้คอลัมน์จาก EnsureCreated (ไม่มีข้อมูลให้เติม)</summary>
+    internal static IReadOnlyList<string> Round201DvStatements() => new[] { EtaxKeptOriginalBackfillSql() };
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมค่า — deterministic ข้ามเครื่อง (ทางเดียวกับ <see cref="DepositBaseSplitLockKey"/>)</summary>
+    internal static string EtaxKeptOriginalLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Documents.EtaxKeptOriginalAt").ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// เติม <c>EtaxKeptOriginalAt</c> ให้ใบที่ปิดธงทาง (ค) ก่อนมีคอลัมน์ (รอบ 200 V1H/V1I ระบุด้วยป้ายในหมายเหตุภายในอย่างเดียว) — แก้โค้ดอย่างเดียวไม่พอเมื่อ
-    /// ค่าถูกเก็บไว้แล้ว (F2 ข้อ 9) · เงื่อนไขเดียวกับ <see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionKeptOriginal"/>: ป้าย
-    /// <see cref="Accounting.Helpers.EtaxReissueReview.ResolvedMarker"/> <b>ตัวสุดท้าย</b>ในหมายเหตุต้องเป็นป้ายทาง (ค) (ปิดซ้ำด้วยใบลดหนี้/ยกเลิกภายหลัง = ไม่เติม) ·
-    /// เวลา = audit <c>RD-ETAX-ORIGINAL-STILL-VALID</c> ล่าสุดของใบนั้น (บริษัทเดียวกัน) · ไม่มี audit = เวลาแก้ไขล่าสุดของใบ · ป้ายเดิมไม่ถูกลบ (ทางสำรองของผู้อ่าน) ·
-    /// ข้อความป้ายมาจากค่าคงที่ตัวเดียวกับฝั่งเขียน/ฝั่งอ่าน (ไม่มีเครื่องหมายคำพูดเดี่ยวในป้าย)
+    /// สร้างคอลัมน์ <c>EtaxKeptOriginalAt</c> แล้วเติมให้ใบที่ปิดธงทาง (ค) ก่อนมีคอลัมน์ (รอบ 200 V1H/V1I ระบุด้วยป้ายในหมายเหตุภายในอย่างเดียว) — แก้โค้ดอย่างเดียวไม่พอเมื่อ
+    /// ค่าถูกเก็บไว้แล้ว (F2 ข้อ 9) · <b>รันครั้งเดียว</b>: มีคอลัมน์แล้ว = ไม่ทำอะไร (advisory lock คีย์คงที่ ⇒ สองเครื่องบูตพร้อมกันเติมครั้งเดียว) ·
+    /// จำกัดแถว: ใบเสร็จ/ใบสำคัญรับที่ไม่ถูกลบ · มีภาษี · หมายเหตุมีป้ายทาง (ค) · เงื่อนไขป้ายเดียวกับ <see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionKeptOriginal"/>:
+    /// ป้าย <see cref="Accounting.Helpers.EtaxReissueReview.ResolvedMarker"/> ตัวสุดท้ายที่อยู่<b>ต้นข้อความ/ต้นบรรทัด</b> ต้องเป็นป้ายทาง (ค)
+    /// (<see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionLinePattern"/> — ป้ายที่ผู้ใช้พิมพ์กลางบรรทัดไม่นับ · ปิดซ้ำด้วยใบลดหนี้/ยกเลิกภายหลัง = ไม่เติม) ·
+    /// เวลา = audit <c>RD-ETAX-ORIGINAL-STILL-VALID</c> ล่าสุดของใบนั้น (บริษัทเดียวกัน) · ไม่มี audit = เวลาแก้ไขล่าสุดของใบ · ป้ายเดิมไม่ถูกลบ (ทางสำรองของผู้อ่าน)
     /// </summary>
     internal static string EtaxKeptOriginalBackfillSql()
     {
-        var resolved = Accounting.Helpers.EtaxReissueReview.ResolvedMarker;
         var kept = Accounting.Helpers.EtaxReissueReview.KeptOriginalMarker;
+        var line = Accounting.Helpers.EtaxReissueReview.LastResolutionLinePattern;
+        var receipt = (int)Accounting.Models.Enums.DocumentType.Receipt;
+        var voucher = (int)Accounting.Models.Enums.DocumentType.ReceiptVoucher;
+        var lockKey = EtaxKeptOriginalLockKey;
         return $$"""
-            UPDATE "Documents" d SET "EtaxKeptOriginalAt" = COALESCE(
-                (SELECT MAX(a."Timestamp") FROM "AuditLogs" a
-                  WHERE a."CompanyId" = d."CompanyId" AND a."EntityType" = 'Document' AND a."EntityId" = d."Id"::text
-                    AND a."NewValues" LIKE '%RD-ETAX-ORIGINAL-STILL-VALID%'),
-                d."UpdatedAt", d."CreatedAt")
-            WHERE d."EtaxKeptOriginalAt" IS NULL
-              AND d."InternalNotes" IS NOT NULL
-              AND strpos(d."InternalNotes", '{{kept}}') > 0
-              AND substr(d."InternalNotes",
-                    length(d."InternalNotes") - strpos(reverse(d."InternalNotes"), reverse('{{resolved}}')) - length('{{resolved}}') + 2)
-                  LIKE '{{kept}}%';
+            DO $mig$
+            BEGIN
+              PERFORM pg_advisory_xact_lock({{lockKey}});
+              IF EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = 'Documents' AND column_name = 'EtaxKeptOriginalAt') THEN
+                RETURN;
+              END IF;
+              ALTER TABLE "Documents" ADD COLUMN "EtaxKeptOriginalAt" timestamp with time zone NULL;
+              UPDATE "Documents" d SET "EtaxKeptOriginalAt" = COALESCE(
+                  (SELECT MAX(a."Timestamp") FROM "AuditLogs" a
+                    WHERE a."CompanyId" = d."CompanyId" AND a."EntityType" = 'Document' AND a."EntityId" = d."Id"::text
+                      AND a."NewValues" LIKE '%RD-ETAX-ORIGINAL-STILL-VALID%'),
+                  d."UpdatedAt", d."CreatedAt")
+              WHERE d."EtaxKeptOriginalAt" IS NULL
+                AND d."IsDeleted" = false
+                AND d."DocumentType" IN ({{receipt}}, {{voucher}})
+                AND d."VatAmount" > 0.005
+                AND d."InternalNotes" IS NOT NULL
+                AND strpos(d."InternalNotes", '{{kept}}') > 0
+                AND substring(d."InternalNotes" from '{{line}}') LIKE '{{kept}}%';
+            END
+            $mig$;
             """;
     }
 }

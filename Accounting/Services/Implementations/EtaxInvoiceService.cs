@@ -758,11 +758,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
 
         // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O5): ไฟล์หลักฐานต้องแนบหลังส่ง e-Tax — ไฟล์ของเอกสารที่แนบไว้ก่อน (PDF ต้นฉบับ) ไม่ใช่หลักฐานการยกเลิก
-        var evidenceNotBefore = EtaxVoidPolicy.EvidenceNotBefore(etax.SubmittedAt, etax.CreatedAt);
+        // รอบ 201 ทีม DV (ฝ่ายค้าน DV-O3): ตัวโหลดเดียวกับทาง (ก) ของการปิดธง — แถว e-Tax ที่ยังไม่ยกเลิกของเอกสาร (เวลาส่ง · แถวเก่า = เวลาสร้างแถว ผ่าน
+        // EtaxVoidPolicy.EvidenceNotBefore) + บันทึก e-Tax by Email ประทับเวลา · ล่าสุดชนะ · ไม่ถึงกรมสรรพากร = ไม่จำกัด (ตัวตัดสินไม่ใช้ไฟล์อยู่แล้ว)
+        var evidenceNotBefore = await DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync(_db, companyId, etax.DocumentId);
         var evidenceId = request?.EvidenceAttachmentId;
         var evidenceAttached = evidenceId is Guid fileId
             && await _db.FileAttachments.AsNoTracking().AnyAsync(a => a.Id == fileId && a.CompanyId == companyId && !a.IsDeleted
-                && a.EntityType == "Document" && a.EntityId == etax.DocumentId && a.CreatedAt > evidenceNotBefore);
+                && a.EntityType == "Document" && a.EntityId == etax.DocumentId
+                && (evidenceNotBefore == null || a.CreatedAt > evidenceNotBefore.Value));
         // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O2): ตัดสินด้วยสถานะที่รวม e-Tax by Email ที่ประทับเวลาแล้ว (เกณฑ์เดียวกับ EffectiveEtaxAsync) — ไม่ใช่สถานะแถวอย่างเดียว
         var emailedWithRdTimestamp = (await DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(_db, companyId, new[] { etax.DocumentId }))
             .Contains(etax.DocumentId);

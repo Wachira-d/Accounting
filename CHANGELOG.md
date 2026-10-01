@@ -4059,3 +4059,14 @@ _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก
 - **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
 - เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
 
+_2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
+- **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
+  (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม) — ก่อนล็อกใบต้นทาง/มัดจำ/กลับรายการใด
+- **DV-O2** รายงานข้อ 44 กลุ่มอีเมลไม่นับแถวที่ audit ยกเลิกบันทึกหลักฐาน (`EtaxReissueReview.VoidAuditHasEvidence`)
+- **DV-O3** `EtaxInvoiceService.VoidAsync` ใช้ตัวโหลดเดียวกับทาง (ก) `DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync`
+- **DV-O5** C-1 นับใบเสร็จเฉพาะที่ถือ VAT · ยุบ `DeclaredVatReportStatusAsync` เข้า `VatPeriodFilingStatusAsync` (คิวรีงวด ภ.พ.30 ตัวเดียว · `VatPeriodDeclaredOrFiledAsync` เรียกตัวนี้)
+- **DV-O6** ป้ายทาง (ค) นับเฉพาะต้นข้อความ/ต้นบรรทัด (ตัวอ่าน + regex migration `LastResolutionLinePattern` ชุดเดียว) · เหตุผล/เลขอ้างอิงที่ผู้ใช้พิมพ์ยุบเป็นบรรทัดเดียว (`OneLine`) ·
+  migration เติม `EtaxKeptOriginalAt` ครั้งเดียวในขั้นที่สร้างคอลัมน์ (DO block + advisory lock คีย์คงที่ · แถวแคบ)
+- **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
+- เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit <pending>)_
+
