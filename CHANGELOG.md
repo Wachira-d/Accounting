@@ -4238,5 +4238,5 @@ _2026-10-01 รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน 
 - **SSO-1** `EmployeeRecordEdit.SsoInsuredNumber` เทียบเลขเดิมก่อนด่าน 13 หลัก · **UI-1** 🧮 ทิ้งผลช้า/ล้างค่าเมื่อเปลี่ยนคน · **WC-1** Notice เมื่อเงินทดแทนเปลี่ยน
 - **Q3** `PayrollRunLineDto.SsoFlagWarning` + ป้ายบนแถว (ไม่บล็อก) · **Q4** HRIS sync (ไม่เก็บเลขผิดรูป + แจ้ง) และนำเข้า CSV (`ImportExportService.ImportEmployeeAsync` — แตะไฟล์ทีมอื่น 4 บรรทัด · แถวล้มพร้อมเหตุผล)
   ผ่านตัวตัดสินเลข ปกส. เดียว · ชื่อพนักงานในตารางรอบผ่าน `Layout.esc`
-- เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit <pending>)_
+- เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit 2fe0e7c4)_
 
