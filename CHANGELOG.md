@@ -4137,3 +4137,11 @@ _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACK
 - (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
 - (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
 - เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit f27f289e)_
+
+_2026-10-01 รอบ 201 ฝ่ายค้านทีม OC (OCX-1..OCX-10 · คำตัดสินข้อ 103 · รายงาน `erp-review/2026-10-01/team-OC.md` §ฝ่ายค้าน):
+- (OCX-1 · P1) ด่าน C-23 "ผู้ใช้แตะเลข" อ่านธงถาวร `OcrScanResults.VendorTaxIdUserChanged` (`OcrCorrectedFieldList.VendorTaxIdTyped` — ตัวเลขเปลี่ยนจาก baseline) · เดิมนับ "VendorTaxId" ในรายการแก้ซึ่งติดทุกใบบนเว็บ ⇒ เลขเพี้ยนที่ผ่าน mod-11 ถอดผู้ขายที่ผูกถูกแล้วสร้างผู้ติดต่อเลขนิติบุคคลอื่น
+- (OCX-2/5) ด่าน walk-in ย้ายเป็น `WalkInSalesBlockAsync` หลังหาคู่ค้าฝั่งขายจากทุกแหล่ง + ซ้ำหลังสร้างบรรทัดด้วย VAT จริง · (OCX-3) ผู้เรียกตัวที่สามของ `OcrWhtLearningScope` ส่งธง C-18
+- (OCX-4) `MatchContactCoreAsync(recordVendorCanonFeedback)` — VendorCanon เฉพาะฝั่งซื้อ · เส้น walk-in ไม่บันทึก · (OCX-6) ตัวนับการอ้างถึงผู้ติดต่อ 35 ช่อง (`AddContactRefsAsync`) · `UpdatedBy` = ผู้กด
+- (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น · (OCX-8) ค่าคงที่ `BranchAddressUnknownNote` ขึ้นเหนือ doc-comment ของ `ContactAddress` · (OCX-9) เทสต์ล็อกคำสั่ง migration อยู่ในชุดที่บูตรัน
+- (OCX-10) `Helpers/OcrPredecessorPartyCheck` ใน `LinkPredecessorAsync` เมื่อยังไม่รู้คู่ค้า · (ข้อ 103 Q3) ตัวอ่านเหตุผลใบลดหนี้ข้ามแถวฟอร์ม "ส่วนลด 0.00"
+- เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit <pending>)_

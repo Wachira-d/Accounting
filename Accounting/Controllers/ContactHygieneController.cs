@@ -204,37 +204,67 @@ public class ContactHygieneController : ControllerBase
             return BadRequest(new ApiResponse<object>(false, null, block));
         contact.IsDeleted = true;
         contact.IsActive = false;
-        contact.UpdatedBy = "contact-hygiene";
+        contact.UpdatedBy = uid.ToString();   // ฝ่ายค้าน OCX-6: ผู้กดจริง (เดิมค่าคงที่ "contact-hygiene" — สอบย้อนไม่ได้ว่าใครลบ)
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, new { contactId },
             $"ลบแถว {contact.Name} ({TaxBranchCode.Label(contact.BranchCode)}) แล้ว — ไม่มีเอกสาร/สแกนอ้างถึง"));
     }
 
-    /// <summary>id ผู้ติดต่อ (ในชุดที่ถาม) ที่มีข้อมูลอ้างถึง — เอกสาร · สแกน (ผูก/AI เสนอ) · 50 ทวิ · เครดิตภาษีถูกหัก · alias สินค้า · รายการประจำ ·
-    /// ทุก query กรอง <c>CompanyId</c> · นับแถวที่ลบแล้วด้วย (ห้ามลบผู้ติดต่อใต้ประวัติ — ทิศปลอดภัย)</summary>
+    /// <summary>id ผู้ติดต่อ (ในชุดที่ถาม) ที่มีข้อมูลอ้างถึง — <b>ทุกตารางที่มีช่องผู้ติดต่อ</b> (ฝ่ายค้าน OCX-6: เดิมดูแค่เอกสาร/สแกน/50 ทวิ/เครดิตภาษี/alias/รายการประจำ
+    /// ⇒ แถวที่เช็ค/ธนาคาร/มัดจำ/gateway/รอบโอน/สินเชื่อ/วงเงินเครดิต/พนักงาน/PDPA อ้างถึงถูกลบได้) · รายการตารางมาจากการเปิด entity ทุกตัวที่มี
+    /// <c>…ContactId</c> (35 ช่อง) · เพิ่มตารางใหม่ที่อ้างผู้ติดต่อ ⇒ เพิ่มแถวที่นี่ · ทุก query กรอง <c>CompanyId</c> · นับแถวที่ลบแล้วด้วย (ทิศปลอดภัย)</summary>
     private async Task<HashSet<Guid>> ReferencedContactIdsAsync(Guid companyId, List<Guid> ids, CancellationToken ct)
     {
         var refs = new HashSet<Guid>();
-        refs.UnionWith(await _db.Documents.IgnoreQueryFilters().AsNoTracking()
-            .Where(d => d.CompanyId == companyId && ids.Contains(d.ContactId)).Select(d => d.ContactId).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.OcrScanResults.IgnoreQueryFilters().AsNoTracking()
-            .Where(s => s.CompanyId == companyId && s.MatchedContactId != null && ids.Contains(s.MatchedContactId.Value))
-            .Select(s => s.MatchedContactId!.Value).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.OcrScanResults.IgnoreQueryFilters().AsNoTracking()
-            .Where(s => s.CompanyId == companyId && s.AiSuggestedContactId != null && ids.Contains(s.AiSuggestedContactId.Value))
-            .Select(s => s.AiSuggestedContactId!.Value).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.WithholdingTaxCerts.IgnoreQueryFilters().AsNoTracking()
-            .Where(w => w.CompanyId == companyId && ids.Contains(w.PayeeContactId))
-            .Select(w => w.PayeeContactId).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.WhtCreditsReceived.IgnoreQueryFilters().AsNoTracking()
-            .Where(w => w.CompanyId == companyId && w.PayerContactId != null && ids.Contains(w.PayerContactId.Value))
-            .Select(w => w.PayerContactId!.Value).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.ProductAliases.IgnoreQueryFilters().AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.ContactId != null && ids.Contains(a.ContactId.Value))
-            .Select(a => a.ContactId!.Value).Distinct().ToListAsync(ct));
-        refs.UnionWith(await _db.RecurringTransactions.IgnoreQueryFilters().AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.ContactId != null && ids.Contains(r.ContactId.Value))
-            .Select(r => r.ContactId!.Value).Distinct().ToListAsync(ct));
+        await AddContactRefsAsync(refs, _db.Documents, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.OcrScanResults, companyId, ids, x => x.MatchedContactId, ct);
+        await AddContactRefsAsync(refs, _db.OcrScanResults, companyId, ids, x => x.AiSuggestedContactId, ct);
+        await AddContactRefsAsync(refs, _db.WithholdingTaxCerts, companyId, ids, x => (Guid?)x.PayeeContactId, ct);
+        await AddContactRefsAsync(refs, _db.WhtCreditsReceived, companyId, ids, x => x.PayerContactId, ct);
+        await AddContactRefsAsync(refs, _db.ProductAliases, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.ProductNegativeAliases, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.RecurringTransactions, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.BankReconciliationPatterns, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.Cheques, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.PostDatedChecks, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.DepositTransactions, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.PaymentIntents, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.SettlementChannels, companyId, ids, x => x.CounterpartyContactId, ct);
+        await AddContactRefsAsync(refs, _db.Loans, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.ContactCreditSettings, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.BadDebtAllowanceLines, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.BillingRates, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.CmsLeads, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.ConsignmentRecords, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.DunningLetters, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.Employees, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.IntegrationSyncLogs, companyId, ids, x => x.CreatedContactId, ct);
+        await AddContactRefsAsync(refs, _db.LodgingReservations, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.PaymentReminders, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.PdpaConsentRecords, companyId, ids, x => x.SubjectContactId, ct);
+        await AddContactRefsAsync(refs, _db.PdpaDataSubjectRequests, companyId, ids, x => x.LinkedContactId, ct);
+        await AddContactRefsAsync(refs, _db.PortalAccesses, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.PosReservations, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.Projects, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.RevenueContracts, companyId, ids, x => (Guid?)x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.SiteCustomers, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.StampDutyRecords, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.TimeEntries, companyId, ids, x => x.ContactId, ct);
+        await AddContactRefsAsync(refs, _db.VendorPortalTokens, companyId, ids, x => (Guid?)x.ContactId, ct);
         return refs;
+    }
+
+    /// <summary>ตัวนับการอ้างถึงหนึ่งตาราง — กรอง tenant ที่นี่ที่เดียว (raw query ข้าม global filter ของบริษัท · <c>IgnoreQueryFilters</c> = นับแถวที่ลบแล้ว)</summary>
+    private static async Task AddContactRefsAsync<T>(HashSet<Guid> refs, IQueryable<T> set, Guid companyId, List<Guid> ids,
+        System.Linq.Expressions.Expression<Func<T, Guid?>> key, CancellationToken ct) where T : Models.Entities.TenantEntity
+    {
+        var found = await set.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .Select(key)
+            .Where(k => k != null && ids.Contains(k.Value))
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var k in found)
+            if (k is Guid g) refs.Add(g);
     }
 }

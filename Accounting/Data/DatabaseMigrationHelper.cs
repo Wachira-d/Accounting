@@ -6518,6 +6518,9 @@ public static class DatabaseMigrationHelper
             // "VendorAddress" ใน UserCorrectedFields ของแถวก่อนรอบ 200 มาจากกติกาเดิม "ส่งมา = แก้" (หน้ารีวิวส่งทุกครั้ง) ⇒ แยกไม่ได้ว่าคนพิมพ์จริงไหม
             // ⚠️ **ไม่ backfill โดยเจตนา** — DEFAULT false = "ไม่รู้" ⇒ ไม่นับเป็นหลักฐานที่อยู่ของแถวสาขาใหม่ (ปล่อยว่าง + ข้อความให้เติม — ทิศที่มองเห็น)
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorAddressUserTyped" boolean NOT NULL DEFAULT false;""",
+            // ═══ รอบ 201 ทีม OC · ฝ่ายค้าน OCX-1 (C-23 · คำตัดสินข้อ 96) — "ผู้ใช้เปลี่ยนเลขผู้เสียภาษีผู้ขาย" ตามกติกา baseline ═══
+            // ⚠️ ไม่ backfill โดยเจตนา — DEFAULT false = ไม่รู้ ⇒ ไม่ถอดผู้ติดต่อที่ผูกไว้ (ทิศที่ไม่สร้างผู้ติดต่อเลขเพี้ยน)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorTaxIdUserChanged" boolean NOT NULL DEFAULT false;""",
 
             // ═══ รอบ 184 · KPI คู่ — แยก "นักเรียนโตจริง" ออกจาก "ระบบเงียบลง" ═══
             // `UsedAi` ที่ลดลงตีความได้สองทางที่ตรงกันข้าม (นักเรียนเก่งขึ้น = ดี ·

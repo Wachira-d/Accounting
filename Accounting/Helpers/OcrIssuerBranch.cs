@@ -208,6 +208,10 @@ public static class OcrIssuerBranch
         return thai > latin;
     }
 
+    /// <summary>ข้อความให้ผู้ใช้เติมที่อยู่ของแถวสาขาที่ระบบสร้างโดยไม่มีที่อยู่ที่พิสูจน์ได้ (C-22 · ฝ่ายค้าน OCX-8: ย้ายขึ้นเหนือ doc-comment ของ ContactAddress — เดิมแทรกกลางทำให้คำอธิบายไปติดค่าคงที่) — ตัวเดียวของทุกเส้นที่สร้างแถวสาขา</summary>
+    public const string BranchAddressUnknownNote =
+        "(ยังไม่มีที่อยู่ของสาขาที่พิสูจน์ได้ — ไม่ใช้ที่อยู่สำนักงานใหญ่แทน · โปรดเติมที่หน้าผู้ติดต่อ)";
+
     /// <summary>
     /// <b>ที่อยู่ที่ควรเขียนลง Contact ของผู้ขาย</b> — ทะเบียน (DBD/RD) เก็บที่ตั้ง<b>สำนักงานใหญ่</b>
     /// เท่านั้น ⇒ ห้ามเอาไปใส่ Contact ของสาขาอื่น และห้ามเอาที่อยู่สาขาจากกระดาษไปใส่ Contact
@@ -233,10 +237,6 @@ public static class OcrIssuerBranch
     /// <param name="registryAddressIsBranch"><paramref name="dbdAddress"/> คือที่อยู่ของ<b>สาขาที่ใบนี้ออก</b>ตามทะเบียน VAT (ไม่ใช่ที่ตั้งสำนักงานใหญ่) —
     /// ตั้งเฉพาะเมื่อทะเบียนยืนยันสาขานั้นจริง (<c>OcrExtractedData.DbdAddressIsBranch</c>) · ค่าเริ่มต้น false = ทะเบียน = สำนักงานใหญ่</param>
     /// <returns><c>(Address, FromRegistry)</c> — <c>Address = null</c> = ไม่ต้องเขียนที่อยู่</returns>
-    /// <summary>ข้อความให้ผู้ใช้เติมที่อยู่ของแถวสาขาที่ระบบสร้างโดยไม่มีที่อยู่ที่พิสูจน์ได้ (C-22) — ตัวเดียวของทุกเส้นที่สร้างแถวสาขา</summary>
-    public const string BranchAddressUnknownNote =
-        "(ยังไม่มีที่อยู่ของสาขาที่พิสูจน์ได้ — ไม่ใช้ที่อยู่สำนักงานใหญ่แทน · โปรดเติมที่หน้าผู้ติดต่อ)";
-
     public static (string? Address, bool FromRegistry) ContactAddress(
         string? contactBranch, string? scanBranch, bool dbdMatched, string? dbdAddress, string? paperAddress,
         bool paperIsIssuerBranchAddress, bool registryAddressIsBranch = false)
@@ -248,7 +248,8 @@ public static class OcrIssuerBranch
 
         if (TaxBranchCode.IsHeadOffice(contactBranch))
         {
-            if (hasDbd) return (dbdAddress, true);
+            // ฝ่ายค้าน OCX-7: ทะเบียนที่ยืนยัน "สาขาที่ใบนี้ออก" คือที่อยู่ของสาขานั้น ไม่ใช่ สนญ. ⇒ ห้ามเขียนลงแถว สนญ.
+            if (hasDbd && !registryAddressIsBranch) return (dbdAddress, true);
             return scanIsHq ? (paper, false) : (null, false);
         }
         // Contact ของสาขา — ที่อยู่ที่ใบของสาขานั้นพิมพ์เองชนะทะเบียน (ทะเบียน = สำนักงานใหญ่)

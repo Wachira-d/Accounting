@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.DTOs.Ocr;
 using Accounting.Models.Enums;
 using Accounting.Services;
 using Xunit;
@@ -326,4 +327,91 @@ public class OcrReview201OcTests
     [InlineData(DocumentType.DeliveryNote, 0)]
     public void WalkIn_OppositeDirection_NonTaxInvoiceTargets_AreAllowed(DocumentType target, int vat)
         => Assert.Null(OcrWalkInBuyer.BlockReason(target, vat));
+
+    // ═══ ฝ่ายค้านรอบ 201 (OCX-1..OCX-10) ═══
+
+    /// <summary>OCX-1 — ต่อสายเหมือน <c>SubmitCorrectionAsync</c> → <c>StaleVendorContactNoteAsync</c>: หน้าเว็บ (<c>_buildReviewCorrection</c>) ส่ง
+    /// <c>vendorTaxId</c> ทุกครั้ง + ปุ่มสร้างเอกสารบันทึกคำแก้ก่อนเสมอ ⇒ "VendorTaxId" ติดรายการแก้ทุกใบ (ด่านเดิมไม่กันอะไร) ·
+    /// ธงที่ด่าน C-23 อ่าน = ตัวเลขเปลี่ยนจากที่สแกน (<c>VendorTaxIdTyped</c>) เท่านั้น</summary>
+    private static bool DetachAfterWebSave(string scannedTaxId, string submittedTaxId, string matchedContactTaxId, bool flagBefore = false)
+    {
+        var web = new OcrCorrectionRequest(VendorName: MakroName, VendorTaxId: submittedTaxId, VendorBranchCode: "00000",
+            BuyerBranchCode: "00000", HasWht: false);
+        var flag = flagBefore || OcrCorrectedFieldList.VendorTaxIdTyped(web.VendorTaxId, scannedTaxId);
+        return OcrVendorBranchContact.MatchedContactIsOtherEntity(matchedContactTaxId, submittedTaxId, userPickedContact: false,
+            userTouchedVendorTaxId: flag);
+    }
+
+    [Fact]
+    public void OCX1_WebEchoesTheScannedTaxId_DoesNotDetachTheCorrectVendor()
+    {
+        // OCR อ่านเลขเพี้ยนแต่ผ่าน mod-11 (NewTin) · ระบบผูกผู้ขายถูกรายด้วยชื่อ/AI (OldTin) · ผู้ใช้กดบันทึก/สร้างเอกสารโดยไม่แตะเลข
+        var web = new OcrCorrectionRequest(VendorTaxId: "0-1055-55999-99-1");
+        Assert.Contains("VendorTaxId", OcrCorrectedFieldList.From(web));                  // กติกาเดิม "ส่งมา = แก้" ⇒ ติดทุกใบ
+        Assert.False(OcrCorrectedFieldList.VendorTaxIdTyped(web.VendorTaxId, NewTin));      // ตัวเลขเท่าเดิม = ไม่ได้แก้
+        Assert.False(DetachAfterWebSave(scannedTaxId: NewTin, submittedTaxId: "0-1055-55999-99-1", matchedContactTaxId: OldTin));
+        // แถวเก่าที่ไม่มีธง (ก่อนรอบนี้) = ไม่รู้ ⇒ ไม่ถอด
+        Assert.False(DetachAfterWebSave(scannedTaxId: NewTin, submittedTaxId: NewTin, matchedContactTaxId: OldTin, flagBefore: false));
+    }
+
+    [Fact]
+    public void OCX1_UserReallyRetypesTheTaxId_Detaches()
+    {
+        // ทิศตรงข้าม: สแกนอ่านเลขเดิม OldTin (ผูกรายเดิม) → ผู้ใช้พิมพ์เลขใหม่ของนิติบุคคลอื่น ⇒ ถอด
+        Assert.True(DetachAfterWebSave(scannedTaxId: OldTin, submittedTaxId: NewTin, matchedContactTaxId: OldTin));
+        // บันทึกครั้งที่สอง (ส่งเลขใหม่ซ้ำ) — ธงคงอยู่ (OR กับค่าเดิม) ⇒ ยังถอด
+        Assert.True(DetachAfterWebSave(scannedTaxId: NewTin, submittedTaxId: NewTin, matchedContactTaxId: OldTin, flagBefore: true));
+        // ล้างช่องเลข = ไม่ใช่นิติบุคคลอื่น
+        Assert.False(OcrCorrectedFieldList.VendorTaxIdTyped("", OldTin));
+        Assert.False(OcrCorrectedFieldList.VendorTaxIdTyped(null, OldTin));
+    }
+
+    [Fact]
+    public void OCX9_MigrationStatementsAreInTheBootLists()
+    {
+        // บล็อก C-18 ถูกต่อเข้าชุด GetFullTextSearchStatements ตอน merge — ต้องอยู่ในชุดที่บูตรันจริง (Program.cs เรียก ApplyFullTextSearchIndexes)
+        Assert.Contains(DatabaseMigrationHelper.WhtCorrectionsPredateBaselineMigrationSql(), DatabaseMigrationHelper.GetFullTextSearchStatements());
+        // OCX-1: คอลัมน์ธงใหม่อยู่ในชุด ADD COLUMN
+        Assert.Contains(DatabaseMigrationHelper.GetAlterStatements(), sql => sql.Contains("\"VendorTaxIdUserChanged\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OCX10_LinkPredecessorWithUnknownCounterparty_TaxIdMismatchBlocks()
+    {
+        var v = OcrPredecessorPartyCheck.Judge(MakroName, NewTin, MakroName, OldTin, "PI6809-0031");
+        Assert.NotNull(v.Block);
+        Assert.Contains("คนละนิติบุคคล", v.Block);
+    }
+
+    [Fact]
+    public void OCX10_OppositeDirection_SameEntityOrTruncatedNamePasses_UnknownWarns()
+    {
+        Assert.Equal(new OcrPredecessorPartyVerdict(null, null), OcrPredecessorPartyCheck.Judge(null, "0-1055-55123-45-0", "อะไรก็ได้", OldTin, "PI-1"));
+        // ชื่อถูกตัด ("แอม แฮปปี้" ⊂ "หจก. แอม แฮปปี้เนส") = ผ่าน
+        Assert.Equal(new OcrPredecessorPartyVerdict(null, null),
+            OcrPredecessorPartyCheck.Judge("แอม แฮปปี้", null, "หจก.แอม แฮปปี้เนส", null, "IV-1"));
+        var other = OcrPredecessorPartyCheck.Judge("บริษัท ก จำกัด", null, "บริษัท ข จำกัด", null, "IV-2");
+        Assert.Null(other.Block);
+        Assert.Contains("ไม่ตรง", other.Note);
+        Assert.Contains("ไม่มีชื่อ", OcrPredecessorPartyCheck.Judge(null, null, "บริษัท ข จำกัด", null, "IV-3").Note);
+    }
+
+    // OCX-5/Q3 (คำตัดสินข้อ 103): แถวฟอร์ม "ส่วนลด 0.00" ไม่ใช่หลักฐานเหตุผลลดหนี้
+    [Fact]
+    public void Q3_CreditNoteFormZeroDiscountRow_IsNotADiscountReason()
+    {
+        const string paper = "ใบลดหนี้ / CREDIT NOTE\nเลขที่ CN6809-0020\nอ้างถึงใบกำกับภาษีเลขที่ IV6809-0411 ลงวันที่ 02/09/2569\n"
+            + "เหตุผล: ปรับปรุงยอดเนื่องจากคิดราคาผิด\nมูลค่าตามใบกำกับเดิม 5,350.00\nส่วนลด 0.00\nDiscount -\nผลต่าง 535.00";
+        Assert.Equal(CreditNoteReason.Adjustment, OcrCreditNoteReasonReader.Read(paper));
+        Assert.Null(OcrCreditNoteReasonReader.Read("ใบลดหนี้\nเลขที่ CN-9\nส่วนลด 0.00 บาท\nผลต่าง 100.00"));
+    }
+
+    [Fact]
+    public void Q3_OppositeDirection_RealDiscountsStillCount()
+    {
+        Assert.Equal(CreditNoteReason.Discount, OcrCreditNoteReasonReader.Read("ใบลดหนี้\nส่วนลดการค้าตามข้อตกลง 500.00\nผลต่าง 500.00"));
+        Assert.Equal(CreditNoteReason.Discount, OcrCreditNoteReasonReader.Read("CREDIT NOTE\nDiscount 10% 1,070.00"));
+        Assert.Equal(CreditNoteReason.Discount, OcrCreditNoteReasonReader.Read("ใบลดหนี้\nเหตุผล: ให้ส่วนลดเพิ่มเติมแก่ลูกค้า"));
+        Assert.Equal(CreditNoteReason.Discount, OcrCreditNoteReasonReader.Read("ใบลดหนี้\nส่วนลด 0.00\nเหตุผล: ลดราคาสินค้าตามโปรโมชั่น"));
+    }
 }

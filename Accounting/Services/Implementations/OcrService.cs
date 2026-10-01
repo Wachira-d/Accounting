@@ -3436,6 +3436,18 @@ public class OcrService : IOcrService
     private static decimal ClampPct(decimal value, decimal min, decimal max, decimal fallback)
         => (value <= 0 || value > 1) ? fallback : Math.Clamp(value, min, max);
 
+    /// <summary>**C-24 (คำตัดสินข้อ 97 · ฝ่ายค้าน OCX-2/OCX-5)** — คู่ค้าฝั่งขายที่หาได้ (จากแหล่งใดก็ตาม) เป็นแถว "ลูกค้าเงินสด (walk-in)" และเอกสารเป้าหมาย
+    /// เป็นใบกำกับเต็มรูป ⇒ ข้อความบล็อก (<see cref="Accounting.Helpers.OcrWalkInBuyer.BlockReason"/>) · null = ผ่าน · tenant</summary>
+    private async Task<string?> WalkInSalesBlockAsync(Guid companyId, Guid? contactId, DocumentType target, decimal vatAmount)
+    {
+        if (contactId is not Guid cid) return null;
+        var isWalkIn = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.Id == cid)
+            .Select(c => c.IsWalkInCustomer)
+            .FirstOrDefaultAsync();
+        return isWalkIn ? Accounting.Helpers.OcrWalkInBuyer.BlockReason(target, vatAmount) : null;
+    }
+
     /// <summary>
     /// **C-23 (รอบ 201 ทีม OC · คำตัดสินข้อ 96) — ผู้ติดต่อที่สแกนผูกไว้ (ฝั่งผู้ขาย) เป็นคนละนิติบุคคลกับเลขผู้ขายบนสแกนตอนนี้ไหม** · คืนโน้ตเมื่อต้องถอด
     /// (null = ไม่ถอด) — ตัวเดียวของสามเส้นที่ผลิตผู้ติดต่อผู้ขายชิ้นเดียวกัน: แก้ผลสแกน (<c>SubmitCorrectionAsync</c>) · สร้างเอกสาร · พรีวิว "แก้ในฟอร์มก่อน"
@@ -3444,11 +3456,12 @@ public class OcrService : IOcrService
     private async Task<string?> StaleVendorContactNoteAsync(Guid companyId, OcrScanResult result, Guid? matchedContactId)
     {
         if (matchedContactId is not Guid matchedId) return null;
-        var corrected = (result.UserCorrectedFields ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var userPicked = corrected.Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
-        // คำตัดสินข้อ 96 พูดถึง "ผู้ใช้แก้เลข" — เลขที่ OCR อ่านเพี้ยนแต่ผูกถูกรายด้วยชื่อ/AI ห้ามถูกถอด (ไม่สร้างผู้ติดต่อเลขเพี้ยน)
-        var userTouchedTaxId = corrected.Contains("VendorTaxId", StringComparer.Ordinal);
+        var userPicked = (result.UserCorrectedFields ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(MatchedContactCorrectionField, StringComparer.Ordinal);
+        // คำตัดสินข้อ 96 พูดถึง "ผู้ใช้แก้เลข" — เลขที่ OCR อ่านเพี้ยนแต่ผูกถูกรายด้วยชื่อ/AI ห้ามถูกถอด (ไม่สร้างผู้ติดต่อเลขเพี้ยน) ·
+        // ฝ่ายค้าน OCX-1: อ่านธงกติกา baseline (`VendorTaxIdUserChanged`) ตัวเดียว — "VendorTaxId" ใน UserCorrectedFields ติดทุกใบบนเว็บ (ส่งมา = แก้)
+        var userTouchedTaxId = result.VendorTaxIdUserChanged;
         if (userPicked || !userTouchedTaxId) return null;
         var matched = await _db.Contacts.AsNoTracking()
             .Where(c => c.CompanyId == companyId && c.Id == matchedId)
@@ -5130,6 +5143,9 @@ public class OcrService : IOcrService
         // UserCorrectedFields ของแถวก่อนรอบ 200 มาจาก "ส่งมา = แก้" แยกไม่ได้) · OR กับค่าเดิม — การพิมพ์ครั้งก่อนยังเป็นหลักฐาน
         if (Accounting.Helpers.OcrCorrectedFieldList.VendorAddressTyped(correctedFields, correctionBaseline))
             result.VendorAddressUserTyped = true;
+        // ฝ่ายค้าน OCX-1 (รอบ 201 ทีม OC · C-23): "ผู้ใช้แก้เลขผู้เสียภาษีผู้ขาย" = ตัวเลขเปลี่ยนจากที่สแกนเก็บไว้ (หน้าเว็บส่งเลขเดิมกลับทุกครั้ง) · OR กับค่าเดิม
+        if (Accounting.Helpers.OcrCorrectedFieldList.VendorTaxIdTyped(correction.VendorTaxId, prevVendorTaxId))
+            result.VendorTaxIdUserChanged = true;
 
         // ── K-4 (รอบ 200): ผู้ใช้เปลี่ยนกุญแจผู้ขาย (รหัสสาขา/เลขผู้เสียภาษี) ⇒ ตัดสินผู้ติดต่อใหม่ด้วยตัวเดียวกับเส้นสแกน/สร้างเอกสาร ──
         // เส้น "แก้ในฟอร์มก่อน" ส่งคำแก้แล้วอ่าน MatchedContactId กลับไปเติมฟอร์ม ⇒ เดิมแก้สาขา 00000 → 00005 แล้วฟอร์มยังได้ผู้ติดต่อ สนญ.
@@ -5261,7 +5277,9 @@ public class OcrService : IOcrService
                 var whtLearn = Accounting.Helpers.OcrWhtLearningScope.Decide(
                     hasScan: true,
                     paperShowsWht: paperWht.Amount is > 0m || paperWht.RatePercent is > 0m,
-                    userCorrectedFields: result.UserCorrectedFields);
+                    userCorrectedFields: result.UserCorrectedFields,
+                    // ฝ่ายค้าน OCX-3 (C-18 · ข้อ 91): ผู้เรียกตัวที่สามของตัวตัดสิน — คำแก้ของแถวที่เริ่มก่อนกติกา baseline WHT = ไม่รู้ (ด่านเดียวกับเรียนทีละใบ/backfill)
+                    userCorrectionsPredateBaseline: result.WhtCorrectionsPredateBaseline);
                 if (!whtLearn.Learn && correction.WhtRate.HasValue)
                     _logger.LogInformation(
                         "ไม่สอนประวัติ WHT ของผู้ขายจากสแกน {ScanId} — {Reason}",
@@ -6500,13 +6518,8 @@ public class OcrService : IOcrService
                     .FirstOrDefaultAsync();
                 var picked = await _db.Contacts.AsNoTracking()
                     .Where(c => c.CompanyId == companyId && c.Id == pickedForSale)
-                    .Select(c => new { c.TaxId, c.Name, c.IsWalkInCustomer })
+                    .Select(c => new { c.TaxId, c.Name })
                     .FirstOrDefaultAsync();
-                // C-24 (รอบ 201 ทีม OC · คำตัดสินข้อ 97): ผู้ใช้เลือก "ลูกค้าเงินสด (walk-in)" ได้เฉพาะเอกสารเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป —
-                // ตรวจซ้ำที่นี่ (ผู้ใช้อาจเปลี่ยนชนิดเป้าหมายเป็นใบกำกับหลังเลือก walk-in · หรือเลือกแถว walk-in จากรายชื่อเอง)
-                if (picked is { IsWalkInCustomer: true }
-                    && Accounting.Helpers.OcrWalkInBuyer.BlockReason(docType, result.ExtractedVatAmount ?? 0m) is string walkInCreateBlock)
-                    throw new Accounting.Helpers.BusinessRuleException(walkInCreateBlock, Accounting.Helpers.OcrWalkInBuyer.RuleCode);
                 if (picked != null && !Accounting.Helpers.OcrSelfPartyGuard.IsOurContact(
                         picked.TaxId, picked.Name, ourCoForSale?.TaxId, ourCoForSale?.Name, ourCoForSale?.NameEn))
                     contactId = pickedForSale;
@@ -6615,6 +6628,11 @@ public class OcrService : IOcrService
                 }
             }
         }
+
+        // C-24 (รอบ 201 ทีม OC · คำตัดสินข้อ 97 · ฝ่ายค้าน OCX-2): ใบกำกับเต็มรูปฝั่งขายห้ามผูก "ลูกค้าเงินสด (walk-in)" — ตรวจหลังหาคู่ค้าได้จาก**ทุกแหล่ง**
+        // (ใบต้นทาง · คีย์เลขภาษี · ชื่อผู้ซื้อตรงแถว walk-in · ผู้ใช้เลือกเอง) ไม่ใช่เฉพาะเส้นผู้ใช้เลือก · ตรวจซ้ำหลังสร้างบรรทัดด้วย VAT จริงของเอกสาร (OCX-5)
+        if (isSalesSide && await WalkInSalesBlockAsync(companyId, contactId, docType, result.ExtractedVatAmount ?? 0m) is string walkInEarlyBlock)
+            throw new Accounting.Helpers.BusinessRuleException(walkInEarlyBlock, Accounting.Helpers.OcrWalkInBuyer.RuleCode);
 
         if (!contactId.HasValue)
             // รอบ 200 ทีม K2 (C-03): ข้อความไทยบอกทางไปต่อ — เดิม InvalidOperationException ภาษาอังกฤษ ⇒ middleware ปิดบังเป็น
@@ -6980,6 +6998,12 @@ public class OcrService : IOcrService
         // — เดิมใส่ส่วนลดที่อ่านจากกระดาษตรง ๆ แม้ตัวกระทบยอดพิสูจน์ไม่ได้ (Σ-GAP) ⇒ PDF พิมพ์
         // "รวมส่วนลด" ที่ไม่มีบรรทัดไหนหักจริง (หัวเอกสารกับบรรทัดขัดกันเองในใบเดียว — รอบ 190 ข้อ 9)
         document.DiscountAmount = document.Lines.Sum(l => l.DiscountAmount);
+
+        // ฝ่ายค้าน OCX-5 (C-24): VAT ของเอกสารจริงหลังสร้างบรรทัด (บรรทัดอาจมี VAT ทั้งที่หัวสแกนอ่าน VAT ไม่ได้) — ด่านเดียวกับก่อนเปิดธุรกรรม ·
+        // throw ในธุรกรรม ⇒ rollback ตอน dispose (ยังไม่มีอะไรบันทึก)
+        if (isSalesSide && await WalkInSalesBlockAsync(companyId, contactId, document.DocumentType,
+                Math.Max(document.VatAmount, document.Lines.Sum(l => l.VatAmount))) is string walkInLateBlock)
+            throw new Accounting.Helpers.BusinessRuleException(walkInLateBlock, Accounting.Helpers.OcrWalkInBuyer.RuleCode);
 
         // เอกสารที่ scan ตรวจว่า "เคลมภาษีซื้อไม่ได้" ([VAT-CLAIM] เช่นใบกำกับ
         // อย่างย่อ §82/5(2) / ใบเสร็จไม่ใช่ใบกำกับเต็มรูป §82/5(1)) — ต้องปิด
@@ -8756,7 +8780,13 @@ public class OcrService : IOcrService
         }
     }
 
-    public async Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
+    public Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId)
+        => MatchContactCoreAsync(companyId, scanResultId, contactId, recordVendorCanonFeedback: true);
+
+    /// <summary>ตัวผูกผู้ติดต่อที่ผู้ใช้เลือก — <paramref name="recordVendorCanonFeedback"/> = false ⇒ ไม่บันทึกคำตอบ VendorCanon (ฝ่ายค้าน OCX-4: เส้น walk-in
+    /// เลือกผู้ซื้อ ไม่ใช่ "ผู้ขายที่ AI เสนอ" ⇒ บันทึกเป็น Explicit "ชื่อเรา → ลูกค้าเงินสด" = สอนนักเรียนผิด) · สแกนฝั่งขายไม่บันทึกเช่นกัน
+    /// (VendorCanon ถามว่า "ผู้ขายบนกระดาษคือผู้ติดต่อไหน" — ฝั่งขายผู้ใช้เลือก<b>ผู้ซื้อ</b> คำตอบคนละคำถาม)</summary>
+    private async Task<OcrResultResponse> MatchContactCoreAsync(Guid companyId, Guid scanResultId, Guid contactId, bool recordVendorCanonFeedback)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -8765,13 +8795,16 @@ public class OcrService : IOcrService
         var contact = await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == contactId)
             ?? throw new InvalidOperationException("Contact not found.");
+        var matchTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+            null, result.TargetDocumentType, result.DocumentType, hasLinkedPurchaseOrder: result.LinkedPurchaseOrderId.HasValue);
+        var vendorCanonLabel = recordVendorCanonFeedback && !Accounting.Helpers.DocumentSide.IsSales(matchTarget.Type, result.OurRole);
 
         // ปิดลูปการสอน local model (กฎเหล็ก #1) — ตอน AI เดา vendor canon แล้ว
         // ผู้ใช้มา "ยืนยัน/แก้" คู่ค้าเอง คือ ground-truth ของ VendorCanon feature.
         // ถ้าไม่บันทึก AiFeedbackTrainingJob จะ mine ไม่ได้ (มัน mine row ที่
         // UserChosenAt != null) → student ไม่เคยเรียนคำตอบจริง. acceptedAi =
         // ผู้ใช้เลือกตรงกับที่ AI แนะนำพอดี. ห่อ try กัน record ล้มไม่ให้ล้ม match.
-        if (_feedbackRecorder != null && result.AiSuggestionFeedbackId.HasValue)
+        if (vendorCanonLabel && _feedbackRecorder != null && result.AiSuggestionFeedbackId.HasValue)
         {
             try
             {
@@ -8822,7 +8855,8 @@ public class OcrService : IOcrService
         if (Accounting.Helpers.OcrWalkInBuyer.BlockReason(target.Type, scan.ExtractedVatAmount ?? 0m) is string walkInBlock)
             throw new Accounting.Helpers.BusinessRuleException(walkInBlock, Accounting.Helpers.OcrWalkInBuyer.RuleCode);
         var walkIn = await Accounting.Helpers.WalkInCustomerContact.GetOrCreateAsync(_db, companyId);
-        return await MatchContactAsync(companyId, scanResultId, walkIn.Id);
+        // ฝ่ายค้าน OCX-4: ไม่บันทึก VendorCanon — การเลือกลูกค้าเงินสดไม่ใช่คำตอบของ "ผู้ขายบนกระดาษคือใคร"
+        return await MatchContactCoreAsync(companyId, scanResultId, walkIn.Id, recordVendorCanonFeedback: false);
     }
 
     /// <summary>ชื่อช่องใน <c>OcrScanResult.UserCorrectedFields</c> ที่บอกว่าผู้ใช้เลือกผู้ติดต่อเอง (<see cref="MatchContactAsync"/>)</summary>
@@ -10792,6 +10826,22 @@ public class OcrService : IOcrService
             if (!allowedParty.Contains(doc.ContactId))
                 throw new Accounting.Helpers.BusinessRuleException("เอกสารต้นทางนี้ไม่ใช่ของคู่ค้ารายเดียวกับกระดาษที่สแกน");
         }
+        // ฝ่ายค้าน OCX-10 (รอบ 201 ทีม OC): ยังไม่รู้ผู้ติดต่อของสแกน ⇒ เทียบเลข/ชื่อบนกระดาษกับผู้ติดต่อของใบต้นทาง (เดิมผ่านเงียบ — ใบรับ/จ่ายเงินที่สร้างตามมา
+        // สืบทอดผู้ติดต่อของใบต้นทางตาม C-20) · เลขคนละนิติบุคคล = บล็อก · ชื่อไม่ตรง/ไม่มีชื่อ = ผูกได้ + โน้ตเตือน
+        string? linkPartyNote = null;
+        if (!expected.HasValue)
+        {
+            var predParty = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Id == doc.ContactId)
+                .Select(c => new { c.Name, c.TaxId })
+                .FirstOrDefaultAsync();
+            var partyVerdict = Accounting.Helpers.OcrPredecessorPartyCheck.Judge(
+                isSales ? scan.BuyerName : scan.ExtractedVendorName, isSales ? scan.BuyerTaxId : scan.ExtractedVendorTaxId,
+                predParty?.Name, predParty?.TaxId, doc.DocumentNumber);
+            if (partyVerdict.Block is string partyBlock)
+                throw new Accounting.Helpers.BusinessRuleException(partyBlock);
+            linkPartyNote = partyVerdict.Note;
+        }
 
         if (doc.DocumentType == DocumentType.PurchaseOrder)
         {
@@ -10803,7 +10853,8 @@ public class OcrService : IOcrService
         scan.LinkedPredecessorNumber = doc.DocumentNumber;
         scan.LinkedPredecessorType = doc.DocumentType.ToString();
         scan.PredecessorLinkReason = "user";
-        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + $"\n[LINK] ผู้ใช้ผูกกับ {doc.DocumentType} {doc.DocumentNumber}";
+        scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + $"\n[LINK] ผู้ใช้ผูกกับ {doc.DocumentType} {doc.DocumentNumber}"
+            + (linkPartyNote != null ? "\n" + linkPartyNote : "");
         await _db.SaveChangesAsync();
         return MapToResponse(scan);
     }
