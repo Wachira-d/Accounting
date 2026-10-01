@@ -204,6 +204,17 @@ public class BankReconciliationPattern : TenantEntity
     public string? TargetAccountCode { get; set; }
 
     public int TimesConfirmed { get; set; } = 1;
+
+    /// <summary>ในจำนวน <see cref="TimesConfirmed"/> นั้น มีกี่ครั้งที่ผู้ใช้<b>ลงมือเลือกคู่เอง</b>
+    /// (<see cref="Accounting.Models.Enums.UserChoiceSource.Explicit"/>) — รอบ 201 ทีม AI · A-AI1 (H-1)
+    ///
+    /// <para>ฝั่งอ่านทุกที่ (ความมั่นใจของคลัง · นักเรียน <c>BankMatchDistillationModel</c>) ต้องนับ<b>ตัวนี้</b>
+    /// ไม่ใช่ <see cref="TimesConfirmed"/> — เดิมปุ่ม "✨ AI จับคู่จากประวัติ" ติ๊กคู่ให้จากคลังแล้วการกดยืนยัน
+    /// ดัน <c>TimesConfirmed</c> ของแพตเทิร์นที่เสนอเอง (คลังสอนตัวเอง · DOCTRINE §3) · ตัวกติกาอยู่ที่
+    /// <c>Helpers/BankPatternEvidence</c> ตัวเดียว · แถวก่อนรอบ 201 backfill = <c>TimesConfirmed</c> ครั้งเดียว
+    /// (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178)</para></summary>
+    public int ExplicitConfirmCount { get; set; }
+
     public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;
     public decimal AvgAmount { get; set; }
     public decimal MinAmount { get; set; }

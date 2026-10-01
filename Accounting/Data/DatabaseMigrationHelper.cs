@@ -7098,6 +7098,20 @@ public static class DatabaseMigrationHelper
                 OR s."CurrentMonthAzureOcrPages" > c.n
                 OR s."CurrentMonthLocalOcrPages" > c.n);
             """,
+            // ═══ รอบ 201 ทีม AI · A-AI1 (H-1) — คลังจับคู่ธนาคารนับ "ผู้ใช้เลือกคู่เอง" แยกจากการกดผ่าน ═══
+            // ADD COLUMN + backfill **ครั้งเดียว** ในบล็อกเดียว (เฉพาะตอนคอลัมน์ยังไม่มี): แถวเก่าทั้งหมดถือเป็นคำยืนยันที่ตั้งใจ
+            // (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178) · ถ้า backfill ทุกบูตแบบ `WHERE Explicit = 0` แพตเทิร์นที่เกิดจาก
+            // การกดผ่านล้วน (Explicit = 0 โดยชอบ) จะถูกยกเป็น "ตั้งใจ" ทุกครั้งที่เปิดเครื่อง = ด่านไม่มีผล
+            """
+            DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'BankReconciliationPatterns' AND column_name = 'ExplicitConfirmCount') THEN
+                ALTER TABLE "BankReconciliationPatterns" ADD COLUMN "ExplicitConfirmCount" integer NOT NULL DEFAULT 0;
+                UPDATE "BankReconciliationPatterns" SET "ExplicitConfirmCount" = "TimesConfirmed" WHERE "TimesConfirmed" > 0;
+            END IF;
+            END $$;
+            """,
+            // ═══ จบบล็อกรอบ 201 ทีม AI ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
         return statements.Concat(DepositKindMigrationStatements()).ToArray();

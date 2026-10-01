@@ -429,7 +429,13 @@ public record SuggestPvAccountingLine(
 public record SuggestPvAccountingResponse(
     IReadOnlyList<SuggestPvAccountingLineResult> Lines,
     IReadOnlyList<string> CrossLineObservations,
-    bool UsedAi);
+    bool UsedAi,
+    /// <summary>นักเรียน (โมเดลในบ้าน) เป็นผู้ตอบ — รอบ 201 ทีม AI · A-AI2</summary>
+    bool FromLocalModel = false,
+    /// <summary>ป้ายผู้ตอบที่เซิร์ฟเวอร์คำนวณ (<c>Helpers/AiAnswerSource.Label</c>) — หน้าเว็บแสดงตรง ๆ ห้ามคิดเอง</summary>
+    string? SourceLabel = null,
+    /// <summary>คำเตือนของผู้ตอบ (ตอบไม่ครบ · ไม่มีใครตอบ) — บอกผู้ตอบจริง ไม่โทษ AI ที่ไม่ได้ถูกถาม</summary>
+    IReadOnlyList<string>? Warnings = null);
 
 /// <summary>ผลแนะนำต่อบรรทัด — AccountCode = ผังบัญชีที่แนะนำ; Confidence 0..1;
 /// FeedbackId เก็บไว้ใส่บน DocumentLine ตอน save → ใช้บันทึก user choice ภายหลัง.</summary>
@@ -440,7 +446,12 @@ public record SuggestPvAccountingLineResult(
     IReadOnlyList<string> Alternatives,
     string? Reasoning,
     bool UsedAi,
-    Guid? FeedbackId);
+    Guid? FeedbackId,
+    /// <summary>เซิร์ฟเวอร์ตัดสินแล้วว่าเติมผังนี้ลงบรรทัดให้เองได้ (<c>Helpers/GlSuggestionApplyPolicy</c> · write-gate ≥ 0.70 +
+    /// รหัสอยู่ในผังของบริษัท) — หน้าเว็บอ่านธงนี้ ห้ามคิดเกณฑ์เอง (รอบ 201 ทีม AI · A-AI5)</summary>
+    bool MayAutoFill = false,
+    /// <summary>บรรทัดนี้นักเรียน (โมเดลในบ้าน) เป็นผู้ตอบ (รอบ 201 A-AI2)</summary>
+    bool FromLocalModel = false);
 
 /// <summary>รอบ 194 — ตัวเลือก "เงินที่ริบคืออะไร" 1 ข้อ สำหรับหน้าเว็บ (ชื่อ enum + ป้าย + คำอธิบายจากตัวตัดสิน) —
 /// หน้าเว็บวาด radio ตามรายการนี้ ห้ามพิมพ์ป้าย/เงื่อนไขซ้ำใน JS (CLAUDE.md F2 ข้อ 5) · ผู้สร้าง = <c>Helpers/DepositKindDocumentRules.ForfeitOptions</c></summary>

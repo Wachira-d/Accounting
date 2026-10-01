@@ -205,7 +205,12 @@ public partial class BankService
             // CAPTURE (กฎเหล็ก #1) — **อยู่ในทรานแซกชันเดียวกัน** ไม่ใช่
             // best-effort หลัง commit แบบเดิม: การบันทึกที่ล้มแล้วถูกกลืนด้วย
             // `LogWarning` ทำให้คลังเรียนรู้หยุดโตโดยไม่มีอะไรฟ้อง (F2 ข้อ 7)
-            await RecordReconciliationPatternsAsync(companyId, group.Id);
+            // แหล่งของคำยืนยันต่อรายการ (รอบ 201 ทีม AI · A-AI1): รายการที่ปุ่ม "✨ AI จับคู่จากประวัติ" ติ๊กให้ = Implicit
+            // (คลังเสนอเอง — ห้ามนับเป็นหลักฐานของตัวเอง) · ติ๊กเอง = Explicit · กลุ่มจากแผน AI ทั้งก้อน = BulkApprove
+            var sourceByItem = new Dictionary<Guid, UserChoiceSource>();
+            foreach (var mi in request.MatchItems)
+                sourceByItem[mi.ItemId] = Accounting.Helpers.BankPatternEvidence.ParseSource(mi.Source);
+            await RecordReconciliationPatternsAsync(companyId, group.Id, sourceByItem);
             await _db.SaveChangesAsync();
 
             await tx.CommitAsync();

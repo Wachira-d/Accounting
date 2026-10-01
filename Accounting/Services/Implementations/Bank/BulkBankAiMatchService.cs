@@ -87,7 +87,10 @@ public sealed record ProposedMatch(
     /// ที่ผู้เสนอแต่งเอง". เดิม `DeduplicateMatches` เรียงด้วย `Confidence`
     /// อย่างเดียว ⇒ AI ที่ตอบ 0.99 ชนะเซิร์ฟเวอร์ที่คำนวณได้ 0.90 เสมอ
     /// (`DECISION_AUDIT_2026-09-18.md` §3 D4-8)</summary>
-    bool ServerProposed = false);
+    bool ServerProposed = false,
+    /// <summary>จำนวนผู้สมัครที่ AI อ้างแต่ไม่มีอยู่จริงในชุด — ถูกตัดออกแล้ว (รอบ 201 ทีม AI · A-AI7 ·
+    /// <c>Helpers/BankAiCandidateGuard</c>) · &gt; 0 ⇒ เพดานความมั่นใจ + ห้ามติ๊กให้อัตโนมัติ</summary>
+    int FabricatedCandidates = 0);
 
 public sealed record MatchCandidate(
     Guid CandidateId,
@@ -787,6 +790,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             var rawOut = !string.IsNullOrWhiteSpace(resp.RawResponseJson) ? resp.RawResponseJson : resp.PrimaryAnswer;
             var aiParsed = ParseResponse(rawOut);
 
+            // ── ด่านกันคู่ที่ AI แต่งขึ้น (รอบ 201 ทีม AI · A-AI7 · H-9) — ต้องอยู่ **ก่อน** ทุกขั้นที่ใช้คู่ของ AI
+            // (ธง AiValidated ของคู่เซิร์ฟเวอร์ · pre-dedup · dedup) ไม่งั้นคู่ที่ไม่มีตัวตนแย่งบรรทัดธนาคาร
+            // จากคู่จริงของเซิร์ฟเวอร์ได้ แล้วพกยอดที่ AI แต่งไปถึงจอ (ยอดตรงเป๊ะ = มั่นใจ 100%)
+            aiParsed = ScreenAiMatches(aiParsed, txns.Select(t => t.Id),
+                openDocs.Select(d => d.Id).Concat(openPayments.Select(p => p.Id)).Concat(openJes.Select(j => j.Id)));
+
             // Per-(bankTxn, candidate) set of pairings AI proposed — used to
             // mark a SERVER match as AiValidated when AI proposed the IDENTICAL
             // pairing (= AI confirmed the server's guess). The UI then drops
@@ -1024,7 +1033,10 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         // SaveChanges — 100 matches = 100 DB round-trips blocking the response).
         var calibrated = new List<ProposedMatch>(parsed.Matches.Count);
         var feedbackRecords = new List<AiFeedbackRecord>();
-        var recordIndexOfMatch = new int[parsed.Matches.Count];   // -1 = no feedback row
+        // ดัชนีแถว feedback ต่อ "ข้อเสนอที่รอดเข้า calibrated" (ไม่ใช่ต่อ parsed.Matches) — รอบ 201 A-AI7:
+        // ข้อเสนอที่ถูกทิ้งไม่เข้า calibrated ⇒ ดัชนีสองชุดต้องเดินด้วยกันเสมอ (เดิม int[] ต่อ parsed ใช้ได้
+        // เพราะทุกรอบ add 1 ตัวพอดี — ถ้าทิ้งแล้วยังใช้ดัชนีเดิม feedback id จะสลับแถวเงียบ ๆ)
+        var recordIndexOfMatch = new List<int>(parsed.Matches.Count);   // -1 = no feedback row
         // MEMOISE per-bank-txn classification + flow category so the verifier
         // loop doesn't re-call BankFlowClassifier.Classify (regex-heavy) once
         // per match. Two matches sharing the same bank line share the same
@@ -1038,17 +1050,32 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             bankCatCache[bt.Id] = cat;
             return cat;
         }
-        int mi = -1;
+        int droppedUnknownBank = 0, droppedNoRealCandidate = 0, trimmedCandidates = 0;
         foreach (var m0 in parsed.Matches)
         {
-            mi++;
             var m = m0;
-            if (!bankTxnLookup.TryGetValue(m.BankTxnId, out var bt))
+            // ── ด่านชั้นที่สอง (รอบ 201 ทีม AI · A-AI7 · H-9) ─────────────────────────
+            // บรรทัดธนาคารที่ไม่อยู่ในบัญชีนี้ / ผู้สมัครที่ไม่อยู่ในชุดจริง ⇒ ตัด (เดิม: bankTxn ที่ไม่รู้จักผ่าน
+            // ไปถึงจอตรง ๆ และผู้สมัครที่ค้นยอดจริงไม่เจอ "พกยอดของ AI ต่อ" ⇒ ยอดตรงเป๊ะ = มั่นใจ 100%)
+            // ข้อเสนอของ AI ผ่าน ScreenAiMatches มาแล้ว ⇒ ที่นี่ปกติเป็น Keep · ชั้นนี้กันทุกเส้นที่สร้าง ProposedMatch
+            // (รวมเส้นที่จะเพิ่มวันหลัง) ไม่ให้พายอดที่ไม่มีแหล่งจริงถึงจอ
+            var screen = Accounting.Helpers.BankAiCandidateGuard.Screen(
+                m.BankTxnId, m.Candidates.Select(c => c.CandidateId),
+                id => bankTxnLookup.ContainsKey(id),
+                id => realAmountById.ContainsKey(id.ToString()));
+            if (screen.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropUnknownBankTxn) { droppedUnknownBank++; continue; }
+            if (screen.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropNoRealCandidate) { droppedNoRealCandidate++; continue; }
+            if (screen.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.KeepTrimmed)
             {
-                calibrated.Add(m with { PerMatchFeedbackId = Guid.Empty });
-                recordIndexOfMatch[mi] = -1;
-                continue;
+                var keepIds = new HashSet<Guid>(screen.KeptCandidateIds);
+                trimmedCandidates += screen.FabricatedCandidateIds.Count;
+                m = m with
+                {
+                    Candidates = m.Candidates.Where(c => keepIds.Contains(c.CandidateId)).ToList(),
+                    FabricatedCandidates = m.FabricatedCandidates + screen.FabricatedCandidateIds.Count,
+                };
             }
+            var bt = bankTxnLookup[m.BankTxnId];
 
             // OVERRIDE each candidate's amount + label with the TRUE values from
             // our DB BEFORE prune/calibrate, so an AI-hallucinated amount can't
@@ -1069,12 +1096,18 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                         var lbl = labelById.GetValueOrDefault(key) ?? c.CandidateId.ToString();
                         hallucinated.Add($"{lbl}: AI ระบุ {c.Amount:N2} จริง {ra:N2}");
                     }
-                    var amt = realAmountById.TryGetValue(key, out var ra2) ? ra2 : c.Amount;
-                    return c with { Amount = amt, Label = labelById.GetValueOrDefault(key) };
+                    // ผ่านด่าน BankAiCandidateGuard แล้ว ⇒ ทุก id มียอดจริงเสมอ — **ไม่มีทางตกไปใช้ยอดของ AI**
+                    // (เดิม `? ra2 : c.Amount` = id ที่แต่งขึ้นพกยอดของ AI มาถึงจอ · H-9)
+                    return c with { Amount = realAmountById[key], Label = labelById.GetValueOrDefault(key) };
                 }).ToList(),
             };
             string? hallucinationNote = hallucinated.Count == 0 ? null
                 : "⚠ AI ระบุยอดผิด: " + string.Join("; ", hallucinated);
+            if (m.FabricatedCandidates > 0)
+            {
+                var fabNote = $"⚠ AI อ้างเอกสาร/รายการที่ไม่มีอยู่จริง {m.FabricatedCandidates} รายการ — ตัดออกแล้ว ตรวจคู่ที่เหลือด้วยตนเอง";
+                hallucinationNote = hallucinationNote == null ? fabNote : hallucinationNote + " · " + fabNote;
+            }
 
             // Trust-but-verify: if the proposed candidates sum off-by but a
             // SUBSET of them sums to the bank amount EXACTLY (the AI added
@@ -1191,7 +1224,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             {
                 type = c.CandidateType, id = c.CandidateId.ToString(), amount = c.Amount,
             }));
-            recordIndexOfMatch[mi] = feedbackRecords.Count;
+            recordIndexOfMatch.Add(feedbackRecords.Count);
             feedbackRecords.Add(BuildPerMatchFeedbackRecord(
                 companyId, calibratedMatch.BankTxnId, bt, answerJson, calibratedMatch.Confidence,
                 resp?.FeedbackId ?? Guid.Empty));
@@ -1210,6 +1243,9 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
 
         // Collect truncation + AI-side warnings into one cohesive list.
         var warnings = new List<string>(parsed.Warnings);
+        var guardWarning = Accounting.Helpers.BankAiCandidateGuard.PlanWarning(
+            droppedUnknownBank, droppedNoRealCandidate, trimmedCandidates);
+        if (guardWarning != null) warnings.Add(guardWarning);
         if (truncatedBankTxns)
             warnings.Add($"จำกัด bank txn ที่ {MaxBankTxns} รายการ — สัปดาห์ที่เก่ากว่าไม่ได้ส่งให้ AI");
         if (truncatedDocs)
@@ -1256,6 +1292,51 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         IReadOnlyList<UnmatchedTxn> Unmatched,
         IReadOnlyList<MissingDataHint> MissingData,
         IReadOnlyList<string> Warnings);
+
+    /// <summary>
+    /// ตัดข้อเสนอของ AI ที่อ้างบรรทัดธนาคาร/ผู้สมัครที่ไม่อยู่ในชุดจริง (รอบ 201 ทีม AI · A-AI7) —
+    /// ตัวตัดสินอยู่ที่ <see cref="Accounting.Helpers.BankAiCandidateGuard"/> ตัวเดียว · ข้อเสนอที่ถูกตัดบางส่วน
+    /// ถูกเพดานความมั่นใจและนับไว้ใน <see cref="ProposedMatch.FabricatedCandidates"/> ให้ชั้นปรับเทียบเขียนเหตุผลบนแถว ·
+    /// ข้อเสนอที่ถูกทิ้งทั้งก้อนถูกนับเป็นคำเตือนของแผน (ไม่หายเงียบ)
+    /// </summary>
+    private static ParsedResponse ScreenAiMatches(ParsedResponse aiParsed,
+        IEnumerable<string> knownBankTxnIds, IEnumerable<string> knownCandidateIds)
+    {
+        var bankSet = new HashSet<Guid>(knownBankTxnIds
+            .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty));
+        var candSet = new HashSet<Guid>(knownCandidateIds
+            .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty));
+
+        var kept = new List<ProposedMatch>(aiParsed.Matches.Count);
+        int droppedBank = 0, droppedNoReal = 0, trimmed = 0;
+        foreach (var m in aiParsed.Matches)
+        {
+            var verdict = Accounting.Helpers.BankAiCandidateGuard.Screen(
+                m.BankTxnId, m.Candidates.Select(c => c.CandidateId), bankSet.Contains, candSet.Contains);
+            if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropUnknownBankTxn) { droppedBank++; continue; }
+            if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropNoRealCandidate) { droppedNoReal++; continue; }
+            if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.KeepTrimmed)
+            {
+                var keepIds = new HashSet<Guid>(verdict.KeptCandidateIds);
+                var fabricated = verdict.FabricatedCandidateIds.Count;
+                trimmed += fabricated;
+                kept.Add(m with
+                {
+                    Candidates = m.Candidates.Where(c => keepIds.Contains(c.CandidateId)).ToList(),
+                    Confidence = Accounting.Helpers.BankAiCandidateGuard.CapConfidence(m.Confidence, fabricated),
+                    FabricatedCandidates = m.FabricatedCandidates + fabricated,
+                });
+                continue;
+            }
+            kept.Add(m);
+        }
+        var warning = Accounting.Helpers.BankAiCandidateGuard.PlanWarning(droppedBank, droppedNoReal, trimmed);
+        return aiParsed with
+        {
+            Matches = kept,
+            Warnings = warning == null ? aiParsed.Warnings : aiParsed.Warnings.Concat(new[] { warning }).ToList(),
+        };
+    }
 
     /// <summary>Best-effort JSON parse — never throws. AI hallucinations
     /// or partial JSON degrade to empty lists + a warning rather than

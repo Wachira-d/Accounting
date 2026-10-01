@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Models.Entities;
@@ -118,26 +119,50 @@ public class AiOrchestrator : IAiOrchestrator
         };
     }
 
+    /// <summary>ตัวกรอง "provider ที่เปิดใช้" ตัวเดียว — ฝั่ง query จริงกับเทสต์ kill-switch ใช้นิพจน์เดียวกัน
+    /// (รอบ 201 ทีม AI · A-AI6)</summary>
+    internal static readonly Expression<Func<AiProviderConfig, bool>> ActiveProviderFilter
+        = p => p.IsActive && p.IsEnabled;
+
+    /// <summary>อ่านค่าตั้งระดับแพลตฟอร์ม — seam ให้เทสต์ kill-switch ป้อนค่าโดยไม่ต้องมีฐานข้อมูล
+    /// (รอบ 201 ทีม AI · A-AI6 · เดิม <c>AiKillSwitchTests</c> เรียกแต่ pure helper จึงไม่มีทางล้ม)</summary>
+    protected virtual Task<SiteSettings?> LoadSiteSettingsAsync(CancellationToken ct)
+        => _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+
+    /// <summary>หา provider ที่เปิดใช้ (<see cref="ActiveProviderFilter"/>) — seam ให้เทสต์ kill-switch</summary>
+    protected virtual Task<AiProviderConfig?> LoadActiveProviderAsync(CancellationToken ct)
+        => _db.AiProviderConfigs.AsNoTracking().FirstOrDefaultAsync(ActiveProviderFilter, ct);
+
+    /// <summary>สิ่งที่รู้แล้วระหว่างทาง — ให้ตาข่ายชั้นนอกคืนคำตอบของนักเรียนได้แม้ขั้นหลังจากนั้นโยน exception
+    /// (รอบ 201 A-AI6: เดิม outer-catch ใช้ request ตั้งต้นที่ยังไม่มีคำตอบนักเรียน ⇒ ฐานข้อมูล/provider ล่ม = คำตอบหาย)</summary>
+    private sealed class AskProgress
+    {
+        public AiRequest Request = null!;
+        public bool HasLocal;
+    }
+
     public async Task<AiResponse> AskAsync(AiRequest request, CancellationToken ct = default)
     {
         // Outer try/catch is the ABSOLUTE safety net: under no
         // circumstances may the caller see an exception from here. The
         // local model's prediction is always returned in the response
         // so call sites can use PrimaryAnswer unconditionally.
+        var progress = new AskProgress { Request = request };
         try
         {
-            return await AskInternalAsync(request, ct);
+            return await AskInternalAsync(request, progress, ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "AiOrchestrator outer-catch — feature {Feature}", request.FeatureKey);
-            return FallbackToLocal(request, AiCallStatus.Failed, error: ex.Message, feedbackId: null);
+            // คำตอบของนักเรียน (ถ้าทำนายไว้แล้ว) ต้องรอดออกไปด้วย — kill-switch ข้อ 4 "สลับมา local ทันที"
+            return FallbackToLocal(progress.Request, AiCallStatus.Failed, error: ex.Message, feedbackId: null,
+                fromLocalModel: progress.HasLocal);
         }
     }
 
-    private async Task<AiResponse> AskInternalAsync(AiRequest request, CancellationToken ct)
+    private async Task<AiResponse> AskInternalAsync(AiRequest request, AskProgress progress, CancellationToken ct)
     {
-        var settings = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
 
         // ── Step 0: per-feature routing decision ──────────────────────
         // Admin policy from AiFeatureRoutingConfigs decides whether to
@@ -177,6 +202,8 @@ public class AiOrchestrator : IAiOrchestrator
                 UserPromptJson = ReplaceLocalModelBlock(
                     request.UserPromptJson, localPred.PrimaryAnswer, localPred.Confidence),
             };
+            progress.Request = request;
+            progress.HasLocal = true;
         }
 
         // Disabled ต้องชนะทุก override (ForceProviderCall/BypassCache) — เดิม
@@ -245,6 +272,8 @@ public class AiOrchestrator : IAiOrchestrator
         }
 
         // ── Step 1: master switch ─────────────────────────────────────
+        // อ่านค่าตั้ง **หลัง** ทำนายด้วยนักเรียนแล้ว (รอบ 201 A-AI6) — อ่านล้มก็ยังมีคำตอบนักเรียนให้ตาข่ายชั้นนอกคืน
+        var settings = await LoadSiteSettingsAsync(ct);
         if (settings == null || !settings.AiAugmentationEnabled)
         {
             var fid = await RecordSkip(request, AiCallStatus.Skipped, "AiAugmentationEnabled=false", ct);
@@ -252,8 +281,7 @@ public class AiOrchestrator : IAiOrchestrator
         }
 
         // ── Step 2: locate active provider ────────────────────────────
-        var providerConfig = await _db.AiProviderConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(p => p.IsActive && p.IsEnabled, ct);
+        var providerConfig = await LoadActiveProviderAsync(ct);
         if (providerConfig == null)
         {
             var fid = await RecordSkip(request, AiCallStatus.NoProvider, "No active AI provider configured", ct);

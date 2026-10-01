@@ -60,7 +60,7 @@ public class BankMatchDistillationModel : ILocalDistillationModel
             .Select(p => new
             {
                 p.DescriptionSignature, p.AmountBucket, p.TargetType,
-                p.ContactId, p.TargetAccountCode, p.TimesConfirmed,
+                p.ContactId, p.TargetAccountCode, p.TimesConfirmed, p.ExplicitConfirmCount,
                 p.AvgAmount, p.LastUsedAt,
             })
             .ToListAsync(ct);
@@ -70,8 +70,14 @@ public class BankMatchDistillationModel : ILocalDistillationModel
         var fresh = new Dictionary<(Guid, string, string), List<PatternHit>>();
         foreach (var g in grouped)
         {
+            // ── รอบ 201 ทีม AI · A-AI1 (H-1): ความมั่นใจนับ **เฉพาะคำยืนยันที่ผู้ใช้เลือกคู่เอง** ──────────────
+            // เดิม Wilson(TimesConfirmed) ⇒ การกดยืนยันคู่ที่คลังติ๊กให้เอง (ปุ่ม "✨ AI จับคู่จากประวัติ") ดัน
+            // คะแนนของแพตเทิร์นตัวเองจนทะลุ short-circuit 0.85 (คลังสอนตัวเอง · DOCTRINE §3) · แพตเทิร์นที่ยังไม่มี
+            // คำยืนยันแบบตั้งใจเลยยังตอบได้ (cold-start) แต่เพดาน 0.45 — สูตรอยู่ที่ Helpers/BankPatternEvidence ตัวเดียว
+            var totalExplicit = g.Sum(x => x.ExplicitConfirmCount);
             var totalConfirms = g.Sum(x => x.TimesConfirmed);
-            var hits = g.OrderByDescending(x => x.TimesConfirmed)
+            var hits = g.OrderByDescending(x => x.ExplicitConfirmCount)
+                .ThenByDescending(x => x.TimesConfirmed)
                 .ThenByDescending(x => x.LastUsedAt)
                 .Take(5)
                 .Select(x => new PatternHit(
@@ -79,12 +85,10 @@ public class BankMatchDistillationModel : ILocalDistillationModel
                     ContactId: x.ContactId?.ToString(),
                     AccountCode: x.TargetAccountCode,
                     AvgAmount: x.AvgAmount,
-                    Confirmed: x.TimesConfirmed,
-                    // Wilson over (confirms / total-for-this-key) — a
-                    // sig+bucket with 50 confirms all routing to the
-                    // same contact gets near-1.0; 1 confirm gets the
-                    // appropriate small-sample discount.
-                    WilsonScore: Wilson(x.TimesConfirmed, Math.Max(x.TimesConfirmed, totalConfirms))))
+                    Confirmed: x.ExplicitConfirmCount,
+                    WilsonScore: Accounting.Helpers.BankPatternEvidence.StudentConfidence(
+                        x.ExplicitConfirmCount, totalExplicit, x.TimesConfirmed, totalConfirms)))
+                .OrderByDescending(h => h.WilsonScore)
                 .ToList();
             fresh[(companyId, g.Key.DescriptionSignature, g.Key.AmountBucket)] = hits;
         }
@@ -130,17 +134,6 @@ public class BankMatchDistillationModel : ILocalDistillationModel
             Alternatives: alts,
             SupportingSamples: top.Confirmed,
             ModelVersion: Version));
-    }
-
-    private static decimal Wilson(int successes, int n)
-    {
-        if (n == 0) return 0m;
-        const double z = 1.96;
-        var p = (double)successes / n;
-        var denom = 1 + z * z / n;
-        var center = p + z * z / (2 * n);
-        var spread = z * Math.Sqrt((p * (1 - p) + z * z / (4 * n)) / n);
-        return (decimal)Math.Max(0, (center - spread) / denom);
     }
 
     /// <summary>Pull description + amount from the orchestrator's
