@@ -4255,3 +4255,13 @@ _2026-10-01 รอบ 201 ฝ่ายค้านทีม OC (OCX-1..OCX-10 ·
 - (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น · (OCX-8) ค่าคงที่ `BranchAddressUnknownNote` ขึ้นเหนือ doc-comment ของ `ContactAddress` · (OCX-9) เทสต์ล็อกคำสั่ง migration อยู่ในชุดที่บูตรัน
 - (OCX-10) `Helpers/OcrPredecessorPartyCheck` ใน `LinkPredecessorAsync` เมื่อยังไม่รู้คู่ค้า · (ข้อ 103 Q3) ตัวอ่านเหตุผลใบลดหนี้ข้ามแถวฟอร์ม "ส่วนลด 0.00"
 - เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit f01811b2)_
+
+_2026-10-01 รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน (V-1 · V-2 · V-3 · SSO-1 · UI-1 · WC-1 · คำตอบ Q3/Q4)
+- **V-1/V-3** `PayrollRunEditPolicy.CanVoid(status, ssoSettledAt, evidence)` — งวดที่ยื่นแล้ว (ผ่าน `FiledOrSettledBlock`) และปันต้นทุนแล้ว ⇒ ยกเลิกรอบไม่ได้ ·
+  ผู้เรียก: `VoidPayrollAsync` + `MapToPayrollRunResponse` (ปุ่ม) · void รอบ Paid ยกเลิก 50 ทวิ ของรอบผ่าน `WhtCertVoidGuard.CheckAsync` (ใบยื่นแล้ว ⇒ ปฏิเสธทั้งหมด)
+- **V-2** `VoidPayrollAsync` ตัดสินซ้ำใต้ล็อก (`lockedRun` + หลักฐานใหม่)
+- **SSO-1** `EmployeeRecordEdit.SsoInsuredNumber` เทียบเลขเดิมก่อนด่าน 13 หลัก · **UI-1** 🧮 ทิ้งผลช้า/ล้างค่าเมื่อเปลี่ยนคน · **WC-1** Notice เมื่อเงินทดแทนเปลี่ยน
+- **Q3** `PayrollRunLineDto.SsoFlagWarning` + ป้ายบนแถว (ไม่บล็อก) · **Q4** HRIS sync (ไม่เก็บเลขผิดรูป + แจ้ง) และนำเข้า CSV (`ImportExportService.ImportEmployeeAsync` — แตะไฟล์ทีมอื่น 4 บรรทัด · แถวล้มพร้อมเหตุผล)
+  ผ่านตัวตัดสินเลข ปกส. เดียว · ชื่อพนักงานในตารางรอบผ่าน `Layout.esc`
+- เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit 2fe0e7c4)_
+

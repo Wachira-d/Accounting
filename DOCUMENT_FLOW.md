@@ -2728,7 +2728,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **🚫 ยกเลิกรอบ (รอบ 201 PR2 · ข้อ 70)** — ปุ่มบนหน้ารายละเอียดรอบ (`payroll.html` `voidRun`) → `POST runs/{id}/void` body `VoidPayrollRunRequest { reason }` ·
   `PayrollRunResponse.CanVoid/VoidBlockReason` จาก `PayrollRunEditPolicy.CanVoid` (ตัวเดียวกับ `VoidPayrollAsync`) · กดไม่ได้ ⇒ disabled + เหตุผล · **เหตุผลบังคับ ≥ 5 ตัวอักษร**
   (service) + `AddChainedAuditLog` (`void-run` · สถานะก่อน · กลับ JE ไหม) · อ่านก่อนล็อกแบบไม่ติดตาม (แถวใต้ `FromSqlRaw … FOR UPDATE` เป็นค่าจริง) ·
-  รอบ Paid ⇒ กลับ JE + คืนเงินทดรอง (เหมือนเดิม) · `PAYROLL-DETAIL-LAST` ชี้ปุ่มนี้ (เดิมบอกให้ใช้ API)
+  รอบ Paid ⇒ กลับ JE + คืนเงินทดรอง (เหมือนเดิม) · `PAYROLL-DETAIL-LAST` ชี้ปุ่มนี้ (เดิมบอกให้ใช้ API) · **แก้ผลฝ่ายค้าน**: `CanVoid(status, ssoSettledAt,
+  PayrollRunLockEvidence)` หลักฐาน**บังคับ** — งวดที่บันทึกว่ายื่นแล้ว (รอบ Approved/Paid) ⇒ ปฏิเสธผ่าน `FiledOrSettledBlock` ตัวเดียวกับแก้ยอด (V-1 · #35) ·
+  ปันต้นทุนโครงการแล้ว ⇒ ปฏิเสธ (V-3) · ตัดสินซ้ำ**ใต้ล็อก**ด้วยแถว/หลักฐานที่ล็อกแล้ว (V-2 · `PAYROLL-VOID-LOCKED`) · 50 ทวิ ของรอบ (`SourcePayrollRunId`)
+  ผ่าน `WhtCertVoidGuard.CheckAsync` **ก่อน**กลับ JE — ใบที่อยู่ในแบบประกาศ/ยื่นแล้ว ⇒ 409 `RD-50TWI-FILED` ปฏิเสธทั้งการยกเลิก · ไม่ติด ⇒ ใบของรอบเป็น Voided ในธุรกรรมเดียวกัน
 - **รายการเงินเดือน — ค่าเสนอธง "เป็นค่าจ้าง ม.5" (รอบ 201 PR2 · A-PR2 · คำตัดสินข้อ 31)**: `GET payroll/items/sso-base-suggestion?incomeNature=` →
   `PayrollIncomeNatureRules.SuggestedCountsForSsoBase` (เบี้ยเลี้ยงประจำ = ใช่ · OT/โบนัส = ไม่ใช่ · ครั้งคราว/คอมมิชชัน/ยังไม่ระบุ = ไม่เสนอ) · หน้าตั้งค่าเติมเฉพาะรายการ
   **ใหม่** ที่ผู้ใช้ยังไม่แตะช่อง · เซิร์ฟเวอร์ไม่ใส่ให้เองตอนสร้าง · แถวเดิมที่ null ไม่แตะ (คงคำเตือนตอนคำนวณ)
@@ -4193,7 +4196,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน — ยกเลิกรอบเงินเดือนด้วยหลักฐานยื่น/ปันต้นทุน + ตัดสินซ้ำใต้ล็อก + ยกเลิก 50 ทวิ ของรอบผ่าน `WhtCertVoidGuard` (§3.8) · เลข ปกส. เดิมไม่ทำให้บันทึกล้ม · HRIS/CSV ผ่านตัวตัดสินเลข ปกส. · คำเตือนธง ปกส. บนหน้ารอบ · Notice เงินทดแทน — commit 2fe0e7c4)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
 
