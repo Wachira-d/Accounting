@@ -276,6 +276,20 @@ public class StockLedger : IStockLedger
 
         var wanted = items.GroupBy(i => i.ProductId).Select(g => g.First()).ToList();
         var ids = wanted.Select(i => i.ProductId).ToList();
+
+        // ฝ่ายค้าน X6: ถือล็อก (คลัง, สินค้า) ทุกแถวคลังของสินค้าที่จะซ่อม **ก่อนอ่าน** — คีย์เดียวกับ MoveAsync ⇒ ระหว่างอ่าน→เขียน
+        // ไม่มีการเคลื่อนไหวของสินค้าตัวนั้นแทรก (เดิมพึ่งแค่เงื่อนไข "ยังเท่าค่าที่อ่าน" ซึ่งไม่เห็นแถวคลังที่ขยับคู่กัน) · เรียงคีย์คงที่
+        // เพื่อไม่สลับลำดับกับผู้ซ่อมคนอื่น (ผู้ซ่อมถูก serialize ด้วยล็อกต่อบริษัทข้างบนอยู่แล้ว)
+        var pairs = await _db.WarehouseStocks.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted && ids.Contains(w.ProductId))
+            .Select(w => new { w.WarehouseId, w.ProductId })
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var pair in pairs.OrderBy(x => x.WarehouseId).ThenBy(x => x.ProductId))
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.StockAdjust,
+                    $"{pair.WarehouseId:N}:{pair.ProductId:N}") }, ct);
+
         var evidence = (await LoadTotalsEvidenceAsync(companyId, ids, ct)).ToDictionary(e => e.ProductId);
         Guid? actorId = Guid.TryParse(actor, out var uid) ? uid : null;
 

@@ -126,6 +126,10 @@ public static class AdvisoryLockKey
     /// <summary>บันทึก "คืนเงินแขกแล้ว" ของการจองที่พัก — part = id การจอง (รอบ 193 ฝ่ายค้าน: สองคำขอพร้อมกันผ่านด่านทั้งคู่
     /// แล้ว RefundPaidAmount ถูกเขียนทับ)</summary>
     public const string LodgingRefundPaid = "lodging-refund";
+    /// <summary>เช็คเอาต์ / ออกใบเช็คเอาต์ใหม่ของการจองที่พัก — part = id การจอง (รอบ 201 ฝ่ายค้าน X7: สองคำขอพร้อมกันผ่านด่าน
+    /// "ยังไม่มีใบ/ใบเดิมถูกยกเลิก" ทั้งคู่ ⇒ ใบกำกับสองใบ) · session lock (<c>JobLock.RunExclusiveAsync</c>) เพราะเส้นออกเอกสาร/ใช้มัดจำ
+    /// เปิดธุรกรรมของตัวเองหลายขั้น (xact lock จะหลุดตั้งแต่ขั้นแรก)</summary>
+    public const string LodgingCheckout = "lodging-checkout";
     /// <summary>รับรู้/ริบใบมัดจำ — part = id ใบมัดจำ (รอบ 194 ฝ่ายค้าน P-a: สองคำขอพร้อมกันผ่านด่านยอดคงค้างทั้งคู่
     /// ⇒ ใบกำกับของยอดที่ริบสองใบ · ต้องเป็น session lock เพราะเส้นออกใบกำกับเปิดธุรกรรมของตัวเองหลายขั้น)</summary>
     public const string DepositRealize = "deposit-realize";

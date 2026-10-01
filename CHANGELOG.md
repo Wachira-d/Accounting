@@ -4123,3 +4123,12 @@ _2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 +
 - **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
 - **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
   required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_
+
+_2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้าน X1–X7 (`erp-review/2026-10-01/team-IN.md` §6):
+- **X1** `InventoryCostFlow.CancelReversals` จับคู่แถวกลับรายการ (DocumentId · VOID-/REFUND- POS · OPENING) ตัดก่อนคิว FIFO · `CostMovement` + DocumentId/Reference
+- **X3** rebuild ถัวเฉลี่ยติดตามมูลค่า (ยกเลิกใบซื้อถอดล็อตออก) · **X4** นำเข้ายอดยกมาซ้ำไม่ลบแถว เขียน OPENING ติดลบผ่าน ledger
+- **X5** `IInventoryCostingService.ResolveValuationUnitCostAsync` + `InventoryCostFlow.RemainingFifoUnitCost` — รายงานมูลค่า/เบิกวัสดุผ่านตัวเดียว
+- **X6** ซ่อมยอดสต็อกถือล็อก (คลัง, สินค้า) ก่อนอ่าน · **X7** `ExclusiveCheckoutAsync` session lock ต่อการจอง (`AdvisoryLockKey.LodgingCheckout`)
+- **X2** `FindLiveReplacementSaleAsync` + `LodgingCheckoutReissue.Problem(liveReplacementNumber, confirmedNoManualReissue)` + ช่องยืนยันบนหน้าที่พัก
+- เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit <pending>)_
+

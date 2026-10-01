@@ -61,8 +61,14 @@ public partial class LodgingService
                 .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync();
             // รอบ 201 ทีม IN (A-IN5 · คำตัดสินข้อ 36): การจองที่เช็คเอาต์แล้ว ⇒ ปุ่ม “ออกใบเช็คเอาต์ใหม่” (ตัวสร้างของที่พักตัวเดียว · ยอดเท่าเดิม)
             // แทนการให้ผู้ใช้ประกอบใบเองที่หน้าเอกสาร · การจองที่ยังเช็คอินอยู่ (ขั้นใช้มัดจำค้าง) คงทางเดิม
-            canReissueFinal = LodgingCheckoutReissue.CanOffer(r.Status, finalStatus, prop.AccountingMode == LodgingAccountingMode.Off);
-            if (finalStatus == DocumentStatus.Voided)
+            // ฝ่ายค้าน X2: มีใบขายที่ยังมีผลอ้างเลขจองนี้ (ผู้ใช้ออกใบแทนเองแล้ว) ⇒ ไม่เปิดปุ่ม + บอกเลขใบนั้น
+            var liveReplacement = finalStatus == DocumentStatus.Voided && r.Status == LodgingReservationStatus.CheckedOut
+                ? await FindLiveReplacementSaleAsync(companyId, r.ReservationNumber, finalDocId) : null;
+            canReissueFinal = LodgingCheckoutReissue.CanOffer(r.Status, finalStatus, prop.AccountingMode == LodgingAccountingMode.Off, liveReplacement);
+            if (finalStatus == DocumentStatus.Voided && liveReplacement != null)
+                finalNote = $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว และมีเอกสารขาย {liveReplacement} ที่อ้างเลขจองนี้ออกแทนแล้ว — "
+                    + "ไม่ต้องออกใบใหม่ (ถ้าใบนั้นออกผิด ให้ยกเลิกที่หน้าเอกสารก่อน)";
+            else if (finalStatus == DocumentStatus.Voided)
                 finalNote = canReissueFinal
                     ? $"ใบเช็คเอาต์ {docNos.GetValueOrDefault(finalDocId)} ถูกยกเลิกแล้ว — มัดจำกลับเป็นยอดคงค้าง · กด “ออกใบเช็คเอาต์ใหม่” "
                       + "เพื่อออกใบแทนยอดเท่าใบเดิม (อ้างเลขใบเดิม · หักมัดจำให้ตามเดิม) · ถ้ายอดต้องเปลี่ยน ให้ออกใบใหม่แล้วออกใบลด/เพิ่มหนี้ส่วนต่าง"

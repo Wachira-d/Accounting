@@ -738,8 +738,9 @@ public record LodgingAddChargeRequest(
     LodgingChargeSource Source = LodgingChargeSource.Manual,
     string? Notes = null);
 
-/// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก — เหตุผลเข้าหมายเหตุภายใน + audit (ไม่บังคับ)</summary>
-public record LodgingReissueFinalRequest(string? Reason = null);
+/// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก — เหตุผลเข้าหมายเหตุภายใน + audit (ไม่บังคับ)
+/// <para>ฝ่ายค้าน X2: <c>ConfirmNoManualReissue</c> = ผู้ใช้ยืนยันว่ายังไม่ได้ออกใบแทนเองที่หน้าเอกสาร (บังคับ — ใบที่ออกเองโดยไม่อ้างเลขจองตรวจไม่ได้)</para></summary>
+public record LodgingReissueFinalRequest(string? Reason = null, bool ConfirmNoManualReissue = false);
 
 /// <summary>เช็คเอาต์ = ออกใบกำกับ/ใบแจ้งหนี้สุดท้าย (ตัดมัดจำ) + รับชำระส่วนที่เหลือ</summary>
 public record LodgingCheckOutRequest(

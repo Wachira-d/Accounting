@@ -16,14 +16,17 @@ public class ProductService : IProductService
     private readonly IWebHostEnvironment _env;
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
     private readonly IStockLedger _stock;
+    /// <summary>ตัวคิดต้นทุนตามวิธีของสินค้า — ตัวเดียวของรายงานมูลค่า/การเบิกใช้ (ฝ่ายค้าน X5)</summary>
+    private readonly Accounting.Services.Implementations.Inventory.IInventoryCostingService _costing;
 
     public ProductService(AccountingDbContext db, IImageProcessingService images, IWebHostEnvironment env,
-        IStockLedger stock)
+        IStockLedger stock, Accounting.Services.Implementations.Inventory.IInventoryCostingService costing)
     {
         _db = db;
         _images = images;
         _env = env;
         _stock = stock;
+        _costing = costing;
     }
 
     // ===== Product images (gallery) =====
@@ -593,14 +596,9 @@ public class ProductService : IProductService
         var items = new List<InventoryValuationItem>();
         foreach (var p in products)
         {
-            // Weighted average cost from stock movements
-            var movements = await _db.StockMovements
-                .Where(m => m.ProductId == p.Id && m.MovementType == "IN")
-                .ToListAsync();
-
-            var totalCost = movements.Sum(m => m.Quantity * m.UnitCost);
-            var totalQty = movements.Sum(m => m.Quantity);
-            var avgCost = totalQty > 0 ? totalCost / totalQty : p.CostPrice;
+            // ฝ่ายค้าน X5 (รอบ 201): เดิมเฉลี่ยทุกแถว "IN" ตลอดกาล (ไม่กรองบริษัท · ไม่ดูวิธีคิด · ไม่เห็นยอดยกมา/กลับรายการ)
+            // ⇒ มูลค่าคงเหลือไม่ตรง COGS ที่ลงจริง · ตอนนี้ผ่านตัวคิดต้นทุนตัวเดียวตามวิธีของสินค้า
+            var avgCost = await _costing.ResolveValuationUnitCostAsync(companyId, p.Id);
 
             items.Add(new InventoryValuationItem(
                 p.Id, p.Code, p.Name, p.Unit, p.Category,
@@ -1010,25 +1008,18 @@ public class ProductService : IProductService
         if (product.CurrentStock < request.Quantity)
             throw new InvalidOperationException($"วัสดุคงเหลือไม่เพียงพอ (คงเหลือ: {product.CurrentStock} {product.Unit})");
 
-        // Calculate weighted average cost
-        var inMovements = await _db.StockMovements
-            .Where(m => m.ProductId == product.Id && m.MovementType == "IN" && !m.IsDeleted)
-            .ToListAsync();
-        var totalCost = inMovements.Sum(m => m.Quantity * m.UnitCost);
-        var totalQty = inMovements.Sum(m => m.Quantity);
-        var avgCost = totalQty > 0 ? totalCost / totalQty : product.CostPrice;
-
-        var usageCost = request.Quantity * avgCost;
-
-        await _stock.MoveAsync(new StockMoveRequest(
+        // ฝ่ายค้าน X5 (รอบ 201): เดิมคิดค่าเฉลี่ยเองจากทุกแถว "IN" (ไม่กรองบริษัท · ข้าม FIFO · ไม่ตรงค่าเฉลี่ยที่ ledger ใช้)
+        // ⇒ ไม่ส่งต้นทุนเอง ให้ ledger ถามตัวคิดต้นทุนตามวิธีของสินค้า (ถัวเฉลี่ย/FIFO) แล้วใช้ต้นทุนที่ประทับจริงกับบันทึก/JE
+        var move = await _stock.MoveAsync(new StockMoveRequest(
             CompanyId: companyId,
             ProductId: product.Id,
             Quantity: -request.Quantity,      // − = เบิกออก (เดิมเขียนเป็นบวก ⇒ รายงานอ่านว่ารับเข้า)
             MovementType: "OUT",
             Reference: request.Reference,
-            UnitCostOverride: avgCost,
             Notes: $"เบิกใช้วัสดุ: {request.Purpose ?? "-"} แผนก: {request.Department ?? "-"}",
             CreatedBy: userId));
+        var avgCost = move.UnitCostUsed;
+        var usageCost = Math.Round(request.Quantity * avgCost, 2, MidpointRounding.AwayFromZero);
 
         // Create usage log
         var usage = new SuppliesUsageLog

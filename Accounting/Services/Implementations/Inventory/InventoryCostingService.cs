@@ -48,6 +48,11 @@ public interface IInventoryCostingService
     /// StockMovement history — for migrations + admin "rebuild" tool.
     /// Safe to run; idempotent.</summary>
     Task<decimal> RebuildAverageCostAsync(Guid productId, CancellationToken ct = default);
+
+    /// <summary>ต้นทุนต่อหน่วยที่ใช้ตีมูลค่าสินค้าคงเหลือตามวิธีของสินค้า (ฝ่ายค้าน X5 — ตัวเดียวของรายงานมูลค่า):
+    /// ถัวเฉลี่ย = <c>AverageUnitCost</c> (ค่าที่ COGS ใช้จริง · ไม่มี = ราคาทุน) · FIFO = มูลค่าล็อตที่เหลือในคิว ÷ จำนวนที่เหลือ ·
+    /// มาตรฐาน = ราคาทุน · กรองบริษัทเสมอ</summary>
+    Task<decimal> ResolveValuationUnitCostAsync(Guid companyId, Guid productId, CancellationToken ct = default);
 }
 
 public class InventoryCostingService : IInventoryCostingService
@@ -170,6 +175,27 @@ public class InventoryCostingService : IInventoryCostingService
         return product.AverageUnitCost;
     }
 
+    public async Task<decimal> ResolveValuationUnitCostAsync(Guid companyId, Guid productId, CancellationToken ct = default)
+    {
+        var product = await _db.Products.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == productId && p.CompanyId == companyId, ct)
+            ?? throw new KeyNotFoundException("ไม่พบสินค้าในบริษัทนี้");
+        switch (product.CostingMethod)
+        {
+            case CostingMethod.Fifo:
+            {
+                var moves = await LoadCostMovementsAsync(companyId, productId, ct);
+                var (layers, consumed) = Accounting.Helpers.InventoryCostFlow.FifoQueue(moves, product.CostPrice);
+                return Accounting.Helpers.InventoryCostFlow.RemainingFifoUnitCost(layers, consumed,
+                    Accounting.Helpers.InventoryCostFlow.LastLayerCost(moves, product.CostPrice));
+            }
+            case CostingMethod.Standard:
+                return product.CostPrice;
+            default:
+                return product.AverageUnitCost > 0m ? product.AverageUnitCost : product.CostPrice;
+        }
+    }
+
     /// <summary>ประวัติการเคลื่อนไหวของสินค้า (เก่า→ใหม่) ในมุมต้นทุน — แถวที่บันทึกแล้ว <b>รวมแถวที่ ledger เพิ่งเพิ่มใน context
     /// แต่ยังไม่ SaveChanges</b> (เอกสารเดียวที่มีสินค้าตัวเดียวกันสองบรรทัด: บรรทัดที่สองต้องเห็นการกินคิวของบรรทัดแรก ·
     /// rebuild ถัวเฉลี่ยหลังยกเลิกใบซื้อต้องเห็นแถวกลับรายการที่เพิ่งเพิ่ม) · กรองบริษัททุก query (tenant)</summary>
@@ -179,14 +205,14 @@ public class InventoryCostingService : IInventoryCostingService
         var saved = await _db.StockMovements.AsNoTracking()
             .Where(m => m.CompanyId == companyId && m.ProductId == productId && !m.IsDeleted)
             .OrderBy(m => m.MovementDate).ThenBy(m => m.CreatedAt)
-            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost))
+            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost, m.DocumentId, m.Reference))
             .ToListAsync(ct);
         var pending = _db.ChangeTracker.Entries<StockMovement>()
             .Where(e => e.State == EntityState.Added && e.Entity.CompanyId == companyId
                      && e.Entity.ProductId == productId && !e.Entity.IsDeleted)
             .Select(e => e.Entity)
             .OrderBy(m => m.MovementDate).ThenBy(m => m.CreatedAt)
-            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost));
+            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost, m.DocumentId, m.Reference));
         saved.AddRange(pending);
         return saved;
     }

@@ -20,13 +20,27 @@ public static class LodgingCheckoutReissue
 {
     public const string RuleCode = "LODGING-CHECKOUT-REISSUE";
 
-    /// <summary>เปิดปุ่ม “ออกใบเช็คเอาต์ใหม่” ได้ไหม (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตามธง)</summary>
-    public static bool CanOffer(LodgingReservationStatus status, DocumentStatus? finalDocumentStatus, bool accountingOff)
-        => status == LodgingReservationStatus.CheckedOut && finalDocumentStatus == DocumentStatus.Voided && !accountingOff;
+    /// <summary>ชนิดเอกสารขายที่ถือว่า "ใบแทนที่ผู้ใช้ออกเองแล้ว" ได้ (ใบรับชำระ/ใบมัดจำ/ใบลดหนี้ไม่นับ — ผู้เรียกกรองเพิ่ม)</summary>
+    public static readonly DocumentType[] SaleTypes = { DocumentType.TaxInvoice, DocumentType.Invoice, DocumentType.Receipt };
+
+    /// <summary>ข้อความยืนยันที่ผู้ใช้ต้องติ๊ก — ระบบไม่เก็บวันที่ยกเลิกเอกสาร ⇒ แยกไม่ได้ว่าใบเดิมถูกยกเลิกสมัยที่ระบบบอกให้ออกใบแทนเอง
+    /// ที่หน้าเอกสาร (ก่อนรอบ 201) หรือไม่ (ฝ่ายค้าน X2 · "ไม่รู้" ห้ามตกเป็น "ผ่าน")</summary>
+    public const string ConfirmNoManualReissueLabel =
+        "ยืนยันว่ายังไม่ได้ออกใบกำกับ/ใบแจ้งหนี้แทนใบที่ยกเลิกเองที่หน้า “เอกสาร” (ถ้าออกไปแล้ว อย่ากดปุ่มนี้ — จะเป็นใบซ้ำ)";
+
+    /// <summary>เปิดปุ่ม “ออกใบเช็คเอาต์ใหม่” ได้ไหม (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตามธง) ·
+    /// <paramref name="liveReplacementNumber"/> = เลขเอกสารขายที่ยังมีผลซึ่งอ้างเลขจองนี้ (ผู้ใช้ออกใบแทนเองแล้ว) ⇒ ไม่เปิดปุ่ม</summary>
+    public static bool CanOffer(LodgingReservationStatus status, DocumentStatus? finalDocumentStatus, bool accountingOff,
+        string? liveReplacementNumber = null)
+        => status == LodgingReservationStatus.CheckedOut && finalDocumentStatus == DocumentStatus.Voided && !accountingOff
+           && liveReplacementNumber == null;
 
     /// <summary>null = ออกได้ · ข้อความ = ปฏิเสธ (ไทย พร้อมทางไปต่อ)</summary>
+    /// <param name="liveReplacementNumber">เอกสารขาย (ไม่ใช่ใบเดิม · ไม่ใช่ใบมัดจำ/ใบรับชำระ) ที่ออกแล้วยังไม่ยกเลิกและอ้างเลขจองนี้ — มี = ผู้ใช้ออกใบแทนเองแล้ว</param>
+    /// <param name="confirmedNoManualReissue">ผู้ใช้ติ๊กยืนยันว่ายังไม่ได้ออกใบแทนเอง (ใบที่ออกเองโดยไม่อ้างเลขจองตรวจจากข้อมูลไม่ได้)</param>
     public static string? Problem(LodgingReservationStatus status, DocumentStatus? finalDocumentStatus, bool accountingOff,
-        DocumentType originalType, decimal originalTotal, DocumentType rebuiltType, decimal rebuiltTotal, string? originalNumber)
+        DocumentType originalType, decimal originalTotal, DocumentType rebuiltType, decimal rebuiltTotal, string? originalNumber,
+        string? liveReplacementNumber = null, bool confirmedNoManualReissue = true)
     {
         if (accountingOff)
             return "ที่พักนี้ตั้งเป็นโหมดไม่ออกเอกสารบัญชี — ออกใบเช็คเอาต์ใหม่จากโมดูลที่พักไม่ได้";
@@ -35,6 +49,11 @@ public static class LodgingCheckoutReissue
         if (finalDocumentStatus != DocumentStatus.Voided)
             return "ใบเช็คเอาต์ของการจองนี้ยังไม่ถูกยกเลิก — ออกใบใหม่ซ้อนไม่ได้ (การขายครั้งเดียวมีใบกำกับได้ใบเดียว) · "
                 + "ถ้ายอดผิด ให้ออกใบลด/เพิ่มหนี้อ้างใบเดิมที่หน้าเอกสาร";
+        if (liveReplacementNumber != null)
+            return $"มีเอกสารขาย {liveReplacementNumber} ที่ยังมีผลและอ้างเลขจองนี้อยู่แล้ว (ออกแทนใบ {originalNumber} ที่หน้าเอกสาร) — ออกใบใหม่อีกใบ = ใบกำกับซ้ำ "
+                + "(ภาษีขายสองรอบ) · ถ้าใบนั้นคือใบแทนจริง ไม่ต้องทำอะไรเพิ่ม · ถ้าออกผิด ให้ยกเลิกใบนั้นที่หน้าเอกสารก่อน";
+        if (!confirmedNoManualReissue)
+            return "ต้องติ๊กยืนยันก่อน: " + ConfirmNoManualReissueLabel;
         if (originalType != rebuiltType)
             return $"ชนิดเอกสารเปลี่ยนจากใบเดิม {originalNumber} (การตั้งค่า VAT ของที่พักเปลี่ยนหลังเช็คเอาต์) — ออกใบใหม่ด้วยชนิดเดิมไม่ได้จากโมดูลที่พัก · "
                 + "ให้นักบัญชีออกเอกสารที่หน้า “เอกสาร” ด้วยชนิดและยอดเดิม";

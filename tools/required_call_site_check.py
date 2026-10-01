@@ -306,7 +306,7 @@ TUPLE_RULES = [
     # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
     # รอบ 201 ทีม IN (A-IN5): ตัวสร้างรายการ/ใบร่าง/การใช้มัดจำ แยกเป็นเมธอดที่เส้นเช็คเอาต์และเส้นออกใบใหม่ใช้ร่วม ⇒ ย้ายจุดล็อก
     # ChargeVatRate → BuildFinalInvoiceLinesAsync · CreateDocumentAsync → UpsertFinalDraftAsync (ลำดับ "วางแผนก่อนออกเลข" ล็อกที่จุดเรียก)
-    (LODGING_LIFE, "CheckOutAsync",
+    (LODGING_LIFE, "CheckOutCoreAsync",
      ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
       "BuildFinalInvoiceLinesAsync(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
       "DepositBaseDeducted: depositPlan.BaseDeducted"],
@@ -867,7 +867,9 @@ _LODGING_ROOM_ONLY_WHY = ("รอบ 194 เงินประกันควา
                           "(LodgingDepositSettlement.RoomDeposits · ปิดแยกที่ SettleSecurityDepositAsync)")
 RULES += [
     dict(file=LODGING_LIFE, method=m, must=["LodgingDepositSettlement.RoomDeposits("], why=_LODGING_ROOM_ONLY_WHY)
-    for m in ("CheckOutAsync", "ResumeCheckOutAsync", "SettleCheckOutAsync", "RecordRefundPaidCoreAsync")
+    # รอบ 201 ฝ่ายค้าน X7: ตัวเช็คเอาต์จริงย้ายเข้า CheckOutCoreAsync (CheckOutAsync = ห่อล็อกต่อการจอง) · ออกใบใหม่ใช้ RoomDeposits เช่นกัน
+    for m in ("CheckOutCoreAsync", "ResumeCheckOutAsync", "SettleCheckOutAsync", "RecordRefundPaidCoreAsync",
+              "ReissueFinalDocumentCoreAsync")
 ]
 RULES += [
     dict(file=LODGING_LIFE, method="CancelCoreAsync",
@@ -3301,14 +3303,30 @@ RULES += [
          must=["DocumentNumberBook.BookPrefix("],
          before=[("DocumentNumberBook.BookPrefix(", "AdvisoryLockKey.For(")],
          why="A-IN4: ตัวนำหน้าเล่ม (บริษัท/สาขา) ตัดสินที่เดียวก่อนล็อก — ล็อกต่อเล่ม ไม่ใช่ต่อชนิดเอกสาร"),
-    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="ReissueFinalDocumentAsync",
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="ReissueFinalDocumentCoreAsync",
          must=["LodgingCheckoutReissue.Problem(", "BuildFinalInvoiceLinesAsync(", "UpsertFinalDraftAsync(",
-               "ApplyFinalDepositPlanAsync(", "AddChainedAuditLog("],
+               "ApplyFinalDepositPlanAsync(", "AddChainedAuditLog(", "FindLiveReplacementSaleAsync("],
          before=[("LodgingCheckoutReissue.Problem(", "UpsertFinalDraftAsync("),
-                 ("BuildFinalInvoiceLinesAsync(", "LodgingCheckoutReissue.Problem(")],
+                 ("BuildFinalInvoiceLinesAsync(", "LodgingCheckoutReissue.Problem("),
+                 ("FindLiveReplacementSaleAsync(", "LodgingCheckoutReissue.Problem(")],
+         call_args=[("LodgingCheckoutReissue.Problem(", "request.ConfirmNoManualReissue")],
          forbid=["MeterStayAsync(", "CreatePaymentAsync(", "AuditLogs.Add("],
          why="A-IN5: ใบเช็คเอาต์ใหม่ผ่านตัวสร้างของที่พักตัวเดียว · ยอด/ชนิดต้องเท่าใบเดิมก่อนออกเลข · ไม่นับมิเตอร์/ไม่รับเงินซ้ำ"),
+    # ฝ่ายค้าน X7: เช็คเอาต์/ออกใบใหม่ เดินผ่านล็อกต่อการจองตัวเดียว (คีย์คงที่)
     dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="CheckOutAsync",
+         must=["ExclusiveCheckoutAsync(", "CheckOutCoreAsync("],
+         why="X7: เช็คเอาต์ถือล็อกต่อการจอง (สองแท็บกดพร้อมกัน = ใบกำกับสองใบ)"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="ReissueFinalDocumentAsync",
+         must=["ExclusiveCheckoutAsync(", "ReissueFinalDocumentCoreAsync("],
+         why="X7: ออกใบเช็คเอาต์ใหม่ถือล็อกต่อการจองตัวเดียวกับเช็คเอาต์"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="ExclusiveCheckoutAsync",
+         must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.LodgingCheckout"],
+         why="X7: session lock คีย์คงที่ AdvisoryLockKey.For(บริษัท, LodgingCheckout, การจอง) — เส้นออกเอกสารเปิดธุรกรรมหลายขั้น"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="FindLiveReplacementSaleAsync",
+         must=["d.CompanyId == companyId", "!d.IsDeposit", "d.BookingNumber == reservationNumber", "d.Reference == reservationNumber",
+               "DocumentStatus.Voided", "ReceiptDocumentId"],
+         why="X2: ใบแทนที่ผู้ใช้ออกเอง = ใบขายที่ยังมีผลอ้างเลขจอง (ไม่นับใบเดิม/ใบมัดจำ/ใบเสร็จคู่การรับชำระ) · tenant"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Lifecycle.cs", method="CheckOutCoreAsync",
          must=["BuildFinalInvoiceLinesAsync(", "UpsertFinalDraftAsync("],
          before=[("UpsertFinalDraftAsync(", "_docService.ApproveDocumentAsync(")],
          why="A-IN5: เช็คเอาต์กับออกใบใหม่ใช้ตัวสร้างรายการ/ใบร่างตัวเดียวกัน (ห้ามสำเนาที่สอง) · ใบร่าง (ใช้ซ้ำได้) ก่อนอนุมัติ"),
@@ -3519,6 +3537,39 @@ RULES += [
          must=["docVoid.EtaxCancellationFlag", "docVoid.OutputVatNotice", "voidResult.OutputVatNotice", "notices = etaxFlags"],
          must_re=[r"var\s+docVoid\s*=\s*await\s+_documents\s*\.\s*VoidDocumentAsync\s*\("],
          why="รอบ 201 ทีม ST (DV Q1): VoidDocumentAsync คืน PaymentVoidResult แล้ว — ทิ้งผล = ธง e-Tax/ภาษีขายที่ถอยไม่ได้หายเงียบจากผู้กดยกเลิกการลงบัญชี"),
+]
+
+# ── รอบ 201 ทีม IN (ฝ่ายค้าน X1–X7): แถวกลับรายการไม่เข้าคิว · ถัวเฉลี่ยติดตามมูลค่า · ยอดยกมาซ้ำไม่ลบแถว · มูลค่า/เบิกใช้ผ่านตัวคิดต้นทุนเดียว ·
+#    ซ่อมยอดถือล็อกคลัง · ล็อกต่อการจอง (เทสต์ pure ใน InventoryCostingMethodTests · LodgingCheckoutReissueTests) ──
+RULES += [
+    dict(file="Helpers/InventoryCostFlow.cs", method="FifoQueue",
+         must=["CancelReversals("],
+         why="X1: แถวกลับรายการ (ยกเลิกเอกสาร/บิล POS/ล้างยอดยกมา) ต้องถูกจับคู่ตัดก่อนสร้างคิว FIFO"),
+    dict(file="Helpers/InventoryCostFlow.cs", method="LastLayerCost",
+         must=["CancelReversals("],
+         why="X1: ต้นทุนสำรองต้องไม่มาจากล็อตที่ถูกยกเลิก"),
+    dict(file="Services/Implementations/Inventory/InventoryCostingService.cs", method="LoadCostMovementsAsync",
+         must=["m.DocumentId, m.Reference"],
+         why="X1: คีย์จับคู่แถวกลับรายการต้องถูกส่งเข้าแถวต้นทุน (ไม่ส่ง = CancelReversals ไม่เห็นคู่)"),
+    dict(file="Services/Implementations/Inventory/InventoryCostingService.cs", method="ResolveValuationUnitCostAsync",
+         must=["InventoryCostFlow.FifoQueue(", "InventoryCostFlow.RemainingFifoUnitCost(", "p.CompanyId == companyId"],
+         why="X5: มูลค่าคงเหลือตามวิธีของสินค้า ตัวเดียว (FIFO = ล็อตที่เหลือ) · tenant"),
+    dict(file="Services/Implementations/ProductService.cs", method="GetInventoryValuationAsync",
+         must=["_costing.ResolveValuationUnitCostAsync("],
+         forbid=["movements.Sum(m => m.Quantity * m.UnitCost)"],
+         why="X5: รายงานมูลค่าคงเหลือห้ามเฉลี่ยแถว IN เอง — ผ่านตัวคิดต้นทุนตามวิธีของสินค้า"),
+    dict(file="Services/Implementations/ProductService.cs", method="UseSuppliesAsync",
+         must=["move.UnitCostUsed"],
+         forbid=["UnitCostOverride: avgCost", "inMovements.Sum("],
+         why="X5: เบิกวัสดุใช้ต้นทุนที่ ledger ถามตัวคิดต้นทุน (ถัวเฉลี่ย/FIFO) — ห้ามคิดค่าเฉลี่ยเองข้ามบริษัท"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="ImportStockOpeningAsync",
+         must=["_stock.MoveAsync("],
+         forbid=["RemoveRange(existingOpening)", "StockMovements.Remove("],
+         why="X4: นำเข้ายอดยกมาซ้ำห้ามลบแถวเดิม — เขียนแถว OPENING ติดลบหักล้างผ่าน IStockLedger"),
+    dict(file="Services/Implementations/Inventory/StockLedger.cs", method="RepairProductTotalsAsync#0",
+         must=["pairs.OrderBy("],
+         before=[("pairs.OrderBy(", "LoadTotalsEvidenceAsync(")],
+         why="X6: ถือล็อก (คลัง, สินค้า) ทุกคลังของสินค้าก่อนอ่านหลักฐาน — คีย์เดียวกับ MoveAsync"),
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
