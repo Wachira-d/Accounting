@@ -3474,6 +3474,12 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   `Helpers/AuditChainCheckpointPolicy` — ตรวจเต็มเมื่อไม่มี checkpoint/ครบ 28 วัน/รอบก่อนพบปัญหา · พบถูกแก้/ขาดตอน ⇒ ไม่ขยับ watermark) · ตรวจเป็นช่วงใช้
   `AuditHashChain.ExternalParents` → ค้นในฐานว่ามีจริง → `Analyze(rows, anchors)` · `AuditLogs.Add` ตรงเหลือเฉพาะไฟล์ทีมอื่น ratchet ใน
   `tools/audit_direct_add_check.py` (baseline 29 จุด/8 ไฟล์หลังรวมงานทีม DV · ห้ามเพิ่ม) · **แถวนอก chain รุ่นเก่า** (`RowHash = null` ก่อนรอบ 201) **ไม่เติม hash ย้อนหลัง** (คำตัดสิน main agent รอบ 201 · DV Q3) — ตัวตรวจ/endpoint/job นับแยก `UnchainedCount` + `UnchainedLatestAt` + ข้อความ `AuditHashChain.UnchainedNote` ("นอก chain รุ่นเก่า ก่อนวันที่ X" · ไม่ใช่ "ถูกแก้")
+- **รอบ 201 ทีม PL — ฝ่ายค้านรอบสาม**: (P1-1) ธุรกรรม Serializable/RepeatableRead/Snapshot จับ snapshot ตั้งแต่คำสั่งแรก ⇒ ตัวประทับตอน commit
+  อ่านปลาย chain เก่าแม้ได้ล็อก (แตกกิ่ง) ⇒ `AuditChainScope.IsolationBlockReason` ล้มดังก่อนล็อกเมื่อมีแถวรอประทับ (ธุรกรรมทั้งก้อน rollback) · สองจุดเดิม
+  เปลี่ยนเป็น ReadCommitted + `SELECT … FOR UPDATE`: `DocumentService.CreateInvoiceFromObligationAsync` (ภาระงาน → สัญญา · กันออกใบซ้ำของงวดเดียวกัน
+  + ธง Completed ของสัญญา) · `AdminAccountSubscriptionController.AdminAttach` (License → Subscription · กันแย่งช่องสุดท้าย) · `tools/audit_direct_add_check.py`
+  ฟ้อง `IsolationLevel.Serializable/RepeatableRead/Snapshot` ใหม่ทั้งเรพ (baseline 0) · (P2-1) INSERT แถว audit ชุดละ 500 แถวต่อคำสั่ง
+  (`AuditChainScope.InsertSql` · ลำดับ VALUES = ลำดับ chain) แทนทีละแถวขณะถือล็อก
 - **รอบ 201 ทีม PL — ช่องลับไม่เข้า audit** (ฝ่ายค้าน GW รอบสอง RV2-1/RV2-2): `Helpers/AuditRedaction` ตัวตัดสินเดียวจากชื่อช่อง (ลงท้าย Password/Secret/
   Protected/Encrypted/Credentials/ApiKey/KeyHash/TokenHash/Token · ขึ้นต้น Has/Is/Max/Last = ธง ไม่ปิด) — `CaptureAuditEntries` เก็บ `[redacted]` (null/ว่างคงไว้) ·
   แถวเก่าที่เก็บค่าจริงไปแล้ว (append-only) ปิดตอนแสดง (`AuditTrailService.MapToResponse` · หน้า audit แอดมิน) โดยไม่แตะค่าที่เก็บ (hash chain คงเดิม) ·
@@ -4453,4 +4459,6 @@ _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม ST — Sett
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม ST — Settlement (§2.10): เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId` + backfill ครั้งเดียว (A-ST1) · ล็อก gateway ทุกเส้นที่ประทับ intent (A-ST2) · ข้อความยอดไม่ลงตัวของ intent (A-ST3) · รายงานของกำพร้าระดับช่องทาง (A-ST4) · ลายนิ้วมือเหตุของการรับรู้ (A-ST5) · ใบที่อ้างทุกชั้น (A-ST6) · ผู้ตัดสินบรรทัดใน SoD (A-ST7) · ลายนิ้วมือชิ้นตอนออกเอกสาร (A-ST8) · รุ่นคีย์ต่อบรรทัด (A-ST9) · C-9 ใบกำพร้าที่รับรู้ = ใบแรกของวัน · unpost รวมผล VoidDocumentAsync (DV Q1) — commit 07baa11b)_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit 9f226f15)_
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit 9f226f15)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_

@@ -96,6 +96,14 @@ public class InvitationController : ControllerBase
             return BadRequest(new ApiResponse<object>(false, null,
                 $"คำเชิญนี้ส่งถึง {inv.Email} แต่คุณเข้าสู่ระบบในนาม {user.Email} — กรุณาเข้าสู่ระบบด้วยอีเมลที่ถูกเชิญ"));
 
+        // ฝ่ายค้านรอบสาม P2-2 (รอบ 201 ทีม PL): ตรวจบทบาทซ้ำตอนรับ — คำเชิญ SystemAdmin/PlatformSupport ที่ออกก่อนแก้ยังค้างได้ ·
+        // ผู้เชิญต้องยังเป็นแอดมินแพลตฟอร์มจึงรับ SystemAdmin ได้ (ไม่พบผู้เชิญ = ไม่ใช่) · PlatformSupport ปฏิเสธเสมอ
+        var inviterIsPlatformAdmin = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == inv.InvitedByUserId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
+        var roleBlocked = Accounting.Helpers.OwnershipTransferPolicy.InvitationRoleBlock(inv.Role, inviterIsPlatformAdmin);
+        if (roleBlocked != null)
+            return StatusCode(403, new ApiResponse<object>(false, null, roleBlocked));
+
         // Idempotent: if the user is already a member of the company, mark
         // the invitation accepted and return success rather than throwing.
         if (!await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == inv.CompanyId && cu.UserId == userId))

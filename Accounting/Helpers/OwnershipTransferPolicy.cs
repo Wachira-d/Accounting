@@ -41,6 +41,26 @@ public static class OwnershipTransferPolicy
         ? "ตั้งบทบาทผู้ดูแลแพลตฟอร์ม (support) ไม่ได้ — บทบาทนี้เกิดเฉพาะเมื่อผู้ดูแลแพลตฟอร์มเปิดบริษัทให้ลูกค้า (ส่งมอบด้วย \u201Cโอนความเป็นเจ้าของ\u201D)"
         : "ตั้งบทบาทแอดมินระบบได้เฉพาะผู้ดูแลแพลตฟอร์ม — เลือกบทบาทของบริษัท (เจ้าของ/นักบัญชี/พนักงาน/ผู้ตรวจสอบ/ผู้ดู)";
 
+    /// <summary>ฝ่ายค้านรอบสาม P1-2: หน้าแอดมินลูกค้าเปลี่ยนบทบาทสมาชิก — null = ได้ · ตั้งใครเป็น Owner หรือลด Owner ⇒ ต้องผ่าน "โอนความเป็นเจ้าของ"
+    /// (ตัวตัดสิน <see cref="Decide"/> · ข้อ 105 · <see cref="Outcome.DenySelf"/>) ไม่ใช่ทางลัดของแอดมิน · บทบาทระดับแพลตฟอร์มตาม <see cref="MayAssign"/></summary>
+    public static string? AdminRoleChangeBlock(UserRole current, UserRole requested)
+    {
+        if (!MayAssign(requested, callerIsPlatformAdmin: true)) return AssignDeniedMessage(requested);
+        if (current == requested) return null;
+        if (requested == UserRole.Owner || current == UserRole.Owner)
+            return "ตั้งหรือลดบทบาทเจ้าของ (Owner) จากหน้านี้ไม่ได้ — ใช้ \u201Cโอนความเป็นเจ้าของ\u201D ที่หน้าทีมของบริษัท "
+                   + "(โดยเจ้าของเดิม หรือผู้ดูแล support ของบริษัทที่ยังเป็นแอดมินแพลตฟอร์ม) เพื่อให้ผ่านด่านเดียวกันและมีร่องรอยการโอน";
+        return null;
+    }
+
+    /// <summary>ฝ่ายค้านรอบสาม P2-2: รับคำเชิญ — ตรวจบทบาทซ้ำตอนรับ (คำเชิญที่ออกก่อนรอบ 201 ยังค้างได้) · ผู้เชิญไม่ใช่/ไม่รู้ว่าเป็นแอดมินแพลตฟอร์ม
+    /// ⇒ SystemAdmin ไม่ได้ · PlatformSupport ไม่ได้เสมอ · null = รับได้</summary>
+    public static string? InvitationRoleBlock(UserRole role, bool inviterIsPlatformAdmin)
+    {
+        if (MayAssign(role, inviterIsPlatformAdmin)) return null;
+        return AssignDeniedMessage(role) + " — คำเชิญนี้ใช้ไม่ได้ ขอคำเชิญใหม่ที่ระบุบทบาทของบริษัทจากเจ้าของบริษัท";
+    }
+
     public static Outcome Decide(bool isApiKeyRequest, bool isPlatformAdmin, UserRole? callerRole,
         bool targetUserExists, UserRole? targetCurrentRole, bool targetIsSelf = false)
     {

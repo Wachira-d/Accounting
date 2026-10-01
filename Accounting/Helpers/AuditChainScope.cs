@@ -28,4 +28,29 @@ public static class AuditChainScope
             if (r.CompanyId is null || r.CompanyId == Guid.Empty)
                 r.CompanyId = owner;
     }
+
+    // ── ฝ่ายค้านรอบสาม (รอบ 201 · ทีม PL) ──
+
+    /// <summary>P1-1: ธุรกรรมระดับนี้ประทับ audit ตอน commit ได้ไหม — null = ได้ · Serializable/RepeatableRead/Snapshot ⇒ เหตุผล
+    /// (PostgreSQL จับ snapshot ตั้งแต่คำสั่งแรก ⇒ อ่านปลาย chain หลังได้ล็อกก็ยังเห็นค่าเก่า ⇒ PrevHash ซ้ำกับธุรกรรมที่ commit ระหว่างนั้น = แตกกิ่ง) ·
+    /// Unspecified = ค่าเริ่มต้นของฐาน (ReadCommitted)</summary>
+    public static string? IsolationBlockReason(System.Data.IsolationLevel level)
+    {
+        if (level is System.Data.IsolationLevel.ReadCommitted or System.Data.IsolationLevel.ReadUncommitted or System.Data.IsolationLevel.Unspecified)
+            return null;
+        return $"ธุรกรรมระดับ {level} ประทับ audit hash chain ไม่ได้ (อ่านปลาย chain จาก snapshot เก่า ⇒ chain แตกกิ่ง) — "
+               + "ใช้ ReadCommitted + SELECT … FOR UPDATE บนแถวที่ต้องกันแข่ง (ธุรกรรมนี้ถูกยกเลิกทั้งก้อน ไม่มีอะไรถูกบันทึก)";
+    }
+
+    /// <summary>P2-1: แถวต่อคำสั่ง INSERT — 500 × 13 คอลัมน์ = 6,500 พารามิเตอร์ (เพดาน PostgreSQL 65,535)</summary>
+    public const int InsertBatchRows = 500;
+
+    /// <summary>P2-1: SQL INSERT หลายแถว (placeholder <c>{n}</c> ของ EF เรียงตามแถวแล้วตามคอลัมน์) — ลำดับแถวใน VALUES = ลำดับที่ส่งเข้า</summary>
+    public static string InsertSql(string table, IReadOnlyList<string> columns, int rowCount)
+    {
+        var cols = string.Join(", ", columns.Select(c => "\"" + c + "\""));
+        var rows = Enumerable.Range(0, rowCount)
+            .Select(r => "(" + string.Join(", ", Enumerable.Range(0, columns.Count).Select(c => "{" + (r * columns.Count + c) + "}")) + ")");
+        return "INSERT INTO \"" + table + "\" (" + cols + ") VALUES " + string.Join(", ", rows);
+    }
 }

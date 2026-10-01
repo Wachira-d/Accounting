@@ -4315,6 +4315,14 @@ _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอ�
 - **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
 - เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit c5fefbc6)_
 
+_2026-10-01 รอบ 201 ทีม PL ชุด 6 — ฝ่ายค้านรอบสาม (P1-1 · P1-2 · P2-1 · P2-2):
+- **P1-1** ตัวประทับ audit ตอน commit ล้มดังเมื่อธุรกรรมเป็น Serializable/RepeatableRead/Snapshot และมีแถวรอประทับ (`AuditChainScope.IsolationBlockReason` ·
+  interceptor ส่ง `transaction.IsolationLevel`) · `CreateInvoiceFromObligationAsync` + `AdminAttach` เป็น ReadCommitted + `SELECT … FOR UPDATE` (CompanyId ใน SQL) ·
+  `tools/audit_direct_add_check.py` ratchet ห้าม isolation ระดับ snapshot ใหม่ทั้งเรพ (+ self-test)
+- **P1-2** `OwnershipTransferPolicy.AdminRoleChangeBlock` — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ (ชี้เส้นโอนเจ้าของ) · `AddChainedAuditLog` บทบาทเดิม/ใหม่
+- **P2-1** `AuditInsertBatches` + `AuditChainScope.InsertSql/InsertBatchRows` (500 แถว/คำสั่ง) ทั้ง sync/async
+- **P2-2** `OwnershipTransferPolicy.InvitationRoleBlock` ที่ `InvitationController.Accept` และ `AuthService.ConsumeInvitationAsync`
+- เทสต์ `PlatformRound201Rv3Tests` · `Db/AuditChainCommitDbTests` +2 · required_call_site ปรับ 4 + เพิ่ม 5 แถว — commit adf19a87)_
 
 _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสาม (P1-1 · P2-1 · P2-5)
 - **P1-1** `Helpers/RemittanceInclusion` (ตัวตัดสินเดียว): บันทึกนำส่ง ภ.ง.ด. นับเป็น "ยื่นแล้ว" เฉพาะของที่เกิดก่อนหรือพร้อมเวลาบันทึกนำส่งล่าสุดของงวด ·
