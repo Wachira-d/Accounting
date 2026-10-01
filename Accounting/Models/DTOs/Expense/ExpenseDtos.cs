@@ -75,7 +75,10 @@ public record ExpenseClaimResponse(
     // to /pages/documents.html?editDoc=<id> for the auto-generated
     // CertificateInLieu so the bookkeeper can review/print.
     Guid? CertificateInLieuDocumentId = null,
-    string? CertificateInLieuDocumentNumber = null);
+    string? CertificateInLieuDocumentNumber = null,
+    // ฝ่ายค้านรอบ 201 รอบสาม P2-2: ข้อสังเกตรายจ่ายต้องห้าม §65 ตรีที่ผ่านตอนอนุมัติใบสำคัญจ่ายจากการกดจ่าย (ไม่บล็อก · คำตัดสินข้อ 110) —
+    // มีค่าเฉพาะคำตอบของ POST pay (null = ไม่ได้มาจากการกดจ่าย · ว่าง = ไม่มีข้อสังเกต) · หน้า expense.html แสดงเป็น toast เตือน
+    IReadOnlyList<string>? PassedApprovalNotes = null);
 
 public record ExpenseClaimLineResponse(
     Guid Id,

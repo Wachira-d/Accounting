@@ -106,3 +106,24 @@ GROUP BY d."CompanyId";
 
 **ความเสี่ยงคอมไพล์เพิ่ม**: `ApprovalAckSource.Unattended = 4` (switch expression อื่นในเรพไม่ครอบ enum นี้แบบครบชุด — ตรวจแล้วมีแค่ในไฟล์เดียว) · `EFilingCaveat` overload (string) / (string, (DateTime, DateTime)?, DateTime?) · `WarnByFor` 4 อาร์กิวเมนต์ ·
 `existingPv` ternary ระหว่าง anonymous type กับ `null` · ชื่อ `ExpenseClaimPayVoucher.StepFor` (เดิมชื่อ `Decide` — `nullable_arg_check` สับสนกับ `Decide(bool)` ตัวอื่น ⇒ เปลี่ยนชื่อ)
+
+## 8. แก้ผลฝ่ายค้านรอบสาม (P1-2 · P2-2/3/4/6) — คอมมิต `<pending>` · หลัง merge `2c8e64d8`
+
+| ID | ตรวจซ้ำที่ HEAD | สถานะ | ที่แก้ | เทสต์ |
+|---|---|---|---|---|
+| P1-2 | จริง — `IsProfitAndLossCode` ดูเลขนำหน้า 5 อย่างเดียว · `accInfo` ไม่มีชนิดผัง | ✅ | `Section65TerValidator.Evaluate(…, accountTypes:)` (optional · ผู้เรียกเก่าไม่พัง) · `IsProfitAndLossAccount(code, type)`: รู้ชนิด = `Expense` เท่านั้น · ไม่รู้ = เลข 5/CIT · ไม่ผูกผัง = ตรวจ · (5) `IsExpenseLedger` · `EvaluateSection65TerAsync` select `a.AccountType` | `P12_ผังผู้ใช้สร้าง_6100_*` · `P12_ทิศตรงข้าม_*` (21920/11920/31200/5999 หนี้สิน/12400 capex/ไม่รู้ชนิด) |
+| P2-2 | จริง — 4 จุดใช้รูปสามอาร์กิวเมนต์ ข้อสังเกตลงแค่ InternalNotes/audit | ✅ | ที่รับ `passedWarnings` (optional ใน interface) · `PassedNotice`/`PassedNotes` ตัวเดียว · OCR = `[APPROVE-S65-NOTE]` (เขียนแถวสแกน + `document-scan.html` toast/การ์ด) · LINE ×2 ต่อท้ายข้อความ · ใบเบิก = `PassedApprovalNotes` + `expense.html` toast | `P22_*` (สองทิศ: ไม่มีข้อสังเกต = null) |
+| P2-3 | จริง — `DisburseAsync` สร้าง PV ทุกครั้ง · ไม่จับ `DocumentApprovalWarningsException` | ✅ | ย้ายเป็น `Helpers/LinkedPayVoucher` + `LinkedPayVoucherSource` (ไม่ copy) · ผูก `DisbursementDocumentId` ก่อนอนุมัติ · 422 `ADVANCE-PAY-PV-WARNINGS` · `salary-advance.html` แยก "PV ร่าง รออนุมัติ" กับ "PV ออกแล้ว" + ลิงก์เปิดใบ | `RTX5_*` (ชื่อใหม่) · `P23_*` |
+| P2-4 | จริง — literal `"RD-86 / RD-82/5(1)"` | ✅ | `ApprovalAcknowledgement.LegalReference(warnings)` (§65 = รหัสข้อจาก `Section65TerApprovalWarnings.RuleCodeOf` · อื่น ๆ = มาตราเดิม · ไม่ซ้ำ) | `P24_*` |
+| P2-6 | จริง — 9 จุด `acknowledgeWarnings: true` ⇒ `User` ⇒ `AcknowledgedByPerson=true` | ✅ ย้ายไป `SystemWorkflow` | เหตุที่ไม่ใช้ `Unattended`: Unattended หยุดทุกคำเตือนนอกชุด §65 ⇒ เช็กเอาต์/ใบเสร็จแพลตฟอร์ม/คำสั่งซื้อออนไลน์ที่มีคำเตือนทั่วไป (เช่น เครดิตเกิน · งบ) จะ**ออกเอกสารไม่ได้** · `SystemWorkflow` ผ่านทุกคำเตือนยกเว้นชุดสแกน (`IsGapWarning`) ซึ่งเอกสารที่เพิ่งสร้างในคำขอเดียวกันไม่มีวันมี (ไม่มีแถวสแกนชี้มา) และ override ด่านงบ/วงเงินเหมือน User ⇒ พฤติกรรมเท่าเดิม เปลี่ยนแค่ร่องรอย | required_call_site 9 แถว (`forbid acknowledgeWarnings: true` / `Actor, true)`) |
+
+**F3 ข้อ 7**: `acknowledgeWarnings: true` ในโค้ด (นอกคอมเมนต์ helper) = 0 · รูปสามอาร์กิวเมนต์ที่เหลือ = ใบประจำ (`RecurringTransactionService:520` — ไม่มีคนรอ ⇒ ร่องรอยพอ) ·
+ทางเข้าที่มีคนรอแต่ยังไม่คืนข้อสังเกต: ไม่พบเพิ่ม (มือถือ/เว็บใช้ None/User = หยุดให้รับทราบอยู่แล้ว)
+**F3 ข้อ 10**: audit เก่ามี `legalReference` เดิม · `NonDeductibleAmount` ของใบเก่าในผัง 6xxx ไม่ถูกคำนวณย้อน (คงหลักเดิมของ RTX-3 — ไม่ย้อน) · ร่าง PV เงินทดรองที่ค้างจากก่อนแก้ไม่ผูกกับรายการ (ไม่มีทางรู้ว่าเป็นของรายการไหนอย่างแน่นอน — ไม่ backfill)
+
+**ความเสี่ยงคอมไพล์**: พารามิเตอร์ optional `ICollection<string>? passedWarnings = null` บน interface + impl (ผู้เรียกเดิมทุกตัวยัง resolve) · `paid with { PassedApprovalNotes = … }`
+(record positional + optional ท้าย) · `existingPv` ternary anonymous/null ใน `SalaryAdvanceService` (รูปเดียวกับใบเบิกที่ CI ผ่านแล้ว) · `Accounting.Helpers.` เต็มชื่อใน
+`SalaryAdvanceService`/`PlatformBillingDocumentIssuer` (ไม่มี `using Accounting.Helpers`) · `accRows` เป็น list ของ anonymous type แล้ว `ToDictionary` สองชุด
+
+**คำถามค้าง**: (1) ใบประจำ (`RecurringTransactionService`) ไม่มีคนรอ — คืนข้อสังเกตทางแจ้งเตือนไหม? (2) ร่าง PV เงินทดรองที่ค้างเมื่อกด "ยกเลิก" รายการ — ควรยกเลิกใบร่างตามไหม (ตอนนี้คงไว้)
+

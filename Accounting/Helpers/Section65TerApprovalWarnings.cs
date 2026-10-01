@@ -54,6 +54,37 @@ public static class Section65TerApprovalWarnings
     public static bool IsWarning(string warning)
         => warning.StartsWith(Prefix, StringComparison.Ordinal);
 
+    /// <summary>มาตราอ้างอิงเมื่ออ่านรหัสกฎจากข้อความไม่ได้</summary>
+    public const string LegalReferenceFallback = "RD-65ter";
+
+    /// <summary>รหัสกฎของข้อสังเกตชุดนี้ (เช่น <c>RD-65ter(6)</c>) จากข้อความที่ <see cref="For"/> สร้าง (ท้ายข้อความ <c>[รหัส]</c>) ·
+    /// ไม่ใช่ข้อความชุดนี้/ไม่มีรหัส = null — ใช้ลง LegalReference ของ audit (ฝ่ายค้านรอบ 201 รอบสาม P2-4)</summary>
+    public static string? RuleCodeOf(string warning)
+    {
+        if (!IsWarning(warning) || !warning.EndsWith("]", StringComparison.Ordinal)) return null;
+        var open = warning.LastIndexOf('[');
+        if (open < 0 || open >= warning.Length - 2) return null;
+        var code = warning.Substring(open + 1, warning.Length - open - 2);
+        return code.StartsWith("RD-65ter", StringComparison.Ordinal) ? code : null;
+    }
+
+    /// <summary>
+    /// **ข้อสังเกต §65 ตรีที่ทางเข้าอัตโนมัติส่งผ่านแล้ว — คืนให้คนที่กดเห็น** (ฝ่ายค้านรอบ 201 รอบสาม P2-2 · คำตัดสินข้อ 110: ไม่บล็อก แต่คนที่อยู่หน้าจอ/แชท
+    /// ต้องรู้ว่าระบบบันทึกยอดบวกกลับ ภ.ง.ด.50 ไว้) · กรองเฉพาะชุดนี้จากรายการที่ <c>ApproveDocumentAsync(..., passedWarnings)</c> เก็บมา ·
+    /// ว่าง = null (ไม่ต้องแสดงอะไร) · บรรทัดเดียว (ใช้ได้ทั้ง ProcessingNotes · ข้อความ LINE · toast)
+    /// </summary>
+    public static string? PassedNotice(IEnumerable<string>? passedWarnings)
+    {
+        var notes = PassedNotes(passedWarnings);
+        if (notes.Count == 0) return null;
+        return $"อนุมัติแล้วพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี {notes.Count} ข้อ (ไม่บล็อก — ตรวจก่อนปิดรอบ): "
+               + string.Join(" · ", notes.Select(n => n.Replace('\n', ' ')));
+    }
+
+    /// <summary>เฉพาะข้อสังเกตชุดนี้จากรายการคำเตือนที่ผ่าน (ลำดับเดิม)</summary>
+    public static IReadOnlyList<string> PassedNotes(IEnumerable<string>? passedWarnings)
+        => passedWarnings?.Where(IsWarning).ToList() ?? new List<string>();
+
     /// <summary>ข้อความคำเตือนก่อนอนุมัติจากผลประเมิน (ลำดับตามผลของตัวตรวจ · ว่าง = ไม่มีอะไรต้องให้เห็น)</summary>
     public static IReadOnlyList<string> For(Section65TerValidator.Result result)
         => result.Findings.Where(Surfaces).Select(Text).ToList();

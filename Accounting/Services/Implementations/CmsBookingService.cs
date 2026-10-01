@@ -626,8 +626,9 @@ public class CmsBookingService : ICmsBookingService
             var baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
             try
             {
+                // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
                 await _docService.ApproveDocumentAsync(companyId, created.Id,
-                    "storefront-booking", acknowledgeWarnings: true);
+                    "storefront-booking", ApprovalAckSource.SystemWorkflow, withAiHints: false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

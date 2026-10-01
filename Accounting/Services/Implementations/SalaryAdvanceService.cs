@@ -307,8 +307,44 @@ public class SalaryAdvanceService : ISalaryAdvanceService
             },
             BankAccountId: request.BankAccountId);
 
-        var doc = await _documentService.CreateDocumentAsync(companyId, createReq, disbursedBy);
-        await _documentService.ApproveDocumentAsync(companyId, doc.Id, disbursedBy);
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-3 (คลาสเดียวกับ RTX-5 ของใบเบิก): เดิมสร้าง PV ทุกครั้งแล้วค่อยอนุมัติ — อนุมัติหยุดด้วยคำเตือน ⇒ ใบร่างค้างไม่ผูกกับรายการ
+        // + exception ไม่ถูกแปลง (500) + กดใหม่ได้ใบร่างเพิ่มอีกใบ · ตอนนี้ผูกใบร่างทันทีหลังสร้าง · กดซ้ำใช้ใบเดิม · ตัวตัดสินตัวเดียวกับใบเบิก (Helpers/LinkedPayVoucher)
+        var existingPv = advance.DisbursementDocumentId is Guid pvExistingId
+            ? await _db.Set<Document>().AsNoTracking()
+                .Where(d => d.Id == pvExistingId && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => new { d.Status, d.DocumentNumber })
+                .FirstOrDefaultAsync()
+            : null;
+        var pvStep = Accounting.Helpers.LinkedPayVoucher.StepFor(advance.DisbursementDocumentId, existingPv?.Status);
+        Guid pvId;
+        string pvNumber;
+        if (pvStep == Accounting.Helpers.LinkedPayVoucherStep.Create)
+        {
+            var created = await _documentService.CreateDocumentAsync(companyId, createReq, disbursedBy);
+            pvId = created.Id;
+            pvNumber = created.DocumentNumber;
+            advance.DisbursementDocumentId = pvId;   // ผูกใบร่างก่อนอนุมัติ — สถานะยังเป็น Approved จนจ่ายจริง
+            await _db.SaveChangesAsync();
+        }
+        else
+        {
+            pvId = advance.DisbursementDocumentId!.Value;
+            pvNumber = existingPv!.DocumentNumber;
+        }
+        if (pvStep != Accounting.Helpers.LinkedPayVoucherStep.AlreadyIssued)
+        {
+            try
+            {
+                await _documentService.ApproveDocumentAsync(companyId, pvId, disbursedBy);
+            }
+            catch (DocumentApprovalWarningsException ex)
+            {
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.LinkedPayVoucher.WarningsMessage(Accounting.Helpers.LinkedPayVoucherSource.SalaryAdvance, pvNumber, ex.Warnings),
+                    Accounting.Helpers.LinkedPayVoucher.WarningsRuleCode(Accounting.Helpers.LinkedPayVoucherSource.SalaryAdvance), 422);
+            }
+        }
+        var doc = await _documentService.GetDocumentAsync(companyId, pvId);
 
         advance.Status = "Disbursed";
         advance.DisbursedAt = disbursementDate;

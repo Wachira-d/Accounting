@@ -1531,10 +1531,13 @@
         const fail = pick('APPROVE-FAIL');
         const skip = pick('APPROVE-SKIP');
         const gaps = pick('Σ-GAP');
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-2 — อนุมัติแล้วพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี (ไม่บล็อก · ข้อความจากเซิร์ฟเวอร์ Section65TerApprovalWarnings.PassedNotice)
+        const s65 = pick('APPROVE-S65-NOTE');
         return {
           notApproved: fail.length > 0 || skip.length > 0,
           notApprovedReason: fail[0] || skip[0] || 'ไม่ทราบสาเหตุ',
           gaps,
+          s65,
           warnings: [
             ...gaps,
             ...pick('DATE-UNKNOWN'),
@@ -1554,6 +1557,7 @@
             ...pick('VAT-DERIVED'),
             // รอบ 200 ทีม K2 (C-09) — สกุลเงินไม่แน่ใจ (ข้อความจากเซิร์ฟเวอร์ Helpers/OcrCurrencyEvidence)
             ...pick('CURRENCY-UNSURE'),
+            ...s65,
             ...skip,
           ],
         };
@@ -3772,6 +3776,8 @@
             if (cf.notApproved) {
               Layout.toast('สร้างเอกสารแล้ว แต่ยังไม่ได้อนุมัติ:\n' + cf.notApprovedReason
                 + '\n\nเปิดใบเพื่อตรวจ/แก้ แล้วกดอนุมัติเอง', 'warning', 9000);
+            } else if (cf.s65.length) {
+              Layout.toast('สร้าง + อนุมัติเอกสารแล้ว — ' + cf.s65.join(' · '), 'warning', 15000);
             } else {
               Layout.toast('สร้าง + อนุมัติเอกสารแล้ว');
             }

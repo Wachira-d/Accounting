@@ -527,7 +527,7 @@ public class ExpenseClaimService : IExpenseClaimService
             // ผู้สร้าง = ระบบ (ใบเกิดจากใบเบิก) · ผู้อนุมัติ = <b>ผู้กดจ่าย</b> — เดิมอนุมัติในนาม "system:expense-claim" ⇒ ใบสำคัญจ่าย
             // + JE เงินสดออกข้าม DocumentPermissionHelper.CanApproveAsync (ฝ่ายค้านรอบสอง R2-C2) · สิทธิ์อนุมัติ PV ตรวจแล้วที่
             // EnsureClaimActionAsync(Pay) · SoD ของเอกสาร (SodBlockSelfApproval) เทียบผู้สร้างกับผู้อนุมัติได้ตามจริง
-            // รอบ 201 ฝ่ายค้าน TX (RTX-5): กดจ่ายซ้ำต้องไม่สร้างใบร่างซ้ำ — ผูกใบร่างกับใบเบิกทันทีหลังสร้าง · กดซ้ำใช้ใบเดิม (Helpers/ExpenseClaimPayVoucher) ·
+            // รอบ 201 ฝ่ายค้าน TX (RTX-5): กดจ่ายซ้ำต้องไม่สร้างใบร่างซ้ำ — ผูกใบร่างกับใบเบิกทันทีหลังสร้าง · กดซ้ำใช้ใบเดิม (Helpers/LinkedPayVoucher — ตัวเดียวกับเงินทดรอง) ·
             // คำเตือนที่ต้องมีคนรับทราบ ⇒ ข้อความไทยพร้อมทางไปต่อ (เดิม exception ไม่ถูกแปลง = 500) · ข้อสังเกต §65 ตรีไม่หยุดเส้นนี้ (คำตัดสินข้อ 110 · แหล่ง Unattended)
             var existingPv = claim.PaymentVoucherDocumentId is Guid pvExistingId
                 ? await _db.Set<Document>().AsNoTracking()
@@ -535,10 +535,10 @@ public class ExpenseClaimService : IExpenseClaimService
                     .Select(d => new { d.Status, d.DocumentNumber })
                     .FirstOrDefaultAsync()
                 : null;
-            var pvStep = Accounting.Helpers.ExpenseClaimPayVoucher.StepFor(claim.PaymentVoucherDocumentId, existingPv?.Status);
+            var pvStep = Accounting.Helpers.LinkedPayVoucher.StepFor(claim.PaymentVoucherDocumentId, existingPv?.Status);
             Guid pvId;
             string pvNumber;
-            if (pvStep == Accounting.Helpers.ExpenseClaimPayVoucherStep.Create)
+            if (pvStep == Accounting.Helpers.LinkedPayVoucherStep.Create)
             {
                 var created = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
                 pvId = created.Id;
@@ -551,17 +551,20 @@ public class ExpenseClaimService : IExpenseClaimService
                 pvId = claim.PaymentVoucherDocumentId!.Value;
                 pvNumber = existingPv!.DocumentNumber;
             }
-            if (pvStep != Accounting.Helpers.ExpenseClaimPayVoucherStep.AlreadyIssued)
+            // ฝ่ายค้านรอบ 201 รอบสาม P2-2: ผู้กดจ่ายอยู่หน้าจอ แต่เส้นนี้ไม่มีขั้นรับทราบ (Unattended — §65 ตรีไม่บล็อก) ⇒ ข้อสังเกตที่ผ่านคืนในคำตอบ
+            var passedWarnings = new List<string>();
+            if (pvStep != Accounting.Helpers.LinkedPayVoucherStep.AlreadyIssued)
             {
                 try
                 {
-                    await _documentService.ApproveDocumentAsync(companyId, pvId, payerUserId.ToString());
+                    await _documentService.ApproveDocumentAsync(companyId, pvId, payerUserId.ToString(),
+                        Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passedWarnings: passedWarnings);
                 }
                 catch (DocumentApprovalWarningsException ex)
                 {
                     throw new Accounting.Helpers.BusinessRuleException(
-                        Accounting.Helpers.ExpenseClaimPayVoucher.WarningsMessage(pvNumber, ex.Warnings),
-                        Accounting.Helpers.ExpenseClaimPayVoucher.WarningsRuleCode, 422);
+                        Accounting.Helpers.LinkedPayVoucher.WarningsMessage(Accounting.Helpers.LinkedPayVoucherSource.ExpenseClaim, pvNumber, ex.Warnings),
+                        Accounting.Helpers.LinkedPayVoucher.WarningsRuleCode(Accounting.Helpers.LinkedPayVoucherSource.ExpenseClaim), 422);
                 }
             }
             var doc = await _documentService.GetDocumentAsync(companyId, pvId);
@@ -578,7 +581,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 title: $"จ่ายเงินใบเบิก {claim.ClaimNumber} แล้ว",
                 message: $"{claim.Title} · {claim.TotalAmount:N2} บาท · ใบสำคัญจ่าย {doc.DocumentNumber}");
 
-            return await GetByIdAsync(companyId, claim.Id);
+            var paid = await GetByIdAsync(companyId, claim.Id);
+            return paid with { PassedApprovalNotes = Accounting.Helpers.Section65TerApprovalWarnings.PassedNotes(passedWarnings) };
         }
 
         // Legacy fallback when DocumentService is not wired (e.g. test

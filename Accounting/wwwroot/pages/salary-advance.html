@@ -227,7 +227,10 @@
             <td class="text-right">${a.monthlyDeduction > 0 ? Layout.money(a.monthlyDeduction) : '<span style="color:#94a3b8">เต็มจำนวน</span>'}</td>
             <td class="text-right ${a.outstandingAmount > 0 ? 'font-semibold' : 'text-gray-400'}">${Layout.money(a.outstandingAmount)}</td>
             <td>${statusBadge(a.status)}</td>
-            <td>${a.disbursementDocumentId ? '📄 PV ออกแล้ว' : '<span style="color:#94a3b8">-</span>'}</td>
+            <td>${a.disbursementDocumentId
+              // ฝ่ายค้านรอบ 201 รอบสาม P2-3: PV ร่างผูกกับรายการตั้งแต่สร้าง (กดจ่ายซ้ำใช้ใบเดิม) — ยังไม่จ่าย = ใบร่างรออนุมัติ ไม่ใช่ "ออกแล้ว"
+              ? (a.status === 'Approved' ? '📝 PV ร่าง รออนุมัติ' : '📄 PV ออกแล้ว')
+              : '<span style="color:#94a3b8">-</span>'}</td>
             <td><button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button></td>
           </tr>`).join('');
           const totalPages = data?.totalPages || 1;
@@ -334,7 +337,8 @@
             ${a.reason ? `<div style="margin-bottom:10px"><div class="text-xs text-gray-500">เหตุผล</div><div>${Layout.esc(a.reason)}</div></div>` : ''}
             ${a.approvedAt ? `<div style="background:#f0fdf4;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">✓ อนุมัติเมื่อ ${Layout.date(a.approvedAt)} โดย ${Layout.esc(a.approvedByName || '-')} ${a.approvalNotes ? '<br><span style="color:#64748b">' + Layout.esc(a.approvalNotes) + '</span>' : ''}</div>` : ''}
             ${a.rejectionReason ? `<div style="background:#fef2f2;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px;color:#991b1b">✕ ปฏิเสธ: ${Layout.esc(a.rejectionReason)}</div>` : ''}
-            ${a.disbursedAt ? `<div style="background:#eff6ff;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">💸 จ่ายเงินเมื่อ ${Layout.date(a.disbursedAt)} ${a.disbursementDocumentId ? '— ใบสำคัญจ่าย <a href="/pages/documents.html#doc=' + a.disbursementDocumentId + '" style="color:#0ea5e9">ดูเอกสาร</a>' : ''}</div>` : ''}`;
+            ${a.disbursedAt ? `<div style="background:#eff6ff;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">💸 จ่ายเงินเมื่อ ${Layout.date(a.disbursedAt)} ${a.disbursementDocumentId ? '— ใบสำคัญจ่าย <a href="/pages/documents.html#doc=' + a.disbursementDocumentId + '" style="color:#0ea5e9">ดูเอกสาร</a>' : ''}</div>` : ''}
+            ${!a.disbursedAt && a.disbursementDocumentId ? `<div style="background:#fffbeb;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:13px">📝 มีใบสำคัญจ่ายร่างที่ยังอนุมัติไม่ผ่าน — <a href="/pages/documents.html#doc=${Layout.esc(a.disbursementDocumentId)}" style="color:#0ea5e9">เปิดใบ</a> ตรวจแล้วกดอนุมัติ แล้วกลับมากด “จ่ายเงิน” (ระบบใช้ใบเดิม ไม่สร้างซ้ำ)</div>` : ''}`;
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (a.status === 'Draft') {

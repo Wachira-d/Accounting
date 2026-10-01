@@ -174,6 +174,27 @@ public static class ApprovalAcknowledgement
         _ => UserRuleCode,
     };
 
+    /// <summary>มาตราอ้างอิงของคำเตือนทั่วไปก่อนอนุมัติ (ใบกำกับ §86 · ภาษีซื้อต้องห้าม §82/5(1)) — ค่าเดิมของ audit ก่อนรอบ 201</summary>
+    public const string GeneralWarningsLegalReference = "RD-86 / RD-82/5(1)";
+
+    /// <summary>
+    /// **มาตราอ้างอิงของร่องรอย "อนุมัติทั้งที่มีคำเตือน" ตามชุดคำเตือนที่ผ่านจริง** (ฝ่ายค้านรอบ 201 รอบสาม P2-4 · กฎ M Legal reference logging) —
+    /// เดิมประทับ <see cref="GeneralWarningsLegalReference"/> ตายตัวทุกแถว ⇒ ทางเข้าอัตโนมัติ/API ที่ผ่านได้แค่ชุด §65 ตรี กลับอ้าง §86/§82/5(1)
+    /// ซึ่งไม่เกี่ยว · ข้อสังเกต §65 ตรี = รหัสกฎของแต่ละข้อ (เช่น <c>RD-65ter(6)</c>) · คำเตือนชนิดอื่น = มาตราทั่วไปเดิม · ไม่ซ้ำ · คงลำดับที่พบ
+    /// </summary>
+    public static string LegalReference(IReadOnlyList<string> warnings)
+    {
+        var refs = new List<string>();
+        foreach (var w in warnings)
+        {
+            var r = Section65TerApprovalWarnings.IsWarning(w)
+                ? Section65TerApprovalWarnings.RuleCodeOf(w) ?? Section65TerApprovalWarnings.LegalReferenceFallback
+                : GeneralWarningsLegalReference;
+            if (!refs.Contains(r)) refs.Add(r);
+        }
+        return refs.Count == 0 ? GeneralWarningsLegalReference : string.Join(" · ", refs);
+    }
+
     /// <summary>คนเป็นผู้รับทราบจริงไหม (ลงใน audit เป็นช่องแยก — ห้ามให้ผู้อ่านเดาจากชื่อผู้อนุมัติ)</summary>
     public static bool AcknowledgedByPerson(ApprovalAckSource source) => source == ApprovalAckSource.User;
 

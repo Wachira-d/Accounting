@@ -257,19 +257,21 @@ public class Round201TxTests
     public void RTX5_ใบเบิก_กดจ่ายซ้ำใช้ใบร่างเดิม_ไม่สร้างซ้ำ()
     {
         var id = Guid.NewGuid();
-        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(null, null));
-        Assert.Equal(ExpenseClaimPayVoucherStep.ReuseDraft, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Draft));
-        Assert.Equal(ExpenseClaimPayVoucherStep.ReuseDraft, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.WaitingApproval));
+        Assert.Equal(LinkedPayVoucherStep.Create, LinkedPayVoucher.StepFor(null, null));
+        Assert.Equal(LinkedPayVoucherStep.ReuseDraft, LinkedPayVoucher.StepFor(id, DocumentStatus.Draft));
+        Assert.Equal(LinkedPayVoucherStep.ReuseDraft, LinkedPayVoucher.StepFor(id, DocumentStatus.WaitingApproval));
         // ผู้ใช้อนุมัติที่หน้าเอกสารแล้ว ⇒ ไม่อนุมัติซ้ำ
-        Assert.Equal(ExpenseClaimPayVoucherStep.AlreadyIssued, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Paid));
-        Assert.Equal(ExpenseClaimPayVoucherStep.AlreadyIssued, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Approved));
+        Assert.Equal(LinkedPayVoucherStep.AlreadyIssued, LinkedPayVoucher.StepFor(id, DocumentStatus.Paid));
+        Assert.Equal(LinkedPayVoucherStep.AlreadyIssued, LinkedPayVoucher.StepFor(id, DocumentStatus.Approved));
         // ทิศตรงข้าม: ใบเดิมถูกยกเลิก/ปฏิเสธ/หาไม่เจอ ⇒ สร้างใบใหม่
-        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Voided));
-        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Rejected));
-        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, null));
-        var msg = ExpenseClaimPayVoucher.WarningsMessage("DRAFT-1", new[] { "คำเตือน ก" });
+        Assert.Equal(LinkedPayVoucherStep.Create, LinkedPayVoucher.StepFor(id, DocumentStatus.Voided));
+        Assert.Equal(LinkedPayVoucherStep.Create, LinkedPayVoucher.StepFor(id, DocumentStatus.Rejected));
+        Assert.Equal(LinkedPayVoucherStep.Create, LinkedPayVoucher.StepFor(id, null));
+        var msg = LinkedPayVoucher.WarningsMessage(LinkedPayVoucherSource.ExpenseClaim, "DRAFT-1", new[] { "คำเตือน ก" });
         Assert.Contains("DRAFT-1", msg);
         Assert.Contains("ไม่สร้างซ้ำ", msg);
+        Assert.Contains("ใบเบิก", msg);
+        Assert.Equal("EXPENSE-PAY-PV-WARNINGS", LinkedPayVoucher.WarningsRuleCode(LinkedPayVoucherSource.ExpenseClaim));   // รหัสเดิมไม่เปลี่ยน
     }
 
     [Fact]
@@ -286,5 +288,105 @@ public class Round201TxTests
         // วันหยุดราชการไหลเข้าวันที่ใช้เตือนผ่านตัวเดียว
         var holidays = new HashSet<DateTime> { due.Paper.Date };
         Assert.True(TaxFilingDeadline.WarnByFor(TaxType.VatPp36, 2026, 9, holidays) > due.Paper);
+    }
+
+    // ═════════════════ ฝ่ายค้านรอบ 201 รอบสาม (P1-2 · P2-2/3/4) ═════════════════
+
+    private static readonly Guid P12Acc = Guid.NewGuid();
+
+    private static Section65TerValidator.Result EvalTyped(string desc, decimal amount, string code, AccountType? type)
+    {
+        var doc = new Document
+        {
+            DocumentType = DocumentType.Expense, TotalAmount = amount,
+            Lines = new List<DocumentLine> { new() { AccountId = P12Acc, Amount = amount, VatAmount = 0m, Description = desc } },
+        };
+        var info = new Dictionary<Guid, (string Code, string Name)> { [P12Acc] = (code, "บัญชีทดสอบ") };
+        var types = type.HasValue ? new Dictionary<Guid, AccountType> { [P12Acc] = type.Value } : null;
+        return Section65TerValidator.Evaluate(doc, info, "บจก. ผู้รับ", "0105551234567",
+            new Section65TerValidator.Context(10_000_000m, 1_000_000m, PriorYtdEntertainmentExpense: 0m, HasSourceDocument: true),
+            accountTypes: types);
+    }
+
+    [Fact]
+    public void P12_ผังผู้ใช้สร้าง_6100_ชนิดค่าใช้จ่าย_ถูกตรวจ()
+    {
+        // ผังนำเข้า/สร้างเอง "6100 ค่าปรับ" ชนิด Expense — เดิมดูเลขนำหน้า 5 อย่างเดียว ⇒ หลุดการบวกกลับเงียบ
+        var penalty = EvalTyped("ค่าปรับจราจร", 1_000m, "6100", AccountType.Expense);
+        Assert.Contains(penalty.Findings, f => f.RuleCode == "RD-65ter(6)" && f.AddBackAmount == 1_000m);
+        Assert.Equal(1_000m, penalty.TotalAddBack);
+        // (6 ทวิ) · (3) · (5) capex ก็ตัดสินด้วยชนิดผังเดียวกัน
+        Assert.Contains(EvalTyped("ภาษีเงินได้นิติบุคคล", 5_000m, "6900", AccountType.Expense).Findings, f => f.RuleCode == "RD-65ter(6bis)");
+        Assert.Contains(EvalTyped("ค่าใช้จ่ายส่วนตัวกรรมการ", 4_000m, "6200", AccountType.Expense).Findings, f => f.RuleCode == "RD-65ter(3)");
+        Assert.Contains(EvalTyped("เครื่องจักรใหม่", 80_000m, "6300", AccountType.Expense).Findings, f => f.RuleCode == "RD-65ter(5)");
+        // ผังมาตรฐาน 5xxxx ชนิด Expense ยังตรวจเหมือนเดิม
+        Assert.Equal(1_000m, EvalTyped("ค่าปรับจราจร", 1_000m, "53700", AccountType.Expense).TotalAddBack);
+    }
+
+    [Fact]
+    public void P12_ทิศตรงข้าม_หนี้สิน_สินทรัพย์_ทุน_ไม่บวกกลับ()
+    {
+        // ชำระ ภ.ง.ด.50/51 · ถอนใช้ส่วนตัว — ไม่ใช่รายจ่ายของงวด แม้คำอธิบายมีคำต้องห้าม
+        Assert.Equal(0m, EvalTyped("ชำระภาษีเงินได้นิติบุคคล ภ.ง.ด.50 พร้อมเงินเพิ่ม", 300_000m, "21920", AccountType.Liability).TotalAddBack);
+        Assert.Equal(0m, EvalTyped("ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า", 150_000m, "11920", AccountType.Asset).TotalAddBack);
+        Assert.Equal(0m, EvalTyped("ถอนใช้ส่วนตัวหุ้นส่วน", 20_000m, "31200", AccountType.Equity).TotalAddBack);
+        // ชนิดผังชนะเลขนำหน้า: ผังเลข 5 ที่ผู้ใช้ตั้งชนิดเป็นหนี้สิน ไม่ถูกบวกกลับ · capex ไม่ฟ้องบัญชีสินทรัพย์
+        Assert.Equal(0m, EvalTyped("ค่าปรับค้างจ่าย", 1_000m, "5999", AccountType.Liability).TotalAddBack);
+        Assert.DoesNotContain(EvalTyped("เครื่องจักรใหม่", 80_000m, "12400", AccountType.Asset).Findings, f => f.RuleCode == "RD-65ter(5)");
+        // ไม่รู้ชนิด (ผู้เรียกเก่า) = ทางสำรองเลขนำหน้าเดิม — 21920 ไม่ตรวจ · 53700 ตรวจ
+        Assert.Equal(0m, EvalTyped("ค่าปรับ", 1_000m, "21920", null).TotalAddBack);
+        Assert.Equal(1_000m, EvalTyped("ค่าปรับจราจร", 1_000m, "53700", null).TotalAddBack);
+    }
+
+    [Fact]
+    public void P22_ข้อสังเกต65ตรีที่ผ่าน_คืนให้คนที่กดเห็น()
+    {
+        var s65 = S65("ค่าปรับ — บวกกลับ 1,000.00 [RD-65ter(6)]");
+        const string other = "ใบกำกับภาษีซื้อเกิน 6 เดือน (§82/3) — ต้องระบุเหตุผล";
+        var notice = Section65TerApprovalWarnings.PassedNotice(new[] { s65, other });
+        Assert.NotNull(notice);
+        Assert.Contains("1 ข้อ", notice);
+        Assert.Contains("ไม่บล็อก", notice);
+        Assert.DoesNotContain("§82/3", notice);   // คืนเฉพาะชุด §65 ตรี
+        Assert.Equal(new[] { s65 }, Section65TerApprovalWarnings.PassedNotes(new[] { other, s65 }));
+        // ทิศตรงข้าม: ไม่มีข้อสังเกต = ไม่มีข้อความ (ใบปกติไม่ขึ้นป้ายเตือน)
+        Assert.Null(Section65TerApprovalWarnings.PassedNotice(new[] { other }));
+        Assert.Null(Section65TerApprovalWarnings.PassedNotice(Array.Empty<string>()));
+        Assert.Null(Section65TerApprovalWarnings.PassedNotice(null));
+        Assert.Empty(Section65TerApprovalWarnings.PassedNotes(null));
+    }
+
+    [Fact]
+    public void P23_เงินทดรอง_ใช้ตัวตัดสินเดียวกับใบเบิก_ข้อความบอกทางไปต่อของตัวเอง()
+    {
+        var id = Guid.NewGuid();
+        Assert.Equal(LinkedPayVoucherStep.ReuseDraft, LinkedPayVoucher.StepFor(id, DocumentStatus.Draft));
+        Assert.Equal(LinkedPayVoucherStep.AlreadyIssued, LinkedPayVoucher.StepFor(id, DocumentStatus.Approved));
+        Assert.Equal(LinkedPayVoucherStep.Create, LinkedPayVoucher.StepFor(id, DocumentStatus.Voided));
+        var msg = LinkedPayVoucher.WarningsMessage(LinkedPayVoucherSource.SalaryAdvance, "DRAFT-9", new[] { "คำเตือน ข" });
+        Assert.Contains("เงินทดรอง", msg);
+        Assert.Contains("DRAFT-9", msg);
+        Assert.Contains("ไม่สร้างซ้ำ", msg);
+        Assert.DoesNotContain("ใบเบิก", msg);
+        Assert.Equal("ADVANCE-PAY-PV-WARNINGS", LinkedPayVoucher.WarningsRuleCode(LinkedPayVoucherSource.SalaryAdvance));
+    }
+
+    [Fact]
+    public void P24_มาตราอ้างอิงตามชุดคำเตือนที่ผ่านจริง()
+    {
+        var s65a = Section65TerApprovalWarnings.Prefix + " (ป.รัษฎากร §65 ตรี (6)) ค่าปรับ (ไม่บล็อก — ตรวจก่อนอนุมัติ) [RD-65ter(6)]";
+        var s65b = Section65TerApprovalWarnings.Prefix + " (ป.รัษฎากร §65 ตรี (3)) ส่วนตัว (ไม่บล็อก — ตรวจก่อนอนุมัติ) [RD-65ter(3)]";
+        const string other = "ใบกำกับภาษีซื้อเกิน 6 เดือน (§82/3) — ต้องระบุเหตุผล";
+        // ทางเข้าอัตโนมัติ/API ผ่านได้แค่ชุด §65 ตรี ⇒ อ้าง §65 ตรีตามข้อจริง ไม่ใช่ §86/§82/5(1)
+        Assert.Equal("RD-65ter(6) · RD-65ter(3)", ApprovalAcknowledgement.LegalReference(new[] { s65a, s65b, s65a }));
+        Assert.Equal("RD-65ter(11)(18)", Section65TerApprovalWarnings.RuleCodeOf(
+            Section65TerApprovalWarnings.Prefix + " (ป.รัษฎากร §65 ตรี (11)(18)) x [RD-65ter(11)(18)]"));
+        // ทิศตรงข้าม: คนรับทราบคำเตือนทั่วไป ⇒ มาตราทั่วไปเดิม · ผสมกัน ⇒ ทั้งสองชุด
+        Assert.Equal(ApprovalAcknowledgement.GeneralWarningsLegalReference, ApprovalAcknowledgement.LegalReference(new[] { other }));
+        Assert.Equal("RD-65ter(6) · " + ApprovalAcknowledgement.GeneralWarningsLegalReference,
+            ApprovalAcknowledgement.LegalReference(new[] { s65a, other }));
+        Assert.Null(Section65TerApprovalWarnings.RuleCodeOf(other));
+        Assert.Equal(Section65TerApprovalWarnings.LegalReferenceFallback,
+            ApprovalAcknowledgement.LegalReference(new[] { Section65TerApprovalWarnings.Prefix + " ไม่มีรหัส" }));
     }
 }

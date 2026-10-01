@@ -5611,8 +5611,10 @@ public partial class DocumentService : IDocumentService
     /// <param name="ackSource">ใคร "ผ่าน" คำเตือน — ตัวตัดสิน Helpers/ApprovalAcknowledgement (ห้ามระบบประทับรับทราบแทนคน)</param>
     /// <param name="withAiHints">เสริมคำเตือนด้วย AI ตอนหยุด — false สำหรับทางเข้าที่ไม่มีหน้าจอแสดงคำแนะนำ (API) ⇒ ไม่เรียก AI
     /// แล้วโยนคำตอบทิ้ง (กฎเหล็ก #1)</param>
+    /// <param name="passedWarnings">ฝ่ายค้านรอบ 201 รอบสาม P2-2: ที่รับคำเตือนที่ "ผ่าน" ในการอนุมัติครั้งนี้ (ชุดเดียวกับที่ลงร่องรอย) — ทางเข้าที่มีคนอยู่หน้าจอ/แชท
+    /// แต่ใช้แหล่ง Unattended (OCR สร้าง+อนุมัติ · LINE · จ่ายใบเบิก) เอาไปคืนให้คนเห็นผ่าน <c>Section65TerApprovalWarnings.PassedNotice</c> · null = ไม่เก็บ</param>
     public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
-        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints)
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null)
     {
         // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
         // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
@@ -5753,9 +5755,12 @@ public partial class DocumentService : IDocumentService
                     acknowledgedByPerson = Accounting.Helpers.ApprovalAcknowledgement.AcknowledgedByPerson(ackSource),
                     ackSource = ackSource.ToString(),
                     ruleCode = Accounting.Helpers.ApprovalAcknowledgement.RuleCode(ackSource),
-                    legalReference = "RD-86 / RD-82/5(1)",
+                    // ฝ่ายค้านรอบ 201 รอบสาม P2-4 (กฎ M): อ้างมาตราของชุดคำเตือนที่ผ่านจริง — เดิมตายตัว "RD-86 / RD-82/5(1)" แม้ทางเข้าอัตโนมัติ/API ผ่านได้แค่ชุด §65 ตรี
+                    legalReference = Accounting.Helpers.ApprovalAcknowledgement.LegalReference(warnings),
                 }),
             });
+            if (passedWarnings != null)
+                foreach (var w in warnings) passedWarnings.Add(w);
         }
 
         // CreditNote must declare its reason — per ประมวลรัษฎากร §82/10 the
@@ -14006,13 +14011,13 @@ public partial class DocumentService : IDocumentService
         // เตรียม account map (Id → code/name) สำหรับตรวจชนิดบัญชี
         var accIds = doc.Lines.Where(l => l.AccountId.HasValue)
             .Select(l => l.AccountId!.Value).Distinct().ToList();
-        var accInfo = accIds.Count == 0
-            ? new Dictionary<Guid, (string, string)>()
-            : (await _db.ChartOfAccounts.AsNoTracking()
+        // ฝ่ายค้านรอบ 201 รอบสาม P1-2: ดึงชนิดผังมาด้วย — ตัวประเมินตัดสิน "รายจ่ายไหม" ด้วยชนิดผัง (ผัง 6100 ค่าปรับ ชนิด Expense ต้องถูกตรวจ)
+        var accRows = await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && accIds.Contains(a.Id))   // tenant (กฎ M) — รอบ 201 เพิ่มตอนแยกตัวประเมิน
-                .Select(a => new { a.Id, a.AccountCode, a.AccountName })
-                .ToListAsync())
-                .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                .ToListAsync();
+        var accInfo = accRows.ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
+        var accTypes = accRows.ToDictionary(a => a.Id, a => a.AccountType);
 
         // context: รายได้ทั้งปี + ทุนจดทะเบียน (สำหรับ cap ค่ารับรอง)
         var company = await _db.Companies.AsNoTracking()
@@ -14078,7 +14083,7 @@ public partial class DocumentService : IDocumentService
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
-        return Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx);
+        return Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx, accountTypes: accTypes);
     }
 
     /// <summary>บังคับลงทะเบียนสินทรัพย์ถาวร — บรรทัดเอกสารฝั่งซื้อที่ลงผัง PPE

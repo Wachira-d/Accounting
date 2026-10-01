@@ -359,8 +359,13 @@ public class LineBotService : ILineBotService
                     return $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ — สิทธิ์ของคุณอนุมัติไม่ได้ แจ้งเจ้าของกิจการ/นักบัญชีอนุมัติในระบบ";
                 try
                 {
-                    var approved = await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email);
-                    return $"✅ บันทึกและอนุมัติแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {approved.DocumentNumber}";
+                    // ฝ่ายค้านรอบ 201 รอบสาม P2-2: แชทไม่มีหน้าจอรับทราบ (Unattended · คำตัดสินข้อ 110 — §65 ตรีไม่บล็อก) แต่มีคนพิมพ์อยู่ ⇒ ข้อสังเกตที่ผ่านต้องตอบกลับในแชท
+                    var passed = new List<string>();
+                    var approved = await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email,
+                        Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passedWarnings: passed);
+                    var s65Notice = Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
+                    return $"✅ บันทึกและอนุมัติแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {approved.DocumentNumber}"
+                        + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
                 }
                 catch (Exception ex)
                 {
@@ -820,11 +825,16 @@ public class LineBotService : ILineBotService
 
         try
         {
-            await _docService.ApproveDocumentAsync(doc.CompanyId, doc.Id, user.Email);
+            // ฝ่ายค้านรอบ 201 รอบสาม P2-2: ข้อสังเกต §65 ตรีที่ผ่าน (ไม่บล็อก · คำตัดสินข้อ 110) ต้องกลับไปถึงคนที่กดในแชท
+            var passed = new List<string>();
+            await _docService.ApproveDocumentAsync(doc.CompanyId, doc.Id, user.Email,
+                Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passedWarnings: passed);
             var number = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == doc.Id).Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+                .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId).Select(d => d.DocumentNumber).FirstOrDefaultAsync();
+            var s65Notice = Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
             return $"✅ อนุมัติแล้ว — {ThaiDocTypeName(doc.DocumentType)} เลขที่ {number}\n"
-                + $"💰 {doc.TotalAmount:N2} ฿ ลงบัญชี + รายงานภาษีให้เรียบร้อย";
+                + $"💰 {doc.TotalAmount:N2} ฿ ลงบัญชี + รายงานภาษีให้เรียบร้อย"
+                + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
         }
         catch (Exception ex)
         {

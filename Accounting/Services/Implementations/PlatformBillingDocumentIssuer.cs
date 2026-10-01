@@ -133,7 +133,9 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 PaymentAccountId: await ResolveCashAccountIdAsync(tenantId.Value, settings));
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
-            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
             _logger.LogInformation(
                 "ออกเอกสารค่าบริการใน tenant ผู้ให้บริการ {DocNo} (payment {PaymentNo} · ฐาน {Base} · VAT {Vat} · WHT {Wht})",
                 approved.DocumentNumber, payment.PaymentNumber, baseAmount, isVat, wht);
@@ -186,7 +188,9 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 });
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
-            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
             return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
         }
         catch (Exception ex)
@@ -249,7 +253,9 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Lines: docLines);
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
-            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor, true);
+            // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+            var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
+                Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
             _logger.LogInformation("ออกใบแจ้งหนี้ค่าใช้งาน {DocNo} ({Lines} บรรทัด · อ้างอิง {Ref})",
                 approved.DocumentNumber, docLines.Count, reference);
             return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);

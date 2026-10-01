@@ -429,7 +429,8 @@ public partial class LodgingService
                 + DepositPolicyResolver.DescribePosting(posted, amount, vatRate)
                 + (kind.Warning != null ? $" · {kind.RuleCode}: {kind.Warning}" : ""));
         await _db.SaveChangesAsync();   // บันทึกหมายเหตุก่อนอนุมัติ — ขั้นอนุมัติอาจ reload เอกสารจาก DB
-        var approvedDeposit = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+        var approvedDeposit = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
         if (kind.Warning != null)
             AppendInternal(r, $"มัดจำ {amount:N2} บันทึกแบบ \"{DepositPolicyResolver.LabelOf(posted)}\" ({kind.Name}) — {kind.Warning}");
         // audit: ประเภทไหน · ใช้โหมดไหน · ใครตั้ง · ยอด JE ที่คาดหวังของโหมดนั้น (ให้ผู้ตรวจเทียบกับ JE จริงของใบได้)
@@ -726,7 +727,8 @@ public partial class LodgingService
             BookingNumber: r.ReservationNumber,
             ServiceUsedDate: r.CheckOutDate);
         var finalDraftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
-        var approved = await _docService.ApproveDocumentAsync(companyId, finalDraftId, userId, acknowledgeWarnings: true);
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+        var approved = await _docService.ApproveDocumentAsync(companyId, finalDraftId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
 
         // ออกใบสำเร็จแล้วจึงผูกรายการใหม่เข้าการจอง + ประทับเลขใบทันที — ถ้าขั้นใช้มัดจำด้านล่างล้ม
         // การกดเช็คเอาต์ซ้ำ = ทำขั้นที่ค้างต่อ (ResumeCheckOutAsync) ไม่ออกใบกำกับใบที่สอง และไม่เพิ่มค่าเสียหายซ้ำ
@@ -894,7 +896,8 @@ public partial class LodgingService
             BookingNumber: r.ReservationNumber,
             ServiceUsedDate: r.CheckOutDate);
         var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
-        var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, acknowledgeWarnings: true);
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+        var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
         r.FinalDocumentId = approved.Id;
         AppendInternal(r, $"ออกใบเช็คเอาต์ใหม่ {approved.DocumentNumber} แทน {old.DocumentNumber} ที่ยกเลิก" + (reason != null ? $" — {reason}" : ""));
         r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
@@ -1449,7 +1452,8 @@ public partial class LodgingService
                 + $"บัญชี {shaped.DepositDeferredAccountCode ?? "ตามระบบ"} · การจอง {r.ReservationNumber}"
                 + (kind.Warning != null ? $" · {kind.RuleCode}: {kind.Warning}" : ""));
         await _db.SaveChangesAsync();
-        var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, acknowledgeWarnings: true);
+        // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
+        var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
 
         if (replacedGoneSecurityDocId != null)
             AppendInternal(r, LodgingDepositSettlement.SecurityDocumentGoneNote + $" — ลิงก์เดิม ({replacedGoneSecurityDocId}) ถูกแทนที่ด้วยใบใหม่");

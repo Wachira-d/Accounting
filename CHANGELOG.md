@@ -4315,3 +4315,12 @@ _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอ�
 - **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
 - เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit c5fefbc6)_
 
+_2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้านรอบสาม (P1-2 · P2-2 · P2-3 · P2-4 · P2-6 · รายงาน `erp-review/2026-10-01/team-TX.md` §8):
+- **P1-2** §65 ตรี ตัดสิน "รายจ่ายไหม" ด้วย `ChartOfAccount.AccountType` (`EvaluateSection65TerAsync` ส่ง `accountTypes:`) — ผัง 6100 ค่าปรับ ชนิด Expense ถูกตรวจ ·
+  หนี้สิน/สินทรัพย์/ทุนไม่ตรวจแม้เลข 5 · ไม่รู้ชนิด = เลขนำหน้าเดิม · (5) capex ใช้ตัวเดียวกัน ⇒ ยอดบวกกลับ ภ.ง.ด.50 ของใบใหม่ในผังค่าใช้จ่ายนอก 5xxxx **เพิ่มขึ้น**
+- **P2-2** ข้อสังเกต §65 ตรีที่ผ่าน (ไม่บล็อก) คืนให้คนที่กด — `ApproveDocumentAsync(…, passedWarnings:)` + `Section65TerApprovalWarnings.PassedNotice/PassedNotes` ·
+  OCR สร้าง+อนุมัติ `[APPROVE-S65-NOTE]` · LINE สองเส้นต่อท้ายข้อความ · ใบเบิก `ExpenseClaimResponse.PassedApprovalNotes`
+- **P2-3** `Helpers/ExpenseClaimPayVoucher` → `Helpers/LinkedPayVoucher` (ใบเบิก + เงินทดรอง) · `SalaryAdvanceService.DisburseAsync` ผูก PV ร่างก่อนอนุมัติ · 422 `ADVANCE-PAY-PV-WARNINGS`
+- **P2-4** audit "อนุมัติทั้งที่มีคำเตือน" อ้างมาตราของชุดที่ผ่านจริง (`ApprovalAcknowledgement.LegalReference`)
+- **P2-6** ที่พัก ×4 · PlatformBilling ×3 · CMS ×2 จาก `acknowledgeWarnings: true` → `SystemWorkflow` (ผลการอนุมัติเท่าเดิม · ร่องรอยไม่ใช่คนรับทราบ)
+- เทสต์ `Round201TxTests.P12_*/P22_*/P23_*/P24_*` · required_call_site +16 แถว + แก้ RTX-5 (negative test ในสคริปต์ทีม) — commit <pending>)_
