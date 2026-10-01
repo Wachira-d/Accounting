@@ -4452,4 +4452,4 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม ST — Settlement
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit 9f226f15)_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_

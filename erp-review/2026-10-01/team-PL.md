@@ -109,7 +109,7 @@ comment_line_break · identifier_space · accessibility · dead_helper · adviso
 
 ---
 
-## ชุด 6 — ฝ่ายค้านรอบสาม (verify ก่อนแก้ · merge `2c8e64d8` ก่อนเริ่ม) · คอมมิต `<pending>`
+## ชุด 6 — ฝ่ายค้านรอบสาม (verify ก่อนแก้ · merge `2c8e64d8` ก่อนเริ่ม) · คอมมิต `adf19a87`
 
 | ID | verify | สถานะ | ที่แก้ | เทสต์ / ด่าน |
 |---|---|---|---|---|

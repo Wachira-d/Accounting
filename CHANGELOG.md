@@ -4322,5 +4322,5 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 6 — ฝ่ายค้าน�
 - **P1-2** `OwnershipTransferPolicy.AdminRoleChangeBlock` — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ (ชี้เส้นโอนเจ้าของ) · `AddChainedAuditLog` บทบาทเดิม/ใหม่
 - **P2-1** `AuditInsertBatches` + `AuditChainScope.InsertSql/InsertBatchRows` (500 แถว/คำสั่ง) ทั้ง sync/async
 - **P2-2** `OwnershipTransferPolicy.InvitationRoleBlock` ที่ `InvitationController.Accept` และ `AuthService.ConsumeInvitationAsync`
-- เทสต์ `PlatformRound201Rv3Tests` · `Db/AuditChainCommitDbTests` +2 · required_call_site ปรับ 4 + เพิ่ม 5 แถว — commit <pending>)_
+- เทสต์ `PlatformRound201Rv3Tests` · `Db/AuditChainCommitDbTests` +2 · required_call_site ปรับ 4 + เพิ่ม 5 แถว — commit adf19a87)_
 
