@@ -45,8 +45,9 @@ public class ApiErrorLoggingMiddleware
                 _ => $"HTTP {statusCode} error"
             };
 
+            // ฝ่ายค้าน GWO-6: path ของ webhook มีรหัสลับของร้าน (เช่น 429 จากเพดานคำขอ) — ปิดบังก่อนเขียน log/ตาราง
             _logger.LogWarning("API error {StatusCode} on {Method} {Path}: {Message}",
-                statusCode, context.Request.Method, path, message);
+                statusCode, context.Request.Method, Accounting.Helpers.GatewayWebhookRoute.RedactPath(path), message);
 
             await SaveErrorLogAsync(context, statusCode, message);
         }
@@ -69,7 +70,7 @@ public class ApiErrorLoggingMiddleware
                 WHERE EXISTS (SELECT 1 FROM information_schema.tables WHERE lower(table_name)='errorlogs')";
 
             using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@p", context.Request.Path.ToString());
+            cmd.Parameters.AddWithValue("@p", Accounting.Helpers.GatewayWebhookRoute.RedactPath(context.Request.Path.ToString()));
             cmd.Parameters.AddWithValue("@m", context.Request.Method);
             cmd.Parameters.AddWithValue("@q", context.Request.QueryString.ToString());
             cmd.Parameters.AddWithValue("@s", statusCode);

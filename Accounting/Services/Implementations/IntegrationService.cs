@@ -2604,7 +2604,30 @@ public class IntegrationService : IIntegrationService
 
     /// <summary>A-GW12: เส้นปรับ JE ตอน resync (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ ⇒ dry-run สร้างใหม่<b>ก่อน</b>กลับ JE เดิม · สร้างไม่ได้ ⇒ คง JE เดิม
     /// + หมายเหตุ + sync log PartialSuccess · คืน (JE id, เหตุที่ข้าม, วิธีที่ใช้)</summary>
+    /// <summary>ฝ่ายค้าน GWO-4: ห่อการปรับ JE ของ resync ด้วยธุรกรรมเดียว + ล็อกต่อเอกสาร (คีย์คงที่ <see cref="Accounting.Helpers.AdvisoryLockKey.IntegrationResync"/>) —
+    /// เดิม dry-run · กลับ JE เดิม · ลง JE ใหม่ บันทึกแยกกันและไม่มีล็อก ⇒ ล้มกลางทาง = กลับแล้วไม่ได้ลงใหม่ · คำขอซ้อนของเอกสารเดียวกันเห็น JE เดิมชุดเดียวกัน
+    /// · ผู้เรียกที่อยู่ในธุรกรรมอยู่แล้ว ⇒ ใช้ธุรกรรมนั้น (ล็อกยังถือจนธุรกรรมของผู้เรียกจบ)</summary>
     private async Task<(Guid? JournalEntryId, string? SkipReason, Accounting.Helpers.IntegrationResyncJournalAction Action)> ApplyResyncJournalAsync(
+        Guid companyId, Guid integrationId, Document existing, string type, IntegrationSyncLog log)
+    {
+        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.IntegrationResync, existing.Id.ToString());
+        if (_db.Database.CurrentTransaction != null)
+        {
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey });
+            return await ApplyResyncJournalCoreAsync(companyId, integrationId, existing, type, log);
+        }
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey });
+            var result = await ApplyResyncJournalCoreAsync(companyId, integrationId, existing, type, log);
+            await tx.CommitAsync();
+            return result;
+        });
+    }
+
+    private async Task<(Guid? JournalEntryId, string? SkipReason, Accounting.Helpers.IntegrationResyncJournalAction Action)> ApplyResyncJournalCoreAsync(
         Guid companyId, Guid integrationId, Document existing, string type, IntegrationSyncLog log)
     {
         var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
@@ -3172,7 +3195,9 @@ public class IntegrationService : IIntegrationService
             existing.DocumentNumber, companyId, jeAction);
         return new InboundSyncResponse(true,
             ResyncResponseText(jeAction, jeSkipReason),
-            existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
+            existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber,
+            // ฝ่ายค้าน GWO-5: JE ที่ไม่เปลี่ยนตามยอดใหม่ต้องอยู่ในช่องคำเตือนด้วย (ระบบต้นทางที่อ่านแค่ Success/Warnings ไม่พลาด)
+            Warnings: Accounting.Helpers.IntegrationResyncJournal.Warnings(jeAction, jeSkipReason));
     }
 
     /// <summary>Resync update ค่าใช้จ่ายจากระบบภายนอก — semantics เดียวกับ invoice.</summary>
@@ -3234,7 +3259,9 @@ public class IntegrationService : IIntegrationService
             existing.DocumentNumber, companyId, jeAction);
         return new InboundSyncResponse(true,
             ResyncResponseText(jeAction, jeSkipReason),
-            existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
+            existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber,
+            // ฝ่ายค้าน GWO-5: JE ที่ไม่เปลี่ยนตามยอดใหม่ต้องอยู่ในช่องคำเตือนด้วย (ระบบต้นทางที่อ่านแค่ Success/Warnings ไม่พลาด)
+            Warnings: Accounting.Helpers.IntegrationResyncJournal.Warnings(jeAction, jeSkipReason));
     }
 
     /// <summary>ข้อความตอบคู่ค้าของ resync (A-GW12) — คง JE เดิม = บอกตรง ๆ ว่ายอดในบัญชียังเป็นยอดเดิม (ที่ที่สามของ "ล้มดัง")</summary>

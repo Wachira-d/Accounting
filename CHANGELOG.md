@@ -4103,6 +4103,17 @@ _2026-10-01 รอบ 201 ทีม GW — Gateway/Integration (BACKLOG §1.1 A-
 - **DV-O4** (ฝ่ายค้านทีม DV · งานเพิ่ม): integration ไม่ทิ้งผล `VoidDocumentAsync` อีก — `VoidDocumentByExternalRefAsync` ส่งธง e-Tax/ภาษีขาย เป็น `InboundSyncResponse.Warnings` + sync log · `ProcessInvoiceAsync` (ยกเลิกขายเงินสดที่หักมัดจำ) ต่อธงเข้าคำตอบปฏิเสธ (`WithVoidNotices`)
 - เทสต์ `GatewayTeamGWRound201Tests` (สองทิศทุกข้อ) · required_call_site +33 แถว (negative test มือ 16/16) — commit bba8cfc7 · DV-O4 + รายงานทีม 97f1f255)_
 
+_2026-10-01 รอบ 201 ทีม GW — แก้ตามฝ่ายค้าน GWO-1..7 (รายงาน `erp-review/2026-10-01/team-GW.md` §ฝ่ายค้าน):
+- **GWO-1** URL webhook เดิมลองเฉพาะ config ที่ `LegacyWebhookEligible` (migration ตั้งครั้งเดียวจาก `LastWebhookAt`/`LastLegacyWebhookAt` · แถวใหม่ false) + ยังไม่ย้าย +
+  ก่อนวันปิด `GatewayWebhookRoute.LegacyRouteSunsetUtc` (1 ม.ค. 2570) · **แก้ข้อความเดิมที่อ้างว่า "คำขอนิรนามไม่ยิงออก"**: ก่อนวันปิด URL เดิมยังพาคีย์ของร้านกลุ่มนั้นออกไปได้
+- **GWO-2** `GatewayFeeVatClaim.ResidueCheck` ระดับวัน (`LatestFeeVatDeferralDateAsync`) + เพดาน 12 ใบ (`ResidueMaxInvoicesCounted`)
+- **GWO-3** `RecordLegacyRefundAsync` บังคับเลือกรอบโอนเมื่อรายการอยู่ในรอบที่บันทึกแล้วและคืนไม่หลังวันเงินเข้า (`GatewayRefundMath.LegacyRefundRoundTiming` ⇒ `RefundSettledAmount`) · ข้อความสำเร็จบอกผลจริง
+- **GWO-4** `IntegrationService.ApplyResyncJournalAsync` = execution strategy + transaction + `pg_advisory_xact_lock` (`AdvisoryLockKey.IntegrationResync`) รอบ `ApplyResyncJournalCoreAsync`
+- **GWO-5** resync คง JE เดิม/สร้าง JE ไม่ได้ ⇒ `InboundSyncResponse.Warnings` (`IntegrationResyncJournal.Warnings`)
+- **GWO-6** URL รหัสลับเต็มเฉพาะเจ้าของ (`WebhookTokenMasked`) · `POST payment-settings/{provider}/webhook-token/rotate` · `GatewayWebhookRoute.RedactPath` ใน log 3 middleware
+- **GWO-7** `LastLegacySkippedAt` + `IPaymentProvider.UnverifiedIntentHint` (ไม่ยิงออก) ⇒ คำเตือน "ระบบไม่รับทาง URL เดิมของร้านนี้" ขึ้นจริง
+- เทสต์ `GWO*` 10 เคสใน `GatewayTeamGWRound201Tests` (สองทิศ) · required_call_site +14 แถว (negative test มือ 25/25 รวมแถวเดิม) — commit <pending>)_
+
 _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
 - **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
   (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม) — ก่อนล็อกใบต้นทาง/มัดจำ/กลับรายการใด

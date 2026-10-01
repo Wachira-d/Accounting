@@ -144,6 +144,11 @@ public interface IPaymentProvider
     /// <b>ไม่ใช่</b>การต่อสายช่องใหม่ — ระบบยังลงบัญชีตามที่อ่านอยู่เดิมจนกว่าจะมีผลทดสอบ</para></summary>
     string? PendingVerificationNotice => null;
 
+    /// <summary>เลขรายการ (PaymentIntent) ที่เนื้อ webhook <b>อ้าง</b> — อ่านจากเนื้อคำขอที่<b>ยังไม่ยืนยัน</b> (ใครก็ปลอมได้) · ไม่มีคำขอออก ·
+    /// ใช้ได้อย่างเดียว: ประทับ "มีคำขอทาง URL เดิมของร้านนี้แต่ถูกข้าม" ให้หน้าตั้งค่าเตือน (ฝ่ายค้าน GWO-7) — <b>ห้าม</b>ใช้ตัดสินสถานะเงินใด ๆ ·
+    /// null = อ่านไม่ได้/เจ้านี้ไม่รองรับ</summary>
+    Guid? UnverifiedIntentHint(string rawBody) => null;
+
     Task<ProviderCharge> CreateChargeAsync(PaymentIntent intent, ChargeRequest req,
         PaymentProviderConfig config, CancellationToken ct = default);
 

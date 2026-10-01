@@ -1140,6 +1140,8 @@ const API = {
       savePaymentConfig: (d) => API.put(`${base}/payment-settings`, d),
       testPaymentConfig: (code) => API.post(`${base}/payment-settings/${code}/test`, {}),
       setPaymentMode: (code, mode) => API.post(`${base}/payment-settings/${code}/mode`, { mode }),
+      // ฝ่ายค้าน GWO-6: ออกรหัสลับ URL แจ้งเตือนใหม่ (เจ้าของเท่านั้น · URL รหัสเก่าใช้ไม่ได้ทันที)
+      rotatePaymentWebhookToken: (code) => API.post(`${base}/payment-settings/${encodeURIComponent(code)}/webhook-token/rotate`, {}),
       createPaymentIntent: (d) => API.post(`${base}/pay/intents`, d),
       getPaymentIntentStatus: (id, live = true) => API.get(`${base}/pay/intents/${id}/status?live=${live}`),
       listPaymentIntents: (q = '') => API.get(`${base}/pay/intents${q}`),

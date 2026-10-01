@@ -436,8 +436,10 @@ public class PaymentGatewayController : ControllerBase
             : BadRequest(new ApiResponse<object>(false, data, r.Message));
     }
 
-    /// <summary>คำขอบันทึกยอดคืนย้อนหลัง — <c>Journal</c> = "BookNow" | "AlreadyBookedManually" (ชื่อ enum · อ่านไม่ออก = ปฏิเสธ)</summary>
-    public sealed record LegacyRefundRequest(decimal? Amount, DateTime? RefundedAt, string? ProviderRefundRef, string? Evidence, string? Journal);
+    /// <summary>คำขอบันทึกยอดคืนย้อนหลัง — <c>Journal</c> = "BookNow" | "AlreadyBookedManually" (ชื่อ enum · อ่านไม่ออก = ปฏิเสธ) ·
+    /// <c>RoundTiming</c> (ฝ่ายค้าน GWO-3) = "DeductedInRecordedRound" | "DeductedInLaterRound" — บังคับเมื่อรายการอยู่ในรอบโอนที่บันทึกแล้วและคืนไม่หลังวันเงินเข้า</summary>
+    public sealed record LegacyRefundRequest(decimal? Amount, DateTime? RefundedAt, string? ProviderRefundRef, string? Evidence, string? Journal,
+        string? RoundTiming = null);
 
     /// <summary>บันทึกยอดคืนจริงของรายการที่ "คืนแล้วแต่ระบบไม่มียอดคืน" (รอบ 201 ทีม GW · A-GW7 · review198-E2 E2-12e) — แถวเก่า/ลงบัญชีคืนไม่สำเร็จ
     /// ค้าง −ค่าธรรมเนียมในกระทบยอดและไม่เข้ารอบโอนตลอดไป · <b>เจ้าของกิจการเท่านั้น</b> (เติมยอดที่ระบบไม่รู้แทนผู้ให้บริการ) + ห้ามคีย์ API + สิทธิ์คืนเงิน ·
@@ -453,10 +455,12 @@ public class PaymentGatewayController : ControllerBase
     {
         var journal = Enum.TryParse<GatewayLegacyRefundJournal>(req.Journal?.Trim(), ignoreCase: true, out var j)
             && Enum.IsDefined(j) ? j : GatewayLegacyRefundJournal.Unspecified;
+        var roundTiming = Enum.TryParse<GatewayLegacyRefundRoundTiming>(req.RoundTiming?.Trim(), ignoreCase: true, out var rt)
+            && Enum.IsDefined(rt) ? rt : GatewayLegacyRefundRoundTiming.Unspecified;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.RecordLegacyRefundAsync(companyId, intentId, req.Amount,
             req.RefundedAt is DateTime at ? DateTime.SpecifyKind(at, at.Kind == DateTimeKind.Unspecified ? DateTimeKind.Utc : at.Kind) : null,
-            req.ProviderRefundRef, req.Evidence, journal, actor, User?.Identity?.Name,
+            req.ProviderRefundRef, req.Evidence, journal, roundTiming, actor, User?.Identity?.Name,
             HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
         var data = new
         {
@@ -723,7 +727,8 @@ public class PaymentWebhookController : ControllerBase
     /// <item><c>{providerCode}/{token}</c> (URL ใหม่) — รหัสลับต่อ config ⇒ ลองยืนยันกับ config นั้นตัวเดียว · รหัสผิด/รูปผิด = <b>ไม่ยิงคำขอออกเลย</b>
     /// (เดิม POST นิรนาม 1 ครั้ง = คำขอออกด้วยคีย์ของทุกร้าน)</item>
     /// <item><c>{providerCode}</c> (URL เดิม · <c>token</c> = null) — <b>คงไว้</b>เพราะผู้ใช้ตั้งไว้ในแดชบอร์ดผู้ให้บริการ (ตัดทิ้ง = ลูกค้าจ่ายแล้วออเดอร์ไม่อัปเดต) ·
-    /// ลองเฉพาะ config ที่โหมดปัจจุบันยังไม่ย้ายมา URL ใหม่</item>
+    /// ลองเฉพาะ config ที่มีหลักฐานว่าใช้ URL เดิม + โหมดปัจจุบันยังไม่ย้าย + ก่อนวันปิด (ฝ่ายค้าน GWO-1 · <see cref="GatewayWebhookRoute.AcceptsLegacy"/>) —
+    /// ก่อนวันปิด POST นิรนามยังพาคีย์ของร้านกลุ่มนั้นออกไปได้ · คำขอที่อ้างรายการของร้านที่ถูกข้าม ⇒ ประทับ <c>LastLegacySkippedAt</c> (GWO-7)</item>
     /// </list>
     /// ตัวเลือก config = <see cref="GatewayWebhookRoute.ConfigsToTry"/> ตัวเดียวของทั้งสองเส้นทาง</summary>
     [HttpPost]
@@ -752,11 +757,35 @@ public class PaymentWebhookController : ControllerBase
             .Where(c => c.ProviderCode == providerCode && c.IsActive && !c.IsDeleted);
         if (token != null) candidatesQ = candidatesQ.Where(c => c.WebhookToken == token);
         var candidates = await candidatesQ.ToListAsync(ct);
-        var toTry = GatewayWebhookRoute.ConfigsToTry(
-            candidates.Select(c => new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt,
-                c.LastTokenWebhookMode, c.Mode)),
-            token);
+        var now = DateTime.UtcNow;
+        GatewayWebhookConfigFacts Facts(PaymentProviderConfig c) => new(c.Id, c.WebhookToken, c.LastTokenWebhookAt,
+            c.LastTokenWebhookMode, c.Mode, c.LegacyWebhookEligible);
+        // ฝ่ายค้าน GWO-1: URL เดิมลองเฉพาะร้านที่มีหลักฐานว่าใช้ URL เดิม + ยังไม่ย้าย + ก่อนวันปิด (AcceptsLegacy)
+        var toTry = GatewayWebhookRoute.ConfigsToTry(candidates.Select(Facts), token, now);
         var configs = candidates.Where(c => toTry.Contains(c.Id)).ToList();
+
+        // ฝ่ายค้าน GWO-7: คำขอทาง URL เดิมที่อ้างรายการของร้านที่ถูกข้าม ⇒ ประทับเวลาให้หน้าตั้งค่าของร้านนั้นเตือน "ตั้ง URL เดิมค้างไว้" ·
+        // เลขรายการมาจากเนื้อคำขอที่ยังไม่ยืนยัน (ไม่ยิงคำขอออก · ไม่เปลี่ยนสถานะเงิน · ผลมีแค่คำเตือน)
+        if (token == null)
+        {
+            var skipped = candidates.Where(c => !toTry.Contains(c.Id)).ToList();
+            if (skipped.Count > 0 && provider.UnverifiedIntentHint(raw) is Guid hintedIntent)
+            {
+                // ขอบเขตบริษัท = บริษัทของ config ที่ถูกข้ามเท่านั้น (ไม่มี tenant จาก route — webhook นิรนาม)
+                var skippedCompanies = skipped.Select(c => c.CompanyId).Distinct().ToList();
+                var hinted = await _db.PaymentIntents.AsNoTracking()
+                    .Where(i => i.Id == hintedIntent && skippedCompanies.Contains(i.CompanyId))
+                    .Select(i => new { i.CompanyId, i.ProviderConfigId })
+                    .FirstOrDefaultAsync(ct);
+                var owner = hinted == null ? null
+                    : skipped.FirstOrDefault(c => c.Id == hinted.ProviderConfigId && c.CompanyId == hinted.CompanyId);
+                if (owner != null && GatewayWebhookRoute.ShouldStampLegacySkip(Facts(owner), owner.LastLegacySkippedAt, now))
+                {
+                    owner.LastLegacySkippedAt = now;
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
+        }
 
         foreach (var cfg in configs)
         {

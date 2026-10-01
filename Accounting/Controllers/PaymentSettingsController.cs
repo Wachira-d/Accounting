@@ -57,7 +57,9 @@ public class PaymentSettingsController : ControllerBase
         string? LegacyWebhookUrl = null,
         string? WebhookUrlWarning = null,
         // B-1: สิ่งที่ adapter ยังไม่ได้ยืนยันกับระบบทดสอบของผู้ให้บริการ (IPaymentProvider.PendingVerificationNotice)
-        string? ProviderNotice = null);
+        string? ProviderNotice = null,
+        // ฝ่ายค้าน GWO-6: true = ผู้ดูไม่ใช่เจ้าของ ⇒ WebhookUrl ปิดบังรหัสลับ (เหลือ 4 ตัวท้าย) · หน้าเว็บซ่อนปุ่มคัดลอก
+        bool WebhookTokenMasked = false);
 
     private static string? Hint(ISecretProtector p, string? protectedValue)
     {
@@ -69,7 +71,19 @@ public class PaymentSettingsController : ControllerBase
     private string WebhookUrl(string providerCode, string? token)
         => $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(providerCode, token)}";
 
-    private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered) => new(
+    /// <summary>URL แจ้งเตือนแบบปิดบังรหัส (ผู้ที่ไม่ใช่เจ้าของ · GWO-6)</summary>
+    private string MaskedWebhookUrl(string providerCode, string? token)
+        => $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.MaskedPath(providerCode, token)}";
+
+    /// <summary>ข้อเท็จจริงของ config สำหรับตัวตัดสินเส้นทาง webhook — ตัวเดียวกับที่ปลายทาง webhook ใช้</summary>
+    private static GatewayWebhookConfigFacts WebhookFacts(PaymentProviderConfig c)
+        => new(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode, c.LegacyWebhookEligible);
+
+    /// <summary><paramref name="showToken"/> = ผู้ดูเป็นเจ้าของ (ด่าน <c>RequireOwnerAttribute.DenyAsync</c>) — ไม่ใช่ ⇒ URL ปิดบังรหัส (GWO-6) ·
+    /// endpoint ที่มี <c>[RequireOwner]</c> อยู่แล้วส่ง true</summary>
+    private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered, bool showToken)
+    {
+        return new(
         c.Id, c.ProviderCode, c.DisplayName, c.Mode.ToString(),
         c.TestPublicKey, c.LivePublicKey,
         Hint(_secrets, c.TestSecretKeyProtected), Hint(_secrets, c.LiveSecretKeyProtected),
@@ -78,7 +92,7 @@ public class PaymentSettingsController : ControllerBase
         CanEnableLive: c.LastTestPassedAt != null
                        && !string.IsNullOrWhiteSpace(c.LivePublicKey)
                        && _secrets.IsUsable(c.LiveSecretKeyProtected),
-        WebhookUrl: WebhookUrl(c.ProviderCode, c.WebhookToken),
+        WebhookUrl: showToken ? WebhookUrl(c.ProviderCode, c.WebhookToken) : MaskedWebhookUrl(c.ProviderCode, c.WebhookToken),
         EnabledMethods: ParseMethods(c.EnabledMethodsJson),
         IsActive: c.IsActive,
         FeeVatMode: c.FeeVatMode.ToString(),
@@ -86,10 +100,13 @@ public class PaymentSettingsController : ControllerBase
         ClearingAccountId: c.ClearingAccountId,
         FeeExpenseAccountId: c.FeeExpenseAccountId,
         FeeVatWarning: GatewaySettlementMath.FeeVatModeWarning(c.FeeVatMode, companyVatRegistered),
-        LegacyWebhookUrl: string.IsNullOrEmpty(c.WebhookToken) ? null : WebhookUrl(c.ProviderCode, null),
-        WebhookUrlWarning: GatewayWebhookRoute.LegacyUrlWarning(c.LastLegacyWebhookAt,
-            new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode)),
-        ProviderNotice: _providers.FirstOrDefault(p => p.ProviderCode == c.ProviderCode)?.PendingVerificationNotice);
+        // GWO-1: แสดง URL เดิมเฉพาะร้านที่ URL เดิมยังรับอยู่ (ตัวตัดสินเดียวกับปลายทาง webhook) — ร้านใหม่ไม่เห็น URL ที่ระบบไม่รับ
+        LegacyWebhookUrl: string.IsNullOrEmpty(c.WebhookToken) || !GatewayWebhookRoute.AcceptsLegacy(WebhookFacts(c), DateTime.UtcNow)
+            ? null : WebhookUrl(c.ProviderCode, null),
+        WebhookUrlWarning: GatewayWebhookRoute.LegacyUrlWarning(c.LastLegacyWebhookAt, c.LastLegacySkippedAt, WebhookFacts(c), DateTime.UtcNow),
+        ProviderNotice: _providers.FirstOrDefault(p => p.ProviderCode == c.ProviderCode)?.PendingVerificationNotice,
+        WebhookTokenMasked: !showToken && !string.IsNullOrEmpty(c.WebhookToken));
+    }
 
     private static List<string> ParseMethods(string? json)
     {
@@ -123,7 +140,10 @@ public class PaymentSettingsController : ControllerBase
             .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
             .ToListAsync(ct);
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
-        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(c => Map(c, vatRegistered)).ToList()));
+        // GWO-6: URL ที่มีรหัสลับเต็มเห็นเฉพาะเจ้าของ (ด่านเดียวกับ [RequireOwner]) — คีย์ API/บทบาทอื่นเห็นแบบปิดบัง
+        var showToken = await Accounting.Filters.RequireOwnerAttribute.DenyAsync(HttpContext, _db, companyId,
+            "ดูรหัสลับใน URL แจ้งเตือน") == null;
+        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(c => Map(c, vatRegistered, showToken)).ToList()));
     }
 
     public sealed record SaveConfigRequest(
@@ -208,7 +228,7 @@ public class PaymentSettingsController : ControllerBase
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<ConfigResponse>(true,
-            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct)), "บันทึกการตั้งค่าแล้ว"));
+            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true), "บันทึกการตั้งค่าแล้ว"));
     }
 
     [HttpPost("{providerCode}/test")]
@@ -232,6 +252,49 @@ public class PaymentSettingsController : ControllerBase
             await _db.SaveChangesAsync(ct);
         }
         return Ok(new ApiResponse<ProviderHealth>(true, health, health.Message));
+    }
+
+    /// <summary>ออกรหัสลับใน URL แจ้งเตือนใหม่ (ฝ่ายค้าน GWO-6) — ใช้เมื่อ URL รั่ว · URL ที่มีรหัสเก่า<b>ใช้ไม่ได้ทันที</b> ⇒ ต้องตั้ง URL ใหม่ในแดชบอร์ด
+    /// ผู้ให้บริการทั้งสองโหมด · ล้างเวลา "รับทาง URL ใหม่" (หน้าตั้งค่ากลับไปเตือนจนกว่าจะได้รับทาง URL ใหม่อีกครั้ง) · เจ้าของเท่านั้น · ห้ามคีย์ API ·
+    /// เข้า hash chain (ไม่บันทึกตัวรหัส)</summary>
+    [HttpPost("{providerCode}/webhook-token/rotate")]
+    [Accounting.Filters.RejectApiKey("ออกรหัสลับ URL แจ้งเตือนใหม่")]
+    [Accounting.Filters.RequireOwner("ออกรหัสลับ URL แจ้งเตือนใหม่", "URL ที่มีรหัสเก่าจะใช้ไม่ได้ทันที — การแจ้งเตือนการชำระเงินของลูกค้าจะไม่ถึงจนกว่าจะตั้ง URL ใหม่")]
+    public async Task<ActionResult<ApiResponse<ConfigResponse>>> RotateWebhookToken(
+        Guid companyId, string providerCode, CancellationToken ct)
+    {
+        var cfg = await _db.PaymentProviderConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId
+                                   && c.ProviderCode == providerCode && !c.IsDeleted, ct);
+        if (cfg == null) return NotFound(new ApiResponse<ConfigResponse>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
+
+        var hadToken = !string.IsNullOrEmpty(cfg.WebhookToken);
+        cfg.WebhookToken = GatewayWebhookRoute.NewToken();
+        cfg.LastTokenWebhookAt = null;
+        cfg.LastTokenWebhookMode = null;
+        cfg.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            EntityType = nameof(PaymentProviderConfig),
+            EntityId = cfg.Id.ToString(),
+            Action = AuditAction.Update,
+            UserEmail = User?.Identity?.Name,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "rotate-webhook-token",
+                provider = providerCode,
+                hadToken,
+            }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        _logger.LogWarning("บริษัท {Company} ออกรหัสลับ URL แจ้งเตือนใหม่ของ {Provider}", companyId, providerCode);
+        return Ok(new ApiResponse<ConfigResponse>(true,
+            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true),
+            "ออกรหัสใหม่แล้ว — URL เดิมที่มีรหัสเก่าใช้ไม่ได้ทันที: คัดลอก URL ด้านบนไปตั้งในแดชบอร์ดผู้ให้บริการทั้งโหมดทดสอบและโหมดใช้งานจริงตอนนี้ "
+            + "(ระหว่างนี้รายการที่ค้างกด \"ตรวจสถานะสด\" ที่หน้ารายการรับชำระออนไลน์)"));
     }
 
     public sealed record SetModeRequest(PaymentProviderMode Mode);
@@ -288,7 +351,7 @@ public class PaymentSettingsController : ControllerBase
         cfg.Mode = req.Mode;
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct)),
+        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true),
             req.Mode == PaymentProviderMode.Live
                 ? "เปิดใช้งานรับชำระเงินจริงแล้ว"
                 : "กลับสู่โหมดทดสอบแล้ว — เงินจะไม่เข้าจริง"));

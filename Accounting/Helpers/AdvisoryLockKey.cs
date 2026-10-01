@@ -156,4 +156,8 @@ public static class AdvisoryLockKey
     /// (รอบ 200 · คำตัดสินข้อ 19 · K-5): หน้าเว็บอัปโหลด 3 ไฟล์พร้อมกัน ⇒ ใบ Makro 00005 สองใบได้แถวสาขาซ้ำ เพราะไม่มี unique index
     /// (ตั้งใจไม่เพิ่มจนกว่าข้อมูลซ้ำเดิมจะถูกจัดการ) — ล็อกต่อ "นิติบุคคล" (ไม่ใช่ต่อสาขา) เพราะแถวสาขาใหม่ถูกตัดสินจากแถวทุกสาขาของเลขนั้น</summary>
     public const string OcrContactCreate = "ocr-contact-create";
+
+    /// <summary>resync เอกสารจากระบบภายนอก — part = id เอกสาร (ฝ่ายค้าน GWO-4 รอบ 201 ทีม GW): dry-run → กลับ JE เดิม → ลง JE ใหม่ ต้องเป็นธุรกรรมเดียวและ
+    /// คำขอ resync ซ้อนของเอกสารเดียวกันต้องรอกัน (ไม่งั้นสองคำขอเห็น JE เดิมชุดเดียวกัน ⇒ กลับซ้ำ/ลงซ้ำ)</summary>
+    public const string IntegrationResync = "int-resync";
 }

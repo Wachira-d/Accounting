@@ -7139,7 +7139,37 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastLegacyWebhookAt" timestamptz NULL;""",
         """UPDATE "PaymentProviderConfigs" SET "WebhookToken" = replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '') WHERE "WebhookToken" IS NULL;""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PaymentProviderConfigs_WebhookToken" ON "PaymentProviderConfigs" ("WebhookToken") WHERE "WebhookToken" IS NOT NULL;""",
+        // ฝ่ายค้าน GWO-7: เวลาที่คำขอทาง URL เดิมของร้านนี้ถูกข้าม
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastLegacySkippedAt" timestamptz NULL;""",
+        // ฝ่ายค้าน GWO-1: ธง "มีหลักฐานว่าใช้ URL เดิม" — ต้องเติม<b>ครั้งเดียว</b>ในขั้นที่สร้างคอลัมน์ (UPDATE ทุกบูตจะเปิดธงให้ร้านที่เพิ่งได้รับทาง URL ใหม่)
+        LegacyWebhookEligibleBackfillSql(),
     };
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์ <c>LegacyWebhookEligible</c> — deterministic ข้ามเครื่อง (ทางเดียวกับ <see cref="EtaxKeptOriginalLockKey"/>)</summary>
+    internal static string LegacyWebhookEligibleLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "PaymentProviderConfigs.LegacyWebhookEligible").ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>ฝ่ายค้าน GWO-1 — สร้าง <c>LegacyWebhookEligible</c> แล้วเปิดธงเฉพาะแถวที่<b>เคยได้รับ webhook</b> (<c>LastWebhookAt</c>/<c>LastLegacyWebhookAt</c> มีค่า ·
+    /// ก่อนรอบนี้มีแต่ URL เดิม) · <b>รันครั้งเดียว</b>: มีคอลัมน์แล้ว = ไม่ทำอะไร (advisory lock คีย์คงที่ ⇒ สองเครื่องบูตพร้อมกันเติมครั้งเดียว) ·
+    /// ฐานใหม่ได้คอลัมน์จาก EnsureCreated (ไม่มีแถวเก่าให้เปิดธง) · แถวที่สร้างหลังจากนี้ = false (EF เขียนค่า false เอง)</summary>
+    internal static string LegacyWebhookEligibleBackfillSql()
+    {
+        var lockKey = LegacyWebhookEligibleLockKey;
+        return $$"""
+            DO $mig$
+            BEGIN
+              PERFORM pg_advisory_xact_lock({{lockKey}});
+              IF EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = 'PaymentProviderConfigs' AND column_name = 'LegacyWebhookEligible') THEN
+                RETURN;
+              END IF;
+              ALTER TABLE "PaymentProviderConfigs" ADD COLUMN "LegacyWebhookEligible" boolean NOT NULL DEFAULT false;
+              UPDATE "PaymentProviderConfigs" SET "LegacyWebhookEligible" = true
+              WHERE "LastWebhookAt" IS NOT NULL OR "LastLegacyWebhookAt" IS NOT NULL;
+            END
+            $mig$;
+            """;
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG A-DV2 · คำตัดสินข้อ 65)

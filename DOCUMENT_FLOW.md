@@ -701,8 +701,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     • **รอบ 201 ทีม GW (A-GW12 · team-G E-4b)**: เส้นปรับ JE ตัวเดียว `ApplyResyncJournalAsync` (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ/ทำไม่ได้ ⇒
       **dry-run สร้างบรรทัด JE ใหม่ก่อน** (`DryRunMappingJournalAsync` = ตัวสร้าง + ด่านโครงสร้างตัวเดียวกับตอนลงจริง ไม่บันทึก) แล้วค่อยกลับ JE เดิม ·
       สร้างไม่ได้ ⇒ **คง JE เดิม** (ไม่กลับ — เดิมกลับก่อนแล้วสร้างใหม่ไม่ได้ ⇒ เอกสารไม่มี JE) + หมายเหตุ `[JE ยังเป็นยอดเดิม]` บนเอกสาร + sync log `PartialSuccess` +
-      ข้อความตอบคู่ค้า "(JE เดิมคงไว้)" · ตัวตัดสิน `Helpers/IntegrationResyncJournal.Decide` · ทางไปต่อที่มีจริง (`ResendNextStep`): แก้ mapping แล้วให้ระบบต้นทาง
-      ส่งซ้ำแบบ `resyncUpdate` (หมายเหตุ `[ยังไม่ลงบัญชี]` เดิมชี้ปุ่ม "ลงบัญชีใหม่จากหน้าเอกสาร" ที่ไม่มีในระบบ — แก้ข้อความแล้ว)
+      ข้อความตอบคู่ค้า "(JE เดิมคงไว้)" + **ช่อง `Warnings`** (ฝ่ายค้าน GWO-5 · `IntegrationResyncJournal.Warnings`) · ตัวตัดสิน `Helpers/IntegrationResyncJournal.Decide` ·
+      ทางไปต่อที่มีจริง (`ResendNextStep`): แก้ mapping แล้วให้ระบบต้นทาง
+      ส่งซ้ำแบบ `resyncUpdate` (หมายเหตุ `[ยังไม่ลงบัญชี]` เดิมชี้ปุ่ม "ลงบัญชีใหม่จากหน้าเอกสาร" ที่ไม่มีในระบบ — แก้ข้อความแล้ว) ·
+      **ธุรกรรมเดียว + ล็อกต่อเอกสาร (GWO-4)**: `ApplyResyncJournalAsync` ห่อ execution strategy + transaction + `pg_advisory_xact_lock`
+      (`AdvisoryLockKey.IntegrationResync` + id เอกสาร) รอบ `ApplyResyncJournalCoreAsync` — ล้มกลางทาง = ไม่มีการกลับ JE ค้าง · resync ซ้อนของเอกสารเดียวกันรอกัน
   - **คำเตือนบัญชีธนาคารรับเงินล่วงหน้า (รอบ 201 ทีม GW · A-GW11)**: `GET integrations/dashboard` คืน `MoneyAccountWarning`
     (`MoneyAccountFallback.IntegrationBankWarning` ← `PickBank` กติกาเดียวกับตอนรับรายการชำระ: บัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
     ที่ไม่ส่ง `bankAccountName` จะถูกปฏิเสธ `INT-NO-BANK-ACCOUNT`) · หน้า `integrations.html` แสดงแถบเตือน + ลิงก์หน้าบัญชีธนาคาร
@@ -1357,8 +1360,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รอบ 201 ทีม GW (BACKLOG §1.1 · `erp-review/2026-10-01/team-GW.md`)**:
   **webhook รหัสลับต่อ config (A-GW1)** — action เดียว `PaymentWebhookController.Receive` สอง route: `api/pay/webhooks/{provider}/{token}` (`PaymentProviderConfig.WebhookToken`
   สุ่ม 256 บิต · ออกตอนบันทึกตั้งค่า + migration เติมแถวเดิม · ลองยืนยันเฉพาะ config ที่รหัสตรง (เทียบเวลาคงที่) · รหัสผิด/รูปผิด = ไม่ยิงคำขอออก) และ URL เดิม
-  `{provider}` (คงไว้ — ลองเฉพาะ config ที่โหมดปัจจุบันยังไม่เคยได้รับทาง URL ใหม่ · `LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt`) · ตัวเลือกตัวเดียว
-  `GatewayWebhookRoute.ConfigsToTry` · หน้าตั้งค่าแสดง URL ใหม่ + URL เดิม + คำเตือน "ยังใช้ URL เดิม" (`LegacyUrlWarning`) ·
+  `{provider}` (คงไว้**ชั่วคราว** — ฝ่ายค้าน GWO-1: ลองเฉพาะ config ที่ `GatewayWebhookRoute.AcceptsLegacy` = **มีหลักฐานว่าใช้ URL เดิม** (`LegacyWebhookEligible`:
+  migration ตั้ง true **ครั้งเดียว**เฉพาะแถวที่เคยได้รับ webhook ก่อนมีคอลัมน์ · แถวใหม่ false) + โหมดปัจจุบันยังไม่เคยได้รับทาง URL ใหม่ (`LastTokenWebhookAt/Mode`) +
+  **ก่อนวันปิด `LegacyRouteSunsetUtc` = 1 ม.ค. 2570 เวลาไทย** · หลังวันปิด URL เดิมไม่ลองใครเลย ⇒ **ก่อนวันปิด POST นิรนามทาง URL เดิมยังพาคีย์ของร้านที่มีหลักฐานและยังไม่ย้ายออกไปได้**
+  (ไม่ใช่ "ไม่ยิงออกเลย") · ตัวเลือกตัวเดียว `GatewayWebhookRoute.ConfigsToTry` · หน้าตั้งค่าแสดง URL ใหม่ + URL เดิม (เฉพาะร้านที่ URL เดิมยังรับ) + คำเตือน
+  พร้อมวันปิด (`LegacyUrlWarning`) · **คำขอทาง URL เดิมที่ถูกข้าม (GWO-7)** — เลขรายการจากเนื้อคำขอที่ยังไม่ยืนยัน (`IPaymentProvider.UnverifiedIntentHint` · ไม่ยิงออก)
+  ⇒ ประทับ `LastLegacySkippedAt` ของ config เจ้าของรายการ (ไม่ถี่กว่า 10 นาที · `ShouldStampLegacySkip`) ⇒ คำเตือน "ระบบไม่รับทาง URL เดิมของร้านนี้" ขึ้นจริง ·
+  **รหัสลับ (GWO-6)** — `GET payment-settings` ส่ง URL เต็มเฉพาะเจ้าของ (`RequireOwnerAttribute.DenyAsync`) ผู้อื่น/คีย์ API เห็นแบบปิดบัง (`MaskedPath` · `WebhookTokenMasked`) ·
+  `POST payment-settings/{provider}/webhook-token/rotate` (`[RequireOwner]` + `[RejectApiKey]` + hash chain ไม่เก็บตัวรหัส · ล้างเวลา "รับทาง URL ใหม่") ·
+  log คำขอ/ข้อผิดพลาด (`RequestLoggingMiddleware` · `ApiErrorLoggingMiddleware` · `ExceptionMiddleware`) ปิดบัง segment รหัสด้วย `GatewayWebhookRoute.RedactPath` ·
   **กระทบยอดรู้จักรอบโอน batch (A-GW4)** — intent ที่ `SettlementBatchId` เป็นเจ้าของ = โอนแล้วเมื่อรอบโอน Posted/BankMatched (`GatewayReconciliation.IsBatchPosted`) ·
   ยอดโอนเข้า/ยอดคืนที่ถูกหัก/ค่าธรรมเนียมที่ถูกหัก จากบรรทัดรอบโอนที่ลงบัญชีแล้ว (`BatchSettled` · `FromIntent`) · `GET pay/intents` `isSettled` ใช้ตัวตัดสินเดียวกัน ·
   หน้า `payment-settlements.html` มีการ์ดกระทบยอด 30 วัน (เดิม endpoint ไม่มีผู้เรียก) + นับแถวเก่าที่แยกยอดคืนหักรอบหลังไม่ได้ (`LateRefundSplitUnknown` · A-GW9 —
@@ -1366,12 +1376,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **VAT ค่าธรรมเนียมของรอบโอน batch (A-GW5)** — อยู่ในใบสำคัญจ่ายค่าธรรมเนียมของรอบโอน (ภาษีซื้อพัก 11640 จนกรอกใบกำกับที่เอกสาร) **ไม่ใช่ 11630** ⇒ ไม่รวมเข้ายอดเคลมของ
   หน้านี้ (รวม = 11630 ติดลบ + ภาษีซื้อซ้ำ) · `GET settlements/fee-vat` แสดง `batchUndueVat/Documents` + `batchPortionNote` และด่าน "VAT เกินที่พัก" ต่อข้อความนี้ ·
   **ปรับปรุงเศษ 11630 (A-GW8)** `POST pay/settlements/fee-vat/residue` → `WriteOffFeeVatResidueAsync` (ล็อกเดียวกับรอบโอน/เคลม · `GatewayFeeVatClaim.ResidueCheck`:
-  มีใบเคลมตั้งแต่ปรับปรุงครั้งก่อน · |ยอดค้าง| ≤ 1 บาท × จำนวนใบ · ใบกำกับล่าสุดครอบเดือนรอบโอนล่าสุด) → JE ค่าธรรมเนียม ↔ 11630 tag `gateway-fee-vat-residue:{provider}`
+  มีใบเคลมตั้งแต่ปรับปรุงครั้งก่อน · |ยอดค้าง| ≤ 1 บาท × จำนวนใบ **นับไม่เกิน 12 ใบ** · **ระดับวัน** (GWO-2): ไม่มีบรรทัดพัก 11630 ของรอบโอนที่วันที่ลงบัญชีหลังวันที่ใบกำกับที่เคลม
+  ล่าสุด (`LatestFeeVatDeferralDateAsync`) — เดิมเทียบระดับเดือน) → JE ค่าธรรมเนียม ↔ 11630 tag `gateway-fee-vat-residue:{provider}`
   (นับเป็น "ล้างแล้ว" ในอายุ 11630 · ไม่เข้าการหาเคลมซ้ำ) + hash chain ·
   **บันทึกยอดคืนย้อนหลัง (A-GW7)** `POST pay/intents/{id}/refund/record-legacy` (`[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`) →
   `RecordLegacyRefundAsync`: `GatewayRefundMath.CheckLegacyRefundEntry` (สถานะคืนแล้ว · ยอดคืนในระบบ = 0 · ยอดไม่เกินยอดรับ · คืนเต็ม = เท่ายอดรับ · วันที่ไม่อนาคต · เลขอ้างอิง +
   หลักฐาน · เลือก `BookNow` = ลงใบสำคัญคืนเงินเส้นเดียวกับคืนเงินปกติ (วันที่เงินออกจริง/งวดปิด = วันนี้+หมายเหตุ) หรือ `AlreadyBookedManually` = บันทึกยอดอย่างเดียว) ⇒
-  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง ⇒ รายการเข้ารอบโอนตามปกติ · hash chain ·
+  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง · **รอบโอน (GWO-3)**: รายการที่อยู่ในรอบโอนที่บันทึกแล้ว (เส้นเดิม `SettledAt` · batch ที่ลงบัญชีแล้ว `PayoutDate`) และเงินคืนออก
+  **ไม่หลัง**วันเงินเข้า ⇒ **บังคับเลือก** `RoundTiming` (`DeductedInRecordedRound` ⇒ `RefundSettledAmount` = ยอดคืน รอบถัดไปไม่หักซ้ำ · `DeductedInLaterRound` ⇒ หักในรอบถัดไป) ·
+  คืนหลังวันเงินเข้า ⇒ หักในรอบถัดไป · ยังไม่เข้ารอบ ⇒ เข้ารอบถัดไปด้วยยอดหลังคืน (`GatewayRefundMath.LegacyRefundRoundTiming` · ข้อความสำเร็จบอกผลจริง) · hash chain ·
   **ป้าย/ปุ่ม/ค้างนาน (A-GW2)** — `GET pay/intents` คืน `statusLabel/sourceKindLabel/isStuck/canCheckLive/canRefund/canEditFee` + `statusOptions` + `stuck/stuckMinutes`
   (`PaymentIntentPolicy` · เกณฑ์ค้าง `StuckThreshold` ตัวเดียวกับงานเบื้องหลัง · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · JS ไม่มีสำเนาเกณฑ์ ·
   **URL กลับหลังจ่าย (A-GW3)** — `StartAsync` ผ่าน `PaymentIntentPolicy.SafeReturnUrl` (โดเมน `SiteDomains` ที่อนุมัติ/`Sites.CustomDomain` ของบริษัท + `App:BaseUrl` ·
@@ -4086,6 +4099,8 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 เมื่อ 2026-09-18 (รอบ 170 — คำตัดสินเจ้าของ: doc ที่เป็น append-only log ขนาด 0.8 MB ทำให้ "สถานะปัจจุบัน" ผิดแล้วไม่มีใครเห็น).
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW แก้ตามฝ่ายค้าน GWO-1..7 (§2.3 · §2.6b): URL webhook เดิมลองเฉพาะร้านที่มีหลักฐานใช้ + วันปิด 1 ม.ค. 2570 · ประทับคำขอที่ถูกข้าม · รหัสลับเต็มเฉพาะเจ้าของ + ออกรหัสใหม่ + ปิดบังใน log · เศษ 11630 ระดับวัน + เพดาน 12 ใบ · ยอดคืนย้อนหลังบังคับเลือกรอบโอน · resync ธุรกรรมเดียว + ล็อก + คำเตือน — commit <pending>)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
 
