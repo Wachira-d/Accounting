@@ -2231,6 +2231,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     `PaidAmount` ไม่ล็อก ⇒ รับชำระใหม่ที่ commit พร้อมกันทำให้ถอยภาษี/ล้าง `OutputVatDueAt` จากค่าเก่า) แล้วจึง lock `Payments` row `FOR UPDATE`
     ในทรานแซกชัน + **อ่านแถวใหม่ใต้ล็อก** + re-check `IsDeleted`; ถ้า void ไปแล้ว = no-op (กัน reverse
     bank balance/PaidAmount สองรอบ)
+  - **ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE (advisory)"** (ฝ่ายค้านรอบสาม V1I-X1): `ApproveDocumentAsync` และ `VoidDocumentAsync` เรียก
+    `LockRelatedSourceDocumentAsync` ทันทีหลังล็อกใบตัวเอง — ก่อน `AutoPostToJournalAsync`/`ReverseJournalEntryAsync` ที่ถือล็อกเลข JE ·
+    เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม
   - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
     + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
     OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน

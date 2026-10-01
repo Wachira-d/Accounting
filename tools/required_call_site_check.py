@@ -3075,6 +3075,21 @@ RULES += [
          why="V1H-O2 (V1I): เกณฑ์ e-Tax by Email ประทับเวลามีตัวเดียว (EtaxEmailedWithRdTimestampAsync) — ห้ามสำเนาคิวรี"),
 ]
 
+# ── รอบ 200 ฝ่ายค้านรอบสาม V1I-X1: ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE" (VoidPaymentAsync ล็อกใบต้นทางก่อนเลข JE · อนุมัติ/ยกเลิกต้องเรียงเดียวกัน ไม่งั้น deadlock 40P01) ──
+RULES += [
+    dict(file=DOC, method="ApproveDocumentAsync",
+         must=["LockRelatedSourceDocumentAsync(companyId, documentId)"],
+         before=[("LockRelatedSourceDocumentAsync(companyId, documentId)", "AutoPostToJournalAsync(")],
+         why="V1I-X1: ล็อกใบต้นทางก่อนออกเลข JE (AutoPostToJournalAsync ถือ advisory lock ของเลข RV/JV)"),
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["LockRelatedSourceDocumentAsync(companyId, documentId)"],
+         before=[("LockRelatedSourceDocumentAsync(companyId, documentId)", "ReverseJournalEntryAsync(")],
+         why="V1I-X1: ล็อกใบต้นทางก่อนกลับ JE (ReverseJournalEntryAsync ถือ advisory lock ของเลข JE)"),
+    dict(file=DOC, method="LockRelatedSourceDocumentAsync",
+         must_lit=["FOR UPDATE", "\\\"CompanyId\\\" = {1} AND \\\"Id\\\" = ", "WHERE \\\"Id\\\" = {0} AND \\\"CompanyId\\\" = {1})"],
+         why="V1I-X1: ล็อกแถวใบต้นทางของบริษัทนี้เท่านั้น (tenant ทั้งแถวนอกและ subquery)"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],

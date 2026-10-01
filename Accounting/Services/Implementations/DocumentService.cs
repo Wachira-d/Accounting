@@ -6013,6 +6013,8 @@ public partial class DocumentService : IDocumentService
                 await _db.Database.ExecuteSqlRawAsync(
                     "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
                     documentId, companyId);
+                // ฝ่ายค้านรอบสาม V1I-X1: ลำดับล็อกกลางของทั้งเรพ = ใบตัวเอง → ใบต้นทาง → เลข JE (advisory) — ต้องล็อกใบต้นทางก่อน AutoPostToJournalAsync
+                await LockRelatedSourceDocumentAsync(companyId, documentId);
 
                 // Re-read status under the lock — the prior reader may have
                 // already moved this Document past Draft.
@@ -8102,6 +8104,8 @@ public partial class DocumentService : IDocumentService
                 await _db.Database.ExecuteSqlRawAsync(
                     "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
                     documentId, companyId);
+                // V1I-X1: ใบต้นทางก่อนขั้นกลับ JE (ล็อกเลข JE) — ลำดับเดียวกับ VoidPaymentAsync/อนุมัติ
+                await LockRelatedSourceDocumentAsync(companyId, documentId);
                 var lockedStatus = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == documentId && d.CompanyId == companyId)
                     .Select(d => d.Status).FirstAsync();
@@ -10187,6 +10191,20 @@ public partial class DocumentService : IDocumentService
     ///
     /// Caller is responsible for transaction + SaveChangesAsync.
     /// </summary>
+    /// <summary>
+    /// ล็อกใบต้นทาง (<c>RelatedDocumentId</c>) ของเอกสาร <paramref name="documentId"/> แบบ FOR UPDATE — ฝ่ายค้านรอบสาม V1I-X1:
+    /// <c>VoidPaymentAsync</c> ล็อกใบต้นทางก่อนแล้วจึงออกเลข JE กลับรายการ (advisory lock ต่อ prefix+เดือน) แต่อนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ที่อ้างใบเดียวกัน
+    /// ออกเลข JE ก่อนแล้วค่อยล็อกใบต้นทาง ⇒ วนรอกัน (40P01) · กติกากลาง: <b>ใบตัวเอง → ใบต้นทาง → เลข JE</b> ·
+    /// ไม่มีใบต้นทาง = ไม่ทำอะไร · ล็อกซ้ำในธุรกรรมเดียวกันไม่มีผลเสีย (PostgreSQL ถือล็อกแถวเดิมอยู่แล้ว)
+    /// </summary>
+    private async Task LockRelatedSourceDocumentAsync(Guid companyId, Guid documentId)
+    {
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Documents\" WHERE \"CompanyId\" = {1} AND \"Id\" = "
+            + "(SELECT \"RelatedDocumentId\" FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1}) FOR UPDATE",
+            documentId, companyId);
+    }
+
     private async Task ApplySourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
     {
         if (!doc.RelatedDocumentId.HasValue) return;

@@ -4039,3 +4039,5 @@ _2026-10-01 รอบ 200 ทีม V1I — แก้ผลฝ่ายค้า
   (เงื่อนไข "มีไฟล์" ตรงตัวต่อ target) + negative test G1–G7
 - **V1H-O7** ธงเช็คเด้ง/ยกเลิกการลงบัญชีของใบเสร็จ Submitted ไม่แนะนำทาง (ค)
 - เทสต์ `VoidReissueR200ITests` (สองทิศทุกข้อ) · required_call_site +9 แถว — commit 3f644286)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 200 ฝ่ายค้านรอบสาม V1I-X1 — ลำดับล็อกกลาง ใบตัวเอง → ใบต้นทาง → เลข JE: `ApproveDocumentAsync`/`VoidDocumentAsync` ล็อกใบต้นทาง (`LockRelatedSourceDocumentAsync`) ก่อนออก/กลับ JE ⇒ ไม่วนรอกับ `VoidPaymentAsync` ที่ V1I สลับให้ล็อกเอกสารก่อน · required_call_site +3 แถว)_

@@ -77,3 +77,12 @@
 
 ## คอมมิต
 - โค้ด + เอกสาร: `3f644286` · เติม sha: คอมมิตตามหลัง (ห้าม amend)
+
+
+## ฝ่ายค้านรอบสาม (main agent ส่ง · 2026-10-01)
+
+ความเสี่ยงคอมไพล์ 7 ข้อ: เปิดไฟล์ยืนยันแล้ว ไม่พบปัญหา · ผ่อนด่านไฟล์แนบเมื่อไม่ส่งไฟล์: ไม่พบทางที่ไฟล์ถูกแตะโดยไม่ผ่านด่าน
+
+| ID | P | สถานะ | ที่แก้ |
+|---|---|---|---|
+| V1I-X1 | P2 | ✅ (main agent) | ลำดับล็อกใหม่ของ `VoidPaymentAsync` (เอกสาร → เลข JE) สวนกับอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ที่อ้างใบเดียวกัน (เลข RV → เอกสาร) ⇒ deadlock 40P01 · แก้: `LockRelatedSourceDocumentAsync` ใน `ApproveDocumentAsync`/`VoidDocumentAsync` ทันทีหลังล็อกใบตัวเอง (ก่อน `AutoPostToJournalAsync`/`ReverseJournalEntryAsync`) · required_call_site 3 แถว (มี before) |
