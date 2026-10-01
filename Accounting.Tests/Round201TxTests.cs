@@ -102,6 +102,17 @@ public class Round201TxTests
     }
 
     [Fact]
+    public void ATX5_ทิศตรงข้าม_ล็อกซ้ำในธุรกรรมเดียวกัน_แถวที่แก้หลังล็อกครั้งแรก_ไม่ล้มและไม่อ่านทับ()
+    {
+        // เส้นหักฐานมัดจำล็อก+แก้ใบ a แล้วเส้นหักแบบขับ JE ล็อก a ซ้ำในการอนุมัติเดียวกัน
+        Guid a = Guid.NewGuid(), b = Guid.NewGuid();
+        var plan = DepositKindDocumentRules.LockReloadPlan(
+            new[] { (a, EntityState.Modified), (b, EntityState.Unchanged) }, new[] { a, b }, new[] { a });
+        Assert.Empty(plan.ModifiedBeforeLock);
+        Assert.Equal(new[] { b }, plan.Reload);   // a ห้ามอ่านใหม่ (ทับการแก้ใต้ล็อก)
+    }
+
+    [Fact]
     public void ATX5_ทิศตรงข้าม_ทุกแถว_Unchanged_ไม่ล้ม()
     {
         Guid a = Guid.NewGuid(), b = Guid.NewGuid();

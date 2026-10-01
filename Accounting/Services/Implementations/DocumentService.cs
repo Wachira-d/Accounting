@@ -16946,6 +16946,14 @@ public partial class DocumentService : IDocumentService
     /// <para>ลำดับเดียวกับคืนมัดจำ/ตัดชำระ (คีย์ก่อนแถว) · ถูกถือโดยผู้อื่น ⇒ ข้อความ "รอสักครู่" ตัวเดียวของทุกทางเข้า (ไม่รอ — กัน deadlock กับล็อกเลขเอกสาร) ·
     /// ต้องอยู่ในธุรกรรม (<c>TryXactLockAsync</c> โยนเมื่อไม่มี — ล้มดัง ไม่ข้ามเงียบ)</para>
     /// </summary>
+    /// <summary>รอบ 201 A-TX5 — ธุรกรรมที่ <see cref="_depositLockedIds"/> เป็นของ (เปลี่ยนธุรกรรม = ล้างชุด)</summary>
+    private object? _depositLockTx;
+    /// <summary>รอบ 201 A-TX5 — ตัวระบุธุรกรรมปัจจุบัน <b>ใช้จำชุดใบที่ล็อกแล้วเท่านั้น</b> (ไม่ใช่ทางข้ามล็อกเมื่อไม่มีธุรกรรม —
+    /// <c>TryXactLockAsync</c> ยังโยนเมื่อไม่มีธุรกรรมเหมือนเดิม)</summary>
+    private object? DepositLockTransactionScope() => _db.Database.CurrentTransaction;
+    /// <summary>รอบ 201 A-TX5 — ใบมัดจำที่ <see cref="LockDepositBalancesAsync"/> ล็อกไปแล้วในธุรกรรมปัจจุบัน (ล็อกซ้ำไม่ถือว่า "แก้ก่อนล็อก")</summary>
+    private readonly HashSet<Guid> _depositLockedIds = new();
+
     private async Task LockDepositBalancesAsync(Guid companyId, IEnumerable<Guid> depositIds)
     {
         var ids = depositIds.Distinct().OrderBy(x => x).ToArray();
@@ -16958,10 +16966,14 @@ public partial class DocumentService : IDocumentService
             @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
             ids, companyId);
         // ค่าล่าสุดใต้ล็อก — context อาจถือแถวนี้ไว้ก่อนล็อก (identity resolution ไม่อ่านค่าใหม่ให้เอง)
-        // รอบ 201 A-TX5: แถวที่ถูกแก้ก่อนล็อก (Modified) เดิมข้ามเงียบ = คงค่าเก่าแล้วบันทึกทับยอดของคำขออื่น ⇒ ล้มดัง (ตัวตัดสิน LockReloadPlan)
+        // รอบ 201 A-TX5: แถวที่ถูกแก้ก่อนล็อก (Modified) เดิมข้ามเงียบ = คงค่าเก่าแล้วบันทึกทับยอดของคำขออื่น ⇒ ล้มดัง (ตัวตัดสิน LockReloadPlan) ·
+        // แถวที่ล็อกไปแล้วในธุรกรรมเดียวกัน (ล็อกซ้ำ re-entrant) ไม่นับ — จำชุดที่ล็อกต่อธุรกรรม (ฟิลด์ของ service ที่มีอายุต่อคำขอ ไม่ใช่ static)
+        var lockScope = DepositLockTransactionScope();
+        if (!ReferenceEquals(lockScope, _depositLockTx)) { _depositLockTx = lockScope; _depositLockedIds.Clear(); }
         var tracked = _db.ChangeTracker.Entries<Document>().ToList();
         var plan = Accounting.Helpers.DepositKindDocumentRules.LockReloadPlan(
-            tracked.Select(e => (e.Entity.Id, e.State)), ids);
+            tracked.Select(e => (e.Entity.Id, e.State)), ids, _depositLockedIds.ToList());
+        _depositLockedIds.UnionWith(ids);
         if (plan.ModifiedBeforeLock.Count > 0)
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.DepositKindDocumentRules.DepositLockOrderMessage(plan.ModifiedBeforeLock.Count),

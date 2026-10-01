@@ -2539,7 +2539,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 
 - **รอบ 201 ทีม TX (มัดจำ · `erp-review/2026-10-01/team-TX.md`)**:
   - **A-TX5** `LockDepositBalancesAsync` — แถวมัดจำที่ context แก้ไว้ก่อนล็อก (Modified/Deleted) ⇒ ล้มดัง `DEPOSIT-LOCK-ORDER` (500 · ทั้งธุรกรรม rollback) ·
-    เดิมข้ามเงียบแล้วบันทึกค่าก่อนล็อกทับยอดของคำขออื่น · ตัวคัด `DepositKindDocumentRules.LockReloadPlan` (Unchanged = อ่านใหม่)
+    เดิมข้ามเงียบแล้วบันทึกค่าก่อนล็อกทับยอดของคำขออื่น · ตัวคัด `DepositKindDocumentRules.LockReloadPlan` (Unchanged = อ่านใหม่) ·
+    แถวที่ล็อกไปแล้วในธุรกรรมเดียวกัน (ล็อกซ้ำ เช่นหักฐานมัดจำ + หักแบบขับ JE ในการอนุมัติครั้งเดียว) ไม่นับและไม่อ่านทับ (`_depositLockedIds` ต่อธุรกรรม)
   - **A-TX6** `UnrealizeDrivesDepositAsync` — ทางลัด "ทุกขาเป็นของใบเดียว" ใช้เมื่อ**เลขบนใบที่หัก** ≤ 1 (`ParseDepositRefs(...).Length` — ตัวเดียวกับที่เส้นหักเลือกใบเดียว/หลายใบ)
     ไม่ใช่จำนวนที่ resolve ได้ · ขา 21913 ที่ผูกไม่ได้นับ `DrivesUnrealizeSplit.UnattributedUndue` แล้วต่อท้ายหมายเหตุบนใบมัดจำ (เดิมข้ามเงียบ)
   - **A-TX7** วันที่รับรู้/ริบ/ใบกำกับของยอดที่ริบเมื่อไม่ระบุ = วันนี้ตามปฏิทินไทย (`DepositKindDocumentRules.RealizeDateOrToday`) — เดิม `UtcNow` ⇒ 00:00–07:00 น. ได้เดือนก่อน

@@ -218,17 +218,21 @@ public static class DepositKindDocumentRules
     /// <c>LockDepositBalancesAsync</c> · แถวที่ context ถือแบบ Unchanged ⇒ อ่านใหม่ (ค่าล่าสุดใต้ล็อก) · แถวที่<b>ถูกแก้ก่อนล็อก</b>
     /// (Modified/Deleted) ⇒ ผิดลำดับ "ล็อกก่อนแก้" — เดิมข้ามเงียบ (คงค่าเก่าที่อ่านก่อนล็อก แล้วบันทึกทับยอดของคำขออื่น = lost update)
     /// ⇒ ผู้เรียกต้องล้มดัง (บั๊กโปรแกรมเมอร์ ไม่ใช่ข้อมูลผู้ใช้) · แถวที่ไม่ได้ล็อก/ไม่ได้ถือ ไม่เกี่ยว
+    /// <para>ยกเว้นแถวที่<b>ล็อกไปแล้วในธุรกรรมเดียวกัน</b> (<paramref name="lockedEarlierInTransaction"/> — ล็อกซ้ำแบบ re-entrant เช่นเส้นหักฐานมัดจำแล้ว
+    /// เส้นหักแบบขับ JE ในการอนุมัติครั้งเดียว): ค่านั้นอ่านใต้ล็อกแล้วแก้ในธุรกรรมนี้เอง ⇒ ไม่อ่านใหม่ (ทับการแก้) และไม่นับว่าผิดลำดับ</para>
     /// </summary>
     public static (IReadOnlyList<Guid> Reload, IReadOnlyList<Guid> ModifiedBeforeLock) LockReloadPlan(
-        IEnumerable<(Guid Id, Microsoft.EntityFrameworkCore.EntityState State)> tracked, IReadOnlyCollection<Guid> lockedIds)
+        IEnumerable<(Guid Id, Microsoft.EntityFrameworkCore.EntityState State)> tracked, IReadOnlyCollection<Guid> lockedIds,
+        IReadOnlyCollection<Guid>? lockedEarlierInTransaction = null)
     {
         var reload = new List<Guid>();
         var dirty = new List<Guid>();
         foreach (var (id, state) in tracked)
         {
             if (!lockedIds.Contains(id)) continue;
-            if (state == Microsoft.EntityFrameworkCore.EntityState.Unchanged) reload.Add(id);
-            else if (state is Microsoft.EntityFrameworkCore.EntityState.Modified or Microsoft.EntityFrameworkCore.EntityState.Deleted) dirty.Add(id);
+            var heldAlready = lockedEarlierInTransaction != null && lockedEarlierInTransaction.Contains(id);
+            if (state == Microsoft.EntityFrameworkCore.EntityState.Unchanged) { if (!heldAlready) reload.Add(id); }
+            else if (state is Microsoft.EntityFrameworkCore.EntityState.Modified or Microsoft.EntityFrameworkCore.EntityState.Deleted && !heldAlready) dirty.Add(id);
         }
         return (reload, dirty);
     }
