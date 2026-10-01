@@ -457,7 +457,8 @@ public class PayrollController : ControllerBase
         try
         {
             var res = await _service.UpdatePayrollDetailAsync(companyId, runId, employeeId, request, User.Identity?.Name ?? "");
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "แก้ยอดรายคนแล้ว"));
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
+                res.Notice == null ? "แก้ยอดรายคนแล้ว" : "แก้ยอดรายคนแล้ว · " + res.Notice));
         }
         catch (InvalidOperationException ex)
         {
@@ -466,13 +467,25 @@ public class PayrollController : ControllerBase
     }
 
     /// <summary>รายชื่อพนักงานที่ "เพิ่มเข้ารอบนี้ได้" (อยู่ในงวด + ยังไม่อยู่ในรอบ) — ใช้ในโมดัล ➕ เพิ่มพนักงานเข้ารอบ ·
-    /// เงินเดือนคืนเฉพาะผู้มีสิทธิ์ดูเงินเดือน (กติกาเดียวกับรายชื่อพนักงาน)</summary>
+    /// เงินเดือนคืนเสมอ — ด่าน <see cref="CheckPayrollAccessAsync"/> คือสิทธิ์ดูเงินเดือนตัวเดียวกัน (รอบ 201 PR2 · X6: เดิมส่ง
+    /// <c>CanViewPayrollAsync</c> ซ้ำหลังด่านเดียวกัน = จริงเสมอ)</summary>
     [HttpGet("runs/{runId:guid}/addable-employees")]
     public async Task<ActionResult<ApiResponse<List<PayrollAddableEmployeeDto>>>> GetAddableEmployees(Guid companyId, Guid runId)
     {
         var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
         return Ok(new ApiResponse<List<PayrollAddableEmployeeDto>>(true,
-            await _service.GetAddableEmployeesAsync(companyId, runId, await CanViewPayrollAsync(companyId))));
+            await _service.GetAddableEmployeesAsync(companyId, runId)));
+    }
+
+    /// <summary>🧮 คำนวณภาษีให้รายคน (รอบ 201 PR2 · คำตัดสินข้อ 73) — พรีวิว <b>ไม่บันทึก</b> · เครื่องคิดภาษีตัวเดียวกับคำนวณรอบ ·
+    /// ใช้ในโมดัล ➕ เพิ่ม / ✏️ แก้ยอด แล้วผู้ใช้ยืนยันค่า · ด่านสิทธิ์เดียวกับการแก้รายคน (ข้อมูลเงินเดือน + ใช้ตอนแก้เท่านั้น)</summary>
+    [HttpPost("runs/{runId:guid}/tax-preview")]
+    public async Task<ActionResult<ApiResponse<PayrollTaxPreviewResponse>>> PreviewWithholdingTax(
+        Guid companyId, Guid runId, [FromBody] PayrollTaxPreviewRequest request)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "คำนวณภาษีรายคน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollTaxPreviewResponse>(true,
+            await _service.PreviewWithholdingTaxAsync(companyId, runId, request)));
     }
 
     /// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว (ก่อนจ่าย) — ด่านเดียวกับ ✏️ แก้ยอด ·
@@ -487,7 +500,9 @@ public class PayrollController : ControllerBase
             var actorUserId = JwtHelper.GetUserIdFromClaims(User);
             var res = await _service.AddPayrollDetailAsync(companyId, runId, request, User.Identity?.Name ?? "",
                 actorUserId == Guid.Empty ? (Guid?)null : actorUserId);
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "เพิ่มพนักงานเข้ารอบแล้ว"));
+            // ผลข้างเคียงต้องถึงผู้กด (ต้องอนุมัติใหม่ · รอบนำเข้าไม่คิดเงินทดแทน) — ห้ามตอบแค่ "สำเร็จ"
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
+                res.Notice == null ? "เพิ่มพนักงานเข้ารอบแล้ว" : "เพิ่มพนักงานเข้ารอบแล้ว · " + res.Notice));
         }
         catch (InvalidOperationException ex)
         {
@@ -507,7 +522,8 @@ public class PayrollController : ControllerBase
             var actorUserId = JwtHelper.GetUserIdFromClaims(User);
             var res = await _service.RemovePayrollDetailAsync(companyId, runId, employeeId, reason, User.Identity?.Name ?? "",
                 actorUserId == Guid.Empty ? (Guid?)null : actorUserId);
-            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "เอาพนักงานออกจากรอบแล้ว"));
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res,
+                res.Notice == null ? "เอาพนักงานออกจากรอบแล้ว" : "เอาพนักงานออกจากรอบแล้ว · " + res.Notice));
         }
         catch (InvalidOperationException ex)
         {
@@ -666,8 +682,11 @@ public class PayrollController : ControllerBase
             await _service.GetLeaveBalanceAsync(companyId, employeeId, year ?? DateTime.UtcNow.Year)));
     }
 
+    /// <summary>ยกเลิกทั้งรอบ — รอบ 201 (PR2 · ข้อ 70) มีปุ่มบนหน้ารอบแล้ว · เหตุผลบังคับ (body <c>{ reason }</c> ·
+    /// service ตรวจ ≥ 5 ตัวอักษร + เก็บ audit chain) · ด่าน <c>PayrollRunEditPolicy.CanVoid</c> ตัวเดียวกับปุ่ม</summary>
     [HttpPost("runs/{runId:guid}/void")]
-    public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId)
+    public async Task<ActionResult<ApiResponse<bool>>> VoidRun(Guid companyId, Guid runId,
+        [FromBody] VoidPayrollRunRequest? request = null)
     {
         // ยกเลิกรอบ = กลับ JE + คืนเงินทดรอง — ทำลายข้อมูลมากกว่าการ "อ่าน"
         // รายละเอียดรอบเสียอีก แต่เดิม**ไม่มีด่านสิทธิ์เลย** ขณะที่ GetRun /
@@ -677,8 +696,10 @@ public class PayrollController : ControllerBase
         var block = await RequirePayrollWriteAsync(companyId, "ยกเลิกรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollPay); if (block != null) return block;
         try
         {
-            await _service.VoidPayrollAsync(companyId, runId);
-            return Ok(new ApiResponse<bool>(true, true));
+            var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+            await _service.VoidPayrollAsync(companyId, runId, request?.Reason, User.Identity?.Name ?? "",
+                actorUserId == Guid.Empty ? (Guid?)null : actorUserId);
+            return Ok(new ApiResponse<bool>(true, true, "ยกเลิกรอบเงินเดือนแล้ว"));
         }
         catch (InvalidOperationException ex)
         {

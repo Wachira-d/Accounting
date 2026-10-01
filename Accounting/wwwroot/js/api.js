@@ -1229,6 +1229,10 @@ const API = {
       addPayrollDetail: (runId, body) => API.post(`${base}/payroll/runs/${runId}/employees`, body),
       removePayrollDetail: (runId, empId, reason) =>
         API.del(`${base}/payroll/runs/${runId}/employees/${empId}?reason=${encodeURIComponent(reason || '')}`),
+      // 🧮 คำนวณภาษีให้รายคน — พรีวิว ไม่บันทึก (เครื่องคิดภาษีตัวเดียวกับคำนวณรอบ · รอบ 201 PR2)
+      previewPayrollTax: (runId, body) => API.post(`${base}/payroll/runs/${runId}/tax-preview`, body),
+      // 🚫 ยกเลิกทั้งรอบ — เหตุผลบังคับ (ด่าน CanVoid ตัวเดียวกับปุ่ม · รอบ 201 PR2)
+      voidPayrollRun: (runId, reason) => API.post(`${base}/payroll/runs/${runId}/void`, { reason }),
       // กลับรายการจ่าย (Paid → Approved) เพื่อแก้ยอดย้อนหลังแล้วจ่ายใหม่
       reopenPayrollRun: (runId, reason) => API.post(`${base}/payroll/runs/${runId}/reopen`, { reason }),
       getPayrollItems: () => API.get(`${base}/payroll/items`),

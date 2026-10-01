@@ -176,8 +176,8 @@ public class PayrollRunRecalculatePolicyTests
         // ฝ่ายค้าน P1: "สร้างไฟล์ ≠ ยื่น" และแถว EFilingExport ลบไม่ได้ ⇒ ถ้าล็อก = ล็อกถาวร
         var ev = PayrollRunLockEvidence.From(Array.Empty<PayrollFilingMark>(), false, 0, pnd1FileGenerated: true);
         Assert.True(PayrollRunEditPolicy.CanRecalculate("Approved", null, null, ev).Can);
-        Assert.Contains("ภ.ง.ด.1", PayrollRunEditPolicy.RecalculateWarning(ev));
-        Assert.Null(PayrollRunEditPolicy.RecalculateWarning(None));
+        Assert.Contains("ภ.ง.ด.1", PayrollRunEditPolicy.RecalculateWarning(ev, null));
+        Assert.Null(PayrollRunEditPolicy.RecalculateWarning(None, null));
     }
 
     [Fact]

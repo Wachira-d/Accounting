@@ -4048,3 +4048,18 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม PR2 — เงินเดือน: คำตัดสิน 69–73 + ผลฝ่ายค้าน PR1 (X1–X6) (`erp-review/2026-09-29/team-PR2.md`)
+- **ข้อ 73** `Helpers/PayrollWithholdingTax` (`Compute` · `Allowances` · `RemainingPeriodsAfter` · `PriorYtd` · `ItemAmount` · `ItemBuckets`) — ส่วนประกอบบริบทภาษีย้ายจาก inline ใน
+  `CalculatePayrollAsync` คำต่อคำ (ค่าคงที่ `Pit*` ของ service ถูกถอด อ้าง `ThaiPitCalculator` ตัวเลขเดียวกัน) · `LoadPriorYtdDetailsAsync` query เดียว · `PreviewWithholdingTaxAsync` +
+  `POST runs/{id}/tax-preview` (ไม่บันทึก) · ปุ่ม "🧮 คำนวณภาษีให้" ในโมดัลรายคน (ค่าผู้ใช้ชนะ) · `PayrollDetailAmounts.ApplyFields` (ส่วนใส่ค่าของ `Apply` · พฤติกรรม `Apply` เดิม)
+- **ข้อ 69** `Helpers/PayrollRosterChange` — ➕/🗑 รอบ Approved ⇒ Calculated + ล้างผู้อนุมัติ · `PayrollRunResponse.Notice` · ✏️ คงเดิม
+- **ข้อ 70** ปุ่ม 🚫 ยกเลิกรอบ (`CanVoid/VoidBlockReason` ใน response) · `VoidPayrollRunRequest` เหตุผลบังคับ + `AddChainedAuditLog` · pre-read ไม่ติดตาม · ข้อความ `PAYROLL-DETAIL-LAST` ชี้ปุ่ม
+- **ข้อ 71/X3** `PayrollDetailAmounts.ApplyWorkersCompensation` — ✏️ ฐานเปลี่ยนคิดเงินทดแทนใหม่ · ➕ ใช้ตัวเดียวกัน · รอบนำเข้าไม่แตะ + บอกผู้ใช้
+- **X1** `Helpers/PayrollSsoFlagGuard` (ธง ปกส. × ฐาน × รายได้ สองทิศ · `PAYROLL-SSO-FLAG-MISMATCH`) — ➕ เสมอ · ✏️ เมื่อฐานเปลี่ยน
+- **X2** ✏️ ธุรกรรม + `FOR UPDATE` + อ่านใต้ล็อก · จ่ายอ่านรอบ/แถวใต้ล็อก + `RecomputeRunTotals` ก่อน JE
+- **X4** `PayrollRun.ManualRosterChangedAt` (migration ADD COLUMN IF NOT EXISTS) + `RecalculateWarning(evidence, manualRosterChangedAt)` · คำนวณใหม่ล้างค่า
+- **X5** `PayrollDetailAmounts.SetYtd` — YTD ของแถวที่เพิ่ม/แก้ด้วย query เดียวกับเส้นคำนวณ
+- **X6** ถอด `includeSalary` (จริงเสมอหลังด่าน) — `PayrollAddableEmployeeDto.BaseSalary` เป็น `decimal` · ตัด branch "ไม่มีสิทธิ์ดูเงินเดือน" ใน `payroll.html`
+- เทสต์ `PayrollWithholdingTaxTests` (golden 2,268 กรณีเทียบสูตรเดิม + 50,000 ⇒ 20,450) · `PayrollRosterChangeTests` · `PayrollDetailAmountsTests` +7 · required_call_site +13 แถว — commit <pending>)_
+

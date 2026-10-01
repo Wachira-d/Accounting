@@ -1756,7 +1756,13 @@ const Page = {
             ? `<button class="btn btn-secondary" onclick="Page.reopenRun('${id}')" title="กลับรายการ JE ที่ลงตอนจ่าย แล้วปลดล็อกให้แก้ยอด — ต้องกด &quot;จ่าย&quot; ใหม่หลังแก้">↩️ กลับรายการจ่าย (เพื่อแก้ยอด)</button>`
             : `<button class="btn btn-secondary" disabled title="${Layout.esc(r.reopenBlockReason || 'กลับรายการจ่ายไม่ได้')}">↩️ กลับรายการจ่าย (ไม่ได้)</button>`)
         : '';
-      document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${reopenBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
+      // 🚫 ยกเลิกรอบ (รอบ 201 PR2 · คำตัดสินข้อ 70) — เซิร์ฟเวอร์ตัดสินที่ PayrollRunEditPolicy.CanVoid (ด่านเดียวกับ endpoint)
+      // กดไม่ได้ ⇒ ปุ่มที่กดไม่ได้พร้อมเหตุผล (ห้ามซ่อนเงียบ) · undefined = เซิร์ฟเวอร์รุ่นเก่า ⇒ ไม่แสดง
+      const voidBtn = (r.canVoid === undefined || r.status === 'Voided') ? ''
+        : (r.canVoid
+            ? `<button class="btn btn-danger" onclick="Page.voidRun('${id}')" title="ยกเลิกทั้งรอบ — รอบที่จ่ายแล้วจะกลับรายการบัญชีและคืนเงินทดรอง · ต้องระบุเหตุผล">🚫 ยกเลิกรอบ</button>`
+            : `<button class="btn btn-secondary" disabled title="${Layout.esc(r.voidBlockReason || 'ยกเลิกรอบไม่ได้')}">🚫 ยกเลิกรอบ (ไม่ได้)</button>`);
+      document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${reopenBtn}${voidBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // หลักฐานการจ่าย/นำส่ง (สลิปโอน, ใบเสร็จ สปส., ใบเสร็จสรรพากร) — เก็บ 5 ปี
       // ตาม พ.ร.บ.การบัญชี ม.10 แนบเพิ่ม/ดู/ลบได้ที่นี่
       const filesHost = document.createElement('div');
@@ -1811,6 +1817,32 @@ const Page = {
     }
   },
 
+  /** 🚫 ยกเลิกทั้งรอบ — ถามเหตุผลก่อน (เซิร์ฟเวอร์บังคับ ≥ 5 ตัวอักษร + เก็บลง audit) · ด่านสถานะ/นำส่ง สปส. อยู่ที่เซิร์ฟเวอร์ */
+  async voidRun(runId) {
+    const api = Layout.api(); if (!api) return;
+    const r = this._curRun || {};
+    const reason = prompt(
+      'ยกเลิกรอบเงินเดือนนี้ทั้งรอบ?\n\n'
+      + (r.status === 'Paid'
+          ? 'รอบนี้จ่ายแล้ว — ระบบจะกลับรายการบัญชี (JE) ที่ลงตอนจ่าย และคืนยอดเงินทดรองที่หักในรอบนี้\n'
+          : '')
+      + 'รอบที่ยกเลิกแล้วแก้ไขหรือใช้ต่อไม่ได้ ถ้าจะจ่ายงวดนี้ต้องสร้างรอบใหม่\n\n'
+      + 'ระบุเหตุผล (อย่างน้อย 5 ตัวอักษร):', '');
+    if (reason === null) return;                       // กดยกเลิก
+    if ((reason || '').trim().length < 5) {
+      Layout.toast('ต้องระบุเหตุผลอย่างน้อย 5 ตัวอักษร', 'error');
+      return;
+    }
+    try {
+      const rr = await api.voidPayrollRun(runId, reason.trim());
+      Layout.toast(rr?.message || 'ยกเลิกรอบเงินเดือนแล้ว', 'success');
+      Layout.closeModal('runDetailModal');
+      this.loadRuns();
+    } catch (e) {
+      Layout.toast(e.message || 'ยกเลิกรอบไม่สำเร็จ', 'error', 9000);
+    }
+  },
+
   async setPayAccount(runId, empId, sel) {
     const api = Layout.api(); if (!api) return;
     const code = sel.value || null;
@@ -1861,7 +1893,11 @@ const Page = {
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <label style="flex:1;font-size:13px">${f.l}${req ? ' <span style="color:#dc2626">*</span>' : ''}${ro ? ' <span style="font-size:11px;color:#64748b">(คิดจากฐานให้)</span>' : ''}</label>
         <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${Layout.esc(valOf(f.k))}"${ro ? ' readonly tabindex="-1"' : ''}
-          oninput="${addMode ? 'this.dataset.userTouched=1;' : ''}Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`;
+          oninput="this.dataset.userTouched=1;Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`
+        // 🧮 คำนวณภาษีให้ (รอบ 201 PR2 · ข้อ 73): เซิร์ฟเวอร์คิดด้วยเครื่องคิดภาษีตัวเดียวกับคำนวณรอบ แล้วเติมเป็นค่าแนะนำ
+        + (f.k === 'withholdingTax' ? `<div style="display:flex;justify-content:flex-end;margin:-2px 0 6px">
+          <button type="button" id="ed_taxBtn" class="btn btn-sm btn-secondary" onclick="Page._edTaxPreview()" title="ระบบคิดภาษีหัก ณ ที่จ่ายของงวดนี้จากยอดบนจอ + รายได้สะสมและค่าลดหย่อนทั้งปี (สูตรเดียวกับคำนวณรอบ) — ตรวจแล้วกดบันทึก">🧮 คำนวณภาษีให้</button></div>
+          <div id="ed_taxBasis" style="font-size:11.5px;color:#475569;line-height:1.6;margin-bottom:6px"></div>` : '');
     };
     return `
       <div style="font-weight:600;color:#16a34a;margin:4px 0">รายได้</div>
@@ -1883,6 +1919,7 @@ const Page = {
   // ===== ➕ เพิ่มพนักงานเข้ารอบ (ใช้โมดัลเดียวกับแก้ยอด) =====
   async openAddDetail() {
     const r = this._curRun; if (!r) return;
+    this._edTaxSuggest = null;
     this._edMode = 'add';
     this._editEmp = null;
     this._edAddable = [];
@@ -1890,7 +1927,7 @@ const Page = {
     const body = document.getElementById('editDetailBody');
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px;line-height:1.6">เพิ่มพนักงานที่ไม่อยู่ในรอบนี้โดยไม่ต้องคำนวณใหม่ทั้งรอบ ·
-        ระบบรวมยอด + คิดเงินสมทบจากฐานให้ · <b>ภาษีหัก ณ ที่จ่ายต้องกรอกเอง</b> (ระบบไม่คิดภาษีรายคน เพราะต้องใช้รายได้สะสมและค่าลดหย่อนทั้งปี)</div>
+        ระบบรวมยอด + คิดเงินสมทบจากฐานให้ · <b>ภาษีหัก ณ ที่จ่ายต้องระบุ</b> — กด “🧮 คำนวณภาษีให้” ให้ระบบเสนอยอดจากรายได้สะสมและค่าลดหย่อนทั้งปี (สูตรเดียวกับคำนวณรอบ) แล้วตรวจก่อนบันทึก</div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
         <select id="ed_employee" class="form-input" style="flex:1" onchange="Page._edAddPick()"><option value="">กำลังโหลดรายชื่อ…</option></select>
         <button type="button" class="btn btn-sm btn-secondary" onclick="Page._edAddLoad()" title="โหลดรายชื่อใหม่ (หลังสร้างพนักงานในแท็บอื่น)">🔄 โหลดรายชื่อใหม่</button>
@@ -1966,13 +2003,12 @@ const Page = {
       return;
     }
     const monthly = e.salaryType === 'Monthly';
-    const salary = (monthly && e.baseSalary != null) ? e.baseSalary : '';
+    const salary = monthly ? e.baseSalary : '';
     setDefault('baseSalary', salary);
     setDefault('socialSecurityBase', e.isSubjectToSocialSecurity ? salary : 0);
     if (dn) {
       const parts = [];
-      if (e.baseSalary == null) parts.push('ไม่มีสิทธิ์ดูเงินเดือน — กรอกเงินเดือนของงวดเอง');
-      else if (!monthly) parts.push('พนักงานคนนี้รับค่าจ้างไม่ใช่รายเดือน — กรอกค่าจ้างของงวดนี้เอง (ระบบไม่เติมให้)');
+      if (!monthly) parts.push('พนักงานคนนี้รับค่าจ้างไม่ใช่รายเดือน — กรอกค่าจ้างของงวดนี้เอง (ระบบไม่เติมให้)');
       else parts.push('เติมเงินเดือนจากข้อมูลพนักงานเป็น<b>ค่าเริ่มต้น</b> — ถ้าเข้างาน/ออกกลางงวด ให้แก้เป็นยอดที่จ่ายจริง');
       parts.push(e.isSubjectToSocialSecurity
         ? 'ฐาน ปกส. ค่าเริ่มต้น = เงินเดือน (อยู่ในระบบประกันสังคม ม.33) — ตรวจก่อนบันทึก'
@@ -1997,9 +2033,10 @@ const Page = {
     const btn = document.getElementById('edSave');
     if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก…'; }
     try {
-      await api.addPayrollDetail(this._curRun.id, body);
+      const rr = await api.addPayrollDetail(this._curRun.id, body);
       Layout.closeModal('editDetailModal');
-      Layout.toast('เพิ่มพนักงานเข้ารอบแล้ว', 'success');
+      // ข้อความจากเซิร์ฟเวอร์บอกผลข้างเคียง (เช่น รอบกลับเป็น "คำนวณแล้ว" ต้องอนุมัติใหม่) — แสดงตามนั้น
+      Layout.toast(rr?.message || 'เพิ่มพนักงานเข้ารอบแล้ว', 'success', rr?.data?.notice ? 9000 : undefined);
       await this.viewRun(this._curRun.id);
       this.loadRuns();
     } catch (e) {
@@ -2020,7 +2057,7 @@ const Page = {
     if (reason === null) return;                       // กดยกเลิก
     try {
       const rr = await api.removePayrollDetail(r.id, empId, reason.trim());
-      Layout.toast(rr?.message || 'เอาพนักงานออกจากรอบแล้ว', 'success');
+      Layout.toast(rr?.message || 'เอาพนักงานออกจากรอบแล้ว', 'success', rr?.data?.notice ? 9000 : undefined);
       await this.viewRun(r.id);
       this.loadRuns();
     } catch (e) {
@@ -2036,6 +2073,7 @@ const Page = {
     const d = details.find(x => (x.employeeId || x.id) === empId);
     if (!d) { Layout.toast('ไม่พบข้อมูลพนักงาน', 'error'); return; }
     this._editEmp = empId;
+    this._edTaxSuggest = null;
     this._edMode = 'edit';
     document.getElementById('editDetailTitle').textContent = `แก้ยอด — ${d.employeeName || ''}`;
     const num = v => Number(v || 0);
@@ -2068,6 +2106,50 @@ const Page = {
     }
     this._edRecalc();
     Layout.openModal('editDetailModal');
+  },
+  /** 🧮 คำนวณภาษีให้ (รอบ 201 PR2 · คำตัดสินข้อ 73) — เซิร์ฟเวอร์คิดด้วยเครื่องคิดภาษีตัวเดียวกับ "คำนวณเงินเดือน"
+   *  (POST tax-preview · ไม่บันทึก) จากยอดบนจอ · หน้านี้ไม่มีสูตรภาษีเอง (server computes · page displays)
+   *  ค่าที่ผู้ใช้พิมพ์ในช่องภาษีเองชนะ: ช่องที่แตะแล้วไม่ถูกทับ — แสดงค่าเสนอพร้อมปุ่ม "ใช้ค่าที่ระบบเสนอ" ให้เลือกเอง */
+  async _edTaxPreview() {
+    const api = Layout.api(); const r = this._curRun; if (!api || !r) return;
+    const box = document.getElementById('ed_taxBasis');
+    if (!this._editEmp) { Layout.toast('เลือกพนักงานก่อน แล้วค่อยกดคำนวณภาษี', 'error'); return; }
+    const body = { employeeId: this._editEmp };
+    ['socialSecurityBase', 'baseSalary', 'overtimePay', 'allowances', 'commission', 'bonus', 'otherIncome',
+      'socialSecurityEmployee', 'providentFundEmployee'].forEach(k => {
+      const el = document.getElementById('ed_' + k);
+      if (el && el.value !== '') body[k] = Number(el.value);      // ว่าง = ตัดคีย์ (เซิร์ฟเวอร์ใช้ค่าที่บันทึกไว้/0)
+    });
+    const btn = document.getElementById('ed_taxBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api.previewPayrollTax(r.id, body);
+      const p = res && res.data; if (!p) return;
+      const el = document.getElementById('ed_withholdingTax');
+      const typed = !!(el && el.dataset.userTouched);
+      this._edTaxSuggest = Number(p.suggestedWithholdingTax || 0);
+      if (el && !typed) { el.value = this._edTaxSuggest.toFixed(2); el.dataset.autoSrc = 'taxPreview'; this._edRecalc(); }
+      if (box) {
+        box.innerHTML = `<div style="padding:8px 10px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px">`
+          + `<b>ระบบเสนอภาษีงวดนี้ ${Layout.money(this._edTaxSuggest)}</b>`
+          + (typed ? ` — ช่องภาษีมีค่าที่คุณพิมพ์เองอยู่แล้ว จึงไม่ทับ <button type="button" class="btn btn-sm btn-secondary" onclick="Page._edUseTaxSuggest()">ใช้ค่าที่ระบบเสนอ</button>`
+                   : ' — เติมในช่องภาษีแล้ว ตรวจก่อนกดบันทึก')
+          + '<ul style="margin:4px 0 0 16px;padding:0">' + (p.basis || []).map(t => `<li>${Layout.esc(t)}</li>`).join('') + '</ul>'
+          + '<div style="color:#64748b">คิดจากยอดบนจอตอนกด — แก้รายได้/ฐาน ปกส. แล้วกดคำนวณใหม่อีกครั้ง</div></div>';
+      }
+    } catch (e) {
+      if (box) box.textContent = e.message || 'คำนวณภาษีไม่สำเร็จ';
+      Layout.toast(e.message || 'คำนวณภาษีไม่สำเร็จ', 'error');
+    } finally { if (btn) btn.disabled = false; }
+  },
+  /** ผู้ใช้เลือกใช้ค่าที่ระบบเสนอแทนค่าที่พิมพ์เอง (ตัดสินใจเองอย่างชัดแจ้ง) */
+  _edUseTaxSuggest() {
+    const el = document.getElementById('ed_withholdingTax');
+    if (!el || this._edTaxSuggest == null) return;
+    el.value = Number(this._edTaxSuggest).toFixed(2);
+    delete el.dataset.userTouched;
+    el.dataset.autoSrc = 'taxPreview';
+    this._edRecalc();
   },
   _edVal(k) { const el = document.getElementById('ed_' + k); return el ? (Number(el.value) || 0) : 0; },
   _edSet(k, v) { const el = document.getElementById('ed_' + k); if (el) el.value = Number(v).toFixed(2); },
@@ -2159,9 +2241,9 @@ const Page = {
     this._edFields.forEach(f => { body[f.k] = this._edVal(f.k); });
     if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก…'; }
     try {
-      await api.updatePayrollDetail(this._curRun.id, this._editEmp, body);
+      const rr = await api.updatePayrollDetail(this._curRun.id, this._editEmp, body);
       Layout.closeModal('editDetailModal');
-      Layout.toast('แก้ยอดแล้ว', 'success');
+      Layout.toast(rr?.message || 'แก้ยอดแล้ว', 'success', rr?.data?.notice ? 9000 : undefined);
       await this.viewRun(this._curRun.id);   // โหลด run detail ใหม่ให้ยอดอัปเดต
       this.loadRuns();                        // อัปเดตยอดรวมในตารางรอบ
     } catch (e) {

@@ -127,4 +127,76 @@ public class PayrollDetailAmountsTests
         Assert.Equal(3_000m, run.TotalDeductions);
         Assert.Equal(60m, run.TotalWorkersCompensation);
     }
+
+    // ── รอบ 201 ทีม PR2 ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ApplyFields_รายได้เปลี่ยนไม่ระบุภาษี_ไม่โยน_ได้ฐานภาษีและปกส_สำหรับพรีวิว_ส่วนApplyยังปฏิเสธ()
+    {
+        // พรีวิว "คำนวณภาษีให้" ต้องได้ยอดของงวดจากสูตรเดียวกับตอนบันทึก โดยไม่ติดด่าน "ต้องระบุภาษี"
+        var preview = new PayrollDetail { BaseSalary = 20_000m, GrossIncome = 22_000m, TaxableGross = 20_000m, WithholdingTax = 300m };
+        var changed = PayrollDetailAmounts.ApplyFields(preview,
+            new UpdatePayrollDetailRequest(BaseSalary: 30_000m, SocialSecurityBase: 30_000m), Sso);
+        Assert.True(changed);
+        Assert.Equal(30_000m, preview.GrossIncome);            // 30,000 + ส่วนอื่น 0 (Allowances เดิมไม่มี)
+        Assert.Equal(28_000m, preview.TaxableGross);           // คงส่วนยกเว้น 2,000 (D-D1)
+        Assert.Equal(750m, preview.SocialSecurityEmployee);
+        Assert.Equal(300m, preview.WithholdingTax);             // ไม่แตะภาษีที่ไม่ได้ส่งมา
+
+        // ทิศตรงข้าม: เส้นบันทึกยังปฏิเสธเหมือนเดิม และข้อความชี้ปุ่มคำนวณภาษีให้
+        var save = new PayrollDetail { BaseSalary = 20_000m, GrossIncome = 22_000m, TaxableGross = 20_000m, WithholdingTax = 300m };
+        var ex = Assert.Throws<BusinessRuleException>(() => PayrollDetailAmounts.Apply(save,
+            new UpdatePayrollDetailRequest(BaseSalary: 30_000m, SocialSecurityBase: 30_000m), Sso));
+        Assert.Contains("คำนวณภาษีให้", ex.Message);
+    }
+
+    [Fact]
+    public void ApplyFields_แก้แค่รายการหัก_คืนfalse()
+        => Assert.False(PayrollDetailAmounts.ApplyFields(new PayrollDetail(),
+            new UpdatePayrollDetailRequest(OtherDeductions: 100m), Sso));
+
+    [Fact]
+    public void เงินทดแทน_รอบในระบบ_เปิดใช้และอยู่ในปกส_คิดจากฐาน_เพดาน20000()
+    {
+        var d = new PayrollDetail { SocialSecurityBase = 30_000m };
+        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, runIsExternalImport: false,
+            companyEnabled: true, ratePercent: 0.2m, employeeSubjectToSso: true));
+        Assert.Equal(40m, d.WorkersCompensation);              // min(30,000, 20,000) × 0.2%
+    }
+
+    [Theory]
+    [InlineData(false, 0.2, true, 15_000)]   // บริษัทไม่เปิดใช้
+    [InlineData(true, 0, true, 15_000)]      // อัตรา 0
+    [InlineData(true, 0.2, false, 15_000)]   // ไม่อยู่ในประกันสังคม
+    [InlineData(true, 0.2, true, 0)]         // ฐาน 0
+    public void เงินทดแทน_รอบในระบบ_เงื่อนไขไม่ครบ_ตั้งเป็น0_แม้เดิมมีค่า(bool enabled, double rate, bool subject, int ssoBase)
+    {
+        var d = new PayrollDetail { SocialSecurityBase = ssoBase, WorkersCompensation = 99m };
+        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, false, enabled, (decimal)rate, subject));
+        Assert.Equal(0m, d.WorkersCompensation);
+    }
+
+    [Fact]
+    public void เงินทดแทน_รอบนำเข้า_ไม่แตะ_คืนfalse()
+    {
+        var d = new PayrollDetail { SocialSecurityBase = 15_000m, WorkersCompensation = 0m };
+        Assert.False(PayrollDetailAmounts.ApplyWorkersCompensation(d, runIsExternalImport: true,
+            companyEnabled: true, ratePercent: 0.5m, employeeSubjectToSso: true));
+        Assert.Equal(0m, d.WorkersCompensation);               // คงศูนย์เท่าแถวนำเข้าอื่น (X3)
+        var kept = new PayrollDetail { SocialSecurityBase = 15_000m, WorkersCompensation = 12.34m };
+        PayrollDetailAmounts.ApplyWorkersCompensation(kept, true, true, 0.5m, true);
+        Assert.Equal(12.34m, kept.WorkersCompensation);        // ไม่แตะค่าเดิม
+    }
+
+    [Fact]
+    public void YTD_สะสมงวดก่อนบวกงวดนี้_สูตรเดียวกับเส้นคำนวณ()
+    {
+        var d = new PayrollDetail { GrossIncome = 30_000m, WithholdingTax = 500m };
+        PayrollDetailAmounts.SetYtd(d, new PayrollWithholdingTax.PriorTotals(Income: 150_000m, TaxBase: 140_000m, Tax: 2_500m));
+        Assert.Equal(180_000m, d.CumulativeIncomeYTD);
+        Assert.Equal(3_000m, d.CumulativeTaxYTD);
+        PayrollDetailAmounts.SetYtd(d, default);               // พนักงานใหม่ ไม่มีงวดก่อน
+        Assert.Equal(30_000m, d.CumulativeIncomeYTD);
+        Assert.Equal(500m, d.CumulativeTaxYTD);
+    }
 }

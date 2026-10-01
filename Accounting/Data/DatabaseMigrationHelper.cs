@@ -4755,6 +4755,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenedAt" timestamptz NULL;""",
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenedBy" text NULL;""",
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ReopenReason" text NULL;""",
+            // รอบ 201 (PR2 · X4): เวลาล่าสุดที่รายชื่อรอบถูกเปลี่ยนด้วยมือ — เตือนก่อนคำนวณใหม่ว่าจะทับ
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ManualRosterChangedAt" timestamptz NULL;""",
             // Employee tax allowances §47/47ทวิ — ละเอียดขึ้นจากที่เก่า
             // เป็น count × 30K เฉย ๆ (ครอบครัวใหญ่ over-withhold).
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "HasSpouseAllowance" boolean NOT NULL DEFAULT false;""",
