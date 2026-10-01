@@ -73,7 +73,7 @@
 
 ## ฝ่ายค้านรอบ 201 (GWO-1..7) — แก้ต่อหลัง merge `9ac79398`
 
-> merge `origin/claude/erp-system-review-team-660mev` (fast-forward ถึง `c2fa874f`) ก่อนแก้ · คอมมิตแยก (sha เติมคอมมิตตามหลัง) · **ยังไม่ได้คอมไพล์**
+> merge `origin/claude/erp-system-review-team-660mev` (fast-forward ถึง `c2fa874f`) ก่อนแก้ · คอมมิตแยก `1454de18` · **ยังไม่ได้คอมไพล์**
 
 | ID | สถานะ | ที่แก้ | เทสต์ / ด่าน |
 |---|---|---|---|

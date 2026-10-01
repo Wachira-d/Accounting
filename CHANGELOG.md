@@ -4112,7 +4112,7 @@ _2026-10-01 รอบ 201 ทีม GW — แก้ตามฝ่ายค้�
 - **GWO-5** resync คง JE เดิม/สร้าง JE ไม่ได้ ⇒ `InboundSyncResponse.Warnings` (`IntegrationResyncJournal.Warnings`)
 - **GWO-6** URL รหัสลับเต็มเฉพาะเจ้าของ (`WebhookTokenMasked`) · `POST payment-settings/{provider}/webhook-token/rotate` · `GatewayWebhookRoute.RedactPath` ใน log 3 middleware
 - **GWO-7** `LastLegacySkippedAt` + `IPaymentProvider.UnverifiedIntentHint` (ไม่ยิงออก) ⇒ คำเตือน "ระบบไม่รับทาง URL เดิมของร้านนี้" ขึ้นจริง
-- เทสต์ `GWO*` 10 เคสใน `GatewayTeamGWRound201Tests` (สองทิศ) · required_call_site +14 แถว (negative test มือ 25/25 รวมแถวเดิม) — commit <pending>)_
+- เทสต์ `GWO*` 10 เคสใน `GatewayTeamGWRound201Tests` (สองทิศ) · required_call_site +14 แถว (negative test มือ 25/25 รวมแถวเดิม) — commit 1454de18)_
 
 _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
 - **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
