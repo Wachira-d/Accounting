@@ -4144,4 +4144,4 @@ _2026-10-01 รอบ 201 ฝ่ายค้านทีม OC (OCX-1..OCX-10 ·
 - (OCX-4) `MatchContactCoreAsync(recordVendorCanonFeedback)` — VendorCanon เฉพาะฝั่งซื้อ · เส้น walk-in ไม่บันทึก · (OCX-6) ตัวนับการอ้างถึงผู้ติดต่อ 35 ช่อง (`AddContactRefsAsync`) · `UpdatedBy` = ผู้กด
 - (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น · (OCX-8) ค่าคงที่ `BranchAddressUnknownNote` ขึ้นเหนือ doc-comment ของ `ContactAddress` · (OCX-9) เทสต์ล็อกคำสั่ง migration อยู่ในชุดที่บูตรัน
 - (OCX-10) `Helpers/OcrPredecessorPartyCheck` ใน `LinkPredecessorAsync` เมื่อยังไม่รู้คู่ค้า · (ข้อ 103 Q3) ตัวอ่านเหตุผลใบลดหนี้ข้ามแถวฟอร์ม "ส่วนลด 0.00"
-- เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit <pending>)_
+- เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit f01811b2)_

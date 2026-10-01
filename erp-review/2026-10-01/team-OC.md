@@ -68,7 +68,7 @@
 - **Q4 (C-19)** สลิปที่ "ป้ายผู้ซื้อ" เป็นคำที่ตัวอ่านไม่รู้จัก (ไม่มีในรายการคำ) และสาขาที่พิมพ์เป็นของผู้ซื้อเพียงตัวเดียว ⇒ ได้ 0.85 ผิดฝั่ง (ความเสี่ยงที่คำตัดสินยอมรับ — "ไม่มีสาขาอื่นบนกระดาษให้สับสน") · ทางย้อน: ลบ `WholePageSingleBranch` ออกจาก switch คะแนน
 - **write_permission_gate WATCHED**: `ContactHygieneController` มี endpoint เขียนแล้ว (มีด่าน `HasPermissionAsync` + ล็อกด้วย required_call_site) — checker เป็นไฟล์ของทีม PL ⇒ ขอ PL/main agent เพิ่มชื่อไฟล์เข้า `WATCHED` (ratchet ตอนเขียว)
 
-## ฝ่ายค้านรอบ 201 (OCX-1..OCX-10) — แก้ต่อหลัง merge `69445881` (merge `origin` เข้า worktree — ไม่ reset)
+## ฝ่ายค้านรอบ 201 (OCX-1..OCX-10) — คอมมิต `f01811b2` · แก้ต่อหลัง merge `69445881` (merge `origin` เข้า worktree — ไม่ reset)
 
 | ID | P | สถานะ | ที่แก้ | เทสต์ / ด่าน |
 |---|---|---|---|---|
