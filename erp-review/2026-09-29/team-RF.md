@@ -72,7 +72,7 @@ F2 ข้อ 1 (grep รูปแบบเดิมทั้งเรพ): `thro
 7. เทสต์ `new DocumentTemplate { … }` ใน namespace `Accounting.Tests` พร้อม `using Accounting.Models.Entities` (รูปเดียวกับ `DocumentChannelHeadingTests`)
 
 ## 5. คำถามค้าง
-- **Q1** แบรนด์เอกสารที่ตั้งสี: HTML ควรใช้สีแบรนด์แทนสีเทมเพลตเหมือน QuestPDF ไหม (drift เดิม — ไม่แตะรอบนี้)
+- ✅ 23d7a6de (รอบ 201 PL · A-PL6 `Helpers/DocumentBrandColor`) **Q1** แบรนด์เอกสารที่ตั้งสี: HTML ควรใช้สีแบรนด์แทนสีเทมเพลตเหมือน QuestPDF ไหม (drift เดิม — ไม่แตะรอบนี้)
 - **Q2** หน้า `document-templates.html` ควรซ่อน/ล็อกปุ่มบันทึกสำหรับผู้ไม่มี `CompanySettings.Edit` ไหม (ตอนนี้ได้ 403 toast)
 - **Q3** กฎอนุมัติที่ถูกล้างโครงการเงียบ ๆ จากหน้าเดิม (ช่วงทีม R → RF) — ไม่มีหลักฐานค่าเดิมให้กู้ · ถ้าต้องตามหา ต้องดู audit log ของ `ApprovalRules` (ถ้ามี)
 

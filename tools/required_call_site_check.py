@@ -1569,7 +1569,7 @@ RULES += [
          must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
          call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "doc.IsTaxInvoiceByLaw")],
          why="C-2: หัวบนหน้าเว็บ/ตอนตรึงบทบาทต้องตรงกระดาษ"),
-    dict(file=PDF_HTML, method="ResolveDocumentHeadingAsync",
+    dict(file=PDF_HTML, method="ResolveDocumentHeadingAsync#1",   # รอบ 201 PL: #0 เป็น overload ส่งต่อแบบ expression-bodied (A-PL9)
          must=["AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
          call_args=[("AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(", "document.IsTaxInvoiceByLaw")],
          why="C-2: หัวในอีเมล/LINE ต้องตรงกับ PDF แนบ"),

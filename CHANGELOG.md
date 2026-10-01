@@ -4057,7 +4057,7 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 1 — audit hash chain เป�
   `AuditHashChain.Analyze(rows, anchors)` + `ExternalParents`
 - **A-PL4** `AuditLogs.Add` ตรง → `AddChainedAuditLog` ใน MeteringAdmin · Admin ×2 · AuditMiddleware · AddOnPurchase · WithholdingTaxCert · Quota ·
   checker ใหม่ `tools/audit_direct_add_check.py` (ratchet baseline 38 จุด/9 ไฟล์ของทีมอื่น + negative test ในตัว)
-- required_call_site: ปรับ 3 แถวรอบ 193 (AddChainedAuditLog/SaveChanges/SaveChangesAsync) + เพิ่ม 5 แถว — commit <pending>)_
+- required_call_site: ปรับ 3 แถวรอบ 193 (AddChainedAuditLog/SaveChanges/SaveChangesAsync) + เพิ่ม 5 แถว — commit 9d4f4033)_
 
 _2026-10-01 รอบ 201 ทีม PL ชุด 2 — เครื่องมือ/ความปลอดภัย/renderer (A-PL5..A-PL11):
 - **A-PL5** `write_permission_gate_check` เพิ่ม deny-list ratchet ทั้งโฟลเดอร์ Controllers (baseline `tools/write_permission_gate_baseline.txt` 547 endpoint นอก WATCHED ·
@@ -4068,7 +4068,7 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 2 — เครื่องม�
 - **A-PL7** `CssThemeValue.SafeCustomCss` — CSS กำหนดเองของธีมแถวเก่า `<` ⇒ `\3c ` ตอน render (theme.css + storefront)
 - **A-PL8** `GET document-templates/default/{type}` อ่านอย่างเดียว (ไม่มี ⇒ ค่าเริ่มต้น id ว่าง) · `POST` เดียวกัน = สร้าง (`CompanySettings.Edit`) · documents.html/document-templates.html ใช้ POST ตอนจะแก้
 - **A-PL11** เติม sha `dd5ceb1e` ใน `review200-round2-sec.md` แถว K2-5b..K2-4 + หัว `team-Z.md`
-- เทสต์ `PlatformRound201Tests` · required_call_site +11 แถว — commit <pending>)_
+- เทสต์ `PlatformRound201Tests` · required_call_site +11 แถว — commit 23d7a6de)_
 
 _2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่มอบให้ทีม (คำตัดสินข้อ 76/77):
 - **C-3** `Helpers/OwnerFeatureMask` — `SubscriptionService.CheckFeatureAccessAsync` เห็น `CompanySettings.OwnerDisabledFeatures` แล้ว: โหมดเงา (ผ่าน + บันทึก
@@ -4077,7 +4077,7 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่�
 - **C-4** `UserRole.PlatformSupport = 7` + `Helpers/OwnershipTransferPolicy` — แอดมินแพลตฟอร์มสร้างบริษัท ⇒ support ไม่ใช่ Owner · คีย์สิทธิ์เฉพาะงานตั้งค่า ·
   `POST api/company/{id}/transfer-ownership` (+ `CheckOwnershipTransferAsync` ด่านก่อนเขียน · audit hash chain) · ตั้ง/เชิญบทบาท support ผ่านหน้าทีมไม่ได้ ·
   team.html กล่องส่งมอบ + ป้ายบทบาท · usage.html ป้ายบทบาท
-- เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit <pending>)_
+- เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit 545cc3ea)_
 
 _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
 - **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
@@ -4092,7 +4092,7 @@ _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก
 _2026-10-01 รอบ 201 ทีม PL — รวมงานทีม DV (merge e97ba288) + คำตัดสิน main agent (DV Q3):
 - `audit_direct_add_check` baseline ลดเป็น 29 จุด/8 ไฟล์ (DocumentService ย้ายเข้า chain โดยทีม DV)
 - แถว audit นอก chain รุ่นเก่า **ไม่เติม hash ย้อนหลัง** — `AuditHashChain.UnchainedNote` + `AuditChainVerifyResult.UnchainedCount/UnchainedLatestAt/UnchainedNote` ·
-  endpoint `verify-hash-chain` ส่ง `unchainedLatestAt`/`unchainedNote` · job log จำนวน · เทสต์ `Unchained_legacy_rows_are_reported_separately_not_as_tampered` — commit <pending>)_
+  endpoint `verify-hash-chain` ส่ง `unchainedLatestAt`/`unchainedNote` · job log จำนวน · เทสต์ `Unchained_legacy_rows_are_reported_separately_not_as_tampered` — commit d2aab79e)_
 
 _2026-10-01 รอบ 201 ทีม PL ชุด 4 — B-9 วันหยุดราชการระดับแพลตฟอร์ม (ส่วนที่ทำได้ก่อน · ข้อมูลภายนอกห้ามแต่ง):
 - ตาราง `PlatformHolidays` (entity + migration · unique วันที่ในแถวที่ยังไม่ลบ) · หน้าแอดมิน `admin/platform-holidays.html` + `api/admin/platform-holidays` (SystemAdmin · ปฏิเสธคีย์ ·
@@ -4100,4 +4100,4 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 4 — B-9 วันหยุด
 - `Helpers/BusinessDayCalendar` ตัวตัดสินวันทำการเดียว · `TaxFilingDeadline` overload รับชุดวันหยุด (overload เดิมคงพฤติกรรมเสาร์/อาทิตย์) ·
   `PlatformHolidayStore.LoadSetAsync` (อ่านไม่ได้ = ชุดว่าง + log) · ผู้อ่าน: `TaxCalendarService.InitializeYearAsync` · `StatutoryRemittanceService` (ธงเลยกำหนด/ปฏิทินยื่น)
 - 📋 ผู้อ่านในไฟล์ทีมอื่นยังเสาร์/อาทิตย์ (ComplianceService · TaxComplianceChecker · SsoLateFee · DepositPolicyResolver · PayrollService · SettlementPosting §87)
-- เทสต์ `BusinessDayCalendarTests` · required_call_site +6 แถว — commit <pending>)_
+- เทสต์ `BusinessDayCalendarTests` · required_call_site +6 แถว — commit 233ba81f)_

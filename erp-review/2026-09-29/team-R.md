@@ -139,10 +139,10 @@ P0 ที่ยังจริงเมื่อเริ่ม: **G2-02** (stor
 | E-07 | P2 | FIFO/WAC rebuild มองเฉพาะ IN/OUT — ผูกกับ E-02 (มีผลเมื่อเปิด FIFO) |
 | E-10 · E-11 | P2 | `ReconcileProductTotalsAsync` ไม่มีผู้เรียก · `UsefulLifeReviewedAt` ไม่มีผู้อ่าน — "ต่อสาย หรือ ลบ" ต้องให้เจ้าของเลือก (F2 #2) |
 | H-1 | P1 | คลังจับคู่ธนาคารสอนตัวเอง — ต้องเพิ่ม `UserChoiceSource` + `ExplicitAcceptCount` ให้ `BankReconciliationPatterns` (migration) + หน้า bank.html ส่ง source + สูตรความมั่นใจนับเฉพาะ Explicit — งานหลายไฟล์ |
-| H-2 | P1 | `AuditChainVerifyJob` ไม่มี watermark — ต้องมีคอลัมน์/ตาราง checkpoint ต่อบริษัท (Id/Timestamp สุดท้ายที่ตรวจผ่าน) + ตรวจต่อจาก tip · ผูกกับคำถามเจ้าของ "serialize การประทับ audit" (W2-C1) |
+| ✅ 9d4f4033 H-2 | P1 | `AuditChainVerifyJob` ไม่มี watermark — ต้องมีคอลัมน์/ตาราง checkpoint ต่อบริษัท (Id/Timestamp สุดท้ายที่ตรวจผ่าน) + ตรวจต่อจาก tip · ผูกกับคำถามเจ้าของ "serialize การประทับ audit" (W2-C1) |
 | H-4 · H-5 · H-6 · H-7 · H-8 · H-9 | P2 | สถาปัตยกรรม AI/ธนาคาร (H-9 ยอดปลอมจาก candidateId ที่ AI แต่ง = ควรแก้ก่อนใน `BulkBankStatementMatch` guard) |
-| G2-10 · S2-C4 · R2-C10 | P2 | checker ครอบไม่ครบ (write_permission 8/143 · attachment_gate false-negative · contact_taxid ยกเว้นกว้าง) |
-| review193-r2-W P-3 · P-4 | P2 | N+1 อีเมลตั้งเวลา · แอดมินกลายเป็น Owner ของบริษัทลูกค้า (ต้องแยก role แพลตฟอร์ม) |
+| ✅ 23d7a6de G2-10 · S2-C4 · R2-C10 | P2 | checker ครอบไม่ครบ (write_permission 8/143 · attachment_gate false-negative · contact_taxid ยกเว้นกว้าง) |
+| ✅ 23d7a6de/545cc3ea review193-r2-W P-3 · P-4 | P2 | N+1 อีเมลตั้งเวลา · แอดมินกลายเป็น Owner ของบริษัทลูกค้า (ต้องแยก role แพลตฟอร์ม) |
 | review194-r4 P4-3 · P4-4 · P4-5 | P3/P2 | ล็อกมัดจำ Modified ข้ามเงียบ (ไม่พบจุดเกิดจริง) · เลขอ้างอิงสองใบ resolve ได้ใบเดียว · ขอบเดือน UTC ของธงริบ (`RealizeDate ?? UtcNow`) |
 | review194-regsec P5 · review194-r3 P-5 | P2 | seed ประเภทมัดจำเมื่อเปลี่ยนประเภทธุรกิจภายหลัง · หมายเหตุ §86 ธ.ค.→ม.ค. |
 

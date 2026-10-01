@@ -89,5 +89,5 @@
 |---|---|---|---|
 | Z-1 | P2 | ✅ | `OcrCounterpartyMatch.LiteralTieBreak` — ชื่อตรงหลัง normalize หลายแถว (ซ้ำจากบั๊กเดิม สะกดรูปนิติบุคคลต่าง) ไม่มีเลขภาษีขัดกัน ⇒ แถวเดียวที่สะกดตรงตัวกับกระดาษ (พฤติกรรมเดิมก่อนคำค้นเสริม) · เทสต์ `K2_1_LegacyDuplicatesSpelledDifferently_…` (สองทิศ: เลขภาษีคนละเลข/สะกดแบบที่สาม ⇒ ยังกำกวม) |
 | Z-2 | P2 | ✅ | `cms-edit.html` ฟอร์มธีม — สี/ความกว้าง/มุมโค้งผ่าน `Layout.esc`/`Number` (แถวเก่าก่อนด่าน RF-2 ยิงสคริปต์ใส่เจ้าของได้) · ข้อความในคอมมิตทีมว่า "ธีมเก่าถูกกรองตอน render" **ไม่ครอบหน้าแก้ธีม** — แก้แล้วที่ฝั่งหน้า |
-| Z-3 | P3 | 📋 | `CmsRenderingService` `CustomCss` แถวเก่าที่มี `</style` ต่อดิบเข้า `ThemeCss` — วันนี้ไม่มีผู้วางลง `<style>` (storefront ใช้ textContent · theme.css เป็น text/css) ⇒ ยังไม่ใช่ช่องโหว่ |
+| Z-3 | P3 | ✅ 23d7a6de (รอบ 201 PL · A-PL7) | `CmsRenderingService` `CustomCss` แถวเก่าที่มี `</style` ต่อดิบเข้า `ThemeCss` — วันนี้ไม่มีผู้วางลง `<style>` (storefront ใช้ textContent · theme.css เป็น text/css) ⇒ ยังไม่ใช่ช่องโหว่ |
 | Z-4 | P3 | 📋 | `SyncScanToPostedDocumentAsync` ถอยแค่แถวสแกน ทั้งที่ `SaveChangesAsync` บันทึกทั้ง context — ต้องแยกการบันทึกแถวสแกน (`ExecuteUpdate`) |

@@ -1023,4 +1023,4 @@ _ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้
 _สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว (รวม BillingAccount/BillingAccountAdmin/Company FK ที่เพิ่งลง) ·_
 _§3.2 (ApiClient/UsageEvent/ApiFeature/Pricing), §4 คอลัมน์ ApiClient, §6, §7, §8, §9 ข้อ 2-7 = 📋_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL — C-3 ด่านเจ้าของปิดฟีเจอร์ระดับ service โหมดเงา + สวิตช์ `OwnerFeatureMaskEnforced` (§5.2) · C-4 บทบาท PlatformSupport + โอนความเป็นเจ้าของ (งานระดับเจ้าของ) — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL — C-3 ด่านเจ้าของปิดฟีเจอร์ระดับ service โหมดเงา + สวิตช์ `OwnerFeatureMaskEnforced` (§5.2) · C-4 บทบาท PlatformSupport + โอนความเป็นเจ้าของ (งานระดับเจ้าของ) — commit 545cc3ea)_

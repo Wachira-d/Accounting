@@ -3965,7 +3965,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL — audit hash chain serialize ต่อบริษัท + watermark + แถวนอก chain รุ่นเก่านับแยก (§6.1) · เทมเพลตเริ่มต้น GET อ่านอย่างเดียว/POST สร้าง · สีแบรนด์สอง renderer ตัวตัดสินเดียว · กำหนดยื่นเลื่อนพ้นวันหยุดราชการของแพลตฟอร์ม — commits 9d4f4033 · 23d7a6de · 545cc3ea · d2aab79e · 233ba81f)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
 
