@@ -3175,6 +3175,44 @@ RULES += [
          call_args=[("AuditHashChain.Analyze(", "anchors")],
          forbid=["Analyze(rows, outside)", "Analyze(rows, Accounting.Helpers.AuditHashChain.ExternalParents("],
          why="A-PL3 ตรวจเป็นช่วง: parent ก่อนช่วงต้องค้นว่ามีจริงในฐานของบริษัท — ส่งชุดที่แถวอ้างเป็น anchors ตรง ๆ = ปิดการตรวจขาดตอน"),
+    # A-PL9 (P-3 N+1): หัวเอกสารของอีเมลตั้งเวลาผ่านแคชต่อรอบ + ตัวตัดสินหัวตัวเดียว (ห้ามคำนวณภาษา/หัวเอง · ห้ามโหลดบริษัทต่อใบ)
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="EnqueueDocumentAsync",
+         must=["HeadingForAsync("], forbid=["ResolveDocumentHeadingAsync(", "_db.Companies"],
+         why="A-PL9 หัว/ชื่อบริษัทของเนื้ออีเมลมาจากแคชต่อรอบที่เรียกตัวตัดสินหัวตัวเดียว — เดิมโหลดบริษัท + หัวใหม่ทุก rule ทุกใบ"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="HeadingForAsync",
+         must=["PdfGenerationService.LoadHeadingCompanyContextAsync(", "PdfGenerationService.ResolveDocumentHeadingAsync("],
+         call_args=[("PdfGenerationService.ResolveDocumentHeadingAsync(", "shared")],
+         why="A-PL9 ค่าระดับบริษัทโหลดครั้งเดียวแล้วส่งเข้าตัวตัดสินหัวตัวเดียว (ไม่ใช่สำเนากติกาหัว)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveDocumentHeadingAsync#1",
+         must=["shared.CompanyId == companyId", "ComputeDocumentHeading(", "AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated("],
+         why="A-PL9 ค่าระดับบริษัทที่ส่งมาใช้ได้เฉพาะบริษัทเดียวกัน (tenant) · ขั้นตัดสินหัวยังเป็นของเดิม"),
+    # A-PL10 (team-V1 Q5): ยกเลิกเอกสาร ERP ล้ม ⇒ ล้าง context ก่อนบันทึกสถานะออเดอร์ (ห้ามบันทึก "ยกเลิกครึ่งเดียว")
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="UpdateOrderStatusAsync",
+         must=["_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(", "ApplyStatus("],
+         before=[("_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(")],
+         why="A-PL10 VoidDocumentAsync ใช้ context เดียวกัน — ล้มกลางทางแล้ว entity ที่แตะค้างจะถูก SaveChanges ของออเดอร์บันทึกตาม"),
+    # A-PL6 (team-RF Q1): สีแบรนด์ผ่านตัวตัดสินเดียวทั้งสอง renderer
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildCss",
+         must=["DocumentBrandColor.Primary(", "DocumentBrandColor.Accent("],
+         why="A-PL6 สอง renderer ห้าม drift — HTML ใช้ตัวตัดสินสีแบรนด์ตัวเดียวกับ QuestPDF"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildBranding",
+         must=["DocumentBrandColor.Primary(", "DocumentBrandColor.Accent("],
+         forbid=["SanitizeHex(brand?.PrimaryColor) ??"],
+         why="A-PL6 QuestPDF ใช้ตัวตัดสินสีแบรนด์ตัวเดียวกับ HTML (ห้ามสูตร ?? ของตัวเอง)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildDocumentHtml",
+         must_lit=["BuildCss(template, doc.Brand?.PrimaryColor)", "BuildLayoutCss(layout, template, doc.Brand?.PrimaryColor)"],
+         why="A-PL6 เส้น HTML ต้องส่งแบรนด์ของเอกสารเข้า CSS (เดิมไม่รู้จักแบรนด์ ⇒ หัวคนละสีกับ PDF สำรอง/e-Tax)"),
+    # A-PL7 (team-Z Z-3): CSS กำหนดเองของธีมผ่านตัวกรองฝั่ง render ทุกทางออก
+    dict(file="Services/Implementations/CmsRenderingService.cs", method="GenerateThemeCssFromEntity",
+         must=["CssThemeValue.SafeCustomCss("], forbid=["sb.AppendLine(theme.CustomCss)"],
+         why="A-PL7 แถวธีมก่อนรอบ 200 อาจมี </style — กรองตอน render (ไม่ต้อง migration)"),
+    # A-PL8 (ข้อ 58): GET เทมเพลตเริ่มต้นไม่เขียน · สร้างผ่าน POST ที่มีด่าน
+    dict(file="Services/Implementations/DocumentTemplateService.cs", method="GetDefaultTemplateAsync",
+         must=["AsNoTracking("], forbid=["SaveChangesAsync(", "DocumentTemplates.Add("],
+         why="A-PL8 GET อ่านอย่างเดียว — การสร้างเทมเพลตอยู่ใน EnsureDefaultTemplateAsync (POST + CompanySettings.Edit)"),
+    dict(file="Controllers/DocumentTemplateController.cs", method="EnsureDefault",
+         must=["_templateService.EnsureDefaultTemplateAsync("],
+         why="A-PL8 ทางสร้างเทมเพลตเริ่มต้นมีที่เดียว (ด่านสิทธิ์ตรวจโดย write_permission_gate_check)"),
 ]
 
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──

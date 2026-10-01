@@ -115,12 +115,23 @@ public class DocumentTemplateService : IDocumentTemplateService
 
     public async Task<DocumentTemplateResponse> GetDefaultTemplateAsync(Guid companyId, DocumentType documentType)
     {
+        // รอบ 201 ทีม PL (A-PL8 · ข้อ 58): GET ไม่เขียน — ไม่มีแถว ⇒ ค่าเริ่มต้นที่ยังไม่บันทึก (Id ว่าง = หน้าเว็บรู้ว่าต้องสร้างก่อนแก้)
+        var template = await _db.DocumentTemplates.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.CompanyId == companyId && t.DocumentType == documentType && t.IsDefault && t.IsActive);
+        if (template != null) return MapToResponse(template);
+        var unsaved = CreateDefaultTemplate(companyId, documentType);
+        unsaved.Id = Guid.Empty;
+        return MapToResponse(unsaved);
+    }
+
+    public async Task<DocumentTemplateResponse> EnsureDefaultTemplateAsync(Guid companyId, DocumentType documentType)
+    {
         var template = await _db.DocumentTemplates
             .FirstOrDefaultAsync(t => t.CompanyId == companyId && t.DocumentType == documentType && t.IsDefault && t.IsActive);
 
         if (template == null)
         {
-            // Auto-create default template
+            // Auto-create default template (เส้น POST ที่มีด่าน CompanySettings.Edit — รอบ 201 A-PL8)
             template = CreateDefaultTemplate(companyId, documentType);
             _db.DocumentTemplates.Add(template);
             await _db.SaveChangesAsync();

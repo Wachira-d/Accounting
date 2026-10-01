@@ -45,6 +45,16 @@ public static class CssThemeValue
         return string.Equals(t, "transparent", StringComparison.OrdinalIgnoreCase) ? "transparent" : null;
     }
 
+    /// <summary>CSS กำหนดเอง (<c>SiteTheme.CustomCss</c>) ฝั่ง <b>render</b> — รอบ 201 ทีม PL (A-PL7 · team-Z Z-3): ฝั่งเขียนปฏิเสธ
+    /// <c>&lt;/style</c>/<c>&lt;script</c> ตั้งแต่รอบ 200 แต่แถวเก่าที่บันทึกก่อนนั้นยังต่อดิบเข้า <c>ThemeCss</c> ⇒ แทน <c>&lt;</c> ทุกตัวด้วย CSS escape
+    /// <c>\3c </c> (ใน string/content ของ CSS แสดงผลเป็น <c>&lt;</c> เหมือนเดิม · นอก string <c>&lt;</c> ไม่ใช่ CSS ที่ถูกอยู่แล้ว) ⇒ tokenizer HTML
+    /// ไม่มีทางเจอแท็กปิด style ไม่ว่าผู้บริโภคจะวางลง <c>&lt;style&gt;</c> หรือเสิร์ฟเป็น text/css · ไม่ต้อง migration (กรองตอนอ่าน) · ว่าง ⇒ null</summary>
+    public static string? SafeCustomCss(string? css)
+    {
+        if (string.IsNullOrWhiteSpace(css)) return null;
+        return css.Replace("<", "\\3c ");
+    }
+
     /// <summary>สีสำหรับ render — ไม่ถูกรูป/ว่าง ⇒ <paramref name="fallback"/></summary>
     public static string Color(string? raw, string fallback) => SafeColor(raw) ?? fallback;
 

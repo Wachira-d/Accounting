@@ -106,10 +106,20 @@ public class DocumentTemplateController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>อ่านอย่างเดียว — ไม่มีเทมเพลตเริ่มต้น ⇒ ค่าเริ่มต้นที่ยังไม่บันทึก (<c>id</c> ว่าง) · รอบ 201 ทีม PL (A-PL8 · ข้อ 58)</summary>
     [HttpGet("default/{documentType}")]
     public async Task<ActionResult<ApiResponse<DocumentTemplateResponse>>> GetDefault(Guid companyId, DocumentType documentType)
     {
         var result = await _templateService.GetDefaultTemplateAsync(companyId, documentType);
+        return Ok(new ApiResponse<DocumentTemplateResponse>(true, result));
+    }
+
+    /// <summary>สร้างเทมเพลตเริ่มต้นเมื่อยังไม่มี (เดิมเกิดใน GET ข้างบนโดยไม่มีด่าน) — ด่านเดียวกับแก้เทมเพลต</summary>
+    [HttpPost("default/{documentType}")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<DocumentTemplateResponse>>> EnsureDefault(Guid companyId, DocumentType documentType)
+    {
+        var result = await _templateService.EnsureDefaultTemplateAsync(companyId, documentType);
         return Ok(new ApiResponse<DocumentTemplateResponse>(true, result));
     }
 

@@ -5355,8 +5355,8 @@
         btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
         try {
           const cid = Layout.getCompanyId();
-          // เทมเพลตค่าเริ่มต้นของชนิดนี้ — endpoint นี้สร้างให้อัตโนมัติถ้ายังไม่มี
-          const tplRes = await API.get(`/api/companies/${cid}/document-templates/default/${docType}`);
+          // เทมเพลตค่าเริ่มต้นของชนิดนี้ — POST สร้างให้ถ้ายังไม่มี (รอบ 201 A-PL8: GET อ่านอย่างเดียวแล้ว · POST ต้องมีสิทธิ์ตั้งค่าบริษัท)
+          const tplRes = await API.post(`/api/companies/${cid}/document-templates/default/${docType}`, {});
           const tplId = tplRes?.data?.id;
           if (!tplId) throw new Error('ไม่พบเทมเพลตของชนิดเอกสารนี้');
           // partial update — ส่งเฉพาะ 2 ค่านี้ ค่าอื่นบนเทมเพลตไม่ถูกแตะ

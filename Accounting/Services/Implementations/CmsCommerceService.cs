@@ -662,17 +662,20 @@ public class CmsCommerceService : ICmsCommerceService
         var order = await _db.SiteOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Order not found.");
 
-        order.Status = request.Status;
-        if (request.TrackingNumber != null) order.TrackingNumber = request.TrackingNumber;
-        if (request.InternalNotes != null) order.InternalNotes = request.InternalNotes;
-        if (request.CancellationReason != null) order.CancellationReason = request.CancellationReason;
-
-        switch (request.Status)
+        void ApplyStatus(SiteOrder o)
         {
-            case SiteOrderStatus.Shipped: order.ShippedAt = DateTime.UtcNow; break;
-            case SiteOrderStatus.Delivered: order.DeliveredAt = DateTime.UtcNow; break;
-            case SiteOrderStatus.Cancelled: order.CancelledAt = DateTime.UtcNow; break;
+            o.Status = request.Status;
+            if (request.TrackingNumber != null) o.TrackingNumber = request.TrackingNumber;
+            if (request.InternalNotes != null) o.InternalNotes = request.InternalNotes;
+            if (request.CancellationReason != null) o.CancellationReason = request.CancellationReason;
+            switch (request.Status)
+            {
+                case SiteOrderStatus.Shipped: o.ShippedAt = DateTime.UtcNow; break;
+                case SiteOrderStatus.Delivered: o.DeliveredAt = DateTime.UtcNow; break;
+                case SiteOrderStatus.Cancelled: o.CancelledAt = DateTime.UtcNow; break;
+            }
         }
+        ApplyStatus(order);
 
         // ยกเลิกออเดอร์ → ต้องกลับรายการเอกสาร ERP ที่ลงบัญชีไว้ (reverse JE + คืน
         // สต๊อก + ตัดชำระ). เดิมแค่ตั้ง Cancelled → รายได้/VAT/สต๊อกยังค้างสำหรับ
@@ -690,6 +693,13 @@ public class CmsCommerceService : ICmsCommerceService
                 var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
                 var stamp = $"[ERP-VOID-FAILED {DateTime.UtcNow:yyyy-MM-dd HH:mm}Z] ยกเลิกออเดอร์แล้วแต่ยกเลิกเอกสาร ERP ไม่สำเร็จ — "
                     + $"เอกสารยังมีผลทางบัญชี ต้องจัดการเอง: {why}";
+                // รอบ 201 ทีม PL (A-PL10 · team-V1 Q5): VoidDocumentAsync ใช้ context เดียวกันกับเรา — ล้มกลางทางแล้ว entity ที่มันแตะ
+                // (เอกสาร/บรรทัด/สต็อก/JE) ยังค้าง Modified/Added ใน ChangeTracker ⇒ SaveChanges ข้างล่างจะบันทึก "ยกเลิกครึ่งเดียว" ลงฐาน
+                // ⇒ ล้าง context แล้วโหลดออเดอร์ใหม่ ประทับเฉพาะการเปลี่ยนสถานะของออเดอร์ + ข้อความ (ไม่ใช่ catch เงียบในเส้นเงิน — F2 ข้อ 7)
+                _db.ChangeTracker.Clear();
+                order = await _db.SiteOrders.FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
+                    ?? throw new KeyNotFoundException("Order not found.");
+                ApplyStatus(order);
                 order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes) ? stamp : order.InternalNotes + "\n" + stamp;
             }
         }

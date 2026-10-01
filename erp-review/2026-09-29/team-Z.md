@@ -1,6 +1,6 @@
 # รอบ 200 — ทีม Z (แก้ผลฝ่ายค้านรอบสอง ด้านสิทธิ์/แพ็กเกจ/security/OCR)
 
-คอมมิตงาน: `<pending>` (sha เติมในคอมมิตตามหลัง — ห้าม amend)
+คอมมิตงาน: `dd5ceb1e` (เติมรอบ 201 ทีม PL · A-PL11)
 
 แหล่ง: `erp-review/2026-09-29/review200-round2-sec.md` (S2-3 · S2-6 · S2-7 · RF-2 · RF-3 · RF-6 · K2-1 · K2-2 · K2-4 · K2-5a · K2-5b) · DECISIONS ข้อ 14, 21–24, 34 ·
 `team-S2.md` `team-RF.md` `team-K2.md` · เริ่มจาก HEAD `36a0aad5` (หัว `claude/erp-system-review-team-660mev` — worktree reset แล้ว)

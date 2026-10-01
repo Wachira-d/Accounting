@@ -524,16 +524,16 @@ public class EmailScheduleService : IEmailScheduleService
             && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return false;
 
         var sendUtc = overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour);
-        var companyRow = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == doc.CompanyId)
-            .Select(c => new { c.Name, c.NameEn }).FirstOrDefaultAsync(ct);
         // ภาษา + หัวเอกสารของเนื้ออีเมล default = ตัวกลางตัวเดียวกับ PDF ที่แนบ (S-12 รอบ 193) — เดิมคำนวณ
         // `doc ?? company` เอง (ข้ามภาษาของเทมเพลต) และหัวเรื่องเขียนแค่ "เอกสาร {DocNumber}"
         // (rule ที่ผู้ใช้เขียน template เองไม่ถูกแตะ — ได้ placeholder {DocTitle} เพิ่มให้ใช้)
-        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, doc.CompanyId, doc.Id);
+        // รอบ 201 ทีม PL (A-PL9 · P-3 N+1): ค่าระดับบริษัทโหลดครั้งเดียวต่อบริษัท · หัวของใบเดียวกันคำนวณครั้งเดียวต่อรอบ
+        // (หลาย rule ของใบเดียว = เดิมคำนวณซ้ำทุก rule) — ตัวตัดสินหัวยังเป็น ResolveDocumentHeadingAsync ตัวเดียว
+        var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
-        var company = (isEn && !string.IsNullOrWhiteSpace(companyRow?.NameEn)
-            ? companyRow!.NameEn : companyRow?.Name) ?? "";
+        var companyRow = _headingCompanies[doc.CompanyId].Company;
+        var company = (isEn && !string.IsNullOrWhiteSpace(companyRow.NameEn)
+            ? companyRow.NameEn : companyRow.Name) ?? "";
         var ctx = new Dictionary<string, string?>
         {
             ["DocNumber"] = doc.DocumentNumber,
@@ -562,6 +562,23 @@ public class EmailScheduleService : IEmailScheduleService
             IdempotencyKey = idem,
         });
         return true;
+    }
+
+    // แคชของรอบนี้ (service เป็น scoped — หนึ่งคำขอ/หนึ่งรอบของ worker) · คีย์บริษัท/เอกสาร ไม่ข้าม tenant
+    private readonly Dictionary<Guid, PdfGenerationService.HeadingCompanyContext> _headingCompanies = new();
+    private readonly Dictionary<Guid, Models.DTOs.DocumentTemplate.DocumentHeading> _headings = new();
+
+    private async Task<Models.DTOs.DocumentTemplate.DocumentHeading> HeadingForAsync(Guid companyId, Guid documentId)
+    {
+        if (!_headingCompanies.TryGetValue(companyId, out var shared))
+        {
+            shared = await PdfGenerationService.LoadHeadingCompanyContextAsync(_db, companyId);
+            _headingCompanies[companyId] = shared;
+        }
+        if (_headings.TryGetValue(documentId, out var cached)) return cached;
+        var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, documentId, shared);
+        _headings[documentId] = heading;
+        return heading;
     }
 
     private static string ResolveEmployeeEmail(Employee e) => e.Email ?? "";

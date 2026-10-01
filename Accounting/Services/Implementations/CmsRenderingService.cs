@@ -229,7 +229,7 @@ public class CmsRenderingService : ICmsRenderingService
                 FooterLayout = site.Theme?.FooterLayout ?? "standard",
                 BorderRadius = Accounting.Helpers.CssThemeValue.Radius(site.Theme?.BorderRadius ?? 8),
                 MaxContentWidth = Accounting.Helpers.CssThemeValue.Length(site.Theme?.MaxContentWidth, "1280px"),
-                CustomCss = site.Theme?.CustomCss,
+                CustomCss = Accounting.Helpers.CssThemeValue.SafeCustomCss(site.Theme?.CustomCss),   // รอบ 201 A-PL7: แถวเก่าที่มี </style
                 CssVariables = themeCss
             },
             Navigations = navigations,
@@ -297,10 +297,11 @@ public class CmsRenderingService : ICmsRenderingService
         sb.AppendLine($"  --max-content-width: {Accounting.Helpers.CssThemeValue.Length(theme.MaxContentWidth, "1280px")};");
         sb.AppendLine("}");
 
-        if (!string.IsNullOrWhiteSpace(theme.CustomCss))
+        // รอบ 201 ทีม PL (A-PL7 · Z-3): แถวเก่าก่อนด่านฝั่งเขียน (รอบ 200) อาจมี </style — กรองตอน render ด้วยตัวเดียว
+        if (Accounting.Helpers.CssThemeValue.SafeCustomCss(theme.CustomCss) is { } customCss)
         {
             sb.AppendLine();
-            sb.AppendLine(theme.CustomCss);
+            sb.AppendLine(customCss);
         }
 
         return sb.ToString();

@@ -4058,3 +4058,14 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 1 — audit hash chain เป�
 - **A-PL4** `AuditLogs.Add` ตรง → `AddChainedAuditLog` ใน MeteringAdmin · Admin ×2 · AuditMiddleware · AddOnPurchase · WithholdingTaxCert · Quota ·
   checker ใหม่ `tools/audit_direct_add_check.py` (ratchet baseline 38 จุด/9 ไฟล์ของทีมอื่น + negative test ในตัว)
 - required_call_site: ปรับ 3 แถวรอบ 193 (AddChainedAuditLog/SaveChanges/SaveChangesAsync) + เพิ่ม 5 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 2 — เครื่องมือ/ความปลอดภัย/renderer (A-PL5..A-PL11):
+- **A-PL5** `write_permission_gate_check` เพิ่ม deny-list ratchet ทั้งโฟลเดอร์ Controllers (baseline `tools/write_permission_gate_baseline.txt` 547 endpoint นอก WATCHED ·
+  นับด่านระดับคลาสในโหมดนี้ · negative test ฉีดลง BankController จริง + สองคลาสในไฟล์เดียว) · attachment_gate (S2-C4/R2-C11) และ contact_taxid (R2-C10) ปิดไปแล้วรอบ 193 — ยืนยันด้วย self-test
+- **A-PL9** อีเมลตั้งเวลา: ค่าระดับบริษัทของหัวเอกสารโหลดครั้งเดียวต่อบริษัท (`PdfGenerationService.LoadHeadingCompanyContextAsync`) + หัวต่อใบครั้งเดียวต่อรอบ (`HeadingForAsync`) — ตัวตัดสินหัวตัวเดิม
+- **A-PL10** `CmsCommerceService.UpdateOrderStatusAsync` ยกเลิกเอกสาร ERP ล้ม ⇒ `ChangeTracker.Clear()` + โหลดออเดอร์ใหม่ + ประทับสถานะ/หมายเหตุ (ไม่บันทึกการยกเลิกครึ่งเดียว)
+- **A-PL6** `Helpers/DocumentBrandColor` — สีแบรนด์ตัวเดียวของ HTML `BuildCss/BuildLayoutCss` และ QuestPDF `BuildBranding`
+- **A-PL7** `CssThemeValue.SafeCustomCss` — CSS กำหนดเองของธีมแถวเก่า `<` ⇒ `\3c ` ตอน render (theme.css + storefront)
+- **A-PL8** `GET document-templates/default/{type}` อ่านอย่างเดียว (ไม่มี ⇒ ค่าเริ่มต้น id ว่าง) · `POST` เดียวกัน = สร้าง (`CompanySettings.Edit`) · documents.html/document-templates.html ใช้ POST ตอนจะแก้
+- **A-PL11** เติม sha `dd5ceb1e` ใน `review200-round2-sec.md` แถว K2-5b..K2-4 + หัว `team-Z.md`
+- เทสต์ `PlatformRound201Tests` · required_call_site +11 แถว — commit <pending>)_

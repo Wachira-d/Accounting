@@ -1529,8 +1529,25 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// (<see cref="ResolveServedAsReceiptAsync"/>) → ภาษา (<see cref="ResolveDocumentLanguage"/> ไม่มีภาษาจากคำขอ —
     /// เหมือนตอนแนบ PDF) → สิทธิ์ §86/6 → <see cref="ComputeDocumentTitle"/> · ไม่ tracking (ไม่แตะ entity ของผู้เรียก)</para>
     /// </summary>
-    internal static async Task<DocumentHeading> ResolveDocumentHeadingAsync(
+    internal static Task<DocumentHeading> ResolveDocumentHeadingAsync(
         AccountingDbContext db, Guid companyId, Guid documentId)
+        => ResolveDocumentHeadingAsync(db, companyId, documentId, null);
+
+    /// <summary>ค่าระดับบริษัทที่หัวเอกสารทุกใบของบริษัทเดียวกันใช้ร่วม (บริษัท · ค่าตั้ง · สวิตช์ ภ.พ.06 ของแพลตฟอร์ม) —
+    /// รอบ 201 ทีม PL (A-PL9 · P-3): ผู้เรียกที่ทำหลายใบ (อีเมลตั้งเวลา) โหลดครั้งเดียวต่อบริษัทแล้วส่งเข้า overload ข้างล่าง ·
+    /// ขั้นการตัดสินหัวยังเป็นตัวเดียวกัน (ไม่ใช่สำเนา) — ต่างกันแค่ "โหลดครั้งเดียว"</summary>
+    internal sealed record HeadingCompanyContext(Guid CompanyId, Company Company, CompanySettings? Settings, bool RequirePhoR06);
+
+    internal static async Task<HeadingCompanyContext> LoadHeadingCompanyContextAsync(AccountingDbContext db, Guid companyId)
+    {
+        var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        return new HeadingCompanyContext(companyId, company, settings, await RequirePhoR06Async(db));
+    }
+
+    internal static async Task<DocumentHeading> ResolveDocumentHeadingAsync(
+        AccountingDbContext db, Guid companyId, Guid documentId, HeadingCompanyContext? shared)
     {
         var document = await db.Documents.AsNoTracking()
             .Include(d => d.Brand)
@@ -1538,9 +1555,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก เหมือนเส้น PDF
         await db.HydrateContactAsync(companyId, document);
-        var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
-        var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        // ค่าระดับบริษัท: ของที่ผู้เรียกโหลดไว้ (ต้องเป็นบริษัทเดียวกัน — tenant) หรือโหลดเอง
+        var ctx = shared != null && shared.CompanyId == companyId
+            ? shared : await LoadHeadingCompanyContextAsync(db, companyId);
+        var company = ctx.Company;
+        var settings = ctx.Settings;
         var template = await ResolveDocumentTemplateAsync(db, companyId, document, null);
         await ResolveServedAsReceiptAsync(db, companyId, document);
         // ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้ (ฝ่ายค้าน C-2 รอบ 199) · ตัวตัดสินเดียวกับทั้งสอง renderer
@@ -1548,7 +1567,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             DocumentStatusRules.IsIssued(document.Status), document.IsTaxInvoiceByLaw,
             AbbreviatedTaxInvoiceRule.CanIssue(
                 company.IsVatRegistered, company.IsRetailApproved, company.PhoR06ApprovedDate,
-                document.DocumentDate, await RequirePhoR06Async(db), Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
+                document.DocumentDate, ctx.RequirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document));
         return ComputeDocumentHeading(document, template, settings, mayAbbrev);
     }
 
@@ -1861,7 +1880,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         var layout = SanitizeLayout(template.LayoutStyle);
         sb.AppendLine("<!DOCTYPE html><html><head>");
         sb.AppendLine($"<meta charset='utf-8'/>");
-        sb.AppendLine($"<style>{BuildCss(template)}{BuildLayoutCss(layout, template)}</style>");
+        // รอบ 201 (A-PL6): สีแบรนด์ของเอกสารผ่านตัวเดียวกับ QuestPDF (Helpers/DocumentBrandColor) — เดิม HTML ไม่รู้จักแบรนด์
+        sb.AppendLine($"<style>{BuildCss(template, doc.Brand?.PrimaryColor)}{BuildLayoutCss(layout, template, doc.Brand?.PrimaryColor)}</style>");
         sb.AppendLine($"</head><body class='layout-{layout}'>");
         // Wrap everything in a layout-classed root DIV (not just <body>) so the
         // layout CSS still applies when this HTML is injected via innerHTML
@@ -2844,10 +2864,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// left-accent, compact, minimal, centred-formal — via class-scoped rules.
     /// Classic adds nothing (the base CSS already is the classic look).
     /// </summary>
-    internal static string BuildLayoutCss(string layout, DocumentTemplate t)
+    internal static string BuildLayoutCss(string layout, DocumentTemplate t, string? brandPrimaryColor = null)
     {
         // รอบ 200 ทีม RF (R200-X1): ทุกค่าจากเทมเพลตที่เข้า <style> ผ่าน Helpers/DocumentTemplateStyle ตัวเดียว (ค่าเก่าที่ไม่ถูกรูป ⇒ ค่าปลอดภัย)
-        var accent = Accounting.Helpers.DocumentTemplateStyle.Color(t.AccentColor, "#4472C4");
+        var accent = Accounting.Helpers.DocumentTemplateStyle.Color(
+            Accounting.Helpers.DocumentBrandColor.Accent(brandPrimaryColor, t.AccentColor), "#4472C4");
         var titlePx = Accounting.Helpers.DocumentTemplateStyle.TitleFontSize(t.TitleFontSize);
         switch (layout)
         {
@@ -2950,7 +2971,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         }
     }
 
-    internal static string BuildCss(DocumentTemplate t)
+    internal static string BuildCss(DocumentTemplate t, string? brandPrimaryColor = null)
     {
         var headTextAlign = "left";
         // รอบ 200 ทีม RF (R200-X1): ค่าจากเทมเพลตทุกช่องที่เข้า <style> ผ่านตัวตรวจตัวเดียว (Helpers/DocumentTemplateStyle) — เดิมต่อดิบ
@@ -2960,8 +2981,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         var font = Accounting.Helpers.DocumentTemplateStyle.Font(t.FontFamily);
         var bodyPx = Accounting.Helpers.DocumentTemplateStyle.BodyFontSize(t.BodyFontSize);
         var titlePx = Accounting.Helpers.DocumentTemplateStyle.TitleFontSize(t.TitleFontSize);
-        var primary = Accounting.Helpers.DocumentTemplateStyle.Color(t.PrimaryColor, "#333333");
-        var accentC = Accounting.Helpers.DocumentTemplateStyle.Color(t.AccentColor, "#4472C4");
+        // รอบ 201 (A-PL6): แบรนด์ชนะเมื่อผูก — ตัวเดียวกับ QuestPDF BuildBranding
+        var primary = Accounting.Helpers.DocumentTemplateStyle.Color(
+            Accounting.Helpers.DocumentBrandColor.Primary(brandPrimaryColor, t.PrimaryColor), "#333333");
+        var accentC = Accounting.Helpers.DocumentTemplateStyle.Color(
+            Accounting.Helpers.DocumentBrandColor.Accent(brandPrimaryColor, t.AccentColor), "#4472C4");
         var headerBg = Accounting.Helpers.DocumentTemplateStyle.Hex(t.HeaderBackgroundColor);
         var thBg = Accounting.Helpers.DocumentTemplateStyle.Color(t.TableHeaderColor, "#4472C4");
         var thText = Accounting.Helpers.DocumentTemplateStyle.Color(t.TableHeaderTextColor, "#FFFFFF");
@@ -3258,8 +3282,9 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                : template.ShowWatermark ? template.WatermarkText : null;
 
         return new PdfBranding(
-            AccentColor: SanitizeHex(brand?.PrimaryColor) ?? SanitizeHex(template.AccentColor),
-            PrimaryColor: SanitizeHex(brand?.PrimaryColor) ?? SanitizeHex(template.PrimaryColor),
+            // รอบ 201 (A-PL6): ตัวตัดสินสีแบรนด์ตัวเดียวกับ HTML BuildCss (Helpers/DocumentBrandColor)
+            AccentColor: SanitizeHex(Accounting.Helpers.DocumentBrandColor.Accent(brand?.PrimaryColor, template.AccentColor)),
+            PrimaryColor: SanitizeHex(Accounting.Helpers.DocumentBrandColor.Primary(brand?.PrimaryColor, template.PrimaryColor)),
             TableHeaderBg: SanitizeHex(template.TableHeaderColor) ?? "#4472C4",
             TableHeaderText: SanitizeHex(template.TableHeaderTextColor) ?? "#FFFFFF",
             WatermarkText: wm,
