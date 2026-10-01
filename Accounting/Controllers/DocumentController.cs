@@ -829,8 +829,12 @@ public class DocumentController : ControllerBase
         if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
             return Forbid403<string>(
                 $"ไม่มีสิทธิ์ยกเลิกเอกสาร {docType} (ต้องการ Document.Void หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Void)");
-        await _documentService.VoidDocumentAsync(companyId, documentId, reversalDate);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิกเอกสารสำเร็จ"));
+        // รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): ธงที่ติดระหว่างยกเลิกการชำระใน cascade ต้องถึงผู้กด — เดิมทิ้งผล ตอบแค่ "สำเร็จ" (รูปเดียวกับ VoidPayment)
+        var voided = await _documentService.VoidDocumentAsync(companyId, documentId, reversalDate);
+        var notice = string.Join(" · ", new[] { voided.EtaxCancellationFlag, voided.OutputVatNotice }
+            .Where(n => !string.IsNullOrWhiteSpace(n)));
+        return Ok(new ApiResponse<string>(true, notice.Length == 0 ? null : notice,
+            notice.Length == 0 ? "ยกเลิกเอกสารสำเร็จ" : "ยกเลิกเอกสารสำเร็จ — " + notice));
     }
 
     /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว — ใช้แก้ใบที่
@@ -1151,13 +1155,14 @@ public class DocumentController : ControllerBase
 
     /// <summary>รอบ 200 ทีม V1G (คำตัดสินข้อ 44) — รายงาน<b>อ่านอย่างเดียว</b>ให้นักบัญชีตรวจ: ใบเสร็จติดธงที่ภาษีขายถูกถอยไปแล้ว · ใบเสร็จที่ปิดธงด้วยเส้นเดิม
     /// (อาจเป็นใบลดหนี้) · ใบแทนที่คัดลอกช่องของใบเดิมเกิน · ตัวกลับภาษีขายถึงกำหนดที่ลงคนละเดือนกับ JE ย้ายภาษี (รอบ 200 ทีม V1H · ข้อ 53) —
-    /// ระบบไม่แก้อะไรอัตโนมัติ</summary>
+    /// ระบบไม่แก้อะไรอัตโนมัติ · รอบ 201 ทีม DV (ข้อ 62/66): + ภาษีขายค้างหลังยกเลิกการชำระหลายใบ · แถว e-Tax ที่ส่งแล้วถูกยกเลิกโดยไม่มีหลักฐาน ·
+    /// ใบทาง (ค) ที่เสียยอดครอบโดยไม่มีธง · แถว e-Tax ของใบที่ส่งอีเมลประทับเวลาแล้วถูกยกเลิกในระบบ</summary>
     [HttpGet("etax-reissue-review")]
     public async Task<ActionResult<ApiResponse<EtaxReissueReviewReport>>> GetEtaxReissueReview(Guid companyId)
     {
         var r = await _documentService.GetEtaxReissueReviewAsync(companyId);
-        var total = r.FlaggedReceiptsVatUndone.Count + r.ResolvedBeforeSplit.Count + r.ReplacementsCarriedExcess.Count
-            + r.MisdatedOutputVatReversals.Count;
+        // รอบ 201 ทีม DV (A-DV1 · ข้อ 62/66): ตัวนับเดียวของทุกกลุ่ม (รวม 4 กลุ่มใหม่) — เดิมนับเอง 4 กลุ่ม
+        var total = r.Total;
         return Ok(new ApiResponse<EtaxReissueReviewReport>(true, r,
             total == 0 ? "ไม่พบรายการที่ต้องตรวจ" : $"พบ {total} รายการที่ต้องให้นักบัญชีตรวจ (ระบบไม่แก้อัตโนมัติ)"));
     }
