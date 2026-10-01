@@ -31,7 +31,7 @@ function load(src, pageFeature) {
     return Promise.resolve({
       status: p.status, ok: p.status >= 200 && p.status < 300,
       headers: { get: () => 'application/json' },
-      json: async () => p.body,
+      json: async () => { if (p.bad) throw new SyntaxError('Unexpected token <'); return p.body; },
       text: async () => '',
     });
   };
@@ -127,6 +127,25 @@ async function suite(src, quiet) {
     check('ยกเลิก/ระงับ → redirect', API.featureDenialAction({ code: 'SUBSCRIPTION_INACTIVE' }, null) === 'redirect');
     check('body ว่าง → notify', API.featureDenialAction(null, 'X') === 'notify');
   }
+  {
+    say('7. รอบ 200 ทีม Z (RF-3): 403 สิทธิ์ (ไม่ใช่แพ็กเกจ) — ข้อความของเซิร์ฟเวอร์ที่บอกวิธีขอสิทธิ์ต้องถึงผู้ใช้ + status 403 ให้ผู้เรียกหยุดวน');
+    const env = load(src, 'DocumentEngine');
+    const msg = 'ไม่มีสิทธิ์ “ตั้งค่าบริษัท” (CompanySettings.Edit) — ขอให้เจ้าของบริษัทเปิดสิทธิ์นี้ให้บทบาทของคุณ ที่หน้า “บทบาทและสิทธิ์” (/pages/roles.html)';
+    env.plan.push({ status: 403, body: { success: false, data: { requiredPermission: 'CompanySettings.Edit' }, message: msg } });
+    const err = await call(env, '/api/companies/c/document-templates/t');
+    env.runTimers();
+    check('ข้อความเซิร์ฟเวอร์ถึงผู้เรียก (ไม่ถูกแทนด้วยข้อความกลาง)', err && err.message === msg, err && err.message);
+    check('err.status = 403', err && err.status === 403);
+    check('err.requiredPermission', err && err.requiredPermission === 'CompanySettings.Edit');
+    check('ไม่ดีดออก/ไม่ toast แพ็กเกจ', env.window.location.href === '/pages/documents.html' && env.toasts.length === 0);
+  }
+  {
+    say('8. 403 ที่ body อ่านไม่ได้ — ข้อความกลาง + status 403');
+    const env = load(src, 'DocumentEngine');
+    env.plan.push({ status: 403, body: undefined });
+    const e = await (async () => { try { env.plan[0].bad = true; await env.API.get('/api/companies/c/x'); return null; } catch (x) { return x; } })();
+    check('status 403', e && e.status === 403, e && e.message);
+  }
   return fail;
 }
 
@@ -147,7 +166,17 @@ async function suite(src, quiet) {
       ? `✓ negative test: ใส่พฤติกรรมเดิม (ดีดทุก 403) แล้วชุดเดียวกันล้ม ${negFail} ข้อ`
       : '✗ negative test: ใส่พฤติกรรมเดิมแล้วยังผ่าน — sim ไม่มีด่าน');
   }
-  const ok = fail === 0 && negFail > 0;
+  // ── negative test 2 (รอบ 200 ทีม Z): พฤติกรรมเดิม "ข้อความ 403 ถูกกลืน" ต้องทำให้ชุดล้ม ──
+  const swallow = SRC.replace(
+    "const e403 = new Error((json && json.message) || this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));",
+    "const e403 = new Error(this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));");
+  let neg2 = -1;
+  if (swallow === SRC) console.log('✗ negative test 2: หาจุดสร้าง error 403 ไม่เจอ — sim ไม่มีด่าน');
+  else {
+    neg2 = await suite(swallow, true);
+    console.log(neg2 > 0 ? `✓ negative test 2: กลืนข้อความ 403 แบบเดิมแล้วชุดล้ม ${neg2} ข้อ` : '✗ negative test 2: กลืนแล้วยังผ่าน — sim ไม่มีด่าน');
+  }
+  const ok = fail === 0 && negFail > 0 && neg2 > 0;
   console.log(ok ? 'ผ่าน' : `ล้ม (${fail} ข้อ)`);
   process.exit(ok ? 0 : 1);
 })();

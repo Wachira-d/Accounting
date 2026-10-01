@@ -618,8 +618,21 @@ public class CmsSiteService : ICmsSiteService
 
     // ===== Themes =====
 
+    /// <summary>ด่านค่าธีมตอนบันทึก (รอบ 200 ทีม Z · RF-2) — ค่าที่ต่อเข้า CSS ไม่ถูกรูป = ปฏิเสธพร้อมเหตุผลไทย (ไม่แก้ค่าเงียบ) ·
+    /// ตัวตรวจเดียวกับฝั่ง render (<see cref="CssThemeValue"/>)</summary>
+    private static void RejectUnsafeTheme(CreateThemeRequest request)
+    {
+        var errs = CssThemeValue.RejectReasons(new CmsThemeStyleInput(
+            request.PrimaryColor, request.SecondaryColor, request.AccentColor, request.BackgroundColor,
+            request.SurfaceColor, request.TextColor, request.TextSecondaryColor,
+            request.HeadingFont, request.BodyFont, request.MaxContentWidth, request.BorderRadius));
+        if (errs.Count > 0)
+            throw new BusinessRuleException("บันทึกธีมไม่ได้: " + string.Join(" · ", errs), "CMS-THEME-STYLE");
+    }
+
     public async Task<ThemeResponse> CreateThemeAsync(Guid companyId, CreateThemeRequest request, string userId)
     {
+        RejectUnsafeTheme(request);
         var theme = new SiteTheme
         {
             CompanyId = companyId,
@@ -650,6 +663,7 @@ public class CmsSiteService : ICmsSiteService
     {
         var theme = await _db.SiteThemes.FirstOrDefaultAsync(t => t.Id == themeId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Theme not found.");
+        RejectUnsafeTheme(request);
 
         theme.Name = request.Name;
         theme.Description = request.Description;
@@ -894,6 +908,9 @@ public class CmsSiteService : ICmsSiteService
         // Block CSS injection vectors
         if (Regex.IsMatch(css, @"expression\s*\(|javascript:|url\s*\(\s*['""]?data:", RegexOptions.IgnoreCase))
             throw new InvalidOperationException("CSS contains potentially dangerous content.");
+        // รอบ 200 ทีม Z (RF-2): "</style" ปิดแท็ก style ของผู้บริโภคที่วาง ThemeCss ลง <style> (tokenizer HTML จบที่ </style> เสมอ) ⇒ สคริปต์บนเว็บไซต์ลูกค้า
+        if (css.Contains("</style", StringComparison.OrdinalIgnoreCase) || css.Contains("<script", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException("บันทึกธีมไม่ได้: CSS กำหนดเองห้ามมีแท็ก HTML (</style> · <script>)", "CMS-THEME-STYLE");
         return css;
     }
 

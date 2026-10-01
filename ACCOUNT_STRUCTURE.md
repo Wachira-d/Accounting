@@ -377,6 +377,15 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - **ขั้นตอนของเจ้าของ**: เปิดหน้าแอดมิน → ดู "ผลโหมดเงา" (ใครใช้จริงแล้วจะถูกบล็อก) + กด "คำนวณ" ตรวจล่วงหน้า → แก้แพ็กเกจ/เปิดฟีเจอร์ให้ลูกค้า
   ที่ควรได้ → "ล้างผล" แล้วสังเกตต่อ → เลือก "บังคับ" (มี confirm บอกจำนวนบริษัทที่จะถูกบล็อก)
 - **`/api/v1/*` ✅ ครอบแล้ว (ข้อ 23 · รอบ 200 ทีม S2)**: บริษัทจาก `context.Items["CompanyId"]` ของคีย์ API — ตรวจสถานะระงับ/หมดอายุ/ยกเลิกผ่านสวิตช์เดียวกัน
+  · **รอบ 200 ทีม Z (S2-6) ตามถ้อยคำข้อ 23 = กันการ"เขียน"**: คำขออ่าน (GET/HEAD/OPTIONS) ของ `/api/v1` ไม่ผ่านด่านนี้เลย (`SubscriptionGatePolicy.SkipsPublicApiRead` —
+  อ่านได้แม้ระงับ/หมดอายุ/subscription ถูกยกเลิก · ไม่มี query เพิ่มต่อคำขออ่าน) · คำขอเขียนเดินด่านเดิม · **ไม่สร้างแถว FreeTrial** ให้บริษัทที่ยังไม่มี subscription
+  จากคำขอ Connected (`MayCreateSubscriptionRow` — ไม่มีแถว ⇒ ผ่าน) · หน้าเว็บ/partner พฤติกรรมเดิม
+- **partner หลวมลงที่ `GET …/bank/accounts` = ทางเลือกที่ตั้งใจ (รอบ 200 ทีม Z · S2-7 · ข้อ 21)**: ข้อยกเว้นราย method (`FeatureExemptEndpoints`) ใช้กับ**ทุกผู้เรียก**
+  รวม partner ที่ส่ง `X-Company-Id` ⇒ partner ที่เคยถูกบังคับ BankReconciliation ที่ endpoint นี้ตั้งแต่ก่อนรอบ 198 ตอนนี้ผ่าน — ยกเว้นหลัก "partner ห้ามหลวม" โดยตั้งใจ
+  เพราะเหตุผลข้อ 21 (รายการบัญชีธนาคารเพื่อเลือกตอนรับ/จ่ายเงิน = งานพื้นฐาน) ใช้กับทุกช่องทางเท่ากัน · เส้นกระทบยอด/สร้างบัญชีจริงยังผูกฟีเจอร์ทุกผู้เรียก
+- **ฟีเจอร์ของหน้า = route ข้อมูลหลัก (รอบ 200 ทีม Z · S2-3)**: `GET /api/subscription/{id}` ส่ง `pageFeatures` (`SubscriptionGatePolicy.PageMainFeatures` —
+  cms-orders → CmsEcommerce · cms-bookings → CmsBooking · document-scan → DocumentOCR · lodging → ไม่ gate) ⇒ `Layout.currentPageFeature()` ตรงกับสิ่งที่ middleware
+  gate จริง ⇒ หลังกดบังคับ โหลดหลักถูกปฏิเสธ = พาไปหน้าแพ็กเกจ (เดิม toast + หน้าว่าง) · หน้าที่ไม่อยู่ในตาราง = ฟีเจอร์ของเมนู (เดิม)
   (Shadow = บันทึกคอลัมน์ partner/API · Enforce = 403/402) · ฟีเจอร์ยังใช้ด่านของ Connected เอง · คำขอ `/api/v1` ที่ส่ง header ด้วย = พฤติกรรม partner เดิม ·
   `/api/signatures/*` เป็นลายเซ็นระดับผู้ใช้ (ไม่มีบริษัท) — ข้ามโดยถูกต้อง
 - **กฎ settlement (D-P5)**: `GET settlement/batches/{id}` ซ่อน `MatchCandidates` + `MatchNote` ของ**บรรทัดที่มีผู้สมัคร** (S200-9 — บรรทัดที่ไม่มีผู้สมัครคงเหตุผลของสถานะ)
@@ -839,7 +848,9 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — **§5.2** คำตัดสินข้อ 21–24 + ฝ่ายค้าน S200-1..9: คีย์ `RouteFeatureMap` ตรง route จริง ·
+_Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit <pending>)_
+
+_ก่อนหน้า: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — **§5.2** คำตัดสินข้อ 21–24 + ฝ่ายค้าน S200-1..9: คีย์ `RouteFeatureMap` ตรง route จริง ·
 คีย์ใหม่เป็นเงาสำหรับทุกผู้เรียกจนกว่ากดบังคับ · `GET bank/accounts`/`warehouses` ไม่ผูก · `/api/v1` ตรวจสถานะผ่านสวิตช์เดียว · config เดิม Enforce ไม่หลวม ·
 เมนู/api.js ไม่ดีดก่อนบังคับ · ตัวตัดสินฟีเจอร์บริษัทตัวเดียว · รายงานเงาแยก partner — commit 62de779a)_
 

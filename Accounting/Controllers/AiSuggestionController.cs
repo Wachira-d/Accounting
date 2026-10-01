@@ -2982,34 +2982,29 @@ public class AiSuggestionController : ControllerBase
         // และไม่ตรวจชุดคำตอบ ⇒ ใช้ตัวตัดสินเดียว (ครูหรือนักเรียน + อยู่ในชุดที่ prompt กำหนด)
         // รอบ 200 ทีม RF (R200-X2): คำตอบของนักเรียน (ตอนปิด provider/short-circuit) — orchestrator ใส่ Reasoning เป็นข้อความ routing
         // ("Hybrid: local wins…"/"AI ไม่พร้อม…") และ SuggestedActions ว่าง ⇒ คำอธิบายจริงของนักเรียนอยู่ใน RawResponseJson (StructuredJson)
-        var studentText = !resp.UsedAi && resp.FromLocalModel
-            ? Accounting.Helpers.AnomalyExplainStudent.ReadStructured(resp.RawResponseJson)
-            : null;
-        var reasoning = studentText?.Reasoning ?? resp.Reasoning;
-        var actions = studentText?.SuggestedActions ?? resp.SuggestedActions;
-        var risks = studentText?.Risks ?? resp.Risks;
         // R200-X8: คำตอบครูนอกชุด ⇒ แปลงเข้าชุด (รูปแบบต่าง ⇒ ค่าในชุด · อย่างอื่น ⇒ NeedReview) แล้วเก็บ — เดิมทิ้ง ⇒ จ่าย token แล้วยิงซ้ำ ·
-        // ความมั่นใจของผู้ตอบใช้ได้เฉพาะเมื่อคำตอบถูกจำได้ (ไม่ใช่ถูกแปลงเป็น NeedReview)
-        var verdict = Accounting.Helpers.AnomalyExplainVerdict.Coerce(resp.PrimaryAnswer);
-        var verdictConfidence = Accounting.Helpers.AnomalyExplainVerdict.IsRecognized(resp.PrimaryAnswer) ? resp.Confidence : null;
+        // ความมั่นใจของผู้ตอบใช้ได้เฉพาะเมื่อคำตอบถูกจำได้ (ไม่ใช่ถูกแปลงเป็น NeedReview) · รอบ 200 ทีม Z (RF-6): ประกอบผ่าน AnomalyExplainVerdict.View
+        // ตัวเดียวกับทางเข้าเฉพาะกิจ (ห้ามประกอบเองสองที่)
+        var view = Accounting.Helpers.AnomalyExplainVerdict.View(resp.UsedAi, resp.FromLocalModel, resp.PrimaryAnswer, resp.Confidence,
+            resp.Reasoning, resp.SuggestedActions, resp.Risks, resp.RawResponseJson);
         if (Accounting.Helpers.AnomalyExplainVerdict.ShouldPersist(resp.UsedAi, resp.FromLocalModel, resp.PrimaryAnswer))
         {
-            anomaly.AiVerdict = verdict;
-            anomaly.AiConfidence = verdictConfidence;
-            anomaly.AiReasoning = reasoning;
-            anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(actions);
-            anomaly.AiRisksJson = JsonSerializer.Serialize(risks);
+            anomaly.AiVerdict = view.Primary;
+            anomaly.AiConfidence = view.Confidence;
+            anomaly.AiReasoning = view.Reasoning;
+            anomaly.AiSuggestedActionsJson = JsonSerializer.Serialize(view.SuggestedActions);
+            anomaly.AiRisksJson = JsonSerializer.Serialize(view.Risks);
             anomaly.AiFeedbackId = resp.FeedbackId;
             anomaly.AiExplainedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
         }
         return Ok(new ApiResponse<object>(true, new
         {
-            primary = verdict ?? resp.PrimaryAnswer,
-            confidence = verdictConfidence,
-            reasoning,
-            suggestedActions = actions,
-            risks,
+            primary = view.Primary,
+            confidence = view.Confidence,
+            reasoning = view.Reasoning,
+            suggestedActions = view.SuggestedActions,
+            risks = view.Risks,
             feedbackId = resp.FeedbackId,
             usedAi = resp.UsedAi,
             fromLocalModel = resp.FromLocalModel,
@@ -3281,12 +3276,19 @@ public class AiSuggestionController : ControllerBase
             anomalyContextJson: "{}",
             localGuess: null);
         var resp = await orchestrator.AskAsync(aiReq, ct);
+        // รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง RF-6 · กฎเหล็ก #1 kill-switch): ตัวประกอบเดียวกับทางเข้าที่บันทึกลงรายการ — ปิด provider แล้วผู้ใช้เห็นคำอธิบาย
+        // ของนักเรียน (ไม่ใช่ข้อความ routing) และคำตอบผ่าน Coerce (อยู่ในชุด LikelyError/LikelyLegit/NeedReview เสมอเมื่อมีคำตอบ)
+        var view = Accounting.Helpers.AnomalyExplainVerdict.View(resp.UsedAi, resp.FromLocalModel, resp.PrimaryAnswer, resp.Confidence,
+            resp.Reasoning, resp.SuggestedActions, resp.Risks, resp.RawResponseJson);
         return Ok(new ApiResponse<object>(true, new
         {
-            answer = resp.PrimaryAnswer,
-            confidence = resp.Confidence,
-            reasoning = resp.Reasoning,
+            answer = view.Primary,
+            confidence = view.Confidence,
+            reasoning = view.Reasoning,
+            suggestedActions = view.SuggestedActions,
+            risks = view.Risks,
             usedAi = resp.UsedAi,
+            fromLocalModel = resp.FromLocalModel,
             feedbackId = resp.FeedbackId,
         }));
     }

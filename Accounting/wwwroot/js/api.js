@@ -430,9 +430,13 @@ const API = {
           return { success: false, data: null, message: 'company not ready' };
         }
         // Try to parse structured 403 (feature locked / subscription inactive)
-        try {
-          const json = await res.json();
-          if (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE') {
+        // รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง RF-3): เดิม `throw new Error(json.message)` อยู่ใน try เดียวกับ res.json() ⇒ catch ด้านล่างกลืนแล้วโยน
+        // "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้" แทน ⇒ ข้อความของเซิร์ฟเวอร์ที่บอกวิธีขอสิทธิ์ (PermissionKeys.DeniedMessage) ไม่เคยถึงผู้ใช้ ·
+        // ตอนนี้ try ครอบแค่การอ่าน JSON · error ที่โยนมี `status = 403` (+ `requiredPermission`) ให้ผู้เรียกหยุดวนยิงซ้ำได้
+        let json = null;
+        try { json = await res.json(); } catch (_) { json = null; }
+        {
+          if (json && (json.code === 'FEATURE_NOT_AVAILABLE' || json.code === 'SUBSCRIPTION_INACTIVE')) {
             // ข้อ 24: ดีดไปหน้าแพ็กเกจเฉพาะเมื่อโหลดหลักของหน้าถูกปฏิเสธ · คำขอเบื้องหลัง = แจ้งเตือนครั้งเดียวต่อฟีเจอร์ ไม่ขวาง
             if (typeof Layout !== 'undefined' && Layout.toast) {
               const pageFeature = typeof Layout.currentPageFeature === 'function' ? Layout.currentPageFeature() : null;
@@ -446,13 +450,13 @@ const API = {
               }
             }
             const err = new Error(json.message || this._t('api.featureNotInPlan', 'ฟีเจอร์ไม่อยู่ในแพ็กเกจ'));
-            err.code = json.code; err.feature = json.feature;
+            err.code = json.code; err.feature = json.feature; err.status = 403;
             throw err;
           }
-          throw new Error(json.message || this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));
-        } catch (parseErr) {
-          if (parseErr.code) throw parseErr;
-          throw new Error(this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));
+          const e403 = new Error((json && json.message) || this._t('api.forbidden', 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้'));
+          e403.status = 403;
+          if (json && json.data && json.data.requiredPermission) e403.requiredPermission = json.data.requiredPermission;
+          throw e403;
         }
       }
       if (res.status === 429) {

@@ -145,7 +145,12 @@ public class SubscriptionController : ControllerBase
         // S200-2: เมนูล็อกตามโหมดที่มีผลจริง — ค่ามาจากตัวตัดสินเดียวกับ middleware (หน้าเว็บห้าม hardcode)
         var enforcement = Accounting.Helpers.SubscriptionEnforcementResolver.Resolve(
             await _gateSwitch.ReadAdminSwitchAsync(HttpContext.RequestAborted), _config);
-        return Ok(new ApiResponse<SubscriptionResponse>(true, result with { FeatureGateMode = enforcement.EffectiveMode.ToString() }));
+        // S2-3 (รอบ 200 ทีม Z): ฟีเจอร์ของ route ข้อมูลหลักรายหน้า — จากตารางเส้นทางตัวเดียวกับ middleware (หน้าเว็บห้ามเก็บสำเนา)
+        return Ok(new ApiResponse<SubscriptionResponse>(true, result with
+        {
+            FeatureGateMode = enforcement.EffectiveMode.ToString(),
+            PageFeatures = Accounting.Helpers.SubscriptionGatePolicy.PageMainFeatures(),
+        }));
     }
 
     /// <summary>

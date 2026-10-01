@@ -1094,6 +1094,12 @@ const Layout = {
       const here = window.location.pathname;
       item = items.find(n => n.href && n.href.split('?')[0] === here);
     }
+    // รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-3): หน้าที่ route ข้อมูลหลักถูก gate ด้วยฟีเจอร์คนละตัวกับเมนู (cms-orders · cms-bookings · lodging · document-scan)
+    // — เซิร์ฟเวอร์บอกผ่าน `pageFeatures` ของ /api/subscription (ตารางเส้นทางตัวเดียวกับ middleware) · ค่า null = route หลักไม่ถูก gate ·
+    // ไม่มีในตาราง/แคชเก่าไม่มีช่องนี้ = ฟีเจอร์ของเมนู (พฤติกรรมเดิม)
+    const pf = this.subscription && this.subscription.pageFeatures;
+    const pageId = (item && item.id) || this.currentPage;
+    if (pf && pageId && Object.prototype.hasOwnProperty.call(pf, pageId)) return pf[pageId] || null;
     return (item && item.feature) || null;
   },
 

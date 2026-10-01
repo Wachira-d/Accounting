@@ -26,8 +26,27 @@ public class DocumentTemplateController : ControllerBase
 
     // ===== Template CRUD =====
     // รอบ 200 ทีม RF (R200-X1): เส้นเขียนเทมเพลตทุกเส้น (สร้าง/แก้/ลบ/ตั้งค่าเริ่มต้น/คัดลอก) ต้องมีสิทธิ์ตั้งค่าบริษัท
-    // (CompanySettings.Edit — คำอธิบายคีย์ครอบ "template" · DECISIONS ข้อ 34: เจ้าของ + Admin โดยปริยาย) · เดิมมีแค่ [Authorize]
+    // (CompanySettings.Edit — คำอธิบายคีย์ครอบ "template" · DECISIONS ข้อ 34 (แก้ถ้อยคำรอบ 200 ทีม Z · RF-3): เจ้าของโดยปริยาย — ระบบไม่มีบทบาท
+    // "Admin ของบริษัท" · บทบาทอื่นต้องได้สิทธิ์ CompanySettings.Edit ผ่านหน้าบทบาทและสิทธิ์) · เดิมมีแค่ [Authorize]
     // ⇒ ผู้ดูอย่างเดียวแก้เทมเพลต default ของบริษัทได้ (หัวเอกสาร/CSS ที่ไปโผล่ในพรีวิวของเจ้าของ)
+
+    /// <summary>
+    /// ผู้ใช้คนนี้แก้เทมเพลตได้ไหม — หน้าเทมเพลตซ่อน/ปิดปุ่มบันทึกตามคำตอบนี้ (รอบ 200 ทีม Z · ฝ่ายค้านรอบสอง RF-3: เดิมหน้าไม่รู้สิทธิ์ ⇒ นักบัญชีกด
+    /// "ใช้สีกับทุกเอกสาร" แล้วได้ 403 ทีละเทมเพลต 15 ครั้ง) · ตัวตัดสินเดียวกับด่าน <c>[RequirePermission(CompanySettingsEdit)]</c> ของเส้นเขียน
+    /// (<see cref="IPermissionService.HasPermissionAsync"/> — เจ้าของ/SystemAdmin ผ่านเอง) · ไม่ได้ ⇒ ข้อความบอกวิธีขอสิทธิ์ (<c>PermissionKeys.DeniedMessage</c>)
+    /// </summary>
+    [HttpGet("access")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAccess(Guid companyId, [FromServices] IPermissionService permissions)
+    {
+        var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+        var canEdit = await permissions.HasPermissionAsync(companyId, userId, PermissionKeys.CompanySettingsEdit);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            canEdit,
+            requiredPermission = PermissionKeys.CompanySettingsEdit.Replace("perm:", ""),
+            reason = canEdit ? null : PermissionKeys.DeniedMessage(PermissionKeys.CompanySettingsEdit),
+        }));
+    }
 
     /// <summary>ตัวตรวจค่าหน้าตาตอนบันทึก — ค่าที่ไม่ถูกรูป = 400 พร้อมข้อความไทย (Helpers/DocumentTemplateStyle ตัวเดียวกับตอน render)</summary>
     private static string? StyleRejection(Accounting.Helpers.TemplateStyleInput input)

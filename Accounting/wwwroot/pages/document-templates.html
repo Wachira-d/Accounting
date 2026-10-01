@@ -78,6 +78,8 @@
           <p class="page-subtitle">เลือกธีมหลักของทั้งระบบ หรือกด "ปรับแต่ง" รายเอกสาร — เห็นหน้าตาจริงทุกแบบ</p>
         </div>
       </div>
+      <!-- รอบ 200 ทีม Z (RF-3): ไม่มีสิทธิ์ CompanySettings.Edit ⇒ ดูได้ แก้ไม่ได้ — ข้อความ/วิธีขอสิทธิ์มาจากเซิร์ฟเวอร์ (GET document-templates/access) -->
+      <div id="tplAccessNote" class="card" style="display:none;margin-bottom:14px;border-left:4px solid #f59e0b;background:#fffbeb;color:#92400e;font-size:13px"></div>
 
       <div class="card" style="margin-bottom:14px">
         <h3 style="margin:0 0 4px">1️⃣ เลือกโครงเทมเพลต — 10 แบบ การจัดวางหน้าต่างกัน</h3>
@@ -114,7 +116,7 @@
                 <input type="text" id="cStripeHex" value="#EEF2FF" oninput="Page._syncHex('cStripeHex','cStripe')" style="width:90px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
               </div>
             </div>
-            <button class="btn btn-primary" onclick="Page.applyCustomColor()">ใช้สีที่กำหนดเองกับทุกเอกสาร</button>
+            <button class="btn btn-primary" data-tpl-write onclick="Page.applyCustomColor()">ใช้สีที่กำหนดเองกับทุกเอกสาร</button>
           </div>
         </div>
       </div>
@@ -131,7 +133,7 @@
               <option value="TopLeft">ป้ายมุมซ้ายบน</option>
             </select>
           </div>
-          <button class="btn btn-primary" onclick="Page.applyGlobalCopyLabel()">ใช้กับทุกเอกสาร</button>
+          <button class="btn btn-primary" data-tpl-write onclick="Page.applyGlobalCopyLabel()">ใช้กับทุกเอกสาร</button>
         </div>
         <div style="font-size:11px;color:#94a3b8;margin-top:8px">
           โหมดป้ายมุม: "สำเนา" เป็นกรอบเล็กมุมเอกสารแทนลายน้ำ · "ต้นฉบับ" (ใบกำกับภาษี §86/4) ย้ายจากท้ายชื่อเอกสารไปมุมเดียวกัน
@@ -153,7 +155,7 @@
           </div>
         </div>
         <div>
-          <button class="btn btn-secondary" onclick="Page.openNew()">+ สร้างเทมเพลตใหม่</button>
+          <button class="btn btn-secondary" data-tpl-write onclick="Page.openNew()">+ สร้างเทมเพลตใหม่</button>
         </div>
       </div>
 
@@ -440,9 +442,9 @@
         </div>
 
         <div class="save-bar">
-          <button class="btn btn-secondary" onclick="Page.duplicateCurrent()">📋 ทำสำเนา</button>
-          <button class="btn btn-danger" onclick="Page.deleteCurrent()">ลบ</button>
-          <button class="btn btn-primary" onclick="Page.save()" id="saveBtn">บันทึก</button>
+          <button class="btn btn-secondary" data-tpl-write onclick="Page.duplicateCurrent()">📋 ทำสำเนา</button>
+          <button class="btn btn-danger" data-tpl-write onclick="Page.deleteCurrent()">ลบ</button>
+          <button class="btn btn-primary" data-tpl-write onclick="Page.save()" id="saveBtn">บันทึก</button>
         </div>
       </div>
 
@@ -512,6 +514,7 @@
         this._populateDocTypeOptions();
         this._renderPresets();
         this._renderGlobalLooks();
+        await this._loadAccess();     // RF-3: ปิดปุ่มบันทึกตามสิทธิ์จากเซิร์ฟเวอร์
         await this.loadTemplates();   // populates this.templates (no auto-open)
         // ผังเงินสด/ธนาคาร (111x) สำหรับ "บัญชีรับเงิน default ต่อชนิดเอกสาร"
         // — โหลดล่วงหน้าครั้งเดียว ใช้ตัวเลือกเดียวกับช่องแหล่งเงินในฟอร์มเอกสาร
@@ -673,7 +676,7 @@
               <div class="design-meta">
                 <div class="look-name">${l.name}</div>
                 <div class="look-sub">${l.desc}</div>
-                <button class="btn btn-sm btn-primary" style="width:100%;margin-top:6px" onclick="Page.applyGlobalLayout('${l.key}')">ใช้โครงนี้</button>
+                <button class="btn btn-sm btn-primary" data-tpl-write style="width:100%;margin-top:6px" onclick="Page.applyGlobalLayout('${l.key}')">ใช้โครงนี้</button>
               </div>
             </div>`).join('');
           this.LAYOUTS.forEach(l => this._loadLayoutThumb(l));
@@ -681,13 +684,45 @@
         const cg = document.getElementById('globalColorGrid');
         if (cg) {
           cg.innerHTML = this.COLORS.map(c => `
-            <button type="button" class="color-card" onclick="Page.applyGlobalColor('${c.key}')" title="${Layout.esc(c.name)}">
+            <button type="button" class="color-card" data-tpl-write onclick="Page.applyGlobalColor('${c.key}')" title="${Layout.esc(c.name)}">
               <span class="color-swatch" style="background:${c.accent}"></span>
               <span class="color-swatch" style="background:${c.headBg}"></span>
               <span class="color-swatch" style="background:${c.stripe};border:1px solid #cbd5e1"></span>
               <div class="color-name">${c.name}</div>
             </button>`).join('');
         }
+        this._applyAccess();   // ปุ่มที่เพิ่งสร้างใหม่ต้องถูกปิดตามสิทธิ์ด้วย
+      },
+
+      // ───────────────── สิทธิ์แก้เทมเพลต (รอบ 200 ทีม Z · ฝ่ายค้านรอบสอง RF-3) ─────────────────
+      // เซิร์ฟเวอร์ตัดสิน (GET document-templates/access — ตัวเดียวกับด่าน [RequirePermission(CompanySettings.Edit)]) · หน้าไม่เดาเองจากบทบาท
+      // null = ยังไม่รู้/อ่านไม่ได้ ⇒ ไม่ปิดปุ่ม (เซิร์ฟเวอร์ยังกันอยู่ และ error 403 ถูกแสดงพร้อมวิธีขอสิทธิ์)
+      canEdit: null,
+      _denyReason: '',
+      async _loadAccess() {
+        try {
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/document-templates/access`);
+          if (r && r.data) { this.canEdit = r.data.canEdit === true; this._denyReason = r.data.reason || ''; }
+        } catch (e) { this.canEdit = null; }
+        this._applyAccess();
+      },
+      _applyAccess() {
+        const locked = this.canEdit === false;
+        document.querySelectorAll('[data-tpl-write]').forEach(b => {
+          b.disabled = locked;
+          if (locked) b.title = this._denyReason; else if (b.title === this._denyReason) b.removeAttribute('title');
+        });
+        const note = document.getElementById('tplAccessNote');
+        if (note) {
+          note.style.display = locked ? '' : 'none';
+          note.textContent = locked ? `🔒 ดูเทมเพลตได้ แต่บันทึกไม่ได้ — ${this._denyReason}` : '';
+        }
+      },
+      /** ด่านก่อนยิงคำขอเขียน — ไม่มีสิทธิ์ = บอกเหตุผลครั้งเดียว ไม่ยิง */
+      _requireEdit() {
+        if (this.canEdit !== false) return true;
+        Layout.toast(this._denyReason || 'ไม่มีสิทธิ์แก้เทมเพลต', 'error');
+        return false;
       },
 
       async _loadLayoutThumb(l) {
@@ -775,10 +810,12 @@
       // (creating one when missing). Only the given fields change; everything
       // else (the other of layout/colour, all toggles) is preserved.
       async _applyToAll(fields, what, nameFn) {
+        if (!this._requireEdit()) return;
         const cid = Layout.getCompanyId();
-        let ok = 0, fail = 0, firstErr = '';
+        let ok = 0, fail = 0, firstErr = '', denied = false;
         Layout.toast(`กำลังใช้${what}กับทุกเอกสาร…`, 'info');
         for (const [type, label] of this.DOC_TYPES) {
+          if (denied) break;   // RF-3: 403 สิทธิ์ครั้งแรก ⇒ หยุด (เดิมยิง PUT ต่อจนครบ 15 ประเภท ได้ 403 ซ้ำ ๆ)
           try {
             let tpl = this._defaultTemplateFor(type);
             if (!tpl) {
@@ -789,7 +826,10 @@
             const payload = Object.assign({ isDefault: true, isActive: true }, fields);
             await API.put(`/api/companies/${cid}/document-templates/${tpl.id}`, payload);
             ok++;
-          } catch (e) { fail++; if (!firstErr) firstErr = e?.message || String(e); }
+          } catch (e) {
+            fail++; if (!firstErr) firstErr = e?.message || String(e);
+            if (e && e.status === 403) { denied = true; this.canEdit = false; this._denyReason = e.message || this._denyReason; this._applyAccess(); }
+          }
         }
         await this.loadTemplates();
         await this._seedGlobalCustomColors();   // ช่อง "กำหนดสีเอง" สะท้อนสีที่เพิ่งใช้
@@ -1114,6 +1154,7 @@
       },
 
       async save() {
+        if (!this._requireEdit()) return;
         const btn = document.getElementById('saveBtn');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
         try {
@@ -1125,10 +1166,11 @@
           await this.loadTemplates();
           await this.refreshPreview();
         } catch (e) { Layout.toast(e.message, 'error'); }
-        finally { btn.disabled = false; btn.textContent = 'บันทึก'; }
+        finally { btn.disabled = this.canEdit === false; btn.textContent = 'บันทึก'; }
       },
 
       async openNew() {
+        if (!this._requireEdit()) return;
         const name = prompt('ชื่อเทมเพลตใหม่');
         if (!name) return;
         try {
@@ -1144,7 +1186,7 @@
       },
 
       async duplicateCurrent() {
-        if (!this.current) return;
+        if (!this.current || !this._requireEdit()) return;
         // endpoint ต้องการ ?newName= (query) — เดิมส่ง body ว่างเปล่า → 400 ทุกครั้ง
         const newName = prompt('ชื่อเทมเพลตสำเนา', `${this.current.name} (สำเนา)`);
         if (!newName) return;
@@ -1160,7 +1202,7 @@
       },
 
       async deleteCurrent() {
-        if (!this.current) return;
+        if (!this.current || !this._requireEdit()) return;
         if (!confirm(`ลบเทมเพลต "${this.current.name}"?`)) return;
         try {
           const cid = Layout.getCompanyId();

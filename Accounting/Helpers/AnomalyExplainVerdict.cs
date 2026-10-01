@@ -26,7 +26,7 @@ public static class AnomalyExplainVerdict
 
     /// <summary>คำตอบที่เขียนลงรายการได้เสมอเมื่อมีคำตอบ: ตรงชุด ⇒ ค่ามาตรฐาน · ต่างแค่รูปแบบ (<c>likely_error</c>) ⇒ ค่าในชุด ·
     /// นอกชุด ⇒ <see cref="Fallback"/> · ว่าง/null ⇒ null (ไม่มีคำตอบให้เก็บ)</summary>
-    public static string? Coerce(string? primary)
+    internal static string? Coerce(string? primary)   // internal: ผู้เรียกภายนอกใช้ View (ทีม Z RF-6) · เทสต์ผ่าน InternalsVisibleTo
     {
         if (string.IsNullOrWhiteSpace(primary)) return null;
         var exact = Normalize(primary);
@@ -46,4 +46,27 @@ public static class AnomalyExplainVerdict
     /// <summary>true = บันทึกลงรายการได้: มีผู้ตอบจริง (ครูหรือนักเรียน — ไม่ใช้ UsedAi เป็นด่าน) + มีคำตอบ (แปลงเข้าชุดด้วย <see cref="Coerce"/>)</summary>
     public static bool ShouldPersist(bool usedAi, bool fromLocalModel, string? primary)
         => (usedAi || fromLocalModel) && Coerce(primary) != null;
+
+    /// <summary>
+    /// **สิ่งที่ผู้ใช้เห็นจากคำตอบหนึ่งครั้ง — ตัวประกอบตัวเดียวของทั้งสองทางเข้า** (<c>POST anomalies/{id}/explain</c> ที่บันทึกลงรายการ และ
+    /// <c>POST anomaly/explain</c> เฉพาะกิจ) — รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง RF-6): ทางเข้าเฉพาะกิจเดิมคืน <c>resp.Reasoning</c> ⇒ ตอนปิด provider
+    /// (kill-switch กฎเหล็ก #1 ข้อ 5) ผู้ใช้เห็นข้อความ routing ("AI ไม่พร้อม…"/"Hybrid: local wins…") แทนคำอธิบายของนักเรียน และคำตอบไม่ผ่าน <see cref="Coerce"/>
+    /// <para>นักเรียนตอบ (<paramref name="fromLocalModel"/> และไม่ได้ใช้ครู) ⇒ คำอธิบาย/สิ่งที่ควรทำ/ความเสี่ยงจาก JSON ของนักเรียน
+    /// (<see cref="AnomalyExplainStudent.ReadStructured"/>) · คำตอบ = <see cref="Coerce"/> (นอกชุด ⇒ NeedReview) · ความมั่นใจใช้ได้เฉพาะเมื่อ <see cref="IsRecognized"/></para>
+    /// </summary>
+    public static AnomalyExplainView View(bool usedAi, bool fromLocalModel, string? primary, decimal? confidence,
+        string? reasoning, IReadOnlyList<string>? suggestedActions, IReadOnlyList<string>? risks, string? rawResponseJson)
+    {
+        var student = !usedAi && fromLocalModel ? AnomalyExplainStudent.ReadStructured(rawResponseJson) : null;
+        return new AnomalyExplainView(
+            Coerce(primary) ?? primary,
+            IsRecognized(primary) ? confidence : null,
+            student?.Reasoning ?? reasoning,
+            student?.SuggestedActions ?? suggestedActions ?? Array.Empty<string>(),
+            student?.Risks ?? risks ?? Array.Empty<string>());
+    }
 }
+
+/// <summary>ผลของ <see cref="AnomalyExplainVerdict.View"/> — <see cref="Primary"/> = ค่าในชุด (หรือ null เมื่อไม่มีคำตอบ)</summary>
+public sealed record AnomalyExplainView(string? Primary, decimal? Confidence, string? Reasoning,
+    IReadOnlyList<string> SuggestedActions, IReadOnlyList<string> Risks);
