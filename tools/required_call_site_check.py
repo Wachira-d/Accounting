@@ -2742,7 +2742,7 @@ RULES += [
          why="R2M-11: บิลที่ปิดก่อน R200G-2 คืนเงินหลัง deploy ต้องกลับขาที่ลงไว้จริง (ไม่ใช่กติกาวันนี้)"),
     dict(file="Services/Implementations/PosService.Orders.cs", method="CreateSalesJournalEntryAsync",
          must=["SaleMoneyLegDescription(pay.PaymentMethod, order.OrderNumber)"],
-         forbid=["$\"รับเงิน {methodLabel} POS #"],
+         forbid_lit=["รับเงิน {methodLabel} POS #"],
          why="R2M-11: คำอธิบายขาเงินผ่านตัวสร้างเดียว — เส้นคืนเงินอ่านขานี้กลับ (ข้อความสองที่ต้องไม่ drift)"),
 ]
 
