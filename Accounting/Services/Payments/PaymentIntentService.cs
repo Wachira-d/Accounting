@@ -76,10 +76,29 @@ public class PaymentIntentService : IPaymentIntentService
     private readonly IEnumerable<IPaymentProvider> _providers;
     private readonly IEnumerable<IPaymentCompletionHandler> _handlers;
     private readonly ILogger<PaymentIntentService> _logger;
+    private readonly IConfiguration? _config;
 
     public PaymentIntentService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers,
-        IEnumerable<IPaymentCompletionHandler> handlers, ILogger<PaymentIntentService> logger)
-    { _db = db; _providers = providers; _handlers = handlers; _logger = logger; }
+        IEnumerable<IPaymentCompletionHandler> handlers, ILogger<PaymentIntentService> logger,
+        IConfiguration? config = null)
+    { _db = db; _providers = providers; _handlers = handlers; _logger = logger; _config = config; }
+
+    /// <summary>รอบ 201 ทีม GW (A-GW3): URL กลับหลังจ่าย = โดเมนเว็บไซต์ของบริษัทนี้ (SiteDomains ที่อนุมัติแล้ว + CustomDomain ของเว็บ) หรือโดเมนของระบบ
+    /// (<c>App:BaseUrl</c>) เท่านั้น — ตัดสินด้วย <see cref="PaymentIntentPolicy.SafeReturnUrl"/> ตัวเดียว (ทุกทางเข้าเดินผ่าน StartAsync)</summary>
+    private async Task<string?> SafeReturnUrlAsync(Guid companyId, string? requested, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(requested)) return null;
+        var hosts = await _db.SiteDomains.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.IsActive && !d.IsDeleted
+                && d.ApprovalStatus == DomainApprovalStatus.Approved)
+            .Select(d => d.Domain)
+            .ToListAsync(ct);
+        hosts.AddRange(await _db.Sites.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.CustomDomain != null)
+            .Select(x => x.CustomDomain!)
+            .ToListAsync(ct));
+        return PaymentIntentPolicy.SafeReturnUrl(requested, hosts, _config?["App:BaseUrl"]);
+    }
 
     private IPaymentProvider Resolve(string code)
         => _providers.FirstOrDefault(p => p.ProviderCode == code)
@@ -203,6 +222,12 @@ public class PaymentIntentService : IPaymentIntentService
             throw new InvalidOperationException(
                 $"ช่องทาง \"{config?.DisplayName ?? code}\" ไม่รองรับวิธีชำระเงินที่เลือก");
 
+        var returnUrl = await SafeReturnUrlAsync(companyId, request.ReturnUrl, ct);
+        if (!string.IsNullOrWhiteSpace(request.ReturnUrl)
+            && (returnUrl == null || !returnUrl.EndsWith(request.ReturnUrl.Trim(), StringComparison.Ordinal)))
+            _logger.LogWarning("URL กลับหลังจ่ายไม่ใช่โดเมนของบริษัท {Company} — แทนด้วยหน้าแรกของระบบ (ที่มา {Kind})",
+                companyId, request.SourceKind);
+
         var intent = new PaymentIntent
         {
             CompanyId = companyId,
@@ -217,7 +242,7 @@ public class PaymentIntentService : IPaymentIntentService
             CustomerEmail = request.CustomerEmail,
             CustomerPhone = request.CustomerPhone,
             MethodKind = request.Method,
-            ReturnUrl = request.ReturnUrl,
+            ReturnUrl = returnUrl,
             Status = PaymentIntentStatus.Created,
             AttemptCount = existing.Count + 1,
             IdempotencyKey = PaymentIntentPolicy.IdempotencyKey(
@@ -233,7 +258,7 @@ public class PaymentIntentService : IPaymentIntentService
         try
         {
             var charge = await provider.CreateChargeAsync(intent,
-                new ChargeRequest(request.Method, request.CardToken, request.ReturnUrl,
+                new ChargeRequest(request.Method, request.CardToken, returnUrl,
                     request.CustomerEmail, request.CustomerPhone,
                     request.Description ?? $"{request.SourceKind} {request.SourceId:N}"),
                 config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = code }, ct);

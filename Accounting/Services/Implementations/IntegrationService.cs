@@ -382,6 +382,19 @@ public class IntegrationService : IIntegrationService
                 l.ExternalRef, l.CreatedAt))
             .ToListAsync();
 
+        // รอบ 201 ทีม GW (A-GW11): บัญชีธนาคารชุดเดียวกับ ResolveMoneyAccountAsync (เปิดใช้ · ผูกผัง) → PickBank → คำเตือนล่วงหน้า
+        // (เดิมผู้ใช้เจอครั้งแรกตอนรายการชำระถูกปฏิเสธ INT-NO-BANK-ACCOUNT) · ไม่มีการเชื่อมต่อ = ไม่เตือน
+        string? moneyWarning = null;
+        if (integrations.Count > 0)
+        {
+            var linkedBankGls = await _db.Set<BankAccount>().AsNoTracking()
+                .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId != null)
+                .Select(b => b.LinkedAccountId!.Value)
+                .ToListAsync();
+            moneyWarning = Accounting.Helpers.MoneyAccountFallback.IntegrationBankWarning(
+                Accounting.Helpers.MoneyAccountFallback.PickBank(linkedBankGls, out _));
+        }
+
         return new IntegrationDashboardResponse(
             integrations.Count,
             integrations.Count(i => i.IsActive),
@@ -390,7 +403,8 @@ public class IntegrationService : IIntegrationService
             integrations.Select(i => new IntegrationSummary(
                 i.Id, i.SystemName, i.SystemType, i.IsActive,
                 i.LastSyncAt, i.TotalSyncCount, i.ErrorCount)).ToList(),
-            recentSyncs);
+            recentSyncs,
+            MoneyAccountWarning: moneyWarning);
     }
 
     // ===== API Key Validation =====
@@ -1110,9 +1124,11 @@ public class IntegrationService : IIntegrationService
                     // ใบยังอนุมัติอยู่ + ไม่มี JE ⇒ ต้องยกเลิก/ออกใบลดหนี้ด้วยมือ · ยิงซ้ำก็ยังล้ม (ดูด่าน idempotent ด้านบน)
                     var voidedId = document.Id;
                     var voidedNo = document.DocumentNumber;
+                    Accounting.Models.DTOs.Document.PaymentVoidResult voidResult;
                     try
                     {
-                        await _documentService!.VoidDocumentAsync(companyId, voidedId);
+                        // รอบ 201 ทีม GW (ฝ่ายค้าน DV-O4): ผลของ cascade ยกเลิกการชำระ (ธง e-Tax/ภาษีขาย) ต้องถึงคู่ค้า — ห้ามทิ้งผลเงียบ
+                        voidResult = await _documentService!.VoidDocumentAsync(companyId, voidedId);
                     }
                     catch (Exception exVoid)
                     {
@@ -1136,7 +1152,8 @@ public class IntegrationService : IIntegrationService
                         document.InternalNotes, "[" + exTiv.RuleCode + "] ยกเลิกอัตโนมัติ — " + exTiv.Message);
                     await _db.SaveChangesAsync();
                     _logger.LogError(exTiv, "isCashSale {Doc}: หักมัดจำที่ออกใบกำกับแล้ว — ยกเลิกใบ ไม่ถอยไปตั้งหนี้", voidedNo);
-                    return await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, voidedId, voidedNo);
+                    var rejected = await RejectTaxedDrivesAsync(log, integrationId, sw, exTiv.Message, voidedId, voidedNo);
+                    return WithVoidNotices(rejected, voidResult);
                 }
                 catch (Exception exCash)
                 {
@@ -2561,8 +2578,9 @@ public class IntegrationService : IIntegrationService
         if (jeId != null) return (jeId, null);
 
         skipReason ??= "สร้างรายการบัญชีอัตโนมัติไม่สำเร็จ (ไม่ทราบสาเหตุ)";
+        // รอบ 201 ทีม GW (A-GW12): เดิมบอกให้ "สั่งลงบัญชีใหม่จากหน้าเอกสาร" — ไม่มีปุ่มนั้นในระบบ ⇒ ทางไปต่อที่มีจริงตัวเดียวกับเส้น resync
         var note = $"[ยังไม่ลงบัญชี] {skipReason} — เอกสารนี้เข้ารายงานภาษีแล้วแต่ยังไม่มี"
-                 + "รายการบัญชี กรุณาแก้ผังบัญชีแล้วสั่งลงบัญชีใหม่จากหน้าเอกสาร";
+                 + "รายการบัญชี · " + Accounting.Helpers.IntegrationResyncJournal.ResendNextStep;
         document.Notes = string.IsNullOrWhiteSpace(document.Notes)
             ? note : document.Notes + "\n" + note;
         log.Status = "PartialSuccess";
@@ -2570,6 +2588,64 @@ public class IntegrationService : IIntegrationService
             ? note : log.ErrorMessage + "\n" + note;
         await _db.SaveChangesAsync();
         return (null, skipReason);
+    }
+
+    /// <summary>ลองสร้างบรรทัด JE ของเอกสารแบบ<b>ไม่บันทึก</b> — ตัวสร้าง + ด่านโครงสร้างตัวเดียวกับตอนลงจริง (รอบ 201 ทีม GW · A-GW12) ·
+    /// null = สร้างได้ · มีค่า = เหตุที่สร้างไม่ได้ (ข้อความถึงผู้ใช้) · ใช้ก่อนกลับ JE เดิมตอน resync (<see cref="Accounting.Helpers.IntegrationResyncJournal"/>)</summary>
+    private async Task<string?> DryRunMappingJournalAsync(Guid companyId, Guid integrationId, Document document, string type)
+    {
+        string? reason = null;
+        var built = await BuildIntegrationJournalLinesAsync(companyId, integrationId, document, type, r => reason ??= r);
+        if (built == null) return reason ?? "สร้างรายการบัญชีอัตโนมัติไม่สำเร็จ (ไม่ทราบสาเหตุ)";
+        if (!await ValidateAndAutofixJournalAsync(companyId, built.Value.Lines, document))
+            return "ด่านตรวจโครงสร้างรายการบัญชีไม่ผ่าน (ผังบัญชีที่ mapping ชี้ไปผิดประเภท/ปิดใช้งาน)";
+        return null;
+    }
+
+    /// <summary>A-GW12: เส้นปรับ JE ตอน resync (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ ⇒ dry-run สร้างใหม่<b>ก่อน</b>กลับ JE เดิม · สร้างไม่ได้ ⇒ คง JE เดิม
+    /// + หมายเหตุ + sync log PartialSuccess · คืน (JE id, เหตุที่ข้าม, วิธีที่ใช้)</summary>
+    private async Task<(Guid? JournalEntryId, string? SkipReason, Accounting.Helpers.IntegrationResyncJournalAction Action)> ApplyResyncJournalAsync(
+        Guid companyId, Guid integrationId, Document existing, string type, IntegrationSyncLog log)
+    {
+        var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
+        Guid? journalEntryId = null;
+        var inPlace = false;
+        if (originals.Count == 1
+            && await IsPeriodOpenAsync(companyId, originals[0].EntryDate)
+            && await IsPeriodOpenAsync(companyId, existing.DocumentDate))
+        {
+            journalEntryId = await UpdateJournalInPlaceAsync(companyId, integrationId, existing, type, originals[0]);
+            inPlace = journalEntryId != null;
+        }
+        // dry-run ก่อนแตะ JE เดิม (ลำดับนี้ล็อกด้วย tools/required_call_site_check.py — "before")
+        var dryRunReason = inPlace || originals.Count == 0 ? null
+            : await DryRunMappingJournalAsync(companyId, integrationId, existing, type);
+        var action = Accounting.Helpers.IntegrationResyncJournal.Decide(inPlace, originals.Count, dryRunReason == null);
+        switch (action)
+        {
+            case Accounting.Helpers.IntegrationResyncJournalAction.InPlace:
+                return (journalEntryId, null, action);
+            case Accounting.Helpers.IntegrationResyncJournalAction.KeepOriginal:
+            {
+                // ห้ามกลับ JE ที่ถูกอยู่แล้วทิ้งเมื่อสร้างใบใหม่ไม่ได้ — ดังสามที่: เอกสาร · sync log · ข้อความตอบคู่ค้า (ผู้เรียกต่อท้าย SkipReason)
+                var note = Accounting.Helpers.IntegrationResyncJournal.KeepOriginalNote(dryRunReason);
+                existing.Notes = string.IsNullOrWhiteSpace(existing.Notes) ? note : existing.Notes + "\n" + note;
+                log.Status = "PartialSuccess";
+                log.ErrorMessage = string.IsNullOrWhiteSpace(log.ErrorMessage) ? note : log.ErrorMessage + "\n" + note;
+                await _db.SaveChangesAsync();
+                return (originals.Count == 1 ? originals[0].Id : null, note, action);
+            }
+            default:
+            {
+                if (action == Accounting.Helpers.IntegrationResyncJournalAction.ReverseAndRepost)
+                {
+                    await ResyncReverseOriginalsAsync(companyId, existing, originals);
+                    await _db.SaveChangesAsync();
+                }
+                var (jeId, skip) = await PostMappingJournalAsync(companyId, integrationId, existing, type, log);
+                return (jeId, skip, action);
+            }
+        }
     }
 
     private async Task<Guid?> CreateJournalFromMappingsAsync(Guid companyId, Guid integrationId, Document document, string type,
@@ -3076,26 +3152,11 @@ public class IntegrationService : IIntegrationService
         // ── เลือกวิธีปรับ JE (contract ระบบต้นทาง):
         //    งวดเปิด + มี JE เดิมใบเดียว → in-place (เลข JE คงเดิม)
         //    มิฉะนั้น → reversal + post ใหม่ (งวดปิดห้ามแก้ในงวด)
-        var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
-        Guid? journalEntryId = null;
-        string? jeSkipReason = null;
-        var inPlace = false;
-        if (originals.Count == 1
-            && await IsPeriodOpenAsync(companyId, originals[0].EntryDate)
-            && await IsPeriodOpenAsync(companyId, existing.DocumentDate))
-        {
-            journalEntryId = await UpdateJournalInPlaceAsync(companyId, integrationId, existing, "invoice", originals[0]);
-            inPlace = journalEntryId != null;
-        }
-        if (!inPlace)
-        {
-            await ResyncReverseOriginalsAsync(companyId, existing, originals);
-            await _db.SaveChangesAsync();
-            (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, existing, "invoice", log);
-        }
+        // รอบ 201 ทีม GW (A-GW12): in-place → (สร้างใหม่ได้ก่อน) กลับ + ลงใหม่ → สร้างไม่ได้ = คง JE เดิม — ตัวตัดสิน IntegrationResyncJournal
+        var (journalEntryId, jeSkipReason, jeAction) = await ApplyResyncJournalAsync(companyId, integrationId, existing, "invoice", log);
         existing.Notes = (existing.Notes ?? "")
             + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — "
-            + (inPlace ? "แก้ JE เดิม (in-place, เลขคงเดิม)" : "กลับ JE เดิม + post ใหม่ (reversal)");
+            + ResyncModeNote(jeAction);
         await _db.SaveChangesAsync();
 
         // หมายเหตุ: ขายเงินสดที่ปิดยอดแล้ว (PaidAmount=Total) ถูก ResyncGuardAsync
@@ -3108,11 +3169,9 @@ public class IntegrationService : IIntegrationService
         log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
         await SaveSyncLog(log, integrationId);
         _logger.LogInformation("Resync-updated invoice {DocNo} (company {Cid}) — {Mode}",
-            existing.DocumentNumber, companyId, inPlace ? "in-place" : "reversal");
+            existing.DocumentNumber, companyId, jeAction);
         return new InboundSyncResponse(true,
-            (inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
-                     : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่")
-            + JeSkipSuffix(jeSkipReason),
+            ResyncResponseText(jeAction, jeSkipReason),
             existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
     }
 
@@ -3159,26 +3218,11 @@ public class IntegrationService : IIntegrationService
         existing.BalanceDue = existing.TotalAmount;
         await _db.SaveChangesAsync();
 
-        var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
-        Guid? journalEntryId = null;
-        string? jeSkipReason = null;
-        var inPlace = false;
-        if (originals.Count == 1
-            && await IsPeriodOpenAsync(companyId, originals[0].EntryDate)
-            && await IsPeriodOpenAsync(companyId, existing.DocumentDate))
-        {
-            journalEntryId = await UpdateJournalInPlaceAsync(companyId, integrationId, existing, "expense", originals[0]);
-            inPlace = journalEntryId != null;
-        }
-        if (!inPlace)
-        {
-            await ResyncReverseOriginalsAsync(companyId, existing, originals);
-            await _db.SaveChangesAsync();
-            (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, existing, "expense", log);
-        }
+        // รอบ 201 ทีม GW (A-GW12): ลำดับเดียวกับ invoice — สร้างใหม่ได้ก่อนค่อยกลับ JE เดิม
+        var (journalEntryId, jeSkipReason, jeAction) = await ApplyResyncJournalAsync(companyId, integrationId, existing, "expense", log);
         existing.Notes = (existing.Notes ?? "")
             + $"\n[Resync แก้ไขจากระบบภายนอก] {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC — "
-            + (inPlace ? "แก้ JE เดิม (in-place, เลขคงเดิม)" : "กลับ JE เดิม + post ใหม่ (reversal)");
+            + ResyncModeNote(jeAction);
         await _db.SaveChangesAsync();
 
         if (log.Status != "PartialSuccess") log.Status = "Updated";
@@ -3187,13 +3231,48 @@ public class IntegrationService : IIntegrationService
         log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
         await SaveSyncLog(log, integrationId);
         _logger.LogInformation("Resync-updated expense {DocNo} (company {Cid}) — {Mode}",
-            existing.DocumentNumber, companyId, inPlace ? "in-place" : "reversal");
+            existing.DocumentNumber, companyId, jeAction);
         return new InboundSyncResponse(true,
-            (inPlace ? "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม"
-                     : "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่")
-            + JeSkipSuffix(jeSkipReason),
+            ResyncResponseText(jeAction, jeSkipReason),
             existing.Id, existing.ContactId, journalEntryId, null, existing.DocumentNumber);
     }
+
+    /// <summary>ข้อความตอบคู่ค้าของ resync (A-GW12) — คง JE เดิม = บอกตรง ๆ ว่ายอดในบัญชียังเป็นยอดเดิม (ที่ที่สามของ "ล้มดัง")</summary>
+    private static string ResyncResponseText(Accounting.Helpers.IntegrationResyncJournalAction action, string? skipReason) => action switch
+    {
+        Accounting.Helpers.IntegrationResyncJournalAction.InPlace => "Resync updated (in-place) — แก้ JE เดิม เลข JE คงเดิม",
+        Accounting.Helpers.IntegrationResyncJournalAction.KeepOriginal =>
+            "Resync updated (JE เดิมคงไว้) — แก้เอกสารแล้วแต่สร้างรายการบัญชีของยอดใหม่ไม่ได้ ⚠ " + skipReason,
+        Accounting.Helpers.IntegrationResyncJournalAction.ReverseAndRepost =>
+            "Resync updated (reversal) — งวดเดิมปิด/มีหลาย JE จึงกลับรายการ + post ใหม่" + JeSkipSuffix(skipReason),
+        _ => "Resync updated — ลงรายการบัญชีใหม่ (ไม่มี JE เดิม)" + JeSkipSuffix(skipReason),
+    };
+
+    /// <summary>ธงจาก cascade ยกเลิกการชำระของ <c>VoidDocumentAsync</c> (e-Tax ที่ต้องยกเลิก · ภาษีขายที่ถอยไม่ได้) เป็นคำเตือนถึงคู่ค้า —
+    /// null = ไม่มี (รอบ 201 ทีม GW · ฝ่ายค้าน DV-O4 · ชุดเดียวกับที่ <c>DocumentController</c> ต่อท้ายข้อความ)</summary>
+    private static List<string>? VoidNotices(Accounting.Models.DTOs.Document.PaymentVoidResult r)
+    {
+        var list = new[] { r.EtaxCancellationFlag, r.OutputVatNotice }
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n!).ToList();
+        return list.Count == 0 ? null : list;
+    }
+
+    /// <summary>ต่อธงของการยกเลิกเข้าคำตอบที่สร้างไว้แล้ว (คงคำเตือนเดิม)</summary>
+    private static InboundSyncResponse WithVoidNotices(InboundSyncResponse response, Accounting.Models.DTOs.Document.PaymentVoidResult r)
+    {
+        var notices = VoidNotices(r);
+        if (notices == null) return response;
+        return response with { Warnings = (response.Warnings ?? new List<string>()).Concat(notices).ToList() };
+    }
+
+    /// <summary>ข้อความวิธีปรับ JE บนหมายเหตุ resync (A-GW12)</summary>
+    private static string ResyncModeNote(Accounting.Helpers.IntegrationResyncJournalAction action) => action switch
+    {
+        Accounting.Helpers.IntegrationResyncJournalAction.InPlace => "แก้ JE เดิม (in-place, เลขคงเดิม)",
+        Accounting.Helpers.IntegrationResyncJournalAction.ReverseAndRepost => "กลับ JE เดิม + post ใหม่ (reversal)",
+        Accounting.Helpers.IntegrationResyncJournalAction.KeepOriginal => "คง JE เดิม (สร้างรายการบัญชีของยอดใหม่ไม่ได้ — ดูหมายเหตุ)",
+        _ => "ลงรายการบัญชีใหม่ (ไม่มี JE เดิม)",
+    };
 
     /// <summary>Resync guard — ตรวจว่าเอกสาร sync เดิมแก้ได้ไหม (ยังไม่แตะ JE).
     /// ตรวจทั้ง "เดือนภาษีเดิม" (หนังสือเดิมจะถูกแก้/กลับ) และ "เดือนของวันที่
@@ -4407,13 +4486,17 @@ public class IntegrationService : IIntegrationService
                 return new InboundSyncResponse(true, "Document already voided", doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
             }
 
-            await _documentService.VoidDocumentAsync(companyId, doc.Id);
+            // รอบ 201 ทีม GW (ฝ่ายค้าน DV-O4): cascade ยกเลิกการชำระคืนธง e-Tax/ภาษีขาย — ส่งต่อเป็นคำเตือนในคำตอบ + sync log (เดิมทิ้งผล)
+            var voidResult = await _documentService.VoidDocumentAsync(companyId, doc.Id);
+            var voidNotices = VoidNotices(voidResult);
 
             log.Status = "Success";
             log.CreatedDocumentId = doc.Id;
+            if (voidNotices != null) log.ErrorMessage = string.Join("\n", voidNotices);
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
-            return new InboundSyncResponse(true, "Document voided " + (request.Reason ?? ""), doc.Id, doc.ContactId, null, null, doc.DocumentNumber);
+            return new InboundSyncResponse(true, "Document voided " + (request.Reason ?? ""), doc.Id, doc.ContactId, null, null, doc.DocumentNumber,
+                Warnings: voidNotices);
         }
         catch (Exception ex)
         {

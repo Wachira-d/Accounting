@@ -61,6 +61,9 @@
         header <code>X-Acting-User</code> ของคีย์ใหม่สวมได้เฉพาะผู้ใช้ที่ผูกไว้ในหัวข้อ "ผู้ใช้ที่คีย์สวมได้"
       </div>
 
+      <!-- รอบ 201 ทีม GW (A-GW11): คำเตือนล่วงหน้าเรื่องบัญชีธนาคารรับเงิน — ข้อความจากเซิร์ฟเวอร์ (MoneyAccountFallback) -->
+      <div id="moneyAccountWarning" style="display:none;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.7;margin-bottom:12px"></div>
+
       <!-- Dashboard Stats -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
         <div class="card" style="padding:14px;text-align:center"><div style="font-size:22px;font-weight:700" id="statTotal">-</div><div class="text-sm text-gray-500" data-i18n="common.all">ทั้งหมด</div></div>
@@ -323,6 +326,12 @@ const Page = {
       document.getElementById('statActive').textContent = d.activeIntegrations;
       document.getElementById('statSyncToday').textContent = d.todaySyncCount;
       document.getElementById('statErrors').textContent = d.todayErrorCount;
+      const mw = document.getElementById('moneyAccountWarning');
+      if (mw) {
+        mw.style.display = d.moneyAccountWarning ? '' : 'none';
+        mw.innerHTML = d.moneyAccountWarning
+          ? '⚠️ ' + Layout.esc(d.moneyAccountWarning) + ' · <a href="/pages/bank.html">ไปหน้าบัญชีธนาคาร</a>' : '';
+      }
       this.integrations = d.integrations || [];
       this.recentSyncs = d.recentSyncs || [];
       this.renderIntegrationList();

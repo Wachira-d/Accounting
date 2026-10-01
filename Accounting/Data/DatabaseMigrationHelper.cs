@@ -7115,8 +7115,26 @@ public static class DatabaseMigrationHelper
             // ═══ จบบล็อกรอบ 201 ทีม AI ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
-        return statements.Concat(DepositKindMigrationStatements()).ToArray();
+        return statements.Concat(DepositKindMigrationStatements()).Concat(Round201GatewayStatements()).ToArray();
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  รอบ 201 ทีม GW (Gateway/Integration) — บล็อกของทีม ต่อท้ายชุดหลัง (ตาราง PaymentProviderConfigs/PaymentIntents สร้างไว้ก่อนหน้าในชุดนี้)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>รอบ 201 ทีม GW — A-GW1 รหัสลับ webhook ต่อ config (+ เวลาที่รับทาง URL ใหม่/เดิม) · idempotent ทุกบรรทัด</summary>
+    internal static IReadOnlyList<string> Round201GatewayStatements() => new List<string>
+    {
+        // A-GW1: รหัสลับต่อ config ใน URL แจ้งเตือน — แถวเดิมได้รหัสสุ่ม 64 ตัว (gen_random_uuid สองตัว · ตัวสุ่มเชิงรหัสลับของ PostgreSQL 13+)
+        // · เติมเฉพาะแถวที่ยังว่าง (รันทุกบูตได้ ไม่เปลี่ยนรหัสที่ผู้ใช้ตั้งในแดชบอร์ดไปแล้ว) · URL เดิมยังทำงานระหว่างเปลี่ยน (GatewayWebhookRoute)
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "WebhookToken" varchar(128) NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastTokenWebhookAt" timestamptz NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastTokenWebhookMode" integer NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastLegacyWebhookAt" timestamptz NULL;""",
+        """UPDATE "PaymentProviderConfigs" SET "WebhookToken" = replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '') WHERE "WebhookToken" IS NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PaymentProviderConfigs_WebhookToken" ON "PaymentProviderConfigs" ("WebhookToken") WHERE "WebhookToken" IS NOT NULL;""",
+    };
+
     // ═══════════════════════════════════════════════════════════════════════
     // รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG A-DV2 · คำตัดสินข้อ 65)
     // ═══════════════════════════════════════════════════════════════════════

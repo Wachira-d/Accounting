@@ -48,7 +48,14 @@ public sealed record PendingSettlementView(
 public sealed record FeeCorrectionOutcome(bool Ok, string Message, decimal? OldFee, decimal? NewFee);
 
 /// <summary>VAT ค่าธรรมเนียมที่รอใบกำกับของผู้ให้บริการรายหนึ่ง (ฝ่ายค้าน R-E3)</summary>
-public sealed record GatewayFeeVatStatusView(string ProviderCode, bool CompanyVatRegistered, GatewayFeeVatAging Aging);
+public sealed record GatewayFeeVatStatusView(string ProviderCode, bool CompanyVatRegistered, GatewayFeeVatAging Aging,
+    // รอบ 201 ทีม GW (A-GW5): VAT ค่าธรรมเนียมของรอบโอน settlement (batch) ที่ยังรอใบกำกับ — อยู่ในใบสำคัญจ่ายของรอบโอน (11640) ไม่ใช่ 11630 ⇒ แสดงอย่างเดียว
+    decimal BatchUndueVat = 0m, int BatchUndueDocuments = 0, string? BatchPortionNote = null,
+    // รอบ 201 ทีม GW (A-GW8): ปรับปรุงเศษ 11630 ได้ไหม — ตัวตรวจเดียวกับตอนบันทึก (GatewayFeeVatClaim.ResidueCheck)
+    GatewayFeeVatResidueCheck? Residue = null);
+
+/// <summary>ผลการปรับปรุงเศษ VAT ค่าธรรมเนียมใน 11630 (รอบ 201 ทีม GW · A-GW8)</summary>
+public sealed record GatewayFeeVatResidueOutcome(bool Ok, string Message, Guid? JournalEntryId, string? JournalEntryNumber, decimal Amount);
 
 /// <summary>คำขอ "รับใบกำกับค่าธรรมเนียม" — ย้าย VAT จาก 11630 → 11610 (ไม่ลงค่าใช้จ่ายซ้ำ · ฝ่ายค้าน R-E3)</summary>
 public sealed record GatewayFeeVatClaimRequest(
@@ -83,6 +90,10 @@ public interface IGatewaySettlementService
     /// <summary>รับใบกำกับค่าธรรมเนียมของผู้ให้บริการ: JV Dr 11610 / Cr 11630 (ไม่ลงค่าใช้จ่ายซ้ำ) + audit (ฝ่ายค้าน R-E3)</summary>
     Task<GatewayFeeVatClaimOutcome> ClaimFeeVatAsync(Guid companyId, GatewayFeeVatClaimRequest req, string actor,
         string? actorEmail, string? ipAddress, CancellationToken ct = default);
+
+    /// <summary>ปรับปรุงเศษ VAT ค่าธรรมเนียมที่ค้าง 11630 ของผู้ให้บริการหนึ่ง (ภายใต้เกณฑ์ · บังคับเหตุผล · audit hash chain) — รอบ 201 ทีม GW (A-GW8)</summary>
+    Task<GatewayFeeVatResidueOutcome> WriteOffFeeVatResidueAsync(Guid companyId, string providerCode, DateTime entryDate, string reason,
+        string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -144,11 +155,22 @@ public class GatewaySettlementService : IGatewaySettlementService
             : await ForeignBoundChannelNamesAsync(companyId, configs.Select(c => c.Id).ToList(), ct);
         var foreignWarning = GatewayBatchIntentRules.LegacyForeignChannelWarning(foreignBound);
 
+        // รอบ 201 ทีม GW · C-10 (คำตัดสินข้อ 83): config ที่ผูกช่องทางรอบโอน (batch) แล้ว ⇒ รายการใหม่ไม่อยู่ในเส้นนี้ (ไปหน้ารอบโอน) ·
+        // คืนเงินภายหลังของรายการที่เส้นนี้เป็นเจ้าของยังอยู่ — ตัวตัดสิน GatewayBatchIntentRules.LegacyAcceptsNewIntents ตัวเดียว
+        var boundByProvider = await ActiveBatchChannelNamesByProviderAsync(companyId, configs, ct);
+        var excludedNew = 0;
+
         // ไม่มีจุดตัดวันเงินเข้า (ยังไม่รู้ว่าจะบันทึกรอบไหน) ⇒ ยอดคืนสะสมทั้งหมด
         var candidates = await SelectCandidatesAsync(companyId, providerCode, null, null, null, ct);
         var items = new List<PendingSettlementItem>();
         foreach (var cand in candidates)
         {
+            if (!cand.Input.AlreadySettled && !GatewayBatchIntentRules.LegacyAcceptsNewIntents(
+                    boundByProvider.TryGetValue(cand.Intent.ProviderCode, out var bound) ? bound : new List<string>()))
+            {
+                excludedNew++;
+                continue;
+            }
             var intent = cand.Intent;
             var mode = ModeOf(intent.ProviderCode);
             var c = GatewaySettlementMath.Contribution(cand.Input, mode);
@@ -161,10 +183,13 @@ public class GatewaySettlementService : IGatewaySettlementService
 
         // คืนเงินก่อนระบบเริ่มบันทึกยอดคืน (สถานะคืนแล้วแต่ยอดคืน = 0) — ไม่รู้ว่าคืนไปเท่าไร ⇒ ไม่นับในรอบโอน
         // และต้องบอกให้คนตรวจมือ (ห้ามเดาว่าคืนเต็ม/ห้ามนับยอดเต็ม)
+        // รอบ 201 ทีม GW (A-GW6 · team-P2 B-8): เฉพาะรายการที่เส้นนี้จะเป็นเจ้าของ — intent ที่รอบโอน settlement (batch) ถือแล้ว ไม่ใช่เรื่องของหน้านี้
+        // (เงื่อนไขเจ้าของเดียวกับ SelectCandidatesAsync)
         var legacy = await _db.PaymentIntents.AsNoTracking()
             .CountAsync(i => i.CompanyId == companyId
                 && (providerCode == null || i.ProviderCode == providerCode)
                 && i.SettlementJournalEntryId == null
+                && i.SettlementBatchId == null
                 && (i.Status == PaymentIntentStatus.Refunded || i.Status == PaymentIntentStatus.PartiallyRefunded)
                 && i.RefundedAmount == 0m, ct);
 
@@ -178,8 +203,33 @@ public class GatewaySettlementService : IGatewaySettlementService
             providerCode == null ? "" : ModeOf(providerCode).ToString(),
             legacy,
             ordered,
-            providerCode == null ? null
-                : GatewayBatchIntentRules.JoinWarnings(foreignWarning, GatewaySettlementMath.FeeVatModeWarning(ModeOf(providerCode), vatRegistered)));
+            providerCode == null
+                ? GatewayBatchIntentRules.JoinWarnings(boundByProvider.Values.Where(v => v.Count > 0)
+                    .Select(v => GatewayBatchIntentRules.LegacyNewIntentsMovedMessage(v, 0)).Distinct().ToArray())
+                : GatewayBatchIntentRules.JoinWarnings(
+                    GatewayBatchIntentRules.LegacyNewIntentsMovedMessage(
+                        boundByProvider.TryGetValue(providerCode, out var pb) ? pb : new List<string>(), excludedNew),
+                    foreignWarning, GatewaySettlementMath.FeeVatModeWarning(ModeOf(providerCode), vatRegistered)));
+    }
+
+    /// <summary>ชื่อช่องทางรอบโอนชนิด Gateway ที่<b>เปิดใช้</b>และผูก config ของบริษัทนี้ แยกตามรหัสผู้ให้บริการของ config (C-10) — ใช้ตัดสินว่าเส้นนี้ยังรับรายการใหม่ไหม</summary>
+    private async Task<Dictionary<string, List<string>>> ActiveBatchChannelNamesByProviderAsync(Guid companyId,
+        IReadOnlyCollection<PaymentProviderConfig> configs, CancellationToken ct)
+    {
+        var result = configs.Select(c => c.ProviderCode).Distinct().ToDictionary(c => c, _ => new List<string>());
+        var ids = configs.Select(c => c.Id).ToList();
+        if (ids.Count == 0) return result;
+        var rows = await _db.SettlementChannels.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.Kind == SettlementChannelKind.Gateway && s.IsActive && !s.IsDeleted
+                && s.PaymentProviderConfigId != null && ids.Contains(s.PaymentProviderConfigId.Value))
+            .Select(s => new { ConfigId = s.PaymentProviderConfigId!.Value, s.DisplayName })
+            .ToListAsync(ct);
+        foreach (var r in rows)
+        {
+            var code = configs.First(c => c.Id == r.ConfigId).ProviderCode;
+            result[code].Add(r.DisplayName);
+        }
+        return result;
     }
 
     public async Task<SettlementOutcome> PreviewAsync(Guid companyId, RecordSettlementRequest req,
@@ -470,6 +520,21 @@ public class GatewaySettlementService : IGatewaySettlementService
                 && c.ProviderCode == req.ProviderCode && !c.IsDeleted, ct);
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
 
+        // รอบ 201 ทีม GW · C-10 (คำตัดสินข้อ 83): config ผูกช่องทางรอบโอน (batch) ที่เปิดใช้ ⇒ รายการใหม่ไม่เข้าเส้นนี้ (ห้ามสองหน้าบันทึกรอบโอน
+        // ของผู้ให้บริการเดียวกัน) · คืนเงินภายหลังของรายการที่เส้นนี้เป็นเจ้าของยังหักที่นี่ (AlreadySettled) · ตัดก่อนคิดแผน ⇒ การมาร์ก (RecordAsync)
+        // ใช้ชุดเดียวกัน
+        var bound = config == null
+            ? new List<string>()
+            : (await ActiveBatchChannelNamesByProviderAsync(companyId, new[] { config }, ct)).GetValueOrDefault(config.ProviderCode)
+              ?? new List<string>();
+        var excludedNew = 0;
+        if (!GatewayBatchIntentRules.LegacyAcceptsNewIntents(bound))
+        {
+            excludedNew = candidates.Count(c => !c.Input.AlreadySettled);
+            candidates = candidates.Where(c => c.Input.AlreadySettled).ToList();
+        }
+        var movedMessage = GatewayBatchIntentRules.LegacyNewIntentsMovedMessage(bound, excludedNew);
+
         var inputs = candidates.Select(c => c.Input).ToList();
         var settledOutcomeUnknown = await CountSettledOutcomeUnknownAsync(companyId, req.ProviderCode,
             GatewaySettlementMath.RefundCutoffUtc(req.SettledAt), ct);
@@ -481,6 +546,13 @@ public class GatewaySettlementService : IGatewaySettlementService
             config?.FeeVatMode ?? GatewayFeeVatMode.None,
             vatRegistered,
             settledOutcomeUnknown);
+
+        if (movedMessage != null)
+            plan = plan.Ok
+                ? plan with { Warning = GatewayBatchIntentRules.JoinWarnings(movedMessage, plan.Warning) }
+                : plan.Reason == SettlementBlockReason.NoIntents
+                    ? GatewaySettlementMath.Block(plan, SettlementBlockReason.NoIntents, movedMessage)
+                    : plan with { Message = GatewayBatchIntentRules.JoinWarnings(plan.Message, movedMessage) };
 
         if (plan.Ok && config != null)
         {
@@ -535,8 +607,8 @@ public class GatewaySettlementService : IGatewaySettlementService
 
         if (plan.Lines.Any(l => l.Role == SettlementLineRole.FeeExpense))
         {
-            var feeId = config?.FeeExpenseAccountId
-                ?? (await FindByCodeAsync(companyId, "54710", ct))?.Id;
+            // รอบ 201 ทีม GW (C-11): ตัวตัดสินเดียวกับค่าตั้งต้น "payment_fee" ของช่องทางรอบโอนที่ผูก config นี้ (ผังเดียวต่อผู้ให้บริการ)
+            var feeId = await _accounts.ResolveFeeExpenseAccountAsync(companyId, providerCode, config?.Id, ct);
             if (feeId is not Guid fid)
                 return new AccountResolution(map,
                     "ยังไม่ได้ตั้งผังบัญชี \"ค่าธรรมเนียมรับชำระเงิน\" (แนะนำ 54710 ค่าธรรมเนียมธนาคาร) — "
@@ -575,8 +647,163 @@ public class GatewaySettlementService : IGatewaySettlementService
 
     public async Task<GatewayFeeVatStatusView> FeeVatStatusAsync(Guid companyId, string providerCode,
         CancellationToken ct = default)
-        => new(providerCode, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct),
-            await LoadFeeVatAgingAsync(companyId, providerCode, ct));
+    {
+        var (batchVat, batchDocs) = await LoadBatchFeeVatUndueAsync(companyId, providerCode, ct);
+        var aging = await LoadFeeVatAgingAsync(companyId, providerCode, ct);
+        var residue = await ResidueCheckAsync(companyId, providerCode, aging, ct);
+        return new(providerCode, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), aging,
+            batchVat, batchDocs, GatewayFeeVatClaim.BatchPortionNote(batchVat, batchDocs), residue);
+    }
+
+    /// <summary>A-GW8: ข้อเท็จจริงของการปรับปรุงเศษ — ใบเคลมตั้งแต่การปรับปรุงครั้งก่อน + วันที่ใบกำกับล่าสุดที่เคลม · ตัดสินด้วย
+    /// <see cref="GatewayFeeVatClaim.ResidueCheck"/> ตัวเดียว (หน้าเว็บแสดงผลเดียวกับที่ด่านตอนบันทึกใช้)</summary>
+    private async Task<GatewayFeeVatResidueCheck> ResidueCheckAsync(Guid companyId, string providerCode, GatewayFeeVatAging aging,
+        CancellationToken ct)
+    {
+        var claimTag = GatewayFeeVatClaim.ClaimTag(providerCode);
+        var residueTag = GatewayFeeVatClaim.ResidueTag(providerCode);
+        var tagged = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null
+                && (j.Tags == claimTag || j.Tags == residueTag))
+            .Select(j => new { j.Tags, j.EntryDate, j.CreatedAt, j.TaxInvoiceDate })
+            .ToListAsync(ct);
+        var lastResidue = tagged.Where(t => t.Tags == residueTag).Select(t => (DateTime?)t.CreatedAt).Max();
+        var claims = tagged.Where(t => t.Tags == claimTag && (lastResidue == null || t.CreatedAt > lastResidue)).ToList();
+        var latestInvoice = tagged.Where(t => t.Tags == claimTag).Select(t => (DateTime?)(t.TaxInvoiceDate ?? t.EntryDate)).Max();
+        var latestDeferred = aging.Buckets.Where(b => b.Deferred != 0m).Select(b => (DateTime?)b.MonthStartUtc).Max();
+        return GatewayFeeVatClaim.ResidueCheck(aging.Outstanding, claims.Count, latestDeferred, latestInvoice);
+    }
+
+    public async Task<GatewayFeeVatResidueOutcome> WriteOffFeeVatResidueAsync(Guid companyId, string providerCode, DateTime entryDate,
+        string reason, string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(providerCode))
+            return new GatewayFeeVatResidueOutcome(false, "กรุณาเลือกผู้ให้บริการ", null, null, 0m);
+        if (string.IsNullOrWhiteSpace(reason))
+            return new GatewayFeeVatResidueOutcome(false,
+                "กรุณาระบุเหตุผล — เช่น \"ส่วนต่างปัดเศษระหว่าง VAT รายรายการกับ VAT บนใบกำกับรายเดือน\" (ผู้สอบบัญชีต้องเห็นว่าปรับเพราะอะไร)",
+                null, null, 0m);
+        if (GatewayFeeVatClaim.FutureClaimDateMessage(entryDate, DateTime.UtcNow) != null)
+            return new GatewayFeeVatResidueOutcome(false, "วันที่ปรับปรุงอยู่ในอนาคต — เลือกวันที่ไม่เกินวันนี้", null, null, 0m);
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            // ล็อกเดียวกับรอบโอน/เคลมของผู้ให้บริการนี้ — ยอดค้างที่ตรวจต้องเป็นยอดเดียวกับที่ล้าง
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, providerCode) }, ct);
+
+            var aging = await LoadFeeVatAgingAsync(companyId, providerCode, ct);
+            var check = await ResidueCheckAsync(companyId, providerCode, aging, ct);
+            if (!check.Ok)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatResidueOutcome(false, check.Message ?? "ปรับปรุงไม่ได้", null, null, check.Amount);
+            }
+
+            var day = ThaiDate.CalendarDateUtc(entryDate);
+            var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, day, ct);
+            if (closed != null)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatResidueOutcome(false, closed, null, null, check.Amount);
+            }
+            var deferred = await FindByCodeAsync(companyId, FeeInputVatDeferredCode, ct);
+            var feeId = await _accounts.ResolveFeeExpenseAccountAsync(companyId, providerCode, null, ct);
+            if (deferred == null || feeId is not Guid fee)
+            {
+                await tx.RollbackAsync(ct);
+                return new GatewayFeeVatResidueOutcome(false,
+                    deferred == null
+                        ? "ไม่พบผังบัญชี 11630 ภาษีซื้อรอเครดิต"
+                        : "ยังไม่ได้ตั้งผังบัญชี \"ค่าธรรมเนียมรับชำระเงิน\" (แนะนำ 54710) ที่หน้าตั้งค่าการรับชำระเงินออนไลน์",
+                    null, null, check.Amount);
+            }
+
+            var abs = Math.Abs(check.Amount);
+            var builder = JournalEntryBuilder.For(_db, companyId, day)
+                .Type(JournalType.General)
+                .Description($"ปรับปรุงเศษ VAT ค่าธรรมเนียมรับชำระเงิน ({providerCode}) ค้าง 11630 {check.Amount:N2} — {reason.Trim()}")
+                .CreatedBy(actor);
+            // ค้างเดบิต (VAT ที่พักมากกว่าบนใบกำกับ) ⇒ ส่วนเกินเป็นค่าธรรมเนียม · ค้างเครดิต (เคลมเกินที่พักเพราะปัด) ⇒ ลดค่าธรรมเนียม
+            if (check.Amount > 0m)
+                builder.Debit(fee, abs, "ส่วนต่างปัดเศษ VAT ค่าธรรมเนียม → ค่าธรรมเนียม")
+                    .Credit(deferred.Id, abs, "ล้างเศษภาษีซื้อรอเครดิต 11630");
+            else
+                builder.Debit(deferred.Id, abs, "ล้างเศษภาษีซื้อรอเครดิต 11630 (เคลมเกินที่พักเพราะปัด)")
+                    .Credit(fee, abs, "ส่วนต่างปัดเศษ VAT ค่าธรรมเนียม → ลดค่าธรรมเนียม");
+            var je = await builder.PostAsync(actor, ct);
+            je.Tags = GatewayFeeVatClaim.ResidueTag(providerCode);
+
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                EntityType = nameof(JournalEntry),
+                EntityId = je.Id.ToString(),
+                Action = AuditAction.Create,
+                UserEmail = actorEmail,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "gateway-fee-vat-residue-writeoff",
+                    provider = providerCode,
+                    amount = check.Amount,
+                    threshold = check.Threshold,
+                    reason = reason.Trim(),
+                    actor,
+                }),
+                IpAddress = ipAddress,
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return new GatewayFeeVatResidueOutcome(true,
+                $"ปรับปรุงเศษ VAT ค่าธรรมเนียม {check.Amount:N2} บาทแล้ว — ใบสำคัญ {je.EntryNumber} (11630 ของผู้ให้บริการนี้เป็นศูนย์)",
+                je.Id, je.EntryNumber, check.Amount);
+        });
+    }
+
+    /// <summary>VAT ค่าธรรมเนียมที่ยังรอใบกำกับในใบสำคัญจ่ายค่าธรรมเนียมของรอบโอน settlement (batch) ที่ลงบัญชีแล้วของช่องทางที่ผูก config ของผู้ให้บริการนี้
+    /// (รอบ 201 ทีม GW · A-GW5) — เอกสารที่ภาษีซื้อพักไว้ "ยังไม่ถึงกำหนด" และยังไม่ย้ายเข้าภาษีซื้อ · อ่านอย่างเดียว (ไม่รวมเข้ายอดที่เคลมที่หน้านี้ได้ —
+    /// คนละผังพัก: ใบสำคัญจ่ายพักที่ 11640 ส่วนเส้นนี้พักที่ 11630)</summary>
+    private async Task<(decimal Vat, int Documents)> LoadBatchFeeVatUndueAsync(Guid companyId, string providerCode, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(providerCode)) return (0m, 0);
+        var configIds = await _db.PaymentProviderConfigs.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.ProviderCode == providerCode && !c.IsDeleted)
+            .Select(c => c.Id).ToListAsync(ct);
+        if (configIds.Count == 0) return (0m, 0);
+        var postedStatuses = new[] { SettlementBatchStatus.Posted, SettlementBatchStatus.BankMatched };
+        var docJson = await _db.SettlementBatches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && postedStatuses.Contains(b.Status)
+                && b.FeeDocumentIdsJson != null
+                && b.Channel.PaymentProviderConfigId != null && configIds.Contains(b.Channel.PaymentProviderConfigId.Value))
+            .Select(b => b.FeeDocumentIdsJson!)
+            .ToListAsync(ct);
+        var docIds = new HashSet<Guid>();
+        foreach (var json in docJson)
+        {
+            try
+            {
+                foreach (var id in System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(json) ?? new List<Guid>())
+                    docIds.Add(id);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                // อ่านไม่ได้ = ไม่รู้ ⇒ ไม่นับ (แสดงอย่างเดียว ไม่ใช่เส้นเงิน) แต่ต้องรู้ว่ามี
+                _logger.LogWarning(ex, "อ่านรายการใบค่าธรรมเนียมของรอบโอนไม่ได้ (บริษัท {Company})", companyId);
+            }
+        }
+        if (docIds.Count == 0) return (0m, 0);
+        var ids = docIds.ToList();
+        var undue = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null && d.VatAmount > 0m)
+            .Select(d => d.VatAmount)
+            .ToListAsync(ct);
+        return (R(undue.Sum()), undue.Count);
+    }
 
     /// <summary>ยอด VAT ค่าธรรมเนียมใน 11630 ของผู้ให้บริการ: เดบิตสุทธิของบรรทัด 11630 ใน<b>ใบสำคัญรอบโอน</b>ของผู้ให้บริการนี้
     /// (ไม่ใช่ยอดคงเหลือ 11630 ทั้งบัญชี — ผังเดียวกันถูกใช้พัก VAT เรื่องอื่นด้วย) ลบเครดิต 11630 ในใบสำคัญ "รับใบกำกับค่าธรรมเนียม"
@@ -606,12 +833,14 @@ public class GatewaySettlementService : IGatewaySettlementService
                 .ToList();
 
         var tag = GatewayFeeVatClaim.ClaimTag(providerCode);
+        // รอบ 201 ทีม GW (A-GW8): ใบปรับปรุงเศษล้าง 11630 ของผู้ให้บริการนี้เหมือนใบเคลม (tag ของตัวเอง — ไม่ใช่ใบกำกับ ไม่เข้าการหาเคลมซ้ำ)
+        var residueTag = GatewayFeeVatClaim.ResidueTag(providerCode);
         var claimed = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.AccountId == vatAcc.Id
                 && l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.ReversedByEntryId == null
-                && l.JournalEntry.Tags == tag)
+                && (l.JournalEntry.Tags == tag || l.JournalEntry.Tags == residueTag))
             .SumAsync(l => l.CreditAmount - l.DebitAmount, ct);
 
         return GatewayFeeVatClaim.Aging(deferredLines, claimed, DateTime.UtcNow);
@@ -639,8 +868,11 @@ public class GatewaySettlementService : IGatewaySettlementService
                 new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, req.ProviderCode) }, ct);
 
             var aging = await LoadFeeVatAgingAsync(companyId, req.ProviderCode, ct);
+            // A-GW5: ใบกำกับรายเดือนใบเดียวครอบรอบโอนสองเส้นได้ — ส่วนของรอบโอน batch เคลมที่ใบสำคัญจ่าย ไม่ใช่ที่นี่ (บอกในข้อความเมื่อยอดเกินที่พัก)
+            var (batchVat, batchDocs) = await LoadBatchFeeVatUndueAsync(companyId, req.ProviderCode, ct);
             var check = GatewayFeeVatClaim.Check(req.VatAmount, aging.Outstanding, req.TaxInvoiceNo, req.TaxInvoiceDate,
-                req.ClaimDate, req.SupplierName, req.SupplierTaxId, req.SupplierBranchCode, req.LateReason);
+                req.ClaimDate, req.SupplierName, req.SupplierTaxId, req.SupplierBranchCode, req.LateReason,
+                GatewayFeeVatClaim.BatchPortionNote(batchVat, batchDocs));
             if (!check.Ok)
             {
                 await tx.RollbackAsync(ct);

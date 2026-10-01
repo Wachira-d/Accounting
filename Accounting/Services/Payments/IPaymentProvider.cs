@@ -138,6 +138,12 @@ public interface IPaymentProvider
     /// แก้ได้ตอน settlement · ลงธนาคารเกินไว้ = กระทบยอดพังเงียบ)</para></summary>
     bool SettlesDirectlyToBank => false;
 
+    /// <summary>คำเตือนล่วงหน้าบนหน้าตั้งค่าของผู้ให้บริการนี้ — สิ่งที่ adapter <b>ยังไม่ได้ยืนยันกับระบบทดสอบจริงของผู้ให้บริการ</b> และอาจทำให้
+    /// ยอดรอบโอนไม่ตรงสเตทเมนต์ (รอบ 201 ทีม GW · BACKLOG B-1) · null = ไม่มีเรื่องค้าง
+    /// <para>ให้ adapter ประกาศเอง (ข้อความเอ่ยถึงรุ่น/ช่องของเจ้านั้นได้ — ไฟล์นอกโฟลเดอร์ adapter ห้ามรู้จักชื่อเจ้า) · หน้าเว็บแสดงอย่างเดียว ·
+    /// <b>ไม่ใช่</b>การต่อสายช่องใหม่ — ระบบยังลงบัญชีตามที่อ่านอยู่เดิมจนกว่าจะมีผลทดสอบ</para></summary>
+    string? PendingVerificationNotice => null;
+
     Task<ProviderCharge> CreateChargeAsync(PaymentIntent intent, ChargeRequest req,
         PaymentProviderConfig config, CancellationToken ct = default);
 

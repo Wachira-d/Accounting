@@ -113,6 +113,86 @@ public static class PaymentIntentPolicy
               + "ยืนยันที่นี่ไม่ได้ (จะลงบัญชีพักของผู้ให้บริการด้วยเงินที่ไม่มีวันถูกโอนมา) · ให้บันทึกรับชำระที่เอกสาร/ออเดอร์ต้นทางโดยตรง"
             : null;
 
+    // ══════════════════════════════════════════════════════════════════
+    //  รอบ 201 ทีม GW (A-GW2 · team-G PG-5): ป้าย/ปุ่ม/เกณฑ์ "ค้างนาน" ของหน้ารายการรับชำระ — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดงอย่างเดียว
+    //  (เดิม JS มีสำเนาเกณฑ์ 30 นาที · เงื่อนไขปุ่มคืนเงิน/แก้ค่าธรรมเนียม · และแสดงชื่อ enum อังกฤษ — F2 ข้อ 5)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>รายการที่ยังเปิดอยู่นานเกินนี้ = "ค้างนาน" — ตัวเดียวของงานเบื้องหลัง (แจ้งเตือน) และหน้ารายการ (ป้าย/แถบเตือน)</summary>
+    public static readonly TimeSpan StuckThreshold = TimeSpan.FromMinutes(30);
+
+    /// <summary>ค้างนานผิดปกติไหม — ยังเปิดอยู่ (<see cref="IsOpen"/>) และสร้างมาเกิน <see cref="StuckThreshold"/></summary>
+    public static bool IsStuck(PaymentIntentStatus status, DateTime createdAtUtc, DateTime nowUtc)
+        => IsOpen(status) && nowUtc - createdAtUtc > StuckThreshold;
+
+    /// <summary>ป้ายสถานะภาษาไทย (ค่าที่ไม่รู้จัก = ชื่อ enum — เพิ่มสถานะใหม่แล้วหน้าเว็บยังแสดงได้)</summary>
+    public static string StatusLabel(PaymentIntentStatus status) => status switch
+    {
+        PaymentIntentStatus.Created => "สร้างแล้ว รอเรียกผู้ให้บริการ",
+        PaymentIntentStatus.Pending => "รอชำระ",
+        PaymentIntentStatus.Succeeded => "สำเร็จ",
+        PaymentIntentStatus.Failed => "ล้มเหลว",
+        PaymentIntentStatus.Expired => "หมดอายุ",
+        PaymentIntentStatus.Refunded => "คืนเงินแล้ว",
+        PaymentIntentStatus.PartiallyRefunded => "คืนเงินบางส่วน",
+        _ => status.ToString(),
+    };
+
+    /// <summary>ตัวเลือกตัวกรองสถานะของหน้ารายการ — ค่า = ชื่อ enum (ที่ endpoint รับ) · ป้าย = <see cref="StatusLabel"/></summary>
+    public static IReadOnlyList<(string Value, string Label)> StatusOptions()
+        => Enum.GetValues<PaymentIntentStatus>().Select(s => (s.ToString(), StatusLabel(s))).ToList();
+
+    /// <summary>ป้ายที่มาของรายการภาษาไทย</summary>
+    public static string SourceKindLabel(PaymentSourceKind kind) => kind switch
+    {
+        PaymentSourceKind.SiteOrder => "คำสั่งซื้อหน้าเว็บ",
+        PaymentSourceKind.Document => "ใบแจ้งหนี้ (portal ลูกค้า)",
+        PaymentSourceKind.LodgingReservation => "มัดจำที่พัก",
+        PaymentSourceKind.SubscriptionPayment => "ค่าบริการระบบ",
+        PaymentSourceKind.PosOrder => "บิล POS",
+        PaymentSourceKind.AddOnPurchase => "ส่วนเสริม",
+        _ => kind.ToString(),
+    };
+
+    /// <summary>ปุ่ม "แก้ค่าธรรมเนียม" ใช้ได้ไหม — ด่านเดียวกับ <c>GatewaySettlementService.CorrectFeeAsync</c>: รับเงินสำเร็จแล้ว (<see cref="IsSettledPositive"/>) ·
+    /// ยังไม่มีใบสำคัญรอบโอนเส้นเดิม · ยังไม่อยู่ในรอบโอน settlement (ฉบับร่างก็นับ — บรรทัดค่าธรรมเนียมถูกบันทึกไปแล้ว)</summary>
+    public static bool CanEditFee(PaymentIntentStatus status, bool settledByJournal, bool inSettlementBatch)
+        => IsSettledPositive(status) && !settledByJournal && !inSettlementBatch;
+
+    /// <summary>URL ที่ผู้ให้บริการจะพาลูกค้ากลับหลังจ่าย/3-D Secure — <b>เฉพาะโดเมนของบริษัทเอง</b> (รอบ 201 ทีม GW · A-GW3 · team-G PG-6)
+    ///
+    /// <para>═══ ที่มา ═══ <c>ReturnUrl</c> จากทางเข้าสาธารณะ (หน้าจ่ายเงินของออเดอร์/การจอง) ถูกส่งต่อเป็น <c>return_uri</c> ของผู้ให้บริการโดยไม่จำกัดโดเมน
+    /// ⇒ open redirect หลังลูกค้ายืนยันบัตร (ลิงก์จ่ายเงินจริงพาไปหน้าปลอมที่ขอข้อมูลต่อ)</para>
+    /// <para>═══ กติกา ═══ URL เต็ม http(s) ที่ host อยู่ใน <paramref name="allowedHosts"/> (โดเมนเว็บไซต์ของบริษัท + โดเมนของระบบ) และไม่มีชื่อผู้ใช้/รหัสผ่านใน URL ⇒
+    /// ใช้ตามเดิม · path สัมพัทธ์ (<c>/x</c> ไม่ใช่ <c>//x</c> หรือ <c>/\x</c>) ⇒ ต่อท้าย <paramref name="systemBaseUrl"/> · นอกนั้น (โดเมนอื่น · <c>//evil</c> ·
+    /// <c>javascript:</c> · รูปเสีย) ⇒ หน้าแรกของระบบ (<paramref name="systemBaseUrl"/>) · ไม่มี URL ⇒ <c>null</c> (พฤติกรรมเดิม — ไม่ส่ง return_uri) ·
+    /// ไม่รู้โดเมนของระบบ ⇒ <c>null</c> (ไม่แต่ง URL)</para></summary>
+    public static string? SafeReturnUrl(string? url, IReadOnlyCollection<string> allowedHosts, string? systemBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        var u = url.Trim();
+        var baseUri = Uri.TryCreate(systemBaseUrl?.Trim(), UriKind.Absolute, out var b)
+                      && (b.Scheme == Uri.UriSchemeHttps || b.Scheme == Uri.UriSchemeHttp) ? b : null;
+        var fallback = baseUri == null ? null : baseUri.GetLeftPart(UriPartial.Authority) + "/";
+
+        // path สัมพัทธ์ของระบบเอง — ต้องขึ้นต้น "/" ตัวเดียว (ห้าม "//host" หรือ "/\host" ที่เบราว์เซอร์ตีเป็นโดเมนอื่น)
+        if (u.StartsWith('/'))
+        {
+            if (u.Length > 1 && (u[1] == '/' || u[1] == '\\')) return fallback;
+            return baseUri == null ? null : baseUri.GetLeftPart(UriPartial.Authority) + u;
+        }
+
+        if (!Uri.TryCreate(u, UriKind.Absolute, out var abs)
+            || (abs.Scheme != Uri.UriSchemeHttps && abs.Scheme != Uri.UriSchemeHttp)
+            || !string.IsNullOrEmpty(abs.UserInfo))
+            return fallback;
+        var host = abs.Host;
+        var allowed = allowedHosts.Any(h => !string.IsNullOrWhiteSpace(h)
+                          && string.Equals(h.Trim().TrimEnd('.'), host.TrimEnd('.'), StringComparison.OrdinalIgnoreCase))
+                      || (baseUri != null && string.Equals(baseUri.Host, host, StringComparison.OrdinalIgnoreCase));
+        return allowed ? u : fallback;
+    }
+
     /// <summary>คีย์กันสร้าง intent ซ้ำสำหรับการจ่ายครั้งเดียวกัน
     ///
     /// <para><paramref name="sequence"/> เพิ่มเมื่อครั้งก่อน **ปิดไปแล้วโดยไม่สำเร็จ**

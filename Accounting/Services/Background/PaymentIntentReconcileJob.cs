@@ -38,7 +38,8 @@ public class PaymentIntentReconcileJob : BackgroundService
     /// และเปลืองโควตาเรียก API ของผู้ให้บริการ</summary>
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
     /// <summary>ค้างนานกว่านี้ในโหมดใช้งานจริง = ต้องมีคนดู</summary>
-    private static readonly TimeSpan StuckThreshold = TimeSpan.FromMinutes(30);
+    // รอบ 201 ทีม GW (A-GW2): เกณฑ์เดียวกับป้าย "ค้างนาน" บนหน้ารายการ — ตัวตั้งอยู่ PaymentIntentPolicy (เดิม JS มีสำเนา 30 นาทีของตัวเอง)
+    private static readonly TimeSpan StuckThreshold = Accounting.Helpers.PaymentIntentPolicy.StuckThreshold;
     /// <summary>จำกัดต่อรอบ — กันงานเดียวยึดฐานข้อมูล/โควตา API ทั้งหมดตอนมีคิวยาว</summary>
     private const int MaxPerCycle = 200;
 

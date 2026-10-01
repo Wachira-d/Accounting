@@ -119,6 +119,9 @@
           <p class="sub">รองรับ: ${p.methods.map(m => Layout.esc(this.methodLabel(m))).join(' · ')}
             ${p.supportsRefund ? ' · คืนเงินผ่านระบบได้' : ''}</p>
 
+          ${c?.providerNotice ? `<div class="hint" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 10px;color:#92400e;margin-bottom:12px">
+            ⚠️ ${Layout.esc(c.providerNotice)}</div>` : ''}
+
           <ol class="steps">
             <li class="${c ? 'done' : ''}">กรอกคีย์ <b>โหมดทดสอบ</b> จากแดชบอร์ดของผู้ให้บริการ แล้วกดบันทึก</li>
             <li class="${gotWebhook ? 'done' : ''}">นำ <b>URL แจ้งเตือน</b> ด้านล่างไปตั้งในแดชบอร์ดของผู้ให้บริการ</li>
@@ -180,7 +183,11 @@
                 ${gotWebhook
                   ? 'ได้รับการแจ้งเตือนล่าสุดเมื่อ ' + Layout.esc(new Date(c.lastWebhookAt).toLocaleString('th-TH'))
                   : '<b style="color:#b45309">ยังไม่เคยได้รับการแจ้งเตือน</b> — ถ้าไม่ตั้ง URL นี้ ลูกค้าจ่ายเงินแล้วออเดอร์จะไม่อัปเดต'}
+                · URL นี้มีรหัสลับของร้าน — อย่าเผยแพร่ ตั้งไว้ในแดชบอร์ดผู้ให้บริการเท่านั้น (ทั้งโหมดทดสอบและโหมดใช้งานจริง)
               </div>
+              ${c?.webhookUrlWarning ? `<div class="hint" style="color:#b45309;font-weight:600">⚠️ ${Layout.esc(c.webhookUrlWarning)}</div>` : ''}
+              ${c?.legacyWebhookUrl ? `<div class="hint">URL แบบเดิม (ยังรับได้ระหว่างเปลี่ยน · ไม่ต้องใช้ถ้าตั้ง URL ด้านบนแล้ว):
+                <span style="font-family:ui-monospace,monospace;word-break:break-all">${Layout.esc(c.legacyWebhookUrl)}</span></div>` : ''}
             </div>
           </div>
 

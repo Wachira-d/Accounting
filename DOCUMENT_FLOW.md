@@ -680,6 +680,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ลิงก์ Original/ReversedBy) + post JE ใหม่
     เลขเอกสารคงเดิมทั้งสองโหมด; response message ระบุโหมดชัด
     ("(in-place)" / "(reversal)") ให้ระบบต้นทางแสดงผลถูก.
+    • **รอบ 201 ทีม GW (A-GW12 · team-G E-4b)**: เส้นปรับ JE ตัวเดียว `ApplyResyncJournalAsync` (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ/ทำไม่ได้ ⇒
+      **dry-run สร้างบรรทัด JE ใหม่ก่อน** (`DryRunMappingJournalAsync` = ตัวสร้าง + ด่านโครงสร้างตัวเดียวกับตอนลงจริง ไม่บันทึก) แล้วค่อยกลับ JE เดิม ·
+      สร้างไม่ได้ ⇒ **คง JE เดิม** (ไม่กลับ — เดิมกลับก่อนแล้วสร้างใหม่ไม่ได้ ⇒ เอกสารไม่มี JE) + หมายเหตุ `[JE ยังเป็นยอดเดิม]` บนเอกสาร + sync log `PartialSuccess` +
+      ข้อความตอบคู่ค้า "(JE เดิมคงไว้)" · ตัวตัดสิน `Helpers/IntegrationResyncJournal.Decide` · ทางไปต่อที่มีจริง (`ResendNextStep`): แก้ mapping แล้วให้ระบบต้นทาง
+      ส่งซ้ำแบบ `resyncUpdate` (หมายเหตุ `[ยังไม่ลงบัญชี]` เดิมชี้ปุ่ม "ลงบัญชีใหม่จากหน้าเอกสาร" ที่ไม่มีในระบบ — แก้ข้อความแล้ว)
+  - **คำเตือนบัญชีธนาคารรับเงินล่วงหน้า (รอบ 201 ทีม GW · A-GW11)**: `GET integrations/dashboard` คืน `MoneyAccountWarning`
+    (`MoneyAccountFallback.IntegrationBankWarning` ← `PickBank` กติกาเดียวกับตอนรับรายการชำระ: บัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
+    ที่ไม่ส่ง `bankAccountName` จะถูกปฏิเสธ `INT-NO-BANK-ACCOUNT`) · หน้า `integrations.html` แสดงแถบเตือน + ลิงก์หน้าบัญชีธนาคาร
+  - **ยกเลิกเอกสารผ่าน API คู่ค้า ส่งธงของการยกเลิกกลับ (รอบ 201 ทีม GW · ฝ่ายค้าน DV-O4)**: `VoidDocumentByExternalRefAsync` และการยกเลิกอัตโนมัติใน `ProcessInvoiceAsync` (ขายเงินสดที่หักมัดจำที่ออกใบกำกับแล้ว) อ่าน `PaymentVoidResult` (`EtaxCancellationFlag` · `OutputVatNotice`) แล้วส่งเป็น `InboundSyncResponse.Warnings` (+ `ErrorMessage` ของ sync log) — เดิมทิ้งผล ⇒ คู่ค้าไม่รู้ว่าต้องยกเลิก e-Tax/ภาษีขายถอยไม่ได้
     Guard: มีการชำระแล้ว / มี CN-DN ลูก / เดือนภาษียื่น ภ.พ.30 หรือ filing-lock
     แล้ว → คืน error ชัดเจน (ให้ void+ส่งใหม่ หรือออก CN แทน); sync log
     Status="Updated"
@@ -1327,6 +1336,37 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **สิทธิ์อ่าน (G-8)**: `GET pay/intents` · `intents/{id}/events` · `reconciliation` = `Bank.View` (`PaymentGatewayPermissionScope.ViewPayments`) · `settlements/pending` =
   `Bank.View` · `intents/{id}/status` (live = ถามผู้ให้บริการ + เปลี่ยนสถานะ) = สิทธิ์เริ่มรับชำระของต้นทาง **หรือ** `Bank.View` (`StatusKeysFor`) — เดิมมีแค่ `[Authorize]` ·
   หน้า `payment-intents.html` ประวัติอ่านคีย์ `from/to` (เดิมอ่าน `fromStatus/toStatus` ที่ไม่มี ⇒ ว่างทุกแถว) · `payment-settlements.html` แก้ช่องหลังดูตัวอย่าง = ปิดปุ่มบันทึกจนกว่าจะดูใหม่
+- **รอบ 201 ทีม GW (BACKLOG §1.1 · `erp-review/2026-10-01/team-GW.md`)**:
+  **webhook รหัสลับต่อ config (A-GW1)** — action เดียว `PaymentWebhookController.Receive` สอง route: `api/pay/webhooks/{provider}/{token}` (`PaymentProviderConfig.WebhookToken`
+  สุ่ม 256 บิต · ออกตอนบันทึกตั้งค่า + migration เติมแถวเดิม · ลองยืนยันเฉพาะ config ที่รหัสตรง (เทียบเวลาคงที่) · รหัสผิด/รูปผิด = ไม่ยิงคำขอออก) และ URL เดิม
+  `{provider}` (คงไว้ — ลองเฉพาะ config ที่โหมดปัจจุบันยังไม่เคยได้รับทาง URL ใหม่ · `LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt`) · ตัวเลือกตัวเดียว
+  `GatewayWebhookRoute.ConfigsToTry` · หน้าตั้งค่าแสดง URL ใหม่ + URL เดิม + คำเตือน "ยังใช้ URL เดิม" (`LegacyUrlWarning`) ·
+  **กระทบยอดรู้จักรอบโอน batch (A-GW4)** — intent ที่ `SettlementBatchId` เป็นเจ้าของ = โอนแล้วเมื่อรอบโอน Posted/BankMatched (`GatewayReconciliation.IsBatchPosted`) ·
+  ยอดโอนเข้า/ยอดคืนที่ถูกหัก/ค่าธรรมเนียมที่ถูกหัก จากบรรทัดรอบโอนที่ลงบัญชีแล้ว (`BatchSettled` · `FromIntent`) · `GET pay/intents` `isSettled` ใช้ตัวตัดสินเดียวกัน ·
+  หน้า `payment-settlements.html` มีการ์ดกระทบยอด 30 วัน (เดิม endpoint ไม่มีผู้เรียก) + นับแถวเก่าที่แยกยอดคืนหักรอบหลังไม่ได้ (`LateRefundSplitUnknown` · A-GW9 —
+  ไม่เติมย้อนหลัง: แถวที่ `SettledFeeDeducted` มีค่ามียอดถูกต้องอยู่แล้ว ที่เหลือพิสูจน์ไม่ได้) ·
+  **VAT ค่าธรรมเนียมของรอบโอน batch (A-GW5)** — อยู่ในใบสำคัญจ่ายค่าธรรมเนียมของรอบโอน (ภาษีซื้อพัก 11640 จนกรอกใบกำกับที่เอกสาร) **ไม่ใช่ 11630** ⇒ ไม่รวมเข้ายอดเคลมของ
+  หน้านี้ (รวม = 11630 ติดลบ + ภาษีซื้อซ้ำ) · `GET settlements/fee-vat` แสดง `batchUndueVat/Documents` + `batchPortionNote` และด่าน "VAT เกินที่พัก" ต่อข้อความนี้ ·
+  **ปรับปรุงเศษ 11630 (A-GW8)** `POST pay/settlements/fee-vat/residue` → `WriteOffFeeVatResidueAsync` (ล็อกเดียวกับรอบโอน/เคลม · `GatewayFeeVatClaim.ResidueCheck`:
+  มีใบเคลมตั้งแต่ปรับปรุงครั้งก่อน · |ยอดค้าง| ≤ 1 บาท × จำนวนใบ · ใบกำกับล่าสุดครอบเดือนรอบโอนล่าสุด) → JE ค่าธรรมเนียม ↔ 11630 tag `gateway-fee-vat-residue:{provider}`
+  (นับเป็น "ล้างแล้ว" ในอายุ 11630 · ไม่เข้าการหาเคลมซ้ำ) + hash chain ·
+  **บันทึกยอดคืนย้อนหลัง (A-GW7)** `POST pay/intents/{id}/refund/record-legacy` (`[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`) →
+  `RecordLegacyRefundAsync`: `GatewayRefundMath.CheckLegacyRefundEntry` (สถานะคืนแล้ว · ยอดคืนในระบบ = 0 · ยอดไม่เกินยอดรับ · คืนเต็ม = เท่ายอดรับ · วันที่ไม่อนาคต · เลขอ้างอิง +
+  หลักฐาน · เลือก `BookNow` = ลงใบสำคัญคืนเงินเส้นเดียวกับคืนเงินปกติ (วันที่เงินออกจริง/งวดปิด = วันนี้+หมายเหตุ) หรือ `AlreadyBookedManually` = บันทึกยอดอย่างเดียว) ⇒
+  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง ⇒ รายการเข้ารอบโอนตามปกติ · hash chain ·
+  **ป้าย/ปุ่ม/ค้างนาน (A-GW2)** — `GET pay/intents` คืน `statusLabel/sourceKindLabel/isStuck/canCheckLive/canRefund/canEditFee` + `statusOptions` + `stuck/stuckMinutes`
+  (`PaymentIntentPolicy` · เกณฑ์ค้าง `StuckThreshold` ตัวเดียวกับงานเบื้องหลัง · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · JS ไม่มีสำเนาเกณฑ์ ·
+  **URL กลับหลังจ่าย (A-GW3)** — `StartAsync` ผ่าน `PaymentIntentPolicy.SafeReturnUrl` (โดเมน `SiteDomains` ที่อนุมัติ/`Sites.CustomDomain` ของบริษัท + `App:BaseUrl` ·
+  path สัมพัทธ์ต่อท้ายโดเมนระบบ · นอกนั้นแทนด้วยหน้าแรกของระบบ) ·
+  **ตัวนับ "คืนก่อนระบบเก็บยอด" (A-GW6)** ไม่นับ intent ที่รอบโอน batch ถือ ·
+  **ปิดเส้นเดิมสำหรับรายการใหม่ (C-10 · คำตัดสินข้อ 83)** — config ที่ผูกช่องทางรอบโอนชนิด Gateway ที่เปิดใช้ ⇒ `ListPendingAsync`/`BuildPlanAsync` ตัดรายการใหม่ออก
+  (`GatewayBatchIntentRules.LegacyAcceptsNewIntents`) + ข้อความ/ลิงก์หน้ารอบโอน (`LegacyNewIntentsMovedMessage`) · **คงเส้นหักยอดคืนภายหลัง** ของรายการที่เส้นนี้เป็นเจ้าของ ·
+  **ผังค่าธรรมเนียมช่วงเปลี่ยนผ่าน (C-11 · ข้อ 84)** — ผูก config ครั้งแรกที่ช่องทาง ⇒ `FeeAccountMapJson["payment_fee"]` = ผังของเส้นเดิม
+  (`IGatewayAccountResolver.ResolveFeeExpenseAccountAsync`: ผังใน config → 54710 · ตัวเดียวกับ `GatewaySettlementService.ResolveAccountsAsync`) · แก้ได้ · ไม่ย้ายย้อนหลัง ·
+  **คำเตือนล่วงหน้าบนหน้าตั้งค่า (B-1)** — `IPaymentProvider.PendingVerificationNotice` (adapter ประกาศ: ค่าธรรมเนียมที่อ่าน = ก่อน VAT ตามรุ่น API ที่ปัก · ยังไม่ยืนยันใน sandbox
+  ⇒ รอบโอนแรกหลังเปิดใช้/อัปเดตอาจยอดไม่ตรง) · **ไม่ต่อสาย `fee_vat`** จนกว่ามีผล sandbox ·
+  **เมนู (A-GW10)** — `MyPermissionsResponse.PermissionDeniedMenuIds` (ตาราง `PaymentGatewayPermissionScope.MenuPermissionKeys`) ⇒ layout ซ่อนเมนูรายการรับชำระ/กระทบยอด
+  เมื่อไม่มี `Bank.View`
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
@@ -3997,7 +4037,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI — AI/ธนาคาร: คู่ที่ AI แต่งในแผนจับคู่ทั้งก้อน `BankAiCandidateGuard` (§6.0c-bis) · คลังจับคู่ธนาคารนับเฉพาะคำยืนยันแบบตั้งใจ `ExplicitConfirmCount`/`BankPatternEvidence` · มาตรฐานคะแนนเดียว (โบนัสเฉพาะจอ → ลำดับรอง · ข้อเสนอจากประวัติผ่าน scorer+arbiter) · ทะเบียนนักเรียน `DistillationModelRegistry` + kill-switch ผ่าน orchestrator จริง (§6.4) · นักเรียน bulk PV `PaymentVoucherAccountingDistillationModel` + write-gate `GlSuggestionApplyPolicy` + ป้าย `AiAnswerSource` · ตัวบันทึก feedback ถอยของค้างเมื่อล้ม — commit ce1328ec)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW — gateway/integration: webhook รหัสลับต่อ config + URL เดิมคงไว้ · กระทบยอดรู้จักรอบโอน batch · VAT ค่าธรรมเนียม batch แสดงแยก · ปรับปรุงเศษ 11630 · บันทึกยอดคืนย้อนหลัง · ป้าย/ปุ่มจากเซิร์ฟเวอร์ · URL กลับหลังจ่าย · resync สร้างใหม่ก่อนกลับ JE · คำเตือนบัญชีธนาคาร integration · C-10/C-11/B-1 (§2.3 · §2.6b) — commit bba8cfc7 · DV-O4 97f1f255)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม AI — AI/ธนาคาร: คู่ที่ AI แต่งในแผนจับคู่ทั้งก้อน `BankAiCandidateGuard` (§6.0c-bis) · คลังจับคู่ธนาคารนับเฉพาะคำยืนยันแบบตั้งใจ `ExplicitConfirmCount`/`BankPatternEvidence` · มาตรฐานคะแนนเดียว (โบนัสเฉพาะจอ → ลำดับรอง · ข้อเสนอจากประวัติผ่าน scorer+arbiter) · ทะเบียนนักเรียน `DistillationModelRegistry` + kill-switch ผ่าน orchestrator จริง (§6.4) · นักเรียน bulk PV `PaymentVoucherAccountingDistillationModel` + write-gate `GlSuggestionApplyPolicy` + ป้าย `AiAnswerSource` · ตัวบันทึก feedback ถอยของค้างเมื่อล้ม — commit ce1328ec)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม IN — วิธีคิดต้นทุนตั้งได้ต่อสินค้า + ด่านเปลี่ยนหลังมีความเคลื่อนไหว (A-IN1) ·
 คิว FIFO/rebuild ถัวเฉลี่ยเห็นยอดยกมา/ตรวจนับ ไม่นับโอนคลัง (A-IN2) · เครื่องออกเลขรับรหัสสาขา (A-IN4 ส่วนเครื่อง — สวิตช์ 📋) · ออกใบเช็คเอาต์ใหม่หลังยกเลิก

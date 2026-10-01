@@ -458,7 +458,9 @@ public record IntegrationDashboardResponse(
     int TotalIntegrations, int ActiveIntegrations,
     int TodaySyncCount, int TodayErrorCount,
     List<IntegrationSummary> Integrations,
-    List<RecentSyncItem> RecentSyncs);
+    List<RecentSyncItem> RecentSyncs,
+    // รอบ 201 ทีม GW (A-GW11): คำเตือนล่วงหน้าเรื่องบัญชีธนาคารรับเงิน — MoneyAccountFallback.IntegrationBankWarning (กติกาเดียวกับตอนรับรายการชำระ)
+    string? MoneyAccountWarning = null);
 
 public record IntegrationSummary(
     Guid Id, string SystemName, string SystemType, bool IsActive,

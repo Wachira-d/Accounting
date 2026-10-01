@@ -1202,6 +1202,13 @@ const API = {
       getGatewayFeeVat: (code) =>
         API.get(`${base}/pay/settlements/fee-vat?providerCode=${encodeURIComponent(code)}`),
       claimGatewayFeeVat: (d) => API.post(`${base}/pay/settlements/fee-vat/claim`, d),
+      // รอบ 201 ทีม GW (A-GW8): ปรับปรุงเศษ VAT ค่าธรรมเนียมที่ค้าง 11630 (ภายใต้เกณฑ์ต่อใบกำกับ — เซิร์ฟเวอร์ตัดสิน)
+      writeOffGatewayFeeVatResidue: (d) => API.post(`${base}/pay/settlements/fee-vat/residue`, d),
+      // รอบ 201 ทีม GW (A-GW4): รายงานกระทบยอดเงินรับออนไลน์ (เดิมมี endpoint แต่ไม่มีหน้าไหนเรียก) — from/to = วันที่ไทย yyyy-mm-dd
+      getGatewayReconciliation: (from, to) =>
+        API.get(`${base}/pay/reconciliation?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+      // รอบ 201 ทีม GW (A-GW7): บันทึกยอดคืนจริงย้อนหลังของรายการที่คืนแล้วแต่ระบบไม่มียอดคืน (เจ้าของกิจการ · journal = "BookNow" | "AlreadyBookedManually")
+      recordPaymentIntentLegacyRefund: (id, d) => API.post(`${base}/pay/intents/${id}/refund/record-legacy`, d),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),

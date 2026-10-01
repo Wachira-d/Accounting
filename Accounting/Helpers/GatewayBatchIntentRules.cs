@@ -150,6 +150,51 @@ public static class GatewayBatchIntentRules
             : $"ช่องทางรับเงิน {string.Join(", ", foreignBoundChannelNames)} ตั้งผู้ให้บริการนี้เป็น \"ต่างประเทศ (ภ.พ.36)\" — การบันทึกรอบโอนที่หน้านี้ไม่ตั้งหนี้ ภ.พ.36 "
               + "(§83/6 ⇒ นำส่ง VAT ขาด) · " + ForeignPp36BoundNextStep;
 
+    // ══════════════════════════════════════════════════════════════════
+    //  รอบ 201 ทีม GW · C-10 (คำตัดสินข้อ 83): ปิดเส้นรอบโอน gateway เดิม "สำหรับรายการใหม่" เมื่อ config ผูกช่องทางรอบโอน (batch) แล้ว
+    //  — คงเส้นหักยอดคืนภายหลังของรายการที่เส้นเดิมเป็นเจ้าของไว้ (ยอดคืนก้อนนั้นไม่มีเส้นอื่นหักให้)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>หน้ารอบโอนของเส้น batch (ลิงก์ทางไปต่อ)</summary>
+    public const string BatchSettlementPage = "/pages/settlements.html";
+
+    /// <summary>เส้นเดิม (<c>GatewaySettlementService</c>) ยังรับ<b>รายการใหม่</b> (ยังไม่มีเจ้าของรอบโอน) ของ config นี้ไหม — มีช่องทางรอบโอนชนิด Gateway
+    /// ที่เปิดใช้และผูก config นี้อย่างน้อยหนึ่งช่องทาง ⇒ ไม่รับ (รายการใหม่ทั้งหมดไปเส้น batch — หนึ่งรายการ หนึ่งเจ้าของ แต่<b>เส้นเดียวต่อผู้ให้บริการ</b>
+    /// ⇒ ไม่มีรอบโอนที่ครึ่งหนึ่งอยู่สองหน้า) · รายการที่เส้นเดิมเป็นเจ้าของแล้ว (คืนเงินภายหลัง) ยังเดินเส้นเดิมเสมอ</summary>
+    public static bool LegacyAcceptsNewIntents(IReadOnlyCollection<string> activeBoundBatchChannelNames)
+        => activeBoundBatchChannelNames.Count == 0;
+
+    /// <summary>ข้อความเมื่อเส้นเดิมไม่รับรายการใหม่ของ config นี้แล้ว — <paramref name="excludedNewIntents"/> = จำนวนรายการใหม่ที่ถูกตัดออกจากเส้นนี้
+    /// (0 ⇒ ข้อความสั้น: บอกว่าหน้านี้เหลืองานอะไร) · null = เส้นเดิมยังรับรายการใหม่ (ไม่มีช่องทางผูก)</summary>
+    public static string? LegacyNewIntentsMovedMessage(IReadOnlyCollection<string> activeBoundBatchChannelNames, int excludedNewIntents)
+    {
+        if (LegacyAcceptsNewIntents(activeBoundBatchChannelNames)) return null;
+        var names = string.Join(", ", activeBoundBatchChannelNames);
+        return (excludedNewIntents > 0
+                   ? $"รายการรับชำระใหม่ {excludedNewIntents} รายการของผู้ให้บริการนี้ไม่แสดง/ไม่นับที่หน้านี้แล้ว — "
+                   : "")
+               + $"การตั้งค่านี้ผูกช่องทางรอบโอน \"{names}\" แล้ว ⇒ รายการรับชำระใหม่บันทึกรอบโอนที่หน้า \"รอบโอนเงินจากแพลตฟอร์ม\" ({BatchSettlementPage}) "
+               + "ปุ่ม \"ประกอบจากรายการรับชำระออนไลน์ในระบบ\" · หน้านี้ใช้เฉพาะหักยอดคืนเงินภายหลังของรายการที่บันทึกรอบโอนด้วยหน้านี้ไว้แล้ว "
+               + "(ถ้าต้องกลับมาใช้หน้านี้ ให้ปิดใช้งานช่องทางนั้นก่อน)";
+    }
+
+    /// <summary>ผังค่าธรรมเนียมของช่องทางรอบโอนตอน<b>ผูก config ครั้งแรก</b> (รอบ 201 ทีม GW · C-11 · คำตัดสินข้อ 84) — เติม <c>"payment_fee"</c> ด้วยผังที่เส้นรอบโอนเดิม
+    /// ใช้กับ config นั้น (<c>IGatewayAccountResolver.ResolveFeeExpenseAccountAsync</c> — ตั้งใน config หรือ 54710) ⇒ ผู้ให้บริการรายเดียวลงค่าธรรมเนียมผังเดียว
+    /// ไม่ว่าจะบันทึกรอบโอนหน้าไหน (เดิมเส้นเดิม 54710 · เส้น batch ตกผังมาตรฐาน 53170 ⇒ สองผังต่อผู้ให้บริการ)
+    /// <para>เติมเฉพาะเมื่อ (ก) การผูกครั้งนี้เป็นครั้งแรก/เปลี่ยน config (<paramref name="firstBinding"/>) (ข) ผู้ใช้ไม่ได้ส่ง <c>"payment_fee"</c> มาเอง
+    /// (ค) หาผังได้ · ผู้ใช้แก้/ลบทีหลังได้ (บันทึกครั้งถัดไปไม่เติมซ้ำ) · <b>ไม่ย้ายย้อนหลัง</b> (รอบโอนที่ลงแล้วคงผังเดิม)</para></summary>
+    public static IReadOnlyDictionary<string, Guid> SeedFeeAccountMapOnFirstBinding(IReadOnlyDictionary<string, Guid> requested,
+        bool firstBinding, Guid? legacyFeeExpenseAccountId)
+    {
+        if (!firstBinding || legacyFeeExpenseAccountId is not Guid fee || fee == Guid.Empty
+            || requested.ContainsKey(SettlementAccountRoles.PaymentFee))
+            return requested;
+        var seeded = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        foreach (var kv in requested) seeded[kv.Key] = kv.Value;
+        seeded[SettlementAccountRoles.PaymentFee] = fee;
+        return seeded;
+    }
+
     /// <summary>รวมคำเตือนหลายข้อเป็นข้อความเดียว (ข้ามค่าว่าง) · ไม่มีเลย ⇒ null (หน้าเว็บไม่แสดงแถบ)</summary>
     public static string? JoinWarnings(params string?[] warnings)
     {

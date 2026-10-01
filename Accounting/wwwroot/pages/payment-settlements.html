@@ -72,6 +72,8 @@
       preview: null,
       banks: [],
       feeVat: null,
+      recon: null,
+      selectedProvider: '',
 
       async init() {
         await Layout.init();
@@ -101,13 +103,20 @@
 
       currentProvider() {
         const sel = document.getElementById('provSel');
-        return sel ? sel.value : (this.providers[0]?.code || '');
+        return sel ? sel.value : (this.selectedProvider || this.providers[0]?.code || '');
       },
 
       async loadPending() {
         const api = Layout.api(); if (!api) return;
         const code = this.currentProvider();
+        this.selectedProvider = code;
         this.pending = code ? (await api.getPendingSettlements(code))?.data : null;
+        // A-GW4: รายงานกระทบยอด 30 วันล่าสุด (รวมรายการที่รอบโอน settlement ลงบัญชีแล้ว) — ตัวเลข/สมดุล/คำเตือนจากเซิร์ฟเวอร์
+        try {
+          const to = Layout.toDateInput(new Date());
+          const from = new Date(); from.setDate(from.getDate() - 30);
+          this.recon = (await api.getGatewayReconciliation(Layout.toDateInput(from), to))?.data || null;
+        } catch (e) { this.recon = { loadError: e.message || 'โหลดไม่สำเร็จ' }; }
         // R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 รอใบกำกับ — ตัวเลข/ระดับ/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด
         try { this.feeVat = code ? (await api.getGatewayFeeVat(code))?.data : null; }
         catch (e) { this.feeVat = { loadError: e.message || 'โหลดไม่สำเร็จ' }; }
@@ -144,7 +153,7 @@
               <div>
                 <label>ผู้ให้บริการ</label>
                 <select class="form-input" id="provSel" onchange="Page.loadPending()">
-                  ${this.providers.map(x => `<option value="${Layout.esc(x.code)}">${Layout.esc(x.displayName || x.code)}</option>`).join('')}
+                  ${this.providers.map(x => `<option value="${Layout.esc(x.code)}" ${x.code === this.selectedProvider ? 'selected' : ''}>${Layout.esc(x.displayName || x.code)}</option>`).join('')}
                 </select>
               </div>
             </div>
@@ -162,8 +171,8 @@
             ${p?.feeVatWarning ? `<div class="banner warn" style="margin-top:8px">⚠️ ${Layout.esc(p.feeVatWarning)}</div>` : ''}
             ${p?.legacyRefundedCount ? `<div class="banner bad" style="margin-top:8px">
               มี <b>${p.legacyRefundedCount}</b> รายการที่คืนเงินแล้วแต่<b>ไม่มียอดคืนที่ระบบบันทึก</b> (คืนก่อนระบบเริ่มบันทึก
-              หรือลงบัญชีคืนเงินไม่สำเร็จ) — ไม่ถูกนับในรอบโอน · ตรวจที่
-              <a href="/pages/payment-intents.html">หน้ารายการรับชำระออนไลน์</a> แล้วบันทึกรายการบัญชีด้วยมือ</div>` : ''}
+              หรือลงบัญชีคืนเงินไม่สำเร็จ) — ไม่ถูกนับในรอบโอน · ที่
+              <a href="/pages/payment-intents.html">หน้ารายการรับชำระออนไลน์</a> เจ้าของกิจการกด "บันทึกยอดคืน" ที่แถวนั้น</div>` : ''}
             ${this.renderItems(p?.items || [])}
           </div>
 
@@ -197,7 +206,8 @@
             </div>
             <div id="previewBox" style="margin-top:14px"></div>
           </div>
-          ${this.renderFeeVat()}`;
+          ${this.renderFeeVat()}
+          ${this.renderRecon()}`;
         this.bindPreviewInvalidation();
       },
 
@@ -218,6 +228,29 @@
           el.addEventListener('input', stale);
           el.addEventListener('change', stale);
         });
+      },
+
+      // รอบ 201 ทีม GW (A-GW4): สมการกระทบยอด (Σ รับ − คืน − ค่าธรรมเนียม = โอนเข้าแล้ว + ยังไม่ถึงรอบโอน) ของทุกผู้ให้บริการ 30 วันล่าสุด
+      renderRecon() {
+        const r = this.recon;
+        if (!r) return '';
+        if (r.loadError) return `<div class="card banner bad">โหลดรายงานกระทบยอดไม่สำเร็จ: ${Layout.esc(r.loadError)}</div>`;
+        return `
+          <div class="card">
+            <h3>กระทบยอดเงินรับออนไลน์ (${Layout.date(r.fromDate)} – ${Layout.date(r.toDate)})</h3>
+            <p class="sub">รับชำระ − คืนเงิน − ค่าธรรมเนียม = โอนเข้าแล้ว + ยังไม่ถึงรอบโอน · รวมรายการที่บันทึกรอบโอนจากหน้านี้และจากหน้า
+              <a href="/pages/settlements.html">รอบโอนเงินจากแพลตฟอร์ม</a> (นับว่าโอนแล้วเมื่อรอบโอนลงบัญชีแล้ว)</p>
+            <div class="stat-row">
+              <div class="stat"><div class="k">รับชำระ (${Number(r.succeededCount) || 0} รายการ)</div><div class="v">${Layout.money(r.grossCharged || 0)}</div></div>
+              <div class="stat"><div class="k">คืนเงิน</div><div class="v">${Layout.money(r.refundedAmount || 0)}</div></div>
+              <div class="stat ${r.feeIsEstimated ? 'warn' : ''}"><div class="k">ค่าธรรมเนียม ${r.feeIsEstimated ? '<span class="pill est">มีตัวประมาณ</span>' : ''}</div><div class="v">${Layout.money(r.feeTotal || 0)}</div></div>
+              <div class="stat"><div class="k">โอนเข้าแล้ว</div><div class="v">${Layout.money(r.settledTotal || 0)}</div></div>
+              <div class="stat"><div class="k">ยังไม่ถึงรอบโอน (${Number(r.unsettledCount) || 0})</div><div class="v">${Layout.money(r.unsettledAmount || 0)}</div></div>
+              <div class="stat ${r.isBalanced ? 'ok' : 'bad'}"><div class="k">ผลต่างที่อธิบายไม่ได้</div><div class="v">${Layout.money(r.unexplainedDifference || 0)}</div></div>
+            </div>
+            ${r.isBalanced ? '' : '<div class="banner bad" style="margin-top:8px">⚠️ ยอดไม่สมดุล — มีเงินที่อธิบายไม่ได้ ต้องตรวจกับสเตทเมนต์ผู้ให้บริการ</div>'}
+            ${r.lateRefundSplitUnknownMessage ? `<div class="banner warn" style="margin-top:8px">ℹ️ ${Layout.esc(r.lateRefundSplitUnknownMessage)}</div>` : ''}
+          </div>`;
       },
 
       // ฝ่ายค้าน R-E3: VAT ค่าธรรมเนียมที่พักใน 11630 → 11610 เมื่อได้ใบกำกับรายเดือนของผู้ให้บริการ
@@ -244,6 +277,12 @@
                 <div class="k">ยังค้าง 11630</div><div class="v">${Layout.money(v.outstanding || 0)}</div></div>
             </div>
             ${v.warning ? `<div class="banner ${v.worstLevel === 'PastWindow' ? 'bad' : 'warn'}" style="margin-top:10px">⚠️ ${Layout.esc(v.warning)}</div>` : ''}
+            ${v.batchPortionNote ? `<div class="banner warn" style="margin-top:10px">ℹ️ ${Layout.esc(v.batchPortionNote)}</div>` : ''}
+            ${v.residueAllowed ? `<div class="banner warn" style="margin-top:10px">
+                ยอดค้าง 11630 ${Layout.money(v.residueAmount)} เป็นเศษปัดของใบกำกับที่เคลมแล้ว (ไม่เกินเกณฑ์ ${Layout.money(v.residueThreshold)})
+                <button class="btn btn-sm btn-secondary" style="margin-left:8px" onclick="Page.writeOffFeeVatResidue()">ปรับปรุงเศษ 11630</button></div>`
+              : (Number(v.outstanding) !== 0 && Number(v.claimedTotal) > 0 && v.residueMessage
+                ? `<div class="hint" style="margin-top:6px">ปรับปรุงเศษไม่ได้: ${Layout.esc(v.residueMessage)}</div>` : '')}
             ${buckets.length ? `<div class="scroll-x" style="margin-top:10px"><table class="tbl">
               <thead><tr><th>เดือนของรอบโอน</th><th class="num">VAT ที่พัก</th><th class="num">ยังค้าง</th><th class="num">อายุ (เดือน)</th><th></th></tr></thead>
               <tbody>${buckets.map(b => `<tr>
@@ -269,6 +308,21 @@
               <button class="btn btn-primary" onclick="Page.claimFeeVat()">🧾 บันทึกรับใบกำกับ (ย้าย VAT เข้า 11610)</button>
             </div>` : ''}
           </div>`;
+      },
+
+      // รอบ 201 ทีม GW (A-GW8): ปรับปรุงเศษ VAT ค่าธรรมเนียม — เกณฑ์/ยอด/ผัง/งวด = เซิร์ฟเวอร์ · หน้าเว็บถามเหตุผลแล้วส่ง
+      async writeOffFeeVatResidue() {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผล (ผู้สอบบัญชีจะเห็นข้อความนี้):',
+          'ส่วนต่างปัดเศษระหว่าง VAT รายรายการกับ VAT บนใบกำกับรายเดือนของผู้ให้บริการ');
+        if (!reason) return;
+        try {
+          const res = await api.writeOffGatewayFeeVatResidue({
+            providerCode: this.currentProvider(), entryDate: Layout.toDateInput(new Date()), reason,
+          });
+          alert(res?.message || 'ปรับปรุงแล้ว');
+          await this.loadPending();
+        } catch (e) { alert(e.message || 'ปรับปรุงไม่สำเร็จ'); }
       },
 
       async claimFeeVat() {

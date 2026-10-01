@@ -43,6 +43,15 @@ public static class PaymentGatewayPermissionScope
         => $"ไม่มีสิทธิ์ดูสถานะรายการชำระเงินนี้ (ต้องการ {StartKeyFor(kind).Replace("perm:", "")} หรือ {ViewPayments.Replace("perm:", "")}) — "
            + "ขอสิทธิ์จากเจ้าของกิจการ";
 
+    /// <summary>เมนูของหน้ารับชำระออนไลน์ → สิทธิ์ที่หน้านั้นต้องใช้ (รอบ 201 ทีม GW · A-GW10 · team-G คำถามค้าง 4) — <b>ตารางเดียว</b>ที่
+    /// <c>RolePermissionService.GetMyPermissionsAsync</c> ใช้คำนวณ "เมนูที่ไม่มีสิทธิ์" ส่งให้แถบเมนู (หน้าเว็บไม่พิมพ์คีย์สิทธิ์ซ้ำ) ·
+    /// เดิมเมนูโผล่ให้ทุกคน กดแล้ว 403 · คีย์ = id เมนูใน <c>layout.js</c> · ค่า = ค่าคงที่ของหน้า endpoint ตัวเดียวกับ <c>[RequirePermission]</c></summary>
+    public static readonly IReadOnlyDictionary<string, string> MenuPermissionKeys = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["payment-intents"] = ViewPayments,
+        ["payment-settlements"] = PreviewSettlement,
+    };
+
     /// <summary>สิทธิ์เริ่มรับชำระของต้นทางแต่ละชนิด — ต้นทางที่ไม่รู้จัก ⇒ สิทธิ์การเงินที่เข้มที่สุด (ไม่ใช่ "ใครก็ได้")</summary>
     public static string StartKeyFor(PaymentSourceKind kind) => kind switch
     {
