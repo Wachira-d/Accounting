@@ -4038,4 +4038,4 @@ _2026-10-01 รอบ 200 ทีม V1I — แก้ผลฝ่ายค้า
 - **V1H-O6** ด่านไฟล์แนบของ `EtaxController.Void` + `DocumentController.ResolveEtaxCancellation` เรียกเฉพาะเมื่อส่ง id ไฟล์ · `tools/attachment_gate_check.py` ช่องที่ 7
   (เงื่อนไข "มีไฟล์" ตรงตัวต่อ target) + negative test G1–G7
 - **V1H-O7** ธงเช็คเด้ง/ยกเลิกการลงบัญชีของใบเสร็จ Submitted ไม่แนะนำทาง (ค)
-- เทสต์ `VoidReissueR200ITests` (สองทิศทุกข้อ) · required_call_site +9 แถว — commit <pending>)_
+- เทสต์ `VoidReissueR200ITests` (สองทิศทุกข้อ) · required_call_site +9 แถว — commit 3f644286)_
