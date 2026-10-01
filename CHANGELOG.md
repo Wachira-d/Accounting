@@ -4315,3 +4315,11 @@ _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอ�
 - **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
 - เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit c5fefbc6)_
 
+
+_2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสาม (P1-1 · P2-1 · P2-5)
+- **P1-1** `Helpers/RemittanceInclusion` (ตัวตัดสินเดียว): บันทึกนำส่ง ภ.ง.ด. นับเป็น "ยื่นแล้ว" เฉพาะของที่เกิดก่อนหรือพร้อมเวลาบันทึกนำส่งล่าสุดของงวด ·
+  `WhtCertVoidGuard.CheckAsync` เทียบ `IssuedDate ?? CreatedAt` ของใบ ⇒ ใบที่ออกหลังนำส่ง (PV ลงวันที่ย้อน) ยกเลิกได้ · ข้อความแยก "อยู่ในการนำส่ง … ณ วันที่ …" ·
+  `LoadRecalculateLockEvidenceAsync` เทียบ `PayrollRun.CreatedAt` ⇒ รอบที่สร้างหลังนำส่งไม่ถูกล็อกทันที · รายงานภาษีที่ประกาศว่ายื่นยังล็อกทั้งงวด
+- **P2-1** ออก 50 ทวิ ภ.ง.ด.1 ล้มแล้วย้อนธุรกรรมของตัวเอง ⇒ `_db.ChangeTracker.Clear()` ก่อนแจ้งเตือน (ทั้งสอง catch)
+- **P2-5** `RemittanceForm` + query รวม `WhtPnd54` → ภ.ง.ด.54
+- เทสต์ `RemittanceInclusionTests` · `PayrollPnd1CertsTests` +WhtPnd54 · required_call_site +4 แถว — commit <pending>)_
