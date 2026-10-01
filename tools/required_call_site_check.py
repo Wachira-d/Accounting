@@ -3077,7 +3077,7 @@ RULES += [
 
 # ── รอบ 200 ฝ่ายค้านรอบสาม V1I-X1: ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE" (VoidPaymentAsync ล็อกใบต้นทางก่อนเลข JE · อนุมัติ/ยกเลิกต้องเรียงเดียวกัน ไม่งั้น deadlock 40P01) ──
 RULES += [
-    dict(file=DOC, method="ApproveDocumentAsync",
+    dict(file=DOC, method="ApproveDocumentAsync#2",
          must=["LockRelatedSourceDocumentAsync(companyId, documentId)"],
          before=[("LockRelatedSourceDocumentAsync(companyId, documentId)", "AutoPostToJournalAsync(")],
          why="V1I-X1: ล็อกใบต้นทางก่อนออกเลข JE (AutoPostToJournalAsync ถือ advisory lock ของเลข RV/JV)"),
