@@ -4263,4 +4263,4 @@ _2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้า�
 - **RTX-5** ใบเบิก: ผูกใบสำคัญจ่ายร่างทันทีหลังสร้าง · กดจ่ายซ้ำใช้ใบเดิม · คำเตือน = 422 ข้อความไทย (`Helpers/ExpenseClaimPayVoucher`)
 - **RTX-6** เรียงตามวันที่ใช้เตือน · ตัวตรวจรายงานใช้วันหยุดราชการ · ข้อความเมื่อเลยวันกระดาษ · **RTX-7** doc-comment `LockDepositBalancesAsync` กลับที่ ·
   **RTX-9** รูปสามอาร์กิวเมนต์ไม่เรียก AI · 📋 **RTX-8** (ต้องนับในฐานจริงก่อน backfill — SQL ในรายงานทีม)
-- เทสต์ golden +8 ใบปกติ/+4 ทิศตรงข้าม · `Round201TxTests.RTX*` · required_call_site +3 แถว — commit <pending>)_
+- เทสต์ golden +8 ใบปกติ/+4 ทิศตรงข้าม · `Round201TxTests.RTX*` · required_call_site +3 แถว — commit f13f4a23)_

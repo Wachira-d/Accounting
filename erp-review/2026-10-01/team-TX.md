@@ -76,7 +76,7 @@
 - `Services/Implementations/JournalAnomalyService.cs` · `StatutoryRemittanceService.cs` · `Tax/TaxComplianceChecker.cs` · `Models/DTOs/StatutoryRemittanceDtos.cs` — ไม่มีทีมถือใน §5
 - `Helpers/SettlementPosting.cs` เฉพาะ `SodSelfApproval` ×2 (ตาม §5) · `Helpers/TaxFilingDeadline.cs` เมธอดใหม่ต่อท้ายคลาส (ทีม PL B-9 จะแก้ `RollToBusinessDay` — คนละช่วง)
 
-## 7. แก้ผลฝ่ายค้าน (RTX-1..9) — หลัง merge `3436774f` (worktree เดิม · merge origin `b8376803`)
+## 7. แก้ผลฝ่ายค้าน (RTX-1..9) — คอมมิต `f13f4a23` · หลัง merge `3436774f` (worktree เดิม · merge origin `b8376803`)
 
 | ID | สถานะ | ที่แก้ | เทสต์ |
 |---|---|---|---|
