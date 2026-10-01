@@ -22,6 +22,9 @@
 | B-7 ปฏิทิน ภ.ง.ด.54/ภ.พ.36 | ✅ (ส่วนที่ทำได้ก่อน) | `TaxFilingDeadline.cs:115` `WarnBy`/`WarnByFor`/`EFilingCaveat` · `StatutoryRemittanceService.cs:404` (`BuildItem`) · `:761` (`BuildCell`) · DTO `WarnDueDate/WarnNote` · `TaxComplianceChecker.DeadlineFor` · `tax-remittance.html` | `Round201TxTests.B7_*` |
 | C-7 ทิป 40(1)/40(2) | 📋 | — | — |
 
+**คอมมิต**: `2d7020af` (งานหลัก) · `0a3e4f48` (ติ๊กต้นทาง) · `f8ec4a9e` (A-TX5 ล็อกซ้ำ re-entrant + ย้ายกติกา B-10) · `93c407c2` (merge `b95ed89a` + doc-comment `SodSelfApproval` หลัง A-ST7)
+· หลัง merge: `required_call_site_check` เต็มชุด **763 กติกาผ่าน** (+ negative test ในตัว) · checker ชุด F รายตัวผ่าน · `test_inventory --check` ล้มเพราะจำนวนเทสต์ (§0 ให้ main agent วางทับตาม BRIEF)
+
 **required_call_site_check**: บล็อก "รอบ 201 ทีม TX" 13 แถว (must/must_re/before/forbid/call_args) · negative test มือ: โหลด checker ด้วย `importlib` แล้ว `check_rule` กับข้อความที่ถอด
 ทุก must / must_re · ใส่ทุก forbid · ส่ง null แทนอาร์กิวเมนต์ call_args — ฟ้องครบทุกแถว (0 พลาด)
 
