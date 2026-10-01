@@ -4076,4 +4076,4 @@ _2026-10-01 รอบ 201 ทีม GW — Gateway/Integration (BACKLOG §1.1 A-
 - **C-10** (ข้อ 83) config ผูกช่องทาง batch ⇒ เส้นเดิมไม่รับรายการใหม่ (คงเส้นคืนเงินภายหลัง) · **C-11** (ข้อ 84) `payment_fee` จาก config ตอนผูกครั้งแรก
   (`IGatewayAccountResolver.ResolveFeeExpenseAccountAsync` ตัวเดียวกับเส้นเดิม · แตะ `SettlementChannelService.SaveAsync` จุดเดียว) · **B-1** `IPaymentProvider.PendingVerificationNotice` บนหน้าตั้งค่า (ไม่ต่อสาย fee_vat)
 - **DV-O4** (ฝ่ายค้านทีม DV · งานเพิ่ม): integration ไม่ทิ้งผล `VoidDocumentAsync` อีก — `VoidDocumentByExternalRefAsync` ส่งธง e-Tax/ภาษีขาย เป็น `InboundSyncResponse.Warnings` + sync log · `ProcessInvoiceAsync` (ยกเลิกขายเงินสดที่หักมัดจำ) ต่อธงเข้าคำตอบปฏิเสธ (`WithVoidNotices`)
-- เทสต์ `GatewayTeamGWRound201Tests` (สองทิศทุกข้อ) · required_call_site +33 แถว (negative test มือ 16/16) — commit <pending>)_
+- เทสต์ `GatewayTeamGWRound201Tests` (สองทิศทุกข้อ) · required_call_site +33 แถว (negative test มือ 16/16) — commit bba8cfc7 · DV-O4 + รายงานทีม 97f1f255)_

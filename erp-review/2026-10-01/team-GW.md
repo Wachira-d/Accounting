@@ -28,7 +28,7 @@
 | **B-1** คำเตือนล่วงหน้า fee_vat | ✅ (ส่วนที่ทำได้ก่อน) | `IPaymentProvider.PendingVerificationNotice` (default interface member · null) · adapter ประกาศข้อความ (รุ่น API ที่ปัก · ค่าธรรมเนียมก่อน VAT · ยังไม่ยืนยัน sandbox) · `ConfigResponse.ProviderNotice` · แถบบนหน้าตั้งค่า · **ไม่ต่อสาย `fee_vat` / ไม่เพิ่มช่อง FeeVat** | `B1_*` |
 | **DV-O4** (งานเพิ่ม) integration ทิ้งผล `VoidDocumentAsync` | ✅ | `IntegrationService.VoidDocumentByExternalRefAsync` → `InboundSyncResponse.Warnings` + `log.ErrorMessage` · `ProcessInvoiceAsync` (ยกเลิกอัตโนมัติขายเงินสดที่หักมัดจำ) → `WithVoidNotices` · `VoidNotices` (ชุดเดียวกับที่ `DocumentController` ต่อท้าย) | required_call_site `VoidDocumentByExternalRefAsync` · `ProcessInvoiceAsync` (negative 2/2) |
 
-ติ๊กในรายงานต้นทาง (sha เติมคอมมิตตามหลัง): `team-G.md` G8-5 · PG-5 · PG-6 · E2-12e · E2-12f · E-3i · E-4b · `team-P2.md` B-1 · B-2 · B-7 · B-8 · `team-SF.md` X-9 · `review200-P2.md` X-9 · `team-GF.md` R200G-4 · R200G-8
+คอมมิต: `bba8cfc7` (ชุดหลัก) · `561416e1` (merge ทีม DV) · `97f1f255` (DV-O4 + รายงานนี้) · ติ๊กในรายงานต้นทาง (sha เติมในคอมมิตตามหลัง): `team-G.md` G8-5 · PG-5 · PG-6 · E2-12e · E2-12f · E-3i · E-4b · `team-P2.md` B-1 · B-2 · B-7 · B-8 · `team-SF.md` X-9 · `review200-P2.md` X-9 · `team-GF.md` R200G-4 · R200G-8
 
 ## ออกแบบที่ตัดสินเอง (ทิศมองเห็นและย้อนได้)
 1. **A-GW1 ไม่เพิ่มเพดานต่อ IP บน URL เดิม** (ทะเบียนเสนอ) — ผู้ให้บริการยิง webhook ของทุกร้านจาก IP ชุดเดียวกัน ⇒ เพดานเข้มขึ้นทิ้ง webhook จริงของร้านอื่น · แก้ที่เหตุแทน: URL เดิมเลิกลองร้านที่ย้ายแล้ว (จำนวนคำขอออกต่อ POST ลดตามจำนวนร้านที่ย้าย) · งานถามสถานะสดเป็นตาข่ายรับอยู่แล้ว
