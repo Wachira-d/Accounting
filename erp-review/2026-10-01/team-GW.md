@@ -92,3 +92,22 @@
 **ความเสี่ยงคอมไพล์เพิ่ม**: `GatewayWebhookConfigFacts` positional + `LegacyEligible` ท้าย (ผู้เรียกเดิม 5 อาร์กิวเมนต์ยังได้) · `ConfigsToTry` +`nowUtc` (ผู้เรียกทั้งหมดแก้แล้ว: controller + เทสต์) · local function `Facts` ใน `Receive` · ternary `? id : null` คืน `Guid?` (C# 9 target-typed) · `IPaymentProvider.UnverifiedIntentHint` DIM + explicit impl ใน adapter (เรียกผ่านชนิด interface) · `Map` เปลี่ยนเป็น block body · tuple `(DateTime?, string?)` คืนจาก `(DateTime, string?)` · `strategy.ExecuteAsync(async () => …)` คืน tuple ชื่อ · เทสต์เพิ่ม `using Accounting.Services.Payments;`
 
 **คำถามค้างใหม่**: (1) ข้อความคอมมิต `bba8cfc7` ข้อ F3-9 เขียน "รหัสผิด = ไม่ยิงออก" (ถูก) แต่ไม่ได้บอกว่า URL เดิมยังยิงออก — แก้ในเอกสารแล้ว คอมมิตเดิมแก้ไม่ได้ (2) เทสต์ DB จริงของ GWO-4 (ล็อก/rollback) รอ `db-test`
+
+## ฝ่ายค้านรอบสอง (RV2-3..11) — แก้ต่อหลัง merge `b3c31a14`
+
+> merge `origin/claude/erp-system-review-team-660mev` (fast-forward ถึง `e0e73eae`) ก่อนแก้ · RV2-1/RV2-2 (token รั่วใน AuditLog/AuditMiddleware) อยู่ที่ทีม PL ·
+> คอมมิตแยก (sha เติมคอมมิตตามหลัง) · **ยังไม่ได้คอมไพล์**
+
+| ID | สถานะ | ที่แก้ | เทสต์ / ด่าน |
+|---|---|---|---|
+| **RV2-3/4/5/11** (P1 · คำตัดสินข้อ 109) ทางเลือก "หักในรอบที่บันทึกแล้ว" ผิด | ✅ | ถอด enum `GatewayLegacyRefundRoundTiming` + record ผล + `LegacyRefundRequest.RoundTiming` + คำถามบน `payment-intents.html` (ช่องเพิ่งเพิ่มในรอบนี้ ยังไม่ deploy ⇒ ถอดได้ ไม่ใช่ silent no-op) · `RecordLegacyRefundAsync` ไม่แตะ `RefundSettledAmount` · `GatewayRefundMath.LegacyRefundRoundOutcome` (ถ้อยคำ "หักในรอบโอนถัดไป") · `RecordedRoundAsync` (ถ้อยคำเท่านั้น) | `RV2_3_*` 4: เส้นเดิม 1,000/30/คืน 200 ⇒ ก่อนรอบถัดไป 770 = 970 − 200 · หลัง 770/770 · batch แบบเดียวกันผ่าน `FromIntent`/`BatchSettled` · ทิศตรงข้าม: ทางเลือกเดิม ⇒ ผลต่างอธิบายไม่ได้ −200 · required_call_site ห้ามเขียน `RefundSettledAmount` ใน `RecordLegacyRefundAsync` · controller ห้ามมีช่อง |
+| **RV2-6** (P2) deadlock RV/SV ↔ audit | ✅ (หมายเหตุ + ด่าน) | ไม่จองเลข JE ล่วงหน้า (ทีม PL ย้ายการประทับ audit ไปตอน commit · คำตัดสินข้อ 104) · doc-comment ลำดับล็อกบน `RunResyncLockedAsync` (`int-resync` → เลข JE เท่านั้น) | required_call_site: `ResyncUpdateInvoiceCoreAsync`/`ResyncUpdateExpenseCoreAsync`/`ApplyResyncJournalAsync` ห้าม `AdvisoryLockKey.` · `BeginTransactionAsync(` · `CreateExecutionStrategy(` |
+| **RV2-7** (P2) ล็อกครอบไม่ถึงการโหลด/ลบบรรทัด | ✅ | `IntegrationService.RunResyncLockedAsync` ครอบทั้ง `ResyncUpdateInvoiceAsync`/`ResyncUpdateExpenseAsync` (แยกเป็น `*CoreAsync`) · ทิ้งหัวเอกสารที่โหลดก่อนถือล็อก (Detached) แล้วโหลดใหม่ใต้ล็อก (tenant) · ถูกยกเลิก/ลบระหว่างรอ = Failed + ข้อความ · ถอด wrapper เดิมรอบ `ApplyResyncJournalAsync` | required_call_site `RunResyncLockedAsync` (ล็อก → โหลด → body → commit) · wrapper ห้ามแตะบรรทัดเอง |
+| **RV2-8** (P2) catch ไม่ล้าง change tracker | ✅ | catch ใน `RunResyncLockedAsync`: `_db.ChangeTracker.Clear(); throw;` (rollback ตอน dispose) ⇒ `HandleSyncError → SaveSyncLog` บันทึกแค่ sync log | `Db/IntegrationResyncRollbackDbTests` 2 (job `db-test` · สองทิศ: ไม่ Clear = ของที่ rollback โผล่ครึ่งเดียว · Clear = มีแค่ sync log) · required_call_site `must_re` catch→Clear→throw |
+| **RV2-9** (P3) rotate เปิด URL เดิมกลับ | ✅ | `GatewayWebhookRoute.LegacyEligibleAfterRotate` (เคยรับทาง URL ใหม่ ⇒ false) · `RotateWebhookToken` ตั้งก่อนล้างเวลา + บันทึกใน audit | `RV2_9_*` สองทิศ · required_call_site ลำดับ |
+| **RV2-10** (P3) | ✅ | คำเตือนที่มาจาก `LastLegacySkippedAt` ระบุว่า "มาจากคำขอที่ยังไม่ยืนยัน" | `RV2_10_*` สองทิศ |
+
+**ความเสี่ยงคอมไพล์เพิ่ม**: local async function `LockedAsync` ใน `RunResyncLockedAsync` · `Func<Document, Task<InboundSyncResponse>>` + lambda `doc => …CoreAsync(…)` · `EntityState` (using `Microsoft.EntityFrameworkCore` มีอยู่แล้ว) ·
+`catch { …; throw; }` ใน lambda ของ `strategy.ExecuteAsync` · เทสต์ DB ใช้ `Xunit.Abstractions` (เหมือนไฟล์ของทีม PL)
+
+**ข้อสังเกต**: การรับรู้ว่า "รอบที่บันทึกแล้วไม่ได้หักยอดคืน" ถือตามคำตัดสินข้อ 109 — ถ้าในอนาคตมีเส้นบันทึกรอบโอนที่ไม่ผ่านด่านยอดตรง (เช่น นำเข้าด้วยมือ) ต้องทบทวนข้อนี้

@@ -437,9 +437,8 @@ public class PaymentGatewayController : ControllerBase
     }
 
     /// <summary>คำขอบันทึกยอดคืนย้อนหลัง — <c>Journal</c> = "BookNow" | "AlreadyBookedManually" (ชื่อ enum · อ่านไม่ออก = ปฏิเสธ) ·
-    /// <c>RoundTiming</c> (ฝ่ายค้าน GWO-3) = "DeductedInRecordedRound" | "DeductedInLaterRound" — บังคับเมื่อรายการอยู่ในรอบโอนที่บันทึกแล้วและคืนไม่หลังวันเงินเข้า</summary>
-    public sealed record LegacyRefundRequest(decimal? Amount, DateTime? RefundedAt, string? ProviderRefundRef, string? Evidence, string? Journal,
-        string? RoundTiming = null);
+    /// ไม่มีช่อง "หักในรอบไหน" (RV2-3 · คำตัดสินข้อ 109: ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ)</summary>
+    public sealed record LegacyRefundRequest(decimal? Amount, DateTime? RefundedAt, string? ProviderRefundRef, string? Evidence, string? Journal);
 
     /// <summary>บันทึกยอดคืนจริงของรายการที่ "คืนแล้วแต่ระบบไม่มียอดคืน" (รอบ 201 ทีม GW · A-GW7 · review198-E2 E2-12e) — แถวเก่า/ลงบัญชีคืนไม่สำเร็จ
     /// ค้าง −ค่าธรรมเนียมในกระทบยอดและไม่เข้ารอบโอนตลอดไป · <b>เจ้าของกิจการเท่านั้น</b> (เติมยอดที่ระบบไม่รู้แทนผู้ให้บริการ) + ห้ามคีย์ API + สิทธิ์คืนเงิน ·
@@ -455,12 +454,10 @@ public class PaymentGatewayController : ControllerBase
     {
         var journal = Enum.TryParse<GatewayLegacyRefundJournal>(req.Journal?.Trim(), ignoreCase: true, out var j)
             && Enum.IsDefined(j) ? j : GatewayLegacyRefundJournal.Unspecified;
-        var roundTiming = Enum.TryParse<GatewayLegacyRefundRoundTiming>(req.RoundTiming?.Trim(), ignoreCase: true, out var rt)
-            && Enum.IsDefined(rt) ? rt : GatewayLegacyRefundRoundTiming.Unspecified;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.RecordLegacyRefundAsync(companyId, intentId, req.Amount,
             req.RefundedAt is DateTime at ? DateTime.SpecifyKind(at, at.Kind == DateTimeKind.Unspecified ? DateTimeKind.Utc : at.Kind) : null,
-            req.ProviderRefundRef, req.Evidence, journal, roundTiming, actor, User?.Identity?.Name,
+            req.ProviderRefundRef, req.Evidence, journal, actor, User?.Identity?.Name,
             HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
         var data = new
         {

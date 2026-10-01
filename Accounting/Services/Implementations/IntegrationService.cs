@@ -2604,30 +2604,9 @@ public class IntegrationService : IIntegrationService
 
     /// <summary>A-GW12: เส้นปรับ JE ตอน resync (ใช้ร่วม invoice/expense) — in-place ไม่สำเร็จ ⇒ dry-run สร้างใหม่<b>ก่อน</b>กลับ JE เดิม · สร้างไม่ได้ ⇒ คง JE เดิม
     /// + หมายเหตุ + sync log PartialSuccess · คืน (JE id, เหตุที่ข้าม, วิธีที่ใช้)</summary>
-    /// <summary>ฝ่ายค้าน GWO-4: ห่อการปรับ JE ของ resync ด้วยธุรกรรมเดียว + ล็อกต่อเอกสาร (คีย์คงที่ <see cref="Accounting.Helpers.AdvisoryLockKey.IntegrationResync"/>) —
-    /// เดิม dry-run · กลับ JE เดิม · ลง JE ใหม่ บันทึกแยกกันและไม่มีล็อก ⇒ ล้มกลางทาง = กลับแล้วไม่ได้ลงใหม่ · คำขอซ้อนของเอกสารเดียวกันเห็น JE เดิมชุดเดียวกัน
-    /// · ผู้เรียกที่อยู่ในธุรกรรมอยู่แล้ว ⇒ ใช้ธุรกรรมนั้น (ล็อกยังถือจนธุรกรรมของผู้เรียกจบ)</summary>
+    /// <summary>ปรับ JE ของ resync (A-GW12) — <b>ต้องถูกเรียกภายใน <see cref="RunResyncLockedAsync"/></b> (ธุรกรรมเดียว + ล็อกต่อเอกสาร ·
+    /// ฝ่ายค้าน GWO-4 → RV2-7: เดิมห่อเฉพาะตรงนี้ ⇒ บรรทัดเอกสารถูกโหลด/ลบก่อนถือล็อก — ย้ายจุดถือล็อกไปครอบทั้ง <c>ResyncUpdate*Async</c>)</summary>
     private async Task<(Guid? JournalEntryId, string? SkipReason, Accounting.Helpers.IntegrationResyncJournalAction Action)> ApplyResyncJournalAsync(
-        Guid companyId, Guid integrationId, Document existing, string type, IntegrationSyncLog log)
-    {
-        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.IntegrationResync, existing.Id.ToString());
-        if (_db.Database.CurrentTransaction != null)
-        {
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey });
-            return await ApplyResyncJournalCoreAsync(companyId, integrationId, existing, type, log);
-        }
-        var strategy = _db.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(async () =>
-        {
-            await using var tx = await _db.Database.BeginTransactionAsync();
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey });
-            var result = await ApplyResyncJournalCoreAsync(companyId, integrationId, existing, type, log);
-            await tx.CommitAsync();
-            return result;
-        });
-    }
-
-    private async Task<(Guid? JournalEntryId, string? SkipReason, Accounting.Helpers.IntegrationResyncJournalAction Action)> ApplyResyncJournalCoreAsync(
         Guid companyId, Guid integrationId, Document existing, string type, IntegrationSyncLog log)
     {
         var originals = await LoadResyncOriginalsAsync(companyId, existing.Id);
@@ -3110,9 +3089,73 @@ public class IntegrationService : IIntegrationService
         return je.Id;
     }
 
+    /// <summary>ธุรกรรมเดียว + ล็อกต่อเอกสารของ resync ทั้งเส้น (ฝ่ายค้าน GWO-4 → RV2-7/RV2-8 · รอบ 201 ทีม GW)
+    /// <list type="bullet">
+    /// <item><b>RV2-7</b>: ถือล็อก (<see cref="Accounting.Helpers.AdvisoryLockKey.IntegrationResync"/> + id เอกสาร · คีย์คงที่) และเริ่มธุรกรรม<b>ก่อน</b>โหลดหัวเอกสาร/ลบบรรทัด
+    /// — ทิ้งค่าหัวเอกสารที่ผู้เรียกโหลดไว้ก่อนถือล็อกแล้วโหลดใหม่ ⇒ เอกสารกับ JE มาจากบรรทัดชุดเดียวกัน · คำขอ resync ซ้อนของเอกสารเดียวกันรอกัน ·
+    /// เอกสารถูกยกเลิก/ลบระหว่างรอ = ล้มดัง (sync log + คำตอบ)</item>
+    /// <item><b>RV2-8</b>: ล้มกลางทาง ⇒ ธุรกรรม rollback แล้ว <c>ChangeTracker.Clear()</c> ก่อนโยนต่อ — มิฉะนั้น <c>HandleSyncError → SaveSyncLog</c>
+    /// (SaveChanges นอกธุรกรรม) จะ INSERT/UPDATE ของที่เพิ่ง rollback (JE กลับรายการ/บรรทัดใหม่) ซ้ำแบบครึ่ง ๆ กลาง ๆ</item>
+    /// <item><b>RV2-6 ลำดับล็อก</b>: ภายในธุรกรรมนี้ resync ถือ <c>int-resync</c> ก่อนเสมอ และ<b>ไม่ขอล็อก advisory อื่นเอง</b> — ล็อกอื่นที่เกิดได้มีแค่ของตัวออกเลข JE
+    /// (<c>JournalEntryBuilder.NextJournalNumberAsync</c> · ถือถึง commit) · การประทับ audit ย้ายไปตอน commit (คำตัดสินข้อ 104 · ทีม PL) ⇒ ไม่มีวง
+    /// "เลข RV/SV ↔ audit" ระหว่าง ReverseAndRepost กับ PostFresh · ห้ามเพิ่มการขอล็อกอื่นในเส้น resync (ล็อกด้วย tools/required_call_site_check.py)</item>
+    /// </list>
+    /// ผู้เรียกที่อยู่ในธุรกรรมอยู่แล้ว ⇒ ใช้ธุรกรรมนั้น (ถือล็อกจนธุรกรรมของผู้เรียกจบ · rollback/Clear เป็นหน้าที่ของผู้เรียก)</summary>
+    private async Task<InboundSyncResponse> RunResyncLockedAsync(Guid companyId, Guid integrationId, Document existing,
+        IntegrationSyncLog log, Stopwatch sw, Func<Document, Task<InboundSyncResponse>> body)
+    {
+        var documentId = existing.Id;
+        var lockKey = Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.IntegrationResync, documentId.ToString());
+        // ค่าหัวเอกสารที่โหลดก่อนถือล็อกอาจเก่า — ทิ้งแล้วโหลดใหม่ใต้ล็อก
+        if (_db.Entry(existing).State != EntityState.Detached) _db.Entry(existing).State = EntityState.Detached;
+
+        async Task<InboundSyncResponse> LockedAsync()
+        {
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { lockKey });
+            var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
+            if (doc == null || doc.IsDeleted || doc.Status == DocumentStatus.Voided)
+            {
+                const string gone = "เอกสารถูกยกเลิกหรือลบระหว่างรอคิวแก้ไข (resync) — ไม่มีอะไรถูกเปลี่ยน · ส่งเป็นเอกสารใหม่แทน";
+                log.Status = "Failed";
+                log.ErrorMessage = gone;
+                log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                await SaveSyncLog(log, integrationId);
+                return new InboundSyncResponse(false, gone, documentId, existing.ContactId, null, null, existing.DocumentNumber);
+            }
+            return await body(doc);
+        }
+
+        if (_db.Database.CurrentTransaction != null) return await LockedAsync();
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                var result = await LockedAsync();
+                await tx.CommitAsync();
+                return result;
+            }
+            catch
+            {
+                // RV2-8: ธุรกรรม rollback ตอน dispose — ของที่ค้างใน change tracker ต้องทิ้ง (โยนต่อเสมอ · ไม่กลืน)
+                _db.ChangeTracker.Clear();
+                throw;
+            }
+        });
+    }
+
     /// <summary>Resync update ใบแจ้งหนี้/ใบกำกับจากระบบภายนอก — เลขเอกสารคงเดิม
-    /// แต่กลับ JE เดิม + สร้างบรรทัด/ยอดใหม่ + post JE ใหม่ (audit trail ครบ).</summary>
+    /// แต่กลับ JE เดิม + สร้างบรรทัด/ยอดใหม่ + post JE ใหม่ (audit trail ครบ) · ทั้งเส้นอยู่ใน <see cref="RunResyncLockedAsync"/></summary>
     private async Task<InboundSyncResponse> ResyncUpdateInvoiceAsync(
+        Guid companyId, Guid integrationId, Document existing,
+        InboundInvoiceRequest request, IntegrationSyncLog log, Stopwatch sw)
+    {
+        return await RunResyncLockedAsync(companyId, integrationId, existing, log, sw,
+            doc => ResyncUpdateInvoiceCoreAsync(companyId, integrationId, doc, request, log, sw));
+    }
+
+    private async Task<InboundSyncResponse> ResyncUpdateInvoiceCoreAsync(
         Guid companyId, Guid integrationId, Document existing,
         InboundInvoiceRequest request, IntegrationSyncLog log, Stopwatch sw)
     {
@@ -3200,8 +3243,16 @@ public class IntegrationService : IIntegrationService
             Warnings: Accounting.Helpers.IntegrationResyncJournal.Warnings(jeAction, jeSkipReason));
     }
 
-    /// <summary>Resync update ค่าใช้จ่ายจากระบบภายนอก — semantics เดียวกับ invoice.</summary>
+    /// <summary>Resync update ค่าใช้จ่ายจากระบบภายนอก — semantics เดียวกับ invoice (ทั้งเส้นอยู่ใน <see cref="RunResyncLockedAsync"/>)</summary>
     private async Task<InboundSyncResponse> ResyncUpdateExpenseAsync(
+        Guid companyId, Guid integrationId, Document existing,
+        InboundExpenseRequest request, IntegrationSyncLog log, Stopwatch sw)
+    {
+        return await RunResyncLockedAsync(companyId, integrationId, existing, log, sw,
+            doc => ResyncUpdateExpenseCoreAsync(companyId, integrationId, doc, request, log, sw));
+    }
+
+    private async Task<InboundSyncResponse> ResyncUpdateExpenseCoreAsync(
         Guid companyId, Guid integrationId, Document existing,
         InboundExpenseRequest request, IntegrationSyncLog log, Stopwatch sw)
     {

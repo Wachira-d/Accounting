@@ -153,11 +153,20 @@ public static class GatewayWebhookRoute
         var lastLegacyActivity = Later(lastLegacyWebhookAt, lastLegacySkippedAt);
         if (lastLegacyActivity is not DateTime legacy) return null;
         if (facts.LastTokenWebhookAt is DateTime viaToken && legacy <= viaToken) return null;
+        // RV2-10: เวลาที่ถูกข้ามระบุร้านจากเลขรายการในเนื้อคำขอที่ยังไม่ยืนยัน (ใครก็ปลอมได้) — บอกผู้อ่านตรง ๆ
+        var fromUnverified = lastLegacySkippedAt is DateTime sk && sk == legacy;
         return "มีการแจ้งเตือนมาทาง URL แบบเดิม (ไม่มีรหัสลับ) ซึ่งระบบไม่รับสำหรับร้านนี้"
                + (facts.MovedToTokenUrl ? " (ร้านเปลี่ยนเป็น URL ใหม่แล้ว)" : "")
+               + (fromUnverified ? " · ระบุร้านจากเลขรายการที่มาจากคำขอที่ยังไม่ยืนยัน (อาจไม่ใช่ผู้ให้บริการจริง)" : "")
                + " — ตรวจแดชบอร์ดผู้ให้บริการว่าตั้ง URL ด้านบนครบทั้งโหมดทดสอบและโหมดใช้งานจริง และไม่ได้ตั้ง URL เดิมค้างไว้ "
                + "(ถ้ามีรายการค้าง กด \"ตรวจสถานะสด\" ที่หน้ารายการรับชำระออนไลน์)";
     }
+
+    /// <summary>ธง "ยังรับทาง URL เดิม" หลังออกรหัสลับใหม่ (ฝ่ายค้านรอบสอง RV2-9) — ร้านที่<b>เคย</b>ได้รับทาง URL ใหม่ (ไม่ว่าโหมดไหน) ⇒ false:
+    /// การออกรหัสใหม่ล้างเวลา "รับทาง URL ใหม่" ⇒ ถ้าคงธงไว้ URL เดิมจะกลับมาลองร้านนี้ (เปิดทางหนีที่ปิดแล้ว) · ร้านที่ยังไม่เคยย้าย = คงตามเดิม
+    /// (แดชบอร์ดยังตั้ง URL เดิม — ปิดตอนนี้ = ลูกค้าจ่ายแล้วรายการไม่อัปเดต)</summary>
+    public static bool LegacyEligibleAfterRotate(GatewayWebhookConfigFacts before)
+        => before.LegacyEligible && before.LastTokenWebhookAt == null;
 
     private static DateTime? Later(DateTime? a, DateTime? b)
         => a is DateTime x && b is DateTime y ? (x > y ? x : y) : a ?? b;

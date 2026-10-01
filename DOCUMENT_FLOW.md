@@ -711,8 +711,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       ข้อความตอบคู่ค้า "(JE เดิมคงไว้)" + **ช่อง `Warnings`** (ฝ่ายค้าน GWO-5 · `IntegrationResyncJournal.Warnings`) · ตัวตัดสิน `Helpers/IntegrationResyncJournal.Decide` ·
       ทางไปต่อที่มีจริง (`ResendNextStep`): แก้ mapping แล้วให้ระบบต้นทาง
       ส่งซ้ำแบบ `resyncUpdate` (หมายเหตุ `[ยังไม่ลงบัญชี]` เดิมชี้ปุ่ม "ลงบัญชีใหม่จากหน้าเอกสาร" ที่ไม่มีในระบบ — แก้ข้อความแล้ว) ·
-      **ธุรกรรมเดียว + ล็อกต่อเอกสาร (GWO-4)**: `ApplyResyncJournalAsync` ห่อ execution strategy + transaction + `pg_advisory_xact_lock`
-      (`AdvisoryLockKey.IntegrationResync` + id เอกสาร) รอบ `ApplyResyncJournalCoreAsync` — ล้มกลางทาง = ไม่มีการกลับ JE ค้าง · resync ซ้อนของเอกสารเดียวกันรอกัน
+      **ธุรกรรมเดียว + ล็อกต่อเอกสาร (GWO-4 → ฝ่ายค้านรอบสอง RV2-7/8)**: `ResyncUpdateInvoiceAsync`/`ResyncUpdateExpenseAsync` → `RunResyncLockedAsync`
+      (execution strategy + transaction + `pg_advisory_xact_lock` คีย์ `AdvisoryLockKey.IntegrationResync` + id เอกสาร) ครอบ**ทั้งเส้น** — ถือล็อกก่อนโหลดหัวเอกสารใหม่
+      (ทิ้งค่าที่โหลดก่อนถือล็อก)/ลบบรรทัด/ปรับ JE ⇒ เอกสารกับ JE มาจากบรรทัดชุดเดียวกัน · เอกสารถูกยกเลิก/ลบระหว่างรอ = ล้มดัง · ล้มกลางทาง = rollback +
+      `ChangeTracker.Clear()` แล้วโยนต่อ (`HandleSyncError → SaveSyncLog` นอกธุรกรรมไม่บันทึกของที่ rollback) · **ลำดับล็อก (RV2-6)**: `int-resync` → เลข JE
+      (`NextJournalNumberAsync`) เท่านั้น · การประทับ audit ย้ายไปตอน commit (คำตัดสินข้อ 104 · ทีม PL) · resync ซ้อนของเอกสารเดียวกันรอกัน
   - **คำเตือนบัญชีธนาคารรับเงินล่วงหน้า (รอบ 201 ทีม GW · A-GW11)**: `GET integrations/dashboard` คืน `MoneyAccountWarning`
     (`MoneyAccountFallback.IntegrationBankWarning` ← `PickBank` กติกาเดียวกับตอนรับรายการชำระ: บัญชีธนาคารที่ผูกผัง 0 หรือ ≥ 2 ⇒ รายการชำระแบบโอน/พร้อมเพย์/หักบัญชี
     ที่ไม่ส่ง `bankAccountName` จะถูกปฏิเสธ `INT-NO-BANK-ACCOUNT`) · หน้า `integrations.html` แสดงแถบเตือน + ลิงก์หน้าบัญชีธนาคาร
@@ -1374,7 +1377,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   พร้อมวันปิด (`LegacyUrlWarning`) · **คำขอทาง URL เดิมที่ถูกข้าม (GWO-7)** — เลขรายการจากเนื้อคำขอที่ยังไม่ยืนยัน (`IPaymentProvider.UnverifiedIntentHint` · ไม่ยิงออก)
   ⇒ ประทับ `LastLegacySkippedAt` ของ config เจ้าของรายการ (ไม่ถี่กว่า 10 นาที · `ShouldStampLegacySkip`) ⇒ คำเตือน "ระบบไม่รับทาง URL เดิมของร้านนี้" ขึ้นจริง ·
   **รหัสลับ (GWO-6)** — `GET payment-settings` ส่ง URL เต็มเฉพาะเจ้าของ (`RequireOwnerAttribute.DenyAsync`) ผู้อื่น/คีย์ API เห็นแบบปิดบัง (`MaskedPath` · `WebhookTokenMasked`) ·
-  `POST payment-settings/{provider}/webhook-token/rotate` (`[RequireOwner]` + `[RejectApiKey]` + hash chain ไม่เก็บตัวรหัส · ล้างเวลา "รับทาง URL ใหม่") ·
+  `POST payment-settings/{provider}/webhook-token/rotate` (`[RequireOwner]` + `[RejectApiKey]` + hash chain ไม่เก็บตัวรหัส · ล้างเวลา "รับทาง URL ใหม่" ·
+  ร้านที่เคยย้ายแล้ว ⇒ `LegacyWebhookEligible = false` (`LegacyEligibleAfterRotate` — RV2-9: ไม่เปิด URL เดิมกลับ)) · คำเตือนที่มาจากเวลาที่ถูกข้ามบอกว่า
+  ระบุร้านจาก "คำขอที่ยังไม่ยืนยัน" (RV2-10) ·
   log คำขอ/ข้อผิดพลาด (`RequestLoggingMiddleware` · `ApiErrorLoggingMiddleware` · `ExceptionMiddleware`) ปิดบัง segment รหัสด้วย `GatewayWebhookRoute.RedactPath` ·
   **กระทบยอดรู้จักรอบโอน batch (A-GW4)** — intent ที่ `SettlementBatchId` เป็นเจ้าของ = โอนแล้วเมื่อรอบโอน Posted/BankMatched (`GatewayReconciliation.IsBatchPosted`) ·
   ยอดโอนเข้า/ยอดคืนที่ถูกหัก/ค่าธรรมเนียมที่ถูกหัก จากบรรทัดรอบโอนที่ลงบัญชีแล้ว (`BatchSettled` · `FromIntent`) · `GET pay/intents` `isSettled` ใช้ตัวตัดสินเดียวกัน ·
@@ -1389,9 +1394,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **บันทึกยอดคืนย้อนหลัง (A-GW7)** `POST pay/intents/{id}/refund/record-legacy` (`[RequireOwner]` + `[RejectApiKey]` + `Bank.PaymentInit`) →
   `RecordLegacyRefundAsync`: `GatewayRefundMath.CheckLegacyRefundEntry` (สถานะคืนแล้ว · ยอดคืนในระบบ = 0 · ยอดไม่เกินยอดรับ · คืนเต็ม = เท่ายอดรับ · วันที่ไม่อนาคต · เลขอ้างอิง +
   หลักฐาน · เลือก `BookNow` = ลงใบสำคัญคืนเงินเส้นเดียวกับคืนเงินปกติ (วันที่เงินออกจริง/งวดปิด = วันนี้+หมายเหตุ) หรือ `AlreadyBookedManually` = บันทึกยอดอย่างเดียว) ⇒
-  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง · **รอบโอน (GWO-3)**: รายการที่อยู่ในรอบโอนที่บันทึกแล้ว (เส้นเดิม `SettledAt` · batch ที่ลงบัญชีแล้ว `PayoutDate`) และเงินคืนออก
-  **ไม่หลัง**วันเงินเข้า ⇒ **บังคับเลือก** `RoundTiming` (`DeductedInRecordedRound` ⇒ `RefundSettledAmount` = ยอดคืน รอบถัดไปไม่หักซ้ำ · `DeductedInLaterRound` ⇒ หักในรอบถัดไป) ·
-  คืนหลังวันเงินเข้า ⇒ หักในรอบถัดไป · ยังไม่เข้ารอบ ⇒ เข้ารอบถัดไปด้วยยอดหลังคืน (`GatewayRefundMath.LegacyRefundRoundTiming` · ข้อความสำเร็จบอกผลจริง) · hash chain ·
+  `RefundedAmount` + เหตุการณ์ยอดรายครั้ง · **รอบโอน (ฝ่ายค้านรอบสอง RV2-3 · คำตัดสินข้อ 109)**: ยอดคืนย้อนหลัง**เข้ารอบโอนถัดไปเสมอ** — รอบที่บันทึกผ่านระบบ
+  ผ่านด่านยอดตรงแล้ว (เส้นเดิม `NetMismatch` · batch = บรรทัดจากไฟล์) ⇒ ผู้ให้บริการไม่ได้หักยอดนี้ในรอบนั้น · ไม่ตั้ง `RefundSettledAmount` เอง (เส้นเดิม: ตัวกรอง
+  ยอดคืนหลังรอบ `refundedAfter` หักในรอบถัดไป · batch: บรรทัดคืนเงินในไฟล์รอบถัดไป) · ทางเลือก "หักในรอบที่บันทึกแล้ว" ของ GWO-3 ถูกถอด (ทำให้รอบถัดไปไม่หัก
+  + กระทบยอดค้างผลต่างถาวร · เทสต์ 1,000/30/คืน 200 ⇒ 770/770 ทั้งสองเส้น) · ข้อความสำเร็จ `GatewayRefundMath.LegacyRefundRoundOutcome` · hash chain ·
   **ป้าย/ปุ่ม/ค้างนาน (A-GW2)** — `GET pay/intents` คืน `statusLabel/sourceKindLabel/isStuck/canCheckLive/canRefund/canEditFee` + `statusOptions` + `stuck/stuckMinutes`
   (`PaymentIntentPolicy` · เกณฑ์ค้าง `StuckThreshold` ตัวเดียวกับงานเบื้องหลัง · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · JS ไม่มีสำเนาเกณฑ์ ·
   **URL กลับหลังจ่าย (A-GW3)** — `StartAsync` ผ่าน `PaymentIntentPolicy.SafeReturnUrl` (โดเมน `SiteDomains` ที่อนุมัติ/`Sites.CustomDomain` ของบริษัท + `App:BaseUrl` ·
@@ -4192,6 +4198,8 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 เมื่อ 2026-09-18 (รอบ 170 — คำตัดสินเจ้าของ: doc ที่เป็น append-only log ขนาด 0.8 MB ทำให้ "สถานะปัจจุบัน" ผิดแล้วไม่มีใครเห็น).
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW แก้ตามฝ่ายค้านรอบสอง RV2-3..11 (§2.3 · §2.6b): ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ (ถอดทางเลือก "หักในรอบที่บันทึกแล้ว") · resync ล็อก/ธุรกรรมครอบทั้งเส้น + Clear เมื่อ rollback + ลำดับล็อก · ออกรหัสใหม่ไม่เปิด URL เดิมกลับ · คำเตือนบอกคำขอที่ยังไม่ยืนยัน — commit <pending>)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
 

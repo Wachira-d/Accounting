@@ -62,20 +62,6 @@ public enum GatewayLegacyRefundJournal
     AlreadyBookedManually = 2,
 }
 
-/// <summary>ยอดคืนที่บันทึกย้อนหลังถูกหักในรอบโอนไหน (ฝ่ายค้าน GWO-3) — ต้องเลือกเองเมื่อรายการอยู่ในรอบโอนที่บันทึกแล้วและเงินคืนออกไม่หลังวันเงินเข้า</summary>
-public enum GatewayLegacyRefundRoundTiming
-{
-    /// <summary>ไม่ได้เลือก — ใช้ได้เฉพาะเมื่อไม่มีคำถาม (ยังไม่เข้ารอบโอน หรือคืนหลังวันเงินเข้า)</summary>
-    Unspecified = 0,
-    /// <summary>ผู้ให้บริการหักยอดคืนนี้ในรอบโอนที่บันทึกแล้ว ⇒ ตั้ง "หักแล้ว" (รอบถัดไปไม่หักซ้ำ)</summary>
-    DeductedInRecordedRound = 1,
-    /// <summary>ยังไม่ถูกหัก — จะถูกหักในรอบโอนถัดไป (ยอดติดลบ)</summary>
-    DeductedInLaterRound = 2,
-}
-
-/// <summary>ผลตัดสินรอบโอนของยอดคืนย้อนหลัง — <c>MarkDeductedInRecordedRound</c> = ตั้ง <c>RefundSettledAmount</c> = ยอดคืน · <c>OutcomeText</c> = ท้ายข้อความสำเร็จ</summary>
-public sealed record GatewayLegacyRefundTimingCheck(bool Ok, string? Message, bool MarkDeductedInRecordedRound, string OutcomeText);
-
 /// <summary>ผลตรวจคำขอบันทึกผลด้วยมือ (<c>AmountToBook</c> = ยอดที่ต้องลงบัญชี เฉพาะ MoneyWentOut)</summary>
 public readonly record struct GatewayRefundManualCheck(bool Ok, string? Message, decimal AmountToBook);
 
@@ -323,38 +309,17 @@ public static class GatewayRefundMath
         return new(true, null, paid);
     }
 
-    /// <summary>ยอดคืนที่บันทึกย้อนหลังถูกหักในรอบโอนไหน (ฝ่ายค้าน GWO-3) — เดิมข้อความสำเร็จบอก "เข้ารอบโอนตามปกติ" ทุกกรณี แต่รายการที่<b>บันทึกรอบโอนแล้ว</b>
-    /// และคืนก่อนวันเงินเข้า: ผู้ให้บริการหักยอดคืนในรอบนั้นไปแล้ว ⇒ รอบถัดไปจะหักซ้ำ (ยอดคืนสะสม &gt; ยอดที่หักแล้ว)
-    /// <para><paramref name="recordedRoundMoneyInUtc"/> = วันเงินเข้าของรอบโอนที่บันทึกแล้ว (เส้นเดิม <c>SettledAt</c> · batch ที่ลงบัญชีแล้ว <c>PayoutDate</c>) · null = ยังไม่อยู่ในรอบที่บันทึก</para>
-    /// <list type="bullet">
-    /// <item>ยังไม่อยู่ในรอบที่บันทึก ⇒ ไม่ต้องเลือก · เข้ารอบโอนถัดไปด้วยยอดหลังคืน</item>
-    /// <item>คืน<b>หลัง</b>วันเงินเข้า ⇒ หักในรอบถัดไป · เลือก "หักในรอบที่บันทึกแล้ว" = ปฏิเสธ (เงินคืนออกหลังรอบนั้น)</item>
-    /// <item>คืน<b>ก่อนหรือวันเดียวกับ</b>วันเงินเข้า ⇒ <b>บังคับเลือก</b> (วันเดียวกันขึ้นกับเวลาตัดรอบของผู้ให้บริการ — ระบบไม่เดา) · ไม่เลือก = ปฏิเสธพร้อมทางไปต่อ</item>
-    /// </list></summary>
-    public static GatewayLegacyRefundTimingCheck LegacyRefundRoundTiming(DateTime refundedAtUtc, DateTime? recordedRoundMoneyInUtc,
-        string? recordedRoundRef, GatewayLegacyRefundRoundTiming timing)
-    {
-        var roundName = string.IsNullOrWhiteSpace(recordedRoundRef) ? "รอบโอนที่บันทึกแล้ว" : $"รอบโอน {recordedRoundRef.Trim()}";
-        if (recordedRoundMoneyInUtc is not DateTime moneyIn)
-            return new(true, null, false, "รายการนี้ยังไม่อยู่ในรอบโอนที่บันทึก — จะเข้ารอบโอนถัดไปด้วยยอดหลังคืน");
-        var refundDay = ThaiDate.CalendarDateUtc(refundedAtUtc);
-        var moneyInDay = ThaiDate.CalendarDateUtc(moneyIn);
-        if (refundDay > moneyInDay)
-            return timing == GatewayLegacyRefundRoundTiming.DeductedInRecordedRound
-                ? new(false, $"เงินคืนออกวันที่ {ThaiDate.ToThaiDisplayString(refundedAtUtc)} หลังวันเงินเข้าของ{roundName} ({ThaiDate.ToThaiDisplayString(moneyIn)}) — "
-                    + "ยอดนี้ไม่อยู่ในรอบนั้น · เลือก \"ยังไม่ถูกหัก (หักในรอบถัดไป)\" หรือตรวจวันที่อีกครั้ง", false, "")
-                : new(true, null, false, $"เงินคืนออกหลังวันเงินเข้าของ{roundName} — ยอดคืนจะถูกหักในรอบโอนถัดไป (ยอดติดลบ)");
-        return timing switch
-        {
-            GatewayLegacyRefundRoundTiming.DeductedInRecordedRound =>
-                new(true, null, true, $"ถือว่าถูกหักใน{roundName}แล้ว — รอบโอนถัดไปไม่หักซ้ำ"),
-            GatewayLegacyRefundRoundTiming.DeductedInLaterRound =>
-                new(true, null, false, $"ถือว่ายังไม่ถูกหักใน{roundName} — ยอดคืนจะถูกหักในรอบโอนถัดไป (ยอดติดลบ)"),
-            _ => new(false, $"รายการนี้อยู่ใน{roundName} (เงินเข้าวันที่ {ThaiDate.ToThaiDisplayString(moneyIn)}) และเงินคืนออกไม่หลังวันนั้น — "
-                + "เลือกว่าผู้ให้บริการหักยอดคืนนี้ในรอบนั้นแล้วหรือยัง (ดูสเตทเมนต์/รายงานรอบโอนของผู้ให้บริการ) · "
-                + "เลือกผิดทาง = รอบถัดไปหักซ้ำหรือไม่หักเลย", false, ""),
-        };
-    }
+    /// <summary>ยอดคืนที่บันทึกย้อนหลังจะถูกหักในรอบโอนไหน — ท้ายข้อความสำเร็จ (ฝ่ายค้านรอบสอง RV2-3/4/5/11 · คำตัดสินข้อ 109)
+    /// <para>═══ ที่มา ═══ รอบแรก (GWO-3) ให้ผู้ใช้เลือก "ถูกหักในรอบโอนที่บันทึกแล้ว" แล้วตั้งยอดที่หักแล้ว = ยอดคืน — <b>ผิด</b>: รอบโอนที่บันทึกผ่านระบบได้
+    /// ต้องผ่านด่านยอดตรงแล้ว (เส้นเดิม <c>NetMismatch</c> เทียบยอดเงินเข้าจริง · batch = บรรทัดจากไฟล์ของผู้ให้บริการ) ⇒ ยอดคืนที่ระบบไม่รู้ ณ วันนั้น
+    /// <b>ไม่ได้ถูกหักในรอบนั้น</b> · ตั้งยอดที่หักแล้วเอง = รอบถัดไปไม่หัก + รายงานกระทบยอดค้างผลต่างเท่ายอดคืนถาวร (1,000/30/คืน 200 ⇒ ควรได้ 770 โอนเข้า 970)</para>
+    /// <para>═══ กติกา ═══ ยอดคืนย้อนหลังเข้ารอบโอนถัดไป<b>เสมอ</b> (เส้นเดิม: ตัวกรองยอดคืนหลังรอบ <c>refundedAfter</c> · batch: บรรทัดคืนเงินในไฟล์รอบถัดไป) ·
+    /// ไม่มีทางเลือกให้ผู้ใช้ · <paramref name="inRecordedRound"/> แค่เปลี่ยนถ้อยคำ</para></summary>
+    public static string LegacyRefundRoundOutcome(bool inRecordedRound, string? recordedRoundRef)
+        => !inRecordedRound
+            ? "รายการนี้ยังไม่อยู่ในรอบโอนที่บันทึก — จะเข้ารอบโอนถัดไปด้วยยอดหลังคืน"
+            : $"รายการนี้อยู่ใน{(string.IsNullOrWhiteSpace(recordedRoundRef) ? "รอบโอนที่บันทึกแล้ว" : "รอบโอน " + recordedRoundRef.Trim())} "
+              + "ซึ่งบันทึกด้วยยอดเงินเข้าจริงแล้ว (ยอดคืนนี้ไม่ได้ถูกหักในรอบนั้น) — ยอดคืนจะถูกหักในรอบโอนถัดไป (ยอดติดลบ)";
 
     /// <summary>วันที่ใบสำคัญของเงินคืนที่ "ผลไม่แน่ชัด" แล้วยืนยันทีหลัง (ตรวจผล/บันทึกผลด้วยมือ) — รอบ 200 ทีม G · review198-E2 E2-12 + คำถามเจ้าของข้อ 4
     ///
