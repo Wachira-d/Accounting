@@ -3165,8 +3165,17 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   ใหม่ (สูตร v2 ไม่มีกุญแจ) ทิ้งร่องรอยแบบเดียวกับการลบ ⇒ ข้อความ "แถวก่อนหน้า…ถูกลบ หรือถูกแก้แล้วประทับ hash ใหม่ (ระบบแยกสองกรณีนี้ไม่ได้) หรือแถวนี้ไม่ได้บันทึก
   โดยระบบ" · หัวแจ้งเตือน job "ขาดตอน (แถวก่อนหน้าถูกลบหรือถูกแก้)" · `verify-hash-chain` endpoint ต้อง `CompanySettings.Edit` + ปฏิเสธ API key ·
   _ที่มา: `Timestamp` เป็น `timestamp without time zone` ⇒ อ่านกลับ `Kind=Unspecified` ความละเอียดไมโครวินาที ⇒ สูตรเดิม (`"O"`) ตรวจไม่ผ่าน
-  **ทุกแถวของทุกบริษัท** · `AuditTrailController` มี canonical สำเนาที่สองของตัวเอง_ · ⚠️ เทสต์ `AuditHashChainTests` **จำลอง** การอ่านกลับ ไม่ผ่าน
-  PostgreSQL จริง · สองเครื่องเขียนพร้อมกันยังได้ fork (serialize การประทับ = คำถามเจ้าของ) · `AuditLogs.Add(...)` ตรงยังเหลือหลายจุด (นอก chain)
+  **ทุกแถวของทุกบริษัท** · `AuditTrailController` มี canonical สำเนาที่สองของตัวเอง_
+- **รอบ 201 ทีม PL — serialize + เทสต์ฐานจริง + watermark** (คำตัดสินข้อ 32/33 · A-PL1..4):
+  `AddChainedAuditLog(row)` **ไม่ประทับตอน Add แล้ว** (อ่านปลาย chain นอกล็อก = แตกกิ่ง) — `SaveChanges/SaveChangesAsync` ถอดแถว audit ที่รอบันทึก
+  (`DetachPendingAuditRows` · รวมแถวที่ยัง `AuditLogs.Add` ตรง) → บันทึกข้อมูลหลัก → `pg_advisory_xact_lock(AdvisoryLockKey.AuditChain ต่อบริษัท · เรียงคีย์)` →
+  `ApplyAuditHashChain` (ResolveTip + Seal) → บันทึกแถว audit · ไม่มีธุรกรรม ⇒ เปิดธุรกรรมสั้นเอง (ข้อมูลหลัก + audit atomic) · มีธุรกรรมของผู้เรียก ⇒ ล็อกถือจน commit
+  (งานเขียนของบริษัทเดียวกันต่อคิวตั้งแต่ SaveChanges แรกที่มีแถว audit · ล็อก audit มาหลังล็อกเอกสาร/เลข JE ของคำสั่งเดียวกัน) · บันทึกล้ม ⇒ คืนแถว audit เป็น Added
+  แล้วโยนต่อ · เทสต์ฐานจริง `Accounting.Tests/Db/AuditChainDbTests` (trait `Category=Db` · job CI `db-test` มี `postgres:16` · 8 คำขอพร้อมกัน ⇒ fork 0 ·
+  ทิศตรงข้าม: เขียน SQL ตรงนอกล็อก ⇒ ตัวตรวจเห็น fork 1) · `AuditChainVerifyJob` ตรวจต่อจาก watermark ต่อบริษัท (`AuditChainCheckpoints` ·
+  `Helpers/AuditChainCheckpointPolicy` — ตรวจเต็มเมื่อไม่มี checkpoint/ครบ 28 วัน/รอบก่อนพบปัญหา · พบถูกแก้/ขาดตอน ⇒ ไม่ขยับ watermark) · ตรวจเป็นช่วงใช้
+  `AuditHashChain.ExternalParents` → ค้นในฐานว่ามีจริง → `Analyze(rows, anchors)` · `AuditLogs.Add` ตรงเหลือเฉพาะไฟล์ทีมอื่น ratchet ใน
+  `tools/audit_direct_add_check.py` (baseline 38 จุด/9 ไฟล์ · ห้ามเพิ่ม)
 - write จุดสำคัญ: Create, Update (Draft), Approve, Void, Payment,
   WHT cert issue, e-Tax submission, DSR access
 - **งานทำลายหลักฐานปฏิเสธ API key ทุกชนิด** (`[RejectApiKey]` → `OwnerActionGuard.DenyResult` · 403 `OWNER-ACTION-NO-API-KEY` · ต้องทำบนเว็บ):

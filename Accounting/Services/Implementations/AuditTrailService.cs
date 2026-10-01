@@ -100,18 +100,34 @@ public class AuditTrailService : IAuditTrailService
     /// <summary>Re-compute RowHash ของแต่ละ row เรียงตาม Id + เทียบกับ
     /// stored hash. ถ้ามี mismatch = chain ถูก tamper (แก้/แทรก/ลบหลัง insert).
     /// สูตรอยู่ที่ <c>Helpers/AuditHashChain</c> ตัวเดียว (v2 = round-trip ผ่าน PostgreSQL ได้ · v1 ตรวจแบบ legacy)</summary>
-    public async Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId)
+    public async Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId, long afterId = 0)
     {
         // เรียงตาม Id = ลำดับเดียวกับที่ฝั่งเขียนหา hash ก่อนหน้า (เดิมเรียง Timestamp ก่อน — เวลาข้ามเครื่องไม่ตรงกัน
         // ⇒ ลำดับไม่ตรงลำดับเขียน ⇒ ฟ้องว่าถูกแก้ทั้งที่ไม่มีใครแตะ)
         var rows = await _db.AuditLogs.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.RowHash != null)
+            .Where(a => a.CompanyId == companyId && a.RowHash != null && a.Id > afterId)
             .OrderBy(a => a.Id)
             .ToListAsync();
+        // รอบ 201 ทีม PL (A-PL3): ตรวจเป็นช่วง ⇒ parent ที่อยู่ก่อนช่วงต้อง "มีอยู่จริงในฐานของบริษัทนี้" จึงนับเป็นจุดยึด —
+        // ค้นจริงทีละชุด ไม่ส่งชุดที่แถวอ้างเป็นจุดยึดตรง ๆ (= ปิดการตรวจขาดตอน)
+        List<string>? anchors = null;
+        if (afterId > 0)
+        {
+            var outside = Accounting.Helpers.AuditHashChain.ExternalParents(rows);
+            anchors = new List<string>();
+            foreach (var chunk in outside.Chunk(500))
+            {
+                var hashes = chunk.ToList();
+                anchors.AddRange(await _db.AuditLogs.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.Id <= afterId && a.RowHash != null && hashes.Contains(a.RowHash!))
+                    .Select(a => a.RowHash!)
+                    .ToListAsync());
+            }
+        }
         // ใช้ฟังก์ชันกลางตัวเดียวกับฝั่งเขียน (Helpers/AuditHashChain — v2 + ตรวจแถว v1 แบบ legacy) —
         // ห้ามเขียน format string ซ้ำที่นี่ เดิมทำแบบนั้นแล้ว drift จนตรวจไม่มีวันผ่าน ·
         // รอบสอง W2-C1: แยก "ถูกแก้" / "ขาดตอน" / "แตกกิ่งจากคำขอพร้อมกัน" และรายงานทุกแถว ไม่ใช่แค่แถวแรก
-        var a = Accounting.Helpers.AuditHashChain.Analyze(rows);
+        var a = Accounting.Helpers.AuditHashChain.Analyze(rows, anchors);
         var first = a.Tampered.Concat(a.Dangling).OrderBy(r => r.Id).FirstOrDefault();
         return new AuditChainVerifyResult(
             rows.Count,
@@ -124,7 +140,8 @@ public class AuditTrailService : IAuditTrailService
             a.ForkCount,
             a.Tampered.Select(r => r.Id.ToString()).ToList(),
             a.Dangling.Select(r => r.Id.ToString()).ToList(),
-            Accounting.Helpers.AuditHashChain.AlertMessage(a));
+            Accounting.Helpers.AuditHashChain.AlertMessage(a),
+            rows.Count == 0 ? 0 : rows[^1].Id);
     }
 
     // ===== Static helper for SaveChanges audit logging =====

@@ -15,7 +15,9 @@ public interface IAuditTrailService
     /// หลัง insert) — list ว่าง = chain ปลอดภัย. ใช้โดย background job
     /// ตรวจรายสัปดาห์ + เรียกตอน RD/DBD audit เพื่อพิสูจน์ตามมาตรฐาน
     /// พ.ร.บ.บัญชี ม.11 ทวิ (เก็บข้อมูลอิเล็กทรอนิกส์).</summary>
-    Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId);
+    /// <param name="afterId">รอบ 201 ทีม PL (A-PL3): &gt; 0 = ตรวจเฉพาะแถว Id มากกว่านี้ (ต่อจาก watermark ของงานตรวจ ·
+    /// parent ก่อนช่วงต้องมีอยู่จริงในฐาน) · 0 = ทั้งบริษัท (พฤติกรรมเดิม)</param>
+    Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId, long afterId = 0);
 }
 
 /// <summary>ผลตรวจ hash chain — <c>IsValid</c> = ไม่มีหลักฐานการแก้/ลบ (fork จากคำขอพร้อมกันไม่นับ — รายงานแยกใน
@@ -32,4 +34,5 @@ public record AuditChainVerifyResult(
     int ForkCount = 0,
     IReadOnlyList<string>? TamperedLogIds = null,
     IReadOnlyList<string>? DanglingLogIds = null,
-    string? AlertMessage = null);
+    string? AlertMessage = null,
+    long LastRowId = 0);

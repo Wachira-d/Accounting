@@ -893,7 +893,7 @@ public class AdminController : ControllerBase
             target.Id, target.Email, target.FullName, adminId, config, 15);
 
         // audit ทุกครั้ง (platform action) — เพื่อ trace ว่าใครเข้าดูบริษัทไหน เมื่อไร
-        _db.AuditLogs.Add(new Models.Entities.AuditLog
+        _db.AddChainedAuditLog(new Models.Entities.AuditLog
         {
             CompanyId = companyId,
             UserId = adminId,
@@ -3128,7 +3128,7 @@ public class AdminController : ControllerBase
 
     private async Task LogAuditAsync(Guid? companyId, string action, string details, string? entityId = null)
     {
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             UserId = JwtHelper.GetUserIdFromClaims(User),

@@ -453,7 +453,7 @@ public class MeteringAdminController : ControllerBase
         sub.QuotaRewardBlocked = req.Blocked;
         sub.UpdatedAt = DateTime.UtcNow;
         sub.UpdatedBy = User.Identity?.Name;
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = req.CompanyId,
             Action = AuditAction.Update,

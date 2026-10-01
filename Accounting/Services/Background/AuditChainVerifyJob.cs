@@ -13,6 +13,8 @@ namespace Accounting.Services.Background;
 /// (เก็บข้อมูลอิเล็กทรอนิกส์ที่ตรวจสอบได้).
 ///
 /// Schedule: ทุก 7 วัน (defer first run 5 นาทีเพื่อให้ EF + migrations พร้อม).
+/// รอบ 201 ทีม PL (A-PL3): ตรวจต่อจาก watermark ต่อบริษัท (<c>AuditChainCheckpoint</c>) ไม่โหลดทั้งตารางทุกรอบ ·
+/// ตรวจเต็มทุก 28 วัน (<c>Helpers/AuditChainCheckpointPolicy</c>).
 /// Idempotent: ตรวจไม่แก้ข้อมูล. Notification ส่งเฉพาะตอนเจอ tamper
 /// — สุขภาพดีก็เงียบ.</summary>
 public class AuditChainVerifyJob : BackgroundService
@@ -71,7 +73,31 @@ public class AuditChainVerifyJob : BackgroundService
             if (ct.IsCancellationRequested) return;
             try
             {
-                var result = await audit.VerifyHashChainAsync(companyId);
+                // รอบ 201 ทีม PL (A-PL3 · team-R H-2): watermark ต่อบริษัท — ตรวจต่อจากแถวสุดท้ายที่ผ่าน · ตรวจเต็มทุก 28 วัน /
+                // เมื่อรอบก่อนพบปัญหา · พบถูกแก้/ขาดตอน = ไม่ขยับ watermark (แจ้งซ้ำรอบหน้า — ล้มดัง ไม่เงียบ)
+                // ตัวตัดสินช่วง/การขยับมีที่เดียว: Helpers/AuditChainCheckpointPolicy
+                var checkpoint = await db.AuditChainCheckpoints.FirstOrDefaultAsync(c => c.CompanyId == companyId, ct);
+                var now = DateTime.UtcNow;
+                var plan = Accounting.Helpers.AuditChainCheckpointPolicy.Decide(
+                    checkpoint?.LastVerifiedId, checkpoint?.LastFullVerifiedAt, checkpoint?.LastFindingCount ?? 0, now);
+                var result = await audit.VerifyHashChainAsync(companyId, plan.AfterId);
+                var next = Accounting.Helpers.AuditChainCheckpointPolicy.Advance(
+                    plan, checkpoint?.LastVerifiedId, checkpoint?.LastFullVerifiedAt, result.LastRowId,
+                    result.TamperedCount + result.DanglingCount, now);
+                if (checkpoint == null)
+                {
+                    checkpoint = new Accounting.Models.Entities.AuditChainCheckpoint { CompanyId = companyId };
+                    db.AuditChainCheckpoints.Add(checkpoint);
+                }
+                checkpoint.LastVerifiedId = next.LastVerifiedId;
+                checkpoint.LastFullVerifiedAt = next.LastFullVerifiedAt;
+                checkpoint.LastFindingCount = next.FindingCount;
+                checkpoint.LastForkCount = result.ForkCount;
+                checkpoint.LastRunAt = now;
+                await db.SaveChangesAsync(ct);
+                _logger.LogInformation(
+                    "Audit chain {CompanyId}: {Mode} after #{After} — {Rows} rows · watermark #{Watermark} ({Reason})",
+                    companyId, plan.Mode, plan.AfterId, result.TotalRows, next.LastVerifiedId, plan.Reason);
                 if (result.ForkCount > 0)
                 {
                     // แตกกิ่งจากคำขอพร้อมกัน (ฝ่ายค้านรอบ 193 รอบสอง W2-C1) — ไม่ใช่หลักฐานการแก้ ⇒ ไม่แจ้งลูกค้าว่า "ถูกแก้"

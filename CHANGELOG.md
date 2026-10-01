@@ -4048,3 +4048,13 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 1 — audit hash chain เป็น control จริง (BACKLOG §1.3 A-PL1..A-PL4 · คำตัดสินข้อ 32/33 · รายงาน `erp-review/2026-10-01/team-PL.md`):
+- **A-PL1** `AccountingDbContext.SaveChanges/SaveChangesAsync` ประทับแถว audit (จาก ChangeTracker + ที่ Add ตรง/`AddChainedAuditLog`) หลัง `pg_advisory_xact_lock`
+  ต่อบริษัท (`AdvisoryLockKey.AuditChain` · เรียงคีย์) · ไม่มีธุรกรรม ⇒ เปิดเอง · `AddChainedAuditLog` ไม่ประทับตอน Add อีก · บันทึกล้มคืนแถว audit แล้วโยนต่อ
+- **A-PL2** job CI `db-test` (service `postgres:16` · `--filter Category=Db`) + `Accounting.Tests/Db/DbTestDatabase` (ทีมอื่นใช้ร่วม) · job `test` เดิมกรอง `Category!=Db`
+- **A-PL3** `AuditChainVerifyJob` ตรวจต่อจาก watermark (`AuditChainCheckpoints` · `Helpers/AuditChainCheckpointPolicy`) · `VerifyHashChainAsync(companyId, afterId)` ·
+  `AuditHashChain.Analyze(rows, anchors)` + `ExternalParents`
+- **A-PL4** `AuditLogs.Add` ตรง → `AddChainedAuditLog` ใน MeteringAdmin · Admin ×2 · AuditMiddleware · AddOnPurchase · WithholdingTaxCert · Quota ·
+  checker ใหม่ `tools/audit_direct_add_check.py` (ratchet baseline 38 จุด/9 ไฟล์ของทีมอื่น + negative test ในตัว)
+- required_call_site: ปรับ 3 แถวรอบ 193 (AddChainedAuditLog/SaveChanges/SaveChangesAsync) + เพิ่ม 5 แถว — commit <pending>)_

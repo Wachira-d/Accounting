@@ -156,4 +156,9 @@ public static class AdvisoryLockKey
     /// (รอบ 200 · คำตัดสินข้อ 19 · K-5): หน้าเว็บอัปโหลด 3 ไฟล์พร้อมกัน ⇒ ใบ Makro 00005 สองใบได้แถวสาขาซ้ำ เพราะไม่มี unique index
     /// (ตั้งใจไม่เพิ่มจนกว่าข้อมูลซ้ำเดิมจะถูกจัดการ) — ล็อกต่อ "นิติบุคคล" (ไม่ใช่ต่อสาขา) เพราะแถวสาขาใหม่ถูกตัดสินจากแถวทุกสาขาของเลขนั้น</summary>
     public const string OcrContactCreate = "ocr-contact-create";
+
+    /// <summary>ต่อ audit hash chain ของบริษัท — part = "" (รอบ 201 ทีม PL · A-PL1 · คำตัดสินข้อ 32): สองคำขอพร้อมกันอ่านปลาย chain
+    /// เดียวกันแล้วประทับ PrevHash เดียวกัน = แตกกิ่ง ⇒ ถือ <c>pg_advisory_xact_lock</c> ตั้งแต่อ่านปลาย chain จนธุรกรรมจบ ·
+    /// ผู้ใช้คีย์นี้มีที่เดียว: <c>AccountingDbContext.SaveChanges/SaveChangesAsync</c> (ล็อกท้ายสุดของคำสั่ง — หลังล็อกเอกสาร/เลข JE)</summary>
+    public const string AuditChain = "audit-chain";
 }

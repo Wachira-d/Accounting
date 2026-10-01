@@ -5199,3 +5199,16 @@ Unit (สองทิศทุกไฟล์ — ใบที่พังกล
 | PR1-12 | ✏️ แก้ยอดรายคนเดิม (regression) — แก้โบนัสโดยไม่กรอกภาษี / แก้ฐาน ปกส. / แก้แค่หักอื่น ๆ | ข้อความ/ผลลัพธ์เหมือนก่อนรอบนี้ทุกกรณี (ตรรกะย้ายไป `PayrollDetailAmounts` คำต่อคำ) |
 | PR1-13 | กด "คำนวณใหม่" รอบในระบบที่มีพนักงานลาออกกลางเดือน (regression D-S2) | ยังอยู่ในรอบ (เงื่อนไขย้ายไป `PayrollEmployeeEligibility.InPeriod`) |
 | PR1-14 | ผู้ใช้ไม่มีสิทธิ์ `PayrollRun` เรียก `POST/DELETE runs/{id}/employees` | 403 ข้อความไทย |
+
+## รอบ 201 ทีม PL — Platform/Audit/Security/Tools (`erp-review/2026-10-01/team-PL.md`)
+
+| เทสต์ (xUnit) | ข้อ | ล็อกอะไร |
+|---|---|---|
+| `Db/AuditChainDbTests` (3 · trait `Category=Db` · รันใน job CI `db-test`) | A-PL1 · A-PL2 | 8 context เขียนพร้อมกันบน PostgreSQL จริง ⇒ chain เดียว fork 0 · ถูกแก้ 0 หลัง round-trip · `AuditLogs.Add` ตรงถูกประทับด้วย · ทิศตรงข้าม: SQL ตรงนอกล็อกผูกปลายเดียวกัน ⇒ ตัวตรวจเห็น fork 1 |
+| `AuditChainCheckpointTests` (7) | A-PL3 | ไม่มี checkpoint/ครบ 28 วัน/รอบก่อนพบปัญหา ⇒ ตรวจเต็ม · พบปัญหา ⇒ watermark ไม่ขยับ · ช่วงที่มี anchor พิสูจน์แล้วสะอาด · ไม่มี anchor ⇒ ยังเห็นขาดตอน · Analyze ไม่ส่ง anchors = พฤติกรรมเดิม |
+
+| ID | ขั้นตอน | ผลที่คาด |
+|---|---|---|
+| PL-01 | สองแท็บอนุมัติ/แก้เอกสารของบริษัทเดียวกันพร้อมกัน แล้วกด "ตรวจ hash chain" | ผ่าน · ไม่มี fork ใหม่ (แถวก่อนรอบ 201 อาจมี fork เดิม — ไม่ใช่หลักฐานการแก้) |
+| PL-02 | job ตรวจ chain รอบที่สองของบริษัทที่ผ่านแล้ว | log `Incremental after #<watermark>` · ตรวจเฉพาะแถวใหม่ · ครบ 28 วันกลับไปตรวจเต็ม |
+| PL-03 | แก้แถว audit เก่ากว่า watermark ด้วย SQL แล้วรอรอบตรวจเต็ม | แจ้งเตือน "ถูกแก้" · watermark ไม่ขยับ · รอบถัดไปตรวจเต็มและแจ้งซ้ำ |

@@ -133,11 +133,17 @@ public static class AuditHashChain
 
     /// <summary><b>ฝั่งตรวจทั้ง chain ตัวเดียว</b> (service · job · endpoint) — แถวที่ส่งมาต้องเป็นของบริษัทเดียวและมี RowHash
     /// (แถวนอก chain ให้ผู้เรียกนับแยก) · ลำดับที่ส่งมาใช้แค่เรียงรายงาน</summary>
-    public static ChainAnalysis Analyze(IReadOnlyList<AuditLog> rows)
+    /// <param name="anchors">รอบ 201 ทีม PL (A-PL3): ตรวจเป็นช่วง (หลัง watermark) — hash ของแถว<b>ก่อนช่วง</b>ที่ผู้เรียกค้นแล้วว่า<b>มีอยู่จริง
+    /// ในฐานของบริษัทเดียวกัน</b> (จาก <see cref="ExternalParents"/>) · null = ตรวจทั้ง chain (พฤติกรรมเดิม) · parent ที่ไม่อยู่ทั้งในช่วงและใน
+    /// anchors = ขาดตอนเหมือนเดิม · fork ข้ามขอบช่วง (แถวก่อนช่วงกับแถวในช่วงชี้ parent เดียวกัน) ไม่ถูกนับ — fork ไม่ใช่หลักฐานการแก้</param>
+    public static ChainAnalysis Analyze(IReadOnlyList<AuditLog> rows, IEnumerable<string>? anchors = null)
     {
         var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
             if (!string.IsNullOrEmpty(r.RowHash)) known.Add(r.RowHash);
+        if (anchors != null)
+            foreach (var h in anchors)
+                if (!string.IsNullOrEmpty(h)) known.Add(h);
         var tampered = new List<AuditLog>();
         var dangling = new List<AuditLog>();
         var children = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -151,6 +157,19 @@ public static class AuditHashChain
         }
         var forks = children.Values.Where(c => c > 1).Sum(c => c - 1);
         return new ChainAnalysis(rows.Count, tampered, dangling, forks);
+    }
+
+    /// <summary>PrevHash ที่แถวในช่วงชี้ไปแต่ไม่มีแถวในช่วงถืออยู่ — ผู้เรียกต้องค้นว่ามีในฐาน (บริษัทเดียวกัน) จริงก่อนส่งเป็น anchors ให้
+    /// <see cref="Analyze"/> (รอบ 201 ทีม PL · A-PL3) · ห้ามส่งชุดนี้เป็น anchors ตรง ๆ โดยไม่ค้น = ปิดการตรวจ "ขาดตอน" ทิ้ง</summary>
+    public static IReadOnlyList<string> ExternalParents(IReadOnlyList<AuditLog> rows)
+    {
+        var held = new HashSet<string>(rows.Where(r => !string.IsNullOrEmpty(r.RowHash)).Select(r => r.RowHash!),
+            StringComparer.OrdinalIgnoreCase);
+        return rows.Select(r => r.PrevHash)
+            .Where(h => !string.IsNullOrEmpty(h) && !held.Contains(h!))
+            .Select(h => h!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>ข้อความแจ้งเตือนถึงบริษัท — <b>ตามสาเหตุที่ตรวจพบจริง</b> (null = ไม่มีอะไรต้องแจ้ง · fork อย่างเดียวไม่แจ้ง)
