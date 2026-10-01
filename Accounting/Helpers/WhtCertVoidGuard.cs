@@ -30,6 +30,26 @@ public static class WhtCertVoidGuard
             + $"ยกเลิกในระบบไม่ได้ · ถ้าหักผิด ให้ยื่น {form} เพิ่มเติม (หรือขอคืนตามขั้นตอนของกรมสรรพากร) แล้วบันทึกรายการปรับปรุงในงวดปัจจุบัน";
     }
 
+    /// <summary>ตัวตัดสินเต็ม (pure) — รายงานภาษีที่ประกาศว่ายื่น (ทั้งงวด) <b>หรือ</b> ใบนี้อยู่ในการนำส่งของงวด · null = ยกเลิกได้
+    ///
+    /// <para>รอบ 201 ฝ่ายค้านรอบสาม PR2 (P1-1): บันทึกนำส่ง (<c>StatutoryRemittance</c>) นับเฉพาะใบที่ออก<b>ก่อนหรือพร้อม</b>เวลาบันทึกนำส่ง
+    /// (<see cref="RemittanceInclusion"/>) — ใบที่ออกหลังนำส่ง (PV ลงวันที่ย้อนเข้างวดที่นำส่งแล้ว) ยังไม่อยู่ในเงินที่นำส่ง
+    /// (หน้านำส่งนับเป็นยอดค้าง) ⇒ ยกเลิกได้ · เดิมนับทั้งงวด ⇒ ยกเลิกไม่ได้และข้อความสั่ง “ยื่นเพิ่มเติม” ซึ่งผิด</para></summary>
+    /// <param name="remittedAtUtc">เวลาบันทึกการนำส่งล่าสุดของแบบ+งวดนั้น (null = ยังไม่นำส่ง)</param>
+    /// <param name="certCountedAtUtc">เวลาที่ใบนับเข้ายอด (<see cref="RemittanceInclusion.CertCountedAt"/>)</param>
+    public static string? Reason(WithholdingTaxCertStatus status, string? certNumber, TaxType formType, int year, int month,
+        bool periodDeclaredOrFiled, DateTime? remittedAtUtc, DateTime certCountedAtUtc)
+    {
+        if (Reason(status, certNumber, formType, year, month, periodDeclaredOrFiled) is string declared) return declared;
+        if (!WhtCertFilingScope.Filed.Contains(status) || remittedAtUtc is not DateTime remittedAt
+            || !RemittanceInclusion.Includes(remittedAt, certCountedAtUtc)) return null;
+        var form = FormLabel(formType);
+        return $"หนังสือรับรองหัก ณ ที่จ่าย {certNumber} อยู่ในการนำส่ง {form} เดือน {month:00}/{year + 543} ณ วันที่ "
+            + $"{RemittanceInclusion.ThaiStamp(remittedAt)} — ยอดของใบนี้ชำระกรมสรรพากรแล้วและผู้ถูกหักถือฉบับจริงไปแล้ว ยกเลิกในระบบไม่ได้ · "
+            + $"ถ้าหักผิด ให้ยื่น {form} เพิ่มเติม (หรือขอคืนตามขั้นตอนของกรมสรรพากร) แล้วบันทึกรายการปรับปรุงในงวดปัจจุบัน · "
+            + "ถ้าบันทึกการนำส่งงวดนี้ผิด ให้ผู้ดูแลระบบยกเลิกรายการนำส่งนั้นก่อน (ระบบยังไม่มีปุ่มยกเลิกการนำส่งบนหน้าจอ)";
+    }
+
     /// <summary>ตรวจหนังสือรับรองชุดหนึ่ง (ของบริษัทนี้) — คืนเหตุผลข้อแรกที่ห้ามยกเลิก หรือ null</summary>
     public static async Task<string?> CheckAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> certIds,
         CancellationToken ct = default)
@@ -38,7 +58,7 @@ public static class WhtCertVoidGuard
         var ids = certIds.ToList();
         var certs = await db.WithholdingTaxCerts.AsNoTracking()
             .Where(w => w.CompanyId == companyId && ids.Contains(w.Id) && WhtCertFilingScope.Filed.Contains(w.Status))
-            .Select(w => new { w.CertificateNumber, w.Status, w.TaxFormType, w.TaxYear, w.TaxMonth })
+            .Select(w => new { w.CertificateNumber, w.Status, w.TaxFormType, w.TaxYear, w.TaxMonth, w.IssuedDate, w.CreatedAt })
             .ToListAsync(ct);
         if (certs.Count == 0) return null;
         var years = certs.Select(c => c.TaxYear).Distinct().ToList();
@@ -49,18 +69,24 @@ public static class WhtCertVoidGuard
             .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
         // รอบ 201 ฝ่ายค้าน PR2 (P1-a): บันทึกการนำส่ง ภ.ง.ด. ของงวด (StatutoryRemittance) = ยื่นแบบพร้อมชำระแล้ว — หลักฐานชุดเดียวกับ
         // ด่านยกเลิก/แก้ยอดรอบเงินเดือน (เดิมเห็นแต่รายงานภาษีที่ประกาศว่ายื่น ⇒ นำส่งแล้วแต่ไม่ได้ประกาศ = ยกเลิก 50 ทวิ ได้)
+        // ★ ฝ่ายค้านรอบสาม (P1-1): นับเฉพาะใบที่ออกก่อนเวลาบันทึกนำส่ง (RemittanceInclusion) · (P2-5) รวม ภ.ง.ด.54
         var remitted = await db.StatutoryRemittances.AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted && years.Contains(r.PeriodYear)
-                && (r.RemittanceType == "WhtPnd1" || r.RemittanceType == "WhtPnd3" || r.RemittanceType == "WhtPnd53"))
-            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth })
+                && (r.RemittanceType == "WhtPnd1" || r.RemittanceType == "WhtPnd3" || r.RemittanceType == "WhtPnd53"
+                    || r.RemittanceType == "WhtPnd54"))
+            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth, r.CreatedAt })
             .ToListAsync(ct);
-        foreach (var r in remitted)
-            if (RemittanceForm(r.RemittanceType) is TaxType form)
-                filed.Add((form, r.PeriodYear, r.PeriodMonth));
+        var remittedAt = RemittanceInclusion.LatestByPeriod(remitted
+            .Where(r => RemittanceForm(r.RemittanceType) != null)
+            .Select(r => ((RemittanceForm(r.RemittanceType)!.Value, r.PeriodYear, r.PeriodMonth), r.CreatedAt)));
         foreach (var c in certs)
+        {
+            DateTime? periodRemittedAt = remittedAt.TryGetValue((c.TaxFormType, c.TaxYear, c.TaxMonth), out var at) ? (DateTime?)at : null;
             if (Reason(c.Status, c.CertificateNumber, c.TaxFormType, c.TaxYear, c.TaxMonth,
-                    filed.Contains((c.TaxFormType, c.TaxYear, c.TaxMonth))) is string why)
+                    filed.Contains((c.TaxFormType, c.TaxYear, c.TaxMonth)),
+                    periodRemittedAt, RemittanceInclusion.CertCountedAt(c.IssuedDate, c.CreatedAt)) is string why)
                 return why;
+        }
         return null;
     }
 
@@ -80,6 +106,8 @@ public static class WhtCertVoidGuard
         "WhtPnd1" => TaxType.WithholdingTax1,
         "WhtPnd3" => TaxType.WithholdingTax3,
         "WhtPnd53" => TaxType.WithholdingTax53,
+        // ฝ่ายค้านรอบสาม PR2 (P2-5): ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70) มี 50 ทวิ และมีบันทึกนำส่ง — เดิมหลุด (FormLabel รองรับอยู่แล้ว)
+        "WhtPnd54" => TaxType.WithholdingTax54,
         _ => null,
     };
 

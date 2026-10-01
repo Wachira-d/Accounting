@@ -3394,6 +3394,32 @@ RULES += [
          why="PR2 P2-d: ปันต้นทุนล็อกแถวรอบก่อนอ่าน (ลำดับเดียวกับยกเลิก/แก้ยอด) — ปันซ้อนกับยกเลิกรอบไม่ได้"),
 ]
 
+# ── รอบ 201 ทีม PR2 ฝ่ายค้านรอบสาม (P1-1 นำส่งนับเฉพาะของที่เกิดก่อนนำส่ง · P2-1 ล้าง context หลังย้อนธุรกรรมใบ · P2-5 ภ.ง.ด.54) ──
+_PR2_WHY_CUTOFF = ("PR2 P1-1: บันทึกนำส่งเป็นหลักฐาน 'ยื่นแล้ว' เฉพาะใบ/รอบที่เกิดก่อนเวลาบันทึกนำส่ง (Helpers/RemittanceInclusion ตัวเดียว) — "
+                   "นับทั้งงวด = ใบที่ออกหลังนำส่ง (ยังค้างนำส่ง) ยกเลิกไม่ได้ · รอบที่ยกเลิกแล้วสร้างใหม่ถูกล็อกทันที")
+RULES += [
+    dict(file="Helpers/WhtCertVoidGuard.cs", method="CheckAsync",
+         must=["RemittanceInclusion.LatestByPeriod(", "RemittanceInclusion.CertCountedAt(c.IssuedDate, c.CreatedAt)", "r.CreatedAt"],
+         must_lit=['r.RemittanceType == "WhtPnd54"'],
+         forbid=["filed.Add((form"],
+         why=_PR2_WHY_CUTOFF + " · P2-5 ภ.ง.ด.54 มี 50 ทวิ และบันทึกนำส่ง"),
+    dict(file="Helpers/WhtCertVoidGuard.cs", method="Reason#1",
+         must=["RemittanceInclusion.Includes(", "WhtCertFilingScope.Filed.Contains(status)"],
+         must_lit=["RemittanceInclusion.ThaiStamp(remittedAt)"],   # อยู่ในรูของสตริง interpolate (ถูก mask)
+         why=_PR2_WHY_CUTOFF + " · ข้อความแยก 'อยู่ในการนำส่ง ณ วันที่'"),
+    dict(file=PAYROLL, method="LoadRecalculateLockEvidenceAsync#0",
+         must=["RemittanceInclusion.LatestByPeriod(", "RemittanceInclusion.Includes(", "run.CreatedAt", "r.CreatedAt"],
+         forbid=["pnd1Remitted.Any("],
+         why=_PR2_WHY_CUTOFF),
+    dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync#0",
+         must_re=[r"if\s*\(\s*certTx\s*!=\s*null\s*\)\s*\{\s*await\s+certTx\s*\.\s*RollbackAsync\(\)\s*;\s*_db\s*\.\s*ChangeTracker\s*\.\s*Clear\(\)\s*;"
+                  r"\s*\}\s*_logger\?\s*\.\s*LogError\([^;]*;\s*await\s+NotifyRunAsync\(",
+                  r"CurrentTransaction\s*!=\s*null\s*\)\s*await\s+certTx\s*\.\s*RollbackAsync\(\)\s*;\s*_db\s*\.\s*ChangeTracker\s*\.\s*Clear\(\)\s*;"
+                  r"\s*\}\s*_logger\?\s*\.\s*LogError\([^;]*;\s*await\s+NotifyRunAsync\("],
+         why="PR2 P2-1: ย้อนธุรกรรมออกใบแล้วต้องล้าง ChangeTracker ก่อนแจ้งเตือน (NotificationEngine SaveChanges บน context เดียวกัน "
+             "⇒ ใบ/บรรทัดที่ค้างถูกเขียนนอกธุรกรรม = ใบครึ่งชุด) · ทั้งสอง catch"),
+]
+
 # ── รอบ 201 ทีม PL (Platform/Audit/Security/Tools) — A-PL3 watermark งานตรวจ chain · (บล็อกนี้ทีม PL ต่อท้ายเอง) ──
 RULES += [
     dict(file=AUDIT_JOB, method="RunCycleAsync",

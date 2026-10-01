@@ -4334,3 +4334,10 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 6 — ฝ่ายค้าน�
 - **P2-2** `OwnershipTransferPolicy.InvitationRoleBlock` ที่ `InvitationController.Accept` และ `AuthService.ConsumeInvitationAsync`
 - เทสต์ `PlatformRound201Rv3Tests` · `Db/AuditChainCommitDbTests` +2 · required_call_site ปรับ 4 + เพิ่ม 5 แถว — commit adf19a87)_
 
+_2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสาม (P1-1 · P2-1 · P2-5)
+- **P1-1** `Helpers/RemittanceInclusion` (ตัวตัดสินเดียว): บันทึกนำส่ง ภ.ง.ด. นับเป็น "ยื่นแล้ว" เฉพาะของที่เกิดก่อนหรือพร้อมเวลาบันทึกนำส่งล่าสุดของงวด ·
+  `WhtCertVoidGuard.CheckAsync` เทียบ `IssuedDate ?? CreatedAt` ของใบ ⇒ ใบที่ออกหลังนำส่ง (PV ลงวันที่ย้อน) ยกเลิกได้ · ข้อความแยก "อยู่ในการนำส่ง … ณ วันที่ …" ·
+  `LoadRecalculateLockEvidenceAsync` เทียบ `PayrollRun.CreatedAt` ⇒ รอบที่สร้างหลังนำส่งไม่ถูกล็อกทันที · รายงานภาษีที่ประกาศว่ายื่นยังล็อกทั้งงวด
+- **P2-1** ออก 50 ทวิ ภ.ง.ด.1 ล้มแล้วย้อนธุรกรรมของตัวเอง ⇒ `_db.ChangeTracker.Clear()` ก่อนแจ้งเตือน (ทั้งสอง catch)
+- **P2-5** `RemittanceForm` + query รวม `WhtPnd54` → ภ.ง.ด.54
+- เทสต์ `RemittanceInclusionTests` · `PayrollPnd1CertsTests` +WhtPnd54 · required_call_site +4 แถว — commit 9e51756e)_

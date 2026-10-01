@@ -44,6 +44,7 @@ public class PayrollPnd1CertsTests
     [InlineData("WhtPnd1", TaxType.WithholdingTax1)]
     [InlineData("WhtPnd3", TaxType.WithholdingTax3)]
     [InlineData("WhtPnd53", TaxType.WithholdingTax53)]
+    [InlineData("WhtPnd54", TaxType.WithholdingTax54)]   // ฝ่ายค้านรอบสาม P2-5 — เดิมหลุด
     public void การนำส่งภงด_แมปเป็นแบบของหนังสือรับรอง(string type, TaxType form)
         => Assert.Equal(form, WhtCertVoidGuard.RemittanceForm(type));
 

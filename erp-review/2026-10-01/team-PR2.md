@@ -18,3 +18,23 @@
 **คำถามค้าง**: (1) ขยาย `WhtCertVoidGuard` ให้นับการนำส่ง ภ.ง.ด.3/53 ด้วย (ตามหลักเดียวกัน) — กระทบเส้นยกเลิกเอกสาร/รอบโอนของทีมอื่น ⇒ main agent ควรยืนยัน ·
 (2) ยังไม่มีปุ่ม "ยกเลิกรายการนำส่ง" บนหน้าจอ — ทางปลดของแหล่งนี้ต้องผ่านผู้ดูแลระบบ · (3) ล็อกแถวรอบกันชนเลขภายในรอบเดียว — สองรอบของเดือนเดียวกันที่ออกใบพร้อมกัน
 (รอบเก่าถูกยกเลิกแล้วโดยปกติ) ยังชน unique ได้ในทางทฤษฎี ⇒ ล้มดังผ่าน catch เดิม
+
+# รอบ 201 ทีม PR2 — แก้ผลฝ่ายค้านรอบสาม (คอมมิต c5fefbc6 · merge 2c8e64d8) — แก้ที่ `9e51756e`
+
+**ยังไม่ได้คอมไพล์/รันเทสต์ในเครื่องนี้** (ไม่มี .NET SDK) — CI บน `claude/**` คือ compiler ตัวแรก
+
+| ID | สถานะ | สิ่งที่ทำ | ที่ |
+| --- | --- | --- | --- |
+| **P1-1** | ✅ | ยืนยันที่ HEAD: `WhtCertVoidGuard` นับการนำส่งทั้งงวด ขณะที่หน้านำส่งคิดยอดค้าง = ใบ − ยอดที่นำส่ง (`StatutoryRemittanceService` · ห้ามนำส่งงวดเดิมซ้ำ ⇒ ใบหลังนำส่งค้างตลอด) · แก้: `Helpers/RemittanceInclusion` (`Includes` · `CertCountedAt` · `LatestByPeriod` · `ThaiStamp`) — ใบ: `IssuedDate` (ทุกทางออกใบประทับ `UtcNow` ตอนออก) ไม่มี ⇒ `CreatedAt` · รอบ: `CreatedAt` · เวลานำส่ง = `StatutoryRemittance.CreatedAt` · ข้อความ "อยู่ในการนำส่ง ภ.ง.ด.x เดือน … ณ วันที่ dd/mm/พ.ศ. HH:mm น." แยกจากข้อความรายงานที่ประกาศว่ายื่น | `Helpers/RemittanceInclusion.cs` · `WhtCertVoidGuard.Reason` (8 อาร์กิวเมนต์) / `CheckAsync` · `PayrollService.LoadRecalculateLockEvidenceAsync` |
+| **P2-1** | ✅ | อ่านเส้นหลัง rollback: ผู้เรียกตัวเดียว `GeneratePostPaymentArtifactsAsync` ใช้ `run` แบบอ่านอย่างเดียว (`AutoGenerateFilingsAsync` query ใหม่ · อีเมลส่งแค่ id) · เส้น inline ของ `ProcessPaymentAsync` หลัง dispatch อ่านค่า + เพิ่มการแจ้งเตือนใหม่เท่านั้น ⇒ `Clear()` ปลอดภัย · ทำเฉพาะเมื่อธุรกรรมเป็นของเมธอดเอง (`certTx != null`) — มีธุรกรรมของผู้เรียกอยู่ ⇒ ไม่แตะ context ของผู้เรียก | `IssueMonthlyPnd1CertsAsync` ทั้งสอง catch |
+| **P2-5** | ✅ | `RemittanceForm("WhtPnd54") → WithholdingTax54` + query รวม `WhtPnd54` (กติกาเวลาเดียวกับ P1-1) | `WhtCertVoidGuard` |
+
+**เทสต์**: `RemittanceInclusionTests` (11 เคส สองทิศ) · `PayrollPnd1CertsTests` +`WhtPnd54` · required_call_site +4 แถว + negative 12 กรณี (ถอยไปนับทั้งงวด · เวลาใบ/รอบเป็นค่าคงที่ ·
+ตัด ภ.ง.ด.54 · ถอดตัวเทียบเวลาใน `Reason` · ถอดวันที่ในข้อความ · ถอด `Clear` ทีละ catch — ฟ้องครบ · ไฟล์จริงไม่ฟ้อง)
+
+**ความเสี่ยงคอมไพล์**: `RemittanceInclusion.LatestByPeriod` อนุมาน `TKey` จาก tuple ซ้อน `((TaxType, int, int), DateTime)` / `((int, int), DateTime)` ·
+`remittedAtUtc is not DateTime remittedAt` ในเงื่อนไข `||` แล้วใช้ต่อ (definite assignment) · `cond ? (DateTime?)x : null`
+
+**คำถามค้าง**: (1) รอบเงินเดือนไม่มีเวลา "จ่าย" ของตัวเอง ⇒ ใช้เวลาสร้างรอบ: รอบที่สร้างก่อนนำส่งแต่จ่ายหลังนำส่งยังถูกล็อก (ทิศปลอดภัย · มีทางปลดผ่านผู้ดูแล) —
+ถ้าต้องการแม่นกว่านี้ต้องเพิ่ม `PayrollRun.PaidAt` (+ migration · backfill จาก JE จ่าย) · (2) รายงานภาษีที่ "ประกาศว่ายื่น" ยังล็อกทั้งงวด (ไม่ได้อยู่ในขอบเขตข้อนี้) — ถ้าจะใช้กติกาเวลาเดียวกัน
+ต้องตัดสินว่าเวลาไหนคือเวลายื่น (`FiledAt`/`FilingLockedAt`) · (3) ใบที่ออกหลังนำส่งยังนำส่งเพิ่มไม่ได้ทางหน้าจอ (ระบบห้ามนำส่งงวดเดิมซ้ำ) — ยอดค้างจะค้างบนหน้านำส่ง

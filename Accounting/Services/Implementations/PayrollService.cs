@@ -3871,7 +3871,15 @@ public class PayrollService : IPayrollService
         }
         catch (BusinessRuleException filed) when (filed.RuleCode == "RD-50TWI-FILED")
         {
-            if (certTx != null) await certTx.RollbackAsync();
+            if (certTx != null)
+            {
+                await certTx.RollbackAsync();
+                // ★ ฝ่ายค้านรอบสาม PR2 (P2-1): ล้างแถวที่ติดตามค้างจากธุรกรรมที่ย้อนแล้ว — NotifyRunAsync (NotificationEngine) เรียก
+                //   SaveChanges บน DbContext เดียวกัน ⇒ ใบ/ผู้ติดต่อ/บรรทัดที่ Added/Modified ค้างจะถูกเขียนลง DB นอกธุรกรรม (ใบครึ่งชุด)
+                //   ปลอดภัยต่อผู้เรียก: ธุรกรรมนี้เป็นของเมธอดนี้เอง (ผู้เรียกไม่มีธุรกรรมเปิด) และผู้เรียกตัวเดียว
+                //   GeneratePostPaymentArtifactsAsync ใช้ run ต่อแบบอ่านอย่างเดียว (AutoGenerateFilingsAsync/อีเมลสลิป query ใหม่เอง)
+                _db.ChangeTracker.Clear();
+            }
             // review198-S4 S4-6: ใบเดิมอยู่ใน ภ.ง.ด.1 ที่ยื่นแล้ว — ระบบคงใบเดิมไว้ทั้งชุด · เดิมตกไป catch ทั่วไปที่บอกให้กด "สร้างเอกสารใหม่"
             // ซึ่งจะล้มด้วยเหตุเดิมทุกครั้ง ⇒ แจ้งทางไปต่อที่ตรงเหตุ (ยื่นเพิ่มเติม/ปรับปรุงงวดปัจจุบัน) · ยอดนำส่งยังนับจากใบเดิม (ไม่ถูกบล็อก)
             _logger?.LogError(filed,
@@ -3886,7 +3894,12 @@ public class PayrollService : IPayrollService
         }
         catch (Exception ex)
         {
-            if (certTx != null && _db.Database.CurrentTransaction != null) await certTx.RollbackAsync();
+            if (certTx != null)
+            {
+                if (_db.Database.CurrentTransaction != null) await certTx.RollbackAsync();
+                // ★ P2-1: เหตุเดียวกับด้านบน — ของที่ย้อนแล้ว (หรือ SaveChanges ที่ล้มกลางทาง) ห้ามค้างให้ SaveChanges ของการแจ้งเตือนเขียนซ้ำ
+                _db.ChangeTracker.Clear();
+            }
             // ⚠️ เดิมเป็น LogWarning เฉย ๆ ⇒ งวดที่ออกใบไม่สำเร็จทั้งก้อนเงียบสนิท
             // ทั้งที่ 50 ทวิ มีกำหนดตามกฎหมาย (ออกในวันที่จ่าย · ยื่นวันที่ 7/15)
             // ที่นี่ throw ไม่ได้ (การจ่ายเงิน commit ไปแล้ว — ล้มย้อนหลังไม่ได้)
@@ -4849,10 +4862,14 @@ public class PayrollService : IPayrollService
             .ToListAsync();
         // ── ยื่นแล้ว (4) รอบ 201 ฝ่ายค้าน PR2 (P1-a): บันทึกการนำส่ง ภ.ง.ด.1 ของงวด (StatutoryRemittance WhtPnd1) — นำส่ง = ยื่นแบบพร้อมชำระ ·
         //    เดิมไม่อ่าน ⇒ รอบ Paid ที่นำส่ง ภ.ง.ด.1 แล้วแต่ไม่ได้ติ๊กปฏิทินภาษี ถูกยกเลิก/แก้ยอดได้ และ 50 ทวิ ของรอบถูกยกเลิกตาม
+        //    ★ ฝ่ายค้านรอบสาม PR2 (P1-1): นับเฉพาะรอบที่สร้างก่อนเวลาบันทึกนำส่ง (Helpers/RemittanceInclusion) — รอบที่ยกเลิกแล้วสร้างใหม่
+        //      ในเดือนที่นำส่งแล้ว ยังไม่อยู่ในเงินที่นำส่ง (หน้านำส่งนับเป็นยอดค้าง) · เดิมล็อกทันทีทั้งที่ยังไม่ได้ยื่น
         var pnd1Remitted = await _db.Set<StatutoryRemittance>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "WhtPnd1" && years.Contains(r.PeriodYear))
-            .Select(r => new { r.PeriodYear, r.PeriodMonth })
+            .Select(r => new { r.PeriodYear, r.PeriodMonth, r.CreatedAt })
             .ToListAsync();
+        var pnd1RemittedAt = Accounting.Helpers.RemittanceInclusion.LatestByPeriod(
+            pnd1Remitted.Select(r => ((r.PeriodYear, r.PeriodMonth), r.CreatedAt)));
         // ── สร้างไฟล์ยื่นแล้ว (เตือนเท่านั้น — "สร้างไฟล์ ≠ ยื่น" · ฝ่ายค้าน P1)
         var efilings = await _db.EFilingExports.AsNoTracking()
             .Where(e => e.CompanyId == companyId && !e.IsDeleted && years.Contains(e.PeriodYear)
@@ -4881,7 +4898,8 @@ public class PayrollService : IPayrollService
             foreach (var t in legacyReports.Where(t => t.Year == y && t.Month == m))
                 marks.Add(new PayrollFilingMark(t.TaxType == TaxType.WithholdingTax1 ? PayrollRunLockEvidence.Pnd1Label : PayrollRunLockEvidence.SsoLabel,
                     PayrollFilingSource.LegacyTaxReport));
-            if (pnd1Remitted.Any(r => r.PeriodYear == y && r.PeriodMonth == m))
+            if (Accounting.Helpers.RemittanceInclusion.Includes(
+                    pnd1RemittedAt.TryGetValue((y, m), out var remittedAt) ? (DateTime?)remittedAt : null, run.CreatedAt))
                 marks.Add(new PayrollFilingMark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.StatutoryRemittance));
             result[run.Id] = PayrollRunLockEvidence.From(marks,
                 runSsoSettled: run.SsoSettledAt.HasValue,
