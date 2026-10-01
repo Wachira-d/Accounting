@@ -51,6 +51,17 @@ public enum GatewayRefundManualDecision
     MoneyWentOut = 2,
 }
 
+/// <summary>รายการบัญชีของยอดคืนที่บันทึกย้อนหลัง (รอบ 201 ทีม GW · A-GW7) — ต้องเลือกเองทุกครั้ง (ไม่มีค่าตั้งต้นที่ตกเป็นทางใดทางหนึ่ง)</summary>
+public enum GatewayLegacyRefundJournal
+{
+    /// <summary>ไม่ได้เลือก/อ่านไม่ออก — ปฏิเสธ</summary>
+    Unspecified = 0,
+    /// <summary>ยังไม่มีรายการบัญชีคืนเงิน ⇒ ลงใบสำคัญคืนเงินเส้นเดียวกับคืนเงินปกติ (Dr ลูกหนี้ / Cr บัญชีพัก)</summary>
+    BookNow = 1,
+    /// <summary>ลงรายการบัญชีคืนเงินด้วยมือไว้แล้ว ⇒ บันทึกเฉพาะยอดคืน (ห้ามลงซ้ำ)</summary>
+    AlreadyBookedManually = 2,
+}
+
 /// <summary>ผลตรวจคำขอบันทึกผลด้วยมือ (<c>AmountToBook</c> = ยอดที่ต้องลงบัญชี เฉพาะ MoneyWentOut)</summary>
 public readonly record struct GatewayRefundManualCheck(bool Ok, string? Message, decimal AmountToBook);
 
@@ -260,6 +271,42 @@ public static class GatewayRefundMath
             return new(true, null, paid);
         }
         return new(false, "กรุณาเลือกผล: \"ไม่มีเงินออก\" หรือ \"เงินออกแล้ว\"", 0m);
+    }
+
+    /// <summary>ตรวจคำขอ "บันทึกยอดคืนจริงย้อนหลัง" ของรายการที่สถานะคืนแล้วแต่ระบบไม่มียอดคืน (รอบ 201 ทีม GW · A-GW7 · review198-E2 E2-12e)
+    ///
+    /// <para>═══ ที่มา ═══ แถวที่คืนก่อนระบบเริ่มเก็บยอดคืน (หรือคืนสำเร็จแต่ลงบัญชีไม่สำเร็จ E-1) มี <c>RefundedAmount = 0</c> ⇒ ไม่เข้ารอบโอน · กระทบยอดค้าง
+    /// −ค่าธรรมเนียมตลอดไป · หน้าเว็บมีแค่ตัวนับเตือน ไม่มีทางกรอก — ไม่มีข้อมูลให้ migration (ยอดคืนจริงอยู่ที่แดชบอร์ดผู้ให้บริการ)</para>
+    /// <para>═══ ด่าน ═══ สถานะคืนแล้ว/คืนบางส่วน · ยอดคืนในระบบ = 0 (มียอดแล้ว = ไม่ใช่แถวเก่า) · ไม่มีการคืนที่ผลไม่แน่ชัดค้าง · ยอด &gt; 0 และไม่เกินยอดรับ ·
+    /// สถานะคืนเต็ม ⇒ ยอดต้องเท่ายอดรับ · คืนบางส่วน ⇒ ยอดต้องน้อยกว่ายอดรับ · วันที่เงินออกต้องไม่อยู่ในอนาคต · เลขอ้างอิง + หลักฐาน · ต้องเลือกว่าลงบัญชีหรือไม่</para></summary>
+    public static GatewayRefundManualCheck CheckLegacyRefundEntry(PaymentIntentStatus status, decimal intentAmount, decimal recordedRefunded,
+        bool outcomeUnknown, decimal? amount, DateTime? refundedAtUtc, DateTime nowUtc, string? providerRefundRef, string? evidence,
+        GatewayLegacyRefundJournal journal)
+    {
+        if (status is not (PaymentIntentStatus.Refunded or PaymentIntentStatus.PartiallyRefunded))
+            return new(false, "บันทึกยอดคืนย้อนหลังได้เฉพาะรายการที่สถานะคืนเงินแล้ว — รายการที่ยังไม่คืนให้ใช้ปุ่มคืนเงินตามปกติ", 0m);
+        if (recordedRefunded > 0m)
+            return new(false, $"รายการนี้ระบบมียอดคืนแล้ว ({recordedRefunded:N2}) — ไม่ใช่แถวที่ขาดยอดคืน (ใช้ปุ่มคืนเงิน/ตรวจผลตามปกติ)", 0m);
+        if (outcomeUnknown)
+            return new(false, OutcomeUnknownMessage, 0m);
+        var paid = R(amount ?? 0m);
+        if (paid <= 0m || paid > R(intentAmount) + Tolerance)
+            return new(false, $"ยอดคืนต้องมากกว่า 0 และไม่เกินยอดที่รับ ({intentAmount:N2})", 0m);
+        if (status == PaymentIntentStatus.Refunded && Math.Abs(paid - R(intentAmount)) > Tolerance)
+            return new(false, $"สถานะของผู้ให้บริการคือ \"คืนเต็มจำนวน\" — ยอดคืนต้องเท่ายอดที่รับ ({intentAmount:N2}) · ถ้าแดชบอร์ดแสดงยอดอื่น ให้ตรวจสถานะสดก่อน", 0m);
+        if (status == PaymentIntentStatus.PartiallyRefunded && paid >= R(intentAmount) - Tolerance)
+            return new(false, $"สถานะของผู้ให้บริการคือ \"คืนบางส่วน\" — ยอดคืนต้องน้อยกว่ายอดที่รับ ({intentAmount:N2}) · ถ้าคืนเต็มแล้ว ให้ตรวจสถานะสดก่อน", 0m);
+        if (refundedAtUtc is not DateTime at)
+            return new(false, "กรุณาระบุวันที่เงินคืนออกจริง (ตามแดชบอร์ดผู้ให้บริการ) — ใช้แยกยอดคืนก่อน/หลังวันเงินเข้าของรอบโอน", 0m);
+        if (ThaiDate.CalendarDateUtc(at) > ThaiDate.CalendarDateUtc(nowUtc))
+            return new(false, "วันที่เงินคืนออกอยู่ในอนาคต — ตรวจวันที่อีกครั้ง", 0m);
+        if (string.IsNullOrWhiteSpace(providerRefundRef))
+            return new(false, "กรุณาระบุเลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ", 0m);
+        if (string.IsNullOrWhiteSpace(evidence))
+            return new(false, "กรุณาระบุหลักฐาน — สิ่งที่เห็นในแดชบอร์ดผู้ให้บริการ (ผู้สอบบัญชีต้องเห็นว่าบันทึกจากอะไร)", 0m);
+        if (journal is not (GatewayLegacyRefundJournal.BookNow or GatewayLegacyRefundJournal.AlreadyBookedManually))
+            return new(false, "กรุณาเลือกว่าให้ระบบลงรายการบัญชีคืนเงิน หรือได้ลงด้วยมือไว้แล้ว (ห้ามลงซ้ำ)", 0m);
+        return new(true, null, paid);
     }
 
     /// <summary>วันที่ใบสำคัญของเงินคืนที่ "ผลไม่แน่ชัด" แล้วยืนยันทีหลัง (ตรวจผล/บันทึกผลด้วยมือ) — รอบ 200 ทีม G · review198-E2 E2-12 + คำถามเจ้าของข้อ 4

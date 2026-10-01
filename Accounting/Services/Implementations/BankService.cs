@@ -492,6 +492,10 @@ public partial class BankService : IBankService
         }
 
         var payIds = pays.Select(p => p.Id).ToHashSet();
+        // ── ด่านฝั่งเขียน "id ต้องมีอยู่จริงในบริษัทนี้" (รอบ 201 ทีม AI · A-AI7 · H-9) ──────────────
+        // เส้น 1:1 ตรวจการมีอยู่ก่อนแล้ว (`ReconcileAsync`) แต่เส้น batch (หน้าจับคู่ทั้งก้อน · /api/v1) ไม่ตรวจ ⇒ id ที่
+        // AI แต่งไปตกที่ "ไม่รู้ทิศ สมุดรายวัน a1b2c3d4" ซึ่งชี้ไปเอกสารที่ไม่มีอยู่ · ตอนนี้บอกตรง ๆ ว่าหาไม่เจอ
+        var foundIds = new HashSet<Guid>(payIds);
         var jeIds = ids.Where(i => !payIds.Contains(i)).ToList();
         if (jeIds.Count > 0)
         {
@@ -500,6 +504,12 @@ public partial class BankService : IBankService
                 .Select(j => new { j.Id, j.TotalDebit, j.EntryNumber })
                 .ToListAsync();
             var jeById = jeHeads.ToDictionary(j => j.Id);
+            foreach (var jeId in jeById.Keys) foundIds.Add(jeId);
+            var missingIds = Accounting.Helpers.BankAiCandidateGuard.MissingIds(ids, foundIds);
+            if (missingIds.Count > 0)
+                throw new KeyNotFoundException(
+                    $"ไม่พบรายการที่จะจับคู่ {missingIds.Count} รายการ (อาจถูกลบไปแล้วหรือไม่ใช่ของบริษัทนี้) — "
+                    + "โหลดหน้าจับคู่ใหม่แล้วเลือกคู่อีกครั้ง");
 
             var jeNetSigned = new Dictionary<Guid, decimal>();
             if (bankCoaId.HasValue)
@@ -622,7 +632,9 @@ public partial class BankService : IBankService
             captured.Add((ReconciliationItemType.Payment, request.MatchedPaymentId.Value, Math.Abs(transaction.Amount)));
         else
             captured.Add((ReconciliationItemType.JournalEntry, request.MatchedJournalEntryId!.Value, Math.Abs(transaction.Amount)));
-        await CaptureConfirmedMatchAsync(companyId, transaction, captured);
+        // แหล่งของคำยืนยันมาจากผู้เรียก (หน้าจับคู่ = Explicit) · ไม่ส่ง = Implicit (รอบ 201 ทีม AI · A-AI1)
+        await CaptureConfirmedMatchAsync(companyId, transaction, captured,
+            Accounting.Helpers.BankPatternEvidence.ParseSource(request.Source));
 
         await _db.SaveChangesAsync();
         var reconcilerName = (await CompanyMemberNamesAsync(companyId, new[] { reconcilerId }))

@@ -391,6 +391,8 @@ public static class SettlementPaidReissue
         nameof(Document.DeliverySignTokenExpiresAt), nameof(Document.DeliverySignedAt), nameof(Document.DeliverySignedBy),
         nameof(Document.DeliverySignatureBase64), nameof(Document.SettlementOrphanAckAt), nameof(Document.SettlementOrphanAckBy),
         nameof(Document.SettlementOrphanAckReason), nameof(Document.ReplacedByDocumentId), nameof(Document.ReplacesDocumentId),
+        nameof(Document.SettlementOrphanAckReasonHash), // รอบ 201 ทีม ST (A-ST5) — การรับรู้ของกำพร้าเป็นของใบเดิม
+        nameof(Document.SettlementPieceFingerprint),     // รอบ 201 ทีม ST (A-ST8) — ใบแทนไม่ได้ออกโดยผู้ลงบัญชีรอบโอน (ไม่มีป้าย CreatedBy ของรอบ)
         nameof(Document.ReplacementReason), nameof(Document.ReplacedAt), nameof(Document.ReplacementCarriesPostings),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),
@@ -402,6 +404,8 @@ public static class SettlementPaidReissue
         // รอบ 200 ทีม V1G: RV1F-12 — ผู้จัดทำใบแทนคือผู้ขอ (CreatedBy) ไม่ใช่ผู้จัดทำภายนอกของใบเดิม ⇒ ลายเซ็นผู้จัดทำใบเดิมไม่ตามไป ·
         // ใบลดหนี้ที่ปิดธง e-Tax ของใบเสร็จ (ข้อ 47) เป็นของใบเสร็จนั้นเท่านั้น
         nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.EtaxCancelledByCreditNoteId),
+        // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): ผลการปิดธง e-Tax ทาง (ค) เป็นของใบเสร็จนั้นเท่านั้น
+        nameof(Document.EtaxKeptOriginalAt),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

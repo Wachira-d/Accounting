@@ -10,8 +10,11 @@ namespace Accounting.Helpers;
 /// <para>ที่มา: ตัวแยกของกำพร้า (DECISIONS ข้อ 10) นับ "ส่งลูกค้าแล้ว" จาก <c>Document.Status == DocumentStatus.Sent</c> ซึ่ง<b>ไม่มีโค้ดไหนประทับ</b>
 /// (นับทั้งเรพ: Sent = 0 จุด · <c>DocumentEmailService</c> เขียนแค่ <c>DocumentEmailLog.Status</c>) ⇒ เงื่อนไขตาย (F2 ข้อ 2) — ใบลดหนี้ที่อีเมลให้ลูกค้าแล้ว
 /// ถูกพาไปยกเลิกแทนการรับรู้ · ตอนนี้: หลักฐาน = แถว <c>DocumentEmailLog</c> ของใบนั้นที่ส่ง<b>สำเร็จ</b> (<see cref="EmailLogStatus.Sent"/> — ครอบทั้งอีเมลปกติและ
-/// e-Tax by email ซึ่งเขียนแถวชนิดเดียวกันพร้อม <c>DocumentId</c>) · สถานะเอกสารไม่ใช่หลักฐาน (ไม่มีผู้ประทับ) · ส่งผ่าน LINE ยังไม่มีบันทึกการส่ง
-/// (<c>DocumentLineDeliveryService</c> ไม่เขียนแถว) ⇒ ยังนับไม่ได้ — ข้อจำกัดในรายงานทีม SF</para>
+/// e-Tax by email ซึ่งเขียนแถวชนิดเดียวกันพร้อม <c>DocumentId</c>) · สถานะเอกสารไม่ใช่หลักฐาน (ไม่มีผู้ประทับ)</para>
+/// <para>LINE (รอบ 201 ทีม ST · A-ST10 ตรวจแล้ว NOT-A-BUG): <c>DocumentLineDeliveryService.SendDocumentLineAsync</c> <b>ไม่มีผู้เรียกทั้งเรพ</b> (มีแค่การลงทะเบียน DI) ⇒
+/// วันนี้ไม่มีทางเข้าใดส่งเอกสารผ่าน LINE จึงไม่มีการส่งที่ต้องนับ · ถ้าวันหน้าต่อสายปุ่มส่ง LINE ต้องทำพร้อมกัน: (1) push ที่คืนผล (ตัวปัจจุบัน
+/// <c>ILineNotifyService.PushFlexToUserAsync</c> คืน <c>Task</c> และกลืนผลล้ม ⇒ เมธอดตอบ true แม้ LINE ปฏิเสธ) (2) บันทึกการส่งที่ API ตอบสำเร็จ
+/// (3) ช่องทาง LINE ในตัวตัดสินนี้ — ไม่เดาจากการกดปุ่ม (คำตัดสินข้อ 25)</para>
 /// </summary>
 public static class DocumentDeliveryEvidence
 {

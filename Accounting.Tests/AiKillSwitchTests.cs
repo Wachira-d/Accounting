@@ -15,6 +15,11 @@ namespace Accounting.Tests;
 /// ยิง provider โดยไม่มี <c>ILocalDistillationModel</c> ⇒ ปิด provider แล้ว endpoint
 /// ตอบ "AI ปิดอยู่หรือไม่พร้อมใช้งาน" = ผู้ใช้ไม่ได้อะไรเลย · D-5 แก้ด้วยการ
 /// <b>ถอดการเรียก AI ทิ้ง</b> ไม่ใช่การ register นักเรียนให้ร้อยแก้ว</para>
+///
+/// <para>⚠️ รอบ 201 ทีม AI · A-AI6 (report-H H-8): เทสต์ในไฟล์นี้ <b>ไม่มีทางล้ม</b>จากช่องโหว่ kill-switch ที่ call site
+/// (เรียกแต่ pure helper) — เทสต์ที่ล้มได้จริงอยู่ที่ <c>AiKillSwitchOrchestratorTests</c> (orchestrator ตัวจริง · provider ทุกตัว
+/// IsActive=false · ทะเบียนนักเรียนจริงจาก <c>DistillationModelRegistry</c> · negative: ถอดนักเรียนแล้วล้ม) และ
+/// <c>BulkPvStudentTests</c> (จุดใช้คำตอบจริงของ bulk PV)</para>
 /// </summary>
 public class AiKillSwitchTests
 {

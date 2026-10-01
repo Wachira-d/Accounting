@@ -11,12 +11,27 @@ public class RolePermissionService : IRolePermissionService
 {
     private readonly AccountingDbContext _db;
     private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _http;
+    private readonly IPermissionService? _permissions;
 
     public RolePermissionService(AccountingDbContext db,
-        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null,
+        IPermissionService? permissions = null)
     {
         _db = db;
         _http = http;
+        _permissions = permissions;
+    }
+
+    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้ไม่มีสิทธิ์ตามตาราง <see cref="Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys"/> —
+    /// ด่านเดียวกับ endpoint ของหน้านั้น (<see cref="IPermissionService.HasPermissionAsync"/>) · ไม่มีตัวตรวจสิทธิ์ = ไม่ตัด (ด่านจริงอยู่ที่ API)</summary>
+    private async Task<List<string>?> PermissionDeniedMenuIdsAsync(Guid companyId, Guid userId)
+    {
+        if (_permissions == null) return null;
+        var denied = new List<string>();
+        foreach (var (menuId, key) in Accounting.Helpers.PaymentGatewayPermissionScope.MenuPermissionKeys)
+            if (!await _permissions.HasPermissionAsync(companyId, userId, key))
+                denied.Add(menuId);
+        return denied.Count == 0 ? null : denied;
     }
 
     public async Task<List<CompanyRoleResponse>> GetRolesAsync(Guid companyId, Guid userId)
@@ -260,7 +275,8 @@ public class RolePermissionService : IRolePermissionService
                 false,
                 new List<string> { "*" },
                 ownerHiddenMenuIds,
-                isPlatformAdmin);
+                isPlatformAdmin,
+                await PermissionDeniedMenuIdsAsync(companyId, userId));
         }
 
         // CompanyRole assigned → STRICT mode. An empty granted list now
@@ -277,7 +293,8 @@ public class RolePermissionService : IRolePermissionService
             .Select(r => r.Name)
             .FirstOrDefaultAsync() ?? cu.Role.ToString();
 
-        return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin);
+        return new MyPermissionsResponse(roleName, false, perms, ownerHiddenMenuIds, isPlatformAdmin,
+            await PermissionDeniedMenuIdsAsync(companyId, userId));
     }
 
     /// <summary>รอบ 200 ทีม R (G2-08): ต้องเป็นเจ้าของ (ด่านเดียวกับสร้าง/แก้ Role อื่น) + idempotent — เดิมสมาชิกคนไหนก็กดได้

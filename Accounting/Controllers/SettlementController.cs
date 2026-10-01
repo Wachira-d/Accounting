@@ -328,7 +328,7 @@ public class SettlementController : ControllerBase
     [Accounting.Filters.RequirePermission(SettlementPermissionScope.Import)]
     public Task<ActionResult<ApiResponse<SettlementLineView>>> AssignMatch(Guid companyId, Guid lineId,
         [FromBody] SettlementAssignMatchRequest request, CancellationToken ct)
-        => Guarded(() => _import.AssignLineMatchAsync(companyId, lineId, request, ct), "บันทึกการจับคู่แล้ว");
+        => Guarded(() => _import.AssignLineMatchAsync(companyId, UserId, lineId, request, ct), "บันทึกการจับคู่แล้ว");
 
     /// <param name="Won">ต้องระบุเสมอ (D-08) — เดิม <c>bool</c> ⇒ body ที่ไม่มี <c>won</c> = แพ้ = ลง JE ขาดทุนเงียบ ๆ</param>
     public sealed record ChargebackResolveRequest(bool? Won);
@@ -407,6 +407,18 @@ public class SettlementController : ControllerBase
         }
         catch (BusinessRuleException ex) { return Fail(ex); }
         catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
+    /// <summary>**รายงานของกำพร้าระดับช่องทาง** (รอบ 201 ทีม ST · A-ST4) — อ่านอย่างเดียว · ใบ/การรับชำระของรอบโอนที่ยกเลิกแล้ว (กอง · เหตุ · ผู้/เวลา/เหตุผลที่รับรู้) +
+    /// ยอดค้างผังพักของรายการที่รับรู้แล้ว · ยอดแสดงเฉพาะผู้มีสิทธิ์นำเข้า/ลงบัญชี (D-P5 · ตัวตัดสินเดียวกับหน้ารอบโอน)</summary>
+    [HttpGet("channels/{channelId:guid}/orphans")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public async Task<ActionResult<ApiResponse<SettlementChannelOrphanReport>>> ChannelOrphans(Guid companyId, Guid channelId, CancellationToken ct)
+    {
+        var hidden = SettlementPermissionScope.CandidatesHiddenReason(
+            await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Import),
+            await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Post));
+        return await Guarded(() => _posting.ChannelOrphanReportAsync(companyId, channelId, hidden, ct));
     }
 
     /// <param name="ArtifactId">id ของเอกสาร (<c>IsPayment=false</c>) หรือการรับชำระ (<c>IsPayment=true</c>) ที่เป็นของกำพร้า</param>

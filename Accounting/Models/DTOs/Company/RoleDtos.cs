@@ -49,4 +49,7 @@ public record MyPermissionsResponse(
     /// เห็นเมนูของแพลตฟอร์มโผล่ในแถบซ้ายของตัวเอง (API ยัง 403 อยู่ ข้อมูลไม่รั่ว
     /// แต่เป็นการเปิดเผยหน้าจอภายในและอยู่ห่างจากการรั่วจริงแค่ก้าวเดียว)
     /// </summary>
-    bool IsSystemAdmin = false);
+    bool IsSystemAdmin = false,
+    /// <summary>รอบ 201 ทีม GW (A-GW10): เมนูที่ผู้ใช้<b>ไม่มีสิทธิ์</b>ตามคีย์ perm:* ของหน้านั้น (ตาราง <c>PaymentGatewayPermissionScope.MenuPermissionKeys</c>) —
+    /// layout.js ซ่อนเมนูเหล่านี้ (เดิมเห็นเมนู กดแล้ว 403) · null/ว่าง = ไม่มีเมนูที่ต้องซ่อนด้วยเหตุนี้ · เจ้าของ/แอดมินไม่ถูกตัด</summary>
+    List<string>? PermissionDeniedMenuIds = null);

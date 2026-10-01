@@ -162,6 +162,11 @@ public sealed class SettlementChannelService : ISettlementChannelService
             if (touched && GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, r.FeeVatMode, r.FeeWhtMode,
                     channelVatRegistered, newIncomeMapJson) is string modeBad)
                 throw new BusinessRuleException(modeBad, "SETTLEMENT-CHANNEL-GATEWAY-MODE");
+            // รอบ 201 ทีม GW · C-11 (คำตัดสินข้อ 84): ผูก config ครั้งแรก ⇒ ผังค่าธรรมเนียม = ผังที่เส้นรอบโอนเดิมใช้กับ config นั้น (แก้ได้ทีหลัง)
+            if (prior?.PaymentProviderConfigId != cfgId && !feeMap.ContainsKey(SettlementAccountRoles.PaymentFee)
+                && await _gatewayAccounts.ResolveFeeExpenseAccountAsync(companyId, cfg.ProviderCode, cfgId, ct) is Guid legacyFee
+                && await _db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.Id == legacyFee && a.CompanyId == companyId && a.IsActive, ct))
+                feeMap = GatewayBatchIntentRules.SeedFeeAccountMapOnFirstBinding(feeMap, firstBinding: true, legacyFee);
         }
         var counterpartyId = await ResolveCounterpartyAsync(companyId, r, ct);
 

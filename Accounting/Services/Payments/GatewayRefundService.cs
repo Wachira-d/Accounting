@@ -44,6 +44,12 @@ public interface IGatewayRefundService
     Task<GatewayRefundOutcome> ResolveUnknownRefundManuallyAsync(Guid companyId, Guid intentId,
         GatewayRefundManualDecision decision, decimal? amount, string? providerRefundRef, string? evidence,
         string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
+
+    /// <summary>บันทึกยอดคืนจริงย้อนหลังของรายการที่สถานะคืนแล้วแต่ระบบไม่มียอดคืน (รอบ 201 ทีม GW · A-GW7) — เจ้าของกิจการ + หลักฐาน ·
+    /// เลือกลงใบสำคัญคืนเงิน (เส้นเดียวกับคืนเงินปกติ) หรือบันทึกเฉพาะยอด (ลงด้วยมือไว้แล้ว) · hash chain · ไม่ migrate</summary>
+    Task<GatewayRefundOutcome> RecordLegacyRefundAsync(Guid companyId, Guid intentId, decimal? amount, DateTime? refundedAtUtc,
+        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal,
+        string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -550,6 +556,94 @@ public class GatewayRefundService : IGatewayRefundService
                 $"บันทึกผลแล้ว: ผู้ให้บริการคืนไป {check.AmountToBook:N2} บาท — ลงบัญชีใบสำคัญ {je.EntryNumber} · ปลดล็อกแล้ว",
                 refundRef, check.AmountToBook, newStatus == PaymentIntentStatus.Refunded, newTotal, je.Id, je.EntryNumber, "",
                 NextStepText), newStatus);
+    }
+
+    public async Task<GatewayRefundOutcome> RecordLegacyRefundAsync(Guid companyId, Guid intentId, decimal? amount, DateTime? refundedAtUtc,
+        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal,
+        string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        // ล็อกเดียวกับการคืนเงิน/บันทึกผลด้วยมือของรายการนี้ — ยอดคืนสะสมที่ตรวจต้องเป็นยอดเดียวกับที่เขียน
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.PaymentIntent, $"refund:{intentId:N}") }, ct);
+
+        var intent = await _db.PaymentIntents
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (intent == null) return Fail("ไม่พบรายการชำระเงิน");
+
+        var check = GatewayRefundMath.CheckLegacyRefundEntry(intent.Status, intent.Amount, intent.RefundedAmount,
+            intent.RefundOutcomeUnknownSince != null, amount, refundedAtUtc, DateTime.UtcNow, providerRefundRef, evidence, journal);
+        if (!check.Ok) return Fail(check.Message ?? "บันทึกไม่ได้");
+
+        var refundAt = refundedAtUtc!.Value;
+        var refundRef = providerRefundRef!.Trim();
+        if (refundRef.Length > 100) refundRef = refundRef[..100];
+        var evidenceText = evidence!.Trim();
+        JournalEntry? je = null;
+        if (journal == GatewayLegacyRefundJournal.BookNow)
+        {
+            // เส้นลงบัญชีคืนเงินตัวเดียว (BookRefundAsync) · วันที่ = วันที่เงินออกจริง (งวดปิด ⇒ วันนี้ + หมายเหตุ — ตัวตัดสินเดียวกับการตรวจผล)
+            var clearingId = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+            var ar = await TradeReceivableAccount.ResolveAsync(_db, companyId, await ContactArPinAsync(companyId, intent, ct), ct);
+            var booking = await PastRefundBookingAsync(companyId, refundAt, ct);
+            var closed = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, booking.EntryDate, ct);
+            if (clearingId is not Guid clearing || ar == null || closed != null)
+                return Fail("ยังลงบัญชีคืนเงินไม่ได้: "
+                    + (closed ?? (clearingId == null
+                        ? "ไม่พบบัญชีพักของผู้ให้บริการ (แนะนำ 11340)"
+                        : $"ไม่พบผังลูกหนี้ {TradeReceivableAccount.StandardCode}"))
+                    + " — แก้แล้วบันทึกอีกครั้ง (ยังไม่มีอะไรถูกบันทึก)");
+            je = await BookRefundAsync(companyId, intent, ar.Id, clearing, booking.EntryDate, check.AmountToBook, check.AmountToBook, refundRef,
+                $"บันทึกยอดคืนย้อนหลัง (คืนก่อนระบบเก็บยอดคืน) — {evidenceText}" + (booking.Note == null ? "" : " · " + booking.Note),
+                actor, intent.Status, intent.Status, refundAt, ct);
+        }
+        else
+        {
+            // ลงรายการบัญชีด้วยมือไว้แล้ว ⇒ บันทึกเฉพาะยอดคืน + เหตุการณ์ที่มียอดรายครั้ง (แผนรอบโอนใช้แยกก่อน/หลังวันเงินเข้า) — ห้ามลงซ้ำ
+            intent.RefundedAmount = check.AmountToBook;
+            intent.LastRefundedAt = refundAt;
+            intent.UpdatedAt = DateTime.UtcNow;
+            _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+            {
+                CompanyId = companyId, IntentId = intent.Id, At = refundAt, Source = PaymentEventSource.Manual,
+                FromStatus = intent.Status, ToStatus = intent.Status,
+                RefundAmount = check.AmountToBook,
+                Note = $"บันทึกยอดคืนย้อนหลัง {check.AmountToBook:N2} · อ้างอิง {refundRef} · ลงรายการบัญชีด้วยมือไว้แล้ว (ระบบไม่ลงซ้ำ) "
+                     + $"โดย {actor} · หลักฐาน: {evidenceText}",
+            });
+        }
+
+        // การเติมยอดที่ระบบไม่รู้ด้วยมือ = จุดที่ผู้สอบบัญชีถามเสมอ ⇒ hash chain (ใคร · ยอด · ลงบัญชีหรือไม่ · หลักฐาน)
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            EntityType = nameof(PaymentIntent),
+            EntityId = intent.Id.ToString(),
+            Action = AuditAction.Update,
+            UserEmail = actorEmail,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { refundedAmount = 0m }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "gateway-legacy-refund-entry",
+                amount = check.AmountToBook,
+                refundedAt = refundAt,
+                providerRefundRef = refundRef,
+                journal = journal.ToString(),
+                journalEntryNumber = je?.EntryNumber,
+                evidence = evidenceText,
+                actor,
+            }),
+            IpAddress = ipAddress,
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return new GatewayRefundOutcome(true,
+            je == null
+                ? $"บันทึกยอดคืน {check.AmountToBook:N2} บาทแล้ว (ไม่ลงบัญชีซ้ำ — ลงด้วยมือไว้แล้ว) · รายการนี้เข้ารอบโอนตามปกติ"
+                : $"บันทึกยอดคืน {check.AmountToBook:N2} บาทและลงบัญชีใบสำคัญ {je.EntryNumber} แล้ว · รายการนี้เข้ารอบโอนตามปกติ",
+            refundRef, check.AmountToBook, intent.Status == PaymentIntentStatus.Refunded, check.AmountToBook,
+            je?.Id, je?.EntryNumber, "", NextStepText);
     }
 
     public async Task<IReadOnlyDictionary<Guid, GatewayRefundCreditNoteView>> CreditNoteStatesAsync(Guid companyId,

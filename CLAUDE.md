@@ -792,8 +792,9 @@ awk brace-balance                      # ทุก .cs ที่แก้
   (ข้อเท็จจริง **ณ 2026-09-18 — แก้ doc**: `Product.CurrentStock` กับ `WarehouseStock`
   **ยุบผ่าน `IStockLedger` ตัวเดียวแล้ว** (`StockLedger.MoveAsync` เขียนทั้งคู่ในคำสั่งเดียว ·
   `tools/stock_writer_check.py` = 0 จุดนอก ledger) — ประโยคเดิม "สองความจริงที่ไม่คุยกัน"
-  ล้าสมัย · ที่ยังค้าง: `ReconcileProductTotalsAsync` มีแต่**ไม่มีใครเรียก** (ตาข่ายซ่อมข้อมูล
-  เก่าก่อนเฟส 0 ยังไม่ต่อสาย) · POS ยังไม่ผูก `Branch`/`Warehouse`
+  ล้าสมัย · ตาข่ายซ่อมข้อมูลเก่าก่อนเฟส 0 ต่อสายแล้ว (รอบ 201 ทีม IN · C-5): `FindProductTotalMismatchesAsync`
+  (รายงานอ่านอย่างเดียว) + `RepairProductTotalsAsync` (ซ่อมเฉพาะแถวที่เลือก · audit) — `ReconcileProductTotalsAsync` เดิมถูกลบ ·
+  ที่ยังค้าง: POS ยังไม่ผูก `Branch`/`Warehouse`
   · สลิปพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่ตรวจ ภ.พ.06)
 - **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
   (วันนี้**ไม่มี**การเชื่อม gateway ใดเลย มีแค่ enum + คีย์ที่เข้ารหัสไว้แล้วไม่มีใครอ่าน ·

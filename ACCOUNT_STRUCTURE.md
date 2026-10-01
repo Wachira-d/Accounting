@@ -237,7 +237,7 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | TXID + `SellerTradeParty` ของ e-Tax XML | ✅ `ComposeTxId(taxId, สาขาที่ resolve, …)` |
 | ตัวเลือกสาขาบนฟอร์มออกเอกสาร | ✅ โผล่เมื่อมีสาขาใช้งาน ≥ 2 · ค่าเริ่มต้น = ตามค่าบริษัท |
 | เอกสารลูกสืบทอดสาขา (convert/clone/settlement/CN/recurring) | ✅ ครบ 5 ทาง |
-| **เลขที่เอกสารแยกชุดต่อสาขา** | 📋 เฟส 2 — ติด unique constraint ระดับฐานบน `NumberSeries` |
+| **เลขที่เอกสารแยกชุดต่อสาขา** | 🔨 รอบ 201 ทีม IN (A-IN4 · คำตัดสินข้อ 35): เครื่องออกเลข `DocumentNumberGenerator.NextAsync(…, branchCode)` + `ISettingsService.GetNextNumberAsync(…, branchCode)` รับรหัสสาขาเป็นพารามิเตอร์เสริมท้าย — ไม่ส่ง/`00000` = เล่มบริษัทเดิมทุกประการ · สาขาอื่น = เล่ม `{PREFIX}-{รหัสสาขา}-{yyyyMMdd}-{NNNN}` ล็อกแยก (`Helpers/DocumentNumberBook`) · 📋 สวิตช์ระดับบริษัท (ค่าเริ่มต้นปิด · เปลี่ยนได้ก่อนมีเลขในปีภาษี) + ผู้เรียก 19 จุด (เอกสาร/integration/POS/ออกแทน — ไฟล์ทีม TX/DV/GW) ส่งสาขา **ยังไม่ต่อ** — เปิดก่อนครบ = ใบสาขาเดียวกันกระจายสองเล่ม |
 | **JE stamp `BranchId`** → งบ/รายงานต่อสาขา | 📋 เฟส 2 |
 | **รายงานภาษีซื้อ/ขาย §87 + ภ.พ.30 แยกสาขา** | 📋 เฟส 2 (`TaxReport` ก็มี unique constraint ที่ต้องขยาย) |
 | ผู้ใช้ผูกสาขา · POS/API key ต่อสาขา · คลังต่อสาขา | 📋 เฟส 3 |
@@ -847,6 +847,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit a4dfa177)_
 
 _Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit <pending>)_
 

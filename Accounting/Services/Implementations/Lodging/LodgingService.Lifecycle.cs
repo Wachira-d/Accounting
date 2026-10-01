@@ -677,37 +677,9 @@ public partial class LodgingService
                 Description: $"ค่าเช็คเอาต์ช้า (หลัง {Time(prop.CheckOutTime)} น.)",
                 Quantity: 1, UnitPrice: prop.LateCheckOutFee, Source: LodgingChargeSource.System), userId));
 
-        var roomTypeIds = r.Rooms.Select(x => x.RoomTypeId).Distinct().ToList();
-        var productCodes = await (from rt in _db.LodgingRoomTypes.AsNoTracking()
-                                  join p in _db.Products.AsNoTracking() on rt.ProductId equals p.Id
-                                  where rt.CompanyId == companyId && roomTypeIds.Contains(rt.Id)
-                                  select new { rt.Id, p.Code }).ToDictionaryAsync(x => x.Id, x => x.Code);
         var pendingCharges = r.Charges.Where(c => c.Status == LodgingChargeStatus.Pending).Concat(newCharges).ToList();
-        var extraProductIds = r.Extras.Where(e => e.ProductId != null).Select(e => e.ProductId!.Value)
-            .Concat(pendingCharges.Where(c => c.ProductId != null).Select(c => c.ProductId!.Value)).Distinct().ToList();
-        var extraCodes = await _db.Products.AsNoTracking().Where(p => p.CompanyId == companyId && extraProductIds.Contains(p.Id))
-            .ToDictionaryAsync(p => p.Id, p => p.Code);
-
-        var lines = new List<DocumentLineRequest>();
-        foreach (var room in r.Rooms)
-            lines.Add(new(
-                Description: $"ค่าห้องพัก {room.RoomTypeName}{(room.Unit != null ? $" ห้อง {room.Unit.Number}" : "")} {r.Nights} คืน ({r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy})",
-                Quantity: 1, Unit: "รายการ", UnitPrice: room.Subtotal, DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0,
-                AccountId: null, AccountCode: prop.RoomRevenueAccountCode, ProductCode: productCodes.GetValueOrDefault(room.RoomTypeId)));
-        foreach (var e in r.Extras)
-            // Total ของบริการเสริมคูณด้วยคืน/คน ตามโหมด (ไม่ใช่ UnitPrice×Quantity ตรง ๆ) —
-            // จึงลงเป็น 1 รายการยอดรวม ห้ามหาร Total/Quantity แล้วปัด (ยอดเพี้ยน 0.01)
-            lines.Add(new(Description: $"{e.Name} ×{e.Quantity}", Quantity: 1, Unit: "รายการ", UnitPrice: e.Total,
-                DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0, AccountId: null,
-                ProductCode: e.ProductId != null ? extraCodes.GetValueOrDefault(e.ProductId.Value) : null));
-        foreach (var c in pendingCharges)
-            // C8 — แถวเดิมที่เก็บ VAT 7 ไว้ก่อนรอบนี้ (บริษัทไม่จด VAT) ต้องผ่านด่าน §90/2 ตอนออกใบด้วย
-            lines.Add(new(Description: c.Description, Quantity: c.Quantity, Unit: "รายการ", UnitPrice: c.UnitPrice, DiscountPercent: 0,
-                VatRate: LodgingPricingEngine.ChargeVatRate(c.VatRate, registered, vatRate), WithholdingTaxRate: 0, AccountId: null,
-                ProductCode: c.ProductId != null ? extraCodes.GetValueOrDefault(c.ProductId.Value) : null));
-        if (r.ServiceChargeAmount > 0)
-            lines.Add(new(Description: $"Service charge {prop.ServiceChargePercent:0.##}%", Quantity: 1, Unit: "รายการ", UnitPrice: r.ServiceChargeAmount,
-                DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0, AccountId: null, AccountCode: prop.ServiceChargeAccountCode));
+        // ตัวสร้างรายการใบสุดท้ายตัวเดียวของที่พัก — เส้นเช็คเอาต์และเส้น "ออกใบเช็คเอาต์ใหม่" (A-IN5) เรียกตัวเดียวกัน
+        var lines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, pendingCharges);
         if (lines.Count == 0) throw new BusinessRuleException("ไม่มีรายการให้ออกเอกสาร");
 
         // ── แผนใช้มัดจำ — วางแผน **ก่อน** ออกเลขใบ (C2 · §86/4 gap-free) ด้วยตัวคำนวณยอดตัวเดียวกับ CreateDocumentAsync ──
@@ -733,39 +705,7 @@ public partial class LodgingService
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber,
             ServiceUsedDate: r.CheckOutDate);
-        // รอบ 194 R3 (P-1) — กดซ้ำหลังอนุมัติล้ม (ยังไม่ประทับ FinalDocumentId) ⇒ ใช้ใบร่างเดิม (idempotent) โดยเขียนเนื้อหาของรอบนี้ทับ
-        // (ยอด/แผนมัดจำของรอบนี้คือความจริงล่าสุด) · เดิมสร้างใบร่างใหม่ทุกครั้ง ใบเก่าค้างเป็นขยะที่อนุมัติผิดใบได้
-        var leftovers = await _db.Documents.AsNoTracking()
-            .Where(LodgingCheckoutDraft.LeftoverOf(companyId, r.ReservationNumber, LodgingOrigin))
-            .OrderByDescending(d => d.CreatedAt)
-            .Select(d => new { d.Id, d.DocumentType })
-            .ToListAsync();
-        var draftPlan = LodgingCheckoutDraft.Plan(leftovers.Select(d => (d.Id, d.DocumentType)).ToList(), docType);
-        foreach (var staleId in draftPlan.Discard)
-            await _docService.DeleteDocumentAsync(companyId, staleId);
-        Guid finalDraftId;
-        if (draftPlan.Reuse is Guid reuseId)
-        {
-            await _docService.UpdateDocumentAsync(companyId, reuseId, new UpdateDocumentRequest(
-                DocumentDate: create.DocumentDate,
-                // ฝ่ายค้านรอบสี่ R4-1: null = "คงค่าเดิม" ⇒ เก็บเงินเลยรอบนี้ต้องล้างวันครบกำหนดของรอบก่อน (sentinel MinValue = ล้าง)
-                DueDate: create.DueDate ?? DateTime.MinValue, ContactId: create.ContactId,
-                Reference: create.Reference, Notes: create.Notes, Lines: create.Lines,
-                BankAccountId: create.BankAccountId, PricesIncludeVat: create.PricesIncludeVat, BranchId: create.BranchId,
-                ServiceUsedDate: create.ServiceUsedDate, BookingNumber: create.BookingNumber,
-                // ""/0 = ล้างค่าของรอบก่อน (แผนมัดจำรอบนี้อาจไม่หักแล้ว) — ห้าม null ซึ่งแปลว่า "คงค่าเดิม"
-                DepositAppliedRef: create.DepositAppliedRef ?? "",
-                DepositBaseDeducted: create.DepositBaseDeducted ?? 0m,
-                // R4-1: ใบร่างก่อนรอบ 193 R3-1 เคยเก็บฐานมัดจำไว้ในส่วนลดท้ายบิล — ล้าง ไม่งั้นหักซ้ำกับ DepositBaseDeducted
-                BillDiscountPercent: create.BillDiscountPercent ?? 0m,
-                BillDiscountAmount: create.BillDiscountAmount ?? 0m));
-            finalDraftId = reuseId;
-        }
-        else
-        {
-            var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
-            finalDraftId = created.Id;
-        }
+        var finalDraftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
         var approved = await _docService.ApproveDocumentAsync(companyId, finalDraftId, userId, acknowledgeWarnings: true);
 
         // ออกใบสำเร็จแล้วจึงผูกรายการใหม่เข้าการจอง + ประทับเลขใบทันที — ถ้าขั้นใช้มัดจำด้านล่างล้ม
@@ -801,6 +741,159 @@ public partial class LodgingService
         return await SettleCheckOutAsync(companyId, r, approved, depositPlan, request, userId);
     }
 
+    /// <summary>ใบร่างของใบสุดท้าย — ใช้ใบร่างที่ค้างของการจองนี้ (idempotent) หรือสร้างใหม่ · ตัวเดียวของเส้นเช็คเอาต์และเส้นออกใบใหม่ (A-IN5)</summary>
+    private async Task<Guid> UpsertFinalDraftAsync(Guid companyId, LodgingReservation r, CreateDocumentRequest create,
+        DocumentType docType, string userId)
+    {
+        // รอบ 194 R3 (P-1) — กดซ้ำหลังอนุมัติล้ม (ยังไม่ประทับ FinalDocumentId) ⇒ ใช้ใบร่างเดิม (idempotent) โดยเขียนเนื้อหาของรอบนี้ทับ
+        // (ยอด/แผนมัดจำของรอบนี้คือความจริงล่าสุด) · เดิมสร้างใบร่างใหม่ทุกครั้ง ใบเก่าค้างเป็นขยะที่อนุมัติผิดใบได้
+        var leftovers = await _db.Documents.AsNoTracking()
+            .Where(LodgingCheckoutDraft.LeftoverOf(companyId, r.ReservationNumber, LodgingOrigin))
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => new { d.Id, d.DocumentType })
+            .ToListAsync();
+        var draftPlan = LodgingCheckoutDraft.Plan(leftovers.Select(d => (d.Id, d.DocumentType)).ToList(), docType);
+        foreach (var staleId in draftPlan.Discard)
+            await _docService.DeleteDocumentAsync(companyId, staleId);
+        if (draftPlan.Reuse is Guid reuseId)
+        {
+            await _docService.UpdateDocumentAsync(companyId, reuseId, new UpdateDocumentRequest(
+                DocumentDate: create.DocumentDate,
+                // ฝ่ายค้านรอบสี่ R4-1: null = "คงค่าเดิม" ⇒ เก็บเงินเลยรอบนี้ต้องล้างวันครบกำหนดของรอบก่อน (sentinel MinValue = ล้าง)
+                DueDate: create.DueDate ?? DateTime.MinValue, ContactId: create.ContactId,
+                Reference: create.Reference, Notes: create.Notes, Lines: create.Lines,
+                BankAccountId: create.BankAccountId, PricesIncludeVat: create.PricesIncludeVat, BranchId: create.BranchId,
+                ServiceUsedDate: create.ServiceUsedDate, BookingNumber: create.BookingNumber,
+                // ""/0 = ล้างค่าของรอบก่อน (แผนมัดจำรอบนี้อาจไม่หักแล้ว) — ห้าม null ซึ่งแปลว่า "คงค่าเดิม"
+                DepositAppliedRef: create.DepositAppliedRef ?? "",
+                DepositBaseDeducted: create.DepositBaseDeducted ?? 0m,
+                // R4-1: ใบร่างก่อนรอบ 193 R3-1 เคยเก็บฐานมัดจำไว้ในส่วนลดท้ายบิล — ล้าง ไม่งั้นหักซ้ำกับ DepositBaseDeducted
+                BillDiscountPercent: create.BillDiscountPercent ?? 0m,
+                BillDiscountAmount: create.BillDiscountAmount ?? 0m));
+            return reuseId;
+        }
+        else
+        {
+            var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
+            return created.Id;
+        }
+    }
+
+    /// <summary>รายการของใบสุดท้าย (ใบเช็คเอาต์) — <b>ตัวสร้างเดียวของที่พัก</b> (รอบ 201 ทีม IN · A-IN5): ค่าห้องรายห้อง · บริการเสริม
+    /// (ยอดรวมต่อรายการ) · รายการ folio ที่ส่งมา · service charge · ใช้ทั้งเช็คเอาต์ (folio ที่ค้าง + รายการใหม่) และการออกใบใหม่หลังใบเดิม
+    /// ถูกยกเลิก (folio ที่ออกเอกสารแล้ว) ⇒ ใบแทนได้รายการชุดเดียวกับใบเดิมเสมอ</summary>
+    private async Task<List<DocumentLineRequest>> BuildFinalInvoiceLinesAsync(Guid companyId, LodgingReservation r, LodgingProperty prop,
+        bool registered, decimal vatRate, IReadOnlyList<LodgingFolioCharge> charges)
+    {
+        var roomTypeIds = r.Rooms.Select(x => x.RoomTypeId).Distinct().ToList();
+        var productCodes = await (from rt in _db.LodgingRoomTypes.AsNoTracking()
+                                  join p in _db.Products.AsNoTracking() on rt.ProductId equals p.Id
+                                  where rt.CompanyId == companyId && roomTypeIds.Contains(rt.Id)
+                                  select new { rt.Id, p.Code }).ToDictionaryAsync(x => x.Id, x => x.Code);
+        var extraProductIds = r.Extras.Where(e => e.ProductId != null).Select(e => e.ProductId!.Value)
+            .Concat(charges.Where(c => c.ProductId != null).Select(c => c.ProductId!.Value)).Distinct().ToList();
+        var extraCodes = await _db.Products.AsNoTracking().Where(p => p.CompanyId == companyId && extraProductIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, p => p.Code);
+
+        var lines = new List<DocumentLineRequest>();
+        foreach (var room in r.Rooms)
+            lines.Add(new(
+                Description: $"ค่าห้องพัก {room.RoomTypeName}{(room.Unit != null ? $" ห้อง {room.Unit.Number}" : "")} {r.Nights} คืน ({r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy})",
+                Quantity: 1, Unit: "รายการ", UnitPrice: room.Subtotal, DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0,
+                AccountId: null, AccountCode: prop.RoomRevenueAccountCode, ProductCode: productCodes.GetValueOrDefault(room.RoomTypeId)));
+        foreach (var e in r.Extras)
+            // Total ของบริการเสริมคูณด้วยคืน/คน ตามโหมด (ไม่ใช่ UnitPrice×Quantity ตรง ๆ) —
+            // จึงลงเป็น 1 รายการยอดรวม ห้ามหาร Total/Quantity แล้วปัด (ยอดเพี้ยน 0.01)
+            lines.Add(new(Description: $"{e.Name} ×{e.Quantity}", Quantity: 1, Unit: "รายการ", UnitPrice: e.Total,
+                DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0, AccountId: null,
+                ProductCode: e.ProductId != null ? extraCodes.GetValueOrDefault(e.ProductId.Value) : null));
+        foreach (var c in charges)
+            // C8 — แถวเดิมที่เก็บ VAT 7 ไว้ก่อนรอบนี้ (บริษัทไม่จด VAT) ต้องผ่านด่าน §90/2 ตอนออกใบด้วย
+            lines.Add(new(Description: c.Description, Quantity: c.Quantity, Unit: "รายการ", UnitPrice: c.UnitPrice, DiscountPercent: 0,
+                VatRate: LodgingPricingEngine.ChargeVatRate(c.VatRate, registered, vatRate), WithholdingTaxRate: 0, AccountId: null,
+                ProductCode: c.ProductId != null ? extraCodes.GetValueOrDefault(c.ProductId.Value) : null));
+        if (r.ServiceChargeAmount > 0)
+            lines.Add(new(Description: $"Service charge {prop.ServiceChargePercent:0.##}%", Quantity: 1, Unit: "รายการ", UnitPrice: r.ServiceChargeAmount,
+                DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0, AccountId: null, AccountCode: prop.ServiceChargeAccountCode));
+        return lines;
+    }
+
+    /// <summary>ออกใบเช็คเอาต์ใหม่หลังใบเดิมถูกยกเลิก (รอบ 201 ทีม IN · A-IN5 · คำตัดสินข้อ 36) — ตัวสร้างรายการ/แผนมัดจำ/ใบร่าง/การใช้มัดจำ
+    /// ชุดเดียวกับเส้นเช็คเอาต์ · ยอด+ชนิดต้องเท่าใบเดิม (<see cref="LodgingCheckoutReissue.Problem"/>) · อ้างเลขใบเดิมในหมายเหตุ + audit ·
+    /// ไม่นับมิเตอร์/ไม่สร้างงานแม่บ้าน/ไม่รับเงินซ้ำ (การรับชำระเดิมถูกยกเลิกไปพร้อมใบ — บันทึกรับชำระที่ใบใหม่ตามจริง)</summary>
+    public async Task<LodgingReservationResponse> ReissueFinalDocumentAsync(Guid companyId, Guid reservationId,
+        LodgingReissueFinalRequest request, string userId)
+    {
+        var r = await RequireReservationAsync(companyId, reservationId);
+        var prop = r.Property;
+        var accountingOff = prop.AccountingMode == LodgingAccountingMode.Off;
+        var oldId = r.FinalDocumentId
+            ?? throw new BusinessRuleException("การจองนี้ยังไม่มีใบเช็คเอาต์ — ใช้ปุ่ม “เช็คเอาต์”", LodgingCheckoutReissue.RuleCode);
+        var old = await _docService.GetDocumentAsync(companyId, oldId);
+
+        var (registered, vatRate) = await VatProfileAsync(companyId, prop);
+        var docType = vatRate > 0 ? DocumentType.TaxInvoice : DocumentType.Invoice;
+        // รายการ folio ที่ออกเอกสารแล้วตอนเช็คเอาต์ (สถานะ Paid ถูกประทับที่เช็คเอาต์เท่านั้น) = รายการบนใบเดิม
+        var billedCharges = r.Charges.Where(c => c.Status == LodgingChargeStatus.Paid).ToList();
+        var lines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, billedCharges);
+        // void ใบเดิมกลับการรับรู้/ตัดชำระมัดจำแล้ว ⇒ แผนจากสถานะมัดจำปัจจุบัน (ตัวเดียวกับเช็คเอาต์)
+        var deposits = LodgingDepositSettlement.RoomDeposits(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId);
+        var full = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m);
+        var depositPlan = LodgingDepositSettlement.PlanCheckout(deposits, full.Net,
+            deducted => DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, deducted).Total);
+        var rebuiltTotal = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, depositPlan.BaseDeducted).Total;
+
+        if (LodgingCheckoutReissue.Problem(r.Status, old.Status, accountingOff, old.DocumentType, old.TotalAmount,
+                docType, rebuiltTotal, old.DocumentNumber) is { } problem)
+            throw new BusinessRuleException(problem, LodgingCheckoutReissue.RuleCode);
+        if (lines.Count == 0) throw new BusinessRuleException("ไม่มีรายการให้ออกเอกสาร", LodgingCheckoutReissue.RuleCode);
+
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
+        var create = new CreateDocumentRequest(
+            DocumentType: docType, DocumentDate: DateTime.UtcNow, DueDate: old.DueDate,
+            // ผู้ซื้อเดิมของใบที่ยกเลิก (อาจเป็นบริษัทของแขก) — ใบแทนต้องออกถึงคนเดิม
+            ContactId: old.Contact.Id, Reference: r.ReservationNumber,
+            Notes: $"เข้าพัก {prop.Name} {r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy} ({r.Nights} คืน) · จอง {r.ReservationNumber} · "
+                + LodgingCheckoutReissue.ReferenceNote(old.DocumentNumber),
+            Lines: lines,
+            DepositAppliedRef: depositPlan.DeductionRef,
+            DepositBaseDeducted: depositPlan.BaseDeducted > 0m ? depositPlan.BaseDeducted : null,
+            PricesIncludeVat: prop.PricesIncludeVat,
+            BankAccountId: old.BankAccountId,
+            BranchId: prop.BranchId,
+            BookingNumber: r.ReservationNumber,
+            ServiceUsedDate: r.CheckOutDate);
+        var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
+        var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, acknowledgeWarnings: true);
+        r.FinalDocumentId = approved.Id;
+        AppendInternal(r, $"ออกใบเช็คเอาต์ใหม่ {approved.DocumentNumber} แทน {old.DocumentNumber} ที่ยกเลิก" + (reason != null ? $" — {reason}" : ""));
+        r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new
+        {
+            action = "CheckOutInvoiceReissued", finalDocument = approved.DocumentNumber, replaces = old.DocumentNumber,
+            total = approved.TotalAmount, depositTaxInvoicedDeducted = depositPlan.BaseDeducted, depositApplied = depositPlan.GrossApplied,
+            reason, ruleCode = LodgingCheckoutReissue.RuleCode, by = userId,
+        }));
+        await _db.SaveChangesAsync();
+
+        try
+        {
+            await ApplyFinalDepositPlanAsync(companyId, prop, approved, depositPlan, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ล้มดัง 3 ที่ (F2 ข้อ 7) — ใบใหม่ออกแล้ว (ห้ามออกซ้ำ) · ทางไปต่อ: หักมัดจำที่หน้าเอกสารของใบใหม่
+            AppendInternal(r, $"⚠️ ออก {approved.DocumentNumber} แล้ว แต่นำมัดจำไปใช้ไม่สำเร็จ: {ex.Message}");
+            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "CheckOutReissueDepositFailed", finalDocument = approved.DocumentNumber, error = ex.Message, by = userId }));
+            await _db.SaveChangesAsync();
+            throw new BusinessRuleException(
+                $"ออก {approved.DocumentNumber} แทน {old.DocumentNumber} แล้ว แต่นำมัดจำไปใช้ไม่สำเร็จ ({ex.Message}) — "
+                + "แก้สาเหตุแล้วใช้ปุ่ม “หักมัดจำ” ที่หน้าเอกสารของใบ " + approved.DocumentNumber + " (อย่าออกใบใหม่ซ้ำ)",
+                LodgingCheckoutReissue.RuleCode);
+        }
+        return await MapAsync(companyId, r, true, true);
+    }
+
     /// <summary>ทำเช็คเอาต์ที่ค้างต่อ — ออกใบสุดท้ายแล้ว (<c>FinalDocumentId</c>) แต่ขั้นใช้มัดจำล้ม · วางแผนใหม่จากสถานะจริง:
     /// ฐานที่ยังต้องรับรู้ = ส่วนหักท้ายบิลของใบ − ที่รับรู้เพื่อใบนี้ไปแล้ว (<c>JournalEntry.DepositRealizedForDocumentId</c>) ·
     /// มัดจำที่ตัดชำระใบนี้แล้วไม่ตัดซ้ำ · ยอดค้างของใบ = ยอดที่ยังตัดได้</summary>
@@ -834,6 +927,34 @@ public partial class LodgingService
             .Select(g => new { Id = g.Key, Sum = g.Sum(x => x.TotalDebit) })
             .ToDictionaryAsync(x => x.Id, x => x.Sum);
 
+    /// <summary>ใช้มัดจำกับใบสุดท้ายตามแผน — ตัวเดียวของเส้นเช็คเอาต์และเส้นออกใบใหม่ (A-IN5) · คืนใบสุดท้ายฉบับล่าสุด (ยอดค้างหลังตัดชำระ)</summary>
+    private async Task<DocumentResponse> ApplyFinalDepositPlanAsync(Guid companyId, LodgingProperty prop, DocumentResponse finalDoc,
+        LodgingCheckoutDepositPlan plan, string userId)
+    {
+        var finalId = finalDoc.Id;
+        // ออกใบกำกับแล้ว → รับรู้ฐานมัดจำเป็นรายได้ (Dr 217xx / Cr รายได้) · VAT มัดจำอยู่งวดเดิม ไม่ถูกกลับ ·
+        // ผูก JE กับใบสุดท้าย (FinalInvoiceId) ⇒ void ใบสุดท้ายแล้วกลับการรับรู้นี้ได้ (C4)
+        // รอบ 193 ฝ่ายค้านรอบสอง: การอนุมัติใบสุดท้ายรับรู้ฐานมัดจำให้แล้ว (DocumentService.RealizeTaxedDepositDeductionsAsync —
+        // ตัวเดียวของทุกเส้น) ⇒ ที่นี่รับรู้เฉพาะส่วนที่ยังขาด (ใบที่ออกก่อนมีตัวนั้น / ทำเช็คเอาต์ต่อ) — ไม่รับรู้ซ้ำ
+        var realizedFor = await RealizedForFinalByDepositAsync(companyId, finalId);
+        foreach (var d in plan.Deduct)
+        {
+            var left = d.Base - realizedFor.GetValueOrDefault(d.Id);
+            if (left <= 0.005m) continue;
+            await _docService.RealizeDepositAsync(companyId, d.Id,
+                new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId), userId);
+        }
+        // เต็มยอด/ภาษีรอเรียกเก็บ → ตัดชำระใบสุดท้าย (Dr 217xx [+ 21913] / Cr ลูกหนี้) · ไม่เกินยอดค้างของใบ (วางแผนไว้แล้ว)
+        foreach (var a in plan.Apply)
+        {
+            var amount = Math.Min(a.Gross, finalDoc.BalanceDue);
+            if (amount <= 0.005m) continue;
+            finalDoc = await _docService.ApplyDepositToInvoiceAsync(companyId, finalId,
+                new ApplyDepositRequest(a.Id, amount, DateTime.UtcNow), userId);
+        }
+        return finalDoc;
+    }
+
     /// <summary>ขั้นใช้มัดจำ + ปิดการเข้าพัก (ใช้ทั้งเช็คเอาต์ปกติและทำต่อ) — ล้มกลางทาง = ล้มดัง 3 ที่ และกดเช็คเอาต์ซ้ำทำต่อได้</summary>
     private async Task<LodgingReservationResponse> SettleCheckOutAsync(
         Guid companyId, LodgingReservation r, DocumentResponse finalDoc, LodgingCheckoutDepositPlan plan,
@@ -843,26 +964,7 @@ public partial class LodgingService
         var finalId = finalDoc.Id;
         try
         {
-            // ออกใบกำกับแล้ว → รับรู้ฐานมัดจำเป็นรายได้ (Dr 217xx / Cr รายได้) · VAT มัดจำอยู่งวดเดิม ไม่ถูกกลับ ·
-            // ผูก JE กับใบสุดท้าย (FinalInvoiceId) ⇒ void ใบสุดท้ายแล้วกลับการรับรู้นี้ได้ (C4)
-            // รอบ 193 ฝ่ายค้านรอบสอง: การอนุมัติใบสุดท้ายรับรู้ฐานมัดจำให้แล้ว (DocumentService.RealizeTaxedDepositDeductionsAsync —
-            // ตัวเดียวของทุกเส้น) ⇒ ที่นี่รับรู้เฉพาะส่วนที่ยังขาด (ใบที่ออกก่อนมีตัวนั้น / ทำเช็คเอาต์ต่อ) — ไม่รับรู้ซ้ำ
-            var realizedFor = await RealizedForFinalByDepositAsync(companyId, finalId);
-            foreach (var d in plan.Deduct)
-            {
-                var left = d.Base - realizedFor.GetValueOrDefault(d.Id);
-                if (left <= 0.005m) continue;
-                await _docService.RealizeDepositAsync(companyId, d.Id,
-                    new RealizeDepositRequest(left, DateTime.UtcNow, prop.RoomRevenueAccountCode, finalId), userId);
-            }
-            // เต็มยอด/ภาษีรอเรียกเก็บ → ตัดชำระใบสุดท้าย (Dr 217xx [+ 21913] / Cr ลูกหนี้) · ไม่เกินยอดค้างของใบ (วางแผนไว้แล้ว)
-            foreach (var a in plan.Apply)
-            {
-                var amount = Math.Min(a.Gross, finalDoc.BalanceDue);
-                if (amount <= 0.005m) continue;
-                finalDoc = await _docService.ApplyDepositToInvoiceAsync(companyId, finalId,
-                    new ApplyDepositRequest(a.Id, amount, DateTime.UtcNow), userId);
-            }
+            finalDoc = await ApplyFinalDepositPlanAsync(companyId, prop, finalDoc, plan, userId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -189,6 +189,55 @@ public static class SettlementSummarySupplement
 
     /// <summary>ความยาวเหตุผลสูงสุดของการยืนยันรายบรรทัด</summary>
     public const int ConfirmReasonMaxLength = 500;
+
+    /// <summary>
+    /// **ใบสรุปกำพร้าที่รับรู้แล้วนับเป็นใบแรกของวันไหม** (รอบ 201 ทีม ST · คำตัดสินข้อ 82 · BACKLOG C-9) — ใบสรุปของรอบโอนที่<b>ยกเลิก/ลบแล้ว</b>ที่ยังไม่ถูกยกเลิก:
+    /// ยกเลิกไม่ได้จริง<b>และ</b>มีผู้รับรู้ที่มีผล (<see cref="SettlementOrphanItem.AckEffective"/> — ครอบรอบนี้และเหตุปัจจุบัน) ⇒ รายได้ของใบนั้นอยู่ในบัญชีจริง ⇒
+    /// เป็น "ใบแรกของวัน" ของใบสรุปเพิ่มเติม (ไม่บล็อกถาวร) · ยังไม่รับรู้/การรับรู้ไม่มีผล ⇒ รายได้ซ้ำ (บล็อกเหมือนเดิม — ทางไปต่อ: ยกเลิกใบนั้น หรือรับรู้) ·
+    /// ด่านเนื้อหาซ้ำ (<see cref="SplitDuplicates"/> + <see cref="OrphanFirstDuplicates"/>) ทำงานต่อกับบรรทัดของรอบเจ้าของใบนั้น · pure
+    /// </summary>
+    public static bool AckedOrphanCountsAsFirst(Guid documentId, IEnumerable<SettlementOrphanItem>? orphanItems)
+        => (orphanItems ?? Array.Empty<SettlementOrphanItem>()).Any(i => !i.IsPayment && i.Id == documentId && i.AckEffective);
+
+    /// <summary>
+    /// **รายการเดียวกับรอบเจ้าของใบสรุปกำพร้าที่รับรู้แล้ว = รายได้ซ้ำ** (รอบ 201 ทีม ST · ข้อ 82 "ด่านเนื้อหาซ้ำทำงานต่อ") — บรรทัดของใบสรุปรอบนี้ที่มี
+    /// <b>เลขรายการของแพลตฟอร์มเดียวกัน</b> (ไม่ใช่คีย์แถวไม่มี id — ตัวนั้นตัดสินด้วยเนื้อหาที่ <see cref="SplitDuplicates"/>) หรือ<b>เลขออเดอร์เดียวกัน</b> กับบรรทัดขายของรอบเจ้าของ
+    /// (รวมบรรทัดที่ถูกลบพร้อมรอบ) ⇒ บล็อกรายบรรทัด (ตัวกันซ้ำระดับออเดอร์เดิมดูแค่รอบที่ลงบัญชีแล้วที่ยังมีผล ⇒ รอบที่ยกเลิกแล้วหลุด) ·
+    /// เลขเดียวกัน = รายการเดียวกันแน่นอน (ไม่ใช่ fuzzy) · pure
+    /// </summary>
+    /// <param name="current">บรรทัดในใบสรุปของรอบนี้ (id · เลขรายการ · เลขออเดอร์)</param>
+    /// <param name="ownerLines">บรรทัดขายของรอบเจ้าของใบกำพร้าที่รับรู้แล้ว (รอบ · เลขรายการ · เลขออเดอร์)</param>
+    /// <param name="owners">รอบเจ้าของ → (เลขรอบโอน · เลขที่ใบสรุปกำพร้า)</param>
+    public static List<SettlementDuplicateSale> OrphanFirstDuplicates(
+        IEnumerable<(Guid LineId, string? TxnId, string? OrderId)> current,
+        IEnumerable<(Guid BatchId, string? TxnId, string? OrderId)> ownerLines,
+        IReadOnlyDictionary<Guid, (string PayoutRef, string Number)> owners)
+    {
+        var byTxn = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var byOrder = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        foreach (var o in ownerLines)
+        {
+            if (!string.IsNullOrWhiteSpace(o.TxnId) && !SettlementTxnKey.IsRowKey(o.TxnId)) byTxn.TryAdd(o.TxnId.Trim(), o.BatchId);
+            if (!string.IsNullOrWhiteSpace(o.OrderId)) byOrder.TryAdd(o.OrderId.Trim(), o.BatchId);
+        }
+        var hits = new List<(Guid LineId, Guid Owner)>();
+        foreach (var c in current)
+        {
+            if (!string.IsNullOrWhiteSpace(c.TxnId) && !SettlementTxnKey.IsRowKey(c.TxnId) && byTxn.TryGetValue(c.TxnId.Trim(), out var b1))
+                hits.Add((c.LineId, b1));
+            else if (!string.IsNullOrWhiteSpace(c.OrderId) && byOrder.TryGetValue(c.OrderId.Trim(), out var b2))
+                hits.Add((c.LineId, b2));
+        }
+        return hits.GroupBy(h => h.Owner)
+            .Select(g =>
+            {
+                var (payoutRef, number) = owners.TryGetValue(g.Key, out var o) ? o : (PayoutRef: "", Number: "");
+                return new SettlementDuplicateSale(g.Select(h => h.LineId).Distinct().ToList(),
+                    $"{g.Count()} บรรทัดเป็นรายการเดียวกับรอบโอน {payoutRef} (ยกเลิกแล้ว) ซึ่งใบสรุป {number} ยังมีผลและรับรู้ไว้แล้ว (เลขรายการ/เลขออเดอร์ตรงกัน) — "
+                    + "ออกในใบสรุปรอบนี้อีก = รายได้และภาษีขายซ้ำ · ทางไปต่อ: จัดประเภทบรรทัดเหล่านั้นเป็นรายการปรับปรุง (ยอดอยู่ในใบเดิมแล้ว) แล้วดูตัวอย่างใหม่");
+            })
+            .ToList();
+    }
 }
 
 /// <summary>ลักษณะกิจการเรื่องสต็อก ณ ใบขายสรุป (review198-C C-15)</summary>

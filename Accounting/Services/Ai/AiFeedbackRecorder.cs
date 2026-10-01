@@ -238,9 +238,10 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         CancellationToken ct, UserChoiceSource source = UserChoiceSource.Implicit)
     {
         if (feedbackId == Guid.Empty) return;
+        AiSuggestionFeedback? row = null;
         try
         {
-            var row = await _db.AiSuggestionFeedbacks.FirstOrDefaultAsync(f => f.Id == feedbackId, ct);
+            row = await _db.AiSuggestionFeedbacks.FirstOrDefaultAsync(f => f.Id == feedbackId, ct);
             if (row == null) return;
             // นับ "ตัดสินใจแล้ว" เพิ่มเฉพาะครั้งแรก — ผู้ใช้เปลี่ยนใจแก้ซ้ำได้
             // ถ้านับทุกครั้งอัตรายอมรับจะเพี้ยน (ตัวหารโตกว่าจำนวน call จริง)
@@ -288,6 +289,10 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AiFeedback user-choice update failed for {Id}", feedbackId);
+            // รอบ 201 ทีม AI · A-AI8 (คำตัดสินข้อ 58 · team-Z Q5): ตัวบันทึกใช้ context ร่วมกับผู้เรียก — SaveChanges ล้มแล้ว
+            // แถว feedback ค้าง Modified ⇒ SaveChanges ถัดไปของผู้เรียก (อนุมัติเอกสาร · AuditMiddleware) ล้มซ้ำด้วยเหตุเดียวกัน
+            // ถอยการแก้ของตัวเองออกจาก change tracker (ค่าในฐานข้อมูลยังเป็นค่าเดิมเพราะบันทึกไม่สำเร็จ)
+            DiscardUnsaved(_db, row);
         }
     }
 
@@ -408,11 +413,12 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         AiFeedbackRecord record, AiUsageAttribution who, CancellationToken ct)
     {
         if (record.CompanyId == Guid.Empty) return;
+        AiUsageDailyTenant? row = null;
         try
         {
             var today = DateTime.UtcNow.Date;
             var featureKey = record.FeatureKey.ToString();
-            var row = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
+            row = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
                 u => u.UsageDate == today
                      && u.CompanyId == record.CompanyId
                      && u.ProviderType == record.ProviderUsed
@@ -469,6 +475,7 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "AiUsageDailyTenant upsert failed (non-fatal)");
+            DiscardUnsaved(_db, row);   // A-AI8: แถวใหม่ (Added) ถูกถอด · แถวเดิม (Modified) คืนค่าเดิม
         }
     }
 
@@ -480,10 +487,11 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         CancellationToken ct)
     {
         if (!firstDecision && wasAccepted == acceptedAi) return;   // ไม่มีอะไรเปลี่ยน
+        AiUsageDailyTenant? target = null;
         try
         {
             var day = row.CreatedAt.Date;
-            var target = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
+            target = await _db.AiUsageDailyTenants.FirstOrDefaultAsync(
                 u => u.UsageDate == day
                      && u.CompanyId == row.CompanyId
                      && u.ProviderType == row.ProviderUsed
@@ -506,16 +514,18 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "AiUsageDailyTenant review bump failed (non-fatal)");
+            DiscardUnsaved(_db, target);   // A-AI8: ห้ามค้าง Modified ใน context ร่วม
         }
     }
 
     private async Task UpsertDailyRollupAsync(AiFeedbackRecord record, CancellationToken ct)
     {
+        AiUsageDaily? row = null;
         try
         {
             var today = DateTime.UtcNow.Date;
             var featureKey = record.FeatureKey.ToString();
-            var row = await _db.AiUsageDailies.FirstOrDefaultAsync(
+            row = await _db.AiUsageDailies.FirstOrDefaultAsync(
                 u => u.UsageDate == today && u.ProviderType == record.ProviderUsed && u.FeatureKey == featureKey, ct);
             if (row == null)
             {
@@ -549,6 +559,28 @@ public class AiFeedbackRecorder : IAiFeedbackRecorder
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "AiUsageDaily upsert failed (non-fatal)");
+            DiscardUnsaved(_db, row);   // A-AI8
+        }
+    }
+
+    /// <summary>ถอยการแก้ที่ยังไม่ถูกบันทึกของ entity หนึ่งตัวออกจาก change tracker (Modified/Deleted ⇒ ค่าเดิม + Unchanged ·
+    /// Added ⇒ Detached) — ตัวบันทึก feedback ใช้ <see cref="AccountingDbContext"/> ร่วมกับผู้เรียก ⇒ ขั้น best-effort ที่ล้ม
+    /// ต้องไม่ทิ้งของค้างให้ SaveChanges ถัดไปของผู้เรียกล้มตาม (รอบ 201 ทีม AI · A-AI8 · แบบเดียวกับ K2-4 รอบ 200)
+    /// · <c>internal</c> ให้เทสต์ล็อกพฤติกรรมโดยไม่ต้องมีฐานข้อมูล</summary>
+    internal static void DiscardUnsaved(DbContext db, object? entity)
+    {
+        if (entity == null) return;
+        var entry = db.Entry(entity);
+        switch (entry.State)
+        {
+            case EntityState.Modified:
+            case EntityState.Deleted:
+                entry.CurrentValues.SetValues(entry.OriginalValues);
+                entry.State = EntityState.Unchanged;
+                break;
+            case EntityState.Added:
+                entry.State = EntityState.Detached;
+                break;
         }
     }
 }

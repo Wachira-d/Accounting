@@ -750,6 +750,9 @@ const API = {
       applyStockCount: (id) => API.post(`${base}/product/stock-counts/${id}/apply`),
       // Inventory Valuation & Reports
       getInventoryValuation: () => API.get(`${base}/product/inventory/valuation`),
+      // รอบ 201 ทีม IN (C-5): ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง — รายงานก่อน · ซ่อมเฉพาะแถวที่เลือกเมื่อกด (audit)
+      getStockTotalsCheck: () => API.get(`${base}/product/inventory/stock-totals-check`),
+      repairStockTotals: (d) => API.post(`${base}/product/inventory/stock-totals-check/repair`, d),
       getStockBalance: (q = '') => API.get(`${base}/product/inventory/balance${q}`),
       getStockAging: () => API.get(`${base}/product/inventory/aging`),
       getMovementSummary: (q) => API.get(`${base}/product/inventory/movement-summary${q}`),
@@ -922,6 +925,8 @@ const API = {
       lodgingAddCharge: (id, d) => API.post(`${base}/lodging/reservations/${id}/charges`, d),
       lodgingCancelCharge: (id, chargeId) => API.del(`${base}/lodging/reservations/${id}/charges/${chargeId}`),
       lodgingCheckOut: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-out`, d),
+      // รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก (ยอดเท่าเดิม)
+      lodgingReissueFinal: (id, d) => API.post(`${base}/lodging/reservations/${id}/reissue-final`, d || {}),
       lodgingCancel: (id, d) => API.post(`${base}/lodging/reservations/${id}/cancel`, d),
       lodgingNoShow: (id, d) => API.post(`${base}/lodging/reservations/${id}/no-show`, d),
       lodgingRefundPaid: (id, d) => API.post(`${base}/lodging/reservations/${id}/refund-paid`, d),
@@ -1160,6 +1165,8 @@ const API = {
       listSettlementChannels: (includeInactive = false) =>
         API.get(`${base}/settlement/channels?includeInactive=${includeInactive ? 'true' : 'false'}`),
       getSettlementChannel: (id) => API.get(`${base}/settlement/channels/${id}`),
+      // รอบ 201 ทีม ST (A-ST4): รายงานของกำพร้าระดับช่องทาง (อ่านอย่างเดียว · ยอดซ่อนตามสิทธิ์ที่ server)
+      getSettlementChannelOrphans: (id) => API.get(`${base}/settlement/channels/${id}/orphans`),
       createSettlementChannel: (d) => API.post(`${base}/settlement/channels`, d),
       updateSettlementChannel: (id, d) => API.put(`${base}/settlement/channels/${id}`, d),
       inspectSettlementFile: (formData) => API.upload(`${base}/settlement/files/inspect`, formData),
@@ -1197,6 +1204,13 @@ const API = {
       getGatewayFeeVat: (code) =>
         API.get(`${base}/pay/settlements/fee-vat?providerCode=${encodeURIComponent(code)}`),
       claimGatewayFeeVat: (d) => API.post(`${base}/pay/settlements/fee-vat/claim`, d),
+      // รอบ 201 ทีม GW (A-GW8): ปรับปรุงเศษ VAT ค่าธรรมเนียมที่ค้าง 11630 (ภายใต้เกณฑ์ต่อใบกำกับ — เซิร์ฟเวอร์ตัดสิน)
+      writeOffGatewayFeeVatResidue: (d) => API.post(`${base}/pay/settlements/fee-vat/residue`, d),
+      // รอบ 201 ทีม GW (A-GW4): รายงานกระทบยอดเงินรับออนไลน์ (เดิมมี endpoint แต่ไม่มีหน้าไหนเรียก) — from/to = วันที่ไทย yyyy-mm-dd
+      getGatewayReconciliation: (from, to) =>
+        API.get(`${base}/pay/reconciliation?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+      // รอบ 201 ทีม GW (A-GW7): บันทึกยอดคืนจริงย้อนหลังของรายการที่คืนแล้วแต่ระบบไม่มียอดคืน (เจ้าของกิจการ · journal = "BookNow" | "AlreadyBookedManually")
+      recordPaymentIntentLegacyRefund: (id, d) => API.post(`${base}/pay/intents/${id}/refund/record-legacy`, d),
       // สูตรวัตถุดิบต่อสินค้า (recipe) — มุมมองบนตาราง BOM เดียวกับใบสั่งผลิต
       getProductRecipe: (productId) => API.get(`${base}/mfg/products/${productId}/recipe`),
       saveProductRecipe: (productId, d) => API.put(`${base}/mfg/products/${productId}/recipe`, d),

@@ -23,7 +23,10 @@ public record CreateProductRequest(
     Guid? SuppliesExpenseAccountId = null,
     bool TrackStock = false,
     decimal MinimumStock = 0,
-    string? PrintStation = null);
+    string? PrintStation = null,
+    // รอบ 201 ทีม IN (A-IN1 · คำตัดสินข้อ 30): วิธีคิดต้นทุน — null = ถัวเฉลี่ย (ค่าเริ่มต้นเดิม) · ห้าม LIFO/ต้นทุนมาตรฐาน
+    // (ตัวตัดสิน Helpers/CostingMethodPolicy)
+    CostingMethod? CostingMethod = null);
 
 public record UpdateProductRequest(
     string? Name,
@@ -45,7 +48,9 @@ public record UpdateProductRequest(
     Guid? InventoryAccountId,
     Guid? SuppliesAccountId,
     Guid? SuppliesExpenseAccountId,
-    string? PrintStation = null);
+    string? PrintStation = null,
+    // รอบ 201 ทีม IN (A-IN1): null = ไม่แก้ · เปลี่ยนได้เฉพาะสินค้าที่ยังไม่มีความเคลื่อนไหวสต็อก (CostingMethodPolicy)
+    CostingMethod? CostingMethod = null);
 
 public record ProductResponse(
     Guid Id,
@@ -75,7 +80,11 @@ public record ProductResponse(
     List<UnitConversionResponse>? UnitConversions = null,
     List<string>? ImageUrls = null,
     string? FeaturedImageUrl = null,
-    string? PrintStation = null);
+    string? PrintStation = null,
+    // รอบ 201 ทีม IN (A-IN1): echo วิธีคิดต้นทุน + สถานะล็อก (null = ไม่ได้ตรวจในคำตอบนี้ · true = มีความเคลื่อนไหวแล้ว เปลี่ยนไม่ได้)
+    CostingMethod CostingMethod = CostingMethod.WeightedAverage,
+    bool? CostingMethodLocked = null,
+    string? CostingMethodLockReason = null);
 
 public record StockAdjustmentRequest(
     Guid ProductId,

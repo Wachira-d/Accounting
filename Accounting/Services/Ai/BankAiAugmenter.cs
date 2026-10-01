@@ -115,7 +115,9 @@ public class BankAiAugmenter : IBankAiAugmenter
                 resp.PrimaryAnswer, resp.Confidence,
                 resp.Alternatives, resp.Risks, resp.ComplianceFlags,
                 resp.Reasoning, resp.SuggestedActions,
-                resp.UsedAi, resp.FeedbackId);
+                resp.UsedAi, resp.FeedbackId,
+                // รอบ 201 A-AI2 (H-4): ธงนักเรียนต้องเดินทางถึงผู้บริโภค (BankFeedService)
+                FromStudent: resp.FromLocalModel);
         }
         catch (Exception ex)
         {

@@ -38,7 +38,7 @@ public static class SettlementChannelLock
         + "(ระบบไม่ทำงานของช่องทางเดียวกันซ้อนกัน เพื่อกันข้อมูลชนกันและลงบัญชีซ้ำ · ระบบยังไม่ได้บันทึกอะไรจากการกดครั้งนี้)";
 }
 
-/// <summary>การรับชำระ 1 รายการที่มีป้ายของรอบโอน (<see cref="SettlementPostingKeys.PaymentMarker"/>) — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
+/// <summary>การรับชำระ 1 รายการของรอบโอน (<c>Payment.SettlementBatchId</c> · รอบ 201 A-ST1) — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
 public sealed record SettlementMarkerPayment(Guid Id, Guid DocumentId, decimal Amount, string? Number);
 
 /// <summary>เอกสาร 1 ใบที่มีป้ายของรอบโอน (<see cref="SettlementPostingKeys.CreatorPrefix"/>) — ยังไม่ถูกยกเลิก</summary>
@@ -143,6 +143,33 @@ public static class SettlementPlanFingerprint
         return string.Join("|", fee.Concat(sum));
     }
 
+    /// <summary>
+    /// **ลายนิ้วมือของชิ้นที่เก็บบนเอกสารตอนออก** (รอบ 201 ทีม ST · A-ST8 · review198-S4 S4-5) — SHA-256 ของ <see cref="Piece"/> (ใบสรุปมีชุด id บรรทัด ⇒ ยาวได้หลายหมื่นตัว
+    /// จึงเก็บแบบย่อ) · <c>"v1:" + hex</c> · canonical ตัวเดียวทั้งฝั่งเขียน (ผู้ลงบัญชีตอนสร้างเอกสาร) และฝั่งเทียบ (<see cref="SettlementPartialEdit"/> ·
+    /// <see cref="IssuedDrift"/>) · pure
+    /// </summary>
+    public static string PieceHash(SettlementPostingPlan p, string component)
+        => "v1:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(Piece(p, component)))).ToLowerInvariant();
+
+    /// <summary>
+    /// **เอกสารที่ออกไปแล้วของรอบนี้ซึ่งเนื้อหาไม่ตรงแผนปัจจุบัน** (A-ST8) — ชิ้นที่มีลายนิ้วมือตอนออกแต่ไม่เท่าของแผนตอนนี้ (บรรทัด/ผังถูกเปลี่ยนหลังออก) ⇒
+    /// ปัญหา<b>ไม่บล็อก</b> <see cref="SettlementPlanIssueCode.IssuedPieceDrift"/> (ยอดยังถูกด่านยอดของผู้ลงบัญชีตรวจ — เนื้อหาที่ต่างแต่ยอดเท่าเดิมไม่ทำให้เงินผิด
+    /// แต่ผู้ใช้ต้องรู้ · บล็อก = ทางตันเมื่อเอกสารยกเลิกไม่ได้) · ไม่มีลายนิ้วมือ = ไม่รู้ ⇒ ไม่เตือน · pure
+    /// </summary>
+    public static SettlementPlanIssue? IssuedDrift(SettlementPostingPlan plan, IEnumerable<(string Component, string Number, string? Fingerprint)> issued)
+    {
+        var drifted = issued.Where(d => d.Fingerprint != null
+                && !string.Equals(d.Fingerprint, PieceHash(plan, d.Component), StringComparison.Ordinal))
+            .Select(d => d.Number).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+        return drifted.Count == 0 ? null
+            : new SettlementPlanIssue(SettlementPlanIssueCode.IssuedPieceDrift, false,
+                $"เอกสาร {string.Join(", ", drifted)} ที่ลงไว้ครั้งก่อนมีเนื้อหาไม่ตรงแผนปัจจุบัน (ชุดบรรทัด/ผังเปลี่ยนหลังออกเอกสาร — ยอดยังถูกตรวจตอนลงบัญชี)",
+                "ตรวจว่าบรรทัดของรอบโอนถูกแก้ตั้งแต่ออกเอกสารนั้นหรือไม่ · ถ้าเอกสารไม่ควรมีรายการเหล่านั้น ให้ยกเลิกเอกสารนั้นที่หน้าเอกสาร (ยกเลิกไม่ได้ ⇒ "
+                + "ใบลดหนี้/ใบเพิ่มหนี้หรือรายการปรับปรุงงวดปัจจุบัน) แล้วดูตัวอย่างใหม่",
+                Array.Empty<Guid>(), null);
+    }
+
     /// <summary>ลายนิ้วมือของการรับชำระใบขายใบหนึ่งในแผน (ยอด + ชุดบรรทัด) — ไม่มี = ""</summary>
     internal static string ReceiptPiece(SettlementPostingPlan p, Guid documentId)
         => string.Join("|", p.Receipts.Where(r => r.DocumentId == documentId)
@@ -158,7 +185,10 @@ public static class SettlementPlanFingerprint
 /// <summary>ชิ้นของรอบที่ลงค้างครึ่งทางซึ่ง "ออกไปแล้ว" (ข้อเท็จจริงจากฐาน · ป้ายของรอบโอน) — ห้ามถูกแก้ผ่านการแก้บรรทัด</summary>
 /// <param name="DocumentComponents">ชิ้นที่มีเอกสารยังไม่ถูกยกเลิก (<c>fee-…</c> · <c>sum-yyyyMMdd</c> จาก <c>Document.CreatedBy</c>)</param>
 /// <param name="ReceivedDocumentIds">ใบขายที่มีการรับชำระยังไม่ถูกยกเลิกซึ่งมีป้ายของรอบโอน</param>
-public sealed record SettlementFrozenParts(IReadOnlyCollection<string> DocumentComponents, IReadOnlyCollection<Guid> ReceivedDocumentIds);
+/// <param name="IssuedFingerprints">ชิ้น → ลายนิ้วมือที่เก็บบนเอกสารตอนออก (<c>Document.SettlementPieceFingerprint</c> · A-ST8) — ชิ้นที่ไม่มี (เอกสารก่อนรอบ 201) =
+/// ไม่รู้ ⇒ เทียบแผนก่อน/หลังแก้แบบเดิม · null = ไม่ได้โหลด</param>
+public sealed record SettlementFrozenParts(IReadOnlyCollection<string> DocumentComponents, IReadOnlyCollection<Guid> ReceivedDocumentIds,
+    IReadOnlyDictionary<string, string>? IssuedFingerprints = null);
 
 /// <summary>
 /// **แก้บรรทัดของรอบที่ลงบัญชีค้างครึ่งทาง — ได้เฉพาะส่วนที่ยังไม่มีเอกสาร/การรับชำระ** (review198-S3 S3-1 · ทีม S4)
@@ -178,8 +208,14 @@ public static class SettlementPartialEdit
     {
         var changed = new List<string>();
         foreach (var c in frozen.DocumentComponents.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal))
-            if (!string.Equals(SettlementPlanFingerprint.Piece(before, c), SettlementPlanFingerprint.Piece(after, c), StringComparison.Ordinal))
-                changed.Add(c.StartsWith("sum-", StringComparison.Ordinal) ? $"ใบขายสรุปรายวัน ({c})" : $"ใบค่าธรรมเนียม ({c})");
+        {
+            if (string.Equals(SettlementPlanFingerprint.Piece(before, c), SettlementPlanFingerprint.Piece(after, c), StringComparison.Ordinal)) continue;
+            // A-ST8: การแก้ที่ทำให้ชิ้นกลับมา "ตรงเนื้อหาที่ออกเอกสารไปจริง" (ลายนิ้วมือที่ประทับตอนออก) = แก้ได้ — เดิมแผนก่อนแก้ที่คลาดจากเอกสารแล้วเป็นตัวตั้ง
+            // ⇒ การแก้กลับให้ตรงถูกปฏิเสธ · ไม่มีลายนิ้วมือ (ใบก่อนรอบ 201) = ไม่รู้ ⇒ พฤติกรรมเดิม (ปฏิเสธเมื่อชิ้นเปลี่ยน)
+            if (frozen.IssuedFingerprints != null && frozen.IssuedFingerprints.TryGetValue(c, out var issued)
+                && string.Equals(SettlementPlanFingerprint.PieceHash(after, c), issued, StringComparison.Ordinal)) continue;
+            changed.Add(c.StartsWith("sum-", StringComparison.Ordinal) ? $"ใบขายสรุปรายวัน ({c})" : $"ใบค่าธรรมเนียม ({c})");
+        }
         if (frozen.ReceivedDocumentIds.Distinct().Any(d =>
                 !string.Equals(SettlementPlanFingerprint.ReceiptPiece(before, d), SettlementPlanFingerprint.ReceiptPiece(after, d),
                     StringComparison.Ordinal)))
@@ -268,8 +304,10 @@ public enum SettlementUnpostRefusalKind
 /// <summary>เหตุผลที่ยกเลิกการลงบัญชีไม่ได้ 1 ข้อ — พร้อมทางไปต่อ</summary>
 /// <param name="ArtifactId">ชิ้นที่ด่านปฏิเสธเพราะเหตุนี้ (เอกสาร · เอกสารของ 50 ทวิ · การรับชำระ) — ใช้แยกของกำพร้า (S3-6 · <see cref="SettlementOrphanTriage"/>)</param>
 /// <param name="Kind">ยกเลิกไม่ได้จริง หรือ ต้องให้คนทำก่อน (S4-1) — ทุกจุดที่สร้างต้องระบุเอง · ค่าเริ่มต้น = <see cref="SettlementUnpostRefusalKind.NeedsUserAction"/> (ทิศบล็อก)</param>
+/// <param name="Code">รหัสโครงสร้างของเหตุ (รอบ 201 ทีม ST · A-ST5) — ใช้ทำลายนิ้วมือเหตุของการรับรู้ของกำพร้า (<see cref="SettlementOrphanTriage.ReasonHash"/>)
+/// ให้ไม่ขึ้นกับถ้อยคำ · null = ใช้ข้อความเหตุแทน</param>
 public sealed record SettlementUnpostRefusal(string Subject, string Reason, string NextStep, Guid? ArtifactId = null,
-    SettlementUnpostRefusalKind Kind = SettlementUnpostRefusalKind.NeedsUserAction);
+    SettlementUnpostRefusalKind Kind = SettlementUnpostRefusalKind.NeedsUserAction, string? Code = null);
 
 /// <summary>
 /// **ด่านก่อนยกเลิกการลงบัญชีรอบโอน — ตรวจทุกชิ้นก่อนแตะชิ้นแรก** (ฝ่ายค้าน C-2)
@@ -298,13 +336,14 @@ public static class SettlementUnpostGate
         foreach (var d in documents)
         {
             if (d.EtaxAccepted)
-                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว)", CreditNotePath, d.Id, Hard));
+                result.Add(new(d.Number, "e-Tax ของเอกสารนี้ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว)", CreditNotePath, d.Id, Hard,
+                    "doc-etax-accepted"));
             else if (d.EtaxSubmitted)
                 result.Add(new(d.Number, "e-Tax ของเอกสารนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted)",
                     "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของเอกสารนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) แล้วกดยกเลิกการลงบัญชีอีกครั้ง · ระบบไม่แตะอะไรในรอบนี้",
                     d.Id, Soft));
             if (d.InLockedReport)
-                result.Add(new(d.Number, "เอกสารนี้อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว", CreditNotePath, d.Id, Hard));
+                result.Add(new(d.Number, "เอกสารนี้อยู่ในรายงานภาษีที่ล็อกการยื่นแล้ว", CreditNotePath, d.Id, Hard, "doc-locked-report"));
             // S4-8: เดือนภาษี = TaxPointDate ?? DocumentDate (สูตรเดียวกับตัวกรองของ ภ.พ.30/ภ.พ.36) — เดิมใช้วันที่เอกสาร
             var taxMonth = ReportDate(d);
             if (IsSaleSide(d.Component) && d.VatAmount != 0m
@@ -325,7 +364,8 @@ public static class SettlementUnpostGate
         foreach (var c in certificates)
             if (WhtCertVoidGuard.Reason(c.Status, c.Number, c.FormType, c.Year, c.Month,
                     declaredOrFiled.Contains((c.FormType, c.Year, c.Month))) is string why)
-                result.Add(new(c.Number ?? "50 ทวิ", why, CreditNotePath, c.DocumentId, Hard));
+                result.Add(new(c.Number ?? "50 ทวิ", why, CreditNotePath, c.DocumentId, Hard,
+                    $"wht-filed:{c.Id:N}:{c.FormType}:{c.Year}-{c.Month}"));
         foreach (var p in payments ?? Array.Empty<SettlementUnpostPayment>())
         {
             // S3-7: ยกเลิกการรับชำระใบบริการ ⇒ กลับภาษีขายที่ถึงกำหนดตอนรับเงิน (§78/1 · 21911→21913) ถ้าไม่เหลือเงินรับอื่นบนใบ — เดือนนั้นยื่นแล้ว = ห้าม
@@ -338,7 +378,7 @@ public static class SettlementUnpostGate
             if (p.ReceiptEtaxAccepted)
                 result.Add(new(p.Number ?? "การรับชำระ",
                     $"ใบเสร็จ {p.ReceiptNumber} ที่ออกคู่การรับชำระนี้ e-Tax ได้รับตอบรับจากกรมสรรพากรแล้ว (Accepted) — ยกเลิกการรับชำระ = ยกเลิกใบที่กรมสรรพากรรับแล้ว",
-                    CreditNotePath, p.Id, Hard));
+                    CreditNotePath, p.Id, Hard, "receipt-etax-accepted"));
             // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ส่งแล้วแต่ยังไม่ตอบรับ — VoidPaymentAsync ปฏิเสธเหมือนกัน (ตัวตัดสินเดียว
             // DocumentVoidPreconditions.AutoReceiptOnPaymentVoid) ⇒ ต้องปฏิเสธที่นี่ก่อนแตะชิ้นแรก · คนยกเลิก e-Tax ของใบเสร็จได้ = NeedsUserAction
             else if (p.ReceiptEtaxSubmitted)
@@ -371,7 +411,9 @@ public static class SettlementUnpostGate
 
 /// <summary>การ "รับรู้ของกำพร้า" ที่ประทับไว้บนเอกสาร/การรับชำระ (รอบ 200 · DECISIONS ข้อ 10) — ผู้/เวลา/เหตุผล · ใช้ได้เฉพาะชิ้นที่<b>ยกเลิกไม่ได้จริง</b></summary>
 /// <param name="ByName">ชื่อผู้รับรู้ (สมาชิกบริษัทนี้) — null = หาชื่อไม่เจอ (แสดง id แทน · ไม่เดา)</param>
-public sealed record SettlementOrphanAck(Guid ByUserId, string? ByName, DateTime At, string Reason);
+/// <param name="ReasonHash">ลายนิ้วมือของเหตุที่ยกเลิกไม่ได้ ณ เวลารับรู้ (รอบ 201 ทีม ST · A-ST5 · <see cref="SettlementOrphanTriage.ReasonHash"/>) —
+/// null = รับรู้ก่อนระบบเก็บเหตุ ⇒ <b>ไม่รู้ว่ารับรู้เหตุอะไร ⇒ ไม่ครอบ</b> (DOCTRINE §1 · หลักเดียวกับคำตัดสินข้อ 29) ต้องรับรู้ใหม่</param>
+public sealed record SettlementOrphanAck(Guid ByUserId, string? ByName, DateTime At, string Reason, string? ReasonHash = null);
 
 /// <summary>ของกำพร้า 1 ชิ้น — เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิก/ลบแล้ว และยังไม่ถูกยกเลิก (C-1(d))</summary>
 /// <param name="BatchId">รอบโอนเจ้าของ (ที่ถูกยกเลิก/ลบแล้ว)</param>
@@ -407,8 +449,9 @@ public enum SettlementOrphanPile
 
 /// <summary>ของกำพร้า 1 ชิ้นสำหรับหน้าจอ (ลิงก์ · กอง · เหตุ · ผู้รับรู้ · ปุ่มรับรู้)</summary>
 /// <param name="CanAcknowledge">กองยกเลิกไม่ได้จริงและยังไม่มีคนรับรู้ ⇒ หน้าจอแสดงปุ่ม "รับรู้ของกำพร้า" (สิทธิ์ตรวจซ้ำที่ server)</param>
+/// <param name="ReasonHash">ลายนิ้วมือเหตุที่ยกเลิกไม่ได้ของรายการ ณ ตอนนี้ (เฉพาะกองยกเลิกไม่ได้จริง · A-ST5) — ปุ่มรับรู้ประทับค่านี้ลงแถว</param>
 public sealed record SettlementOrphanItem(Guid Id, bool IsPayment, string? Number, string PayoutRef, SettlementOrphanPile Pile,
-    string Why, string NextStep, SettlementOrphanAck? Ack, bool CanAcknowledge)
+    string Why, string NextStep, SettlementOrphanAck? Ack, bool CanAcknowledge, string? ReasonHash = null)
 {
     /// <summary>ป้ายไทยของกอง — หน้าเว็บไม่มีตารางป้ายเอง (F2 ข้อ 5)</summary>
     public string PileLabel => Pile switch
@@ -467,10 +510,11 @@ public static class SettlementOrphanTriage
         var byArtifact = refusals.Where(r => r.ArtifactId != null).GroupBy(r => r.ArtifactId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
         var voidBlockOf = documents.Where(d => d.VoidBlock != null).GroupBy(d => d.Id).ToDictionary(g => g.Key, g => g.First().VoidBlock!);
-        // รอบ 200: ใบที่อ้างซึ่งตัวเองยกเลิกไม่ได้ ⇒ ใบกำพร้ายกเลิกไม่ได้ด้วย (ต้องยกเลิกใบที่อ้างก่อน — ทำไม่ได้)
-        var childHardOf = (children ?? Array.Empty<SettlementOrphanChild>())
-            .Select(c => (c.ParentId, Why: ChildUnvoidableReason(c))).Where(x => x.Why != null)
-            .GroupBy(x => x.ParentId).ToDictionary(g => g.Key, g => g.Select(x => x.Why!).Distinct().ToList());
+        // รอบ 200: ใบที่อ้างซึ่งตัวเองยกเลิกไม่ได้ ⇒ ใบกำพร้ายกเลิกไม่ได้ด้วย (ต้องยกเลิกใบที่อ้างก่อน — ทำไม่ได้) · รอบ 201 A-ST6: ไล่ทั้งต้น (หลาน/เหลน …)
+        var descendants = DescendantHardReasons(children ?? Array.Empty<SettlementOrphanChild>(),
+            artifacts.Where(a => !a.IsPayment).Select(a => a.Id));
+        var childHardOf = descendants.Where(kv => kv.Value.Count > 0)
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(x => x.Why).Distinct().ToList());
         var voidable = new List<string>();
         var needs = new List<SettlementOrphanBlock>();
         var hard = new List<string>();
@@ -495,26 +539,32 @@ public static class SettlementOrphanTriage
                 var rs = byArtifact.GetValueOrDefault(a.Id) ?? new List<SettlementUnpostRefusal>();
                 var head = $"{what} {a.Number} ที่ลงบัญชีให้รอบโอน {payoutRef} (ถูกยกเลิกแล้ว)";
                 var childHard = a.IsPayment ? new List<string>() : childHardOf.GetValueOrDefault(a.Id) ?? new List<string>();
-                var hardReasons = rs.Where(r => r.Kind == SettlementUnpostRefusalKind.Unvoidable).Select(r => r.Reason)
-                    .Concat(childHard).Distinct().ToList();
+                var hardRefusals = rs.Where(r => r.Kind == SettlementUnpostRefusalKind.Unvoidable).ToList();
+                var hardReasons = hardRefusals.Select(r => r.Reason).Concat(childHard).Distinct().ToList();
                 if (hardReasons.Count > 0)
                 {
+                    // A-ST5: ลายนิ้วมือของเหตุ ณ ตอนนี้ — การรับรู้ผูกกับเหตุที่ผู้รับรู้เห็น (เหตุเปลี่ยน ⇒ การรับรู้เดิมไม่มีผล)
+                    var reasonHash = ReasonHash(hardRefusals.Select(RefusalKey)
+                        .Concat(a.IsPayment ? Enumerable.Empty<string>()
+                            : descendants.GetValueOrDefault(a.Id)?.Select(x => x.Key) ?? Enumerable.Empty<string>()));
                     var msg = $"{head} ยกเลิกในระบบไม่ได้แล้ว: {string.Join(" · ", hardReasons)}";
-                    if (a.Ack is SettlementOrphanAck stale && !AckCovers(stale, payoutRef, current))
-                        msg += $" (เคยรับรู้ไว้เมื่อ {ThaiDate.ToThaiDisplayString(stale.At)} ก่อนนำเข้ารอบนี้ ซึ่งใช้เลขรอบโอน {payoutRef} เดียวกับรอบที่ยกเลิก — "
-                            + "อาจเป็นไฟล์เดิมนำเข้าซ้ำ · การรับรู้เดิมไม่ครอบรอบนี้ ต้องตรวจแล้วรับรู้ใหม่)";
-                    if (a.Ack is SettlementOrphanAck ack && AckCovers(ack, payoutRef, current))
+                    if (a.Ack is SettlementOrphanAck stale && !AckCovers(stale, payoutRef, current, reasonHash))
+                        msg += AckCovers(stale, payoutRef, current)
+                            ? StaleReasonNote(stale)
+                            : $" (เคยรับรู้ไว้เมื่อ {ThaiDate.ToThaiDisplayString(stale.At)} ก่อนนำเข้ารอบนี้ ซึ่งใช้เลขรอบโอน {payoutRef} เดียวกับรอบที่ยกเลิก — "
+                              + "อาจเป็นไฟล์เดิมนำเข้าซ้ำ · การรับรู้เดิมไม่ครอบรอบนี้ ต้องตรวจแล้วรับรู้ใหม่)";
+                    if (a.Ack is SettlementOrphanAck ack && AckCovers(ack, payoutRef, current, reasonHash))
                     {
                         var shown = msg + " — " + AckLabel(ack);
                         acked.Add(shown);
                         items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.Unvoidable, shown,
-                            AcknowledgedNextStep, ack, false));
+                            AcknowledgedNextStep, ack, false, reasonHash));
                     }
                     else
                     {
                         hard.Add(msg);
                         items.Add(new SettlementOrphanItem(a.Id, a.IsPayment, a.Number, payoutRef, SettlementOrphanPile.Unvoidable, msg,
-                            UnacknowledgedNextStep, null, true));
+                            UnacknowledgedNextStep, null, true, reasonHash));
                     }
                     continue;
                 }
@@ -536,6 +586,72 @@ public static class SettlementOrphanTriage
            || !string.Equals((ownerPayoutRef ?? "").Trim(), (current.PayoutRef ?? "").Trim(), StringComparison.Ordinal)
            || ack.At >= current.CreatedAt;
 
+    /// <summary>การรับรู้ครอบ "รอบนี้" <b>และ</b> "เหตุปัจจุบัน" (รอบ 201 ทีม ST · A-ST5) — ลายนิ้วมือเหตุที่ประทับไว้ต้องเท่ากับของตอนนี้ ·
+    /// ไม่มีลายนิ้วมือ (รับรู้ก่อนระบบเก็บเหตุ) = ไม่รู้ ⇒ ไม่ครอบ (DOCTRINE §1 — ทิศที่มองเห็นและแก้ได้: กดรับรู้ใหม่)</summary>
+    internal static bool AckCovers(SettlementOrphanAck ack, string ownerPayoutRef, SettlementOrphanCurrentBatch? current, string currentReasonHash)
+        => AckCovers(ack, ownerPayoutRef, current)
+           && ack.ReasonHash != null && string.Equals(ack.ReasonHash, currentReasonHash, StringComparison.Ordinal);
+
+    /// <summary>ข้อความเมื่อการรับรู้ไม่ครอบเพราะเหตุเปลี่ยน/ไม่รู้เหตุเดิม (A-ST5)</summary>
+    private static string StaleReasonNote(SettlementOrphanAck ack)
+        => ack.ReasonHash == null
+            ? $" (เคยรับรู้ไว้เมื่อ {ThaiDate.ToThaiDisplayString(ack.At)} ก่อนระบบเก็บเหตุที่รับรู้ — ไม่รู้ว่ารับรู้เหตุใด การรับรู้เดิมไม่มีผล ต้องตรวจแล้วรับรู้ใหม่)"
+            : $" (เคยรับรู้ไว้เมื่อ {ThaiDate.ToThaiDisplayString(ack.At)} แต่เหตุที่ยกเลิกไม่ได้เปลี่ยนไปจากตอนนั้น — การรับรู้เดิมไม่มีผล ต้องตรวจแล้วรับรู้ใหม่)";
+
+    /// <summary>
+    /// **ลายนิ้วมือของเหตุที่ยกเลิกไม่ได้** (รอบ 201 ทีม ST · A-ST5 · team-SF V2-P3) — SHA-256 ของกุญแจโครงสร้างที่เรียงแล้ว (ไม่ขึ้นกับลำดับ/ถ้อยคำ) · <c>"v1:" + hex</c> ·
+    /// กุญแจ: เหตุจากด่านยกเลิกการลงบัญชี (<see cref="RefusalKey"/>) + ใบที่อ้างแต่ละชั้นที่ยกเลิกไม่ได้ (<see cref="ChildKey"/>) · canonical ตัวเดียวทั้งฝั่งประทับและฝั่งเทียบ · pure
+    /// </summary>
+    public static string ReasonHash(IEnumerable<string> keys)
+    {
+        var canonical = string.Join("\n", keys.Distinct(StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal));
+        return "v1:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    /// <summary>กุญแจของเหตุจากด่านยกเลิกการลงบัญชี — รหัสโครงสร้าง (ถ้ามี) + ชิ้นที่ถูกปฏิเสธ</summary>
+    internal static string RefusalKey(SettlementUnpostRefusal r) => $"r:{r.Code ?? r.Reason}|{r.ArtifactId:N}|{r.Subject}";
+
+    /// <summary>กุญแจของใบที่อ้างที่ยกเลิกไม่ได้ — id ใบ + ธงเหตุ (e-Tax ตอบรับ/ส่งแล้ว · รายงานล็อก · 50 ทวิ · ส่งลูกค้า)</summary>
+    internal static string ChildKey(SettlementOrphanChild c)
+        => $"c:{c.ChildId:N}:{(c.EtaxAccepted ? "A" : c.EtaxSubmitted ? "S" : "-")}{(c.InLockedReport ? "L" : "-")}"
+           + $"{(string.IsNullOrWhiteSpace(c.WhtFiled) ? "-" : "W")}{(c.SentToCustomer ? "D" : "-")}";
+
+    /// <summary>ความลึกสูงสุดของสายใบที่อ้าง (ลูก → หลาน → …) ที่ไล่ตาม (A-ST6) — ลึกกว่านี้ไม่ตาม (ใบลูกชั้นแรกยังมี "เอกสารอ้าง" ⇒ กองต้องทำขั้นก่อน = มองเห็น)</summary>
+    public const int MaxChildDepth = 6;
+
+    /// <summary>
+    /// **เหตุที่ใบกำพร้ายกเลิกไม่ได้เพราะใบที่อ้างมัน "ชั้นใดก็ได้" ยกเลิกไม่ได้** (รอบ 201 ทีม ST · A-ST6 · team-V2 คำถามค้าง 2) — เดิมดูแค่ลูกชั้นแรก ⇒
+    /// ลูกที่ยกเลิกได้แต่มีหลานซึ่งยกเลิกไม่ได้ (ใบลดหนี้ที่ e-Tax ตอบรับแล้วอ้างใบลูก) ⇒ ทางไปต่อ "ยกเลิกใบที่อ้างก่อน" ทำไม่ได้จริง ⇒ ช่องทางบล็อกถาวร ·
+    /// <paramref name="edges"/> = ทุกขอบ "ใบแม่ ← ใบที่อ้าง" ทุกชั้น · กันวน (เยี่ยมแต่ละใบครั้งเดียวต่อราก) · ลึกไม่เกิน <see cref="MaxChildDepth"/> ·
+    /// ผล: รากแต่ละใบ → (ข้อความ · กุญแจ) ของทุกใบในต้นที่ยกเลิกไม่ได้ · pure
+    /// </summary>
+    internal static Dictionary<Guid, List<(string Why, string Key)>> DescendantHardReasons(IReadOnlyList<SettlementOrphanChild> edges,
+        IEnumerable<Guid> roots)
+    {
+        var byParent = edges.GroupBy(e => e.ParentId).ToDictionary(g => g.Key, g => g.ToList());
+        var result = new Dictionary<Guid, List<(string Why, string Key)>>();
+        foreach (var root in roots.Distinct())
+        {
+            var found = new List<(string Why, string Key)>();
+            var seen = new HashSet<Guid> { root };
+            var frontier = new List<(Guid Id, List<string> Via)> { (root, new List<string>()) };
+            for (var depth = 1; depth <= MaxChildDepth && frontier.Count > 0; depth++)
+            {
+                var next = new List<(Guid Id, List<string> Via)>();
+                foreach (var (id, via) in frontier)
+                    foreach (var c in byParent.GetValueOrDefault(id) ?? new List<SettlementOrphanChild>())
+                    {
+                        if (!seen.Add(c.ChildId)) continue;
+                        if (ChildUnvoidableReason(c, via) is string why) found.Add((why, ChildKey(c)));
+                        next.Add((c.ChildId, via.Append(c.Number ?? c.ChildId.ToString("N")).ToList()));
+                    }
+                frontier = next;
+            }
+            result[root] = found;
+        }
+        return result;
+    }
+
     /// <summary>ชิ้นนี้มีเหตุให้ตัดสินรายชิ้นไหม (ด่านยกเลิกการลงบัญชีปฏิเสธ หรือมีใบที่อ้างซึ่งยกเลิกไม่ได้) — ไม่มี = กองยกเลิกได้ทันที</summary>
     private static bool Judged(SettlementOrphanArtifact a, Dictionary<Guid, List<SettlementUnpostRefusal>> byArtifact,
         Dictionary<Guid, List<string>> childHardOf)
@@ -545,7 +661,10 @@ public static class SettlementOrphanTriage
     /// **ใบที่อ้างของกำพร้า "เอง" ยกเลิกไม่ได้เพราะอะไร** — null = ยกเลิกได้ (ทางไปต่อ "ยกเลิกใบที่อ้างก่อน" ยังใช้ได้) · ชุดเดียวกับ
     /// <see cref="SettlementUnpostRefusalKind.Unvoidable"/> (e-Tax ตอบรับ · รายงานล็อก · 50 ทวิ ยื่นแล้ว) + ส่งให้ลูกค้าแล้ว (DECISIONS ข้อ 10) · pure
     /// </summary>
-    internal static string? ChildUnvoidableReason(SettlementOrphanChild c)
+    internal static string? ChildUnvoidableReason(SettlementOrphanChild c) => ChildUnvoidableReason(c, Array.Empty<string>());
+
+    /// <param name="via">เลขที่ของใบที่อยู่ระหว่างใบกำพร้ากับใบนี้ (เรียงจากชั้นลูกลงมา) — ว่าง = ลูกชั้นแรก (ข้อความเดิมทุกตัวอักษร) · A-ST6</param>
+    internal static string? ChildUnvoidableReason(SettlementOrphanChild c, IReadOnlyList<string> via)
     {
         var reasons = new List<string>();
         if (c.EtaxAccepted) reasons.Add("e-Tax ถึงกรมสรรพากรแล้ว (ตอบรับ หรือ e-Tax by Email ที่ประทับเวลาแล้ว)");
@@ -560,6 +679,9 @@ public static class SettlementOrphanTriage
             DocumentType.DebitNote => "ใบเพิ่มหนี้",
             _ => "เอกสาร",
         };
+        if (via.Count > 0)
+            return $"{what} {c.Number} ที่อ้าง {string.Join(" ← ", via.AsEnumerable().Reverse())} (ซึ่งอ้างใบนี้) ยกเลิกไม่ได้ ({string.Join(" · ", reasons)}) "
+                + "จึงยกเลิกสายเอกสารนั้นและใบนี้ไม่ได้ด้วย";
         return $"{what} {c.Number} ที่อ้างใบนี้ยกเลิกไม่ได้ ({string.Join(" · ", reasons)}) จึงยกเลิกใบนี้ไม่ได้ด้วย";
     }
 
@@ -660,8 +782,6 @@ public static class SettlementUnpostScope
 /// </summary>
 public static class SettlementArtifactGuard
 {
-    private const string MarkerHead = SettlementPostingKeys.PaymentMarkerHead;
-
     /// <summary>รอบโอนเจ้าของเอกสาร จาก <c>Document.CreatedBy</c> (<see cref="SettlementPostingKeys.CreatorPrefix"/>) — ไม่ใช่ของรอบโอน = null</summary>
     public static Guid? BatchIdFromCreator(string? createdBy)
     {
@@ -671,14 +791,8 @@ public static class SettlementArtifactGuard
         return Guid.TryParseExact(createdBy.Substring(head.Length, 32), "N", out var id) ? id : null;
     }
 
-    /// <summary>รอบโอนเจ้าของการรับชำระ จากป้ายใน <c>Payment.Notes</c> (<see cref="SettlementPostingKeys.PaymentMarker"/>)</summary>
-    public static Guid? BatchIdFromPaymentNotes(string? notes)
-    {
-        if (notes == null) return null;
-        var at = notes.IndexOf(MarkerHead, StringComparison.Ordinal);
-        if (at < 0 || notes.Length < at + MarkerHead.Length + 33 || notes[at + MarkerHead.Length + 32] != ']') return null;
-        return Guid.TryParseExact(notes.Substring(at + MarkerHead.Length, 32), "N", out var id) ? id : null;
-    }
+    // รอบ 201 ทีม ST (A-ST1): รอบโอนเจ้าของการรับชำระ = คอลัมน์ Payment.SettlementBatchId (ผู้ลงบัญชีประทับ · SettlementPaymentOwner) —
+    // ตัวอ่านป้ายจาก Payment.Notes (BatchIdFromPaymentNotes) ถูกถอด: Notes เป็นข้อความที่ผู้ใช้พิมพ์ได้ทุกทางเข้า ⇒ ปลอม/ลบป้ายได้
 
     /// <summary>เหตุผลที่ห้ามยกเลิกชิ้นนี้ทีละชิ้น — null = ยกเลิกได้</summary>
     internal static string? VoidBlockedReason(SettlementBatchStatus? batchStatus, bool batchDeleted, bool unpostingThisBatch, string? payoutRef)
@@ -747,13 +861,12 @@ public static class SettlementArtifactGuard
     public static async Task<string?> CheckDocumentPaymentsAsync(AccountingDbContext db, Guid companyId, Guid documentId,
         CancellationToken ct = default, bool lockBatchRows = false)
     {
-        var notes = await db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted && p.Notes != null
-                && p.Notes.Contains(MarkerHead))
-            .Select(p => p.Notes).ToListAsync(ct);
-        foreach (var n in notes)
+        // รอบ 201 ทีม ST (A-ST1): เจ้าของ = คอลัมน์ SettlementBatchId (เดิมอ่านป้ายใน Notes) · เรียงตาม id ⇒ ลำดับล็อกแถวรอบโอนคงที่
+        var owners = await db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted && p.SettlementBatchId != null)
+            .Select(p => p.SettlementBatchId!.Value).Distinct().ToListAsync(ct);
+        foreach (var batchId in owners.OrderBy(x => x))
         {
-            if (BatchIdFromPaymentNotes(n) is not Guid batchId) continue;
             if (lockBatchRows) await LockBatchRowAsync(db, companyId, batchId, ct);
             if (await BatchStateAsync(db, companyId, batchId, ct) is not { } batch) continue;
             var why = PaidDocumentVoidReason(batch.Status, batch.IsDeleted, SettlementUnpostScope.IsUnposting(batchId), batch.PayoutRef);
