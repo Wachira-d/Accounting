@@ -4048,3 +4048,14 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
+- **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
+  (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
+- **A-DV1 (ข้อ 62/66)** รายงานข้อ 44 + 4 กลุ่ม (`StuckOutputVatAfterPaymentVoid` · `SubmittedEtaxVoidedWithoutEvidence` · `KeptOriginalCoverageLost` · `EmailedEtaxVoidedInSystem`) · `EtaxReissueReviewReport.Total`
+- **A-DV2 (ข้อ 65)** `Documents.EtaxKeptOriginalAt` + migration `Round201DvStatements` (เติมจากป้ายตัวสุดท้าย/audit) · ตัวอ่านเดียว `EtaxReissueReview.KeptOriginal` · `LastResolutionKeptOriginal` → internal
+- **A-DV3 (ข้อ 67)** หลักฐานทาง (ก) แนบหลังเวลาที่ใบถึงกรมสรรพากร (`CancellationEvidenceNotBefore` · `EtaxRdTimestampEmailTimesAsync` ใช้เงื่อนไขอีเมลตัวเดียว)
+- **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
+- **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
+- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
+

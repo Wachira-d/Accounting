@@ -2224,6 +2224,29 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   (3) **V1H-O6** ด่านไฟล์แนบของ `POST etax/{id}/void` และ `POST document/{id}/etax-cancellation` เรียก**เฉพาะเมื่อส่ง id ไฟล์** (ไม่ส่งไฟล์ = service ไม่แตะไฟล์) —
   `tools/attachment_gate_check.py` รับด่านใต้เงื่อนไข "มีไฟล์" ตรงตัวของ target ที่ระบุเท่านั้น (negative test ในตัว)
   (4) **V1H-O7** ธงของใบเสร็จที่ส่ง e-Tax แล้วแต่ยังไม่รู้ผล (Submitted) ไม่แนะนำทาง (ค) อีก (ทาง ค ปฏิเสธ Submitted) · ใบที่ตอบรับแล้วยังแนะนำ
+  · **รอบ 201 ทีม DV (รายงาน `erp-review/2026-10-01/team-DV.md` · คำตัดสินข้อ 62/65/66/67/68/74)**:
+  (1) **A-DV4 (ข้อ 68)** cascade ของ `VoidDocumentAsync` (ขั้น 1 ยกเลิกการชำระของใบ) **ล็อกเอกสารอื่นทุกใบที่การชำระแตะ** (ใบหลักของการชำระ · ใบในการจัดสรร) ด้วย
+  `LockDocumentsForPaymentVoidAsync` ตัวเดียวกับ `VoidPaymentAsync` ตามลำดับกลาง ใบตัวเอง → ใบต้นทาง → ใบอื่นของการชำระ → เลข JE · ยอดครอบของทาง (ค) ไม่นับ**ทุก**รายการที่
+  ธุรกรรมนี้กำลังยกเลิก (`PaymentsVoidingInThisContext` → `LivePaymentCoverageAsync(..., excludePaymentIds)` → pure `DocumentVoidPreconditions.LivePaymentCoverage`) ·
+  **`VoidDocumentAsync` คืน `PaymentVoidResult`** (ข้อความธง/ภาษีของทุกรายการในลูป) และ `POST document/{id}/void` ตอบข้อความถึงผู้กด (หน้าเอกสารแสดงคำเตือน 15 วินาที) — ผู้เรียกอื่น
+  (integration · CMS · settlement unpost) ทิ้งผลตามเดิม (ไม่มีผู้กด) · หมายเหตุ: ใบที่มีใบเสร็จ/ใบกำกับลูกที่ยังมีผลถูกด่านลูก `ChildBlocksAsync` บล็อกก่อนถึง cascade อยู่แล้ว ⇒
+  ข้อความในทางปฏิบัติส่วนใหญ่มาจากภาษีขายที่ถอยไม่ได้
+  (2) **A-DV1 (ข้อ 62/66)** รายงานอ่านอย่างเดียวข้อ 44 (`GET document/etax-reissue-review`) เพิ่ม 4 กลุ่ม: `StuckOutputVatAfterPaymentVoid` (ใบแจ้งหนี้ที่ยังตั้ง `OutputVatDueAt`
+  แต่ไม่เหลือเงินรับ/ใบเสร็จถือ VAT และเคยมีการจัดสรรหลายใบที่ถูกยกเลิก) · `SubmittedEtaxVoidedWithoutEvidence` (แถว e-Tax Voided ที่มีเวลาส่งแต่ไม่มี audit `etax-voided-in-system`) ·
+  `KeptOriginalCoverageLost` (ใบทาง ค ที่ยอดครอบหายแต่ไม่มีธง — ตัวตัดสินเดียวกับเส้นยกเลิกการชำระ) · `EmailedEtaxVoidedInSystem` (แถว e-Tax Voided ของใบที่ส่ง e-Tax by Email
+  ประทับเวลาแล้ว) · เอกสารที่บันทึกยกเลิกทาง e-Tax พร้อมหลักฐาน (`RD-ETAX-CANCEL-EVIDENCE`) ไม่นับ · ตัวนับรวม `EtaxReissueReviewReport.Total` · ไม่แก้อัตโนมัติ
+  (3) **A-DV2 (ข้อ 65)** คอลัมน์ `Documents.EtaxKeptOriginalAt` — ผู้เขียนตัวเดียว `ResolveEtaxCancellationAsync` (ทาง ค = ตั้ง · ทาง ก/ข = ล้าง) · ผู้อ่าน `EtaxReissueReview.KeptOriginal`
+  (คอลัมน์เป็นหลัก · ป้าย `KeptOriginalMarker` ตัวสุดท้ายเป็นทางสำรองของใบเก่า) ใน `ReflagKeptOriginalReceiptsAsync` + รายงานข้อ 44 · migration `Round201DvStatements`
+  (ADD COLUMN + เติมจากป้ายตัวสุดท้าย/audit `RD-ETAX-ORIGINAL-STILL-VALID`) · ไม่ตามไปใบแทน (`DocumentNotCarriedFields`) · echo ใน `DocumentResponse` + แถบเขียวบนหน้าเอกสาร
+  (4) **A-DV3 (ข้อ 67)** ทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ": ไฟล์หลักฐานต้องแนบ**หลัง**เวลาที่ใบถึงกรมสรรพากร — `DocumentVoidPreconditions.CancellationEvidenceNotBefore` = ล่าสุดของ
+  (แถว e-Tax Submitted/Accepted: `EtaxVoidPolicy.EvidenceNotBefore`) และ (บันทึก e-Tax by Email ประทับเวลา: เวลาส่ง ไม่มี = เวลาสร้าง · ตัวโหลด `EtaxRdTimestampEmailTimesAsync`
+  ใช้เงื่อนไขอีเมลตัวเดียวกับ `EtaxEmailedWithRdTimestampAsync`) · ไม่ถึงกรมสรรพากร = ไม่จำกัด · audit เก็บ `evidenceNotBefore`
+  (5) **C-1 (ข้อ 74)** "ยกเลิกและออกใบแทน" บล็อกเมื่อรายงาน ภ.พ.30 ของเดือนภาษี (`TaxPointDate ?? DocumentDate`) ของใบเดิมหรือใบเสร็จถือ VAT ที่ระบบจะออกใหม่ อยู่ใน
+  `TaxFilingLockPolicy.DeclaredOrFiledStatuses` (ประกาศว่ายื่น/ยื่นแล้ว — เดิมดูแค่รายงานที่ล็อก) · 409 `REISSUE-VAT-MONTH-DECLARED` พร้อมทางไปต่อ (ปลดล็อก/กลับเป็นร่างพร้อมเหตุผล ·
+  หรือใบลดหนี้/ใบเพิ่มหนี้เดือนปัจจุบัน) · ตัวตัดสิน `DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock` ทำงานหลัง `SettlementPaidReissue.Decide` ใน `EvaluateSettlementPaidReissueAsync`
+  (ปุ่มและการกดจริงใช้ตัวเดียว)
+  (6) **A-DV5** ธง "รับรู้ของกำพร้า" (`SettlementOrphanAckAt/By/Reason` + ชื่อผู้รับรู้ที่เป็นสมาชิกบริษัท) echo ใน `DocumentResponse` + แถบบนหน้าเอกสาร (อ่านอย่างเดียว)
+  (7) **A-DV6** `AuditLogs.Add` ตรง 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog` (เข้า hash chain)
 - **ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ**: ยกเลิกตรงไม่ได้ (409 ชี้ 3 ทาง) · แก้ผู้ซื้อ/คำบรรยาย = **ยกเลิกและออกใบแทน** (§2.4c) · กู้คืนใบเดิมที่ออกใบแทนแล้วไม่ได้
 - **Standalone void ปลอดภัยจาก void ซ้อน (row lock ใน tx)**:
   - `VoidPaymentAsync` (`DocumentService.cs`) — **ล็อกเอกสารทุกใบที่การชำระแตะ (ใบต้นทาง + ทุกใบในการจัดสรร) `ORDER BY "Id" FOR UPDATE`
@@ -2233,7 +2256,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     bank balance/PaidAmount สองรอบ)
   - **ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE (advisory)"** (ฝ่ายค้านรอบสาม V1I-X1): `ApproveDocumentAsync` และ `VoidDocumentAsync` เรียก
     `LockRelatedSourceDocumentAsync` ทันทีหลังล็อกใบตัวเอง — ก่อน `AutoPostToJournalAsync`/`ReverseJournalEntryAsync` ที่ถือล็อกเลข JE ·
-    เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม
+    เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม ·
+    รอบ 201 ทีม DV (A-DV4 · ข้อ 68): `VoidDocumentAsync` ล็อก**เอกสารอื่นของการชำระใน cascade** (`LockDocumentsForPaymentVoidAsync` · ORDER BY Id) ต่อจากใบต้นทาง
+    ก่อนล็อกยอดมัดจำ/กลับรายการ (เดิม cascade ไม่ล็อกใบอื่น)
   - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
     + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
     OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน
@@ -3926,7 +3951,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม V1I — แก้ผลฝ่ายค้านงาน V1H: ใบกำกับทาง (ค) ที่เสียยอดครอบถูกติดธงกลับ (O1) · ยกเลิก e-Tax ดู e-Tax by Email + หลักฐานต้องแนบหลังส่ง (O2/O5) · ยกเลิกการชำระล็อกเอกสารก่อนแถว Payment (O3) · ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์ (O6) · ธง Submitted ไม่แนะนำทาง ค (O7) (§2.4c · §3.5) — commit 3f644286)_
 
