@@ -103,6 +103,9 @@ public enum SettlementPlanIssueCode
     /// <summary>บรรทัดแบบไม่มีเลขรายการที่เนื้อหาตรงกับบรรทัดของรอบโอนอื่นในช่องทางเดียวกัน — อาจเป็นไฟล์เดิม/ฉบับแก้ที่นำเข้าด้วยเลขรอบโอนที่พิมพ์ต่าง
     /// (review198-S4 S4-4 · ทีม I รอบ 200 · <c>SettlementContentOverlap</c>) · เลข 59 เว้นช่วง 55–58 ให้ทีมอื่นของรอบ 200</summary>
     ContentOverlapElsewhere = 59,
+    /// <summary>ใบสรุปเพิ่มเติมที่ทุกบรรทัด (ที่ยังไม่ยืนยัน) เนื้อหาตรงรอบที่ออกใบแรกของวัน — น่าจะเป็นไฟล์ซ้ำ (บล็อก) · ทางไปต่อ: ยกเลิกรอบ หรือผู้มีสิทธิ์ลงบัญชี
+    /// "ยืนยันว่าเป็นรายการจริง" รายบรรทัดพร้อมเหตุผล (ฝ่ายค้านรอบสอง R2M-12 · แยกจาก <see cref="SummarySaleDuplicate"/> ที่ยืนยันไม่ได้ — ออเดอร์เดียวกันมีเอกสารแล้ว)</summary>
+    SummarySupplementDuplicate = 61,
 }
 
 /// <summary>ปัญหา 1 ข้อของแผน</summary>
@@ -614,12 +617,19 @@ public static class SettlementBatchMath
                 ? SettlementFeeTax.WhtOnBase(whtBase, whtRate, whtModeOfLine)
                 : (parts.Sum(p => p.Sign * p.Tax.WhtAmount), parts.Sum(p => p.Sign * p.Tax.WhtCertIncome),
                     parts.Sum(p => p.Sign * p.Tax.WhtBorneExpense));
+            var lineDeducted = parts.Sum(p => p.Sign * p.Tax.Deducted);
+            // ฝ่ายค้านรอบสอง R2M-4: ภ.พ.36 ของบรรทัดใบคิดจากฐานรวม + ภาษีออกแทน "ตัวที่ลง 50 ทวิ" (ลำดับข้อ 40: เงินได้รวม → WHT → ภ.พ.36) —
+            // เดิมรวม ภ.พ.36 รายส่วนที่ปัดภาษีออกแทนทีละรายการ ⇒ 100 × 3.65 ได้ 30.00 แทน 30.06 · สูตรตัวเดียว SettlementFeeTax.Pp36Legs
+            var (linePp36, lineInputVat, lineExpense) = parts.Count > 1 && SettlementFeeTax.IsSelfAssessed(treatment)
+                ? SettlementFeeTax.Pp36Legs(treatment, lineDeducted, whtBorne)
+                : (parts.Sum(p => p.Sign * p.Tax.Pp36Payable), parts.Sum(p => p.Sign * p.Tax.InputVat),
+                    parts.Sum(p => p.Sign * p.Tax.Expense));
             result.Add(new FeeLineWithTreatment(treatment, new SettlementFeeDocumentLine(
                 g.Key.LineType, rule.LabelTh, role, accountId, SettlementAccountRoles.DefaultCode(role),
-                parts.Sum(p => p.Sign * p.Tax.Deducted),
-                parts.Sum(p => p.Sign * p.Tax.Expense),
-                parts.Sum(p => p.Sign * p.Tax.InputVat),
-                parts.Sum(p => p.Sign * p.Tax.Pp36Payable),
+                lineDeducted,
+                lineExpense,
+                lineInputVat,
+                linePp36,
                 parts.Select(p => p.Tax.WhtIncomeCode).FirstOrDefault(c => c != null),
                 parts.Select(p => p.Tax.WhtRatePercent).FirstOrDefault(r => r != 0m),
                 whtBase,

@@ -3957,3 +3957,20 @@ _2026-09-29 รอบ 200 ทีม V1F — แก้ผลฝ่ายค้า
 - **P1** e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลา = ถึงกรมสรรพากร (`EffectiveEtaxAsync` ตัวโหลดเดียว — ยกเลิกการชำระ · ออกใบแทน · ด่านยกเลิกการลงบัญชี) ·
   **P2** ยกเลิกการลงบัญชีรอบโอน: ใบเสร็จที่ถูกส่ง e-Tax ระหว่างทาง ⇒ ติดธง ไม่ throw กลางลูป · **P4** hooks หลัง commit อยู่นอก execution strategy
 - เทสต์ `VoidReissueR200FTests` (สองทิศทุกข้อ) + ปรับ `VoidReissueR200Tests` / `SettlementReceiptPolicyTests` · required_call_site +9 แถว/ปรับ 7 — commit c6b4908a)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SG — แก้ผลฝ่ายค้านรอบสอง เงิน/ภาษี settlement + ภ.พ.36 (`erp-review/2026-09-29/review200-round2-money.md` · รายงาน `team-SG.md`):
+- **R2M-2** (ข้อ 26) `GatewayBatchIntentRules.ModeMismatch`: บริษัทไม่จด VAT ผ่อนคู่ VAT ไทยเฉพาะเมื่อ gateway ไม่หัก ณ ที่จ่าย — หัก 3% ⇒ ฐานก่อน VAT ต้องเท่ากัน (107: 3.31 vs 3.09 = ไม่ตรง)
+- **R2M-5** (ข้อ 26 × 41) `ModeMismatch(…, channelIncomeTypeMapJson)` + `IncomeTypeProblem` (private): ประเภทเงินได้ของ "ค่าธรรมเนียมรับชำระเงิน" ต้องได้ 3% เท่าเส้นเดิม ·
+  ผู้เรียก 5 จุดส่งค่าตั้ง (บันทึกช่องทางส่งค่าใหม่ + เปลี่ยนค่าตั้ง = แตะโหมด) · `ConfigChangeRefusal` รับ tuple 4 ช่อง
+- **R2M-3/R2M-10** (ข้อ 40) `ForeignServiceVat.BorneTaxOutsideLines` ตัวตัดสินเดียวของรายงาน ภ.พ.36 + คำเตือน 50 ทวิ (เงินได้บน 50 ทวิ vs ยอดบรรทัด) · รายงานนับ `WhtCertFilingScope.Filed`
+- **R2M-4** `SettlementFeeTax.Pp36Legs` สูตรเดียวของรายก้อน/รายบรรทัดใบ — `BuildFeeLines` คิด ภ.พ.36 ใหม่จากฐานรวม + ภาษีออกแทนของบรรทัดใบ (30.00 → 30.06 · W2 หลายส่วน 26.00 → 25.55)
+- **R2M-6** (X-8) `LoadIntentRowsAsync`: ไม่กรอกปลายช่วง ⇒ `ConfirmedToExclusiveUtc(วันเงินเข้า − 1)` (= จุดตัดยอดคืน)
+- **R2M-7/R2M-8** `GatewayBatchIntentRules.ForeignPp36BoundNextStep` ทางไปต่อตัวเดียว (ด่านโหมด · `PostingIssue(…, channelVat)` · `SettlementForeignWht.GatewayConfigHint` ·
+  `LegacyForeignChannelWarning` บนหน้ารายการค้างโอนเส้นเดิม + `JoinWarnings`)
+- **R2M-11** `MoneyAccountFallback.RefundAccountFromSale` + `PosService.SaleMoneyLegDescription` (ตัวสร้างข้อความขาเงินตัวเดียว) — คืนเงินบัตร/e-Wallet/เช็คลงผังของขาขายเดิม
+- **R2M-12** รหัส `SummarySupplementDuplicate = 61` · `SettlementDuplicateSale.DistinctConfirmable` · `SplitDuplicates(…, confirmedDistinct)` · `ConfirmRefusal` ·
+  `ISettlementPostingService.ConfirmDistinctLinesAsync` + `POST settlement/batches/{id}/lines/confirm-distinct` + ปุ่มใน settlements.html ·
+  คอลัมน์ `SettlementLines.DistinctConfirmedAt/By/Reason` (migration ADD COLUMN IF NOT EXISTS)
+- **R2M-13** (ข้อ 27) `SettlementReceiptWht.Remaining` + `SettlementPostingService.RemainingWhtAsync` (ด่าน + `EnsureReceiptAsync`) — WHT ที่ยังไม่ถูกบันทึกของใบ
+- เทสต์ `SettlementReview200SgTests` (สองทิศทุกข้อ · ตัวเลขตัวอย่างในรายงาน) + ปรับ `SettlementReview200SfTests` / `SettlementGatewayPhase2Tests` / `SettlementForeignWhtFollowupTests` ·
+  required_call_site +19 แถว/ปรับ 1 (W_FEETAX Compute → `Pp36Legs`) — commit <pending>)_

@@ -179,7 +179,9 @@ public static class GatewaySettlementMath
     /// (ฝ่ายค้านทีม G · R200G-3: ตัวประกอบรอบโอนจาก PaymentIntent ยังใช้ <c>CalendarDateUtc(วันที่)</c> ⇒ ขอบเลื่อน 7 ชม. ทั้งสองฝั่ง)</summary>
     public static DateTime ConfirmedFromUtc(DateTime fromDate) => BangkokMidnightUtc(fromDate);
 
-    /// <summary>ขอบปลาย (ไม่รวม) ของช่วงที่เปิดต้นได้ = เที่ยงคืนเวลาไทยของวันถัดจาก <paramref name="toDate"/> — สูตรเดียวกับ <see cref="ConfirmedRangeUtc"/></summary>
+    /// <summary>ขอบปลาย (ไม่รวม) ของช่วงที่เปิดต้นได้ = เที่ยงคืนเวลาไทยของวันถัดจาก <paramref name="toDate"/> — สูตรเดียวกับ <see cref="ConfirmedRangeUtc"/>
+    /// <para>ฝ่ายค้านรอบสอง R2M-6 (X-8): ตัวประกอบรอบโอน settlement ของ gateway ที่ผู้ใช้<b>ไม่กรอกปลายช่วง</b> ใช้ตัวนี้กับ "วันก่อนวันเงินเข้า"
+    /// (= เที่ยงคืนต้นวันเงินเข้า · ขอบเดียวกับจุดตัดยอดคืน <see cref="RefundCutoffUtc"/>) — ห้ามไม่มีขอบบน</para></summary>
     public static DateTime ConfirmedToExclusiveUtc(DateTime toDate) => BangkokMidnightUtc(toDate).AddDays(1);
 
     /// <summary>เที่ยงคืนต้นวันไทยของ <paramref name="date"/> เป็นเวลา UTC (ไทยไม่มีเวลาออมแสง ⇒ −7 ชั่วโมงคงที่)</summary>

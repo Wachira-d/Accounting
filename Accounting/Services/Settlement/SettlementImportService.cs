@@ -107,7 +107,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
                 .Select(c => new { c.FeeVatMode, c.WhtOnFee }).FirstOrDefaultAsync(ct);
             var fileVatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
             if (boundCfg != null && GatewayBatchIntentRules.ModeMismatch(boundCfg.FeeVatMode, boundCfg.WhtOnFee, channel.FeeVatMode,
-                    channel.FeeWhtMode, fileVatRegistered) is string fileModeBad)
+                    channel.FeeWhtMode, fileVatRegistered, channel.WhtIncomeTypeMapJson) is string fileModeBad)
                 throw new BusinessRuleException(fileModeBad, "SETTLEMENT-GATEWAY-MODE-MISMATCH");
         }
         var file = new SettlementFileInput(fileName, await ReadBoundedAsync(content, ct));

@@ -67,7 +67,7 @@ public class SettlementReview200SfTests
     public void X3_โหมดต้องให้ผลภาษีเท่ากันทั้งสองเส้น(GatewayFeeVatMode gVat, GatewayFeeWhtMode gWht, SettlementFeeVatMode cVat,
         SettlementFeeWhtMode cWht, bool vatRegistered, bool blocked)
     {
-        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht, vatRegistered);
+        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht, vatRegistered, null);
         Assert.Equal(blocked, why != null);
         if (blocked) Assert.Contains("ทางไปต่อ", why);
     }
@@ -80,7 +80,7 @@ public class SettlementReview200SfTests
             Channel(SettlementFeeVatMode.ForeignPp36), true);
         Assert.True(Assert.Single(plan.FeeDocuments).Pp36Payable > 0m);
         var why = GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, SettlementFeeVatMode.ForeignPp36,
-            SettlementFeeWhtMode.None, true);
+            SettlementFeeWhtMode.None, true, null);
         Assert.Contains("ไม่ผูกการตั้งค่า gateway", why);
     }
 
@@ -92,26 +92,26 @@ public class SettlementReview200SfTests
             Channel(), true);
         Assert.Equal(2.73m, Assert.Single(plan.FeeDocuments).InputVat);
         var issue = GatewayBatchIntentRules.PostingIssue(GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.None, GatewayFeeWhtMode.None,
-            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, true));
+            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, true, null), SettlementFeeVatMode.ThaiVat7);
         Assert.NotNull(issue);
         Assert.True(issue!.Blocking);
         Assert.Equal(SettlementPlanIssueCode.GatewayModeMismatch, issue.Code);
         Assert.Contains("ประกอบใหม่", issue.NextStep);
         // ทิศตรงข้าม: คู่ที่ตรงกัน ⇒ ไม่มีปัญหา (ลงได้ตามเดิม)
         Assert.Null(GatewayBatchIntentRules.PostingIssue(GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.IncludedInFee,
-            GatewayFeeWhtMode.None, SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, true)));
+            GatewayFeeWhtMode.None, SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, true, null), SettlementFeeVatMode.ThaiVat7));
     }
 
     [Fact]
     public void X1_บันทึกค่าตั้งgateway_เปลี่ยนโหมดแล้วขัดกับช่องทางที่ผูก_ปฏิเสธพร้อมชื่อช่องทาง_ไม่ขัดหรือไม่มีช่องทาง_บันทึกได้()
     {
-        var bound = new[] { ("Omise หลัก", SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None) };
+        var bound = new[] { ("Omise หลัก", SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, (string?)null) };
         var bad = GatewayBatchIntentRules.ConfigChangeRefusal(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, true, bound);
         Assert.NotNull(bad);
         Assert.Contains("Omise หลัก", bad);
         Assert.Null(GatewayBatchIntentRules.ConfigChangeRefusal(GatewayFeeVatMode.IncludedInFee, GatewayFeeWhtMode.None, true, bound));
         Assert.Null(GatewayBatchIntentRules.ConfigChangeRefusal(GatewayFeeVatMode.None, GatewayFeeWhtMode.None, true,
-            Array.Empty<(string, SettlementFeeVatMode, SettlementFeeWhtMode)>()));
+            Array.Empty<(string, SettlementFeeVatMode, SettlementFeeWhtMode, string?)>()));
     }
 
     [Fact]
@@ -220,16 +220,18 @@ public class SettlementReview200SfTests
         var b = Guid.NewGuid();
         var sup = new SettlementSupplementarySummary(Day, new[] { a, b }, "TIV-0100", "PO-1", true, 1);
         var allSame = new[] { new SettlementContentHit<Guid>(a, new[] { "PO-1" }), new SettlementContentHit<Guid>(b, new[] { "PO-1", "PO-2" }) };
-        var (dups, kept) = SettlementSummarySupplement.SplitDuplicates(new[] { sup }, allSame);
+        var (dups, kept) = SettlementSummarySupplement.SplitDuplicates(new[] { sup }, allSame, new HashSet<Guid>());
         var dup = Assert.Single(dups);
         Assert.Contains("PO-1", dup.Evidence);
         Assert.Empty(kept);
 
-        var (d2, k2) = SettlementSummarySupplement.SplitDuplicates(new[] { sup }, new[] { new SettlementContentHit<Guid>(a, new[] { "PO-1" }) });
+        var (d2, k2) = SettlementSummarySupplement.SplitDuplicates(new[] { sup }, new[] { new SettlementContentHit<Guid>(a, new[] { "PO-1" }) },
+            new HashSet<Guid>());
         Assert.Empty(d2);
         Assert.Single(k2);
         var (d3, k3) = SettlementSummarySupplement.SplitDuplicates(new[] { sup },
-            new[] { new SettlementContentHit<Guid>(a, new[] { "PO-9" }), new SettlementContentHit<Guid>(b, new[] { "PO-9" }) });
+            new[] { new SettlementContentHit<Guid>(a, new[] { "PO-9" }), new SettlementContentHit<Guid>(b, new[] { "PO-9" }) },
+            new HashSet<Guid>());
         Assert.Empty(d3);
         Assert.Single(k3);
     }

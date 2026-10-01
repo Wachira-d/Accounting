@@ -84,12 +84,14 @@ public static class SettlementForeignWht
         return issues;
     }
 
-    /// <summary>ฝ่ายค้าน W-6: ช่องทางที่ผูกการตั้งค่า gateway — โหมดหัก ณ ที่จ่ายเก็บสองที่ (config gateway · ช่องทาง) และต้องตรงกัน (คำตัดสินข้อ 26)
-    /// ⇒ ทางไปต่อที่ให้ "เปลี่ยนโหมดของช่องทาง" ต้องบอกให้แก้ config ของ gateway ด้วย ไม่งั้นผู้ใช้ไปชนด่านโหมดไม่ตรงกันต่อ</summary>
+    /// <summary>ฝ่ายค้าน W-6 → ฝ่ายค้านรอบสอง R2M-7: ช่องทาง<b>ต่างประเทศ</b>ที่ผูกการตั้งค่า gateway ไม่มีโหมดใดที่ "ตรงกัน" ได้ (X-3 · คำตัดสินข้อ 26 —
+    /// config ของ gateway ไม่มีโหมด ภ.พ.36) ⇒ เดิมบอกให้ "แก้การตั้งค่า gateway ให้ตรงกัน" ซึ่งทำตามแล้วยังถูกบล็อก ขัดกับข้อความด่านโหมดบนพรีวิวเดียวกัน ·
+    /// ตอนนี้ใช้ทางไปต่อตัวเดียวกับด่านโหมด (<see cref="GatewayBatchIntentRules.ForeignPp36BoundNextStep"/>) · ไม่ผูก ⇒ ไม่ต่อท้าย</summary>
     private static string GatewayConfigHint(SettlementChannel channel)
-        => channel.PaymentProviderConfigId is null ? ""
-            : " · ช่องทางนี้ผูกการตั้งค่า gateway: ถ้าเปลี่ยนโหมดหัก ณ ที่จ่ายของช่องทาง ต้องแก้ \"หัก ณ ที่จ่ายค่าธรรมเนียม\" ที่หน้า "
-              + "\"ตั้งค่าการรับชำระเงินออนไลน์\" ให้ตรงกันด้วย (ระบบตรวจว่าสองที่ตอบตรงกัน)";
+    {
+        if (channel.PaymentProviderConfigId is null) return "";
+        return " · ช่องทางนี้ผูกการตั้งค่า gateway ซึ่งใช้กับผู้ให้บริการต่างประเทศไม่ได้ — " + GatewayBatchIntentRules.ForeignPp36BoundNextStep;
+    }
 
     /// <summary>
     /// ผู้ติดต่อของช่องทางอยู่ต่างประเทศ แต่ช่องทางไม่ได้ตั้งเป็นต่างประเทศ และแผนมีขาหัก ณ ที่จ่ายที่เราต้องยื่นเอง ⇒ บล็อก (null = ไม่มีปัญหา)

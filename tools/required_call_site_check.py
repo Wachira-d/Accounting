@@ -2596,11 +2596,15 @@ RULES += [
          why="ทีม W/WF (W-7): คำเตือนจ่ายต่างประเทศเทียบอัตรารายบรรทัดกับตัวตัดสิน ม.70 ผ่านขอบเขตผู้รับตัวเดียว (บุคคลธรรมดาเงียบ · มีเลขนิติบุคคลไทย/"
              "ไม่รู้ประเภท = เตือนว่าไม่รู้) · บรรทัดไม่หักเลยที่จำแนกแล้วต้องถูกตรวจ · ห้ามกลับไปเตือนเหมาทุกใบที่หัก 15%"),
     # ── ทีม WF: W-3 (ข้อ 40) ฐาน ภ.พ.36 รวมภาษีออกแทน · W-4/W-9 (ข้อ 41) ประเภทเงินได้ต่อช่องทาง · W-5 คำเตือนตอนออก 50 ทวิ · W-6 ทางไปต่อ ──
+    # รอบ 200 ทีม SG (R2M-4): สูตร ภ.พ.36 ย้ายเข้า SettlementFeeTax.Pp36Legs ตัวเดียว (รายก้อน · รายบรรทัดใบ) — Compute ต้องเรียกหลังขั้น WHT
     dict(file=W_FEETAX, method="Compute",
-         must=["ForeignServiceVat.SelfAssessedVatOn(ForeignServiceVat.Pp36Base(preVat, borne))"],
-         before=[("WhtOnBase(preVat, rate, whtMode)", "ForeignServiceVat.Pp36Base(preVat, borne)")],
+         must=["Pp36Legs(treatment, preVat, borne)"],
+         before=[("WhtOnBase(preVat, rate, whtMode)", "Pp36Legs(treatment, preVat, borne)")],
          forbid=["R(deducted * VatRate / 100m)"],
          why="ทีม WF (คำตัดสินข้อ 40): ฐาน ภ.พ.36 = มูลค่าบริการ + ภาษีที่ออกแทน — คิดหลังขั้น WHT ด้วยสูตรตัวเดียว (ห้ามกลับไปคิดบนยอดที่ถูกหัก)"),
+    dict(file=W_FEETAX, method="Pp36Legs",
+         must=["ForeignServiceVat.SelfAssessedVatOn(ForeignServiceVat.Pp36Base(serviceValue, payerBorneTax))"],
+         why="ทีม WF/SG (ข้อ 40 · R2M-4): สูตร ภ.พ.36 ตัวเดียวของรายก้อนและรายบรรทัดใบ = ฐานรวมภาษีออกแทน"),
     dict(file=W_BATCH, method="ComputeTax",
          must=["SettlementWhtIncomeType.For(rule.Type, channel)"],
          forbid=["rule.WhtIncomeCode"],
@@ -2637,6 +2641,87 @@ RULES += [
          forbid=["ThaiWhtRateTable"],
          why="ทีม W: ภ.ง.ด.54 ห้ามตัดสินด้วยตารางอัตราในประเทศ (ท.ป.4/2528) — ใช้ตัวตัดสิน ม.70 ตัวเดียว"),
 ]
+# ── รอบ 200 ทีม SG (แก้ผลฝ่ายค้านรอบสอง review200-round2-money.md R2M-2..13 · DECISIONS ข้อ 26/27/40/41): เทสต์ SettlementReview200SgTests
+#    ล็อกตัวตัดสิน pure — ที่นี่ล็อกว่าทุกทางเข้าเรียกจริง · ส่งข้อเท็จจริงที่ถูกตัว · ใช้ผล ──
+RULES += [
+    # R2M-2/R2M-5: ตัวตัดสินโหมดรู้ค่าตั้งประเภทเงินได้ของช่องทาง (ข้อ 41) ทุกทางเข้า
+    dict(file=SETTLE_GATEWAY, method="ImportFromPaymentIntentsAsync",
+         call_args=[("GatewayBatchIntentRules.ModeMismatch(", "channel.WhtIncomeTypeMapJson")],
+         why="R2M-5: ประกอบรอบโอนจากรายการรับชำระ — ประเภทเงินได้ต่อช่องทางต้องให้อัตราเท่าเส้นเดิม"),
+    dict(file=SETTLE_IMPORT, method="ImportFileAsync",
+         call_args=[("GatewayBatchIntentRules.ModeMismatch(", "channel.WhtIncomeTypeMapJson")],
+         why="R2M-5: นำเข้าไฟล์ของช่องทางที่ผูก config — ตัวตัดสินเดียวกัน"),
+    dict(file=SETTLE_CHANNEL, method="SaveAsync",
+         must=["prior?.WhtIncomeTypeMapJson"],
+         call_args=[("GatewayBatchIntentRules.ModeMismatch(", "newIncomeMapJson")],
+         why="R2M-5: บันทึกช่องทางที่เปลี่ยนค่าตั้งประเภทเงินได้ = แตะโหมด ⇒ ตรวจด้วยค่าตั้งใหม่ (ไม่ใช่ค่าเดิมในฐาน)"),
+    dict(file="Controllers/PaymentSettingsController.cs", method="Save",
+         must=["b.WhtIncomeTypeMapJson"],
+         why="R2M-5: เปลี่ยนโหมดหักที่หน้า gateway ตรวจกับค่าตั้งประเภทเงินได้ของทุกช่องทางที่ผูก"),
+    # R2M-2/5/7/13 + R2M-12 ที่ด่านผู้ลงบัญชี
+    dict(file=SETTLE_POST, method="BuildGateAsync",
+         must=["RemainingWhtAsync(", "remainingWht[d.Id]", "l.DistinctConfirmedAt != null"],
+         call_args=[("GatewayBatchIntentRules.ModeMismatch(", "channel.WhtIncomeTypeMapJson"),
+                    ("GatewayBatchIntentRules.PostingIssue(", "channel.FeeVatMode"),
+                    ("SettlementSummarySupplement.SplitDuplicates(", "confirmedDistinct")],
+         forbid=["pend?.PayoutRefs, d.WithholdingTaxAmount)"],
+         why="R2M-5 ค่าตั้งประเภทเงินได้ · R2M-7 ทางไปต่อของช่องทาง ภ.พ.36 · R2M-12 บรรทัดที่ยืนยันแล้วไม่นับเป็นหลักฐานซ้ำ · "
+             "R2M-13 ด่านเห็น WHT ที่ยังไม่ถูกบันทึก (ไม่ใช่ WHT ทั้งใบ)"),
+    dict(file=SETTLE_POST, method="EnsureReceiptAsync",
+         must=["RemainingWhtAsync(", "SettlementReceiptWht.Decide(remainingWht"],
+         forbid=["Decide(target.WithholdingTaxAmount"],
+         why="R2M-13: เส้นรับชำระตัดสินจาก WHT ที่ยังไม่ถูกบันทึก ตัวเดียวกับด่าน"),
+    dict(file=SETTLE_POST, method="RemainingWhtAsync",
+         must=["SettlementReceiptWht.Remaining(", "p.CompanyId == companyId", "d.CompanyId == companyId", "DocumentStatus.Draft"],
+         why="R2M-13: ยอดที่บันทึกแล้ว = ชุดเดียวกับเพดานของ CreatePaymentAsync (tenant ทุก query)"),
+    dict(file=SETTLE_POST, method="ConfirmDistinctLinesAsync",
+         must=["_perms.HasPermissionAsync(", "JobLock.RunExclusiveAsync(", "BuildGateAsync(", "SettlementSummarySupplement.ConfirmRefusal(",
+               "AddChainedAuditLog(", "l.CompanyId == companyId"],
+         must_re=[r"ConfirmRefusal\s*\([^;]*gate\s*\.\s*Plan\s*\.\s*Issues\s*\)\s*is\s+string\s+(\w+)\s*\)\s*\{\s*result\s*=\s*Fail\s*\(\s*\1"],
+         before=[("SettlementSummarySupplement.ConfirmRefusal(requested", "SaveChangesAsync(")],
+         why="R2M-12: ยืนยันรายบรรทัดต้องผ่านสิทธิ์ใน service + ด่านสดใต้ล็อก (บรรทัดต้องอยู่ในปัญหา SummarySupplementDuplicate) + audit chain รายบรรทัด"),
+    dict(file="Controllers/SettlementController.cs", method="ConfirmDistinctLines",
+         must=["_posting.ConfirmDistinctLinesAsync("],
+         why="R2M-12: endpoint ยืนยันรายบรรทัดเรียก service ตัวเดียว (สิทธิ์/ด่านอยู่ใน service)"),
+    # R2M-3/R2M-10: ฐาน ภ.พ.36 ห้ามบวกภาษีออกแทนซ้ำ · นับเฉพาะ 50 ทวิ ที่ออกแล้ว
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePp36Report",
+         must=["ForeignServiceVat.BorneTaxOutsideLines(", "WhtCertFilingScope.Filed", "w.TotalIncomeAmount"],
+         forbid=["w.Status != WithholdingTaxCertStatus.Voided"],
+         why="R2M-3: ใบที่คีย์ gross-up แล้วห้ามบวกภาษีออกแทนซ้ำ (ตัดสินจากเงินได้บน 50 ทวิ vs ยอดบรรทัด) · R2M-10: ร่างไม่นับ"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueWarningsAsync",
+         must=["ForeignServiceVat.BorneTaxOutsideLines(", "cert.TotalIncomeAmount"],
+         forbid=["Pp36Shortfall(serviceValue, cert.TotalTaxAmount"],
+         why="R2M-3: คำเตือน 'VAT ขาด' ใช้ตัวตัดสินเดียวกับรายงาน — ห้ามพาผู้ใช้ยื่น ภ.พ.36 เกิน"),
+    # R2M-4: ภ.พ.36 ของบรรทัดใบคิดจากฐานรวม + ภาษีออกแทนตัวที่ลง 50 ทวิ
+    dict(file=W_BATCH, method="BuildFeeLines",
+         must=["SettlementFeeTax.Pp36Legs(treatment, lineDeducted, whtBorne)"],
+         before=[("SettlementFeeTax.WhtOnBase(", "SettlementFeeTax.Pp36Legs(")],
+         why="R2M-4: ลำดับข้อ 40 (เงินได้รวม → WHT → ภ.พ.36) ใช้ WHT ตัวที่ลง 50 ทวิ ไม่ใช่รวม ภ.พ.36 ที่ปัดรายส่วน"),
+    # R2M-6: ไม่กรอกปลายช่วง ⇒ ขอบบน = เที่ยงคืนต้นวันเงินเข้า
+    dict(file=SETTLE_GATEWAY, method="LoadIntentRowsAsync",
+         must=["GatewaySettlementMath.ConfirmedToExclusiveUtc(periodTo ?? payoutDate.AddDays(-1))"],
+         forbid=["periodTo is DateTime pt ?"],
+         why="R2M-6 (X-8): ห้ามไม่มีขอบบน — รายการที่รับเงินหลังวันเงินเข้าไม่ใช่ของรอบนี้"),
+    # R2M-7/R2M-8: ทางไปต่อตัวเดียวของช่องทางต่างประเทศที่ผูก gateway + เตือนบนหน้ารอบโอนเส้นเดิม
+    dict(file="Helpers/SettlementForeignWht.cs", method="GatewayConfigHint",
+         must=["GatewayBatchIntentRules.ForeignPp36BoundNextStep"],
+         forbid=["ระบบตรวจว่าสองที่ตอบตรงกัน"],
+         why="R2M-7: ทางไปต่อไม่ขัดกับด่านโหมด (ช่องทาง ภ.พ.36 ที่ผูก config ไม่มีโหมดที่ตรงได้)"),
+    dict(file="Services/Payments/GatewaySettlementService.cs", method="ListPendingAsync",
+         must=["GatewayBatchIntentRules.LegacyForeignChannelWarning(", "s.CompanyId == companyId", "SettlementFeeVatMode.ForeignPp36"],
+         why="R2M-8: หน้ารอบโอนเส้นเดิมเตือนว่าไม่ตั้ง ภ.พ.36 เมื่อมีช่องทางต่างประเทศผูก config นี้"),
+    # R2M-11: POS คืนเงินบัตร/e-Wallet/เช็ค ลงผังเดียวกับขาขายเดิม
+    dict(file="Services/Implementations/PosService.Orders.cs", method="CreateRefundJournalEntryAsync",
+         must=["MoneyAccountFallback.RefundAccountFromSale(", "SaleMoneyLegDescription(refundMethod, order.OrderNumber)",
+               "l.JournalEntry.CompanyId == companyId"],
+         before=[("MoneyAccountFallback.RefundAccountFromSale(", "ResolvePaymentAccountAsync(")],
+         why="R2M-11: บิลที่ปิดก่อน R200G-2 คืนเงินหลัง deploy ต้องกลับขาที่ลงไว้จริง (ไม่ใช่กติกาวันนี้)"),
+    dict(file="Services/Implementations/PosService.Orders.cs", method="CreateSalesJournalEntryAsync",
+         must=["SaleMoneyLegDescription(pay.PaymentMethod, order.OrderNumber)"],
+         forbid=["$\"รับเงิน {methodLabel} POS #"],
+         why="R2M-11: คำอธิบายขาเงินผ่านตัวสร้างเดียว — เส้นคืนเงินอ่านขานี้กลับ (ข้อความสองที่ต้องไม่ drift)"),
+]
+
 # ── รอบ 200 ทีม K (OCR ผู้ติดต่อสาขา/ใบ Makro · คำตัดสินเจ้าของข้อ 19): เทสต์ล็อกแค่ helper pure ⇒ ล็อกจุดเรียกใน service ──
 PRODUCT_MATCHER = "Services/Implementations/Ocr/ProductMatcher.cs"
 _K5_WHY = ("รอบ 200 K-5 (คำตัดสินข้อ 19): สร้างผู้ติดต่อจากสแกนต้องอยู่ใต้ advisory lock ต่อ (CompanyId, เลขผู้เสียภาษี) ในธุรกรรม แล้วถาม"

@@ -209,10 +209,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             if (doc is { IsForeignService: true } && doc.VatAmount > 0m)
             {
                 var serviceValue = DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
-                var gap = ForeignServiceVat.Pp36Shortfall(serviceValue, cert.TotalTaxAmount, doc.VatAmount);
+                // ฝ่ายค้านรอบสอง R2M-3: บรรทัดที่คีย์ gross-up แล้ว (เงินได้บน 50 ทวิ = ยอดบรรทัด) ห้ามบวกภาษีออกแทนซ้ำ — ตัวตัดสินเดียวกับรายงาน ภ.พ.36
+                var borneOutside = ForeignServiceVat.BorneTaxOutsideLines(serviceValue, doc.WithholdingTaxAmount,
+                    cert.TotalIncomeAmount, cert.TotalTaxAmount);
+                var gap = ForeignServiceVat.Pp36Shortfall(serviceValue, borneOutside, doc.VatAmount);
                 if (gap > 0m)
-                    warnings.Add($"ภ.พ.36 ของเอกสาร {doc.DocumentNumber} คิดจากฐาน {serviceValue:N2} แต่ภาษีเงินได้ที่ออกแทน {cert.TotalTaxAmount:N2} "
-                        + $"เป็นส่วนของมูลค่าบริการ (§79 · คำตัดสินข้อ 40) ⇒ ฐาน ภ.พ.36 = {ForeignServiceVat.Pp36Base(serviceValue, cert.TotalTaxAmount):N2} "
+                    warnings.Add($"ภ.พ.36 ของเอกสาร {doc.DocumentNumber} คิดจากฐาน {serviceValue:N2} แต่ภาษีเงินได้ที่ออกแทน {borneOutside:N2} "
+                        + $"ยังไม่อยู่ในยอดบรรทัดและเป็นส่วนของมูลค่าบริการ (§79 · คำตัดสินข้อ 40) ⇒ ฐาน ภ.พ.36 = {ForeignServiceVat.Pp36Base(serviceValue, borneOutside):N2} "
                         + $"VAT ขาด {gap:N2} — แก้ VAT ของเอกสารก่อนนำส่ง หรือยื่น ภ.พ.36 เพิ่มเติมถ้ายื่นเดือนนั้นแล้ว");
             }
         }

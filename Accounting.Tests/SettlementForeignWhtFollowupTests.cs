@@ -275,14 +275,21 @@ public class SettlementForeignWhtFollowupTests
     [Fact]
     public void W6_ช่องทางผูกgateway_ทางไปต่อบอกให้แก้การตั้งค่าgatewayด้วย_ไม่ผูกไม่พูด()
     {
+        // ฝ่ายค้านรอบสอง R2M-7: ช่องทางต่างประเทศที่ผูก gateway ไม่มีโหมดที่ "ตรงกัน" ได้ (X-3) ⇒ ทางไปต่อต้องเป็นตัวเดียวกับด่านโหมด
+        // (สร้างช่องทางไม่ผูก config + นำเข้าไฟล์) ไม่ใช่ "แก้การตั้งค่า gateway ให้ตรงกัน" ที่ทำตามแล้วยังถูกบล็อก
         var gw = Plan(Channel(SettlementFeeVatMode.ForeignPp36, SettlementFeeWhtMode.AgentWithholds, null, Guid.NewGuid()), true,
             L(SettlementLineType.PaymentFee, -450m));
-        Assert.Contains("ตั้งค่าการรับชำระเงินออนไลน์",
-            Assert.Single(gw.Issues, i => i.Code == SettlementPlanIssueCode.ForeignWhtNotSupported).NextStep);
+        var next = Assert.Single(gw.Issues, i => i.Code == SettlementPlanIssueCode.ForeignWhtNotSupported).NextStep;
+        Assert.Contains(GatewayBatchIntentRules.ForeignPp36BoundNextStep, next);
+        Assert.DoesNotContain("ให้ตรงกันด้วย", next);
+        // ข้อความเดียวกับด่านโหมดของช่องทางเดียวกัน (สองข้อความบนพรีวิวเดียวกันไม่ขัดกัน)
+        Assert.Contains(GatewayBatchIntentRules.ForeignPp36BoundNextStep, GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.None,
+            GatewayFeeWhtMode.None, SettlementFeeVatMode.ForeignPp36, SettlementFeeWhtMode.AgentWithholds, true, null));
+        Assert.Equal(GatewayBatchIntentRules.ForeignPp36BoundNextStep, GatewayBatchIntentRules.PostingIssue("x", SettlementFeeVatMode.ForeignPp36)!.NextStep);
 
         var plain = Plan(Channel(SettlementFeeVatMode.ForeignPp36, SettlementFeeWhtMode.AgentWithholds), true,
             L(SettlementLineType.PaymentFee, -450m));
-        Assert.DoesNotContain("ตั้งค่าการรับชำระเงินออนไลน์",
+        Assert.DoesNotContain(GatewayBatchIntentRules.ForeignPp36BoundNextStep,
             Assert.Single(plain.Issues, i => i.Code == SettlementPlanIssueCode.ForeignWhtNotSupported).NextStep);
     }
 }

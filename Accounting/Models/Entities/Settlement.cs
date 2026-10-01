@@ -142,4 +142,10 @@ public class SettlementLine : TenantEntity
     public Guid? OverrideAccountId { get; set; }
     /// <summary>เหตุผลของบรรทัดปรับปรุง — <b>บังคับ</b>สำหรับ Adjustment</summary>
     public string? AdjustmentReason { get; set; }
+
+    /// <summary>ผู้มีสิทธิ์ลงบัญชียืนยันว่าบรรทัดนี้เป็นรายการจริงคนละรายการกับบรรทัดหน้าตาเหมือนกันในรอบที่ออกใบสรุปแรกของวัน (ฝ่ายค้านรอบสอง R2M-12 ·
+    /// <c>SettlementSummarySupplement.SplitDuplicates</c>) — null = ยังไม่ยืนยัน · ประทับพร้อมผู้/เหตุผล + audit chain</summary>
+    public DateTime? DistinctConfirmedAt { get; set; }
+    public Guid? DistinctConfirmedBy { get; set; }
+    public string? DistinctConfirmedReason { get; set; }
 }

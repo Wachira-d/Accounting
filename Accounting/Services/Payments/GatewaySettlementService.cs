@@ -137,6 +137,16 @@ public class GatewaySettlementService : IGatewaySettlementService
         GatewayFeeVatMode ModeOf(string code)
             => configs.FirstOrDefault(c => c.ProviderCode == code)?.FeeVatMode ?? GatewayFeeVatMode.None;
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+        // ฝ่ายค้านรอบสอง R2M-8: ช่องทางรับเงินที่ผูก config นี้ตั้งผู้ให้บริการเป็นต่างประเทศ (ภ.พ.36) ⇒ เส้นนี้ไม่ตั้งหนี้ ภ.พ.36 — บอกบนหน้าที่ใช้บันทึก
+        // (ข้อความทางไปต่อตัวเดียวกับด่านโหมดของรอบโอน settlement · GatewayBatchIntentRules.ForeignPp36BoundNextStep)
+        var configIds = configs.Select(c => c.Id).ToList();
+        var foreignBound = providerCode == null || configIds.Count == 0
+            ? new List<string>()
+            : await _db.SettlementChannels.AsNoTracking()
+                .Where(s => s.CompanyId == companyId && s.PaymentProviderConfigId != null
+                    && configIds.Contains(s.PaymentProviderConfigId.Value) && s.FeeVatMode == SettlementFeeVatMode.ForeignPp36)
+                .Select(s => s.DisplayName).ToListAsync(ct);
+        var foreignWarning = GatewayBatchIntentRules.LegacyForeignChannelWarning(foreignBound);
 
         // ไม่มีจุดตัดวันเงินเข้า (ยังไม่รู้ว่าจะบันทึกรอบไหน) ⇒ ยอดคืนสะสมทั้งหมด
         var candidates = await SelectCandidatesAsync(companyId, providerCode, null, null, null, ct);
@@ -172,7 +182,8 @@ public class GatewaySettlementService : IGatewaySettlementService
             providerCode == null ? "" : ModeOf(providerCode).ToString(),
             legacy,
             ordered,
-            providerCode == null ? null : GatewaySettlementMath.FeeVatModeWarning(ModeOf(providerCode), vatRegistered));
+            providerCode == null ? null
+                : GatewayBatchIntentRules.JoinWarnings(foreignWarning, GatewaySettlementMath.FeeVatModeWarning(ModeOf(providerCode), vatRegistered)));
     }
 
     public async Task<SettlementOutcome> PreviewAsync(Guid companyId, RecordSettlementRequest req,

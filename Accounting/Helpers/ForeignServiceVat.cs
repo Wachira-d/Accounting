@@ -58,6 +58,32 @@ public static class ForeignServiceVat
     public static decimal Pp36Base(decimal serviceValue, decimal payerBorneIncomeTax)
         => serviceValue + (payerBorneIncomeTax > 0m ? payerBorneIncomeTax : 0m);
 
+    /// <summary>
+    /// **ภาษีที่ออกแทนส่วนที่ "ยังไม่อยู่ในยอดบรรทัดของเอกสาร"** — ตัวตัดสินตัวเดียวของรายงาน ภ.พ.36 (<c>TaxService.GeneratePp36Report</c>) และคำเตือนตอนออก/แก้
+    /// 50 ทวิ (<c>WithholdingTaxCertService.IssueWarningsAsync</c>) · ฝ่ายค้านรอบสอง R2M-3
+    /// <para>═══ ที่มา (บั๊กจริง) ═══ เดิมบวกภาษีของ 50 ทวิ "ออกให้ตลอดไป" เข้าฐาน<b>ทุกเอกสาร</b> ⇒ ใบที่นักบัญชีคีย์แบบ gross-up แล้ว (บรรทัด 529.41 ·
+    /// หัก 15% = 79.41 · ภ.พ.36 37.06 ถูกอยู่แล้ว) ได้ฐาน 608.82 (อัตราแสดง 6.09%) + คำเตือน "VAT ขาด 5.56" ⇒ ทำตาม = ยื่น ภ.พ.36 เกิน + ภาษีซื้อ 11640 เกิน</para>
+    /// <para>═══ ตัดสินจากข้อเท็จจริงบนเอกสาร (ไม่เดา) ═══ เงินได้บน 50 ทวิ (= มูลค่าบริการรวมภาษีออกแทน) เทียบยอดบรรทัดของเอกสาร:
+    /// <list type="number">
+    /// <item>เงินได้ ≈ ยอดบรรทัด + ภาษี ⇒ บรรทัดยังไม่รวม (ใบค่าธรรมเนียมรอบโอน: 450 + 79.41 = 529.41) ⇒ บวกภาษีทั้งก้อน</item>
+    /// <item>เงินได้ ≈ ยอดบรรทัด ⇒ บรรทัดรวมแล้ว (gross-up) ⇒ 0</item>
+    /// <item>อื่น ๆ (50 ทวิ ครอบบางงวด): เอกสารมีภาษีหัก ณ ที่จ่ายบนตัว ⇒ บรรทัดคือเงินได้รวม (ผู้จ่ายหักจากยอดบรรทัด) ⇒ 0 ·
+    /// ไม่มี ⇒ ภาษีจ่ายแยกนอกเอกสาร ⇒ บวกภาษีทั้งก้อน</item>
+    /// </list> ความคลาดเคลื่อนที่ยอมรับ ±0.01 ต่อก้อน (เศษปัด)</para>
+    /// </summary>
+    /// <param name="serviceValue">ฐานค่าบริการของเอกสาร (ยอดบรรทัด — <c>DocumentVatFallback.TaxBase</c>)</param>
+    /// <param name="documentWht">ภาษีหัก ณ ที่จ่ายที่ตั้งบนเอกสาร (<c>Document.WithholdingTaxAmount</c>)</param>
+    /// <param name="certIncome">เงินได้รวมบน 50 ทวิ "ออกให้ตลอดไป" ที่ผูกเอกสาร (ที่ออกแล้ว)</param>
+    /// <param name="certTax">ภาษีรวมบน 50 ทวิ เหล่านั้น (= ภาษีที่ผู้จ่ายออกแทน)</param>
+    public static decimal BorneTaxOutsideLines(decimal serviceValue, decimal documentWht, decimal certIncome, decimal certTax)
+    {
+        if (certTax <= 0m) return 0m;
+        const decimal tol = 0.01m;
+        if (Math.Abs(certIncome - (serviceValue + certTax)) <= tol) return certTax;
+        if (Math.Abs(certIncome - serviceValue) <= tol) return 0m;
+        return documentWht > 0m ? 0m : certTax;
+    }
+
     /// <summary>VAT ที่ประเมินเอง (ภ.พ.36) บนฐาน — round(ฐาน × อัตรา VAT ตามกฎหมาย, AwayFromZero) · อัตราจาก <see cref="PartnerVatRate.StatutoryRate"/> ตัวเดียว</summary>
     public static decimal SelfAssessedVatOn(decimal pp36Base)
         => pp36Base <= 0m ? 0m : Math.Round(pp36Base * PartnerVatRate.StatutoryRate / 100m, 2, MidpointRounding.AwayFromZero);

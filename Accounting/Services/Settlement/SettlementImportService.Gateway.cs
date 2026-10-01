@@ -44,7 +44,9 @@ public sealed partial class SettlementImportService
         // ไม่ตรง = รอบโอนแต่งภาษีซื้อ (config ไม่แยก + ช่องทาง VAT 7%) หรือยอดไม่ลงตัว/ภาษีซื้อหาย (config บวก VAT + ช่องทางไม่มี VAT)
         // X-3 (DECISIONS ข้อ 26): "ตรงกัน" = สองเส้นให้ผลภาษีเท่ากัน — บริษัทไม่จด VAT ⇒ โหมด VAT ไทยทุกคู่เท่ากัน (ตัวตัดสินต้องรู้สถานะ VAT)
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
-        if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, channel.FeeVatMode, channel.FeeWhtMode, vatRegistered) is string modeBad)
+        // R2M-2/R2M-5 (ฝ่ายค้านรอบสอง): ไม่จด VAT + หัก ⇒ ฐานหัก ณ ที่จ่ายต้องเท่ากัน · ประเภทเงินได้ต่อช่องทางต้องได้อัตราเท่าเส้นเดิม
+        if (GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, channel.FeeVatMode, channel.FeeWhtMode, vatRegistered,
+                channel.WhtIncomeTypeMapJson) is string modeBad)
             throw new BusinessRuleException(modeBad, "SETTLEMENT-GATEWAY-MODE-MISMATCH");
 
         // R-A1: บรรทัดที่พก PaymentIntentId ถูกนับว่า "อยู่ในผังพักแล้ว" — จริงเฉพาะเมื่อผังพักของช่องทาง = ผังที่ขาเงินเข้าของ intent ลงไว้
@@ -93,7 +95,8 @@ public sealed partial class SettlementImportService
         // R200G-3 (รอบ 200): ขอบช่วง = เที่ยงคืนเวลาไทย ตัวเดียวกับแผนรอบโอนเส้นเดิม/รายงานกระทบยอด (GatewaySettlementMath) —
         // เดิม CalendarDateUtc(วันที่) = 00:00 UTC (07:00 ไทย) ⇒ รับเงินตี 0–7 ของวันถัดจากปลายช่วงถูกดึงเข้ารอบนี้ · ของวันแรกหลุด
         var from = periodFrom is DateTime pf ? GatewaySettlementMath.ConfirmedFromUtc(pf) : (DateTime?)null;
-        var to = periodTo is DateTime pt ? GatewaySettlementMath.ConfirmedToExclusiveUtc(pt) : (DateTime?)null;
+        // R2M-6 (ฝ่ายค้านรอบสอง · X-8): ไม่กรอกปลายช่วง ⇒ ขอบบน = เที่ยงคืนต้นวันเงินเข้า (ห้ามไม่มีขอบบน — รายการหลังเงินเข้าไม่ใช่ของรอบนี้)
+        DateTime? to = GatewaySettlementMath.ConfirmedToExclusiveUtc(periodTo ?? payoutDate.AddDays(-1));
         // ยังไม่มีเจ้าของรอบโอน (เส้นเดิม SettlementJournalEntryId · เส้นนี้ SettlementBatchId ว่างทั้งคู่) — ตัวตัดสินตัวเดียว (expression)
         var fresh = await _db.PaymentIntents.AsNoTracking()
             .Where(GatewayBatchIntentRules.UnclaimedForBatch(companyId, providerCode, from, to))

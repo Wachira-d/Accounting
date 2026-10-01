@@ -210,7 +210,7 @@ public class SettlementGatewayPhase2Tests
     public void โหมดภาษีค่าธรรมเนียม_configกับช่องทาง_ต้องตรงกัน(GatewayFeeVatMode gVat, GatewayFeeWhtMode gWht,
         SettlementFeeVatMode cVat, SettlementFeeWhtMode cWht, bool blocked)
     {
-        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht, companyVatRegistered: true);
+        var why = GatewayBatchIntentRules.ModeMismatch(gVat, gWht, cVat, cWht, companyVatRegistered: true, channelIncomeTypeMapJson: null);
         Assert.Equal(blocked, why != null);
         if (blocked) Assert.Contains("ทางไปต่อ", why);
     }
@@ -225,7 +225,7 @@ public class SettlementGatewayPhase2Tests
         Assert.Equal(2.73m, Assert.Single(plan.FeeDocuments).InputVat);
         Assert.Equal(0m, LegacyPlan(snaps, GatewayFeeVatMode.None).FeeVat);
         Assert.NotNull(GatewayBatchIntentRules.ModeMismatch(GatewayFeeVatMode.None, GatewayFeeWhtMode.None,
-            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, companyVatRegistered: true));
+            SettlementFeeVatMode.ThaiVat7, SettlementFeeWhtMode.None, companyVatRegistered: true, channelIncomeTypeMapJson: null));
     }
 
     // ═════════════════ หนึ่งรายการ หนึ่งเจ้าของ (สองทิศ) ═════════════════

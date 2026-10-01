@@ -222,6 +222,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "ImportScope" varchar(64) NULL;""",
             // รอบ 200 ทีม WF (คำตัดสินข้อ 41): ประเภทเงินได้ของค่าธรรมเนียมต่อประเภทบรรทัดที่ผู้ทำบัญชีตั้งที่ช่องทาง — NULL = ค่าตั้งต้น (แถวเดิมทุกแถว)
             """ALTER TABLE "SettlementChannels" ADD COLUMN IF NOT EXISTS "WhtIncomeTypeMapJson" text NULL;""",
+            // ฝ่ายค้านรอบสอง R2M-12 (รอบ 200 ทีม SG): ผู้มีสิทธิ์ลงบัญชียืนยันรายบรรทัดว่า "เป็นรายการจริงคนละรายการกับรอบที่ออกใบสรุปแรกของวัน" (หน้าตาเหมือนกัน R-B5)
+            // NULL = ยังไม่ยืนยัน (แถวเดิมทุกแถว ⇒ ใบสรุปเพิ่มเติมที่เนื้อหาตรงรอบแรกทุกบรรทัดยังบล็อกเหมือนเดิม)
+            """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedAt" timestamptz NULL;""",
+            """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedBy" uuid NULL;""",
+            """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedReason" text NULL;""",
         };
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;

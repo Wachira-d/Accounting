@@ -99,6 +99,28 @@ public static class MoneyAccountFallback
         _ => null,
     };
 
+    /// <summary>
+    /// ผังขาเงินของ<b>การคืนเงิน POS</b> ที่ต้องเป็นภาพสะท้อนของขาขายเดิม (ฝ่ายค้านรอบสอง R2M-11) — <c>null</c> = ใช้กติกาปัจจุบัน
+    /// (<see cref="TerminalPinFor"/> → <see cref="StandardCode"/>)
+    /// <para>═══ ที่มา ═══ R200G-2 เปลี่ยนผังของบัตร/e-Wallet/เช็คจาก "ธนาคารที่ปัก" เป็นผังของชนิดนั้น (11340/11113/11131) — บิลที่ปิด<b>ก่อน</b> deploy
+    /// ลง Dr ธนาคารที่ปัก แล้วคืนเงิน<b>หลัง</b> deploy ได้ Cr ผังใหม่ ⇒ ธนาคารเกิน + ผังพักติดลบ · เงินของชนิดเหล่านี้ไหลกลับทางเดียวกับที่เข้ามา
+    /// (ผู้ให้บริการรับบัตร/กระเป๋า/เช็คใบเดิม) ⇒ ขาคืนต้องลงผังเดียวกับขาขายของบิลนั้น อ่านจาก JE ของบิลเดิม ไม่ใช่กติกาวันนี้</para>
+    /// <para>ขอบเขต: เฉพาะชนิดที่ไม่ใช่เงินสด/เงินฝากธนาคาร (เงินสด/โอนคืนจากลิ้นชัก/บัญชีที่ใช้วันนี้จริง) · ขาขายต้องมี<b>ผังเดียว</b>สำหรับวิธีนั้น
+    /// (สองผัง = บิลจ่ายบัตรสองทาง ⇒ ไม่เดา ใช้กติกาปัจจุบัน) · pure</para>
+    /// </summary>
+    /// <param name="refundMethod">วิธีที่จ่ายคืน</param>
+    /// <param name="saleLegDescription">คำอธิบายขาเงินของวิธีนั้นใน JE ขาย (ผู้เรียกประกอบด้วยตัวสร้างข้อความตัวเดียวกับเส้นขาย)</param>
+    /// <param name="saleJournalLines">บรรทัด JE ขายของบิล (ผัง · เดบิต · คำอธิบาย)</param>
+    public static Guid? RefundAccountFromSale(PaymentMethod refundMethod, string saleLegDescription,
+        IEnumerable<(Guid AccountId, decimal Debit, string? Description)> saleJournalLines)
+    {
+        if (KindOf(refundMethod) is MoneyAccountKind.Cash or MoneyAccountKind.BankDeposit) return null;
+        var ids = saleJournalLines
+            .Where(l => l.Debit > 0m && string.Equals(l.Description, saleLegDescription, StringComparison.Ordinal))
+            .Select(l => l.AccountId).Distinct().ToList();
+        return ids.Count == 1 ? ids[0] : null;
+    }
+
     /// <summary>เลือกบัญชีธนาคารจากรายการ GL ของบัญชีธนาคารที่ผูกผังไว้ (active) — ไม่เดาเมื่อมีหลายบัญชี</summary>
     public static BankAccountPickOutcome PickBank(IReadOnlyCollection<Guid> linkedBankGlIds, out Guid? picked)
     {

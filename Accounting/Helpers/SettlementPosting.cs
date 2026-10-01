@@ -242,8 +242,9 @@ public static class SettlementAccountResolver
 /// <param name="PendingElsewhere">ยอดที่รอบโอน<b>อื่น</b>ที่ยังไม่ลงบัญชีจับคู่ใบนี้ไว้ (<see cref="SettlementCrossBatchReceipts.PendingElsewhere"/> ·
 /// review198-B R-B13) — 0 = ไม่มี/ไม่ได้ตรวจ</param>
 /// <param name="PendingPayoutRefs">เลขรอบโอนเหล่านั้น (ข้อความทางไปต่อ)</param>
-/// <param name="DocumentWht">ภาษีหัก ณ ที่จ่ายที่ใบตั้งไว้ว่าลูกค้าจะหัก (<c>Document.WithholdingTaxAmount</c> · ยอดค้างของใบสุทธิหลังหักแล้ว) —
-/// 0 = ใบไม่มี WHT (ฝ่ายค้านรอบ 200 T-1 · DECISIONS ข้อ 27 · <see cref="SettlementReceiptWht"/>)</param>
+/// <param name="DocumentWht">ภาษีหัก ณ ที่จ่ายของลูกค้าที่ใบตั้งไว้แต่<b>ยังไม่ถูกบันทึก</b> (<see cref="SettlementReceiptWht.Remaining"/> ของ
+/// <c>Document.WithholdingTaxAmount</c> · ยอดค้างของใบสุทธิหลังหักแล้ว) — 0 = ใบไม่มี WHT หรือบันทึกครบจากงวดก่อนแล้ว
+/// (ฝ่ายค้านรอบ 200 T-1 · DECISIONS ข้อ 27 · ฝ่ายค้านรอบสอง R2M-13 · <see cref="SettlementReceiptWht"/>)</param>
 public sealed record SettlementReceiptTarget(
     Guid DocumentId, bool Found, string? DocumentNumber, DocumentType Type, DocumentStatus Status, decimal BalanceDue, bool AlreadyReceived,
     decimal PendingElsewhere = 0m, IReadOnlyList<string>? PendingPayoutRefs = null, decimal DocumentWht = 0m);
@@ -267,6 +268,12 @@ public enum SettlementReceiptWhtKind
 /// </summary>
 public static class SettlementReceiptWht
 {
+    /// <summary>WHT ของใบที่<b>ยังไม่ถูกบันทึก</b> = WHT ที่ใบตั้งไว้ − ที่บันทึกแล้วจากการรับชำระ/ใบเสร็จงวดก่อน (ไม่ติดลบ) — เป็นอินพุต <c>documentWht</c>
+    /// ของ <see cref="Decide"/> (ฝ่ายค้านรอบสอง R2M-13: เดิมส่ง WHT ทั้งใบ ⇒ งวดกลางของใบที่ WHT ถูกหักครบจากงวดก่อนแล้วถูกบล็อก ทั้งที่ส่ง 0 ถูกต้อง) ·
+    /// ชุดที่นับ "บันทึกแล้ว" = ชุดเดียวกับเพดานของ <c>DocumentService.CreatePaymentAsync</c> (การรับชำระที่ไม่ถูกลบ + ใบเสร็จ/ใบสำคัญที่อ้างใบนี้ซึ่งไม่ใช่ร่าง/ยกเลิก/ปฏิเสธ)</summary>
+    public static decimal Remaining(decimal documentWht, decimal withheldViaPayments, decimal withheldViaReceipts)
+        => Math.Max(0m, documentWht - withheldViaPayments - withheldViaReceipts);
+
     public static SettlementReceiptWhtKind Decide(decimal documentWht, decimal balanceDue, decimal amount)
         => documentWht <= 0m ? SettlementReceiptWhtKind.None
             : amount + 0.01m >= balanceDue ? SettlementReceiptWhtKind.FinalInstallment
@@ -289,7 +296,9 @@ public sealed record SettlementClearingSource(
     bool RefundOutcomeUnknown = false);
 
 /// <summary>หลักฐานว่ายอดขายที่จะออกใบสรุป "มีเอกสารขายอยู่แล้ว" (review198-A R-A7)</summary>
-public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string Evidence);
+/// <param name="DistinctConfirmable">true = หลักฐานเป็น "เนื้อหาหน้าตาเหมือนรอบที่ออกใบแรก" (ใบสรุปเพิ่มเติม · T-2) ซึ่งผู้มีสิทธิ์ยืนยันรายบรรทัดได้ว่าเป็นรายการจริง
+/// (ฝ่ายค้านรอบสอง R2M-12 · ปัญหา <c>SummarySupplementDuplicate</c>) · false = ออเดอร์/วันเดียวกันมีเอกสารขายแล้วจริง (ยืนยันไม่ได้)</param>
+public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string Evidence, bool DistinctConfirmable = false);
 
 /// <summary>ข้อเท็จจริงจากฐานที่ด่านของผู้ลงบัญชีต้องใช้ (ผู้เรียกหาให้ทั้งหมด — ตัวด่านไม่แตะฐาน)</summary>
 /// <param name="SummaryAbbreviatedBlock">ผลของ <c>AbbreviatedTaxInvoiceRule.Judge</c> ช่องทางเอกสาร ณ วันที่ใบขายสรุป (ฝ่ายค้าน C-6)</param>
@@ -530,10 +539,15 @@ public static class SettlementPostingGate
 
         // ── รายได้ซ้ำ (R-A7) ──
         foreach (var d in f.DuplicateSales)
-            Add(SettlementPlanIssueCode.SummarySaleDuplicate, true, d.Evidence,
-                "ถ้าเป็นออเดอร์ชุดเดียวกัน (มีเอกสารขายแล้ว) ให้จับคู่บรรทัดกับเอกสารนั้นแทน — ระบบจะรับชำระเข้าผังพักให้ ไม่ออกใบสรุปซ้ำ · "
-                + "ถ้าเป็นเอกสารของรอบโอนที่ยกเลิกแล้ว ให้ยกเลิกเอกสารนั้นก่อน (หรือจับคู่บรรทัดกับเอกสารนั้นถ้าเป็นยอดขายชุดเดียวกัน)",
-                d.LineIds, null);
+            if (d.DistinctConfirmable)
+                // R2M-12: เนื้อหาหน้าตาเหมือนรอบแรก — ทางไปต่อสองทาง (ยกเลิกรอบ · ยืนยันรายบรรทัด) · รหัสแยกให้หน้าจอแสดงปุ่มยืนยันเฉพาะกองนี้
+                Add(SettlementPlanIssueCode.SummarySupplementDuplicate, true, d.Evidence, SettlementSummarySupplement.DistinctConfirmNextStep,
+                    d.LineIds, null);
+            else
+                Add(SettlementPlanIssueCode.SummarySaleDuplicate, true, d.Evidence,
+                    "ถ้าเป็นออเดอร์ชุดเดียวกัน (มีเอกสารขายแล้ว) ให้จับคู่บรรทัดกับเอกสารนั้นแทน — ระบบจะรับชำระเข้าผังพักให้ ไม่ออกใบสรุปซ้ำ · "
+                    + "ถ้าเป็นเอกสารของรอบโอนที่ยกเลิกแล้ว ให้ยกเลิกเอกสารนั้นก่อน (หรือจับคู่บรรทัดกับเอกสารนั้นถ้าเป็นยอดขายชุดเดียวกัน)",
+                    d.LineIds, null);
 
         // ── ใบสรุปเพิ่มเติมของวันเดียวกัน (คำตัดสินรอบ 200 ข้อ 15 · review198-C C-9) — แทนการบล็อก SummarySaleDuplicate ──
         foreach (var sup in f.Supplementary ?? Array.Empty<SettlementSupplementarySummary>())

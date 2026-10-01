@@ -435,6 +435,30 @@ public class SettlementController : ControllerBase
         catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
     }
 
+    /// <param name="LineIds">บรรทัดที่ยืนยันว่าเป็นรายการจริงคนละรายการ (ต้องอยู่ในปัญหา "ใบสรุปเพิ่มเติมเนื้อหาตรงรอบแรก" ของพรีวิวปัจจุบัน)</param>
+    public sealed record DistinctConfirmRequest(IReadOnlyList<Guid>? LineIds, string? Reason);
+
+    /// <summary>**ยืนยันรายบรรทัดว่าเป็นรายการจริงคนละรายการ** (ฝ่ายค้านรอบสอง R2M-12) — ทางไปต่อนอกจาก "ยกเลิกรอบ" ของใบสรุปเพิ่มเติมที่หน้าตาเหมือนรอบแรก ·
+    /// บังคับเหตุผล · ประทับผู้/เวลา/เหตุผลบนบรรทัด + audit chain · ปลดบล็อกการลงบัญชี (ขยับ GL) ⇒ ห้ามคีย์ API · ปฏิเสธ = 409 พร้อมเหตุ</summary>
+    [HttpPost("batches/{batchId:guid}/lines/confirm-distinct")]
+    [Accounting.Filters.RejectApiKey("ยืนยันบรรทัดรอบโอนว่าเป็นรายการจริง")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.Post)]
+    public async Task<ActionResult<ApiResponse<SettlementDistinctConfirmResult>>> ConfirmDistinctLines(Guid companyId, Guid batchId,
+        [FromBody] DistinctConfirmRequest? request, CancellationToken ct)
+    {
+        if (request?.LineIds is not { Count: > 0 } ids)
+            return BadRequest(new ApiResponse<SettlementDistinctConfirmResult>(false, null, "ระบุบรรทัดที่จะยืนยัน"));
+        try
+        {
+            var r = await _posting.ConfirmDistinctLinesAsync(companyId, batchId, ids, UserId, request!.Reason, ct);
+            return r.Ok
+                ? Ok(new ApiResponse<SettlementDistinctConfirmResult>(true, r, r.Message))
+                : Conflict(new ApiResponse<SettlementDistinctConfirmResult>(false, r, r.Message));
+        }
+        catch (BusinessRuleException ex) { return Fail(ex); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+    }
+
     // ═════════════════════════════ จับคู่เงินเข้าธนาคาร ═════════════════════════════
 
     /// <summary>ผู้สมัครรายการเดินบัญชี — รายการที่ยังไม่กระทบยอดของบัญชีที่รอบโอนระบุ (<c>IBankService.GetUnreconciledAsync</c> · tenant) ·
