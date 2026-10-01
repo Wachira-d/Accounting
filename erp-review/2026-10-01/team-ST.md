@@ -67,7 +67,7 @@ comment_line_break · tuple_name_merge · accessibility · identifier_space · h
 settings_reader · gl_code · advisory_lock_key · verbatim_string · escape_helper · deep_link_param · dead_link · js_dup_method · css_var · namespace_shadow · regex_line_span ·
 ocr_helper_test · test_inventory --check (วางทับ §0 ด้วย `--row`) · required_call_site (เต็ม + negative มือ 21 กรณีจับได้ครบ) · `node --check` (`settlement-channels.html` · `api.js`) · awk brace/U+FFFD ไฟล์ .cs ที่แก้
 
-## 7. รอบฝ่ายค้าน (ST-X1..X7 · ไม่มี P0/P1) — หลัง merge b95ed89a
+## 7. รอบฝ่ายค้าน (ST-X1..X7 · ไม่มี P0/P1) — หลัง merge b95ed89a · ✅ d0b19cf7
 
 คำตัดสินเจ้าของที่ได้รับ (DECISIONS 101/102): **A-ST10 ต่อสายรอบถัดไป** (รอบนี้ไม่แตะ) · **การรับรู้ของรอบ 200 ต้องกดใหม่ = ยอมรับ** (คง `AckCovers` ถือ null = ไม่ครอบ)
 
