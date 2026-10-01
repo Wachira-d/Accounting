@@ -4078,3 +4078,18 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่�
   `POST api/company/{id}/transfer-ownership` (+ `CheckOwnershipTransferAsync` ด่านก่อนเขียน · audit hash chain) · ตั้ง/เชิญบทบาท support ผ่านหน้าทีมไม่ได้ ·
   team.html กล่องส่งมอบ + ป้ายบทบาท · usage.html ป้ายบทบาท
 - เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
+- **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
+  (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
+- **A-DV1 (ข้อ 62/66)** รายงานข้อ 44 + 4 กลุ่ม (`StuckOutputVatAfterPaymentVoid` · `SubmittedEtaxVoidedWithoutEvidence` · `KeptOriginalCoverageLost` · `EmailedEtaxVoidedInSystem`) · `EtaxReissueReviewReport.Total`
+- **A-DV2 (ข้อ 65)** `Documents.EtaxKeptOriginalAt` + migration `Round201DvStatements` (เติมจากป้ายตัวสุดท้าย/audit) · ตัวอ่านเดียว `EtaxReissueReview.KeptOriginal` · `LastResolutionKeptOriginal` → internal
+- **A-DV3 (ข้อ 67)** หลักฐานทาง (ก) แนบหลังเวลาที่ใบถึงกรมสรรพากร (`CancellationEvidenceNotBefore` · `EtaxRdTimestampEmailTimesAsync` ใช้เงื่อนไขอีเมลตัวเดียว)
+- **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
+- **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
+- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
+
+_2026-10-01 รอบ 201 ทีม PL — รวมงานทีม DV (merge e97ba288) + คำตัดสิน main agent (DV Q3):
+- `audit_direct_add_check` baseline ลดเป็น 29 จุด/8 ไฟล์ (DocumentService ย้ายเข้า chain โดยทีม DV)
+- แถว audit นอก chain รุ่นเก่า **ไม่เติม hash ย้อนหลัง** — `AuditHashChain.UnchainedNote` + `AuditChainVerifyResult.UnchainedCount/UnchainedLatestAt/UnchainedNote` ·
+  endpoint `verify-hash-chain` ส่ง `unchainedLatestAt`/`unchainedNote` · job log จำนวน · เทสต์ `Unchained_legacy_rows_are_reported_separately_not_as_tampered` — commit <pending>)_

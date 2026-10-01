@@ -105,6 +105,17 @@ public class AuditChainCheckpointTests
     }
 
     [Fact]
+    public void Unchained_legacy_rows_are_reported_separately_not_as_tampered()
+    {
+        // คำตัดสินรอบ 201 (DV Q3): นับแยก "นอก chain รุ่นเก่า (ก่อนวันที่ X)" · ไม่ใช่ถูกแก้ · ไม่เติม hash ย้อนหลัง
+        var note = AuditHashChain.UnchainedNote(12, new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc))!;
+        Assert.Contains("นอก hash chain รุ่นเก่า 12 แถว", note);
+        Assert.Contains("01/10/2026 00:00", note);                 // เวลาไทย
+        Assert.Contains("ไม่ใช่หลักฐานว่าถูกแก้", note);
+        Assert.Null(AuditHashChain.UnchainedNote(0, null));        // ทิศตรงข้าม: ไม่มีแถวนอก chain = ไม่มีข้อความ
+    }
+
+    [Fact]
     public void Analyze_without_anchors_keeps_full_chain_behaviour()
     {
         var rows = Chain(5);

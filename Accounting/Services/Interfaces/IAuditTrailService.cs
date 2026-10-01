@@ -35,4 +35,7 @@ public record AuditChainVerifyResult(
     IReadOnlyList<string>? TamperedLogIds = null,
     IReadOnlyList<string>? DanglingLogIds = null,
     string? AlertMessage = null,
-    long LastRowId = 0);
+    long LastRowId = 0,
+    int UnchainedCount = 0,
+    DateTime? UnchainedLatestAt = null,
+    string? UnchainedNote = null);

@@ -172,6 +172,21 @@ public static class AuditHashChain
             .ToList();
     }
 
+    /// <summary>แถว audit <b>นอก chain รุ่นเก่า</b> (<c>RowHash = null</c> — เขียนตรงก่อนรอบ 201 ที่ SaveChanges ประทับทุกแถว) ·
+    /// คำตัดสิน main agent รอบ 201 (คำถาม DV Q3): <b>ห้ามเติม hash ย้อนหลัง</b> (= ประทับความน่าเชื่อถือให้แถวที่ไม่เคยถูกคุ้มครอง) — นับแยกเป็นกลุ่ม
+    /// "นอก chain รุ่นเก่า (ก่อนวันที่ X)" ไม่ใช่ "ถูกแก้" และรายงานจำนวนให้เห็น · X = เวลาของแถวนอก chain ล่าสุด · null = ไม่มีแถวนอก chain</summary>
+    public static string? UnchainedNote(int count, DateTime? latestAt)
+    {
+        if (count <= 0) return null;
+        var when = latestAt.HasValue
+            ? " (ก่อนวันที่ " + DateTime.SpecifyKind(latestAt.Value, DateTimeKind.Utc).AddHours(7)
+                  .ToString("dd/MM/yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " น.)"
+            : "";
+        return "แถว audit นอก hash chain รุ่นเก่า " + count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " แถว" + when
+               + " — บันทึกก่อนที่ระบบจะประทับทุกแถว · ไม่ใช่หลักฐานว่าถูกแก้ " +
+               "แต่ก็ไม่ได้รับการคุ้มครองจาก chain (ระบบไม่เติม hash ย้อนหลังให้โดยเจตนา)";
+    }
+
     /// <summary>ข้อความแจ้งเตือนถึงบริษัท — <b>ตามสาเหตุที่ตรวจพบจริง</b> (null = ไม่มีอะไรต้องแจ้ง · fork อย่างเดียวไม่แจ้ง)
     /// ไม่อ้างวิธี ("raw SQL") ที่ตรวจไม่ได้ · hash chain ไม่มีกุญแจ ⇒ ผู้ที่เขียนฐานข้อมูลได้ประทับใหม่ทั้งช่วงได้ (W2-P3)
     /// จึงบอกแค่ "พบความไม่ตรงกัน" ไม่ใช่ "พิสูจน์ได้ว่าไม่มีใครแก้" เมื่อผ่าน</summary>

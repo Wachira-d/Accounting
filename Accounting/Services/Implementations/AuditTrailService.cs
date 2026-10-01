@@ -129,6 +129,12 @@ public class AuditTrailService : IAuditTrailService
         // รอบสอง W2-C1: แยก "ถูกแก้" / "ขาดตอน" / "แตกกิ่งจากคำขอพร้อมกัน" และรายงานทุกแถว ไม่ใช่แค่แถวแรก
         var a = Accounting.Helpers.AuditHashChain.Analyze(rows, anchors);
         var first = a.Tampered.Concat(a.Dangling).OrderBy(r => r.Id).FirstOrDefault();
+        // คำตัดสินรอบ 201 (DV Q3): แถวนอก chain รุ่นเก่า นับแยก (ไม่ใช่ "ถูกแก้" · ไม่เติม hash ย้อนหลัง) — ทั้งบริษัท ไม่ขึ้นกับ watermark
+        var unchainedCount = await _db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.CompanyId == companyId && x.RowHash == null);
+        DateTime? unchainedLatest = unchainedCount == 0 ? null : await _db.AuditLogs.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.RowHash == null)
+            .MaxAsync(x => (DateTime?)x.Timestamp);
         return new AuditChainVerifyResult(
             rows.Count,
             first == null ? -1 : rows.IndexOf(first),
@@ -141,7 +147,9 @@ public class AuditTrailService : IAuditTrailService
             a.Tampered.Select(r => r.Id.ToString()).ToList(),
             a.Dangling.Select(r => r.Id.ToString()).ToList(),
             Accounting.Helpers.AuditHashChain.AlertMessage(a),
-            rows.Count == 0 ? 0 : rows[^1].Id);
+            rows.Count == 0 ? 0 : rows[^1].Id,
+            unchainedCount, unchainedLatest,
+            Accounting.Helpers.AuditHashChain.UnchainedNote(unchainedCount, unchainedLatest));
     }
 
     // ===== Static helper for SaveChanges audit logging =====

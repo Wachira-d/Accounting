@@ -180,6 +180,7 @@ public static class DatabaseMigrationHelper
         var list = CoreAlterStatements();
         list.AddRange(DepositKindSchemaStatements());
         list.AddRange(SettlementSchemaStatements());
+        list.AddRange(Round201DvStatements());   // รอบ 201 ทีม DV (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7108,5 +7109,42 @@ public static class DatabaseMigrationHelper
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
         return statements.Concat(DepositKindMigrationStatements()).ToArray();
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    // รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG A-DV2 · คำตัดสินข้อ 65)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>รอบ 201 ทีม DV — คอลัมน์ <c>Documents.EtaxKeptOriginalAt</c> (ใบเสร็จที่ปิดธงครั้งล่าสุดด้วยทาง ค) + เติมจากของเดิม · รันทุกบูตได้
+    /// (ADD COLUMN IF NOT EXISTS · UPDATE เฉพาะแถวที่ยังว่าง)</summary>
+    internal static IReadOnlyList<string> Round201DvStatements() => new[]
+    {
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxKeptOriginalAt" timestamp with time zone NULL;""",
+        EtaxKeptOriginalBackfillSql(),
+    };
+
+    /// <summary>
+    /// เติม <c>EtaxKeptOriginalAt</c> ให้ใบที่ปิดธงทาง (ค) ก่อนมีคอลัมน์ (รอบ 200 V1H/V1I ระบุด้วยป้ายในหมายเหตุภายในอย่างเดียว) — แก้โค้ดอย่างเดียวไม่พอเมื่อ
+    /// ค่าถูกเก็บไว้แล้ว (F2 ข้อ 9) · เงื่อนไขเดียวกับ <see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionKeptOriginal"/>: ป้าย
+    /// <see cref="Accounting.Helpers.EtaxReissueReview.ResolvedMarker"/> <b>ตัวสุดท้าย</b>ในหมายเหตุต้องเป็นป้ายทาง (ค) (ปิดซ้ำด้วยใบลดหนี้/ยกเลิกภายหลัง = ไม่เติม) ·
+    /// เวลา = audit <c>RD-ETAX-ORIGINAL-STILL-VALID</c> ล่าสุดของใบนั้น (บริษัทเดียวกัน) · ไม่มี audit = เวลาแก้ไขล่าสุดของใบ · ป้ายเดิมไม่ถูกลบ (ทางสำรองของผู้อ่าน) ·
+    /// ข้อความป้ายมาจากค่าคงที่ตัวเดียวกับฝั่งเขียน/ฝั่งอ่าน (ไม่มีเครื่องหมายคำพูดเดี่ยวในป้าย)
+    /// </summary>
+    internal static string EtaxKeptOriginalBackfillSql()
+    {
+        var resolved = Accounting.Helpers.EtaxReissueReview.ResolvedMarker;
+        var kept = Accounting.Helpers.EtaxReissueReview.KeptOriginalMarker;
+        return $$"""
+            UPDATE "Documents" d SET "EtaxKeptOriginalAt" = COALESCE(
+                (SELECT MAX(a."Timestamp") FROM "AuditLogs" a
+                  WHERE a."CompanyId" = d."CompanyId" AND a."EntityType" = 'Document' AND a."EntityId" = d."Id"::text
+                    AND a."NewValues" LIKE '%RD-ETAX-ORIGINAL-STILL-VALID%'),
+                d."UpdatedAt", d."CreatedAt")
+            WHERE d."EtaxKeptOriginalAt" IS NULL
+              AND d."InternalNotes" IS NOT NULL
+              AND strpos(d."InternalNotes", '{{kept}}') > 0
+              AND substr(d."InternalNotes",
+                    length(d."InternalNotes") - strpos(reverse(d."InternalNotes"), reverse('{{resolved}}')) - length('{{resolved}}') + 2)
+                  LIKE '{{kept}}%';
+            """;
     }
 }

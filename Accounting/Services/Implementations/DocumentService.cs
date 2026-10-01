@@ -1836,6 +1836,15 @@ public partial class DocumentService : IDocumentService
         // คำบรรยาย) + hash ที่ต้องส่งกลับตอนยืนยัน · ตัวประกอบเดียวกับฝั่งยืนยัน (BuildReissueRequestViewAsync)
         if (doc.ReissueRequestJson != null)
             resp = resp with { ReissueRequestDetail = await BuildReissueRequestViewAsync(companyId, doc) };
+        // รอบ 201 ทีม DV (A-DV5): ชื่อผู้รับรู้ของกำพร้า — เฉพาะสมาชิกของบริษัทนี้ (tenant) · ไม่พบ = null (หน้าเว็บแสดง "-")
+        if (doc.SettlementOrphanAckBy is Guid orphanAckBy)
+            resp = resp with
+            {
+                SettlementOrphanAckByName = await _db.CompanyUsers.AsNoTracking()
+                    .Where(cu => cu.CompanyId == companyId && cu.UserId == orphanAckBy)
+                    .Select(cu => cu.User.FullName)
+                    .FirstOrDefaultAsync(),
+            };
         // เลขที่ของใบที่ผูกกัน — โชว์ให้ผู้ใช้กดไปดูได้ (ห้ามให้เขาไปค้นเองจาก id)
         var replacementLinkIds = new[] { doc.ReplacedByDocumentId, doc.ReplacesDocumentId }
             .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
@@ -1900,7 +1909,7 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await ApplyInputVatClaimPeriodAsync(companyId, doc, period);
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Update,
@@ -5700,7 +5709,7 @@ public partial class DocumentService : IDocumentService
             var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
             AppendInternalNote(doc, ackNote);
 
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 Action = AuditAction.Update,
@@ -6968,7 +6977,7 @@ public partial class DocumentService : IDocumentService
             }
             await builder.PostAsync(actor);
 
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 Action = AuditAction.Update,
@@ -7350,7 +7359,7 @@ public partial class DocumentService : IDocumentService
             await AutoPostToJournalAsync(companyId, doc, actor);
             await _db.SaveChangesAsync();
 
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 Action = AuditAction.Update,
@@ -7473,7 +7482,7 @@ public partial class DocumentService : IDocumentService
             await _db.SaveChangesAsync();
 
             // 3) audit — append-only ตาม cross-cutting invariant (CLAUDE.md §M)
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 Action = AuditAction.Update,
@@ -8023,7 +8032,9 @@ public partial class DocumentService : IDocumentService
     /// ไปโผล่เดือนปัจจุบัน ทำให้งบ/ภาษี **ผิดสองเดือนพร้อมกัน** (เดือนเก่ามียอด
     /// ค้างที่ไม่มีอยู่จริง เดือนใหม่มียอดติดลบที่ไม่มีที่มา). ส่งค่ามาเองได้เมื่อ
     /// ตั้งใจลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)</param>
-    public async Task VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null)
+    /// <returns>รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): ข้อความธง/ภาษีจากการยกเลิกการชำระใน cascade (ใบกำกับทาง ค ที่เสียยอดครอบ · ภาษีขายที่ถอยไม่ได้) —
+    /// ต้องถึงผู้กด (เดิมทิ้งผล ตอบแค่ "สำเร็จ") · ไม่มี = <see cref="PaymentVoidResult.None"/></returns>
+    public async Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null)
     {
         // Lines must be Include'd here so ApplyStockMovementsAsync (called
         // during the void transaction below) can iterate them — otherwise
@@ -8093,9 +8104,13 @@ public partial class DocumentService : IDocumentService
         if (reversalDateFallback != null)
             _logger.LogWarning("VoidDocument {DocNo}: {Reason}", doc.DocumentNumber, reversalDateFallback);
 
+        string? cascadeEtaxFlag = null;
+        string? cascadeVatNotice = null;
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
+            cascadeEtaxFlag = null;
+            cascadeVatNotice = null;
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
@@ -8106,6 +8121,27 @@ public partial class DocumentService : IDocumentService
                     documentId, companyId);
                 // V1I-X1: ใบต้นทางก่อนขั้นกลับ JE (ล็อกเลข JE) — ลำดับเดียวกับ VoidPaymentAsync/อนุมัติ
                 await LockRelatedSourceDocumentAsync(companyId, documentId);
+                // รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): cascade ขั้น 1 ยกเลิกการชำระของใบนี้ — ล็อกเอกสารอื่นทุกใบที่การชำระเหล่านั้นแตะ (ใบหลักของการชำระ ·
+                // ใบในการจัดสรร) ด้วยตัวล็อกเดียวกับ VoidPaymentAsync (ORDER BY Id คำสั่งเดียว + อ่านใหม่แถวที่ context ถือ) · เดิม cascade ไม่ล็อกใบอื่นเลย ⇒
+                // การรับชำระใหม่/ยกเลิกซ้อนที่ commit พร้อมกันทำให้ยอด PaidAmount ของใบนั้นเป็น lost update · ลำดับล็อกกลาง: ใบตัวเอง → ใบต้นทาง → ใบอื่นของการชำระ → เลข JE
+                var cascadePaymentIds = await _db.PaymentAllocations.AsNoTracking()
+                    .Where(a => a.DocumentId == documentId && a.CompanyId == companyId && !a.IsDeleted)
+                    .Select(a => a.PaymentId)
+                    .ToListAsync();
+                cascadePaymentIds.AddRange(await _db.Payments.AsNoTracking()
+                    .Where(p => p.DocumentId == documentId && p.CompanyId == companyId && !p.IsDeleted)
+                    .Select(p => p.Id)
+                    .ToListAsync());
+                var cascadeLockDocIds = await _db.PaymentAllocations.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && !a.IsDeleted && cascadePaymentIds.Contains(a.PaymentId))
+                    .Select(a => a.DocumentId)
+                    .ToListAsync();
+                cascadeLockDocIds.AddRange(await _db.Payments.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && cascadePaymentIds.Contains(p.Id))
+                    .Select(p => p.DocumentId)
+                    .ToListAsync());
+                cascadeLockDocIds.RemoveAll(lockId => lockId == documentId);
+                await LockDocumentsForPaymentVoidAsync(companyId, cascadeLockDocIds);
                 var lockedStatus = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == documentId && d.CompanyId == companyId)
                     .Select(d => d.Status).FirstAsync();
@@ -8163,14 +8199,16 @@ public partial class DocumentService : IDocumentService
 
                     var hasOwnAllocations = await _db.PaymentAllocations
                         .AnyAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted);
-                    if (hasOwnAllocations)
-                        await ReverseMultiDocPaymentInternalAsync(companyId, payment,
+                    // รอบ 201 ทีม DV (A-DV4 · ข้อ 68): เก็บข้อความธง/ภาษีของทุกรายการในลูป แล้วคืนถึงผู้กด (เดิมทิ้งผล — ธงติดที่ใบแต่ผู้กดไม่รู้)
+                    var cascadeVoid = hasOwnAllocations
+                        ? await ReverseMultiDocPaymentInternalAsync(companyId, payment,
+                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}",
+                            reversalDate: effectiveReversalDate)
+                        : await ReversePaymentInternalAsync(companyId, payment, doc,
                             $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}",
                             reversalDate: effectiveReversalDate);
-                    else
-                        await ReversePaymentInternalAsync(companyId, payment, doc,
-                            $"ยกเลิกอัตโนมัติพร้อมเอกสาร {doc.DocumentNumber}",
-                            reversalDate: effectiveReversalDate);
+                    cascadeEtaxFlag = CombineNotices(cascadeEtaxFlag, cascadeVoid.EtaxFlag);
+                    cascadeVatNotice = CombineNotices(cascadeVatNotice, cascadeVoid.VatNotice);
                 }
 
                 // R2-4 — จับภาพ "JV ตัดชำระด้วยมัดจำ" ที่ยังมีผลของใบนี้ (ถ้าเป็นใบมัดจำ) ก่อนขั้น 2 กลับรายการ: หลัง C2 มัดจำใบเดียวตัดชำระได้หลายใบ
@@ -8649,6 +8687,9 @@ public partial class DocumentService : IDocumentService
             documentType = doc.DocumentType.ToString(),
             voidedAt = DateTime.UtcNow,
         });
+        return cascadeEtaxFlag == null && cascadeVatNotice == null
+            ? PaymentVoidResult.None
+            : new PaymentVoidResult(cascadeEtaxFlag, cascadeVatNotice);
     }
 
     /// <summary>กู้คืนเอกสารที่ยกเลิกผิด (Voided → Draft, คงเลขเดิม). ดู interface
@@ -9401,7 +9442,7 @@ public partial class DocumentService : IDocumentService
 
             if (userId.HasValue)
             {
-                _db.AuditLogs.Add(new AuditLog
+                _db.AddChainedAuditLog(new AuditLog
                 {
                     CompanyId = companyId,
                     UserId = userId,
@@ -9995,14 +10036,16 @@ public partial class DocumentService : IDocumentService
                 && !r.IsDeleted
                 && r.EtaxCancelRequiredAt == null
                 && r.EtaxCancelledByCreditNoteId == null
-                && r.InternalNotes != null && r.InternalNotes.Contains(EtaxReissueReview.KeptOriginalMarker))
+                // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): คอลัมน์ EtaxKeptOriginalAt เป็นหลัก · ป้ายในหมายเหตุภายในเป็นทางสำรองของใบเก่า (ตัวอ่านเดียว EtaxReissueReview.KeptOriginal)
+                && (r.EtaxKeptOriginalAt != null || (r.InternalNotes != null && r.InternalNotes.Contains(EtaxReissueReview.KeptOriginalMarker))))
             .ToListAsync();
         if (kept.Count == 0) return null;
-        var coverage = await LivePaymentCoverageAsync(companyId, doc.Id, excludePaymentId: voidedPaymentId);
+        // รอบ 201 ทีม DV (A-DV4 · ข้อ 68): ไม่นับทุกรายการที่ธุรกรรมนี้กำลังยกเลิก (cascade ของ VoidDocumentAsync ยกเลิกหลายรายการในลูปเดียว — เดิมไม่นับแค่รายการนี้)
+        var coverage = await LivePaymentCoverageAsync(companyId, doc.Id, excludePaymentIds: PaymentsVoidingInThisContext(companyId, voidedPaymentId));
         var notices = new List<string>();
         foreach (var r in kept)
         {
-            var flag = DocumentVoidPreconditions.KeptOriginalCoverageLost(EtaxReissueReview.LastResolutionKeptOriginal(r.InternalNotes),
+            var flag = DocumentVoidPreconditions.KeptOriginalCoverageLost(EtaxReissueReview.KeptOriginal(r.EtaxKeptOriginalAt, r.InternalNotes),
                 r.EtaxCancelRequiredAt != null, r.VatAmount, r.TotalAmount, coverage, r.DocumentNumber, paymentNumber);
             if (flag == null) continue;
             r.EtaxCancelRequiredAt = DateTime.UtcNow;
@@ -11602,7 +11645,7 @@ public partial class DocumentService : IDocumentService
             }
             keep.UpdatedAt = DateTime.UtcNow;
             keep.UpdatedBy = performedBy;
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 UserId = Guid.TryParse(performedBy, out var uid) ? uid : null,
@@ -11938,7 +11981,7 @@ public partial class DocumentService : IDocumentService
         {
             var affected = await _db.Documents.AsNoTracking()
                 .CountAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted);
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 Action = AuditAction.Update,
@@ -17802,7 +17845,12 @@ public partial class DocumentService : IDocumentService
         DepositKindId: d.DepositKindId,
         DepositKindName: d.DepositKindName,
         DepositNature: d.DepositNature?.ToString(),
-        DepositPolicyNote: d.DepositPolicyNote);
+        DepositPolicyNote: d.DepositPolicyNote,
+        // รอบ 201 ทีม DV (A-DV2 · A-DV5) — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ปิดธง e-Tax ทาง (ค) · รับรู้ของกำพร้า (ผู้/เวลา/เหตุผล — อ่านอย่างเดียว)
+        EtaxKeptOriginalAt: d.EtaxKeptOriginalAt,
+        SettlementOrphanAckAt: d.SettlementOrphanAckAt,
+        SettlementOrphanAckBy: d.SettlementOrphanAckBy,
+        SettlementOrphanAckReason: d.SettlementOrphanAckReason);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -18284,7 +18332,7 @@ public partial class DocumentService : IDocumentService
         if (!Accounting.Helpers.WhtAdviceNote.ShouldAppend(doc.InternalNotes, note)) return;
 
         AppendInternalNote(doc, note);
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Update,

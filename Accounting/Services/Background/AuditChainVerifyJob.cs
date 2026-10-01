@@ -96,8 +96,8 @@ public class AuditChainVerifyJob : BackgroundService
                 checkpoint.LastRunAt = now;
                 await db.SaveChangesAsync(ct);
                 _logger.LogInformation(
-                    "Audit chain {CompanyId}: {Mode} after #{After} — {Rows} rows · watermark #{Watermark} ({Reason})",
-                    companyId, plan.Mode, plan.AfterId, result.TotalRows, next.LastVerifiedId, plan.Reason);
+                    "Audit chain {CompanyId}: {Mode} after #{After} — {Rows} rows · watermark #{Watermark} ({Reason}) · unchained legacy {Unchained}",
+                    companyId, plan.Mode, plan.AfterId, result.TotalRows, next.LastVerifiedId, plan.Reason, result.UnchainedCount);
                 if (result.ForkCount > 0)
                 {
                     // แตกกิ่งจากคำขอพร้อมกัน (ฝ่ายค้านรอบ 193 รอบสอง W2-C1) — ไม่ใช่หลักฐานการแก้ ⇒ ไม่แจ้งลูกค้าว่า "ถูกแก้"
