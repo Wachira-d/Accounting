@@ -4126,6 +4126,18 @@ RULES += [
     dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="BuildCell",
          must=["TaxFilingDeadline.WarnBy(", "TaxFilingDeadline.EFilingCaveat("], forbid=["today > efiling.Date", "(efiling.Date - today)"],
          why="B-7: ช่องปฏิทินนำส่งนับวัน/เลยกำหนดจาก TaxFilingDeadline.WarnBy ตัวเดียว"),
+    # ── ฝ่ายค้านรอบ 201 ทีม TX (RTX-1/5/6 · คำตัดสินข้อ 110) ──
+    dict(file=EXPENSE, method="MarkAsPaidAsync",
+         must=["ExpenseClaimPayVoucher.StepFor(", "claim.PaymentVoucherDocumentId = pvId", "ExpenseClaimPayVoucher.WarningsMessage("],
+         must_re=[r"catch\s*\(\s*DocumentApprovalWarningsException\s+ex\s*\)\s*\{\s*throw\b"],
+         before=[("claim.PaymentVoucherDocumentId = pvId", "_documentService.ApproveDocumentAsync(")],
+         why="RTX-5: กดจ่ายใบเบิกซ้ำใช้ใบร่างเดิม (ผูกก่อนอนุมัติ) · คำเตือนที่ต้องมีคนรับทราบ = ข้อความไทยพร้อมทางไปต่อ ไม่ใช่ 500"),
+    dict(file=APIV1, method="Approve",
+         must=["Section65TerApprovalWarnings.IsWarning", "nonDeductibleExpense ="],
+         why="RTX-1 (ข้อ 110): API v1 ไม่ถูกบล็อกด้วยข้อสังเกต §65 ตรี — อนุมัติแล้วคืนธงในผลตอบ"),
+    dict(file="Services/Implementations/Tax/TaxComplianceChecker.cs", method="CheckAsync",
+         must=["PlatformHolidayStore.LoadSetAsync("], call_args=[("DeadlineFor(", "holidays")],
+         why="RTX-6: ตัวตรวจรายงานใช้วันหยุดราชการชุดเดียวกับหน้านำส่ง/ปฏิทิน"),
 ]
 
 # ── รอบ 201 ทีม IN (ฝ่ายค้าน X1–X7): แถวกลับรายการไม่เข้าคิว · ถัวเฉลี่ยติดตามมูลค่า · ยอดยกมาซ้ำไม่ลบแถว · มูลค่า/เบิกใช้ผ่านตัวคิดต้นทุนเดียว ·

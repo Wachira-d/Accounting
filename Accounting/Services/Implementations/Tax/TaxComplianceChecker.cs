@@ -202,7 +202,5 @@ public class TaxComplianceChecker : ITaxComplianceChecker
     /// <para>รอบ 201 ทีม TX (B-7): ใช้วันที่เตือนของตารางกลาง (<c>WarnByFor</c>) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันว่ามาตรการ
     /// e-Filing +8 วันครอบสองแบบนี้ (ไม่ครอบแล้วเตือนตามวัน e-Filing = ช้า 8 วัน) · แบบอื่น = วัน e-Filing เท่าเดิม</para></summary>
     private static DateTime? DeadlineFor(TaxType type, int year, int month, IReadOnlySet<DateTime>? holidays)
-    {
-        return Accounting.Helpers.TaxFilingDeadline.WarnByFor(type, year, month, holidays);
-    }
+        => Accounting.Helpers.TaxFilingDeadline.WarnByFor(type, year, month, holidays);
 }

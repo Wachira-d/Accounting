@@ -5585,8 +5585,11 @@ public partial class DocumentService : IDocumentService
         }).ToList();
     }
 
+    /// <summary>รูปสามอาร์กิวเมนต์ = ทางเข้าอัตโนมัติที่ไม่มีหน้าจอ (ใบประจำ · ใบเบิก · เบิกล่วงหน้า · LINE · OCR อนุมัติอัตโนมัติ · integration) —
+    /// รอบ 201 ฝ่ายค้าน TX (RTX-1/RTX-9 · คำตัดสินข้อ 110): แหล่ง <c>Unattended</c> (คำเตือนทั่วไปหยุดตามเดิม · ข้อสังเกต §65 ตรีผ่านพร้อมร่องรอย) ·
+    /// ไม่เรียก AI เสริมคำเตือน (ไม่มีหน้าจอแสดง — กฎเหล็ก #1 ห้ามจ่าย token แล้วทิ้ง)</summary>
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy)
-        => ApproveDocumentAsync(companyId, documentId, approvedBy, acknowledgeWarnings: false);
+        => ApproveDocumentAsync(companyId, documentId, approvedBy, Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false);
 
     public Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings)
         => ApproveDocumentAsync(companyId, documentId, approvedBy,
@@ -16995,13 +16998,6 @@ public partial class DocumentService : IDocumentService
             .GroupBy(d => d.Id).Select(g => g.First()).ToList();
     }
 
-    /// <summary>
-    /// รอบ 194 R3-2 — ล็อกยอดใบมัดจำ<b>ตัวเดียว</b>ของทุกเส้นในธุรกรรมที่อ่าน-แล้ว-เขียน <c>DepositRealizedAmount</c>/<c>DepositRefundedAmount</c>/
-    /// <c>DepositOutputVatRecognizedAt</c>/<c>DepositAppliedToDocumentId</c>: คีย์ <c>AdvisoryLockKey.DepositRealizeKey</c> (ตัวเดียวกับ session lock
-    /// ของปุ่มรับรู้/ริบ) แบบไม่รอ → ล็อกแถว (FOR UPDATE เรียงตาม Id) → อ่านค่าล่าสุดของแถวที่ context ถืออยู่ (Unchanged)
-    /// <para>ลำดับเดียวกับคืนมัดจำ/ตัดชำระ (คีย์ก่อนแถว) · ถูกถือโดยผู้อื่น ⇒ ข้อความ "รอสักครู่" ตัวเดียวของทุกทางเข้า (ไม่รอ — กัน deadlock กับล็อกเลขเอกสาร) ·
-    /// ต้องอยู่ในธุรกรรม (<c>TryXactLockAsync</c> โยนเมื่อไม่มี — ล้มดัง ไม่ข้ามเงียบ)</para>
-    /// </summary>
     /// <summary>รอบ 201 A-TX5 — ธุรกรรมที่ <see cref="_depositLockedIds"/> เป็นของ (เปลี่ยนธุรกรรม = ล้างชุด)</summary>
     private object? _depositLockTx;
     /// <summary>รอบ 201 A-TX5 — ตัวระบุธุรกรรมปัจจุบัน <b>ใช้จำชุดใบที่ล็อกแล้วเท่านั้น</b> (ไม่ใช่ทางข้ามล็อกเมื่อไม่มีธุรกรรม —
@@ -17010,6 +17006,13 @@ public partial class DocumentService : IDocumentService
     /// <summary>รอบ 201 A-TX5 — ใบมัดจำที่ <see cref="LockDepositBalancesAsync"/> ล็อกไปแล้วในธุรกรรมปัจจุบัน (ล็อกซ้ำไม่ถือว่า "แก้ก่อนล็อก")</summary>
     private readonly HashSet<Guid> _depositLockedIds = new();
 
+    /// <summary>
+    /// รอบ 194 R3-2 — ล็อกยอดใบมัดจำ<b>ตัวเดียว</b>ของทุกเส้นในธุรกรรมที่อ่าน-แล้ว-เขียน <c>DepositRealizedAmount</c>/<c>DepositRefundedAmount</c>/
+    /// <c>DepositOutputVatRecognizedAt</c>/<c>DepositAppliedToDocumentId</c>: คีย์ <c>AdvisoryLockKey.DepositRealizeKey</c> (ตัวเดียวกับ session lock
+    /// ของปุ่มรับรู้/ริบ) แบบไม่รอ → ล็อกแถว (FOR UPDATE เรียงตาม Id) → อ่านค่าล่าสุดของแถวที่ context ถืออยู่ (Unchanged)
+    /// <para>ลำดับเดียวกับคืนมัดจำ/ตัดชำระ (คีย์ก่อนแถว) · ถูกถือโดยผู้อื่น ⇒ ข้อความ "รอสักครู่" ตัวเดียวของทุกทางเข้า (ไม่รอ — กัน deadlock กับล็อกเลขเอกสาร) ·
+    /// ต้องอยู่ในธุรกรรม (<c>TryXactLockAsync</c> โยนเมื่อไม่มี — ล้มดัง ไม่ข้ามเงียบ)</para>
+    /// </summary>
     private async Task LockDepositBalancesAsync(Guid companyId, IEnumerable<Guid> depositIds)
     {
         var ids = depositIds.Distinct().OrderBy(x => x).ToArray();

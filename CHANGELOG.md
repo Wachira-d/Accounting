@@ -4298,3 +4298,11 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 4 — แก้ตามฝ่�
 - เทสต์ `Db/AuditChainCommitDbTests` · `PlatformHolidayReadersRound201Tests` · `AuditRedactionRound201Tests` · +2 `AuditChainCheckpointTests` · แก้ C4 ใน `PlatformOwnerRound201Tests` ·
   required_call_site: เขียนแถว audit chain ใหม่ 8 แถว + เพิ่ม 14 แถว (negative test ฉีดในสคริปต์) — commit 9f226f15)_
 
+_2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้าน (RTX-1..9 · คำตัดสินข้อ 110 · รายงาน `erp-review/2026-10-01/team-TX.md` §7):
+- **RTX-1/2** §65 ตรี (5) capex · (4) ค่ารับรอง = บันทึกอย่างเดียว · ทางเข้าไม่มีคน = `ApprovalAckSource.Unattended` (รูปสามอาร์กิวเมนต์) ⇒ §65 ตรีผ่าน + หมายเหตุ/audit
+  `APPROVE-UNATTENDED-PASSED-S65` · API v1 ส่งผ่าน + `nonDeductibleNotes` · หน้าเว็บยังรับทราบ
+- **RTX-3** (1)(2)(3)(6)(6 ทวิ) เฉพาะผังกำไรขาดทุน — ยอดบวกกลับ ภ.ง.ด.50 ของใบใหม่ลดลง (ใบชำระภาษี/ถอนใช้ส่วนตัว) · **RTX-4** surcharges/fined + ยกเว้น fuel surcharge
+- **RTX-5** ใบเบิก: ผูกใบสำคัญจ่ายร่างทันทีหลังสร้าง · กดจ่ายซ้ำใช้ใบเดิม · คำเตือน = 422 ข้อความไทย (`Helpers/ExpenseClaimPayVoucher`)
+- **RTX-6** เรียงตามวันที่ใช้เตือน · ตัวตรวจรายงานใช้วันหยุดราชการ · ข้อความเมื่อเลยวันกระดาษ · **RTX-7** doc-comment `LockDepositBalancesAsync` กลับที่ ·
+  **RTX-9** รูปสามอาร์กิวเมนต์ไม่เรียก AI · 📋 **RTX-8** (ต้องนับในฐานจริงก่อน backfill — SQL ในรายงานทีม)
+- เทสต์ golden +8 ใบปกติ/+4 ทิศตรงข้าม · `Round201TxTests.RTX*` · required_call_site +3 แถว — commit f13f4a23)_

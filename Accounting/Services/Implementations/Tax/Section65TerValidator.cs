@@ -169,13 +169,17 @@ public static class Section65TerValidator
             // (VAT ที่เคลมได้ไปอยู่ในภาษีซื้อ ไม่ได้เป็นค่าใช้จ่าย — เดิมรวมเสมอ
             // ทำให้บวกกลับเกินจริงในบรรทัดที่เคลม VAT ได้)
             var lineAmt = line.Amount + (line.IsVatClaimable ? 0m : line.VatAmount);
+            // ฝ่ายค้านรอบ 201 RTX-3: ข้อ (6)(6 ทวิ)(1)(2)(3) เป็นรายจ่าย = บัญชีกำไรขาดทุนเท่านั้น (ผัง 5xxxx · CIT…) — บรรทัดที่ลงหนี้สิน/สินทรัพย์/ทุน
+            // (ชำระ ภ.ง.ด.50/51 ผ่าน 21920/11920 · ถอนใช้ส่วนตัว หจก. 31xxx) ไม่ใช่รายจ่ายของงวด ⇒ บวกกลับ = นับภาษีเกิน (ตัวรวม ภ.ง.ด.50 ได้ผลเดียวกัน) ·
+            // ไม่รู้ผัง (บรรทัดไม่ผูกบัญชี) = ตรวจตามเดิม
+            var profitAndLoss = IsProfitAndLossCode(code);
 
             // (6) เบี้ยปรับ / เงินเพิ่ม / ค่าปรับอาญา — auto nonDeductible, no override
             // รอบ 201 A-TX1: คำอังกฤษจับ "ทั้งคำ" — เดิม Contains("fine") จับ "refined oil"/"define" แล้วบวกกลับเต็มจำนวนเงียบ ๆ
             // (ตอนนี้ผลข้อนี้ขึ้นเป็นคำเตือนก่อนอนุมัติ — คำเตือนที่ฟ้องใบถูก = ปิดด่านโดยไม่ตั้งใจ)
             // "ค่าปรับปรุง/ปรับแต่ง/ปรับเปลี่ยน/ปรับอากาศ" ไม่ใช่ค่าปรับ · "เงินเพิ่มทุน/เงินเพิ่มพิเศษ/เงินเพิ่มค่าครองชีพ" ไม่ใช่เงินเพิ่มภาษี
-            if (ThaiPenaltyWord.IsMatch(hay) || hay.Contains("เบี้ยปรับ") || ThaiSurchargeWord.IsMatch(hay)
-                || HasWord(hay, "penalty") || HasWord(hay, "penalties") || HasWord(hay, "surcharge") || HasWord(hay, "fine") || HasWord(hay, "fines"))
+            if (profitAndLoss && (ThaiPenaltyWord.IsMatch(hay) || hay.Contains("เบี้ยปรับ") || ThaiSurchargeWord.IsMatch(hay)
+                || EnglishPenaltyWord.IsMatch(hay)))
             {
                 findings.Add(new("RD-65ter(6)", "ป.รัษฎากร §65 ตรี (6)",
                     lineAmt, $"เบี้ยปรับ/เงินเพิ่ม/ค่าปรับ — บวกกลับเต็มจำนวน ({lineAmt:N2})",
@@ -184,8 +188,8 @@ public static class Section65TerValidator
             }
 
             // (6 ทวิ) ภาษีเงินได้นิติบุคคล — code ขึ้นต้น CIT หรือ name มีคำ
-            if (code.StartsWith("CIT", StringComparison.OrdinalIgnoreCase)
-                || hay.Contains("ภาษีเงินได้นิติบุคคล") || hay.Contains("corporate income tax"))
+            if (profitAndLoss && (code.StartsWith("CIT", StringComparison.OrdinalIgnoreCase)
+                || hay.Contains("ภาษีเงินได้นิติบุคคล") || hay.Contains("corporate income tax")))
             {
                 findings.Add(new("RD-65ter(6bis)", "ป.รัษฎากร §65 ตรี (6 ทวิ)",
                     lineAmt, $"ภาษีเงินได้นิติบุคคล — บวกกลับเต็มจำนวน ({lineAmt:N2})",
@@ -197,7 +201,7 @@ public static class Section65TerValidator
             // ที่จ่ายเข้ากองทุนจดทะเบียนแล้ว (§65 ตรี(2) ข้อยกเว้น). keyword อาจ
             // false-positive → NeedsConfirmation ให้นักบัญชียืนยัน
             // รอบ 201 A-TX1: "reserve" ทั้งคำ — เดิมจับ "hotel reservation"/"reserved seat" เป็นเงินสำรอง แล้วบวกกลับทั้งบรรทัด
-            if ((hay.Contains("เงินสำรอง") || hay.Contains("สำรองเผื่อ") || HasWord(hay, "reserve") || HasWord(hay, "reserves")
+            if (profitAndLoss && (hay.Contains("เงินสำรอง") || hay.Contains("สำรองเผื่อ") || HasWord(hay, "reserve") || HasWord(hay, "reserves")
                  || HasWord(hay, "provision") || HasWord(hay, "provisions"))
                 && !hay.Contains("สำรองเลี้ยงชีพ") && !hay.Contains("provident") && !hay.Contains("pvd"))
             {
@@ -208,7 +212,7 @@ public static class Section65TerValidator
             }
 
             // (3) รายจ่ายส่วนตัว/เสน่หา — บวกกลับเต็ม (warning ให้ยืนยัน เพราะอาศัย keyword)
-            if (hay.Contains("ส่วนตัว") || hay.Contains("เสน่หา") || hay.Contains("personal use") || hay.Contains("ของขวัญส่วนตัว"))
+            if (profitAndLoss && (hay.Contains("ส่วนตัว") || hay.Contains("เสน่หา") || hay.Contains("personal use") || hay.Contains("ของขวัญส่วนตัว")))
             {
                 findings.Add(new("RD-65ter(3)", "ป.รัษฎากร §65 ตรี (3)",
                     lineAmt, $"รายจ่ายส่วนตัว/เสน่หา — บวกกลับ {lineAmt:N2} (โปรดยืนยันว่าไม่เกี่ยวกิจการ)",
@@ -308,6 +312,17 @@ public static class Section65TerValidator
         var total = findings.Sum(f => f.AddBackAmount);
         return new Result(total, findings);
     }
+
+    /// <summary>ฝ่ายค้านรอบ 201 RTX-4: ค่าปรับภาษาอังกฤษทั้งคำ (penalty/penalties · fine/fines/fined · surcharge/surcharges) ·
+    /// "fuel surcharge" (ค่าน้ำมันส่วนเพิ่มของขนส่ง) ไม่ใช่ค่าปรับ</summary>
+    private static readonly System.Text.RegularExpressions.Regex EnglishPenaltyWord =
+        new("(?<![a-z0-9-])(?:penalty|penalties|fine|fines|fined|(?<!fuel )surcharges?)(?![a-z0-9-])",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>ผังนี้เป็นบัญชีกำไรขาดทุน (ค่าใช้จ่าย/ต้นทุน 5xxxx · ภาษีเงินได้นิติบุคคล CIT…) หรือไม่รู้ผัง (ว่าง = ตรวจตามเดิม)</summary>
+    private static bool IsProfitAndLossCode(string code)
+        => string.IsNullOrEmpty(code) || code.StartsWith("5", StringComparison.Ordinal)
+           || code.StartsWith("CIT", StringComparison.OrdinalIgnoreCase);
 
     private static readonly System.Text.RegularExpressions.Regex ThaiPenaltyWord =
         new("ค่าปรับ(?!ปรุง|แต่ง|เปลี่ยน|อากาศ)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);

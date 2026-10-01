@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **433 ไฟล์ · 4,178 `[Fact]` + 660 `[Theory]` (2,950 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **433 ไฟล์ · 4,182 `[Fact]` + 660 `[Theory]` (2,953 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5505,3 +5505,7 @@ required_call_site บล็อก "รอบ 201 ทีม TX" (13 แถว) �
 | TX-10 | รอบโอน settlement ช่องทาง "เราออกภาษีแทน" ที่ยอดโอนสุทธิ 0 → สแกนรายการบัญชีผิดปกติ | ไม่มี JE-WHT-RATIO ของ JE รอบนั้น (เมื่อ 50 ทวิ ออกแล้ว) · JE เครดิตทั้งใบลง 21917 ยังฟ้อง |
 | TX-11 | หน้านำส่งภาษี งวดที่มี ภ.พ.36/ภ.ง.ด.54 หลังวันที่ 7 แต่ก่อนวันที่ 15 | แถวขึ้นเลยกำหนด + ป้าย "⚠️ เตือนตามวันกระดาษ" (tooltip บอกเหตุผล) · ภ.ง.ด.53 งวดเดียวกันยังไม่เลย |
 | TX-12 | แอดมินปิดสวิตช์ ภ.พ.06 · บริษัทจด VAT แต่ไม่ได้ติ๊กขายปลีก ออกใบเสร็จมี VAT/สลิป POS | หัวเป็น "ใบเสร็จรับเงิน" (ไม่ใช่อย่างย่อ) · ติ๊กขายปลีกแล้ว = อย่างย่อได้โดยไม่ต้องมี ภ.พ.06 |
+| TX-13 | (RTX-1) API v1 อนุมัติค่าใช้จ่ายที่มี "ค่าปรับ" · ใบประจำ/LINE/OCR อัตโนมัติ/ใบเบิก ที่มีรายจ่ายต้องห้าม | อนุมัติสำเร็จ · API คืน `nonDeductibleExpense: true` · หมายเหตุภายใน "ทางเข้าอัตโนมัติส่งผ่าน" + audit `APPROVE-UNATTENDED-PASSED-S65` |
+| TX-14 | (RTX-1) ใบซื้อวัตถุดิบ 120,000 ผัง 51210 / ค่าเช่า 60,000 ผัง 54410 | ไม่มีคำเตือน §65 ตรี (ข้อสังเกต capex อยู่ในกล่องบนเอกสาร) |
+| TX-15 | (RTX-3) PV ชำระ ภ.ง.ด.50 ผัง 21920 / ถอนใช้ส่วนตัว ผัง 31xxx | `NonDeductibleAmount` = 0 · ไม่ขึ้นใน worksheet บวกกลับ ภ.ง.ด.50 |
+| TX-16 | (RTX-5) จ่ายใบเบิกที่ PV มีคำเตือน (เช่น ใบกำกับเกิน 6 เดือน) แล้วกดจ่ายซ้ำ | 422 ข้อความไทยบอกเลขใบร่าง · กดซ้ำไม่มีใบร่างใหม่ · อนุมัติ PV ที่หน้าเอกสารแล้วกดจ่าย = ใบเบิกปิด |

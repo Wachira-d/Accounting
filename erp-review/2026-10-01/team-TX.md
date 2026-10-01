@@ -75,3 +75,34 @@
 - `wwwroot/admin/site-settings.html` (ข้อความช่วยเหลือของสวิตช์ ภ.พ.06 2 บรรทัด — ข้อความเดิมผิดหลัง C-21)
 - `Services/Implementations/JournalAnomalyService.cs` · `StatutoryRemittanceService.cs` · `Tax/TaxComplianceChecker.cs` · `Models/DTOs/StatutoryRemittanceDtos.cs` — ไม่มีทีมถือใน §5
 - `Helpers/SettlementPosting.cs` เฉพาะ `SodSelfApproval` ×2 (ตาม §5) · `Helpers/TaxFilingDeadline.cs` เมธอดใหม่ต่อท้ายคลาส (ทีม PL B-9 จะแก้ `RollToBusinessDay` — คนละช่วง)
+
+## 7. แก้ผลฝ่ายค้าน (RTX-1..9) — คอมมิต `f13f4a23` · หลัง merge `3436774f` (worktree เดิม · merge origin `b8376803`)
+
+| ID | สถานะ | ที่แก้ | เทสต์ |
+|---|---|---|---|
+| RTX-1 (P1) | ✅ | `Section65TerApprovalWarnings` — `RD-65ter(5)` เข้าชุดบันทึกอย่างเดียว · `ApprovalAckSource.Unattended` (รูปสามอาร์กิวเมนต์ของ `ApproveDocumentAsync` = ใบประจำ · ใบเบิก · เบิกล่วงหน้า · LINE ×2 · OCR อนุมัติอัตโนมัติ · integration) + `ApiClient` ส่งผ่านชุด §65 ตรี (`Section65TerApprovalWarnings.IsWarning`) · หมายเหตุ/audit `APPROVE-UNATTENDED-PASSED-S65` · API v1 คืน `nonDeductibleExpense`/`nonDeductibleNotes` · หน้าเว็บ/มือถือ/อนุมัติหลายใบ (`None`) ยังต้องรับทราบ | golden 54410 60k · 51210 120k · 52130 250k = 0 · `RTX1_ทางเข้าไม่มีคน_*` (สองทิศ) |
+| RTX-2 (P2) | ✅ ไม่ยกขึ้น | `RD-65ter(4)` เข้าชุดบันทึกอย่างเดียว | golden "ค่ารับรองต้นปี" = 0 คำเตือน แต่ finding ยังมียอด 47,000 |
+| RTX-3 (P2) | ✅ | `Section65TerValidator` — (6)(6 ทวิ)(1)(2)(3) เฉพาะผัง 5xxxx/CIT/ไม่ผูกผัง ⇒ **ตัวรวม ภ.ง.ด.50 บวกกลับน้อยลงสำหรับใบใหม่** (บันทึกใน DOCUMENT_FLOW §3.2/§5.3) | golden 21920/11920/31200 `TotalAddBack = 0` · ทิศตรงข้าม 59100 CIT = 6bis · ไม่ผูกผัง = (3) |
+| RTX-4 (P2) | ✅ | regex `EnglishPenaltyWord` (surcharges · fined · ยกเว้น fuel surcharge) | golden สองทิศ |
+| RTX-5 (P2) | ✅ | `Helpers/ExpenseClaimPayVoucher` (`StepFor` · `WarningsMessage`) · `ExpenseClaimService.MarkAsPaidAsync` ผูก PV ร่างก่อนอนุมัติ · กดซ้ำใช้ใบเดิม · ออกแล้ว = ไม่อนุมัติซ้ำ · `DocumentApprovalWarningsException` ⇒ 422 `EXPENSE-PAY-PV-WARNINGS` | `RTX5_*` |
+| RTX-6 (P3) | ✅ | เรียง `WarnDueDate ?? EFilingDueDate` · `WarnByFor(…, holidays)` + `TaxComplianceChecker` โหลด `PlatformHolidayStore` · `EFilingCaveat(type, due, today)` บอก "เลยวันกระดาษแล้ว ยื่นอินเทอร์เน็ตได้ถึง … (ยังไม่ยืนยัน)" | `RTX6_*` |
+| RTX-7 (P3) | ✅ | ฟิลด์ล็อกมัดจำย้ายขึ้นก่อน doc-comment ของ `LockDepositBalancesAsync` | — |
+| RTX-8 (P3) | 📋 | ต้องนับในฐานจริงก่อน — backfill ค่าตรึงแบบเดาไม่ได้ (ไม่มีประวัติสวิตช์ ภ.พ.06 ณ วันออกใบ) · ผลของ C-21 กับใบเก่า: เกิดเฉพาะเมื่อ **สวิตช์ ภ.พ.06 ถูกปิดอยู่ตอนนี้** + บริษัทไม่ใช่ขายปลีก + ใบ `IsTaxInvoiceByLaw IS NULL` · คำค้นให้ main agent/เจ้าของรันก่อนตัดสิน (ด้านล่าง) | — |
+| RTX-9 (P3) | ✅ | รูปสามอาร์กิวเมนต์ = `withAiHints: false` (ครอบ 6 ทางเข้าที่ไม่มีหน้าจอ) | — |
+
+คำค้น RTX-8 (อ่านอย่างเดียว):
+```sql
+SELECT d."CompanyId", count(*)
+FROM "Documents" d JOIN "Companies" c ON c."Id" = d."CompanyId"
+WHERE d."IsTaxInvoiceByLaw" IS NULL AND NOT d."IsDeleted" AND d."VatAmount" > 0
+  AND d."Status" NOT IN (0, 1)            -- ตรวจเลขสถานะ Draft/WaitingApproval กับ enum ก่อนรัน
+  AND c."IsVatRegistered" AND NOT c."IsRetailApproved"
+  AND (SELECT s."RequirePhoR06ForAbbreviatedTaxInvoice" FROM "SiteSettings" s LIMIT 1) = false
+GROUP BY d."CompanyId";
+```
+ถ้าได้ 0 แถว (สวิตช์ไม่เคยปิด = ค่าตั้งต้น) ⇒ ไม่ต้อง backfill · ถ้ามี ⇒ ตรึงด้วย DO block ใน `DatabaseMigrationHelper` (คีย์ advisory lock คงที่) ให้ค่าตรึง = หัวที่พิมพ์ก่อน C-21
+
+**คำตอบคำถามค้าง (main agent)**: Q1 = ข้อ 110 (ทำแล้ว) · Q2/Q3 = ข้อ 108 (SoD คงเงา · ทิป: ต่อสาย `TipPayoutService` ก่อน — รอบถัดไป) · Q4 = รอ db-test และห้ามแถวสแกนหลุด audit chain
+
+**ความเสี่ยงคอมไพล์เพิ่ม**: `ApprovalAckSource.Unattended = 4` (switch expression อื่นในเรพไม่ครอบ enum นี้แบบครบชุด — ตรวจแล้วมีแค่ในไฟล์เดียว) · `EFilingCaveat` overload (string) / (string, (DateTime, DateTime)?, DateTime?) · `WarnByFor` 4 อาร์กิวเมนต์ ·
+`existingPv` ternary ระหว่าง anonymous type กับ `null` · ชื่อ `ExpenseClaimPayVoucher.StepFor` (เดิมชื่อ `Decide` — `nullable_arg_check` สับสนกับ `Decide(bool)` ตัวอื่น ⇒ เปลี่ยนชื่อ)

@@ -393,7 +393,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
-            .ThenBy(p => p.EFilingDueDate).ToList();
+            .ThenBy(p => p.WarnDueDate ?? p.EFilingDueDate).ToList();   // RTX-6: เรียงตามวันที่ใช้เตือน (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ)
 
         return new RemittanceDashboardResponse(
             TotalPending: pending.Sum(p => p.Amount),
@@ -424,7 +424,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             paper, efiling, overdue, lateFee, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
             reportFiledAt, unissuedCount, unissuedAmount,
-            WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type));
+            WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type, (paper, efiling), today));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -771,7 +771,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var (paper, efiling) = DueDates(type, y, m, _holidays);
         // รอบ 201 B-7: นับวัน/เลยกำหนดจาก TaxFilingDeadline.WarnBy ตัวเดียว (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันมาตรการ e-Filing) · วันหยุดราชการชุดเดียวกับ DueDates (B-9)
         var warnBy = Accounting.Helpers.TaxFilingDeadline.WarnBy(type, y, m, _holidays);
-        var efilingCaveat = Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type);
+        var efilingCaveat = Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type, (paper, efiling), today);
         var daysToDue = (int)(warnBy.Date - today).TotalDays;
         var isCurrentPeriod = period.Year == today.Year && period.Month == today.Month;
 

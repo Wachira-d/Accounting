@@ -227,4 +227,64 @@ public class Round201TxTests
         Assert.Null(TaxFilingDeadline.EFilingCaveat("VatPp30"));
         Assert.Null(TaxFilingDeadline.WarnByFor(TaxType.CorporateIncomeTax, 2026, 9));
     }
+
+    // ═════════════════ ฝ่ายค้านรอบ 201 (RTX) ═════════════════
+
+    private static string S65(string text) => Section65TerApprovalWarnings.Prefix + " (ป.รัษฎากร §65 ตรี (6)) " + text;
+
+    [Fact]
+    public void RTX1_ทางเข้าไม่มีคน_ข้อสังเกต65ตรีผ่าน_คำเตือนอื่นยังหยุด()
+    {
+        var s65 = S65("ค่าปรับ — บวกกลับ 1,000.00");
+        const string other = "ใบกำกับภาษีซื้อเกิน 6 เดือน (§82/3) — ต้องระบุเหตุผล";
+        // คำตัดสินข้อ 110: ทางเข้าอัตโนมัติ (ใบประจำ · ใบเบิก · LINE · OCR · integration) และ API v1 ไม่ถูกหยุดด้วย §65 ตรี
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.Unattended, new[] { s65 }));
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, new[] { s65 }));
+        Assert.Null(ApprovalAcknowledgement.ApiRefusal(new[] { s65 }));
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.SystemWorkflow, new[] { s65 }));
+        // ทิศตรงข้าม: คำเตือนชนิดอื่นยังหยุดทางเข้าไม่มีคน (พฤติกรรมเดิม) · หน้าเว็บ (None) ยังต้องรับทราบ §65 ตรี
+        Assert.Equal(new[] { other }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.Unattended, new[] { s65, other }));
+        Assert.Equal(new[] { other }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, new[] { s65, other }));
+        Assert.Equal(new[] { s65 }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.None, new[] { s65 }));
+        // ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ
+        Assert.Equal(ApprovalAcknowledgement.UnattendedRuleCode, ApprovalAcknowledgement.RuleCode(ApprovalAckSource.Unattended));
+        Assert.False(ApprovalAcknowledgement.AcknowledgedByPerson(ApprovalAckSource.Unattended));
+        Assert.Contains("ไม่มีผู้ใช้เห็น", ApprovalAcknowledgement.Note(ApprovalAckSource.Unattended, new[] { s65 }, "system",
+            new DateTime(2026, 10, 1, 3, 0, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void RTX5_ใบเบิก_กดจ่ายซ้ำใช้ใบร่างเดิม_ไม่สร้างซ้ำ()
+    {
+        var id = Guid.NewGuid();
+        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(null, null));
+        Assert.Equal(ExpenseClaimPayVoucherStep.ReuseDraft, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Draft));
+        Assert.Equal(ExpenseClaimPayVoucherStep.ReuseDraft, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.WaitingApproval));
+        // ผู้ใช้อนุมัติที่หน้าเอกสารแล้ว ⇒ ไม่อนุมัติซ้ำ
+        Assert.Equal(ExpenseClaimPayVoucherStep.AlreadyIssued, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Paid));
+        Assert.Equal(ExpenseClaimPayVoucherStep.AlreadyIssued, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Approved));
+        // ทิศตรงข้าม: ใบเดิมถูกยกเลิก/ปฏิเสธ/หาไม่เจอ ⇒ สร้างใบใหม่
+        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Voided));
+        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, DocumentStatus.Rejected));
+        Assert.Equal(ExpenseClaimPayVoucherStep.Create, ExpenseClaimPayVoucher.StepFor(id, null));
+        var msg = ExpenseClaimPayVoucher.WarningsMessage("DRAFT-1", new[] { "คำเตือน ก" });
+        Assert.Contains("DRAFT-1", msg);
+        Assert.Contains("ไม่สร้างซ้ำ", msg);
+    }
+
+    [Fact]
+    public void RTX6_เลยวันกระดาษแต่ยังไม่ถึงวัน_eFiling_บอกตรง_ๆ()
+    {
+        var due = TaxFilingDeadline.For("VatPp36", 2026, 9);
+        var between = due.Paper.AddDays(1);
+        Assert.True(between <= due.EFiling);
+        Assert.Contains("เลยกำหนดแบบกระดาษ", TaxFilingDeadline.EFilingCaveat("VatPp36", due, between));
+        // ทิศตรงข้าม: ยังไม่เลยวันกระดาษ / เลยวัน e-Filing ไปแล้ว / แบบที่ไม่มีข้อสงสัย ⇒ ไม่มีประโยคนี้
+        Assert.DoesNotContain("เลยกำหนดแบบกระดาษ", TaxFilingDeadline.EFilingCaveat("VatPp36", due, due.Paper)!);
+        Assert.DoesNotContain("เลยกำหนดแบบกระดาษ", TaxFilingDeadline.EFilingCaveat("VatPp36", due, due.EFiling.AddDays(1))!);
+        Assert.Null(TaxFilingDeadline.EFilingCaveat("WhtPnd53", TaxFilingDeadline.For("WhtPnd53", 2026, 9), between));
+        // วันหยุดราชการไหลเข้าวันที่ใช้เตือนผ่านตัวเดียว
+        var holidays = new HashSet<DateTime> { due.Paper.Date };
+        Assert.True(TaxFilingDeadline.WarnByFor(TaxType.VatPp36, 2026, 9, holidays) > due.Paper);
+    }
 }
