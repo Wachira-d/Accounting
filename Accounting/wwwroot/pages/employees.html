@@ -334,6 +334,13 @@
         // ตัวเลือกคำนำหน้ามาจากตารางกลางฝั่งเซิร์ฟเวอร์ — default "นาย" เหมือนเดิม
         await Layout.fillTitleSelect('fTitle', { allowEmpty: false, current: 'นาย' });
         await this.load();
+        // ?new=1 — ลิงก์ "สร้างพนักงานใหม่" จากโมดัล ➕ เพิ่มพนักงานเข้ารอบ (payroll.html) เปิดฟอร์มสร้างทันที
+        // แล้วล้างพารามิเตอร์ออก เพื่อไม่ให้รีเฟรชหน้าแล้วเด้งฟอร์มซ้ำ
+        const qs = new URLSearchParams(location.search);
+        if (qs.get('new') === '1') {
+          this.openCreate();
+          history.replaceState(null, '', location.pathname);
+        }
       },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); },
       debounceLoad() {

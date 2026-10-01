@@ -1434,16 +1434,8 @@ public class PayrollService : IPayrollService
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
 
         var code = string.IsNullOrWhiteSpace(accountCode) ? null : accountCode.Trim();
-        if (code != null)
-        {
-            // validate: ต้องเป็นผังเงินสด/ธนาคาร/ช่องจ่าย (111x/1133/2123) ของบริษัทนี้
-            var ok = await _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
-                && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4
-                && (a.AccountCode.StartsWith("111") || a.AccountCode.StartsWith("1133")
-                    || a.AccountCode.StartsWith("2123")));
-            if (!ok)
-                throw new InvalidOperationException($"ผังบัญชีแหล่งจ่าย '{code}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่าย)");
-        }
+        if (code != null && !await IsValidNetPaymentAccountAsync(companyId, code))
+            throw new InvalidOperationException($"ผังบัญชีแหล่งจ่าย '{code}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่าย)");
 
         detail.NetPaymentAccountCode = code;
         detail.UpdatedAt = DateTime.UtcNow;
@@ -1471,125 +1463,321 @@ public class PayrollService : IPayrollService
         var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
 
-        static decimal Pos(decimal v) => v < 0 ? 0 : v;
-
-        // ส่วนของรายได้ที่ **ไม่ต้องเสียภาษี** (สวัสดิการยกเว้น เช่นค่ารักษาพยาบาล)
-        // — เก็บไว้ก่อนแก้ยอด เพื่อคงไว้หลังรวมรายได้ใหม่ (ผลตรวจ D-D1)
-        var nonTaxablePortion = Math.Max(0m, d.GrossIncome - d.TaxableGross);
-
-        // รายได้เปลี่ยนไหม — ใช้ตัดสินว่าต้องคิดภาษีใหม่หรือเปล่า (ผลตรวจ D-D2)
-        var incomeChanged = req.BaseSalary.HasValue || req.OvertimePay.HasValue
-            || req.Allowances.HasValue || req.Commission.HasValue
-            || req.Bonus.HasValue || req.OtherIncome.HasValue;
-
-        if (req.BaseSalary.HasValue) d.BaseSalary = Pos(req.BaseSalary.Value);
-        if (req.OvertimePay.HasValue) d.OvertimePay = Pos(req.OvertimePay.Value);
-        if (req.Allowances.HasValue) d.Allowances = Pos(req.Allowances.Value);
-        if (req.Commission.HasValue) d.Commission = Pos(req.Commission.Value);
-        if (req.Bonus.HasValue) d.Bonus = Pos(req.Bonus.Value);
-        if (req.OtherIncome.HasValue) d.OtherIncome = Pos(req.OtherIncome.Value);
-        // ── ประกันสังคม: **ฐานเป็นตัวตั้ง ทั้งสองฝั่งเป็นผลลัพธ์** ──
-        // เดิมแก้ฝั่งลูกจ้างได้อิสระ ฝั่งนายจ้างค้างค่าเดิม ⇒ ยอดนำส่งสองฝั่ง
-        // ไม่เท่ากัน (เคสจริง: ลูกจ้าง 4,381 vs นายจ้าง 4,403 ต่างกัน 22 = ยอด
-        // ของพนักงานที่ถูกแก้พอดี) ทั้งที่ ม.33 ใช้ฐานเดียวกันทั้งคู่
-        // และไฟล์ สปส.1-10 ก็ประกาศค่าจ้างที่ 5% ไม่ลงตัวกับเงินสมทบ
+        // ตัวเติมยอดรายคนตัวเดียว (ใช้ร่วมกับ ➕ เพิ่มพนักงานเข้ารอบ — AddPayrollDetailAsync) ·
+        // ปกส. จากฐาน · บังคับระบุภาษีเมื่อรายได้เปลี่ยน (§54) · รวม Gross/หัก/สุทธิ · ห้ามสุทธิติดลบ
         var ssoParams = await GetSsoParamsAsync(companyId, run.Year, run.Month);
-        if (req.SocialSecurityBase.HasValue)
-        {
-            // ผู้ใช้ระบุ "ค่าจ้างที่ใช้เป็นฐาน" มาเอง (ม.5: เบี้ยเลี้ยง/ค่าน้ำมัน
-            // เหมาจ่ายไม่ใช่ค่าจ้าง) → คิดทั้งสองฝั่งใหม่จากฐานนั้น
-            d.SocialSecurityBase = Pos(req.SocialSecurityBase.Value);
-            if (d.SocialSecurityBase > 0)
-            {
-                var clamped = Accounting.Helpers.SsoWageBase.Clamp(d.SocialSecurityBase, ssoParams.MaxBase);
-                d.SocialSecurityEmployee = Accounting.Helpers.SsoWageBase.Contribution(
-                    clamped, ssoParams.Rate, ssoParams.MaxContribution);
-                // ฝั่งนายจ้างคิดจาก "ยอดลูกจ้าง" ตามสัดส่วนอัตรา ไม่ใช่คำนวณจากฐาน
-                // ใหม่อีกรอบ — อัตราเท่ากันต้องได้ยอดเท่ากันเป๊ะ ไม่ต่างกันด้วยเศษปัด
-                d.SocialSecurityEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
-                    d.SocialSecurityEmployee, ssoParams.Rate,
-                    ssoParams.EmployerRate, ssoParams.EmployerMaxContribution);
-            }
-            else
-            {
-                d.SocialSecurityEmployee = 0m;
-                d.SocialSecurityEmployer = 0m;
-            }
-        }
-        else if (req.SocialSecurityEmployee.HasValue)
-        {
-            // แก้ "ยอดสมทบ" ตรง ๆ (ทางเดิมที่ผู้ใช้คุ้น) → ย้อนกลับไปหาฐานที่ทำให้
-            // ยอดนั้นถูกต้อง แล้วให้ฝั่งนายจ้างตามฐานเดียวกัน — เว้นแต่ผู้ใช้ระบุ
-            // ฝั่งนายจ้างมาเองในคำขอเดียวกัน (กรณีอัตราสองฝั่งไม่เท่ากันจริง เช่น
-            // ประกาศลดอัตราชั่วคราวช่วงโควิด ซึ่งกฎหมายเคยกำหนดคนละอัตรา)
-            d.SocialSecurityEmployee = Pos(req.SocialSecurityEmployee.Value);
-            d.SocialSecurityBase = Accounting.Helpers.SsoWageBase.Resolve(
-                0m, d.SocialSecurityEmployee, d.GrossIncome,
-                ssoParams.Rate, ssoParams.MaxContribution);
-            if (!req.SocialSecurityEmployer.HasValue)
-                d.SocialSecurityEmployer = Accounting.Helpers.SsoWageBase.EmployerFrom(
-                    d.SocialSecurityEmployee, ssoParams.Rate,
-                    ssoParams.EmployerRate, ssoParams.EmployerMaxContribution);
-        }
-        if (req.SocialSecurityEmployer.HasValue) d.SocialSecurityEmployer = Pos(req.SocialSecurityEmployer.Value);
-        if (req.WithholdingTax.HasValue) d.WithholdingTax = Pos(req.WithholdingTax.Value);
-        if (req.ProvidentFundEmployee.HasValue) d.ProvidentFundEmployee = Pos(req.ProvidentFundEmployee.Value);
-        if (req.LoanDeduction.HasValue) d.LoanDeduction = Pos(req.LoanDeduction.Value);
-        if (req.OtherDeductions.HasValue) d.OtherDeductions = Pos(req.OtherDeductions.Value);
+        Accounting.Helpers.PayrollDetailAmounts.Apply(d, req, ssoParams);
 
-        // รวมยอดใหม่ — หักฝั่งลูกจ้างเท่านั้นที่กระทบ net (ปกส./PVD นายจ้าง = cost บริษัท)
-        d.GrossIncome = d.BaseSalary + d.OvertimePay + d.Allowances + d.Commission + d.Bonus + d.OtherIncome;
-
-        // ★ เดิมเขียน `d.TaxableGross = d.GrossIncome` ทับทุกครั้ง (ผลตรวจ D-D1)
-        // ⇒ ส่วนที่ยกเว้นภาษี (ค่ารักษาพยาบาล ฯลฯ ที่ engine แยกไว้ตอนคำนวณ)
-        // **หายทุกครั้งที่ HR แก้ยอดช่องใด ๆ** แม้แก้ช่องที่ไม่เกี่ยวกันเลย
-        // ⇒ ฐานภาษีใน ภ.ง.ด.1 และ 50 ทวิ สูงกว่าจริง = พนักงานถูกหักเกิน
-        // คงสัดส่วนที่ยกเว้นไว้ (clamp ไม่ให้ติดลบเมื่อรายได้ใหม่น้อยกว่าส่วนยกเว้น)
-        d.TaxableGross = Math.Max(0m, d.GrossIncome - Math.Min(nonTaxablePortion, d.GrossIncome));
-
-        // ★ แก้รายได้แล้วภาษีต้องเปลี่ยนตาม (ผลตรวจ D-D2)
-        //
-        // เดิมแก้โบนัส/OT ได้แต่ `WithholdingTax` ค้างค่าเดิม ⇒ หักน้อยกว่าที่ควร
-        // แล้วผู้จ่ายรับผิดตาม §54 — และเงียบสนิทเพราะยอดสุทธิ "ดูสมเหตุสมผล"
-        //
-        // **ไม่คำนวณใหม่ที่นี่** เพราะสูตรภาษีต้องใช้บริบทของทั้งปี (รายได้สะสม ·
-        // ลดหย่อนรายช่อง · ตารางขั้นภาษีของบริษัท · งวดที่เหลือ) ที่เมธอดนี้ไม่มี
-        // — คัดลอกสูตรมาที่นี่ = อัลกอริทึมภาษีชุดที่สองที่จะ drift แน่นอน
-        // (defect class ที่ทั้งไฟล์นี้เพิ่งยุบทิ้งไปในรอบ D-T1..T4)
-        // จึง **ล้มดังพร้อมบอกทางไปต่อ** แทนการปล่อยตัวเลขผิดผ่านไปเงียบ ๆ
-        if (incomeChanged && !req.WithholdingTax.HasValue)
-        {
-            throw new Accounting.Helpers.BusinessRuleException(
-                "แก้ยอดรายได้แล้วต้องระบุภาษีหัก ณ ที่จ่ายใหม่ด้วย — "
-                + $"ยอดเดิม {d.WithholdingTax:N2} บาท คิดจากรายได้ก่อนแก้ "
-                + "ถ้าปล่อยไว้จะหักน้อย/มากกว่าที่ควร (ภาษีที่หักขาด ผู้จ่ายรับผิดตาม §54). "
-                + "ทางแก้: กรอกช่อง \"ภาษีหัก ณ ที่จ่าย\" ในโมดัลเดียวกัน "
-                + "หรือกด \"คำนวณเงินเดือน\" ใหม่ทั้งรอบเพื่อให้ระบบคิดภาษีให้ทุกคน");
-        }
-
-        d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
-            + d.LoanDeduction + d.OtherDeductions;
-        d.NetPay = d.GrossIncome - d.TotalDeductions;
-        if (d.NetPay < 0)
-            throw new InvalidOperationException(
-                $"ยอดสุทธิติดลบ ({d.NetPay:N2}) — รายการหักรวมมากกว่ารายได้ ตรวจสอบยอดอีกครั้ง");
-        d.UpdatedAt = DateTime.UtcNow;
-
-        // รวม run totals ใหม่จาก details ทั้งหมด
-        run.TotalGrossSalary = run.Details.Sum(x => x.GrossIncome);
-        run.TotalWithholdingTax = run.Details.Sum(x => x.WithholdingTax);
-        run.TotalSocialSecurityEmployee = run.Details.Sum(x => x.SocialSecurityEmployee);
-        run.TotalSocialSecurityEmployer = run.Details.Sum(x => x.SocialSecurityEmployer);
-        run.TotalProvidentFundEmployee = run.Details.Sum(x => x.ProvidentFundEmployee);
-        run.TotalProvidentFundEmployer = run.Details.Sum(x => x.ProvidentFundEmployer);
-        run.TotalNetPay = run.Details.Sum(x => x.NetPay);
-        run.TotalDeductions = run.Details.Sum(x => x.TotalDeductions);
+        // รวม run totals ใหม่จาก details ทั้งหมด (ตัวเดียวกับเพิ่ม/เอาออก)
+        Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
         run.UpdatedBy = updatedBy;
         run.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         _logger?.LogInformation("แก้ยอด payroll detail run {Run} emp {Emp} โดย {By} → net {Net}",
             payrollRunId, employeeId, updatedBy, d.NetPay);
+        return await GetPayrollRunAsync(companyId, payrollRunId);
+    }
+
+    /// <summary>ผังแหล่งจ่ายเงินสุทธิรายคนที่รับได้ — เงินสด/ธนาคาร/ช่องจ่าย (111x/1133/2123) ระดับ 4+ ที่ active
+    /// ของบริษัทนี้ · ตัวเดียวของ "แก้แหล่งจ่าย" และ "➕ เพิ่มพนักงานเข้ารอบ" (ช่องเดียวกันบนแถวเดียวกัน)</summary>
+    private Task<bool> IsValidNetPaymentAccountAsync(Guid companyId, string code)
+        => _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
+            && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4
+            && (a.AccountCode.StartsWith("111") || a.AccountCode.StartsWith("1133")
+                || a.AccountCode.StartsWith("2123")));
+
+    /// <summary>พนักงานที่ "เพิ่มเข้ารอบนี้ได้" — ผ่าน <see cref="PayrollEmployeeEligibility.InPeriod"/> ของงวด
+    /// (ตัวเดียวกับคำนวณ/เพิ่ม) และยังไม่อยู่ในรอบ · ใช้เติม dropdown + ค่าเริ่มต้นบนจอ (ผู้ใช้เห็นและยืนยันก่อนส่ง
+    /// เซิร์ฟเวอร์ไม่แต่งยอดเอง) · <paramref name="includeSalary"/> = false ⇒ ไม่คืนเงินเดือน (แบบเดียวกับรายชื่อพนักงาน)</summary>
+    public async Task<List<PayrollAddableEmployeeDto>> GetAddableEmployeesAsync(
+        Guid companyId, Guid payrollRunId, bool includeSalary)
+    {
+        var run = await _db.Set<PayrollRun>().AsNoTracking()
+            .Where(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            .Select(r => new { r.Id, r.PeriodStart, r.PeriodEnd })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+        var inRun = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.PayrollRunId == run.Id)
+            .Select(x => x.EmployeeId)
+            .ToListAsync();
+
+        var emps = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && !e.IsDeleted && !inRun.Contains(e.Id))
+            .Where(PayrollEmployeeEligibility.InPeriod(run.PeriodStart, run.PeriodEnd))
+            .OrderBy(e => e.EmployeeCode)
+            .ToListAsync();
+
+        return emps.Select(e => new PayrollAddableEmployeeDto(
+            e.Id, e.EmployeeCode,
+            $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim(),
+            includeSalary ? e.BaseSalary : null,
+            e.SalaryType,
+            e.IsSubjectToSocialSecurity,
+            e.HasProvidentFund)).ToList();
+    }
+
+    /// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว (รอบ 200 ทีม PR1)
+    ///
+    /// <para>ที่มา: รอบที่นำเข้าจากระบบนอก (<c>IsExternalImport</c>) คำนวณใหม่ไม่ได้ และหน้ารอบมีแค่ ✏️ แก้ยอด/แหล่งจ่าย
+    /// ⇒ คนที่หลุดจากไฟล์ต้นทาง (เข้างานกลางเดือน · ลาออกงวดสุดท้าย) ไม่มีทางเข้ารอบเลยนอกจากนำเข้าใหม่ทั้งรอบ ·
+    /// รอบที่สร้างในระบบก็ได้ทางเลือกนอกจาก "คำนวณใหม่ทั้งรอบ" (ซึ่งทับยอดที่แก้มือของทุกคน)</para>
+    ///
+    /// <para>ด่าน (ลำดับ): ล็อกแถวรอบ <c>FOR UPDATE</c> → ด่านแก้ยอดชุดเดียวกับ ✏️ (<see cref="PayrollRunEditPolicy.CanEditAmounts"/>
+    /// + หลักฐานยื่น/นำส่ง) → พนักงานของบริษัทนี้ → ไม่ซ้ำในรอบ (409) → อยู่ในงวด (<see cref="PayrollEmployeeEligibility"/>) →
+    /// ภาษี + ฐาน ปกส. ต้องระบุเอง (ระบบไม่แต่ง) → ตัวเติมยอดตัวเดียวกับ ✏️ (<see cref="PayrollDetailAmounts.Apply"/>) →
+    /// audit ใน hash chain · สถานะรอบคงเดิม (Approved คงเป็น Approved เหมือน ✏️ แก้ยอด)</para></summary>
+    public async Task<PayrollRunResponse> AddPayrollDetailAsync(Guid companyId, Guid payrollRunId,
+        AddPayrollDetailRequest req, string actorName, Guid? actorUserId)
+    {
+        ArgumentNullException.ThrowIfNull(req);
+        // ── ตรวจรูปคำขอก่อนล็อก (ไม่แตะฐาน) ──
+        if (req.EmployeeId == Guid.Empty)
+            throw new Accounting.Helpers.BusinessRuleException("เลือกพนักงานที่จะเพิ่มเข้ารอบก่อน");
+        var reason = (req.Reason ?? "").Trim();
+        if (reason.Length < 5)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องระบุเหตุผลที่เพิ่มพนักงานเข้ารอบนี้ (อย่างน้อย 5 ตัวอักษร) — "
+                + "รอบนี้คำนวณ/นำเข้าแล้ว ผู้ตรวจสอบต้องรู้ว่าทำไมมีรายชื่อนอกการคำนวณ/ไฟล์ต้นทาง");
+        if (!req.WithholdingTax.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องระบุภาษีหัก ณ ที่จ่ายของพนักงานคนนี้ (ใส่ 0 ได้ถ้าตั้งใจไม่หัก) — "
+                + "ระบบไม่คิดภาษีให้รายคนเพราะต้องใช้รายได้สะสมและค่าลดหย่อนทั้งปี "
+                + "ถ้าหักขาด ผู้จ่ายเงินได้รับผิดตาม §54 (หน้าที่หัก ณ ที่จ่ายตาม §50)");
+        if (!req.SocialSecurityBase.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องระบุฐานค่าจ้างประกันสังคม (ม.33) — ใส่ 0 ถ้าพนักงานไม่อยู่ในระบบประกันสังคม · "
+                + "ฐานนี้คือช่อง ค่าจ้าง บนไฟล์ สปส.1-10 และใช้คิดเงินสมทบทั้งสองฝั่ง ระบบจึงไม่เดาให้");
+        var payCode = string.IsNullOrWhiteSpace(req.PaymentAccountCode) ? null : req.PaymentAccountCode.Trim();
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // ล็อกแถวรอบ — กันเพิ่มซ้อนกับ คำนวณใหม่/อนุมัติ/จ่าย/เพิ่มคนเดียวกันพร้อมกัน แล้วอ่านรอบใหม่ใต้ล็อก
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+            var run = await _db.Set<PayrollRun>()
+                .Include(r => r.Details)
+                .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+            // ด่านชุดเดียวกับ ✏️ แก้ยอด (สถานะ + หลักฐานยื่น/นำส่ง · #35/C3)
+            var editEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { run }))[run.Id];
+            var (canEditAmt, editAmtReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status, editEvidence);
+            if (!canEditAmt)
+                throw new Accounting.Helpers.BusinessRuleException(editAmtReason!, "PAYROLL-EDIT-LOCKED");
+
+            var emp = await _db.Set<Employee>()
+                .FirstOrDefaultAsync(e => e.Id == req.EmployeeId && e.CompanyId == companyId && !e.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบพนักงาน (อาจถูกลบไปแล้ว) — กดโหลดรายชื่อใหม่");
+            var empName = $"{emp.FirstNameTh} {emp.LastNameTh}".Trim();
+
+            if (run.Details.Any(x => x.EmployeeId == emp.Id && !x.IsDeleted))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"{empName} ({emp.EmployeeCode}) อยู่ในรอบนี้แล้ว — ใช้ปุ่ม ✏️ แก้ยอด ที่แถวของพนักงานคนนี้แทน",
+                    "PAYROLL-DETAIL-DUPLICATE", 409);
+
+            var notEligible = PayrollEmployeeEligibility.Reason(emp, run.PeriodStart, run.PeriodEnd);
+            if (notEligible != null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"เพิ่ม {empName} ({emp.EmployeeCode}) เข้ารอบนี้ไม่ได้ — {notEligible}",
+                    "PAYROLL-EMPLOYEE-NOT-IN-PERIOD");
+
+            if (payCode != null && !await IsValidNetPaymentAccountAsync(companyId, payCode))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ผังบัญชีแหล่งจ่าย '{payCode}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่ายที่เปิดใช้ของบริษัทนี้)");
+
+            var d = new PayrollDetail
+            {
+                CompanyId = companyId,
+                PayrollRunId = run.Id,
+                EmployeeId = emp.Id,
+                CreatedBy = actorName,
+                ProvidentFundEmployer = Math.Max(0m, req.ProvidentFundEmployer ?? 0m),
+                NetPaymentAccountCode = payCode,
+            };
+            // ตัวเติมยอดตัวเดียวกับ ✏️ แก้ยอด — ห้ามมีสูตร ปกส./สุทธิชุดที่สอง
+            var ssoParams = await GetSsoParamsAsync(companyId, run.Year, run.Month);
+            Accounting.Helpers.PayrollDetailAmounts.Apply(d, new UpdatePayrollDetailRequest(
+                SocialSecurityBase: req.SocialSecurityBase,
+                BaseSalary: req.BaseSalary,
+                OvertimePay: req.OvertimePay,
+                Allowances: req.Allowances,
+                Commission: req.Commission,
+                Bonus: req.Bonus,
+                OtherIncome: req.OtherIncome,
+                WithholdingTax: req.WithholdingTax,
+                ProvidentFundEmployee: req.ProvidentFundEmployee,
+                LoanDeduction: req.LoanDeduction,
+                OtherDeductions: req.OtherDeductions), ssoParams);
+            if (d.GrossIncome <= 0)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "รายได้รวมของพนักงานคนนี้เป็น 0 — กรอกเงินเดือน/รายได้ของงวดนี้ก่อน "
+                    + "(ถ้าไม่ได้จ่ายเงินคนนี้ในงวดนี้ ไม่ต้องเพิ่มเข้ารอบ)");
+
+            // กองทุนเงินทดแทน — กติกาเดียวกับเส้นคำนวณ (เปิดใช้ + อยู่ในประกันสังคม · สูตรที่ WorkersCompensationBase ตัวเดียว)
+            // ฐาน = ค่าจ้างที่ผู้ใช้ประกาศเป็นฐาน ปกส. (ค่าจ้าง ม.5 ตัวเดียวกัน) · ฐาน 0 ⇒ ไม่คิด
+            var settings = await _db.Set<CompanySettings>().AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+            if (settings?.WorkersCompensationEnabled == true && emp.IsSubjectToSocialSecurity
+                && settings.WorkersCompensationRatePercent > 0 && d.SocialSecurityBase > 0)
+                d.WorkersCompensation = Accounting.Helpers.WorkersCompensationBase.Contribution(
+                    d.SocialSecurityBase, settings.WorkersCompensationRatePercent);
+
+            run.Details.Add(d);
+            Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
+            run.UpdatedBy = actorName;
+            run.UpdatedAt = DateTime.UtcNow;
+
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = actorUserId,
+                UserEmail = actorName,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun",
+                EntityId = run.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "add-employee",
+                    run.PayrollNumber,
+                    emp.EmployeeCode,
+                    EmployeeName = empName,
+                    d.GrossIncome,
+                    d.WithholdingTax,
+                    d.SocialSecurityBase,
+                    d.SocialSecurityEmployee,
+                    d.SocialSecurityEmployer,
+                    d.NetPay,
+                    Reason = reason,
+                    run.Status,
+                    run.IsExternalImport,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            _logger?.LogInformation("เพิ่มพนักงาน {Emp} เข้ารอบเงินเดือน {Run} โดย {By} → net {Net}",
+                emp.Id, run.Id, actorName, d.NetPay);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+        return await GetPayrollRunAsync(companyId, payrollRunId);
+    }
+
+    /// <summary>🗑 เอาพนักงานออกจากรอบที่คำนวณ/นำเข้าแล้ว (รอบ 200 ทีม PR1) — soft-delete แถวรายคน
+    /// (query filter <c>!IsDeleted</c> ของ <c>PayrollDetail</c> ตัดออกจากทุกเส้นอ่าน: ภ.ง.ด.1 · สปส.1-10 · 50 ทวิ ·
+    /// สลิป · JE ตอนจ่าย) · ด่านชุดเดียวกับ ✏️ แก้ยอด · ห้ามเหลือ 0 คน (ยกเลิกทั้งรอบแทน) · ห้ามเอาออกเมื่อต้นทุน
+    /// แรงงานของคนนี้ถูกปันเข้าโครงการแล้ว (ไม่มีปุ่มยกเลิกการปัน) · เหตุผลบังคับ + audit ใน hash chain</summary>
+    public async Task<PayrollRunResponse> RemovePayrollDetailAsync(Guid companyId, Guid payrollRunId,
+        Guid employeeId, string? reason, string actorName, Guid? actorUserId)
+    {
+        var why = (reason ?? "").Trim();
+        if (why.Length < 5)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องระบุเหตุผลที่เอาพนักงานออกจากรอบนี้ (อย่างน้อย 5 ตัวอักษร) — ผู้ตรวจสอบต้องรู้ว่าทำไมรายชื่อหายไป");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                payrollRunId, companyId);
+            var run = await _db.Set<PayrollRun>()
+                .Include(r => r.Details)
+                .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+
+            var editEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { run }))[run.Id];
+            var (canEditAmt, editAmtReason) = PayrollRunEditPolicy.CanEditAmounts(run.Status, editEvidence);
+            if (!canEditAmt)
+                throw new Accounting.Helpers.BusinessRuleException(editAmtReason!, "PAYROLL-EDIT-LOCKED");
+
+            var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId && !x.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้ (อาจถูกเอาออกไปแล้ว) — โหลดหน้ารอบใหม่");
+            if (run.Details.Count(x => !x.IsDeleted) <= 1)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "รอบนี้เหลือพนักงานคนเดียว — รอบต้องมีพนักงานอย่างน้อย 1 คน · ถ้าจะเปลี่ยนเป็นอีกคน ให้กด ➕ เพิ่มพนักงานเข้ารอบ "
+                    + "ก่อนแล้วค่อยเอาคนนี้ออก · ถ้าไม่จ่ายรอบนี้แล้ว ต้องยกเลิกทั้งรอบ (ตอนนี้ทำได้ผ่าน API ยกเลิกรอบ "
+                    + "POST /payroll/runs/{id}/void เท่านั้น หน้าเว็บยังไม่มีปุ่ม — แจ้งผู้ดูแลระบบ)",
+                    "PAYROLL-DETAIL-LAST");
+
+            // ต้นทุนแรงงานของคนนี้ถูกปันเข้าโครงการด้วยยอดของรอบนี้แล้ว ⇒ เอาออก = ต้นทุนโครงการค้างยอดที่ไม่มีที่มา
+            var allocatedRows = await _db.EmployeeProjectTimes.AsNoTracking()
+                .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.IsAllocated
+                    && t.EmployeeId == employeeId && t.AllocatedPayrollRunId == run.Id);
+            if (allocatedRows > 0)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ต้นทุนแรงงานของพนักงานคนนี้ในรอบนี้ถูกปันเข้าโครงการแล้ว ({allocatedRows} แถวเวลาทำงาน) — "
+                    + "เอาออกแล้วต้นทุนโครงการจะไม่ตรงกับเงินเดือน · ระบบยังไม่มีปุ่มยกเลิกการปันต้นทุน "
+                    + "⇒ ปรับยอดด้วย ✏️ แก้ยอด แล้วปรับต้นทุนโครงการด้วยใบสำคัญปรับปรุง",
+                    "PAYROLL-DETAIL-ALLOCATED");
+
+            var emp = await _db.Set<Employee>().AsNoTracking()
+                .Where(e => e.Id == employeeId && e.CompanyId == companyId)
+                .Select(e => new { e.EmployeeCode, e.FirstNameTh, e.LastNameTh })
+                .FirstOrDefaultAsync();
+            var empName = emp == null ? "(ไม่พบพนักงาน)" : $"{emp.FirstNameTh} {emp.LastNameTh}".Trim();
+
+            d.IsDeleted = true;
+            d.UpdatedAt = DateTime.UtcNow;
+            d.UpdatedBy = actorName;
+            Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
+            run.UpdatedBy = actorName;
+            run.UpdatedAt = DateTime.UtcNow;
+
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = actorUserId,
+                UserEmail = actorName,
+                Action = AuditAction.Update,
+                EntityType = "PayrollRun",
+                EntityId = run.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    EmployeeCode = emp?.EmployeeCode,
+                    EmployeeName = empName,
+                    d.GrossIncome,
+                    d.WithholdingTax,
+                    d.SocialSecurityBase,
+                    d.SocialSecurityEmployee,
+                    d.SocialSecurityEmployer,
+                    d.NetPay,
+                }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "remove-employee",
+                    run.PayrollNumber,
+                    EmployeeCode = emp?.EmployeeCode,
+                    EmployeeName = empName,
+                    Reason = why,
+                    run.EmployeeCount,
+                    run.TotalNetPay,
+                    run.Status,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            _logger?.LogInformation("เอาพนักงาน {Emp} ออกจากรอบเงินเดือน {Run} โดย {By}",
+                employeeId, run.Id, actorName);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
         return await GetPayrollRunAsync(companyId, payrollRunId);
     }
 
@@ -1681,11 +1869,10 @@ public class PayrollService : IPayrollService
                 // ⇒ ลาออกกลางเดือน = ไม่ได้เงินเดือนงวดสุดท้าย · ไม่อยู่ใน
                 //   ภ.ง.ด.1 · ไม่อยู่ใน สปส.1-10 — เงียบสนิท ไม่มี error ให้เห็น
                 // (เงื่อนไขที่ "ปกติเป็นจริงเสมอ" ซ่อนเงื่อนไขที่ตามมาไว้ทั้งข้อ)
-                .Where(e => e.CompanyId == companyId && !e.IsDeleted
-                    && (e.IsActive
-                        || (e.EndDate != null && e.EndDate >= run.PeriodStart))
-                    && e.StartDate <= run.PeriodEnd
-                    && (e.EndDate == null || e.EndDate >= run.PeriodStart))
+                // รอบ 200 (PR1): เงื่อนไขย้ายไป Helpers/PayrollEmployeeEligibility ตัวเดียว — ทางเข้า
+                // ➕ เพิ่มพนักงานเข้ารอบ / รายชื่อที่เพิ่มได้ ใช้ตัวเดียวกัน (tenant คงไว้ที่นี่ให้เห็นชัด)
+                .Where(e => e.CompanyId == companyId && !e.IsDeleted)
+                .Where(Accounting.Helpers.PayrollEmployeeEligibility.InPeriod(run.PeriodStart, run.PeriodEnd))
                 .ToListAsync();
 
             // CompanySettings — ใช้ในการคำนวณกองทุนเงินทดแทน (กท.20ก)
@@ -4485,7 +4672,8 @@ public class PayrollService : IPayrollService
             RecalculateWarning: PayrollRunEditPolicy.RecalculateWarning(lockEvidence),
             CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can,
             // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. (เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
-            SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month));
+            SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month),
+            PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd);
     }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>

@@ -46,6 +46,12 @@ public interface IPayrollService
     /// <summary>แก้ยอดรายคน (ก่อนจ่าย) — อัปเดตเฉพาะ field ที่ส่งมา + รวม
     /// Gross/หัก/สุทธิ และ run totals ใหม่. คืน run ที่อัปเดตแล้ว (พร้อม Details).</summary>
     Task<PayrollRunResponse> UpdatePayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId, UpdatePayrollDetailRequest request, string updatedBy);
+    /// <summary>พนักงานที่เพิ่มเข้ารอบนี้ได้ (อยู่ในงวดตาม PayrollEmployeeEligibility และยังไม่อยู่ในรอบ)</summary>
+    Task<List<PayrollAddableEmployeeDto>> GetAddableEmployeesAsync(Guid companyId, Guid payrollRunId, bool includeSalary);
+    /// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว — ด่านเดียวกับแก้ยอด · ภาษี + ฐาน ปกส. บังคับ · เหตุผลบังคับ</summary>
+    Task<PayrollRunResponse> AddPayrollDetailAsync(Guid companyId, Guid payrollRunId, AddPayrollDetailRequest request, string actorName, Guid? actorUserId);
+    /// <summary>🗑 เอาพนักงานออกจากรอบ (soft-delete) — ด่านเดียวกับแก้ยอด · ห้ามเหลือ 0 คน · เหตุผลบังคับ</summary>
+    Task<PayrollRunResponse> RemovePayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId, string? reason, string actorName, Guid? actorUserId);
     Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request);
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);

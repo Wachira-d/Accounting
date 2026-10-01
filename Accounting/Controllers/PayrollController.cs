@@ -465,6 +465,56 @@ public class PayrollController : ControllerBase
         }
     }
 
+    /// <summary>รายชื่อพนักงานที่ "เพิ่มเข้ารอบนี้ได้" (อยู่ในงวด + ยังไม่อยู่ในรอบ) — ใช้ในโมดัล ➕ เพิ่มพนักงานเข้ารอบ ·
+    /// เงินเดือนคืนเฉพาะผู้มีสิทธิ์ดูเงินเดือน (กติกาเดียวกับรายชื่อพนักงาน)</summary>
+    [HttpGet("runs/{runId:guid}/addable-employees")]
+    public async Task<ActionResult<ApiResponse<List<PayrollAddableEmployeeDto>>>> GetAddableEmployees(Guid companyId, Guid runId)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<List<PayrollAddableEmployeeDto>>(true,
+            await _service.GetAddableEmployeesAsync(companyId, runId, await CanViewPayrollAsync(companyId))));
+    }
+
+    /// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว (ก่อนจ่าย) — ด่านเดียวกับ ✏️ แก้ยอด ·
+    /// ภาษีหัก ณ ที่จ่าย + ฐาน ปกส. + เหตุผล บังคับ · ข้อผิดพลาดเชิงกฎเป็น BusinessRuleException (409 เมื่อซ้ำ)</summary>
+    [HttpPost("runs/{runId:guid}/employees")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> AddDetail(
+        Guid companyId, Guid runId, [FromBody] AddPayrollDetailRequest request)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "เพิ่มพนักงานเข้ารอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        try
+        {
+            var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+            var res = await _service.AddPayrollDetailAsync(companyId, runId, request, User.Identity?.Name ?? "",
+                actorUserId == Guid.Empty ? (Guid?)null : actorUserId);
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "เพิ่มพนักงานเข้ารอบแล้ว"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>🗑 เอาพนักงานออกจากรอบ (ก่อนจ่าย) — เหตุผลผ่าน query <c>reason</c> (แบบเดียวกับ DELETE เอกสาร) ·
+    /// ด่านเดียวกับ ✏️ แก้ยอด · ห้ามเหลือ 0 คน</summary>
+    [HttpDelete("runs/{runId:guid}/employees/{employeeId:guid}")]
+    public async Task<ActionResult<ApiResponse<PayrollRunResponse>>> RemoveDetail(
+        Guid companyId, Guid runId, Guid employeeId, [FromQuery] string? reason = null)
+    {
+        var block = await RequirePayrollWriteAsync(companyId, "เอาพนักงานออกจากรอบเงินเดือน", Models.Constants.PermissionKeys.PayrollRun); if (block != null) return block;
+        try
+        {
+            var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+            var res = await _service.RemovePayrollDetailAsync(companyId, runId, employeeId, reason, User.Identity?.Name ?? "",
+                actorUserId == Guid.Empty ? (Guid?)null : actorUserId);
+            return Ok(new ApiResponse<PayrollRunResponse>(true, res, "เอาพนักงานออกจากรอบแล้ว"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<PayrollRunResponse>(false, null, ex.Message));
+        }
+    }
+
     /// <summary>สลิปเงินเดือน PDF. download=false (ค่าเริ่มต้น) → แสดง inline ใน
     /// iframe; download=true → แนบไฟล์ให้โหลด (ชื่อไฟล์มีชื่อพนักงาน).</summary>
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}/payslip")]
