@@ -169,4 +169,44 @@ public class EmployeeRecordEditTests
         Assert.Null(r.Error);
         Assert.False(r.Changes);
     }
+
+    // ── รอบ 201 ทีม PR2 · A-PR1: เลขประกันสังคม (แรงงานต่างด้าว/เลขแยกจากบัตร) ──
+    [Fact]
+    public void เลขประกันสังคม_กรอกใหม่มีขีด_เก็บตัวเลขล้วน13หลัก_ไม่ตรวจchecksum()
+    {
+        var r = EmployeeRecordEdit.SsoInsuredNumber("1-2345-67890-12-3", null);
+        Assert.Null(r.Error);
+        Assert.True(r.Changes);
+        Assert.Equal("1234567890123", r.Value);              // checksum ไม่ผ่านก็รับ — เลขที่ สปส. ออกให้ต่างด้าว
+    }
+
+    [Theory]
+    [InlineData("12345")]
+    [InlineData("12345678901234")]
+    [InlineData("ABC4567890123")]
+    public void เลขประกันสังคม_ไม่ใช่13หลัก_ปฏิเสธพร้อมทางไปต่อ(string bad)
+    {
+        var r = EmployeeRecordEdit.SsoInsuredNumber(bad, null);
+        Assert.NotNull(r.Error);
+        Assert.Contains("13 หลัก", r.Error);
+        Assert.False(r.Changes);
+    }
+
+    [Fact]
+    public void เลขประกันสังคม_null_ไม่แตะ_ว่าง_ล้าง_ค่าปิดบังของเดิม_ไม่แตะ()
+    {
+        Assert.False(EmployeeRecordEdit.SsoInsuredNumber(null, "1234567890123").Changes);
+        var clear = EmployeeRecordEdit.SsoInsuredNumber("", "1234567890123");
+        Assert.True(clear.Changes);
+        Assert.Null(clear.Value);
+        Assert.False(EmployeeRecordEdit.SsoInsuredNumber("", null).Changes);
+        // ผู้ไม่มีสิทธิ์ pii:view ได้ 1-XXXX-XXXXX-XX-3 ไปเติมฟอร์ม แล้วกดบันทึก — ห้ามเขียนทับของจริง
+        var echo = EmployeeRecordEdit.SsoInsuredNumber(PiiMask.CitizenId("1234567890123"), "1234567890123");
+        Assert.Null(echo.Error);
+        Assert.False(echo.Changes);
+        // ค่าปิดบังที่ไม่ใช่ของเดิม = ปฏิเสธ (ไม่เก็บ X ลงฐาน)
+        Assert.NotNull(EmployeeRecordEdit.SsoInsuredNumber("9-XXXX-XXXXX-XX-9", "1234567890123").Error);
+        // เลขเดิมต่างแค่ขีด = ไม่ได้แก้
+        Assert.False(EmployeeRecordEdit.SsoInsuredNumber("1 2345 67890 12 3", "1234567890123").Changes);
+    }
 }

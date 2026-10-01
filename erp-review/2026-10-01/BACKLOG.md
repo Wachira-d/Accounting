@@ -147,9 +147,9 @@
 ### 1.9 หลัง PR1 merge (ชนไฟล์ทีม PR1 — ห้ามเริ่มก่อน)
 | ID | แหล่ง | P | หมวด | สรุป | สถานะที่ HEAD | ไฟล์ | ร่างวิธีแก้ |
 |---|---|---|---|---|---|---|---|
-| A-PR1 | team-R.md:137 (D-06 UI) | P1 | A | ไม่มีช่องเลขประกันสังคม (แรงงานต่างด้าว) บนหน้าพนักงาน — ไฟล์ สปส. ใช้เลขบัตรแทน | ยังค้าง | `employees.html` · `UpdateEmployeeRequest`/Create/Response · PII mask · `employee_form_contract_sim` baseline | **M** · checklist F4 B · `SsoInsuredNumber.Resolve` อ่านช่องใหม่ก่อน · mask `pii:view` · sim สองทิศ |
-| A-PR2 | DECISIONS.md:37 (ข้อ 31 ส่วนค่าเริ่มต้น) | P3 | A | ข้อ 31 ให้ "เงินเพิ่มประจำ = นับ" เป็นค่าเริ่มต้น — โค้ดใช้ `CountsForSsoBase = null` (ไม่นับ + เตือน) | ธงมีแล้ว (`Payroll.cs:484` · `SsoWageBase`) — ขาดค่าเสนอเริ่มต้นตอนสร้างรายการ | `PayrollService` (สร้าง PayrollItem — **ไม่ใช่** Calculate/UpdateDetail) · หน้าตั้งค่ารายการเงินเดือน | **S** · เสนอค่าเริ่มต้นตาม `IncomeNature` ตอนสร้าง (ผู้ใช้เห็น/แก้ได้) · แถวเดิม null คงเตือน (ไม่ขยับยอดนำส่งเงียบ) |
-| A-PR3 | (A-PL4 ส่วนของไฟล์นี้) | P3 | A | `AuditLogs.Add` ตรงใน `PayrollService.cs:2391, 3259, 4754` | ยังค้าง | `PayrollService.cs` | **S** · `AddChainedAuditLog` · ตัด baseline |
+| ✅ f2cd1982 A-PR1 | team-R.md:137 (D-06 UI) | P1 | A | ไม่มีช่องเลขประกันสังคม (แรงงานต่างด้าว) บนหน้าพนักงาน — ไฟล์ สปส. ใช้เลขบัตรแทน | ยังค้าง | `employees.html` · `UpdateEmployeeRequest`/Create/Response · PII mask · `employee_form_contract_sim` baseline | **M** · checklist F4 B · `SsoInsuredNumber.Resolve` อ่านช่องใหม่ก่อน · mask `pii:view` · sim สองทิศ |
+| ✅ f2cd1982 A-PR2 | DECISIONS.md:37 (ข้อ 31 ส่วนค่าเริ่มต้น) | P3 | A | ข้อ 31 ให้ "เงินเพิ่มประจำ = นับ" เป็นค่าเริ่มต้น — โค้ดใช้ `CountsForSsoBase = null` (ไม่นับ + เตือน) | ธงมีแล้ว (`Payroll.cs:484` · `SsoWageBase`) — ขาดค่าเสนอเริ่มต้นตอนสร้างรายการ | `PayrollService` (สร้าง PayrollItem — **ไม่ใช่** Calculate/UpdateDetail) · หน้าตั้งค่ารายการเงินเดือน | **S** · เสนอค่าเริ่มต้นตาม `IncomeNature` ตอนสร้าง (ผู้ใช้เห็น/แก้ได้) · แถวเดิม null คงเตือน (ไม่ขยับยอดนำส่งเงียบ) |
+| ✅ f2cd1982 A-PR3 | (A-PL4 ส่วนของไฟล์นี้) | P3 | A | `AuditLogs.Add` ตรงใน `PayrollService.cs:2391, 3259, 4754` | ยังค้าง | `PayrollService.cs` | **S** · `AddChainedAuditLog` · ตัด baseline |
 
 ---
 

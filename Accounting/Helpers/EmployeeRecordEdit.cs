@@ -98,6 +98,32 @@ public static class EmployeeRecordEdit
         return locked != null ? FieldEdit.Reject(locked) : FieldEdit.Set(t);
     }
 
+    /// <summary>เลขประกันสังคม (ผู้ประกันตน) — รอบ 201 ทีม PR2 (BACKLOG A-PR1 · D-06 UI): แรงงานต่างด้าว/ผู้ที่ สปส. ออกเลขแยกจาก
+    /// เลขบัตร ต้องกรอกได้ที่หน้าพนักงาน (เดิมไม่มีช่อง ⇒ ไฟล์ สปส.1-10 ใช้เลขบัตรแทน ซึ่งคนกลุ่มนี้ไม่มี/ไม่ตรง)
+    ///
+    /// <para>null = ไม่แตะ · "" = ล้าง (กลับไปใช้เลขบัตรใน <c>SsoInsuredNumber.Resolve</c>) · ค่าปิดบังของเดิม = ไม่แตะ ·
+    /// มี X = ปฏิเสธ (ค่าปิดบังที่ไม่ใช่ของเดิม) · ตัดขีด/ช่องว่าง แล้วต้องเป็นตัวเลข 13 หลัก · <b>ไม่ตรวจ checksum</b>
+    /// (เลขที่ สปส. ออกให้คนต่างด้าวไม่รับประกันว่าผ่าน mod-11 ของเลขบัตร — ปฏิเสธเลขจริง = ทางตันที่แย่กว่า) ·
+    /// เก็บเป็นตัวเลขล้วน (ไฟล์ สปส.1-10 ใช้ค่านี้ตรง)</para></summary>
+    public static FieldEdit SsoInsuredNumber(string? incoming, string? current)
+    {
+        if (incoming is null) return FieldEdit.Keep;
+        var t = incoming.Trim();
+        if (t.Length == 0)
+            return string.IsNullOrWhiteSpace(current) ? FieldEdit.Keep : FieldEdit.Set(null);
+        if (!string.IsNullOrWhiteSpace(current) && IsMaskedEcho(t, PiiMask.CitizenId(current)))
+            return FieldEdit.Keep;
+        if (t.IndexOf('X') >= 0 || t.IndexOf('x') >= 0)
+            return FieldEdit.Reject("เลขประกันสังคม: ค่านี้เป็นเลขที่ถูกปิดบัง (PDPA) — พิมพ์เลขจริง 13 หลัก หรือคงค่าเดิมไว้โดยไม่แก้ช่องนี้");
+        var stripped = t.Replace("-", "").Replace(" ", "");
+        if (stripped.Length != 13 || !stripped.All(char.IsDigit))
+            return FieldEdit.Reject("เลขประกันสังคม: ต้องเป็นตัวเลข 13 หลัก (ขีด/ช่องว่างได้) — "
+                + "เว้นว่างถ้าใช้เลขบัตรประชาชนเป็นเลขผู้ประกันตน");
+        if (!string.IsNullOrWhiteSpace(current) && stripped == current.Replace("-", "").Replace(" ", "").Trim())
+            return FieldEdit.Keep;
+        return FieldEdit.Set(stripped);
+    }
+
     /// <summary>วันเริ่มงานที่รับได้ — ไม่เกิน 1 ปีข้างหน้า (กติกาเดียวของทั้งสร้างและแก้ไข)</summary>
     public static string? StartDateError(DateTime startDate, DateTime utcNow)
         => startDate > utcNow.AddYears(1) ? "วันเริ่มงานต้องไม่เกิน 1 ปีข้างหน้า" : null;

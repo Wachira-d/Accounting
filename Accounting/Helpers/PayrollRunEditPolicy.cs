@@ -99,14 +99,27 @@ public static class PayrollRunEditPolicy
         return (true, null);
     }
 
-    /// <summary>คำเตือน (ไม่ล็อก) ก่อนคำนวณใหม่/แก้ยอด — ไฟล์ e-Filing ที่ระบบ<b>สร้าง</b>ไว้แล้วของงวดนี้ ·
-    /// "สร้างไฟล์ ≠ ยื่น" ⇒ ไม่ใช่เหตุล็อก แต่ต้องบอกผู้ใช้ (null = ไม่มีอะไรต้องเตือน)</summary>
-    public static string? RecalculateWarning(PayrollRunLockEvidence evidence)
+    /// <summary>คำเตือน (ไม่ล็อก) ก่อนคำนวณใหม่/แก้ยอด — null = ไม่มีอะไรต้องเตือน · หลายเรื่องคั่นด้วย " · "
+    /// <list type="bullet">
+    /// <item>ไฟล์ e-Filing ที่ระบบ<b>สร้าง</b>ไว้แล้วของงวดนี้ — "สร้างไฟล์ ≠ ยื่น" ⇒ ไม่ใช่เหตุล็อก แต่ต้องบอกผู้ใช้</item>
+    /// <item>รอบ 201 (PR2 · X4): รายชื่อถูกเพิ่ม/เอาออกด้วยมือ (<paramref name="manualRosterChangedAt"/> จาก
+    ///   <see cref="PayrollRosterChange"/>) — คำนวณใหม่สร้างรายชื่อจากเงื่อนไขงวดใหม่ทั้งหมด ⇒ คนที่เพิ่มมือแต่ไม่ผ่านเงื่อนไขหาย ·
+    ///   คนที่เอาออกแต่ยังอยู่ในงวดกลับมา · ยอดที่กรอกมือถูกคิดใหม่ (บังคับส่ง — ผู้เรียกต้องอ่านจากรอบ ไม่ใช่เดา)</item>
+    /// </list></summary>
+    public static string? RecalculateWarning(PayrollRunLockEvidence evidence, DateTime? manualRosterChangedAt)
     {
         ArgumentNullException.ThrowIfNull(evidence);
-        return evidence.FileGeneratedForms.Count == 0 ? null
-            : $"ระบบเคยสร้างไฟล์ยื่น {string.Join(" / ", evidence.FileGeneratedForms)} ของงวดนี้ไว้แล้ว — "
-              + "ถ้าไฟล์นั้นถูกอัปโหลดไปแล้ว ตัวเลขหลังแก้จะไม่ตรงกับที่ยื่น (บันทึกการยื่นที่ปฏิทินภาษีเพื่อให้ระบบล็อก หรือยื่นแบบเพิ่มเติม)";
+        var parts = new List<string>();
+        if (evidence.FileGeneratedForms.Count > 0)
+            parts.Add($"ระบบเคยสร้างไฟล์ยื่น {string.Join(" / ", evidence.FileGeneratedForms)} ของงวดนี้ไว้แล้ว — "
+              + "ถ้าไฟล์นั้นถูกอัปโหลดไปแล้ว ตัวเลขหลังแก้จะไม่ตรงกับที่ยื่น (บันทึกการยื่นที่ปฏิทินภาษีเพื่อให้ระบบล็อก หรือยื่นแบบเพิ่มเติม)");
+        if (manualRosterChangedAt.HasValue)
+            parts.Add("รอบนี้มีการเพิ่ม/เอาพนักงานออกด้วยมือ (ล่าสุด "
+              + manualRosterChangedAt.Value.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)
+              + ") — คำนวณใหม่จะสร้างรายชื่อจากวันเริ่มงาน/พ้นสภาพของงวดใหม่ทั้งหมด: คนที่เพิ่มด้วยมือแต่ไม่อยู่ในงวดจะหายไป · "
+              + "คนที่เอาออกแต่ยังอยู่ในงวดจะกลับเข้ามา · ยอด/ภาษีที่กรอกมือจะถูกคิดใหม่ "
+              + "(ถ้าต้องการคงรายชื่อนี้ ให้แก้รายคนด้วย ✏️ แก้ยอด แทนการคำนวณใหม่)");
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
     }
 
     /// <summary>ด่าน "ยื่น/นำส่งแล้ว" ตัวเดียวของทั้ง <see cref="CanRecalculate"/> และ <see cref="CanEditAmounts"/>

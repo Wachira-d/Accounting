@@ -141,6 +141,28 @@ public static class PayrollIncomeNatureRules
         return new PayrollEarningBuckets(ot, recurring, oneTime, com, bonus, nonTaxable);
     }
 
+    /// <summary>ค่า<b>เสนอ</b>ของธง "เป็นค่าจ้างตาม ม.5" (<c>PayrollItem.CountsForSsoBase</c>) ตอน<b>สร้าง</b>รายการใหม่ —
+    /// รอบ 201 ทีม PR2 (BACKLOG A-PR2 · คำตัดสินข้อ 31): เงินเพิ่มประจำที่จ่ายเป็นค่าตอบแทนการทำงานทุกงวด (ค่าตำแหน่ง ·
+    /// ค่าครองชีพประจำ) = <c>true</c> · ค่าล่วงเวลา/โบนัส = <c>false</c> · ที่เหลือ (ครั้งคราว · คอมมิชชัน · ยังไม่ระบุ) = <c>null</c>
+    /// = ไม่เสนอ ให้ผู้ใช้ตัดสินเอง (ครั้งคราวรวมเงินชดเชยค่าใช้จ่ายจริงซึ่งไม่ใช่ค่าจ้าง · คอมมิชชันตีความได้สองทาง — ห้ามเดา)
+    ///
+    /// <para>เป็นค่าที่<b>หน้าเว็บเติมให้เห็นก่อนบันทึก</b> (ผู้ใช้แก้ได้) — เซิร์ฟเวอร์ไม่ใส่ให้เองตอนสร้าง และ<b>ไม่แตะแถวเดิม</b>
+    /// ที่ยัง null (ยอดนำส่งที่ยื่นไปแล้วต้องไม่ขยับเพราะอัปเดตระบบ — แถวเดิมคงคำเตือน)</para></summary>
+    public static bool? SuggestedCountsForSsoBase(PayrollIncomeNature nature) => nature switch
+    {
+        PayrollIncomeNature.RecurringAllowance => true,
+        PayrollIncomeNature.Overtime or PayrollIncomeNature.Bonus => false,
+        _ => null,
+    };
+
+    /// <summary>เหตุผลของค่าเสนอ <see cref="SuggestedCountsForSsoBase"/> — เซิร์ฟเวอร์เป็นเจ้าของถ้อยคำ</summary>
+    public static string SuggestedSsoBaseNote(PayrollIncomeNature nature) => SuggestedCountsForSsoBase(nature) switch
+    {
+        true => "ระบบเสนอ “ใช่” — เงินเพิ่มที่จ่ายประจำทุกงวดเป็นค่าตอบแทนการทำงาน (เช่น ค่าตำแหน่ง ค่าครองชีพ) ถือเป็นค่าจ้างตาม ม.5 · แก้ได้ถ้าเป็นเงินชดเชยค่าใช้จ่าย",
+        false => "ระบบเสนอ “ไม่ใช่” — ค่าล่วงเวลา/โบนัสไม่รวมในฐานเงินสมทบตามแนวปฏิบัติ · แก้ได้ถ้าข้อตกลงการจ้างต่างออกไป",
+        null => "ลักษณะนี้ระบบไม่เสนอค่า — ขึ้นกับข้อตกลงการจ้าง (เงินชดเชยค่าใช้จ่ายจริง = ไม่ใช่ · ค่าตอบแทนการทำงาน = ใช่) กรุณาเลือกเอง",
+    };
+
     /// <summary>คำอธิบายสั้นสำหรับหน้าตั้งค่า — บอกผลต่อการประมาณการภาษี
     /// (เซิร์ฟเวอร์เป็นเจ้าของถ้อยคำ หน้าเว็บห้ามเขียนตารางเอง)</summary>
     public static string Describe(PayrollIncomeNature nature) => nature switch

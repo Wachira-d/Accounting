@@ -25,6 +25,45 @@ public static class PayrollDetailAmounts
     public static void Apply(PayrollDetail d, UpdatePayrollDetailRequest req,
         (decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution) sso)
     {
+        var incomeChanged = ApplyFields(d, req, sso);
+
+        // ★ แก้รายได้แล้วภาษีต้องเปลี่ยนตาม (ผลตรวจ D-D2)
+        //
+        // เดิมแก้โบนัส/OT ได้แต่ `WithholdingTax` ค้างค่าเดิม ⇒ หักน้อยกว่าที่ควร
+        // แล้วผู้จ่ายรับผิดตาม §54 — และเงียบสนิทเพราะยอดสุทธิ "ดูสมเหตุสมผล"
+        //
+        // **ไม่คำนวณใหม่ที่นี่** เพราะสูตรภาษีต้องใช้บริบทของทั้งปี (รายได้สะสม ·
+        // ลดหย่อนรายช่อง · ตารางขั้นภาษีของบริษัท · งวดที่เหลือ) ที่เมธอดนี้ไม่มี
+        // — คัดลอกสูตรมาที่นี่ = อัลกอริทึมภาษีชุดที่สองที่จะ drift แน่นอน
+        // (defect class ที่ทั้งไฟล์นี้เพิ่งยุบทิ้งไปในรอบ D-T1..T4)
+        // จึง **ล้มดังพร้อมบอกทางไปต่อ** แทนการปล่อยตัวเลขผิดผ่านไปเงียบ ๆ
+        // รอบ 201 (PR2 · ข้อ 73): ทางไปต่อที่สามคือปุ่ม "คำนวณภาษีให้" ในโมดัลเดียวกัน
+        // (เซิร์ฟเวอร์คิดด้วย PayrollWithholdingTax ตัวเดียวกับคำนวณรอบ แล้วผู้ใช้ยืนยัน)
+        if (incomeChanged && !req.WithholdingTax.HasValue)
+        {
+            throw new BusinessRuleException(
+                "แก้ยอดรายได้แล้วต้องระบุภาษีหัก ณ ที่จ่ายใหม่ด้วย — "
+                + $"ยอดเดิม {d.WithholdingTax:N2} บาท คิดจากรายได้ก่อนแก้ "
+                + "ถ้าปล่อยไว้จะหักน้อย/มากกว่าที่ควร (ภาษีที่หักขาด ผู้จ่ายรับผิดตาม §54). "
+                + "ทางแก้: กรอกช่อง \"ภาษีหัก ณ ที่จ่าย\" ในโมดัลเดียวกัน (หรือกดปุ่ม “🧮 คำนวณภาษีให้” แล้วยืนยันค่า) "
+                + "หรือกด \"คำนวณเงินเดือน\" ใหม่ทั้งรอบเพื่อให้ระบบคิดภาษีให้ทุกคน");
+        }
+
+        d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
+            + d.LoanDeduction + d.OtherDeductions;
+        d.NetPay = d.GrossIncome - d.TotalDeductions;
+        if (d.NetPay < 0)
+            throw new InvalidOperationException(
+                $"ยอดสุทธิติดลบ ({d.NetPay:N2}) — รายการหักรวมมากกว่ารายได้ ตรวจสอบยอดอีกครั้ง");
+        d.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>ส่วน "ใส่ค่า" ของ <see cref="Apply"/> (รายได้ · ปกส. จากฐาน · รายการหัก · Gross · ฐานภาษีที่คงส่วนยกเว้น) —
+    /// <b>ไม่ตรวจ ไม่โยน ไม่รวมสุทธิ</b> · คืน true เมื่อคำขอแตะช่องรายได้ · พรีวิว "คำนวณภาษีให้" เรียกตัวนี้บนสำเนาของแถว
+    /// (ไม่บันทึก) เพื่อได้ฐานภาษี/ปกส. ของงวดจากสูตรเดียวกับตอนบันทึก (รอบ 201 PR2 · ห้ามสูตรชุดที่สอง)</summary>
+    public static bool ApplyFields(PayrollDetail d, UpdatePayrollDetailRequest req,
+        (decimal MaxBase, decimal Rate, decimal EmployerRate, decimal MaxContribution, decimal EmployerMaxContribution) sso)
+    {
         ArgumentNullException.ThrowIfNull(d);
         ArgumentNullException.ThrowIfNull(req);
 
@@ -104,33 +143,7 @@ public static class PayrollDetailAmounts
         // คงสัดส่วนที่ยกเว้นไว้ (clamp ไม่ให้ติดลบเมื่อรายได้ใหม่น้อยกว่าส่วนยกเว้น)
         d.TaxableGross = Math.Max(0m, d.GrossIncome - Math.Min(nonTaxablePortion, d.GrossIncome));
 
-        // ★ แก้รายได้แล้วภาษีต้องเปลี่ยนตาม (ผลตรวจ D-D2)
-        //
-        // เดิมแก้โบนัส/OT ได้แต่ `WithholdingTax` ค้างค่าเดิม ⇒ หักน้อยกว่าที่ควร
-        // แล้วผู้จ่ายรับผิดตาม §54 — และเงียบสนิทเพราะยอดสุทธิ "ดูสมเหตุสมผล"
-        //
-        // **ไม่คำนวณใหม่ที่นี่** เพราะสูตรภาษีต้องใช้บริบทของทั้งปี (รายได้สะสม ·
-        // ลดหย่อนรายช่อง · ตารางขั้นภาษีของบริษัท · งวดที่เหลือ) ที่เมธอดนี้ไม่มี
-        // — คัดลอกสูตรมาที่นี่ = อัลกอริทึมภาษีชุดที่สองที่จะ drift แน่นอน
-        // (defect class ที่ทั้งไฟล์นี้เพิ่งยุบทิ้งไปในรอบ D-T1..T4)
-        // จึง **ล้มดังพร้อมบอกทางไปต่อ** แทนการปล่อยตัวเลขผิดผ่านไปเงียบ ๆ
-        if (incomeChanged && !req.WithholdingTax.HasValue)
-        {
-            throw new BusinessRuleException(
-                "แก้ยอดรายได้แล้วต้องระบุภาษีหัก ณ ที่จ่ายใหม่ด้วย — "
-                + $"ยอดเดิม {d.WithholdingTax:N2} บาท คิดจากรายได้ก่อนแก้ "
-                + "ถ้าปล่อยไว้จะหักน้อย/มากกว่าที่ควร (ภาษีที่หักขาด ผู้จ่ายรับผิดตาม §54). "
-                + "ทางแก้: กรอกช่อง \"ภาษีหัก ณ ที่จ่าย\" ในโมดัลเดียวกัน "
-                + "หรือกด \"คำนวณเงินเดือน\" ใหม่ทั้งรอบเพื่อให้ระบบคิดภาษีให้ทุกคน");
-        }
-
-        d.TotalDeductions = d.SocialSecurityEmployee + d.WithholdingTax + d.ProvidentFundEmployee
-            + d.LoanDeduction + d.OtherDeductions;
-        d.NetPay = d.GrossIncome - d.TotalDeductions;
-        if (d.NetPay < 0)
-            throw new InvalidOperationException(
-                $"ยอดสุทธิติดลบ ({d.NetPay:N2}) — รายการหักรวมมากกว่ารายได้ ตรวจสอบยอดอีกครั้ง");
-        d.UpdatedAt = DateTime.UtcNow;
+        return incomeChanged;
     }
 
     /// <summary>รวมยอดระดับรอบใหม่จากแถวรายคนที่ยังไม่ถูกลบ (แก้ยอด · เพิ่ม · เอาออก ใช้ตัวเดียวกัน) ·
@@ -150,5 +163,34 @@ public static class PayrollDetailAmounts
         run.TotalNetPay = live.Sum(x => x.NetPay);
         run.TotalDeductions = live.Sum(x => x.TotalDeductions);
         run.EmployeeCount = live.Count;
+    }
+
+    /// <summary>กองทุนเงินทดแทน (กท.20ก) ของแถวที่เพิ่ม/แก้ด้วยมือ — <b>สูตรเดียว</b>ของ ➕ เพิ่มพนักงาน และ ✏️ แก้ยอดเมื่อฐานเปลี่ยน
+    /// (รอบ 201 PR2 · คำตัดสินข้อ 71) · ฐาน = ค่าจ้างที่ผู้ใช้ประกาศเป็นฐาน ปกส. (ค่าจ้าง ม.5 ตัวเดียวกัน) ผ่าน
+    /// <see cref="WorkersCompensationBase.Contribution"/> · เปิดใช้ + อยู่ในประกันสังคม + อัตรา &gt; 0 + ฐาน &gt; 0 ⇒ คิด · อื่น ๆ ⇒ 0
+    ///
+    /// <para><b>รอบที่นำเข้าจากระบบนอก</b> (<paramref name="runIsExternalImport"/> · X3) ⇒ <b>ไม่แตะ</b> แล้วคืน false —
+    /// แถวนำเข้าไม่มีเงินทดแทน (ระบบต้นทางไม่ส่งมา) ถ้าแถวที่เพิ่มมือคิดอยู่คนเดียว ยอด กท.20ก ของรอบจะเป็นยอดของคนเดียว
+    /// ที่ไม่มีใครตั้งใจ · ผู้เรียกต้องบอกผู้ใช้ (ข้อความตอบ) ว่าไม่ได้คิด</para></summary>
+    /// <returns>true = คิด/ตั้งค่าใหม่แล้ว · false = รอบนำเข้า ไม่แตะ</returns>
+    public static bool ApplyWorkersCompensation(PayrollDetail d, bool runIsExternalImport,
+        bool companyEnabled, decimal ratePercent, bool employeeSubjectToSso)
+    {
+        ArgumentNullException.ThrowIfNull(d);
+        if (runIsExternalImport) return false;
+        d.WorkersCompensation = companyEnabled && employeeSubjectToSso && ratePercent > 0 && d.SocialSecurityBase > 0
+            ? WorkersCompensationBase.Contribution(d.SocialSecurityBase, ratePercent)
+            : 0m;
+        return true;
+    }
+
+    /// <summary>รายได้/ภาษีสะสมทั้งปี (YTD บนสลิป) ของแถว = ยอดสะสมงวดก่อน + ยอดของงวดนี้ — สูตรเดียวกับเส้นคำนวณรอบ
+    /// (<c>cumulativeIncome + grossIncome</c> · <c>cumulativeTax + monthlyTax</c>) · ยอดสะสมจาก <see cref="PayrollWithholdingTax.PriorYtd"/>
+    /// (query เดียวกับเส้นคำนวณ · รอบ 201 PR2 · X5)</summary>
+    public static void SetYtd(PayrollDetail d, PayrollWithholdingTax.PriorTotals prior)
+    {
+        ArgumentNullException.ThrowIfNull(d);
+        d.CumulativeIncomeYTD = prior.Income + d.GrossIncome;
+        d.CumulativeTaxYTD = prior.Tax + d.WithholdingTax;
     }
 }

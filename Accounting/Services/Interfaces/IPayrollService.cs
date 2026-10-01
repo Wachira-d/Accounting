@@ -47,7 +47,9 @@ public interface IPayrollService
     /// Gross/หัก/สุทธิ และ run totals ใหม่. คืน run ที่อัปเดตแล้ว (พร้อม Details).</summary>
     Task<PayrollRunResponse> UpdatePayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId, UpdatePayrollDetailRequest request, string updatedBy);
     /// <summary>พนักงานที่เพิ่มเข้ารอบนี้ได้ (อยู่ในงวดตาม PayrollEmployeeEligibility และยังไม่อยู่ในรอบ)</summary>
-    Task<List<PayrollAddableEmployeeDto>> GetAddableEmployeesAsync(Guid companyId, Guid payrollRunId, bool includeSalary);
+    Task<List<PayrollAddableEmployeeDto>> GetAddableEmployeesAsync(Guid companyId, Guid payrollRunId);
+    /// <summary>🧮 คำนวณภาษีให้รายคน — พรีวิว (ไม่บันทึก) ด้วยเครื่องคิดภาษีตัวเดียวกับคำนวณรอบ (รอบ 201 PR2 · ข้อ 73)</summary>
+    Task<PayrollTaxPreviewResponse> PreviewWithholdingTaxAsync(Guid companyId, Guid payrollRunId, PayrollTaxPreviewRequest request);
     /// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว — ด่านเดียวกับแก้ยอด · ภาษี + ฐาน ปกส. บังคับ · เหตุผลบังคับ</summary>
     Task<PayrollRunResponse> AddPayrollDetailAsync(Guid companyId, Guid payrollRunId, AddPayrollDetailRequest request, string actorName, Guid? actorUserId);
     /// <summary>🗑 เอาพนักงานออกจากรอบ (soft-delete) — ด่านเดียวกับแก้ยอด · ห้ามเหลือ 0 คน · เหตุผลบังคับ</summary>
@@ -59,7 +61,7 @@ public interface IPayrollService
     /// <summary>สร้างเอกสารหลังจ่าย (ภงด.1 cert + filings + สลิปทุกคน + อีเมล) —
     /// รันใน background scope หลัง pay เพื่อกัน request timeout. best-effort.</summary>
     Task GeneratePostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor);
-    Task VoidPayrollAsync(Guid companyId, Guid payrollRunId);
+    Task VoidPayrollAsync(Guid companyId, Guid payrollRunId, string? reason, string actorName, Guid? actorUserId);
     /// <summary>กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อแก้ยอดย้อนหลังแล้ว
     /// จ่ายใหม่ — กลับ JE ที่ลงตอนจ่าย (ลงวันเดียวกับ PayDate เพื่อให้โพสต์ใหม่
     /// เข้างวดเดิมได้), คืนเงินทดรองที่หักในรอบนี้, ตัดสาย JournalEntryId,

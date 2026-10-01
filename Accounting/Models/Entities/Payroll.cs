@@ -207,6 +207,10 @@ public class PayrollRun : TenantEntity
     public string? ReopenedBy { get; set; }
     public string? ReopenReason { get; set; }
 
+    // รอบ 201 (PR2 · X4): เวลาล่าสุดที่รายชื่อถูกเปลี่ยนด้วยมือ (➕ เพิ่ม / 🗑 เอาออก · Helpers/PayrollRosterChange) —
+    // ใช้เตือนก่อน "คำนวณใหม่" ว่าจะทับรายชื่อที่แก้มือ · คำนวณรอบใหม่ล้างเป็น null (รายชื่อกลับมาจากเงื่อนไขงวด)
+    public DateTime? ManualRosterChangedAt { get; set; }
+
     public ICollection<PayrollDetail> Details { get; set; } = new List<PayrollDetail>();
 }
 

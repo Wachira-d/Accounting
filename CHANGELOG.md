@@ -4079,6 +4079,20 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่�
   team.html กล่องส่งมอบ + ป้ายบทบาท · usage.html ป้ายบทบาท
 - เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit 545cc3ea)_
 
+_2026-10-01 รอบ 201 ทีม PR2 — เงินเดือน: คำตัดสิน 69–73 + ผลฝ่ายค้าน PR1 (X1–X6) (`erp-review/2026-09-29/team-PR2.md`)
+- **ข้อ 73** `Helpers/PayrollWithholdingTax` (`Compute` · `Allowances` · `RemainingPeriodsAfter` · `PriorYtd` · `ItemAmount` · `ItemBuckets`) — ส่วนประกอบบริบทภาษีย้ายจาก inline ใน
+  `CalculatePayrollAsync` คำต่อคำ (ค่าคงที่ `Pit*` ของ service ถูกถอด อ้าง `ThaiPitCalculator` ตัวเลขเดียวกัน) · `LoadPriorYtdDetailsAsync` query เดียว · `PreviewWithholdingTaxAsync` +
+  `POST runs/{id}/tax-preview` (ไม่บันทึก) · ปุ่ม "🧮 คำนวณภาษีให้" ในโมดัลรายคน (ค่าผู้ใช้ชนะ) · `PayrollDetailAmounts.ApplyFields` (ส่วนใส่ค่าของ `Apply` · พฤติกรรม `Apply` เดิม)
+- **ข้อ 69** `Helpers/PayrollRosterChange` — ➕/🗑 รอบ Approved ⇒ Calculated + ล้างผู้อนุมัติ · `PayrollRunResponse.Notice` · ✏️ คงเดิม
+- **ข้อ 70** ปุ่ม 🚫 ยกเลิกรอบ (`CanVoid/VoidBlockReason` ใน response) · `VoidPayrollRunRequest` เหตุผลบังคับ + `AddChainedAuditLog` · pre-read ไม่ติดตาม · ข้อความ `PAYROLL-DETAIL-LAST` ชี้ปุ่ม
+- **ข้อ 71/X3** `PayrollDetailAmounts.ApplyWorkersCompensation` — ✏️ ฐานเปลี่ยนคิดเงินทดแทนใหม่ · ➕ ใช้ตัวเดียวกัน · รอบนำเข้าไม่แตะ + บอกผู้ใช้
+- **X1** `Helpers/PayrollSsoFlagGuard` (ธง ปกส. × ฐาน × รายได้ สองทิศ · `PAYROLL-SSO-FLAG-MISMATCH`) — ➕ เสมอ · ✏️ เมื่อฐานเปลี่ยน
+- **X2** ✏️ ธุรกรรม + `FOR UPDATE` + อ่านใต้ล็อก · จ่ายอ่านรอบ/แถวใต้ล็อก + `RecomputeRunTotals` ก่อน JE
+- **X4** `PayrollRun.ManualRosterChangedAt` (migration ADD COLUMN IF NOT EXISTS) + `RecalculateWarning(evidence, manualRosterChangedAt)` · คำนวณใหม่ล้างค่า
+- **X5** `PayrollDetailAmounts.SetYtd` — YTD ของแถวที่เพิ่ม/แก้ด้วย query เดียวกับเส้นคำนวณ
+- **X6** ถอด `includeSalary` (จริงเสมอหลังด่าน) — `PayrollAddableEmployeeDto.BaseSalary` เป็น `decimal` · ตัด branch "ไม่มีสิทธิ์ดูเงินเดือน" ใน `payroll.html`
+- เทสต์ `PayrollWithholdingTaxTests` (golden 2,268 กรณีเทียบสูตรเดิม + 50,000 ⇒ 20,450) · `PayrollRosterChangeTests` · `PayrollDetailAmountsTests` +7 · required_call_site +13 แถว — commit 127844b9)_
+
 _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
 - **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
   (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
@@ -4190,3 +4204,11 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 6 — คำสั่ง main a
 - `write_permission_gate_check` WATCHED + `ContactHygieneController` (endpoint เขียน `POST …/ocr-branch-orphans/{id}/retire` · ด่าน `HasPermissionAsync(Contact.Edit)`) ·
   negative test ฉีด POST ไม่มีด่านลงไฟล์จริงในโหมด WATCHED · marker `ScanGateAsync(`/`DocGateAsync(`/`DenyScanSourceAsync(` (รูปการใช้ผลล็อกโดย attachment_gate_check) ⇒
   baseline deny-list 547 → 529 (ลดอย่างเดียว) · audit_direct_add baseline 28 → 27 (OcrService เข้า chain โดยทีม OC) — commit 97aab100)_
+
+_2026-10-01 รอบ 201 ทีม PR2 ชุดสอง — BACKLOG 2026-10-01 §1.9 (หลัง PR1 merge)
+- **A-PR1** เลขประกันสังคม (แรงงานต่างด้าว) บนหน้าพนักงานทั้งสองหน้า · `UpdateEmployeeRequest`/`EmployeeResponse` +`SocialSecurityNumber` · `EmployeeRecordEdit.SsoInsuredNumber`
+  (13 หลัก · ตัวเลขล้วน · ไม่ checksum · ค่าปิดบังไม่ทับ) ใช้ทั้งสร้าง/แก้ · response ปิดบังตาม pii:view · `employee_form_contract_sim` +5 ข้อ + 3 mutant (baseline ล้ม 4)
+- **A-PR2** `PayrollIncomeNatureRules.SuggestedCountsForSsoBase/SuggestedSsoBaseNote` + `GET payroll/items/sso-base-suggestion` · หน้าตั้งค่ารายการเติมค่าเสนอเฉพาะรายการใหม่ (ค่าผู้ใช้ชนะ)
+- **A-PR3** `AuditLogs.Add` ตรง 3 จุดใน `PayrollService` → `AddChainedAuditLog`
+- เทสต์ `EmployeeRecordEditTests` +3 · `PayrollItemNatureTests` +2 · required_call_site +8 แถว — commit f2cd1982)_
+

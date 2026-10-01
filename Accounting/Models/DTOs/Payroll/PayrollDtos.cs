@@ -109,7 +109,10 @@ public record UpdateEmployeeRequest(
     string? TaxId = null,
     string? EmploymentType = null,
     DateTime? StartDate = null,
-    string? BankAccountName = null);
+    string? BankAccountName = null,
+    /// <summary>รอบ 201 PR2 (A-PR1) — เลขประกันสังคม (แรงงานต่างด้าว/เลขแยกจากบัตร) · null = ไม่แตะ · "" = ล้าง ·
+    /// ค่าปิดบังของเดิม = ไม่แตะ (ตัวตัดสิน <c>EmployeeRecordEdit.SsoInsuredNumber</c>)</summary>
+    string? SocialSecurityNumber = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -149,7 +152,10 @@ public record EmployeeResponse(
     /// <summary>null = ยังไม่ได้ตรวจ (ลิสต์ไม่ตรวจเพื่อไม่ให้เป็น N+1) · true = แก้รหัส
     /// พนักงานไม่ได้เพราะมีประวัติเงินเดือนแล้ว (เหตุผลอยู่ใน EmployeeCodeLockReason)</summary>
     bool? EmployeeCodeLocked = null,
-    string? EmployeeCodeLockReason = null);
+    string? EmployeeCodeLockReason = null,
+    /// <summary>รอบ 201 PR2 (A-PR1) — เลขประกันสังคมที่<b>กรอกไว้</b> (ไม่ใช่เลขบัตรที่ใช้แทน) · ปิดบังตาม PDPA ม.26
+    /// เว้นแต่ผู้เรียกมีสิทธิ์ pii:view · null = ไม่ได้กรอก (ไฟล์ สปส.1-10 ใช้เลขบัตร)</summary>
+    string? SocialSecurityNumber = null);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows
@@ -193,6 +199,13 @@ public record UpdatePayrollItemRequest(
     /// ผู้ใช้จะ**ย้อนกลับไป "ยังไม่ระบุ" ไม่ได้เลย** (silent no-op คลาสเดิม)
     /// · ไม่ส่ง/ค่าอื่น = ไม่แตะของเดิม</summary>
     string? CountsForSsoBase = null);
+
+/// <summary>ค่าเสนอของธง "เป็นค่าจ้างตาม ม.5" ตอนสร้างรายการเงินเดือนใหม่ (รอบ 201 PR2 · A-PR2 · คำตัดสินข้อ 31) —
+/// <c>CountsForSsoBase</c> = null ⇒ ไม่เสนอ (ผู้ใช้เลือกเอง) · <c>IncomeNature</c> ออกเป็นชื่อ</summary>
+public record PayrollItemSsoSuggestionDto(
+    Models.Enums.PayrollIncomeNature IncomeNature,
+    bool? CountsForSsoBase,
+    string Note);
 
 public record PayrollItemResponse(
     Guid Id, string Code, string Name, string ItemType,
@@ -341,7 +354,14 @@ public record PayrollRunResponse(
     // รอบ 200 (PR1): ช่วงงวดของรอบ — โมดัล ➕ เพิ่มพนักงานเข้ารอบ ใช้บอกผู้ใช้ว่ารายชื่อที่เพิ่มได้ต้องอยู่ในช่วงไหน
     // (เซิร์ฟเวอร์ตัดสินสิทธิ์ที่ PayrollEmployeeEligibility — หน้าเว็บแค่แสดงช่วงวันที่)
     DateTime? PeriodStart = null,
-    DateTime? PeriodEnd = null);
+    DateTime? PeriodEnd = null,
+    // รอบ 201 (PR2 · ข้อ 70): ปุ่ม "ยกเลิกรอบ" — เซิร์ฟเวอร์ตัดสินที่ PayrollRunEditPolicy.CanVoid ตัวเดียว (ด่านเดียวกับ VoidPayrollAsync)
+    // กดไม่ได้ ⇒ หน้าเว็บแสดงปุ่มที่กดไม่ได้พร้อมเหตุผล (ห้ามซ่อนเงียบ)
+    bool CanVoid = false,
+    string? VoidBlockReason = null,
+    // รอบ 201 (PR2): ข้อความผลข้างเคียงของคำสั่งล่าสุดที่ผู้ใช้ต้องรู้ (เช่น รอบกลับเป็น "คำนวณแล้ว" ต้องอนุมัติใหม่ ·
+    // รอบนำเข้าไม่คิดกองทุนเงินทดแทนให้แถวที่เพิ่ม) — เติมเฉพาะคำตอบของ ➕/🗑/✏️ · null = ไม่มีอะไรต้องบอก
+    string? Notice = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
@@ -432,15 +452,50 @@ public record AddPayrollDetailRequest(
     string? PaymentAccountCode = null);
 
 /// <summary>พนักงานที่เพิ่มเข้ารอบได้ — ใช้เติม dropdown + ค่าเริ่มต้นบนจอ (ผู้ใช้เห็นก่อนส่ง) ·
-/// <c>BaseSalary</c> = null เมื่อผู้เรียกไม่มีสิทธิ์ดูเงินเดือน</summary>
+/// <c>BaseSalary</c> คืนเสมอ: endpoint ผ่านด่านดูข้อมูลเงินเดือน (<c>CheckPayrollAccessAsync</c>) ก่อนแล้ว ⇒ ผู้เรียกทุกคนดูเงินเดือนได้
+/// (รอบ 201 PR2 · X6: พารามิเตอร์ includeSalary เดิมเป็นจริงเสมอ = โค้ดตาย จึงถอดทั้งสองฝั่ง)</summary>
 public record PayrollAddableEmployeeDto(
     Guid Id,
     string EmployeeCode,
     string EmployeeName,
-    decimal? BaseSalary,
+    decimal BaseSalary,
     string SalaryType,
     bool IsSubjectToSocialSecurity,
     bool HasProvidentFund);
+
+/// <summary>ยกเลิกทั้งรอบ (รอบ 201 PR2 · คำตัดสินข้อ 70) — เหตุผล<b>บังคับที่ service</b> (อย่างน้อย 5 ตัวอักษร · เก็บใน audit chain) ·
+/// <c>string?</c> เพื่อให้คำขอที่ไม่ส่งเหตุผลได้ข้อความไทยจาก service ไม่ใช่ข้อความ [Required] อังกฤษของ ASP.NET</summary>
+public record VoidPayrollRunRequest(string? Reason = null);
+
+/// <summary>พรีวิว "🧮 คำนวณภาษีให้" รายคน (รอบ 201 PR2 · คำตัดสินข้อ 73) — ยอดบนจอของโมดัล ➕ เพิ่ม / ✏️ แก้ยอด
+/// (ช่องว่าง = ไม่ส่ง ⇒ ใช้ค่าที่บันทึกไว้ของแถวเดิม หรือ 0 สำหรับแถวใหม่) · <b>ไม่บันทึกอะไร</b></summary>
+public record PayrollTaxPreviewRequest(
+    Guid EmployeeId,
+    decimal? SocialSecurityBase = null,
+    decimal? BaseSalary = null,
+    decimal? OvertimePay = null,
+    decimal? Allowances = null,
+    decimal? Commission = null,
+    decimal? Bonus = null,
+    decimal? OtherIncome = null,
+    decimal? SocialSecurityEmployee = null,
+    decimal? ProvidentFundEmployee = null);
+
+/// <summary>ผลพรีวิวภาษี — <c>SuggestedWithholdingTax</c> คือค่าที่เติมให้ในช่อง (≥ 0) · <c>ComputedWithholding</c> คือผลดิบจาก
+/// เครื่องคิดภาษี (ติดลบได้ = คืนภาษีที่หักเกินในงวดก่อน) · ที่เหลือคือที่มาให้ผู้ใช้ตรวจก่อนยืนยัน · <c>Basis</c> = คำอธิบายภาษาไทย</summary>
+public record PayrollTaxPreviewResponse(
+    decimal SuggestedWithholdingTax,
+    decimal ComputedWithholding,
+    decimal TaxableThisPeriod,
+    decimal PriorTaxableYtd,
+    decimal PriorTaxWithheld,
+    decimal RecurringMonthlyIncome,
+    int RemainingPeriodsAfterThis,
+    decimal EstimatedAnnualIncome,
+    decimal ExpenseDeduction,
+    decimal TotalAllowances,
+    decimal EstimatedAnnualTax,
+    List<string> Basis);
 
 public record PayrollDetailResponse(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,
