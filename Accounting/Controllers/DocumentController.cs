@@ -1145,12 +1145,14 @@ public class DocumentController : ControllerBase
     }
 
     /// <summary>รอบ 200 ทีม V1G (คำตัดสินข้อ 44) — รายงาน<b>อ่านอย่างเดียว</b>ให้นักบัญชีตรวจ: ใบเสร็จติดธงที่ภาษีขายถูกถอยไปแล้ว · ใบเสร็จที่ปิดธงด้วยเส้นเดิม
-    /// (อาจเป็นใบลดหนี้) · ใบแทนที่คัดลอกช่องของใบเดิมเกิน — ระบบไม่แก้อะไรอัตโนมัติ</summary>
+    /// (อาจเป็นใบลดหนี้) · ใบแทนที่คัดลอกช่องของใบเดิมเกิน · ตัวกลับภาษีขายถึงกำหนดที่ลงคนละเดือนกับ JE ย้ายภาษี (รอบ 200 ทีม V1H · ข้อ 53) —
+    /// ระบบไม่แก้อะไรอัตโนมัติ</summary>
     [HttpGet("etax-reissue-review")]
     public async Task<ActionResult<ApiResponse<EtaxReissueReviewReport>>> GetEtaxReissueReview(Guid companyId)
     {
         var r = await _documentService.GetEtaxReissueReviewAsync(companyId);
-        var total = r.FlaggedReceiptsVatUndone.Count + r.ResolvedBeforeSplit.Count + r.ReplacementsCarriedExcess.Count;
+        var total = r.FlaggedReceiptsVatUndone.Count + r.ResolvedBeforeSplit.Count + r.ReplacementsCarriedExcess.Count
+            + r.MisdatedOutputVatReversals.Count;
         return Ok(new ApiResponse<EtaxReissueReviewReport>(true, r,
             total == 0 ? "ไม่พบรายการที่ต้องตรวจ" : $"พบ {total} รายการที่ต้องให้นักบัญชีตรวจ (ระบบไม่แก้อัตโนมัติ)"));
     }

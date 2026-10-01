@@ -9499,7 +9499,7 @@ public partial class DocumentService : IDocumentService
                 // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบเสร็จอัตโนมัติคู่การชำระที่ e-Tax ถึงกรมสรรพากรแล้ว — ตัดสินใน internal ทั้งสองเส้น
                 // (DocumentVoidPreconditions.AutoReceiptOnPaymentVoid) · ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธ (rollback ทั้งก้อน) · เช็คเด้ง = ติดธง
                 if (hasAllocations)
-                    etaxCancellationFlag = await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน", cause: cause);
+                    (etaxCancellationFlag, outputVatNotice) = await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน", cause: cause);
                 else
                     (etaxCancellationFlag, outputVatNotice) = await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน", cause: cause);
                 await _db.SaveChangesAsync();
@@ -9829,46 +9829,9 @@ public partial class DocumentService : IDocumentService
         }
         doc.UpdatedAt = DateTime.UtcNow;
 
-        // ── กลับ "ภาษีขายถึงกำหนด" เมื่อไม่เหลือการรับชำระแล้ว (M-6) ──────────
-        // TryReclassifyUndueOutputVatAsync ย้าย VAT ทั้งก้อน 21913 → 21911 ตอน
-        // รับเงินงวดแรก (tax point §78/1) แต่ JE ตัวนั้นใช้ Reference = เลขเอกสาร
-        // ไม่ใช่เลข Payment ⇒ ตัวเลือก JE ด้านบนไม่แตะ ⇒ void การชำระแล้ว VAT
-        // ยังค้างที่ 21911 + OutputVatDueAt ยังตั้ง ⇒ ภ.พ.30 งวดนั้นเก็บภาษีขาย
-        // ของเงินที่ไม่เคยได้รับ และรับชำระใหม่ก็ถูก idempotent guard บล็อกถาวร
-        //
-        // รอบ 200 ทีม V1F (ฝ่ายค้าน V1-R2): ใบเสร็จถือ VAT ที่ยังมีผล (เช็คเด้งแต่ใบเสร็จถึงกรมสรรพากรแล้ว ⇒ ติดธง ไม่ถูกยกเลิก · หรือใบเสร็จถือ VAT
-        // ใบอื่นของใบนี้) = ใบกำกับที่ออกไปแล้ว ⇒ ความรับผิดยังอยู่ · ห้ามถอยภาษีขายออกจาก ภ.พ.30 เงียบ ๆ — เงินกลับ (ลูกหนี้เปิดใหม่) แต่ VAT ยังรายงาน
-        // จนกว่าจะบันทึกว่ายกเลิกทาง e-Tax แล้ว (ResolveEtaxCancellationAsync ถอยให้ตอนนั้น) · ตัวตัดสินเดียว ShouldUndoOutputVatReclass
-        //
-        // รอบ 200 ทีม V1G (ข้อ 48 · RV1F-2): ตัวกลับลงวันที่ของ JE ย้ายภาษีเอง (เดือนรับเงิน — เดิมลงวันที่ใบแจ้งหนี้ ⇒ สองเดือนคลาด) · เดือนนั้น
-        // ปิด/ยื่นแล้ว ⇒ ผู้ใช้กดเอง = ปฏิเสธดัง (เดิม LogError แล้วตอบสำเร็จ) · เช็คเด้ง/ยกเลิกการลงบัญชี = กลับเงินต่อ + ธงบนใบต้นทาง (ตัวตัดสินเดียว)
-        string? vatNotice = null;
-        if (doc.PaidAmount <= 0.005m && doc.OutputVatDueAt != null)
-        {
-            var liveVatReceiptKeepsTaxPoint =
-                (receiptDoc != null && DocumentVoidPreconditions.FlaggedReceiptKeepsTaxPoint(receiptDecision.Action, receiptDoc.VatAmount))
-                || await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: receiptDoc?.Id);
-            if (DocumentVoidPreconditions.ShouldUndoOutputVatReclass(doc.PaidAmount, doc.OutputVatDueAt != null, liveVatReceiptKeepsTaxPoint))
-            {
-                var undo = DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(
-                    await ReclassLockReasonAsync(companyId, doc.Id), cause, doc.DocumentNumber);
-                if (undo.Action == OutputVatUndoAction.Refuse)
-                    throw new BusinessRuleException(undo.Message ?? "ยกเลิกการชำระนี้ไม่ได้ — งวดของภาษีขายปิดแล้ว", "RD-78/1-VAT-UNDO-LOCKED", 409);
-                if (undo.Action == OutputVatUndoAction.KeepAndFlag)
-                {
-                    vatNotice = undo.Message;
-                    AppendInternalNote(doc, undo.Message ?? "[VAT-UNDO-BLOCKED]");
-                    doc.UpdatedAt = DateTime.UtcNow;
-                    _logger.LogWarning("ยกเลิกการชำระ {PayNo}: {Notice}", payment.PaymentNumber, undo.Message);
-                }
-                else
-                    await UndoUndueOutputVatReclassAsync(companyId, doc, reason);
-            }
-            else
-                _logger.LogInformation(
-                    "ยกเลิกการชำระ {PayNo}: ไม่ถอยภาษีขายถึงกำหนดของ {Doc} — ยังมีใบเสร็จถือ VAT ที่มีผลอยู่ (ใบกำกับออกไปแล้ว)",
-                    payment.PaymentNumber, doc.DocumentNumber);
-        }
+        // ── กลับ "ภาษีขายถึงกำหนด" เมื่อไม่เหลือการรับชำระแล้ว (M-6 · V1F V1-R2 · V1G ข้อ 48) — เหตุผลเต็มอยู่ที่ UndoOutputVatOnPaymentVoidAsync
+        // รอบ 200 ทีม V1H (ข้อ 50): ตัวถอยภาษีตัวเดียวกับเส้นจัดสรรหลายใบ
+        var vatNotice = await UndoOutputVatOnPaymentVoidAsync(companyId, doc, receiptDecision, receiptDoc, cause, reason, payment.PaymentNumber);
 
         // ── ทะเบียนเครดิตภาษีถูกหัก ณ ที่จ่ายฝั่งขาย 11910 (M-4) ─────────────
         // SyncWhtCreditReceivedAsync อ่านจาก GL จริงและลบแถวเองเมื่อยอดเป็น 0
@@ -9918,6 +9881,58 @@ public partial class DocumentService : IDocumentService
     }
 
     /// <summary>
+    /// **ถอย "ภาษีขายถึงกำหนด" (§78/1) ของใบต้นทางหนึ่งใบหลังยกเลิกการรับชำระ — ตัวเดียวของเส้นใบเดียวและเส้นจัดสรรหลายใบ**
+    /// (รอบ 200 ทีม V1H · คำตัดสินข้อ 50: เส้นเดียวกันต้องให้ผลเดียวกัน — เดิม <see cref="ReverseMultiDocPaymentInternalAsync"/> ไม่ถอยเลย ⇒ ยกเลิกเช็คก้อนเดียวที่
+    /// จ่ายหลายใบแล้วภาษีขายของเงินที่ไม่เคยได้รับยังอยู่ใน ภ.พ.30 · ส่วน "ใบเสร็จถือ VAT ที่ยังมีผล" ยังกันเหมือนเส้นใบเดียว)
+    /// <para>เรียก<b>หลัง</b>คืนยอดรับชำระของใบนั้นแล้ว (ตัดสินจากยอดที่เหลือจริง) และหลังตัดสินใบเสร็จอัตโนมัติ (ใบเสร็จที่ยกเลิกพร้อมกันไม่นับ — ยังไม่ save) ·
+    /// ตัวตัดสิน: <see cref="DocumentVoidPreconditions.ReceiptHoldsTaxPointFor"/> (ใบเสร็จที่ติดธงถือจุดความรับผิดของใบที่มันอ้างเท่านั้น) +
+    /// <see cref="LiveVatReceiptExistsAsync"/> → <see cref="DocumentVoidPreconditions.ShouldUndoOutputVatReclass"/> → ด่านงวด <see cref="ReclassLockReasonAsync"/> →
+    /// <see cref="DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid"/> (ผู้ใช้ = 409 · เช็คเด้ง/ยกเลิกการลงบัญชี = ธง) · คืนข้อความธง (null = ไม่มี)</para>
+    /// </summary>
+    private async Task<string?> UndoOutputVatOnPaymentVoidAsync(Guid companyId, Document doc, AutoReceiptEtaxDecision receiptDecision,
+        Document? receiptDoc, PaymentVoidCause cause, string reason, string paymentNumber)
+    {
+        // ── กลับ "ภาษีขายถึงกำหนด" เมื่อไม่เหลือการรับชำระแล้ว (M-6) ──────────
+        // TryReclassifyUndueOutputVatAsync ย้าย VAT ทั้งก้อน 21913 → 21911 ตอน
+        // รับเงินงวดแรก (tax point §78/1) แต่ JE ตัวนั้นใช้ Reference = เลขเอกสาร
+        // ไม่ใช่เลข Payment ⇒ ตัวเลือก JE ของการชำระไม่แตะ ⇒ void การชำระแล้ว VAT
+        // ยังค้างที่ 21911 + OutputVatDueAt ยังตั้ง ⇒ ภ.พ.30 งวดนั้นเก็บภาษีขาย
+        // ของเงินที่ไม่เคยได้รับ และรับชำระใหม่ก็ถูก idempotent guard บล็อกถาวร
+        //
+        // รอบ 200 ทีม V1F (ฝ่ายค้าน V1-R2): ใบเสร็จถือ VAT ที่ยังมีผล (เช็คเด้งแต่ใบเสร็จถึงกรมสรรพากรแล้ว ⇒ ติดธง ไม่ถูกยกเลิก · หรือใบเสร็จถือ VAT
+        // ใบอื่นของใบนี้) = ใบกำกับที่ออกไปแล้ว ⇒ ความรับผิดยังอยู่ · ห้ามถอยภาษีขายออกจาก ภ.พ.30 เงียบ ๆ — เงินกลับ (ลูกหนี้เปิดใหม่) แต่ VAT ยังรายงาน
+        // จนกว่าจะบันทึกว่ายกเลิกทาง e-Tax แล้ว (ResolveEtaxCancellationAsync ถอยให้ตอนนั้น) · ตัวตัดสินเดียว ShouldUndoOutputVatReclass
+        //
+        // รอบ 200 ทีม V1G (ข้อ 48 · RV1F-2): ตัวกลับลงวันที่ของ JE ย้ายภาษีเอง (เดือนรับเงิน — เดิมลงวันที่ใบแจ้งหนี้ ⇒ สองเดือนคลาด) · เดือนนั้น
+        // ปิด/ยื่นแล้ว ⇒ ผู้ใช้กดเอง = ปฏิเสธดัง (เดิม LogError แล้วตอบสำเร็จ) · เช็คเด้ง/ยกเลิกการลงบัญชี = กลับเงินต่อ + ธงบนใบต้นทาง (ตัวตัดสินเดียว)
+        if (doc.PaidAmount > 0.005m || doc.OutputVatDueAt == null) return null;
+        var liveVatReceiptKeepsTaxPoint =
+            (receiptDoc != null && DocumentVoidPreconditions.ReceiptHoldsTaxPointFor(doc.Id, receiptDoc.RelatedDocumentId,
+                receiptDecision.Action, receiptDoc.VatAmount))
+            || await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: receiptDoc?.Id);
+        if (!DocumentVoidPreconditions.ShouldUndoOutputVatReclass(doc.PaidAmount, doc.OutputVatDueAt != null, liveVatReceiptKeepsTaxPoint))
+        {
+            _logger.LogInformation(
+                "ยกเลิกการชำระ {PayNo}: ไม่ถอยภาษีขายถึงกำหนดของ {Doc} — ยังมีใบเสร็จถือ VAT ที่มีผลอยู่ (ใบกำกับออกไปแล้ว)",
+                paymentNumber, doc.DocumentNumber);
+            return null;
+        }
+        var undo = DocumentVoidPreconditions.OutputVatUndoOnPaymentVoid(
+            await ReclassLockReasonAsync(companyId, doc.Id), cause, doc.DocumentNumber);
+        if (undo.Action == OutputVatUndoAction.Refuse)
+            throw new BusinessRuleException(undo.Message ?? "ยกเลิกการชำระนี้ไม่ได้ — งวดของภาษีขายปิดแล้ว", "RD-78/1-VAT-UNDO-LOCKED", 409);
+        if (undo.Action == OutputVatUndoAction.KeepAndFlag)
+        {
+            AppendInternalNote(doc, undo.Message ?? "[VAT-UNDO-BLOCKED]");
+            doc.UpdatedAt = DateTime.UtcNow;
+            _logger.LogWarning("ยกเลิกการชำระ {PayNo}: {Notice}", paymentNumber, undo.Message);
+            return undo.Message;
+        }
+        await UndoUndueOutputVatReclassAsync(companyId, doc, reason);
+        return null;
+    }
+
+    /// <summary>
     /// Internal: กลับรายการ "ใบรับ/จ่ายเงินที่จัดสรรหลายเอกสาร" (multi-doc payment)
     /// ภายใน transaction ที่เปิดไว้แล้ว — ต่างจาก <see cref="ReversePaymentInternalAsync"/>
     /// ตรงที่เงิน 1 ก้อนผูกหลายใบผ่าน <c>PaymentAllocation</c>:
@@ -9931,7 +9946,8 @@ public partial class DocumentService : IDocumentService
     /// Caller รับผิดชอบ transaction + SaveChangesAsync.
     /// </summary>
     /// <param name="reversalDate">วันที่กลับรายการ (null = วันนี้)</param>
-    private async Task<string?> ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
+    /// <returns>ข้อความธงบนใบเสร็จ (ต้องยกเลิกทาง e-Tax) และข้อความ "ถอยภาษีขายไม่ได้" ของใบที่ถูกจัดสรร (รอบ 200 ทีม V1H · ข้อ 50 — รูปเดียวกับเส้นใบเดียว)</returns>
+    private async Task<(string? EtaxFlag, string? VatNotice)> ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
         DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
         // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
@@ -10021,6 +10037,17 @@ public partial class DocumentService : IDocumentService
         // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, pn);
 
+        // 4b) รอบ 200 ทีม V1H (คำตัดสินข้อ 50): ถอยภาษีขายถึงกำหนด "รายใบ" ผ่านตัวเดียวกับเส้นใบเดียว — เดิมเส้นนี้ไม่ถอยเลย ⇒ ยกเลิกเงินก้อนเดียวที่จ่ายหลายใบ
+        //     แล้วภาษีขายของเงินที่ไม่เคยได้รับยังอยู่ใน ภ.พ.30 · ใบที่ยังมีเงินรับอื่น/ใบเสร็จถือ VAT ที่มีผล = ไม่ถอย (ตัวตัดสินเดียวกัน) · งวดปิด: ผู้ใช้ = 409 ทั้งก้อน
+        //     (ไม่มีอะไรถูกเขียน — ธุรกรรมของผู้เรียก rollback) · เช็คเด้ง/ยกเลิกการลงบัญชี = ธงรายใบ
+        var vatNotices = new List<string>();
+        foreach (var undoDocId in docIds)
+        {
+            if (!docMap.TryGetValue(undoDocId, out var undoDoc)) continue;
+            if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, receiptDecision, receiptDoc, cause, reason, pn) is string notice)
+                vatNotices.Add(notice);
+        }
+
         // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง
         if (payment.WithholdingTaxAmount > 0)
         {
@@ -10052,7 +10079,7 @@ public partial class DocumentService : IDocumentService
 
         payment.IsDeleted = true;
         payment.UpdatedAt = DateTime.UtcNow;
-        return etaxCancellationFlag;
+        return (etaxCancellationFlag, vatNotices.Count == 0 ? null : string.Join("\n", vatNotices));
     }
 
     /// <summary>

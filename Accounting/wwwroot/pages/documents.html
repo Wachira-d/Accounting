@@ -1316,8 +1316,10 @@
             <label class="form-label">ทำอะไรที่กรมสรรพากร/ผู้ให้บริการ e-Tax</label>
             <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" name="ecPath" value="CancelledAtRd" checked onchange="Page.etaxCancelPathChanged()">
               (ก) ยกเลิกใบนี้ทาง e-Tax สำเร็จ — ใบเสร็จนี้ไม่มีผลแล้ว (ระบบยกเลิกใบเสร็จ คงแสดงเป็น “ยกเลิก”)</label>
-            <label style="display:block;font-size:13px"><input type="radio" name="ecPath" value="CreditNote" onchange="Page.etaxCancelPathChanged()">
+            <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" name="ecPath" value="CreditNote" onchange="Page.etaxCancelPathChanged()">
               (ข) ออกใบลดหนี้แล้ว — ใบเสร็จนี้ยังมีผล (ต้องมีใบลดหนี้ในระบบนี้ · ภาษีขายลดในเดือนของใบลดหนี้)</label>
+            <label style="display:block;font-size:13px"><input type="radio" name="ecPath" value="OriginalStillValid" onchange="Page.etaxCancelPathChanged()">
+              (ค) ใบกำกับเดิมยังใช้ได้ — ลูกค้าชำระใหม่ครอบยอดแทนเช็คที่เด้ง ไม่ได้ยกเลิกที่กรมสรรพากร (ใบเสร็จนี้คงมีผล · ไม่ถอยภาษี · ต้องมีสิทธิ์อนุมัติ)</label>
           </div>
           <div id="ecPathA">
             <div class="form-group">
@@ -9858,7 +9860,7 @@
             banners += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               ⚠️ <b>ต้องยกเลิกทาง e-Tax</b> (ติดธงเมื่อ ${Layout.date(d.etaxCancelRequiredAt)})
               <div style="margin-top:4px">${Layout.esc(d.etaxCancelRequiredReason || '')}</div>
-              <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกการยกเลิกทาง e-Tax (ยกเลิกสำเร็จ / ออกใบลดหนี้)</button></div>
+              <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกการจัดการทาง e-Tax (ยกเลิกสำเร็จ / ออกใบลดหนี้ / ใบกำกับเดิมยังใช้ได้)</button></div>
             </div>`;
           }
           // รอบ 200 ทีม V1F (V1-R6): คำขอยกเลิกและออกใบแทนที่รอผู้อนุมัติคนที่สอง — เซิร์ฟเวอร์ตัดสินว่าใครยืนยันได้ (ผู้ขอยืนยันเองไม่ได้)
@@ -11971,7 +11973,8 @@
         } catch (e) { Layout.toast(e.message || 'ยกเลิกคำขอไม่สำเร็จ', 'error', 10000); }
       },
       // รอบ 200 ทีม V1F (V1-R3) · แยกทางรอบ V1G (คำตัดสินข้อ 46–48) — บันทึกการยกเลิกทาง e-Tax: (ก) ยกเลิกสำเร็จ (เลขอ้างอิง + ไฟล์หลักฐาน)
-      // หรือ (ข) ใบลดหนี้ในระบบ · เซิร์ฟเวอร์ตัดสินว่าหลักฐานพอไหม/ถอยภาษีได้ไหม/ต้องออกใบกำกับใหม่ไหม — หน้าเว็บแค่เก็บข้อมูลแล้วแสดงข้อความของเซิร์ฟเวอร์
+      // หรือ (ข) ใบลดหนี้ในระบบ หรือ (ค) ใบกำกับเดิมยังใช้ได้ (รอบ 200 ทีม V1H · ข้อ 54 — ไม่มีช่องเพิ่ม: เซิร์ฟเวอร์ตรวจยอดรับชำระ/สิทธิ์เอง)
+      // · เซิร์ฟเวอร์ตัดสินว่าหลักฐานพอไหม/ถอยภาษีได้ไหม/ต้องออกใบกำกับใหม่ไหม — หน้าเว็บแค่เก็บข้อมูลแล้วแสดงข้อความของเซิร์ฟเวอร์
       async resolveEtaxCancellation(id) {
         const api = Layout.api(); if (!api) return;
         document.getElementById('ecDocId').value = id;
@@ -12009,7 +12012,7 @@
         try {
           if (path === 'CreditNote') {
             payload.creditNoteDocumentId = document.getElementById('ecCreditNote').value || null;
-          } else {
+          } else if (path === 'CancelledAtRd') {
             payload.rdCancellationReference = document.getElementById('ecReference').value;
             const file = document.getElementById('ecEvidence').files?.[0];
             if (file) {
@@ -12056,12 +12059,14 @@
           const d = r?.data;
           const rows = [...(d?.flaggedReceiptsVatUndone || []), ...(d?.resolvedBeforeSplit || [])];
           const reps = d?.replacementsCarriedExcess || [];
-          if (!rows.length && !reps.length) { el.style.display = 'none'; return; }
+          const revs = d?.misdatedOutputVatReversals || [];   // รอบ 200 ทีม V1H (ข้อ 53): ตัวกลับภาษีขายที่ลงคนละเดือน (ข้อความจากเซิร์ฟเวอร์)
+          if (!rows.length && !reps.length && !revs.length) { el.style.display = 'none'; return; }
           const link = (id, no) => `<a href="#" onclick="Page.detail('${id}');return false" style="color:#92400e;text-decoration:underline">${Layout.esc(no || '')}</a>`;
           el.innerHTML = `📋 <b>${Layout.esc(r?.message || 'มีรายการที่ต้องให้นักบัญชีตรวจ')}</b>`
             + rows.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
             + reps.slice(0, 20).map(x => `<div>• ใบแทน ${link(x.replacementId, x.replacementNumber)} ของ ${Layout.esc(x.originalNumber || '')} พาช่องของใบเดิมมา: ${Layout.esc((x.carriedFields || []).join(', '))}</div>`).join('')
-            + (rows.length + reps.length > 40 ? '<div>…</div>' : '');
+            + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
+            + (rows.length + reps.length + revs.length > 60 ? '<div>…</div>' : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },

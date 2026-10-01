@@ -3976,3 +3976,16 @@ _2026-09-29 รอบ 200 ทีม V1G — แก้ผลฝ่ายค้า
   ผ่าน EF model · `PreparerName/PreparerSignatureBase64` ไม่ตามไปใบแทน
 - **ข้อ 44** รายงานอ่านอย่างเดียว `GET document/etax-reissue-review` (`Helpers/EtaxReissueReview`) + แถบบนหน้ารายการเอกสาร
 - เทสต์ `VoidReissueR200GTests` (สองทิศ + ลำดับ เช็คเด้ง→รับใหม่→ปิดธง ระดับตัวตัดสิน) · ปรับ `VoidReissueR200FTests` R3 · required_call_site +16 แถว/ปรับ 7 — commit 3f4e1ea2)_
+
+_2026-10-01 รอบ 200 ทีม V1H — ลงมือตามคำตัดสินข้อ 50–54 (คำถามค้างทีม V1G · `erp-review/2026-09-29/DECISIONS.md` · รายงาน `team-V1H.md`):
+- **ข้อ 50** ตัวถอยภาษีขายถึงกำหนดหลังยกเลิกการรับชำระ `UndoOutputVatOnPaymentVoidAsync` ตัวเดียวของเส้นใบเดียว + เส้นจัดสรรหลายใบ (`ReverseMultiDocPaymentInternalAsync`
+  ถอยรายใบ · คืน `(EtaxFlag, VatNotice)` เหมือนเส้นใบเดียว · เดิมไม่ถอยเลย) · `DocumentVoidPreconditions.ReceiptHoldsTaxPointFor` (ใบเสร็จติดธงถือจุดความรับผิดของใบที่อ้างเท่านั้น)
+- **ข้อ 51** `EtaxInvoiceService.VoidAsync(companyId, etaxId, EtaxVoidRequest?, actor)` + `Helpers/EtaxVoidPolicy` — Submitted ต้องมีเหตุผล + ไฟล์หลักฐานการยกเลิกที่แนบเข้าเอกสาร
+  (controller เดิน `IAttachmentAccessGate` · แถวใหม่ `attachment_gate_check`) · 409 `RD-ETAX-VOID-EVIDENCE` (เดิม `InvalidOperationException`) · audit hash chain · `EtaxInvoiceResponse`
+  เพิ่ม `VoidedAt/VoidReason/VoidedNote` · หน้า e-Tax ป้าย "ยกเลิกในระบบนี้" + ฟอร์มแนบหลักฐาน · ข้อความทางไปต่อของ Submitted ทุกตัวตัดสินบอกให้แนบไฟล์
+- **ข้อ 52** `EtaxCancellationFollowUp` ปฏิเสธพร้อมทางไปต่อเมื่อการรับชำระที่ยังมีผลไม่ใช่ "รับครบงวดเดียว" (`InstallmentTaxInvoiceRequired`) — 📋 ใบกำกับรายงวดจริงยังไม่ทำ
+  (ต้องเปลี่ยนกติกาย้ายภาษีเต็มก้อนตอนรับเงินแรกทั้งระบบ) · ปรับเทสต์ V1G ที่ล็อกพฤติกรรมเดิม
+- **ข้อ 53** รายงานข้อ 44 เพิ่มกลุ่ม `MisdatedOutputVatReversals` (`EtaxReissueReview.ReclassReversalMisdated`) — อ่านอย่างเดียว
+- **ข้อ 54** ปิดธงทาง (ค) `EtaxCancellationPath.OriginalStillValid` / `EtaxCancellationEvidence.OriginalInvoiceStillValid` — ครอบยอดด้วย `LivePaymentCoverageAsync` · ไม่มีใบกำกับอื่น ·
+  ภาษีไม่ถูกถอยไปแล้ว · สิทธิ์อนุมัติตรวจใน service · ล้างธงอย่างเดียว + audit · หน้าเอกสารเพิ่มตัวเลือก (ค)
+- เทสต์ `VoidReissueR200HTests` (สองทิศทุกข้อ) · required_call_site +5 แถว/ปรับ 3 — commit <pending>)_

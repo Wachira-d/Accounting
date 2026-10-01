@@ -406,4 +406,11 @@ public record EtaxInvoiceResponse(
     string? BuyerTaxId,
     DateTime? SignedAt,
     string? CertificateSerialNumber,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    DateTime? VoidedAt,
+    string? VoidReason,
+    string? VoidedNote);
+
+/// <summary>คำขอยกเลิกแถว e-Tax ในระบบนี้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 51) — แถวที่ส่งถึงกรมสรรพากรแล้ว (Submitted) ต้องมีเหตุผล + ไฟล์หลักฐาน
+/// การยกเลิกจากกรมสรรพากร/ผู้ให้บริการที่แนบเข้าเอกสารของแถวนี้ · เลขอ้างอิงไม่บังคับ (เก็บลง audit)</summary>
+public sealed record EtaxVoidRequest(string? Reason, string? RdCancellationReference, Guid? EvidenceAttachmentId);

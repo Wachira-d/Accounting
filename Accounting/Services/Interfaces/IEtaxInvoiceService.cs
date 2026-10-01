@@ -13,7 +13,9 @@ public interface IEtaxInvoiceService
     Task<EtaxInvoiceResponse> SignAsync(Guid companyId, Guid etaxId);
     Task<EtaxInvoiceResponse> SubmitToRevenueAsync(Guid companyId, Guid etaxId);
     Task<string> GetXmlAsync(Guid companyId, Guid etaxId);
-    Task VoidAsync(Guid companyId, Guid etaxId);
+    /// <summary>ยกเลิกแถว e-Tax <b>ในระบบนี้</b> (ไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร) — ตัวตัดสิน <c>Helpers/EtaxVoidPolicy</c> · แถว Submitted ต้องมีไฟล์หลักฐาน
+    /// การยกเลิกที่แนบเข้าเอกสารของแถวนี้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 51 — controller เดินด่านไฟล์แนบตัวเดียวก่อนถึงที่นี่)</summary>
+    Task VoidAsync(Guid companyId, Guid etaxId, EtaxVoidRequest? request, string actor);
 
     /// <summary>
     /// Build PDF/A-3 with embedded ETDA XML for e-Tax by Email compliance.

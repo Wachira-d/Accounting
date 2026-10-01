@@ -14,6 +14,8 @@ namespace Accounting.Helpers;
 /// ทางกรมสรรพากรยกเลิกจริง หรือออกใบลดหนี้ (ถ้าลดหนี้ ต้องบันทึกใบลดหนี้ในระบบ และภาษีขายของเดือนเดิมถูกลดย้อนหลังไปแล้ว)</item>
 /// <item><see cref="CarriedExcess"/> — ใบแทน ("ยกเลิกและออกใบแทน") ที่ออกก่อนรอบ V1F ด้วยตัวคัดลอกทุกช่อง (<c>CopyScalars</c>) ⇒ พาหลักฐานของใบเดิม
 /// (ลายเซ็นรับของ · ผลตรวจ RD · feedback AI · ผู้จัดทำภายนอก ฯลฯ) มาด้วย</item>
+/// <item><see cref="ReclassReversalMisdated"/> — รอบ 200 ทีม V1H (คำตัดสินข้อ 53): ตัวกลับ "ภาษีขายถึงกำหนด" (§78/1) ที่ลงคนละเดือนกับ JE ย้ายภาษีที่มันกลับ —
+/// ก่อนคำตัดสินข้อ 48 ตัวถอยลงวันที่ใบแจ้งหนี้ ⇒ GL ภาษีขายคลาดสองเดือน (เดือนใบแจ้งหนี้ −VAT · เดือนรับเงิน +VAT) ขณะที่ ภ.พ.30 = 0/0</item>
 /// </list>
 /// </summary>
 public static class EtaxReissueReview
@@ -27,6 +29,11 @@ public static class EtaxReissueReview
     /// <summary>ใบเสร็จถือ VAT ที่ยังมีผลและติดธง แต่ใบต้นทาง (ใบแจ้งหนี้) ไม่มีวันที่ภาษีขายถึงกำหนดแล้ว = ถูกถอยไปแล้วทั้งที่ใบกำกับยังมีผล</summary>
     public static bool FlaggedReceiptVatUndone(bool receiptLive, decimal receiptVat, bool flagged, DocumentType sourceType, DateTime? sourceOutputVatDueAt)
         => receiptLive && flagged && receiptVat > 0.005m && sourceType == DocumentType.Invoice && sourceOutputVatDueAt == null;
+
+    /// <summary>ตัวกลับของ JE ย้ายภาษีขายถึงกำหนด (§78/1) ลงคนละเดือนภาษี (ปี+เดือน) กับ JE ที่มันกลับไหม — ตัวกลับที่ถูกต้องลงวันที่ของ JE ย้ายภาษีเอง
+    /// (คำตัดสินข้อ 48) ⇒ คนละเดือน = GL ภาษีขายของสองเดือนไม่ตรง ภ.พ.30 · วันเดียวกัน/เดือนเดียวกัน = ไม่จำแนก · pure (ข้อ 53)</summary>
+    public static bool ReclassReversalMisdated(DateTime reclassEntryDate, DateTime reversalEntryDate)
+        => reclassEntryDate.Year != reversalEntryDate.Year || reclassEntryDate.Month != reversalEntryDate.Month;
 
     /// <summary>ช่องตัวตน/เวลา/สถานะของใบแทนเองที่ต่างจากใบเดิมโดยธรรมชาติ — ไม่นับในการตรวจช่องเกิน</summary>
     private static readonly HashSet<string> OwnFields = new(StringComparer.Ordinal)
@@ -70,6 +77,11 @@ public sealed record EtaxReviewReceiptRow(Guid ReceiptId, string ReceiptNumber, 
 public sealed record EtaxReviewReplacementRow(Guid ReplacementId, string ReplacementNumber, Guid OriginalId, string OriginalNumber,
     DateTime? ReplacedAt, IReadOnlyList<string> CarriedFields);
 
-/// <summary>รายงานอ่านอย่างเดียว (ข้อ 44) — ไม่มีอะไรถูกแก้ · นักบัญชีตัดสินรายใบ</summary>
+/// <summary>ตัวกลับภาษีขายถึงกำหนดที่ลงคนละเดือนกับ JE ย้ายภาษี 1 คู่ (ข้อ 53) — นักบัญชีตรวจว่า ภ.พ.30/GL ของสองเดือนต้องปรับไหม</summary>
+public sealed record EtaxReviewReversalRow(Guid SourceId, string SourceNumber, Guid ReclassEntryId, string ReclassEntryNumber, DateTime ReclassDate,
+    Guid ReversalEntryId, string ReversalEntryNumber, DateTime ReversalDate, decimal Amount, string Finding);
+
+/// <summary>รายงานอ่านอย่างเดียว (ข้อ 44 · ข้อ 53) — ไม่มีอะไรถูกแก้ · นักบัญชีตัดสินรายใบ</summary>
 public sealed record EtaxReissueReviewReport(IReadOnlyList<EtaxReviewReceiptRow> FlaggedReceiptsVatUndone,
-    IReadOnlyList<EtaxReviewReceiptRow> ResolvedBeforeSplit, IReadOnlyList<EtaxReviewReplacementRow> ReplacementsCarriedExcess);
+    IReadOnlyList<EtaxReviewReceiptRow> ResolvedBeforeSplit, IReadOnlyList<EtaxReviewReplacementRow> ReplacementsCarriedExcess,
+    IReadOnlyList<EtaxReviewReversalRow> MisdatedOutputVatReversals);

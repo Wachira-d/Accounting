@@ -95,6 +95,10 @@ TARGETS = [
     ("Accounting/Controllers/DocumentController.cs", "ResolveEtaxCancellation", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
      [r"\.ResolveEtaxCancellationAsync\s*\("],
      [r'"Document"', r"\bdocumentId\b", r"AttachmentAccess\.Read", r"\bEvidenceAttachmentId\b"]),
+    # ── รอบ 200 ทีม V1H (คำตัดสินข้อ 51): ไฟล์หลักฐานการยกเลิก e-Tax ที่ส่งแล้ว — ด่านอ่านไฟล์ของเอกสารของแถวนี้ก่อนถึง service ──
+    ("Accounting/Controllers/EtaxController.cs", "Void", r"\.DenyAttachmentAsync\s*\(", DENY_USE,
+     [r"\.VoidAsync\s*\("],
+     [r'"Document"', r"\bdocId\b", r"AttachmentAccess\.Read", r"\bevidenceId\b"]),
 ]
 
 # กติกาเชิงโครงสร้าง: controller → [(regex ของพารามิเตอร์, regex ของด่าน, regex อาร์กิวเมนต์ที่ต้องมี)]

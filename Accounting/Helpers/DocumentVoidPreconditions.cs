@@ -164,14 +164,15 @@ public static class DocumentVoidPreconditions
                 + " จึงยังไม่ถูกยกเลิกในระบบ · ภาษีขายตามใบนี้ (ถ้าใบถือ VAT) ยังรายงานใน ภ.พ.30 จนกว่าจะยกเลิกทางกรมสรรพากร — "
                 + (accepted
                     ? "ดำเนินการยกเลิก/ออกใบลดหนี้ที่ระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) "
-                    : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ (ทำได้ก่อนกรมสรรพากรตอบรับ) ")
-                + "แล้วกด “บันทึกว่ายกเลิกทาง e-Tax แล้ว” บนใบเสร็จนี้ (ระบบยกเลิกใบเสร็จและปลดบล็อกใบต้นทางให้) · แจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล");
+                    : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ (ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) ")
+                + "แล้วกด “บันทึกว่ายกเลิกทาง e-Tax แล้ว” บนใบเสร็จนี้ (ระบบยกเลิกใบเสร็จและปลดบล็อกใบต้นทางให้) · แจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล · "
+                + "ถ้าลูกค้าชำระใหม่ครอบยอดแล้วและไม่ยกเลิกใบนี้ ให้เลือกทาง “ใบกำกับเดิมยังใช้ได้” (คำตัดสินข้อ 54)");
         return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Refuse,
             $"ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จ {no} ที่ออกคู่การรับชำระ "
             + (accepted
                 ? "ถึงกรมสรรพากรแล้วและยกเลิกจากระบบนี้ไม่ได้ (Accepted — ตอบรับแล้ว หรือ e-Tax by Email ที่ประทับเวลาแล้ว) — ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากรก่อน "
                   + "· ถ้าเงินไม่ได้เข้าจริง (เช็คเด้ง) ให้บันทึก “เช็คเด้ง” ที่หน้าเช็ค ระบบจะกลับรายการเงินและติดธงให้ตามยกเลิก e-Tax"
-                : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) "
+                : "ส่ง e-Tax ไปกรมสรรพากรแล้ว (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) "
                   + "แล้วกดยกเลิกการชำระอีกครั้ง")
             + " · ระบบยังไม่ได้แตะอะไร");
     }
@@ -191,8 +192,18 @@ public static class DocumentVoidPreconditions
 
     /// <summary>ใบเสร็จที่ติดธงยังถือภาษีขายไหม — เงื่อนไขเดียวกับตัวเลือกเจ้าของแถว ภ.พ.30 ของ <c>TaxService</c> (<c>VatAmount &gt; 0.005</c>) ·
     /// ใบที่ถูกยกเลิกตามปกติ (Void) ไม่ถือแล้ว</summary>
-    public static bool FlaggedReceiptKeepsTaxPoint(AutoReceiptEtaxAction action, decimal receiptVatAmount)
+    internal static bool FlaggedReceiptKeepsTaxPoint(AutoReceiptEtaxAction action, decimal receiptVatAmount)
         => action == AutoReceiptEtaxAction.FlagEtaxCancellation && receiptVatAmount > 0.005m;
+
+    /// <summary>
+    /// **ใบเสร็จอัตโนมัติของการรับชำระที่กำลังยกเลิก ยังถือจุดความรับผิด §78/1 ของ "ใบต้นทางใบนี้" ไหม** (รอบ 200 ทีม V1H · คำตัดสินข้อ 50) —
+    /// ตัวเดียวของเส้นใบเดียว (<c>ReversePaymentInternalAsync</c>) และเส้นจัดสรรหลายใบ (<c>ReverseMultiDocPaymentInternalAsync</c>)
+    /// <para>การชำระที่จัดสรรหลายใบมีใบเสร็จ (ถ้ามี) อ้างได้ใบเดียว (<c>RelatedDocumentId</c>) ⇒ ใบเสร็จที่ติดธงถือจุดความรับผิดของใบที่มันอ้างเท่านั้น ·
+    /// ใบอื่นในการจัดสรรเดียวกันตัดสินด้วยใบเสร็จถือ VAT ของตัวเอง (<c>LiveVatReceiptExistsAsync</c>) · เงื่อนไขภาษีเดียวกับ
+    /// <see cref="FlaggedReceiptKeepsTaxPoint"/> · G6: pure</para>
+    /// </summary>
+    public static bool ReceiptHoldsTaxPointFor(Guid documentId, Guid? receiptRelatedDocumentId, AutoReceiptEtaxAction action, decimal receiptVatAmount)
+        => receiptRelatedDocumentId == documentId && FlaggedReceiptKeepsTaxPoint(action, receiptVatAmount);
 
 
     /// <summary>
@@ -205,7 +216,10 @@ public static class DocumentVoidPreconditions
     /// <para>(ข) <see cref="EtaxCancellationPath.CreditNote"/> — ออกใบลดหนี้แล้ว ⇒ <b>ใบลดหนี้ต้องมีอยู่ในระบบนี้</b> (อ้างใบเสร็จ/ใบต้นทาง ·
     /// ผู้ซื้อเดียวกัน · ออกแล้ว · ภาษีครอบภาษีของใบเสร็จ · ยังไม่เคยใช้ปิดธงใบอื่น) — ใบเสร็จเดิมคงอยู่ (ภาษีขายลดในเดือนของใบลดหนี้ §86/10) ·
     /// ห้ามรับแค่ "เลขที่" ข้อความ</para>
-    /// <para>ส่งแล้วยังไม่รู้ผล (Submitted) ⇒ ปฏิเสธพร้อมทางไปต่อทั้งสองทาง · เหตุผลบังคับ · G6: pure</para>
+    /// <para>(ค) <see cref="EtaxCancellationPath.OriginalStillValid"/> — ใบกำกับเดิมยังใช้ได้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 54 — กรณีปกติที่สุดของเช็คเด้ง):
+    /// ลูกค้าชำระใหม่ครอบยอดใบเสร็จนี้ · ใบนี้ตอบรับที่กรมสรรพากรแล้ว · ไม่มีใบกำกับใบอื่นของการขายนี้ · ภาษีขายของใบต้นทางยังไม่ถูกถอย ⇒ ล้างธงอย่างเดียว
+    /// (ใบเสร็จเดิมคงมีผล · ไม่ถอยภาษี · ไม่ยกเลิกอะไร)</para>
+    /// <para>ส่งแล้วยังไม่รู้ผล (Submitted) ⇒ ปฏิเสธพร้อมทางไปต่อทุกทาง · เหตุผลบังคับ · G6: pure</para>
     /// </summary>
     public static EtaxCancellationResolutionVerdict EtaxCancellationResolution(EtaxCancellationClaim c)
     {
@@ -219,6 +233,29 @@ public static class DocumentVoidPreconditions
                 "e-Tax ของใบนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
                 + "หรือรอผลตอบรับแล้วบันทึกตามสิ่งที่ทำจริงที่กรมสรรพากร (ยกเลิก หรือออกใบลดหนี้)" + Tail);
 
+        if (c.Path == EtaxCancellationPath.OriginalStillValid)
+        {
+            // ── (ค) ใบกำกับเดิมยังใช้ได้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 54): เช็คเด้ง → ลูกค้าชำระใหม่ครอบยอด ⇒ ใบเสร็จเดิมคงมีผล · ไม่ถอยภาษี ·
+            // การรับชำระใหม่มีใบรับที่ไม่ใช่ใบกำกับ (ใบกำกับของการขายนี้มีใบเดียว) ──
+            if (c.EffectiveEtax != EtaxStatus.Accepted)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "ใบนี้ไม่มีใบกำกับที่มีผลที่กรมสรรพากร (e-Tax ไม่ถึงกรมสรรพากรหรือถูกยกเลิกในระบบนี้แล้ว) — “ใบกำกับเดิมยังใช้ได้” ใช้ไม่ได้ · "
+                    + "ใช้ทาง “ยกเลิกทาง e-Tax แล้ว” (ระบบออกใบกำกับ ณ วันรับเงินให้การรับชำระที่ยังมีผล)" + Tail);
+            if (c.OtherLiveVatReceipt)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "ใบต้นทางมีใบเสร็จถือภาษีขาย (ใบกำกับ) ใบอื่นที่ยังมีผลอยู่แล้ว — ถ้าใบนี้ยังใช้ได้อีก การขายเดียวกันจะมีใบกำกับสองใบ (ภาษีขายนับซ้ำ) · "
+                    + "ใช้ทาง “ยกเลิกทาง e-Tax แล้ว” หรือ “ออกใบลดหนี้แล้ว” สำหรับใบนี้" + Tail);
+            if (c.SourceVatUndone)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    "ภาษีขายของใบต้นทางถูกถอยออกไปแล้ว (ข้อบกพร่องรอบก่อน — อยู่ในรายงานตรวจข้อ 44) — ปิดธงแบบ “ใบกำกับเดิมยังใช้ได้” ตอนนี้ ภ.พ.30 จะไม่มี"
+                    + "ภาษีขายของใบกำกับนี้ · ให้ผู้ทำบัญชีตรวจรายงานข้อ 44 แล้วตัดสินก่อน" + Tail);
+            if (c.LivePaymentCoverage + 0.005m < c.ReceiptTotalAmount)
+                return EtaxCancellationResolutionVerdict.Refused(
+                    $"ยอดรับชำระที่ยังมีผลของใบต้นทาง ({c.LivePaymentCoverage:N2}) ยังไม่ครอบยอดใบเสร็จนี้ ({c.ReceiptTotalAmount:N2}) — ใบกำกับเดิมระบุยอดที่ลูกค้า"
+                    + "ยังไม่ได้ชำระจริง · บันทึกการรับชำระใหม่ให้ครบก่อนแล้วกดอีกครั้ง หรือใช้ทาง “ยกเลิกทาง e-Tax แล้ว” / “ออกใบลดหนี้แล้ว”" + Tail);
+            return new EtaxCancellationResolutionVerdict(true, null, EtaxCancellationEvidence.OriginalInvoiceStillValid);
+        }
+
         if (c.Path == EtaxCancellationPath.CreditNote)
         {
             if (c.EffectiveEtax != EtaxStatus.Accepted)
@@ -227,8 +264,8 @@ public static class DocumentVoidPreconditions
             if (c.SourceRemainingPaid > 0.005m)
                 return EtaxCancellationResolutionVerdict.Refused(
                     $"ใบต้นทางยังมีการรับชำระที่มีผลอยู่ {c.SourceRemainingPaid:N2} บาท — การขายยังเกิดจริง ใบลดหนี้เต็มจำนวนจะทำให้ยอดลดหนี้รวมรับชำระเกินหนี้ "
-                    + "(§86/10) · ถ้าลูกค้าชำระใหม่แล้ว ใบเสร็จนี้อาจยังเป็นใบกำกับของการขายนี้ได้ — ปรึกษาผู้ทำบัญชีก่อน (ยกเลิกการรับชำระที่เหลือก่อน "
-                    + "หรือใช้ทาง “ยกเลิกทาง e-Tax แล้ว” เมื่อยกเลิกทางกรมสรรพากรแล้ว)" + Tail);
+                    + "(§86/10) · ถ้าลูกค้าชำระใหม่แล้วและไม่ได้ยกเลิกใบนี้ที่กรมสรรพากร ใบเสร็จนี้ยังเป็นใบกำกับของการขายนี้ — เลือกทาง “ใบกำกับเดิมยังใช้ได้” "
+                    + "(คำตัดสินข้อ 54) · หรือยกเลิกการรับชำระที่เหลือก่อน หรือใช้ทาง “ยกเลิกทาง e-Tax แล้ว” เมื่อยกเลิกทางกรมสรรพากรแล้ว" + Tail);
             if (c.CreditNote is not { Found: true } cn)
                 return EtaxCancellationResolutionVerdict.Refused(
                     "เลือกใบลดหนี้ในระบบนี้ที่ออกอ้างใบเสร็จ/ใบต้นทางแล้ว (สร้างใบลดหนี้ที่หน้าเอกสารก่อน) — ระบบรับเลขที่เป็นข้อความอย่างเดียวไม่ได้ "
@@ -282,6 +319,8 @@ public static class DocumentVoidPreconditions
             "เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ + ไฟล์หลักฐานแนบ (ผู้ใช้ยืนยัน — ระบบตรวจกับกรมสรรพากรเองไม่ได้)",
         EtaxCancellationEvidence.CreditNoteInSystem =>
             "ใบลดหนี้ในระบบนี้อ้างใบกำกับเดิม (ใบเสร็จเดิมยังมีผล · ภาษีขายลดในเดือนของใบลดหนี้ §86/10)",
+        EtaxCancellationEvidence.OriginalInvoiceStillValid =>
+            "ผู้ใช้ยืนยันว่าใบกำกับเดิมยังใช้ได้ (ไม่ได้ยกเลิกที่กรมสรรพากร) — ลูกค้าชำระใหม่ครอบยอดใบเสร็จนี้ · ภาษีขายไม่ถูกถอย · การรับชำระใหม่มีใบรับที่ไม่ใช่ใบกำกับ",
         _ => "ไม่มีหลักฐาน",
     };
 
@@ -318,6 +357,8 @@ public static class DocumentVoidPreconditions
     /// <item>มีการรับชำระที่ยังมีผล (เช็คเด้ง → รับใหม่ → ปิดธง · RV1F-3) ⇒ จุดความรับผิดย้ายไปวันรับเงินจริงครั้งแรกที่เหลือ (ถอยในเดือนเดิม +
     /// ย้ายใหม่ ณ วันรับเงิน) · รับครบงวดเดียว (กติกาเดียวกับ <see cref="SettlementReceiptPolicy.CarriesTaxInvoiceRole"/>) ⇒ <b>ออกใบกำกับ ณ วันรับเงิน</b>
     /// ให้การรับชำระนั้นในธุรกรรมเดียวกัน (ยกเลิกใบรับเปล่าเดิม) — ไม่มีช่วงที่การขายไม่มีใบกำกับ · ใบรับเปล่าที่ส่ง e-Tax แล้ว / งวดของวันรับเงินปิด ⇒ ปฏิเสธ</item>
+    /// <item>รอบ 200 ทีม V1H (ข้อ 52): ใบแจ้งหนี้ถือ VAT ที่รับหลายงวด/บางส่วน/รับรวมกับเอกสารอื่น ⇒ <b>ปฏิเสธพร้อมทางไปต่อ</b>
+    /// (<see cref="InstallmentTaxInvoiceRequired"/> — ใบกำกับรายงวดตาม §78/1 ระบบยังออกอัตโนมัติไม่ได้ · เดิมยกเลิกใบเสร็จแล้วไม่มีใบกำกับเลย)</item>
     /// </list>
     /// G6: pure</summary>
     public static EtaxCancelFollowUpPlan EtaxCancellationFollowUp(EtaxCancelFollowUpFacts f)
@@ -341,6 +382,15 @@ public static class DocumentVoidPreconditions
         var singleFull = f.LivePayments.Count == 1 && !first.HasAllocations && f.SourceFullyPaid;
         var carries = SettlementReceiptPolicy.CarriesTaxInvoiceRole(f.SourceType, f.SourceVat, singleFull, liveVatReceiptExists: false)
             && first.ReceiptVat <= 0.005m;
+        // รอบ 200 ทีม V1H (คำตัดสินข้อ 52): การขายที่ต้องมีใบกำกับ (ใบแจ้งหนี้ถือ VAT) แต่การรับชำระที่ยังมีผลไม่ใช่ "รับครบงวดเดียว" (หลายงวด ·
+        // บางส่วน · รับรวมกับเอกสารอื่น) ⇒ ใบกำกับต้องออก<b>รายงวด</b>ตามจุดความรับผิด §78/1 ซึ่งระบบยังออกอัตโนมัติไม่ได้ (📋 backlog) — เดิมยกเลิกใบเสร็จแล้ว
+        // ย้ายภาษีไปวันรับเงินแรกโดยไม่มีใบกำกับเลย (การขายที่รับเงินแล้วไม่มีใบกำกับ) ⇒ ปฏิเสธพร้อมทางไปต่อ ธงยังค้างให้เห็น
+        if (InstallmentTaxInvoiceRequired(f.SourceType, f.SourceVat, carries))
+            return EtaxCancelFollowUpPlan.Refused(
+                $"ใบต้นทางยังมีการรับชำระที่มีผล {f.LivePayments.Count} รายการแบบรับหลายงวด/บางส่วน/รับรวมกับเอกสารอื่น — ใบกำกับต้องออกรายงวดตามจุดความรับผิด "
+                + "§78/1 (บริการ: รับเงินแต่ละงวด = จุดความรับผิดของงวดนั้น · คำตัดสินข้อ 52) ซึ่งระบบยังออกให้อัตโนมัติไม่ได้ · ยกเลิกใบเสร็จนี้ตอนนี้ = "
+                + "การขายที่รับเงินแล้วไม่มีใบกำกับ · ทางไปต่อ: (1) ถ้าลูกค้าชำระใหม่ครอบยอดใบเสร็จนี้และไม่ได้ยกเลิกใบนี้ที่กรมสรรพากร ให้เลือกทาง "
+                + "“ใบกำกับเดิมยังใช้ได้” (2) ถ้ายกเลิกที่กรมสรรพากรแล้วจริง ให้ผู้ทำบัญชีตัดสินการออกใบกำกับรายงวด (ธงยังค้างให้เห็นจนกว่าจะจัดการ)" + Tail);
         var moveTaxPoint = f.OutputVatDueAt?.Date != first.PaymentDate.Date;
         if (moveTaxPoint && f.OutputVatDueAt != null && !string.IsNullOrWhiteSpace(f.ReclassPeriodLock))
             return EtaxCancelFollowUpPlan.Refused(
@@ -363,6 +413,14 @@ public static class DocumentVoidPreconditions
     }
 
     /// <summary>
+    /// **การรับชำระที่ยังมีผลต้องได้ใบกำกับรายงวด (§78/1) ที่ระบบยังออกอัตโนมัติไม่ได้ไหม** (รอบ 200 ทีม V1H · คำตัดสินข้อ 52) — ใบต้นทางเป็นใบแจ้งหนี้
+    /// ถือ VAT (ภาษีขายพักจนรับเงิน ⇒ การรับเงินคือจุดที่ต้องออกใบกำกับ) และการรับชำระไม่ใช่ "รับครบงวดเดียวที่ออกใบกำกับ ณ วันรับเงินได้"
+    /// (<paramref name="singleShotTaxInvoiceIssuable"/> = ผลของ <see cref="SettlementReceiptPolicy.CarriesTaxInvoiceRole"/> ของงวดแรก) · G6: pure
+    /// </summary>
+    internal static bool InstallmentTaxInvoiceRequired(DocumentType sourceType, decimal sourceVat, bool singleShotTaxInvoiceIssuable)
+        => sourceType == DocumentType.Invoice && sourceVat > 0m && !singleShotTaxInvoiceIssuable;
+
+    /// <summary>
     /// **ยกเลิก/กู้คืนเอกสารที่ e-Tax ถึงกรมสรรพากรแล้ว** (ข้อ 43 · RV1F-6) — ตัวตัดสินเดียวของ <c>VoidDocumentAsync</c> และ <c>RestoreVoidedDocumentAsync</c>
     /// (ทุกทางเข้า: หน้าเอกสาร · integration · ยกเลิกการลงบัญชีรอบโอน) · ชุดสถานะ <see cref="EtaxReachedRdStatuses"/> + e-Tax by Email (<see cref="EffectiveEtaxAsync"/>)
     /// — เดิมดูแค่ Accepted แล้วพลิก Submitted เป็น Voided เงียบ ⇒ กรมสรรพากรตอบรับภายหลังได้ทั้งที่ระบบเรายกเลิกไปแล้ว · null = ไม่บล็อก · G6: pure
@@ -377,7 +435,7 @@ public static class DocumentVoidPreconditions
               + (restore ? "ออกเอกสารใหม่แทน" : "ต้องยกเลิกทางระบบ e-Tax ของกรมสรรพากรก่อน หรือออกใบลดหนี้อ้างใบนี้ (§86/10)")
               + " · ระบบยังไม่ได้แตะอะไร"
             : $"{what}ไม่ได้ — e-Tax ของ {no} ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) · เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
-              + $"(ทำได้ก่อนกรมสรรพากรตอบรับ) แล้ว{what}อีกครั้ง · ระบบยังไม่ได้แตะอะไร";
+              + $"(ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) แล้ว{what}อีกครั้ง · ระบบยังไม่ได้แตะอะไร";
     }
 }
 
@@ -388,6 +446,8 @@ public enum EtaxCancellationPath
     CancelledAtRd = 0,
     /// <summary>(ข) ออกใบลดหนี้แล้ว — ใบเสร็จเดิมยังมีผล ⇒ ผูกใบลดหนี้ในระบบนี้ (ภาษีขายลดในเดือนของใบลดหนี้)</summary>
     CreditNote = 1,
+    /// <summary>(ค) ใบกำกับเดิมยังใช้ได้ (คำตัดสินข้อ 54) — ลูกค้าชำระใหม่ครอบยอดแทนเช็คที่เด้ง ⇒ ล้างธงอย่างเดียว ใบเสร็จเดิมคงมีผล · ไม่ถอยภาษี</summary>
+    OriginalStillValid = 2,
 }
 
 /// <summary>หลักฐานที่ใช้ปิดธง "ต้องยกเลิกทาง e-Tax" (<see cref="DocumentVoidPreconditions.EtaxCancellationResolution"/>) — ป้าย
@@ -404,6 +464,8 @@ public enum EtaxCancellationEvidence
     EtaxNeverReachedRd = 3,
     /// <summary>ใบลดหนี้ในระบบนี้อ้างใบกำกับเดิม (ทาง ข · ข้อ 47)</summary>
     CreditNoteInSystem = 4,
+    /// <summary>ผู้ใช้ยืนยันว่าใบกำกับเดิมยังใช้ได้ + การรับชำระที่มีผลครอบยอดใบเสร็จ (ทาง ค · ข้อ 54)</summary>
+    OriginalInvoiceStillValid = 5,
 }
 
 /// <summary>ใบลดหนี้ที่ผู้ใช้เลือกปิดธงทาง (ข) — ข้อเท็จจริงจากฐาน (tenant แล้ว)</summary>
@@ -418,9 +480,14 @@ public sealed record EtaxCreditNoteFact(bool Found, string? Number, DocumentType
 /// <param name="AnyEtaxRowVoided">มีแถว e-Tax ของใบที่ถูกยกเลิก (Voided) ในระบบนี้</param>
 /// <param name="EvidenceFileAttached">ไฟล์หลักฐานที่ผู้ใช้ระบุผ่านด่านไฟล์แนบแล้ว และเป็นไฟล์ของใบเสร็จนี้จริง</param>
 /// <param name="SourceRemainingPaid">ยอดรับชำระที่ยังมีผลบนใบต้นทาง</param>
+/// <param name="ReceiptTotalAmount">ยอดรวมของใบเสร็จที่ติดธง (ทาง ค — การรับชำระใหม่ต้องครอบยอดนี้)</param>
+/// <param name="LivePaymentCoverage">ยอดรับชำระที่ยังมีผลของใบต้นทาง นับจากรายการรับชำระจริง (ตรง = ยอด+ค่าธรรมเนียม+บรรทัดปรับ · จัดสรร = ยอดจัดสรร) — ทาง ค</param>
+/// <param name="OtherLiveVatReceipt">ใบต้นทางมีใบเสร็จถือ VAT ใบอื่นที่ยังมีผล (ทาง ค — ห้ามใบกำกับสองใบของการขายเดียว)</param>
+/// <param name="SourceVatUndone">ภาษีขายของใบต้นทางถูกถอยไปแล้วทั้งที่ใบนี้ยังมีผล (<see cref="EtaxReissueReview.FlaggedReceiptVatUndone"/> — ทาง ค)</param>
 public sealed record EtaxCancellationClaim(bool Flagged, EtaxStatus? EffectiveEtax, bool AnyEtaxRowVoided, EtaxCancellationPath Path,
     string? Reason, string? RdCancellationReference, bool EvidenceFileAttached, EtaxCreditNoteFact? CreditNote, decimal ReceiptVatAmount,
-    decimal SourceRemainingPaid);
+    decimal SourceRemainingPaid, decimal ReceiptTotalAmount = 0m, decimal LivePaymentCoverage = 0m, bool OtherLiveVatReceipt = false,
+    bool SourceVatUndone = false);
 
 /// <param name="Allowed">ปิดธงได้</param>
 /// <param name="Reason">ข้อความไทยพร้อมทางไปต่อเมื่อปิดไม่ได้</param>

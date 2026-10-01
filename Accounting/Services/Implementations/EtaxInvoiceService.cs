@@ -746,28 +746,57 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     }
 
     /// <summary>
-    /// ยกเลิก e-Tax Invoice — set Status=Voided + บันทึกวันที่ยกเลิก
-    /// เก็บ XML/PDF ไว้เพื่อ audit trail (ห้ามลบเอกสารที่ส่งกรมสรรพากรแล้ว)
+    /// ยกเลิกแถว e-Tax <b>ในระบบนี้</b> — set Status=Voided + บันทึกวันที่/เหตุผล · เก็บ XML/PDF ไว้เพื่อ audit trail (ห้ามลบเอกสารที่ส่งกรมสรรพากรแล้ว)
+    /// <para>รอบ 200 ทีม V1H (คำตัดสินข้อ 51): ระบบนี้ไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร ⇒ แถว <b>Submitted</b> (ถึงกรมสรรพากร/ผู้ให้บริการแล้ว) ยกเลิกได้เมื่อมี
+    /// เหตุผล + <b>ไฟล์หลักฐานการยกเลิก</b>ที่แนบเข้าเอกสารของแถวนี้ (controller เดินด่าน <c>IAttachmentAccessGate</c> แล้ว · ที่นี่ตรวจว่าไฟล์เป็นของเอกสารนี้
+    /// ในบริษัทนี้จริง) · ตัวตัดสินเดียว <see cref="EtaxVoidPolicy.Decide"/> · เดิมพลิก Submitted เป็น Voided เงียบ ⇒ ด่านยกเลิกเอกสาร/การชำระที่ไม่นับแถว Voided
+    /// ปล่อยผ่านทั้งที่กรมสรรพากรอาจตอบรับภายหลัง · audit ใน hash chain พร้อมป้ายหลักฐานตามความจริง (ไม่ประทับสถานะของกรมสรรพากรเอง)</para>
     /// </summary>
-    public async Task VoidAsync(Guid companyId, Guid etaxId)
+    public async Task VoidAsync(Guid companyId, Guid etaxId, EtaxVoidRequest? request, string actor)
     {
         var etax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
 
-        // block เฉพาะ Accepted (ได้รับตอบรับจาก RD จริง) — Submitted (ยังไม่ตอบรับ)
-        // ยกเลิกได้ก่อนนำส่ง ภ.พ.30 (สอดคล้องกับ guard ใน VoidDocumentAsync)
-        if (etax.Status == EtaxStatus.Accepted)
-            throw new InvalidOperationException(
-                "ไม่สามารถยกเลิก e-Tax ที่ได้รับการตอบรับจากกรมสรรพากรแล้ว (Accepted) " +
-                "ต้องดำเนินการขอยกเลิกที่กรมสรรพากรก่อน");
+        var evidenceId = request?.EvidenceAttachmentId;
+        var evidenceAttached = evidenceId is Guid fileId
+            && await _db.FileAttachments.AsNoTracking().AnyAsync(a => a.Id == fileId && a.CompanyId == companyId && !a.IsDeleted
+                && a.EntityType == "Document" && a.EntityId == etax.DocumentId);
+        var verdict = EtaxVoidPolicy.Decide(etax.Status, request?.Reason, evidenceAttached);
+        if (!verdict.Allowed)
+            throw new BusinessRuleException(verdict.Reason ?? "ยกเลิก e-Tax นี้ไม่ได้", "RD-ETAX-VOID-EVIDENCE", 409);
 
-        if (etax.Status == EtaxStatus.Voided)
-            throw new InvalidOperationException("e-Tax นี้ถูกยกเลิกไปแล้ว");
-
+        var before = etax.Status;
+        var reason = string.IsNullOrWhiteSpace(request?.Reason) ? "ยกเลิกโดยผู้ใช้" : request!.Reason!.Trim();
+        var reference = request?.RdCancellationReference?.Trim();
+        var now = DateTime.UtcNow;
         etax.Status = EtaxStatus.Voided;
-        etax.VoidedAt = DateTime.UtcNow;
-        etax.VoidReason ??= "ยกเลิกโดยผู้ใช้";
-        etax.UpdatedAt = DateTime.UtcNow;
+        etax.VoidedAt = now;
+        var voidReason = $"{reason} — {verdict.EvidenceLabel}" + (string.IsNullOrEmpty(reference) ? "" : $" · อ้างอิง {reference}");
+        etax.VoidReason = voidReason.Length > 1000 ? voidReason[..1000] : voidReason;   // คอลัมน์ varchar(1000) · ข้อความเต็มอยู่ใน audit
+        etax.UpdatedAt = now;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(actor, out var actorId) ? actorId : (Guid?)null,
+            EntityType = nameof(EtaxInvoice),
+            EntityId = etax.Id.ToString(),
+            Action = AuditAction.Update,
+            OldValues = JsonSerializer.Serialize(new { status = before.ToString() }),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                action = "etax-voided-in-system",
+                ruleCode = before == EtaxStatus.Submitted ? "RD-ETAX-VOID-SUBMITTED-EVIDENCE" : "RD-ETAX-VOID-NOT-REACHED",
+                legalReference = "คำตัดสินรอบ 200 ข้อ 51 · DECISION_AUDIT R1 (ระบบไม่ประทับสถานะของกรมสรรพากรเอง)",
+                status = EtaxStatus.Voided.ToString(),
+                statusLabel = EtaxVoidPolicy.VoidedLabel,
+                evidenceLabel = verdict.EvidenceLabel,
+                evidenceAttachmentId = evidenceAttached ? evidenceId : null,
+                rdCancellationReference = reference,
+                documentId = etax.DocumentId,
+                reason,
+            }),
+            Timestamp = now,
+        });
         await _db.SaveChangesAsync();
     }
 
@@ -1411,7 +1440,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         e.DigitalSignature, e.Status, e.SubmissionId, e.SubmittedAt,
         e.AcceptanceNumber, e.AcceptedAt, e.ErrorMessage, e.ErrorCode,
         e.SellerName, e.SellerTaxId, e.BuyerName, e.BuyerTaxId,
-        e.SignedAt, e.CertificateSerialNumber, e.CreatedAt);
+        e.SignedAt, e.CertificateSerialNumber, e.CreatedAt,
+        e.VoidedAt, e.VoidReason, EtaxVoidPolicy.VoidedStatusNote(e.Status, e.VoidReason));
 
     private class RdSubmissionResult
     {
