@@ -4157,3 +4157,7 @@ _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้า�
 - **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
 - เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit 8c5e36d2)_
 
+_2026-10-01 รอบ 201 ทีม PL ชุด 5 — คำสั่ง main agent หลังทีม DV เปลี่ยน `VoidDocumentAsync` ให้คืน `PaymentVoidResult`:
+- `Helpers/VoidResultNotice.Lines` ตัวประกอบข้อความเดียว · `CmsCommerceService.UpdateOrderStatusAsync` ประทับ `[ERP-VOID-NOTICE …]` บนออเดอร์ (หมายเหตุภายในที่เจ้าของร้านเห็น) ·
+  `CmsBookingService.SettleErpDocumentOnCancelAsync` ส่งเข้า `notices` (ผลตอบผู้กด) + ประทับบนการจอง — เดิมทั้งสองทางทิ้งผลเงียบ
+- เทสต์ `VoidResultNoticeTests` (สองทิศ) · required_call_site +1 แถว/ปรับ 1 · write_permission marker `RequireInventoryAsync` (หลังรวมทีม IN) — commit <pending>)_

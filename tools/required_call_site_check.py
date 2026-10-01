@@ -3213,8 +3213,8 @@ RULES += [
          why="A-PL9 ค่าระดับบริษัทที่ส่งมาใช้ได้เฉพาะบริษัทเดียวกัน (tenant) · ขั้นตัดสินหัวยังเป็นของเดิม"),
     # A-PL10 (team-V1 Q5): ยกเลิกเอกสาร ERP ล้ม ⇒ ล้าง context ก่อนบันทึกสถานะออเดอร์ (ห้ามบันทึก "ยกเลิกครึ่งเดียว")
     dict(file="Services/Implementations/CmsCommerceService.cs", method="UpdateOrderStatusAsync",
-         must=["_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(", "ApplyStatus("],
-         before=[("_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(")],
+         must=["_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(", "ApplyStatus(", "VoidResultNotice.Lines("],
+         before=[("_docService.VoidDocumentAsync(", "VoidResultNotice.Lines("), ("_docService.VoidDocumentAsync(", "_db.ChangeTracker.Clear(")],
          why="A-PL10 VoidDocumentAsync ใช้ context เดียวกัน — ล้มกลางทางแล้ว entity ที่แตะค้างจะถูก SaveChanges ของออเดอร์บันทึกตาม"),
     # A-PL6 (team-RF Q1): สีแบรนด์ผ่านตัวตัดสินเดียวทั้งสอง renderer
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildCss",
@@ -3290,6 +3290,10 @@ RULES += [
     dict(file="Helpers/TaxFilingDeadline.cs", method="RollToBusinessDay#1",
          must=["BusinessDayCalendar.RollForward("],
          why="B-9 การเลื่อนวันทำการมีตัวตัดสินเดียว (เสาร์/อาทิตย์ + วันหยุดราชการ)"),
+    # คำสั่ง main agent หลังทีม DV: ผลยกเลิกเอกสาร (ธง e-Tax/ภาษีขาย) ห้ามทิ้งเงียบในทางเข้า CMS
+    dict(file="Services/Implementations/CmsBookingService.cs", method="SettleErpDocumentOnCancelAsync",
+         must=["VoidResultNotice.Lines("], before=[("_docService!.VoidDocumentAsync(", "VoidResultNotice.Lines(")],
+         why="ผลยกเลิกเอกสาร ERP ถึงผู้กด (notices) และประทับบนการจอง — เดิมทิ้งเงียบ"),
 ]
 
 # ── รอบ 201 ทีม DV (BACKLOG A-DV1..A-DV6 · C-1 · คำตัดสินข้อ 62/65/66/67/68/74): เอกสาร ยกเลิก/ออกใบแทน/e-Tax (pure ทดสอบใน VoidReissueR201DvTests) ──

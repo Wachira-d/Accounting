@@ -683,7 +683,17 @@ public class CmsCommerceService : ICmsCommerceService
         // log ไว้ให้กลับรายการเอง (ปกติต้องออกใบลดหนี้/คืนเงินแทน).
         if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null)
         {
-            try { await _docService.VoidDocumentAsync(companyId, order.ErpDocumentId.Value); }
+            try
+            {
+                // รอบ 201 ทีม PL: ผลยกเลิก (ธง e-Tax · ภาษีขายที่ถอย) ประทับบนออเดอร์ที่เจ้าของร้านเห็น — เดิมทิ้งเงียบ
+                var voided = await _docService.VoidDocumentAsync(companyId, order.ErpDocumentId.Value);
+                var lines = Accounting.Helpers.VoidResultNotice.Lines(voided, null);
+                if (lines.Count > 0)
+                {
+                    var stamp = $"[ERP-VOID-NOTICE {DateTime.UtcNow:yyyy-MM-dd HH:mm}Z] ยกเลิกเอกสาร ERP ของออเดอร์แล้ว — " + string.Join(" · ", lines);
+                    order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes) ? stamp : order.InternalNotes + "\n" + stamp;
+                }
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "ยกเลิกออเดอร์ {Order} แต่ void เอกสาร ERP {Doc} ไม่สำเร็จ — ต้องกลับรายการ/ออกใบลดหนี้เอง",
