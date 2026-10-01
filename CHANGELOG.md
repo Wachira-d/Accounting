@@ -4068,5 +4068,5 @@ _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้า�
 - **DV-O6** ป้ายทาง (ค) นับเฉพาะต้นข้อความ/ต้นบรรทัด (ตัวอ่าน + regex migration `LastResolutionLinePattern` ชุดเดียว) · เหตุผล/เลขอ้างอิงที่ผู้ใช้พิมพ์ยุบเป็นบรรทัดเดียว (`OneLine`) ·
   migration เติม `EtaxKeptOriginalAt` ครั้งเดียวในขั้นที่สร้างคอลัมน์ (DO block + advisory lock คีย์คงที่ · แถวแคบ)
 - **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
-- เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit <pending>)_
+- เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit 8c5e36d2)_
 

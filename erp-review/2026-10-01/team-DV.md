@@ -81,4 +81,4 @@ checker หลังแก้: `required_call_site_check` 38 กติกาข�
 service_interface · string_quote_close · comment_line_break · tuple_name_merge · accessibility · identifier_space · dead_helper (หลังทำ internal 2 ตัว) · verbatim_string · html_attr_escape · onclick_js_string ·
 advisory_lock_key · regex_line_span · test_inventory (`--row`) ✅ · node --check / brace / U+FFFD ✅ · ฝ่ายค้านรอบสอง: ยังไม่ได้ส่ง (ไม่มีเครื่องมือ subagent)
 
-คอมมิตแก้ฝ่ายค้าน: `<pending>` (sha เติมในคอมมิตตามหลัง)
+คอมมิตแก้ฝ่ายค้าน: `8c5e36d2` (sha เติมในคอมมิตตามหลัง — ห้าม amend)
