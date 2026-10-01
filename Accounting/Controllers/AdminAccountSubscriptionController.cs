@@ -254,16 +254,21 @@ public class AdminAccountSubscriptionController : ControllerBase
     /// page calls this from the "🔗 ผูกเข้า License" action. Enforces
     /// MaxCompanies slot count + active license check.
     ///
-    /// Concurrency: wrapped in a Serializable transaction so two concurrent
-    /// attaches racing for the last slot can't both succeed — PG will abort
-    /// one with a serialization failure rather than over-fill the license.
+    /// Concurrency: two concurrent attaches racing for the last slot can't both succeed —
+    /// รอบ 201 ทีม PL (ฝ่ายค้านรอบสาม P1-1): เดิม Serializable (snapshot ตั้งแต่คำสั่งแรก ⇒ ตัวประทับ audit ตอน commit อ่านปลาย chain เก่า = แตกกิ่ง) ·
+    /// ตอนนี้ ReadCommitted + ล็อกแถว License <c>FOR UPDATE</c> ก่อนนับช่อง (คำขอที่สองรอแล้วนับยอดที่ commit แล้ว) + ล็อกแถว Subscription ของบริษัท
     /// </summary>
     [HttpPost("/api/admin/companies/{companyId:guid}/attach-to-account-plan")]
     public async Task<ActionResult<ApiResponse<string>>> AdminAttach(Guid companyId, [FromBody] AdminAttachRequest req)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
 
-        await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+        // ลำดับล็อกเดียว: License → Subscription ของบริษัท (CompanyId ใน SQL)
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"AccountSubscriptions\" WHERE \"Id\" = {0} FOR UPDATE", req.AccountSubscriptionId);
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Subscriptions\" WHERE \"CompanyId\" = {0} FOR UPDATE", companyId);
 
         var ap = await _db.AccountSubscriptions.FirstOrDefaultAsync(a => a.Id == req.AccountSubscriptionId && !a.IsDeleted);
         if (ap == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบ License ที่ระบุ"));

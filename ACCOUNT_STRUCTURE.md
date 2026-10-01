@@ -157,6 +157,11 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   support โอนให้ตัวเองไม่ได้ (`DenySelf` 403) · บทบาท: `OwnershipTransferPolicy.MayAssign` ตัวเดียวของหน้าทีม/คำเชิญ/หน้าแอดมินลูกค้า — PlatformSupport ตั้งไม่ได้
   ทุกทาง · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) · `admin/customers.html` แสดงป้าย PlatformSupport/SystemAdmin (เลือกไม่ได้) · รายงาน
   "บริษัทที่ยังไม่มีเจ้าของ" `GET api/admin/companies/without-owner` (แบนเนอร์บนหน้าลูกค้า + ผู้ดูแล support ที่โอนได้ · ไม่แก้ข้อมูลเอง)
+  · **ฝ่ายค้านรอบสาม**: (P1-2) หน้าแอดมินลูกค้า `PUT api/admin/companies/{id}/users/{uid}/role` ตั้ง/ลด Owner ไม่ได้แล้ว
+  (`OwnershipTransferPolicy.AdminRoleChangeBlock` ⇒ 400 ชี้เส้นโอนเจ้าของ · บทบาทเดิม/ใหม่เข้า audit chain เพราะ `CompanyUser` ไม่ใช่ BaseEntity) ·
+  (P2-2) รับคำเชิญตรวจบทบาทซ้ำ (`InvitationRoleBlock` — คำเชิญ SystemAdmin จากผู้ที่ไม่ใช่/ไม่ได้เป็นแอดมินแพลตฟอร์มแล้ว และ PlatformSupport ทุกกรณี ⇒
+  403 ที่ปุ่มรับ · เส้นสมัคร/SSO ไม่เข้าร่วม + log คำเตือน) · (P1-1) ผูกบริษัทเข้า License (`AdminAttach`) ใช้ ReadCommitted + ล็อกแถว License/Subscription
+  `FOR UPDATE` แทน Serializable
 - ล็อกจุดเรียก: `tools/owner_action_wiring_check.py` (64 แถว · ต้อง "ใช้ผล" · `--self-test` ถอดทีละแถวจากไฟล์จริง) · `tools/write_permission_gate_check.py` WATCHED
   (+Integration/Tax/Settings/Webhook/PaymentSettings/Sensitivity/Approval/EmailConfig/LineConfig/Pdpa/StatutoryRemittance/CompetitorImport/ExpenseClaim)
 - ⚠️ เปลี่ยนพฤติกรรม: Accountant ที่ไม่มี `CompanySettings.Edit` บันทึกหน้าตั้งค่าไม่ได้แล้ว (คำถามเจ้าของ: ให้โดยปริยายไหม) · สคริปต์ `acc_` ที่เรียกปิดงวด/ปิดปี/
@@ -1032,4 +1037,6 @@ _§3.2 (ApiClient/UsageEvent/ApiFeature/Pricing), §4 คอลัมน์ ApiC
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL — C-3 ด่านเจ้าของปิดฟีเจอร์ระดับ service โหมดเงา + สวิตช์ `OwnerFeatureMaskEnforced` (§5.2) · C-4 บทบาท PlatformSupport + โอนความเป็นเจ้าของ (งานระดับเจ้าของ) — commit 545cc3ea)_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — โอนความเป็นเจ้าของเฉพาะ support ที่ยังเป็นแอดมิน/เจ้าของ · ห้ามโอนให้ตัวเอง · `MayAssign` (SystemAdmin 99 เฉพาะแอดมินแพลตฟอร์ม) · รายงานบริษัทไม่มีเจ้าของ · ยอดสรุปบังคับแพ็กเกจไม่รวมด่านเจ้าของปิดฟีเจอร์ · GET ไม่บันทึกเงา — commit 9f226f15)_
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — โอนความเป็นเจ้าของเฉพาะ support ที่ยังเป็นแอดมิน/เจ้าของ · ห้ามโอนให้ตัวเอง · `MayAssign` (SystemAdmin 99 เฉพาะแอดมินแพลตฟอร์ม) · รายงานบริษัทไม่มีเจ้าของ · ยอดสรุปบังคับแพ็กเกจไม่รวมด่านเจ้าของปิดฟีเจอร์ · GET ไม่บันทึกเงา — commit 9f226f15)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ + audit · รับคำเชิญตรวจบทบาทซ้ำ · AdminAttach ล็อกแถวแทน Serializable — commit <pending>)_

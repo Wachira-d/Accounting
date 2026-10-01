@@ -106,3 +106,21 @@ filing_deadline_single_source · advisory_lock_key · di_cycle · namespace_shad
 required_call_site (เต็มชุด) · write_permission_gate · audit_direct_add (+retry self-test) · owner_action_wiring · html_attr_escape · onclick_js_string · dead_link · css_var ·
 admin_menu_gate · dto_nullable_contract · gl_code · settings_reader · record_arg · nullable_arg · using · undeclared_local · arg_type · service_interface · string_quote_close ·
 comment_line_break · identifier_space · accessibility · dead_helper · advisory_lock_key · tuple_name_merge · verbatim_string · namespace_shadow · `node --check` (customers · platform-holidays · admin-api.js) · brace/U+FFFD
+
+---
+
+## ชุด 6 — ฝ่ายค้านรอบสาม (verify ก่อนแก้ · merge `2c8e64d8` ก่อนเริ่ม) · คอมมิต `<pending>`
+
+| ID | verify | สถานะ | ที่แก้ | เทสต์ / ด่าน |
+|---|---|---|---|---|
+| P1-1 | ✅ จริง — PostgreSQL Serializable/RepeatableRead ใช้ snapshot จากคำสั่งแรก ⇒ `ResolveTip` หลังล็อกยังเห็นปลายเก่า · จุดเปิด 2 จุดตามที่รายงาน (grep `IsolationLevel.` ทั้งเรพ = 4 จุด อีก 2 เป็น ReadCommitted) | ✅ | `AuditChainScope.IsolationBlockReason` ใน `SealDeferredAuditAtCommit(Async)` ก่อนล็อก (interceptor ส่ง `transaction.IsolationLevel`) · `CreateInvoiceFromObligationAsync` ReadCommitted + FOR UPDATE ภาระงาน → สัญญา (เหตุผลเดิม: กันออกใบซ้ำของงวดเดียวกัน ⇒ ยังอยู่ · ธง Completed ของสัญญาต่อคิวที่แถวสัญญา) · `AdminAttach` ReadCommitted + FOR UPDATE License → Subscription (เหตุผลเดิม: กันแย่งช่องสุดท้าย ⇒ นับหลังล็อก) | `PlatformRound201Rv3Tests.P1_1_*` · `Db/…Serializable_transaction_with_audit_rows_fails_loud_and_read_committed_seals` · checker ratchet isolation (baseline 0 + self-test) · required_call_site |
+| P1-2 | ✅ จริง — `ChangeCompanyUserRole` ตั้ง `cu.Role` ตรงทุกค่ายกเว้น PlatformSupport · `CompanyUser` ไม่สืบ BaseEntity ⇒ ไม่มี audit | ✅ | `OwnershipTransferPolicy.AdminRoleChangeBlock` (ตั้ง/ลด Owner ⇒ 400 ชี้ "โอนความเป็นเจ้าของ") · ไม่เปลี่ยน = 200 ไม่บันทึก · `AddChainedAuditLog` บทบาทเดิม/ใหม่ | `P1_2_*` สองทิศ · required_call_site (ด่านก่อนเขียน · audit หลังเขียน) |
+| P2-1 | ✅ จริง — INSERT ทีละแถวในลูปขณะถือล็อก | ✅ | `AuditInsertBatches` ชุดละ `InsertBatchRows` = 500 (6,500 พารามิเตอร์) · `AuditChainScope.InsertSql` | `P2_1_*` · `Db/…Batched_insert_keeps_chain_order_across_batches` (1,007 แถว) · required_call_site forbid ลูปทีละแถว |
+| P2-2 | ✅ จริง — สองเส้นใช้ `inv.Role` ตรง · เส้นสร้างคำเชิญ (`AddUserAsync`) มี `MayAssign` แล้วจากชุด 5 | ✅ | `OwnershipTransferPolicy.InvitationRoleBlock(role, inviterIsPlatformAdmin)` — ผู้เชิญอ่านจาก `InvitedByUserId` (ไม่พบ = ไม่ใช่แอดมิน) · ปุ่มรับ 403 · เส้นสมัคร/SSO ไม่เข้าร่วม + `LogWarning` (บัญชียังถูกสร้าง — พฤติกรรมเดิมของคำเชิญที่ใช้ไม่ได้) | `P2_2_*` สองทิศ · required_call_site ×2 |
+
+ความเสี่ยง: (1) ลำดับ Id ของ INSERT หลายแถว = ลำดับ VALUES (พฤติกรรมจริงของ PostgreSQL กับ VALUES ธรรมดา ไม่ใช่สัญญาในเอกสาร) — เทสต์ DB 1,007 แถวจับได้ถ้าไม่จริง ·
+(2) เส้นสมัครที่คำเชิญถูกปฏิเสธเพราะบทบาทไม่บอกผู้ใช้บนจอสมัคร (ผลเท่ากับคำเชิญหมดอายุแบบเดิม) — ผู้ใช้เห็นเหตุผลเมื่อเปิดลิงก์คำเชิญ ·
+(3) ยังไม่ได้คอมไพล์/รันเทสต์ DB (CI `db-test`)
+
+ไฟล์ทีมอื่นที่แตะ: `DocumentService.cs` (`CreateInvoiceFromObligationAsync`) · `AdminAccountSubscriptionController.cs` · `InvitationController.cs` · `AuthService.cs` (`ConsumeInvitationAsync`)
+

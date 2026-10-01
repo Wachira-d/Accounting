@@ -145,6 +145,55 @@ public class AuditChainCommitDbTests
         Assert.Null(rows[0].PrevHash);
     }
 
+    /// <summary>ฝ่ายค้านรอบสาม P1-1: ธุรกรรม Serializable ที่มีแถว audit รอประทับ ⇒ commit ล้มดัง (ไม่มีอะไรถูกบันทึก) ·
+    /// ทิศตรงข้าม: Serializable ที่ไม่มีแถว audit commit ได้ · ReadCommitted บันทึกได้ตามปกติ</summary>
+    [Fact]
+    public async Task Serializable_transaction_with_audit_rows_fails_loud_and_read_committed_seals()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = Guid.NewGuid();
+        await using (var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+        {
+            db.AddChainedAuditLog(Row(company, "serializable"));
+            await db.SaveChangesAsync();
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => tx.CommitAsync());
+            Assert.Contains("Serializable", ex.ToString());
+        }
+        Assert.Empty(await ChainAsync(db, company));
+
+        await using (var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+            await tx.CommitAsync();                                  // ไม่มีแถวรอ ⇒ ไม่มีอะไรต้องตัดสิน
+
+        await using (var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted))
+        {
+            db.AddChainedAuditLog(Row(company, "read-committed"));
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        var rows = await ChainAsync(db, company);
+        Assert.Single(rows);
+        Assert.Equal("read-committed", rows[0].EntityId);
+    }
+
+    /// <summary>ฝ่ายค้านรอบสาม P2-1: แถวเกินหนึ่งชุด INSERT (500) ในการ commit เดียว ⇒ ลำดับ Id = ลำดับ chain · ไม่แตกกิ่ง · ครบทุกแถว</summary>
+    [Fact]
+    public async Task Batched_insert_keeps_chain_order_across_batches()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = Guid.NewGuid();
+        var n = AuditChainScope.InsertBatchRows * 2 + 7;
+        for (var i = 0; i < n; i++) db.AddChainedAuditLog(Row(company, $"b{i:D5}"));
+        await db.SaveChangesAsync();
+        var rows = await ChainAsync(db, company);
+        Assert.Equal(n, rows.Count);
+        Assert.Equal(Enumerable.Range(0, n).Select(i => $"b{i:D5}"), rows.Select(r => r.EntityId));
+        var a = AuditHashChain.Analyze(rows);
+        Assert.Equal(0, a.ForkCount);
+        Assert.False(a.HasIntegrityFindings);
+    }
+
     /// <summary>หลายคำขอพร้อมกันที่ SaveChanges หลายครั้งในธุรกรรมของตัวเอง ⇒ chain เดียว ไม่แตกกิ่ง (ประทับตอน commit ภายใต้ล็อก)</summary>
     [Fact]
     public async Task Concurrent_caller_transactions_produce_one_unbroken_chain()

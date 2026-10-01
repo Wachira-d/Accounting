@@ -182,7 +182,50 @@ def retry_self_test() -> list:
     return fails
 
 
+# ── ฝ่ายค้านรอบสาม P1-1 (รอบ 201 · ทีม PL): ธุรกรรม Serializable/RepeatableRead/Snapshot จับ snapshot ตั้งแต่คำสั่งแรก ⇒ ตัวประทับ audit ตอน commit
+#    อ่านปลาย chain จาก snapshot เก่าแม้ได้ล็อกแล้ว ⇒ PrevHash ซ้ำกับธุรกรรมที่ commit ระหว่างนั้น = chain แตกกิ่ง · interceptor ล้มดังตอน commit
+#    แต่ checker นี้กันตั้งแต่เขียนโค้ด: ใช้ ReadCommitted + `SELECT … FOR UPDATE` บนแถวที่ต้องกันแข่ง · baseline = 0 จุด (สองจุดเดิมแก้แล้ว)
+ISOLATION_RX = re.compile(r"\bIsolationLevel\s*\.\s*(Serializable|RepeatableRead|Snapshot)\b")
+
+
+def isolation_errors(texts: dict) -> list:
+    out = []
+    for rel, t in texts.items():
+        code = strip_code(t)
+        for m in ISOLATION_RX.finditer(code):
+            out.append(f"Accounting/{rel}:{code.count(chr(10), 0, m.start()) + 1}: IsolationLevel.{m.group(1)} — ตัวประทับ audit ตอน commit อ่านปลาย chain "
+                       "จาก snapshot เก่า (chain แตกกิ่ง · ฝ่ายค้านรอบสาม P1-1) ⇒ ใช้ ReadCommitted + SELECT … FOR UPDATE บนแถวที่ต้องกันแข่ง")
+    return out
+
+
+def isolation_self_test() -> list:
+    fails = []
+    if not isolation_errors({"X.cs": "await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);"}):
+        fails.append("self-test P1-1: IsolationLevel.Serializable ไม่ถูกฟ้อง")
+    if not isolation_errors({"X.cs": "BeginTransaction(IsolationLevel . RepeatableRead)"}):
+        fails.append("self-test P1-1: RepeatableRead ไม่ถูกฟ้อง")
+    if isolation_errors({"X.cs": "// IsolationLevel.Serializable\nvar s = \"IsolationLevel.Serializable\"; BeginTransaction(IsolationLevel.ReadCommitted);"}):
+        fails.append("self-test P1-1: คอมเมนต์/สตริง/ReadCommitted ถูกฟ้องผิด")
+    return fails
+
+
+def all_sources() -> dict:
+    texts = {}
+    for dirpath, _, files in os.walk(SRC):
+        for fn in files:
+            if fn.endswith(".cs"):
+                path = os.path.join(dirpath, fn)
+                rel = os.path.relpath(path, SRC).replace(os.sep, "/")
+                if "/bin/" in "/" + rel or "/obj/" in "/" + rel:
+                    continue
+                texts[rel] = open(path, encoding="utf-8").read()
+    return texts
+
+
 def main() -> int:
+    iso = isolation_errors(all_sources()) + isolation_self_test()
+    for e in iso:
+        print("❌ " + e)
     retry_texts = {}
     for rel in ("Program.cs", "Data/AccountingDbContext.cs"):
         path = os.path.join(SRC, rel)
@@ -206,7 +249,7 @@ def main() -> int:
         print("❌ " + e)
     for s in shrink:
         print("⚠️  " + s)
-    if errs or st or retry:
+    if errs or st or retry or iso:
         return 1
     print(f"audit_direct_add_check: ผ่าน — {sum(len(v) for v in found.values())} จุดใน baseline {len(found)} ไฟล์ (ห้ามเพิ่ม)")
     return 0
