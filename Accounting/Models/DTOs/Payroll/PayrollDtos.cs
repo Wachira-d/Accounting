@@ -109,7 +109,10 @@ public record UpdateEmployeeRequest(
     string? TaxId = null,
     string? EmploymentType = null,
     DateTime? StartDate = null,
-    string? BankAccountName = null);
+    string? BankAccountName = null,
+    /// <summary>รอบ 201 PR2 (A-PR1) — เลขประกันสังคม (แรงงานต่างด้าว/เลขแยกจากบัตร) · null = ไม่แตะ · "" = ล้าง ·
+    /// ค่าปิดบังของเดิม = ไม่แตะ (ตัวตัดสิน <c>EmployeeRecordEdit.SsoInsuredNumber</c>)</summary>
+    string? SocialSecurityNumber = null);
 
 public record EmployeeResponse(
     Guid Id, string EmployeeCode, string TitleTh,
@@ -149,7 +152,10 @@ public record EmployeeResponse(
     /// <summary>null = ยังไม่ได้ตรวจ (ลิสต์ไม่ตรวจเพื่อไม่ให้เป็น N+1) · true = แก้รหัส
     /// พนักงานไม่ได้เพราะมีประวัติเงินเดือนแล้ว (เหตุผลอยู่ใน EmployeeCodeLockReason)</summary>
     bool? EmployeeCodeLocked = null,
-    string? EmployeeCodeLockReason = null);
+    string? EmployeeCodeLockReason = null,
+    /// <summary>รอบ 201 PR2 (A-PR1) — เลขประกันสังคมที่<b>กรอกไว้</b> (ไม่ใช่เลขบัตรที่ใช้แทน) · ปิดบังตาม PDPA ม.26
+    /// เว้นแต่ผู้เรียกมีสิทธิ์ pii:view · null = ไม่ได้กรอก (ไฟล์ สปส.1-10 ใช้เลขบัตร)</summary>
+    string? SocialSecurityNumber = null);
 
 /// <summary>Bulk-sync envelope for employees from an external HRIS. Each
 /// row is upserted on (CompanyId, ExternalSystem, ExternalId). Rows
@@ -193,6 +199,13 @@ public record UpdatePayrollItemRequest(
     /// ผู้ใช้จะ**ย้อนกลับไป "ยังไม่ระบุ" ไม่ได้เลย** (silent no-op คลาสเดิม)
     /// · ไม่ส่ง/ค่าอื่น = ไม่แตะของเดิม</summary>
     string? CountsForSsoBase = null);
+
+/// <summary>ค่าเสนอของธง "เป็นค่าจ้างตาม ม.5" ตอนสร้างรายการเงินเดือนใหม่ (รอบ 201 PR2 · A-PR2 · คำตัดสินข้อ 31) —
+/// <c>CountsForSsoBase</c> = null ⇒ ไม่เสนอ (ผู้ใช้เลือกเอง) · <c>IncomeNature</c> ออกเป็นชื่อ</summary>
+public record PayrollItemSsoSuggestionDto(
+    Models.Enums.PayrollIncomeNature IncomeNature,
+    bool? CountsForSsoBase,
+    string Note);
 
 public record PayrollItemResponse(
     Guid Id, string Code, string Name, string ItemType,

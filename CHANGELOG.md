@@ -4061,7 +4061,7 @@ _2026-10-01 รอบ 201 ทีม PR2 — เงินเดือน: คำ�
 - **X4** `PayrollRun.ManualRosterChangedAt` (migration ADD COLUMN IF NOT EXISTS) + `RecalculateWarning(evidence, manualRosterChangedAt)` · คำนวณใหม่ล้างค่า
 - **X5** `PayrollDetailAmounts.SetYtd` — YTD ของแถวที่เพิ่ม/แก้ด้วย query เดียวกับเส้นคำนวณ
 - **X6** ถอด `includeSalary` (จริงเสมอหลังด่าน) — `PayrollAddableEmployeeDto.BaseSalary` เป็น `decimal` · ตัด branch "ไม่มีสิทธิ์ดูเงินเดือน" ใน `payroll.html`
-- เทสต์ `PayrollWithholdingTaxTests` (golden 2,268 กรณีเทียบสูตรเดิม + 50,000 ⇒ 20,450) · `PayrollRosterChangeTests` · `PayrollDetailAmountsTests` +7 · required_call_site +13 แถว — commit <pending>)_
+- เทสต์ `PayrollWithholdingTaxTests` (golden 2,268 กรณีเทียบสูตรเดิม + 50,000 ⇒ 20,450) · `PayrollRosterChangeTests` · `PayrollDetailAmountsTests` +7 · required_call_site +13 แถว — commit 127844b9)_
 
 _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
 - **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
@@ -4137,3 +4137,11 @@ _2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 +
 - **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
 - **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
   required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_
+
+_2026-10-01 รอบ 201 ทีม PR2 ชุดสอง — BACKLOG 2026-10-01 §1.9 (หลัง PR1 merge)
+- **A-PR1** เลขประกันสังคม (แรงงานต่างด้าว) บนหน้าพนักงานทั้งสองหน้า · `UpdateEmployeeRequest`/`EmployeeResponse` +`SocialSecurityNumber` · `EmployeeRecordEdit.SsoInsuredNumber`
+  (13 หลัก · ตัวเลขล้วน · ไม่ checksum · ค่าปิดบังไม่ทับ) ใช้ทั้งสร้าง/แก้ · response ปิดบังตาม pii:view · `employee_form_contract_sim` +5 ข้อ + 3 mutant (baseline ล้ม 4)
+- **A-PR2** `PayrollIncomeNatureRules.SuggestedCountsForSsoBase/SuggestedSsoBaseNote` + `GET payroll/items/sso-base-suggestion` · หน้าตั้งค่ารายการเติมค่าเสนอเฉพาะรายการใหม่ (ค่าผู้ใช้ชนะ)
+- **A-PR3** `AuditLogs.Add` ตรง 3 จุดใน `PayrollService` → `AddChainedAuditLog`
+- เทสต์ `EmployeeRecordEditTests` +3 · `PayrollItemNatureTests` +2 · required_call_site +8 แถว — commit <pending>)_
+

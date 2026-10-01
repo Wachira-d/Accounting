@@ -254,6 +254,14 @@ else {
   // ช่องที่ D-01 ต้องการ: เลขผู้เสียภาษีเขียนได้ทั้งสองทางและ echo กลับ
   for (const [set, label] of [[dto.create, 'Create'], [dto.update, 'Update'], [dto.response, 'Response']])
     set.has('taxId') ? ok(`${label} มี taxId (D-01)`) : bad(`${label} ไม่มี taxId — 50 ทวิ ภ.ง.ด.1 กลับไปเขียนไม่ได้`);
+  // รอบ 201 PR2 (A-PR1): เลขประกันสังคม (แรงงานต่างด้าว) เขียนได้ทั้งสองทาง + echo + ทั้งสองหน้ามีช่องที่ hydrate และส่ง
+  // baseline (ซอร์สที่คอมมิต 1f639ae1 ก่อนแก้): ทั้งสองหน้าไม่มีช่อง · Update/Response ไม่มีคีย์ ⇒ ข้อนี้ล้ม 4 ข้อ (Update · Response · 2 หน้า)
+  for (const [set, label] of [[dto.create, 'Create'], [dto.update, 'Update'], [dto.response, 'Response']])
+    set.has('socialSecurityNumber') ? ok(`${label} มี socialSecurityNumber (A-PR1)`)
+      : bad(`${label} ไม่มี socialSecurityNumber — เลขประกันสังคมแรงงานต่างด้าวกรอก/แก้/เห็นไม่ได้ ไฟล์ สปส.1-10 ใช้เลขบัตรแทน`);
+  for (const [src, label] of [[empSrc, 'employees.html'], [paySrc, 'payroll.html']])
+    /e\.socialSecurityNumber/.test(src) && /socialSecurityNumber:\s*(?!null)/.test(src) ? ok(`${label} มีช่องเลขประกันสังคม (hydrate + ส่ง)`)
+      : bad(`${label} ไม่มีช่องเลขประกันสังคมที่ hydrate และส่ง (A-PR1)`);
 }
 
 console.log('ทิศที่ 2 — ใส่บั๊กกลับ (negative test): ตัวตรวจต้องจับได้ทุกตัว');
@@ -283,6 +291,21 @@ const mutants = [
     emp: (s) => s.replace("          document.getElementById('fTaxId').value = e.taxId || '';\n", '')
                  .replace("            taxId: v('fTaxId'),\n", ''),
     expect: /\[5\] ช่อง fTaxId/,
+  },
+  {
+    name: 'UpdateEmployeeRequest ไม่มี SocialSecurityNumber (สภาพก่อนแก้ A-PR1 — แก้เลข ปกส. แล้วเงียบ)',
+    cs: (s) => s.replace(/(public record UpdateEmployeeRequest\([\s\S]*?)string\? SocialSecurityNumber = null\);/, '$1string? Removed1 = null);'),
+    expect: /\[3\] คีย์ "socialSecurityNumber" ส่งตอน update/,
+  },
+  {
+    name: 'EmployeeResponse ไม่มี SocialSecurityNumber (เก็บแล้วไม่ echo — เปิดแก้แล้วช่องว่าง)',
+    cs: (s) => s.replace(/(public record EmployeeResponse\([\s\S]*?)string\? SocialSecurityNumber = null\);/, '$1string? Removed2 = null);'),
+    expect: /\[4\] hydrate อ่าน e\.socialSecurityNumber/,
+  },
+  {
+    name: 'payroll.html ไม่ hydrate เลขประกันสังคม (ค้างค่าของคนก่อน)',
+    pay: (s) => s.replace("      document.getElementById('empSsoNumber').value = e.socialSecurityNumber || '';\n", ''),
+    expect: /\[2\] empSsoNumber/,
   },
   {
     name: 'payroll.html ไม่ hydrate คำนำหน้า (select ค้าง "นาย" แล้วเขียนทับ "นางสาว")',

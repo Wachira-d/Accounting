@@ -275,6 +275,19 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<PayrollItemResponse>(true, await _service.UpdatePayrollItemAsync(companyId, itemId, request)));
     }
 
+    /// <summary>ค่าเสนอของธง "เป็นค่าจ้างตาม ม.5" ตามลักษณะเงินได้ — หน้าตั้งค่ารายการเงินเดือนเติมให้ผู้ใช้เห็นก่อนสร้าง
+    /// (รอบ 201 PR2 · A-PR2) · ไม่เขียนอะไร · กติกาอยู่ที่ <c>PayrollIncomeNatureRules.SuggestedCountsForSsoBase</c> ตัวเดียว</summary>
+    [HttpGet("items/sso-base-suggestion")]
+    public async Task<ActionResult<ApiResponse<PayrollItemSsoSuggestionDto>>> GetItemSsoSuggestion(
+        Guid companyId, [FromQuery] Models.Enums.PayrollIncomeNature incomeNature)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        return Ok(new ApiResponse<PayrollItemSsoSuggestionDto>(true, new PayrollItemSsoSuggestionDto(
+            incomeNature,
+            Accounting.Helpers.PayrollIncomeNatureRules.SuggestedCountsForSsoBase(incomeNature),
+            Accounting.Helpers.PayrollIncomeNatureRules.SuggestedSsoBaseNote(incomeNature))));
+    }
+
     [HttpGet("items")]
     public async Task<ActionResult<ApiResponse<List<PayrollItemResponse>>>> GetItems(Guid companyId)
     {

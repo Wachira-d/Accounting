@@ -2658,6 +2658,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   `PayrollRunResponse.CanVoid/VoidBlockReason` จาก `PayrollRunEditPolicy.CanVoid` (ตัวเดียวกับ `VoidPayrollAsync`) · กดไม่ได้ ⇒ disabled + เหตุผล · **เหตุผลบังคับ ≥ 5 ตัวอักษร**
   (service) + `AddChainedAuditLog` (`void-run` · สถานะก่อน · กลับ JE ไหม) · อ่านก่อนล็อกแบบไม่ติดตาม (แถวใต้ `FromSqlRaw … FOR UPDATE` เป็นค่าจริง) ·
   รอบ Paid ⇒ กลับ JE + คืนเงินทดรอง (เหมือนเดิม) · `PAYROLL-DETAIL-LAST` ชี้ปุ่มนี้ (เดิมบอกให้ใช้ API)
+- **รายการเงินเดือน — ค่าเสนอธง "เป็นค่าจ้าง ม.5" (รอบ 201 PR2 · A-PR2 · คำตัดสินข้อ 31)**: `GET payroll/items/sso-base-suggestion?incomeNature=` →
+  `PayrollIncomeNatureRules.SuggestedCountsForSsoBase` (เบี้ยเลี้ยงประจำ = ใช่ · OT/โบนัส = ไม่ใช่ · ครั้งคราว/คอมมิชชัน/ยังไม่ระบุ = ไม่เสนอ) · หน้าตั้งค่าเติมเฉพาะรายการ
+  **ใหม่** ที่ผู้ใช้ยังไม่แตะช่อง · เซิร์ฟเวอร์ไม่ใส่ให้เองตอนสร้าง · แถวเดิมที่ null ไม่แตะ (คงคำเตือนตอนคำนวณ)
+- **audit ของเงินเดือน (รอบ 201 PR2 · A-PR3)**: `NormalizeRunSsoAsync` · `ReopenPaidRunAsync` · `ReverseSsoSettlementAsync` เขียนผ่าน `AddChainedAuditLog` แล้ว ⇒
+  `AuditLogs.Add` ตรงใน `PayrollService` = 0 จุด
 - **จ่าย (รอบ 201 PR2 · X2)** — `ProcessPaymentAsync` อ่านก่อนล็อกแบบไม่ติดตาม (สถานะ/งวดบัญชี/จ่ายซ้ำเดือน) แล้ว**อ่านรอบ + แถวรายคนใหม่ใต้ `FOR UPDATE`** ·
   `RecomputeRunTotals(run)` หลัง `NormalizeRunSsoAsync` ก่อนสร้าง JE ⇒ ➕/🗑/✏️ ที่ commit ระหว่างนั้นอยู่ใน JE เสมอ (เดิม Details โหลดก่อนล็อก = EF ไม่ refresh)
 - **➕/🗑 พนักงานในรอบ (รอบ 200 ทีม PR1)** — ทางเข้าใหม่สำหรับรอบที่คำนวณ/**นำเข้าจากระบบนอก** (คำนวณใหม่ไม่ได้) และรอบในระบบ (ทางเลือกนอกจากคำนวณใหม่ทั้งรอบ):
@@ -2690,7 +2695,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ถ้าไม่มี `Pii.View` (G2-05) · 50 ทวิรายปี audit เลขบัตรแบบปิดบังผ่าน `AddChainedAuditLog` (D-11) · API `GET tax/sso-rate` อ่าน `SsoRateSchedule` (D-03) ·
   จ่ายทิป: ส่วนแบ่งเป็นสตางค์ Σ = กองทิป + อัตรา/เกณฑ์ WHT จาก `ThaiWhtRateTable` (`TipShareAllocation` · D-05) · ไม่มีผัง 21915 = ล้มดังก่อนลงบัญชี
 - **แก้ข้อมูลพนักงาน** (A05/D-07): `UpdateEmployeeRequest` +11 ช่อง (null = ไม่แตะ · "" = ล้าง) ผ่าน `Helpers/EmployeeRecordEdit` · Response +TaxId/ธนาคาร/
-  `EmployeeCodeLocked`+เหตุผล · ทั้งสองหน้า hydrate = payload ชุดเดียว (`tools/employee_form_contract_sim.js`) · เลขบัตร checksum ผ่าน `ThaiTaxIdValidator`
+  `EmployeeCodeLocked`+เหตุผล · ทั้งสองหน้า hydrate = payload ชุดเดียว (`tools/employee_form_contract_sim.js`) · **รอบ 201 PR2 (A-PR1)**: ช่อง "เลขประกันสังคม
+  (ถ้าต่างจากเลขบัตร)" ทั้งสองหน้า → `Create/UpdateEmployeeRequest.SocialSecurityNumber` ผ่าน `EmployeeRecordEdit.SsoInsuredNumber` (13 หลัก · เก็บตัวเลขล้วน ·
+  ไม่ตรวจ checksum · ค่าปิดบังของเดิม = ไม่แตะ) · `EmployeeResponse.SocialSecurityNumber` ปิดบังตาม pii:view · ไฟล์ สปส. ใช้ช่องนี้ก่อนเลขบัตร (`SsoInsuredNumber.Resolve`
+  เดิม) · HRIS sync ยังเขียนค่าดิบ (backlog) · เลขบัตร checksum ผ่าน `ThaiTaxIdValidator`
   (เลขเดิมที่ไม่ได้แก้ไม่ถูกตรวจ) · วันเริ่มงานส่งเฉพาะเมื่อเปลี่ยนจริง · HRIS sync/นำเข้า CSV ยังไม่ตรวจ checksum (backlog)
 
 ---
@@ -4090,7 +4098,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 — เงินเดือน (§3.8): 🧮 คำนวณภาษีให้รายคน `POST runs/{id}/tax-preview` ด้วย `Helpers/PayrollWithholdingTax` ตัวเดียวกับคำนวณรอบ (ย้ายจาก inline · golden เทียบ 9c9580e6) · ➕/🗑 รอบ Approved กลับเป็น Calculated (`PayrollRosterChange`) · 🚫 ยกเลิกรอบบนหน้าเว็บ + เหตุผลบังคับ + audit · เงินทดแทนคิดใหม่เมื่อฐานเปลี่ยน (รอบนำเข้าไม่คิด) · ด่านธง ปกส. (`PayrollSsoFlagGuard`) · ✏️/จ่าย อ่านใต้ล็อก · YTD แถวมือ · `ManualRosterChangedAt` — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 — เงินเดือน (§3.8): 🧮 คำนวณภาษีให้รายคน `POST runs/{id}/tax-preview` ด้วย `Helpers/PayrollWithholdingTax` ตัวเดียวกับคำนวณรอบ (ย้ายจาก inline · golden เทียบ 9c9580e6) · ➕/🗑 รอบ Approved กลับเป็น Calculated (`PayrollRosterChange`) · 🚫 ยกเลิกรอบบนหน้าเว็บ + เหตุผลบังคับ + audit · เงินทดแทนคิดใหม่เมื่อฐานเปลี่ยน (รอบนำเข้าไม่คิด) · ด่านธง ปกส. (`PayrollSsoFlagGuard`) · ✏️/จ่าย อ่านใต้ล็อก · YTD แถวมือ · `ManualRosterChangedAt` — commit 127844b9)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
 

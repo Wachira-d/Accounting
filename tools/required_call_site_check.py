@@ -3253,6 +3253,31 @@ RULES += [
          why="PR2 X6: ด่าน CheckPayrollAccessAsync คือสิทธิ์ดูเงินเดือนตัวเดียวกัน — ส่งซ้ำ = โค้ดตายที่ดูเหมือนด่าน"),
 ]
 
+# ── รอบ 201 ทีม PR2 ชุดสอง (BACKLOG 2026-10-01 §1.9): A-PR1 เลขประกันสังคม · A-PR2 ค่าเสนอธง ม.5 · A-PR3 audit chain ──
+_PR2_WHY_AUDIT = "PR2 A-PR3 (A-PL4): แถว audit ของเงินเดือนต้องเข้า hash chain (AddChainedAuditLog) — AuditLogs.Add ตรง = นอก chain ตรวจย้อนไม่ได้"
+RULES += [
+    dict(file=PAYROLL, method="NormalizeRunSsoAsync", must=["AddChainedAuditLog("], forbid=["AuditLogs.Add("], why=_PR2_WHY_AUDIT),
+    dict(file=PAYROLL, method="ReopenPaidRunAsync", must=["AddChainedAuditLog("], forbid=["AuditLogs.Add("], why=_PR2_WHY_AUDIT),
+    dict(file=PAYROLL, method="ReverseSsoSettlementAsync", must=["AddChainedAuditLog("], forbid=["AuditLogs.Add("], why=_PR2_WHY_AUDIT),
+    dict(file=PAYROLL, method="CreateEmployeeAsync",
+         must=["EmployeeRecordEdit.SsoInsuredNumber(request.SocialSecurityNumber, null)", "SocialSecurityNumber = ssoNoEdit.Value"],
+         forbid=["SocialSecurityNumber = request.SocialSecurityNumber"],
+         why="PR2 A-PR1: เลขประกันสังคมผ่านตัวตัดสินเดียว (13 หลัก · เก็บตัวเลขล้วน) ทั้งสร้างและแก้"),
+    dict(file=PAYROLL, method="UpdateEmployeeAsync",
+         must=["EmployeeRecordEdit.SsoInsuredNumber(request.SocialSecurityNumber, employee.SocialSecurityNumber)"],
+         must_re=[r"if\s*\(\s*ssoNoEdit\s*\.\s*Changes\s*\)\s*employee\s*\.\s*SocialSecurityNumber\s*=\s*ssoNoEdit\s*\.\s*Value"],
+         before=[("EmployeeRecordEdit.SsoInsuredNumber(", "_db.SaveChangesAsync(")],
+         forbid=["employee.SocialSecurityNumber = request.SocialSecurityNumber"],
+         why="PR2 A-PR1: แก้เลขประกันสังคมผ่านตัวตัดสินเดียว · ค่าปิดบังของเดิมไม่เขียนทับของจริง"),
+    dict(file=PAYROLL, method="MapToEmployeeResponse",
+         must=["PiiMask.CitizenId(e.SocialSecurityNumber)"],
+         why="PR2 A-PR1: เลขประกันสังคมเป็น PII ม.26 — echo ปิดบังเว้นแต่มีสิทธิ์ pii:view"),
+    dict(file="Controllers/PayrollController.cs", method="GetItemSsoSuggestion",
+         must=["PayrollIncomeNatureRules.SuggestedCountsForSsoBase("],
+         before=[("CheckPayrollAccessAsync(", "PayrollIncomeNatureRules.SuggestedCountsForSsoBase(")],
+         why="PR2 A-PR2: ค่าเสนอธง ม.5 มาจากกติกาตัวเดียวที่เซิร์ฟเวอร์ (หน้าเว็บห้ามมีตารางเอง)"),
+]
+
 # ── รอบ 201 ทีม DV (BACKLOG A-DV1..A-DV6 · C-1 · คำตัดสินข้อ 62/65/66/67/68/74): เอกสาร ยกเลิก/ออกใบแทน/e-Tax (pure ทดสอบใน VoidReissueR201DvTests) ──
 _DV_WHY_LOCK = ("A-DV4 (ข้อ 68) + ฝ่ายค้าน DV-O1: การชำระที่ชำระร่วมกับเอกสารอื่นถูกปฏิเสธทันทีหลังล็อกใบนี้ ก่อนล็อกอื่น/กลับรายการใด (ตัวตัดสินเดียว "
                 "SharedPaymentVoidBlock) ⇒ cascade แตะแค่ใบนี้ · ห้ามล็อก 'ใบอื่นของการชำระ' (ว่างเสมอในเส้นที่สำเร็จ แต่สร้างวงรอกับ VoidPaymentAsync/"

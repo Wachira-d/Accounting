@@ -222,7 +222,7 @@
           </div>
           <div class="form-group" id="itemNatureGroup">
             <label class="form-label">ลักษณะเงินได้ * (มีผลกับการประมาณการภาษีทั้งปี)</label>
-            <select class="form-select" id="itemNature" onchange="Page.renderItemNatureNote()">
+            <select class="form-select" id="itemNature" onchange="Page.renderItemNatureNote();Page._itemSsoSuggest()">
               <option value="RecurringAllowance">เบี้ยเลี้ยงประจำ — ได้ทุกงวด (ถูกฉายไปงวดที่เหลือ)</option>
               <option value="OneTimeAllowance">เงินได้ครั้งคราว — ไม่ได้ทุกงวด</option>
               <option value="Overtime">ค่าล่วงเวลา</option>
@@ -236,12 +236,13 @@
                "ยังไม่ตัดสิน" ต้องต่างจาก "ตัดสินแล้วว่าไม่ใช่ค่าจ้าง" -->
           <div class="form-group" id="itemSsoGroup">
             <label class="form-label">เป็น "ค่าจ้าง" ตาม ม.5 ประกันสังคม? (มีผลกับฐานเงินสมทบ)</label>
-            <select class="form-select" id="itemSsoBase" onchange="Page.renderItemSsoNote()">
+            <select class="form-select" id="itemSsoBase" onchange="this.dataset.userTouched=1;Page.renderItemSsoNote()">
               <option value="unset">ยังไม่ระบุ — ไม่รวมในฐาน (ค่าตั้งต้น)</option>
               <option value="true">ใช่ — รวมในฐานเงินสมทบ ปกส. + กองทุนเงินทดแทน</option>
               <option value="false">ไม่ใช่ — เงินชดเชยค่าใช้จ่ายตามจ่ายจริง</option>
             </select>
             <div id="itemSsoNote" style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.6"></div>
+            <div id="itemSsoSuggestNote" style="font-size:12px;color:#0f766e;margin-top:4px;line-height:1.6"></div>
           </div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px">
@@ -342,6 +343,14 @@
               </label>
               <div class="text-gray-400" style="font-size:11px;margin-top:4px">
                 ปิดเฉพาะกรณีที่กฎหมายยกเว้นจริง — ไม่หักทั้งที่ต้องหัก = เงินเพิ่ม §49 และลูกจ้างเสียสิทธิ์
+              </div>
+            </div>
+            <!-- รอบ 201 PR2 (A-PR1): เลขประกันสังคมแยกจากเลขบัตร (แรงงานต่างด้าว) — ไฟล์ สปส.1-10 ใช้ช่องนี้ก่อนเลขบัตร -->
+            <div class="form-group">
+              <label class="form-label">เลขประกันสังคม (ถ้าต่างจากเลขบัตร)</label>
+              <input type="text" class="form-input" id="empSsoNumber" maxlength="17">
+              <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+                เว้นว่าง = ใช้เลขบัตรประชาชน · กรอกสำหรับแรงงานต่างด้าว/ผู้ที่ สปส. ออกเลขให้แยก (13 หลัก)
               </div>
             </div>
           </div>
@@ -642,10 +651,36 @@ const Page = {
     document.getElementById('itemSsoBase').value =
       (it && it.countsForSsoBase === true) ? 'true'
       : (it && it.countsForSsoBase === false) ? 'false' : 'unset';
+    // A-PR2: ค่าเสนอของธง ม.5 ใช้เฉพาะรายการ**ใหม่** และเฉพาะเมื่อผู้ใช้ยังไม่แตะช่องเอง (ค่าผู้ใช้ชนะ · แถวเดิมไม่แตะ)
+    const ssoSel = document.getElementById('itemSsoBase');
+    delete ssoSel.dataset.userTouched;
+    const sn = document.getElementById('itemSsoSuggestNote'); if (sn) sn.textContent = '';
     this.onItemTypeChange();
     this.renderItemNatureNote();
     this.renderItemSsoNote();
     Layout.openModal('itemModal');
+    if (!it) this._itemSsoSuggest();
+  },
+
+  /** ค่าเสนอของ "เป็นค่าจ้างตาม ม.5" ตามลักษณะเงินได้ (รอบ 201 PR2 · A-PR2 · คำตัดสินข้อ 31) — เซิร์ฟเวอร์ตัดสิน
+   *  (PayrollIncomeNatureRules.SuggestedCountsForSsoBase) หน้านี้แค่เติม · รายการที่มีอยู่แล้ว/ช่องที่ผู้ใช้เลือกเองไม่ถูกแตะ */
+  async _itemSsoSuggest() {
+    if (document.getElementById('itemId').value) return;                 // แก้ไขรายการเดิม — ไม่เสนอ
+    const sel = document.getElementById('itemSsoBase');
+    const note = document.getElementById('itemSsoSuggestNote');
+    if (!sel || sel.dataset.userTouched) return;
+    const cid = Layout.getCompanyId(); if (!cid) return;
+    const nature = document.getElementById('itemNature').value;
+    try {
+      const res = await API.get(`/api/companies/${cid}/payroll/items/sso-base-suggestion?incomeNature=${encodeURIComponent(nature)}`);
+      const s = res && res.data; if (!s || sel.dataset.userTouched) return;
+      if (document.getElementById('itemNature').value !== nature) return;   // ผู้ใช้เปลี่ยนลักษณะระหว่างรอ — ผลเก่าทิ้ง
+      sel.value = s.countsForSsoBase === true ? 'true' : s.countsForSsoBase === false ? 'false' : 'unset';
+      this.renderItemSsoNote();
+      if (note) note.textContent = '💡 ' + (s.note || '');
+    } catch (e) {
+      if (note) note.textContent = e.message || 'โหลดค่าเสนอไม่สำเร็จ — เลือกเองได้ตามปกติ';
+    }
   },
 
   async saveItem() {
@@ -1030,7 +1065,7 @@ const Page = {
     document.getElementById('empId').value = '';
     document.getElementById('empActiveRow').style.display = 'none';
     document.getElementById('empSso').checked = true;   // default ตามกฎหมาย (D-S1)
-    ['empCode','empFirstName','empLastName','empIdCard','empTaxId','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone','empLineId'].forEach(id => document.getElementById(id).value = '');
+    ['empCode','empFirstName','empLastName','empIdCard','empTaxId','empSsoNumber','empStartDate','empPosition','empDepartment','empSalary','empBankAccount','empEmail','empPhone','empLineId'].forEach(id => document.getElementById(id).value = '');
     Layout.setTitleSelectValue('empTitle', 'นาย');   // ห้ามค้างคำนำหน้าของคนที่เปิดแก้ก่อนหน้า
     this._setEmpCodeLock(false, null);
     document.getElementById('empStartDate').value = Layout.dateInput(new Date());
@@ -1065,6 +1100,7 @@ const Page = {
       // "ค่าปิดบังของของเดิม" และไม่เขียนทับ (Helpers/EmployeeRecordEdit)
       document.getElementById('empIdCard').value = e.citizenId || e.idCardNumber || e.nationalId || '';
       document.getElementById('empTaxId').value = e.taxId || '';
+      document.getElementById('empSsoNumber').value = e.socialSecurityNumber || '';
       document.getElementById('empStartDate').value = Layout.dateInput(e.startDate || e.hireDate);
       // ส่งวันเริ่มงานเฉพาะเมื่อผู้ใช้เปลี่ยนจริง — กันการแปลงเขตเวลาไป-กลับขยับค่าเดิม
       document.getElementById('empStartDate').dataset.orig = document.getElementById('empStartDate').value;
@@ -1118,6 +1154,7 @@ const Page = {
       lastNameTh: document.getElementById('empLastName').value.trim(),
       citizenId: txt('empIdCard'),
       taxId: txt('empTaxId'),
+      socialSecurityNumber: txt('empSsoNumber'),
       // แก้ไข: ส่งเฉพาะเมื่อเปลี่ยนจริง (null = ไม่แตะ) · สร้าง: บังคับ
       startDate: id
         ? (startEl.value && startEl.value !== startEl.dataset.orig ? startEl.value : null)

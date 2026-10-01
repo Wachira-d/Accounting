@@ -219,4 +219,24 @@ public class PayrollItemNatureTests
 
         Assert.Contains("BN01", PayrollIncomeNatureRules.Describe(PayrollIncomeNature.Unspecified));
     }
+
+    // ── รอบ 201 ทีม PR2 · A-PR2 (คำตัดสินข้อ 31): ค่าเสนอของธง "เป็นค่าจ้างตาม ม.5" ตอนสร้างรายการ ──
+    [Fact]
+    public void ค่าเสนอฐานปกส_เงินเพิ่มประจำ_นับ_OTและโบนัส_ไม่นับ()
+    {
+        Assert.True(PayrollIncomeNatureRules.SuggestedCountsForSsoBase(PayrollIncomeNature.RecurringAllowance));
+        Assert.False(PayrollIncomeNatureRules.SuggestedCountsForSsoBase(PayrollIncomeNature.Overtime));
+        Assert.False(PayrollIncomeNatureRules.SuggestedCountsForSsoBase(PayrollIncomeNature.Bonus));
+        Assert.Contains("ใช่", PayrollIncomeNatureRules.SuggestedSsoBaseNote(PayrollIncomeNature.RecurringAllowance));
+    }
+
+    [Theory]
+    [InlineData(PayrollIncomeNature.OneTimeAllowance)]   // รวมเงินชดเชยค่าใช้จ่ายจริง — ไม่ใช่ค่าจ้าง ห้ามเดาว่านับ
+    [InlineData(PayrollIncomeNature.Commission)]         // ตีความได้สองทาง
+    [InlineData(PayrollIncomeNature.Unspecified)]
+    public void ค่าเสนอฐานปกส_ลักษณะที่กำกวม_ไม่เสนอ_ให้ผู้ใช้เลือกเอง(PayrollIncomeNature nature)
+    {
+        Assert.Null(PayrollIncomeNatureRules.SuggestedCountsForSsoBase(nature));
+        Assert.Contains("เลือกเอง", PayrollIncomeNatureRules.SuggestedSsoBaseNote(nature));
+    }
 }

@@ -233,6 +233,9 @@ public class PayrollService : IPayrollService
         if (citizenEdit.Error != null) throw new BusinessRuleException(citizenEdit.Error);
         var taxIdEdit = EmployeeRecordEdit.ThaiIdNumber(request.TaxId, null, "เลขประจำตัวผู้เสียภาษี");
         if (taxIdEdit.Error != null) throw new BusinessRuleException(taxIdEdit.Error);
+        // รอบ 201 PR2 (A-PR1): เลขประกันสังคม — ตัวตัดสินเดียวกับเส้นแก้ไข (13 หลัก · เก็บตัวเลขล้วน)
+        var ssoNoEdit = EmployeeRecordEdit.SsoInsuredNumber(request.SocialSecurityNumber, null);
+        if (ssoNoEdit.Error != null) throw new BusinessRuleException(ssoNoEdit.Error);
 
         var existing = await _db.Set<Employee>()
             .AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == request.EmployeeCode);
@@ -264,7 +267,7 @@ public class PayrollService : IPayrollService
             BankName = request.BankName,
             BankAccountNumber = request.BankAccountNumber,
             BankAccountName = request.BankAccountName,
-            SocialSecurityNumber = request.SocialSecurityNumber,
+            SocialSecurityNumber = ssoNoEdit.Value,
             SocialSecurityHospital = request.SocialSecurityHospital,
             IsSubjectToSocialSecurity = request.IsSubjectToSocialSecurity,
             HasProvidentFund = request.HasProvidentFund,
@@ -385,7 +388,8 @@ public class PayrollService : IPayrollService
         var lastNameEdit = EmployeeRecordEdit.RequiredText(request.LastNameTh, "นามสกุล (ไทย)");
         var citizenEdit = EmployeeRecordEdit.ThaiIdNumber(request.CitizenId, employee.CitizenId, "เลขบัตรประชาชน");
         var taxIdEdit = EmployeeRecordEdit.ThaiIdNumber(request.TaxId, employee.TaxId, "เลขประจำตัวผู้เสียภาษี");
-        var firstError = new[] { codeEdit, firstNameEdit, lastNameEdit, citizenEdit, taxIdEdit }
+        var ssoNoEdit = EmployeeRecordEdit.SsoInsuredNumber(request.SocialSecurityNumber, employee.SocialSecurityNumber);
+        var firstError = new[] { codeEdit, firstNameEdit, lastNameEdit, citizenEdit, taxIdEdit, ssoNoEdit }
             .Select(x => x.Error).FirstOrDefault(x => x != null);
         if (firstError != null) throw new BusinessRuleException(firstError);
         if (request.StartDate.HasValue
@@ -408,6 +412,7 @@ public class PayrollService : IPayrollService
         if (lastNameEnEdit.Changes) employee.LastNameEn = lastNameEnEdit.Value;
         if (citizenEdit.Changes) employee.CitizenId = citizenEdit.Value;
         if (taxIdEdit.Changes) employee.TaxId = taxIdEdit.Value;
+        if (ssoNoEdit.Changes) employee.SocialSecurityNumber = ssoNoEdit.Value;
         var empTypeEdit = EmployeeRecordEdit.OptionalText(request.EmploymentType);
         if (empTypeEdit.Changes) employee.EmploymentType = empTypeEdit.Value;
         if (request.StartDate.HasValue) employee.StartDate = request.StartDate.Value;
@@ -2679,7 +2684,7 @@ public class PayrollService : IPayrollService
             // การแก้ตัวเลขเงินอัตโนมัติต้องเข้า hash chain ของ AuditLog ไม่ใช่
             // อยู่แค่ในไฟล์ log ที่ไม่มีใครเปิด — ต้องตอบผู้สอบบัญชีได้ว่า
             // "ใครเปลี่ยน 4,403 → 4,381 เมื่อไร ด้วยกฎข้อไหน"
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 UserId = Guid.TryParse(actor, out var actorId) ? actorId : (Guid?)null,
@@ -3588,7 +3593,7 @@ public class PayrollService : IPayrollService
             run.UpdatedBy = reopenedBy;
             run.UpdatedAt = DateTime.UtcNow;
 
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 UserId = Guid.TryParse(reopenedBy, out var actorId) ? actorId : (Guid?)null,
@@ -4710,7 +4715,9 @@ public class PayrollService : IPayrollService
             TaxId: taxId,
             BankName: e.BankName,
             BankAccountNumber: bankAccountNo,
-            BankAccountName: e.BankAccountName);
+            BankAccountName: e.BankAccountName,
+            // A-PR1: เลขที่กรอกไว้เท่านั้น (ไม่แต่งจากเลขบัตร — ช่องว่าง = ใช้เลขบัตร) · ปิดบังแบบเลข 13 หลักของบุคคล
+            SocialSecurityNumber: includePii ? e.SocialSecurityNumber : Accounting.Helpers.PiiMask.CitizenId(e.SocialSecurityNumber));
     }
 
     private static PayrollItemResponse MapToPayrollItemResponse(PayrollItem i)
@@ -5114,7 +5121,7 @@ public class PayrollService : IPayrollService
                     + "กรุณาตรวจในสมุดรายวันแล้วกลับรายการใบนั้นด้วยตนเอง");
             }
 
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 UserId = Guid.TryParse(performedBy, out var actorId) ? actorId : (Guid?)null,

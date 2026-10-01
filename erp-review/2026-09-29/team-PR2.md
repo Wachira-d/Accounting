@@ -60,3 +60,18 @@ TaxAllowances ติดลบ/พ้นสภาพปีนี้/ปีก่�
    ใหญ่เกินรอบนี้ (📋)
 2. ✏️ แก้ยอดรายคนของรอบ **Approved** ยังคงสถานะ (ตามคำตัดสินข้อ 69) — ถ้าแก้ยอดเงินมาก ผู้อนุมัติก็ไม่เห็นเช่นกัน (เป็นทางเลือกของเจ้าของ ไม่ได้แตะ)
 3. ด่านธง ปกส. (X1) ใน ✏️ ทำงานเฉพาะเมื่อฐานเปลี่ยน — แถวนำเข้าที่ขัดอยู่แล้วจะไม่ถูกเตือนจนกว่าจะแตะฐาน · ถ้าต้องการให้เห็นทุกแถว ควรเป็น**คำเตือน**บนหน้ารอบ (ไม่ใช่บล็อก)
+
+## ชุดสอง — BACKLOG 2026-10-01 §1.9 (งานเพิ่มจาก main agent · คอมมิตแยก)
+
+| ID | สถานะ | สิ่งที่ทำ | ที่ |
+| --- | --- | --- | --- |
+| **A-PR1** | ✅ | ช่อง "เลขประกันสังคม (ถ้าต่างจากเลขบัตร)" บน `employees.html` (`fSsoNumber`) และแท็บพนักงานของ `payroll.html` (`empSsoNumber`) — hydrate/ส่ง/ล้างตอนฟอร์มใหม่ครบ (checklist F4 B) · `UpdateEmployeeRequest` + `EmployeeResponse` +`SocialSecurityNumber` (Create มีอยู่แล้วแต่ฟอร์มส่ง null) · ตัวตัดสิน `EmployeeRecordEdit.SsoInsuredNumber` (null ไม่แตะ · "" ล้าง · ค่าปิดบังของเดิมไม่แตะ · X ปฏิเสธ · 13 หลักตัดขีด · ไม่ตรวจ checksum — เลขที่ สปส. ออกให้ต่างด้าวไม่รับประกัน mod-11) ใช้ทั้ง Create/Update · response ปิดบัง `PiiMask.CitizenId` เว้นแต่ pii:view (คอลัมน์เข้ารหัสอยู่แล้ว `EncryptedColumnConverter`) · `SsoInsuredNumber.Resolve` อ่านช่องนี้ก่อนเลขบัตรอยู่แล้ว (ไม่ต้องแก้) · `employee_form_contract_sim` baseline จากซอร์สคอมมิต `1f639ae1` ล้ม 4 ข้อ (Update · Response · สองหน้า) | `EmployeeRecordEdit.cs` · `PayrollService.cs` Create/Update/Map · `employees.html` · `payroll.html` |
+| **A-PR2** | ✅ | `PayrollIncomeNatureRules.SuggestedCountsForSsoBase` (ประจำ = true · OT/โบนัส = false · ครั้งคราว/คอมมิชชัน/ยังไม่ระบุ = null ไม่เดา) + `SuggestedSsoBaseNote` · `GET payroll/items/sso-base-suggestion` (`CheckPayrollAccessAsync`) · หน้าตั้งค่า `_itemSsoSuggest` เติมเฉพาะรายการใหม่และช่องที่ผู้ใช้ยังไม่แตะ (`dataset.userTouched` · ผลที่มาช้าหลังเปลี่ยนลักษณะถูกทิ้ง) · `CreatePayrollItemAsync` ไม่เปลี่ยน (ไม่ใส่ค่าให้เอง) · แถวเดิม null คงเตือน | `PayrollIncomeNatureRules.cs` · `PayrollController.GetItemSsoSuggestion` · `payroll.html` |
+| **A-PR3** | ✅ | `AuditLogs.Add` → `AddChainedAuditLog` ใน `NormalizeRunSsoAsync` · `ReopenPaidRunAsync` · `ReverseSsoSettlementAsync` (บรรทัดที่ BACKLOG อ้าง `:2391/3259/4754` ขยับเป็น `:2682/3591/5117` ที่ HEAD) · ไม่มี baseline ของ checker A-PL4 ในเรพ ⇒ ล็อกด้วย required_call_site 3 แถว (must chain + forbid Add) | `PayrollService.cs` |
+
+ความเสี่ยงคอมไพล์ชุดสอง: `stripped.All(char.IsDigit)` (LINQ บน string · implicit usings) · `[FromQuery] PayrollIncomeNature incomeNature` (bind ชื่อ enum) ·
+record positional เพิ่มพารามิเตอร์ท้ายแบบมีค่าเริ่มต้น (ผู้เรียกแบบ positional เดิมไม่กระทบ)
+
+คำถามค้างชุดสอง: (4) HRIS sync (`SyncEmployeesAsync`) + นำเข้า CSV ยังเขียนเลขประกันสังคมดิบ ไม่ผ่าน `SsoInsuredNumber` edit — ควรใช้ตัวตัดสินเดียวกันไหม
+(ปฏิเสธทั้งแถว vs ข้ามช่อง) · (5) คอมมิชชันเป็น "ค่าจ้าง" ม.5 ไหม (ไม่เสนอค่าไว้ — ต้องการคำตัดสิน)
+

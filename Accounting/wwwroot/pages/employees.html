@@ -82,6 +82,12 @@
               <div style="font-size:11px;color:#64748b;margin-top:4px">เว้นว่าง = ใช้เลขบัตรประชาชน (บุคคลไทย) · กรอกเฉพาะผู้ที่ไม่มีบัตรไทย — ใช้ออก 50 ทวิ / ภ.ง.ด.1</div>
             </div>
           </div>
+          <!-- รอบ 201 PR2 (A-PR1): เลขประกันสังคมของแรงงานต่างด้าว/ผู้ที่ สปส. ออกเลขแยก — ไฟล์ สปส.1-10 ใช้ช่องนี้ก่อนเลขบัตร -->
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">เลขประกันสังคม (ถ้าต่างจากเลขบัตร)</label><input type="text" class="form-input" id="fSsoNumber" maxlength="17">
+              <div style="font-size:11px;color:#64748b;margin-top:4px">เว้นว่าง = ใช้เลขบัตรประชาชนเป็นเลขผู้ประกันตน · กรอกสำหรับแรงงานต่างด้าว/ผู้ที่ สปส. ออกเลขให้แยก (13 หลัก) — ใช้ในไฟล์ สปส.1-10 / 1-03 / 6-09</div>
+            </div>
+          </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
             <div class="form-group"><label class="form-label">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
@@ -404,7 +410,7 @@
         document.getElementById('formTitle').textContent = '+ เพิ่มพนักงาน';
         document.getElementById('fId').value = '';
         ['fCode','fFirstNameTh','fLastNameTh','fFirstNameEn','fLastNameEn','fCitizenId',
-         'fTaxId','fPhone','fEmail','fDept','fPos','fBankName','fBankAcct','fBankAcctName',
+         'fTaxId','fSsoNumber','fPhone','fEmail','fDept','fPos','fBankName','fBankAcct','fBankAcctName',
          'fExtSys','fExtId'].forEach(id => document.getElementById(id).value = '');
         Page._setCodeLock(false, null);
         document.getElementById('fStart').dataset.orig = '';
@@ -438,6 +444,7 @@
           // เลข/บัญชีที่ถูกปิดบัง (ไม่มีสิทธิ์ pii:view) ส่งกลับไปตามเดิมได้ — เซิร์ฟเวอร์
           // รู้จัก "ค่าปิดบังของของเดิม" และไม่เขียนทับ (Helpers/EmployeeRecordEdit)
           document.getElementById('fTaxId').value = e.taxId || '';
+          document.getElementById('fSsoNumber').value = e.socialSecurityNumber || '';
           document.getElementById('fPhone').value = e.phone || '';
           document.getElementById('fEmail').value = e.email || '';
           document.getElementById('fDept').value = e.department || '';
@@ -487,7 +494,8 @@
             bankName: document.getElementById('fBankName').value.trim() || null,
             bankAccountNumber: document.getElementById('fBankAcct').value.trim() || null,
             bankAccountName: document.getElementById('fBankAcctName').value.trim() || null,
-            socialSecurityNumber: null, socialSecurityHospital: null,
+            socialSecurityNumber: document.getElementById('fSsoNumber').value.trim() || null,
+            socialSecurityHospital: null,
             isSubjectToSocialSecurity: document.getElementById('fSso').checked,
             hasProvidentFund: false,
             providentFundEmployeePercent: 0,
@@ -522,6 +530,7 @@
             lastNameEn: v('fLastNameEn'),
             citizenId: v('fCitizenId'),
             taxId: v('fTaxId'),
+            socialSecurityNumber: v('fSsoNumber'),
             employmentType: document.getElementById('fEmpType').value,
             startDate: startEl.value && startEl.value !== startEl.dataset.orig ? startEl.value : null,
             isSubjectToSocialSecurity: document.getElementById('fSso').checked,
