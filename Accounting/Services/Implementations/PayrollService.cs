@@ -3694,10 +3694,26 @@ public class PayrollService : IPayrollService
     /// Best-effort — generation failure ไม่ rollback การ pay.</summary>
     private async Task IssueMonthlyPnd1CertsAsync(Guid companyId, PayrollRun run)
     {
+        // ★ ฝ่ายค้าน PR2 (P1-c): ออกเลขใบภายใต้ล็อกแถวรอบ (ธุรกรรมของตัวเอง ถ้าผู้เรียกไม่มี) — ออกซ้ำพร้อมกัน (กด "สร้างเอกสารใหม่"
+        //   ระหว่างงาน background) ต้องรอกัน ไม่ใช่หาเลขว่างได้เลขเดียวกันแล้วชน unique · ล้ม ⇒ ย้อนทั้งชุด (ไม่มีใบครึ่งชุด)
+        await using var certTx = _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
+            if (certTx != null)
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    run.Id, companyId);
+            // ★ P1-b: รอบมีพนักงานแต่ไม่มีแถวรายคนที่โหลดมา = ผู้เรียกไม่ได้ Include — ห้ามคืนเงียบ (50 ทวิ จะไม่มีวันออก)
+            if (Accounting.Helpers.PayrollPnd1Certs.DetailsNotLoaded(run.Details.Count, run.EmployeeCount))
+                throw new InvalidOperationException(
+                    $"ไม่ได้โหลดแถวรายคนของรอบ {run.PayrollNumber} ({run.EmployeeCount} คน) — ระบบไม่ออก 50 ทวิ จากข้อมูลว่าง (บั๊กโปรแกรม ต้องแก้ผู้เรียก)");
             var details = run.Details.Where(d => d.WithholdingTax > 0).ToList();
-            if (details.Count == 0) return;
+            if (details.Count == 0)
+            {
+                if (certTx != null) await certTx.CommitAsync();
+                return;
+            }
 
             // Void existing certs ที่ออกจาก run นี้ (re-post scenario)
             var existingFromThisRun = await _db.Set<WithholdingTaxCert>()
@@ -3731,6 +3747,13 @@ public class PayrollService : IPayrollService
             var skipped = new List<string>();
             var issuedCount = 0;   // นับที่ออกได้จริง — ไม่ใช่ details.Count − skipped
                                    // (แถวที่ HR ออกใบเองไว้ก่อนก็ไม่ได้ออกใหม่ที่นี่)
+            // ★ P1-c: เลขที่ถูกใช้แล้วของงวดนี้ — รวมใบ Voided/ลบแล้ว (unique index (CompanyId, CertificateNumber) นับทุกแถว)
+            var pnd1Prefix = Accounting.Helpers.PayrollPnd1Certs.Prefix(run.Year, run.Month);
+            var takenNumbers = (await _db.Set<WithholdingTaxCert>().IgnoreQueryFilters().AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && c.CertificateNumber.StartsWith(pnd1Prefix))
+                    .Select(c => c.CertificateNumber)
+                    .ToListAsync())
+                .ToHashSet(StringComparer.Ordinal);
 
             foreach (var d in details)
             {
@@ -3782,7 +3805,9 @@ public class PayrollService : IPayrollService
                     await _db.SaveChangesAsync();
                 }
 
-                var certNumber = $"PND1-{run.Year}{run.Month:D2}-{emp.EmployeeCode}";
+                // ★ P1-c: ใบแรกคงรูปเดิม PND1-yyyymm-รหัส · ชน (รอบเดือนเดียวกันที่ถูกยกเลิก/ออกซ้ำ) ⇒ -2, -3 … (ตัวตั้งเดียว)
+                var certNumber = Accounting.Helpers.PayrollPnd1Certs.NextNumber(run.Year, run.Month, emp.EmployeeCode, takenNumbers);
+                takenNumbers.Add(certNumber);
                 var taxableIncome = d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
 
                 var cert = new WithholdingTaxCert
@@ -3817,6 +3842,7 @@ public class PayrollService : IPayrollService
                 issuedCount++;
             }
             await _db.SaveChangesAsync();
+            if (certTx != null) await certTx.CommitAsync();
             _logger?.LogInformation("ออก ภ.ง.ด.1 cert {Count} ฉบับสำหรับ run {Run}",
                 issuedCount, run.Id);
 
@@ -3845,6 +3871,7 @@ public class PayrollService : IPayrollService
         }
         catch (BusinessRuleException filed) when (filed.RuleCode == "RD-50TWI-FILED")
         {
+            if (certTx != null) await certTx.RollbackAsync();
             // review198-S4 S4-6: ใบเดิมอยู่ใน ภ.ง.ด.1 ที่ยื่นแล้ว — ระบบคงใบเดิมไว้ทั้งชุด · เดิมตกไป catch ทั่วไปที่บอกให้กด "สร้างเอกสารใหม่"
             // ซึ่งจะล้มด้วยเหตุเดิมทุกครั้ง ⇒ แจ้งทางไปต่อที่ตรงเหตุ (ยื่นเพิ่มเติม/ปรับปรุงงวดปัจจุบัน) · ยอดนำส่งยังนับจากใบเดิม (ไม่ถูกบล็อก)
             _logger?.LogError(filed,
@@ -3859,6 +3886,7 @@ public class PayrollService : IPayrollService
         }
         catch (Exception ex)
         {
+            if (certTx != null && _db.Database.CurrentTransaction != null) await certTx.RollbackAsync();
             // ⚠️ เดิมเป็น LogWarning เฉย ๆ ⇒ งวดที่ออกใบไม่สำเร็จทั้งก้อนเงียบสนิท
             // ทั้งที่ 50 ทวิ มีกำหนดตามกฎหมาย (ออกในวันที่จ่าย · ยื่นวันที่ 7/15)
             // ที่นี่ throw ไม่ได้ (การจ่ายเงิน commit ไปแล้ว — ล้มย้อนหลังไม่ได้)
@@ -3913,7 +3941,10 @@ public class PayrollService : IPayrollService
 
     public async Task GeneratePostPaymentArtifactsAsync(Guid companyId, Guid runId, string actor)
     {
+        // ★ รอบ 201 ฝ่ายค้าน PR2 (P1-b): Include(Details) — เส้นหลักรันใน background scope (DbContext ใหม่ ไม่มีแถวรายคนที่ติดตามไว้)
+        //   เดิมไม่ Include ⇒ run.Details ว่าง ⇒ IssueMonthlyPnd1CertsAsync คืนเงียบ = 50 ทวิ อัตโนมัติไม่เคยออก (ผ่านเฉพาะเส้น inline ของเทสต์)
         var run = await _db.Set<PayrollRun>()
+            .Include(r => r.Details)
             .FirstOrDefaultAsync(r => r.Id == runId && r.CompanyId == companyId && !r.IsDeleted);
         if (run == null) return;
 
@@ -4816,6 +4847,12 @@ public class PayrollService : IPayrollService
                 && (t.Status != TaxReportStatus.Draft || t.FilingLockedAt != null))
             .Select(t => new { t.TaxType, t.Year, t.Month })
             .ToListAsync();
+        // ── ยื่นแล้ว (4) รอบ 201 ฝ่ายค้าน PR2 (P1-a): บันทึกการนำส่ง ภ.ง.ด.1 ของงวด (StatutoryRemittance WhtPnd1) — นำส่ง = ยื่นแบบพร้อมชำระ ·
+        //    เดิมไม่อ่าน ⇒ รอบ Paid ที่นำส่ง ภ.ง.ด.1 แล้วแต่ไม่ได้ติ๊กปฏิทินภาษี ถูกยกเลิก/แก้ยอดได้ และ 50 ทวิ ของรอบถูกยกเลิกตาม
+        var pnd1Remitted = await _db.Set<StatutoryRemittance>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "WhtPnd1" && years.Contains(r.PeriodYear))
+            .Select(r => new { r.PeriodYear, r.PeriodMonth })
+            .ToListAsync();
         // ── สร้างไฟล์ยื่นแล้ว (เตือนเท่านั้น — "สร้างไฟล์ ≠ ยื่น" · ฝ่ายค้าน P1)
         var efilings = await _db.EFilingExports.AsNoTracking()
             .Where(e => e.CompanyId == companyId && !e.IsDeleted && years.Contains(e.PeriodYear)
@@ -4844,6 +4881,8 @@ public class PayrollService : IPayrollService
             foreach (var t in legacyReports.Where(t => t.Year == y && t.Month == m))
                 marks.Add(new PayrollFilingMark(t.TaxType == TaxType.WithholdingTax1 ? PayrollRunLockEvidence.Pnd1Label : PayrollRunLockEvidence.SsoLabel,
                     PayrollFilingSource.LegacyTaxReport));
+            if (pnd1Remitted.Any(r => r.PeriodYear == y && r.PeriodMonth == m))
+                marks.Add(new PayrollFilingMark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.StatutoryRemittance));
             result[run.Id] = PayrollRunLockEvidence.From(marks,
                 runSsoSettled: run.SsoSettledAt.HasValue,
                 allocatedRows: allocated.FirstOrDefault(a => a.RunId == run.Id)?.Count ?? 0,

@@ -85,7 +85,8 @@ RULES = [
          must=["TaxCalendarEvents", "ComplianceFilings", "TaxReports", "EFilingExports", "EmployeeProjectTimes",
                "SsoSettledAt.HasValue", "PayrollRunLockEvidence.From(", "PayrollFilingSource.TaxCalendar"],
          must_lit=['e.Status == "Filed"', 'f.Status == "Filed"'],
-         forbid=["StatutoryRemittances"],
+         # รอบ 201 ฝ่ายค้าน PR2 (P1-a): การนำส่ง ภ.ง.ด.1 รายงวด (StatutoryRemittance WhtPnd1) = หลักฐานยื่นแล้ว · "นำส่ง สปส." ยังต้องผูกกับรอบ
+         forbid_lit=['"SsoSps110"'],
          why="หลักฐาน 'ยื่นแล้ว' ต้องอ่านปฏิทินภาษี (ทางเดียวบนจอ · C1) · 'นำส่งแล้ว' ผูกกับรอบ ไม่ใช่แถวนำส่งรายเดือน (C2)"),
     dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync",
          must=["EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)", "payeeTaxId == null"],
@@ -3327,6 +3328,35 @@ RULES += [
     dict(file=PAYROLL, method="GetPayrollRunAsync",
          must=["PayrollSsoFlagGuard.Check("],
          why="PR2 ฝ่ายค้าน Q3: แถวที่ธง ปกส. ขัดกับฐานต้องเห็นคำเตือนบนหน้ารอบ (ตัวตัดสินเดียวกับ ➕/✏️ · ไม่บล็อก)"),
+]
+
+# ── รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอง (P1-a · P1-b · P1-c · P2-d) ──
+RULES += [
+    dict(file=PAYROLL, method="LoadRecalculateLockEvidenceAsync#0",
+         must=["PayrollFilingSource.StatutoryRemittance", "r.CompanyId == companyId && !r.IsDeleted"],
+         must_lit=['r.RemittanceType == "WhtPnd1"'],
+         why="PR2 P1-a: นำส่ง ภ.ง.ด.1 ของงวดแล้ว = ยื่นแล้ว — หลักฐานตัวเดียวของแก้ยอด/คำนวณใหม่/ยกเลิกรอบ"),
+    dict(file="Helpers/WhtCertVoidGuard.cs", method="CheckAsync",
+         must=["StatutoryRemittances", "RemittanceForm(", "r.CompanyId == companyId && !r.IsDeleted"],
+         why="PR2 P1-a: 50 ทวิ ในงวดที่นำส่งแล้วยกเลิกไม่ได้ — หลักฐานเดียวกับด่านรอบเงินเดือน"),
+    dict(file=PAYROLL, method="GeneratePostPaymentArtifactsAsync",
+         must=["Include(r => r.Details)"],
+         before=[("Include(r => r.Details)", "IssueMonthlyPnd1CertsAsync(")],
+         why="PR2 P1-b: เส้น background scope ต้องโหลดแถวรายคน — ไม่งั้น 50 ทวิ อัตโนมัติไม่เคยออก"),
+    dict(file=PAYROLL, method="IssueMonthlyPnd1CertsAsync#0",
+         must=["PayrollPnd1Certs.NextNumber(", "PayrollPnd1Certs.DetailsNotLoaded(", "IgnoreQueryFilters()", "certTx.CommitAsync(",
+               "c.CompanyId == companyId && c.CertificateNumber.StartsWith(pnd1Prefix)"],
+         must_lit=["FOR UPDATE", "\\\"CompanyId\\\" = {1}"],
+         before=[("ExecuteSqlRawAsync(", "PayrollPnd1Certs.DetailsNotLoaded("),
+                 ("PayrollPnd1Certs.DetailsNotLoaded(", "WhtCertVoidGuard.CheckAsync(")],
+         forbid_lit=["PND1-{run.Year}"],
+         why="PR2 P1-b/P1-c: ห้ามคืนเงียบเมื่อไม่ได้โหลดแถวรายคน · เลขใบจากตัวตั้งเดียว (ต่อท้าย -2/-3 เมื่อชนใบเดิมรวม Voided) ใต้ล็อกแถวรอบ"),
+    dict(file="Services/Implementations/HrAllocationService.cs", method="AllocatePayrollRunAsync",
+         must=["tx.CommitAsync("],
+         must_lit=["FOR UPDATE", "\\\"CompanyId\\\" = {1}"],
+         before=[("ExecuteSqlRawAsync(", "Include(r => r.Details)"),
+                 ("ExecuteSqlRawAsync(", "_db.SaveChangesAsync(")],
+         why="PR2 P2-d: ปันต้นทุนล็อกแถวรอบก่อนอ่าน (ลำดับเดียวกับยกเลิก/แก้ยอด) — ปันซ้อนกับยกเลิกรอบไม่ได้"),
 ]
 
 # ── รอบ 201 ทีม PL (Platform/Audit/Security/Tools) — A-PL3 watermark งานตรวจ chain · (บล็อกนี้ทีม PL ต่อท้ายเอง) ──

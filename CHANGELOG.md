@@ -4265,3 +4265,11 @@ _2026-10-01 รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน 
   ผ่านตัวตัดสินเลข ปกส. เดียว · ชื่อพนักงานในตารางรอบผ่าน `Layout.esc`
 - เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit 2fe0e7c4)_
 
+_2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอง (P1-a · P1-b · P1-c · P2-d · P2-e · P2-f · P2-g)
+- **P1-a** `PayrollFilingSource.StatutoryRemittance` + ตัวหาหลักฐานอ่าน `StatutoryRemittance` `WhtPnd1` ของงวด · `WhtCertVoidGuard.CheckAsync` นับการนำส่ง ภ.ง.ด.1/3/53 เป็นยื่นแล้ว
+- **P1-b** `GeneratePostPaymentArtifactsAsync` `Include(Details)` · `PayrollPnd1Certs.DetailsNotLoaded` ⇒ ล้มดัง
+- **P1-c** `Helpers/PayrollPnd1Certs.NextNumber` (ใบแรกรูปเดิม · ชนแล้ว -2/-3) · ออกใบในธุรกรรม + ล็อกแถวรอบ · ค้นเลขที่ใช้แล้วรวมใบ Voided/ลบ
+- **P2-d** `HrAllocationService.AllocatePayrollRunAsync` ธุรกรรม + `FOR UPDATE` แถวรอบก่อนอ่าน · **P2-e** ข้อความปันต้นทุนของรอบ Paid ชี้ "กลับรายการจ่าย"
+- **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
+- เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit <pending>)_
+
