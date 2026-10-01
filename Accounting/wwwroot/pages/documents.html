@@ -5240,14 +5240,17 @@
           }
           html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
           html += '<thead><tr style="text-align:left;border-bottom:1px solid #93c5fd"><th style="padding:4px">บรรทัด</th><th style="padding:4px">รายละเอียด</th><th style="padding:4px">ผังที่แนะนำ</th><th style="padding:4px;text-align:right">มั่นใจ</th><th style="padding:4px">เหตุผล</th></tr></thead><tbody>';
-          items.forEach((it, idx) => {
+          items.forEach((it) => {
             const ln = lines.find(l => l.tempId === it.tempId);
+            // เลขบรรทัด = ลำดับการ์ดจริงจาก tempId (ฝ่ายค้าน X-9 — ลำดับในผลลัพธ์เลื่อนเมื่อมีการ์ดว่าง)
+            const cardNo = parseInt(String(it.tempId || '').replace('line-', ''), 10);
+            const lineLabel = Number.isInteger(cardNo) ? String(cardNo + 1) : '—';
             const conf = it.confidence != null ? Math.round(it.confidence * 100) + '%' : '—';
             // สีบอกผลการตัดสินของเซิร์ฟเวอร์ (เติมให้ได้ / แนะนำเฉย ๆ / ไม่มีคำตอบ) — ไม่ถือเกณฑ์ตัวเลขใน JS
             const color = it.mayAutoFill ? '#15803d' : it.accountCode ? '#ca8a04' : '#dc2626';
             const code = it.accountCode || '—';
             const accName = this.coaByCode?.[it.accountCode]?.accountName || '';
-            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${idx + 1}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)} <span style="color:#6b7280;font-weight:400">${Layout.esc(accName)}</span></td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
+            html += `<tr style="border-bottom:1px solid #dbeafe"><td style="padding:4px">${lineLabel}</td><td style="padding:4px">${Layout.esc(ln?.description || '')}</td><td style="padding:4px;font-weight:600">${Layout.esc(code)} <span style="color:#6b7280;font-weight:400">${Layout.esc(accName)}</span></td><td style="padding:4px;text-align:right;color:${color};font-weight:600">${conf}</td><td style="padding:4px;color:#475569">${Layout.esc(it.reasoning || '')}</td></tr>`;
           });
           html += '</tbody></table>';
           if (observe.length) {

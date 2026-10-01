@@ -793,8 +793,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             // ── ด่านกันคู่ที่ AI แต่งขึ้น (รอบ 201 ทีม AI · A-AI7 · H-9) — ต้องอยู่ **ก่อน** ทุกขั้นที่ใช้คู่ของ AI
             // (ธง AiValidated ของคู่เซิร์ฟเวอร์ · pre-dedup · dedup) ไม่งั้นคู่ที่ไม่มีตัวตนแย่งบรรทัดธนาคาร
             // จากคู่จริงของเซิร์ฟเวอร์ได้ แล้วพกยอดที่ AI แต่งไปถึงจอ (ยอดตรงเป๊ะ = มั่นใจ 100%)
-            aiParsed = ScreenAiMatches(aiParsed, txns.Select(t => t.Id),
-                openDocs.Select(d => d.Id).Concat(openPayments.Select(p => p.Id)).Concat(openJes.Select(j => j.Id)));
+            // ชนิดจริงของผู้สมัคร (ฝ่ายค้าน X-2) — id ถูกแต่ชนิดผิดต้องถูกแก้เป็นชนิดจริงก่อนถึงเส้นยืนยัน
+            var realTypeById = new Dictionary<Guid, string>();
+            foreach (var d in openDocs) if (Guid.TryParse(d.Id, out var g)) realTypeById[g] = "Document";
+            foreach (var p in openPayments) if (Guid.TryParse(p.Id, out var g)) realTypeById[g] = "Payment";
+            foreach (var j in openJes) if (Guid.TryParse(j.Id, out var g)) realTypeById[g] = "JournalEntry";
+            aiParsed = ScreenAiMatches(aiParsed, txns.Select(t => t.Id), realTypeById);
 
             // Per-(bankTxn, candidate) set of pairings AI proposed — used to
             // mark a SERVER match as AiValidated when AI proposed the IDENTICAL
@@ -987,6 +991,11 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             realAmountById[j.Id] = j.GrossAmount ?? j.NetAmount;   // document face value
         }
         foreach (var p in openPayments) { labelById[p.Id] = p.Number; realAmountById[p.Id] = p.Amount; }
+        // ชนิดจริงต่อ id (ฝ่ายค้าน X-2) — ชั้นปรับเทียบเขียนทับชนิดที่ข้อเสนออ้าง ก่อนส่งถึงจอ/เส้นยืนยัน
+        var realTypeOfId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var j in openJes) realTypeOfId[j.Id] = "JournalEntry";
+        foreach (var p in openPayments) realTypeOfId[p.Id] = "Payment";
+        foreach (var d in openDocs) realTypeOfId[d.Id] = "Document";
         foreach (var d in openDocs) { labelById[d.Id] = d.Number; realAmountById[d.Id] = d.Outstanding; }
 
         // Identity + source-date lookup so a CONFIRMED 1:1 can be upgraded to
@@ -1098,7 +1107,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                     }
                     // ผ่านด่าน BankAiCandidateGuard แล้ว ⇒ ทุก id มียอดจริงเสมอ — **ไม่มีทางตกไปใช้ยอดของ AI**
                     // (เดิม `? ra2 : c.Amount` = id ที่แต่งขึ้นพกยอดของ AI มาถึงจอ · H-9)
-                    return c with { Amount = realAmountById[key], Label = labelById.GetValueOrDefault(key) };
+                    return c with
+                    {
+                        Amount = realAmountById[key],
+                        Label = labelById.GetValueOrDefault(key),
+                        CandidateType = realTypeOfId.GetValueOrDefault(key) ?? c.CandidateType,
+                    };
                 }).ToList(),
             };
             string? hallucinationNote = hallucinated.Count == 0 ? null
@@ -1300,19 +1314,29 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
     /// ข้อเสนอที่ถูกทิ้งทั้งก้อนถูกนับเป็นคำเตือนของแผน (ไม่หายเงียบ)
     /// </summary>
     private static ParsedResponse ScreenAiMatches(ParsedResponse aiParsed,
-        IEnumerable<string> knownBankTxnIds, IEnumerable<string> knownCandidateIds)
+        IEnumerable<string> knownBankTxnIds, IReadOnlyDictionary<Guid, string> realTypeById)
     {
         var bankSet = new HashSet<Guid>(knownBankTxnIds
             .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty));
-        var candSet = new HashSet<Guid>(knownCandidateIds
-            .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty));
+        Func<Guid, bool> isKnownCandidate = realTypeById.ContainsKey;
 
         var kept = new List<ProposedMatch>(aiParsed.Matches.Count);
-        int droppedBank = 0, droppedNoReal = 0, trimmed = 0;
-        foreach (var m in aiParsed.Matches)
+        int droppedBank = 0, droppedNoReal = 0, trimmed = 0, typeCorrected = 0;
+        foreach (var m0 in aiParsed.Matches)
         {
+            // ชนิดจริงจากชุดผู้สมัคร (X-2) — ไม่ใช่ชนิดที่ AI อ้าง
+            var m = m0 with
+            {
+                Candidates = m0.Candidates.Select(c =>
+                {
+                    var (type, corrected) = Accounting.Helpers.BankAiCandidateGuard.RealType(
+                        c.CandidateId, c.CandidateType, id => realTypeById.TryGetValue(id, out var t) ? t : null);
+                    if (corrected) typeCorrected++;
+                    return c with { CandidateType = type };
+                }).ToList(),
+            };
             var verdict = Accounting.Helpers.BankAiCandidateGuard.Screen(
-                m.BankTxnId, m.Candidates.Select(c => c.CandidateId), bankSet.Contains, candSet.Contains);
+                m.BankTxnId, m.Candidates.Select(c => c.CandidateId), bankSet.Contains, isKnownCandidate);
             if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropUnknownBankTxn) { droppedBank++; continue; }
             if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.DropNoRealCandidate) { droppedNoReal++; continue; }
             if (verdict.Outcome == Accounting.Helpers.BankAiCandidateGuard.Outcome.KeepTrimmed)
@@ -1330,12 +1354,12 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             }
             kept.Add(m);
         }
+        var warnings = aiParsed.Warnings.ToList();
         var warning = Accounting.Helpers.BankAiCandidateGuard.PlanWarning(droppedBank, droppedNoReal, trimmed);
-        return aiParsed with
-        {
-            Matches = kept,
-            Warnings = warning == null ? aiParsed.Warnings : aiParsed.Warnings.Concat(new[] { warning }).ToList(),
-        };
+        if (warning != null) warnings.Add(warning);
+        if (typeCorrected > 0)
+            warnings.Add($"⚠ AI ระบุชนิดรายการผิด {typeCorrected} รายการ — ใช้ชนิดจริงจากระบบแทน (ตรวจคู่เหล่านั้นก่อนยืนยัน)");
+        return aiParsed with { Matches = kept, Warnings = warnings };
     }
 
     /// <summary>Best-effort JSON parse — never throws. AI hallucinations

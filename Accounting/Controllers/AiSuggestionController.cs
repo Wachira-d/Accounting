@@ -3012,67 +3012,9 @@ public class AiSuggestionController : ControllerBase
         }));
     }
 
-    // ────────────────────────────────────────────────────────────────
-    //  Payment-voucher batch suggestion — one call returns AI's pick
-    //  for EVERY line in one go. Used by the "สร้างใบสำคัญจ่ายจาก
-    //  ใบกำกับภาษี" wizard so the user sees a fully pre-filled draft
-    //  and only needs to override the rare bad guess.
-    // ────────────────────────────────────────────────────────────────
-
-    public sealed record BatchSuggestPvRequest(Guid SourceInvoiceId);
-
-    [HttpPost("payment-voucher/suggest-all-accounts")]
-    public async Task<ActionResult<ApiResponse<object>>> SuggestAllPvAccounts(
-        Guid companyId, [FromBody] BatchSuggestPvRequest req, CancellationToken ct)
-    {
-        var src = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == req.SourceInvoiceId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new
-            {
-                d.Id, d.Currency,
-                ContactName = d.Contact != null ? d.Contact.Name : null,
-                ContactTaxId = d.Contact != null ? d.Contact.TaxId : null,
-                Lines = d.Lines.Select(l => new { l.Id, l.Description, l.Amount, l.AccountId })
-                               .ToList(),
-            })
-            .FirstOrDefaultAsync(ct);
-        if (src == null)
-            return NotFound(new ApiResponse<object>(false, null, "ไม่พบ source invoice"));
-        if (src.Lines.Count == 0)
-            return Ok(new ApiResponse<object>(true, new { lines = Array.Empty<object>() }));
-
-        // Single BULK AI call covering every line — AI sees cross-line
-        // patterns (cluster detection, odd-line-out) the previous
-        // per-line fan-out couldn't. Cost drops from N× to 1×; accuracy
-        // improves on multi-category invoices.
-        using var aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var bulkLines = src.Lines.Select(l => (
-            LineId: l.Id,
-            Description: l.Description ?? "",
-            Amount: l.Amount,
-            CurrentAccountCode: (string?)null)).ToList();
-        var bulk = await _docAi.SuggestAllPaymentVoucherAccountingAsync(
-            companyId, req.SourceInvoiceId,
-            src.ContactName, src.ContactTaxId, vendorIndustry: null,
-            bulkLines, src.Currency ?? "THB", aiCts.Token);
-
-        var results = src.Lines.Select(ln => new
-        {
-            lineId = ln.Id,
-            description = ln.Description,
-            amount = ln.Amount,
-            ai = ToDto(bulk.ByLineId.TryGetValue(ln.Id, out var s) ? s : null),
-        }).ToList();
-        return Ok(new ApiResponse<object>(true, new
-        {
-            lines = results,
-            crossLineObservations = bulk.CrossLineObservations,
-            warnings = bulk.Warnings,
-            usedAi = bulk.UsedAi,
-            fromLocalModel = bulk.FromLocalModel,
-            sourceLabel = Helpers.AiAnswerSource.Label(Helpers.AiAnswerSource.Of(bulk.UsedAi, bulk.FromLocalModel)),
-        }));
-    }
+    // ฝ่ายค้าน X-7 (รอบ 201 ทีม AI): ลบ `POST ai/payment-voucher/suggest-all-accounts` — ไม่มีหน้าใดเรียก (api.js ค้าง) และเป็นทางเข้า
+    // ที่สองของ bulk PV ที่ไม่มี write-gate · ทางเข้าเดียวที่เหลือ = `POST document/ai-suggest-pv-accounting`
+    // (`DocumentService.SuggestPaymentVoucherAccountingAsync` · `GlSuggestionApplyPolicy` + `AiAnswerSource.LabelWithRules`)
 
     // ────────────────────────────────────────────────────────────────
     //  Advanced AI: Tier-4 OCR review, stock decisions, AR/AP

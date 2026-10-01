@@ -78,4 +78,33 @@ public class BankMatchSingleStandardTests
         Assert.Equal(a.Score, b.Score);
         Assert.True(a.Score <= BankMatchScorer.MaxScore);
     }
+    // ── ฝ่ายค้าน X-6: SuggestMatchAsync (V1 `/api/v1` + ปุ่ม "AI วิเคราะห์" ในหน้าต่างจับคู่) หยิบ "ใบแรกที่ยอดตรง" ตามลำดับเดียวกับจอ
+    //    ⇒ เปลี่ยนลำดับ = เปลี่ยนคำแนะนำของสองทางเข้านั้นด้วย — ล็อกด้วยโค้ดจริง (BankService.RankCandidates + PickSubset)
+
+    private static Accounting.Models.DTOs.Bank.MatchCandidate Pay(string number, int score, string deposit, int dateDiff = 0)
+        => new("Payment", Guid.NewGuid(), number, D, 1000m, "", null, null, dateDiff, 0m, score, null,
+            DepositLabel: null, DepositCategory: deposit);
+
+    [Fact]
+    public void X6_คำแนะนำ_SuggestMatch_อันดับที่เปลี่ยน_ใบคะแนนจริงสูงกว่าถูกหยิบ_แม้ลงเงินสด()
+    {
+        // เดิม: PV-เงินสด 85−5 = 80 · PV-ธนาคาร 80+5 = 85 ⇒ V1/ปุ่ม AI แนะนำ PV-ธนาคาร
+        // ตอนนี้: คะแนนจริง 85 > 80 ⇒ แนะนำ PV-เงินสด (เท่ากับที่ arbiter เห็น) — ผู้ใช้ยังเห็นป้าย "💵 เงินสด" ก่อนกดยืนยัน
+        var cash = Pay("PV-เงินสด", 85, "Cash");
+        var bank = Pay("PV-ธนาคาร", 80, "Bank");
+        var ranked = Accounting.Services.Implementations.BankService.RankCandidates(new[] { bank, cash }, bankIsInflow: true);
+        var (ids, _, exact) = Accounting.Services.Implementations.BankService.PickSubset(ranked, 1000m, 0.01m);
+        Assert.True(exact);
+        Assert.Equal(cash.Id, Assert.Single(ids));
+    }
+
+    [Fact]
+    public void X6_คำแนะนำ_SuggestMatch_คะแนนเท่ากัน_ยังหยิบใบที่ลงธนาคารเหมือนเดิม()
+    {
+        var cash = Pay("PV-เงินสด", 85, "Cash");
+        var bank = Pay("PV-ธนาคาร", 85, "Bank", dateDiff: 2);
+        var ranked = Accounting.Services.Implementations.BankService.RankCandidates(new[] { cash, bank }, bankIsInflow: true);
+        var (ids, _, _) = Accounting.Services.Implementations.BankService.PickSubset(ranked, 1000m, 0.01m);
+        Assert.Equal(bank.Id, Assert.Single(ids));
+    }
 }

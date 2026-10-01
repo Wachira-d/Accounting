@@ -84,7 +84,27 @@ public class BankAiCandidateGuardTests
         Assert.Contains("จับคู่ด้วยมือ", w);
     }
 
+    [Fact]
+    public void ฝ่ายค้าน_X2_id_จริงแต่ชนิดที่_AI_อ้างผิด_ต้องถูกแก้เป็นชนิดจริง()
+    {
+        // AI บอก "Payment" ให้ id ของสมุดรายวัน ⇒ เส้นยืนยันจะเก็บลง MatchedPaymentId (คอลัมน์ผิด)
+        var types = new Dictionary<Guid, string> { [Rv0500] = "JournalEntry" };
+        var (type, corrected) = BankAiCandidateGuard.RealType(Rv0500, "Payment", id => types.GetValueOrDefault(id));
+        Assert.Equal("JournalEntry", type);
+        Assert.True(corrected);
+    }
+
     // ── ครึ่งที่ "ใบถูกไม่ถูกแตะ" ───────────────────────────────────────
+
+    [Fact]
+    public void ฝ่ายค้าน_X2_ชนิดถูกอยู่แล้ว_ไม่นับว่าแก้_และ_id_ที่ไม่รู้จักคงค่าเดิม()
+    {
+        var types = new Dictionary<Guid, string> { [Rv0500] = "Payment" };
+        Assert.Equal(("Payment", false), BankAiCandidateGuard.RealType(Rv0500, "Payment", id => types.GetValueOrDefault(id)));
+        Assert.Equal(("Document", false), BankAiCandidateGuard.RealType(Fabricated, "Document", id => types.GetValueOrDefault(id)));
+        // ฝั่งเขียน: id ที่ประกาศว่าเป็นการชำระแต่ไม่อยู่ในชุดการชำระจริง = ถูกรายงาน
+        Assert.Equal(new[] { Rv0570 }, BankAiCandidateGuard.MissingIds(new[] { Rv0500, Rv0570 }, new HashSet<Guid> { Rv0500 }));
+    }
 
     [Fact]
     public void ข้อเสนอที่ผู้สมัครทุกตัวมีจริง_ต้องผ่านโดยไม่แตะ_รวมข้อเสนอของเซิร์ฟเวอร์()

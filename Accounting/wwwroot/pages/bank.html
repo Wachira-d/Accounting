@@ -737,13 +737,13 @@
           container.innerHTML = this.accounts.map(a => `
             <div class="card" style="cursor:pointer;transition:all .2s;${this.selectedAccount?.id === a.id ? 'border-color:var(--primary);box-shadow:var(--shadow-md)' : ''}" onclick="Page.selectAccount('${a.id}')">
               <div class="flex items-center justify-between" style="margin-bottom:12px">
-                <div class="font-semibold">${a.accountName}</div>
+                <div class="font-semibold">${Layout.esc(a.accountName)}</div>
                 <div class="flex gap-1">
                   ${a.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}
                   <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();Page.openEdit('${a.id}')" title="แก้ไข">&#9998;</button>
                 </div>
               </div>
-              <div class="text-xs text-gray-500">${a.bankName} - ${a.accountNumber}</div>
+              <div class="text-xs text-gray-500">${Layout.esc(a.bankName || '')} - ${Layout.esc(a.accountNumber || '')}</div>
               <div class="text-xs text-gray-400">${a.accountType === 'Savings' ? 'ออมทรัพย์' : a.accountType === 'Current' ? 'กระแสรายวัน' : a.accountType === 'Fixed' ? 'ฝากประจำ' : a.accountType || ''} | ${a.branchName || '-'}</div>
               ${a.linkedAccountCode ? `<div class="text-xs" style="color:var(--primary);margin-top:4px">ผังบัญชี: ${a.linkedAccountCode} ${a.linkedAccountName || ''}</div>` : ''}
               ${this.renderBalances(a)}
@@ -1108,7 +1108,7 @@
         const range = (from || '–') + ' ถึง ' + (to || '–');
         if (!(await Layout.confirmDanger({
           title: 'ลบรายการทั้งหมดตามช่วงวันที่',
-          message: `ลบรายการในบัญชี "${this.selectedAccount.accountName}" ช่วง ${range}${includeReconciled ? ' (รวมที่กระทบยอดแล้ว)' : ' (ยกเว้นที่กระทบยอดแล้ว)'} ?`,
+          message: `ลบรายการในบัญชี "${Layout.esc(this.selectedAccount.accountName)}" ช่วง ${Layout.esc(range)}${includeReconciled ? ' (รวมที่กระทบยอดแล้ว)' : ' (ยกเว้นที่กระทบยอดแล้ว)'} ?`,
           mode: 'type', confirmText: 'confirm'
         }))) return;
         const api = Layout.api(); if (!api) return;
@@ -2061,7 +2061,7 @@
             ${block('Prompt JSON (sent to AI)', d.promptJson)}`;
         } catch (e) {
           document.getElementById('bulkAiRawContent').innerHTML =
-            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+            `<div class="text-danger" style="padding:12px">โหลดไม่สำเร็จ: ${Layout.esc(e.message)}</div>`;
         }
       },
 
@@ -2086,7 +2086,7 @@
               <div class="flex items-center gap-2">
                 <span class="badge" style="background:${confColor(s.confidence)};color:white">${confLabel(s.confidence)} ${Math.round(s.confidence*100)}%</span>
                 <span class="badge badge-primary">${matchTypeLabel}</span>
-                <span class="text-xs text-gray-500">${s.reasoning}</span>
+                <span class="text-xs text-gray-500">${Layout.esc(s.reasoning || '')}</span>
               </div>
               <div class="flex gap-1">
                 <button class="btn btn-sm btn-success" onclick="Page.acceptSuggestion(${idx})" data-i18n="common.confirm">ยืนยัน</button>
@@ -2100,15 +2100,15 @@
                   <span>${Layout.date(bt.transactionDate)}</span>
                   <span class="font-bold ${isCredit(bt.transactionType) ? 'text-success' : 'text-danger'}">${isCredit(bt.transactionType) ? '+' : '-'}${Layout.money(bt.amount)}</span>
                 </div>
-                <div class="text-xs text-gray-500">${bt.description || bt.payee || '-'}</div>
+                <div class="text-xs text-gray-500">${Layout.esc(bt.description || bt.payee || '-')}</div>
               </div>
               <div style="border:1px solid var(--border);border-radius:6px;padding:8px 12px">
                 <div class="text-xs text-gray-500" style="margin-bottom:4px">รายการบัญชี${s.accountingEntries.length > 1 ? ` (${s.accountingEntries.length} รายการ)` : ''}</div>
                 ${s.accountingEntries.map(e => `<div class="flex justify-between" style="margin-bottom:2px">
-                  <span class="text-xs">${Layout.date(e.entryDate)} ${e.entryNumber || ''} ${e.contactName ? '- ' + e.contactName : ''}</span>
+                  <span class="text-xs">${Layout.date(e.entryDate)} ${Layout.esc(e.entryNumber || '')} ${e.contactName ? '- ' + Layout.esc(e.contactName) : ''}</span>
                   <span class="font-medium text-xs">${Layout.money(e.amount)}</span>
                 </div>
-                <div class="text-xs text-gray-400">${e.description || '-'}</div>`).join('')}
+                <div class="text-xs text-gray-400">${Layout.esc(e.description || '-')}</div>`).join('')}
                 ${s.difference > 0.01 ? `<div class="text-xs text-danger" style="margin-top:4px">ผลต่าง: ${Layout.money(s.difference)}</div>` : ''}
               </div>
             </div>
@@ -2122,11 +2122,11 @@
         document.getElementById('discrepancyCount').textContent = d.length;
         document.getElementById('discrepancyBody').innerHTML = d.map(x => `<tr>
           <td>${Layout.date(x.entryDate)}</td>
-          <td class="font-medium">${x.journalNumber || '-'}</td>
+          <td class="font-medium">${Layout.esc(x.journalNumber || '-')}</td>
           <td class="text-right">${Layout.money(x.amount)}</td>
-          <td class="text-xs">${x.description || '-'}</td>
-          <td><span class="badge badge-warning">${x.bookedTo}</span></td>
-          <td class="text-xs">${x.suggestedFix}${x.suggestedAccountName ? ' (' + x.suggestedAccountName + ')' : ''}</td>
+          <td class="text-xs">${Layout.esc(x.description || '-')}</td>
+          <td><span class="badge badge-warning">${Layout.esc(x.bookedTo || '')}</span></td>
+          <td class="text-xs">${Layout.esc(x.suggestedFix || '')}${x.suggestedAccountName ? ' (' + Layout.esc(x.suggestedAccountName) + ')' : ''}</td>
         </tr>`).join('');
       },
       renderWarnings() {
@@ -2138,8 +2138,8 @@
         document.getElementById('warningList').innerHTML = w.map(x =>
           `<div style="padding:6px 0;border-bottom:1px solid var(--border)" class="text-sm">
             <span>${typeIcon[x.warningType] || '&#9888;'}</span>
-            <span class="badge badge-danger" style="font-size:10px">${x.warningType}</span>
-            ${x.message}
+            <span class="badge badge-danger" style="font-size:10px">${Layout.esc(x.warningType || '')}</span>
+            ${Layout.esc(x.message || '')}
           </div>`).join('');
       },
       async acceptSuggestion(idx, source = 'Explicit') {
@@ -2569,10 +2569,12 @@
 
         const api = Layout.api(); if (!api) return;
         try {
+          // แหล่งของคำยืนยัน (ฝ่ายค้าน X-3): ติ๊กเองทุกตัว = Explicit · ยังมีตัวที่ปุ่ม AI ติ๊กให้แล้วไม่ได้แตะ = Implicit
+          // (คลังห้ามนับข้อเสนอของระบบที่ผู้ใช้ปล่อยผ่านเป็นหลักฐาน · รอบ 201 A-AI1)
+          const confirmSource = sel.some(x => x.autoSrc) ? 'Implicit' : 'Explicit';
           if (sel.length === 1) {
             // Use the simple single-match endpoint
-            // ผู้ใช้ติ๊กเลือกคู่เองในหน้าต่างจับคู่ = Explicit (รอบ 201 A-AI1)
-            const payload = { bankTransactionId: transId, source: 'Explicit' };
+            const payload = { bankTransactionId: transId, source: confirmSource };
             if (type === 'Payment') payload.matchedPaymentId = sel[0].id;
             else payload.matchedJournalEntryId = sel[0].id;
             await api.reconcile(payload);
@@ -2583,7 +2585,7 @@
                 bankTransactionId: transId,
                 matchType: 'Multiple',
                 matchedEntryIds: sel.map(s => s.id),
-                source: 'Explicit'
+                source: confirmSource
               }]
             });
           }
@@ -2635,8 +2637,9 @@
           for (const id of r.suggestedIds) {
             const c = list.find(x => x.id === id);
             if (c) {
+              // ติ๊กโดยปุ่ม AI ⇒ ติดธง (ผู้ใช้กดติ๊กเองภายหลัง = รายการใหม่ไม่มีธง · ฝ่ายค้าน X-3)
               this._pickerSelected.push({
-                type: r.type, id: c.id, number: c.number, amount: Number(c.amount) || 0
+                type: r.type, id: c.id, number: c.number, amount: Number(c.amount) || 0, autoSrc: 'ai'
               });
             }
           }
@@ -2788,7 +2791,7 @@
       // === IMPORT STATEMENT ===
       openImport() {
         const sel = document.getElementById('impAccount');
-        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName} - ${a.accountNumber}</option>`).join('');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${Layout.esc(a.accountName)} - ${Layout.esc(a.accountNumber || '')}</option>`).join('');
         Layout.openModal('importModal');
       },
       async doImport() {
@@ -2908,7 +2911,7 @@
           const tbody = document.getElementById('connBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการเชื่อมต่อ</td></tr>'; return; }
           tbody.innerHTML = items.map(c => `<tr>
-            <td class="font-medium">${c.bankCode || c.bankName || '-'}</td>
+            <td class="font-medium">${Layout.esc(c.bankCode || c.bankName || '-')}</td>
             <td>${c.bankAccountName || '-'}</td>
             <td>${c.status === 'Active' ? '<span class="badge badge-success">เชื่อมต่อ</span>' : c.status === 'Error' ? '<span class="badge badge-danger" data-i18n="common.error">ผิดพลาด</span>' : '<span class="badge badge-gray">' + (c.status || 'ไม่ทราบ') + '</span>'}</td>
             <td>${c.lastSyncAt ? Layout.date(c.lastSyncAt) : 'ยังไม่เคย'}</td>
@@ -2921,7 +2924,7 @@
       },
       openCreateConnection() {
         const sel = document.getElementById('cAccount');
-        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${a.accountName}</option>`).join('');
+        sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${Layout.esc(a.accountName)}</option>`).join('');
         document.getElementById('cName').value = '';
         document.getElementById('cApiKey').value = '';
         document.getElementById('cApiSecret').value = '';
@@ -3046,7 +3049,7 @@
         this.bankFilter = '';
         this.itemFilter = '';
         document.getElementById('grAccount').innerHTML = accounts
-          .map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${a.accountName} — ${a.bankName} ${a.accountNumber}</option>`).join('');
+          .map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${Layout.esc(a.accountName)} — ${Layout.esc(a.bankName || '')} ${Layout.esc(a.accountNumber || '')}</option>`).join('');
         document.getElementById('grDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         document.getElementById('grNotes').value = '';
         document.getElementById('grBankSearch').value = '';
@@ -3164,7 +3167,7 @@
           this.renderItems();
           this.recalc();
         } catch (e) {
-          document.getElementById('grBankList').innerHTML = `<div style="text-align:center;color:#dc2626;padding:20px">${e.message}</div>`;
+          document.getElementById('grBankList').innerHTML = `<div style="text-align:center;color:#dc2626;padding:20px">${Layout.esc(e.message)}</div>`;
           document.getElementById('grItemList').innerHTML = '';
         }
       },
@@ -3185,8 +3188,8 @@
             <label class="gr-row" style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:8px;border-radius:6px;cursor:pointer;margin-bottom:4px;background:${t._selected ? '#dbeafe' : '#fff'};border:1px solid ${t._selected ? '#60a5fa' : '#e2e8f0'}">
               <input type="checkbox" ${t._selected ? 'checked' : ''} onchange="GroupReconcile.toggleBank(${i}, this.checked)">
               <div>
-                <div style="font-size:13px;font-weight:500">${new Date(t.date).toLocaleDateString('th-TH')} · ${t.description || '(ไม่มีรายละเอียด)'}</div>
-                <div style="font-size:11px;color:#64748b">${t.reference || '—'}</div>
+                <div style="font-size:13px;font-weight:500">${new Date(t.date).toLocaleDateString('th-TH')} · ${Layout.esc(t.description || '(ไม่มีรายละเอียด)')}</div>
+                <div style="font-size:11px;color:#64748b">${Layout.esc(t.reference || '—')}</div>
               </div>
               <div style="text-align:right">
                 <div style="font-size:14px;font-weight:600;color:${color}">${sign}${Layout.money(t.amount)}</div>
@@ -3211,7 +3214,7 @@
             <label class="gr-row" style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:8px;border-radius:6px;cursor:pointer;margin-bottom:4px;background:${it._selected ? '#fef3c7' : '#fff'};border:1px solid ${it._selected ? '#fbbf24' : '#e2e8f0'}">
               <input type="checkbox" ${it._selected ? 'checked' : ''} onchange="GroupReconcile.toggleItem(${i}, this.checked)">
               <div>
-                <div style="font-size:13px;font-weight:500">${typeBadge} ${it.number || '—'} · ${it.description || ''}</div>
+                <div style="font-size:13px;font-weight:500">${typeBadge} ${Layout.esc(it.number || '—')} · ${Layout.esc(it.description || '')}</div>
                 <div style="font-size:11px;color:#64748b">${it.date ? new Date(it.date).toLocaleDateString('th-TH') : ''}</div>
               </div>
               <div style="text-align:right">
@@ -3381,7 +3384,7 @@
                 </tr>`).join('')}</tbody>
             </table>`;
         } catch (e) {
-          container.innerHTML = `<div style="text-align:center;color:#dc2626;padding:24px;font-size:13px">${e.message}</div>`;
+          container.innerHTML = `<div style="text-align:center;color:#dc2626;padding:24px;font-size:13px">${Layout.esc(e.message)}</div>`;
         }
       },
       async viewDetail(id) {
@@ -3429,7 +3432,7 @@
                 <tr style="background:${g.isBalanced ? '#d1fae5' : '#fee2e2'}"><td colspan="4"><strong>ผลต่าง</strong></td><td class="text-right"><strong>${fmt(g.difference)}</strong></td></tr>
               </tfoot>
             </table>`;
-        } catch (e) { document.getElementById('gdBody').innerHTML = `<div style="color:#dc2626;padding:16px">${e.message}</div>`; }
+        } catch (e) { document.getElementById('gdBody').innerHTML = `<div style="color:#dc2626;padding:16px">${Layout.esc(e.message)}</div>`; }
       },
       async unmatchCurrent() {
         if (!this.currentDetailId) return;

@@ -805,7 +805,10 @@ public partial class BankService
                 if (item.MatchType == "Payment" && item.MatchedPaymentId.HasValue) ids.Add(item.MatchedPaymentId.Value);
                 else if (item.MatchType == "JournalEntry" && item.MatchedJournalEntryId.HasValue) ids.Add(item.MatchedJournalEntryId.Value);
                 else if (item.MatchType == "Multiple" && item.MatchedEntryIds?.Any() == true) ids.AddRange(item.MatchedEntryIds);
-                await ValidateMatchAmountAsync(companyId, txn, ids);
+                // ชนิดที่ประกาศต้องตรงชนิดจริง (ฝ่ายค้าน X-2) — Multiple เก็บเป็นรายการ id จึงไม่ผูกชนิด
+                await ValidateMatchAmountAsync(companyId, txn, ids,
+                    declaredPaymentIds: item.MatchType == "Payment" ? ids : null,
+                    declaredJournalEntryIds: item.MatchType == "JournalEntry" ? ids : null);
 
                 txn.ReconciliationStatus = ReconciliationStatus.Matched;
                 txn.ReconciledAt = DateTime.UtcNow;

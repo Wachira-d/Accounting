@@ -37,6 +37,13 @@ public class BulkPvStudentTests
         Array.Empty<BulkPvAccountingPrompt.VendorHistoricalAccount>(),
         "THB").UserPromptJson;
 
+    /// <summary>รายละเอียดบรรทัดจากคำถามรายบรรทัด (อ่านผ่าน JSON — ข้อความดิบมีไทยเป็น \uXXXX)</summary>
+    private static string LineDescription(string perLineJson)
+    {
+        using var doc = JsonDocument.Parse(perLineJson);
+        return doc.RootElement.GetProperty("line").GetProperty("description").GetString() ?? "";
+    }
+
     // ── นักเรียน: แตกคำถามทั้งใบเป็นรายบรรทัดด้วยกุญแจรูปเดียวกับแถว feedback ลูก ─────────────
 
     [Fact]
@@ -49,7 +56,8 @@ public class BulkPvStudentTests
             (cid, json, ct) =>
             {
                 asked.Add(json);
-                var code = json.Contains("น้ำมัน") ? "53110" : "53120";
+                // JsonSerializer escape อักษรไทยเป็น \uXXXX ⇒ ห้ามค้นข้อความดิบ — อ่านค่าจาก JSON (ฝ่ายค้าน X-1)
+                var code = LineDescription(json).Contains("น้ำมัน") ? "53110" : "53120";
                 return Task.FromResult<LocalPrediction?>(new LocalPrediction(code, 0.90m, Array.Empty<string>(), 4, "v1"));
             }, CancellationToken.None);
 
@@ -68,12 +76,13 @@ public class BulkPvStudentTests
     public async Task นักเรียนตอบไม่ครบทุกบรรทัด_ความมั่นใจรวมต้องเป็นศูนย์_ไม่ข้ามครู()
     {
         var pred = await PaymentVoucherAccountingDistillationModel.PredictWithAsync(Guid.NewGuid(), BulkPrompt(),
-            (cid, json, ct) => Task.FromResult<LocalPrediction?>(json.Contains("น้ำมัน")
+            (cid, json, ct) => Task.FromResult<LocalPrediction?>(LineDescription(json).Contains("น้ำมัน")
                 ? new LocalPrediction("53110", 0.95m, Array.Empty<string>(), 9, "v1") : null),
             CancellationToken.None);
         Assert.NotNull(pred);
         Assert.Equal(0m, pred!.Confidence);
-        Assert.Contains("1/2", pred.StructuredJson);
+        using var doc = JsonDocument.Parse(pred.StructuredJson!);
+        Assert.Contains("1/2", doc.RootElement.GetProperty("warnings")[0].GetString());
     }
 
     [Fact]

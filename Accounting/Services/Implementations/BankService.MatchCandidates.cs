@@ -193,7 +193,7 @@ public partial class BankService
 
         var bankTxnIsInflowForSort = bankTxn.TransactionType == BankTransactionType.Deposit
             || bankTxn.TransactionType == BankTransactionType.Interest;
-        var rankedPaymentsAll = paymentCandidates
+        IEnumerable<MatchCandidate> rankedPaymentsSeq = paymentCandidates
             .Select(p =>
             {
                 var fx = Accounting.Helpers.BankMatchCurrency.Convert(
@@ -236,12 +236,8 @@ public partial class BankService
                     BankCurrencyAmount: fx.Comparable ? fx.BankCurrencyAmount : (decimal?)null,
                     CurrencyNote: fx.Kind == Accounting.Helpers.BankAmountComparability.SameCurrency
                         ? null : fx.Reason);
-            })
-            .OrderByDescending(c => c.Score)
-            .ThenByDescending(c => Accounting.Helpers.BankMatchScorer.DepositPreference(
-                c.Type, c.DepositCategory, bankTxnIsInflowForSort, c.Amount))
-            .ThenBy(c => c.DateDiffDays)
-            .ToList();
+            });
+        var rankedPaymentsAll = RankCandidates(rankedPaymentsSeq, bankTxnIsInflowForSort);
 
         var totalPaymentsInWindow = rankedPaymentsAll.Count;
         var rankedPayments = rankedPaymentsAll.Take(DisplayCap).ToList();
@@ -282,7 +278,7 @@ public partial class BankService
         var bankTxnIsDeposit2 = bankTxn.TransactionType == BankTransactionType.Deposit
             || bankTxn.TransactionType == BankTransactionType.Interest;
 
-        var rankedJournalsAll = jeCandidates
+        IEnumerable<MatchCandidate> rankedJournalsSeq = jeCandidates
             .Select(j =>
             {
                 // Use TotalDebit (= TotalCredit) as the JE amount
@@ -314,12 +310,8 @@ public partial class BankService
                     ScoreReason: reason,
                     DepositLabel: depLabel,
                     DepositCategory: depCat);
-            })
-            .OrderByDescending(c => c.Score)
-            .ThenByDescending(c => Accounting.Helpers.BankMatchScorer.DepositPreference(
-                c.Type, c.DepositCategory, bankTxnIsDeposit2, c.Amount))
-            .ThenBy(c => c.DateDiffDays)
-            .ToList();
+            });
+        var rankedJournalsAll = RankCandidates(rankedJournalsSeq, bankTxnIsDeposit2);
 
         var totalJournalEntriesInWindow = rankedJournalsAll.Count;
         var rankedJournals = rankedJournalsAll.Take(DisplayCap).ToList();
@@ -354,27 +346,6 @@ public partial class BankService
         var data = await GetMatchCandidatesAsync(companyId, bankTransactionId);
         var target = data.BankTransactionAmount;
         const decimal tolerance = 0.01m; // 1 satang tolerance
-
-        // Helper: try to find a subset whose amounts sum to `target`.
-        // Returns selected IDs + total + exact flag.
-        static (List<Guid> ids, decimal sum, bool exact) PickSubset(List<MatchCandidate> items, decimal target, decimal tol)
-        {
-            // 1) Single exact match wins
-            var single = items.FirstOrDefault(i => Math.Abs(i.Amount - target) <= tol);
-            if (single != null) return (new List<Guid> { single.Id }, single.Amount, true);
-
-            // 2) Many-to-one subset-sum (limit to 20 to keep backtracking tractable)
-            var pool = items.Where(i => i.Amount > 0 && i.Amount <= target + tol)
-                .OrderByDescending(i => i.Score) // bias toward high-score candidates first
-                .Take(20)
-                .ToList();
-
-            var picks = new List<MatchCandidate>();
-            if (BacktrackGeneric(pool, 0, target, tol, picks, new List<MatchCandidate>()))
-                return (picks.Select(p => p.Id).ToList(), picks.Sum(p => p.Amount), true);
-
-            return (new List<Guid>(), 0m, false);
-        }
 
         // Try Payments first (most common case for bank deposits = customer payments)
         var (payIds, paySum, payExact) = PickSubset(data.Payments, target, tolerance);
@@ -411,6 +382,42 @@ public partial class BankService
             BankTransactionAmount: target,
             Difference: target,
             Message: "AI ไม่พบรายการเดี่ยวหรือชุดที่รวมแล้วได้ยอดตรงเป๊ะ — กรุณาเลือกด้วยตนเอง");
+    }
+
+    /// <summary>
+    /// ลำดับรายการบนหน้าจับคู่ด้วยมือ (และลำดับที่ <see cref="SuggestMatchAsync"/> หยิบ — V1 + ปุ่ม "AI วิเคราะห์" ในหน้าต่างจับคู่) ·
+    /// คะแนน <c>BankMatchScorer</c> ก่อน แล้วหลักฐาน "เงินลงที่ไหน" เป็นลำดับรอง แล้ววันใกล้ (รอบ 201 A-AI3 · ฝ่ายค้าน X-6:
+    /// ลำดับนี้คือสิ่งที่ <c>PickSubset</c> หยิบ "ใบแรกที่ยอดตรง" ⇒ เปลี่ยนลำดับ = เปลี่ยนคำแนะนำของ V1/ปุ่ม AI ด้วย — ล็อกด้วยเทสต์)
+    /// </summary>
+    internal static List<MatchCandidate> RankCandidates(IEnumerable<MatchCandidate> items, bool bankIsInflow)
+    {
+        return items
+            .OrderByDescending(c => c.Score)
+            .ThenByDescending(c => Accounting.Helpers.BankMatchScorer.DepositPreference(
+                c.Type, c.DepositCategory, bankIsInflow, c.Amount))
+            .ThenBy(c => c.DateDiffDays)
+            .ToList();
+    }
+
+    /// <summary>หาชุดรายการที่รวมได้ยอดธนาคารพอดี — ใบเดี่ยวที่ยอดตรง (ตามลำดับของ <see cref="RankCandidates"/>) ก่อน
+    /// แล้วค่อย subset-sum ≤ 20 ใบ (เรียงด้วยคะแนน) · <c>internal static</c> ให้เทสต์ล็อกคำแนะนำ (ฝ่ายค้าน X-6)</summary>
+    internal static (List<Guid> ids, decimal sum, bool exact) PickSubset(List<MatchCandidate> items, decimal target, decimal tol)
+    {
+        // 1) Single exact match wins
+        var single = items.FirstOrDefault(i => Math.Abs(i.Amount - target) <= tol);
+        if (single != null) return (new List<Guid> { single.Id }, single.Amount, true);
+
+        // 2) Many-to-one subset-sum (limit to 20 to keep backtracking tractable)
+        var pool = items.Where(i => i.Amount > 0 && i.Amount <= target + tol)
+            .OrderByDescending(i => i.Score) // bias toward high-score candidates first
+            .Take(20)
+            .ToList();
+
+        var picks = new List<MatchCandidate>();
+        if (BacktrackGeneric(pool, 0, target, tol, picks, new List<MatchCandidate>()))
+            return (picks.Select(p => p.Id).ToList(), picks.Sum(p => p.Amount), true);
+
+        return (new List<Guid>(), 0m, false);
     }
 
     private static bool BacktrackGeneric(

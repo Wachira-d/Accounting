@@ -211,8 +211,8 @@ public class BankReconciliationPattern : TenantEntity
     /// <para>ฝั่งอ่านทุกที่ (ความมั่นใจของคลัง · นักเรียน <c>BankMatchDistillationModel</c>) ต้องนับ<b>ตัวนี้</b>
     /// ไม่ใช่ <see cref="TimesConfirmed"/> — เดิมปุ่ม "✨ AI จับคู่จากประวัติ" ติ๊กคู่ให้จากคลังแล้วการกดยืนยัน
     /// ดัน <c>TimesConfirmed</c> ของแพตเทิร์นที่เสนอเอง (คลังสอนตัวเอง · DOCTRINE §3) · ตัวกติกาอยู่ที่
-    /// <c>Helpers/BankPatternEvidence</c> ตัวเดียว · แถวก่อนรอบ 201 backfill = <c>TimesConfirmed</c> ครั้งเดียว
-    /// (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178)</para></summary>
+    /// <c>Helpers/BankPatternEvidence</c> ตัวเดียว · แถวก่อนรอบ 201 เริ่มที่ 0 (คำตัดสินข้อ 99 · ไม่ยกการยืนยันในอดีตที่แยกไม่ออกเป็นหลักฐาน —
+    /// ช่วงแรกคลังเสนอ/ติ๊กให้น้อยลง ไม่ใช่ผิดเงียบ)</para></summary>
     public int ExplicitConfirmCount { get; set; }
 
     public DateTime LastUsedAt { get; set; } = DateTime.UtcNow;

@@ -4137,3 +4137,9 @@ _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACK
 - (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
 - (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
 - เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit f27f289e)_
+
+### รอบ 201 ทีม AI — แก้ผลฝ่ายค้าน X-1..X-10 (`erp-review/2026-10-01/team-AI.md` §แก้ผลฝ่ายค้าน)
+- X-1 เทสต์ bulk PV อ่านค่าผ่าน JSON (ไทยถูก escape) · X-10 bank.html escape ข้อความจาก statement/AI/ข้อผิดพลาดทุกจุดที่เข้า innerHTML (แผนคำแนะนำ · discrepancy · คำเตือน · การ์ดบัญชี · หน้ากระทบยอดกลุ่ม · confirmDanger)
+- X-2 ชนิดผู้สมัคร = ชนิดจริง (`BankAiCandidateGuard.RealType`) ในแผน AI · ฝั่งเขียนตรวจ MatchType ตรงชนิดจริง · X-3 ปุ่ม "AI วิเคราะห์" ติดธง → ยืนยันโดยไม่แตะ = Implicit
+- X-4 ยังไม่ปิด (นักเรียนฟีดธนาคารไม่ตอบ id เอกสาร — ระบุใน DOCUMENT_FLOW §6.4) · X-5 ไม่ backfill `ExplicitConfirmCount` (คำตัดสินข้อ 99)
+- X-6 `RankCandidates`/`PickSubset` internal static + เทสต์คำแนะนำ SuggestMatchAsync · X-7 ลบ endpoint `suggest-all-accounts` ที่ไม่มีผู้เรียก · X-8 ratchet จำนวนรายการค้าง ≤ 38 · X-9 เลขบรรทัดจาก tempId — commit <pending>
