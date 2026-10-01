@@ -18,6 +18,10 @@ public enum WhtLearningEvidence
 
     /// <summary>ยอดมาจาก<b>ข้อเสนอของระบบเอง</b>ที่ไม่มีใครแตะ — <b>ห้ามเรียน</b></summary>
     SystemSuggestedOnly,
+
+    /// <summary>มีชื่อช่อง WHT ใน <c>UserCorrectedFields</c> แต่คำแก้ของแถวนั้น<b>เริ่มก่อนกติกา baseline</b> (K-10) — แยกไม่ได้ว่าคนแก้จริงหรือหน้าเว็บ
+    /// ส่งค่าเดิมกลับมา ⇒ "ไม่รู้" ⇒ <b>ห้ามเรียน</b> (รอบ 201 ทีม OC · C-18 · คำตัดสินข้อ 91 · หลักเดียวกับข้อ 29) · ค่าต่อท้าย enum (เลขไม่ชน)</summary>
+    UserEditedBeforeBaseline,
 }
 
 /// <summary>
@@ -42,12 +46,17 @@ public static class OcrWhtLearningScope
     /// <param name="hasScan">มีแถวสแกนผูกกับเอกสารนี้ไหม</param>
     /// <param name="paperShowsWht">แถวสแกนบอกว่ากระดาษมีส่วนหัก (<c>HasWht</c> / <c>WhtRate &gt; 0</c>)</param>
     /// <param name="userCorrectedFields">CSV ของช่องที่ผู้ใช้แก้ (<c>OcrScanResult.UserCorrectedFields</c>)</param>
+    /// <param name="userCorrectionsPredateBaseline">คำแก้ของแถวสแกนเริ่มก่อนกติกา baseline WHT (<c>OcrScanResult.WhtCorrectionsPredateBaseline</c> ·
+    /// C-18) ⇒ ชื่อช่อง WHT ใน <paramref name="userCorrectedFields"/> ไม่นับเป็นหลักฐาน · กระดาษ/ไม่มีสแกน ไม่เกี่ยว (ตัดสินก่อนชั้นนี้)</param>
     public static (bool Learn, WhtLearningEvidence Evidence) Decide(
-        bool hasScan, bool paperShowsWht, string? userCorrectedFields)
+        bool hasScan, bool paperShowsWht, string? userCorrectedFields, bool userCorrectionsPredateBaseline = false)
     {
         if (!hasScan) return (true, WhtLearningEvidence.NoScan);
         if (paperShowsWht) return (true, WhtLearningEvidence.Paper);
-        if (UserTouchedWht(userCorrectedFields)) return (true, WhtLearningEvidence.UserEdited);
+        if (UserTouchedWht(userCorrectedFields))
+            return userCorrectionsPredateBaseline
+                ? (false, WhtLearningEvidence.UserEditedBeforeBaseline)
+                : (true, WhtLearningEvidence.UserEdited);
         return (false, WhtLearningEvidence.SystemSuggestedOnly);
     }
 
@@ -71,6 +80,8 @@ public static class OcrWhtLearningScope
         WhtLearningEvidence.UserEdited => "ผู้ใช้ลงมือแก้/ยืนยันช่องหัก ณ ที่จ่ายเอง",
         WhtLearningEvidence.SystemSuggestedOnly =>
             "ยอดหัก ณ ที่จ่ายมาจากข้อเสนอของระบบเองและไม่มีใครแตะ — เรียนกลับ = สอนตัวเอง",
+        WhtLearningEvidence.UserEditedBeforeBaseline =>
+            "คำแก้ช่องหัก ณ ที่จ่ายของสแกนนี้เกิดก่อนกติกา “นับเฉพาะค่าที่เปลี่ยนจริง” — แยกไม่ได้ว่าคนแก้จริง จึงไม่นับเป็นหลักฐาน",
         _ => "ไม่ทราบที่มา",
     };
 }

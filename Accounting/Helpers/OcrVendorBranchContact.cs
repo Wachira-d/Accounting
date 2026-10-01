@@ -167,6 +167,27 @@ public static class OcrVendorBranchContact
         => createdDocumentId.HasValue || createdJournalEntryId.HasValue;
 
     /// <summary>
+    /// **ผู้ติดต่อที่สแกนผูกไว้เป็นคนละนิติบุคคลกับเลขผู้เสียภาษีผู้ขายบนสแกนตอนนี้ไหม** (รอบ 201 ทีม OC · C-23 · คำตัดสินข้อ 96)
+    /// <para>ผู้ใช้แก้<b>เลขผู้เสียภาษี</b>ผู้ขายในหน้ารีวิวเป็นเลขที่ยังไม่มีผู้ติดต่อ ⇒ เดิมทั้งเส้นแก้ผลสแกน (K-4) และเส้นสร้างเอกสารคง
+    /// <c>MatchedContactId</c> ของเลขเดิม (ตัวตัดสินสาขาเลือกได้เฉพาะแถวของเลขใหม่ ซึ่งไม่มี) ⇒ ใบกำกับผูกนิติบุคคลผิด = ภาษีซื้อ/50 ทวิ ผิดคน ·
+    /// ตอนนี้: เลขสองฝั่งครบ 13 หลักและต่างกัน ⇒ ถอดการผูก (ผู้เรียกปล่อยให้ตัวตัดสินสาขา/ตัวสร้างผู้ติดต่อใหม่ทำงาน + โน้ต <see cref="StaleMatchNote"/>)</para>
+    /// <para>ไม่ถอดเมื่อ: ผู้ใช้เลือกผู้ติดต่อเอง (คำตอบสุดท้าย — กติกาเดิม) · <b>ผู้ใช้ไม่ได้แตะเลขผู้เสียภาษีผู้ขาย</b> (<paramref name="userTouchedVendorTaxId"/> —
+    /// คำตัดสินพูดถึง "ผู้ใช้แก้เลข" · เลขที่ OCR อ่านเพี้ยนแต่ผูกถูกรายด้วยชื่อ/AI ต้องไม่ถูกถอดแล้วสร้างผู้ติดต่อเลขเพี้ยน) · เลขที่ผูกไม่ครบ 13 หลัก
+    /// (แถวไม่มีเลข = เส้นเติมเลขเข้าแถวเดิมตัดสินต่อ) · เลขบนสแกนไม่ผ่าน mod-11 (พิมพ์ผิด = ไม่มีหลักฐานว่าเป็นนิติบุคคลอื่น — ไม่สร้างผู้ติดต่อเลขเสีย)</para>
+    /// </summary>
+    public static bool MatchedContactIsOtherEntity(string? matchedContactTaxId, string? scanVendorTaxId, bool userPickedContact,
+        bool userTouchedVendorTaxId)
+        => !userPickedContact && userTouchedVendorTaxId
+           && ThaiTaxId.IsWellFormed(matchedContactTaxId) && ThaiTaxId.HasValidChecksum(scanVendorTaxId)
+           && ThaiTaxId.Normalize(matchedContactTaxId) != ThaiTaxId.Normalize(scanVendorTaxId);
+
+    /// <summary>โน้ตเมื่อถอดการผูก (C-23) — บอกว่าถอดจากใคร และเกิดอะไรต่อ (ห้ามเงียบ)</summary>
+    public static string StaleMatchNote(string? oldName, string? oldTaxId, string? newTaxId)
+        => $"[Contact] เลขผู้เสียภาษีผู้ขายเป็น {ThaiTaxId.Normalize(newTaxId)} แต่ผู้ติดต่อที่ผูกไว้ “{oldName}” ใช้เลข {ThaiTaxId.Normalize(oldTaxId)} "
+           + "⇒ ถอดการผูก (คนละนิติบุคคล) · ถ้ายังไม่มีผู้ติดต่อของเลขใหม่ ระบบจะสร้างให้ตอนสร้างเอกสาร "
+           + "— ถ้าเลขใหม่พิมพ์ผิด ให้แก้เลขกลับ หรือเลือกผู้ติดต่อเองที่ “จับคู่ผู้ติดต่อ”";
+
+    /// <summary>
     /// ชื่อของผู้ติดต่อแถวใหม่ของสาขา — <b>ชื่อนิติบุคคล</b> (ทุกสาขาของเลขเดียวกันคือนิติบุคคลเดียว): ทะเบียนก่อน →
     /// ชื่อของแถวแม่แบบ (ตัดป้ายสาขาท้ายชื่อออก — "(สำนักงานใหญ่)" ไม่ใช่ชื่อของสาขาอื่น) → ชื่อที่อ่านจากกระดาษ ·
     /// ชื่อสาขาเก็บที่ <c>Contact.BranchName</c> ไม่ต่อท้ายชื่อ

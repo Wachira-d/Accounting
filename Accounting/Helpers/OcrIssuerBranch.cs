@@ -104,6 +104,16 @@ public static class OcrIssuerBranch
         return new OcrIssuerBranchStatement(hits[0].Code, hits[0].Evidence, address);
     }
 
+    /// <summary>กระดาษมีประโยคประกาศสาขาผู้ออกใบ<b>อย่างน้อยหนึ่งประโยค</b>ไหม (ไม่สนว่ารหัสตรงกันหรือไม่) — ใช้คู่กับ <see cref="Detect"/>:
+    /// มีประโยคแต่ Detect คืน null = รหัสขัดกันเอง (ไทย 8 · อังกฤษ 9) = "ไม่รู้" ⇒ ตัวอ่านอื่นห้ามยกความมั่นใจของรหัสจากส่วนอื่นของหน้า
+    /// (รอบ 201 ทีม OC · C-19 — <c>BranchCodeExtractor</c> สลิปรหัสเดียว)</summary>
+    public static bool HasAnyStatement(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return false;
+        var text = rawText.Replace("\r", "");
+        return ThaiStatementRx.IsMatch(text) || EnglishStatementRx.IsMatch(text);
+    }
+
     /// <summary>กลบ<b>ทุก</b>ประโยคประกาศสาขาผู้ออกใบด้วยช่องว่างความยาวเท่าเดิม (ตำแหน่งตัวอักษรอื่นคงเดิม) — ประโยคนั้นเป็นของ
     /// <b>ผู้ขาย</b>เสมอ (แม้รหัสสองภาษาขัดกันจน <see cref="Detect"/> คืน null) ⇒ ห้ามถูกอ่านเป็นสาขาผู้ซื้อ (รอบ 200 K-11: ใบ Makro
     /// สองคอลัมน์ "ชื่อลูกค้า … / สาขาที่ออกใบกำกับภาษี/ Branch 00005" สลับบรรทัด ⇒ สาขาผู้ซื้อได้ 00005 ของผู้ขาย)</summary>
@@ -209,9 +219,9 @@ public static class OcrIssuerBranch
     ///
     /// <para>กติกา: Contact สำนักงานใหญ่ → DBD ก่อน (พฤติกรรมเดิม) · กระดาษได้เฉพาะเมื่อใบนี้เป็นของ
     /// สำนักงานใหญ่/ไม่รู้สาขา (ที่อยู่ของสาขาอื่นห้ามไปทับ Contact สำนักงานใหญ่) · Contact สาขา N →
-    /// ที่อยู่ที่กระดาษประกาศไว้ตามประโยคสาขาผู้ออกใบก่อน เมื่อใบนี้ออกโดยสาขา N · ไม่มีจึงถอยไปใช้ทะเบียน
-    /// (= ที่อยู่ของนิติบุคคล ซึ่งยังใช้ได้กับ 50 ทวิ — พฤติกรรมเดิม ไม่ปล่อยว่างให้แย่ลง ·
-    /// คำถามเจ้าของ Q-P3 ในรายงานทีม P ว่าควรปล่อยว่างแทนไหม)</para>
+    /// ที่อยู่ที่กระดาษประกาศไว้ตามประโยคสาขาผู้ออกใบก่อน เมื่อใบนี้ออกโดยสาขา N · หรือที่อยู่จากทะเบียน VAT ที่<b>ยืนยันสาขา N</b>
+    /// (<paramref name="registryAddressIsBranch"/>) · <b>ไม่รู้ = ว่าง</b> (รอบ 201 ทีม OC · C-22 · คำตัดสินข้อ 95 — ตอบ Q-P3/team-K Q4: เดิมถอยไปใช้
+    /// ที่อยู่ทะเบียน (= สำนักงานใหญ่) หรือที่อยู่หัวกระดาษที่พิสูจน์ไม่ได้ ⇒ แถวสาขาได้ที่อยู่ สนญ. = ค่าแต่ง · ผู้เรียกบอกผู้ใช้ให้เติมเมื่อว่าง)</para>
     /// </summary>
     /// <param name="contactBranch">รหัสสาขาของ Contact ที่จะเขียน (ว่าง = สำนักงานใหญ่)</param>
     /// <param name="scanBranch">รหัสสาขาผู้ขายที่อ่านได้จากใบนี้ (ว่าง = ไม่รู้)</param>
@@ -220,10 +230,16 @@ public static class OcrIssuerBranch
     /// <param name="paperIsIssuerBranchAddress">ที่อยู่จากกระดาษมาจาก<b>ประโยคประกาศสาขาผู้ออกใบ</b>
     /// (<see cref="Detect"/>) — ที่อยู่ที่ engine อ่านเองอาจเป็นที่อยู่สำนักงานใหญ่ปนสองภาษา (ใบ B)
     /// จึงไม่ชนะทะเบียน</param>
+    /// <param name="registryAddressIsBranch"><paramref name="dbdAddress"/> คือที่อยู่ของ<b>สาขาที่ใบนี้ออก</b>ตามทะเบียน VAT (ไม่ใช่ที่ตั้งสำนักงานใหญ่) —
+    /// ตั้งเฉพาะเมื่อทะเบียนยืนยันสาขานั้นจริง (<c>OcrExtractedData.DbdAddressIsBranch</c>) · ค่าเริ่มต้น false = ทะเบียน = สำนักงานใหญ่</param>
     /// <returns><c>(Address, FromRegistry)</c> — <c>Address = null</c> = ไม่ต้องเขียนที่อยู่</returns>
+    /// <summary>ข้อความให้ผู้ใช้เติมที่อยู่ของแถวสาขาที่ระบบสร้างโดยไม่มีที่อยู่ที่พิสูจน์ได้ (C-22) — ตัวเดียวของทุกเส้นที่สร้างแถวสาขา</summary>
+    public const string BranchAddressUnknownNote =
+        "(ยังไม่มีที่อยู่ของสาขาที่พิสูจน์ได้ — ไม่ใช้ที่อยู่สำนักงานใหญ่แทน · โปรดเติมที่หน้าผู้ติดต่อ)";
+
     public static (string? Address, bool FromRegistry) ContactAddress(
         string? contactBranch, string? scanBranch, bool dbdMatched, string? dbdAddress, string? paperAddress,
-        bool paperIsIssuerBranchAddress)
+        bool paperIsIssuerBranchAddress, bool registryAddressIsBranch = false)
     {
         var hasDbd = dbdMatched && !string.IsNullOrWhiteSpace(dbdAddress);
         var paper = string.IsNullOrWhiteSpace(paperAddress) ? null : paperAddress;
@@ -239,7 +255,8 @@ public static class OcrIssuerBranch
         var sameBranch = scanKnown
             && TaxBranchCode.Normalize(scanBranch) == TaxBranchCode.Normalize(contactBranch);
         if (sameBranch && paper != null && paperIsIssuerBranchAddress) return (paper, false);
-        if (hasDbd) return (dbdAddress, true);
-        return sameBranch ? (paper, false) : (null, false);
+        // C-22 (คำตัดสินข้อ 95): ทะเบียนใช้กับแถวสาขาได้เฉพาะเมื่อทะเบียน VAT ยืนยันสาขานั้น · ที่อยู่ทะเบียน สนญ. / ที่อยู่หัวกระดาษที่พิสูจน์ไม่ได้ = ไม่รู้ ⇒ ว่าง
+        if (sameBranch && hasDbd && registryAddressIsBranch) return (dbdAddress, true);
+        return (null, false);
     }
 }

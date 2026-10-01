@@ -4161,3 +4161,32 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 5 — คำสั่ง main a
 - `Helpers/VoidResultNotice.Lines` ตัวประกอบข้อความเดียว · `CmsCommerceService.UpdateOrderStatusAsync` ประทับ `[ERP-VOID-NOTICE …]` บนออเดอร์ (หมายเหตุภายในที่เจ้าของร้านเห็น) ·
   `CmsBookingService.SettleErpDocumentOnCancelAsync` ส่งเข้า `notices` (ผลตอบผู้กด) + ประทับบนการจอง — เดิมทั้งสองทางทิ้งผลเงียบ
 - เทสต์ `VoidResultNoticeTests` (สองทิศ) · required_call_site +1 แถว/ปรับ 1 · write_permission marker `RequireInventoryAsync` (หลังรวมทีม IN) — commit 7ab6cf72)_
+
+_2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 + C-9 · รายงาน `erp-review/2026-10-01/team-ST.md`):
+- **A-ST1** เจ้าของการรับชำระ = `Payment.SettlementBatchId` (ประทับใน SaveChanges เดียวกับ INSERT ผ่าน `Helpers/SettlementPaymentOwner` · ผู้อ่าน 8 จุดย้ายมาอ่านคอลัมน์ · `BatchIdFromPaymentNotes` ถูกถอด ·
+  backfill ครั้งเดียวตอนสร้างคอลัมน์เฉพาะป้ายที่พิสูจน์ได้ · checker NOTES_MARKER_FORBID ทั้งเรพ) · แตะ `DocumentService.VoidPaymentAsync` 2 นิพจน์ (ช่วงทีม DV)
+- **A-ST2** ล็อก gateway ทุกเส้นที่ประทับ intent + ตรวจซ้ำใต้ล็อก · **A-ST3** ทางไปต่อของยอดไม่ลงตัวเมื่อไม่กรอกถึงวันที่ · **A-ST4** `GET settlement/channels/{id}/orphans` + ปุ่มบนหน้าช่องทาง
+- **A-ST5** ลายนิ้วมือเหตุของการรับรู้ของกำพร้า (การรับรู้ก่อนรอบ 201 ต้องรับรู้ใหม่) · **A-ST6** ใบที่อ้างทุกชั้น · **A-ST7** ผู้ตัดสินบรรทัดเข้าชุดผู้ทำของ SoD ·
+  **A-ST8** ลายนิ้วมือชิ้นตอนออกเอกสาร + คำเตือน `IssuedPieceDrift` · **A-ST9** `SettlementLine.KeyVersion` + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน
+- **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
+- **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
+  required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_
+
+_2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACKLOG §1.7 A-OC1..A-OC5 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97 · รายงาน `erp-review/2026-10-01/team-OC.md`):
+- (A-OC1) known-good ชื่อ/ที่อยู่ผู้ขายจากเส้นแก้ผลสแกนจำเฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (`OcrCorrectedFieldList.ShouldRememberKnownGood`) — หน้าเว็บส่งค่าเดิมทุกครั้ง ⇒ เดิมค่าที่ OCR อ่านผิดกลายเป็น UserCorrection ชนะ Azure ถาวร
+- (A-OC4) `InferCreditNoteReason`/`MapAzureDocType` ย้ายตรงตัวเป็น `Helpers/OcrCreditNoteReasonReader`/`Helpers/OcrPaperDocumentType` (+เทสต์สองครึ่ง) · `ocr_helper_test_check` ratchet static method ใน `OcrService.cs` (`tools/ocr_service_static_baseline.txt` 30 แถว · negative test ในตัว)
+- (A-OC3) `document-scan.html` ยิง `ai-feedback/latest` ผ่าน `API.get` · checker ใหม่ `tools/raw_fetch_api_check.py` (ratchet ต่อไฟล์ `tools/raw_fetch_api_baseline.txt` 172 จุด/41 ไฟล์ · negative test ในตัว)
+- (A-OC2) `contact-hygiene` ส่วน "แถวสาขาที่ระบบสแกนสร้างแต่ไม่มีอะไรอ้าง" + `POST contact-hygiene/ocr-branch-orphans/{id}/retire` (soft · ทีละแถว · `Contact.Edit` · ตรวจซ้ำ) · แท็ก `ContactDataHygiene.OcrBranchAutoCreateTag` ตัวเดียว
+- (A-OC5) audit การลบสแกนผ่าน `AddChainedAuditLog`
+- (C-18) คอลัมน์ `OcrScanResults.WhtCorrectionsPredateBaseline` (migration DO block ตีธงครั้งเดียวตอนสร้างคอลัมน์) ⇒ `OcrWhtLearningScope` = `UserEditedBeforeBaseline` (ไม่เรียน) ทั้งเรียนทีละใบและ backfill
+- (C-19) `BranchCodeExtractor`: ไม่มีป้ายผู้ซื้อ + รหัสสาขาเดียวทั้งหน้า ⇒ `WholePageSingleBranch` 0.85 · `OcrIssuerBranch.HasAnyStatement` กันประโยคประกาศขัดกัน
+- (C-20) ใบรับ/จ่ายเงินฝั่งซื้อที่ผูกใบต้นทางสืบทอดผู้ติดต่อของใบต้นทาง (`Helpers/OcrSettlementCounterparty`) — เส้นสร้างเอกสาร + พรีวิว
+- (C-22) ที่อยู่แถวสาขา = กระดาษที่พิสูจน์ได้ หรือทะเบียน VAT ที่ยืนยันสาขานั้น (`OcrExtractedData.DbdAddressIsBranch`) · ไม่รู้ = ว่าง + `BranchAddressUnknownNote`
+- (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
+- (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
+- เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit f27f289e)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 6 — คำสั่ง main agent หลังทีม OC (merge origin):
+- `write_permission_gate_check` WATCHED + `ContactHygieneController` (endpoint เขียน `POST …/ocr-branch-orphans/{id}/retire` · ด่าน `HasPermissionAsync(Contact.Edit)`) ·
+  negative test ฉีด POST ไม่มีด่านลงไฟล์จริงในโหมด WATCHED · marker `ScanGateAsync(`/`DocGateAsync(`/`DenyScanSourceAsync(` (รูปการใช้ผลล็อกโดย attachment_gate_check) ⇒
+  baseline deny-list 547 → 529 (ลดอย่างเดียว) · audit_direct_add baseline 28 → 27 (OcrService เข้า chain โดยทีม OC) — commit <pending>)_

@@ -114,6 +114,9 @@ WATCHED = [
     # แก้เทมเพลต default ของบริษัทได้ (หัวเอกสาร/CSS ที่ไปโผล่ในพรีวิวของเจ้าของ) ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 10) ·
     # ด่าน = CompanySettings.Edit ชุดเดียวกับ SettingsController · POST สร้าง PDF/HTML/พรีวิว = อ่านอย่างเดียว (READ_ONLY_POSTS_IN_FILE)
     "Accounting/Controllers/DocumentTemplateController.cs",
+    # เพิ่มรอบ 201 ทีม PL (คำสั่ง main agent หลังทีม OC · A-OC2) — ลบ (soft) แถวสาขาที่ OCR สร้างแล้วไม่มีอะไรอ้าง เป็น endpoint เขียนตัวแรกของไฟล์นี้ ·
+    # ใส่ตอนเขียว (ratchet) · ด่าน = HasPermissionAsync(Contact.Edit) ชุดเดียวกับลบผู้ติดต่อ · negative test ฉีด POST ไม่มีด่านลงไฟล์จริงใน ratchet_self_test
+    "Accounting/Controllers/ContactHygieneController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -164,6 +167,11 @@ GATE_MARKERS = (
     "OwnershipTransferPolicy.Outcome.Allow",
     # รอบ 201 (หลังรวมทีม IN) — ด่านสต็อกของ ProductController (HasPermissionAsync + 403 ไทย) · ใช้ผลรูป `is { } deny) return deny`
     "RequireInventoryAsync",
+    # รอบ 201 (หลังรวมทีม OC) — ด่านไฟล์แนบ/สแกนของ OcrController (IAttachmentAccessGate · ทิศอ่าน/เขียน) — รูปการใช้ผล ทิศ และอาร์กิวเมนต์
+    # ถูกล็อกแยกโดย tools/attachment_gate_check.py (กติกาพารามิเตอร์ scanId/fileAttachmentId/documentId) ⇒ นับเป็นด่านที่นี่ได้
+    "ScanGateAsync(",
+    "DocGateAsync(",
+    "DenyScanSourceAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
@@ -473,6 +481,26 @@ def ratchet_self_test(found, base):
         if fired != expect:
             fails.append("ratchet self-test: " + ("POST ไม่มีด่านใน BankController ไม่ถูกฟ้อง" if expect
                                                    else "POST ที่มี [RequirePermission] ถูกฟ้องผิด"))
+    # ไฟล์ใน WATCHED ที่เพิ่มรอบ 201 (ContactHygieneController): ฉีด POST ไม่มีด่านแล้วต้องถูกฟ้องในโหมด WATCHED
+    hyg = os.path.join(CONTROLLER_DIR, "ContactHygieneController.cs")
+    if os.path.exists(hyg):
+        htext = open(hyg, encoding="utf-8").read()
+        hcut = htext.rstrip().rfind("}")
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+            f.write(htext[:hcut] + '\n    [HttpPost("__inj2")]\n    public async Task<IActionResult> InjectedHygiene() => Ok();\n' + htext[hcut:])
+            tmp = f.name
+        try:
+            hnames = [n for _, _, _, n in scan(tmp)]
+            real = [n for _, _, _, n in scan(hyg)]
+        finally:
+            os.unlink(tmp)
+        if "InjectedHygiene" not in hnames:
+            fails.append("ratchet self-test: POST ไม่มีด่านใน ContactHygieneController (WATCHED) ไม่ถูกฟ้อง")
+        if real:
+            fails.append(f"ratchet self-test: ContactHygieneController จริงถูกฟ้อง {real} (ด่าน HasPermissionAsync ต้องนับ)")
+    else:
+        fails.append("ratchet self-test: ไม่พบ ContactHygieneController.cs — เปลี่ยนเป้าของ negative test")
+
     # ด่านระดับคลาส: นับเฉพาะคลาสที่ attribute อยู่เหนือการประกาศ — คลาสที่สองในไฟล์เดียวกัน (ไม่มีด่าน) ต้องยังถูกฟ้อง
     two = ('[Authorize(Roles = "SystemAdmin")]\npublic class GatedController : ControllerBase\n{\n'
            '    [HttpPost("a")]\n    public async Task<IActionResult> InGated() => Ok();\n}\n'

@@ -20,6 +20,10 @@
 ว่า "ของชิ้นนี้มีเทสต์ไหม" ซึ่งต้องโยงสองโปรเจกต์เข้าหากัน
 
 รันเปล่า ๆ = ตรวจทั้งเรพ · `--self-test` = ทดสอบตัว checker เอง
+
+ส่วนที่สอง (รอบ 201 ทีม OC · A-OC4 · ratchet): static method ใน `OcrService.cs` — ตัวตัดสินที่ยังฝังในไฟล์ service
+คือที่ที่ถดถอยเกิดโดยไม่มีอะไรฟ้อง (CLAUDE.md §H) · ชื่อที่มีอยู่แล้วอยู่ใน `tools/ocr_service_static_baseline.txt` ·
+static ตัวใหม่ = ฟ้อง (ย้ายไป Helpers/Ocr*.cs พร้อมเทสต์) · แถวใน baseline ที่ไม่มีในไฟล์แล้ว = ฟ้อง (ตัดแถวทิ้ง — baseline ห้ามค้างของตาย)
 """
 import os
 import re
@@ -69,6 +73,61 @@ def collect(helpers_dir=HELPERS, tests_dir=TESTS):
     return [(f, c) for f, c in ocr_helper_classes(helpers_dir) if not referenced_in_tests(c, tests_dir)]
 
 
+OCR_SERVICE = os.path.join(ROOT, "Accounting", "Services", "Implementations", "OcrService.cs")
+STATIC_BASELINE = os.path.join(ROOT, "tools", "ocr_service_static_baseline.txt")
+# เมธอด static (ไม่นับ field `static readonly` · ชนิดซ้อน) — ชนิดคืนเป็น tuple หลายบรรทัดได้
+STATIC_METHOD_RE = re.compile(
+    r"^[ \t]*(?:private|internal|public|protected)\s+static\s+(?!readonly\b|class\b|partial\b|extern\b)(?:async\s+)?"
+    r"(\([^)]*\)|[\w.]+(?:<[^;(){}]*?>)?(?:\[\])?\??)\s+(\w+)\s*(?:<[^>]*>)?\s*\(", re.M)
+
+
+def static_methods(text):
+    return sorted({m.group(2) for m in STATIC_METHOD_RE.finditer(text)})
+
+
+def load_baseline(path=STATIC_BASELINE):
+    if not os.path.isfile(path):
+        return set()
+    out = set()
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.add(line)
+    return out
+
+
+def static_ratchet(text, baseline):
+    """คืน (ตัวใหม่ที่ไม่อยู่ใน baseline, แถว baseline ที่ไม่มีในไฟล์แล้ว)"""
+    found = set(static_methods(text))
+    return sorted(found - baseline), sorted(baseline - found)
+
+
+def ratchet_self_test(verbose=False):
+    """negative test ของ ratchet บนไฟล์จริง — รันทุกครั้งที่รัน checker (ไม่ต้องจำไปรัน --self-test เอง)"""
+    ok = True
+    if not os.path.isfile(OCR_SERVICE):
+        return ok
+    real = open(OCR_SERVICE, encoding="utf-8").read()
+    base = load_baseline()
+    injected = real + "\nstatic class __X\n{\n    private static decimal? InferSomethingNew(string? rawText) => null;\n}\n"
+    new, _ = static_ratchet(injected, base)
+    if "InferSomethingNew" not in new:
+        print("❌ self-test: static method ใหม่ใน OcrService.cs ไม่ถูกฟ้อง"); ok = False
+    elif verbose:
+        print("✅ self-test: static method ใหม่ใน OcrService.cs ถูกฟ้อง (ratchet)")
+    multi = "    private static (string? A,\n        string? B)\n        Pair(string x)\n    { return (x, x); }\n"
+    if "Pair" not in static_methods(multi):
+        print("❌ self-test: ชนิดคืนเป็น tuple หลายบรรทัดไม่ถูกนับ"); ok = False
+    if static_methods("    private static readonly Regex R = new(\"x\");\n"):
+        print("❌ self-test: field static readonly ถูกนับเป็นเมธอด"); ok = False
+    _, stale = static_ratchet(real, base | {"ThisMethodWasMovedOut"})
+    if "ThisMethodWasMovedOut" not in stale:
+        print("❌ self-test: แถว baseline ที่ไม่มีในไฟล์แล้วไม่ถูกฟ้อง"); ok = False
+    elif verbose:
+        print("✅ self-test: แถว baseline ค้าง (ย้ายออกแล้วไม่ตัดแถว) ถูกฟ้อง")
+    return ok
+
+
 def self_test():
     import shutil
     import tempfile
@@ -103,6 +162,8 @@ def self_test():
             print("❌ self-test: ไฟล์ที่ไม่ใช่ Ocr* ถูกตรวจ"); ok = False
         else:
             print("✅ self-test: ตรวจเฉพาะ Helpers/Ocr*.cs")
+        if not ratchet_self_test(verbose=True):
+            ok = False
         return 0 if ok else 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -118,7 +179,17 @@ def main():
         print(f"Accounting/Helpers/{f}: `{c}` ไม่มีเทสต์ไหนใน Accounting.Tests อ้างถึง")
         print("    → เพิ่ม Accounting.Tests/<ชื่อคลาส>Tests.cs ที่ล็อกทั้งเคสที่ต้องทำงานและเคสที่ต้องเงียบ ด้วยเลข/ข้อความจากกระดาษจริง")
     print(f"\nตรวจตัวตัดสิน OCR {total} คลาส · ที่ไม่มีเทสต์ {len(bad)} คลาส")
-    return 1 if bad else 0
+    new, stale = [], []
+    if os.path.isfile(OCR_SERVICE):
+        new, stale = static_ratchet(open(OCR_SERVICE, encoding="utf-8").read(), load_baseline())
+        for n in new:
+            print(f"Accounting/Services/Implementations/OcrService.cs: static `{n}` ใหม่ — ตัวตัดสิน OCR ต้องเกิดใน Helpers/Ocr*.cs พร้อมเทสต์ "
+                  "(ห้ามเพิ่มแถวใน tools/ocr_service_static_baseline.txt เพื่อให้เขียว)")
+        for n in stale:
+            print(f"tools/ocr_service_static_baseline.txt: `{n}` ไม่มีใน OcrService.cs แล้ว — ตัดแถวทิ้ง (ratchet ลดลงเท่านั้น)")
+        print(f"static ใน OcrService.cs: ใหม่ {len(new)} · baseline ค้าง {len(stale)}")
+    rt_ok = ratchet_self_test()
+    return 1 if (bad or new or stale or not rt_ok) else 0
 
 
 if __name__ == "__main__":

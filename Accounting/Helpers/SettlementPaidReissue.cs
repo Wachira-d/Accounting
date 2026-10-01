@@ -391,6 +391,8 @@ public static class SettlementPaidReissue
         nameof(Document.DeliverySignTokenExpiresAt), nameof(Document.DeliverySignedAt), nameof(Document.DeliverySignedBy),
         nameof(Document.DeliverySignatureBase64), nameof(Document.SettlementOrphanAckAt), nameof(Document.SettlementOrphanAckBy),
         nameof(Document.SettlementOrphanAckReason), nameof(Document.ReplacedByDocumentId), nameof(Document.ReplacesDocumentId),
+        nameof(Document.SettlementOrphanAckReasonHash), // รอบ 201 ทีม ST (A-ST5) — การรับรู้ของกำพร้าเป็นของใบเดิม
+        nameof(Document.SettlementPieceFingerprint),     // รอบ 201 ทีม ST (A-ST8) — ใบแทนไม่ได้ออกโดยผู้ลงบัญชีรอบโอน (ไม่มีป้าย CreatedBy ของรอบ)
         nameof(Document.ReplacementReason), nameof(Document.ReplacedAt), nameof(Document.ReplacementCarriesPostings),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),

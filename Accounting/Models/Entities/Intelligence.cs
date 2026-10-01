@@ -229,6 +229,14 @@ public class OcrScanResult : TenantEntity
     /// <c>Helpers/OcrCorrectedFieldList.VendorAddressTyped</c> · เป็นร่องรอยของ<b>การอัปโหลดครั้งนั้น</b> ไม่คัดลอกไปสแกนสำเนา</para></summary>
     public bool VendorAddressUserTyped { get; set; }
 
+    /// <summary>คำแก้ของแถวนี้<b>เริ่มก่อน</b>กติกา baseline ของช่อง WHT (K-10) — "HasWht/WhtRate/WhtIncomeTypeCode" ใน
+    /// <see cref="UserCorrectedFields"/> อาจมาจากหน้าเว็บที่ส่งค่าเดิมกลับมา (กติกาเก่า "ส่งมา = แก้") ⇒ แยกไม่ได้ว่าคนแก้จริง
+    /// (รอบ 201 ทีม OC · C-18 · คำตัดสินข้อ 91 · หลักเดียวกับข้อ 29)
+    /// <para>ผู้เขียนตัวเดียว: migration <c>DatabaseMigrationHelper.WhtCorrectionsPredateBaselineMigrationSql</c> (ตีธงครั้งเดียวตอนสร้างคอลัมน์ —
+    /// แถวใหม่ = false เสมอ) · ผู้อ่าน: <c>Helpers/OcrWhtLearningScope.Decide</c> ผ่าน <c>VendorIntelligenceService</c> (เรียนทีละใบ + backfill) ·
+    /// ไม่ลบข้อมูล · เป็นร่องรอยของการอัปโหลดครั้งนั้น ไม่คัดลอกไปสแกนสำเนา</para></summary>
+    public bool WhtCorrectionsPredateBaseline { get; set; }
+
     /// <summary>**สมุดที่มาของค่ารายช่อง** — JSON ของ
     /// <c>Helpers/OcrFieldArbiter.ToJson()</c> (สถาปัตยกรรมเป้าหมาย D1)
     ///

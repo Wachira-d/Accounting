@@ -162,8 +162,10 @@ public sealed partial class SettlementImportService : ISettlementImportService
         public required string Key { get; init; }
         /// <summary>คีย์ของแถวเดียวกันตามกติการุ่นก่อน (<see cref="SettlementTxnKey.LegacyKeys"/>) — ใช้เทียบกับของที่เก็บแล้วเท่านั้น (S3-4)</summary>
         public required IReadOnlyList<string> LegacyKeys { get; init; }
-        /// <summary>คีย์ทุกตัวที่ถือว่าเป็นแถวนี้ (รุ่นปัจจุบัน + รุ่นก่อน)</summary>
-        public IEnumerable<string> AllKeys => LegacyKeys.Prepend(Key);
+        /// <summary>คีย์กติกาปัจจุบันคิดด้วยวันที่ตามตัวอักษร (A-ST9) — นับว่ามีอยู่แล้วเฉพาะบรรทัดที่นำเข้าด้วยตัวอ่านรุ่นก่อน (<c>KeyVersion</c> null)</summary>
+        public IReadOnlyList<string> LiteralKeys { get; init; } = Array.Empty<string>();
+        /// <summary>คีย์ทุกตัวที่ถือว่าเป็นแถวนี้ (รุ่นปัจจุบัน + รุ่นก่อน) — ชุดที่ "พบแล้ว" ถูกกรองรุ่นของบรรทัดที่ <c>ExistingKeysAsync</c></summary>
+        public IEnumerable<string> AllKeys => LegacyKeys.Concat(LiteralKeys).Prepend(Key);
         public string? Label { get; init; }
         public string? Description { get; init; }
         public SettlementLineType Type { get; set; } = SettlementLineType.Unclassified;
@@ -199,19 +201,23 @@ public sealed partial class SettlementImportService : ISettlementImportService
         var keys = SettlementTxnKey.Assign(keyInputs);
         // I-1: คีย์รุ่นก่อนคิดซ้ำด้วย "วันที่ตามตัวอักษร" (แบบที่ตัวอ่านก่อนรอบ 200 อ่าน) — ตัวอ่านใหม่แปลงเขตเวลา ⇒ วันที่/คีย์เปลี่ยน ⇒ ไฟล์ที่นำเข้าก่อน deploy
         // ต้องยังถูกจับว่าซ้ำ (ใช้เทียบเท่านั้น · บรรทัดใหม่เก็บคีย์รุ่นปัจจุบัน)
-        var legacyKeys = SettlementTxnKey.LegacyKeys(keyInputs, payoutRef, LiteralDateSets(rows));
+        var legacyKeys = SettlementTxnKey.LegacyKeySets(keyInputs, payoutRef, LiteralDateSets(rows));
         // S4-3: ไฟล์ที่บรรทัดมาจาก (ลายนิ้วมือเนื้อหา — ตัวเดียวกับคีย์ v2:rowc:) · เส้น PaymentIntent ไม่มีไฟล์
         var importScope = input.File != null ? SettlementTxnKey.ImportScopeOf(keyInputs) : null;
         var all = rows.Select((r, i) => new PreparedLine
             {
                 Row = r,
                 Key = keys[i],
-                LegacyKeys = legacyKeys[i],
+                LegacyKeys = legacyKeys[i].Any,
+                LiteralKeys = legacyKeys[i].LiteralCurrent,
                 // ป้ายเป็นอินพุตของ AI ด้วย — ตัด PII ก่อนทั้งเก็บและถาม
                 Label = Fit(SettlementPiiScrubber.Scrub(r.RawTypeLabel), 200),
                 Description = SettlementPiiScrubber.Scrub(r.Description),
             }).ToList();
-        var existing = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
+        // A-ST9: คีย์ "วันที่ตามตัวอักษร" ของกติกาปัจจุบัน — ที่ไม่ใช่คีย์รุ่นปัจจุบัน/รุ่นก่อนแบบอื่นของแถวใดในไฟล์ (ทิศเดิมเมื่อชนกัน)
+        var normalKeys = all.SelectMany(p => p.LegacyKeys.Prepend(p.Key)).ToHashSet(StringComparer.Ordinal);
+        var literalOnly = all.SelectMany(p => p.LiteralKeys).Where(k => !normalKeys.Contains(k)).ToHashSet(StringComparer.Ordinal);
+        var existing = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), literalOnly, ct);
         var prepared = all.Where(p => !p.AllKeys.Any(existing.Contains)).ToList();
 
         // ── 3. จัดประเภท (นอกธุรกรรม — ครูอาจใช้เวลาหลายวินาที ห้ามถือล็อกไว้) ──
@@ -227,9 +233,8 @@ public sealed partial class SettlementImportService : ISettlementImportService
             // ล็อกต่อช่องทางตัวเดียวกับผู้ลงบัญชี (C-1) — ก่อนอ่านอะไรใต้ธุรกรรม (R-B3)
             await LockChannelAsync(companyId, channelId, ct);
             if (input.GatewayProviderCode is string pc)
-                // ล็อกเดียวกับเส้นบันทึกรอบโอนเดิม (GatewaySettlementService) — สองเส้นห้ามหยิบ intent ชุดเดียวกันพร้อมกัน
-                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                    new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, pc) }, ct);
+                // ล็อกเดียวกับเส้นบันทึกรอบโอนเดิม (GatewaySettlementService) — สองเส้นห้ามหยิบ intent ชุดเดียวกันพร้อมกัน (ตัวล็อกตัวเดียว · รอบ 201 A-ST2)
+                await LockGatewayAsync(companyId, pc, ct);
 
             var channel = await LoadChannelAsync(companyId, channelId, tracked: true, ct);
             if (input.FreshIntentIds.Count > 0)
@@ -244,7 +249,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
                         "SETTLEMENT-INTENT-TAKEN");
             }
             // ตรวจซ้ำใต้ล็อกด้วยคีย์ทุกรุ่นของ "ทุกแถว" — ชุดที่ได้ = บรรทัดที่แถวในไฟล์นี้อ้างด้วยคีย์แล้ว (ห้ามถูกนับซ้ำด้วยเนื้อหาด้านล่าง)
-            var underLock = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), ct);
+            var underLock = await ExistingKeysAsync(companyId, channelId, all.SelectMany(p => p.AllKeys).ToList(), literalOnly, ct);
             var toAdd = prepared.Where(p => !p.AllKeys.Any(underLock.Contains)).ToList();
             // รอบ 200 ทีม P2: ยอดคืนก้อนเดียวถูกนับในรอบโอนเดียว — ตรวจซ้ำใต้ล็อก gateway (อ่าน "ยอดในบรรทัดแล้ว" นอกล็อก ⇒ สองช่องทางพร้อมกันได้ซ้ำ)
             if (input.GatewayProviderCode != null)
@@ -394,6 +399,7 @@ public sealed partial class SettlementImportService : ISettlementImportService
                     TxnDate = p.Row.TxnDate,
                     ExternalOrderId = Fit(p.Row.ExternalOrderId?.Trim(), 200),
                     ExternalTxnId = p.Key,
+                    KeyVersion = SettlementTxnKey.StoredKeyVersion,
                     ImportScope = lineScope,
                     Amount = R(p.Row.Amount),
                     VatAmount = p.Row.VatAmount is decimal v ? R(v) : null,
@@ -580,8 +586,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
 
     // ═══════════════════ ของช่วย ═══════════════════
 
+    /// <param name="literalOnly">คีย์ที่นับเฉพาะบรรทัดที่นำเข้าด้วยตัวอ่านรุ่นก่อน (A-ST9 · <see cref="SettlementTxnKey.CountsAsExisting"/>)</param>
     private async Task<HashSet<string>> ExistingKeysAsync(Guid companyId, Guid channelId, IReadOnlyList<string> keys,
-        CancellationToken ct)
+        IReadOnlySet<string> literalOnly, CancellationToken ct)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);
         foreach (var chunk in keys.Distinct(StringComparer.Ordinal).Chunk(1000))
@@ -590,9 +597,9 @@ public sealed partial class SettlementImportService : ISettlementImportService
             var hit = await _db.SettlementLines.AsNoTracking()
                 .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && l.ExternalTxnId != null
                     && part.Contains(l.ExternalTxnId))
-                .Select(l => l.ExternalTxnId!)
+                .Select(l => new { Key = l.ExternalTxnId!, l.KeyVersion })
                 .ToListAsync(ct);
-            found.UnionWith(hit);
+            found.UnionWith(hit.Where(h => SettlementTxnKey.CountsAsExisting(h.Key, h.KeyVersion, literalOnly)).Select(h => h.Key));
         }
         return found;
     }

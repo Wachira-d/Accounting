@@ -40,7 +40,7 @@ public interface ISettlementImportService
         CancellationToken ct = default);
 
     /// <summary>ผู้ใช้ตัดสินการจับคู่ของบรรทัดขาย/คืนเงิน (เลือกเอกสาร หรือยืนยันใบขายสรุปรายวัน)</summary>
-    Task<SettlementLineView> AssignLineMatchAsync(Guid companyId, Guid lineId, SettlementAssignMatchRequest request,
+    Task<SettlementLineView> AssignLineMatchAsync(Guid companyId, Guid userId, Guid lineId, SettlementAssignMatchRequest request,
         CancellationToken ct = default);
 
     /// <summary>จับคู่ใหม่ทั้งรอบโอน (หลังสร้างเอกสารขายที่ขาด) — ไม่แตะบรรทัดที่ผู้ใช้ตัดสินเองแล้ว</summary>

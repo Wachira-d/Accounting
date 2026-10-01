@@ -83,28 +83,55 @@ public static class SettlementTxnKey
     /// <param name="literalDateSets">วันที่ตามตัวอักษรทีละชุด (แต่ละชุดยาวเท่า <paramref name="rows"/>) — null/ชุดที่เท่ากับวันที่ของแถว = ไม่มีอะไรเพิ่ม</param>
     public static IReadOnlyList<IReadOnlyList<string>> LegacyKeys(IReadOnlyList<SettlementTxnKeyInput> rows, string? typedPayoutRef,
         IReadOnlyList<IReadOnlyList<DateTime?>>? literalDateSets = null)
+        => LegacyKeySets(rows, typedPayoutRef, literalDateSets)
+            .Select(x => (IReadOnlyList<string>)x.Any.Concat(x.LiteralCurrent).ToList()).ToList();
+
+    /// <summary>
+    /// คีย์รุ่นก่อนแยกสองกอง (รอบ 201 ทีม ST · A-ST9 · ฝ่ายค้าน R2M-9) — <c>Any</c> = รุ่น v1/v2-ก่อน-S3-4 ด้วยวันที่ที่อ่านได้ (เทียบกับบรรทัดใดก็ได้ · ทิศเดิม) ·
+    /// <c>LiteralCurrent</c> = <b>ทุกรุ่นที่คิดด้วยวันที่ตามตัวอักษร</b> (รวมกติกาปัจจุบัน — รูปคีย์เหมือนคีย์ที่บรรทัดหลังรอบ 200 เก็บทุกตัวอักษร) ⇒ เทียบได้<b>เฉพาะบรรทัดที่นำเข้าด้วยตัวอ่านรุ่นก่อน</b>
+    /// (<c>SettlementLine.KeyVersion</c> = null) — เดิมเทียบกับทุกบรรทัด ⇒ แถวคืนเงินบางส่วนยอดเท่ากันข้ามเที่ยงคืนไทย/UTC (หรือไฟล์ MDY ที่ตัวแปร DMY ชน)
+    /// ชนคีย์ของ<b>อีกรายการ</b>ที่นำเข้าหลังรอบ 200 ⇒ ถูกข้ามว่า "นำเข้าแล้ว" (มองเห็นได้ · ยอดไม่ลงตัวบล็อก แต่ต้องตามแก้) · คีย์ที่อยู่ทั้งสองกองนับเป็น <c>Any</c> (ทิศเดิม)
+    /// </summary>
+    public static IReadOnlyList<(IReadOnlyList<string> Any, IReadOnlyList<string> LiteralCurrent)> LegacyKeySets(
+        IReadOnlyList<SettlementTxnKeyInput> rows, string? typedPayoutRef, IReadOnlyList<IReadOnlyList<DateTime?>>? literalDateSets = null)
     {
         var typed = (typedPayoutRef ?? "").Trim();
         var current = Assign(rows);
         var variants = new List<IReadOnlyList<string>> { V1(rows), V2Typed(rows, typed) };
+        var literalCurrent = new List<IReadOnlyList<string>>();
         foreach (var set in literalDateSets ?? Array.Empty<IReadOnlyList<DateTime?>>())
         {
             if (set.Count != rows.Count || rows.Select(r => r.Date).SequenceEqual(set)) continue;
             var literal = rows.Select((r, i) => r with { Date = set[i] }).ToList();
-            variants.Add(V1(literal));
-            variants.Add(V2Typed(literal, typed));
-            variants.Add(Assign(literal));
+            // ทุกรุ่นที่คิดด้วยวันที่ตามตัวอักษร = รูปที่เฉพาะตัวอ่านก่อนรอบ 200 เก็บ ⇒ กอง LiteralCurrent (แถวมี id: V2Typed = Assign ทุกตัวอักษร)
+            literalCurrent.Add(V1(literal));
+            literalCurrent.Add(V2Typed(literal, typed));
+            literalCurrent.Add(Assign(literal));
         }
-        var result = new List<IReadOnlyList<string>>(rows.Count);
+        var result = new List<(IReadOnlyList<string> Any, IReadOnlyList<string> LiteralCurrent)>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
         {
             var at = i;
-            result.Add(variants.Select(v => v[at])
+            var any = variants.Select(v => v[at])
                 .Where(k => !string.Equals(k, current[at], StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal).ToList());
+                .Distinct(StringComparer.Ordinal).ToList();
+            var lit = literalCurrent.Select(v => v[at])
+                .Where(k => !string.Equals(k, current[at], StringComparison.Ordinal) && !any.Contains(k, StringComparer.Ordinal))
+                .Distinct(StringComparer.Ordinal).ToList();
+            result.Add((any, lit));
         }
         return result;
     }
+
+    /// <summary>รุ่นของตัวอ่าน/กติกาคีย์ที่ประทับบนบรรทัดใหม่ (<c>SettlementLine.KeyVersion</c> · A-ST9) — null = บรรทัดที่นำเข้าก่อนมีคอลัมน์ (ถือว่าตัวอ่านรุ่นก่อน)</summary>
+    public const string StoredKeyVersion = "v2tz";
+
+    /// <summary>
+    /// คีย์ที่พบในบรรทัดที่เก็บแล้วนับว่า "แถวนี้มีอยู่แล้ว" ไหม (A-ST9) — คีย์ในกอง <c>LiteralCurrent</c> นับเฉพาะเมื่อบรรทัดนั้นนำเข้าด้วยตัวอ่านรุ่นก่อน
+    /// (<paramref name="storedKeyVersion"/> null) · คีย์อื่นนับเสมอ (พฤติกรรมเดิม) · pure
+    /// </summary>
+    public static bool CountsAsExisting(string key, string? storedKeyVersion, IReadOnlySet<string> literalOnlyKeys)
+        => storedKeyVersion == null || !literalOnlyKeys.Contains(key);
 
     /// <summary>กติกา v1 (เฟส 1 ทีม B) — ใช้เทียบเท่านั้น</summary>
     private static IReadOnlyList<string> V1(IReadOnlyList<SettlementTxnKeyInput> rows) => AssignCore(rows, r =>

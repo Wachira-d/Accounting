@@ -94,6 +94,19 @@ public static class OcrCorrectedFieldList
     public static bool VendorAddressTyped(IReadOnlyCollection<string> correctedFields, OcrCorrectionBaseline? before)
         => before?.VendorAddress != null && correctedFields.Contains("VendorAddress", StringComparer.Ordinal);
 
+    /// <summary>
+    /// **ค่าชื่อ/ที่อยู่ผู้ขายที่ส่งมาควรถูกจำเป็น "คำแก้ของคน" ในคลัง known-good ไหม** (รอบ 201 ทีม OC · A-OC1 · team-K Q2)
+    /// <para>หน้ารีวิวส่ง <c>vendorName</c>/<c>vendorAddress</c> กลับมา<b>ทุกครั้ง</b>ที่ช่องมีค่า ⇒ เดิมทุกการกดบันทึกเขียน
+    /// <c>Source = "UserCorrection"</c> (และเพิ่ม <c>ConfirmedCount</c>) ทั้งที่ผู้ใช้ไม่ได้แตะ ⇒ ค่าที่ OCR อ่านผิดแล้วผู้ใช้ไม่สังเกต
+    /// กลายเป็น "คำแก้ของคน" ที่ชนะ Azure ถาวร — ทรงเดียวกับ K-10 (WHT) · หลัก baseline เดียวกับ K-1/K-10/ข้อ 19/ข้อ 29
+    /// (ไม่ใช่ทางแยกใหม่): จำเฉพาะเมื่อค่า<b>เปลี่ยนจากที่สแกนเก็บไว้ก่อนรับคำแก้</b> (<see cref="TextChanged"/>) และไม่ว่าง
+    /// (ล้างช่อง = ไม่มีค่าให้จำ)</para>
+    /// </summary>
+    /// <param name="submitted">ค่าที่หน้าเว็บส่งมา (null = ไม่ได้แตะ)</param>
+    /// <param name="scannedBefore">ค่าบนแถวสแกน<b>ก่อน</b>รับคำแก้นี้</param>
+    public static bool ShouldRememberKnownGood(string? submitted, string? scannedBefore)
+        => !string.IsNullOrWhiteSpace(submitted) && TextChanged(submitted, scannedBefore);
+
     /// <summary>รหัสสาขาที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — เทียบหลัง normalize 5 หลัก ("5" ≡ "00005") · ว่างทั้งคู่ = เท่ากัน ·
     /// ว่าง ↔ "00000" = <b>ต่างกัน</b> (ว่าง = "ไม่รู้" ≠ สำนักงานใหญ่ — ผู้ใช้เติม 00000 ลงช่องว่างคือการตอบ) ·
     /// ผิดรูป ("8A") เทียบข้อความตรงตัว</summary>

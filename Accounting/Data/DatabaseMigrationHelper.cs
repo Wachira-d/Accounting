@@ -229,6 +229,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedBy" uuid NULL;""",
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedReason" text NULL;""",
         };
+        // รอบ 201 ทีม ST — บล็อกของทีมอยู่ท้ายไฟล์ (Round201SettlementStatements) · ผังต้องเป็นคำสั่งสุดท้ายของชุดนี้ (เทสต์ล็อก)
+        list.AddRange(Round201SettlementStatements());
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;
     }
@@ -7109,6 +7111,9 @@ public static class DatabaseMigrationHelper
             """CREATE TABLE IF NOT EXISTS "PlatformHolidays" ("Id" uuid PRIMARY KEY, "Date" timestamp without time zone NOT NULL, "NameTh" varchar(200) NOT NULL DEFAULT '', "NameEn" varchar(200) NULL, "Kind" varchar(20) NOT NULL DEFAULT 'Public', "SourceReference" varchar(500) NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformHolidays_Date" ON "PlatformHolidays" ("Date") WHERE "IsDeleted" = false;""",
             // ═══ จบบล็อกรอบ 201 ทีม PL ═══
+            // ═══ รอบ 201 ทีม OC · C-18 (คำตัดสินข้อ 91) — คำแก้ WHT ก่อนกติกา baseline K-10 ไม่นับเป็นหลักฐาน ═══
+            // ดู WhtCorrectionsPredateBaselineMigrationSql (ท้ายไฟล์) — สร้างคอลัมน์ + ตีธงแถวที่ถูกแก้ไปแล้ว **ครั้งเดียวในขั้นที่สร้างคอลัมน์**
+            WhtCorrectionsPredateBaselineMigrationSql(),
             // ═══ รอบ 201 ทีม AI · A-AI1 (H-1) — คลังจับคู่ธนาคารนับ "ผู้ใช้เลือกคู่เอง" แยกจากการกดผ่าน ═══
             // ADD COLUMN + backfill **ครั้งเดียว** ในบล็อกเดียว (เฉพาะตอนคอลัมน์ยังไม่มี): แถวเก่าทั้งหมดถือเป็นคำยืนยันที่ตั้งใจ
             // (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178) · ถ้า backfill ทุกบูตแบบ `WHERE Explicit = 0` แพตเทิร์นที่เกิดจาก
@@ -7197,4 +7202,71 @@ public static class DatabaseMigrationHelper
             $mig$;
             """;
     }
+
+    // ═══ รอบ 201 ทีม ST (Settlement) ═══
+    /// <summary>รอบ 201 ทีม ST — คอลัมน์ใหม่ของ settlement (ADD COLUMN IF NOT EXISTS · ค่าเดิม NULL = พฤติกรรมเดิม/ไม่รู้) ·
+    /// A-ST1: <c>Payments.SettlementBatchId</c> สร้าง<b>พร้อม backfill ครั้งเดียว</b> (<see cref="PaymentSettlementOwnerMigrationSql"/>) + index ·
+    /// A-ST5: ลายนิ้วมือเหตุของการรับรู้ของกำพร้า · A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด · A-ST8: ลายนิ้วมือชิ้นของแผนตอนออกเอกสาร</summary>
+    internal static IReadOnlyList<string> Round201SettlementStatements() => new List<string>
+    {
+        PaymentSettlementOwnerMigrationSql(),
+        """CREATE INDEX IF NOT EXISTS "IX_Payments_Company_SettlementBatch" ON "Payments" ("CompanyId", "SettlementBatchId") WHERE "SettlementBatchId" IS NOT NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReasonHash" text NULL;""",
+        """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReasonHash" text NULL;""",
+        // A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด — NULL = ระบบตัดสิน/บรรทัดก่อนรอบ 201 (ไม่นับใน SoD · ผู้สร้างรอบยังนับ)
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DecidedBy" text NULL;""",
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DecidedAt" timestamptz NULL;""",
+        // A-ST8: ลายนิ้วมือชิ้นแผนตอนออกเอกสาร — NULL = เอกสารเดิมทุกใบ (ไม่รู้ ⇒ ตัวเทียบใช้แผนก่อน/หลังแก้แบบเดิม)
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementPieceFingerprint" text NULL;""",
+        // A-ST9: รุ่นของตัวอ่าน/กติกาคีย์ตอนนำเข้า — NULL = บรรทัดเดิมทุกแถว (ถือว่าตัวอ่านรุ่นก่อน ⇒ คีย์วันที่ตามตัวอักษรยังเทียบได้ = พฤติกรรมเดิม)
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "KeyVersion" text NULL;""",
+    };
+
+    /// <summary>รอบ 201 ทีม ST (A-ST1) — สร้าง <c>Payments.SettlementBatchId</c> และเติมเจ้าของจากป้ายเดิม<b>ในขั้นเดียวกับที่คอลัมน์ถูกสร้างเท่านั้น</b>
+    /// (ตรวจ information_schema ก่อน · มีคอลัมน์แล้ว = ไม่ทำอะไร — ฐานใหม่จาก EnsureCreated ไม่มีข้อมูลให้เติม) · ครอบ <c>pg_advisory_xact_lock</c> คีย์คงที่ ⇒
+    /// สองเครื่องบูตพร้อมกันทำครั้งเดียว · <b>ห้าม backfill ซ้ำทุกบูต</b>: ป้ายที่ผู้ใช้พิมพ์หลัง deploy (รูปแบบตรง) จะถูกนับเป็นเจ้าของ = ช่องโหว่เดิม ·
+    /// เงื่อนไข "ป้ายที่พิสูจน์ได้" อยู่ที่ <see cref="Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql"/> ตัวเดียว</summary>
+    internal static string PaymentSettlementOwnerMigrationSql() => """
+        DO $mig$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(__LOCK_KEY__);
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'Payments' AND column_name = 'SettlementBatchId') THEN
+            RETURN;
+          END IF;
+          ALTER TABLE "Payments" ADD COLUMN "SettlementBatchId" uuid NULL;
+          __BACKFILL__
+        END
+        $mig$;
+        """.Replace("__LOCK_KEY__", PaymentSettlementOwnerLockKey, StringComparison.Ordinal)
+           .Replace("__BACKFILL__", Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql(), StringComparison.Ordinal);
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมเจ้าของข้างบน — deterministic ข้ามเครื่อง (FNV ผ่าน AdvisoryLockKey · ห้าม GetHashCode)</summary>
+    internal static string PaymentSettlementOwnerLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Payments.SettlementBatchId").ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // ═══ รอบ 201 ทีม OC ═══
+
+    /// <summary>
+    /// **C-18 (คำตัดสินข้อ 91) — สแกนที่ถูกแก้ก่อนกติกา baseline ของช่อง WHT (K-10) แยกไม่ได้ว่าคนแก้ WHT จริงไหม** ⇒ ตีธง
+    /// <c>OcrScanResults.WhtCorrectionsPredateBaseline = true</c> ให้ทุกแถวที่ <c>UserCorrectedAt</c> มีค่าแล้ว <b>ในขั้นเดียวกับที่สร้างคอลัมน์เท่านั้น</b>
+    /// (ตรวจ information_schema ก่อน · มีคอลัมน์แล้ว = ไม่แตะ) — ตัวเรียนประวัติ WHT ของผู้ขาย (<c>OcrWhtLearningScope</c>) ไม่นับ "HasWht/WhtRate/
+    /// WhtIncomeTypeCode" ใน <c>UserCorrectedFields</c> ของแถวเหล่านี้เป็น "ผู้ใช้แก้" (ไม่ลบข้อมูล · กระดาษ/เอกสารคีย์มือยังเรียนได้ตามเดิม)
+    /// <para>ทำไมไม่ใช้วันที่คงที่: ไม่มีใครรู้วันที่โค้ด K-10 ถึงเครื่องผู้ใช้จริง — เวลาที่คอลัมน์นี้เกิด (= โค้ดรอบ 201 บูตครั้งแรก) ≥ วัน deploy K-10 เสมอ ⇒
+    /// ทิศปลอดภัย (แถวที่แก้ระหว่าง K-10 กับรอบ 201 ถูกนับว่า "ไม่รู้" ด้วย — เสียหลักฐานบางส่วน ไม่ได้สอนด้วยค่าที่ไม่มีใครแตะ) · เดิม UPDATE ที่รันทุกบูต
+    /// จะตีธงแถวที่แก้หลังกติกาไปด้วย ⇒ ใช้ DO block + information_schema แบบ <see cref="DepositBaseSplitMigrationSql"/> · สองเครื่องบูตพร้อมกัน:
+    /// เครื่องที่สองล้มที่ ALTER (คอลัมน์มีแล้ว — benign) ทั้งบล็อกจึงไม่ UPDATE ซ้ำ</para>
+    /// </summary>
+    internal static string WhtCorrectionsPredateBaselineMigrationSql() => """
+        DO $mig$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'OcrScanResults' AND column_name = 'WhtCorrectionsPredateBaseline') THEN
+            RETURN;
+          END IF;
+          ALTER TABLE "OcrScanResults" ADD COLUMN "WhtCorrectionsPredateBaseline" boolean NOT NULL DEFAULT false;
+          UPDATE "OcrScanResults" SET "WhtCorrectionsPredateBaseline" = true WHERE "UserCorrectedAt" IS NOT NULL;
+        END
+        $mig$;
+        """;
 }

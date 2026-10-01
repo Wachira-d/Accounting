@@ -79,6 +79,42 @@ public static class SettlementContentOverlap
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// บรรทัด<b>แบบไม่มี id</b> ของรอบโอนที่ระบุ — <b>รวมบรรทัดที่ถูกลบพร้อมรอบ</b> (รอบ 201 ทีม ST · คำตัดสินข้อ 82): ใบสรุปกำพร้าที่รับรู้แล้วนับเป็นใบแรกของวัน ⇒
+    /// ด่านเนื้อหาซ้ำ (<see cref="SettlementSummarySupplement.SplitDuplicates"/>) ต้องเทียบกับบรรทัดของรอบเจ้าของใบนั้นซึ่งถูกลบไปพร้อมการยกเลิกรอบ ·
+    /// tenant + ช่องทาง + รอบที่ระบุเท่านั้น · ใช้เฉพาะด่านนี้ (คำเตือนทั่วไปยังไม่นับรอบที่ยกเลิกแล้ว — <see cref="LoadOtherBatchesAsync"/>)
+    /// </summary>
+    internal static async Task<List<SettlementContentLine>> LoadBatchesIncludingDeletedAsync(AccountingDbContext db, Guid companyId, Guid channelId,
+        IReadOnlyCollection<Guid> batchIds, IEnumerable<DateTime> dates, CancellationToken ct)
+    {
+        var dateList = dates.Distinct().Take(MaxDates).ToList();
+        var ids = batchIds.Distinct().ToList();
+        if (dateList.Count == 0 || ids.Count == 0) return new List<SettlementContentLine>();
+        var refOf = await db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.ChannelId == channelId && ids.Contains(b.Id))
+            .ToDictionaryAsync(b => b.Id, b => (b.PayoutRef, b.Status), ct);
+        return (await db.SettlementLines.IgnoreQueryFilters().AsNoTracking()
+                .Where(l => l.CompanyId == companyId && l.ChannelId == channelId && ids.Contains(l.BatchId) && l.ExternalTxnId != null
+                    && l.TxnDate != null && (l.ExternalTxnId.StartsWith(RowKeyPrefix) || l.ExternalTxnId.StartsWith(LegacyRowKeyPrefix))
+                    && dateList.Contains(l.TxnDate.Value))
+                .Select(l => new { l.Id, l.BatchId, l.ExternalTxnId, l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate })
+                .ToListAsync(ct))
+            .Where(l => refOf.ContainsKey(l.BatchId))
+            .Select(l => new SettlementContentLine(l.Id, l.ExternalTxnId, l.ExternalOrderId, l.RawTypeLabel, l.Amount, l.TxnDate,
+                refOf[l.BatchId].PayoutRef, refOf[l.BatchId].Status))
+            .ToList();
+    }
+
+    /// <summary>ผลเทียบเนื้อหาของรอบนี้กับรอบที่ระบุ (รวมบรรทัดที่ถูกลบ) — คำตัดสินข้อ 82 · ไม่มีรอบ ⇒ ว่าง</summary>
+    public static async Task<IReadOnlyList<SettlementContentHit<Guid>>> AgainstBatchesAsync(AccountingDbContext db, Guid companyId, Guid channelId,
+        IReadOnlyCollection<Guid> batchIds, IReadOnlyList<SettlementLine> lines, CancellationToken ct)
+    {
+        var candidates = BatchCandidates(lines);
+        if (candidates.Count == 0 || batchIds.Count == 0) return Array.Empty<SettlementContentHit<Guid>>();
+        var dates = lines.Where(l => SettlementTxnKey.IsRowKey(l.ExternalTxnId) && l.TxnDate != null).Select(l => l.TxnDate!.Value);
+        return Find(candidates, await LoadBatchesIncludingDeletedAsync(db, companyId, channelId, batchIds, dates, ct));
+    }
+
     /// <summary>ผลของรอบโอนนี้ (โหลด + เทียบ) สำหรับพรีวิว/ลงบัญชี — บรรทัดเดียวที่ผู้ลงบัญชีเรียก</summary>
     public static async Task<IReadOnlyList<SettlementContentHit<Guid>>> ForBatchAsync(AccountingDbContext db, Guid companyId, Guid channelId,
         Guid batchId, IReadOnlyList<SettlementLine> lines, CancellationToken ct)

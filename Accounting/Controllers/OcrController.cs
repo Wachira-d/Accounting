@@ -747,6 +747,17 @@ public class OcrController : ControllerBase
         return Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchContactAsync(companyId, scanId, contactId)));
     }
 
+    /// <summary>รอบ 201 ทีม OC (C-24 · คำตัดสินข้อ 97): ใบขายที่อ่านผู้ซื้อไม่ได้ ⇒ ผูก "ลูกค้าเงินสด (walk-in)" — เซิร์ฟเวอร์ตัดสินว่าใช้ได้ไหม
+    /// (เป้าหมายใบกำกับเต็มรูป = 400 ข้อความไทยบอกทางไปต่อ) · ด่านของสแกนชุดเดียวกับ match-contact</summary>
+    [HttpPost("{scanId:guid}/match-walk-in")]
+    public async Task<ActionResult<ApiResponse<OcrResultResponse>>> MatchWalkInBuyer(Guid companyId, Guid scanId)
+    {
+        var deny = await ScanGateAsync(companyId, scanId, "ผูกลูกค้าเงินสดให้สแกน", write: true);
+        if (deny != null) return deny;
+        return Ok(new ApiResponse<OcrResultResponse>(true, await _service.MatchWalkInBuyerAsync(companyId, scanId),
+            "ผูกลูกค้าเงินสด (walk-in) แล้ว"));
+    }
+
     [HttpPost("{scanId:guid}/correct")]
     public async Task<ActionResult<ApiResponse<object>>> SubmitCorrection(Guid companyId, Guid scanId, [FromBody] OcrCorrectionRequest correction)
     {

@@ -133,4 +133,35 @@ public static class ContactDataHygiene
         return new(false, registryDiffers, branchPaper,
             registryDiffers == false ? "รหัสไปรษณีย์ตรงทะเบียน" : "ไม่มีหลักฐานว่าถูกทับ");
     }
+
+    // ─── รอบ 201 ทีม OC (A-OC2 · team-K2 R4): แถวสาขาที่ OCR สร้างแล้วไม่มีอะไรอ้าง ───
+
+    /// <summary>แท็ก <c>CreatedBy</c> ของแถวผู้ติดต่อสาขาที่ OCR สร้างเอง (เส้นสแกน Branch 0 · เส้นสร้างเอกสาร/แก้ผลสแกน K-4) —
+    /// <b>ตัวตั้งตัวเดียว</b> ของผู้เขียน (<c>OcrService</c>) และผู้อ่าน (รายงานนี้)</summary>
+    public const string OcrBranchAutoCreateTag = "OCR-BranchAutoCreate";
+
+    /// <summary>แถวนี้เกิดจาก OCR สร้างแถวสาขาเองไหม (เทียบแท็กตรงตัว — ไม่ใช่ "ขึ้นต้น OCR" ซึ่งรวมแถวที่ OCR แค่เติมข้อมูล)</summary>
+    private static bool IsOcrBranchAutoCreated(string? createdBy)
+        => string.Equals(createdBy?.Trim(), OcrBranchAutoCreateTag, StringComparison.Ordinal);
+
+    /// <summary>
+    /// **แถวสาขาที่ OCR สร้างแล้วไม่มีเอกสาร/สแกน/ข้อมูลอื่นอ้างถึง** — ผู้ใช้พิมพ์รหัสสาขาผิดในหน้ารีวิว ⇒ แถวของรหัสผิดเกิดขึ้น
+    /// แล้วค้างถาวรหลังแก้กลับ (team-K2 R4) · <b>รายงานอย่างเดียว</b> — การลบต้องให้คนกดทีละแถว (<see cref="OrphanRetireBlock"/> ตรวจซ้ำที่เซิร์ฟเวอร์)
+    /// </summary>
+    /// <param name="referencedIds">id ผู้ติดต่อที่ถูกอ้างโดยข้อมูลใดก็ตามที่ผู้เรียกตรวจ (เอกสาร · สแกน · 50 ทวิ · เครดิตภาษี · alias · รายการประจำ)</param>
+    public static IReadOnlyList<ContactKeyRow> OrphanOcrBranchRows(IEnumerable<ContactKeyRow> rows, IReadOnlyCollection<Guid> referencedIds)
+        => rows.Where(r => IsOcrBranchAutoCreated(r.CreatedBy) && !referencedIds.Contains(r.Id))
+            .OrderBy(r => r.TaxId, StringComparer.Ordinal).ThenBy(r => r.BranchCode, StringComparer.Ordinal).ThenBy(r => r.CreatedAt)
+            .ToList();
+
+    /// <summary>ด่านของปุ่ม "ลบแถวนี้" (soft) — คืนข้อความไทยเมื่อ<b>ห้าม</b> · null = ลบได้ · เซิร์ฟเวอร์ตรวจซ้ำทุกครั้ง (หน้ารายงานอาจค้าง:
+    /// ระหว่างเปิดรายงานกับกดปุ่ม มีเอกสารผูกแถวนี้แล้วก็ได้)</summary>
+    public static string? OrphanRetireBlock(string? createdBy, bool referenced)
+    {
+        if (!IsOcrBranchAutoCreated(createdBy))
+            return "ลบจากหน้านี้ได้เฉพาะแถวสาขาที่ระบบสแกนสร้างเอง — แถวอื่นลบที่หน้าผู้ติดต่อ";
+        if (referenced)
+            return "แถวนี้มีเอกสาร/สแกน/ข้อมูลอื่นอ้างถึงแล้ว — ลบไม่ได้ (เปิดผู้ติดต่อเพื่อรวมหรือปิดการใช้งานแทน)";
+        return null;
+    }
 }

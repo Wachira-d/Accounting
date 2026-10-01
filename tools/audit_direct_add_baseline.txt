@@ -4,5 +4,4 @@ Services/Implementations/AuthService.cs	3
 Services/Implementations/LineBotService.cs	1
 Services/Implementations/Lodging/LodgingService.Lifecycle.cs	17
 Services/Implementations/Lodging/LodgingService.Reservations.cs	2
-Services/Implementations/OcrService.cs	1
 Services/Implementations/PayrollService.cs	3

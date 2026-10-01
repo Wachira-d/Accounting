@@ -157,22 +157,55 @@ public sealed partial class SettlementImportService
 
     /// <summary>ประทับ <c>PaymentIntent.SettlementBatchId</c> ให้ตรงกับบรรทัดของรอบโอน — intent ที่บรรทัดอ้างถึงและยังไม่อยู่รอบใด ⇒ ประทับรอบนี้ ·
     /// intent ที่ประทับรอบนี้แต่ไม่มีบรรทัดอ้างแล้ว ⇒ ปลด (กันเส้นเดิม/รอบอื่นหยิบซ้ำ · กันค้างหลังผู้ใช้เปลี่ยนการจับคู่) ·
-    /// intent ที่อยู่รอบอื่นแล้ว (บรรทัด "คืนเงินภายหลัง" ของรอบถัดไป) ⇒ คงรอบเดิม — รอบแรกเป็นเจ้าของยอดขาย</summary>
+    /// intent ที่อยู่รอบอื่นแล้ว (บรรทัด "คืนเงินภายหลัง" ของรอบถัดไป) ⇒ คงรอบเดิม — รอบแรกเป็นเจ้าของยอดขาย
+    /// <para>รอบ 201 ทีม ST (A-ST2 · X-6/X-7): ถือ<b>ล็อก gateway ตัวเดียวกับเส้นประกอบ/เส้นบันทึกรอบโอนเดิม</b> (<see cref="LockGatewaysAsync"/>) ก่อนโหลด intent ·
+    /// ตรวจซ้ำใต้ล็อก: intent ที่จะประทับใหม่แต่เส้นเดิม (<c>GatewaySettlementService</c>) บันทึกรอบโอนไปแล้วระหว่างนี้ ⇒ ล้มดังให้กดใหม่ (เดิมพึ่งตาข่าย
+    /// <c>IntentSettledElsewhere</c> ตอนลงบัญชี — รอบค้าง/ไม่ลงตัวที่มองเห็นแต่ต้องตามแก้) · เส้นไฟล์/จับคู่มือ/จับคู่ใหม่/ยกเลิกรอบ เข้าทางนี้ทุกเส้น</para></summary>
     private async Task SyncIntentStampsAsync(Guid companyId, Guid batchId, IReadOnlyList<SettlementLine> lines, CancellationToken ct)
     {
         var referenced = lines.Where(l => !l.IsDeleted && l.PaymentIntentId != null).Select(l => l.PaymentIntentId!.Value)
             .Distinct().ToList();
+        await LockGatewaysAsync(companyId, batchId, referenced, ct);
         var stamped = await _db.PaymentIntents
             .Where(i => i.CompanyId == companyId && (i.SettlementBatchId == batchId || referenced.Contains(i.Id)))
             .ToListAsync(ct);
+        var takenByLegacy = 0;
         foreach (var i in stamped)
         {
             var want = referenced.Contains(i.Id) ? batchId : (Guid?)null;
             if (i.SettlementBatchId == want) continue;
             if (want != null && i.SettlementBatchId != null) continue;          // เจ้าของคือรอบแรก (คืนเงินภายหลัง)
+            if (want != null && i.SettlementJournalEntryId != null) { takenByLegacy++; continue; }
             i.SettlementBatchId = want;
             i.UpdatedAt = DateTime.UtcNow;
         }
+        if (takenByLegacy > 0)
+            throw new BusinessRuleException(
+                $"รายการรับชำระออนไลน์ {takenByLegacy} รายการถูกบันทึกรอบโอนด้วยหน้า \u201Cรอบโอน gateway\u201D ไปแล้วระหว่างที่ระบบตัดสินบรรทัดนี้ — "
+                + "ระบบยังไม่ได้บันทึกอะไร · กดอีกครั้ง (บรรทัดนั้นจะถูกจับคู่ใหม่ตามข้อมูลล่าสุด)", "SETTLEMENT-INTENT-TAKEN", 409);
+    }
+
+    /// <summary>
+    /// **ล็อก gateway (<see cref="AdvisoryLockKey.GatewaySettlement"/> ต่อผู้ให้บริการ) ของ intent ที่รอบโอนนี้ถือ/กำลังจะถือ** — ตัวเดียวกับที่เส้นประกอบจาก intent
+    /// (<c>PersistAsync</c>) และเส้นบันทึกรอบโอนเดิม (<c>GatewaySettlementService</c>) ถือ ⇒ สองเส้นห้ามหยิบ intent ชุดเดียวกันพร้อมกัน (A-ST2) ·
+    /// ต้องอยู่ในธุรกรรมที่เปิดแล้ว (xact lock ถือถึง commit) และหลังล็อกช่องทาง (ลำดับ: ช่องทาง → gateway) · หลายผู้ให้บริการ ⇒ เรียงชื่อก่อนล็อก (ลำดับคงที่ กัน deadlock) ·
+    /// คีย์คงที่ข้ามเครื่องผ่าน <see cref="AdvisoryLockKey.For(Guid, string, string)"/> (<c>advisory_lock_key_check</c>)
+    /// </summary>
+    private async Task LockGatewaysAsync(Guid companyId, Guid batchId, IReadOnlyCollection<Guid> intentIds, CancellationToken ct)
+    {
+        var ids = intentIds.ToList();
+        var providers = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && (i.SettlementBatchId == batchId || ids.Contains(i.Id)))
+            .Select(i => i.ProviderCode).Distinct().ToListAsync(ct);
+        foreach (var pc in providers.Where(p => !string.IsNullOrWhiteSpace(p)).OrderBy(p => p, StringComparer.Ordinal))
+            await LockGatewayAsync(companyId, pc, ct);
+    }
+
+    /// <summary>ล็อก gateway ของผู้ให้บริการหนึ่งราย (ตัวเดียวของทุกเส้นใน <c>SettlementImportService</c> — รวม <c>PersistAsync</c>) · รอได้ (re-entrant ในธุรกรรมเดียว)</summary>
+    private async Task LockGatewayAsync(Guid companyId, string providerCode, CancellationToken ct)
+    {
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, providerCode) }, ct);
     }
 
     // ═══════════════════ มุมมอง ═══════════════════
@@ -323,6 +356,7 @@ public sealed partial class SettlementImportService
             // ประเภทก่อนเปลี่ยน — ตัดสินว่าคำตัดสินการจับคู่ของคนยังใช้ได้ไหม (R-B1)
             var oldTypes = new Dictionary<Guid, SettlementLineType> { [line.Id] = line.LineType };
             Apply(line, type, SettlementClassifiedBy.User, overrideAccount, reason);
+            MarkDecided(line, userId);
             var changed = new List<SettlementLine> { line };
 
             // ป้ายเดียวกัน+เครื่องหมายเดียวกันในรอบนี้ที่ผู้ใช้ยังไม่ได้เลือกเอง ⇒ ใช้คำตอบเดียวกัน (Learned — ไม่นับเป็นเสียงของผู้ใช้ซ้ำ)
@@ -337,6 +371,7 @@ public sealed partial class SettlementImportService
                 {
                     oldTypes[other.Id] = other.LineType;
                     Apply(other, type, SettlementClassifiedBy.Learned, other.OverrideAccountId, null);
+                    MarkDecided(other, userId);     // A-ST7: คนสั่ง "ใช้กับป้ายเดียวกัน" = คนตัดสินบรรทัดเหล่านี้ด้วย
                     changed.Add(other);
                 }
 
@@ -375,6 +410,13 @@ public sealed partial class SettlementImportService
         });
     }
 
+    /// <summary>ประทับผู้ตัดสินบนบรรทัด (รอบ 201 ทีม ST · A-ST7) — ตัวเดียวของการจับคู่มือและการจัดประเภทโดยคน</summary>
+    private static void MarkDecided(SettlementLine l, Guid userId)
+    {
+        l.DecidedBy = userId.ToString();
+        l.DecidedAt = DateTime.UtcNow;
+    }
+
     private static void Apply(SettlementLine l, SettlementLineType type, SettlementClassifiedBy by, Guid? overrideAccount, string? reason)
     {
         l.LineType = type;
@@ -406,7 +448,7 @@ public sealed partial class SettlementImportService
 
     // ═══════════════════ ผู้ใช้ตัดสินการจับคู่ ═══════════════════
 
-    public async Task<SettlementLineView> AssignLineMatchAsync(Guid companyId, Guid lineId, SettlementAssignMatchRequest request,
+    public async Task<SettlementLineView> AssignLineMatchAsync(Guid companyId, Guid userId, Guid lineId, SettlementAssignMatchRequest request,
         CancellationToken ct = default)
     {
         var strategy = _db.Database.CreateExecutionStrategy();
@@ -441,7 +483,7 @@ public sealed partial class SettlementImportService
             {
                 if (isRefund)
                     throw new BusinessRuleException("คืนเงินต้องอ้างใบขายเดิม (§86/10) — เลือกใบขายของออเดอร์นี้", "SETTLEMENT-REFUND-NEEDS-DOC");
-                foreach (var l in group) SetMatch(l, SettlementMatchStatus.AutoSummary, null);
+                foreach (var l in group) SetMatch(l, SettlementMatchStatus.AutoSummary, null, userId);
             }
             else if (request.PaymentIntentId is Guid intentId)
             {
@@ -457,7 +499,7 @@ public sealed partial class SettlementImportService
                 var refusal = SettlementSaleMatch.AssignRefusal(candidate, line.LineType, GroupAmountOf(line, OrderGroupsOf(batchLines)), line.Amount);
                 if (refusal != null)
                     throw new BusinessRuleException(refusal, "SETTLEMENT-MATCH-INTENT-REFUSED", 409);
-                foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, null, intentId);
+                foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, null, userId, intentId);
             }
             else
             {
@@ -477,7 +519,7 @@ public sealed partial class SettlementImportService
                         $"เอกสาร {doc.DocumentNumber} รับชำระจากผังพักไม่ได้ (ต้องเป็นใบแจ้งหนี้/ใบกำกับที่ออกแล้วและยังมียอดค้าง) — "
                         + "ถ้ารายได้ของออเดอร์นี้บันทึกด้วยใบเสร็จแล้ว ให้บันทึกบรรทัดนี้เป็นรายการปรับปรุงแทน (กันรายได้ซ้ำ)",
                         "SETTLEMENT-MATCH-DOC");
-                foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, docId);
+                foreach (var l in group) SetMatch(l, SettlementMatchStatus.Matched, docId, userId);
             }
             // S3-1: การแก้ของรอบค้างครึ่งทางต้องไม่เปลี่ยนชิ้นที่ออกแล้ว (ใบค่าธรรมเนียม · ใบสรุป · การรับชำระที่บันทึกแล้ว) — ไม่ผ่าน = 409 ทั้งธุรกรรม
             halfPosted?.Check(batchLines);
@@ -490,11 +532,12 @@ public sealed partial class SettlementImportService
         });
     }
 
-    /// <summary>คนตัดสินการจับคู่ — ติดธง <c>MatchDecidedByUser</c> (ตัวจับคู่อัตโนมัติห้ามทับ · R-B1)</summary>
+    /// <summary>คนตัดสินการจับคู่ — ติดธง <c>MatchDecidedByUser</c> (ตัวจับคู่อัตโนมัติห้ามทับ · R-B1) + ผู้ตัดสิน (A-ST7 · นับเป็นผู้ทำใน SoD ของการลงบัญชี)</summary>
     /// <param name="paymentIntentId">รายการรับชำระที่คนเลือก (D-01) — null = ไม่ผูก (ถอดของเดิม)</param>
-    private static void SetMatch(SettlementLine l, SettlementMatchStatus status, Guid? documentId, Guid? paymentIntentId = null)
+    private static void SetMatch(SettlementLine l, SettlementMatchStatus status, Guid? documentId, Guid decidedBy, Guid? paymentIntentId = null)
     {
         l.MatchDecidedByUser = true;
+        MarkDecided(l, decidedBy);
         l.MatchStatus = status;
         l.MatchedDocumentId = documentId;
         l.ReservationId = null;
@@ -547,6 +590,8 @@ public sealed partial class SettlementImportService
             await LockChannelAsync(companyId, await BatchChannelAsync(companyId, batchId, ct), ct);
             var batch = await LoadEditableBatchAsync(companyId, batchId, ct);
             var lines = await _db.SettlementLines.Where(l => l.CompanyId == companyId && l.BatchId == batch.Id).ToListAsync(ct);
+            // A-ST2: ล็อก gateway ก่อนอ่าน "รอบถัดไปมีบรรทัดคืนเงินของ intent ในรอบนี้ไหม" (เส้นประกอบของอีกช่องทางที่ผูก config เดียวกันเพิ่มบรรทัดได้พร้อมกัน)
+            await LockGatewaysAsync(companyId, batch.Id, Array.Empty<Guid>(), ct);
             // รอบถัดไปมีบรรทัด "คืนเงินภายหลัง" ของ intent ในรอบนี้ ⇒ ยกเลิกรอบนี้แล้ว intent จะกลับมาเป็นรายการใหม่ (ยอดคืนนับซ้ำ)
             var ownedIntents = await _db.PaymentIntents.AsNoTracking()
                 .Where(i => i.CompanyId == companyId && i.SettlementBatchId == batch.Id).Select(i => i.Id).ToListAsync(ct);
@@ -685,34 +730,39 @@ public sealed partial class SettlementImportService
         }
     }
 
-    /// <summary>ชิ้นของรอบที่ออกไปแล้ว (เอกสารที่ยังไม่ถูกยกเลิก → ชิ้นจาก <c>CreatedBy</c> · ใบขายที่มีการรับชำระที่มีป้าย) — ป้ายชุดเดียวกับ
-    /// <see cref="PostingArtifactsAsync"/> และผู้ลงบัญชี</summary>
+    /// <summary>ชิ้นของรอบที่ออกไปแล้ว (เอกสารที่ยังไม่ถูกยกเลิก → ชิ้นจาก <c>CreatedBy</c> · ใบขายที่มีการรับชำระของรอบนี้) — กุญแจชุดเดียวกับ
+    /// <see cref="PostingArtifactsAsync"/> และผู้ลงบัญชี (การรับชำระ = คอลัมน์ <c>Payment.SettlementBatchId</c> · รอบ 201 A-ST1)</summary>
     private async Task<SettlementFrozenParts> FrozenPartsAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
         var prefix = SettlementPostingKeys.CreatorPrefix(batchId);
-        var marker = SettlementPostingKeys.PaymentMarker(batchId);
-        var components = (await _db.Documents.AsNoTracking()
+        var docRows = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
                     && d.CreatedBy != null && d.CreatedBy.StartsWith(prefix))
-                .Select(d => d.CreatedBy!).ToListAsync(ct))
-            .Select(c => c.Substring(prefix.Length)).Distinct(StringComparer.Ordinal).ToList();
+                .Select(d => new { d.CreatedBy, d.SettlementPieceFingerprint }).ToListAsync(ct);
+        var components = docRows.Select(d => d.CreatedBy!.Substring(prefix.Length)).Distinct(StringComparer.Ordinal).ToList();
+        // A-ST8: ลายนิ้วมือที่ประทับตอนออก (ชิ้นที่มีหลายใบ/ไม่มีค่า ⇒ ไม่ใส่ = ไม่รู้ ⇒ ตัวเทียบใช้แผนก่อน/หลังแก้แบบเดิม)
+        var issued = docRows.Where(d => d.SettlementPieceFingerprint != null)
+            .GroupBy(d => d.CreatedBy!.Substring(prefix.Length), StringComparer.Ordinal)
+            .Where(g => g.Select(x => x.SettlementPieceFingerprint).Distinct().Count() == 1
+                && docRows.Count(d => d.CreatedBy!.Substring(prefix.Length) == g.Key) == g.Count())
+            .ToDictionary(g => g.Key, g => g.First().SettlementPieceFingerprint!, StringComparer.Ordinal);
         var received = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.SettlementBatchId == batchId)
             .Select(p => p.DocumentId).Distinct().ToListAsync(ct);
-        return new SettlementFrozenParts(components, received);
+        return new SettlementFrozenParts(components, received, issued);
     }
 
-    /// <summary>เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งการลงบัญชีสร้างให้รอบโอนนี้ (ป้ายตัวเดียวกับผู้ลงบัญชี — <see cref="SettlementPostingKeys"/>)</summary>
+    /// <summary>เอกสาร/การรับชำระที่ยังไม่ถูกยกเลิกซึ่งการลงบัญชีสร้างให้รอบโอนนี้ (กุญแจตัวเดียวกับผู้ลงบัญชี — <see cref="SettlementPostingKeys"/> ·
+    /// การรับชำระ = คอลัมน์ <c>Payment.SettlementBatchId</c> · รอบ 201 A-ST1)</summary>
     private async Task<List<string>> PostingArtifactsAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
         var prefix = SettlementPostingKeys.CreatorPrefix(batchId);
-        var marker = SettlementPostingKeys.PaymentMarker(batchId);
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
                 && d.CreatedBy != null && d.CreatedBy.StartsWith(prefix))
             .Select(d => "เอกสาร " + d.DocumentNumber).ToListAsync(ct);
         var pays = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Notes != null && p.Notes.Contains(marker))
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.SettlementBatchId == batchId)
             .Select(p => "การรับชำระ " + p.PaymentNumber).ToListAsync(ct);
         return docs.Concat(pays).ToList();
     }

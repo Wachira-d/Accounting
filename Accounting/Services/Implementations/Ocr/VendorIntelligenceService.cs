@@ -539,7 +539,8 @@ public class VendorIntelligenceService
             var whtScan = await _db.Set<OcrScanResult>().AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == documentId)
                 .OrderByDescending(r => r.CreatedAt)
-                .Select(r => new { r.RawTextContent, r.UserCorrectedFields })
+                // รอบ 201 ทีม OC (C-18 · คำตัดสินข้อ 91): ธง "คำแก้ของแถวนี้เริ่มก่อนกติกา baseline WHT" — ด่านเดียวกับเส้น backfill
+                .Select(r => new { r.RawTextContent, r.UserCorrectedFields, r.WhtCorrectionsPredateBaseline })
                 .FirstOrDefaultAsync();
             // ⚠️ "กระดาษพูด" ต้องมาจาก **ตัวอ่านกระดาษตัวเดียว** (`PaperWhtReader`)
             // ห้ามอ่าน `scan.HasWht`/`scan.WhtRate` ที่นี่: สองช่องนั้นเคยถูกเขียนโดย
@@ -552,7 +553,8 @@ public class VendorIntelligenceService
             var scope = OcrWhtLearningScope.Decide(
                 hasScan: whtScan != null,
                 paperShowsWht: paperWht.Amount is > 0m || paperWht.RatePercent is > 0m,
-                userCorrectedFields: whtScan?.UserCorrectedFields);
+                userCorrectedFields: whtScan?.UserCorrectedFields,
+                userCorrectionsPredateBaseline: whtScan?.WhtCorrectionsPredateBaseline ?? false);
             if (scope.Learn)
             {
                 intel.WhtUsageCount++;
@@ -757,7 +759,7 @@ public class VendorIntelligenceService
         // ตัวเองที่เส้นเพิ่มทีละใบเพิ่งปิดไป (ทางเข้าอื่นต้องเดินด่านเดียวกัน)
         var docIds = docs.Select(d => d.Id).ToList();
         var whtScans = docIds.Count == 0
-            ? new Dictionary<Guid, (bool Paper, string? Corrected)>()
+            ? new Dictionary<Guid, (bool Paper, string? Corrected, bool PredateBaseline)>()
             : (await _db.Set<OcrScanResult>().AsNoTracking()
                     .Where(r => r.CompanyId == companyId && r.CreatedDocumentId != null
                         && docIds.Contains(r.CreatedDocumentId!.Value))
@@ -769,6 +771,8 @@ public class VendorIntelligenceService
                         // TrainFromDocumentAsync ข้างบน (ธงนั้นเคยเป็นคำตอบของเราเอง)
                         r.RawTextContent,
                         r.UserCorrectedFields,
+                        // รอบ 201 ทีม OC (C-18 · คำตัดสินข้อ 91): คำแก้ก่อนกติกา baseline WHT = ไม่รู้ ⇒ ไม่นับ (ไม่ลบข้อมูล)
+                        r.WhtCorrectionsPredateBaseline,
                     })
                     .ToListAsync())
                 .GroupBy(x => x.DocId)
@@ -780,7 +784,8 @@ public class VendorIntelligenceService
                         var first = g.First();
                         var paper = Accounting.Helpers.PaperWhtReader.Read(first.RawTextContent);
                         return (Paper: paper.Amount is > 0m || paper.RatePercent is > 0m,
-                                Corrected: first.UserCorrectedFields);
+                                Corrected: first.UserCorrectedFields,
+                                PredateBaseline: first.WhtCorrectionsPredateBaseline);
                     });
 
         var trained = 0;
@@ -844,7 +849,8 @@ public class VendorIntelligenceService
                 var whtLearnable = OcrWhtLearningScope.Decide(
                     hasScan: hasScanRow,
                     paperShowsWht: whtScan.Paper,
-                    userCorrectedFields: whtScan.Corrected).Learn;
+                    userCorrectedFields: whtScan.Corrected,
+                    userCorrectionsPredateBaseline: whtScan.PredateBaseline).Learn;
                 if (d.WithholdingTaxAmount > 0 && d.SubTotal > 0 && whtLearnable)
                 {
                     whtCount++;
