@@ -3976,3 +3976,20 @@ _2026-09-29 รอบ 200 ทีม V1G — แก้ผลฝ่ายค้า
   ผ่าน EF model · `PreparerName/PreparerSignatureBase64` ไม่ตามไปใบแทน
 - **ข้อ 44** รายงานอ่านอย่างเดียว `GET document/etax-reissue-review` (`Helpers/EtaxReissueReview`) + แถบบนหน้ารายการเอกสาร
 - เทสต์ `VoidReissueR200GTests` (สองทิศ + ลำดับ เช็คเด้ง→รับใหม่→ปิดธง ระดับตัวตัดสิน) · ปรับ `VoidReissueR200FTests` R3 · required_call_site +16 แถว/ปรับ 7 — commit 3f4e1ea2)_
+
+_Last verified against codebase: 2026-09-29 (รอบ 200 ทีม Z — แก้ผลฝ่ายค้านรอบสอง ด้านสิทธิ์/แพ็กเกจ/security/OCR (`erp-review/2026-09-29/review200-round2-sec.md` · รายงาน `team-Z.md`):
+- **K2-5b/5a** `Helpers/OcrCurrencyEvidence`: ชื่อสกุลคำเดี่ยว (EURO/YEN/YUAN/RMB) นับเป็นหลักฐานเฉพาะเมื่อติดตัวเลขยอด/บรรทัดป้ายยอดรวม/ป้ายสกุลเงิน · `€`/`£` ติดตัวเลข = หลักฐานใหม่ ·
+  กระดาษในเทสต์ 363 ชิ้น คำตอบเปลี่ยน 0 (ตัวจำลอง Python เดิม vs ใหม่)
+- **K2-1** `Helpers/OcrCounterpartyMatch`: ชื่อตรงหลายแถวของนิติบุคคลเดียว ⇒ `ContactTaxBranchKey.Pick` ตามสาขาผู้ซื้อ (`SameEntityBranch`) · ผู้สมัครพก `TaxId/BranchCode` ·
+  โน้ต `[BUYER]` ทุกครั้งที่จะสร้างใหม่ (`NewCustomerNote` · `NonCustomerNote` · `NewBranchNote`) · คำค้นเสริม `PrefilterToken` · `Take(100)` เรียงชื่อดิบตรงก่อน
+- **K2-2** `OcrService.ScanAsync` บันทึกของค้างก่อนเปิดธุรกรรมสร้างผู้ติดต่อ · `UndoOcrContactCreateAfterRollback` ถอด entity ทุกชนิดที่เกิดในบล็อก
+- **K2-4** `DocumentService.SyncScanToPostedDocumentAsync` ล้ม ⇒ `DiscardUnsavedEntry(scan)` (TryTrain/e-Tax hook ไม่ล้มตาม)
+- **RF-6** `AnomalyExplainVerdict.View` ตัวประกอบเดียวของสองทางเข้า (`Coerce` เป็น internal)
+- **RF-3** DECISIONS ข้อ 34 แก้ถ้อยคำ (เจ้าของโดยปริยาย · ไม่มีบทบาท Admin) · `GET document-templates/access` · หน้าเทมเพลตปิดปุ่มเขียนตามสิทธิ์ + หยุดวนที่ 403 แรก ·
+  **api.js 403 สิทธิ์ส่งข้อความเซิร์ฟเวอร์ถึงผู้ใช้** (เดิม catch กลืนเป็น "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้" ⇒ `DeniedMessage` ไม่เคยถึงใคร) + `err.status/requiredPermission`
+- **RF-2** `Helpers/CssThemeValue` (สี = `DocumentTemplateStyle.Hex` + rgb/hsl ตัวเลขล้วน · ฟอนต์ · ความยาว · ขอบมน) ใน theme.css + ข้อมูลธีม storefront · ด่านบันทึกธีม
+  (`RejectUnsafeTheme` · CSS กำหนดเองห้าม `</style`/`<script`) · สีแบรนด์เอกสารตรวจ/เก็บ/echo ผ่าน `DocumentTemplateStyle.Hex`
+- **S2-6** `/api/v1` อ่านไม่ผ่านด่าน (`SkipsPublicApiRead`) · ไม่สร้าง FreeTrial (`MayCreateSubscriptionRow`) · **S2-3** `pageFeatures` (`SubscriptionGatePolicy.PageMainFeatures`) ⇒
+  `Layout.currentPageFeature()` · **S2-7** จดใน ACCOUNT_STRUCTURE · checklist ก่อนกด Enforce ใน `team-S.md` ข้อ 3a
+- เทสต์ `Review200ZTests` · sim ใหม่ `tools/page_feature_sim.js` · `api_feature_denial_sim.js` ข้อ 7–8 + negative test 2 · required_call_site +15 แถว/ปรับ 1 — commit <pending>)_
+

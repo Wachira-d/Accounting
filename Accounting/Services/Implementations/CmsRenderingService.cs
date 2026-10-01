@@ -210,24 +210,25 @@ public class CmsRenderingService : ICmsRenderingService
             },
             Theme = new StorefrontThemeInfo
             {
-                PrimaryColor = site.Theme?.PrimaryColor ?? "#4F46E5",
-                SecondaryColor = site.Theme?.SecondaryColor ?? "#0EA5E9",
-                AccentColor = site.Theme?.AccentColor ?? "#F59E0B",
-                BackgroundColor = site.Theme?.BackgroundColor ?? "#FFFFFF",
-                SurfaceColor = site.Theme?.SurfaceColor ?? "#F9FAFB",
-                TextColor = site.Theme?.TextColor ?? "#111827",
-                TextSecondaryColor = site.Theme?.TextSecondaryColor ?? "#6B7280",
-                SuccessColor = site.Theme?.SuccessColor ?? "#10B981",
-                WarningColor = site.Theme?.WarningColor ?? "#F59E0B",
-                DangerColor = site.Theme?.DangerColor ?? "#EF4444",
-                HeadingFont = site.Theme?.HeadingFont ?? "Inter",
-                BodyFont = site.Theme?.BodyFont ?? "Noto Sans Thai",
-                MonoFont = site.Theme?.MonoFont ?? "JetBrains Mono",
-                BaseFontSize = site.Theme?.BaseFontSize ?? "16px",
+                // RF-2 (รอบ 200 ทีม Z): ค่าที่ผ่านตัวตรวจเดียวกับ theme.css — หน้าเว็บสาธารณะนำไปต่อเป็น style ได้โดยไม่แตก
+                PrimaryColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.PrimaryColor, "#4F46E5"),
+                SecondaryColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.SecondaryColor, "#0EA5E9"),
+                AccentColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.AccentColor, "#F59E0B"),
+                BackgroundColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.BackgroundColor, "#FFFFFF"),
+                SurfaceColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.SurfaceColor, "#F9FAFB"),
+                TextColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.TextColor, "#111827"),
+                TextSecondaryColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.TextSecondaryColor, "#6B7280"),
+                SuccessColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.SuccessColor, "#10B981"),
+                WarningColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.WarningColor, "#F59E0B"),
+                DangerColor = Accounting.Helpers.CssThemeValue.Color(site.Theme?.DangerColor, "#EF4444"),
+                HeadingFont = Accounting.Helpers.CssThemeValue.FontName(site.Theme?.HeadingFont, "Inter"),
+                BodyFont = Accounting.Helpers.CssThemeValue.FontName(site.Theme?.BodyFont, "Noto Sans Thai"),
+                MonoFont = Accounting.Helpers.CssThemeValue.FontName(site.Theme?.MonoFont, "JetBrains Mono"),
+                BaseFontSize = Accounting.Helpers.CssThemeValue.Length(site.Theme?.BaseFontSize, "16px"),
                 HeaderLayout = site.Theme?.HeaderLayout ?? "standard",
                 FooterLayout = site.Theme?.FooterLayout ?? "standard",
-                BorderRadius = site.Theme?.BorderRadius ?? 8,
-                MaxContentWidth = site.Theme?.MaxContentWidth ?? "1280px",
+                BorderRadius = Accounting.Helpers.CssThemeValue.Radius(site.Theme?.BorderRadius ?? 8),
+                MaxContentWidth = Accounting.Helpers.CssThemeValue.Length(site.Theme?.MaxContentWidth, "1280px"),
                 CustomCss = site.Theme?.CustomCss,
                 CssVariables = themeCss
             },
@@ -271,26 +272,29 @@ public class CmsRenderingService : ICmsRenderingService
 
     // ===== Private helpers =====
 
+    /// <remarks>รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง RF-2): ทุกค่าที่ต่อเข้า CSS ผ่าน <see cref="Accounting.Helpers.CssThemeValue"/> (สี ⇒ ตัวตรวจสีตัวเดียวกับเทมเพลตเอกสาร
+    /// <c>DocumentTemplateStyle.Hex</c>) — เดิมต่อดิบ ⇒ ค่าสีที่ปิดกฎด้วยวงเล็บปีกกาแล้วต่อกฎ CSS ใหม่ เขียน CSS ทับทั้งเว็บไซต์ลูกค้า · ค่าเก่าที่ไม่ถูกรูป = ค่าเริ่มต้นของช่องนั้น
+    /// (ชุดเดียวกับ <see cref="GenerateDefaultThemeCss"/>) ไม่ต้อง migration</remarks>
     private static string GenerateThemeCssFromEntity(Models.Entities.SiteTheme theme)
     {
         var sb = new StringBuilder();
         sb.AppendLine(":root {");
-        sb.AppendLine($"  --color-primary: {theme.PrimaryColor};");
-        sb.AppendLine($"  --color-secondary: {theme.SecondaryColor};");
-        sb.AppendLine($"  --color-accent: {theme.AccentColor};");
-        sb.AppendLine($"  --color-background: {theme.BackgroundColor};");
-        sb.AppendLine($"  --color-surface: {theme.SurfaceColor};");
-        sb.AppendLine($"  --color-text: {theme.TextColor};");
-        sb.AppendLine($"  --color-text-secondary: {theme.TextSecondaryColor};");
-        sb.AppendLine($"  --color-success: {theme.SuccessColor};");
-        sb.AppendLine($"  --color-warning: {theme.WarningColor};");
-        sb.AppendLine($"  --color-danger: {theme.DangerColor};");
-        sb.AppendLine($"  --font-heading: '{theme.HeadingFont}', sans-serif;");
-        sb.AppendLine($"  --font-body: '{theme.BodyFont}', sans-serif;");
-        sb.AppendLine($"  --font-mono: '{theme.MonoFont}', monospace;");
-        sb.AppendLine($"  --font-size-base: {theme.BaseFontSize};");
-        sb.AppendLine($"  --border-radius: {theme.BorderRadius}px;");
-        sb.AppendLine($"  --max-content-width: {theme.MaxContentWidth};");
+        sb.AppendLine($"  --color-primary: {Accounting.Helpers.CssThemeValue.Color(theme.PrimaryColor, "#4F46E5")};");
+        sb.AppendLine($"  --color-secondary: {Accounting.Helpers.CssThemeValue.Color(theme.SecondaryColor, "#0EA5E9")};");
+        sb.AppendLine($"  --color-accent: {Accounting.Helpers.CssThemeValue.Color(theme.AccentColor, "#F59E0B")};");
+        sb.AppendLine($"  --color-background: {Accounting.Helpers.CssThemeValue.Color(theme.BackgroundColor, "#FFFFFF")};");
+        sb.AppendLine($"  --color-surface: {Accounting.Helpers.CssThemeValue.Color(theme.SurfaceColor, "#F9FAFB")};");
+        sb.AppendLine($"  --color-text: {Accounting.Helpers.CssThemeValue.Color(theme.TextColor, "#111827")};");
+        sb.AppendLine($"  --color-text-secondary: {Accounting.Helpers.CssThemeValue.Color(theme.TextSecondaryColor, "#6B7280")};");
+        sb.AppendLine($"  --color-success: {Accounting.Helpers.CssThemeValue.Color(theme.SuccessColor, "#10B981")};");
+        sb.AppendLine($"  --color-warning: {Accounting.Helpers.CssThemeValue.Color(theme.WarningColor, "#F59E0B")};");
+        sb.AppendLine($"  --color-danger: {Accounting.Helpers.CssThemeValue.Color(theme.DangerColor, "#EF4444")};");
+        sb.AppendLine($"  --font-heading: '{Accounting.Helpers.CssThemeValue.FontName(theme.HeadingFont, "Inter")}', sans-serif;");
+        sb.AppendLine($"  --font-body: '{Accounting.Helpers.CssThemeValue.FontName(theme.BodyFont, "Noto Sans Thai")}', sans-serif;");
+        sb.AppendLine($"  --font-mono: '{Accounting.Helpers.CssThemeValue.FontName(theme.MonoFont, "JetBrains Mono")}', monospace;");
+        sb.AppendLine($"  --font-size-base: {Accounting.Helpers.CssThemeValue.Length(theme.BaseFontSize, "16px")};");
+        sb.AppendLine($"  --border-radius: {Accounting.Helpers.CssThemeValue.Radius(theme.BorderRadius)}px;");
+        sb.AppendLine($"  --max-content-width: {Accounting.Helpers.CssThemeValue.Length(theme.MaxContentWidth, "1280px")};");
         sb.AppendLine("}");
 
         if (!string.IsNullOrWhiteSpace(theme.CustomCss))

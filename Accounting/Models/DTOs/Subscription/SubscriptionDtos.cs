@@ -90,7 +90,10 @@ public record SubscriptionResponse(
     /// <summary>รอบ 200 ฝ่ายค้าน S200-2: โหมดบังคับแพ็กเกจที่มีผลจริงกับหน้าเว็บ ("Off"/"Shadow"/"Enforce" — ชื่อ · จาก
     /// <c>SubscriptionEnforcementResolver</c> ตัวเดียวกับ middleware) — เมนูที่ผูกฟีเจอร์ใหม่ (`lockOnEnforce` ใน layout.js) ล็อก 🔒 เฉพาะเมื่อ
     /// "Enforce" · โหมดเงา = ป้ายเล็ก "แพ็กเกจไม่รวม" แต่ยังกดเข้าได้ · <c>null</c> = ไม่รู้ (ถือว่ายังไม่บังคับ)</summary>
-    string? FeatureGateMode = null);
+    string? FeatureGateMode = null,
+    /// <summary>รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-3): หน้า → ฟีเจอร์ของ route ข้อมูลหลัก (<c>SubscriptionGatePolicy.PageMainFeatures</c>) — ให้
+    /// <c>Layout.currentPageFeature()</c> ตรงกับสิ่งที่เซิร์ฟเวอร์ gate จริง (หน้าที่ไม่อยู่ในนี้ = ฟีเจอร์ของเมนู) · <c>null</c> = ไม่รู้</summary>
+    IReadOnlyDictionary<string, string?>? PageFeatures = null);
 
 public record UsageLimits(
     int MaxUsers,

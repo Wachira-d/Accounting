@@ -2782,12 +2782,19 @@ public class OcrService : IOcrService
             var lockContactCreate = !scanResult.MatchedContactId.HasValue
                 && Accounting.Helpers.OcrContactCreateLock.LockPart(extractedData.VendorTaxId) != null
                 && !IsOurOwnContact(extractedData.VendorTaxId, extractedData.VendorName);
+            // ── ฝ่ายค้านรอบสอง K2-2 (รอบ 200 ทีม Z): SaveChanges ครั้งแรกในธุรกรรมสั้นบันทึก "ทุกอย่างที่ค้างใน context ตั้งแต่ต้นไปป์ไลน์" (ไม่ใช่แค่ผู้ติดต่อ) ⇒
+            // ธุรกรรม rollback แล้ว EF ถือว่าของค้างชนิดอื่นบันทึกแล้ว ⇒ SaveChanges ท้าย ScanAsync ไม่ส่งซ้ำ = หายเงียบ · บันทึกของค้างทั้งหมด<b>ก่อน</b>เปิดธุรกรรม
+            // (ของพวกนี้ถูกบันทึกอยู่แล้วในเส้นปกติ — แค่ย้ายจุดให้อยู่นอกธุรกรรมที่อาจถูกถอย) ⇒ ในธุรกรรมเหลือเฉพาะงานของบล็อกสร้างผู้ติดต่อ
+            if (lockContactCreate && _db.Database.CurrentTransaction == null && _db.ChangeTracker.HasChanges())
+                await _db.SaveChangesAsync();
             await using var contactCreateTx = lockContactCreate && _db.Database.CurrentTransaction == null
                 ? await _db.Database.BeginTransactionAsync() : null;
             // ── ฝ่ายค้าน K R8 (รอบ 200 ทีม K2): ธุรกรรมสั้นนี้ rollback (commit ล้ม · ล้มหลัง SaveChanges แต่ก่อน commit) แต่ EF ถือว่าแถวผู้ติดต่อ/
             // MatchedContactId ที่ SaveChanges ไปแล้ว "บันทึกแล้ว" ⇒ สแกน (และคำตอบถึงผู้ใช้) ชี้ผู้ติดต่อที่ไม่มีจริง · จำสภาพก่อนบล็อกไว้ แล้วคืนเมื่อล้ม
+            // (K2-2: จำ entity ทุกชนิดที่ถูกติดตามก่อนบล็อก — ไม่ใช่เฉพาะ Contact)
             var matchedBeforeContactCreate = scanResult.MatchedContactId;
-            var contactsTrackedBeforeCreate = _db.ChangeTracker.Entries<Contact>().Select(e => e.Entity.Id).ToHashSet();
+            var trackedBeforeContactCreate = _db.ChangeTracker.Entries().Select(e => e.Entity)
+                .ToHashSet(ReferenceEqualityComparer.Instance);
             try
             {
             if (lockContactCreate)
@@ -2968,7 +2975,7 @@ public class OcrService : IOcrService
             }
             catch (Exception) when (contactCreateTx != null)
             {
-                UndoOcrContactCreateAfterRollback(scanResult, matchedBeforeContactCreate, contactsTrackedBeforeCreate);
+                UndoOcrContactCreateAfterRollback(scanResult, matchedBeforeContactCreate, trackedBeforeContactCreate);
                 throw;
             }
             // Backfill ข้อมูลใน contact เดิม. แยก 2 step:
@@ -3551,15 +3558,20 @@ public class OcrService : IOcrService
         if (string.IsNullOrWhiteSpace(buyerNm)) return (null, null, null);
         // ถอยไปจับชื่อได้เฉพาะในชุดที่ตัวจับคู่กลางอนุญาต (เลขนี้มีอยู่แล้วคนละสาขา ⇒ ห้าม · เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข)
         var buyerSoft = Accounting.Helpers.ContactTaxBranchKey.SoftScope(contacts, companyId, buyerTax, buyerKey);
-        if (buyerSoft == null) return (null, null, null);
+        // รอบ 200 ทีม Z (K2-1): เลขนี้มีผู้ติดต่ออยู่แล้วคนละสาขา ⇒ ผู้เรียกสร้างแถวของสาขานั้น — บอกให้เห็น (สร้างใหม่ต้องมีโน้ตเสมอ)
+        if (buyerSoft == null)
+            return (null, null, Accounting.Helpers.OcrCounterpartyMatch.NewBranchNote(buyerNm, buyerTax, result.BuyerBranchCode));
         var name = buyerNm.Trim();
+        // K2-1 (ก): คำค้นเสริม — ชื่อที่ "ตรงหลัง normalize" แต่สะกดรูปนิติบุคคลต่างกันต้องถึงตัวตัดสิน (เดิมถูกตัดทิ้งด้วย Contains ดิบ ⇒ ลูกค้าซ้ำ)
+        var token = Accounting.Helpers.OcrCounterpartyMatch.PrefilterToken(name) ?? name;
         var rows = await buyerSoft
-            .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name.Contains(name))
-            .OrderBy(c => c.Name.Length).ThenBy(c => c.Id)
-            .Take(50)
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted && (c.Name.Contains(name) || c.Name.Contains(token)))
+            .OrderBy(c => c.Name.Contains(name) ? 0 : 1).ThenBy(c => c.Name.Length).ThenBy(c => c.Id)
+            .Take(100)
             .ToListAsync();
         var pick = Accounting.Helpers.OcrCounterpartyMatch.PickBuyerByName(name,
-            rows.Select(c => new Accounting.Helpers.OcrCounterpartyCandidate(c.Id, c.Name, c.IsCustomer)));
+            rows.Select(c => new Accounting.Helpers.OcrCounterpartyCandidate(c.Id, c.Name, c.IsCustomer, c.TaxId, c.BranchCode)),
+            result.BuyerBranchCode);
         var row = pick.ContactId is Guid pickedId ? rows.FirstOrDefault(c => c.Id == pickedId) : null;
         if (row == null) return (null, null, pick.Note);
         var adopt = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(row, buyerTax, result.BuyerBranchCode,
@@ -3597,10 +3609,12 @@ public class OcrService : IOcrService
     /// "บันทึกแล้ว" ทั้งที่ฐานข้อมูลไม่มี: ถอดแถวผู้ติดต่อที่เกิดในบล็อก · คืน <c>MatchedContactId</c> เดิม (ห้ามชี้แถวที่ไม่มีจริง) ·
     /// บังคับเขียนแถวสแกนทั้งแถวตอนบันทึกท้าย <c>ScanAsync</c> (ค่าที่ EF คิดว่าบันทึกแล้วแต่ถูก rollback จะไม่ถูกส่งซ้ำถ้าไม่บังคับ)
     /// </summary>
-    private void UndoOcrContactCreateAfterRollback(OcrScanResult scanResult, Guid? matchedBefore, HashSet<Guid> contactsTrackedBefore)
+    /// <remarks>รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง K2-2): ถอด entity <b>ทุกชนิด</b>ที่เกิดในบล็อก (ไม่ใช่แค่ Contact) · ของค้างก่อนบล็อกถูกบันทึกก่อนเปิดธุรกรรมแล้ว
+    /// (ผู้เรียก) จึงไม่มีอะไรจากนอกบล็อกหายไปกับ rollback</remarks>
+    private void UndoOcrContactCreateAfterRollback(OcrScanResult scanResult, Guid? matchedBefore, HashSet<object> trackedBefore)
     {
-        foreach (var entry in _db.ChangeTracker.Entries<Contact>().ToList())
-            if (!contactsTrackedBefore.Contains(entry.Entity.Id))
+        foreach (var entry in _db.ChangeTracker.Entries().ToList())
+            if (!trackedBefore.Contains(entry.Entity))
                 entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
         scanResult.MatchedContactId = matchedBefore;
         _db.Entry(scanResult).State = Microsoft.EntityFrameworkCore.EntityState.Modified;

@@ -358,6 +358,24 @@ public static class SubscriptionGatePolicy
         return new SubscriptionFeaturePlan(r.Feature, r.RouteKey, null, null);
     }
 
+    /// <summary>
+    /// หน้าเว็บที่ "ข้อมูลหลัก" ถูก gate ด้วยฟีเจอร์คนละตัวกับเมนูของหน้า — รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-3): api.js ดีดไปหน้าแพ็กเกจเฉพาะเมื่อ
+    /// ฟีเจอร์ใน 403 ตรง <c>Layout.currentPageFeature()</c> (ข้อ 24) ซึ่งเดิมอ่านจากเมนู ⇒ หน้าเหล่านี้โหลดหลักได้ 403 แล้วได้แค่ toast + หน้าว่าง ·
+    /// ตารางนี้ระบุ <b>route ข้อมูลหลัก</b> ของหน้า แล้วให้ <see cref="RequiredFeatureFor"/> (ตารางเส้นทางตัวเดียว) บอกฟีเจอร์ — หน้าเว็บไม่เก็บสำเนาตาราง
+    /// </summary>
+    private static readonly (string PageId, string MainRoute)[] PageMainRoutes =
+    {
+        ("cms-orders",    "/api/companies/{companyId}/cms/sites/{siteId}/commerce/orders"),   // CmsWebsiteBuilder (เมนู) → CmsEcommerce
+        ("cms-bookings",  "/api/companies/{companyId}/cms/sites/{siteId}/booking/bookings"),  // CmsWebsiteBuilder (เมนู) → CmsBooking
+        ("lodging",       "/api/companies/{companyId}/lodging/reservations"),                 // CmsWebsiteBuilder (เมนู) → ไม่ gate (null)
+        ("document-scan", "/api/companies/{companyId}/ocr"),                                  // AI_Features (เมนู) → DocumentOCR
+    };
+
+    /// <summary>หน้า → ชื่อฟีเจอร์ของ route ข้อมูลหลัก (<c>null</c> = route หลักไม่ถูก gate ⇒ 403 ฟีเจอร์ใด ๆ ในหน้านั้นเป็นคำขอเบื้องหลัง) ·
+    /// ส่งไปกับ <c>/api/subscription</c> (<c>pageFeatures</c>) · หน้าที่ไม่อยู่ในตาราง = ฟีเจอร์ของเมนู (พฤติกรรมเดิม)</summary>
+    public static IReadOnlyDictionary<string, string?> PageMainFeatures() =>
+        PageMainRoutes.ToDictionary(p => p.PageId, p => RequiredFeatureFor(p.MainRoute, "GET")?.Feature.ToString(), StringComparer.Ordinal);
+
     /// <summary>ผู้เรียกเป็น partner/integration (ส่ง <c>X-Company-Id</c> เอง หรือคีย์ API ของ <c>/api/v1</c>) — รายงานเงานับแยกคอลัมน์จากหน้าเว็บ</summary>
     public static bool IsPartnerCaller(TenantCompanyTarget target) =>
         target.HeaderCarried || target.Source == TenantCompanySource.ApiKey;
@@ -365,6 +383,23 @@ public static class SubscriptionGatePolicy
     /// <summary>เส้นทาง Connected (<c>/api/v1/…</c>) — บริษัทมาจากคีย์ API (<c>context.Items["CompanyId"]</c> ที่ <c>ApiKeyMiddleware</c> ใส่)</summary>
     private static bool IsPublicApiPath(string? path) =>
         (path ?? "").StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// คำขอ <c>/api/v1</c> (บริษัทจากคีย์ API) ที่<b>ไม่ต้องผ่านด่านนี้เลย</b> — รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-6) ตามถ้อยคำข้อ 23
+    /// "บริษัทที่ถูกระงับต้องไม่<b>เขียน</b>ข้อมูลผ่านทางเข้าใดก็ได้": คำขออ่าน (GET/HEAD/OPTIONS) ของ Connected ⇒ ข้าม (อ่านได้แม้ระงับ/หมดอายุ/subscription ถูกยกเลิก ·
+    /// ด่านฟีเจอร์ของ Connected อยู่ใน <c>PublicApiControllerBase</c> อยู่แล้ว) — และไม่เสีย query ต่อคำขออ่านเลย (เดิมทุกคำขออ่าน <c>/api/v1</c> อ่านสถานะแพ็กเกจ)
+    /// · คำขอเขียนยังเดินด่านระงับ/หมดอายุ/ยกเลิกตามสวิตช์เดียวกัน (เงา = บันทึก · บังคับ = บล็อก) · คำขอที่ไม่ใช่ <see cref="TenantCompanySource.ApiKey"/> ไม่แตะ
+    /// </summary>
+    public static bool SkipsPublicApiRead(TenantCompanyTarget target, bool isWrite) =>
+        target.Source == TenantCompanySource.ApiKey && !isWrite;
+
+    /// <summary>
+    /// ด่านนี้สร้างแถว subscription (FreeTrial) ให้บริษัทที่ยังไม่มีได้ไหม — ได้เฉพาะคำขอจากหน้าเว็บ/partner (พฤติกรรมเดิม) · <b>ห้าม</b>สำหรับ <c>/api/v1</c>
+    /// (รอบ 200 ทีม Z · S2-6: เดิมคำขอ Connected ครั้งแรกของบริษัทที่ยังไม่มีแถวสร้าง FreeTrial ให้เงียบ ๆ = เริ่มนับวันทดลองจากคีย์ API ที่ลูกค้าไม่รู้ตัว) ·
+    /// ไม่มีแถว ⇒ ผ่าน (ไม่มีข้อเท็จจริงให้ตัดสิน — ทิศไม่บล็อกแบบเดิมของ fail-open)
+    /// </summary>
+    public static bool MayCreateSubscriptionRow(TenantCompanyTarget target) =>
+        target.Source != TenantCompanySource.ApiKey;
 
     /// <summary>
     /// บริษัทของคำขอ <c>/api/v1</c> — รอบ 200 คำตัดสินข้อ 23 "ตรวจสถานะระงับ/หมดอายุผ่านสวิตช์ตัวเดียวกัน (เงาก่อน)": คำขอที่ไม่มีบริษัทจาก route/header

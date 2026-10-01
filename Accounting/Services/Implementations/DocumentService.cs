@@ -13566,9 +13566,10 @@ public partial class DocumentService : IDocumentService
     private async Task SyncScanToPostedDocumentAsync(
         Guid companyId, Document doc, List<DocumentLine> approvedLines)
     {
+        OcrScanResult? scan = null;
         try
         {
-            var scan = await _db.Set<OcrScanResult>()
+            scan = await _db.Set<OcrScanResult>()
                 .FirstOrDefaultAsync(s => s.CompanyId == companyId
                     && s.CreatedDocumentId == doc.Id && !s.IsDeleted);
             if (scan == null) return;
@@ -13664,6 +13665,29 @@ public partial class DocumentService : IDocumentService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "sync สแกนกับเอกสารที่อนุมัติไม่สำเร็จ (doc {DocId})", doc.Id);
+            // ฝ่ายค้านรอบสอง K2-4 (รอบ 200 ทีม Z): sync ย้ายมาอยู่ก่อน TryTrain + e-Tax hook (ข้อ 28) ⇒ ถ้า SaveChanges ของ sync ล้ม แถวสแกนยังค้าง
+            // Modified ใน context เดียวกัน แล้ว SaveChanges ถัดไป (TryTrain · IssuedDocumentHooks → e-Tax) ล้มซ้ำด้วยเหตุเดียวกัน — ถอยการแก้ของ sync
+            // ออกจาก change tracker (ค่าในฐานข้อมูลยังเป็นค่าเดิม เพราะบันทึกไม่สำเร็จ) · ขั้นที่เหลือเริ่มจากสภาพที่ commit แล้ว
+            DiscardUnsavedEntry(scan);
+        }
+    }
+
+    /// <summary>ถอยการแก้ที่ยังไม่ถูกบันทึกของ entity หนึ่งตัวออกจาก change tracker (Modified ⇒ ค่าเดิม + Unchanged · Added ⇒ Detached) —
+    /// ใช้หลังขั้น best-effort ที่ SaveChanges ล้ม เพื่อไม่ให้ขั้นถัดไป (e-Tax hook) ล้มตามด้วยเหตุเดียวกัน (รอบ 200 ทีม Z · K2-4)</summary>
+    private void DiscardUnsavedEntry(object? entity)
+    {
+        if (entity == null) return;
+        var entry = _db.Entry(entity);
+        switch (entry.State)
+        {
+            case EntityState.Modified:
+            case EntityState.Deleted:
+                entry.CurrentValues.SetValues(entry.OriginalValues);
+                entry.State = EntityState.Unchanged;
+                break;
+            case EntityState.Added:
+                entry.State = EntityState.Detached;
+                break;
         }
     }
 

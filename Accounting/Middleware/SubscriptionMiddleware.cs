@@ -87,6 +87,13 @@ public class SubscriptionCheckMiddleware
             await _next(context);
             return;
         }
+        // รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-6): ข้อ 23 = กันการ "เขียน" ของบริษัทระงับ/หมดอายุผ่าน /api/v1 — คำขออ่านของ Connected ไม่ผ่านด่านนี้
+        // (ไม่อ่านสวิตช์ · ไม่อ่านแพ็กเกจ · ไม่สร้างแถว subscription) ⇒ ไม่มี query เพิ่มต่อคำขออ่าน
+        if (SubscriptionGatePolicy.SkipsPublicApiRead(target, IsWriteMethod(context.Request.Method)))
+        {
+            await _next(context);
+            return;
+        }
         if (target.HeaderDisagreesWithRoute)
             _logger.LogInformation("X-Company-Id ไม่ตรงกับบริษัทใน route {Path} — ใช้บริษัทใน route {CompanyId}", path, companyId);
 
@@ -107,8 +114,14 @@ public class SubscriptionCheckMiddleware
         SubscriptionGateState sub;
         try
         {
-            sub = await subscriptionService.GetGateStateAsync(companyId)
-                  ?? ToGateState(await subscriptionService.GetSubscriptionAsync(companyId));
+            var gate = await subscriptionService.GetGateStateAsync(companyId);
+            if (gate == null && !SubscriptionGatePolicy.MayCreateSubscriptionRow(target))
+            {
+                // S2-6: /api/v1 ห้ามสร้าง FreeTrial ให้บริษัทที่ยังไม่มีแถว (GetSubscriptionAsync สร้างให้) — ไม่มีข้อเท็จจริงให้ตัดสิน ⇒ ผ่าน (fail-open เดิม)
+                await _next(context);
+                return;
+            }
+            sub = gate ?? ToGateState(await subscriptionService.GetSubscriptionAsync(companyId));
         }
         catch
         {

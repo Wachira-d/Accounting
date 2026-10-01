@@ -63,7 +63,8 @@ public class DocumentBrandController : ControllerBase
     private static BrandResponse Map(DocumentBrand b, string? companyAddress) => new(
         b.Id, b.Name, b.NameEn, b.TagLine, b.TagLineEn, b.LogoPath, b.LogoUrl,
         b.Address, b.AddressEn, b.Phone, b.Email, b.Website,
-        b.PrimaryColor, b.SecondaryColor, b.DefaultTemplateId,
+        // RF-2 (รอบ 200 ทีม Z): echo สีผ่านตัวตรวจสีตัวเดียว — ค่าเก่าที่ไม่ใช่ #RRGGBB (ก่อนมีด่านบันทึก) = null ⇒ หน้าเว็บใช้สีตั้งต้น
+        Accounting.Helpers.DocumentTemplateStyle.Hex(b.PrimaryColor), Accounting.Helpers.DocumentTemplateStyle.Hex(b.SecondaryColor), b.DefaultTemplateId,
         b.FooterNotes, b.FooterNotesEn, b.LegalNamePlacement, b.IsActive, b.SortOrder,
         BrandAddressSource.Normalize(b.AddressSource), b.AddressSourceBranchId,
         BrandAddressSource.Resolve(b.AddressSource, b.Address, BranchAddressOf(b.AddressSourceBranch))
@@ -133,6 +134,9 @@ public class DocumentBrandController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(new ApiResponse<BrandResponse>(false, null, "กรุณากรอกชื่อทางการค้า"));
 
+        if (BrandColorRejection(req) is { } badColor)
+            return BadRequest(new ApiResponse<BrandResponse>(false, null, badColor));
+
         var b = new DocumentBrand { CompanyId = companyId };
         Apply(b, req);
         _db.DocumentBrands.Add(b);
@@ -151,6 +155,8 @@ public class DocumentBrandController : ControllerBase
         if (b == null) return NotFound(new ApiResponse<BrandResponse>(false, null, "ไม่พบชื่อทางการค้านี้"));
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(new ApiResponse<BrandResponse>(false, null, "กรุณากรอกชื่อทางการค้า"));
+        if (BrandColorRejection(req) is { } badColor)
+            return BadRequest(new ApiResponse<BrandResponse>(false, null, badColor));
 
         Apply(b, req);
         b.UpdatedAt = DateTime.UtcNow;
@@ -303,6 +309,18 @@ public class DocumentBrandController : ControllerBase
     private static string FormatBranchLabel(string? code, string? name)
         => TaxBranchCode.LabelWithName(code, name);
 
+    /// <summary>สีแบรนด์ต้องเป็น #RRGGBB (ตัวตรวจสีตัวเดียวกับเทมเพลตเอกสาร <c>DocumentTemplateStyle.Hex</c>) — รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง RF-2):
+    /// เดิมเก็บตามที่ส่งมา แล้วหน้า document-brands ต่อเข้า <c>style="background:…"</c> (CSS injection ใน attribute) · ว่าง = ใช้สีตั้งต้น (ผ่าน)</summary>
+    private static string? BrandColorRejection(BrandRequest r)
+    {
+        var errs = new List<string>();
+        if (!string.IsNullOrWhiteSpace(r.PrimaryColor) && Accounting.Helpers.DocumentTemplateStyle.Hex(r.PrimaryColor) == null)
+            errs.Add("สีหลักของแบรนด์ ต้องเป็นรหัสสีแบบ #RRGGBB (เช่น #1F2937) หรือเว้นว่าง");
+        if (!string.IsNullOrWhiteSpace(r.SecondaryColor) && Accounting.Helpers.DocumentTemplateStyle.Hex(r.SecondaryColor) == null)
+            errs.Add("สีรองของแบรนด์ ต้องเป็นรหัสสีแบบ #RRGGBB หรือเว้นว่าง");
+        return errs.Count == 0 ? null : "บันทึกชื่อทางการค้าไม่ได้: " + string.Join(" · ", errs);
+    }
+
     private static void Apply(DocumentBrand b, BrandRequest r)
     {
         b.Name = r.Name.Trim();
@@ -320,8 +338,8 @@ public class DocumentBrandController : ControllerBase
         b.Phone = Blank(r.Phone);
         b.Email = Blank(r.Email);
         b.Website = Blank(r.Website);
-        b.PrimaryColor = Blank(r.PrimaryColor);
-        b.SecondaryColor = Blank(r.SecondaryColor);
+        b.PrimaryColor = Accounting.Helpers.DocumentTemplateStyle.Hex(r.PrimaryColor);     // ผ่าน BrandColorRejection แล้ว ⇒ #RRGGBB หรือ null
+        b.SecondaryColor = Accounting.Helpers.DocumentTemplateStyle.Hex(r.SecondaryColor);
         b.DefaultTemplateId = r.DefaultTemplateId;
         b.FooterNotes = Blank(r.FooterNotes);
         b.FooterNotesEn = Blank(r.FooterNotesEn);
