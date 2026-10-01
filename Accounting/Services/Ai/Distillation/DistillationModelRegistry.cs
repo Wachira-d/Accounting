@@ -98,14 +98,11 @@ public static class DistillationModelRegistry
             [AiFeatureKey.ProductCategoryTagging] = GapCallsAi,
             [AiFeatureKey.ProjectAllocationSuggestion] = GapCallsAi,
             [AiFeatureKey.VatTypeInference] = GapCallsAi + " · มี ThaiVatTypeRule",
-            // ── ไม่มีจุดเรียก AI (enum ค้าง / ถอดการเรียกแล้ว) ──
-            [AiFeatureKey.ContactMatch] = GapNoCall,
-            [AiFeatureKey.CurrencyAndFxSuggestion] = GapNoCall,
+            // ── ไม่มีจุดเรียก AI (enum ค้าง / ถอดการเรียกแล้ว) · ตัวที่ติด [Obsolete(error: true)] (ContactMatch · CurrencyAndFxSuggestion ·
+            //    PaymentMethodSuggestion · ProductMatch) อ้างชื่อในโค้ดไม่ได้ (CS0619) ⇒ ไม่อยู่ในรายการนี้ — MissingStudents ข้ามให้เอง ──
             [AiFeatureKey.LineItemStructuredParse] = GapNoCall,
             [AiFeatureKey.ManualJournalSuggestion] = GapNoCall,
-            [AiFeatureKey.PaymentMethodSuggestion] = GapNoCall,
             [AiFeatureKey.PayrollIncomeTypeSuggestion] = GapNoCall,
-            [AiFeatureKey.ProductMatch] = GapNoCall,
             [AiFeatureKey.ReorderForecast] = GapNoCall + " (รอบ 184 ถอดการเรียก AI · ReorderNarrative ตอบเอง)",
             [AiFeatureKey.TaxFilingPreCheck] = GapNoCall + " (TaxComplianceChecker เป็นกติกา)",
         };
@@ -138,12 +135,16 @@ public static class DistillationModelRegistry
         return services;
     }
 
+    /// <summary>ค่า enum ที่เลิกใช้แล้ว (<c>[Obsolete]</c>) — ไม่มีจุดเรียก AI ได้อีก (error: true = คอมไพล์ไม่ผ่านถ้าอ้างชื่อ) ⇒ ไม่นับเป็นช่องว่างของนักเรียน</summary>
+    public static bool IsRetired(AiFeatureKey key)
+        => typeof(AiFeatureKey).GetField(key.ToString())?.IsDefined(typeof(ObsoleteAttribute), inherit: false) == true;
+
     /// <summary>feature ที่ไม่มีนักเรียน<b>และ</b>ไม่อยู่ในรายการค้าง — ต้องว่างเสมอ (เทสต์ kill-switch ล็อก)</summary>
     public static IReadOnlyList<AiFeatureKey> MissingStudents(IEnumerable<AiFeatureKey> registered)
     {
         var have = new HashSet<AiFeatureKey>(registered);
         return Enum.GetValues<AiFeatureKey>()
-            .Where(k => !have.Contains(k) && !KnownGapsWithoutStudent.ContainsKey(k))
+            .Where(k => !IsRetired(k) && !have.Contains(k) && !KnownGapsWithoutStudent.ContainsKey(k))
             .ToList();
     }
 }
