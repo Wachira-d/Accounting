@@ -770,10 +770,34 @@
 
       renderIssues(plan) {
         const issues = plan?.issues || [];
+        this.renderedIssues = issues;
         if (!issues.length) return '';
-        return issues.map(x => `<div class="banner ${x.blocking ? 'bad' : 'info'}">
+        const canPost = !!this.detail?.actions?.canPost;
+        // ฝ่ายค้านรอบสอง R2M-12: ปุ่มยืนยันรายบรรทัดขึ้นเฉพาะปัญหาที่เซิร์ฟเวอร์ติดรหัส SummarySupplementDuplicate (ชื่อ enum) — สิทธิ์/บรรทัดตรวจซ้ำที่ server
+        return issues.map((x, i) => `<div class="banner ${x.blocking ? 'bad' : 'info'}">
             ${x.blocking ? '⛔' : 'ℹ️'} ${Layout.esc(x.message)}${x.amount != null ? ` (${Layout.money(x.amount)})` : ''}
-            ${x.nextStep ? `<div><b>ทางไปต่อ:</b> ${Layout.esc(x.nextStep)}</div>` : ''}</div>`).join('');
+            ${x.nextStep ? `<div><b>ทางไปต่อ:</b> ${Layout.esc(x.nextStep)}</div>` : ''}
+            ${x.code === 'SummarySupplementDuplicate' && (x.lineIds || []).length && canPost
+              ? `<div style="margin-top:6px"><button class="btn btn-sm" onclick="Page.confirmDistinct(${i})">ยืนยันว่าเป็นรายการจริง (${(x.lineIds || []).length} บรรทัด)</button></div>`
+              : ''}</div>`).join('');
+      },
+
+      /** R2M-12: ยืนยันรายบรรทัดว่าเป็นรายการจริงคนละรายการ — เซิร์ฟเวอร์ประทับผู้/เวลา/เหตุผลบนทุกบรรทัด + audit แล้วตรวจด่านใหม่ */
+      confirmDistinct(i) {
+        const x = (this.renderedIssues || [])[i]; if (!x) return;
+        const ids = x.lineIds || []; if (!ids.length) return;
+        this.askReason('ยืนยันว่าเป็นรายการจริง',
+          `${ids.length} บรรทัดของรอบนี้หน้าตาเหมือนรอบที่ออกใบสรุปแรกของวันทุกบรรทัด — ยืนยันเฉพาะเมื่อตรวจกับรายงานของแพลตฟอร์มแล้วว่าเป็นคนละรายการจริง `
+            + '(ถ้าเป็นไฟล์เดิมที่นำเข้าซ้ำ ให้ยกเลิกรอบโอนแทน) · ระบบบันทึกชื่อผู้ยืนยัน เวลา และเหตุผลบนทุกบรรทัด (ตรวจย้อนได้)',
+          async (reason) => {
+            const api = Layout.api(); if (!api) return;
+            try {
+              const res = await api.confirmSettlementDistinctLines(this.detail?.batch?.id, ids, reason);
+              if (res?.success === false) throw new Error(res?.message || 'ยืนยันไม่สำเร็จ');
+              Layout.toast(res?.message || 'ยืนยันแล้ว');
+              await this.loadPreview();
+            } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error'); }
+          });
       },
 
       /** ของกำพร้าของช่องทางนี้ (รอบ 200 · DECISIONS ข้อ 10) — กอง/เหตุ/ทางไปต่อ/ผู้รับรู้มาจากเซิร์ฟเวอร์ทั้งหมด (ไม่มีกติกาในหน้านี้) ·

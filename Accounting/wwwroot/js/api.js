@@ -1183,6 +1183,9 @@ const API = {
       // batchId = รอบโอนที่กำลังดูพรีวิว (ฝ่ายค้านรอบ 200 V2-P1 — เก็บลง audit ว่าตรวจเทียบรอบไหน)
       acknowledgeSettlementOrphan: (artifactId, isPayment, reason, batchId) =>
         API.post(`${base}/settlement/orphans/acknowledge`, { artifactId, isPayment: !!isPayment, reason, batchId: batchId || null }),
+      // ฝ่ายค้านรอบสอง R2M-12: ยืนยันรายบรรทัดว่าเป็นรายการจริงคนละรายการ (ใบสรุปเพิ่มเติมที่หน้าตาเหมือนรอบแรก) — ด่านทั้งหมดอยู่ที่ server
+      confirmSettlementDistinctLines: (batchId, lineIds, reason) =>
+        API.post(`${base}/settlement/batches/${batchId}/lines/confirm-distinct`, { lineIds, reason }),
       getSettlementDepositCandidates: (id) => API.get(`${base}/settlement/batches/${id}/deposit-candidates`),
       matchSettlementDeposit: (id, bankTransactionId) =>
         API.post(`${base}/settlement/batches/${id}/deposit-match`, { bankTransactionId }),

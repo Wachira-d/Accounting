@@ -509,7 +509,23 @@ public partial class PosService
             .Where(x => x.Id == order.SessionId && x.CompanyId == companyId)
             .Select(x => x.Terminal)
             .FirstOrDefaultAsync();
-        var cashAccount = await ResolvePaymentAccountAsync(companyId, refundMethod, jeTerminal);
+        // ฝ่ายค้านรอบสอง R2M-11: บัตร/e-Wallet/เช็ค — ขาคืนเงินลงผังเดียวกับขาขายของบิลนี้ (อ่านจาก JE ขายเดิม ไม่ใช่กติกาวันนี้) ·
+        // บิลที่ปิดก่อน R200G-2 ลง Dr ธนาคารที่ปัก ⇒ คืนหลัง deploy ต้อง Cr ธนาคารนั้น (ไม่ใช่ 11340 ⇒ ผังพักติดลบ/ธนาคารเกิน) · ตัวตัดสิน MoneyAccountFallback.RefundAccountFromSale
+        Accounting.Models.Entities.ChartOfAccount? cashAccount = null;
+        if (order.JournalEntryId is Guid saleJeId)
+        {
+            var saleLegs = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.JournalEntryId == saleJeId && !l.IsDeleted && l.DebitAmount > 0m
+                    && l.JournalEntry.CompanyId == companyId)
+                .Select(l => new { l.AccountId, l.DebitAmount, l.Description })
+                .ToListAsync();
+            var mirrored = Accounting.Helpers.MoneyAccountFallback.RefundAccountFromSale(refundMethod,
+                SaleMoneyLegDescription(refundMethod, order.OrderNumber),
+                saleLegs.Select(l => (l.AccountId, l.DebitAmount, l.Description)));
+            if (mirrored is Guid mirroredId)
+                cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == mirroredId && a.CompanyId == companyId && !a.IsDeleted);
+        }
+        cashAccount ??= await ResolvePaymentAccountAsync(companyId, refundMethod, jeTerminal);
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
             ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
@@ -1672,8 +1688,8 @@ public partial class PosService
                 // posts the invoice value, not the full bill the customer handed over.
                 var debit = pay.Amount;
                 if (debit <= 0) continue;
-                var methodLabel = PaymentMethodThaiLabel(pay.PaymentMethod);
-                lines.Add(new(acct.Id, debit, 0, $"รับเงิน {methodLabel} POS #{order.OrderNumber}"));
+                // คำอธิบายขาเงินผ่านตัวสร้างตัวเดียว — การคืนเงินอ่านขานี้กลับเพื่อลงผังเดียวกัน (R2M-11)
+                lines.Add(new(acct.Id, debit, 0, SaleMoneyLegDescription(pay.PaymentMethod, order.OrderNumber)));
             }
         }
 
@@ -2458,4 +2474,9 @@ public partial class PosService
         PaymentMethod.EWallet      => "e-Wallet",
         _                          => m.ToString()
     };
+
+    /// <summary>คำอธิบายขาเงินของวิธีชำระหนึ่งใน JE ขาย POS — ตัวสร้างตัวเดียวของเส้นขาย (<see cref="CreateSalesJournalEntryAsync"/>) และเส้นคืนเงินที่อ่านขานี้กลับ
+    /// (<see cref="CreateRefundJournalEntryAsync"/> · R2M-11) ⇒ สองเส้นไม่มีทางเขียนข้อความต่างกัน</summary>
+    private static string SaleMoneyLegDescription(PaymentMethod method, string orderNumber)
+        => $"รับเงิน {PaymentMethodThaiLabel(method)} POS #{orderNumber}";
 }

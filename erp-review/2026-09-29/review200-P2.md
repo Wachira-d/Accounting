@@ -118,6 +118,6 @@ NOT-A-BUG (ตรวจแล้ว): สูตรค่าธรรมเนี
 | X-5 | ✅ c7bad3f5 | `PersistAsync`: เติมรอบโอน gateway (PayoutRef ซ้ำ) ด้วยวันเงินเข้าต่างจากรอบเดิม ⇒ 400 `SETTLEMENT-GATEWAY-PAYOUT-DATE` (เส้นไฟล์คงคำเตือนเดิม) · checker |
 | X-6 | 📋 | ล็อก gateway ครอบเส้นไฟล์/จับคู่มือ/rematch — ต้องแตะ `SettlementImportService.Lines` หลายเส้น (ไฟล์ทีม T/I) · ตาข่ายที่การลงบัญชีกันเงินผิดแล้ว (รอบค้าง ไม่ใช่เงินผิด) |
 | X-7 | 📋 | คู่ของ X-6 (ตาข่ายยอดคืนเส้นไฟล์) — ผลเห็นเป็นรอบไม่ลงตัว ไม่เงียบ |
-| X-8 | 📋 | `PeriodTo` ว่าง = ไม่มีขอบบน — อยู่ในเมธอดเดียวกับที่ทีม GF แก้ช่วงวันที่ (`LoadIntentRowsAsync`) · แก้พร้อม X-2 เพื่อไม่ conflict |
+| X-8 | ✅ ทีม SG (R2M-6 · sha ใน team-SG.md) | `PeriodTo` ว่าง = ไม่มีขอบบน — ทีม GF ไม่ได้ทำ (ฝ่ายค้านรอบสอง R2M-6) ⇒ ทีม SG: `LoadIntentRowsAsync` ใช้ `ConfirmedToExclusiveUtc(periodTo ?? วันเงินเข้า − 1)` · เดิม: "แก้พร้อม X-2 (ทีม GF)" |
 | X-9 | 📋 | หน้าเคลม VAT ค่าธรรมเนียม gateway ไม่เห็น VAT ของ intent ที่ batch เป็นเจ้าของ — คู่ B-1 (ไฟล์ทีม G) |
 | X-10 | ✅ c7bad3f5 | `SettlementChannelService.SaveAsync` ตรวจเฉพาะช่องทางใหม่/เมื่อการผูกหรือโหมดเปลี่ยน (`ChannelModeTouched`) · บริษัทไม่จด VAT คู่ VAT ไทยผ่าน · เทสต์ `X10_…` |

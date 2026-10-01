@@ -132,12 +132,17 @@ public static class SettlementSummarySupplement
     /// <summary>
     /// **ใบสรุปเพิ่มเติมที่เนื้อหาซ้ำรอบที่ออกใบแรก = รายได้ซ้ำ ไม่ใช่ใบเพิ่มเติม** (ฝ่ายค้านรอบ 200 T-2) — ก่อนข้อ 15 ด่าน <c>SummarySaleDuplicate</c>
     /// กัน "ไฟล์เดิมนำเข้าด้วยเลขรอบโอนอื่น (ไม่มีเลขออเดอร์/เลขรายการ)" · หลังข้อ 15 เหลือแค่คำเตือนตอนนำเข้าที่ผู้กดลงบัญชีไม่เห็น ⇒ ตัดสินที่ด่านลงบัญชี
-    /// ด้วยข้อเท็จจริงเนื้อหาตัวเดียวกับผู้นำเข้า (<see cref="SettlementContentOverlap"/>): <b>ทุก</b>บรรทัดของใบสรุปวันนั้นมีบรรทัดเนื้อหาตรงกันในรอบโอนที่ออกใบแรก
-    /// ⇒ ย้ายเป็น <see cref="SettlementDuplicateSale"/> (บล็อก) · ตรงบางบรรทัด ⇒ ยังเป็นใบเพิ่มเติม (คำเตือน <c>ContentOverlapElsewhere</c> รายบรรทัดยังอยู่ —
-    /// แถวหน้าตาเหมือนกันอาจเป็นคนละรายการจริง R-B5) · pure
+    /// ด้วยข้อเท็จจริงเนื้อหาตัวเดียวกับผู้นำเข้า (<see cref="SettlementContentOverlap"/>): <b>ทุก</b>บรรทัด<b>ที่ยังไม่ถูกยืนยัน</b>ของใบสรุปวันนั้นมีบรรทัดเนื้อหาตรงกัน
+    /// ในรอบโอนที่ออกใบแรก ⇒ ย้ายเป็น <see cref="SettlementDuplicateSale"/> (บล็อก · <c>DistinctConfirmable</c>) · ตรงบางบรรทัด ⇒ ยังเป็นใบเพิ่มเติม
+    /// (คำเตือน <c>ContentOverlapElsewhere</c> รายบรรทัดยังอยู่ — แถวหน้าตาเหมือนกันอาจเป็นคนละรายการจริง R-B5) · pure
+    /// <para>ฝ่ายค้านรอบสอง R2M-12: ร้านเล็กที่มีรายการไม่มีเลขหน้าตาเหมือนกันจริงในสอง payout วันเดียวกัน เดิมมีทางไปต่อแค่ "ยกเลิกรอบ" ⇒ ผู้มีสิทธิ์ลงบัญชี
+    /// <b>ยืนยันรายบรรทัด</b>พร้อมเหตุผล (<paramref name="confirmedDistinct"/> · ประทับบนบรรทัด + audit แบบเดียวกับรับรู้ของกำพร้า) · บรรทัดที่ยืนยันแล้วไม่นับเป็นหลักฐานซ้ำ ·
+    /// ยืนยันครบทุกบรรทัด ⇒ เป็นใบเพิ่มเติม · ยังเหลือบรรทัดที่ตรงรอบแรกและยังไม่ยืนยัน ⇒ ยังบล็อก (ยืนยันบรรทัดเดียวไม่ปลดทั้งใบ)</para>
     /// </summary>
+    /// <param name="confirmedDistinct">บรรทัดที่ผู้มีสิทธิ์ยืนยันแล้วว่าเป็นรายการจริงคนละรายการ (<c>SettlementLine.DistinctConfirmedAt != null</c>)</param>
     public static (List<SettlementDuplicateSale> Duplicates, List<SettlementSupplementarySummary> Kept) SplitDuplicates(
-        IEnumerable<SettlementSupplementarySummary> supplementary, IReadOnlyList<SettlementContentHit<Guid>> contentHits)
+        IEnumerable<SettlementSupplementarySummary> supplementary, IReadOnlyList<SettlementContentHit<Guid>> contentHits,
+        IReadOnlySet<Guid> confirmedDistinct)
     {
         var refsOf = contentHits.GroupBy(h => h.Id)
             .ToDictionary(g => g.Key, g => g.SelectMany(h => h.PayoutRefs).ToHashSet(StringComparer.Ordinal));
@@ -145,16 +150,45 @@ public static class SettlementSummarySupplement
         var kept = new List<SettlementSupplementarySummary>();
         foreach (var sup in supplementary)
         {
-            var sameAsFirst = sup.LineIds.Count > 0
-                && sup.LineIds.All(id => refsOf.TryGetValue(id, out var refs) && refs.Contains(sup.FirstPayoutRef));
+            var open = sup.LineIds.Where(id => !confirmedDistinct.Contains(id)).ToList();
+            var sameAsFirst = open.Count > 0
+                && open.All(id => refsOf.TryGetValue(id, out var refs) && refs.Contains(sup.FirstPayoutRef));
             if (!sameAsFirst) { kept.Add(sup); continue; }
-            duplicates.Add(new SettlementDuplicateSale(sup.LineIds,
-                $"ยอดขายวันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} ของรอบนี้ ({sup.LineIds.Count} บรรทัด) เนื้อหาตรงทุกบรรทัด (ออเดอร์ · ป้าย · ยอด · วันที่) "
+            var confirmedCount = sup.LineIds.Count - open.Count;
+            duplicates.Add(new SettlementDuplicateSale(open,
+                $"ยอดขายวันที่ {ThaiDate.ToThaiDisplayString(sup.Day)} ของรอบนี้ ({open.Count} บรรทัด"
+                + (confirmedCount > 0 ? $" · ยืนยันแล้ว {confirmedCount} บรรทัด" : "")
+                + ") เนื้อหาตรงทุกบรรทัด (ออเดอร์ · ป้าย · ยอด · วันที่) "
                 + $"กับรอบโอน {sup.FirstPayoutRef} ที่ออกใบสรุปของวันนั้นแล้ว ({sup.FirstNumber}) — น่าจะเป็นไฟล์เดิมที่นำเข้าด้วยเลขรอบโอนอื่น · "
-                + "ออกเป็นใบสรุปเพิ่มเติม = รายได้และภาษีขายของวันนั้นซ้ำ (ถ้าเป็นไฟล์ซ้ำ ให้ยกเลิกรอบโอนนี้)"));
+                + "ออกเป็นใบสรุปเพิ่มเติม = รายได้และภาษีขายของวันนั้นซ้ำ",
+                DistinctConfirmable: true));
         }
         return (duplicates, kept);
     }
+
+    /// <summary>ทางไปต่อของใบสรุปเพิ่มเติมที่เนื้อหาซ้ำรอบแรก (R2M-12) — ยกเลิกรอบ (ไฟล์ซ้ำ) หรือยืนยันรายบรรทัด (รายการจริงหน้าตาเหมือนกัน)</summary>
+    public const string DistinctConfirmNextStep =
+        "ถ้าเป็นไฟล์เดิมที่นำเข้าซ้ำ ให้ยกเลิกรอบโอนนี้ · ถ้าเป็นรายการจริงคนละรายการที่หน้าตาเหมือนกัน (ร้านที่รายการไม่มีเลขออเดอร์) ให้ผู้มีสิทธิ์ลงบัญชีกด "
+        + "\"ยืนยันว่าเป็นรายการจริง\" พร้อมเหตุผล (ระบบประทับผู้/เวลา/เหตุผลบนทุกบรรทัดที่ระบุ + บันทึกตรวจสอบ) แล้วดูตัวอย่างใหม่";
+
+    /// <summary>คำขอ "ยืนยันว่าเป็นรายการจริง" ใช้ได้ไหม (R2M-12) — null = ได้ · ทุกบรรทัดที่ขอต้องอยู่ในปัญหา <c>SummarySupplementDuplicate</c> ของพรีวิวปัจจุบัน
+    /// (ตัดสินจากด่านตัวเดียวกับการลงบัญชี ⇒ ยืนยันบรรทัดที่ไม่ได้ถูกบล็อกด้วยเหตุนี้ = ปฏิเสธ ห้ามประทับแล้วไม่มีผลเงียบ ๆ) · เหตุผลบังคับ</summary>
+    public static string? ConfirmRefusal(IReadOnlyCollection<Guid> requested, string? reason, IEnumerable<SettlementPlanIssue> currentIssues)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "ระบุเหตุผลที่ยืนยันว่าเป็นรายการจริงคนละรายการ (เช่น ตรวจกับรายงานแพลตฟอร์มแล้วเป็นคนละคำสั่งซื้อ) — ผู้สอบบัญชีต้องเห็นเหตุผล";
+        if (reason.Trim().Length > ConfirmReasonMaxLength)
+            return $"เหตุผลยาวเกิน {ConfirmReasonMaxLength} ตัวอักษร — สรุปให้สั้นลง";
+        if (requested.Count == 0) return "ระบุบรรทัดที่จะยืนยัน";
+        var allowed = currentIssues.Where(i => i.Code == SettlementPlanIssueCode.SummarySupplementDuplicate)
+            .SelectMany(i => i.LineIds).ToHashSet();
+        var outside = requested.Count(id => !allowed.Contains(id));
+        return outside == 0 ? null
+            : $"มี {outside} บรรทัดที่ไม่ได้ถูกบล็อกเพราะ \"ใบสรุปเพิ่มเติมเนื้อหาตรงรอบแรก\" ในตัวอย่างปัจจุบัน — ดูตัวอย่างการลงบัญชีใหม่แล้วยืนยันเฉพาะบรรทัดที่ระบบแสดง";
+    }
+
+    /// <summary>ความยาวเหตุผลสูงสุดของการยืนยันรายบรรทัด</summary>
+    public const int ConfirmReasonMaxLength = 500;
 }
 
 /// <summary>ลักษณะกิจการเรื่องสต็อก ณ ใบขายสรุป (review198-C C-15)</summary>

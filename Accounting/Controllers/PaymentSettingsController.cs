@@ -183,10 +183,11 @@ public class PaymentSettingsController : ControllerBase
         {
             var bound = await _db.SettlementChannels.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && c.PaymentProviderConfigId == cfg.Id)
-                .Select(c => new { c.DisplayName, c.FeeVatMode, c.FeeWhtMode }).ToListAsync(ct);
+                .Select(c => new { c.DisplayName, c.FeeVatMode, c.FeeWhtMode, c.WhtIncomeTypeMapJson }).ToListAsync(ct);
             var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
+            // R2M-5: ประเภทเงินได้ต่อช่องทางอยู่ในตัวตัดสินเดียวกัน (เปิด "หัก 3%" ขณะช่องทางตั้ง "ไม่หัก"/2%/1% ⇒ สองเส้นต่างกัน)
             if (GatewayBatchIntentRules.ConfigChangeRefusal(cfg.FeeVatMode, cfg.WhtOnFee, vatRegistered,
-                    bound.Select(b => (b.DisplayName, b.FeeVatMode, b.FeeWhtMode))) is string cfgModeBad)
+                    bound.Select(b => (b.DisplayName, b.FeeVatMode, b.FeeWhtMode, b.WhtIncomeTypeMapJson))) is string cfgModeBad)
                 return BadRequest(new ApiResponse<ConfigResponse>(false, null,
                     cfgModeBad + " (แก้โหมดของช่องทางก่อน หรือบันทึกที่นี่ด้วยโหมดเดิม)"));
         }

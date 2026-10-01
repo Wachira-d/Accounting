@@ -102,3 +102,23 @@
 9. **`ChangeTracker.Clear()` ใน `UnpostCoreAsync`/`AcknowledgeOrphanCoreAsync` (SF V2-C3)**: `LoadAsync` เป็น AsNoTracking ทั้งหมด · ขั้นยกเลิกเอกสาร/การรับชำระ/ถอนจับคู่ SaveChanges ของตัวเองก่อนถึง Clear — ไม่มีการเปลี่ยนแปลงค้างที่ถูกทิ้ง
 10. **คีย์กันซ้ำ IF กับเส้น PaymentIntent**: แถว intent ไม่มี `LiteralDates` ⇒ `LegacyKeys` เท่าเดิม · กรอง SQL `StartsWith(v2:row | row:)` ชุดเดียวกับ `IsRowKey`
 11. **ข้อ 39 (IF) แถวไม่มีเลขที่พิสูจน์ไม่ได้ว่าเป็นแถวสรุปถูกนำเข้า**: ถ้าจริง ๆ เป็นแถวสรุป สมการรอบโอน (Σ บรรทัด = ยอดโอน + ส่วนต่าง wallet) ไม่ลงตัว ⇒ `Unbalanced` บล็อก — ไม่เงียบ
+
+---
+
+## สถานะการแก้ (รอบ 200 ทีม SG · คอมมิตโค้ด `<pending>` — sha เติมในคอมมิตตามหลัง · รายงาน `team-SG.md`)
+
+| ID | สถานะ | ที่แก้ | เทสต์ (`Accounting.Tests/SettlementReview200SgTests.cs`) |
+|---|---|---|---|
+| R2M-1 | ✅ `0ce0ae2f` (ก่อนทีม SG) | แถว W_FEETAX `Compute` · ทีม SG ปรับอีกครั้งเมื่อสูตรย้ายเข้า `Pp36Legs` (R2M-4) | required_call_site_check |
+| R2M-2 | ✅ | `GatewayBatchIntentRules.VatProblem` — ไม่จด VAT ผ่อนเฉพาะเมื่อ gateway ไม่หัก · หัก 3% ⇒ กติกาเดียวกับจด VAT + ข้อความ "ฐานหัก ณ ที่จ่าย/50 ทวิ ต่างกัน" | `R2M2_*` (3.31 vs 3.09 · Theory ผูกด่านกับตัวเลขสองสูตรจริง · ทิศตรงข้าม X-10) |
+| R2M-3 | ✅ | `ForeignServiceVat.BorneTaxOutsideLines` ใน `TaxService.GeneratePp36Report` + `WithholdingTaxCertService.IssueWarningsAsync` | `R2M3_*` (529.41 ⇒ 529.41 ไม่ใช่ 608.82 · ใบรอบโอน 450 ยังได้ 529.41 · 50 ทวิ บางงวด) |
+| R2M-4 | ✅ | `SettlementFeeTax.Pp36Legs` (สูตรเดียว) · `SettlementBatchMath.BuildFeeLines` คิด ภ.พ.36/ภาษีซื้อ/ค่าใช้จ่ายของบรรทัดใบใหม่จากฐานรวม + `whtBorne` | `R2M4_*` (30.06 · ไม่จด VAT 395.06 · W2 25.55) |
+| R2M-5 | ✅ | `ModeMismatch(…, channelIncomeTypeMapJson)` → `IncomeTypeProblem` · ผู้เรียก 5 ทาง (ประกอบ · นำเข้าไฟล์ · บันทึกช่องทาง — เปลี่ยนค่าตั้ง = แตะโหมด · ค่าตั้ง gateway · ลงบัญชี) | `R2M5_*` |
+| R2M-6 | ✅ | `SettlementImportService.Gateway.LoadIntentRowsAsync`: `ConfirmedToExclusiveUtc(periodTo ?? payoutDate.AddDays(-1))` · ติ๊ก X-8 ใน `review200-P2.md` | `R2M6_*` |
+| R2M-7 | ✅ | `GatewayBatchIntentRules.ForeignPp36BoundNextStep` ตัวเดียว: ข้อความด่านโหมด (ไม่มีส่วน "แก้สองที่ให้ตรงกัน") · `PostingIssue(…, channelVat)` · `SettlementForeignWht.GatewayConfigHint` | `R2M7_*` · `W6_*` (ปรับ) |
+| R2M-8 | ✅ | ทางไปต่อระบุ "สร้างช่องทางใหม่ไม่ผูก config + ผังพักเดียวกับ gateway + นำเข้าไฟล์ · ช่องทางเดิมถอดการผูกไม่ได้ ⇒ ยกเลิกรอบค้าง" · หน้ารายการค้างโอนเส้นเดิมเตือนเมื่อมีช่องทาง ภ.พ.36 ผูก config (`GatewaySettlementService.ListPendingAsync` → `LegacyForeignChannelWarning`) | `R2M8_*` |
+| R2M-9 | 📋 | ประเมินแล้ว: เคสแคบ (id + ป้าย + ยอดเท่ากัน **และ** วันที่อีกรายการ = วันที่ตามตัวอักษรของแถวนี้) · ถูกข้ามพร้อมคำเตือนรายแถว "ข้าม…แถวที่นำเข้าแล้ว" (ไม่เงียบ) · สมการรอบโอนไม่ลงตัว ⇒ บล็อกที่ลงบัญชี · ถอดคีย์ `Assign(literal)` ออกจากชุดรุ่นก่อน = ไฟล์เดิมที่นำเข้าก่อนรอบ 200 นำเข้าซ้ำได้ (ทิศที่เงียบกว่า) ⇒ ต้องตัดสินพร้อมเจ้าของไฟล์ `SettlementTxnKey` (ทีม I) + เทสต์ไฟล์จริง — ไม่แตะในรอบนี้ | — |
+| R2M-10 | ✅ | รายงาน ภ.พ.36 นับเฉพาะ `WhtCertFilingScope.Filed` (ร่าง/ยกเลิกไม่นับ) | `R2M10_*` + required_call_site (forbid สูตรเดิม) |
+| R2M-11 | ✅ | `MoneyAccountFallback.RefundAccountFromSale` (บัตร/e-Wallet/เช็ค · ผังเดียวของขาขายเดิม · สองผัง/ไม่พบ ⇒ กติกาปัจจุบัน) + `PosService.SaleMoneyLegDescription` ตัวสร้างข้อความขาเงินตัวเดียว | `R2M11_*` |
+| R2M-12 | ✅ | รหัส `SummarySupplementDuplicate` (61) · ยืนยันรายบรรทัด `ConfirmDistinctLinesAsync` (สิทธิ์ใน service · ด่านสดใต้ล็อก · ประทับ `SettlementLine.DistinctConfirmed*` + audit chain รายบรรทัด) · endpoint + ปุ่มหน้า settlements | `R2M12_*` |
+| R2M-13 | ✅ | `SettlementReceiptWht.Remaining` + `RemainingWhtAsync` (ชุดเดียวกับเพดาน `CreatePaymentAsync`) ที่ด่านและ `EnsureReceiptAsync` | `R2M13_*` |

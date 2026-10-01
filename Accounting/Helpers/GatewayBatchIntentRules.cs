@@ -43,10 +43,13 @@ public static class GatewayBatchIntentRules
     /// — คู่ใดที่ให้ผลต่าง (แม้เส้นหนึ่ง "ถูกกว่า") = ไม่ตรง เพราะภาษีห้ามขึ้นกับว่าผู้ใช้กดหน้าไหน:
     /// <list type="bullet">
     /// <item>ช่องทาง "ต่างประเทศ ภ.พ.36" ⇒ ไม่ตรง<b>เสมอ</b> — เส้นรอบโอนตั้งหนี้ ภ.พ.36 (§83/6 ทั้งผู้จด/ไม่จด VAT) · config ของ gateway ไม่มีโหมดนี้
-    /// (เส้นเดิมลงค่าใช้จ่ายทั้งก้อน)</item>
-    /// <item>บริษัท<b>ไม่จด VAT</b>: VAT ที่ผู้ให้บริการเก็บเป็นค่าใช้จ่ายทั้งก้อนทั้งสองเส้น (ภาษีซื้อเคลมไม่ได้) ⇒ โหมด VAT ไทยทุกคู่ให้ผลเท่ากัน (X-10)</item>
+    /// (เส้นเดิมลงค่าใช้จ่ายทั้งก้อน) · ข้อความทางไปต่อเป็นของตัวเอง (<see cref="ForeignPp36BoundNextStep"/> — ไม่ใช่ "แก้สองที่ให้ตรงกัน" ซึ่งทำไม่ได้ · R2M-7)</item>
+    /// <item>บริษัท<b>ไม่จด VAT</b>: VAT ที่ผู้ให้บริการเก็บเป็นค่าใช้จ่ายทั้งก้อนทั้งสองเส้น ⇒ ขาค่าใช้จ่ายเท่ากันทุกคู่ (X-10) <b>แต่ฐานหัก ณ ที่จ่ายไม่เท่า</b>
+    /// (เส้นเดิม "ไม่แยก VAT" หักบนยอดเต็ม · เส้นรอบโอน "VAT ไทย 7%" หักบนยอดก่อน VAT — ค่าธรรมเนียม 107 ออกภาษีแทน 3.31 กับ 3.09 · ฝ่ายค้านรอบสอง R2M-2)
+    /// ⇒ ผ่อนคู่ VAT ไทยเฉพาะเมื่อ gateway <b>ไม่หัก</b> ณ ที่จ่าย · หัก 3% ⇒ ใช้กติกาเดียวกับบริษัทจด VAT</item>
     /// <item>บริษัทจด VAT: config "ไม่แยก" ↔ ช่องทาง "ไม่มี VAT" เท่านั้น · config "รวมใน/บวกเพิ่ม" ↔ ช่องทาง "VAT ไทย 7%" เท่านั้น</item>
-    /// <item>หัก ณ ที่จ่าย: config "หัก 3%" (ออกภาษีแทน ฐานก่อน VAT) ↔ ช่องทาง "เราออกภาษีแทน" เท่านั้น · config "ไม่หัก" ↔ ช่องทาง "ไม่หัก" หรือ
+    /// <item>หัก ณ ที่จ่าย: config "หัก 3%" (ออกภาษีแทน ฐานก่อน VAT) ↔ ช่องทาง "เราออกภาษีแทน" เท่านั้น <b>และ</b> ประเภทเงินได้ของ "ค่าธรรมเนียมรับชำระเงิน"
+    /// ที่ช่องทางใช้ต้องได้อัตรา 3% เท่าเส้นเดิม (ค่าตั้งต่อช่องทาง ข้อ 41 · <see cref="IncomeTypeProblem"/> · R2M-5) · config "ไม่หัก" ↔ ช่องทาง "ไม่หัก" หรือ
     /// "แพลตฟอร์มเป็นตัวแทนหัก" (W1 — ไม่มีขา JE/50 ทวิ/ยอดยื่นฝั่งเรา ⇒ ผลเท่าเส้นเดิม) · "หักเองแล้วได้คืน" (W2 ตั้ง 21917 + ลูกหนี้รอคืน + 50 ทวิ)
     /// ⇒ ไม่ตรง</item>
     /// </list></para>
@@ -54,12 +57,17 @@ public static class GatewayBatchIntentRules
     /// นำเข้าไฟล์ของช่องทางที่ผูก config · บันทึกช่องทาง · บันทึกค่าตั้ง gateway (<see cref="ConfigChangeRefusal"/>) · <b>ด่านลงบัญชี</b>
     /// (<see cref="PostingIssue"/> — X-1: รอบโอนที่นำเข้าก่อนด่านนี้มี/ก่อนเปลี่ยนโหมด)</para>
     /// </summary>
+    /// <param name="channelIncomeTypeMapJson">ค่าตั้งประเภทเงินได้ของค่าธรรมเนียมของช่องทาง (<c>SettlementChannel.WhtIncomeTypeMapJson</c> · ข้อ 41)</param>
     public static string? ModeMismatch(GatewayFeeVatMode gatewayVat, GatewayFeeWhtMode gatewayWht,
-        SettlementFeeVatMode channelVat, SettlementFeeWhtMode channelWht, bool companyVatRegistered)
+        SettlementFeeVatMode channelVat, SettlementFeeWhtMode channelWht, bool companyVatRegistered, string? channelIncomeTypeMapJson)
     {
+        if (SettlementForeignWht.IsForeignChannel(channelVat))
+            return "ช่องทางตั้งเป็น \"ผู้ให้บริการต่างประเทศ (ภ.พ.36)\" แต่ผูกการตั้งค่า gateway ซึ่งไม่มีโหมดนี้ (รอบโอน gateway เดิมไม่ตั้งหนี้ ภ.พ.36) — "
+                   + "สองเส้นจึงให้ภาษีต่างกันเสมอ ไม่มีโหมดที่แก้ให้ตรงได้ · " + ForeignPp36BoundNextStep;
         var problems = new List<string>();
-        if (VatProblem(gatewayVat, channelVat, companyVatRegistered) is string vat) problems.Add(vat);
+        if (VatProblem(gatewayVat, gatewayWht, channelVat, companyVatRegistered) is string vat) problems.Add(vat);
         if (WhtProblem(gatewayWht, channelWht) is string wht) problems.Add(wht);
+        else if (IncomeTypeProblem(gatewayWht, channelVat, channelIncomeTypeMapJson) is string income) problems.Add(income);
         if (problems.Count == 0) return null;
         return "โหมดภาษีของค่าธรรมเนียมในการตั้งค่า gateway กับช่องทางรับเงินไม่ตรงกัน (ภาษีของรายการชุดเดียวกันจะต่างกันตามหน้าที่กดรอบโอน) — "
                + string.Join(" · ", problems)
@@ -67,16 +75,33 @@ public static class GatewayBatchIntentRules
                + "— ระบบไม่เลือกฝั่งใดฝั่งหนึ่งให้ เพราะทั้งสองที่เป็นคำตอบของคำถามเดียวกัน";
     }
 
-    private static string? VatProblem(GatewayFeeVatMode gatewayVat, SettlementFeeVatMode channelVat, bool companyVatRegistered)
+    /// <summary>
+    /// ทางไปต่อตัวเดียวของ "ผู้ให้บริการต่างประเทศ (ภ.พ.36) บนช่องทางที่ผูกการตั้งค่า gateway" (ฝ่ายค้านรอบสอง R2M-7/R2M-8) — ใช้ทั้งข้อความด่านโหมด
+    /// (<see cref="ModeMismatch"/> · <see cref="PostingIssue"/>) · ทางไปต่อของปัญหาหัก ณ ที่จ่ายต่างประเทศ (<c>SettlementForeignWht.PlanIssues</c>) ·
+    /// คำเตือนหน้ารอบโอนเส้นเดิม (<see cref="LegacyForeignChannelWarning"/>) ⇒ ข้อความบนพรีวิวเดียวกันไม่ขัดกันอีก
+    /// <para>ช่องทางที่มีรอบโอนแล้วถอดการผูกไม่ได้ (<c>SettlementChannelService</c> ล็อก "การตั้งค่า gateway ที่ผูก") ⇒ ทางจริงคือสร้างช่องทางใหม่ ·
+    /// หน้ารอบโอน gateway เดิมไม่ตั้ง ภ.พ.36 ⇒ ห้ามใช้กับผู้ให้บริการต่างประเทศ</para>
+    /// </summary>
+    public const string ForeignPp36BoundNextStep =
+        "ทางไปต่อ: สร้างช่องทางรับเงินใหม่ชนิด Gateway ที่ไม่ผูกการตั้งค่า gateway (ตั้งผังพักเดียวกับผังพักของ gateway · โหมด VAT \"ผู้ให้บริการต่างประเทศ (ภ.พ.36)\") "
+        + "แล้วนำเข้าไฟล์ settlement report ของผู้ให้บริการที่ช่องทางนั้น — ช่องทางเดิมที่มีรอบโอนแล้วถอดการผูกไม่ได้ ให้ยกเลิกรอบโอนที่ค้างของช่องทางเดิม · "
+        + "อย่าใช้หน้า \"บันทึกรอบโอน\" ของระบบรับชำระออนไลน์กับผู้ให้บริการต่างประเทศ (เส้นนั้นไม่ตั้งหนี้ ภ.พ.36 §83/6 ⇒ นำส่ง VAT ขาด)";
+
+    private static string? VatProblem(GatewayFeeVatMode gatewayVat, GatewayFeeWhtMode gatewayWht, SettlementFeeVatMode channelVat,
+        bool companyVatRegistered)
     {
-        if (channelVat == SettlementFeeVatMode.ForeignPp36)
-            return "ช่องทางตั้งเป็น \"ผู้ให้บริการต่างประเทศ (ภ.พ.36)\" แต่การตั้งค่า gateway ไม่มีโหมดนี้ (รอบโอน gateway เดิมไม่ตั้งหนี้ ภ.พ.36) — "
-                   + "ถ้าผู้ให้บริการเป็นต่างประเทศจริง ให้ใช้ช่องทางที่ไม่ผูกการตั้งค่า gateway แล้วนำเข้าไฟล์ settlement report แทน";
-        if (!companyVatRegistered) return null;
+        // R2M-2: ไม่จด VAT ⇒ ขาค่าใช้จ่ายเท่ากันทุกคู่ แต่ฐานหัก ณ ที่จ่าย (ก่อน VAT) ของสองเส้นต่างกัน ⇒ ผ่อนได้เฉพาะเมื่อ gateway ไม่หัก
+        if (!companyVatRegistered && gatewayWht != GatewayFeeWhtMode.Withhold3Percent) return null;
         var agrees = gatewayVat == GatewayFeeVatMode.None
             ? channelVat == SettlementFeeVatMode.None
             : channelVat == SettlementFeeVatMode.ThaiVat7;
         if (agrees) return null;
+        if (!companyVatRegistered)
+            return gatewayVat == GatewayFeeVatMode.None
+                ? "บริษัทไม่จด VAT และหัก ณ ที่จ่ายค่าธรรมเนียม: การตั้งค่า gateway \"ไม่แยก VAT\" หักบนยอดเต็ม แต่ช่องทาง \"VAT ไทย 7%\" หักบนยอดก่อน VAT "
+                  + "(ฐานหัก ณ ที่จ่าย/50 ทวิ ต่างกัน)"
+                : "บริษัทไม่จด VAT และหัก ณ ที่จ่ายค่าธรรมเนียม: การตั้งค่า gateway หักบนยอดก่อน VAT แต่ช่องทางไม่ได้ตั้ง \"VAT ไทย 7%\" จึงหักบนยอดรวม VAT "
+                  + "(ฐานหัก ณ ที่จ่าย/50 ทวิ ต่างกัน)";
         return gatewayVat == GatewayFeeVatMode.None
             ? "การตั้งค่า gateway บอกว่าค่าธรรมเนียม \"ไม่แยก VAT\" แต่ช่องทางตั้งเป็น \"VAT ไทย 7%\" (รอบโอนจะแยกภาษีซื้อจากค่าธรรมเนียมที่ไม่มี VAT)"
             : "การตั้งค่า gateway บอกว่าค่าธรรมเนียมมี VAT 7% แต่ช่องทางไม่ได้ตั้งเป็น \"VAT ไทย 7%\" (VAT ที่ถูกหักจะไม่ถูกแยกเป็นภาษีซื้อ)";
@@ -96,6 +121,42 @@ public static class GatewayBatchIntentRules
         };
     }
 
+    /// <summary>
+    /// ประเภทเงินได้ของ "ค่าธรรมเนียมรับชำระเงิน" ที่ช่องทางใช้ (ค่าตั้งต่อช่องทาง ข้อ 41 → ตารางประเภทบรรทัด) ให้อัตราเท่าเส้นเดิมไหม (ฝ่ายค้านรอบสอง R2M-5) —
+    /// เส้นเดิมหัก <see cref="GatewaySettlementMath.ServiceWhtRate"/> คงที่ · เส้นรอบโอนหักตามรหัสของช่องทาง ⇒ ตั้ง "ไม่หัก"/ค่าโฆษณา 2%/ค่าขนส่ง 1% ที่ช่องทาง
+    /// = สองเส้นให้ 50 ทวิ/ภ.ง.ด.53 ต่างกัน · null = เท่ากัน หรือ gateway ไม่หัก (ไม่มีขาหัก ณ ที่จ่ายฝั่งเราทั้งสองเส้น) หรือช่องทางต่างประเทศ (ไม่ตรงอยู่แล้ว) ·
+    /// ประเภทบรรทัดที่ตรวจ = ชนิดที่ตัวประกอบรอบโอนจากรายการรับชำระสร้าง (<c>PaymentIntentAdapter</c> — ค่าธรรมเนียมรับชำระเงิน)
+    /// </summary>
+    private static string? IncomeTypeProblem(GatewayFeeWhtMode gatewayWht, SettlementFeeVatMode channelVat, string? channelIncomeTypeMapJson)
+    {
+        if (gatewayWht != GatewayFeeWhtMode.Withhold3Percent || SettlementForeignWht.IsForeignChannel(channelVat)) return null;
+        var parsed = SettlementWhtIncomeType.ParseMap(channelIncomeTypeMapJson);
+        var choice = SettlementWhtIncomeType.Resolve(GatewayFeeLineType, channelVat, parsed.Map);
+        var legacyRate = GatewaySettlementMath.ServiceWhtRate * 100m;
+        var rate = choice.Code is string code ? ThaiWhtRateTable.RateFor(code, payeeIsJuristic: true) ?? 0m : 0m;
+        if (rate == legacyRate) return null;
+        var label = SettlementLineTypeRules.For(GatewayFeeLineType).LabelTh;
+        return $"ช่องทางตั้งประเภทเงินได้ของ \"{label}\" ให้หัก {rate:0.##}% แต่การตั้งค่า gateway หัก {legacyRate:0.##}% "
+               + "(แก้ \"ประเภทเงินได้ของค่าธรรมเนียม\" ที่หน้าตั้งค่าช่องทางให้ได้อัตราเดียวกัน หรือปิดการหักที่หน้าตั้งค่าการรับชำระเงินออนไลน์)";
+    }
+
+    /// <summary>ประเภทบรรทัดค่าธรรมเนียมที่รอบโอนจากรายการรับชำระสร้าง (<c>PaymentIntentAdapter</c>) — ตัวเดียวที่เส้นเดิมมีความหมายเทียบได้</summary>
+    private const SettlementLineType GatewayFeeLineType = SettlementLineType.PaymentFee;
+
+    /// <summary>คำเตือนบนหน้ารายการค้างโอน/บันทึกรอบโอนของเส้นเดิม (ฝ่ายค้านรอบสอง R2M-8) — มีช่องทางที่ผูก config นี้ตั้งเป็นผู้ให้บริการต่างประเทศ (ภ.พ.36)
+    /// ⇒ เส้นเดิมไม่ตั้งหนี้ ภ.พ.36 · null = ไม่มีช่องทางแบบนั้น (ไม่เตือน)</summary>
+    public static string? LegacyForeignChannelWarning(IReadOnlyCollection<string> foreignBoundChannelNames)
+        => foreignBoundChannelNames.Count == 0 ? null
+            : $"ช่องทางรับเงิน {string.Join(", ", foreignBoundChannelNames)} ตั้งผู้ให้บริการนี้เป็น \"ต่างประเทศ (ภ.พ.36)\" — การบันทึกรอบโอนที่หน้านี้ไม่ตั้งหนี้ ภ.พ.36 "
+              + "(§83/6 ⇒ นำส่ง VAT ขาด) · " + ForeignPp36BoundNextStep;
+
+    /// <summary>รวมคำเตือนหลายข้อเป็นข้อความเดียว (ข้ามค่าว่าง) · ไม่มีเลย ⇒ null (หน้าเว็บไม่แสดงแถบ)</summary>
+    public static string? JoinWarnings(params string?[] warnings)
+    {
+        var list = warnings.Where(w => !string.IsNullOrWhiteSpace(w)).ToList();
+        return list.Count == 0 ? null : string.Join(" · ", list);
+    }
+
     /// <summary>บันทึกช่องทางครั้งนี้แตะ "ข้อเท็จจริงเรื่องโหมดภาษี" ไหม (X-10) — ช่องทางใหม่ (<paramref name="priorVat"/>/<paramref name="priorWht"/> = null) ·
     /// เปลี่ยน config ที่ผูก · เปลี่ยนโหมด VAT/หัก ณ ที่จ่าย ⇒ true (ต้องตรวจ <see cref="ModeMismatch"/>) · แก้ช่องอื่นล้วน ⇒ false
     /// (ช่องทางเดิมที่โหมดขัดยังแก้ชื่อ/ปิดใช้งานได้ — ด่านนำเข้า/ลงบัญชีตรวจซ้ำทุกครั้ง)</summary>
@@ -104,21 +165,24 @@ public static class GatewayBatchIntentRules
         => priorVat is null || priorWht is null || priorConfigId != newConfigId || priorVat != newVat || priorWht != newWht;
 
     /// <summary>ด่านลงบัญชีรอบโอนของช่องทางที่ผูก config ของ gateway (X-1 · DECISIONS ข้อ 26) — ผลของ <see cref="ModeMismatch"/> เป็นปัญหาที่บล็อก ·
-    /// null = ผ่าน · ไม่ผูก config ⇒ ไม่เกี่ยว (ช่องทางเป็นคำตอบเดียว)</summary>
-    public static SettlementPlanIssue? PostingIssue(string? modeMismatch)
+    /// null = ผ่าน · ไม่ผูก config ⇒ ไม่เกี่ยว (ช่องทางเป็นคำตอบเดียว) · ช่องทาง ภ.พ.36 ⇒ ทางไปต่อ = <see cref="ForeignPp36BoundNextStep"/>
+    /// (ไม่ใช่ "แก้โหมดให้ตรงกัน" ซึ่งทำไม่ได้ — ฝ่ายค้านรอบสอง R2M-7)</summary>
+    public static SettlementPlanIssue? PostingIssue(string? modeMismatch, SettlementFeeVatMode channelVat)
         => modeMismatch is null ? null
             : new SettlementPlanIssue(SettlementPlanIssueCode.GatewayModeMismatch, true, modeMismatch,
-                "แก้โหมดให้ตรงกันแล้วดูตัวอย่างใหม่ — ถ้ารอบนี้ประกอบจากรายการรับชำระ ให้ยกเลิกรอบโอนแล้วประกอบใหม่หลังแก้ "
-                + "(บรรทัดค่าธรรมเนียมถูกคิดด้วยโหมดตอนประกอบ) · ระบบไม่ลงบัญชีด้วยโหมดที่สองที่ตอบต่างกัน",
+                SettlementForeignWht.IsForeignChannel(channelVat)
+                    ? ForeignPp36BoundNextStep
+                    : "แก้โหมดให้ตรงกันแล้วดูตัวอย่างใหม่ — ถ้ารอบนี้ประกอบจากรายการรับชำระ ให้ยกเลิกรอบโอนแล้วประกอบใหม่หลังแก้ "
+                      + "(บรรทัดค่าธรรมเนียมถูกคิดด้วยโหมดตอนประกอบ) · ระบบไม่ลงบัญชีด้วยโหมดที่สองที่ตอบต่างกัน",
                 Array.Empty<Guid>(), null);
 
     /// <summary>บันทึกค่าตั้ง gateway ที่เปลี่ยนโหมด VAT/หัก ณ ที่จ่ายค่าธรรมเนียม (X-1/B-3) — ช่องทางที่ผูก config นี้ต้องยังตรงกันทุกช่อง ·
     /// null = บันทึกได้ · ข้อความรวมชื่อช่องทางที่ขัด + ทางไปต่อ</summary>
     public static string? ConfigChangeRefusal(GatewayFeeVatMode gatewayVat, GatewayFeeWhtMode gatewayWht, bool companyVatRegistered,
-        IEnumerable<(string ChannelName, SettlementFeeVatMode Vat, SettlementFeeWhtMode Wht)> boundChannels)
+        IEnumerable<(string ChannelName, SettlementFeeVatMode Vat, SettlementFeeWhtMode Wht, string? IncomeTypeMapJson)> boundChannels)
     {
         var bad = boundChannels
-            .Select(c => (c.ChannelName, Why: ModeMismatch(gatewayVat, gatewayWht, c.Vat, c.Wht, companyVatRegistered)))
+            .Select(c => (c.ChannelName, Why: ModeMismatch(gatewayVat, gatewayWht, c.Vat, c.Wht, companyVatRegistered, c.IncomeTypeMapJson)))
             .Where(x => x.Why != null)
             .ToList();
         if (bad.Count == 0) return null;

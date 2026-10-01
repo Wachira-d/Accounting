@@ -151,13 +151,16 @@ public sealed class SettlementChannelService : ISettlementChannelService
             // (ด่านนำเข้า/ประกอบ/ลงบัญชีตรวจซ้ำทุกครั้งอยู่แล้ว ⇒ ไม่มีรอบโอนที่ลงด้วยโหมดขัด) · บริษัทไม่จด VAT ⇒ คู่ VAT ไทยให้ผลเท่ากัน (ข้อ 26)
             var prior = channelId is Guid priorId
                 ? await _db.SettlementChannels.AsNoTracking().Where(c => c.Id == priorId && c.CompanyId == companyId)
-                    .Select(c => new { c.PaymentProviderConfigId, c.FeeVatMode, c.FeeWhtMode }).FirstOrDefaultAsync(ct)
+                    .Select(c => new { c.PaymentProviderConfigId, c.FeeVatMode, c.FeeWhtMode, c.WhtIncomeTypeMapJson }).FirstOrDefaultAsync(ct)
                 : null;
+            // R2M-5 (ฝ่ายค้านรอบสอง): ค่าตั้งประเภทเงินได้ของช่องทาง (ข้อ 41) เป็นส่วนของ "ผลภาษีสองเส้น" ด้วย ⇒ เปลี่ยนค่าตั้งนี้ = แตะโหมด
+            var newIncomeMapJson = SettlementWhtIncomeType.Serialize(incomeMap);
             var touched = GatewayBatchIntentRules.ChannelModeTouched(prior?.PaymentProviderConfigId, prior?.FeeVatMode, prior?.FeeWhtMode,
-                r.PaymentProviderConfigId, r.FeeVatMode, r.FeeWhtMode);
+                    r.PaymentProviderConfigId, r.FeeVatMode, r.FeeWhtMode)
+                || !string.Equals(prior?.WhtIncomeTypeMapJson, newIncomeMapJson, StringComparison.Ordinal);
             var channelVatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
             if (touched && GatewayBatchIntentRules.ModeMismatch(cfg.FeeVatMode, cfg.WhtOnFee, r.FeeVatMode, r.FeeWhtMode,
-                    channelVatRegistered) is string modeBad)
+                    channelVatRegistered, newIncomeMapJson) is string modeBad)
                 throw new BusinessRuleException(modeBad, "SETTLEMENT-CHANNEL-GATEWAY-MODE");
         }
         var counterpartyId = await ResolveCounterpartyAsync(companyId, r, ct);
