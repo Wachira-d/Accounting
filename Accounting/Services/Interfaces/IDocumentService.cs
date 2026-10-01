@@ -126,8 +126,9 @@ public interface IDocumentService
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy, bool acknowledgeWarnings);
     /// <summary>รอบ 193 (ฝ่ายค้าน C5/C6): อนุมัติโดยบอก "แหล่งของการรับทราบคำเตือน" ตรง ๆ — ระบบ/workflow/API
     /// ห้ามประทับว่า "ผู้ใช้รับทราบ" แทนคน · <paramref name="withAiHints"/> = false ⇒ ไม่เรียก AI เสริมคำเตือน</summary>
+    /// <param name="passedWarnings">รอบ 201 รอบสาม P2-2: ที่รับคำเตือนที่ผ่านในการอนุมัติครั้งนี้ (คืนให้คนที่กดเห็น) · null = ไม่เก็บ</param>
     Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
-        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints);
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null);
     /// <summary>คำเตือนก่อนอนุมัติของเอกสาร — ไม่อนุมัติ ไม่บันทึก ไม่เรียก AI</summary>
     Task<IReadOnlyList<string>> PreviewApprovalWarningsAsync(Guid companyId, Guid documentId);
     /// <summary>ยกเลิกเอกสาร: เก็บไว้ + สร้าง reversal JE ตามมาตรฐานบัญชี (audit-safe)</summary>

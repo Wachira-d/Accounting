@@ -1856,7 +1856,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > `SIGN-CUSTOMER-STALE` · รอบ 193 R4-1) และลายเซ็นที่ไม่นับถูกแทนที่ในธุรกรรมอนุมัติ (§2.8)
 
 > **การรับทราบคำเตือน — แหล่ง 4 แบบ (รอบ 193 · คำตัดสิน #12 · `Helpers/ApprovalAcknowledgement` + enum
-> `ApprovalAckSource {None, User, SystemWorkflow, ApiClient}` · overload ใหม่ของ `ApproveDocumentAsync`)**:
+> `ApprovalAckSource {None, User, SystemWorkflow, ApiClient, Unattended}` · overload ใหม่ของ `ApproveDocumentAsync`)**:
 > - **User** (เว็บ/มือถือ — คนกด "รับทราบ"): `DocumentApprovalWarningsException` (422) → ส่งซ้ำพร้อม `acknowledgeWarnings=true` →
 >   `[APPROVE-ACK]` บน `InternalNotes` + `AuditLog` `APPROVE-ACK-WARNINGS` · มือถือ `QuickApproveAsync` พรีวิวคำเตือน**ทุกชุด**
 >   (`Warnings` + `RequiresAcknowledgement` · `MobileController ?acknowledgeWarnings=true`) และประทับผู้อนุมัติเป็น userId จริง
@@ -1874,9 +1874,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 >   service เองก็หยุดชุด VAT เมื่อแหล่ง = ApiClient (`Unacknowledged`) ⇒ คำเตือนที่เกิดระหว่างพรีวิวกับอนุมัติถูก catch เป็นรูป 422 เดียวกัน ·
 >   `success` ยังมีช่อง `scanVatNotOnPaper` (= false เสมอ · สัญญา v1 นิ่ง) · ApiClient **ไม่ override** ด่านงบ/วงเงิน/วางบิลเกิน
 > - **ทางเข้าอื่นที่อนุมัติโดยไม่มีคนเห็นคำเตือน** (ตรวจรอบ 199): SystemWorkflow ทุกจุด (PV อัตโนมัติ · ริบมัดจำ · ใบแทน · รอบโอน settlement · ลายเซ็นที่ไม่ส่ง ack)
->   หยุดชุด VAT อยู่แล้ว (`IsGapWarning` รวมชุด VAT) · LINE / สร้าง+อนุมัติ OCR / recurring / ใบเบิก / เงินเดือนล่วงหน้า / integration แปลงใบ = แหล่ง `None`
->   (หยุดทุกคำเตือน) · ที่พัก/PlatformBilling/CMS ส่ง `acknowledgeWarnings:true` แต่เป็นเอกสารที่เพิ่งสร้างเองในคำขอเดียวกัน (ไม่มีสแกนที่ `CreatedDocumentId`
->   ชี้มา ⇒ ไม่มีคำเตือนชุดนี้)
+>   หยุดชุด VAT อยู่แล้ว (`IsGapWarning` รวมชุด VAT) · LINE / สร้าง+อนุมัติ OCR / recurring / ใบเบิก / เงินเดือนล่วงหน้า / integration แปลงใบ = แหล่ง `Unattended`
+>   (รอบ 201 · หยุดทุกคำเตือนยกเว้นข้อสังเกต §65 ตรี — §3.2 ข้อ 6) · **ที่พัก ×4 / PlatformBilling ×3 / CMS ×2 = `SystemWorkflow`** (ฝ่ายค้านรอบ 201 รอบสาม P2-6 —
+>   เดิมส่ง `acknowledgeWarnings:true` = ประทับ `AcknowledgedByPerson=true`/"ยืนยันโดย" ทั้งที่ไม่มีใครเห็น) · ผลการอนุมัติเท่าเดิม: เอกสารเพิ่งสร้างเองในคำขอเดียวกัน
+>   ไม่มีสแกนที่ `CreatedDocumentId` ชี้มา ⇒ ไม่มีชุด `[Σ-GAP]`/VAT ⇒ SystemWorkflow ผ่านทุกคำเตือนเหมือน User · override ด่านงบ/วงเงินเหมือนเดิม
+>   (`acknowledgeWarnings` ภายใน = User หรือ SystemWorkflow) · ไม่หยุดการออกเอกสารของร้าน/ที่พัก · เปลี่ยนแค่ร่องรอย (`APPROVE-SYSTEM-PASSED-WARNINGS`)
 > - **คำเตือน "เดือนภาษียื่น ภ.พ.30 แล้ว" (รอบ 200 ทีม R · B-09)**: ใบขายที่มี VAT (TaxInvoice/Receipt/RV/Invoice/CN/DN ฝั่งขาย · ไม่รวมมัดจำ VAT พัก)
 >   ที่เดือน tax point (`TaxPointDate ?? TaxPointResolver.Resolve`) ยื่น/ประกาศว่ายื่น/ล็อก ภ.พ.30 แล้ว (`VatPeriodDeclaredOrFiledAsync` — ชุดสถานะเดียวกับด่านรับรู้มัดจำ)
 >   ⇒ คำเตือนใน `CollectApprovalWarningsAsync` (warn-gate · ไม่บล็อก: ขายจริงในเดือนนั้น = ยื่นเพิ่มเติม · ขายวันนี้ = แก้วันที่) — เดิมด่านยกเลิก/กู้คืน/มัดจำบล็อก
@@ -1896,8 +1898,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 >   (ไม่มีสำเนากติกา/คำเตือนในหน้าขายด่วน) · error อื่น (403/ด่านบังคับ) ⇒ ข้อความของเซิร์ฟเวอร์ในแบนเนอร์เดียวกัน · เดิม `catch (_) {}` แล้วขึ้น
 >   "บันทึกสำเร็จ" ทั้งที่ใบค้างร่าง · **คำตอบ `{success:false}` ที่ `api.js` คืนโดยไม่ throw** (429 ถูกจำกัดอัตรา · 403 ขณะรายการบริษัทยังโหลดไม่เสร็จ)
 >   ⇒ ไม่นับเป็นอนุมัติ แบนเนอร์ร่าง + ข้อความนั้น (review198-S4 S4-2 ทีม S5) · ล็อกด้วย `tools/quick_sale_approve_sim.js` (โค้ดจริง + กลายพันธุ์ 6 แบบ)
-> - ⚠️ ผู้เรียกภายในที่ยังส่ง `acknowledgeWarnings:true` ตรง (ที่พัก ×2 · PlatformBilling ×3 · CMS ×2 ฯลฯ — เอกสารระบบสร้างเอง ไม่มี `[Σ-GAP]`)
->   ร่องรอยยังเขียนว่า "ยืนยันโดย" — ควรย้ายไป `SystemWorkflow` (backlog 7 จุด)
+> - ~~ผู้เรียกภายในที่ยังส่ง `acknowledgeWarnings:true` ตรง~~ — ย้ายไป `SystemWorkflow` แล้วทั้ง 9 จุด (รอบ 201 รอบสาม P2-6 · `grep "acknowledgeWarnings: true"` ในโค้ด = 0)
+> - **มาตราอ้างอิงของร่องรอย** (รอบ 201 รอบสาม P2-4 · กฎ M): `legalReference` ของ audit "อนุมัติทั้งที่มีคำเตือน" = `ApprovalAcknowledgement.LegalReference(warnings)`
+>   ตามชุดที่ผ่านจริง — ข้อสังเกต §65 ตรี = รหัสข้อ (`RD-65ter(6)` ฯลฯ อ่านจาก `Section65TerApprovalWarnings.RuleCodeOf`) · คำเตือนชนิดอื่น = `RD-86 / RD-82/5(1)` เดิม
+>   (เดิมตายตัวทุกแถว แม้ทางเข้าอัตโนมัติ/API ผ่านได้แค่ชุด §65 ตรี)
 >
 > **`[Σ-GAP]` ตอนอนุมัติด้วยมือ** (`Helpers/OcrApprovalGapWarning` ใน `CollectApprovalWarningsAsync`): ข้อความบอก "ตอนนี้รายการรวมเท่าไร ·
 > กระดาษเท่าไร" จาก Σ บรรทัด (ไม่ใช่ `TotalAmount` ที่ตั้งตามกระดาษเสมอ) · ซ้ำ = ครั้งเดียว · แก้จนตรงแล้ว/ไม่รู้ยอดกระดาษ = ไม่เตือน
@@ -1992,8 +1996,17 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
      §65 ตรีผ่าน แล้วลงหมายเหตุภายใน "ทางเข้าอัตโนมัติส่งผ่าน" + audit `APPROVE-UNATTENDED-PASSED-S65` · API v1 (`ApiClient`) ส่งผ่าน + คืน
      `nonDeductibleExpense`/`nonDeductibleNotes` ในผลตอบ · workflow ระบบ (`SystemWorkflow`) ส่งผ่านอยู่แล้ว · หน้าเว็บ/มือถือ/อนุมัติหลายใบ (`None`) ยังต้องรับทราบ ·
      ตัวแยกชุด = `Section65TerApprovalWarnings.IsWarning` ตัวเดียว (ใช้ใน `ApprovalAcknowledgement.Unacknowledged`)
-   - **(6)(6 ทวิ)(1)(2)(3) เฉพาะบัญชีกำไรขาดทุน** (ผัง 5xxxx · `CIT…` · ไม่ผูกผัง = ตรวจตามเดิม) — บรรทัดชำระ ภ.ง.ด.50/51 (21920/11920) · ถอนใช้ส่วนตัว หจก. (31xxx)
-     ไม่ถูกบวกกลับแล้ว ⇒ **ยอดบวกกลับในตัวรวม ภ.ง.ด.50 (`GenerateCitReport` อ่าน `NonDeductibleAmount`) ลดลงสำหรับใบใหม่** · ใบที่อนุมัติไปแล้วคงค่าเดิม (ไม่ย้อน)
+   - **(6)(6 ทวิ)(1)(2)(3) เฉพาะบัญชีกำไรขาดทุน** — บรรทัดชำระ ภ.ง.ด.50/51 (21920/11920) · ถอนใช้ส่วนตัว หจก. (31xxx)
+     ไม่ถูกบวกกลับแล้ว ⇒ **ยอดบวกกลับในตัวรวม ภ.ง.ด.50 (`GenerateCitReport` อ่าน `NonDeductibleAmount`) ลดลงสำหรับใบใหม่** · ใบที่อนุมัติไปแล้วคงค่าเดิม (ไม่ย้อน) ·
+     **ตัดสินด้วยชนิดผัง** (รอบ 201 รอบสาม P1-2): `EvaluateSection65TerAsync` ส่ง `ChartOfAccount.AccountType` เข้าตัวประเมิน (`accountTypes:`) ⇒
+     `AccountType == Expense` = ตรวจ (ผังที่ผู้ใช้สร้าง/นำเข้า เช่น "6100 ค่าปรับ" ชนิดค่าใช้จ่าย — เดิมดูเลขนำหน้า 5 อย่างเดียว ⇒ หลุดการบวกกลับเงียบ) ·
+     ชนิดอื่น (หนี้สิน/สินทรัพย์/ทุน/รายได้) = ไม่ตรวจ แม้เลขขึ้นต้น 5 · ไม่รู้ชนิด (ผู้เรียกเก่า/เทสต์) = เลขนำหน้า 5/`CIT…` เป็นทางสำรอง · ไม่ผูกผัง = ตรวจตามเดิม ·
+     ข้อ (5) capex ใช้ตัวตัดสินชนิดผังเดียวกัน (`IsExpenseLedger`) · ⇒ **ยอดบวกกลับของใบใหม่ที่ลงผังค่าใช้จ่ายนอกช่วง 5xxxx เพิ่มขึ้น** (ใบเก่าไม่ย้อน)
+   - **ข้อสังเกตที่ผ่านกลับไปถึงคนที่กด** (รอบ 201 รอบสาม P2-2 · คำตัดสินข้อ 110 ไม่บล็อก): ทางเข้าที่มีคนอยู่แต่ไม่มีขั้นรับทราบ (แหล่ง `Unattended`) ส่ง
+     `passedWarnings:` เข้า `ApproveDocumentAsync` (ชุดเดียวกับที่ลงร่องรอย) แล้วคืนผ่าน `Section65TerApprovalWarnings.PassedNotice/PassedNotes` ตัวเดียว —
+     สร้าง+อนุมัติจากหน้าสแกน (`OcrController.CreateDocument`) = แท็ก `[APPROVE-S65-NOTE]` ใน `ProcessingNotes` (เขียนลงแถวสแกนด้วย · `document-scan.html`
+     ขึ้น toast เตือน + อยู่ในรายการข้อสังเกตของการ์ด) · LINE คำสั่ง "จ่าย…" + ปุ่มอนุมัติ = ต่อท้ายข้อความตอบกลับ · กดจ่ายใบเบิก = `ExpenseClaimResponse.PassedApprovalNotes`
+     (`expense.html` toast เตือน) · ไม่มีข้อสังเกต = ไม่มีป้าย
    - คำอังกฤษค่าปรับเพิ่ม `surcharges` · `fined` · ยกเว้น "fuel surcharge"
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
@@ -3664,6 +3677,11 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
   PV จากการจ่ายอนุมัติในนาม**ผู้กดจ่าย** (ไม่ใช่ `"system:expense-claim"`) · มือถือเรียก `ApproveAsync/RejectAsync` ⇒ ได้ §65 ทวิ + **CertificateInLieu** เท่าเว็บ ·
   หลักฐาน (`ExpenseClaimEvidencePolicy.OwnerMayChange(status, isRemoval)`): Draft แนบ/ถอดได้ · Submitted เพิ่มได้ ถอดไม่ได้ · หลังอนุมัติผู้ยื่นแตะไม่ได้
   (`LockedMessage` ให้ขอผู้อนุมัติ) · SoD `ReviewerKeyApplies` · ส่ง/อนุมัติเว็บ/อนุมัติมือถือตรวจหลักฐานซ้ำ (`MissingEvidenceMessage`)
+- **ใบเบิก / เงินทดรอง → ใบสำคัญจ่าย** (รอบ 201 RTX-5 · รอบสาม P2-3): ตัวตัดสินตัวเดียว `Helpers/LinkedPayVoucher` (เดิม `ExpenseClaimPayVoucher` เฉพาะใบเบิก) —
+  สร้าง PV แล้ว**ผูกกับรายการทันทีก่อนอนุมัติ** (`ExpenseClaim.PaymentVoucherDocumentId` · `SalaryAdvance.DisbursementDocumentId`) · กดจ่ายซ้ำ: ใบร่าง/รออนุมัติ = อนุมัติใบเดิม ·
+  ออกแล้ว = ไม่อนุมัติซ้ำ แค่ปิดรายการ · ยกเลิก/ปฏิเสธ/หาไม่เจอ = สร้างใหม่ · อนุมัติหยุดด้วยคำเตือนที่ต้องมีคน ⇒ 422 `EXPENSE-PAY-PV-WARNINGS` / `ADVANCE-PAY-PV-WARNINGS`
+  บอกเลขใบร่าง + ทางไปต่อ (เดิมเงินทดรองหลุด 500 และได้ใบร่างเพิ่มทุกครั้งที่กด) · เงินทดรองสถานะยังเป็น `Approved` จนจ่ายจริง ⇒ `salary-advance.html` แสดง
+  "📝 PV ร่าง รออนุมัติ" + ลิงก์เปิดใบ (ไม่ใช่ "PV ออกแล้ว")
 - **ถัง 50 ทวิ ก่อนบันทึก** (`WhtCredit` + id ว่าง): ดูทั้งถัง = 403 · ไฟล์ในถังเปิดได้เฉพาะผู้อัปโหลดหรือผู้ถือ `Tax.File` · ลบได้เฉพาะผู้อัปโหลด ·
   บันทึกรายการ ⇒ ผูกไฟล์ (`WhtCreditService.AdoptUnsavedAttachmentAsync` ตอน Create/Update/MarkReceived · ผู้อัปโหลดหรือผู้ถือ Tax.File เท่านั้น) ·
   ไฟล์ชนิดอื่น/ของรายการอื่น = `WHT-CREDIT-FOREIGN-FILE` · migration ย้ายไฟล์ในถังที่รายการชี้ถึงแล้ว (idempotent)
@@ -4253,7 +4271,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอง — นำส่ง ภ.ง.ด.1 = หลักฐานยื่นแล้ว (รอบเงินเดือน + 50 ทวิ) · 50 ทวิ อัตโนมัติออกจริงในเส้น background + เลขต่อท้ายเมื่อชน · ปันต้นทุนล็อกแถวรอบ · ข้อความปันต้นทุนตามสถานะ · ตัวอย่างเลข ปกส. ในเทมเพลต CSV (§3.8) — commit c5fefbc6)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม TX แก้ผลฝ่ายค้านรอบสาม P1-2 · P2-2/3/4/6 — §65 ตรีตัดสินรายจ่ายด้วยชนิดผัง (§3.2 ข้อ 6) · ข้อสังเกตที่ผ่านคืนให้คนที่กด (OCR/LINE/ใบเบิก) · มาตราอ้างอิงตามชุดที่ผ่าน · ที่พัก/แพลตฟอร์ม/ร้านออนไลน์ = SystemWorkflow (§3.2 การรับทราบ) · เงินทดรองใช้ใบร่างเดิม (§6 ใบเบิก/เงินทดรอง) — commit 4f7daac6)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอง — นำส่ง ภ.ง.ด.1 = หลักฐานยื่นแล้ว (รอบเงินเดือน + 50 ทวิ) · 50 ทวิ อัตโนมัติออกจริงในเส้น background + เลขต่อท้ายเมื่อชน · ปันต้นทุนล็อกแถวรอบ · ข้อความปันต้นทุนตามสถานะ · ตัวอย่างเลข ปกส. ในเทมเพลต CSV (§3.8) — commit c5fefbc6)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม TX แก้ผลฝ่ายค้าน RTX-1..9 · คำตัดสินข้อ 110 — §65 ตรี: (4)(5) บันทึกอย่างเดียว · ทางเข้าไม่มีคน `Unattended`/API ไม่ถูกหยุด · (1)(2)(3)(6)(6 ทวิ) เฉพาะผังกำไรขาดทุน (§3.2 ข้อ 6 · §5.3 ภ.ง.ด.50) · ใบเบิกใช้ใบร่างเดิม · กำหนดยื่นเรียง/วันหยุด (§5.3) — commit f13f4a23)_
 

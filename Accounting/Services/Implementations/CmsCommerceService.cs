@@ -1107,8 +1107,9 @@ public class CmsCommerceService : ICmsCommerceService
         {
             try
             {
+                // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
                 await _docService.ApproveDocumentAsync(companyId, order.ErpDocumentId.Value,
-                    actor, acknowledgeWarnings: true);
+                    actor, ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 approvedNow = true;
             }
             catch (Exception ex)

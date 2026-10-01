@@ -80,13 +80,16 @@ public static class Section65TerValidator
         bool StrictPayeeIdentification = false);
 
     /// <summary>accountInfo: map AccountId → (code, name) สำหรับตรวจชนิดบัญชี.
-    /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).</summary>
+    /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).
+    /// accountTypes (ฝ่ายค้านรอบ 201 รอบสาม P1-2): map AccountId → ชนิดผัง — ตัดสิน "เป็นรายจ่ายไหม" ด้วยชนิดผังก่อน
+    /// (ผังที่ผู้ใช้สร้าง/นำเข้า เช่น 6100 ค่าปรับ ชนิด Expense ต้องถูกตรวจ) · ว่าง/ไม่มีในแผนที่ = ใช้เลขนำหน้า 5 เป็นทางสำรอง</summary>
     public static Result Evaluate(
         Document doc,
         IReadOnlyDictionary<Guid, (string Code, string Name)> accountInfo,
         string? payeeName, string? payeeTaxId,
         Context ctx,
-        decimal capexThreshold = DefaultCapexThreshold)
+        decimal capexThreshold = DefaultCapexThreshold,
+        IReadOnlyDictionary<Guid, AccountType>? accountTypes = null)
     {
         var findings = new List<Finding>();
 
@@ -164,6 +167,9 @@ public static class Section65TerValidator
             var code = ""; var name = "";
             if (line.AccountId.HasValue && accountInfo.TryGetValue(line.AccountId.Value, out var ai))
             { code = ai.Code; name = ai.Name; }
+            AccountType? accountType = null;
+            if (line.AccountId.HasValue && accountTypes != null && accountTypes.TryGetValue(line.AccountId.Value, out var at))
+                accountType = at;
             var hay = $"{name} {line.Description}".ToLowerInvariant();
             // ยอดบวกกลับ = ต้นทุนจริงของบรรทัด. รวม VAT **เฉพาะตอนเคลมไม่ได้**
             // (VAT ที่เคลมได้ไปอยู่ในภาษีซื้อ ไม่ได้เป็นค่าใช้จ่าย — เดิมรวมเสมอ
@@ -171,8 +177,9 @@ public static class Section65TerValidator
             var lineAmt = line.Amount + (line.IsVatClaimable ? 0m : line.VatAmount);
             // ฝ่ายค้านรอบ 201 RTX-3: ข้อ (6)(6 ทวิ)(1)(2)(3) เป็นรายจ่าย = บัญชีกำไรขาดทุนเท่านั้น (ผัง 5xxxx · CIT…) — บรรทัดที่ลงหนี้สิน/สินทรัพย์/ทุน
             // (ชำระ ภ.ง.ด.50/51 ผ่าน 21920/11920 · ถอนใช้ส่วนตัว หจก. 31xxx) ไม่ใช่รายจ่ายของงวด ⇒ บวกกลับ = นับภาษีเกิน (ตัวรวม ภ.ง.ด.50 ได้ผลเดียวกัน) ·
-            // ไม่รู้ผัง (บรรทัดไม่ผูกบัญชี) = ตรวจตามเดิม
-            var profitAndLoss = IsProfitAndLossCode(code);
+            // ไม่รู้ผัง (บรรทัดไม่ผูกบัญชี) = ตรวจตามเดิม · รอบสาม P1-2: ตัดสินด้วย "ชนิดผัง" ก่อน — เลขนำหน้า 5 เป็นแค่ทางสำรองเมื่อไม่รู้ชนิด
+            // (เดิมดูเลขอย่างเดียว ⇒ ผังที่ผู้ใช้สร้าง/นำเข้า 6100 ค่าปรับ ชนิด Expense หลุดการบวกกลับเงียบ)
+            var profitAndLoss = IsProfitAndLossAccount(code, accountType);
 
             // (6) เบี้ยปรับ / เงินเพิ่ม / ค่าปรับอาญา — auto nonDeductible, no override
             // รอบ 201 A-TX1: คำอังกฤษจับ "ทั้งคำ" — เดิม Contains("fine") จับ "refined oil"/"define" แล้วบวกกลับเต็มจำนวนเงียบ ๆ
@@ -264,7 +271,7 @@ public static class Section65TerValidator
             }
 
             // (5) Capex — มูลค่าสูง + ลงเป็นค่าใช้จ่าย → ควร capitalize (warning)
-            if (lineAmt >= capexThreshold && code.StartsWith("5"))
+            if (lineAmt >= capexThreshold && IsExpenseLedger(code, accountType))
             {
                 findings.Add(new("RD-65ter(5)", "ป.รัษฎากร §65 ตรี (5) + พ.ร.ฎ.145",
                     0m, $"มูลค่า {lineAmt:N2} ≥ {capexThreshold:N0} — ถ้าอายุใช้งาน >1 ปี ต้องบันทึกเป็นสินทรัพย์ (คิดค่าเสื่อม) ไม่ใช่ค่าใช้จ่าย",
@@ -319,10 +326,18 @@ public static class Section65TerValidator
         new("(?<![a-z0-9-])(?:penalty|penalties|fine|fines|fined|(?<!fuel )surcharges?)(?![a-z0-9-])",
             System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
-    /// <summary>ผังนี้เป็นบัญชีกำไรขาดทุน (ค่าใช้จ่าย/ต้นทุน 5xxxx · ภาษีเงินได้นิติบุคคล CIT…) หรือไม่รู้ผัง (ว่าง = ตรวจตามเดิม)</summary>
-    private static bool IsProfitAndLossCode(string code)
-        => string.IsNullOrEmpty(code) || code.StartsWith("5", StringComparison.Ordinal)
-           || code.StartsWith("CIT", StringComparison.OrdinalIgnoreCase);
+    /// <summary>บรรทัดนี้เป็นรายจ่ายของงวดหรือไม่ — รู้ชนิดผัง = ตัดสินด้วยชนิด (Expense เท่านั้น · หนี้สิน/สินทรัพย์/ทุน/รายได้ = ไม่ใช่) ·
+    /// ไม่รู้ชนิด = เลขนำหน้า 5 / CIT… เป็นทางสำรอง · ไม่ผูกผังเลย (เลขว่าง) = ตรวจตามเดิม</summary>
+    private static bool IsProfitAndLossAccount(string code, AccountType? type)
+    {
+        if (type.HasValue) return type.Value == AccountType.Expense;
+        return string.IsNullOrEmpty(code) || code.StartsWith("5", StringComparison.Ordinal)
+               || code.StartsWith("CIT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>(5) capex: บรรทัดที่ลงเป็นค่าใช้จ่ายจริง (ต้องผูกผัง) — ชนิด Expense หรือไม่รู้ชนิดแต่เลขนำหน้า 5</summary>
+    private static bool IsExpenseLedger(string code, AccountType? type)
+        => type.HasValue ? type.Value == AccountType.Expense : code.StartsWith("5", StringComparison.Ordinal);
 
     private static readonly System.Text.RegularExpressions.Regex ThaiPenaltyWord =
         new("ค่าปรับ(?!ปรุง|แต่ง|เปลี่ยน|อากาศ)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);

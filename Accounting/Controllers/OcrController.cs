@@ -438,8 +438,15 @@ public class OcrController : ControllerBase
             {
                 try
                 {
+                    // ฝ่ายค้านรอบ 201 รอบสาม P2-2: เส้นนี้ไม่มีหน้าจอรับทราบ (แหล่ง Unattended · คำตัดสินข้อ 110 — ข้อสังเกต §65 ตรีไม่บล็อก) แต่มีคนกดอยู่ ⇒
+                    // ข้อสังเกตที่ผ่านต้องกลับไปถึงคนนั้นใน ProcessingNotes (เขียนลงแถวสแกนด้วยตัวเดียวกับเหตุผลอนุมัติไม่ผ่าน)
+                    var passed = new List<string>();
                     await _documentService.ApproveDocumentAsync(
-                        companyId, result.CreatedDocumentId.Value, userId);
+                        companyId, result.CreatedDocumentId.Value, userId,
+                        Helpers.ApprovalAckSource.Unattended, withAiHints: false, passedWarnings: passed);
+                    var s65Notice = Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
+                    if (s65Notice != null)
+                        approveNote = "\n[APPROVE-S65-NOTE] " + s65Notice;
                 }
                 catch (Exception ex)
                 {

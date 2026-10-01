@@ -526,7 +526,14 @@
       async payClaim(id) {
         if (!confirm('ยืนยันจ่ายเงิน?')) return;
         const api = Layout.api(); if (!api) return;
-        try { await api.payExpenseClaim(id); Layout.toast('จ่ายเงินสำเร็จ'); Layout.closeModal('detailModal'); this.load(); }
+        try {
+          const res = await api.payExpenseClaim(id);
+          // ฝ่ายค้านรอบ 201 รอบสาม P2-2 — ข้อสังเกตรายจ่ายต้องห้าม §65 ตรีที่ผ่านตอนอนุมัติใบสำคัญจ่าย (ไม่บล็อก · ข้อความจากเซิร์ฟเวอร์)
+          const notes = (res && res.data && res.data.passedApprovalNotes) || [];
+          if (notes.length) Layout.toast('จ่ายเงินสำเร็จ — ข้อสังเกต §65 ตรี (ไม่บล็อก · ตรวจก่อนปิดรอบ): ' + notes.join(' · '), 'warning', 15000);
+          else Layout.toast('จ่ายเงินสำเร็จ');
+          Layout.closeModal('detailModal'); this.load();
+        }
         catch (e) { Layout.toast(e.message, 'error'); }
       }
     };
