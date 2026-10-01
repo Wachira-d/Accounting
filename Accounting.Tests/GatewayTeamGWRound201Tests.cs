@@ -626,41 +626,102 @@ public class GatewayTeamGWRound201Tests
         Assert.Equal(3.00m, GatewayFeeVatClaim.ResidueCheck(0.5m, 3, day, inv).Threshold);
     }
 
-    // ═══ ฝ่ายค้าน GWO-3: ยอดคืนย้อนหลังของรายการที่บันทึกรอบโอนแล้ว ═══
+    // ═══ ฝ่ายค้านรอบสอง RV2-3/4/5/11 (คำตัดสินข้อ 109): ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ — กระทบยอดสมดุลทั้งสองเส้น ═══
 
-    private static readonly DateTime MoneyIn = new(2026, 9, 20, 3, 0, 0, DateTimeKind.Utc);
+    private static GatewayIntentAmounts LegacyRow(decimal refundSettled, decimal deductedAfter)
+        => new(Amount: 1000m, FeeActual: 30m, FeeEstimated: 0m, SettledAmount: 970m, IsRefundedFully: false, IsSettled: true,
+            RefundedAmount: 200m, RefundSettledAmount: refundSettled, RefundDeductedAfterSettlement: deductedAfter,
+            FeeVatMode: GatewayFeeVatMode.None, SettledFeeDeducted: 30m);
 
     [Fact]
-    public void GWO3_คืนก่อนวันเงินเข้า_บังคับเลือก_หักแล้วตั้งยอดที่หัก()
+    public void RV2_3_เส้นเดิม_คืนย้อนหลัง200_หักรอบถัดไป_สมดุล770()
     {
-        var before = MoneyIn.AddDays(-5);
-        var none = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.Unspecified);
-        Assert.False(none.Ok);   // เดิมไม่ถาม ⇒ รอบถัดไปหักซ้ำ
-        Assert.Contains("PO-1", none.Message);
-        var deducted = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInRecordedRound);
-        Assert.True(deducted.Ok);
-        Assert.True(deducted.MarkDeductedInRecordedRound);
-        Assert.DoesNotContain("ตามปกติ", deducted.OutcomeText);
-        var later = GatewayRefundMath.LegacyRefundRoundTiming(before, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInLaterRound);
-        Assert.True(later.Ok);
-        Assert.False(later.MarkDeductedInRecordedRound);
-        // วันเดียวกับวันเงินเข้า = ระบบไม่เดา (ต้องเลือก)
-        Assert.False(GatewayRefundMath.LegacyRefundRoundTiming(MoneyIn.AddHours(2), MoneyIn, null, GatewayLegacyRefundRoundTiming.Unspecified).Ok);
+        // รอบแรกบันทึกด้วยยอดเงินเข้าจริง 970 (ผ่านด่านยอดตรง — ยังไม่มียอดคืน) · บันทึกยอดคืนย้อนหลัง 200 (ไม่ตั้งยอดที่หักแล้ว)
+        var before = GatewayReconciliation.Compute(new[] { LegacyRow(refundSettled: 0m, deductedAfter: 0m) });
+        Assert.Equal(770m, before.ExpectedNet);
+        Assert.Equal(970m, before.SettledTotal);
+        Assert.Equal(-200m, before.UnsettledAmount);   // ยอดติดลบที่จะถูกหักในรอบถัดไป
+        Assert.True(before.IsBalanced);
+        // รอบถัดไปหัก 200 (late filter เดิม: RefundSettledAmount = ยอดคืน · RefundDeductedAfterSettlement += 200)
+        var after = GatewayReconciliation.Compute(new[] { LegacyRow(refundSettled: 200m, deductedAfter: 200m) });
+        Assert.Equal(770m, after.ExpectedNet);
+        Assert.Equal(770m, after.SettledTotal);
+        Assert.True(after.IsBalanced);
     }
 
     [Fact]
-    public void GWO3_ทิศตรงข้าม_ยังไม่เข้ารอบหรือคืนหลังวันเงินเข้า_ไม่ต้องเลือก()
+    public void RV2_3_ทิศตรงข้าม_ทางเลือกเดิมหักในรอบที่บันทึกแล้ว_ค้างผลต่างถาวร()
     {
-        var notSettled = GatewayRefundMath.LegacyRefundRoundTiming(MoneyIn, null, null, GatewayLegacyRefundRoundTiming.Unspecified);
-        Assert.True(notSettled.Ok);
-        Assert.False(notSettled.MarkDeductedInRecordedRound);
-        var after = MoneyIn.AddDays(3);
-        var r = GatewayRefundMath.LegacyRefundRoundTiming(after, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.Unspecified);
-        Assert.True(r.Ok);
-        Assert.False(r.MarkDeductedInRecordedRound);
-        Assert.Contains("รอบโอนถัดไป", r.OutcomeText);
-        // คืนหลังวันเงินเข้าแต่เลือก "หักในรอบที่บันทึกแล้ว" = ขัดกับวันที่ ⇒ ปฏิเสธ
-        Assert.False(GatewayRefundMath.LegacyRefundRoundTiming(after, MoneyIn, "PO-1", GatewayLegacyRefundRoundTiming.DeductedInRecordedRound).Ok);
+        // ทางเลือกที่ถอดออก: ตั้ง RefundSettledAmount = 200 ทั้งที่รอบนั้นโอนเข้า 970 ⇒ รอบถัดไปไม่หัก + ผลต่างอธิบายไม่ได้ 200 ตลอดไป
+        var removedChoice = GatewayReconciliation.Compute(new[] { LegacyRow(refundSettled: 200m, deductedAfter: 0m) });
+        Assert.False(removedChoice.IsBalanced);
+        Assert.Equal(-200m, removedChoice.UnexplainedDifference);
+    }
+
+    [Fact]
+    public void RV2_3_batch_คืนย้อนหลัง200_บรรทัดคืนในรอบถัดไป_สมดุล770()
+    {
+        var row = new GatewayReconciliationIntentRow(1000m, 30m, 0m, null, false, false, 200m, 0m, 0m, GatewayFeeVatMode.None, null,
+            OwnedByBatch: true, BatchPosted: true);
+        var firstRound = GatewayReconciliation.BatchSettled(new[]
+        {
+            new GatewayBatchLineFact(SettlementLineType.Sale, 1000m),
+            new GatewayBatchLineFact(SettlementLineType.PaymentFee, -30m),
+        });
+        var before = GatewayReconciliation.Compute(new[] { GatewayReconciliation.FromIntent(row, firstRound) });
+        Assert.Equal(770m, before.ExpectedNet);
+        Assert.Equal(970m, before.SettledTotal);
+        Assert.True(before.IsBalanced);
+        var withRefundRound = GatewayReconciliation.BatchSettled(new[]
+        {
+            new GatewayBatchLineFact(SettlementLineType.Sale, 1000m),
+            new GatewayBatchLineFact(SettlementLineType.PaymentFee, -30m),
+            new GatewayBatchLineFact(SettlementLineType.Refund, -200m),   // รอบถัดไป (ลงบัญชีแล้ว)
+        });
+        var after = GatewayReconciliation.Compute(new[] { GatewayReconciliation.FromIntent(row, withRefundRound) });
+        Assert.Equal(770m, after.ExpectedNet);
+        Assert.Equal(770m, after.SettledTotal);
+        Assert.True(after.IsBalanced);
+    }
+
+    [Fact]
+    public void RV2_3_ข้อความสำเร็จบอกว่าหักในรอบถัดไป_ไม่มีทางเลือก()
+    {
+        var inRound = GatewayRefundMath.LegacyRefundRoundOutcome(true, "PO-1");
+        Assert.Contains("PO-1", inRound);
+        Assert.Contains("รอบโอนถัดไป", inRound);
+        Assert.Contains("ไม่ได้ถูกหักในรอบนั้น", inRound);
+        Assert.Contains("ยังไม่อยู่ในรอบโอน", GatewayRefundMath.LegacyRefundRoundOutcome(false, null));
+        // ไม่มีชนิด "หักในรอบที่บันทึกแล้ว" เหลือในระบบ
+        Assert.Null(typeof(GatewayRefundMath).Assembly.GetType("Accounting.Helpers.GatewayLegacyRefundRoundTiming"));
+    }
+
+    // ═══ ฝ่ายค้านรอบสอง RV2-9: ออกรหัสใหม่ไม่เปิด URL เดิมกลับ · RV2-10: คำเตือนบอกว่ามาจากคำขอที่ยังไม่ยืนยัน ═══
+
+    [Fact]
+    public void RV2_9_ออกรหัสใหม่_ร้านที่เคยย้าย_URLเดิมไม่กลับมาลอง()
+    {
+        var moved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", BeforeSunset, PaymentProviderMode.Test, PaymentProviderMode.Test, true);
+        Assert.False(GatewayWebhookRoute.LegacyEligibleAfterRotate(moved));
+        // หลังล้างเวลา "รับทาง URL ใหม่" + ธงที่ได้ ⇒ URL เดิมไม่ลอง
+        var afterRotate = new GatewayWebhookConfigFacts(moved.ConfigId, "t2", null, null, PaymentProviderMode.Test,
+            GatewayWebhookRoute.LegacyEligibleAfterRotate(moved));
+        Assert.False(GatewayWebhookRoute.AcceptsLegacy(afterRotate, BeforeSunset));
+        // ทิศตรงข้าม: ร้านที่ยังไม่เคยย้าย (แดชบอร์ดยังใช้ URL เดิม) คงรับต่อ
+        var notMoved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", null, null, PaymentProviderMode.Test, true);
+        Assert.True(GatewayWebhookRoute.LegacyEligibleAfterRotate(notMoved));
+        Assert.False(GatewayWebhookRoute.LegacyEligibleAfterRotate(new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", null)));
+    }
+
+    [Fact]
+    public void RV2_10_คำเตือนจากเวลาที่ถูกข้าม_บอกว่ามาจากคำขอที่ยังไม่ยืนยัน()
+    {
+        var moved = new GatewayWebhookConfigFacts(Guid.NewGuid(), "t", BeforeSunset, PaymentProviderMode.Test, PaymentProviderMode.Test, true);
+        Assert.Contains("คำขอที่ยังไม่ยืนยัน",
+            GatewayWebhookRoute.LegacyUrlWarning(null, BeforeSunset.AddMinutes(1), moved, BeforeSunset));
+        // ทิศตรงข้าม: รับทาง URL เดิมจริง (ยืนยันแล้ว) ล่าสุด ⇒ ไม่มีวลีนี้
+        Assert.DoesNotContain("คำขอที่ยังไม่ยืนยัน",
+            GatewayWebhookRoute.LegacyUrlWarning(BeforeSunset.AddMinutes(2), BeforeSunset.AddMinutes(1), moved, BeforeSunset));
     }
 
     // ═══ ฝ่ายค้าน GWO-5: คง JE เดิม ⇒ อยู่ในช่องคำเตือนของคำตอบ ═══

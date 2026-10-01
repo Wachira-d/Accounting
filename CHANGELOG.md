@@ -4171,6 +4171,16 @@ _2026-10-01 รอบ 201 ทีม GW — แก้ตามฝ่ายค้�
 - **GWO-7** `LastLegacySkippedAt` + `IPaymentProvider.UnverifiedIntentHint` (ไม่ยิงออก) ⇒ คำเตือน "ระบบไม่รับทาง URL เดิมของร้านนี้" ขึ้นจริง
 - เทสต์ `GWO*` 10 เคสใน `GatewayTeamGWRound201Tests` (สองทิศ) · required_call_site +14 แถว (negative test มือ 25/25 รวมแถวเดิม) — commit 1454de18)_
 
+_2026-10-01 รอบ 201 ทีม GW — แก้ตามฝ่ายค้านรอบสอง RV2-3..11 (RV2-1/2 ส่งทีม PL):
+- **RV2-3/4/5/11** (คำตัดสินข้อ 109) ถอดทางเลือก `DeductedInRecordedRound` ทั้ง enum/ช่อง API/คำถามบนหน้า — ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ
+  (`GatewayRefundMath.LegacyRefundRoundOutcome` แค่ถ้อยคำ · `RecordedRoundAsync`) · เทสต์ `GatewayReconciliation.Compute` เส้นเดิม + batch 1,000/30/คืน 200 ⇒ 770/770 +
+  ทิศตรงข้าม (ทางเลือกเดิม ⇒ ผลต่างอธิบายไม่ได้ −200)
+- **RV2-6** หมายเหตุลำดับล็อก (`int-resync` → เลข JE เท่านั้น · audit ไปตอน commit ตามคำตัดสินข้อ 104) + required_call_site ห้ามขอล็อก/เปิดธุรกรรมซ้อนใน core ของ resync
+- **RV2-7** `RunResyncLockedAsync` ถือล็อก + ธุรกรรมครอบทั้ง `ResyncUpdate*Async` (โหลดหัวเอกสารใหม่ใต้ล็อก · เอกสารถูกยกเลิก/ลบระหว่างรอ = ล้มดัง)
+- **RV2-8** ล้มกลางทาง ⇒ `ChangeTracker.Clear()` แล้วโยนต่อ · เทสต์ DB `IntegrationResyncRollbackDbTests` (สองทิศ · job `db-test`)
+- **RV2-9** ออกรหัสใหม่: ร้านที่เคยย้าย ⇒ `LegacyWebhookEligible = false` (`GatewayWebhookRoute.LegacyEligibleAfterRotate`) · **RV2-10** คำเตือนบอกว่ามาจากคำขอที่ยังไม่ยืนยัน
+- เทสต์ใหม่ 6 + DB 2 · required_call_site ปรับ/เพิ่ม (negative test มือ 18/18) — commit 30e7a835)_
+
 _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
 - **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
   (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม) — ก่อนล็อกใบต้นทาง/มัดจำ/กลับรายการใด

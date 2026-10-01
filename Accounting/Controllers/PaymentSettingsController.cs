@@ -269,6 +269,8 @@ public class PaymentSettingsController : ControllerBase
         if (cfg == null) return NotFound(new ApiResponse<ConfigResponse>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
 
         var hadToken = !string.IsNullOrEmpty(cfg.WebhookToken);
+        // RV2-9: เคยย้ายมา URL ใหม่แล้ว ⇒ URL เดิมต้องไม่กลับมาลองร้านนี้หลังล้างเวลา "รับทาง URL ใหม่" (ตัวตัดสินเดียวใน GatewayWebhookRoute)
+        cfg.LegacyWebhookEligible = GatewayWebhookRoute.LegacyEligibleAfterRotate(WebhookFacts(cfg));
         cfg.WebhookToken = GatewayWebhookRoute.NewToken();
         cfg.LastTokenWebhookAt = null;
         cfg.LastTokenWebhookMode = null;
@@ -285,6 +287,7 @@ public class PaymentSettingsController : ControllerBase
                 action = "rotate-webhook-token",
                 provider = providerCode,
                 hadToken,
+                legacyWebhookEligible = cfg.LegacyWebhookEligible,
             }),
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
             Timestamp = DateTime.UtcNow,

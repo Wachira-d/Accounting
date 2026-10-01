@@ -311,17 +311,10 @@
         const book = confirm('ให้ระบบลงรายการบัญชีคืนเงินให้หรือไม่?\n\n'
           + 'ตกลง = ยังไม่เคยลงบัญชีคืนเงินรายการนี้ (ระบบลง Dr ลูกหนี้ / Cr บัญชีพักให้)\n'
           + 'ยกเลิก = ลงรายการบัญชีด้วยมือไว้แล้ว (บันทึกเฉพาะยอดคืน — ห้ามลงซ้ำ)');
-        // ฝ่ายค้าน GWO-3: รายการที่อยู่ในรอบโอนที่บันทึกแล้ว ต้องบอกว่าผู้ให้บริการหักยอดคืนในรอบนั้นแล้วหรือยัง (เซิร์ฟเวอร์ตัดสินว่าต้องใช้คำตอบไหม)
-        const roundTiming = r.isSettled
-          ? (confirm('รายการนี้อยู่ในรอบโอนที่บันทึกแล้ว — ผู้ให้บริการหักยอดคืนนี้ในรอบโอนนั้นแล้วหรือยัง?\n\n'
-              + 'ตกลง = หักในรอบที่บันทึกแล้ว (ดูสเตทเมนต์/รายงานรอบโอน — รอบถัดไปจะไม่หักซ้ำ)\n'
-              + 'ยกเลิก = ยังไม่ถูกหัก (จะถูกหักในรอบโอนถัดไป)') ? 'DeductedInRecordedRound' : 'DeductedInLaterRound')
-          : undefined;
         try {
           const res = await api.recordPaymentIntentLegacyRefund(id, {
             amount: Number(raw), refundedAt: at.trim(), providerRefundRef: ref, evidence,
             journal: book ? 'BookNow' : 'AlreadyBookedManually',
-            ...(roundTiming ? { roundTiming } : {}),
           });
           alert(`${res?.message || 'บันทึกแล้ว'}${res?.data?.nextStep ? '\n\nขั้นถัดไป: ' + res.data.nextStep : ''}`);
         } catch (e) {

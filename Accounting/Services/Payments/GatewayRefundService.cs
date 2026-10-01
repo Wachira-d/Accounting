@@ -48,7 +48,7 @@ public interface IGatewayRefundService
     /// <summary>บันทึกยอดคืนจริงย้อนหลังของรายการที่สถานะคืนแล้วแต่ระบบไม่มียอดคืน (รอบ 201 ทีม GW · A-GW7) — เจ้าของกิจการ + หลักฐาน ·
     /// เลือกลงใบสำคัญคืนเงิน (เส้นเดียวกับคืนเงินปกติ) หรือบันทึกเฉพาะยอด (ลงด้วยมือไว้แล้ว) · hash chain · ไม่ migrate</summary>
     Task<GatewayRefundOutcome> RecordLegacyRefundAsync(Guid companyId, Guid intentId, decimal? amount, DateTime? refundedAtUtc,
-        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal, GatewayLegacyRefundRoundTiming roundTiming,
+        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal,
         string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
 }
 
@@ -559,7 +559,7 @@ public class GatewayRefundService : IGatewayRefundService
     }
 
     public async Task<GatewayRefundOutcome> RecordLegacyRefundAsync(Guid companyId, Guid intentId, decimal? amount, DateTime? refundedAtUtc,
-        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal, GatewayLegacyRefundRoundTiming roundTiming,
+        string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal,
         string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default)
     {
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -575,11 +575,10 @@ public class GatewayRefundService : IGatewayRefundService
             intent.RefundOutcomeUnknownSince != null, amount, refundedAtUtc, DateTime.UtcNow, providerRefundRef, evidence, journal);
         if (!check.Ok) return Fail(check.Message ?? "บันทึกไม่ได้");
 
-        // ฝ่ายค้าน GWO-3: รายการที่อยู่ในรอบโอนที่บันทึกแล้ว (เส้นเดิม/batch ลงบัญชีแล้ว) + คืนไม่หลังวันเงินเข้า ⇒ บังคับเลือกว่าหักในรอบนั้นแล้วหรือยัง
-        // (เดิมไม่ถาม ⇒ RefundSettledAmount คงเดิม ⇒ รอบถัดไปหักยอดคืนซ้ำทั้งที่ผู้ให้บริการหักไปแล้ว) · ตัดสินที่ GatewayRefundMath ตัวเดียว
-        var (roundMoneyIn, roundRef) = await RecordedRoundMoneyInAsync(companyId, intent, ct);
-        var timing = GatewayRefundMath.LegacyRefundRoundTiming(refundedAtUtc!.Value, roundMoneyIn, roundRef, roundTiming);
-        if (!timing.Ok) return Fail(timing.Message ?? "บันทึกไม่ได้");
+        // ฝ่ายค้านรอบสอง RV2-3 (คำตัดสินข้อ 109): ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ — รอบที่บันทึกแล้วผ่านด่านยอดตรง ⇒ ผู้ให้บริการไม่ได้หักยอดนี้ในรอบนั้น ·
+        // ห้ามตั้ง RefundSettledAmount เอง (เดิม GWO-3 ให้เลือก "หักแล้ว" ⇒ รอบถัดไปไม่หัก + กระทบยอดค้างผลต่างถาวร) · รอบที่อยู่ใช้แค่ถ้อยคำ
+        var (inRecordedRound, roundRef) = await RecordedRoundAsync(companyId, intent, ct);
+        var roundOutcome = GatewayRefundMath.LegacyRefundRoundOutcome(inRecordedRound, roundRef);
 
         var refundAt = refundedAtUtc!.Value;
         var refundRef = providerRefundRef!.Trim();
@@ -615,12 +614,9 @@ public class GatewayRefundService : IGatewayRefundService
                 FromStatus = intent.Status, ToStatus = intent.Status,
                 RefundAmount = check.AmountToBook,
                 Note = $"บันทึกยอดคืนย้อนหลัง {check.AmountToBook:N2} · อ้างอิง {refundRef} · ลงรายการบัญชีด้วยมือไว้แล้ว (ระบบไม่ลงซ้ำ) "
-                     + $"โดย {actor} · หลักฐาน: {evidenceText} · {timing.OutcomeText}",
+                     + $"โดย {actor} · หลักฐาน: {evidenceText} · {roundOutcome}",
             });
         }
-
-        // GWO-3: ทั้งสองทาง (ลงบัญชี/ลงมือไว้แล้ว) — ถูกหักในรอบที่บันทึกแล้ว ⇒ ยอดที่หักแล้ว = ยอดคืน (รอบถัดไปไม่หักซ้ำ)
-        if (timing.MarkDeductedInRecordedRound) intent.RefundSettledAmount = check.AmountToBook;
 
         // การเติมยอดที่ระบบไม่รู้ด้วยมือ = จุดที่ผู้สอบบัญชีถามเสมอ ⇒ hash chain (ใคร · ยอด · ลงบัญชีหรือไม่ · หลักฐาน)
         _db.AddChainedAuditLog(new AuditLog
@@ -638,8 +634,7 @@ public class GatewayRefundService : IGatewayRefundService
                 refundedAt = refundAt,
                 providerRefundRef = refundRef,
                 journal = journal.ToString(),
-                roundTiming = roundTiming.ToString(),
-                deductedInRecordedRound = timing.MarkDeductedInRecordedRound,
+                inRecordedRound,
                 journalEntryNumber = je?.EntryNumber,
                 evidence = evidenceText,
                 actor,
@@ -652,34 +647,26 @@ public class GatewayRefundService : IGatewayRefundService
         return new GatewayRefundOutcome(true,
             (je == null
                 ? $"บันทึกยอดคืน {check.AmountToBook:N2} บาทแล้ว (ไม่ลงบัญชีซ้ำ — ลงด้วยมือไว้แล้ว)"
-                : $"บันทึกยอดคืน {check.AmountToBook:N2} บาทและลงบัญชีใบสำคัญ {je.EntryNumber} แล้ว") + " · " + timing.OutcomeText,
+                : $"บันทึกยอดคืน {check.AmountToBook:N2} บาทและลงบัญชีใบสำคัญ {je.EntryNumber} แล้ว") + " · " + roundOutcome,
             refundRef, check.AmountToBook, intent.Status == PaymentIntentStatus.Refunded, check.AmountToBook,
             je?.Id, je?.EntryNumber, "", NextStepText);
     }
 
-    /// <summary>วันเงินเข้า + อ้างอิงของรอบโอนที่<b>บันทึกแล้ว</b>ซึ่งรวมรายการนี้ (GWO-3) — เส้นเดิม: <c>SettledAt</c> (ไม่มี ⇒ วันที่ JE รอบโอน) ·
-    /// batch ที่ลงบัญชีแล้ว (สถานะชุดเดียวกับรายงานกระทบยอด <c>GatewayReconciliation.IsBatchPosted</c>): <c>PayoutDate</c> · ไม่อยู่ในรอบที่บันทึก = (null, null)</summary>
-    private async Task<(DateTime? MoneyIn, string? Ref)> RecordedRoundMoneyInAsync(Guid companyId, PaymentIntent intent, CancellationToken ct)
+    /// <summary>รายการนี้อยู่ในรอบโอนที่<b>บันทึกแล้ว</b>ไหม + อ้างอิงของรอบ (ใช้แค่ถ้อยคำของข้อความสำเร็จ · RV2-3) — เส้นเดิม: มีใบสำคัญรอบโอน ·
+    /// batch: สถานะชุดเดียวกับรายงานกระทบยอด (<c>GatewayReconciliation.IsBatchPosted</c>)</summary>
+    private async Task<(bool InRecordedRound, string? Ref)> RecordedRoundAsync(Guid companyId, PaymentIntent intent, CancellationToken ct)
     {
-        if (intent.SettlementJournalEntryId is Guid jeId)
-        {
-            if (intent.SettledAt is DateTime at) return (at, intent.SettlementRef);
-            var entryDate = await _db.JournalEntries.AsNoTracking()
-                .Where(j => j.Id == jeId && j.CompanyId == companyId)
-                .Select(j => (DateTime?)j.EntryDate)
-                .FirstOrDefaultAsync(ct);
-            return (entryDate, intent.SettlementRef);
-        }
+        if (intent.SettlementJournalEntryId != null) return (true, intent.SettlementRef);
         if (intent.SettlementBatchId is Guid batchId)
         {
             var batch = await _db.SettlementBatches.AsNoTracking()
                 .Where(b => b.Id == batchId && b.CompanyId == companyId && !b.IsDeleted)
-                .Select(b => new { b.Status, b.PayoutDate, b.PayoutRef })
+                .Select(b => new { b.Status, b.PayoutRef })
                 .FirstOrDefaultAsync(ct);
             if (batch != null && GatewayReconciliation.IsBatchPosted(batch.Status))
-                return (batch.PayoutDate, batch.PayoutRef);
+                return (true, batch.PayoutRef);
         }
-        return (null, null);
+        return (false, null);
     }
 
     public async Task<IReadOnlyDictionary<Guid, GatewayRefundCreditNoteView>> CreditNoteStatesAsync(Guid companyId,
