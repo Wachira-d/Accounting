@@ -4322,4 +4322,4 @@ _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสา�
   `LoadRecalculateLockEvidenceAsync` เทียบ `PayrollRun.CreatedAt` ⇒ รอบที่สร้างหลังนำส่งไม่ถูกล็อกทันที · รายงานภาษีที่ประกาศว่ายื่นยังล็อกทั้งงวด
 - **P2-1** ออก 50 ทวิ ภ.ง.ด.1 ล้มแล้วย้อนธุรกรรมของตัวเอง ⇒ `_db.ChangeTracker.Clear()` ก่อนแจ้งเตือน (ทั้งสอง catch)
 - **P2-5** `RemittanceForm` + query รวม `WhtPnd54` → ภ.ง.ด.54
-- เทสต์ `RemittanceInclusionTests` · `PayrollPnd1CertsTests` +WhtPnd54 · required_call_site +4 แถว — commit <pending>)_
+- เทสต์ `RemittanceInclusionTests` · `PayrollPnd1CertsTests` +WhtPnd54 · required_call_site +4 แถว — commit 9e51756e)_
