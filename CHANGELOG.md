@@ -4048,3 +4048,21 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม GW — Gateway/Integration (BACKLOG §1.1 A-GW1..A-GW12 · C-10 · C-11 · B-1 · รายงาน `erp-review/2026-10-01/team-GW.md`):
+- **A-GW1** webhook รหัสลับต่อ config `PaymentProviderConfig.WebhookToken` (+`LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt` · migration บล็อกทีม GW) · action เดียวสอง route ·
+  `Helpers/GatewayWebhookRoute` (ตัวเลือก config ตัวเดียว · รหัสผิด = ไม่ยิงคำขอออก · URL เดิมคงไว้ เลิกลองร้านที่โหมดปัจจุบันย้ายแล้ว) · หน้าตั้งค่า URL ใหม่ + คำเตือน URL เดิม
+- **A-GW4** กระทบยอดรู้จักรอบโอน batch (`GatewayReconciliation.IsBatchPosted/BatchSettled/FromIntent`) + การ์ดกระทบยอดบนหน้ากระทบยอดเงินรับออนไลน์ (endpoint เดิมไม่มีผู้เรียก)
+- **A-GW5** VAT ค่าธรรมเนียมของรอบโอน batch (ใบสำคัญจ่าย · 11640) แสดงแยก + ข้อความในด่าน "เกินที่พัก" — **ไม่รวมเข้า 11630** (คนละผังพัก · รวม = ภาษีซื้อซ้ำ)
+- **A-GW12** resync integration: dry-run สร้างบรรทัดใหม่ก่อนกลับ JE เดิม · สร้างไม่ได้ = คง JE เดิม + ดังสามที่ (`Helpers/IntegrationResyncJournal`) · ข้อความทางไปต่อ "ส่งซ้ำแบบ resyncUpdate" แทนปุ่มที่ไม่มี
+- **A-GW11** `IntegrationDashboardResponse.MoneyAccountWarning` (`MoneyAccountFallback.IntegrationBankWarning`) + แถบเตือนหน้าเชื่อมต่อระบบ
+- **A-GW6** ตัวนับ "คืนก่อนระบบเก็บยอด" ไม่นับ intent ที่ batch ถือ
+- **A-GW2** ป้าย/ปุ่ม/ค้างนานจากเซิร์ฟเวอร์ (`PaymentIntentPolicy.StatusLabel/SourceKindLabel/StatusOptions/IsStuck/StuckThreshold/CanEditFee` · ปุ่มคืนเงิน = `GatewayRefundMath.Check`) · งานเบื้องหลังใช้เกณฑ์เดียวกัน
+- **A-GW3** `PaymentIntentPolicy.SafeReturnUrl` ใน `StartAsync` (โดเมนเว็บไซต์ของบริษัท + `App:BaseUrl`)
+- **A-GW7** `POST pay/intents/{id}/refund/record-legacy` (`RecordLegacyRefundAsync` · `GatewayRefundMath.CheckLegacyRefundEntry` · เจ้าของ + หลักฐาน · hash chain)
+- **A-GW8** `POST pay/settlements/fee-vat/residue` (`WriteOffFeeVatResidueAsync` · `GatewayFeeVatClaim.ResidueCheck/ResidueTag`)
+- **A-GW9** 📋 ไม่เติมย้อนหลัง (แถวที่ `SettledFeeDeducted` มีค่าถูกอยู่แล้ว · ที่เหลือพิสูจน์ไม่ได้) — นับให้เห็นบนรายงาน (`LateRefundSplitUnknown`)
+- **A-GW10** `MyPermissionsResponse.PermissionDeniedMenuIds` (`PaymentGatewayPermissionScope.MenuPermissionKeys`) + layout ซ่อนเมนู · `tools/payment_menu_gate_sim.js`
+- **C-10** (ข้อ 83) config ผูกช่องทาง batch ⇒ เส้นเดิมไม่รับรายการใหม่ (คงเส้นคืนเงินภายหลัง) · **C-11** (ข้อ 84) `payment_fee` จาก config ตอนผูกครั้งแรก
+  (`IGatewayAccountResolver.ResolveFeeExpenseAccountAsync` ตัวเดียวกับเส้นเดิม · แตะ `SettlementChannelService.SaveAsync` จุดเดียว) · **B-1** `IPaymentProvider.PendingVerificationNotice` บนหน้าตั้งค่า (ไม่ต่อสาย fee_vat)
+- เทสต์ `GatewayTeamGWRound201Tests` (สองทิศทุกข้อ) · required_call_site +30 แถว (negative test มือ 14/14) — commit <pending>)_

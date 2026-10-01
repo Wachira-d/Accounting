@@ -91,18 +91,16 @@
             refundedAwaitingCreditNote: d.refundedAwaitingCreditNote || 0,
             refundUntracked: d.refundUntracked || 0,
             refundOutcomeUnknown: d.refundOutcomeUnknown || 0,
+            // รอบ 201 ทีม GW (A-GW2): ค้างนาน + เกณฑ์ + ตัวเลือกสถานะ มาจากเซิร์ฟเวอร์ (PaymentIntentPolicy) — หน้าเว็บไม่มีสำเนาเกณฑ์/ป้าย
+            stuck: d.stuck || 0,
+            stuckMinutes: d.stuckMinutes,
           };
+          this.statusOptions = d.statusOptions || [];
           this.render();
         } catch (e) {
           document.getElementById('body').innerHTML =
             `<div class="card banner warn">โหลดไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
         }
-      },
-
-      // ค้างนานผิดปกติ = ยังเปิดอยู่และสร้างมาเกิน 30 นาที (เกณฑ์เดียวกับงานเบื้องหลัง)
-      isStuck(r) {
-        if (!['Created', 'Pending'].includes(r.status)) return false;
-        return (Date.now() - new Date(r.createdAt).getTime()) > 30 * 60 * 1000;
       },
 
       visible() {
@@ -111,12 +109,13 @@
         return this.rows.filter(r =>
           (r.providerRef || '').toLowerCase().includes(q)
           || (r.sourceKind || '').toLowerCase().includes(q)
+          || (r.sourceKindLabel || '').toLowerCase().includes(q)
           || String(r.amount).includes(q));
       },
 
       render() {
         const rows = this.visible();
-        const stuckCount = this.rows.filter(r => this.isStuck(r)).length;
+        const stuckCount = this.summary.stuck || 0;
         document.getElementById('body').innerHTML = `
           ${this.summary.refundedAwaitingCreditNote ? `<div class="banner warn">
             🧾 มี <b>${this.summary.refundedAwaitingCreditNote}</b> รายการที่<b>คืนเงินแล้ว แต่ยังไม่พบใบลดหนี้</b> (§86/10) —
@@ -128,11 +127,11 @@
           </div>` : ''}
           ${this.summary.refundUntracked ? `<div class="banner warn">
             ⚠️ มี <b>${this.summary.refundUntracked}</b> รายการที่สถานะ "คืนเงินแล้ว" แต่<b>ไม่มีรายการบัญชีคืนเงิน</b>
-            (คืนก่อนระบบบันทึกยอดคืน หรือลงบัญชีไม่สำเร็จ — ดูประวัติของรายการ) · ต้องบันทึกรายการบัญชีด้วยมือ
-            และรายการเหล่านี้ไม่ถูกนับในรอบโอน
+            (คืนก่อนระบบบันทึกยอดคืน หรือลงบัญชีไม่สำเร็จ — ดูประวัติของรายการ) · รายการเหล่านี้ไม่ถูกนับในรอบโอน
+            จนกว่าเจ้าของกิจการจะกด <b>"บันทึกยอดคืน"</b> ที่แถวนั้น (ยอดคืนจริงตามแดชบอร์ดผู้ให้บริการ + เลือกว่าให้ระบบลงบัญชีหรือลงมือไว้แล้ว)
           </div>` : ''}
           ${stuckCount ? `<div class="banner warn">
-            ⚠️ มี <b>${stuckCount}</b> รายการค้างเกิน 30 นาที — สาเหตุที่พบบ่อยที่สุดคือ
+            ⚠️ มี <b>${stuckCount}</b> รายการค้างเกิน ${Layout.esc(String(this.summary.stuckMinutes ?? ''))} นาที — สาเหตุที่พบบ่อยที่สุดคือ
             <b>ยังไม่ได้ตั้ง Webhook URL</b> ในแดชบอร์ดของผู้ให้บริการ
             (ดู URL ได้ที่ <a href="/pages/payment-settings.html">หน้าตั้งค่าการรับชำระเงินออนไลน์</a>)
             · ถ้าลูกค้าจ่ายแล้วจริง กด "ตรวจสถานะสด" ที่แถวนั้น
@@ -142,12 +141,7 @@
               <div><label>สถานะ</label>
                 <select class="form-input" id="fSt" onchange="Page.setStatus(this.value)">
                   <option value="">ทั้งหมด</option>
-                  <option value="Pending">รอชำระ</option>
-                  <option value="Succeeded">สำเร็จ</option>
-                  <option value="Failed">ล้มเหลว</option>
-                  <option value="Expired">หมดอายุ</option>
-                  <option value="Refunded">คืนเงินแล้ว</option>
-                  <option value="PartiallyRefunded">คืนเงินบางส่วน</option>
+                  ${(this.statusOptions || []).map(o => `<option value="${Layout.esc(o.value)}" ${this.filter.status === o.value ? 'selected' : ''}>${Layout.esc(o.label)}</option>`).join('')}
                 </select></div>
               <div style="flex:1;min-width:200px"><label>ค้นหา (เลขอ้างอิง / ที่มา / ยอด)</label>
                 <input class="form-input" id="fQ" value="${Layout.esc(this.filter.q)}"
@@ -175,21 +169,22 @@
         const el = document.getElementById('fQ'); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } },
 
       row(r) {
-        const open = ['Created', 'Pending'].includes(r.status);
-        const stuck = this.isStuck(r);
+        // ทุกเงื่อนไขของปุ่ม/ป้ายมาจากเซิร์ฟเวอร์ (canCheckLive · canRefund · canEditFee · isStuck) — A-GW2
+        const open = r.canCheckLive === true;
+        const stuck = r.isStuck === true;
         return `<tr class="${stuck ? 'stuck' : ''}">
           <td>${Layout.date(r.createdAt)}<div style="color:#94a3b8;font-size:11px">${new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</div></td>
-          <td>${Layout.esc(r.sourceKind || '')}</td>
+          <td>${Layout.esc(r.sourceKindLabel || r.sourceKind || '')}</td>
           <td>${Layout.esc(r.providerCode || '')}<div style="color:#94a3b8;font-size:11px">${Layout.esc(r.method || '')}</div></td>
           <td style="font-family:ui-monospace,monospace;font-size:11px;word-break:break-all">${Layout.esc(r.providerRef || '—')}</td>
           <td class="num">${Layout.money(r.amount)}</td>
-          <td><span class="pill st-${Layout.esc(r.status)}">${Layout.esc(r.status)}</span>
+          <td><span class="pill st-${Layout.esc(r.status)}">${Layout.esc(r.statusLabel || r.status)}</span>
             ${stuck ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ค้างนาน</div>' : ''}
             ${r.failureMessage ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.failureMessage)}</div>` : ''}
             ${Number(r.refundedAmount) > 0 ? `<div style="font-size:11px;margin-top:2px">คืนแล้ว ${Layout.money(r.refundedAmount)}</div>` : ''}
             ${r.needsCreditNote ? '<div style="margin-top:2px"><span class="pill cn-miss">ยังไม่ออกใบลดหนี้</span></div>' : ''}
             ${r.creditNoteState === 'CreditNoteCovered' ? '<div style="margin-top:2px"><span class="pill cn-ok">ออกใบลดหนี้แล้ว</span></div>' : ''}
-            ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มีรายการบัญชีคืนเงิน — ตรวจมือ</div>' : ''}
+            ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มียอดคืนในระบบ — กด "บันทึกยอดคืน" (เจ้าของกิจการ)</div>' : ''}
             ${r.refundOutcomeUnknown ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.refundOutcomeUnknownMessage || 'คืนเงินผลไม่แน่ชัด')}</div>` : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
           <td style="white-space:nowrap">
@@ -199,10 +194,12 @@
             ${r.refundOutcomeUnknown
               ? `<button class="btn btn-sm btn-warning" onclick="Page.verifyRefund('${r.id}')">ตรวจผลการคืนเงิน</button>
                  <button class="btn btn-sm btn-secondary" onclick="Page.resolveRefund('${r.id}')" title="เจ้าของกิจการเท่านั้น — เมื่อผู้ให้บริการไม่ส่งผล/ข้อมูลขัดกัน">บันทึกผลด้วยมือ</button>`
-              : ((r.status === 'Succeeded' || (r.status === 'PartiallyRefunded' && Number(r.refundedAmount) > 0)) && Number(r.refundableRemaining) > 0
+              : (r.canRefund
                 ? `<button class="btn btn-sm btn-warning" onclick="Page.refund('${r.id}', ${Number(r.refundableRemaining) || 0})">คืนเงิน</button>` : '')}
-            ${!r.isSettled && ['Succeeded', 'PartiallyRefunded', 'Refunded'].includes(r.status)
+            ${r.canEditFee
               ? `<button class="btn btn-sm btn-secondary" onclick="Page.editFee('${r.id}')">ค่าธรรมเนียม</button>` : ''}
+            ${r.refundUntracked && !r.refundOutcomeUnknown
+              ? `<button class="btn btn-sm btn-secondary" onclick="Page.recordLegacyRefund('${r.id}')" title="เจ้าของกิจการเท่านั้น — ยอดคืนจริงตามแดชบอร์ดผู้ให้บริการ">บันทึกยอดคืน</button>` : ''}
           </td>
         </tr>`;
       },
@@ -294,6 +291,34 @@
           alert(res?.message || 'บันทึกผลแล้ว');
         } catch (e) {
           alert(e.message || 'บันทึกผลไม่สำเร็จ');
+        }
+        await this.load();
+      },
+
+      // รอบ 201 ทีม GW (A-GW7): บันทึกยอดคืนจริงย้อนหลัง (แถวที่คืนแล้วแต่ระบบไม่มียอดคืน) — เซิร์ฟเวอร์ตัดสินทุกด่าน หน้าเว็บแค่เก็บคำตอบ
+      async recordLegacyRefund(id) {
+        const api = Layout.api(); if (!api) return;
+        const r = this.rows.find(x => x.id === id) || {};
+        const raw = prompt('ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ดผู้ให้บริการ):',
+          r.status === 'Refunded' ? Number(r.amount || 0).toFixed(2) : '');
+        if (raw === null || raw.trim() === '') return;
+        const at = prompt('วันที่เงินคืนออกจริง (ปปปป-ดด-วว ค.ศ. ตามแดชบอร์ด):', '');
+        if (!at) return;
+        const ref = prompt('เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ:', '');
+        if (!ref) return;
+        const evidence = prompt('หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้):', '');
+        if (!evidence) return;
+        const book = confirm('ให้ระบบลงรายการบัญชีคืนเงินให้หรือไม่?\n\n'
+          + 'ตกลง = ยังไม่เคยลงบัญชีคืนเงินรายการนี้ (ระบบลง Dr ลูกหนี้ / Cr บัญชีพักให้)\n'
+          + 'ยกเลิก = ลงรายการบัญชีด้วยมือไว้แล้ว (บันทึกเฉพาะยอดคืน — ห้ามลงซ้ำ)');
+        try {
+          const res = await api.recordPaymentIntentLegacyRefund(id, {
+            amount: Number(raw), refundedAt: at.trim(), providerRefundRef: ref, evidence,
+            journal: book ? 'BookNow' : 'AlreadyBookedManually',
+          });
+          alert(`${res?.message || 'บันทึกแล้ว'}${res?.data?.nextStep ? '\n\nขั้นถัดไป: ' + res.data.nextStep : ''}`);
+        } catch (e) {
+          alert(e.message || 'บันทึกไม่สำเร็จ');
         }
         await this.load();
       },

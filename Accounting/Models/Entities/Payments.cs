@@ -44,6 +44,18 @@ public class PaymentProviderConfig : TenantEntity
     /// <summary>ครั้งล่าสุดที่ได้รับ webhook จริงจาก provider — โชว์ในหน้าตั้งค่า</summary>
     public DateTime? LastWebhookAt { get; set; }
 
+    /// <summary>รหัสลับต่อ config ใน URL แจ้งเตือน <c>api/pay/webhooks/{provider}/{token}</c> (รอบ 201 ทีม GW · A-GW1) — webhook ที่มาทาง URL นี้
+    /// ถูกลองยืนยันกับ config นี้เท่านั้น (ไม่ยิงคำขอออกด้วยคีย์ของร้านอื่น) · ออกตอนบันทึกการตั้งค่า + migration เติมให้แถวเดิม ·
+    /// เทียบด้วย <c>GatewayWebhookRoute.TokenMatches</c> ตัวเดียว</summary>
+    public string? WebhookToken { get; set; }
+    /// <summary>ครั้งล่าสุดที่ webhook ผ่านการยืนยันทาง URL ใหม่ (มีรหัสลับ)</summary>
+    public DateTime? LastTokenWebhookAt { get; set; }
+    /// <summary>โหมดของ config ตอน webhook ทาง URL ใหม่ผ่านครั้งล่าสุด — แดชบอร์ดทดสอบ/ใช้จริงของผู้ให้บริการตั้ง URL แยกกัน
+    /// ⇒ URL เดิมเลิกลอง config นี้เฉพาะเมื่อโหมดปัจจุบันย้ายแล้ว (<c>GatewayWebhookConfigFacts.MovedToTokenUrl</c>)</summary>
+    public PaymentProviderMode? LastTokenWebhookMode { get; set; }
+    /// <summary>ครั้งล่าสุดที่ webhook ผ่านการยืนยันทาง URL เดิม (ไม่มีรหัสลับ) — หน้าตั้งค่าเตือน "ยังใช้ URL เดิม"</summary>
+    public DateTime? LastLegacyWebhookAt { get; set; }
+
     /// <summary>JSON array ของวิธีจ่ายที่เปิด เช่น <c>["card","promptpay"]</c></summary>
     public string? EnabledMethodsJson { get; set; }
 

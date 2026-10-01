@@ -18,6 +18,12 @@ public interface IGatewayAccountResolver
     /// <c>null</c> = หาไม่เจอ ⇒ ผู้เรียกต้องล้มดัง</summary>
     Task<Guid?> ResolveClearingAccountAsync(Guid companyId, string providerCode, Guid? providerConfigId,
         CancellationToken ct = default);
+
+    /// <summary>ผังค่าธรรมเนียมรับชำระเงินของผู้ให้บริการรายนี้ (รอบ 201 ทีม GW · C-11) — ผังที่ตั้งใน config ชนะ · ไม่มี ⇒ 54710 ผังมาตรฐาน ·
+    /// ตัวเดียวของเส้นรอบโอนเดิม (<c>GatewaySettlementService</c>) และค่าตั้งต้น "payment_fee" ของช่องทางรอบโอนที่ผูก config ครั้งแรก ·
+    /// <c>null</c> = หาไม่เจอ</summary>
+    Task<Guid?> ResolveFeeExpenseAccountAsync(Guid companyId, string providerCode, Guid? providerConfigId,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -45,6 +51,8 @@ public class GatewayAccountResolver : IGatewayAccountResolver
 {
     /// <summary>ผังมาตรฐาน "ลูกหนี้ผู้ให้บริการรับชำระเงิน" (ChartOfAccountTemplates)</summary>
     public const string StandardClearingCode = "11340";
+    /// <summary>ผังมาตรฐานของค่าธรรมเนียมรับชำระเงินบนเส้นรอบโอนเดิม (54710 ค่าธรรมเนียมธนาคาร) — เมื่อ config ไม่ได้ตั้งผัง</summary>
+    public const string StandardFeeExpenseCode = "54710";
 
     private readonly AccountingDbContext _db;
     private readonly IEnumerable<IPaymentProvider> _providers;
@@ -101,6 +109,23 @@ public class GatewayAccountResolver : IGatewayAccountResolver
         return await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId
                 && a.AccountCode == StandardClearingCode && !a.IsDeleted)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<Guid?> ResolveFeeExpenseAccountAsync(Guid companyId, string providerCode, Guid? providerConfigId,
+        CancellationToken ct = default)
+    {
+        var configured = providerConfigId is Guid cid
+            ? await _db.PaymentProviderConfigs.AsNoTracking()
+                .Where(c => c.Id == cid && c.CompanyId == companyId)
+                .Select(c => c.FeeExpenseAccountId).FirstOrDefaultAsync(ct)
+            : await _db.PaymentProviderConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.ProviderCode == providerCode && !c.IsDeleted)
+                .Select(c => c.FeeExpenseAccountId).FirstOrDefaultAsync(ct);
+        if (configured is Guid chosen) return chosen;
+        return await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == StandardFeeExpenseCode && !a.IsDeleted)
             .Select(a => (Guid?)a.Id)
             .FirstOrDefaultAsync(ct);
     }
