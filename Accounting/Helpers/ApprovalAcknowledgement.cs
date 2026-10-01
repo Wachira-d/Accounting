@@ -19,6 +19,10 @@ public enum ApprovalAckSource
     /// คำเตือนชนิดอื่นยังหยุดตามเดิม · <b>คำเตือน VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้ = หยุด</b> (คำตัดสินรอบ 198 ข้อ 6 · รอบ 199 ฝ่ายค้าน B-1 —
     /// เดิมผ่านเพราะ <see cref="OcrApprovalGapWarning.IsGapWarning"/> ถูกขยายให้รวมชุด VAT แล้ว API อ้างข้อ 12 ซึ่งครอบแค่ [Σ-GAP])</summary>
     ApiClient = 3,
+    /// <summary>รอบ 201 (คำตัดสินข้อ 110 · ฝ่ายค้าน TX RTX-1): ทางเข้าอัตโนมัติที่ไม่มีหน้าจอให้คนเห็นคำเตือน (ใบประจำ · ใบเบิก · เบิกล่วงหน้า · LINE ·
+    /// OCR อนุมัติอัตโนมัติ · integration — ผู้เรียกรูปสามอาร์กิวเมนต์ของ <c>ApproveDocumentAsync</c>) — คำเตือนทั่วไปหยุดเหมือน <see cref="None"/>
+    /// (พฤติกรรมเดิม) · <b>ข้อสังเกต §65 ตรีผ่าน</b> แล้วทิ้งร่องรอยบนเอกสาร + audit (<see cref="UnattendedRuleCode"/>) — ไม่ใช่ "คนรับทราบ"</summary>
+    Unattended = 4,
 }
 
 /// <summary>
@@ -43,6 +47,12 @@ public static class ApprovalAcknowledgement
     /// <summary>API ส่งผ่านคำเตือน [Σ-GAP] และคืนรายการให้ระบบปลายทางในคำตอบ</summary>
     public const string ApiRuleCode = "APPROVE-API-RETURNED-WARNINGS";
 
+    /// <summary>ทางเข้าอัตโนมัติส่งผ่านข้อสังเกต §65 ตรี (คำตัดสินข้อ 110) — ไม่มีผู้ใช้เห็นรายการ</summary>
+    public const string UnattendedRuleCode = "APPROVE-UNATTENDED-PASSED-S65";
+
+    /// <summary>คำเตือนที่ทางเข้าไม่มีคนส่งผ่านได้ (ไม่หยุด) — ชุด §65 ตรี (คำตัดสินข้อ 110) · ตัวตั้งอยู่ที่ <see cref="Section65TerApprovalWarnings.IsWarning"/></summary>
+    private static bool PassesWithoutPerson(string warning) => Section65TerApprovalWarnings.IsWarning(warning);
+
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)
     {
@@ -51,7 +61,9 @@ public static class ApprovalAcknowledgement
         {
             ApprovalAckSource.User => Array.Empty<string>(),
             ApprovalAckSource.SystemWorkflow => warnings.Where(OcrApprovalGapWarning.IsGapWarning).ToList(),
-            ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsAmountGapWarning(w)).ToList(),
+            // คำตัดสินข้อ 110: API ส่งผ่านข้อสังเกต §65 ตรี แล้วคืนธงในผลตอบ (เหมือน [Σ-GAP])
+            ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsAmountGapWarning(w) && !PassesWithoutPerson(w)).ToList(),
+            ApprovalAckSource.Unattended => warnings.Where(w => !PassesWithoutPerson(w)).ToList(),
             _ => warnings,
         };
     }
@@ -158,6 +170,7 @@ public static class ApprovalAcknowledgement
     {
         ApprovalAckSource.SystemWorkflow => SystemRuleCode,
         ApprovalAckSource.ApiClient => ApiRuleCode,
+        ApprovalAckSource.Unattended => UnattendedRuleCode,
         _ => UserRuleCode,
     };
 
@@ -176,6 +189,7 @@ public static class ApprovalAcknowledgement
         {
             ApprovalAckSource.SystemWorkflow => "— คำเตือนตอนอนุมัติ: ระบบ workflow ส่งผ่าน (ไม่มีผู้ใช้เห็นรายการนี้ก่อนอนุมัติ) —",
             ApprovalAckSource.ApiClient => "— คำเตือนตอนอนุมัติผ่าน API: คืนรายการให้ระบบปลายทางในคำตอบ (ไม่มีผู้ใช้กดรับทราบ) —",
+            ApprovalAckSource.Unattended => "— ข้อสังเกตตอนอนุมัติ: ทางเข้าอัตโนมัติส่งผ่าน (ไม่มีผู้ใช้เห็นรายการนี้ก่อนอนุมัติ · คำตัดสินข้อ 110) — ตรวจก่อนปิดรอบ —",
             _ => "— รับทราบคำเตือนตอนอนุมัติ —",
         };
         var tail = source == ApprovalAckSource.User

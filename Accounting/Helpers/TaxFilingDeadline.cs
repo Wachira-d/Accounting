@@ -130,15 +130,32 @@ public static class TaxFilingDeadline
     }
 
     /// <summary><see cref="WarnBy(string,int,int)"/> ตาม <see cref="TaxType"/> — null เมื่อไม่ใช่แบบรายเดือน (เงื่อนไขเดียวกับ <see cref="EFilingFor"/>)</summary>
-    public static DateTime? WarnByFor(TaxType type, int year, int month)
+    public static DateTime? WarnByFor(TaxType type, int year, int month) => WarnByFor(type, year, month, null);
+
+    /// <summary><see cref="WarnByFor(TaxType,int,int)"/> + วันหยุดราชการ (ฝ่ายค้านรอบ 201 RTX-6 — ตัวตรวจรายงานใช้ชุดเดียวกับหน้านำส่ง)</summary>
+    public static DateTime? WarnByFor(TaxType type, int year, int month, IReadOnlySet<DateTime>? holidays)
     {
         if (year < 2018 || month is < 1 or > 12) return null;
         var key = KeyOf(type);
-        return key == null ? null : WarnBy(key, year, month);
+        return key == null ? null : WarnBy(key, year, month, holidays);
     }
 
     /// <summary>ข้อความกำกับบนจอเมื่อแบบนี้เตือนตามวันกระดาษเพราะยังไม่ยืนยันมาตรการ e-Filing — null = ไม่มีอะไรต้องบอก</summary>
-    public static string? EFilingCaveat(string remittanceType)
+    public static string? EFilingCaveat(string remittanceType) => EFilingCaveat(remittanceType, null, null);
+
+    /// <summary>ข้อความกำกับ + เมื่อ <b>เลยวันกระดาษแล้วแต่ยังไม่ถึงวัน e-Filing</b> บอกตรง ๆ ว่าถ้ายื่นทางอินเทอร์เน็ตอาจยังทัน (ฝ่ายค้านรอบ 201 RTX-6) —
+    /// ไม่ใช่ทางเลี่ยงคำเตือน: ระบบยังนับว่าเลยกำหนดจนกว่าจะยืนยันตัวบท</summary>
+    public static string? EFilingCaveat(string remittanceType, (DateTime Paper, DateTime EFiling)? due, DateTime? today)
+    {
+        var baseNote = EFilingCaveatCore(remittanceType);
+        if (baseNote == null || due == null || today == null) return baseNote;
+        var (paper, eFiling) = due.Value;
+        return today.Value.Date > paper.Date && today.Value.Date <= eFiling.Date
+            ? baseNote + $" · เลยกำหนดแบบกระดาษ ({paper:dd/MM/yyyy}) แล้ว — ถ้ามาตรการครอบ ยื่นทางอินเทอร์เน็ตได้ถึง {eFiling:dd/MM/yyyy} (ยังไม่ยืนยัน · ระบบนับว่าเลยกำหนด)"
+            : baseNote;
+    }
+
+    private static string? EFilingCaveatCore(string remittanceType)
         => EFilingExtensionUnconfirmed.Contains(remittanceType)
             ? "ยังไม่ยืนยันว่ามาตรการขยายเวลายื่นทางอินเทอร์เน็ต (+8 วัน) ครอบแบบนี้ — ระบบเตือนตามกำหนดแบบกระดาษ (เร็วกว่า) จนกว่าจะยืนยันตัวบท"
             : null;

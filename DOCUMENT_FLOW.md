@@ -1964,9 +1964,20 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
    ผู้อนุมัติเห็นยอดบวกกลับ ภ.ง.ด.50 **ก่อนกด** (ข้อความขึ้นต้น `Section65TerApprovalWarnings.Prefix`) · ชุดชนิด = `Section65TerApprovalWarnings.AppliesTo`
    ตัวเดียว (ธุรกรรม + คำเตือน) · ยกขึ้นเฉพาะ: บวกกลับจริง (> 0) + ข้อที่ต้องยืนยันแต่เกิดเฉพาะใบผิดปกติ ((5) capex · (7) บริจาค · (15) · (10) · (4) ไม่มีฐาน) ·
    **บันทึกอย่างเดียว** (ไม่ขัดจังหวะ): (11)(18) ไม่มีเลขภาษีผู้รับ · (9) ไม่มีเลขใบกำกับ/ไฟล์แนบ · (8) — วัดด้วย `Section65TerApprovalWarningGoldenTests`
-   (ใบปกติ 11 แบบ = 0 คำเตือน) · ข้อที่บล็อกไม่อยู่ในคำเตือน (ยังโยนในธุรกรรม) · คำเตือนชุดนี้เป็นคำเตือนทั่วไป ⇒ workflow ระบบส่งผ่านได้ ·
-   **API v1 หยุดรอคนรับทราบ** (เหมือนคำเตือนชนิดอื่น — คำถามค้างในรายงานทีม) · ตัวตรวจคำ: คำอังกฤษจับทั้งคำ ("refined"/"reservation"/"fine-tuning"
+   (ใบปกติ 19 แบบ = 0 คำเตือน) · ข้อที่บล็อกไม่อยู่ในคำเตือน (ยังโยนในธุรกรรม) · คำเตือนชุดนี้เป็นคำเตือนทั่วไป ⇒ workflow ระบบส่งผ่านได้ ·
+   ~~**API v1 หยุดรอคนรับทราบ**~~ ไม่ใช่แล้ว (ด้านล่าง) · ตัวตรวจคำ: คำอังกฤษจับทั้งคำ ("refined"/"reservation"/"fine-tuning"
    ไม่ใช่ค่าปรับ/เงินสำรอง) · "ค่าปรับปรุง/ปรับแต่ง/ปรับเปลี่ยน/ปรับอากาศ" ไม่ใช่ค่าปรับ · "เงินเพิ่มเติม/ทุน/พิเศษ/ค่าครองชีพ" ไม่ใช่เงินเพิ่มภาษี
+   **ฝ่ายค้านรอบ 201 (RTX-1..4 · คำตัดสินข้อ 110)**:
+   - **(5) capex และ (4) ค่ารับรอง = บันทึกอย่างเดียว** (ไม่ขึ้นคำเตือน — (5) ฟ้องทุกบรรทัด ≥ 50,000 ผัง 5xxxx เช่นต้นทุนสินค้า/วัตถุดิบ/เหมาช่วง/ค่าเช่า ·
+     (4) ตัวรวม ภ.ง.ด.50 คิดเพดานรายปีตอนปิดรอบ) · ยังเก็บใน `NonDeductibleRuleJson`/กล่อง "ข้อสังเกต §65 ตรี" เหมือนเดิม
+   - **ทางเข้าที่ไม่มีคนกดรับทราบไม่ถูกหยุดด้วยข้อสังเกต §65 ตรี**: รูปสามอาร์กิวเมนต์ `ApproveDocumentAsync(companyId, id, by)` (ใบประจำ · ใบเบิก ·
+     เบิกล่วงหน้า · LINE · OCR อนุมัติอัตโนมัติ · integration) = แหล่ง `ApprovalAckSource.Unattended` (+ ไม่เรียก AI · RTX-9) ⇒ คำเตือนทั่วไปหยุดตามเดิม ·
+     §65 ตรีผ่าน แล้วลงหมายเหตุภายใน "ทางเข้าอัตโนมัติส่งผ่าน" + audit `APPROVE-UNATTENDED-PASSED-S65` · API v1 (`ApiClient`) ส่งผ่าน + คืน
+     `nonDeductibleExpense`/`nonDeductibleNotes` ในผลตอบ · workflow ระบบ (`SystemWorkflow`) ส่งผ่านอยู่แล้ว · หน้าเว็บ/มือถือ/อนุมัติหลายใบ (`None`) ยังต้องรับทราบ ·
+     ตัวแยกชุด = `Section65TerApprovalWarnings.IsWarning` ตัวเดียว (ใช้ใน `ApprovalAcknowledgement.Unacknowledged`)
+   - **(6)(6 ทวิ)(1)(2)(3) เฉพาะบัญชีกำไรขาดทุน** (ผัง 5xxxx · `CIT…` · ไม่ผูกผัง = ตรวจตามเดิม) — บรรทัดชำระ ภ.ง.ด.50/51 (21920/11920) · ถอนใช้ส่วนตัว หจก. (31xxx)
+     ไม่ถูกบวกกลับแล้ว ⇒ **ยอดบวกกลับในตัวรวม ภ.ง.ด.50 (`GenerateCitReport` อ่าน `NonDeductibleAmount`) ลดลงสำหรับใบใหม่** · ใบที่อนุมัติไปแล้วคงค่าเดิม (ไม่ย้อน)
+   - คำอังกฤษค่าปรับเพิ่ม `surcharges` · `fined` · ยกเว้น "fuel surcharge"
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
      (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
@@ -3025,7 +3036,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 | **ภ.พ.36** (ซื้อบริการ ตปท. self-assess VAT) | `TaxFilingExportService.ExportPp36Async` (`:566`) | Documents.IsForeignService |
 | **ภ.ง.ด.1** (เงินเดือน WHT) | `ExportPnd1Async` (`:42`) | PayrollDetail |
 | **ภ.ง.ด.3 / 53 / 54** | `ExportPnd3 / 53 / 54Async` | WithholdingTaxCert + DocumentLine.WHT |
-| **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count) | JE Revenue/Expense + Document.NonDeductibleAmount |
+| **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count · รอบ 201 RTX-3: ข้อ (1)(2)(3)(6)(6 ทวิ) นับเฉพาะบรรทัดผังกำไรขาดทุน — ใบชำระ ภ.ง.ด.50/51 · ถอนใช้ส่วนตัวไม่ถูกบวกกลับ) | JE Revenue/Expense + Document.NonDeductibleAmount |
 | **ภ.ง.ด.51** (ครึ่งปี) | `ExportPnd51Async` | half-year P&L |
 | **สปส.1-10** (ประกันสังคม) | `ExportSso110Async` (`:412`) | PayrollRun + Employee |
 | **สปส.1-03** (ขึ้นทะเบียนเข้าใหม่) | `ExportSps103Async` | Employee.StartDate ในเดือน + IsSubjectToSocialSecurity |
@@ -3120,6 +3131,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   หน้านำส่ง (`StatutoryRemittanceService.BuildItem` → `PendingRemittanceItem.WarnDueDate/WarnNote` · `tax-remittance.html` ป้าย "เตือนตามวันกระดาษ") ·
   ปฏิทินนำส่ง (`BuildCell` → `FilingCalendarCell.WarnDueDate` · `DaysToDue/Overdue/NextDue`) · ตัวตรวจรายงาน (`TaxComplianceChecker.DeadlineFor` → `WarnByFor` + บอกวัน e-Filing ในข้อความ) ·
   ปฏิทินภาษี (`TaxCalendarService`) เตือนตาม `DueDate` = วันกระดาษอยู่แล้วและแสดง `EFilingDueDate` คู่กัน · ยืนยันตัวบทแล้วเอาแบบออกจากชุด `EFilingExtensionUnconfirmed` ที่เดียว
+  · ฝ่ายค้านรอบ 201 RTX-6: รายการรอนำส่งเรียงตาม `WarnDueDate ?? EFilingDueDate` · ตัวตรวจรายงานใช้วันหยุดราชการชุดเดียวกัน (`WarnByFor(…, holidays)` +
+  `PlatformHolidayStore`) · ข้อความกำกับบอกเมื่อ "เลยวันกระดาษแล้วแต่ยังไม่ถึงวัน e-Filing" (`EFilingCaveat(type, due, today)`)
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -4193,7 +4206,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม TX แก้ผลฝ่ายค้าน RTX-1..9 · คำตัดสินข้อ 110 — §65 ตรี: (4)(5) บันทึกอย่างเดียว · ทางเข้าไม่มีคน `Unattended`/API ไม่ถูกหยุด · (1)(2)(3)(6)(6 ทวิ) เฉพาะผังกำไรขาดทุน (§3.2 ข้อ 6 · §5.3 ภ.ง.ด.50) · ใบเบิกใช้ใบร่างเดิม · กำหนดยื่นเรียง/วันหยุด (§5.3) — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
 

@@ -4255,3 +4255,12 @@ _2026-10-01 รอบ 201 ฝ่ายค้านทีม OC (OCX-1..OCX-10 ·
 - (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น · (OCX-8) ค่าคงที่ `BranchAddressUnknownNote` ขึ้นเหนือ doc-comment ของ `ContactAddress` · (OCX-9) เทสต์ล็อกคำสั่ง migration อยู่ในชุดที่บูตรัน
 - (OCX-10) `Helpers/OcrPredecessorPartyCheck` ใน `LinkPredecessorAsync` เมื่อยังไม่รู้คู่ค้า · (ข้อ 103 Q3) ตัวอ่านเหตุผลใบลดหนี้ข้ามแถวฟอร์ม "ส่วนลด 0.00"
 - เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit f01811b2)_
+
+_2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้าน (RTX-1..9 · คำตัดสินข้อ 110 · รายงาน `erp-review/2026-10-01/team-TX.md` §7):
+- **RTX-1/2** §65 ตรี (5) capex · (4) ค่ารับรอง = บันทึกอย่างเดียว · ทางเข้าไม่มีคน = `ApprovalAckSource.Unattended` (รูปสามอาร์กิวเมนต์) ⇒ §65 ตรีผ่าน + หมายเหตุ/audit
+  `APPROVE-UNATTENDED-PASSED-S65` · API v1 ส่งผ่าน + `nonDeductibleNotes` · หน้าเว็บยังรับทราบ
+- **RTX-3** (1)(2)(3)(6)(6 ทวิ) เฉพาะผังกำไรขาดทุน — ยอดบวกกลับ ภ.ง.ด.50 ของใบใหม่ลดลง (ใบชำระภาษี/ถอนใช้ส่วนตัว) · **RTX-4** surcharges/fined + ยกเว้น fuel surcharge
+- **RTX-5** ใบเบิก: ผูกใบสำคัญจ่ายร่างทันทีหลังสร้าง · กดจ่ายซ้ำใช้ใบเดิม · คำเตือน = 422 ข้อความไทย (`Helpers/ExpenseClaimPayVoucher`)
+- **RTX-6** เรียงตามวันที่ใช้เตือน · ตัวตรวจรายงานใช้วันหยุดราชการ · ข้อความเมื่อเลยวันกระดาษ · **RTX-7** doc-comment `LockDepositBalancesAsync` กลับที่ ·
+  **RTX-9** รูปสามอาร์กิวเมนต์ไม่เรียก AI · 📋 **RTX-8** (ต้องนับในฐานจริงก่อน backfill — SQL ในรายงานทีม)
+- เทสต์ golden +8 ใบปกติ/+4 ทิศตรงข้าม · `Round201TxTests.RTX*` · required_call_site +3 แถว — commit <pending>)_

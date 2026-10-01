@@ -29,6 +29,10 @@ public static class Section65TerApprovalWarnings
         "RD-65ter(11)(18)",   // ไม่มีเลขผู้เสียภาษีผู้รับ (ไม่บล็อก) — ค่าใช้จ่ายเงินสดรายย่อย
         "RD-65ter(9)",        // ไม่มีเลขใบกำกับผู้ขาย/ไฟล์แนบ — ใบคีย์มือ
         "RD-65ter(8)",        // หลักฐานการจ่าย — ผู้เรียกยังไม่ส่งข้อมูล
+        // ฝ่ายค้านรอบ 201 RTX-1/RTX-2 + คำตัดสินข้อ 110: (5) capex ฟ้องทุกบรรทัด ≥ 50,000 ผัง 5xxxx (ต้นทุนสินค้า/วัตถุดิบ/เหมาช่วง/ค่าเช่า) ·
+        // (4) ค่ารับรองคิดเพดานต่อรอบบัญชีที่ตัวรวม ภ.ง.ด.50 ตอนปิดรอบ (ฐานรายได้ YTD ต้นปียังต่ำ = ฟ้องผิด) ⇒ บันทึกอย่างเดียว
+        "RD-65ter(5)",
+        "RD-65ter(4)",
     };
 
     /// <summary>
@@ -41,7 +45,14 @@ public static class Section65TerApprovalWarnings
 
     /// <summary>ผลข้อนี้ต้องยกขึ้นให้ผู้อนุมัติเห็นไหม</summary>
     private static bool Surfaces(Section65TerValidator.Finding f)
-        => !f.HardBlock && (f.AddBackAmount > 0m || (f.NeedsConfirmation && !RecordOnlyRules.Contains(f.RuleCode)));
+        => !f.HardBlock && !RecordOnlyRules.Contains(f.RuleCode) && (f.AddBackAmount > 0m || f.NeedsConfirmation);
+
+    /// <summary>
+    /// **คำเตือนนี้เป็นของชุด §65 ตรีไหม** — ตัวเดียวที่ <c>ApprovalAcknowledgement</c> ใช้แยกชุดนี้ออกจากคำเตือนชนิดอื่น (คำตัดสินข้อ 110:
+    /// ทางเข้าที่ไม่มีคนกดรับทราบ (API v1 · ใบประจำ · ใบเบิก · OCR/LINE อัตโนมัติ) ไม่ถูกหยุดด้วยชุดนี้ — ผ่านแล้วทิ้งร่องรอย · หน้าเว็บ/มือถือยังต้องรับทราบ)
+    /// </summary>
+    public static bool IsWarning(string warning)
+        => warning.StartsWith(Prefix, StringComparison.Ordinal);
 
     /// <summary>ข้อความคำเตือนก่อนอนุมัติจากผลประเมิน (ลำดับตามผลของตัวตรวจ · ว่าง = ไม่มีอะไรต้องให้เห็น)</summary>
     public static IReadOnlyList<string> For(Section65TerValidator.Result result)

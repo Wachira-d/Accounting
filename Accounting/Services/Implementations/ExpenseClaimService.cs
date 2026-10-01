@@ -527,8 +527,44 @@ public class ExpenseClaimService : IExpenseClaimService
             // ผู้สร้าง = ระบบ (ใบเกิดจากใบเบิก) · ผู้อนุมัติ = <b>ผู้กดจ่าย</b> — เดิมอนุมัติในนาม "system:expense-claim" ⇒ ใบสำคัญจ่าย
             // + JE เงินสดออกข้าม DocumentPermissionHelper.CanApproveAsync (ฝ่ายค้านรอบสอง R2-C2) · สิทธิ์อนุมัติ PV ตรวจแล้วที่
             // EnsureClaimActionAsync(Pay) · SoD ของเอกสาร (SodBlockSelfApproval) เทียบผู้สร้างกับผู้อนุมัติได้ตามจริง
-            var doc = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
-            await _documentService.ApproveDocumentAsync(companyId, doc.Id, payerUserId.ToString());
+            // รอบ 201 ฝ่ายค้าน TX (RTX-5): กดจ่ายซ้ำต้องไม่สร้างใบร่างซ้ำ — ผูกใบร่างกับใบเบิกทันทีหลังสร้าง · กดซ้ำใช้ใบเดิม (Helpers/ExpenseClaimPayVoucher) ·
+            // คำเตือนที่ต้องมีคนรับทราบ ⇒ ข้อความไทยพร้อมทางไปต่อ (เดิม exception ไม่ถูกแปลง = 500) · ข้อสังเกต §65 ตรีไม่หยุดเส้นนี้ (คำตัดสินข้อ 110 · แหล่ง Unattended)
+            var existingPv = claim.PaymentVoucherDocumentId is Guid pvExistingId
+                ? await _db.Set<Document>().AsNoTracking()
+                    .Where(d => d.Id == pvExistingId && d.CompanyId == companyId && !d.IsDeleted)
+                    .Select(d => new { d.Status, d.DocumentNumber })
+                    .FirstOrDefaultAsync()
+                : null;
+            var pvStep = Accounting.Helpers.ExpenseClaimPayVoucher.StepFor(claim.PaymentVoucherDocumentId, existingPv?.Status);
+            Guid pvId;
+            string pvNumber;
+            if (pvStep == Accounting.Helpers.ExpenseClaimPayVoucherStep.Create)
+            {
+                var created = await _documentService.CreateDocumentAsync(companyId, createReq, "system:expense-claim");
+                pvId = created.Id;
+                pvNumber = created.DocumentNumber;
+                claim.PaymentVoucherDocumentId = pvId;
+                await _db.SaveChangesAsync();
+            }
+            else
+            {
+                pvId = claim.PaymentVoucherDocumentId!.Value;
+                pvNumber = existingPv!.DocumentNumber;
+            }
+            if (pvStep != Accounting.Helpers.ExpenseClaimPayVoucherStep.AlreadyIssued)
+            {
+                try
+                {
+                    await _documentService.ApproveDocumentAsync(companyId, pvId, payerUserId.ToString());
+                }
+                catch (DocumentApprovalWarningsException ex)
+                {
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        Accounting.Helpers.ExpenseClaimPayVoucher.WarningsMessage(pvNumber, ex.Warnings),
+                        Accounting.Helpers.ExpenseClaimPayVoucher.WarningsRuleCode, 422);
+                }
+            }
+            var doc = await _documentService.GetDocumentAsync(companyId, pvId);
 
             claim.PaymentVoucherDocumentId = doc.Id;
             claim.Status = ExpenseClaimStatus.Paid;

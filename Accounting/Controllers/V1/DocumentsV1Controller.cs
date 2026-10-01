@@ -263,6 +263,8 @@ public class DocumentsV1Controller : PublicApiControllerBase
                 return await RefuseApprovalAsync(ctx!.CompanyId, documentId, target.Status, preview, refusal, ct);
 
             IReadOnlyList<string> scanGapWarnings = preview.Where(Helpers.OcrApprovalGapWarning.IsAmountGapWarning).ToList();
+            // คำตัดสินข้อ 110 (รอบ 201 ฝ่ายค้าน TX RTX-1): ข้อสังเกต §65 ตรีไม่บล็อก API — อนุมัติต่อแล้วคืนในผลตอบ
+            IReadOnlyList<string> nonDeductibleNotes = preview.Where(Helpers.Section65TerApprovalWarnings.IsWarning).ToList();
             var doc = await _documents.ApproveDocumentAsync(ctx!.CompanyId, documentId, "api:v1",
                 Helpers.ApprovalAckSource.ApiClient, withAiHints: false);
             return Ok(new ApiResponse<object>(true, new
@@ -277,6 +279,8 @@ public class DocumentsV1Controller : PublicApiControllerBase
                 // เป็น false ทุกใบ · คงช่องไว้ให้สัญญา v1 นิ่ง (ระบบปลายทางที่อ่านช่องนี้ไม่พัง)
                 scanVatNotOnPaper = false,
                 warnings = scanGapWarnings,
+                nonDeductibleExpense = nonDeductibleNotes.Count > 0,
+                nonDeductibleNotes,
             }, scanGapWarnings.Count > 0
                 ? $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber} · หมายเหตุ: {string.Join(" · ", scanGapWarnings)}"
                 : $"อนุมัติแล้ว — เลขที่ {doc.DocumentNumber}"));
