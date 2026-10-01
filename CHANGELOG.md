@@ -4049,6 +4049,16 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
 
+_2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
+- **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
+  (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
+- **A-DV1 (ข้อ 62/66)** รายงานข้อ 44 + 4 กลุ่ม (`StuckOutputVatAfterPaymentVoid` · `SubmittedEtaxVoidedWithoutEvidence` · `KeptOriginalCoverageLost` · `EmailedEtaxVoidedInSystem`) · `EtaxReissueReviewReport.Total`
+- **A-DV2 (ข้อ 65)** `Documents.EtaxKeptOriginalAt` + migration `Round201DvStatements` (เติมจากป้ายตัวสุดท้าย/audit) · ตัวอ่านเดียว `EtaxReissueReview.KeptOriginal` · `LastResolutionKeptOriginal` → internal
+- **A-DV3 (ข้อ 67)** หลักฐานทาง (ก) แนบหลังเวลาที่ใบถึงกรมสรรพากร (`CancellationEvidenceNotBefore` · `EtaxRdTimestampEmailTimesAsync` ใช้เงื่อนไขอีเมลตัวเดียว)
+- **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
+- **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
+- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
+
 _2026-10-01 รอบ 201 ทีม GW — Gateway/Integration (BACKLOG §1.1 A-GW1..A-GW12 · C-10 · C-11 · B-1 · รายงาน `erp-review/2026-10-01/team-GW.md`):
 - **A-GW1** webhook รหัสลับต่อ config `PaymentProviderConfig.WebhookToken` (+`LastTokenWebhookAt/Mode` · `LastLegacyWebhookAt` · migration บล็อกทีม GW) · action เดียวสอง route ·
   `Helpers/GatewayWebhookRoute` (ตัวเลือก config ตัวเดียว · รหัสผิด = ไม่ยิงคำขอออก · URL เดิมคงไว้ เลิกลองร้านที่โหมดปัจจุบันย้ายแล้ว) · หน้าตั้งค่า URL ใหม่ + คำเตือน URL เดิม

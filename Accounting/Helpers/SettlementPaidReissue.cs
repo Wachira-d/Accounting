@@ -402,6 +402,8 @@ public static class SettlementPaidReissue
         // รอบ 200 ทีม V1G: RV1F-12 — ผู้จัดทำใบแทนคือผู้ขอ (CreatedBy) ไม่ใช่ผู้จัดทำภายนอกของใบเดิม ⇒ ลายเซ็นผู้จัดทำใบเดิมไม่ตามไป ·
         // ใบลดหนี้ที่ปิดธง e-Tax ของใบเสร็จ (ข้อ 47) เป็นของใบเสร็จนั้นเท่านั้น
         nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.EtaxCancelledByCreditNoteId),
+        // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): ผลการปิดธง e-Tax ทาง (ค) เป็นของใบเสร็จนั้นเท่านั้น
+        nameof(Document.EtaxKeptOriginalAt),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

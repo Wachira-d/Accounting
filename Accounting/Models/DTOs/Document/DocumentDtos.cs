@@ -936,7 +936,16 @@ public record DocumentResponse(
     /// คำบรรยาย) + hash ที่การยืนยันต้องส่งกลับ · null = ไม่มีคำขอ/อ่านไม่ได้</summary>
     ReissueRequestView? ReissueRequestDetail = null,
     /// <summary>รอบ 200 ทีม V1G (ข้อ 47) — ใบลดหนี้ที่ใช้ปิดธง e-Tax ของใบเสร็จนี้ (เก็บแล้วต้อง echo) · null = ไม่มี</summary>
-    Guid? EtaxCancelledByCreditNoteId = null);
+    Guid? EtaxCancelledByCreditNoteId = null,
+    /// <summary>รอบ 201 ทีม DV (A-DV2 · ข้อ 65) — ปิดธง e-Tax ครั้งล่าสุดด้วยทาง (ค) "ใบกำกับเดิมยังใช้ได้" เมื่อไร (เก็บแล้วต้อง echo) · null = ไม่ใช่</summary>
+    DateTime? EtaxKeptOriginalAt = null,
+    /// <summary>รอบ 201 ทีม DV (A-DV5 · team-V2 คำถามค้าง 5) — "รับรู้ของกำพร้า" ของรอบโอนที่ถูกยกเลิก (ผู้/เวลา/เหตุผล) · อ่านอย่างเดียว ·
+    /// เก็บแล้วต้อง echo (F4 A) — เดิมเห็นเฉพาะพรีวิวรอบโอน · null = ไม่ได้รับรู้</summary>
+    DateTime? SettlementOrphanAckAt = null,
+    Guid? SettlementOrphanAckBy = null,
+    /// <summary>ชื่อผู้รับรู้ (สมาชิกของบริษัทนี้) — เติมที่ <c>GetDocumentAsync</c> เท่านั้น · null = รายการหลายใบ/ไม่พบสมาชิก</summary>
+    string? SettlementOrphanAckByName = null,
+    string? SettlementOrphanAckReason = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

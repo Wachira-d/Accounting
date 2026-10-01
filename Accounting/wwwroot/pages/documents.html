@@ -9863,6 +9863,19 @@
               <div style="margin-top:6px"><button class="btn btn-secondary" onclick="Page.resolveEtaxCancellation('${d.id}')">✅ บันทึกการจัดการทาง e-Tax (ยกเลิกสำเร็จ / ออกใบลดหนี้ / ใบกำกับเดิมยังใช้ได้)</button></div>
             </div>`;
           }
+          // รอบ 201 ทีม DV (A-DV2): ปิดธง e-Tax ครั้งล่าสุดด้วยทาง (ค) "ใบกำกับเดิมยังใช้ได้" — ข้อเท็จจริงจากคอลัมน์ (เซิร์ฟเวอร์ echo) · ไม่แสดงซ้อนธงที่ติดอยู่
+          if (d.etaxKeptOriginalAt && !d.etaxCancelRequiredAt) {
+            banners += `<div style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              ✅ <b>ยืนยันแล้วว่าใบกำกับเดิมยังใช้ได้</b> (เมื่อ ${Layout.date(d.etaxKeptOriginalAt)}) — ลูกค้าชำระใหม่ครอบยอดใบนี้ · ถ้าการรับชำระนั้นถูกยกเลิกภายหลัง ระบบติดธงกลับให้เอง
+            </div>`;
+          }
+          // รอบ 201 ทีม DV (A-DV5 · team-V2 คำถามค้าง 5): "รับรู้ของกำพร้า" ของรอบโอนที่ถูกยกเลิก — เก็บแล้วต้อง echo (เดิมเห็นเฉพาะพรีวิวรอบโอน) · อ่านอย่างเดียว
+          if (d.settlementOrphanAckAt) {
+            banners += `<div style="background:#f8fafc;border:1px solid #cbd5e1;color:#334155;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              📌 <b>รับรู้แล้วว่าเป็นของกำพร้าของรอบโอนที่ถูกยกเลิก</b> — โดย ${Layout.esc(d.settlementOrphanAckByName || '-')} เมื่อ ${Layout.date(d.settlementOrphanAckAt)}
+              <div style="margin-top:4px">เหตุผล: ${Layout.esc(d.settlementOrphanAckReason || '-')}</div>
+            </div>`;
+          }
           // รอบ 200 ทีม V1F (V1-R6): คำขอยกเลิกและออกใบแทนที่รอผู้อนุมัติคนที่สอง — เซิร์ฟเวอร์ตัดสินว่าใครยืนยันได้ (ผู้ขอยืนยันเองไม่ได้)
           if (d.reissueRequestedAt) {
             // รอบ 200 ทีม V1G (คำตัดสินข้อ 49 · RV1F-5): ผู้ยืนยันต้องเห็นคำขอเต็ม — ผู้ซื้อ/เลขภาษี/สาขา/ที่อยู่ เดิม→ใหม่ · หมายเหตุ · คำบรรยาย
@@ -11105,8 +11118,12 @@
           mode: 'math'
         }))) return;
         try {
-          await api.voidDocument(id, hasJe ? revDate : null);
-          Layout.closeModal('detailModal'); Layout.toast('ยกเลิกสำเร็จ'); await this.load();
+          const res = await api.voidDocument(id, hasJe ? revDate : null);
+          Layout.closeModal('detailModal');
+          // รอบ 201 ทีม DV (A-DV4 · ข้อ 68): ธงที่ติดระหว่างยกเลิกการชำระใน cascade (ข้อความจากเซิร์ฟเวอร์) ต้องถึงผู้กด — รูปเดียวกับ voidPayment
+          if (res && res.data) Layout.toast(res.message || 'ยกเลิกสำเร็จ', 'warning', 15000);
+          else Layout.toast('ยกเลิกสำเร็จ');
+          await this.load();
         }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -12060,13 +12077,20 @@
           const rows = [...(d?.flaggedReceiptsVatUndone || []), ...(d?.resolvedBeforeSplit || [])];
           const reps = d?.replacementsCarriedExcess || [];
           const revs = d?.misdatedOutputVatReversals || [];   // รอบ 200 ทีม V1H (ข้อ 53): ตัวกลับภาษีขายที่ลงคนละเดือน (ข้อความจากเซิร์ฟเวอร์)
-          if (!rows.length && !reps.length && !revs.length) { el.style.display = 'none'; return; }
+          // รอบ 201 ทีม DV (A-DV1 · ข้อ 62/66): อีก 4 กลุ่มอ่านอย่างเดียว — การจำแนก/ข้อความมาจากเซิร์ฟเวอร์ทั้งหมด (หน้าเว็บแสดงอย่างเดียว)
+          const stuck = d?.stuckOutputVatAfterPaymentVoid || [];
+          const etaxRows = [...(d?.submittedEtaxVoidedWithoutEvidence || []), ...(d?.emailedEtaxVoidedInSystem || [])];
+          const keptLost = d?.keptOriginalCoverageLost || [];
+          if (!rows.length && !reps.length && !revs.length && !stuck.length && !etaxRows.length && !keptLost.length) { el.style.display = 'none'; return; }
           const link = (id, no) => `<a href="#" onclick="Page.detail('${id}');return false" style="color:#92400e;text-decoration:underline">${Layout.esc(no || '')}</a>`;
           el.innerHTML = `📋 <b>${Layout.esc(r?.message || 'มีรายการที่ต้องให้นักบัญชีตรวจ')}</b>`
             + rows.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
             + reps.slice(0, 20).map(x => `<div>• ใบแทน ${link(x.replacementId, x.replacementNumber)} ของ ${Layout.esc(x.originalNumber || '')} พาช่องของใบเดิมมา: ${Layout.esc((x.carriedFields || []).join(', '))}</div>`).join('')
             + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + (rows.length + reps.length + revs.length > 60 ? '<div>…</div>' : '');
+            + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
+            + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
+            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
+            + (rows.length + reps.length + revs.length + stuck.length + keptLost.length + etaxRows.length > 120 ? '<div>…</div>' : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },
