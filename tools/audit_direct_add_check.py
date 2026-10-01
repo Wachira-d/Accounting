@@ -162,7 +162,35 @@ def self_test(found: dict, base: dict) -> list:
     return fails
 
 
+# ── PL-X7 (รอบ 201 · คำตัดสินข้อ 104): แถว audit ในธุรกรรมของผู้เรียกถูก "เก็บ" ผูกกับ TransactionId แล้วประทับตอน commit ⇒ execution strategy ที่
+#    retry (EnableRetryOnFailure) จะเล่น SaveChanges ซ้ำในธุรกรรมใหม่โดยแถวเดิมผูกธุรกรรมเก่า (ทิ้ง) — เปิดได้เฉพาะเมื่อห่อทุกธุรกรรมด้วย
+#    Database.CreateExecutionStrategy().ExecuteAsync(...) ซึ่งเรพนี้ยังไม่ทำ ⇒ ห้ามเปิดเงียบ ๆ
+RETRY_RX = re.compile(r"\bEnableRetryOnFailure\s*\(")
+
+
+def retry_errors(texts: dict) -> list:
+    return [f"Accounting/{rel}: เปิด EnableRetryOnFailure — ต้องห่อธุรกรรมด้วย execution strategy ก่อน (แถว audit ประทับตอน commit ผูกกับธุรกรรม · PL-X7)"
+            for rel, t in texts.items() if RETRY_RX.search(strip_code(t))]
+
+
+def retry_self_test() -> list:
+    fails = []
+    if not retry_errors({"Program.cs": "x.UseNpgsql(cs, o => o.EnableRetryOnFailure(3));"}):
+        fails.append("self-test PL-X7: EnableRetryOnFailure ไม่ถูกฟ้อง")
+    if retry_errors({"Program.cs": "// o.EnableRetryOnFailure(3)\nvar s = \"EnableRetryOnFailure(\";"}):
+        fails.append("self-test PL-X7: คอมเมนต์/สตริงถูกฟ้องผิด")
+    return fails
+
+
 def main() -> int:
+    retry_texts = {}
+    for rel in ("Program.cs", "Data/AccountingDbContext.cs"):
+        path = os.path.join(SRC, rel)
+        if os.path.exists(path):
+            retry_texts[rel] = open(path, encoding="utf-8").read()
+    retry = retry_errors(retry_texts) + retry_self_test()
+    for e in retry:
+        print("❌ " + e)
     found = scan()
     if "--write-baseline" in sys.argv:
         with open(BASELINE, "w", encoding="utf-8") as f:
@@ -178,7 +206,7 @@ def main() -> int:
         print("❌ " + e)
     for s in shrink:
         print("⚠️  " + s)
-    if errs or st:
+    if errs or st or retry:
         return 1
     print(f"audit_direct_add_check: ผ่าน — {sum(len(v) for v in found.values())} จุดใน baseline {len(found)} ไฟล์ (ห้ามเพิ่ม)")
     return 0

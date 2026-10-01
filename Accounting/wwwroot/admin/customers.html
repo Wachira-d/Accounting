@@ -42,6 +42,7 @@
 </head>
 <body>
   <div id="pageContent">
+    <div id="ownerlessBanner" style="display:none"></div>
     <div class="admin-card">
       <div class="admin-toolbar">
         <input type="text" id="searchInput" class="admin-input admin-search" placeholder="ค้นหาชื่อบริษัท, เลขภาษี, อีเมล..." onkeyup="if(event.key==='Enter')loadCustomers()">
@@ -77,6 +78,32 @@
     AdminLayout.init('customers');
     let currentPage = 1;
     let currentDetail = null; // store current detail data
+
+    // PL-S3 (รอบ 201): บริษัทที่ยังไม่มีเจ้าของ (แอดมินเปิดให้ลูกค้าแล้วยังไม่ได้โอนความเป็นเจ้าของ) — รายงานอย่างเดียว ส่งมอบที่หน้าทีมของบริษัทนั้น
+    async function loadOwnerless() {
+      const el = document.getElementById('ownerlessBanner');
+      try {
+        const res = await AdminAPI.companiesWithoutOwner();
+        const items = (res.data && res.data.items) || [];
+        if (!items.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        el.style.display = 'block';
+        el.innerHTML = `<div class="admin-card" style="border:1px solid #fcd34d;background:#fffbeb">
+          <div style="font-weight:700;color:#92400e;margin-bottom:6px">บริษัทที่ยังไม่มีเจ้าของ ${items.length.toLocaleString('th-TH')}${res.data.truncated ? '+' : ''} แห่ง</div>
+          <div style="font-size:12px;color:#92400e;margin-bottom:8px">งานระดับเจ้าของ (คีย์ API · สมาชิก · ปิดงวด) ทำไม่ได้จนกว่าผู้ดูแล (support) ของบริษัทนั้นจะ "โอนความเป็นเจ้าของ" ให้ลูกค้าที่หน้าตั้งค่าทีม</div>
+          <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>บริษัท</th><th>ผู้ดูแล (support)</th><th>สมาชิก</th><th>สร้างเมื่อ</th><th></th></tr></thead><tbody>
+          ${items.map(c => `<tr>
+            <td><strong>${AdminLayout.esc(c.name)}</strong><div style="font-size:12px;color:#94a3b8">${AdminLayout.esc(c.taxId || '-')}</div></td>
+            <td>${c.supports.length ? c.supports.map(e => AdminLayout.esc(e)).join('<br>') : '<span style="color:#b91c1c">ไม่มี — ติดต่อทีมแพลตฟอร์ม</span>'}</td>
+            <td>${c.memberCount}</td>
+            <td>${AdminLayout.date(c.createdAt)}</td>
+            <td><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="showDetail('${c.id}')">ดู</button></td>
+          </tr>`).join('')}
+          </tbody></table></div></div>`;
+      } catch (e) {
+        el.style.display = 'block';
+        el.innerHTML = `<div class="admin-card" style="color:#b91c1c">โหลดรายการบริษัทที่ไม่มีเจ้าของไม่สำเร็จ: ${AdminLayout.esc(e.message || '')}</div>`;
+      }
+    }
 
     async function loadCustomers(page = 1) {
       currentPage = page;
@@ -398,6 +425,8 @@
                         <option value="Auditor" ${u.role==='Auditor'?'selected':''}>ผู้ตรวจสอบ</option>
                         <option value="Viewer" ${u.role==='Viewer'?'selected':''}>ดูอย่างเดียว</option>
                         <option value="ExternalAccountant" ${u.role==='ExternalAccountant'?'selected':''}>นักบัญชีภายนอก</option>
+                        ${u.role==='PlatformSupport' ? '<option value="PlatformSupport" selected disabled>ผู้ดูแลแพลตฟอร์ม (support · ตั้งจากหน้านี้ไม่ได้)</option>' : ''}
+                        ${u.role==='SystemAdmin' ? '<option value="SystemAdmin" selected disabled>ผู้ดูแลระบบ (SystemAdmin)</option>' : ''}
                       </select>
                     </td>
                     <td>${AdminLayout.statusBadge(u.status)}</td>
@@ -679,6 +708,7 @@
     }
 
     loadCustomers();
+    loadOwnerless();
   </script>
 </body>
 </html>

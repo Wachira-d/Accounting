@@ -59,16 +59,17 @@ public class PlatformOwnerRound201Tests
         Assert.Contains(PermissionKeys.CompanySettingsEdit, OwnershipTransferPolicy.SupportDefaultKeys);
         Assert.DoesNotContain(PermissionKeys.PayrollView, OwnershipTransferPolicy.SupportDefaultKeys);
         Assert.DoesNotContain(PermissionKeys.DocumentApprove, OwnershipTransferPolicy.SupportDefaultKeys);
-        Assert.False(OwnershipTransferPolicy.AssignableByMembers(UserRole.PlatformSupport));
-        Assert.True(OwnershipTransferPolicy.AssignableByMembers(UserRole.Accountant));
+        Assert.False(OwnershipTransferPolicy.MayAssign(UserRole.PlatformSupport, callerIsPlatformAdmin: false));
+        Assert.True(OwnershipTransferPolicy.MayAssign(UserRole.Accountant, callerIsPlatformAdmin: false));
     }
 
     [Fact]
-    public void C4_Transfer_AllowedFor_SupportOwnerPlatformAdmin()
+    public void C4_Transfer_AllowedFor_Owner_And_ActiveSupportOfThisCompany()
     {
-        Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, false, UserRole.PlatformSupport, true, null));
+        // support ของบริษัทนี้ที่ยังเป็นแอดมินแพลตฟอร์ม → ส่งมอบให้ลูกค้า
+        Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, true, UserRole.PlatformSupport, true, null));
         Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, false, UserRole.Owner, true, UserRole.Accountant));
-        Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, true, null, true, null));
+        Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, false, UserRole.SystemAdmin, true, null));
     }
 
     [Fact]
@@ -79,9 +80,44 @@ public class PlatformOwnerRound201Tests
         Assert.Equal(403, OwnershipTransferPolicy.StatusCode(key));
         Assert.Equal(OwnershipTransferPolicy.Outcome.DenyNotAllowed, OwnershipTransferPolicy.Decide(false, false, UserRole.Accountant, true, null));
         Assert.Equal(OwnershipTransferPolicy.Outcome.DenyNotAllowed, OwnershipTransferPolicy.Decide(false, false, null, true, null));
-        var missing = OwnershipTransferPolicy.Decide(false, false, UserRole.PlatformSupport, false, null);
+        var missing = OwnershipTransferPolicy.Decide(false, true, UserRole.PlatformSupport, false, null);
         Assert.Equal(404, OwnershipTransferPolicy.StatusCode(missing));
         Assert.Contains("สมัคร", OwnershipTransferPolicy.Message(missing));   // ทางไปต่อ
         Assert.Equal(409, OwnershipTransferPolicy.StatusCode(OwnershipTransferPolicy.Decide(false, false, UserRole.Owner, true, UserRole.Owner)));
+    }
+
+    [Fact]
+    public void C4_PlatformAdminWithoutSupportSeat_OrRevokedSupport_CannotTransfer()
+    {
+        // PL-S2 (ข้อ 105): แอดมินแพลตฟอร์มที่ไม่ได้เป็น support ของบริษัทนั้น (ไม่ใช่สมาชิก/เป็นแค่นักบัญชี) ⇒ ปฏิเสธ — เจ้าของเดิมต้องทำเอง
+        Assert.Equal(OwnershipTransferPolicy.Outcome.DenyNotAllowed, OwnershipTransferPolicy.Decide(false, true, null, true, null));
+        Assert.Equal(OwnershipTransferPolicy.Outcome.DenyNotAllowed, OwnershipTransferPolicy.Decide(false, true, UserRole.Accountant, true, null));
+        // PL-S1: support ที่ถูกถอดสิทธิ์แอดมินแพลตฟอร์มแล้ว ⇒ ปฏิเสธ
+        Assert.Equal(OwnershipTransferPolicy.Outcome.DenyNotAllowed, OwnershipTransferPolicy.Decide(false, false, UserRole.PlatformSupport, true, null));
+    }
+
+    [Fact]
+    public void C4_Support_CannotTransferToSelf_OwnerPathUnchanged()
+    {
+        var self = OwnershipTransferPolicy.Decide(false, true, UserRole.PlatformSupport, true, UserRole.PlatformSupport, targetIsSelf: true);
+        Assert.Equal(OwnershipTransferPolicy.Outcome.DenySelf, self);
+        Assert.Equal(403, OwnershipTransferPolicy.StatusCode(self));
+        // ทิศตรงข้าม: support โอนให้ลูกค้า (ไม่ใช่ตัวเอง) ผ่าน · Owner ที่โอนให้ตัวเองตก 409 (เป็นเจ้าของอยู่แล้ว) ไม่ใช่ DenySelf
+        Assert.Equal(OwnershipTransferPolicy.Outcome.Allow, OwnershipTransferPolicy.Decide(false, true, UserRole.PlatformSupport, true, null, targetIsSelf: false));
+        Assert.Equal(OwnershipTransferPolicy.Outcome.DenyTargetAlreadyOwner, OwnershipTransferPolicy.Decide(false, false, UserRole.Owner, true, UserRole.Owner, targetIsSelf: true));
+    }
+
+    [Fact]
+    public void C4_MembersCannotAssignPlatformRoles()
+    {
+        // คำตัดสินข้อ 107: SystemAdmin (99) และ PlatformSupport ตั้งผ่านหน้าทีม/คำเชิญไม่ได้ · บทบาทลูกค้าตั้งได้เหมือนเดิม
+        Assert.False(OwnershipTransferPolicy.MayAssign(UserRole.SystemAdmin, callerIsPlatformAdmin: false));
+        Assert.False(OwnershipTransferPolicy.MayAssign(UserRole.PlatformSupport, callerIsPlatformAdmin: false));
+        Assert.True(OwnershipTransferPolicy.MayAssign(UserRole.Owner, callerIsPlatformAdmin: false));
+        Assert.True(OwnershipTransferPolicy.MayAssign(UserRole.Viewer, callerIsPlatformAdmin: false));
+        // ทิศตรงข้าม: แอดมินแพลตฟอร์มตั้ง SystemAdmin ได้ · แต่ PlatformSupport ไม่มีใครตั้งได้ (เกิดทางเดียวตอนแอดมินสร้างบริษัท)
+        Assert.True(OwnershipTransferPolicy.MayAssign(UserRole.SystemAdmin, callerIsPlatformAdmin: true));
+        Assert.False(OwnershipTransferPolicy.MayAssign(UserRole.PlatformSupport, callerIsPlatformAdmin: true));
+        Assert.Contains("support", OwnershipTransferPolicy.AssignDeniedMessage(UserRole.PlatformSupport));
     }
 }

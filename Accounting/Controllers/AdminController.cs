@@ -430,6 +430,32 @@ public class AdminController : ControllerBase
         }));
     }
 
+    /// <summary>บริษัทที่ไม่มีเจ้าของ (ไม่มีสมาชิกบทบาท Owner) — รอบ 201 ทีม PL · ฝ่ายค้าน PL-S3 · คำตอบ Q1 (รายงาน ไม่ migrate)
+    ///
+    /// <para>ที่มา: ตั้งแต่ C-4 แอดมินแพลตฟอร์มที่เปิดบริษัทให้ลูกค้าได้บทบาท PlatformSupport แทน Owner ⇒ บริษัทนั้นไม่มีเจ้าของจนกว่าจะ "โอนความเป็นเจ้าของ"
+    /// ให้ลูกค้า (งานเจ้าของ เช่น คีย์ API · สมาชิก · ปิดงวด ทำไม่ได้) · หน้านี้บอกแอดมินว่ายังค้างส่งมอบที่ไหน พร้อมผู้ดูแล (support) ที่โอนได้ ·
+    /// ไม่แก้ข้อมูลเอง (ไม่มีใครรู้ว่าลูกค้าคือใครนอกจากผู้ดูแลของบริษัทนั้น)</para></summary>
+    [HttpGet("companies/without-owner")]
+    public async Task<ActionResult<ApiResponse<object>>> GetCompaniesWithoutOwner()
+    {
+        var rows = await _db.Companies.AsNoTracking()
+            .Where(c => !c.CompanyUsers.Any(cu => cu.Role == UserRole.Owner))
+            .OrderBy(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.Name,
+                c.TaxId,
+                c.CreatedAt,
+                supports = c.CompanyUsers.Where(cu => cu.Role == UserRole.PlatformSupport)
+                    .Select(cu => cu.User.Email).ToList(),
+                memberCount = c.CompanyUsers.Count,
+            })
+            .Take(200)
+            .ToListAsync();
+        return Ok(new ApiResponse<object>(true, new { items = rows, truncated = rows.Count == 200 }));
+    }
+
     [HttpGet("customers/{companyId:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> GetCustomerDetail(
         Guid companyId, [FromServices] IConfiguration config)
@@ -1201,6 +1227,9 @@ public class AdminController : ControllerBase
         var cu = await _db.CompanyUsers
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == userId);
         if (cu == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบสมาชิกในบริษัทนี้"));
+        // รอบ 201 ทีม PL (Q2 · ข้อ 77): PlatformSupport ตั้งผ่านหน้านี้ไม่ได้ (เกิดเฉพาะตอนแอดมินสร้างบริษัท · ส่งมอบด้วยโอนความเป็นเจ้าของ)
+        if (!Accounting.Helpers.OwnershipTransferPolicy.MayAssign(request.Role, callerIsPlatformAdmin: true))
+            return BadRequest(new ApiResponse<string>(false, null, Accounting.Helpers.OwnershipTransferPolicy.AssignDeniedMessage(request.Role)));
 
         cu.Role = request.Role;
         await _db.SaveChangesAsync();
@@ -3391,8 +3420,13 @@ public class AdminController : ControllerBase
                 a.EntityType, a.EntityId, a.IpAddress, a.Timestamp,
                 a.OldValues, a.NewValues })
             .ToListAsync();
+        // RV2-1 (รอบ 201 ทีม PL): แถวเก่าที่มีค่าลับ (ก่อนตัวปิดค่าตอนเขียน) — ปิดตอนแสดง · ค่าที่เก็บไม่ถูกแตะ (hash chain คงเดิม)
+        var shown = items.Select(a => new {
+            a.Id, a.CompanyId, a.UserEmail, a.Action, a.EntityType, a.EntityId, a.IpAddress, a.Timestamp,
+            OldValues = Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues),
+            NewValues = Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues) }).ToList();
         return Ok(new ApiResponse<object>(true, new {
-            items, total, page, pageSize,
+            items = shown, total, page, pageSize,
             totalPages = (int)Math.Ceiling(total / (double)pageSize) }));
     }
 

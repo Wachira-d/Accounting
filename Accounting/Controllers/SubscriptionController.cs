@@ -360,7 +360,8 @@ public class SubscriptionController : ControllerBase
         if (!Enum.TryParse<Models.Enums.FeatureFlags>(feature, true, out var featureFlag))
             return BadRequest(new ApiResponse<bool>(false, false, "ไม่รู้จัก feature นี้"));
 
-        var result = await _subscriptionService.CheckFeatureAccessAsync(companyId, featureFlag);
+        // PL-C2: เส้นถาม "มีสิทธิ์ไหม" ของหน้าเว็บ — ไม่บันทึกโหมดเงา (เปิดหน้าไม่ใช่การใช้ฟีเจอร์)
+        var result = await _subscriptionService.CheckFeatureAccessAsync(companyId, featureFlag, recordShadow: false);
         return Ok(new ApiResponse<bool>(true, result));
     }
 

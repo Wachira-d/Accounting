@@ -14,14 +14,16 @@ namespace Accounting.Helpers;
 /// <item>ผู้สร้างบริษัทที่เป็นแอดมินแพลตฟอร์ม ⇒ <see cref="UserRole.PlatformSupport"/> (ไม่ใช่ Owner) · ผู้ใช้ทั่วไป ⇒ Owner (เดิม)</item>
 /// <item>PlatformSupport <b>ไม่ผ่านด่านเจ้าของ</b> (บทบาทนี้ไม่อยู่ใน <c>OwnerGateDecision</c>/<c>EnsureOwnerAccessAsync</c>) · สิทธิ์ตั้งค่าเริ่มระบบผ่าน
 /// <see cref="SupportDefaultKeys"/> (ไม่รวมเงินเดือน/ข้อมูลส่วนบุคคล/สมาชิก/คีย์ API)</item>
-/// <item>โอนความเป็นเจ้าของ: ผู้เรียก = แอดมินแพลตฟอร์ม (claim) หรือสมาชิก Owner/SystemAdmin/PlatformSupport · ปฏิเสธคำขอจาก API key ·
+/// <item>โอนความเป็นเจ้าของ: ผู้เรียก = สมาชิก Owner/SystemAdmin ของบริษัท <b>หรือ</b> PlatformSupport ของบริษัทนั้นที่ <b>ยังเป็นแอดมินแพลตฟอร์มอยู่</b>
+/// (ฝ่ายค้าน PL-S1/PL-S2 · คำตัดสินข้อ 105: แอดมินแพลตฟอร์มที่ไม่ได้เป็น support ของบริษัทนั้นโอนไม่ได้ — สิทธิ์แพลตฟอร์มไม่ใช่สิทธิ์ยึดบริษัทลูกค้า ·
+/// support ที่ถูกถอดสิทธิ์แอดมินแล้วโอนไม่ได้) · ห้ามโอนให้ตัวเอง (ยกเว้นผู้เรียกเป็น Owner — ซึ่งจะตก 409 อยู่แล้ว) · ปฏิเสธคำขอจาก API key ·
 /// ผู้รับต้องมีบัญชีในระบบแล้ว (ไม่สร้างบัญชีให้) · ผู้รับเป็น Owner อยู่แล้ว = ไม่มีอะไรต้องทำ (409)</item>
-/// <item>บทบาท PlatformSupport ให้ผ่านทีม/คำเชิญไม่ได้ (<see cref="AssignableByMembers"/>) — เกิดได้ทางเดียวคือแอดมินแพลตฟอร์มสร้างบริษัท</item>
+/// <item>บทบาท PlatformSupport ให้ผ่านทีม/คำเชิญไม่ได้ (<see cref="MayAssign"/>) · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) — เกิดได้ทางเดียวคือแอดมินแพลตฟอร์มสร้างบริษัท</item>
 /// </list>
 /// </summary>
 public static class OwnershipTransferPolicy
 {
-    public enum Outcome { Allow, DenyApiKey, DenyNotAllowed, DenyTargetMissing, DenyTargetAlreadyOwner }
+    public enum Outcome { Allow, DenyApiKey, DenyNotAllowed, DenyTargetMissing, DenyTargetAlreadyOwner, DenySelf }
 
     public const string RuleCode = "PLATFORM-OWNERSHIP-TRANSFER";
 
@@ -29,24 +31,33 @@ public static class OwnershipTransferPolicy
     public static UserRole CreatorRole(bool creatorIsPlatformAdmin)
         => creatorIsPlatformAdmin ? UserRole.PlatformSupport : UserRole.Owner;
 
-    /// <summary>บทบาทที่สมาชิก (เจ้าของ) ตั้งให้คนอื่นผ่านหน้าทีม/คำเชิญได้ — PlatformSupport ไม่ได้</summary>
-    public static bool AssignableByMembers(UserRole role) => role != UserRole.PlatformSupport;
+    /// <summary>ตั้งบทบาทนี้ได้ไหม — ตัวตัดสินเดียวของทุกทางตั้งบทบาท (หน้าทีม · คำเชิญ · หน้าแอดมินลูกค้า) · PlatformSupport เกิดได้ทางเดียว
+    /// (แอดมินแพลตฟอร์มสร้างบริษัท) · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) · บทบาทลูกค้าตั้งได้ตามเดิม</summary>
+    public static bool MayAssign(UserRole role, bool callerIsPlatformAdmin)
+        => role != UserRole.PlatformSupport && (role != UserRole.SystemAdmin || callerIsPlatformAdmin);
+
+    /// <summary>ข้อความปฏิเสธการตั้งบทบาทระดับแพลตฟอร์ม</summary>
+    public static string AssignDeniedMessage(UserRole role) => role == UserRole.PlatformSupport
+        ? "ตั้งบทบาทผู้ดูแลแพลตฟอร์ม (support) ไม่ได้ — บทบาทนี้เกิดเฉพาะเมื่อผู้ดูแลแพลตฟอร์มเปิดบริษัทให้ลูกค้า (ส่งมอบด้วย \u201Cโอนความเป็นเจ้าของ\u201D)"
+        : "ตั้งบทบาทแอดมินระบบได้เฉพาะผู้ดูแลแพลตฟอร์ม — เลือกบทบาทของบริษัท (เจ้าของ/นักบัญชี/พนักงาน/ผู้ตรวจสอบ/ผู้ดู)";
 
     public static Outcome Decide(bool isApiKeyRequest, bool isPlatformAdmin, UserRole? callerRole,
-        bool targetUserExists, UserRole? targetCurrentRole)
+        bool targetUserExists, UserRole? targetCurrentRole, bool targetIsSelf = false)
     {
         if (isApiKeyRequest) return Outcome.DenyApiKey;
-        if (!isPlatformAdmin && callerRole is not (UserRole.Owner or UserRole.SystemAdmin or UserRole.PlatformSupport))
-            return Outcome.DenyNotAllowed;
+        var memberOwner = callerRole is UserRole.Owner or UserRole.SystemAdmin;
+        var activeSupport = callerRole == UserRole.PlatformSupport && isPlatformAdmin;
+        if (!memberOwner && !activeSupport) return Outcome.DenyNotAllowed;
         if (!targetUserExists) return Outcome.DenyTargetMissing;
         if (targetCurrentRole == UserRole.Owner) return Outcome.DenyTargetAlreadyOwner;
+        if (targetIsSelf && callerRole != UserRole.Owner) return Outcome.DenySelf;
         return Outcome.Allow;
     }
 
     /// <summary>HTTP status ของผลปฏิเสธ</summary>
     public static int StatusCode(Outcome o) => o switch
     {
-        Outcome.DenyApiKey or Outcome.DenyNotAllowed => 403,
+        Outcome.DenyApiKey or Outcome.DenyNotAllowed or Outcome.DenySelf => 403,
         Outcome.DenyTargetMissing => 404,
         Outcome.DenyTargetAlreadyOwner => 409,
         _ => 200,
@@ -56,7 +67,8 @@ public static class OwnershipTransferPolicy
     public static string Message(Outcome o) => o switch
     {
         Outcome.DenyApiKey => "โอนความเป็นเจ้าของผ่านคีย์ API ไม่ได้ — ต้องทำบนเว็บโดยผู้ที่ล็อกอิน",
-        Outcome.DenyNotAllowed => "โอนความเป็นเจ้าของได้เฉพาะเจ้าของบริษัทหรือผู้ดูแลแพลตฟอร์มที่ตั้งค่าบริษัทนี้ให้",
+        Outcome.DenyNotAllowed => "โอนความเป็นเจ้าของได้เฉพาะเจ้าของบริษัท หรือผู้ดูแลแพลตฟอร์มที่เป็นผู้ดูแล (support) ของบริษัทนี้และยังมีสิทธิ์แอดมินแพลตฟอร์ม — บริษัทอื่นต้องให้เจ้าของเดิมโอนเอง",
+        Outcome.DenySelf => "ผู้ดูแลแพลตฟอร์มโอนความเป็นเจ้าของให้ตัวเองไม่ได้ — ส่งมอบให้ลูกค้า (อีเมลของลูกค้า)",
         Outcome.DenyTargetMissing => "ไม่พบบัญชีผู้ใช้ของอีเมลนี้ — ให้ลูกค้าสมัครใช้งานด้วยอีเมลนี้ก่อน แล้วโอนอีกครั้ง",
         Outcome.DenyTargetAlreadyOwner => "ผู้ใช้นี้เป็นเจ้าของบริษัทอยู่แล้ว",
         _ => "โอนความเป็นเจ้าของแล้ว",

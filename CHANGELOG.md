@@ -4281,3 +4281,20 @@ _2026-10-01 รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน 
   ผ่านตัวตัดสินเลข ปกส. เดียว · ชื่อพนักงานในตารางรอบผ่าน `Layout.esc`
 - เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit 2fe0e7c4)_
 
+_2026-10-01 รอบ 201 ทีม PL ชุด 4 — แก้ตามฝ่ายค้าน (PL-X1..X7 · PL-S1..S3 · PL-B1 · PL-C1/C2 · Q1–Q4 · GW รอบสอง RV2-1/RV2-2 · คำตัดสินข้อ 104–107):
+- **PL-X1..X5 (ข้อ 104)** ประทับ audit ตอน commit — `Data/AuditChainCommitInterceptor` (ลงทะเบียนใน `OnConfiguring`) · `SealDeferredAuditAtCommit(Async)`
+  (`AuditChainScope.Normalize` → `lock_timeout 15s` → ล็อกทุกบริษัทเรียงคีย์ → Seal → INSERT ตรง) · rollback/failed ทิ้งแถว · ธุรกรรมที่เปิดเอง
+  `acceptAllChangesOnSuccess:false` แล้ว Accept หลัง commit · ล้ม ⇒ คืนแถว audit + ChangeTracker
+- **PL-X1/X6** `Helpers/AuditChainScope` — แถวลูกไม่ผูกบริษัท/NULL ได้บริษัทของ batch (บริษัทเดียว) · นอกนั้น `Guid.Empty` · ไม่เหลือ NULL
+- **PL-X7** `tools/audit_direct_add_check.py` ฟ้อง `EnableRetryOnFailure(` ใน Program.cs/AccountingDbContext.cs (+ self-test)
+- **PL-S1/S2 (ข้อ 105)** `OwnershipTransferPolicy.Decide(..., targetIsSelf)` — support ต้องยังเป็นแอดมิน · แอดมินที่ไม่ใช่ support ของบริษัทนั้นโอนไม่ได้ · `DenySelf`
+- **Q3 (ข้อ 107)** `OwnershipTransferPolicy.MayAssign` แทน `AssignableByMembers` (ถอด) — หน้าทีม/คำเชิญ/หน้าแอดมินลูกค้า · SystemAdmin เฉพาะแอดมินแพลตฟอร์ม
+- **Q2** `admin/customers.html` แสดงป้าย PlatformSupport/SystemAdmin (disabled) · **PL-S3/Q1** `GET api/admin/companies/without-owner` + แบนเนอร์ (รายงาน ไม่ migrate)
+- **PL-B1 (ข้อ 106)** ต่อสายวันหยุด: `ComplianceService.InitializeFilingCalendarAsync` · `TaxComplianceChecker.CheckAsync` (+ `TaxFilingDeadline.WarnByFor(..., holidays)`) ·
+  `DepositPolicyResolver.ForfeitTaxPointDecision(..., holidays)` ← `DocumentService.RealizeDepositCoreAsync` · ค้าง `SsoLateFee` (ไฟล์เงินเดือน PR2) + §87 `SettlementPosting`
+  (ไฟล์ทีม ST) ⇒ `Helpers/PlatformHolidayReadiness` ปิดการเพิ่มวันหยุด (409 + เหตุผล · หน้าเว็บล็อกฟอร์ม)
+- **PL-C1** ยอดสรุปบังคับแพ็กเกจไม่รวมเหตุ `OwnerDisabledFeature` · **PL-C2** `CheckFeatureAccessAsync(..., recordShadow)` — `GET features/{x}` ไม่บันทึกเงา
+- **RV2-1** `Helpers/AuditRedaction` — ช่องลับเก็บ `[redacted]` ใน `CaptureAuditEntries` + ปิดตอนแสดงแถวเก่า (หน้า audit บริษัท/แอดมิน) · **RV2-2** `AuditMiddleware` ใช้ `RedactPath`
+- เทสต์ `Db/AuditChainCommitDbTests` · `PlatformHolidayReadersRound201Tests` · `AuditRedactionRound201Tests` · +2 `AuditChainCheckpointTests` · แก้ C4 ใน `PlatformOwnerRound201Tests` ·
+  required_call_site: เขียนแถว audit chain ใหม่ 8 แถว + เพิ่ม 14 แถว (negative test ฉีดในสคริปต์) — commit 9f226f15)_
+

@@ -747,7 +747,7 @@ public class SubscriptionService : ISubscriptionService
 
     // ==================== Usage Tracking ====================
 
-    public async Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature)
+    public async Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature, bool recordShadow = true)
     {
         var eff = await GetEffectivePlanAsync(companyId);
         if (eff == null || !eff.IsActive) return false;
@@ -765,7 +765,8 @@ public class SubscriptionService : ISubscriptionService
             .Select(s => (bool?)s.OwnerFeatureMaskEnforced)
             .FirstOrDefaultAsync() ?? false;
         var verdict = Accounting.Helpers.OwnerFeatureMask.Decide(eff.EnabledFeatures, ownerDisabled, feature, enforced);
-        if (verdict.ShadowHit && _shadowLog != null)
+        // PL-C2: เส้นอ่าน (GET ของหน้าเว็บ) ไม่ใช่ "การใช้งานที่จะถูกปิด" — บันทึกเฉพาะด่านที่กำลังจะทำงานจริง (สร้างเอกสาร · EntitlementService)
+        if (verdict.ShadowHit && recordShadow && _shadowLog != null)
             await _shadowLog.RecordAsync(new SubscriptionGateShadowHit(
                 companyId, Accounting.Helpers.SubscriptionGateReason.OwnerDisabledFeature, feature.ToString(), eff.Plan.ToString(),
                 RouteKey: null, Method: "SERVICE", WouldBlock: true,
