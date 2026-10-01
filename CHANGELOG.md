@@ -4306,3 +4306,12 @@ _2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้า�
 - **RTX-6** เรียงตามวันที่ใช้เตือน · ตัวตรวจรายงานใช้วันหยุดราชการ · ข้อความเมื่อเลยวันกระดาษ · **RTX-7** doc-comment `LockDepositBalancesAsync` กลับที่ ·
   **RTX-9** รูปสามอาร์กิวเมนต์ไม่เรียก AI · 📋 **RTX-8** (ต้องนับในฐานจริงก่อน backfill — SQL ในรายงานทีม)
 - เทสต์ golden +8 ใบปกติ/+4 ทิศตรงข้าม · `Round201TxTests.RTX*` · required_call_site +3 แถว — commit f13f4a23)_
+
+_2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอง (P1-a · P1-b · P1-c · P2-d · P2-e · P2-f · P2-g)
+- **P1-a** `PayrollFilingSource.StatutoryRemittance` + ตัวหาหลักฐานอ่าน `StatutoryRemittance` `WhtPnd1` ของงวด · `WhtCertVoidGuard.CheckAsync` นับการนำส่ง ภ.ง.ด.1/3/53 เป็นยื่นแล้ว
+- **P1-b** `GeneratePostPaymentArtifactsAsync` `Include(Details)` · `PayrollPnd1Certs.DetailsNotLoaded` ⇒ ล้มดัง
+- **P1-c** `Helpers/PayrollPnd1Certs.NextNumber` (ใบแรกรูปเดิม · ชนแล้ว -2/-3) · ออกใบในธุรกรรม + ล็อกแถวรอบ · ค้นเลขที่ใช้แล้วรวมใบ Voided/ลบ
+- **P2-d** `HrAllocationService.AllocatePayrollRunAsync` ธุรกรรม + `FOR UPDATE` แถวรอบก่อนอ่าน · **P2-e** ข้อความปันต้นทุนของรอบ Paid ชี้ "กลับรายการจ่าย"
+- **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
+- เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit c5fefbc6)_
+

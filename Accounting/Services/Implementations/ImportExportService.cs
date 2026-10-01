@@ -2918,7 +2918,8 @@ public class ImportExportService : IImportExportService
             "SalaryType" => "Monthly",
             "BankName" => "ธนาคารกสิกรไทย",
             "BankAccountNumber" => "123-4-56789-0",
-            "SocialSecurityNumber" => "1234567890",
+            // รอบ 201 PR2 (ฝ่ายค้าน P2-f): ตัวอย่างต้องผ่านตัวตัดสินเลขประกันสังคม (13 หลัก) — เดิม 10 หลัก ⇒ ผู้ใช้ลอกตัวอย่างแล้วนำเข้าล้ม
+            "SocialSecurityNumber" => "1101700203450",
             "BudgetName" => "งบ 2026",
             "FiscalYear" => "2026",
             "Month1" => "10000", "Month2" => "10000", "Month3" => "10000",

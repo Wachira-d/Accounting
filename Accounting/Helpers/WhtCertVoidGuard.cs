@@ -47,6 +47,16 @@ public static class WhtCertVoidGuard
                     && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
                 .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct))
             .Select(t => (t.TaxType, t.Year, t.Month)).ToHashSet();
+        // รอบ 201 ฝ่ายค้าน PR2 (P1-a): บันทึกการนำส่ง ภ.ง.ด. ของงวด (StatutoryRemittance) = ยื่นแบบพร้อมชำระแล้ว — หลักฐานชุดเดียวกับ
+        // ด่านยกเลิก/แก้ยอดรอบเงินเดือน (เดิมเห็นแต่รายงานภาษีที่ประกาศว่ายื่น ⇒ นำส่งแล้วแต่ไม่ได้ประกาศ = ยกเลิก 50 ทวิ ได้)
+        var remitted = await db.StatutoryRemittances.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && years.Contains(r.PeriodYear)
+                && (r.RemittanceType == "WhtPnd1" || r.RemittanceType == "WhtPnd3" || r.RemittanceType == "WhtPnd53"))
+            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth })
+            .ToListAsync(ct);
+        foreach (var r in remitted)
+            if (RemittanceForm(r.RemittanceType) is TaxType form)
+                filed.Add((form, r.PeriodYear, r.PeriodMonth));
         foreach (var c in certs)
             if (Reason(c.Status, c.CertificateNumber, c.TaxFormType, c.TaxYear, c.TaxMonth,
                     filed.Contains((c.TaxFormType, c.TaxYear, c.TaxMonth))) is string why)
@@ -63,6 +73,15 @@ public static class WhtCertVoidGuard
             .Select(w => w.Id).ToListAsync(ct);
         return await CheckAsync(db, companyId, ids, ct);
     }
+
+    /// <summary>ชนิดการนำส่ง → แบบ ภ.ง.ด. ของ 50 ทวิ (null = ไม่ใช่การนำส่งภาษีหัก ณ ที่จ่ายที่มีหนังสือรับรอง)</summary>
+    internal static TaxType? RemittanceForm(string? remittanceType) => remittanceType switch
+    {
+        "WhtPnd1" => TaxType.WithholdingTax1,
+        "WhtPnd3" => TaxType.WithholdingTax3,
+        "WhtPnd53" => TaxType.WithholdingTax53,
+        _ => null,
+    };
 
     private static string FormLabel(TaxType t) => t switch
     {

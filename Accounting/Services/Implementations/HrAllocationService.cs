@@ -267,6 +267,13 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
 
     public async Task<PayrollLabourAllocationResponse> AllocatePayrollRunAsync(Guid companyId, Guid payrollRunId, CancellationToken ct = default)
     {
+        // รอบ 201 ทีม PR2 (ฝ่ายค้าน P2-d): ล็อกแถวรอบ FOR UPDATE ก่อนอ่าน — ลำดับล็อกเดียวกับยกเลิก/แก้ยอด/เพิ่ม/เอาออก (แถวรอบก่อน)
+        // ⇒ ปันต้นทุนซ้อนกับ "ยกเลิกรอบ" ไม่ได้ (เดิมยกเลิกผ่านด่านปันต้นทุนได้ทั้งที่อีกคำขอกำลังปัน) · อ่านสถานะซ้ำใต้ล็อก
+        //   ไม่ commit (exception) ⇒ dispose ของธุรกรรมย้อนให้เอง
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"PayrollRuns\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            new object[] { payrollRunId, companyId }, ct);
         var run = await _db.Set<PayrollRun>()
             .Include(r => r.Details).ThenInclude(d => d.Employee)
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId, ct)
@@ -375,6 +382,7 @@ public class HrAllocationService : IEmployeeProjectTimeService, IFixVariableCost
         }
 
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         var summary = perProject
             .Select(kv => new PayrollLabourAllocationLine(
