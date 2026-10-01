@@ -4057,5 +4057,5 @@ _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก
 - **A-DV3 (ข้อ 67)** หลักฐานทาง (ก) แนบหลังเวลาที่ใบถึงกรมสรรพากร (`CancellationEvidenceNotBefore` · `EtaxRdTimestampEmailTimesAsync` ใช้เงื่อนไขอีเมลตัวเดียว)
 - **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
 - **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
-- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit <pending>)_
+- เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
 
