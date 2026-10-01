@@ -129,6 +129,8 @@ public static class OcrScanSnapshot
             nameof(OcrScanResult.UserCorrectedFields),
             // รอบ 200 ทีม K2 (คำตัดสินข้อ 29): "ผู้ใช้พิมพ์ที่อยู่เอง" เป็นร่องรอยคนแก้ของแถวนี้ — ชุดเดียวกับสองช่องบน
             nameof(OcrScanResult.VendorAddressUserTyped),
+            // รอบ 201 ทีม OC (C-18 · คำตัดสินข้อ 91): ธง "คำแก้ของแถวนี้เริ่มก่อนกติกา baseline WHT" — ร่องรอยคนแก้ของแถวนี้ ชุดเดียวกัน
+            nameof(OcrScanResult.WhtCorrectionsPredateBaseline),
         };
 
     // อ่าน metadata ครั้งเดียวตอนโหลดคลาส — reflection ต่อการเรียกจะช้าเกินไป

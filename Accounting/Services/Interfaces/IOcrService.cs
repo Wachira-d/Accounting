@@ -67,6 +67,9 @@ public interface IOcrService
     Task<Guid> CreateJournalEntryFromScanAsync(Guid companyId, Guid scanResultId,
         Models.DTOs.Ocr.CreateJeFromScanRequest request, string performedBy);
     Task<OcrResultResponse> MatchContactAsync(Guid companyId, Guid scanResultId, Guid contactId);
+    /// <summary>รอบ 201 ทีม OC (C-24 · คำตัดสินข้อ 97): ใบขายจากสแกนที่อ่านผู้ซื้อไม่ได้ ⇒ ผูก "ลูกค้าเงินสด (walk-in)" — เฉพาะเมื่อเอกสารเป้าหมาย
+    /// ไม่ใช่ใบกำกับเต็มรูป (<c>Helpers/OcrWalkInBuyer</c>) · ใบกำกับ/ฝั่งซื้อ/สร้างเอกสารแล้ว = BusinessRuleException ข้อความไทยบอกทางไปต่อ</summary>
+    Task<OcrResultResponse> MatchWalkInBuyerAsync(Guid companyId, Guid scanResultId);
 
     /// <summary>Persist a per-line project assignment into the scan's
     /// ExtractedItemsJson so CreateDocumentFromScanAsync can flow it

@@ -71,12 +71,14 @@ public class OcrVendorBranchReview197Tests
     }
 
     [Fact]
-    public void ReceiptWithoutBuyerBlock_WholePage_IsBelowThreshold_ButStillFilled()
+    public void ReceiptWithoutBuyerBlock_SingleBranchCode_ReachesThreshold()
     {
+        // รอบ 201 ทีม OC (C-19 · คำตัดสินข้อ 92): เดิมล็อกไว้ที่ 0.70 (K-2) ⇒ สลิปร้านสะดวกซื้อต้องพิมพ์ยืนยันรหัสสาขาทุกใบ ·
+        // ไม่มีบล็อกผู้ซื้อ + รหัสสาขาเดียวทั้งหน้า = ไม่มีสาขาอื่นให้สับสน ⇒ 0.85 · ทิศตรงข้าม (สองรหัส/มีสำนักงานใหญ่/มีผู้ซื้อ) อยู่ใน OcrReview201OcTests
         var br = BranchCodeExtractor.Extract("ร้านสะดวกซื้อ สาขาที่ 00021\nรวม 107.00");
         Assert.Equal("00021", br.SellerBranchCode);
-        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.WholePageNoBuyerBlock, br.SellerEvidence);
-        Assert.True(br.SellerConfidence < OcrVendorBranchContact.ReliableBranchConfidence);
+        Assert.Equal(BranchCodeExtractor.SellerBranchEvidence.WholePageSingleBranch, br.SellerEvidence);
+        Assert.True(OcrVendorBranchContact.IsReliableBranch(br.SellerConfidence));
     }
 
     [Fact]

@@ -64,6 +64,10 @@ public static class BranchCodeExtractor
         WholePageNoBuyerBlock,
         /// <summary>มีป้ายผู้ซื้อ แต่บล็อกผู้ขายไม่มีสาขา ⇒ ถอยไปอ่านทั้งหน้า — ตัวแรกของหน้ามักอยู่ในบล็อกผู้ซื้อ</summary>
         WholePageFallback,
+        /// <summary>ไม่มีป้ายผู้ซื้อทั้งหน้า <b>และ</b>ทั้งหน้ามีรหัสสาขาที่พิมพ์เป็นตัวเลขเพียงค่าเดียว (ไม่มีคำว่าสำนักงานใหญ่ปนเมื่อรหัสไม่ใช่ 00000 ·
+        /// ไม่มีประโยคประกาศสาขาที่ขัดกันเอง) — ใบร้านสะดวกซื้อ/ปั๊ม/สลิป: ไม่มีสาขาอื่นบนกระดาษให้สับสน (รอบ 201 ทีม OC · C-19 · คำตัดสินข้อ 92)
+        /// · ค่าต่อท้าย enum (เลขเดิมไม่ขยับ)</summary>
+        WholePageSingleBranch,
     }
 
     /// <summary>คะแนนของรหัสสาขาผู้ขายตามที่มา — ตัวตั้งตัวเดียวของทุกเส้น engine (<c>EnrichFromRawText</c> ·
@@ -72,6 +76,9 @@ public static class BranchCodeExtractor
     public const double SellerBlockConfidence = 0.85;
     public const double WholePageNoBuyerBlockConfidence = 0.70;
     public const double WholePageFallbackConfidence = 0.60;
+    /// <summary>สลิป/ใบร้านค้าที่ไม่มีบล็อกผู้ซื้อและมีรหัสสาขาเดียวทั้งหน้า = เท่าเกณฑ์สร้างแถวสาขา (C-19 · คำตัดสินข้อ 92 — กฎเหล็ก #3 1-click:
+    /// เดิม 0.70 ⇒ ใบปริมาณสูงสุดของผู้ใช้ต้องพิมพ์ยืนยันรหัสสาขาทุกใบ)</summary>
+    public const double WholePageSingleBranchConfidence = 0.85;
     /// <summary>ถอยอ่านทั้งหน้าแล้วได้รหัส<b>เดียวกับสาขาผู้ซื้อ</b> = เกือบแน่ว่าอ่านป้ายของผู้ซื้อซ้ำ</summary>
     public const double FallbackEqualsBuyerConfidence = 0.40;
 
@@ -84,6 +91,7 @@ public static class BranchCodeExtractor
             SellerBranchEvidence.IssuerStatement => IssuerStatementConfidence,
             SellerBranchEvidence.SellerBlock => SellerBlockConfidence,
             SellerBranchEvidence.WholePageNoBuyerBlock => WholePageNoBuyerBlockConfidence,
+            SellerBranchEvidence.WholePageSingleBranch => WholePageSingleBranchConfidence,
             SellerBranchEvidence.WholePageFallback => string.Equals(SellerBranchCode, BuyerBranchCode, StringComparison.Ordinal)
                 ? FallbackEqualsBuyerConfidence : WholePageFallbackConfidence,
             _ => WholePageFallbackConfidence,   // ไม่รู้ที่มา = ไม่พอสร้างแถว (DOCTRINE §1)
@@ -117,7 +125,10 @@ public static class BranchCodeExtractor
             // อ่านทั้งหน้าเป็นของผู้ขาย, ผู้ซื้อไม่ระบุ (ค่าเดิม · คะแนนต่ำกว่าเกณฑ์สร้างแถว — K-2)
             if (issuer != null) return new Result(issuer, null, SellerBranchEvidence.IssuerStatement);
             var page = FromSegment(rawText);
-            return new Result(page, null, page == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageNoBuyerBlock);
+            if (page == null) return new Result(null, null, SellerBranchEvidence.None);
+            // C-19 (รอบ 201 · คำตัดสินข้อ 92): รหัสเดียวทั้งหน้า = ไม่มีสาขาอื่นให้สับสน ⇒ เท่าเกณฑ์สร้างแถว · ไม่งั้นคงคะแนนเดิม (K-2)
+            return new Result(page, null, SingleBranchCodeOnPage(rawText, page)
+                ? SellerBranchEvidence.WholePageSingleBranch : SellerBranchEvidence.WholePageNoBuyerBlock);
         }
 
         var sellerSegment = rawText[..buyerAnchorIndex];
@@ -152,6 +163,20 @@ public static class BranchCodeExtractor
         // จากค่าที่อาจเป็นสาขาของผู้ซื้อ (ฝ่ายค้าน K-2 รอบ 197)
         var page2 = FromSegment(rawText);
         return new Result(page2, buyer, page2 == null ? SellerBranchEvidence.None : SellerBranchEvidence.WholePageFallback);
+    }
+
+    /// <summary>
+    /// <b>ทั้งหน้ามีรหัสสาขาผู้ขายค่าเดียวไหม</b> (รอบ 201 ทีม OC · C-19) — ใช้เฉพาะกระดาษที่<b>ไม่มีป้ายผู้ซื้อ</b>เลย:
+    /// ป้ายสาขาที่พิมพ์เป็นตัวเลข (<see cref="BranchRegex"/>) ต้องมี ≥ 1 และทุกตัวให้รหัสเดียวกับที่อ่านได้ · รหัสไม่ใช่ 00000 แต่หน้ามีคำว่า
+    /// “สำนักงานใหญ่/Head Office” = มีสองสถานประกอบการบนกระดาษ ⇒ ไม่ใช่ · มีประโยคประกาศสาขาผู้ออกใบแต่ <c>OcrIssuerBranch.Detect</c> คืน null
+    /// (รหัสขัดกันเอง) ⇒ ไม่ใช่ · มีแต่คำว่าสำนักงานใหญ่ (ไม่มีตัวเลข) ⇒ ไม่ใช่ (คำนั้นโผล่ในประโยคอื่นได้ — คงคะแนนเดิม)
+    /// </summary>
+    internal static bool SingleBranchCodeOnPage(string rawText, string pageCode)
+    {
+        if (Accounting.Helpers.OcrIssuerBranch.HasAnyStatement(rawText)) return false;
+        var codes = BranchRegex.Matches(rawText).Select(m => m.Groups[1].Value.PadLeft(5, '0')).Distinct(StringComparer.Ordinal).ToList();
+        if (codes.Count != 1 || !string.Equals(codes[0], pageCode, StringComparison.Ordinal)) return false;
+        return pageCode == "00000" || !HeadOfficeRegex.IsMatch(rawText);
     }
 
     /// <summary>จุดเริ่มบล็อกผู้ซื้อ — รายการคำของตัวนี้ก่อน · ไม่เจอจึงใช้ป้ายผู้ซื้อชุดกลาง (Helpers/OcrPartyLabels) · -1 = ไม่มี

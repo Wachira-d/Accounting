@@ -188,6 +188,24 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     **ทุกกรณีที่สร้างลูกค้าใหม่มีโน้ต `[BUYER]`** (รวมเลขมีอยู่คนละสาขา `NewBranchNote`) · คำค้นเสริม `PrefilterToken` ให้ชื่อที่สะกดรูปนิติบุคคลต่างกันถึงตัวตัดสิน ·
     (K2-2) ของค้างใน context บันทึกก่อนเปิดธุรกรรมสั้นของการสร้างผู้ติดต่อ + rollback ถอด entity ทุกชนิดที่เกิดในบล็อก ·
     (K2-4) sync สแกนตอนอนุมัติล้ม ⇒ ถอยการแก้แถวสแกนออกจาก change tracker (`DiscardUnsavedEntry`) ⇒ TryTrain/e-Tax hook ไม่ล้มตาม
+    · **รอบ 201 ทีม OC (`erp-review/2026-10-01/team-OC.md` · BACKLOG §1.7 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97)**:
+    (A-OC1) known-good ชื่อ/ที่อยู่ผู้ขายจากเส้นแก้ผลสแกน บันทึกเป็น `UserCorrection` **เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้** (`OcrCorrectedFieldList.ShouldRememberKnownGood`
+    — baseline เดียวกับ K-1/K-10/ข้อ 29 · เดิมหน้าเว็บส่งค่าเดิมทุกครั้ง ⇒ ค่าที่ OCR อ่านผิดชนะ Azure ถาวร) · (A-OC4) `InferCreditNoteReason`/`MapAzureDocType` ย้ายตรงตัวเป็น
+    `Helpers/OcrCreditNoteReasonReader` · `Helpers/OcrPaperDocumentType` (+ ratchet static method ใน `OcrService.cs` — `tools/ocr_service_static_baseline.txt`) ·
+    (A-OC5) audit การลบสแกนผ่าน `AddChainedAuditLog` · (A-OC2) `contact-hygiene` รายงานแถวสาขาที่ OCR สร้าง (`CreatedBy = OCR-BranchAutoCreate`) ที่ไม่มี
+    เอกสาร/สแกน/50 ทวิ/เครดิตภาษี/alias/รายการประจำอ้าง + ปุ่มลบ (soft · ทีละแถว · `Contact.Edit` · ตรวจซ้ำที่เซิร์ฟเวอร์ `ContactDataHygiene.OrphanRetireBlock`) ·
+    (C-18 · ข้อ 91) คอลัมน์ `OcrScanResults.WhtCorrectionsPredateBaseline` — migration ตีธงแถวที่ `UserCorrectedAt` มีค่า **ครั้งเดียวตอนสร้างคอลัมน์** ⇒
+    `OcrWhtLearningScope` ไม่นับชื่อช่อง WHT ของแถวเหล่านั้นเป็น "ผู้ใช้แก้" (`UserEditedBeforeBaseline` · ทั้งเรียนทีละใบและ backfill · ไม่ลบข้อมูล) ·
+    (C-19 · ข้อ 92) ใบไม่มีป้ายผู้ซื้อ + รหัสสาขาตัวเลขค่าเดียวทั้งหน้า (ไม่มีคำว่าสำนักงานใหญ่ปนเมื่อรหัส ≠ 00000 · ไม่มีประโยคประกาศสาขาขัดกัน) ⇒
+    `SellerBranchEvidence.WholePageSingleBranch` 0.85 (สร้างแถวสาขาได้) — อื่น ๆ คง 0.70 · (C-20 · ข้อ 93) ใบรับ/จ่ายเงินฝั่งซื้อที่ผูกใบต้นทาง ⇒ ผู้ติดต่อของใบต้นทาง
+    (`Helpers/OcrSettlementCounterparty` · สืบทอดแล้วข้ามตัวตัดสินสาขา · ผู้ใช้เลือกเอง/คนละนิติบุคคล = ไม่สืบทอด + โน้ต) — ฝั่งขายสืบทอดอยู่แล้ว (`ResolveSalesCounterpartyAsync`) ·
+    เส้นสร้างเอกสาร + พรีวิว "แก้ในฟอร์มก่อน" ใช้ตัวเดียวกัน · (C-22 · ข้อ 95) ที่อยู่แถวสาขา (`OcrIssuerBranch.ContactAddress`) = กระดาษที่พิสูจน์ได้ หรือทะเบียน VAT
+    ที่**ยืนยันสาขานั้น** (`OcrExtractedData.DbdAddressIsBranch`) เท่านั้น · ไม่รู้ = ว่าง + `BranchAddressUnknownNote` (เดิมถอยไปใช้ที่อยู่ทะเบียน = สนญ.) ทุกเส้นที่สร้าง/เติมแถวสาขา ·
+    (C-23 · ข้อ 96) ผู้ติดต่อที่ผูกถือเลขผู้เสียภาษี 13 หลักคนละเลขกับผู้ขายบนสแกน (ผู้ใช้แก้เลข) ⇒ ถอดการผูก (`OcrVendorBranchContact.MatchedContactIsOtherEntity` ·
+    ผู้ใช้เลือกเอง = ไม่ถอด) ⇒ ตัวตัดสินสาขาเลือกแถวของเลขใหม่ หรือเส้นสร้างเอกสารสร้างแถวใหม่ + โน้ต `[Contact]` — สามเส้น (แก้ผลสแกน · สร้างเอกสาร · พรีวิว) ·
+    (C-24 · ข้อ 97) ใบขายที่อ่านผู้ซื้อไม่ได้: คงบล็อก `OCR-NO-COUNTERPARTY` · ปุ่ม “ใช้ลูกค้าเงินสด (walk-in)” (`POST ocr/{scanId}/match-walk-in` → `MatchWalkInBuyerAsync`)
+    ได้เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`: ใบกำกับ · ใบเพิ่ม/ลดหนี้ · ใบเสร็จ/ใบสำคัญรับที่มี VAT = บล็อก `OCR-WALKIN-FULL-TAX-INVOICE`) ·
+    เส้นสร้างเอกสารตรวจซ้ำเมื่อผู้ติดต่อที่ผู้ใช้เลือกเป็นแถว walk-in
   - **ชื่อผู้ขายเป็นโลโก้** (รอบ 197 · ใบ Makro "ma ro") — (ก) เลขผู้เสียภาษีที่พิมพ์แบ่งกลุ่มแบบอื่น ("0 10 7 567 00041 4") ที่มีป้ายกำกับ ⇒
     `ThaiTaxId.LooseGroupingPattern` ใน `SmartFieldExtractor.ExtractTaxIdCandidates` (รับเฉพาะตัวมีป้าย) ⇒ `OcrVendorKeyEvidence` พิสูจน์กุญแจได้ ⇒ ทะเบียนชนะ ·
     ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" ถูกกลบใน `OcrPartyLabels` (เดิมนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย) (ข) ชื่อไม่มีรูปนิติบุคคล + เลขนิติบุคคล ⇒

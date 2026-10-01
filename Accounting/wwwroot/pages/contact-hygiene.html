@@ -24,6 +24,7 @@
 
     <div class="card" id="summary" style="margin-bottom:16px"></div>
     <div class="card" id="duplicates" style="margin-bottom:16px"></div>
+    <div class="card" id="ocrOrphans" style="margin-bottom:16px"></div>
     <div class="card" id="truncated" style="margin-bottom:16px"></div>
     <div class="card" id="hq"></div>
   </div>
@@ -46,6 +47,7 @@
         const loading = '<div class="text-center text-gray-400" style="padding:32px">กำลังตรวจ… (ถามทะเบียนกรมสรรพากรอาจใช้เวลาสักครู่)</div>';
         document.getElementById('summary').innerHTML = loading;
         document.getElementById('duplicates').innerHTML = '';
+        document.getElementById('ocrOrphans').innerHTML = '';
         document.getElementById('truncated').innerHTML = '';
         document.getElementById('hq').innerHTML = '';
         try {
@@ -54,6 +56,18 @@
         } catch (e) {
           document.getElementById('summary').innerHTML =
             `<div class="text-center text-danger" style="padding:32px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
+      },
+      // รอบ 201 ทีม OC (A-OC2): ลบแถวสาขาที่สแกนสร้างแล้วไม่มีอะไรอ้าง — ทีละแถว · เซิร์ฟเวอร์ตรวจซ้ำ (สิทธิ์ Contact.Edit + ยังไม่มีอะไรอ้าง)
+      async retireOcrOrphan(id, label) {
+        if (!confirm(`ลบแถวผู้ติดต่อ ${label}?\nแถวนี้ระบบสแกนสร้างเอง และไม่มีเอกสาร/สแกนอ้างถึง (ลบแบบซ่อน — ไม่ลบประวัติ)`)) return;
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const res = await API.post(`/api/companies/${encodeURIComponent(cid)}/contact-hygiene/ocr-branch-orphans/${encodeURIComponent(id)}/retire`, {});
+          Layout.toast((res && res.message) || 'ลบแล้ว', 'success');
+          await this.load(this._offset);
+        } catch (e) {
+          Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error', 6000);
         }
       },
       _openLink(id) {
@@ -97,6 +111,28 @@
                 <span class="text-xs text-gray-500">${Layout.esc(c.createdBy || '')}</span>
                 ${this._openLink(c.contactId)}</div>`).join('')}</td>
               <td class="text-xs">${Layout.esc(String(g.ocrCreated ?? '-'))}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>` : '<div class="text-center text-gray-400" style="padding:20px">✓ ไม่พบ</div>'}`;
+
+        // undefined = เซิร์ฟเวอร์รุ่นก่อนรอบ 201 ยังไม่ส่งส่วนนี้ ("ยังไม่ได้ตรวจ" ≠ "ไม่พบ")
+        const orphans = Array.isArray(d.ocrBranchOrphans) ? d.ocrBranchOrphans : null;
+        document.getElementById('ocrOrphans').innerHTML = `
+          <div style="padding:12px 16px;font-weight:700">แถวสาขาที่ระบบสแกนสร้าง แต่ไม่มีเอกสาร/สแกนอ้างถึง</div>
+          <div class="text-xs text-gray-500" style="padding:0 16px 8px">
+            มักเกิดจากพิมพ์รหัสสาขาผิดในหน้าตรวจสแกนแล้วแก้กลับ — แถวของรหัสผิดค้างอยู่ · ระบบ<b>ไม่ลบให้อัตโนมัติ</b> ·
+            กด “ลบแถวนี้” ทีละแถว (เซิร์ฟเวอร์ตรวจซ้ำว่ายังไม่มีอะไรอ้างถึง)
+            ${typeof d.ocrBranchCreated === 'number' ? ` · แถวสาขาที่สแกนสร้างทั้งหมด ${Layout.esc(String(d.ocrBranchCreated))} แถว` : ''}
+          </div>
+          ${orphans === null ? '<div class="text-center text-gray-400" style="padding:20px">ยังไม่มีข้อมูลส่วนนี้จากเซิร์ฟเวอร์</div>'
+            : orphans.length ? `
+          <div class="table-container" style="border:none"><table class="table">
+            <thead><tr><th>ผู้ติดต่อ</th><th>เลขผู้เสียภาษี / สาขา</th><th>สร้างเมื่อ</th><th></th></tr></thead>
+            <tbody>${orphans.map(r => `<tr>
+              <td class="font-medium">${Layout.esc(r.name || '-')}</td>
+              <td>${Layout.esc(r.taxId || '-')}<div class="text-xs text-gray-500">${Layout.esc(r.branchLabel || r.branchCode || '')}</div></td>
+              <td class="text-xs">${Layout.esc(r.createdAt ? new Date(r.createdAt).toLocaleString('th-TH') : '-')}</td>
+              <td class="text-right" style="white-space:nowrap">${this._openLink(r.contactId)}
+                <button class="btn btn-sm btn-danger" onclick="Page.retireOcrOrphan('${Layout.jsArg(r.contactId)}','${Layout.jsArg((r.name || '') + ' ' + (r.branchLabel || ''))}')">ลบแถวนี้</button></td>
             </tr>`).join('')}</tbody>
           </table></div>` : '<div class="text-center text-gray-400" style="padding:20px">✓ ไม่พบ</div>'}`;
 

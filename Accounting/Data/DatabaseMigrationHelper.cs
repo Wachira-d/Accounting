@@ -7101,6 +7101,10 @@ public static class DatabaseMigrationHelper
                 OR s."CurrentMonthAzureOcrPages" > c.n
                 OR s."CurrentMonthLocalOcrPages" > c.n);
             """,
+
+            // ═══ รอบ 201 ทีม OC · C-18 (คำตัดสินข้อ 91) — คำแก้ WHT ก่อนกติกา baseline K-10 ไม่นับเป็นหลักฐาน ═══
+            // ดู WhtCorrectionsPredateBaselineMigrationSql (ท้ายไฟล์) — สร้างคอลัมน์ + ตีธงแถวที่ถูกแก้ไปแล้ว **ครั้งเดียวในขั้นที่สร้างคอลัมน์**
+            WhtCorrectionsPredateBaselineMigrationSql(),
             // ═══ รอบ 201 ทีม AI · A-AI1 (H-1) — คลังจับคู่ธนาคารนับ "ผู้ใช้เลือกคู่เอง" แยกจากการกดผ่าน ═══
             // ADD COLUMN + backfill **ครั้งเดียว** ในบล็อกเดียว (เฉพาะตอนคอลัมน์ยังไม่มี): แถวเก่าทั้งหมดถือเป็นคำยืนยันที่ตั้งใจ
             // (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178) · ถ้า backfill ทุกบูตแบบ `WHERE Explicit = 0` แพตเทิร์นที่เกิดจาก
@@ -7231,4 +7235,29 @@ public static class DatabaseMigrationHelper
     /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมเจ้าของข้างบน — deterministic ข้ามเครื่อง (FNV ผ่าน AdvisoryLockKey · ห้าม GetHashCode)</summary>
     internal static string PaymentSettlementOwnerLockKey =>
         Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Payments.SettlementBatchId").ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // ═══ รอบ 201 ทีม OC ═══
+
+    /// <summary>
+    /// **C-18 (คำตัดสินข้อ 91) — สแกนที่ถูกแก้ก่อนกติกา baseline ของช่อง WHT (K-10) แยกไม่ได้ว่าคนแก้ WHT จริงไหม** ⇒ ตีธง
+    /// <c>OcrScanResults.WhtCorrectionsPredateBaseline = true</c> ให้ทุกแถวที่ <c>UserCorrectedAt</c> มีค่าแล้ว <b>ในขั้นเดียวกับที่สร้างคอลัมน์เท่านั้น</b>
+    /// (ตรวจ information_schema ก่อน · มีคอลัมน์แล้ว = ไม่แตะ) — ตัวเรียนประวัติ WHT ของผู้ขาย (<c>OcrWhtLearningScope</c>) ไม่นับ "HasWht/WhtRate/
+    /// WhtIncomeTypeCode" ใน <c>UserCorrectedFields</c> ของแถวเหล่านี้เป็น "ผู้ใช้แก้" (ไม่ลบข้อมูล · กระดาษ/เอกสารคีย์มือยังเรียนได้ตามเดิม)
+    /// <para>ทำไมไม่ใช้วันที่คงที่: ไม่มีใครรู้วันที่โค้ด K-10 ถึงเครื่องผู้ใช้จริง — เวลาที่คอลัมน์นี้เกิด (= โค้ดรอบ 201 บูตครั้งแรก) ≥ วัน deploy K-10 เสมอ ⇒
+    /// ทิศปลอดภัย (แถวที่แก้ระหว่าง K-10 กับรอบ 201 ถูกนับว่า "ไม่รู้" ด้วย — เสียหลักฐานบางส่วน ไม่ได้สอนด้วยค่าที่ไม่มีใครแตะ) · เดิม UPDATE ที่รันทุกบูต
+    /// จะตีธงแถวที่แก้หลังกติกาไปด้วย ⇒ ใช้ DO block + information_schema แบบ <see cref="DepositBaseSplitMigrationSql"/> · สองเครื่องบูตพร้อมกัน:
+    /// เครื่องที่สองล้มที่ ALTER (คอลัมน์มีแล้ว — benign) ทั้งบล็อกจึงไม่ UPDATE ซ้ำ</para>
+    /// </summary>
+    internal static string WhtCorrectionsPredateBaselineMigrationSql() => """
+        DO $mig$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'OcrScanResults' AND column_name = 'WhtCorrectionsPredateBaseline') THEN
+            RETURN;
+          END IF;
+          ALTER TABLE "OcrScanResults" ADD COLUMN "WhtCorrectionsPredateBaseline" boolean NOT NULL DEFAULT false;
+          UPDATE "OcrScanResults" SET "WhtCorrectionsPredateBaseline" = true WHERE "UserCorrectedAt" IS NOT NULL;
+        END
+        $mig$;
+        """;
 }

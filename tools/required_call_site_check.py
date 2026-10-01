@@ -3521,6 +3521,78 @@ RULES += [
          why="รอบ 201 ทีม ST (DV Q1): VoidDocumentAsync คืน PaymentVoidResult แล้ว — ทิ้งผล = ธง e-Tax/ภาษีขายที่ถอยไม่ได้หายเงียบจากผู้กดยกเลิกการลงบัญชี"),
 ]
 
+# ── รอบ 201 ทีม OC (OCR · BACKLOG §1.7 A-OC1/A-OC2/A-OC5 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97): เทสต์ล็อกตัวตัดสิน pure (OcrReview201OcTests)
+#    ⇒ ล็อกจุดเรียก/ลำดับ/การใช้ผลใน service ที่นี่ ──
+OCR_VI = "Services/Implementations/Ocr/VendorIntelligenceService.cs"
+HYGIENE = "Controllers/ContactHygieneController.cs"
+BRANCH_X = "Services/BranchCodeExtractor.cs"
+RULES += [
+    dict(file=OCR, method="SubmitCorrectionAsync",
+         must=["OcrCorrectedFieldList.ShouldRememberKnownGood(", "StaleVendorContactNoteAsync("],
+         must_re=[r"if\s*\(\s*rememberVendorName\s*\)\s*await\s+_knownGoodCorrector\s*\.\s*RememberUserCorrectionAsync",
+                  r"if\s*\(\s*rememberVendorAddress\s*\)\s*await\s+_knownGoodCorrector\s*\.\s*RememberUserCorrectionAsync",
+                  r"staleCorrectionNote\s*!=\s*null\s*\?\s*null\s*:\s*result\s*\.\s*MatchedContactId"],
+         before=[("StaleVendorContactNoteAsync(", "DecideScanVendorBranchContactAsync(")],
+         why="A-OC1: known-good ชื่อ/ที่อยู่ผู้ขายจำเฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (หน้าเว็บส่งค่าเดิมทุกครั้ง) · "
+             "C-23: แก้เลขผู้เสียภาษีเป็นนิติบุคคลอื่น ⇒ ถอดการผูกเดิมก่อนตัดสินผู้ติดต่อใหม่"),
+    dict(file=OCR, method="StaleVendorContactNoteAsync",
+         must=["OcrVendorBranchContact.MatchedContactIsOtherEntity(", "OcrVendorBranchContact.StaleMatchNote(", "MatchedContactCorrectionField"],
+         must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId"],
+         must_lit=['"VendorTaxId"'],
+         call_args=[("OcrVendorBranchContact.MatchedContactIsOtherEntity(", "userTouchedTaxId")],
+         why="C-23: ตัวตัดสินเดียวของสามเส้น (แก้ผลสแกน · สร้างเอกสาร · พรีวิว) · ผู้ใช้เลือกผู้ติดต่อเอง = ไม่ถอด · ถอดเฉพาะเมื่อผู้ใช้แตะเลข "
+             "(เลขที่ OCR อ่านเพี้ยนแต่ผูกถูกราย ห้ามถูกถอด) · tenant"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
+         must=["StaleVendorContactNoteAsync(", "OcrSettlementCounterparty.Decide(", "OcrWalkInBuyer.BlockReason("],
+         must_re=[r"!\s*vendorIsUs\s*&&\s*!\s*settlementInherited\s*&&"],
+         before=[("StaleVendorContactNoteAsync(", "DecideScanVendorBranchContactAsync("),
+                 ("OcrSettlementCounterparty.Decide(", "DecideScanVendorBranchContactAsync(")],
+         why="C-23 ถอดผู้ติดต่อของเลขเดิมก่อนตัดสินสาขา · C-20 ใบรับ/จ่ายเงินสืบทอดผู้ติดต่อใบต้นทาง (สืบทอดแล้ว = ข้ามตัวตัดสินสาขา) · "
+             "C-24 ใบกำกับเต็มรูปห้ามผูกลูกค้าเงินสด (ตรวจซ้ำตอนสร้าง)"),
+    dict(file=OCR, method="PreviewDocumentLinesAsync",
+         must=["StaleVendorContactNoteAsync(", "OcrSettlementCounterparty.Decide("],
+         why="C-23/C-20: \"แก้ในฟอร์มก่อน\" ได้ผู้ติดต่อผู้ขายจากตัวตัดสินเดียวกับเส้นสร้างเอกสาร (CLAUDE.md §H สามเส้นตัวสร้างเดียว)"),
+    dict(file=OCR, method="MatchWalkInBuyerAsync",
+         must=["OcrWalkInBuyer.BlockReason(", "DocumentSide.IsSales(", "WalkInCustomerContact.GetOrCreateAsync(", "MatchContactAsync(",
+               "OcrVendorBranchContact.ScanAlreadyPosted("],
+         before=[("OcrWalkInBuyer.BlockReason(", "WalkInCustomerContact.GetOrCreateAsync(")],
+         why="C-24: ตัดสินก่อนสร้าง/ผูกผู้ติดต่อเงินสด (ใบกำกับเต็มรูป = บล็อกพร้อมทางไปต่อ) · ผูกผ่านเส้นเลือกผู้ติดต่อเอง (นับเป็นผู้ใช้เลือก)"),
+    dict(file=OCR, method="ScanAsync",
+         call_args=[("OcrIssuerBranch.ContactAddress(", "registryAddressIsBranch")],
+         why="C-22: ที่อยู่แถวสาขาจากทะเบียนได้เฉพาะเมื่อทะเบียน VAT ยืนยันสาขานั้น — ไม่ส่งธง = ถอยไปใช้ที่อยู่ สนญ. (ค่าแต่ง)"),
+    dict(file=OCR, method="EnrichContactAddress",
+         call_args=[("OcrIssuerBranch.ContactAddress(", "registryAddressIsBranch")],
+         why="C-22: ตัวเติมที่อยู่ผู้ติดต่อเดิมใช้ตัวตัดสินเดียวกับเส้นสร้างแถว"),
+    dict(file=OCR, method="DeleteScanAsync",
+         must=["AddChainedAuditLog("],
+         forbid=["AuditLogs.Add("],
+         why="A-OC5 (A-PL4): audit ของการลบสแกนต้องเข้า hash chain ของบริษัท (Add ตรง = RowHash null นอก chain)"),
+    dict(file=OCR_VI, method="TrainFromDocumentAsync#1",
+         call_args=[("OcrWhtLearningScope.Decide(", "WhtCorrectionsPredateBaseline")],
+         must=["WhtCorrectionsPredateBaseline"],
+         why="C-18 (ข้อ 91): คำแก้ WHT ก่อนกติกา baseline = ไม่รู้ ⇒ ไม่นับเป็นหลักฐาน (เส้นเรียนทีละใบ)"),
+    dict(file=OCR_VI, method="BackfillCoreAsync",
+         call_args=[("OcrWhtLearningScope.Decide(", "PredateBaseline")],
+         must=["WhtCorrectionsPredateBaseline"],
+         why="C-18 (ข้อ 91): backfill ข้ามแถวที่คำแก้เกิดก่อนกติกา baseline K-10 (ไม่ลบข้อมูล)"),
+    dict(file=BRANCH_X, method="Extract",
+         must=["SingleBranchCodeOnPage("],
+         why="C-19 (ข้อ 92): สลิปไม่มีบล็อกผู้ซื้อได้ 0.85 เฉพาะเมื่อตัวตรวจ \"รหัสเดียวทั้งหน้า\" ผ่าน"),
+    dict(file=BRANCH_X, method="SingleBranchCodeOnPage",
+         must=["OcrIssuerBranch.HasAnyStatement(", "HeadOfficeRegex.IsMatch("],
+         must_re=[r"codes\s*\.\s*Count\s*!=\s*1"],
+         why="C-19: ประโยคประกาศสาขาขัดกัน/มีสำนักงานใหญ่ปน/สองรหัส = ไม่ใช่รหัสเดียว (คงคะแนนเดิม K-2)"),
+    dict(file=HYGIENE, method="RetireOcrBranchOrphan",
+         must=["HasPermissionAsync(", "PermissionKeys.ContactEdit", "ContactDataHygiene.OrphanRetireBlock(", "ReferencedContactIdsAsync("],
+         before=[("HasPermissionAsync(", "SaveChangesAsync("), ("ContactDataHygiene.OrphanRetireBlock(", "SaveChangesAsync(")],
+         why="A-OC2: ลบแถวสาขาที่ OCR สร้างได้เฉพาะผู้มีสิทธิ์ Contact.Edit + ตรวจซ้ำที่เซิร์ฟเวอร์ว่ายังไม่มีอะไรอ้างถึง (ก่อนบันทึก)"),
+    dict(file=HYGIENE, method="ReferencedContactIdsAsync",
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"s\s*\.\s*CompanyId\s*==\s*companyId", r"w\s*\.\s*CompanyId\s*==\s*companyId",
+                  r"a\s*\.\s*CompanyId\s*==\s*companyId", r"r\s*\.\s*CompanyId\s*==\s*companyId"],
+         must=["WithholdingTaxCerts", "OcrScanResults", "Documents"],
+         why="A-OC2: ตัวนับการอ้างถึงต้องครอบเอกสาร/สแกน/50 ทวิ และกรอง tenant ทุกตาราง (raw query ไม่มี global filter ของบริษัท)"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 # ── รอบ 201 ทีม AI (A-AI1..A-AI8 · AI/ธนาคาร): เทสต์ล็อกตัวตัดสิน pure (BankAiCandidateGuardTests · BankPatternEvidenceTests ·
 #    BankMatchSingleStandardTests · AiKillSwitchOrchestratorTests · BulkPvStudentTests · AiFeedbackRecorderDiscardTests) ⇒ ล็อกจุดเรียกที่นี่ ──
