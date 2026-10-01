@@ -4130,5 +4130,5 @@ _2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้า�
 - **X5** `IInventoryCostingService.ResolveValuationUnitCostAsync` + `InventoryCostFlow.RemainingFifoUnitCost` — รายงานมูลค่า/เบิกวัสดุผ่านตัวเดียว
 - **X6** ซ่อมยอดสต็อกถือล็อก (คลัง, สินค้า) ก่อนอ่าน · **X7** `ExclusiveCheckoutAsync` session lock ต่อการจอง (`AdvisoryLockKey.LodgingCheckout`)
 - **X2** `FindLiveReplacementSaleAsync` + `LodgingCheckoutReissue.Problem(liveReplacementNumber, confirmedNoManualReissue)` + ช่องยืนยันบนหน้าที่พัก
-- เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit <pending>)_
+- เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit ecaddf15)_
 
