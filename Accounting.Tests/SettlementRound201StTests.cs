@@ -448,4 +448,190 @@ public class SettlementRound201StTests
             new (Guid, string?, string?)[] { (line, "v2:T-3:x", "SP-3") }, new (Guid, string?, string?)[] { (Guid.NewGuid(), "v2:T-4:y", "SP-4") },
             new Dictionary<Guid, (string PayoutRef, string Number)>()));
     }
+
+    // ═════════════ ฝ่ายค้านรอบ 201 (ST-X1..X7) ═════════════
+
+    [Fact]
+    public void X1_ยกเลิกล้มกลางทาง_ข้อความมีธงของชิ้นที่ยกเลิกไปแล้ว_ตัวเดียวกับเส้นสำเร็จ()
+    {
+        var flags = new[] { "ใบเสร็จ RV-1 ส่ง e-Tax ระหว่างทาง", "ภาษีขาย 9/2026 ประกาศยื่นแล้ว" };
+        var msg = SettlementUnpostNotice.Partial("PO-9", "ล้มที่ใบที่ 3", 2, 1, flags);
+        Assert.Contains("ยกเลิกไปแล้ว 2 เอกสาร · 1 การรับชำระ", msg);
+        Assert.Contains("มี 2 รายการที่ต้องตามต่อ", msg);
+        Assert.Contains("RV-1", msg);
+        Assert.EndsWith(SettlementUnpostNotice.FlagsTail(flags), msg);
+    }
+
+    [Fact]
+    public void X1_ทิศตรงข้าม_ไม่มีธง_ไม่มีท้ายข้อความตามต่อ()
+    {
+        Assert.Equal("", SettlementUnpostNotice.FlagsTail(Array.Empty<string>()));
+        var msg = SettlementUnpostNotice.Partial("PO-9", "x", 0, 0, Array.Empty<string>());
+        Assert.DoesNotContain("ต้องตามต่อ", msg);
+        Assert.Contains("กดยกเลิกอีกครั้ง", msg);
+    }
+
+    [Fact]
+    public void X2_ประทับเจ้าของตอนแถวเริ่มถูกติดตาม_ก่อนSaveChanges_auditจับค่าจริงได้()
+    {
+        using var db = OfflineDb();
+        var mine = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocX, PaymentNumber = "PAY-1" };
+        var other = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocY, PaymentNumber = "PAY-2" };
+        using (SettlementPaymentOwner.StampOnSave(db, BatchA, DocX))
+        {
+            db.Payments.Add(mine);
+            db.Payments.Add(other);
+            Assert.Equal(BatchA, mine.SettlementBatchId);   // ยังไม่ SaveChanges — ค่าอยู่แล้วตอน CaptureAuditEntries
+            Assert.Null(other.SettlementBatchId);          // ใบอื่นไม่ถูกแตะ
+        }
+    }
+
+    [Fact]
+    public void X2_ทิศตรงข้าม_นอกขอบเขต_เพิ่มหลังถอดตัวฟัง_ไม่ประทับ_และไม่ย้ายเจ้าของเดิม()
+    {
+        using var db = OfflineDb();
+        var owned = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocX, PaymentNumber = "PAY-3", SettlementBatchId = BatchB };
+        using (SettlementPaymentOwner.StampOnSave(db, BatchA, DocX))
+            db.Payments.Add(owned);
+        Assert.Equal(BatchB, owned.SettlementBatchId);
+        var later = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocX, PaymentNumber = "PAY-4" };
+        db.Payments.Add(later);
+        Assert.Null(later.SettlementBatchId);
+    }
+
+    [Fact]
+    public void X3_ข้อความแยกหน้าที่บอกบทบาทที่ชนจริง()
+    {
+        var me = Guid.NewGuid();
+        var other = Guid.NewGuid().ToString();
+        Assert.Equal(new[] { "ผู้สร้างรอบโอน" }, SettlementLineMakers.RolesOf(me.ToString(), Array.Empty<(string?, string?)>(), me));
+        Assert.Equal(new[] { "ผู้เติมไฟล์เข้ารอบ" },
+            SettlementLineMakers.RolesOf(other, new (string?, string?)[] { (me.ToString(), null) }, me));
+        Assert.Equal(new[] { "ผู้ตัดสินการจับคู่/จัดประเภทบรรทัด" },
+            SettlementLineMakers.RolesOf(other, new (string?, string?)[] { (other, me.ToString().ToUpperInvariant()) }, me));
+        Assert.Contains("ไม่รู้ผู้สร้างรอบโอน (ระบบบล็อกไว้ก่อน)", SettlementLineMakers.RolesOf(null, Array.Empty<(string?, string?)>(), me));
+
+        var plan = SodPlan();
+        var issue = Assert.Single(SettlementPostingGate.Evaluate(plan, SodFacts(plan) with
+            { SodSelfApprovalBlocked = true, SodRoles = new[] { "ผู้ตัดสินการจับคู่/จัดประเภทบรรทัด" } }).Issues,
+            i => i.Code == SettlementPlanIssueCode.SodSelfApproval);
+        Assert.Contains("เป็นผู้ตัดสินการจับคู่/จัดประเภทบรรทัดของรอบโอนนี้เอง", issue.Message);
+        Assert.DoesNotContain("ผู้นำเข้า", issue.Message);
+    }
+
+    [Fact]
+    public void X3_ทิศตรงข้าม_ไม่ชนบทบาทใด_รายการว่าง_ไม่ส่งบทบาท_ข้อความเดิม_ปิดด่าน_ไม่มีปัญหา()
+    {
+        var me = Guid.NewGuid();
+        var other = Guid.NewGuid().ToString();
+        Assert.Empty(SettlementLineMakers.RolesOf(other, new (string?, string?)[] { (other, other), (null, null) }, me));
+        var plan = SodPlan();
+        var issue = Assert.Single(SettlementPostingGate.Evaluate(plan, SodFacts(plan) with { SodSelfApprovalBlocked = true }).Issues,
+            i => i.Code == SettlementPlanIssueCode.SodSelfApproval);
+        Assert.Contains("ผู้นำเข้ารอบโอนนี้เอง", issue.Message);
+        Assert.DoesNotContain(SettlementPostingGate.Evaluate(plan, SodFacts(plan) with { SodRoles = new[] { "ผู้สร้างรอบโอน" } }).Issues,
+            i => i.Code == SettlementPlanIssueCode.SodSelfApproval);   // บทบาทเป็นข้อความเท่านั้น — ไม่บล็อกเอง
+    }
+
+    private static SettlementPostingPlan SodPlan()
+    {
+        var batch = new SettlementBatch { CompanyId = Co, PayoutRef = "PO-SOD", PayoutDate = Day, NetPayout = 963m, BankAccountId = Guid.NewGuid() };
+        var channel = new SettlementChannel
+        {
+            CompanyId = Co, Kind = SettlementChannelKind.Marketplace, DisplayName = "Shopee", ClearingAccountId = Clearing,
+            CounterpartyContactId = Guid.NewGuid(),
+        };
+        var lines = new[]
+        {
+            new SettlementLine { CompanyId = Co, Seq = 1, LineType = SettlementLineType.Sale, Amount = 1070m, TxnDate = Day,
+                ExternalOrderId = "SP-1", MatchStatus = SettlementMatchStatus.AutoSummary },
+            new SettlementLine { CompanyId = Co, Seq = 2, LineType = SettlementLineType.Commission, Amount = -107m, TxnDate = Day,
+                MatchStatus = SettlementMatchStatus.NotRequired },
+        };
+        return SettlementBatchMath.Plan(batch, lines, channel, true);
+    }
+
+    private static SettlementPostingFacts SodFacts(SettlementPostingPlan plan) => new(
+        SettlementBatchStatus.Matched, Day, Day, null, new Dictionary<DateTime, string>(),
+        new HashSet<(int, int)>(), new HashSet<(int, int)>(), Array.Empty<string>(),
+        true, true, Clearing,
+        plan.Receipts.Select(r => new SettlementReceiptTarget(r.DocumentId, true, "TIV-0001", DocumentType.TaxInvoice,
+            DocumentStatus.Approved, r.Amount, false)).ToList(),
+        Array.Empty<SettlementClearingSource>(), Array.Empty<SettlementDuplicateSale>(), true, true, 0);
+
+    private static readonly SettlementOrphanAck XAck = new(Guid.Parse("88888888-8888-8888-8888-888888888888"), "สมหญิง", Day, "ยื่นภาษีแล้ว", "v1:abc");
+
+    [Fact]
+    public void X4_สถานะการรับรู้ของเอกสาร_มีผล_ป้ายรับรู้แล้ว_ไม่มีทางไปต่อ()
+    {
+        var eff = new SettlementOrphanItem(DocX, false, "PV-1", "PO-OLD", SettlementOrphanPile.Unvoidable, "ยกเลิกไม่ได้", "ไม่ต้องทำอะไร", XAck, false);
+        var st = SettlementOrphanReport.AckStatusOf(DocX, new[] { eff });
+        Assert.True(st.Effective);
+        Assert.Equal("✅ รับรู้แล้ว", st.Label);
+        Assert.Null(st.NextStep);
+    }
+
+    [Fact]
+    public void X4_ทิศตรงข้าม_การรับรู้ไม่ครอบเหตุ_ไม่อยู่ในรายการ_เป็นการรับชำระ_ไม่มีผลพร้อมทางไปต่อ()
+    {
+        // ตัวแยกคืนกองยกเลิกไม่ได้จริงที่การรับรู้ไม่ครอบเป็น "ยังไม่รับรู้" (Ack = null) + เหตุ
+        var stale = new SettlementOrphanItem(DocX, false, "PV-1", "PO-OLD", SettlementOrphanPile.Unvoidable,
+            "ยกเลิกไม่ได้ (เหตุเปลี่ยนหลังรับรู้)", "ตรวจแล้วกดรับรู้", null, true);
+        var st = SettlementOrphanReport.AckStatusOf(DocX, new[] { stale });
+        Assert.False(st.Effective);
+        Assert.Contains("ต้องตรวจแล้วรับรู้ใหม่", st.Label);
+        Assert.Contains("ทางไปต่อ: ตรวจแล้วกดรับรู้", st.NextStep);
+        var voidable = stale with { Pile = SettlementOrphanPile.Voidable, Ack = XAck };
+        Assert.Contains("ต้องยกเลิกแทน", SettlementOrphanReport.AckStatusOf(DocX, new[] { voidable }).Label);
+        Assert.False(SettlementOrphanReport.AckStatusOf(DocX, Array.Empty<SettlementOrphanItem>()).Effective);
+        Assert.False(SettlementOrphanReport.AckStatusOf(DocX, null).Effective);
+        var payment = new SettlementOrphanItem(DocX, true, "RV-1", "PO-OLD", SettlementOrphanPile.Unvoidable, "", "", XAck, false);
+        Assert.False(SettlementOrphanReport.AckStatusOf(DocX, new[] { payment }).Effective);   // id ซ้ำกับการรับชำระ — ไม่ใช่เอกสาร
+    }
+
+    [Fact]
+    public void X5_ตัวนับแถวที่ไม่ถูกbackfill_อ่านอย่างเดียว_เฉพาะแถวที่ยังไม่มีเจ้าของและมีป้าย()
+    {
+        var sql = SettlementPostingKeys.PaymentOwnerUnbackfilledCountSql();
+        Assert.StartsWith("SELECT COUNT(*)", sql);
+        Assert.Contains("\"SettlementBatchId\" IS NULL", sql);
+        Assert.Contains("LIKE '" + SettlementPostingKeys.PaymentMarkerHead + "%'", sql);
+        Assert.DoesNotContain("UPDATE", sql);
+    }
+
+    [Fact]
+    public void X6_บรรทัดขายที่เพิ่งอ้างintentของรอบอื่น_ล้มดัง()
+    {
+        Assert.True(SettlementSaleMatch.SaleReferenceTakenByOtherBatch(false, true, BatchB, BatchA));
+    }
+
+    [Fact]
+    public void X6_ทิศตรงข้าม_บรรทัดคืนเงิน_อ้างค้างจากก่อนหน้า_เจ้าของคือรอบนี้หรือไม่มีเจ้าของ_ไม่ล้ม()
+    {
+        Assert.False(SettlementSaleMatch.SaleReferenceTakenByOtherBatch(true, true, BatchB, BatchA));    // คืนเงินภายหลัง = ปกติ
+        Assert.False(SettlementSaleMatch.SaleReferenceTakenByOtherBatch(false, false, BatchB, BatchA));  // อ้างค้าง — ไม่ทำให้ทุกการแก้ตัน
+        Assert.False(SettlementSaleMatch.SaleReferenceTakenByOtherBatch(false, true, BatchA, BatchA));
+        Assert.False(SettlementSaleMatch.SaleReferenceTakenByOtherBatch(false, true, null, BatchA));
+    }
+
+    [Fact]
+    public void X7_รายงานกำพร้า_ข้อความซ่อนยอดเฉพาะของรายงาน_เกณฑ์เดียวกับหน้ารอบโอน()
+    {
+        var reason = SettlementPermissionScope.OrphanAmountsHiddenReason(false, false);
+        Assert.NotNull(reason);
+        Assert.Contains("กำพร้า", reason);
+        Assert.Contains("ผังพัก", reason);
+        Assert.NotEqual(SettlementPermissionScope.CandidatesHiddenReason(false, false), reason);
+        Assert.DoesNotContain("ผู้สมัคร", reason);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void X7_ทิศตรงข้าม_มีสิทธิ์นำเข้าหรือลงบัญชี_เห็นยอด(bool canImport, bool canPost)
+    {
+        Assert.Null(SettlementPermissionScope.OrphanAmountsHiddenReason(canImport, canPost));
+        Assert.Null(SettlementPermissionScope.CandidatesHiddenReason(canImport, canPost));
+    }
 }

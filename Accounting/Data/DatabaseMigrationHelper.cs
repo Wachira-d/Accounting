@@ -11,6 +11,8 @@ public static class DatabaseMigrationHelper
 {
     public static void ApplyMissingColumns(AccountingDbContext db, ILogger? logger = null)
     {
+        // รอบ 201 ทีม ST (ฝ่ายค้าน ST-X5): รู้ก่อนว่าบูตนี้คือบูตที่สร้าง Payments.SettlementBatchId (backfill ครั้งเดียว) ⇒ log แถวที่มีป้ายแต่ไม่ผ่านหลักฐาน
+        var paymentOwnerColumnExisted = PaymentOwnerColumnExists(db, logger);
         var statements = GetAlterStatements();
         foreach (var sql in statements)
         {
@@ -35,6 +37,7 @@ public static class DatabaseMigrationHelper
                         sql.Length > 200 ? sql[..200] + "…" : sql);
             }
         }
+        if (!paymentOwnerColumnExisted) ReportPaymentOwnerBackfill(db, logger);
     }
 
     /// <summary>ฝ่ายค้านรอบสี่ R4-3 — สร้างคอลัมน์ <c>Documents.DepositBaseDeducted</c> และย้ายค่าเดิมจาก <c>BillDiscountAmount</c>
@@ -7231,6 +7234,45 @@ public static class DatabaseMigrationHelper
         $mig$;
         """.Replace("__LOCK_KEY__", PaymentSettlementOwnerLockKey, StringComparison.Ordinal)
            .Replace("__BACKFILL__", Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql(), StringComparison.Ordinal);
+
+    /// <summary>มีคอลัมน์ <c>Payments.SettlementBatchId</c> แล้วไหม (ST-X5) — ตรวจไม่ได้ = ถือว่ามีแล้ว (ไม่ log รายงานหลัง backfill · ไม่กระทบการ migrate)</summary>
+    private static bool PaymentOwnerColumnExists(AccountingDbContext db, ILogger? logger)
+    {
+        try
+        {
+            return db.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*)::int AS \"Value\" FROM information_schema.columns WHERE table_schema = current_schema() "
+                    + "AND table_name = 'Payments' AND column_name = 'SettlementBatchId'")
+                .AsEnumerable().First() > 0;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "[DbMigration] ตรวจคอลัมน์ Payments.SettlementBatchId ไม่ได้ — ข้ามรายงานหลัง backfill");
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// รายงานหลัง backfill เจ้าของการรับชำระ (รอบ 201 ทีม ST · ฝ่ายค้าน ST-X5) — เฉพาะบูตที่เพิ่งสร้างคอลัมน์ · จำนวนแถวที่มีป้ายรอบโอนใน Notes แต่ไม่ผ่านหลักฐาน
+    /// (ป้ายที่ผู้ใช้พิมพ์ · รูปแบบเพี้ยน) ⇒ log warning ให้ผู้ดูแลตรวจ · ไม่ backfill รอบสอง (ป้ายไม่มีผลกับด่านใดอยู่แล้ว) · SQL อยู่กับเจ้าของป้าย
+    /// (<see cref="Accounting.Helpers.SettlementPostingKeys.PaymentOwnerUnbackfilledCountSql"/>)
+    /// </summary>
+    private static void ReportPaymentOwnerBackfill(AccountingDbContext db, ILogger? logger)
+    {
+        try
+        {
+            var left = db.Database.SqlQueryRaw<int>(Accounting.Helpers.SettlementPostingKeys.PaymentOwnerUnbackfilledCountSql()).AsEnumerable().First();
+            if (left > 0)
+                logger?.LogWarning("[DbMigration] backfill Payments.SettlementBatchId: {Count} แถวมีป้ายรอบโอนใน Notes แต่ไม่ผ่านหลักฐาน "
+                    + "(ไม่ใช่ข้อความที่ระบบเขียน/รอบโอนไม่ตรงบริษัท/Reference ไม่ตรง) — ไม่ถูกนับเป็นของรอบโอน · ตรวจด้วยมือถ้าคาดว่าเป็นของรอบโอน", left);
+            else
+                logger?.LogInformation("[DbMigration] backfill Payments.SettlementBatchId: ป้ายใน Notes ผ่านหลักฐานครบทุกแถว");
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "[DbMigration] นับแถวที่ไม่ถูก backfill ของ Payments.SettlementBatchId ไม่ได้");
+        }
+    }
 
     /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมเจ้าของข้างบน — deterministic ข้ามเครื่อง (FNV ผ่าน AdvisoryLockKey · ห้าม GetHashCode)</summary>
     internal static string PaymentSettlementOwnerLockKey =>

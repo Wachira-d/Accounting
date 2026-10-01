@@ -415,11 +415,19 @@ public class SettlementController : ControllerBase
     [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
     public async Task<ActionResult<ApiResponse<SettlementChannelOrphanReport>>> ChannelOrphans(Guid companyId, Guid channelId, CancellationToken ct)
     {
-        var hidden = SettlementPermissionScope.CandidatesHiddenReason(
+        // ฝ่ายค้าน ST-X7: เกณฑ์เดียวกับหน้ารอบโอน แต่ข้อความบอกสิ่งที่ถูกซ่อนในรายงานนี้ (ยอดกำพร้า/ผังพัก ไม่ใช่ผู้สมัครเอกสารขาย)
+        var hidden = SettlementPermissionScope.OrphanAmountsHiddenReason(
             await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Import),
             await _perms.HasPermissionAsync(companyId, UserId, SettlementPermissionScope.Post));
         return await Guarded(() => _posting.ChannelOrphanReportAsync(companyId, channelId, hidden, ct));
     }
+
+    /// <summary>สถานะการรับรู้ของกำพร้าของเอกสาร (รอบ 201 ฝ่ายค้าน ST-X4) — แถบ "รับรู้แล้ว" บนหน้าเอกสารบอกด้วยว่าการรับรู้ยังมีผลไหม (ตัวแยกเดียวกับพรีวิว) ·
+    /// อ่านอย่างเดียว · ไม่ใช่ของกำพร้า/ไม่เคยรับรู้ = data null</summary>
+    [HttpGet("orphans/documents/{documentId:guid}/ack-status")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public Task<ActionResult<ApiResponse<SettlementOrphanAckStatus?>>> DocumentOrphanAckStatus(Guid companyId, Guid documentId, CancellationToken ct)
+        => Guarded(() => _posting.DocumentOrphanAckStatusAsync(companyId, documentId, ct));
 
     /// <param name="ArtifactId">id ของเอกสาร (<c>IsPayment=false</c>) หรือการรับชำระ (<c>IsPayment=true</c>) ที่เป็นของกำพร้า</param>
     /// <param name="BatchId">รอบโอนที่ผู้ใช้กำลังดูพรีวิวและตรวจเทียบ (ฝ่ายค้านรอบ 200 V2-P1 — เก็บลง audit · การรับรู้เดิมที่ไม่ครอบรอบนี้รับรู้ใหม่ได้) · null = ไม่ระบุ</param>

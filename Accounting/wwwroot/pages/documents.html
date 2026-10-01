@@ -9886,7 +9886,23 @@
             banners += `<div style="background:#f8fafc;border:1px solid #cbd5e1;color:#334155;padding:10px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
               📌 <b>รับรู้แล้วว่าเป็นของกำพร้าของรอบโอนที่ถูกยกเลิก</b> — โดย ${Layout.esc(d.settlementOrphanAckByName || '-')} เมื่อ ${Layout.date(d.settlementOrphanAckAt)}
               <div style="margin-top:4px">เหตุผล: ${Layout.esc(d.settlementOrphanAckReason || '-')}</div>
+              <div id="orphanAckStatus" style="margin-top:4px;color:#64748b">กำลังตรวจว่าการรับรู้ยังมีผลไหม…</div>
             </div>`;
+            // รอบ 201 ทีม ST (ฝ่ายค้าน ST-X4): การรับรู้มีผลไหม — server ตัดสินด้วยตัวแยกเดียวกับพรีวิว (เหตุเปลี่ยน/รับรู้ก่อนระบบเก็บเหตุ = ไม่มีผล) · หน้าแสดงอย่างเดียว
+            const ackDocId = d.id;
+            setTimeout(async () => {
+              const box = document.getElementById('orphanAckStatus');
+              if (!box) return;
+              try {
+                const st = (await Layout.api()?.getSettlementDocumentOrphanAckStatus(ackDocId))?.data;
+                box.innerHTML = st
+                  ? `<b>${Layout.esc(st.label || '')}</b>${st.nextStep ? `<div>${Layout.esc(st.nextStep)}</div>` : ''}`
+                  : 'ไม่พบสถานะการรับรู้ (ไม่ใช่เอกสารของรอบโอนแล้ว)';
+                box.style.color = st && st.effective ? '#166534' : '#92400e';
+              } catch (e) {
+                box.textContent = 'ตรวจสถานะการรับรู้ไม่ได้: ' + (e.message || '') + ' (ต้องมีสิทธิ์ดูรอบโอน)';
+              }
+            }, 0);
           }
           // รอบ 200 ทีม V1F (V1-R6): คำขอยกเลิกและออกใบแทนที่รอผู้อนุมัติคนที่สอง — เซิร์ฟเวอร์ตัดสินว่าใครยืนยันได้ (ผู้ขอยืนยันเองไม่ได้)
           if (d.reissueRequestedAt) {

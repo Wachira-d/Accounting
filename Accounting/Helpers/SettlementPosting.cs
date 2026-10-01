@@ -58,6 +58,13 @@ public static class SettlementPostingKeys
         + "AND p.\"PaymentMethod\" = " + (int)PaymentMethod.EWallet + " "
         + "AND p.\"OverridePaymentAccountId\" IS NOT NULL;";
 
+    /// <summary>
+    /// **นับแถวที่มีป้ายแต่ไม่ถูก backfill** (รอบ 201 ฝ่ายค้าน ST-X5) — log ครั้งเดียวในบูตที่สร้างคอลัมน์ (ผู้เรียก = <c>DatabaseMigrationHelper</c> เท่านั้น) ·
+    /// อ่านอย่างเดียว ไม่ตัดสินอะไร · ไม่ backfill รอบสอง
+    /// </summary>
+    public static string PaymentOwnerUnbackfilledCountSql() =>
+        "SELECT COUNT(*)::int AS \"Value\" FROM \"Payments\" WHERE \"SettlementBatchId\" IS NULL AND \"Notes\" LIKE '" + PaymentMarkerHead + "%'";
+
     /// <summary><c>JournalEntry.Reference</c> ของ JE ปิดรายการ chargeback ต่อบรรทัด — กันปิดซ้ำ</summary>
     public static string ChargebackReference(Guid lineId) => "STL-CB-" + lineId.ToString("N");
 }
@@ -339,6 +346,7 @@ public sealed record SettlementDuplicateSale(IReadOnlyList<Guid> LineIds, string
 /// <see cref="FiledWhtPeriods"/> ต้องเป็นเดือนที่ยื่นแล้วของแบบที่ <c>GateWhtForm</c> คืน</param>
 /// <param name="Supplementary">ใบสรุปของรอบนี้ที่เป็นใบสรุปเพิ่มเติมของวันเดียวกัน (<see cref="SettlementSummarySupplement.Judge"/> · คำตัดสินรอบ 200 ข้อ 15)</param>
 /// <param name="Stock">ลักษณะกิจการเรื่องสต็อก (<see cref="SettlementStock.StanceOf"/> · C-15)</param>
+/// <param name="SodRoles">บทบาทที่ผู้กดลงบัญชีชนในด่านแยกหน้าที่ (<see cref="SettlementLineMakers.RolesOf"/> · รอบ 201 ฝ่ายค้าน ST-X3) — null/ว่าง = ข้อความทั่วไปแบบเดิม</param>
 public sealed record SettlementPostingFacts(
     SettlementBatchStatus Status,
     DateTime PayoutDay,
@@ -368,7 +376,8 @@ public sealed record SettlementPostingFacts(
     IReadOnlyCollection<(int Year, int Month)>? FiledPp36Periods = null,
     TaxType WhtFormType = TaxType.WithholdingTax53,
     IReadOnlyList<SettlementSupplementarySummary>? Supplementary = null,
-    SettlementStockStance Stock = SettlementStockStance.NotChecked);
+    SettlementStockStance Stock = SettlementStockStance.NotChecked,
+    IReadOnlyList<string>? SodRoles = null);
 
 /// <summary>
 /// **ด่านของผู้ลงบัญชีรอบโอน — ต่อจากแผนของ <see cref="SettlementBatchMath.Plan"/>** (ปัญหาที่ต้องรู้ข้อมูลในฐาน)
@@ -632,8 +641,12 @@ public static class SettlementPostingGate
         // ── แยกหน้าที่ (คำตัดสินเจ้าของข้อ 7): ผู้นำเข้ารอบโอน = ผู้ทำ · ผู้กดลงบัญชี = ผู้อนุมัติเอกสารที่ระบบออกให้ ──
         if (f.SodSelfApprovalBlocked && (plan.FeeDocuments.Count > 0 || plan.SummarySales.Count > 0))
             Add(SettlementPlanIssueCode.SodSelfApproval, true,
-                "บริษัทเปิด \"แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ\" และผู้กดลงบัญชีคือผู้นำเข้ารอบโอนนี้เอง — เอกสารค่าธรรมเนียม/ใบขายสรุปที่ระบบออกให้จะมีผู้ทำและผู้อนุมัติคนเดียวกัน",
-                "ให้ผู้มีสิทธิ์อนุมัติคนอื่น (ไม่ใช่ผู้นำเข้ารอบโอน) เป็นผู้กดลงบัญชี — ระบบบันทึกผู้กดเป็นผู้อนุมัติเอกสารทุกใบของรอบนี้");
+                // ฝ่ายค้าน ST-X3: บอกบทบาทที่ชนจริง (ผู้สร้างรอบ · ผู้เติมไฟล์ · ผู้ตัดสินจับคู่/จัดประเภท) — เดิมบอกว่า "ผู้นำเข้า" เสมอ
+                f.SodRoles is { Count: > 0 } roles
+                    ? $"บริษัทเปิด \"แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ\" และผู้กดลงบัญชีเป็น{string.Join(" · ", roles)}ของรอบโอนนี้เอง — "
+                      + "เอกสารค่าธรรมเนียม/ใบขายสรุปที่ระบบออกให้จะมีผู้ทำและผู้อนุมัติคนเดียวกัน"
+                    : "บริษัทเปิด \"แยกหน้าที่ผู้สร้าง/ผู้อนุมัติ\" และผู้กดลงบัญชีคือผู้นำเข้ารอบโอนนี้เอง — เอกสารค่าธรรมเนียม/ใบขายสรุปที่ระบบออกให้จะมีผู้ทำและผู้อนุมัติคนเดียวกัน",
+                "ให้ผู้มีสิทธิ์อนุมัติคนอื่น (ไม่ใช่ผู้สร้าง/ผู้เติมไฟล์/ผู้ตัดสินบรรทัดของรอบโอนนี้) เป็นผู้กดลงบัญชี — ระบบบันทึกผู้กดเป็นผู้อนุมัติเอกสารทุกใบของรอบนี้");
 
         // ── สิทธิ์ (ทุกทางเข้าอนุมัติเอกสารต้องผ่าน DocumentPermissionHelper.CanApproveAsync) ──
         if (plan.FeeDocuments.Count > 0 && !f.CanApproveFeeDocuments)

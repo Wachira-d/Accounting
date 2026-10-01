@@ -263,6 +263,18 @@ public static class SettlementSaleMatch
         => legacySettlementJournalEntryId is not null
            || (!refundLine && ownerBatchId is Guid owner && owner != batchId);
 
+    /// <summary>
+    /// **ตรวจซ้ำใต้ล็อก gateway: บรรทัดฝั่งขายที่<b>เพิ่งอ้าง</b> intent ซึ่งรอบโอนอื่นเป็นเจ้าของแล้ว** (รอบ 201 ฝ่ายค้าน ST-X6) — ตัวจับคู่/คนเลือกอ่าน intent ก่อนถือล็อก gateway
+    /// (ล็อกช่องทางอย่างเดียว) ⇒ รอบโอนของ<b>ช่องทางอื่นที่ใช้ gateway เดียวกัน</b>ประทับ intent ตัวนั้นไประหว่างนี้ได้ · เดิมข้ามเงียบ แล้วไปติดตาข่าย
+    /// <see cref="IntentSettledElsewhere"/> ตอนลงบัญชี ⇒ ล้มดังทันทีแบบเดียวกับ "ถูกบันทึกด้วยหน้ารอบโอน gateway เดิม" ·
+    /// <b>บรรทัดคืนเงินยกเว้น</b> (คืนเงินภายหลังของรายการที่รอบก่อนเป็นเจ้าของยอดขาย = ปกติ) · <b>เฉพาะการอ้างที่เพิ่งเกิดในคำสั่งนี้</b> — การอ้างค้างจากก่อนหน้า
+    /// ไม่ล้มทุกการแก้ของรอบ (ทางตันถาวร) แต่ยังติดด่านลงบัญชีที่มีทางไปต่อ · pure
+    /// </summary>
+    /// <param name="refundLine">บรรทัดนั้นเป็นฝั่งคืนเงิน (<c>SettlementLineTypeRules.For(t).Posting == Refund</c>)</param>
+    /// <param name="newlyReferenced">บรรทัดเพิ่งอ้าง intent นี้ในคำสั่งนี้ (บรรทัดใหม่ หรือช่อง PaymentIntentId เพิ่งเปลี่ยน)</param>
+    public static bool SaleReferenceTakenByOtherBatch(bool refundLine, bool newlyReferenced, Guid? ownerBatchId, Guid batchId)
+        => !refundLine && newlyReferenced && ownerBatchId is Guid owner && owner != batchId;
+
     /// <summary>R-B16: แก้ค่าธรรมเนียมของ PaymentIntent ที่อยู่ในรอบโอน settlement แล้วไม่มีผล (บรรทัดค่าธรรมเนียมถูกบันทึกไปแล้ว) — ต้องบอก ไม่เงียบ</summary>
     public static string? FeeEditBlockedByBatch(Guid? settlementBatchId)
         => settlementBatchId is null ? null

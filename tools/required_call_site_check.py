@@ -3488,9 +3488,10 @@ RULES += [
          must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId", r"d\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
          why="รอบ 201 ทีม ST (A-ST4): ตัวแยกเดียวกับด่านลงบัญชี · ทิศต่อผังพักจากตัวตัดสินเดียว · tenant ทุก query"),
     dict(file="Controllers/SettlementController.cs", method="ChannelOrphans",
-         before=[("SettlementPermissionScope.CandidatesHiddenReason(", "_posting.ChannelOrphanReportAsync(")],
+         before=[("SettlementPermissionScope.OrphanAmountsHiddenReason(", "_posting.ChannelOrphanReportAsync(")],
          call_args=[("_posting.ChannelOrphanReportAsync(", "hidden")],
-         why="A-ST4 (D-P5): ผู้มีแค่สิทธิ์ดูเห็นรายการแต่ไม่เห็นยอด — ตัวตัดสินสิทธิ์ตัวเดียวกับหน้ารอบโอน"),
+         forbid=["SettlementPermissionScope.CandidatesHiddenReason("],
+         why="A-ST4 (D-P5): ผู้มีแค่สิทธิ์ดูเห็นรายการแต่ไม่เห็นยอด — เกณฑ์ตัวเดียวกับหน้ารอบโอน · ST-X7: ข้อความเฉพาะของรายงานกำพร้า (ไม่ยืมข้อความผู้สมัคร)"),
     # A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทนับเป็นผู้ทำใน SoD
     dict(file=SETTLE_POST, method="BuildGateAsync",
          must=["SettlementLineMakers.Of(", "l.DecidedBy", "SettlementPlanFingerprint.IssuedDrift(", "SettlementContentOverlap.AgainstBatchesAsync(",
@@ -3519,6 +3520,40 @@ RULES += [
          must=["docVoid.EtaxCancellationFlag", "docVoid.OutputVatNotice", "voidResult.OutputVatNotice", "notices = etaxFlags"],
          must_re=[r"var\s+docVoid\s*=\s*await\s+_documents\s*\.\s*VoidDocumentAsync\s*\("],
          why="รอบ 201 ทีม ST (DV Q1): VoidDocumentAsync คืน PaymentVoidResult แล้ว — ทิ้งผล = ธง e-Tax/ภาษีขายที่ถอยไม่ได้หายเงียบจากผู้กดยกเลิกการลงบัญชี"),
+    # ── รอบ 201 ทีม ST ฝ่ายค้าน (ST-X1..X7) ──
+    dict(file=SETTLE_POST, method="UnpostCoreAsync",
+         must=["SettlementUnpostNotice.Partial(batch.PayoutRef, ex.Message, voidedDocs.Count, voidedPayments.Count, etaxFlags)",
+               "SettlementUnpostNotice.FlagsTail(etaxFlags)", "_db.Database.CurrentTransaction != null", "_db.AddChainedAuditLog("],
+         must_lit=['action = "settlement-unpost-partial"', 'throw new BusinessRuleException(message, ex, "SETTLEMENT-UNPOST-PARTIAL", 409)'],
+         before=[("SettlementUnpostNotice.Partial(", "throw new BusinessRuleException(message, ex,")],
+         why="ST-X1: เส้นล้มกลางทางต้องพาธง e-Tax/ภาษีขายของชิ้นที่ยกเลิกไปแล้วถึงผู้กด + audit แถว partial (กดใหม่ชิ้นนั้นไม่ถูกยกเลิกซ้ำ ⇒ ธงไม่เกิดอีก) · "
+             "audit ห้ามอยู่ในธุรกรรมที่ค้าง (rollback = หายเงียบ)"),
+    dict(file="Helpers/SettlementPaymentOwner.cs", method="StampOnSave",
+         must=["db.ChangeTracker.Tracked += tracked", "db.ChangeTracker.Tracked -= tracked", "e.Entry.State == EntityState.Added",
+               "db.SavingChanges += saving", "db.SavingChanges -= saving"],
+         why="ST-X2: ประทับตอนแถวเริ่มถูกติดตาม — ก่อน CaptureAuditEntries ⇒ audit \"Create Payment\" มีเจ้าของจริง · SavingChanges คงเป็นตาข่าย · ถอดทั้งคู่ตอน Dispose"),
+    dict(file=SETTLE_POST, method="BuildGateAsync",
+         must=["SettlementLineMakers.RolesOf(batch.CreatedBy, lines.Select(l => (l.CreatedBy, l.DecidedBy)), userId)", "SodRoles: sodRoles"],
+         why="ST-X3: ข้อความแยกหน้าที่บอกบทบาทที่ชนจริง (ผู้สร้าง · ผู้เติมไฟล์ · ผู้ตัดสินจับคู่/จัดประเภท) — ข้อมูลชุดเดียวกับตัวตัดสิน SodSelfApproval"),
+    dict(file=SETTLE_POST, method="DocumentOrphanAckStatusAsync",
+         must=["SettlementOrphanReport.AckStatusOf(documentId, triage.Items)", "OrphanArtifactsAsync(companyId, null, ch,",
+               "SettlementArtifactGuard.BatchIdFromCreator(doc.CreatedBy)"],
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"b\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="ST-X4: แถบ \"รับรู้แล้ว\" บนหน้าเอกสารบอกว่าการรับรู้ยังมีผลไหม — ตัวแยกเดียวกับพรีวิว/ด่านลงบัญชี (ห้ามตัดสินเองจากช่องบนแถว) · tenant ทุก query"),
+    dict(file=SETTLE_LINES, method="SyncIntentStampsAsync",
+         must=["SettlementSaleMatch.SaleReferenceTakenByOtherBatch(", "takenByOtherBatch++", "NewlyReferencesIntent(l)",
+               "!= SettlementPostingKind.Refund"],
+         must_re=[r"if\s*\(\s*takenByOtherBatch\s*>\s*0\s*\)\s*throw\s+new\s+BusinessRuleException\b"],
+         before=[("LockGatewaysAsync(", "NewlyReferencesIntent(l)")],
+         why="ST-X6: ใต้ล็อก gateway — บรรทัดฝั่งขายที่เพิ่งอ้าง intent ซึ่งรอบอื่นเป็นเจ้าของแล้ว ⇒ 409 (เดิมข้ามเงียบไปติดด่านลงบัญชี) · คืนเงินยกเว้น · อ้างค้างไม่ทำให้ตัน"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="ApplyMissingColumns",
+         must=["PaymentOwnerColumnExists(db, logger)", "if (!paymentOwnerColumnExisted) ReportPaymentOwnerBackfill(db, logger)"],
+         before=[("PaymentOwnerColumnExists(db, logger)", "GetAlterStatements()")],
+         why="ST-X5: รู้ก่อนรันคำสั่งว่าบูตนี้สร้างคอลัมน์ (backfill ครั้งเดียว) ⇒ log จำนวนแถวที่มีป้ายแต่ไม่ผ่านหลักฐานเฉพาะบูตนั้น"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="ReportPaymentOwnerBackfill",
+         must=["SettlementPostingKeys.PaymentOwnerUnbackfilledCountSql()", "LogWarning("],
+         forbid=["ExecuteSqlRaw(", "PaymentOwnerBackfillSql("],
+         why="ST-X5: นับแล้ว log อย่างเดียว — ไม่ backfill รอบสอง (ป้ายใน Notes ไม่มีผลกับด่านใด)"),
 ]
 
 # ── รอบ 201 ทีม OC (OCR · BACKLOG §1.7 A-OC1/A-OC2/A-OC5 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97): เทสต์ล็อกตัวตัดสิน pure (OcrReview201OcTests)
@@ -3746,7 +3781,7 @@ def settlement_folder_self_test(files) -> list:
 #    ตัวสร้างข้อความ + SQL backfill ครั้งเดียวตอนสร้างคอลัมน์) ──
 NOTES_MARKER_FORBID = dict(
     allow={"Helpers/SettlementPosting.cs"},
-    code_patterns=[r"\bBatchIdFromPaymentNotes\b", r"\bPaymentMarker(?:Head)?\b", r"\bPaymentOwnerBackfillSql\b"],
+    code_patterns=[r"\bBatchIdFromPaymentNotes\b", r"\bPaymentMarker(?:Head)?\b", r"\bPaymentOwnerBackfillSql\b", r"\bPaymentOwnerUnbackfilledCountSql\b"],
     literal_patterns=[r"\[SETTLEMENT:"],
     why="รอบ 201 ทีม ST (A-ST1): ป้ายใน Payment.Notes เป็นข้อความที่ผู้ใช้พิมพ์ได้ — อ่านเจ้าของจากคอลัมน์ Payment.SettlementBatchId "
         "(ผู้ลงบัญชีประทับผ่าน SettlementPaymentOwner) · backfill จากป้ายมีที่เดียวใน SettlementPostingKeys.PaymentOwnerBackfillSql "
@@ -3775,7 +3810,8 @@ def notes_marker_errors(files) -> list:
             for rx in pats:
                 for m in re.finditer(rx, code):
                     # ผู้เรียก backfill ที่อนุญาตตัวเดียว (เรียกใน DO block ตอนสร้างคอลัมน์)
-                    if rel == NOTES_MARKER_MIGRATION_CALLER and m.group(0) == "PaymentOwnerBackfillSql":
+                    # + ตัวนับแถวที่ไม่ถูก backfill (ST-X5 · log อย่างเดียว)
+                    if rel == NOTES_MARKER_MIGRATION_CALLER and m.group(0) in ("PaymentOwnerBackfillSql", "PaymentOwnerUnbackfilledCountSql"):
                         continue
                     line = code.count("\n", 0, m.start()) + 1
                     errs.append(f"{rel}:{line} อ้างป้ายใน Payment.Notes `{m.group(0)}` — {NOTES_MARKER_FORBID['why']}")

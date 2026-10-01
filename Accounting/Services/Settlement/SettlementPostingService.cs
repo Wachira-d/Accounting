@@ -103,6 +103,9 @@ public interface ISettlementPostingService
     /// </summary>
     Task<SettlementChannelOrphanReport> ChannelOrphanReportAsync(Guid companyId, Guid channelId, string? amountsHiddenReason,
         CancellationToken ct = default);
+
+    /// <summary>สถานะการรับรู้ของกำพร้าของเอกสารใบหนึ่ง (รอบ 201 ฝ่ายค้าน ST-X4) — ตัวแยกเดียวกับพรีวิว · ไม่ใช่เอกสารของรอบโอน/ไม่เคยรับรู้ = null · อ่านอย่างเดียว</summary>
+    Task<SettlementOrphanAckStatus?> DocumentOrphanAckStatusAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -672,6 +675,8 @@ public class SettlementPostingService : ISettlementPostingService
         // S3-11 (รอบ 200): ผู้ที่เติมไฟล์เข้ารอบเดิม (ผู้สร้างบรรทัด) เป็นผู้ทำด้วย · รอบ 201 ทีม ST (A-ST7): ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัดด้วย
         var sodBlocked = SettlementPostingGate.SodSelfApproval(sodOn, batch.CreatedBy,
             SettlementLineMakers.Of(lines.Select(l => (l.CreatedBy, l.DecidedBy))), userId);
+        // ฝ่ายค้าน ST-X3: บทบาทที่ชนจริงสำหรับข้อความ (ไม่เปลี่ยนการตัดสิน)
+        var sodRoles = sodBlocked ? SettlementLineMakers.RolesOf(batch.CreatedBy, lines.Select(l => (l.CreatedBy, l.DecidedBy)), userId) : null;
 
         var saleType = vatRegistered ? DocumentType.TaxInvoice : DocumentType.Receipt;
         var facts = new SettlementPostingFacts(
@@ -682,7 +687,7 @@ public class SettlementPostingService : ISettlementPostingService
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, saleType),
             existingDocs.Count + payments.Count,
             summaryBlock, staleReceipts, orphans.Voidable, sodBlocked, orphans.Unvoidable, orphans.NeedsUserAction, orphans.Acknowledged,
-            Wallet: wallet, FiledPp36Periods: filedPp36, WhtFormType: whtForm, Supplementary: supplementary, Stock: stock);
+            Wallet: wallet, FiledPp36Periods: filedPp36, WhtFormType: whtForm, Supplementary: supplementary, Stock: stock, SodRoles: sodRoles);
         var gated = SettlementPostingGate.Evaluate(plan, facts);
         // ผู้รับค่าธรรมเนียมอยู่ต่างประเทศ แต่ช่องทางคิด WHT แบบในประเทศ (ภ.ง.ด.53) ⇒ บล็อก — ม.70 ต้องเป็น ภ.ง.ด.54 (ทีม W · R-A5 อีกรูป)
         if (batch.Status is not (SettlementBatchStatus.Posted or SettlementBatchStatus.BankMatched)
@@ -1207,6 +1212,22 @@ public class SettlementPostingService : ISettlementPostingService
         return SettlementOrphanReport.Build(channel.Id, channel.DisplayName, items, docs, pays, amountsHiddenReason);
     }
 
+    public async Task<SettlementOrphanAckStatus?> DocumentOrphanAckStatusAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.CreatedBy, d.SettlementOrphanAckAt }).FirstOrDefaultAsync(ct);
+        if (doc?.SettlementOrphanAckAt == null) return null;
+        if (SettlementArtifactGuard.BatchIdFromCreator(doc.CreatedBy) is not Guid ownerId) return null;
+        var channelId = await _db.SettlementBatches.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => b.Id == ownerId && b.CompanyId == companyId)
+            .Select(b => (Guid?)b.ChannelId).FirstOrDefaultAsync(ct);
+        if (channelId is not Guid ch) return null;
+        // ตัวแยกตัวเดียวกับด่านลงบัญชี/พรีวิว/ปุ่มรับรู้ (ไม่เทียบรอบที่กำลังดู — มุมมองจากหน้าเอกสาร)
+        var triage = await OrphanArtifactsAsync(companyId, null, ch, ThaiDate.CalendarDateUtc(DateTime.UtcNow), null, ct);
+        return SettlementOrphanReport.AckStatusOf(documentId, triage.Items);
+    }
+
     // ═════════════════════════════ ยืนยันรายบรรทัด "รายการจริงคนละรายการ" (ฝ่ายค้านรอบสอง R2M-12) ═════════════════════════════
 
     public async Task<SettlementDistinctConfirmResult> ConfirmDistinctLinesAsync(Guid companyId, Guid batchId, IReadOnlyCollection<Guid> lineIds,
@@ -1397,10 +1418,49 @@ public class SettlementPostingService : ISettlementPostingService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ยกเลิกการลงบัญชีรอบโอน {Batch} ล้มกลางทาง", batchId);
-            throw new BusinessRuleException(
-                $"ยกเลิกการลงบัญชีรอบโอน {batch.PayoutRef} ไม่สำเร็จ: {ex.Message} — ยกเลิกไปแล้ว {voidedDocs.Count} เอกสาร · "
-                + $"{voidedPayments.Count} การรับชำระ (สถานะรอบโอนยังเป็นลงบัญชีแล้ว) · แก้สาเหตุแล้วกดยกเลิกอีกครั้ง ระบบทำต่อจากที่ค้าง",
-                ex, "SETTLEMENT-UNPOST-PARTIAL", 409);
+            var message = SettlementUnpostNotice.Partial(batch.PayoutRef, ex.Message, voidedDocs.Count, voidedPayments.Count, etaxFlags);
+            // ฝ่ายค้าน ST-X1: ชิ้นที่ยกเลิกไปแล้ว commit แล้ว (เส้นยกเลิกของ DocumentService เปิดธุรกรรมของตัวเองทีละชิ้น) ⇒ ธงของชิ้นเหล่านั้นต้องอยู่ใน audit
+            // ด้วย (กดใหม่ = ชิ้นนั้นไม่ถูกยกเลิกซ้ำ ⇒ ธงไม่เกิดอีก) · เขียนในคำสั่งแยกหลังล้าง change tracker (ของที่ค้างจากชิ้นที่ล้มต้องไม่ถูกบันทึกตาม)
+            const string auditFailedNote = " · ⚠️ บันทึกตรวจสอบของชิ้นที่ยกเลิกไปแล้วไม่สำเร็จ — จดรายการที่ต้องตามต่อในข้อความนี้ไว้";
+            if (voidedDocs.Count + voidedPayments.Count > 0 && _db.Database.CurrentTransaction != null)
+            {
+                // ธุรกรรมที่ค้างจากชิ้นที่ล้มจะถูก rollback ⇒ audit ห้ามอยู่ในนั้น (เขียนแล้วหายเงียบ) — ล้มดังในข้อความแทน
+                _logger.LogError("ข้าม audit ของการยกเลิกการลงบัญชีรอบโอน {Batch} ที่ล้มกลางทาง: ยังมีธุรกรรมค้าง", batchId);
+                message += auditFailedNote;
+            }
+            else if (voidedDocs.Count + voidedPayments.Count > 0)
+            {
+                try
+                {
+                    _db.ChangeTracker.Clear();
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId,
+                        UserId = userId,
+                        EntityType = nameof(SettlementBatch),
+                        EntityId = batchId.ToString(),
+                        Action = AuditAction.Update,
+                        NewValues = JsonSerializer.Serialize(new
+                        {
+                            action = "settlement-unpost-partial",
+                            reason,
+                            error = ex.Message,
+                            voidedDocuments = voidedDocs,
+                            voidedPayments,
+                            notices = etaxFlags,
+                        }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                }
+                catch (Exception auditEx) when (auditEx is not OperationCanceledException)
+                {
+                    // ล้มดังในคำตอบ (ไม่กลืน): ผู้กดเห็นว่าบันทึกตรวจสอบของชิ้นที่ทำไปแล้วไม่สำเร็จ + ข้อความธงอยู่ในคำตอบนี้แล้ว
+                    _logger.LogError(auditEx, "บันทึก audit ของการยกเลิกการลงบัญชีรอบโอน {Batch} ที่ล้มกลางทางไม่สำเร็จ", batchId);
+                    message += auditFailedNote;
+                }
+            }
+            throw new BusinessRuleException(message, ex, "SETTLEMENT-UNPOST-PARTIAL", 409);
         }
 
         // 4) ธุรกรรมเดียว: กลับรายการ JE รอบโอน (เส้นกลางของ IAccountingService) + สถานะ + audit
@@ -1458,9 +1518,7 @@ public class SettlementPostingService : ISettlementPostingService
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return new SettlementUnpostResult(true,
-                $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้"
-                + (etaxFlags.Count == 0 ? "" : $" · ⚠️ มี {etaxFlags.Count} รายการที่ต้องตามต่อ (ใบเสร็จที่ส่ง e-Tax ระหว่างทาง/ภาษีขายที่ถอยไม่ได้): "
-                    + string.Join(" · ", etaxFlags)),
+                $"ยกเลิกการลงบัญชีรอบโอน {tracked.PayoutRef} แล้ว — แก้รายการแล้วลงบัญชีใหม่ได้" + SettlementUnpostNotice.FlagsTail(etaxFlags),
                 tracked.Status, reversalId, voidedDocs, voidedPayments);
         });
     }
