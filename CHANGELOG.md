@@ -4160,4 +4160,4 @@ _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้า�
 _2026-10-01 รอบ 201 ทีม PL ชุด 5 — คำสั่ง main agent หลังทีม DV เปลี่ยน `VoidDocumentAsync` ให้คืน `PaymentVoidResult`:
 - `Helpers/VoidResultNotice.Lines` ตัวประกอบข้อความเดียว · `CmsCommerceService.UpdateOrderStatusAsync` ประทับ `[ERP-VOID-NOTICE …]` บนออเดอร์ (หมายเหตุภายในที่เจ้าของร้านเห็น) ·
   `CmsBookingService.SettleErpDocumentOnCancelAsync` ส่งเข้า `notices` (ผลตอบผู้กด) + ประทับบนการจอง — เดิมทั้งสองทางทิ้งผลเงียบ
-- เทสต์ `VoidResultNoticeTests` (สองทิศ) · required_call_site +1 แถว/ปรับ 1 · write_permission marker `RequireInventoryAsync` (หลังรวมทีม IN) — commit <pending>)_
+- เทสต์ `VoidResultNoticeTests` (สองทิศ) · required_call_site +1 แถว/ปรับ 1 · write_permission marker `RequireInventoryAsync` (หลังรวมทีม IN) — commit 7ab6cf72)_
