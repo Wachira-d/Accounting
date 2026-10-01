@@ -30,7 +30,11 @@ public record PendingRemittanceItem(
     // ที่ออกจริง** (Issued/Printed) ⇒ ไม่รวมใน Amount (ตัวตั้ง = certs ชุดเดียวกับรายงาน/ไฟล์ยื่น) และ
     // RemitAsync บล็อกจนกว่าจะออกครบ — ห้ามนับเงียบ ๆ (ยอดนำส่งจะน้อยกว่าที่หักจริง) · null = ไม่มี
     int? UnissuedWhtCount = null,
-    decimal? UnissuedWhtAmount = null);
+    decimal? UnissuedWhtAmount = null,
+    // รอบ 201 ทีม TX (B-7): วันที่ใช้เตือน/ตัดสินเลยกำหนด (TaxFilingDeadline.WarnBy) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันว่ามาตรการ
+    // e-Filing ครอบ · null = เท่ากับ EFilingDueDate · WarnNote = ข้อความกำกับ (null = ไม่มี)
+    DateTime? WarnDueDate = null,
+    string? WarnNote = null);
 
 /// <summary>สรุปหน้านำส่ง — ยอดรวมรอนำส่ง + รายการ.</summary>
 public record RemittanceDashboardResponse(
@@ -133,7 +137,7 @@ public record FilingCalendarCell(
     decimal LateFee,              // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส.)
     DateTime PaperDueDate,
     DateTime EFilingDueDate,
-    bool Overdue,                 // เลยกำหนด e-Filing และยังไม่ครบ
+    bool Overdue,                 // เลยกำหนด (WarnDueDate — ปกติ = e-Filing) และยังไม่ครบ
     int DaysToDue,                // ติดลบ = เลยมาแล้วกี่วัน
     bool FormFiled,               // ยื่นแบบแล้ว (TaxReport.Status = Filed)
     DateTime? FiledAt,
@@ -143,7 +147,8 @@ public record FilingCalendarCell(
     bool HasReceipt,              // แนบใบเสร็จ/หลักฐานแล้ว
     bool IsNil,                   // ยอด 0 → ต้องยื่น "แบบเปล่า"
     string Hint,                  // สิ่งที่ต้องทำ / เหตุผลที่ยังไม่รู้ยอด
-    string? ActionUrl);           // ลิงก์ไปหน้าที่ทำงานนั้นได้ทันที
+    string? ActionUrl,            // ลิงก์ไปหน้าที่ทำงานนั้นได้ทันที
+    DateTime? WarnDueDate = null); // รอบ 201 B-7: วันที่ใช้เตือน (Overdue/DaysToDue คิดจากวันนี้) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ
 
 /// <summary>1 แถว = แบบยื่น 1 ชนิด ตลอดช่วงเดือนที่ขอ.</summary>
 public record FilingCalendarRow(

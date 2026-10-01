@@ -642,11 +642,14 @@ public static class SettlementPostingGate
     /// **แยกหน้าที่ของเอกสารที่การลงบัญชีรอบโอนออกให้** (คำตัดสินเจ้าของรอบ 198 ข้อ 7 · review198-C C-7) — ผู้ทำ = ผู้นำเข้ารอบโอน
     /// (<c>SettlementBatch.CreatedBy</c> = user id ของผู้นำเข้า) · ผู้อนุมัติ = คนกดลงบัญชี · บริษัทเปิด <c>SodBlockSelfApproval</c> และเป็นคนเดียวกัน ⇒ true (บล็อก)
     /// <para>ผู้นำเข้าไม่รู้ (null/ว่าง) ⇒ <b>บล็อก</b> เมื่อเปิดแยกหน้าที่ — "ไม่รู้" ห้ามตกเป็น "ผ่าน" (DOCTRINE §1)</para>
+    /// <para>รอบ 201 ทีม TX (A-TX3 · คำตัดสินข้อ 45): สูตรย้ายไป <see cref="ApprovalControlPolicy.SelfApproval"/> ตัวเดียว (เส้นอนุมัติเอกสารถามตัวเดียวกัน) ·
+    /// ที่นี่เลือกนโยบายของรอบโอน = "ไม่รู้" บล็อก (<see cref="ApprovalControlPolicy.BlocksSettlementPosting"/>)</para>
     /// </summary>
     public static bool SodSelfApproval(bool sodBlockSelfApproval, string? batchCreatedBy, Guid postingUserId)
-        => sodBlockSelfApproval
-           && (string.IsNullOrWhiteSpace(batchCreatedBy)
-               || string.Equals(batchCreatedBy.Trim(), postingUserId.ToString(), StringComparison.OrdinalIgnoreCase));
+    {
+        return ApprovalControlPolicy.BlocksSettlementPosting(
+            ApprovalControlPolicy.SelfApproval(sodBlockSelfApproval, batchCreatedBy, null, postingUserId.ToString()));
+    }
 
     /// <summary>
     /// **ผู้ทำของรอบโอน = ผู้สร้างรอบ + ผู้ที่เติมไฟล์เข้ารอบเดิม** (review198-S3 S3-11 · รอบ 200 ทีม V2) — เดิมเทียบแค่ <c>SettlementBatch.CreatedBy</c> ⇒
@@ -655,9 +658,10 @@ public static class SettlementPostingGate
     /// ผู้ที่ตัดสินการจับคู่/จัดประเภทไม่ได้ถูกบันทึกบนบรรทัด (ยังไม่นับ — ข้อจำกัดในรายงานทีม V2)
     /// </summary>
     public static bool SodSelfApproval(bool sodBlockSelfApproval, string? batchCreatedBy, IEnumerable<string?> lineCreators, Guid postingUserId)
-        => SodSelfApproval(sodBlockSelfApproval, batchCreatedBy, postingUserId)
-           || (sodBlockSelfApproval && lineCreators.Any(c => !string.IsNullOrWhiteSpace(c)
-               && string.Equals(c!.Trim(), postingUserId.ToString(), StringComparison.OrdinalIgnoreCase)));
+    {
+        return ApprovalControlPolicy.BlocksSettlementPosting(
+            ApprovalControlPolicy.SelfApproval(sodBlockSelfApproval, batchCreatedBy, lineCreators, postingUserId.ToString()));
+    }
 
     /// <summary>จำนวนวันจันทร์–ศุกร์หลัง <paramref name="from"/> จนถึง <paramref name="to"/> (ไม่หักวันหยุดราชการ ⇒ นับวันทำการ<b>มากกว่าจริง</b>
     /// = เตือนเร็วกว่าจริง ทิศที่ปลอดภัย)</summary>

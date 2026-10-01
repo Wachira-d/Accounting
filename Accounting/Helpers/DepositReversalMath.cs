@@ -64,28 +64,36 @@ public static class DepositReversalMath
     /// </summary>
     /// <param name="depositNumbers">เลขใบมัดจำที่ resolve ได้ (ตามลำดับในเลขอ้างอิง · ไม่ซ้ำ)</param>
     /// <param name="debitLegs">ขา Dr ของ JE ต้นฉบับของใบที่หัก: (รหัสบัญชี · ยอด Dr · คำอธิบายบรรทัด)</param>
+    /// <param name="referencedCount">รอบ 201 ทีม TX (A-TX6 · review194-r4 P4-4): จำนวนเลขอ้างอิงบนใบที่หัก (<see cref="ParseDepositRefs"/>(…).Length —
+    /// ตัวเดียวกับที่เส้นหักใช้เลือก "ใบเดียว/หลายใบ") · ทางลัด "ทุกขาเป็นของใบเดียว" ใช้ได้เฉพาะเมื่อเส้นหักเดินทางใบเดียวจริง (≤ 1 เลข) — เดิมดูจำนวนที่
+    /// <b>resolve ได้</b> ⇒ อ้างสองใบแต่หาเจอใบเดียว (อีกใบถูกลบ/เลขเปลี่ยน) ขา Dr ของใบที่หายถูกนับคืนให้ใบที่เหลือ · 0 = ไม่ทราบ (ใช้จำนวนที่ resolve ได้ = เดิม)</param>
     public static DrivesUnrealizeSplit SplitDrivesUnrealize(
-        IReadOnlyList<string> depositNumbers, IReadOnlyList<(string AccountCode, decimal Debit, string? Description)> debitLegs)
+        IReadOnlyList<string> depositNumbers, IReadOnlyList<(string AccountCode, decimal Debit, string? Description)> debitLegs,
+        int referencedCount = 0)
     {
         static bool IsBase(string code) => code.StartsWith("217", System.StringComparison.Ordinal) || code.StartsWith("215", System.StringComparison.Ordinal);
         static bool IsUndue(string code) => code == "21913";
         var bases = depositNumbers.ToDictionary(n => n, _ => 0m, System.StringComparer.Ordinal);
         var stamped = depositNumbers.ToDictionary(n => n, _ => false, System.StringComparer.Ordinal);
         var unattributed = 0m;
+        var unattributedUndue = 0m;
+        var singleOwner = depositNumbers.Count == 1 && referencedCount <= 1;
         foreach (var (code, debit, desc) in debitLegs)
         {
             if (debit <= 0m || (!IsBase(code) && !IsUndue(code))) continue;
-            string? owner = depositNumbers.Count == 1 ? depositNumbers[0] : OwnerOf(depositNumbers, desc);
+            string? owner = singleOwner ? depositNumbers[0] : OwnerOf(depositNumbers, desc);
             if (owner == null)
             {
+                // A-TX6: ขา 21913 ที่ผูกไม่ได้เดิมข้ามเงียบ ⇒ นับแยกให้ผู้เรียกบอกให้เห็น (ธงรับรู้ VAT ของมัดจำใบใดไม่ถูกล้าง)
                 if (IsBase(code)) unattributed += debit;
+                else unattributedUndue += debit;
                 continue;
             }
             if (IsBase(code)) bases[owner] += debit;
             else stamped[owner] = true;
         }
         return new DrivesUnrealizeSplit(
-            depositNumbers.Select(n => new DrivesUnrealizeShare(n, bases[n], stamped[n])).ToList(), unattributed);
+            depositNumbers.Select(n => new DrivesUnrealizeShare(n, bases[n], stamped[n])).ToList(), unattributed, unattributedUndue);
     }
 
     /// <summary>เลขใบมัดจำที่คำอธิบายบรรทัดอ้าง "มัดจำ {เลข}" ทั้งคำ (ตามด้วยช่องว่าง/วงเล็บ/จุลภาค/ท้ายข้อความ) · ไม่พบ/อ้างหลายใบ = null (ห้ามเดา)</summary>
@@ -105,5 +113,6 @@ public static class DepositReversalMath
 /// <param name="Stamped21913">ใบที่หักเป็นผู้ย้าย VAT พักของมัดจำใบนี้ (มีขา Dr 21913) ⇒ ล้าง <c>DepositOutputVatRecognizedAt</c> ได้</param>
 public sealed record DrivesUnrealizeShare(string DepositNumber, decimal Base, bool Stamped21913);
 
-/// <summary>ผลแยกยอดคืนทั้งใบ — <paramref name="Unattributed"/> = ฐานที่ผูกกับใบมัดจำใดไม่ได้ (ผู้เรียกต้องบอกให้เห็น)</summary>
-public sealed record DrivesUnrealizeSplit(IReadOnlyList<DrivesUnrealizeShare> Shares, decimal Unattributed);
+/// <summary>ผลแยกยอดคืนทั้งใบ — <paramref name="Unattributed"/> = ฐานที่ผูกกับใบมัดจำใดไม่ได้ (ผู้เรียกต้องบอกให้เห็น) ·
+/// <paramref name="UnattributedUndue"/> = ขา Dr 21913 ที่ผูกไม่ได้ (รอบ 201 A-TX6 — ธงรับรู้ VAT ของมัดจำใบนั้นไม่ถูกล้าง ต้องบอกให้เห็น)</summary>
+public sealed record DrivesUnrealizeSplit(IReadOnlyList<DrivesUnrealizeShare> Shares, decimal Unattributed, decimal UnattributedUndue = 0m);

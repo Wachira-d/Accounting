@@ -171,8 +171,11 @@ public static class Section65TerValidator
             var lineAmt = line.Amount + (line.IsVatClaimable ? 0m : line.VatAmount);
 
             // (6) เบี้ยปรับ / เงินเพิ่ม / ค่าปรับอาญา — auto nonDeductible, no override
-            if (hay.Contains("ค่าปรับ") || hay.Contains("เบี้ยปรับ") || hay.Contains("เงินเพิ่ม")
-                || hay.Contains("penalty") || hay.Contains("surcharge") || hay.Contains("fine"))
+            // รอบ 201 A-TX1: คำอังกฤษจับ "ทั้งคำ" — เดิม Contains("fine") จับ "refined oil"/"define" แล้วบวกกลับเต็มจำนวนเงียบ ๆ
+            // (ตอนนี้ผลข้อนี้ขึ้นเป็นคำเตือนก่อนอนุมัติ — คำเตือนที่ฟ้องใบถูก = ปิดด่านโดยไม่ตั้งใจ)
+            // "ค่าปรับปรุง/ปรับแต่ง/ปรับเปลี่ยน/ปรับอากาศ" ไม่ใช่ค่าปรับ · "เงินเพิ่มทุน/เงินเพิ่มพิเศษ/เงินเพิ่มค่าครองชีพ" ไม่ใช่เงินเพิ่มภาษี
+            if (ThaiPenaltyWord.IsMatch(hay) || hay.Contains("เบี้ยปรับ") || ThaiSurchargeWord.IsMatch(hay)
+                || HasWord(hay, "penalty") || HasWord(hay, "penalties") || HasWord(hay, "surcharge") || HasWord(hay, "fine") || HasWord(hay, "fines"))
             {
                 findings.Add(new("RD-65ter(6)", "ป.รัษฎากร §65 ตรี (6)",
                     lineAmt, $"เบี้ยปรับ/เงินเพิ่ม/ค่าปรับ — บวกกลับเต็มจำนวน ({lineAmt:N2})",
@@ -193,7 +196,9 @@ public static class Section65TerValidator
             // (1)(2) เงินสำรอง/เงินกองทุน — บวกกลับเต็ม ยกเว้นกองทุนสำรองเลี้ยงชีพ (PVD)
             // ที่จ่ายเข้ากองทุนจดทะเบียนแล้ว (§65 ตรี(2) ข้อยกเว้น). keyword อาจ
             // false-positive → NeedsConfirmation ให้นักบัญชียืนยัน
-            if ((hay.Contains("เงินสำรอง") || hay.Contains("สำรองเผื่อ") || hay.Contains("reserve") || hay.Contains("provision"))
+            // รอบ 201 A-TX1: "reserve" ทั้งคำ — เดิมจับ "hotel reservation"/"reserved seat" เป็นเงินสำรอง แล้วบวกกลับทั้งบรรทัด
+            if ((hay.Contains("เงินสำรอง") || hay.Contains("สำรองเผื่อ") || HasWord(hay, "reserve") || HasWord(hay, "reserves")
+                 || HasWord(hay, "provision") || HasWord(hay, "provisions"))
                 && !hay.Contains("สำรองเลี้ยงชีพ") && !hay.Contains("provident") && !hay.Contains("pvd"))
             {
                 findings.Add(new("RD-65ter(1)(2)", "ป.รัษฎากร §65 ตรี (1)(2)",
@@ -303,4 +308,14 @@ public static class Section65TerValidator
         var total = findings.Sum(f => f.AddBackAmount);
         return new Result(total, findings);
     }
+
+    private static readonly System.Text.RegularExpressions.Regex ThaiPenaltyWord =
+        new("ค่าปรับ(?!ปรุง|แต่ง|เปลี่ยน|อากาศ)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex ThaiSurchargeWord =
+        new("เงินเพิ่ม(?!ทุน|พิเศษ|ค่าครองชีพ|เติม)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>คำอังกฤษ "ทั้งคำ" ใน hay (ตัวพิมพ์เล็กแล้ว) — ขอบคำ = ไม่ใช่ตัวอักษร/ตัวเลขละติน/ขีด (อักษรไทยติดกันนับเป็นขอบ ·
+    /// "fine-tuning" ไม่ใช่ค่าปรับ)</summary>
+    private static bool HasWord(string hay, string word)
+        => System.Text.RegularExpressions.Regex.IsMatch(hay, "(?<![a-z0-9-])" + System.Text.RegularExpressions.Regex.Escape(word) + "(?![a-z0-9-])");
 }

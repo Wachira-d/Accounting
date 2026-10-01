@@ -68,12 +68,26 @@ public class DepositRound194R2Tests
         Assert.Equal(new DateTime(2026, 9, 3), locked.TaxPointDate);
         Assert.True(locked.LateFlag);
         Assert.Contains("ยื่น/ปิดในระบบแล้ว", locked.Note);
-        // ข้ามปีภาษี — แม้ยังไม่เลยกำหนดยื่นงวด ธ.ค. (15/01) = งวดปัจจุบันเสมอ
+        // รอบ 201 A-TX8 (review194-r3 P-5): ข้ามปีปฏิทินไม่ใช่เหตุ — รับ ธ.ค. ริบ ม.ค. ก่อนกำหนดยื่นงวด ธ.ค. (15/01) ⇒ คงงวด ธ.ค. ไม่ติดธง §89/1
+        // (เดิมย้ายเข้างวด ม.ค. พร้อมธงเกินจำเป็น) · หมายเหตุบอก §86 ออกช้า
         var crossYear = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2025, 12, 20), new DateTime(2026, 1, 5),
             depositPeriodLocked: false, today: new DateTime(2026, 1, 5));
-        Assert.Equal(new DateTime(2026, 1, 5), crossYear.TaxPointDate);
-        Assert.True(crossYear.LateFlag);
-        Assert.Contains("ข้ามปีภาษี", crossYear.Note);
+        Assert.Equal(new DateTime(2025, 12, 20), crossYear.TaxPointDate);
+        Assert.False(crossYear.LateFlag);
+        Assert.Contains("12/2025", crossYear.Note);
+        Assert.Contains("§86", crossYear.Note);
+        // ทิศตรงข้าม: ข้ามปีและเลยกำหนดยื่นงวด ธ.ค. แล้ว ⇒ งวดปัจจุบัน + ธง (เหตุ = เลยกำหนด ไม่ใช่ข้ามปี)
+        var crossYearLate = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2025, 12, 20), new DateTime(2026, 1, 20),
+            depositPeriodLocked: false, today: new DateTime(2026, 1, 20));
+        Assert.Equal(new DateTime(2026, 1, 20), crossYearLate.TaxPointDate);
+        Assert.True(crossYearLate.LateFlag);
+        Assert.Contains("เลยกำหนดยื่น", crossYearLate.Note);
+        Assert.Contains("§86", crossYearLate.Note);
+        // ทิศตรงข้าม: ข้ามปีแต่งวดบัญชี ธ.ค. ปิด/ยื่นในระบบแล้ว ⇒ งวดปัจจุบัน + ธง
+        var crossYearLocked = DepositPolicyResolver.ForfeitTaxPointDecision(DepositForfeitVatRoute.UndueReclassification, true, new DateTime(2025, 12, 20), new DateTime(2026, 1, 5),
+            depositPeriodLocked: true, today: new DateTime(2026, 1, 5));
+        Assert.Equal(new DateTime(2026, 1, 5), crossYearLocked.TaxPointDate);
+        Assert.True(crossYearLocked.LateFlag);
     }
 
     [Fact]

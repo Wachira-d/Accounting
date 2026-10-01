@@ -400,9 +400,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     {
         var (label, form, code) = Meta(type);
         var (paper, efiling) = DueDates(type, year, month);
+        // รอบ 201 B-7: เตือนตามวันที่จาก TaxFilingDeadline.WarnBy ตัวเดียว (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันมาตรการ e-Filing)
+        var warnBy = Accounting.Helpers.TaxFilingDeadline.WarnBy(type, year, month);
         // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
         // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
-        var overdue = today > efiling.Date && reportFiledAt == null;
+        var overdue = today > warnBy.Date && reportFiledAt == null;
         // เงินเพิ่ม preview เฉพาะ ปกส. (§49 2%/เดือน)
         var lateFee = type == "SsoSps110"
             ? PayrollService.ComputeSsoLateFee(year, month, today, amount)
@@ -410,7 +412,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         return new PendingRemittanceItem(type, label, form, year, month, amount,
             paper, efiling, overdue, lateFee, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
-            reportFiledAt, unissuedCount, unissuedAmount);
+            reportFiledAt, unissuedCount, unissuedAmount,
+            WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -708,10 +711,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var next = rows
             .SelectMany(r => r.Cells.Select(c => new { Row = r, Cell = c }))
             .Where(x => (x.Cell.Status is "Pending" or "Partial" or "Unknown") && x.Cell.DaysToDue >= 0)
-            .OrderBy(x => x.Cell.EFilingDueDate).ThenBy(x => x.Row.FormCode)
+            .OrderBy(x => x.Cell.WarnDueDate ?? x.Cell.EFilingDueDate).ThenBy(x => x.Row.FormCode)
             .FirstOrDefault();
         string? nextLabel = next == null ? null
-            : $"{next.Row.FormCode} งวด {next.Cell.Month:D2}/{next.Cell.Year} — ครบกำหนด {next.Cell.EFilingDueDate:dd/MM/yyyy}"
+            : $"{next.Row.FormCode} งวด {next.Cell.Month:D2}/{next.Cell.Year} — ครบกำหนด {(next.Cell.WarnDueDate ?? next.Cell.EFilingDueDate):dd/MM/yyyy}"
               + (next.Cell.DaysToDue == 0 ? " (วันนี้!)" : $" (อีก {next.Cell.DaysToDue} วัน)");
 
         var headline = overdue.Count > 0
@@ -735,7 +738,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             UnknownCount: unknown,
             FiledCount: filed,
             RequiredCount: required.Count,
-            NextDueDate: next?.Cell.EFilingDueDate,
+            NextDueDate: next == null ? null : (next.Cell.WarnDueDate ?? next.Cell.EFilingDueDate),
             NextDueLabel: nextLabel,
             Headline: headline);
     }
@@ -754,7 +757,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     {
         int y = period.Year, m = period.Month;
         var (paper, efiling) = DueDates(type, y, m);
-        var daysToDue = (int)(efiling.Date - today).TotalDays;
+        // รอบ 201 B-7: นับวัน/เลยกำหนดจาก TaxFilingDeadline.WarnBy ตัวเดียว (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันมาตรการ e-Filing)
+        var warnBy = Accounting.Helpers.TaxFilingDeadline.WarnBy(type, y, m);
+        var efilingCaveat = Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type);
+        var daysToDue = (int)(warnBy.Date - today).TotalDays;
         var isCurrentPeriod = period.Year == today.Year && period.Month == today.Month;
 
         // ── หลักฐานที่มี ──
@@ -899,7 +905,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             else
             {
                 status = "Pending";
-                hint = $"ต้องนำส่ง {amount:N2} บาท ภายใน {efiling:dd/MM/yyyy} (e-Filing) / {paper:dd/MM/yyyy} (กระดาษ)";
+                hint = $"ต้องนำส่ง {amount:N2} บาท ภายใน {efiling:dd/MM/yyyy} (e-Filing) / {paper:dd/MM/yyyy} (กระดาษ)"
+                    + (efilingCaveat != null ? " · " + efilingCaveat : "");
                 url = remittanceUrl;
             }
         }
@@ -934,7 +941,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
 
         var incomplete = status is "Pending" or "Partial" or "Unknown";
-        var overdueFlag = incomplete && today > efiling.Date;
+        var overdueFlag = incomplete && today > warnBy.Date;
         var lateFee = (overdueFlag && type == "SsoSps110" && amount > 0)
             ? PayrollService.ComputeSsoLateFee(y, m, today, amount)
             : 0m;
@@ -943,7 +950,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         return new FilingCalendarCell(y, m, status, amount, lateFee, paper, efiling,
             overdueFlag, daysToDue, formFiled, filedAt, remitted, remittedAt,
-            filingNumber, hasReceipt, isNil, hint, url);
+            filingNumber, hasReceipt, isNil, hint, url, WarnDueDate: warnBy);
     }
 
     public async Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,

@@ -103,4 +103,32 @@ public static class TaxFilingDeadline
         var key = KeyOf(type);
         return key == null ? null : For(key, year, month).EFiling;
     }
+
+    // ═══ รอบ 201 ทีม TX (B-7 · team-W Q-W3) — มาตรการขยาย e-Filing ครอบ ภ.พ.36 / ภ.ง.ด.54 ไหม ยังไม่ยืนยัน ═══
+    // ระหว่างรอตัวบท (หมวด B — ห้ามแต่งข้อมูลภายนอก): แสดงทั้งวันกระดาษและวัน e-Filing ตามเดิม แต่ "เตือน/เลยกำหนด" ใช้วันที่เร็วกว่า
+    // (วันกระดาษ) สำหรับสองแบบนี้ — ถ้ามาตรการไม่ครอบ การเตือนตามวัน e-Filing = ช้า 8 วัน (ทิศอันตราย) · ยืนยันแล้วให้เอาแบบออกจากชุดนี้ที่เดียว
+
+    /// <summary>แบบที่<b>ยังไม่ยืนยัน</b>ว่ามาตรการขยายเวลายื่นทางอินเทอร์เน็ตครอบ — ตัวเดียวของทั้งระบบ</summary>
+    private static readonly HashSet<string> EFilingExtensionUnconfirmed = new(StringComparer.Ordinal) { "VatPp36", "WhtPnd54" };
+
+    /// <summary>วันที่ใช้<b>เตือน/ตัดสินว่าเลยกำหนด</b> — วัน e-Filing เมื่อยืนยันว่ามาตรการครอบ · วันกระดาษ (เร็วกว่า) เมื่อยังไม่ยืนยัน</summary>
+    public static DateTime WarnBy(string remittanceType, int year, int month)
+    {
+        var (paper, eFiling) = For(remittanceType, year, month);
+        return EFilingExtensionUnconfirmed.Contains(remittanceType) ? paper : eFiling;
+    }
+
+    /// <summary><see cref="WarnBy(string,int,int)"/> ตาม <see cref="TaxType"/> — null เมื่อไม่ใช่แบบรายเดือน (เงื่อนไขเดียวกับ <see cref="EFilingFor"/>)</summary>
+    public static DateTime? WarnByFor(TaxType type, int year, int month)
+    {
+        if (year < 2018 || month is < 1 or > 12) return null;
+        var key = KeyOf(type);
+        return key == null ? null : WarnBy(key, year, month);
+    }
+
+    /// <summary>ข้อความกำกับบนจอเมื่อแบบนี้เตือนตามวันกระดาษเพราะยังไม่ยืนยันมาตรการ e-Filing — null = ไม่มีอะไรต้องบอก</summary>
+    public static string? EFilingCaveat(string remittanceType)
+        => EFilingExtensionUnconfirmed.Contains(remittanceType)
+            ? "ยังไม่ยืนยันว่ามาตรการขยายเวลายื่นทางอินเทอร์เน็ต (+8 วัน) ครอบแบบนี้ — ระบบเตือนตามกำหนดแบบกระดาษ (เร็วกว่า) จนกว่าจะยืนยันตัวบท"
+            : null;
 }

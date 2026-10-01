@@ -81,9 +81,16 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         // back-filling late.
         var deadline = DeadlineFor(report.TaxType, report.Year, report.Month);
         if (deadline.HasValue && DateTime.UtcNow.Date > deadline.Value)
+        {
+            // รอบ 201 B-7: แบบที่ยังไม่ยืนยันมาตรการ e-Filing (ภ.พ.36/ภ.ง.ด.54) เตือนตามวันกระดาษ — บอกวัน e-Filing ไว้ด้วยให้ผู้ใช้ตัดสินได้
+            var eFiling = Accounting.Helpers.TaxFilingDeadline.EFilingFor(report.TaxType, report.Year, report.Month);
+            var caveat = eFiling.HasValue && eFiling.Value > deadline.Value
+                ? $" (กำหนดแบบกระดาษ · ถ้ามาตรการขยาย e-Filing ครอบแบบนี้ = {eFiling:yyyy-MM-dd} — ยังไม่ยืนยันตัวบท)"
+                : "";
             findings.Add(new("RD-DEADLINE", "Warning",
-                $"พ้นกำหนดยื่นแล้ว ({deadline:yyyy-MM-dd}). อาจมีเบี้ยปรับ.",
+                $"พ้นกำหนดยื่นแล้ว ({deadline:yyyy-MM-dd}){caveat}. อาจมีเบี้ยปรับ.",
                 "เตรียมเงินค่าปรับ + คำชี้แจงเหตุล่าช้า ถ้ามี."));
+        }
 
         // ── Per-form checks ──────────────────────────────────────────
         switch (report.TaxType)
@@ -187,7 +194,9 @@ public class TaxComplianceChecker : ITaxComplianceChecker
     /// (<c>VAT or VatPp36 => AddDays(22)</c> = วันที่ 23) — ภ.พ.36 อยู่ใต้ §83/6
     /// ซึ่งกำหนด "ภายใน 7 วันนับแต่วันสิ้นเดือน" ⇒ e-Filing คือวันที่ <b>15</b>
     /// ⇒ ตัวตรวจนี้เตือนช้ากว่ากำหนดจริง 8 วันมาตลอด. ตารางย้ายไปอยู่ที่
-    /// <see cref="Accounting.Helpers.TaxFilingDeadline"/> ตัวเดียวแล้ว</para></summary>
+    /// <see cref="Accounting.Helpers.TaxFilingDeadline"/> ตัวเดียวแล้ว</para>
+    /// <para>รอบ 201 ทีม TX (B-7): ใช้วันที่เตือนของตารางกลาง (<c>WarnByFor</c>) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันว่ามาตรการ
+    /// e-Filing +8 วันครอบสองแบบนี้ (ไม่ครอบแล้วเตือนตามวัน e-Filing = ช้า 8 วัน) · แบบอื่น = วัน e-Filing เท่าเดิม</para></summary>
     private static DateTime? DeadlineFor(TaxType type, int year, int month)
-        => Accounting.Helpers.TaxFilingDeadline.EFilingFor(type, year, month);
+        => Accounting.Helpers.TaxFilingDeadline.WarnByFor(type, year, month);
 }

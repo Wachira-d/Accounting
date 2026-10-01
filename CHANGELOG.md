@@ -4048,3 +4048,14 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม TX — ภาษี/ด่านอนุมัติ/มัดจำ ระยะ 1 (`erp-review/2026-10-01/team-TX.md` · BACKLOG §1.5 + C-7/C-21/B-7):
+- **A-TX1** §65 ตรี ขึ้นเป็นคำเตือนก่อนอนุมัติ — `EvaluateSection65TerAsync` (อ่านอย่างเดียว) ใช้ร่วมธุรกรรม/คำเตือน · `Helpers/Section65TerApprovalWarnings` (ชุดชนิด + ข้อที่ยกขึ้น ·
+  วัดก่อนเปิดด้วย golden: ใบปกติ 0 คำเตือน) · ตัวตรวจคำ: อังกฤษทั้งคำ + ตัดคำไทยที่คล้าย ("ค่าปรับปรุง", "เงินเพิ่มเติม")
+- **A-TX3** SoD ตัวตัดสินเดียว `ApprovalControlPolicy.SelfApproval` (สามสถานะ) · รอบโอนเรียกตัวเดียวกัน (พฤติกรรมเดิม) · อนุมัติเอกสาร "ไม่รู้ผู้ทำ" = โหมดเงา + audit `SOD-SHADOW-MAKER-UNKNOWN`
+- **A-TX2** `TaxPointResolver.SupplyKind.ReverseCharge` (§83/6 = วันจ่าย ?? วันที่เอกสาร) ตอนอนุมัติ — 📋 เส้นจ่ายชำระภายหลัง (ระยะ 2)
+- **A-TX9** `JournalPostingGuard.Validate(..., externalWhtIncomeBase)` + ตัวสแกนส่งเงินได้ 50 ทวิ ของใบค่าธรรมเนียมรอบโอน
+- **A-TX5/6/7/8** มัดจำ: แก้ก่อนล็อก = ล้มดัง · นับเลขบนใบ + ขา 21913 ที่ผูกไม่ได้ · วันไทย · ข้ามปีไม่ใช่เหตุ + หมายเหตุ §86
+- **C-21** ด่านขายปลีก §86/6 ก่อนสวิตช์ ภ.พ.06 (+ ข้อความหน้าแอดมิน) · **B-7** `TaxFilingDeadline.WarnBy/WarnByFor/EFilingCaveat` — ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ
+- 📋 A-TX4 (ไฟล์ทีม DV) · A-TX10 (รอเทสต์ DB ของ PL) · C-7 (`TipPayoutService` ไม่มีทางเข้า + ไม่มีที่เก็บยอดสะสมรายคน) · A-TX11 (ระยะ 2)
+- เทสต์ `Section65TerApprovalWarningGoldenTests` · `Round201TxTests` · ปรับ `DepositRound194R2Tests`/`PosSlipHeaderTests` · required_call_site +13 แถว — commit <pending>)_

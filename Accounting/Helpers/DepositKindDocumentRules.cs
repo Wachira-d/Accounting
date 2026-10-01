@@ -204,6 +204,42 @@ public static class DepositKindDocumentRules
            + $"① ถ้า {priorNumber} ผิด ให้ยกเลิกใบนั้นก่อน (ระบบคืนยอดมัดจำและปลดการผูกให้อัตโนมัติ) แล้วทำรายการนี้ใหม่ · "
            + $"② ถ้ามัดจำเหลือจากการหักใบนั้น ให้คืนส่วนที่เหลือที่หน้า “เงินมัดจำ” (ใบลดหนี้ §86/10 ถ้าเสีย VAT แล้ว) หรือ “ริบมัดจำ” "
            + "(ระบบออกใบกำกับของยอดที่ริบแล้วตัดชำระให้ — ใบกำกับของการริบใช้ร่วมกับใบอื่นได้)";
+
+    /// <summary>
+    /// **วันที่รับรู้/ริบมัดจำเมื่อผู้เรียกไม่ระบุ** — วันนี้ตาม<b>ปฏิทินไทย</b> (รอบ 201 ทีม TX · A-TX7 · review194-r4 P4-5) · ตัวเดียวของปุ่มรับรู้/ริบ
+    /// และใบกำกับของยอดที่ริบ · เดิม <c>RealizeDate ?? DateTime.UtcNow</c> ⇒ กด 00:30 น. วันที่ 1 (= 17:30 UTC วันสุดท้ายของเดือนก่อน)
+    /// ได้งวดภาษี/งวดบัญชี/ธงริบข้ามเดือนของเดือนก่อน · วันที่ที่ผู้เรียกระบุ = ใช้ตามนั้น (ไม่แปลงซ้ำ)
+    /// </summary>
+    public static DateTime RealizeDateOrToday(DateTime? requested, DateTime utcNow)
+        => requested ?? ThaiDate.CalendarDateUtc(utcNow);
+
+    /// <summary>
+    /// **หลังล็อกยอดใบมัดจำ: แถวไหนต้องอ่านค่าล่าสุด และแถวไหนผิดลำดับ** (รอบ 201 ทีม TX · A-TX5 · review194-r4 P4-3) — ตัวเดียวของ
+    /// <c>LockDepositBalancesAsync</c> · แถวที่ context ถือแบบ Unchanged ⇒ อ่านใหม่ (ค่าล่าสุดใต้ล็อก) · แถวที่<b>ถูกแก้ก่อนล็อก</b>
+    /// (Modified/Deleted) ⇒ ผิดลำดับ "ล็อกก่อนแก้" — เดิมข้ามเงียบ (คงค่าเก่าที่อ่านก่อนล็อก แล้วบันทึกทับยอดของคำขออื่น = lost update)
+    /// ⇒ ผู้เรียกต้องล้มดัง (บั๊กโปรแกรมเมอร์ ไม่ใช่ข้อมูลผู้ใช้) · แถวที่ไม่ได้ล็อก/ไม่ได้ถือ ไม่เกี่ยว
+    /// </summary>
+    public static (IReadOnlyList<Guid> Reload, IReadOnlyList<Guid> ModifiedBeforeLock) LockReloadPlan(
+        IEnumerable<(Guid Id, Microsoft.EntityFrameworkCore.EntityState State)> tracked, IReadOnlyCollection<Guid> lockedIds)
+    {
+        var reload = new List<Guid>();
+        var dirty = new List<Guid>();
+        foreach (var (id, state) in tracked)
+        {
+            if (!lockedIds.Contains(id)) continue;
+            if (state == Microsoft.EntityFrameworkCore.EntityState.Unchanged) reload.Add(id);
+            else if (state is Microsoft.EntityFrameworkCore.EntityState.Modified or Microsoft.EntityFrameworkCore.EntityState.Deleted) dirty.Add(id);
+        }
+        return (reload, dirty);
+    }
+
+    /// <summary>ข้อความเมื่อ <see cref="LockReloadPlan"/> พบแถวที่ถูกแก้ก่อนล็อก (รหัส <see cref="DepositLockOrderRuleCode"/>)</summary>
+    public static string DepositLockOrderMessage(int count)
+        => $"ข้อผิดพลาดภายในระบบ: ใบมัดจำ {count} ใบถูกแก้ก่อนล็อกยอด (ลำดับต้องเป็น ล็อก → อ่านค่าล่าสุด → แก้) — ระบบยกเลิกรายการนี้ทั้งหมด "
+           + "ยังไม่มีอะไรถูกบันทึก · ลองใหม่อีกครั้ง ถ้าเกิดซ้ำให้แจ้งผู้ดูแลระบบพร้อมเลขเอกสาร";
+
+    /// <summary>รหัสกฎของการล้มเพราะแก้ใบมัดจำก่อนล็อก</summary>
+    public const string DepositLockOrderRuleCode = "DEPOSIT-LOCK-ORDER";
 }
 
 /// <summary>ขั้นที่ต้องทำกับใบกำกับของยอดที่ริบ (M1 ข)</summary>

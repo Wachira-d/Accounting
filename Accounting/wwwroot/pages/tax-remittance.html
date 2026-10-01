@@ -247,7 +247,8 @@
       /** สถานะความด่วนของแถว — ใช้ทั้งสี badge, แถบซ้าย และตัวกรอง
        *  (ตัวตัดสินตัวเดียว ห้ามคำนวณซ้ำที่อื่น) */
       _urgency(r) {
-        const days = this._daysTo(r.eFilingDueDate);
+        // รอบ 201 B-7: วันที่เตือนมาจากเซิร์ฟเวอร์ (TaxFilingDeadline.WarnBy) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษจนกว่าจะยืนยันมาตรการ e-Filing
+        const days = this._daysTo(r.warnDueDate || r.eFilingDueDate);
         // ยื่นแบบแล้ว (คนละเหตุการณ์กับจ่ายเงิน) — เซิร์ฟเวอร์ตัด isOverdue ให้แล้ว
         // แต่ต้องบอกผู้ใช้ด้วยว่า "ที่ค้างคือเงิน ไม่ใช่แบบ" ไม่งั้นแถวนี้จะดู
         // เหมือนงานที่ยังไม่เริ่มทั้งที่ยื่นตรงเวลาไปแล้ว
@@ -476,7 +477,7 @@
             <td class="font-medium" data-label="แบบ">${typeCell}</td>
             <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
             <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}${gap}</td>
-            <td class="text-center" data-label="กำหนดยื่น">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div></td>
+            <td class="text-center" data-label="กำหนดยื่น">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div>${r.warnNote ? `<div class="text-xs" style="color:#b45309" title="${Layout.esc(r.warnNote)}">⚠️ เตือนตามวันกระดาษ</div>` : ''}</td>
             <td class="text-center" data-label="สถานะ"><span class="badge ${u.badge}">${u.label}</span></td>
             <td class="text-right"><button class="btn btn-outline btn-sm" onclick="Page.openPay(${r._idx})">💸 นำส่ง</button></td>
           </tr>`;
@@ -517,7 +518,7 @@
         if (this._f.view === 'list') {
           // เรียงแบบเดิม: เลยกำหนดก่อน แล้วตามกำหนดยื่น
           const sorted = [...rows].sort((a, b) =>
-            (b.isOverdue - a.isOverdue) || (Layout.asUtc(a.eFilingDueDate) - Layout.asUtc(b.eFilingDueDate)));
+            (b.isOverdue - a.isOverdue) || (Layout.asUtc(a.warnDueDate || a.eFilingDueDate) - Layout.asUtc(b.warnDueDate || b.eFilingDueDate)));
           c.innerHTML = this._tableHtml(sorted, true);
           return;
         }
@@ -535,7 +536,7 @@
           : groups.get(b).reduce((s, r) => s + r.amount, 0) - groups.get(a).reduce((s, r) => s + r.amount, 0));
 
         c.innerHTML = keys.map(k => {
-          const list = groups.get(k).sort((a, b) => Layout.asUtc(a.eFilingDueDate) - Layout.asUtc(b.eFilingDueDate));
+          const list = groups.get(k).sort((a, b) => Layout.asUtc(a.warnDueDate || a.eFilingDueDate) - Layout.asUtc(b.warnDueDate || b.eFilingDueDate));
           const total = list.reduce((s, r) => s + (r.amount || 0), 0);
           const overdueN = list.filter(r => r.isOverdue).length;
           const first = list[0];
@@ -766,6 +767,7 @@
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <span class="badge ${u.badge}">${u.label}</span>
             <span class="text-xs text-gray-500">กำหนดยื่น e-Filing ${Layout.date(r.eFilingDueDate)} · กระดาษ ${Layout.date(r.paperDueDate)}</span>
+            ${r.warnNote ? `<span class="text-xs" style="color:#b45309">⚠️ ${Layout.esc(r.warnNote)}</span>` : ''}
           </div>
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>

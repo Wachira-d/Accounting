@@ -62,6 +62,36 @@ public class JournalAnomalyService
                 && j.EntryDate >= from && j.EntryDate <= to)
             .ToListAsync();
 
+        // ── รอบ 201 ทีม TX (A-TX9 · team-W Q-W6): JE รอบโอน settlement ลงเฉพาะขา WHT ของใบค่าธรรมเนียม (ค่าธรรมเนียมอยู่ในใบสำคัญจ่าย) ──
+        // ⇒ ส่งเงินได้ตาม 50 ทวิ ของใบค่าธรรมเนียมเป็นฐาน JE-WHT-RATIO (เดิมรอบที่โอนสุทธิ 0 ฟ้อง 100% ทั้งที่ถูก) · tenant ทุก query ·
+        // JSON อ่านไม่ได้ = ไม่ส่งฐาน (กฎฟ้องตามเดิม — ทิศที่มองเห็น)
+        var externalWhtBase = new Dictionary<Guid, decimal>();
+        var scannedJeIds = journals.Select(j => j.Id).ToList();
+        var payoutBatches = await _db.SettlementBatches.AsNoTracking()
+                .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.PayoutJournalEntryId != null
+                    && scannedJeIds.Contains(b.PayoutJournalEntryId.Value) && b.FeeDocumentIdsJson != null)
+                .Select(b => new { JeId = b.PayoutJournalEntryId!.Value, Json = b.FeeDocumentIdsJson! })
+                .ToListAsync();
+        if (payoutBatches.Count > 0)
+        {
+            var feeDocsByJe = new Dictionary<Guid, List<Guid>>();
+            foreach (var b in payoutBatches)
+            {
+                try { feeDocsByJe[b.JeId] = System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(b.Json) ?? new List<Guid>(); }
+                catch (System.Text.Json.JsonException) { continue; }   // อ่านไม่ได้ ⇒ ไม่ส่งฐาน · JE-WHT-RATIO ฟ้องตามเดิม (มองเห็น)
+            }
+            var allFeeDocIds = feeDocsByJe.Values.SelectMany(x => x).Distinct().ToList();
+            var filedStatuses = Accounting.Helpers.WhtCertFilingScope.Filed;
+            var certIncomeByDoc = (await _db.WithholdingTaxCerts.AsNoTracking()
+                        .Where(w => w.CompanyId == companyId && w.DocumentId != null && allFeeDocIds.Contains(w.DocumentId.Value)
+                            && filedStatuses.Contains(w.Status))
+                        .Select(w => new { DocId = w.DocumentId!.Value, w.TotalIncomeAmount })
+                        .ToListAsync())
+                    .GroupBy(x => x.DocId).ToDictionary(g => g.Key, g => g.Sum(x => x.TotalIncomeAmount));
+            foreach (var (jeId, feeIds) in feeDocsByJe)
+                externalWhtBase[jeId] = feeIds.Sum(id => certIncomeByDoc.GetValueOrDefault(id));
+        }
+
         var srcDocIds = journals.Where(j => j.SourceDocumentId.HasValue)
             .Select(j => j.SourceDocumentId!.Value).Distinct().ToList();
         var docsById = await _db.Documents.AsNoTracking()
@@ -103,7 +133,7 @@ public class JournalAnomalyService
                     ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate)
                 : null;
 
-            foreach (var f in JournalPostingGuard.Validate(lines, facts))
+            foreach (var f in JournalPostingGuard.Validate(lines, facts, externalWhtBase.GetValueOrDefault(j.Id)))
                 anomalies.Add(new Anomaly(
                     f.RuleCode, f.IsError ? "Error" : "Warning", f.Message,
                     doc != null

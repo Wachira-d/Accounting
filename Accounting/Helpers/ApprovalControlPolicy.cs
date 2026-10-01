@@ -23,6 +23,26 @@ public enum ReissueControlAction
 
 public sealed record ReissueControlVerdict(ReissueControlAction Action, string? Reason, string? RuleCode);
 
+/// <summary>ผลตัดสิน SoD สามสถานะ (<see cref="ApprovalControlPolicy.SelfApproval"/>) — "ไม่รู้ผู้ทำ" เป็นค่าใน enum ไม่ใช่ "ผ่าน" (DOCTRINE §1)</summary>
+public enum SodVerdict
+{
+    /// <summary>ปิดการแบ่งแยกหน้าที่ หรือผู้ทำเป็นคนอื่นที่รู้ตัว</summary>
+    Pass = 0,
+    /// <summary>ผู้อนุมัติคือผู้ทำ (หลักหรือรอง)</summary>
+    SamePerson = 1,
+    /// <summary>ไม่รู้ผู้ทำหลัก (ระบบ/นำเข้า/แถวเก่า)</summary>
+    MakerUnknown = 2,
+}
+
+/// <summary>นโยบายต่อสถานะ "ไม่รู้ผู้ทำ" ของเส้นที่ยังไม่บังคับ</summary>
+public enum SodUnknownMakerMode
+{
+    /// <summary>ไม่บล็อก — บันทึก audit "ถ้าบังคับจะบล็อก" (วัดผลกระทบก่อน)</summary>
+    Shadow = 0,
+    /// <summary>บล็อกพร้อมทางไปต่อ (ให้ผู้มีสิทธิ์อนุมัติคนอื่น)</summary>
+    Enforce = 1,
+}
+
 public static class ApprovalControlPolicy
 {
     /// <summary>
@@ -33,14 +53,51 @@ public static class ApprovalControlPolicy
         => requireApprovalForDocuments && totalAmount >= (approvalThresholdAmount ?? 0m);
 
     /// <summary>
-    /// **SoD — ผู้ทำ (maker) ห้ามเป็นผู้อนุมัติ (checker) คนเดียวกัน** (<c>CompanySettings.SodBlockSelfApproval</c>) · ผู้ทำว่าง (ระบบ/นำเข้า) = ไม่บล็อก ·
-    /// เทียบ id ผู้ใช้แบบไม่สนตัวพิมพ์ (ตัวเดียวกับที่ <c>ApproveDocumentAsync</c> ใช้)
+    /// **SoD ตัวตัดสินเดียวของทั้งระบบ** (รอบ 201 ทีม TX · A-TX3 · คำตัดสินข้อ 45) — ผู้ทำ (maker) ห้ามเป็นผู้อนุมัติ (checker) คนเดียวกัน
+    /// (<c>CompanySettings.SodBlockSelfApproval</c>) · เดิมมีสองความจริง: รอบโอน settlement "ผู้ทำไม่รู้ = บล็อก" (<c>SettlementPostingGate.SodSelfApproval</c>
+    /// เขียนสูตรเอง) กับอนุมัติเอกสาร "ไม่รู้ = ไม่บล็อก" · ตอนนี้สูตรอยู่ที่นี่ที่เดียว และคืน<b>สามสถานะ</b> ("ไม่รู้" เป็นค่าใน enum — DOCTRINE §1)
+    /// ให้แต่ละเส้นเลือกนโยบายต่อสถานะ "ไม่รู้" ผ่าน <see cref="BlocksDocumentApproval"/> / <see cref="BlocksSettlementPosting"/>
+    /// <para>เทียบ id แบบตัดช่องว่าง + ไม่สนตัวพิมพ์ · ผู้ทำรอง (<paramref name="otherMakers"/> — เช่นผู้เติมไฟล์เข้ารอบโอน) ที่ว่างไม่นับเป็นใคร ·
+    /// "ไม่รู้" ตัดสินจาก<b>ผู้ทำหลัก</b> (<paramref name="primaryMaker"/>) เท่านั้น (พฤติกรรมเดิมของรอบโอน)</para>
+    /// </summary>
+    public static SodVerdict SelfApproval(bool sodBlockSelfApproval, string? primaryMaker, IEnumerable<string?>? otherMakers, string? approverId)
+    {
+        if (!sodBlockSelfApproval) return SodVerdict.Pass;
+        if (SamePerson(primaryMaker, approverId) || (otherMakers ?? Array.Empty<string?>()).Any(m => SamePerson(m, approverId)))
+            return SodVerdict.SamePerson;
+        return string.IsNullOrWhiteSpace(primaryMaker) ? SodVerdict.MakerUnknown : SodVerdict.Pass;
+    }
+
+    /// <summary>
+    /// <b>โหมดของสถานะ "ไม่รู้ผู้ทำ" บนเส้นอนุมัติเอกสาร</b> — คำตัดสินข้อ 45 ให้บล็อกพร้อมทางไปต่อ แต่เข้มขึ้นกับเส้นอนุมัติเดิม (ใบที่ระบบ/นำเข้าสร้าง
+    /// ไม่มีผู้ทำ) ⇒ <b>โหมดเงาก่อน</b>: บันทึก audit "จะบล็อก" (<see cref="ShadowRuleCode"/>) ให้วัดว่ากระทบใบไหนบ้าง แล้วเจ้าของค่อยเปลี่ยนเป็น
+    /// <see cref="SodUnknownMakerMode.Enforce"/> (คอมมิตเดียว — ยังไม่มีสวิตช์บนหน้าแอดมิน · ไฟล์ของทีม PL)
+    /// </summary>
+    public const SodUnknownMakerMode DocumentUnknownMakerMode = SodUnknownMakerMode.Shadow;
+
+    /// <summary>รหัสกฎของร่องรอยโหมดเงา "ถ้าบังคับจะบล็อก" (ค้นใน audit ได้)</summary>
+    public const string ShadowRuleCode = "SOD-SHADOW-MAKER-UNKNOWN";
+
+    /// <summary>เส้นอนุมัติเอกสารบล็อกไหม — คนเดียวกัน = บล็อกเสมอ · ไม่รู้ผู้ทำ = ตาม <paramref name="unknownMode"/></summary>
+    internal static bool BlocksDocumentApproval(SodVerdict verdict, SodUnknownMakerMode unknownMode)
+        => verdict == SodVerdict.SamePerson || (verdict == SodVerdict.MakerUnknown && unknownMode == SodUnknownMakerMode.Enforce);
+
+    /// <summary>เส้นอนุมัติเอกสารต้องบันทึกร่องรอยโหมดเงาไหม (ไม่รู้ผู้ทำ + ยังไม่บังคับ)</summary>
+    public static bool RecordsShadow(SodVerdict verdict, SodUnknownMakerMode unknownMode)
+        => verdict == SodVerdict.MakerUnknown && unknownMode == SodUnknownMakerMode.Shadow;
+
+    /// <summary>เส้นลงบัญชีรอบโอน (settlement) บล็อกไหม — "ไม่รู้" บล็อกเสมอ (คำตัดสินรอบ 198 ข้อ 7 · DOCTRINE §1)</summary>
+    public static bool BlocksSettlementPosting(SodVerdict verdict) => verdict != SodVerdict.Pass;
+
+    /// <summary>
+    /// **SoD ของเส้นอนุมัติเอกสาร** (ทางลัดเดิม — ผู้ทำว่าง (ระบบ/นำเข้า) ยังไม่บล็อกระหว่างโหมดเงา) · สูตรอยู่ที่ <see cref="SelfApproval"/> ตัวเดียว
     /// </summary>
     public static bool SelfApprovalBlocked(bool sodBlockSelfApproval, string? makerId, string? approverId)
-        => sodBlockSelfApproval && SamePerson(makerId, approverId);
+        => BlocksDocumentApproval(SelfApproval(sodBlockSelfApproval, makerId, null, approverId), DocumentUnknownMakerMode);
 
     private static bool SamePerson(string? a, string? b)
-        => !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        => !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b)
+           && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// **"ยกเลิกและออกใบแทน" ต้องมีคนที่สองไหม** — ใบแทนออกเลขใบกำกับจริง (และเปลี่ยนผู้ซื้อได้) ⇒ ด่านควบคุมเดียวกับการอนุมัติ:

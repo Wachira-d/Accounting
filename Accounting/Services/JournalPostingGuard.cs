@@ -54,7 +54,11 @@ public static class JournalPostingGuard
     private static bool IsPurchaseFamily(DocumentType t) =>
         t is DocumentType.Expense or DocumentType.PurchaseInvoice or DocumentType.PaymentVoucher;
 
-    public static List<Finding> Validate(IReadOnlyList<LineFacts> lines, DocFacts? doc)
+    /// <param name="externalWhtIncomeBase">รอบ 201 ทีม TX (A-TX9 · team-W Q-W6): เงินได้ (ฐาน 50 ทวิ) ของ WHT ใน JE นี้ที่<b>ขาค่าใช้จ่ายอยู่ในเอกสารอื่น</b> —
+    /// JE รอบโอน settlement ลงเฉพาะขา WHT ของใบค่าธรรมเนียม (W2 Dr ลูกหนี้รอคืน · W3 Dr ภาษีที่ออกแทน / Cr 21917/21918) ส่วนค่าธรรมเนียมอยู่ในใบสำคัญจ่าย
+    /// ⇒ รอบที่ยอดโอนสุทธิ 0 ฐาน Dr เหลือแค่ขาภาษี ⇒ JE-WHT-RATIO ฟ้อง 100% ทั้งที่ถูก (W3 3% = 30.93 ของเงินได้ 1,030.93) · ผู้เรียกส่งเงินได้จาก
+    /// 50 ทวิ ของใบค่าธรรมเนียม · 0 = ไม่มี (พฤติกรรมเดิมทุกตัวอักษร) · ไม่ผ่อนกฎอื่น · posting gate ไม่ส่ง (ลงบัญชีรอบโอนไม่ผ่าน guard นี้)</param>
+    public static List<Finding> Validate(IReadOnlyList<LineFacts> lines, DocFacts? doc, decimal externalWhtIncomeBase = 0m)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var findings = new List<Finding>();
@@ -83,6 +87,9 @@ public static class JournalPostingGuard
         var whtBase = Rnd(lines
             .Where(l => !IsAnyVatOrWht(l.AccountCode))
             .Sum(l => l.Debit));
+        // A-TX9: ฐานของ WHT ที่ขาค่าใช้จ่ายอยู่ใบอื่น (เงินได้ตาม 50 ทวิ = ค่าธรรมเนียม + ภาษีที่ออกแทน) — ใช้ค่าที่มากกว่า (ไม่บวกซ้ำขาภาษีที่ออกแทน)
+        if (externalWhtIncomeBase > 0m)
+            whtBase = Math.Max(whtBase, Rnd(externalWhtIncomeBase));
         if (whtCr > 0 && whtBase > 0 && whtCr > Rnd(whtBase * 0.155m) + 1m)
             findings.Add(new Finding("JE-WHT-RATIO", true,
                 $"ยอดภาษีหัก ณ ที่จ่าย ({whtCr:N2}) สูงเกินอัตราสูงสุด 15% ของฐาน " +
