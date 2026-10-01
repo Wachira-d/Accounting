@@ -4242,3 +4242,8 @@ _2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้า�
 - **X2** `FindLiveReplacementSaleAsync` + `LodgingCheckoutReissue.Problem(liveReplacementNumber, confirmedNoManualReissue)` + ช่องยืนยันบนหน้าที่พัก
 - เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit ecaddf15)_
 
+### รอบ 201 ทีม AI — แก้ผลฝ่ายค้าน X-1..X-10 (`erp-review/2026-10-01/team-AI.md` §แก้ผลฝ่ายค้าน)
+- X-1 เทสต์ bulk PV อ่านค่าผ่าน JSON (ไทยถูก escape) · X-10 bank.html escape ข้อความจาก statement/AI/ข้อผิดพลาดทุกจุดที่เข้า innerHTML (แผนคำแนะนำ · discrepancy · คำเตือน · การ์ดบัญชี · หน้ากระทบยอดกลุ่ม · confirmDanger)
+- X-2 ชนิดผู้สมัคร = ชนิดจริง (`BankAiCandidateGuard.RealType`) ในแผน AI · ฝั่งเขียนตรวจ MatchType ตรงชนิดจริง · X-3 ปุ่ม "AI วิเคราะห์" ติดธง → ยืนยันโดยไม่แตะ = Implicit
+- X-4 ยังไม่ปิด (นักเรียนฟีดธนาคารไม่ตอบ id เอกสาร — ระบุใน DOCUMENT_FLOW §6.4) · X-5 ไม่ backfill `ExplicitConfirmCount` (คำตัดสินข้อ 99)
+- X-6 `RankCandidates`/`PickSubset` internal static + เทสต์คำแนะนำ SuggestMatchAsync · X-7 ลบ endpoint `suggest-all-accounts` ที่ไม่มีผู้เรียก · X-8 ratchet จำนวนรายการค้าง ≤ 38 · X-9 เลขบรรทัดจาก tempId — commit 10709643

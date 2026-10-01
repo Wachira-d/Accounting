@@ -9,7 +9,7 @@ namespace Accounting.Tests;
 ///
 /// ของจริงที่พัง: ปุ่ม "✨ AI จับคู่จากประวัติ" ติ๊กคู่จากคลัง → กดยืนยัน → <c>TimesConfirmed</c> ของแพตเทิร์นที่เสนอเองเพิ่ม →
 /// คะแนน <c>0.2·min(1, TimesConfirmed/10)</c> และ Wilson ของนักเรียนโตเองจนทะลุ short-circuit 0.85. สองครึ่ง: กดผ่านรัว ๆ
-/// ต้องไม่ดันความมั่นใจ · และแพตเทิร์นเดิม (backfill = TimesConfirmed) ต้องได้คะแนนเท่าเดิม
+/// ต้องไม่ดันความมั่นใจ · และเมื่อทุกคำยืนยันเป็นแบบตั้งใจ สูตรต้องเท่าสูตรเดิม · แถวเก่าเริ่ม Explicit = 0 (คำตัดสินข้อ 99)
 /// </summary>
 public class BankPatternEvidenceTests
 {
@@ -73,15 +73,24 @@ public class BankPatternEvidenceTests
     }
 
     [Fact]
-    public void แพตเทิร์นเดิมที่_backfill_เท่า_TimesConfirmed_ต้องได้ความมั่นใจเท่าสูตรเดิม()
+    public void คำยืนยันแบบตั้งใจทั้งหมด_ความมั่นใจต้องเท่าสูตรเดิม()
     {
-        // ครึ่ง "ใบถูกไม่ถูกแตะ": migration ตั้ง ExplicitConfirmCount = TimesConfirmed ครั้งเดียว ⇒ นักเรียนต้องตอบเท่าเดิม
+        // ครึ่ง "ใบถูกไม่ถูกแตะ": ผู้ใช้เลือกเองทุกครั้ง (Explicit = TimesConfirmed) ⇒ นักเรียนตอบเท่าสูตรเดิม
         // สูตรเดิม = Wilson(TimesConfirmed, max(TimesConfirmed, totalForKey))
         foreach (var (n, total) in new[] { (1, 1), (3, 5), (12, 12), (40, 50) })
             Assert.Equal(BankPatternEvidence.Wilson(n, Math.Max(n, total)),
                 BankPatternEvidence.StudentConfidence(n, total, n, total));
         // ความเกี่ยวข้องเดิม: (0.5·jaccard + bucket + 0.2·min(1, n/10)) × recency
         Assert.Equal((0.5 * 0.6 + 0.3 + 0.2 * 0.4) * 1.0, BankPatternEvidence.Relevance(0.6, true, 4, 0), 10);
+    }
+
+    [Fact]
+    public void แถวเก่าก่อนรอบ_201_เริ่ม_Explicit_0_ต้องตอบได้แต่ไม่ถึงเกณฑ์ติ๊ก_คำตัดสินข้อ_99()
+    {
+        // migration ไม่ backfill ⇒ แพตเทิร์นเก่า 40 ครั้งที่แยกไม่ออกว่าใครเลือก = หลักฐานอ่อน (ทิศที่มองเห็น: เสนอน้อยลง ไม่ผิดเงียบ)
+        var c = BankPatternEvidence.StudentConfidence(0, 0, 40, 40);
+        Assert.True(c > 0m && c <= BankPatternEvidence.ImplicitOnlyConfidenceCap);
+        Assert.True(BankPatternEvidence.Relevance(0.6, true, 0, 0) < BankPatternEvidence.Relevance(0.6, true, 40, 0));
     }
 
     [Fact]

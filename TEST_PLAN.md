@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **429 ไฟล์ · 4,128 `[Fact]` + 655 `[Theory]` (2,918 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **429 ไฟล์ · 4,134 `[Fact]` + 655 `[Theory]` (2,918 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5384,6 +5384,9 @@ IsActive=false · ทะเบียนนักเรียนจริง ratc
 | AI-08 | ใบสำคัญจ่ายที่มีการ์ดว่างคั่นกลาง (บรรทัด 2 ว่าง) → "AI แนะนำผังบัญชี" | ผังลงบรรทัดตาม tempId ถูกการ์ด (เดิมเลื่อนผิดบรรทัด) |
 | AI-09 | เรียก `POST document/ai-suggest-pv-accounting` ตรง (สคริปต์) | ทุกบรรทัดมี `mayAutoFill` ที่เซิร์ฟเวอร์ตัดสิน (≥0.70 + รหัสอยู่ในผังของบริษัท) · `sourceLabel` · `warnings` |
 | AI-10 | ฟีดธนาคาร (BankFeed) ตอนปิด provider และนักเรียนตอบเอกสารที่อยู่ในชุดจริง | แถว `Suggested` ป้าย "⚙️ ระบบเสนอ (ดึงจากธนาคาร)" `BANK-MATCH-LOCAL-DOC` (ไม่ใช่ "🤖 AI เสนอ") |
+| AI-11 | ฝ่ายค้าน X-10: นำเข้า statement ที่คำอธิบายเป็น `<img src=x onerror=alert(1)>` แล้วเปิดคำแนะนำ AI / หน้ากระทบยอดกลุ่ม | แสดงเป็นข้อความ ไม่รันสคริปต์ |
+| AI-12 | ฝ่ายค้าน X-3: หน้าต่างจับคู่ → "AI วิเคราะห์" ติ๊กให้ → กดจับคู่โดยไม่แตะ | คำยืนยันบันทึกเป็น Implicit (`ExplicitConfirmCount` ไม่เพิ่ม) · เอาติ๊กออกแล้วติ๊กเอง = Explicit |
+| AI-13 | ฝ่ายค้าน X-2: batch ส่ง `matchType: Payment` พร้อม id ของสมุดรายวัน | 400 "ไม่ใช่การชำระเงินของบริษัทนี้" · ไม่มีอะไรถูกบันทึก |
 
 ### รอบ 201 ทีม GW — Gateway/Integration (`erp-review/2026-10-01/team-GW.md` · BACKLOG §1.1 · C-10 · C-11 · B-1)
 

@@ -107,6 +107,15 @@ public class AiKillSwitchOrchestratorTests
     }
 
     [Fact]
+    public void รายการค้างที่ไม่มีนักเรียน_ลดได้ทางเดียว_ห้ามเพิ่มแถว()
+    {
+        // ฝ่ายค้าน X-8: ratchet ของจำนวน — รอบ 201 = 38 (มีจุดเรียก AI 29 + ไม่มีจุดเรียก 9) · เพิ่มนักเรียนแล้วลดตัวเลขนี้ลงในคอมมิตเดียวกัน
+        const int Round201Baseline = 38;
+        Assert.True(DistillationModelRegistry.KnownGapsWithoutStudent.Count <= Round201Baseline,
+            $"รายการค้างโต {DistillationModelRegistry.KnownGapsWithoutStudent.Count} > {Round201Baseline} — feature ใหม่ต้องมีนักเรียน ห้ามเพิ่มแถวค้าง");
+    }
+
+    [Fact]
     public void ถอดนักเรียน_1_ตัวออกจากทะเบียน_ตัวตรวจต้องฟ้อง()
     {
         // negative test ของตัวตรวจทะเบียน — ตัวตรวจที่ไม่ฟ้องเมื่อถอดนักเรียน = ตัวตรวจที่พัง

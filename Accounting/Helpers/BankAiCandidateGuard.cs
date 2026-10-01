@@ -91,6 +91,16 @@ public static class BankAiCandidateGuard
         return requested.Where(id => id != Guid.Empty && !set.Contains(id)).Distinct().ToList();
     }
 
+    /// <summary>ชนิดของผู้สมัครต้องเป็น<b>ชนิดจริง</b>จากชุดผู้สมัคร ไม่ใช่ชนิดที่ AI อ้าง (ฝ่ายค้าน X-2) — id ถูกแต่ชนิดผิด
+    /// (AI บอก Payment ทั้งที่เป็นสมุดรายวัน) ⇒ เส้นยืนยันเลือกคอลัมน์ผิด (MatchedPaymentId เก็บ id ของ JE) ·
+    /// คืนชนิดจริง (ไม่รู้จัก = คงค่าเดิม — ผู้สมัครที่ไม่รู้จักถูก <see cref="Screen"/> ตัดไปก่อนแล้ว) + ธงว่าแก้หรือไม่</summary>
+    public static (string Type, bool Corrected) RealType(Guid candidateId, string? claimedType, Func<Guid, string?> realTypeOf)
+    {
+        var real = realTypeOf(candidateId);
+        if (string.IsNullOrEmpty(real)) return (claimedType ?? "", false);
+        return (real, !string.Equals(real, claimedType, StringComparison.Ordinal));
+    }
+
     /// <summary>ข้อความเตือนรวมของแผน — นับให้ผู้ใช้เห็นว่ามีข้อเสนอถูกตัดกี่รายการ (ห้ามหายเงียบ)</summary>
     public static string? PlanWarning(int droppedUnknownBankTxn, int droppedNoRealCandidate, int trimmedCandidates)
     {

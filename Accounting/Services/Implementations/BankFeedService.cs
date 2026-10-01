@@ -366,6 +366,10 @@ public class BankFeedService : IBankFeedService
             // รอบ 201 ทีม AI · A-AI2 (H-4): ด่าน "มีคำตอบให้ใช้ไหม" = HasModelAnswer (AI **หรือนักเรียน**) — เดิม `!UsedAi`
             // ทิ้งคำตอบนักเรียนทุกครั้งที่ปิด provider (kill-switch) · เกณฑ์ความมั่นใจเป็นตัวเลขอยู่ที่ ScreenAiProposals (≥ 0.70)
             // + candidate set ด้านล่าง (DOCTRINE §2.5 ห้ามใช้ HasModelAnswer เดี่ยว ๆ)
+            // ⚠ ยังไม่ปิด (ฝ่ายค้าน X-4): นักเรียน BankMatchDistillationModel ตอบเป็น JSON {type, contactId, accountCode}
+            // **ไม่มี id เอกสาร** ⇒ คำตอบนักเรียนตกที่ Guid.TryParse ด้านล่างเสมอ (ทิ้ง = ทิศปลอดภัย ไม่ประทับอะไร) ·
+            // ปิด provider แล้วชั้นนี้ไม่มีคำตอบ — ชั้นในบ้าน (scorer+arbiter ด้านบน) ยังทำงานครบ · ต้องมีนักเรียนที่ตอบ id
+            // จากชุดผู้สมัครจริงก่อนจึงจะปิดข้อนี้ได้ (backlog)
             if (!aiResult.HasModelAnswer
                 || string.IsNullOrEmpty(aiResult.Answer) || aiResult.Answer == "__NEW__"
                 || !Guid.TryParse(aiResult.Answer, out var aiDocId))

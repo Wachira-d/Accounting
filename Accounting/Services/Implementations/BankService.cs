@@ -425,7 +425,10 @@ public partial class BankService : IBankService
     ///   (2) เดิม "ผ่านถ้า net หรือ gross ตรง" = สองโอกาสผ่านต่อใบ →
     ///       ตอนนี้แต่ละใบมียอดเงินสดที่คาดว่าผ่านธนาคาร **ค่าเดียว**
     /// </summary>
-    private async Task ValidateMatchAmountAsync(Guid companyId, BankTransaction txn, IEnumerable<Guid> matchedIds)
+    /// <param name="declaredPaymentIds">id ที่คำขอระบุว่าเป็น "การชำระเงิน" (MatchType=Payment) — ต้องพบในตารางการชำระจริง (ฝ่ายค้าน X-2)</param>
+    /// <param name="declaredJournalEntryIds">id ที่คำขอระบุว่าเป็น "สมุดรายวัน" (MatchType=JournalEntry) — ต้องพบในตารางสมุดรายวันจริง</param>
+    private async Task ValidateMatchAmountAsync(Guid companyId, BankTransaction txn, IEnumerable<Guid> matchedIds,
+        IReadOnlyCollection<Guid>? declaredPaymentIds = null, IReadOnlyCollection<Guid>? declaredJournalEntryIds = null)
     {
         var ids = matchedIds.Where(i => i != Guid.Empty).Distinct().ToList();
         if (ids.Count == 0) return;
@@ -551,6 +554,17 @@ public partial class BankService : IBankService
                     RecordedAmount: gross));
             }
         }
+
+        // ── ชนิดที่คำขอประกาศต้องตรงกับชนิดจริง (ฝ่ายค้าน X-2) — id ของสมุดรายวันที่ส่งมาในช่อง "การชำระเงิน" ถูกเก็บลง
+        // MatchedPaymentId (คอลัมน์ผิด) ⇒ หน้าจอ/การถอนจับคู่หาไม่เจอ · ปฏิเสธพร้อมบอกให้เลือกใหม่
+        var wrongPay = Accounting.Helpers.BankAiCandidateGuard.MissingIds(declaredPaymentIds, payIds);
+        if (wrongPay.Count > 0)
+            throw new InvalidOperationException(
+                $"รายการ {wrongPay.Count} รายการที่ระบุว่าเป็น \u201cการชำระเงิน\u201d ไม่ใช่การชำระเงินของบริษัทนี้ — โหลดหน้าจับคู่ใหม่แล้วเลือกคู่อีกครั้ง");
+        var wrongJe = Accounting.Helpers.BankAiCandidateGuard.MissingIds(declaredJournalEntryIds, foundIds.Except(payIds).ToHashSet());
+        if (wrongJe.Count > 0)
+            throw new InvalidOperationException(
+                $"รายการ {wrongJe.Count} รายการที่ระบุว่าเป็น \u201cสมุดรายวัน\u201d ไม่ใช่สมุดรายวันของบริษัทนี้ — โหลดหน้าจับคู่ใหม่แล้วเลือกคู่อีกครั้ง");
 
         var result = Accounting.Helpers.BankMatchAmountReconciler.Reconcile(
             txn.Amount, bankDirection, items);
