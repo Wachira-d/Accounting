@@ -1128,9 +1128,14 @@ public class DocumentController : ControllerBase
         if (docType == null) return NotFound(new ApiResponse<DocumentResponse?>(false, null, "ไม่พบเอกสาร"));
         if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
             return Forbid403<DocumentResponse?>("ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกการยกเลิกทาง e-Tax ต้องใช้สิทธิ์ยกเลิกเอกสาร");
-        var deny = await gate.DenyAttachmentAsync(companyId, userIdGuid, "Document", documentId, AttachmentAccess.Read,
-            "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิกทาง e-Tax", request.EvidenceAttachmentId);
-        if (deny != null) return StatusCode(deny.Status, new ApiResponse<DocumentResponse?>(false, null, deny.Message));
+        // รอบ 200 ทีม V1I (V1H-O6 · คู่สมมาตรของ EtaxController.Void): ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์มา — ทาง (ข)/(ค) และทาง (ก) ที่ไม่ถึงกรมสรรพากรไม่ใช้ไฟล์
+        // (service ไม่แตะไฟล์เมื่อไม่มี id) · ทาง (ก) ที่ถึงกรมสรรพากรแล้วต้องส่งไฟล์ ⇒ ผ่านด่านนี้เสมอ
+        if (request.EvidenceAttachmentId != null)
+        {
+            var deny = await gate.DenyAttachmentAsync(companyId, userIdGuid, "Document", documentId, AttachmentAccess.Read,
+                "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิกทาง e-Tax", request.EvidenceAttachmentId);
+            if (deny != null) return StatusCode(deny.Status, new ApiResponse<DocumentResponse?>(false, null, deny.Message));
+        }
         var result = await _documentService.ResolveEtaxCancellationAsync(companyId, documentId, request, userIdGuid.ToString());
         return Ok(new ApiResponse<DocumentResponse?>(true, result.Source, result.Message));
     }
@@ -1421,8 +1426,12 @@ public class DocumentController : ControllerBase
         var denyVoidPay = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             payDocType.Value, DocPerm.Void, "ยกเลิกการชำระของ");
         if (denyVoidPay != null) return Forbid403<string>(denyVoidPay);
-        await _documentService.VoidPaymentAsync(companyId, paymentId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิกการชำระเงินสำเร็จ"));
+        // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): ธงที่ติดระหว่างยกเลิก (ใบกำกับทาง ค ที่เสียยอดครอบ) ต้องถึงผู้กด — เดิมทิ้งผล ตอบแค่ "สำเร็จ"
+        var voided = await _documentService.VoidPaymentAsync(companyId, paymentId);
+        var notice = string.Join(" · ", new[] { voided.EtaxCancellationFlag, voided.OutputVatNotice }
+            .Where(n => !string.IsNullOrWhiteSpace(n)));
+        return Ok(new ApiResponse<string>(true, notice.Length == 0 ? null : notice,
+            notice.Length == 0 ? "ยกเลิกการชำระเงินสำเร็จ" : "ยกเลิกการชำระเงินสำเร็จ — " + notice));
     }
 
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง)

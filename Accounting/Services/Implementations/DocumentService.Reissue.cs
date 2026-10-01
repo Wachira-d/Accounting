@@ -750,7 +750,7 @@ public partial class DocumentService
                     rcpt.EtaxCancelRequiredReason = null;
                     rcpt.UpdatedAt = now;
                     rcpt.UpdatedBy = actor;
-                    AppendInternalNote(rcpt, $"{EtaxReissueReview.ResolvedMarker} ใบกำกับเดิมยังใช้ได้ — {evidenceLabel} · ยอดรับชำระที่มีผล {liveCoverage:N2} — {reason}");
+                    AppendInternalNote(rcpt, EtaxReissueReview.KeptOriginalMarker + $" — {evidenceLabel} · ยอดรับชำระที่มีผล {liveCoverage:N2} — {reason}");
                     message = $"บันทึกแล้ว — ใบเสร็จ {rcpt.DocumentNumber} ยังมีผล (ใบกำกับของการขายนี้) · การรับชำระใหม่ {liveCoverage:N2} บาทครอบยอดใบเสร็จ "
                         + "· ภาษีขายไม่ถูกถอย · ไม่มีการยกเลิกใด ๆ";
                 }
@@ -1033,15 +1033,19 @@ public partial class DocumentService
 
     /// <summary>ยอดรับชำระที่ยังมีผลของใบต้นทาง นับจาก<b>รายการรับชำระจริง</b> (ไม่ใช่ <c>PaidAmount</c> ซึ่งรวมใบลดหนี้ที่หักล้างด้วย) — การรับชำระตรง =
     /// ยอด + ค่าธรรมเนียม + บรรทัดปรับ (สูตรเดียวกับตอนคืนยอดใน <c>ReversePaymentInternalAsync</c>) · การจัดสรรหลายใบ = ยอดที่จัดสรรให้ใบนี้ · tenant
-    /// (รอบ 200 ทีม V1H · คำตัดสินข้อ 54 — ทาง (ค) ต้องครอบยอดใบเสร็จเดิม)</summary>
-    private async Task<decimal> LivePaymentCoverageAsync(Guid companyId, Guid sourceDocumentId)
+    /// (รอบ 200 ทีม V1H · คำตัดสินข้อ 54 — ทาง (ค) ต้องครอบยอดใบเสร็จเดิม)
+    /// <para>รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): <paramref name="excludePaymentId"/> = การรับชำระที่กำลังยกเลิกในธุรกรรมนี้ (ยังไม่ save — แถวในฐานยังไม่ถูกลบ)
+    /// ⇒ ไม่นับทั้งการรับตรงและการจัดสรรของรายการนั้น</para></summary>
+    private async Task<decimal> LivePaymentCoverageAsync(Guid companyId, Guid sourceDocumentId, Guid? excludePaymentId = null)
     {
         var allocated = await _db.PaymentAllocations.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.DocumentId == sourceDocumentId && !a.IsDeleted
+                && (excludePaymentId == null || a.PaymentId != excludePaymentId.Value)
                 && _db.Payments.Any(p => p.Id == a.PaymentId && p.CompanyId == companyId && !p.IsDeleted))
             .SumAsync(a => (decimal?)a.AllocatedAmount) ?? 0m;
         var direct = await _db.Payments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.DocumentId == sourceDocumentId && !p.IsDeleted
+                && (excludePaymentId == null || p.Id != excludePaymentId.Value)
                 && !_db.PaymentAllocations.Any(a => a.PaymentId == p.Id && a.CompanyId == companyId && !a.IsDeleted))
             .SumAsync(p => (decimal?)(p.Amount + p.FeeAmount + p.SettlementAdjustmentAmount)) ?? 0m;
         return allocated + direct;

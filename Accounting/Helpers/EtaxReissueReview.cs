@@ -26,6 +26,19 @@ public static class EtaxReissueReview
     /// <summary>ป้ายของเส้นปิดธงรอบ V1G (ใบเสร็จคงแสดง · แยกทางยกเลิก/ใบลดหนี้)</summary>
     public const string ResolvedMarker = "[ETAX-CANCEL-RESOLVED]";
 
+    /// <summary>ป้ายของการปิดธงทาง (ค) “ใบกำกับเดิมยังใช้ได้” (ข้อ 54) — ฝั่งเขียน (<c>ResolveEtaxCancellationAsync</c>) และฝั่งอ่าน
+    /// (<see cref="LastResolutionKeptOriginal"/>) ใช้ค่าคงที่ตัวนี้ตัวเดียว (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O1)</summary>
+    public const string KeptOriginalMarker = ResolvedMarker + " ใบกำกับเดิมยังใช้ได้";
+
+    /// <summary>การปิดธงครั้ง<b>ล่าสุด</b>ของใบเสร็จนี้เป็นทาง (ค) ไหม — ป้าย <see cref="ResolvedMarker"/> ตัวสุดท้ายในหมายเหตุภายในต้องเป็น
+    /// <see cref="KeptOriginalMarker"/> (ปิดด้วยทาง ค แล้วภายหลังปิดซ้ำด้วยใบลดหนี้ = ไม่ใช่) · หมายเหตุว่าง/ไม่มีป้าย = false · pure (V1H-O1)</summary>
+    public static bool LastResolutionKeptOriginal(string? internalNotes)
+    {
+        if (string.IsNullOrEmpty(internalNotes)) return false;
+        var i = internalNotes.LastIndexOf(ResolvedMarker, StringComparison.Ordinal);
+        return i >= 0 && string.CompareOrdinal(internalNotes, i, KeptOriginalMarker, 0, KeptOriginalMarker.Length) == 0;
+    }
+
     /// <summary>ใบเสร็จถือ VAT ที่ยังมีผลและติดธง แต่ใบต้นทาง (ใบแจ้งหนี้) ไม่มีวันที่ภาษีขายถึงกำหนดแล้ว = ถูกถอยไปแล้วทั้งที่ใบกำกับยังมีผล</summary>
     public static bool FlaggedReceiptVatUndone(bool receiptLive, decimal receiptVat, bool flagged, DocumentType sourceType, DateTime? sourceOutputVatDueAt)
         => receiptLive && flagged && receiptVat > 0.005m && sourceType == DocumentType.Invoice && sourceOutputVatDueAt == null;

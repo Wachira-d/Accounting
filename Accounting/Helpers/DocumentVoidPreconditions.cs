@@ -123,15 +123,25 @@ public static class DocumentVoidPreconditions
             .Where(e => e.CompanyId == companyId && ids.Contains(e.DocumentId))
             .Select(e => new { e.DocumentId, e.Status })
             .ToListAsync(ct);
-        var emailed = (await db.DocumentEmailLogs.AsNoTracking()
+        var emailed = await EtaxEmailedWithRdTimestampAsync(db, companyId, ids, ct);
+        foreach (var id in ids)
+            result[id] = EffectiveEtax(StrongestEtax(rows.Where(r => r.DocumentId == id).Select(r => r.Status)), emailed.Contains(id));
+        return result;
+    }
+
+    /// <summary>เอกสารที่มีบันทึก e-Tax by Email ส่งสำเร็จพร้อม CC ประทับเวลาของกรมสรรพากร (ถึงกรมสรรพากรแล้วแม้แถว e-Tax ยังไม่ใช่ส่งแล้ว/ตอบรับ) —
+    /// เกณฑ์ตัวเดียวของ <see cref="EffectiveEtaxAsync"/> และด่านยกเลิกแถว e-Tax รายแถว (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O2) · tenant แล้ว</summary>
+    public static async Task<HashSet<Guid>> EtaxEmailedWithRdTimestampAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<Guid> documentIds, CancellationToken ct = default)
+    {
+        if (documentIds.Count == 0) return new HashSet<Guid>();
+        var ids = documentIds.Distinct().ToList();
+        return (await db.DocumentEmailLogs.AsNoTracking()
                 .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.DocumentId != null && ids.Contains(l.DocumentId.Value)
                     && l.IsEtaxByEmail && l.IncludedRdTimestamp && l.Status == EmailLogStatus.Sent)
                 .Select(l => l.DocumentId!.Value)
                 .ToListAsync(ct))
             .ToHashSet();
-        foreach (var id in ids)
-            result[id] = EffectiveEtax(StrongestEtax(rows.Where(r => r.DocumentId == id).Select(r => r.Status)), emailed.Contains(id));
-        return result;
     }
 
     /// <summary>
@@ -165,8 +175,12 @@ public static class DocumentVoidPreconditions
                 + (accepted
                     ? "ดำเนินการยกเลิก/ออกใบลดหนี้ที่ระบบ e-Tax ของกรมสรรพากร (หรือผู้ให้บริการ e-Tax) "
                     : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนี้ (ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) ")
-                + "แล้วกด “บันทึกว่ายกเลิกทาง e-Tax แล้ว” บนใบเสร็จนี้ (ระบบยกเลิกใบเสร็จและปลดบล็อกใบต้นทางให้) · แจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล · "
-                + "ถ้าลูกค้าชำระใหม่ครอบยอดแล้วและไม่ยกเลิกใบนี้ ให้เลือกทาง “ใบกำกับเดิมยังใช้ได้” (คำตัดสินข้อ 54)");
+                + "แล้วกด “บันทึกว่ายกเลิกทาง e-Tax แล้ว” บนใบเสร็จนี้ (ระบบยกเลิกใบเสร็จและปลดบล็อกใบต้นทางให้) · แจ้งลูกค้าว่าใบเสร็จนี้ไม่มีผล"
+                // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O7): ทาง (ค) ใช้ได้เฉพาะใบที่กรมสรรพากรตอบรับแล้ว (EtaxCancellationResolution ปฏิเสธ Submitted) ⇒
+                // ใบที่ยังไม่รู้ผลห้ามแนะนำทางที่จะถูกปฏิเสธ
+                + (accepted
+                    ? " · ถ้าลูกค้าชำระใหม่ครอบยอดแล้วและไม่ยกเลิกใบนี้ ให้เลือกทาง “ใบกำกับเดิมยังใช้ได้” (คำตัดสินข้อ 54)"
+                    : ""));
         return new AutoReceiptEtaxDecision(AutoReceiptEtaxAction.Refuse,
             $"ยกเลิกการชำระนี้ไม่ได้ — ใบเสร็จ {no} ที่ออกคู่การรับชำระ "
             + (accepted
@@ -204,6 +218,31 @@ public static class DocumentVoidPreconditions
     /// </summary>
     public static bool ReceiptHoldsTaxPointFor(Guid documentId, Guid? receiptRelatedDocumentId, AutoReceiptEtaxAction action, decimal receiptVatAmount)
         => receiptRelatedDocumentId == documentId && FlaggedReceiptKeepsTaxPoint(action, receiptVatAmount);
+
+    /// <summary>
+    /// **ใบกำกับที่ถูกยืนยันว่า “ใบกำกับเดิมยังใช้ได้” (ทาง ค · ข้อ 54) เสียการรับชำระที่ครอบยอดไปแล้ว — ต้องติดธงกลับไหม** (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O1)
+    /// <para>ทาง (ค) ล้างธงของใบเสร็จเดิม (การรับชำระของมันถูกยกเลิกไปแล้ว) โดยอาศัย "การรับชำระใหม่ที่ยังมีผลครอบยอดใบเสร็จ" เป็นเงื่อนไข · ถ้าภายหลังการรับชำระใหม่นั้น
+    /// ถูกยกเลิก/เช็คเด้ง ⇒ ใบกำกับที่กรมสรรพากรมีระบุเงินที่ไม่ได้รับจริงอีกครั้ง — เดิมตัวถอยภาษีเห็นใบนี้เป็น "ใบเสร็จถือ VAT ที่ยังมีผล" แล้วจบเงียบ
+    /// (ไม่ถอยภาษี · ไม่มีธง · ไม่มีคำเตือน) ⇒ <b>ติดธง "ต้องยกเลิกทาง e-Tax" กลับ</b> พร้อมทางไปต่อ (ทิศที่มองเห็นและแก้ทัน — DOCTRINE §1) ·
+    /// ภาษีขายตามใบนี้ยังอยู่ในแบบ (ใบกำกับยังมีผล) จนผู้ใช้เลือกทางปิดธงใหม่</para>
+    /// <para>ไม่ใช่ทาง (ค) ครั้งล่าสุด / ติดธงอยู่แล้ว / ใบไม่ถือภาษี / ยอดที่ยังมีผลยังครอบ ⇒ null (ไม่แตะ) · G6: pure</para>
+    /// </summary>
+    /// <param name="lastResolutionKeptOriginal">การปิดธงครั้งล่าสุดของใบนี้เป็นทาง (ค) (<see cref="EtaxReissueReview.LastResolutionKeptOriginal"/>)</param>
+    /// <param name="flagged">ใบนี้ติดธง "ต้องยกเลิกทาง e-Tax" อยู่แล้ว</param>
+    /// <param name="livePaymentCoverage">ยอดรับชำระที่ยังมีผลของใบต้นทาง <b>ไม่นับ</b>การรับชำระที่กำลังยกเลิก</param>
+    /// <returns>ข้อความธง (null = ไม่ต้องติดธง)</returns>
+    public static string? KeptOriginalCoverageLost(bool lastResolutionKeptOriginal, bool flagged, decimal receiptVatAmount,
+        decimal receiptTotalAmount, decimal livePaymentCoverage, string? receiptNumber, string? paymentNumber)
+    {
+        if (!lastResolutionKeptOriginal || flagged || receiptVatAmount <= 0.005m) return null;
+        if (livePaymentCoverage + 0.005m >= receiptTotalAmount) return null;
+        var no = string.IsNullOrWhiteSpace(receiptNumber) ? "ใบนี้" : receiptNumber!.Trim();
+        var pay = string.IsNullOrWhiteSpace(paymentNumber) ? "" : " " + paymentNumber!.Trim();
+        return $"ต้องยกเลิกทาง e-Tax หรือยืนยันใหม่ — ใบกำกับ {no} เคยถูกยืนยันว่า “ใบกำกับเดิมยังใช้ได้” เพราะลูกค้าชำระใหม่ครอบยอด "
+            + $"แต่การรับชำระ{pay} ถูกยกเลิกแล้ว ⇒ ยอดรับชำระที่ยังมีผล ({livePaymentCoverage:N2}) ไม่ครอบยอดใบกำกับนี้ ({receiptTotalAmount:N2}) · "
+            + "ใบกำกับยังมีผลที่กรมสรรพากร และภาษีขายตามใบนี้ยังรายงานใน ภ.พ.30 — ทางไปต่อ: บันทึกการรับชำระใหม่ให้ครบแล้วเลือก “ใบกำกับเดิมยังใช้ได้” อีกครั้ง "
+            + "หรือยกเลิกทาง e-Tax / ออกใบลดหนี้ แล้วบันทึกผลที่ใบนี้";
+    }
 
 
     /// <summary>

@@ -757,11 +757,17 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var etax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
 
+        // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O5): ไฟล์หลักฐานต้องแนบหลังส่ง e-Tax — ไฟล์ของเอกสารที่แนบไว้ก่อน (PDF ต้นฉบับ) ไม่ใช่หลักฐานการยกเลิก
+        var evidenceNotBefore = EtaxVoidPolicy.EvidenceNotBefore(etax.SubmittedAt, etax.CreatedAt);
         var evidenceId = request?.EvidenceAttachmentId;
         var evidenceAttached = evidenceId is Guid fileId
             && await _db.FileAttachments.AsNoTracking().AnyAsync(a => a.Id == fileId && a.CompanyId == companyId && !a.IsDeleted
-                && a.EntityType == "Document" && a.EntityId == etax.DocumentId);
-        var verdict = EtaxVoidPolicy.Decide(etax.Status, request?.Reason, evidenceAttached);
+                && a.EntityType == "Document" && a.EntityId == etax.DocumentId && a.CreatedAt > evidenceNotBefore);
+        // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O2): ตัดสินด้วยสถานะที่รวม e-Tax by Email ที่ประทับเวลาแล้ว (เกณฑ์เดียวกับ EffectiveEtaxAsync) — ไม่ใช่สถานะแถวอย่างเดียว
+        var emailedWithRdTimestamp = (await DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(_db, companyId, new[] { etax.DocumentId }))
+            .Contains(etax.DocumentId);
+        var decidedStatus = EtaxVoidPolicy.StatusForVoid(etax.Status, emailedWithRdTimestamp);
+        var verdict = EtaxVoidPolicy.Decide(decidedStatus, request?.Reason, evidenceAttached);
         if (!verdict.Allowed)
             throw new BusinessRuleException(verdict.Reason ?? "ยกเลิก e-Tax นี้ไม่ได้", "RD-ETAX-VOID-EVIDENCE", 409);
 
@@ -785,7 +791,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             NewValues = JsonSerializer.Serialize(new
             {
                 action = "etax-voided-in-system",
-                ruleCode = before == EtaxStatus.Submitted ? "RD-ETAX-VOID-SUBMITTED-EVIDENCE" : "RD-ETAX-VOID-NOT-REACHED",
+                ruleCode = decidedStatus == EtaxStatus.Submitted ? "RD-ETAX-VOID-SUBMITTED-EVIDENCE" : "RD-ETAX-VOID-NOT-REACHED",
                 legalReference = "คำตัดสินรอบ 200 ข้อ 51 · DECISION_AUDIT R1 (ระบบไม่ประทับสถานะของกรมสรรพากรเอง)",
                 status = EtaxStatus.Voided.ToString(),
                 statusLabel = EtaxVoidPolicy.VoidedLabel,
