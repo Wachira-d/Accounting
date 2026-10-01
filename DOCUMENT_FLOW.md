@@ -2530,13 +2530,27 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   เคยจ่ายแล้วกลับรายการ (`ReopenedAt` → ใช้ ✏️ แก้ยอดรายคน) · นำเข้าจากระบบนอก (TakeTime) · **รอบ Approved ที่มีหลักฐาน "ยื่นแล้ว/นำส่งแล้ว"** ·
   **ปันต้นทุนโครงการแล้ว (ทุกสถานะ)** · Draft/Calculated ไม่ถูกหลักฐานของงวดล็อก (รอบที่สองของเดือนต้องคำนวณได้) · ด่านอยู่ก่อน `RemoveRange(run.Details)`
   (`required_call_site_check`) · **ไม่ทำ migration อัตโนมัติ** ให้รอบที่คำนวณก่อนแก้สูตร (HR กดเอง — เปลี่ยนตัวเลขที่อนุมัติแล้วเงียบ = สถานะที่ระบบประทับเอง)
-- **หลักฐาน "ยื่นแล้ว"** (`PayrollService.LoadRecalculateLockEvidenceAsync` `:4354` · batch · กรอง `CompanyId` + `!IsDeleted`): **ปฏิทินภาษี** `TaxCalendarEvents`
+- **หลักฐาน "ยื่นแล้ว"** (`PayrollService.LoadRecalculateLockEvidenceAsync` `:4572` · batch · กรอง `CompanyId` + `!IsDeleted`): **ปฏิทินภาษี** `TaxCalendarEvents`
   (`ภ.ง.ด.1`/`สปส.1-10` · `Status == "Filed"` · ปี/เดือนของรอบ — ทางเดียวบนจอ) + `ComplianceFiling` (PND1/SSO1-10 Filed/Accepted — ไม่มีหน้าจอ) + `TaxReport`
   เก่า (WHT1/SocialSecurity ที่ไม่ใช่ร่างหรือถูกล็อก) · **"นำส่งแล้ว"** = `SsoSettledAt` **ของรอบนั้น** (รอบโบนัสในเดือนที่รอบอื่นนำส่งแล้วไม่ล็อก) · ปันต้นทุน =
   `EmployeeProjectTimes.AllocatedPayrollRunId` · `EFilingExport` (PND.1) = **คำเตือนเท่านั้น** (`RecalculateWarning`) · การดาวน์โหลดไฟล์ยื่นไม่ทิ้งร่องรอย
   (ห้ามอนุมาน "ดาวน์โหลด = ยื่น" — confirm เตือนให้บันทึกการยื่นก่อน) · ข้อความทางไปต่อตามแหล่งที่บันทึกจริง (`PayrollFilingMark.UndoHint`)
 - **✏️ แก้ยอดรายคน** `CanEditAmounts(status, evidence)` ด่านเดียวกับคำนวณใหม่ ⇒ `PAYROLL-EDIT-LOCKED` (`UpdatePayrollDetailAsync`) · ข้อความที่แนะนำ ✏️ ออกเฉพาะเมื่อ ✏️ ใช้ได้จริง ·
   **แหล่งจ่าย** แยก `CanSetPaymentAccount(status)` (ไม่อยู่ในแบบยื่น — ไม่ถูกล็อกด้วยหลักฐาน)
+- **➕/🗑 พนักงานในรอบ (รอบ 200 ทีม PR1)** — ทางเข้าใหม่สำหรับรอบที่คำนวณ/**นำเข้าจากระบบนอก** (คำนวณใหม่ไม่ได้) และรอบในระบบ (ทางเลือกนอกจากคำนวณใหม่ทั้งรอบ):
+  `GET runs/{id}/addable-employees` (`GetAddableEmployeesAsync` · ด่าน `CheckPayrollAccessAsync` · เงินเดือนคืนตาม `CanViewPayrollAsync`) ·
+  `POST runs/{id}/employees` (`AddPayrollDetailAsync` · body `AddPayrollDetailRequest`) · `DELETE runs/{id}/employees/{employeeId}?reason=` (`RemovePayrollDetailAsync`) —
+  ทั้งสองเขียนผ่าน `RequirePayrollWriteAsync(..., PayrollRun)` · ธุรกรรม + `FOR UPDATE` แถวรอบ (tenant) แล้วอ่านรอบใหม่ใต้ล็อก · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง
+  **ชุดเดียวกับ ✏️** (`PAYROLL-EDIT-LOCKED`) · **อยู่ในงวด** = `Helpers/PayrollEmployeeEligibility.InPeriod/Reason` ตัวเดียว (ย้ายจาก inline ใน `CalculatePayrollAsync` ·
+  D-S2 ลาออกกลางงวดยังอยู่) — ไม่ผ่าน ⇒ `PAYROLL-EMPLOYEE-NOT-IN-PERIOD` พร้อมเหตุผล · ซ้ำในรอบ ⇒ 409 `PAYROLL-DETAIL-DUPLICATE` (ทางไปต่อ ✏️ แก้ยอด) ·
+  **ภาษีหัก ณ ที่จ่าย + ฐาน ปกส. + เหตุผล บังคับ** (0 ได้ถ้าตั้งใจ · ระบบไม่แต่ง — §50/§54 · ม.33) · รายได้รวม 0 ⇒ ปฏิเสธ · แหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย"
+  (`IsValidNetPaymentAccountAsync`) · ยอดรายคนผ่าน **ตัวเติมยอดตัวเดียวกับ ✏️** `Helpers/PayrollDetailAmounts.Apply` (แถวใหม่ `TaxableGross = GrossIncome` · ปกส. สองฝั่งจากฐาน) ·
+  กองทุนเงินทดแทนของแถวใหม่ = `WorkersCompensationBase.Contribution(ฐาน ปกส., อัตรา)` เมื่อบริษัทเปิดใช้ + พนักงานอยู่ใน ปกส. (กติกาเดียวกับเส้นคำนวณ) ·
+  ยอดรวมรอบ `PayrollDetailAmounts.RecomputeRunTotals` (ใช้ร่วมกับ ✏️ · นับ `EmployeeCount` + `TotalWorkersCompensation` จากแถวที่ยังไม่ลบ) · **สถานะรอบคงเดิม**
+  (Approved คงเป็น Approved เหมือน ✏️) · เอาออก = **soft-delete** `PayrollDetail.IsDeleted` (query filter ตัดออกจาก ภ.ง.ด.1 · สปส.1-10 · 50 ทวิ · สลิป · JE ตอนจ่าย ·
+  ไม่มีเส้นอ่านแถวนี้ผ่าน `IgnoreQueryFilters`/raw SQL) · ห้ามเหลือ 0 คน (`PAYROLL-DETAIL-LAST`) · ห้ามเอาออกเมื่อเวลาทำงานของคนนี้ถูกปันเข้าโครงการด้วยรอบนี้แล้ว
+  (`PAYROLL-DETAIL-ALLOCATED`) · audit ทั้งสองทางผ่าน `AddChainedAuditLog` (entity `PayrollRun` · ชื่อ/รหัสพนักงาน · ยอด · เหตุผล) · หน้า `payroll.html` ใช้โมดัลรายคนตัวเดียวกับ ✏️
+  (`_edInputsHtml` · สุทธิสด `_edRecalc` ตัวเดียว) · ปุ่ม ➕ ไม่ได้ ⇒ disabled + เหตุผล · ลิงก์ "สร้างพนักงานใหม่" → `employees.html?new=1` (เปิดฟอร์มสร้าง)
 - **50 ทวิ ภ.ง.ด.1** (D-01): เลขผู้เสียภาษีพนักงาน = `Helpers/EmployeeTaxIdentity.Resolve(taxId, citizenId)` (TaxId ที่กรอก → เลขบัตร → null) ใช้ใน 50 ทวิ
   รายเดือน (ด่าน + ค้นใบมือ + ค้น/สร้าง Contact) · รายปี · ไฟล์ ภ.ง.ด.1/1ก/91 · รายงาน ภ.ง.ด.1ก · Contact จากใบเบิก/เงินทดรอง — _เดิม `Employee.TaxId` ไม่มี
   ผู้เขียนแต่เป็นด่านเดียว ⇒ "ออก 50 ทวิไม่ครบ" ทุกงวด + นำส่ง ภ.ง.ด.1 ติด `WHT-CERT-UNISSUED` ตลอดกาล_ · ไฟล์ สปส.1-10 ใช้ `CitizenId` ตรง (ถูกต้อง)
@@ -3817,7 +3831,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 | **หาผู้ติดต่อด้วยเลขภาษี + สาขา** | `Helpers/ContactTaxBranchKey.cs` (§6.2i) · checker `tools/contact_taxid_only_match_check.py` |
 | **ด่านไฟล์แนบ/สแกน** | `Services/Implementations/AttachmentAccessGate.cs` + `Helpers/AttachmentPermissionScope.cs` (§6.2h) · checker `tools/attachment_gate_check.py` |
 | **ธง VAT บริษัท (stopgap)** | `Helpers/CompanyVatStatus.cs` + `Helpers/CompanySettingsFactory.cs` · รายงาน `Controllers/VatFlagConsistencyController.cs` |
-| **รอบเงินเดือน: คำนวณใหม่/แก้ยอด/ฐาน ปกส.** | `Helpers/PayrollRunEditPolicy.cs` · `PayrollService.LoadRecalculateLockEvidenceAsync` · `Helpers/SsoWageBase.ForPeriod` (§3.8) |
+| **รอบเงินเดือน: คำนวณใหม่/แก้ยอด/ฐาน ปกส./➕🗑 พนักงานในรอบ** | `Helpers/PayrollRunEditPolicy.cs` · `PayrollService.LoadRecalculateLockEvidenceAsync` · `Helpers/SsoWageBase.ForPeriod` · `Helpers/PayrollEmployeeEligibility.cs` · `Helpers/PayrollDetailAmounts.cs` (§3.8) |
 | **ใบเบิก: ด่านสิทธิ์ + SoD + หลักฐาน** | `Helpers/ExpenseClaimActionPolicy.cs` · `Helpers/ExpenseClaimEvidencePolicy.cs` · `ExpenseClaimService.EnsureClaimActionAsync` (§6.2h) |
 | แก้ stock movement (ทิศทางต่อชนิดเอกสาร) | `DocumentService.ApplyStockMovementsAsync` |
 | **แก้การเขียนสต็อกเอง (ยอด/คลัง/ต้นทุน)** | `Services/Implementations/Inventory/StockLedger.cs` — **ที่เดียวของระบบ** |
@@ -3912,7 +3926,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 200 ทีม V1I — แก้ผลฝ่ายค้านงาน V1H: ใบกำกับทาง (ค) ที่เสียยอดครอบถูกติดธงกลับ (O1) · ยกเลิก e-Tax ดู e-Tax by Email + หลักฐานต้องแนบหลังส่ง (O2/O5) · ยกเลิกการชำระล็อกเอกสารก่อนแถว Payment (O3) · ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์ (O6) · ธง Submitted ไม่แนะนำทาง ค (O7) (§2.4c · §3.5) — commit 3f644286)_
+_Last verified against codebase: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม V1I — แก้ผลฝ่ายค้านงาน V1H: ใบกำกับทาง (ค) ที่เสียยอดครอบถูกติดธงกลับ (O1) · ยกเลิก e-Tax ดู e-Tax by Email + หลักฐานต้องแนบหลังส่ง (O2/O5) · ยกเลิกการชำระล็อกเอกสารก่อนแถว Payment (O3) · ด่านไฟล์แนบเฉพาะเมื่อส่งไฟล์ (O6) · ธง Submitted ไม่แนะนำทาง ค (O7) (§2.4c · §3.5) — commit 3f644286)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม V1H — คำตัดสินข้อ 50–54: ยกเลิกการชำระที่จัดสรรหลายใบถอยภาษีขายรายใบผ่านตัวเดียวกับเส้นใบเดียว (ข้อ 50) · ยกเลิก e-Tax แถว Submitted ต้องแนบไฟล์หลักฐาน + ป้าย "ยกเลิกในระบบนี้" (ข้อ 51) · ปิดธงเมื่อรับหลายงวด = ปฏิเสธพร้อมทางไปต่อ ส่วนใบกำกับรายงวด 📋 (ข้อ 52) · ตัวกลับภาษีขายคนละเดือนในรายงานข้อ 44 (ข้อ 53) · ปิดธงทาง (ค) ใบกำกับเดิมยังใช้ได้ (ข้อ 54) (§2.4c · §3.5) — commit abf0892f)_
 

@@ -1224,6 +1224,11 @@ const API = {
       getEmployeeLineStatus: (empId) => API.get(`${base}/payroll/employees/${empId}/line-status`),
       setPayrollPaymentAccount: (runId, empId, accountCode) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/payment-account`, { accountCode }),
       updatePayrollDetail: (runId, empId, body) => API.put(`${base}/payroll/runs/${runId}/employees/${empId}/detail`, body),
+      // ➕/🗑 เพิ่ม/เอาพนักงานออกจากรอบที่คำนวณ/นำเข้าแล้ว (ด่านเดียวกับแก้ยอด · เหตุผลบังคับ)
+      getPayrollAddableEmployees: (runId) => API.get(`${base}/payroll/runs/${runId}/addable-employees`),
+      addPayrollDetail: (runId, body) => API.post(`${base}/payroll/runs/${runId}/employees`, body),
+      removePayrollDetail: (runId, empId, reason) =>
+        API.del(`${base}/payroll/runs/${runId}/employees/${empId}?reason=${encodeURIComponent(reason || '')}`),
       // กลับรายการจ่าย (Paid → Approved) เพื่อแก้ยอดย้อนหลังแล้วจ่ายใหม่
       reopenPayrollRun: (runId, reason) => API.post(`${base}/payroll/runs/${runId}/reopen`, { reason }),
       getPayrollItems: () => API.get(`${base}/payroll/items`),

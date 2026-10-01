@@ -4041,3 +4041,10 @@ _2026-10-01 รอบ 200 ทีม V1I — แก้ผลฝ่ายค้า
 - เทสต์ `VoidReissueR200ITests` (สองทิศทุกข้อ) · required_call_site +9 แถว — commit 3f644286)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 200 ฝ่ายค้านรอบสาม V1I-X1 — ลำดับล็อกกลาง ใบตัวเอง → ใบต้นทาง → เลข JE: `ApproveDocumentAsync`/`VoidDocumentAsync` ล็อกใบต้นทาง (`LockRelatedSourceDocumentAsync`) ก่อนออก/กลับ JE ⇒ ไม่วนรอกับ `VoidPaymentAsync` ที่ V1I สลับให้ล็อกเอกสารก่อน · required_call_site +3 แถว)_
+
+_2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (โจทย์ผู้ใช้: รอบที่ import จากระบบนอกคำนวณใหม่ไม่ได้ และหน้ารอบมีแค่ ✏️ แก้ยอด/แหล่งจ่าย — ไม่มีทางเพิ่ม/เอาออก · รายงาน `erp-review/2026-09-29/team-PR1.md`):
+- `Helpers/PayrollEmployeeEligibility` (`InPeriod` expression + `Reason` ข้อความไทยพร้อมทางไปต่อ) — ตัวตั้งเดียวของ "อยู่ในงวด" ย้ายจาก inline ใน `CalculatePayrollAsync` (D-S2 คงเดิม) · ใช้ทั้งคำนวณ · เพิ่ม · รายชื่อที่เพิ่มได้
+- `Helpers/PayrollDetailAmounts.Apply` + `RecomputeRunTotals` — ตัวเติมยอดรายคน/ยอดรวมรอบตัวเดียวของ ✏️ แก้ยอดและ ➕ เพิ่ม (ย้ายจาก `UpdatePayrollDetailAsync` คำต่อคำ · ยอดรวมนับ `EmployeeCount` + `TotalWorkersCompensation` จากแถวที่ยังไม่ลบ)
+- `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
+- `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
+- เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_

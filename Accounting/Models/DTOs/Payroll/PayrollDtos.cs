@@ -337,7 +337,11 @@ public record PayrollRunResponse(
     // แหล่งจ่ายรายคน — ไม่อยู่ในแบบยื่น จึงไม่ถูกล็อกด้วยหลักฐานการยื่นแบบ ✏️ แก้ยอด (PayrollRunEditPolicy.CanSetPaymentAccount)
     bool CanSetPaymentAccount = false,
     // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. ของงวดนี้ (Helpers/SsoLateFee · เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
-    DateTime? SsoDueDate = null);
+    DateTime? SsoDueDate = null,
+    // รอบ 200 (PR1): ช่วงงวดของรอบ — โมดัล ➕ เพิ่มพนักงานเข้ารอบ ใช้บอกผู้ใช้ว่ารายชื่อที่เพิ่มได้ต้องอยู่ในช่วงไหน
+    // (เซิร์ฟเวอร์ตัดสินสิทธิ์ที่ PayrollEmployeeEligibility — หน้าเว็บแค่แสดงช่วงวันที่)
+    DateTime? PeriodStart = null,
+    DateTime? PeriodEnd = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
@@ -405,6 +409,38 @@ public record UpdatePayrollDetailRequest(
     decimal? ProvidentFundEmployee = null,
     decimal? LoanDeduction = null,
     decimal? OtherDeductions = null);
+
+/// <summary>➕ เพิ่มพนักงานเข้ารอบที่คำนวณ/นำเข้าแล้ว (รอบ 200 ทีม PR1) — ช่องตัวเลขเป็น <c>decimal?</c>
+/// (หน้าเว็บตัดคีย์ทิ้งเมื่อช่องว่าง) · <c>WithholdingTax</c> + <c>SocialSecurityBase</c> + <c>Reason</c>
+/// <b>บังคับที่ service</b> (0 ได้ถ้าตั้งใจ — ระบบไม่แต่งค่าภาษี/ฐาน ปกส. เอง) · ปกส. สองฝั่งคิดจากฐาน
+/// ด้วยตัวเติมยอดตัวเดียวกับแก้ยอด · <c>PaymentAccountCode</c> ว่าง = ใช้บัญชีระดับรอบ/ค่าเริ่มต้น</summary>
+public record AddPayrollDetailRequest(
+    Guid EmployeeId,
+    string? Reason = null,
+    decimal? SocialSecurityBase = null,
+    decimal? WithholdingTax = null,
+    decimal? BaseSalary = null,
+    decimal? OvertimePay = null,
+    decimal? Allowances = null,
+    decimal? Commission = null,
+    decimal? Bonus = null,
+    decimal? OtherIncome = null,
+    decimal? ProvidentFundEmployee = null,
+    decimal? ProvidentFundEmployer = null,
+    decimal? LoanDeduction = null,
+    decimal? OtherDeductions = null,
+    string? PaymentAccountCode = null);
+
+/// <summary>พนักงานที่เพิ่มเข้ารอบได้ — ใช้เติม dropdown + ค่าเริ่มต้นบนจอ (ผู้ใช้เห็นก่อนส่ง) ·
+/// <c>BaseSalary</c> = null เมื่อผู้เรียกไม่มีสิทธิ์ดูเงินเดือน</summary>
+public record PayrollAddableEmployeeDto(
+    Guid Id,
+    string EmployeeCode,
+    string EmployeeName,
+    decimal? BaseSalary,
+    string SalaryType,
+    bool IsSubjectToSocialSecurity,
+    bool HasProvidentFund);
 
 public record PayrollDetailResponse(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,

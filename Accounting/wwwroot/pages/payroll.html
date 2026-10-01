@@ -1672,6 +1672,12 @@ const Page = {
         }
         return h;
       };
+      this._payOpts = payOpts;          // ใช้ซ้ำในโมดัล ➕ เพิ่มพนักงานเข้ารอบ (แหล่งจ่ายชุดเดียวกัน)
+      // ➕ เพิ่มพนักงานเข้ารอบ — ใช้สิทธิ์ชุดเดียวกับ ✏️ แก้ยอด (เซิร์ฟเวอร์ตัดสิน) · แก้ไม่ได้ = ปุ่มกดไม่ได้
+      // พร้อมเหตุผลใน title (ห้ามซ่อนเงียบ — กฎเหล็ก #4 A ห้าม silent no-op)
+      const addEmpBtn = payEditable
+        ? `<button class="btn btn-sm btn-secondary" onclick="Page.openAddDetail()" title="เพิ่มพนักงานที่ไม่อยู่ในรอบนี้ (เช่น เข้างานกลางเดือน · หลุดจากไฟล์ที่นำเข้า) โดยไม่ต้องคำนวณใหม่ทั้งรอบ">➕ เพิ่มพนักงานเข้ารอบนี้</button>`
+        : `<button class="btn btn-sm btn-secondary" disabled title="${Layout.esc(lockReason || 'รอบนี้แก้รายชื่อไม่ได้ในสถานะปัจจุบัน')}">➕ เพิ่มพนักงานเข้ารอบนี้ (ไม่ได้)</button>`;
       document.getElementById('runDetailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:16px;margin-bottom:20px">
           <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">งวด</div><div class="font-medium">${r.month}/${r.year}</div></div>
@@ -1706,6 +1712,7 @@ const Page = {
               <span style="font-size:12px">วิธีแก้: กด "✏️ แก้ยอด" ที่แถวที่มีป้ายเตือน แล้วปรับตัวเลขให้เงินได้สุทธิในหน้าต่างแก้ยอดตรงกับยอดที่จ่ายจริง (ระบบคำนวณสุทธิให้สด ๆ ระหว่างพิมพ์) — มักเกิดจากข้อมูล import ที่ส่ง "สุทธิ" มาไม่ตรงส่วนประกอบ เช่น มียอดหักที่ไม่ได้ส่งรายละเอียดมา ให้ใส่ยอดนั้นในช่อง "หักอื่น ๆ"</span>
             </div>` : '';
         })()}
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px">${addEmpBtn}</div>
         <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right" title="กองทุนสำรองฯ + เงินกู้ + หักอื่น ๆ">หักอื่น</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => {
           const empId = d.employeeId||d.id;
@@ -1728,7 +1735,8 @@ const Page = {
           <td class="text-right">${Layout.money(otherDed)}</td>
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}${rowBroken ? `<div style="font-size:11px;color:#dc2626;white-space:nowrap" title="รายได้รวม − รายการหัก ≠ สุทธิ — กดแก้ยอดเพื่อปรับ">⚠️ ไม่ลงตัว ${rowDiff > 0 ? '+' : ''}${Layout.money(rowDiff)}</div>` : ''}</td>
           <td>${payCell}</td>
-          <td>${payEditable ? `<button class="btn btn-sm ${rowBroken ? 'btn-primary' : 'btn-secondary'}" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>` : ''}</td>
+          <td style="white-space:nowrap">${payEditable ? `<button class="btn btn-sm ${rowBroken ? 'btn-primary' : 'btn-secondary'}" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>
+            <button class="btn btn-sm btn-secondary" onclick="Page.removeDetail('${Layout.jsArg(empId)}')" title="เอาพนักงานคนนี้ออกจากรอบ (ต้องระบุเหตุผล)">🗑 เอาออก</button>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.showPayslip('${id}','${empId}')">ดูสลิป</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.sendPayslipLine('${id}','${empId}')" title="ส่งสลิปนี้ให้พนักงานทาง LINE">📤 LINE</button>
@@ -1834,6 +1842,192 @@ const Page = {
     { k: 'otherDeductions', l: 'หักอื่น ๆ', grp: 'de' },
     { k: 'socialSecurityEmployer', l: 'ประกันสังคม (นายจ้าง)', grp: 'er' },
   ],
+  // ➕ เพิ่มพนักงาน: ช่องเพิ่มเติม (แก้ยอดเดิมไม่มี PVD นายจ้าง) · ช่องที่เซิร์ฟเวอร์คิดจากฐานเอง (แสดงอย่างเดียว ไม่ส่ง) ·
+  // ช่องที่ต้องกรอกเอง (ติดดาว — เซิร์ฟเวอร์เป็นผู้ตัดสินจริง ข้อความปฏิเสธมาจากเซิร์ฟเวอร์)
+  _edAddExtraFields: [
+    { k: 'providentFundEmployer', l: 'กองทุนสำรองเลี้ยงชีพ (นายจ้าง)', grp: 'er' },
+  ],
+  _edDerived: ['socialSecurityEmployee', 'socialSecurityEmployer'],
+  _edAddRequired: ['withholdingTax', 'socialSecurityBase'],
+
+  /** ช่องรายได้/หัก/ส่วนนายจ้าง/ฐาน ปกส. ของโมดัลรายคน — **ตัวเดียว** ของ ✏️ แก้ยอด และ ➕ เพิ่มพนักงาน
+   *  (สุทธิสดคิดที่ _edRecalc · ปกส. ซิงก์ที่ _edSyncSso ตัวเดียวกัน — ห้ามมีสูตรสำเนาที่สอง)
+   *  @param valOf   (key) → ค่าเริ่มต้นของช่อง ('' = ว่าง)
+   *  @param addMode true = โหมดเพิ่ม: ช่องที่คิดจากฐานเป็น readonly · ช่องบังคับติดดาว · จำว่าผู้ใช้แตะช่องไหน */
+  _edInputsHtml(fields, valOf, addMode) {
+    const inputRow = f => {
+      const ro = addMode && this._edDerived.includes(f.k);
+      const req = addMode && this._edAddRequired.includes(f.k);
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label style="flex:1;font-size:13px">${f.l}${req ? ' <span style="color:#dc2626">*</span>' : ''}${ro ? ' <span style="font-size:11px;color:#64748b">(คิดจากฐานให้)</span>' : ''}</label>
+        <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${Layout.esc(valOf(f.k))}"${ro ? ' readonly tabindex="-1"' : ''}
+          oninput="${addMode ? 'this.dataset.userTouched=1;' : ''}Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`;
+    };
+    return `
+      <div style="font-weight:600;color:#16a34a;margin:4px 0">รายได้</div>
+      ${fields.filter(f => f.grp === 'in').map(inputRow).join('')}
+      <div style="font-weight:600;color:#dc2626;margin:10px 0 4px">รายการหัก (ฝั่งลูกจ้าง)</div>
+      ${fields.filter(f => f.grp === 'de').map(inputRow).join('')}
+      <div style="font-weight:600;color:#475569;margin:10px 0 4px">ส่วนนายจ้าง (ไม่หักจากสุทธิ — กระทบ GL/สปส.)</div>
+      ${fields.filter(f => f.grp === 'er').map(inputRow).join('')}
+      <div style="font-weight:600;color:#0f766e;margin:10px 0 4px">ประกันสังคม — ฐานค่าจ้าง (ม.33)</div>
+      ${fields.filter(f => f.grp === 'sso').map(inputRow).join('')}
+      <div style="font-size:11.5px;color:#64748b;line-height:1.65;margin-top:2px">
+        ตัวเลขนี้คือช่อง <b>"ค่าจ้าง"</b> ที่จะไปอยู่ในไฟล์ สปส.1-10 — แก้แล้วระบบคิดเงินสมทบ
+        <b>ทั้งฝั่งลูกจ้างและนายจ้าง</b> ใหม่จากฐานนี้ให้เอง (สองฝั่งต้องมาจากฐานเดียวกันเสมอ)<br>
+        ค่าจ้างตาม ม.5 ไม่รวมเบี้ยเลี้ยง/ค่าน้ำมันเหมาจ่ายที่ไม่ใช่ค่าตอบแทนการทำงาน จึงอาจน้อยกว่ารายได้รวม
+        ${addMode ? '<br><b>ใส่ 0 ถ้าพนักงานไม่อยู่ในระบบประกันสังคม</b> — ช่องนี้ต้องกรอก ระบบไม่เดาให้' : ''}
+      </div>`;
+  },
+
+  // ===== ➕ เพิ่มพนักงานเข้ารอบ (ใช้โมดัลเดียวกับแก้ยอด) =====
+  async openAddDetail() {
+    const r = this._curRun; if (!r) return;
+    this._edMode = 'add';
+    this._editEmp = null;
+    this._edAddable = [];
+    document.getElementById('editDetailTitle').textContent = `เพิ่มพนักงานเข้ารอบ — ${r.name || ''}`;
+    const body = document.getElementById('editDetailBody');
+    body.innerHTML = `
+      <div style="font-size:12px;color:#64748b;margin-bottom:8px;line-height:1.6">เพิ่มพนักงานที่ไม่อยู่ในรอบนี้โดยไม่ต้องคำนวณใหม่ทั้งรอบ ·
+        ระบบรวมยอด + คิดเงินสมทบจากฐานให้ · <b>ภาษีหัก ณ ที่จ่ายต้องกรอกเอง</b> (ระบบไม่คิดภาษีรายคน เพราะต้องใช้รายได้สะสมและค่าลดหย่อนทั้งปี)</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <select id="ed_employee" class="form-input" style="flex:1" onchange="Page._edAddPick()"><option value="">กำลังโหลดรายชื่อ…</option></select>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="Page._edAddLoad()" title="โหลดรายชื่อใหม่ (หลังสร้างพนักงานในแท็บอื่น)">🔄 โหลดรายชื่อใหม่</button>
+      </div>
+      <div id="ed_employeeNote" style="font-size:12px;color:#64748b;margin-bottom:6px;line-height:1.6"></div>
+      <div id="ed_defaultNote" style="font-size:12px;color:#0f766e;margin-bottom:8px;line-height:1.6"></div>
+      ${this._edInputsHtml(this._edFields.concat(this._edAddExtraFields), () => '', true)}
+      <div style="display:flex;align-items:center;gap:8px;margin:10px 0 6px">
+        <label style="flex:1;font-size:13px">แหล่งจ่ายเงินสุทธิ</label>
+        <select id="ed_paymentAccountCode" class="form-input" style="width:220px;font-size:12px">${this._payOpts ? this._payOpts('') : '<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>'}</select>
+      </div>
+      <div style="margin-top:8px">
+        <label style="font-size:13px">เหตุผลที่เพิ่ม <span style="color:#dc2626">*</span></label>
+        <textarea id="ed_reason" class="form-input" rows="2" style="width:100%" placeholder="เช่น เข้างานกลางเดือน ไม่อยู่ในไฟล์ที่นำเข้าจากระบบนอก"></textarea>
+      </div>
+      <div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px;font-size:14px">
+        <div style="display:flex;justify-content:space-between"><span>รวมรายได้</span><b id="edGross">-</b></div>
+        <div style="display:flex;justify-content:space-between"><span>รวมรายการหัก</span><b id="edDed">-</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:4px"><span>เงินได้สุทธิ (ตัวอย่าง — เซิร์ฟเวอร์คิดจริงตอนบันทึก)</span><b id="edNet" style="color:#2563eb">-</b></div>
+      </div>`;
+    this._edOldNet = null;
+    this._edRecalc();
+    Layout.openModal('editDetailModal');
+    await this._edAddLoad();
+  },
+
+  /** รายชื่อที่เพิ่มได้ = เซิร์ฟเวอร์ตัดสิน (อยู่ในงวด + ยังไม่อยู่ในรอบ) — หน้านี้แค่แสดง */
+  async _edAddLoad() {
+    const api = Layout.api(); const r = this._curRun; if (!api || !r) return;
+    const sel = document.getElementById('ed_employee');
+    const note = document.getElementById('ed_employeeNote');
+    if (!sel || !note) return;
+    const keep = sel.value;
+    sel.disabled = true;
+    try {
+      const res = await api.getPayrollAddableEmployees(r.id);
+      const list = (res && res.data) || [];
+      this._edAddable = list;
+      sel.innerHTML = list.length
+        ? '<option value="">— เลือกพนักงาน —</option>' + list.map(e =>
+            `<option value="${Layout.esc(e.id)}">${Layout.esc(e.employeeCode)} · ${Layout.esc(e.employeeName)}</option>`).join('')
+        : '<option value="">ไม่มีพนักงานที่เพิ่มได้ในงวดนี้</option>';
+      if (keep && list.some(e => e.id === keep)) sel.value = keep;
+      note.innerHTML = (list.length ? '' : '<b>ไม่มีพนักงานที่เพิ่มได้ในงวดนี้</b> — ')
+        + `รายชื่อแสดงเฉพาะพนักงานที่อยู่ในงวด ${Layout.esc(Layout.date(r.periodStart))} – ${Layout.esc(Layout.date(r.periodEnd))} และยังไม่อยู่ในรอบนี้ · `
+        + `ไม่เห็นคนที่ต้องการ? ตรวจวันเริ่มงาน/วันพ้นสภาพที่หน้าพนักงาน หรือ `
+        + `<a href="/pages/employees.html?new=1" target="_blank" rel="noopener">สร้างพนักงานใหม่</a> (แท็บใหม่) แล้วกด 🔄 โหลดรายชื่อใหม่`;
+    } catch (e) {
+      this._edAddable = [];
+      sel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ</option>';
+      note.textContent = e.message || 'โหลดรายชื่อพนักงานไม่สำเร็จ';
+    } finally { sel.disabled = false; }
+    this._edAddPick();
+  },
+
+  /** เลือกพนักงาน → เติม "ค่าเริ่มต้นบนจอ" (เงินเดือนรายเดือน · ฐาน ปกส. = เงินเดือนเมื่ออยู่ใน ม.33 ไม่อยู่ = 0)
+   *  ผู้ใช้เห็นและแก้ได้ก่อนส่ง · ช่องที่ผู้ใช้พิมพ์เองแล้วไม่ถูกทับ (ค่าผู้ใช้ชนะเสมอ) · ภาษีไม่เติมให้ */
+  _edAddPick() {
+    const sel = document.getElementById('ed_employee'); if (!sel) return;
+    const e = (this._edAddable || []).find(x => x.id === sel.value) || null;
+    this._editEmp = e ? e.id : null;
+    const setDefault = (k, v) => {
+      const el = document.getElementById('ed_' + k);
+      if (!el || el.dataset.userTouched) return;
+      el.value = (v === '' || v == null) ? '' : Number(v).toFixed(2);
+    };
+    const dn = document.getElementById('ed_defaultNote');
+    if (!e) {
+      setDefault('baseSalary', '');
+      setDefault('socialSecurityBase', '');
+      if (dn) dn.textContent = '';
+      this._edRecalc('socialSecurityBase');
+      return;
+    }
+    const monthly = e.salaryType === 'Monthly';
+    const salary = (monthly && e.baseSalary != null) ? e.baseSalary : '';
+    setDefault('baseSalary', salary);
+    setDefault('socialSecurityBase', e.isSubjectToSocialSecurity ? salary : 0);
+    if (dn) {
+      const parts = [];
+      if (e.baseSalary == null) parts.push('ไม่มีสิทธิ์ดูเงินเดือน — กรอกเงินเดือนของงวดเอง');
+      else if (!monthly) parts.push('พนักงานคนนี้รับค่าจ้างไม่ใช่รายเดือน — กรอกค่าจ้างของงวดนี้เอง (ระบบไม่เติมให้)');
+      else parts.push('เติมเงินเดือนจากข้อมูลพนักงานเป็น<b>ค่าเริ่มต้น</b> — ถ้าเข้างาน/ออกกลางงวด ให้แก้เป็นยอดที่จ่ายจริง');
+      parts.push(e.isSubjectToSocialSecurity
+        ? 'ฐาน ปกส. ค่าเริ่มต้น = เงินเดือน (อยู่ในระบบประกันสังคม ม.33) — ตรวจก่อนบันทึก'
+        : 'ฐาน ปกส. ค่าเริ่มต้น = 0 (ข้อมูลพนักงานระบุว่าไม่อยู่ในระบบประกันสังคม)');
+      if (e.hasProvidentFund) parts.push('พนักงานคนนี้อยู่ในกองทุนสำรองเลี้ยงชีพ — กรอกยอดเงินสะสม/สมทบเอง');
+      dn.innerHTML = '💡 ' + parts.join(' · ');
+    }
+    this._edRecalc('socialSecurityBase');
+  },
+
+  async saveAddDetail() {
+    const api = Layout.api(); if (!api || !this._curRun) return;
+    if (!this._editEmp) { Layout.toast('เลือกพนักงานที่จะเพิ่มเข้ารอบก่อน', 'error'); return; }
+    const body = { employeeId: this._editEmp, reason: (document.getElementById('ed_reason')?.value || '').trim() };
+    this._edFields.concat(this._edAddExtraFields).forEach(f => {
+      if (this._edDerived.includes(f.k)) return;                   // เซิร์ฟเวอร์คิดจากฐานเอง — ไม่ส่ง
+      const el = document.getElementById('ed_' + f.k);
+      if (el && el.value !== '') body[f.k] = Number(el.value);   // ว่าง = ตัดคีย์ทิ้ง (ไม่ส่ง null)
+    });
+    const pay = document.getElementById('ed_paymentAccountCode')?.value || '';
+    if (pay) body.paymentAccountCode = pay;
+    const btn = document.getElementById('edSave');
+    if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก…'; }
+    try {
+      await api.addPayrollDetail(this._curRun.id, body);
+      Layout.closeModal('editDetailModal');
+      Layout.toast('เพิ่มพนักงานเข้ารอบแล้ว', 'success');
+      await this.viewRun(this._curRun.id);
+      this.loadRuns();
+    } catch (e) {
+      Layout.toast(e.message || 'เพิ่มพนักงานไม่สำเร็จ', 'error', 9000);
+    } finally { if (btn) { btn.disabled = false; btn.textContent = 'บันทึก'; } }
+  },
+
+  /** 🗑 เอาพนักงานออกจากรอบ — ถามเหตุผลก่อน (เซิร์ฟเวอร์บังคับ + เก็บลง AuditLog) ·
+   *  ด่านทั้งหมด (สถานะ/ยื่นแล้ว/คนสุดท้าย/ปันต้นทุนแล้ว) อยู่ที่เซิร์ฟเวอร์ — ข้อความปฏิเสธแสดงตามนั้น */
+  async removeDetail(empId) {
+    const api = Layout.api(); const r = this._curRun; if (!api || !r) return;
+    const d = (r.details || []).find(x => (x.employeeId || x.id) === empId);
+    const name = d ? (d.employeeName || '') : '';
+    const reason = prompt(
+      `เอา ${name} ออกจากรอบนี้?\n\n`
+      + 'แถวของพนักงานคนนี้จะไม่อยู่ในการจ่าย · ภ.ง.ด.1 · สปส.1-10 · สลิป ของรอบนี้อีก และยอดรวมของรอบจะคำนวณใหม่\n\n'
+      + 'ระบุเหตุผล (อย่างน้อย 5 ตัวอักษร):', '');
+    if (reason === null) return;                       // กดยกเลิก
+    try {
+      const rr = await api.removePayrollDetail(r.id, empId, reason.trim());
+      Layout.toast(rr?.message || 'เอาพนักงานออกจากรอบแล้ว', 'success');
+      await this.viewRun(r.id);
+      this.loadRuns();
+    } catch (e) {
+      Layout.toast(e.message || 'เอาพนักงานออกไม่สำเร็จ', 'error', 9000);
+    }
+  },
+
   openEditDetail(empId) {
     const r = this._curRun; if (!r) return;
     const details = r.details || [];
@@ -1842,28 +2036,13 @@ const Page = {
     const d = details.find(x => (x.employeeId || x.id) === empId);
     if (!d) { Layout.toast('ไม่พบข้อมูลพนักงาน', 'error'); return; }
     this._editEmp = empId;
+    this._edMode = 'edit';
     document.getElementById('editDetailTitle').textContent = `แก้ยอด — ${d.employeeName || ''}`;
     const num = v => Number(v || 0);
-    const inputRow = f => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <label style="flex:1;font-size:13px">${f.l}</label>
-        <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${num(d[f.k]).toFixed(2)}"
-          oninput="Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`;
     const body = document.getElementById('editDetailBody');
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px">แก้ได้เฉพาะก่อนจ่าย · ระบบจะรวมยอด + ตรวจสุทธิให้</div>
-      <div style="font-weight:600;color:#16a34a;margin:4px 0">รายได้</div>
-      ${this._edFields.filter(f => f.grp === 'in').map(inputRow).join('')}
-      <div style="font-weight:600;color:#dc2626;margin:10px 0 4px">รายการหัก (ฝั่งลูกจ้าง)</div>
-      ${this._edFields.filter(f => f.grp === 'de').map(inputRow).join('')}
-      <div style="font-weight:600;color:#475569;margin:10px 0 4px">ส่วนนายจ้าง (ไม่หักจากสุทธิ — กระทบ GL/สปส.)</div>
-      ${this._edFields.filter(f => f.grp === 'er').map(inputRow).join('')}
-      <div style="font-weight:600;color:#0f766e;margin:10px 0 4px">ประกันสังคม — ฐานค่าจ้าง (ม.33)</div>
-      ${this._edFields.filter(f => f.grp === 'sso').map(inputRow).join('')}
-      <div style="font-size:11.5px;color:#64748b;line-height:1.65;margin-top:2px">
-        ตัวเลขนี้คือช่อง <b>"ค่าจ้าง"</b> ที่จะไปอยู่ในไฟล์ สปส.1-10 — แก้แล้วระบบคิดเงินสมทบ
-        <b>ทั้งฝั่งลูกจ้างและนายจ้าง</b> ใหม่จากฐานนี้ให้เอง (สองฝั่งต้องมาจากฐานเดียวกันเสมอ)<br>
-        ค่าจ้างตาม ม.5 ไม่รวมเบี้ยเลี้ยง/ค่าน้ำมันเหมาจ่ายที่ไม่ใช่ค่าตอบแทนการทำงาน จึงอาจน้อยกว่ารายได้รวม
-      </div>
+      ${this._edInputsHtml(this._edFields, k => num(d[k]).toFixed(2), false)}
       <div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px;font-size:14px">
         <div style="display:flex;justify-content:space-between"><span>รวมรายได้</span><b id="edGross">-</b></div>
         <div style="display:flex;justify-content:space-between"><span>รวมรายการหัก</span><b id="edDed">-</b></div>
@@ -1973,6 +2152,7 @@ const Page = {
     }
   },
   async saveEditDetail() {
+    if (this._edMode === 'add') return this.saveAddDetail();   // ปุ่มบันทึกตัวเดียวของโมดัลรายคน
     const api = Layout.api(); if (!api || !this._curRun || !this._editEmp) return;
     const btn = document.getElementById('edSave');
     const body = {};

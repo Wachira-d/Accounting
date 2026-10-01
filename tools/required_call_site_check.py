@@ -3090,6 +3090,62 @@ RULES += [
          why="V1I-X1: ล็อกแถวใบต้นทางของบริษัทนี้เท่านั้น (tenant ทั้งแถวนอกและ subquery)"),
 ]
 
+# ── รอบ 200 ทีม PR1: ➕/🗑 พนักงานในรอบเงินเดือน — ตัวตั้งเดียวของ "อยู่ในงวด" + ตัวเติมยอดเดียว + ด่านเดียวกับ ✏️ แก้ยอด ──
+_PR1_WHY_ELIG = "PR1: พนักงานที่อยู่ในงวดตัดสินที่ PayrollEmployeeEligibility ตัวเดียว (คำนวณ · เพิ่ม · รายชื่อที่เพิ่มได้) — ห้ามสำเนาเงื่อนไข inline"
+_PR1_WHY_EDIT = ("PR1: เพิ่ม/เอาพนักงานออกจากรอบต้องล็อกแถวรอบ (FOR UPDATE) · ผ่านด่าน CanEditAmounts ด้วยหลักฐานยื่น/นำส่งจริงก่อนบันทึก · "
+                 "ยอดรวมผ่าน RecomputeRunTotals ตัวเดียว · audit ใน hash chain")
+RULES += [
+    dict(file=PAYROLL, method="CalculatePayrollAsync",
+         must=["PayrollEmployeeEligibility.InPeriod(run.PeriodStart, run.PeriodEnd)", "e.CompanyId == companyId && !e.IsDeleted"],
+         forbid=["e.StartDate <= run.PeriodEnd", "e.EndDate >= run.PeriodStart"],
+         why=_PR1_WHY_ELIG),
+    dict(file=PAYROLL, method="GetAddableEmployeesAsync",
+         must=["PayrollEmployeeEligibility.InPeriod(", "e.CompanyId == companyId && !e.IsDeleted", "x.CompanyId == companyId"],
+         forbid=["e.StartDate <=", "e.EndDate >="],
+         why=_PR1_WHY_ELIG),
+    dict(file=PAYROLL, method="UpdatePayrollDetailAsync",
+         must=["PayrollDetailAmounts.Apply(d, req, ssoParams)", "PayrollDetailAmounts.RecomputeRunTotals(run)"],
+         forbid=["SsoWageBase.Clamp(", "d.NetPay = d.GrossIncome", "run.Details.Sum("],
+         why="PR1: ✏️ แก้ยอดกับ ➕ เพิ่มพนักงานใช้ตัวเติมยอด/ยอดรวมตัวเดียว (Helpers/PayrollDetailAmounts) — ห้ามสูตรสองชุด"),
+    dict(file=PAYROLL, method="AddPayrollDetailAsync",
+         must=["LoadRecalculateLockEvidenceAsync(", "PayrollEmployeeEligibility.Reason(", "PayrollDetailAmounts.Apply(",
+               "PayrollDetailAmounts.RecomputeRunTotals(run)", "AddChainedAuditLog(", "tx.CommitAsync(", "tx.RollbackAsync("],
+         must_re=[r"if\s*\(\s*!\s*canEditAmt\s*\)\s*throw\b", r"if\s*\(\s*!\s*req\s*\.\s*WithholdingTax\s*\.\s*HasValue\s*\)\s*throw\b",
+                  r"if\s*\(\s*!\s*req\s*\.\s*SocialSecurityBase\s*\.\s*HasValue\s*\)\s*throw\b"],
+         must_lit=["FOR UPDATE", "\\\"CompanyId\\\" = {1}"],
+         call_args=[("PayrollRunEditPolicy.CanEditAmounts(", "editEvidence")],
+         before=[("ExecuteSqlRawAsync(", "PayrollRunEditPolicy.CanEditAmounts("),
+                 ("PayrollRunEditPolicy.CanEditAmounts(", "_db.SaveChangesAsync("),
+                 ("PayrollEmployeeEligibility.Reason(", "_db.SaveChangesAsync("),
+                 ("AddChainedAuditLog(", "_db.SaveChangesAsync(")],
+         forbid=["PayrollRunLockEvidence.None", "AuditLogs.Add(", "SsoWageBase.Clamp(", "SsoWageBase.Contribution(",
+                 "d.NetPay = d.GrossIncome"],
+         why=_PR1_WHY_EDIT),
+    dict(file=PAYROLL, method="RemovePayrollDetailAsync",
+         must=["LoadRecalculateLockEvidenceAsync(", "PayrollDetailAmounts.RecomputeRunTotals(run)", "AddChainedAuditLog(",
+               "d.IsDeleted = true", "EmployeeProjectTimes", "tx.CommitAsync(", "tx.RollbackAsync("],
+         must_re=[r"if\s*\(\s*!\s*canEditAmt\s*\)\s*throw\b", r"Count\s*\(\s*x\s*=>\s*!\s*x\s*\.\s*IsDeleted\s*\)\s*<=\s*1\s*\)\s*throw\b"],
+         must_lit=["FOR UPDATE", "\\\"CompanyId\\\" = {1}"],
+         call_args=[("PayrollRunEditPolicy.CanEditAmounts(", "editEvidence")],
+         before=[("ExecuteSqlRawAsync(", "PayrollRunEditPolicy.CanEditAmounts("),
+                 ("PayrollRunEditPolicy.CanEditAmounts(", "_db.SaveChangesAsync("),
+                 ("AddChainedAuditLog(", "_db.SaveChangesAsync(")],
+         forbid=["PayrollRunLockEvidence.None", "AuditLogs.Add(", "RemoveRange(", ".Remove(d)"],
+         why=_PR1_WHY_EDIT + " · soft-delete (ห้ามลบจริง — ประวัติรอบต้องตามรอยได้) · ห้ามเหลือ 0 คน"),
+    dict(file="Controllers/PayrollController.cs", method="AddDetail",
+         before=[("RequirePayrollWriteAsync(", "_service.AddPayrollDetailAsync(")],
+         must_re=[r"RequirePayrollWriteAsync\s*\([^;]*PermissionKeys\s*\.\s*PayrollRun\s*\)\s*;\s*if\s*\(\s*block\s*!=\s*null\s*\)\s*return\s+block"],
+         why="PR1: ➕ เพิ่มพนักงานเข้ารอบ = เขียนข้อมูลเงินเดือน ต้องผ่านด่านสิทธิ์ PayrollRun ก่อนเรียก service"),
+    dict(file="Controllers/PayrollController.cs", method="RemoveDetail",
+         before=[("RequirePayrollWriteAsync(", "_service.RemovePayrollDetailAsync(")],
+         must_re=[r"RequirePayrollWriteAsync\s*\([^;]*PermissionKeys\s*\.\s*PayrollRun\s*\)\s*;\s*if\s*\(\s*block\s*!=\s*null\s*\)\s*return\s+block"],
+         why="PR1: 🗑 เอาพนักงานออกจากรอบ ต้องผ่านด่านสิทธิ์ PayrollRun ก่อนเรียก service"),
+    dict(file="Controllers/PayrollController.cs", method="GetAddableEmployees",
+         before=[("CheckPayrollAccessAsync(", "_service.GetAddableEmployeesAsync(")],
+         call_args=[("_service.GetAddableEmployeesAsync(", "CanViewPayrollAsync")],
+         why="PR1: รายชื่อ + เงินเดือนพนักงานต้องผ่านด่านดูข้อมูลเงินเดือน · เงินเดือนคืนตามสิทธิ์ดูเงินเดือน"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
