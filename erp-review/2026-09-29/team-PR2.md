@@ -4,6 +4,8 @@
 `employees.html` · เทสต์ Payroll* · แตะนอกขอบเขตเล็กน้อย: `PayrollDtos.cs` (DTO) · `IPayrollService.cs` · `Models/Entities/Payroll.cs` (+1 field) ·
 `DatabaseMigrationHelper.cs` (+1 ADD COLUMN) · `api.js` (+2 เมธอด) · `tools/required_call_site_check.py`
 
+**คอมมิต**: `127844b9` (คำตัดสิน 69–73 + X1–X6) · `f2cd1982` (ชุดสอง A-PR1..3) · sha เติมในคอมมิตตามหลัง
+
 **สถานะ**: โค้ด + เทสต์ + checker + เอกสารครบ · **ยังไม่ได้คอมไพล์/รันเทสต์ในเครื่องนี้ (ไม่มี .NET SDK) — CI เป็นตัวแรก**
 
 ## รายการ

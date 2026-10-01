@@ -4143,5 +4143,5 @@ _2026-10-01 รอบ 201 ทีม PR2 ชุดสอง — BACKLOG 2026-10-0
   (13 หลัก · ตัวเลขล้วน · ไม่ checksum · ค่าปิดบังไม่ทับ) ใช้ทั้งสร้าง/แก้ · response ปิดบังตาม pii:view · `employee_form_contract_sim` +5 ข้อ + 3 mutant (baseline ล้ม 4)
 - **A-PR2** `PayrollIncomeNatureRules.SuggestedCountsForSsoBase/SuggestedSsoBaseNote` + `GET payroll/items/sso-base-suggestion` · หน้าตั้งค่ารายการเติมค่าเสนอเฉพาะรายการใหม่ (ค่าผู้ใช้ชนะ)
 - **A-PR3** `AuditLogs.Add` ตรง 3 จุดใน `PayrollService` → `AddChainedAuditLog`
-- เทสต์ `EmployeeRecordEditTests` +3 · `PayrollItemNatureTests` +2 · required_call_site +8 แถว — commit <pending>)_
+- เทสต์ `EmployeeRecordEditTests` +3 · `PayrollItemNatureTests` +2 · required_call_site +8 แถว — commit f2cd1982)_
 

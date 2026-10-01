@@ -4098,7 +4098,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit f2cd1982)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 — เงินเดือน (§3.8): 🧮 คำนวณภาษีให้รายคน `POST runs/{id}/tax-preview` ด้วย `Helpers/PayrollWithholdingTax` ตัวเดียวกับคำนวณรอบ (ย้ายจาก inline · golden เทียบ 9c9580e6) · ➕/🗑 รอบ Approved กลับเป็น Calculated (`PayrollRosterChange`) · 🚫 ยกเลิกรอบบนหน้าเว็บ + เหตุผลบังคับ + audit · เงินทดแทนคิดใหม่เมื่อฐานเปลี่ยน (รอบนำเข้าไม่คิด) · ด่านธง ปกส. (`PayrollSsoFlagGuard`) · ✏️/จ่าย อ่านใต้ล็อก · YTD แถวมือ · `ManualRosterChangedAt` — commit 127844b9)_
 
