@@ -65,4 +65,40 @@ public class LodgingCheckoutReissueTests
     [Fact]
     public void หมายเหตุอ้างเลขใบเดิม()
         => Assert.Contains("TIV-20261001-0001", LodgingCheckoutReissue.ReferenceNote("TIV-20261001-0001"));
+
+    // ── ฝ่ายค้าน X2: ผู้ใช้ออกใบแทนเองที่หน้าเอกสารแล้ว (ข้อความก่อนรอบ 201 สั่งให้ทำ) ──────────
+
+    [Fact]
+    public void X2_มีใบขายที่ยังมีผลอ้างเลขจองอยู่แล้ว_ปฏิเสธ_และไม่เปิดปุ่ม()
+    {
+        var why = LodgingCheckoutReissue.Problem(LodgingReservationStatus.CheckedOut, DocumentStatus.Voided, false,
+            DocumentType.TaxInvoice, 5_350m, DocumentType.TaxInvoice, 5_350m, "TIV-20261001-0001",
+            liveReplacementNumber: "TIV-20261005-0003", confirmedNoManualReissue: true);
+        Assert.NotNull(why);
+        Assert.Contains("TIV-20261005-0003", why);
+        Assert.False(LodgingCheckoutReissue.CanOffer(LodgingReservationStatus.CheckedOut, DocumentStatus.Voided, false, "TIV-20261005-0003"));
+    }
+
+    [Fact]
+    public void X2_ไม่ติ๊กยืนยันว่ายังไม่ได้ออกใบแทนเอง_ปฏิเสธ()
+        => Assert.Contains("ติ๊กยืนยัน", LodgingCheckoutReissue.Problem(LodgingReservationStatus.CheckedOut, DocumentStatus.Voided, false,
+            DocumentType.TaxInvoice, 5_350m, DocumentType.TaxInvoice, 5_350m, "TIV-20261001-0001",
+            liveReplacementNumber: null, confirmedNoManualReissue: false));
+
+    [Fact]
+    public void X2_ไม่มีใบแทน_ติ๊กยืนยันแล้ว_ออกได้_และเปิดปุ่ม()
+    {
+        Assert.Null(LodgingCheckoutReissue.Problem(LodgingReservationStatus.CheckedOut, DocumentStatus.Voided, false,
+            DocumentType.TaxInvoice, 5_350m, DocumentType.TaxInvoice, 5_350m, "TIV-20261001-0001",
+            liveReplacementNumber: null, confirmedNoManualReissue: true));
+        Assert.True(LodgingCheckoutReissue.CanOffer(LodgingReservationStatus.CheckedOut, DocumentStatus.Voided, false, null));
+    }
+
+    [Fact]
+    public void X2_ใบรับชำระและใบมัดจำ_ไม่อยู่ในชนิดที่นับเป็นใบแทน()
+    {
+        Assert.DoesNotContain(DocumentType.CreditNote, LodgingCheckoutReissue.SaleTypes);
+        Assert.DoesNotContain(DocumentType.ReceiptVoucher, LodgingCheckoutReissue.SaleTypes);
+        Assert.Contains(DocumentType.TaxInvoice, LodgingCheckoutReissue.SaleTypes);
+    }
 }

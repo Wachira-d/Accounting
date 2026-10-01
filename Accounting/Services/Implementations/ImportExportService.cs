@@ -966,29 +966,29 @@ public class ImportExportService : IImportExportService
         // Replace any previously imported opening balance so re-running the
         // file twice doesn't double-count. The MovementType OPENING is the
         // unique signal we use to identify migration-time entries.
-        var existingOpening = await _db.StockMovements
-            .Where(m => m.CompanyId == companyId && m.ProductId == product.Id && m.MovementType == "OPENING")
+        var existingOpening = await _db.StockMovements.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.ProductId == product.Id && m.MovementType == "OPENING" && !m.IsDeleted)
+            .OrderBy(m => m.MovementDate).ThenBy(m => m.CreatedAt)
+            .Select(m => new { m.WarehouseId, m.Quantity, m.UnitCost })
             .ToListAsync();
         if (_stock == null)
             throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้าสต็อกยกมาได้");
 
-        // ล้างยอดยกมาชุดก่อนผ่าน ledger ด้วย (ไม่ใช่ `CurrentStock -=` เอง) เพื่อให้
-        // `WarehouseStock` ถูกล้างตามไปพร้อมกัน — เดิมลบเฉพาะยอดรวม ⇒ นำเข้าไฟล์ซ้ำ
-        // แล้วยอดต่อคลังบวมขึ้นทุกรอบทั้งที่ยอดรวมถูก
-        if (existingOpening.Count > 0)
+        // ล้างยอดยกมาชุดก่อนผ่าน ledger (ไม่ใช่ `CurrentStock -=` เอง) เพื่อให้ `WarehouseStock` ถูกล้างตามไปพร้อมกัน
+        // รอบ 201 ฝ่ายค้าน X4: เดิม (1) ลบแถว OPENING ทิ้งจริง (ประวัติหาย · ยอดจากประวัติไม่ตรงคลัง) และ (2) แถวล้างเป็น OUT/IN ⇒ คิว FIFO
+        // นับเป็นการขายที่กินล็อตเก่าสุด/ล็อตใหม่ · ตอนนี้: ไม่ลบอะไร · แถวล้างเป็น OPENING จำนวนติดลบ (คู่หักล้างของยอดยกมาเดิม ·
+        // InventoryCostFlow.CancelReversals จับคู่แถว OPENING ขนาดเท่ากันตัดออกจากคิว) ที่ต้นทุนของยอดยกมาเดิม (ถัวเฉลี่ยติดตามมูลค่าถอดได้ตรง)
+        foreach (var ex in existingOpening.GroupBy(m => m.WarehouseId))
         {
-            foreach (var ex in existingOpening.GroupBy(m => m.WarehouseId))
-            {
-                var net = ex.Sum(m => m.Quantity);
-                if (net == 0m) continue;
-                await _stock.MoveAsync(new StockMoveRequest(
-                    CompanyId: companyId, ProductId: product.Id, Quantity: -net,
-                    MovementType: net > 0 ? "OUT" : "IN",
-                    Reference: "OPENING-RESET", WarehouseId: ex.Key,
-                    UnitCostOverride: unitCost,
-                    Notes: "ล้างสต็อกยกมาชุดก่อน (นำเข้าซ้ำ)", CreatedBy: performedBy));
-            }
-            _db.StockMovements.RemoveRange(existingOpening);
+            var net = ex.Sum(m => m.Quantity);
+            if (net == 0m) continue;
+            var originalCost = ex.LastOrDefault(m => m.Quantity > 0m && m.UnitCost > 0m)?.UnitCost ?? unitCost;
+            await _stock.MoveAsync(new StockMoveRequest(
+                CompanyId: companyId, ProductId: product.Id, Quantity: -net,
+                MovementType: "OPENING",
+                Reference: "OPENING-RESET", WarehouseId: ex.Key,
+                UnitCostOverride: originalCost,
+                Notes: "ล้างสต็อกยกมาชุดก่อน (นำเข้าซ้ำ)", CreatedBy: performedBy));
         }
 
         product.CostPrice = unitCost;

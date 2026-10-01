@@ -382,9 +382,11 @@
         const r = this.current;
         this.sub('ออกใบเช็คเอาต์ใหม่', `<form id="rff" class="grid2">
           <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ใบใหม่แทนใบ ${esc(r.finalDocumentNumber || '')} ที่ยกเลิก — รายการชุดเดียวกับตอนเช็คเอาต์ หักมัดจำตามเดิม และ <b>ยอดต้องเท่าใบเดิม</b> (ยอดต้องเปลี่ยน = ออกใบลด/เพิ่มหนี้หลังออกใบนี้) · ไม่รับเงินอัตโนมัติ — ถ้าเคยรับชำระแล้ว ให้บันทึกรับชำระที่ใบใหม่</div>
-          <div class="fld" style="grid-column:1/-1"><label>เหตุผลที่ออกใหม่</label><input class="form-input" name="reason"></div></form>`, async () => {
+          <div class="fld" style="grid-column:1/-1"><label>เหตุผลที่ออกใหม่</label><input class="form-input" name="reason"></div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="confirmNoManual"> ยืนยันว่ายังไม่ได้ออกใบกำกับ/ใบแจ้งหนี้แทนใบที่ยกเลิกเองที่หน้า “เอกสาร” (ถ้าออกไปแล้ว อย่ากดปุ่มนี้ — จะเป็นใบซ้ำ)</label></div></form>`, async () => {
           const f = document.getElementById('rff');
-          await this.call(() => Layout.api().lodgingReissueFinal(r.id, { reason: f.reason.value || null }));
+          // ฝ่ายค้าน X2: เซิร์ฟเวอร์ปฏิเสธเมื่อไม่ติ๊ก (ใบที่ออกเองโดยไม่อ้างเลขจองตรวจจากข้อมูลไม่ได้) · มีใบขายอ้างเลขจองอยู่แล้ว = ปฏิเสธเสมอ
+          await this.call(() => Layout.api().lodgingReissueFinal(r.id, { reason: f.reason.value || null, confirmNoManualReissue: f.confirmNoManual.checked }));
         }, 'ออกใบใหม่');
       },
       // ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง — บัญชีที่เงินออก: เลือกเอง หรือปล่อยว่าง = บัญชีเดียวกับที่รับมัดจำเข้ามา

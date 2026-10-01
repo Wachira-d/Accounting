@@ -16,15 +16,15 @@ public class InventoryCostingMethodTests
     private static CostMovement M(string type, decimal qty, decimal cost = 0m) => new(type, qty, cost);
 
     /// <summary>ชุดกระดาษเดียวกันสำหรับ golden ทั้ง FIFO และถัวเฉลี่ย:
-    /// ยกมา 10@100 · ซื้อ 20@130 · ตรวจนับพบของหาย 2 · โอนคลัง 5 (คู่) · ขาย 5 (ledger เก็บติดลบ)</summary>
+    /// ยกมา 10@100 · ซื้อ 20@130 · ตรวจนับพบของหาย 2 · โอนคลัง 5 (คู่) · ขาย 5 (ledger เก็บติดลบ · ขาออกประทับค่าเฉลี่ย 120)</summary>
     private static List<CostMovement> Story() => new()
     {
         M("OPENING", 10m, 100m),
         M("IN", 20m, 130m),
-        M("ADJUST", -2m, 100m),
+        M("ADJUST", -2m, 120m),      // ledger ประทับขาออกด้วยค่าเฉลี่ย ณ ตอนนั้น
         M("TRANSFER_OUT", -5m, 130m),
         M("TRANSFER_IN", 5m, 130m),
-        M("OUT", -5m, 100m),
+        M("OUT", -5m, 120m),
     };
 
     // ── A-IN2 golden: FIFO ──────────────────────────────────────────────
@@ -157,5 +157,153 @@ public class InventoryCostingMethodTests
     {
         Assert.Equal(CostingMethod.WeightedAverage, CostingMethodPolicy.Default);
         Assert.Equal(CostingMethodPolicy.Default, CostingMethodPolicy.Selectable[0]);
+    }
+
+    // ── ฝ่ายค้าน X1: แถวกลับรายการ (ยกเลิกเอกสาร / บิล POS) ห้ามเข้าคิว FIFO ──────────────
+
+    private static readonly Guid DocA = Guid.Parse("0000000a-0000-0000-0000-000000000000");
+    private static readonly Guid DocB = Guid.Parse("0000000b-0000-0000-0000-000000000000");
+    private static readonly Guid DocC = Guid.Parse("0000000c-0000-0000-0000-000000000000");
+
+    private static decimal FifoNext(IEnumerable<CostMovement> moves, decimal qty)
+    {
+        var list = moves.ToList();
+        var (layers, consumed) = InventoryCostFlow.FifoQueue(list, 0m);
+        return FifoLayerCost.Resolve(layers, consumed, qty, InventoryCostFlow.LastLayerCost(list, 0m));
+    }
+
+    [Fact]
+    public void X1_ยกเลิกใบซื้อล็อตที่สอง_ขายถัดไปได้ล็อตแรก_ไม่ใช่ถูกกินล็อตเก่าสุด()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m, DocA),
+            new CostMovement("IN", 10m, 200m, DocB),
+            new CostMovement("OUT", -10m, 200m, DocB),     // กลับรายการตอนยกเลิกใบซื้อ B
+        };
+        Assert.Equal(100m, FifoNext(moves, 5m));
+        // ก่อนแก้: OUT −10 กินล็อต A ทั้งก้อน ⇒ ขาย 5 ได้ 200 (ล็อตที่ถูกยกเลิกไปแล้ว)
+        var (oldLayers, oldConsumed) = (new[] { new FifoLayer(10m, 100m), new FifoLayer(10m, 200m) }, 10m);
+        Assert.Equal(200m, FifoLayerCost.Resolve(oldLayers, oldConsumed, 5m, 200m));
+    }
+
+    [Fact]
+    public void X1_ยกเลิกใบขาย_ของกลับเข้าล็อตเดิม_ขายถัดไปได้ต้นทุนล็อตเดิม()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m, DocA),
+            new CostMovement("IN", 10m, 200m, DocB),
+            new CostMovement("OUT", -10m, 100m, DocC),     // ขาย 10 (กินล็อต A)
+            new CostMovement("IN", 10m, 100m, DocC),       // ยกเลิกใบขาย C
+        };
+        Assert.Equal(100m, FifoNext(moves, 10m));          // ก่อนแก้: แถวยกเลิกเป็นล็อตใหม่ท้ายคิว ⇒ ขายถัดไปได้ล็อต B 200
+    }
+
+    [Fact]
+    public void X1_ยกเลิกแล้วอนุมัติใหม่_แถวรอบใหม่ยังอยู่()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m, DocA),
+            new CostMovement("IN", 10m, 200m, DocB),
+            new CostMovement("OUT", -10m, 200m, DocB),
+            new CostMovement("IN", 10m, 210m, DocB),       // อนุมัติใบ B ใหม่หลังแก้ราคา
+        };
+        var (layers, consumed) = InventoryCostFlow.FifoQueue(moves, 0m);
+        Assert.Equal(new[] { new FifoLayer(10m, 100m), new FifoLayer(10m, 210m) }, layers);
+        Assert.Equal(0m, consumed);
+    }
+
+    [Fact]
+    public void X1_บิลPOSยกเลิก_จับคู่ด้วยเลขบิล_คืนบางส่วนไม่ตัด()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m, DocA),
+            new CostMovement("IN", 10m, 200m, DocB),
+            new CostMovement("OUT", -4m, 100m, null, "POS-0001"),
+            new CostMovement("IN", 4m, 100m, null, "VOID-POS-0001"),
+            new CostMovement("OUT", -3m, 100m, null, "POS-0002"),
+            new CostMovement("IN", 1m, 100m, null, "REFUND-POS-0002"),   // คืนบางส่วน — ไม่ใช่คู่กลับรายการ
+        };
+        var (layers, consumed) = InventoryCostFlow.FifoQueue(moves, 0m);
+        // บิล 0001 ยกเลิกทั้งใบ ⇒ คู่ถูกตัด · บิล 0002 คืน 1 จาก 3 ⇒ ยังขาย 3 และคืน 1 เป็นล็อต
+        Assert.Equal(new[] { new FifoLayer(10m, 100m), new FifoLayer(10m, 200m), new FifoLayer(1m, 100m) }, layers);
+        Assert.Equal(3m, consumed);
+    }
+
+    [Fact]
+    public void X1_เลขอ้างอิงอิสระของการปรับสต็อกมือ_ไม่ถูกจับคู่()
+    {
+        var moves = new[]
+        {
+            new CostMovement("ADJUST", 5m, 100m, null, "นับใหม่"),
+            new CostMovement("ADJUST", -5m, 100m, null, "นับใหม่"),
+        };
+        var (layers, consumed) = InventoryCostFlow.FifoQueue(moves, 0m);
+        Assert.Equal(new[] { new FifoLayer(5m, 100m) }, layers);
+        Assert.Equal(5m, consumed);
+    }
+
+    // ── ฝ่ายค้าน X3: rebuild ถัวเฉลี่ยหลังยกเลิกใบซื้อ ─────────────────────────────
+
+    [Fact]
+    public void X3_ยกเลิกใบซื้อ10ที่200_ค่าเฉลี่ยกลับเป็น100()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m, DocA),
+            new CostMovement("IN", 10m, 200m, DocB),       // ค่าเฉลี่ย 150
+            new CostMovement("OUT", -10m, 200m, DocB),     // กลับรายการที่ต้นทุนล็อตเดิม
+        };
+        Assert.Equal(100m, InventoryCostFlow.RebuildWeightedAverage(moves, 0m));   // ก่อนแก้ค้าง 150
+    }
+
+    [Fact]
+    public void X3_ขายที่ประทับค่าเฉลี่ย_ไม่ขยับค่าเฉลี่ย()
+    {
+        var moves = new[]
+        {
+            new CostMovement("IN", 10m, 100m),
+            new CostMovement("IN", 10m, 200m),
+            new CostMovement("OUT", -7m, 150m),
+        };
+        Assert.Equal(150m, InventoryCostFlow.RebuildWeightedAverage(moves, 0m));
+    }
+
+    // ── ฝ่ายค้าน X4: นำเข้ายอดยกมาซ้ำ = แถว OPENING ติดลบหักล้าง (ไม่ลบแถวเดิม) ─────────────────
+
+    [Fact]
+    public void X4_นำเข้ายอดยกมาซ้ำ_คู่หักล้างถูกตัด_เหลือยอดยกมาชุดใหม่()
+    {
+        var moves = new[]
+        {
+            M("OPENING", 10m, 100m),
+            M("IN", 5m, 150m),
+            M("OPENING", -10m, 100m),   // แถวล้างชุดก่อน (นำเข้าซ้ำ)
+            M("OPENING", 12m, 110m),
+        };
+        var (layers, consumed) = InventoryCostFlow.FifoQueue(moves, 0m);
+        Assert.Equal(new[] { new FifoLayer(5m, 150m), new FifoLayer(12m, 110m) }, layers);
+        Assert.Equal(0m, consumed);   // ก่อนแก้ (แถวล้างเป็น OUT): กินล็อตยกมาเก่าแทน ⇒ ลำดับคิวเพี้ยน
+    }
+
+    [Fact]
+    public void X4_ถัวเฉลี่ย_ล้างยอดยกมาที่ต้นทุนเดิม_ถอดมูลค่าออกตรง()
+        => Assert.Equal(130m, InventoryCostFlow.RebuildWeightedAverage(new[]
+        {
+            M("OPENING", 10m, 100m), M("IN", 10m, 150m), M("OPENING", -10m, 100m), M("OPENING", 10m, 110m),
+        }, 0m));   // หลังล้าง 10@150 · ยกมาใหม่ 10@110 ⇒ (1,500 + 1,100) / 20 = 130
+
+    // ── ฝ่ายค้าน X5: มูลค่าคงเหลือของสินค้า FIFO = มูลค่าล็อตที่เหลือ ─────────────────────────
+
+    [Fact]
+    public void X5_มูลค่าคงเหลือFIFO_คิดจากล็อตที่ยังไม่ถูกกิน()
+    {
+        var layers = new[] { new FifoLayer(10m, 100m), new FifoLayer(10m, 200m) };
+        Assert.Equal(200m, InventoryCostFlow.RemainingFifoUnitCost(layers, 10m, 0m));   // เหลือแต่ล็อตสอง
+        Assert.Equal(166.6667m, InventoryCostFlow.RemainingFifoUnitCost(layers, 5m, 0m)); // 5@100 + 10@200 = 2,500 / 15
+        Assert.Equal(90m, InventoryCostFlow.RemainingFifoUnitCost(layers, 20m, 90m));      // คิวหมด = ต้นทุนสำรอง
     }
 }

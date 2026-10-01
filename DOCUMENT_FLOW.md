@@ -2037,6 +2037,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
      (`OPENING`) และตรวจนับ/ปรับ (`ADJUST` ±) เข้าคิว · โอนระหว่างคลังไม่นับ (ต้นทุนระดับบริษัท) · OUT ใช้ค่าสัมบูรณ์ · ล็อตไม่มีต้นทุน
      คิดด้วย `CostPrice` · อ่านแถวที่ ledger เพิ่มใน context แต่ยังไม่ save ด้วย (ใบเดียวสินค้าซ้ำสองบรรทัด · rebuild หลัง void) ·
      rebuild ใช้ `WeightedAverageCost.Next` ตัวเดียวกับ ledger (เดิมข้าม ADJUST/OPENING)
+     · **ฝ่ายค้านรอบ 201 (X1/X3/X4/X5)**: แถวกลับรายการถูกจับคู่ตัดก่อนสร้างคิว FIFO (`InventoryCostFlow.CancelReversals` — คีย์ `DocumentId` ของ
+     การยกเลิกเอกสาร · `VOID-/REFUND-{เลขบิล}` ของ POS · แถว `OPENING` ของการนำเข้าซ้ำ · จับเฉพาะขนาดเท่ากันทิศตรงข้าม) · rebuild ถัวเฉลี่ย
+     **ติดตามมูลค่า** (ขาออกลดมูลค่าด้วยต้นทุนที่ประทับ ⇒ ยกเลิกใบซื้อถอดล็อตนั้นออกจากค่าเฉลี่ย) · นำเข้ายอดยกมาซ้ำไม่ลบแถวเดิม เขียนแถว
+     `OPENING` ติดลบหักล้างผ่าน ledger ที่ต้นทุนเดิม · รายงานมูลค่าคงเหลือ + เบิกวัสดุผ่าน `IInventoryCostingService` ตัวเดียว
+     (`ResolveValuationUnitCostAsync` · FIFO = มูลค่าล็อตที่เหลือ · เบิกวัสดุใช้ `StockMoveResult.UnitCostUsed`)
 9. **Fixed asset auto-register** — `AutoRegisterFixedAssetsAsync` (DocumentService)
    เป็นแค่ตัวห่อ: มอบต่อให้ **`FixedAssetService.RegisterFromDocumentAsync(companyId,
    doc, onlyLineId: null, actor, skipIfScanRegistered: true)`** ซึ่งเป็น**ตัวขึ้นทะเบียน
@@ -3179,7 +3184,8 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   สินค้าที่ `CurrentStock ≠ Σ WarehouseStock` พร้อมหลักฐานชั้นที่สาม (ยอดจากประวัติ movement) · `POST …/repair` (สิทธิ์ `Inventory.Adjust`)
   ซ่อม `CurrentStock := Σ คลัง` เฉพาะแถวที่ผู้ใช้เลือกและค่ายังเท่าที่เห็น (`ExecuteUpdate` มีเงื่อนไข) · ประวัติไม่ตรงผลรวมคลัง = ต้องติ๊ก
   "ตรวจนับแล้ว" · ทุกแถวเข้า audit chain · **ไม่มีงานไหนรันอัตโนมัติ** · ตัวตัดสิน `Helpers/StockTotalsReconciliation` · หน้า products.html
-  เมนู "🔎 ตรวจยอดสต็อกรวม" (แทน `ReconcileProductTotalsAsync` ที่ซ่อมเงียบและไม่มีผู้เรียก)
+  เมนู "🔎 ตรวจยอดสต็อกรวม" (แทน `ReconcileProductTotalsAsync` ที่ซ่อมเงียบและไม่มีผู้เรียก) · ฝ่ายค้าน X6: ก่อนอ่านหลักฐาน ถือล็อก (คลัง, สินค้า)
+  ทุกแถวคลังของสินค้าที่จะซ่อม (คีย์เดียวกับ `MoveAsync`)
 - Fixed Asset: `FixedAsset` row สร้างอัตโนมัติ → ผู้ใช้กรอก
   `UsefulLifeMonths + DepreciationMethod` ในหน้า fixed-assets แล้วยืนยัน
   (`NeedsReview = false`) → schedule depreciation ปกติ · ใบที่อนุมัติแล้วแต่บรรทัด
@@ -3984,7 +3990,10 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 `LodgingManage` · `ReissueFinalDocumentAsync`): รายการจาก `BuildFinalInvoiceLinesAsync` (ตัวสร้างเดียวกับเช็คเอาต์ · folio ที่ `Paid` = ที่อยู่บนใบเดิม) + แผนมัดจำ
 จากสถานะปัจจุบัน + ใบร่างผ่าน `UpsertFinalDraftAsync` + ใช้มัดจำผ่าน `ApplyFinalDepositPlanAsync` (ตัวเดียวกับเช็คเอาต์) · ยอด/ชนิดต้องเท่าใบเดิมก่อนออกเลข
 (`Helpers/LodgingCheckoutReissue` · ต่าง = ปฏิเสธ ทางไปต่อใบลด/เพิ่มหนี้) · ผู้ซื้อเดิม · หมายเหตุอ้างเลขใบเดิม · ไม่นับมิเตอร์/ไม่สร้างงานแม่บ้าน/ไม่รับเงินซ้ำ ·
-ไม่ตั้ง `ReplacesDocumentId` (ช่องนั้นเป็นของใบแทน §86/6 ที่ไม่ลงบัญชี) · ยังเช็คอินอยู่ (ขั้นใช้มัดจำค้าง) ⇒ `FinalDocumentNote` ทางเดิมที่หน้าเอกสาร · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
+ไม่ตั้ง `ReplacesDocumentId` (ช่องนั้นเป็นของใบแทน §86/6 ที่ไม่ลงบัญชี) · ยังเช็คอินอยู่ (ขั้นใช้มัดจำค้าง) ⇒ `FinalDocumentNote` ทางเดิมที่หน้าเอกสาร ·
+**ฝ่ายค้าน X2/X7**: มีเอกสารขายที่ยังมีผลอ้างเลขจอง (`BookingNumber`/`Reference` · ไม่ใช่ใบเดิม/ใบมัดจำ/ใบเสร็จคู่การรับชำระ — `FindLiveReplacementSaleAsync`)
+⇒ ไม่เปิดปุ่ม + ปฏิเสธ (ใบที่ผู้ใช้ออกแทนเองตามข้อความก่อนรอบ 201) · ต้องติ๊ก `ConfirmNoManualReissue` ทุกครั้ง (ระบบไม่มีวันที่ยกเลิกให้แยกยุค) ·
+เช็คเอาต์และออกใบใหม่ถือ session lock ต่อการจอง `AdvisoryLockKey.LodgingCheckout` (`ExclusiveCheckoutAsync` · ถืออยู่ = `LODGING-CHECKOUT-BUSY`) · เช็คเอาต์เครดิต = DueDate +30 วัน + บันทึกยอดค้างใน InternalNotes · unit → VacantDirty + งานแม่บ้าน CheckoutClean อัตโนมัติ |
 | ยกเลิก / no-show (`CancelCoreAsync`) | ค่าปรับ = `LodgingPricingEngine.CancellationFee` จาก **snapshot** นโยบาย ณ วันจอง (no-show = `NoShowChargePercent`) · **รอบ 193 (F-03/P0-2)**: ด่านสถานะ (Terminal + เช็คอินแล้ว) อยู่ในตัวกลาง ⇒ เส้นแขกยกเลิกซ้ำ = "ยกเลิกไปแล้ว" · บันทึกสถานะยกเลิก + `RefundAmount` (ยอด**ต้องคืน**) ก่อน แล้วลงบัญชีส่วนริบ `RealizeDepositAsync(ฐาน, ForfeitAs: PriceOrFee)` (`LodgingDepositSettlement.PlanCancellation` — เดิมส่ง gross เข้าช่องฐาน ⇒ ล้มทุกครั้งเมื่อจด VAT) · **รอบ 194 (spec S3)**: มัดจำค่าห้อง = ส่วนหนึ่งของราคา ⇒ ริบเป็นราคา/ค่าธรรมเนียมยกเลิก — VAT ทันที = คงเดิม · รอเรียกเก็บ = ย้าย 21913→21911 + ธง `[DEPOSIT-LATE-VAT]` · เต็มยอด = ออกใบกำกับของยอดที่ริบแล้วตัดชำระ (ตัดสินที่ `ForfeitVatDecision` ใน DocumentService — เดิมรายได้ไม่มี VAT เงียบ ๆ) · รอบ 194 ทีม M: ส่งอัตรา VAT ของที่พัก (`channelVatRate`) ⇒ ที่พักไม่คิด VAT ไม่ได้ใบกำกับ 7% · ล้ม ⇒ หมายเหตุบนการจองถูกบันทึกจริง (DocumentService ไม่ล้าง change tracker ทั้งก้อน) + ทางไปต่อข้อความเดียว `ForfeitRetryHint` · เงินประกันถูกกรองออกก่อนวางแผน (ไม่ถูกริบเป็นค่าปรับ) + หมายเหตุให้ปิดที่ปุ่มเงินประกัน · **ไม่ลง JE คืนเงิน/ใบลดหนี้ตอนยกเลิกแล้ว** | ค่าปรับเกินมัดจำ = บันทึกส่วนต่างที่ยังไม่เรียกเก็บใน InternalNotes · แขกไม่เห็นข้อความภายในเมื่อยกเลิกสำเร็จแต่ลงรายได้ส่วนริบล้ม (หมายเหตุ + audit ฝั่งพนักงาน) · night audit บันทึก no-show แต่ไม่ริบ/คืน (backlog) |
 | ยืนยันคืนเงินแล้ว (`POST /lodging/reservations/{id}/refund-paid` · สิทธิ์ `LodgingManage` · `RecordRefundPaidAsync`) | พนักงานยืนยันว่าโอนคืนจริง → `RefundDepositAsync` (JE + ใบลดหนี้) ทีละใบมัดจำ **จากบัญชีที่เงินเข้า** (ขา Dr ของ JE รับมัดจำ เช่น 11340 gateway) หรือบัญชีธนาคารที่เลือก · หาไม่ได้ = ปฏิเสธให้เลือก (ไม่เดา 111) | `RefundPaidAmount/RefundPaidAt/RefundPaidBy/RefundReference` · `RefundState` (None/Pending/Paid/Unknown) คำนวณจากสองตัวเลขเท่านั้น · แถวยกเลิกเดิมที่โค้ดเก่า "ลงคืนแล้ว" = ป้าย `legacy:posted-at-cancel` ⇒ `Unknown` "ไม่มีข้อมูลการโอนคืน" (กดคืนไม่ได้ · ไม่อยู่ในคิว) · ล็อกระดับการจอง (`JobLock` + `AdvisoryLockKey.LodgingRefundPaid`) · ตัวซ่อมยอด `RefundPaidCatchUp` นับเฉพาะการคืนหลัง `RefundBaselineGross` (ยอดคืนบนใบมัดจำ ณ จุดตั้งยอดค้าง) · ห้ามลงวันที่ย้อนเข้างวด ภ.พ.30 ที่ยื่น/ประกาศว่ายื่นแล้ว หรือวันที่อนาคต · หน้า front desk: ป้าย "ค้างคืน" · มุมมอง "ต้องคืนเงินแขก" · หน้าแขก "รอที่พักโอนคืน ฿X"/"ที่พักโอนคืนแล้ว" |
 | รับเงินประกันความเสียหาย (`POST /lodging/reservations/{id}/security-deposit` · `LodgingManage` · `ReceiveSecurityDepositAsync` · รอบ 194) | `Receipt` `IsDeposit=true` เลขจองเดียวกัน · ประเภท = `LodgingProperty.SecurityDepositKindId` (ต้องเป็นลักษณะ `RefundableSecurity` · เป็น "ประเภทบนใบ" ของ `ResolveKind` — ไม่ผ่านชั้นของมัดจำค่าห้อง) · ยอดเริ่มต้น `SecurityDepositAmount` · `DepositKindId:` ⇒ ใบตรึงลักษณะเงินประกัน · บัญชี 21530 (ผังโรงแรม) ไม่งั้น 21620 · SECURITY seed = เต็มยอด VAT 0 → Approve(ack) → ผูก `SecurityDepositDocumentId` | สถานะ Confirmed/CheckedIn · โหมดไม่ออกเอกสาร = ปฏิเสธ · ใบค้างอยู่ = รับซ้ำไม่ได้ (ปิดใบเดิมก่อน) — ตัดสินที่ `LodgingDepositSettlement.SecurityLinkState` ตัวเดียว: ใบที่ผูกถูกยกเลิก/ลบที่หน้าเอกสาร = `DocumentGone` = ไม่ค้าง ⇒ รับใหม่ได้ (ลิงก์ถูกแทน + หมายเหตุ + audit `replacedVoidedSecurityDocumentId`) · หน้าจอใช้ `SecurityDepositOpen`/`SecurityDepositNote` จากเซิร์ฟเวอร์ (ฝ่ายค้าน C3 — เดิมค้างตลอดไป: รับใหม่ไม่ได้ ปิดก็ไม่ได้) · ใบเงินประกันของการจอง = **เฉพาะใบที่ผูก** (`SecurityDeposit` ไม่ fallback ใบลักษณะเงินประกันใบอื่นแล้ว) · **ไม่นับใน `PaidAmount`/`BalanceDue`** (ไม่ใช่ค่าห้อง) · ไม่เข้าแผนเช็คเอาต์/ยกเลิก/คืนเงินค่าห้อง (`RoomDeposits`) |
@@ -4164,7 +4173,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม TX — §65 ตรี เป็นคำเตือนก่อนอนุมัติ (§3.2 ข้อ 6) · SoD ตัวตัดสินเดียว + โหมดเงา (§3.2 ข้อ 2) · tax point §83/6 = วันจ่าย (§3.2 ข้อ 4) · มัดจำ: ล็อกก่อนแก้/นับเลขบนใบ/วันไทย/ข้ามปีไม่ใช่เหตุ (§3.7) · ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ (§5.3) · ใบกำกับอย่างย่อ: ขายปลีกก่อนสวิตช์ ภ.พ.06 — commit 2d7020af)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม IN แก้ผลฝ่ายค้าน X1–X7 — แถวกลับรายการไม่เข้าคิว FIFO · ถัวเฉลี่ยติดตามมูลค่า ·
+ยอดยกมาซ้ำไม่ลบแถว · มูลค่าคงเหลือ/เบิกวัสดุผ่านตัวคิดต้นทุนเดียว · ซ่อมยอดถือล็อกคลัง · ออกใบเช็คเอาต์ใหม่กันใบซ้ำ + ล็อกต่อการจอง (§3.2 ข้อ 8 · §5.6 · §6.5)
+— commit ecaddf15)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม TX — §65 ตรี เป็นคำเตือนก่อนอนุมัติ (§3.2 ข้อ 6) · SoD ตัวตัดสินเดียว + โหมดเงา (§3.2 ข้อ 2) · tax point §83/6 = วันจ่าย (§3.2 ข้อ 4) · มัดจำ: ล็อกก่อนแก้/นับเลขบนใบ/วันไทย/ข้ามปีไม่ใช่เหตุ (§3.7) · ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ (§5.3) · ใบกำกับอย่างย่อ: ขายปลีกก่อนสวิตช์ ภ.พ.06 — commit 2d7020af)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit f2cd1982)_
 

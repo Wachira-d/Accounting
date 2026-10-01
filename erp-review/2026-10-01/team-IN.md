@@ -30,7 +30,10 @@
 ## 3. คำตอบ F3 ข้อ 7–12 (สรุป)
 
 7. `callers.py`: `CostingMethod` ผู้อ่าน 5 จุดเดิม + ผู้เขียนใหม่ 2 (Create/Update) · `ReconcileProductTotalsAsync` ผู้เรียก 0 → ลบ, แทนด้วยสองเมธอดที่มีผู้เรียก 1 ต่อเมธอด ·
-   `RebuildAverageCostAsync` ผู้เรียก 1 (void ใบซื้อ) ได้สูตรใหม่ · `GetNextNumberAsync`/`NextAsync` ผู้เรียก 6/19 ไม่ต้องแก้ (optional ท้าย) · รูปแบบ "อ่านแค่ IN/OUT" ในคิวต้นทุนเหลือ 0 จุด
+   `RebuildAverageCostAsync` ผู้เรียก 1 (void ใบซื้อ) ได้สูตรใหม่ · `GetNextNumberAsync`/`NextAsync` ผู้เรียก 6/19 ไม่ต้องแก้ (optional ท้าย) ·
+   ~~รูปแบบ "อ่านแค่ IN/OUT" ในคิวต้นทุนเหลือ 0 จุด~~ **แก้ถ้อยคำ (ฝ่ายค้าน X5 — ตัวเลขเดิมผิด)**: คิว FIFO/rebuild ใน `InventoryCostingService` = 0 จุด แต่ยังมี
+   ผู้คิดต้นทุนจากแถว `"IN"` เองนอกตัวคิดต้นทุนอีก 5 จุดใน `ProductService` ตอนส่งรอบแรก — แก้แล้ว 2 (`GetInventoryValuationAsync` · `UseSuppliesAsync`) ·
+   **เหลือ 3 📋** (`GetStockBalanceAsOfDateAsync` · `GetStockAgingReportAsync` · `GetStockMovementSummaryAsync` — รายงาน "ณ วันที่" ต้องมีตัวคิดต้นทุนย้อนวันก่อน)
    (`AiSuggestionController` อ่าน OUT/TRANSFER_OUT เพื่อสถิติการใช้ ไม่ใช่ต้นทุน — ไม่แตะ)
 8. ทางเข้าสร้างสินค้าอื่น (OCR `OcrController` · นำเข้าไฟล์ · CMS) ไม่ส่งวิธีคิด ⇒ ค่าเริ่มต้นถัวเฉลี่ย = พฤติกรรมเดิม · ทางเข้าแก้สินค้ามีเส้นเดียว (`UpdateAsync`) ·
    ปรับประมาณการค่าเสื่อม: หน้าแก้ไขปฏิเสธ (ด่านเดิม) + เส้นเดียว `adjust-life` · ออกใบเช็คเอาต์ใหม่: เส้นเดียวในโมดูลที่พัก (หน้าเอกสารยังออกเองได้ตามเดิม)
@@ -59,3 +62,20 @@
    (พฤติกรรมเดิมหลัง void) — ควรให้ทีมที่พักทบทวนว่าจะลด `PaidAmount` ตอน void หรือไม่
 3. **C-5 ทิศการซ่อม** — ยึด "แถวคลัง = ความจริง" ตาม migration เฟส 0 · ถ้าเจ้าของต้องการให้ซ่อมอีกทิศ (สร้างแถวคลังจาก `CurrentStock`) ต้องผ่าน ledger + movement ปรับยอด
 4. **C-6** เตือนเป็น Warning (ไม่บล็อกการปิด) — ถ้าต้องการบล็อก แก้ severity บรรทัดเดียว
+
+## 6. แก้ผลฝ่ายค้าน (X1–X7 · หลัง merge `4b044a30` · คอมมิต `ecaddf15`)
+
+| ID | สถานะ | ที่แก้ | เทสต์ / ด่าน |
+|---|---|---|---|
+| X1 (P1) คิว FIFO ไม่รู้จักแถวกลับรายการ | ✅ (คง FIFO ในตัวเลือก) | `InventoryCostFlow.CancelReversals` (private · เรียกจาก `FifoQueue`/`LastLayerCost`) — จับคู่ภายในคีย์ (DocumentId · `VOID-/REFUND-{เลขบิล}` POS · แถว OPENING) ที่ขนาดเท่ากันทิศตรงข้าม (กับแถวล่าสุดที่ยังไม่ถูกจับ ⇒ ยกเลิกแล้วอนุมัติใหม่ยังเหลือรอบใหม่) · `CostMovement` + `DocumentId`/`Reference` · `LoadCostMovementsAsync` ส่งคีย์ | golden: ยกเลิกใบซื้อล็อตสอง ⇒ ขาย 5 = 100 · ยกเลิกใบขาย ⇒ ขายถัดไปล็อตเดิม 100 · อนุมัติใหม่ · POS ยกเลิกทั้งบิล/คืนบางส่วน · เลขอ้างอิงอิสระไม่ถูกจับ · required_call_site ×3 |
+| X2 (P1) ใบแทนที่ผู้ใช้ออกเอง ⇒ ใบกำกับซ้ำ | ✅ | `FindLiveReplacementSaleAsync` (ใบขาย Invoice/TaxInvoice/Receipt ที่ออกแล้วไม่ยกเลิก · ≠ ใบเดิม · ไม่ใช่ใบมัดจำ · ไม่ใช่ใบเสร็จคู่การรับชำระ · `BookingNumber`/`Reference` = เลขจอง · tenant) · `LodgingCheckoutReissue.Problem/CanOffer` รับผลนั้น + `ConfirmNoManualReissue` (บังคับทุกครั้ง — `Document` ไม่มีวันที่ยกเลิก จึงแยก "ก่อนรอบ 201" ไม่ได้) · ข้อความ/ปุ่มบน `lodging.html` | 4 เทสต์สองทิศ · required_call_site (ลำดับ + call_args ต้องส่ง `request.ConfirmNoManualReissue`) |
+| X3 (P2) rebuild WAC หลังยกเลิกใบซื้อ | ✅ | `RebuildWeightedAverage` ติดตามมูลค่า (ขาออกลดมูลค่าด้วย UnitCost ที่ประทับ · ไม่มี = ค่าเฉลี่ย) | golden 10@100 + 10@200 ยกเลิก ⇒ 100 · ขายที่ประทับค่าเฉลี่ยไม่ขยับ |
+| X4 (P2) นำเข้ายอดยกมาซ้ำลบแถว | ✅ | `ImportStockOpeningAsync`: ไม่ลบ · แถวล้างเป็น `OPENING` ติดลบผ่าน `IStockLedger` ที่ต้นทุนยอดยกมาเดิม | golden FIFO + ถัวเฉลี่ย · required_call_site forbid `RemoveRange(existingOpening)` |
+| X5 (P2) เบิกวัสดุ/มูลค่าคงเหลือคิดต้นทุนเอง | ✅ (2 จุด) · 📋 3 รายงาน "ณ วันที่" | `IInventoryCostingService.ResolveValuationUnitCostAsync` (ใหม่ · tenant) + `InventoryCostFlow.RemainingFifoUnitCost` · `ProductService` รับ `IInventoryCostingService` · `UseSuppliesAsync` ไม่ส่งต้นทุนเอง ใช้ `move.UnitCostUsed` | `X5_มูลค่าคงเหลือFIFO…` · required_call_site ×3 |
+| X6 (P3) ซ่อมยอดไม่ถือล็อกคลัง | ✅ | `RepairProductTotalsAsync` ล็อก (คลัง, สินค้า) ทุกแถวคลังของสินค้าที่เลือก เรียงคีย์คงที่ ก่อนอ่าน (คีย์เดียวกับ `MoveAsync`) | required_call_site (ล็อกก่อนอ่าน) |
+| X7 (P3) ไม่มีล็อกต่อการจอง | ✅ (session lock) | `ExclusiveCheckoutAsync` → `JobLock.RunExclusiveAsync(AdvisoryLockKey.LodgingCheckout, idการจอง)` ห่อทั้ง `CheckOutAsync` และ `ReissueFinalDocumentAsync` (ตัวจริงย้ายเป็น `CheckOutCoreAsync`/`ReissueFinalDocumentCoreAsync`) · **ใช้ session lock ไม่ใช่ `pg_advisory_xact_lock`** เพราะเส้นออกเอกสาร/ใช้มัดจำเปิดธุรกรรมของตัวเองหลายขั้น (xact lock หลุดตั้งแต่ขั้นแรก — แบบเดียวกับ `LodgingRefundPaid`) · คีย์คงที่ (`advisory_lock_key_check` ผ่าน) | required_call_site ×3 |
+
+ความเสี่ยงคอมไพล์เพิ่ม: `ProductService` constructor +`IInventoryCostingService` (DI ลงทะเบียนแล้ว · `di_cycle_check` ผ่าน) · local function `KeyOf` ใน static method ·
+`Func<Task<LodgingReservationResponse>>` ใน `ExclusiveCheckoutAsync` · `_db.Payments.Any(...)` ซ้อนใน `Where` ของ EF
+คำตอบคำถามค้างจาก main agent: Q1 ลิงก์ใบเช็คเอาต์ใหม่ ↔ ใบเดิมในโครงสร้าง = 📋 รอบถัดไป · Q2 `PaidAmount` ไม่ลดตอนยกเลิกใบ = ถูกแล้ว · Q3 รับทราบ
+

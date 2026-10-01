@@ -626,6 +626,26 @@ public partial class LodgingService
 
     public async Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId)
     {
+        return await ExclusiveCheckoutAsync(companyId, reservationId, () => CheckOutCoreAsync(companyId, reservationId, request, userId));
+    }
+
+    /// <summary>ล็อกต่อการจอง (ข้ามเครื่องได้) ของเส้นเช็คเอาต์และออกใบเช็คเอาต์ใหม่ (รอบ 201 ฝ่ายค้าน X7) — คีย์คงที่
+    /// <c>AdvisoryLockKey.For(บริษัท, LodgingCheckout, idการจอง)</c> · session lock เพราะเส้นออกเอกสารเปิดธุรกรรมของตัวเองหลายขั้น ·
+    /// ถืออยู่ = ปฏิเสธดังพร้อมทางไปต่อ (ไม่รอ — กดซ้ำสองแท็บคือสาเหตุหลัก)</summary>
+    private async Task<LodgingReservationResponse> ExclusiveCheckoutAsync(Guid companyId, Guid reservationId,
+        Func<Task<LodgingReservationResponse>> work)
+    {
+        LodgingReservationResponse? result = null;
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.LodgingCheckout, reservationId.ToString(),
+            async () => { result = await work(); }, _logger, companyId);
+        if (!ran || result == null)
+            throw new BusinessRuleException("มีผู้ใช้อื่นกำลังเช็คเอาต์/ออกใบเช็คเอาต์ของการจองนี้อยู่ — รอสักครู่แล้วเปิดการจองดูใหม่",
+                "LODGING-CHECKOUT-BUSY");
+        return result;
+    }
+
+    private async Task<LodgingReservationResponse> CheckOutCoreAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId)
+    {
         var r = await RequireReservationAsync(companyId, reservationId);
         if (r.Status != LodgingReservationStatus.CheckedIn) throw new BusinessRuleException($"ต้องเช็คอินก่อนจึงเช็คเอาต์ได้ (สถานะปัจจุบัน {StatusTh(r.Status)})");
         var prop = r.Property;
@@ -824,6 +844,13 @@ public partial class LodgingService
     public async Task<LodgingReservationResponse> ReissueFinalDocumentAsync(Guid companyId, Guid reservationId,
         LodgingReissueFinalRequest request, string userId)
     {
+        return await ExclusiveCheckoutAsync(companyId, reservationId,
+            () => ReissueFinalDocumentCoreAsync(companyId, reservationId, request, userId));
+    }
+
+    private async Task<LodgingReservationResponse> ReissueFinalDocumentCoreAsync(Guid companyId, Guid reservationId,
+        LodgingReissueFinalRequest request, string userId)
+    {
         var r = await RequireReservationAsync(companyId, reservationId);
         var prop = r.Property;
         var accountingOff = prop.AccountingMode == LodgingAccountingMode.Off;
@@ -843,8 +870,11 @@ public partial class LodgingService
             deducted => DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, deducted).Total);
         var rebuiltTotal = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, depositPlan.BaseDeducted).Total;
 
+        // ฝ่ายค้าน X2: ผู้ใช้อาจออกใบแทนเองที่หน้าเอกสารแล้ว (ข้อความก่อนรอบ 201 สั่งให้ทำ) โดย FinalDocumentId ยังชี้ใบเดิม ⇒ หาใบขายที่ยังมีผล
+        // ซึ่งอ้างเลขจองนี้ · ใบที่ออกเองโดยไม่อ้างเลขจอง ตรวจจากข้อมูลไม่ได้ ⇒ ผู้ใช้ต้องติ๊กยืนยันทุกครั้ง (ไม่มีวันที่ยกเลิกให้แยกยุค)
+        var liveReplacement = await FindLiveReplacementSaleAsync(companyId, r.ReservationNumber, oldId);
         if (LodgingCheckoutReissue.Problem(r.Status, old.Status, accountingOff, old.DocumentType, old.TotalAmount,
-                docType, rebuiltTotal, old.DocumentNumber) is { } problem)
+                docType, rebuiltTotal, old.DocumentNumber, liveReplacement, request.ConfirmNoManualReissue) is { } problem)
             throw new BusinessRuleException(problem, LodgingCheckoutReissue.RuleCode);
         if (lines.Count == 0) throw new BusinessRuleException("ไม่มีรายการให้ออกเอกสาร", LodgingCheckoutReissue.RuleCode);
 
@@ -892,6 +922,23 @@ public partial class LodgingService
                 LodgingCheckoutReissue.RuleCode);
         }
         return await MapAsync(companyId, r, true, true);
+    }
+
+    /// <summary>เลขเอกสารขายที่ออกแล้วและยังมีผล (ไม่ใช่ใบ <paramref name="excludeId"/> · ไม่ใช่ใบมัดจำ · ไม่ใช่ใบเสร็จคู่การรับชำระ) ซึ่งอ้างเลขจองนี้
+    /// ใน <c>BookingNumber</c> หรือ <c>Reference</c> — มี = ผู้ใช้ออกใบแทนใบเช็คเอาต์ที่ยกเลิกเองแล้ว (ฝ่ายค้าน X2) · null = ไม่พบ</summary>
+    internal async Task<string?> FindLiveReplacementSaleAsync(Guid companyId, string reservationNumber, Guid excludeId)
+    {
+        var saleTypes = LodgingCheckoutReissue.SaleTypes;
+        var notIssued = DocumentStatusRules.NotIssued;
+        return await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Id != excludeId && !d.IsDeposit
+                && (d.BookingNumber == reservationNumber || d.Reference == reservationNumber)
+                && saleTypes.Contains(d.DocumentType)
+                && !notIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
+                && !_db.Payments.Any(p => p.CompanyId == companyId && p.ReceiptDocumentId == d.Id))
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => d.DocumentNumber)
+            .FirstOrDefaultAsync();
     }
 
     /// <summary>ทำเช็คเอาต์ที่ค้างต่อ — ออกใบสุดท้ายแล้ว (<c>FinalDocumentId</c>) แต่ขั้นใช้มัดจำล้ม · วางแผนใหม่จากสถานะจริง:

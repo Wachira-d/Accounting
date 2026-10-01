@@ -4222,3 +4222,12 @@ _2026-10-01 รอบ 201 ทีม TX — ภาษี/ด่านอนุม
 - **C-21** ด่านขายปลีก §86/6 ก่อนสวิตช์ ภ.พ.06 (+ ข้อความหน้าแอดมิน) · **B-7** `TaxFilingDeadline.WarnBy/WarnByFor/EFilingCaveat` — ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ
 - 📋 A-TX4 (ไฟล์ทีม DV) · A-TX10 (รอเทสต์ DB ของ PL) · C-7 (`TipPayoutService` ไม่มีทางเข้า + ไม่มีที่เก็บยอดสะสมรายคน) · A-TX11 (ระยะ 2)
 - เทสต์ `Section65TerApprovalWarningGoldenTests` · `Round201TxTests` · ปรับ `DepositRound194R2Tests`/`PosSlipHeaderTests` · required_call_site +13 แถว — commit 2d7020af)_
+
+_2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้าน X1–X7 (`erp-review/2026-10-01/team-IN.md` §6):
+- **X1** `InventoryCostFlow.CancelReversals` จับคู่แถวกลับรายการ (DocumentId · VOID-/REFUND- POS · OPENING) ตัดก่อนคิว FIFO · `CostMovement` + DocumentId/Reference
+- **X3** rebuild ถัวเฉลี่ยติดตามมูลค่า (ยกเลิกใบซื้อถอดล็อตออก) · **X4** นำเข้ายอดยกมาซ้ำไม่ลบแถว เขียน OPENING ติดลบผ่าน ledger
+- **X5** `IInventoryCostingService.ResolveValuationUnitCostAsync` + `InventoryCostFlow.RemainingFifoUnitCost` — รายงานมูลค่า/เบิกวัสดุผ่านตัวเดียว
+- **X6** ซ่อมยอดสต็อกถือล็อก (คลัง, สินค้า) ก่อนอ่าน · **X7** `ExclusiveCheckoutAsync` session lock ต่อการจอง (`AdvisoryLockKey.LodgingCheckout`)
+- **X2** `FindLiveReplacementSaleAsync` + `LodgingCheckoutReissue.Problem(liveReplacementNumber, confirmedNoManualReissue)` + ช่องยืนยันบนหน้าที่พัก
+- เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit ecaddf15)_
+
