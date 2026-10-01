@@ -4061,4 +4061,4 @@ _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACK
 - (C-22) ที่อยู่แถวสาขา = กระดาษที่พิสูจน์ได้ หรือทะเบียน VAT ที่ยืนยันสาขานั้น (`OcrExtractedData.DbdAddressIsBranch`) · ไม่รู้ = ว่าง + `BranchAddressUnknownNote`
 - (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
 - (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
-- เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit <pending>)_
+- เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit f27f289e)_

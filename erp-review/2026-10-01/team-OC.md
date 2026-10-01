@@ -2,6 +2,7 @@
 
 > ขอบเขต: `BACKLOG.md` §1.7 (A-OC1 → A-OC4 → A-OC3 → A-OC2 → A-OC5) + หมวด C ที่ BRIEF รอบ 201 มอบให้ (C-18 · C-19 · C-20 · C-22 · C-23 · C-24 =
 > คำตัดสินข้อ 91 · 92 · 93 · 95 · 96 · 97) · worktree เริ่มที่ `5eed54bf` · ไม่มี .NET SDK ⇒ **ยังไม่ได้คอมไพล์** (CI คือ compiler ตัวแรก)
+> คอมมิตหลัก `f27f289e` (sha เติมในคอมมิตตามหลัง — ไม่ amend)
 > ไม่แตะ: `SyncScanToPostedDocumentAsync` (TX) · ไฟล์เงินเดือน (PR2) · `layout.js` (GW) · `api.js` · `AccountingDbContext.cs` (PL)
 
 ## ตารางรายการ
