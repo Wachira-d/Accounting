@@ -3988,4 +3988,4 @@ _2026-10-01 รอบ 200 ทีม V1H — ลงมือตามคำตั
 - **ข้อ 53** รายงานข้อ 44 เพิ่มกลุ่ม `MisdatedOutputVatReversals` (`EtaxReissueReview.ReclassReversalMisdated`) — อ่านอย่างเดียว
 - **ข้อ 54** ปิดธงทาง (ค) `EtaxCancellationPath.OriginalStillValid` / `EtaxCancellationEvidence.OriginalInvoiceStillValid` — ครอบยอดด้วย `LivePaymentCoverageAsync` · ไม่มีใบกำกับอื่น ·
   ภาษีไม่ถูกถอยไปแล้ว · สิทธิ์อนุมัติตรวจใน service · ล้างธงอย่างเดียว + audit · หน้าเอกสารเพิ่มตัวเลือก (ค)
-- เทสต์ `VoidReissueR200HTests` (สองทิศทุกข้อ) · required_call_site +5 แถว/ปรับ 3 — commit <pending>)_
+- เทสต์ `VoidReissueR200HTests` (สองทิศทุกข้อ) · required_call_site +5 แถว/ปรับ 3 — commit abf0892f)_
