@@ -72,6 +72,12 @@ public class SiteSettings : BaseEntity
     /// ตั้งจากหน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</para></summary>
     public SubscriptionEnforcementMode SubscriptionEnforcementMode { get; set; } = SubscriptionEnforcementMode.Shadow;
 
+    /// <summary>รอบ 201 ทีม PL (C-3 · คำตัดสินข้อ 76): ด่าน service "เจ้าของบริษัทปิดฟีเจอร์เอง" (<c>CompanySettings.OwnerDisabledFeatures</c>)
+    /// <b>บังคับ</b>แล้วหรือยัง — ค่าตั้งต้น false = โหมดเงา (ผ่าน + บันทึก "จะถูกปิด" ลง <c>SubscriptionGateShadowHits</c> เหตุ OwnerDisabledFeature) ·
+    /// แยกจาก <see cref="SubscriptionEnforcementMode"/> โดยเจตนา: แพลตฟอร์มที่เปิดบังคับแพ็กเกจไว้แล้วต้องยังได้ช่วงเงาของด่านใหม่นี้ (ข้อ 22) ·
+    /// ผู้อ่าน: <c>SubscriptionService.CheckFeatureAccessAsync</c> → <c>Helpers/OwnerFeatureMask</c> · ตั้งจากหน้าแอดมิน "บังคับแพ็กเกจบนหน้าเว็บ"</summary>
+    public bool OwnerFeatureMaskEnforced { get; set; }
+
     public string? MaintenanceMessage { get; set; }
     public string DefaultLanguage { get; set; } = "th";
 

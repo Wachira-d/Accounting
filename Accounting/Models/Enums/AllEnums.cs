@@ -9,6 +9,9 @@ public enum UserRole
     Auditor = 4,
     Viewer = 5,           // ดูอย่างเดียว
     ExternalAccountant = 6, // นักบัญชีภายนอก / Freelance
+    /// <summary>ผู้ดูแลแพลตฟอร์ม (support) ที่เปิด/ตั้งค่าบริษัทให้ลูกค้า — <b>ไม่ใช่เจ้าของ</b> (ไม่ผ่านด่านเจ้าของ) · โอนความเป็นเจ้าของให้ลูกค้าได้ ·
+    /// รอบ 201 ทีม PL (C-4 · ข้อ 77) · ตัวตัดสิน <c>Helpers/OwnershipTransferPolicy</c> · ตั้งผ่านหน้าทีม/คำเชิญไม่ได้</summary>
+    PlatformSupport = 7,
     SystemAdmin = 99
 }
 

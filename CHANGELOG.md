@@ -4069,3 +4069,12 @@ _2026-10-01 รอบ 201 ทีม PL ชุด 2 — เครื่องม�
 - **A-PL8** `GET document-templates/default/{type}` อ่านอย่างเดียว (ไม่มี ⇒ ค่าเริ่มต้น id ว่าง) · `POST` เดียวกัน = สร้าง (`CompanySettings.Edit`) · documents.html/document-templates.html ใช้ POST ตอนจะแก้
 - **A-PL11** เติม sha `dd5ceb1e` ใน `review200-round2-sec.md` แถว K2-5b..K2-4 + หัว `team-Z.md`
 - เทสต์ `PlatformRound201Tests` · required_call_site +11 แถว — commit <pending>)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่มอบให้ทีม (คำตัดสินข้อ 76/77):
+- **C-3** `Helpers/OwnerFeatureMask` — `SubscriptionService.CheckFeatureAccessAsync` เห็น `CompanySettings.OwnerDisabledFeatures` แล้ว: โหมดเงา (ผ่าน + บันทึก
+  `SubscriptionGateShadowHits` เหตุ `OwnerDisabledFeature`) จนกว่าแอดมินกดสวิตช์แยก `SiteSettings.OwnerFeatureMaskEnforced` (`PUT api/admin/subscription-enforcement/owner-mask` ·
+  การ์ด 🔒 หน้า admin/subscription-enforcement) · migration ADD COLUMN DEFAULT false · คอมเมนต์ EntitlementService แก้ให้ตรงความจริง
+- **C-4** `UserRole.PlatformSupport = 7` + `Helpers/OwnershipTransferPolicy` — แอดมินแพลตฟอร์มสร้างบริษัท ⇒ support ไม่ใช่ Owner · คีย์สิทธิ์เฉพาะงานตั้งค่า ·
+  `POST api/company/{id}/transfer-ownership` (+ `CheckOwnershipTransferAsync` ด่านก่อนเขียน · audit hash chain) · ตั้ง/เชิญบทบาท support ผ่านหน้าทีมไม่ได้ ·
+  team.html กล่องส่งมอบ + ป้ายบทบาท · usage.html ป้ายบทบาท
+- เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit <pending>)_

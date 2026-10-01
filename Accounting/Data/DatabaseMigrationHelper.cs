@@ -7102,6 +7102,8 @@ public static class DatabaseMigrationHelper
             // ═══ รอบ 201 ทีม PL (Platform/Audit/Security) — ต่อท้ายไฟล์ในบล็อกของทีม ═══
             // A-PL3: watermark งานตรวจ audit chain ต่อบริษัท (ต้องตรง AccountingDbContext — ฐานใหม่ได้จาก EnsureCreated)
             """CREATE TABLE IF NOT EXISTS "AuditChainCheckpoints" ("CompanyId" uuid PRIMARY KEY, "LastVerifiedId" bigint NOT NULL DEFAULT 0, "LastRunAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "LastFullVerifiedAt" timestamp without time zone NULL, "LastFindingCount" integer NOT NULL DEFAULT 0, "LastForkCount" integer NOT NULL DEFAULT 0);""",
+            // C-3: สวิตช์บังคับด่าน "เจ้าของปิดฟีเจอร์" ระดับ service — DEFAULT false = โหมดเงา (ห้ามเริ่มที่บังคับ · ข้อ 76)
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OwnerFeatureMaskEnforced" boolean NOT NULL DEFAULT false;""",
             // ═══ จบบล็อกรอบ 201 ทีม PL ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat

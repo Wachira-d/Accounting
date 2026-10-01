@@ -159,6 +159,9 @@ GATE_MARKERS = (
     # รอบ 198 — webhook ของผู้ให้บริการรับชำระเงิน (PaymentWebhookController อยู่ไฟล์เดียวกับ PaymentGatewayController):
     # ไม่มีผู้ใช้ให้ตรวจสิทธิ์ ด่านคือ "adapter ยืนยันเหตุการณ์กับผู้ให้บริการ" (HMAC/re-fetch) — ไม่ผ่าน = ไม่แตะข้อมูล
     "VerifyWebhookAsync(",
+    # รอบ 201 ทีม PL (C-4) — โอนความเป็นเจ้าของ: ตัวตัดสินเดียว Helpers/OwnershipTransferPolicy (ปฏิเสธคีย์ API · ผู้เรียกต้องเป็นแอดมินแพลตฟอร์ม/
+    # เจ้าของ/ผู้ดูแลแพลตฟอร์มของบริษัท) — controller เรียกผ่าน CheckOwnershipTransferAsync แล้วใช้ผลตัดสิน (service ตรวจซ้ำก่อนเขียน)
+    "OwnershipTransferPolicy.Outcome.Allow",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก

@@ -34,6 +34,9 @@ public enum SubscriptionGateReason
     PlanExpired = 3,
     /// <summary>เส้นทางต้องใช้ฟีเจอร์ที่ไม่อยู่ในแพ็กเกจ → 403 ทั้งอ่านและเขียน</summary>
     FeatureNotInPlan = 4,
+    /// <summary>รอบ 201 ทีม PL (C-3): เจ้าของบริษัทปิดฟีเจอร์เอง (<c>OwnerDisabledFeatures</c>) — ด่าน service ·
+    /// โหมดเงาจนกว่าแอดมินกดบังคับ (<c>SiteSettings.OwnerFeatureMaskEnforced</c>) · ตัวตัดสิน <c>Helpers/OwnerFeatureMask</c></summary>
+    OwnerDisabledFeature = 5,
 }
 
 /// <summary>ข้อเท็จจริงที่ middleware โหลดมาให้ตัดสิน</summary>
@@ -456,6 +459,8 @@ public static class SubscriptionGatePolicy
         SubscriptionGateReason.PlanExpired => "แพ็กเกจหมดอายุเกินช่วงผ่อนผัน — จะดูได้แต่สร้าง/แก้ไขไม่ได้",
         SubscriptionGateReason.FeatureNotInPlan =>
             $"ฟีเจอร์ \"{feature}\" ไม่อยู่ในแพ็กเกจ {(string.IsNullOrEmpty(plan) ? "ปัจจุบัน" : plan)} — จะถูกบล็อกทั้งดูและแก้ไข",
+        SubscriptionGateReason.OwnerDisabledFeature =>
+            $"เจ้าของบริษัทปิดฟีเจอร์ \"{feature}\" เอง แต่ยังถูกใช้ผ่านด่าน service (API/LINE/งานเบื้องหลัง) — จะถูกปฏิเสธเมื่อกดบังคับ \u201Cเจ้าของปิดฟีเจอร์\u201D",
         _ => "-",
     };
 }

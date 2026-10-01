@@ -97,12 +97,15 @@ public class CompanyService : ICompanyService
         // รอบ 194 — ประเภทเงินมัดจำเริ่มต้นตามประเภทธุรกิจ (tenant ใหม่ห้ามว่าง · spec S8) — ตารางเดียวกับ migration
         await Accounting.Helpers.DepositKindSeed.EnsureSeededAsync(_db, company.Id);
 
-        // Add creator as Owner
+        // Add creator as Owner — รอบ 201 ทีม PL (C-4 · ข้อ 77): แอดมินแพลตฟอร์มที่เปิดบริษัทให้ลูกค้าได้บทบาท "ผู้ดูแลแพลตฟอร์ม (support)"
+        // ไม่ใช่ Owner (เดิมได้ Owner ถาวรในข้อมูลลูกค้า) — ส่งมอบให้ลูกค้าด้วย TransferOwnershipAsync · ตัวตัดสิน Helpers/OwnershipTransferPolicy
+        var creatorIsPlatformAdmin = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
         _db.CompanyUsers.Add(new CompanyUser
         {
             UserId = userId,
             CompanyId = company.Id,
-            Role = UserRole.Owner,
+            Role = Accounting.Helpers.OwnershipTransferPolicy.CreatorRole(creatorIsPlatformAdmin),
             IsDefault = true
         });
 
@@ -361,6 +364,10 @@ public class CompanyService : ICompanyService
     public async Task<AddUserResult> AddUserAsync(Guid companyId, Guid ownerId, AddCompanyUserRequest request)
     {
         await EnsureOwnerAccessAsync(companyId, ownerId);
+        // รอบ 201 ทีม PL (C-4): บทบาทผู้ดูแลแพลตฟอร์มเชิญ/เพิ่มผ่านหน้าทีมไม่ได้
+        if (!Accounting.Helpers.OwnershipTransferPolicy.AssignableByMembers(request.Role))
+            throw new Accounting.Helpers.BusinessRuleException("เชิญด้วยบทบาทผู้ดูแลแพลตฟอร์มไม่ได้ — เลือกบทบาทอื่น",
+                Accounting.Helpers.OwnershipTransferPolicy.RuleCode);
 
         var email = NormalizeEmail(request.Email);
         if (string.IsNullOrEmpty(email))
@@ -500,6 +507,7 @@ public class CompanyService : ICompanyService
         UserRole.Auditor => "ผู้ตรวจสอบ",
         UserRole.Viewer => "ผู้ดู",
         UserRole.ExternalAccountant => "นักบัญชีภายนอก",
+        UserRole.PlatformSupport => "ผู้ดูแลแพลตฟอร์ม (support)",
         _ => r.ToString(),
     };
 
@@ -556,6 +564,10 @@ public class CompanyService : ICompanyService
 
         if (ownerId == targetUserId)
             throw new InvalidOperationException("ไม่สามารถเปลี่ยน Role ของตัวเองได้");
+        // รอบ 201 ทีม PL (C-4): บทบาทผู้ดูแลแพลตฟอร์มเกิดได้ทางเดียว (แอดมินแพลตฟอร์มสร้างบริษัท) — ตั้งผ่านหน้าทีมไม่ได้
+        if (!Accounting.Helpers.OwnershipTransferPolicy.AssignableByMembers(newRole))
+            throw new Accounting.Helpers.BusinessRuleException("ตั้งบทบาทผู้ดูแลแพลตฟอร์มผ่านหน้าทีมไม่ได้ — บทบาทนี้เกิดเฉพาะเมื่อผู้ดูแลแพลตฟอร์มเปิดบริษัทให้ลูกค้า",
+                Accounting.Helpers.OwnershipTransferPolicy.RuleCode);
 
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
@@ -596,6 +608,73 @@ public class CompanyService : ICompanyService
         await _db.SaveChangesAsync();
         _logger?.LogInformation("Owner {Owner} แก้ชื่อสมาชิก {Target} ในบริษัท {Company}: '{Old}' → '{New}'",
             ownerId, targetUserId, companyId, old, name);
+    }
+
+    /// <summary>รอบ 201 ทีม PL (C-4 · ข้อ 77): โอนความเป็นเจ้าของให้ผู้ใช้ที่มีบัญชีแล้ว (ลูกค้า) — ผู้เรียก = แอดมินแพลตฟอร์ม หรือสมาชิก
+    /// Owner/SystemAdmin/PlatformSupport (ตัวตัดสินเดียว <see cref="Accounting.Helpers.OwnershipTransferPolicy.Decide"/>) · ผู้รับได้ Owner
+    /// (เป็นสมาชิกอยู่แล้ว ⇒ ยกบทบาท · ยังไม่เป็น ⇒ เพิ่มแถว) · <paramref name="removeSupport"/> = ถอดผู้เรียกที่เป็น PlatformSupport ออกจากบริษัท ·
+    /// audit ผ่าน hash chain (AddChainedAuditLog) · ปฏิเสธ = BusinessRuleException ข้อความไทยพร้อมทางไปต่อ</summary>
+    public async Task<Accounting.Helpers.OwnershipTransferPolicy.Outcome> CheckOwnershipTransferAsync(
+        Guid companyId, Guid actorUserId, string? targetEmail)
+    {
+        var isKey = Accounting.Helpers.OwnerActionGuard.IsApiKeyRequest(_http?.HttpContext);
+        var isPlatformAdmin = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == actorUserId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
+        var callerRole = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == actorUserId)
+            .Select(cu => (UserRole?)cu.Role).FirstOrDefaultAsync();
+        var email = NormalizeEmail(targetEmail);
+        var target = string.IsNullOrEmpty(email) ? null : await _db.Users.AsNoTracking()
+            .Where(u => u.Email.ToLower() == email).Select(u => new { u.Id }).FirstOrDefaultAsync();
+        UserRole? targetRole = target == null ? null : await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == target.Id)
+            .Select(cu => (UserRole?)cu.Role).FirstOrDefaultAsync();
+        return Accounting.Helpers.OwnershipTransferPolicy.Decide(isKey, isPlatformAdmin, callerRole, target != null, targetRole);
+    }
+
+    public async Task TransferOwnershipAsync(Guid companyId, Guid actorUserId, string? targetEmail, bool removeSupport)
+    {
+        var outcome = await CheckOwnershipTransferAsync(companyId, actorUserId, targetEmail);
+        if (outcome != Accounting.Helpers.OwnershipTransferPolicy.Outcome.Allow)
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.OwnershipTransferPolicy.Message(outcome),
+                Accounting.Helpers.OwnershipTransferPolicy.RuleCode, Accounting.Helpers.OwnershipTransferPolicy.StatusCode(outcome));
+
+        var email = NormalizeEmail(targetEmail);
+        var target = await _db.Users.FirstAsync(u => u.Email.ToLower() == email);
+        var row = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == target.Id);
+        var before = row?.Role;
+        if (row == null)
+            _db.CompanyUsers.Add(new CompanyUser { UserId = target.Id, CompanyId = companyId, Role = UserRole.Owner });
+        else
+            row.Role = UserRole.Owner;
+
+        var removedSupport = false;
+        if (removeSupport && target.Id != actorUserId)
+        {
+            var actorRow = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == actorUserId);
+            if (actorRow?.Role == UserRole.PlatformSupport)
+            {
+                _db.CompanyUsers.Remove(actorRow);
+                removedSupport = true;
+            }
+        }
+
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            Action = AuditAction.Update,
+            EntityType = "CompanyUser",
+            EntityId = target.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { role = before?.ToString() }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "TransferOwnership", to = target.Id, role = nameof(UserRole.Owner), removedSupport,
+                ruleCode = Accounting.Helpers.OwnershipTransferPolicy.RuleCode,
+            }),
+            IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
+        });
+        await _db.SaveChangesAsync();
     }
 
     public async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)

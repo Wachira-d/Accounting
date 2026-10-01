@@ -41,8 +41,8 @@ public class EntitlementService : IEntitlementService
         // ② ชื่อบิตของแพ็กเกจ (Payroll, Inventory, LodgingModule …)
         if (Enum.TryParse<FeatureFlags>(code, ignoreCase: true, out var flag) && flag != 0)
         {
-            // อ่านผ่าน CheckFeatureAccessAsync เดิม — ตัวนั้นครอบ OwnerDisabledFeatures
-            // (เจ้าของกดซ่อนฟีเจอร์ที่ไม่ใช้) ซึ่ง EnabledFeatures ดิบไม่มี
+            // อ่านผ่าน CheckFeatureAccessAsync — ครอบ OwnerDisabledFeatures (เจ้าของกดซ่อนฟีเจอร์ที่ไม่ใช้) ตั้งแต่รอบ 201 (C-3):
+            // โหมดเงา (ผ่าน + บันทึก "จะถูกปิด") จนกว่าแอดมินกดบังคับ — ก่อนรอบ 201 คอมเมนต์นี้เขียนว่าครอบแล้วแต่ไม่จริง (F-S2-1)
             var ok = await _subscriptions.CheckFeatureAccessAsync(companyId, flag);
             return ok
                 ? EntitlementResult.Ok()

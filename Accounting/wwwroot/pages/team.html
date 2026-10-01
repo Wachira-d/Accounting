@@ -65,6 +65,17 @@
     </div>
 
     <!-- Add Member Form -->
+    <!-- รอบ 201 ทีม PL (C-4 · ข้อ 77): ผู้ดูแลแพลตฟอร์มที่ตั้งค่าบริษัทให้ลูกค้า ส่งมอบความเป็นเจ้าของ (เซิร์ฟเวอร์ตัดสินสิทธิ์ — หน้านี้แค่แสดงเมื่อน่าจะใช้) -->
+    <div class="card" id="transferOwnerSection" style="display:none">
+      <h3 style="margin:0 0 6px">ส่งมอบบริษัทให้ลูกค้า (โอนความเป็นเจ้าของ)</h3>
+      <p style="font-size:12px;color:#64748b;margin:0 0 10px">ลูกค้าต้องมีบัญชีในระบบแล้ว (สมัครด้วยอีเมลนี้) · ลูกค้าได้บทบาทเจ้าของ · บันทึกใน audit log</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="email" id="transferEmail" class="form-input" placeholder="อีเมลของลูกค้า" style="max-width:280px">
+        <label style="font-size:13px"><input type="checkbox" id="transferRemoveSelf" checked> ถอดฉันออกจากบริษัทหลังส่งมอบ</label>
+        <button class="btn btn-primary" id="transferBtn" onclick="Page.transferOwnership()">โอนความเป็นเจ้าของ</button>
+      </div>
+    </div>
+
     <div class="card" id="addMemberSection" style="display:none">
       <h3 class="card-title" style="margin-bottom:12px">เพิ่มสมาชิกใหม่</h3>
       <p style="font-size:13px;color:#64748b;margin-bottom:16px">ผู้ใช้ต้องสมัครสมาชิก Next Acc ก่อน จึงจะเพิ่มเข้าบริษัทได้</p>
@@ -114,6 +125,7 @@
       'Auditor': { label: 'ผู้ตรวจสอบ', cls: 'auditor', icon: '🔍', value: 4 },
       'Viewer': { label: 'ดูอย่างเดียว', cls: 'viewer', icon: '👁️', value: 5 },
       'ExternalAccountant': { label: 'นักบัญชีภายนอก', cls: 'external', icon: '🤝', value: 6 },
+      'PlatformSupport': { label: 'ผู้ดูแลแพลตฟอร์ม (support)', cls: 'viewer', icon: '🛠️', value: 7 },
       'SystemAdmin': { label: 'System Admin', cls: 'owner', icon: '⚡', value: 99 }
     };
     const ROLE_DEFAULT = { label: 'ไม่ทราบ', cls: 'viewer', icon: '❓', value: 0 };
@@ -173,6 +185,9 @@
           const isOwner = this.currentUserRole === 'Owner' || this.currentUserRole === 'SystemAdmin' || this.isPlatformAdmin;
           document.getElementById('addMemberSection').style.display = isOwner ? 'block' : 'none';
           document.getElementById('btnInvite').style.display = isOwner ? '' : 'none';
+          // C-4: ผู้ดูแลแพลตฟอร์ม/เจ้าของเห็นกล่องส่งมอบ (สิทธิ์จริงตัดสินที่เซิร์ฟเวอร์ — OwnershipTransferPolicy)
+          document.getElementById('transferOwnerSection').style.display =
+            (this.currentUserRole === 'PlatformSupport' || this.isPlatformAdmin) ? 'block' : 'none';
 
           this.renderQuota();
           this.renderMembers();
@@ -288,6 +303,22 @@
           document.getElementById('ownerWarning').style.display = 'none';
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async transferOwnership() {
+        const email = (document.getElementById('transferEmail').value || '').trim();
+        if (!email) { Layout.toast('กรุณากรอกอีเมลของลูกค้า', 'error'); return; }
+        const removeSupport = document.getElementById('transferRemoveSelf').checked;
+        if (!confirm(`โอนความเป็นเจ้าของบริษัทนี้ให้ ${email}?` + (removeSupport ? '\n\nคุณจะถูกถอดออกจากบริษัทหลังโอน' : ''))) return;
+        const btn = document.getElementById('transferBtn');
+        btn.disabled = true;
+        try {
+          const res = await API.post(`/api/company/${Layout.getCompanyId()}/transfer-ownership`, { email, removeSupport });
+          Layout.toast(res?.message || 'โอนความเป็นเจ้าของแล้ว');
+          document.getElementById('transferEmail').value = '';
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
       },
 
       async changeRole(userId, newRole) {
