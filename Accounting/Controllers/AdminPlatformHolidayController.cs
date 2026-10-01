@@ -16,7 +16,9 @@ public record PlatformHolidayDto(Guid Id, DateTime Date, string NameTh, string? 
 public record CreatePlatformHolidayRequest(DateTime? Date, string? NameTh, string? NameEn, string? Kind, string? SourceReference);
 
 /// <summary>ภาพรวมของปี + กำหนดยื่นที่เลื่อนเพราะวันหยุด (ให้แอดมินเห็นผลทันทีว่าตารางกระทบอะไร)</summary>
-public record PlatformHolidayYearDto(int Year, List<PlatformHolidayDto> Holidays, List<string> ShiftedDeadlines, string Guidance);
+/// <param name="EntryBlockedReason">PL-B1 (รอบ 201): ไม่ว่าง = ปิดการเพิ่มวันหยุด (ผู้อ่านกำหนดส่งยังต่อสายไม่ครบ — <see cref="PlatformHolidayReadiness"/>) · หน้าเว็บล็อกฟอร์ม + แสดงเหตุผลนี้</param>
+public record PlatformHolidayYearDto(int Year, List<PlatformHolidayDto> Holidays, List<string> ShiftedDeadlines, string Guidance,
+    string? EntryBlockedReason, IReadOnlyList<string> PendingReaders);
 
 /// <summary>
 /// วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — แอดมินแพลตฟอร์มกรอกจากประกาศ ครม./สำนักนายกฯ (ข้อมูลภายนอก · ระบบไม่แต่ง) ·
@@ -67,7 +69,8 @@ public class AdminPlatformHolidayController : ControllerBase
                 if (before != after)
                     shifted.Add($"{key} งวด {m:00}/{y}: กระดาษ {before.Paper:dd/MM} → {after.Paper:dd/MM} · e-Filing {before.EFiling:dd/MM} → {after.EFiling:dd/MM}");
             }
-        return Ok(new ApiResponse<PlatformHolidayYearDto>(true, new PlatformHolidayYearDto(y, rows, shifted, Guidance)));
+        return Ok(new ApiResponse<PlatformHolidayYearDto>(true, new PlatformHolidayYearDto(y, rows, shifted, Guidance,
+            PlatformHolidayReadiness.EntryBlockedReason(), PlatformHolidayReadiness.PendingReaders)));
     }
 
     [HttpPost]
@@ -75,6 +78,10 @@ public class AdminPlatformHolidayController : ControllerBase
     [Accounting.Filters.RejectApiKey("เพิ่มวันหยุดราชการของแพลตฟอร์ม")]
     public async Task<ActionResult<ApiResponse<PlatformHolidayDto>>> Create([FromBody] CreatePlatformHolidayRequest request, CancellationToken ct = default)
     {
+        // PL-B1 (ฝ่ายค้านรอบ 201 · ข้อ 106): ผู้อ่านกำหนดส่งยังต่อสายไม่ครบ ⇒ ปิดการเพิ่ม (กำหนดคนละวันในแต่ละหน้า แย่กว่าตารางว่าง)
+        var blocked = PlatformHolidayReadiness.EntryBlockedReason();
+        if (blocked != null)
+            return Conflict(new ApiResponse<PlatformHolidayDto>(false, null, blocked));
         if (request?.Date is not DateTime d)
             return BadRequest(new ApiResponse<PlatformHolidayDto>(false, null, "ต้องระบุวันที่"));
         var name = (request.NameTh ?? "").Trim();

@@ -187,8 +187,11 @@ public class AdminSubscriptionEnforcementController : ControllerBase
                 r.RouteKey != null && SubscriptionGatePolicy.NewlyGatedRouteKeys.Contains(r.RouteKey));
         }).ToList();
 
-        var wouldBlock = hits.Where(h => h.HitCount > 0).ToList();
-        var blocked = hits.Where(h => h.BlockedCount > 0).ToList();
+        // PL-C1 (ฝ่ายค้านรอบ 201): ยอดสรุป "จะถูกปิด/ถูกปิดแล้ว" ของสวิตช์ <b>แพ็กเกจ</b> ห้ามรวมแถวของด่านเจ้าของปิดฟีเจอร์ (คนละสวิตช์ — นับแยกใน ownerMask ข้างล่าง)
+        // เดิมนับรวม ⇒ แอดมินเห็นว่า "เปิดบังคับแพ็กเกจแล้วจะกระทบ N บริษัท" ทั้งที่ N บางส่วนเป็นเจ้าของที่ปิดฟีเจอร์เอง
+        static bool IsPlanGate(SubscriptionShadowHitDto h) => h.Reason != nameof(SubscriptionGateReason.OwnerDisabledFeature);
+        var wouldBlock = hits.Where(h => h.HitCount > 0 && IsPlanGate(h)).ToList();
+        var blocked = hits.Where(h => h.BlockedCount > 0 && IsPlanGate(h)).ToList();
         var partnerWouldBlock = hits.Where(h => h.PartnerHitCount > 0).ToList();
         // C-3: แถวของด่าน "เจ้าของปิดฟีเจอร์" (service) นับแยก — หน้าเว็บแสดงคู่กับสวิตช์ของมันเอง
         var ownerMask = hits.Where(h => h.Reason == nameof(SubscriptionGateReason.OwnerDisabledFeature) && h.HitCount > 0).ToList();

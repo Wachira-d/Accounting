@@ -130,11 +130,14 @@ public static class TaxFilingDeadline
     }
 
     /// <summary><see cref="WarnBy(string,int,int)"/> ตาม <see cref="TaxType"/> — null เมื่อไม่ใช่แบบรายเดือน (เงื่อนไขเดียวกับ <see cref="EFilingFor"/>)</summary>
-    public static DateTime? WarnByFor(TaxType type, int year, int month)
+    public static DateTime? WarnByFor(TaxType type, int year, int month) => WarnByFor(type, year, month, null);
+
+    /// <summary><see cref="WarnByFor(TaxType,int,int)"/> + วันหยุดราชการ (รอบ 201 ทีม PL · ฝ่ายค้าน PL-B1) — ตารางว่าง/null = เดิม</summary>
+    public static DateTime? WarnByFor(TaxType type, int year, int month, IReadOnlySet<DateTime>? holidays)
     {
         if (year < 2018 || month is < 1 or > 12) return null;
         var key = KeyOf(type);
-        return key == null ? null : WarnBy(key, year, month);
+        return key == null ? null : WarnBy(key, year, month, holidays);
     }
 
     /// <summary>ข้อความกำกับบนจอเมื่อแบบนี้เตือนตามวันกระดาษเพราะยังไม่ยืนยันมาตรการ e-Filing — null = ไม่มีอะไรต้องบอก</summary>

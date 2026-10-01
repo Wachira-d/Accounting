@@ -202,10 +202,12 @@ public class AuditTrailService : IAuditTrailService
                 var oldValues = new Dictionary<string, object?>();
                 var newValues = new Dictionary<string, object?>();
 
+                // RV2-1 (ฝ่ายค้าน GW รอบสอง · รอบ 201 ทีม PL): ช่องลับ (WebhookToken · *Protected · PasswordHash ฯลฯ) ห้ามเข้า audit เป็นข้อความเปล่า
+                // (append-only — ลบไม่ได้ · ทุกบทบาทอ่าน /audit/logs ได้) ⇒ ตัวตัดสินเดียว Helpers/AuditRedaction
                 foreach (var prop in entry.Properties.Where(p => p.IsModified))
                 {
-                    oldValues[prop.Metadata.Name] = prop.OriginalValue;
-                    newValues[prop.Metadata.Name] = prop.CurrentValue;
+                    oldValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.OriginalValue);
+                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
                 }
 
                 auditLog.OldValues = JsonSerializer.Serialize(oldValues);
@@ -216,7 +218,7 @@ public class AuditTrailService : IAuditTrailService
                 var newValues = new Dictionary<string, object?>();
                 foreach (var prop in entry.Properties)
                 {
-                    newValues[prop.Metadata.Name] = prop.CurrentValue;
+                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
                 }
                 auditLog.NewValues = JsonSerializer.Serialize(newValues);
             }
@@ -227,9 +229,14 @@ public class AuditTrailService : IAuditTrailService
         return auditEntries;
     }
 
-    private static AuditLogResponse MapToResponse(AuditLog a) => new(
-        a.Id, a.CompanyId, a.UserId, a.UserEmail, a.Action, a.EntityType,
-        a.EntityId, a.OldValues, a.NewValues, a.IpAddress, a.UserAgent, a.Timestamp);
+    /// <summary>RV2-1: แถวเก่าที่เก็บค่าลับไปแล้ว (ก่อนรอบ 201) แก้ไม่ได้ (append-only · hash chain) — ปิดค่าตอนแสดงแทน</summary>
+    private static AuditLogResponse MapToResponse(AuditLog a)
+    {
+        return new AuditLogResponse(
+            a.Id, a.CompanyId, a.UserId, a.UserEmail, a.Action, a.EntityType,
+            a.EntityId, Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues), Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues),
+            a.IpAddress, a.UserAgent, a.Timestamp);
+    }
 }
 
 /// <summary>F14 hash chain — กันการแก้ไข AuditLogs หลังจากบันทึก. ปกติ

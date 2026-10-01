@@ -307,11 +307,13 @@ public class ComplianceService : IComplianceService
             ("RD_WHT",           "PND1",    "WhtPnd1"),
             ("SSO_Contribution", "SSO1-10", "SsoSps110"),
         };
+        // รอบ 201 ทีม PL (ฝ่ายค้าน PL-B1): เลื่อนพ้นวันหยุดราชการของแพลตฟอร์มด้วย — ชุดเดียวกับปฏิทินภาษี/หน้านำส่ง (ตารางว่าง = เดิม)
+        var holidays = await PlatformHolidayStore.LoadSetAsync(_db, year, year);
         foreach (var (filingType, formCode, remitKey) in monthlyForms)
         {
             for (int month = 1; month <= 12; month++)
             {
-                var (paper, _) = Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month);
+                var (paper, _) = Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month, holidays);
                 filings.Add(new ComplianceFiling
                 {
                     CompanyId = companyId,

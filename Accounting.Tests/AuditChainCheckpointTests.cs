@@ -116,6 +116,38 @@ public class AuditChainCheckpointTests
     }
 
     [Fact]
+    public void Scope_orphan_rows_join_the_single_tenant_of_the_batch()
+    {
+        // PL-X1/X6: แถวลูกไม่ผูกบริษัท (Empty) และ NULL ได้บริษัทของ batch — ไม่ใช้ล็อก/chain "บริษัทว่าง" ร่วมกับ tenant อื่น
+        var rows = new List<AuditLog>
+        {
+            new() { CompanyId = Company, EntityType = "Document" },
+            new() { CompanyId = Guid.Empty, EntityType = "DocumentLine" },
+            new() { CompanyId = null, EntityType = "Http" },
+        };
+        AuditChainScope.Normalize(rows);
+        Assert.All(rows, r => Assert.Equal(Company, r.CompanyId));
+    }
+
+    [Fact]
+    public void Scope_platform_or_mixed_batches_stay_platform_level_and_never_null()
+    {
+        // ทิศตรงข้าม: ไม่มีบริษัท / หลายบริษัท ⇒ ไม่เดา — ว่างคงว่าง (ระดับแพลตฟอร์มจริง) · NULL กลายเป็น Empty (ตัวตรวจอ่านได้)
+        var platform = new List<AuditLog> { new() { CompanyId = null, EntityType = "User" }, new() { CompanyId = Guid.Empty, EntityType = "User" } };
+        AuditChainScope.Normalize(platform);
+        Assert.All(platform, r => Assert.Equal(Guid.Empty, r.CompanyId));
+        var other = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var mixed = new List<AuditLog>
+        {
+            new() { CompanyId = Company, EntityType = "A" }, new() { CompanyId = other, EntityType = "B" }, new() { CompanyId = null, EntityType = "C" },
+        };
+        AuditChainScope.Normalize(mixed);
+        Assert.Equal(Company, mixed[0].CompanyId);
+        Assert.Equal(other, mixed[1].CompanyId);
+        Assert.Equal(Guid.Empty, mixed[2].CompanyId);
+    }
+
+    [Fact]
     public void Analyze_without_anchors_keeps_full_chain_behaviour()
     {
         var rows = Chain(5);

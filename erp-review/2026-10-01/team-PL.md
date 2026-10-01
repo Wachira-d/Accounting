@@ -62,3 +62,47 @@ filing_deadline_single_source · advisory_lock_key · di_cycle · namespace_shad
 3. เจ้าของบริษัทตั้งบทบาท `SystemAdmin` (99) ให้สมาชิกผ่านหน้าทีมได้ (ของเดิม · ผ่านด่านเจ้าของเท่า Owner) — ควรปิดเหมือน PlatformSupport ไหม
 4. **A-PL1 ทางเลือกถ้าล็อกเป็นคอขวด**: ย้ายการประทับไปตอน commit ผ่าน `DbTransactionInterceptor` (ล็อก audit ท้ายสุดเสมอ) — ต้องการเทสต์ DB ก่อน
 5. **F3 ข้อ 11**: ยังไม่ได้ส่ง diff ให้ฝ่ายค้าน (แตะสิทธิ์/หลักฐาน/กำหนดยื่นภาษี) — ขอให้ main agent ส่งรอบรวม
+
+---
+
+## ชุด 5 — แก้ตามฝ่ายค้าน (PL-X1..X7 · PL-S1..S3 · PL-B1 · PL-C1/C2 · Q1–Q4) + ฝ่ายค้าน GW รอบสอง (RV2-1/RV2-2) · คำตัดสินข้อ 104–107
+
+ก่อนเริ่ม: `git merge origin/claude/erp-system-review-team-660mev` (merge ไม่ใช่ reset · รวม GW `b3c31a14`) · คอมมิต: `<pending>` (เติมในคอมมิตตามหลัง)
+
+| ID | สถานะ | ที่แก้ | เทสต์ / ด่าน |
+|---|---|---|---|
+| PL-X1 (P0) | ✅ | ล็อก "บริษัทว่าง" ตัวเดียวทั้งแพลตฟอร์มหายไป: `Helpers/AuditChainScope.Normalize` ก่อนล็อก — แถวลูก (`Guid.Empty`/NULL) ได้บริษัทของ batch (บริษัทเดียว) · หลายบริษัท/ไม่มีเลย = `Guid.Empty` (ระดับแพลตฟอร์มจริง) | `AuditChainCommitDbTests.Orphan_rows_join_their_tenant_and_two_tenants_do_not_block_each_other` · `AuditChainCheckpointTests.Scope_*` (2) · required_call_site (Normalize ก่อนล็อก) |
+| PL-X2/X3 (P1) | ✅ | **ประทับตอน commit** (ข้อ 104): `Data/AuditChainCommitInterceptor` (`DbTransactionInterceptor` · `OnConfiguring` ⇒ เว็บ/job/`DbTestDatabase` ทุกทาง) → `AccountingDbContext.SealDeferredAuditAtCommit(Async)`: Normalize → `SET LOCAL lock_timeout = '15s'` → ล็อกทุกบริษัทเรียงคีย์ → ปลาย chain → Seal → INSERT ตรง · SaveChanges ในธุรกรรมของผู้เรียก **ห้ามล็อก** (เก็บแถวผูก `TransactionId`) ⇒ ล็อก audit เป็นล็อกสุดท้ายเสมอ | `Save_then_lock_vs_lock_then_save_in_one_company_do_not_deadlock` (ล็อกเลข JE จริง · บังคับลำดับด้วยสัญญาณ) · `Concurrent_caller_transactions_produce_one_unbroken_chain` · required_call_site forbid `LockAuditChain(Async)` ใน SaveChanges ×2 |
+| PL-X4 (P1) | ✅ | ล็อกถือแค่ช่วง commit — ไม่ข้าม HTTP ภายนอก/AuditMiddleware (AuditMiddleware ไม่มีธุรกรรม ⇒ ธุรกรรมสั้นของตัวเอง) | (ผลของ X2) · TEST_PLAN PL-17 |
+| PL-X5 (P2) | ✅ | ธุรกรรมที่เปิดเอง: `base.SaveChanges(acceptAllChangesOnSuccess:false)` → commit → `AcceptAllChanges` · ล้ม ⇒ `DropDeferredAudit` + `RestorePendingAuditRows` (แถว audit กลับเป็น Added ไม่มี hash) + ChangeTracker ยังไม่ Accept ⇒ ลองใหม่ได้ | `Rollback_drops_deferred_audit_rows` · required_call_site (acceptAll false · Accept หลัง commit) |
+| PL-X6 (P2) | ✅ | NULL ⇒ บริษัทของ batch หรือ `Guid.Empty` ตั้งแต่รอบนี้ (ตัวตรวจ/job อ่านได้ทุกแถว) · แถว NULL เก่าไม่ migrate (append-only · นับแยกแบบ "นอก chain รุ่นเก่า" ตาม DV Q3) | `Scope_platform_or_mixed_batches_stay_platform_level_and_never_null` |
+| PL-X7 (P3) | ✅ | `tools/audit_direct_add_check.py` ฟ้อง `EnableRetryOnFailure(` (retry ซ้ำการ commit ⇒ ประทับซ้ำ) + `retry_self_test` | self-test ในตัว |
+| PL-S1 (P1) | ✅ | `OwnershipTransferPolicy.Decide`: PlatformSupport โอนได้เฉพาะ `isPlatformAdmin` ยังจริง · `targetIsSelf` ⇒ `DenySelf` 403 (Owner ให้ตัวเอง = 409 เดิม) · `CompanyService.CheckOwnershipTransferAsync` ส่ง `targetIsSelf` | `C4_PlatformAdminWithoutSupportSeat_OrRevokedSupport_CannotTransfer` · `C4_Support_CannotTransferToSelf_OwnerPathUnchanged` · required_call_site call_args `targetIsSelf` |
+| PL-S2 (P2 · ข้อ 105) | ✅ | แอดมินแพลตฟอร์มที่ไม่ได้เป็น support ของบริษัทนั้น ⇒ `DenyNotAllowed` (เดิมผ่านทุกบริษัท) | เทสต์เดียวกับ S1 (ทิศตรงข้าม `C4_Transfer_AllowedFor_Owner_And_ActiveSupportOfThisCompany`) |
+| PL-S3 (P3) · Q1 | ✅ | รายงาน ไม่ migrate: `GET api/admin/companies/without-owner` (≤200 · ผู้ดูแล support · จำนวนสมาชิก) + แบนเนอร์บน `admin/customers.html` | TEST_PLAN PL-16 · 📋 ไม่มีเทสต์ DB (query ตรง) |
+| Q2 | ✅ | `admin/customers.html` แสดง PlatformSupport/SystemAdmin เป็น option `disabled` (รู้จักแต่ตั้งไม่ได้) · `AdminController.ChangeCompanyUserRole` ใช้ `MayAssign(…, true)` ⇒ PlatformSupport 400 | required_call_site (MayAssign ก่อน `cu.Role =`) |
+| Q3 (ข้อ 107) | ✅ | `OwnershipTransferPolicy.MayAssign(role, callerIsPlatformAdmin)` แทน `AssignableByMembers` (ถอด — ไม่เหลือผู้เรียก) · `CompanyService.AddUserAsync/UpdateUserRoleAsync` ⇒ SystemAdmin(99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม · `AssignDeniedMessage` ไทย 403 | `C4_MembersCannotAssignPlatformRoles` (สองทิศ) · required_call_site |
+| PL-B1 (P2 · ข้อ 106) | 🔨 ต่อสายได้ 3/5 + ปิดการกรอก | ✅ `ComplianceService.InitializeFilingCalendarAsync` · `TaxComplianceChecker.CheckAsync` (+ `TaxFilingDeadline.WarnByFor(…, holidays)`) · `DepositPolicyResolver.ForfeitTaxPointDecision(…, holidays)` ← `DocumentService.RealizeDepositCoreAsync` · 📋 `SsoLateFee` (ผู้เรียกอยู่ใน `PayrollService`/`PayrollController` — ไฟล์ PR2 ห้ามแตะ) · §87 `SettlementPosting.WeekdaysAfter` (ทีม ST กำลังทำงานในไฟล์นี้) ⇒ **`Helpers/PlatformHolidayReadiness` ปิดการเพิ่มวันหยุด** (409 + เหตุผลระบุผู้อ่านที่ค้าง · หน้าเว็บล็อกฟอร์ม · ลบได้) — ต่อสายครบแล้วตัดออกจาก `PendingReaders` ที่เดียว | `PlatformHolidayReadersRound201Tests` (3 · สองทิศ) · required_call_site 4 แถว (+ negative ฉีดในสคริปต์) |
+| PL-C1 (P3) | ✅ | `AdminSubscriptionEnforcementController.Get` — `wouldBlock`/`blocked` ไม่รวมเหตุ `OwnerDisabledFeature` (`IsPlanGate`) · นับแยกในการ์ด 🔒 เดิม | required_call_site |
+| PL-C2 (P3) | ✅ | `ISubscriptionService.CheckFeatureAccessAsync(…, bool recordShadow = true)` · `SubscriptionController.CheckFeature` (GET) ส่ง `false` | required_call_site call_args (+ negative) |
+| RV2-1 (P1 · GW รอบสอง) | ✅ | `Helpers/AuditRedaction` (ชื่อช่องลงท้าย Password/Secret/SecretKey/PrivateKey/Protected/Encrypted/Credentials/ApiKey/KeyHash/TokenHash/Token · Has/Is/Max/Last = ธง) — `CaptureAuditEntries` เก็บ `[redacted]` · แถวเก่าปิดตอนแสดง (`AuditTrailService.MapToResponse` · `AdminController.GetAuditLogs`) โดยไม่แตะค่าที่เก็บ (hash chain คงเดิม) · 📋 **ไม่มีคีย์สิทธิ์ "ดู audit"** — `GET /audit/logs` ยังเปิดทุกบทบาทในบริษัท (หลังปิดค่าลับ) · เพิ่มคีย์ใหม่ = ต้องให้เจ้าของตัดสินว่าบทบาทใดได้โดยปริยาย (Auditor ต้องเห็น) · แนะนำร้านที่เคย rotate โทเคนก่อนรอบนี้ rotate อีกครั้ง | `AuditRedactionRound201Tests` (5 · Theory 25 เคส · บันทึก/rotate `PaymentProviderConfig` บน context ออฟไลน์) · required_call_site 3 แถว (forbid `= prop.CurrentValue;`) |
+| RV2-2 (P2) | ✅ | `AuditMiddleware` — `path = GatewayWebhookRoute.RedactPath(...)` ก่อนทุกการใช้ (EntityType · log ข้อผิดพลาด) · `ExtractEntityType` ข้าม `[redacted]` ⇒ ได้รหัสผู้ให้บริการ | required_call_site (must RedactPath · forbid path ดิบ) |
+
+### คำตอบคำถามค้าง (ตามคำตัดสิน main agent)
+1. Q1 = รายงาน (PL-S3) ไม่ migrate ✅ · 2. Q2 = รู้จัก/แสดงป้าย ตั้งไม่ได้ ✅ · 3. Q3 = ปิด (ข้อ 107) ✅ · 4. Q4 = ประทับตอน commit (ข้อ 104) ✅ — **ไม่ต้องถอด A-PL1 กลับ**
+
+### ความเสี่ยง (ยังไม่ได้คอมไพล์ — CI คือ compiler ตัวแรก · ยังไม่ได้รันเทสต์ DB จริง)
+1. `TransactionEventData.TransactionId` ต้องตรงกับ `IDbContextTransaction.TransactionId` ของธุรกรรมเดียวกัน (EF ใช้ id เดียวกัน — ยืนยันจากเอกสาร ไม่ใช่จากการรัน) · ถ้าไม่ตรง แถว audit ในธุรกรรมของผู้เรียกจะไม่ถูกประทับ ⇒ `Concurrent_caller_transactions_*` จับได้ (12 แถว)
+2. INSERT ตรงใช้ชื่อคอลัมน์จากโมเดล (`GetColumnName`) + ค่า enum เป็น int · `Id` ไม่ส่ง (identity) — ถ้า AuditLog.Id ไม่ใช่ identity ต้องแก้
+3. ธุรกรรมแบบ `TransactionScope`/ambient หรือ `UseTransaction(DbTransaction ภายนอก)` — ไม่มีในเรพ (grep 0) · ถ้าเพิ่มในอนาคต interceptor ยังเห็น commit ของ EF เท่านั้น
+4. `lock_timeout 15s` ⇒ commit ล้มด้วย 55P03 แทนการรอไม่จบ (ล้มดัง · ข้อมูลหลัก rollback ทั้งก้อน)
+5. `RedactJson` เปลี่ยนรูป JSON ของแถวเก่าที่มีช่องลับ (Thai ⇒ `\uXXXX`) ตอนแสดงเท่านั้น
+
+### ไฟล์ทีมอื่นที่แตะ (เล็กที่สุด)
+`DocumentService.cs` (1 อาร์กิวเมนต์ `holidays:` ใน `RealizeDepositCoreAsync`) · `DepositPolicyResolver.cs` (พารามิเตอร์ optional + 1 บรรทัด) · `ComplianceService.cs` · `Tax/TaxComplianceChecker.cs` ·
+`AuditTrailService.cs` · `AuditMiddleware.cs` (GW แตะ 3 middleware อื่น — ไฟล์นี้ไม่ได้แตะ) · `SubscriptionController.cs` · `ISubscriptionService.cs` · `AdminController.cs` (3 จุด)
+
+### checker ที่รัน
+required_call_site (เต็มชุด) · write_permission_gate · audit_direct_add (+retry self-test) · owner_action_wiring · html_attr_escape · onclick_js_string · dead_link · css_var ·
+admin_menu_gate · dto_nullable_contract · gl_code · settings_reader · record_arg · nullable_arg · using · undeclared_local · arg_type · service_interface · string_quote_close ·
+comment_line_break · identifier_space · accessibility · dead_helper · advisory_lock_key · tuple_name_merge · verbatim_string · namespace_shadow · `node --check` (customers · platform-holidays · admin-api.js) · brace/U+FFFD

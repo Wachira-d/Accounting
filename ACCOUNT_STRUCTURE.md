@@ -151,7 +151,12 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   (`SupportDefaultKeys`: ค่าตั้งบริษัท · ผังบัญชี · ผู้ติดต่อ · สินค้า · ดูบัญชี · แดชบอร์ด — ไม่รวมเงินเดือน/PII/สมาชิก/อนุมัติ) · ตั้ง/เชิญผ่านหน้าทีมไม่ได้ ·
   **โอนความเป็นเจ้าของ** `POST api/company/{id}/transfer-ownership {email, removeSupport}` (หน้า `team.html` กล่อง "ส่งมอบบริษัทให้ลูกค้า") — ผู้เรียก =
   แอดมินแพลตฟอร์ม/Owner/SystemAdmin/PlatformSupport ของบริษัท · ปฏิเสธคีย์ API · ผู้รับต้องมีบัญชีแล้ว (404 + ทางไปต่อ) · เป็น Owner อยู่แล้ว = 409 ·
-  audit hash chain `PLATFORM-OWNERSHIP-TRANSFER` · ⚠️ บริษัทเดิมที่แอดมินถือ Owner อยู่แล้ว **ไม่ migrate** (แยกไม่ได้ว่าเปิดให้ลูกค้าหรือของแอดมินเอง — คำถามค้าง)
+  audit hash chain `PLATFORM-OWNERSHIP-TRANSFER` · ⚠️ บริษัทเดิมที่แอดมินถือ Owner อยู่แล้ว **ไม่ migrate** (แยกไม่ได้ว่าเปิดให้ลูกค้าหรือของแอดมินเอง)
+  · **หลังฝ่ายค้าน (PL-S1/S2/S3 · คำตัดสินข้อ 105/107 · Q1/Q2)**: ผู้โอน = สมาชิก Owner/SystemAdmin ของบริษัท **หรือ** PlatformSupport ของบริษัทนั้นที่ **ยังเป็น
+  แอดมินแพลตฟอร์ม** (ถอดสิทธิ์แอดมินแล้วโอนไม่ได้ · แอดมินแพลตฟอร์มที่ไม่ได้เป็น support ของบริษัทนั้นโอนไม่ได้ — สิทธิ์แพลตฟอร์มไม่ใช่สิทธิ์ยึดบริษัทลูกค้า) ·
+  support โอนให้ตัวเองไม่ได้ (`DenySelf` 403) · บทบาท: `OwnershipTransferPolicy.MayAssign` ตัวเดียวของหน้าทีม/คำเชิญ/หน้าแอดมินลูกค้า — PlatformSupport ตั้งไม่ได้
+  ทุกทาง · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) · `admin/customers.html` แสดงป้าย PlatformSupport/SystemAdmin (เลือกไม่ได้) · รายงาน
+  "บริษัทที่ยังไม่มีเจ้าของ" `GET api/admin/companies/without-owner` (แบนเนอร์บนหน้าลูกค้า + ผู้ดูแล support ที่โอนได้ · ไม่แก้ข้อมูลเอง)
 - ล็อกจุดเรียก: `tools/owner_action_wiring_check.py` (64 แถว · ต้อง "ใช้ผล" · `--self-test` ถอดทีละแถวจากไฟล์จริง) · `tools/write_permission_gate_check.py` WATCHED
   (+Integration/Tax/Settings/Webhook/PaymentSettings/Sensitivity/Approval/EmailConfig/LineConfig/Pdpa/StatutoryRemittance/CompetitorImport/ExpenseClaim)
 - ⚠️ เปลี่ยนพฤติกรรม: Accountant ที่ไม่มี `CompanySettings.Edit` บันทึกหน้าตั้งค่าไม่ได้แล้ว (คำถามเจ้าของ: ให้โดยปริยายไหม) · สคริปต์ `acc_` ที่เรียกปิดงวด/ปิดปี/
@@ -1025,4 +1030,6 @@ _ฟีเจอร์กลาง/การเรียนรู้ 2 ชั้
 _สถานะ: §3.1 ✅ ตรวจกับโค้ดแล้ว (รวม BillingAccount/BillingAccountAdmin/Company FK ที่เพิ่งลง) ·_
 _§3.2 (ApiClient/UsageEvent/ApiFeature/Pricing), §4 คอลัมน์ ApiClient, §6, §7, §8, §9 ข้อ 2-7 = 📋_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL — C-3 ด่านเจ้าของปิดฟีเจอร์ระดับ service โหมดเงา + สวิตช์ `OwnerFeatureMaskEnforced` (§5.2) · C-4 บทบาท PlatformSupport + โอนความเป็นเจ้าของ (งานระดับเจ้าของ) — commit 545cc3ea)_
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL — C-3 ด่านเจ้าของปิดฟีเจอร์ระดับ service โหมดเงา + สวิตช์ `OwnerFeatureMaskEnforced` (§5.2) · C-4 บทบาท PlatformSupport + โอนความเป็นเจ้าของ (งานระดับเจ้าของ) — commit 545cc3ea)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — โอนความเป็นเจ้าของเฉพาะ support ที่ยังเป็นแอดมิน/เจ้าของ · ห้ามโอนให้ตัวเอง · `MayAssign` (SystemAdmin 99 เฉพาะแอดมินแพลตฟอร์ม) · รายงานบริษัทไม่มีเจ้าของ · ยอดสรุปบังคับแพ็กเกจไม่รวมด่านเจ้าของปิดฟีเจอร์ · GET ไม่บันทึกเงา — commit <pending>)_

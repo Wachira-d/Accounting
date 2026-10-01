@@ -25,6 +25,7 @@
         <span class="admin-card-title">📅 วันหยุดราชการ ปี
           <select id="yearSel"></select></span>
       </div>
+      <div id="entryBlocked" style="display:none;margin-bottom:10px;padding:10px 12px;border:1px solid #fcd34d;background:#fffbeb;color:#92400e;border-radius:8px;font-size:13px"></div>
       <div class="form-row">
         <label>วันที่<input type="date" id="hDate"></label>
         <label>ชื่อวันหยุด (ไทย)<input type="text" id="hNameTh" maxlength="200" style="min-width:220px"></label>
@@ -84,6 +85,12 @@
 
       render(d) {
         document.getElementById('guidance').textContent = d.guidance || '';
+        // PL-B1 (รอบ 201): เซิร์ฟเวอร์ปิดการเพิ่มวันหยุดจนกว่าผู้อ่านกำหนดส่งจะต่อสายครบ — ล็อกฟอร์มพร้อมเหตุผล (ห้ามให้กดแล้วล้ม)
+        const blocked = d.entryBlockedReason || '';
+        ['hDate', 'hNameTh', 'hNameEn', 'hKind', 'hSource', 'addBtn'].forEach(id => { document.getElementById(id).disabled = !!blocked; });
+        const why = document.getElementById('entryBlocked');
+        why.style.display = blocked ? 'block' : 'none';
+        why.textContent = blocked;
         const rows = d.holidays || [];
         document.getElementById('list').innerHTML = rows.length === 0
           ? '<div class="muted">ยังไม่มีวันหยุดของปีนี้ — กำหนดยื่นเลื่อนเฉพาะเสาร์/อาทิตย์</div>'

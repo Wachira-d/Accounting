@@ -3835,7 +3835,8 @@ public partial class DocumentService : IDocumentService
                     forfeitTaxPoint = Accounting.Helpers.DepositPolicyResolver.ForfeitTaxPointDecision(
                         Accounting.Helpers.DepositForfeitVatRoute.UndueReclassification, true, doc.DocumentDate, when,
                         await DepositReceiptPeriodLockedAsync(companyId, doc.DocumentDate),
-                        Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow));
+                        Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow),
+                        holidays: await PlatformHolidayStore.LoadSetAsync(_db, doc.DocumentDate.Year, doc.DocumentDate.Year));   // PL-B1 (รอบ 201): กำหนดยื่นงวดรับเงินเลื่อนพ้นวันหยุดราชการ
                 if (forfeit.Action == Accounting.Helpers.DepositForfeitVatAction.IssueTaxInvoiceForForfeit)
                 {
                     await IssueForfeitTaxInvoiceAsync(companyId, doc, request, forfeit, forfeitTaxPoint, actor);

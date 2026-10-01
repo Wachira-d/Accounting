@@ -800,8 +800,10 @@ public static class DepositPolicyResolver
     /// <param name="depositPeriodLocked">งวดเดือนรับเงิน "ปิดในระบบแล้ว" — แถว ภ.พ.30 ยื่น/ประกาศว่ายื่น (<c>TaxFilingLockPolicy.DeclaredOrFiledStatuses</c>) ·
     /// <c>FilingLockedAt</c> · หรืองวดบัญชีของวันรับเงินปิดแล้ว</param>
     /// <param name="today">วันนี้ตามปฏิทินไทย (<c>ThaiDate.CalendarDateUtc(DateTime.UtcNow)</c>) — ใช้เทียบกำหนดยื่น (การยื่นเกิดตามเวลาจริง ไม่ใช่วันที่ในใบ)</param>
+    /// <param name="holidays">วันหยุดราชการของแพลตฟอร์ม (<c>PlatformHolidayStore</c> · รอบ 201 ทีม PL ฝ่ายค้าน PL-B1) — null/ว่าง = เลื่อนกำหนดยื่นเฉพาะเสาร์/อาทิตย์ (เดิม)</param>
     public static DepositForfeitTaxPoint ForfeitTaxPointDecision(
-        DepositForfeitVatRoute route, bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodLocked, DateTime today)
+        DepositForfeitVatRoute route, bool lateVat, DateTime depositReceivedDate, DateTime forfeitDate, bool depositPeriodLocked, DateTime today,
+        IReadOnlySet<DateTime>? holidays = null)
     {
         if (!lateVat) return new DepositForfeitTaxPoint(forfeitDate, false, null);
         if (forfeitDate < depositReceivedDate) return new DepositForfeitTaxPoint(forfeitDate, false, null);
@@ -822,7 +824,7 @@ public static class DepositPolicyResolver
         // รอบ 201 ทีม TX (A-TX8 · review194-r3 P-5): เดิมมีเงื่อนไข "ข้ามปีภาษี" ⇒ รับเงิน ธ.ค. ริบ ม.ค. ก่อนวันที่ 15 ถูกย้ายเข้างวดปัจจุบันพร้อมธง §89/1
         // ทั้งที่งวด ธ.ค. ยังยื่นทัน · ภ.พ.30 เป็นแบบรายเดือน — ปีปฏิทินไม่มีผลต่อกำหนดยื่น (กำหนดยื่นจาก TaxFilingDeadline ตัวเดียว) · ปีบัญชีที่ปิดแล้ว
         // ถูกครอบด้วย depositPeriodLocked (งวดบัญชีของวันรับเงินปิดแล้ว) อยู่แล้ว
-        var deadline = TaxFilingDeadline.For(TaxFilingDeadline.KeyOf(TaxType.VAT)!, depositReceivedDate.Year, depositReceivedDate.Month).Paper;
+        var deadline = TaxFilingDeadline.For(TaxFilingDeadline.KeyOf(TaxType.VAT)!, depositReceivedDate.Year, depositReceivedDate.Month, holidays).Paper;
         var beforeDeadline = today.Date <= deadline.Date;
         if (!depositPeriodLocked && (sameMonth || beforeDeadline))
             return new DepositForfeitTaxPoint(depositReceivedDate, false, sameMonth ? null

@@ -61,7 +61,9 @@ public class AuditMiddleware
         var email = context.User.FindFirst(ClaimTypes.Email)?.Value;
         var companyId = context.Items.ContainsKey("CompanyId") ? context.Items["CompanyId"] as Guid? : null;
         var isApiKey = context.Items.ContainsKey("IsApiKeyAuth") && context.Items["IsApiKeyAuth"] is true;
-        var path = context.Request.Path.Value;
+        // RV2-2 (ฝ่ายค้าน GW รอบสอง · รอบ 201 ทีม PL): path ของ webhook มีรหัสลับของร้าน (/api/pay/webhooks/{code}/{token}) — เดิมเข้า EntityType ของ
+        // audit (append-only) + log ข้อผิดพลาดทั้งก้อน ⇒ ปิดบังตั้งแต่ต้น ตัวเดียวกับ RequestLogging/ApiErrorLogging/Exception middleware
+        var path = Accounting.Helpers.GatewayWebhookRoute.RedactPath(context.Request.Path.Value);
 
         await _next(context);
 
@@ -124,6 +126,6 @@ public class AuditMiddleware
         if (string.IsNullOrEmpty(path)) return "Unknown";
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         // Find the main entity type from path
-        return segments.LastOrDefault(s => !Guid.TryParse(s, out _) && s != "api" && s != "companies") ?? "Unknown";
+        return segments.LastOrDefault(s => !Guid.TryParse(s, out _) && s != "api" && s != "companies" && s != "[redacted]") ?? "Unknown";
     }
 }

@@ -3415,13 +3415,27 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
 - **รอบ 201 ทีม PL — serialize + เทสต์ฐานจริง + watermark** (คำตัดสินข้อ 32/33 · A-PL1..4):
   `AddChainedAuditLog(row)` **ไม่ประทับตอน Add แล้ว** (อ่านปลาย chain นอกล็อก = แตกกิ่ง) — `SaveChanges/SaveChangesAsync` ถอดแถว audit ที่รอบันทึก
   (`DetachPendingAuditRows` · รวมแถวที่ยัง `AuditLogs.Add` ตรง) → บันทึกข้อมูลหลัก → `pg_advisory_xact_lock(AdvisoryLockKey.AuditChain ต่อบริษัท · เรียงคีย์)` →
-  `ApplyAuditHashChain` (ResolveTip + Seal) → บันทึกแถว audit · ไม่มีธุรกรรม ⇒ เปิดธุรกรรมสั้นเอง (ข้อมูลหลัก + audit atomic) · มีธุรกรรมของผู้เรียก ⇒ ล็อกถือจน commit
-  (งานเขียนของบริษัทเดียวกันต่อคิวตั้งแต่ SaveChanges แรกที่มีแถว audit · ล็อก audit มาหลังล็อกเอกสาร/เลข JE ของคำสั่งเดียวกัน) · บันทึกล้ม ⇒ คืนแถว audit เป็น Added
-  แล้วโยนต่อ · เทสต์ฐานจริง `Accounting.Tests/Db/AuditChainDbTests` (trait `Category=Db` · job CI `db-test` มี `postgres:16` · 8 คำขอพร้อมกัน ⇒ fork 0 ·
+  `ApplyAuditHashChain` (ResolveTip + Seal) → บันทึกแถว audit — **แก้หลังฝ่ายค้าน (PL-X1..X7 · คำตัดสินข้อ 104): ประทับ "ตอน commit"** ·
+  SaveChanges ในธุรกรรมของผู้เรียกบันทึกข้อมูลหลักอย่างเดียว แล้วเก็บแถว audit ไว้ผูกกับ `TransactionId` (`_deferredAudit`) · `Data/AuditChainCommitInterceptor`
+  (`DbTransactionInterceptor` ลงทะเบียนใน `OnConfiguring` = ทุกทางที่สร้าง context: เว็บ · job · `DbTestDatabase`) `TransactionCommitting(Async)` ⇒
+  `SealDeferredAuditAtCommit(Async)`: `Helpers/AuditChainScope.Normalize` (แถวลูกที่ไม่ผูกบริษัท/NULL ได้บริษัทของ batch · หลายบริษัท/ไม่มีเลย = `Guid.Empty`
+  ระดับแพลตฟอร์ม · ไม่เหลือ NULL) → `SET LOCAL lock_timeout = '15s'` → `pg_advisory_xact_lock` ทุกบริษัทเรียงคีย์ → ปลาย chain → Seal → `INSERT` ตรง
+  (ไม่ flush ChangeTracker ของผู้เรียกตอน commit) · `TransactionRolledBack/Failed` ⇒ ทิ้งแถวที่รอ ⇒ **ล็อก audit เป็นล็อกสุดท้ายของทุกธุรกรรม ถือแค่ช่วง commit**
+  (ไม่วนรอกับเลข JE/ล็อกสินค้า · ไม่ถือข้าม HTTP ภายนอก · tenant อื่นไม่ต่อคิวบน "บริษัทว่าง") · ไม่มีธุรกรรม ⇒ เปิดธุรกรรมสั้นเอง:
+  `base.SaveChanges(acceptAllChangesOnSuccess: false)` → commit (interceptor ประทับ) → `ChangeTracker.AcceptAllChanges()` · ล้มก่อน/ระหว่าง commit ⇒ ทิ้งแถวที่รอ +
+  คืนแถว audit เป็น Added + ChangeTracker ยังไม่ Accept (ลองใหม่ได้ · PL-X5) แล้วโยนต่อ · ห้าม `EnableRetryOnFailure` (PL-X7 · `tools/audit_direct_add_check.py` ฟ้อง) ·
+  เทสต์ฐานจริง `Db/AuditChainCommitDbTests` (บันทึก→ล็อก JE vs ล็อก JE→บันทึก ไม่ deadlock · แถวลูกเข้า chain ของบริษัท + สองบริษัทไม่รอกัน · rollback ทิ้งแถว ·
+  6 ธุรกรรมพร้อมกัน chain เดียว) · เทสต์ฐานจริง `Accounting.Tests/Db/AuditChainDbTests` (trait `Category=Db` · job CI `db-test` มี `postgres:16` · 8 คำขอพร้อมกัน ⇒ fork 0 ·
   ทิศตรงข้าม: เขียน SQL ตรงนอกล็อก ⇒ ตัวตรวจเห็น fork 1) · `AuditChainVerifyJob` ตรวจต่อจาก watermark ต่อบริษัท (`AuditChainCheckpoints` ·
   `Helpers/AuditChainCheckpointPolicy` — ตรวจเต็มเมื่อไม่มี checkpoint/ครบ 28 วัน/รอบก่อนพบปัญหา · พบถูกแก้/ขาดตอน ⇒ ไม่ขยับ watermark) · ตรวจเป็นช่วงใช้
   `AuditHashChain.ExternalParents` → ค้นในฐานว่ามีจริง → `Analyze(rows, anchors)` · `AuditLogs.Add` ตรงเหลือเฉพาะไฟล์ทีมอื่น ratchet ใน
   `tools/audit_direct_add_check.py` (baseline 29 จุด/8 ไฟล์หลังรวมงานทีม DV · ห้ามเพิ่ม) · **แถวนอก chain รุ่นเก่า** (`RowHash = null` ก่อนรอบ 201) **ไม่เติม hash ย้อนหลัง** (คำตัดสิน main agent รอบ 201 · DV Q3) — ตัวตรวจ/endpoint/job นับแยก `UnchainedCount` + `UnchainedLatestAt` + ข้อความ `AuditHashChain.UnchainedNote` ("นอก chain รุ่นเก่า ก่อนวันที่ X" · ไม่ใช่ "ถูกแก้")
+- **รอบ 201 ทีม PL — ช่องลับไม่เข้า audit** (ฝ่ายค้าน GW รอบสอง RV2-1/RV2-2): `Helpers/AuditRedaction` ตัวตัดสินเดียวจากชื่อช่อง (ลงท้าย Password/Secret/
+  Protected/Encrypted/Credentials/ApiKey/KeyHash/TokenHash/Token · ขึ้นต้น Has/Is/Max/Last = ธง ไม่ปิด) — `CaptureAuditEntries` เก็บ `[redacted]` (null/ว่างคงไว้) ·
+  แถวเก่าที่เก็บค่าจริงไปแล้ว (append-only) ปิดตอนแสดง (`AuditTrailService.MapToResponse` · หน้า audit แอดมิน) โดยไม่แตะค่าที่เก็บ (hash chain คงเดิม) ·
+  `AuditMiddleware` ใช้ `GatewayWebhookRoute.RedactPath` ก่อนเขียน EntityType/log (path webhook มีรหัสลับร้าน) · ⚠️ ไม่มีคีย์สิทธิ์ "ดู audit" — `GET /audit/logs` ยังเปิดทุกบทบาท
+  ในบริษัท (หลังปิดค่าลับแล้ว · การเพิ่มคีย์ใหม่ต้องให้เจ้าของตัดสินบทบาทที่ได้โดยปริยาย) · โทเคน webhook ที่เคย rotate ก่อนรอบนี้อยู่ใน audit เก่า (ซ่อนตอนแสดงแล้ว) —
+  แนะนำให้ร้าน rotate อีกครั้ง
 - write จุดสำคัญ: Create, Update (Draft), Approve, Void, Payment,
   WHT cert issue, e-Tax submission, DSR access
 - **งานทำลายหลักฐานปฏิเสธ API key ทุกชนิด** (`[RejectApiKey]` → `OwnerActionGuard.DenyResult` · 403 `OWNER-ACTION-NO-API-KEY` · ต้องทำบนเว็บ):
@@ -4379,4 +4393,6 @@ _ก่อนหน้า: 2026-09-25 (รอบ 194 ฝ่ายค้านถ
 
 _ก่อนหน้า: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · **หลังฝ่ายค้านรอบสี่**: ลายเซ็นลูกค้า `IsSignatureCurrent` + hash v2 (§2.8/§3.2 · de5dc4cd) · migration ฐานมัดจำครั้งเดียว + `[DEPOSIT-BASE-SPLIT]` + ฝั่งขายเท่านั้น (c3820dce) · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคล · `[TAXID-CHECKSUM]` (§6.2i · cb552889) · ข้อความขาดตอน (§6.1 · 960e98cd) · รายละเอียดรอบ `CHANGELOG.md` — commit 7a16f097)_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม ST — Settlement (§2.10): เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId` + backfill ครั้งเดียว (A-ST1) · ล็อก gateway ทุกเส้นที่ประทับ intent (A-ST2) · ข้อความยอดไม่ลงตัวของ intent (A-ST3) · รายงานของกำพร้าระดับช่องทาง (A-ST4) · ลายนิ้วมือเหตุของการรับรู้ (A-ST5) · ใบที่อ้างทุกชั้น (A-ST6) · ผู้ตัดสินบรรทัดใน SoD (A-ST7) · ลายนิ้วมือชิ้นตอนออกเอกสาร (A-ST8) · รุ่นคีย์ต่อบรรทัด (A-ST9) · C-9 ใบกำพร้าที่รับรู้ = ใบแรกของวัน · unpost รวมผล VoidDocumentAsync (DV Q1) — commit 07baa11b)_
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม ST — Settlement (§2.10): เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId` + backfill ครั้งเดียว (A-ST1) · ล็อก gateway ทุกเส้นที่ประทับ intent (A-ST2) · ข้อความยอดไม่ลงตัวของ intent (A-ST3) · รายงานของกำพร้าระดับช่องทาง (A-ST4) · ลายนิ้วมือเหตุของการรับรู้ (A-ST5) · ใบที่อ้างทุกชั้น (A-ST6) · ผู้ตัดสินบรรทัดใน SoD (A-ST7) · ลายนิ้วมือชิ้นตอนออกเอกสาร (A-ST8) · รุ่นคีย์ต่อบรรทัด (A-ST9) · C-9 ใบกำพร้าที่รับรู้ = ใบแรกของวัน · unpost รวมผล VoidDocumentAsync (DV Q1) — commit 07baa11b)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit <pending>)_

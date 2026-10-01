@@ -27,7 +27,8 @@ public interface ISubscriptionService
     Task CancelSubscriptionAsync(Guid companyId, string performedBy);
 
     // Usage Tracking
-    Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature);
+    /// <param name="recordShadow">false = เส้นอ่านอย่างเดียว (GET ของหน้าเว็บ) — ไม่บันทึกโหมดเงา "เจ้าของปิดฟีเจอร์" (PL-C2: เดิมทุกการเปิดหน้านับเป็น "จะถูกปิด")</param>
+    Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature, bool recordShadow = true);
     Task<Accounting.Services.Implementations.SubscriptionService.EffectivePlan?> GetEffectivePlanAsync(Guid companyId);
     Task<Accounting.Services.Implementations.SubscriptionService.AggregateUsage?> GetAggregateUsageAsync(Guid accountSubscriptionId);
     Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType);

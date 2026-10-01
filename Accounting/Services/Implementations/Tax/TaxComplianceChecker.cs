@@ -79,11 +79,15 @@ public class TaxComplianceChecker : ITaxComplianceChecker
 
         // Deadline check — gentle warning, not error, in case admin is
         // back-filling late.
-        var deadline = DeadlineFor(report.TaxType, report.Year, report.Month);
+        // รอบ 201 ทีม PL (ฝ่ายค้าน PL-B1): วันหยุดราชการของแพลตฟอร์ม — ตัวตัดสินเดียวกับปฏิทินภาษี/หน้านำส่ง (ตารางว่าง = เสาร์/อาทิตย์ เดิม)
+        var holidays = report.Year is >= 2018 and <= 2100
+            ? await Accounting.Services.Implementations.PlatformHolidayStore.LoadSetAsync(_db, report.Year, report.Year, ct: ct)
+            : null;
+        var deadline = DeadlineFor(report.TaxType, report.Year, report.Month, holidays);
         if (deadline.HasValue && DateTime.UtcNow.Date > deadline.Value)
         {
             // รอบ 201 B-7: แบบที่ยังไม่ยืนยันมาตรการ e-Filing (ภ.พ.36/ภ.ง.ด.54) เตือนตามวันกระดาษ — บอกวัน e-Filing ไว้ด้วยให้ผู้ใช้ตัดสินได้
-            var eFiling = Accounting.Helpers.TaxFilingDeadline.EFilingFor(report.TaxType, report.Year, report.Month);
+            var eFiling = Accounting.Helpers.TaxFilingDeadline.EFilingFor(report.TaxType, report.Year, report.Month, holidays);
             var caveat = eFiling.HasValue && eFiling.Value > deadline.Value
                 ? $" (กำหนดแบบกระดาษ · ถ้ามาตรการขยาย e-Filing ครอบแบบนี้ = {eFiling:yyyy-MM-dd} — ยังไม่ยืนยันตัวบท)"
                 : "";
@@ -197,6 +201,8 @@ public class TaxComplianceChecker : ITaxComplianceChecker
     /// <see cref="Accounting.Helpers.TaxFilingDeadline"/> ตัวเดียวแล้ว</para>
     /// <para>รอบ 201 ทีม TX (B-7): ใช้วันที่เตือนของตารางกลาง (<c>WarnByFor</c>) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันว่ามาตรการ
     /// e-Filing +8 วันครอบสองแบบนี้ (ไม่ครอบแล้วเตือนตามวัน e-Filing = ช้า 8 วัน) · แบบอื่น = วัน e-Filing เท่าเดิม</para></summary>
-    private static DateTime? DeadlineFor(TaxType type, int year, int month)
-        => Accounting.Helpers.TaxFilingDeadline.WarnByFor(type, year, month);
+    private static DateTime? DeadlineFor(TaxType type, int year, int month, IReadOnlySet<DateTime>? holidays)
+    {
+        return Accounting.Helpers.TaxFilingDeadline.WarnByFor(type, year, month, holidays);
+    }
 }

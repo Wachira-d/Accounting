@@ -3574,35 +3574,73 @@ public class AccountingDbContext : DbContext
         });
     }
 
+    // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    // audit hash chain — ประทับ "ตอน commit" (รอบ 201 ทีม PL · คำตัดสินข้อ 32 + ข้อ 104 หลังฝ่ายค้าน PL-X1..X7)
+    // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    // เดิม (A-PL1 รุ่นแรก) ล็อก audit ตั้งแต่ SaveChanges แรกในธุรกรรมของผู้เรียกแล้วถือจน commit ⇒ (X1) คีย์ "บริษัทว่าง" ตัวเดียวข้าม tenant ·
+    // (X2/X3) ธุรกรรมที่ขอเลข JE/ล็อกสินค้า "หลัง" SaveChanges แรก วนรอกับเส้นที่ขอของพวกนั้นก่อน = deadlock · (X4) ถือล็อกระหว่าง HTTP ภายนอก ⇒
+    // ตอนนี้ SaveChanges ในธุรกรรมของผู้เรียก "เก็บ" แถว audit ไว้ (ยังไม่ประทับ · ผูกกับ TransactionId) แล้ว AuditChainCommitInterceptor ประทับตอน
+    // commit: SET LOCAL lock_timeout → ล็อกทุกบริษัทที่เกี่ยวพร้อมกันเรียงคีย์ → อ่านปลาย chain → Seal → INSERT → commit ⇒ ล็อก audit เป็นล็อก "สุดท้าย"
+    // ของทุกธุรกรรมเสมอ (ไม่มีวงรอกับล็อกเอกสาร/เลข JE/สินค้า) และถือแค่ช่วง commit · rollback/commit ล้ม = ทิ้งแถว (ไม่มีร่องรอยของสิ่งที่ไม่เกิด)
+    // SaveChanges ที่ไม่มีธุรกรรม: เปิดธุรกรรมเอง → บันทึกข้อมูลหลัก (ยังไม่ AcceptAllChanges) → commit (ประทับที่ interceptor ตัวเดียวกัน) → Accept ·
+    // ล้ม = rollback + คืนแถว audit + สถานะ ChangeTracker คงเดิม (PL-X5) · ⚠️ ห้ามเปิด EnableRetryOnFailure โดยไม่ห่อธุรกรรมด้วย execution strategy
+    // (PL-X7 — retry จะเล่นซ้ำ SaveChanges แต่แถว audit ที่เก็บไว้ผูกกับธุรกรรมเดิม · tools/audit_direct_add_check.py ฟ้องถ้ามีใน Program.cs)
+
+    /// <summary>ลงทะเบียนตัวประทับตอน commit ทุกทางที่สร้าง context (เว็บ · job · เทสต์ DB · สคริปต์) — ไม่พึ่งให้ผู้สร้างจำ (PL-X1 ข้อลงทะเบียน)</summary>
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.AddInterceptors(AuditChainCommitInterceptor.Instance);
+        base.OnConfiguring(optionsBuilder);
+    }
+
+    /// <summary>แถว audit ที่รอประทับตอน commit — ผูกกับธุรกรรมที่บันทึก (TransactionId) · แถวของธุรกรรมอื่น (ถูกทิ้งโดยไม่ rollback ผ่าน EF) = ทิ้ง</summary>
+    private readonly List<(Guid TxId, Models.Entities.AuditLog Row)> _deferredAudit = new();
+
     public override int SaveChanges()
     {
         UpdateTimestamps();
-        // รอบ 201 ทีม PL (A-PL1 · คำตัดสินข้อ 32): แถว audit ที่ Add ตรง (AddChainedAuditLog / AuditLogs.Add เดิม) ถูกถอดออกจาก
-        // ChangeTracker ก่อนบันทึกข้อมูลหลัก แล้วประทับ hash พร้อมแถวจาก ChangeTracker ภายใต้ล็อกของบริษัท (ดู LockAuditChain)
         var directAudit = DetachPendingAuditRows();
         var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
         var chained = directAudit.Concat(auditEntries).ToList();
         if (chained.Count == 0) return base.SaveChanges();
-        var serialize = Database.IsNpgsql();
-        var ownTx = serialize && Database.CurrentTransaction == null ? Database.BeginTransaction() : null;
-        try
+        if (!Database.IsNpgsql())
         {
-            var result = base.SaveChanges();
-            if (serialize) LockAuditChain(chained);
+            // ผู้ให้บริการอื่น (ไม่มี advisory lock) — ประทับทันทีแบบก่อนรอบ 201
+            var r0 = base.SaveChanges();
+            Accounting.Helpers.AuditChainScope.Normalize(chained);
             ApplyAuditHashChain(chained);
             AuditLogs.AddRange(chained);
             base.SaveChanges();
-            ownTx?.Commit();
-            return result + directAudit.Count;
+            return r0 + directAudit.Count;
+        }
+        if (Database.CurrentTransaction is { } callerTx)
+        {
+            try
+            {
+                var r1 = base.SaveChanges();
+                foreach (var row in chained) _deferredAudit.Add((callerTx.TransactionId, row));
+                return r1 + directAudit.Count;
+            }
+            catch (Exception)
+            {
+                RestorePendingAuditRows(directAudit);
+                throw;
+            }
+        }
+        using var ownTx = Database.BeginTransaction();
+        try
+        {
+            var r2 = base.SaveChanges(acceptAllChangesOnSuccess: false);
+            foreach (var row in chained) _deferredAudit.Add((ownTx.TransactionId, row));
+            ownTx.Commit();   // AuditChainCommitInterceptor ประทับ + INSERT ภายใต้ล็อกก่อน commit จริง
+            ChangeTracker.AcceptAllChanges();
+            return r2 + directAudit.Count;
         }
         catch (Exception)
         {
+            DropDeferredAudit(ownTx.TransactionId);
             RestorePendingAuditRows(directAudit);
             throw;
-        }
-        finally
-        {
-            ownTx?.Dispose();
         }
     }
 
@@ -3613,46 +3651,61 @@ public class AccountingDbContext : DbContext
         var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
         var chained = directAudit.Concat(auditEntries).ToList();
         if (chained.Count == 0) return await base.SaveChangesAsync(cancellationToken);
-        var serialize = Database.IsNpgsql();
-        var ownTx = serialize && Database.CurrentTransaction == null
-            ? await Database.BeginTransactionAsync(cancellationToken) : null;
-        try
+        if (!Database.IsNpgsql())
         {
-            var result = await base.SaveChangesAsync(cancellationToken);
-            if (serialize) await LockAuditChainAsync(chained, cancellationToken);
+            var r0 = await base.SaveChangesAsync(cancellationToken);
+            Accounting.Helpers.AuditChainScope.Normalize(chained);
             ApplyAuditHashChain(chained);
             AuditLogs.AddRange(chained);
             await base.SaveChangesAsync(cancellationToken);
-            if (ownTx != null) await ownTx.CommitAsync(cancellationToken);
-            return result + directAudit.Count;
+            return r0 + directAudit.Count;
+        }
+        if (Database.CurrentTransaction is { } callerTx)
+        {
+            // ธุรกรรมของผู้เรียก: บันทึกข้อมูลหลักตอนนี้ · แถว audit ประทับตอน commit (ไม่ถือล็อก audit ระหว่างทาง — PL-X2/X3/X4)
+            try
+            {
+                var r1 = await base.SaveChangesAsync(cancellationToken);
+                foreach (var row in chained) _deferredAudit.Add((callerTx.TransactionId, row));
+                return r1 + directAudit.Count;
+            }
+            catch (Exception)
+            {
+                RestorePendingAuditRows(directAudit);
+                throw;
+            }
+        }
+        await using var ownTx = await Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var r2 = await base.SaveChangesAsync(acceptAllChangesOnSuccess: false, cancellationToken);
+            foreach (var row in chained) _deferredAudit.Add((ownTx.TransactionId, row));
+            await ownTx.CommitAsync(cancellationToken);   // ประทับที่ interceptor ก่อน commit จริง
+            ChangeTracker.AcceptAllChanges();
+            return r2 + directAudit.Count;
         }
         catch (Exception)
         {
+            // PL-X5: rollback (dispose) · ข้อมูลหลักยังไม่ Accept ⇒ ChangeTracker คงสถานะก่อนบันทึก · แถว audit กลับเป็น Added ให้บันทึกซ้ำได้
+            DropDeferredAudit(ownTx.TransactionId);
             RestorePendingAuditRows(directAudit);
             throw;
-        }
-        finally
-        {
-            if (ownTx != null) await ownTx.DisposeAsync();
         }
     }
 
     /// <summary>เพิ่มแถว <see cref="Models.Entities.AuditLog"/> ที่เขียน<b>ตรง</b> (ไม่ได้มาจาก ChangeTracker) ให้เข้า hash chain
     /// ของบริษัท — ฝ่ายค้านรอบ 193 P2: <c>AuditLogs.Add(row)</c> ตรง ๆ เคยข้ามการประทับ ⇒ <c>RowHash = null</c> อยู่นอก chain ·
     /// ผู้เรียกต้อง SaveChanges เอง
-    /// <para>รอบ 201 ทีม PL (A-PL1 · คำตัดสินข้อ 32): <b>ไม่ประทับตอน Add อีกแล้ว</b> — การอ่านปลาย chain ตอน Add อยู่นอกล็อก
-    /// (คำขอพร้อมกันอ่านปลายเดียวกัน = แตกกิ่ง) · ประทับจริงใน SaveChanges ภายใต้ <c>pg_advisory_xact_lock</c> ของบริษัท
-    /// (<see cref="DetachPendingAuditRows"/> → <see cref="LockAuditChainAsync"/> → <see cref="ApplyAuditHashChain"/>) ·
-    /// แถวที่ยังใช้ <c>AuditLogs.Add</c> ตรงถูกประทับด้วยเส้นเดียวกัน (กันพลาด) แต่ checker
-    /// <c>tools/audit_direct_add_check.py</c> ห้ามจุดใหม่ — ให้เรียกเมธอดนี้ให้เห็นเจตนา</para></summary>
+    /// <para>รอบ 201 ทีม PL (คำตัดสินข้อ 32/104): <b>ไม่ประทับตอน Add</b> — ประทับตอน commit ภายใต้ <c>pg_advisory_xact_lock</c> ของบริษัท
+    /// (<see cref="DetachPendingAuditRows"/> → เก็บไว้ → <see cref="SealDeferredAuditAtCommitAsync"/>) · แถวที่ยังใช้ <c>AuditLogs.Add</c> ตรงถูกประทับ
+    /// ด้วยเส้นเดียวกัน (กันพลาด) แต่ checker <c>tools/audit_direct_add_check.py</c> ห้ามจุดใหม่ — ให้เรียกเมธอดนี้ให้เห็นเจตนา</para></summary>
     public void AddChainedAuditLog(Models.Entities.AuditLog row)
     {
         AuditLogs.Add(row);
     }
 
     /// <summary>แถว audit ที่รอบันทึกใน ChangeTracker (Add ตรง/AddChainedAuditLog) — ถอดออกก่อนบันทึกข้อมูลหลัก เพื่อประทับ hash
-    /// <b>หลังได้ล็อก</b> เท่านั้น · ลำดับคงตามลำดับที่ ChangeTracker คืน (ลำดับ Add) · แถวที่ประทับไว้แล้ว (ไม่ควรมี) ถูกประทับใหม่
-    /// จากปลาย chain ปัจจุบัน</summary>
+    /// <b>ตอน commit</b> เท่านั้น · ลำดับคงตามลำดับที่ ChangeTracker คืน (ลำดับ Add)</summary>
     private List<Models.Entities.AuditLog> DetachPendingAuditRows()
     {
         var rows = ChangeTracker.Entries<Models.Entities.AuditLog>()
@@ -3662,21 +3715,80 @@ public class AccountingDbContext : DbContext
         return rows.Select(en => en.Entity).ToList();
     }
 
-    /// <summary>บันทึกล้ม (ข้อมูลหลักหรือแถว audit) ⇒ คืนแถว audit ที่ถอดไว้กลับเป็น Added — ผู้เรียกที่จับ error แล้ว SaveChanges ซ้ำ
-    /// ต้องไม่เสียร่องรอยเงียบ ๆ (พฤติกรรมเดิมก่อนรอบ 201: แถวยังค้างใน ChangeTracker) · error ถูกโยนต่อเสมอ</summary>
+    /// <summary>บันทึกล้ม ⇒ คืนแถว audit ที่ถอดไว้กลับเป็น Added — ผู้เรียกที่จับ error แล้ว SaveChanges ซ้ำต้องไม่เสียร่องรอยเงียบ ๆ ·
+    /// ล้างค่าที่ประทับไว้ (ถ้ามี) ให้ประทับใหม่จากปลาย chain ตอนบันทึกครั้งหน้า · error ถูกโยนต่อเสมอ</summary>
     private void RestorePendingAuditRows(List<Models.Entities.AuditLog> rows)
     {
         foreach (var row in rows)
+        {
+            row.PrevHash = null;
+            row.RowHash = null;
             if (Entry(row).State == EntityState.Detached) Entry(row).State = EntityState.Added;
+        }
     }
 
-    /// <summary>รอบ 201 ทีม PL (A-PL1 · คำตัดสินข้อ 32 · W2-C1): serialize การต่อ chain <b>ต่อบริษัท</b> ข้ามคำขอ/ข้ามเครื่อง —
-    /// <c>pg_advisory_xact_lock</c> คีย์คงที่ (<see cref="Accounting.Helpers.AdvisoryLockKey.AuditChain"/>) ก่อนอ่านปลาย chain
-    /// ถือจนธุรกรรมจบ ⇒ คำขอที่สองอ่านปลาย chain <b>หลัง</b>คำขอแรก commit แล้วเสมอ ⇒ ไม่แตกกิ่ง ·
-    /// เรียงคีย์บริษัทก่อนล็อก (กัน deadlock ระหว่างคำขอที่เขียนหลายบริษัท) ·
-    /// ลำดับล็อกกลาง (V1I-X1): ล็อกนี้มาหลังล็อกเอกสาร/เลข JE ของคำสั่งเดียวกันเพราะประทับหลังบันทึกข้อมูลหลัก ·
-    /// ⚠️ ในธุรกรรมของผู้เรียก ล็อกถือจน commit ⇒ งานเขียนของบริษัทเดียวกันต่อคิวกันตั้งแต่ SaveChanges แรกที่มีแถว audit
-    /// (ราคาของความถูกต้อง · คำตัดสินข้อ 32) · ต้องมีธุรกรรมครอบเสมอ (ผู้เรียก SaveChanges เปิดให้เมื่อไม่มี)</summary>
+    /// <summary>ทิ้งแถวที่รอประทับของธุรกรรมนี้ (rollback/commit ล้ม) — เรียกจาก interceptor และจากเส้นธุรกรรมที่ SaveChanges เปิดเอง</summary>
+    internal void DropDeferredAudit(Guid transactionId)
+        => _deferredAudit.RemoveAll(x => x.TxId == transactionId);
+
+    /// <summary>แถวของธุรกรรมที่กำลัง commit · แถวของธุรกรรมอื่นที่ค้าง (ถูก dispose โดยไม่ผ่าน rollback ของ EF) ทิ้งไป — ห้ามประทับร่องรอยของสิ่งที่ไม่เกิด</summary>
+    private List<Models.Entities.AuditLog> TakeDeferredAudit(Guid transactionId)
+    {
+        var rows = _deferredAudit.Where(x => x.TxId == transactionId).Select(x => x.Row).ToList();
+        _deferredAudit.Clear();
+        return rows;
+    }
+
+    /// <summary>lock_timeout ระหว่างรอล็อก audit ตอน commit — เกิน ⇒ commit ล้มดัง (ธุรกรรมทั้งก้อน rollback) ไม่ค้างกิน connection ไม่จำกัด</summary>
+    internal const string AuditLockTimeoutSql = "SET LOCAL lock_timeout = '15s'";
+
+    /// <summary>ตัวประทับตอน commit (เรียกจาก <see cref="AuditChainCommitInterceptor"/> ก่อน commit จริง ภายในธุรกรรมเดียวกัน) —
+    /// lock_timeout → ล็อกทุกบริษัทที่เกี่ยวพร้อมกันเรียงคีย์ → ปลาย chain → Seal → INSERT (SQL ตรง ไม่ผ่าน ChangeTracker — ไม่ flush ของอื่นของผู้เรียก)</summary>
+    internal async Task SealDeferredAuditAtCommitAsync(Guid transactionId, CancellationToken ct)
+    {
+        var rows = TakeDeferredAudit(transactionId);
+        if (rows.Count == 0) return;
+        Accounting.Helpers.AuditChainScope.Normalize(rows);
+        await Database.ExecuteSqlRawAsync(AuditLockTimeoutSql, ct);
+        await LockAuditChainAsync(rows, ct);
+        ApplyAuditHashChain(rows);
+        var (sql, args) = AuditInsertCommand();
+        foreach (var row in rows)
+            await Database.ExecuteSqlRawAsync(sql, args(row), ct);
+    }
+
+    internal void SealDeferredAuditAtCommit(Guid transactionId)
+    {
+        var rows = TakeDeferredAudit(transactionId);
+        if (rows.Count == 0) return;
+        Accounting.Helpers.AuditChainScope.Normalize(rows);
+        Database.ExecuteSqlRaw(AuditLockTimeoutSql);
+        LockAuditChain(rows);
+        ApplyAuditHashChain(rows);
+        var (sql, args) = AuditInsertCommand();
+        foreach (var row in rows)
+            Database.ExecuteSqlRaw(sql, args(row));
+    }
+
+    /// <summary>INSERT แถว audit (ชื่อตาราง/คอลัมน์จากโมเดล EF — ไม่พิมพ์ซ้ำ) · Id = identity ของฐาน</summary>
+    private (string Sql, Func<Models.Entities.AuditLog, object[]> Args) AuditInsertCommand()
+    {
+        var et = Model.FindEntityType(typeof(Models.Entities.AuditLog))!;
+        var props = new[] { "CompanyId", "UserId", "UserEmail", "Action", "EntityType", "EntityId", "OldValues", "NewValues",
+            "IpAddress", "UserAgent", "Timestamp", "PrevHash", "RowHash" };
+        var cols = string.Join(", ", props.Select(p => "\"" + et.FindProperty(p)!.GetColumnName() + "\""));
+        var vals = string.Join(", ", props.Select((_, i) => "{" + i + "}"));
+        var sql = "INSERT INTO \"" + et.GetTableName() + "\" (" + cols + ") VALUES (" + vals + ")";
+        static object N(object? v) => v ?? DBNull.Value;
+        return (sql, r => new object[]
+        {
+            N(r.CompanyId), N(r.UserId), N(r.UserEmail), (int)r.Action, r.EntityType, N(r.EntityId), N(r.OldValues), N(r.NewValues),
+            N(r.IpAddress), N(r.UserAgent), r.Timestamp, N(r.PrevHash), N(r.RowHash),
+        });
+    }
+
+    /// <summary>คีย์ล็อกต่อบริษัทของแถวที่จะประทับ — คงที่ข้ามเครื่อง (AdvisoryLockKey) · เรียงก่อนล็อก (ทุกธุรกรรมขอชุดเดียวกันตามลำดับเดียวกัน
+    /// ⇒ ไม่วนรอกันเอง) · หลัง <see cref="Accounting.Helpers.AuditChainScope.Normalize"/> คีย์ "บริษัทว่าง" เหลือเฉพาะแถวระดับแพลตฟอร์มจริง (PL-X1)</summary>
     private static List<long> AuditChainLockKeys(List<Models.Entities.AuditLog> rows)
     {
         return rows.Select(r => r.CompanyId ?? Guid.Empty).Distinct().OrderBy(g => g)
@@ -3702,7 +3814,7 @@ public class AccountingDbContext : DbContext
     /// Canonical form + SHA-256 อยู่ที่ Helpers/AuditHashChain ตัวเดียว (Seal = สูตร v2)
     /// Forensic-grade: SOC2 compliance + protection against insider tamper
     /// of audit trail.
-    /// รอบ 201 (A-PL1): ผู้เรียกต้องถือล็อกของบริษัทแล้ว (SaveChanges/SaveChangesAsync) — ปลาย chain ที่อ่านที่นี่จึงเป็นปลายจริง</summary>
+    /// รอบ 201 (A-PL1 · ข้อ 104): ผู้เรียกต้องถือล็อกของบริษัทแล้ว (ตัวประทับตอน commit) — ปลาย chain ที่อ่านที่นี่จึงเป็นปลายจริง</summary>
     private void ApplyAuditHashChain(List<Models.Entities.AuditLog> newEntries)
     {
         if (newEntries.Count == 0) return;
