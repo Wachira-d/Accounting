@@ -128,38 +128,17 @@ public class InventoryCostingService : IInventoryCostingService
 
             case CostingMethod.Fifo:
             {
-                // Walk IN layers chronologically. Sum (layer.UnitCost × consumed)
-                // / total consumed = effective outbound unit cost.
-                var inLayers = await _db.StockMovements.AsNoTracking()
-                    .Where(m => m.ProductId == productId
-                                && m.MovementType == "IN"
-                                && m.UnitCost > 0
-                                && !m.IsDeleted)
-                    .OrderBy(m => m.MovementDate)
-                    .Select(m => new { m.MovementDate, m.Quantity, m.UnitCost, m.Id })
-                    .ToListAsync(ct);
-                // OUT ถูกเก็บ "คนละเครื่องหมาย" ตามผู้เขียน: เอกสาร/POS เก็บติดลบ,
-                // ปรับสต๊อกมือเก็บบวก (audit A1/A6) → ต้อง Σ|Quantity| ไม่งั้นยอด
-                // บริโภคสะสมกลายเป็นลบ → needed < 0 → costSum 0 → COGS ตกไป
-                // CostPrice (หรือ 0) ตั้งแต่การขายครั้งที่สองเป็นต้นไป
-                var outQty = await _db.StockMovements.AsNoTracking()
-                    .Where(m => m.ProductId == productId
-                                && m.MovementType == "OUT"
-                                && !m.IsDeleted)
-                    .SumAsync(m => Math.Abs(m.Quantity), ct);
-                // เดิน layer เก่า→ใหม่: ข้ามส่วนที่ OUT ก่อนหน้ากินไปแล้ว (outQty)
-                // แล้วคิดต้นทุนเฉพาะ "ก้อนใหม่" (quantity) — audit A2: เดิมเฉลี่ย
-                // costSum/consumed ทั้งประวัติ → ขายครั้งที่สองได้ต้นทุนเฉลี่ยรวม
-                // แทนต้นทุน layer ถัดไปตามหลัก FIFO
+                // คิว FIFO ระดับบริษัทจากประวัติทั้งหมด — ตัวจำแนกชนิดการเคลื่อนไหวตัวเดียว `Helpers/InventoryCostFlow`
+                // (รอบ 201 ทีม IN · A-IN2): เดิมอ่านเฉพาะ "IN"/"OUT" ⇒ ยอดยกมา (OPENING) ไม่เป็นล็อต · ตรวจนับ/ปรับสต็อก
+                // (ADJUST ±) ไม่กินคิว ⇒ ขายครั้งแรกได้ต้นทุนล็อตที่สอง และล็อตเก่าค้างตลอดกาล · โอนระหว่างคลังไม่นับ (ระดับบริษัท)
                 //
-                // สูตรอยู่ที่ `Helpers/FifoLayerCost` ที่เดียว (มีเทสต์ที่ใช้ตัวเลขจริง)
-                // — เดิมเขียน inline ที่นี่และปิดท้ายด้วย `Math.Max(taken, 1m)` ซึ่งกด
-                // ตัวหารเป็น 1 ทุกครั้งที่ขายน้อยกว่า 1 หน่วย ⇒ ขาย 0.5 กก. จากล็อต
-                // 100 บาท/กก. ได้ต้นทุน 50 (DECISION_AUDIT D5-1)
-                var lastInCost = inLayers.LastOrDefault()?.UnitCost ?? product.CostPrice;
-                return Accounting.Helpers.FifoLayerCost.Resolve(
-                    inLayers.Select(l => new Accounting.Helpers.FifoLayer(l.Quantity, l.UnitCost)).ToList(),
-                    alreadyConsumed: outQty, quantity: quantity, fallbackUnitCost: lastInCost);
+                // OUT ที่เก็บ "คนละเครื่องหมาย" ตามผู้เขียน (เอกสาร/POS ติดลบ · แถวเก่าเก็บบวก — audit A1/A6) ⇒ ตัวจำแนก
+                // ใช้ค่าสัมบูรณ์ของ OUT เสมอ · การข้ามส่วนหัวคิวที่ถูกกินไปแล้ว + คิดเฉพาะก้อนใหม่ อยู่ที่ `FifoLayerCost`
+                // (audit A2 · DECISION_AUDIT D5-1 เศษส่วนหน่วย)
+                var moves = await LoadCostMovementsAsync(product.CompanyId, productId, ct);
+                var (layers, consumed) = Accounting.Helpers.InventoryCostFlow.FifoQueue(moves, product.CostPrice);
+                return Accounting.Helpers.FifoLayerCost.Resolve(layers, alreadyConsumed: consumed, quantity: quantity,
+                    fallbackUnitCost: Accounting.Helpers.InventoryCostFlow.LastLayerCost(moves, product.CostPrice));
             }
             case CostingMethod.Standard:
                 return product.CostPrice;
@@ -178,33 +157,37 @@ public class InventoryCostingService : IInventoryCostingService
             // FIFO/Standard don't have a single AverageUnitCost to rebuild.
             return product.AverageUnitCost;
         }
-        var movements = await _db.StockMovements.AsNoTracking()
-            .Where(m => m.ProductId == productId && !m.IsDeleted)
-            .OrderBy(m => m.MovementDate)
-            .Select(m => new { m.MovementType, m.Quantity, m.UnitCost })
-            .ToListAsync(ct);
-        decimal stock = 0m, avg = product.CostPrice;
-        foreach (var m in movements)
-        {
-            if (m.MovementType == "IN" && m.Quantity > 0 && m.UnitCost > 0)
-            {
-                var newTotal = stock + m.Quantity;
-                avg = newTotal <= 0 ? m.UnitCost
-                    : (stock * avg + m.Quantity * m.UnitCost) / newTotal;
-                stock = newTotal;
-            }
-            else if (m.MovementType == "OUT")
-            {
-                stock -= Math.Abs(m.Quantity);   // OUT เก็บได้ทั้ง +/− (audit A6)
-                // Outbound doesn't change WAC.
-            }
-            // ADJUST: skipped — adjustment treatment is policy-dependent.
-        }
+        // ทุกชนิดการเคลื่อนไหว (ยอดยกมา · ตรวจนับ ± · รับ/ขาย) ผ่านตัวจำแนกเดียวกับคิว FIFO — เดิมข้าม ADJUST/OPENING
+        // ⇒ ยอดคงเหลือในการ rebuild ผิดตั้งแต่แถวแรกที่เป็นยอดยกมา แล้วค่าเฉลี่ยถ่วงด้วยจำนวนผิด (รอบ 201 ทีม IN · A-IN2)
+        // สูตรรับเข้าเป็นตัวเดียวกับ ledger (`WeightedAverageCost.Next`) ⇒ rebuild = ค่าที่ runtime ได้
+        var movements = await LoadCostMovementsAsync(product.CompanyId, productId, ct);
+        var avg = Accounting.Helpers.InventoryCostFlow.RebuildWeightedAverage(movements, product.CostPrice);
         // ระบุ MidpointRounding เสมอ — default ของ .NET คือ banker's rounding
         // (CLAUDE.md กฎเหล็ก #4 E) · ทศนิยมเท่ากับ FifoLayerCost.CostDecimals
         product.AverageUnitCost = Math.Round(avg, Accounting.Helpers.FifoLayerCost.CostDecimals,
             MidpointRounding.AwayFromZero);
         await _db.SaveChangesAsync(ct);
         return product.AverageUnitCost;
+    }
+
+    /// <summary>ประวัติการเคลื่อนไหวของสินค้า (เก่า→ใหม่) ในมุมต้นทุน — แถวที่บันทึกแล้ว <b>รวมแถวที่ ledger เพิ่งเพิ่มใน context
+    /// แต่ยังไม่ SaveChanges</b> (เอกสารเดียวที่มีสินค้าตัวเดียวกันสองบรรทัด: บรรทัดที่สองต้องเห็นการกินคิวของบรรทัดแรก ·
+    /// rebuild ถัวเฉลี่ยหลังยกเลิกใบซื้อต้องเห็นแถวกลับรายการที่เพิ่งเพิ่ม) · กรองบริษัททุก query (tenant)</summary>
+    private async Task<List<Accounting.Helpers.CostMovement>> LoadCostMovementsAsync(
+        Guid companyId, Guid productId, CancellationToken ct)
+    {
+        var saved = await _db.StockMovements.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.ProductId == productId && !m.IsDeleted)
+            .OrderBy(m => m.MovementDate).ThenBy(m => m.CreatedAt)
+            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost))
+            .ToListAsync(ct);
+        var pending = _db.ChangeTracker.Entries<StockMovement>()
+            .Where(e => e.State == EntityState.Added && e.Entity.CompanyId == companyId
+                     && e.Entity.ProductId == productId && !e.Entity.IsDeleted)
+            .Select(e => e.Entity)
+            .OrderBy(m => m.MovementDate).ThenBy(m => m.CreatedAt)
+            .Select(m => new Accounting.Helpers.CostMovement(m.MovementType, m.Quantity, m.UnitCost));
+        saved.AddRange(pending);
+        return saved;
     }
 }

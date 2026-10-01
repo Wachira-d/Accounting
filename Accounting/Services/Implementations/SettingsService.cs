@@ -70,8 +70,17 @@ public class SettingsService : ISettingsService
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
 
-        if (request.PrimaryColor != null) settings.PrimaryColor = request.PrimaryColor;
-        if (request.SecondaryColor != null) settings.SecondaryColor = request.SecondaryColor;
+        // รอบ 201 ทีม IN (A-IN6): สีบริษัท — เดิมรับข้อความอะไรก็ได้ลงตรง ๆ แล้วไหลเข้าหัวเอกสาร (CSS) · ตัวตรวจเดียวกับเทมเพลต
+        // (DocumentTemplateStyle.Hex) · null = ไม่แก้ · "" = ล้างค่า · ผิดรูป = ปฏิเสธดัง (400 ไทย) ก่อนแตะช่องอื่น
+        var colorProblems = new[]
+        {
+            Accounting.Helpers.DocumentTemplateStyle.ColorRejectReason(request.PrimaryColor, "สีหลัก"),
+            Accounting.Helpers.DocumentTemplateStyle.ColorRejectReason(request.SecondaryColor, "สีรอง"),
+        }.Where(x => x != null).ToList();
+        if (colorProblems.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(string.Join(" · ", colorProblems), "SET-COLOR");
+        if (request.PrimaryColor != null) settings.PrimaryColor = Accounting.Helpers.DocumentTemplateStyle.Hex(request.PrimaryColor);
+        if (request.SecondaryColor != null) settings.SecondaryColor = Accounting.Helpers.DocumentTemplateStyle.Hex(request.SecondaryColor);
         // ช่องข้อความ: null = ไม่แก้ · "" (หรือช่องว่างล้วน) = ล้างค่า — กติกาเดียวกับ AuthorizedSignatoryName (S-13 รอบ 193:
         // เดิมเก็บ "" ลงตรง ๆ หรือหน้าเว็บส่ง null เมื่อว่าง ⇒ ลบค่าแล้วกดบันทึก ค่าเดิมยังอยู่เงียบ ๆ)
         if (request.DefaultPaymentTerms != null) settings.DefaultPaymentTerms = TextOrNull(request.DefaultPaymentTerms);
@@ -492,8 +501,9 @@ public class SettingsService : ISettingsService
     /// ที่ถูกต้อง). งานที่เหลือคือห่อ create ของ IntegrationService ด้วย transaction
     /// — จดไว้ใน DOCUMENT_FLOW รอบ 112 ไม่ทำครึ่ง ๆ กลาง ๆ ในคอมมิตนี้
     /// </summary>
-    public Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType, DateTime? documentDate)
-        => Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, documentType, documentDate);
+    public Task<string> GetNextNumberAsync(Guid companyId, DocumentType documentType, DateTime? documentDate,
+        string? branchCode = null)
+        => Accounting.Helpers.DocumentNumberGenerator.NextAsync(_db, companyId, documentType, documentDate, branchCode);
 
     // ===== API Key Management =====
 
@@ -614,7 +624,9 @@ public class SettingsService : ISettingsService
     }
 
     private static CompanySettingsResponse MapToResponse(Guid companyId, CompanySettings s) => new(
-        companyId, s.LogoUrl, s.PrimaryColor, s.SecondaryColor,
+        // สีที่เก็บไว้ก่อนรอบ 201 อาจผิดรูป ⇒ อ่านผ่านตัวตรวจเดียวกัน (ผิดรูป = null = หน้าเว็บใช้ค่าเริ่มต้น · A-IN6)
+        companyId, s.LogoUrl, Accounting.Helpers.DocumentTemplateStyle.Hex(s.PrimaryColor),
+        Accounting.Helpers.DocumentTemplateStyle.Hex(s.SecondaryColor),
         s.DefaultPaymentTerms, s.DefaultPaymentDueDays,
         // Document notes/footer
         s.InvoiceNotes, s.ReceiptNotes, s.QuotationNotes, s.InvoiceFooter, s.ReceiptFooter,

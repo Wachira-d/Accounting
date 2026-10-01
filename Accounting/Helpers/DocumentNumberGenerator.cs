@@ -66,10 +66,12 @@ public static class DocumentNumberGenerator
         return string.IsNullOrWhiteSpace(custom) ? GetPrefix(type) : custom.Trim();
     }
 
+    /// <param name="branchCode">รอบ 201 ทีม IN (A-IN4): รหัสสาขา 5 หลักของเล่มที่จะออก — null/<c>00000</c> = เล่มของบริษัท
+    /// (พฤติกรรมเดิมทุกประการ) · ตัวกำหนดเล่มตัวเดียว <see cref="DocumentNumberBook.BookPrefix"/></param>
     public static async Task<string> NextAsync(AccountingDbContext db, Guid companyId, DocumentType type,
-        DateTime? documentDate)
+        DateTime? documentDate, string? branchCode = null)
     {
-        var prefix = await ResolvePrefixAsync(db, companyId, type);
+        var prefix = DocumentNumberBook.BookPrefix(await ResolvePrefixAsync(db, companyId, type), branchCode);
         // ⚠️ HashCode.Combine สุ่ม seed ต่อ process ⇒ สอง instance ได้คีย์คนละค่า
         // = ล็อกกันข้ามเครื่องไม่ได้ ⇒ เลขเอกสารซ้ำ (§86/4 บังคับไม่ซ้ำ ไม่ขาดช่วง)
         var lockKey = AdvisoryLockKey.For(companyId, AdvisoryLockKey.DocumentSequence, prefix);

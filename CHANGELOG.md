@@ -4059,3 +4059,17 @@ _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก
 - **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
 - เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
 
+_2026-10-01 รอบ 201 ทีม IN — สต็อก/สินทรัพย์/ค่าตั้ง/ที่พัก (`erp-review/2026-10-01/team-IN.md` · BACKLOG §1.8 + C-5/C-6):
+- **A-IN1** วิธีคิดต้นทุนตั้งได้ต่อสินค้า (DTO สร้าง/แก้/คำตอบ + หน้าสินค้า) — `Helpers/CostingMethodPolicy` (ถัวเฉลี่ย/FIFO · ห้าม LIFO/มาตรฐาน ·
+  เปลี่ยนหลังมีความเคลื่อนไหว = ปฏิเสธพร้อมทางไปต่อ · audit chain) · ข้อความศูนย์ช่วยเหลือแก้ตาม
+- **A-IN2** คิว FIFO + rebuild ถัวเฉลี่ยผ่าน `Helpers/InventoryCostFlow` (ยกมา/ตรวจนับเข้าคิว · โอนคลังไม่นับ · แถวที่ยังไม่ save นับด้วย · กรองบริษัท)
+- **A-IN3** `adjust-life` รับ `NewDepreciationMethod` + เหตุผล · ยืนยันค่าเดิม = บันทึกว่าทบทวน · `Helpers/DepreciationEstimateChange` · audit chain
+- **A-IN4 (ส่วนเครื่อง)** `DocumentNumberGenerator.NextAsync(…, branchCode)` · `Helpers/DocumentNumberBook` — สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋
+- **A-IN5** ปุ่ม/endpoint “ออกใบเช็คเอาต์ใหม่” (`ReissueFinalDocumentAsync`) — ตัวสร้างรายการ/ใบร่าง/ใช้มัดจำแยกเป็นเมธอดเดียวที่เช็คเอาต์ใช้ร่วม ·
+  `Helpers/LodgingCheckoutReissue` (ยอด/ชนิดเท่าเดิม)
+- **A-IN6** สีบริษัทตรวจด้วย `DocumentTemplateStyle.ColorRejectReason/Hex` (บันทึก · อ่าน · หัวเอกสาร) · **A-IN7** `DepositKindSeed.AddedByIndustryChange` → เติมประเภทมัดจำ
+- **C-5** เครื่องมือแอดมินตรวจ/ซ่อมยอดสต็อกรวม (`FindProductTotalMismatchesAsync` / `RepairProductTotalsAsync` · `Helpers/StockTotalsReconciliation`) แทน
+  `ReconcileProductTotalsAsync` (ซ่อมเงียบ ไม่มีผู้เรียก) · คอมเมนต์ใน ledger ที่อ้าง "งานตรวจเรียกเป็นระยะ" แก้ให้ตรงความจริง
+- **C-6** รายการตรวจก่อนปิดงวดเดือนสุดท้ายของรอบบัญชีเตือนสินทรัพย์ที่ยังไม่ทบทวนอายุ (`Helpers/UsefulLifeReview`)
+- เทสต์ 6 ไฟล์ใหม่ (สองทิศ) · sim `product_form_contract_sim.js` · required_call_site +14 แถว — commit a4dfa177)_
+

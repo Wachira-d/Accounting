@@ -750,6 +750,9 @@ const API = {
       applyStockCount: (id) => API.post(`${base}/product/stock-counts/${id}/apply`),
       // Inventory Valuation & Reports
       getInventoryValuation: () => API.get(`${base}/product/inventory/valuation`),
+      // รอบ 201 ทีม IN (C-5): ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง — รายงานก่อน · ซ่อมเฉพาะแถวที่เลือกเมื่อกด (audit)
+      getStockTotalsCheck: () => API.get(`${base}/product/inventory/stock-totals-check`),
+      repairStockTotals: (d) => API.post(`${base}/product/inventory/stock-totals-check/repair`, d),
       getStockBalance: (q = '') => API.get(`${base}/product/inventory/balance${q}`),
       getStockAging: () => API.get(`${base}/product/inventory/aging`),
       getMovementSummary: (q) => API.get(`${base}/product/inventory/movement-summary${q}`),
@@ -922,6 +925,8 @@ const API = {
       lodgingAddCharge: (id, d) => API.post(`${base}/lodging/reservations/${id}/charges`, d),
       lodgingCancelCharge: (id, chargeId) => API.del(`${base}/lodging/reservations/${id}/charges/${chargeId}`),
       lodgingCheckOut: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-out`, d),
+      // รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก (ยอดเท่าเดิม)
+      lodgingReissueFinal: (id, d) => API.post(`${base}/lodging/reservations/${id}/reissue-final`, d || {}),
       lodgingCancel: (id, d) => API.post(`${base}/lodging/reservations/${id}/cancel`, d),
       lodgingNoShow: (id, d) => API.post(`${base}/lodging/reservations/${id}/no-show`, d),
       lodgingRefundPaid: (id, d) => API.post(`${base}/lodging/reservations/${id}/refund-paid`, d),

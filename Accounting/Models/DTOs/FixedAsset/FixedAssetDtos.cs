@@ -131,7 +131,9 @@ public record WriteOffAssetRequest(
 public record AdjustUsefulLifeRequest(
     int NewUsefulLifeMonths,
     decimal? NewSalvageValue,
-    string? Reason = null);
+    string? Reason = null,
+    // รอบ 201 ทีม IN (A-IN3): เปลี่ยนวิธีคิดค่าเสื่อมไปข้างหน้า — null = คงวิธีเดิม (Helpers/DepreciationEstimateChange)
+    DepreciationMethod? NewDepreciationMethod = null);
 
 public record AssetCategoryResponse(
     string Category,

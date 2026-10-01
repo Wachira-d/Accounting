@@ -40,7 +40,7 @@
    ค่าธีม CMS ต่อ CSS ดิบ 16 → 0 (theme.css) + 16 → 0 (storefront DTO) · `Blank(r.PrimaryColor/SecondaryColor)` 2 → 0 · `Entries<Contact>()` ใน Undo 1 → 0 ·
    `throw new Error(json.message …)` ภายใน try ที่กลืน (api.js 403) 1 → 0 · คำเดี่ยวสกุลเงินที่นับทุกที่ 4 → 0
 8. ทางเข้าอื่น: ลูกค้าจากชื่อ — LINE/มือถือ/API v1 autoCreate/พรีวิว "แก้ในฟอร์มก่อน" ผ่าน `ResolveSalesCounterpartyAsync` ตัวเดียว ⇒ ได้ K2-1 ครบ · สกุลเงิน — ผู้เรียก 3 จุด (สแกน · สร้างเอกสาร ·
-   DTO) ผ่าน `OcrCurrencyEvidence` ตัวเดียว · อธิบายรายการผิดปกติ — 2 ทางเข้าผ่าน `View` · สีแบรนด์ — เส้นเขียนเดียว (`Apply`) · ธีม CMS — สร้าง/แก้ทั้งคู่ · 📋 `SettingsService`
+   DTO) ผ่าน `OcrCurrencyEvidence` ตัวเดียว · อธิบายรายการผิดปกติ — 2 ทางเข้าผ่าน `View` · สีแบรนด์ — เส้นเขียนเดียว (`Apply`) · ธีม CMS — สร้าง/แก้ทั้งคู่ · 📋→✅ a4dfa177 (รอบ 201 IN A-IN6) `SettingsService`
    (`CompanySettings.PrimaryColor/SecondaryColor`) ยังรับสีไม่ตรวจรูป (ไม่อยู่ในรายงาน · QuestPDF/HTML ใช้ผ่าน `SanitizeHex`/`DocumentTemplateStyle.Color` อยู่แล้ว)
 9. เข้มขึ้น + ทางไปต่อ: (ก) ธีม CMS/สีแบรนด์ที่ไม่ถูกรูป ⇒ 400 ข้อความไทยบอกรูปที่ถูก (`RF2_LegitThemeValues_AreUntouched` ทิศตรงข้าม) (ข) ผู้ไม่มี `CompanySettings.Edit` ⇒ ปุ่มปิด + ข้อความ
    "ขอให้เจ้าของเปิดสิทธิ์ที่หน้าบทบาทและสิทธิ์" (ค) คำเดี่ยวสกุลเงินที่ไม่มีหลักฐาน ⇒ บาท — ใบต่างประเทศจริงที่ไม่มีรหัส/ตัวเลขติด (น้อยมาก) ผู้ใช้เลือกสกุลในฟอร์มเอกสาร

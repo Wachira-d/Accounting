@@ -575,6 +575,9 @@ public class LodgingReservationResponse
     public string? StatusLabel { get; set; }
     /// <summary>ใบเช็คเอาต์ถูกยกเลิก — ข้อความบอกทางออกใบใหม่ (เฉพาะหน้าพนักงาน) · null = ไม่มีปัญหา</summary>
     public string? FinalDocumentNote { get; set; }
+    /// <summary>รอบ 201 ทีม IN (A-IN5): เปิดปุ่ม “ออกใบเช็คเอาต์ใหม่” ได้ไหม — เซิร์ฟเวอร์ตัดสิน (Helpers/LodgingCheckoutReissue.CanOffer) ·
+    /// เฉพาะหน้าพนักงาน (หน้าแขกเป็น false เสมอ)</summary>
+    public bool CanReissueFinalDocument { get; set; }
     /// <summary>ยอดที่ gateway จะเก็บจริงเมื่อแขกกดจ่ายออนไลน์ (null = ไม่มีอะไรให้จ่าย) — ตัวเดียวกับ PublicPaymentResolver</summary>
     public decimal? OnlinePayableAmount { get; set; }
     /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>
@@ -734,6 +737,9 @@ public record LodgingAddChargeRequest(
     Guid? ProductId = null, decimal? VatRate = null,
     LodgingChargeSource Source = LodgingChargeSource.Manual,
     string? Notes = null);
+
+/// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก — เหตุผลเข้าหมายเหตุภายใน + audit (ไม่บังคับ)</summary>
+public record LodgingReissueFinalRequest(string? Reason = null);
 
 /// <summary>เช็คเอาต์ = ออกใบกำกับ/ใบแจ้งหนี้สุดท้าย (ตัดมัดจำ) + รับชำระส่วนที่เหลือ</summary>
 public record LodgingCheckOutRequest(
