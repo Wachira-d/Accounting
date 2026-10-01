@@ -4199,7 +4199,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW แก้ตามฝ่ายค้านรอบสอง RV2-3..11 (§2.3 · §2.6b): ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ (ถอดทางเลือก "หักในรอบที่บันทึกแล้ว") · resync ล็อก/ธุรกรรมครอบทั้งเส้น + Clear เมื่อ rollback + ลำดับล็อก · ออกรหัสใหม่ไม่เปิด URL เดิมกลับ · คำเตือนบอกคำขอที่ยังไม่ยืนยัน — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW แก้ตามฝ่ายค้านรอบสอง RV2-3..11 (§2.3 · §2.6b): ยอดคืนย้อนหลังเข้ารอบโอนถัดไปเสมอ (ถอดทางเลือก "หักในรอบที่บันทึกแล้ว") · resync ล็อก/ธุรกรรมครอบทั้งเส้น + Clear เมื่อ rollback + ลำดับล็อก · ออกรหัสใหม่ไม่เปิด URL เดิมกลับ · คำเตือนบอกคำขอที่ยังไม่ยืนยัน — commit 30e7a835)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม AI แก้ผลฝ่ายค้าน X-1..X-10 — ชนิดผู้สมัครเป็นชนิดจริง (แผน AI + ฝั่งเขียน `ValidateMatchAmountAsync` ตรวจ MatchType) · `ExplicitConfirmCount` ไม่ backfill · ลำดับจอ/SuggestMatchAsync ผ่าน `RankCandidates` · ลบ `POST ai/payment-voucher/suggest-all-accounts` (ไม่มีผู้เรียก) · BankFeed: นักเรียนไม่ตอบ id เอกสาร = ชั้น AI ของฟีดยังไม่ปิด kill-switch · bank.html escape ข้อความจาก statement/AI — commit 10709643)_
 

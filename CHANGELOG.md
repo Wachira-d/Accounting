@@ -4179,7 +4179,7 @@ _2026-10-01 รอบ 201 ทีม GW — แก้ตามฝ่ายค้�
 - **RV2-7** `RunResyncLockedAsync` ถือล็อก + ธุรกรรมครอบทั้ง `ResyncUpdate*Async` (โหลดหัวเอกสารใหม่ใต้ล็อก · เอกสารถูกยกเลิก/ลบระหว่างรอ = ล้มดัง)
 - **RV2-8** ล้มกลางทาง ⇒ `ChangeTracker.Clear()` แล้วโยนต่อ · เทสต์ DB `IntegrationResyncRollbackDbTests` (สองทิศ · job `db-test`)
 - **RV2-9** ออกรหัสใหม่: ร้านที่เคยย้าย ⇒ `LegacyWebhookEligible = false` (`GatewayWebhookRoute.LegacyEligibleAfterRotate`) · **RV2-10** คำเตือนบอกว่ามาจากคำขอที่ยังไม่ยืนยัน
-- เทสต์ใหม่ 6 + DB 2 · required_call_site ปรับ/เพิ่ม (negative test มือ 18/18) — commit <pending>)_
+- เทสต์ใหม่ 6 + DB 2 · required_call_site ปรับ/เพิ่ม (negative test มือ 18/18) — commit 30e7a835)_
 
 _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้าน (merge `e97ba288` · รายงาน `erp-review/2026-10-01/team-DV.md` §ฝ่ายค้าน):
 - **DV-O1** `VoidDocumentAsync` ถอดการล็อก "ใบอื่นของการชำระ" (สร้างวงรอกับ `VoidPaymentAsync`/`CreateMultiDocPaymentAsync`) · ด่าน "ชำระร่วมกับเอกสารอื่น" ย้ายไปทันทีหลังล็อกใบตัวเอง
