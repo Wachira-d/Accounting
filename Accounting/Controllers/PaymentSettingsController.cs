@@ -51,7 +51,13 @@ public class PaymentSettingsController : ControllerBase
         // รอบ 198 — การลงบัญชีค่าธรรมเนียม (เก็บแล้วต้อง echo กลับ · enum เป็นชื่อ)
         string FeeVatMode, string WhtOnFee, Guid? ClearingAccountId, Guid? FeeExpenseAccountId,
         // ฝ่ายค้าน R-E6: บริษัทจด VAT + "ไม่แยก VAT" = เสียภาษีซื้อเงียบ ๆ — ข้อความจาก GatewaySettlementMath ตัวเดียว (หน้าเว็บแสดงอย่างเดียว)
-        string? FeeVatWarning);
+        string? FeeVatWarning,
+        // รอบ 201 ทีม GW (A-GW1): WebhookUrl = URL ที่มีรหัสลับของร้าน · LegacyWebhookUrl = URL เดิมที่ยังทำงานระหว่างเปลี่ยน ·
+        // WebhookUrlWarning = "ยังใช้ URL เดิม" จาก GatewayWebhookRoute ตัวเดียว (หน้าเว็บแสดงอย่างเดียว)
+        string? LegacyWebhookUrl = null,
+        string? WebhookUrlWarning = null,
+        // B-1: สิ่งที่ adapter ยังไม่ได้ยืนยันกับระบบทดสอบของผู้ให้บริการ (IPaymentProvider.PendingVerificationNotice)
+        string? ProviderNotice = null);
 
     private static string? Hint(ISecretProtector p, string? protectedValue)
     {
@@ -59,8 +65,9 @@ public class PaymentSettingsController : ControllerBase
         return string.IsNullOrEmpty(v) ? null : "…" + v[^Math.Min(4, v.Length)..];
     }
 
-    private string WebhookUrl(string providerCode)
-        => $"{Request.Scheme}://{Request.Host}/api/pay/webhooks/{providerCode}";
+    /// <summary>URL แจ้งเตือน — รูป path จาก <see cref="GatewayWebhookRoute.Path"/> ตัวเดียว (token ว่าง = URL เดิม)</summary>
+    private string WebhookUrl(string providerCode, string? token)
+        => $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(providerCode, token)}";
 
     private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered) => new(
         c.Id, c.ProviderCode, c.DisplayName, c.Mode.ToString(),
@@ -71,14 +78,18 @@ public class PaymentSettingsController : ControllerBase
         CanEnableLive: c.LastTestPassedAt != null
                        && !string.IsNullOrWhiteSpace(c.LivePublicKey)
                        && _secrets.IsUsable(c.LiveSecretKeyProtected),
-        WebhookUrl: WebhookUrl(c.ProviderCode),
+        WebhookUrl: WebhookUrl(c.ProviderCode, c.WebhookToken),
         EnabledMethods: ParseMethods(c.EnabledMethodsJson),
         IsActive: c.IsActive,
         FeeVatMode: c.FeeVatMode.ToString(),
         WhtOnFee: c.WhtOnFee.ToString(),
         ClearingAccountId: c.ClearingAccountId,
         FeeExpenseAccountId: c.FeeExpenseAccountId,
-        FeeVatWarning: GatewaySettlementMath.FeeVatModeWarning(c.FeeVatMode, companyVatRegistered));
+        FeeVatWarning: GatewaySettlementMath.FeeVatModeWarning(c.FeeVatMode, companyVatRegistered),
+        LegacyWebhookUrl: string.IsNullOrEmpty(c.WebhookToken) ? null : WebhookUrl(c.ProviderCode, null),
+        WebhookUrlWarning: GatewayWebhookRoute.LegacyUrlWarning(c.LastLegacyWebhookAt,
+            new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt, c.LastTokenWebhookMode, c.Mode)),
+        ProviderNotice: _providers.FirstOrDefault(p => p.ProviderCode == c.ProviderCode)?.PendingVerificationNotice);
 
     private static List<string> ParseMethods(string? json)
     {
@@ -149,6 +160,8 @@ public class PaymentSettingsController : ControllerBase
             _db.PaymentProviderConfigs.Add(cfg);
         }
 
+        // รอบ 201 ทีม GW (A-GW1): รหัสลับของ URL แจ้งเตือน — ออกครั้งเดียว (ไม่เปลี่ยนตอนบันทึกครั้งถัดไป: URL ที่ผู้ใช้ตั้งในแดชบอร์ดต้องไม่ตาย)
+        cfg.WebhookToken ??= GatewayWebhookRoute.NewToken();
         if (req.DisplayName != null) cfg.DisplayName = req.DisplayName.Trim();
         if (req.TestPublicKey != null) cfg.TestPublicKey = req.TestPublicKey.Trim();
         if (req.LivePublicKey != null) cfg.LivePublicKey = req.LivePublicKey.Trim();

@@ -1,7 +1,6 @@
 # audit_direct_add_check baseline — ไฟล์<TAB>จำนวนจุด AuditLogs.Add ตรง (ห้ามเพิ่ม · ลดได้อย่างเดียว)
 Services/Background/LodgingNightAuditJob.cs	1
 Services/Implementations/AuthService.cs	3
-Services/Implementations/FixedAssetService.cs	1
 Services/Implementations/LineBotService.cs	1
 Services/Implementations/Lodging/LodgingService.Lifecycle.cs	17
 Services/Implementations/Lodging/LodgingService.Reservations.cs	2

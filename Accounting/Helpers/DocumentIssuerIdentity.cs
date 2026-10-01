@@ -156,6 +156,10 @@ public static class DocumentIssuerIdentity
         string? companyPrimaryColor,
         DocumentBrandView? brand)
     {
+        // สีบริษัทจากค่าตั้งที่เก็บไว้ก่อนรอบ 201 อาจผิดรูป (เดิมไม่ตรวจตอนบันทึก) ⇒ ผ่านตัวตรวจสีตัวเดียวก่อนถึง renderer
+        // (ผิดรูป = null = renderer ใช้สีเริ่มต้นของตัวเอง · ทีม IN A-IN6) · สีแบรนด์ตรวจแล้วตอนบันทึก (DocumentBrandController)
+        companyPrimaryColor = DocumentTemplateStyle.Hex(companyPrimaryColor);
+
         // ชื่อนิติบุคคลตามภาษาเอกสาร (ลอจิกเดิมที่เคยซ้ำอยู่ใน renderer ทั้งสองตัว)
         var legalPrimary = isEnglish && !string.IsNullOrWhiteSpace(companyNameEn)
             ? companyNameEn!

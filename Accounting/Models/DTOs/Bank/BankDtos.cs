@@ -85,7 +85,11 @@ public record BankTransactionResponse(
 public record ReconcileRequest(
     Guid BankTransactionId,
     Guid? MatchedPaymentId,
-    Guid? MatchedJournalEntryId);
+    Guid? MatchedJournalEntryId,
+    /// <summary>แหล่งของคำยืนยัน (ชื่อ <c>UserChoiceSource</c>: "Explicit" = ผู้ใช้เลือกคู่เอง · "Implicit" =
+    /// ระบบเติม/ติ๊กให้แล้วผู้ใช้ปล่อยผ่าน · "BulkApprove" = ยืนยันทั้งชุดคลิกเดียว) — ว่าง = Implicit ·
+    /// คลังจับคู่นับความมั่นใจเฉพาะ Explicit (รอบ 201 ทีม AI · A-AI1 · <c>Helpers/BankPatternEvidence</c>)</summary>
+    string? Source = null);
 
 public record ImportBankStatementRequest(
     Guid BankAccountId,
@@ -196,7 +200,11 @@ public record BatchReconcileItem(
     // what the user saw at the moment of acceptance.
     decimal? ConfidenceAtApply = null,
     bool WasAiValidated = false,
-    string? AlternativesJson = null);
+    string? AlternativesJson = null,
+    /// <summary>แหล่งของคำยืนยัน (ชื่อ <c>UserChoiceSource</c>: "Explicit" = ผู้ใช้เลือกคู่เอง · "Implicit" =
+    /// ระบบเติม/ติ๊กให้แล้วผู้ใช้ปล่อยผ่าน · "BulkApprove" = ยืนยันทั้งชุดคลิกเดียว) — ว่าง = Implicit ·
+    /// คลังจับคู่นับความมั่นใจเฉพาะ Explicit (รอบ 201 ทีม AI · A-AI1 · <c>Helpers/BankPatternEvidence</c>)</summary>
+    string? Source = null);
 
 public record UnmatchRequest(Guid BankTransactionId);
 
@@ -311,7 +319,11 @@ public record ReconciliationGroupItemRequest(
     string ItemType,         // "BankTransaction" / "Payment" / "JournalEntry" / "Document"
     Guid ItemId,
     decimal AllocatedAmount, // signed: + inflow, - outflow
-    string? Notes = null);
+    string? Notes = null,
+    /// <summary>แหล่งของคำยืนยัน <b>ต่อรายการฝั่งเอกสาร</b> (ฝั่งบรรทัดธนาคารไม่ใช้) (ชื่อ <c>UserChoiceSource</c>: "Explicit" = ผู้ใช้เลือกคู่เอง · "Implicit" =
+    /// ระบบเติม/ติ๊กให้แล้วผู้ใช้ปล่อยผ่าน · "BulkApprove" = ยืนยันทั้งชุดคลิกเดียว) — ว่าง = Implicit ·
+    /// คลังจับคู่นับความมั่นใจเฉพาะ Explicit (รอบ 201 ทีม AI · A-AI1 · <c>Helpers/BankPatternEvidence</c>)</summary>
+    string? Source = null);
 
 public record ReconciliationGroupResponse(
     Guid Id,
@@ -385,8 +397,19 @@ public record LearnedSuggestion(
     string? Description,
     decimal Amount,
     string? ContactName,
-    double Confidence,           // 0..1
-    string Reason);              // human-readable, e.g. "พบรูปแบบนี้ 3 ครั้ง · ใช้ล่าสุด 12/04/2025"
+    double Confidence,           // 0..1 = Score/100 (รอบ 201: สเกลเดียวกับ BankMatchScorer — เดิมเป็นความเกี่ยวข้องของแพตเทิร์น)
+    string Reason,               // เหตุผลของคะแนน + หลักฐานของแพตเทิร์น ("ผู้ใช้เลือกคู่แบบนี้เอง N ครั้ง …")
+    /// <summary>คะแนน 0..100 จาก <c>Helpers/BankMatchScorer</c> — สูตรเดียวกับหน้าจับคู่และจับคู่อัตโนมัติ (รอบ 201 A-AI3)</summary>
+    int Score = 0,
+    /// <summary>คำตัดสินของ <c>BankMatchArbiter</c> (ชื่อ enum: None/Suggest/Apply) — เฉพาะรายการที่ arbiter เลือก · อื่น = None</summary>
+    string Verdict = "None",
+    /// <summary>เซิร์ฟเวอร์ตัดสินว่าหน้าเว็บติ๊กรายการนี้ให้ได้ไหม (= ที่ 1 ของรายการค้างทั้งหมด และ verdict Apply) —
+    /// หน้าเว็บห้ามคิดเกณฑ์เอง (เดิม JS ติ๊กทุกตัวที่ ≥ 0.4)</summary>
+    bool AutoSelect = false,
+    /// <summary>จำนวนครั้งที่ผู้ใช้เลือกคู่แบบนี้เอง (Explicit) — หลักฐานจริงของแพตเทิร์น (รอบ 201 A-AI1)</summary>
+    int ExplicitConfirmations = 0,
+    /// <summary>ความเกี่ยวข้องของแพตเทิร์น 0..1 (<c>BankPatternEvidence.Relevance</c>) — ใช้เรียงรองจากคะแนน</summary>
+    double PatternRelevance = 0);
 
 public record LearnedSuggestionsResponse(
     List<LearnedSuggestion> Suggestions,

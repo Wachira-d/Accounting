@@ -3069,6 +3069,8 @@ public class AiSuggestionController : ControllerBase
             crossLineObservations = bulk.CrossLineObservations,
             warnings = bulk.Warnings,
             usedAi = bulk.UsedAi,
+            fromLocalModel = bulk.FromLocalModel,
+            sourceLabel = Helpers.AiAnswerSource.Label(Helpers.AiAnswerSource.Of(bulk.UsedAi, bulk.FromLocalModel)),
         }));
     }
 
@@ -3334,6 +3336,9 @@ public class AiSuggestionController : ControllerBase
             suggestedActions = r.SuggestedActions,
             feedbackId = r.FeedbackId,
             usedAi = r.UsedAi,
+            // รอบ 201 ทีม AI · A-AI2 (H-4): ป้ายผู้ตอบต้องแยก "นักเรียนตอบ" กับ "ไม่มีใครตอบ" ได้
+            fromLocalModel = r.FromStudent,
+            sourceLabel = Helpers.AiAnswerSource.Label(Helpers.AiAnswerSource.Of(r.UsedAi, r.FromStudent && r.HasModelAnswer)),
         };
     }
 }

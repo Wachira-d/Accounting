@@ -7109,45 +7109,92 @@ public static class DatabaseMigrationHelper
             """CREATE TABLE IF NOT EXISTS "PlatformHolidays" ("Id" uuid PRIMARY KEY, "Date" timestamp without time zone NOT NULL, "NameTh" varchar(200) NOT NULL DEFAULT '', "NameEn" varchar(200) NULL, "Kind" varchar(20) NOT NULL DEFAULT 'Public', "SourceReference" varchar(500) NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformHolidays_Date" ON "PlatformHolidays" ("Date") WHERE "IsDeleted" = false;""",
             // ═══ จบบล็อกรอบ 201 ทีม PL ═══
+            // ═══ รอบ 201 ทีม AI · A-AI1 (H-1) — คลังจับคู่ธนาคารนับ "ผู้ใช้เลือกคู่เอง" แยกจากการกดผ่าน ═══
+            // ADD COLUMN + backfill **ครั้งเดียว** ในบล็อกเดียว (เฉพาะตอนคอลัมน์ยังไม่มี): แถวเก่าทั้งหมดถือเป็นคำยืนยันที่ตั้งใจ
+            // (ของที่ทำงานอยู่ไม่พัง — แบบเดียวกับรอบ 178) · ถ้า backfill ทุกบูตแบบ `WHERE Explicit = 0` แพตเทิร์นที่เกิดจาก
+            // การกดผ่านล้วน (Explicit = 0 โดยชอบ) จะถูกยกเป็น "ตั้งใจ" ทุกครั้งที่เปิดเครื่อง = ด่านไม่มีผล
+            """
+            DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'BankReconciliationPatterns' AND column_name = 'ExplicitConfirmCount') THEN
+                ALTER TABLE "BankReconciliationPatterns" ADD COLUMN "ExplicitConfirmCount" integer NOT NULL DEFAULT 0;
+                UPDATE "BankReconciliationPatterns" SET "ExplicitConfirmCount" = "TimesConfirmed" WHERE "TimesConfirmed" > 0;
+            END IF;
+            END $$;
+            """,
+            // ═══ จบบล็อกรอบ 201 ทีม AI ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
-        return statements.Concat(DepositKindMigrationStatements()).ToArray();
+        return statements.Concat(DepositKindMigrationStatements()).Concat(Round201GatewayStatements()).ToArray();
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  รอบ 201 ทีม GW (Gateway/Integration) — บล็อกของทีม ต่อท้ายชุดหลัง (ตาราง PaymentProviderConfigs/PaymentIntents สร้างไว้ก่อนหน้าในชุดนี้)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>รอบ 201 ทีม GW — A-GW1 รหัสลับ webhook ต่อ config (+ เวลาที่รับทาง URL ใหม่/เดิม) · idempotent ทุกบรรทัด</summary>
+    internal static IReadOnlyList<string> Round201GatewayStatements() => new List<string>
+    {
+        // A-GW1: รหัสลับต่อ config ใน URL แจ้งเตือน — แถวเดิมได้รหัสสุ่ม 64 ตัว (gen_random_uuid สองตัว · ตัวสุ่มเชิงรหัสลับของ PostgreSQL 13+)
+        // · เติมเฉพาะแถวที่ยังว่าง (รันทุกบูตได้ ไม่เปลี่ยนรหัสที่ผู้ใช้ตั้งในแดชบอร์ดไปแล้ว) · URL เดิมยังทำงานระหว่างเปลี่ยน (GatewayWebhookRoute)
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "WebhookToken" varchar(128) NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastTokenWebhookAt" timestamptz NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastTokenWebhookMode" integer NULL;""",
+        """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "LastLegacyWebhookAt" timestamptz NULL;""",
+        """UPDATE "PaymentProviderConfigs" SET "WebhookToken" = replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '') WHERE "WebhookToken" IS NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PaymentProviderConfigs_WebhookToken" ON "PaymentProviderConfigs" ("WebhookToken") WHERE "WebhookToken" IS NOT NULL;""",
+    };
+
     // ═══════════════════════════════════════════════════════════════════════
     // รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG A-DV2 · คำตัดสินข้อ 65)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// <summary>รอบ 201 ทีม DV — คอลัมน์ <c>Documents.EtaxKeptOriginalAt</c> (ใบเสร็จที่ปิดธงครั้งล่าสุดด้วยทาง ค) + เติมจากของเดิม · รันทุกบูตได้
-    /// (ADD COLUMN IF NOT EXISTS · UPDATE เฉพาะแถวที่ยังว่าง)</summary>
-    internal static IReadOnlyList<string> Round201DvStatements() => new[]
-    {
-        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "EtaxKeptOriginalAt" timestamp with time zone NULL;""",
-        EtaxKeptOriginalBackfillSql(),
-    };
+    /// <summary>รอบ 201 ทีม DV — คอลัมน์ <c>Documents.EtaxKeptOriginalAt</c> (ใบเสร็จที่ปิดธงครั้งล่าสุดด้วยทาง ค) + เติมจากของเดิม <b>ครั้งเดียว</b>ในขั้นเดียวกับที่สร้างคอลัมน์
+    /// (ฝ่ายค้าน DV-O6 — เดิม UPDATE ด้วย LIKE ทั่วทั้งตารางทุกบูต) · ฐานใหม่ได้คอลัมน์จาก EnsureCreated (ไม่มีข้อมูลให้เติม)</summary>
+    internal static IReadOnlyList<string> Round201DvStatements() => new[] { EtaxKeptOriginalBackfillSql() };
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมค่า — deterministic ข้ามเครื่อง (ทางเดียวกับ <see cref="DepositBaseSplitLockKey"/>)</summary>
+    internal static string EtaxKeptOriginalLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Documents.EtaxKeptOriginalAt").ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// เติม <c>EtaxKeptOriginalAt</c> ให้ใบที่ปิดธงทาง (ค) ก่อนมีคอลัมน์ (รอบ 200 V1H/V1I ระบุด้วยป้ายในหมายเหตุภายในอย่างเดียว) — แก้โค้ดอย่างเดียวไม่พอเมื่อ
-    /// ค่าถูกเก็บไว้แล้ว (F2 ข้อ 9) · เงื่อนไขเดียวกับ <see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionKeptOriginal"/>: ป้าย
-    /// <see cref="Accounting.Helpers.EtaxReissueReview.ResolvedMarker"/> <b>ตัวสุดท้าย</b>ในหมายเหตุต้องเป็นป้ายทาง (ค) (ปิดซ้ำด้วยใบลดหนี้/ยกเลิกภายหลัง = ไม่เติม) ·
-    /// เวลา = audit <c>RD-ETAX-ORIGINAL-STILL-VALID</c> ล่าสุดของใบนั้น (บริษัทเดียวกัน) · ไม่มี audit = เวลาแก้ไขล่าสุดของใบ · ป้ายเดิมไม่ถูกลบ (ทางสำรองของผู้อ่าน) ·
-    /// ข้อความป้ายมาจากค่าคงที่ตัวเดียวกับฝั่งเขียน/ฝั่งอ่าน (ไม่มีเครื่องหมายคำพูดเดี่ยวในป้าย)
+    /// สร้างคอลัมน์ <c>EtaxKeptOriginalAt</c> แล้วเติมให้ใบที่ปิดธงทาง (ค) ก่อนมีคอลัมน์ (รอบ 200 V1H/V1I ระบุด้วยป้ายในหมายเหตุภายในอย่างเดียว) — แก้โค้ดอย่างเดียวไม่พอเมื่อ
+    /// ค่าถูกเก็บไว้แล้ว (F2 ข้อ 9) · <b>รันครั้งเดียว</b>: มีคอลัมน์แล้ว = ไม่ทำอะไร (advisory lock คีย์คงที่ ⇒ สองเครื่องบูตพร้อมกันเติมครั้งเดียว) ·
+    /// จำกัดแถว: ใบเสร็จ/ใบสำคัญรับที่ไม่ถูกลบ · มีภาษี · หมายเหตุมีป้ายทาง (ค) · เงื่อนไขป้ายเดียวกับ <see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionKeptOriginal"/>:
+    /// ป้าย <see cref="Accounting.Helpers.EtaxReissueReview.ResolvedMarker"/> ตัวสุดท้ายที่อยู่<b>ต้นข้อความ/ต้นบรรทัด</b> ต้องเป็นป้ายทาง (ค)
+    /// (<see cref="Accounting.Helpers.EtaxReissueReview.LastResolutionLinePattern"/> — ป้ายที่ผู้ใช้พิมพ์กลางบรรทัดไม่นับ · ปิดซ้ำด้วยใบลดหนี้/ยกเลิกภายหลัง = ไม่เติม) ·
+    /// เวลา = audit <c>RD-ETAX-ORIGINAL-STILL-VALID</c> ล่าสุดของใบนั้น (บริษัทเดียวกัน) · ไม่มี audit = เวลาแก้ไขล่าสุดของใบ · ป้ายเดิมไม่ถูกลบ (ทางสำรองของผู้อ่าน)
     /// </summary>
     internal static string EtaxKeptOriginalBackfillSql()
     {
-        var resolved = Accounting.Helpers.EtaxReissueReview.ResolvedMarker;
         var kept = Accounting.Helpers.EtaxReissueReview.KeptOriginalMarker;
+        var line = Accounting.Helpers.EtaxReissueReview.LastResolutionLinePattern;
+        var receipt = (int)Accounting.Models.Enums.DocumentType.Receipt;
+        var voucher = (int)Accounting.Models.Enums.DocumentType.ReceiptVoucher;
+        var lockKey = EtaxKeptOriginalLockKey;
         return $$"""
-            UPDATE "Documents" d SET "EtaxKeptOriginalAt" = COALESCE(
-                (SELECT MAX(a."Timestamp") FROM "AuditLogs" a
-                  WHERE a."CompanyId" = d."CompanyId" AND a."EntityType" = 'Document' AND a."EntityId" = d."Id"::text
-                    AND a."NewValues" LIKE '%RD-ETAX-ORIGINAL-STILL-VALID%'),
-                d."UpdatedAt", d."CreatedAt")
-            WHERE d."EtaxKeptOriginalAt" IS NULL
-              AND d."InternalNotes" IS NOT NULL
-              AND strpos(d."InternalNotes", '{{kept}}') > 0
-              AND substr(d."InternalNotes",
-                    length(d."InternalNotes") - strpos(reverse(d."InternalNotes"), reverse('{{resolved}}')) - length('{{resolved}}') + 2)
-                  LIKE '{{kept}}%';
+            DO $mig$
+            BEGIN
+              PERFORM pg_advisory_xact_lock({{lockKey}});
+              IF EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = 'Documents' AND column_name = 'EtaxKeptOriginalAt') THEN
+                RETURN;
+              END IF;
+              ALTER TABLE "Documents" ADD COLUMN "EtaxKeptOriginalAt" timestamp with time zone NULL;
+              UPDATE "Documents" d SET "EtaxKeptOriginalAt" = COALESCE(
+                  (SELECT MAX(a."Timestamp") FROM "AuditLogs" a
+                    WHERE a."CompanyId" = d."CompanyId" AND a."EntityType" = 'Document' AND a."EntityId" = d."Id"::text
+                      AND a."NewValues" LIKE '%RD-ETAX-ORIGINAL-STILL-VALID%'),
+                  d."UpdatedAt", d."CreatedAt")
+              WHERE d."EtaxKeptOriginalAt" IS NULL
+                AND d."IsDeleted" = false
+                AND d."DocumentType" IN ({{receipt}}, {{voucher}})
+                AND d."VatAmount" > 0.005
+                AND d."InternalNotes" IS NOT NULL
+                AND strpos(d."InternalNotes", '{{kept}}') > 0
+                AND substring(d."InternalNotes" from '{{line}}') LIKE '{{kept}}%';
+            END
+            $mig$;
             """;
     }
 }

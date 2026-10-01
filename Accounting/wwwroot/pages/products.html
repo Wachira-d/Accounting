@@ -24,6 +24,8 @@
             <a class="dropdown-item" href="/pages/document-scan.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">📸 สแกนใบเสร็จ / ใบกำกับ (OCR) → สต็อก/วัสดุ/สินทรัพย์</a>
             <a class="dropdown-item" href="/pages/supplies.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🧻 ไปหน้าวัสดุสิ้นเปลือง</a>
             <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
+            <div style="border-top:1px solid var(--gray-200);margin:4px 0"></div>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openStockTotalsCheck()">🔎 ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง</a>
           </div>
         </div>
         <button class="btn btn-primary" onclick="Page.openCreate()"
@@ -53,6 +55,21 @@
     <div id="pagination"></div>
 
     <!-- Create/Edit Modal -->
+    <!-- รอบ 201 ทีม IN (C-5): เครื่องมือตรวจยอดสต็อกรวม — รายงานก่อน · ซ่อมเฉพาะแถวที่เลือกเมื่อกด (audit) · ไม่ซ่อมอัตโนมัติ -->
+    <div class="modal-overlay" id="stockTotalsModal">
+      <div class="modal" style="max-width:860px">
+        <div class="modal-header"><h3 class="modal-title">ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง</h3><button class="modal-close" onclick="Layout.closeModal('stockTotalsModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="font-size:13px;color:#475569;margin-bottom:8px">ยอด “คงเหลือ” บนสินค้าต้องเท่าผลรวมทุกคลังเสมอ · รายการด้านล่างคือสินค้าที่ไม่ตรง (มักเป็นข้อมูลก่อนระบบรู้จักคลัง) · การซ่อมตั้งยอดคงเหลือให้เท่าผลรวมคลัง (ไม่แตะยอดในคลัง) และบันทึกประวัติการแก้ทุกแถว</p>
+          <div id="stockTotalsBody" style="max-height:420px;overflow:auto"></div>
+          <label style="display:flex;gap:6px;align-items:flex-start;margin-top:10px;font-size:13px"><input type="checkbox" id="stockTotalsCounted"> <span>ฉันตรวจนับสต็อกในคลังของสินค้าที่ “ประวัติไม่ตรง” แล้ว — ยอดในคลังคือของจริง</span></label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('stockTotalsModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="stockTotalsRepairBtn" onclick="Page.repairStockTotals()">ซ่อมแถวที่เลือก</button>
+        </div>
+      </div>
+    </div>
     <div class="modal-overlay" id="formModal">
       <div class="modal" style="max-width:700px">
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มสินค้า</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
@@ -96,6 +113,14 @@
               <input type="number" class="form-input" id="fMinStock" value="0" step="0.01">
               <div id="reorderHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
             </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="fCostingMethod">วิธีคิดต้นทุนสินค้า <span style="font-size:11px;color:#64748b;font-weight:400">— TFRS for NPAEs บทที่ 8 · ใช้วิธีเดิมสม่ำเสมอ (ไม่มีวิธีเข้าหลังออกก่อน/LIFO)</span></label>
+            <select class="form-select" id="fCostingMethod">
+              <option value="WeightedAverage">ถัวเฉลี่ยถ่วงน้ำหนัก</option>
+              <option value="Fifo">เข้าก่อน-ออกก่อน (FIFO)</option>
+            </select>
+            <div id="costingMethodHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
           <div class="form-group">
@@ -511,6 +536,7 @@
         document.getElementById('editId').value='';
         ['fCode','fName','fNameEn','fCategory','fSku','fDesc'].forEach(id=>document.getElementById(id).value='');
         document.getElementById('fPrintStation').value='';
+        this._setCostingMethod(null);
         document.getElementById('fUnit').value='ชิ้น';document.getElementById('fSellPrice').value='';document.getElementById('fCostPrice').value='0';
         document.getElementById('fType').value='Product';document.getElementById('fVat').value='7';document.getElementById('fVatIncl').checked=false;
         document.getElementById('fTrackStock').checked=true;document.getElementById('fMinStock').value='0';document.getElementById('fCode').disabled=false;document.getElementById('fType').disabled=false;document.getElementById('fType').title='';
@@ -530,8 +556,69 @@
         document.getElementById('fTrackStock').checked=p.trackStock;document.getElementById('fMinStock').value=p.minimumStock;
         document.getElementById('fDesc').value=p.description||'';
         document.getElementById('fPrintStation').value=p.printStation||'';
+        this._setCostingMethod(p);
         this._toggleImageSection(p);
         Layout.openModal('formModal');
+      },
+      // รอบ 201 ทีม IN (C-5): ตรวจ/ซ่อมยอดสต็อกรวม — ข้อความ/การตัดสินมาจากเซิร์ฟเวอร์ (StockTotalsReconciliation) · หน้าแค่แสดงและส่งแถวที่เลือก
+      _stockTotals: [],
+      async openStockTotalsCheck() {
+        const api=Layout.api(); if(!api)return;
+        document.getElementById('stockTotalsCounted').checked=false;
+        document.getElementById('stockTotalsBody').innerHTML='<div class="text-gray-400" style="padding:16px">กำลังตรวจ...</div>';
+        Layout.openModal('stockTotalsModal');
+        try {
+          const res = await api.getStockTotalsCheck();
+          this._stockTotals = res.data || [];
+          this._renderStockTotals(res.message || '');
+        } catch(e) { document.getElementById('stockTotalsBody').innerHTML=`<div class="text-danger" style="padding:16px">${Layout.esc(e.message)}</div>`; }
+      },
+      _renderStockTotals(message, outcomes) {
+        const rows = this._stockTotals;
+        // จำนวนสต็อก (ไม่ใช่เงิน) — ทศนิยมได้ถึง 4 ตำแหน่งตามหน่วยนับ
+        const q = (n) => (n == null || isNaN(Number(n))) ? '-' : Number(n).toLocaleString('th-TH', { maximumFractionDigits: 4 });
+        const btn = document.getElementById('stockTotalsRepairBtn');
+        btn.disabled = rows.length === 0;
+        const outBy = {};
+        (outcomes || []).forEach(o => { outBy[o.productId] = o; });
+        const body = rows.length === 0
+          ? `<div style="padding:16px;color:#16a34a">✅ ${Layout.esc(message || 'ยอดตรงทุกสินค้า')}</div>`
+          : `<div style="font-size:13px;margin-bottom:6px">${Layout.esc(message)}</div><table class="table"><thead><tr><th></th><th>รหัส</th><th>ชื่อ</th><th class="text-right">คงเหลือบนสินค้า</th><th class="text-right">ผลรวมคลัง</th><th class="text-right">จากประวัติ</th><th>หมายเหตุ</th></tr></thead><tbody>`
+            + rows.map((r, i) => {
+                const o = outBy[r.productId];
+                const note = o ? (o.repaired ? `✅ ซ่อมแล้ว ${q(o.before)} → ${q(o.after)}` : `⏭️ ${o.reason || ''}`) : r.note;
+                return `<tr><td><input type="checkbox" data-st-idx="${i}" ${o && o.repaired ? 'disabled' : 'checked'}></td>`
+                  + `<td>${Layout.esc(r.code)}</td><td>${Layout.esc(r.name)}</td>`
+                  + `<td class="text-right">${q(r.currentStock)}</td><td class="text-right">${q(r.warehouseTotal)}</td>`
+                  + `<td class="text-right ${r.historyAgrees ? '' : 'text-danger'}">${q(r.movementBalance)}</td>`
+                  + `<td style="font-size:12px">${Layout.esc(note)}</td></tr>`;
+              }).join('') + '</tbody></table>';
+        document.getElementById('stockTotalsBody').innerHTML = body;
+      },
+      async repairStockTotals() {
+        const api=Layout.api(); if(!api)return;
+        const items = [...document.querySelectorAll('#stockTotalsBody input[data-st-idx]:checked')]
+          .map(cb => this._stockTotals[Number(cb.dataset.stIdx)])
+          .filter(Boolean)
+          .map(r => ({ productId: r.productId, seenCurrentStock: r.currentStock, seenWarehouseTotal: r.warehouseTotal }));
+        if (items.length === 0) { Layout.toast('ยังไม่ได้เลือกแถวที่จะซ่อม','error'); return; }
+        try {
+          const res = await api.repairStockTotals({ items, confirmPhysicalCount: document.getElementById('stockTotalsCounted').checked });
+          Layout.toast(res.message || 'ซ่อมแล้ว');
+          this._renderStockTotals(res.message || '', (res.data && res.data.items) || []);
+          await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      // รอบ 201 ทีม IN (A-IN1): วิธีคิดต้นทุน — ค่า/สถานะล็อก/เหตุผลมาจากเซิร์ฟเวอร์ (CostingMethodPolicy) ·
+      // costingMethodLocked === true ⇒ ล็อกช่อง + บอกเหตุผล (ห้าม silent no-op) · undefined/null = ยังไม่ได้ตรวจ ⇒ ไม่ล็อก (เซิร์ฟเวอร์ยังตัดสินดัง)
+      _setCostingMethod(p) {
+        const sel = document.getElementById('fCostingMethod');
+        const hint = document.getElementById('costingMethodHint');
+        sel.value = (p && p.costingMethod) || 'WeightedAverage';
+        const locked = !!(p && p.costingMethodLocked === true);
+        sel.disabled = locked;
+        sel.title = locked ? (p.costingMethodLockReason || '') : '';
+        hint.textContent = locked ? (p.costingMethodLockReason || '') : '';
       },
       _toggleImageSection(p) {
         const grp = document.getElementById('fImagesGroup');
@@ -597,8 +684,8 @@
         const id=document.getElementById('editId').value;
         try {
           let saved;
-          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sku:document.getElementById('fSku').value||'',unit:document.getElementById('fUnit').value,trackStock:document.getElementById('fTrackStock').checked,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
-          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null}); }
+          if(id) { saved = await api.updateProduct(id,{name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,category:document.getElementById('fCategory').value||null,sku:document.getElementById('fSku').value||'',unit:document.getElementById('fUnit').value,trackStock:document.getElementById('fTrackStock').checked,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null,costingMethod:document.getElementById('fCostingMethod').value||null}); }
+          else { saved = await api.createProduct({code:document.getElementById('fCode').value,name:document.getElementById('fName').value,nameEn:document.getElementById('fNameEn').value||null,productType:document.getElementById('fType').value,sku:document.getElementById('fSku').value||null,category:document.getElementById('fCategory').value||null,unit:document.getElementById('fUnit').value,sellingPrice:Layout.numOrNull('fSellPrice')??0,costPrice:Layout.numOrNull('fCostPrice')??0,vatRate:Layout.numOrNull('fVat')??7,isVatIncluded:document.getElementById('fVatIncl').checked,trackStock:document.getElementById('fTrackStock').checked,minimumStock:Layout.numOrNull('fMinStock')??0,description:document.getElementById('fDesc').value||null,printStation:document.getElementById('fPrintStation').value||null,costingMethod:document.getElementById('fCostingMethod').value||null}); }
           Layout.toast(id?'แก้ไขสำเร็จ':'เพิ่มสินค้าสำเร็จ — ตอนนี้อัพโหลดรูปได้แล้ว');
           await this.load();
           // Keep modal open so the user can upload images right after creating —
@@ -610,6 +697,7 @@
             document.getElementById('fCode').disabled = true;
             document.getElementById('formTitle').textContent = 'แก้ไขสินค้า';
             this._cache[p.id] = p;
+            this._setCostingMethod(p);
             this._toggleImageSection(p);
           } else {
             Layout.closeModal('formModal');

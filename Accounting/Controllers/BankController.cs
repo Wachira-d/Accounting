@@ -353,7 +353,9 @@ public class BankController : ControllerBase
         await _bankService.ReconcileAsync(companyId, new ReconcileRequest(
             BankTransactionId: transactionId,
             MatchedPaymentId: null,
-            MatchedJournalEntryId: je.Id));
+            MatchedJournalEntryId: je.Id,
+            // ผู้ใช้สร้างรายการบัญชีให้บรรทัดนี้เองกับมือ = คำยืนยันแบบตั้งใจ (รอบ 201 ทีม AI · A-AI1)
+            Source: nameof(UserChoiceSource.Explicit)));
 
         return Ok(new ApiResponse<object>(true, new { journalEntryId = je.Id, journalEntryNumber = je.EntryNumber },
             $"สร้างรายการบัญชี {je.EntryNumber} และกระทบยอดสำเร็จ"));

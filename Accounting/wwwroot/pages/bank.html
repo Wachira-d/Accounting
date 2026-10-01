@@ -1279,7 +1279,8 @@
         if (!confirm('ยืนยันการจับคู่รายการนี้?')) return;
         const api = Layout.api(); if (!api) return;
         try {
-          const payload = { bankTransactionId: txnId };
+          // ผู้ใช้เลือกคู่นี้เองจากรายการ = Explicit (คลังจับคู่นับความมั่นใจเฉพาะแบบนี้ · รอบ 201 A-AI1)
+          const payload = { bankTransactionId: txnId, source: 'Explicit' };
           if (candidateType === 'Payment') payload.matchedPaymentId = candidateId;
           else payload.matchedJournalEntryId = candidateId;
           await api.reconcile(payload);
@@ -1901,8 +1902,10 @@
               bankTransactions: rows.map(m => ({
                 itemType: 'BankTransaction', itemId: m.bankTxnId,
                 allocatedAmount: m.candidates[0].amount, notes: null })),
+              // ยืนยันทั้งชุดจากแผนในคลิกเดียว = BulkApprove (ไม่ใช่การเลือกคู่เอง · รอบ 201 A-AI1)
               matchItems: [{ itemType, itemId: doc.candidateId,
-                allocatedAmount: rows.reduce((s, m) => s + m.candidates[0].amount, 0), notes: null }],
+                allocatedAmount: rows.reduce((s, m) => s + m.candidates[0].amount, 0), notes: null,
+                source: 'BulkApprove' }],
               notes: 'AI: หลายโอนรวมเป็นเอกสารเดียว', tolerance: 0.01,
             });
             groupsApplied += rows.length;
@@ -1921,17 +1924,20 @@
           if (allIds.length === 0) {
             skips.push({ label: rowLabel(m), reason: 'ไม่มี Payment/JE ให้จับคู่' }); return [];
           }
+          // บริบทของคำยืนยัน (รอบ 201 A-AI1): ยืนยันทั้งก้อนจากแผน = BulkApprove · ธง AI + ความมั่นใจลง audit
+          // (เดิมไม่ส่ง ⇒ ทุกแถวถูกบันทึกว่า "คนเลือกเอง" และคลังนับเป็นหลักฐานเต็ม)
+          const ctx = { wasAiValidated: !!m.aiValidated, confidenceAtApply: m.confidence ?? null };
           if (allIds.length === 1 && payIds.length === 1) {
             return [{ bankTransactionId: m.bankTxnId, matchType: 'Payment',
-                      matchedPaymentId: payIds[0], matchedJournalEntryId: null, matchedEntryIds: null }];
+                      matchedPaymentId: payIds[0], matchedJournalEntryId: null, matchedEntryIds: null, source: 'BulkApprove', ...ctx }];
           }
           if (allIds.length === 1 && jeIds.length === 1) {
             return [{ bankTransactionId: m.bankTxnId, matchType: 'JournalEntry',
-                      matchedPaymentId: null, matchedJournalEntryId: jeIds[0], matchedEntryIds: null }];
+                      matchedPaymentId: null, matchedJournalEntryId: jeIds[0], matchedEntryIds: null, source: 'BulkApprove', ...ctx }];
           }
           // Multiple (M:1 split) — server stores all IDs as JSON.
           return [{ bankTransactionId: m.bankTxnId, matchType: 'Multiple',
-                    matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds }];
+                    matchedPaymentId: null, matchedJournalEntryId: null, matchedEntryIds: allIds, source: 'BulkApprove', ...ctx }];
         });
         if (items.length === 0 && groupsApplied === 0) {
           if (skips.length > 0) { Layout.toast(`ข้ามทั้งหมด ${skips.length} รายการ`, 'error'); this._showBulkSkips(skips); }
@@ -2136,7 +2142,7 @@
             ${x.message}
           </div>`).join('');
       },
-      async acceptSuggestion(idx) {
+      async acceptSuggestion(idx, source = 'Explicit') {
         if (!this.aiResult?.suggestions?.[idx]) return;
         const api = Layout.api(); if (!api) return;
         const s = this.aiResult.suggestions[idx];
@@ -2144,14 +2150,15 @@
         try {
           if (s.matchType === 'OneToOne' && s.accountingEntries.length === 1) {
             const e = s.accountingEntries[0];
-            const req = { bankTransactionId: bt.id };
+            // กดยืนยันข้อเสนอทีละแถว = Explicit · "ยืนยันทั้งหมด" ส่ง BulkApprove (รอบ 201 A-AI1)
+            const req = { bankTransactionId: bt.id, source: source };
             if (e.entryType === 'Payment') req.matchedPaymentId = e.entryId;
             else req.matchedJournalEntryId = e.entryId;
             await api.reconcile(req);
           } else {
             await api.batchReconcile({
               items: [{ bankTransactionId: bt.id, matchType: 'Multiple',
-                matchedEntryIds: s.accountingEntries.map(e => e.entryId) }]
+                matchedEntryIds: s.accountingEntries.map(e => e.entryId), source: source }]
             });
           }
           const el = document.getElementById(`sug_${s.matchId}`);
@@ -2169,7 +2176,7 @@
         const api = Layout.api(); if (!api) return;
         let ok = 0, fail = 0;
         for (let i = 0; i < this.aiResult.suggestions.length; i++) {
-          try { await this.acceptSuggestion(i); ok++; } catch { fail++; }
+          try { await this.acceptSuggestion(i, 'BulkApprove'); ok++; } catch { fail++; }
         }
         Layout.toast(`ยืนยันสำเร็จ ${ok} คู่${fail ? `, ล้มเหลว ${fail} คู่` : ''}`);
       },
@@ -2564,7 +2571,8 @@
         try {
           if (sel.length === 1) {
             // Use the simple single-match endpoint
-            const payload = { bankTransactionId: transId };
+            // ผู้ใช้ติ๊กเลือกคู่เองในหน้าต่างจับคู่ = Explicit (รอบ 201 A-AI1)
+            const payload = { bankTransactionId: transId, source: 'Explicit' };
             if (type === 'Payment') payload.matchedPaymentId = sel[0].id;
             else payload.matchedJournalEntryId = sel[0].id;
             await api.reconcile(payload);
@@ -2574,7 +2582,8 @@
               items: [{
                 bankTransactionId: transId,
                 matchType: 'Multiple',
-                matchedEntryIds: sel.map(s => s.id)
+                matchedEntryIds: sel.map(s => s.id),
+                source: 'Explicit'
               }]
             });
           }
@@ -3224,16 +3233,19 @@
         const targets = selectedBanks.length > 0 ? selectedBanks : this.bankTxns;
         if (targets.length === 0) { Layout.toast('ไม่มี bank transaction', 'error'); return; }
         try {
-          let totalApplied = 0;
+          let totalApplied = 0, shownOnly = 0;
           for (const t of targets) {
             const res = await api.getLearnedSuggestions(t.id);
             const sugs = res?.data?.suggestions || [];
             for (const s of sugs) {
-              // High-confidence only — anything below 0.4 is too noisy to auto-apply.
-              if (s.confidence < 0.4) continue;
+              // เซิร์ฟเวอร์ตัดสินว่าติ๊กให้ได้ไหม (คะแนน BankMatchScorer + BankMatchArbiter บนรายการค้างทั้งหมด ·
+              // รอบ 201 A-AI3) — หน้าเว็บห้ามคิดเกณฑ์เอง (เดิม ≥ 0.4 บนสเกลของคลัง)
+              if (!s.autoSelect) { shownOnly++; continue; }
               const item = this.items.find(it => it.type === s.itemType && it.id === s.id);
               if (item && !item._selected) {
                 item._selected = true;
+                // ติ๊กโดยคลัง ⇒ ตอนยืนยันส่งเป็น Implicit (คลังห้ามนับคำยืนยันของข้อเสนอตัวเอง · A-AI1)
+                item._autoSrc = 'learned';
                 totalApplied++;
               }
             }
@@ -3241,7 +3253,11 @@
             if (selectedBanks.length === 0) t._selected = true;
           }
           this.renderBank(); this.renderItems(); this.recalc();
-          Layout.toast(totalApplied > 0 ? `ติ๊กรายการที่ AI แนะนำ ${totalApplied} รายการ` : 'ยังไม่มี pattern ที่เรียนรู้ — ลองจับคู่ด้วยมือสัก 2-3 ครั้งก่อน', totalApplied > 0 ? 'success' : 'info');
+          Layout.toast(totalApplied > 0
+            ? `⚙️ ระบบติ๊กรายการจากประวัติ ${totalApplied} รายการ — ตรวจแล้วกดยืนยัน`
+            : (shownOnly > 0
+              ? `พบรายการจากประวัติ ${shownOnly} รายการ แต่หลักฐานยังไม่พอจะติ๊กให้ — เลือกเองจากรายการฝั่งขวา`
+              : 'ยังไม่มีประวัติการจับคู่ของบรรทัดแบบนี้ — จับคู่ด้วยมือสัก 2-3 ครั้งก่อน'), totalApplied > 0 ? 'success' : 'info');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       toggleBank(i, on) {
@@ -3251,6 +3267,8 @@
       },
       toggleItem(i, on) {
         this.items[i]._selected = on;
+        // ผู้ใช้แตะช่องนี้เอง ⇒ ไม่ใช่ "คลังติ๊กให้" อีกต่อไป (ค่าผู้ใช้ชนะเสมอ · กฎเหล็ก #4 A)
+        delete this.items[i]._autoSrc;
         this.signItemsToBankSide();
         this.renderItems(); this.recalc();
       },
@@ -3307,7 +3325,9 @@
           bankAccountId: this.accountId,
           reconciledDate: document.getElementById('grDate').value,
           bankTransactions: bSel.map(t => ({ itemType: 'BankTransaction', itemId: t.id, allocatedAmount: t._alloc })),
-          matchItems: iSel.map(it => ({ itemType: it.type, itemId: it.id, allocatedAmount: it._alloc })),
+          // ติ๊กเอง = Explicit · ปุ่ม "✨ AI จับคู่จากประวัติ" ติ๊กให้แล้วไม่ได้แตะ = Implicit (รอบ 201 A-AI1)
+          matchItems: iSel.map(it => ({ itemType: it.type, itemId: it.id, allocatedAmount: it._alloc,
+                                        source: it._autoSrc ? 'Implicit' : 'Explicit' })),
           notes: document.getElementById('grNotes').value || null,
         };
         const btn = document.getElementById('grConfirmBtn');

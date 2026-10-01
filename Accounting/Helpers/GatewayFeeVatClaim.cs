@@ -25,6 +25,10 @@ public sealed record GatewayFeeVatAging(
 /// <summary>ใบสำคัญ "รับใบกำกับค่าธรรมเนียม" ที่ลงไว้แล้ว — ใช้หาการเคลมซ้ำ (review198-E2 E2-4) · <c>SupplierTaxId</c> null = หาไม่เจอ (ใบเก่า)</summary>
 public readonly record struct GatewayFeeVatPriorClaim(string EntryNumber, string? InvoiceNo, string? SupplierTaxId);
 
+/// <summary>ผลตรวจ "ปรับปรุงเศษ VAT ค่าธรรมเนียมใน 11630" (รอบ 201 ทีม GW · A-GW8) — <c>Amount</c> มีเครื่องหมาย: บวก = 11630 ค้างเดบิต (Dr ค่าธรรมเนียม / Cr 11630) ·
+/// ลบ = เคลมเกินที่พัก (Dr 11630 / Cr ค่าธรรมเนียม)</summary>
+public readonly record struct GatewayFeeVatResidueCheck(bool Ok, string? Message, decimal Amount, decimal Threshold);
+
 /// <summary>ผลตรวจคำขอ "รับใบกำกับค่าธรรมเนียม" (ย้าย 11630 → 11610)</summary>
 public readonly record struct GatewayFeeVatClaimCheck(
     bool Ok, string? Message, decimal Vat, decimal OutstandingAfter, bool IsLate, string BranchCode);
@@ -179,10 +183,60 @@ public static class GatewayFeeVatClaim
         _ => null,
     };
 
-    /// <summary>ตรวจคำขอรับใบกำกับค่าธรรมเนียม (ก่อนลงใบสำคัญ Dr 11610 / Cr 11630)</summary>
+    /// <summary>ส่วนของใบกำกับรายเดือนที่อยู่<b>นอก</b>หน้านี้ (รอบ 201 ทีม GW · A-GW5 · review200-P2 X-9) — VAT ค่าธรรมเนียมของรายการที่รอบโอน settlement (batch)
+    /// เป็นเจ้าของอยู่ใน<b>ใบสำคัญจ่ายค่าธรรมเนียม</b>ของรอบโอนนั้น (พักที่ 11640 "ยังไม่ถึงกำหนด" จนกรอกใบกำกับที่เอกสาร) ไม่ใช่ 11630 ⇒ เคลมรวมกับหน้านี้ไม่ได้
+    /// (ใบสำคัญ Dr 11610 / Cr 11630 ของยอดนั้น = 11630 ติดลบ + ภาษีซื้อซ้ำ) · null = ไม่มีส่วนนอกหน้านี้</summary>
+    public static string? BatchPortionNote(decimal batchUndueVat, int batchDocumentCount)
+        => R(batchUndueVat) <= 0m || batchDocumentCount <= 0 ? null
+            : $"VAT ค่าธรรมเนียมอีก {R(batchUndueVat):N2} บาท ({batchDocumentCount} ใบสำคัญจ่าย) มาจากรอบโอนที่บันทึกในหน้า \"รอบโอนเงินจากแพลตฟอร์ม\" — "
+              + "ใบกำกับรายเดือนของผู้ให้บริการใบเดียวอาจครอบทั้งสองส่วน: เคลมที่หน้านี้เฉพาะส่วนที่ค้าง 11630 แล้วกรอกเลขที่/วันที่ใบกำกับเดียวกันที่ใบสำคัญจ่ายค่าธรรมเนียม"
+              + "ของรอบโอนเหล่านั้น (ปุ่ม \"บันทึก + ย้ายเข้าภาษีซื้อ ภ.พ.30\" ที่หน้าเอกสาร) — ห้ามเคลมส่วนนั้นซ้ำที่นี่";
+
+    // ══════════════════════════════════════════════════════════════════
+    //  รอบ 201 ทีม GW (A-GW8 · review198-E2 E2-12f): เศษปัดรายใบกำกับค้าง 11630 — เครื่องมือปรับปรุงภายใต้เกณฑ์
+    // ══════════════════════════════════════════════════════════════════
+
+    /// <summary>คำนำของ tag ใบสำคัญ "ปรับปรุงเศษ VAT ค่าธรรมเนียม" — <b>ไม่</b>ขึ้นต้นด้วย <see cref="ClaimTagPrefix"/> (ไม่ใช่ใบกำกับ · ไม่เข้าการหาเคลมซ้ำ)</summary>
+    public const string ResidueTagPrefix = "gateway-fee-vat-residue:";
+
+    /// <summary>tag ของใบสำคัญปรับปรุงเศษของผู้ให้บริการหนึ่ง — ยอดในใบนี้นับเป็น "ล้าง 11630 แล้ว" คู่กับใบเคลม (ฝั่งอ่านกับฝั่งเขียนใช้ตัวนี้ตัวเดียว)</summary>
+    public static string ResidueTag(string providerCode) => ResidueTagPrefix + providerCode;
+
+    /// <summary>เกณฑ์เศษปัดที่ยอมให้ปรับปรุง ต่อใบกำกับที่เคลมแล้ว (ตั้งแต่การปรับปรุงครั้งก่อน) — VAT ปัดรายรายการ (ต่อ charge) กับ VAT บนใบกำกับรายเดือน
+    /// (ปัดยอดรวม) ต่างกันได้ไม่เกินสตางค์ต่อรายการ · ต่อใบ 1 บาทครอบหลายร้อยรายการ · เกินนี้ = ไม่ใช่เศษ (ใบกำกับที่ยังไม่เคลม/โหมด VAT ไม่ตรง)</summary>
+    public const decimal ResiduePerInvoiceBaht = 1.00m;
+
+    /// <summary>ตรวจคำขอปรับปรุงเศษ — ล้าง 11630 ของผู้ให้บริการนี้ทั้งยอดที่ค้าง (ไม่ให้เลือกยอด: เศษคือส่วนที่เหลือทั้งหมดหลังเคลมครบ)
+    /// <para>ด่าน: (1) มีใบกำกับที่เคลมแล้วตั้งแต่การปรับปรุงครั้งก่อนอย่างน้อยหนึ่งใบ (เศษเกิดจากการเคลมเท่านั้น) (2) ยอดค้างไม่เป็นศูนย์
+    /// (3) |ยอดค้าง| ≤ เกณฑ์ × จำนวนใบ (4) ใบกำกับล่าสุดที่เคลมครอบเดือนของรอบโอนล่าสุดที่พัก VAT แล้ว — ยังมีเดือนที่ไม่ได้รับใบกำกับ ⇒ ยอดค้างคือ VAT
+    /// ที่รอใบ ไม่ใช่เศษ (ปรับปรุงทิ้ง = เสียสิทธิ์เคลม)</para></summary>
+    public static GatewayFeeVatResidueCheck ResidueCheck(decimal outstanding, int claimsSinceLastResidue,
+        DateTime? latestDeferredMonthStartUtc, DateTime? latestClaimedInvoiceDate)
+    {
+        var amount = R(outstanding);
+        var threshold = R(ResiduePerInvoiceBaht * Math.Max(0, claimsSinceLastResidue));
+        GatewayFeeVatResidueCheck Fail(string m) => new(false, m, amount, threshold);
+        if (claimsSinceLastResidue <= 0)
+            return Fail("ยังไม่มีใบกำกับที่เคลมแล้วตั้งแต่การปรับปรุงครั้งก่อน — เศษปัดเกิดหลังเคลมใบกำกับเท่านั้น (ยอดค้างตอนนี้คือ VAT ที่รอใบกำกับ)");
+        if (amount == 0m)
+            return Fail("ไม่มียอดค้าง 11630 ของผู้ให้บริการนี้ให้ปรับปรุง");
+        if (Math.Abs(amount) > threshold)
+            return Fail($"ยอดค้าง {amount:N2} เกินเกณฑ์เศษปัด {threshold:N2} บาท ({ResiduePerInvoiceBaht:N2} บาท × ใบกำกับที่เคลม {claimsSinceLastResidue} ใบ) — "
+                + "ไม่ใช่เศษปัด: มีใบกำกับที่ยังไม่ได้เคลม หรือ \"VAT ของค่าธรรมเนียม\" ตั้งไม่ตรงกับที่ผู้ให้บริการคิด · "
+                + "ตรวจใบกำกับรายเดือนให้ครบก่อน (ถ้าเลยกำหนด §82/3 ให้นักบัญชีลงใบสำคัญโอนเป็นค่าใช้จ่ายเอง)");
+        if (latestDeferredMonthStartUtc is DateTime lastMonth
+            && (latestClaimedInvoiceDate is not DateTime lastInv || MonthsBetween(lastMonth, ThaiDate.CalendarDateUtc(lastInv)) < 0))
+            return Fail($"ยังมี VAT จากรอบโอนเดือน {lastMonth.ToString("MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} ที่ใบกำกับที่เคลมล่าสุดยังไม่ครอบ — ยอดค้างอาจเป็น VAT ที่รอใบกำกับ ไม่ใช่เศษ · "
+                + "รับใบกำกับของเดือนนั้นก่อนแล้วค่อยปรับปรุงเศษ");
+        return new GatewayFeeVatResidueCheck(true, null, amount, threshold);
+    }
+
+    /// <summary>ตรวจคำขอรับใบกำกับค่าธรรมเนียม (ก่อนลงใบสำคัญ Dr 11610 / Cr 11630)
+    /// <para><paramref name="batchPortionNote"/> (A-GW5): ข้อความจาก <see cref="BatchPortionNote"/> — ต่อท้ายข้อความ "VAT มากกว่ายอดพัก" ให้รู้ว่าส่วนเกินอาจเป็นของรอบโอน batch</para></summary>
     public static GatewayFeeVatClaimCheck Check(decimal vatAmount, decimal outstanding,
         string? invoiceNo, DateTime invoiceDate, DateTime claimDate,
-        string? supplierName, string? supplierTaxId, string? supplierBranchCode, string? lateReason)
+        string? supplierName, string? supplierTaxId, string? supplierBranchCode, string? lateReason,
+        string? batchPortionNote = null)
     {
         var vat = R(vatAmount);
         // รอบ 200 ทีม G (review198-E2 E2-12): สาขาว่าง ≠ สำนักงานใหญ่ — §86/4 + ประกาศอธิบดีฯ 199 บังคับให้ใบกำกับมีสาขา ⇒ ต้องกรอกตามใบ
@@ -195,7 +249,8 @@ public static class GatewayFeeVatClaim
         if (vat > R(outstanding) + GatewayRefundMath.Tolerance)
             return Fail($"VAT บนใบกำกับ ({vat:N2}) มากกว่า VAT ค่าธรรมเนียมที่พักไว้ใน 11630 ({R(outstanding):N2}) — "
                 + "ใบนี้อาจครอบค่าธรรมเนียมของรอบโอนที่ยังไม่ได้บันทึก (บันทึกรอบโอนที่ค้างก่อน) หรือ \"VAT ของค่าธรรมเนียม\" "
-                + "ตั้งไม่ตรงกับที่ผู้ให้บริการคิด · ระบบไม่ดัน 11630 ให้ติดลบ");
+                + "ตั้งไม่ตรงกับที่ผู้ให้บริการคิด · ระบบไม่ดัน 11630 ให้ติดลบ"
+                + (string.IsNullOrWhiteSpace(batchPortionNote) ? "" : " · " + batchPortionNote));
         if (string.IsNullOrWhiteSpace(invoiceNo))
             return Fail("กรุณากรอกเลขที่ใบกำกับภาษีของผู้ให้บริการ (§86/4)");
         if (string.IsNullOrWhiteSpace(supplierName))

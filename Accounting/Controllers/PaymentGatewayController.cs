@@ -127,16 +127,21 @@ public class PaymentGatewayController : ControllerBase
             .Take(Math.Clamp(limit, 1, 500))
             .Select(i => new
             {
-                i.Id, i.ProviderCode, sourceKind = i.SourceKind.ToString(), i.SourceId,
-                i.Amount, status = i.Status.ToString(), method = i.MethodKind.ToString(),
+                i.Id, i.ProviderCode, SourceKindValue = i.SourceKind, sourceKind = i.SourceKind.ToString(), i.SourceId,
+                i.Amount, StatusValue = i.Status, status = i.Status.ToString(), method = i.MethodKind.ToString(),
                 i.ProviderRef, i.FailureMessage, i.ConfirmedAt, i.ConfirmedBy,
                 i.FeeActual, i.SettledAt, i.CreatedAt,
                 i.RefundedAmount, i.LastRefundedAt, i.LastRefundJournalEntryId,
-                isSettled = i.SettlementJournalEntryId != null,
+                SettledByJournal = i.SettlementJournalEntryId != null,
+                i.SettlementBatchId,
                 i.RefundOutcomeUnknownSince,
                 i.RefundOutcomeUnknownAmount,
             })
             .ToListAsync(ct);
+        // A-GW4: intent ที่รอบโอน settlement เป็นเจ้าของ — "บันทึกรอบโอนแล้ว" เมื่อรอบโอนลงบัญชีแล้ว (ตัวตัดสินเดียวกับรายงานกระทบยอด)
+        var batchFacts = await LoadBatchSettlementAsync(companyId,
+            rows.Where(r => r.SettlementBatchId != null && !r.SettledByJournal).Select(r => (r.Id, r.SettlementBatchId!.Value)).ToList(), ct);
+        var nowUtc = DateTime.UtcNow;
 
         // "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" (§86/10 · รอบ 198 G-1) — ตัดสินที่เซิร์ฟเวอร์ตัวเดียว หน้าเว็บแค่ติดป้าย
         var cn = await refunds.CreditNoteStatesAsync(companyId,
@@ -152,11 +157,22 @@ public class PaymentGatewayController : ControllerBase
             // คืนแล้วแต่ไม่มียอดคืน = คืนก่อนระบบบันทึกยอดคืน / ลงบัญชีคืนเงินไม่สำเร็จ ⇒ ต้องตรวจมือ (ไม่ใช่ "ครบ")
             var legacyRefund = r.RefundedAmount == 0m && (r.status == nameof(PaymentIntentStatus.Refunded)
                 || r.status == nameof(PaymentIntentStatus.PartiallyRefunded));
+            var isSettled = r.SettledByJournal || (batchFacts.TryGetValue(r.Id, out var bf) && bf.Posted);
             return new
             {
                 r.Id, r.ProviderCode, r.sourceKind, r.SourceId, r.Amount, r.status, r.method,
                 r.ProviderRef, r.FailureMessage, r.ConfirmedAt, r.ConfirmedBy, r.FeeActual, r.SettledAt,
-                r.CreatedAt, r.RefundedAmount, r.LastRefundedAt, r.LastRefundJournalEntryId, r.isSettled,
+                r.CreatedAt, r.RefundedAmount, r.LastRefundedAt, r.LastRefundJournalEntryId, isSettled,
+                // รอบ 201 ทีม GW (A-GW2): ป้าย/ปุ่ม/ค้างนาน — เซิร์ฟเวอร์ตัดสิน (หน้าเว็บไม่มีสำเนาเกณฑ์อีก)
+                statusLabel = PaymentIntentPolicy.StatusLabel(r.StatusValue),
+                sourceKindLabel = PaymentIntentPolicy.SourceKindLabel(r.SourceKindValue),
+                isStuck = PaymentIntentPolicy.IsStuck(r.StatusValue, r.CreatedAt, nowUtc),
+                canCheckLive = PaymentIntentPolicy.IsOpen(r.StatusValue),
+                // ปุ่มคืนเงิน = ด่านเดียวกับ service (GatewayRefundMath.Check ยอดเต็มที่เหลือ) — ผลไม่แน่ชัดมีปุ่มของตัวเอง
+                canRefund = GatewayRefundMath.Check(r.StatusValue, r.Amount, r.RefundedAmount, null,
+                    r.RefundOutcomeUnknownSince != null).Ok,
+                canEditFee = PaymentIntentPolicy.CanEditFee(r.StatusValue, r.SettledByJournal, r.SettlementBatchId != null),
+                inSettlementBatch = r.SettlementBatchId != null,
                 refundableRemaining = GatewayRefundMath.Remaining(r.Amount, r.RefundedAmount),
                 feeInputLabel = GatewaySettlementMath.FeeInputLabel(
                     feeModes.FirstOrDefault(m => m.ProviderCode == r.ProviderCode)?.FeeVatMode ?? GatewayFeeVatMode.None),
@@ -177,6 +193,9 @@ public class PaymentGatewayController : ControllerBase
             refundedAwaitingCreditNote = shaped.Count(x => x.needsCreditNote),
             refundUntracked = shaped.Count(x => x.refundUntracked),
             refundOutcomeUnknown = shaped.Count(x => x.refundOutcomeUnknown),
+            stuck = shaped.Count(x => x.isStuck),
+            stuckMinutes = (int)PaymentIntentPolicy.StuckThreshold.TotalMinutes,
+            statusOptions = PaymentIntentPolicy.StatusOptions().Select(o => new { value = o.Value, label = o.Label }),
         }));
     }
 
@@ -204,13 +223,18 @@ public class PaymentGatewayController : ControllerBase
                          || i.Status == PaymentIntentStatus.PartiallyRefunded))
             .Select(i => new
             {
-                i.ProviderCode, i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
+                i.Id, i.ProviderCode, i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount,
                 IsRefundedFully = i.Status == PaymentIntentStatus.Refunded,
-                IsSettled = i.SettlementJournalEntryId != null,
+                SettledByJournal = i.SettlementJournalEntryId != null,
+                i.SettlementBatchId,
                 i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement,
                 i.SettledFeeDeducted,
             })
             .ToListAsync(ct);
+        // รอบ 201 ทีม GW (A-GW4): intent ที่รอบโอน settlement (batch) เป็นเจ้าของ — โอนแล้วเมื่อรอบโอนลงบัญชีแล้ว · ยอดจากบรรทัดรอบโอน
+        // (เดิม IsSettled = มีใบสำคัญรอบโอนเส้นเดิมเท่านั้น ⇒ batch ที่ลงบัญชีแล้วโชว์ "ยังไม่โอน" ตลอดไป)
+        var batchFacts = await LoadBatchSettlementAsync(companyId,
+            raw.Where(i => i.SettlementBatchId != null && !i.SettledByJournal).Select(i => (i.Id, i.SettlementBatchId!.Value)).ToList(), ct);
         // R-E5: โหมด VAT ค่าธรรมเนียมของผู้ให้บริการแต่ละราย — สูตรเดียวกับแผนรอบโอน (AddedOnTop = ถูกหักรวม VAT)
         var modes = await _db.PaymentProviderConfigs.AsNoTracking()
             .Where(c => c.CompanyId == companyId && !c.IsDeleted)
@@ -218,10 +242,16 @@ public class PaymentGatewayController : ControllerBase
             .ToListAsync(ct);
         GatewayFeeVatMode ModeOf(string code)
             => modes.FirstOrDefault(m => m.ProviderCode == code)?.FeeVatMode ?? GatewayFeeVatMode.None;
-        var rows = raw.Select(i => new GatewayIntentAmounts(
-            i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount, i.IsRefundedFully, i.IsSettled,
-            i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement, ModeOf(i.ProviderCode),
-            i.SettledFeeDeducted)).ToList();
+        var intentRows = raw.Select(i => new GatewayReconciliationIntentRow(
+                i.Amount, i.FeeActual, i.FeeEstimated, i.SettledAmount, i.IsRefundedFully, i.SettledByJournal,
+                i.RefundedAmount, i.RefundSettledAmount, i.RefundDeductedAfterSettlement, ModeOf(i.ProviderCode),
+                i.SettledFeeDeducted, OwnedByBatch: i.SettlementBatchId != null,
+                BatchPosted: batchFacts.TryGetValue(i.Id, out var bp) && bp.Posted))
+            .ToList();
+        var rows = raw.Select((i, idx) => GatewayReconciliation.FromIntent(intentRows[idx],
+            batchFacts.TryGetValue(i.Id, out var bf) ? bf.Amounts : null)).ToList();
+        // A-GW9: แถวเก่าที่แยกยอดคืนหักรอบหลังไม่ได้ — นับให้เห็น (ไม่เติมย้อนหลังด้วยค่าที่แต่งขึ้น)
+        var lateRefundUnknown = intentRows.Count(GatewayReconciliation.LateRefundSplitUnknown);
 
         var result = GatewayReconciliation.Compute(rows);
         return Ok(new ApiResponse<object>(true, new
@@ -231,7 +261,41 @@ public class PaymentGatewayController : ControllerBase
             result.FeeTotal, result.FeeIsEstimated, result.ExpectedNet,
             result.SettledTotal, result.UnsettledCount, result.UnsettledAmount,
             result.Difference, result.UnexplainedDifference, result.IsBalanced,
+            lateRefundSplitUnknown = lateRefundUnknown,
+            lateRefundSplitUnknownMessage = GatewayReconciliation.LateRefundSplitUnknownMessage(lateRefundUnknown),
         }));
+    }
+
+    /// <summary>สถานะรอบโอน settlement ของ intent ที่ batch เป็นเจ้าของ + ยอดจากบรรทัดของรอบที่ลงบัญชีแล้ว (รอบ 201 ทีม GW · A-GW4) —
+    /// ตัวตัดสิน "โอนแล้ว" = <see cref="GatewayReconciliation.IsBatchPosted"/> · ยอด = <see cref="GatewayReconciliation.BatchSettled"/></summary>
+    private async Task<Dictionary<Guid, (bool Posted, GatewayBatchSettledAmounts? Amounts)>> LoadBatchSettlementAsync(Guid companyId,
+        IReadOnlyCollection<(Guid IntentId, Guid BatchId)> owned, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, (bool Posted, GatewayBatchSettledAmounts? Amounts)>();
+        if (owned.Count == 0) return result;
+        var batchIds = owned.Select(o => o.BatchId).Distinct().ToList();
+        var statuses = await _db.SettlementBatches.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && batchIds.Contains(b.Id))
+            .Select(b => new { b.Id, b.Status, b.IsDeleted })
+            .ToDictionaryAsync(b => b.Id, b => !b.IsDeleted && GatewayReconciliation.IsBatchPosted(b.Status), ct);
+        var postedIntentIds = owned.Where(o => statuses.TryGetValue(o.BatchId, out var p) && p).Select(o => o.IntentId).ToList();
+        var postedStatuses = new[] { SettlementBatchStatus.Posted, SettlementBatchStatus.BankMatched };
+        var lines = postedIntentIds.Count == 0
+            ? new List<(Guid IntentId, GatewayBatchLineFact Line)>()
+            : (await _db.SettlementLines.AsNoTracking()
+                    .Where(l => l.CompanyId == companyId && l.PaymentIntentId != null && postedIntentIds.Contains(l.PaymentIntentId.Value)
+                        && !l.Batch.IsDeleted && postedStatuses.Contains(l.Batch.Status))
+                    .Select(l => new { IntentId = l.PaymentIntentId!.Value, l.LineType, l.Amount })
+                    .ToListAsync(ct))
+                .Select(l => (IntentId: l.IntentId, Line: new GatewayBatchLineFact(l.LineType, l.Amount))).ToList();
+        foreach (var (intentId, batchId) in owned)
+        {
+            var posted = statuses.TryGetValue(batchId, out var isPosted) && isPosted;
+            result[intentId] = (posted, posted
+                ? GatewayReconciliation.BatchSettled(lines.Where(l => l.IntentId == intentId).Select(l => l.Line))
+                : null);
+        }
+        return result;
     }
 
     public sealed record ManualConfirmRequest(string Reason);
@@ -359,6 +423,41 @@ public class PaymentGatewayController : ControllerBase
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.ResolveUnknownRefundManuallyAsync(companyId, intentId, decision, req.Amount, req.ProviderRefundRef,
             req.Evidence, actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        var data = new
+        {
+            amount = r.Amount,
+            refundedTotal = r.RefundedTotal,
+            journalEntryId = r.JournalEntryId,
+            journalEntryNumber = r.JournalEntryNumber,
+            nextStep = r.NextStep,
+        };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
+
+    /// <summary>คำขอบันทึกยอดคืนย้อนหลัง — <c>Journal</c> = "BookNow" | "AlreadyBookedManually" (ชื่อ enum · อ่านไม่ออก = ปฏิเสธ)</summary>
+    public sealed record LegacyRefundRequest(decimal? Amount, DateTime? RefundedAt, string? ProviderRefundRef, string? Evidence, string? Journal);
+
+    /// <summary>บันทึกยอดคืนจริงของรายการที่ "คืนแล้วแต่ระบบไม่มียอดคืน" (รอบ 201 ทีม GW · A-GW7 · review198-E2 E2-12e) — แถวเก่า/ลงบัญชีคืนไม่สำเร็จ
+    /// ค้าง −ค่าธรรมเนียมในกระทบยอดและไม่เข้ารอบโอนตลอดไป · <b>เจ้าของกิจการเท่านั้น</b> (เติมยอดที่ระบบไม่รู้แทนผู้ให้บริการ) + ห้ามคีย์ API + สิทธิ์คืนเงิน ·
+    /// ต้องมีหลักฐาน · ตัดสินที่ service (<c>GatewayRefundMath.CheckLegacyRefundEntry</c>)</summary>
+    [HttpPost("intents/{intentId:guid}/refund/record-legacy")]
+    [Accounting.Filters.RejectApiKey("บันทึกยอดคืนเงินย้อนหลัง")]
+    [Accounting.Filters.RequireOwner("บันทึกยอดคืนเงินย้อนหลัง",
+        "เป็นการเติมยอดคืนที่ระบบไม่รู้แทนผู้ให้บริการ — กระทบรอบโอนและบัญชีพัก")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.Refund)]
+    public async Task<ActionResult<ApiResponse<object>>> RecordLegacyRefund(
+        Guid companyId, Guid intentId, [FromBody] LegacyRefundRequest req,
+        [FromServices] IGatewayRefundService refunds, CancellationToken ct)
+    {
+        var journal = Enum.TryParse<GatewayLegacyRefundJournal>(req.Journal?.Trim(), ignoreCase: true, out var j)
+            && Enum.IsDefined(j) ? j : GatewayLegacyRefundJournal.Unspecified;
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await refunds.RecordLegacyRefundAsync(companyId, intentId, req.Amount,
+            req.RefundedAt is DateTime at ? DateTime.SpecifyKind(at, at.Kind == DateTimeKind.Unspecified ? DateTimeKind.Utc : at.Kind) : null,
+            req.ProviderRefundRef, req.Evidence, journal, actor, User?.Identity?.Name,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
         var data = new
         {
             amount = r.Amount,
@@ -522,6 +621,11 @@ public class PaymentGatewayController : ControllerBase
             v.ProviderCode, v.CompanyVatRegistered,
             deferredTotal = v.Aging.DeferredTotal, claimedTotal = v.Aging.ClaimedTotal, outstanding = v.Aging.Outstanding,
             worstLevel = v.Aging.WorstLevel.ToString(), warning = v.Aging.Warning,
+            // รอบ 201 ทีม GW (A-GW5): VAT ค่าธรรมเนียมของรอบโอน batch ที่รอใบกำกับ (เคลมที่ใบสำคัญจ่าย ไม่ใช่ที่นี่) — แสดงอย่างเดียว
+            batchUndueVat = v.BatchUndueVat, batchUndueDocuments = v.BatchUndueDocuments, batchPortionNote = v.BatchPortionNote,
+            // A-GW8: ปรับปรุงเศษ 11630 — ผลจากตัวตรวจเดียวกับตอนบันทึก (ปุ่มขึ้นเฉพาะเมื่อ residueAllowed · ไม่ได้ = ข้อความบอกเหตุ)
+            residueAllowed = v.Residue?.Ok ?? false, residueAmount = v.Residue?.Amount ?? 0m,
+            residueThreshold = v.Residue?.Threshold ?? 0m, residueMessage = v.Residue?.Message,
             buckets = v.Aging.Buckets.Select(b => new
             {
                 b.MonthStartUtc, b.Deferred, b.Outstanding, b.MonthsOld, level = b.Level.ToString(), b.Warning,
@@ -544,6 +648,26 @@ public class PaymentGatewayController : ControllerBase
                 req.SupplierName, req.SupplierTaxId, req.SupplierBranchCode, req.LateReason),
             actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
         var data = new { r.JournalEntryId, r.JournalEntryNumber, r.OutstandingAfter };
+        return r.Ok
+            ? Ok(new ApiResponse<object>(true, data, r.Message))
+            : BadRequest(new ApiResponse<object>(false, data, r.Message));
+    }
+
+    public sealed record FeeVatResidueRequestDto(string? ProviderCode, DateTime EntryDate, string? Reason);
+
+    /// <summary>ปรับปรุงเศษ VAT ค่าธรรมเนียมที่ค้าง 11630 (รอบ 201 ทีม GW · A-GW8 · review198-E2 E2-12f) — เฉพาะยอดที่ไม่เกินเกณฑ์เศษปัดต่อใบกำกับที่เคลมแล้ว ·
+    /// JE ค่าธรรมเนียม ↔ 11630 + hash chain · สิทธิ์ลง JE · ห้ามคีย์ API</summary>
+    [HttpPost("settlements/fee-vat/residue")]
+    [Accounting.Filters.RejectApiKey("ปรับปรุงเศษ VAT ค่าธรรมเนียมรับชำระเงิน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.PostSettlement)]
+    public async Task<ActionResult<ApiResponse<object>>> WriteOffFeeVatResidue(
+        Guid companyId, [FromBody] FeeVatResidueRequestDto req,
+        [FromServices] IGatewaySettlementService settlements, CancellationToken ct)
+    {
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await settlements.WriteOffFeeVatResidueAsync(companyId, req.ProviderCode ?? string.Empty, req.EntryDate,
+            req.Reason ?? string.Empty, actor, User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        var data = new { r.JournalEntryId, r.JournalEntryNumber, r.Amount };
         return r.Ok
             ? Ok(new ApiResponse<object>(true, data, r.Message))
             : BadRequest(new ApiResponse<object>(false, data, r.Message));
@@ -594,22 +718,45 @@ public class PaymentWebhookController : ControllerBase
         ILogger<PaymentWebhookController> logger)
     { _providers = providers; _intents = intents; _db = db; _logger = logger; }
 
-    [HttpPost("{providerCode}")]
-    public async Task<IActionResult> Receive(string providerCode, CancellationToken ct)
+    /// <summary>ปลายทาง webhook — <b>สองเส้นทาง action เดียว</b> (รอบ 201 ทีม GW · A-GW1)
+    /// <list type="bullet">
+    /// <item><c>{providerCode}/{token}</c> (URL ใหม่) — รหัสลับต่อ config ⇒ ลองยืนยันกับ config นั้นตัวเดียว · รหัสผิด/รูปผิด = <b>ไม่ยิงคำขอออกเลย</b>
+    /// (เดิม POST นิรนาม 1 ครั้ง = คำขอออกด้วยคีย์ของทุกร้าน)</item>
+    /// <item><c>{providerCode}</c> (URL เดิม · <c>token</c> = null) — <b>คงไว้</b>เพราะผู้ใช้ตั้งไว้ในแดชบอร์ดผู้ให้บริการ (ตัดทิ้ง = ลูกค้าจ่ายแล้วออเดอร์ไม่อัปเดต) ·
+    /// ลองเฉพาะ config ที่โหมดปัจจุบันยังไม่ย้ายมา URL ใหม่</item>
+    /// </list>
+    /// ตัวเลือก config = <see cref="GatewayWebhookRoute.ConfigsToTry"/> ตัวเดียวของทั้งสองเส้นทาง</summary>
+    [HttpPost]
+    [Route("{providerCode}")]
+    [Route("{providerCode}/{token}")]
+    public async Task<IActionResult> Receive(string providerCode, string? token, CancellationToken ct)
     {
         var provider = _providers.FirstOrDefault(p => p.ProviderCode == providerCode);
         if (provider == null) return Ok(new { received = true, handled = false });
+
+        // รหัสรูปผิด = ไม่แตะฐานและไม่ยิงอะไรออก (ตัวตัดสินเดียวกับการเลือก config)
+        if (token != null && !GatewayWebhookRoute.IsWellFormedToken(token))
+        {
+            _logger.LogWarning("webhook {Provider}: รหัสลับใน URL รูปผิด — ไม่ลองยืนยันกับการตั้งค่าใด", providerCode);
+            return Ok(new { received = true, handled = false });
+        }
 
         using var reader = new StreamReader(Request.Body);
         var raw = await reader.ReadToEndAsync(ct);
         var headers = Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(),
             StringComparer.OrdinalIgnoreCase);
 
-        // ยังไม่รู้ว่าเป็นของบริษัทไหน — ลองยืนยันกับทุก config ของ provider นี้
-        // ที่เปิดใช้อยู่ · adapter ที่ยืนยันไม่ผ่านจะคืน null (ไม่ throw)
-        var configs = await _db.PaymentProviderConfigs
-            .Where(c => c.ProviderCode == providerCode && c.IsActive && !c.IsDeleted)
-            .ToListAsync(ct);
+        // ยังไม่รู้ว่าเป็นของบริษัทไหน — ผู้สมัคร = config ที่เปิดใช้ของ provider นี้ (เส้นรหัสลับกรองด้วยรหัสที่ฐานก่อน) แล้วให้
+        // GatewayWebhookRoute.ConfigsToTry ตัดสินชุดที่จะลองจริง · adapter ที่ยืนยันไม่ผ่านจะคืน null (ไม่ throw)
+        var candidatesQ = _db.PaymentProviderConfigs
+            .Where(c => c.ProviderCode == providerCode && c.IsActive && !c.IsDeleted);
+        if (token != null) candidatesQ = candidatesQ.Where(c => c.WebhookToken == token);
+        var candidates = await candidatesQ.ToListAsync(ct);
+        var toTry = GatewayWebhookRoute.ConfigsToTry(
+            candidates.Select(c => new GatewayWebhookConfigFacts(c.Id, c.WebhookToken, c.LastTokenWebhookAt,
+                c.LastTokenWebhookMode, c.Mode)),
+            token);
+        var configs = candidates.Where(c => toTry.Contains(c.Id)).ToList();
 
         foreach (var cfg in configs)
         {
@@ -624,6 +771,9 @@ public class PaymentWebhookController : ControllerBase
             if (verified == null) continue;
 
             cfg.LastWebhookAt = DateTime.UtcNow;
+            // A-GW1: เส้นทางที่ webhook มาจริง — หน้าตั้งค่าเตือน "ยังใช้ URL เดิม" · URL เดิมเลิกลอง config นี้เมื่อโหมดนี้ย้ายแล้ว
+            if (token != null) { cfg.LastTokenWebhookAt = cfg.LastWebhookAt; cfg.LastTokenWebhookMode = cfg.Mode; }
+            else cfg.LastLegacyWebhookAt = cfg.LastWebhookAt;
             await _db.SaveChangesAsync(ct);
 
             // รอบ 198 ฝ่ายค้าน R-E1 (P0): ลายเซ็นผ่านด้วยคีย์ของบริษัทหนึ่ง ไม่ได้แปลว่ารายการที่ metadata อ้างเป็นของบริษัทนั้น —
@@ -648,9 +798,10 @@ public class PaymentWebhookController : ControllerBase
             return Ok(new { received = true, handled = true });
         }
 
-        // ยืนยันไม่ผ่านกับ config ไหนเลย — อาจเป็นของปลอม หรือคีย์ถูกเปลี่ยน
+        // ยืนยันไม่ผ่านกับ config ไหนเลย — อาจเป็นของปลอม หรือคีย์ถูกเปลี่ยน · หรือรหัสลับไม่ตรงกับร้านใด (ไม่มีคำขอออก)
         // ต้องรู้ว่ามีคนยิงเข้ามา แต่ห้ามตอบ error (provider จะ retry ไม่รู้จบ)
-        _logger.LogWarning("webhook {Provider}: ยืนยันไม่ผ่านกับการตั้งค่าใดเลย", providerCode);
+        _logger.LogWarning("webhook {Provider}: ยืนยันไม่ผ่านกับการตั้งค่าใดเลย ({Route} · ลอง {Count} การตั้งค่า)",
+            providerCode, token == null ? "URL เดิม" : "URL รหัสลับ", configs.Count);
         return Ok(new { received = true, handled = false });
     }
 }

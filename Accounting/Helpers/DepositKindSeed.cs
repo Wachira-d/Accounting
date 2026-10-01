@@ -56,6 +56,16 @@ public static class DepositKindSeed
         return rows;
     }
 
+    /// <summary>ประเภทเริ่มต้นที่ธุรกิจใหม่มีแต่ธุรกิจเดิมไม่มี (pure) — เปลี่ยน <c>IndustryType</c> ภายหลังแล้วรายการนี้ไม่ว่าง ⇒
+    /// ผู้เรียกต้อง <see cref="EnsureSeededAsync"/> (idempotent · ไม่ลบของเดิม · แถวที่ผู้ใช้ลบไม่ถูก seed คืน) · รอบ 201 ทีม IN A-IN7
+    /// (เดิมเปลี่ยนเป็นธุรกิจให้เช่าอสังหาฯ แล้วไม่มี “ค่าเช่าล่วงหน้า (ยกเว้น VAT)” จนกว่าจะบูตเครื่องใหม่)</summary>
+    public static IReadOnlyList<DepositKindSeedRow> AddedByIndustryChange(IndustryType from, IndustryType to)
+    {
+        if (from == to) return Array.Empty<DepositKindSeedRow>();
+        var had = new HashSet<string>(For(from).Select(r => r.SeedKey), StringComparer.Ordinal);
+        return For(to).Where(r => !had.Contains(r.SeedKey)).ToList();
+    }
+
     internal static DepositKind ToEntity(Guid companyId, DepositKindSeedRow r) => new()
     {
         CompanyId = companyId,

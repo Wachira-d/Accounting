@@ -162,6 +162,10 @@ def top_level_arg_count(t: str, open_paren: int):
 
 
 KEY_FEEDBACK = re.compile(r'\bfeedbackId\b')
+# รอบ 201 ทีม AI · A-AI1 (H-1): คำยืนยันการจับคู่ธนาคารก็เป็น "คำตอบที่ผู้ใช้เลือก" ของคลัง BankReconciliationPattern
+KEY_RECON_TXN = re.compile(r'\bbankTransactionId\s*:')
+KEY_RECON_MATCH = re.compile(r'\bmatched(?:PaymentId|JournalEntryId|EntryIds)\s*:')
+KEY_MATCH_ITEMS = re.compile(r'\bmatchItems\s*:')
 KEY_ACCEPTED = re.compile(r'\bacceptedAi\b')
 KEY_SOURCE = re.compile(r'\bsource\s*:')
 CALL_WRAPPER = re.compile(r'\baiFeedbackRecord\s*\(')
@@ -188,6 +192,38 @@ def scan_text(raw: str, is_html: bool):
         problems.append((raw.count('\n', 0, m.start()) + 1,
                          'body ที่มี feedbackId + acceptedAi แต่ไม่ประกาศ source'))
 
+    # (3) รอบ 201 ทีม AI · A-AI1: body ยืนยันการจับคู่ธนาคาร (reconcile / batch-reconcile) ที่ระบุคู่ไว้ใน
+    #     object เดียวกันต้องประกาศ source — ไม่ส่ง = Implicit ⇒ คลังจับคู่ไม่นับเป็นหลักฐาน (ต้องตั้งใจ ไม่ใช่ลืม)
+    for m in KEY_RECON_MATCH.finditer(t):
+        span = enclosing_object(t, m.start())
+        if span is None or span in seen_blocks:
+            continue
+        seen_blocks.add(span)
+        block = t[span[0]:span[1]]
+        if not KEY_RECON_TXN.search(block) or KEY_SOURCE.search(block):
+            continue
+        problems.append((raw.count('\n', 0, m.start()) + 1,
+                         'body ยืนยันการจับคู่ธนาคาร (bankTransactionId + matched*) แต่ไม่ประกาศ source'))
+
+    # (4) รอบ 201 ทีม AI · A-AI1: รายการฝั่งเอกสารของกลุ่มกระทบยอด (matchItems) ต้องประกาศ source ต่อรายการ
+    for m in KEY_MATCH_ITEMS.finditer(t):
+        j = m.end()
+        depth, k = 0, j
+        while k < len(t):
+            c = t[k]
+            if c in '([{':
+                depth += 1
+            elif c in ')]}':
+                depth -= 1
+                if depth < 0:
+                    break
+            elif c == ',' and depth == 0:
+                break
+            k += 1
+        if not KEY_SOURCE.search(t[j:k]):
+            problems.append((raw.count('\n', 0, m.start()) + 1,
+                             'matchItems ของกลุ่มกระทบยอดไม่ประกาศ source ต่อรายการ'))
+
     # (2) ตัวห่อ api.aiFeedbackRecord(feedbackId, chosenAnswer, acceptedAi, source)
     for m in CALL_WRAPPER.finditer(t):
         # นิยามของตัวห่อเอง (`aiFeedbackRecord: (a, b, c, d) =>`) ไม่ใช่จุดเรียก
@@ -212,7 +248,8 @@ def run(root=WWW):
                 continue
             with open(full, encoding='utf-8', errors='ignore') as fh:
                 raw = fh.read()
-            if 'acceptedAi' not in raw and 'aiFeedbackRecord' not in raw:
+            if ('acceptedAi' not in raw and 'aiFeedbackRecord' not in raw
+                    and 'bankTransactionId' not in raw and 'matchItems' not in raw):
                 continue
             for line, why in scan_text(raw, f.endswith('.html')):
                 bad.append((os.path.relpath(full, ROOT), line, why))
@@ -231,6 +268,26 @@ BAD_SNIPPET = """
 BAD_WRAPPER = """
       jobs.push(api.aiFeedbackRecord(this._fid, chosen, chosen === aiSaid));
 """
+BAD_RECON = """
+      const items = rows.map(m => ({ bankTransactionId: m.bankTxnId, matchType: 'Payment',
+                                     matchedPaymentId: m.id, matchedJournalEntryId: null }));
+"""
+BAD_GROUP = """
+      await api.createReconciliationGroup({ bankAccountId: a, bankTransactions: b,
+        matchItems: iSel.map(it => ({ itemType: it.type, itemId: it.id, allocatedAmount: it._alloc })),
+        notes: null });
+"""
+GOOD_RECON = """
+      const items = rows.map(m => ({ bankTransactionId: m.bankTxnId, matchType: 'Payment',
+                                     matchedPaymentId: m.id, source: 'BulkApprove' }));
+      const payload = { bankTransactionId: txnId, source: 'Explicit' };
+      payload.matchedPaymentId = pid;
+      await api.createReconciliationGroup({ bankAccountId: a, bankTransactions: b,
+        matchItems: iSel.map(it => ({ itemType: it.type, itemId: it.id, allocatedAmount: it._alloc,
+                                      source: it._autoSrc ? 'Implicit' : 'Explicit' })),
+        notes: null });
+      await this.post('/api/v1/bank/matches/confirm', { bankTransactionId: txnId, entryIds: ids });
+"""
 GOOD_SNIPPET = """
       // source: 'Explicit' ในคอมเมนต์ไม่นับ — ต้องอยู่ในโค้ดจริง
       sel.addEventListener('change', () => {
@@ -248,7 +305,10 @@ def self_test():
     fail = 0
     for name, text, want_hit in (('BAD_SNIPPET', BAD_SNIPPET, True),
                                  ('BAD_WRAPPER', BAD_WRAPPER, True),
-                                 ('GOOD_SNIPPET', GOOD_SNIPPET, False)):
+                                 ('BAD_RECON', BAD_RECON, True),
+                                 ('BAD_GROUP', BAD_GROUP, True),
+                                 ('GOOD_SNIPPET', GOOD_SNIPPET, False),
+                                 ('GOOD_RECON', GOOD_RECON, False)):
         hits = scan_text(text, is_html=False)
         if bool(hits) != want_hit:
             print(f'self-test ล้ม: {name} ควร{"ถูกฟ้อง" if want_hit else "ผ่าน"} '

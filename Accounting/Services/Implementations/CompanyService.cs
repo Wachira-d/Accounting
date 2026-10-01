@@ -267,7 +267,12 @@ public class CompanyService : ICompanyService
         if (request.BranchCode != null) company.BranchCode = request.BranchCode;
         if (request.BranchName != null) company.BranchName = request.BranchName;
         if (request.BusinessType.HasValue) company.BusinessType = request.BusinessType.Value;
+        // รอบ 201 ทีม IN (A-IN7): เปลี่ยนประเภทธุรกิจภายหลัง ⇒ เติมประเภทเงินมัดจำเริ่มต้นของธุรกิจใหม่ (ตารางเดียวกับตอนสร้างบริษัท ·
+        // idempotent · ไม่ลบของเดิม · Add เข้า context แล้วบันทึกพร้อม SaveChanges ของเมธอดนี้)
+        var oldIndustry = company.IndustryType;
         if (request.IndustryType.HasValue) company.IndustryType = request.IndustryType.Value;
+        if (Accounting.Helpers.DepositKindSeed.AddedByIndustryChange(oldIndustry, company.IndustryType).Count > 0)
+            await Accounting.Helpers.DepositKindSeed.EnsureSeededAsync(_db, company.Id);
         if (request.JuristicId != null) company.JuristicId = request.JuristicId;
         if (request.IsVatRegistered.HasValue) company.IsVatRegistered = request.IsVatRegistered.Value;
         // ธง "ประกอบกิจการขายปลีก" (§86/6) กับวันที่อนุมัติ ภ.พ.06 เป็นคนละเรื่อง (รอบ 199 — คำตัดสินเจ้าของ 2026-09-28):
