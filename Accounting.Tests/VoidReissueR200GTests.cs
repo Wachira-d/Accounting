@@ -238,10 +238,13 @@ public class VoidReissueR200GTests
                 new EtaxCancelLivePayment(Guid.NewGuid(), Mar05, false, null, null, 0m, false),
                 new EtaxCancelLivePayment(P2, Feb25, false, Rc2, "RC-2", 0m, false),
             }, null, null));
-        Assert.True(partial.Allowed);
-        Assert.Null(partial.IssueVatReceiptForPaymentId);            // กติกาเดิมของการรับหลายงวด (CarriesTaxInvoiceRole)
-        Assert.Equal(Feb25, partial.ReclassAt);                       // จุดความรับผิด = วันรับเงินจริงครั้งแรกที่เหลือ
-        Assert.True(partial.UndoReclass);
+        // รอบ 200 ทีม V1H (คำตัดสินข้อ 52): รับหลายงวด ⇒ ใบกำกับรายงวดตาม §78/1 ที่ระบบยังออกอัตโนมัติไม่ได้ ⇒ ปฏิเสธพร้อมทางไปต่อ
+        // (เดิม V1G: ย้ายภาษีไปวันรับเงินแรกโดยไม่ออกใบกำกับเลย — การขายที่รับเงินแล้วไม่มีใบกำกับ) · ไม่ออกใบกำกับใบเดียวแทนทั้งก้อนเหมือนเดิม
+        Assert.False(partial.Allowed);
+        Assert.Null(partial.IssueVatReceiptForPaymentId);
+        Assert.Null(partial.ReclassAt);
+        Assert.False(partial.UndoReclass);
+        Assert.Contains("ข้อ 52", partial.Reason);
 
         // ใบกำกับภาษี (TaxInvoice) ต้นทาง — ใบเสร็จไม่ถือ VAT อยู่แล้ว ไม่ออกใบกำกับซ้ำ
         var tiv = DocumentVoidPreconditions.EtaxCancellationFollowUp(AfterRepay(Feb25) with { SourceType = DocumentType.TaxInvoice });

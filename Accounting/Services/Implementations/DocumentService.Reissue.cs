@@ -706,9 +706,30 @@ public partial class DocumentService
                                 && (creditNote.RelatedDocumentId == rcpt.Id || creditNote.RelatedDocumentId == rcpt.RelatedDocumentId),
                             creditNote.ContactId == rcpt.ContactId, creditNote.VatAmount, usedBy);
                 }
+                // รอบ 200 ทีม V1H (คำตัดสินข้อ 54): ทาง (ค) "ใบกำกับเดิมยังใช้ได้" — สิทธิ์ตรวจใน service (ยืนยันว่าใบกำกับที่ออกไปแล้วยังมีผล = อำนาจอนุมัติ
+                // ใบชนิดนี้ · ไม่รู้ตัวผู้กด = ปฏิเสธ) + ข้อเท็จจริงจากรายการรับชำระจริง (ครอบยอด · ไม่มีใบกำกับใบอื่น · ภาษีขายไม่ถูกถอยไปแล้ว)
+                decimal liveCoverage = 0m;
+                var otherLiveVatReceipt = false;
+                var sourceVatUndone = false;
+                if (path == EtaxCancellationPath.OriginalStillValid)
+                {
+                    if (_permissionService == null || !Guid.TryParse(actor, out var keepUid)
+                        || !await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, keepUid, rcpt.DocumentType))
+                        throw new BusinessRuleException(
+                            "ยืนยันว่า “ใบกำกับเดิมยังใช้ได้” ต้องเป็นผู้มีสิทธิ์อนุมัติเอกสารชนิดนี้ — ให้ผู้มีสิทธิ์เป็นผู้กด · ระบบยังไม่ได้แตะอะไร",
+                            "ETAX-CANCEL-KEEP-APPROVE", 403);
+                    if (src != null)
+                    {
+                        liveCoverage = await LivePaymentCoverageAsync(companyId, src.Id);
+                        otherLiveVatReceipt = await LiveVatReceiptExistsAsync(companyId, src.Id, exceptReceiptId: rcpt.Id);
+                        sourceVatUndone = EtaxReissueReview.FlaggedReceiptVatUndone(true, rcpt.VatAmount, true, src.DocumentType, src.OutputVatDueAt);
+                    }
+                }
                 var verdict = DocumentVoidPreconditions.EtaxCancellationResolution(new EtaxCancellationClaim(
                     rcpt.EtaxCancelRequiredAt != null, etax, anyEtaxRowVoided, path, request.Reason, request.RdCancellationReference,
-                    evidenceAttached, creditNoteFact, rcpt.VatAmount, src?.PaidAmount ?? 0m));
+                    evidenceAttached, creditNoteFact, rcpt.VatAmount, src?.PaidAmount ?? 0m,
+                    ReceiptTotalAmount: rcpt.TotalAmount, LivePaymentCoverage: liveCoverage, OtherLiveVatReceipt: otherLiveVatReceipt,
+                    SourceVatUndone: sourceVatUndone));
                 if (!verdict.Allowed)
                     throw new BusinessRuleException(verdict.Reason ?? "บันทึกการยกเลิกทาง e-Tax ไม่ได้", "ETAX-CANCEL-EVIDENCE", 409);
 
@@ -721,7 +742,19 @@ public partial class DocumentService
                 EtaxCancelFollowUpPlan? plan = null;
                 sourceId = src?.Id;
 
-                if (path == EtaxCancellationPath.CreditNote)
+                if (path == EtaxCancellationPath.OriginalStillValid)
+                {
+                    // ── (ค) ใบกำกับเดิมยังใช้ได้ (ข้อ 54): ล้างธงอย่างเดียว — ใบเสร็จเดิมคงมีผล · ไม่ถอยภาษีขาย · ไม่ยกเลิกอะไร · การรับชำระใหม่มีใบรับที่ไม่ใช่ใบกำกับอยู่แล้ว
+                    // (ตอนรับเงินใหม่ CarriesTaxInvoiceRole เห็นใบนี้เป็นใบถือ VAT ที่มีผล) ──
+                    rcpt.EtaxCancelRequiredAt = null;
+                    rcpt.EtaxCancelRequiredReason = null;
+                    rcpt.UpdatedAt = now;
+                    rcpt.UpdatedBy = actor;
+                    AppendInternalNote(rcpt, $"{EtaxReissueReview.ResolvedMarker} ใบกำกับเดิมยังใช้ได้ — {evidenceLabel} · ยอดรับชำระที่มีผล {liveCoverage:N2} — {reason}");
+                    message = $"บันทึกแล้ว — ใบเสร็จ {rcpt.DocumentNumber} ยังมีผล (ใบกำกับของการขายนี้) · การรับชำระใหม่ {liveCoverage:N2} บาทครอบยอดใบเสร็จ "
+                        + "· ภาษีขายไม่ถูกถอย · ไม่มีการยกเลิกใด ๆ";
+                }
+                else if (path == EtaxCancellationPath.CreditNote)
                 {
                     // ── (ข) ใบลดหนี้ในระบบ: ใบเสร็จเดิมคงมีผล · ภาษีขายเดือนเดิมไม่ถูกแตะ · ใบลดหนี้ลดภาษีในเดือนของตัวเอง (§86/10) ──
                     rcpt.EtaxCancelledByCreditNoteId = creditNote!.Id;
@@ -856,8 +889,14 @@ public partial class DocumentService
                     NewValues = System.Text.Json.JsonSerializer.Serialize(new
                     {
                         action = "etax-cancellation-recorded",
-                        ruleCode = path == EtaxCancellationPath.CreditNote ? "RD-86/10-ETAX-CANCEL-CN" : "RD-ETAX-CANCEL-EVIDENCE",
-                        legalReference = "คำตัดสินรอบ 200 ข้อ 11 · 46 · 47 · 48 · review200-round2-V1F",
+                        ruleCode = path switch
+                        {
+                            EtaxCancellationPath.CreditNote => "RD-86/10-ETAX-CANCEL-CN",
+                            EtaxCancellationPath.OriginalStillValid => "RD-ETAX-ORIGINAL-STILL-VALID",
+                            _ => "RD-ETAX-CANCEL-EVIDENCE",
+                        },
+                        legalReference = "คำตัดสินรอบ 200 ข้อ 11 · 46 · 47 · 48 · 52 · 54 · review200-round2-V1F",
+                        liveCoverage = path == EtaxCancellationPath.OriginalStillValid ? liveCoverage : (decimal?)null,
                         path = path.ToString(),
                         evidence = verdict.Evidence.ToString(),
                         evidenceLabel,
@@ -964,7 +1003,48 @@ public partial class DocumentService
             if (excess.Count > 0)
                 excessRows.Add(new EtaxReviewReplacementRow(neo.Id, neo.DocumentNumber, orig.Id, orig.DocumentNumber, orig.ReplacedAt, excess));
         }
-        return new EtaxReissueReviewReport(undone, resolvedRows, excessRows);
+        // ── ข้อ 53 (รอบ 200 ทีม V1H): ตัวกลับภาษีขายถึงกำหนดที่ลงคนละเดือนกับ JE ย้ายภาษี (ก่อนคำตัดสินข้อ 48 ตัวถอยลงวันที่ใบแจ้งหนี้) — อ่านอย่างเดียว ──
+        // JE ย้ายภาษี = JE ต้นฉบับของใบแจ้งหนี้ที่มีขา Dr 21913 (ตัวเดียวกับ OutputVatReclassJournalsAsync) · ตัวกลับ = JE ที่ OriginalEntryId ชี้มันและยังมีผล
+        var reversalPairs = await (
+            from rev in _db.JournalEntries.AsNoTracking()
+            join orig in _db.JournalEntries.AsNoTracking() on rev.OriginalEntryId equals (Guid?)orig.Id
+            join src in _db.Documents.IgnoreQueryFilters().AsNoTracking() on orig.SourceDocumentId equals (Guid?)src.Id
+            where rev.CompanyId == companyId && orig.CompanyId == companyId && src.CompanyId == companyId
+                  && !rev.IsDeleted && !orig.IsDeleted && rev.Status == JournalEntryStatus.Posted && orig.OriginalEntryId == null
+                  && src.DocumentType == DocumentType.Invoice
+                  && _db.JournalEntryLines.Any(l => l.JournalEntryId == orig.Id && !l.IsDeleted && l.DebitAmount > 0
+                      && _db.ChartOfAccounts.Any(a => a.Id == l.AccountId && a.CompanyId == companyId && a.AccountCode == "21913"))
+            select new
+            {
+                SourceId = src.Id, SourceNumber = src.DocumentNumber, OrigId = orig.Id, OrigNumber = orig.EntryNumber, OrigDate = orig.EntryDate,
+                RevId = rev.Id, RevNumber = rev.EntryNumber, RevDate = rev.EntryDate, Amount = orig.TotalDebit,
+            }).ToListAsync();
+        var misdated = reversalPairs
+            .Where(x => EtaxReissueReview.ReclassReversalMisdated(x.OrigDate, x.RevDate))
+            .OrderBy(x => x.RevDate)
+            .Select(x => new EtaxReviewReversalRow(x.SourceId, x.SourceNumber, x.OrigId, x.OrigNumber, x.OrigDate, x.RevId, x.RevNumber, x.RevDate,
+                x.Amount,
+                $"ตัวกลับภาษีขายถึงกำหนด {x.RevNumber} ลงวันที่ {x.RevDate:dd/MM/yyyy} แต่ JE ย้ายภาษี {x.OrigNumber} ลงวันที่ {x.OrigDate:dd/MM/yyyy} — "
+                + "GL ภาษีขาย (21911) ของสองเดือนคลาดกับ ภ.พ.30 (ตัวถอยรุ่นก่อนคำตัดสินข้อ 48 ลงวันที่ใบแจ้งหนี้) · ระบบไม่แก้อัตโนมัติ — ให้ผู้ทำบัญชีตรวจว่าต้องปรับ "
+                + "GL/ยื่นเพิ่มเติมไหม"))
+            .ToList();
+        return new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated);
+    }
+
+    /// <summary>ยอดรับชำระที่ยังมีผลของใบต้นทาง นับจาก<b>รายการรับชำระจริง</b> (ไม่ใช่ <c>PaidAmount</c> ซึ่งรวมใบลดหนี้ที่หักล้างด้วย) — การรับชำระตรง =
+    /// ยอด + ค่าธรรมเนียม + บรรทัดปรับ (สูตรเดียวกับตอนคืนยอดใน <c>ReversePaymentInternalAsync</c>) · การจัดสรรหลายใบ = ยอดที่จัดสรรให้ใบนี้ · tenant
+    /// (รอบ 200 ทีม V1H · คำตัดสินข้อ 54 — ทาง (ค) ต้องครอบยอดใบเสร็จเดิม)</summary>
+    private async Task<decimal> LivePaymentCoverageAsync(Guid companyId, Guid sourceDocumentId)
+    {
+        var allocated = await _db.PaymentAllocations.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.DocumentId == sourceDocumentId && !a.IsDeleted
+                && _db.Payments.Any(p => p.Id == a.PaymentId && p.CompanyId == companyId && !p.IsDeleted))
+            .SumAsync(a => (decimal?)a.AllocatedAmount) ?? 0m;
+        var direct = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.DocumentId == sourceDocumentId && !p.IsDeleted
+                && !_db.PaymentAllocations.Any(a => a.PaymentId == p.Id && a.CompanyId == companyId && !a.IsDeleted))
+            .SumAsync(p => (decimal?)(p.Amount + p.FeeAmount + p.SettlementAdjustmentAmount)) ?? 0m;
+        return allocated + direct;
     }
 
     /// <summary>ใบต้นทางยังมีใบเสร็จ "ถือ VAT" ที่มีผลอยู่ไหม (เงื่อนไขเดียวกับตัวเลือกเจ้าของแถว ภ.พ.30 ของ TaxService) — ใช้ตัดสินว่าจุดความรับผิด §78/1

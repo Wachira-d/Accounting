@@ -4011,3 +4011,16 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SG — แ�
   required_call_site +19 แถว/ปรับ 1 (W_FEETAX Compute → `Pp36Legs`) — commit <pending>)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 200 ฝ่ายค้านรอบสาม Z/SG — Z-1 ลูกค้าซ้ำเดิมที่สะกดรูปนิติบุคคลต่างไม่ทำให้สร้างแถวใหม่ทุกสแกน (`OcrCounterpartyMatch.LiteralTieBreak`) · Z-2 ฟอร์มแก้ธีม CMS หนีค่าที่เก็บไว้ (แถวก่อนด่าน RF-2) · SG-1 พรีวิว/บันทึกรอบโอน gateway เส้นเดิมบล็อกเมื่อมีช่องทาง ภ.พ.36 ผูก config (`SettlementBlockReason.ForeignPp36Bound`) · P3 Z-3/Z-4/SG-2 เป็น backlog ใน team-Z/team-SG)_
+
+_2026-10-01 รอบ 200 ทีม V1H — ลงมือตามคำตัดสินข้อ 50–54 (คำถามค้างทีม V1G · `erp-review/2026-09-29/DECISIONS.md` · รายงาน `team-V1H.md`):
+- **ข้อ 50** ตัวถอยภาษีขายถึงกำหนดหลังยกเลิกการรับชำระ `UndoOutputVatOnPaymentVoidAsync` ตัวเดียวของเส้นใบเดียว + เส้นจัดสรรหลายใบ (`ReverseMultiDocPaymentInternalAsync`
+  ถอยรายใบ · คืน `(EtaxFlag, VatNotice)` เหมือนเส้นใบเดียว · เดิมไม่ถอยเลย) · `DocumentVoidPreconditions.ReceiptHoldsTaxPointFor` (ใบเสร็จติดธงถือจุดความรับผิดของใบที่อ้างเท่านั้น)
+- **ข้อ 51** `EtaxInvoiceService.VoidAsync(companyId, etaxId, EtaxVoidRequest?, actor)` + `Helpers/EtaxVoidPolicy` — Submitted ต้องมีเหตุผล + ไฟล์หลักฐานการยกเลิกที่แนบเข้าเอกสาร
+  (controller เดิน `IAttachmentAccessGate` · แถวใหม่ `attachment_gate_check`) · 409 `RD-ETAX-VOID-EVIDENCE` (เดิม `InvalidOperationException`) · audit hash chain · `EtaxInvoiceResponse`
+  เพิ่ม `VoidedAt/VoidReason/VoidedNote` · หน้า e-Tax ป้าย "ยกเลิกในระบบนี้" + ฟอร์มแนบหลักฐาน · ข้อความทางไปต่อของ Submitted ทุกตัวตัดสินบอกให้แนบไฟล์
+- **ข้อ 52** `EtaxCancellationFollowUp` ปฏิเสธพร้อมทางไปต่อเมื่อการรับชำระที่ยังมีผลไม่ใช่ "รับครบงวดเดียว" (`InstallmentTaxInvoiceRequired`) — 📋 ใบกำกับรายงวดจริงยังไม่ทำ
+  (ต้องเปลี่ยนกติกาย้ายภาษีเต็มก้อนตอนรับเงินแรกทั้งระบบ) · ปรับเทสต์ V1G ที่ล็อกพฤติกรรมเดิม
+- **ข้อ 53** รายงานข้อ 44 เพิ่มกลุ่ม `MisdatedOutputVatReversals` (`EtaxReissueReview.ReclassReversalMisdated`) — อ่านอย่างเดียว
+- **ข้อ 54** ปิดธงทาง (ค) `EtaxCancellationPath.OriginalStillValid` / `EtaxCancellationEvidence.OriginalInvoiceStillValid` — ครอบยอดด้วย `LivePaymentCoverageAsync` · ไม่มีใบกำกับอื่น ·
+  ภาษีไม่ถูกถอยไปแล้ว · สิทธิ์อนุมัติตรวจใน service · ล้างธงอย่างเดียว + audit · หน้าเอกสารเพิ่มตัวเลือก (ค)
+- เทสต์ `VoidReissueR200HTests` (สองทิศทุกข้อ) · required_call_site +5 แถว/ปรับ 3 — commit abf0892f)_

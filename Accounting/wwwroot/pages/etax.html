@@ -141,6 +141,32 @@
       </div>
     </div>
 
+    <!-- รอบ 200 ทีม V1H (คำตัดสินข้อ 51): ยกเลิก e-Tax ที่ส่งถึงกรมสรรพากรแล้ว (Submitted) — ต้องแนบไฟล์หลักฐานการยกเลิก · เซิร์ฟเวอร์ตัดสินทั้งหมด -->
+    <div id="voidEvidenceModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('voidEvidenceModal')"></div>
+      <div class="modal-content" style="max-width:560px">
+        <div class="modal-header">
+          <h3>ยกเลิก e-Tax ที่ส่งกรมสรรพากรแล้ว</h3>
+          <button class="btn-close" onclick="Page.closeModal('voidEvidenceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="padding:10px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px;line-height:1.6">
+            ระบบนี้<b>ไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร</b> — ยกเลิกที่ระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการก่อน แล้วแนบไฟล์หลักฐานการยกเลิกที่นี่ ·
+            สถานะในระบบจะแสดงว่า “ยกเลิกในระบบนี้” (ไม่ใช่คำยืนยันจากกรมสรรพากร)
+          </div>
+          <input type="hidden" id="veEtaxId"><input type="hidden" id="veDocId">
+          <div class="form-group"><label class="form-label">เหตุผล <span class="req">*</span></label><input type="text" class="form-input" id="veReason"></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิงการยกเลิก (ถ้ามี)</label><input type="text" class="form-input" id="veReference"></div>
+          <div class="form-group"><label class="form-label">ไฟล์หลักฐานการยกเลิก <span class="req">*</span></label>
+            <input type="file" class="form-input" id="veEvidence" accept="image/*,application/pdf"></div>
+        </div>
+        <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-outline" onclick="Page.closeModal('voidEvidenceModal')">ปิด</button>
+          <button class="btn btn-danger" onclick="Page.doVoidWithEvidence()">ยกเลิกในระบบนี้</button>
+        </div>
+      </div>
+    </div>
+
     <!-- XML Preview Modal -->
     <div id="xmlModal" class="modal" style="display:none">
       <div class="modal-overlay" onclick="Page.closeModal('xmlModal')"></div>
@@ -332,10 +358,11 @@
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
               ${(e.status === 'Signed' || e.status === 'Submitted' || e.status === 'Accepted') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่งทางอีเมล</button>` : ''}
               ${e.status === 'Error' ? `<button class="btn btn-xs btn-warning" onclick="Page.sign('${e.id}')">ลองใหม่</button>` : ''}
-              ${e.status !== 'Accepted' ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')" data-i18n="common.cancel">ยกเลิก</button>` : ''}
+              ${(e.status !== 'Accepted' && e.status !== 'Voided') ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')" data-i18n="common.cancel">ยกเลิก</button>` : ''}
             </div>
             ${e.errorMessage ? `<div class="text-danger text-xs" style="margin-top:4px">${this.esc(e.errorMessage)}</div>` : ''}
             ${e.acceptanceNumber ? `<div class="text-success text-xs" style="margin-top:4px">เลขตอบรับ: ${this.esc(e.acceptanceNumber)}</div>` : ''}
+            ${e.voidedNote ? `<div class="text-xs" style="margin-top:4px;color:#64748b">${this.esc(e.voidedNote)}</div>` : ''}
           </td>
         </tr>
       `).join('');
@@ -348,7 +375,9 @@
         'Submitted': ['ส่งแล้ว', 'info'],
         'Accepted': ['ตอบรับ', 'success'],
         'Rejected': ['ปฏิเสธ', 'danger'],
-        'Error': ['ข้อผิดพลาด', 'danger']
+        'Error': ['ข้อผิดพลาด', 'danger'],
+        // รอบ 200 ทีม V1H (ข้อ 51): บอกสิ่งที่ระบบรู้จริง — ยกเลิกในฐานเรา ไม่ใช่ "กรมสรรพากรยกเลิกแล้ว" (รายละเอียดจากเซิร์ฟเวอร์ใน voidedNote)
+        'Voided': ['ยกเลิกในระบบนี้', 'gray']
       };
       const [label, color] = map[status] || [status, 'gray'];
       return `<span class="badge badge-${color}">${label}</span>`;
@@ -459,10 +488,45 @@
     },
 
     async void(id) {
-      if (!(await Layout.confirmDanger({ title: 'ยกเลิก e-Tax Invoice', message: 'e-Tax Invoice ที่ส่งกรมสรรพากรแล้ว ต้องแจ้งยกเลิกตามขั้นตอน', mode: 'type', confirmText: 'confirm' }))) return;
+      const row = (this.items || []).find(x => x.id === id);
+      // รอบ 200 ทีม V1H (ข้อ 51): แถวที่ส่งกรมสรรพากรแล้วต้องมีไฟล์หลักฐานการยกเลิก — เปิดฟอร์มเก็บข้อมูล (เซิร์ฟเวอร์ตัดสินว่าพอไหม)
+      if (row && row.status === 'Submitted') {
+        document.getElementById('veEtaxId').value = id;
+        document.getElementById('veDocId').value = row.documentId || '';
+        document.getElementById('veReason').value = '';
+        document.getElementById('veReference').value = '';
+        document.getElementById('veEvidence').value = '';
+        document.getElementById('voidEvidenceModal').style.display = 'flex';
+        return;
+      }
+      if (!(await Layout.confirmDanger({ title: 'ยกเลิก e-Tax Invoice', message: 'ยกเลิกในระบบนี้ (ยังไม่ได้ส่งถึงกรมสรรพากร) — ระบบไม่ได้ส่งคำยกเลิกใด ๆ ถึงกรมสรรพากร', mode: 'type', confirmText: 'confirm' }))) return;
       try {
-        await API.post(`/api/companies/${this.companyId}/etax/${id}/void`);
-        alert('ยกเลิกสำเร็จ');
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/void`, {});
+        alert(res?.message || 'ยกเลิกในระบบนี้แล้ว');
+        await this.load();
+      } catch(e) { alert(e.message); }
+    },
+
+    async doVoidWithEvidence() {
+      const id = document.getElementById('veEtaxId').value;
+      const docId = document.getElementById('veDocId').value;
+      const payload = {
+        reason: document.getElementById('veReason').value,
+        rdCancellationReference: document.getElementById('veReference').value || null,
+        evidenceAttachmentId: null
+      };
+      try {
+        const file = document.getElementById('veEvidence').files?.[0];
+        if (file && docId) {
+          // แนบเข้าเอกสารของแถวนี้ผ่านเส้นไฟล์แนบปกติ (ด่านไฟล์แนบตัวเดียว) แล้วส่ง id — เซิร์ฟเวอร์ตรวจซ้ำว่าเป็นไฟล์ของเอกสารนี้
+          const fd = new FormData();
+          fd.append('file', file);
+          const up = await API.upload(`/api/companies/${this.companyId}/attachments/Document/${docId}`, fd);
+          payload.evidenceAttachmentId = up?.data?.id || null;
+        }
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/void`, payload);
+        this.closeModal('voidEvidenceModal');
+        alert(res?.message || 'ยกเลิกในระบบนี้แล้ว');
         await this.load();
       } catch(e) { alert(e.message); }
     },

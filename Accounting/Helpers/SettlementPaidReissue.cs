@@ -134,7 +134,7 @@ public static class SettlementPaidReissue
         if (DocumentVoidPreconditions.EtaxReachedRd(f.DocumentEtax))
             return SettlementPaidReissueVerdict.Blocked(
                 "e-Tax ของใบนี้ส่งไปกรมสรรพากรแล้วแต่ยังไม่รู้ผล (Submitted) — เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบนี้ก่อน "
-                + "(ทำได้ก่อนกรมสรรพากรตอบรับ) แล้วกดอีกครั้ง · ถ้ากรมสรรพากรตอบรับแล้ว ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากร" + Tail,
+                + "(ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) แล้วกดอีกครั้ง · ถ้ากรมสรรพากรตอบรับแล้ว ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากร" + Tail,
                 "REISSUE-ETAX-SUBMITTED");
         if (f.FilingLocked)
             return SettlementPaidReissueVerdict.Blocked(
@@ -178,7 +178,7 @@ public static class SettlementPaidReissue
                     $"ใบเสร็จ {r.Number} ที่ออกคู่การรับชำระต้องถูกยกเลิกและออกใหม่อ้างใบใหม่ แต่ใบเสร็จนั้นส่ง e-Tax ไปกรมสรรพากรแล้ว — "
                     + (r.StrongestEtax == EtaxStatus.Accepted
                         ? "ต้องยกเลิก/ออกแทนที่ระบบ e-Tax ของกรมสรรพากรก่อน"
-                        : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนั้นก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ) แล้วกดอีกครั้ง") + Tail,
+                        : "เปิดหน้า e-Tax แล้วกดยกเลิก e-Tax ของใบเสร็จนั้นก่อน (ทำได้ก่อนกรมสรรพากรตอบรับ · ต้องแนบไฟล์หลักฐานการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax) แล้วกดอีกครั้ง") + Tail,
                     "REISSUE-RECEIPT-ETAX");
         }
         return SettlementPaidReissueVerdict.Ok;

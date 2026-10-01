@@ -179,12 +179,26 @@ public class EtaxController : ControllerBase
         }, "สร้าง PDF/A-3 พร้อมฝัง XML สำเร็จ"));
     }
 
+    /// <summary>ยกเลิกแถว e-Tax <b>ในระบบนี้</b> (ระบบไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร) — รอบ 200 ทีม V1H (คำตัดสินข้อ 51): แถวที่ส่งถึงกรมสรรพากรแล้ว (Submitted)
+    /// ต้องแนบไฟล์หลักฐานการยกเลิก ⇒ ไฟล์เดินด่านไฟล์แนบ<b>ตัวเดียว</b> (<see cref="IAttachmentAccessGate"/> — อ่านไฟล์ของเอกสารของแถวนี้) ก่อนถึง service ·
+    /// service ตรวจต่อว่าไฟล์เป็นของเอกสารนี้จริง (ไม่ส่งไฟล์ = service ปฏิเสธแถว Submitted) · body ว่างได้ (แถวที่ยังไม่ถึงกรมสรรพากร)</summary>
     [HttpPost("{etaxId:guid}/void")]
-    public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid etaxId)
+    public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid etaxId,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] EtaxVoidRequest? request,
+        [FromServices] IAttachmentAccessGate gate)
     {
         if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxVoid, "ยกเลิก e-Tax") is { } d) return d;
-        await _etaxService.VoidAsync(companyId, etaxId);
-        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
+        var documentId = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.Id == etaxId && e.CompanyId == companyId)
+            .Select(e => (Guid?)e.DocumentId).FirstOrDefaultAsync();
+        if (documentId is not Guid docId) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบ e-Tax Invoice"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var evidenceId = request?.EvidenceAttachmentId;
+        var deny = await gate.DenyAttachmentAsync(companyId, userId, "Document", docId, AttachmentAccess.Read,
+            "ใช้ไฟล์แนบเป็นหลักฐานการยกเลิก e-Tax", evidenceId);
+        if (deny != null) return StatusCode(deny.Status, new ApiResponse<bool>(false, false, deny.Message));
+        await _etaxService.VoidAsync(companyId, etaxId, request, userId.ToString());
+        return Ok(new ApiResponse<bool>(true, true, $"ยกเลิกแล้ว ({EtaxVoidPolicy.VoidedLabel} — ระบบไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร)"));
     }
 
     /// <summary>ลงนาม + ส่งสรรพากร ในขั้นตอนเดียว</summary>
