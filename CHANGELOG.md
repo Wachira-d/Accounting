@@ -4061,5 +4061,5 @@ _2026-10-01 รอบ 201 ทีม IN — สต็อก/สินทรัพ
 - **C-5** เครื่องมือแอดมินตรวจ/ซ่อมยอดสต็อกรวม (`FindProductTotalMismatchesAsync` / `RepairProductTotalsAsync` · `Helpers/StockTotalsReconciliation`) แทน
   `ReconcileProductTotalsAsync` (ซ่อมเงียบ ไม่มีผู้เรียก) · คอมเมนต์ใน ledger ที่อ้าง "งานตรวจเรียกเป็นระยะ" แก้ให้ตรงความจริง
 - **C-6** รายการตรวจก่อนปิดงวดเดือนสุดท้ายของรอบบัญชีเตือนสินทรัพย์ที่ยังไม่ทบทวนอายุ (`Helpers/UsefulLifeReview`)
-- เทสต์ 6 ไฟล์ใหม่ (สองทิศ) · sim `product_form_contract_sim.js` · required_call_site +14 แถว — commit <pending>)_
+- เทสต์ 6 ไฟล์ใหม่ (สองทิศ) · sim `product_form_contract_sim.js` · required_call_site +14 แถว — commit a4dfa177)_
 

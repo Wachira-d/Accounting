@@ -3955,7 +3955,7 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม IN — วิธีคิดต้นทุนตั้งได้ต่อสินค้า + ด่านเปลี่ยนหลังมีความเคลื่อนไหว (A-IN1) ·
 คิว FIFO/rebuild ถัวเฉลี่ยเห็นยอดยกมา/ตรวจนับ ไม่นับโอนคลัง (A-IN2) · เครื่องออกเลขรับรหัสสาขา (A-IN4 ส่วนเครื่อง — สวิตช์ 📋) · ออกใบเช็คเอาต์ใหม่หลังยกเลิก
 (A-IN5) · เปลี่ยนประมาณการค่าเสื่อมไปข้างหน้ารวมวิธีคิด (A-IN3) · สีบริษัทตรวจรูป (A-IN6) · เปลี่ยนประเภทธุรกิจเติมประเภทมัดจำ (A-IN7) · ตรวจ/ซ่อมยอดสต็อกรวม (C-5) ·
-ทบทวนอายุในรายการปิดปี (C-6) (§3.2 ข้อ 8 · §5.6 · §6.5) — commit <pending>)_
+ทบทวนอายุในรายการปิดปี (C-6) (§3.2 ข้อ 8 · §5.6 · §6.5) — commit a4dfa177)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 200 ทีม PR1 — ➕/🗑 พนักงานในรอบเงินเดือนที่คำนวณ/นำเข้าแล้ว (§3.8): `AddPayrollDetailAsync`/`RemovePayrollDetailAsync`/`GetAddableEmployeesAsync` · ตัวตั้ง "อยู่ในงวด" `Helpers/PayrollEmployeeEligibility` (ย้ายจาก `CalculatePayrollAsync`) · ตัวเติมยอดตัวเดียว `Helpers/PayrollDetailAmounts` (ใช้ร่วมกับ ✏️ แก้ยอด) · required_call_site +8 แถว — commit <pending>)_
 

@@ -848,7 +848,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit <pending>)_
+_Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit a4dfa177)_
 
 _Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit <pending>)_
 

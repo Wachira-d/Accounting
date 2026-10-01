@@ -1,6 +1,6 @@
 # รอบ 201 ทีม IN — สต็อก / สินทรัพย์ / ค่าตั้งบริษัท / ที่พัก
 
-> ฐาน `5eed54bf` (branch `claude/erp-system-review-team-660mev`) · ขอบเขต `BACKLOG.md` §1.8 (A-IN1..7) + หมวด C ที่ BRIEF มอบ (C-5 · C-6) ·
+> คอมมิตงาน `a4dfa177` · ฐาน `5eed54bf` (branch `claude/erp-system-review-team-660mev`) · ขอบเขต `BACKLOG.md` §1.8 (A-IN1..7) + หมวด C ที่ BRIEF มอบ (C-5 · C-6) ·
 > คำตัดสิน `erp-review/2026-09-29/DECISIONS.md` ข้อ 30 · 35 · 36 · 38 · 78 · 79 · **ยังไม่ได้คอมไพล์/รันเทสต์ในเครื่องนี้ (ไม่มี .NET SDK) — CI คือตัวแรก**
 
 ## 1. สถานะรายข้อ

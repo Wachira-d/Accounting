@@ -40,7 +40,7 @@ service_interface · dead_helper · required_call_site (160 กติกา) · 
 - P2 `DocumentService.cs:3814` SaveChanges ธง `[DEPOSIT-LATE-VAT]` ก่อน `CreateDocumentAsync` — สร้างล้ม (ไม่มีผู้ติดต่อ/โควตา) ⇒ ธงค้างบนใบทั้งที่ไม่มีใบกำกับ
 - P3 ยกเลิกที่พักล้มกลางทาง: ข้อความ lodging (`Lifecycle.cs:~1020`) สั่ง "รับรู้ที่หน้าเงินมัดจำ" ขัดกับข้อความ IssueForfeit "ห้ามกดซ้ำ" · ใบกำกับร่างค้าง
 - ✅ ทีม R <pending> P4 `documents.html` `_hydrateDepositKind` ก่อนรายการประเภทโหลดเสร็จ ⇒ ป้าย "(ปิดใช้แล้ว)" ผิด + ไม่มีตัวเลือกอื่น (re-render เฉพาะ `sel.value===''`)
-- ✅ <pending> (รอบ 201 IN A-IN7 — เปลี่ยน IndustryType เติมประเภทมัดจำทันที) (backlog — ทีม R ไม่ทำรอบนี้) P5 สมัครผ่าน AuthService seed ชุด General · เปลี่ยน IndustryType ทีหลังไม่เปลี่ยนชื่อ (โรงแรม) · RENT-ADV มาตอนบูตถัดไป (cosmetic)
+- ✅ a4dfa177 (รอบ 201 IN A-IN7 — เปลี่ยน IndustryType เติมประเภทมัดจำทันที) (backlog — ทีม R ไม่ทำรอบนี้) P5 สมัครผ่าน AuthService seed ชุด General · เปลี่ยน IndustryType ทีหลังไม่เปลี่ยนชื่อ (โรงแรม) · RENT-ADV มาตอนบูตถัดไป (cosmetic)
 - ✅ ทีม R <pending> P6 DDL คอลัมน์ Documents ใหม่อยู่ในชุด `ApplyFullTextSearchIndexes` ซึ่ง `catch {}` เงียบ (ต่างจาก `ApplyMissingColumns` ที่ log) — ถ้าล้ม ทุก query Documents พังโดยไม่มี log
 
 ## NOT-A-BUG (ตรวจแล้ว)
